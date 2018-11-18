@@ -1,4 +1,6 @@
 # JAX is Autograd and XLA
+package(default_visibility = ["//visibility:public"])
+
 py_library(
     name = "libjax",
     srcs = glob(
@@ -34,5 +36,12 @@ py_library(
 py_library(
     name = "lapax",
     srcs = ["experimental/lapax.py"],
+    deps = [":libjax"],
+)
+
+# this is a dummy target for building purposes
+py_binary(
+    name = "build_jax",
+    srcs = ["core.py"],
     deps = [":libjax"],
 )
