@@ -1,6 +1,15 @@
 #!/bin/bash
 set -exv
 
+init_commit=a30e858e59d7184b9e54dc3f3955238221d70439
+if [[ ! -d .git || $(git rev-list --parents HEAD | tail -1) != ${init_commit} ]]
+then
+  (>&2 echo "must be executed from jax repo root")
+  exit 1
+fi
+
+cp build/WORKSPACE .
+
 tmp=/tmp/jax-build  # could mktemp -d but this way we can cache results
 mkdir -p ${tmp}
 
@@ -75,5 +84,6 @@ sed -i '/from tensorflow.compiler.xla.service import hlo_pb2/d' jax/lib/xla_clie
 
 ## clean up
 rm -f bazel-*  # symlinks
+rm -f WORKSPACE
 rm -rf tensorflow
 # rm -rf ${tmp}
