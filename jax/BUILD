@@ -42,6 +42,7 @@ py_library(
 # this is a dummy target for building purposes
 py_binary(
     name = "build_jax",
-    srcs = ["core.py"],
+    srcs = ["__init__.py"],
+    main = "__init__.py",
     deps = [":libjax"],
 )
