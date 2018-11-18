@@ -65,14 +65,14 @@ bazel_build_opt="-c opt --config=cuda"
 if [ -n $handle_temporary_bazel_0_19_1_bug ]
 then
   set +e
-  bazel ${bazel_opt} build ${bazel_build_opt} jax:interactive 2> /dev/null
+  bazel ${bazel_opt} build ${bazel_build_opt} examples:interactive 2> /dev/null
   sed -i 's/toolchain_identifier = "local"/toolchain_identifier = "local_linux"/' ${bazel_output_base}/external/local_config_cc/BUILD
   set -e
 fi
-bazel ${bazel_opt} build ${bazel_build_opt} jax:interactive
+bazel ${bazel_opt} build ${bazel_build_opt} examples:interactive
 
 ## extract the pieces we need
-runfiles_prefix="execroot/__main__/bazel-out/k8-opt/bin/jax/interactive.runfiles/org_tensorflow/tensorflow"
+runfiles_prefix="execroot/__main__/bazel-out/k8-opt/bin/examples/interactive.runfiles/org_tensorflow/tensorflow"
 cp ${bazel_output_base}/${runfiles_prefix}/libtensorflow_framework.so jax/lib/
 cp ${bazel_output_base}/${runfiles_prefix}/compiler/xla/xla_data_pb2.py jax/lib/
 cp ${bazel_output_base}/${runfiles_prefix}/compiler/xla/python/{xla_client.py,pywrap_xla.py,_pywrap_xla.so} jax/lib/
