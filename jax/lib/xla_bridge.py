@@ -29,7 +29,7 @@ import warnings
 from absl import flags
 import numpy as onp  # 'onp' rather than 'np' to distinguish from autograd.numpy
 
-from tensorflow.compiler.xla import xla_data_pb2
+from . import xla_data_pb2
 from . import xla_client
 
 
