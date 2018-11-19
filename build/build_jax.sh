@@ -27,14 +27,17 @@ bazel_dir=${tmp}/jax-bazel
 if [ ! -d ${bazel_dir}/bin ]
 then
     mkdir -p ${bazel_dir}
-    curl -OL https://github.com/bazelbuild/bazel/releases/download/0.19.1/bazel-0.19.1-installer-linux-x86_64.sh
-    chmod +x bazel-0.19.1-installer-linux-x86_64.sh
-    ./bazel-0.19.1-installer-linux-x86_64.sh --prefix=${bazel_dir}
-    rm bazel-0.19.1-installer-linux-x86_64.sh
+    case "$(uname -s)" in
+      Linux*) installer=bazel-0.19.2-installer-linux-x86_64.sh;;
+      Darwin*) installer=bazel-0.19.2-installer-darwin-x86_64.sh;;
+      *) exit 1;;
+    esac
+    curl -OL https://github.com/bazelbuild/bazel/releases/download/0.19.2/${installer}
+    chmod +x ${installer}
+    bash ${installer} --prefix=${bazel_dir}
+    rm ${installer}
 fi
 export PATH="${bazel_dir}/bin:$PATH"
-# BUG: https://github.com/bazelbuild/bazel/issues/6665
-handle_temporary_bazel_0_19_1_bug=1  # TODO(mattjj): remove with bazel 0.19.2
 
 ## get and configure tensorflow for building xla
 if [[ ! -d tensorflow ]]
@@ -83,14 +86,6 @@ then
   bazel_build_opt="-c opt --config=cuda"
 else
   bazel_build_opt="-c opt"
-fi
-# TODO(mattjj): remove this if/else clause with bazel 0.19.2 release
-if [[ -n $handle_temporary_bazel_0_19_1_bug && ${JAX_BUILD_WITH_CUDA} != 0 ]]
-then
-  set +e
-  bazel ${bazel_opt} build ${bazel_build_opt} jax:build_jax 2> /dev/null
-  sed -i 's/toolchain_identifier = "local"/toolchain_identifier = "local_linux"/' ${bazel_output_base}/external/local_config_cc/BUILD
-  set -e
 fi
 bazel ${bazel_opt} build ${bazel_build_opt} jax:build_jax
 
