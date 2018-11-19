@@ -31,9 +31,7 @@ py_library(
             "**/*_test.py",
         ],
     ),
-    deps = [
-        "@org_tensorflow//tensorflow/compiler/xla/python:xla_client",
-    ],
+    deps = ["@org_tensorflow//tensorflow/compiler/xla/python:xla_client"],
 )
 
 py_library(
