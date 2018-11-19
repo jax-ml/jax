@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A basic MNIST example using JAX together with the mini-libraries stax, for
-neural network building, and minmax, for first-order stochastic optimization.
+"""A basic MNIST example using Numpy and JAX.
+
+The primary aim here is simplicity and minimal dependencies.
 """
 
 from __future__ import absolute_import
@@ -21,18 +22,25 @@ from __future__ import division
 from __future__ import print_function
 
 import time
-import itertools
 
 from absl import app
 import numpy.random as npr
 
-import jax.numpy as np
-from jax import jit, grad
-from jax.experimental import minmax
+from jax.api import jit, grad
 from jax.examples import datasets
-from jax.experimental import stax
-from jax.experimental.stax import Dense, Relu, Softmax
+from jax.scipy.misc import logsumexp
+import jax.numpy as np
 
+
+def init_random_params(scale, layer_sizes, rng=npr.RandomState(0)):
+  return [(scale * rng.randn(m, n), scale * rng.randn(n))
+          for m, n, in zip(layer_sizes[:-1], layer_sizes[1:])]
+
+def predict(params, inputs):
+  for w, b in params:
+    outputs = np.dot(inputs, w) + b
+    inputs = np.tanh(outputs)
+  return outputs - logsumexp(outputs, axis=1, keepdims=True)
 
 def loss(params, batch):
   inputs, targets = batch
@@ -45,16 +53,13 @@ def accuracy(params, batch):
   predicted_class = np.argmax(predict(params, inputs), axis=1)
   return np.mean(predicted_class == target_class)
 
-init_random_params, predict = stax.serial(
-    Dense(1024), Relu,
-    Dense(1024), Relu,
-    Dense(10), Softmax)
 
 def main(unused_argv):
+  layer_sizes = [784, 1024, 1024, 10]  # TODO(mattjj): revise to standard arch
+  param_scale = 0.1
   step_size = 0.001
   num_epochs = 10
   batch_size = 32
-  momentum_mass = 0.9
 
   train_images, train_labels, test_images, test_labels = datasets.mnist()
   num_train = train_images.shape[0]
@@ -70,24 +75,19 @@ def main(unused_argv):
         yield train_images[batch_idx], train_labels[batch_idx]
   batches = data_stream()
 
-  opt_init, opt_update = minmax.momentum(step_size, mass=momentum_mass)
-
   @jit
-  def update(i, opt_state, batch):
-    params = minmax.get_params(opt_state)
-    return opt_update(i, grad(loss)(params, batch), opt_state)
+  def update(params, batch):
+    grads = grad(loss)(params, batch)
+    return [(w - step_size * dw, b - step_size * db)
+            for (w, b), (dw, db) in zip(params, grads)]
 
-  _, init_params = init_random_params((-1, 28 * 28))
-  opt_state = opt_init(init_params)
-  itercount = itertools.count()
-
+  params = init_random_params(param_scale, layer_sizes)
   for epoch in range(num_epochs):
     start_time = time.time()
     for _ in range(num_batches):
-      opt_state = update(next(itercount), opt_state, next(batches))
+      params = update(params, next(batches))
     epoch_time = time.time() - start_time
 
-    params = minmax.get_params(opt_state)
     train_acc = accuracy(params, (train_images, train_labels))
     test_acc = accuracy(params, (test_images, test_labels))
     print("Epoch {} in {:0.2f} sec".format(epoch, epoch_time))

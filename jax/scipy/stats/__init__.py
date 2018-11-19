@@ -13,17 +13,4 @@
 # limitations under the License.
 
 from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
-import scipy.special as osp_special
-
-from .. import lax
-from ..numpy.lax_numpy import _wraps
-
-
-gammaln = _wraps(osp_special.gammaln)(lax.lgamma)
-digamma = _wraps(osp_special.digamma)(lax.digamma)
-erf = _wraps(osp_special.erf)(lax.erf)
-erfc = _wraps(osp_special.erfc)(lax.erfc)
-erfinv = _wraps(osp_special.erfinv)(lax.erf_inv)
+from . import norm

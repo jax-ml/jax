@@ -1566,9 +1566,30 @@ def slice_transpose_rule(t, start_indices, limit_indices, strides,
   assert result.shape == operand_shape
   return [result]
 
+def slice_batching_rule(batched_args, batch_dims, start_indices, limit_indices,
+                        strides, **unused_kwargs):
+  operand, = batched_args
+  bdim, = batch_dims
+
+  new_start_indices = list(start_indices)
+  new_start_indices.insert(bdim, 0)
+
+  new_limit_indices = list(limit_indices)
+  new_limit_indices.insert(bdim, operand.shape[bdim])
+
+  if strides is None:
+    new_strides = None
+  else:
+    new_strides = list(strides)
+    new_strides.insert(bdim, 1)
+
+  out = slice(operand, new_start_indices, new_limit_indices, new_strides)
+  return out, bdim
+
 slice_p = standard_primitive(slice_shape_rule, _input_dtype, 'slice',
                              slice_translation_rule)
 ad.deflinear(slice_p, slice_transpose_rule)
+batching.primitive_batchers[slice_p] = slice_batching_rule
 
 
 def dynamic_slice_shape_rule(operand, start_indices, slice_sizes,

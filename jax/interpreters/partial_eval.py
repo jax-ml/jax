@@ -173,12 +173,12 @@ class JaxprTracerTuple(tuple): pass
 Destructuring = namedtuple('Destructuring', ['i', 'eqn', 'key'])
 
 class PartialVal(tuple):
-  def __init__(self, xs):
+  def __new__(cls, xs):
     assert core.skip_checks or (
         isinstance(xs[0], valid_pv_types)
         and isinstance(xs[1], core.Tracer) or core.valid_jaxtype(xs[1])
     ), xs
-    super(PartialVal, self).__init__(xs)
+    return tuple.__new__(cls, xs)
 
 valid_pv_types = (AbstractValue, JaxprTracerTuple, type(None))
 

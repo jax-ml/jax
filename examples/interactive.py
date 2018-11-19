@@ -20,9 +20,11 @@ from absl import app
 import IPython
 import numpy as onp
 
+import jax
+import jax.numpy as np
 from jax import lax
-from jax import numpy as np
-from jax import jit, grad, vmap
+from jax import random
+from jax import jit, grad, vmap, jacfwd, jacrev, hessian
 
 
 def main(unused_argv):

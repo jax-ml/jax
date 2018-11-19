@@ -28,13 +28,12 @@ import time
 from absl import app
 import matplotlib.pyplot as plt
 
-from jax import lax, random
-from jax.api import jit, grad
+import jax.numpy as np
+from jax import jit, grad, lax, random
 from jax.examples import datasets
 from jax.experimental import minmax
 from jax.experimental import stax
 from jax.experimental.stax import Dense, FanOut, Relu, Softplus
-import jax.numpy as np
 
 
 def gaussian_kl(mu, sigmasq):

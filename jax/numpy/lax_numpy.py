@@ -171,7 +171,7 @@ def _constant_like(x, const):
 def _wraps(fun):
   """Like functools.wraps but works with numpy.ufuncs."""
   docstr = """
-  LAX-backed implementation of {fun}. Corresponding Numpy docstring below.
+  LAX-backed implementation of {fun}. Original docstring below.
 
   {np_doc}
   """.format(fun=fun.__name__, np_doc=fun.__doc__)

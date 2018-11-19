@@ -428,9 +428,9 @@ pytype_aval_mappings = {}
 # ------------------- Products -------------------
 
 class JaxTuple(tuple):
-  def __new__(self, xs):
-    assert all(map(valid_jaxtype, xs)), xs
-    return tuple.__new__(JaxTuple, xs)
+  def __new__(cls, xs):
+    assert skip_checks or all(map(valid_jaxtype, xs)), xs
+    return tuple.__new__(cls, xs)
 
   def __repr__(self):
     if self is unit:

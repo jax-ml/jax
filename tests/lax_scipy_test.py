@@ -27,15 +27,17 @@ from absl.testing import parameterized
 import numpy as onp
 import scipy.misc as osp_misc
 import scipy.special as osp_special
+import scipy.stats as osp_stats
 
 from jax import api
 from jax import test_util as jtu
 from jax.scipy import misc as lsp_misc
 from jax.scipy import special as lsp_special
+from jax.scipy import stats as lsp_stats
 
 FLAGS = flags.FLAGS
 
-all_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4), (2, 3, 4)]
+all_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4)]
 
 float_dtypes = [onp.float32, onp.float64]
 complex_dtypes = [onp.complex64]
@@ -79,6 +81,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       for axis in range(-len(shape), len(shape))
       for keepdims in [False, True])
   def testLogSumExp(self, rng, shape, dtype, axis, keepdims):
+    # TODO(mattjj): test autodiff
     def scipy_fun(array_to_reduce):
       return osp_misc.logsumexp(array_to_reduce, axis, keepdims=keepdims)
 
@@ -101,6 +104,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       for dtypes in CombosWithReplacement(rec.dtypes, rec.nargs))
   def testScipySpecialFun(self, scipy_op, lax_op, rng, shapes, dtypes, modes):
     # TODO(mattjj): unskip this test combination when real() on tpu is improved
+    # TODO(mattjj): test autodiff
     if (FLAGS.jax_test_dut and FLAGS.jax_test_dut.startswith("tpu")
         and not shapes[0]):
       return absltest.unittest.skip("real() on scalar not supported on tpu")
@@ -111,7 +115,40 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
                         check_dtypes=False)
     self._CompileAndCheck(lax_op, args_maker, check_dtypes=True)
 
-  # TODO(mattjj): add test for lsp_stats.norm_logpdf
+  @parameterized.named_parameters(
+      {"testcase_name": jtu.format_test_name_suffix(
+          "", shapes, dtypes),
+       "rng": rng, "shapes": shapes, "dtypes": dtypes}
+      for shapes in CombosWithReplacement(all_shapes, 3)
+      for dtypes in CombosWithReplacement(default_dtypes, 3)
+      for rng in [jtu.rand_default()])
+  def testNormLogPdfThreeArgs(self, rng, shapes, dtypes):
+    # TODO(mattjj): test autodiff
+    scipy_fun = osp_stats.norm.logpdf
+    lax_fun = lsp_stats.norm.logpdf
+    def args_maker():
+      x, loc, scale = map(rng, shapes, dtypes)
+      scale = 0.5 + onp.abs(scale)
+      return [x, loc, scale]
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(
+      {"testcase_name": jtu.format_test_name_suffix(
+          "", shapes, dtypes),
+       "rng": rng, "shapes": shapes, "dtypes": dtypes}
+      for shapes in CombosWithReplacement(all_shapes, 2)
+      for dtypes in CombosWithReplacement(default_dtypes, 2)
+      for rng in [jtu.rand_default()])
+  def testNormLogPdfTwoArgs(self, rng, shapes, dtypes):
+    # TODO(mattjj): test autodiff
+    scale = 0.5
+    scipy_fun = functools.partial(osp_stats.norm.logpdf, scale=scale)
+    lax_fun = functools.partial(lsp_stats.norm.logpdf, scale=scale)
+    def args_maker():
+      return list(map(rng, shapes, dtypes))
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
 
 if __name__ == "__main__":

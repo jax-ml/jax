@@ -16,14 +16,18 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import scipy.special as osp_special
+import numpy as onp
+import scipy.stats as osp_stats
 
-from .. import lax
-from ..numpy.lax_numpy import _wraps
+from ... import lax
+from ...numpy.lax_numpy import _promote_args_like, _constant_like, _wraps
 
 
-gammaln = _wraps(osp_special.gammaln)(lax.lgamma)
-digamma = _wraps(osp_special.digamma)(lax.digamma)
-erf = _wraps(osp_special.erf)(lax.erf)
-erfc = _wraps(osp_special.erfc)(lax.erfc)
-erfinv = _wraps(osp_special.erfinv)(lax.erf_inv)
+@_wraps(osp_stats.norm.logpdf)
+def logpdf(x, loc=0, scale=1):
+  x, loc, scale = _promote_args_like(osp_stats.norm.logpdf, x, loc, scale)
+  two = _constant_like(x, 2)
+  scale_sqrd = lax.pow(scale, two)
+  log_normalizer = lax.log(lax.mul(_constant_like(x, 2 * onp.pi), scale_sqrd))
+  quadratic = lax.div(lax.pow(lax.sub(x, loc), two), scale_sqrd)
+  return lax.div(lax.neg(lax.add(log_normalizer, quadratic)), two)

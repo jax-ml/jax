@@ -127,6 +127,23 @@ class LaxRandomTest(jtu.JaxTestCase):
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.norm().cdf)
 
+  @parameterized.named_parameters(
+      {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
+      for dtype in [onp.float32, onp.float64, onp.int32, onp.int64])
+  def testShuffle(self, dtype):
+    key = random.PRNGKey(0)
+    x = onp.arange(100).astype(dtype)
+    rand = lambda key: random.shuffle(key, x)
+    crand = api.jit(rand)
+
+    perm1 = rand(key)
+    perm2 = crand(key)
+
+    self.assertTrue(onp.all(perm1 == perm2))
+    self.assertTrue(onp.all(perm1.dtype == perm2.dtype))
+    self.assertFalse(onp.all(perm1 == x))  # seems unlikely!
+    self.assertTrue(onp.all(onp.sort(perm1) == x))
+
 
 if __name__ == "__main__":
   absltest.main()

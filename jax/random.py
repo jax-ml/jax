@@ -309,7 +309,7 @@ def shuffle(key, x, axis=0):
   for _ in range(num_rounds):
     key, subkey = split(key)
     sort_keys = _random_bits(subkey, 32, x.shape)
-    _, x = lax.sort_keyval(sort_keys, x, axis)
+    _, x = lax.sort_key_val(sort_keys, x, axis)
 
   return x
 

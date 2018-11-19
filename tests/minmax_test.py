@@ -114,5 +114,41 @@ class OptimizerTests(jtu.JaxTestCase):
     partial_loss = functools.partial(loss, y)
     self._CheckRun(minmax.sgd, partial_loss, x0, num_iters, step_size)
 
+  def testSgdVectorExponentialDecaySchedule(self):
+    def loss(x, _): return np.dot(x, x)
+    x0 = np.ones(2)
+    num_iters = 100
+    step_schedule = minmax.exponential_decay(0.1, 3, 2.)
+    self._CheckOptimizer(minmax.sgd, loss, x0, num_iters, step_schedule)
+
+  def testSgdVectorInverseTimeDecaySchedule(self):
+    def loss(x, _): return np.dot(x, x)
+    x0 = np.ones(2)
+    num_iters = 100
+    step_schedule = minmax.inverse_time_decay(0.1, 3, 2.)
+    self._CheckOptimizer(minmax.sgd, loss, x0, num_iters, step_schedule)
+
+  def testAdamVectorInverseTimeDecaySchedule(self):
+    def loss(x, _): return np.dot(x, x)
+    x0 = np.ones(2)
+    num_iters = 100
+    step_schedule = minmax.inverse_time_decay(0.1, 3, 2.)
+    self._CheckOptimizer(minmax.adam, loss, x0, num_iters, step_schedule)
+
+  def testMomentumVectorInverseTimeDecayStaircaseSchedule(self):
+    def loss(x, _): return np.dot(x, x)
+    x0 = np.ones(2)
+    num_iters = 100
+    step_sched = minmax.inverse_time_decay(0.1, 3, 2., staircase=True)
+    mass = 0.9
+    self._CheckOptimizer(minmax.momentum, loss, x0, num_iters, step_sched, mass)
+
+  def testRmspropVectorPiecewiseConstantSchedule(self):
+    def loss(x, _): return np.dot(x, x)
+    x0 = np.ones(2)
+    num_iters = 100
+    step_schedule = minmax.piecewise_constant([25, 75], [1.0, 0.5, 0.1])
+    self._CheckOptimizer(minmax.rmsprop, loss, x0, num_iters, step_schedule)
+
 if __name__ == '__main__':
   absltest.main()

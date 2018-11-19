@@ -21,6 +21,7 @@ from absl.testing import parameterized
 import jax.numpy as np
 from jax import test_util as jtu
 from jax.abstract_arrays import ShapedArray
+from jax import lax
 from jax.api import jit, grad, jvp, vjp, trace_to_jaxpr
 from jax.api import vmap
 from jax.core import unit
@@ -134,6 +135,24 @@ class BatchingTest(jtu.JaxTestCase):
     self.assertAllClose(g(2 * onp.ones(2)), 4 * onp.ones(2),
                         check_dtypes=False)
     self.assertEqual(len(side), 1)
+
+  def testSliceLax(self):
+    fun = lambda x: lax.slice(x, (2,), (4,))
+    R = onp.random.RandomState(0).randn
+    x = R(5, 10)
+
+    ans = vmap(fun, x)
+    expected_ans = x[:, 2:4]
+    self.assertAllClose(ans, expected_ans, check_dtypes=False)
+
+  def testSliceNumpy(self):
+    fun = lambda x: x[:, 2]
+    R = onp.random.RandomState(0).randn
+    x = R(10, 5, 3, 7)
+
+    ans = vmap(fun, x)
+    expected_ans = x[:, :, 2]
+    self.assertAllClose(ans, expected_ans, check_dtypes=False)
 
 
 if __name__ == '__main__':
