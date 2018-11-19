@@ -21,6 +21,8 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from absl import app
+
 import numpy.random as npr
 
 import jax.numpy as np
@@ -29,7 +31,7 @@ from jax.experimental import minmax
 from jax.experimental import stax
 from jax.experimental.stax import (AvgPool, BatchNorm, Conv, Dense, FanInSum,
                                    FanOut, Flatten, GeneralConv, Identity,
-                                   MaxPool, Relu, LogSoftmax)
+                                   MaxPool, Relu, Softmax)
 
 
 # ResNet blocks compose other layers
@@ -80,10 +82,12 @@ def ResNet50(num_classes):
       ConvBlock(3, [512, 512, 2048]),
       IdentityBlock(3, [512, 512]),
       IdentityBlock(3, [512, 512]),
-      AvgPool((7, 7)), Flatten, Dense(num_classes), LogSoftmax)
+      AvgPool((7, 7)), Flatten, Dense(num_classes), Softmax)
 
 
-if __name__ == "__main__":
+def main(argv):
+  del argv  # Unused.
+
   batch_size = 8
   num_classes = 1001
   input_shape = (224, 224, 3, batch_size)
@@ -124,3 +128,7 @@ if __name__ == "__main__":
   for i in xrange(num_steps):
     opt_state = update(i, opt_state, next(batches))
   trained_params = minmax.get_params(opt_state)
+
+
+if __name__ == '__main__':
+  app.run(main)

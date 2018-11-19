@@ -25,14 +25,15 @@ from __future__ import print_function
 import os
 import time
 
+from absl import app
 import matplotlib.pyplot as plt
 
 import jax.numpy as np
 from jax import jit, grad, lax, random
+import datasets
 from jax.experimental import minmax
 from jax.experimental import stax
 from jax.experimental.stax import Dense, FanOut, Relu, Softplus
-import datasets
 
 
 def gaussian_kl(mu, sigmasq):
@@ -137,3 +138,7 @@ if __name__ == "__main__":
     test_elbo, images = evaluate(opt_state, test_images)
     print("{: 3d} {} ({:.3f} sec)".format(epoch, test_elbo, time.time() - tic))
     plt.imsave(imfile.format(epoch), images, cmap=plt.cm.gray)
+
+
+if __name__ == "__main__":
+  app.run(main)

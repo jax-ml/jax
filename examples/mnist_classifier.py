@@ -23,14 +23,15 @@ from __future__ import print_function
 import time
 import itertools
 
+from absl import app
 import numpy.random as npr
 
 import jax.numpy as np
 from jax import jit, grad
 from jax.experimental import minmax
-from jax.experimental import stax
-from jax.experimental.stax import Dense, Relu, LogSoftmax
 import datasets
+from jax.experimental import stax
+from jax.experimental.stax import Dense, Relu, Softmax
 
 
 def loss(params, batch):
@@ -47,7 +48,7 @@ def accuracy(params, batch):
 init_random_params, predict = stax.serial(
     Dense(1024), Relu,
     Dense(1024), Relu,
-    Dense(10), LogSoftmax)
+    Dense(10), Softmax)
 
 if __name__ == "__main__":
   step_size = 0.001
@@ -92,3 +93,7 @@ if __name__ == "__main__":
     print("Epoch {} in {:0.2f} sec".format(epoch, epoch_time))
     print("Training set accuracy {}".format(train_acc))
     print("Test set accuracy {}".format(test_acc))
+
+
+if __name__ == "__main__":
+  app.run(main)

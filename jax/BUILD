@@ -29,7 +29,6 @@ py_library(
             "interpreters/*.py",
             "numpy/*.py",
             "scipy/*.py",
-            "scipy/stats/*.py",
         ],
         exclude = [
             "*_test.py",

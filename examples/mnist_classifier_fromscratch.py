@@ -23,12 +23,13 @@ from __future__ import print_function
 
 import time
 
+from absl import app
 import numpy.random as npr
 
 from jax.api import jit, grad
+import datasets
 from jax.scipy.misc import logsumexp
 import jax.numpy as np
-import datasets
 
 
 def init_random_params(scale, layer_sizes, rng=npr.RandomState(0)):
@@ -92,3 +93,7 @@ if __name__ == "__main__":
     print("Epoch {} in {:0.2f} sec".format(epoch, epoch_time))
     print("Training set accuracy {}".format(train_acc))
     print("Test set accuracy {}".format(test_acc))
+
+
+if __name__ == "__main__":
+  app.run(main)
