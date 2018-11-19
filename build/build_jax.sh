@@ -55,7 +55,6 @@ then
   export TF_CUDA_VERSION=$(readlink -f ${CUDA_TOOLKIT_PATH}/lib64/libcudart.so | cut -d '.' -f4-5)
   export TF_CUDNN_VERSION=$(readlink -f ${CUDNN_INSTALL_PATH}/lib64/libcudnn.so | cut -d '.' -f4-5)
   export TF_CUDA_COMPUTE_CAPABILITIES="3.0,3.5,5.2,6.0,6.1,7.0"
-  export TF_NCCL_VERSION=2
   export TF_NEED_CUDA=1
 else
   export TF_NEED_CUDA=0
@@ -73,6 +72,7 @@ export TF_DOWNLOAD_CLANG=0
 export TF_SET_ANDROID_WORKSPACE=0
 export TF_CUDA_CLANG=0
 export TF_NEED_TENSORRT=0
+export TF_NCCL_VERSION="2"
 ./configure
 popd
 

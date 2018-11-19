@@ -12,19 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from setuptools import setup
-from glob import glob
+from __future__ import absolute_import
+from __future__ import division
 
-setup(
-    name='jax',
-    version='0.0',
-    description='Differentiate, compile, and transform Numpy code.',
-    author='JAX team',
-    author_email='jax-team@google.com',
-    packages=['jax', 'jax.lib', 'jax.interpreters', 'jax.numpy', 'jax.scipy',
-              'jax.experimental'],
-    install_requires=['numpy>=1.12', 'six', 'protobuf'],
-    url='https://github.com/google/jax',
-    license='Apache-2.0',
-    package_data={'jax.lib': glob('jax/lib/*.so')},
-)
+from absl import app
+
+import IPython
+import numpy as onp
+
+import jax
+import jax.numpy as np
+from jax import lax
+from jax import random
+from jax import jit, grad, vmap, jacfwd, jacrev, hessian
+
+
+def main(unused_argv):
+  IPython.embed(user_ns=dict(globals(), **locals()))
+
+if __name__ == "__main__":
+  app.run(main)

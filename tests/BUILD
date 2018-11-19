@@ -14,11 +14,11 @@
 
 licenses(["notice"])  # Apache 2
 
-load(":build_defs.bzl", "jax_test")
+load("//third_party/py/jax/tests:build_defs.bzl", "jax_test")
 
 jax_test(
     name = "core_test",
-    srcs = ["core_test.py"],
+    srcs = ["tests/core_test.py"],
     shard_count = {
         "cpu": 5,
     },
@@ -26,7 +26,7 @@ jax_test(
 
 jax_test(
     name = "lax_test",
-    srcs = ["lax_test.py"],
+    srcs = ["tests/lax_test.py"],
     shard_count = {
         "cpu": 40,
         "gpu": 20,
@@ -35,7 +35,7 @@ jax_test(
 
 jax_test(
     name = "lax_numpy_test",
-    srcs = ["lax_numpy_test.py"],
+    srcs = ["tests/lax_numpy_test.py"],
     shard_count = {
         "cpu": 40,
         "gpu": 20,
@@ -44,7 +44,7 @@ jax_test(
 
 jax_test(
     name = "lax_numpy_indexing_test",
-    srcs = ["lax_numpy_indexing_test.py"],
+    srcs = ["tests/lax_numpy_indexing_test.py"],
     shard_count = {
         "cpu": 10,
         "gpu": 2,
@@ -53,7 +53,7 @@ jax_test(
 
 jax_test(
     name = "lax_scipy_test",
-    srcs = ["lax_scipy_test.py"],
+    srcs = ["tests/lax_scipy_test.py"],
     shard_count = {
         "cpu": 10,
         "gpu": 2,
@@ -62,33 +62,33 @@ jax_test(
 
 jax_test(
     name = "random_test",
-    srcs = ["random_test.py"],
+    srcs = ["tests/random_test.py"],
 )
 
 jax_test(
     name = "api_test",
-    srcs = ["api_test.py"],
+    srcs = ["tests/api_test.py"],
 )
 
 jax_test(
     name = "batching_test",
-    srcs = ["batching_test.py"],
+    srcs = ["tests/batching_test.py"],
 )
 
 jax_test(
     name = "stax_test",
-    srcs = ["stax_test.py"],
-    deps = ["//jax:stax"],
+    srcs = ["tests/stax_test.py"],
+    deps = [":stax"],
 )
 
 jax_test(
     name = "minmax_test",
-    srcs = ["minmax_test.py"],
-    deps = ["//jax:minmax"],
+    srcs = ["tests/minmax_test.py"],
+    deps = [":minmax"],
 )
 
 jax_test(
     name = "lapax_test",
-    srcs = ["lapax_test.py"],
-    deps = ["//jax:lapax"],
+    srcs = ["tests/lapax_test.py"],
+    deps = [":lapax"],
 )

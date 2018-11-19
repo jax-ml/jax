@@ -39,8 +39,8 @@ py_binary(
     srcs = ["mnist_vae.py"],
     deps = [
         ":datasets",
+        ":minmax",
+        ":stax",
         "//jax:libjax",
-        "//jax:minmax",
-        "//jax:stax",
     ],
 )
