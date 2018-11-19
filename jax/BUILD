@@ -16,6 +16,8 @@
 
 licenses(["notice"])  # Apache 2
 
+# top-level EF placeholder
+
 package(default_visibility = ["//visibility:public"])
 
 py_library(
