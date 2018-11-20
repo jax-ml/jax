@@ -31,7 +31,7 @@ from jax import jit, grad
 from jax.experimental import minmax
 import datasets
 from jax.experimental import stax
-from jax.experimental.stax import Dense, Relu, Softmax
+from jax.experimental.stax import Dense, Relu, LogSoftmax
 
 
 def loss(params, batch):
@@ -48,7 +48,7 @@ def accuracy(params, batch):
 init_random_params, predict = stax.serial(
     Dense(1024), Relu,
     Dense(1024), Relu,
-    Dense(10), Softmax)
+    Dense(10), LogSoftmax)
 
 if __name__ == "__main__":
   step_size = 0.001

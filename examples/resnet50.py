@@ -31,7 +31,7 @@ from jax.experimental import minmax
 from jax.experimental import stax
 from jax.experimental.stax import (AvgPool, BatchNorm, Conv, Dense, FanInSum,
                                    FanOut, Flatten, GeneralConv, Identity,
-                                   MaxPool, Relu, Softmax)
+                                   MaxPool, Relu, LogSoftmax)
 
 
 # ResNet blocks compose other layers
@@ -82,7 +82,7 @@ def ResNet50(num_classes):
       ConvBlock(3, [512, 512, 2048]),
       IdentityBlock(3, [512, 512]),
       IdentityBlock(3, [512, 512]),
-      AvgPool((7, 7)), Flatten, Dense(num_classes), Softmax)
+      AvgPool((7, 7)), Flatten, Dense(num_classes), LogSoftmax)
 
 
 def main(argv):
