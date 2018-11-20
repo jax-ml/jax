@@ -42,9 +42,8 @@ import jax.numpy as np
 def relu(x): return np.maximum(x, 0.)
 def softplus(x): return np.logaddexp(x, 0.)
 
-# TODO(mattjj): change this name to better fit convention
-def softmax(x, axis=-1):
-  """Apply a softmax to an array of logits, log-normalizing along an axis."""
+def logsoftmax(x, axis=-1):
+  """Apply log softmax to an array of logits, log-normalizing along an axis."""
   return x - logsumexp(x, axis, keepdims=True)
 
 def fastvar(x, axis, keepdims):
@@ -146,7 +145,7 @@ def _elemwise_no_params(fun, **kwargs):
   return init_fun, apply_fun
 Tanh = _elemwise_no_params(np.tanh)
 Relu = _elemwise_no_params(relu)
-Softmax = _elemwise_no_params(softmax, axis=-1)
+LogSoftmax = _elemwise_no_params(logsoftmax, axis=-1)
 Softplus = _elemwise_no_params(softplus)
 
 

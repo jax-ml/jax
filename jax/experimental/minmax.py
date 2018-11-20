@@ -179,10 +179,10 @@ def piecewise_constant(boundaries, values):
     return values[np.sum(i > boundaries)]
   return schedule
 
-def make_schedule(constant_scalar_or_schedule_fun):
-  if np.isscalar(constant_scalar_or_schedule_fun):
-    return constant(constant_scalar_or_schedule_fun)
-  elif callable(constant_scalar_or_schedule_fun):
-    return constant_scalar_or_schedule_fun
+def make_schedule(scalar_or_schedule_fun):
+  if callable(scalar_or_schedule_fun):
+    return scalar_or_schedule_fun
+  elif np.ndim(scalar_or_schedule_fun) == 0:
+    return constant(scalar_or_schedule_fun)
   else:
-    raise TypeError, type(constant_scalar_or_schedule_fun)
+    raise TypeError, type(scalar_or_schedule_fun)
