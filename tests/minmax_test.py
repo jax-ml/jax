@@ -21,9 +21,9 @@ import functools
 
 from absl.testing import absltest
 
-import jax.test_util as jtu
 import jax.numpy as np
-from jax.api import grad
+import jax.test_util as jtu
+from jax import jit, grad
 from jax.experimental import minmax
 from jax.lib import xla_bridge as xla
 
@@ -149,6 +149,25 @@ class OptimizerTests(jtu.JaxTestCase):
     num_iters = 100
     step_schedule = minmax.piecewise_constant([25, 75], [1.0, 0.5, 0.1])
     self._CheckOptimizer(minmax.rmsprop, loss, x0, num_iters, step_schedule)
+
+  def testTracedStepSize(self):
+    def loss(x, _): return np.dot(x, x)
+    x0 = np.ones(2)
+    num_iters = 100
+    step_size = 0.1
+
+    init_fun, _ = minmax.sgd(step_size)
+    opt_state = init_fun(x0)
+
+    @jit
+    def update(opt_state, step_size):
+      _, update_fun = minmax.sgd(step_size)
+      x = minmax.get_params(opt_state)
+      g = grad(loss)(x, None)
+      return update_fun(0, g, opt_state)
+
+    update(opt_state, 0.9)  # doesn't crash
+
 
 if __name__ == '__main__':
   absltest.main()
