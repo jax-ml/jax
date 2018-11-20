@@ -325,7 +325,7 @@ def normal(key, shape, dtype=onp.float32):
   Returns:
     A random array with the specified shape and dtype.
   """
-  lo = onp.nextafter(onp.array(-1., dtype), 0.)
+  lo = onp.nextafter(onp.array(-1., dtype), 0., dtype=dtype)
   hi = onp.array(1., dtype)
   u = uniform(key, shape, dtype, lo, hi)
   return onp.array(onp.sqrt(2), dtype) * lax.erf_inv(u)
