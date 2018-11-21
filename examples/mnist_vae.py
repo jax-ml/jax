@@ -25,15 +25,14 @@ from __future__ import print_function
 import os
 import time
 
-from absl import app
 import matplotlib.pyplot as plt
 
 import jax.numpy as np
 from jax import jit, grad, lax, random
-from jax.examples import datasets
 from jax.experimental import minmax
 from jax.experimental import stax
 from jax.experimental.stax import Dense, FanOut, Relu, Softplus
+import datasets
 
 
 def gaussian_kl(mu, sigmasq):
@@ -84,7 +83,7 @@ decoder_init, decode = stax.serial(
 )
 
 
-def main(unused_argv):
+if __name__ == "__main__":
   step_size = 0.001
   num_epochs = 100
   batch_size = 32
@@ -138,7 +137,3 @@ def main(unused_argv):
     test_elbo, images = evaluate(opt_state, test_images)
     print("{: 3d} {} ({:.3f} sec)".format(epoch, test_elbo, time.time() - tic))
     plt.imsave(imfile.format(epoch), images, cmap=plt.cm.gray)
-
-
-if __name__ == "__main__":
-  app.run(main)
