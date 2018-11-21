@@ -1347,7 +1347,7 @@ def concatenate_transpose_rule(t, *operands, **kwargs):
   operand_shapes = kwargs.pop('operand_shapes')
   limit_points = onp.cumsum([shape[dimension] for shape in operand_shapes])
 
-  starts = onp.zeros((len(operands), t.ndim))
+  starts = onp.zeros((len(operands), t.ndim), dtype=int)
   starts[1:, dimension] = limit_points[:-1]
   limits = onp.tile(t.shape, (len(operands), 1))
   limits[:, dimension] = limit_points
