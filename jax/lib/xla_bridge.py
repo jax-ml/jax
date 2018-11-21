@@ -112,10 +112,10 @@ def get_xla_client():
     xla_client.initialize_platform_name(FLAGS.jax_platform_name)
   else:
     try:
-      xla_client.initialize_platform_name('CUDA')
+      xla_client.initialize_platform_name(b'CUDA')
     except RuntimeError:
       warnings.warn('No GPU found, falling back to CPU.')
-      xla_client.initialize_platform_name('Host')
+      xla_client.initialize_platform_name(b'Host')
   return xla_client
 
 

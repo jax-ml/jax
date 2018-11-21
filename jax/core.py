@@ -18,6 +18,7 @@ from operator import attrgetter
 from contextlib import contextmanager
 from collections import namedtuple, Counter, defaultdict
 from weakref import ref
+import six
 import types
 
 from . import linear_util as lu
@@ -248,7 +249,6 @@ class Tracer(object):
   def __oct__(self): return self.aval._oct(self)
 
 
-
   def __getattr__(self, name):
     # if the aval property raises an AttributeError, gets caught here
     assert skip_checks or name != "aval"
@@ -263,7 +263,10 @@ class Tracer(object):
       if t is aval_property:
         return attr.fget(self)
       elif t is aval_method:
-        return types.MethodType(attr.fun, self, None)
+        if six.PY3:
+          return types.MethodType(attr.fun, self)
+        else:
+          return types.MethodType(attr.fun, self, None)
       else:
         return attr
 
@@ -345,7 +348,7 @@ def new_master(trace_type, bottom=False):
     t = ref(master)
     del master
     if t() is not None:
-      print trace_stack
+      print(trace_stack)
       raise Exception('Leaked trace {}'.format(t()))
 
 

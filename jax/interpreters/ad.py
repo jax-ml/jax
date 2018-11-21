@@ -20,11 +20,14 @@ from .. import core as core
 from ..core import Trace, Tracer, new_master, get_aval, pack, call_p, Primitive
 from ..ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval,
                        zeros_like_p, zero, Zero)
-from ..util import unzip2, unzip3, safe_zip, partial
+from ..util import unzip2, unzip3, safe_map, safe_zip, partial
 from ..tree_util import process_pytree, build_tree, register_pytree_node
 from ..linear_util import thunk, staged, transformation, transformation_with_aux, wrap_init
 
+from six.moves import builtins, reduce
+
 zip = safe_zip
+map = safe_map
 
 def jvp(fun):
   return jvpfun(jvp_subtrace(fun))
@@ -102,13 +105,18 @@ def backward_pass(jaxpr, consts, freevar_vals, cotangent_in):
           for subjaxpr, const_vars, bound_vars in eqn.bound_subjaxprs])
       cts_out, ct_free_vars_out = get_primitive_transpose(eqn.primitive)(
           eqn.params, subjaxprs, sub_consts, sub_freevar_vals, invals, ct_in)
+      # TODO(dougalm): support cases != 1
+      assert(len(eqn.bound_subjaxprs) == 1)
+      _, _, bound_vars = eqn.bound_subjaxprs[0]
       map(write_cotangent, bound_vars, ct_free_vars_out)
     else:
       cts_out = get_primitive_transpose(eqn.primitive)(ct_in, *invals, **eqn.params)
 
     if cts_out is zero:
       cts_out = [zero for _ in eqn.invars]
-    map(write_cotangent, eqn.invars, cts_out)
+    # TODO(phawkins,dougalm): eqn.invars and cts_out can have different lengths
+    for var, ct in builtins.zip(eqn.invars, cts_out):
+      write_cotangent(var, ct)
 
   cotangents_out = map(read_cotangent, jaxpr.invars)
   freevar_cts = map(read_cotangent, jaxpr.freevars)
@@ -195,7 +203,7 @@ class JVPTrace(Trace):
     elif xt is zero and yt is zero:
       return xt, yt
     else:
-      raise TypeError, (xt, yt)
+      raise TypeError((xt, yt))
 
   def pack(self, tracers):
     primals = pack(t.primal for t in tracers)
@@ -344,7 +352,10 @@ def transposed_fun(jaxpr, in_tree_def, args):
   out_jtuple, tree_def = tree_to_jaxtuples((cotangents_out, freevar_cts))
   yield out_jtuple, tree_def
 
-def call_transpose(primitive, params, (jaxpr,), (consts,), (freevar_vals,), args, ct):
+def call_transpose(primitive, params, jaxpr, consts, freevar_vals, args, ct):
+  jaxpr, = jaxpr
+  consts, = consts
+  freevar_vals, = freevar_vals
   assert isinstance(jaxpr, core.Jaxpr)
   assert all(a is None for a in args), "TODO(dougalm): handle non-tangent primal args"
   (ct, freevar_vals), in_tree_def = tree_to_jaxtuples((ct, freevar_vals))

@@ -25,6 +25,8 @@ from ..core import (Trace, Tracer, new_master, Jaxpr, JaxprEqn, get_aval, pack,
                     AbstractValue, AbstractTuple, unit, unitvar, Primitive,
                     call_p)
 
+map = safe_map
+zip = safe_zip
 
 class JaxprTrace(Trace):
   def pure(self, val):
@@ -212,7 +214,7 @@ def as_abstract_val(pv):
   elif isinstance(pv, JaxprTracerTuple):
     return AbstractTuple(map(as_abstract_val, pv))
   elif pv is None:
-    raise TypeError, "{} is not abstract".format(pv)
+    raise TypeError("{} is not abstract".format(pv))
 
 
 def partial_val_aval(pv, const):
@@ -283,7 +285,7 @@ def eqn_tracer_to_var(var, outvars, eqn):
 def tracers_to_jaxpr(in_tracers, out_tracer):
   newvar = gensym('')
   t_to_var = defaultdict(newvar)
-  var = lambda t: t_to_var[t]
+  var = lambda t: t_to_var[id(t)]
   sorted_tracers = toposort(out_tracer)
   invars = map(var, in_tracers)
   eqns = []
@@ -308,11 +310,11 @@ def tracers_to_jaxpr(in_tracers, out_tracer):
         destructuring_vars[key] = outvars
       else:
         outvars = destructuring_vars[key]
-      t_to_var[t] = outvars[i]
+      t_to_var[id(t)] = outvars[i]
     elif recipe is unit:
-      t_to_var[t] = unitvar
+      t_to_var[id(t)] = unitvar
     else:
-      raise TypeError, recipe
+      raise TypeError(recipe)
 
   env_vars, env_vals = unzip2(env.items())
   const_vars, const_vals = unzip2(consts.items())
@@ -323,7 +325,7 @@ def tracers_to_jaxpr(in_tracers, out_tracer):
 
 def gensym(suffix):
   counter = it.count()
-  return lambda: Var(counter.next(), suffix)
+  return lambda: Var(next(counter), suffix)
 
 class Var(object):
   def __init__(self, count, suffix):
@@ -334,7 +336,7 @@ class Var(object):
     rem = self.count
     s = ''
     while True:
-      rem, i = rem / 26, rem % 26
+      rem, i = rem // 26, rem % 26
       s = chr(97 + i % 26) + s
       if not rem:
         break

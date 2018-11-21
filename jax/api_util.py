@@ -17,8 +17,9 @@ from __future__ import absolute_import
 from .core import pack
 from .tree_util import build_tree, process_pytree
 from .linear_util import transformation_with_aux
-from .util import unzip2, partial
+from .util import safe_map, unzip2, partial
 
+map = safe_map
 
 @transformation_with_aux
 def flatten_fun(in_trees, *args, **kwargs):

@@ -182,6 +182,7 @@ class LapaxMatrix(object):
   __sub__ = _make_infix_op(lax.sub)
   __mul__ = _make_infix_op(lax.batch_matmul)
   __div__ = _make_infix_op(lax.div)
+  __truediv__ = _make_infix_op(lax.div)
   T = property(_make_infix_op(_matrix_transpose))
 
 

@@ -16,8 +16,11 @@ from __future__ import absolute_import
 
 from collections import namedtuple
 import itertools as it
+from six.moves import reduce
 
-from .util import unzip2, concatenate, partial
+from .util import unzip2, concatenate, partial, safe_map
+
+map = safe_map
 
 
 def tree_map(f, tree):

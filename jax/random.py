@@ -58,7 +58,7 @@ class PRNGKey(object):
   def from_keypair(cls, keypair):
     """Internal method to create a PRNGKey instance from a raw key pair."""
     new = cls.__new__(cls)
-    new.keypair = keypair
+    new.keypair = tuple(keypair)
     return new
 
 
@@ -83,7 +83,7 @@ def _make_rotate_left(dtype):
 
 def _bit_stats(bits):
   """This is a debugging function to compute the statistics of bit fields."""
-  return onp.array([map(int, onp.binary_repr(x, 64)) for x in bits]).mean(0)
+  return onp.array([list(map(int, onp.binary_repr(x, 64))) for x in bits]).mean(0)
 
 
 ### hash function and split

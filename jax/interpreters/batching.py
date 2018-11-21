@@ -18,6 +18,8 @@ import itertools as it
 
 import numpy as onp
 
+from six.moves import reduce
+
 from .. import core
 from ..core import Trace, Tracer, new_master, pack, AbstractTuple, JaxTuple
 from ..abstract_arrays import ShapedArray, make_shaped_array, array_types
@@ -83,7 +85,7 @@ class BatchTracer(Tracer):
     elif t is int:
       batch_dims = [self.batch_dim] * len(self.val)
     else:
-      raise TypeError, t
+      raise TypeError(t)
     return map(partial(BatchTracer, self.trace), self.val, batch_dims)
 
   def full_lower(self):
@@ -150,7 +152,7 @@ def raise_to_shaped(aval):
   elif isinstance(aval, ShapedArray):
     return ShapedArray(aval.shape, aval.dtype)
   else:
-    raise TypeError, type(aval)
+    raise TypeError(type(aval))
 
 def remove_batch_dim_from_aval(bdim, aval):
   t = type(aval)
@@ -167,7 +169,7 @@ def remove_batch_dim_from_aval(bdim, aval):
       unbatched_shape = tuple(onp.delete(aval.shape, bdim))
       return ShapedArray(unbatched_shape, aval.dtype)
   else:
-    raise TypeError, t
+    raise TypeError(t)
 
 pytype_aval_mappings = {}
 
@@ -259,7 +261,7 @@ def dimsize(dim, x):
   elif dim is None:
     return set()
   else:
-    raise TypeError, type(dim)
+    raise TypeError(type(dim))
 
 def moveaxis(sz, dst, src, x):
   aval = get_aval(x)
@@ -284,7 +286,7 @@ def moveaxis(sz, dst, src, x):
         perm.insert(dst, src)
         return x.transpose(perm)
   else:
-    raise TypeError, type(aval)
+    raise TypeError(type(aval))
 
 def broadcast(x, sz):
   try:

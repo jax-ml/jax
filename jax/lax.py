@@ -15,12 +15,13 @@
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
-import __builtin__
 
 import collections
 from .util import partial
 import itertools
 import operator
+import six
+from six.moves import builtins, xrange
 import string
 
 import numpy as onp
@@ -40,9 +41,14 @@ from .util import curry, safe_zip, unzip2
 from .tree_util import build_tree
 from .lib import xla_bridge
 
-_max = __builtin__.max
-_min = __builtin__.max
+_max = builtins.max
+_min = builtins.max
 
+if six.PY3:
+  def maketrans(s1, s2):
+    return s1.maketrans(s1, s2)
+else:
+  maketrans = string.maketrans
 
 ### traceables
 
@@ -383,7 +389,7 @@ def _while_loop(cond_fun, body_fun, init_val):
   params = OpaqueParam((abs_out, cond_jaxpr, cond_consts, body_jaxpr, body_consts))
   out_flat = while_p.bind(init_val_flat, opaque_params=params)
   if out_tree() != in_tree:
-    raise TypeError, "body_fun input and output must have identical structure"
+    raise TypeError("body_fun input and output must have identical structure")
   return build_tree(out_tree(), out_flat)
 
 class OpaqueParam(object):
@@ -500,8 +506,9 @@ def fori_loop(lower, upper, body_fun, init_val):
   # state: (upper limit, index, loop value)
   # The `lt` and `add` functions are added to the namespace programmatically.
   _, _, result = _while_loop(
-      lambda (upper, i, _): lt(i, upper),
-      lambda (upper, i, x): (upper, add(i, 1), body_fun(i, x)),
+      lambda upper_i_x: lt(upper_i_x[1], upper_i_x[0]),
+      lambda upper_i_x: (upper_i_x[0], add(upper_i_x[1], 1),
+                         body_fun(upper_i_x[1], upper_i_x[2])),
       (upper, lower, init_val))
   return result
 
@@ -519,7 +526,7 @@ def foreach_loop(sequence, body_fun, init_val):
   """
   _, result = fori_loop(
       0, len(sequence),
-      lambda i, (seq, val): body_fun(seq[i], val),
+      lambda i, seq_val: body_fun(seq_val[0][i], seq_val[1]),
       (sequence, init_val))
   return result
 
@@ -708,7 +715,7 @@ standard_binop = partial(binop, _input_dtype)
 def _brcast(x, *others):
   # used in jvprules to make binop broadcasting explicit for transposability.
   # requires shape info during jvp tracing, which isn't strictly necessary.
-  shapes = filter(None, map(onp.shape, (x,) + others))
+  shapes = list(filter(None, map(onp.shape, (x,) + others)))
   shape = tuple(shapes and onp.max(shapes, axis=0))
   if onp.shape(x) != shape:
     return _brcast_to(x, shape)
@@ -1017,8 +1024,8 @@ def conv_general_dilated_transpose_rhs(
     lhs_sdims, rhs_sdims, out_sdims = _get_sdims(dimension_numbers)
     lhs_spec, rhs_spec, out_spec = dimension_numbers
     trans_dimension_numbers = (_charswap("C", "N", lhs_spec),
-                              out_spec.translate(string.maketrans("NC", "IO")),
-                              rhs_spec.translate(string.maketrans("IO", "NC")))
+                               out_spec.translate(maketrans("NC", "IO")),
+                               rhs_spec.translate(maketrans("IO", "NC")))
 
   padding = _conv_general_vjp_rhs_padding(
       onp.take(lhs_shape, lhs_sdims), onp.take(rhs_shape, rhs_sdims),
@@ -1543,9 +1550,8 @@ def slice_shape_rule(operand, start_indices, limit_indices, strides,
       msg = "slice strides must be positive, got {}"
       raise TypeError(msg.format(strides))
 
-  result_shape = onp.divide(onp.add(onp.subtract(limit_indices, start_indices),
-                                    strides) - 1,
-                            strides)
+  result_shape = onp.floor_divide(
+      onp.add(onp.subtract(limit_indices, start_indices), strides) - 1, strides)
   return tuple(result_shape)
 
 def slice_translation_rule(c, operand, start_indices, limit_indices, strides,
@@ -1911,7 +1917,8 @@ def reduce_window_shape_tuple(operand_shape, window_dimensions, window_strides,
                               padding):
   pads = padtype_to_pads(operand_shape, window_dimensions, window_strides, padding)
   operand_padded = onp.add(operand_shape, onp.add(*zip(*pads)))
-  t = onp.divide(onp.subtract(operand_padded, window_dimensions), window_strides) + 1
+  t = onp.floor_divide(
+      onp.subtract(operand_padded, window_dimensions), window_strides) + 1
   return tuple(t)
 
 
@@ -2127,7 +2134,7 @@ def _check_same_dtypes(name, ignore_fp_precision, *dtypes):
   """Check that dtypes agree, possibly ignoring float precision."""
   # the `ignore_fp_precision` flag exists because the XLA shape inference logic
   # allows mixed floating point precision, but the HLO verifier often rejects it
-  dtypes = map(onp.dtype, dtypes)  # canonicalize
+  dtypes = list(map(onp.dtype, dtypes))  # canonicalize
   if ignore_fp_precision:
     dtypes = [
         onp.floating if onp.issubdtype(dtype, onp.floating)
@@ -2172,7 +2179,8 @@ def conv_shape_tuple(lhs_shape, rhs_shape, strides, pads):
     raise TypeError(msg.format(len(lhs_shape) - 2, len(pads)))
 
   lhs_padded = onp.add(lhs_shape[2:], onp.add(*zip(*pads)))
-  out_space = onp.divide(onp.subtract(lhs_padded, rhs_shape[2:]), strides) + 1
+  out_space = onp.floor_divide(
+      onp.subtract(lhs_padded, rhs_shape[2:]), strides) + 1
   out_space = onp.maximum(0, out_space)
   out_shape = (lhs_shape[0], rhs_shape[0]) + tuple(out_space)
   return tuple(out_shape)
@@ -2268,7 +2276,7 @@ def remaining(original, *removed_lists):
 
 
 def _charswap(a, b, s):
-  return s.translate(string.maketrans(a+b, b+a))
+  return s.translate(maketrans(a + b, b + a))
 
 
 def _get_sdims(dimension_numbers):
@@ -2339,13 +2347,13 @@ def _eq_meet(a, b):
 
 def maybe_tracer_tuple_to_abstract_tuple(tup):
   if isinstance(tup, pe.JaxprTracerTuple):
-    return core.AbstractTuple(map(maybe_tracer_tuple_to_abstract_tuple, tup))
+    return core.AbstractTuple(list(map(maybe_tracer_tuple_to_abstract_tuple, tup)))
   elif isinstance(tup, core.AbstractValue):
     return tup
   elif tup is None:
     return core.AbstractTuple(())  # TODO(dougalm): check this
   else:
-    raise TypeError, tup
+    raise TypeError(tup)
 
 
 def subvals(lst, replace):
