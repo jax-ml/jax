@@ -15,7 +15,6 @@
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
-import __builtin__
 
 import collections
 import itertools
@@ -24,10 +23,12 @@ import numpy as onp
 import opt_einsum
 import scipy.special
 
-_slice = __builtin__.slice
-_max = __builtin__.max
-_min = __builtin__.min
-_map = __builtin__.map
+from six.moves import builtins
+
+_slice = builtins.slice
+_max = builtins.max
+_min = builtins.min
+_map = builtins.map
 
 neg = onp.negative
 sign = onp.sign
@@ -87,13 +88,13 @@ sub = onp.subtract
 mul = onp.multiply
 
 def div(lhs, rhs):
-  quotient = onp.divide(lhs, rhs)
   if onp.issubdtype(onp.result_type(lhs), onp.integer):
+    quotient = onp.floor_divide(lhs, rhs)
     select = onp.logical_and(onp.sign(lhs) != onp.sign(rhs),
                              onp.remainder(lhs, rhs) != 0)
     return onp.where(select, quotient + 1, quotient)
   else:
-    return quotient
+    return onp.divide(lhs, rhs)
 
 def rem(lhs, rhs):
   return onp.sign(lhs) * onp.remainder(onp.abs(lhs), onp.abs(rhs))
@@ -150,14 +151,14 @@ dot = onp.dot
 
 def dot_general(lhs, rhs, dimension_numbers):
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
-  new_id = itertools.count().next
-  lhs_axis_ids = [new_id() for _ in lhs.shape]
-  rhs_axis_ids = [new_id() for _ in rhs.shape]
+  new_id = itertools.count()
+  lhs_axis_ids = [next(new_id) for _ in lhs.shape]
+  rhs_axis_ids = [next(new_id) for _ in rhs.shape]
   lhs_out_axis_ids = lhs_axis_ids[:]
   rhs_out_axis_ids = rhs_axis_ids[:]
 
   for lhs_axis, rhs_axis in zip(lhs_contracting, rhs_contracting):
-    shared_id = new_id()
+    shared_id = next(new_id)
     lhs_axis_ids[lhs_axis] = shared_id
     rhs_axis_ids[rhs_axis] = shared_id
     lhs_out_axis_ids[lhs_axis] = None
@@ -165,7 +166,7 @@ def dot_general(lhs, rhs, dimension_numbers):
 
   batch_ids = []
   for lhs_axis, rhs_axis in zip(lhs_batch, rhs_batch):
-    shared_id = new_id()
+    shared_id = next(new_id)
     lhs_axis_ids[lhs_axis] = shared_id
     rhs_axis_ids[rhs_axis] = shared_id
     lhs_out_axis_ids[lhs_axis] = None
@@ -215,7 +216,7 @@ select = onp.where
 def slice(operand, start_indices, limit_indices, strides=None):  # pylint: disable=redefined-builtin
   if strides is None:
     strides = onp.ones(len(start_indices)).astype(int)
-  slices = _map(_slice, start_indices, limit_indices, strides)
+  slices = tuple(_map(_slice, start_indices, limit_indices, strides))
   return operand[slices]
 
 def dynamic_slice(operand, start_indices, slice_sizes):
@@ -227,7 +228,7 @@ def dynamic_slice(operand, start_indices, slice_sizes):
   return out
 
 def dynamic_update_slice(operand, update, start_indices):
-  slices = _map(_slice, start_indices, onp.add(start_indices, update.shape))
+  slices = tuple(_map(_slice, start_indices, onp.add(start_indices, update.shape)))
   updated_operand = onp.copy(operand)
   updated_operand[slices] = update
   return updated_operand
@@ -295,8 +296,8 @@ def _conv_view(lhs, rhs_shape, window_strides, pads, pad_value):
   out_strides = onp.multiply(window_strides, lhs.strides[2:])
   view_strides = lhs.strides[:1] + tuple(out_strides) + lhs.strides[1:]
 
-  out_shape = onp.divide(onp.subtract(in_shape, filter_shape),
-                         window_strides) + 1
+  out_shape = onp.floor_divide(
+      onp.subtract(in_shape, filter_shape), window_strides) + 1
   view_shape = lhs.shape[:1] + tuple(out_shape) + rhs_shape[1:]
 
   view = onp.lib.stride_tricks.as_strided(lhs, view_shape, view_strides)

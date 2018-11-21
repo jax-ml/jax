@@ -15,7 +15,8 @@
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
-import __builtin__
+
+from six.moves import builtins
 
 import six
 import numpy as onp
@@ -38,11 +39,11 @@ import jax.lax as lax
 
 
 # We replace some builtin names to follow Numpy's API, so we capture here.
-_all = __builtin__.all
-_any = __builtin__.any
-_max = __builtin__.max
-_min = __builtin__.min
-_sum = __builtin__.sum
+_all = builtins.all
+_any = builtins.any
+_max = builtins.max
+_min = builtins.min
+_sum = builtins.sum
 
 # We need some numpy scalars
 # TODO(mattjj): handle constants in an indirected, less explicit way?
@@ -985,7 +986,7 @@ def _canonicalize_tuple_index(arr, idx):
   if ellipsis_index is not None:
     if next(ellipses, None) is not None:
       msg = "Multiple ellipses (...) not supported: {}."
-      raise IndexError(msg.format(map(type, idx)))
+      raise IndexError(msg.format(list(map(type, idx))))
     colons = (slice(None),) * (arr.ndim - len_without_none)
     idx = idx[:ellipsis_index] + colons + idx[ellipsis_index + 1:]
   elif len_without_none < arr.ndim:

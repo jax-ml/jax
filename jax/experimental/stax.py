@@ -27,6 +27,7 @@ import operator as op
 
 import numpy as onp
 import numpy.random as npr
+from six.moves import reduce
 
 from jax import lax
 from jax import random

@@ -42,6 +42,8 @@ class Store(object):
   def __nonzero__(self):
     return hasattr(self, '_val')
 
+  __bool__ = __nonzero__
+
 
 @curry
 def staged(f, *init_args):
@@ -74,7 +76,7 @@ class WrappedFun(object):
     stack = []
     for gen, gen_args, out_store in self.transforms:
       gen = gen(*(gen_args + tuple(args)))
-      args = gen.next()
+      args = next(gen)
       stack.append((gen, out_store))
 
     del gen

@@ -16,6 +16,8 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import six
+
 import numpy as onp
 from absl.testing import absltest
 from jax import test_util as jtu
@@ -102,11 +104,11 @@ class APITest(jtu.JaxTestCase):
     def f(x):
       return x
 
-    jtu.check_raises(lambda: grad(f)("foo"), TypeError,
-                     "Argument 'foo' of type <type 'str'> is not a valid JAX type")
+    jtu.check_raises_regexp(lambda: grad(f)("foo"), TypeError,
+                     "Argument 'foo' of type <.*'str'> is not a valid JAX type")
 
-    jtu.check_raises(lambda: jit(f)("foo"), TypeError,
-                     "Argument 'foo' of type <type 'str'> is not a valid JAX type")
+    jtu.check_raises_regexp(lambda: jit(f)("foo"), TypeError,
+                     "Argument 'foo' of type <.*'str'> is not a valid JAX type")
 
   # TODO(dougalm): enable when we remove 'None' from pytree nodes
   # def test_bad_output(self):
@@ -176,12 +178,18 @@ class APITest(jtu.JaxTestCase):
       return x
 
     assert jit(f, static_argnums=(1,))(0, 5) == 10
-    jtu.check_raises(lambda: jit(f)(0, 5), TypeError, concretization_err_msg(int))
+    jtu.check_raises_regexp(
+        lambda: jit(f)(0, 5), TypeError,
+        "('JaxprTracer' object cannot be interpreted as an integer"
+        "|Abstract value passed to function.*)")
 
   def test_casts(self):
-    for castfun in [float, int, long, complex, hex, oct]:
+    for castfun in [float, complex, hex, oct] + list(six.integer_types):
       f = lambda x: castfun(x)
-      jtu.check_raises(lambda: jit(f)(0), TypeError, concretization_err_msg(castfun))
+      jtu.check_raises_regexp(
+          lambda: jit(f)(0), TypeError,
+          "('JaxprTracer' object cannot be interpreted as an integer"
+          "|Abstract value passed to function.*)")
 
   def test_unimplemented_interpreter_rules(self):
     foo_p = Primitive('foo')

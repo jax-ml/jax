@@ -15,6 +15,7 @@
 from __future__ import absolute_import
 
 import functools
+import re
 
 from absl import flags
 from absl.testing import absltest
@@ -276,6 +277,13 @@ def check_raises(thunk, err_type, msg):
     assert False
   except err_type as e:
     assert str(e) == msg, "{}\n\n{}\n".format(e, msg)
+
+def check_raises_regexp(thunk, err_type, pattern):
+  try:
+    thunk()
+    assert False
+  except err_type as e:
+    assert re.match(pattern, str(e)), "{}\n\n{}\n".format(e, pattern)
 
 
 class JaxTestCase(parameterized.TestCase):

@@ -65,19 +65,23 @@ class LaxRandomTest(jtu.JaxTestCase):
     # We test the hash by comparing to known values provided in the test code of
     # the original reference implementation of Threefry. For the values, see
     # https://github.com/DEShawResearch/Random123-Boost/blob/65e3d874b67aa7b3e02d5ad8306462f52d2079c0/libs/random/test/test_threefry.cpp#L30-L32
-    expected = ("0x6b200159L", "0x99ba4efeL")
+    def result_to_hex(result):
+      return tuple([hex(x.copy()).rstrip("L") for x in result])
+
+    expected = ("0x6b200159", "0x99ba4efe")
     result = random.threefry_2x32(onp.uint32([0, 0]), onp.uint32([0, 0]))
-    self.assertEqual(expected, tuple(map(hex, result)))
 
-    expected = ("0x1cb996fcL", "0xbb002be7L")
+    self.assertEqual(expected, result_to_hex(result))
+
+    expected = ("0x1cb996fc", "0xbb002be7")
     result = random.threefry_2x32(onp.uint32([-1, -1]), onp.uint32([-1, -1]))
-    self.assertEqual(expected, tuple(map(hex, result)))
+    self.assertEqual(expected, result_to_hex(result))
 
-    expected = ("0xc4923a9cL", "0x483df7a0L")
+    expected = ("0xc4923a9c", "0x483df7a0")
     result = random.threefry_2x32(
         onp.uint32([0x13198a2e, 0x03707344]),
         onp.uint32([0x243f6a88, 0x85a308d3]))
-    self.assertEqual(expected, tuple(map(hex, result)))
+    self.assertEqual(expected, result_to_hex(result))
 
   @parameterized.named_parameters(
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}

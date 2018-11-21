@@ -15,6 +15,7 @@
 from __future__ import absolute_import
 
 import numpy as onp
+import six
 
 from . import core
 from . import ad_util
@@ -52,7 +53,8 @@ class UnshapedArray(core.AbstractValue):
   _bool = _nonzero = concretization_function_error(bool)
   _float   = concretization_function_error(float)
   _int     = concretization_function_error(int)
-  _long    = concretization_function_error(long)
+  if six.PY2:
+    _long    = concretization_function_error(long)
   _complex = concretization_function_error(complex)
   _hex     = concretization_function_error(hex)
   _oct     = concretization_function_error(oct)
@@ -94,7 +96,7 @@ class ShapedArray(UnshapedArray):
     elif self.dtype == other.dtype:
       return UnshapedArray(self.dtype)
     else:
-      raise TypeError, other
+      raise TypeError(other)
 
   def str_short(self):
     dtypestr = onp.dtype(self.dtype).name
@@ -137,7 +139,7 @@ class ConcreteArray(ShapedArray):
     elif self.dtype == other.dtype:
       return UnshapedArray(self.dtype)
     else:
-      raise TypeError, other
+      raise TypeError(other)
 
   def str_short(self):
     return str(self.val)

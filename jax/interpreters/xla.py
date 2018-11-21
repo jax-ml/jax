@@ -18,13 +18,15 @@ from collections import namedtuple
 import itertools as it
 import numpy as onp
 import operator as op
+import six
+from six.moves import xrange
 
 from absl import flags
 from .. import core
 from .. import ad_util
 from ..abstract_arrays import ConcreteArray, ShapedArray, make_shaped_array, array_types
 from ..core import AbstractTuple, JaxTuple, pack, valid_jaxtype
-from ..util import partial, partialmethod, memoize, unzip2, concatenate
+from ..util import partial, partialmethod, memoize, unzip2, concatenate, safe_map
 from ..linear_util import transformation_with_aux, memoize as linear_memoize
 from ..lib import xla_bridge as xb
 from .partial_eval import trace_to_subjaxpr, merge_pvals, JaxprTrace, PartialVal
@@ -32,6 +34,7 @@ from .partial_eval import trace_to_subjaxpr, merge_pvals, JaxprTrace, PartialVal
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_device_values', True, 'Enable device-persistent values.')
 
+map = safe_map
 
 def apply_primitive(prim, *args, **kwargs):
   abstract_args = map(abstractify, args)
@@ -123,7 +126,8 @@ translations = {}
 
 translations[core.pack_p] = lambda c, *xs: c.Tuple(*xs)
 translations[ad_util.add_jaxvals_p] = lambda c, x, y: c.Add(x, y)
-translations[core.call_p] = lambda c, (subc, a1), *a2: c.Call(subc, a1 + a2)
+translations[core.call_p] = lambda c, subc_a1, *a2: c.Call(subc_a1[0],
+                                                           subc_a1[1] + a2)
 translations[core.identity_p] = lambda c, x: x
 
 
@@ -242,7 +246,8 @@ class DeviceArray(DeviceValue):
   __bool__ = __nonzero__ = partialmethod(forward_to_value, bool)
   __float__ = partialmethod(forward_to_value, float)
   __int__ = partialmethod(forward_to_value, int)
-  __long__ = partialmethod(forward_to_value, long)
+  if six.PY2:
+    __long__ = partialmethod(forward_to_value, long)
   __complex__ = partialmethod(forward_to_value, complex)
   __hex__ = partialmethod(forward_to_value, hex)
   __oct__ = partialmethod(forward_to_value, oct)
@@ -252,6 +257,14 @@ class DeviceArray(DeviceValue):
 
   # clobbered when jax.numpy is imported, but useful in tests
   def __eq__(self, other): return self._value == other
+
+  def __hash__(self):
+    # TODO(mattjj): this is not semantically correct because it is possible
+    # __eq__ is true for values with unequal __hash__ values. However, the
+    # main use case at the moment is memoization for which false negatives are
+    # fine.
+    return id(self)
+
 
 core.pytype_aval_mappings[DeviceArray] = ConcreteArray
 pytype_aval_mappings[DeviceArray] = make_shaped_array
@@ -267,7 +280,7 @@ def xla_shape(x):
     if type(x) in (core.AbstractTuple, core.JaxTuple):
       return xb.Shape.tuple_shape(tuple(map(xla_shape, x)))
     else:
-      raise TypeError, type(x)
+      raise TypeError(type(x))
 
 
 # For callable XLA Computations (as opposed to, e.g., Computations used in the
@@ -298,7 +311,7 @@ def tree_flatten(maybe_tree):
   elif core.skip_checks or valid_jaxtype(maybe_tree):
     return [maybe_tree], leaf
   else:
-    raise TypeError, type(maybe_tree)
+    raise TypeError(type(maybe_tree))
 
 JTupleTreeDef = namedtuple("JTupleTreeDef", ["child_specs"])
 
@@ -313,7 +326,7 @@ def build_tree(xs, tree_spec):
   elif type(tree_spec) is JTupleTreeDef:
     return pack(map(partial(build_tree, xs), tree_spec.child_specs))
   else:
-    raise TypeError, type(tree_spec)
+    raise TypeError(type(tree_spec))
 
 
 def device_put(x):
@@ -364,4 +377,5 @@ xla_call = partial(core.call_bind, xla_call_p)
 xla_call_p.def_custom_bind(xla_call)
 xla_call_p.def_impl(xla_call_impl)
 
-translations[xla_call_p] = lambda c, (subc, a1), *a2: c.Call(subc, a1 + a2)
+translations[xla_call_p] = lambda c, subc_a1, *a2: c.Call(subc_a1[0],
+                                                          subc_a1[1] + a2)

@@ -24,16 +24,16 @@ allow_memoize_hash_failures = False
 def safe_zip(*args):
   n = len(args[0])
   for arg in args[1:]:
-    assert len(arg) == n, 'length mismatch: {}'.format(map(len, args))
-  return zip(*args)
+    assert len(arg) == n, 'length mismatch: {}'.format(list(map(len, args)))
+  return list(zip(*args))
 
 
 def safe_map(f, *args):
-  args = map(list, args)
+  args = list(map(list, args))
   n = len(args[0])
   for arg in args[1:]:
-    assert len(arg) == n, 'length mismatch: {}'.format(map(len, args))
-  return map(f, *args)
+    assert len(arg) == n, 'length mismatch: {}'.format(list(map(len, args)))
+  return list(map(f, *args))
 
 
 def unzip2(xys):
@@ -82,10 +82,10 @@ def toposort(end_node):
   stack = [end_node]
   while stack:
     node = stack.pop()
-    if node in child_counts:
-      child_counts[node] += 1
+    if id(node) in child_counts:
+      child_counts[id(node)] += 1
     else:
-      child_counts[node] = 1
+      child_counts[id(node)] = 1
       stack.extend(node.parents)
 
   sorted_nodes = []
@@ -94,16 +94,16 @@ def toposort(end_node):
     node = childless_nodes.pop()
     sorted_nodes.append(node)
     for parent in node.parents:
-      if child_counts[parent] == 1:
+      if child_counts[id(parent)] == 1:
         childless_nodes.append(parent)
       else:
-        child_counts[parent] -= 1
+        child_counts[id(parent)] -= 1
 
   return sorted_nodes[::-1]
 
 
 def split_merge(predicate, xs):
-  sides = map(predicate, xs)
+  sides = list(map(predicate, xs))
   lhs = [x for x, s in zip(xs, sides) if s]
   rhs = [x for x, s in zip(xs, sides) if not s]
   def merge(new_lhs, new_rhs):

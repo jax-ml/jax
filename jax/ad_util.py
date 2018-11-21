@@ -17,6 +17,9 @@ from __future__ import absolute_import
 from .core import JaxTuple, lattice_join
 from .interpreters.partial_eval import Primitive
 from .tree_util import register_pytree_node
+from .util import safe_map
+
+map = safe_map
 
 jaxval_adders = {}
 

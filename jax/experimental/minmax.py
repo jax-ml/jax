@@ -185,4 +185,4 @@ def make_schedule(scalar_or_schedule_fun):
   elif np.ndim(scalar_or_schedule_fun) == 0:
     return constant(scalar_or_schedule_fun)
   else:
-    raise TypeError, type(scalar_or_schedule_fun)
+    raise TypeError(type(scalar_or_schedule_fun))
