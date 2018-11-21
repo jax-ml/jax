@@ -16,6 +16,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import operator
 from collections import namedtuple
 
 import numpy as onp
@@ -28,7 +29,7 @@ from jax import numpy as np
 from jax import test_util as jtu
 from jax.api import jvp, linearize, vjp, jit
 from jax.lax import UnshapedArray, ShapedArray, ConcreteArray
-from jax.tree_util import tree_flatten, tree_multimap
+from jax.tree_util import tree_flatten, tree_unflatten, tree_multimap, tree_reduce
 from jax.util import partial
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
@@ -188,6 +189,14 @@ class CoreTest(jtu.JaxTestCase):
   def test_tree_flatten(self):
     flat, _ = tree_flatten(({'a': 1}, [2, 3], 4))
     assert flat == [1, 2, 3, 4]
+
+  def test_tree_unflatten(self):
+    tree = [(1, 2), {"roy": (3, [4, 5])}]
+    flat, treedef = tree_flatten(tree)
+    assert flat == [1, 2, 3, 4, 5]
+    tree2 = tree_unflatten(flat, treedef)
+    nodes_equal = tree_multimap(operator.eq, tree, tree2)
+    assert tree_reduce(operator.and_, nodes_equal)
 
   @parameterized.parameters(test_specs)
   def test_jit(self, f, args):

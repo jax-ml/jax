@@ -90,6 +90,14 @@ def build_tree(treedef, xs):
 
 tree_flatten = partial(walk_pytree, concatenate, lambda x: [x])
 
+def tree_unflatten(xs, treedef):
+  xs = iter(xs)
+  if treedef is leaf:
+    return next(xs)
+  else:
+    children = map(partial(tree_unflatten, xs), treedef.children)
+    return treedef.node_type.from_iterable(treedef.node_data, children)
+
 
 def tree_structure(tree):
   spec, _ = process_pytree(tree, lambda _: None)
