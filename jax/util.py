@@ -16,7 +16,7 @@ from __future__ import absolute_import
 
 import functools
 import itertools as it
-import weakref
+
 
 allow_memoize_hash_failures = False
 
