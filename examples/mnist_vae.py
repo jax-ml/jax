@@ -30,10 +30,10 @@ import matplotlib.pyplot as plt
 
 import jax.numpy as np
 from jax import jit, grad, lax, random
-import datasets
 from jax.experimental import minmax
 from jax.experimental import stax
 from jax.experimental.stax import Dense, FanOut, Relu, Softplus
+import datasets
 
 
 def gaussian_kl(mu, sigmasq):

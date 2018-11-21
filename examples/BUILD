@@ -26,8 +26,8 @@ py_library(
 )
 
 py_binary(
-    name = "mnist_classifier",
-    srcs = ["mnist_classifier.py"],
+    name = "mnist_classifier_fromscratch",
+    srcs = ["mnist_classifier_fromscratch.py"],
     deps = [
         ":datasets",
         "//jax:libjax",
@@ -35,8 +35,30 @@ py_binary(
 )
 
 py_binary(
+    name = "mnist_classifier",
+    srcs = ["mnist_classifier.py"],
+    deps = [
+        ":datasets",
+        "//jax:libjax",
+        "//jax:minmax",
+        "//jax:stax",
+    ],
+)
+
+py_binary(
     name = "mnist_vae",
     srcs = ["mnist_vae.py"],
+    deps = [
+        ":datasets",
+        "//jax:libjax",
+        "//jax:minmax",
+        "//jax:stax",
+    ],
+)
+
+py_binary(
+    name = "resnet50",
+    srcs = ["resnet50.py"],
     deps = [
         ":datasets",
         "//jax:libjax",

@@ -29,9 +29,9 @@ import numpy.random as npr
 import jax.numpy as np
 from jax import jit, grad
 from jax.experimental import minmax
-import datasets
 from jax.experimental import stax
 from jax.experimental.stax import Dense, Relu, LogSoftmax
+import datasets
 
 
 def loss(params, batch):
