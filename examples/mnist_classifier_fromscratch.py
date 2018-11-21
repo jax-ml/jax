@@ -27,9 +27,9 @@ from absl import app
 import numpy.random as npr
 
 from jax.api import jit, grad
-import datasets
 from jax.scipy.misc import logsumexp
 import jax.numpy as np
+import datasets
 
 
 def init_random_params(scale, layer_sizes, rng=npr.RandomState(0)):
