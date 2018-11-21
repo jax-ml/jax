@@ -14,7 +14,7 @@
 
 licenses(["notice"])  # Apache 2
 
-load("//third_party/py/jax/tests:build_defs.bzl", "jax_test")
+load(":build_defs.bzl", "jax_test")
 
 jax_test(
     name = "core_test",
