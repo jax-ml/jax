@@ -227,7 +227,9 @@ def uniform(key, shape, dtype=onp.float32, minval=0., maxval=1.):
       lax.shift_right_logical(bits, onp.array(nbits - nmant, lax._dtype(bits))),
       onp.array(1., dtype).view(onp.uint32 if nbits == 32 else onp.uint64))
   floats = lax.bitcast_convert_type(float_bits, dtype) - onp.array(1., dtype)
-  return lax.reshape(floats * (maxval - minval) + minval, shape)
+  return lax.max(
+      minval,
+      lax.reshape(floats * (maxval - minval) + minval, shape))
 
 
 def randint(key, shape, minval, maxval, dtype=onp.int32):

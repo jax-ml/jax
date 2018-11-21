@@ -221,6 +221,7 @@ class Tracer(object):
   def __div__(self, other): return self.aval._div(self, other)
   def __rdiv__(self, other): return self.aval._rdiv(self, other)
   def __truediv__(self, other): return self.aval._truediv(self, other)
+  def __rtruediv__(self, other): return self.aval._rtruediv(self, other)
   def __floordiv__(self, other): return self.aval._floordiv(self, other)
   def __rfloordiv__(self, other): return self.aval._rfloordiv(self, other)
   def __divmod__(self, other): return self.aval._divmod(self, other)
