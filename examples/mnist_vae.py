@@ -98,9 +98,6 @@ if __name__ == "__main__":
   num_complete_batches, leftover = divmod(train_images.shape[0], batch_size)
   num_batches = num_complete_batches + bool(leftover)
 
-  # TODO(mattjj): automatically keep large closed-over consts device-persistent
-  train_images = jit(lambda x: x)(train_images)  # dataset on device
-
   _, init_encoder_params = encoder_init((batch_size, 28 * 28))
   _, init_decoder_params = decoder_init((batch_size, 10))
   init_params = init_encoder_params, init_decoder_params
@@ -113,14 +110,16 @@ if __name__ == "__main__":
     return random.bernoulli(rng, batch)
 
   @jit
-  def run_epoch(rng, opt_state, images):
+  def run_epoch(rng, opt_state):
     def body_fun(i, (rng, opt_state, images)):
       rng, elbo_rng, data_rng = random.split(rng, 3)
       batch = binarize_batch(data_rng, i, images)
       loss = lambda params: -elbo(elbo_rng, params, batch) / batch_size
       g = grad(loss)(minmax.get_params(opt_state))
       return rng, opt_update(i, g, opt_state), images
-    return lax.fori_loop(0, num_batches, body_fun, (rng, opt_state, images))
+    init_val = rng, opt_state, train_images
+    _, opt_state, _ =  lax.fori_loop(0, num_batches, body_fun, init_val)
+    return opt_state
 
   @jit
   def evaluate(opt_state, images):
@@ -134,10 +133,11 @@ if __name__ == "__main__":
   opt_state = opt_init(init_params)
   for epoch in range(num_epochs):
     tic = time.time()
-    rng, opt_state, _ = run_epoch(rng, opt_state, train_images)
-    test_elbo, images = evaluate(opt_state, test_images)
+    rng, epoch_rng = random.split(rng)
+    opt_state = run_epoch(epoch_rng, opt_state)
+    test_elbo, sampled_images = evaluate(opt_state, test_images)
     print("{: 3d} {} ({:.3f} sec)".format(epoch, test_elbo, time.time() - tic))
-    plt.imsave(imfile.format(epoch), images, cmap=plt.cm.gray)
+    plt.imsave(imfile.format(epoch), sampled_images, cmap=plt.cm.gray)
 
 
 if __name__ == "__main__":
