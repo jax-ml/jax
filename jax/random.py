@@ -18,12 +18,15 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from functools import partial
+
 import numpy as onp
 
 from . import lax
 from . import numpy as np
 from . import tree_util
 from .lib import xla_bridge
+from .api import jit
 
 
 # TODO(mattjj): add api.jit decorators to the user-facing functions
@@ -156,6 +159,7 @@ def threefry_2x32(keypair, count):
   return lax.reshape(out[:-1] if odd_size else out, count.shape)
 
 
+@partial(jit, static_argnums=(1,))
 def split(key, num=2):
   """Splits a PRNG key pair of 32bit unsigned integers into `num` new key pairs.
 
@@ -192,6 +196,7 @@ def _random_bits(key, bit_width, shape):
 ### random samplers
 
 
+@partial(jit, static_argnums=(1, 2))
 def uniform(key, shape, dtype=onp.float32, minval=0., maxval=1.):
   """Sample uniform random values in [minval, maxval) with given shape/dtype.
 
@@ -232,6 +237,7 @@ def uniform(key, shape, dtype=onp.float32, minval=0., maxval=1.):
       lax.reshape(floats * (maxval - minval) + minval, shape))
 
 
+@partial(jit, static_argnums=(1, 4))
 def randint(key, shape, minval, maxval, dtype=onp.int32):
   """Sample uniform random values in [minval, maxval) with given shape/dtype.
 
@@ -280,6 +286,7 @@ def randint(key, shape, minval, maxval, dtype=onp.int32):
   return lax.add(minval, lax.convert_element_type(random_offset, dtype))
 
 
+@partial(jit, static_argnums=(2,))
 def shuffle(key, x, axis=0):
   """Shuffle the elements of an array uniformly at random along an axis.
 
@@ -316,6 +323,7 @@ def shuffle(key, x, axis=0):
   return x
 
 
+@partial(jit, static_argnums=(1, 2))
 def normal(key, shape, dtype=onp.float32):
   """Sample standard normal random values with given shape and float dtype.
 
@@ -333,6 +341,7 @@ def normal(key, shape, dtype=onp.float32):
   return onp.array(onp.sqrt(2), dtype) * lax.erf_inv(u)
 
 
+@partial(jit, static_argnums=(2,))
 def bernoulli(key, mean=onp.float32(0.5), shape=()):
   """Sample Bernoulli random values with given shape and mean.
 
