@@ -24,7 +24,8 @@ from . import core
 from . import linear_util as lu
 from .core import pack, eval_jaxpr
 from .api_util import flatten_fun, unflatten_fun, tree_to_jaxtuples
-from .tree_util import process_pytree, node_types, build_tree, PyTreeDef, leaf
+from .tree_util import (process_pytree, node_types, build_tree, PyTreeDef, leaf,
+                        tree_map)
 from .util import unzip2, unzip3, curry, partial, safe_map
 from .abstract_arrays import ShapedArray
 from .interpreters import partial_eval as pe
@@ -75,9 +76,8 @@ def jacrev(fun, x):
   jac_flat, = vmap(pullback, std_basis, out_bdim=onp.ndim(y))
   return jac_flat.reshape(onp.shape(y) + onp.shape(x))
 
-@curry
-def hessian(fun, x):
-  return jacfwd(jacrev(fun))(x)
+def hessian(fun):
+  return jacfwd(jacrev(fun))
 
 def vmap(fun, *args, **kwargs):
   in_bdims = kwargs.pop("in_bdims", 0)
@@ -157,6 +157,16 @@ def lift_jaxpr(jaxpr, consts, io_tree, pvals, py_args):
     ans = eval_jaxpr(jaxpr, consts, (), *args)
     return pe.merge_pvals(ans, pvals)
   return unflatten_fun(fun, io_tree, *py_args)
+
+
+@jit
+def device_put(x):
+  return x
+
+def device_get(x):
+  def get(x):
+    return x.copy() if type(x) is xla.DeviceArray else x
+  return tree_map(get, x)
 
 
 @lu.transformation_with_aux
