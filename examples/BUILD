@@ -14,12 +14,6 @@
 
 licenses(["notice"])  # Apache 2
 
-py_binary(
-    name = "interactive",
-    srcs = ["interactive.py"],
-    deps = ["//jax:libjax"],
-)
-
 py_library(
     name = "datasets",
     srcs = ["datasets.py"],
