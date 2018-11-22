@@ -159,14 +159,9 @@ def lift_jaxpr(jaxpr, consts, io_tree, pvals, py_args):
   return unflatten_fun(fun, io_tree, *py_args)
 
 
-@jit
-def device_put(x):
-  return x
-
-def device_get(x):
-  def get(x):
-    return x.copy() if type(x) is xla.DeviceArray else x
-  return tree_map(get, x)
+device_put = jit(lambda x: x)
+device_get_array = lambda x: x.copy() if type(x) is xla.DeviceArray else x
+device_get = partial(tree_map, device_get_array)
 
 
 @lu.transformation_with_aux
