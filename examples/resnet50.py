@@ -23,6 +23,8 @@ from __future__ import print_function
 
 import numpy.random as npr
 
+from six.moves import xrange
+
 import jax.numpy as np
 from jax import jit, grad
 from jax.experimental import minmax
