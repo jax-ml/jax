@@ -23,10 +23,11 @@ from absl.testing import absltest
 from jax import test_util as jtu
 
 import jax.numpy as np
-from jax import jit, grad
+from jax import jit, grad, device_get, device_put
 from jax.core import Primitive
 from jax.interpreters.partial_eval import def_abstract_eval
 from jax.interpreters.ad import defjvp
+from jax.interpreters.xla import DeviceArray
 from jax.abstract_arrays import concretization_err_msg
 
 class APITest(jtu.JaxTestCase):
@@ -215,6 +216,26 @@ class APITest(jtu.JaxTestCase):
 
     jtu.check_raises(lambda: grad(foo)(1.0), NotImplementedError,
                      "Reverse-mode differentiation rule for 'foo' not implemented")
+
+  def test_device_put_and_get(self):
+    x = onp.arange(12.).reshape((3, 4)).astype("float32")
+    dx = device_put(x)
+    assert isinstance(dx, DeviceArray)
+    x2 = device_get(dx)
+    assert isinstance(x2, onp.ndarray)
+    assert onp.all(x == x2)
+
+    y = [x, (2 * x, 3 * x)]
+    dy = device_put(y)
+    y2 = device_get(dy)
+    assert isinstance(y2, list)
+    assert isinstance(y2[0], onp.ndarray)
+    assert onp.all(y2[0] == x)
+    assert isinstance(y2[1], tuple)
+    assert isinstance(y2[1][0], onp.ndarray)
+    assert onp.all(y2[1][0] == 2 * x)
+    assert isinstance(y2[1][1], onp.ndarray)
+    assert onp.all(y2[1][1] == 3 * x)
 
 
 if __name__ == '__main__':
