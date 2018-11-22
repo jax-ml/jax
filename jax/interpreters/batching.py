@@ -88,6 +88,8 @@ class BatchTracer(Tracer):
       batch_dims = self.batch_dim
     elif t is int:
       batch_dims = [self.batch_dim] * len(self.val)
+    elif t is type(None):
+      return tuple(self.val)
     else:
       raise TypeError(t)
     return map(partial(BatchTracer, self.trace), self.val, batch_dims)
