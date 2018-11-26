@@ -25,7 +25,6 @@ from __future__ import print_function
 import os
 import time
 
-from absl import app
 import matplotlib.pyplot as plt
 
 import jax.numpy as np
@@ -139,6 +138,3 @@ if __name__ == "__main__":
     print("{: 3d} {} ({:.3f} sec)".format(epoch, test_elbo, time.time() - tic))
     plt.imsave(imfile.format(epoch), sampled_images, cmap=plt.cm.gray)
 
-
-if __name__ == "__main__":
-  app.run(main)

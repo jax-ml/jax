@@ -21,8 +21,6 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from absl import app
-
 import numpy.random as npr
 
 import jax.numpy as np
@@ -131,4 +129,5 @@ def main(argv):
 
 
 if __name__ == '__main__':
+  from absl import app
   app.run(main)
