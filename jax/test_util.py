@@ -145,6 +145,22 @@ def skip_on_devices(*disabled_devices):
   return skip
 
 
+def skip_on_flag(flag_name, skip_value):
+  """A decorator for test methods to skip the test when flags are set."""
+  def skip(test_method):        # pylint: disable=missing-docstring
+    @functools.wraps(test_method)
+    def test_method_wrapper(self, *args, **kwargs):
+      flag_value = getattr(FLAGS, flag_name)
+      if flag_value == skip_value:
+        test_name = getattr(test_method, '__name__', '[unknown test]')
+        return absltest.unittest.skip(
+            '{} not supported when FLAGS.{} is {}'.format(
+                test_name, flag_name, flag_value))
+      return test_method(self, *args, **kwargs)
+    return test_method_wrapper
+  return skip
+
+
 def format_test_name_suffix(opname, shapes, dtypes):
   arg_descriptions = (format_shape_dtype_string(shape, dtype)
                       for shape, dtype in zip(shapes, dtypes))
@@ -369,4 +385,3 @@ class JaxTestCase(parameterized.TestCase):
     numpy_ans = numpy_reference_op(*args)
     self.assertAllClose(lax_ans, numpy_ans, check_dtypes=check_dtypes,
                         atol=tol, rtol=tol)
-
