@@ -133,10 +133,10 @@ def _get_xla_client(backend_name, platform_name, replica_count):
       xla_client.initialize_platform_name(platform_name)
     else:
       try:
-        xla_client.initialize_platform_name(b'CUDA')
+        xla_client.initialize_platform_name('CUDA')
       except RuntimeError:
         warnings.warn('No GPU found, falling back to CPU.')
-        xla_client.initialize_platform_name(b'Host')
+        xla_client.initialize_platform_name('Host')
   return xla_client
 
 
