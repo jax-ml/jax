@@ -1506,13 +1506,26 @@ def select_transpose_rule(t, pred, on_true, on_false):
           select(pred, t, _zeros(on_false)) if on_true is None else None,
           select(pred, _zeros(on_true), t) if on_false is None else None]
 
+def select_batch_rule(batched_args, batch_dims, **unused_kwargs):
+  oprand, on_true, on_false, = batched_args
+  pred_bdim, ot_bdim, of_bdim = batch_dims
+
+  if (ot_bdim not in {None, pred_bdim}) or (of_bdim not in {None, pred_bdim}):
+    raise NotImplementedError  # TODO(schsam, mattjj): Handle more cases.
+
+  # TODO(schsam, mattjj): Switch to using broadcast_in_dim.
+  ot = _ones(oprand) * on_true
+  of = _ones(oprand) * on_false
+
+  return select(oprand, ot, of), pred_bdim
+
 select_p = standard_primitive(select_shape_rule, select_dtype_rule, 'select')
 ad.defjvp(select_p,
           None,
           lambda g, b, x, y: select(b, g, _zeros(g)),
           lambda g, b, x, y: select(b, _zeros(g), g))
 ad.primitive_transposes[select_p] = select_transpose_rule
-
+batching.primitive_batchers[select_p] = select_batch_rule
 
 def slice_shape_rule(operand, start_indices, limit_indices, strides,
                      operand_shape):
