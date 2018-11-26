@@ -30,6 +30,7 @@ from jax.core import unit
 from jax.interpreters import partial_eval as pe
 from jax.util import partial
 
+import functools as fn
 
 class BatchingTest(jtu.JaxTestCase):
 
@@ -155,6 +156,42 @@ class BatchingTest(jtu.JaxTestCase):
     ans = vmap(fun, x)
     expected_ans = x[:, :, 2]
     self.assertAllClose(ans, expected_ans, check_dtypes=False)
+
+  def testNpMaximum(self):
+    fun = lambda x: np.maximum(x, 0.0)
+    R = onp.random.RandomState(0).randn
+    x = R(10, 5, 3, 7)
+
+    ans = vmap(fun, x)
+    expected_ans = onp.maximum(x, 0.0)
+    self.assertAllClose(ans, expected_ans, check_dtypes=False)
+
+  def testNpGtrThan(self):
+    R = onp.random.RandomState(0).randn
+    x = R(10, 5, 3, 7)
+
+    ans = vmap(lambda x: x > 1.0, x)
+    expected_ans = x > 1.0
+    self.assertAllClose(ans, expected_ans, check_dtypes=True)
+
+  def testNpMaximumPerExampleGrad(self):
+    R = onp.random.RandomState(0).randn
+    x = R(10, 5)
+    W = R(5, 5)
+
+    fun = lambda W, x: np.sum(np.maximum(np.dot(x, W), 0.0) ** 2)
+
+    ans = vmap(fn.partial(grad(fun), W), x)
+
+    W_t = np.transpose(W)
+    for i in range(10):
+      x_ex = x[i:i + 1]
+
+      expected_ans = 2.0 * np.dot(
+          np.maximum(np.dot(W_t, np.transpose(x_ex)), 0.0), x_ex)
+      expected_ans = np.transpose(expected_ans)
+
+      self.assertAllClose(ans[i], expected_ans, check_dtypes=False)
 
 
 if __name__ == '__main__':
