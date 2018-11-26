@@ -80,6 +80,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       for shape in all_shapes for dtype in float_dtypes
       for axis in range(-len(shape), len(shape))
       for keepdims in [False, True])
+  @jtu.skip_on_flag("jax_xla_backend", "xrt")
   def testLogSumExp(self, rng, shape, dtype, axis, keepdims):
     # TODO(mattjj): test autodiff
     def scipy_fun(array_to_reduce):
@@ -122,6 +123,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       for shapes in CombosWithReplacement(all_shapes, 3)
       for dtypes in CombosWithReplacement(default_dtypes, 3)
       for rng in [jtu.rand_default()])
+  @jtu.skip_on_flag("jax_xla_backend", "xrt")
   def testNormLogPdfThreeArgs(self, rng, shapes, dtypes):
     # TODO(mattjj): test autodiff
     scipy_fun = osp_stats.norm.logpdf

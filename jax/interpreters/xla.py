@@ -335,7 +335,7 @@ def device_put(x):
   if type(x) is DeviceArray:
     return x.device_buffer
   else:
-    return xb.get_xla_client().LocalBuffer.from_pyval(x)
+    return xb.device_put(x)
 
 def handle_result(device_buffer):
   if device_buffer.shape().is_tuple():

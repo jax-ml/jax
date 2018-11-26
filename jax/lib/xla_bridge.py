@@ -44,15 +44,18 @@ flags.DEFINE_string('jax_dump_hlo_optimized', None,
 flags.DEFINE_string('jax_dump_hlo_per_pass', None,
                     'Dirpath for per-pass HLO dump.')
 flags.DEFINE_integer('jax_replica_count', 1, 'Replica count for computations.')
+flags.DEFINE_enum(
+    'jax_xla_backend', 'xla', ['xla', 'xrt'],
+    'Either "xla" for the XLA service directly, or "xrt" for an XRT backend.')
+flags.DEFINE_string(
+    'jax_backend_target', 'local',
+    'Either "local" or "rpc:address" to connect to a remote service target.')
 flags.DEFINE_string(
     'jax_platform_name', '',
     'Platform name for XLA. The default is to attempt to use a '
     'GPU if available, but fall back to CPU otherwise. To set '
     'the platform manually, pass "Host" for CPU or "CUDA" for '
     'GPU.')
-flags.DEFINE_string(
-    'jax_xla_client_mode', 'local',
-    'Either "local", "rpc:address" or "rpc:binpath" to spawn the service.')
 
 # Prefix for HLO-dump flags indicating output should go into Sponge's
 # visible output files.
@@ -107,20 +110,56 @@ def memoize_thunk(func):
 
 @memoize_thunk
 def get_xla_client():
-  xla_client.initialize_replica_count(FLAGS.jax_replica_count)
-  if FLAGS.jax_platform_name:
-    xla_client.initialize_platform_name(FLAGS.jax_platform_name)
-  else:
-    try:
-      xla_client.initialize_platform_name(b'CUDA')
-    except RuntimeError:
-      warnings.warn('No GPU found, falling back to CPU.')
-      xla_client.initialize_platform_name(b'Host')
+  return _get_xla_client(FLAGS.jax_xla_backend,
+                         FLAGS.jax_platform_name,
+                         FLAGS.jax_replica_count)
+
+
+def _get_xla_client(backend_name, platform_name, replica_count):
+  """Configures and returns a handle to the XLA client.
+
+  Args:
+    backend_name: backend name, 'xla' or 'xrt'
+    platform_name: platform name for XLA backend
+    replica_count: number of computation replicas with which to configure the
+      backend library.
+
+  Returns:
+    A client library module, or an object that behaves identically to one.
+  """
+  xla_client.initialize_replica_count(replica_count)
+  if backend_name == 'xla':
+    if platform_name:
+      xla_client.initialize_platform_name(platform_name)
+    else:
+      try:
+        xla_client.initialize_platform_name(b'CUDA')
+      except RuntimeError:
+        warnings.warn('No GPU found, falling back to CPU.')
+        xla_client.initialize_platform_name(b'Host')
   return xla_client
 
 
 def get_replica_count():
   return get_xla_client().get_replica_count()
+
+
+_backend_flag_to_type = {
+    'xla': xla_client.BackendType.XLA_LOCAL,
+    'xrt': xla_client.BackendType.XRT,
+}
+
+
+@memoize_thunk
+def _get_backend():
+  return xla_client.BackendSpec(_backend_flag_to_type[FLAGS.jax_xla_backend],
+                                FLAGS.jax_backend_target)
+
+
+def device_put(pyval):
+  # TODO(frostig): Accept a replica id for placement. For now, this places on
+  # the first replica only.
+  return get_xla_client().LocalBuffer.from_pyval(pyval, backend=_get_backend())
 
 
 Shape = xla_client.Shape        # pylint: disable=invalid-name
@@ -256,6 +295,10 @@ class _JaxComputationBuilderBase(object):
 
   # Method name case follows that of the XLA ComputationBuilder
   # pylint: disable=invalid-name
+
+  def Build(self, *args, **kwargs):
+    return super(_JaxComputationBuilderBase, self).Build(
+        *args, backend=_get_backend(), **kwargs)
 
   def Parameter(self, value, name=None, parameter_num=None):
     return super(_JaxComputationBuilderBase, self).ParameterWithShape(
