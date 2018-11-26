@@ -29,9 +29,6 @@ from .lib import xla_bridge
 from .api import jit
 
 
-# TODO(mattjj): add api.jit decorators to the user-facing functions
-
-
 class PRNGKey(object):
   """A pseudo-random number generator (PRNG) key for use with lax.random."""
   __slots__ = ["keypair"]
@@ -92,6 +89,7 @@ def _bit_stats(bits):
 ### hash function and split
 
 
+@jit
 def threefry_2x32(keypair, count):
   """Apply the Threefry 2x32 hash.
 
