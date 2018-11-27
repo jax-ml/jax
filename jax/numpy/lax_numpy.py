@@ -26,6 +26,7 @@ from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
 from ..interpreters.xla import DeviceArray
 from ..lib import xla_bridge
 import jax.lax as lax
+from ..util import memoize
 
 # To provide the same module-level names as Numpy, we need to redefine builtins
 # and also use some common names (like 'shape' and 'dtype') at the top-level.
@@ -105,6 +106,7 @@ def _promote_shapes(*args):
             if len(shp) != nd else arg for arg, shp in zip(args, shapes)]
 
 
+@memoize
 def _broadcast_shapes(*shapes):
   """Apply Numpy broadcasting rules to the given shapes."""
   if len(shapes) == 1:
@@ -120,6 +122,7 @@ def _broadcast_shapes(*shapes):
 
 def _promote_dtypes(*args):
   """Convenience function to apply Numpy argument dtype promotion."""
+  # TODO(dougalm,mattjj): This is a performance bottleneck. Consider memoizing.
   if len(args) < 2:
     return args
   else:

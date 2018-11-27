@@ -37,7 +37,7 @@ from .interpreters import partial_eval as pe
 from .interpreters import xla
 from .interpreters import ad
 from .interpreters import batching
-from .util import curry, safe_zip, unzip2
+from .util import curry, safe_zip, unzip2, prod
 from .tree_util import build_tree
 from .lib import xla_bridge
 
@@ -424,7 +424,7 @@ def full_like(x, fill_value, dtype=None, shape=None):
 
 def collapse(operand, start_dimension, stop_dimension):
   lo, hi = start_dimension, stop_dimension
-  size = onp.product(operand.shape[lo:hi])
+  size = prod(operand.shape[lo:hi])
   new_shape = operand.shape[:lo] + (size,) + operand.shape[hi:]
   return reshape(operand, new_shape)
 
@@ -1407,7 +1407,7 @@ def reshape_shape_rule(operand, new_sizes, dimensions, **unused_kwargs):
   if not onp.all(onp.greater_equal(new_sizes, 0)):
     msg = 'reshape new_sizes must all be positive, got {}.'
     raise TypeError(msg.format(new_sizes))
-  if onp.prod(onp.shape(operand)) != onp.prod(new_sizes):
+  if prod(onp.shape(operand)) != prod(new_sizes):
     msg = 'reshape total size must be unchanged, got new_sizes {} for shape {}.'
     raise TypeError(msg.format(new_sizes, onp.shape(operand)))
   if dimensions is not None:
