@@ -18,7 +18,7 @@ from __future__ import print_function
 
 import functools
 import itertools as it
-
+from operator import mul
 
 allow_memoize_hash_failures = False
 
@@ -139,3 +139,7 @@ def memoize(fun):
       else:
         raise
   return memoized_fun
+
+
+def prod(xs):
+  return functools.reduce(mul, xs, 1)

@@ -21,6 +21,7 @@ import six
 
 from . import core
 from . import ad_util
+from . util import prod
 from .lib import xla_bridge
 
 
@@ -80,7 +81,7 @@ class ShapedArray(UnshapedArray):
     self.shape = shape
 
   ndim = property(lambda self: len(self.shape))
-  size = property(lambda self: int(onp.prod(self.shape)))
+  size = property(lambda self: prod(self.shape))
 
   def __eq__(self, other):
     return (type(self) is type(other)

@@ -28,7 +28,7 @@ from .. import core
 from .. import ad_util
 from ..abstract_arrays import ConcreteArray, ShapedArray, make_shaped_array, array_types
 from ..core import AbstractTuple, JaxTuple, pack, valid_jaxtype
-from ..util import partial, partialmethod, memoize, unzip2, concatenate, safe_map
+from ..util import partial, partialmethod, memoize, unzip2, concatenate, safe_map, prod
 from ..linear_util import transformation_with_aux, memoize as linear_memoize
 from ..lib import xla_bridge as xb
 from .partial_eval import trace_to_subjaxpr, merge_pvals, JaxprTrace, PartialVal
@@ -190,7 +190,7 @@ class DeviceArray(DeviceValue):
     self.shape = xla_shape.dimensions()
     self.dtype = xla_shape.element_type()
     self.ndim = len(self.shape)
-    size = int(onp.prod(self.shape))
+    size = prod(self.shape)
     self._npy_value = None
 
   @property
