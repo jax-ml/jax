@@ -125,7 +125,3 @@ if __name__ == "__main__":
     opt_state = update(i, opt_state, next(batches))
   trained_params = minmax.get_params(opt_state)
 
-
-if __name__ == '__main__':
-  from absl import app
-  app.run(main)
