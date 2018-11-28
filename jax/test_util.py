@@ -19,7 +19,6 @@ from __future__ import print_function
 import functools
 import re
 
-from absl import flags
 from absl.testing import absltest
 from absl.testing import parameterized
 
@@ -27,6 +26,7 @@ import numpy as onp
 import numpy.random as npr
 
 from . import api
+from .config import flags
 from .util import partial
 from .tree_util import tree_multimap, tree_all, tree_map, tree_reduce
 
