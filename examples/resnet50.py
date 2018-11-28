@@ -83,9 +83,7 @@ def ResNet50(num_classes):
       AvgPool((7, 7)), Flatten, Dense(num_classes), LogSoftmax)
 
 
-def main(argv):
-  del argv  # Unused.
-
+if __name__ == "__main__":
   batch_size = 8
   num_classes = 1001
   input_shape = (224, 224, 3, batch_size)
