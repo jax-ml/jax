@@ -23,6 +23,7 @@ import numpy as onp
 from absl.testing import absltest
 from absl.testing import parameterized
 
+from jax.config import flags
 from jax import api
 from jax import core
 from jax import numpy as np
@@ -331,4 +332,5 @@ class CoreTest(jtu.JaxTestCase):
 
 
 if __name__ == '__main__':
+  flags.config_with_absl()
   absltest.main()

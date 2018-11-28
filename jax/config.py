@@ -42,16 +42,16 @@ class Config(object):
   def DEFINE_enum(self, name, default, *args, **kwargs):
     self.add_option(name, default, 'enum', args, kwargs)
 
-  def config_with_absl(f):
+  def config_with_absl(self):
     # Run this before calling `app.run(main)` etc
-    import absl.FLAGS as absl_FLAGS
+    import absl.flags as absl_FLAGS
     from absl import app, flags as absl_flags
 
     self.use_absl = True
     self.absl_flags = absl_flags
     absl_defs = { bool: absl_flags.DEFINE_bool,
-                  int:  absl_flags.DEFINE_int,
-                  str:  absl_flags.DEFINE_str,
+                  int:  absl_flags.DEFINE_integer,
+                  str:  absl_flags.DEFINE_string,
                   'enum': absl_flags.DEFINE_enum }
 
     for name, val in self.values.items():
