@@ -16,7 +16,6 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from absl import flags
 from absl.testing import absltest
 from absl.testing import parameterized
 
@@ -28,8 +27,9 @@ from jax import api
 from jax import lax
 from jax import random
 from jax import test_util as jtu
+from jax.config import config
 
-FLAGS = flags.FLAGS
+FLAGS = config.FLAGS
 
 
 class LaxRandomTest(jtu.JaxTestCase):
@@ -150,4 +150,5 @@ class LaxRandomTest(jtu.JaxTestCase):
 
 
 if __name__ == "__main__":
+  config.config_with_absl()
   absltest.main()

@@ -23,6 +23,7 @@ from absl.testing import absltest
 from jax import test_util as jtu
 
 import jax.numpy as np
+from jax.config import config
 from jax import jit, grad, device_get, device_put
 from jax.core import Primitive
 from jax.interpreters.partial_eval import def_abstract_eval
@@ -239,4 +240,5 @@ class APITest(jtu.JaxTestCase):
 
 
 if __name__ == '__main__':
+  config.config_with_absl()
   absltest.main()

@@ -28,6 +28,7 @@ from jax import core
 from jax import numpy as np
 from jax import test_util as jtu
 from jax.api import jvp, linearize, vjp, jit
+from jax.config import config
 from jax.lax import UnshapedArray, ShapedArray, ConcreteArray
 from jax.tree_util import tree_flatten, tree_unflatten, tree_multimap, tree_reduce
 from jax.util import partial
@@ -331,4 +332,5 @@ class CoreTest(jtu.JaxTestCase):
 
 
 if __name__ == '__main__':
+  config.config_with_absl()
   absltest.main()

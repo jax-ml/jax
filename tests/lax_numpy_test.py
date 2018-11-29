@@ -20,7 +20,6 @@ import collections
 import functools
 import itertools
 
-from absl import flags
 from absl.testing import absltest
 from absl.testing import parameterized
 
@@ -29,8 +28,9 @@ import numpy as onp
 from jax import api
 from jax import numpy as lnp
 from jax import test_util as jtu
+from jax.config import config
 
-FLAGS = flags.FLAGS
+FLAGS = config.FLAGS
 
 all_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4), (2, 3, 4)]
 
@@ -542,4 +542,5 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
 
 if __name__ == "__main__":
+  config.config_with_absl()
   absltest.main()

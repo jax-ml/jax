@@ -21,7 +21,6 @@ import functools
 from functools import partial
 import itertools
 
-from absl import flags
 from absl.testing import absltest
 from absl.testing import parameterized
 
@@ -33,10 +32,11 @@ from jax import core
 from jax import lax
 from jax import test_util as jtu
 from jax import lax_reference
+from jax.config import config
 from jax.interpreters import xla
 from jax.lib import xla_bridge
 
-FLAGS = flags.FLAGS
+FLAGS = config.FLAGS
 
 
 def num_float_bits(dtype):
@@ -1986,4 +1986,5 @@ class LaxAutodiffTest(jtu.JaxTestCase):
 
 
 if __name__ == '__main__':
+  config.config_with_absl()
   absltest.main()

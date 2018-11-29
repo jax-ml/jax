@@ -26,6 +26,7 @@ import itertools
 import numpy.random as npr
 
 import jax.numpy as np
+from jax.config import config
 from jax import jit, grad
 from jax.experimental import minmax
 from jax.experimental import stax
@@ -80,6 +81,7 @@ if __name__ == "__main__":
   opt_state = opt_init(init_params)
   itercount = itertools.count()
 
+  print("\nStarting training...")
   for epoch in range(num_epochs):
     start_time = time.time()
     for _ in range(num_batches):

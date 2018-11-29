@@ -23,7 +23,7 @@ import operator as op
 import six
 from six.moves import xrange
 
-from absl import flags
+from ..config import flags
 from .. import core
 from .. import ad_util
 from ..abstract_arrays import ConcreteArray, ShapedArray, make_shaped_array, array_types
