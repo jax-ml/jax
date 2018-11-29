@@ -1678,7 +1678,12 @@ def dynamic_update_slice_jvp(primals, tangents, update_shape):
   g_operand, g_update, g_start_indices = tangents
   assert g_start_indices is ad_util.zero
   val_out = dynamic_update_slice(operand, update, start_indices)
-  tangent_out = dynamic_update_slice(g_operand, g_update, start_indices)
+  if g_operand is ad_util.zero and g_update is ad_util.zero:
+    tangent_out = ad_util.zero
+  else:
+    g_operand = ad.instantiate_zeros(operand, g_operand)
+    g_update = ad.instantiate_zeros(update, g_update)
+    tangent_out = dynamic_update_slice(g_operand, g_update, start_indices)
   return val_out, tangent_out
 
 def dynamic_update_slice_transpose_rule(t, operand, update, start_indices,
@@ -1717,7 +1722,7 @@ def index_take_translation_rule(c, src, *idxs, **kwargs):
 def index_take_jvp(primals, tangents, axes, input_shape, jaxpr, consts):
   src = primals[0]
   idxs = tuple(primals[1:])
-  g =tangents[0]
+  g = ad.instantiate_zeros(src, tangents[0])
   return index_take(src, idxs, axes), index_take(g, idxs, axes)
 
 def index_take_transpose_rule(t, src, *idxs, **kwargs):
@@ -1747,6 +1752,8 @@ def index_untake_jvp(primals, tangents, axes, jaxpr, consts):
   src, dst = primals[0], primals[1]
   idxs = tuple(primals[2:])
   g_src, g_dst = tangents[0], tangents[1]
+  g_src = ad.instantiate_zeros(src, g_src)
+  g_dst = ad.instantiate_zeros(dst, g_dst)
   val_out = index_untake(src, dst, idxs, axes)
   tangent_out = index_untake(g_src, g_dst, idxs, axes)
   return val_out, tangent_out
@@ -2064,10 +2071,17 @@ def sort_key_val_jvp(primals, tangents, dimension):
 
   val_out = sort_key_val(keys, values, dimension)
 
-  keys_tangents_out = sort_jvp_rule(keys_tangents, keys, dimension)
-  values_tangents_out = sort_jvp_rule(values_tangents, keys, dimension)
-  tangents_out = keys_tangents_out, values_tangents_out
+  if keys_tangents is ad_util.zero:
+    keys_tangents_out = ad_util.zero
+  else:
+    keys_tangents_out = sort_jvp_rule(keys_tangents, keys, dimension)
 
+  if values_tangents is ad_util.zero:
+    values_tangents_out = ad_util.zero
+  else:
+    values_tangents_out = sort_jvp_rule(values_tangents, keys, dimension)
+
+  tangents_out = keys_tangents_out, values_tangents_out
   return core.pack(val_out), core.pack(tangents_out)
 
 def sort_key_val_transpose_rule(t, keys, values, dimension):

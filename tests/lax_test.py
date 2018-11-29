@@ -839,8 +839,8 @@ class LaxTest(jtu.JaxTestCase):
       ]
       for dtype in default_dtypes
       for rng in [jtu.rand_default()])
-  def testDynamicUpdateSlice(self, shape, dtype, start_indices, update_shape,
-                             rng):
+  def testDynamicUpdateSliceAgainstNumpy(self, shape, dtype, start_indices,
+                                         update_shape, rng):
 
     def args_maker():
       return [rng(shape, dtype), rng(update_shape, dtype),
@@ -1797,8 +1797,15 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     operand = rng(shape, dtype)
     update = rng(update_shape, dtype)
     start_indices = onp.array(start_indices)
+
     dus = lambda x, y: lax.dynamic_update_slice(x, y, start_indices)
     check_grads(dus, (operand, update), 2, tol, tol, tol)
+
+    dus = lambda x: lax.dynamic_update_slice(x, update, start_indices)
+    check_grads(dus, (operand,), 2, tol, tol, tol)
+
+    dus = lambda y: lax.dynamic_update_slice(operand, y, start_indices)
+    check_grads(dus, (update,), 2, tol, tol, tol)
 
   @parameterized.named_parameters(
       {"testcase_name": "_shape={}_perm={}".format(
