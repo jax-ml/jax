@@ -28,6 +28,7 @@ import time
 import matplotlib.pyplot as plt
 
 import jax.numpy as np
+from jax.config import config
 from jax import jit, grad, lax, random
 from jax.experimental import minmax
 from jax.experimental import stax

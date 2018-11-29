@@ -20,7 +20,7 @@ from __future__ import print_function
 import functools
 
 from absl.testing import absltest
-
+from jax.config import config
 import jax.numpy as np
 import jax.test_util as jtu
 from jax import jit, grad
@@ -170,4 +170,5 @@ class OptimizerTests(jtu.JaxTestCase):
 
 
 if __name__ == '__main__':
+  config.config_with_absl()
   absltest.main()

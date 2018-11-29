@@ -20,7 +20,6 @@ import collections
 import functools
 import itertools
 
-from absl import flags
 from absl.testing import absltest
 from absl.testing import parameterized
 
@@ -31,11 +30,12 @@ import scipy.stats as osp_stats
 
 from jax import api
 from jax import test_util as jtu
+from jax.config import config
 from jax.scipy import misc as lsp_misc
 from jax.scipy import special as lsp_special
 from jax.scipy import stats as lsp_stats
 
-FLAGS = flags.FLAGS
+FLAGS = config.FLAGS
 
 all_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4)]
 
@@ -154,4 +154,5 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
 
 if __name__ == "__main__":
+  config.config_with_absl()
   absltest.main()

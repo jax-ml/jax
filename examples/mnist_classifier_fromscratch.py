@@ -26,6 +26,7 @@ import time
 import numpy.random as npr
 
 from jax.api import jit, grad
+from jax.config import config
 from jax.scipy.misc import logsumexp
 import jax.numpy as np
 import datasets

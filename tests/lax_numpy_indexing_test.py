@@ -20,7 +20,6 @@ import collections
 from functools import partial
 import itertools
 
-from absl import flags
 from absl.testing import absltest
 from absl.testing import parameterized
 
@@ -30,8 +29,9 @@ from jax import api
 from jax import lax
 from jax import numpy as lnp
 from jax import test_util as jtu
+from jax.config import config
 
-FLAGS = flags.FLAGS
+FLAGS = config.FLAGS
 
 # We disable the whitespace continuation check in this file because otherwise it
 # makes the test name formatting unwieldy.
@@ -587,4 +587,5 @@ class IndexingTest(jtu.JaxTestCase):
 
 
 if __name__ == "__main__":
+  config.config_with_absl()
   absltest.main()

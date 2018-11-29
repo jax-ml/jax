@@ -25,6 +25,7 @@ from absl.testing import parameterized
 
 from jax import jit
 from jax import test_util as jtu
+from jax.config import config
 from jax.experimental import lapax
 
 
@@ -202,4 +203,5 @@ class LapaxTest(jtu.JaxTestCase):
 
 
 if __name__ == "__main__":
+  config.config_with_absl()
   absltest.main()

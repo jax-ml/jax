@@ -24,6 +24,7 @@ from __future__ import print_function
 import numpy.random as npr
 
 import jax.numpy as np
+from jax.config import config
 from jax import jit, grad
 from jax.experimental import minmax
 from jax.experimental import stax

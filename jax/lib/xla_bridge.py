@@ -26,7 +26,7 @@ from __future__ import print_function
 import os
 import warnings
 
-from absl import flags
+from ..config import flags
 import numpy as onp  # 'onp' rather than 'np' to distinguish from autograd.numpy
 
 from . import xla_data_pb2
@@ -206,21 +206,8 @@ _dtype_to_32bit_dtype = {
 }
 
 
-def canonicalize_dtype(dtype):
-  """Convert from a dtype to a canonical dtype based on FLAGS.jax_enable_x64."""
-  # This function is a thin wrapper around the memoized _canonicalize_dtype to
-  # handle the case where FLAGS haven't been parsed yet, for example because
-  # this function is called at module loading time. This situation can't obtain
-  # during tracing and instead can arise when there are module-level constants
-  # computed using lax or lax_numpy.
-  if FLAGS.is_parsed():
-    return _canonicalize_dtype(dtype)
-  else:
-    return dtype
-
-
 @memoize
-def _canonicalize_dtype(dtype):
+def canonicalize_dtype(dtype):
   """Convert from a dtype to a canonical dtype based on FLAGS.jax_enable_x64."""
   dtype = onp.dtype(dtype)
   if FLAGS.jax_enable_x64:

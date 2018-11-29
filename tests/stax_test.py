@@ -24,6 +24,7 @@ import numpy as onp
 
 from jax import test_util as jtu
 from jax import random
+from jax.config import config
 from jax.experimental import stax
 
 
@@ -129,4 +130,5 @@ class StaxTest(jtu.JaxTestCase):
 
 
 if __name__ == "__main__":
+  config.config_with_absl()
   absltest.main()
