@@ -2,8 +2,9 @@ from collections import namedtuple
 from functools import partial
 import numpy.random as npr
 import jax.numpy as np
-from jax import jit
+from jax import jit, jvp
 import itertools as it
+import sys
 
 npr.seed(0)
 
@@ -151,26 +152,61 @@ def gen_subset(xs):
 
   return gen_sized_subset(xs, npr.randint(len(xs) + 1))
 
+def gen_inputs(fun):
+  return [gen_array_val(v.vartype) for v in fun.in_vars]
+
+def jvp_fd(fun, args, directions):
+  EPS = 1e-4
+  def eval_eps(eps):
+    return fun(*[x if d is None else x + eps * d
+                 for x, d in zip(args, directions)])
+
+  ys_neg = eval_eps(-EPS)
+  ys_pos = eval_eps(EPS)
+  ys = eval_eps(0.0)
+  deriv = [(y_pos - y_neg) / (2 * EPS) for y_neg, y_pos in zip(ys_neg, ys_pos)]
+  return ys, deriv
+
+def check_all_close(xs, ys, tol=1e-3):
+  for x, y in zip(xs, ys):
+    assert x.shape == y.shape
+    # TODO(dougalm): re-enable once we've tackled the less pendantic bugs
+    # assert x.dtype == y.dtype
+    assert np.allclose(x, y, rtol=tol, atol=tol), \
+       "Value mismatch:\n{}\n  vs\n{}\n".format(x, y)
+
 def jit_is_identity(fun):
-  vals = map(gen_array_val, [v.vartype for v in fun.in_vars])
+  vals = gen_inputs(fun)
   fun = partial(eval_fun, fun)
   ans = fun(*vals)
-  ans_jitted = jit(fun)(*vals)
-  for i, (x, x_jit) in enumerate(zip(ans, ans_jitted)):
-    assert x.shape == x_jit.shape
-    # assert x.dtype == x_jit.dtype, 'dtype mismatch: {} != {}'.format(x.dtype, x_jit.dtype)
-    assert np.allclose(x, x_jit)
+  static_argnums = thin(range(len(vals)), 0.5)
+  ans_jitted = jit(fun, static_argnums=static_argnums)(*vals)
+  check_all_close(ans, ans_jitted)
+
+def jvp_matches_fd(fun):
+  vals = gen_inputs(fun)
+  directions = gen_inputs(fun)
+  fun = partial(eval_fun, fun)
+
+  # TODO: differentiate wrt some inputs only
+  ans1, deriv1 = jvp_fd(fun, vals, directions)
+  ans2, deriv2 = jvp(fun, vals, directions)
+  check_all_close(ans1, ans2)
+  check_all_close(deriv1, deriv2)
 
 properties = [
-  jit_is_identity ]
-  # jvp_matches_fd,
-  # vjp_matches_fd,
-  # vmap_matches_map ]
+  jit_is_identity,
+  jvp_matches_fd,
+]
+# vjp_matches_fd,
+# vmap_matches_map ]
 
 def run_tests():
-  sizes = [3, 10, 30]
-  num_examples = 30
-  for size, _, check_prop in it.product(sizes, range(num_examples), properties):
+  sizes = [3, 10]
+  num_examples = 50
+  cases = it.product(sizes, range(num_examples), properties)
+  for i, (size, _, check_prop) in enumerate(cases):
+    sys.stderr.write('\rTested: {}'.format(i))
     check_prop(gen_fun_and_types(size))
 
 if __name__ == "__main__":
