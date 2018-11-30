@@ -12,4 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '1')
 from jax.api import *
+import jax.numpy as np  # side-effecting import sets up operator overloads
