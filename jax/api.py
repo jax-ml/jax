@@ -26,7 +26,7 @@ from .core import pack, eval_jaxpr
 from .api_util import flatten_fun, unflatten_fun, tree_to_jaxtuples
 from .tree_util import (process_pytree, node_types, build_tree, PyTreeDef, leaf,
                         tree_map)
-from .util import unzip2, unzip3, curry, partial, safe_map
+from .util import unzip2, unzip3, curry, partial, safe_map, WrapHashably
 from .abstract_arrays import ShapedArray
 from .interpreters import partial_eval as pe
 from .interpreters import xla
@@ -191,17 +191,16 @@ def argnums_partial(f, dyn_argnums, args):
     dyn_argnums = (dyn_argnums,)
   else:
     dyn_argnums = tuple(dyn_argnums)
-  fixed_args = tuple([None if i in dyn_argnums else arg for i, arg in enumerate(args)])
+  fixed_args = tuple([None if i in dyn_argnums else WrapHashably(arg)
+                      for i, arg in enumerate(args)])
   dyn_args = [args[i] for i in dyn_argnums]
   return argnums_partial_(f, dyn_argnums, fixed_args), dyn_args
 
 @lu.transformation
 def argnums_partial_(dyn_argnums, fixed_args, *dyn_args):
-  args = list(fixed_args)
+  args = [None if arg is None else arg.val for arg in fixed_args]
   for i, arg in zip(dyn_argnums, dyn_args):
     args[i] = arg
-
-
   ans = yield args
   yield ans
 
