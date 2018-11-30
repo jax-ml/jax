@@ -27,6 +27,7 @@ jax_test(
 jax_test(
     name = "lax_test",
     srcs = ["lax_test.py"],
+    disable = ["tpu"],
     shard_count = {
         "cpu": 40,
         "gpu": 20,
@@ -36,6 +37,7 @@ jax_test(
 jax_test(
     name = "lax_numpy_test",
     srcs = ["lax_numpy_test.py"],
+    disable = ["tpu"],
     shard_count = {
         "cpu": 40,
         "gpu": 20,
