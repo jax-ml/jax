@@ -30,7 +30,7 @@ jax_test(
     disable = ["tpu"],
     shard_count = {
         "cpu": 40,
-        "gpu": 20,
+        "gpu": 40,
     },
 )
 
@@ -40,7 +40,7 @@ jax_test(
     disable = ["tpu"],
     shard_count = {
         "cpu": 40,
-        "gpu": 20,
+        "gpu": 40,
     },
 )
 
@@ -49,7 +49,7 @@ jax_test(
     srcs = ["lax_numpy_indexing_test.py"],
     shard_count = {
         "cpu": 10,
-        "gpu": 2,
+        "gpu": 4,
     },
 )
 
@@ -58,7 +58,7 @@ jax_test(
     srcs = ["lax_scipy_test.py"],
     shard_count = {
         "cpu": 10,
-        "gpu": 2,
+        "gpu": 4,
     },
 )
 
