@@ -216,7 +216,6 @@ def jvp_matches_fd(fun):
 
 
 def vjp_matches_fd(fun):
-  # print fun
   vals = gen_vals(fun.in_vars)
   in_tangents = gen_vals(fun.in_vars)
   in_cotangents = gen_vals(fun.out_vars)
@@ -232,7 +231,6 @@ def vjp_matches_fd(fun):
   inner_prod_ad = inner_prod(in_tangents, out_cotangents)
   check_close(inner_prod_fd, inner_prod_ad)
 
-
 properties = [
   jit_is_identity,
   jvp_matches_fd,
@@ -246,7 +244,13 @@ def run_tests():
   cases = it.product(sizes, range(num_examples), properties)
   for i, (size, _, check_prop) in enumerate(cases):
     sys.stderr.write('\rTested: {}'.format(i))
-    check_prop(gen_fun_and_types(size))
+    try:
+      fun = gen_fun_and_types(size)
+      check_prop(fun)
+    except:
+      print fun
+      raise
+
   print "\nok"
 
 if __name__ == "__main__":
