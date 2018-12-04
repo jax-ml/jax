@@ -47,8 +47,10 @@ def apply_primitive(prim, *args, **kwargs):
 def xla_primitive_callable(prim, *abstract_args, **kwargs):
   shapes = map(xla_shape, abstract_args)
   built_c = primitive_computation(prim, *shapes, **kwargs)
+  result_shape = xla_shape_to_result_shape(built_c.GetReturnValueShape())
+  handle_result = result_handler(result_shape)
   compiled = built_c.Compile(shapes, xb.get_compile_options())
-  return partial(execute_compiled_primitive, compiled)
+  return partial(execute_compiled_primitive, compiled, handle_result)
 
 @memoize
 def primitive_computation(prim, *shapes, **kwargs):
@@ -64,15 +66,48 @@ def primitive_computation(prim, *shapes, **kwargs):
 def aval_from_xla_shape(shape):
   return ShapedArray(shape.dimensions(), shape.element_type())
 
-def execute_compiled_primitive(compiled, *args):
+def execute_compiled_primitive(compiled, result_handler, *args):
   input_bufs = [device_put(canonicalize_pyval_dtype(x)) for x in args]
-  return handle_result(compiled.Execute(input_bufs))
+  return result_handler(compiled.Execute(input_bufs, not core.skip_checks))
+
+def device_put(x):
+  if type(x) is DeviceArray:
+    return x.device_buffer
+  else:
+    return xb.device_put(x)  # can round-trip elements of tuples here
+
+def result_handler(result_shape):
+  if type(result_shape) is ResultArray and FLAGS.jax_device_values:
+    def handle_result(device_buffer):
+      return DeviceArray(device_buffer, *result_shape)
+  elif type(result_shape) is ResultArray:
+    def handle_result(device_buffer):
+      return onp.asarray(DeviceArray(device_buffer, *result_shape))
+  elif type(result_shape) is ResultTuple:
+    handlers = list(map(result_handler, result_shape))
+    def handle_result(device_buffer):
+      bufs = device_buffer.destructure()
+      return JaxTuple(handler(buf) for handler, buf in zip(handlers, bufs))
+  else:
+    raise TypeError(type(result_shape))
+  return handle_result
+
+def xla_shape_to_result_shape(xla_shape):
+  if xla_shape.is_tuple():
+    return ResultTuple(map(xla_shape_to_result_shape, xla_shape.tuple_shapes()))
+  else:
+    shape, dtype = xla_shape.dimensions(), xla_shape.element_type()
+    ndim, size = len(shape), prod(shape)
+    return ResultArray((shape, dtype, ndim, size))
+class ResultTuple(tuple): pass
+class ResultArray(tuple): pass
 
 
 def compile_jaxpr(jaxpr, const_vals, *abstract_args):
-  arg_shapes = map(xla_shape, abstract_args)
-  built = jaxpr_computation(jaxpr, const_vals, (), *arg_shapes)
-  return built.Compile(arg_shapes, xb.get_compile_options())
+  arg_shapes = list(map(xla_shape, abstract_args))
+  built_c = jaxpr_computation(jaxpr, const_vals, (), *arg_shapes)
+  result_shape = xla_shape_to_result_shape(built_c.GetReturnValueShape())
+  return built_c.Compile(arg_shapes, xb.get_compile_options()), result_shape
 
 def jaxpr_computation(jaxpr, const_vals, freevar_shapes, *arg_shapes):
   c = xb.make_computation_builder("jaxpr_computation")
@@ -184,13 +219,12 @@ class DeviceArray(DeviceValue):
   __slots__ = ["shape", "dtype", "ndim", "size", "_npy_value"]
   __array_priority__ = 100.
 
-  def __init__(self, device_buffer):
+  def __init__(self, device_buffer, shape, dtype, ndim, size):
     self.device_buffer = device_buffer
-    xla_shape = device_buffer.shape()
-    self.shape = xla_shape.dimensions()
-    self.dtype = xla_shape.element_type()
-    self.ndim = len(self.shape)
-    size = prod(self.shape)
+    self.shape = shape
+    self.dtype = dtype
+    self.ndim = ndim
+    self.size = size
     self._npy_value = None
 
   @property
@@ -331,20 +365,6 @@ def build_tree(xs, tree_spec):
     raise TypeError(type(tree_spec))
 
 
-def device_put(x):
-  if type(x) is DeviceArray:
-    return x.device_buffer
-  else:
-    return xb.device_put(x)
-
-def handle_result(device_buffer):
-  if device_buffer.shape().is_tuple():
-    return JaxTuple(map(handle_result, device_buffer.destructure()))
-  else:
-    dval = DeviceArray(device_buffer)
-    return dval if FLAGS.jax_device_values else onp.asarray(dval)
-
-
 def xla_call_impl(fun, *args):
   flat_args, in_trees = unzip2(map(tree_flatten, args))
   flat_args = concatenate(flat_args)
@@ -364,14 +384,15 @@ def xla_callable(fun, *abstract_args):
     pvals = [PartialVal((aval, core.unit)) for aval in abstract_args]
     jaxpr, (pval, consts, env) = trace_to_subjaxpr(fun, master).call_wrapped(pvals)
     assert not env  # no subtraces here (though cond might eventually need them)
-    compiled = compile_jaxpr(jaxpr, consts, *abstract_args)
+    compiled, result_shape = compile_jaxpr(jaxpr, consts, *abstract_args)
     del master, pvals, consts, jaxpr, env
-    return partial(execute_compiled, compiled, pval)
+    handle_result = result_handler(result_shape)
+    return partial(execute_compiled, compiled, pval, handle_result)
 
-def execute_compiled(compiled, pval, *args):
+def execute_compiled(compiled, pval, handle_result, *args):
   input_bufs = [device_put(canonicalize_pyval_dtype(x)) for x in args]
-  ans = handle_result(compiled.Execute(input_bufs))
-  return merge_pvals(ans, pval)
+  out_buf = compiled.Execute(input_bufs, not core.skip_checks)
+  return merge_pvals(handle_result(out_buf), pval)
 
 
 xla_call_p = core.Primitive('xla_call')
