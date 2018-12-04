@@ -123,8 +123,8 @@ def lift_linearized(jaxpr, consts, io_tree, out_pval, py_args):
   def fun(*args):
     primals = pack(args) # doesn't matter what these are-they'll be ignored
     tangents = pack(args)
-    ans = eval_jaxpr(jaxpr, consts, (), primals, tangents)
-    return list(pe.merge_pvals(ans, out_pval))[1]
+    _, ans = eval_jaxpr(jaxpr, consts, (), primals, tangents)
+    return pe.merge_pvals(ans, out_pval)
 
   return unflatten_fun(fun, io_tree, *py_args)
 
