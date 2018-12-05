@@ -686,7 +686,9 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
   if ndmin != 0 or order != "K":
     raise NotImplementedError("Only implemented for order='K', ndmin=0.")
 
-  if isinstance(object, ndarray):
+  if hasattr(object, '__asarray__'):
+    return object.__asarray__(dtype)
+  elif isinstance(object, ndarray):
     if dtype and _dtype(object) != dtype:
       return lax.convert_element_type(object, dtype)
     else:

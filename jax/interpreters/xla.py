@@ -60,7 +60,8 @@ def primitive_computation(prim, *shapes, **kwargs):
   try:
     return c.Build()
   except RuntimeError as e:
-    prim.abstract_eval(*map(aval_from_xla_shape, shapes)) # try for better error
+    # try for a better error message by using the abstract_eval checks
+    prim.abstract_eval(*map(aval_from_xla_shape, shapes), **kwargs)
     raise e
 
 def aval_from_xla_shape(shape):

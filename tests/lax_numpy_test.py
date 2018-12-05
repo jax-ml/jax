@@ -419,6 +419,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp.array, lnp.array, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp.array, args_maker, check_dtypes=True)
 
+  def testArrayAsarrayMethod(self):
+    class arraylike(object):
+      def __asarray__(self, dtype=None):
+        return 3.
+    a = arraylike()
+    ans = lnp.array(a)
+    assert ans == 3.
+
   def testAllClose(self):
     rng = onp.random.RandomState(0)
     x = rng.randn(2, 2)
