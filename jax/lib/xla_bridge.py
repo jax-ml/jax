@@ -29,8 +29,8 @@ import warnings
 from ..config import flags
 import numpy as onp  # 'onp' rather than 'np' to distinguish from autograd.numpy
 
-from . import xla_data_pb2
-from . import xla_client
+from jaxlib import xla_data_pb2
+from jaxlib import xla_client
 
 
 FLAGS = flags.FLAGS
