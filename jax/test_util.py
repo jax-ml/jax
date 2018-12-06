@@ -310,24 +310,17 @@ def check_raises_regexp(thunk, err_type, pattern):
     assert re.match(pattern, str(e)), "{}\n\n{}\n".format(e, pattern)
 
 
-random.seed(0)
+def cases_from_list(xs):
+  assert False
 
+random.seed(0) # TODO: consider managing prng state more carefully
 
-def take(xs):
-  return dedup(it.islice(xs, FLAGS.num_generated_cases))
-
-
-def dedup(xs):
-  seen = set()
-  for x in xs:
-    name = x["testcase_name"]
-    if name not in seen:
-      seen.add(name)
-      yield x
-
-
-def sample(xs):
-  return [random.choice(xs)]
+def cases_from_gens(*gens):
+  sizes = [1, 3, 10]
+  cases_per_size = int(FLAGS.num_generated_cases / len(sizes))
+  for size in sizes:
+    for i in xrange(cases_per_size):
+      yield ('_{}_{}'.format(size, i),) + tuple(gen(size) for gen in gens)
 
 
 class JaxTestCase(parameterized.TestCase):
