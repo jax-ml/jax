@@ -91,3 +91,8 @@ jax_test(
     name = "lapax_test",
     srcs = ["lapax_test.py"],
 )
+
+jax_test(
+    name = "generated_fun_test",
+    srcs = ["generated_fun_test.py"],
+)
