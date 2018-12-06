@@ -25,6 +25,8 @@ from jax import jit, jvp, vjp
 import jax.test_util as jtu
 from jax.config import config
 
+config.parse_flags_with_absl()
+
 npr.seed(0)
 
 from jax.util import unzip2, safe_zip, safe_map
@@ -262,5 +264,4 @@ class GeneratedFunTest(jtu.JaxTestCase):
 
 
 if __name__ == "__main__":
-  config.config_with_absl()
   absltest.main()

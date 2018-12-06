@@ -309,15 +309,16 @@ def check_raises_regexp(thunk, err_type, pattern):
   except err_type as e:
     assert re.match(pattern, str(e)), "{}\n\n{}\n".format(e, pattern)
 
+random.seed(0) # TODO: consider managing prng state more carefully
 
 def cases_from_list(xs):
-  assert False
-
-random.seed(0) # TODO: consider managing prng state more carefully
+  xs = list(xs)
+  k = min(len(xs), FLAGS.num_generated_cases)
+  return random.sample(xs, k)
 
 def cases_from_gens(*gens):
   sizes = [1, 3, 10]
-  cases_per_size = int(FLAGS.num_generated_cases / len(sizes))
+  cases_per_size = int(FLAGS.num_generated_cases / len(sizes)) + 1
   for size in sizes:
     for i in xrange(cases_per_size):
       yield ('_{}_{}'.format(size, i),) + tuple(gen(size) for gen in gens)
