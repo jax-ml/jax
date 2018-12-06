@@ -39,8 +39,7 @@ all_shapes = [jtu.NUMPY_SCALAR_SHAPE] + array_shapes
 float_dtypes = [onp.float32, onp.float64]
 complex_dtypes = [onp.complex64]
 int_dtypes = [onp.int32, onp.int64]
-unsigned_dtypes = (
-    [onp.uint32, onp.uint64] if FLAGS.jax_enable_x64 else [onp.uint32])
+unsigned_dtypes = [onp.uint32, onp.uint64]
 bool_dtypes = [onp.bool_]
 default_dtypes = float_dtypes + int_dtypes
 numeric_dtypes = float_dtypes + complex_dtypes + int_dtypes
@@ -182,6 +181,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           _dtypes_are_compatible_for_bitwise_ops,
           CombosWithReplacement(rec.dtypes, rec.nargs)))
   def testBitwiseOp(self, onp_op, lnp_op, rng, shapes, dtypes):
+    if not FLAGS.jax_enable_x64 and any(
+        onp.iinfo(dtype).bits == 64 for dtype in dtypes):
+      self.skipTest("x64 types are disabled by jax_enable_x64")
     args_maker = self._GetArgsMaker(rng, shapes, dtypes)
     self._CheckAgainstNumpy(onp_op, lnp_op, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_op, args_maker, check_dtypes=True)
