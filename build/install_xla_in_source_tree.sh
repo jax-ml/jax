@@ -45,23 +45,22 @@ if [[ $# -ne 1 ]]; then
 fi
 TARGET="$1"
 
-if [[ ! -r "${TARGET}/jax/lax.py" ]]; then
-  echo "Target directory ${TARGET} does not seem to be a JAX source tree" \
-       "(missing jax/lax.py)"
+if [[ ! -d "${TARGET}/jaxlib" ]]; then
+  echo "Target directory ${TARGET} does not have a jaxlib directory"
   exit 1
 fi
 
 # Copy the XLA dependencies into jax/lib, fixing up some imports to point to the
 # new location.
 cp -f "$(rlocation org_tensorflow/tensorflow/compiler/xla/xla_data_pb2.py)" \
-  "${TARGET}/jax/lib"
+  "${TARGET}/jaxlib"
 cp -f "$(rlocation org_tensorflow/tensorflow/compiler/xla/python/pywrap_xla.py)" \
-  "${TARGET}/jax/lib"
+  "${TARGET}/jaxlib"
 cp -f "$(rlocation org_tensorflow/tensorflow/compiler/xla/python/_pywrap_xla.so)" \
-  "${TARGET}/jax/lib"
+  "${TARGET}/jaxlib"
 sed \
   -e 's/from tensorflow.compiler.xla.python import pywrap_xla as c_api/from . import pywrap_xla as c_api/' \
   -e 's/from tensorflow.compiler.xla import xla_data_pb2/from . import xla_data_pb2/' \
   -e '/from tensorflow.compiler.xla.service import hlo_pb2/d' \
   < "$(rlocation org_tensorflow/tensorflow/compiler/xla/python/xla_client.py)" \
-  > "${TARGET}/jax/lib/xla_client.py"
+  > "${TARGET}/jaxlib/xla_client.py"

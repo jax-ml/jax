@@ -22,7 +22,7 @@ import six
 from . import core
 from . import ad_util
 from . util import prod
-from .lib import xla_bridge
+from jaxlib import xla_bridge
 
 
 def concretization_err_msg(fun):

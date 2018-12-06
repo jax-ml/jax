@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Helper script for building JAX easily.
+# Helper script for building JAX's libjax easily.
 
 from __future__ import absolute_import
 from __future__ import division
@@ -186,13 +186,11 @@ BANNER = r"""
 
 EPILOG = """
 
-From the JAX repository root, run
-python build.py
+From the 'build' directory in the JAX repository, run
+    python build.py
 or
-python3 build.py
-
-Downloads and builds JAX's XLA dependency, installing XLA in the JAX source
-tree.
+    python3 build.py
+to download and builds JAX's XLA (jaxlib) dependency.
 """
 
 
@@ -222,7 +220,7 @@ def add_boolean_argument(parser, name, default=False, help_str=None):
 
 def main():
   parser = argparse.ArgumentParser(
-      description="Builds JAX from source.", epilog=EPILOG)
+      description="Builds libjax from source.", epilog=EPILOG)
   parser.add_argument(
       "--bazel_path",
       help="Path to the Bazel binary to use. The default is to find bazel via "
@@ -268,7 +266,7 @@ def main():
       cuda_toolkit_path=cuda_toolkit_path,
       cudnn_install_path=cudnn_install_path)
 
-  print("\nBuilding XLA and installing it in the JAX source tree...")
+  print("\nBuilding XLA and installing it in the jaxlib source tree...")
   shell([
       bazel_path, "run", "-c", "opt", "//build:install_xla_in_source_tree",
       os.getcwd()

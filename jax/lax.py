@@ -39,7 +39,7 @@ from .interpreters import ad
 from .interpreters import batching
 from .util import curry, safe_zip, unzip2, prod
 from .tree_util import build_tree
-from .lib import xla_bridge
+from jaxlib import xla_bridge
 
 _max = builtins.max
 _min = builtins.max

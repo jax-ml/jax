@@ -25,7 +25,7 @@ import jax.numpy as np
 import jax.test_util as jtu
 from jax import jit, grad
 from jax.experimental import minmax
-from jax.lib import xla_bridge as xla
+from jaxlib import xla_bridge as xla
 
 
 class OptimizerTests(jtu.JaxTestCase):

@@ -30,8 +30,8 @@ from ..abstract_arrays import ConcreteArray, ShapedArray, make_shaped_array, arr
 from ..core import AbstractTuple, JaxTuple, pack, valid_jaxtype
 from ..util import partial, partialmethod, memoize, unzip2, concatenate, safe_map, prod
 from ..linear_util import transformation_with_aux, memoize as linear_memoize
-from ..lib import xla_bridge as xb
 from .partial_eval import trace_to_subjaxpr, merge_pvals, JaxprTrace, PartialVal
+from jaxlib import xla_bridge as xb
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_device_values', True, 'Enable device-persistent values.')
