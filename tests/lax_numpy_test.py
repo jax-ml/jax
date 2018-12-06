@@ -33,7 +33,11 @@ from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
-all_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4), (2, 3, 4)]
+array_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4), (2, 3, 4)]
+
+# TODO(b/120546360): add jtu.NUMPY_SCALAR_SHAPE when the coercion rules are
+# fixed so the tests pass.
+all_shapes = array_shapes
 
 float_dtypes = [onp.float32, onp.float64]
 complex_dtypes = [onp.complex64]
@@ -54,10 +58,10 @@ def op_record(name, nargs, dtypes, rng, diff_modes, test_name=None):
 JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("abs", 1, default_dtypes, jtu.rand_default(), ["rev"]),
     op_record("add", 2, default_dtypes, jtu.rand_default(), ["rev"]),
-    op_record("bitwise_and", 2, default_dtypes, jtu.rand_bool(), []),
-    op_record("bitwise_not", 1, default_dtypes, jtu.rand_bool(), []),
-    op_record("bitwise_or", 2, default_dtypes, jtu.rand_bool(), []),
-    op_record("bitwise_xor", 2, default_dtypes, jtu.rand_bool(), []),
+    op_record("bitwise_and", 2, int_dtypes, jtu.rand_bool(), []),
+    op_record("bitwise_not", 1, int_dtypes, jtu.rand_bool(), []),
+    op_record("bitwise_or", 2, int_dtypes, jtu.rand_bool(), []),
+    op_record("bitwise_xor", 2, int_dtypes, jtu.rand_bool(), []),
     op_record("ceil", 1, float_dtypes, jtu.rand_default(), []),
     op_record("conj", 1, numeric_dtypes, jtu.rand_default(), ["rev"]),
     op_record("conjugate", 1, numeric_dtypes, jtu.rand_default(), ["rev"]),
@@ -307,12 +311,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(lnp.stack, onp.stack, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inshape=[{}]_indtype={}_outdtype={}".format(
-          "_".join(str(d) for d in shape),
-          onp.dtype(fill_value_dtype).name, onp.dtype(out_dtype).name),
+      {"testcase_name": "_inshape={}_outdtype={}".format(
+          jtu.format_shape_dtype_string(shape, fill_value_dtype),
+          onp.dtype(out_dtype).name),
        "shape": shape, "fill_value_dtype": fill_value_dtype,
-       "out_dtype": out_dtype, "rng": jtu.rand_default()}
-      for shape in all_shapes
+       "out_dtype": out_dtype, "rng": jtu.rand_default()})
+      for shape in array_shapes
       for fill_value_dtype in default_dtypes
       for out_dtype in default_dtypes))
   def testFull(self, shape, fill_value_dtype, out_dtype, rng):
@@ -346,6 +350,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "rng": jtu.rand_default()}
       for dtype in default_dtypes
       for arg_shape, out_shape in [
+          (jtu.NUMPY_SCALAR_SHAPE, (1, 1, 1)),
+          ((), (1, 1, 1)),
+          ((7, 0), (0, 42, 101)),
           ((3, 4), 12),
           ((3, 4), (12,)),
           ((3, 4), -1),
