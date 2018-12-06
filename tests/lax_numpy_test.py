@@ -30,6 +30,7 @@ from jax import numpy as lnp
 from jax import test_util as jtu
 from jax.config import config
 
+config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
 all_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4), (2, 3, 4)]
@@ -130,7 +131,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def _GetArgsMaker(self, rng, shapes, dtypes):
     return lambda: [rng(shape, dtype) for shape, dtype in zip(shapes, dtypes)]
 
-  @parameterized.named_parameters(
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": jtu.format_test_name_suffix(rec.test_name, shapes,
                                                     dtypes),
        "rng": rec.rng, "shapes": shapes, "dtypes": dtypes,
@@ -138,13 +139,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for rec in itertools.chain(JAX_ONE_TO_ONE_OP_RECORDS,
                                  JAX_COMPOUND_OP_RECORDS)
       for shapes in CombosWithReplacement(all_shapes, rec.nargs)
-      for dtypes in CombosWithReplacement(rec.dtypes, rec.nargs))
+      for dtypes in CombosWithReplacement(rec.dtypes, rec.nargs)))
   def testOp(self, onp_op, lnp_op, rng, shapes, dtypes):
     args_maker = self._GetArgsMaker(rng, shapes, dtypes)
     self._CheckAgainstNumpy(onp_op, lnp_op, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_op, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "{}_inshape={}_axis={}_keepdims={}".format(
           rec.test_name.capitalize(),
           jtu.format_shape_dtype_string(shape, dtype), axis, keepdims),
@@ -154,7 +155,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for rec in JAX_REDUCER_RECORDS
       for shape in all_shapes for dtype in rec.dtypes
       for axis in range(-len(shape), len(shape))
-      for keepdims in [False, True])
+      for keepdims in [False, True]))
   def testReducer(self, onp_op, lnp_op, rng, shape, dtype, axis, keepdims):
     onp_fun = lambda x: onp_op(x, axis, keepdims=keepdims)
     lnp_fun = lambda x: lnp_op(x, axis, keepdims=keepdims)
@@ -162,7 +163,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "{}_inshape={}_axis={}".format(
           rec.test_name.capitalize(),
           jtu.format_shape_dtype_string(shape, dtype), axis),
@@ -171,7 +172,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "axis": axis}
       for rec in JAX_ARGMINMAX_RECORDS
       for shape in all_shapes for dtype in rec.dtypes
-      for axis in range(-len(shape), len(shape)))
+      for axis in range(-len(shape), len(shape))))
   def testArgMinMax(self, onp_op, lnp_op, rng, shape, dtype, axis):
 
     def onp_fun(array_to_reduce):
@@ -184,7 +185,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_{}_{}".format(
           name,
           jtu.format_shape_dtype_string(lhs_shape, lhs_dtype),
@@ -204,13 +205,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           ("tensor-matrix", (4, 3, 2), (2, 5)),
           ("matrix-tensor", (5, 2), (3, 2, 4)),
           ("tensor-tensor", (2, 3, 4), (5, 4, 1))]
-      for lhs_dtype, rhs_dtype in CombosWithReplacement(float_dtypes, 2))
+      for lhs_dtype, rhs_dtype in CombosWithReplacement(float_dtypes, 2)))
   def testDot(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype, rng):
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
     self._CheckAgainstNumpy(onp.dot, lnp.dot, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp.dot, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_{}_{}".format(
           name,
           jtu.format_shape_dtype_string(lhs_shape, lhs_dtype),
@@ -230,20 +231,20 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           ("tensor-matrix", (5, 2, 3), (3, 2)),
           ("tensor-tensor", (5, 3, 4), (5, 4, 1)),
           ("tensor-tensor-broadcast", (3, 1, 3, 4), (5, 4, 1))]
-      for lhs_dtype, rhs_dtype in CombosWithReplacement(float_dtypes, 2))
+      for lhs_dtype, rhs_dtype in CombosWithReplacement(float_dtypes, 2)))
   def testMatmul(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype, rng):
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
     self._CheckAgainstNumpy(onp.matmul, lnp.matmul, args_maker,
                             check_dtypes=True)
     self._CompileAndCheck(lnp.matmul, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_amin={}_amax={}".format(
           jtu.format_shape_dtype_string(shape, dtype), a_min, a_max),
        "shape": shape, "dtype": dtype, "a_min": a_min, "a_max": a_max,
        "rng": jtu.rand_default()}
       for shape in all_shapes for dtype in float_dtypes
-      for a_min, a_max in [(-1, None), (None, 1), (-1, 1)])
+      for a_min, a_max in [(-1, None), (None, 1), (-1, 1)]))
   def testClipStaticBounds(self, shape, dtype, a_min, a_max, rng):
     onp_fun = lambda x: onp.clip(x, a_min=a_min, a_max=a_max)
     lnp_fun = lambda x: lnp.clip(x, a_min=a_min, a_max=a_max)
@@ -251,13 +252,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_decimals={}".format(
           jtu.format_shape_dtype_string(shape, dtype), decimals),
        "shape": shape, "dtype": dtype, "decimals": decimals,
        "rng": jtu.rand_default()}
       for shape in all_shapes for dtype in float_dtypes
-      for decimals in [0, 1, -2])
+      for decimals in [0, 1, -2]))
   def testRoundStaticDecimals(self, shape, dtype, decimals, rng):
     onp_fun = lambda x: onp.round(x, decimals=decimals)
     lnp_fun = lambda x: lnp.round(x, decimals=decimals)
@@ -265,7 +266,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_axis={}_baseshape=[{}]_dtypes=[{}]".format(
           axis, ",".join(str(d) for d in base_shape),
           ",".join(onp.dtype(dtype).name for dtype in dtypes)),
@@ -274,7 +275,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for num_arrs in [3]
       for dtypes in CombosWithReplacement(default_dtypes, num_arrs)
       for base_shape in [(4,), (3, 4), (2, 3, 4)]
-      for axis in range(-len(base_shape)+1, len(base_shape)))
+      for axis in range(-len(base_shape)+1, len(base_shape))))
   def testConcatenate(self, axis, base_shape, dtypes, rng):
     wrapped_axis = axis % len(base_shape)
     shapes = [base_shape[:wrapped_axis] + (size,) + base_shape[wrapped_axis+1:]
@@ -288,7 +289,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(
           jtu.format_test_name_suffix("", [shape] * len(dtypes), dtypes)),
        "shape": shape, "dtypes": dtypes, "rng": rng}
@@ -300,12 +301,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         [onp.float32, onp.int32, onp.float64],
       ]
       for shape in [(), (2,), (3, 4), (1, 100)]
-      for rng in [jtu.rand_default()])
+      for rng in [jtu.rand_default()]))
   def testStack(self, shape, dtypes, rng):
     args_maker = lambda: [[rng(shape, dtype) for dtype in dtypes]]
     self._CheckAgainstNumpy(lnp.stack, onp.stack, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape=[{}]_indtype={}_outdtype={}".format(
           "_".join(str(d) for d in shape),
           onp.dtype(fill_value_dtype).name, onp.dtype(out_dtype).name),
@@ -313,7 +314,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "out_dtype": out_dtype, "rng": jtu.rand_default()}
       for shape in all_shapes
       for fill_value_dtype in default_dtypes
-      for out_dtype in default_dtypes)
+      for out_dtype in default_dtypes))
   def testFull(self, shape, fill_value_dtype, out_dtype, rng):
     onp_fun = lambda fill_value: onp.full(shape, fill_value, dtype=out_dtype)
     lnp_fun = lambda fill_value: lnp.full(shape, fill_value, dtype=out_dtype)
@@ -321,7 +322,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_axis={}_{}sections".format(
           jtu.format_shape_dtype_string(shape, dtype), axis, num_sections),
        "shape": shape, "num_sections": num_sections, "axis": axis,
@@ -329,7 +330,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for shape, axis, num_sections in [
           ((3,), 0, 3), ((12,), 0, 3), ((12, 4), 0, 4), ((12, 4), 1, 2),
           ((2, 3, 4), -1, 2), ((2, 3, 4), -2, 3)]
-      for dtype in default_dtypes)
+      for dtype in default_dtypes))
   def testSplitStaticInt(self, shape, num_sections, axis, dtype, rng):
     onp_fun = lambda x: onp.split(x, num_sections, axis=axis)
     lnp_fun = lambda x: lnp.split(x, num_sections, axis=axis)
@@ -337,7 +338,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_outshape={}".format(
           jtu.format_shape_dtype_string(arg_shape, dtype),
           jtu.format_shape_dtype_string(out_shape, dtype)),
@@ -350,7 +351,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           ((3, 4), -1),
           ((2, 1, 4), (-1,)),
           ((2, 2, 4), (2, 8))
-      ])
+      ]))
   def testReshape(self, arg_shape, out_shape, dtype, rng):
     onp_fun = lambda x: onp.reshape(x, out_shape)
     lnp_fun = lambda x: lnp.reshape(x, out_shape)
@@ -358,14 +359,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_expanddim={}".format(
           jtu.format_shape_dtype_string(arg_shape, dtype), dim),
        "arg_shape": arg_shape, "dtype": dtype, "dim": dim,
        "rng": jtu.rand_default()}
       for arg_shape in [(), (3,), (3, 4)]
       for dtype in default_dtypes
-      for dim in range(-len(arg_shape)+1, len(arg_shape)))
+      for dim in range(-len(arg_shape)+1, len(arg_shape))))
   def testExpandDimsStaticDim(self, arg_shape, dtype, dim, rng):
     onp_fun = lambda x: onp.expand_dims(x, dim)
     lnp_fun = lambda x: lnp.expand_dims(x, dim)
@@ -373,7 +374,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_axes=({},{})".format(
           jtu.format_shape_dtype_string(arg_shape, dtype), ax1, ax2),
        "arg_shape": arg_shape, "dtype": dtype, "ax1": ax1, "ax2": ax2,
@@ -381,7 +382,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for arg_shape, ax1, ax2 in [
           ((3, 4), 0, 1), ((3, 4), 1, 0), ((3, 4, 5), 1, 2),
           ((3, 4, 5), -1, -2), ((3, 4, 5), 0, 1)]
-      for dtype in default_dtypes)
+      for dtype in default_dtypes))
   def testSwapAxesStaticAxes(self, arg_shape, dtype, ax1, ax2, rng):
     onp_fun = lambda x: onp.swapaxes(x, ax1, ax2)
     lnp_fun = lambda x: lnp.swapaxes(x, ax1, ax2)
@@ -389,7 +390,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_axis={}".format(
           jtu.format_shape_dtype_string(arg_shape, dtype), ax),
        "arg_shape": arg_shape, "dtype": dtype, "ax": ax,
@@ -399,7 +400,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           ((3, 1), 1),
           ((1, 3, 1), (0, 2)),
           ((1, 4, 1), (0,))]
-      for dtype in default_dtypes)
+      for dtype in default_dtypes))
   def testSqueeze(self, arg_shape, dtype, ax, rng):
     onp_fun = lambda x: onp.squeeze(x, ax)
     lnp_fun = lambda x: lnp.squeeze(x, ax)
@@ -407,13 +408,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_arg{}".format(i), "arg": arg}
       for i, arg in enumerate([
           [1, 2, 3], [1., 2., 3.],
           [[1, 2], [3, 4], [5, 6]], [[1, 2.], [3, 4], [5, 6]],
           [[3, onp.array(2), 1], onp.arange(3.)],
-      ]))
+      ])))
   def testArray(self, arg):
     args_maker = lambda: [arg]
     self._CheckAgainstNumpy(onp.array, lnp.array, args_maker, check_dtypes=True)
@@ -550,5 +551,4 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
 
 if __name__ == "__main__":
-  config.config_with_absl()
   absltest.main()

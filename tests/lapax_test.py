@@ -28,6 +28,7 @@ from jax import test_util as jtu
 from jax.config import config
 from jax.experimental import lapax
 
+config.parse_flags_with_absl()
 
 class LapaxTest(jtu.JaxTestCase):
 
@@ -130,7 +131,7 @@ class LapaxTest(jtu.JaxTestCase):
     check(fun, arr)
     check(fun, arr2)
 
-  @parameterized.named_parameters(
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_lhs={}_rhs={}_lower={}_leftside={}_transposea={}".format(
            jtu.format_shape_dtype_string(lhs_shape, dtype),
@@ -144,7 +145,7 @@ class LapaxTest(jtu.JaxTestCase):
           ((2, 4, 4), (2, 4, 6) if left else (2, 6, 4)),
       ]
       for dtype in [onp.float32, onp.float64]
-      for rng in [jtu.rand_default()])
+      for rng in [jtu.rand_default()]))
   def testSolveTriangular(self, lower, left_side, transpose_a, lhs_shape,
                           rhs_shape, dtype, rng):
     # pylint: disable=invalid-name
@@ -165,7 +166,7 @@ class LapaxTest(jtu.JaxTestCase):
     self.assertAllClose(np_ans, lapax_ans, check_dtypes=False)
     # pylint: enable=invalid-name
 
-  @parameterized.named_parameters(
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_lhs={}_rhs={}_lower={}_leftside={}_transposea={}".format(
            jtu.format_shape_dtype_string(lhs_shape, dtype),
@@ -179,7 +180,7 @@ class LapaxTest(jtu.JaxTestCase):
           ((2, 8, 8), (2, 8, 10) if left else (2, 10, 8)),
       ]
       for dtype in [onp.float32, onp.float64]
-      for rng in [jtu.rand_default()])
+      for rng in [jtu.rand_default()]))
   def testSolveTriangularBlocked(self, lower, left_side, transpose_a, lhs_shape,
                                  rhs_shape, dtype, rng):
     # pylint: disable=invalid-name
@@ -203,5 +204,4 @@ class LapaxTest(jtu.JaxTestCase):
 
 
 if __name__ == "__main__":
-  config.config_with_absl()
   absltest.main()
