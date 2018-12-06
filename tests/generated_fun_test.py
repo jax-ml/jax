@@ -19,9 +19,11 @@ import numpy.random as npr
 from absl.testing import absltest
 from absl.testing import parameterized
 
+import itertools as it
 import jax.numpy as np
 from jax import jit, jvp, vjp
-from jax.test_util as jtu
+import jax.test_util as jtu
+from jax.config import config
 
 npr.seed(0)
 
@@ -211,44 +213,15 @@ def partial_argnums(f, args, dyn_argnums):
   dyn_args = [args[i] for i in dyn_argnums]
   return f_, dyn_args
 
-def jvp_matches_fd(fun):
-  vals = gen_vals(fun.in_vars)
-  tangents = gen_vals(fun.in_vars)
-  fun = partial(eval_fun, fun)
-  dyn_argnums = thin(range(len(vals)), 0.5)
-  tangents = [tangents[i] for i in dyn_argnums]
-  fun, vals = partial_argnums(fun, vals, dyn_argnums)
-  ans1, deriv1 = jvp_fd(fun, vals, tangents)
-  ans2, deriv2 = jvp(fun, vals, tangents)
-  check_all_close(ans1, ans2)
-  check_all_close(deriv1, deriv2)
-
-
-def vjp_matches_fd(fun):
-  vals = gen_vals(fun.in_vars)
-  in_tangents = gen_vals(fun.in_vars)
-  in_cotangents = gen_vals(fun.out_vars)
-  fun = partial(eval_fun, fun)
-  dyn_argnums = thin(range(len(vals)), 0.5)
-  in_tangents = [in_tangents[i] for i in dyn_argnums]
-  fun, vals = partial_argnums(fun, vals, dyn_argnums)
-  ans1, out_tangents = jvp_fd(fun, vals, in_tangents)
-  ans2, vjpfun = vjp(fun, *vals)
-  out_cotangents = vjpfun(in_cotangents)
-  check_all_close(ans1, ans2)
-  inner_prod_fd = inner_prod(out_tangents, in_cotangents)
-  inner_prod_ad = inner_prod(in_tangents, out_cotangents)
-  check_close(inner_prod_fd, inner_prod_ad)
-
 counter = it.count()
 fresh = counter.next
 
 class GeneratedFunTest(jtu.JaxTestCase):
   """Tests of transformations on randomly generated functions."""
 
-  @parameterized.named_parameters(take(
-    {"testcase_name": 'rand_fun_jit_test_{}'.format(fresh()),
-     "fun" : gen_fun_and_types(size) }
+  @parameterized.named_parameters(jtu.take(
+    {"testcase_name": str(fresh()),
+     "fun" : gen_fun_and_types(10) }
      for _ in it.count()))
   def testJitIsIdentity(self, fun):
     vals = gen_vals(fun.in_vars)
@@ -261,6 +234,43 @@ class GeneratedFunTest(jtu.JaxTestCase):
     except:
       print fun
       raise
+
+  @parameterized.named_parameters(jtu.take(
+    {"testcase_name": str(fresh()),
+     "fun" : gen_fun_and_types(10) }
+     for _ in it.count()))
+  def testJVPMatchesFD(self, fun):
+    vals = gen_vals(fun.in_vars)
+    tangents = gen_vals(fun.in_vars)
+    fun = partial(eval_fun, fun)
+    dyn_argnums = thin(range(len(vals)), 0.5)
+    tangents = [tangents[i] for i in dyn_argnums]
+    fun, vals = partial_argnums(fun, vals, dyn_argnums)
+    ans1, deriv1 = jvp_fd(fun, vals, tangents)
+    ans2, deriv2 = jvp(fun, vals, tangents)
+    check_all_close(ans1, ans2)
+    check_all_close(deriv1, deriv2)
+
+  @parameterized.named_parameters(jtu.take(
+    {"testcase_name": str(fresh()),
+     "fun" : gen_fun_and_types(10) }
+     for _ in it.count()))
+  def vjp_matches_fd(self, fun):
+    vals = gen_vals(fun.in_vars)
+    in_tangents = gen_vals(fun.in_vars)
+    in_cotangents = gen_vals(fun.out_vars)
+    fun = partial(eval_fun, fun)
+    dyn_argnums = thin(range(len(vals)), 0.5)
+    in_tangents = [in_tangents[i] for i in dyn_argnums]
+    fun, vals = partial_argnums(fun, vals, dyn_argnums)
+    ans1, out_tangents = jvp_fd(fun, vals, in_tangents)
+    ans2, vjpfun = vjp(fun, *vals)
+    out_cotangents = vjpfun(in_cotangents)
+    check_all_close(ans1, ans2)
+    inner_prod_fd = inner_prod(out_tangents, in_cotangents)
+    inner_prod_ad = inner_prod(in_tangents, out_cotangents)
+    check_close(inner_prod_fd, inner_prod_ad)
+
 
 if __name__ == "__main__":
   config.config_with_absl()

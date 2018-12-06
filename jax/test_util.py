@@ -18,6 +18,8 @@ from __future__ import print_function
 
 import functools
 import re
+import itertools as it
+import random
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -39,6 +41,10 @@ flags.DEFINE_enum(
     'Describes the device under test in case special consideration is required.'
 )
 
+flags.DEFINE_integer(
+  'num_generated_cases',
+  100,
+  help='Number of generated cases to test')
 
 EPS = 1e-4
 ATOL = 1e-4
@@ -302,6 +308,26 @@ def check_raises_regexp(thunk, err_type, pattern):
     assert False
   except err_type as e:
     assert re.match(pattern, str(e)), "{}\n\n{}\n".format(e, pattern)
+
+
+random.seed(0)
+
+
+def take(xs):
+  return dedup(it.islice(xs, FLAGS.num_generated_cases))
+
+
+def dedup(xs):
+  seen = set()
+  for x in xs:
+    name = x["testcase_name"]
+    if name not in seen:
+      seen.add(name)
+      yield x
+
+
+def sample(xs):
+  return [random.choice(xs)]
 
 
 class JaxTestCase(parameterized.TestCase):
