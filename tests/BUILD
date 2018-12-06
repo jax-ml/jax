@@ -80,17 +80,14 @@ jax_test(
 jax_test(
     name = "stax_test",
     srcs = ["stax_test.py"],
-    deps = ["//jax:stax"],
 )
 
 jax_test(
     name = "minmax_test",
     srcs = ["minmax_test.py"],
-    deps = ["//jax:minmax"],
 )
 
 jax_test(
     name = "lapax_test",
     srcs = ["lapax_test.py"],
-    deps = ["//jax:lapax"],
 )
