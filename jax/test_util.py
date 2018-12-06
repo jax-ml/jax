@@ -173,12 +173,41 @@ def format_test_name_suffix(opname, shapes, dtypes):
   return '{}_{}'.format(opname.capitalize(), '_'.join(arg_descriptions))
 
 
+class _NumpyScalar(object):
+
+  def __len__(self):
+    return 0
+
+# A special singleton "shape" that denotes numpy scalars. Numpy scalars are not
+# identical to 0-D arrays, and we want to write tests that exercise both paths.
+NUMPY_SCALAR_SHAPE = _NumpyScalar()
+
+
+def _dims_of_shape(shape):
+  """Converts `shape` to a tuple of dimensions."""
+  return shape if shape != NUMPY_SCALAR_SHAPE else ()
+
+
+def _cast_to_shape(value, shape, dtype):
+  """Casts `value` to the correct Python type for `shape` and `dtype`."""
+  if shape != NUMPY_SCALAR_SHAPE:
+    return value
+  else:
+    # A numpy scalar was requested. Explicitly cast in case `value` is a Python
+    # scalar.
+    return dtype(value)
+
+
 def format_shape_dtype_string(shape, dtype):
+  typestr = onp.dtype(dtype).name
+  if shape == NUMPY_SCALAR_SHAPE:
+    return typestr
+
   if onp.isscalar(shape):
     shapestr = str(shape) + ','
   else:
     shapestr = ','.join(str(dim) for dim in shape)
-  return '{}[{}]'.format(onp.dtype(dtype).name, shapestr)
+  return '{}[{}]'.format(typestr, shapestr)
 
 
 def _rand_dtype(rand, shape, dtype, scale=1., post=lambda x: x):
@@ -197,12 +226,12 @@ def _rand_dtype(rand, shape, dtype, scale=1., post=lambda x: x):
     An ndarray of the given shape and dtype using random values based on a call
     to rand but scaled, converted to the appropriate dtype, and post-processed.
   """
-  r = lambda: onp.asarray(scale * rand(*shape), dtype)
+  r = lambda: onp.asarray(scale * rand(*_dims_of_shape(shape)), dtype)
   if onp.issubdtype(dtype, onp.complexfloating):
     vals = r() + 1.0j * r()
   else:
     vals = r()
-  return onp.asarray(post(vals), dtype)
+  return _cast_to_shape(onp.asarray(post(vals), dtype), shape, dtype)
 
 
 def rand_default():
@@ -261,14 +290,15 @@ def rand_some_inf():
       # only float types have inf
       return base_rand(shape, dtype)
 
-    posinf_flips = rng.rand(*shape) < 0.1
-    neginf_flips = rng.rand(*shape) < 0.1
+    dims = _dims_of_shape(shape)
+    posinf_flips = rng.rand(*dims) < 0.1
+    neginf_flips = rng.rand(*dims) < 0.1
 
     vals = base_rand(shape, dtype)
     vals = onp.where(posinf_flips, onp.inf, vals)
     vals = onp.where(neginf_flips, -onp.inf, vals)
 
-    return onp.asarray(vals, dtype=dtype)
+    return _cast_to_shape(onp.asarray(vals, dtype=dtype), shape, dtype)
 
   return rand
 
@@ -281,19 +311,22 @@ def rand_some_zero():
 
   def rand(shape, dtype):
     """The random sampler function."""
-    zeros = rng.rand(*shape) < 0.5
+    dims = _dims_of_shape(shape)
+    zeros = rng.rand(*dims) < 0.5
 
     vals = base_rand(shape, dtype)
     vals = onp.where(zeros, 0, vals)
 
-    return onp.asarray(vals, dtype=dtype)
+    return _cast_to_shape(onp.asarray(vals, dtype=dtype), shape, dtype)
 
   return rand
 
 
 def rand_bool():
   rng = npr.RandomState(0)
-  return lambda shape, dtype: rng.rand(*shape) < 0.5
+  def generator(shape, dtype):
+    return _cast_to_shape(rng.rand(*_dims_of_shape(shape)) < 0.5, shape, dtype)
+  return generator
 
 def check_raises(thunk, err_type, msg):
   try:
