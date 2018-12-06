@@ -213,16 +213,11 @@ def partial_argnums(f, args, dyn_argnums):
   dyn_args = [args[i] for i in dyn_argnums]
   return f_, dyn_args
 
-counter = it.count()
-fresh = counter.next
 
 class GeneratedFunTest(jtu.JaxTestCase):
   """Tests of transformations on randomly generated functions."""
 
-  @parameterized.named_parameters(jtu.take(
-    {"testcase_name": str(fresh()),
-     "fun" : gen_fun_and_types(10) }
-     for _ in it.count()))
+  @parameterized.named_parameters(jtu.cases_from_gens(gen_fun_and_types))
   def testJitIsIdentity(self, fun):
     vals = gen_vals(fun.in_vars)
     fun = partial(eval_fun, fun)
@@ -235,10 +230,7 @@ class GeneratedFunTest(jtu.JaxTestCase):
       print fun
       raise
 
-  @parameterized.named_parameters(jtu.take(
-    {"testcase_name": str(fresh()),
-     "fun" : gen_fun_and_types(10) }
-     for _ in it.count()))
+  @parameterized.named_parameters(jtu.cases_from_gens(gen_fun_and_types))
   def testJVPMatchesFD(self, fun):
     vals = gen_vals(fun.in_vars)
     tangents = gen_vals(fun.in_vars)
@@ -251,10 +243,7 @@ class GeneratedFunTest(jtu.JaxTestCase):
     check_all_close(ans1, ans2)
     check_all_close(deriv1, deriv2)
 
-  @parameterized.named_parameters(jtu.take(
-    {"testcase_name": str(fresh()),
-     "fun" : gen_fun_and_types(10) }
-     for _ in it.count()))
+  @parameterized.named_parameters(jtu.cases_from_gens(gen_fun_and_types))
   def vjp_matches_fd(self, fun):
     vals = gen_vals(fun.in_vars)
     in_tangents = gen_vals(fun.in_vars)
