@@ -34,13 +34,12 @@ FLAGS = config.FLAGS
 
 array_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4), (2, 3, 4)]
 
-# TODO(b/120546360): add jtu.NUMPY_SCALAR_SHAPE when the coercion rules are
-# fixed so the tests pass.
-all_shapes = array_shapes
+all_shapes = [jtu.NUMPY_SCALAR_SHAPE] + array_shapes
 
 float_dtypes = [onp.float32, onp.float64]
 complex_dtypes = [onp.complex64]
 int_dtypes = [onp.int32, onp.int64]
+unsigned_dtypes = [onp.uint32, onp.uint64]
 bool_dtypes = [onp.bool_]
 default_dtypes = float_dtypes + int_dtypes
 numeric_dtypes = float_dtypes + complex_dtypes + int_dtypes
@@ -57,10 +56,6 @@ def op_record(name, nargs, dtypes, rng, diff_modes, test_name=None):
 JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("abs", 1, default_dtypes, jtu.rand_default(), ["rev"]),
     op_record("add", 2, default_dtypes, jtu.rand_default(), ["rev"]),
-    op_record("bitwise_and", 2, int_dtypes, jtu.rand_bool(), []),
-    op_record("bitwise_not", 1, int_dtypes, jtu.rand_bool(), []),
-    op_record("bitwise_or", 2, int_dtypes, jtu.rand_bool(), []),
-    op_record("bitwise_xor", 2, int_dtypes, jtu.rand_bool(), []),
     op_record("ceil", 1, float_dtypes, jtu.rand_default(), []),
     op_record("conj", 1, numeric_dtypes, jtu.rand_default(), ["rev"]),
     op_record("conjugate", 1, numeric_dtypes, jtu.rand_default(), ["rev"]),
@@ -109,6 +104,17 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("where", 3, (onp.float32, onp.int64), jtu.rand_some_zero(), []),
 ]
 
+JAX_BITWISE_OP_RECORDS = [
+    op_record("bitwise_and", 2, int_dtypes + unsigned_dtypes,
+              jtu.rand_bool(), []),
+    op_record("bitwise_not", 1, int_dtypes + unsigned_dtypes,
+              jtu.rand_bool(), []),
+    op_record("bitwise_or", 2, int_dtypes + unsigned_dtypes,
+              jtu.rand_bool(), []),
+    op_record("bitwise_xor", 2, int_dtypes + unsigned_dtypes,
+              jtu.rand_bool(), []),
+]
+
 JAX_REDUCER_RECORDS = [
     op_record("all", 1, bool_dtypes, jtu.rand_default(), []),
     op_record("any", 1, bool_dtypes, jtu.rand_default(), []),
@@ -128,6 +134,22 @@ JAX_ARGMINMAX_RECORDS = [
 CombosWithReplacement = itertools.combinations_with_replacement
 
 
+def _dtypes_are_compatible_for_bitwise_ops(args):
+  if len(args) <= 1:
+    return True
+  is_signed = lambda dtype: onp.issubdtype(dtype, onp.signedinteger)
+  width = lambda dtype: onp.iinfo(dtype).bits
+  x, y = args
+  if width(x) > width(y):
+    x, y = y, x
+  # The following condition seems a little ad hoc, but seems to capture what
+  # numpy actually implements.
+  return (
+      is_signed(x) == is_signed(y)
+      or (width(x) == 32 and width(y) == 32)
+      or (width(x) == 32 and width(y) == 64 and is_signed(y)))
+
+
 class LaxBackedNumpyTests(jtu.JaxTestCase):
   """Tests for LAX-backed Numpy implementation."""
 
@@ -144,6 +166,24 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for shapes in CombosWithReplacement(all_shapes, rec.nargs)
       for dtypes in CombosWithReplacement(rec.dtypes, rec.nargs))
   def testOp(self, onp_op, lnp_op, rng, shapes, dtypes):
+    args_maker = self._GetArgsMaker(rng, shapes, dtypes)
+    self._CheckAgainstNumpy(onp_op, lnp_op, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_op, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(
+      {"testcase_name": jtu.format_test_name_suffix(rec.test_name, shapes,
+                                                    dtypes),
+       "rng": rec.rng, "shapes": shapes, "dtypes": dtypes,
+       "onp_op": getattr(onp, rec.name), "lnp_op": getattr(lnp, rec.name)}
+      for rec in JAX_BITWISE_OP_RECORDS
+      for shapes in CombosWithReplacement(all_shapes, rec.nargs)
+      for dtypes in filter(
+          _dtypes_are_compatible_for_bitwise_ops,
+          CombosWithReplacement(rec.dtypes, rec.nargs)))
+  def testBitwiseOp(self, onp_op, lnp_op, rng, shapes, dtypes):
+    if not FLAGS.jax_enable_x64 and any(
+        onp.iinfo(dtype).bits == 64 for dtype in dtypes):
+      self.skipTest("x64 types are disabled by jax_enable_x64")
     args_maker = self._GetArgsMaker(rng, shapes, dtypes)
     self._CheckAgainstNumpy(onp_op, lnp_op, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_op, args_maker, check_dtypes=True)

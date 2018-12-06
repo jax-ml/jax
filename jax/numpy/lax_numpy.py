@@ -126,10 +126,7 @@ def _promote_dtypes(*args):
   if len(args) < 2:
     return args
   else:
-    all_scalar = _all(isscalar(x) for x in args)
-    some_bools = _any(_dtype(x) == onp.dtype("bool") for x in args)
-    keep_all = all_scalar or some_bools
-    from_dtypes = (_dtype(x) for x in args if keep_all or not isscalar(x))
+    from_dtypes = (_dtype(x) for x in args)
     to_dtype = xla_bridge.canonicalize_dtype(result_type(*from_dtypes))
     return [lax.convert_element_type(x, to_dtype)
             if _dtype(x) != to_dtype else x for x in args]
