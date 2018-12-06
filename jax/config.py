@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import sys
+
 
 class Config(object):
   def __init__(self):
@@ -75,6 +77,10 @@ class Config(object):
     for name, _ in self.values.items():
       self.update(name, getattr(absl_flags.FLAGS, name))
 
+  def parse_flags_with_absl(self):
+    import absl.flags
+    self.config_with_absl()
+    absl.flags.FLAGS(sys.argv)
 
 class NameSpace(object):
   def __init__(self, getter):
