@@ -8,7 +8,6 @@ http_archive(
     ],
 )
 
-
 # To update TensorFlow to a new revision,
 # a) update URL and strip_prefix to the new git commit hash
 # b) get the sha256 hash of the commit by running:
@@ -17,9 +16,9 @@ http_archive(
 http_archive(
     name = "org_tensorflow",
     sha256 = "dccd52030b173ee803191134215f712df7b18ee97a7c7d00437014002d29c26b",
-    strip_prefix="tensorflow-8ccf1ebdbf4475bc7af6d79b2fa7e1fd8221e3fd"
+    strip_prefix = "tensorflow-8ccf1ebdbf4475bc7af6d79b2fa7e1fd8221e3fd",
     urls = [
-      "https://github.com/tensorflow/tensorflow/archive/8ccf1ebdbf4475bc7af6d79b2fa7e1fd8221e3fd.tar.gz",
+        "https://github.com/tensorflow/tensorflow/archive/8ccf1ebdbf4475bc7af6d79b2fa7e1fd8221e3fd.tar.gz",
     ],
 )
 
@@ -28,7 +27,6 @@ http_archive(
 #    name = "org_tensorflow",
 #    path = "tensorflow",
 # )
-
 
 load("@org_tensorflow//tensorflow:workspace.bzl", "tf_workspace")
 
