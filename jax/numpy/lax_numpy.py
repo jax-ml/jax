@@ -383,7 +383,7 @@ def reshape(a, newshape, order="C"):  # pylint: disable=missing-docstring
   else:
     raise ValueError("Unexpected value for 'order' argument: {}.".format(order))
 
-  dummy_val = onp.broadcast_to(0, a.shape)  # zero strides
+  dummy_val = onp.broadcast_to(0, shape(a))  # zero strides
   computed_newshape = onp.reshape(dummy_val, newshape).shape
   return lax.reshape(a, computed_newshape, dims)
 
