@@ -268,7 +268,7 @@ def main():
 
   print("\nBuilding XLA and installing it in the jaxlib source tree...")
   shell([
-      bazel_path, "run", "-c", "opt", "//build:install_xla_in_source_tree",
+      bazel_path, "run", "-c", "opt", ":install_xla_in_source_tree",
       os.getcwd()
   ])
 
