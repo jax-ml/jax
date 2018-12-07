@@ -66,7 +66,7 @@ def gen_function(size, in_types):
       fun, out_types = gen_function(size / size_reduction_factor, arg_types)
       fun = partial(eval_fun, fun)
     else:
-      arity = choice(primitive_generators.keys())
+      arity = choice(list(primitive_generators))
       arg_vars = gen_sized_subset(cur_vars, arity)
       arg_types = [v.vartype for v in arg_vars]
       prim_gen = weighted_choice(primitive_generators[arity])
