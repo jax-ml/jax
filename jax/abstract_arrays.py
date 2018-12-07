@@ -152,8 +152,9 @@ def make_shaped_array(x):
   dtype = xla_bridge.canonicalize_dtype(onp.result_type(x))
   return ShapedArray(onp.shape(x), dtype)
 
-array_types = [onp.ndarray, onp.float64, onp.float32, onp.int64, onp.int32,
-               onp.bool_, onp.uint64, onp.uint32, float, int, bool]
+array_types = [onp.ndarray, onp.float64, onp.float32, onp.complex64,
+               onp.int64, onp.int32, onp.bool_, onp.uint64, onp.uint32, float,
+               int, bool]
 
 for t in array_types:
   core.pytype_aval_mappings[t] = ConcreteArray

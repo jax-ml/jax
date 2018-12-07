@@ -111,7 +111,8 @@ if __name__ == "__main__":
 
   @jit
   def run_epoch(rng, opt_state):
-    def body_fun(i, (rng, opt_state, images)):
+    def body_fun(i, rng__opt_state__images):
+      (rng, opt_state, images) = rng__opt_state__images
       rng, elbo_rng, data_rng = random.split(rng, 3)
       batch = binarize_batch(data_rng, i, images)
       loss = lambda params: -elbo(elbo_rng, params, batch) / batch_size

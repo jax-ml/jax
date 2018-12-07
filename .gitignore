@@ -4,3 +4,8 @@
 /jax/lib/xla_client.py
 /jax/lib/xla_data_pb2.py
 *.egg-info
+.ipynb_checkpoints
+/bazel-*
+.bazelrc
+/tensorflow
+.DS_Store

@@ -187,7 +187,7 @@ def _random_bits(key, bit_width, shape):
   bits = threefry_2x32(key.keypair, onp.arange(max_count, dtype=onp.uint32))
   if bit_width == 64:
     bits = [lax.convert_element_type(x, onp.uint64) for x in np.split(bits, 2)]
-    bits = (bits[0] << 32) | bits[1]
+    bits = (bits[0] << onp.uint64(32)) | bits[1]
   return lax.reshape(bits, shape)
 
 
