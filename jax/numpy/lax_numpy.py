@@ -24,9 +24,9 @@ import numpy as onp
 from .. import core
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
 from ..interpreters.xla import DeviceArray
-from ..lib import xla_bridge
 import jax.lax as lax
 from ..util import memoize
+from ..lib import xla_bridge
 
 # To provide the same module-level names as Numpy, we need to redefine builtins
 # and also use some common names (like 'shape' and 'dtype') at the top-level.
@@ -616,6 +616,7 @@ def allclose(a, b, rtol=1e-05, atol=1e-08):
 
 
 arange = onp.arange
+eye = onp.eye
 
 
 @_wraps(onp.stack)

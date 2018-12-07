@@ -3,4 +3,9 @@
 /jax/lib/pywrap_xla.py
 /jax/lib/xla_client.py
 /jax/lib/xla_data_pb2.py
-jax.egg-info
+*.egg-info
+.ipynb_checkpoints
+/bazel-*
+.bazelrc
+/tensorflow
+.DS_Store

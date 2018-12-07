@@ -13,17 +13,20 @@
 # limitations under the License.
 
 from setuptools import setup
+from glob import glob
+import os
+
+binary_libs = [os.path.basename(f) for f in glob('jaxlib/*.so*')]
 
 setup(
-    name='jax',
+    name='jaxlib',
     version='0.1',
-    description='Differentiate, compile, and transform Numpy code.',
+    description='XLA library for JAX',
     author='JAX team',
     author_email='jax-dev@google.com',
-    packages=['jax', 'jax.lib', 'jax.interpreters', 'jax.numpy', 'jax.scipy',
-              'jax.experimental'],
-    install_requires=['numpy>=1.12', 'six', 'protobuf', 'absl-py',
-                      'opt_einsum'],
+    packages=['jaxlib'],
+    install_requires=['numpy>=1.12', 'six', 'protobuf', 'absl-py'],
     url='https://github.com/google/jax',
     license='Apache-2.0',
+    package_data={'jaxlib': binary_libs},
 )
