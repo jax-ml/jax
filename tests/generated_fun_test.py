@@ -167,7 +167,7 @@ def weighted_choice(weighted_choices):
   return choice(choices, weights)
 
 def gen_sized_subset(xs, size):
-  return [npr_choice(xs) for _ in range(size)]
+  return [choice(xs) for _ in range(size)]
 
 def gen_subset(xs):
   if not xs:
