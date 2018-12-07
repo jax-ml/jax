@@ -205,7 +205,6 @@ class CoreTest(jtu.JaxTestCase):
 
   @parameterized.parameters(test_specs)
   def test_jvp(self, f, args):
-    print(f)
     jtu.check_jvp(f, partial(jvp, f), args)
 
   def test_jvp_zeros(self):
@@ -223,7 +222,7 @@ class CoreTest(jtu.JaxTestCase):
         return np.multiply(np.sin(x), y)
       return call(bar, x)
 
-    print(api.trace_to_jaxpr(foo, (__,)))
+    api.trace_to_jaxpr(foo, (__,))
 
   def DISABLED_test_nested_grad(self):
     def foo(x):
@@ -246,16 +245,14 @@ class CoreTest(jtu.JaxTestCase):
 
       return call(bar, x)
 
-    print(api.trace_to_jaxpr(foo, (__,)))
+    api.trace_to_jaxpr(foo, (__,))
 
   @parameterized.parameters(test_specs)
   def test_jvp_linearized(self, f, args):
-    print(f)
     jtu.check_jvp(f, partial(jvp_unlinearized, f), args)
 
   @parameterized.parameters(test_specs)
   def test_vjp(self, f, args):
-    print(f)
     jtu.check_vjp(f, partial(vjp, f), args)
 
   def test_jvp_closure(self):

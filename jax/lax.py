@@ -1643,7 +1643,7 @@ def dynamic_slice_transpose_rule(t, operand, start_indices, slice_sizes,
                                  operand_shape):
   assert operand is None
   zeros = broadcast(_const(t, 0), operand_shape)
-  return [dynamic_update_slice(zeros, t, start_indices)]
+  return [dynamic_update_slice(zeros, t, start_indices), ad_util.zero]
 
 dynamic_slice_p = standard_primitive(
     dynamic_slice_shape_rule, _input_dtype, 'dynamic_slice',
