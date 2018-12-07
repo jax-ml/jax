@@ -65,7 +65,7 @@ def jacfwd(fun, x):
   fun = lu.wrap_init(fun)
   pushfwd = partial(jvp, fun, (x,))
   std_basis = onp.eye(onp.size(x)).reshape((-1,) + onp.shape(x)),
-  y, jac_flat = vmap(pushfwd, std_basis, out_bdim=(None, 0))
+  y, jac_flat = vmap(pushfwd, std_basis, out_axes=(None, 0))
   return jac_flat.reshape(onp.shape(y) + onp.shape(x))
 
 @curry
@@ -73,26 +73,26 @@ def jacrev(fun, x):
   fun = lu.wrap_init(fun)
   y, pullback = vjp(fun, x)
   std_basis = onp.eye(onp.size(y)).reshape((-1,) + onp.shape(y))
-  jac_flat, = vmap(pullback, std_basis, out_bdim=onp.ndim(y))
+  jac_flat, = vmap(pullback, std_basis, out_axes=onp.ndim(y))
   return jac_flat.reshape(onp.shape(y) + onp.shape(x))
 
 def hessian(fun):
   return jacfwd(jacrev(fun))
 
 def vmap(fun, *args, **kwargs):
-  in_bdims = kwargs.pop("in_bdims", 0)
-  out_bdim = kwargs.pop("out_bdim", 0)
+  in_axes = kwargs.pop("in_axes", 0)
+  out_axes = kwargs.pop("out_axes", 0)
   if kwargs:
-    msg = "vmap keyword args must be 'in_bdims' and/or 'out_bdim', got {}."
+    msg = "vmap keyword args must be 'in_axes' and/or 'out_axes', got {}."
     raise TypeError(msg.format(', '.join(kwargs)))
 
-  if type(in_bdims) is int:
-    in_bdims = (in_bdims,) * len(args)
+  if type(in_axes) is int:
+    in_axes = (in_axes,) * len(args)
   if not isinstance(fun, lu.WrappedFun):
     fun = lu.wrap_init(fun)
   in_flat, in_trees = unzip2(map(tree_to_jaxtuples, args))
   flat_fun, out_tree = flatten_fun(fun, in_trees)
-  out_flat = batching.batch(flat_fun, in_flat, in_bdims, out_bdim)
+  out_flat = batching.batch(flat_fun, in_flat, in_axes, out_axes)
   return build_tree(out_tree(), out_flat)
 
 def jvp(fun, primals, tangents):
