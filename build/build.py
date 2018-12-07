@@ -190,7 +190,7 @@ From the 'build' directory in the JAX repository, run
     python build.py
 or
     python3 build.py
-to download and builds JAX's XLA (jaxlib) dependency.
+to download and build JAX's XLA (jaxlib) dependency.
 """
 
 
