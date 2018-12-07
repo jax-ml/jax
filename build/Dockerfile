@@ -13,7 +13,7 @@ WORKDIR /tmp/patchelf
 RUN bash bootstrap.sh && ./configure && make && make install && rm -r /tmp/patchelf
 
 WORKDIR /
-RUN curl -O https://raw.githubusercontent.com/google/jax/18920337f30bd6727062382024746d1d3f7b6fbb/build/build_wheel_docker_entrypoint.sh
+RUN curl -O https://raw.githubusercontent.com/google/jax/762abcf29b4a155c3de325c27ecffa5d4a3da28c/build/build_wheel_docker_entrypoint.sh
 RUN chmod +x /build_wheel_docker_entrypoint.sh
 
 WORKDIR /build
