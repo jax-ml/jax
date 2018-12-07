@@ -36,7 +36,6 @@ from .interpreters import ray
 
 map = safe_map
 
-
 def rayjit(fun, static_argnums=()):
   def f_jitted(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)

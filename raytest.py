@@ -1,7 +1,10 @@
 import os
 
+import ray
 from jax import rayjit
 from jax import grad
+
+ray.init()
 
 @rayjit
 def f(x):
@@ -9,4 +12,4 @@ def f(x):
   return x**2
 
 print f(3.)
-print grad(f)(3.)
+# print grad(f)(3.)
