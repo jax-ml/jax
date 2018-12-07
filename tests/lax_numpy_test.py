@@ -334,6 +334,24 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape=[{}]_axis={}_repeats={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), axis, repeats),
+       "axis": axis, "shape": shape, "dtype": dtype, "repeats": repeats,
+       "rng": jtu.rand_default()}
+      for repeats in [0, 1, 2]
+      for dtype in default_dtypes
+      for shape in all_shapes
+      for axis in [None] + list(range(-len(shape), len(shape)))))
+  def testRepeat(self, axis, shape, dtype, repeats, rng):
+    onp_fun = lambda arg: onp.repeat(arg, repeats=repeats, axis=axis)
+    lnp_fun = lambda arg: lnp.repeat(arg, repeats=repeats, axis=axis)
+
+    args_maker = lambda: [rng(shape, dtype)]
+
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(
           jtu.format_test_name_suffix("", [shape] * len(dtypes), dtypes)),
        "shape": shape, "dtypes": dtypes, "rng": rng}
