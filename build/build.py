@@ -245,7 +245,7 @@ def main():
   args = parser.parse_args()
 
   print(BANNER)
-  os.chdir(os.path.dirname(__file__))
+  os.chdir(os.path.dirname(__file__ or args.prog) or '.')
 
   # Find a working Bazel.
   bazel_path = get_bazel_path(args.bazel_path)

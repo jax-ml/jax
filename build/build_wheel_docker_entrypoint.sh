@@ -1,4 +1,5 @@
-#!/bin/bash -xev
+#!/bin/bash
+set -xev
 if [ ! -d "/dist" ]
 then
   echo "/dist must be mounted to produce output"
@@ -6,10 +7,10 @@ then
 fi
 
 git clone -b binary-distros https://github.com/google/jax /build/jax
-cd /build/jax
+cd /build/jax/build
 
 usage() {
-  echo "usage: ${0##*/} [python2|python3] [cuda-included|cuda|nocuda]"
+  echo "usage: ${0##*/} [py2|py3] [cuda-included|cuda|nocuda]"
   exit 1
 }
 
@@ -19,10 +20,10 @@ then
 fi
 
 case $1 in
-  py2)
+  py3)
     update-alternatives --install /usr/bin/python python /usr/bin/python3 10
     ;;
-  py3)
+  py2)
     ;;
   *)
     usage
@@ -31,7 +32,7 @@ esac
 case $2 in
   cuda-included)
     python build.py --enable_cuda --cudnn_path /usr/lib/x86_64-linux-gnu/
-    python build/include_cuda.py
+    python include_cuda.py
     ;;
   cuda)
     python build.py --enable_cuda --cudnn_path /usr/lib/x86_64-linux-gnu/
@@ -43,5 +44,5 @@ case $2 in
     usage
 esac
 
-python setup.py bdist bdist_wheel
+python setup.py bdist_wheel
 cp -r dist/* /dist
