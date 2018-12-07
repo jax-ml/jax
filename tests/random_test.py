@@ -29,6 +29,7 @@ from jax import random
 from jax import test_util as jtu
 from jax.config import config
 
+config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
 
@@ -48,9 +49,9 @@ class LaxRandomTest(jtu.JaxTestCase):
     statistic = scipy.stats.kstest(samples, cdf).statistic
     self.assertLess(1. - scipy.special.kolmogorov(statistic), fail_prob)
 
-  @parameterized.named_parameters(
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
-      for dtype in [onp.float32, onp.float64])
+      for dtype in [onp.float32, onp.float64]))
   def testNumpyAndXLAAgreeOnFloatEndianness(self, dtype):
     if not FLAGS.jax_enable_x64 and onp.issubdtype(dtype, onp.float64):
       return absltest.unittest.skip("can't test float64 agreement")
@@ -83,9 +84,9 @@ class LaxRandomTest(jtu.JaxTestCase):
         onp.uint32([0x243f6a88, 0x85a308d3]))
     self.assertEqual(expected, result_to_hex(result))
 
-  @parameterized.named_parameters(
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
-      for dtype in [onp.float32, onp.float64])
+      for dtype in [onp.float32, onp.float64]))
   def testRngUniform(self, dtype):
     key = random.PRNGKey(0)
     rand = lambda key: random.uniform(key, (10000,), dtype)
@@ -98,9 +99,9 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckCollisions(samples, onp.finfo(dtype).nmant)
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.uniform().cdf)
 
-  @parameterized.named_parameters(
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
-      for dtype in [onp.int32, onp.int64])
+      for dtype in [onp.int32, onp.int64]))
   def testRngRandint(self, dtype):
     lo = 5
     hi = 10
@@ -117,9 +118,9 @@ class LaxRandomTest(jtu.JaxTestCase):
       self.assertTrue(onp.all(samples < hi))
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.randint(lo, hi).cdf)
 
-  @parameterized.named_parameters(
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
-      for dtype in [onp.float32, onp.float64])
+      for dtype in [onp.float32, onp.float64]))
   def testNormal(self, dtype):
     key = random.PRNGKey(0)
     rand = lambda key: random.normal(key, (10000,), dtype)
@@ -131,9 +132,9 @@ class LaxRandomTest(jtu.JaxTestCase):
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.norm().cdf)
 
-  @parameterized.named_parameters(
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
-      for dtype in [onp.float32, onp.float64, onp.int32, onp.int64])
+      for dtype in [onp.float32, onp.float64, onp.int32, onp.int64]))
   def testShuffle(self, dtype):
     key = random.PRNGKey(0)
     x = onp.arange(100).astype(dtype)
@@ -150,5 +151,4 @@ class LaxRandomTest(jtu.JaxTestCase):
 
 
 if __name__ == "__main__":
-  config.config_with_absl()
   absltest.main()

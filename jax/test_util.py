@@ -18,6 +18,8 @@ from __future__ import print_function
 
 import functools
 import re
+import itertools as it
+import random
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -39,6 +41,10 @@ flags.DEFINE_enum(
     'Describes the device under test in case special consideration is required.'
 )
 
+flags.DEFINE_integer(
+  'num_generated_cases',
+  100,
+  help='Number of generated cases to test')
 
 EPS = 1e-4
 ATOL = 1e-4
@@ -327,7 +333,7 @@ def check_raises(thunk, err_type, msg):
     thunk()
     assert False
   except err_type as e:
-    assert str(e) == msg, "{}\n\n{}\n".format(e, msg)
+    assert str(e).startswith(msg), "\n{}\n\n{}\n".format(e, msg)
 
 def check_raises_regexp(thunk, err_type, pattern):
   try:
@@ -335,6 +341,20 @@ def check_raises_regexp(thunk, err_type, pattern):
     assert False
   except err_type as e:
     assert re.match(pattern, str(e)), "{}\n\n{}\n".format(e, pattern)
+
+random.seed(0) # TODO: consider managing prng state more carefully
+
+def cases_from_list(xs):
+  xs = list(xs)
+  k = min(len(xs), FLAGS.num_generated_cases)
+  return random.sample(xs, k)
+
+def cases_from_gens(*gens):
+  sizes = [1, 3, 10]
+  cases_per_size = int(FLAGS.num_generated_cases / len(sizes)) + 1
+  for size in sizes:
+    for i in xrange(cases_per_size):
+      yield ('_{}_{}'.format(size, i),) + tuple(gen(size) for gen in gens)
 
 
 class JaxTestCase(parameterized.TestCase):
