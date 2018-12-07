@@ -739,6 +739,35 @@ def ones(shape, dtype=onp.dtype("float64")):
   return onp.broadcast_to(onp.ones((), dtype), tuple(shape))
 
 
+@_wraps(onp.repeat)
+def repeat(a, repeats, axis=None):
+  if not isscalar(repeats):
+    raise NotImplementedError(
+        "np.repeat implementation only supports scalar repeats")
+  if axis is None or isscalar(a):
+    a = ravel(a)
+    axis = 0
+  a_shape = list(shape(a))
+  num_dims = len(a_shape)
+  if axis < 0:
+    axis = axis + num_dims
+
+  if axis < 0 or axis >= num_dims:
+    raise ValueError(
+        "axis {} is out of bounds for array of dimension {}".format(
+            axis, num_dims))
+
+  # Broadcasts to [..., X, repeats, ...] and reshapes to [..., X * repeats, ...]
+  broadcast_shape = list(a_shape)
+  broadcast_shape.insert(axis + 1, repeats)
+  broadcast_dims = onp.concatenate((onp.arange(0, axis + 1),
+                                    onp.arange(axis + 2, num_dims + 1)))
+  a_shape[axis] *= repeats
+  return lax.reshape(
+      lax.broadcast_in_dim(a, broadcast_shape, broadcast_dims),
+      a_shape)
+
+
 ### Tensor contraction operations
 
 
@@ -836,7 +865,6 @@ insert = _not_implemented(onp.insert)
 linspace = _not_implemented(onp.linspace)
 nonzero = _not_implemented(onp.nonzero)
 ptp = _not_implemented(onp.ptp)
-repeat = _not_implemented(onp.repeat)
 searchsorted = _not_implemented(onp.searchsorted)
 take = _not_implemented(onp.take)
 trace = _not_implemented(onp.trace)
