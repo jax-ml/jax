@@ -6,7 +6,7 @@ then
   exit 1
 fi
 
-git clone -b binary-distros https://github.com/google/jax /build/jax
+git clone https://github.com/google/jax /build/jax
 cd /build/jax/build
 
 usage() {
