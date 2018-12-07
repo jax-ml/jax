@@ -64,21 +64,40 @@ def linearize(traceable, *primals):
   in_pvals = (pe.PartialVal((None, pack(primals))),
               pe.PartialVal((core.AbstractTuple(tangent_avals), core.unit)))
   jaxpr, out_pval, consts = pe.trace_to_jaxpr(jvpfun, in_pvals)
-  out_pv, out_const = out_pval
-  assert out_pv is None or out_pv[0] is None
-  primal_out = tuple(out_const)[0]
-  return primal_out, out_pval, jaxpr, consts
-
+  pval_primal, pval_tangent = unpair_pval(out_pval)
+  aval_primal, const_primal = pval_primal
+  assert aval_primal is None
+  return const_primal, pval_tangent, jaxpr, consts
 
 def vjp(traceable, primals):
-  out_primal, _, jaxpr, consts = linearize(traceable, *primals)
+  out_primal, pval, jaxpr, consts = linearize(traceable, *primals)
   def vjp_(ct):
+    ct = ignore_consts(ct, pval)
     dummy_primal_and_ct = pack((core.unit, ct))
     _, arg_cts = backward_pass(jaxpr, consts, (), dummy_primal_and_ct)
     return instantiate_zeros(pack(primals), arg_cts[1])
 
   return out_primal, vjp_
 
+def ignore_consts(ct, pval):
+  aval, const = pval
+  if isinstance(aval, core.AbstractValue):
+    return ct
+  elif isinstance(aval, pe.JaxprTracerTuple):
+    return pack(map(ignore_consts, ct, zip(aval, const)))
+  elif aval is None:
+    return core.unit
+  else:
+    raise TypeError(aval)
+
+def unpair_pval(pval):
+  aval, const = pval
+  const_1, const_2 = const
+  if aval is None:
+    return (None, const_1), (None, const_2)
+  else:
+    aval_1, aval_2 = aval
+    return (aval_1, const_1), (aval_2, const_2)
 
 def backward_pass(jaxpr, consts, freevar_vals, cotangent_in):
   def write_cotangent(v, ct):
@@ -116,8 +135,8 @@ def backward_pass(jaxpr, consts, freevar_vals, cotangent_in):
 
     if cts_out is zero:
       cts_out = [zero for _ in eqn.invars]
-    # TODO(phawkins,dougalm): eqn.invars and cts_out can have different lengths
-    for var, ct in builtins.zip(eqn.invars, cts_out):
+
+    for var, ct in zip(eqn.invars, cts_out):
       write_cotangent(var, ct)
 
   cotangents_out = map(read_cotangent, jaxpr.invars)
