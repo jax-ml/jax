@@ -123,18 +123,15 @@ class APITest(jtu.JaxTestCase):
 
   def test_grad_tuple_output(self):
     jtu.check_raises(lambda: grad(lambda x: (x,x))(1.0), TypeError,
-                     "Gradient only defined for scalar-output functions. "
-                     "Output was: (1.0, 1.0)")
+                     "Gradient only defined for scalar-output functions. ")
 
   def test_grad_unit_output(self):
     jtu.check_raises(lambda: grad(lambda x: ())(onp.zeros(3)), TypeError,
-                     "Gradient only defined for scalar-output functions. "
-                     "Output was: ()")
+                     "Gradient only defined for scalar-output functions. ")
 
   def test_grad_nonscalar_output(self):
     jtu.check_raises(lambda: grad(lambda x: x)(onp.zeros(3)), TypeError,
-                     "Gradient only defined for scalar-output functions. "
-                     "Output was: [ 0.  0.  0.]")
+                     "Gradient only defined for scalar-output functions. ")
 
   def test_unwrapped_numpy(self):
     def f(x):

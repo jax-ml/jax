@@ -333,7 +333,7 @@ def check_raises(thunk, err_type, msg):
     thunk()
     assert False
   except err_type as e:
-    assert str(e) == msg, "{}\n\n{}\n".format(e, msg)
+    assert str(e).startswith(msg), "\n{}\n\n{}\n".format(e, msg)
 
 def check_raises_regexp(thunk, err_type, pattern):
   try:
