@@ -149,13 +149,7 @@ primitive_generators = { 1: unary_primitive_generators,
 def gen_nonneg_int(size):
   return npr.randint(size)
 
-choice = npr.choice
-
-def weighted_choice(weighted_choices):
-  weights, choices = unzip2(weighted_choices)
-  return npr_choice(choices, weights)
-
-def npr_choice(xs, weights=None):
+def choice(xs, weights=None):
   # npr.choice isn't actually RS -> [a] -> a
   # because it inspects the components to see if they're array-like
   assert xs
@@ -167,6 +161,10 @@ def npr_choice(xs, weights=None):
     weights = [w / normalizer for w in weights]
     i = npr.choice(range(n), p=weights)
   return xs[i]
+
+def weighted_choice(weighted_choices):
+  weights, choices = unzip2(weighted_choices)
+  return choice(choices, weights)
 
 def gen_sized_subset(xs, size):
   return [npr_choice(xs) for _ in range(size)]
