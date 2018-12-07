@@ -98,7 +98,7 @@ def eval_fun(fun, *args):
 
 counter = it.count()
 def fresh_var(ty):
-  return Var(counter.next(), ty)
+  return Var(next(counter), ty)
 
 def gen_array_type(size):
   # TODO(dougalm): randomize this
