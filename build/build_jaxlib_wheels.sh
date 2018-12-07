@@ -14,13 +14,13 @@ do
   do
     mkdir -p dist/nocuda/
     nvidia-docker run -it --tmpfs /build:exec --rm -v $(pwd)/dist:/dist jaxbuild $PYTHON_VERSION nocuda
-    mv dist/*.whl dist/nocuda/jaxlib-${JAXLIB_VERSION}-${PYTHON_VERSION}-none-linux_x86_64.whl
+    mv dist/*.whl dist/nocuda/jaxlib-${JAXLIB_VERSION}-${PYTHON_VERSION}-none-manylinux1_x86_64.whl
 
     for CUDA_VARIANT in $CUDA_VARIANTS
     do
       mkdir -p dist/cuda${CUDA_VERSION//.}
       nvidia-docker run -it --tmpfs /build:exec --rm -v $(pwd)/dist:/dist jaxbuild $PYTHON_VERSION $CUDA_VARIANT
-      mv dist/*.whl dist/cuda${CUDA_VERSION//.}/jaxlib-${JAXLIB_VERSION}-${PYTHON_VERSION}-none-linux_x86_64.whl
+      mv dist/*.whl dist/cuda${CUDA_VERSION//.}/jaxlib-${JAXLIB_VERSION}-${PYTHON_VERSION}-none-manylinux1_x86_64.whl
     done
   done
 done
