@@ -25,8 +25,8 @@ import numpy as onp
 from . import lax
 from . import numpy as np
 from . import tree_util
-from .lib import xla_bridge
 from .api import jit
+from jax.lib import xla_bridge
 
 
 class PRNGKey(object):
