@@ -491,7 +491,7 @@ from jax.experimental.stax import LogSoftmax
 # Set up network initialization and evaluation functions
 net_init, net_apply = stax.serial(
     Conv(32, (3, 3), padding='SAME'), Relu,
-    Conv(64, (3, 3), padding='SAME'), Relu
+    Conv(64, (3, 3), padding='SAME'), Relu,
     MaxPool((2, 2)), Flatten,
     Dense(128), Relu,
     Dense(10), SoftMax,
