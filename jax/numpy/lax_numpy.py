@@ -616,6 +616,7 @@ def allclose(a, b, rtol=1e-05, atol=1e-08):
 
 
 arange = onp.arange
+eye = onp.eye
 
 
 @_wraps(onp.stack)
