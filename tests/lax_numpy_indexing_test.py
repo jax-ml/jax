@@ -31,6 +31,7 @@ from jax import numpy as lnp
 from jax import test_util as jtu
 from jax.config import config
 
+config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
 # We disable the whitespace continuation check in this file because otherwise it
@@ -60,7 +61,7 @@ def check_grads(f, args, order, atol=None, rtol=None, eps=None):
 class IndexingTest(jtu.JaxTestCase):
   """Tests for Numpy indexing translation rules."""
 
-  @parameterized.named_parameters({
+  @parameterized.named_parameters(jtu.cases_from_list({
       "testcase_name":
           "{}_inshape={}_indexer={}".format(
               name, jtu.format_shape_dtype_string( shape, dtype), indexer),
@@ -152,14 +153,14 @@ class IndexingTest(jtu.JaxTestCase):
           IndexSpec(shape=(3, 4), indexer=()),
       ]),
   ] for shape, indexer in index_specs for dtype in all_dtypes
-                                  for rng in [jtu.rand_default()])
+                                  for rng in [jtu.rand_default()]))
   @jtu.skip_on_devices("tpu")
   def testStaticIndexing(self, shape, dtype, rng, indexer):
     args_maker = lambda: [rng(shape, dtype)]
     fun = lambda x: x[indexer]
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters({
+  @parameterized.named_parameters(jtu.cases_from_list({
       "testcase_name":
           "{}_inshape={}_indexer={}".format(name,
                                             jtu.format_shape_dtype_string(
@@ -231,7 +232,7 @@ class IndexingTest(jtu.JaxTestCase):
       #   IndexSpec(shape=(3, 4), indexer=()),
       #   ]),
   ] for shape, indexer in index_specs for dtype in float_dtypes
-                                  for rng in [jtu.rand_default()])
+                                  for rng in [jtu.rand_default()]))
   @jtu.skip_on_devices("tpu")
   def testStaticIndexingGrads(self, shape, dtype, rng, indexer):
     tol = 1e-2 if onp.finfo(dtype).bits == 32 else None
@@ -255,7 +256,7 @@ class IndexingTest(jtu.JaxTestCase):
     else:
       return idx, lambda x: x
 
-  @parameterized.named_parameters(
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "{}_inshape={}_indexer={}"
        .format(name, jtu.format_shape_dtype_string(shape, dtype), indexer),
        "shape": shape, "dtype": dtype, "rng": rng, "indexer": indexer}
@@ -278,7 +279,7 @@ class IndexingTest(jtu.JaxTestCase):
       ]
       for shape, indexer in index_specs
       for dtype in all_dtypes
-      for rng in [jtu.rand_default()])
+      for rng in [jtu.rand_default()]))
   def testDynamicIndexingWithSlicesErrors(self, shape, dtype, rng, indexer):
     unpacked_indexer, pack_indexer = self._ReplaceSlicesWithTuples(indexer)
 
@@ -290,7 +291,7 @@ class IndexingTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype), unpacked_indexer]
     self.assertRaises(IndexError, lambda: fun(*args_maker()))
 
-  @parameterized.named_parameters(
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "{}_inshape={}_indexer={}"
        .format(name, jtu.format_shape_dtype_string(shape, dtype), indexer),
        "shape": shape, "dtype": dtype, "rng": rng, "indexer": indexer}
@@ -310,7 +311,7 @@ class IndexingTest(jtu.JaxTestCase):
       ]
       for shape, indexer in index_specs
       for dtype in all_dtypes
-      for rng in [jtu.rand_default()])
+      for rng in [jtu.rand_default()]))
   def testDynamicIndexingWithIntegers(self, shape, dtype, rng, indexer):
     unpacked_indexer, pack_indexer = self._ReplaceSlicesWithTuples(indexer)
 
@@ -321,7 +322,7 @@ class IndexingTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype), unpacked_indexer]
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "{}_inshape={}_indexer={}"
        .format(name, jtu.format_shape_dtype_string(shape, dtype), indexer),
        "shape": shape, "dtype": dtype, "rng": rng, "indexer": indexer}
@@ -343,7 +344,7 @@ class IndexingTest(jtu.JaxTestCase):
       ]
       for shape, indexer in index_specs
       for dtype in float_dtypes
-      for rng in [jtu.rand_default()])
+      for rng in [jtu.rand_default()]))
   def DISABLED_testDynamicIndexingWithIntegersGrads(self, shape, dtype, rng, indexer):
     # TODO(mattjj): re-enable (test works but for grad-of-compile, in flux)
     tol = 1e-2 if onp.finfo(dtype).bits == 32 else None
@@ -357,7 +358,7 @@ class IndexingTest(jtu.JaxTestCase):
     arr = rng(shape, dtype)
     check_grads(partial(fun, unpacked_indexer), (arr,), 2, tol, tol, tol)
 
-  @parameterized.named_parameters(
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "{}_inshape={}_indexer={}"
        .format(name, jtu.format_shape_dtype_string(shape, dtype), indexer),
        "shape": shape, "dtype": dtype, "rng": rng, "indexer": indexer}
@@ -409,13 +410,13 @@ class IndexingTest(jtu.JaxTestCase):
       ]
       for shape, indexer in index_specs
       for dtype in all_dtypes
-      for rng in [jtu.rand_default()])
+      for rng in [jtu.rand_default()]))
   def testAdvancedIntegerIndexing(self, shape, dtype, rng, indexer):
     args_maker = lambda: [rng(shape, dtype), indexer]
     fun = lambda x, idx: x[idx]
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "{}_inshape={}_indexer={}"
        .format(name, jtu.format_shape_dtype_string(shape, dtype), indexer),
        "shape": shape, "dtype": dtype, "rng": rng, "indexer": indexer}
@@ -467,14 +468,14 @@ class IndexingTest(jtu.JaxTestCase):
       ]
       for shape, indexer in index_specs
       for dtype in float_dtypes
-      for rng in [jtu.rand_default()])
+      for rng in [jtu.rand_default()]))
   def testAdvancedIntegerIndexingGrads(self, shape, dtype, rng, indexer):
     tol = 1e-2 if onp.finfo(dtype).bits == 32 else None
     arg = rng(shape, dtype)
     fun = lambda x: x[indexer]**2
     check_grads(fun, (arg,), 2, tol, tol, tol)
 
-  @parameterized.named_parameters(
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "{}_inshape={}_indexer={}"
        .format(name, jtu.format_shape_dtype_string(shape, dtype), indexer),
        "shape": shape, "dtype": dtype, "rng": rng, "indexer": indexer}
@@ -530,7 +531,7 @@ class IndexingTest(jtu.JaxTestCase):
       ]
       for shape, indexer in index_specs
       for dtype in all_dtypes
-      for rng in [jtu.rand_default()])
+      for rng in [jtu.rand_default()]))
   def testMixedAdvancedIntegerIndexing(self, shape, dtype, rng, indexer):
     indexer_with_dummies = [e if isinstance(e, onp.ndarray) else ()
                             for e in indexer]
@@ -587,5 +588,4 @@ class IndexingTest(jtu.JaxTestCase):
 
 
 if __name__ == "__main__":
-  config.config_with_absl()
   absltest.main()
