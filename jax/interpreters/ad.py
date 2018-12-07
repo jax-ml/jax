@@ -19,7 +19,7 @@ from __future__ import print_function
 from . import partial_eval as pe
 from . import xla
 from .. import core as core
-from ..core import Trace, Tracer, new_master, get_aval, pack, call_p, Primitive
+from ..core import JaxTuple, Trace, Tracer, new_master, get_aval, pack, call_p, Primitive
 from ..ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval,
                        zeros_like_p, zero, Zero)
 from ..util import unzip2, unzip3, safe_map, safe_zip, partial
