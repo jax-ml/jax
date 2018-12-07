@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
 from collections import namedtuple
 from functools import partial
 import numpy.random as npr
@@ -229,7 +233,7 @@ class GeneratedFunTest(jtu.JaxTestCase):
     try:
       check_all_close(ans, ans_jitted)
     except:
-      print fun
+      print(fun)
       raise
 
   @parameterized.named_parameters(jtu.cases_from_gens(gen_fun_and_types))
