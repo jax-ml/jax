@@ -27,6 +27,8 @@ from absl.testing import parameterized
 import numpy as onp
 import numpy.random as npr
 
+from six.moves import xrange
+
 from . import api
 from .config import flags
 from .util import partial
