@@ -35,6 +35,7 @@ from jax.scipy import misc as lsp_misc
 from jax.scipy import special as lsp_special
 from jax.scipy import stats as lsp_stats
 
+config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
 all_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4)]
@@ -72,14 +73,14 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   def _GetArgsMaker(self, rng, shapes, dtypes):
     return lambda: [rng(shape, dtype) for shape, dtype in zip(shapes, dtypes)]
 
-  @parameterized.named_parameters(
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_axis={}_keepdims={}".format(
           jtu.format_shape_dtype_string(shape, dtype), axis, keepdims),
        "rng": jtu.rand_default(), "shape": shape, "dtype": dtype,
        "axis": axis, "keepdims": keepdims}
       for shape in all_shapes for dtype in float_dtypes
       for axis in range(-len(shape), len(shape))
-      for keepdims in [False, True])
+      for keepdims in [False, True]))
   @jtu.skip_on_flag("jax_xla_backend", "xrt")
   def testLogSumExp(self, rng, shape, dtype, axis, keepdims):
     # TODO(mattjj): test autodiff
@@ -93,7 +94,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": jtu.format_test_name_suffix(
           rec.test_name, shapes, dtypes),
        "rng": rec.rng, "shapes": shapes, "dtypes": dtypes,
@@ -102,7 +103,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
        "lax_op": getattr(lsp_special, rec.name)}
       for rec in JAX_SPECIAL_FUNCTION_RECORDS
       for shapes in CombosWithReplacement(all_shapes, rec.nargs)
-      for dtypes in CombosWithReplacement(rec.dtypes, rec.nargs))
+      for dtypes in CombosWithReplacement(rec.dtypes, rec.nargs)))
   def testScipySpecialFun(self, scipy_op, lax_op, rng, shapes, dtypes, modes):
     # TODO(mattjj): unskip this test combination when real() on tpu is improved
     # TODO(mattjj): test autodiff
@@ -116,13 +117,13 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
                         check_dtypes=False)
     self._CompileAndCheck(lax_op, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": jtu.format_test_name_suffix(
           "", shapes, dtypes),
        "rng": rng, "shapes": shapes, "dtypes": dtypes}
       for shapes in CombosWithReplacement(all_shapes, 3)
       for dtypes in CombosWithReplacement(default_dtypes, 3)
-      for rng in [jtu.rand_default()])
+      for rng in [jtu.rand_default()]))
   @jtu.skip_on_flag("jax_xla_backend", "xrt")
   def testNormLogPdfThreeArgs(self, rng, shapes, dtypes):
     # TODO(mattjj): test autodiff
@@ -135,13 +136,13 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": jtu.format_test_name_suffix(
           "", shapes, dtypes),
        "rng": rng, "shapes": shapes, "dtypes": dtypes}
       for shapes in CombosWithReplacement(all_shapes, 2)
       for dtypes in CombosWithReplacement(default_dtypes, 2)
-      for rng in [jtu.rand_default()])
+      for rng in [jtu.rand_default()]))
   def testNormLogPdfTwoArgs(self, rng, shapes, dtypes):
     # TODO(mattjj): test autodiff
     scale = 0.5
@@ -154,5 +155,4 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
 
 if __name__ == "__main__":
-  config.config_with_absl()
   absltest.main()

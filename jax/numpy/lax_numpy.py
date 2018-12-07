@@ -820,9 +820,10 @@ def _argminmax(op, a, axis):
   return min(mask_idxs, axis)
 
 
-# TODO plan how to handle unsupported ops
 def _not_implemented(fun):
-  return None
+  def wrapped(*args, **kwargs):
+    raise Exception("Numpy function {} not yet implemented".format(fun))
+  return wrapped
 
 argpartition = _not_implemented(onp.argpartition)
 argsort = _not_implemented(onp.argsort)
