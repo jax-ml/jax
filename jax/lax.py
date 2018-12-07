@@ -1790,6 +1790,8 @@ batching.defreducer(reduce_p)
 
 
 def reduce_sum_shape_rule(operand, axes, input_shape):
+  assert operand.shape == input_shape, ('{} != {}'
+                                        .format(operand.shape, input_shape))
   return tuple(onp.delete(operand.shape, axes))
 
 def reduce_sum_translation_rule(c, operand, axes, input_shape):
