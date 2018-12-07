@@ -32,8 +32,23 @@ from .interpreters import partial_eval as pe
 from .interpreters import xla
 from .interpreters import ad
 from .interpreters import batching
+from .interpreters import ray
 
 map = safe_map
+
+
+def rayjit(fun, static_argnums=()):
+  def f_jitted(*args, **kwargs):
+    f = lu.wrap_init(fun, kwargs)
+    dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
+    f, dyn_args = argnums_partial(f, dyn_argnums, args)
+    args_flat, in_trees = unzip2(map(tree_to_jaxtuples, dyn_args))
+    check_args(args_flat)
+    flat_fun, out_tree = flatten_fun(f, in_trees)
+    out_flat = ray.ray_call(flat_fun, *args_flat)
+    return build_tree(out_tree(), out_flat)
+
+  return f_jitted
 
 def jit(fun, static_argnums=()):
   def f_jitted(*args, **kwargs):
