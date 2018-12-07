@@ -42,10 +42,10 @@ class BatchingTest(jtu.JaxTestCase):
 
   def testNestedBatchingMatMat(self):
     def matvec(A, b):
-      return vmap(np.vdot, A, b, in_bdims=(0, None))
+      return vmap(np.vdot, A, b, in_axes=(0, None))
 
     def matmat(A, B):
-      return vmap(matvec, A, B, in_bdims=(None, 1), out_bdim=1)
+      return vmap(matvec, A, B, in_axes=(None, 1), out_axes=1)
 
     R = onp.random.RandomState(0).randn
     A = R(4, 3)
@@ -107,13 +107,13 @@ class BatchingTest(jtu.JaxTestCase):
     def jacbwd(f, x):
       y, pullback = vjp(f, x)
       std_basis = onp.eye(onp.size(y)).reshape((-1,) + onp.shape(y))
-      jac_flat, = vmap(pullback, std_basis, out_bdim=onp.ndim(y))
+      jac_flat, = vmap(pullback, std_basis, out_axes=onp.ndim(y))
       return jac_flat.reshape(onp.shape(y) + onp.shape(x))
 
     def jacfwd(f, x):
       pushfwd = lambda v: jvp(f, (x,), (v,))
       std_basis = onp.eye(onp.size(x)).reshape((-1,) + onp.shape(x))
-      y, jac_flat = vmap(pushfwd, std_basis, out_bdim=(None, 0))
+      y, jac_flat = vmap(pushfwd, std_basis, out_axes=(None, 0))
       return jac_flat.reshape(onp.shape(y) + onp.shape(x))
 
     R = onp.random.RandomState(0).randn
