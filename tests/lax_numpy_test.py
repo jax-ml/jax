@@ -355,7 +355,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, fill_value_dtype),
           onp.dtype(out_dtype).name),
        "shape": shape, "fill_value_dtype": fill_value_dtype,
-       "out_dtype": out_dtype, "rng": jtu.rand_default()})
+       "out_dtype": out_dtype, "rng": jtu.rand_default()}
       for shape in array_shapes
       for fill_value_dtype in default_dtypes
       for out_dtype in default_dtypes))
