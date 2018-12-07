@@ -15,7 +15,7 @@ to any order.
 
 What’s new is that JAX uses
 [XLA](https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/g3doc/overview.md)
-to compile and run your NumPy functions on GPUs and TPUs. Compilation happens
+to compile and run your NumPy programs on GPUs and TPUs. Compilation happens
 under the hood by default, with library calls getting just-in-time compiled and
 executed. But JAX also lets you just-in-time compile your own Python functions
 into XLA-optimized kernels using a one-function API,
@@ -79,7 +79,7 @@ To build XLA with CUDA support, you can run
 ```bash
 python build/build.py --enable_cuda
 pip install -e build  # install jaxlib
-pip install -e .  # install jax
+pip install -e .      # install jax (pure Python)
 ```
 
 See `python build/build.py --help` for configuration options, including ways to
@@ -87,18 +87,18 @@ specify the paths to CUDA and CUDNN, which you must have installed. The build
 also depends on NumPy, and a compiler toolchain corresponding to that of
 Ubuntu 16.04 or newer.
 
-To build XLA without CUDA GPU support (CPU only), just run
+To build XLA without CUDA GPU support (CPU only), drop the `--enable_cuda`:
 
 ```bash
 python build/build.py
 pip install -e build  # install jaxlib
-pip install -e .  # install jax
+pip install -e .      # install jax
 ```
 
-To update to the latest version from GitHub, just run `git pull` from the JAX
-repository root, and rebuild by running `build.py` if necessary. You only have
-to reinstall if new files are added because `pip install -e` sets up symbolic
-links from site-packages into the repository.
+To upgrade to the latest version from GitHub, just run `git pull` from the JAX
+repository root, and rebuild by running `build.py` if necessary. You shouldn't have
+to reinstall because `pip install -e` sets up symbolic links from site-packages
+into the repository.
 
 ### pip installation
 
@@ -121,7 +121,7 @@ cloud VM), you can run
 # install jaxlib
 PYTHON_VERSION=py2  # alternatives: py2, py3
 CUDA_VERSION=cuda92  # alternatives: cuda90, cuda92, cuda100
-PLATFORM=linux_x86_64  # alternatives: linux_x86_64, mac
+PLATFORM=linux_x86_64  # alternatives: linux_x86_64, macosx-10.6-x86_64
 pip install https://storage.googleapis.com/jax-wheels/$CUDA_VERSION/jax-0.1-$PYTHON_VERSION-none-$PLATFORM.whl
 
 pip install jax  # install jax
@@ -159,10 +159,11 @@ What’s happening behind-the-scenes is that JAX is using XLA to just-in-time
 (JIT) compile and execute these individual operations on the GPU. First the
 `random.normal` call is compiled and the array referred to by `x` is generated
 on the GPU. Next, each function called on `x` (namely `transpose`, `dot`, and
-`divide`) is JIT-compiled and executed, each keeping its results on the device.
+`divide`) is individually JIT-compiled and executed, each keeping its results on
+the device.
 It’s only when a value needs to be printed, plotted, saved, or passed into a raw
 NumPy function that a read-only copy of the value is brought back to the host as
-an ndarray and cached. The second call to `dot` is even faster because the
+an ndarray and cached. The second call to `dot` is faster because the
 JIT-compiled code is cached and reused, saving the compilation time.
 
 The fun really starts when you use `grad` for automatic differentiation and
@@ -216,19 +217,19 @@ examples](https://github.com/google/jax/blob/master/examples/).
 
 If you’re using JAX just as an accelerator-backed NumPy, without using `grad` or
 `jit` in your code, then in principle there are no constraints, though some
-NumPy features haven’t been implemented. Generally using `np.dot(A, B)` is
+NumPy functions haven’t been implemented yet. Generally using `np.dot(A, B)` is
 better than `A.dot(B)` because the former gives us more opportunities to run the
 computation on the device. NumPy also does a lot of work to cast any array-like
 function arguments to arrays, as in `np.sum([x, y])`, while `jax.numpy`
 typically requires explicit casting of array arguments, like
 `np.sum(np.array([x, y]))`.
 
-For automatic differentiation with `grad`, JAX has the same basic requirements
+For automatic differentiation with `grad`, JAX has the same restrictions
 as [Autograd](https://github.com/hips/autograd). Specifically, differentiation
 works with indexing (`x = A[i, j, :]`) but not indexed assignment (`A[i, j] =
 x`) or indexed in-place updating (`A[i] += b`). You can use lists, tuples, and
-dicts freely. Using `np.dot(A, B)` rather than `A.dot(B)` is required for
-automatic differentiation when `A` is a raw ndarray.
+dicts freely: jax doesn't even see them. Using `np.dot(A, B)` rather than
+`A.dot(B)` is required for automatic differentiation when `A` is a raw ndarray.
 
 For compiling your own functions with `jit` there are a few more requirements.
 Because `jit` aims to specialize Python functions only on shapes and dtypes
@@ -239,6 +240,11 @@ lax.cond and lax.while. Some indexing features, like slice-based indexing
 `A[i:i+5]` for argument-dependent `i`, or boolean-based indexing `A[bool_ind]`
 for argument-dependent `bool_ind`, produce abstract values of unknown shape and
 are thus unsupported in `jit` functions.
+
+In general, JAX is intended to be used with a functional style of Python
+programming. Functions passed to transformations like `grad` and `jit` are
+expected to be free of side-effects. You can write print statements for
+debugging but they may only be executed once if they're under a `jit` decorator.
 
 > TLDR **Do use**
 >
@@ -270,8 +276,8 @@ You should get loud errors if your code violates any of these.
 
 ## Transformations
 
-JAX is at its core an extensible system for transforming numerical functions.
-Here are three key transformations for machine learning research.
+At its core, JAX is an extensible system for transforming numerical functions.
+We currently expose three important transformations: `grad`, `jit`, and `vmap`.
 
 ### Automatic differentiation with grad
 
@@ -343,8 +349,7 @@ You can mix `jit` and `grad` and any other JAX transformation however you like.
 
 ### Auto-vectorization with vmap
 
-JAX enables more program transformations than just forward- and reverse-mode
-differentiation and compilation. Another example is `vmap`, the vectorizing map.
+`vmap` is the vectorizing map.
 It has the familiar semantics of mapping a function along array axes, but
 instead of keeping the loop on the outside, it pushes the loop down into a
 function’s primitive operations for better performance.
@@ -405,7 +410,7 @@ differentiation for fast Jacobian and Hessian matrix calculations in
 
 ## Random numbers are different
 
-JAX needs a pseudo-random number generator (PRNG) system to provide
+JAX needs a functional pseudo-random number generator (PRNG) system to provide
 reproducible results invariant to compilation boundaries and backends, while
 also maximizing performance by enabling vectorized generation and
 parallelization across random calls. The `numpy.random` library doesn’t have
@@ -451,6 +456,11 @@ By splitting the PRNG key, not only do we avoid having to thread random states
 back out of every function call, but also we can generate multiple random arrays
 in parallel because we can avoid unnecessary sequential dependencies.
 
+There's a gotcha here, which is that it's easy to unintentionally reuse a key
+without splitting. We intend to add a check for this (a sort of dynamic linear
+typing) but for now it's something to be careful about.
+
+
 ## Mini-libraries
 
 JAX provides some small, experimental libraries for machine learning. These
@@ -465,7 +475,7 @@ a single layer or an entire network can be modeled as an `(init_fun, apply_fun)`
 pair. The `init_fun` is used to initialize network parameters and the
 `apply_fun` takes parameters and inputs to produce outputs. There are
 constructor functions for common basic pairs, like `Conv` and `Relu`, and these
-pairs can be composed in serial using `stax.serial` or in parallel using
+pairs can be composed in series using `stax.serial` or in parallel using
 `stax.parallel`.
 
 Here’s an example:
@@ -532,7 +542,7 @@ net_params = minmax.get_params(opt_state)
 
 Programming in machine learning is about expressing and transforming functions.
 Transformations include automatic differentiation, compilation for accelerators,
-and even automatic batching. High-level languages like Python are great for
+and automatic batching. High-level languages like Python are great for
 expressing functions, but usually all we can do with them is apply them. We lose
 access to their internal structure which would let us perform transformations.
 
@@ -558,12 +568,13 @@ tracing in instances of the `Tracer` class, and call the function on them.
 Abstract arguments represent sets of possible values rather than specific
 values: for example, `jit` abstracts ndarray arguments to abstract values that
 represent all ndarrays with the same shape and dtype. In contrast, `grad`
-abstracts ndarray arguments to represent a small neighborhood of the underlying
+abstracts ndarray arguments to represent an infinitesimal neighborhood of the
+underlying
 value. By tracing the Python function on these abstract values, we ensure that
 it’s specialized enough so that it’s tractable to transform, and that it’s still
-general enough so that the transformed result is useful. These transformed
-functions are then lifted back into Python callables in a way that allows them
-to be traced and transformed again as needed.
+general enough so that the transformed result is useful, and possibly reusable.
+These transformed functions are then lifted back into Python callables in a way
+that allows them to be traced and transformed again as needed.
 
 The primitive functions that JAX traces are mostly in 1:1 correspondence with
 [XLA HLO](https://www.tensorflow.org/xla/operation_semantics) and are defined
