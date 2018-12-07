@@ -1,4 +1,5 @@
-#!/bin/bash -xev
+#!/bin/bash
+set -xev
 JAXLIB_VERSION=$(sed -n "s/^ \+version=[']\(.*\)['],$/\\1/p" jax/build/setup.py)
 
 PYTHON_VERSIONS="py2 py3"
