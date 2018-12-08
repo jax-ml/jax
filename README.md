@@ -644,9 +644,14 @@ Some things we don't handle that might surprise NumPy users:
 
 ## Contributors
 
-So far, JAX includes lots of help and contributions from [Peter
-Hawkins](https://github.com/hawkinsp), [Alex
-Wiltschko](http://github.com/alexbw), George Dahl, [Eli
-Bendersky](https://github.com/eliben), Zak Stone, [Alexey
-Radul](https://github.com/axch), Michael Isard, Skye Wanderman-Milne, and many
-others.
+So far, JAX includes lots of help and contributions from
+[Jamie Townsend](https://github.com/j-towns),
+[Peter Hawkins](https://github.com/hawkinsp),
+[Alex Wiltschko](http://github.com/alexbw),
+George Dahl,
+[Eli Bendersky](https://github.com/eliben),
+Zak Stone,
+[Alexey Radul](https://github.com/axch),
+Michael Isard,
+Skye Wanderman-Milne,
+and many others.
