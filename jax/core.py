@@ -53,12 +53,41 @@ class Jaxpr(object):
     return self.__str__()
 
 
-JaxprEqn = namedtuple('JaxprEqn', ['invars', 'outvars', 'primitive',
-                                   'bound_subjaxprs', 'destructure', 'params'])
+_JaxprEqn = namedtuple('JaxprEqn', ['invars', 'outvars', 'primitive',
+                                    'bound_subjaxprs', 'destructure', 'params'])
+class JaxprEqn(object):
+  def __init__(self, invars, outvars, primitive, bound_subjaxprs, destructure,
+               params):
+    self.invars = invars
+    self.outvars = outvars
+    self.primitive = primitive
+    self.bound_subjaxprs = bound_subjaxprs
+    self.destructure = destructure
+    self.params = params
+
+  def __getstate__(self):
+    return (self.primitive.name, self.invars, self.outvars, self.bound_subjaxprs,
+            self.destructure, self.params)
+
+  def __setstate__(self, tup):
+    (name, self.invars, self.outvars, self.bound_subjaxprs, self.destructure,
+     self.params) = tup
+    self.primitive = Primitive.primitives[name]
+
+  def __iter__(self):
+    return iter((self.invars, self.outvars, self.primitive,
+                 self.bound_subjaxprs, self.destructure, self.params))
+
 
 class Primitive(object):
+  primitives = {}
+
   def __init__(self, name):
     self.name = name
+    if name in Primitive.primitives:
+      raise NameError("primitive name already in use: {}".format(name))
+    else:
+      Primitive.primitives[name] = self
 
   def __repr__(self):
     return '{}'.format(self.name)

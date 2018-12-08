@@ -54,8 +54,7 @@ def ray_callable(fun, *abstract_args):
     return lambda *args: ray_fun(jaxpr, consts, *args)
 
 def ray_fun(jaxpr, consts, *args):
-  import jax.numpy as np
-  print(os.getpid())
+  print("worker pid", os.getpid())
   return core.eval_jaxpr(jaxpr, consts, (), *args)
 
 ray_call_p = core.Primitive('ray_call')
