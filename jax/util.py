@@ -153,5 +153,4 @@ class WrapHashably(object):
     return id(self.val)
 
   def __eq__(self, other):
-    return self.val == other.val
-
+    return self.val is other.val
