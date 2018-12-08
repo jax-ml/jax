@@ -1352,15 +1352,18 @@ def concatenate_translation_rule(c, *operands, **kwargs):
 def concatenate_transpose_rule(t, *operands, **kwargs):
   dimension = kwargs.pop('dimension')
   operand_shapes = kwargs.pop('operand_shapes')
-  limit_points = onp.cumsum([shape[dimension] for shape in operand_shapes])
 
-  starts = onp.zeros((len(operands), t.ndim), dtype=int)
-  starts[1:, dimension] = limit_points[:-1]
-  limits = onp.tile(t.shape, (len(operands), 1))
-  limits[:, dimension] = limit_points
+  if t is ad_util.zero:
+    return [ad_util.zero if o is None else None for o in operands]
+  else:
+    limit_points = onp.cumsum([shape[dimension] for shape in operand_shapes])
+    starts = onp.zeros((len(operands), t.ndim), dtype=int)
+    starts[1:, dimension] = limit_points[:-1]
+    limits = onp.tile(t.shape, (len(operands), 1))
+    limits[:, dimension] = limit_points
 
-  return [slice(t, start, limit) if o is None else None
-          for o, start, limit in zip(operands, starts, limits)]
+    return [slice(t, start, limit) if o is None else None
+            for o, start, limit in zip(operands, starts, limits)]
 
 concatenate_p = standard_primitive(
     concatenate_shape_rule, concatenate_dtype_rule, 'concatenate',
