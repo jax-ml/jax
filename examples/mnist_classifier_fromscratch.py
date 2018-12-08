@@ -39,7 +39,7 @@ def init_random_params(scale, layer_sizes, rng=npr.RandomState(0)):
 def predict(params, inputs):
   for w, b in params:
     outputs = np.dot(inputs, w) + b
-    inputs = np.tanh(outputs)
+    outputs = np.tanh(outputs)
   return outputs - logsumexp(outputs, axis=1, keepdims=True)
 
 def loss(params, batch):
