@@ -973,7 +973,7 @@ def _rewriting_take(arr, idx, axis=0):
 
 
 def _is_slice_none(idx):
-  """Return True if idx is equal to slice(None), falsey otherwise."""
+  """Return True if idx is equal to slice(None), False otherwise."""
   if isinstance(idx, slice):
     return idx.start is None and idx.stop is None and idx.step is None
 
@@ -1001,7 +1001,7 @@ def _is_advanced_int_indexer_without_slices(idx):
 
 
 def _is_int(x):
-  """Returns True if x is array-like with integer dtype, falsey otherwise."""
+  """Returns True if x is array-like with integer dtype, False otherwise."""
   return (isinstance(x, int) and not isinstance(x, bool)
           or onp.issubdtype(getattr(x, "dtype", None), onp.integer)
           or isinstance(x, (list, tuple)) and _all(_is_int(e) for e in x))
