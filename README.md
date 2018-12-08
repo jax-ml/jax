@@ -77,8 +77,7 @@ connected to a Google Cloud GPU.
 ## Installation
 JAX is written in pure Python, but it depends on XLA, which needs to be
 compiled and installed as the `jaxlib` package. Use the following instructions
-to [build XLA from source](#building-jax-from-source) or [install a binary
-package with pip](#pip-installation).
+to build JAX from source or install a binary package with pip.
 
 ### Building JAX from source
 First, obtain the JAX source code:
@@ -92,7 +91,7 @@ To build XLA with CUDA support, you can run
 
 ```bash
 python build/build.py --enable_cuda
-pip install -e build  # install jaxlib
+pip install -e build  # install jaxlib (includes XLA)
 pip install -e .      # install jax (pure Python)
 ```
 
@@ -105,7 +104,7 @@ To build XLA without CUDA GPU support (CPU only), drop the `--enable_cuda`:
 
 ```bash
 python build/build.py
-pip install -e build  # install jaxlib
+pip install -e build  # install jaxlib (includes XLA)
 pip install -e .      # install jax
 ```
 
