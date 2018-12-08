@@ -55,6 +55,18 @@ Leary](https://github.com/learyg), and is now developed [in the
 open](https://github.com/google/jax) by a growing number of
 [contributors](#contributors).
 
+### Contents
+* [Quickstart: Colab in the Cloud](#quickstart-colab-in-the-cloud)
+* [Installation](#installation)
+* [A brief tour](#a-brief-tour)
+* [What's supported](#whats-supported)
+* [Transformations](#transformations)
+* [Random numbers are different](#random-numbers-are-different)
+* [Mini-libraries](#mini-libraries)
+* [How it works](#how-it-works)
+* [What we're working on](#what-were-working-on)
+* [Current gotchas](#current-gotchas)
+
 ## Quickstart: Colab in the Cloud
 Jump right in using [a notebook in your
 browser](https://colab.research.google.com/github/google/jax/blob/master/notebooks/quickstart.ipynb)
