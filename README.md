@@ -334,8 +334,8 @@ def abs_val(x):
     return -x
 
 abs_val_grad = grad(abs_val)
-print(abs_val_grad)(1.0)   # prints 1.0
-print(abs_val_grad)(-1.0)  # prints -1.0 (abs_val is re-evaluated)
+print(abs_val_grad(1.0))   # prints 1.0
+print(abs_val_grad(-1.0))  # prints -1.0 (abs_val is re-evaluated)
 ```
 
 ### Compilation with jit
