@@ -163,10 +163,17 @@ def translation_rule(p):
 translations = {}
 
 translations[core.pack_p] = lambda c, *xs: c.Tuple(*xs)
-translations[ad_util.add_jaxvals_p] = lambda c, x, y: c.Add(x, y)
 translations[core.call_p] = lambda c, subc_a1, *a2: c.Call(subc_a1[0],
                                                            subc_a1[1] + a2)
 translations[core.identity_p] = lambda c, x: x
+
+# TODO(mattjj): zeros_like and add_jaxvals should handle any jaxval
+def zeros_like_translation_rule(c, x):
+  x_shape = c.GetShape(x)
+  return c.Broadcast(c.Constant(onp.array(0, x_shape.element_type())),
+                     x_shape.dimensions())
+translations[ad_util.zeros_like_p] = zeros_like_translation_rule
+translations[ad_util.add_jaxvals_p] = lambda c, x, y: c.Add(x, y)
 
 
 def canonicalize_pyval_dtype(x):
