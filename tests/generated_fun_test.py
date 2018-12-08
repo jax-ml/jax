@@ -65,6 +65,7 @@ def gen_function(size, in_types):
       arg_types = [v.vartype for v in arg_vars]
       fun, out_types = gen_function(size / size_reduction_factor, arg_types)
       fun = partial(eval_fun, fun)
+      fun = maybe_jit(fun, len(arg_types))
     else:
       arity = choice(list(primitive_generators))
       arg_vars = gen_sized_subset(cur_vars, arity)
@@ -95,6 +96,10 @@ def eval_fun(fun, *args):
     map(write, out_vars, out_vals)
 
   return map(read, fun.out_vars)
+
+def maybe_jit(f, num_args):
+  static_argnums = thin(range(num_args), 0.5)
+  return jit(f, static_argnums=static_argnums)
 
 counter = it.count()
 def fresh_var(ty):
