@@ -29,7 +29,7 @@ from jax.api import vmap
 from jax.config import config
 from jax.core import unit
 from jax.interpreters import partial_eval as pe
-from jax.util import partial
+from jax.util import partial, curry
 
 import functools as fn
 
@@ -196,13 +196,13 @@ class BatchingTest(jtu.JaxTestCase):
 
   def testDotGeneral(self):
     R = onp.random.RandomState(0).randn
- 
+
     x = R(10, 3, 4, 5)
     y = R(10, 3, 5, 6)
     ans = vmap(lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))]), x, y)
     expected = lax.dot_general(x, y, [((3,), (2,)), ((0, 1), (0, 1))])
     self.assertAllClose(ans, expected, check_dtypes=True)
- 
+
     x = R(3, 4, 10, 5)
     y = R(3, 10, 5, 6)
     ans = vmap(lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))]), x, y,
@@ -210,7 +210,7 @@ class BatchingTest(jtu.JaxTestCase):
     fun = lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))])
     expected = onp.stack([fun(x[..., i, :], y[:, i, ...]) for i in range(10)])
     self.assertAllClose(ans, expected, check_dtypes=True)
- 
+
     x = R(3, 4, 5, 10)
     y = R(3, 5, 6)
     ans = vmap(lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))]), x, y,
@@ -218,7 +218,7 @@ class BatchingTest(jtu.JaxTestCase):
     fun = lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))])
     expected = onp.stack([fun(x[..., i], y) for i in range(10)])
     self.assertAllClose(ans, expected, check_dtypes=True)
- 
+
     x = R(3, 4, 5)
     y = R(3, 5, 10, 6)
     ans = vmap(lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))]), x, y,
@@ -226,6 +226,23 @@ class BatchingTest(jtu.JaxTestCase):
     fun = lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))])
     expected = onp.stack([fun(x, y[..., i, :]) for i in range(10)])
     self.assertAllClose(ans, expected, check_dtypes=True)
+
+  def testDot(self):
+    # these tests are based on @shoyer's notebook studying gufuncs
+    curried_vmap = curry(vmap)
+
+    def vecvec(a, b):
+      dot = np.dot
+      for ndim in range(1, max(a.ndim, b.ndim)):
+        a_ax = 0 if a.ndim > ndim else None
+        b_ax = 0 if b.ndim > ndim else None
+        dot = curried_vmap(dot, in_axes=(a_ax, b_ax))
+      return dot(a, b)
+
+    assert vecvec(np.zeros((3,)), np.zeros((3,))).shape == ()
+    assert vecvec(np.zeros((2, 3)), np.zeros((3,))).shape == (2,)
+    # TODO(mattjj): this fails due to an xla error in dot_general
+    # assert vecvec(np.zeros((4, 2, 3)), np.zeros((3,))).shape == (4, 2)
 
 
 if __name__ == '__main__':
