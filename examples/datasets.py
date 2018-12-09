@@ -23,7 +23,7 @@ import gzip
 import os
 from os import path
 import struct
-import urllib2
+from six.moves.urllib.request import urlretrieve
 
 import numpy as np
 
@@ -37,9 +37,8 @@ def _download(url, filename):
     os.makedirs(_DATA)
   out_file = path.join(_DATA, filename)
   if not path.isfile(out_file):
-    with open(out_file, "wb") as f:
-      f.write(urllib2.urlopen(url, out_file).read())
-      print("downloaded {} to {}".format(url, _DATA))
+    urlretrieve(url, out_file)
+    print("downloaded {} to {}".format(url, _DATA))
 
 
 def _partial_flatten(x):
