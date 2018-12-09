@@ -57,7 +57,6 @@ def grad(fun, argnums=0):
     g = vjp_py(onp.ones((), onp.result_type(ans)))
     return g[0] if isinstance(argnums, int) else g
 
-
   return grad_f
 
 @curry
