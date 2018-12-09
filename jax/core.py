@@ -28,9 +28,9 @@ from .util import unzip2, safe_zip, safe_map, partial
 from .pprint_util import pp, vcat, hcat, pp_kv_pairs
 
 # TODO(dougalm): the trace cache breaks the leak detector. Consisder solving.
-# TODO(mattjj): put each of these behind flags
 check_leaks = False
-skip_checks = True  # not __debug__  # google doesn't use -O
+# TODO(dougalm): put this behind a flag that's enabled during testing
+skip_checks = False  # not __debug__  # google doesn't use -O
 
 zip = safe_zip
 map = safe_map
@@ -435,7 +435,9 @@ pytype_aval_mappings = {}
 
 class JaxTuple(tuple):
   def __new__(cls, xs):
-    assert skip_checks or all(map(valid_jaxtype, xs)), xs
+    if not skip_checks:
+      xs = list(xs)
+      assert all(map(valid_jaxtype, xs)), xs
     return tuple.__new__(cls, xs)
 
   def __repr__(self):

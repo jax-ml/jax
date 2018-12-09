@@ -31,9 +31,7 @@ def jax_test(
             fail("Only one test source file is currently supported.")
 
     # Deps that are linked into all test target variants.
-    all_test_deps = [
-        ":libjax",
-    ]
+    all_test_deps = []
     disabled_tags = ["manual", "notap", "disabled"]
     native.py_test(
         name = name + "_cpu",
@@ -45,33 +43,33 @@ def jax_test(
         args = args + ["--jax_enable_x64=true --jax_test_dut=cpu --jax_platform_name=Host"],
         tags = (disabled_tags if "cpu" in disable else []),
     )
-    native.py_test(
-        name = name + "_cpu_x32",
-        main = main,
-        srcs = srcs,
-        data = data,
-        deps = deps + all_test_deps,
-        shard_count = shard_count.get("cpu") if shard_count else None,
-        args = args + ["--jax_enable_x64=false --jax_test_dut=cpu --jax_platform_name=Host"],
-        tags = (disabled_tags if "cpu" in disable else []),
-    )
-    native.py_test(
-        name = name + "_gpu",
-        main = main,
-        srcs = srcs,
-        data = data,
-        args = args + ["--jax_test_dut=gpu --jax_enable_x64=true --jax_platform_name=CUDA"],
-        deps = deps + all_test_deps,
-        tags = ["requires-gpu-sm35"] + (disabled_tags if "gpu" in disable else []),
-        shard_count = shard_count.get("gpu") if shard_count else None,
-    )
-    native.py_test(
-        name = name + "_gpu_x32",
-        main = main,
-        srcs = srcs,
-        data = data,
-        args = args + ["--jax_test_dut=gpu --jax_enable_x64=false --jax_platform_name=CUDA"],
-        deps = deps + all_test_deps,
-        tags = ["requires-gpu-sm35"] + (disabled_tags if "gpu" in disable else []),
-        shard_count = shard_count.get("gpu") if shard_count else None,
-    )
+    # native.py_test(
+    #     name = name + "_cpu_x32",
+    #     main = main,
+    #     srcs = srcs,
+    #     data = data,
+    #     deps = deps + all_test_deps,
+    #     shard_count = shard_count.get("cpu") if shard_count else None,
+    #     args = args + ["--jax_enable_x64=false --jax_test_dut=cpu --jax_platform_name=Host"],
+    #     tags = (disabled_tags if "cpu" in disable else []),
+    # )
+    # native.py_test(
+    #     name = name + "_gpu",
+    #     main = main,
+    #     srcs = srcs,
+    #     data = data,
+    #     args = args + ["--jax_test_dut=gpu --jax_enable_x64=true --jax_platform_name=CUDA"],
+    #     deps = deps + all_test_deps,
+    #     tags = ["requires-gpu-sm35"] + (disabled_tags if "gpu" in disable else []),
+    #     shard_count = shard_count.get("gpu") if shard_count else None,
+    # )
+    # native.py_test(
+    #     name = name + "_gpu_x32",
+    #     main = main,
+    #     srcs = srcs,
+    #     data = data,
+    #     args = args + ["--jax_test_dut=gpu --jax_enable_x64=false --jax_platform_name=CUDA"],
+    #     deps = deps + all_test_deps,
+    #     tags = ["requires-gpu-sm35"] + (disabled_tags if "gpu" in disable else []),
+    #     shard_count = shard_count.get("gpu") if shard_count else None,
+    # )
