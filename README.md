@@ -648,8 +648,11 @@ Some things we don't handle that might surprise NumPy users:
 So far, JAX includes lots of help and contributions from
 [Jamie Townsend](https://github.com/j-towns),
 [Peter Hawkins](https://github.com/hawkinsp),
+[Jonathan Ragan-Kelley](https://people.eecs.berkeley.edu/~jrk/),
 [Alex Wiltschko](http://github.com/alexbw),
 George Dahl,
+[Stephan Hoyer](http://stephanhoyer.com/),
+Sam Schoenholz,
 [Eli Bendersky](https://github.com/eliben),
 Zak Stone,
 [Alexey Radul](https://github.com/axch),
