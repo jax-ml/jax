@@ -1112,6 +1112,7 @@ def dot_batch_rule(batched_args, batch_dims):
   lbd, rbd = batch_dims
   T = lambda x: transpose(x, onp.arange(onp.ndim(x))[::-1])
 
+  # in some cases, we can call dot instead of dot_general
   if max(onp.ndim(lhs), onp.ndim(rhs)) <= 2:
     if rbd is None:
       assert lbd in (0, 1)
@@ -1127,7 +1128,13 @@ def dot_batch_rule(batched_args, batch_dims):
       else:
         return dot(rhs, T(lhs)), 0
 
-    assert False  # unreachable
+    assert lbd is not None and rbd is not None
+    assert lhs.ndim == rhs.ndim == 2  # dot only supports rank 1 and above
+    if lbd != 0:
+      batching.move_dim_to_front(lhs, lbd)
+    if rbd != 0:
+      batching.move_dim_to_front(rhs, rbd)
+    return dot_general(lhs, rhs, [((1,), (1,)), ((0,), (0,))])
 
   if lbd is None:
     assert rbd is not None
