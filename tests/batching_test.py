@@ -194,6 +194,39 @@ class BatchingTest(jtu.JaxTestCase):
 
       self.assertAllClose(ans[i], expected_ans, check_dtypes=False)
 
+  def testDotGeneral(self):
+    R = onp.random.RandomState(0).randn
+ 
+    x = R(10, 3, 4, 5)
+    y = R(10, 3, 5, 6)
+    ans = vmap(lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))]), x, y)
+    expected = lax.dot_general(x, y, [((3,), (2,)), ((0, 1), (0, 1))])
+    self.assertAllClose(ans, expected, check_dtypes=True)
+ 
+    x = R(3, 4, 10, 5)
+    y = R(3, 10, 5, 6)
+    ans = vmap(lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))]), x, y,
+               in_axes=(2, 1))
+    fun = lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))])
+    expected = onp.stack([fun(x[..., i, :], y[:, i, ...]) for i in range(10)])
+    self.assertAllClose(ans, expected, check_dtypes=True)
+ 
+    x = R(3, 4, 5, 10)
+    y = R(3, 5, 6)
+    ans = vmap(lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))]), x, y,
+               in_axes=(3, None))
+    fun = lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))])
+    expected = onp.stack([fun(x[..., i], y) for i in range(10)])
+    self.assertAllClose(ans, expected, check_dtypes=True)
+ 
+    x = R(3, 4, 5)
+    y = R(3, 5, 10, 6)
+    ans = vmap(lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))]), x, y,
+               in_axes=(None, 2))
+    fun = lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))])
+    expected = onp.stack([fun(x, y[..., i, :]) for i in range(10)])
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
 
 if __name__ == '__main__':
   config.config_with_absl()
