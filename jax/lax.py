@@ -1231,14 +1231,41 @@ def dot_general_transpose_rhs(g, x, dimension_numbers):
   return dot_general_transpose_lhs(g, x, swapped_dimension_numbers, True)
 
 
-# def dot_general_batch_rule(batched_args, batch_dims, dimension_numbers):
-#   assert False  # TODO
+def dot_general_batch_rule(batched_args, batch_dims, dimension_numbers):
+  (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
+  lhs, rhs = batched_args
+  lbd, rbd = batch_dims
+  assert lbd is not None or rbd is not None
+
+  if lbd is not None:
+    if lbd != 0:
+      lhs = batching.move_dim_to_front(lhs, lbd)
+      lbd = 0
+  else:
+    assert rbd is not None
+    lhs = broadcast(lhs, (rhs.shape[rbd],))
+  lhs_contract = tuple(onp.add(1, lhs_contract))
+  lhs_batch = (0,) + tuple(onp.add(1, lhs_batch))
+
+  if rbd is not None:
+    if rbd != 0:
+      rhs = batching.move_dim_to_front(rhs, rbd)
+      rbd = 0
+  else:
+    assert lbd is not None
+    rhs = broadcast(rhs, (lhs.shape[lbd],))
+  rhs_contract = tuple(onp.add(1, rhs_contract))
+  rhs_batch = (0,) + tuple(onp.add(1, rhs_batch))
+
+  new_dimension_numbers = [(lhs_contract, rhs_contract), (lhs_batch, rhs_batch)]
+  batched_out = dot_general(lhs, rhs, new_dimension_numbers)
+  return batched_out, 0
 
 dot_general_p = standard_primitive(dot_general_shape_rule,
                                    dot_general_dtype_rule, 'dot_general')
 ad.defbilinear(dot_general_p,
                dot_general_transpose_lhs, dot_general_transpose_rhs)
-# batching.primitive_batchers[dot_general_p] = dot_general_batch_rule
+batching.primitive_batchers[dot_general_p] = dot_general_batch_rule
 
 
 def broadcast_shape_rule(operand, sizes):
