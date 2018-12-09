@@ -37,7 +37,7 @@ from .tree_util import tree_multimap, tree_all, tree_map, tree_reduce
 FLAGS = flags.FLAGS
 flags.DEFINE_enum(
     'jax_test_dut',
-    None,
+    'cpu',
     enum_values=['cpu', 'gpu', 'tpu'],
     help=
     'Describes the device under test in case special consideration is required.'
