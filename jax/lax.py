@@ -1797,10 +1797,12 @@ def index_untake_jvp(primals, tangents, axes, jaxpr, consts):
 
 def index_untake_transpose_rule(t, src, dst, *idxs, **kwargs):
   axes = kwargs['axes']
+  t_src = t_dst = None
   if src is None:
     t_src = index_take(t, idxs, axes)
   if dst is None:
     t_dst = t
+
   return [t_src, t_dst] + [None] * len(idxs)
 
 index_untake_p = standard_primitive(
@@ -2121,7 +2123,7 @@ def sort_key_val_jvp(primals, tangents, dimension):
     values_tangents_out = sort_jvp_rule(values_tangents, keys, dimension)
 
   tangents_out = keys_tangents_out, values_tangents_out
-  return core.pack(val_out), core.pack(tangents_out)
+  return core.pack(val_out), ad.TangentTuple(tangents_out)
 
 def sort_key_val_transpose_rule(t, keys, values, dimension):
   t_keys, t_values = t
