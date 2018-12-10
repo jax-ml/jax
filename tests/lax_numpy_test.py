@@ -66,7 +66,7 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("conj", 1, numeric_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("conjugate", 1, numeric_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("equal", 2, default_dtypes, all_shapes, jtu.rand_some_equal(), []),
-    #op_record("exp", 1, numeric_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
+    op_record("exp", 1, numeric_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("floor", 1, float_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("greater", 2, default_dtypes, all_shapes, jtu.rand_some_equal(), []),
     op_record("greater_equal", 2, default_dtypes, all_shapes, jtu.rand_some_equal(), []),
@@ -82,7 +82,7 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("multiply", 2, default_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("negative", 1, default_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("not_equal", 2, default_dtypes, all_shapes, jtu.rand_some_equal(), ["rev"]),
-    #op_record("power", 2, float_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
+    op_record("power", 2, float_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
     op_record("subtract", 2, default_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("tanh", 1, numeric_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("sin", 1, default_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
@@ -125,11 +125,11 @@ JAX_REDUCER_RECORDS = [
     op_record("all", 1, bool_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("any", 1, bool_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("max", 1, default_dtypes, nonempty_shapes, jtu.rand_default(), []),
-    #op_record("mean", 1, default_dtypes, all_shapes, jtu.rand_default(), []),
+    op_record("mean", 1, default_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("min", 1, default_dtypes, nonempty_shapes, jtu.rand_default(), []),
-    #op_record("prod", 1, default_dtypes, all_shapes, jtu.rand_small_positive(), []),
+    op_record("prod", 1, default_dtypes, all_shapes, jtu.rand_small_positive(), []),
     op_record("sum", 1, default_dtypes, all_shapes, jtu.rand_default(), []),
-    #op_record("var", 1, default_dtypes, all_shapes, jtu.rand_default(), []),
+    op_record("var", 1, default_dtypes, all_shapes, jtu.rand_default(), []),
 ]
 
 JAX_ARGMINMAX_RECORDS = [
