@@ -274,8 +274,11 @@ def rand_some_equal():
   rng = npr.RandomState(0)
 
   def post(x):
+    x_ravel = x.ravel()
+    if len(x_ravel) == 0:
+      return x
     flips = rng.rand(*onp.shape(x)) < 0.5
-    return onp.where(flips, x.ravel()[0], x)
+    return onp.where(flips, x_ravel[0], x)
 
   return partial(_rand_dtype, randn, scale=100., post=post)
 

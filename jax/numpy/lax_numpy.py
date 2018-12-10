@@ -113,7 +113,9 @@ def _broadcast_shapes(*shapes):
     return shapes[0]
   ndim = _max(len(shape) for shape in shapes)
   shapes = onp.array([(1,) * (ndim - len(shape)) + shape for shape in shapes])
-  result_shape = onp.max(shapes, axis=0)
+  min_shape = onp.min(shapes, axis=0)
+  max_shape = onp.max(shapes, axis=0)
+  result_shape = onp.where(min_shape == 0, 0, max_shape)
   if not onp.all((shapes == result_shape) | (shapes == 1)):
     raise ValueError("Incompatible shapes for broadcasting: {}"
                      .format(tuple(map(tuple, shapes))))
