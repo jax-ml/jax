@@ -8,7 +8,8 @@ JAX is [Autograd](https://github.com/hips/autograd) and
 [XLA](https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/g3doc/overview.md),
 brought together for high-performance machine learning research.
 
-With its updated version of Autograd, JAX can automatically differentiate native
+With its updated version of [Autograd](https://github.com/hips/autograd),
+JAX can automatically differentiate native
 Python and NumPy functions. It can differentiate through loops, branches,
 recursion, and closures, and it can take derivatives of derivatives of
 derivatives. It supports reverse-mode differentiation (a.k.a. backpropagation)
