@@ -692,7 +692,9 @@ def broadcasting_shape_rule(name, *avals):
   if len({len(shape) for shape in shapes}) != 1:
     msg = '{} got arrays of different rank: {}.'
     raise TypeError(msg.format(name, ', '.join(map(str, map(tuple, shapes)))))
-  result_shape = onp.max(shapes, axis=0)
+  min_shape = onp.min(shapes, axis=0)
+  max_shape = onp.max(shapes, axis=0)
+  result_shape = onp.where(min_shape == 0, 0, max_shape)
   if not onp.all((shapes == result_shape) | (shapes == 1)):
     msg = '{} got incompatible shapes for broadcasting: {}.'
     raise TypeError(msg.format(name, ', '.join(map(str, map(tuple, shapes)))))
