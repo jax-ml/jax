@@ -163,6 +163,7 @@ build --python_path="{python_bin_path}"
 build --action_env TF_NEED_CUDA="{tf_need_cuda}"
 build --action_env CUDA_TOOLKIT_PATH="{cuda_toolkit_path}"
 build --action_env CUDNN_INSTALL_PATH="{cudnn_install_path}"
+build --distinct_host_configuration=false
 build:opt --copt=-march=native
 build:opt --copt=-Wno-sign-compare
 build:opt --host_copt=-march=native
