@@ -78,21 +78,18 @@ def jacrev(fun, x):
 def hessian(fun):
   return jacfwd(jacrev(fun))
 
-def vmap(fun, *args, **kwargs):
-  in_axes = kwargs.pop("in_axes", 0)
-  out_axes = kwargs.pop("out_axes", 0)
-  if kwargs:
-    msg = "vmap keyword args must be 'in_axes' and/or 'out_axes', got {}."
-    raise TypeError(msg.format(', '.join(kwargs)))
+def vmap(fun, in_axes=0, out_axes=0):
 
-  if type(in_axes) is int:
-    in_axes = (in_axes,) * len(args)
-  if not isinstance(fun, lu.WrappedFun):
-    fun = lu.wrap_init(fun)
-  in_flat, in_trees = unzip2(map(tree_to_jaxtuples, args))
-  flat_fun, out_tree = flatten_fun(fun, in_trees)
-  out_flat = batching.batch(flat_fun, in_flat, in_axes, out_axes)
-  return build_tree(out_tree(), out_flat)
+  def batched_fun(*args, **kwargs):
+    if not isinstance(fun, lu.WrappedFun):
+      f = lu.wrap_init(fun)
+    in_axes_ = (in_axes,) * len(args) if type(in_axes) is int else in_axes
+    in_flat, in_trees = unzip2(map(tree_to_jaxtuples, args))
+    flat_fun, out_tree = flatten_fun(f, in_trees)
+    out_flat = batching.batch(flat_fun, in_flat, in_axes_, out_axes)
+    return build_tree(out_tree(), out_flat)
+
+  return batched_fun
 
 def jvp(fun, primals, tangents):
   def flatten_arg(primal, tangent):
