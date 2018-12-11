@@ -47,8 +47,7 @@ def logprob_fun(params, inputs, targets):
   return np.sum((preds - targets)**2)
 
 grad_fun = jit(grad(logprob_fun))  # compiled gradient evaluation function
-perex_grads = jit(lambda params, inputs, targets:  # fast per-example gradients
-                  vmap(partial(grad_fun, params), inputs, targets))
+perex_grads = jit(vmap(grad_fun, in_axes=(None, 0, 0)))  # fast per-example grads
 ```
 
 JAX started as a research project by [Matt Johnson](https://github.com/mattjj),
@@ -400,7 +399,9 @@ The `vmap` function does that transformation for us. That is, if we write
 
 ```python
 from jax import vmap
-predictions = vmap(partial(predict, params), input_batch)
+predictions = vmap(partial(predict, params))(input_batch)
+# or, alternatively
+predictions = vmap(predict, in_axes=(None, 0))(input_batch)
 ```
 
 then the `vmap` function will push the outer loop inside the function, and our
@@ -414,7 +415,7 @@ of parameters, we want to compute the gradient of our loss function evaluated
 separately at each example in a batch. With `vmap`, it’s easy:
 
 ```python
-per_example_gradients = vmap(partial(grad(loss), params), inputs, targets)
+per_example_gradients = vmap(partial(grad(loss), params))(inputs, targets)
 ```
 
 Of course, `vmap` can be arbitrarily composed with `jit`, `grad`, and any other
