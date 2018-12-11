@@ -344,7 +344,7 @@ def zero_jvp(primitive, primals, tangents, **params):
   return primitive.bind(*primals, **params), zero
 
 
-deflinear(zeros_like_p, lambda t: (zeros_like_jaxval(t),))
+deflinear(zeros_like_p, lambda t: [zero])
 deflinear(core.identity_p, lambda t: (t,))
 deflinear(core.pack_p, lambda t: list(t) if t is not zero else zero)
 deflinear(add_jaxvals_p, lambda t: (t, t))

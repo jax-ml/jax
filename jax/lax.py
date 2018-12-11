@@ -808,7 +808,7 @@ real_p = unop(_fixed_dtype(onp.float32), _complex, 'real')
 ad.deflinear(real_p, lambda t: [complex(t, onp.zeros((), onp.float32))])
 
 imag_p = unop(_fixed_dtype(onp.float32), _complex, 'imag')
-ad.deflinear(imag_p, lambda t: [complex(onp.zeros((), onp.float32), neg(t))])
+ad.deflinear(imag_p, lambda t: [complex(onp.zeros((), onp.float32), t)])
 
 complex_p = standard_binop([_f32, _f32], 'complex')
 ad.deflinear(complex_p, lambda t: [real(t), imag(t)])
