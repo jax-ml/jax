@@ -19,6 +19,8 @@ from __future__ import print_function
 import functools
 import itertools as it
 from operator import mul
+import types
+import numpy as onp
 
 allow_memoize_hash_failures = False
 
@@ -154,3 +156,21 @@ class WrapHashably(object):
 
   def __eq__(self, other):
     return self.val is other.val
+
+
+
+def get_module_functions(module):
+  """Finds functions in module.
+  Args:
+    module: A Python module.
+  Returns:
+    module_fns: A set of functions, builtins or ufuncs in `module`.
+  """
+
+  module_fns = set()
+  for key in dir(module):
+    attr = getattr(module, key)
+    if isinstance(
+        attr, (types.BuiltinFunctionType, types.FunctionType, onp.ufunc)):
+      module_fns.add(attr)
+  return module_fns
