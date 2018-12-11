@@ -19,13 +19,15 @@ from __future__ import print_function
 from six.moves import builtins
 
 import six
+import math
 import numpy as onp
 
 from .. import core
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
 from ..interpreters.xla import DeviceArray
-import jax.lax as lax
+from .. import lax
 from ..util import memoize
+from ..util import get_module_functions
 from ..lib import xla_bridge
 
 # To provide the same module-level names as Numpy, we need to redefine builtins
@@ -170,6 +172,8 @@ def _promote_args_like(op, *args):
 def _constant_like(x, const):
   return onp.array(const, dtype=_dtype(x))
 
+# A dictionary mapping implemented funcs to their lax equivalent.
+IMPLEMENTED_FUNCS = {}
 
 def _wraps(fun):
   """Like functools.wraps but works with numpy.ufuncs."""
@@ -183,6 +187,7 @@ def _wraps(fun):
       op.__name__ = fun.__name__
       op.__doc__ = docstr
     finally:
+      IMPLEMENTED_FUNCS[fun] = op
       return op
   return wrap
 
@@ -856,21 +861,12 @@ def _not_implemented(fun):
     raise Exception("Numpy function {} not yet implemented".format(fun))
   return wrapped
 
-argpartition = _not_implemented(onp.argpartition)
-argsort = _not_implemented(onp.argsort)
-compress = _not_implemented(onp.compress)
-cumprod = _not_implemented(onp.cumprod)
-cumsum = _not_implemented(onp.cumsum)
-delete = _not_implemented(onp.delete)
-diagonal = _not_implemented(onp.diagonal)
-insert = _not_implemented(onp.insert)
-linspace = _not_implemented(onp.linspace)
-nonzero = _not_implemented(onp.nonzero)
-ptp = _not_implemented(onp.ptp)
-searchsorted = _not_implemented(onp.searchsorted)
-take = _not_implemented(onp.take)
-trace = _not_implemented(onp.trace)
-
+# Build a set of all unimplemented NumPy functions.
+# TODO(alexbw): deal with numpy.random
+UNIMPLEMENTED_FUNCS = get_module_functions(onp) - set(IMPLEMENTED_FUNCS)
+for func in UNIMPLEMENTED_FUNCS:
+  if func.__name__ not in globals():
+    globals()[func.__name__] = _not_implemented(func)
 
 ### Indexing
 
@@ -1129,3 +1125,4 @@ setattr(DeviceArray, "T", property(transpose))
 
 # Extra methods that are handy
 setattr(DeviceArray, "broadcast", lax.broadcast)
+
