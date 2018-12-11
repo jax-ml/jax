@@ -19,7 +19,6 @@ from __future__ import print_function
 from six.moves import builtins
 
 import six
-import math
 import numpy as onp
 
 from .. import core
@@ -862,7 +861,6 @@ def _not_implemented(fun):
   return wrapped
 
 # Build a set of all unimplemented NumPy functions.
-# TODO(alexbw): deal with numpy.random
 UNIMPLEMENTED_FUNCS = get_module_functions(onp) - set(IMPLEMENTED_FUNCS)
 for func in UNIMPLEMENTED_FUNCS:
   if func.__name__ not in globals():
@@ -1125,4 +1123,3 @@ setattr(DeviceArray, "T", property(transpose))
 
 # Extra methods that are handy
 setattr(DeviceArray, "broadcast", lax.broadcast)
-
