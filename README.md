@@ -401,7 +401,7 @@ The `vmap` function does that transformation for us. That is, if we write
 from jax import vmap
 predictions = vmap(partial(predict, params))(input_batch)
 # or, alternatively
-predictions = vmap(predict, in_axes=(None, 0))(input_batch)
+predictions = vmap(predict, in_axes=(None, 0))(params, input_batch)
 ```
 
 then the `vmap` function will push the outer loop inside the function, and our
