@@ -31,21 +31,16 @@ from jax.core import unit
 from jax.interpreters import partial_eval as pe
 from jax.util import partial, curry
 
-import functools as fn
-
 class BatchingTest(jtu.JaxTestCase):
 
   def testConstantFunction(self):
-    ans = vmap(lambda x: 3, onp.ones(4))
+    ans = vmap(lambda x: 3)(onp.ones(4))
     expected = 3 * onp.ones(4)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testNestedBatchingMatMat(self):
-    def matvec(A, b):
-      return vmap(np.vdot, A, b, in_axes=(0, None))
-
-    def matmat(A, B):
-      return vmap(matvec, A, B, in_axes=(None, 1), out_axes=1)
+    matvec = vmap(np.vdot, in_axes=(0, None))
+    matmat = vmap(matvec, in_axes=(None, 1), out_axes=1)
 
     R = onp.random.RandomState(0).randn
     A = R(4, 3)
@@ -94,7 +89,7 @@ class BatchingTest(jtu.JaxTestCase):
     target_batch = R(5, 4)
     batch = (input_batch, target_batch)
 
-    ans = vmap(partial(grad(loss), params), batch)
+    ans = vmap(partial(grad(loss), params))(batch)
 
     for ans_pair, param_pair in zip(ans, params):
       dW, db = ans_pair
@@ -107,13 +102,13 @@ class BatchingTest(jtu.JaxTestCase):
     def jacbwd(f, x):
       y, pullback = vjp(f, x)
       std_basis = onp.eye(onp.size(y)).reshape((-1,) + onp.shape(y))
-      jac_flat, = vmap(pullback, std_basis, out_axes=onp.ndim(y))
+      jac_flat, = vmap(pullback, out_axes=onp.ndim(y))(std_basis)
       return jac_flat.reshape(onp.shape(y) + onp.shape(x))
 
     def jacfwd(f, x):
       pushfwd = lambda v: jvp(f, (x,), (v,))
       std_basis = onp.eye(onp.size(x)).reshape((-1,) + onp.shape(x))
-      y, jac_flat = vmap(pushfwd, std_basis, out_axes=(None, 0))
+      y, jac_flat = vmap(pushfwd, out_axes=(None, 0))(std_basis)
       return jac_flat.reshape(onp.shape(y) + onp.shape(x))
 
     R = onp.random.RandomState(0).randn
@@ -133,7 +128,7 @@ class BatchingTest(jtu.JaxTestCase):
       side.append(None)
       return x + x
 
-    g = jit(lambda x: vmap(f, x))
+    g = jit(vmap(f))
     self.assertAllClose(g(onp.ones(2)), 2 * onp.ones(2), check_dtypes=False)
     self.assertEqual(len(side), 1)
     self.assertAllClose(g(2 * onp.ones(2)), 4 * onp.ones(2),
@@ -145,7 +140,7 @@ class BatchingTest(jtu.JaxTestCase):
     R = onp.random.RandomState(0).randn
     x = R(5, 10)
 
-    ans = vmap(fun, x)
+    ans = vmap(fun)(x)
     expected_ans = x[:, 2:4]
     self.assertAllClose(ans, expected_ans, check_dtypes=False)
 
@@ -154,7 +149,7 @@ class BatchingTest(jtu.JaxTestCase):
     R = onp.random.RandomState(0).randn
     x = R(10, 5, 3, 7)
 
-    ans = vmap(fun, x)
+    ans = vmap(fun)(x)
     expected_ans = x[:, :, 2]
     self.assertAllClose(ans, expected_ans, check_dtypes=False)
 
@@ -163,7 +158,7 @@ class BatchingTest(jtu.JaxTestCase):
     R = onp.random.RandomState(0).randn
     x = R(10, 5, 3, 7)
 
-    ans = vmap(fun, x)
+    ans = vmap(fun)(x)
     expected_ans = onp.maximum(x, 0.0)
     self.assertAllClose(ans, expected_ans, check_dtypes=False)
 
@@ -171,7 +166,7 @@ class BatchingTest(jtu.JaxTestCase):
     R = onp.random.RandomState(0).randn
     x = R(10, 5, 3, 7)
 
-    ans = vmap(lambda x: x > 1.0, x)
+    ans = vmap(lambda x: x > 1.0)(x)
     expected_ans = x > 1.0
     self.assertAllClose(ans, expected_ans, check_dtypes=True)
 
@@ -182,7 +177,7 @@ class BatchingTest(jtu.JaxTestCase):
 
     fun = lambda W, x: np.sum(np.maximum(np.dot(x, W), 0.0) ** 2)
 
-    ans = vmap(fn.partial(grad(fun), W), x)
+    ans = vmap(partial(grad(fun), W))(x)
 
     W_t = np.transpose(W)
     for i in range(10):
@@ -199,44 +194,44 @@ class BatchingTest(jtu.JaxTestCase):
 
     x = R(10, 3, 4, 5)
     y = R(10, 3, 5, 6)
-    ans = vmap(lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))]), x, y)
+    fun = lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))])
+    ans = vmap(fun)(x, y)
     expected = lax.dot_general(x, y, [((3,), (2,)), ((0, 1), (0, 1))])
     self.assertAllClose(ans, expected, check_dtypes=True)
 
     x = R(3, 4, 10, 5)
     y = R(3, 10, 5, 6)
-    ans = vmap(lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))]), x, y,
-               in_axes=(2, 1))
+    fun = lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))])
+    ans = vmap(fun, in_axes=(2, 1))(x, y)
     fun = lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))])
     expected = onp.stack([fun(x[..., i, :], y[:, i, ...]) for i in range(10)])
     self.assertAllClose(ans, expected, check_dtypes=True)
 
     x = R(3, 4, 5, 10)
     y = R(3, 5, 6)
-    ans = vmap(lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))]), x, y,
-               in_axes=(3, None))
+    fun = lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))])
+    ans = vmap(fun, in_axes=(3, None))(x, y)
     fun = lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))])
     expected = onp.stack([fun(x[..., i], y) for i in range(10)])
     self.assertAllClose(ans, expected, check_dtypes=True)
 
     x = R(3, 4, 5)
     y = R(3, 5, 10, 6)
-    ans = vmap(lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))]), x, y,
-               in_axes=(None, 2))
+    fun = lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))])
+    ans = vmap(fun, in_axes=(None, 2))(x, y)
     fun = lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))])
     expected = onp.stack([fun(x, y[..., i, :]) for i in range(10)])
     self.assertAllClose(ans, expected, check_dtypes=True)
 
   def testDot(self):
     # these tests are based on @shoyer's notebook studying gufuncs
-    curried_vmap = curry(vmap)
 
     def vecvec(a, b):
       dot = np.dot
       for ndim in range(1, max(a.ndim, b.ndim)):
         a_ax = 0 if a.ndim > ndim else None
         b_ax = 0 if b.ndim > ndim else None
-        dot = curried_vmap(dot, in_axes=(a_ax, b_ax))
+        dot = vmap(dot, in_axes=(a_ax, b_ax))
       return dot(a, b)
 
     assert vecvec(np.zeros((3,)), np.zeros((3,))).shape == ()
