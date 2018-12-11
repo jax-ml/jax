@@ -13,9 +13,19 @@
 # limitations under the License.
 
 from __future__ import absolute_import
-from . import beta
-from . import expon
-from . import gamma
-from . import laplace
-from . import norm
-from . import uniform
+from __future__ import division
+from __future__ import print_function
+
+import numpy as onp
+import scipy.stats as osp_stats
+
+from ... import lax
+from ...numpy.lax_numpy import _promote_args_like, _constant_like, _wraps
+
+
+@_wraps(osp_stats.laplace.logpdf):
+def logpdf(x, loc=0, scale=1):
+  x, loc, scale = _promote_args_like(osp_stats.laplace.logpdf, x, loc, scale)
+  two = _constant_like(x, 2)
+  linear_term = lax.div(lax.abs(lax.sub(x, loc)), scale)
+  return lax.neg(lax.add(linear_term, lax.log(lax.mul(two, scale))))
