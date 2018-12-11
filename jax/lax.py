@@ -44,12 +44,6 @@ from .lib import xla_bridge
 _max = builtins.max
 _min = builtins.max
 
-if six.PY3:
-  def maketrans(s1, s2):
-    return s1.maketrans(s1, s2)
-else:
-  maketrans = string.maketrans
-
 ### traceables
 
 def neg(x): return neg_p.bind(x)
@@ -126,28 +120,20 @@ def concatenate(operands, dimension):
   return concatenate_p.bind(*operands, dimension=dimension,
                             operand_shapes=tuple(o.shape for o in operands))
 
-def conv(lhs, rhs, window_strides, padding):
-  pads = padtype_to_pads(lhs.shape[2:], rhs.shape[2:], window_strides, padding)
-  return conv_general_dilated_p.bind(
-      lhs, rhs, window_strides=tuple(window_strides), padding=tuple(pads),
-      lhs_dilation=(), rhs_dilation=(), dimension_numbers=None,
-      lhs_shape=lhs.shape, rhs_shape=rhs.shape)
-
-def conv_with_general_padding(lhs, rhs, window_strides, padding,
-                              lhs_dilation, rhs_dilation):
-  return conv_general_dilated_p.bind(
-      lhs, rhs, window_strides=tuple(window_strides), padding=tuple(padding),
-      lhs_dilation=(), rhs_dilation=(), dimension_numbers=None,
-      lhs_shape=lhs.shape, rhs_shape=rhs.shape)
-
-def conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation,
-                         rhs_dilation, dimension_numbers):
+def conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation=None,
+                         rhs_dilation=None, dimension_numbers=None):
+  if type(dimension_numbers) is not ConvDimensionNumbers:
+    dimension_numbers = conv_dimension_numbers(
+        lhs.shape, rhs.shape, dimension_numbers)
   if isinstance(padding, str):
-    perms = conv_general_permutations(dimension_numbers)
-    lhs_perm, rhs_perm, _ = perms
-    padding = padtype_to_pads(onp.take(lhs.shape, lhs_perm)[2:],
-                              onp.take(rhs.shape, rhs_perm)[2:],
-                              window_strides, padding)
+    lhs_perm, rhs_perm, _ = dimension_numbers
+    padding = padtype_to_pads(
+        onp.take(lhs.shape, lhs_perm)[2:], onp.take(rhs.shape, rhs_perm)[2:],
+        window_strides, padding)
+  if lhs_dilation is None:
+    lhs_dilation = (1,) * (lhs.ndim - 2)
+  if rhs_dilation is None:
+    rhs_dilation = (1,) * (rhs.ndim - 2)
   return conv_general_dilated_p.bind(
       lhs, rhs, window_strides=tuple(window_strides), padding=tuple(padding),
       lhs_dilation=tuple(lhs_dilation), rhs_dilation=tuple(rhs_dilation),
@@ -403,6 +389,17 @@ opaque_param_ids = itertools.count()
 
 
 ### convenience wrappers around traceables
+
+
+def conv(lhs, rhs, window_strides, padding):
+  pads = padtype_to_pads(lhs.shape[2:], rhs.shape[2:], window_strides, padding)
+  return conv_general_dilated(lhs, rhs, window_strides, padding)
+
+def conv_with_general_padding(lhs, rhs, window_strides, padding,
+                              lhs_dilation, rhs_dilation):
+  return conv_general_dilated(
+      lhs, rhs, window_strides, padding, lhs_dilation=lhs_dilation,
+      rhs_dilation=rhs_dilation)
 
 
 def full_like(x, fill_value, dtype=None, shape=None):
@@ -952,35 +949,13 @@ batching.defvectorized(bitcast_convert_type_p)
 
 def conv_general_dilated_shape_rule(
     lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
-    dimension_numbers=None, **unused_kwargs):
-  if dimension_numbers is None:
-    lhs_dilated = _dilate_shape(lhs.shape, lhs_dilation)
-    rhs_dilated = _dilate_shape(rhs.shape, rhs_dilation)
-    _check_conv_shapes('conv_general_dilated', lhs_dilated, rhs_dilated,
-                       window_strides)
-    return conv_shape_tuple(lhs_dilated, rhs_dilated, window_strides, padding)
-  else:
-    if not isinstance(dimension_numbers, (tuple, list)):
-      msg = "conv_general_dilated dimension_numbers must be tuple/list, got {}."
-      raise TypeError(msg.format(type(dimension_numbers)))
-    if len(dimension_numbers) != 3:
-      msg = "conv_general_dilated dimension_numbers must be length 3, got {}."
-      raise TypeError(msg.format(len(dimension_numbers)))
-    if not all(isinstance(elt, str) for elt in dimension_numbers):
-      msg = ("conv_general_dilated dimension_numbers elements must be strings, "
-            "got {}.")
-      raise TypeError(msg.format(tuple(map(type, dimension_numbers))))
-    msg = ("conv_general_dilated dimension_numbers[{}] must have len equal to "
-           "the ndim of lhs and rhs, got {} for lhs and rhs shapes {} and {}.")
-    for i, elt in enumerate(dimension_numbers):
-      if len(elt) != lhs.ndim:
-        raise TypeError(msg.format(i, len(elt), lhs.shape, rhs.shape))
-
-    lhs_perm, rhs_perm, out_perm = conv_general_permutations(dimension_numbers)
-    lhs_trans = _dilate_shape(onp.take(lhs.shape, lhs_perm), lhs_dilation)
-    rhs_trans = _dilate_shape(onp.take(rhs.shape, rhs_perm), rhs_dilation)
-    out_trans = conv_shape_tuple(lhs_trans, rhs_trans, window_strides, padding)
-    return tuple(onp.take(out_trans, onp.argsort(out_perm)))
+    dimension_numbers, **unused_kwargs):
+  assert type(dimension_numbers) is ConvDimensionNumbers
+  lhs_perm, rhs_perm, out_perm = dimension_numbers
+  lhs_trans = _dilate_shape(onp.take(lhs.shape, lhs_perm), lhs_dilation)
+  rhs_trans = _dilate_shape(onp.take(rhs.shape, rhs_perm), rhs_dilation)
+  out_trans = conv_shape_tuple(lhs_trans, rhs_trans, window_strides, padding)
+  return tuple(onp.take(out_trans, onp.argsort(out_perm)))
 
 def conv_general_dilated_dtype_rule(
     lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
@@ -988,19 +963,17 @@ def conv_general_dilated_dtype_rule(
   return binop_dtype_rule(_input_dtype, [_f32, _f32], 'conv_general_dilated',
                           lhs, rhs)
 
+_conv_transpose = lambda spec: (spec[1], spec[0]) + spec[2:]
+_conv_sdims = lambda spec: spec[2:]
+
 def conv_general_dilated_transpose_lhs(
     g, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
     dimension_numbers, lhs_shape, rhs_shape):
-  if dimension_numbers is None:
-    nd = len(lhs_shape)
-    lhs_sdims = rhs_sdims = out_sdims = list(range(2, nd))
-    trans_dimension_numbers = ConvolutionDimensionNumbers(
-        tuple(range(nd)), (1, 0) + tuple(range(2, nd)), tuple(range(nd)))
-  else:
-    lhs_sdims, rhs_sdims, out_sdims = _get_sdims(dimension_numbers)
-    lhs_spec, rhs_spec, out_spec = dimension_numbers
-    trans_dimension_numbers = out_spec, _charswap("I", "O", rhs_spec), lhs_spec
-
+  assert type(dimension_numbers) is ConvDimensionNumbers
+  lhs_sdims, rhs_sdims, out_sdims = map(_conv_sdims, dimension_numbers)
+  lhs_spec, rhs_spec, out_spec = dimension_numbers
+  t_rhs_spec = _conv_transpose(rhs_spec)
+  trans_dimension_numbers = ConvDimensionNumbers(lhs_spec, t_rhs_spec, out_spec)
   padding = _conv_general_vjp_lhs_padding(
       onp.take(lhs_shape, lhs_sdims), onp.take(rhs_shape, rhs_sdims),
       window_strides, onp.take(g.shape, out_sdims), padding, lhs_dilation,
@@ -1011,24 +984,13 @@ def conv_general_dilated_transpose_lhs(
       lhs_dilation=window_strides, rhs_dilation=rhs_dilation,
       dimension_numbers=trans_dimension_numbers)
 
-
 def conv_general_dilated_transpose_rhs(
     g, lhs, window_strides, padding, lhs_dilation, rhs_dilation,
     dimension_numbers, lhs_shape, rhs_shape):
-  if dimension_numbers is None:
-    nd = len(lhs_shape)
-    lhs_sdims = rhs_sdims = out_sdims = list(range(2, nd))
-    trans_dimension_numbers = ConvolutionDimensionNumbers(
-        (1, 0) + tuple(range(2, nd)),
-        (1, 0) + tuple(range(2, nd)),
-        (1, 0) + tuple(range(2, nd)))
-  else:
-    lhs_sdims, rhs_sdims, out_sdims = _get_sdims(dimension_numbers)
-    lhs_spec, rhs_spec, out_spec = dimension_numbers
-    trans_dimension_numbers = (_charswap("C", "N", lhs_spec),
-                               out_spec.translate(maketrans("NC", "IO")),
-                               rhs_spec.translate(maketrans("IO", "NC")))
-
+  assert type(dimension_numbers) is ConvDimensionNumbers
+  lhs_sdims, rhs_sdims, out_sdims = map(_conv_sdims, dimension_numbers)
+  transposed = map(_conv_transpose, dimension_numbers)
+  trans_dimension_numbers = ConvDimensionNumbers(*transposed)
   padding = _conv_general_vjp_rhs_padding(
       onp.take(lhs_shape, lhs_sdims), onp.take(rhs_shape, rhs_sdims),
       window_strides, onp.take(g.shape, out_sdims), padding, lhs_dilation,
@@ -1038,12 +1000,11 @@ def conv_general_dilated_transpose_rhs(
       lhs_dilation=lhs_dilation, rhs_dilation=window_strides,
       dimension_numbers=trans_dimension_numbers)
 
-
 def conv_general_dilated_translation_rule(
     c, lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
     dimension_numbers, **unused_kwargs):
-  if isinstance(dimension_numbers, ConvolutionDimensionNumbers):
-    dimension_numbers = _conv_general_proto(dimension_numbers)
+  assert type(dimension_numbers) is ConvDimensionNumbers
+  dimension_numbers = _conv_general_proto(dimension_numbers)
   return c.ConvGeneralDilated(lhs, rhs, window_strides, padding, lhs_dilation,
                               rhs_dilation, dimension_numbers)
 
@@ -2285,35 +2246,6 @@ def _check_shapelike(fun_name, arg_name, obj):
     raise TypeError(msg.format(fun_name, arg_name, obj))
 
 
-def conv_general_permutations(dimension_numbers):
-  """Utility for convolution dimension permutations relative to Conv HLO."""
-  lhs_spec, rhs_spec, out_spec = dimension_numbers
-  lhs_char, rhs_char, out_char = charpairs = ("N", "C"), ("O", "I"), ("N", "C")
-  for i, (a, b) in enumerate(charpairs):
-    if not dimension_numbers[i].count(a) == dimension_numbers[i].count(b) == 1:
-      msg = ("convolution dimension_numbers[{}] must contain the characters "
-             "'{}' and '{}' exatly once, got {}.")
-      raise TypeError(msg.format(i, a, b, dimension_numbers[i]))
-    if len(dimension_numbers[i]) != len(set(dimension_numbers[i])):
-      msg = ("convolution dimension_numbers[{}] cannot have duplicate "
-             "characters, got {}.")
-      raise TypeError(msg.format(i, dimension_numbers[i]))
-  if not (set(lhs_spec) - set(lhs_char) == set(rhs_spec) - set(rhs_char) ==
-          set(out_spec) - set(out_char)):
-    msg = ("convolution dimension_numbers elements must each have the same "
-           "set of spatial characters, got {}.")
-    raise TypeError(msg.format(dimension_numbers))
-
-  def getperm(spec, charpair):
-    spatial = (i for i, c in enumerate(spec) if c not in charpair)
-    if spec is not rhs_spec:
-      spatial = sorted(spatial, key=lambda i: rhs_spec.index(spec[i]))
-    return (spec.index(charpair[0]), spec.index(charpair[1])) + tuple(spatial)
-
-  lhs_perm, rhs_perm, out_perm = map(getperm, dimension_numbers, charpairs)
-  return lhs_perm, rhs_perm, out_perm
-
-
 def _dynamic_slice_indices(operand, start_indices):
   if isinstance(start_indices, (tuple, list)):
     start_indices = concatenate([reshape(i, [1]) for i in start_indices], 0)
@@ -2345,25 +2277,80 @@ def remaining(original, *removed_lists):
   return [i for i in original if i not in blacklist]
 
 
-def _charswap(a, b, s):
-  return s.translate(maketrans(a + b, b + a))
+ConvDimensionNumbers = collections.namedtuple(
+    "ConvDimensionNumbers", ["lhs_spec", "rhs_spec", "out_spec"])
+
+def conv_dimension_numbers(lhs_shape, rhs_shape, dimension_numbers):
+  """Convert from user spec of dimension_numbers to ConvDimensionNumbers.
+
+  Args:
+    lhs_shape: tuple of nonnegative integers, shape of the convolution input.
+    rhs_shape: tuple of nonnegative integers, shape of the convolution kernel.
+    dimension_numbers: None or a tuple/list of strings, following the
+      convolution dimension number specification format in xla_client.py.
+
+  Returns:
+    A ConvDimensionNumbers namedtuple representing dimension_numbers in a
+    canonical form that is handled by internal lax functions.
+  """
+  if len(lhs_shape) != len(rhs_shape):
+    msg = "convolution requires lhs and rhs ndim to be equal, got {} and {}."
+    raise TypeError(msg.format(len(lhs_shape), len(rhs_shape)))
+
+  if dimension_numbers is None:
+    iota = tuple(range(len(lhs_shape)))
+    return ConvDimensionNumbers(iota, iota, iota)
+  elif isinstance(dimension_numbers, (list, tuple)):
+    if len(dimension_numbers) != 3:
+      msg = "convolution dimension_numbers list/tuple must be length 3, got {}."
+      raise TypeError(msg.format(len(dimension_numbers)))
+    if not all(isinstance(elt, str) for elt in dimension_numbers):
+      msg = "convolution dimension_numbers elements must be strings, got {}."
+      raise TypeError(msg.format(tuple(map(type, dimension_numbers))))
+    msg = ("convolution dimension_numbers[{}] must have len equal to the ndim "
+           "of lhs and rhs, got {} for lhs and rhs shapes {} and {}.")
+    for i, elt in enumerate(dimension_numbers):
+      if len(elt) != len(lhs_shape):
+        raise TypeError(msg.format(i, len(elt), lhs_shape, rhs_shape))
+
+    lhs_spec, rhs_spec, out_spec = conv_general_permutations(dimension_numbers)
+    return ConvDimensionNumbers(lhs_spec, rhs_spec, out_spec)
+  else:
+    msg = "convolution dimension_numbers must be tuple/list or None, got {}."
+    raise TypeError(msg.format(type(dimension_numbers)))
 
 
-def _get_sdims(dimension_numbers):
+def conv_general_permutations(dimension_numbers):
+  """Utility for convolution dimension permutations relative to Conv HLO."""
   lhs_spec, rhs_spec, out_spec = dimension_numbers
-  rhs_sdims = [i for i, c in enumerate(rhs_spec) if c not in {"I", "O"}]
-  lhs_sdims = sorted((i for i, c in enumerate(lhs_spec) if c not in {"N", "C"}),
-                     key=lambda i: rhs_spec.index(lhs_spec[i]))
-  out_sdims = sorted((i for i, c in enumerate(out_spec) if c not in {"N", "C"}),
-                     key=lambda i: rhs_spec.index(out_spec[i]))
-  return lhs_sdims, rhs_sdims, out_sdims
+  lhs_char, rhs_char, out_char = charpairs = ("N", "C"), ("O", "I"), ("N", "C")
+  for i, (a, b) in enumerate(charpairs):
+    if not dimension_numbers[i].count(a) == dimension_numbers[i].count(b) == 1:
+      msg = ("convolution dimension_numbers[{}] must contain the characters "
+             "'{}' and '{}' exatly once, got {}.")
+      raise TypeError(msg.format(i, a, b, dimension_numbers[i]))
+    if len(dimension_numbers[i]) != len(set(dimension_numbers[i])):
+      msg = ("convolution dimension_numbers[{}] cannot have duplicate "
+             "characters, got {}.")
+      raise TypeError(msg.format(i, dimension_numbers[i]))
+  if not (set(lhs_spec) - set(lhs_char) == set(rhs_spec) - set(rhs_char) ==
+          set(out_spec) - set(out_char)):
+    msg = ("convolution dimension_numbers elements must each have the same "
+           "set of spatial characters, got {}.")
+    raise TypeError(msg.format(dimension_numbers))
 
+  def getperm(spec, charpair):
+    spatial = (i for i, c in enumerate(spec) if c not in charpair)
+    if spec is not rhs_spec:
+      spatial = sorted(spatial, key=lambda i: rhs_spec.index(spec[i]))
+    return (spec.index(charpair[0]), spec.index(charpair[1])) + tuple(spatial)
 
-ConvolutionDimensionNumbers = collections.namedtuple(
-    "ConvolutionDimensionNumbers", ["lhs_spec", "rhs_spec", "out_spec"])
+  lhs_perm, rhs_perm, out_perm = map(getperm, dimension_numbers, charpairs)
+  return lhs_perm, rhs_perm, out_perm
+
 
 def _conv_general_proto(dimension_numbers):
-  assert type(dimension_numbers) is ConvolutionDimensionNumbers
+  assert type(dimension_numbers) is ConvDimensionNumbers
   lhs_spec, rhs_spec, out_spec = dimension_numbers
   proto = xla_bridge.xla_data_pb2.ConvolutionDimensionNumbers()
   proto.input_batch_dimension = lhs_spec[0]
