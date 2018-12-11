@@ -71,9 +71,10 @@ open](https://github.com/google/jax) by a growing number of
 * [Current gotchas](#current-gotchas)
 
 ## Quickstart: Colab in the Cloud
-Jump right in using [a notebook in your
-browser](https://colab.research.google.com/github/google/jax/blob/master/notebooks/quickstart.ipynb)
-connected to a Google Cloud GPU.
+Jump right in using a notebook in your browser, connected to a Google Cloud GPU: 
+- [The basics: NumPy on accelerators, `grad` for automatic differentiation, `jit` for compilation and `vmap` for auto-vectorization](https://colab.research.google.com/github/google/jax/blob/master/notebooks/quickstart.ipynb)
+- [Training a Simple Neural Network, with PyTorch Data Loading](https://colab.research.google.com/github/google/jax/blob/master/notebooks/neural_network_and_data_loading.ipynb)
+
 
 ## Installation
 JAX is written in pure Python, but it depends on XLA, which needs to be
