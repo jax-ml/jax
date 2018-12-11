@@ -633,6 +633,8 @@ def stack(arrays):
 def concatenate(arrays, axis=0):
   if not arrays:
     raise ValueError("Need at least one array to concatenate.")
+  if ndim(arrays[0]) == 0:
+    raise ValueError("Zero-dimensional arrays cannot be concatenated.")
   return lax.concatenate(_promote_dtypes(*arrays), axis % ndim(arrays[0]))
 
 
