@@ -239,6 +239,24 @@ class BatchingTest(jtu.JaxTestCase):
     # TODO(mattjj): this fails due to an xla error in dot_general
     # assert vecvec(np.zeros((4, 2, 3)), np.zeros((3,))).shape == (4, 2)
 
+  def testPad(self):
+    fun = lambda x: lax.pad(x, onp.float32(0), [(1, 2, 1)])
+    R = onp.random.RandomState(0).randn
+    x = R(5, 10).astype(onp.float32)
+
+    ans = vmap(fun)(x)
+    expected_ans = np.stack(list(map(fun, x)))
+    self.assertAllClose(ans, expected_ans, check_dtypes=False)
+
+
+    fun = lambda x: lax.pad(x, onp.float32(0), [(1, 2, 1), (0, 1, 0)])
+    R = onp.random.RandomState(0).randn
+    x = R(5, 10, 3).astype(onp.float32)
+
+    ans = vmap(fun)(x)
+    expected_ans = np.stack(list(map(fun, x)))
+    self.assertAllClose(ans, expected_ans, check_dtypes=False)
+
 
 if __name__ == '__main__':
   config.config_with_absl()

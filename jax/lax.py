@@ -1398,9 +1398,21 @@ def pad_transpose(t, operand, padding_value, padding_config):
 
   return [t_operand, t_padv]
 
+def pad_batch_rule(batched_args, batch_dims, padding_config):
+  operand, padding_value = batched_args
+  operand_bdim, padding_value_bdim = batch_dims
+  if padding_value_bdim is None:
+    assert operand_bdim is not None
+    padding_config = list(padding_config)
+    padding_config.insert(operand_bdim, (0, 0, 0))
+    return pad(operand, padding_value, padding_config), operand_bdim
+  else:
+    raise NotImplementedError
+
 pad_p = standard_primitive(pad_shape_rule, _input_dtype, 'pad')
 ad.deflinear(pad_p, pad_transpose)
 ad.primitive_transposes[pad_p] = pad_transpose
+batching.primitive_batchers[pad_p] = pad_batch_rule
 
 
 def reshape_shape_rule(operand, new_sizes, dimensions, **unused_kwargs):
