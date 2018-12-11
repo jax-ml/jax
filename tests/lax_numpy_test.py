@@ -171,34 +171,36 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def _GetArgsMaker(self, rng, shapes, dtypes):
     return lambda: [rng(shape, dtype) for shape, dtype in zip(shapes, dtypes)]
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": jtu.format_test_name_suffix(rec.test_name, shapes,
-                                                    dtypes),
-       "rng": rec.rng, "shapes": shapes, "dtypes": dtypes,
-       "onp_op": getattr(onp, rec.name), "lnp_op": getattr(lnp, rec.name)}
-      for rec in itertools.chain(JAX_ONE_TO_ONE_OP_RECORDS,
-                                 JAX_COMPOUND_OP_RECORDS)
-      for shapes in filter(
-        _shapes_are_broadcast_compatible,
-        CombosWithReplacement(rec.shapes, rec.nargs))
-      for dtypes in CombosWithReplacement(rec.dtypes, rec.nargs)))
+  @parameterized.named_parameters(itertools.chain.from_iterable(
+      jtu.cases_from_list(
+        {"testcase_name": jtu.format_test_name_suffix(rec.test_name, shapes,
+                                                      dtypes),
+         "rng": rec.rng, "shapes": shapes, "dtypes": dtypes,
+         "onp_op": getattr(onp, rec.name), "lnp_op": getattr(lnp, rec.name)}
+        for shapes in filter(
+          _shapes_are_broadcast_compatible,
+          CombosWithReplacement(rec.shapes, rec.nargs))
+        for dtypes in CombosWithReplacement(rec.dtypes, rec.nargs))
+      for rec in itertools.chain(JAX_ONE_TO_ONE_OP_RECORDS, JAX_COMPOUND_OP_RECORDS)))
   def testOp(self, onp_op, lnp_op, rng, shapes, dtypes):
     args_maker = self._GetArgsMaker(rng, shapes, dtypes)
     self._CheckAgainstNumpy(onp_op, lnp_op, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_op, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": jtu.format_test_name_suffix(rec.test_name, shapes,
-                                                    dtypes),
-       "rng": rec.rng, "shapes": shapes, "dtypes": dtypes,
-       "onp_op": getattr(onp, rec.name), "lnp_op": getattr(lnp, rec.name)}
-      for rec in JAX_BITWISE_OP_RECORDS
-      for shapes in filter(
-        _shapes_are_broadcast_compatible,
-        CombosWithReplacement(rec.shapes, rec.nargs))
-      for dtypes in filter(
-        _dtypes_are_compatible_for_bitwise_ops,
-        CombosWithReplacement(rec.dtypes, rec.nargs))))
+  @parameterized.named_parameters(itertools.chain.from_iterable(
+      jtu.cases_from_list(
+        {"testcase_name": jtu.format_test_name_suffix(rec.test_name, shapes,
+                                                      dtypes),
+         "rng": rec.rng, "shapes": shapes, "dtypes": dtypes,
+         "onp_op": getattr(onp, rec.name), "lnp_op": getattr(lnp, rec.name)}
+        for rec in JAX_BITWISE_OP_RECORDS
+        for shapes in filter(
+          _shapes_are_broadcast_compatible,
+          CombosWithReplacement(rec.shapes, rec.nargs))
+        for dtypes in filter(
+          _dtypes_are_compatible_for_bitwise_ops,
+          CombosWithReplacement(rec.dtypes, rec.nargs)))
+      for rec in JAX_BITWISE_OP_RECORDS))
   def testBitwiseOp(self, onp_op, lnp_op, rng, shapes, dtypes):
     if not FLAGS.jax_enable_x64 and any(
         onp.iinfo(dtype).bits == 64 for dtype in dtypes):
@@ -621,6 +623,41 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     cfoo = api.jit(foo)
     self.assertRaises(NotImplementedError, lambda: cfoo(onp.arange(3)))
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_axis={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), axis),
+       "rng": rng, "shape": shape, "dtype": dtype, "axis": axis}
+      for shape in [(3,), (2, 3)]
+      for dtype in default_dtypes
+      for axis in range(len(shape))
+      for rng in [jtu.rand_default()]))
+  def testFlip(self, shape, dtype, axis, rng):
+    args_maker = self._GetArgsMaker(rng, [shape], [dtype])
+    lnp_op = lambda x: lnp.flip(x, axis)
+    onp_op = lambda x: onp.flip(x, axis)
+    self._CheckAgainstNumpy(onp_op, lnp_op, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_op, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_k={}_axes={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), k, axes),
+       "rng": rng, "shape": shape, "dtype": dtype, "k": k, "axes": axes}
+      for shape, axes in [
+          [(2, 3), (0, 1)],
+          [(2, 3), (1, 0)],
+          [(4, 3, 2), (0, 2)],
+          [(4, 3, 2), (2, 1)],
+      ]
+      for k in range(-3, 4)
+      for dtype in default_dtypes
+      for rng in [jtu.rand_default()]))
+  def testRot90(self, shape, dtype, k, axes, rng):
+    args_maker = self._GetArgsMaker(rng, [shape], [dtype])
+    lnp_op = lambda x: lnp.rot90(x, k, axes)
+    onp_op = lambda x: onp.rot90(x, k, axes)
+    self._CheckAgainstNumpy(onp_op, lnp_op, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_op, args_maker, check_dtypes=True)
 
   # TODO(mattjj): test infix operator overrides
 

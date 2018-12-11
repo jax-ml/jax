@@ -137,27 +137,29 @@ CombosWithReplacement = itertools.combinations_with_replacement
 class LaxTest(jtu.JaxTestCase):
   """Numerical tests for LAX operations."""
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": jtu.format_test_name_suffix(
-          rec.op.__name__, shapes, itertools.repeat(dtype)),
-       "op": rec.op, "rng": rec.rng, "shapes": shapes, "dtype": dtype}
-      for rec in LAX_OPS
-      for shape_group in compatible_shapes
-      for shapes in CombosWithReplacement(shape_group, rec.nargs)
-      for dtype in rec.dtypes))
+  @parameterized.named_parameters(itertools.chain.from_iterable(
+      jtu.cases_from_list(
+        {"testcase_name": jtu.format_test_name_suffix(
+            rec.op.__name__, shapes, itertools.repeat(dtype)),
+         "op": rec.op, "rng": rec.rng, "shapes": shapes, "dtype": dtype}
+        for shape_group in compatible_shapes
+        for shapes in CombosWithReplacement(shape_group, rec.nargs)
+        for dtype in rec.dtypes)
+      for rec in LAX_OPS))
   def testOp(self, op, rng, shapes, dtype):
     args_maker = lambda: [rng(shape, dtype) for shape in shapes]
     self._CompileAndCheck(op, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": jtu.format_test_name_suffix(
-          rec.op.__name__, shapes, itertools.repeat(dtype)),
-       "op": rec.op, "rng": rec.rng, "shapes": shapes, "dtype": dtype,
-       "tol": rec.tol}
-      for rec in LAX_OPS
-      for shape_group in compatible_shapes
-      for shapes in CombosWithReplacement(shape_group, rec.nargs)
-      for dtype in rec.dtypes))
+  @parameterized.named_parameters(itertools.chain.from_iterable(
+      jtu.cases_from_list(
+        {"testcase_name": jtu.format_test_name_suffix(
+            rec.op.__name__, shapes, itertools.repeat(dtype)),
+         "op": rec.op, "rng": rec.rng, "shapes": shapes, "dtype": dtype,
+         "tol": rec.tol}
+        for shape_group in compatible_shapes
+        for shapes in CombosWithReplacement(shape_group, rec.nargs)
+        for dtype in rec.dtypes)
+      for rec in LAX_OPS))
   def testOpAgainstNumpy(self, op, rng, shapes, dtype, tol):
     args_maker = lambda: [rng(shape, dtype) for shape in shapes]
     numpy_op = getattr(lax_reference, op.__name__)
@@ -1436,16 +1438,16 @@ def check_grads_bilinear(f, args, order, atol=None, rtol=None):
 
 class LaxAutodiffTest(jtu.JaxTestCase):
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": jtu.format_test_name_suffix(
-          rec.op.__name__, shapes, itertools.repeat(dtype)),
-       "op": rec.op, "rng": rec.rng, "shapes": shapes, "dtype": dtype,
-       "order": rec.order}
-      for rec in LAX_GRAD_OPS
-      for shape_group in compatible_shapes
-      for shapes in CombosWithReplacement(shape_group, rec.nargs)
-      for dtype in rec.dtypes
-  ))
+  @parameterized.named_parameters(itertools.chain.from_iterable(
+      jtu.cases_from_list(
+        {"testcase_name": jtu.format_test_name_suffix(
+            rec.op.__name__, shapes, itertools.repeat(dtype)),
+         "op": rec.op, "rng": rec.rng, "shapes": shapes, "dtype": dtype,
+         "order": rec.order}
+        for shape_group in compatible_shapes
+        for shapes in CombosWithReplacement(shape_group, rec.nargs)
+        for dtype in rec.dtypes)
+      for rec in LAX_GRAD_OPS))
   def testOpGrad(self, op, rng, shapes, dtype, order):
     if FLAGS.jax_test_dut and FLAGS.jax_test_dut.startswith("tpu"):
       if dtype is onp.complex64:
