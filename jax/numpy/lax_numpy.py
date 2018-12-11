@@ -327,6 +327,30 @@ def transpose(x, axis=None):
   return lax.transpose(x, axis)
 
 
+@_wraps(onp.rot90)
+def rot90(m, k=1, axes=(0, 1)):
+  ax1, ax2 = axes
+  if ax1 % m.ndim == ax2 % m.ndim:
+    raise ValueError("Axes must be different")  # same as numpy error
+  k = k % 4
+  if k == 0:
+    return m
+  elif k == 2:
+    return flip(flip(m, ax1), ax2)
+  else:
+    perm = list(range(m.ndim))
+    perm[ax1], perm[ax2] = perm[ax2], perm[ax1]
+    if k == 1:
+      return transpose(flip(m, ax2), perm)
+    else:
+      return flip(transpose(m, perm), ax2)
+
+
+@_wraps(onp.flip)
+def flip(m, axis):
+  return lax.rev(m, [axis])
+
+
 @_wraps(onp.sinh)
 def sinh(x):
   x, = _promote_to_result_dtype(onp.sinh, x)
@@ -454,7 +478,10 @@ def where(condition, x=None, y=None):
   if not onp.issubdtype(_dtype(condition), onp.bool_):
     condition = lax.ne(condition, zeros_like(condition))
   condition, x, y = broadcast_arrays(condition, x, y)
-  return lax.select(condition, *_promote_dtypes(x, y))
+  if not x.size:
+    return x
+  else:
+    return lax.select(condition, *_promote_dtypes(x, y))
 
 
 def broadcast_arrays(*args):
