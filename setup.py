@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from setuptools import setup
+from setuptools import setup, find_packages
 
 setup(
     name='jax',
@@ -20,8 +20,7 @@ setup(
     description='Differentiate, compile, and transform Numpy code.',
     author='JAX team',
     author_email='jax-dev@google.com',
-    packages=['jax', 'jax.lib', 'jax.interpreters', 'jax.numpy', 'jax.scipy',
-              'jax.scipy.stats', 'jax.experimental'],
+    packages=find_packages(),
     install_requires=['numpy>=1.12', 'six', 'protobuf>=3.6.0', 'absl-py',
                       'opt_einsum'],
     url='https://github.com/google/jax',
