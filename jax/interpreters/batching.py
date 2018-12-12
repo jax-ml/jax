@@ -281,6 +281,7 @@ def moveaxis(sz, dst, src, x):
     else:
       return pack(map(partial(moveaxis, sz, dst, src), x))
   elif isinstance(aval, ShapedArray):
+    dst = (dst % aval.ndim) if dst is not None and aval.ndim else dst
     if src == dst:
       return x
     else:
