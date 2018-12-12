@@ -479,7 +479,8 @@ def where(condition, x=None, y=None):
     condition = lax.ne(condition, zeros_like(condition))
   condition, x, y = broadcast_arrays(condition, x, y)
   if not x.size:
-    return x
+    empty, _ = _promote_dtypes(x, y)
+    return empty
   else:
     return lax.select(condition, *_promote_dtypes(x, y))
 

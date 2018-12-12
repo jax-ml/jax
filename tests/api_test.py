@@ -23,13 +23,15 @@ from absl.testing import absltest
 from jax import test_util as jtu
 
 import jax.numpy as np
-from jax.config import config
 from jax import jit, grad, device_get, device_put, jacfwd, jacrev
 from jax.core import Primitive
 from jax.interpreters.partial_eval import def_abstract_eval
 from jax.interpreters.ad import defjvp
 from jax.interpreters.xla import DeviceArray
 from jax.abstract_arrays import concretization_err_msg
+
+from jax.config import config
+config.parse_flags_with_absl()
 
 class APITest(jtu.JaxTestCase):
 
@@ -235,6 +237,7 @@ class APITest(jtu.JaxTestCase):
     assert isinstance(y2[1][1], onp.ndarray)
     assert onp.all(y2[1][1] == 3 * x)
 
+  @jtu.skip_on_devices("tpu")
   def test_jacobian(self):
     R = onp.random.RandomState(0).randn
     A = R(4, 3)
@@ -249,5 +252,4 @@ class APITest(jtu.JaxTestCase):
 
 
 if __name__ == '__main__':
-  config.config_with_absl()
   absltest.main()

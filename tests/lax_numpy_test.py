@@ -28,8 +28,8 @@ import numpy as onp
 from jax import api
 from jax import numpy as lnp
 from jax import test_util as jtu
-from jax.config import config
 
+from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
@@ -189,11 +189,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
       jtu.cases_from_list(
-        {"testcase_name": jtu.format_test_name_suffix(rec.test_name, shapes,
-                                                      dtypes),
+        {"testcase_name": jtu.format_test_name_suffix(
+            rec.test_name, shapes, dtypes),
          "rng": rec.rng, "shapes": shapes, "dtypes": dtypes,
          "onp_op": getattr(onp, rec.name), "lnp_op": getattr(lnp, rec.name)}
-        for rec in JAX_BITWISE_OP_RECORDS
         for shapes in filter(
           _shapes_are_broadcast_compatible,
           CombosWithReplacement(rec.shapes, rec.nargs))

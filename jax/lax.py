@@ -72,7 +72,7 @@ def erf_inv(x): return erf_inv_p.bind(x)
 def real(x): return real_p.bind(x)
 def imag(x): return imag_p.bind(x)
 def complex(x, y): return complex_p.bind(_brcast(x, y), _brcast(y, x))
-def conj(x): return conj_p.bind(x)
+def conj(x): return conj_p.bind(x, input_dtype=_dtype(x))
 def abs(x): return abs_p.bind(x)
 def pow(x, y): return pow_p.bind(x, y)
 
@@ -652,7 +652,7 @@ def standard_translate(name, c, *args, **kwargs):
   return getattr(c, xla_opname)(*args, **kwargs)
 
 
-def unop_dtype_rule(result_dtype, accepted_dtypes, name, aval):
+def unop_dtype_rule(result_dtype, accepted_dtypes, name, aval, **kwargs):
   if not any(onp.issubdtype(aval.dtype, t) for t in accepted_dtypes):
     msg = '{} does not accept dtype {}. Accepted dtypes are subtypes of {}.'
     typename = str(onp.dtype(aval.dtype).name)
@@ -663,10 +663,11 @@ def unop_dtype_rule(result_dtype, accepted_dtypes, name, aval):
 
 def unop(result_dtype, accepted_dtypes, name):
   dtype_rule = partial(unop_dtype_rule, result_dtype, accepted_dtypes, name)
-  prim = standard_primitive(operator.attrgetter('shape'), dtype_rule, name)
+  prim = standard_primitive(_attrgetter('shape'), dtype_rule, name)
   batching.defvectorized(prim)
   return prim
 standard_unop = partial(unop, identity)
+_attrgetter = lambda name: lambda x, **kwargs: getattr(x, name)
 
 
 def binop_dtype_rule(result_dtype, accepted_dtypes, name, *avals):
@@ -810,17 +811,25 @@ ad.deflinear(real_p, lambda t: [complex(t, onp.zeros((), onp.float32))])
 imag_p = unop(_fixed_dtype(onp.float32), _complex, 'imag')
 ad.deflinear(imag_p, lambda t: [complex(onp.zeros((), onp.float32), t)])
 
-complex_p = standard_binop([_f32, _f32], 'complex')
+complex_p = binop(_fixed_dtype(onp.complex64), [_f32, _f32], 'complex')
 ad.deflinear(complex_p, lambda t: [real(t), imag(t)])
 
-# TODO promotes dtypes, need to remember whether we came from float or not
 conj_p = unop(_fixed_dtype(onp.complex64), _float | _complex, 'conj')
-ad.deflinear(conj_p, lambda t: [conj(t)])
+
+def conj_transpose_rule(t, x, input_dtype):
+  assert x is None
+  if onp.issubdtype(input_dtype, onp.complexfloating):
+    return [conj(t)]
+  else:
+    return [real(t)]
+
+ad.primitive_jvps[conj_p] = partial(ad.linear_jvp, conj_p)
+ad.primitive_transposes[conj_p] = conj_transpose_rule
 
 abs_p = unop(_complex_basetype, _num, 'abs')
 ad.defjvp2(abs_p,
-           lambda g, ans, x: div(_maybe_real(mul(g, _maybe_conj(x))),
-                                 _replace_zero(ans)))
+           lambda g, ans, x:
+           div(_maybe_real(mul(g, _maybe_conj(x))), _replace_zero(ans)))
 _maybe_conj = lambda x: conj(x) if _iscomplex(x) else x
 _maybe_real = lambda x: real(x) if _iscomplex(x) else x
 

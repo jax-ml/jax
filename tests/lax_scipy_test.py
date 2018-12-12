@@ -30,11 +30,11 @@ import scipy.stats as osp_stats
 
 from jax import api
 from jax import test_util as jtu
-from jax.config import config
 from jax.scipy import misc as lsp_misc
 from jax.scipy import special as lsp_special
 from jax.scipy import stats as lsp_stats
 
+from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 

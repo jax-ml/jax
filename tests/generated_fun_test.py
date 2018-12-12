@@ -27,8 +27,8 @@ import itertools as it
 import jax.numpy as np
 from jax import jit, jvp, vjp
 import jax.test_util as jtu
-from jax.config import config
 
+from jax.config import config
 config.parse_flags_with_absl()
 
 npr.seed(0)
