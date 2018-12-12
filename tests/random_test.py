@@ -27,8 +27,8 @@ from jax import api
 from jax import lax
 from jax import random
 from jax import test_util as jtu
-from jax.config import config
 
+from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 

@@ -25,9 +25,9 @@ from absl.testing import parameterized
 
 from jax import jit
 from jax import test_util as jtu
-from jax.config import config
 from jax.experimental import lapax
 
+from jax.config import config
 config.parse_flags_with_absl()
 
 class LapaxTest(jtu.JaxTestCase):

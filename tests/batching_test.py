@@ -26,10 +26,12 @@ from jax.abstract_arrays import ShapedArray
 from jax import lax
 from jax.api import jit, grad, jvp, vjp, trace_to_jaxpr, jacfwd, jacrev
 from jax.api import vmap
-from jax.config import config
 from jax.core import unit
 from jax.interpreters import partial_eval as pe
 from jax.util import partial, curry
+
+from jax.config import config
+config.parse_flags_with_absl()
 
 class BatchingTest(jtu.JaxTestCase):
 
@@ -284,5 +286,4 @@ class BatchingTest(jtu.JaxTestCase):
 
 
 if __name__ == '__main__':
-  config.config_with_absl()
   absltest.main()
