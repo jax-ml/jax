@@ -240,21 +240,36 @@ class BatchingTest(jtu.JaxTestCase):
     # assert vecvec(np.zeros((4, 2, 3)), np.zeros((3,))).shape == (4, 2)
 
   def testPad(self):
-    fun = lambda x: lax.pad(x, onp.float32(0), [(1, 2, 1)])
     R = onp.random.RandomState(0).randn
-    x = R(5, 10).astype(onp.float32)
 
+    fun = lambda x: lax.pad(x, onp.float32(0), [(1, 2, 1)])
+    x = R(5, 10).astype(onp.float32)
     ans = vmap(fun)(x)
     expected_ans = np.stack(list(map(fun, x)))
     self.assertAllClose(ans, expected_ans, check_dtypes=False)
 
 
     fun = lambda x: lax.pad(x, onp.float32(0), [(1, 2, 1), (0, 1, 0)])
-    R = onp.random.RandomState(0).randn
     x = R(5, 10, 3).astype(onp.float32)
-
     ans = vmap(fun)(x)
     expected_ans = np.stack(list(map(fun, x)))
+    self.assertAllClose(ans, expected_ans, check_dtypes=False)
+
+  def testConcatenate(self):
+    R = lambda *shape: onp.random.RandomState(0).randn(*shape).astype(onp.float32)
+
+    fun = lambda *args: lax.concatenate(args, dimension=0)
+    x, y, z = R(10, 2, 3), R(1, 10, 3), R(4, 3)
+    ans = vmap(fun, in_axes=(0, 1, None))(x, y, z)
+    expected_ans = onp.concatenate([x, onp.swapaxes(y, 0, 1),
+                                    onp.broadcast_to(z, (10, 4, 3))], 1)
+    self.assertAllClose(ans, expected_ans, check_dtypes=False)
+
+    fun = lambda *args: lax.concatenate(args, dimension=1)
+    x, y, z = R(10, 2, 1), R(2, 3), R(2, 4, 10)
+    ans = vmap(fun, in_axes=(0, None, 2))(x, y, z)
+    expected_ans = onp.concatenate([x, onp.broadcast_to(y, (10, 2, 3)),
+                                    onp.moveaxis(z, 2, 0)], 2)
     self.assertAllClose(ans, expected_ans, check_dtypes=False)
 
 
