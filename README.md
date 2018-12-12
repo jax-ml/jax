@@ -71,7 +71,7 @@ open](https://github.com/google/jax) by a growing number of
 
 ## Quickstart: Colab in the Cloud
 Jump right in using a notebook in your browser, connected to a Google Cloud GPU: 
-- [The basics: NumPy on accelerators, `grad` for automatic differentiation, `jit` for compilation and `vmap` for auto-vectorization](https://colab.research.google.com/github/google/jax/blob/master/notebooks/quickstart.ipynb)
+- [The basics: NumPy on accelerators, `grad` for differentiation, `jit` for compilation, and `vmap` for vectorization](https://colab.research.google.com/github/google/jax/blob/master/notebooks/quickstart.ipynb)
 - [Training a Simple Neural Network, with PyTorch Data Loading](https://colab.research.google.com/github/google/jax/blob/master/notebooks/neural_network_and_data_loading.ipynb)
 
 
