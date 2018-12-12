@@ -24,7 +24,7 @@ from jax import test_util as jtu
 
 import jax.numpy as np
 from jax.config import config
-from jax import jit, grad, device_get, device_put
+from jax import jit, grad, device_get, device_put, jacfwd, jacrev
 from jax.core import Primitive
 from jax.interpreters.partial_eval import def_abstract_eval
 from jax.interpreters.ad import defjvp
@@ -234,6 +234,18 @@ class APITest(jtu.JaxTestCase):
     assert onp.all(y2[1][0] == 2 * x)
     assert isinstance(y2[1][1], onp.ndarray)
     assert onp.all(y2[1][1] == 3 * x)
+
+  def test_jacobian(self):
+    R = onp.random.RandomState(0).randn
+    A = R(4, 3)
+    x = R(3)
+
+    f = lambda x: np.dot(A, x)
+    assert onp.allclose(jacfwd(f)(x), A)
+    assert onp.allclose(jacrev(f)(x), A)
+
+    f = lambda x: np.tanh(np.dot(A, x))
+    assert onp.allclose(jacfwd(f)(x), jacrev(f)(x))
 
 
 if __name__ == '__main__':
