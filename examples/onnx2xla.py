@@ -129,3 +129,4 @@ if __name__ == "__main__":
   fun = lambda inputs: np.sum(compiled_predict(inputs))
   print("a derivative with respect to inputs:")
   print(grad(fun)(np.ones((1, 1, 28, 28)))[..., :3, :3])
+
