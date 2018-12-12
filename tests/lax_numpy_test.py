@@ -372,6 +372,37 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_dtype={}_m={}_n={}_k={}".format(
+          onp.dtype(dtype).name, m, n, k),
+       "m": m, "n": n, "k": k, "dtype": dtype, "rng": jtu.rand_default()}
+      for dtype in default_dtypes
+      for n in [0, 4]
+      for m in [None, 0, 1, 3, 4]
+      for k in list(range(-4, 4))))
+  def testTri(self, m, n, k, dtype, rng):
+    onp_fun = lambda: onp.tri(n, M=m, k=k, dtype=dtype)
+    lnp_fun = lambda: lnp.tri(n, M=m, k=k, dtype=dtype)
+    args_maker = lambda: []
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_op={}_shape={}_k={}".format(
+          op, jtu.format_shape_dtype_string(shape, dtype), k),
+       "dtype": dtype, "shape": shape, "op": op, "k": k,
+       "rng": jtu.rand_default()}
+      for dtype in default_dtypes
+      for shape in [shape for shape in all_shapes if len(shape) >= 1]
+      for op in ["tril", "triu"]
+      for k in list(range(-3, 3))))
+  def testTriLU(self, dtype, shape, op, k, rng):
+    onp_fun = lambda arg: getattr(onp, op)(arg, k=k)
+    lnp_fun = lambda arg: getattr(lnp, op)(arg, k=k)
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(
           jtu.format_test_name_suffix("", [shape] * len(dtypes), dtypes)),
        "shape": shape, "dtypes": dtypes, "rng": rng}

@@ -349,7 +349,7 @@ def _ndarray_constant_handler(c, val):
     An XLA ComputationDataHandle / XlaOp representing the constant ndarray
     staged into the XLA Computation.
   """
-  if onp.any(onp.equal(0, val.strides)):
+  if onp.any(onp.equal(0, val.strides)) and val.size > 0:
     zero_stride_axes, = onp.where(onp.equal(0, val.strides))
     other_axes, = onp.where(onp.not_equal(0, val.strides))
     collapsed_val = val[tuple(0 if ax in zero_stride_axes else slice(None)
