@@ -32,8 +32,10 @@ def jax_test(
 
     # Deps that are linked into all test target variants.
     all_test_deps = [
-        ":libjax",
+        "//jax:libjax",
     ]
+    cpu_tags = ["jax_test_cpu"]
+    gpu_tags = ["jax_test_gpu"]
     disabled_tags = ["manual", "notap", "disabled"]
     native.py_test(
         name = name + "_cpu",
@@ -43,7 +45,7 @@ def jax_test(
         deps = deps + all_test_deps,
         shard_count = shard_count.get("cpu") if shard_count else None,
         args = args + ["--jax_enable_x64=true --jax_test_dut=cpu --jax_platform_name=Host"],
-        tags = (disabled_tags if "cpu" in disable else []),
+        tags = cpu_tags + (disabled_tags if "cpu" in disable else []),
     )
     native.py_test(
         name = name + "_cpu_x32",
@@ -53,7 +55,7 @@ def jax_test(
         deps = deps + all_test_deps,
         shard_count = shard_count.get("cpu") if shard_count else None,
         args = args + ["--jax_enable_x64=false --jax_test_dut=cpu --jax_platform_name=Host"],
-        tags = (disabled_tags if "cpu" in disable else []),
+        tags = cpu_tags + (disabled_tags if "cpu" in disable else []),
     )
     native.py_test(
         name = name + "_gpu",
@@ -62,7 +64,7 @@ def jax_test(
         data = data,
         args = args + ["--jax_test_dut=gpu --jax_enable_x64=true --jax_platform_name=CUDA"],
         deps = deps + all_test_deps,
-        tags = ["requires-gpu-sm35"] + (disabled_tags if "gpu" in disable else []),
+        tags = gpu_tags + ["requires-gpu-sm35"] + (disabled_tags if "gpu" in disable else []),
         shard_count = shard_count.get("gpu") if shard_count else None,
     )
     native.py_test(
@@ -72,6 +74,6 @@ def jax_test(
         data = data,
         args = args + ["--jax_test_dut=gpu --jax_enable_x64=false --jax_platform_name=CUDA"],
         deps = deps + all_test_deps,
-        tags = ["requires-gpu-sm35"] + (disabled_tags if "gpu" in disable else []),
+        tags = gpu_tags + ["requires-gpu-sm35"] + (disabled_tags if "gpu" in disable else []),
         shard_count = shard_count.get("gpu") if shard_count else None,
     )
