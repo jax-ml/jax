@@ -402,6 +402,36 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_k={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), k),
+       "dtype": dtype, "shape": shape, "k": k, "rng": jtu.rand_default()}
+      for dtype in default_dtypes
+      for shape in [shape for shape in all_shapes if len(shape) in (1, 2)]
+      for k in list(range(-4, 4))))
+  def testDiag(self, shape, dtype, k, rng):
+    onp_fun = lambda arg: onp.diag(arg, k)
+    lnp_fun = lambda arg: lnp.diag(arg, k)
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_offset={}_axis1={}_axis2={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), offset, axis1, axis2),
+       "dtype": dtype, "shape": shape, "offset": offset, "axis1": axis1,
+       "axis2": axis2, "rng": jtu.rand_default()}
+      for dtype in default_dtypes
+      for shape in [shape for shape in all_shapes if len(shape) >= 2]
+      for (axis1, axis2) in itertools.combinations(range(len(shape)), 2)
+      for offset in list(range(-4, 4))))
+  def testDiagonal(self, shape, dtype, offset, axis1, axis2, rng):
+    onp_fun = lambda arg: onp.diagonal(arg, offset, axis1, axis2)
+    lnp_fun = lambda arg: lnp.diagonal(arg, offset, axis1, axis2)
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(
           jtu.format_test_name_suffix("", [shape] * len(dtypes), dtypes)),
        "shape": shape, "dtypes": dtypes, "rng": rng}
