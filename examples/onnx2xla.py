@@ -17,12 +17,15 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from cStringIO import StringIO
 from functools import partial
-from six.moves.urllib.request import urlopen
+import hashlib
+import sys
 
 import onnx
 from onnx import numpy_helper
 from onnx import onnx_pb2
+from six.moves.urllib.request import urlopen
 
 import jax.numpy as np
 from jax import jit, grad
@@ -112,7 +115,11 @@ if __name__ == "__main__":
   url = ('https://github.com/onnx/models/blob/'
          '81c4779096d1205edd0b809e191a924c58c38fef/'
          'mnist/model.onnx?raw=true')
-  model = onnx.load(urlopen(url))
+  download = urlopen(url).read()
+  if hashlib.md5(download).hexdigest() != 'bc8ad9bd19c5a058055dc18d0f089dad':
+    print("onnx file checksum mismatch")
+    sys.exit(1)
+  model = onnx.load(StringIO(download))
 
   predict = lambda inputs: interpret_onnx(model.graph, inputs)[0]
 
