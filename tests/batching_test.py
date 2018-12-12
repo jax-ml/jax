@@ -24,7 +24,7 @@ import jax.numpy as np
 from jax import test_util as jtu
 from jax.abstract_arrays import ShapedArray
 from jax import lax
-from jax.api import jit, grad, jvp, vjp, trace_to_jaxpr
+from jax.api import jit, grad, jvp, vjp, trace_to_jaxpr, jacfwd, jacrev
 from jax.api import vmap
 from jax.config import config
 from jax.core import unit
@@ -271,6 +271,16 @@ class BatchingTest(jtu.JaxTestCase):
     expected_ans = onp.concatenate([x, onp.broadcast_to(y, (10, 2, 3)),
                                     onp.moveaxis(z, 2, 0)], 2)
     self.assertAllClose(ans, expected_ans, check_dtypes=False)
+
+  def testJacobianIssue54(self):
+    # test modeling the code in https://github.com/google/jax/issues/54
+
+    def func(xs):
+      return np.array([x for x in xs])
+
+    xs = np.ones((5, 1))
+    jacrev(func)(xs)  # don't crash
+    jacfwd(func)(xs)  # don't crash
 
 
 if __name__ == '__main__':

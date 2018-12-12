@@ -64,7 +64,7 @@ def jacfwd(fun, x):
   fun = lu.wrap_init(fun)
   pushfwd = partial(jvp, fun, (x,))
   std_basis = onp.eye(onp.size(x)).reshape((-1,) + onp.shape(x)),
-  y, jac_flat = vmap(pushfwd, std_basis, out_axes=(None, 0))
+  y, jac_flat = vmap(pushfwd, out_axes=(None, -1))(std_basis)
   return jac_flat.reshape(onp.shape(y) + onp.shape(x))
 
 @curry
@@ -72,7 +72,7 @@ def jacrev(fun, x):
   fun = lu.wrap_init(fun)
   y, pullback = vjp(fun, x)
   std_basis = onp.eye(onp.size(y)).reshape((-1,) + onp.shape(y))
-  jac_flat, = vmap(pullback, std_basis, out_axes=onp.ndim(y))
+  jac_flat, = vmap(pullback, out_axes=0)(std_basis)
   return jac_flat.reshape(onp.shape(y) + onp.shape(x))
 
 def hessian(fun):
