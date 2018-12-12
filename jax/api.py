@@ -12,6 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""
+User-facing transformations.
+
+These mostly wrap internal transformations, providing convenience flags to
+control behavior and handling Python containers (tuples/lists/dicts) of
+arguments and outputs.
+"""
+
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -36,6 +44,21 @@ from .interpreters import batching
 map = safe_map
 
 def jit(fun, static_argnums=()):
+  """Sets up `fun` for just-in-time compilation with XLA.
+
+  Args:
+    fun: Function to be jitted. Should be a pure function, as side-effects may
+        only be executed once. Its positional arguments and return value should
+        be arrays, scalars, or standard Python containers (tuple/list/dict)
+        thereof. Keyword arguments and positional arguments specified by
+        `static_argnums` can be anything at all. These are treated as static
+        (see below).
+    static_argnums: A tuple of ints. Specifies which arguments to treat as
+        static (compile-time constant). Operations that only depend on static
+        arguments will be constant-folded. Calling the jitted function with
+        different values for these constants will trigger recompilation.
+   Returns: A wrapped version of `fun`, set up for just-in-time compilation.
+  """
   def f_jitted(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
     dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
@@ -49,6 +72,21 @@ def jit(fun, static_argnums=()):
   return f_jitted
 
 def grad(fun, argnums=0):
+  """Creates a function which evaluates the gradient of `fun`.
+
+  Args:
+    fun: Function to be differentiated. Its arguments at positions specified by
+        `argnums` should be arrays, scalars, or standard Python containers. It
+        should return a scalar (which includes arrays with shape `()` but not
+        arrays with shape `(1,)` etc.)
+    argnums: Integer or tuple of integers. Specifies which positional
+        argument(s) to differentiate with respect to.
+  Returns: A function with the same arguments as `fun`, that evaluates the
+      gradient of `fun`. If `argnums` is an integer then the gradient has the
+      same shape and type as the positional argument indicated by that integer.
+      If argnums is a tuple of integers, the gradient is a tuple of values with
+      the same shapes and types as the corresponding arguments.
+  """
   def grad_f(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
     f_partial, dyn_args = argnums_partial(f, argnums, args)
@@ -61,6 +99,7 @@ def grad(fun, argnums=0):
 
 @curry
 def jacfwd(fun, x):
+  """Jacobian of `fun`, evaluated column-by-column using forward-mode AD"""
   fun = lu.wrap_init(fun)
   pushfwd = partial(jvp, fun, (x,))
   std_basis = onp.eye(onp.size(x)).reshape((-1,) + onp.shape(x)),
@@ -69,6 +108,7 @@ def jacfwd(fun, x):
 
 @curry
 def jacrev(fun, x):
+  """Jacobian of `fun`, evaluated row-by-row using reverse-mode AD"""
   fun = lu.wrap_init(fun)
   y, pullback = vjp(fun, x)
   std_basis = onp.eye(onp.size(y)).reshape((-1,) + onp.shape(y))
@@ -79,7 +119,27 @@ def hessian(fun):
   return jacfwd(jacrev(fun))
 
 def vmap(fun, in_axes=0, out_axes=0):
+  """Vectorizing map. Creates a function which maps `fun` over additional axes.
 
+  Args:
+    fun: Function to be mapped over additional axes.
+    in_axes, out_axes: Specifies which axes to map over. These may be integers,
+        None, or (possibly nested) tuples of integers or None.
+  Returns: Batched/vectorized version of `fun` with arguments that correspond to
+      those of `fun`, but with extra array axes at positions indicated by
+      `in_axes`, and a return value that corresponds to that of `fun`, but with
+      extra array axes at positions indicated by `out_axes`.
+
+  For example, we can implement a matrix-matrix product using a vector dot
+  product:
+
+    vv = lambda x, y: np.vdot(x, y)  #  ([a], [a]) -> []
+    mv = vmap(vv, (0, None), 0)      #  ([a,b], [b]) -> [a]
+    mm = vmap(mv, (None, 1), 1)      #  ([a,b], [b,c]) -> [a,c]
+
+  (`[a,b]` indicates an array with shape (a,b))
+
+  """
   def batched_fun(*args, **kwargs):
     if not isinstance(fun, lu.WrappedFun):
       f = lu.wrap_init(fun)
