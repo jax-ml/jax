@@ -9,3 +9,5 @@
 .bazelrc
 /tensorflow
 .DS_Store
+build/
+dist/
