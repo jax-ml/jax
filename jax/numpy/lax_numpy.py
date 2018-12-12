@@ -41,6 +41,7 @@ from ..lib import xla_bridge
 
 
 # We replace some builtin names to follow Numpy's API, so we capture here.
+_abs = builtins.abs
 _all = builtins.all
 _any = builtins.any
 _max = builtins.max
@@ -827,6 +828,41 @@ def tril(m, k=0):
 def triu(m, k=0):
   mask = tri(*shape(m)[-2:], k=k - 1, dtype=bool)
   return where(mask, zeros_like(m), m)
+
+
+@_wraps(onp.diagonal)
+def diagonal(a, offset=0, axis1=0, axis2=1):
+  a_shape = shape(a)
+
+  # Move the two dimensions to the end.
+  perm = [i for i in range(len(a_shape)) if i != axis1 and i != axis2]
+  perm = perm + [axis1, axis2]
+  a = lax.transpose(a, perm)
+
+  # Mask out the diagonal and reduce over one of the axes
+  a = where(eye(a_shape[axis1], a_shape[axis2], k=offset, dtype=bool),
+            a, zeros_like(a))
+  reduce_axis = -2 if offset < 0 else -1
+  d = sum(a, axis=reduce_axis, dtype=_dtype(a))
+
+  # Slice out the correct diagonal size.
+  diag_size = _max(0, _min(a_shape[axis1] + _min(offset, 0),
+                           a_shape[axis2] - _max(offset, 0)))
+  return lax.slice_in_dim(d, 0, diag_size, axis=-1)
+
+
+@_wraps(onp.diag)
+def diag(v, k=0):
+  v_shape = shape(v)
+  if len(v_shape) == 1:
+    zero = lambda x: lax.full_like(x, shape=(), fill_value=0)
+    n = v_shape[0] + _abs(k)
+    v = lax.pad(v, zero(v), ((_max(0, k), _max(0, -k), 0),))
+    return where(eye(n, k=k, dtype=bool), v, zeros_like(v))
+  elif len(v_shape) == 2:
+    return diagonal(v, offset=k)
+  else:
+    raise ValueError("diag input must be 1d or 2d")
 
 
 ### Tensor contraction operations
