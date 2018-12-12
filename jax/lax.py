@@ -561,14 +561,12 @@ def tan(x):
   return div(sin(x), cos(x))
 
 def asin(x):
-  # asin(x) = 2 * atan(x / (1 + sqrt(1 - x**2)))
-  return mul(_const(x, 2.),
-             atan2(x, add(_const(x, 1.), sqrt(add(_const(x, 1.), square(x))))))
+  return mul(_const(x, 2),
+             atan2(x, add(_const(x, 1), sqrt(sub(_const(x, 1), square(x))))))
 
 def acos(x):
-  # acos(x) = 2 * atan(sqrt(1 - x**2) / (1 + x))
-  return mul(_const(x, 2.),
-             atan2(sqrt(sub(_const(x, 1.), square(x))), add(_const(x, 1.), x)))
+  return mul(_const(x, 2),
+             atan2(sqrt(sub(_const(x, 1), square(x))), add(_const(x, 1), x)))
 
 def atan(x):
   return atan2(x, _const(x, 1.))
@@ -587,6 +585,11 @@ def acosh(x):
   # acosh(x) = log(x + sqrt((x + 1) * (x - 1)))
   return log(add(x, mul(sqrt(add(x, _const(x, 1.))),
                         sqrt(sub(x, _const(x, 1.))))))
+
+def atanh(x):
+  # atanh(x) = 0.5 * log((1 + x) / (1 - x))
+  return mul(_const(x, 0.5), log(div(add(_const(x, 1.), x),
+                                     sub(_const(x, 1.), x))))
 
 
 # Add some methods to ShapedArray that rely on lax primitives
