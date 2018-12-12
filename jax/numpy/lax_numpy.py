@@ -804,6 +804,31 @@ def repeat(a, repeats, axis=None):
       a_shape)
 
 
+@_wraps(onp.tri)
+def tri(N, M=None, k=0, dtype=None):
+  M = M if M is not None else N
+  dtype = dtype or float32
+  x = arange(N, dtype=int32)
+  y = arange(M, dtype=int32)
+  mask = lax.ge(
+      (lax.broadcast_in_dim(x, shape=(N, M), broadcast_dimensions=(0,)) +
+       int32(k)),
+      lax.broadcast(y, [N]))
+  return lax.convert_element_type(mask, dtype)
+
+
+@_wraps(onp.tril)
+def tril(m, k=0):
+  mask = tri(*shape(m)[-2:], k=k, dtype=bool)
+  return where(mask, m, zeros_like(m))
+
+
+@_wraps(onp.triu)
+def triu(m, k=0):
+  mask = tri(*shape(m)[-2:], k=k - 1, dtype=bool)
+  return where(mask, zeros_like(m), m)
+
+
 ### Tensor contraction operations
 
 
