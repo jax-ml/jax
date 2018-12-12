@@ -1362,11 +1362,20 @@ def concatenate_transpose_rule(t, *operands, **kwargs):
     return [slice(t, start, limit) if o is None else None
             for o, start, limit in zip(operands, starts, limits)]
 
+def concatenate_batch_rule(batched_args, batch_dims, dimension, operand_shapes):
+  size = next(op.shape[bdim] for op, bdim in zip(batched_args, batch_dims)
+              if bdim is not None)
+  operands = [batching.move_dim_to_front(op, bdim) if bdim is not None
+              else broadcast(op, (size,))
+              for op, bdim in zip(batched_args, batch_dims)]
+  return concatenate(operands, dimension + 1), 0
+
 concatenate_p = standard_primitive(
     concatenate_shape_rule, concatenate_dtype_rule, 'concatenate',
     concatenate_translation_rule)
 ad.deflinear(concatenate_p, concatenate_transpose_rule)
 ad.primitive_transposes[concatenate_p] = concatenate_transpose_rule
+batching.primitive_batchers[concatenate_p] = concatenate_batch_rule
 
 
 def pad_shape_rule(operand, padding_value, padding_config):
