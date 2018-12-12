@@ -117,42 +117,5 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
                         check_dtypes=False)
     self._CompileAndCheck(lax_op, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": jtu.format_test_name_suffix(
-          "", shapes, dtypes),
-       "rng": rng, "shapes": shapes, "dtypes": dtypes}
-      for shapes in CombosWithReplacement(all_shapes, 3)
-      for dtypes in CombosWithReplacement(default_dtypes, 3)
-      for rng in [jtu.rand_default()]))
-  @jtu.skip_on_flag("jax_xla_backend", "xrt")
-  def testNormLogPdfThreeArgs(self, rng, shapes, dtypes):
-    # TODO(mattjj): test autodiff
-    scipy_fun = osp_stats.norm.logpdf
-    lax_fun = lsp_stats.norm.logpdf
-    def args_maker():
-      x, loc, scale = map(rng, shapes, dtypes)
-      scale = 0.5 + onp.abs(scale)
-      return [x, loc, scale]
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
-    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
-
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": jtu.format_test_name_suffix(
-          "", shapes, dtypes),
-       "rng": rng, "shapes": shapes, "dtypes": dtypes}
-      for shapes in CombosWithReplacement(all_shapes, 2)
-      for dtypes in CombosWithReplacement(default_dtypes, 2)
-      for rng in [jtu.rand_default()]))
-  def testNormLogPdfTwoArgs(self, rng, shapes, dtypes):
-    # TODO(mattjj): test autodiff
-    scale = 0.5
-    scipy_fun = functools.partial(osp_stats.norm.logpdf, scale=scale)
-    lax_fun = functools.partial(lsp_stats.norm.logpdf, scale=scale)
-    def args_maker():
-      return list(map(rng, shapes, dtypes))
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
-    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
-
-
 if __name__ == "__main__":
   absltest.main()
