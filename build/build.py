@@ -171,7 +171,7 @@ build:opt --host_copt=-march=native
 
 
 def write_bazelrc(**kwargs):
-  f = open(".bazelrc", "w")
+  f = open("../.bazelrc", "w")
   f.write(BAZELRC_TEMPLATE.format(**kwargs))
   f.close()
 
