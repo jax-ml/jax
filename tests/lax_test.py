@@ -32,10 +32,10 @@ from jax import core
 from jax import lax
 from jax import test_util as jtu
 from jax import lax_reference
-from jax.config import config
 from jax.interpreters import xla
 from jax.lib import xla_bridge
 
+from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 

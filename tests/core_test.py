@@ -28,12 +28,14 @@ from jax import core
 from jax import numpy as np
 from jax import test_util as jtu
 from jax.api import jvp, linearize, vjp, jit
-from jax.config import config
 from jax.lax import UnshapedArray, ShapedArray, ConcreteArray
 from jax.tree_util import tree_flatten, tree_unflatten, tree_multimap, tree_reduce
 from jax.util import partial
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
+
+from jax.config import config
+config.parse_flags_with_absl()
 
 _ = pe.PartialVal((UnshapedArray(onp.float32), core.unit))
 __ = pe.PartialVal((ShapedArray((), onp.float32), core.unit))
@@ -329,5 +331,4 @@ class CoreTest(jtu.JaxTestCase):
 
 
 if __name__ == '__main__':
-  config.config_with_absl()
   absltest.main()

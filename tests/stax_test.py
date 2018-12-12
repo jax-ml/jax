@@ -24,9 +24,9 @@ import numpy as onp
 
 from jax import test_util as jtu
 from jax import random
-from jax.config import config
 from jax.experimental import stax
 
+from jax.config import config
 config.parse_flags_with_absl()
 
 

@@ -237,6 +237,8 @@ class JVPTracer(Tracer):
     self.trace = trace
     self.primal = primal
     self.tangent = tangent
+    # TODO(mattjj,dougalm): behind skip_checks, check primal/tangent shapes and
+    # dtypes agree (up to jax_enable_x64 flag)
 
   @property
   def aval(self):
