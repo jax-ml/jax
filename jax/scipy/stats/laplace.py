@@ -23,7 +23,7 @@ from ... import lax
 from ...numpy.lax_numpy import _promote_args_like, _constant_like, _wraps
 
 
-@_wraps(osp_stats.laplace.logpdf):
+@_wraps(osp_stats.laplace.logpdf)
 def logpdf(x, loc=0, scale=1):
   x, loc, scale = _promote_args_like(osp_stats.laplace.logpdf, x, loc, scale)
   two = _constant_like(x, 2)
