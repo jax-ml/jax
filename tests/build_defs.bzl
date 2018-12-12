@@ -31,9 +31,10 @@ def jax_test(
             fail("Only one test source file is currently supported.")
 
     # Deps that are linked into all test target variants.
-    all_test_deps = [
-        "//jax:libjax",
-    ]
+    all_test_deps = select({
+        ":libjax_depend": ["//jax:libjax"],
+        "//conditions:default": [],
+    })
     cpu_tags = ["jax_test_cpu"]
     gpu_tags = ["jax_test_gpu"]
     disabled_tags = ["manual", "notap", "disabled"]

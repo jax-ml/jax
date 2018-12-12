@@ -16,6 +16,11 @@ licenses(["notice"])  # Apache 2
 
 load(":build_defs.bzl", "jax_test")
 
+config_setting(
+    name = "libjax_depend",
+    values = {"define": "libjax_depend=true"},
+)
+
 jax_test(
     name = "core_test",
     srcs = ["core_test.py"],
