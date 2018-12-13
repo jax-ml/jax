@@ -20,6 +20,7 @@ import collections
 import functools
 from functools import partial
 import itertools
+from unittest import skip
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -365,6 +366,7 @@ class LaxTest(jtu.JaxTestCase):
 
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)
 
+  @skip
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_lhs_shape={}_rhs_shape={}_strides={}_padding={}"
        "_lhs_dilation={}_rhs_dilation={}".format(

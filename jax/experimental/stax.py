@@ -49,7 +49,7 @@ def logsoftmax(x, axis=-1):
 
 def fastvar(x, axis, keepdims):
   """A fast but less numerically-stable variance calculation than np.var."""
-  return np.mean(x**2, axis, keepdims) - np.mean(x, axis, keepdims)**2
+  return np.mean(x**2, axis, keepdims=keepdims) - np.mean(x, axis, keepdims=keepdims)**2
 
 
 # Initializers
