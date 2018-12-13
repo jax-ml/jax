@@ -17,7 +17,7 @@ from __future__ import division
 from __future__ import print_function
 
 import collections
-from .util import partial
+from .util import partial, prod
 import itertools
 import operator
 import six
@@ -43,6 +43,9 @@ from .lib import xla_bridge
 
 _max = builtins.max
 _min = builtins.max
+_reduce = six.moves.reduce
+
+def identity(x): return x
 
 ### traceables
 
@@ -411,6 +414,25 @@ class OpaqueParam(object):
 opaque_param_ids = itertools.count()
 
 
+def tie_in(x, y):
+  return tie_in_p.bind(x, y)
+
+def full(shape, fill_value, dtype=None):
+  if onp.shape(fill_value):
+    msg = "full must be called with scalar fill_value, got fill_value.shape {}."
+    raise TypeError(msg.format(onp.shape(fill_value)))
+
+  dtype = dtype and xla_bridge.canonicalize_dtype(dtype)
+  if dtype is not None and _dtype(fill_value) != dtype:
+    # for Python scalars and raw ndarrays, we keep fill_value as a cpu ndarray
+    if onp.isscalar(fill_value) or type(fill_value) is onp.ndarray:
+      fill_value = onp.array(fill_value, dtype)
+    else:
+      fill_value = convert_element_type(fill_value, dtype)
+
+  return full_p.bind(fill_value, shape=shape)
+
+
 ### convenience wrappers around traceables
 
 
@@ -439,7 +461,8 @@ def full_like(x, fill_value, dtype=None, shape=None):
     `fill_value`, similar to the output of np.full.
   """
   shape = onp.shape(x) if shape is None else shape
-  return broadcast(onp.array(fill_value, dtype or _dtype(x)), shape)
+  out = full(shape, fill_value, dtype or _dtype(x))
+  return tie_in(x, out)
 
 
 def collapse(operand, start_dimension, stop_dimension):
@@ -631,8 +654,7 @@ ShapedArray._iter = staticmethod(_iter)
 # Add some ad handlers that use (or could use) lax primitives
 
 def zeros_like_array(x):
-  dtype = xla_bridge.canonicalize_dtype(_dtype(x))
-  return onp.broadcast_to(onp.zeros((), dtype), onp.shape(x))
+  return full_like(x, 0)
 
 for t in itertools.chain(array_types, [xla.DeviceArray]):
   ad_util.jaxval_adders[t] = add
@@ -647,8 +669,6 @@ batching.pytype_aval_mappings[xla.DeviceArray] = make_shaped_array
 _input_dtype = lambda *args, **_: xla_bridge.canonicalize_dtype(args[0].dtype)
 _fixed_dtype = lambda dtype: lambda *args, **kwargs: xla_bridge.canonicalize_dtype(dtype)
 _complex_basetype = lambda dtype: onp.abs(onp.zeros((), dtype)).dtype
-
-def identity(x): return x
 
 
 def standard_primitive(shape_rule, dtype_rule, name, translation_rule=None):
@@ -1561,9 +1581,11 @@ def select_dtype_rule(pred, on_true, on_false):
   return on_true.dtype
 
 def select_transpose_rule(t, pred, on_true, on_false):
+  assert pred is not None
+  zeros = full_like(t, 0)
   return [None,
-          select(pred, t, _zeros(on_false)) if on_true is None else None,
-          select(pred, _zeros(on_true), t) if on_false is None else None]
+          select(pred, t, zeros) if on_true is None else None,
+          select(pred, zeros, t) if on_false is None else None]
 
 def select_batch_rule(batched_args, batch_dims, **unused_kwargs):
   oprand, on_true, on_false, = batched_args
@@ -2218,6 +2240,71 @@ while_p.def_abstract_eval(while_loop_abstract_eval)
 xla.translations[while_p] = while_loop_translation_rule
 
 
+### primitives for handling constants
+
+
+def tie_in_transpose_rule(t):
+  return [ad_util.zero, t]
+
+def tie_in_batch_rule(batched_args, batch_dims):
+  y = tie_in(*batched_args)
+  _, bdim_y = batch_dims
+  return y, bdim_y
+
+tie_in_p = Primitive('tie_in')
+tie_in_p.def_impl(lambda x, y: y)
+tie_in_p.def_abstract_eval(lambda x, y: y)
+xla.translations[tie_in_p] = lambda c, x, y: y
+ad.deflinear(tie_in_p, tie_in_transpose_rule)
+batching.primitive_batchers[tie_in_p] = tie_in_batch_rule
+
+
+class FilledConstant(xla.DeviceConstant):
+  __slots__ = ["fill_value"]
+
+  def __init__(self, fill_value, shape):
+    assert type(fill_value) is onp.ndarray
+    self.shape = shape
+    self.dtype = _dtype(fill_value)
+    self.ndim = len(shape)
+    self.size = prod(shape)
+    self._npy_value = None
+
+    self.fill_value = fill_value
+
+  @property
+  def _value(self):
+    return onp.full(self.shape, self.fill_value)
+
+  @staticmethod
+  def constant_handler(c, filled_const):
+    return c.Broadcast(c.NumpyArrayConstant(filled_const.fill_value),
+                       filled_const.shape)
+xla.register_device_constant(FilledConstant)
+
+# TODO(mattjj): if we used isinstance rather than handlers here, these would all
+# be covered as subclasses of DeviceArray. alternatively, just set up these in a
+# loop after we've defined all the constant DeviceConstant subclasses.
+batching.pytype_aval_mappings[FilledConstant] = make_shaped_array
+ad_util.jaxval_adders[FilledConstant] = add
+ad_util.jaxval_zeros_likers[FilledConstant] = zeros_like_array
+
+def full_batch_rule(batched_args, batch_dims, shape):
+  fill_value, = batched_args
+  bdim, = batch_dims
+  assert bdim == 0
+  return broadcast_in_dim(fill_value, fill_value.shape + shape, [bdim])
+
+full_p = Primitive('full_p')
+full_p.def_impl(FilledConstant)
+full_p.def_abstract_eval(
+    lambda fill_value, shape: ShapedArray(shape, _dtype(fill_value)))
+xla.translations[full_p] = \
+    lambda c, fill_value, shape: c.Broadcast(fill_value, shape)
+ad.deflinear(full_p, lambda t, shape: [_reduce_sum(t, tuple(range(len(shape))))])
+batching.primitive_batchers[full_p] = full_batch_rule
+
+
 ### util
 
 def _ndim(x):
@@ -2350,13 +2437,19 @@ def _dynamic_slice_indices(operand, start_indices):
   return rem(start_indices, onp.array(operand.shape, start_indices.dtype))
 
 
-_const = lambda example, val: onp.array(val, _dtype(example))
-_zeros = partial(full_like, fill_value=0)
-_zero = partial(full_like, shape=(), fill_value=0)
-_ones = partial(full_like, fill_value=1)
-_one = partial(full_like, shape=(), fill_value=1)
-_twos = partial(full_like, fill_value=2)
-_two = partial(full_like, shape=(), fill_value=2)
+def _ndarray_full_like(x, fill_value, dtype=None, shape=None):
+  return onp.broadcast_to(onp.array(fill_value, dtype or _dtype(x)),
+                          onp.shape(x) if shape is None else shape)
+
+def _const(example, val):
+  return onp.array(val, _dtype(example))
+
+_zeros = partial(_ndarray_full_like, fill_value=0)
+_zero = partial(_ndarray_full_like, shape=(), fill_value=0)
+_ones = partial(_ndarray_full_like, fill_value=1)
+_one = partial(_ndarray_full_like, shape=(), fill_value=1)
+_twos = partial(_ndarray_full_like, fill_value=2)
+_two = partial(_ndarray_full_like, shape=(), fill_value=2)
 
 _dtype = onp.result_type
 _iscomplex = lambda x: onp.issubdtype(_dtype(x), onp.complexfloating)

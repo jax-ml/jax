@@ -794,33 +794,27 @@ asarray = array
 
 @_wraps(onp.zeros_like)
 def zeros_like(x, dtype=None):
-  return zeros(_shape(x), dtype or _dtype(x))
+  return lax.full_like(x, 0, dtype)
 
 
 @_wraps(onp.ones_like)
 def ones_like(x, dtype=None):
-  return ones(_shape(x), dtype or _dtype(x))
+  return lax.full_like(x, 1, dtype)
 
 
-@_wraps(onp.full)
-def full(shape, fill_value, dtype=None):
-  if dtype:
-    fill_value = lax.convert_element_type(fill_value, dtype)
-  return lax.broadcast(fill_value, tuple(shape))
+full = _wraps(onp.full)(lax.full)
 
 
 @_wraps(onp.zeros)
 def zeros(shape, dtype=onp.dtype("float64")):
   shape = (shape,) if onp.isscalar(shape) else shape
-  dtype = xla_bridge.canonicalize_dtype(dtype)
-  return onp.broadcast_to(onp.zeros((), dtype), tuple(shape))
+  return lax.full(shape, 0, dtype)
 
 
 @_wraps(onp.ones)
 def ones(shape, dtype=onp.dtype("float64")):
   shape = (shape,) if onp.isscalar(shape) else shape
-  dtype = xla_bridge.canonicalize_dtype(dtype)
-  return onp.broadcast_to(onp.ones((), dtype), tuple(shape))
+  return lax.full(shape, 1, dtype)
 
 
 @_wraps(onp.repeat)
