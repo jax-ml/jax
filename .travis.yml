@@ -20,6 +20,7 @@ before_install:
   - conda config --add channels conda-forge
 install:
   - conda install --yes python=$TRAVIS_PYTHON_VERSION $DEPS
+  - pip install jaxlib
   - pip install -v .
 script:
   - cd tests
