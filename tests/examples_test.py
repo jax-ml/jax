@@ -27,6 +27,9 @@ import numpy as onp
 from jax import test_util as jtu
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from examples import mnist_classifier
+from examples import mnist_classifier_fromscratch
+from examples import mnist_vae
 from examples import resnet50
 sys.path.pop()
 

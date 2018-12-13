@@ -29,7 +29,7 @@ from jax.api import jit, grad
 from jax.config import config
 from jax.scipy.misc import logsumexp
 import jax.numpy as np
-import datasets
+from examples import datasets
 
 
 def init_random_params(scale, layer_sizes, rng=npr.RandomState(0)):
@@ -93,4 +93,3 @@ if __name__ == "__main__":
     print("Epoch {} in {:0.2f} sec".format(epoch, epoch_time))
     print("Training set accuracy {}".format(train_acc))
     print("Test set accuracy {}".format(test_acc))
-
