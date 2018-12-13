@@ -57,7 +57,7 @@ class UnshapedArray(core.AbstractValue):
   _float   = concretization_function_error(float)
   _int     = concretization_function_error(int)
   if six.PY2:
-    _long    = concretization_function_error(long)
+    _long    = concretization_function_error(long)  # noqa: F821
   _complex = concretization_function_error(complex)
   _hex     = concretization_function_error(hex)
   _oct     = concretization_function_error(oct)

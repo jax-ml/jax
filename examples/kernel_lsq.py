@@ -18,6 +18,8 @@ from __future__ import print_function
 
 from functools import partial
 
+from six.moves import xrange
+
 import numpy.random as npr
 
 import jax.numpy as np
