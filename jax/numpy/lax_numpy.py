@@ -93,6 +93,12 @@ float32 = onp.float32
 float64 = onp.float64
 complex64 = onp.complex64
 
+integer = onp.integer
+
+iinfo = onp.iinfo
+finfo = onp.finfo
+
+issubdtype = onp.issubdtype
 
 ### utility functions
 
@@ -864,6 +870,30 @@ def tril(m, k=0):
 def triu(m, k=0):
   mask = tri(*shape(m)[-2:], k=k - 1, dtype=bool)
   return where(mask, zeros_like(m), m)
+
+
+@_wraps(onp.trace)
+def trace(a, offset=0, axis1=0, axis2=1, dtype=None, out=None):
+  if out:
+    raise NotImplementedError("The 'out' argument to trace is not supported.")
+
+  a_shape = shape(a)
+  if dtype is None:
+    dtype = _dtype(a)
+    if issubdtype(dtype, integer):
+      default_int = xla_bridge.canonicalize_dtype(onp.int_)
+      if iinfo(dtype).bits < iinfo(default_int).bits:
+        dtype = default_int
+
+  # Move the axis? dimensions to the end.
+  perm = [i for i in range(len(a_shape)) if i != axis1 and i != axis2]
+  perm = perm + [axis1, axis2]
+  a = lax.transpose(a, perm)
+
+  # Mask out the diagonal and reduce.
+  a = where(eye(a_shape[axis1], a_shape[axis2], k=offset, dtype=bool),
+            a, zeros_like(a))
+  return sum(a, axis=(-2, -1), dtype=dtype)
 
 
 @_wraps(onp.diagonal)
