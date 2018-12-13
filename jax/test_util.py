@@ -293,7 +293,7 @@ def rand_some_inf():
 
   def rand(shape, dtype):
     """The random sampler function."""
-    if not onp.issubdtype(dtype, onp.float):
+    if not onp.issubdtype(dtype, onp.floating):
       # only float types have inf
       return base_rand(shape, dtype)
 
