@@ -440,7 +440,7 @@ def reshape(a, newshape, order="C"):  # pylint: disable=missing-docstring
   elif order == "F":
     dims = onp.arange(ndim(a))[::-1]
   elif order == "A":
-    dims = onp.arange(ndim(a))[::-1] if isfortran(a) else onp.arange(ndim(a))
+    raise NotImplementedError("np.reshape order=A is not implemented.")
   else:
     raise ValueError("Unexpected value for 'order' argument: {}.".format(order))
 
