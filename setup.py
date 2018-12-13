@@ -16,7 +16,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='jax',
-    version='0.1.8',
+    version='0.1.9',
     description='Differentiate, compile, and transform Numpy code.',
     author='JAX team',
     author_email='jax-dev@google.com',
