@@ -195,44 +195,65 @@ def _wraps(fun):
 ### implementations of numpy functions in terms of lax
 
 
-def _one_to_one_op(numpy_fn, lax_fn, promote_to_result_dtype=False):
-  if promote_to_result_dtype:
-    promoted_lax_fn = lambda *args: lax_fn(*_promote_args_like(numpy_fn, *args))
+def _one_to_one_unop(numpy_fn, lax_fn, promote_like=False):
+  if promote_like:
+    fn = lambda x: lax_fn(lax.convert_element_type(x, _result_dtype(numpy_fn, x)))
   else:
-    name = numpy_fn.__name__
-    promoted_lax_fn = lambda *args: lax_fn(*_promote_args(name, *args))
-  return _wraps(numpy_fn)(promoted_lax_fn)
+    fn = lambda x: lax_fn(x)
+  return _wraps(numpy_fn)(fn)
 
-absolute = abs = _one_to_one_op(onp.absolute, lax.abs)
-add = _one_to_one_op(onp.add, lax.add)
-bitwise_and = _one_to_one_op(onp.bitwise_and, lax.bitwise_and)
-bitwise_not = _one_to_one_op(onp.bitwise_not, lax.bitwise_not)
-bitwise_or = _one_to_one_op(onp.bitwise_or, lax.bitwise_or)
-bitwise_xor = _one_to_one_op(onp.bitwise_xor, lax.bitwise_xor)
-right_shift = _one_to_one_op(onp.right_shift, lax.shift_right_arithmetic)
-left_shift = _one_to_one_op(onp.left_shift, lax.shift_left)
-ceil = _one_to_one_op(onp.ceil, lax.ceil)
-equal = _one_to_one_op(onp.equal, lax.eq)
-expm1 = _one_to_one_op(onp.expm1, lax.expm1, True)
-exp = _one_to_one_op(onp.exp, lax.exp, True)
-floor = _one_to_one_op(onp.floor, lax.floor)
-greater_equal = _one_to_one_op(onp.greater_equal, lax.ge)
-greater = _one_to_one_op(onp.greater, lax.gt)
-isfinite = _one_to_one_op(onp.isfinite, lax.is_finite)
-less_equal = _one_to_one_op(onp.less_equal, lax.le)
-less = _one_to_one_op(onp.less, lax.lt)
-log1p = _one_to_one_op(onp.log1p, lax.log1p, True)
-log = _one_to_one_op(onp.log, lax.log, True)
-maximum = _one_to_one_op(onp.maximum, lax.max)
-minimum = _one_to_one_op(onp.minimum, lax.min)
-multiply = _one_to_one_op(onp.multiply, lax.mul)
-negative = _one_to_one_op(onp.negative, lax.neg)
-not_equal = _one_to_one_op(onp.not_equal, lax.ne)
-power = _one_to_one_op(onp.power, lax.pow, True)
-sign = _one_to_one_op(onp.sign, lax.sign)
-subtract = _one_to_one_op(onp.subtract, lax.sub)
-tanh = _one_to_one_op(onp.tanh, lax.tanh, True)
-sort = _one_to_one_op(onp.sort, lax.sort)
+def _one_to_one_binop(numpy_fn, lax_fn, promote_like=False):
+  if promote_like:
+    fn = lambda x, y: lax_fn(*_promote_args_like(numpy_fn, x, y))
+  else:
+    fn = lambda x, y: lax_fn(*_promote_args(numpy_fn.__name__, x, y))
+  return _wraps(numpy_fn)(fn)
+
+
+absolute = abs = _one_to_one_unop(onp.absolute, lax.abs)
+bitwise_not = _one_to_one_unop(onp.bitwise_not, lax.bitwise_not)
+negative = _one_to_one_unop(onp.negative, lax.neg)
+sort = _one_to_one_unop(onp.sort, lax.sort)
+sign = _one_to_one_unop(onp.sign, lax.sign)
+
+floor = _one_to_one_unop(onp.floor, lax.floor, True)
+ceil = _one_to_one_unop(onp.ceil, lax.ceil, True)
+exp = _one_to_one_unop(onp.exp, lax.exp, True)
+log = _one_to_one_unop(onp.log, lax.log, True)
+expm1 = _one_to_one_unop(onp.expm1, lax.expm1, True)
+log1p = _one_to_one_unop(onp.log1p, lax.log1p, True)
+sin = _one_to_one_unop(onp.sin, lax.sin, True)
+cos = _one_to_one_unop(onp.cos, lax.cos, True)
+tan = _one_to_one_unop(onp.tan, lax.tan, True)
+arcsin = _one_to_one_unop(onp.arcsin, lax.asin, True)
+arccos = _one_to_one_unop(onp.arccos, lax.acos, True)
+arctan = _one_to_one_unop(onp.arctan, lax.atan, True)
+sinh = _one_to_one_unop(onp.sinh, lax.sinh, True)
+cosh = _one_to_one_unop(onp.cosh, lax.cosh, True)
+tanh = _one_to_one_unop(onp.tanh, lax.tanh, True)
+arcsinh = _one_to_one_unop(onp.arcsinh, lax.asinh, True)
+arccosh = _one_to_one_unop(onp.arccosh, lax.acosh, True)
+arctanh = _one_to_one_unop(onp.arctanh, lax.atanh, True)
+
+add = _one_to_one_binop(onp.add, lax.add)
+bitwise_and = _one_to_one_binop(onp.bitwise_and, lax.bitwise_and)
+bitwise_or = _one_to_one_binop(onp.bitwise_or, lax.bitwise_or)
+bitwise_xor = _one_to_one_binop(onp.bitwise_xor, lax.bitwise_xor)
+right_shift = _one_to_one_binop(onp.right_shift, lax.shift_right_arithmetic)
+left_shift = _one_to_one_binop(onp.left_shift, lax.shift_left)
+equal = _one_to_one_binop(onp.equal, lax.eq)
+greater_equal = _one_to_one_binop(onp.greater_equal, lax.ge)
+greater = _one_to_one_binop(onp.greater, lax.gt)
+isfinite = _one_to_one_binop(onp.isfinite, lax.is_finite)
+less_equal = _one_to_one_binop(onp.less_equal, lax.le)
+less = _one_to_one_binop(onp.less, lax.lt)
+maximum = _one_to_one_binop(onp.maximum, lax.max)
+minimum = _one_to_one_binop(onp.minimum, lax.min)
+multiply = _one_to_one_binop(onp.multiply, lax.mul)
+not_equal = _one_to_one_binop(onp.not_equal, lax.ne)
+subtract = _one_to_one_binop(onp.subtract, lax.sub)
+power = _one_to_one_binop(onp.power, lax.pow, True)
+arctan2 = _one_to_one_binop(onp.arctan2, lax.atan2, True)
 
 
 def _logical_op(np_op, bitwise_op):
@@ -350,30 +371,6 @@ def rot90(m, k=1, axes=(0, 1)):
 @_wraps(onp.flip)
 def flip(m, axis):
   return lax.rev(m, [axis])
-
-
-@_wraps(onp.sinh)
-def sinh(x):
-  x, = _promote_to_result_dtype(onp.sinh, x)
-  return lax.div(lax.sub(lax.exp(x), lax.exp(lax.neg(x))), _constant_like(x, 2))
-
-
-@_wraps(onp.cosh)
-def cosh(x):
-  x, = _promote_to_result_dtype(onp.cosh, x)
-  return lax.div(lax.add(lax.exp(x), lax.exp(lax.neg(x))), _constant_like(x, 2))
-
-
-@_wraps(onp.sin)
-def sin(x):
-  x, = _promote_to_result_dtype(onp.sin, x)
-  return lax.sin(x)
-
-
-@_wraps(onp.cos)
-def cos(x):
-  x, = _promote_to_result_dtype(onp.sin, x)
-  return lax.cos(x)
 
 
 @_wraps(onp.conjugate)
@@ -611,8 +608,8 @@ sum = _make_reduction(onp.sum, lax.add, 0)
 prod = _make_reduction(onp.prod, lax.mul, 1)
 max = _make_reduction(onp.max, lax.max, -onp.inf)
 min = _make_reduction(onp.min, lax.min, onp.inf)
-all = _make_reduction(onp.all, logical_and, True)
-any = _make_reduction(onp.any, logical_or, False)
+all = alltrue = _make_reduction(onp.all, logical_and, True)
+any = sometrue = _make_reduction(onp.any, logical_or, False)
 
 
 @_wraps(onp.mean)
