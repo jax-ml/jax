@@ -31,7 +31,7 @@ from jax import jit, grad
 from jax.experimental import minmax
 from jax.experimental import stax
 from jax.experimental.stax import Dense, Relu, LogSoftmax
-import datasets
+from examples import datasets
 
 
 def loss(params, batch):
@@ -94,4 +94,3 @@ if __name__ == "__main__":
     print("Epoch {} in {:0.2f} sec".format(epoch, epoch_time))
     print("Training set accuracy {}".format(train_acc))
     print("Test set accuracy {}".format(test_acc))
-

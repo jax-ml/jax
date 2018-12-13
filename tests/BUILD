@@ -101,3 +101,8 @@ jax_test(
     name = "generated_fun_test",
     srcs = ["generated_fun_test.py"],
 )
+
+jax_test(
+    name = "examples_test",
+    srcs = ["examples_test.py"],
+)
