@@ -60,3 +60,11 @@ py_binary(
         "//jax:stax",
     ],
 )
+
+py_binary(
+    name = "kernel_lsq",
+    srcs = ["kernel_lsq.py"],
+    deps = [
+        "//jax:libjax",
+    ],
+)
