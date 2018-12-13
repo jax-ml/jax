@@ -572,7 +572,7 @@ def _make_reduction(np_fun, op, init_val):
 
     a = a if isinstance(a, ndarray) else asarray(a)
     dims = _reduction_dims(a, axis)
-    result_dtype = _dtype(np_fun(onp.ones((), dtype=_dtype(a))))
+    result_dtype = _dtype(np_fun(onp.ones((), dtype=dtype or _dtype(a))))
     if _dtype(a) != result_dtype:
       a = lax.convert_element_type(a, result_dtype)
     result = lax.reduce(a, _reduction_init_val(a, init_val), op, dims)
@@ -616,25 +616,36 @@ any = _make_reduction(onp.any, logical_or, False)
 
 
 @_wraps(onp.mean)
-def mean(a, axis=None, keepdims=False):
+def mean(a, axis=None, dtype=None, keepdims=False):
   if axis is None:
     normalizer = size(a)
   else:
     normalizer = onp.prod(onp.take(shape(a), axis))
-  if onp.issubdtype(_dtype(a), onp.bool_):
-    a = lax.convert_element_type(a, onp.int32)
-  return true_divide(sum(a, axis, keepdims=keepdims),
-                     _constant_like(a, normalizer))
+  if dtype is None:
+    if (onp.issubdtype(_dtype(a), onp.bool_) or
+        onp.issubdtype(_dtype(a), onp.integer)):
+      dtype = xla_bridge.canonicalize_dtype(onp.float64)
+    else:
+      dtype = _dtype(a)
+
+  td = true_divide(
+      sum(a, axis, dtype=dtype, keepdims=keepdims),
+      lax.convert_element_type(normalizer, dtype))
+  return lax.convert_element_type(td, dtype)
 
 
 @_wraps(onp.var)
-def var(a, axis=None, keepdims=False, ddof=0):
+def var(a, axis=None, dtype=None, keepdims=False, ddof=0):
   if ddof != 0:
     raise NotImplementedError("Only implemented for ddof=0.")
-  centered = subtract(a, mean(a, axis, keepdims=True))
+  if dtype is None:
+    if (onp.issubdtype(_dtype(a), onp.bool_) or
+        onp.issubdtype(_dtype(a), onp.integer)):
+      dtype = xla_bridge.canonicalize_dtype(onp.float64)
+  centered = subtract(a, mean(a, axis, dtype=dtype, keepdims=True))
   if iscomplexobj(centered):
     centered = lax.abs(centered)
-  return mean(lax.mul(centered, centered), axis, keepdims=keepdims)
+  return mean(lax.mul(centered, centered), axis, dtype=dtype, keepdims=keepdims)
 
 
 @_wraps(onp.std)
