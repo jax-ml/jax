@@ -19,6 +19,7 @@ from __future__ import print_function
 import functools
 import re
 import itertools as it
+import os
 import random
 
 from absl.testing import absltest
@@ -45,7 +46,7 @@ flags.DEFINE_enum(
 
 flags.DEFINE_integer(
   'num_generated_cases',
-  100,
+  os.getenv('JAX_NUM_GENERATED_CASES', 100),
   help='Number of generated cases to test')
 
 EPS = 1e-4
