@@ -25,8 +25,10 @@ from absl.testing import parameterized
 import numpy as onp
 
 from jax import test_util as jtu
+import jax.numpy as np
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from examples import kernel_lsq
 from examples import mnist_classifier
 from examples import mnist_classifier_fromscratch
 from examples import mnist_vae
@@ -75,6 +77,25 @@ class ResNet50Test(jtu.JaxTestCase):
   def testResNet50Shape(self, num_classes, input_shape):
     init_fun, apply_fun = resnet50.ResNet50(num_classes)
     _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)
+
+  def testKernelRegressionGram(self):
+    n, d = 100, 20
+    rng = onp.random.RandomState(0)
+    truth = rng.randn(d)
+    xs = rng.randn(n, d)
+    ys = np.dot(xs, truth)
+    kernel = lambda x, y: np.dot(x, y)
+    assert np.all(kernel_lsq.gram(kernel, xs) == np.dot(xs, xs.T))
+
+  def testKernelRegressionTrainAndPredict(self):
+    n, d = 100, 20
+    rng = onp.random.RandomState(0)
+    truth = rng.randn(d)
+    xs = rng.randn(n, d)
+    ys = np.dot(xs, truth)
+    kernel = lambda x, y: np.dot(x, y)
+    predict = kernel_lsq.train(kernel, xs, ys)
+    assert np.allclose(predict(xs), ys, atol=1e-3)
 
 
 if __name__ == "__main__":
