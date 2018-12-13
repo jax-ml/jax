@@ -2013,7 +2013,7 @@ def select_and_scatter_shape_rule(
     raise TypeError(msg.format(window_strides, window_dimensions))
   return operand.shape
 
-def select_and_scatter_translation(operand, source, init_value, select_jaxpr,
+def select_and_scatter_translation(c, operand, source, init_value, select_jaxpr,
                                    select_consts, scatter_jaxpr, scatter_consts,
                                    window_dimensions, window_strides, padding):
   select = _reduction_computation(c, select_jaxpr, select_consts, init_value)
@@ -2164,6 +2164,9 @@ xla.translations[while_p] = while_loop_translation_rule
 
 
 ### util
+
+def _ndim(x):
+  return x.ndim
 
 
 def _dilate_shape(shape, dilation):
