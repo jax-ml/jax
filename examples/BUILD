@@ -14,6 +14,8 @@
 
 licenses(["notice"])  # Apache 2
 
+package(default_visibility = ["//visibility:public"])
+
 py_library(
     name = "datasets",
     srcs = ["datasets.py"],
