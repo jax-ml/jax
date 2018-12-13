@@ -467,6 +467,24 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_dtype_{}_offset={}_axis1={}_axis2={}".format(
+          jtu.format_shape_dtype_string(shape, dtype),
+          out_dtype, offset, axis1, axis2),
+       "dtype": dtype, "out_dtype": out_dtype, "shape": shape, "offset": offset,
+       "axis1": axis1, "axis2": axis2, "rng": jtu.rand_default()}
+      for dtype in default_dtypes
+      for out_dtype in [None] + default_dtypes
+      for shape in [shape for shape in all_shapes if len(shape) >= 2]
+      for (axis1, axis2) in itertools.combinations(range(len(shape)), 2)
+      for offset in list(range(-4, 4))))
+  def testTrace(self, shape, dtype, out_dtype, offset, axis1, axis2, rng):
+    onp_fun = lambda arg: onp.trace(arg, offset, axis1, axis2, out_dtype)
+    lnp_fun = lambda arg: lnp.trace(arg, offset, axis1, axis2, out_dtype)
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(
           jtu.format_test_name_suffix("", [shape] * len(dtypes), dtypes)),
        "shape": shape, "dtypes": dtypes, "rng": rng}
