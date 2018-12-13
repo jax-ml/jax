@@ -355,6 +355,7 @@ def _ndarray_constant_handler(c, val):
     An XLA ComputationDataHandle / XlaOp representing the constant ndarray
     staged into the XLA Computation.
   """
+  # TODO(mattjj): revise this to use c.BroadcastInDim rather than Transpose
   if onp.any(onp.equal(0, val.strides)) and val.size > 0:
     zero_stride_axes, = onp.where(onp.equal(0, val.strides))
     other_axes, = onp.where(onp.not_equal(0, val.strides))
