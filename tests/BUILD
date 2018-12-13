@@ -59,6 +59,14 @@ jax_test(
 )
 
 jax_test(
+    name = "linalg_test",
+    srcs = ["linalg_test.py"],
+    shard_count = {
+        "cpu": 2,
+    },
+)
+
+jax_test(
     name = "lax_scipy_test",
     srcs = ["lax_scipy_test.py"],
     shard_count = {

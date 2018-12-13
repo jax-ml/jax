@@ -358,7 +358,7 @@ def _select_and_gather_add(tangents, operand, select_prim, window_dimensions,
       window_strides=tuple(window_strides), padding=padding)
 
 def sort(operand, dimension=-1):
-  return sort_p.bind(operand, dimension=-1)
+  return sort_p.bind(operand, dimension=dimension)
 
 def sort_key_val(keys, values, dimension=-1):
   # TODO new sort_key_val is variadic
@@ -595,7 +595,6 @@ def atanh(x):
   return mul(_const(x, 0.5), log(div(add(_const(x, 1), x),
                                      sub(_const(x, 1), x))))
 
-
 # Add some methods to ShapedArray that rely on lax primitives
 
 ShapedArray.broadcast = core.aval_method(broadcast)
@@ -677,7 +676,7 @@ standard_unop = partial(unop, identity)
 _attrgetter = lambda name: lambda x, **kwargs: getattr(x, name)
 
 
-def binop_dtype_rule(result_dtype, accepted_dtypes, name, *avals):
+def binop_dtype_rule(result_dtype, accepted_dtypes, name, *avals, **kwargs):
   aval_dtypes = [aval.dtype for aval in avals]
   for i, (aval_dtype, types) in enumerate(zip(aval_dtypes, accepted_dtypes)):
     if not any(onp.issubdtype(aval_dtype, t) for t in types):
@@ -751,7 +750,6 @@ _bool = {onp.bool_}
 
 _num = _int | _float | _complex
 _any = _int | _float | _complex | _bool
-
 
 neg_p = standard_unop(_num, 'neg')
 ad.deflinear(neg_p, lambda t: [neg(t)])
@@ -860,8 +858,13 @@ ad.defjvp_zero(or_p)
 xor_p = standard_binop([_any, _any], 'xor')
 ad.defjvp_zero(xor_p)
 
+def add_transpose(t, x, y):
+  assert x is None and y is None  # computation must be linear, not affine
+  return [t, t]
+
 add_p = standard_binop([_num, _num], 'add')
 ad.defjvp(add_p, lambda g, x, y: _brcast(g, y), lambda g, x, y: _brcast(g, x))
+ad.primitive_transposes[add_p] = add_transpose
 
 sub_p = standard_binop([_num, _num], 'sub')
 ad.defjvp(sub_p,
@@ -873,7 +876,7 @@ ad.defbilinear_broadcasting(_brcast, mul_p, mul, mul)  # TODO
 
 
 def div_transpose_rule(cotangent, x, y):
-  assert x is None
+  assert x is None and y is not None
   res = ad_util.zero if cotangent is ad_util.zero else div(cotangent, y)
   return res, None
 div_p = standard_binop([_num, _num], 'div')
