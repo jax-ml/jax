@@ -22,8 +22,9 @@ from .. import lax
 from ..numpy.lax_numpy import _wraps
 
 
-gammaln = _wraps(osp_special.gammaln)(lax.lgamma)
-digamma = _wraps(osp_special.digamma)(lax.digamma)
-erf = _wraps(osp_special.erf)(lax.erf)
-erfc = _wraps(osp_special.erfc)(lax.erfc)
-erfinv = _wraps(osp_special.erfinv)(lax.erf_inv)
+# need to create new functions because _wraps sets the __name__ attribute
+gammaln = _wraps(osp_special.gammaln)(lambda x: lax.lgamma(x))
+digamma = _wraps(osp_special.digamma)(lambda x: lax.digamma(x))
+erf = _wraps(osp_special.erf)(lambda x: lax.erf(x))
+erfc = _wraps(osp_special.erfc)(lambda x: lax.erfc(x))
+erfinv = _wraps(osp_special.erfinv)(lambda x: lax.erf_inv(x))

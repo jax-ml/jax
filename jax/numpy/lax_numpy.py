@@ -180,9 +180,6 @@ def _promote_args_like(op, *args):
 def _constant_like(x, const):
   return onp.array(const, dtype=_dtype(x))
 
-# A dictionary mapping implemented funcs to their lax equivalent.
-IMPLEMENTED_FUNCS = {}
-
 def _wraps(fun):
   """Like functools.wraps but works with numpy.ufuncs."""
   docstr = """
@@ -195,7 +192,6 @@ def _wraps(fun):
       op.__name__ = fun.__name__
       op.__doc__ = docstr
     finally:
-      IMPLEMENTED_FUNCS[fun] = op
       return op
   return wrap
 
@@ -1013,19 +1009,6 @@ def _argminmax(op, a, axis):
   mask_idxs = where(lax._eq_meet(a, op(a, axis, keepdims=True)), idxs, maxval)
   return min(mask_idxs, axis)
 
-
-def _not_implemented(fun):
-  @_wraps(fun)
-  def wrapped(*args, **kwargs):
-    raise Exception("Numpy function {} not yet implemented".format(fun))
-  return wrapped
-
-# Build a set of all unimplemented NumPy functions.
-UNIMPLEMENTED_FUNCS = get_module_functions(onp) - set(IMPLEMENTED_FUNCS)
-for func in UNIMPLEMENTED_FUNCS:
-  if func.__name__ not in globals():
-    globals()[func.__name__] = _not_implemented(func)
-
 ### Indexing
 
 
@@ -1196,6 +1179,20 @@ def _static_idx(idx, size):
   else:
     end = _min(start - step, size)
     return stop_inclusive, end, -step, True
+
+
+### track unimplemented functions
+
+def _not_implemented(fun):
+  @_wraps(fun)
+  def wrapped(*args, **kwargs):
+    raise Exception("Numpy function {} not yet implemented".format(fun))
+  return wrapped
+
+# Build a set of all unimplemented NumPy functions.
+for func in get_module_functions(onp):
+  if func.__name__ not in globals():
+    globals()[func.__name__] = _not_implemented(func)
 
 
 ### add method and operator overloads to arraylike classes

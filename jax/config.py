@@ -78,9 +78,13 @@ class Config(object):
       self.update(name, getattr(absl_flags.FLAGS, name))
 
   def parse_flags_with_absl(self):
-    import absl.flags
-    self.config_with_absl()
-    absl.flags.FLAGS(sys.argv)
+    global already_configured_with_absl
+    if not already_configured_with_absl:
+      import absl.flags
+      self.config_with_absl()
+      absl.flags.FLAGS(sys.argv)
+      already_configured_with_absl = True
+
 
 class NameSpace(object):
   def __init__(self, getter):
@@ -92,3 +96,4 @@ class NameSpace(object):
 
 config = Config()
 flags = config
+already_configured_with_absl = False

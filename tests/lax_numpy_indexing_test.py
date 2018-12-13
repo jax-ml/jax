@@ -19,6 +19,7 @@ from __future__ import print_function
 import collections
 from functools import partial
 import itertools
+from unittest import skip
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -322,6 +323,7 @@ class IndexingTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype), unpacked_indexer]
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)
 
+  @skip
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "{}_inshape={}_indexer={}"
        .format(name, jtu.format_shape_dtype_string(shape, dtype), indexer),

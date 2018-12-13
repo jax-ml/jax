@@ -27,9 +27,6 @@ from . import numpy as np
 from . import tree_util
 from .api import jit
 from jax.lib import xla_bridge
-from .util import get_module_functions
-from .numpy.lax_numpy import _not_implemented
-from .numpy.lax_numpy import IMPLEMENTED_FUNCS
 
 class PRNGKey(object):
   """A pseudo-random number generator (PRNG) key for use with lax.random."""
@@ -361,10 +358,3 @@ def bernoulli(key, mean=onp.float32(0.5), shape=()):
   if onp.shape(mean) != shape:
     mean = lax.broadcast(mean, shape)
   return lax.lt(uniform(key, shape), mean)
-
-# TODO(alexbw): np.random.random is an alias of random_sample, and
-# doesn't show up after a call to `dir(module)`.
-UNIMPLEMENTED_FUNCS = get_module_functions(onp.random) - set(IMPLEMENTED_FUNCS)
-for func in UNIMPLEMENTED_FUNCS:
-  if func.__name__ not in globals():
-    globals()[func.__name__] = _not_implemented(func)

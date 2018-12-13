@@ -19,6 +19,7 @@ from __future__ import print_function
 import collections
 import functools
 import itertools
+from unittest import skip
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -647,7 +648,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertFalse(a3)
 
   @jtu.skip_on_devices("tpu")  # TODO(mattjj): investigate this failure
-  def DISABLED_testOnesBroadcastingConstantHandler(self):
+  @skip
+  def testOnesBroadcastingConstantHandler(self):
     # TODO(mattjj): update this test for jax3
 
     def fun(x):
@@ -727,7 +729,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     self.assertRaises(TypeError, lambda: g(3.))
 
-  def DISABLED_testTracingPrimitiveWithNoTranslationErrorMessage(self):
+  @skip
+  def testTracingPrimitiveWithNoTranslationErrorMessage(self):
     # TODO(mattjj): update this for jax3
     foo = lnp._not_implemented(lambda x: x)
 
@@ -774,7 +777,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   # TODO(mattjj): test infix operator overrides
 
-  def DISABLED_testRavel(self):
+  @skip
+  def testRavel(self):
     # TODO(mattjj): support this method-based syntax?
     rng = onp.random.RandomState(0)
     args_maker = lambda: [rng.randn(3, 4).astype("float32")]

@@ -18,6 +18,7 @@ from __future__ import print_function
 
 import operator
 from collections import namedtuple
+from unittest import skip
 
 import numpy as onp
 from absl.testing import absltest
@@ -152,7 +153,8 @@ def check_trace_eval(f, pvals, vals, expected_out_pval):
 
 class CoreTest(jtu.JaxTestCase):
 
-  def DISABLED_test_pack_unpack(self):
+  @skip
+  def test_pack_unpack(self):
     # TODO(dougalm): figure out what jaxpr-tracing api to expose and re-enable
     y = onp.array(1.0)
     def foo(x):
@@ -162,7 +164,8 @@ class CoreTest(jtu.JaxTestCase):
 
     pe.trace_to_jaxpr(foo, (_,))
 
-  def DISABLED_test_tup_add(self):
+  @skip
+  def test_tup_add(self):
     # TODO(mattjj,dougalm): put tup_add somewhere (was in array_type.py)
     y = onp.array(1.0)
     def foo(x):
@@ -184,7 +187,8 @@ class CoreTest(jtu.JaxTestCase):
     except TypeError:
       pass
 
-  def DIABLED_test_print_jaxpr_compound(self):
+  @skip
+  def test_print_jaxpr_compound(self):
     # TODO(dougalm): figure out what jaxpr-tracing api to expose and re-enable
     pv = pe.PartialVal((ShapedArray((2, 3), onp.float32), core.unit))
     print(pe.trace_to_jaxpr(fun_with_call_closure, (pv,))[0])
@@ -226,7 +230,8 @@ class CoreTest(jtu.JaxTestCase):
 
     api.trace_to_jaxpr(foo, (__,))
 
-  def DISABLED_test_nested_grad(self):
+  @skip
+  def test_nested_grad(self):
     def foo(x):
       print(type(x), x)
       def bar(y):
