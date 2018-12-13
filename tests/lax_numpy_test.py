@@ -122,14 +122,17 @@ JAX_BITWISE_OP_RECORDS = [
 ]
 
 JAX_REDUCER_RECORDS = [
+    op_record("mean", 1, default_dtypes, nonempty_shapes, jtu.rand_default(), []),
+    op_record("prod", 1, default_dtypes, all_shapes, jtu.rand_small_positive(), []),
+    op_record("sum", 1, default_dtypes, all_shapes, jtu.rand_default(), []),
+    op_record("var", 1, default_dtypes, nonempty_shapes, jtu.rand_default(), []),
+]
+
+JAX_REDUCER_NO_DTYPE_RECORDS = [
     op_record("all", 1, bool_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("any", 1, bool_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("max", 1, default_dtypes, nonempty_shapes, jtu.rand_default(), []),
-    op_record("mean", 1, default_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("min", 1, default_dtypes, nonempty_shapes, jtu.rand_default(), []),
-    op_record("prod", 1, default_dtypes, all_shapes, jtu.rand_small_positive(), []),
-    op_record("sum", 1, default_dtypes, all_shapes, jtu.rand_default(), []),
-    op_record("var", 1, default_dtypes, all_shapes, jtu.rand_default(), []),
 ]
 
 JAX_ARGMINMAX_RECORDS = [
@@ -209,17 +212,37 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(lnp_op, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "{}_inshape={}_axis={}_dtype={}_keepdims={}".format(
+          rec.test_name.capitalize(),
+          jtu.format_shape_dtype_string(shape, dtype), axis,
+          "None" if out_dtype is None else onp.dtype(out_dtype).name, keepdims),
+       "rng": rec.rng, "shape": shape, "dtype": dtype, "out_dtype": out_dtype,
+       "onp_op": getattr(onp, rec.name), "lnp_op": getattr(lnp, rec.name),
+       "axis": axis, "keepdims": keepdims}
+      for rec in JAX_REDUCER_RECORDS
+      for shape in rec.shapes for dtype in rec.dtypes
+      for out_dtype in [None] + rec.dtypes
+      for axis in range(-len(shape), len(shape))
+      for keepdims in [False, True]))
+  def testReducer(self, onp_op, lnp_op, rng, shape, dtype, out_dtype, axis, keepdims):
+    onp_fun = lambda x: onp_op(x, axis, dtype=out_dtype, keepdims=keepdims)
+    lnp_fun = lambda x: lnp_op(x, axis, dtype=out_dtype, keepdims=keepdims)
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "{}_inshape={}_axis={}_keepdims={}".format(
           rec.test_name.capitalize(),
           jtu.format_shape_dtype_string(shape, dtype), axis, keepdims),
        "rng": rec.rng, "shape": shape, "dtype": dtype,
        "onp_op": getattr(onp, rec.name), "lnp_op": getattr(lnp, rec.name),
        "axis": axis, "keepdims": keepdims}
-      for rec in JAX_REDUCER_RECORDS
+      for rec in JAX_REDUCER_NO_DTYPE_RECORDS
       for shape in rec.shapes for dtype in rec.dtypes
       for axis in range(-len(shape), len(shape))
       for keepdims in [False, True]))
-  def testReducer(self, onp_op, lnp_op, rng, shape, dtype, axis, keepdims):
+  def testReducerNoDtype(self, onp_op, lnp_op, rng, shape, dtype, axis, keepdims):
     onp_fun = lambda x: onp_op(x, axis, keepdims=keepdims)
     lnp_fun = lambda x: lnp_op(x, axis, keepdims=keepdims)
     args_maker = lambda: [rng(shape, dtype)]
