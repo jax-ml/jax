@@ -27,7 +27,7 @@ composed arbitrarily, so you can express sophisticated algorithms and get
 maximal performance without leaving Python.
 
 Dig a little deeper, and you'll see that JAX is really an extensible system for
-[composable transformations of functions](#transformations). Both
+[composable function transformations](#transformations). Both
 [`grad`](#automatic-differentiation-with-grad) and [`jit`](#compilation-with-jit)
 are instances of such transformations. Another is [`vmap`](#auto-vectorization-with-vmap)
 for automatic vectorization, with more to come.
