@@ -49,11 +49,13 @@ _min = builtins.min
 _sum = builtins.sum
 
 # We need some numpy scalars
-# TODO(mattjj): handle constants in an indirected, less explicit way?
 pi = onp.pi
 e = onp.e
 inf = onp.inf
 nan = onp.nan
+
+# And some numpy utility functions
+set_printoptions = onp.set_printoptions
 
 # We want isinstance(x, np.ndarray) checks in user code to work with the our
 # array-like types, including DeviceArray and UnshapedArray (i.e. the abstract
@@ -1013,6 +1015,7 @@ def _argminmax(op, a, axis):
 
 
 def _not_implemented(fun):
+  @_wraps(fun)
   def wrapped(*args, **kwargs):
     raise Exception("Numpy function {} not yet implemented".format(fun))
   return wrapped
