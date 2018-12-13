@@ -47,7 +47,7 @@ def _CheckShapeAgreement(test_case, init_fun, apply_fun, input_shape):
   test_case.assertEqual(result.shape, result_shape)
 
 
-class ResNet50Test(jtu.JaxTestCase):
+class ExamplesTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       {"testcase_name": "_input_shape={}".format(input_shape),

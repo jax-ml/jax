@@ -559,7 +559,7 @@ def square(x):
   return mul(x, x)
 
 def reciprocal(x):
-  return div(_const(x, 1.), x)
+  return div(_const(x, 1), x)
 
 def tan(x):
   return div(sin(x), cos(x))
@@ -573,7 +573,7 @@ def acos(x):
              atan2(sqrt(sub(_const(x, 1), square(x))), add(_const(x, 1), x)))
 
 def atan(x):
-  return atan2(x, _const(x, 1.))
+  return atan2(x, _const(x, 1))
 
 def sinh(x):
   return mul(_const(x, 0.5), sub(exp(x), exp(neg(x))))
@@ -583,17 +583,17 @@ def cosh(x):
 
 def asinh(x):
   # asinh(x) = log(x + sqrt(x**2 + 1))
-  return log(add(x, sqrt(add(mul(x, x), _const(x, 1.)))))
+  return log(add(x, sqrt(add(mul(x, x), _const(x, 1)))))
 
 def acosh(x):
   # acosh(x) = log(x + sqrt((x + 1) * (x - 1)))
-  return log(add(x, mul(sqrt(add(x, _const(x, 1.))),
-                        sqrt(sub(x, _const(x, 1.))))))
+  return log(add(x, mul(sqrt(add(x, _const(x, 1))),
+                        sqrt(sub(x, _const(x, 1))))))
 
 def atanh(x):
   # atanh(x) = 0.5 * log((1 + x) / (1 - x))
-  return mul(_const(x, 0.5), log(div(add(_const(x, 1.), x),
-                                     sub(_const(x, 1.), x))))
+  return mul(_const(x, 0.5), log(div(add(_const(x, 1), x),
+                                     sub(_const(x, 1), x))))
 
 
 # Add some methods to ShapedArray that rely on lax primitives
