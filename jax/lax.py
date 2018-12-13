@@ -244,7 +244,11 @@ def _index_untake(axes, src, dst, *idxs):
   return dst
 
 def transpose(operand, permutation):
-  return transpose_p.bind(operand, permutation=tuple(permutation))
+  permutation = tuple(permutation)
+  if permutation == tuple(range(len(permutation))):
+    return operand
+  else:
+    return transpose_p.bind(operand, permutation=permutation)
 
 def reduce(operand, init_value, computation, dimensions):
   monoid_reducer = _get_monoid_reducer(computation, init_value)
