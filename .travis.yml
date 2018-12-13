@@ -1,6 +1,7 @@
 sudo: false
 notifications:
   email: false
+dist: xenial
 language: python
 python:
   - "2.7"
