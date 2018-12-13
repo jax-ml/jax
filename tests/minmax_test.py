@@ -43,22 +43,22 @@ class OptimizerTests(jtu.JaxTestCase):
   @jtu.skip_on_devices('gpu')
   def _CheckRun(self, optimizer, loss, x0, num_steps, *args, **kwargs):
     return # TODO(mattjj): bring back fax!
-    num_repl = xla.get_replica_count()
-    infeeder = fax.make_infeed_from_sequence(
-        [np.ones(1, dtype='float32')] * num_steps * num_repl,
-        with_pyvals=True)
+    # num_repl = xla.get_replica_count()
+    # infeeder = fax.make_infeed_from_sequence(
+    #     [np.ones(1, dtype='float32')] * num_steps * num_repl,
+    #     with_pyvals=True)
 
-    def op(infeed, x0):
-      opt_init, opt_update = optimizer(*args, **kwargs)
-      return minmax.run_optimizer(loss, infeed, opt_update, opt_init(x0))
-    cop = jit(op)
+    # def op(infeed, x0):
+    #   opt_init, opt_update = optimizer(*args, **kwargs)
+    #   return minmax.run_optimizer(loss, infeed, opt_update, opt_init(x0))
+    # cop = jit(op)
 
-    a1, _ = op(infeeder(), x0)
-    a2, _ = cop(infeeder(), x0)
+    # a1, _ = op(infeeder(), x0)
+    # a2, _ = cop(infeeder(), x0)
 
-    assert loss(a1, None) < 1e-3
-    assert loss(a2, None) < 1e-3
-    self.assertAllClose(a1, a2, check_dtypes=False)
+    # assert loss(a1, None) < 1e-3
+    # assert loss(a2, None) < 1e-3
+    # self.assertAllClose(a1, a2, check_dtypes=False)
 
   def testSgdScalar(self):
     def loss(x, _): return x**2

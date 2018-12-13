@@ -291,7 +291,7 @@ class DeviceArray(DeviceValue):
   __float__ = partialmethod(forward_to_value, float)
   __int__ = partialmethod(forward_to_value, int)
   if six.PY2:
-    __long__ = partialmethod(forward_to_value, long)
+    __long__ = partialmethod(forward_to_value, long)  # noqa: F821
   __complex__ = partialmethod(forward_to_value, complex)
   __hex__ = partialmethod(forward_to_value, hex)
   __oct__ = partialmethod(forward_to_value, oct)

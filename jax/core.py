@@ -160,7 +160,6 @@ class Trace(object):
                         .format(val.trace, (level, sublevel)))
       return self.lift(val)
     elif val.trace.level > level:
-      print_trace_stack()
       raise Exception("Can't lift {} to {}".format(val, self))
     elif val.trace.level == self.level:
       raise Exception("Different traces at same level: {}, {}".format(val, self))
@@ -368,7 +367,6 @@ def new_sublevel():
     t = ref(sublevel)
     del sublevel
     if t() is not None:
-      print_trace_stack()
       raise Exception('Leaked sublevel {}'.format(t()))
 
 # -------------------- abstract values --------------------
