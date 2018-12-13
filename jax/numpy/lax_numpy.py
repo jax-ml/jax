@@ -301,11 +301,38 @@ def _float_divmod(x1, x2):
   return lax.round(div), mod
 
 
+@_wraps(onp.logaddexp)
 def logaddexp(x1, x2):
   x1, x2 = _promote_to_result_dtype(onp.logaddexp, *_promote_shapes(x1, x2))
   amax = lax.max(x1, x2)
   return lax.add(amax, lax.log(lax.add(lax.exp(lax.sub(x1, amax)),
                                        lax.exp(lax.sub(x2, amax)))))
+
+
+@_wraps(onp.logaddexp2)
+def logaddexp2(x1, x2):
+  x1, x2 = _promote_to_result_dtype(onp.logaddexp2, *_promote_shapes(x1, x2))
+  amax = lax.max(x1, x2)
+  return lax.add(amax, log2(lax.add(exp2(lax.sub(x1, amax)),
+                                    exp2(lax.sub(x2, amax)))))
+
+
+@_wraps(onp.log2)
+def log2(x):
+  x, = _promote_to_result_dtype(onp.log2, x)
+  return lax.div(lax.log(x), lax.log(_constant_like(x, 2)))
+
+
+@_wraps(onp.log10)
+def log10(x):
+  x, = _promote_to_result_dtype(onp.log10, x)
+  return lax.div(lax.log(x), lax.log(_constant_like(x, 10)))
+
+
+@_wraps(onp.exp2)
+def exp2(x):
+  x, = _promote_to_result_dtype(onp.exp2, x)
+  return lax.exp(lax.mul(lax.log(_constant_like(x, 2)), x))
 
 
 @_wraps(onp.remainder)
@@ -316,6 +343,7 @@ mod = remainder
 fmod = lax.rem
 
 
+@_wraps(onp.sqrt)
 def sqrt(x):
   x, = _promote_to_result_dtype(onp.sqrt, x)
   return power(x, _constant_like(x, 0.5))
