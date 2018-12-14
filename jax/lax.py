@@ -111,7 +111,12 @@ def convert_element_type(operand, new_dtype):
     return operand
 
 def bitcast_convert_type(operand, new_dtype):
-  return bitcast_convert_type_p.bind(operand, new_dtype=new_dtype)
+  new_dtype = xla_bridge.canonicalize_dtype(new_dtype)
+  old_dtype = _dtype(operand)
+  if old_dtype != new_dtype:
+    return bitcast_convert_type_p.bind(operand, new_dtype=new_dtype)
+  else:
+    return operand
 
 def clamp(min, operand, max):
   return clamp_p.bind(min, operand, max)
@@ -256,8 +261,8 @@ def reduce(operand, init_value, computation, dimensions):
     return monoid_reducer(operand, dimensions)
   else:
     jaxpr, consts = _reduction_jaxpr(computation, init_value)
-    return reduce_p.bind(operand, init_value, jaxpr=jaxpr, consts=consts,
-                         dimensions=tuple(dimensions))
+    return reduce_p.bind(operand, init_value, computation=computation,
+                         jaxpr=jaxpr, consts=consts, dimensions=tuple(dimensions))
 
 def _reduction_jaxpr(computation, init_value):
   pval = _abstractify(init_value)
@@ -273,18 +278,26 @@ def _get_monoid_reducer(monoid_op, x):
       return aval.val == _get_max_identity(aval.dtype) and _reduce_max
     elif monoid_op is min:
       return aval.val == _get_min_identity(aval.dtype) and _reduce_min
+    elif monoid_op is bitwise_or and aval.dtype == onp.bool_:
+      return aval.val == _get_max_identity(aval.dtype) and _reduce_or
+    elif monoid_op is bitwise_and and aval.dtype == onp.bool_:
+      return aval.val == _get_min_identity(aval.dtype) and _reduce_and
 
 def _get_max_identity(dtype):
   if onp.issubdtype(dtype, onp.floating):
     return onp.array(-onp.inf, dtype)
   elif onp.issubdtype(dtype, onp.integer):
     return onp.array(onp.iinfo(dtype).min, dtype)
+  elif onp.issubdtype(dtype, onp.bool_):
+    return onp.array(False, onp.bool_)
 
 def _get_min_identity(dtype):
   if onp.issubdtype(dtype, onp.floating):
     return onp.array(onp.inf, dtype)
   elif onp.issubdtype(dtype, onp.integer):
     return onp.array(onp.iinfo(dtype).max, dtype)
+  elif onp.issubdtype(dtype, onp.bool_):
+    return onp.array(True, onp.bool_)
 
 def _reduce_sum(operand, axes):
   return reduce_sum_p.bind(operand, axes=tuple(axes), input_shape=operand.shape)
@@ -294,6 +307,12 @@ def _reduce_max(operand, axes):
 
 def _reduce_min(operand, axes):
   return reduce_min_p.bind(operand, axes=tuple(axes))
+
+def _reduce_or(operand, axes):
+  return reduce_or_p.bind(operand, axes=tuple(axes))
+
+def _reduce_and(operand, axes):
+  return reduce_and_p.bind(operand, axes=tuple(axes))
 
 def reduce_window(operand, init_value, computation, window_dimensions,
                   window_strides, padding):
@@ -1435,7 +1454,7 @@ def pad_batch_rule(batched_args, batch_dims, padding_config):
     padding_config.insert(operand_bdim, (0, 0, 0))
     return pad(operand, padding_value, padding_config), operand_bdim
   else:
-    raise NotImplementedError
+    raise NotImplementedError  # loop and stack
 
 pad_p = standard_primitive(pad_shape_rule, _input_dtype, 'pad')
 ad.deflinear(pad_p, pad_transpose)
@@ -1815,12 +1834,23 @@ ad.primitive_jvps[index_untake_p] = index_untake_jvp
 ad.primitive_transposes[index_untake_p] = index_untake_transpose_rule
 
 
-def reduce_shape_rule(operand, init_value, jaxpr, consts, dimensions):
+def reduce_shape_rule(operand, init_value, computation, jaxpr, consts, dimensions):
   return tuple(onp.delete(operand.shape, dimensions))
 
-def reduce_translation_rule(c, operand, init_value, jaxpr, consts, dimensions):
+def reduce_translation_rule(c, operand, init_value, computation, jaxpr, consts, dimensions):
   xla_computation = _reduction_computation(c, jaxpr, consts, init_value)
   return c.Reduce(operand, init_value, xla_computation, dimensions)
+
+def reduce_batch_rule(batched_args, batch_dims, computation, jaxpr, consts, dimensions):
+  operand, init_value = batched_args
+  operand_bdim, init_value_bdim = batch_dims
+  if init_value_bdim is None:
+    assert operand_bdim is not None
+    new_dimensions = [d + bool(d >= operand_bdim) for d in dimensions]
+    new_operand_bdim = operand_bdim - onp.sum(onp.less(dimensions, operand_bdim))
+    return reduce(operand, init_value, computation, new_dimensions), new_operand_bdim
+  else:
+    raise NotImplementedError  # loop and stack
 
 def _reduction_computation(c, jaxpr, consts, init_value):
   shape = c.GetShape(init_value)
@@ -1828,7 +1858,7 @@ def _reduction_computation(c, jaxpr, consts, init_value):
 
 reduce_p = standard_primitive(reduce_shape_rule, _input_dtype, 'reduce',
                               reduce_translation_rule)
-batching.defreducer(reduce_p)
+# batching.primitive_batchers[reduce_p] = reduce_batch_rule  # TODO(mattjj): test
 
 
 def reduce_sum_shape_rule(operand, axes, input_shape):
@@ -1888,6 +1918,31 @@ reduce_min_p = standard_primitive(reduce_chooser_shape_rule, _input_dtype,
                                   'reduce_min', reduce_min_translation_rule)
 ad.defjvp2(reduce_min_p, reduce_chooser_jvp_rule)
 batching.defreducer(reduce_min_p)
+
+
+def reduce_logical_shape_rule(operand, axes):
+  if operand.dtype != onp.bool_:
+    msg = "logical reduction requires operand dtype bool, got {}."
+    raise TypeError(msg.format(operand.dtype))
+  return tuple(onp.delete(operand.shape, axes))
+
+def reduce_logical_translation_rule(prim, identity, c, operand, axes):
+  scalar = xla_bridge.Shape.array_shape(onp.bool_, ())
+  return c.Reduce(operand, c.Constant(identity(onp.bool_)),
+                  xla.primitive_computation(prim, scalar, scalar), axes)
+
+reduce_or_translation_rule = partial(reduce_logical_translation_rule,
+                                     or_p, _get_max_identity)
+reduce_or_p = standard_primitive(reduce_logical_shape_rule, _fixed_dtype(onp.bool_),
+                                 'reduce_or', reduce_or_translation_rule)
+batching.defreducer(reduce_or_p)
+
+
+reduce_and_translation_rule = partial(reduce_logical_translation_rule,
+                                      and_p, _get_min_identity)
+reduce_and_p = standard_primitive(reduce_logical_shape_rule, _fixed_dtype(onp.bool_),
+                                 'reduce_and', reduce_and_translation_rule)
+batching.defreducer(reduce_and_p)
 
 
 def reduce_window_shape_rule(operand, init_value, jaxpr, consts,

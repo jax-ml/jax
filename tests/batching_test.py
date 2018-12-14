@@ -284,6 +284,13 @@ class BatchingTest(jtu.JaxTestCase):
     jacrev(func)(xs)  # don't crash
     jacfwd(func)(xs)  # don't crash
 
+  def testAny(self):
+    # test modeling the code in https://github.com/google/jax/issues/108
+
+    ans = vmap(np.any)(np.array([[True, False], [False, False]]))
+    expected = np.array([True, False])
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
 
 if __name__ == '__main__':
   absltest.main()

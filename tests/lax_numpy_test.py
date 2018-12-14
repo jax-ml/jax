@@ -142,8 +142,8 @@ JAX_REDUCER_RECORDS = [
 ]
 
 JAX_REDUCER_NO_DTYPE_RECORDS = [
-    op_record("all", 1, bool_dtypes, all_shapes, jtu.rand_default(), []),
-    op_record("any", 1, bool_dtypes, all_shapes, jtu.rand_default(), []),
+    op_record("all", 1, default_dtypes + bool_dtypes, all_shapes, jtu.rand_some_zero(), []),
+    op_record("any", 1, default_dtypes + bool_dtypes, all_shapes, jtu.rand_some_zero(), []),
     op_record("max", 1, default_dtypes, nonempty_shapes, jtu.rand_default(), []),
     op_record("min", 1, default_dtypes, nonempty_shapes, jtu.rand_default(), []),
 ]
