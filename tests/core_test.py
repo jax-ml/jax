@@ -153,9 +153,9 @@ def check_trace_eval(f, pvals, vals, expected_out_pval):
 
 class CoreTest(jtu.JaxTestCase):
 
-  @skip
   def test_pack_unpack(self):
     # TODO(dougalm): figure out what jaxpr-tracing api to expose and re-enable
+    self.skipTest("disabled")
     y = onp.array(1.0)
     def foo(x):
       x1, y1 = core.pack((x, y))
@@ -164,9 +164,9 @@ class CoreTest(jtu.JaxTestCase):
 
     pe.trace_to_jaxpr(foo, (_,))
 
-  @skip
   def test_tup_add(self):
     # TODO(mattjj,dougalm): put tup_add somewhere (was in array_type.py)
+    self.skipTest("disabled")
     y = onp.array(1.0)
     def foo(x):
       return np.tup_add(core.pack((x, y)))
@@ -187,9 +187,9 @@ class CoreTest(jtu.JaxTestCase):
     except TypeError:
       pass
 
-  @skip
   def test_print_jaxpr_compound(self):
     # TODO(dougalm): figure out what jaxpr-tracing api to expose and re-enable
+    self.skipTest("disabled")
     pv = pe.PartialVal((ShapedArray((2, 3), onp.float32), core.unit))
     print(pe.trace_to_jaxpr(fun_with_call_closure, (pv,))[0])
 
@@ -230,8 +230,8 @@ class CoreTest(jtu.JaxTestCase):
 
     api.trace_to_jaxpr(foo, (__,))
 
-  @skip
   def test_nested_grad(self):
+    self.skipTest("disabled")  # TODO: re-enable this test.
     def foo(x):
       print(type(x), x)
       def bar(y):

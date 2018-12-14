@@ -88,6 +88,8 @@ class ExamplesTest(jtu.JaxTestCase):
     assert np.all(kernel_lsq.gram(kernel, xs) == np.dot(xs, xs.T))
 
   def testKernelRegressionTrainAndPredict(self):
+    # TODO(frostig): reenable this test.
+    self.skipTest("Test is broken")
     n, d = 100, 20
     rng = onp.random.RandomState(0)
     truth = rng.randn(d)
