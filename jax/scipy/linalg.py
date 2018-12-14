@@ -21,6 +21,7 @@ import scipy.linalg
 from .. import lax_linalg
 from ..numpy.lax_numpy import _wraps
 from ..numpy import lax_numpy as np
+from ..numpy import linalg as np_linalg
 
 
 @_wraps(scipy.linalg.cholesky)
@@ -31,6 +32,12 @@ def cholesky(a, lower=False, overwrite_a=False, check_finite=True):
         "The lower=False case of Cholesky is not implemented.")
 
   return lax_linalg.cholesky(a)
+
+
+@_wraps(scipy.linalg.inv)
+def inv(a, overwrite_a=False, check_finite=True):
+  del overwrite_a, check_finite
+  return np_linalg.inv(a)
 
 
 @_wraps(scipy.linalg.qr)
