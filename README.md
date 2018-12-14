@@ -505,11 +505,7 @@ Here’s an example:
 
 ```python
 from jax.experimental import stax
-from jax.experimental.stax import Conv
-from jax.experimental.stax import Dense
-from jax.experimental.stax import MaxPool
-from jax.experimental.stax import Relu
-from jax.experimental.stax import LogSoftmax
+from jax.experimental.stax import Conv, Dense, MaxPool, Relu, LogSoftmax
 
 # Set up network initialization and evaluation functions
 net_init, net_apply = stax.serial(
