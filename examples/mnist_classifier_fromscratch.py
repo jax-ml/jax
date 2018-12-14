@@ -59,7 +59,7 @@ if __name__ == "__main__":
   param_scale = 0.1
   step_size = 0.001
   num_epochs = 10
-  batch_size = 32
+  batch_size = 128
 
   train_images, train_labels, test_images, test_labels = datasets.mnist()
   num_train = train_images.shape[0]
