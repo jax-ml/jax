@@ -53,7 +53,7 @@ init_random_params, predict = stax.serial(
 if __name__ == "__main__":
   step_size = 0.001
   num_epochs = 10
-  batch_size = 32
+  batch_size = 128
   momentum_mass = 0.9
 
   train_images, train_labels, test_images, test_labels = datasets.mnist()
