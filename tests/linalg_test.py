@@ -109,6 +109,27 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     # Check that q is close to unitary.
     self.assertTrue(onp.all(norm(onp.eye(k) - onp.matmul(T(lq), lq)) < 5))
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype, "rng": rng}
+      for shape in [(1, 1), (4, 4), (2, 5, 5), (200, 200), (5, 5, 5)]
+      for dtype in float_types()
+      for rng in [jtu.rand_default()]))
+  def testInv(self, shape, dtype, rng):
+    def args_maker():
+      a = rng(shape, dtype)
+      try:
+        onp.linalg.inv(a)
+        invertible = True
+      except onp.linalg.LinAlgError:
+        pass
+      return [a]
+
+    self._CheckAgainstNumpy(onp.linalg.inv, np.linalg.inv, args_maker,
+                            check_dtypes=True, tol=1e-3)
+    self._CompileAndCheck(np.linalg.inv, args_maker, check_dtypes=True)
+
 
 class ScipyLinalgTest(jtu.JaxTestCase):
 

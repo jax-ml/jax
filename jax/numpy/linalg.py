@@ -30,10 +30,18 @@ dot = np.dot
 matmul = np.matmul
 trace = np.trace
 
+_T = lambda x: np.swapaxes(x, -1, -2)
 
 @_wraps(onp.linalg.cholesky)
 def cholesky(a):
   return lax_linalg.cholesky(a)
+
+@_wraps(onp.linalg.inv)
+def inv(a):
+  if np.ndim(a) < 2 or a.shape[-1] != a.shape[-2]:
+    raise ValueError("Argument to inv must have shape [..., n, n].")
+  q, r = qr(a, mode="complete")
+  return lax_linalg.triangular_solve(r, _T(q), lower=False, left_side=True)
 
 
 @_wraps(onp.linalg.qr)
