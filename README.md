@@ -130,7 +130,7 @@ To install a CPU-only version, which might be useful for doing local
 development on a laptop, you can run
 
 ```bash
-pip install jax jaxlib  # CPU-only version
+pip install --upgrade jax jaxlib  # CPU-only version
 ```
 
 If you want to install JAX with both CPU and GPU support, using existing CUDA
@@ -142,9 +142,10 @@ cloud VM), you can run
 PYTHON_VERSION=py2  # alternatives: py2, py3
 CUDA_VERSION=cuda92  # alternatives: cuda90, cuda92, cuda100
 PLATFORM=linux_x86_64  # alternatives: linux_x86_64
-pip install https://storage.googleapis.com/jax-wheels/$CUDA_VERSION/jaxlib-0.1.1-$PYTHON_VERSION-none-$PLATFORM.whl
+BASE_URL='https://storage.googleapis.com/jax-wheels'
+pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.1-$PYTHON_VERSION-none-$PLATFORM.whl
 
-pip install jax  # install jax
+pip install --upgrade jax  # install jax
 ```
 
 The library package name must correspond to the version of the existing CUDA
