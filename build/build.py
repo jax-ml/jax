@@ -164,9 +164,11 @@ build --action_env TF_NEED_CUDA="{tf_need_cuda}"
 build --action_env CUDA_TOOLKIT_PATH="{cuda_toolkit_path}"
 build --action_env CUDNN_INSTALL_PATH="{cudnn_install_path}"
 build --distinct_host_configuration=false
+build --copt=-Wno-sign-compare
+build -c opt
 build:opt --copt=-march=native
-build:opt --copt=-Wno-sign-compare
 build:opt --host_copt=-march=native
+build:mkl_open_source_only --define=tensorflow_mkldnn_contraction_kernel=1
 """
 
 
@@ -233,6 +235,18 @@ def main():
       "interpreter used to run the build script.")
   add_boolean_argument(
       parser,
+      "enable_march_native",
+      default=False,
+      help_str="Generate code targeted to the current machine? This may "
+          "increase performance, but may generate code that does not run on "
+          "older machines.")
+  add_boolean_argument(
+      parser,
+      "enable_mkl_dnn",
+      default=True,
+      help_str="Should we build with MKL-DNN enabled?")
+  add_boolean_argument(
+      parser,
       "enable_cuda",
       help_str="Should we build with CUDA enabled? Requires CUDA and CuDNN.")
   parser.add_argument(
@@ -256,6 +270,9 @@ def main():
   python_bin_path = get_python_bin_path(args.python_bin_path)
   print("Python binary path: {}".format(python_bin_path))
 
+  print("MKL-DNN enabled: {}".format("yes" if args.enable_mkl_dnn else "no"))
+  print("-march=native: {}".format("yes" if args.enable_march_native else "no"))
+
   cuda_toolkit_path = args.cuda_path
   cudnn_install_path = args.cudnn_path
   print("CUDA enabled: {}".format("yes" if args.enable_cuda else "no"))
@@ -269,10 +286,15 @@ def main():
       cudnn_install_path=cudnn_install_path)
 
   print("\nBuilding XLA and installing it in the jaxlib source tree...")
-  shell([
-      bazel_path, "run", "-c", "opt", ":install_xla_in_source_tree",
-      os.getcwd()
-  ])
+  config_args = []
+  if args.enable_march_native:
+    config_args += ["--config=opt"]
+  if args.enable_mkl_dnn:
+    config_args += ["--config=mkl_open_source_only"]
+  shell(
+    [bazel_path, "run", "--verbose_failures=true"] +
+    config_args +
+    [":install_xla_in_source_tree", os.getcwd()])
 
 
 if __name__ == "__main__":
