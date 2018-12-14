@@ -118,12 +118,14 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for rng in [jtu.rand_default()]))
   def testInv(self, shape, dtype, rng):
     def args_maker():
-      a = rng(shape, dtype)
-      try:
-        onp.linalg.inv(a)
-        invertible = True
-      except onp.linalg.LinAlgError:
-        pass
+      invertible = False
+      while not invertible:
+        a = rng(shape, dtype)
+        try:
+          onp.linalg.inv(a)
+          invertible = True
+        except onp.linalg.LinAlgError:
+          pass
       return [a]
 
     self._CheckAgainstNumpy(onp.linalg.inv, np.linalg.inv, args_maker,
