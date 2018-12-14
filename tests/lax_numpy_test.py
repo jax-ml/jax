@@ -648,9 +648,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertFalse(a3)
 
   @jtu.skip_on_devices("tpu")  # TODO(mattjj): investigate this failure
-  @skip
   def testOnesBroadcastingConstantHandler(self):
     # TODO(mattjj): update this test for jax3
+    self.skipTest("test needs jax3 update")
 
     def fun(x):
       ones = lnp.ones((3, 4))
@@ -729,9 +729,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     self.assertRaises(TypeError, lambda: g(3.))
 
-  @skip
   def testTracingPrimitiveWithNoTranslationErrorMessage(self):
     # TODO(mattjj): update this for jax3
+    self.skipTest("test needs jax3 update")
     foo = lnp._not_implemented(lambda x: x)
 
     # No error if there's no tracing.
@@ -777,9 +777,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   # TODO(mattjj): test infix operator overrides
 
-  @skip
   def testRavel(self):
     # TODO(mattjj): support this method-based syntax?
+    self.skipTest("test disabled")
     rng = onp.random.RandomState(0)
     args_maker = lambda: [rng.randn(3, 4).astype("float32")]
     self._CompileAndCheck(lambda x: x.ravel(), args_maker, check_dtypes=True)
