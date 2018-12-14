@@ -25,8 +25,7 @@ from .. import core
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
 from ..interpreters.xla import DeviceArray
 from .. import lax
-from ..util import memoize
-from ..util import get_module_functions
+from ..util import memoize, partial, get_module_functions
 from ..lib import xla_bridge
 
 # To provide the same module-level names as Numpy, we need to redefine builtins
@@ -591,15 +590,16 @@ around = round
 ### Reducers
 
 
-def _make_reduction(np_fun, op, init_val):
+def _make_reduction(np_fun, op, init_val, preproc=None):
   """Creates reduction function given a binary operation and monoid identity."""
 
-  @_wraps(op)
+  @_wraps(np_fun)
   def reduction(a, axis=None, dtype=None, out=None, keepdims=False):
     if out is not None:
       raise ValueError("reduction does not support `out` argument.")
 
     a = a if isinstance(a, ndarray) else asarray(a)
+    a = preproc(a) if preproc else a
     dims = _reduction_dims(a, axis)
     result_dtype = _dtype(np_fun(onp.ones((), dtype=dtype or _dtype(a))))
     if _dtype(a) != result_dtype:
@@ -614,7 +614,6 @@ def _make_reduction(np_fun, op, init_val):
 
   return reduction
 
-
 def _reduction_dims(a, axis):
   if axis is None:
     return onp.arange(ndim(a))
@@ -625,7 +624,6 @@ def _reduction_dims(a, axis):
   else:
     raise TypeError("Unexpected type of axis argument: {}".format(type(axis)))
 
-
 def _reduction_init_val(a, init_val):
   a_dtype = xla_bridge.canonicalize_dtype(_dtype(a))
   try:
@@ -635,13 +633,14 @@ def _reduction_init_val(a, init_val):
     sign, iinfo = onp.sign(init_val), onp.iinfo(a_dtype)
     return onp.array(iinfo.min if sign < 0 else iinfo.max, dtype=a_dtype)
 
+_cast_to_bool = partial(lax.convert_element_type, new_dtype=onp.bool_)
 
 sum = _make_reduction(onp.sum, lax.add, 0)
 prod = _make_reduction(onp.prod, lax.mul, 1)
 max = _make_reduction(onp.max, lax.max, -onp.inf)
 min = _make_reduction(onp.min, lax.min, onp.inf)
-all = alltrue = _make_reduction(onp.all, logical_and, True)
-any = sometrue = _make_reduction(onp.any, logical_or, False)
+all = alltrue = _make_reduction(onp.all, lax.bitwise_and, True, _cast_to_bool)
+any = sometrue = _make_reduction(onp.any, lax.bitwise_or, False, _cast_to_bool)
 
 
 @_wraps(onp.mean)
