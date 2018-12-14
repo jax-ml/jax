@@ -111,7 +111,12 @@ def convert_element_type(operand, new_dtype):
     return operand
 
 def bitcast_convert_type(operand, new_dtype):
-  return bitcast_convert_type_p.bind(operand, new_dtype=new_dtype)
+  new_dtype = xla_bridge.canonicalize_dtype(new_dtype)
+  old_dtype = _dtype(operand)
+  if old_dtype != new_dtype:
+    return bitcast_convert_type_p.bind(operand, new_dtype=new_dtype)
+  else:
+    return operand
 
 def clamp(min, operand, max):
   return clamp_p.bind(min, operand, max)
@@ -269,9 +274,9 @@ def _get_monoid_reducer(monoid_op, x):
   if (type(aval) is ConcreteArray) and aval.shape == ():
     if monoid_op is add:
       return aval.val == 0 and _reduce_sum
-    elif monoid_op is max:
+    elif monoid_op is max or monoid_op is bitwise_or and aval.dtype == onp.bool_:
       return aval.val == _get_max_identity(aval.dtype) and _reduce_max
-    elif monoid_op is min:
+    elif monoid_op is min or monoid_op is bitwise_and and aval.dtype == onp.bool_:
       return aval.val == _get_min_identity(aval.dtype) and _reduce_min
 
 def _get_max_identity(dtype):
@@ -279,12 +284,16 @@ def _get_max_identity(dtype):
     return onp.array(-onp.inf, dtype)
   elif onp.issubdtype(dtype, onp.integer):
     return onp.array(onp.iinfo(dtype).min, dtype)
+  elif onp.issubdtype(dtype, onp.bool_):
+    return onp.array(False, onp.bool_)
 
 def _get_min_identity(dtype):
   if onp.issubdtype(dtype, onp.floating):
     return onp.array(onp.inf, dtype)
   elif onp.issubdtype(dtype, onp.integer):
     return onp.array(onp.iinfo(dtype).max, dtype)
+  elif onp.issubdtype(dtype, onp.bool_):
+    return onp.array(True, onp.bool_)
 
 def _reduce_sum(operand, axes):
   return reduce_sum_p.bind(operand, axes=tuple(axes), input_shape=operand.shape)
@@ -1828,7 +1837,7 @@ def _reduction_computation(c, jaxpr, consts, init_value):
 
 reduce_p = standard_primitive(reduce_shape_rule, _input_dtype, 'reduce',
                               reduce_translation_rule)
-batching.defreducer(reduce_p)
+# batching.defreducer(reduce_p)  # TODO batching rule for general reduce
 
 
 def reduce_sum_shape_rule(operand, axes, input_shape):
