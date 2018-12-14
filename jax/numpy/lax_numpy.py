@@ -508,7 +508,7 @@ def where(condition, x=None, y=None):
   if not onp.issubdtype(_dtype(condition), onp.bool_):
     condition = lax.ne(condition, zeros_like(condition))
   condition, x, y = broadcast_arrays(condition, x, y)
-  if not x.size:
+  if not onp.size(x):
     empty, _ = _promote_dtypes(x, y)
     return empty
   else:
