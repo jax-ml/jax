@@ -1580,10 +1580,13 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        "rhs_dil": rhs_dil, "rng": rng, "dimension_numbers": dim_nums,
        "perms": perms}
       for lhs_shape, rhs_shape, all_strides, all_pads, lhs_dils, rhs_dils in [
-          ((b, i, 5, 6), (j, i, 1, 2), [(1, 1), (1, 2), (2, 1)],
-           [((0, 0), (0, 0)), ((1, 0), (0, 1)), ((0, -1), (0, 0))],
-           [(1, 1), (2, 1)], [(1, 1)])
-          for b, i, j in itertools.product([2, 3], repeat=3)]
+          ((b, i, 5, 6),  # lhs_shape
+           (j, i, 1, 2),  # rhs_shape
+           [(1, 1), (1, 2), (2, 1)],  # strides
+           [((0, 0), (0, 0)), ((1, 0), (0, 1)), ((0, -1), (0, 0))],  # pads
+           [(1, 1), (2, 1)],  # lhs_dils
+           [(1, 1)])  # rhs_dils
+          for b, i, j in itertools.product([1, 2], repeat=3)]
       for strides in all_strides
       for rhs_dil in rhs_dils
       for lhs_dil in lhs_dils
@@ -1592,7 +1595,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       for rng in [jtu.rand_default()]
       for dim_nums, perms in [
           (("NCHW", "OIHW", "NCHW"), ([0, 1, 2, 3], [0, 1, 2, 3])),
-          # (("NHWC", "HWIO", "NHWC"), ([0, 2, 3, 1], [2, 3, 1, 0]))
+          (("NHWC", "HWIO", "NHWC"), ([0, 2, 3, 1], [2, 3, 1, 0]))
       ]))
   @jtu.skip_on_devices("tpu")
   def testConvGeneralDilatedGrad(self, lhs_shape, rhs_shape, dtype, strides,
