@@ -1580,7 +1580,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        "rhs_dil": rhs_dil, "rng": rng, "dimension_numbers": dim_nums,
        "perms": perms}
       for lhs_shape, rhs_shape, all_strides, all_pads, lhs_dils, rhs_dils in [
-          ((b, i, 4, 5),  # lhs_shape
+          ((b, i, 6, 7),  # lhs_shape
            (j, i, 1, 2),  # rhs_shape
            [(1, 1), (1, 2), (2, 1)],  # strides
            [((0, 0), (0, 0)), ((1, 0), (0, 1)), ((0, -1), (0, 0))],  # pads
