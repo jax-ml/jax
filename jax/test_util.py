@@ -46,7 +46,7 @@ flags.DEFINE_enum(
 
 flags.DEFINE_integer(
   'num_generated_cases',
-  os.getenv('JAX_NUM_GENERATED_CASES', 100),
+  os.getenv('JAX_NUM_GENERATED_CASES', 10),
   help='Number of generated cases to test')
 
 EPS = 1e-4
