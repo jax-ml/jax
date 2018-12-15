@@ -27,11 +27,8 @@ from ..numpy import linalg as np_linalg
 @_wraps(scipy.linalg.cholesky)
 def cholesky(a, lower=False, overwrite_a=False, check_finite=True):
   del overwrite_a, check_finite
-  if not lower:
-    raise NotImplementedError(
-        "The lower=False case of Cholesky is not implemented.")
-
-  return lax_linalg.cholesky(a)
+  l = lax_linalg.cholesky(a)
+  return l if lower else np.conj(l.T)
 
 
 @_wraps(scipy.linalg.inv)

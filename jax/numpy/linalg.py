@@ -26,10 +26,6 @@ from . import lax_numpy as np
 from ..util import get_module_functions
 
 
-dot = np.dot
-matmul = np.matmul
-trace = np.trace
-
 _T = lambda x: np.swapaxes(x, -1, -2)
 
 @_wraps(onp.linalg.cholesky)
