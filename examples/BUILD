@@ -14,7 +14,14 @@
 
 licenses(["notice"])  # Apache 2
 
+load("//tests:build_defs.bzl", "jax_test")
+
 package(default_visibility = ["//visibility:public"])
+
+config_setting(
+    name = "libjax_depend",
+    values = {"define": "libjax_depend=true"},
+)
 
 py_library(
     name = "datasets",
@@ -26,7 +33,6 @@ py_binary(
     srcs = ["mnist_classifier_fromscratch.py"],
     deps = [
         ":datasets",
-        "//jax:libjax",
     ],
 )
 
@@ -35,9 +41,6 @@ py_binary(
     srcs = ["mnist_classifier.py"],
     deps = [
         ":datasets",
-        "//jax:libjax",
-        "//jax:minmax",
-        "//jax:stax",
     ],
 )
 
@@ -46,9 +49,6 @@ py_binary(
     srcs = ["mnist_vae.py"],
     deps = [
         ":datasets",
-        "//jax:libjax",
-        "//jax:minmax",
-        "//jax:stax",
     ],
 )
 
@@ -57,16 +57,15 @@ py_binary(
     srcs = ["resnet50.py"],
     deps = [
         ":datasets",
-        "//jax:libjax",
-        "//jax:minmax",
-        "//jax:stax",
     ],
 )
 
 py_binary(
     name = "kernel_lsq",
     srcs = ["kernel_lsq.py"],
-    deps = [
-        "//jax:libjax",
-    ],
+)
+
+jax_test(
+    name = "examples_test",
+    srcs = ["examples_test.py"],
 )
