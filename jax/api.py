@@ -43,6 +43,16 @@ from .interpreters import batching
 
 map = safe_map
 
+def _wraps(wrapped):
+  def decorator(wrapper):
+    wrapper.__name__ = getattr(wrapped, "__name__", "<unnamed function>")
+    wrapper.__module__ = getattr(wrapped, "__module__", "<unknown module>")
+    if hasattr(wrapped, "__doc__"):
+      wrapper.__doc__ = getattr(wrapped, "__doc__")
+    return wrapper
+  return decorator
+
+
 def jit(fun, static_argnums=()):
   """Sets up `fun` for just-in-time compilation with XLA.
 
@@ -59,6 +69,7 @@ def jit(fun, static_argnums=()):
         different values for these constants will trigger recompilation.
    Returns: A wrapped version of `fun`, set up for just-in-time compilation.
   """
+  @_wraps(fun)
   def f_jitted(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
     dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
