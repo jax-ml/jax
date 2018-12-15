@@ -71,6 +71,7 @@ def numpy_close(a, b, atol=ATOL, rtol=RTOL, equal_nan=False):
   if testing_tpu or testing_x32:
     atol = max(atol, 1e-1)
     rtol = max(rtol, 1e-1)
+  assert a.shape == b.shape
   return onp.allclose(a, b, atol=atol * a.size, rtol=rtol * b.size,
                       equal_nan=equal_nan)
 
