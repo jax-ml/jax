@@ -23,5 +23,4 @@ install:
   - pip install jaxlib
   - pip install -v .
 script:
-  - cd tests
-  - JAX_NUM_GENERATED_CASES=10 nosetests
+  - JAX_NUM_GENERATED_CASES=100 nosetests tests examples
