@@ -1027,8 +1027,8 @@ def conv_general_dilated_transpose_rhs(
     dimension_numbers, lhs_shape, rhs_shape):
   assert type(dimension_numbers) is ConvDimensionNumbers
   lhs_sdims, rhs_sdims, out_sdims = map(_conv_sdims, dimension_numbers)
-  transposed = map(_conv_transpose, dimension_numbers)
-  trans_dimension_numbers = ConvDimensionNumbers(*transposed)
+  lhs_trans, rhs_trans, out_trans = map(_conv_transpose, dimension_numbers)
+  trans_dimension_numbers = ConvDimensionNumbers(lhs_trans, out_trans, rhs_trans)
   padding = _conv_general_vjp_rhs_padding(
       onp.take(lhs_shape, lhs_sdims), onp.take(rhs_shape, rhs_sdims),
       window_strides, onp.take(g.shape, out_sdims), padding, lhs_dilation,

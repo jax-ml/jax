@@ -46,7 +46,7 @@ flags.DEFINE_enum(
 
 flags.DEFINE_integer(
   'num_generated_cases',
-  os.getenv('JAX_NUM_GENERATED_CASES', 100),
+  os.getenv('JAX_NUM_GENERATED_CASES', 10),
   help='Number of generated cases to test')
 
 EPS = 1e-4
@@ -71,6 +71,7 @@ def numpy_close(a, b, atol=ATOL, rtol=RTOL, equal_nan=False):
   if testing_tpu or testing_x32:
     atol = max(atol, 1e-1)
     rtol = max(rtol, 1e-1)
+  assert a.shape == b.shape
   return onp.allclose(a, b, atol=atol * a.size, rtol=rtol * b.size,
                       equal_nan=equal_nan)
 
