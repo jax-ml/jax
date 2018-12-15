@@ -47,7 +47,7 @@ def qr(a, overwrite_a=False, lwork=None, mode="full", pivoting=False,
   if mode in ("full", "r"):
     full_matrices = True
   elif mode == "economic":
-    full_matrices = True
+    full_matrices = False
   else:
     raise ValueError("Unsupported QR decomposition mode '{}'".format(mode))
   q, r = lax_linalg.qr(a, full_matrices)
