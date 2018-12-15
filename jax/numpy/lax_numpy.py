@@ -677,8 +677,8 @@ def var(a, axis=None, dtype=None, keepdims=False, ddof=0):
 
 
 @_wraps(onp.std)
-def std(a, axis=None, keepdims=False, ddof=0):
-  return sqrt(var(a, axis=axis, keepdims=keepdims, ddof=ddof))
+def std(a, axis=None, dtype=None, keepdims=False, ddof=0):
+  return sqrt(var(a, axis=axis, dtype=dtype, keepdims=keepdims, ddof=ddof))
 
 
 @_wraps(onp.allclose)

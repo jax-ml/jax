@@ -139,6 +139,7 @@ JAX_REDUCER_RECORDS = [
     op_record("prod", 1, default_dtypes, all_shapes, jtu.rand_small_positive(), []),
     op_record("sum", 1, default_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("var", 1, default_dtypes, nonempty_shapes, jtu.rand_default(), []),
+    op_record("std", 1, default_dtypes, nonempty_shapes, jtu.rand_default(), []),
 ]
 
 JAX_REDUCER_NO_DTYPE_RECORDS = [
