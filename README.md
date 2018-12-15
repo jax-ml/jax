@@ -66,6 +66,7 @@ open](https://github.com/google/jax) by a growing number of
 ### Contents
 * [Quickstart: Colab in the Cloud](#quickstart-colab-in-the-cloud)
 * [Installation](#installation)
+* [Running the tests](#running-the-tests)
 * [A brief tour](#a-brief-tour)
 * [What's supported](#whats-supported)
 * [Transformations](#transformations)
@@ -156,6 +157,30 @@ run command like these, depending on your CUDNN install path:
 ```bash
 nvcc --version
 grep CUDNN_MAJOR -A 2 /usr/local/cuda/include/cudnn.h  # might need different path
+```
+
+## Running the tests
+
+To run all the JAX tests, from the repository root directory run
+
+```bash
+nosetests tests
+```
+
+JAX generates test cases combinatorially, and you can control the number of
+cases that are generated and checked for each test (default 10):
+
+```bash
+JAX_NUM_GENERATED_CASES=100 nosetests tests
+```
+
+You can run a more specific set of tests using
+[`nose`](https://nose.readthedocs.io/en/latest/usage.html)'s built-in selection
+mechanisms, or alternatively you can run a specific test file directly to see
+more detailed information about the cases being run:
+
+```bash
+python tests/lax_numpy_test.py --num_generated_cases=5
 ```
 
 ## A brief tour
