@@ -25,7 +25,7 @@ import numpy.random as npr
 import jax.numpy as np
 from jax.config import config
 from jax.experimental import minmax
-from jax import grad, jit, vmap
+from jax import grad, jit, make_jaxpr, vmap
 
 
 def gram(kernel, xs):
@@ -80,11 +80,23 @@ if __name__ == "__main__":
 
   # linear kernel
 
-  kernel = lambda x, y: np.dot(x, y)
+  linear_kernel = lambda x, y: np.dot(x, y)
   truth = npr.randn(d)
   xs = npr.randn(n, d)
   ys = np.dot(xs, truth)
 
-  predict = train(kernel, xs, ys)
+  predict = train(linear_kernel, xs, ys)
 
   print('MSE:', np.sum((predict(xs) - ys) ** 2.))
+
+  def gram_jaxpr(kernel):
+    return make_jaxpr(partial(gram, kernel))(xs)
+
+  rbf_kernel = lambda x, y: np.exp(-np.sum((x - y) ** 2))
+
+  print()
+  print('jaxpr of gram(linear_kernel):')
+  print(gram_jaxpr(linear_kernel))
+  print()
+  print('jaxpr of gram(rbf_kernel):')
+  print(gram_jaxpr(rbf_kernel))
