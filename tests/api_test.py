@@ -180,17 +180,13 @@ class APITest(jtu.JaxTestCase):
 
     assert jit(f, static_argnums=(1,))(0, 5) == 10
     jtu.check_raises_regexp(
-        lambda: jit(f)(0, 5), TypeError,
-        "('JaxprTracer' object cannot be interpreted as an integer"
-        "|Abstract value passed to function.*)")
+        lambda: jit(f)(0, 5), TypeError, "Abstract value passed to .*")
 
   def test_casts(self):
     for castfun in [float, complex, hex, oct] + list(six.integer_types):
       f = lambda x: castfun(x)
       jtu.check_raises_regexp(
-          lambda: jit(f)(0), TypeError,
-          "('JaxprTracer' object cannot be interpreted as an integer"
-          "|Abstract value passed to function.*)")
+          lambda: jit(f)(0), TypeError, "Abstract value passed to .*")
 
   def test_unimplemented_interpreter_rules(self):
     foo_p = Primitive('foo')

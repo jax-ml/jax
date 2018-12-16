@@ -340,12 +340,6 @@ def instantiate_device_constant(const, cutoff=1000000):
   else:
     return xb.device_put(onp.asarray(const))
 
-def register_device_constant(cls):
-  pytype_aval_mappings[cls] = pytype_aval_mappings[DeviceArray]
-  canonicalize_dtype_handlers[cls] = identity
-  core.pytype_aval_mappings[cls] = ConcreteArray
-  xb.register_constant_handler(cls, cls.constant_handler)
-
 
 def xla_shape(x):
   try:

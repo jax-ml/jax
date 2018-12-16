@@ -798,7 +798,9 @@ def ones_like(x, dtype=None):
   return lax.full_like(x, 1, dtype)
 
 
-full = _wraps(onp.full)(lax.full)
+@_wraps(onp.full)
+def full(shape, fill_value, dtype=None):
+  return lax.full(shape, fill_value, dtype)
 
 
 @_wraps(onp.zeros)
