@@ -20,12 +20,15 @@ from six.moves import builtins
 
 import six
 import numpy as onp
+import opt_einsum
+import collections
+import itertools
 
 from .. import core
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
 from ..interpreters.xla import DeviceArray
 from .. import lax
-from ..util import memoize, partial, get_module_functions, prod as _prod
+from ..util import memoize, partial, get_module_functions, unzip2, prod as _prod
 from ..lib import xla_bridge
 
 # To provide the same module-level names as Numpy, we need to redefine builtins
@@ -1052,6 +1055,78 @@ def tensordot(a, b, axes=2):
   msg = ("tensordot axes argument must be an int, a pair of ints, or a pair of "
          "lists/tuples of ints.")
   raise TypeError(msg)
+
+
+def einsum(*operands):
+  operands, contractions = opt_einsum.contract_path(
+      *operands, einsum_call=True, use_blas=True)
+  for operand_indices, contracted_names, einstr, _, _ in contractions:
+    input_str, result_names = einstr.split('->')
+    input_names = input_str.split(',')
+
+    # switch on the number of operands to be processed in this loop iteration.
+    # every case here sets 'result' and 'names'.
+    if len(operand_indices) == 1:
+      operand = operands.pop(operand_indices[0])
+      names, = input_names
+      counts = collections.Counter(names)
+
+      # sum out non-repeated indices with a single reduction
+      uniques = tuple(name for name in contracted_names if counts[name] == 1)
+      if uniques:
+        axes = tuple(names.index(name) for name in uniques)
+        operand = lax.reduce(operand, onp.array(0, _dtype(operand)), lax.add, axes)
+        names = names.translate(None, ''.join(uniques))
+        map(counts.pop, uniques)
+
+      # for every repeated index, do a contraction against an identity matrix
+      for name, count in counts.items():
+        if count > 1:
+          raise NotImplementedError
+
+      result = operand
+
+    elif len(operand_indices) == 2:
+      lhs, rhs = map(operands.pop, operand_indices)
+      lhs_counts, rhs_counts = map(collections.Counter, input_names)
+      lhs_names, rhs_names = input_names
+
+      all_counts = itertools.chain(lhs_counts.values(), rhs_counts.values())
+      if _any(count > 1 for count in all_counts):
+        # TODO handle repeated indices (trace out first)
+        # TODO handle unique axes (sum out first)
+        raise NotImplementedError
+
+      batch_names = set(lhs_names) & set(rhs_names) - contracted_names
+      lhs_cont, rhs_cont = unzip2((lhs_names.index(name), rhs_names.index(name))
+                                  for name in contracted_names)
+      lhs_batch, rhs_batch = unzip2((lhs_names.find(name), rhs_names.find(name))
+                                    for name in batch_names)
+      batch_dims = tuple(range(len(batch_names)))
+      if lhs_batch != rhs_batch or set(lhs_batch) != set(batch_dims):
+        lhs = moveaxis(lhs, lhs_batch, batch_dims)
+        rhs = moveaxis(rhs, rhs_batch, batch_dims)
+        batch_names = ''.join(batch_names)
+      else:
+        batch_dims = tuple(lhs_batch)
+        batch_names = ''.join(lhs_names[i] for i in batch_dims)
+
+      dimension_numbers = [(lhs_cont, rhs_cont), (batch_dims, batch_dims)]
+      result = lax.dot_general(lhs, rhs, dimension_numbers)
+      deleted_names = batch_names + ''.join(contracted_names)
+      names = (batch_names
+               + lhs_names.translate(None, deleted_names)
+               + rhs_names.translate(None, deleted_names))
+
+    else:
+      raise NotImplementedError
+
+    if names != result_names:
+      perm = tuple([names.index(name) for name in result_names])
+      result = lax.transpose(result, perm)
+    operands.append(result)  # used in next iteration
+
+  return operands[0]
 
 
 ### Misc
