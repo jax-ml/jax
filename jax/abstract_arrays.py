@@ -112,6 +112,9 @@ class ShapedArray(UnshapedArray):
     except IndexError:
       raise TypeError("len() of unsized object")  # same as numpy error
 
+  def _len(self, ignored_tracer):
+    return len(self)
+
 
 class ConcreteArray(ShapedArray):
   __slots__ = ['val']

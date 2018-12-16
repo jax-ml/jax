@@ -196,8 +196,7 @@ class Tracer(object):
     return iter(self.aval._iter(self))
 
   def __len__(self):
-    # TODO(dougalm,mattjj): replace with something more efficient
-    return len(list(iter(self)))
+    return self.aval._len(self)
 
   @property
   def aval(self):
@@ -449,6 +448,9 @@ class AbstractTuple(AbstractValue, tuple):
   @staticmethod
   def _iter(tracer):
     return tracer.unpack()
+
+  def _len(self, ignored_tracer):
+    return len(self)  # tuples have a known length
 
   def at_least_vspace(self):
     return AbstractTuple(x.at_least_vspace() for x in self)
