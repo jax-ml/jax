@@ -226,6 +226,19 @@ def lift_jaxpr(jaxpr, consts, io_tree, pvals, py_args):
     return pe.merge_pvals(ans, pvals)
   return unflatten_fun(fun, io_tree, *py_args)
 
+def make_jaxpr(f):
+  def pv_like(x):
+    aval = ShapedArray(onp.shape(x), onp.result_type(x))
+    return pe.PartialVal((aval, core.unit))
+
+  @_wraps(f)
+  def jaxpr_maker(*args):
+    jaxpr, _, _, _ = trace_to_jaxpr(f, map(pv_like, args))
+    return jaxpr
+
+  jaxpr_maker.__name__ = "make_jaxpr({})".format(jaxpr_maker.__name__)
+  return jaxpr_maker
+
 
 device_put = jit(lambda x: x)
 device_get_array = lambda x: x.copy() if type(x) is xla.DeviceArray else x
