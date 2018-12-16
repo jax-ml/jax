@@ -168,7 +168,7 @@ def split(key, num=2):
   Returns:
     A tuple of length `num` of new PRNGKey instances.
   """
-  counts = onp.arange(num * 2, dtype=onp.uint32)
+  counts = lax.iota(onp.uint32, num * 2)
   bits = lax.reshape(threefry_2x32(key.keypair, counts), (num, 2))
   keypairs = (lax.index_in_dim(bits, i, keepdims=False) for i in range(num))
   return tuple(PRNGKey.from_keypair((kp[0], kp[1])) for kp in keypairs)
@@ -183,7 +183,7 @@ def _random_bits(key, bit_width, shape):
     # TODO(mattjj): just split the key here
     raise TypeError("requesting more random bits than a single call provides.")
 
-  bits = threefry_2x32(key.keypair, onp.arange(max_count, dtype=onp.uint32))
+  bits = threefry_2x32(key.keypair, lax.iota(onp.uint32, max_count))
   if bit_width == 64:
     bits = [lax.convert_element_type(x, onp.uint64) for x in np.split(bits, 2)]
     bits = (bits[0] << onp.uint64(32)) | bits[1]

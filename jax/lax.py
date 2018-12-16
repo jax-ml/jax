@@ -432,11 +432,25 @@ def full(shape, fill_value, dtype=None):
 
   return full_p.bind(fill_value, shape=shape)
 
-def iota(dtype, shape, dimension):
+def iota(dtype, size):
+  return broadcasted_iota(dtype, (size,), 0)
+
+def broadcasted_iota(dtype, shape, dimension):
   dtype = xla_bridge.canonicalize_dtype(dtype)
-  shape = tuple(map(int(shape)))
+  shape = tuple(map(int, shape))
   dimension = int(dimension)
   return IotaConstant(dtype, shape, dimension)
+
+def eye(dtype, size):
+  return broadcasted_eye(dtype, (size, size), (0, 1))
+
+def broadcasted_eye(dtype, shape, axes):
+  if not isinstance(axes, (list, tuple)) or not len(axes) >= 2:
+    raise TypeError("make_diagonal `axes` must be a tuple with len at least 2.")
+  dtype = xla_bridge.canonicalize_dtype(dtype)
+  shape = tuple(map(int, shape))
+  axes = tuple(map(int, axes))
+  return EyeConstant(shape, axes, dtype)
 
 
 ### convenience wrappers around traceables
@@ -2309,7 +2323,7 @@ class IotaConstant(xla.DeviceConstant):
 
   def __init__(self, dtype, shape, axis):
     self.shape = shape
-    self.dtype = onp.dtype(dtype)
+    self.dtype = dtype
     self.ndim = len(shape)
     self.size = prod(shape)
     self._npy_value = None
@@ -2332,7 +2346,38 @@ class IotaConstant(xla.DeviceConstant):
 xla.register_device_constant(IotaConstant)
 
 
-for t in [FilledConstant, IotaConstant]:
+class EyeConstant(xla.DeviceConstant):
+  __slots__ = ["axes"]
+
+  def __init__(self, shape, axes, dtype):
+    self.shape = shape
+    self.dtype = dtype
+    self.ndim = len(shape)
+    self.size = prod(shape)
+    self._npy_value = None
+
+    self.axes = axes
+
+  @property
+  def _value(self):
+    if self._npy_value is None:
+      ones = [1] * self.ndim
+      iotas = [onp.arange(self.shape[axis]).reshape(subvals(ones, [(axis, -1)]))
+               for axis in self.axes]
+      result = onp.asarray(_reduce(operator.eq, iotas), self.dtype)
+      self._npy_value = onp.broadcast_to(result, self.shape)
+    return self._npy_value
+
+  @staticmethod
+  def constant_handler(c, diag_const):
+    etype = xla_bridge.dtype_to_etype(diag_const.dtype)
+    iotas = [c.BroadcastedIota(diag_const.dtype, diag_const.shape, axis)
+             for axis in diag_const.axes]
+    return c.ConvertElementType(_reduce(c.Eq, iotas), etype)
+xla.register_device_constant(EyeConstant)
+
+
+for t in [FilledConstant, IotaConstant, EyeConstant]:
   batching.pytype_aval_mappings[t] = make_shaped_array
   ad_util.jaxval_adders[t] = add
   ad_util.jaxval_zeros_likers[t] = zeros_like_array
