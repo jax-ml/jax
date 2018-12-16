@@ -328,7 +328,7 @@ class DeviceConstant(DeviceArray):
     assert False
 
 # TODO(mattjj): tune cutoff
-def instantiate_device_constant(const, cutoff=1000000):
+def instantiate_device_constant(const, cutoff=0):
   # dispatch an XLA Computation to build the constant on the device if it's
   # large, or alternatively build it on the host and transfer it if it's small
   assert isinstance(const, DeviceConstant)

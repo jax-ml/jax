@@ -27,6 +27,7 @@ from . import numpy as np
 from . import tree_util
 from .api import jit
 from jax.lib import xla_bridge
+from jax import core
 
 class PRNGKey(object):
   """A pseudo-random number generator (PRNG) key for use with lax.random."""
@@ -51,13 +52,13 @@ class PRNGKey(object):
     else:
       k1 = convert(lax.shift_right_logical(seed, 32))
     k2 = convert(lax.bitwise_and(seed, 0xFFFFFFFF))
-    self.keypair = (k1, k2)
+    self.keypair = core.pack((k1, k2))
 
   @classmethod
   def from_keypair(cls, keypair):
     """Internal method to create a PRNGKey instance from a raw key pair."""
     new = cls.__new__(cls)
-    new.keypair = tuple(keypair)
+    new.keypair = core.pack(keypair)
     return new
 
 
@@ -100,7 +101,7 @@ def threefry_2x32(keypair, count):
     An array of dtype uint32 with the same shape as `count`.
   """
   # Based on ThreeFry2x32 by phawkins@ in //.../xla/client/lib/prng.cc
-  key1, key2 = keypair[0], keypair[1]
+  key1, key2 = keypair
   if not lax._dtype(key1) == lax._dtype(key2) == lax._dtype(count) == onp.uint32:
     msg = "threefry_2x32 requires uint32 arguments, got {}"
     raise TypeError(msg.format([lax._dtype(x) for x in [key1, key2, count]]))
@@ -168,7 +169,7 @@ def split(key, num=2):
   Returns:
     A tuple of length `num` of new PRNGKey instances.
   """
-  counts = lax.iota(onp.uint32, num * 2)
+  counts = lax.tie_in(key.keypair, lax.iota(onp.uint32, num * 2))
   bits = lax.reshape(threefry_2x32(key.keypair, counts), (num, 2))
   keypairs = (lax.index_in_dim(bits, i, keepdims=False) for i in range(num))
   return tuple(PRNGKey.from_keypair((kp[0], kp[1])) for kp in keypairs)
@@ -183,7 +184,8 @@ def _random_bits(key, bit_width, shape):
     # TODO(mattjj): just split the key here
     raise TypeError("requesting more random bits than a single call provides.")
 
-  bits = threefry_2x32(key.keypair, lax.iota(onp.uint32, max_count))
+  counts = lax.tie_in(key.keypair, lax.iota(onp.uint32, max_count))
+  bits = threefry_2x32(key.keypair, counts)
   if bit_width == 64:
     bits = [lax.convert_element_type(x, onp.uint64) for x in np.split(bits, 2)]
     bits = (bits[0] << onp.uint64(32)) | bits[1]
