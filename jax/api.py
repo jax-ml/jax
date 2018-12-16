@@ -80,6 +80,7 @@ def jit(fun, static_argnums=()):
     out_flat = xla.xla_call(flat_fun, *args_flat)
     return build_tree(out_tree(), out_flat)
 
+  f_jitted.__name__ = "jit({})".format(f_jitted.__name__)
   return f_jitted
 
 def grad(fun, argnums=0):
