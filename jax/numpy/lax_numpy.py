@@ -988,6 +988,7 @@ def tensordot(a, b, axes=2):
     raise TypeError(msg.format(ndim(a), ndim(b)))
 
   if type(axes) is int:
+    a, b = _promote_dtypes(a, b)
     a_reshape = lax.reshape(a, (_prod(a.shape[:-axes]), _prod(a.shape[-axes:])))
     b_reshape = lax.reshape(b, (_prod(b.shape[:axes]), _prod(b.shape[axes:])))
     out_reshape = lax.dot(a_reshape, b_reshape)
