@@ -263,7 +263,7 @@ class DeviceArray(DeviceValue):
 
   def __repr__(self):
     shape_str = ",".join(map(str, self.shape))
-    return "DeviceArray{{{}[{}]}}".format(self.dtype.name, shape_str)
+    return "DeviceArray{{{}[{}]}}".format(onp.dtype(self.dtype).name, shape_str)
 
   def __len__(self):
     try:

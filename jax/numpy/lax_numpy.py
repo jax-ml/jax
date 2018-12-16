@@ -697,10 +697,6 @@ def allclose(a, b, rtol=1e-05, atol=1e-08):
 ### Array-creation functions
 
 
-arange = onp.arange
-eye = onp.eye
-
-
 @_wraps(onp.stack)
 def stack(arrays):
   if not arrays:
@@ -815,6 +811,48 @@ def zeros(shape, dtype=onp.dtype("float64")):
 def ones(shape, dtype=onp.dtype("float64")):
   shape = (shape,) if onp.isscalar(shape) else shape
   return lax.full(shape, 1, dtype)
+
+
+@_wraps(onp.eye)
+def eye(N, M=None, k=None, dtype=onp.dtype("float64")):
+  M = N if M is None else M
+  if k is None:
+    return lax.broadcasted_eye(dtype, (N, M), (0, 1))
+  else:
+    k_dtype = _dtype(k)
+    if not onp.issubdtype(k_dtype, onp.integer):
+      msg = "eye argument `k` must be of integer dtype, got {}"
+      raise TypeError(msg.format(k_dtype))
+    rows = k + lax.broadcasted_iota(k_dtype, (N, M), 0)
+    cols = lax.broadcasted_iota(k_dtype, (N, M), 1)
+    return lax.convert_element_type(lax.eq(rows, cols), dtype)
+
+
+@_wraps(onp.arange)
+def arange(*args, **kwargs):
+  nargs = len(args)
+  start, step = 0, 1
+  dtype = kwargs.pop("dtype", None)
+  if kwargs:
+    raise TypeError("arange only accepts 'dtype' kwarg, got {}".format(kwargs))
+  if nargs == 0:
+    raise TypeError("Required argument 'start' (pos 1) not found")  # same as numpy error
+  elif nargs == 1:
+    stop, = args
+    dtype = dtype or _dtype(stop)
+    return lax.iota(dtype, stop)  # avoids materializing
+  elif nargs == 2:
+    start, stop = args
+    dtype = dtype or onp.result_type(start, stop)
+  elif nargs == 3:
+    start, stop, step = args
+    dtype = dtype or onp.result_type(start, stop, step)
+  elif nargs == 4:
+    start, stop, step, dtype = args
+    dtype = dtype or onp.result_type(start, stop, step)
+
+  size = (stop - start - 1) // step + 1
+  return start + step * lax.iota(dtype, size)
 
 
 @_wraps(onp.repeat)
