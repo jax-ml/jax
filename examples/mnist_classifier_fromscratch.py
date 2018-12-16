@@ -37,10 +37,14 @@ def init_random_params(scale, layer_sizes, rng=npr.RandomState(0)):
           for m, n, in zip(layer_sizes[:-1], layer_sizes[1:])]
 
 def predict(params, inputs):
-  for w, b in params:
-    outputs = np.dot(inputs, w) + b
-    inputs = np.tanh(outputs)
-  return outputs - logsumexp(outputs, axis=1, keepdims=True)
+  activations = inputs
+  for w, b in params[:-1]:
+    outputs = np.dot(activations, w) + b
+    activations = np.tanh(outputs)
+
+  final_w, final_b = params[-1]
+  logits = np.dot(activations, final_w) + final_b
+  return logits - logsumexp(logits, axis=1, keepdims=True)
 
 def loss(params, batch):
   inputs, targets = batch
