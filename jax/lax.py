@@ -422,15 +422,15 @@ def full(shape, fill_value, dtype=None):
     msg = "full must be called with scalar fill_value, got fill_value.shape {}."
     raise TypeError(msg.format(onp.shape(fill_value)))
 
+  # For constants (defined as Python scalars, raw ndarrays, or DeviceValues),
+  # create a FilledConstant value, otherwise just call broadcast.
   dtype = dtype and xla_bridge.canonicalize_dtype(dtype)
-  if dtype is not None and _dtype(fill_value) != dtype:
-    # for Python scalars and raw ndarrays, we keep fill_value as a cpu ndarray
-    if onp.isscalar(fill_value) or type(fill_value) is onp.ndarray:
-      fill_value = onp.array(fill_value, dtype)
-    else:
-      fill_value = convert_element_type(fill_value, dtype)
-
-  return full_p.bind(fill_value, shape=shape)
+  if onp.isscalar(fill_value) or type(fill_value) is onp.ndarray:
+    return FilledConstant(onp.asarray(fill_value, dtype), shape)
+  elif isinstance(fill_value, xla.DeviceValue):
+    return FilledConstant(convert_element_type(fill_value, dtype), shape)
+  else:
+    return broadcast(convert_element_type(fill_value, dtype), shape)
 
 def iota(dtype, size):
   return broadcasted_iota(dtype, (size,), 0)
@@ -2260,7 +2260,7 @@ while_p.def_abstract_eval(while_loop_abstract_eval)
 xla.translations[while_p] = while_loop_translation_rule
 
 
-### primitives for handling constants
+### constants
 
 
 def tie_in_transpose_rule(t):
@@ -2300,22 +2300,6 @@ class FilledConstant(xla.DeviceConstant):
   def constant_handler(c, filled_const):
     return c.Broadcast(c.NumpyArrayConstant(filled_const.fill_value),
                        filled_const.shape)
-xla.register_device_constant(FilledConstant)
-
-def full_batch_rule(batched_args, batch_dims, shape):
-  fill_value, = batched_args
-  bdim, = batch_dims
-  assert bdim == 0
-  return broadcast_in_dim(fill_value, fill_value.shape + shape, [bdim])
-
-full_p = Primitive('full_p')
-full_p.def_impl(FilledConstant)
-full_p.def_abstract_eval(
-    lambda fill_value, shape: ShapedArray(shape, _dtype(fill_value)))
-xla.translations[full_p] = \
-    lambda c, fill_value, shape: c.Broadcast(fill_value, shape)
-ad.deflinear(full_p, lambda t, shape: [_reduce_sum(t, tuple(range(len(shape))))])
-batching.primitive_batchers[full_p] = full_batch_rule
 
 
 class IotaConstant(xla.DeviceConstant):
@@ -2343,7 +2327,6 @@ class IotaConstant(xla.DeviceConstant):
   def constant_handler(c, iota_constant):
     return c.BroadcastedIota(iota_constant.dtype, iota_constant.shape,
                              iota_constant.axis)
-xla.register_device_constant(IotaConstant)
 
 
 class EyeConstant(xla.DeviceConstant):
@@ -2374,10 +2357,13 @@ class EyeConstant(xla.DeviceConstant):
     iotas = [c.BroadcastedIota(diag_const.dtype, diag_const.shape, axis)
              for axis in diag_const.axes]
     return c.ConvertElementType(_reduce(c.Eq, iotas), etype)
-xla.register_device_constant(EyeConstant)
 
 
 for t in [FilledConstant, IotaConstant, EyeConstant]:
+  xla_bridge.register_constant_handler(t, t.constant_handler)
+  core.pytype_aval_mappings[t] = ConcreteArray
+  xla.pytype_aval_mappings[t] = xla.pytype_aval_mappings[xla.DeviceArray]
+  xla.canonicalize_dtype_handlers[t] = identity
   batching.pytype_aval_mappings[t] = make_shaped_array
   ad_util.jaxval_adders[t] = add
   ad_util.jaxval_zeros_likers[t] = zeros_like_array
