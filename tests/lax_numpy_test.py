@@ -339,6 +339,29 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(lnp.matmul, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_{}_{}".format(
+          jtu.format_shape_dtype_string(lhs_shape, lhs_dtype),
+          jtu.format_shape_dtype_string(rhs_shape, rhs_dtype),
+          axes),
+       "lhs_shape": lhs_shape, "lhs_dtype": lhs_dtype,
+       "rhs_shape": rhs_shape, "rhs_dtype": rhs_dtype,
+       "axes": axes, "rng": rng}
+      for rng in [jtu.rand_default()]
+      for lhs_shape, rhs_shape, axes in [
+          [(2, 3, 4), (3, 4, 5, 6), 2],
+          [(2, 3, 4), (5, 4, 3, 6), [1, 2]],
+          [(2, 3, 4), (5, 4, 3, 6), [[1, 2], [2, 1]]],
+          [(1, 2, 3, 4), (4, 5, 3, 6), [[2, 3], [2, 0]]],
+      ]
+      for lhs_dtype, rhs_dtype in CombosWithReplacement(float_dtypes, 2)))
+  def testTensordot(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype, axes, rng):
+    args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
+    lnp_fun = lambda a, b: lnp.tensordot(a, b, axes)
+    onp_fun = lambda a, b: onp.tensordot(a, b, axes)
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_amin={}_amax={}".format(
           jtu.format_shape_dtype_string(shape, dtype), a_min, a_max),
        "shape": shape, "dtype": dtype, "a_min": a_min, "a_max": a_max,
