@@ -310,7 +310,8 @@ def shuffle(key, x, axis=0):
   # Section 2 of http://people.csail.mit.edu/costis/6896sp11/lec5s.pdf for
   # another analysis (where the keys are generated one bit at a time).
   exponent = 3  # see tjablin@'s analysis for explanation of this parameter
-  num_rounds = int(onp.ceil(exponent * onp.log(len(x)) / 32))
+  uint32max = onp.iinfo(onp.uint32).max
+  num_rounds = int(onp.ceil(exponent * onp.log(x.size) / onp.log(uint32max)))
 
   for _ in range(num_rounds):
     key, subkey = split(key)
