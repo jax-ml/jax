@@ -16,6 +16,8 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import warnings
+
 import scipy.linalg
 
 from .. import lax_linalg
@@ -24,8 +26,11 @@ from ..numpy import lax_numpy as np
 from ..numpy import linalg as np_linalg
 
 
+_EXPERIMENTAL_WARNING = "scipy.linalg support is experimental and may cause silent failures or wrong outputs"
+
 @_wraps(scipy.linalg.cholesky)
 def cholesky(a, lower=False, overwrite_a=False, check_finite=True):
+  warnings.warn(_EXPERIMENTAL_WARNING)
   del overwrite_a, check_finite
   l = lax_linalg.cholesky(a)
   return l if lower else np.conj(l.T)
@@ -33,6 +38,7 @@ def cholesky(a, lower=False, overwrite_a=False, check_finite=True):
 
 @_wraps(scipy.linalg.inv)
 def inv(a, overwrite_a=False, check_finite=True):
+  warnings.warn(_EXPERIMENTAL_WARNING)
   del overwrite_a, check_finite
   return np_linalg.inv(a)
 
@@ -40,6 +46,7 @@ def inv(a, overwrite_a=False, check_finite=True):
 @_wraps(scipy.linalg.qr)
 def qr(a, overwrite_a=False, lwork=None, mode="full", pivoting=False,
        check_finite=True):
+  warnings.warn(_EXPERIMENTAL_WARNING)
   del overwrite_a, lwork, check_finite
   if pivoting:
     raise NotImplementedError(
@@ -59,6 +66,7 @@ def qr(a, overwrite_a=False, lwork=None, mode="full", pivoting=False,
 @_wraps(scipy.linalg.solve_triangular)
 def solve_triangular(a, b, trans=0, lower=False, unit_diagonal=False,
                      overwrite_b=False, debug=None, check_finite=True):
+  warnings.warn(_EXPERIMENTAL_WARNING)
   del overwrite_b, debug, check_finite
 
   if unit_diagonal:

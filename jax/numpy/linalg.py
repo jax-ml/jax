@@ -18,6 +18,7 @@ from __future__ import print_function
 
 
 import numpy as onp
+import warnings
 
 from .. import lax_linalg
 from .lax_numpy import _not_implemented
@@ -25,15 +26,18 @@ from .lax_numpy import _wraps
 from . import lax_numpy as np
 from ..util import get_module_functions
 
+_EXPERIMENTAL_WARNING = "numpy.linalg support is experimental and may cause silent failures or wrong outputs"
 
 _T = lambda x: np.swapaxes(x, -1, -2)
 
 @_wraps(onp.linalg.cholesky)
 def cholesky(a):
+  warnings.warn(_EXPERIMENTAL_WARNING)
   return lax_linalg.cholesky(a)
 
 @_wraps(onp.linalg.inv)
 def inv(a):
+  warnings.warn(_EXPERIMENTAL_WARNING)
   if np.ndim(a) < 2 or a.shape[-1] != a.shape[-2]:
     raise ValueError("Argument to inv must have shape [..., n, n], got {}."
       .format(np.shape(a)))
@@ -43,6 +47,7 @@ def inv(a):
 
 @_wraps(onp.linalg.qr)
 def qr(a, mode="reduced"):
+  warnings.warn(_EXPERIMENTAL_WARNING)
   if mode in ("reduced", "r", "full"):
     full_matrices = False
   elif mode == "complete":
