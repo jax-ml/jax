@@ -43,6 +43,16 @@ from .interpreters import batching
 
 map = safe_map
 
+def _wraps(wrapped):
+  def decorator(wrapper):
+    wrapper.__name__ = getattr(wrapped, "__name__", "<unnamed function>")
+    wrapper.__module__ = getattr(wrapped, "__module__", "<unknown module>")
+    if hasattr(wrapped, "__doc__"):
+      wrapper.__doc__ = getattr(wrapped, "__doc__")
+    return wrapper
+  return decorator
+
+
 def jit(fun, static_argnums=()):
   """Sets up `fun` for just-in-time compilation with XLA.
 
@@ -59,6 +69,7 @@ def jit(fun, static_argnums=()):
         different values for these constants will trigger recompilation.
    Returns: A wrapped version of `fun`, set up for just-in-time compilation.
   """
+  @_wraps(fun)
   def f_jitted(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
     dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
@@ -69,6 +80,7 @@ def jit(fun, static_argnums=()):
     out_flat = xla.xla_call(flat_fun, *args_flat)
     return build_tree(out_tree(), out_flat)
 
+  f_jitted.__name__ = "jit({})".format(f_jitted.__name__)
   return f_jitted
 
 def grad(fun, argnums=0):
@@ -213,6 +225,20 @@ def lift_jaxpr(jaxpr, consts, io_tree, pvals, py_args):
     ans = eval_jaxpr(jaxpr, consts, (), *args)
     return pe.merge_pvals(ans, pvals)
   return unflatten_fun(fun, io_tree, *py_args)
+
+def make_jaxpr(f):
+  # TODO(frostig): handle container trees etc.
+  def pv_like(x):
+    aval = ShapedArray(onp.shape(x), onp.result_type(x))
+    return pe.PartialVal((aval, core.unit))
+
+  @_wraps(f)
+  def jaxpr_maker(*args):
+    jaxpr, _, _, _ = trace_to_jaxpr(f, map(pv_like, args))
+    return jaxpr
+
+  jaxpr_maker.__name__ = "make_jaxpr({})".format(jaxpr_maker.__name__)
+  return jaxpr_maker
 
 
 device_put = jit(lambda x: x)
