@@ -596,7 +596,7 @@ def _make_reduction(np_fun, op, init_val, preproc=None):
   @_wraps(np_fun)
   def reduction(a, axis=None, dtype=None, out=None, keepdims=False):
     if out is not None:
-      raise ValueError("reduction does not support `out` argument.")
+      raise ValueError("reduction does not support the `out` argument.")
 
     a = a if isinstance(a, ndarray) else asarray(a)
     a = preproc(a) if preproc else a
@@ -646,7 +646,7 @@ any = sometrue = _make_reduction(onp.any, lax.bitwise_or, False, _cast_to_bool)
 @_wraps(onp.mean)
 def mean(a, axis=None, dtype=None, out=None, keepdims=False):
   if out is not None:
-    raise ValueError("mean does not support `out` argument.")
+    raise ValueError("mean does not support the `out` argument.")
 
   if axis is None:
     normalizer = size(a)
@@ -668,7 +668,7 @@ def mean(a, axis=None, dtype=None, out=None, keepdims=False):
 @_wraps(onp.var)
 def var(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
   if out is not None:
-    raise ValueError("mean does not support `out` argument.")
+    raise ValueError("var does not support the `out` argument.")
 
   if ddof != 0:
     raise NotImplementedError("Only implemented for ddof=0.")
@@ -684,8 +684,9 @@ def var(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
 
 @_wraps(onp.std)
 def std(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
-  return sqrt(var(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
-                  keepdims=keepdims))
+  if out is not None:
+    raise ValueError("std does not support the `out` argument.")
+  return sqrt(var(a, axis=axis, dtype=dtype, ddof=ddof, keepdims=keepdims))
 
 
 @_wraps(onp.allclose)
