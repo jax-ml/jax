@@ -75,10 +75,9 @@ ad.primitive_jvps[cholesky_p] = cholesky_jvp_rule
 
 def cholesky_cpu_translation_rule(c, operand):
   shape = c.GetShape(operand)
-  if len(shape.dimensions()) == 2 and shape.element_type() == np.float32:
-    return c.GetTupleElement(lapack.jax_spotrf(c, operand, lower=True), 0)
-  elif len(shape.dimensions()) == 2 and shape.element_type() == np.float64:
-    return c.GetTupleElement(lapack.jax_dpotrf(c, operand, lower=True), 0)
+  if len(shape.dimensions()) == 2 and (
+    shape.element_type() == np.float32 or shape.element_type() == np.float64):
+    return c.GetTupleElement(lapack.jax_potrf(c, operand, lower=True), 0)
   else:
     # Fall back to the HLO implementation for batched Cholesky decomposition or
     # unsupported types.
@@ -124,6 +123,24 @@ ad.defjvp(triangular_solve_p,
           None,
           lambda g_b, a, b, **kwargs: triangular_solve(a, g_b, **kwargs))
 ad.primitive_transposes[triangular_solve_p] = triangular_solve_transpose_rule
+
+
+def triangular_solve_cpu_translation_rule(
+    c, a, b, left_side, lower, transpose_a, conjugate_a):
+  shape = c.GetShape(a)
+  if len(shape.dimensions()) == 2 and shape.element_type() == np.float32:
+    return lapack.jax_trsm(c, c.ConstantF32Scalar(1.0), a, b, left_side, lower,
+                           transpose_a, conjugate_a)
+  elif len(shape.dimensions()) == 2 and shape.element_type() == np.float64:
+    return lapack.jax_trsm(c, c.ConstantF64Scalar(1.0), a, b, left_side, lower,
+                           transpose_a, conjugate_a)
+  else:
+    # Fall back to the HLO implementation for batched triangular_solve or
+    # unsupported types.
+    # TODO(phawkins): support BLAS primitives in batched mode.
+    return c.TriangularSolve(a, b, left_side, lower, transpose_a, conjugate_a)
+
+xla.translations[triangular_solve_p] = triangular_solve_cpu_translation_rule
 
 
 def qr_impl(operand, full_matrices):
