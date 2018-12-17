@@ -20,13 +20,10 @@ licenses(["notice"])  # Apache 2
 
 package(default_visibility = ["//visibility:public"])
 
-sh_binary(
-    name = "install_xla_in_source_tree",
-    srcs = ["install_xla_in_source_tree.sh"],
-    data = [
-        "@org_tensorflow//tensorflow/compiler/xla/python:xla_client",
-        "//jaxlib:lapack.so",
+pyx_library(
+    name = "lapack",
+    srcs = ["lapack.pyx"],
+    py_deps = [
+        "@org_tensorflow//third_party/py/numpy",
     ],
-    deps = ["@bazel_tools//tools/bash/runfiles"],
 )
-
