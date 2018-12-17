@@ -227,6 +227,7 @@ def lift_jaxpr(jaxpr, consts, io_tree, pvals, py_args):
   return unflatten_fun(fun, io_tree, *py_args)
 
 def make_jaxpr(f):
+  # TODO(frostig): handle container trees etc.
   def pv_like(x):
     aval = ShapedArray(onp.shape(x), onp.result_type(x))
     return pe.PartialVal((aval, core.unit))
