@@ -14,8 +14,6 @@
 
 # JAX is Autograd and XLA
 
-load("@org_tensorflow//tensorflow/core:platform/default/build_config.bzl", "pyx_library")
-
 licenses(["notice"])  # Apache 2
 
 package(default_visibility = ["//visibility:public"])
