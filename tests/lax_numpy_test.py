@@ -27,6 +27,7 @@ from absl.testing import parameterized
 import numpy as onp
 
 from jax import api
+from jax import lax
 from jax import numpy as lnp
 from jax import test_util as jtu
 
@@ -812,7 +813,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   def testOnpMean(self):
     # from https://github.com/google/jax/issues/125
-    x = lnp.eye(3) + 0.
+    x = lax.add(lnp.eye(3), 0.)
     ans = onp.mean(x)
     self.assertAllClose(ans, onp.array([1./3, 1./3, 1./3]), check_dtypes=False)
 
