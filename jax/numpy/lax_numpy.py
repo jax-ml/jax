@@ -644,7 +644,10 @@ any = sometrue = _make_reduction(onp.any, lax.bitwise_or, False, _cast_to_bool)
 
 
 @_wraps(onp.mean)
-def mean(a, axis=None, dtype=None, keepdims=False):
+def mean(a, axis=None, dtype=None, out=None, keepdims=False):
+  if out is not None:
+    raise ValueError("mean does not support `out` argument.")
+
   if axis is None:
     normalizer = size(a)
   else:
@@ -663,7 +666,10 @@ def mean(a, axis=None, dtype=None, keepdims=False):
 
 
 @_wraps(onp.var)
-def var(a, axis=None, dtype=None, keepdims=False, ddof=0):
+def var(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
+  if out is not None:
+    raise ValueError("mean does not support `out` argument.")
+
   if ddof != 0:
     raise NotImplementedError("Only implemented for ddof=0.")
   if dtype is None:
@@ -677,8 +683,9 @@ def var(a, axis=None, dtype=None, keepdims=False, ddof=0):
 
 
 @_wraps(onp.std)
-def std(a, axis=None, dtype=None, keepdims=False, ddof=0):
-  return sqrt(var(a, axis=axis, dtype=dtype, keepdims=keepdims, ddof=ddof))
+def std(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
+  return sqrt(var(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+                  keepdims=keepdims))
 
 
 @_wraps(onp.allclose)

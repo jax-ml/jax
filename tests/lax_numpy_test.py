@@ -810,6 +810,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   # TODO(mattjj): test other ndarray-like method overrides
 
+  def testOnpMean(self):
+    # from https://github.com/google/jax/issues/125
+    x = lnp.eye(3) + 0.
+    ans = onp.mean(x)
+    self.assertAllClose(ans, onp.array([1./3, 1./3, 1./3]), check_dtypes=False)
+
 
 if __name__ == "__main__":
   absltest.main()
