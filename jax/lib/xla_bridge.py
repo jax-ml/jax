@@ -61,6 +61,8 @@ flags.DEFINE_string(
 # visible output files.
 _SPONGE_PREFIX = '/SPONGE/'
 
+_platform_name = None  # set to the active platform name
+
 
 def _hlo_path(path, name):
   path = path.replace(_SPONGE_PREFIX,
@@ -127,16 +129,20 @@ def _get_xla_client(backend_name, platform_name, replica_count):
   Returns:
     A client library module, or an object that behaves identically to one.
   """
+  global _platform_name
   xla_client.initialize_replica_count(replica_count)
   if backend_name == 'xla':
     if platform_name:
       xla_client.initialize_platform_name(platform_name)
+      _platform_name = platform_name
     else:
       try:
         xla_client.initialize_platform_name('CUDA')
+        _platform_name = 'CUDA'
       except RuntimeError:
         warnings.warn('No GPU found, falling back to CPU.')
         xla_client.initialize_platform_name('Host')
+        _platform_name = 'Host'
   return xla_client
 
 
