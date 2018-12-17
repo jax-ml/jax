@@ -19,6 +19,7 @@
 
 from __future__ import print_function
 
+from libc.stdint cimport int32_t
 from libc.string cimport memcpy
 from libcpp.string cimport string
 from cpython.pycapsule cimport PyCapsule_New
@@ -42,12 +43,12 @@ cdef register_cpu_custom_call_target(fn_name, void* fn):
 # triangular solve
 
 cdef void blas_strsm(void* out, void** data) nogil:
-  cdef bint left_side = (<bint*>(data[0]))[0]
-  cdef bint lower = (<bint*>(data[1]))[0]
-  cdef int trans_a = (<int*>(data[2]))[0]
-  cdef bint diag = (<bint*>(data[3]))[0]
-  cdef int m = (<int*>(data[4]))[0]
-  cdef int n = (<int*>(data[5]))[0]
+  cdef int32_t left_side = (<int32_t*>(data[0]))[0]
+  cdef int32_t lower = (<int32_t*>(data[1]))[0]
+  cdef int32_t trans_a = (<int32_t*>(data[2]))[0]
+  cdef int32_t diag = (<int32_t*>(data[3]))[0]
+  cdef int m = (<int32_t*>(data[4]))[0]
+  cdef int n = (<int32_t*>(data[5]))[0]
   cdef float* alpha = <float*>(data[6])
   cdef float* a = <float*>(data[7])
   cdef float* b = <float*>(data[8])
@@ -71,12 +72,12 @@ cdef void blas_strsm(void* out, void** data) nogil:
 register_cpu_custom_call_target(b"blas_strsm", <void*>(blas_strsm))
 
 cdef void blas_dtrsm(void* out, void** data) nogil:
-  cdef bint left_side = (<bint*>(data[0]))[0]
-  cdef bint lower = (<bint*>(data[1]))[0]
-  cdef int trans_a = (<int*>(data[2]))[0]
-  cdef bint diag = (<bint*>(data[3]))[0]
-  cdef int m = (<int*>(data[4]))[0]
-  cdef int n = (<int*>(data[5]))[0]
+  cdef int32_t left_side = (<int32_t*>(data[0]))[0]
+  cdef int32_t lower = (<int32_t*>(data[1]))[0]
+  cdef int32_t trans_a = (<int32_t*>(data[2]))[0]
+  cdef int32_t diag = (<int32_t*>(data[3]))[0]
+  cdef int m = (<int32_t*>(data[4]))[0]
+  cdef int n = (<int32_t*>(data[5]))[0]
   cdef double* alpha = <double*>(data[6])
   cdef double* a = <double*>(data[7])
   cdef double* b = <double*>(data[8])
@@ -124,19 +125,19 @@ def jax_trsm(c, alpha, a, b, left_side=False, lower=False, trans_a=False,
   return c.CustomCall(
       fn,
       operands=(
-        c.ConstantPredScalar(left_side),
-        c.ConstantPredScalar(lower),
+        c.ConstantS32Scalar(int(left_side)),
+        c.ConstantS32Scalar(int(lower)),
         c.ConstantS32Scalar(1 if trans_a else 0),
-        c.ConstantPredScalar(diag),
+        c.ConstantS32Scalar(int(diag)),
         c.ConstantS32Scalar(m),
         c.ConstantS32Scalar(n),
         alpha, a, b),
       shape_with_layout=Shape.array_shape(dtype, b_shape.dimensions(), (0, 1)),
       operand_shapes_with_layout=(
-          Shape.array_shape(np.bool, (), ()),
-          Shape.array_shape(np.bool, (), ()),
           Shape.array_shape(np.int32, (), ()),
-          Shape.array_shape(np.bool, (), ()),
+          Shape.array_shape(np.int32, (), ()),
+          Shape.array_shape(np.int32, (), ()),
+          Shape.array_shape(np.int32, (), ()),
           Shape.array_shape(np.int32, (), ()),
           Shape.array_shape(np.int32, (), ()),
           Shape.array_shape(dtype, (), ()),
@@ -147,8 +148,8 @@ def jax_trsm(c, alpha, a, b, left_side=False, lower=False, trans_a=False,
 # ?potrf: Cholesky decomposition
 
 cdef void lapack_spotrf(void* out_tuple, void** data) nogil:
-  cdef bint lower = (<bint*>(data[0]))[0]
-  cdef int n = (<int*>(data[1]))[0]
+  cdef int32_t lower = (<int32_t*>(data[0]))[0]
+  cdef int n = (<int32_t*>(data[1]))[0]
   cdef const float* a_in = <float*>(data[2])
   cdef char uplo = 'L' if lower else 'U'
 
@@ -176,8 +177,8 @@ register_cpu_custom_call_target(b"lapack_spotrf", <void*>(lapack_spotrf))
 
 
 cdef void lapack_dpotrf(void* out_tuple, void** data) nogil:
-  cdef bint lower = (<bint*>(data[0]))[0]
-  cdef int n = (<int*>(data[1]))[0]
+  cdef int32_t lower = (<int32_t*>(data[0]))[0]
+  cdef int n = (<int32_t*>(data[1]))[0]
   cdef const double* a_in = <double*>(data[2])
   cdef char uplo = 'L' if lower else 'U'
 
@@ -204,6 +205,8 @@ cdef void lapack_dpotrf(void* out_tuple, void** data) nogil:
 register_cpu_custom_call_target(b"lapack_dpotrf", <void*>(lapack_dpotrf))
 
 def jax_potrf(c, a, lower=False):
+  assert sizeof(int32_t) == sizeof(int)
+
   a_shape = c.GetShape(a)
   dtype = a_shape.element_type()
   m, n = a_shape.dimensions()
@@ -218,13 +221,13 @@ def jax_potrf(c, a, lower=False):
 
   return c.CustomCall(
       fn,
-      operands=(c.ConstantPredScalar(lower), c.ConstantS32Scalar(n), a),
+      operands=(c.ConstantS32Scalar(int(lower)), c.ConstantS32Scalar(n), a),
       shape_with_layout=Shape.tuple_shape((
           Shape.array_shape(dtype, (n, n), (0, 1)),
           Shape.array_shape(np.int32, (), ()),
       )),
       operand_shapes_with_layout=(
-          Shape.array_shape(np.bool, (), ()),
+          Shape.array_shape(np.int32, (), ()),
           Shape.array_shape(np.int32, (), ()),
           Shape.array_shape(dtype, (n, n), (0, 1)),
       ))
