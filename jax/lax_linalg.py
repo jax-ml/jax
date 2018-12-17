@@ -84,8 +84,7 @@ def cholesky_cpu_translation_rule(c, operand):
     # TODO(phawkins): support LAPACK primitives in batched mode.
     return c.Cholesky(operand)
 
-# TODO(mattjj): add per-backend translation rule support
-# xla.translations[cholesky_p] = cholesky_cpu_translation_rule
+xla.backend_specific_translations['Host'][cholesky_p] = cholesky_cpu_translation_rule
 
 
 triangular_solve_dtype_rule = partial(
@@ -141,8 +140,7 @@ def triangular_solve_cpu_translation_rule(
     # TODO(phawkins): support BLAS primitives in batched mode.
     return c.TriangularSolve(a, b, left_side, lower, transpose_a, conjugate_a)
 
-# TODO(mattjj): add per-backend translation rule support
-# xla.translations[triangular_solve_p] = triangular_solve_cpu_translation_rule
+xla.backend_specific_translations['Host'][triangular_solve_p] = triangular_solve_cpu_translation_rule
 
 
 def qr_impl(operand, full_matrices):
