@@ -17,6 +17,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from functools import partial
 import itertools
 
 import numpy as onp
@@ -24,6 +25,7 @@ import numpy as onp
 from absl.testing import absltest
 from absl.testing import parameterized
 
+from jax import jvp
 from jax import numpy as np
 from jax import scipy
 from jax import test_util as jtu
@@ -63,7 +65,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, dtype), full_matrices),
        "shape": shape, "dtype": dtype, "full_matrices": full_matrices,
        "rng": rng}
-      for shape in [(1, 1), (3, 4), (2, 10, 5), (2, 200, 200)]
+      for shape in [(1, 1), (3, 4), (2, 10, 5), (2, 200, 100)]
       for dtype in float_types()
       for full_matrices in [False, True]
       for rng in [jtu.rand_default()]))
@@ -108,6 +110,10 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
     # Check that q is close to unitary.
     self.assertTrue(onp.all(norm(onp.eye(k) - onp.matmul(T(lq), lq)) < 5))
+
+    if not full_matrices and m >= n:
+        jtu.check_jvp(np.linalg.qr, partial(jvp, np.linalg.qr), (a,))
+
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
