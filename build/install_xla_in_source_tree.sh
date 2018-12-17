@@ -58,6 +58,7 @@ cp -f "$(rlocation org_tensorflow/tensorflow/compiler/xla/python/pywrap_xla.py)"
   "${TARGET}/jaxlib"
 cp -f "$(rlocation org_tensorflow/tensorflow/compiler/xla/python/_pywrap_xla.so)" \
   "${TARGET}/jaxlib"
+cp -f "$(rlocation __main__/jaxlib/lapack.so)" "${TARGET}/jaxlib"
 sed \
   -e 's/from tensorflow.compiler.xla.python import pywrap_xla as c_api/from . import pywrap_xla as c_api/' \
   -e 's/from tensorflow.compiler.xla import xla_data_pb2/from . import xla_data_pb2/' \

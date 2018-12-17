@@ -16,7 +16,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from collections import namedtuple
+from collections import namedtuple, defaultdict
 import itertools as it
 import numpy as onp
 import operator as op
@@ -153,14 +153,16 @@ def unit_constant(c, val):
 xb.register_constant_handler(JaxTuple, unit_constant)
 
 def translation_rule(p):
+  backend_specific_rule = backend_specific_translations[xb._platform_name].get(p)
   try:
-    return translations[p]
+    return backend_specific_rule or translations[p]
   except KeyError:
     raise NotImplementedError(
         "XLA translation rule for '{}' not implemented".format(p))
 
 
 translations = {}
+backend_specific_translations = defaultdict(dict)
 
 translations[core.pack_p] = lambda c, *xs: c.Tuple(*xs)
 translations[core.call_p] = lambda c, subc_a1, *a2: c.Call(subc_a1[0],

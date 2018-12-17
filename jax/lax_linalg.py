@@ -28,7 +28,7 @@ from jax.abstract_arrays import ShapedArray
 from jax.core import Primitive
 from jax.lax import (standard_primitive, standard_unop, binop_dtype_rule,
                      _float, _complex, _input_dtype)
-
+import jaxlib
 
 # traceables
 
@@ -72,6 +72,21 @@ cholesky_p = standard_unop(_float, 'cholesky')
 ad.primitive_jvps[cholesky_p] = cholesky_jvp_rule
 
 
+def cholesky_cpu_translation_rule(c, operand):
+  shape = c.GetShape(operand)
+  if len(shape.dimensions()) == 2 and (
+    shape.element_type() == np.float32 or shape.element_type() == np.float64):
+    return c.GetTupleElement(jaxlib.lapack.jax_potrf(c, operand, lower=True), 0)
+  else:
+    # Fall back to the HLO implementation for batched Cholesky decomposition or
+    # unsupported types.
+    # TODO(phawkins): support LAPACK primitives in batched mode.
+    return c.Cholesky(operand)
+
+if hasattr(jaxlib, "lapack"):
+  xla.backend_specific_translations['Host'][cholesky_p] = cholesky_cpu_translation_rule
+
+
 triangular_solve_dtype_rule = partial(
     binop_dtype_rule, _input_dtype, (_float | _complex, _float | _complex),
     'triangular_solve')
@@ -108,6 +123,27 @@ ad.defjvp(triangular_solve_p,
           None,
           lambda g_b, a, b, **kwargs: triangular_solve(a, g_b, **kwargs))
 ad.primitive_transposes[triangular_solve_p] = triangular_solve_transpose_rule
+
+
+def triangular_solve_cpu_translation_rule(
+    c, a, b, left_side, lower, transpose_a, conjugate_a):
+  shape = c.GetShape(a)
+  if len(shape.dimensions()) == 2 and shape.element_type() == np.float32:
+    return jaxlib.lapack.jax_trsm(
+      c, c.ConstantF32Scalar(1.0), a, b, left_side, lower, transpose_a,
+      conjugate_a)
+  elif len(shape.dimensions()) == 2 and shape.element_type() == np.float64:
+    return jaxlib.lapack.jax_trsm(
+      c, c.ConstantF64Scalar(1.0), a, b, left_side, lower, transpose_a,
+      conjugate_a)
+  else:
+    # Fall back to the HLO implementation for batched triangular_solve or
+    # unsupported types.
+    # TODO(phawkins): support BLAS primitives in batched mode.
+    return c.TriangularSolve(a, b, left_side, lower, transpose_a, conjugate_a)
+
+if hasattr(jaxlib, "lapack"):
+  xla.backend_specific_translations['Host'][triangular_solve_p] = triangular_solve_cpu_translation_rule
 
 
 def qr_impl(operand, full_matrices):
