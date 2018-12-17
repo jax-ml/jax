@@ -135,7 +135,23 @@ def qr_abstract_eval(operand, full_matrices):
 def qr_dtype_rule(operand, full_matrices=True):
   return operand.dtype
 
+def qr_jvp_rule(primals, tangents, full_matrices):
+  # See j-towns.github.io/papers/qr-derivative.pdf for a terse derivation.
+  x, = primals
+  if full_matrices or np.shape(x)[-2] < np.shape(x)[-1]:
+    raise NotImplementedError
+  dx, = tangents
+  q, r = qr_p.bind(x, full_matrices=False)
+  dx_rinv = triangular_solve(r, dx)  # Right side solve by default
+  qt_dx_rinv = np.matmul(_T(q), dx_rinv)
+  qt_dx_rinv_lower = np.tril(qt_dx_rinv, -1)
+  domega = qt_dx_rinv_lower - _T(qt_dx_rinv_lower)  # This is skew-symmetric
+  dq = np.matmul(q, domega - qt_dx_rinv) + dx_rinv
+  dr = np.matmul(qt_dx_rinv - domega, r)
+  return core.pack((q, r)), core.pack((dq, dr))
+
 qr_p = Primitive('qr')
 qr_p.def_impl(qr_impl)
 qr_p.def_abstract_eval(qr_abstract_eval)
 xla.translations[qr_p] = qr_translation_rule
+ad.primitive_jvps[qr_p] = qr_jvp_rule
