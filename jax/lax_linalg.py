@@ -28,7 +28,8 @@ from jax.abstract_arrays import ShapedArray
 from jax.core import Primitive
 from jax.lax import (standard_primitive, standard_unop, binop_dtype_rule,
                      _float, _complex, _input_dtype)
-
+from jax.lib import xla_bridge
+from jaxlib import lapack
 
 # traceables
 
@@ -70,6 +71,21 @@ def cholesky_jvp_rule(primals, tangents):
 
 cholesky_p = standard_unop(_float, 'cholesky')
 ad.primitive_jvps[cholesky_p] = cholesky_jvp_rule
+
+
+def cholesky_cpu_translation_rule(c, operand):
+  shape = c.GetShape(operand)
+  if len(shape.dimensions()) == 2 and shape.element_type() == np.float32:
+    return c.GetTupleElement(lapack.jax_spotrf(c, operand, lower=True), 0)
+  elif len(shape.dimensions()) == 2 and shape.element_type() == np.float64:
+    return c.GetTupleElement(lapack.jax_dpotrf(c, operand, lower=True), 0)
+  else:
+    # Fall back to the HLO implementation for batched Cholesky decomposition or
+    # unsupported types.
+    # TODO(phawkins): support LAPACK primitives in batched mode.
+    return c.Cholesky(operand)
+
+xla.translations[cholesky_p] = cholesky_cpu_translation_rule
 
 
 triangular_solve_dtype_rule = partial(
