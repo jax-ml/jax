@@ -1062,6 +1062,26 @@ def einsum(*operands):
       *operands, einsum_call=True, use_blas=True)
   sum = lambda x, axes: lax.reduce(x, onp.array(0, x.dtype), lax.add, axes)
 
+  def sum_uniques(operand, names, uniques):
+    if uniques:
+      axes = [names.index(name) for name in uniques]
+      operand = sum(operand, axes)
+      names = names.translate(None, ''.join(uniques))
+    return operand, names
+
+  def sum_repeats(operand, names, counts, keep_names):
+    for name, count in counts.items():
+      if count > 1:
+        axes = [i for i, n in enumerate(names) if n == name]
+        eye = lax.broadcasted_eye(operand.dtype, operand.shape, axes)
+        if name not in keep_names:
+          operand = sum(operand * eye, axes)
+          names = names.replace(name, '')
+        else:
+          operand = sum(operand * eye, axes[:-1])
+          names = names.replace(name, '', count - 1)
+    return operand, names
+
   for operand_indices, contracted_names, einstr, _, _ in contractions:
     input_str, result_names = einstr.split('->')
     input_names = input_str.split(',')
@@ -1073,39 +1093,35 @@ def einsum(*operands):
       names, = input_names
       counts = collections.Counter(names)
 
-      # sum out non-repeated indices with a single reduction
-      uniques = tuple(name for name in contracted_names if counts[name] == 1)
-      if uniques:
-        axes = tuple(names.index(name) for name in uniques)
-        operand = sum(operand, axes)
-        names = names.translate(None, ''.join(uniques))
-        map(counts.pop, uniques)
+      # sum out unique contracted indices with a single reduce-sum
+      uniques = [name for name in contracted_names if counts[name] == 1]
+      operand, names = sum_uniques(operand, names, uniques)
 
       # for every repeated index, do a contraction against an identity matrix
-      for name, count in counts.items():
-        if count > 1:
-          axes = [i for i, n in enumerate(names) if n == name]
-          eye = lax.broadcasted_eye(operand.dtype, operand.shape, axes)
-          if name not in result_names:
-            operand = sum(operand * eye, axes)
-            names = names.replace(name, '')
-          else:
-            operand = sum(operand * eye, axes[:-1])
-            names = names.replace(name, '', count - 1)
-
-      result = operand
+      operand, names = sum_repeats(operand, names, counts, result_names)
 
     elif len(operand_indices) == 2:
       lhs, rhs = map(operands.pop, operand_indices)
       lhs_counts, rhs_counts = map(collections.Counter, input_names)
       lhs_names, rhs_names = input_names
 
-      all_counts = itertools.chain(lhs_counts.values(), rhs_counts.values())
-      if _any(count > 1 for count in all_counts):
-        # TODO handle repeated indices (trace out first)
-        # TODO handle unique axes (sum out first)
-        raise NotImplementedError
+      # sum out unique contracted indices in lhs and rhs
+      lhs_uniques = [name for name in contracted_names
+                     if lhs_counts[name] == 1 and rhs_counts[name] == 0]
+      lhs, lhs_names = sum_uniques(lhs, lhs_names, lhs_uniques)
 
+      rhs_uniques = [name for name in contracted_names
+                     if rhs_counts[name] == 1 and lhs_counts[name] == 0]
+      rhs, rhs_names = sum_uniques(rhs, rhs_names, rhs_uniques)
+
+      # for every repeated index, contract against an identity matrix
+      lhs, lhs_names = sum_repeats(lhs, lhs_names, lhs_counts,
+                                   result_names + rhs_names)
+      rhs, rhs_names = sum_repeats(rhs, rhs_names, rhs_counts,
+                                   result_names + lhs_names)
+
+      # contract lhs against rhs
+      contracted_names = contracted_names & (set(lhs_names) | set(rhs_names))
       batch_names = set(lhs_names) & set(rhs_names) - contracted_names
       lhs_cont, rhs_cont = unzip2((lhs_names.index(name), rhs_names.index(name))
                                   for name in contracted_names)
@@ -1120,8 +1136,9 @@ def einsum(*operands):
         batch_dims = tuple(lhs_batch)
         batch_names = ''.join(lhs_names[i] for i in batch_dims)
 
+      # TODO need to flatten lhs_cont / rhs_cont if more than 1d
       dimension_numbers = [(lhs_cont, rhs_cont), (batch_dims, batch_dims)]
-      result = lax.dot_general(lhs, rhs, dimension_numbers)
+      operand = lax.dot_general(lhs, rhs, dimension_numbers)
       deleted_names = batch_names + ''.join(contracted_names)
       names = (batch_names
                + lhs_names.translate(None, deleted_names)
@@ -1130,10 +1147,14 @@ def einsum(*operands):
     else:
       raise NotImplementedError
 
+    # the resulting 'operand' with axis labels 'names' should be a permutation
+    # of the desired result
+    assert len(names) == len(result_names) == len(set(names))
+    assert set(names) == set(result_names)
     if names != result_names:
       perm = tuple([names.index(name) for name in result_names])
-      result = lax.transpose(result, perm)
-    operands.append(result)  # used in next iteration
+      operand = lax.transpose(operand, perm)
+    operands.append(operand)  # used in next iteration
 
   return operands[0]
 
