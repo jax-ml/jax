@@ -1060,6 +1060,7 @@ def tensordot(a, b, axes=2):
 def einsum(*operands):
   operands, contractions = opt_einsum.contract_path(
       *operands, einsum_call=True, use_blas=True)
+  operands = list(_promote_dtypes(*operands))
   sum = lambda x, axes: lax.reduce(x, onp.array(0, x.dtype), lax.add, axes)
 
   def sum_uniques(operand, names, uniques):
@@ -1139,16 +1140,7 @@ def einsum(*operands):
           batch_dims = tuple(lhs_batch)
           batch_names = ''.join(lhs_names[i] for i in batch_dims)
 
-        # lax.dot_general only allows one contracting dimension, move it to last
-        ncont = len(contracted_names)
-        if ncont > 1:
-          cdims = tuple(range(lhs.ndim - ncont, lhs.ndim))
-          lhs = moveaxis(lhs, lhs_cont, cdims).reshape(lhs.shape[:-ncont] + (-1,))
-          rhs = moveaxis(rhs, rhs_cont, cdims).reshape(rhs.shape[:-ncont] + (-1,))
-          lhs_cont = rhs_cont = [lhs.ndim - 1]
-
-        dimension_numbers = [(lhs_cont, rhs_cont), (batch_dims, batch_dims)]
-        operand = lax.dot_general(lhs, rhs, dimension_numbers)
+        operand = _dot_general(lhs, rhs, lhs_cont, rhs_cont, len(batch_dims))
         deleted_names = batch_names + ''.join(contracted_names)
         names = (batch_names
                 + lhs_names.translate(None, deleted_names)
@@ -1181,6 +1173,47 @@ def einsum(*operands):
     operands.append(operand)  # used in next iteration
 
   return operands[0]
+
+
+def _dot_general(lhs, rhs, lhs_cont, rhs_cont, nbatch):
+  # lax.dot_general has some tight constraints on dimension_numbers that this
+  # wrapper loosens via transposes and reshapes
+  assert len(lhs_cont) == len(rhs_cont) > 0
+  ncont = len(lhs_cont)
+  lhs_ntensor = lhs.ndim - nbatch - ncont
+  rhs_ntensor = rhs.ndim - nbatch - ncont
+  batch_dims = tuple(range(nbatch))
+
+  if ncont == 1 and 0 <= lhs_ntensor <= 1 and 0 <= rhs_ntensor <= 1:
+    dimension_numbers = [(lhs_cont, rhs_cont), (batch_dims, batch_dims)]
+    return lax.dot_general(lhs, rhs, dimension_numbers)
+  else:
+    # move contracting dimensions to the end. lax.dot_general only allows one
+    # contracting dimension, so if there's more than one we collapse them.
+    if ncont > 1:
+      lhs_cdims = tuple(range(lhs.ndim - ncont, lhs.ndim))
+      lhs = moveaxis(lhs, lhs_cont, lhs_cdims).reshape(lhs.shape[:-ncont] + (-1,))
+
+      rhs_cdims = tuple(range(rhs.ndim - ncont, rhs.ndim))
+      rhs = moveaxis(rhs, rhs_cont, rhs_cdims).reshape(rhs.shape[:-ncont] + (-1,))
+    else:
+      lhs = moveaxis(lhs, lhs_cont[0], -1)
+      rhs = moveaxis(rhs, rhs_cont[0], -1)
+
+    # lax.dot_general only allows zero or one tensor product dims per operand,
+    # so if there's more than one we collapse them.
+    result_shape = lhs.shape[:nbatch] + lhs.shape[nbatch:-1] + rhs.shape[nbatch:-1]
+
+    if lhs_ntensor > 1:
+      lhs = lhs.reshape(lhs.shape[:nbatch] + (-1,) + lhs.shape[-1:])
+
+    if rhs_ntensor > 1:
+      rhs = rhs.reshape(rhs.shape[:nbatch] + (-1,) + rhs.shape[-1:])
+
+    lhs_cont, rhs_cont = [lhs.ndim - 1], [rhs.ndim - 1]
+    dimension_numbers = [(lhs_cont, rhs_cont), (batch_dims, batch_dims)]
+    result = lax.dot_general(lhs, rhs, dimension_numbers)
+    return lax.reshape(result, result_shape)
 
 
 ### Misc
