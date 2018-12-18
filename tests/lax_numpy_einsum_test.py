@@ -75,6 +75,12 @@ class EinsumTest(jtu.JaxTestCase):
     s = 'ij,ij->'
     check(s, x, y)
 
+  def test_two_operands_5(self):
+    x = rng().randn(10, 2, 3)
+    y = rng().randn(3, 4)
+    s = 'nij,jk->nik'
+    check(s, x, y)
+
   def test_one_operand_1(self):
     x = rng().randn(3, 4, 5)
     s = 'ijk->j'
