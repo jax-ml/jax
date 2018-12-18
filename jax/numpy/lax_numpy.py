@@ -16,13 +16,14 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from six.moves import builtins
-
-import six
-import numpy as onp
-import opt_einsum
 import collections
 import itertools
+import string
+
+import numpy as onp
+import opt_einsum
+import six
+from six.moves import builtins
 
 from jax import jit
 from .. import core
@@ -32,15 +33,12 @@ from .. import lax
 from ..util import memoize, partial, get_module_functions, unzip2, prod as _prod
 from ..lib import xla_bridge
 
-# To provide the same module-level names as Numpy, we need to redefine builtins
-# and also use some common names (like 'shape' and 'dtype') at the top-level.
-# pylint: disable=redefined-builtin,redefined-outer-name
-
-# There might be a pylint bug with tuple unpacking.
-# pylint: disable=unbalanced-tuple-unpacking
-
-# We get docstrings from the underlying numpy functions.
-# pylint: disable=missing-docstring
+if six.PY3:
+  def removechars(s, chars):
+    return s.translate(str.maketrans(dict.fromkeys(chars)))
+else:
+  def removechars(s, chars):
+    return s.translate(None, ''.join(chars))
 
 
 # We replace some builtin names to follow Numpy's API, so we capture here.
@@ -1075,7 +1073,7 @@ def _einsum(operands, contractions):
     if uniques:
       axes = [names.index(name) for name in uniques]
       operand = sum(operand, axes)
-      names = names.translate(None, ''.join(uniques))
+      names = removechars(names, uniques)
     return operand, names
 
   def sum_repeats(operand, names, counts, keep_names):
@@ -1150,9 +1148,8 @@ def _einsum(operands, contractions):
 
         operand = _dot_general(lhs, rhs, lhs_cont, rhs_cont, len(batch_dims))
         deleted_names = batch_names + ''.join(contracted_names)
-        names = (batch_names
-                + lhs_names.translate(None, deleted_names)
-                + rhs_names.translate(None, deleted_names))
+        names = (batch_names + removechars(lhs_names, deleted_names)
+                 + removechars(rhs_names, deleted_names))
       else:
         # no contraction, just a tensor product
         if lhs_batch != rhs_batch:
