@@ -328,7 +328,7 @@ defbilinear = partial(defbilinear_broadcasting, lambda g, x: g)
 
 
 def bilinear_transpose(lhs_rule, rhs_rule, cotangent, x, y, **kwargs):
-  assert x is None or y is None
+  assert (x is None) ^ (y is None)
   if x is None:
     out = zero if cotangent is zero else lhs_rule(cotangent, y, **kwargs)
     return out, None
