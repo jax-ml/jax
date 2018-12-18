@@ -2347,16 +2347,18 @@ class EyeConstant(xla.DeviceConstant):
       ones = [1] * self.ndim
       iotas = [onp.arange(self.shape[axis]).reshape(subvals(ones, [(axis, -1)]))
                for axis in self.axes]
-      result = onp.asarray(_reduce(operator.eq, iotas), self.dtype)
+      eyes = [i1 == i2 for i1, i2 in zip(iotas[:-1], iotas[1:])]
+      result = onp.asarray(_reduce(operator.and_, eyes), self.dtype)
       self._npy_value = onp.broadcast_to(result, self.shape)
     return self._npy_value
 
   @staticmethod
   def constant_handler(c, diag_const):
     etype = xla_bridge.dtype_to_etype(diag_const.dtype)
-    iotas = [c.BroadcastedIota(diag_const.dtype, diag_const.shape, axis)
+    iotas = [c.BroadcastedIota(onp.bool_, diag_const.shape, axis)
              for axis in diag_const.axes]
-    return c.ConvertElementType(_reduce(c.Eq, iotas), etype)
+    eyes = [c.Eq(i1, i2) for i1, i2 in zip(iotas[:-1], iotas[1:])]
+    return c.ConvertElementType(_reduce(c.And, eyes), etype)
 
 
 for t in [FilledConstant, IotaConstant, EyeConstant]:
