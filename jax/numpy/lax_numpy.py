@@ -24,6 +24,7 @@ import opt_einsum
 import collections
 import itertools
 
+from jax import jit
 from .. import core
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
 from ..interpreters.xla import DeviceArray
@@ -1058,8 +1059,15 @@ def tensordot(a, b, axes=2):
 
 
 def einsum(*operands):
+  # using einsum_call=True here is an internal api for opt_einsum
   operands, contractions = opt_einsum.contract_path(
       *operands, einsum_call=True, use_blas=True)
+  contractions = tuple(data[:3] for data in contractions)
+  return _einsum(operands, contractions)
+
+
+@partial(jit, static_argnums=(1,))
+def _einsum(operands, contractions):
   operands = list(_promote_dtypes(*operands))
   sum = lambda x, axes: lax.reduce(x, onp.array(0, x.dtype), lax.add, axes)
 
@@ -1083,7 +1091,7 @@ def einsum(*operands):
           names = names.replace(name, '', count - 1)
     return operand, names
 
-  for operand_indices, contracted_names, einstr, _, _ in contractions:
+  for operand_indices, contracted_names, einstr in contractions:
     input_str, result_names = einstr.split('->')
     input_names = input_str.split(',')
 
@@ -1176,6 +1184,7 @@ def einsum(*operands):
 
 
 def _dot_general(lhs, rhs, lhs_cont, rhs_cont, nbatch):
+  """Helper for einsum contractions."""
   # lax.dot_general has some tight constraints on dimension_numbers that this
   # wrapper loosens via transposes and reshapes
   assert len(lhs_cont) == len(rhs_cont) > 0
