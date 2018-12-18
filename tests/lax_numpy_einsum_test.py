@@ -43,6 +43,18 @@ class EinsumTest(jtu.JaxTestCase):
     s = 'ij,j->i'
     check(s, x, y)
 
+  def test_two_operands_2(self):
+    x = rng().randn(3, 4, 5)
+    y = rng().randn(4)
+    s = 'ijk,j->i'
+    check(s, x, y)
+
+  def test_two_operands_3(self):
+    x = rng().randn(3, 4, 3)
+    y = rng().randn(3)
+    s = 'iji,i->j'
+    check(s, x, y)
+
   def test_one_operand_1(self):
     x = rng().randn(3, 4, 5)
     s = 'ijk->j'
@@ -79,38 +91,48 @@ class EinsumTest(jtu.JaxTestCase):
     check(s, x)
 
   def test_one_operand_8(self):
+    x = rng().randn(3, 3)
+    s = 'ij->'
+    check(s, x)
+
+  def test_one_operand_9(self):
     x = rng().randn(3, 3, 3)
     s = 'iii->'
     check(s, x)
 
-  def test_one_operand_9(self):
+  def test_one_operand_10(self):
     x = rng().randn(3, 3)
     s = 'ii->i'
     check(s, x)
 
-  def test_one_operand_10(self):
+  def test_one_operand_11(self):
     x = rng().randn(3, 3, 4)
     s = 'iij->i'
     check(s, x)
 
-  def test_one_operand_11(self):
+  def test_one_operand_12(self):
     x = rng().randn(3, 3, 3)
     s = 'iii->i'
     check(s, x)
 
-  def test_one_operand_12(self):
+  def test_one_operand_13(self):
     x = rng().randn(3, 3, 5, 4, 4)
     s = 'iijkk->i'
     check(s, x)
 
-  def test_one_operand_13(self):
+  def test_one_operand_14(self):
     x = rng().randn(3, 3, 5, 4, 4)
     s = 'iijkk->ik'
     check(s, x)
 
-  def test_one_operand_14(self):
+  def test_one_operand_15(self):
     x = rng().randn(3, 3, 5, 4, 4)
     s = 'iijkl->il'
+    check(s, x)
+
+  def test_one_operand_16(self):
+    x = rng().randn(3, 3)
+    s = 'ij->ij'
     check(s, x)
 
 
