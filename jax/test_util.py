@@ -141,6 +141,22 @@ def check_vjp(f, f_vjp, args, atol=ATOL, rtol=RTOL, eps=EPS):
   check_close(ip, ip_expected, atol=atol, rtol=rtol)
 
 
+def check_grads(f, args, order, atol=None, rtol=None, eps=None):
+  if order > 1:
+    def f_vjp(*args):
+      out_primal_py, vjp_py = api.vjp(f, *args)
+      return vjp_py(out_primal_py)
+
+    check_grads(f_vjp, args, order - 1, atol=atol, rtol=rtol, eps=eps)
+  else:
+    default_tol = 1e-6 if FLAGS.jax_enable_x64 else 1e-2
+    atol = atol or default_tol
+    rtol = rtol or default_tol
+    eps = eps or default_tol
+    check_jvp(f, partial(api.jvp, f), args, atol, rtol, eps)
+    check_vjp(f, partial(api.vjp, f), args, atol, rtol, eps)
+
+
 def skip_on_devices(*disabled_devices):
   """A decorator for test methods to skip the test on certain devices."""
   def skip(test_method):
