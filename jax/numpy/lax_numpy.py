@@ -1120,29 +1120,53 @@ def einsum(*operands):
       rhs, rhs_names = sum_repeats(rhs, rhs_names, rhs_counts,
                                    result_names + lhs_names)
 
-      # contract lhs against rhs
       contracted_names = contracted_names & (set(lhs_names) | set(rhs_names))
       batch_names = set(lhs_names) & set(rhs_names) - contracted_names
-      lhs_cont, rhs_cont = unzip2((lhs_names.index(name), rhs_names.index(name))
-                                  for name in contracted_names)
-      lhs_batch, rhs_batch = unzip2((lhs_names.find(name), rhs_names.find(name))
-                                    for name in batch_names)
-      batch_dims = tuple(range(len(batch_names)))
-      if lhs_batch != rhs_batch or set(lhs_batch) != set(batch_dims):
-        lhs = moveaxis(lhs, lhs_batch, batch_dims)
-        rhs = moveaxis(rhs, rhs_batch, batch_dims)
-        batch_names = ''.join(batch_names)
-      else:
-        batch_dims = tuple(lhs_batch)
-        batch_names = ''.join(lhs_names[i] for i in batch_dims)
+      lhs_batch, rhs_batch = unzip2((lhs_names.find(n), rhs_names.find(n))
+                                    for n in batch_names)
+      if contracted_names:
+        # contract usint lax.dot_general
+        lhs_cont, rhs_cont = unzip2((lhs_names.index(n), rhs_names.index(n))
+                                    for n in contracted_names)
 
-      # TODO need to flatten lhs_cont / rhs_cont if more than 1d
-      dimension_numbers = [(lhs_cont, rhs_cont), (batch_dims, batch_dims)]
-      operand = lax.dot_general(lhs, rhs, dimension_numbers)
-      deleted_names = batch_names + ''.join(contracted_names)
-      names = (batch_names
-               + lhs_names.translate(None, deleted_names)
-               + rhs_names.translate(None, deleted_names))
+        # lax.dot_general batch dims have to precede non-batch dims
+        batch_dims = tuple(range(len(batch_names)))
+        if lhs_batch != rhs_batch or set(lhs_batch) != set(batch_dims):
+          lhs = moveaxis(lhs, lhs_batch, batch_dims)
+          rhs = moveaxis(rhs, rhs_batch, batch_dims)
+          batch_names = ''.join(batch_names)
+        else:
+          batch_dims = tuple(lhs_batch)
+          batch_names = ''.join(lhs_names[i] for i in batch_dims)
+
+        # lax.dot_general only allows one contracting dimension, move it to last
+        ncont = len(contracted_names)
+        if ncont > 1:
+          cdims = tuple(range(lhs.ndim - ncont, lhs.ndim))
+          lhs = moveaxis(lhs, lhs_cont, cdims).reshape(lhs.shape[:-ncont] + (-1,))
+          rhs = moveaxis(rhs, rhs_cont, cdims).reshape(rhs.shape[:-ncont] + (-1,))
+          lhs_cont = rhs_cont = [lhs.ndim - 1]
+
+        dimension_numbers = [(lhs_cont, rhs_cont), (batch_dims, batch_dims)]
+        operand = lax.dot_general(lhs, rhs, dimension_numbers)
+        deleted_names = batch_names + ''.join(contracted_names)
+        names = (batch_names
+                + lhs_names.translate(None, deleted_names)
+                + rhs_names.translate(None, deleted_names))
+      else:
+        # no contraction, just a tensor product
+        if lhs_batch != rhs_batch:
+          rhs = moveaxis(rhs, rhs_batch, lhs_batch)
+        batch_names = ''.join(lhs_names[i] for i in lhs_batch)
+
+        names = batch_names + lhs_names + rhs_names
+        lhs_shape = iter(lhs.shape)
+        lhs_shape = [next(lhs_shape) if n in batch_names + lhs_names else 1
+                     for n in names]
+        rhs_shape = iter(rhs.shape)
+        rhs_shape = [next(rhs_shape) if n in batch_names + rhs_names else 1
+                     for n in names]
+        operand = lax.reshape(lhs, lhs_shape) * lax.reshape(rhs, rhs_shape)
 
     else:
       raise NotImplementedError
