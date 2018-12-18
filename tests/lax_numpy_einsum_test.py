@@ -37,6 +37,20 @@ def check(s, *ops):
 
 class EinsumTest(jtu.JaxTestCase):
 
+  def test_three_operands_1(self):
+    x = rng().randn(3)
+    y = rng().randn(4)
+    z = rng().randn(5)
+    s = 'i,j,k->ijk'
+    check(s, x, y, z)
+
+  def test_three_operands_2(self):
+    x = rng().randn(3)
+    y = rng().randn(4)
+    z = rng().randn(5)
+    s = 'i,j,k->ijk'
+    check(s, x, y, z)
+
   def test_two_operands_1(self):
     x = rng().randn(3, 4)
     y = rng().randn(4)
@@ -53,6 +67,12 @@ class EinsumTest(jtu.JaxTestCase):
     x = rng().randn(3, 4, 3)
     y = rng().randn(3)
     s = 'iji,i->j'
+    check(s, x, y)
+
+  def test_two_operands_4(self):
+    x = rng().randn(3, 4)
+    y = rng().randn(3, 4)
+    s = 'ij,ij->'
     check(s, x, y)
 
   def test_one_operand_1(self):
