@@ -33,6 +33,7 @@ from jax import core
 from jax import lax
 from jax import test_util as jtu
 from jax import lax_reference
+from jax.test_util import check_grads
 from jax.interpreters import xla
 from jax.lib import xla_bridge
 
@@ -1482,22 +1483,6 @@ LAX_GRAD_OPS = [
     GradTestSpec(lax.min, nargs=2, order=2, rng=jtu.rand_some_equal(),
                  dtypes=[onp.float64]),
 ]
-
-
-def check_grads(f, args, order, atol=None, rtol=None, eps=None):
-  if order > 1:
-    def f_vjp(*args):
-      out_primal_py, vjp_py = api.vjp(f, *args)
-      return vjp_py(out_primal_py)
-
-    check_grads(f_vjp, args, order - 1, atol=atol, rtol=rtol, eps=eps)
-  else:
-    default_tol = 1e-6 if FLAGS.jax_enable_x64 else 1e-2
-    atol = atol or default_tol
-    rtol = rtol or default_tol
-    eps = eps or default_tol
-    jtu.check_jvp(f, partial(api.jvp, f), args, atol, rtol, eps)
-    jtu.check_vjp(f, partial(api.vjp, f), args, atol, rtol, eps)
 
 
 def check_grads_bilinear(f, args, order, atol=None, rtol=None):

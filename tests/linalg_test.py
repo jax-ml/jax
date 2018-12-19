@@ -180,6 +180,31 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
     self.assertAllClose(onp_ans, ans, check_dtypes=True)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_lhs={}_rhs={}_lower={}_transposea={}".format(
+           jtu.format_shape_dtype_string(lhs_shape, dtype),
+           jtu.format_shape_dtype_string(rhs_shape, dtype),
+           lower, transpose_a),
+       "lower": lower, "transpose_a": transpose_a,
+       "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
+       "rng": rng}
+      for lower, transpose_a in itertools.product([False, True], repeat=2)
+      for lhs_shape, rhs_shape in [
+          ((4, 4), (4,)),
+          ((4, 4), (4, 3)),
+          ((2, 8, 8), (2, 8, 10)),
+      ]
+      for dtype in float_types()
+      for rng in [jtu.rand_default()]))
+  def testSolveTriangularBlockedGrad(self, lower, transpose_a, lhs_shape,
+                                     rhs_shape, dtype, rng):
+    A = np.tril(rng(lhs_shape, dtype) + 10 * onp.eye(lhs_shape[-1], dtype=dtype))
+    A = A if lower else T(A)
+    B = rng(rhs_shape, dtype)
+    f = partial(scipy.linalg.solve_triangular, lower=lower,
+                trans=1 if transpose_a else 0)
+    jtu.check_grads(f, (A, B), 2)
 
 if __name__ == "__main__":
   absltest.main()
