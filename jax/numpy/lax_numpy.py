@@ -1460,7 +1460,6 @@ def _swap_args(f):
   return lambda x, y: f(y, x)
 
 _operators = {
-    "astype": lax.convert_element_type,
     "getitem": _rewriting_take,
     "neg": negative,
     "eq": equal,
@@ -1520,6 +1519,7 @@ for method_name in _nondiff_methods + _diff_methods:
   setattr(ShapedArray, method_name, core.aval_method(globals()[method_name]))
 setattr(ShapedArray, "flatten", core.aval_method(ravel))
 setattr(ShapedArray, "T", core.aval_property(transpose))
+setattr(ShapedArray, "astype", core.aval_method(lax.convert_element_type))
 
 
 # Forward operators, methods, and properies on DeviceArray to lax_numpy
@@ -1530,6 +1530,7 @@ for method_name in _nondiff_methods + _diff_methods:
   setattr(DeviceArray, method_name, globals()[method_name])
 setattr(DeviceArray, "flatten", ravel)
 setattr(DeviceArray, "T", property(transpose))
+setattr(DeviceArray, "astype", lax.convert_element_type)
 
 
 # Extra methods that are handy

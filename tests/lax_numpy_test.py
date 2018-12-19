@@ -826,10 +826,16 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   def testRavel(self):
     # TODO(mattjj): support this method-based syntax?
-    self.skipTest("test disabled")
     rng = onp.random.RandomState(0)
     args_maker = lambda: [rng.randn(3, 4).astype("float32")]
     self._CompileAndCheck(lambda x: x.ravel(), args_maker, check_dtypes=True)
+
+  def testAstype(self):
+    rng = onp.random.RandomState(0)
+    args_maker = lambda: [rng.randn(3, 4).astype("float32")]
+    op = lambda x: x.astype(lnp.int32)
+    self._CheckAgainstNumpy(op, op, args_maker, check_dtypes=True)
+    self._CompileAndCheck(op, args_maker, check_dtypes=True)
 
   # TODO(mattjj): test other ndarray-like method overrides
 
