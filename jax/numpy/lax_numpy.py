@@ -1155,14 +1155,16 @@ def _einsum(operands, contractions):
         if lhs_batch != rhs_batch:
           rhs = moveaxis(rhs, rhs_batch, lhs_batch)
         batch_names = ''.join(lhs_names[i] for i in lhs_batch)
+        nbatch = len(batch_names)
 
-        names = batch_names + lhs_names + rhs_names
+        assert len(lhs_names) == lhs.ndim and len(rhs_names) == rhs.ndim
+        assert lhs_names.startswith(batch_names) and rhs_names.startswith(batch_names)
+
+        names = batch_names + lhs_names[nbatch:] + rhs_names[nbatch:]
         lhs_shape = iter(lhs.shape)
-        lhs_shape = [next(lhs_shape) if n in batch_names + lhs_names else 1
-                     for n in names]
+        lhs_shape = [next(lhs_shape) if n in lhs_names else 1 for n in names]
         rhs_shape = iter(rhs.shape)
-        rhs_shape = [next(rhs_shape) if n in batch_names + rhs_names else 1
-                     for n in names]
+        rhs_shape = [next(rhs_shape) if n in rhs_names else 1 for n in names]
         operand = lax.reshape(lhs, lhs_shape) * lax.reshape(rhs, rhs_shape)
 
     else:
