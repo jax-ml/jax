@@ -17,7 +17,7 @@ from __future__ import division
 from __future__ import print_function
 
 import collections
-from .util import partial
+from .util import partial, prod
 import itertools
 import operator
 import six
@@ -43,6 +43,9 @@ from .lib import xla_bridge
 
 _max = builtins.max
 _min = builtins.max
+_reduce = six.moves.reduce
+
+def identity(x): return x
 
 ### traceables
 
@@ -411,6 +414,45 @@ class OpaqueParam(object):
 opaque_param_ids = itertools.count()
 
 
+def tie_in(x, y):
+  return tie_in_p.bind(x, y)
+
+def full(shape, fill_value, dtype):
+  if onp.shape(fill_value):
+    msg = "full must be called with scalar fill_value, got fill_value.shape {}."
+    raise TypeError(msg.format(onp.shape(fill_value)))
+  dtype = xla_bridge.canonicalize_dtype(dtype)
+
+  # For constants (defined as Python scalars, raw ndarrays, or DeviceValues),
+  # create a FilledConstant value, otherwise just call broadcast.
+  if onp.isscalar(fill_value) or type(fill_value) is onp.ndarray:
+    return FilledConstant(onp.asarray(fill_value, dtype), shape)
+  elif isinstance(fill_value, xla.DeviceValue):
+    return FilledConstant(convert_element_type(fill_value, dtype), shape)
+  else:
+    return broadcast(convert_element_type(fill_value, dtype), shape)
+
+def iota(dtype, size):
+  return broadcasted_iota(dtype, (size,), 0)
+
+def broadcasted_iota(dtype, shape, dimension):
+  dtype = xla_bridge.canonicalize_dtype(dtype)
+  shape = tuple(map(int, shape))
+  dimension = int(dimension)
+  return IotaConstant(dtype, shape, dimension)
+
+def eye(dtype, size):
+  return broadcasted_eye(dtype, (size, size), (0, 1))
+
+def broadcasted_eye(dtype, shape, axes):
+  if not isinstance(axes, (list, tuple)) or not len(axes) >= 2:
+    raise TypeError("make_diagonal `axes` must be a tuple with len at least 2.")
+  dtype = xla_bridge.canonicalize_dtype(dtype)
+  shape = tuple(map(int, shape))
+  axes = tuple(map(int, axes))
+  return EyeConstant(shape, axes, dtype)
+
+
 ### convenience wrappers around traceables
 
 
@@ -439,7 +481,8 @@ def full_like(x, fill_value, dtype=None, shape=None):
     `fill_value`, similar to the output of np.full.
   """
   shape = onp.shape(x) if shape is None else shape
-  return broadcast(onp.array(fill_value, dtype or _dtype(x)), shape)
+  out = full(shape, fill_value, dtype or _dtype(x))
+  return tie_in(x, out)
 
 
 def collapse(operand, start_dimension, stop_dimension):
@@ -631,8 +674,7 @@ ShapedArray._iter = staticmethod(_iter)
 # Add some ad handlers that use (or could use) lax primitives
 
 def zeros_like_array(x):
-  dtype = xla_bridge.canonicalize_dtype(_dtype(x))
-  return onp.broadcast_to(onp.zeros((), dtype), onp.shape(x))
+  return full_like(x, 0)
 
 for t in itertools.chain(array_types, [xla.DeviceArray]):
   ad_util.jaxval_adders[t] = add
@@ -647,8 +689,6 @@ batching.pytype_aval_mappings[xla.DeviceArray] = make_shaped_array
 _input_dtype = lambda *args, **_: xla_bridge.canonicalize_dtype(args[0].dtype)
 _fixed_dtype = lambda dtype: lambda *args, **kwargs: xla_bridge.canonicalize_dtype(dtype)
 _complex_basetype = lambda dtype: onp.abs(onp.zeros((), dtype)).dtype
-
-def identity(x): return x
 
 
 def standard_primitive(shape_rule, dtype_rule, name, translation_rule=None):
@@ -1561,9 +1601,11 @@ def select_dtype_rule(pred, on_true, on_false):
   return on_true.dtype
 
 def select_transpose_rule(t, pred, on_true, on_false):
+  assert pred is not None
+  zeros = full_like(t, 0)
   return [None,
-          select(pred, t, _zeros(on_false)) if on_true is None else None,
-          select(pred, _zeros(on_true), t) if on_false is None else None]
+          select(pred, t, zeros) if on_true is None else None,
+          select(pred, zeros, t) if on_false is None else None]
 
 def select_batch_rule(batched_args, batch_dims, **unused_kwargs):
   oprand, on_true, on_false, = batched_args
@@ -2218,6 +2260,117 @@ while_p.def_abstract_eval(while_loop_abstract_eval)
 xla.translations[while_p] = while_loop_translation_rule
 
 
+### constants
+
+
+def tie_in_transpose_rule(t):
+  return [ad_util.zero, t]
+
+def tie_in_batch_rule(batched_args, batch_dims):
+  y = tie_in(*batched_args)
+  _, bdim_y = batch_dims
+  return y, bdim_y
+
+tie_in_p = Primitive('tie_in')
+tie_in_p.def_impl(lambda x, y: y)
+tie_in_p.def_abstract_eval(lambda x, y: y)
+xla.translations[tie_in_p] = lambda c, x, y: y
+ad.deflinear(tie_in_p, tie_in_transpose_rule)
+batching.primitive_batchers[tie_in_p] = tie_in_batch_rule
+
+
+class FilledConstant(xla.DeviceConstant):
+  __slots__ = ["fill_value"]
+
+  def __init__(self, fill_value, shape):
+    assert type(fill_value) is onp.ndarray
+    self.shape = shape
+    self.dtype = _dtype(fill_value)
+    self.ndim = len(shape)
+    self.size = prod(shape)
+    self._npy_value = None
+
+    self.fill_value = fill_value
+
+  @property
+  def _value(self):
+    return onp.full(self.shape, self.fill_value)
+
+  @staticmethod
+  def constant_handler(c, filled_const):
+    return c.Broadcast(c.NumpyArrayConstant(filled_const.fill_value),
+                       filled_const.shape)
+
+
+class IotaConstant(xla.DeviceConstant):
+  __slots__ = ["axis"]
+
+  def __init__(self, dtype, shape, axis):
+    self.shape = shape
+    self.dtype = dtype
+    self.ndim = len(shape)
+    self.size = prod(shape)
+    self._npy_value = None
+
+    self.axis = axis
+
+  @property
+  def _value(self):
+    if self._npy_value is None:
+      iota = onp.arange(self.shape[self.axis], dtype=self.dtype)
+      iota = iota.reshape([self.shape[self.axis] if i == self.axis else 1
+                           for i in range(self.ndim)])
+      self._npy_value = onp.broadcast_to(iota, self.shape)
+    return self._npy_value
+
+  @staticmethod
+  def constant_handler(c, iota_constant):
+    return c.BroadcastedIota(iota_constant.dtype, iota_constant.shape,
+                             iota_constant.axis)
+
+
+class EyeConstant(xla.DeviceConstant):
+  __slots__ = ["axes"]
+
+  def __init__(self, shape, axes, dtype):
+    self.shape = shape
+    self.dtype = dtype
+    self.ndim = len(shape)
+    self.size = prod(shape)
+    self._npy_value = None
+
+    self.axes = axes
+
+  @property
+  def _value(self):
+    if self._npy_value is None:
+      ones = [1] * self.ndim
+      iotas = [onp.arange(self.shape[axis]).reshape(subvals(ones, [(axis, -1)]))
+               for axis in self.axes]
+      eyes = [i1 == i2 for i1, i2 in zip(iotas[:-1], iotas[1:])]
+      result = onp.asarray(_reduce(operator.and_, eyes), self.dtype)
+      self._npy_value = onp.broadcast_to(result, self.shape)
+    return self._npy_value
+
+  @staticmethod
+  def constant_handler(c, diag_const):
+    etype = xla_bridge.dtype_to_etype(diag_const.dtype)
+    iotas = [c.BroadcastedIota(onp.bool_, diag_const.shape, axis)
+             for axis in diag_const.axes]
+    eyes = [c.Eq(i1, i2) for i1, i2 in zip(iotas[:-1], iotas[1:])]
+    return c.ConvertElementType(_reduce(c.And, eyes), etype)
+
+
+for t in [FilledConstant, IotaConstant, EyeConstant]:
+  xla_bridge.register_constant_handler(t, t.constant_handler)
+  core.pytype_aval_mappings[t] = ConcreteArray
+  xla.pytype_aval_mappings[t] = xla.pytype_aval_mappings[xla.DeviceArray]
+  xla.canonicalize_dtype_handlers[t] = identity
+  batching.pytype_aval_mappings[t] = make_shaped_array
+  ad_util.jaxval_adders[t] = add
+  ad_util.jaxval_zeros_likers[t] = zeros_like_array
+
+
 ### util
 
 def _ndim(x):
@@ -2350,7 +2503,9 @@ def _dynamic_slice_indices(operand, start_indices):
   return rem(start_indices, onp.array(operand.shape, start_indices.dtype))
 
 
-_const = lambda example, val: onp.array(val, _dtype(example))
+def _const(example, val):
+  return onp.array(val, _dtype(example))
+
 _zeros = partial(full_like, fill_value=0)
 _zero = partial(full_like, shape=(), fill_value=0)
 _ones = partial(full_like, fill_value=1)

@@ -249,6 +249,8 @@ class Tracer(object):
   def __hex__(self): return self.aval._hex(self)
   def __oct__(self): return self.aval._oct(self)
 
+  def __setitem__(self, idx, val):
+    raise TypeError("JAX 'Tracer' objects do not support item assignment")
 
   def __getattr__(self, name):
     # if the aval property raises an AttributeError, gets caught here
