@@ -16,8 +16,12 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from collections import defaultdict
+import itertools
+
 import numpy as onp
 from absl.testing import absltest
+from absl.testing import parameterized
 
 import jax.numpy as np
 import jax.test_util as jtu
@@ -216,6 +220,54 @@ class EinsumTest(jtu.JaxTestCase):
     z = r.randn(3, 4)
     s = 'ij,ij,jk->ik'
     check(s, x, y, z)
+
+  # these tests are based on https://github.com/dask/dask/pull/3412/files
+  @parameterized.named_parameters(
+      {"testcase_name": "_{}".format(einstr), "einstr": einstr}
+      for einstr in [
+          'abc,bad->abcd',
+          'abcdef,bcdfg->abcdeg',
+          'ea,fb,abcd,gc,hd->efgh',
+          'ab,b',
+          'aa',
+          'a,a->',
+          'a,a->a',
+          'a,a',
+          'a,b',
+          'a,b,c',
+          'a',
+          'ba,b',
+          'ba,b->',
+          'defab,fedbc->defac',
+          'ab...,bc...->ac...',
+          'a...a',
+          'abc...->cba...',
+          '...ab->...a',
+          'a...a->a...',
+          # Following 2 from # https://stackoverflow.com/a/19203475/1611416
+          # '...abc,...abcd->...d',  # TODO hard crash
+          'ab...,b->ab...',
+          # https://github.com/dask/dask/pull/3412#discussion_r182413444
+          'aa->a',
+          'ab,ab,c->c',
+          'aab,bc->ac',
+          'aab,bcc->ac',
+          # 'fdf,cdd,ccd,afe->ae',  # TODO hard crash
+          'fff,fae,bef,def->abd',
+      ])
+  def test_from_dask(self, einstr):
+    r = rng()
+    if '->' in einstr:
+      input_str, result_names = einstr.split('->')
+    else:
+      input_str = einstr
+    input_names = input_str.split(',')
+
+    shapes = defaultdict(itertools.cycle([2, 3, 4]).next)
+    input_shapes = [tuple(shapes[c] for c in names) for names in input_names]
+    operands = [r.randn(*shape) for shape in input_shapes]
+
+    check(einstr, *operands)
 
 
 if __name__ == '__main__':
