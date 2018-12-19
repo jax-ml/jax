@@ -845,6 +845,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     ans = onp.mean(x)
     self.assertAllClose(ans, onp.array([1./3, 1./3, 1./3]), check_dtypes=False)
 
+  # TODO(mattjj): more exhaustive arange tests
+  def testArangeOnFloats(self):
+    # from https://github.com/google/jax/issues/145
+    expected = onp.arange(0.0, 1.0, 0.1)
+    ans = lnp.arange(0.0, 1.0, 0.1)
+    self.assertAllClose(expected, ans, check_dtypes=True)
+
 
 if __name__ == "__main__":
   absltest.main()
