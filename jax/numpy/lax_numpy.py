@@ -16,27 +16,29 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import collections
+import itertools
+import string
+
+import numpy as onp
+import opt_einsum
+import six
 from six.moves import builtins
 
-import six
-import numpy as onp
-
+from jax import jit
 from .. import core
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
 from ..interpreters.xla import DeviceArray
 from .. import lax
-from ..util import memoize, partial, get_module_functions, prod as _prod
+from ..util import memoize, partial, get_module_functions, unzip2, prod as _prod
 from ..lib import xla_bridge
 
-# To provide the same module-level names as Numpy, we need to redefine builtins
-# and also use some common names (like 'shape' and 'dtype') at the top-level.
-# pylint: disable=redefined-builtin,redefined-outer-name
-
-# There might be a pylint bug with tuple unpacking.
-# pylint: disable=unbalanced-tuple-unpacking
-
-# We get docstrings from the underlying numpy functions.
-# pylint: disable=missing-docstring
+if six.PY3:
+  def removechars(s, chars):
+    return s.translate(str.maketrans(dict.fromkeys(chars)))
+else:
+  def removechars(s, chars):
+    return s.translate(None, ''.join(chars))
 
 
 # We replace some builtin names to follow Numpy's API, so we capture here.
@@ -1052,6 +1054,172 @@ def tensordot(a, b, axes=2):
   msg = ("tensordot axes argument must be an int, a pair of ints, or a pair of "
          "lists/tuples of ints.")
   raise TypeError(msg)
+
+
+def einsum(*operands):
+  # using einsum_call=True here is an internal api for opt_einsum
+  operands, contractions = opt_einsum.contract_path(
+      *operands, einsum_call=True, use_blas=True)
+  contractions = tuple(data[:3] for data in contractions)
+  return _einsum(operands, contractions)
+
+
+@partial(jit, static_argnums=(1,))
+def _einsum(operands, contractions):
+  operands = list(_promote_dtypes(*operands))
+  sum = lambda x, axes: lax.reduce(x, onp.array(0, x.dtype), lax.add, axes)
+
+  def sum_uniques(operand, names, uniques):
+    if uniques:
+      axes = [names.index(name) for name in uniques]
+      operand = sum(operand, axes)
+      names = removechars(names, uniques)
+    return operand, names
+
+  def sum_repeats(operand, names, counts, keep_names):
+    for name, count in counts.items():
+      if count > 1:
+        axes = [i for i, n in enumerate(names) if n == name]
+        eye = lax.broadcasted_eye(operand.dtype, operand.shape, axes)
+        if name not in keep_names:
+          operand = sum(operand * eye, axes)
+          names = names.replace(name, '')
+        else:
+          operand = sum(operand * eye, axes[:-1])
+          names = names.replace(name, '', count - 1)
+    return operand, names
+
+  for operand_indices, contracted_names, einstr in contractions:
+    input_str, result_names = einstr.split('->')
+    input_names = input_str.split(',')
+
+    # switch on the number of operands to be processed in this loop iteration.
+    # every case here sets 'result' and 'names'.
+    if len(operand_indices) == 1:
+      operand = operands.pop(operand_indices[0])
+      names, = input_names
+      counts = collections.Counter(names)
+
+      # sum out unique contracted indices with a single reduce-sum
+      uniques = [name for name in contracted_names if counts[name] == 1]
+      operand, names = sum_uniques(operand, names, uniques)
+
+      # for every repeated index, do a contraction against an identity matrix
+      operand, names = sum_repeats(operand, names, counts, result_names)
+
+    elif len(operand_indices) == 2:
+      lhs, rhs = map(operands.pop, operand_indices)
+      lhs_counts, rhs_counts = map(collections.Counter, input_names)
+      lhs_names, rhs_names = input_names
+
+      # sum out unique contracted indices in lhs and rhs
+      lhs_uniques = [name for name in contracted_names
+                     if lhs_counts[name] == 1 and rhs_counts[name] == 0]
+      lhs, lhs_names = sum_uniques(lhs, lhs_names, lhs_uniques)
+
+      rhs_uniques = [name for name in contracted_names
+                     if rhs_counts[name] == 1 and lhs_counts[name] == 0]
+      rhs, rhs_names = sum_uniques(rhs, rhs_names, rhs_uniques)
+
+      # for every repeated index, contract against an identity matrix
+      lhs, lhs_names = sum_repeats(lhs, lhs_names, lhs_counts,
+                                   result_names + rhs_names)
+      rhs, rhs_names = sum_repeats(rhs, rhs_names, rhs_counts,
+                                   result_names + lhs_names)
+
+      contracted_names = contracted_names & (set(lhs_names) | set(rhs_names))
+      batch_names = set(lhs_names) & set(rhs_names) - contracted_names
+      lhs_batch, rhs_batch = unzip2((lhs_names.find(n), rhs_names.find(n))
+                                    for n in batch_names)
+      if contracted_names:
+        # contract usint lax.dot_general
+        lhs_cont, rhs_cont = unzip2((lhs_names.index(n), rhs_names.index(n))
+                                    for n in contracted_names)
+
+        # lax.dot_general batch dims have to precede non-batch dims
+        batch_dims = tuple(range(len(batch_names)))
+        if lhs_batch != rhs_batch or set(lhs_batch) != set(batch_dims):
+          lhs = moveaxis(lhs, lhs_batch, batch_dims)
+          rhs = moveaxis(rhs, rhs_batch, batch_dims)
+          batch_names = ''.join(batch_names)
+        else:
+          batch_dims = tuple(lhs_batch)
+          batch_names = ''.join(lhs_names[i] for i in batch_dims)
+
+        operand = _dot_general(lhs, rhs, lhs_cont, rhs_cont, len(batch_dims))
+        deleted_names = batch_names + ''.join(contracted_names)
+        names = (batch_names + removechars(lhs_names, deleted_names)
+                 + removechars(rhs_names, deleted_names))
+      else:
+        # no contraction, just a tensor product
+        if lhs_batch != rhs_batch:
+          rhs = moveaxis(rhs, rhs_batch, lhs_batch)
+        batch_names = ''.join(lhs_names[i] for i in lhs_batch)
+
+        names = batch_names + lhs_names + rhs_names
+        lhs_shape = iter(lhs.shape)
+        lhs_shape = [next(lhs_shape) if n in batch_names + lhs_names else 1
+                     for n in names]
+        rhs_shape = iter(rhs.shape)
+        rhs_shape = [next(rhs_shape) if n in batch_names + rhs_names else 1
+                     for n in names]
+        operand = lax.reshape(lhs, lhs_shape) * lax.reshape(rhs, rhs_shape)
+
+    else:
+      raise NotImplementedError
+
+    # the resulting 'operand' with axis labels 'names' should be a permutation
+    # of the desired result
+    assert len(names) == len(result_names) == len(set(names))
+    assert set(names) == set(result_names)
+    if names != result_names:
+      perm = tuple([names.index(name) for name in result_names])
+      operand = lax.transpose(operand, perm)
+    operands.append(operand)  # used in next iteration
+
+  return operands[0]
+
+
+def _dot_general(lhs, rhs, lhs_cont, rhs_cont, nbatch):
+  """Helper for einsum contractions."""
+  # lax.dot_general has some tight constraints on dimension_numbers that this
+  # wrapper loosens via transposes and reshapes
+  assert len(lhs_cont) == len(rhs_cont) > 0
+  ncont = len(lhs_cont)
+  lhs_ntensor = lhs.ndim - nbatch - ncont
+  rhs_ntensor = rhs.ndim - nbatch - ncont
+  batch_dims = tuple(range(nbatch))
+
+  if ncont == 1 and 0 <= lhs_ntensor <= 1 and 0 <= rhs_ntensor <= 1:
+    dimension_numbers = [(lhs_cont, rhs_cont), (batch_dims, batch_dims)]
+    return lax.dot_general(lhs, rhs, dimension_numbers)
+  else:
+    # move contracting dimensions to the end. lax.dot_general only allows one
+    # contracting dimension, so if there's more than one we collapse them.
+    if ncont > 1:
+      lhs_cdims = tuple(range(lhs.ndim - ncont, lhs.ndim))
+      lhs = moveaxis(lhs, lhs_cont, lhs_cdims).reshape(lhs.shape[:-ncont] + (-1,))
+
+      rhs_cdims = tuple(range(rhs.ndim - ncont, rhs.ndim))
+      rhs = moveaxis(rhs, rhs_cont, rhs_cdims).reshape(rhs.shape[:-ncont] + (-1,))
+    else:
+      lhs = moveaxis(lhs, lhs_cont[0], -1)
+      rhs = moveaxis(rhs, rhs_cont[0], -1)
+
+    # lax.dot_general only allows zero or one tensor product dims per operand,
+    # so if there's more than one we collapse them.
+    result_shape = lhs.shape[:nbatch] + lhs.shape[nbatch:-1] + rhs.shape[nbatch:-1]
+
+    if lhs_ntensor > 1:
+      lhs = lhs.reshape(lhs.shape[:nbatch] + (-1,) + lhs.shape[-1:])
+
+    if rhs_ntensor > 1:
+      rhs = rhs.reshape(rhs.shape[:nbatch] + (-1,) + rhs.shape[-1:])
+
+    lhs_cont, rhs_cont = [lhs.ndim - 1], [rhs.ndim - 1]
+    dimension_numbers = [(lhs_cont, rhs_cont), (batch_dims, batch_dims)]
+    result = lax.dot_general(lhs, rhs, dimension_numbers)
+    return lax.reshape(result, result_shape)
 
 
 ### Misc
