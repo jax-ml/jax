@@ -1602,10 +1602,15 @@ def select_dtype_rule(pred, on_true, on_false):
 
 def select_transpose_rule(t, pred, on_true, on_false):
   assert pred is not None
-  zeros = full_like(t, 0)
-  return [None,
-          select(pred, t, zeros) if on_true is None else None,
-          select(pred, zeros, t) if on_false is None else None]
+  if t is ad_util.zero:
+    return [None,
+            ad_util.zero if on_true is None else None,
+            ad_util.zero if on_false is None else None]
+  else:
+    zeros = full_like(t, 0)
+    return [None,
+            select(pred, t, zeros) if on_true is None else None,
+            select(pred, zeros, t) if on_false is None else None]
 
 def select_batch_rule(batched_args, batch_dims, **unused_kwargs):
   oprand, on_true, on_false, = batched_args
