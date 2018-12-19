@@ -1221,6 +1221,19 @@ def _dot_general(lhs, rhs, lhs_cont, rhs_cont, nbatch):
     result = lax.dot_general(lhs, rhs, dimension_numbers)
     return lax.reshape(result, result_shape)
 
+@_wraps(onp.inner)
+def inner(a, b):
+  if ndim(a) == 0 or ndim(b) == 0:
+    return a * b
+  return tensordot(a, b, (-1, -1))
+
+
+@_wraps(onp.outer)
+def outer(a, b, out=None):
+  if out:
+    raise NotImplementedError("The 'out' argument to outer is not supported.")
+  return ravel(a)[:, None] * ravel(b)
+
 
 ### Misc
 
