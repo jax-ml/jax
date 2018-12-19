@@ -81,6 +81,8 @@ def solve_triangular(a, b, trans=0, lower=False, unit_diagonal=False,
   else:
     raise ValueError("Invalid 'trans' value {}".format(trans))
 
+  a = np.tril(a) if lower else np.triu(a)
+
   # lax_linalg.triangular_solve only supports matrix 'b's at the moment.
   b_is_vector = np.ndim(a) == np.ndim(b) + 1
   if b_is_vector:

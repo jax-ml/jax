@@ -109,6 +109,17 @@ def triangular_solve_shape_rule(a, b, left_side=False, **unused_kwargs):
     raise TypeError(msg.format(a.shape, b.shape))
   return b.shape
 
+def triangular_solve_jvp_rule_a(
+    g_a, ans, a, b, left_side, lower, transpose_a, conjugate_a):
+  g_a = lax.neg(g_a)
+  g_a = np.swapaxes(g_a, -1, -2) if transpose_a else g_a
+  tmp = triangular_solve(a, g_a, left_side, lower, transpose_a, conjugate_a)
+  dot = lax.dot if g_a.ndim == 2 else lax.batch_matmul
+  if left_side:
+    return dot(tmp, ans)
+  else:
+    return dot(ans, tmp)
+
 def triangular_solve_transpose_rule(
     cotangent, a, b, left_side, lower, transpose_a, conjugate_a):
   assert a is not None and b is None
@@ -119,9 +130,9 @@ def triangular_solve_transpose_rule(
 triangular_solve_p = standard_primitive(
     triangular_solve_shape_rule, triangular_solve_dtype_rule,
     'triangular_solve')
-ad.defjvp(triangular_solve_p,
-          None,
-          lambda g_b, a, b, **kwargs: triangular_solve(a, g_b, **kwargs))
+ad.defjvp2(triangular_solve_p,
+           triangular_solve_jvp_rule_a,
+           lambda g_b, _, a, b, **kws: triangular_solve(a, g_b, **kws))
 ad.primitive_transposes[triangular_solve_p] = triangular_solve_transpose_rule
 
 
