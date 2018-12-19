@@ -27,9 +27,11 @@ from .lib import xla_bridge
 
 def concretization_err_msg(fun):
   fname = getattr(fun, "__name__", fun)
-  return ("Abstract value passed to function {} that requires a concrete value. "
-          "Possibly tracing Python control flow using abstract values. "
-          "If so, try using lax.cond or lax.while instead.").format(fname)
+  msg = ("Abstract value passed to `{}`, which requires a concrete value. "
+         "The function to be transformed can't be traced at the required level "
+         "of abstraction. If using `jit`, try using `static_argnums` or "
+         "applying `jit` to smaller subfunctions instead.")
+  return msg.format(fname)
 
 def concretization_function_error(fun):
   def error(self, *args):

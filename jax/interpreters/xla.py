@@ -74,6 +74,8 @@ def execute_compiled_primitive(compiled, result_handler, *args):
 def device_put(x):
   if type(x) is DeviceArray:
     return x.device_buffer
+  elif isinstance(x, DeviceConstant):
+    return instantiate_device_constant(x)
   else:
     return xb.device_put(x)  # can round-trip elements of tuples here
 
@@ -237,6 +239,7 @@ class DeviceArray(DeviceValue):
     self.size = size
     self._npy_value = None
 
+  # TODO make device_buffer a property, make the _npy_value writeable, invalidate
   @property
   def _value(self):
     if self._npy_value is None:
@@ -260,7 +263,7 @@ class DeviceArray(DeviceValue):
 
   def __repr__(self):
     shape_str = ",".join(map(str, self.shape))
-    return "DeviceArray{{{}[{}]}}".format(self.dtype.name, shape_str)
+    return "DeviceArray{{{}[{}]}}".format(onp.dtype(self.dtype).name, shape_str)
 
   def __len__(self):
     try:
@@ -317,6 +320,24 @@ pytype_aval_mappings[DeviceArray] = make_shaped_array
 canonicalize_dtype_handlers[DeviceArray] = identity
 xb.register_constant_handler(DeviceArray,
                              lambda c, val: c.Constant(onp.asarray(val)))
+
+
+class DeviceConstant(DeviceArray):
+  @staticmethod
+  def constant_handler(c, constant_instance):
+    assert False
+
+def instantiate_device_constant(const, cutoff=1e6):
+  # dispatch an XLA Computation to build the constant on the device if it's
+  # large, or alternatively build it on the host and transfer it if it's small
+  assert isinstance(const, DeviceConstant)
+  if const.size > cutoff:
+    c = xb.make_computation_builder("constant_instantiating_computation")
+    xla_const = const.constant_handler(c, const)
+    compiled = c.Build(xla_const).Compile((), xb.get_compile_options())
+    return compiled.Execute(())
+  else:
+    return xb.device_put(onp.asarray(const))
 
 
 def xla_shape(x):
