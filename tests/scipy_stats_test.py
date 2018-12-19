@@ -17,7 +17,6 @@ from __future__ import division
 from __future__ import print_function
 
 import collections
-import functools
 import itertools
 
 from absl.testing import absltest, parameterized
@@ -31,26 +30,18 @@ from lax_scipy_test import CombosWithReplacement, float_dtypes
 
 all_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4)]
 
-def genNamedParametersNArgs(n):
+def genNamedParametersNArgs(n, rng):
     return parameterized.named_parameters(
-            jtu.cases_from_list(
-              {"testcase_name": jtu.format_test_name_suffix("", shapes, dtypes),
-               "rng": rng, "shapes": shapes, "dtypes": dtypes}
-              for shapes in CombosWithReplacement(all_shapes, n)
-              for dtypes in CombosWithReplacement(float_dtypes, n)
-              for rng in [jtu.rand_default()]
-            ))
+        jtu.cases_from_list(
+          {"testcase_name": jtu.format_test_name_suffix("", shapes, dtypes),
+            "rng": rng, "shapes": shapes, "dtypes": dtypes}
+          for shapes in CombosWithReplacement(all_shapes, n)
+          for dtypes in CombosWithReplacement(float_dtypes, n)))
 
 class LaxBackedScipyStatsTests(jtu.JaxTestCase):
   """Tests for LAX-backed scipy.stats implementations"""
 
-  beta_decorator = genNamedParametersNArgs(5)
-  expon_decorator = genNamedParametersNArgs(3)
-  laplace_decorator = genNamedParametersNArgs(3)
-  norm_decorator = genNamedParametersNArgs(3)
-  uniform_decorator = genNamedParametersNArgs(3)
-
-  @beta_decorator
+  @genNamedParametersNArgs(5, jtu.rand_positive())
   def testBetaLogPdf(self, rng, shapes, dtypes):
     scipy_fun = osp_stats.beta.logpdf
     lax_fun = lsp_stats.beta.logpdf
@@ -62,20 +53,21 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
-  @norm_decorator
+  @genNamedParametersNArgs(3, jtu.rand_default())
   def testNormLogPdf(self, rng, shapes, dtypes):
     scipy_fun = osp_stats.norm.logpdf
     lax_fun = lsp_stats.norm.logpdf
 
     def args_maker():
       x, loc, scale = map(rng, shapes, dtypes)
-      scale = onp.clip(onp.abs(scale), a_min=0.1, a_max=None)  # clipping to ensure that scale is not too low
+      # clipping to ensure that scale is not too low
+      scale = onp.clip(onp.abs(scale), a_min=0.1, a_max=None)
       return [x, loc, scale]
 
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
-  @expon_decorator
+  @genNamedParametersNArgs(3, jtu.rand_positive())
   def testExponLogPdf(self, rng, shapes, dtypes):
     scipy_fun = osp_stats.expon.logpdf
     lax_fun = lsp_stats.expon.logpdf
@@ -87,20 +79,21 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
-  @laplace_decorator
+  @genNamedParametersNArgs(3, jtu.rand_positive())
   def testLaplaceLogPdf(self, rng, shapes, dtypes):
     scipy_fun = osp_stats.laplace.logpdf
     lax_fun = lsp_stats.laplace.logpdf
 
     def args_maker():
       x, loc, scale = map(rng, shapes, dtypes)
-      scale = onp.clip(onp.abs(scale), a_min=0.1, a_max=None)  # clipping to ensure that scale is not too low
+      # clipping to ensure that scale is not too low
+      scale = onp.clip(onp.abs(scale), a_min=0.1, a_max=None)
       return [x, loc, scale]
 
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
-  @uniform_decorator
+  @genNamedParametersNArgs(3, jtu.rand_default())
   def testUniformLogPdf(self, rng, shapes, dtypes):
     scipy_fun = osp_stats.uniform.logpdf
     lax_fun = lsp_stats.uniform.logpdf
