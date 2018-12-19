@@ -417,14 +417,14 @@ opaque_param_ids = itertools.count()
 def tie_in(x, y):
   return tie_in_p.bind(x, y)
 
-def full(shape, fill_value, dtype=None):
+def full(shape, fill_value, dtype):
   if onp.shape(fill_value):
     msg = "full must be called with scalar fill_value, got fill_value.shape {}."
     raise TypeError(msg.format(onp.shape(fill_value)))
+  dtype = xla_bridge.canonicalize_dtype(dtype)
 
   # For constants (defined as Python scalars, raw ndarrays, or DeviceValues),
   # create a FilledConstant value, otherwise just call broadcast.
-  dtype = dtype and xla_bridge.canonicalize_dtype(dtype)
   if onp.isscalar(fill_value) or type(fill_value) is onp.ndarray:
     return FilledConstant(onp.asarray(fill_value, dtype), shape)
   elif isinstance(fill_value, xla.DeviceValue):
