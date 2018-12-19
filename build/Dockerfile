@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
             dh-autoreconf git curl \
             python python-pip python-dev \
             python3 python3-pip python3-dev
-RUN pip install numpy setuptools wheel && pip3 install numpy setuptools wheel
+RUN pip install numpy scipy cython setuptools wheel && pip3 install numpy scipy cython setuptools wheel
 
 RUN git clone https://github.com/nixos/patchelf /tmp/patchelf
 WORKDIR /tmp/patchelf
