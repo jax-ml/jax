@@ -111,13 +111,14 @@ if __name__ == "__main__":
 
   @jit
   def run_epoch(rng, opt_state):
-    def body_fun(i, rng__opt_state__images):
-      (rng, opt_state, images) = rng__opt_state__images
+    def body_fun(i, loop_carry):
+      (rng, opt_state, images) = loop_carry
       rng, elbo_rng, data_rng = random.split(rng, 3)
       batch = binarize_batch(data_rng, i, images)
       loss = lambda params: -elbo(elbo_rng, params, batch) / batch_size
       g = grad(loss)(minmax.get_params(opt_state))
-      return rng, opt_update(i, g, opt_state), images
+      loop_carry = rng, opt_update(i, g, opt_state), images
+      return loop_carry
     init_val = rng, opt_state, train_images
     _, opt_state, _ =  lax.fori_loop(0, num_batches, body_fun, init_val)
     return opt_state
