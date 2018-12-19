@@ -23,7 +23,5 @@ package(default_visibility = ["//visibility:public"])
 pyx_library(
     name = "lapack",
     srcs = ["lapack.pyx"],
-    py_deps = [
-        "@org_tensorflow//third_party/py/numpy",
-    ],
+    py_deps = ["@org_tensorflow//third_party/py/numpy"],
 )
