@@ -112,6 +112,7 @@ def triangular_solve_shape_rule(a, b, left_side=False, **unused_kwargs):
 def triangular_solve_jvp_rule_a(
     g_a, ans, a, b, left_side, lower, transpose_a, conjugate_a):
   g_a = lax.neg(g_a)
+  g_a = np.swapaxes(g_a, -1, -2) if transpose_a else g_a
   tmp = triangular_solve(a, g_a, left_side, lower, transpose_a, conjugate_a)
   dot = lax.dot if g_a.ndim == 2 else lax.batch_matmul
   if left_side:
