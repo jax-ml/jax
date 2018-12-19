@@ -370,7 +370,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "lhs_shape": lhs_shape, "lhs_dtype": lhs_dtype,
        "rhs_shape": rhs_shape, "rhs_dtype": rhs_dtype,
        "rng": jtu.rand_default()}
-      for lhs_dtype, rhs_dtype in CombosWithReplacement(numeric_dtypes, 2)
+      # TODO(phawkins): support integer dtypes too.
+      for lhs_dtype, rhs_dtype in CombosWithReplacement(float_dtypes, 2)
       for lhs_shape, rhs_shape in [
         (l, r) for l, r in CombosWithReplacement(all_shapes, 2)
         if len(jtu._dims_of_shape(l)) == 0
