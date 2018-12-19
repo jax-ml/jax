@@ -1121,20 +1121,21 @@ def _einsum(operands, contractions):
                                     for n in batch_names)
       if contracted_names:
         # contract using lax.dot_general
-        lhs_cont, rhs_cont = unzip2((lhs_names.index(n), rhs_names.index(n))
-                                    for n in contracted_names)
 
         # lax.dot_general batch dims have to precede non-batch dims
         batch_dims = tuple(range(len(batch_names)))
         if lhs_batch != rhs_batch or set(lhs_batch) != set(batch_dims):
           lhs = moveaxis(lhs, lhs_batch, batch_dims)
+          lhs_names = _movechars(lhs_names, lhs_batch, batch_dims)
           rhs = moveaxis(rhs, rhs_batch, batch_dims)
+          rhs_names = _movechars(rhs_names, rhs_batch, batch_dims)
           batch_names = ''.join(batch_names)
-          # TODO(mattjj): may need to update lhs_cont and rhs_cont here
         else:
           batch_dims = tuple(lhs_batch)
           batch_names = ''.join(lhs_names[i] for i in batch_dims)
 
+        lhs_cont, rhs_cont = unzip2((lhs_names.index(n), rhs_names.index(n))
+                                    for n in contracted_names)
         operand = _dot_general(lhs, rhs, lhs_cont, rhs_cont, len(batch_dims))
         deleted_names = batch_names + ''.join(contracted_names)
         names = (batch_names + removechars(lhs_names, deleted_names)
@@ -1211,6 +1212,15 @@ def _dot_general(lhs, rhs, lhs_cont, rhs_cont, nbatch):
     dimension_numbers = [(lhs_cont, rhs_cont), (batch_dims, batch_dims)]
     result = lax.dot_general(lhs, rhs, dimension_numbers)
     return lax.reshape(result, result_shape)
+
+
+def _movechars(s, src, dst):
+  """Helper for einsum string munging, like moveaxis on identifier strings."""
+  chars = [c for i, c in enumerate(s) if i not in src]
+  for i, j in sorted(zip(dst, src)):
+    chars.insert(i, s[j])
+  return ''.join(chars)
+
 
 @_wraps(onp.inner)
 def inner(a, b):
