@@ -108,6 +108,7 @@ JAX_COMPOUND_OP_RECORDS = [
               test_name="expm1_large"),
     op_record("expm1", 1, numeric_dtypes, all_shapes, jtu.rand_small_positive(), []),
     op_record("floor_divide", 2, default_dtypes, all_shapes, jtu.rand_nonzero(), ["rev"]),
+    op_record("outer", 2, default_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("isclose", 2, float_dtypes, all_shapes, jtu.rand_small_positive(), []),
     op_record("log2", 1, numeric_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
     op_record("log10", 1, numeric_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
@@ -359,6 +360,27 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
     lnp_fun = lambda a, b: lnp.tensordot(a, b, axes)
     onp_fun = lambda a, b: onp.tensordot(a, b, axes)
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_{}".format(
+          jtu.format_shape_dtype_string(lhs_shape, lhs_dtype),
+          jtu.format_shape_dtype_string(rhs_shape, rhs_dtype)),
+       "lhs_shape": lhs_shape, "lhs_dtype": lhs_dtype,
+       "rhs_shape": rhs_shape, "rhs_dtype": rhs_dtype,
+       "rng": jtu.rand_default()}
+      # TODO(phawkins): support integer dtypes too.
+      for lhs_dtype, rhs_dtype in CombosWithReplacement(float_dtypes, 2)
+      for lhs_shape, rhs_shape in [
+        (l, r) for l, r in CombosWithReplacement(all_shapes, 2)
+        if len(jtu._dims_of_shape(l)) == 0
+        or len(jtu._dims_of_shape(r)) == 0
+        or l[-1] == r[-1]]))
+  def testInner(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype, rng):
+    args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
+    onp_fun = lambda lhs, rhs: onp.inner(lhs, rhs)
+    lnp_fun = lambda lhs, rhs: lnp.inner(lhs, rhs)
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
