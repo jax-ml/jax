@@ -227,14 +227,17 @@ def lift_jaxpr(jaxpr, consts, io_tree, pvals, py_args):
   return unflatten_fun(fun, io_tree, *py_args)
 
 def make_jaxpr(f):
-  # TODO(frostig): handle container trees etc.
   def pv_like(x):
-    aval = ShapedArray(onp.shape(x), onp.result_type(x))
+    aval = xla.abstractify(x)
     return pe.PartialVal((aval, core.unit))
 
+  fun = lu.wrap_init(f)
   @_wraps(f)
-  def jaxpr_maker(*args):
-    jaxpr, _, _, _ = trace_to_jaxpr(f, map(pv_like, args))
+  def jaxpr_maker(*args, **kwargs):
+    jax_args, in_trees = unzip2(map(tree_to_jaxtuples, args))
+    flat_fun, out_tree = flatten_fun(fun, in_trees)
+    pvals = map(pv_like, jax_args)
+    jaxpr, _, _ = pe.trace_to_jaxpr(flat_fun, pvals, **kwargs)
     return jaxpr
 
   jaxpr_maker.__name__ = "make_jaxpr({})".format(jaxpr_maker.__name__)
