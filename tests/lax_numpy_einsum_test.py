@@ -192,14 +192,13 @@ class EinsumTest(jtu.JaxTestCase):
     s = 'ij->ij'
     check(s, x)
 
-  # TODO(mattjj): patch this up!
-  # def test_tf_unsupported_1(self):
-  #   # from https://www.tensorflow.org/api_docs/python/tf/einsum
-  #   r = rng()
-  #   x = r.randn(2, 3, 5, 1)
-  #   y = r.randn(3, 4, 5, 1)
-  #   s = 'ij...,jk...->ik...'
-  #   check(s, x, y)
+  def test_tf_unsupported_1(self):
+    # from https://www.tensorflow.org/api_docs/python/tf/einsum
+    r = rng()
+    x = r.randn(2, 3, 5, 1)
+    y = r.randn(3, 4, 5, 1)
+    s = 'ij...,jk...->ik...'
+    check(s, x, y)
 
   def test_tf_unsupported_2(self):
     # from https://www.tensorflow.org/api_docs/python/tf/einsum
