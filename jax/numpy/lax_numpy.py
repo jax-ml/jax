@@ -834,29 +834,17 @@ def eye(N, M=None, k=None, dtype=onp.dtype("float64")):
 
 @_wraps(onp.arange)
 def arange(*args, **kwargs):
-  nargs = len(args)
-  start, step = 0, 1
-  dtype = kwargs.pop("dtype", None)
-  if kwargs:
-    raise TypeError("arange only accepts 'dtype' kwarg, got {}".format(kwargs))
-  if nargs == 0:
-    raise TypeError("Required argument 'start' (pos 1) not found")  # same as numpy error
-  elif nargs == 1:
-    stop, = args
-    dtype = dtype or _dtype(stop)
-    return lax.iota(dtype, stop)  # avoids materializing
-  elif nargs == 2:
-    start, stop = args
-    dtype = dtype or onp.result_type(start, stop)
-  elif nargs == 3:
-    start, stop, step = args
-    dtype = dtype or onp.result_type(start, stop, step)
-  elif nargs == 4:
-    start, stop, step, dtype = args
-    dtype = dtype or onp.result_type(start, stop, step)
-
-  size = (stop - start - 1) // step + 1
-  return start + step * lax.iota(dtype, size)
+  # attempt to generate a lazy IotaConstant, otherwise fall back to raw numpy
+  # TODO(mattjj): add tests for this function, then re-enable
+  # dtype = kwargs.pop("dtype", None)
+  # if not args:
+  #   raise TypeError("Required argument 'start' (pos 1) not found")  # same as numpy error
+  # elif len(args) == 1 and not kwargs:
+  #   stop, = args
+  #   dtype = dtype or _dtype(stop)
+  #   if onp.issubdtype(dtype, onp.integer):
+  #     return lax.iota(dtype, stop)  # avoids materializing
+  return onp.arange(*args, **kwargs)
 
 
 @_wraps(onp.repeat)
