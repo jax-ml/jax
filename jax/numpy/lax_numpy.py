@@ -623,7 +623,8 @@ def isinf(x):
     return full_like(x, False, dtype=bool_)
 
 def isnan(x):
-  return bitwise_and(bitwise_not(isfinite(x)), bitwise_not(isinf(x)))
+  return lax.bitwise_and(lax.bitwise_not(isfinite(x)),
+                         lax.bitwise_not(isinf(x)))
 
 
 ### Reducers
