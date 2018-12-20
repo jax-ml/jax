@@ -734,6 +734,12 @@ def allclose(a, b, rtol=1e-05, atol=1e-08):
   return all(isclose(a, b, rtol, atol))
 
 
+@_wraps(onp.count_nonzero)
+def count_nonzero(a, axis=None):
+  return sum(lax.ne(a, _constant_like(a, 0)), axis=axis,
+             dtype=xla_bridge.canonicalize_dtype(onp.int_))
+
+
 ### Array-creation functions
 
 
@@ -863,6 +869,9 @@ def ones(shape, dtype=onp.dtype("float64")):
 @_wraps(onp.eye)
 def eye(N, M=None, k=None, dtype=onp.dtype("float64")):
   M = N if M is None else M
+  if N < 0 or M < 0:
+    msg = "negative dimensions are not allowed, got {} and {}"
+    raise ValueError(msg.format(N, M))
   if k is None:
     return lax.broadcasted_eye(dtype, (N, M), (0, 1))
   else:
@@ -873,6 +882,12 @@ def eye(N, M=None, k=None, dtype=onp.dtype("float64")):
     rows = k + lax.broadcasted_iota(k_dtype, (N, M), 0)
     cols = lax.broadcasted_iota(k_dtype, (N, M), 1)
     return lax.convert_element_type(lax.eq(rows, cols), dtype)
+
+
+@_wraps(onp.identity)
+def identity(n, dtype=None):
+  return eye(n, dtype=dtype)
+
 
 @_wraps(onp.arange)
 def arange(*args, **kwargs):
