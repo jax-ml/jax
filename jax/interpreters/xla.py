@@ -213,6 +213,7 @@ pytype_aval_mappings = {}
 def abstractify_tuple(tup):
   return AbstractTuple(tuple(map(abstractify, tup)))
 pytype_aval_mappings[JaxTuple] = abstractify_tuple
+pytype_aval_mappings[AbstractTuple] = abstractify_tuple
 
 for t in array_types:
   pytype_aval_mappings[t] = make_shaped_array
@@ -320,6 +321,9 @@ pytype_aval_mappings[DeviceArray] = make_shaped_array
 canonicalize_dtype_handlers[DeviceArray] = identity
 xb.register_constant_handler(DeviceArray,
                              lambda c, val: c.Constant(onp.asarray(val)))
+
+pytype_aval_mappings[ConcreteArray] = make_shaped_array
+pytype_aval_mappings[ShapedArray] = lambda x: x
 
 
 class DeviceConstant(DeviceArray):
