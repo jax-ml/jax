@@ -58,16 +58,17 @@ def jit(fun, static_argnums=()):
 
   Args:
     fun: Function to be jitted. Should be a pure function, as side-effects may
-        only be executed once. Its positional arguments and return value should
-        be arrays, scalars, or standard Python containers (tuple/list/dict)
-        thereof. Keyword arguments and positional arguments specified by
-        `static_argnums` can be anything at all. These are treated as static
-        (see below).
+      only be executed once. Its positional arguments and return value should be
+      arrays, scalars, or standard Python containers (tuple/list/dict) thereof.
+      Keyword arguments and positional arguments specified by `static_argnums`
+      can be anything at all. These are treated as static (see below).
     static_argnums: A tuple of ints. Specifies which arguments to treat as
-        static (compile-time constant). Operations that only depend on static
-        arguments will be constant-folded. Calling the jitted function with
-        different values for these constants will trigger recompilation.
-   Returns: A wrapped version of `fun`, set up for just-in-time compilation.
+      static (compile-time constant). Operations that only depend on static
+      arguments will be constant-folded. Calling the jitted function with
+      different values for these constants will trigger recompilation.
+
+  Returns:
+    A wrapped version of `fun`, set up for just-in-time compilation.
   """
   @_wraps(fun)
   def f_jitted(*args, **kwargs):
@@ -83,31 +84,62 @@ def jit(fun, static_argnums=()):
   f_jitted.__name__ = "jit({})".format(f_jitted.__name__)
   return f_jitted
 
+
 def grad(fun, argnums=0):
   """Creates a function which evaluates the gradient of `fun`.
 
   Args:
     fun: Function to be differentiated. Its arguments at positions specified by
-        `argnums` should be arrays, scalars, or standard Python containers. It
-        should return a scalar (which includes arrays with shape `()` but not
-        arrays with shape `(1,)` etc.)
+      `argnums` should be arrays, scalars, or standard Python containers. It
+      should return a scalar (which includes arrays with shape `()` but not
+      arrays with shape `(1,)` etc.)
     argnums: Integer or tuple of integers. Specifies which positional
-        argument(s) to differentiate with respect to.
-  Returns: A function with the same arguments as `fun`, that evaluates the
-      gradient of `fun`. If `argnums` is an integer then the gradient has the
-      same shape and type as the positional argument indicated by that integer.
-      If argnums is a tuple of integers, the gradient is a tuple of values with
-      the same shapes and types as the corresponding arguments.
+    argument(s) to differentiate with respect to.
+
+  Returns:
+    A function with the same arguments as `fun`, that evaluates the gradient of
+    `fun`. If `argnums` is an integer then the gradient has the same shape and
+    type as the positional argument indicated by that integer. If argnums is a
+    tuple of integers, the gradient is a tuple of values with the same shapes
+    and types as the corresponding arguments.
   """
+  value_and_grad_f = value_and_grad(fun, argnums)
+
   def grad_f(*args, **kwargs):
+    ans, g = value_and_grad_f(*args, **kwargs)
+    return g
+
+  return grad_f
+
+def value_and_grad(fun, argnums=0):
+  """Creates a function which evaluates both `fun` and the gradient of `fun`.
+
+  Args:
+    fun: Function to be differentiated. Its arguments at positions specified by
+      `argnums` should be arrays, scalars, or standard Python containers. It
+      should return a scalar (which includes arrays with shape `()` but not
+      arrays with shape `(1,)` etc.)
+    argnums: Integer or tuple of integers. Specifies which positional
+      argument(s) to differentiate with respect to.
+
+  Returns:
+    A function with the same arguments as `fun` that evaluates both `fun` and
+    the gradient of `fun` and returns them as a pair (a two-element tuple). If
+    `argnums` is an integer then the gradient has the same shape and type as the
+    positional argument indicated by that integer. If argnums is a tuple of
+    integers, the gradient is a tuple of values with the same shapes and types
+    as the corresponding arguments.
+  """
+  def value_and_grad_f(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
     f_partial, dyn_args = argnums_partial(f, argnums, args)
     ans, vjp_py = vjp(f_partial, *dyn_args)
     check_scalar(ans)
     g = vjp_py(onp.ones((), onp.result_type(ans)))
-    return g[0] if isinstance(argnums, int) else g
+    g = g[0] if isinstance(argnums, int) else g
+    return (ans, g)
 
-  return grad_f
+  return value_and_grad_f
 
 @curry
 def jacfwd(fun, x):
@@ -136,11 +168,13 @@ def vmap(fun, in_axes=0, out_axes=0):
   Args:
     fun: Function to be mapped over additional axes.
     in_axes, out_axes: Specifies which axes to map over. These may be integers,
-        None, or (possibly nested) tuples of integers or None.
-  Returns: Batched/vectorized version of `fun` with arguments that correspond to
-      those of `fun`, but with extra array axes at positions indicated by
-      `in_axes`, and a return value that corresponds to that of `fun`, but with
-      extra array axes at positions indicated by `out_axes`.
+      None, or (possibly nested) tuples of integers or None.
+
+  Returns:
+    Batched/vectorized version of `fun` with arguments that correspond to those
+    of `fun`, but with extra array axes at positions indicated by `in_axes`, and
+    a return value that corresponds to that of `fun`, but with extra array axes
+    at positions indicated by `out_axes`.
 
   For example, we can implement a matrix-matrix product using a vector dot
   product:
@@ -150,7 +184,6 @@ def vmap(fun, in_axes=0, out_axes=0):
     mm = vmap(mv, (None, 1), 1)      #  ([a,b], [b,c]) -> [a,c]
 
   (`[a,b]` indicates an array with shape (a,b))
-
   """
   def batched_fun(*args, **kwargs):
     if not isinstance(fun, lu.WrappedFun):
