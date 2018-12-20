@@ -88,13 +88,20 @@ ndim = _ndim = onp.ndim
 size = onp.size
 _dtype = lax._dtype
 
+bool_ = onp.bool_
+uint8 = onp.uint8
+uint16 = onp.uint16
 uint32 = onp.uint32
-int32 = onp.int32
 uint64 = onp.uint64
+int8 = onp.int8
+int16 = onp.int16
+int32 = onp.int32
 int64 = onp.int64
+float16 = onp.float16
 float32 = onp.float32
 float64 = onp.float64
 complex64 = onp.complex64
+complex128 = onp.complex128
 
 integer = onp.integer
 
@@ -831,7 +838,6 @@ def eye(N, M=None, k=None, dtype=onp.dtype("float64")):
     cols = lax.broadcasted_iota(k_dtype, (N, M), 1)
     return lax.convert_element_type(lax.eq(rows, cols), dtype)
 
-
 @_wraps(onp.arange)
 def arange(*args, **kwargs):
   # attempt to generate a lazy IotaConstant, otherwise fall back to raw numpy
@@ -846,6 +852,10 @@ def arange(*args, **kwargs):
   #     return lax.iota(dtype, stop)  # avoids materializing
   return onp.arange(*args, **kwargs)
 
+linspace = onp.linspace
+logspace = onp.logspace
+geomspace = onp.geomspace
+meshgrid = onp.meshgrid
 
 @_wraps(onp.repeat)
 def repeat(a, repeats, axis=None):
@@ -923,6 +933,9 @@ def trace(a, offset=0, axis1=0, axis2=1, dtype=None, out=None):
   a = where(eye(a_shape[axis1], a_shape[axis2], k=offset, dtype=bool),
             a, zeros_like(a))
   return sum(a, axis=(-2, -1), dtype=dtype)
+
+
+diag_indices = onp.diag_indices
 
 
 @_wraps(onp.diagonal)
