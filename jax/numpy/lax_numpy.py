@@ -1116,9 +1116,15 @@ def _einsum(operands, contractions):
                                    result_names + lhs_names)
 
       contracted_names = contracted_names & (set(lhs_names) | set(rhs_names))
-      batch_names = set(lhs_names) & set(rhs_names) - contracted_names
+      batch_names = (set(lhs_names) & set(rhs_names)) - contracted_names
       lhs_batch, rhs_batch = unzip2((lhs_names.find(n), rhs_names.find(n))
                                     for n in batch_names)
+
+      # NOTE(mattjj): this can fail non-deterministically in python3, maybe
+      # due to opt_einsum
+      assert _all(name in lhs_names and name in rhs_names and
+                  lhs.shape[lhs_names.index(name)] == rhs.shape[rhs_names.index(name)]
+                  for name in contracted_names)
 
       # move batch dims to the front (required by lax.dot_general, and easier)
       batch_dims = tuple(range(len(batch_names)))
