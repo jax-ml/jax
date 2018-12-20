@@ -263,9 +263,9 @@ class EinsumTest(jtu.JaxTestCase):
       input_str = einstr
     input_names = input_str.split(',')
 
-    # TODO(mattjj): handle '...' better here
     shapes = defaultdict(itertools.cycle([2, 3, 4]).next)
-    input_shapes = [tuple(shapes[c] for c in names) for names in input_names]
+    input_shapes = [tuple(shapes[c] for c in names.replace('...', '01'))
+                    for names in input_names]
     operands = [r.randn(*shape) for shape in input_shapes]
 
     check(einstr, *operands)
