@@ -199,12 +199,13 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       for rng in [jtu.rand_default()]))
   def testSolveTriangularBlockedGrad(self, lower, transpose_a, lhs_shape,
                                      rhs_shape, dtype, rng):
-    A = np.tril(rng(lhs_shape, dtype) + 10 * onp.eye(lhs_shape[-1], dtype=dtype))
+    # TODO(frostig): change ensemble to support a bigger rtol
+    A = np.tril(rng(lhs_shape, dtype) + 5 * onp.eye(lhs_shape[-1], dtype=dtype))
     A = A if lower else T(A)
     B = rng(rhs_shape, dtype)
     f = partial(scipy.linalg.solve_triangular, lower=lower,
                 trans=1 if transpose_a else 0)
-    jtu.check_grads(f, (A, B), 2)
+    jtu.check_grads(f, (A, B), 2, rtol=1e-3)
 
 if __name__ == "__main__":
   absltest.main()
