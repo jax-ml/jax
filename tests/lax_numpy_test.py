@@ -50,7 +50,7 @@ unsigned_dtypes = [onp.uint32, onp.uint64]
 bool_dtypes = [onp.bool_]
 default_dtypes = float_dtypes + int_dtypes
 numeric_dtypes = float_dtypes + complex_dtypes + int_dtypes
-
+all_dtypes = numeric_dtypes + bool_dtypes
 
 OpRecord = collections.namedtuple(
   "OpRecord",
@@ -239,7 +239,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for rec in JAX_REDUCER_RECORDS
       for shape in rec.shapes for dtype in rec.dtypes
       for out_dtype in [None] + rec.dtypes
-      for axis in range(-len(shape), len(shape))
+      for axis in set(range(-len(shape), len(shape))) | set([None])
       for keepdims in [False, True]))
   def testReducer(self, onp_op, lnp_op, rng, shape, dtype, out_dtype, axis, keepdims):
     onp_fun = lambda x: onp_op(x, axis, dtype=out_dtype, keepdims=keepdims)
@@ -257,11 +257,25 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "axis": axis, "keepdims": keepdims}
       for rec in JAX_REDUCER_NO_DTYPE_RECORDS
       for shape in rec.shapes for dtype in rec.dtypes
-      for axis in range(-len(shape), len(shape))
+      for axis in set(range(-len(shape), len(shape))) | set([None])
       for keepdims in [False, True]))
   def testReducerNoDtype(self, onp_op, lnp_op, rng, shape, dtype, axis, keepdims):
     onp_fun = lambda x: onp_op(x, axis, keepdims=keepdims)
     lnp_fun = lambda x: lnp_op(x, axis, keepdims=keepdims)
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_axis={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), axis),
+       "shape": shape, "dtype": dtype, "axis": axis}
+      for shape in all_shapes for dtype in all_dtypes
+      for axis in set(range(-len(shape), len(shape))) | set([None])))
+  def testCountNonzero(self, shape, dtype, axis):
+    rng = jtu.rand_some_zero()
+    onp_fun = lambda x: onp.count_nonzero(x, axis)
+    lnp_fun = lambda x: lnp.count_nonzero(x, axis)
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
@@ -512,6 +526,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     onp_fun = lambda arg: onp.diagonal(arg, offset, axis1, axis2)
     lnp_fun = lambda arg: lnp.diagonal(arg, offset, axis1, axis2)
     args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_n={}".format(onp.dtype(dtype).name, n),
+       "dtype": dtype, "n": n}
+      for dtype in default_dtypes
+      for n in list(range(4))))
+  def testIdentity(self, n, dtype):
+    onp_fun = lambda: onp.identity(n, dtype)
+    lnp_fun = lambda: lnp.identity(n, dtype)
+    args_maker = lambda: []
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
