@@ -16,8 +16,13 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from collections import defaultdict
+import itertools
+
 import numpy as onp
 from absl.testing import absltest
+from absl.testing import parameterized
+import six
 
 import jax.numpy as np
 import jax.test_util as jtu
@@ -38,135 +43,238 @@ def check(s, *ops):
 class EinsumTest(jtu.JaxTestCase):
 
   def test_three_operands_1(self):
-    x = rng().randn(3)
-    y = rng().randn(4)
-    z = rng().randn(5)
+    r = rng()
+    x = r.randn(3)
+    y = r.randn(4)
+    z = r.randn(5)
     s = 'i,j,k->ijk'
     check(s, x, y, z)
 
   def test_three_operands_2(self):
-    x = rng().randn(3)
-    y = rng().randn(4)
-    z = rng().randn(5)
+    r = rng()
+    x = r.randn(3)
+    y = r.randn(4)
+    z = r.randn(5)
     s = 'i,j,k->ijk'
     check(s, x, y, z)
 
   def test_two_operands_1(self):
-    x = rng().randn(3, 4)
-    y = rng().randn(4)
+    r = rng()
+    x = r.randn(3, 4)
+    y = r.randn(4)
     s = 'ij,j->i'
     check(s, x, y)
 
   def test_two_operands_2(self):
-    x = rng().randn(3, 4, 5)
-    y = rng().randn(4)
+    r = rng()
+    x = r.randn(3, 4, 5)
+    y = r.randn(4)
     s = 'ijk,j->i'
     check(s, x, y)
 
   def test_two_operands_3(self):
-    x = rng().randn(3, 4, 3)
-    y = rng().randn(3)
+    r = rng()
+    x = r.randn(3, 4, 3)
+    y = r.randn(3)
     s = 'iji,i->j'
     check(s, x, y)
 
   def test_two_operands_4(self):
-    x = rng().randn(3, 4)
-    y = rng().randn(3, 4)
+    r = rng()
+    x = r.randn(3, 4)
+    y = r.randn(3, 4)
     s = 'ij,ij->'
     check(s, x, y)
 
   def test_two_operands_5(self):
-    x = rng().randn(10, 2, 3)
-    y = rng().randn(3, 4)
+    r = rng()
+    x = r.randn(10, 2, 3)
+    y = r.randn(3, 4)
     s = 'nij,jk->nik'
     check(s, x, y)
 
   def test_two_operands_6(self):
     # based on https://github.com/google/jax/issues/37#issuecomment-448572187
-    x = rng().randn(2, 1)
-    y = rng().randn(2, 3, 4)
+    r = rng()
+    x = r.randn(2, 1)
+    y = r.randn(2, 3, 4)
     s = 'sa,shb->shab'
     check(s, x, y)
 
   def test_one_operand_1(self):
-    x = rng().randn(3, 4, 5)
+    r = rng()
+    x = r.randn(3, 4, 5)
     s = 'ijk->j'
     check(s, x)
 
   def test_one_operand_2(self):
-    x = rng().randn(3, 4, 5)
+    r = rng()
+    x = r.randn(3, 4, 5)
     s = 'ijk->kij'
     check(s, x)
 
   def test_one_operand_3(self):
-    x = rng().randn(3, 4, 5)
+    r = rng()
+    x = r.randn(3, 4, 5)
     s = 'ijk->ki'
     check(s, x)
 
   def test_one_operand_4(self):
-    x = rng().randn(3, 4, 5)
+    r = rng()
+    x = r.randn(3, 4, 5)
     s = 'ijk->ki'
     check(s, x)
 
   def test_one_operand_5(self):
-    x = rng().randn(2, 3, 4, 5)
+    r = rng()
+    x = r.randn(2, 3, 4, 5)
     s = '...ijk->...ki'
     check(s, x)
 
   def test_one_operand_6(self):
-    x = rng().randn(3, 4, 5)
+    r = rng()
+    x = r.randn(3, 4, 5)
     s = '...ijk->ki'
     check(s, x)
 
   def test_one_operand_7(self):
-    x = rng().randn(3, 3)
+    r = rng()
+    x = r.randn(3, 3)
     s = 'ii->'
     check(s, x)
 
   def test_one_operand_8(self):
-    x = rng().randn(3, 3)
+    r = rng()
+    x = r.randn(3, 3)
     s = 'ij->'
     check(s, x)
 
   def test_one_operand_9(self):
-    x = rng().randn(3, 3, 3)
+    r = rng()
+    x = r.randn(3, 3, 3)
     s = 'iii->'
     check(s, x)
 
   def test_one_operand_10(self):
-    x = rng().randn(3, 3)
+    r = rng()
+    x = r.randn(3, 3)
     s = 'ii->i'
     check(s, x)
 
   def test_one_operand_11(self):
-    x = rng().randn(3, 3, 4)
+    r = rng()
+    x = r.randn(3, 3, 4)
     s = 'iij->i'
     check(s, x)
 
   def test_one_operand_12(self):
-    x = rng().randn(3, 3, 3)
+    r = rng()
+    x = r.randn(3, 3, 3)
     s = 'iii->i'
     check(s, x)
 
   def test_one_operand_13(self):
-    x = rng().randn(3, 3, 5, 4, 4)
+    r = rng()
+    x = r.randn(3, 3, 5, 4, 4)
     s = 'iijkk->i'
     check(s, x)
 
   def test_one_operand_14(self):
-    x = rng().randn(3, 3, 5, 4, 4)
+    r = rng()
+    x = r.randn(3, 3, 5, 4, 4)
     s = 'iijkk->ik'
     check(s, x)
 
   def test_one_operand_15(self):
-    x = rng().randn(3, 3, 5, 4, 4)
+    r = rng()
+    x = r.randn(3, 3, 5, 4, 4)
     s = 'iijkl->il'
     check(s, x)
 
   def test_one_operand_16(self):
-    x = rng().randn(3, 3)
+    r = rng()
+    x = r.randn(3, 3)
     s = 'ij->ij'
     check(s, x)
+
+  def test_tf_unsupported_1(self):
+    # from https://www.tensorflow.org/api_docs/python/tf/einsum
+    r = rng()
+    x = r.randn(2, 3, 5, 1)
+    y = r.randn(3, 4, 5, 1)
+    s = 'ij...,jk...->ik...'
+    check(s, x, y)
+
+  def test_tf_unsupported_2(self):
+    # from https://www.tensorflow.org/api_docs/python/tf/einsum
+    r = rng()
+    x = r.randn(2, 3, 3)
+    y = r.randn(4)
+    s = 'ijj,k->ik'
+    check(s, x, y)
+
+  def test_tf_unsupported_3(self):
+    # TODO(mattjj): heisenbug! fails sometimes in python3. opt_einsum bug?
+    if six.PY3:
+      return absltest.unittest.skip("py3 failures")
+
+    # from https://www.tensorflow.org/api_docs/python/tf/einsum
+    r = rng()
+    x = r.randn(2, 3)
+    y = r.randn(2, 3)
+    z = r.randn(3, 4)
+    s = 'ij,ij,jk->ik'
+    check(s, x, y, z)
+
+  # these tests are based on https://github.com/dask/dask/pull/3412/files
+  @parameterized.named_parameters(
+      {"testcase_name": "_{}".format(einstr), "einstr": einstr}
+      for einstr in [
+          'abc,bad->abcd',
+          'abcdef,bcdfg->abcdeg',
+          'ea,fb,abcd,gc,hd->efgh',
+          'ab,b',
+          'aa',
+          'a,a->',
+          'a,a->a',
+          'a,a',
+          'a,b',
+          'a,b,c',
+          'a',
+          'ba,b',
+          'ba,b->',
+          'defab,fedbc->defac',
+          'ab...,bc...->ac...',
+          'a...a',
+          'abc...->cba...',
+          '...ab->...a',
+          'a...a->a...',
+          # Following 2 from # https://stackoverflow.com/a/19203475/1611416
+          # '...abc,...abcd->...d',  # TODO hard crash
+          'ab...,b->ab...',
+          # https://github.com/dask/dask/pull/3412#discussion_r182413444
+          'aa->a',
+          'ab,ab,c->c',
+          'aab,bc->ac',
+          'aab,bcc->ac',
+          # 'fdf,cdd,ccd,afe->ae',  # TODO hard crash
+          'fff,fae,bef,def->abd',
+      ])
+  def test_from_dask(self, einstr):
+    r = rng()
+    if '->' in einstr:
+      input_str, result_names = einstr.split('->')
+    else:
+      input_str = einstr
+    input_names = input_str.split(',')
+
+    dims = itertools.cycle([2, 3, 4])
+    shapes = defaultdict(lambda: next(dims))
+    input_shapes = [tuple(shapes[c] for c in names.replace('...', '01'))
+                    for names in input_names]
+    operands = [r.randn(*shape) for shape in input_shapes]
+
+    check(einstr, *operands)
 
 
 if __name__ == '__main__':

@@ -1082,7 +1082,7 @@ def _einsum(operands, contractions):
     input_names = input_str.split(',')
 
     # switch on the number of operands to be processed in this loop iteration.
-    # every case here sets 'result' and 'names'.
+    # every case here sets 'operand' and 'names'.
     if len(operand_indices) == 1:
       operand = operands.pop(operand_indices[0])
       names, = input_names
@@ -1116,47 +1116,47 @@ def _einsum(operands, contractions):
                                    result_names + lhs_names)
 
       contracted_names = contracted_names & (set(lhs_names) | set(rhs_names))
-      batch_names = set(lhs_names) & set(rhs_names) - contracted_names
+      batch_names = (set(lhs_names) & set(rhs_names)) - contracted_names
       lhs_batch, rhs_batch = unzip2((lhs_names.find(n), rhs_names.find(n))
                                     for n in batch_names)
+
+      # NOTE(mattjj): this can fail non-deterministically in python3, maybe
+      # due to opt_einsum
+      assert _all(name in lhs_names and name in rhs_names and
+                  lhs.shape[lhs_names.index(name)] == rhs.shape[rhs_names.index(name)]
+                  for name in contracted_names)
+
+      # move batch dims to the front (required by lax.dot_general, and easier)
+      batch_dims = tuple(range(len(batch_names)))
+      if lhs_batch != rhs_batch or set(lhs_batch) != set(batch_dims):
+        lhs = moveaxis(lhs, lhs_batch, batch_dims)
+        lhs_names = _movechars(lhs_names, lhs_batch, batch_dims)
+        rhs = moveaxis(rhs, rhs_batch, batch_dims)
+        rhs_names = _movechars(rhs_names, rhs_batch, batch_dims)
+        batch_names = ''.join(batch_names)
+      else:
+        batch_dims = tuple(lhs_batch)
+        batch_names = ''.join(lhs_names[i] for i in batch_dims)
+
       if contracted_names:
-        # contract usint lax.dot_general
+        # contract using lax.dot_general
         lhs_cont, rhs_cont = unzip2((lhs_names.index(n), rhs_names.index(n))
                                     for n in contracted_names)
-
-        # lax.dot_general batch dims have to precede non-batch dims
-        batch_dims = tuple(range(len(batch_names)))
-        if lhs_batch != rhs_batch or set(lhs_batch) != set(batch_dims):
-          lhs = moveaxis(lhs, lhs_batch, batch_dims)
-          rhs = moveaxis(rhs, rhs_batch, batch_dims)
-          batch_names = ''.join(batch_names)
-        else:
-          batch_dims = tuple(lhs_batch)
-          batch_names = ''.join(lhs_names[i] for i in batch_dims)
-
         operand = _dot_general(lhs, rhs, lhs_cont, rhs_cont, len(batch_dims))
         deleted_names = batch_names + ''.join(contracted_names)
         names = (batch_names + removechars(lhs_names, deleted_names)
                  + removechars(rhs_names, deleted_names))
       else:
         # no contraction, just a tensor product
-        if lhs_batch != rhs_batch:
-          rhs = moveaxis(rhs, rhs_batch, lhs_batch)
-        batch_names = ''.join(lhs_names[i] for i in lhs_batch)
         nbatch = len(batch_names)
-
-        assert len(lhs_names) == lhs.ndim and len(rhs_names) == rhs.ndim
-        assert lhs_names.startswith(batch_names) and rhs_names.startswith(batch_names)
-
+        assert lhs.shape[:nbatch] == rhs.shape[:nbatch]
         names = batch_names + lhs_names[nbatch:] + rhs_names[nbatch:]
-        lhs_shape = iter(lhs.shape)
-        lhs_shape = [next(lhs_shape) if n in lhs_names else 1 for n in names]
-        rhs_shape = iter(rhs.shape)
-        rhs_shape = [next(rhs_shape) if n in rhs_names else 1 for n in names]
+        lhs_shape = lhs.shape + (1,) * (rhs.ndim - nbatch)
+        rhs_shape = rhs.shape[:nbatch] + (1,) * (lhs.ndim - nbatch) + rhs.shape[nbatch:]
         operand = lax.reshape(lhs, lhs_shape) * lax.reshape(rhs, rhs_shape)
 
     else:
-      raise NotImplementedError
+      raise NotImplementedError  # if this is actually reachable, open an issue!
 
     # the resulting 'operand' with axis labels 'names' should be a permutation
     # of the desired result
@@ -1188,10 +1188,12 @@ def _dot_general(lhs, rhs, lhs_cont, rhs_cont, nbatch):
     # contracting dimension, so if there's more than one we collapse them.
     if ncont > 1:
       lhs_cdims = tuple(range(lhs.ndim - ncont, lhs.ndim))
-      lhs = moveaxis(lhs, lhs_cont, lhs_cdims).reshape(lhs.shape[:-ncont] + (-1,))
+      lhs = moveaxis(lhs, lhs_cont, lhs_cdims)
+      lhs = lhs.reshape(lhs.shape[:-ncont] + (-1,))
 
       rhs_cdims = tuple(range(rhs.ndim - ncont, rhs.ndim))
-      rhs = moveaxis(rhs, rhs_cont, rhs_cdims).reshape(rhs.shape[:-ncont] + (-1,))
+      rhs = moveaxis(rhs, rhs_cont, rhs_cdims)
+      rhs = rhs.reshape(rhs.shape[:-ncont] + (-1,))
     else:
       lhs = moveaxis(lhs, lhs_cont[0], -1)
       rhs = moveaxis(rhs, rhs_cont[0], -1)
@@ -1210,6 +1212,15 @@ def _dot_general(lhs, rhs, lhs_cont, rhs_cont, nbatch):
     dimension_numbers = [(lhs_cont, rhs_cont), (batch_dims, batch_dims)]
     result = lax.dot_general(lhs, rhs, dimension_numbers)
     return lax.reshape(result, result_shape)
+
+
+def _movechars(s, src, dst):
+  """Helper for einsum string munging, like moveaxis on identifier strings."""
+  chars = [c for i, c in enumerate(s) if i not in src]
+  for i, j in sorted(zip(dst, src)):
+    chars.insert(i, s[j])
+  return ''.join(chars)
+
 
 @_wraps(onp.inner)
 def inner(a, b):
