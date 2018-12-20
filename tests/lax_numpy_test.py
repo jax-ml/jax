@@ -72,6 +72,7 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("floor", 1, float_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("greater", 2, default_dtypes, all_shapes, jtu.rand_some_equal(), []),
     op_record("greater_equal", 2, default_dtypes, all_shapes, jtu.rand_some_equal(), []),
+    op_record("isfinite", 1, numeric_dtypes, all_shapes, jtu.rand_some_inf(), []),
     op_record("less", 2, default_dtypes, all_shapes, jtu.rand_some_equal(), []),
     op_record("less_equal", 2, default_dtypes, all_shapes, jtu.rand_some_equal(), []),
     op_record("log", 1, numeric_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
@@ -562,6 +563,25 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     onp_fun = lambda fill_value: onp.full(shape, fill_value, dtype=out_dtype)
     lnp_fun = lambda fill_value: lnp.full(shape, fill_value, dtype=out_dtype)
     args_maker = lambda: [rng((), fill_value_dtype)]
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_inshape={}_filldtype={}_outdtype={}".format(
+          jtu.format_shape_dtype_string(shape, in_dtype),
+          onp.dtype(fill_value_dtype).name,
+          onp.dtype(out_dtype).name),
+       "shape": shape, "in_dtype": in_dtype,
+       "fill_value_dtype": fill_value_dtype, "out_dtype": out_dtype,
+       "rng": jtu.rand_default()}
+      for shape in array_shapes
+      for in_dtype in default_dtypes
+      for fill_value_dtype in default_dtypes
+      for out_dtype in default_dtypes))
+  def testFullLike(self, shape, in_dtype, fill_value_dtype, out_dtype, rng):
+    onp_fun = lambda x, fill_value: onp.full_like(x, fill_value, dtype=out_dtype)
+    lnp_fun = lambda x, fill_value: lnp.full_like(x, fill_value, dtype=out_dtype)
+    args_maker = lambda: [rng(shape, in_dtype), rng((), fill_value_dtype)]
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 

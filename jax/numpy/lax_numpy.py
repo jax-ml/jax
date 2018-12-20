@@ -53,6 +53,7 @@ _sum = builtins.sum
 pi = onp.pi
 e = onp.e
 inf = onp.inf
+NINF = onp.NINF
 nan = onp.nan
 
 # And some numpy utility functions
@@ -103,6 +104,8 @@ float64 = onp.float64
 complex64 = onp.complex64
 complex128 = onp.complex128
 
+complexfloating = onp.complexfloating
+floating = onp.floating
 integer = onp.integer
 
 iinfo = onp.iinfo
@@ -256,7 +259,6 @@ left_shift = _one_to_one_binop(onp.left_shift, lax.shift_left)
 equal = _one_to_one_binop(onp.equal, lax.eq)
 greater_equal = _one_to_one_binop(onp.greater_equal, lax.ge)
 greater = _one_to_one_binop(onp.greater, lax.gt)
-isfinite = _one_to_one_binop(onp.isfinite, lax.is_finite)
 less_equal = _one_to_one_binop(onp.less_equal, lax.le)
 less = _one_to_one_binop(onp.less, lax.lt)
 maximum = _one_to_one_binop(onp.maximum, lax.max)
@@ -596,6 +598,35 @@ def round(a, decimals=0):
 around = round
 
 
+# Caution: If fast math mode is enabled, the semantics of inf and nan are not
+# preserved by XLA/LLVM, and the behavior of inf/nan values is unpredictable.
+# To disable fast math mode on CPU, set the environment variable
+# XLA_FLAGS=--xla_cpu_enable_fast_math=false.
+
+def isfinite(x):
+  dtype = _dtype(x)
+  if issubdtype(dtype, floating):
+    return lax.is_finite(x)
+  elif issubdtype(dtype, complexfloating):
+    return lax.bitwise_and(lax.is_finite(real(x)), lax.is_finite(imag(x)))
+  else:
+    return full_like(x, True, dtype=bool_)
+
+def isinf(x):
+  dtype = _dtype(x)
+  if issubdtype(dtype, floating):
+    return lax.eq(lax.abs(x), inf)
+  elif issubdtype(dtype, complexfloating):
+    return lax.bitwise_or(lax.eq(lax.abs(real(x)), inf),
+                          lax.eq(lax.abs(imag(x)), inf))
+  else:
+    return full_like(x, False, dtype=bool_)
+
+def isnan(x):
+  return lax.bitwise_and(lax.bitwise_not(isfinite(x)),
+                         lax.bitwise_not(isinf(x)))
+
+
 ### Reducers
 
 
@@ -810,6 +841,11 @@ def ones_like(x, dtype=None):
 @_wraps(onp.full)
 def full(shape, fill_value, dtype=None):
   return lax.full(shape, fill_value, dtype)
+
+
+@_wraps(onp.full_like)
+def full_like(a, fill_value, dtype=None):
+  return lax.full_like(a, fill_value, dtype)
 
 
 @_wraps(onp.zeros)
