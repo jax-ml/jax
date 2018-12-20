@@ -44,6 +44,15 @@ class APITest(jtu.JaxTestCase):
     assert grad(f, argnums=1)(1.0, 1.0, 1.0, flag=True) == 2.0
     assert grad(f, argnums=(2, 0))(1.0, 1.0, 1.0, flag=True) == (3.0, 1.0)
 
+  def value_and_grad_argnums(self):
+    def f(x, y, z, flag=False):
+      assert flag
+      return 1.0 * x + 2.0 * y + 3.0 * z
+
+    y = f(1.0, 1.0, 1.0, flag=True)
+    assert value_and_grad(f)(1.0, 1.0, 1.0, flag=True) == (y, 1.0)
+    assert value_and_grad(f, argnums=1)(1.0, 1.0, 1.0, flag=True) == (y, 2.0)
+    assert value_and_grad(f, argnums=(2, 0))(1.0, 1.0, 1.0, flag=True) == (y, (3.0, 1.0))
 
   def test_jit_static_args(self):
     side = []
