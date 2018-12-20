@@ -20,6 +20,7 @@ from __future__ import print_function
 import numpy as onp
 import warnings
 
+from .. import lax
 from .. import lax_linalg
 from .lax_numpy import _not_implemented
 from .lax_numpy import _wraps
@@ -34,6 +35,19 @@ _T = lambda x: np.swapaxes(x, -1, -2)
 def cholesky(a):
   warnings.warn(_EXPERIMENTAL_WARNING)
   return lax_linalg.cholesky(a)
+
+
+@_wraps(onp.linalg.det)
+def det(a):
+  dtype = lax._dtype(a)
+  a_shape = np.shape(a)
+  if len(a_shape) != 2 or a_shape[-1] != a_shape[-2]:
+    msg = "Argument to det() must be a square matrix, got {}"
+    raise ValueError(msg.format(a_shape))
+  lu, pivot = lax_linalg.lu(a)
+  parity = np.count_nonzero(pivot != np.arange(a_shape[-1])) % 2
+  return np.prod(np.diagonal(lu)) * np.array(-2 * parity + 1, dtype=dtype)
+
 
 @_wraps(onp.linalg.inv)
 def inv(a):

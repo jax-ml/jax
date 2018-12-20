@@ -25,7 +25,7 @@ from libcpp.string cimport string
 from cpython.pycapsule cimport PyCapsule_New
 
 from scipy.linalg.cython_blas cimport strsm, dtrsm
-from scipy.linalg.cython_lapack cimport spotrf, dpotrf
+from scipy.linalg.cython_lapack cimport sgetrf, dgetrf, spotrf, dpotrf
 
 import numpy as np
 from jaxlib import xla_client
@@ -144,6 +144,72 @@ def jax_trsm(c, alpha, a, b, left_side=False, lower=False, trans_a=False,
           Shape.array_shape(dtype, a_shape.dimensions(), (0, 1)),
           Shape.array_shape(dtype, b_shape.dimensions(), (0, 1)),
       ))
+
+
+# ?getrf: LU decomposition
+
+cdef void lapack_sgetrf(void* out_tuple, void** data) nogil:
+  cdef int m = (<int32_t*>(data[0]))[0]
+  cdef int n = (<int32_t*>(data[1]))[0]
+  cdef const float* a_in = <float*>(data[2])
+
+  cdef void** out = <void**>(out_tuple)
+  cdef float* a_out = <float*>(out[0])
+  cdef int* ipiv = <int*>(out[1])
+  cdef int* info = <int*>(out[2])
+  if a_out != a_in:
+    memcpy(a_out, a_in, m * n * sizeof(float))
+
+  sgetrf(&m, &n, a_out, &m, ipiv, info)
+
+register_cpu_custom_call_target(b"lapack_sgetrf", <void*>(lapack_sgetrf))
+
+
+cdef void lapack_dgetrf(void* out_tuple, void** data) nogil:
+  cdef int m = (<int32_t*>(data[0]))[0]
+  cdef int n = (<int32_t*>(data[1]))[0]
+  cdef const double* a_in = <double*>(data[2])
+
+  cdef void** out = <void**>(out_tuple)
+  cdef double* a_out = <double*>(out[0])
+  cdef int* ipiv = <int*>(out[1])
+  cdef int* info = <int*>(out[2])
+  if a_out != a_in:
+    memcpy(a_out, a_in, m * n * sizeof(double))
+
+  dgetrf(&m, &n, a_out, &m, ipiv, info)
+
+register_cpu_custom_call_target(b"lapack_dgetrf", <void*>(lapack_dgetrf))
+
+
+def jax_getrf(c, a):
+  assert sizeof(int32_t) == sizeof(int)
+
+  a_shape = c.GetShape(a)
+  dtype = a_shape.element_type()
+  m, n = a_shape.dimensions()
+  if dtype == np.float32:
+    fn = b"lapack_sgetrf"
+  elif dtype == np.float64:
+    fn = b"lapack_dgetrf"
+  else:
+    raise NotImplementedError("Unsupported dtype {}".format(dtype))
+
+  return c.CustomCall(
+      fn,
+      operands=(c.ConstantS32Scalar(m), c.ConstantS32Scalar(n), a),
+      shape_with_layout=Shape.tuple_shape((
+          Shape.array_shape(dtype, (m, n), (0, 1)),
+          Shape.array_shape(np.int32, (min(m, n),), (0,)),
+          Shape.array_shape(np.int32, (), ()),
+      )),
+      operand_shapes_with_layout=(
+          Shape.array_shape(np.int32, (), ()),
+          Shape.array_shape(np.int32, (), ()),
+          Shape.array_shape(dtype, (m, n), (0, 1)),
+      ))
+
+
 
 # ?potrf: Cholesky decomposition
 

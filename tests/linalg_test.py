@@ -21,15 +21,18 @@ from functools import partial
 import itertools
 
 import numpy as onp
+import scipy as osp
 
 from absl.testing import absltest
 from absl.testing import parameterized
 
 from jax import jvp
 from jax import numpy as np
-from jax import scipy
+from jax import scipy as jsp
 from jax import test_util as jtu
 from jax.lib import xla_bridge
+
+from jaxlib import lapack
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -59,6 +62,21 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp.linalg.cholesky, np.linalg.cholesky, args_maker,
                             check_dtypes=True, tol=1e-3)
     self._CompileAndCheck(np.linalg.cholesky, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),
+       "n": n, "dtype": dtype, "rng": rng}
+      for n in [0, 4, 5, 200]
+      for dtype in float_types()
+      for rng in [jtu.rand_default()]))
+  def testDet(self, n, dtype, rng):
+    args_maker = lambda: [rng((n, n), dtype)]
+
+    self._CheckAgainstNumpy(onp.linalg.det, np.linalg.det, args_maker,
+                            check_dtypes=True, tol=1e-3)
+    self._CompileAndCheck(np.linalg.det, args_maker, check_dtypes=True)
+
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_fullmatrices={}".format(
@@ -143,6 +161,35 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
+       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype, "rng": rng}
+      for shape in [(1, 1), (4, 5), (10, 5), (50, 50)]
+      for dtype in float_types()
+      for rng in [jtu.rand_default()]))
+  def testLu(self, shape, dtype, rng):
+    args_maker = lambda: [rng(shape, dtype)]
+
+    self._CheckAgainstNumpy(osp.linalg.lu, jsp.linalg.lu, args_maker,
+                            check_dtypes=True, tol=1e-3)
+    self._CompileAndCheck(jsp.linalg.lu, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),
+       "n": n, "dtype": dtype, "rng": rng}
+      for n in [1, 4, 5, 200]
+      for dtype in float_types()
+      for rng in [jtu.rand_default()]))
+  def testLuFactor(self, n, dtype, rng):
+    args_maker = lambda: [rng((n, n), dtype)]
+
+    self._CheckAgainstNumpy(osp.linalg.lu_factor, jsp.linalg.lu_factor,
+                            args_maker, check_dtypes=True, tol=1e-3)
+    self._CompileAndCheck(jsp.linalg.lu_factor, args_maker, check_dtypes=True)
+
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
        "_lhs={}_rhs={}_lower={}_transposea={}".format(
            jtu.format_shape_dtype_string(lhs_shape, dtype),
            jtu.format_shape_dtype_string(rhs_shape, dtype),
@@ -158,7 +205,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       ]
       for dtype in float_types()
       for rng in [jtu.rand_default()]))
-  def testSolveTriangularBlocked(self, lower, transpose_a, lhs_shape,
+  def testSolveTriangular(self, lower, transpose_a, lhs_shape,
                                  rhs_shape, dtype, rng):
     k = rng(lhs_shape, dtype)
     l = onp.linalg.cholesky(onp.matmul(k, T(k))
@@ -175,7 +222,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
     # The standard scipy.linalg.solve_triangular doesn't support broadcasting.
     # But it seems like an inevitable extension so we support it.
-    ans = scipy.linalg.solve_triangular(
+    ans = jsp.linalg.solve_triangular(
         l if lower else T(l), b, trans=1 if transpose_a else 0, lower=lower)
 
     self.assertAllClose(onp_ans, ans, check_dtypes=True)
@@ -197,13 +244,13 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       ]
       for dtype in float_types()
       for rng in [jtu.rand_default()]))
-  def testSolveTriangularBlockedGrad(self, lower, transpose_a, lhs_shape,
+  def testSolveTriangularGrad(self, lower, transpose_a, lhs_shape,
                                      rhs_shape, dtype, rng):
     # TODO(frostig): change ensemble to support a bigger rtol
     A = np.tril(rng(lhs_shape, dtype) + 5 * onp.eye(lhs_shape[-1], dtype=dtype))
     A = A if lower else T(A)
     B = rng(rhs_shape, dtype)
-    f = partial(scipy.linalg.solve_triangular, lower=lower,
+    f = partial(jsp.linalg.solve_triangular, lower=lower,
                 trans=1 if transpose_a else 0)
     jtu.check_grads(f, (A, B), 2, rtol=1e-3)
 
