@@ -126,20 +126,24 @@ def split_merge(predicate, xs):
   return lhs, rhs, merge
 
 
+class _MemoizeNoEntry(object):
+  pass
+
+_NO_MEMO_ENTRY = _MemoizeNoEntry
+
 def memoize(fun):
   cache = {}
   def memoized_fun(*args, **kwargs):
     key = (args, tuple(kwargs and sorted(kwargs.items())))
     try:
-      return cache[key]
-    except KeyError:
-      ans = cache[key] = fun(*args, **kwargs)
-      return ans
+      ans = cache.get(key, _NO_MEMO_ENTRY)
+      if ans != _NO_MEMO_ENTRY:
+        return ans
     except TypeError:
-      if allow_memoize_hash_failures:
-        return fun(*args, **kwargs)
-      else:
+      if not allow_memoize_hash_failures:
         raise
+    ans = cache[key] = fun(*args, **kwargs)
+    return ans
   return memoized_fun
 
 
