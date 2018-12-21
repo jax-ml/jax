@@ -1346,6 +1346,41 @@ def outer(a, b, out=None):
   return ravel(a)[:, None] * ravel(b)
 
 
+@_wraps(onp.kron)
+def kron(a, b):
+  a_shape = shape(a)
+  b_shape = shape(b)
+  a_ndims = len(a_shape)
+  b_ndims = len(b_shape)
+  a = array(a)
+  b = array(b)
+  d = _min(a_ndims, b_ndims)
+  if d == 0:
+    return a * b
+  a_broadcast_dims = list(range(a_ndims - d, a_ndims + d, 2))
+  a_broadcast_shape = onp.ones(a_ndims + d, dtype=onp.int64)
+  a_broadcast_shape[:-2*d] = a_shape[:-d]
+  a_broadcast_shape[a_broadcast_dims] = a_shape[-d:]
+
+  b_broadcast_dims = list(range(b_ndims -d + 1, b_ndims + d + 1, 2))
+  b_broadcast_shape = onp.ones(b_ndims + d, dtype=onp.int64)
+  b_broadcast_shape[:-2*d] = b_shape[:-d]
+  b_broadcast_shape[b_broadcast_dims] = b_shape[-d:]
+
+  if a_ndims > b_ndims:
+    out_shape = onp.array(a_shape, dtype=onp.int64)
+    out_shape[-d:] *= onp.array(b_shape, dtype=onp.int64)
+  else:
+    out_shape = onp.array(b_shape, dtype=onp.int64)
+    out_shape[-d:] *= onp.array(a_shape, dtype=onp.int64)
+
+  a_broadcast = lax.broadcast_in_dim(
+    a, a_broadcast_shape, list(range(a_ndims - d)) + a_broadcast_dims)
+  b_broadcast = lax.broadcast_in_dim(
+    b, b_broadcast_shape, list(range(b_ndims - d)) + b_broadcast_dims)
+  return lax.reshape(a_broadcast * b_broadcast, out_shape)
+
+
 ### Misc
 
 

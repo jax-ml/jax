@@ -109,6 +109,7 @@ JAX_COMPOUND_OP_RECORDS = [
               test_name="expm1_large"),
     op_record("expm1", 1, numeric_dtypes, all_shapes, jtu.rand_small_positive(), []),
     op_record("floor_divide", 2, default_dtypes, all_shapes, jtu.rand_nonzero(), ["rev"]),
+    op_record("kron", 2, default_dtypes, nonempty_shapes, jtu.rand_default(), []),
     op_record("outer", 2, default_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("isclose", 2, float_dtypes, all_shapes, jtu.rand_small_positive(), []),
     op_record("log2", 1, numeric_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
