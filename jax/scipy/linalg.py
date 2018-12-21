@@ -64,7 +64,7 @@ def lu(a, permute_l=False, overwrite_a=False, check_finite=True):
   m, n = np.shape(a)
   lu, pivots = lax_linalg.lu(a)
   permutation = lax_linalg.lu_pivots_to_permutation(pivots, m)
-  p = np.array(permutation == np.arange(m)[:, None], dtype=dtype)
+  p = np.real(np.array(permutation == np.arange(m)[:, None], dtype=dtype))
   k = min(m, n)
   l = np.tril(lu, -1)[:, :k] + np.eye(m, k, dtype=dtype)
   u = np.triu(lu)[:k, :]

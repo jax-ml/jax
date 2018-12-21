@@ -29,7 +29,8 @@ from scipy.linalg.cython_lapack cimport sgetrf, dgetrf, cgetrf, spotrf, dpotrf
 
 import numpy as np
 from jaxlib import xla_client
-from jaxlib.xla_client import Shape
+
+Shape = xla_client.Shape
 
 
 cdef register_cpu_custom_call_target(fn_name, void* fn):
