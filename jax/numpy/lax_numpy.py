@@ -603,6 +603,7 @@ around = round
 # To disable fast math mode on CPU, set the environment variable
 # XLA_FLAGS=--xla_cpu_enable_fast_math=false.
 
+@_wraps(onp.isfinite)
 def isfinite(x):
   dtype = _dtype(x)
   if issubdtype(dtype, floating):
@@ -612,6 +613,7 @@ def isfinite(x):
   else:
     return full_like(x, True, dtype=bool_)
 
+@_wraps(onp.isinf)
 def isinf(x):
   dtype = _dtype(x)
   if issubdtype(dtype, floating):
@@ -622,10 +624,33 @@ def isinf(x):
   else:
     return full_like(x, False, dtype=bool_)
 
+def _isposneginf(infinity, x):
+  dtype = _dtype(x)
+  if issubdtype(dtype, floating):
+    return lax.eq(x, infinity)
+  elif issubdtype(dtype, complexfloating):
+    raise ValueError("isposinf/isneginf are not well defined for complex types")
+  else:
+    return full_like(x, False, dtype=bool_)
+
+isposinf = _wraps(onp.isposinf)(partial(_isposneginf, inf))
+isneginf = _wraps(onp.isneginf)(partial(_isposneginf, -inf))
+
+@_wraps(onp.isnan)
 def isnan(x):
   return lax.bitwise_and(lax.bitwise_not(isfinite(x)),
                          lax.bitwise_not(isinf(x)))
 
+@_wraps(onp.nan_to_num)
+def nan_to_num(x, copy=True):
+  del copy
+  if iscomplexobj(x):
+    raise ValueError("nan_to_num is not well defined for complex types")
+  info = finfo(xla_bridge.canonicalize_dtype(_dtype(x)))
+  x = where(isnan(x), _constant_like(x, 0), x)
+  x = where(isposinf(x), _constant_like(x, info.max), x)
+  x = where(isneginf(x), _constant_like(x, info.min), x)
+  return x
 
 ### Reducers
 
@@ -739,6 +764,24 @@ def count_nonzero(a, axis=None):
   return sum(lax.ne(a, _constant_like(a, 0)), axis=axis,
              dtype=xla_bridge.canonicalize_dtype(onp.int_))
 
+
+def _make_nan_reduction(onp_reduction, np_reduction, init_val, nan_if_all_nan):
+  @_wraps(onp_reduction)
+  def nan_reduction(a, axis=None, out=None, keepdims=False, **kwargs):
+    out = np_reduction(where(isnan(a), _reduction_init_val(a, init_val), a),
+                       axis=axis, out=out, keepdims=keepdims, **kwargs)
+    if nan_if_all_nan:
+      return where(all(isnan(a), axis=axis, keepdims=keepdims),
+                   _constant_like(a, nan), out)
+    else:
+      return out
+
+  return nan_reduction
+
+nanmin = _make_nan_reduction(onp.nanmin, min, inf, nan_if_all_nan=True)
+nanmax = _make_nan_reduction(onp.nanmax, max, -inf, nan_if_all_nan=True)
+nansum = _make_nan_reduction(onp.nansum, sum, 0, nan_if_all_nan=False)
+nanprod = _make_nan_reduction(onp.nanprod, prod, 1, nan_if_all_nan=False)
 
 ### Array-creation functions
 
