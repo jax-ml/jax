@@ -20,6 +20,7 @@ import warnings
 
 import scipy.linalg
 
+from .. import lax
 from .. import lax_linalg
 from ..numpy.lax_numpy import _wraps
 from ..numpy import lax_numpy as np
@@ -36,11 +37,41 @@ def cholesky(a, lower=False, overwrite_a=False, check_finite=True):
   return l if lower else np.conj(l.T)
 
 
+@_wraps(scipy.linalg.det)
+def det(a, overwrite_a=False, check_finite=True):
+  warnings.warn(_EXPERIMENTAL_WARNING)
+  del overwrite_a, check_finite
+  return np_linalg.det(a)
+
+
 @_wraps(scipy.linalg.inv)
 def inv(a, overwrite_a=False, check_finite=True):
   warnings.warn(_EXPERIMENTAL_WARNING)
   del overwrite_a, check_finite
   return np_linalg.inv(a)
+
+
+@_wraps(scipy.linalg.lu_factor)
+def lu_factor(a, overwrite_a=False, check_finite=True):
+  del overwrite_a, check_finite
+  return lax_linalg.lu(a)
+
+
+@_wraps(scipy.linalg.lu)
+def lu(a, permute_l=False, overwrite_a=False, check_finite=True):
+  del overwrite_a, check_finite
+  dtype = lax._dtype(a)
+  m, n = np.shape(a)
+  lu, pivots = lax_linalg.lu(a)
+  permutation = lax_linalg.lu_pivots_to_permutation(pivots, m)
+  p = np.array(permutation == np.arange(m)[:, None], dtype=dtype)
+  k = min(m, n)
+  l = np.tril(lu, -1)[:, :k] + np.eye(m, k, dtype=dtype)
+  u = np.triu(lu)[:k, :]
+  if permute_l:
+    return np.matmul(p, l), u
+  else:
+    return p, l, u
 
 
 @_wraps(scipy.linalg.qr)

@@ -28,11 +28,13 @@ from jax.abstract_arrays import ShapedArray
 from jax.core import Primitive
 from jax.lax import (standard_primitive, standard_unop, binop_dtype_rule,
                      _float, _complex, _input_dtype)
-import jaxlib
+from jaxlib import lapack
 
 # traceables
 
 def cholesky(x): return cholesky_p.bind(x)
+
+def lu(x): return lu_p.bind(x)
 
 def qr(x, full_matrices=True):
   q, r = qr_p.bind(x, full_matrices=full_matrices)
@@ -76,15 +78,14 @@ def cholesky_cpu_translation_rule(c, operand):
   shape = c.GetShape(operand)
   if len(shape.dimensions()) == 2 and (
     shape.element_type() == np.float32 or shape.element_type() == np.float64):
-    return c.GetTupleElement(jaxlib.lapack.jax_potrf(c, operand, lower=True), 0)
+    return c.GetTupleElement(lapack.jax_potrf(c, operand, lower=True), 0)
   else:
     # Fall back to the HLO implementation for batched Cholesky decomposition or
     # unsupported types.
     # TODO(phawkins): support LAPACK primitives in batched mode.
     return c.Cholesky(operand)
 
-if hasattr(jaxlib, "lapack"):
-  xla.backend_specific_translations['Host'][cholesky_p] = cholesky_cpu_translation_rule
+xla.backend_specific_translations['Host'][cholesky_p] = cholesky_cpu_translation_rule
 
 
 triangular_solve_dtype_rule = partial(
@@ -140,11 +141,11 @@ def triangular_solve_cpu_translation_rule(
     c, a, b, left_side, lower, transpose_a, conjugate_a):
   shape = c.GetShape(a)
   if len(shape.dimensions()) == 2 and shape.element_type() == np.float32:
-    return jaxlib.lapack.jax_trsm(
+    return lapack.jax_trsm(
       c, c.ConstantF32Scalar(1.0), a, b, left_side, lower, transpose_a,
       conjugate_a)
   elif len(shape.dimensions()) == 2 and shape.element_type() == np.float64:
-    return jaxlib.lapack.jax_trsm(
+    return lapack.jax_trsm(
       c, c.ConstantF64Scalar(1.0), a, b, left_side, lower, transpose_a,
       conjugate_a)
   else:
@@ -153,9 +154,81 @@ def triangular_solve_cpu_translation_rule(
     # TODO(phawkins): support BLAS primitives in batched mode.
     return c.TriangularSolve(a, b, left_side, lower, transpose_a, conjugate_a)
 
-if hasattr(jaxlib, "lapack"):
-  xla.backend_specific_translations['Host'][triangular_solve_p] = triangular_solve_cpu_translation_rule
+xla.backend_specific_translations['Host'][triangular_solve_p] = triangular_solve_cpu_translation_rule
 
+
+# LU decomposition
+
+# Computes a pivoted LU decomposition such that
+# PA = LU
+# In the style of LAPACK, LU are stored in the same matrix.
+# TODO(phawkins): add a mechanism to report errors for singular matrices.
+
+def lu_impl(operand):
+  lu, pivot = xla.apply_primitive(lu_p, operand)
+  return core.pack((lu, pivot))
+
+def lu_translation_rule(c, operand):
+  raise NotImplementedError(
+    "LU decomposition is only implemented on the CPU backend")
+
+def lu_abstract_eval(operand):
+  if isinstance(operand, ShapedArray):
+    if operand.ndim < 2:
+      raise ValueError("Argument to LU decomposition must have ndims >= 2")
+
+    batch_dims = operand.shape[:-2]
+    m = operand.shape[-2]
+    n = operand.shape[-1]
+    pivot = ShapedArray(batch_dims + (min(m, n),), np.int32)
+  else:
+    pivot = operand
+  return core.AbstractTuple((operand, pivot))
+
+lu_p = Primitive('lu')
+lu_p.def_impl(lu_impl)
+lu_p.def_abstract_eval(lu_abstract_eval)
+xla.translations[lu_p] = lu_translation_rule
+
+def lu_cpu_translation_rule(c, operand):
+  shape = c.GetShape(operand)
+  if len(shape.dimensions()) == 2 and (
+    shape.element_type() == np.float32 or shape.element_type() == np.float64):
+    out = lapack.jax_getrf(c, operand)
+    lu = c.GetTupleElement(out, 0)
+    # Subtract 1 from the pivot to get 0-based indices.
+    pivot = c.Sub(c.GetTupleElement(out, 1), c.ConstantS32Scalar(1))
+    # Throw away the `info` value, because we have no way to report errors.
+    return c.Tuple(lu, pivot)
+  else:
+    raise NotImplementedError("Only unbatched LU decomposition is implemented")
+
+# TODO(phawkins): The hasattr() test here is to avoid incompatibilities between
+# jax and an older jaxlib. Remove after a jaxlib release includes jax_getrf.
+if hasattr(lapack, "jax_getrf"):
+  xla.backend_specific_translations['Host'][lu_p] = lu_cpu_translation_rule
+
+
+def lu_pivots_to_permutation(swaps, k):
+  """Converts the pivots (row swaps) returned by LU to a permutation."""
+
+  def body_fn(i, loop_carry):
+    swaps, permutation = loop_carry
+    j = swaps[i]
+    x, y = np.ravel(permutation[i]), np.ravel(permutation[j])
+    permutation = lax.dynamic_update_index_in_dim(permutation, y, i, axis=0)
+    permutation = lax.dynamic_update_index_in_dim(permutation, x, j, axis=0)
+    return swaps, permutation
+
+  n, = np.shape(swaps)
+  permutation = np.arange(k)
+  _, permutation = lax.fori_loop(onp.array(0, onp.int32), onp.array(n, onp.int32),
+                                 body_fn, (swaps, permutation))
+  return permutation
+
+
+
+# QR decomposition
 
 def qr_impl(operand, full_matrices):
   q, r = xla.apply_primitive(qr_p, operand, full_matrices=full_matrices)
@@ -178,9 +251,6 @@ def qr_abstract_eval(operand, full_matrices):
     q = operand
     r = operand
   return core.AbstractTuple((q, r))
-
-def qr_dtype_rule(operand, full_matrices=True):
-  return operand.dtype
 
 def qr_jvp_rule(primals, tangents, full_matrices):
   # See j-towns.github.io/papers/qr-derivative.pdf for a terse derivation.
