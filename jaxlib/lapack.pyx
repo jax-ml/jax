@@ -25,7 +25,7 @@ from libcpp.string cimport string
 from cpython.pycapsule cimport PyCapsule_New
 
 from scipy.linalg.cython_blas cimport strsm, dtrsm
-from scipy.linalg.cython_lapack cimport sgetrf, dgetrf, spotrf, dpotrf
+from scipy.linalg.cython_lapack cimport sgetrf, dgetrf, cgetrf, spotrf, dpotrf
 
 import numpy as np
 from jaxlib import xla_client
@@ -182,6 +182,23 @@ cdef void lapack_dgetrf(void* out_tuple, void** data) nogil:
 register_cpu_custom_call_target(b"lapack_dgetrf", <void*>(lapack_dgetrf))
 
 
+cdef void lapack_cgetrf(void* out_tuple, void** data) nogil:
+  cdef int m = (<int32_t*>(data[0]))[0]
+  cdef int n = (<int32_t*>(data[1]))[0]
+  cdef const float complex* a_in = <float complex*>(data[2])
+
+  cdef void** out = <void**>(out_tuple)
+  cdef float complex* a_out = <float complex*>(out[0])
+  cdef int* ipiv = <int*>(out[1])
+  cdef int* info = <int*>(out[2])
+  if a_out != a_in:
+    memcpy(a_out, a_in, m * n * sizeof(float complex))
+
+  cgetrf(&m, &n, a_out, &m, ipiv, info)
+
+register_cpu_custom_call_target(b"lapack_cgetrf", <void*>(lapack_cgetrf))
+
+
 def jax_getrf(c, a):
   assert sizeof(int32_t) == sizeof(int)
 
@@ -192,6 +209,8 @@ def jax_getrf(c, a):
     fn = b"lapack_sgetrf"
   elif dtype == np.float64:
     fn = b"lapack_dgetrf"
+  elif dtype == np.complex64:
+    fn = b"lapack_cgetrf"
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
 
