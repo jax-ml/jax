@@ -229,40 +229,49 @@ def reducer_batcher(prim, batched_args, batch_dims, axes, **kwargs):
   return prim.bind(operand, axes=axes, **kwargs), bdim_out
 
 def add_batched(batched_args, batch_dims):
-  xs, ys = batched_args
   bdx, bdy = batch_dims
   if bdx == bdy:
+    xs, ys = batched_args
     return add_jaxvals_p.bind(xs, ys), bdx
   else:
-    raise NotImplementedError  # TODO(mattjj)
+    xs, ys = map(bdim_at_front, batched_args, batch_dims)
+    return add_jaxvals_p.bind(xs, ys), 0
 primitive_batchers[add_jaxvals_p] = add_batched
 
 
 ### util
 
+# These utilities depend on primitives for things like broadcasting, reshaping,
+# and transposition on arrays. To avoid a circular import from depending on
+# lax.py, these functions use method dispatch on their arguments, which could be
+# DeviceArrays, numpy.ndarrays, or traced versions of those. This strategy
+# almost works, except for broadcast, for which raw numpy.ndarrays don't have a
+# method. To handle that case, the `broadcast` function uses a try/except.
+
 
 def bdim_at_front(x, bdim, broadcast_size=1):
   if bdim is None:
-    return broadcast(x, broadcast_size) if onp.ndim(x) else x
+    return broadcast(x, broadcast_size)
   else:
     return move_dim_to_front(x, bdim)
 
 def move_dim_to_front(x, dim):
-  assert 0 <= dim < onp.ndim(x)
-  if dim == 0:
-    return x
+  aval = get_aval(x)
+  if type(aval) is AbstractTuple:
+    return pack(map(partial(move_dim_to_front, dim=dim), x))
+  elif isinstance(aval, ShapedArray):
+    assert 0 <= dim < onp.ndim(x)
+    if dim == 0:
+      return x
+    else:
+      perm = (dim,) + tuple(range(dim)) + tuple(range(dim + 1, onp.ndim(x)))
+      return x.transpose(perm)
   else:
-    perm = (dim,) + tuple(range(dim)) + tuple(range(dim + 1, onp.ndim(x)))
-    return x.transpose(perm)
-
-def handle_scalar_broadcasting(nd, x, bdim):
-  if bdim is None or nd == onp.ndim(x):
-    return x
-  else:
-    return x.reshape(x.shape + (1,) * (nd - x.ndim))
+    raise TypeError(type(x))
 
 def dimsize(dim, x):
-  if type(x) is JaxTuple:
+  aval = get_aval(x)
+  if type(aval) is AbstractTuple:
     return reduce(set.union, map(partial(dimsize, dim), x))
   elif type(dim) is int:
     return {x.shape[dim]}
@@ -298,8 +307,26 @@ def moveaxis(sz, dst, src, x):
     raise TypeError(type(aval))
 
 def broadcast(x, sz):
-  try:
-    return x.broadcast((sz,))
-  except AttributeError:
-    assert not isinstance(x, Tracer)
-    return onp.broadcast_to(x, (sz,) + onp.shape(x))
+  aval = get_aval(x)
+  if type(aval) is AbstractTuple:
+    return pack(map(partial(broadcast, sz=sz), x))
+  elif isinstance(aval, ShapedArray):
+    # for scalars, don't actually broadcast
+    if not onp.ndim(x):
+      return x
+
+    # See comment at the top of this section about this try/except.
+    try:
+      return x.broadcast((sz,))
+    except AttributeError:
+      assert not isinstance(x, Tracer)
+      return onp.broadcast_to(x, (sz,) + onp.shape(x))
+  else:
+    raise TypeError(type(x))
+
+def handle_scalar_broadcasting(nd, x, bdim):
+  assert isinstance(get_aval(x), ShapedArray)
+  if bdim is None or nd == onp.ndim(x):
+    return x
+  else:
+    return x.reshape(x.shape + (1,) * (nd - x.ndim))
