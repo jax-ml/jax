@@ -190,10 +190,11 @@ lu_p.def_impl(lu_impl)
 lu_p.def_abstract_eval(lu_abstract_eval)
 xla.translations[lu_p] = lu_translation_rule
 
+_lu_cpu_types = {np.float32, np.float64, np.complex64}
+
 def lu_cpu_translation_rule(c, operand):
   shape = c.GetShape(operand)
-  if len(shape.dimensions()) == 2 and (
-    shape.element_type() == np.float32 or shape.element_type() == np.float64):
+  if len(shape.dimensions()) == 2 and shape.element_type().type in _lu_cpu_types:
     out = lapack.jax_getrf(c, operand)
     lu = c.GetTupleElement(out, 0)
     # Subtract 1 from the pivot to get 0-based indices.

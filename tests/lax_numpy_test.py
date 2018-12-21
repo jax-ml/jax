@@ -520,7 +520,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "axis2": axis2, "rng": jtu.rand_default()}
       for dtype in default_dtypes
       for shape in [shape for shape in all_shapes if len(shape) >= 2]
-      for (axis1, axis2) in itertools.combinations(range(len(shape)), 2)
+      for axis1 in range(-len(shape), len(shape))
+      for axis2 in [a for a in range(-len(shape), len(shape))
+                    if a % len(shape) != axis1 % len(shape)]
       for offset in list(range(-4, 4))))
   def testDiagonal(self, shape, dtype, offset, axis1, axis2, rng):
     onp_fun = lambda arg: onp.diagonal(arg, offset, axis1, axis2)
