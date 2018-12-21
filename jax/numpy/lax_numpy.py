@@ -992,9 +992,12 @@ diag_indices = onp.diag_indices
 @_wraps(onp.diagonal)
 def diagonal(a, offset=0, axis1=0, axis2=1):
   a_shape = shape(a)
+  a_ndims = len(a_shape)
 
   # Move the two dimensions to the end.
-  perm = [i for i in range(len(a_shape)) if i != axis1 and i != axis2]
+  axis1 %= a_ndims
+  axis2 %= a_ndims
+  perm = [i for i in range(a_ndims) if i != axis1 and i != axis2]
   perm = perm + [axis1, axis2]
   a = lax.transpose(a, perm)
 

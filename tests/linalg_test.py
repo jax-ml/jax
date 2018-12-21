@@ -44,6 +44,9 @@ def float_types():
   return set(onp.dtype(xla_bridge.canonicalize_dtype(dtype))
              for dtype in [onp.float32, onp.float64])
 
+def complex_types():
+  return {onp.complex64}
+
 
 class NumpyLinalgTest(jtu.JaxTestCase):
 
@@ -68,8 +71,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       {"testcase_name":
        "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),
        "n": n, "dtype": dtype, "rng": rng}
-      for n in [0, 4, 5, 200]
-      for dtype in float_types()
+      for n in [0, 4, 5, 50]
+      for dtype in float_types() | complex_types()
       for rng in [jtu.rand_default()]))
   @jtu.skip_on_devices("gpu", "tpu")
   def testDet(self, n, dtype, rng):
@@ -81,6 +84,22 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                             check_dtypes=True, tol=1e-3)
     self._CompileAndCheck(np.linalg.det, args_maker, check_dtypes=True)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),
+       "n": n, "dtype": dtype, "rng": rng}
+      for n in [0, 4, 10, 200]
+      for dtype in float_types() | complex_types()
+      for rng in [jtu.rand_default()]))
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testSlogdet(self, n, dtype, rng):
+    if not hasattr(lapack, "jax_getrf"):
+      self.skipTest("No LU implementation available")
+    args_maker = lambda: [rng((n, n), dtype)]
+
+    self._CheckAgainstNumpy(onp.linalg.slogdet, np.linalg.slogdet, args_maker,
+                            check_dtypes=True, tol=1e-3)
+    self._CompileAndCheck(np.linalg.slogdet, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_fullmatrices={}".format(
@@ -169,7 +188,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype, "rng": rng}
       for shape in [(1, 1), (4, 5), (10, 5), (50, 50)]
-      for dtype in float_types()
+      for dtype in float_types() | complex_types()
       for rng in [jtu.rand_default()]))
   @jtu.skip_on_devices("gpu", "tpu")
   def testLu(self, shape, dtype, rng):
@@ -188,7 +207,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
        "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),
        "n": n, "dtype": dtype, "rng": rng}
       for n in [1, 4, 5, 200]
-      for dtype in float_types()
+      for dtype in float_types() | complex_types()
       for rng in [jtu.rand_default()]))
   @jtu.skip_on_devices("gpu", "tpu")
   def testLuFactor(self, n, dtype, rng):
