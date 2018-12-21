@@ -570,7 +570,8 @@ def fori_loop(lower, upper, body_fun, init_val):
   # The `lt` and `add` functions are added to the namespace programmatically.
   _, _, result = _while_loop(
       lambda upper_i_x: lt(upper_i_x[1], upper_i_x[0]),
-      lambda upper_i_x: (upper_i_x[0], add(upper_i_x[1], 1),
+      lambda upper_i_x: (upper_i_x[0],
+                         add(upper_i_x[1], onp.array(1, _dtype(upper_i_x[1]))),
                          body_fun(upper_i_x[1], upper_i_x[2])),
       (upper, lower, init_val))
   return result
@@ -2681,7 +2682,6 @@ def subvals(lst, replace):
 def _abstractify(x):
   # abstractify wrapper used internally for primitives like _while_loop
   if isinstance(x, core.Tracer):
-    # TODO(mattjj,dougalm): check that it's at least ShapedArray
-    return pe.PartialVal((x.aval, core.unit))
+    return pe.PartialVal((xla.abstractify(x.aval), core.unit))
   else:
     return pe.PartialVal((xla.abstractify(x), core.unit))
