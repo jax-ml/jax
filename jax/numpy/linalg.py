@@ -92,6 +92,42 @@ def qr(a, mode="reduced"):
     return r
   return q, r
 
+
+@_wraps(onp.linalg.solve)
+def solve(a, b):
+  a_shape = np.shape(a)
+  b_shape = np.shape(b)
+  a_ndims = len(a_shape)
+  b_ndims = len(b_shape)
+  if not (a_ndims >= 2 and a_shape[-1] == a_shape[-2] and
+          (a_ndims == b_ndims or a_ndims == b_ndims + 1)):
+    msg = ("The arguments to solve must have shapes a=[..., m, m] and "
+           "b=[..., m, k] or b=[..., m]; got a={} and b={}")
+    raise ValueError(msg.format(a_shape, b_shape))
+  lu, pivots = lax_linalg.lu(a)
+  dtype = lax._dtype(a)
+
+  # TODO(phawkins): add unit_diagonal support to solve_triangular, use it here
+  # instead of explicit masking of l.
+  m = a_shape[-1]
+  l = np.tril(lu, -1)[:, :m] + np.eye(m, m, dtype=dtype)
+
+  # TODO(phawkins): triangular_solve only supports matrices on the RHS, so we
+  # add a dummy dimension. Extend it to support vectors and simplify this.
+  x = b if a_ndims == b_ndims else b[..., None]
+
+  # TODO(phawkins): use a gather rather than a matrix multiplication here.
+  permutation = lax_linalg.lu_pivots_to_permutation(pivots, m)
+  p = np.array(permutation[:, None] == np.arange(m), dtype=dtype)
+  x = np.matmul(p, x)
+
+  x = lax_linalg.triangular_solve(l, x, left_side=True, lower=True)
+  x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=False)
+
+  return x[..., 0] if a_ndims != b_ndims else x
+
+
+
 for func in get_module_functions(onp.linalg):
   if func.__name__ not in globals():
     globals()[func.__name__] = _not_implemented(func)
