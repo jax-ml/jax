@@ -203,7 +203,10 @@ def lu_cpu_translation_rule(c, operand):
   else:
     raise NotImplementedError("Only unbatched LU decomposition is implemented")
 
-xla.backend_specific_translations['Host'][lu_p] = lu_cpu_translation_rule
+# TODO(phawkins): The hasattr() test here is to avoid incompatibilities between
+# jax and an older jaxlib. Remove after a jaxlib release includes jax_getrf.
+if hasattr(lapack, "jax_getrf"):
+  xla.backend_specific_translations['Host'][lu_p] = lu_cpu_translation_rule
 
 
 def lu_pivots_to_permutation(swaps, k):

@@ -63,6 +63,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                             check_dtypes=True, tol=1e-3)
     self._CompileAndCheck(np.linalg.cholesky, args_maker, check_dtypes=True)
 
+  # TODO(phawkins): enable when there is an LU implementation for GPU/TPU.
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),
@@ -70,7 +71,10 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for n in [0, 4, 5, 200]
       for dtype in float_types()
       for rng in [jtu.rand_default()]))
+  @jtu.skip_on_devices("gpu", "tpu")
   def testDet(self, n, dtype, rng):
+    if not hasattr(lapack, "jax_getrf"):
+      self.skipTest("No LU implementation available")
     args_maker = lambda: [rng((n, n), dtype)]
 
     self._CheckAgainstNumpy(onp.linalg.det, np.linalg.det, args_maker,
@@ -159,6 +163,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
 class ScipyLinalgTest(jtu.JaxTestCase):
 
+  # TODO(phawkins): enable when there is an LU implementation for GPU/TPU.
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
@@ -166,13 +171,18 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       for shape in [(1, 1), (4, 5), (10, 5), (50, 50)]
       for dtype in float_types()
       for rng in [jtu.rand_default()]))
+  @jtu.skip_on_devices("gpu", "tpu")
   def testLu(self, shape, dtype, rng):
+    # TODO(phawkins): remove this after a jaxlib release.
+    if not hasattr(lapack, "jax_getrf"):
+      self.skipTest("No LU implementation available")
     args_maker = lambda: [rng(shape, dtype)]
 
     self._CheckAgainstNumpy(osp.linalg.lu, jsp.linalg.lu, args_maker,
                             check_dtypes=True, tol=1e-3)
     self._CompileAndCheck(jsp.linalg.lu, args_maker, check_dtypes=True)
 
+  # TODO(phawkins): enable when there is an LU implementation for GPU/TPU.
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),
@@ -180,7 +190,11 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       for n in [1, 4, 5, 200]
       for dtype in float_types()
       for rng in [jtu.rand_default()]))
+  @jtu.skip_on_devices("gpu", "tpu")
   def testLuFactor(self, n, dtype, rng):
+    # TODO(phawkins): remove this after a jaxlib release.
+    if not hasattr(lapack, "jax_getrf"):
+      self.skipTest("No LU implementation available")
     args_maker = lambda: [rng((n, n), dtype)]
 
     self._CheckAgainstNumpy(osp.linalg.lu_factor, jsp.linalg.lu_factor,
