@@ -24,7 +24,7 @@ import jax.numpy as np
 from jax import test_util as jtu
 from jax.abstract_arrays import ShapedArray
 from jax import lax
-from jax.api import jit, grad, jvp, vjp, trace_to_jaxpr, jacfwd, jacrev
+from jax.api import jit, grad, jvp, vjp, trace_to_jaxpr, jacfwd, jacrev, hessian
 from jax.api import vmap
 from jax.core import unit
 from jax.interpreters import partial_eval as pe
@@ -290,6 +290,21 @@ class BatchingTest(jtu.JaxTestCase):
     ans = vmap(np.any)(np.array([[True, False], [False, False]]))
     expected = np.array([True, False])
     self.assertAllClose(ans, expected, check_dtypes=True)
+
+  def testHessian(self):
+    # test based on code from sindhwani@google
+    def fun(x, t):
+      return np.sum(np.power(np.maximum(x, 0.0), 2)) + t
+
+    x = onp.array([-1., -0.5, 0., 0.5, 1.0])
+
+    ans = hessian(lambda x: fun(x, 0.0))(x)
+    expected = onp.array([[0., 0., 0., 0., 0.],
+                          [0., 0., 0., 0., 0.],
+                          [0., 0.,0.5, 0., 0.],
+                          [0., 0., 0., 2., 0.],
+                          [0., 0., 0., 0., 2.]])
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
 
 if __name__ == '__main__':
