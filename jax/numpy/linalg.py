@@ -37,16 +37,35 @@ def cholesky(a):
   return lax_linalg.cholesky(a)
 
 
-@_wraps(onp.linalg.det)
-def det(a):
+@_wraps(onp.linalg.slogdet)
+def slogdet(a):
   dtype = lax._dtype(a)
   a_shape = np.shape(a)
-  if len(a_shape) != 2 or a_shape[-1] != a_shape[-2]:
-    msg = "Argument to det() must be a square matrix, got {}"
+  if len(a_shape) < 2 or a_shape[-1] != a_shape[-2]:
+    msg = "Argument to slogdet() must have shape [..., n, n], got {}"
     raise ValueError(msg.format(a_shape))
   lu, pivot = lax_linalg.lu(a)
-  parity = np.count_nonzero(pivot != np.arange(a_shape[-1])) % 2
-  return np.prod(np.diagonal(lu)) * np.array(-2 * parity + 1, dtype=dtype)
+  diag = np.diagonal(lu, axis1=-2, axis2=-1)
+  is_zero = np.any(diag == 0, axis=-1)
+  parity = np.count_nonzero(pivot != np.arange(a_shape[-1]), axis=-1)
+  if np.iscomplexobj(a):
+    sign = np.prod(diag / np.abs(diag))
+  else:
+    sign = 1
+    parity = parity + np.count_nonzero(diag < 0)
+  sign = np.where(is_zero,
+                  np.array(0, dtype=dtype),
+                  sign * np.array(-2 * (parity % 2) + 1, dtype=dtype))
+  logdet = np.where(
+      is_zero, np.array(-np.inf, dtype=dtype),
+      np.sum(np.log(np.abs(diag)), axis=-1))
+  return sign, logdet
+
+
+@_wraps(onp.linalg.det)
+def det(a):
+  sign, logdet = slogdet(a)
+  return sign * np.exp(logdet)
 
 
 @_wraps(onp.linalg.inv)
