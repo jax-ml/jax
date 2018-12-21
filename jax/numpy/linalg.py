@@ -46,12 +46,12 @@ def slogdet(a):
     raise ValueError(msg.format(a_shape))
   lu, pivot = lax_linalg.lu(a)
   diag = np.diagonal(lu, axis1=-2, axis2=-1)
-  is_zero = np.any(diag == 0, axis=-1)
+  is_zero = np.any(diag == np.array(0, dtype=dtype), axis=-1)
   parity = np.count_nonzero(pivot != np.arange(a_shape[-1]), axis=-1)
   if np.iscomplexobj(a):
     sign = np.prod(diag / np.abs(diag))
   else:
-    sign = 1
+    sign = np.array(1, dtype=dtype)
     parity = parity + np.count_nonzero(diag < 0)
   sign = np.where(is_zero,
                   np.array(0, dtype=dtype),
@@ -59,7 +59,7 @@ def slogdet(a):
   logdet = np.where(
       is_zero, np.array(-np.inf, dtype=dtype),
       np.sum(np.log(np.abs(diag)), axis=-1))
-  return sign, logdet
+  return sign, np.real(logdet)
 
 
 @_wraps(onp.linalg.det)

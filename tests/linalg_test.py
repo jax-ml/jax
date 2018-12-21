@@ -197,7 +197,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       self.skipTest("No LU implementation available")
     args_maker = lambda: [rng(shape, dtype)]
 
-    self._CheckAgainstNumpy(osp.linalg.lu, jsp.linalg.lu, args_maker,
+    self._CheckAgainstNumpy(jsp.linalg.lu, osp.linalg.lu, args_maker,
                             check_dtypes=True, tol=1e-3)
     self._CompileAndCheck(jsp.linalg.lu, args_maker, check_dtypes=True)
 
@@ -216,7 +216,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       self.skipTest("No LU implementation available")
     args_maker = lambda: [rng((n, n), dtype)]
 
-    self._CheckAgainstNumpy(osp.linalg.lu_factor, jsp.linalg.lu_factor,
+    self._CheckAgainstNumpy(jsp.linalg.lu_factor, osp.linalg.lu_factor,
                             args_maker, check_dtypes=True, tol=1e-3)
     self._CompileAndCheck(jsp.linalg.lu_factor, args_maker, check_dtypes=True)
 
