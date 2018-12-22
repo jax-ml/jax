@@ -19,6 +19,7 @@
 
 from __future__ import print_function
 
+from libc.stdlib cimport malloc, free
 from libc.stdint cimport int32_t
 from libc.string cimport memcpy
 from libcpp.string cimport string
@@ -27,6 +28,8 @@ from cpython.pycapsule cimport PyCapsule_New
 from scipy.linalg.cython_blas cimport strsm, dtrsm, ctrsm
 from scipy.linalg.cython_lapack cimport sgetrf, dgetrf, cgetrf
 from scipy.linalg.cython_lapack cimport spotrf, dpotrf, cpotrf
+from scipy.linalg.cython_lapack cimport ssyevd
+
 
 import numpy as np
 from jaxlib import xla_client
@@ -383,3 +386,59 @@ def jax_potrf(c, a, lower=False):
           Shape.array_shape(np.int32, (), ()),
           Shape.array_shape(dtype, (n, n), (0, 1)),
       ))
+
+
+# syevd: Symmetric eigendecomposition
+
+cdef void lapack_ssyevd(void* out_tuple, void** data) nogil:
+  cdef int32_t lower = (<int32_t*>(data[0]))[0]
+  cdef int n = (<int32_t*>(data[1]))[0]
+  cdef const float* a_in = <float*>(data[2])
+
+  cdef void** out = <void**>(out_tuple)
+  cdef float* a_out = <float*>(out[0])
+  cdef float* w_out = <float*>(out[1])
+  cdef int* info_out = <int*>(out[2])
+  if a_out != a_in:
+    memcpy(a_out, a_in, n * n * sizeof(float))
+
+  cdef char jobz = 'V'
+  cdef char uplo = 'L' if lower else 'U'
+
+  # Formulas from lapack documentation
+  cdef int lwork = 1 + 6 * n + 2 * n * n
+  cdef int liwork = 3 + 6 * n
+  cdef float* work = <float*> malloc(lwork * sizeof(float))
+  cdef int* iwork = <int*> malloc(liwork * sizeof(int))
+  ssyevd(&jobz, &uplo, &n, a_out, &n, w_out, work, &lwork, iwork, &liwork,
+         info_out)
+  free(work)
+  free(iwork)
+
+register_cpu_custom_call_target(b"lapack_syevd", <void*>(lapack_ssyevd))
+
+def jax_syevd(c, a, lower=False):
+  assert sizeof(int32_t) == sizeof(int)
+
+  a_shape = c.GetShape(a)
+  dtype = a_shape.element_type()
+  m, n = a_shape.dimensions()
+  if dtype == np.float32:
+    fn = b"lapack_syevd"
+  else:
+    raise NotImplementedError("Unsupported dtype {}".format(dtype))
+
+  return c.CustomCall(
+      fn,
+      operands=(c.ConstantS32Scalar(1 if lower else 0), c.ConstantS32Scalar(n), a),
+      shape_with_layout=Shape.tuple_shape((
+          Shape.array_shape(dtype, (n, n), (0, 1)),
+          Shape.array_shape(dtype, (n,), (0,)),
+          Shape.array_shape(np.int32, (), ()),
+      )),
+      operand_shapes_with_layout=(
+          Shape.array_shape(np.int32, (), ()),
+          Shape.array_shape(np.int32, (), ()),
+          Shape.array_shape(dtype, (n, n), (0, 1)),
+      ))
+
