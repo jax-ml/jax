@@ -55,6 +55,8 @@ def _T(x):
 
 # primitives
 
+_cpu_lapack_types = {np.float32, np.float64, np.complex64}
+
 
 def cholesky_jvp_rule(primals, tangents):
   x, = primals
@@ -70,14 +72,14 @@ def cholesky_jvp_rule(primals, tangents):
       L, tmp, left_side=True, transpose_a=False, lower=True)))
   return L, L_dot
 
-cholesky_p = standard_unop(_float, 'cholesky')
+cholesky_p = standard_unop(_float | _complex, 'cholesky')
 ad.primitive_jvps[cholesky_p] = cholesky_jvp_rule
 
 
 def cholesky_cpu_translation_rule(c, operand):
   shape = c.GetShape(operand)
-  if len(shape.dimensions()) == 2 and (
-    shape.element_type() == np.float32 or shape.element_type() == np.float64):
+  dtype = shape.element_type().type
+  if len(shape.dimensions()) == 2 and dtype in _cpu_lapack_types:
     return c.GetTupleElement(lapack.jax_potrf(c, operand, lower=True), 0)
   else:
     # Fall back to the HLO implementation for batched Cholesky decomposition or
@@ -140,14 +142,11 @@ ad.primitive_transposes[triangular_solve_p] = triangular_solve_transpose_rule
 def triangular_solve_cpu_translation_rule(
     c, a, b, left_side, lower, transpose_a, conjugate_a):
   shape = c.GetShape(a)
-  if len(shape.dimensions()) == 2 and shape.element_type() == np.float32:
+  dtype = shape.element_type().type
+  if len(shape.dimensions()) == 2 and dtype in _cpu_lapack_types:
     return lapack.jax_trsm(
-      c, c.ConstantF32Scalar(1.0), a, b, left_side, lower, transpose_a,
-      conjugate_a)
-  elif len(shape.dimensions()) == 2 and shape.element_type() == np.float64:
-    return lapack.jax_trsm(
-      c, c.ConstantF64Scalar(1.0), a, b, left_side, lower, transpose_a,
-      conjugate_a)
+      c, c.Constant(onp.array(1, dtype=dtype)), a, b, left_side, lower,
+                    transpose_a, conjugate_a)
   else:
     # Fall back to the HLO implementation for batched triangular_solve or
     # unsupported types.
@@ -190,11 +189,10 @@ lu_p.def_impl(lu_impl)
 lu_p.def_abstract_eval(lu_abstract_eval)
 xla.translations[lu_p] = lu_translation_rule
 
-_lu_cpu_types = {np.float32, np.float64, np.complex64}
-
 def lu_cpu_translation_rule(c, operand):
   shape = c.GetShape(operand)
-  if len(shape.dimensions()) == 2 and shape.element_type().type in _lu_cpu_types:
+  dtype = shape.element_type().type
+  if len(shape.dimensions()) == 2 and dtype in _cpu_lapack_types:
     out = lapack.jax_getrf(c, operand)
     lu = c.GetTupleElement(out, 0)
     # Subtract 1 from the pivot to get 0-based indices.

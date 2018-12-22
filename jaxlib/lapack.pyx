@@ -24,8 +24,9 @@ from libc.string cimport memcpy
 from libcpp.string cimport string
 from cpython.pycapsule cimport PyCapsule_New
 
-from scipy.linalg.cython_blas cimport strsm, dtrsm
-from scipy.linalg.cython_lapack cimport sgetrf, dgetrf, cgetrf, spotrf, dpotrf
+from scipy.linalg.cython_blas cimport strsm, dtrsm, ctrsm
+from scipy.linalg.cython_lapack cimport sgetrf, dgetrf, cgetrf
+from scipy.linalg.cython_lapack cimport spotrf, dpotrf, cpotrf
 
 import numpy as np
 from jaxlib import xla_client
@@ -102,6 +103,35 @@ cdef void blas_dtrsm(void* out, void** data) nogil:
 register_cpu_custom_call_target(b"blas_dtrsm", <void*>(blas_dtrsm))
 
 
+cdef void blas_ctrsm(void* out, void** data) nogil:
+  cdef int32_t left_side = (<int32_t*>(data[0]))[0]
+  cdef int32_t lower = (<int32_t*>(data[1]))[0]
+  cdef int32_t trans_a = (<int32_t*>(data[2]))[0]
+  cdef int32_t diag = (<int32_t*>(data[3]))[0]
+  cdef int m = (<int32_t*>(data[4]))[0]
+  cdef int n = (<int32_t*>(data[5]))[0]
+  cdef float complex* alpha = <float complex*>(data[6])
+  cdef float complex* a = <float complex*>(data[7])
+  cdef float complex* b = <float complex*>(data[8])
+
+  cdef float complex* x = <float complex*>(out)
+  if x != b:
+    memcpy(x, b, m * n * sizeof(float complex))
+
+  cdef char cside = 'L' if left_side else 'R'
+  cdef char cuplo = 'L' if lower else 'U'
+  cdef char ctransa = 'N'
+  if trans_a == 1:
+    ctransa = 'T'
+  elif trans_a == 2:
+    ctransa = 'C'
+  cdef char cdiag = 'U' if diag else 'N'
+  cdef int lda = m
+  cdef int ldb = m if left_side else n
+  ctrsm(&cside, &cuplo, &ctransa, &cdiag, &m, &n, alpha, a, &lda, x, &ldb)
+
+register_cpu_custom_call_target(b"blas_ctrsm", <void*>(blas_ctrsm))
+
 def jax_trsm(c, alpha, a, b, left_side=False, lower=False, trans_a=False,
              conj_a=False, diag=False):
   b_shape = c.GetShape(b)
@@ -118,17 +148,22 @@ def jax_trsm(c, alpha, a, b, left_side=False, lower=False, trans_a=False,
 
   if dtype == np.float32:
     fn = b"blas_strsm"
-  elif dtype == np.float64: 
+  elif dtype == np.float64:
     fn = b"blas_dtrsm"
+  elif dtype == np.complex64:
+    fn = b"blas_ctrsm"
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
+
+  if conj_a and not trans_a:
+    raise NotImplementedError("Conjugation without transposition not supported")
 
   return c.CustomCall(
       fn,
       operands=(
         c.ConstantS32Scalar(int(left_side)),
         c.ConstantS32Scalar(int(lower)),
-        c.ConstantS32Scalar(1 if trans_a else 0),
+        c.ConstantS32Scalar((2 if conj_a else 1) if trans_a else 0),
         c.ConstantS32Scalar(int(diag)),
         c.ConstantS32Scalar(m),
         c.ConstantS32Scalar(n),
@@ -290,6 +325,35 @@ cdef void lapack_dpotrf(void* out_tuple, void** data) nogil:
 
 register_cpu_custom_call_target(b"lapack_dpotrf", <void*>(lapack_dpotrf))
 
+
+cdef void lapack_cpotrf(void* out_tuple, void** data) nogil:
+  cdef int32_t lower = (<int32_t*>(data[0]))[0]
+  cdef int n = (<int32_t*>(data[1]))[0]
+  cdef const float complex* a_in = <float complex*>(data[2])
+  cdef char uplo = 'L' if lower else 'U'
+
+  cdef void** out = <void**>(out_tuple)
+  cdef float complex* a_out = <float complex*>(out[0])
+  cdef int* info = <int*>(out[1])
+  if a_out != a_in:
+    memcpy(a_out, a_in, n * n * sizeof(float complex))
+
+  cpotrf(&uplo, &n, a_out, &n, info)
+
+  # cpotrf leaves junk in the part of the triangle that is not written; zero it.
+  cdef int i
+  cdef int j
+  if lower:
+    for i in range(n):
+      for j in range(i):
+        a_out[i * n + j] = 0
+  else:
+    for i in range(n):
+      for j in range(i, n):
+        a_out[i * n + j] = 0
+
+register_cpu_custom_call_target(b"lapack_cpotrf", <void*>(lapack_cpotrf))
+
 def jax_potrf(c, a, lower=False):
   assert sizeof(int32_t) == sizeof(int)
 
@@ -300,8 +364,10 @@ def jax_potrf(c, a, lower=False):
     raise ValueError("potrf expects a square matrix, got {}".format(a_shape))
   if dtype == np.float32:
     fn = b"lapack_spotrf"
-  elif dtype == np.float64: 
+  elif dtype == np.float64:
     fn = b"lapack_dpotrf"
+  elif dtype == np.complex64:
+    fn = b"lapack_cpotrf"
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
 

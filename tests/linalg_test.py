@@ -60,13 +60,12 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testCholesky(self, shape, dtype, rng):
     def args_maker():
       a = rng(shape, dtype)
-      return [onp.matmul(a, T(a))]
+      return [onp.matmul(a, np.conj(T(a)))]
 
     self._CheckAgainstNumpy(onp.linalg.cholesky, np.linalg.cholesky, args_maker,
                             check_dtypes=True, tol=1e-3)
     self._CompileAndCheck(np.linalg.cholesky, args_maker, check_dtypes=True)
 
-  # TODO(phawkins): enable when there is an LU implementation for GPU/TPU.
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),
@@ -74,6 +73,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for n in [0, 4, 5, 50]
       for dtype in float_types() | complex_types()
       for rng in [jtu.rand_default()]))
+  # TODO(phawkins): enable when there is an LU implementation for GPU/TPU.
   @jtu.skip_on_devices("gpu", "tpu")
   def testDet(self, n, dtype, rng):
     if not hasattr(lapack, "jax_getrf"):
@@ -155,6 +155,31 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     if not full_matrices and m >= n:
         jtu.check_jvp(np.linalg.qr, partial(jvp, np.linalg.qr), (a,))
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_lhs={}_rhs={}".format(
+           jtu.format_shape_dtype_string(lhs_shape, dtype),
+           jtu.format_shape_dtype_string(rhs_shape, dtype)),
+       "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
+       "rng": rng}
+      for lhs_shape, rhs_shape in [
+          ((1, 1), (1, 1)),
+          ((4, 4), (4,)),
+          ((8, 8), (8, 4)),
+      ]
+      for dtype in float_types() | complex_types()
+      for rng in [jtu.rand_default()]))
+  # TODO(phawkins): enable when there is an LU implementation for GPU/TPU.
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testSolve(self, lhs_shape, rhs_shape, dtype, rng):
+    if not hasattr(lapack, "jax_getrf"):
+      self.skipTest("No LU implementation available")
+    args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
+
+    self._CheckAgainstNumpy(onp.linalg.solve, np.linalg.solve, args_maker,
+                            check_dtypes=True, tol=1e-3)
+    self._CompileAndCheck(np.linalg.solve, args_maker, check_dtypes=True)
+
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -219,6 +244,46 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(jsp.linalg.lu_factor, osp.linalg.lu_factor,
                             args_maker, check_dtypes=True, tol=1e-3)
     self._CompileAndCheck(jsp.linalg.lu_factor, args_maker, check_dtypes=True)
+
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_lhs={}_rhs={}_sym_pos={}_lower={}".format(
+           jtu.format_shape_dtype_string(lhs_shape, dtype),
+           jtu.format_shape_dtype_string(rhs_shape, dtype),
+           sym_pos, lower),
+       "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
+       "sym_pos": sym_pos, "lower": lower, "rng": rng}
+      for lhs_shape, rhs_shape in [
+          ((1, 1), (1, 1)),
+          ((4, 4), (4,)),
+          ((8, 8), (8, 4)),
+      ]
+      for sym_pos, lower in [
+        (False, False),
+        (True, False),
+        (True, True),
+      ]
+      for dtype in float_types() | complex_types()
+      for rng in [jtu.rand_default()]))
+  # TODO(phawkins): enable when there is an LU implementation for GPU/TPU.
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testSolve(self, lhs_shape, rhs_shape, dtype, sym_pos, lower, rng):
+    if not hasattr(lapack, "jax_getrf"):
+      self.skipTest("No LU implementation available")
+    osp_fun = lambda lhs, rhs: osp.linalg.solve(lhs, rhs, sym_pos=sym_pos, lower=lower)
+    jsp_fun = lambda lhs, rhs: jsp.linalg.solve(lhs, rhs, sym_pos=sym_pos, lower=lower)
+
+    def args_maker():
+      a = rng(lhs_shape, dtype)
+      if sym_pos:
+        a = onp.matmul(a, onp.conj(T(a)))
+        a = onp.tril(a) if lower else onp.triu(a)
+      return [a, rng(rhs_shape, dtype)]
+
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
+                            check_dtypes=True, tol=1e-3)
+    self._CompileAndCheck(jsp_fun, args_maker, check_dtypes=True)
 
 
   @parameterized.named_parameters(jtu.cases_from_list(
