@@ -29,11 +29,13 @@ from ..numpy import linalg as np_linalg
 
 _EXPERIMENTAL_WARNING = "scipy.linalg support is experimental and may cause silent failures or wrong outputs"
 
+_T = lambda x: np.swapaxes(x, -1, -2)
+
 @_wraps(scipy.linalg.cholesky)
 def cholesky(a, lower=False, overwrite_a=False, check_finite=True):
   warnings.warn(_EXPERIMENTAL_WARNING)
   del overwrite_a, check_finite
-  l = lax_linalg.cholesky(a)
+  l = lax_linalg.cholesky(a if lower else np.conj(a.T))
   return l if lower else np.conj(l.T)
 
 
@@ -60,9 +62,9 @@ def lu_factor(a, overwrite_a=False, check_finite=True):
 @_wraps(scipy.linalg.lu)
 def lu(a, permute_l=False, overwrite_a=False, check_finite=True):
   del overwrite_a, check_finite
+  lu, pivots = lax_linalg.lu(a)
   dtype = lax._dtype(a)
   m, n = np.shape(a)
-  lu, pivots = lax_linalg.lu(a)
   permutation = lax_linalg.lu_pivots_to_permutation(pivots, m)
   p = np.real(np.array(permutation == np.arange(m)[:, None], dtype=dtype))
   k = min(m, n)
@@ -92,6 +94,33 @@ def qr(a, overwrite_a=False, lwork=None, mode="full", pivoting=False,
   if mode == "r":
     return r
   return q, r
+
+@_wraps(scipy.linalg.solve)
+def solve(a, b, sym_pos=False, lower=False, overwrite_a=False, overwrite_b=False,
+          debug=False, check_finite=True):
+  del overwrite_a, overwrite_b, debug, check_finite
+  if not sym_pos:
+    return np_linalg.solve(a, b)
+
+  a_shape = np.shape(a)
+  b_shape = np.shape(b)
+  a_ndims = len(a_shape)
+  b_ndims = len(b_shape)
+  if not (a_ndims >= 2 and a_shape[-1] == a_shape[-2] and
+          (a_ndims == b_ndims or a_ndims == b_ndims + 1)):
+    msg = ("The arguments to solve must have shapes a=[..., m, m] and "
+           "b=[..., m, k] or b=[..., m]; got a={} and b={}")
+    raise ValueError(msg.format(a_shape, b_shape))
+
+  # TODO(phawkins): triangular_solve only supports matrices on the RHS, so we
+  # add a dummy dimension. Extend it to support vectors and simplify this.
+  b = b if a_ndims == b_ndims else b[..., None]
+  lu = lax_linalg.cholesky(a if lower else np.conj(_T(a)))
+  b = lax_linalg.triangular_solve(lu, b, left_side=True, lower=True)
+  b = lax_linalg.triangular_solve(lu, b, left_side=True, lower=True,
+                                  transpose_a=True, conjugate_a=True)
+  return b[..., 0] if a_ndims != b_ndims else b
+
 
 
 @_wraps(scipy.linalg.solve_triangular)
