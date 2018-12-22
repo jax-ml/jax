@@ -309,6 +309,24 @@ class ScipyLinalgTest(jtu.JaxTestCase):
                             check_dtypes=True, tol=1e-3)
     self._CompileAndCheck(jsp.linalg.lu, args_maker, check_dtypes=True)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype, "rng": rng}
+      for shape in [(1, 1), (4, 5), (10, 5), (10, 10)]
+      for dtype in float_types() | complex_types()
+      for rng in [jtu.rand_default()]))
+  # TODO(phawkins): enable when there is an LU implementation for GPU/TPU.
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testLuGrad(self, shape, dtype, rng):
+    # TODO(phawkins): remove this after a jaxlib release.
+    if not hasattr(lapack, "jax_getrf"):
+      self.skipTest("No LU implementation available")
+    a = rng(shape, dtype)
+
+    jtu.check_grads(jsp.linalg.lu, (a,), 2, rtol=1e-3)
+
+
   # TODO(phawkins): enable when there is an LU implementation for GPU/TPU.
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
