@@ -110,6 +110,7 @@ def solve(a, b, sym_pos=False, lower=False, overwrite_a=False, overwrite_b=False
           (a_ndims == b_ndims or a_ndims == b_ndims + 1)):
     msg = ("The arguments to solve must have shapes a=[..., m, m] and "
            "b=[..., m, k] or b=[..., m]; got a={} and b={}")
+    raise ValueError(msg.format(a_shape, b_shape))
 
   # TODO(phawkins): triangular_solve only supports matrices on the RHS, so we
   # add a dummy dimension. Extend it to support vectors and simplify this.
