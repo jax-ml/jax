@@ -1438,7 +1438,7 @@ def _rewriting_take(arr, idx, axis=0):
 
   # Handle slice index (only static, otherwise an error is raised)
   elif isinstance(idx, slice):
-    if not _all(elt is None or isinstance(core.get_aval(elt), ConcreteArray)
+    if not _all(elt is None or type(core.get_aval(elt)) is ConcreteArray
                 for elt in (idx.start, idx.stop, idx.step)):
       msg = ("Array slice indices must have static start/stop/step to be used "
              "with Numpy indexing syntax. Try lax.dynamic_slice instead.")
@@ -1447,6 +1447,27 @@ def _rewriting_take(arr, idx, axis=0):
       start, limit, stride, needs_rev = _static_idx(idx, arr.shape[axis])
       result = lax.slice_in_dim(arr, start, limit, stride, axis=axis)
       return lax.rev(result, [axis]) if needs_rev else result
+
+  # Handle non-advanced bool index (only static, otherwise an error is raised)
+  elif (isinstance(abstract_idx, ShapedArray) and onp.issubdtype(abstract_idx.dtype, onp.bool_)
+        or isinstance(idx, list) and _all(not _shape(e) and onp.issubdtype(_dtype(e), onp.bool_)
+                                          for e in idx)):
+    if isinstance(idx, list):
+      idx = array(idx)
+      abstract_idx = core.get_aval(idx)
+
+    if not type(abstract_idx) is ConcreteArray:
+      msg = ("Array boolean indices must be static (e.g. no dependence on an "
+             "argument to a jit or vmap function).")
+      raise IndexError(msg)
+    else:
+      if idx.ndim > arr.ndim or idx.shape != arr.shape[:idx.ndim]:
+        msg = "Boolean index shape did not match indexed array shape prefix."
+        raise IndexError(msg)
+      else:
+        reshaped_arr = arr.reshape((-1,) + arr.shape[idx.ndim:])
+        int_idx, = onp.where(idx.ravel())
+        return lax.index_take(reshaped_arr, (int_idx,), (0,))
 
   # Handle non-advanced tuple indices by recursing once
   elif isinstance(idx, tuple) and _all(onp.ndim(elt) == 0 for elt in idx):
@@ -1487,10 +1508,11 @@ def _rewriting_take(arr, idx, axis=0):
   # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#combining-advanced-and-basic-indexing
   elif _is_advanced_int_indexer(idx):
     canonical_idx = _canonicalize_tuple_index(arr, tuple(idx))
-    idx_noadvanced = [slice(None) if _is_int(e) else e for e in canonical_idx]
+    idx_noadvanced = [slice(None) if _is_int_arraylike(e) else e
+                      for e in canonical_idx]
     arr_sliced = _rewriting_take(arr, tuple(idx_noadvanced))
 
-    advanced_pairs = ((e, i) for i, e in enumerate(canonical_idx) if _is_int(e))
+    advanced_pairs = ((e, i) for i, e in enumerate(canonical_idx) if _is_int_arraylike(e))
     idx_advanced, axes = zip(*advanced_pairs)
     idx_advanced = broadcast_arrays(*idx_advanced)
 
@@ -1522,11 +1544,11 @@ def _is_advanced_int_indexer(idx):
   # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#advanced-indexing
   if isinstance(idx, (tuple, list)):
     # We assume this check comes *after* the check for non-advanced tuple index,
-    # and hence we already know at least one element is a sequence
-    return _all(e is None or e is Ellipsis or isinstance(e, slice) or _is_int(e)
-                for e in idx)
+    # and hence we already know at least one element is a sequence if it's a tuple
+    return _all(e is None or e is Ellipsis or isinstance(e, slice)
+                or _is_int_arraylike(e) for e in idx)
   else:
-    return _is_int(idx)
+    return _is_int_arraylike(idx)
 
 
 def _is_advanced_int_indexer_without_slices(idx):
@@ -1539,11 +1561,11 @@ def _is_advanced_int_indexer_without_slices(idx):
       return True
 
 
-def _is_int(x):
+def _is_int_arraylike(x):
   """Returns True if x is array-like with integer dtype, False otherwise."""
   return (isinstance(x, int) and not isinstance(x, bool)
           or onp.issubdtype(getattr(x, "dtype", None), onp.integer)
-          or isinstance(x, (list, tuple)) and _all(_is_int(e) for e in x))
+          or isinstance(x, (list, tuple)) and _all(_is_int_arraylike(e) for e in x))
 
 
 def _canonicalize_tuple_index(arr, idx):
