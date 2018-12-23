@@ -50,7 +50,8 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       x, a, b, loc, scale = map(rng, shapes, dtypes)
       return [x, onp.abs(a), onp.abs(b), loc, onp.abs(scale)]
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True,
+                            tol=1e-4)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
   @genNamedParametersNArgs(3, jtu.rand_default())
