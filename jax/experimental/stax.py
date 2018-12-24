@@ -217,6 +217,12 @@ def Dropout(rate, mode='train'):
   def init_fun(input_shape):
     return input_shape, ()
   def apply_fun(params, inputs, rng):
+    if rng is None:
+      msg = ("Dropout layer requires apply_fun to be called with a PRNG key "
+             "argument. That is, instead of `apply_fun(params, inputs)`, call "
+             "it like `apply_fun(params, inputs, key)` where `key` is a "
+             "jax.random.PRNGKey value.")
+      raise ValueError(msg)
     if mode == 'train':
       keep = random.bernoulli(rng, rate, inputs.shape)
       return np.where(keep, inputs / rate, 0)
