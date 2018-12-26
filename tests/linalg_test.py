@@ -110,6 +110,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for dtype in float_types()
       for full_matrices in [False, True]
       for rng in [jtu.rand_default()]))
+  @jtu.skip_on_devices("cpu")
   def testQr(self, shape, dtype, full_matrices, rng):
     m, n = shape[-2:]
 
