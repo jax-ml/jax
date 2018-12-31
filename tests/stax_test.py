@@ -30,9 +30,18 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 
+def random_inputs(rng, input_shape):
+  if type(input_shape) is tuple:
+    return rng.randn(*input_shape).astype(onp.float32)
+  elif type(input_shape) is list:
+    return [random_inputs(rng, shape) for shape in input_shape]
+  else:
+    raise TypeError(type(input_shape))
+
+
 def _CheckShapeAgreement(test_case, init_fun, apply_fun, input_shape):
   result_shape, params = init_fun(input_shape)
-  inputs = onp.random.RandomState(0).randn(*input_shape).astype("float32")
+  inputs = random_inputs(onp.random.RandomState(0), input_shape)
   rng_key = random.PRNGKey(0)
   result = apply_fun(params, inputs, rng_key)
   test_case.assertEqual(result.shape, result_shape)
@@ -129,6 +138,26 @@ class StaxTest(jtu.JaxTestCase):
   def testDropoutShape(self, input_shape):
     init_fun, apply_fun = stax.Dropout(0.9)
     _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_input_shape={}".format(input_shape),
+       "input_shape": input_shape}
+      for input_shape in [(3, 4), (2, 5, 6, 1)]))
+  def testFanInSum(self, input_shape):
+    init_fun, apply_fun = stax.FanInSum
+    _CheckShapeAgreement(self, init_fun, apply_fun, [input_shape, input_shape])
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_inshapes={}_axis={}".format(input_shapes, axis),
+       "input_shapes": input_shapes, "axis": axis}
+      for input_shapes, axis in [
+          ([(2, 3), (2, 1)], 1),
+          ([(2, 3), (2, 1)], -1),
+          ([(1, 2, 4), (1, 1, 4)], 1),
+      ]))
+  def testFanInConcat(self, input_shapes, axis):
+    init_fun, apply_fun = stax.FanInConcat(axis)
+    _CheckShapeAgreement(self, init_fun, apply_fun, input_shapes)
 
 
 if __name__ == "__main__":
