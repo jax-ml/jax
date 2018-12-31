@@ -35,7 +35,8 @@ from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
-nonempty_array_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4), (2, 3, 4)]
+nonempty_nonscalar_array_shapes = [(4,), (3, 4), (3, 1), (1, 4), (2, 1, 4), (2, 3, 4)]
+nonempty_array_shapes = [()] + nonempty_nonscalar_array_shapes
 empty_array_shapes = [(0,), (0, 4), (3, 0),]
 
 scalar_shapes = [jtu.NUMPY_SCALAR_SHAPE]
@@ -119,6 +120,7 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("log1p", 1, numeric_dtypes, all_shapes, jtu.rand_small_positive(), []),
     op_record("logaddexp", 2, float_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("logaddexp2", 2, float_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
+    op_record("polyval", 2, numeric_dtypes, nonempty_nonscalar_array_shapes, jtu.rand_default(), []),
     op_record("ravel", 1, default_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("remainder", 2, default_dtypes, all_shapes, jtu.rand_nonzero(), []),
     op_record("sqrt", 1, default_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
@@ -444,6 +446,28 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
               for size, _ in zip(itertools.cycle([3, 1, 4]), dtypes)]
     onp_fun = lambda *args: onp.concatenate(args, axis=axis)
     lnp_fun = lambda *args: lnp.concatenate(args, axis=axis)
+
+    def args_maker():
+      return [rng(shape, dtype) for shape, dtype in zip(shapes, dtypes)]
+
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_axis={}_baseshape=[{}]_dtypes=[{}]".format(
+          axis, ",".join(str(d) for d in base_shape),
+          ",".join(onp.dtype(dtype).name for dtype in dtypes)),
+       "axis": axis, "base_shape": base_shape, "dtypes": dtypes,
+       "rng": jtu.rand_default()}
+      for dtypes in CombosWithReplacement(default_dtypes, 2)
+      for base_shape in [(4,), (3, 4), (2, 3, 4)]
+      for axis in range(-len(base_shape)+1, len(base_shape))))
+  def testAppend(self, axis, base_shape, dtypes, rng):
+    wrapped_axis = axis % len(base_shape)
+    shapes = [base_shape[:wrapped_axis] + (size,) + base_shape[wrapped_axis+1:]
+              for size, _ in zip(itertools.cycle([3, 1, 4]), dtypes)]
+    onp_fun = lambda arr, values: onp.append(arr, values, axis=axis)
+    lnp_fun = lambda arr, values: lnp.append(arr, values, axis=axis)
 
     def args_maker():
       return [rng(shape, dtype) for shape, dtype in zip(shapes, dtypes)]
