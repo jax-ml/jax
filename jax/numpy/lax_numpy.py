@@ -1070,6 +1070,27 @@ def diag(v, k=0):
     raise ValueError("diag input must be 1d or 2d")
 
 
+@_wraps(onp.polyval)
+def polyval(p, x):
+  if isinstance(p, onp.poly1d):
+    p = onp.asarray(p)
+  if isinstance(x, onp.poly1d):
+    y = 0
+  else:
+    y = zeros_like(x)
+  for i in range(len(p)):
+    y = y * x + p[i]
+  return y
+
+
+@_wraps(onp.append)
+def append(arr, values, axis=None):
+  if axis is None:
+    return concatenate([ravel(arr), ravel(values)], 0)
+  else:
+    return concatenate([arr, values], axis=axis)
+
+
 ### Tensor contraction operations
 
 
