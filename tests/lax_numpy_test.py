@@ -35,7 +35,8 @@ from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
-nonempty_array_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4), (2, 3, 4)]
+nonempty_nonscalar_array_shapes = [(4,), (3, 4), (3, 1), (1, 4), (2, 1, 4), (2, 3, 4)]
+nonempty_array_shapes = [()] + nonempty_nonscalar_array_shapes
 empty_array_shapes = [(0,), (0, 4), (3, 0),]
 
 scalar_shapes = [jtu.NUMPY_SCALAR_SHAPE]
@@ -119,7 +120,7 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("log1p", 1, numeric_dtypes, all_shapes, jtu.rand_small_positive(), []),
     op_record("logaddexp", 2, float_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("logaddexp2", 2, float_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
-    op_record("polyval", 2, numeric_dtypes, nonempty_array_shapes, jtu.rand_default(), []),
+    op_record("polyval", 2, numeric_dtypes, nonempty_nonscalar_array_shapes, jtu.rand_default(), []),
     op_record("ravel", 1, default_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("remainder", 2, default_dtypes, all_shapes, jtu.rand_nonzero(), []),
     op_record("sqrt", 1, default_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
