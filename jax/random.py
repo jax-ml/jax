@@ -154,8 +154,7 @@ def split(key, num=2):
     A tuple of length `num` of new PRNGKey instances.
   """
   counts = lax.tie_in(key, lax.iota(onp.uint32, num * 2))
-  bits = lax.reshape(threefry_2x32(key, counts), (num, 2))
-  return tuple(bits)
+  return lax.reshape(threefry_2x32(key, counts), (num, 2))
 
 
 def _random_bits(key, bit_width, shape):
