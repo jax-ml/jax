@@ -521,16 +521,20 @@ def process_env_traces(primitive, level, *args):
   yield ans, todo
 
 def call_bind(primitive, f, *args, **kwargs):
+  free_vars = not kwargs.pop('__jax_no_free_vars', False)
   top_trace = find_top_trace(args)
   level = trace_stack.next_level(True) if top_trace is None else top_trace.level
-  f, env_trace_todo = process_env_traces(f, primitive, level)
+  if free_vars:
+    f, env_trace_todo = process_env_traces(f, primitive, level)
   if top_trace is None:
     with new_sublevel():
       ans = primitive.impl(f, *args, **kwargs)
   else:
     tracers = map(top_trace.full_raise, args)
     ans = full_lower(top_trace.process_call(primitive, f, tracers, kwargs))
-  return apply_todos(env_trace_todo(), ans)
+  if free_vars:
+    ans = apply_todos(env_trace_todo(), ans)
+  return ans
 
 
 def call_impl(f, *args, **kwargs):

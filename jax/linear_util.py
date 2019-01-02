@@ -80,6 +80,8 @@ class WrappedFun(object):
       gen = gen(*(gen_args + tuple(args)))
       args = next(gen)
       stack.append((gen, out_store))
+    else:
+      gen = None
 
     del gen
     ans = self.f(*args, **self.kwargs)
@@ -92,6 +94,7 @@ class WrappedFun(object):
         out_store.store(side)
 
     return ans
+  __call__ = call_wrapped
 
   def __repr__(self):
     def transform_to_str(x):

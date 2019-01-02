@@ -182,11 +182,16 @@ class JVPTrace(Trace):
   def process_call(self, call_primitive, f, tracers, params):
     primals = [t.primal for t in tracers]
     tangents = [t.tangent for t in tracers]
-    nonzero_tangents, in_tree_def = tree_to_jaxtuples(tangents)
-    f, out_tree_def = traceable(jvp_subtrace(f, self.master), in_tree_def)
-    result = call_primitive.bind(f, pack(primals), nonzero_tangents)
-    primal_out, tangent_out = build_tree(out_tree_def(), result)
-    return JVPTracer(self, primal_out, tangent_out)
+    if f.f in composite_jvps:
+      assert call_primitive is core.call_p
+      primal_out, tangent_out = composite_jvps[f.f](primals, tangents, **params)
+      return JVPTracer(self, primal_out, tangent_out)
+    else:
+      nonzero_tangents, in_tree_def = tree_to_jaxtuples(tangents)
+      f, out_tree_def = traceable(jvp_subtrace(f, self.master), in_tree_def)
+      result = call_primitive.bind(f, pack(primals), nonzero_tangents)
+      primal_out, tangent_out = build_tree(out_tree_def(), result)
+      return JVPTracer(self, primal_out, tangent_out)
 
   def post_process_call(self, _, out_tracer):
     out_jtuple, tree_def = tree_to_jaxtuples((out_tracer.primal, out_tracer.tangent))
