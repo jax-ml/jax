@@ -50,19 +50,29 @@ print grad(lax.mul)(2., 3.)
 
 ####
 
-def abstract_fun(fun, *avals):
+def abstract_eval_fun(fun, *avals):
   pvs_in = [pe.PartialVal((a, core.unit)) for a in avals]
   _, pvout, _ = pe.trace_unwrapped_to_jaxpr(fun, pvs_in)
   aval_out, _ = pvout
   return aval_out
 
+def lower_fun(fun, c, *xla_args):
+  xla_shapes = map(c.GetShape, xla_args)
+  avals = map(xla.aval_from_xla_shape, xla_shapes)
+  pvals = [pe.PartialVal((a, core.unit)) for a in avals]
+  jaxpr, pvout, consts = pe.trace_unwrapped_to_jaxpr(fun, pvals)
+  built_c = xla.jaxpr_computation(jaxpr, consts, (), *xla_shapes)
+  return c.Call(built_c, xla_args)
+
 def primitive(fun):
-  fun_p = core.Primitive('custom_primitive')  # TODO get name
+  name = getattr(fun, '__name__', 'custom_primitive')
+  fun_p = core.Primitive(name)
   fun_p.def_impl(fun)
 
-  fun_p.def_abstract_eval(partial(abstract_fun, fun))
+  # generic implementations that rely on traceability of `fun`
+  fun_p.def_abstract_eval(partial(abstract_eval_fun, fun))
   ad.primitive_jvps[fun_p] = partial(jvp, fun)
-  # TODO iterate through transformations, set up generic rules
+  xla.translations[fun_p] = partial(lower_fun, fun)
 
   return fun_p
 
@@ -74,8 +84,9 @@ logsumexp = lambda x: logsumexp_p.bind(x)
 
 x = np.array([2., 3.])
 t = np.array([4., 5.])
-print jvp(logsumexp, (x,), (t,))
+print logsumexp(x)
 print jit(logsumexp)(x)
+print jvp(logsumexp, (x,), (t,))
 
 # def logsumexp_vjp(g, ans, x):
 #   return [np.full(x.shape, g) * np.exp(x - np.full(x.shape, ans))]
