@@ -1,6 +1,7 @@
 from jax import core
 from jax import linear_util as lu
 from jax.util import partial
+from jax.api_util import wraps
 from jax.interpreters import ad
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
@@ -65,22 +66,27 @@ def lower_fun(fun, c, *xla_args):
   return c.Call(built_c, xla_args)
 
 def primitive(fun):
-  name = getattr(fun, '__name__', 'custom_primitive')
+  name = getattr(fun, '__name__', '<unnamed primitive>')
   fun_p = core.Primitive(name)
   fun_p.def_impl(fun)
 
   # generic implementations that rely on traceability of `fun`
   fun_p.def_abstract_eval(partial(abstract_eval_fun, fun))
-  ad.primitive_jvps[fun_p] = partial(jvp, fun)
   xla.translations[fun_p] = partial(lower_fun, fun)
+  ad.primitive_jvps[fun_p] = partial(jvp, fun)
+  # TODO batching
 
-  return fun_p
+  @wraps(fun)
+  def traceable(*args, **kwargs):
+    return fun_p.bind(*args, **kwargs)
+  traceable.primitive = fun_p
 
-def logsumexp_raw(x):
+  return traceable
+
+@primitive
+def logsumexp(x):
   max_x = np.max(x)
   return max_x + np.log(np.sum(np.exp(x - max_x)))
-logsumexp_p = primitive(logsumexp_raw)
-logsumexp = lambda x: logsumexp_p.bind(x)
 
 x = np.array([2., 3.])
 t = np.array([4., 5.])

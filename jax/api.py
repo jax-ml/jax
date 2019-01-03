@@ -31,7 +31,7 @@ import numpy as onp
 from . import core
 from . import linear_util as lu
 from .core import pack, eval_jaxpr
-from .api_util import flatten_fun, unflatten_fun, tree_to_jaxtuples
+from .api_util import flatten_fun, unflatten_fun, tree_to_jaxtuples, wraps
 from .tree_util import (process_pytree, node_types, build_tree, PyTreeDef, leaf,
                         tree_map)
 from .util import unzip2, unzip3, curry, partial, safe_map, WrapHashably
@@ -42,15 +42,6 @@ from .interpreters import ad
 from .interpreters import batching
 
 map = safe_map
-
-def _wraps(wrapped):
-  def decorator(wrapper):
-    wrapper.__name__ = getattr(wrapped, "__name__", "<unnamed function>")
-    wrapper.__module__ = getattr(wrapped, "__module__", "<unknown module>")
-    if hasattr(wrapped, "__doc__"):
-      wrapper.__doc__ = getattr(wrapped, "__doc__")
-    return wrapper
-  return decorator
 
 
 def jit(fun, static_argnums=()):
@@ -70,7 +61,7 @@ def jit(fun, static_argnums=()):
   Returns:
     A wrapped version of `fun`, set up for just-in-time compilation.
   """
-  @_wraps(fun)
+  @wraps(fun)
   def f_jitted(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
     dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
@@ -265,7 +256,8 @@ def make_jaxpr(f):
     return pe.PartialVal((aval, core.unit))
 
   fun = lu.wrap_init(f)
-  @_wraps(f)
+
+  @wraps(f)
   def jaxpr_maker(*args, **kwargs):
     jax_args, in_trees = unzip2(map(tree_to_jaxtuples, args))
     flat_fun, out_tree = flatten_fun(fun, in_trees)
