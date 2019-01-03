@@ -1510,7 +1510,7 @@ def _rewriting_take(arr, idx, axis=0):
   # Handle integer array indexing *without* ellipsis/slices/nones
   # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#integer-array-indexing
   if _is_advanced_int_indexer_without_slices(idx):
-    if isinstance(idx, list):
+    if isinstance(idx, (tuple, list)):
       if _any(_shape(e) for e in idx):
         # At least one sequence element in the index list means broadcasting.
         idx = broadcast_arrays(*idx)
@@ -1521,7 +1521,7 @@ def _rewriting_take(arr, idx, axis=0):
       # The indexer is just a single integer array.
       idx = [idx]
 
-    flat_idx = tuple(mod(ravel(x), arr.shape[i]) for i, x in enumerate(idx))
+    flat_idx = tuple([mod(ravel(x), arr.shape[i]) for i, x in enumerate(idx)])
     out = lax.index_take(arr, flat_idx, tuple(range(len(idx))))
     return lax.reshape(out, idx[0].shape + _shape(arr)[len(idx):])
 
