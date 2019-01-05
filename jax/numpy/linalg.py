@@ -37,6 +37,12 @@ def cholesky(a):
   return lax_linalg.cholesky(a)
 
 
+@_wraps(onp.linalg.svd)
+def svd(a, full_matrices=True, compute_uv=True):
+  warnings.warn(_EXPERIMENTAL_WARNING)
+  return lax_linalg.svd(a, full_matrices, compute_uv)
+
+
 @_wraps(onp.linalg.slogdet)
 def slogdet(a):
   dtype = lax._dtype(a)
