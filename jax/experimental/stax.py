@@ -146,6 +146,7 @@ def _elemwise_no_params(fun, **kwargs):
   return init_fun, apply_fun
 Tanh = _elemwise_no_params(np.tanh)
 Relu = _elemwise_no_params(relu)
+Exp = _elemwise_no_params(np.exp)
 LogSoftmax = _elemwise_no_params(logsoftmax, axis=-1)
 Softplus = _elemwise_no_params(softplus)
 
@@ -314,3 +315,8 @@ def shape_dependent(make_layer):
   def apply_fun(params, inputs, rng=None):
     return make_layer(inputs.shape)[1](params, inputs, rng)
   return init_fun, apply_fun
+
+
+# Simple compositions
+
+Softmax = serial(LogSoftmax, Exp)
