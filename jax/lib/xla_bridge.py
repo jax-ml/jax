@@ -34,7 +34,9 @@ from jaxlib import xla_client
 
 
 FLAGS = flags.FLAGS
-flags.DEFINE_bool('jax_enable_x64', False, 'Enable 64-bit types to be used.')
+flags.DEFINE_bool('jax_enable_x64',
+                  os.getenv('JAX_ENABLE_X64', False),
+                  'Enable 64-bit types to be used.')
 flags.DEFINE_string('jax_dump_hlo_graph', None, 'Regexp of HLO graphs to dump.')
 flags.DEFINE_bool('jax_hlo_profile', False, 'Enables HLO profiling mode.')
 flags.DEFINE_string('jax_dump_hlo_unoptimized', None,
@@ -216,6 +218,11 @@ _dtype_to_32bit_dtype = {
 def canonicalize_dtype(dtype):
   """Convert from a dtype to a canonical dtype based on FLAGS.jax_enable_x64."""
   dtype = onp.dtype(dtype)
+
+  # special rule for complex128, which XLA doesn't support
+  if dtype == onp.complex128:
+    dtype = onp.dtype('complex64')
+
   if FLAGS.jax_enable_x64:
     return str(dtype)
   else:
