@@ -19,86 +19,84 @@ import jax.scipy.stats.norm as norm
 
 # ========= Functions to define the evidence lower bound. =========
 
-def diag_gaussian_sample(mean, log_std, rng):
+def diag_gaussian_sample(rng, mean, log_std):
+    # Take a single sample from a diagonal multivariate Gaussian.
     return mean + np.exp(log_std) * random.normal(rng, mean.shape)
 
 def diag_gaussian_logpdf(x, mean, log_std):
+    # Evaluate a single point on a diagonal multivariate Gaussian.
     return np.sum(vmap(norm.logpdf)(x, mean, np.exp(log_std)))
 
-def elbo((mean, log_std), logprob, rng):
-    # Simple Monte Carlo estimate of the variational lower bound.
-    sample = diag_gaussian_sample(mean, log_std, rng)
+def elbo(logprob, rng, (mean, log_std)):
+    # Single-sample Monte Carlo estimate of the variational lower bound.
+    sample = diag_gaussian_sample(rng, mean, log_std)
     return logprob(sample) - diag_gaussian_logpdf(sample, mean, log_std)
 
-
-# ========= Helper functions for batching. =========
-
-def rng_map(f, rng, num_samples, *args, **kwargs):
-    # Calls f with a batch of different seeds.
-    # f must have signature f(*args, rng, **kwargs).
-    rngs = np.array(random.split(rng, num_samples))
-    return vmap(partial(f, *args, **kwargs))(rngs)
-
-def batch_elbo(params, logprob, num_samples, rng):
-    return np.mean(rng_map(elbo, rng, num_samples, params, logprob))
+def batch_elbo(logprob, rng, params, num_samples):
+    # Average over a batch of random samples.
+    rngs = random.split(rng, num_samples)
+    vectorized_elbo = vmap(partial(elbo, logprob), in_axes=(0, None))
+    return np.mean(vectorized_elbo(rngs, params))
 
 
-# ========= Helper functions for plotting. =========
+# ========= Helper function for plotting. =========
 
-def eval_zip(func, X, Y):
-    params_vec = np.stack([X.ravel(), Y.ravel()]).T
-    zs = vmap(func)(params_vec)
-    return zs.reshape(X.shape)
-eval_zip = jit(eval_zip, static_argnums=(0,))
-
-def plot_isocontours(ax, func, xlimits, ylimits, numticks=101, **kwargs):
-    x = np.linspace(*xlimits, num=numticks)
-    y = np.linspace(*ylimits, num=numticks)
+@partial(jit, static_argnums=(0, 1, 2, 4))
+def mesh_eval(func, x_limits, y_limits, params, num_ticks=101):
+    # Evaluate func on a 2D grid defined by x_limits and y_limits.
+    x = np.linspace(*x_limits, num=num_ticks)
+    y = np.linspace(*y_limits, num=num_ticks)
     X, Y = np.meshgrid(x, y)
-    Z = eval_zip(func, X, Y)
-    ax.contour(X, Y, Z, **kwargs)
-    ax.set_xlim(xlimits)
-    ax.set_ylim(ylimits)
-    ax.set_yticks([])
-    ax.set_xticks([])
+    xy_vec = np.stack([X.ravel(), Y.ravel()]).T
+    zs = vmap(func, in_axes=(0, None))(xy_vec, params)
+    return X, Y, zs.reshape(X.shape)
 
 
 # ========= Define an intractable unnormalized density =========
 
 def funnel_log_density(params):
-    mean, log_stddev = params[0], params[1]
-    return norm.logpdf(mean,        0, np.exp(log_stddev)) + \
-           norm.logpdf(log_stddev,  0, 1.35)
+    return norm.logpdf(params[0], 0, np.exp(params[1])) + \
+           norm.logpdf(params[1], 0, 1.35)
 
 
 if __name__ == "__main__":
-    step_size = 0.1
-    momentum = 0.9
-    num_steps = 100
-    num_samples = 20
+    num_samples = 40
 
-    def objective(params, rng):
-        return -batch_elbo(params, funnel_log_density, num_samples, rng)
+    @jit
+    def objective(params, t):
+        rng = random.PRNGKey(t)
+        return -batch_elbo(funnel_log_density, rng, params, num_samples)
 
     # Set up figure.
     fig = plt.figure(figsize=(8,8), facecolor='white')
     ax = fig.add_subplot(111, frameon=False)
     plt.ion()
     plt.show(block=False)
-    xlimits = [-2, 2]
-    ylimits = [-4, 2]
+    x_limits = [-2, 2]
+    y_limits = [-4, 2]
+    target_dist = lambda x, _: np.exp(funnel_log_density(x))
+    approx_dist = lambda x, params: np.exp(diag_gaussian_logpdf(x, *params))
 
-    def callback(params, t, rng):
-        print("Iteration {} lower bound {}".format(t, objective(params, rng)))
+    def callback(params, t):
+        print("Iteration {} lower bound {}".format(t, objective(params, t)))
 
         plt.cla()
-        target_dist = lambda x: np.exp(funnel_log_density(x))
-        approx_dist = lambda x: np.exp(diag_gaussian_logpdf(x, *params))
-        plot_isocontours(ax, target_dist, xlimits, ylimits, cmap='summer')
-        plot_isocontours(ax, approx_dist, xlimits, ylimits, cmap='winter')
+        X, Y, Z = mesh_eval(target_dist, x_limits, y_limits, 1)
+        ax.contour(X, Y, Z, cmap='summer')
+        X, Y, Z = mesh_eval(approx_dist, x_limits, y_limits, params)
+        ax.contour(X, Y, Z, cmap='winter')
+        ax.set_xlim(x_limits)
+        ax.set_ylim(y_limits)
+        ax.set_yticks([])
+        ax.set_xticks([])
 
-        samples = rng_map(diag_gaussian_sample, rng, num_samples, *params)
-        plt.plot(samples[:, 0], samples[:, 1], 'b.')
+        # Plot random samples from variational distribution.
+        # Here we clone the rng used in computing the objective
+        # so that we can show exactly the same samples.
+        rngs = random.split(random.PRNGKey(t), num_samples)
+        samples = vmap(diag_gaussian_sample, in_axes=(0, None, None))(rngs, *params)
+        ax.plot(samples[:, 0], samples[:, 1], 'b.')
+
         plt.draw()
         plt.pause(1.0/60.0)
 
@@ -108,19 +106,19 @@ if __name__ == "__main__":
     init_mean = np.zeros(D)
     init_std  = np.zeros(D)
     init_params = (init_mean, init_std)
-    opt_init, opt_update = minmax.momentum(step_size, mass=momentum)
+    opt_init, opt_update = minmax.momentum(step_size=0.1, mass=0.9)
     opt_state = opt_init(init_params)
 
     @jit
-    def update(i, opt_state, rng):
+    def update(i, opt_state):
         params = minmax.get_params(opt_state)
-        return opt_update(i, grad(objective)(params, rng), opt_state)
+        gradient = grad(objective)(params, i)
+        return opt_update(i, gradient, opt_state)
 
 
-    # Main fitting loop.
+    # Main loop.
     print("Optimizing variational parameters...")
-    rng = random.PRNGKey(0)
-    for t in range(num_steps):
-      opt_state = update(t, opt_state, rng)
-      callback(minmax.get_params(opt_state), t, rng)
-      old, rng = random.split(rng)
+    for t in range(100):
+      opt_state = update(t, opt_state)
+      params = minmax.get_params(opt_state)
+      callback(params, t)
