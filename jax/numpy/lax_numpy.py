@@ -1723,5 +1723,7 @@ setattr(DeviceArray, "astype", lax.convert_element_type)
 
 
 # Extra methods that are handy
+setattr(ShapedArray, "broadcast", core.aval_method(lax.broadcast))
+setattr(ShapedArray, "split", core.aval_method(split))
 setattr(DeviceArray, "broadcast", lax.broadcast)
 setattr(DeviceArray, "split", split)
