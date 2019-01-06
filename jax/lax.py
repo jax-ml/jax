@@ -32,7 +32,7 @@ from . import linear_util as lu
 from .core import Primitive
 from .abstract_arrays import (UnshapedArray, ShapedArray, ConcreteArray,
                               array_types, make_shaped_array)
-from .api_util import flatten_fun, tree_to_jaxtuples
+from .api_util import pytree_fun_to_jaxtupletree_fun, pytree_to_jaxtupletree
 from .interpreters import partial_eval as pe
 from .interpreters import xla
 from .interpreters import ad
@@ -389,9 +389,9 @@ def sort_key_val(keys, values, dimension=-1):
   return sorted_keys, sorted_values
 
 def _while_loop(cond_fun, body_fun, init_val):
-  init_val_flat, in_tree = tree_to_jaxtuples(init_val)
-  flat_body_fun, out_tree = flatten_fun(lu.wrap_init(body_fun), (in_tree,))
-  flat_cond_fun, _ = flatten_fun(lu.wrap_init(cond_fun), (in_tree,))
+  init_val_flat, in_tree = pytree_to_jaxtupletree(init_val)
+  flat_body_fun, out_tree = pytree_fun_to_jaxtupletree_fun(lu.wrap_init(body_fun), (in_tree,))
+  flat_cond_fun, _ = pytree_fun_to_jaxtupletree_fun(lu.wrap_init(cond_fun), (in_tree,))
 
   pval_flat = _abstractify(init_val_flat)
   cond_jaxpr, _, cond_consts = pe.trace_to_jaxpr(flat_cond_fun, (pval_flat,))
@@ -679,7 +679,7 @@ def zeros_like_array(x):
 
 for t in itertools.chain(array_types, [xla.DeviceArray]):
   ad_util.jaxval_adders[t] = add
-  ad_util.jaxval_zeros_likers[t] = zeros_like_array
+ad_util.jaxval_zeros_likers[xla.DeviceArray] = zeros_like_array
 
 batching.pytype_aval_mappings[xla.DeviceArray] = make_shaped_array
 

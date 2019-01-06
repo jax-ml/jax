@@ -25,6 +25,7 @@ from __future__ import print_function
 
 import os
 import warnings
+from distutils.util import strtobool
 
 from ..config import flags
 import numpy as onp  # 'onp' rather than 'np' to distinguish from autograd.numpy
@@ -35,7 +36,7 @@ from jaxlib import xla_client
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_enable_x64',
-                  os.getenv('JAX_ENABLE_X64', False),
+                  strtobool(os.getenv('JAX_ENABLE_X64', "False")),
                   'Enable 64-bit types to be used.')
 flags.DEFINE_string('jax_dump_hlo_graph', None, 'Regexp of HLO graphs to dump.')
 flags.DEFINE_bool('jax_hlo_profile', False, 'Enables HLO profiling mode.')

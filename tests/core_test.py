@@ -198,10 +198,10 @@ class CoreTest(jtu.JaxTestCase):
     assert flat == [1, 2, 3, 4]
 
   def test_tree_unflatten(self):
-    tree = [(1, 2), {"roy": (3, [4, 5])}]
+    tree = [(1, 2), {"roy": (3, [4, 5, ()])}]
     flat, treedef = tree_flatten(tree)
     assert flat == [1, 2, 3, 4, 5]
-    tree2 = tree_unflatten(flat, treedef)
+    tree2 = tree_unflatten(treedef, flat)
     nodes_equal = tree_multimap(operator.eq, tree, tree2)
     assert tree_reduce(operator.and_, nodes_equal)
 

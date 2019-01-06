@@ -295,7 +295,7 @@ def moveaxis(sz, dst, src, x):
       return x
     else:
       if src is None:
-        x = broadcast(x, sz)
+        x = broadcast(x, sz, force_broadcast=True)
         src = 0
       if src == dst:
         return x
@@ -306,21 +306,20 @@ def moveaxis(sz, dst, src, x):
   else:
     raise TypeError(type(aval))
 
-def broadcast(x, sz):
+def broadcast(x, sz, force_broadcast=False):
   aval = get_aval(x)
   if type(aval) is AbstractTuple:
     return pack(map(partial(broadcast, sz=sz), x))
   elif isinstance(aval, ShapedArray):
-    # for scalars, don't actually broadcast
-    if not onp.ndim(x):
+    # for scalars, maybe don't actually broadcast
+    if not onp.ndim(x) and not force_broadcast:
       return x
 
-    # See comment at the top of this section about this try/except.
-    try:
-      return x.broadcast((sz,))
-    except AttributeError:
-      assert not isinstance(x, Tracer)
+    # see comment at the top of this section
+    if isinstance(x, onp.ndarray) or onp.isscalar(x):
       return onp.broadcast_to(x, (sz,) + onp.shape(x))
+    else:
+      return x.broadcast((sz,))  # should be a JAX arraylike
   else:
     raise TypeError(type(x))
 
