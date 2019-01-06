@@ -25,12 +25,17 @@ map = safe_map
 
 
 @curry
-def wraps(wrapped, wrapper):
-  wrapper.__name__ = getattr(wrapped, "__name__", "<unnamed function>")
-  wrapper.__module__ = getattr(wrapped, "__module__", "<unknown module>")
-  if hasattr(wrapped, "__doc__"):
-    wrapper.__doc__ = getattr(wrapped, "__doc__")
-  return wrapper
+def wraps(wrapped, fun, namestr="{fun}", docstr="{doc}", **kwargs):
+  try:
+    fun.__name__ = namestr.format(fun=get_name(wrapped))
+    fun.__module__ = get_module(wrapped)
+    fun.__doc__ = docstr.format(fun=get_name(wrapped), doc=get_doc(wrapped), **kwargs)
+  finally:
+    return fun
+
+def get_name(fun): return getattr(fun, "__name__", "<unnamed function>")
+def get_module(fun): return getattr(fun, "__module__", "<unknown module>")
+def get_doc(fun): return getattr(fun, "__doc__", "")
 
 
 @transformation_with_aux

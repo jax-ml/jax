@@ -18,17 +18,21 @@ from __future__ import print_function
 
 from .tree_util import tree_flatten, tree_unflatten
 from .linear_util import transformation_with_aux
+from .util import safe_zip
+
+import jax.numpy as np
+from jax.api import vjp
+
+zip = safe_zip
 
 
 def ravel_pytree(pytree):
-  from jax.api import vjp  # TODO(mattjj): fix circular imports
   leaves, treedef = tree_flatten(pytree)
-  flat, unravel_list = vjp(_ravel_list, *leaves)
+  flat, unravel_list = vjp(ravel_list, *leaves)
   unravel_pytree = lambda flat: tree_unflatten(treedef, unravel_list(flat))
   return flat, unravel_pytree
 
-def _ravel_list(*lst):
-  import jax.numpy as np  # TODO(mattjj): fix circular imports
+def ravel_list(*lst):
   return np.concatenate([np.ravel(elt) for elt in lst]) if lst else np.array([])
 
 

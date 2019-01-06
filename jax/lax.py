@@ -679,7 +679,7 @@ def zeros_like_array(x):
 
 for t in itertools.chain(array_types, [xla.DeviceArray]):
   ad_util.jaxval_adders[t] = add
-  ad_util.jaxval_zeros_likers[t] = zeros_like_array
+ad_util.jaxval_zeros_likers[xla.DeviceArray] = zeros_like_array
 
 batching.pytype_aval_mappings[xla.DeviceArray] = make_shaped_array
 

@@ -24,6 +24,7 @@ from jax import test_util as jtu
 
 import jax.numpy as np
 from jax import jit, grad, device_get, device_put, jacfwd, jacrev
+from jax import api
 from jax.core import Primitive
 from jax.interpreters.partial_eval import def_abstract_eval
 from jax.interpreters.ad import defjvp
@@ -258,6 +259,22 @@ class APITest(jtu.JaxTestCase):
 
     f = lambda x: np.tanh(np.dot(A, x))
     assert onp.allclose(jacfwd(f)(x), jacrev(f)(x))
+
+  def test_std_basis(self):
+    basis = api._std_basis(np.zeros(3))
+    assert getattr(basis, "shape", None) == (3, 3)
+    assert onp.allclose(basis, onp.eye(3))
+
+    basis = api._std_basis(np.zeros((3, 3)))
+    assert getattr(basis, "shape", None) == (9, 3, 3)
+    assert onp.allclose(basis, onp.eye(9).reshape(9, 3, 3))
+
+    basis = api._std_basis([0., (np.zeros(3), np.zeros((3, 4)))])
+    assert isinstance(basis, list) and len(basis) == 2
+    assert getattr(basis[0], "shape", None) == (16,)
+    assert isinstance(basis[1], tuple) and len(basis[1]) == 2
+    assert getattr(basis[1][0], "shape", None) == (16, 3)
+    assert getattr(basis[1][1], "shape", None) == (16, 3, 4)
 
 
 if __name__ == '__main__':
