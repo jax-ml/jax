@@ -25,6 +25,7 @@ from __future__ import division
 from __future__ import print_function
 
 import itertools
+import operator as op
 
 import numpy as onp
 
@@ -33,10 +34,12 @@ from . import linear_util as lu
 from .core import pack, eval_jaxpr
 from .api_util import (pytree_fun_to_jaxtupletree_fun, apply_jaxtree_fun,
                        pytree_to_jaxtupletree, wraps)
-from .flatten_util import ravel_fun, ravel_pytree
-from .tree_util import (process_pytree, node_types, build_tree, PyTreeDef, leaf,
-                        tree_map)
-from .util import unzip2, unzip3, curry, partial, safe_map, WrapHashably
+from .tree_util import (process_pytree, node_types, build_tree, PyTreeDef,
+                        tree_map, tree_flatten, tree_unflatten, tree_structure,
+                        tree_transpose)
+from .util import (unzip2, unzip3, curry, partial, safe_map, safe_zip,
+                   WrapHashably, prod)
+from .lib.xla_bridge import canonicalize_dtype
 from .abstract_arrays import ShapedArray
 from .interpreters import partial_eval as pe
 from .interpreters import xla
@@ -44,6 +47,7 @@ from .interpreters import ad
 from .interpreters import batching
 
 map = safe_map
+zip = safe_zip
 
 
 def jit(fun, static_argnums=()):
@@ -98,6 +102,12 @@ def grad(fun, argnums=0):
   """
   value_and_grad_f = value_and_grad(fun, argnums)
 
+  docstr = ("Gradient of {fun} with respect to positional argument(s) "
+            "{argnums}. Takes the same arguments as {fun} but returns the "
+            "gradient, which has the same shape as the arguments at "
+            "positions {argnums}.")
+
+  @wraps(fun, docstr=docstr, argnums=argnums)
   def grad_f(*args, **kwargs):
     ans, g = value_and_grad_f(*args, **kwargs)
     return g
@@ -123,6 +133,14 @@ def value_and_grad(fun, argnums=0):
     integers, the gradient is a tuple of values with the same shapes and types
     as the corresponding arguments.
   """
+
+  docstr = ("Value and gradient of {fun} with respect to positional "
+            "argument(s) {argnums}. Takes the same arguments as {fun} but "
+            "returns a two-element tuple where the first element is the value "
+            "of {fun} and the second element is the gradient, which has the "
+            "same shape as the arguments at positions {argnums}.")
+
+  @wraps(fun, docstr=docstr, argnums=argnums)
   def value_and_grad_f(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
     f_partial, dyn_args = argnums_partial(f, argnums, args)
@@ -134,41 +152,61 @@ def value_and_grad(fun, argnums=0):
 
   return value_and_grad_f
 
-@curry
-def jacfwd(fun, x):
-  """Jacobian of `fun`, evaluated column-by-column using forward-mode AD"""
-  if not isinstance(fun, lu.WrappedFun):
-    fun = lu.wrap_init(fun)
-  pushfwd = partial(jvp, fun, (x,))
-  std_basis = onp.eye(onp.size(x)).reshape((-1,) + onp.shape(x)),
-  y, jac_flat = vmap(pushfwd, out_axes=(None, -1))(std_basis)
-  return jac_flat.reshape(onp.shape(y) + onp.shape(x))
 
-@curry
-def jacrev(fun, x):
-  """Jacobian of `fun`, evaluated row-by-row using reverse-mode AD"""
-  if not isinstance(fun, lu.WrappedFun):
-    fun = lu.wrap_init(fun)
-  y, pullback = vjp(fun, x)
-  std_basis = onp.eye(onp.size(y)).reshape((-1,) + onp.shape(y))
-  jac_flat, = vmap(pullback, out_axes=0)(std_basis)
-  return jac_flat.reshape(onp.shape(y) + onp.shape(x))
+def jacfwd(fun, argnums=0):
+  """Jacobian of `fun` evaluated column-by-column using forward-mode AD."""
+
+  def jacfun(*args, **kwargs):
+    f = lu.wrap_init(fun, kwargs)
+    f_partial, dyn_args = argnums_partial(f, argnums, args)
+    pushfwd = partial(jvp, f_partial, dyn_args)
+    y, jac = vmap(pushfwd, out_axes=(None, -1))(_std_basis(dyn_args))
+    example_args = dyn_args[0] if isinstance(argnums, int) else dyn_args
+    return tree_map(partial(_unravel_array_into_pytree, example_args, -1), jac)
+
+  return jacfun
+
+def jacrev(fun, argnums=0):
+  """Jacobian of `fun` evaluated row-by-row using reverse-mode AD."""
+
+  def jacfun(*args, **kwargs):
+    f = lu.wrap_init(fun, kwargs)
+    f_partial, dyn_args = argnums_partial(f, argnums, args)
+    y, pullback = vjp(f_partial, *dyn_args)
+    jac = vmap(pullback)(_std_basis(y))
+    jac = jac[0] if isinstance(argnums, int) else jac
+    example_args = dyn_args[0] if isinstance(argnums, int) else dyn_args
+    jac = tree_map(partial(_unravel_array_into_pytree, y, 0), jac)
+    return tree_transpose(tree_structure(example_args), tree_structure(y), jac)
+
+  return jacfun
 
 def hessian(fun):
   return jacfwd(jacrev(fun))
 
+def _std_basis(pytree):
+  leaves, _ = tree_flatten(pytree)
+  ndim = sum(map(onp.size, leaves))
+  return _unravel_array_into_pytree(pytree, 1, onp.eye(ndim))
 
-def general_jacobian(jacfun, fun):
-  def jac_f(*args, **kwargs):
-    f = lu.wrap_init(fun, kwargs)
-    raveled_input, unravel_inputs = ravel_pytree(args)
-    raveled_fun, unravel_outputs = ravel_fun(f, unravel_inputs)
-    jacmat = jacfun(raveled_fun)(raveled_input)
-    return tree_map(unravel_inputs, vmap(unravel_outputs(), in_axes=1)(jacmat))
-  return jac_f
-jacfwd2 = partial(general_jacobian, jacfwd)
-jacrev2 = partial(general_jacobian, jacrev)
-hessian2 = partial(general_jacobian, hessian)  # TODO(mattjj): doesn't work yet
+def _unravel_array_into_pytree(pytree, axis, arr):
+  leaves, treedef = tree_flatten(pytree)
+  axis = axis % arr.ndim
+  dtypes = map(_dtype, leaves)
+  shapes = [arr.shape[:axis] + onp.shape(l) + arr.shape[axis+1:] for l in leaves]
+  parts = _split(arr, onp.cumsum(map(onp.size, leaves[:-1])), axis)
+  reshaped_parts = [onp.reshape(part.astype(dtype), shape)
+                    for part, dtype, shape in zip(parts, dtypes, shapes)]
+  return tree_unflatten(treedef, reshaped_parts)
+
+def _split(x, indices, axis):
+  if isinstance(x, onp.ndarray):
+    return onp.split(x, indices, axis)
+  else:
+    return x.split(indices, axis)
+
+def _dtype(x):
+  return canonicalize_dtype(onp.result_type(x))
 
 
 def vmap(fun, in_axes=0, out_axes=0):
@@ -194,6 +232,11 @@ def vmap(fun, in_axes=0, out_axes=0):
 
   (`[a,b]` indicates an array with shape (a,b))
   """
+
+  docstr = ("Vectorized version of {fun}. Takes similar arguments as {fun} "
+            "but with additional array axes over which {fun} is mapped.")
+
+  @wraps(fun, docstr=docstr)
   def batched_fun(*args, **kwargs):
     if not isinstance(fun, lu.WrappedFun):
       f = lu.wrap_init(fun)
@@ -301,7 +344,7 @@ def argnums_partial(f, dyn_argnums, args):
     dyn_argnums = tuple(dyn_argnums)
   fixed_args = tuple([None if i in dyn_argnums else WrapHashably(arg)
                       for i, arg in enumerate(args)])
-  dyn_args = [args[i] for i in dyn_argnums]
+  dyn_args = tuple(args[i] for i in dyn_argnums)
   return argnums_partial_(f, dyn_argnums, fixed_args), dyn_args
 
 @lu.transformation
