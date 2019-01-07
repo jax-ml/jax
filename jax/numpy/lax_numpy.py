@@ -104,6 +104,11 @@ float64 = onp.float64
 complex64 = onp.complex64
 complex128 = onp.complex128
 
+flexible = onp.flexible
+character = onp.character
+object_ = onp.object_
+number = onp.number
+inexact = onp.inexact
 complexfloating = onp.complexfloating
 floating = onp.floating
 integer = onp.integer

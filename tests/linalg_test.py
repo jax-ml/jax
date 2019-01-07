@@ -102,6 +102,40 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(np.linalg.slogdet, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_n={}_lower={}".format(
+           jtu.format_shape_dtype_string((n,n), dtype), lower),
+       "n": n, "dtype": dtype, "lower": lower, "rng": rng}
+      for n in [0, 4, 5, 50]
+      for dtype in float_types() | complex_types()
+      for lower in [False, True]
+      for rng in [jtu.rand_default()]))
+  # TODO(phawkins): enable when there is an eigendecomposition implementation
+  # for GPU/TPU.
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testEigh(self, n, dtype, lower, rng):
+    if not hasattr(lapack, "jax_syevd"):
+      self.skipTest("No symmetric eigendecomposition implementation available")
+    args_maker = lambda: [rng((n, n), dtype)]
+
+    uplo = "L" if lower else "U"
+
+    # Norm, adjusted for dimension and type.
+    def norm(x):
+      norm = onp.linalg.norm(x, axis=(-2, -1))
+      return norm / ((n + 1) * onp.finfo(dtype).eps)
+
+    a, = args_maker()
+    a = (a + onp.conj(a.T)) / 2
+    w, v = np.linalg.eigh(onp.tril(a) if lower else onp.triu(a), UPLO=uplo)
+
+    self.assertTrue(norm(onp.eye(n) - onp.matmul(onp.conj(T(v)), v)) < 5)
+    self.assertTrue(norm(onp.matmul(a, v) - w * v) < 20)
+
+    self._CompileAndCheck(partial(np.linalg.eigh, UPLO=uplo), args_maker,
+                          check_dtypes=True)
+
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_fullmatrices={}".format(
           jtu.format_shape_dtype_string(shape, dtype), full_matrices),
        "shape": shape, "dtype": dtype, "full_matrices": full_matrices,
