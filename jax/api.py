@@ -180,6 +180,7 @@ def jacrev(fun, argnums=0):
     return tree_transpose(tree_structure(example_args), tree_structure(y), jac)
 
   return jacfun
+jacobian = jacrev
 
 def hessian(fun):
   return jacfwd(jacrev(fun))
