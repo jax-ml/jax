@@ -440,7 +440,7 @@ def full(shape, fill_value, dtype):
     return broadcast(convert_element_type(fill_value, dtype), shape)
 
 def iota(dtype, size):
-  return broadcasted_iota(dtype, (size,), 0)
+  return broadcasted_iota(dtype, (int(size),), 0)
 
 def broadcasted_iota(dtype, shape, dimension):
   dtype = xla_bridge.canonicalize_dtype(dtype)
