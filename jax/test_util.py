@@ -427,6 +427,11 @@ class JaxTestCase(parameterized.TestCase):
       self.assertEqual(len(x), len(y))
       for x_elt, y_elt in zip(x, y):
         self.assertAllClose(x_elt, y_elt, check_dtypes, atol=atol, rtol=rtol)
+    elif isinstance(x, dict):
+      self.assertIsInstance(y, dict)
+      self.assertEqual(set(x.keys()), set(y.keys()))
+      for k in x.keys():
+        self.assertAllClose(x[k], y[k], check_dtypes, atol=atol, rtol=rtol)
     else:
       is_array = lambda x: hasattr(x, '__array__') or onp.isscalar(x)
       self.assertTrue(is_array(x))
