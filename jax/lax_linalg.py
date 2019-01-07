@@ -96,8 +96,8 @@ xla.backend_specific_translations['Host'][cholesky_p] = cholesky_cpu_translation
 # Symmetric/Hermitian eigendecomposition
 
 def eigh_impl(operand, lower):
-  w, v = xla.apply_primitive(eigh_p, operand, lower=lower)
-  return core.pack((w, v))
+  v, w = xla.apply_primitive(eigh_p, operand, lower=lower)
+  return core.pack((v, w))
 
 def eigh_translation_rule(c, operand, lower):
   raise NotImplementedError(
@@ -111,11 +111,11 @@ def eigh_abstract_eval(operand, lower):
 
     batch_dims = operand.shape[:-2]
     n = operand.shape[-1]
-    w = ShapedArray(batch_dims + (n,), operand.dtype)
     v = ShapedArray(batch_dims + (n, n), operand.dtype)
+    w = ShapedArray(batch_dims + (n,), operand.dtype)
   else:
-    w, v = operand, operand
-  return core.AbstractTuple((w, v))
+    v, w = operand, operand
+  return core.AbstractTuple((v, w))
 
 def eigh_cpu_translation_rule(c, operand, lower):
   shape = c.GetShape(operand)
