@@ -27,7 +27,7 @@ from six.moves import reduce
 from .. import core
 from ..core import Trace, Tracer, new_master, pack, AbstractTuple, JaxTuple
 from ..abstract_arrays import ShapedArray, make_shaped_array, array_types
-from ..ad_util import add_jaxvals_p
+from ..ad_util import add_jaxvals_p, zeros_like_p, zeros_like_jaxval
 from ..linear_util import transformation, transformation_with_aux, wrap_init
 from ..tree_util import register_pytree_node
 from ..util import unzip2, partial, safe_map
@@ -228,6 +228,8 @@ def reducer_batcher(prim, batched_args, batch_dims, axes, **kwargs):
     kwargs['input_shape'] = operand.shape
   return prim.bind(operand, axes=axes, **kwargs), bdim_out
 
+# set up primitive batches for ad_util primitives
+
 def add_batched(batched_args, batch_dims):
   bdx, bdy = batch_dims
   if bdx == bdy:
@@ -237,6 +239,12 @@ def add_batched(batched_args, batch_dims):
     xs, ys = map(bdim_at_front, batched_args, batch_dims)
     return add_jaxvals_p.bind(xs, ys), 0
 primitive_batchers[add_jaxvals_p] = add_batched
+
+def zeros_like_batched(batched_args, batch_dims):
+  val, = batched_args
+  bdim, = batch_dims
+  return zeros_like_jaxval(val), bdim
+primitive_batchers[zeros_like_p] = zeros_like_batched
 
 
 ### util
@@ -287,6 +295,9 @@ def moveaxis(sz, dst, src, x):
       return pack(map(partial(moveaxis, sz), dst, src, x))
     elif type(src) is tuple:
       return pack(map(partial(moveaxis, sz, dst), src, x))
+    elif type(dst) is tuple:
+      srcs = (src,) * len(dst)
+      return pack(map(partial(moveaxis, sz), dst, srcs, x))
     else:
       return pack(map(partial(moveaxis, sz, dst, src), x))
   elif isinstance(aval, ShapedArray):
