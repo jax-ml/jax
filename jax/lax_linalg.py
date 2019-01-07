@@ -34,7 +34,7 @@ from jaxlib import lapack
 
 def cholesky(x): return cholesky_p.bind(x)
 
-def eigh(x): return eigh_p.bind(x)
+def eigh(x, lower=True): return eigh_p.bind(x, lower=lower)
 
 def lu(x): return lu_p.bind(x)
 
@@ -95,15 +95,15 @@ xla.backend_specific_translations['Host'][cholesky_p] = cholesky_cpu_translation
 
 # Symmetric/Hermitian eigendecomposition
 
-def eigh_impl(operand):
-  w, v = xla.apply_primitive(eigh_p, operand)
+def eigh_impl(operand, lower):
+  w, v = xla.apply_primitive(eigh_p, operand, lower=lower)
   return core.pack((w, v))
 
-def eigh_translation_rule(c, operand):
+def eigh_translation_rule(c, operand, lower):
   raise NotImplementedError(
     "Symmetric eigendecomposition is only implemented on the CPU backend")
 
-def eigh_abstract_eval(operand):
+def eigh_abstract_eval(operand, lower):
   if isinstance(operand, ShapedArray):
     if operand.ndim < 2 or operand.shape[-2] != operand.shape[-1]:
       raise ValueError(
@@ -117,11 +117,11 @@ def eigh_abstract_eval(operand):
     w, v = operand, operand
   return core.AbstractTuple((w, v))
 
-def eigh_cpu_translation_rule(c, operand):
+def eigh_cpu_translation_rule(c, operand, lower):
   shape = c.GetShape(operand)
   dtype = shape.element_type().type
   if len(shape.dimensions()) == 2 and dtype in _cpu_lapack_types:
-    out = lapack.jax_syevd(c, operand, lower=True)
+    out = lapack.jax_syevd(c, operand, lower=lower)
     return c.Tuple(c.GetTupleElement(out, 0), c.GetTupleElement(out, 1))
   else:
     raise NotImplementedError(

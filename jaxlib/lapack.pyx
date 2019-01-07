@@ -28,7 +28,7 @@ from cpython.pycapsule cimport PyCapsule_New
 from scipy.linalg.cython_blas cimport strsm, dtrsm, ctrsm
 from scipy.linalg.cython_lapack cimport sgetrf, dgetrf, cgetrf
 from scipy.linalg.cython_lapack cimport spotrf, dpotrf, cpotrf
-from scipy.linalg.cython_lapack cimport ssyevd
+from scipy.linalg.cython_lapack cimport ssyevd, dsyevd, cheevd
 
 
 import numpy as np
@@ -390,6 +390,13 @@ def jax_potrf(c, a, lower=False):
 
 # syevd: Symmetric eigendecomposition
 
+# Workspace sizes, taken from the LAPACK documentation.
+cdef int syevd_work_size(int n) nogil:
+  return 1 + 6 * n + 2 * n * n
+
+cdef int syevd_iwork_size(int n) nogil:
+  return 3 + 5 * n
+
 cdef void lapack_ssyevd(void* out_tuple, void** data) nogil:
   cdef int32_t lower = (<int32_t*>(data[0]))[0]
   cdef int n = (<int32_t*>(data[1]))[0]
@@ -399,23 +406,78 @@ cdef void lapack_ssyevd(void* out_tuple, void** data) nogil:
   cdef float* a_out = <float*>(out[0])
   cdef float* w_out = <float*>(out[1])
   cdef int* info_out = <int*>(out[2])
+  cdef float* work = <float*>(out[3])
+  cdef int* iwork = <int*>(out[4])
   if a_out != a_in:
     memcpy(a_out, a_in, n * n * sizeof(float))
 
   cdef char jobz = 'V'
   cdef char uplo = 'L' if lower else 'U'
 
-  # Formulas from lapack documentation
-  cdef int lwork = 1 + 6 * n + 2 * n * n
-  cdef int liwork = 3 + 6 * n
-  cdef float* work = <float*> malloc(lwork * sizeof(float))
-  cdef int* iwork = <int*> malloc(liwork * sizeof(int))
+  cdef int lwork = syevd_work_size(n)
+  cdef int liwork = syevd_iwork_size(n)
   ssyevd(&jobz, &uplo, &n, a_out, &n, w_out, work, &lwork, iwork, &liwork,
          info_out)
-  free(work)
-  free(iwork)
 
-register_cpu_custom_call_target(b"lapack_syevd", <void*>(lapack_ssyevd))
+register_cpu_custom_call_target(b"lapack_ssyevd", <void*>(lapack_ssyevd))
+
+cdef void lapack_dsyevd(void* out_tuple, void** data) nogil:
+  cdef int32_t lower = (<int32_t*>(data[0]))[0]
+  cdef int n = (<int32_t*>(data[1]))[0]
+  cdef const double* a_in = <double*>(data[2])
+
+  cdef void** out = <void**>(out_tuple)
+  cdef double* a_out = <double*>(out[0])
+  cdef double* w_out = <double*>(out[1])
+  cdef int* info_out = <int*>(out[2])
+  cdef double* work = <double*>(out[3])
+  cdef int* iwork = <int*>(out[4])
+  if a_out != a_in:
+    memcpy(a_out, a_in, n * n * sizeof(double))
+
+  cdef char jobz = 'V'
+  cdef char uplo = 'L' if lower else 'U'
+
+  cdef int lwork = syevd_work_size(n)
+  cdef int liwork = syevd_iwork_size(n)
+  dsyevd(&jobz, &uplo, &n, a_out, &n, w_out, work, &lwork, iwork, &liwork,
+         info_out)
+
+register_cpu_custom_call_target(b"lapack_dsyevd", <void*>(lapack_dsyevd))
+
+# Workspace sizes, taken from the LAPACK documentation.
+cdef int heevd_work_size(int n) nogil:
+  return 1 + 2 * n + n * n
+
+cdef int heevd_rwork_size(int n) nogil:
+  return 1 + 5 * n + 2 * n * n
+
+
+cdef void lapack_cheevd(void* out_tuple, void** data) nogil:
+  cdef int32_t lower = (<int32_t*>(data[0]))[0]
+  cdef int n = (<int32_t*>(data[1]))[0]
+  cdef const float complex* a_in = <float complex*>(data[2])
+
+  cdef void** out = <void**>(out_tuple)
+  cdef float complex* a_out = <float complex*>(out[0])
+  cdef float* w_out = <float*>(out[1])
+  cdef int* info_out = <int*>(out[2])
+  cdef float complex* work = <float complex*>(out[3])
+  cdef float* rwork = <float*>(out[4])
+  cdef int* iwork = <int*>(out[5])
+  if a_out != a_in:
+    memcpy(a_out, a_in, n * n * sizeof(float complex))
+
+  cdef char jobz = 'V'
+  cdef char uplo = 'L' if lower else 'U'
+
+  cdef int lwork = heevd_work_size(n)
+  cdef int lrwork = heevd_rwork_size(n)
+  cdef int liwork = syevd_iwork_size(n)
+  cheevd(&jobz, &uplo, &n, a_out, &n, w_out, work, &lwork, rwork, &lrwork,
+         iwork, &liwork, info_out)
+
+register_cpu_custom_call_target(b"lapack_cheevd", <void*>(lapack_cheevd))
 
 def jax_syevd(c, a, lower=False):
   assert sizeof(int32_t) == sizeof(int)
@@ -424,21 +486,39 @@ def jax_syevd(c, a, lower=False):
   dtype = a_shape.element_type()
   m, n = a_shape.dimensions()
   if dtype == np.float32:
-    fn = b"lapack_syevd"
+    fn = b"lapack_ssyevd"
+    eigvals_type = np.float32
+    workspace = (Shape.array_shape(dtype, (syevd_work_size(n),), (0,)),
+                 Shape.array_shape(np.int32, (syevd_iwork_size(n),), (0,)))
+  elif dtype == np.float64:
+    fn = b"lapack_dsyevd"
+    eigvals_type = np.float64
+    workspace = (Shape.array_shape(dtype, (syevd_work_size(n),), (0,)),
+                 Shape.array_shape(np.int32, (syevd_iwork_size(n),), (0,)))
+  elif dtype == np.complex64:
+    fn = b"lapack_cheevd"
+    eigvals_type = np.float32
+    workspace = (Shape.array_shape(dtype, (heevd_work_size(n),), (0,)),
+                 Shape.array_shape(np.float32, (heevd_rwork_size(n),), (0,)),
+                 Shape.array_shape(np.int32, (syevd_iwork_size(n),), (0,)))
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
 
-  return c.CustomCall(
+  out = c.CustomCall(
       fn,
-      operands=(c.ConstantS32Scalar(1 if lower else 0), c.ConstantS32Scalar(n), a),
+      operands=(c.ConstantS32Scalar(1 if lower else 0),
+                c.ConstantS32Scalar(n),
+                a),
       shape_with_layout=Shape.tuple_shape((
           Shape.array_shape(dtype, (n, n), (0, 1)),
-          Shape.array_shape(dtype, (n,), (0,)),
-          Shape.array_shape(np.int32, (), ()),
-      )),
+          Shape.array_shape(eigvals_type, (n,), (0,)),
+          Shape.array_shape(np.int32, (), ())) + workspace
+      ),
       operand_shapes_with_layout=(
           Shape.array_shape(np.int32, (), ()),
           Shape.array_shape(np.int32, (), ()),
           Shape.array_shape(dtype, (n, n), (0, 1)),
       ))
+  return c.Tuple(c.GetTupleElement(out, 0), c.GetTupleElement(out, 1),
+                 c.GetTupleElement(out, 2))
 
