@@ -19,7 +19,6 @@
 
 from __future__ import print_function
 
-from libc.stdlib cimport malloc, free
 from libc.stdint cimport int32_t
 from libc.string cimport memcpy
 from libcpp.string cimport string
