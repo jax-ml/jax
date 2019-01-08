@@ -123,6 +123,7 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("polyval", 2, numeric_dtypes, nonempty_nonscalar_array_shapes, jtu.rand_default(), []),
     op_record("ravel", 1, default_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("remainder", 2, default_dtypes, all_shapes, jtu.rand_nonzero(), []),
+    op_record("square", 1, default_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("sqrt", 1, default_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
     op_record("transpose", 1, default_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("true_divide", 2, default_dtypes, all_shapes, jtu.rand_nonzero(), ["rev"]),

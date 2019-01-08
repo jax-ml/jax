@@ -389,6 +389,11 @@ def sqrt(x):
   x, = _promote_to_result_dtype(onp.sqrt, x)
   return power(x, _constant_like(x, 0.5))
 
+@_wraps(onp.square)
+def square(x):
+  x, = _promote_to_result_dtype(onp.square, x)
+  return x * x
+
 
 @_wraps(onp.transpose)
 def transpose(x, axis=None):
