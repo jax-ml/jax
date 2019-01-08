@@ -35,6 +35,7 @@ _T = lambda x: np.swapaxes(x, -1, -2)
 def cholesky(a, lower=False, overwrite_a=False, check_finite=True):
   warnings.warn(_EXPERIMENTAL_WARNING)
   del overwrite_a, check_finite
+  a = np_linalg._promote_arg_dtypes(np.asarray(a))
   l = lax_linalg.cholesky(a if lower else np.conj(a.T))
   return l if lower else np.conj(l.T)
 
@@ -44,6 +45,29 @@ def det(a, overwrite_a=False, check_finite=True):
   warnings.warn(_EXPERIMENTAL_WARNING)
   del overwrite_a, check_finite
   return np_linalg.det(a)
+
+
+@_wraps(scipy.linalg.eigh)
+def eigh(a, b=None, lower=True, eigvals_only=False, overwrite_a=False,
+         overwrite_b=False, turbo=True, eigvals=None, type=1,
+         check_finite=True):
+  del overwrite_a, overwrite_b, turbo, check_finite
+  if b is not None:
+    raise NotImplemented("Only the b=None case of eigh is implemented")
+  if type != 1:
+    raise NotImplementedError("Only the type=1 case of eigh is implemented.")
+  if eigvals is not None:
+    raise NotImplementedError(
+        "Only the eigvals=None case of eigh is implemented.")
+
+  a = np_linalg._promote_arg_dtypes(np.asarray(a))
+  v, w = lax_linalg.eigh(a, lower=lower)
+
+  if eigvals_only:
+    return w
+  else:
+    return w, v
+
 
 
 @_wraps(scipy.linalg.inv)
@@ -56,12 +80,14 @@ def inv(a, overwrite_a=False, check_finite=True):
 @_wraps(scipy.linalg.lu_factor)
 def lu_factor(a, overwrite_a=False, check_finite=True):
   del overwrite_a, check_finite
+  a = np_linalg._promote_arg_dtypes(np.asarray(a))
   return lax_linalg.lu(a)
 
 
 @_wraps(scipy.linalg.lu)
 def lu(a, permute_l=False, overwrite_a=False, check_finite=True):
   del overwrite_a, check_finite
+  a = np_linalg._promote_arg_dtypes(np.asarray(a))
   lu, pivots = lax_linalg.lu(a)
   dtype = lax._dtype(a)
   m, n = np.shape(a)
@@ -90,6 +116,7 @@ def qr(a, overwrite_a=False, lwork=None, mode="full", pivoting=False,
     full_matrices = False
   else:
     raise ValueError("Unsupported QR decomposition mode '{}'".format(mode))
+  a = np_linalg._promote_arg_dtypes(np.asarray(a))
   q, r = lax_linalg.qr(a, full_matrices)
   if mode == "r":
     return r
@@ -102,6 +129,7 @@ def solve(a, b, sym_pos=False, lower=False, overwrite_a=False, overwrite_b=False
   if not sym_pos:
     return np_linalg.solve(a, b)
 
+  a, b = np_linalg._promote_arg_dtypes(np.asarray(a), np.asarray(b))
   a_shape = np.shape(a)
   b_shape = np.shape(b)
   a_ndims = len(a_shape)
@@ -140,6 +168,8 @@ def solve_triangular(a, b, trans=0, lower=False, unit_diagonal=False,
     transpose_a, conjugate_a = True, True
   else:
     raise ValueError("Invalid 'trans' value {}".format(trans))
+
+  a, b = np_linalg._promote_arg_dtypes(np.asarray(a), np.asarray(b))
 
   a = np.tril(a) if lower else np.triu(a)
 
