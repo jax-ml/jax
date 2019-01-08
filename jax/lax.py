@@ -2540,7 +2540,7 @@ def _dynamic_slice_indices(operand, start_indices):
   if isinstance(start_indices, (tuple, list)):
     start_indices = concatenate([reshape(i, [1]) for i in start_indices], 0)
   # map int over operand.shape to raise any dynamic-shape errors
-  shape = onp.asarray(map(int, operand.shape), start_indices.dtype)
+  shape = onp.asarray(list(map(int, operand.shape)), start_indices.dtype)
   return rem(start_indices, shape)
 
 
