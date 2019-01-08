@@ -19,6 +19,7 @@
 
 from __future__ import print_function
 
+from libc.stdlib cimport malloc, free
 from libc.stdint cimport int32_t
 from libc.string cimport memcpy
 from libcpp.string cimport string
@@ -390,10 +391,11 @@ def jax_potrf(c, a, lower=False):
 # ?gesdd: SVD decomposition
 
 cdef void lapack_sgesdd(void* out_tuple, void** data) nogil:
-  cdef int32_t job_opt = (<int32_t*>(data[0]))[0]
-  cdef int m = (<int32_t*>(data[1]))[0]
-  cdef int n = (<int32_t*>(data[2]))[0]
-  cdef float* a_in = <float*>(data[3])
+  cdef int32_t job_opt_some = (<int32_t*>(data[0]))[0]
+  cdef int32_t job_opt_compute_uv = (<int32_t*>(data[1]))[0]
+  cdef int m = (<int32_t*>(data[2]))[0]
+  cdef int n = (<int32_t*>(data[3]))[0]
+  cdef float* a_in = <float*>(data[4])
 
   cdef void** out = <void**>(out_tuple)
   cdef float* a_out = <float*>(out[0])
@@ -490,7 +492,7 @@ def jax_gesdd(c, a, full_matrices=True, compute_uv=True):
 
   return c.CustomCall(
       fn,
-      operands=(c.ConstantS32Scalar(int(full_matrices)), c.ConstantS32Scalar(int(compute_uv)),
+      operands=(c.ConstantS32Scalar(int(not full_matrices)), c.ConstantS32Scalar(int(compute_uv)),
                 c.ConstantS32Scalar(m), c.ConstantS32Scalar(n), a),
       shape_with_layout=Shape.tuple_shape((
           Shape.array_shape(dtype, (m, n), (0, 1)),

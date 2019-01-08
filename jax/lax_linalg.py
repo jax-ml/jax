@@ -41,7 +41,7 @@ def qr(x, full_matrices=True):
   return q, r
 
 def svd(x, full_matrices=True, compute_uv=True):
-  s, u, v = qr_p.bind(x, full_matrices=full_matrices, compute_uv=compute_uv)
+  s, u, v = svd_p.bind(x, full_matrices=full_matrices, compute_uv=compute_uv)
   if compute_uv:
     return s, u, v
   else:
@@ -286,14 +286,14 @@ def svd_impl(operand, full_matrices, compute_uv):
   s, u, vt = xla.apply_primitive(svd_p, operand, full_matrices=full_matrices, compute_uv=compute_uv)
   return core.pack((s, u, vt))
 
-def svd_translation_rule(c, operand):
+def svd_translation_rule(c, operand, full_matrices, compute_uv):
   raise NotImplementedError(
-    "SVD is only implemented on the CPU backend")
+    "Singular value decomposition is only implemented on the CPU backend")
 
 def svd_abstract_eval(operand, full_matrices, compute_uv):
   if isinstance(operand, ShapedArray):
     if operand.ndim < 2:
-      raise ValueError("Argument to SVD must have ndims >= 2")
+      raise ValueError("Argument to singular value decomposition must have ndims >= 2")
 
     batch_dims = operand.shape[:-2]
     m = operand.shape[-2]
@@ -307,7 +307,20 @@ def svd_abstract_eval(operand, full_matrices, compute_uv):
     vt = operand
   return core.AbstractTuple((s, u, vt))
 
+def svd_cpu_translation_rule(c, operand, full_matrices, compute_uv):
+  shape = c.GetShape(operand)
+  dtype = shape.element_type().type
+  if len(shape.dimensions()) == 2 and dtype in {np.float32, np.float64}:
+    out = lapack.jax_gesdd(c, operand, full_matrices=full_matrices, compute_uv=compute_uv)
+    return c.Tuple(c.GetTupleElement(out, 0),
+                   c.GetTupleElement(out, 1),
+                   c.GetTupleElement(out, 2))
+  else:
+    raise NotImplementedError(
+        "Only unbatched singular value decomposition for real matrices is implemented on CPU")
+
 svd_p = Primitive('svd')
 svd_p.def_impl(svd_impl)
 svd_p.def_abstract_eval(svd_abstract_eval)
 xla.translations[svd_p] = svd_translation_rule
+xla.backend_specific_translations['Host'][svd_p] = svd_cpu_translation_rule
