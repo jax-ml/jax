@@ -40,6 +40,14 @@ def cholesky(a, lower=False, overwrite_a=False, check_finite=True):
   return l if lower else np.conj(l.T)
 
 
+@_wraps(scipy.linalg.svd)
+def svd(a, full_matrices=True, compute_uv=True, overwrite_a=False, check_finite=True, lapack_driver='gesdd'):
+  warnings.warn(_EXPERIMENTAL_WARNING)
+  del overwrite_a, check_finite, lapack_driver
+  a = np_linalg._promote_arg_dtypes(np.asarray(a))
+  return lax_linalg.svd(a, full_matrices, compute_uv)
+
+
 @_wraps(scipy.linalg.det)
 def det(a, overwrite_a=False, check_finite=True):
   warnings.warn(_EXPERIMENTAL_WARNING)
