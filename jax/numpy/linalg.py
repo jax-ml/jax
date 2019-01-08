@@ -40,6 +40,7 @@ def cholesky(a):
 @_wraps(onp.linalg.svd)
 def svd(a, full_matrices=True, compute_uv=True):
   warnings.warn(_EXPERIMENTAL_WARNING)
+  a = _promote_arg_dtypes(np.asarray(a))
   return lax_linalg.svd(a, full_matrices, compute_uv)
 
 
