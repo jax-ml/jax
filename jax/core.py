@@ -449,7 +449,7 @@ class JaxTuple(tuple):
 class AbstractTuple(AbstractValue, tuple):
   @staticmethod
   def _iter(tracer):
-    return tracer.unpack()
+    return map(full_lower, tracer.unpack())
 
   def _len(self, ignored_tracer):
     return len(self)  # tuples have a known length
