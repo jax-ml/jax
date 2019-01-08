@@ -23,7 +23,8 @@ from absl.testing import absltest
 from jax import test_util as jtu
 
 import jax.numpy as np
-from jax import jit, grad, device_get, device_put, jacfwd, jacrev
+from jax import jit, grad, device_get, device_put, jacfwd, jacrev, hessian
+from jax import api
 from jax.core import Primitive
 from jax.interpreters.partial_eval import def_abstract_eval
 from jax.interpreters.ad import defjvp
@@ -258,6 +259,67 @@ class APITest(jtu.JaxTestCase):
 
     f = lambda x: np.tanh(np.dot(A, x))
     assert onp.allclose(jacfwd(f)(x), jacrev(f)(x))
+
+  @jtu.skip_on_devices("tpu")
+  def test_hessian(self):
+    R = onp.random.RandomState(0).randn
+    A = R(4, 4)
+    x = R(4)
+
+    f = lambda x: np.dot(x, np.dot(A, x))
+    assert onp.allclose(hessian(f)(x), A + A.T)
+
+  def test_std_basis(self):
+    basis = api._std_basis(np.zeros(3))
+    assert getattr(basis, "shape", None) == (3, 3)
+    assert onp.allclose(basis, onp.eye(3))
+
+    basis = api._std_basis(np.zeros((3, 3)))
+    assert getattr(basis, "shape", None) == (9, 3, 3)
+    assert onp.allclose(basis, onp.eye(9).reshape(9, 3, 3))
+
+    basis = api._std_basis([0., (np.zeros(3), np.zeros((3, 4)))])
+    assert isinstance(basis, list) and len(basis) == 2
+    assert getattr(basis[0], "shape", None) == (16,)
+    assert isinstance(basis[1], tuple) and len(basis[1]) == 2
+    assert getattr(basis[1][0], "shape", None) == (16, 3)
+    assert getattr(basis[1][1], "shape", None) == (16, 3, 4)
+
+  @jtu.skip_on_devices("tpu")
+  def test_jacobian_on_pytrees(self):
+    for jacfun in [jacfwd, jacrev]:
+      ans = jacfun(lambda x, y: (x, y))(0., 1.)
+      expected = (1., 0.)
+      self.assertAllClose(ans, expected, check_dtypes=False)
+
+      ans = jacfun(lambda x, y: (x, y), 1)(0., 1.)
+      expected = (0., 1.)
+      self.assertAllClose(ans, expected, check_dtypes=False)
+
+      ans = jacfun(lambda x, y: (x, y), (0, 1))(0., 1.)
+      expected = ((1., 0.),
+                  (0., 1.),)
+      self.assertAllClose(ans, expected, check_dtypes=False)
+
+      ans = jacfun(lambda x: x[:2])((1., 2., 3.))
+      expected = ((1., 0., 0.),
+                  (0., 1., 0.))
+      self.assertAllClose(ans, expected, check_dtypes=False)
+
+      R = onp.random.RandomState(0).randn
+      x = R(2)
+      y = R(3)
+      ans = jacfun(lambda x, y: {'x': x, 'xy': np.outer(x, y)})(x, y)
+      expected = {'x': onp.eye(2),
+                  'xy': onp.kron(onp.eye(2), y[:, None]).reshape(2, 3, 2)}
+      self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @jtu.skip_on_devices("tpu")
+  def test_hessian_on_pytrees(self):
+    ans = hessian(lambda x: np.array(x)**2)((1., 2.))
+    expected = ((onp.array([2., 0.]), onp.array([0., 0.])),
+                (onp.array([0., 0.]), onp.array([0., 2.])))
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
 
 if __name__ == '__main__':

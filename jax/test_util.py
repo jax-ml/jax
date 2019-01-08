@@ -408,8 +408,17 @@ class JaxTestCase(parameterized.TestCase):
       self.assertDtypesMatch(x, y)
 
   def assertDtypesMatch(self, x, y):
+    # special rule for complex128, which XLA doesn't support
+    def c128_to_c64(dtype):
+      if dtype == onp.complex128:
+        return onp.complex64
+      else:
+        return dtype
+
     if FLAGS.jax_enable_x64:
-      self.assertEqual(onp.asarray(x).dtype, onp.asarray(y).dtype)
+      x_dtype = c128_to_c64(onp.asarray(x).dtype)
+      y_dtype = c128_to_c64(onp.asarray(y).dtype)
+      self.assertEqual(x_dtype, y_dtype)
 
   def assertAllClose(self, x, y, check_dtypes, atol=None, rtol=None):
     """Assert that x and y, either arrays or nested tuples/lists, are close."""
@@ -418,6 +427,11 @@ class JaxTestCase(parameterized.TestCase):
       self.assertEqual(len(x), len(y))
       for x_elt, y_elt in zip(x, y):
         self.assertAllClose(x_elt, y_elt, check_dtypes, atol=atol, rtol=rtol)
+    elif isinstance(x, dict):
+      self.assertIsInstance(y, dict)
+      self.assertEqual(set(x.keys()), set(y.keys()))
+      for k in x.keys():
+        self.assertAllClose(x[k], y[k], check_dtypes, atol=atol, rtol=rtol)
     else:
       is_array = lambda x: hasattr(x, '__array__') or onp.isscalar(x)
       self.assertTrue(is_array(x))

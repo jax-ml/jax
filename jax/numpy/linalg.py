@@ -26,14 +26,32 @@ from .lax_numpy import _not_implemented
 from .lax_numpy import _wraps
 from . import lax_numpy as np
 from ..util import get_module_functions
+from ..lib import xla_bridge
 
 _EXPERIMENTAL_WARNING = "numpy.linalg support is experimental and may cause silent failures or wrong outputs"
 
 _T = lambda x: np.swapaxes(x, -1, -2)
 
+
+
+def _promote_arg_dtypes(*args):
+  """Promotes `args` to a common inexact type."""
+  def _to_inexact_type(type):
+    return type if np.issubdtype(type, np.inexact) else np.float64
+  inexact_types = [_to_inexact_type(np._dtype(arg)) for arg in args]
+  dtype = xla_bridge.canonicalize_dtype(np.result_type(*inexact_types))
+  args = [lax.convert_element_type(arg, dtype) for arg in args]
+  if len(args) == 1:
+    return args[0]
+  else:
+    return args
+
+
+
 @_wraps(onp.linalg.cholesky)
 def cholesky(a):
   warnings.warn(_EXPERIMENTAL_WARNING)
+  a = _promote_arg_dtypes(np.asarray(a))
   return lax_linalg.cholesky(a)
 
 
@@ -46,6 +64,7 @@ def svd(a, full_matrices=True, compute_uv=True):
 
 @_wraps(onp.linalg.slogdet)
 def slogdet(a):
+  a = _promote_arg_dtypes(np.asarray(a))
   dtype = lax._dtype(a)
   a_shape = np.shape(a)
   if len(a_shape) < 2 or a_shape[-1] != a_shape[-2]:
@@ -75,6 +94,21 @@ def det(a):
   return sign * np.exp(logdet)
 
 
+@_wraps(onp.linalg.eigh)
+def eigh(a, UPLO=None):
+  if UPLO is None or UPLO == "L":
+    lower = True
+  elif UPLO == "U":
+    lower = False
+  else:
+    msg = "UPLO must be one of None, 'L', or 'U', got {}".format(UPLO)
+    raise ValueError(msg)
+
+  a = _promote_arg_dtypes(np.asarray(a))
+  v, w = lax_linalg.eigh(a, lower=lower)
+  return w, v
+
+
 @_wraps(onp.linalg.inv)
 def inv(a):
   warnings.warn(_EXPERIMENTAL_WARNING)
@@ -94,6 +128,7 @@ def qr(a, mode="reduced"):
     full_matrices = True
   else:
     raise ValueError("Unsupported QR decomposition mode '{}'".format(mode))
+  a = _promote_arg_dtypes(np.asarray(a))
   q, r = lax_linalg.qr(a, full_matrices)
   if mode == "r":
     return r
@@ -102,6 +137,7 @@ def qr(a, mode="reduced"):
 
 @_wraps(onp.linalg.solve)
 def solve(a, b):
+  a, b = _promote_arg_dtypes(np.asarray(a), np.asarray(b))
   a_shape = np.shape(a)
   b_shape = np.shape(b)
   a_ndims = len(a_shape)

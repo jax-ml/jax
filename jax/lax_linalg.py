@@ -34,6 +34,8 @@ from jaxlib import lapack
 
 def cholesky(x): return cholesky_p.bind(x)
 
+def eigh(x, lower=True): return eigh_p.bind(x, lower=lower)
+
 def lu(x): return lu_p.bind(x)
 
 def qr(x, full_matrices=True):
@@ -64,6 +66,7 @@ def _T(x):
 
 _cpu_lapack_types = {np.float32, np.float64, np.complex64}
 
+# Cholesky decomposition
 
 def cholesky_jvp_rule(primals, tangents):
   x, = primals
@@ -95,6 +98,48 @@ def cholesky_cpu_translation_rule(c, operand):
     return c.Cholesky(operand)
 
 xla.backend_specific_translations['Host'][cholesky_p] = cholesky_cpu_translation_rule
+
+
+# Symmetric/Hermitian eigendecomposition
+
+def eigh_impl(operand, lower):
+  v, w = xla.apply_primitive(eigh_p, operand, lower=lower)
+  return core.pack((v, w))
+
+def eigh_translation_rule(c, operand, lower):
+  raise NotImplementedError(
+    "Symmetric eigendecomposition is only implemented on the CPU backend")
+
+def eigh_abstract_eval(operand, lower):
+  if isinstance(operand, ShapedArray):
+    if operand.ndim < 2 or operand.shape[-2] != operand.shape[-1]:
+      raise ValueError(
+        "Argument to symmetric eigendecomposition must have shape [..., n, n]")
+
+    batch_dims = operand.shape[:-2]
+    n = operand.shape[-1]
+    v = ShapedArray(batch_dims + (n, n), operand.dtype)
+    w = ShapedArray(batch_dims + (n,), operand.dtype)
+  else:
+    v, w = operand, operand
+  return core.AbstractTuple((v, w))
+
+def eigh_cpu_translation_rule(c, operand, lower):
+  shape = c.GetShape(operand)
+  dtype = shape.element_type().type
+  if len(shape.dimensions()) == 2 and dtype in _cpu_lapack_types:
+    out = lapack.jax_syevd(c, operand, lower=lower)
+    return c.Tuple(c.GetTupleElement(out, 0), c.GetTupleElement(out, 1))
+  else:
+    raise NotImplementedError(
+        "Only unbatched eigendecomposition is implemented on CPU")
+
+eigh_p = Primitive('eigh')
+eigh_p.def_impl(eigh_impl)
+eigh_p.def_abstract_eval(eigh_abstract_eval)
+xla.translations[eigh_p] = eigh_translation_rule
+xla.backend_specific_translations['Host'][eigh_p] = eigh_cpu_translation_rule
+
 
 
 triangular_solve_dtype_rule = partial(

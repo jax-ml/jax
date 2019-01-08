@@ -17,9 +17,12 @@ from __future__ import division
 from __future__ import print_function
 
 from collections import namedtuple, defaultdict
+from distutils.util import strtobool
 import itertools as it
-import numpy as onp
 import operator as op
+import os
+
+import numpy as onp
 import six
 from six.moves import xrange
 
@@ -34,7 +37,9 @@ from ..lib import xla_bridge as xb
 from .partial_eval import trace_to_subjaxpr, merge_pvals, JaxprTrace, PartialVal
 
 FLAGS = flags.FLAGS
-flags.DEFINE_bool('jax_device_values', True, 'Enable device-persistent values.')
+flags.DEFINE_bool('jax_device_values',
+                  strtobool(os.getenv('JAX_DEVICE_VALUES', "True")),
+                  'Enable device-persistent values.')
 
 map = safe_map
 

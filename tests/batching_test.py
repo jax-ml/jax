@@ -24,6 +24,7 @@ import jax.numpy as np
 from jax import test_util as jtu
 from jax.abstract_arrays import ShapedArray
 from jax import lax
+from jax import random
 from jax.api import jit, grad, jvp, vjp, trace_to_jaxpr, jacfwd, jacrev, hessian
 from jax.api import vmap
 from jax.core import unit
@@ -325,6 +326,14 @@ class BatchingTest(jtu.JaxTestCase):
     ans = vmap(lambda x, i: x[i], in_axes=(None, 0))(x, idx)
     expected = x[idx]
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testRandom(self):
+    seeds = vmap(random.PRNGKey)(onp.arange(10))
+    ans = vmap(partial(random.normal, shape=(3, 2)))(seeds)
+    expected = onp.stack([random.normal(random.PRNGKey(seed), (3, 2))
+                          for seed in onp.arange(10)])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+    assert len(onp.unique(ans)) == 10 * 3 * 2
 
 
 if __name__ == '__main__':
