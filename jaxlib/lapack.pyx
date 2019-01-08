@@ -421,7 +421,7 @@ cdef void lapack_sgesdd(void* out_tuple, void** data) nogil:
   if job_opt_full_matrices == 0:
     ldvt = min(m, n)
 
-  cdef int* iwork = <int *> malloc(min(m, n) * sizeof(int))
+  cdef int* iwork = <int *> malloc(8 * min(m, n) * sizeof(int))
 
   # First perform a workspace query to get the optimal lwork
   # NB: We perform a workspace query with malloc and free for the work array, 
@@ -471,7 +471,7 @@ cdef void lapack_dgesdd(void* out_tuple, void** data) nogil:
   if job_opt_full_matrices == 0:
     ldvt = min(m, n)
 
-  cdef int* iwork = <int *> malloc(min(m, n) * sizeof(int))
+  cdef int* iwork = <int *> malloc(8 * min(m, n) * sizeof(int))
 
   # First perform a workspace query to get the optimal lwork
   # NB: We perform a workspace query with malloc and free for the work array, 

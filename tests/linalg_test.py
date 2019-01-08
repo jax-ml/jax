@@ -164,11 +164,11 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       if full_matrices:
         k = min(m, n)
         if m < n:
-          self.assertTrue(onp.all(norm(a - onp.matmul(out[1] * out[0], out[2][:k, :])) < 30))
+          self.assertTrue(onp.all(norm(a - onp.matmul(out[1] * out[0], out[2][:k, :])) < 50))
         else:
-          self.assertTrue(onp.all(norm(a - onp.matmul(out[1] * out[0][:, :k], out[2])) < 30))
+          self.assertTrue(onp.all(norm(a - onp.matmul(out[1] * out[0][:, :k], out[2])) < 50))
       else:
-          self.assertTrue(onp.all(norm(a - onp.matmul(out[1] * out[0], out[2])) < 30))
+          self.assertTrue(onp.all(norm(a - onp.matmul(out[1] * out[0], out[2])) < 50))
 
       # Check the unitary properties of the singular vector matrices.
       self.assertTrue(onp.all(norm(onp.eye(out[0].shape[1]) - onp.matmul(T(out[0]), out[0])) < 5))
