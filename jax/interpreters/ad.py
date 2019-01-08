@@ -247,10 +247,9 @@ class JVPTracer(Tracer):
 
   def unpack(self):
     if self.tangent is zero:
-      tangent = [zero] * len(self.primal)
+      return self.full_lower()
     else:
-      tangent = self.tangent
-    return map(partial(JVPTracer, self.trace), self.primal, tangent)
+      return map(partial(JVPTracer, self.trace), self.primal, self.tangent)
 
   def full_lower(self):
     if self.tangent is zero:
