@@ -164,18 +164,21 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       if full_matrices:
         k = min(m, n)
         if m < n:
-          self.assertTrue(onp.all(norm(a - onp.matmul(out[0] * out[1], out[2][:k, :])) < 30))
+          self.assertTrue(onp.all(norm(a - onp.matmul(out[1] * out[0], out[2][:k, :])) < 30))
         else:
-          self.assertTrue(onp.all(norm(a - onp.matmul(out[0] * out[1][:, :k], out[2])) < 30))
+          self.assertTrue(onp.all(norm(a - onp.matmul(out[1] * out[0][:, :k], out[2])) < 30))
       else:
-          self.assertTrue(onp.all(norm(a - onp.matmul(out[0] * out[1], out[2])) < 30))
+          self.assertTrue(onp.all(norm(a - onp.matmul(out[1] * out[0], out[2])) < 30))
 
       # Check the unitary properties of the singular vector matrices.
-      self.assertTrue(onp.all(norm(onp.eye(out[1].shape[1]) - onp.matmul(T(out[1]), out[1])) < 5))
+      self.assertTrue(onp.all(norm(onp.eye(out[0].shape[1]) - onp.matmul(T(out[0]), out[0])) < 5))
       if m >= n:
         self.assertTrue(onp.all(norm(onp.eye(out[2].shape[1]) - onp.matmul(T(out[2]), out[2])) < 5))
       else:
         self.assertTrue(onp.all(norm(onp.eye(out[2].shape[0]) - onp.matmul(out[2], T(out[2]))) < 5))
+
+    else:
+      self.assertTrue(onp.allclose(onp.linalg.svd(a, compute_uv=False), onp.asarray(out)))
 
     self._CompileAndCheck(partial(np.linalg.svd, full_matrices=full_matrices, compute_uv=compute_uv),
                           args_maker, check_dtypes=True)

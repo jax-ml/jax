@@ -28,7 +28,7 @@ from cpython.pycapsule cimport PyCapsule_New
 from scipy.linalg.cython_blas cimport strsm, dtrsm, ctrsm
 from scipy.linalg.cython_lapack cimport sgetrf, dgetrf, cgetrf
 from scipy.linalg.cython_lapack cimport spotrf, dpotrf, cpotrf
-from scipy.linalg.cython_lapack cimport sgesdd, dgesdd, cgesdd
+from scipy.linalg.cython_lapack cimport sgesdd, dgesdd
 from scipy.linalg.cython_lapack cimport ssyevd, dsyevd, cheevd
 
 import numpy as np
@@ -388,7 +388,7 @@ def jax_potrf(c, a, lower=False):
       ))
 
 
-# ?gesdd: SVD decomposition
+# ?gesdd: Singular value decomposition
 
 cdef void lapack_sgesdd(void* out_tuple, void** data) nogil:
   cdef int32_t job_opt_full_matrices = (<int32_t*>(data[0]))[0]
