@@ -391,7 +391,7 @@ def jax_potrf(c, a, lower=False):
 # ?gesdd: SVD decomposition
 
 cdef void lapack_sgesdd(void* out_tuple, void** data) nogil:
-  cdef int32_t job_opt_some = (<int32_t*>(data[0]))[0]
+  cdef int32_t job_opt_full_matrices = (<int32_t*>(data[0]))[0]
   cdef int32_t job_opt_compute_uv = (<int32_t*>(data[1]))[0]
   cdef int m = (<int32_t*>(data[2]))[0]
   cdef int n = (<int32_t*>(data[3]))[0]
@@ -412,30 +412,36 @@ cdef void lapack_sgesdd(void* out_tuple, void** data) nogil:
   if job_opt_compute_uv == 0:
     jobz = 'N'
   else:
-    if job_opt_some == 1:
+    if job_opt_full_matrices == 0:
       jobz = 'S'
 
   cdef int lda = m
   cdef int ldu = m
   cdef int ldvt = n
+  if job_opt_full_matrices == 0:
+    ldvt = min(m, n)
 
   cdef int* iwork = <int *> malloc(min(m, n) * sizeof(int))
 
   # First perform a workspace query to get the optimal lwork
+  # NB: We perform a workspace query with malloc and free for the work array, 
+  # because it is officially recommended.
   cdef float wkopt = 0
   cdef int lwork = -1
   sgesdd(&jobz, &m, &n, a_out, &lda, s, u, &ldu, vt, &ldvt, &wkopt, &lwork, iwork, info)
   lwork = <int> wkopt
 
   # Now get the actual SVD
-  cdef work = <float *> malloc(lwork * sizeof(float))
+  cdef float* work = <float *> malloc(lwork * sizeof(float))
   sgesdd(&jobz, &m, &n, a_out, &lda, s, u, &ldu, vt, &ldvt, work, &lwork, iwork, info)
+  free(iwork)
+  free(work)
 
 register_cpu_custom_call_target(b"lapack_sgesdd", <void*>(lapack_sgesdd))
 
 
 cdef void lapack_dgesdd(void* out_tuple, void** data) nogil:
-  cdef int32_t job_opt_some = (<int32_t*>(data[0]))[0]
+  cdef int32_t job_opt_full_matrices = (<int32_t*>(data[0]))[0]
   cdef int32_t job_opt_compute_uv = (<int32_t*>(data[1]))[0]
   cdef int m = (<int32_t*>(data[2]))[0]
   cdef int n = (<int32_t*>(data[3]))[0]
@@ -456,24 +462,30 @@ cdef void lapack_dgesdd(void* out_tuple, void** data) nogil:
   if job_opt_compute_uv == 0:
     jobz = 'N'
   else:
-    if job_opt_some == 1:
+    if job_opt_full_matrices == 0:
       jobz = 'S'
 
   cdef int lda = m
   cdef int ldu = m
   cdef int ldvt = n
+  if job_opt_full_matrices == 0:
+    ldvt = min(m, n)
 
   cdef int* iwork = <int *> malloc(min(m, n) * sizeof(int))
 
   # First perform a workspace query to get the optimal lwork
+  # NB: We perform a workspace query with malloc and free for the work array, 
+  # because it is officially recommended.
   cdef double wkopt = 0
   cdef int lwork = -1
   dgesdd(&jobz, &m, &n, a_out, &lda, s, u, &ldu, vt, &ldvt, &wkopt, &lwork, iwork, info)
   lwork = <int> wkopt
 
   # Now get the actual SVD
-  cdef work = <double *> malloc(lwork * sizeof(double))
+  cdef double* work = <double *> malloc(lwork * sizeof(double))
   dgesdd(&jobz, &m, &n, a_out, &lda, s, u, &ldu, vt, &ldvt, work, &lwork, iwork, info)
+  free(iwork)
+  free(work)
 
 register_cpu_custom_call_target(b"lapack_dgesdd", <void*>(lapack_dgesdd))
 
@@ -490,9 +502,9 @@ def jax_gesdd(c, a, full_matrices=True, compute_uv=True):
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
 
-  return c.CustomCall(
+  out = c.CustomCall(
       fn,
-      operands=(c.ConstantS32Scalar(int(not full_matrices)), c.ConstantS32Scalar(int(compute_uv)),
+      operands=(c.ConstantS32Scalar(int(full_matrices)), c.ConstantS32Scalar(int(compute_uv)),
                 c.ConstantS32Scalar(m), c.ConstantS32Scalar(n), a),
       shape_with_layout=Shape.tuple_shape((
           Shape.array_shape(dtype, (m, n), (0, 1)),
@@ -508,6 +520,8 @@ def jax_gesdd(c, a, full_matrices=True, compute_uv=True):
           Shape.array_shape(np.int32, (), ()),
           Shape.array_shape(dtype, (m, n), (0, 1)),
       ))
+  return c.Tuple(c.GetTupleElement(out, 1), c.GetTupleElement(out, 2),
+                 c.GetTupleElement(out, 3), c.GetTupleElement(out, 4))
 
 
 # syevd: Symmetric eigendecomposition
