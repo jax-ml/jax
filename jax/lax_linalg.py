@@ -45,7 +45,7 @@ def qr(x, full_matrices=True):
 def svd(x, full_matrices=True, compute_uv=True):
   s, u, v = svd_p.bind(x, full_matrices=full_matrices, compute_uv=compute_uv)
   if compute_uv:
-    return s, u, v
+    return u, s, v
   else:
     return s
 
@@ -325,7 +325,7 @@ xla.translations[qr_p] = qr_translation_rule
 ad.primitive_jvps[qr_p] = qr_jvp_rule
 
 
-# SVD decomposition
+# Singular value decomposition
 
 def svd_impl(operand, full_matrices, compute_uv):
   s, u, vt = xla.apply_primitive(svd_p, operand, full_matrices=full_matrices, compute_uv=compute_uv)
