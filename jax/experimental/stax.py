@@ -47,6 +47,11 @@ def logsoftmax(x, axis=-1):
   """Apply log softmax to an array of logits, log-normalizing along an axis."""
   return x - logsumexp(x, axis, keepdims=True)
 
+def softmax(x, axis=-1):
+  """Apply softmax to an array of logits, exponentiating and normalizing along an axis."""
+  unnormalized = np.exp(x - x.max(axis, keepdims=True))
+  return unnormalized / unnormalized.sum(axis, keepdims=True)
+
 def fastvar(x, axis, keepdims):
   """A fast but less numerically-stable variance calculation than np.var."""
   return np.mean(x**2, axis, keepdims=keepdims) - np.mean(x, axis, keepdims=keepdims)**2
@@ -146,7 +151,9 @@ def _elemwise_no_params(fun, **kwargs):
   return init_fun, apply_fun
 Tanh = _elemwise_no_params(np.tanh)
 Relu = _elemwise_no_params(relu)
+Exp = _elemwise_no_params(np.exp)
 LogSoftmax = _elemwise_no_params(logsoftmax, axis=-1)
+Softmax = _elemwise_no_params(softmax, axis=-1)
 Softplus = _elemwise_no_params(softplus)
 
 

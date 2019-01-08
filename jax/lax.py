@@ -32,7 +32,7 @@ from . import linear_util as lu
 from .core import Primitive
 from .abstract_arrays import (UnshapedArray, ShapedArray, ConcreteArray,
                               array_types, make_shaped_array)
-from .api_util import flatten_fun, tree_to_jaxtuples
+from .api_util import pytree_fun_to_jaxtupletree_fun, pytree_to_jaxtupletree
 from .interpreters import partial_eval as pe
 from .interpreters import xla
 from .interpreters import ad
@@ -389,9 +389,9 @@ def sort_key_val(keys, values, dimension=-1):
   return sorted_keys, sorted_values
 
 def _while_loop(cond_fun, body_fun, init_val):
-  init_val_flat, in_tree = tree_to_jaxtuples(init_val)
-  flat_body_fun, out_tree = flatten_fun(lu.wrap_init(body_fun), (in_tree,))
-  flat_cond_fun, _ = flatten_fun(lu.wrap_init(cond_fun), (in_tree,))
+  init_val_flat, in_tree = pytree_to_jaxtupletree(init_val)
+  flat_body_fun, out_tree = pytree_fun_to_jaxtupletree_fun(lu.wrap_init(body_fun), (in_tree,))
+  flat_cond_fun, _ = pytree_fun_to_jaxtupletree_fun(lu.wrap_init(cond_fun), (in_tree,))
 
   pval_flat = _abstractify(init_val_flat)
   cond_jaxpr, _, cond_consts = pe.trace_to_jaxpr(flat_cond_fun, (pval_flat,))
@@ -418,6 +418,13 @@ def tie_in(x, y):
   return tie_in_p.bind(x, y)
 
 def full(shape, fill_value, dtype):
+  try:
+    shape = tuple(map(int, shape))
+  except TypeError:
+    msg = ("`full` requires shapes to be concrete. If using `jit`, try using "
+           "`static_argnums` or applying `jit` to smaller subfunctions instead.")
+    raise TypeError(msg)
+
   if onp.shape(fill_value):
     msg = "full must be called with scalar fill_value, got fill_value.shape {}."
     raise TypeError(msg.format(onp.shape(fill_value)))
@@ -433,7 +440,7 @@ def full(shape, fill_value, dtype):
     return broadcast(convert_element_type(fill_value, dtype), shape)
 
 def iota(dtype, size):
-  return broadcasted_iota(dtype, (size,), 0)
+  return broadcasted_iota(dtype, (int(size),), 0)
 
 def broadcasted_iota(dtype, shape, dimension):
   dtype = xla_bridge.canonicalize_dtype(dtype)
@@ -679,7 +686,7 @@ def zeros_like_array(x):
 
 for t in itertools.chain(array_types, [xla.DeviceArray]):
   ad_util.jaxval_adders[t] = add
-  ad_util.jaxval_zeros_likers[t] = zeros_like_array
+ad_util.jaxval_zeros_likers[xla.DeviceArray] = zeros_like_array
 
 batching.pytype_aval_mappings[xla.DeviceArray] = make_shaped_array
 
@@ -2532,7 +2539,9 @@ def _check_shapelike(fun_name, arg_name, obj):
 def _dynamic_slice_indices(operand, start_indices):
   if isinstance(start_indices, (tuple, list)):
     start_indices = concatenate([reshape(i, [1]) for i in start_indices], 0)
-  return rem(start_indices, onp.array(operand.shape, start_indices.dtype))
+  # map int over operand.shape to raise any dynamic-shape errors
+  shape = onp.asarray(list(map(int, operand.shape)), start_indices.dtype)
+  return rem(start_indices, shape)
 
 
 def _const(example, val):

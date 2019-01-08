@@ -29,41 +29,25 @@ from .api import jit
 from jax.lib import xla_bridge
 from jax import core
 
-class PRNGKey(object):
-  """A pseudo-random number generator (PRNG) key for use with lax.random."""
-  __slots__ = ["keypair"]
 
-  def __init__(self, seed):
-    """Create a new PRNG key.
+def PRNGKey(seed):
+  if onp.shape(seed):
+    raise TypeError("PRNGKey seed must be a scalar.")
+  convert = lambda k: lax.reshape(lax.convert_element_type(k, onp.uint32), [1])
+  if isinstance(seed, (int, onp.ndarray)):
+    # Special handling of raw integer values, which may have be 64bit even
+    # when jax_enable_x64=False and we don't want to drop the top 32 bits
+    k1 = convert(onp.bitwise_and(onp.right_shift(seed, 32), 0xFFFFFFFF))
+  else:
+    k1 = convert(lax.shift_right_logical(seed, 32))
+  k2 = convert(lax.bitwise_and(seed, 0xFFFFFFFF))
+  return lax.concatenate([k1, k2], 0)
 
-    Args:
-      seed: a scalar integer value used to initialize the PRNG key.
-
-    Returns:
-      A new PRNGKey object.
-    """
-    convert = lambda key: lax.convert_element_type(key, onp.uint32)
-    if onp.shape(seed):
-      raise TypeError("PRNGKey seed must be a scalar.")
-    if isinstance(seed, (int, onp.ndarray)):
-      # Special handling of raw integer values, which may have be 64bit even
-      # when jax_enable_x64=False and we don't want to drop the top 32 bits
-      k1 = convert(onp.bitwise_and(onp.right_shift(seed, 32), 0xFFFFFFFF))
-    else:
-      k1 = convert(lax.shift_right_logical(seed, 32))
-    k2 = convert(lax.bitwise_and(seed, 0xFFFFFFFF))
-    self.keypair = core.pack((k1, k2))
-
-  @classmethod
-  def from_keypair(cls, keypair):
-    """Internal method to create a PRNGKey instance from a raw key pair."""
-    new = cls.__new__(cls)
-    new.keypair = core.pack(keypair)
-    return new
-
-
-tree_util.register_pytree_node(PRNGKey, lambda k: (k.keypair, None),
-                               lambda _, xs: PRNGKey.from_keypair(xs))
+def is_prng_key(key):
+  try:
+    return key.shape == (2,) and key.dtype == onp.uint32
+  except AttributeError:
+    return False
 
 
 ### utilities
@@ -169,14 +153,14 @@ def split(key, num=2):
   Returns:
     A tuple of length `num` of new PRNGKey instances.
   """
-  counts = lax.tie_in(key.keypair, lax.iota(onp.uint32, num * 2))
-  bits = lax.reshape(threefry_2x32(key.keypair, counts), (num, 2))
-  keypairs = (lax.index_in_dim(bits, i, keepdims=False) for i in range(num))
-  return tuple(PRNGKey.from_keypair((kp[0], kp[1])) for kp in keypairs)
+  counts = lax.tie_in(key, lax.iota(onp.uint32, num * 2))
+  return lax.reshape(threefry_2x32(key, counts), (num, 2))
 
 
 def _random_bits(key, bit_width, shape):
   """Sample uniform random bits of given width and shape using PRNG key."""
+  if not is_prng_key(key):
+    raise TypeError("_random_bits got invalid prng key.")
   if bit_width not in (32, 64):
     raise TypeError("requires 32- or 64-bit field width.")
   max_count = (bit_width // 32) * onp.prod(shape)
@@ -184,8 +168,8 @@ def _random_bits(key, bit_width, shape):
     # TODO(mattjj): just split the key here
     raise TypeError("requesting more random bits than a single call provides.")
 
-  counts = lax.tie_in(key.keypair, lax.iota(onp.uint32, max_count))
-  bits = threefry_2x32(key.keypair, counts)
+  counts = lax.tie_in(key, lax.iota(onp.uint32, max_count))
+  bits = threefry_2x32(key, counts)
   if bit_width == 64:
     bits = [lax.convert_element_type(x, onp.uint64) for x in np.split(bits, 2)]
     bits = (bits[0] << onp.uint64(32)) | bits[1]

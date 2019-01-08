@@ -90,17 +90,46 @@ def build_tree(treedef, xs):
 
 tree_flatten = partial(walk_pytree, concatenate, lambda x: [x])
 
-def tree_unflatten(xs, treedef):
-  xs = iter(xs)
+def tree_unflatten(treedef, xs):
+  # like build_tree, but handles empty containers in the tree
+  return _tree_unflatten(iter(xs), treedef)
+
+def _tree_unflatten(xs, treedef):
   if treedef is leaf:
     return next(xs)
   else:
-    children = map(partial(tree_unflatten, xs), treedef.children)
+    children = map(partial(_tree_unflatten, xs), treedef.children)
     return treedef.node_type.from_iterable(treedef.node_data, children)
 
 
+def tree_transpose(outer_treedef, inner_treedef, pytree_to_transpose):
+  flat, treedef = tree_flatten(pytree_to_transpose)
+  expected_treedef = _nested_treedef(inner_treedef, outer_treedef)
+  if treedef != expected_treedef:
+    raise TypeError("Mismatch\n{}\n != \n{}".format(treedef, expected_treedef))
+
+  inner_size = _num_leaves(inner_treedef)
+  outer_size = _num_leaves(outer_treedef)
+  flat = iter(flat)
+  lol = [[next(flat) for _ in range(inner_size)] for __ in range(outer_size)]
+  transposed_lol = zip(*lol)
+  subtrees = map(partial(tree_unflatten, outer_treedef), transposed_lol)
+  return tree_unflatten(inner_treedef, subtrees)
+
+def _num_leaves(treedef):
+  return 1 if treedef is leaf else sum(map(_num_leaves, treedef.children))
+
+def _nested_treedef(inner, outer):
+  # just used in tree_transpose error checking
+  if outer is leaf:
+    return inner
+  else:
+    children = map(partial(_nested_treedef, inner), outer.children)
+    return PyTreeDef(outer.node_type, outer.node_data, tuple(children))
+
+
 def tree_structure(tree):
-  spec, _ = process_pytree(tree, lambda _: None)
+  _, spec = process_pytree(lambda _: None, tree)
   return spec
 
 
@@ -123,9 +152,12 @@ class PyTreeDef(object):
     return hash((self.node_type, self.node_data, tuple(self.children)))
 
   def __eq__(self, other):
-    return (self.node_type == other.node_type and
-            self.node_data == other.node_data and
-            self.children == other.children)
+    if other is leaf:
+      return False
+    else:
+      return (self.node_type == other.node_type and
+              self.node_data == other.node_data and
+              self.children == other.children)
 
   def __ne__(self, other):
     return not self == other

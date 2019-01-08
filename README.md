@@ -152,7 +152,7 @@ pip install --upgrade jax  # install jax
 The library package name must correspond to the version of the existing CUDA
 installation you want to use, with `cuda100` for CUDA 10.0, `cuda92` for CUDA
 9.2, and `cuda90` for CUDA 9.0. To find your CUDA and CUDNN versions, you can
-run command like these, depending on your CUDNN install path:
+run commands like these, depending on your CUDNN install path:
 
 ```bash
 nvcc --version
@@ -274,7 +274,7 @@ For automatic differentiation with `grad`, JAX has the same restrictions
 as [Autograd](https://github.com/hips/autograd). Specifically, differentiation
 works with indexing (`x = A[i, j, :]`) but not indexed assignment (`A[i, j] =
 x`) or indexed in-place updating (`A[i] += b`). You can use lists, tuples, and
-dicts freely: jax doesn't even see them. Using `np.dot(A, B)` rather than
+dicts freely: JAX doesn't even see them. Using `np.dot(A, B)` rather than
 `A.dot(B)` is required for automatic differentiation when `A` is a raw ndarray.
 
 For compiling your own functions with `jit` there are a few more requirements.

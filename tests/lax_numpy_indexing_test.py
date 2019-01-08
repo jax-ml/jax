@@ -398,6 +398,10 @@ class IndexingTest(jtu.JaxTestCase):
            [IndexSpec(shape=(3, 4, 5), indexer=[[0, 1]]),
             IndexSpec(shape=(3, 4, 5), indexer=[[[0], [-1]], [[2, 3, 0, 3]]]),
             ]),
+          ("TupleOfListsOfPythonInts",
+           [IndexSpec(shape=(3, 4, 5), indexer=([0, 1])),
+            IndexSpec(shape=(3, 4, 5), indexer=([[0], [-1]], [[2, 3, 0, 3]])),
+            ]),
           ("ListOfPythonIntsAndIntArrays",
            [IndexSpec(shape=(3, 4, 5), indexer=[0, onp.array([0, 1])]),
             IndexSpec(shape=(3, 4, 5), indexer=[0, 1,
@@ -629,6 +633,15 @@ class IndexingTest(jtu.JaxTestCase):
     x = onp.zeros(3)
     i = onp.array([True, True, False])
     self.assertRaises(IndexError, lambda: api.jit(lambda x, i: x[i])(x, i))
+
+  def testIssue187(self):
+    x = lnp.ones((5, 5))
+    x[[0, 2, 4], [0, 2, 4]]  # doesn't crash
+
+    x = onp.arange(25).reshape((5, 5))
+    ans = api.jit(lambda x: x[[0, 2, 4], [0, 2, 4]])(x)
+    expected = x[[0, 2, 4], [0, 2, 4]]
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
 
 if __name__ == "__main__":
