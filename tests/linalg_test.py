@@ -129,7 +129,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     w, v = np.linalg.eigh(onp.tril(a) if lower else onp.triu(a), UPLO=uplo)
 
     self.assertTrue(norm(onp.eye(n) - onp.matmul(onp.conj(T(v)), v)) < 5)
-    self.assertTrue(norm(onp.matmul(a, v) - w * v) < 20)
+    self.assertTrue(norm(onp.matmul(a, v) - w * v) < 30)
 
     self._CompileAndCheck(partial(np.linalg.eigh, UPLO=uplo), args_maker,
                           check_dtypes=True)
