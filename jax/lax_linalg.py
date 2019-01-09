@@ -21,6 +21,7 @@ import numpy as onp
 from jax.numpy import lax_numpy as np
 from jax import core
 from jax import lax
+from jax import ad_util
 from jax.interpreters import xla
 from jax.interpreters import ad
 from jax.util import partial
@@ -247,33 +248,29 @@ def lu_jvp_rule(primals, tangents):
 
   # TODO(phawkins): use a gather rather than a matrix multiplication here.
   permutation = lu_pivots_to_permutation(pivots, m)
-  p = np.array(permutation == np.arange(m)[:, None], dtype=dtype)
+  p = np.array(permutation[:, None] == np.arange(m), dtype=dtype)
   x = np.matmul(p, a_dot)
 
-  # Derivation of the JVP is from:
   # Differentiation of Matrix Functionals Using Triangular Factorization
   # F. R. De Hoog, R. S. Anderssen, and M. A. Lukas
+  #
+  #     LU = A
+  # ==> L'U + LU' = A'
+  # ==> inv(L) . L' + U' . inv(U) = inv(L) A' inv(U)
+  # ==> L' = L . tril(inv(L) . A' . inv(U), -1)
+  #     U' = triu(inv(L) . A' . inv(U)) . U
 
-  # TODO(phawkins): add unit_diagonal support to solve_triangular, use it here
-  # instead of explicit masking of l.
   l = np.tril(lu, -1)[:, :k] + np.eye(m, k, dtype=dtype)
   u = np.triu(lu)
 
   la = triangular_solve(l, x, left_side=True, transpose_a=False, lower=True)
-
   lau = triangular_solve(u, la, left_side=False, transpose_a=False,
                          lower=False)
 
-  l_dot = np.matmul(l, np.tril(lau)[:, :k])
+  l_dot = np.matmul(l, np.tril(lau, -1)[:, :k])
   u_dot = np.matmul(np.triu(lau)[:k, :], u)
-
-  # The LU decomposition output must have a unit diagonal, so rescale L and U
-  # so L's diagonal is a unit.
-  l_diag = np.diagonal(l_dot, axis1=-2, axis2=-1)
-  l_dot = l_dot / l_diag[..., None, :]
-  u_dot = u_dot * l_diag[..., None]
-  lu_dot = np.tril(l_dot, -1) + u_dot
-  return core.pack((lu, pivots)), core.pack((lu_dot, ad.zeros_like_jaxval(pivots)))
+  lu_dot = l_dot + u_dot
+  return core.pack((lu, pivots)), ad.TangentTuple((lu_dot, ad_util.zero))
 
 
 lu_p = Primitive('lu')
