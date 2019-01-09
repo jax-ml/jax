@@ -141,7 +141,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
        "compute_uv": compute_uv, "rng": rng}
       for m in [2, 7, 29, 53]
       for n in [2, 7, 29, 53]
-      for dtype in float_types()
+      for dtype in float_types() | complex_types()
       for full_matrices in [False, True]
       for compute_uv in [False, True]
       for rng in [jtu.rand_default()]))
@@ -171,11 +171,11 @@ class NumpyLinalgTest(jtu.JaxTestCase):
           self.assertTrue(onp.all(norm(a - onp.matmul(out[1] * out[0], out[2])) < 50))
 
       # Check the unitary properties of the singular vector matrices.
-      self.assertTrue(onp.all(norm(onp.eye(out[0].shape[1]) - onp.matmul(T(out[0]), out[0])) < 5))
+      self.assertTrue(onp.all(norm(onp.eye(out[0].shape[1]) - onp.matmul(onp.conj(T(out[0])), out[0])) < 5))
       if m >= n:
-        self.assertTrue(onp.all(norm(onp.eye(out[2].shape[1]) - onp.matmul(T(out[2]), out[2])) < 5))
+        self.assertTrue(onp.all(norm(onp.eye(out[2].shape[1]) - onp.matmul(onp.conj(T(out[2])), out[2])) < 5))
       else:
-        self.assertTrue(onp.all(norm(onp.eye(out[2].shape[0]) - onp.matmul(out[2], T(out[2]))) < 5))
+        self.assertTrue(onp.all(norm(onp.eye(out[2].shape[0]) - onp.matmul(out[2], onp.conj(T(out[2])))) < 10))
 
     else:
       self.assertTrue(onp.allclose(onp.linalg.svd(a, compute_uv=False), onp.asarray(out)))
