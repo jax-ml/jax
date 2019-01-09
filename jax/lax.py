@@ -203,6 +203,19 @@ def dynamic_update_slice(operand, update, start_indices):
   return dynamic_update_slice_p.bind(operand, update, start_indices,
                                      update_shape=update.shape)
 
+def gather(operand, start_indices, dimension_numbers=None, slice_sizes=None):
+  return gather_p.bind(
+      operand, start_indices, dimension_numbers=dimension_numbers,
+      slice_sizes=tuple(slice_sizes), operand_shape=operand.shape)
+
+def scatter(operand, scatter_indices, updates, update_computation,
+            dimension_numbers=None):
+  jaxpr, consts = _reduction_jaxpr(update_computation, _const(operand, 0))
+  return scatter_p.bind(
+      operand, scatter_indices, updates, update_jaxpr=jaxpr,
+      update_consts=consts, dimension_numbers=dimension_numbers)
+
+
 def index_take(src, idxs, axes):
   pvals = [_abstractify(arg) for arg in (src,) + idxs]
   jaxpr, _, consts = pe.trace_unwrapped_to_jaxpr(partial(_index_take, axes), pvals)
@@ -1847,6 +1860,118 @@ ad.primitive_jvps[dynamic_update_slice_p] = dynamic_update_slice_jvp
 ad.primitive_transposes[dynamic_update_slice_p] = \
     dynamic_update_slice_transpose_rule
 
+
+
+GatherDimensionNumbers = collections.namedtuple(
+    "GatherDimensionNumbers",
+    ["offset_dims", "collapsed_slice_dims", "start_index_map",
+     "index_vector_dim"])
+
+def _gather_dimensions_proto(dimension_numbers):
+  assert type(dimension_numbers) is GatherDimensionNumbers
+  proto = xla_bridge.xla_data_pb2.GatherDimensionNumbers()
+  proto.offset_dims.extend(dimension_numbers.offset_dims)
+  proto.collapsed_slice_dims.extend(dimension_numbers.collapsed_slice_dims)
+  proto.start_index_map.extend(dimension_numbers.start_index_map)
+  proto.index_vector_dim = dimension_numbers.index_vector_dim
+  return proto
+
+def gather_dtype_rule(operand, start_indices, **kwargs):
+  if not onp.issubdtype(start_indices.dtype, onp.integer):
+    raise ValueError("start_indices must have an integer type")
+  return xla_bridge.canonicalize_dtype(operand.dtype)
+
+def gather_shape_rule(operand, start_indices, dimension_numbers, slice_sizes,
+                      operand_shape):
+  assert operand.shape == operand_shape
+  expanded_start_indices_shape = start_indices
+  if len(expanded_start_indices_shape) == dimension_numbers.index_vector_dim:
+    expanded_start_indices_shape.append(1)
+  result_rank = len(dimension_numbers.offset_dims)
+  result_rank += len(expanded_start_indices_shape) - 1
+  output_shape = []
+  offset_dims_seen = 0
+  gather_dims_seen = 0
+  for i in xrange(result_rank):
+    if i in dimension_numbers.offset_dims:
+      while offset_dims_seen in dimension_numbers.collapsed_slice_dims:
+        offset_dims_seen += 1
+      output_shape.append(slice_sizes[offset_dims_seen])
+      offset_dims_seen += 1
+    else:
+      if gather_dims_seen == dimension_numbers.index_vector_dim:
+        gather_dims_seen += 1
+      output_shape.append(expanded_start_indices_shape[gather_dims_seen])
+      gather_dims_seen += 1
+  return tuple(output_shape)
+
+def gather_translation_rule(c, operand, start_indices, dimension_numbers,
+                            slice_sizes, operand_shape):
+  return c.Gather(operand, start_indices,
+                  _gather_dimensions_proto(dimension_numbers), slice_sizes)
+
+def gather_jvp_rule(g, operand, start_indices, dimension_numbers, slice_sizes,
+                    operand_shape):
+  return gather(g, start_indices, dimension_numbers, slice_sizes)
+
+def gather_transpose_rule(t, operand, start_indices, dimension_numbers,
+                          slice_sizes, operand_shape):
+  # TODO(phawkins): this is completely untested and probably wrong.
+  assert operand is None
+  zeros = broadcast(_const(t, 0), operand_shape)
+  scatter_dnums = ScatterDimensionNumbers(
+    update_window_dims=dimension_numbers.update_window_dims,
+    inserted_window_dims=dimension_numbers.collapsed_slice_dims,
+    scatter_dims_to_operand_dims=dimension_numbers.start_index_map,
+    index_vector_dim=dimension_numbers.index_vector_dim)
+  return [scatter(zeros, start_indices, t, add, scatter_dnums), ad_util.zero]
+
+
+gather_p = standard_primitive(
+    gather_shape_rule, gather_dtype_rule, 'gather',
+    gather_translation_rule)
+ad.defjvp(gather_p, gather_jvp_rule, None)
+ad.primitive_transposes[gather_p] = gather_transpose_rule
+
+
+ScatterDimensionNumbers = collections.namedtuple(
+    "ScatterDimensionNumbers",
+    ["update_window_dims", "inserted_window_dims",
+     "scatter_dims_to_operand_dims", "index_vector_dim"])
+
+def _scatter_dimensions_proto(dimension_numbers):
+  assert type(dimension_numbers) is ScatterDimensionNumbers
+  proto = xla_bridge.xla_data_pb2.ScatterDimensionNumbers()
+  proto.update_window_dims.extend(dimension_numbers.update_window_dims)
+  proto.inserted_window_dims.extend(dimension_numbers.inserted_window_dims)
+  proto.scatter_dims_to_operand_dims.extend(
+      dimension_numbers.scatter_dims_to_operand_dims)
+  proto.index_vector_dim = dimension_numbers.index_vector_dim
+  return proto
+
+def scatter_dtype_rule(operand, scatter_indices, updates, **kwargs):
+  if not onp.issubdtype(scatter_indices.dtype, onp.integer):
+    raise ValueError("start_indices must have an integer type")
+  _check_same_dtypes("scatter", False, operand.dtype, updates.dtype)
+  return xla_bridge.canonicalize_dtype(operand.dtype)
+
+def scatter_shape_rule(operand, scatter_indices, updates, **kwargs):
+  return operand.shape
+
+def scatter_translation_rule(c, operand, scatter_indices, updates,
+                             update_jaxpr, update_consts, dimension_numbers):
+  dtype = c.GetShape(operand).numpy_dtype()
+  init_value = c.Constant(onp.array(0, dtype))
+  update_computation = _reduction_computation(
+      c, update_jaxpr, update_consts, init_value)
+  return c.Scatter(operand, scatter_indices, updates, update_computation,
+                  _scatter_dimensions_proto(dimension_numbers))
+
+scatter_p = standard_primitive(
+    scatter_shape_rule, scatter_dtype_rule, 'scatter',
+    scatter_translation_rule)
+
+# TODO(phawkins): define JVP and transpose rules for scatter.
 
 def index_take_shape_rule(src, *idxs, **kwargs):
   axes = kwargs['axes']
