@@ -70,8 +70,8 @@ cdef void blas_strsm(void* out, void** data) nogil:
   elif trans_a == 2:
     ctransa = 'C'
   cdef char cdiag = 'U' if diag else 'N'
-  cdef int lda = m
-  cdef int ldb = m if left_side else n
+  cdef int lda = m if left_side else n
+  cdef int ldb = m
   strsm(&cside, &cuplo, &ctransa, &cdiag, &m, &n, alpha, a, &lda, x, &ldb)
 
 register_cpu_custom_call_target(b"blas_strsm", <void*>(blas_strsm))
@@ -99,8 +99,8 @@ cdef void blas_dtrsm(void* out, void** data) nogil:
   elif trans_a == 2:
     ctransa = 'C'
   cdef char cdiag = 'U' if diag else 'N'
-  cdef int lda = m
-  cdef int ldb = m if left_side else n
+  cdef int lda = m if left_side else n
+  cdef int ldb = m
   dtrsm(&cside, &cuplo, &ctransa, &cdiag, &m, &n, alpha, a, &lda, x, &ldb)
 
 register_cpu_custom_call_target(b"blas_dtrsm", <void*>(blas_dtrsm))
@@ -129,8 +129,8 @@ cdef void blas_ctrsm(void* out, void** data) nogil:
   elif trans_a == 2:
     ctransa = 'C'
   cdef char cdiag = 'U' if diag else 'N'
-  cdef int lda = m
-  cdef int ldb = m if left_side else n
+  cdef int lda = m if left_side else n
+  cdef int ldb = m
   ctrsm(&cside, &cuplo, &ctransa, &cdiag, &m, &n, alpha, a, &lda, x, &ldb)
 
 register_cpu_custom_call_target(b"blas_ctrsm", <void*>(blas_ctrsm))
@@ -139,13 +139,11 @@ def jax_trsm(c, alpha, a, b, left_side=False, lower=False, trans_a=False,
              conj_a=False, diag=False):
   b_shape = c.GetShape(b)
   dtype = b_shape.element_type()
-  #if left_side:
   m, n = b_shape.dimensions()
-  #else:
-  #  n, m = b_shape.dimensions()
+  k = m if left_side else n
 
   a_shape = c.GetShape(a)
-  if (m, m) != a_shape.dimensions() or a_shape.element_type() != dtype:
+  if (k, k) != a_shape.dimensions() or a_shape.element_type() != dtype:
     raise ValueError("Argument mismatch for trsm, got {} and {}".format(
       a_shape, b_shape))
 

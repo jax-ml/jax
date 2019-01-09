@@ -242,7 +242,8 @@ def lu_jvp_rule(primals, tangents):
   a_dot, = tangents
   lu, pivots = lu_p.bind(a)
 
-  m, n = np.shape(a)[-2:]
+  a_shape = np.shape(a)
+  m, n = a_shape[-2:]
   dtype = lax._dtype(a)
   k = min(m, n)
 
@@ -260,15 +261,26 @@ def lu_jvp_rule(primals, tangents):
   # ==> L' = L . tril(inv(L) . A' . inv(U), -1)
   #     U' = triu(inv(L) . A' . inv(U)) . U
 
-  l = np.tril(lu, -1)[:, :k] + np.eye(m, k, dtype=dtype)
-  u = np.triu(lu)
+  ndims = len(a_shape)
+  l_padding = [(0, 0, 0)] * ndims
+  l_padding[-1] = (0, m - k, 0)
+  zero = np._constant_like(lu, 0)
+  l = lax.pad(np.tril(lu[..., :, :k], -1), zero, l_padding)
+  l = l + np.eye(m, m, dtype=dtype)
+
+  u_eye = lax.pad(np.eye(n - k, n - k, dtype=dtype), zero,
+                  ((k, 0, 0), (k, 0, 0)))
+  u_padding = [(0, 0, 0)] * ndims
+  u_padding[-2] = (0, n - k, 0)
+  u = lax.pad(np.triu(lu[..., :k, :]), zero, u_padding) + u_eye
+
 
   la = triangular_solve(l, x, left_side=True, transpose_a=False, lower=True)
   lau = triangular_solve(u, la, left_side=False, transpose_a=False,
                          lower=False)
 
-  l_dot = np.matmul(l, np.tril(lau, -1)[:, :k])
-  u_dot = np.matmul(np.triu(lau)[:k, :], u)
+  l_dot = np.matmul(l, np.tril(lau, -1))
+  u_dot = np.matmul(np.triu(lau), u)
   lu_dot = l_dot + u_dot
   return core.pack((lu, pivots)), ad.TangentTuple((lu_dot, ad_util.zero))
 
