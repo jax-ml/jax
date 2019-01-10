@@ -23,7 +23,7 @@ import string
 import numpy as onp
 import opt_einsum
 import six
-from six.moves import builtins
+from six.moves import builtins, xrange
 
 from jax import jit
 from .. import core
@@ -794,6 +794,23 @@ nansum = _make_nan_reduction(onp.nansum, sum, 0, nan_if_all_nan=False)
 nanprod = _make_nan_reduction(onp.nanprod, prod, 1, nan_if_all_nan=False)
 
 ### Array-creation functions
+
+@_wraps(onp.pad)
+def pad(array, pad_width, mode, constant_values=0):
+  if mode != "constant":
+    msg = "Only the 'constant' case of np.pad is implemented, got mode={}."
+    raise NotImplementedError(msg.format(mode))
+
+  array = asarray(array)
+  pad_width = onp.broadcast_to(onp.asarray(pad_width), (array.ndim, 2))
+  constant_values = broadcast_to(asarray(constant_values), (array.ndim, 2))
+  for i in xrange(array.ndim):
+    widths = [(0, 0, 0)] * array.ndim
+    widths[i] = (pad_width[i, 0], 0, 0)
+    array = lax.pad(array, constant_values[i, 0], widths)
+    widths[i] = (0, pad_width[i, 1], 0)
+    array = lax.pad(array, constant_values[i, 1], widths)
+  return array
 
 
 @_wraps(onp.stack)
