@@ -324,7 +324,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       self.skipTest("No LU implementation available")
     a = rng(shape, dtype)
 
-    jtu.check_grads(jsp.linalg.lu, (a,), 2, rtol=1e-2)
+    jtu.check_grads(jsp.linalg.lu, (a,), 2, rtol=2e-2)
 
 
   # TODO(phawkins): enable when there is an LU implementation for GPU/TPU.
