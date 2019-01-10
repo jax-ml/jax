@@ -45,12 +45,13 @@ from .interpreters import partial_eval as pe
 from .interpreters import xla
 from .interpreters import ad
 from .interpreters import batching
+from .interpreters import parallel
 
 map = safe_map
 zip = safe_zip
 
 
-def jit(fun, static_argnums=()):
+def jit(fun, static_argnums=(), **params):
   """Sets up `fun` for just-in-time compilation with XLA.
 
   Args:
@@ -75,7 +76,7 @@ def jit(fun, static_argnums=()):
     args_flat, in_trees = unzip2(map(pytree_to_jaxtupletree, dyn_args))
     check_args(args_flat)
     jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(f, in_trees)
-    out_flat = xla.xla_call(jaxtree_fun, *args_flat)
+    out_flat = xla.xla_call(jaxtree_fun, *args_flat, **params)
     return build_tree(out_tree(), out_flat)
 
   f_jitted.__name__ = "jit({})".format(f_jitted.__name__)
@@ -254,6 +255,35 @@ def vmap(fun, in_axes=0, out_axes=0):
     return build_tree(out_tree(), out_flat)
 
   return batched_fun
+
+
+def pmap(fun, axis_name, in_axes=0, out_axes=0):
+  """Vectorizing pseudo-map for single-program multiple-data (SPMD) functions."""
+  def pmap_fun(*args, **kwargs):
+    f = lu.wrap_init(fun, kwargs)
+    in_axes_ = in_axes if isinstance(in_axes, (list, tuple)) else (in_axes,) * len(args)
+    in_flat, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
+    jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(f, in_trees)
+    out_flat = parallel.pmap(jaxtree_fun, axis_name, args, in_axes_, out_axes)
+    return build_tree(out_tree(), out_flat)
+
+  return pmap_fun
+
+
+def papply(fun, in_axes=0):
+  """Apply a function using parallel computation by sharding inputs."""
+  axis_name = parallel.newvar()
+
+  def papply_fun(*args, **kwargs):
+    f = lu.wrap_init(fun, kwargs)
+    in_axes_ = in_axes if isinstance(in_axes, (list, tuple)) else (in_axes,) * len(args)
+    args_flat, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
+    jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(f, in_trees)
+    out_flat = parallel.papply(jaxtree_fun, axis_name, args_flat, in_axes_)
+    return build_tree(out_tree(), out_flat)
+
+  return papply_fun, axis_name
+
 
 def jvp(fun, primals, tangents):
   def trim_arg(primal, tangent):

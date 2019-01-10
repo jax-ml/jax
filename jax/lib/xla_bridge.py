@@ -165,10 +165,9 @@ def _get_backend():
                                 FLAGS.jax_backend_target)
 
 
-def device_put(pyval):
-  # TODO(frostig): Accept a replica id for placement. For now, this places on
-  # the first replica only.
-  return get_xla_client().LocalBuffer.from_pyval(pyval, backend=_get_backend())
+def device_put(pyval, replica=0):
+  client = get_xla_client()
+  return client.LocalBuffer.from_pyval(pyval, replica, backend=_get_backend())
 
 
 Shape = xla_client.Shape        # pylint: disable=invalid-name

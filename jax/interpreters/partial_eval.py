@@ -260,7 +260,7 @@ def trace_to_jaxpr(fun, pvals, **kwargs):
   return jaxpr, out_pval, consts
 
 @transformation
-def trace_to_subjaxpr(master, pvals, **kwargs):
+def trace_to_subjaxpr(master, pvals):
   assert all([isinstance(pv, PartialVal) for pv in pvals]), pvals
   trace = JaxprTrace(master, core.cur_sublevel())
   in_tracers = map(trace.new_arg, pvals)

@@ -40,6 +40,7 @@ from .interpreters import partial_eval as pe
 from .interpreters import xla
 from .interpreters import ad
 from .interpreters import batching
+from .interpreters import parallel
 from .util import curry, safe_zip, unzip2, prod
 from .tree_util import build_tree
 from .lib import xla_bridge
@@ -758,6 +759,7 @@ def unop(result_dtype, accepted_dtypes, name):
   dtype_rule = partial(unop_dtype_rule, result_dtype, accepted_dtypes, name)
   prim = standard_primitive(_attrgetter('shape'), dtype_rule, name)
   batching.defvectorized(prim)
+  parallel.defvectorized(prim)
   return prim
 standard_unop = partial(unop, identity)
 _attrgetter = lambda name: lambda x, **kwargs: getattr(x, name)
@@ -797,6 +799,7 @@ def binop(result_dtype, accepted_dtypes, name):
   shape_rule = partial(broadcasting_shape_rule, name)
   prim = standard_primitive(shape_rule, dtype_rule, name)
   batching.defbroadcasting(prim)
+  parallel.defbroadcasting(prim)
   return prim
 standard_binop = partial(binop, _input_dtype)
 
@@ -1570,10 +1573,24 @@ def reshape_batch_rule(batched_args, batch_dims, new_sizes, dimensions, **unused
     dimensions = (0,) + tuple(onp.add(1, dimensions))
   return reshape(operand, operand.shape[:1] + new_sizes, dimensions), 0
 
+def reshape_papply_rule(name, vals, axes, new_sizes, dimensions, old_sizes):
+  operand, = vals
+  axis, = axes
+
+  if dimensions is None:
+    # if there is an i such that prod(new_sizes[:i]) == prod(old_sizes[:axis])
+    # and new_sizes[i] == old_sizes[axis], then we can maintain sharding.
+    # otherwise, it's ambiguous, and we could either gather or just make up a
+    # way to rescatter.
+    raise NotImplementedError  # TODO
+  else:
+    raise NotImplementedError  # TODO(mattjj): handle reshape w/ dimensions
+
 reshape_p = standard_primitive(reshape_shape_rule, reshape_dtype_rule,
                                'reshape', reshape_translation_rule)
 ad.deflinear(reshape_p, reshape_transpose_rule)
 batching.primitive_batchers[reshape_p] = reshape_batch_rule
+parallel.papply_primitive_rules[reshape_p] = reshape_papply_rule
 
 
 def rev_shape_rule(operand, dimensions):
@@ -2155,6 +2172,7 @@ reduce_sum_p = standard_primitive(reduce_sum_shape_rule, _input_dtype,
                                   'reduce_sum', reduce_sum_translation_rule)
 ad.deflinear(reduce_sum_p, reduce_sum_transpose_rule)
 batching.defreducer(reduce_sum_p)
+parallel.defreducer(reduce_sum_p, parallel.psum_p)
 
 
 def reduce_chooser_shape_rule(operand, axes):
