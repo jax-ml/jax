@@ -88,6 +88,7 @@ shape = _shape = onp.shape
 ndim = _ndim = onp.ndim
 size = onp.size
 _dtype = lax._dtype
+dtype = onp.dtype
 
 bool_ = onp.bool_
 uint8 = onp.uint8
@@ -894,11 +895,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
     else:
       return onp.array([], dtype)
   elif isscalar(object):
-    out = lax.reshape(object, ())
-    if dtype and _dtype(out) != dtype:
-      return lax.convert_element_type(out, dtype)
-    else:
-      return out
+    return lax.convert_element_type(object, dtype)
   else:
     raise TypeError("Unexpected input type for array: {}".format(type(object)))
 asarray = array

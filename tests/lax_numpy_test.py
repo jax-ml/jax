@@ -932,6 +932,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng.randn(3, 4).astype("float32")]
     self._CompileAndCheck(lambda x: x.ravel(), args_maker, check_dtypes=True)
 
+  def testArray(self):
+    rng = onp.random.RandomState(0)
+    args_maker = lambda: [rng.randn(3, 4).astype("float32")]
+    op = lambda x: lnp.array(x)
+    self._CheckAgainstNumpy(op, op, args_maker, check_dtypes=True)
+    self._CompileAndCheck(op, args_maker, check_dtypes=True)
+
   def testAstype(self):
     rng = onp.random.RandomState(0)
     args_maker = lambda: [rng.randn(3, 4).astype("float32")]
