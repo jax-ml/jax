@@ -118,6 +118,8 @@ finfo = onp.finfo
 
 issubdtype = onp.issubdtype
 
+ComplexWarning = onp.ComplexWarning
+
 ### utility functions
 
 
@@ -229,8 +231,8 @@ def _one_to_one_binop(numpy_fn, lax_fn, promote_like=False):
     fn = lambda x, y: lax_fn(*_promote_args(numpy_fn.__name__, x, y))
   return _wraps(numpy_fn)(fn)
 
-
 absolute = abs = _one_to_one_unop(onp.absolute, lax.abs)
+fabs = _one_to_one_unop(onp.fabs, lax.abs, True)
 bitwise_not = _one_to_one_unop(onp.bitwise_not, lax.bitwise_not)
 negative = _one_to_one_unop(onp.negative, lax.neg)
 sort = _one_to_one_unop(onp.sort, lax.sort)
@@ -262,17 +264,48 @@ bitwise_xor = _one_to_one_binop(onp.bitwise_xor, lax.bitwise_xor)
 right_shift = _one_to_one_binop(onp.right_shift, lax.shift_right_arithmetic)
 left_shift = _one_to_one_binop(onp.left_shift, lax.shift_left)
 equal = _one_to_one_binop(onp.equal, lax.eq)
-greater_equal = _one_to_one_binop(onp.greater_equal, lax.ge)
-greater = _one_to_one_binop(onp.greater, lax.gt)
-less_equal = _one_to_one_binop(onp.less_equal, lax.le)
-less = _one_to_one_binop(onp.less, lax.lt)
-maximum = _one_to_one_binop(onp.maximum, lax.max)
-minimum = _one_to_one_binop(onp.minimum, lax.min)
 multiply = _one_to_one_binop(onp.multiply, lax.mul)
 not_equal = _one_to_one_binop(onp.not_equal, lax.ne)
 subtract = _one_to_one_binop(onp.subtract, lax.sub)
 power = _one_to_one_binop(onp.power, lax.pow, True)
 arctan2 = _one_to_one_binop(onp.arctan2, lax.atan2, True)
+
+
+def _comparison_op(numpy_fn, lax_fn):
+  def fn(x, y):
+    x, y =  _promote_args(numpy_fn.__name__, x, y)
+    # Comparison on complex types are defined as a lexicographic ordering on
+    # the (real, imag) pair.
+    if issubdtype(_dtype(x), complexfloating):
+      rx = lax.real(x)
+      ry = lax.real(y)
+      return lax.select(lax.eq(rx, ry), lax_fn(lax.imag(x), lax.imag(y)),
+                        lax_fn(rx, ry))
+    return lax_fn(x, y)
+  return _wraps(numpy_fn)(fn)
+
+greater_equal = _comparison_op(onp.greater_equal, lax.ge)
+greater = _comparison_op(onp.greater, lax.gt)
+less_equal = _comparison_op(onp.less_equal, lax.le)
+less = _comparison_op(onp.less, lax.lt)
+
+def _minmax_op(numpy_fn, lax_fn, lax_cmp_fn):
+  def fn(x, y):
+    x, y =  _promote_args(numpy_fn.__name__, x, y)
+    # Comparison on complex types are defined as a lexicographic ordering on
+    # the (real, imag) pair.
+    if issubdtype(_dtype(x), complexfloating):
+      rx = lax.real(x)
+      ry = lax.real(y)
+      return where(
+          lax.select(lax.eq(rx, ry), lax_cmp_fn(lax.imag(x), lax.imag(y)),
+                     lax_cmp_fn(rx, ry)),
+          x, y)
+    return lax_fn(x, y)
+  return _wraps(numpy_fn)(fn)
+
+maximum = _minmax_op(onp.maximum, lax.max, lax.gt)
+minimum = _minmax_op(onp.minimum, lax.min, lax.lt)
 
 
 def _logical_op(np_op, bitwise_op):
@@ -312,11 +345,23 @@ def divide(x1, x2):
 @_wraps(onp.floor_divide)
 def floor_divide(x1, x2):
   x1, x2 = _promote_args("floor_divide", x1, x2)
-  if onp.issubdtype(_dtype(x1), onp.integer):
+  dtype = _dtype(x1)
+  if issubdtype(dtype, integer):
     quotient = lax.div(x1, x2)
     select = logical_and(lax.sign(x1) != lax.sign(x2), lax.rem(x1, x2) != 0)
     # TODO(mattjj): investigate why subtracting a scalar was causing promotion
     return where(select, quotient - onp.array(1, _dtype(quotient)), quotient)
+  elif issubdtype(dtype, complexfloating):
+    x1r = lax.real(x1)
+    x1i = lax.imag(x1)
+    x2r = lax.real(x2)
+    x2i = lax.imag(x2)
+    which = lax.ge(lax.abs(x2r), lax.abs(x2i))
+    rat1 = where(which, lax._const(x2i, 1), lax.div(x2r, x2i))
+    rat2 = where(which, lax.div(x2i, x2r), lax._const(x2i, 1))
+    out = lax.floor(lax.div(lax.add(lax.mul(x1r, rat1), lax.mul(x1i, rat2)),
+                            lax.add(lax.mul(x2r, rat1), lax.mul(x2i, rat2))))
+    return lax.convert_element_type(out, dtype)
   else:
     return _float_divmod(x1, x2)[0]
 
@@ -514,11 +559,18 @@ def moveaxis(a, source, destination):
 
 @_wraps(onp.isclose)
 def isclose(a, b, rtol=1e-05, atol=1e-08):
-  a, b = _promote_args("isclose", a, b)
-  rtol = lax.convert_element_type(rtol, _dtype(a))
-  atol = lax.convert_element_type(atol, _dtype(a))
-  return lax.le(lax.abs(lax.sub(a, b)),
-                lax.add(atol, lax.mul(rtol, lax.abs(b))))
+  a, b = _promote_args("isclose", asarray(a), asarray(b))
+  dtype = _dtype(a)
+  if issubdtype(dtype, inexact):
+    if issubdtype(dtype, complexfloating):
+      dtype = _result_dtype(real, a)
+    rtol = lax.convert_element_type(rtol, dtype)
+    atol = lax.convert_element_type(atol, dtype)
+    return lax.le(
+      lax.abs(lax.sub(a, b)),
+      lax.add(atol, lax.mul(rtol, lax.abs(b))))
+  else:
+    return lax.eq(a, b)
 
 
 @_wraps(onp.where)
@@ -585,7 +637,10 @@ def clip(a, a_min=None, a_max=None):
     a_min = lax.convert_element_type(a_min, _dtype(a))
   if _dtype(a_max) != _dtype(a):
     a_max = lax.convert_element_type(a_max, _dtype(a))
-  return lax.clamp(a_min, a, a_max)
+  if issubdtype(_dtype(a), complexfloating):
+    return minimum(maximum(a_min, a), a_max)
+  else:
+    return lax.clamp(a_min, a, a_max)
 
 
 def _dtype_info(dtype):
@@ -597,14 +652,24 @@ def _dtype_info(dtype):
 
 @_wraps(onp.round)
 def round(a, decimals=0):
-  if onp.issubdtype(_dtype(a), onp.integer):
+  dtype = _dtype(a)
+  if issubdtype(dtype, integer):
+    if decimals < 0:
+      raise NotImplementedError(
+        "integer np.round not implemented for decimals < 0")
     return a  # no-op on integer types
 
-  if decimals == 0:
-    return lax.round(a)
+  def _round_float(x):
+    if decimals == 0:
+      return lax.round(x)
 
-  factor = _constant_like(a, 10 ** decimals)
-  return lax.div(lax.round(lax.mul(a, factor)), factor)
+    factor = _constant_like(x, 10 ** decimals)
+    return lax.div(lax.round(lax.mul(x, factor)), factor)
+
+  if issubdtype(dtype, complexfloating):
+    return lax.complex(_round_float(lax.real(a)), _round_float(lax.imag(a)))
+  else:
+    return _round_float(a)
 around = round
 
 
@@ -712,8 +777,8 @@ _cast_to_bool = partial(lax.convert_element_type, new_dtype=onp.bool_)
 
 sum = _make_reduction(onp.sum, lax.add, 0)
 prod = _make_reduction(onp.prod, lax.mul, 1)
-max = _make_reduction(onp.max, lax.max, -onp.inf)
-min = _make_reduction(onp.min, lax.min, onp.inf)
+amax = max = _make_reduction(onp.max, maximum, -onp.inf)
+amin = min = _make_reduction(onp.min, minimum, onp.inf)
 all = alltrue = _make_reduction(onp.all, lax.bitwise_and, True, _cast_to_bool)
 any = sometrue = _make_reduction(onp.any, lax.bitwise_or, False, _cast_to_bool)
 

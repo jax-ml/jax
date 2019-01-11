@@ -17,14 +17,17 @@ from __future__ import division
 from __future__ import print_function
 
 import collections
-from .util import partial, prod
 import itertools
 import operator
+import string
+import warnings
+
 import six
 from six.moves import builtins, xrange
-import string
 
 import numpy as onp
+
+from .util import partial, prod
 
 from . import core
 from . import ad_util
@@ -108,6 +111,11 @@ def convert_element_type(operand, new_dtype):
   new_dtype = xla_bridge.canonicalize_dtype(new_dtype)
   old_dtype = _dtype(operand)
   if old_dtype != new_dtype:
+    if (onp.issubdtype(old_dtype, onp.complexfloating) and
+        not onp.issubdtype(new_dtype, onp.complexfloating)):
+      msg = "Casting complex values to real discards the imaginary part"
+      warnings.warn(msg, onp.ComplexWarning)
+      operand = real(operand)
     return convert_element_type_p.bind(
         operand, new_dtype=new_dtype, old_dtype=old_dtype)
   else:
