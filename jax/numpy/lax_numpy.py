@@ -631,16 +631,17 @@ def split(ary, indices_or_sections, axis=0):
 
 @_wraps(onp.clip)
 def clip(a, a_min=None, a_max=None):
-  a_min = _dtype_info(_dtype(a)).min if a_min is None else a_min
-  a_max = _dtype_info(_dtype(a)).max if a_max is None else a_max
-  if _dtype(a_min) != _dtype(a):
-    a_min = lax.convert_element_type(a_min, _dtype(a))
-  if _dtype(a_max) != _dtype(a):
-    a_max = lax.convert_element_type(a_max, _dtype(a))
-  if issubdtype(_dtype(a), complexfloating):
-    return minimum(maximum(a_min, a), a_max)
-  else:
-    return lax.clamp(a_min, a, a_max)
+  if a_min is None and a_max is None:
+    raise "At most one of a_min and a_max may be None"
+  if a_min is not None:
+    if _dtype(a_min) != _dtype(a):
+      a_min = lax.convert_element_type(a_min, _dtype(a))
+    a = maximum(a_min, a)
+  if a_max is not None:
+    if _dtype(a_max) != _dtype(a):
+      a_max = lax.convert_element_type(a_max, _dtype(a))
+    a = minimum(a_max, a)
+  return a
 
 
 def _dtype_info(dtype):
