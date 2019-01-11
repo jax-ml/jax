@@ -99,10 +99,10 @@ int16 = onp.int16
 int32 = onp.int32
 int64 = onp.int64
 float16 = onp.float16
-float32 = onp.float32
-float64 = onp.float64
-complex64 = onp.complex64
-complex128 = onp.complex128
+float32 = single = onp.float32
+float64 = double = onp.float64
+complex64 = csingle = onp.complex64
+complex128 = cdouble = onp.complex128
 
 flexible = onp.flexible
 character = onp.character
