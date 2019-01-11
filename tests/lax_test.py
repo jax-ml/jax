@@ -52,7 +52,7 @@ def num_float_bits(dtype):
 # arguments of appropriate shapes and dtypes using the following table.
 
 float_dtypes = [onp.float32, onp.float64]
-complex_dtypes = [onp.complex64]
+complex_dtypes = [onp.complex64, onp.complex128]
 int_dtypes = [onp.int32, onp.int64]
 bool_dtypes = [onp.bool_]
 default_dtypes = float_dtypes + int_dtypes

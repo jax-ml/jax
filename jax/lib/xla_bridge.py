@@ -193,6 +193,7 @@ _etype_to_dtype = {
     xla_data_pb2.F32: onp.dtype('float32'),
     xla_data_pb2.F64: onp.dtype('float64'),
     xla_data_pb2.C64: onp.dtype('complex64'),
+    xla_data_pb2.C128: onp.dtype('complex128'),
 }
 
 # Note the conversion on the key. Numpy has a known issue wherein dtype hashing
@@ -219,10 +220,6 @@ _dtype_to_32bit_dtype = {
 def canonicalize_dtype(dtype):
   """Convert from a dtype to a canonical dtype based on FLAGS.jax_enable_x64."""
   dtype = onp.dtype(dtype)
-
-  # special rule for complex128, which XLA doesn't support
-  if dtype == onp.complex128:
-    dtype = onp.dtype('complex64')
 
   if FLAGS.jax_enable_x64:
     return str(dtype)

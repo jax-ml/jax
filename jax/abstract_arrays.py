@@ -162,8 +162,8 @@ def zeros_like_array(x):
   return onp.broadcast_to(onp.array(0, dtype), onp.shape(x))
 
 array_types = [onp.ndarray, onp.float64, onp.float32, onp.complex64,
-               onp.int64, onp.int32, onp.bool_, onp.uint64, onp.uint32,
-               complex, float, int, bool]
+               onp.complex128, onp.int64, onp.int32, onp.bool_, onp.uint64,
+               onp.uint32, complex, float, int, bool]
 
 for t in array_types:
   core.pytype_aval_mappings[t] = ConcreteArray
