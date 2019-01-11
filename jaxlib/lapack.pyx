@@ -28,7 +28,7 @@ from cpython.pycapsule cimport PyCapsule_New
 from scipy.linalg.cython_blas cimport strsm, dtrsm, ctrsm
 from scipy.linalg.cython_lapack cimport sgetrf, dgetrf, cgetrf
 from scipy.linalg.cython_lapack cimport spotrf, dpotrf, cpotrf
-from scipy.linalg.cython_lapack cimport sgesdd, dgesdd
+from scipy.linalg.cython_lapack cimport sgesdd, dgesdd, cgesdd
 from scipy.linalg.cython_lapack cimport ssyevd, dsyevd, cheevd
 
 import numpy as np
@@ -388,6 +388,16 @@ def jax_potrf(c, a, lower=False):
 
 # ?gesdd: Singular value decomposition
 
+cdef int gesdd_iwork_size(int m, int n) nogil:
+  return 8 * min(m, n)
+
+cdef int cgesdd_rwork_size(int m, int n, int compute_uv) nogil:
+  cdef int mn = min(m, n)
+  if compute_uv == 0:
+    return 7 * mn
+  cdef int mx = max(m, n)
+  return max(5 * mn * mn + 5 * mn, 2 * mx * mn + 2 * mn * mn + mn)
+
 cdef void lapack_sgesdd(void* out_tuple, void** data) nogil:
   cdef int32_t job_opt_full_matrices = (<int32_t*>(data[0]))[0]
   cdef int32_t job_opt_compute_uv = (<int32_t*>(data[1]))[0]
@@ -401,6 +411,7 @@ cdef void lapack_sgesdd(void* out_tuple, void** data) nogil:
   cdef float* u = <float*>(out[2])
   cdef float* vt = <float*>(out[3])
   cdef int* info = <int*>(out[4])
+  cdef int* iwork = <int*>(out[5])
 
   if a_out != a_in:
     memcpy(a_out, a_in, m * n * sizeof(float))
@@ -419,11 +430,9 @@ cdef void lapack_sgesdd(void* out_tuple, void** data) nogil:
   if job_opt_full_matrices == 0:
     ldvt = min(m, n)
 
-  cdef int* iwork = <int *> malloc(8 * min(m, n) * sizeof(int))
-
   # First perform a workspace query to get the optimal lwork
   # NB: We perform a workspace query with malloc and free for the work array, 
-  # because it is officially recommended.
+  # because it is officially recommended in the LAPACK documentation
   cdef float wkopt = 0
   cdef int lwork = -1
   sgesdd(&jobz, &m, &n, a_out, &lda, s, u, &ldu, vt, &ldvt, &wkopt, &lwork, iwork, info)
@@ -432,7 +441,6 @@ cdef void lapack_sgesdd(void* out_tuple, void** data) nogil:
   # Now get the actual SVD
   cdef float* work = <float *> malloc(lwork * sizeof(float))
   sgesdd(&jobz, &m, &n, a_out, &lda, s, u, &ldu, vt, &ldvt, work, &lwork, iwork, info)
-  free(iwork)
   free(work)
 
 register_cpu_custom_call_target(b"lapack_sgesdd", <void*>(lapack_sgesdd))
@@ -451,6 +459,7 @@ cdef void lapack_dgesdd(void* out_tuple, void** data) nogil:
   cdef double* u = <double*>(out[2])
   cdef double* vt = <double*>(out[3])
   cdef int* info = <int*>(out[4])
+  cdef int* iwork = <int*>(out[5])
 
   if a_out != a_in:
     memcpy(a_out, a_in, m * n * sizeof(double))
@@ -469,11 +478,9 @@ cdef void lapack_dgesdd(void* out_tuple, void** data) nogil:
   if job_opt_full_matrices == 0:
     ldvt = min(m, n)
 
-  cdef int* iwork = <int *> malloc(8 * min(m, n) * sizeof(int))
-
   # First perform a workspace query to get the optimal lwork
   # NB: We perform a workspace query with malloc and free for the work array, 
-  # because it is officially recommended.
+  # because it is officially recommended in the LAPACK documentation
   cdef double wkopt = 0
   cdef int lwork = -1
   dgesdd(&jobz, &m, &n, a_out, &lda, s, u, &ldu, vt, &ldvt, &wkopt, &lwork, iwork, info)
@@ -482,10 +489,59 @@ cdef void lapack_dgesdd(void* out_tuple, void** data) nogil:
   # Now get the actual SVD
   cdef double* work = <double *> malloc(lwork * sizeof(double))
   dgesdd(&jobz, &m, &n, a_out, &lda, s, u, &ldu, vt, &ldvt, work, &lwork, iwork, info)
-  free(iwork)
   free(work)
 
 register_cpu_custom_call_target(b"lapack_dgesdd", <void*>(lapack_dgesdd))
+
+
+cdef void lapack_cgesdd(void* out_tuple, void** data) nogil:
+  cdef int32_t job_opt_full_matrices = (<int32_t*>(data[0]))[0]
+  cdef int32_t job_opt_compute_uv = (<int32_t*>(data[1]))[0]
+  cdef int m = (<int32_t*>(data[2]))[0]
+  cdef int n = (<int32_t*>(data[3]))[0]
+  cdef float complex* a_in = <float complex*>(data[4])
+
+  cdef void** out = <void**>(out_tuple)
+  cdef float complex* a_out = <float complex*>(out[0])
+  cdef float* s = <float*>(out[1])
+  cdef float complex* u = <float complex*>(out[2])
+  cdef float complex* vt = <float complex*>(out[3])
+  cdef int* info = <int*>(out[4])
+  cdef int* iwork = <int*>(out[5])
+  cdef float* rwork = <float*>(out[6])
+
+  if a_out != a_in:
+    memcpy(a_out, a_in, m * n * sizeof(float complex))
+
+  # define appropriate job code
+  cdef char jobz = 'A'
+  if job_opt_compute_uv == 0:
+    jobz = 'N'
+  else:
+    if job_opt_full_matrices == 0:
+      jobz = 'S'
+
+  cdef int lda = m
+  cdef int ldu = m
+  cdef int ldvt = n
+  if job_opt_full_matrices == 0:
+    ldvt = min(m, n)
+
+  # First perform a workspace query to get the optimal lwork
+  # NB: We perform a workspace query with malloc and free for the work array, 
+  # because it is officially recommended in the LAPACK documentation
+  cdef float complex wkopt = 0
+  cdef int lwork = -1
+  cgesdd(&jobz, &m, &n, a_out, &lda, s, u, &ldu, vt, &ldvt, &wkopt, &lwork, rwork, iwork, info)
+  lwork = <int>(wkopt.real)
+
+  # Now get the actual SVD
+  cdef float complex* work = <float complex*> malloc(lwork * sizeof(float complex))
+  cgesdd(&jobz, &m, &n, a_out, &lda, s, u, &ldu, vt, &ldvt, work, &lwork, rwork, iwork, info)
+  free(work)
+
+register_cpu_custom_call_target(b"lapack_cgesdd", <void*>(lapack_cgesdd))
+
 
 def jax_gesdd(c, a, full_matrices=True, compute_uv=True):
   assert sizeof(int32_t) == sizeof(int)
@@ -495,8 +551,17 @@ def jax_gesdd(c, a, full_matrices=True, compute_uv=True):
   m, n = a_shape.dimensions()
   if dtype == np.float32:
     fn = b"lapack_sgesdd"
+    singular_vals_dtype = np.float32
+    workspace = (Shape.array_shape(np.int32, (gesdd_iwork_size(m, n),), (0,)),)
   elif dtype == np.float64:
     fn = b"lapack_dgesdd"
+    singular_vals_dtype = np.float64
+    workspace = (Shape.array_shape(np.int32, (gesdd_iwork_size(m, n),), (0,)),)
+  elif dtype == np.complex64:
+    fn = b"lapack_cgesdd"
+    singular_vals_dtype = np.float32
+    workspace = (Shape.array_shape(np.int32, (gesdd_iwork_size(m, n),), (0,)),
+                 Shape.array_shape(np.float32, (cgesdd_rwork_size(m, n, int(compute_uv)),), (0,)))
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
 
@@ -506,11 +571,11 @@ def jax_gesdd(c, a, full_matrices=True, compute_uv=True):
                 c.ConstantS32Scalar(m), c.ConstantS32Scalar(n), a),
       shape_with_layout=Shape.tuple_shape((
           Shape.array_shape(dtype, (m, n), (0, 1)),
-          Shape.array_shape(dtype, (min(m, n),), (0,)),
+          Shape.array_shape(singular_vals_dtype, (min(m, n),), (0,)),
           Shape.array_shape(dtype, (m, m if full_matrices else min(m, n)), (0, 1)),
           Shape.array_shape(dtype, (n if full_matrices else min(m, n), n), (0, 1)),
-          Shape.array_shape(np.int32, (), ()),
-      )),
+          Shape.array_shape(np.int32, (), ())) + workspace
+      ),
       operand_shapes_with_layout=(
           Shape.array_shape(np.int32, (), ()),
           Shape.array_shape(np.int32, (), ()),
