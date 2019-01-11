@@ -50,8 +50,9 @@ int_dtypes = [onp.int32, onp.int64]
 unsigned_dtypes = [onp.uint32, onp.uint64]
 bool_dtypes = [onp.bool_]
 default_dtypes = float_dtypes + int_dtypes
-numeric_dtypes = float_dtypes + complex_dtypes + int_dtypes
-all_dtypes = numeric_dtypes + bool_dtypes
+inexact_dtypes = float_dtypes + complex_dtypes
+number_dtypes = float_dtypes + complex_dtypes + int_dtypes
+all_dtypes = number_dtypes + bool_dtypes
 
 OpRecord = collections.namedtuple(
   "OpRecord",
@@ -63,70 +64,71 @@ def op_record(name, nargs, dtypes, shapes, rng, diff_modes, test_name=None):
   return OpRecord(name, nargs, dtypes, shapes, rng, diff_modes, test_name)
 
 JAX_ONE_TO_ONE_OP_RECORDS = [
-    op_record("abs", 1, default_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
-    op_record("add", 2, default_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
+    op_record("abs", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
+    op_record("add", 2, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("ceil", 1, float_dtypes, all_shapes, jtu.rand_default(), []),
-    op_record("conj", 1, numeric_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
-    op_record("conjugate", 1, numeric_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
-    op_record("equal", 2, default_dtypes, all_shapes, jtu.rand_some_equal(), []),
-    op_record("exp", 1, numeric_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
+    op_record("conj", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
+    op_record("conjugate", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
+    op_record("equal", 2, all_dtypes, all_shapes, jtu.rand_some_equal(), []),
+    op_record("exp", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
+    op_record("fabs", 1, float_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("floor", 1, float_dtypes, all_shapes, jtu.rand_default(), []),
-    op_record("greater", 2, default_dtypes, all_shapes, jtu.rand_some_equal(), []),
-    op_record("greater_equal", 2, default_dtypes, all_shapes, jtu.rand_some_equal(), []),
-    op_record("isfinite", 1, numeric_dtypes, all_shapes, jtu.rand_some_inf(), []),
-    op_record("less", 2, default_dtypes, all_shapes, jtu.rand_some_equal(), []),
-    op_record("less_equal", 2, default_dtypes, all_shapes, jtu.rand_some_equal(), []),
-    op_record("log", 1, numeric_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
-    op_record("logical_and", 2, default_dtypes, all_shapes, jtu.rand_bool(), []),
-    op_record("logical_not", 1, default_dtypes, all_shapes, jtu.rand_bool(), []),
-    op_record("logical_or", 2, default_dtypes, all_shapes, jtu.rand_bool(), []),
-    op_record("logical_xor", 2, default_dtypes, all_shapes, jtu.rand_bool(), []),
-    op_record("maximum", 2, default_dtypes, all_shapes, jtu.rand_some_inf(), []),
-    op_record("minimum", 2, default_dtypes, all_shapes, jtu.rand_some_inf(), []),
-    op_record("multiply", 2, default_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
-    op_record("negative", 1, default_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
-    op_record("not_equal", 2, default_dtypes, all_shapes, jtu.rand_some_equal(), ["rev"]),
-    op_record("power", 2, float_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
-    op_record("subtract", 2, default_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
-    op_record("sin", 1, default_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
-    op_record("cos", 1, default_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
-    op_record("tan", 1, default_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
-    op_record("sinh", 1, numeric_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
-    op_record("cosh", 1, numeric_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
-    op_record("tanh", 1, numeric_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
-    op_record("arcsin", 1, default_dtypes, all_shapes, jtu.rand_small(), ["rev"]),
-    op_record("arccos", 1, default_dtypes, all_shapes, jtu.rand_small(), ["rev"]),
-    op_record("arctan", 1, default_dtypes, all_shapes, jtu.rand_small(), ["rev"]),
-    op_record("arctan2", 2, default_dtypes, all_shapes, jtu.rand_small(), ["rev"]),
-    op_record("arcsinh", 1, default_dtypes, all_shapes, jtu.rand_small(), ["rev"]),
-    op_record("arccosh", 1, default_dtypes, all_shapes, jtu.rand_small(), ["rev"]),
-    op_record("arctanh", 1, default_dtypes, all_shapes, jtu.rand_small(), ["rev"]),
+    op_record("greater", 2, number_dtypes, all_shapes, jtu.rand_some_equal(), []),
+    op_record("greater_equal", 2, number_dtypes, all_shapes, jtu.rand_some_equal(), []),
+    op_record("isfinite", 1, number_dtypes, all_shapes, jtu.rand_some_inf(), []),
+    op_record("less", 2, number_dtypes, all_shapes, jtu.rand_some_equal(), []),
+    op_record("less_equal", 2, number_dtypes, all_shapes, jtu.rand_some_equal(), []),
+    op_record("log", 1, number_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
+    op_record("logical_and", 2, all_dtypes, all_shapes, jtu.rand_bool(), []),
+    op_record("logical_not", 1, all_dtypes, all_shapes, jtu.rand_bool(), []),
+    op_record("logical_or", 2, all_dtypes, all_shapes, jtu.rand_bool(), []),
+    op_record("logical_xor", 2, all_dtypes, all_shapes, jtu.rand_bool(), []),
+    op_record("maximum", 2, number_dtypes, all_shapes, jtu.rand_some_inf(), []),
+    op_record("minimum", 2, number_dtypes, all_shapes, jtu.rand_some_inf(), []),
+    op_record("multiply", 2, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
+    op_record("negative", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
+    op_record("not_equal", 2, number_dtypes, all_shapes, jtu.rand_some_equal(), ["rev"]),
+    op_record("power", 2, inexact_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
+    op_record("subtract", 2, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
+    op_record("sin", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
+    op_record("cos", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
+    op_record("tan", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
+    op_record("sinh", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
+    op_record("cosh", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
+    op_record("tanh", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
+    op_record("arcsin", 1, float_dtypes, all_shapes, jtu.rand_small(), ["rev"]),
+    op_record("arccos", 1, float_dtypes, all_shapes, jtu.rand_small(), ["rev"]),
+    op_record("arctan", 1, float_dtypes, all_shapes, jtu.rand_small(), ["rev"]),
+    op_record("arctan2", 2, float_dtypes, all_shapes, jtu.rand_small(), ["rev"]),
+    op_record("arcsinh", 1, number_dtypes, all_shapes, jtu.rand_small(), ["rev"]),
+    op_record("arccosh", 1, number_dtypes, all_shapes, jtu.rand_small(), ["rev"]),
+    op_record("arctanh", 1, number_dtypes, all_shapes, jtu.rand_small(), ["rev"]),
 ]
 
 JAX_COMPOUND_OP_RECORDS = [
-    op_record("divide", 2, default_dtypes, all_shapes, jtu.rand_nonzero(), ["rev"]),
-    op_record("exp2", 1, numeric_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
-    op_record("expm1", 1, numeric_dtypes, all_shapes, jtu.rand_positive(), [],
+    op_record("divide", 2, number_dtypes, all_shapes, jtu.rand_nonzero(), ["rev"]),
+    op_record("exp2", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
+    op_record("expm1", 1, number_dtypes, all_shapes, jtu.rand_positive(), [],
               test_name="expm1_large"),
-    op_record("expm1", 1, numeric_dtypes, all_shapes, jtu.rand_small_positive(), []),
-    op_record("floor_divide", 2, default_dtypes, all_shapes, jtu.rand_nonzero(), ["rev"]),
-    op_record("kron", 2, default_dtypes, nonempty_shapes, jtu.rand_default(), []),
-    op_record("outer", 2, default_dtypes, all_shapes, jtu.rand_default(), []),
-    op_record("isclose", 2, float_dtypes, all_shapes, jtu.rand_small_positive(), []),
-    op_record("log2", 1, numeric_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
-    op_record("log10", 1, numeric_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
-    op_record("log1p", 1, numeric_dtypes, all_shapes, jtu.rand_positive(), [],
+    op_record("expm1", 1, number_dtypes, all_shapes, jtu.rand_small_positive(), []),
+    op_record("floor_divide", 2, number_dtypes, all_shapes, jtu.rand_nonzero(), ["rev"]),
+    op_record("kron", 2, number_dtypes, nonempty_shapes, jtu.rand_default(), []),
+    op_record("outer", 2, number_dtypes, all_shapes, jtu.rand_default(), []),
+    op_record("isclose", 2, all_dtypes, all_shapes, jtu.rand_small_positive(), []),
+    op_record("log2", 1, number_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
+    op_record("log10", 1, number_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
+    op_record("log1p", 1, number_dtypes, all_shapes, jtu.rand_positive(), [],
               test_name="log1p_large"),
-    op_record("log1p", 1, numeric_dtypes, all_shapes, jtu.rand_small_positive(), []),
+    op_record("log1p", 1, number_dtypes, all_shapes, jtu.rand_small_positive(), []),
     op_record("logaddexp", 2, float_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("logaddexp2", 2, float_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
-    op_record("polyval", 2, numeric_dtypes, nonempty_nonscalar_array_shapes, jtu.rand_default(), []),
-    op_record("ravel", 1, default_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
+    op_record("polyval", 2, number_dtypes, nonempty_nonscalar_array_shapes, jtu.rand_default(), []),
+    op_record("ravel", 1, all_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("remainder", 2, default_dtypes, all_shapes, jtu.rand_nonzero(), []),
-    op_record("square", 1, default_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
-    op_record("sqrt", 1, default_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
-    op_record("transpose", 1, default_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
-    op_record("true_divide", 2, default_dtypes, all_shapes, jtu.rand_nonzero(), ["rev"]),
+    op_record("square", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
+    op_record("sqrt", 1, number_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
+    op_record("transpose", 1, all_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
+    op_record("true_divide", 2, all_dtypes, all_shapes, jtu.rand_nonzero(), ["rev"]),
     op_record("where", 3, (onp.float32, onp.int64), all_shapes, jtu.rand_some_zero(), []),
 ]
 
@@ -142,23 +144,24 @@ JAX_BITWISE_OP_RECORDS = [
 ]
 
 JAX_REDUCER_RECORDS = [
-    op_record("mean", 1, default_dtypes, nonempty_shapes, jtu.rand_default(), []),
-    op_record("prod", 1, default_dtypes, all_shapes, jtu.rand_small_positive(), []),
-    op_record("sum", 1, default_dtypes, all_shapes, jtu.rand_default(), []),
-    op_record("var", 1, default_dtypes, nonempty_shapes, jtu.rand_default(), []),
+    op_record("mean", 1, number_dtypes, nonempty_shapes, jtu.rand_default(), []),
+    op_record("prod", 1, number_dtypes, all_shapes, jtu.rand_small_positive(), []),
+    op_record("sum", 1, number_dtypes, all_shapes, jtu.rand_default(), []),
+    op_record("var", 1, number_dtypes, nonempty_shapes, jtu.rand_default(), []),
+    # TODO(phawkins): test inexact_dtypes for std after a jaxlib release.
     op_record("std", 1, float_dtypes, nonempty_shapes, jtu.rand_default(), []),
 ]
 
 JAX_REDUCER_NO_DTYPE_RECORDS = [
-    op_record("all", 1, default_dtypes + bool_dtypes, all_shapes, jtu.rand_some_zero(), []),
-    op_record("any", 1, default_dtypes + bool_dtypes, all_shapes, jtu.rand_some_zero(), []),
-    op_record("max", 1, default_dtypes, nonempty_shapes, jtu.rand_default(), []),
-    op_record("min", 1, default_dtypes, nonempty_shapes, jtu.rand_default(), []),
+    op_record("all", 1, all_dtypes, all_shapes, jtu.rand_some_zero(), []),
+    op_record("any", 1, all_dtypes, all_shapes, jtu.rand_some_zero(), []),
+    op_record("max", 1, all_dtypes, nonempty_shapes, jtu.rand_default(), []),
+    op_record("min", 1, all_dtypes, nonempty_shapes, jtu.rand_default(), []),
 ]
 
 JAX_ARGMINMAX_RECORDS = [
-    op_record("argmin", 1, default_dtypes, nonempty_shapes, jtu.rand_some_equal(), []),
-    op_record("argmax", 1, default_dtypes, nonempty_shapes, jtu.rand_some_equal(), []),
+    op_record("argmin", 1, all_dtypes, nonempty_shapes, jtu.rand_some_equal(), []),
+    op_record("argmax", 1, all_dtypes, nonempty_shapes, jtu.rand_some_equal(), []),
 ]
 
 CombosWithReplacement = itertools.combinations_with_replacement
@@ -326,7 +329,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           ("tensor-matrix", (4, 3, 2), (2, 5)),
           ("matrix-tensor", (5, 2), (3, 2, 4)),
           ("tensor-tensor", (2, 3, 4), (5, 4, 1))]
-      for lhs_dtype, rhs_dtype in CombosWithReplacement(float_dtypes, 2)))
+      for lhs_dtype, rhs_dtype in CombosWithReplacement(inexact_dtypes, 2)))
   def testDot(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype, rng):
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
     self._CheckAgainstNumpy(onp.dot, lnp.dot, args_maker, check_dtypes=True)
@@ -352,7 +355,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           ("tensor-matrix", (5, 2, 3), (3, 2)),
           ("tensor-tensor", (5, 3, 4), (5, 4, 1)),
           ("tensor-tensor-broadcast", (3, 1, 3, 4), (5, 4, 1))]
-      for lhs_dtype, rhs_dtype in CombosWithReplacement(float_dtypes, 2)))
+      for lhs_dtype, rhs_dtype in CombosWithReplacement(inexact_dtypes, 2)))
   def testMatmul(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype, rng):
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
     self._CheckAgainstNumpy(onp.matmul, lnp.matmul, args_maker,
@@ -374,7 +377,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           [(2, 3, 4), (5, 4, 3, 6), [[1, 2], [2, 1]]],
           [(1, 2, 3, 4), (4, 5, 3, 6), [[2, 3], [2, 0]]],
       ]
-      for lhs_dtype, rhs_dtype in CombosWithReplacement(float_dtypes, 2)))
+      for lhs_dtype, rhs_dtype in CombosWithReplacement(inexact_dtypes, 2)))
   def testTensordot(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype, axes, rng):
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
     lnp_fun = lambda a, b: lnp.tensordot(a, b, axes)
@@ -390,7 +393,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "rhs_shape": rhs_shape, "rhs_dtype": rhs_dtype,
        "rng": jtu.rand_default()}
       # TODO(phawkins): support integer dtypes too.
-      for lhs_dtype, rhs_dtype in CombosWithReplacement(float_dtypes, 2)
+      for lhs_dtype, rhs_dtype in CombosWithReplacement(inexact_dtypes, 2)
       for lhs_shape, rhs_shape in [
         (l, r) for l, r in CombosWithReplacement(all_shapes, 2)
         if len(jtu._dims_of_shape(l)) == 0
@@ -408,7 +411,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, dtype), a_min, a_max),
        "shape": shape, "dtype": dtype, "a_min": a_min, "a_max": a_max,
        "rng": jtu.rand_default()}
-      for shape in all_shapes for dtype in float_dtypes
+      for shape in all_shapes for dtype in number_dtypes
       for a_min, a_max in [(-1, None), (None, 1), (-1, 1)]))
   def testClipStaticBounds(self, shape, dtype, a_min, a_max, rng):
     onp_fun = lambda x: onp.clip(x, a_min=a_min, a_max=a_max)
@@ -422,9 +425,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, dtype), decimals),
        "shape": shape, "dtype": dtype, "decimals": decimals,
        "rng": jtu.rand_default()}
-      for shape in all_shapes for dtype in float_dtypes
+      for shape in all_shapes for dtype in number_dtypes
       for decimals in [0, 1, -2]))
   def testRoundStaticDecimals(self, shape, dtype, decimals, rng):
+    if onp.issubdtype(dtype, onp.integer) and decimals < 0:
+      self.skipTest("Integer rounding with decimals < 0 not implemented")
     onp_fun = lambda x: onp.round(x, decimals=decimals)
     lnp_fun = lambda x: lnp.round(x, decimals=decimals)
     args_maker = lambda: [rng(shape, dtype)]
@@ -604,7 +609,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "dtype": dtype, "out_dtype": out_dtype, "shape": shape, "offset": offset,
        "axis1": axis1, "axis2": axis2, "rng": jtu.rand_default()}
       for dtype in default_dtypes
-      for out_dtype in [None] + default_dtypes
+      for out_dtype in [None] + number_dtypes
       for shape in [shape for shape in all_shapes if len(shape) >= 2]
       for (axis1, axis2) in itertools.combinations(range(len(shape)), 2)
       for offset in list(range(-4, 4))))
