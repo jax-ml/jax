@@ -245,6 +245,10 @@ def randint(key, shape, minval, maxval, dtype=onp.int32):
   if nbits not in (32, 64):
     raise TypeError("randint only accepts 32- or 64-bit dtypes.")
 
+  # if we don't have minval < maxval, just always return minval
+  # https://github.com/google/jax/issues/222
+  maxval = lax.max(lax.add(minval, onp.array(1, dtype)), maxval)
+
   # This algorithm is biased whenever (maxval - minval) is not a power of 2.
   # We generate double the number of random bits required by the dtype so as to
   # reduce that bias.
