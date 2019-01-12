@@ -1592,8 +1592,8 @@ def _rewriting_take(arr, idx, axis=0):
       axis += isinstance(elt, slice)   # advance axis index if not eliminated
     unexpanded_shape_itr = iter(result.shape)
     result_shape = tuple(1 if elt is None else next(unexpanded_shape_itr)
-                         for elt in canonical_idx if not isinstance(elt, int))
-    return lax.reshape(result, result_shape)
+                         for elt in canonical_idx if isinstance(elt, (type(None), slice)))
+    return lax.reshape(result, result_shape) if result_shape else result
 
   # Handle advanced indexing (non-tuple sequence, ndarray of dtype int or bool,
   # or a tuple with at least one sequence object).
