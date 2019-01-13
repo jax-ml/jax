@@ -391,7 +391,7 @@ def sort(operand, dimension=-1):
   return sort_p.bind(operand, dimension=dimension)
 
 def sort_key_val(keys, values, dimension=-1):
-  # TODO new sort_key_val is variadic
+  # TODO(mattjj): new sort_key_val is variadic
   result = sort_key_val_p.bind(keys, values, dimension=dimension)
   sorted_keys, sorted_values = result
   return sorted_keys, sorted_values

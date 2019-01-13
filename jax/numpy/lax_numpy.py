@@ -235,7 +235,6 @@ absolute = abs = _one_to_one_unop(onp.absolute, lax.abs)
 fabs = _one_to_one_unop(onp.fabs, lax.abs, True)
 bitwise_not = _one_to_one_unop(onp.bitwise_not, lax.bitwise_not)
 negative = _one_to_one_unop(onp.negative, lax.neg)
-sort = _one_to_one_unop(onp.sort, lax.sort)
 sign = _one_to_one_unop(onp.sign, lax.sign)
 
 floor = _one_to_one_unop(onp.floor, lax.floor, True)
@@ -1523,6 +1522,20 @@ def _argminmax(op, a, axis):
   mask_idxs = where(lax._eq_meet(a, op(a, axis, keepdims=True)), idxs, maxval)
   return min(mask_idxs, axis)
 
+
+@_wraps(onp.sort)
+def sort(a, axis=-1, kind='quicksort', order=None):
+  if kind != 'quicksort':
+    warnings.warn("'kind' argument to sort is ignored.")
+  if order is not None:
+    msg = "'order' argument to sort is not supported."
+    raise ValueError(msg)
+  if axis is None:
+    return lax.sort(a.ravel(), 0)
+  else:
+    return lax.sort(a, axis % ndim(a))
+
+
 ### Indexing
 
 
@@ -1722,7 +1735,8 @@ def _static_idx(idx, size):
 def _not_implemented(fun):
   @_wraps(fun)
   def wrapped(*args, **kwargs):
-    raise Exception("Numpy function {} not yet implemented".format(fun))
+    msg = "Numpy function {} not yet implemented"
+    raise NotImplementedError(msg.format(fun))
   return wrapped
 
 # Build a set of all unimplemented NumPy functions.

@@ -932,7 +932,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   # TODO(mattjj): test infix operator overrides
 
   def testRavel(self):
-    # TODO(mattjj): support this method-based syntax?
     rng = onp.random.RandomState(0)
     args_maker = lambda: [rng.randn(3, 4).astype("float32")]
     self._CompileAndCheck(lambda x: x.ravel(), args_maker, check_dtypes=True)
@@ -957,6 +956,28 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # from https://github.com/google/jax/issues/145
     expected = onp.arange(0.0, 1.0, 0.1)
     ans = lnp.arange(0.0, 1.0, 0.1)
+    self.assertAllClose(expected, ans, check_dtypes=True)
+
+  def testSortManual(self):
+    # manual tests for sort are nice because we don't have to worry about ties.
+    # lax.sort is tested combinatorially.
+    ans = lnp.sort(onp.array([16, 15, 23, 42, 8, 4]))
+    expected = onp.array([4, 8, 15, 16, 23, 42])
+    self.assertAllClose(expected, ans, check_dtypes=True)
+
+    a = onp.array([[1, 4], [3, 1]])
+    ans = lnp.sort(a, axis=None)
+    expected = onp.array([[1, 1, 3, 4]])
+    self.assertAllClose(expected, ans, check_dtypes=True)
+
+    a = onp.array([[1, 4], [3, 1]])
+    ans = lnp.sort(a)  # last axis
+    expected = onp.array([[1, 4], [1, 3]])
+    self.assertAllClose(expected, ans, check_dtypes=True)
+
+    a = onp.array([[1, 4], [3, 1]])
+    ans = lnp.sort(a, axis=0)
+    expected = onp.array([[1, 1], [3, 4]])
     self.assertAllClose(expected, ans, check_dtypes=True)
 
 
