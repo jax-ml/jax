@@ -19,6 +19,7 @@ from __future__ import print_function
 import collections
 import itertools
 import string
+import warnings
 
 import numpy as onp
 import opt_einsum
@@ -1528,12 +1529,28 @@ def sort(a, axis=-1, kind='quicksort', order=None):
   if kind != 'quicksort':
     warnings.warn("'kind' argument to sort is ignored.")
   if order is not None:
-    msg = "'order' argument to sort is not supported."
-    raise ValueError(msg)
+    raise ValueError("'order' argument to sort is not supported.")
+
   if axis is None:
     return lax.sort(a.ravel(), 0)
   else:
     return lax.sort(a, axis % ndim(a))
+
+
+@_wraps(onp.argsort)
+def argsort(a, axis=-1, kind='quicksort', order=None):
+  if kind != 'quicksort':
+    warnings.warn("'kind' argument to argsort is ignored.")
+  if order is not None:
+    raise ValueError("'order' argument to argsort is not supported.")
+
+  if axis is None:
+    return argsort(a.ravel(), 0)
+  else:
+    axis = axis % ndim(a)
+    iota = lax.broadcasted_iota(onp.int64, shape(a), axis)
+    _, perm = lax.sort_key_val(a, iota, dimension=axis)
+    return perm
 
 
 ### Indexing

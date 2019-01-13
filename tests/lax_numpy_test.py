@@ -958,7 +958,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     ans = lnp.arange(0.0, 1.0, 0.1)
     self.assertAllClose(expected, ans, check_dtypes=True)
 
-  def testSortManual(self):
+  def testSortManually(self):
     # manual tests for sort are nice because we don't have to worry about ties.
     # lax.sort is tested combinatorially.
     ans = lnp.sort(onp.array([16, 15, 23, 42, 8, 4]))
@@ -979,6 +979,32 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     ans = lnp.sort(a, axis=0)
     expected = onp.array([[1, 1], [3, 4]])
     self.assertAllClose(expected, ans, check_dtypes=True)
+
+  def testArgsortManually(self):
+    x = onp.array([16, 15, 23, 42, 8, 4])
+    ans = lnp.argsort(x)
+    expected = onp.argsort(x)
+    self.assertAllClose(expected, ans, check_dtypes=False)
+
+    x = onp.array([[16, 15, 23], [42, 8, 4]])
+    ans = lnp.argsort(x, axis=0)
+    expected = onp.argsort(x, axis=0)
+    self.assertAllClose(expected, ans, check_dtypes=False)
+
+    x = onp.array([[16, 15, 23], [42, 8, 4]])
+    ans = lnp.argsort(x, axis=1)
+    expected = onp.argsort(x, axis=1)
+    self.assertAllClose(expected, ans, check_dtypes=False)
+
+    x = onp.array([[16, 15, 23], [42, 8, 4]])
+    ans = lnp.argsort(x, axis=None)
+    expected = onp.argsort(x, axis=None)
+    self.assertAllClose(expected, ans, check_dtypes=False)
+
+    x = onp.array([[16, 15, 23], [42, 8, 4]])
+    ans = lnp.argsort(x)
+    expected = onp.argsort(x)
+    self.assertAllClose(expected, ans, check_dtypes=False)
 
 
 if __name__ == "__main__":
