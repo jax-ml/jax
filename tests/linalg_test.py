@@ -149,6 +149,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testSVD(self, m, n, dtype, full_matrices, compute_uv, rng):
     if not hasattr(lapack, "jax_gesdd"):
       self.skipTest("No singular value decomposition implementation available")
+
     args_maker = lambda: [rng((m, n), dtype)]
 
     # Norm, adjusted for dimension and type.
@@ -164,18 +165,18 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       if full_matrices:
         k = min(m, n)
         if m < n:
-          self.assertTrue(onp.all(norm(a - onp.matmul(out[1] * out[0], out[2][:k, :])) < 50))
+          self.assertTrue(onp.all(norm(a - onp.matmul(out[1] * out[0], out[2][:k, :])) < 100))
         else:
-          self.assertTrue(onp.all(norm(a - onp.matmul(out[1] * out[0][:, :k], out[2])) < 50))
+          self.assertTrue(onp.all(norm(a - onp.matmul(out[1] * out[0][:, :k], out[2])) < 100))
       else:
-          self.assertTrue(onp.all(norm(a - onp.matmul(out[1] * out[0], out[2])) < 50))
+          self.assertTrue(onp.all(norm(a - onp.matmul(out[1] * out[0], out[2])) < 100))
 
       # Check the unitary properties of the singular vector matrices.
-      self.assertTrue(onp.all(norm(onp.eye(out[0].shape[1]) - onp.matmul(onp.conj(T(out[0])), out[0])) < 5))
+      self.assertTrue(onp.all(norm(onp.eye(out[0].shape[1]) - onp.matmul(onp.conj(T(out[0])), out[0])) < 10))
       if m >= n:
-        self.assertTrue(onp.all(norm(onp.eye(out[2].shape[1]) - onp.matmul(onp.conj(T(out[2])), out[2])) < 5))
+        self.assertTrue(onp.all(norm(onp.eye(out[2].shape[1]) - onp.matmul(onp.conj(T(out[2])), out[2])) < 10))
       else:
-        self.assertTrue(onp.all(norm(onp.eye(out[2].shape[0]) - onp.matmul(out[2], onp.conj(T(out[2])))) < 10))
+        self.assertTrue(onp.all(norm(onp.eye(out[2].shape[0]) - onp.matmul(out[2], onp.conj(T(out[2])))) < 20))
 
     else:
       self.assertTrue(onp.allclose(onp.linalg.svd(a, compute_uv=False), onp.asarray(out)))
@@ -324,7 +325,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       self.skipTest("No LU implementation available")
     a = rng(shape, dtype)
 
-    jtu.check_grads(jsp.linalg.lu, (a,), 2, rtol=2e-2)
+    jtu.check_grads(jsp.linalg.lu, (a,), 2, rtol=1e-1)
 
 
   # TODO(phawkins): enable when there is an LU implementation for GPU/TPU.
