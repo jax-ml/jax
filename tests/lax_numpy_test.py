@@ -1006,6 +1006,25 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     expected = onp.argsort(x)
     self.assertAllClose(expected, ans, check_dtypes=False)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_axis={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), axis),
+       "rng": rng, "shape": shape, "dtype": dtype, "axis": axis}
+      for shape in [(3,), (3, 4), (3, 4, 5)]
+      for axis in itertools.chain(range(len(shape)), [-1], [None])
+      for dtype in default_dtypes
+      for rng in [jtu.rand_default()]))
+  def testTakeAlongAxis(self, shape, dtype, axis, rng):
+    def args_maker():
+      x = rng(shape, dtype)
+      i = onp.argsort(x, axis=axis)
+      return x, i
+
+    lnp_op = lambda x, i: lnp.take_along_axis(x, i, axis=axis)
+    onp_op = lambda x, i: onp.take_along_axis(x, i, axis=axis)
+    self._CheckAgainstNumpy(lnp_op, onp_op, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_op, args_maker, check_dtypes=True)
+
 
 if __name__ == "__main__":
   absltest.main()
