@@ -1553,6 +1553,21 @@ def argsort(a, axis=-1, kind='quicksort', order=None):
     return perm
 
 
+@_wraps(onp.take_along_axis)
+def take_along_axis(arr, indices, axis):
+  if axis is None and ndim(arr) != 1:
+    return take_along_axis(arr.ravel(), indices.ravel(), 0)
+  elif ndim(arr) == 1:
+    return lax.index_take(arr, (indices,), (0,))
+  else:
+    all_indices = [lax.broadcasted_iota(_dtype(indices), shape(indices), i)
+                   for i in range(ndim(arr))]
+    all_indices[axis] = indices
+    all_indices = tuple(map(ravel, all_indices))
+    out_flat = lax.index_take(arr, all_indices, tuple(range(ndim(arr))))
+    return reshape(out_flat, shape(indices))
+
+
 ### Indexing
 
 
