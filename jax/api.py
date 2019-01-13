@@ -240,7 +240,7 @@ def vmap(fun, in_axes=0, out_axes=0):
   @wraps(fun, docstr=docstr)
   def batched_fun(*args, **kwargs):
     if not isinstance(fun, lu.WrappedFun):
-      f = lu.wrap_init(fun)
+      f = lu.wrap_init(fun, kwargs)
     in_axes_ = (in_axes,) * len(args) if type(in_axes) is int else in_axes
     in_flat, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
     jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(f, in_trees)
