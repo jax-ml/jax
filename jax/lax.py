@@ -2275,12 +2275,40 @@ def sort_key_val_jvp(primals, tangents, dimension):
 def sort_key_val_transpose_rule(t, keys, values, dimension):
   t_keys, t_values = t
   assert t_keys is ad_util.zero
-  broadcasted_iota = broadcast_in_dim(
-      onp.arange(keys.shape[dimension]), keys.shape, [dimension % keys.ndim])
-  _, perm = sort_key_val(keys, broadcasted_iota)
+  iota = broadcasted_iota(onp.int32, keys.shape, dimension % keys.ndim)
+  _, perm = sort_key_val(keys, iota)
   keys_result = ad_util.zero if keys is None else None
   values_result = sort_key_val(perm, t_values)[1] if values is None else None
   return [keys_result, values_result]
+
+def sort_key_val_batch_rule(batched_args, batch_dims, dimension):
+  keys, values = batched_args
+  keys_bdim, values_bdim = batch_dims
+  assert keys_bdim is not None or values_bdim is not None
+  if keys_bdim == values_bdim:
+    new_dimension = dimension + (keys_bdim <= dimension)
+    out = sort_key_val(keys, values, new_dimension)
+    return core.pack(out), keys_bdim
+  elif keys_bdim is not None and values_bdim is not None:
+    keys_trans = batching.moveaxis(keys.shape[keys_bdim], values_bdim,
+                                   keys_bdim, keys)
+    new_dimension = dimension + (values_bdim <= dimension)
+    out = sort_key_val(keys_trans, values, new_dimension)
+    return core.pack(out), values_bdim
+  elif keys_bdim is None:
+    broadcast_dimensions = onp.delete(onp.arange(values.ndim), values_bdim)
+    new_keys = broadcast_in_dim(keys, values.shape, broadcast_dimensions)
+    new_dimension = dimension + (values_bdim <= dimension)
+    out = sort_key_val(new_keys, values, new_dimension)
+    return core.pack(out), values_bdim
+  elif values_bdim is None:
+    broadcast_dimensions = onp.delete(onp.arange(keys.ndim), keys_bdim)
+    new_values = broadcast_in_dim(values, keys.shape, broadcast_dimensions)
+    new_dimension = dimension + (keys_bdim <= dimension)
+    out = sort_key_val(keys, new_values, new_dimension)
+    return core.pack(out), keys_bdim
+  else:
+    raise Exception  # unreachable
 
 sort_key_val_p = Primitive('sort_key_val')
 sort_key_val_p.def_impl(sort_key_val_impl)
@@ -2288,6 +2316,7 @@ sort_key_val_p.def_abstract_eval(sort_key_val_abstract_eval)
 xla.translations[sort_key_val_p] = partial(standard_translate, 'sort_key_val')
 ad.primitive_jvps[sort_key_val_p] = sort_key_val_jvp
 ad.primitive_transposes[sort_key_val_p] = sort_key_val_transpose_rule
+batching.primitive_batchers[sort_key_val_p] = sort_key_val_batch_rule
 
 
 def while_loop_abstract_eval(init_val, opaque_params):
