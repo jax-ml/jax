@@ -450,6 +450,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
               irng):
     pad_width = irng([len(shape), 2][2 - pad_width_rank:], onp.int32)
     def onp_fun(x, constant_vals):
+      if pad_width.size == 0:
+        return x
       return onp.pad(x, pad_width, mode='constant',
                      constant_values=constant_vals)
     def lnp_fun(x, constant_vals):
