@@ -216,9 +216,8 @@ def gather(operand, start_indices, dimension_numbers=None, slice_sizes=None):
       operand, start_indices, dimension_numbers=dimension_numbers,
       slice_sizes=tuple(slice_sizes), operand_shape=operand.shape)
 
-def scatter(operand, scatter_indices, updates, update_computation,
-            dimension_numbers=None):
-  jaxpr, consts = _reduction_jaxpr(update_computation, _const(operand, 0))
+def scatter_add(operand, scatter_indices, updates, dimension_numbers=None):
+  jaxpr, consts = _reduction_jaxpr(add, _const(operand, 0))
   return scatter_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
       update_consts=consts, dimension_numbers=dimension_numbers,
@@ -1938,7 +1937,7 @@ def gather_transpose_rule(t, operand, start_indices, dimension_numbers,
     inserted_window_dims=dimension_numbers.collapsed_slice_dims,
     scatter_dims_to_operand_dims=dimension_numbers.start_index_map,
     index_vector_dim=dimension_numbers.index_vector_dim)
-  return [scatter(zeros, start_indices, t, add, scatter_dnums), ad_util.zero]
+  return [scatter_add(zeros, start_indices, t, scatter_dnums), ad_util.zero]
 
 
 gather_p = standard_primitive(
@@ -1994,7 +1993,6 @@ def scatter_jvp(primals, tangents, update_jaxpr, update_consts,
   if g_operand is ad_util.zero and g_updates is ad_util.zero:
     tangent_out = ad_util.zero
   else:
-    print("scatter jvp ", g_operand, g_updates)
     g_operand = ad.instantiate_zeros(operand, g_operand)
     g_updates = ad.instantiate_zeros(updates, g_updates)
     tangent_out = scatter_p.bind(
@@ -2008,17 +2006,9 @@ def scatter_transpose_rule(t, operand, scatter_indices, updates,
                            update_jaxpr, update_consts, dimension_numbers,
                            updates_shape):
   assert scatter_indices is not None
-  print("scatter transpose ", t, operand, updates, dimension_numbers)
-  assert (operand is None) ^ (updates is None)
   operand_t = update_t = None
   if operand is None:
-    # TODO(phawkins): only correct for scatter-add.
     operand_t = t
-    #zeros = _zeros(t, shape=updates_shape)
-    #operand_t = scatter_p.bind(
-    #  t, scatter_indices, zeros, update_jaxpr=update_jaxpr,
-    #  update_consts=update_consts, dimension_numbers=dimension_numbers,
-    #  updates_shape=updates_shape)
 
   if updates is None:
     gather_dnums = GatherDimensionNumbers(
@@ -2036,12 +2026,11 @@ def scatter_transpose_rule(t, operand, scatter_indices, updates,
         pos += 1
     update_t = gather(t, scatter_indices, dimension_numbers=gather_dnums,
                       slice_sizes=slice_sizes)
-    print("transpose out ", update_t, scatter_indices, gather_dnums, slice_sizes)
-  return [operand_t, update_t, None]
+  return [operand_t, None, update_t]
 
 
 scatter_p = standard_primitive(
-    scatter_shape_rule, scatter_dtype_rule, 'scatter',
+    scatter_shape_rule, scatter_dtype_rule, 'scatter-add',
     scatter_translation_rule)
 ad.primitive_jvps[scatter_p] = scatter_jvp
 ad.primitive_transposes[scatter_p] = scatter_transpose_rule
