@@ -201,13 +201,13 @@ def _constant_like(x, const):
 
 def _wraps(fun):
   """Like functools.wraps but works with numpy.ufuncs."""
-  docstr = """
-  LAX-backed implementation of {fun}. Original docstring below.
-
-  {np_doc}
-  """.format(fun=fun.__name__, np_doc=fun.__doc__)
   def wrap(op):
     try:
+      docstr = """
+      LAX-backed implementation of {fun}. Original docstring below.
+
+      {np_doc}
+      """.format(fun=fun.__name__, np_doc=fun.__doc__)
       op.__name__ = fun.__name__
       op.__doc__ = docstr
     finally:
@@ -1553,7 +1553,7 @@ def argsort(a, axis=-1, kind='quicksort', order=None):
     return perm
 
 
-@_wraps(onp.take_along_axis)
+@_wraps(getattr(onp, "take_along_axis", None))
 def take_along_axis(arr, indices, axis):
   if axis is None and ndim(arr) != 1:
     return take_along_axis(arr.ravel(), indices.ravel(), 0)
