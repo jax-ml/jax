@@ -1893,7 +1893,11 @@ def gather_dtype_rule(operand, start_indices, **kwargs):
 def gather_shape_rule(operand, start_indices, dimension_numbers, slice_sizes,
                       operand_shape):
   assert operand.shape == operand_shape
-  expanded_start_indices_shape = start_indices.shape
+  if len(operand_shape) != len(slice_sizes):
+    msg = ("slice_sizes must have rank equal to the gather operand; "
+          "operand.shape={}, slice_sizes={}".format(operand_shape, slice_sizes))
+    raise ValueError(msg)
+  expanded_start_indices_shape = list(start_indices.shape)
   if len(expanded_start_indices_shape) == dimension_numbers.index_vector_dim:
     expanded_start_indices_shape.append(1)
   result_rank = len(dimension_numbers.offset_dims)
@@ -2004,7 +2008,8 @@ def scatter_transpose_rule(t, operand, scatter_indices, updates,
                            update_jaxpr, update_consts, dimension_numbers,
                            updates_shape):
   assert scatter_indices is not None
-  assert operand is None and updates is None
+  print("scatter transpose ", t, operand, updates, dimension_numbers)
+  assert (operand is None) ^ (updates is None)
   operand_t = update_t = None
   if operand is None:
     # TODO(phawkins): only correct for scatter-add.
@@ -2021,10 +2026,17 @@ def scatter_transpose_rule(t, operand, scatter_indices, updates,
       collapsed_slice_dims=dimension_numbers.inserted_window_dims,
       start_index_map=dimension_numbers.scatter_dims_to_operand_dims,
       index_vector_dim=dimension_numbers.index_vector_dim)
-    slice_sizes = onp.array(updates_shape)[
-      list(dimension_numbers.update_window_dims)]
+    slice_sizes = []
+    pos = 0
+    for i in xrange(len(t.shape)):
+      if i in dimension_numbers.inserted_window_dims:
+        slice_sizes.append(1)
+      else:
+        slice_sizes.append(updates_shape[dimension_numbers.update_window_dims[pos]])
+        pos += 1
     update_t = gather(t, scatter_indices, dimension_numbers=gather_dnums,
                       slice_sizes=slice_sizes)
+    print("transpose out ", update_t, scatter_indices, gather_dnums, slice_sizes)
   return [operand_t, update_t, None]
 
 
