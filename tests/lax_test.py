@@ -2110,7 +2110,6 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     index_untake = lambda src, dst: lax.index_untake(src, dst, idxs, axes)
     check_grads(index_untake, (src, dst), 2, 1e-2, 1e-2, 1e-2)
 
-
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_idxs={}_dnums={}_slice_sizes={}".format(
           jtu.format_shape_dtype_string(shape, dtype), idxs, dnums,
@@ -2136,7 +2135,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     gather = lambda x: lax.gather(x, idxs, dimension_numbers=dnums,
                                   slice_sizes=slice_sizes)
     x = rng(shape, dtype)
-    check_grads(gather, (x,), 2)
+    check_grads(gather, (x,), 2, 1e-2, 1e-2, 1e-2)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_idxs={}_update={}_dnums={}".format(
@@ -2166,7 +2165,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
                                                dimension_numbers=dnums)
     x = rng(arg_shape, dtype)
     y = rng(update_shape, dtype)
-    check_grads(scatter_add, (x, y), 2)
+    check_grads(scatter_add, (x, y), 2, 1e-2, 1e-2, 1e-2)
 
 
 if __name__ == '__main__':
