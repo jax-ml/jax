@@ -335,6 +335,36 @@ class BatchingTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
     assert len(onp.unique(ans)) == 10 * 3 * 2
 
+  def testSortKeyVal(self):
+    k = onp.arange(12)[::-1].reshape(3, 4)
+    v = onp.random.RandomState(0).permutation(12).reshape(3, 4)
+
+    sk, sv = vmap(partial(lax.sort_key_val, dimension=0), (0, 0))(k, v)
+    self.assertAllClose(sk, k[:, ::-1], check_dtypes=True)
+    self.assertAllClose(sv, v[:, ::-1], check_dtypes=True)
+
+    sk, sv = vmap(partial(lax.sort_key_val, dimension=0), (1, 1), 1)(k, v)
+    self.assertAllClose(sk, k[::-1, :], check_dtypes=True)
+    self.assertAllClose(sv, v[::-1, :], check_dtypes=True)
+
+    sk, sv = vmap(partial(lax.sort_key_val, dimension=0), (0, 1))(k, v.T)
+    self.assertAllClose(sk, k[:, ::-1], check_dtypes=True)
+    self.assertAllClose(sv, v[:, ::-1], check_dtypes=True)
+
+    sk, sv = vmap(partial(lax.sort_key_val, dimension=0), (1, 0))(k.T, v)
+    self.assertAllClose(sk, k[:, ::-1], check_dtypes=True)
+    self.assertAllClose(sv, v[:, ::-1], check_dtypes=True)
+
+    sk, sv = vmap(partial(lax.sort_key_val, dimension=0), (None, 0))(k[0], v)
+    self.assertAllClose(sk, onp.broadcast_to(k[0, ::-1], (3, 4)),
+                        check_dtypes=True)
+    self.assertAllClose(sv, v[:, ::-1], check_dtypes=True)
+
+    sk, sv = vmap(partial(lax.sort_key_val, dimension=0), (1, None))(k.T, v[0])
+    self.assertAllClose(sk, k[:, ::-1], check_dtypes=True)
+    self.assertAllClose(sv, onp.broadcast_to(v[0, ::-1], (3, 4)),
+                        check_dtypes=True)
+
 
 if __name__ == '__main__':
   absltest.main()

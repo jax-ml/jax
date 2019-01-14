@@ -349,6 +349,12 @@ def rand_some_zero():
   return rand
 
 
+def rand_int(low, high=None):
+  randint = npr.RandomState(0).randint
+  def fn(shape, dtype):
+    return randint(low, high=high, size=shape, dtype=dtype)
+  return fn
+
 def rand_bool():
   rng = npr.RandomState(0)
   def generator(shape, dtype):

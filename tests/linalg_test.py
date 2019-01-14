@@ -141,7 +141,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
        "compute_uv": compute_uv, "rng": rng}
       for m in [2, 7, 29, 53]
       for n in [2, 7, 29, 53]
-      for dtype in float_types()
+      for dtype in float_types() | complex_types()
       for full_matrices in [False, True]
       for compute_uv in [False, True]
       for rng in [jtu.rand_default()]))
@@ -149,6 +149,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testSVD(self, m, n, dtype, full_matrices, compute_uv, rng):
     if not hasattr(lapack, "jax_gesdd"):
       self.skipTest("No singular value decomposition implementation available")
+
     args_maker = lambda: [rng((m, n), dtype)]
 
     # Norm, adjusted for dimension and type.
@@ -164,18 +165,18 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       if full_matrices:
         k = min(m, n)
         if m < n:
-          self.assertTrue(onp.all(norm(a - onp.matmul(out[1] * out[0], out[2][:k, :])) < 50))
+          self.assertTrue(onp.all(norm(a - onp.matmul(out[1] * out[0], out[2][:k, :])) < 100))
         else:
-          self.assertTrue(onp.all(norm(a - onp.matmul(out[1] * out[0][:, :k], out[2])) < 50))
+          self.assertTrue(onp.all(norm(a - onp.matmul(out[1] * out[0][:, :k], out[2])) < 100))
       else:
-          self.assertTrue(onp.all(norm(a - onp.matmul(out[1] * out[0], out[2])) < 50))
+          self.assertTrue(onp.all(norm(a - onp.matmul(out[1] * out[0], out[2])) < 100))
 
       # Check the unitary properties of the singular vector matrices.
-      self.assertTrue(onp.all(norm(onp.eye(out[0].shape[1]) - onp.matmul(T(out[0]), out[0])) < 5))
+      self.assertTrue(onp.all(norm(onp.eye(out[0].shape[1]) - onp.matmul(onp.conj(T(out[0])), out[0])) < 10))
       if m >= n:
-        self.assertTrue(onp.all(norm(onp.eye(out[2].shape[1]) - onp.matmul(T(out[2]), out[2])) < 5))
+        self.assertTrue(onp.all(norm(onp.eye(out[2].shape[1]) - onp.matmul(onp.conj(T(out[2])), out[2])) < 10))
       else:
-        self.assertTrue(onp.all(norm(onp.eye(out[2].shape[0]) - onp.matmul(out[2], T(out[2]))) < 5))
+        self.assertTrue(onp.all(norm(onp.eye(out[2].shape[0]) - onp.matmul(out[2], onp.conj(T(out[2])))) < 20))
 
     else:
       self.assertTrue(onp.allclose(onp.linalg.svd(a, compute_uv=False), onp.asarray(out)))
@@ -308,6 +309,24 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(jsp.linalg.lu, osp.linalg.lu, args_maker,
                             check_dtypes=True, tol=1e-3)
     self._CompileAndCheck(jsp.linalg.lu, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype, "rng": rng}
+      for shape in [(1, 1), (4, 5), (10, 5), (10, 10)]
+      for dtype in float_types() | complex_types()
+      for rng in [jtu.rand_default()]))
+  # TODO(phawkins): enable when there is an LU implementation for GPU/TPU.
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testLuGrad(self, shape, dtype, rng):
+    # TODO(phawkins): remove this after a jaxlib release.
+    if not hasattr(lapack, "jax_getrf"):
+      self.skipTest("No LU implementation available")
+    a = rng(shape, dtype)
+
+    jtu.check_grads(jsp.linalg.lu, (a,), 2, rtol=1e-1)
+
 
   # TODO(phawkins): enable when there is an LU implementation for GPU/TPU.
   @parameterized.named_parameters(jtu.cases_from_list(
