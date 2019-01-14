@@ -290,6 +290,12 @@ def rand_small_positive():
   rand = npr.RandomState(0).rand
   return partial(_rand_dtype, rand, scale=2e-5)
 
+def rand_uniform(low=0.0, high=1.0):
+  assert low < high
+  rand = npr.RandomState(0).rand
+  def fn():
+    return partial(_rand_dtype, rand) * (high - low) + low
+
 
 def rand_some_equal():
   randn = npr.RandomState(0).randn
