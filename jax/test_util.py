@@ -293,8 +293,8 @@ def rand_small_positive():
 def rand_uniform(low=0.0, high=1.0):
   assert low < high
   rand = npr.RandomState(0).rand
-  def fn():
-    return partial(_rand_dtype, rand) * (high - low) + low
+  post = lambda x: x * (high - low) + low
+  return partial(_rand_dtype, rand, post=post)
 
 
 def rand_some_equal():
