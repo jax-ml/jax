@@ -16,11 +16,14 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import collections
 import functools
 import itertools as it
 from operator import mul
 import types
 import numpy as onp
+
+import six
 
 allow_memoize_hash_failures = False
 
@@ -126,22 +129,35 @@ def split_merge(predicate, xs):
   return lhs, rhs, merge
 
 
-class _MemoizeNoEntry(object):
-  pass
+if six.PY3:
+  OrderedDict = collections.OrderedDict
+else:
+  # Retrofits a move_to_end method to OrderedDict in Python 2 mode.
+  class OrderedDict(collections.OrderedDict):
+    def move_to_end(self, key):
+      value = self[key]
+      del self[key]
+      self[key] = value
 
-_NO_MEMO_ENTRY = _MemoizeNoEntry
 
-def memoize(fun):
-  cache = {}
+_NO_MEMO_ENTRY = object()
+
+def memoize(fun, max_size=4096):
+  cache = OrderedDict()
   def memoized_fun(*args, **kwargs):
     key = (args, tuple(kwargs and sorted(kwargs.items())))
     try:
       ans = cache.get(key, _NO_MEMO_ENTRY)
       if ans != _NO_MEMO_ENTRY:
+        cache.move_to_end(key)
         return ans
     except TypeError:
       if not allow_memoize_hash_failures:
         raise
+
+    if len(cache) > max_size:
+      cache.popitem(last=False)
+
     ans = cache[key] = fun(*args, **kwargs)
     return ans
   return memoized_fun
