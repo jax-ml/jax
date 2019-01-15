@@ -719,7 +719,6 @@ _input_dtype = lambda *args, **_: xla_bridge.canonicalize_dtype(args[0].dtype)
 _fixed_dtype = lambda dtype: lambda *args, **kwargs: xla_bridge.canonicalize_dtype(dtype)
 _complex_basetype = lambda dtype: onp.abs(onp.zeros((), dtype)).dtype
 
-
 def standard_primitive(shape_rule, dtype_rule, name, translation_rule=None):
   prim = Primitive(name)
   prim.def_impl(partial(xla.apply_primitive, prim))
@@ -832,7 +831,8 @@ def _brcast_to(x, shape):
 
 _f32 = {onp.float32}
 _float = {onp.floating}
-_complex = {onp.complex64}
+_complex = {onp.complex}
+_complex_elem_types = {onp.float32, onp.float64}
 _int = {onp.integer}
 _bool = {onp.bool_}
 
@@ -898,16 +898,18 @@ erf_inv_p = standard_unop(_float, 'erf_inv')
 ad.defjvp2(erf_inv_p, lambda g, ans, x: mul(_const(x, onp.sqrt(onp.pi) / 2.),
                                             mul(g, exp(square(ans)))))
 
-real_p = unop(_fixed_dtype(onp.float32), _complex, 'real')
-ad.deflinear(real_p, lambda t: [complex(t, onp.zeros((), onp.float32))])
+real_p = unop(_complex_basetype, _complex, 'real')
+ad.deflinear(real_p, lambda t: [complex(t, onp.zeros((), _dtype(t)))])
 
-imag_p = unop(_fixed_dtype(onp.float32), _complex, 'imag')
-ad.deflinear(imag_p, lambda t: [complex(onp.zeros((), onp.float32), t)])
+imag_p = unop(_complex_basetype, _complex, 'imag')
+ad.deflinear(imag_p, lambda t: [complex(onp.zeros((), _dtype(t)), t)])
 
-complex_p = binop(_fixed_dtype(onp.complex64), [_f32, _f32], 'complex')
+_complex_dtype = lambda dtype, *args: (onp.zeros((), dtype) + onp.zeros((), onp.complex64)).dtype
+complex_p = binop(_complex_dtype, [_complex_elem_types, _complex_elem_types],
+                  'complex')
 ad.deflinear(complex_p, lambda t: [real(t), imag(t)])
 
-conj_p = unop(_fixed_dtype(onp.complex64), _float | _complex, 'conj')
+conj_p = unop(_complex_dtype, _float | _complex, 'conj')
 
 def conj_transpose_rule(t, x, input_dtype):
   assert x is None

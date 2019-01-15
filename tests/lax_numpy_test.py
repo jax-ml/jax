@@ -45,7 +45,7 @@ nonempty_shapes = scalar_shapes + nonempty_array_shapes
 all_shapes =  scalar_shapes + array_shapes
 
 float_dtypes = [onp.float32, onp.float64]
-complex_dtypes = [onp.complex64]
+complex_dtypes = [onp.complex64, onp.complex128]
 int_dtypes = [onp.int32, onp.int64]
 unsigned_dtypes = [onp.uint32, onp.uint64]
 bool_dtypes = [onp.bool_]
@@ -92,7 +92,8 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("subtract", 2, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("sin", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("cos", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
-    op_record("tan", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
+    op_record("tan", 1, number_dtypes, all_shapes, jtu.rand_uniform(-1.5, 1.5),
+              ["rev"]),
     op_record("sinh", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("cosh", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("tanh", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
