@@ -132,7 +132,7 @@ def wrap_init(f, kwargs={}):
   return WrappedFun(f, [], kwargs)
 
 
-def memoize(call, max_size=64):
+def memoize(call, max_size=4096):
   cache = OrderedDict()
   def memoized_fun(f, *args):
     key = (f, args)

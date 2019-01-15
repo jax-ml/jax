@@ -142,7 +142,7 @@ else:
 
 _NO_MEMO_ENTRY = object()
 
-def memoize(fun, max_size=64):
+def memoize(fun, max_size=4096):
   cache = OrderedDict()
   def memoized_fun(*args, **kwargs):
     key = (args, tuple(kwargs and sorted(kwargs.items())))
