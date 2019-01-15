@@ -16,7 +16,8 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from .util import curry, partial
+from .util import curry, partial, OrderedDict
+
 
 def thunk(f):
   store = Store()
@@ -131,14 +132,17 @@ def wrap_init(f, kwargs={}):
   return WrappedFun(f, [], kwargs)
 
 
-def memoize(call):
-  cache = {}
+def memoize(call, max_size=4096):
+  cache = OrderedDict()
   def memoized_fun(f, *args):
     key = (f, args)
     if key in cache:
       ans, f_prev = cache[key]
+      cache.move_to_end(key)
       f.populate_stores(f_prev)
     else:
+      if len(cache) > max_size:
+        cache.popitem(last=False)
       ans = call(f, *args)
       cache[key] = (ans, f)
     return ans
