@@ -227,9 +227,9 @@ def vmap(fun, in_axes=0, out_axes=0):
   For example, we can implement a matrix-matrix product using a vector dot
   product:
 
-    vv = lambda x, y: np.vdot(x, y)  #  ([a], [a]) -> []
-    mv = vmap(vv, (0, None), 0)      #  ([a,b], [b]) -> [a]
-    mm = vmap(mv, (None, 1), 1)      #  ([a,b], [b,c]) -> [a,c]
+  >>> vv = lambda x, y: np.vdot(x, y)  #  ([a], [a]) -> []
+  >>> mv = vmap(vv, (0, None), 0)      #  ([a,b], [b]) -> [a]
+  >>> mm = vmap(mv, (None, 1), 1)      #  ([a,b], [b,c]) -> [a,c]
 
   (`[a,b]` indicates an array with shape (a,b))
   """
