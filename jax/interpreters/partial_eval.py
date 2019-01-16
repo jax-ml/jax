@@ -117,6 +117,7 @@ def partial_eval_wrapper(avals, *consts, **kwargs):
 
 
 class JaxprTracer(Tracer):
+  __slots__ = ['pval', 'recipe']
 
   def __init__(self, trace, pval, recipe):
     assert isinstance(pval, PartialVal)
