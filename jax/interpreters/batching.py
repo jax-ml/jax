@@ -72,6 +72,8 @@ def batch_subtrace(master, dims, *vals):
 
 
 class BatchTracer(Tracer):
+  __slots__ = ['val', 'batch_dim']
+
   def __init__(self, trace, val, batch_dim):
     self.trace = trace
     self.val = val
