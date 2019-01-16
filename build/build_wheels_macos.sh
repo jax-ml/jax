@@ -22,6 +22,7 @@ build_jax () {
   echo "\nBuilding JAX for Python ${PY_VERSION}, tag ${PY_TAG}"
   pyenv install -s "${PY_VERSION}"
   VENV="jax-build-${PY_VERSION}"
+  pyenv virtualenv-delete -f "${VENV}"
   pyenv virtualenv "${PY_VERSION}" "${VENV}"
   pyenv activate "${VENV}"
   pip install scipy wheel
