@@ -18,6 +18,7 @@ from __future__ import print_function
 
 import collections
 import itertools
+import re
 import string
 import warnings
 
@@ -199,15 +200,36 @@ def _promote_args_like(op, *args):
 def _constant_like(x, const):
   return onp.array(const, dtype=_dtype(x))
 
+_numpy_signature_re = re.compile(r'^([\w., ]+=)?\s*[\w\.]+\(.*\)$')
+
 def _wraps(fun):
   """Like functools.wraps but works with numpy.ufuncs."""
   def wrap(op):
     try:
-      docstr = """
-      LAX-backed implementation of {fun}. Original docstring below.
+      # Numpy doc comments have the form:
+      # fn(x, y, z)          (optional)
+      #
+      # A one-line summary
+      #
+      # ... everything else ...
+      # We (a) move the summary to the top, since it is what the Sphinx
+      # autosummary extension expects, and (b) add a comment below the summary
+      # to the effect that this is a LAX wrapper of a Numpy function.
+      sections = fun.__doc__.split("\n\n")
 
-      {np_doc}
-      """.format(fun=fun.__name__, np_doc=fun.__doc__)
+      signatures = []
+      summary = None
+      for i in xrange(len(sections)):
+        if _numpy_signature_re.match(sections[i]):
+          signatures.append(sections[i])
+        else:
+          summary = sections[i].strip()
+          break
+      body = "\n\n".join(signatures + sections[i + 1:])
+      docstr = (
+        "{summary}\n\nLAX-backend implementation of :func:`{fun}`. "
+        "Original docstring below.\n\n{body}".format(
+          summary=summary, fun=fun.__name__, body=body))
       op.__name__ = fun.__name__
       op.__doc__ = docstr
     finally:
@@ -426,7 +448,7 @@ def remainder(x1, x2):
   x1, x2 = _promote_args("remainder", x1, x2)
   return lax.rem(lax.add(lax.rem(x1, x2), x2), x2)
 mod = remainder
-fmod = lax.rem
+fmod = _wraps(onp.fmod)(lambda x, y: lax.rem(x, y))
 
 
 @_wraps(onp.sqrt)
@@ -1268,6 +1290,7 @@ def tensordot(a, b, axes=2):
   raise TypeError(msg)
 
 
+@_wraps(onp.einsum)
 def einsum(*operands):
   # using einsum_call=True here is an internal api for opt_einsum
   operands, contractions = opt_einsum.contract_path(
