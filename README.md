@@ -67,6 +67,7 @@ open](https://github.com/google/jax) by a growing number of
 * [Quickstart: Colab in the Cloud](#quickstart-colab-in-the-cloud)
 * [Installation](#installation)
 * [Running the tests](#running-the-tests)
+* [Reference documentation](#reference-documentation)
 * [A brief tour](#a-brief-tour)
 * [What's supported](#whats-supported)
 * [Transformations](#transformations)
@@ -75,13 +76,11 @@ open](https://github.com/google/jax) by a growing number of
 * [How it works](#how-it-works)
 * [What we're working on](#what-were-working-on)
 * [Current gotchas](#current-gotchas)
-* [Reference documentation](#reference-documentation)
 
 ## Quickstart: Colab in the Cloud
 Jump right in using a notebook in your browser, connected to a Google Cloud GPU:
 - [The basics: NumPy on accelerators, `grad` for differentiation, `jit` for compilation, and `vmap` for vectorization](https://colab.research.google.com/github/google/jax/blob/master/notebooks/quickstart.ipynb)
 - [Training a Simple Neural Network, with PyTorch Data Loading](https://colab.research.google.com/github/google/jax/blob/master/notebooks/neural_network_and_data_loading.ipynb)
-
 
 ## Installation
 JAX is written in pure Python, but it depends on XLA, which needs to be
@@ -89,11 +88,12 @@ compiled and installed as the `jaxlib` package. Use the following instructions
 to build JAX from source or install a binary package with pip.
 
 ### Building JAX from source
-First, obtain the JAX source code:
+First, obtain the JAX source code, and make sure `scipy` is installed.
 
 ```bash
 git clone https://github.com/google/jax
 cd jax
+pip install scipy
 ```
 
 To build XLA with CUDA support, you can run
@@ -183,6 +183,11 @@ more detailed information about the cases being run:
 ```bash
 python tests/lax_numpy_test.py --num_generated_cases=5
 ```
+
+## Reference documentation
+
+For details about the JAX API, see the
+[reference documentation](https://jax.readthedocs.io/).
 
 ## A brief tour
 
@@ -672,11 +677,6 @@ The good news about this tradeoff is that `jit` is opt-in: JAX libraries use
 write unrestricted Python+Numpy and still make use of a hardware accelerator.
 But when you want to maximize performance, you can often use `jit` in your own
 code to compile and end-to-end optimize much bigger functions.
-
-## Reference documentation
-
-For more details about the JAX API, see the
-[reference documentation](https://jax.readthedocs.io/).
 
 ## What we're working on
 1. Documentation!
