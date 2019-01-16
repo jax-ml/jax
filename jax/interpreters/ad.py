@@ -233,6 +233,8 @@ class JVPTrace(Trace):
 
 
 class JVPTracer(Tracer):
+  __slots__ = ['primal', 'tangent']
+
   def __init__(self, trace, primal, tangent):
     self.trace = trace
     self.primal = primal
