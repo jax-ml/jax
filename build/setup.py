@@ -25,7 +25,7 @@ setup(
     author='JAX team',
     author_email='jax-dev@google.com',
     packages=['jaxlib'],
-    install_requires=['numpy>=1.12', 'six', 'protobuf>=3.6.0', 'absl-py'],
+    install_requires=['scipy', 'numpy>=1.12', 'six', 'protobuf>=3.6.0', 'absl-py'],
     url='https://github.com/google/jax',
     license='Apache-2.0',
     package_data={'jaxlib': binary_libs},
