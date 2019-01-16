@@ -1,0 +1,182 @@
+
+jax.numpy package
+=================
+
+.. currentmodule:: jax.numpy
+
+.. automodule:: jax.numpy
+
+.. autosummary::
+  :toctree: _autosummary
+
+    abs
+    absolute
+    add
+    all
+    allclose
+    alltrue
+    amax
+    amin
+    angle
+    any
+    append
+    arange
+    arccos
+    arccosh
+    arcsin
+    arcsinh
+    arctan
+    arctan2
+    arctanh
+    argmax
+    argmin
+    argsort
+    around
+    array
+    asarray
+    atleast_1d
+    atleast_2d
+    bitwise_and
+    bitwise_not
+    bitwise_or
+    bitwise_xor
+    broadcast_arrays
+    broadcast_to
+    ceil
+    clip
+    column_stack
+    concatenate
+    conj
+    conjugate
+    cos
+    cosh
+    count_nonzero
+    diag
+    diag_indices
+    diagonal
+    divide
+    divmod
+    dot
+    einsum
+    equal
+    exp
+    exp2
+    expand_dims
+    expm1
+    eye
+    fabs
+    flip
+    floor
+    floor_divide
+    fmod
+    full
+    full_like
+    geomspace
+    greater
+    greater_equal
+    hstack
+    identity
+    imag
+    inner
+    isclose
+    isfinite
+    isinf
+    isnan
+    isneginf
+    isposinf
+    kron
+    left_shift
+    less
+    less_equal
+    linspace
+    log
+    log10
+    log1p
+    log2
+    logaddexp
+    logaddexp2
+    logical_and
+    logical_not
+    logical_or
+    logical_xor
+    logspace
+    matmul
+    max
+    maximum
+    mean
+    meshgrid
+    min
+    minimum
+    mod
+    moveaxis
+    multiply
+    nan_to_num
+    nanmax
+    nanmin
+    nanprod
+    nansum
+    negative
+    not_equal
+    ones
+    ones_like
+    outer
+    pad
+    polyval
+    power
+    prod
+    ravel
+    real
+    remainder
+    repeat
+    reshape
+    right_shift
+    rot90
+    round
+    row_stack
+    sign
+    sin
+    sinh
+    sometrue
+    sort
+    split
+    sqrt
+    square
+    squeeze
+    stack
+    std
+    subtract
+    sum
+    swapaxes
+    take_along_axis
+    tan
+    tanh
+    tensordot
+    trace
+    transpose
+    tri
+    tril
+    triu
+    true_divide
+    var
+    vdot
+    vstack
+    where
+    zeros
+    zeros_like
+
+jax.numpy.linalg
+----------------
+
+.. automodule:: jax.numpy.linalg
+
+.. autosummary::
+  :toctree: _autosummary
+
+  cholesky
+  det
+  eigh
+  inv
+  qr
+  slogdet
+  solve
+  svd
