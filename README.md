@@ -75,9 +75,10 @@ open](https://github.com/google/jax) by a growing number of
 * [How it works](#how-it-works)
 * [What we're working on](#what-were-working-on)
 * [Current gotchas](#current-gotchas)
+* [Reference documentation](#reference-documentation)
 
 ## Quickstart: Colab in the Cloud
-Jump right in using a notebook in your browser, connected to a Google Cloud GPU: 
+Jump right in using a notebook in your browser, connected to a Google Cloud GPU:
 - [The basics: NumPy on accelerators, `grad` for differentiation, `jit` for compilation, and `vmap` for vectorization](https://colab.research.google.com/github/google/jax/blob/master/notebooks/quickstart.ipynb)
 - [Training a Simple Neural Network, with PyTorch Data Loading](https://colab.research.google.com/github/google/jax/blob/master/notebooks/neural_network_and_data_loading.ipynb)
 
@@ -263,7 +264,10 @@ examples](https://github.com/google/jax/blob/master/examples/).
 
 If you’re using JAX just as an accelerator-backed NumPy, without using `grad` or
 `jit` in your code, then in principle there are no constraints, though some
-NumPy functions haven’t been implemented yet. Generally using `np.dot(A, B)` is
+NumPy functions haven’t been implemented yet. A list of supported functions can
+be found in the [reference documentation](https://jax.readthedocs.io/).
+
+Generally using `np.dot(A, B)` is
 better than `A.dot(B)` because the former gives us more opportunities to run the
 computation on the device. NumPy also does a lot of work to cast any array-like
 function arguments to arrays, as in `np.sum([x, y])`, while `jax.numpy`
@@ -295,9 +299,9 @@ debugging but they may only be executed once if they're under a `jit` decorator.
 > TLDR **Do use**
 >
 > *   Functional programming
-> *   [Many](https://github.com/google/jax/blob/master/jax/numpy/lax_numpy.py) of NumPy’s
+> *   [Many](https://jax.readthedocs.io/en/latest/jax.numpy.html) of NumPy’s
 >     functions (help us add more!)
-> *   [Some](https://github.com/google/jax/tree/master/jax/scipy) SciPy functions
+> *   [Some](https://jax.readthedocs.io/en/latest/jax.scipy.html) SciPy functions
 > *   Indexing and slicing of arrays like `x = A[[5, 1, 7], :, 2:4]`
 > *   Explicit array creation from lists like `A = np.array([x, y])`
 >
@@ -668,6 +672,11 @@ The good news about this tradeoff is that `jit` is opt-in: JAX libraries use
 write unrestricted Python+Numpy and still make use of a hardware accelerator.
 But when you want to maximize performance, you can often use `jit` in your own
 code to compile and end-to-end optimize much bigger functions.
+
+## Reference documentation
+
+For more details about the JAX API, see the
+[reference documentation](https://jax.readthedocs.io/).
 
 ## What we're working on
 1. Documentation!
