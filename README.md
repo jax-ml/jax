@@ -96,6 +96,9 @@ cd jax
 pip install scipy
 ```
 
+If you are building on a Mac, make sure XCode and the XCode command line tools
+are installed.
+
 To build XLA with CUDA support, you can run
 
 ```bash
@@ -141,11 +144,11 @@ cloud VM), you can run
 
 ```bash
 # install jaxlib
-PYTHON_VERSION=py2  # alternatives: py2, py3
+PYTHON_VERSION=cp27  # alternatives: cp27, cp36, cp37
 CUDA_VERSION=cuda92  # alternatives: cuda90, cuda92, cuda100
 PLATFORM=linux_x86_64  # alternatives: linux_x86_64
 BASE_URL='https://storage.googleapis.com/jax-wheels'
-pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.3-$PYTHON_VERSION-none-$PLATFORM.whl
+pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.5-$PYTHON_VERSION-none-$PLATFORM.whl
 
 pip install --upgrade jax  # install jax
 ```
@@ -159,6 +162,10 @@ run commands like these, depending on your CUDNN install path:
 nvcc --version
 grep CUDNN_MAJOR -A 2 /usr/local/cuda/include/cudnn.h  # might need different path
 ```
+
+The Python version must match your Python interpreter. There are prebuilt wheels
+for Python 2.7, 3.6, and 3.7; for anything else, you must build from source.
+
 
 ## Running the tests
 
