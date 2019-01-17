@@ -4,16 +4,30 @@ LABEL maintainer "Matt Johnson <mattjj@google.com>"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
             dh-autoreconf git curl \
-            python python-pip python-dev \
-            python3 python3-pip python3-dev
-RUN pip install numpy scipy cython setuptools wheel && pip3 install numpy scipy cython setuptools wheel
+            build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev \
+            libsqlite3-dev wget llvm libncurses5-dev xz-utils tk-dev \
+            libxml2-dev libxmlsec1-dev libffi-dev
 
 RUN git clone https://github.com/nixos/patchelf /tmp/patchelf
 WORKDIR /tmp/patchelf
 RUN bash bootstrap.sh && ./configure && make && make install && rm -r /tmp/patchelf
 
+
 WORKDIR /
-RUN curl -O https://raw.githubusercontent.com/google/jax/762abcf29b4a155c3de325c27ecffa5d4a3da28c/build/build_wheel_docker_entrypoint.sh
+RUN git clone https://github.com/pyenv/pyenv.git /pyenv
+ENV PYENV_ROOT /pyenv
+RUN /pyenv/bin/pyenv install 2.7.15
+RUN /pyenv/bin/pyenv install 3.6.8
+RUN /pyenv/bin/pyenv install 3.7.2
+
+# We pin numpy to a version < 1.16 to avoid version compatibility issues.
+RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 2.7.15 && pip install numpy==1.15.4 scipy cython setuptools wheel
+RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.6.8 && pip install numpy==1.15.4 scipy cython setuptools wheel
+RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.7.2 && pip install numpy==1.15.4 scipy cython setuptools wheel
+
+
+WORKDIR /
+COPY build_wheel_docker_entrypoint.sh /build_wheel_docker_entrypoint.sh
 RUN chmod +x /build_wheel_docker_entrypoint.sh
 
 WORKDIR /build
