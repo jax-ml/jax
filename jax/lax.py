@@ -831,7 +831,7 @@ def _brcast_to(x, shape):
 
 _f32 = {onp.float32}
 _float = {onp.floating}
-_complex = {onp.complex}
+_complex = {onp.complexfloating}
 _complex_elem_types = {onp.float32, onp.float64}
 _int = {onp.integer}
 _bool = {onp.bool_}
