@@ -46,6 +46,9 @@ def float_types():
 
 def complex_types():
   return {onp.complex64}
+  # TODO(phawkins): change to the following after another jaxlib release.
+  #return set(onp.dtype(xla_bridge.canonicalize_dtype(dtype))
+  #           for dtype in [onp.complex64, onp.complex128])
 
 
 class NumpyLinalgTest(jtu.JaxTestCase):
