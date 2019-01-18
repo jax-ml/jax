@@ -65,7 +65,7 @@ def _T(x):
 
 # primitives
 
-_cpu_lapack_types = {np.float32, np.float64, np.complex64}
+_cpu_lapack_types = {np.float32, np.float64, np.complex64, np.complex128}
 
 # Cholesky decomposition
 
