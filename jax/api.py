@@ -237,11 +237,17 @@ def vmap(fun, in_axes=0, out_axes=0):
   docstr = ("Vectorized version of {fun}. Takes similar arguments as {fun} "
             "but with additional array axes over which {fun} is mapped.")
 
+  if (not isinstance(in_axes, (list, tuple, type(None), int))
+      or not isinstance(out_axes, (list, tuple, type(None), int))):
+    msg = ("vmap arguments in_axes and out_axes must each be an integer, None, "
+           "or a (nested) tuple of those types, got {} and {} respectively.")
+    raise TypeError(msg.format(type(in_axes), type(out_axes)))
+
   @wraps(fun, docstr=docstr)
   def batched_fun(*args, **kwargs):
     if not isinstance(fun, lu.WrappedFun):
       f = lu.wrap_init(fun, kwargs)
-    in_axes_ = (in_axes,) * len(args) if type(in_axes) is int else in_axes
+    in_axes_ = in_axes if isinstance(in_axes, (list, tuple)) else (in_axes,) * len(args)
     in_flat, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
     jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(f, in_trees)
     out_flat = batching.batch(jaxtree_fun, in_flat, in_axes_, out_axes)
