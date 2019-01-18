@@ -41,7 +41,7 @@ def diag_gaussian_logpdf(x, mean, log_std):
     # Evaluate a single point on a diagonal multivariate Gaussian.
     return np.sum(vmap(norm.logpdf)(x, mean, np.exp(log_std)))
 
-def elbo(logprob, rng, (mean, log_std)):
+def elbo(logprob, rng, mean, log_std):
     # Single-sample Monte Carlo estimate of the variational lower bound.
     sample = diag_gaussian_sample(rng, mean, log_std)
     return logprob(sample) - diag_gaussian_logpdf(sample, mean, log_std)
@@ -49,8 +49,8 @@ def elbo(logprob, rng, (mean, log_std)):
 def batch_elbo(logprob, rng, params, num_samples):
     # Average over a batch of random samples.
     rngs = random.split(rng, num_samples)
-    vectorized_elbo = vmap(partial(elbo, logprob), in_axes=(0, None))
-    return np.mean(vectorized_elbo(rngs, params))
+    vectorized_elbo = vmap(partial(elbo, logprob), in_axes=(0, None, None))
+    return np.mean(vectorized_elbo(rngs, *params))
 
 
 # ========= Helper function for plotting. =========
@@ -133,6 +133,7 @@ if __name__ == "__main__":
     # Main loop.
     print("Optimizing variational parameters...")
     for t in range(100):
-      opt_state = update(t, opt_state)
-      params = minmax.get_params(opt_state)
-      callback(params, t)
+        opt_state = update(t, opt_state)
+        params = minmax.get_params(opt_state)
+        callback(params, t)
+    plt.show(block=True)
