@@ -313,17 +313,13 @@ def lift_jaxpr(jaxpr, consts, io_tree, pvals, py_args):
   return apply_jaxtree_fun(fun, io_tree, *py_args)
 
 def make_jaxpr(f):
-  def pv_like(x):
-    aval = xla.abstractify(x)
-    return pe.PartialVal((aval, core.unit))
-
   fun = lu.wrap_init(f)
 
   @wraps(f)
   def jaxpr_maker(*args, **kwargs):
     jax_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
     jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(fun, in_trees)
-    pvals = map(pv_like, jax_args)
+    pvals = map(pe.abstractify, jax_args)
     jaxpr, _, _ = pe.trace_to_jaxpr(jaxtree_fun, pvals, **kwargs)
     return jaxpr
 
