@@ -25,11 +25,11 @@ from libc.string cimport memcpy
 from libcpp.string cimport string
 from cpython.pycapsule cimport PyCapsule_New
 
-from scipy.linalg.cython_blas cimport strsm, dtrsm, ctrsm
-from scipy.linalg.cython_lapack cimport sgetrf, dgetrf, cgetrf
-from scipy.linalg.cython_lapack cimport spotrf, dpotrf, cpotrf
-from scipy.linalg.cython_lapack cimport sgesdd, dgesdd, cgesdd
-from scipy.linalg.cython_lapack cimport ssyevd, dsyevd, cheevd
+from scipy.linalg.cython_blas cimport strsm, dtrsm, ctrsm, ztrsm
+from scipy.linalg.cython_lapack cimport sgetrf, dgetrf, cgetrf, zgetrf
+from scipy.linalg.cython_lapack cimport spotrf, dpotrf, cpotrf, zpotrf
+from scipy.linalg.cython_lapack cimport sgesdd, dgesdd, cgesdd, zgesdd
+from scipy.linalg.cython_lapack cimport ssyevd, dsyevd, cheevd, zheevd
 
 import numpy as np
 from jaxlib import xla_client
@@ -135,6 +135,36 @@ cdef void blas_ctrsm(void* out, void** data) nogil:
 
 register_cpu_custom_call_target(b"blas_ctrsm", <void*>(blas_ctrsm))
 
+cdef void blas_ztrsm(void* out, void** data) nogil:
+  cdef int32_t left_side = (<int32_t*>(data[0]))[0]
+  cdef int32_t lower = (<int32_t*>(data[1]))[0]
+  cdef int32_t trans_a = (<int32_t*>(data[2]))[0]
+  cdef int32_t diag = (<int32_t*>(data[3]))[0]
+  cdef int m = (<int32_t*>(data[4]))[0]
+  cdef int n = (<int32_t*>(data[5]))[0]
+  cdef double complex* alpha = <double complex*>(data[6])
+  cdef double complex* a = <double complex*>(data[7])
+  cdef double complex* b = <double complex*>(data[8])
+
+  cdef double complex* x = <double complex*>(out)
+  if x != b:
+    memcpy(x, b, m * n * sizeof(double complex))
+
+  cdef char cside = 'L' if left_side else 'R'
+  cdef char cuplo = 'L' if lower else 'U'
+  cdef char ctransa = 'N'
+  if trans_a == 1:
+    ctransa = 'T'
+  elif trans_a == 2:
+    ctransa = 'C'
+  cdef char cdiag = 'U' if diag else 'N'
+  cdef int lda = m if left_side else n
+  cdef int ldb = m
+  ztrsm(&cside, &cuplo, &ctransa, &cdiag, &m, &n, alpha, a, &lda, x, &ldb)
+
+register_cpu_custom_call_target(b"blas_ztrsm", <void*>(blas_ztrsm))
+
+
 def jax_trsm(c, alpha, a, b, left_side=False, lower=False, trans_a=False,
              conj_a=False, diag=False):
   b_shape = c.GetShape(b)
@@ -153,6 +183,8 @@ def jax_trsm(c, alpha, a, b, left_side=False, lower=False, trans_a=False,
     fn = b"blas_dtrsm"
   elif dtype == np.complex64:
     fn = b"blas_ctrsm"
+  elif dtype == np.complex128:
+    fn = b"blas_ztrsm"
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
 
@@ -236,6 +268,22 @@ cdef void lapack_cgetrf(void* out_tuple, void** data) nogil:
 register_cpu_custom_call_target(b"lapack_cgetrf", <void*>(lapack_cgetrf))
 
 
+cdef void lapack_zgetrf(void* out_tuple, void** data) nogil:
+  cdef int m = (<int32_t*>(data[0]))[0]
+  cdef int n = (<int32_t*>(data[1]))[0]
+  cdef const double complex* a_in = <double complex*>(data[2])
+
+  cdef void** out = <void**>(out_tuple)
+  cdef double complex* a_out = <double complex*>(out[0])
+  cdef int* ipiv = <int*>(out[1])
+  cdef int* info = <int*>(out[2])
+  if a_out != a_in:
+    memcpy(a_out, a_in, m * n * sizeof(double complex))
+
+  zgetrf(&m, &n, a_out, &m, ipiv, info)
+
+register_cpu_custom_call_target(b"lapack_zgetrf", <void*>(lapack_zgetrf))
+
 def jax_getrf(c, a):
   assert sizeof(int32_t) == sizeof(int)
 
@@ -248,6 +296,8 @@ def jax_getrf(c, a):
     fn = b"lapack_dgetrf"
   elif dtype == np.complex64:
     fn = b"lapack_cgetrf"
+  elif dtype == np.complex128:
+    fn = b"lapack_zgetrf"
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
 
@@ -355,6 +405,34 @@ cdef void lapack_cpotrf(void* out_tuple, void** data) nogil:
 
 register_cpu_custom_call_target(b"lapack_cpotrf", <void*>(lapack_cpotrf))
 
+cdef void lapack_zpotrf(void* out_tuple, void** data) nogil:
+  cdef int32_t lower = (<int32_t*>(data[0]))[0]
+  cdef int n = (<int32_t*>(data[1]))[0]
+  cdef const double complex* a_in = <double complex*>(data[2])
+  cdef char uplo = 'L' if lower else 'U'
+
+  cdef void** out = <void**>(out_tuple)
+  cdef double complex* a_out = <double complex*>(out[0])
+  cdef int* info = <int*>(out[1])
+  if a_out != a_in:
+    memcpy(a_out, a_in, n * n * sizeof(double complex))
+
+  zpotrf(&uplo, &n, a_out, &n, info)
+
+  # zpotrf leaves junk in the part of the triangle that is not written; zero it.
+  cdef int i
+  cdef int j
+  if lower:
+    for i in range(n):
+      for j in range(i):
+        a_out[i * n + j] = 0
+  else:
+    for i in range(n):
+      for j in range(i, n):
+        a_out[i * n + j] = 0
+
+register_cpu_custom_call_target(b"lapack_zpotrf", <void*>(lapack_zpotrf))
+
 def jax_potrf(c, a, lower=False):
   assert sizeof(int32_t) == sizeof(int)
 
@@ -369,6 +447,8 @@ def jax_potrf(c, a, lower=False):
     fn = b"lapack_dpotrf"
   elif dtype == np.complex64:
     fn = b"lapack_cpotrf"
+  elif dtype == np.complex128:
+    fn = b"lapack_zpotrf"
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
 
@@ -528,7 +608,7 @@ cdef void lapack_cgesdd(void* out_tuple, void** data) nogil:
     ldvt = min(m, n)
 
   # First perform a workspace query to get the optimal lwork
-  # NB: We perform a workspace query with malloc and free for the work array, 
+  # NB: We perform a workspace query with malloc and free for the work array,
   # because it is officially recommended in the LAPACK documentation
   cdef float complex wkopt = 0
   cdef int lwork = -1
@@ -542,6 +622,54 @@ cdef void lapack_cgesdd(void* out_tuple, void** data) nogil:
 
 register_cpu_custom_call_target(b"lapack_cgesdd", <void*>(lapack_cgesdd))
 
+
+cdef void lapack_zgesdd(void* out_tuple, void** data) nogil:
+  cdef int32_t job_opt_full_matrices = (<int32_t*>(data[0]))[0]
+  cdef int32_t job_opt_compute_uv = (<int32_t*>(data[1]))[0]
+  cdef int m = (<int32_t*>(data[2]))[0]
+  cdef int n = (<int32_t*>(data[3]))[0]
+  cdef double complex* a_in = <double complex*>(data[4])
+
+  cdef void** out = <void**>(out_tuple)
+  cdef double complex* a_out = <double complex*>(out[0])
+  cdef double* s = <double*>(out[1])
+  cdef double complex* u = <double complex*>(out[2])
+  cdef double complex* vt = <double complex*>(out[3])
+  cdef int* info = <int*>(out[4])
+  cdef int* iwork = <int*>(out[5])
+  cdef double* rwork = <double*>(out[6])
+
+  if a_out != a_in:
+    memcpy(a_out, a_in, m * n * sizeof(double complex))
+
+  # define appropriate job code
+  cdef char jobz = 'A'
+  if job_opt_compute_uv == 0:
+    jobz = 'N'
+  else:
+    if job_opt_full_matrices == 0:
+      jobz = 'S'
+
+  cdef int lda = m
+  cdef int ldu = m
+  cdef int ldvt = n
+  if job_opt_full_matrices == 0:
+    ldvt = min(m, n)
+
+  # First perform a workspace query to get the optimal lwork
+  # NB: We perform a workspace query with malloc and free for the work array,
+  # because it is officially recommended in the LAPACK documentation
+  cdef double complex wkopt = 0
+  cdef int lwork = -1
+  zgesdd(&jobz, &m, &n, a_out, &lda, s, u, &ldu, vt, &ldvt, &wkopt, &lwork, rwork, iwork, info)
+  lwork = <int>(wkopt.real)
+
+  # Now get the actual SVD
+  cdef double complex* work = <double complex*> malloc(lwork * sizeof(double complex))
+  zgesdd(&jobz, &m, &n, a_out, &lda, s, u, &ldu, vt, &ldvt, work, &lwork, rwork, iwork, info)
+  free(work)
+
+register_cpu_custom_call_target(b"lapack_zgesdd", <void*>(lapack_zgesdd))
 
 def jax_gesdd(c, a, full_matrices=True, compute_uv=True):
   assert sizeof(int32_t) == sizeof(int)
@@ -562,6 +690,11 @@ def jax_gesdd(c, a, full_matrices=True, compute_uv=True):
     singular_vals_dtype = np.float32
     workspace = (Shape.array_shape(np.int32, (gesdd_iwork_size(m, n),), (0,)),
                  Shape.array_shape(np.float32, (cgesdd_rwork_size(m, n, int(compute_uv)),), (0,)))
+  elif dtype == np.complex128:
+    fn = b"lapack_zgesdd"
+    singular_vals_dtype = np.float64
+    workspace = (Shape.array_shape(np.int32, (gesdd_iwork_size(m, n),), (0,)),
+                 Shape.array_shape(np.float64, (cgesdd_rwork_size(m, n, int(compute_uv)),), (0,)))
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
 
@@ -678,6 +811,33 @@ cdef void lapack_cheevd(void* out_tuple, void** data) nogil:
 
 register_cpu_custom_call_target(b"lapack_cheevd", <void*>(lapack_cheevd))
 
+
+cdef void lapack_zheevd(void* out_tuple, void** data) nogil:
+  cdef int32_t lower = (<int32_t*>(data[0]))[0]
+  cdef int n = (<int32_t*>(data[1]))[0]
+  cdef const double complex* a_in = <double complex*>(data[2])
+
+  cdef void** out = <void**>(out_tuple)
+  cdef double complex* a_out = <double complex*>(out[0])
+  cdef double* w_out = <double*>(out[1])
+  cdef int* info_out = <int*>(out[2])
+  cdef double complex* work = <double complex*>(out[3])
+  cdef double* rwork = <double*>(out[4])
+  cdef int* iwork = <int*>(out[5])
+  if a_out != a_in:
+    memcpy(a_out, a_in, n * n * sizeof(double complex))
+
+  cdef char jobz = 'V'
+  cdef char uplo = 'L' if lower else 'U'
+
+  cdef int lwork = heevd_work_size(n)
+  cdef int lrwork = heevd_rwork_size(n)
+  cdef int liwork = syevd_iwork_size(n)
+  zheevd(&jobz, &uplo, &n, a_out, &n, w_out, work, &lwork, rwork, &lrwork,
+         iwork, &liwork, info_out)
+
+register_cpu_custom_call_target(b"lapack_zheevd", <void*>(lapack_zheevd))
+
 def jax_syevd(c, a, lower=False):
   assert sizeof(int32_t) == sizeof(int)
 
@@ -699,6 +859,12 @@ def jax_syevd(c, a, lower=False):
     eigvals_type = np.float32
     workspace = (Shape.array_shape(dtype, (heevd_work_size(n),), (0,)),
                  Shape.array_shape(np.float32, (heevd_rwork_size(n),), (0,)),
+                 Shape.array_shape(np.int32, (syevd_iwork_size(n),), (0,)))
+  elif dtype == np.complex128:
+    fn = b"lapack_zheevd"
+    eigvals_type = np.float64
+    workspace = (Shape.array_shape(dtype, (heevd_work_size(n),), (0,)),
+                 Shape.array_shape(np.float64, (heevd_rwork_size(n),), (0,)),
                  Shape.array_shape(np.int32, (syevd_iwork_size(n),), (0,)))
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
