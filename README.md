@@ -474,7 +474,7 @@ differentiation for fast Jacobian and Hessian matrix calculations in
 
 ## Random numbers are different
 
-JAX needs a functional pseudo-random number generator (PRNG) system to provide
+JAX needs a [functional pseudo-random number generator (PRNG) system](design_notes/prng.md) to provide
 reproducible results invariant to compilation boundaries and backends, while
 also maximizing performance by enabling vectorized generation and
 parallelization across random calls. The `numpy.random` library doesn’t have
@@ -523,6 +523,9 @@ in parallel because we can avoid unnecessary sequential dependencies.
 There's a gotcha here, which is that it's easy to unintentionally reuse a key
 without splitting. We intend to add a check for this (a sort of dynamic linear
 typing) but for now it's something to be careful about.
+
+For more detailed information on the design and the reasoning behind it, see the
+[PRNG design doc](design_notes/prng.md).
 
 
 ## Mini-libraries
