@@ -179,16 +179,17 @@ def _random_bits(key, bit_width, shape):
 ### random samplers
 
 
-@partial(jit, static_argnums=(1, 2))
-def uniform(key, shape, dtype=onp.float32, minval=0., maxval=1.):
+@partial(jit, static_argnums=(3, 4))
+def uniform(key, minval=0., maxval=1., shape=(), dtype=onp.float32):
   """Sample uniform random values in [minval, maxval) with given shape/dtype.
 
   Args:
     key: a PRNGKey used as the random key.
-    shape: a tuple of nonnegative integers representing the shape.
-    dtype: optional, a float dtype for the returned values (default float32).
     minval: optional, a minimum (inclusive) value for the range (default 0).
     maxval: optional, a maximum (exclusive) value for the range (default 1).
+    shape: optional, a tuple of nonnegative integers representing the shape 
+      (default scalar).
+    dtype: optional, a float dtype for the returned values (default float32).
 
   Returns:
     A random array with the specified shape and dtype.
@@ -220,15 +221,16 @@ def uniform(key, shape, dtype=onp.float32, minval=0., maxval=1.):
       lax.reshape(floats * (maxval - minval) + minval, shape))
 
 
-@partial(jit, static_argnums=(1, 4))
-def randint(key, shape, minval, maxval, dtype=onp.int32):
+@partial(jit, static_argnums=(3, 4))
+def randint(key, minval, maxval, shape=(), dtype=onp.int32):
   """Sample uniform random values in [minval, maxval) with given shape/dtype.
 
   Args:
     key: a PRNGKey used as the random key.
-    shape: a tuple of nonnegative integers representing the shape.
-    minval: optional, a minimum (inclusive) value for the range (default 0).
-    maxval: optional, a maximum (exclusive) value for the range (default 1).
+    minval: a minimum (inclusive) value for the range.
+    maxval: a maximum (exclusive) value for the range.
+    shape: optional, a tuple of nonnegative integers representing the shape 
+      (default scalar).
     dtype: optional, an int dtype for the returned values (default int32).
 
   Returns:
@@ -311,26 +313,63 @@ def shuffle(key, x, axis=0):
   return x
 
 
-@partial(jit, static_argnums=(1, 2))
-def normal(key, shape, dtype=onp.float32):
-  """Sample standard normal random values with given shape and float dtype.
+@partial(jit, static_argnums=(3, 4))
+def normal(key, loc=0.0, scale=1.0, shape=(), dtype=onp.float32):
+  """Sample normal random values with given shape, mean, variance and float dtype.
 
   Args:
     key: a PRNGKey used as the random key.
-    shape: a tuple of nonnegative integers representing the shape.
+    loc: optional, the mean of the distribution (default 0.0).
+    scale: optional, the standard deviation of the distribution (default 1.0).
+    shape: optional, a tuple of nonnegative integers representing the shape 
+      (default scalar).
     dtype: optional, a float dtype for the returned values (default float32).
 
   Returns:
     A random array with the specified shape and dtype.
   """
+  if not onp.issubdtype(dtype, onp.floating):
+    raise TypeError("uniform only accepts floating point dtypes.")
+  loc = onp.array(loc, dtype)
+  scale = onp.array(scale, dtype)
+
   lo = onp.nextafter(onp.array(-1., dtype), 0., dtype=dtype)
   hi = onp.array(1., dtype)
-  u = uniform(key, shape, dtype, lo, hi)
-  return onp.array(onp.sqrt(2), dtype) * lax.erf_inv(u)
+  u = uniform(key, lo, hi, shape, dtype)
+  return loc + scale * onp.array(onp.sqrt(2), dtype) * lax.erf_inv(u)
 
 
-@partial(jit, static_argnums=(2,))
-def bernoulli(key, mean=onp.float32(0.5), shape=()):
+@partial(jit, static_argnums=(3, 4))
+def multivariate_normal(key, mean, cov, shape=(), dtype=onp.float32):
+  """Sample normal random values with given shape, mean, variance and float dtype.
+
+  Args:
+    key: a PRNGKey used as the random key.
+    mean: the mean of the distribution.
+    cov: the variance of the distribution.
+    shape: optional, given a shape of e.g. (m, n, k) for an N-d distribution, the
+      output shape will be (m, n, k, N) [default: (), which corresponds to a single
+      N-d sample].
+    dtype: optional, a float dtype for the returned values (default float32).
+
+  Returns:
+    A random array with the specified shape and dtype.
+  """
+  if not onp.issubdtype(dtype, onp.floating):
+    raise TypeError("uniform only accepts floating point dtypes.")
+  mean = onp.array(mean, dtype)
+  cov = onp.array(cov, dtype)
+  L = np.linalg.cholesky(cov)
+  dim = mean.shape[0]
+
+  lo = onp.nextafter(onp.array(-1., dtype), 0., dtype=dtype)
+  hi = onp.array(1., dtype)
+  u = uniform(key, lo, hi, (*shape, dim), dtype)
+  return mean + np.dot(onp.array(onp.sqrt(2), dtype) * lax.erf_inv(u), L.T)
+
+
+@partial(jit, static_argnums=(2, 3))
+def bernoulli(key, mean=0.5, shape=(), dtype=onp.float32):
   """Sample Bernoulli random values with given shape and mean.
 
   Args:
@@ -338,14 +377,14 @@ def bernoulli(key, mean=onp.float32(0.5), shape=()):
     mean: optional, an array-like broadcastable to `shape` for the mean of the
       random variables (default 0.5).
     shape: optional, a tuple of nonnegative integers representing the shape
-      (default scalar).
+      (default: same as the shape of `mean`).
+    dtype: optional, a float dtype for the returned values (default float32).
 
   Returns:
     A random array with the specified shape and boolean dtype.
   """
   shape = shape or onp.shape(mean)
-  if not onp.issubdtype(lax._dtype(mean), onp.float32):
-    mean = lax.convert_element_type(mean, onp.float32)
+  mean = lax.convert_element_type(mean, dtype)
   if onp.shape(mean) != shape:
     mean = lax.broadcast(mean, shape)
-  return lax.lt(uniform(key, shape), mean)
+  return lax.lt(uniform(key, shape=shape), mean)
