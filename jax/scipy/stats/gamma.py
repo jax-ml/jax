@@ -34,3 +34,7 @@ def logpdf(x, a, loc=0, scale=1):
   shape_terms = lax.add(gammaln(a), lax.log(scale))
   log_probs = lax.sub(log_linear_term, shape_terms)
   return where(lax.le(x, loc), -inf, log_probs)
+
+@_wraps(osp_stats.gamma.pdf)
+def pdf(x, a, loc=0, scale=1):
+  return lax.exp(logpdf(x, a, loc, scale))
