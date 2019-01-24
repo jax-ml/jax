@@ -25,7 +25,7 @@ from jax import test_util as jtu
 from jax import lax
 from jax.api import pmap, papply, jit, make_jaxpr
 from jax.linear_util import wrap_init
-from jax.interpreters.parallel import psum, scatter_like, chunk
+from jax.interpreters.parallel import psum, scatter_like
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -115,16 +115,16 @@ class PapplyTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=True)
 
 
-class ChunkTest(jtu.JaxTestCase):
+# class ChunkTest(jtu.JaxTestCase):
 
-  def testChunkingSum(self):
-    f = lambda x: psum(x, 'i')
+#   def testChunkingSum(self):
+#     f = lambda x: psum(x, 'i')
 
-    x = 3 * onp.ones((4, 2))
-    ans = pmap(lambda x: chunk(wrap_init(f), 2, 'i', (x,), (0,), 0), 'i')(x)
-    expected = 24
+#     x = 3 * onp.ones((4, 2))
+#     ans = pmap(lambda x: chunk(wrap_init(f), 2, 'i', (x,), (0,), 0), 'i')(x)
+#     expected = 24
 
-    self.assertAllClose(ans, expected, check_dtypes=False)
+#     self.assertAllClose(ans, expected, check_dtypes=False)
 
 
 if __name__ == '__main__':
