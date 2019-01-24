@@ -31,115 +31,88 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 
-# class PmapTest(jtu.JaxTestCase):
+class PmapTest(jtu.JaxTestCase):
 
-#   def testConstantFunction(self):
-#     f = lambda x: 3
-#     ans = pmap(f, axis_name='i')(onp.ones(4))
-#     expected = 3 * onp.ones(4)
-#     self.assertAllClose(ans, expected, check_dtypes=False)
+  def testConstantFunction(self):
+    f = lambda x: 3
+    ans = pmap(f, axis_name='i')(onp.ones(4))
+    expected = 3 * onp.ones(4)
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
-#   def testReduceSum(self):
-#     f = lambda x: psum(x, 'i')
-#     ans = pmap(f, axis_name='i')(onp.ones(4))
-#     expected = 4 * onp.ones(4)
-#     self.assertAllClose(ans, expected, check_dtypes=False)
+  def testReduceSum(self):
+    f = lambda x: psum(x, 'i')
+    ans = pmap(f, axis_name='i')(onp.ones(4))
+    expected = 4 * onp.ones(4)
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
-#   def testLogSoftmax(self):
-#     f = lambda x: x - np.log(psum(np.exp(x), 'i'))
-#     x = onp.log(onp.arange(1., 10., dtype=onp.float32))
-#     ans = pmap(f, axis_name='i')(x)
-#     expected = x - onp.log(onp.sum(onp.exp(x)))
-#     self.assertAllClose(ans, expected, check_dtypes=False)
-
-#   # def testPmapOfJit(self):
-#   #   f = jit(lambda x: psum(x, 'i'))
-#   #   x = onp.arange(12.)
-#   #   ans = pmap(f, axis_name='i')(x)
-#   #   expected = onp.sum(x)
-#   #   self.assertAllClose(ans, expected, check_dtypes=False)
+  def testLogSoftmax(self):
+    f = lambda x: x - np.log(psum(np.exp(x), 'i'))
+    x = onp.log(onp.arange(1., 10., dtype=onp.float32))
+    ans = pmap(f, axis_name='i')(x)
+    expected = x - onp.log(onp.sum(onp.exp(x)))
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
 
-# class PapplyTest(jtu.JaxTestCase):
+class PapplyTest(jtu.JaxTestCase):
 
-#   def testIdentity(self):
-#     pfun, axis_name = papply(lambda x: x)
-#     ans = pfun(onp.arange(3))
-#     expected = onp.arange(3)
-#     self.assertAllClose(ans, expected, check_dtypes=False)
+  def testIdentity(self):
+    pfun, axis_name = papply(lambda x: x)
+    ans = pfun(onp.arange(3))
+    expected = onp.arange(3)
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
-#   def testMap(self):
-#     pfun, axis_name = papply(np.sin)
-#     ans = pfun(onp.arange(3.))
-#     expected = onp.sin(onp.arange(3.))
-#     self.assertAllClose(ans, expected, check_dtypes=False)
+  def testMap(self):
+    pfun, axis_name = papply(np.sin)
+    ans = pfun(onp.arange(3.))
+    expected = onp.sin(onp.arange(3.))
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
-#   def testSum(self):
-#     pfun, axis_name = papply(np.sum)
+  def testSum(self):
+    pfun, axis_name = papply(np.sum)
 
-#     jaxpr = make_jaxpr(pfun)(onp.zeros(5))
-#     expected_jaxpr = make_jaxpr(lambda x: psum(x, axis_name))(onp.zeros(5))
-#     assert repr(jaxpr) == repr(expected_jaxpr)
+    jaxpr = make_jaxpr(pfun)(onp.zeros(5))
+    expected_jaxpr = make_jaxpr(lambda x: psum(x, axis_name))(onp.zeros(5))
+    assert repr(jaxpr) == repr(expected_jaxpr)
 
-#     ans = pmap(pfun, axis_name)(onp.arange(3.))
-#     expected = onp.sum(onp.arange(3.))
-#     self.assertAllClose(ans, expected, check_dtypes=False)
+    ans = pmap(pfun, axis_name)(onp.arange(3.))
+    expected = onp.sum(onp.arange(3.))
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
-#   def testLogSoftmax(self):
+  def testLogSoftmax(self):
 
-#     def fun(x):
-#       return x - np.log(np.sum(np.exp(x)))
+    def fun(x):
+      return x - np.log(np.sum(np.exp(x)))
 
-#     pfun, axis_name = papply(fun)
+    pfun, axis_name = papply(fun)
 
-#     jaxpr = make_jaxpr(pfun)(onp.zeros(5))
-#     expected_jaxpr = make_jaxpr(lambda x: x - np.log(psum(np.exp(x), axis_name))
-#                                 )(onp.zeros(5))
-#     assert repr(jaxpr) == repr(expected_jaxpr)
+    jaxpr = make_jaxpr(pfun)(onp.zeros(5))
+    expected_jaxpr = make_jaxpr(lambda x: x - np.log(psum(np.exp(x), axis_name))
+                                )(onp.zeros(5))
+    assert repr(jaxpr) == repr(expected_jaxpr)
 
-#     ans = pmap(pfun, axis_name)(onp.arange(1., 5.))
-#     expected = fun(onp.arange(1., 5.))
-#     self.assertAllClose(ans, expected, check_dtypes=False)
+    ans = pmap(pfun, axis_name)(onp.arange(1., 5.))
+    expected = fun(onp.arange(1., 5.))
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
-#   def testAdd(self):
-#     x = onp.array([[1, 2, 3], [4, 5, 6]])
-#     expected = x + x
+  def testAdd(self):
+    x = onp.array([[1, 2, 3], [4, 5, 6]])
+    expected = x + x
 
-#     pfun, axis_name = papply(np.add)
-#     ans = pmap(pfun, axis_name)(x, x)
-#     self.assertAllClose(ans, expected, check_dtypes=True)
+    pfun, axis_name = papply(np.add)
+    ans = pmap(pfun, axis_name)(x, x)
+    self.assertAllClose(ans, expected, check_dtypes=True)
 
-# #   def testAddDifferentSharding(self):
-# #     x = onp.array([[1, 2, 3], [4, 5, 6]])
-# #     expected = x + x
+  def testAddBroadcasting(self):
 
-# #     pfun, axis_name = papply(np.add, (0, 1))
-# #     ans = pmap(pfun, axis_name)(x, x)
-# #     self.assertAllClose(ans, expected, check_dtypes=True)
+    def fun(x):
+      return x + 3
 
-# #   def testScatterLike(self):
-# #     def fun(y):
-# #       x_scattered = scatter_like(x, y)
-# #       return lax.add(x_scattered, y)  # TODO replace with x + y
+    x = onp.array([[1, 2], [3, 4]])
+    expected = x + 3
 
-# #     x = onp.array([[1, 2], [3, 4]])
-# #     expected = x + x
-
-# #     pfun, axis_name = papply(fun)
-# #     ans = pmap(pfun, axis_name)(x)
-# #     self.assertAllClose(ans, expected, check_dtypes=True)
-
-#   def testAddBroadcasting(self):
-
-#     def fun(x):
-#       return x + 3
-
-#     x = onp.array([[1, 2], [3, 4]])
-#     expected = x + 3
-
-#     pfun, axis_name = papply(fun)
-#     ans = pmap(pfun, axis_name)(x)
-#     self.assertAllClose(ans, expected, check_dtypes=True)
+    pfun, axis_name = papply(fun)
+    ans = pmap(pfun, axis_name)(x)
+    self.assertAllClose(ans, expected, check_dtypes=True)
 
 
 class ChunkTest(jtu.JaxTestCase):
