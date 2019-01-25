@@ -282,6 +282,23 @@ class SplitTrace(Trace):
     new_names = next(t.new_names for t in tracers if t.name is not None)
     return SplitTracer(self, name, new_names, vals)
 
+def reshape_axis(chunksize, in_axis, arg):
+  aval = core.get_aval(arg)
+  if type(aval) is core.AbstractTuple:
+    if type(in_axis) is int:
+      return core.pack(map(partial(reshape_axis, chunksize, in_axis), arg))
+    elif isinstance(in_axis, (list, tuple)):
+      return core.pack(map(partial(reshape_axis, chunksize), in_axis, arg))
+    else:
+      raise TypeError("unexpected in_axis type: {}".format(type(in_axis)))
+  elif isinstance(aval, ShapedArray):
+    in_axis = in_axis % arg.ndim
+    split_shape = (arg.shape[in_axis] // chunksize, chunksize)
+    new_shape = arg.shape[:in_axis] + split_shape + arg.shape[in_axis+1:]
+    return arg.reshape(new_shape)
+  else:
+    raise TypeError(type(arg))
+
 
 ### papply
 

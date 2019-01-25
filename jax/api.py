@@ -271,7 +271,7 @@ def pmap(fun, axis_name, in_axes=0, out_axes=0):
 
 
 def axisvar_split(fun, name, new_names):
-  """Split axis variable names into new names."""
+  """Split axis variable names into new names in an SPMD function."""
   def split_fun(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
     in_flat, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
@@ -280,6 +280,24 @@ def axisvar_split(fun, name, new_names):
     return build_tree(out_tree(), out_flat)
 
   return split_fun
+
+
+def chunk(fun, name, chunksize, in_axes=0, out_axes=0):
+  """Stage SPMD primitives to first operate on chunks, then use collectives."""
+  temp_name = object()
+
+  def chunked_fun(*args, **kwargs):
+    f = lu.wrap_init(fun, kwargs)
+    in_axes_ = in_axes if isinstance(in_axes, (list, tuple)) else (in_axes,) * len(args)
+    in_flat, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
+    f, out_tree = pytree_fun_to_jaxtupletree_fun(f, in_trees)
+    f = parallel.axisvar_split(f, name, (temp_name, name))
+    reshape = partial(parallel.reshape_axis, chunksize)
+    reshaped_args = map(reshape, in_axes_, args)
+    out_flat = parallel.pmap(f, temp_name, reshaped_args, in_axes_, out_axes)
+    return build_tree(out_tree(), out_flat)
+
+  return chunked_fun
 
 
 def papply(fun, in_axes=0):
