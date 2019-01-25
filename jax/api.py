@@ -270,6 +270,18 @@ def pmap(fun, axis_name, in_axes=0, out_axes=0):
   return pmap_fun
 
 
+def axisvar_split(fun, name, new_names):
+  """Split axis variable names into new names."""
+  def split_fun(*args, **kwargs):
+    f = lu.wrap_init(fun, kwargs)
+    in_flat, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
+    jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(f, in_trees)
+    out_flat = parallel.axisvar_split(jaxtree_fun, name, new_names).call_wrapped(*args)
+    return build_tree(out_tree(), out_flat)
+
+  return split_fun
+
+
 def papply(fun, in_axes=0):
   """Apply a function using parallel computation by sharding inputs."""
   axis_name = parallel.newvar()
