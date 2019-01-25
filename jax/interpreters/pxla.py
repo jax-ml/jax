@@ -189,7 +189,7 @@ def replicated_jaxpr_computation(jaxpr, devicegrps,
       rule = parallel_translation_rules[eqn.primitive]
       axis_name = eqn.params['axis_name']
       params = {k: eqn.params[k] for k in eqn.params if k != 'axis_name'}
-      ans = rule(c, in_nodes, devicegrps[axis_name], **params)
+      ans = rule(c, *in_nodes, device_groups=devicegrps[axis_name], **params)
     else:
       if eqn.bound_subjaxprs: raise NotImplementedError  # TODO check primitive
       ans = translation_rule(eqn.primitive)(c, *in_nodes, **eqn.params)
@@ -260,10 +260,11 @@ def execute_replicated(axis_map, mesh_map, mesh_spec, compiled, pval,
   input_bufs = map(partial(shard_array, mesh_spec, mesh_map), axis_maps, args)
   out_bufs = compiled.ExecutePerReplica(zip(*input_bufs))
   if out_tree is leaf:
+    # TODO sharded device persistence
     out_shards = [merge_pvals(out_buf.to_py(), pval) for out_buf in out_bufs]
     return unshard_array(mesh_spec, mesh_map, out_axis_map, out_shards)
   else:
-    raise NotImplementedError
+    raise NotImplementedError  # TODO
 
 
 xla_pcall_p = core.Primitive('xla_pcall')

@@ -176,7 +176,7 @@ def psum(x, axis_name):
 def psum_pmap_rule(val, axis):
   return val.sum(axis), None
 
-def psum_parallel_translation_rule(c, val, device_grp):
+def psum_parallel_translation_rule(c, val, device_groups):
   # return c.CrossReplicaSum(val, device_grp)  # TODO
   return c.CrossReplicaSum(val)
 

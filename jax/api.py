@@ -43,6 +43,7 @@ from .lib.xla_bridge import canonicalize_dtype
 from .abstract_arrays import ShapedArray
 from .interpreters import partial_eval as pe
 from .interpreters import xla
+from .interpreters import pxla
 from .interpreters import ad
 from .interpreters import batching
 from .interpreters import parallel
@@ -51,7 +52,7 @@ map = safe_map
 zip = safe_zip
 
 
-def jit(fun, static_argnums=(), **params):
+def jit(fun, static_argnums=()):
   """Sets up `fun` for just-in-time compilation with XLA.
 
   Args:
@@ -76,7 +77,7 @@ def jit(fun, static_argnums=(), **params):
     args_flat, in_trees = unzip2(map(pytree_to_jaxtupletree, dyn_args))
     check_args(args_flat)
     jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(f, in_trees)
-    out_flat = xla.xla_call(jaxtree_fun, *args_flat, **params)
+    out_flat = xla.xla_call(jaxtree_fun, *args_flat)
     return build_tree(out_tree(), out_flat)
 
   f_jitted.__name__ = "jit({})".format(f_jitted.__name__)
@@ -255,6 +256,25 @@ def vmap(fun, in_axes=0, out_axes=0):
     return build_tree(out_tree(), out_flat)
 
   return batched_fun
+
+
+def pjit(fun, axis_map, out_axis_map, mesh_spec, mesh_map, static_argnums=()):
+  """Set up SPMD function for JIT compilation and parallel execution with XLA."""
+  @wraps(fun)
+  def f_jitted(*args, **kwargs):
+    f = lu.wrap_init(fun, kwargs)
+    dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
+    f, dyn_args = argnums_partial(f, dyn_argnums, args)
+    args_flat, in_trees = unzip2(map(pytree_to_jaxtupletree, dyn_args))
+    check_args(args_flat)
+    jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(f, in_trees)
+    out_flat = pxla.xla_pcall(jaxtree_fun, *args_flat,
+                              axis_map=axis_map, out_axis_map=out_axis_map,
+                              mesh_map=mesh_map, mesh_spec=mesh_spec)
+    return build_tree(out_tree(), out_flat)
+
+  f_jitted.__name__ = "pjit({})".format(f_jitted.__name__)
+  return f_jitted
 
 
 def pmap(fun, axis_name, in_axes=0, out_axes=0):
