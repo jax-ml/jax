@@ -199,10 +199,10 @@ pmap_primitive_rules[gather_p] = gather_pmap_rule
 
 
 @lu.transformation
-def axisvar_split_transform(name, new_names, *args):
+def axisvar_split(name, new_names, *args):
   with new_master(SplitTrace) as master:
-    trace = Trace(master, core.cur_sublevel())
-    in_tracers = map(partial(SplitTracer, name, new_names), args)
+    trace = SplitTrace(master, core.cur_sublevel())
+    in_tracers = map(partial(SplitTracer, trace, name, new_names), args)
     ans = yield in_tracers
     out_tracer = trace.full_raise(ans)
     out_val = out_tracer.val
@@ -244,7 +244,7 @@ class SplitTrace(Trace):
     if all(name is None for name in names_in):
       return primitive.bind(*vals_in, **params)
     else:
-      name = next(name for name in names if name is not None)
+      name = next(name for name in names_in if name is not None)
       new_names = next(t.new_names for t in tracers if t.name is not None)
       if primitive in pmap_primitive_rules:
         val_in, = vals_in
@@ -267,7 +267,7 @@ class SplitTrace(Trace):
     if all(name is None for name in names_in):
       return call_primitive.bind(f, *vals, **params)
     else:
-      name = next(name for name in names if name is not None)
+      name = next(name for name in names_in if name is not None)
       new_names = next(t.new_names for t in tracers if t.name is not None)
       f = axisvar_split_subtrace(f, self.master, name, new_names)
       val_out = call_primitive.bind(f, *vals, **params)
