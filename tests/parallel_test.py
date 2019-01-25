@@ -23,7 +23,7 @@ from absl.testing import parameterized
 import jax.numpy as np
 from jax import test_util as jtu
 from jax import lax
-from jax.api import pmap, papply, jit, make_jaxpr
+from jax.api import pmap, papply, jit, make_jaxpr, axisvar_split
 from jax.linear_util import wrap_init
 from jax.interpreters.parallel import psum, scatter_like
 
@@ -124,16 +124,25 @@ class PapplyTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=True)
 
 
-# class ChunkTest(jtu.JaxTestCase):
+class SplitTest(jtu.JaxTestCase):
 
-#   def testChunkingSum(self):
-#     f = lambda x: psum(x, 'i')
+  def testSplitBasic(self):
+    f = lambda x: psum(np.sin(x), 'i')
+    x = onp.ones((2, 2))
+    fsplit = axisvar_split(f, 'i', ('j', 'k'))
+    ans = pmap(pmap(fsplit, 'j'), 'k')(x)
+    expected = onp.sum(onp.sin(x))
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
-#     x = 3 * onp.ones((4, 2))
-#     ans = pmap(lambda x: chunk(wrap_init(f), 2, 'i', (x,), (0,), 0), 'i')(x)
-#     expected = 24
 
-#     self.assertAllClose(ans, expected, check_dtypes=False)
+  # def testChunkingSum(self):
+  #   f = lambda x: psum(x, 'i')
+
+  #   x = 3 * onp.ones((4, 2))
+  #   ans = pmap(lambda x: chunk(wrap_init(f), 2, 'i', (x,), (0,), 0), 'i')(x)
+  #   expected = 24
+
+  #   self.assertAllClose(ans, expected, check_dtypes=False)
 
 
 if __name__ == '__main__':
