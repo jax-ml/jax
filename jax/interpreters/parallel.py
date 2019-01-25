@@ -116,14 +116,21 @@ class PmapTrace(Trace):
     else:
       name = next(name for name in names_in if name is not None)  # all same
       if primitive in pmap_primitive_rules:
+        # if it's a pmap collective primitive, do something special
+        val_in, = vals_in
+        axis_in, = axes_in
         if name == params['axis_name']:
+          # if the name matches this tracer's name, apply the pmap rule
           rule = pmap_primitive_rules[primitive]
           params = {k: params[k] for k in params if k != 'axis_name'}
-          val_out, axis_out = rule(vals_in, axes_in, **params)
+          val_out, axis_out = rule(val_in, axis_in, **params)
           return PmapTracer(self, name, val_out, axis_out)
         else:
-          return primitive.bind(val, **params)
+          # if not, bind the primitive so that any other pmap tracers can see it
+          val_out = primitive.bind(val_in, **params)
+          return PmapTracer(self, name, val_out, axis_in)
       else:
+        # if it's not a pmap collective primitive, act just like vmap
         rule = batching.get_primitive_batcher(primitive)
         val_out, axis_out = rule(vals_in, axes_in, **params)
         return PmapTracer(self, name, val_out, axis_out)
@@ -166,13 +173,10 @@ pmap_primitive_rules = {}
 def psum(x, axis_name):
   return psum_p.bind(x, axis_name=axis_name)
 
-def psum_pmap_rule(vals, axes):
-  val, = vals
-  axis, = axes
+def psum_pmap_rule(val, axis):
   return val.sum(axis), None
 
-def psum_parallel_translation_rule(c, in_nodes, device_grp):
-  val, = in_nodes
+def psum_parallel_translation_rule(c, val, device_grp):
   # return c.CrossReplicaSum(val, device_grp)  # TODO
   return c.CrossReplicaSum(val)
 
@@ -184,40 +188,99 @@ pxla.parallel_translation_rules[psum_p] = psum_parallel_translation_rule
 def gather(x, axis_name):
   return gather_p.bind(x, axis_name=axis_name)
 
-def gather_pmap_rule(vals, axes):
-  val, = vals
+def gather_pmap_rule(val, axis):
   return val, None
 
 gather_p = PmapPrimitive('gather')
 pmap_primitive_rules[gather_p] = gather_pmap_rule
 
 
-def rescatter(x, new_axis, axis_name):
-  return rescatter_p.bind(x, new_axis=new_axis, axis_name=axis_name)
-
-def rescatter_pmap_rule(vals, axes, new_axis):
-  val, = vals
-  axis, = axes
-  raise NotImplementedError  # TODO why the transpose, instead of identity?
-  return batching.moveaxis(None, new_axis, axis, val), new_axis
-
-rescatter_p = PmapPrimitive('rescatter')
-pmap_primitive_rules[rescatter_p] = rescatter_pmap_rule
+### axis variable splitting and computation chunking
 
 
-# TODO maybe this isn't a great primitive, and it's the only one that needs more
-# than one operand at the moment
-def _scatter(source, dummy, target_axis, axis_name):
-  return scatter_p.bind(source, dummy, target_axis=target_axis, axis_name=axis_name)
+@lu.transformation
+def axisvar_split_transform(name, new_names, *args):
+  with new_master(SplitTrace) as master:
+    trace = Trace(master, core.cur_sublevel())
+    in_tracers = map(partial(SplitTracer, name, new_names), args)
+    ans = yield in_tracers
+    out_tracer = trace.full_raise(ans)
+    out_val = out_tracer.val
+    del master
+  yield out_val
 
-def scatter_pmap_rule(vals, axes, target_axis):
-  source, _ = vals
-  source_axis, _ = axes
-  assert source_axis is None
-  return source, target_axis
+class SplitTracer(Tracer):
+  def __init__(self, trace, name, new_names, val):
+    self.trace = trace
+    self.name = name
+    self.new_names = new_names
+    self.val = val
 
-scatter_p = PmapPrimitive('scatter')
-pmap_primitive_rules[scatter_p] = scatter_pmap_rule
+  @property
+  def aval(self):
+    return core.get_aval(self.val)
+
+  def unpack(self):
+    raise NotImplementedError  # TODO(mattjj)
+
+  def full_lower(self):
+    if self.name is None:
+      return core.full_lower(self.val)
+    else:
+      return self
+
+class SplitTrace(Trace):
+  def pure(self, val):
+    return SplitTracer(self, None, (), val)
+
+  def lift(self, val):
+    return SplitTracer(self, None, (), val)
+
+  def sublift(self, val):
+    return SplitTracer(self, val.name, val.new_names, val.val)
+
+  def process_primitive(self, primitive, tracers, params):
+    names_in, vals_in = unzip2((t.name, t.val) for t in tracers)
+    if all(name is None for name in names_in):
+      return primitive.bind(*vals_in, **params)
+    else:
+      name = next(name for name in names if name is not None)
+      new_names = next(t.new_names for t in tracers if t.name is not None)
+      if primitive in pmap_primitive_rules:
+        val_in, = vals_in
+        if name == params['axis_name']:
+          new_params = {k: params[k] for k in params if k != 'axis_name'}
+          val = val_in
+          for new_name in new_names:
+            val = primitive.bind(val, axis_name=new_name, **new_params)
+          val_out = val
+          return SplitTracer(self, name, new_names, val_out)
+        else:
+          val_out = primitive.bind(val_in, **params)
+          return SplitTracer(self, name, new_names, val_out)
+      else:
+        val_out = primitive.bind(*vals_in, **params)
+        return SplitTracer(self, name, new_names, val_out)
+
+  def process_call(self, call_primitive, f, tracers, params):
+    names_in, vals_in = unzip2((t.name, t.val) for t in tracers)
+    if all(name is None for name in names_in):
+      return call_primitive.bind(f, *vals, **params)
+    else:
+      name = next(name for name in names if name is not None)
+      new_names = next(t.new_names for t in tracers if t.name is not None)
+      f = axisvar_split_subtrace(f, self.master, name, new_names)
+      val_out = call_primitive.bind(f, *vals, **params)
+      return SplitTracer(self, name, new_names, val_out)
+
+  def post_process_call(self, _, out_tracer):
+    raise NotImplementedError  # TODO(mattjj,dougalm)
+
+  def pack(self, tracers):
+    vals = pack([t.val for t in tracers])
+    name = next(t.name for t in tracers if t.name is not None)
+    new_names = next(t.new_names for t in tracers if t.name is not None)
+    return SplitTracer(self, name, new_names, vals)
 
 
 ### papply
@@ -351,7 +414,6 @@ def broadcasting_papply(prim, name, vals, axes, **params):
   elif xdim == ydim:
     return prim.bind(x, y, **params), xdim
   else:
-    # TODO rescatter based on sizes
     raise NotImplementedError  # this isn't right, need to think about names
     x = rescatter(x, ydim, name)
     return prim.bind(x, y, **params), ydim

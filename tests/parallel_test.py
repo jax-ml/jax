@@ -52,6 +52,15 @@ class PmapTest(jtu.JaxTestCase):
     expected = x - onp.log(onp.sum(onp.exp(x)))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testNested(self):
+    f = lambda x: psum(psum(x, 'i'), 'j')
+    x = onp.ones((2, 2))
+    ans1 = pmap(pmap(f, 'i'), 'j')(x)
+    ans2 = pmap(pmap(f, 'j'), 'i')(x)
+    expected = 4 * onp.ones((2, 2))
+    self.assertAllClose(ans1, expected, check_dtypes=False)
+    self.assertAllClose(ans2, expected, check_dtypes=False)
+
 
 class PapplyTest(jtu.JaxTestCase):
 
