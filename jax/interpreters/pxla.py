@@ -233,36 +233,25 @@ def xla_pcall_impl(fun, *args, **params):
   flat_args = concatenate(flat_args)
   fun, out_tree = flatten_fun(fun, in_trees)
 
-  @HideFromMemoizer
-  def out_axes_thunk():
-    return canonicalize_axis_spec([out_tree()], out_axes)[0]
-
   in_axes = canonicalize_axis_spec(in_trees, in_axes)
-  compiled_fun = xla_parallel_callable(
-      fun, axis_name, in_axes, out_axes_thunk,
-      mesh_axis, mesh_spec, *map(abstractify, flat_args))
+  def canonicalized_out_axes():
+    return canonicalize_axis_spec([out_tree()], out_axes)[0]
+  fun = chunk_transform(fun, axis_name, in_axes, canonicalized_out_axes)
+
+  compiled_fun = xla_parallel_callable(fun, axis_name, in_axes, mesh_axis,
+                                       mesh_spec, *map(abstractify, flat_args))
 
   leaf_out = out_tree() is leaf
-  flat_ans = compiled_fun(leaf_out, out_axes_thunk(), *args)
+  flat_ans = compiled_fun(leaf_out, canonicalized_out_axes(), *args)
 
   if leaf_out:
     return flat_ans
   else:
     return build_tree(iter(flat_ans), out_tree())
 
-class HideFromMemoizer(object):
-  def __init__(self, val):
-    self.val = val
-  def __call__(self):
-    return self.val()
-  def __hash__(self):
-    return 0
-  def __eq__(self, other):
-    return type(other) is HideFromMemoizer
-
 @lu.memoize
-def xla_parallel_callable(fun, axis_name, in_axes, out_axes,
-                          mesh_axis, mesh_spec, *abstract_args):
+def xla_parallel_callable(fun, axis_name, in_axes, mesh_axis, mesh_spec,
+                          *abstract_args):
   axis_sizes = {arg.shape[axis] for arg, axis in zip(abstract_args, in_axes)
                 if axis is not None}
   if len(axis_sizes) == 0:
@@ -281,7 +270,6 @@ def xla_parallel_callable(fun, axis_name, in_axes, out_axes,
 
   chunksize = axis_size // mesh_spec[mesh_axis]
   abstract_args = map(partial(chunk_aval, chunksize), abstract_args, in_axes)
-  fun = chunk_transform(fun, axis_name, in_axes, out_axes)
   device_groups = meshgroups(mesh_spec, mesh_axis)
 
   pvals = [PartialVal((aval, core.unit)) for aval in abstract_args]
