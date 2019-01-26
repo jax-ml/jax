@@ -118,7 +118,7 @@ def unshard_output(mesh_spec, mesh_axis, out_axis, out_shards):
   """Collect and concatenate sharded device results."""
   _, ids = onp.unique(shard_assignments(mesh_spec, mesh_axis), return_index=True)
   shards = [out_shards[i] for i in ids]
-  return onp.concatenate(shards, out_axis)
+  return onp.concatenate(shards, out_axis)  # TODO device persistence
 
 def shard_assignments(mesh_spec, mesh_axis):
   """Given a mesh axis long which to shard data, compute replica assignments."""
@@ -143,6 +143,24 @@ def split_array(x, num_splits, axis):
     return x[tuple(idx)]
   return map(get_nth_subarray, range(num_splits))
 
+def axis_size(mesh_spec, mesh_axis, in_axes, abstract_args):
+  """Compute the size of mapped axes, checking for errors."""
+  axis_sizes = {arg.shape[axis] for arg, axis in zip(abstract_args, in_axes)
+                if axis is not None}
+  if len(axis_sizes) == 0:
+    msg = "axis name '{}' not bound to any input axes."
+    raise ValueError(msg.format(axis_name))
+  elif len(axis_sizes) > 1:
+    msg = "axis name '{}' bound to multiple axes with different sizes: {}."
+    raise ValueError(msg.format(axis_name, axis_sizes))
+  else:
+    axis_size = axis_sizes.pop()
+    if axis_size % mesh_spec[mesh_axis]:
+      msg = ("axis name '{}' bound to input axis of size {} mapped to mesh "
+             "axis index {} with size {}, which does not evenly divide {}.")
+      raise ValueError(msg.format(axis_name, axis_size, mesh_axis,
+                                  mesh_spec[mesh_axis], axis_size))
+  return axis_size
 
 ### xla_pcall
 
@@ -218,26 +236,10 @@ def xla_pcall_impl(fun, *args, **params):
 @lu.memoize
 def xla_parallel_callable(fun, axis_name, in_axes, mesh_axis, mesh_spec,
                           *abstract_args):
-  axis_sizes = {arg.shape[axis] for arg, axis in zip(abstract_args, in_axes)
-                if axis is not None}
-  if len(axis_sizes) == 0:
-    msg = "axis name '{}' not bound to any input axes."
-    raise ValueError(msg.format(axis_name))
-  elif len(axis_sizes) > 1:
-    msg = "axis name '{}' bound to multiple axes with different sizes: {}."
-    raise ValueError(msg.format(axis_name, axis_sizes))
-  else:
-    axis_size = axis_sizes.pop()
-    if axis_size % mesh_spec[mesh_axis]:
-      msg = ("axis name '{}' bound to input axis of size {} mapped to mesh "
-             "axis index {} with size {}, which does not evenly divide {}.")
-      raise ValueError(msg.format(axis_name, axis_size, mesh_axis,
-                                  mesh_spec[mesh_axis], axis_size))
-
-  chunksize = axis_size // mesh_spec[mesh_axis]
+  ax_size = axis_size(mesh_spec, mesh_axis, in_axes, abstract_args)
+  chunksize = ax_size // mesh_spec[mesh_axis]
   abstract_args = map(partial(chunk_aval, chunksize), abstract_args, in_axes)
   device_groups = replica_groups(mesh_spec, mesh_axis)
-
   pvals = [PartialVal((aval, core.unit)) for aval in abstract_args]
   with core.new_master(JaxprTrace, True) as master:
     jaxpr, (pval, consts, env) = trace_to_subjaxpr(fun, master).call_wrapped(pvals)
@@ -252,6 +254,7 @@ def execute_replicated(in_axes, mesh_axis, mesh_spec, compiled, pval,
   input_bufs = map(partial(shard_arg, mesh_spec, mesh_axis), in_axes, args)
   out_bufs = compiled.ExecutePerReplica(zip(*input_bufs))
   if leaf_out:
+    # TODO device persistence
     out_shards = [merge_pvals(out_buf.to_py(), pval) for out_buf in out_bufs]
     return unshard_output(mesh_spec, mesh_axis, out_axes, out_shards)
   else:
