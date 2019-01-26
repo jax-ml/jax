@@ -29,7 +29,6 @@ from ..abstract_arrays import ShapedArray, ConcreteArray, make_shaped_array
 from ..util import safe_zip, unzip2, unzip3, partialmethod, prod
 from ..lib import xla_bridge as xb
 from . import partial_eval as pe
-from . import pxla
 from . import batching
 
 zip = safe_zip
@@ -45,13 +44,14 @@ def pmap(fun, name, in_vals, in_axes, out_axis_target):
   if not sizes:
     return fun.call_wrapped(*in_vals)
   elif len(sizes) == 1:
-    out_val, out_axis = pmap_transform(fun).call_wrapped(name, in_vals, in_axes)
-    return batching.moveaxis(sizes.pop(), out_axis_target, out_axis, out_val)
+    fun, out_axis = pmap_transform(fun, name, in_axes)
+    out_val = fun.call_wrapped(*in_vals)
+    return batching.moveaxis(sizes.pop(), out_axis_target, out_axis(), out_val)
   else:
     raise TypeError("got inconsistent map dimension sizes: {}".format(sizes))
 
-@lu.transformation
-def pmap_transform(name, vals, axes):
+@lu.transformation_with_aux
+def pmap_transform(name, axes, *vals):
   with new_master(PmapTrace) as master:
     trace = PmapTrace(master, core.cur_sublevel())
     in_tracers = map(partial(PmapTracer, trace, name), vals, axes)
@@ -168,6 +168,7 @@ def PmapPrimitive(name):
 
 
 pmap_primitive_rules = {}
+parallel_translation_rules = {}
 
 
 def psum(x, axis_name):
@@ -182,7 +183,7 @@ def psum_parallel_translation_rule(c, val, device_groups):
 
 psum_p = PmapPrimitive('psum')
 pmap_primitive_rules[psum_p] = psum_pmap_rule
-pxla.parallel_translation_rules[psum_p] = psum_parallel_translation_rule
+parallel_translation_rules[psum_p] = psum_parallel_translation_rule
 
 
 def gather(x, axis_name):

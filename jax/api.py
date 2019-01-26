@@ -258,7 +258,7 @@ def vmap(fun, in_axes=0, out_axes=0):
   return batched_fun
 
 
-def pjit(fun, axis_map, out_axis_map, mesh_spec, mesh_map, static_argnums=()):
+def pjit(fun, axis_name, in_axes=0, out_axes=0, mesh_axis=0, static_argnums=()):
   """Set up SPMD function for JIT compilation and parallel execution with XLA."""
   @wraps(fun)
   def f_jitted(*args, **kwargs):
@@ -269,8 +269,8 @@ def pjit(fun, axis_map, out_axis_map, mesh_spec, mesh_map, static_argnums=()):
     check_args(args_flat)
     jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(f, in_trees)
     out_flat = pxla.xla_pcall(jaxtree_fun, *args_flat,
-                              axis_map=axis_map, out_axis_map=out_axis_map,
-                              mesh_map=mesh_map, mesh_spec=mesh_spec)
+                              axis_name=axis_name, in_axes=in_axes,
+                              out_axes=out_axes, mesh_axis=mesh_axis)
     return build_tree(out_tree(), out_flat)
 
   f_jitted.__name__ = "pjit({})".format(f_jitted.__name__)
