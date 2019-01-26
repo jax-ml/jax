@@ -58,7 +58,7 @@ def pmap_transform(name, axes, *vals):
     ans = yield in_tracers
     out_tracer = trace.full_raise(ans)
     out_val, out_axis = out_tracer.val, out_tracer.axis
-    del master
+    del master, out_tracer
   yield out_val, out_axis
 
 @lu.transformation_with_aux
@@ -213,7 +213,7 @@ def axisvar_split(name, new_names, *args):
     ans = yield in_tracers
     out_tracer = trace.full_raise(ans)
     out_val = out_tracer.val
-    del master
+    del master, out_tracer
   yield out_val
 
 class SplitTracer(Tracer):
@@ -270,6 +270,7 @@ class SplitTrace(Trace):
         return SplitTracer(self, name, new_names, val_out)
 
   def process_call(self, call_primitive, f, tracers, params):
+    import ipdb; ipdb.set_trace()
     names_in, vals_in = unzip2((t.name, t.val) for t in tracers)
     if all(name is None for name in names_in):
       return call_primitive.bind(f, *vals, **params)
@@ -281,6 +282,7 @@ class SplitTrace(Trace):
       return SplitTracer(self, name, new_names, val_out)
 
   def post_process_call(self, _, out_tracer):
+    import ipdb; ipdb.set_trace()
     name, new_names, val = out_tracer.name, out_tracer.new_names, out_tracer.val
     master = self.master
     def todo(x):
@@ -329,7 +331,7 @@ def papply_transform(name, args, axes):
     out_tracer = yield in_tracers
     out_tracer = trace.full_raise(out_tracer)
     out_val = out_tracer.val
-    del master
+    del master, out_tracer
   yield out_val
 
 class PapplyTracer(Tracer):

@@ -244,6 +244,7 @@ def xla_parallel_callable(fun, axis_name, in_axes, mesh_axis, mesh_spec,
   pvals = [PartialVal((aval, core.unit)) for aval in abstract_args]
   with core.new_master(JaxprTrace, True) as master:
     jaxpr, (pval, consts, env) = trace_to_subjaxpr(fun, master).call_wrapped(pvals)
+    import ipdb; ipdb.set_trace()
     assert not env
     compiled, result_shape = compile_replicated(jaxpr, device_groups,
                                                 consts, *abstract_args)
