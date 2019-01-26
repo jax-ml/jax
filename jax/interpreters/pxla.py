@@ -50,20 +50,19 @@ mesh_spec = None
 ### util
 
 
-def chunk_transform(fun, name, in_axes, out_axes_dst):
+def chunk_transform(fun, chunksize, name, in_axes, out_axes_dst):
   """Rewrite SPMD operations to act first on local chunks then cross-replica."""
   temp_name = object()  # TODO gensym
   fun = parallel.axisvar_split(fun, name, (temp_name, name))
   fun, out_axes_src = parallel.pmap_transform(fun, temp_name, in_axes)
-  fun = move_output_axis_transform(fun, out_axes_src, out_axes_dst)
+  fun = move_output_axis_transform(fun, chunksize, out_axes_src, out_axes_dst)
   return fun
 
 @lu.transformation
-def move_output_axis_transform(src, dst, *args):
+def move_output_axis_transform(chunksize, src, dst, *args):
   """Function transformation that moves output axes from src to dst."""
   ans = yield args
-  # TODO singleton or chunksize? i think chunksize...
-  yield moveaxis(1, dst(), src(), ans)  # inserts singleton if src is None
+  yield moveaxis(chunksize, dst(), src(), ans)
 
 def chunk_aval(chunksize, aval, axis):
   """Transform an abstract value's shape to have chunksize extent along axis."""
@@ -143,8 +142,8 @@ def split_array(x, num_splits, axis):
     return x[tuple(idx)]
   return map(get_nth_subarray, range(num_splits))
 
-def axis_size(mesh_spec, mesh_axis, in_axes, abstract_args):
-  """Compute the size of mapped axes, checking for errors."""
+def chunk_size(mesh_spec, mesh_axis, in_axes, abstract_args):
+  """Compute the chunk size for mapped axes, checking for errors."""
   axis_sizes = {arg.shape[axis] for arg, axis in zip(abstract_args, in_axes)
                 if axis is not None}
   if len(axis_sizes) == 0:
@@ -160,7 +159,8 @@ def axis_size(mesh_spec, mesh_axis, in_axes, abstract_args):
              "axis index {} with size {}, which does not evenly divide {}.")
       raise ValueError(msg.format(axis_name, axis_size, mesh_axis,
                                   mesh_spec[mesh_axis], axis_size))
-  return axis_size
+
+  return axis_size // mesh_spec[mesh_axis]
 
 ### xla_pcall
 
@@ -219,12 +219,14 @@ def xla_pcall_impl(fun, *args, **params):
   flat_args = concatenate(flat_args)
   fun, out_tree = flatten_fun(fun, in_trees)
 
+  abstract_args = map(abstractify, flat_args)
   in_axes = canonicalize_in_axis_spec(in_trees, in_axes)
+  chunksize = chunk_size(mesh_spec_, mesh_axis, in_axes, abstract_args)
   out_axes_thunk = lambda: canonicalize_out_axis_spec(out_tree(), out_axes)
-  fun = chunk_transform(fun, axis_name, in_axes, out_axes_thunk)
+  fun = chunk_transform(fun, chunksize, axis_name, in_axes, out_axes_thunk)
 
   compiled_fun = xla_parallel_callable(fun, axis_name, in_axes, mesh_axis,
-                                       mesh_spec_, *map(abstractify, flat_args))
+                                       mesh_spec_, *abstract_args)
   leaf_out = out_tree() is leaf
   flat_ans = compiled_fun(leaf_out, out_axes_thunk(), *args)
 
@@ -236,8 +238,7 @@ def xla_pcall_impl(fun, *args, **params):
 @lu.memoize
 def xla_parallel_callable(fun, axis_name, in_axes, mesh_axis, mesh_spec,
                           *abstract_args):
-  ax_size = axis_size(mesh_spec, mesh_axis, in_axes, abstract_args)
-  chunksize = ax_size // mesh_spec[mesh_axis]
+  chunksize = chunk_size(mesh_spec, mesh_axis, in_axes, abstract_args)
   abstract_args = map(partial(chunk_aval, chunksize), abstract_args, in_axes)
   device_groups = replica_groups(mesh_spec, mesh_axis)
   pvals = [PartialVal((aval, core.unit)) for aval in abstract_args]
