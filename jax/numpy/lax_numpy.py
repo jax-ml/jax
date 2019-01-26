@@ -42,6 +42,7 @@ else:
   def removechars(s, chars):
     return s.translate(None, ''.join(chars))
 
+newaxis = None
 
 # We replace some builtin names to follow Numpy's API, so we capture here.
 _abs = builtins.abs
