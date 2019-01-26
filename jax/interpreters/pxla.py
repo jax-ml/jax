@@ -38,6 +38,7 @@ from .xla import (flatten_fun, tree_flatten, build_tree, leaf, xla_shape,
                   xla_shape_to_result_shape)
 from .partial_eval import trace_to_subjaxpr, merge_pvals, JaxprTrace, PartialVal
 from .parallel import parallel_translation_rules
+from .batching import moveaxis
 from . import parallel
 
 map = safe_map
@@ -56,7 +57,7 @@ def chunk_transform(fun, name, in_axes, out_axes_dst):
 @lu.transformation
 def move_output_axis_transform(src, dst, *args):
   ans = yield args
-  yield batching.moveaxis(None, dst(), src(), ans)
+  yield moveaxis(1, dst(), src(), ans)  # inserts singleton if src is None
 
 def chunk_aval(chunksize, aval, axis):
   if axis is None:
@@ -181,14 +182,14 @@ def split_array(x, axis):
 ### xla_pcall
 
 
-def compile_replicated(jaxpr, devicegrps, consts, *abstract_args):
+def compile_replicated(jaxpr, device_groups, consts, *abstract_args):
   arg_shapes = list(map(xla_shape, abstract_args))
-  built_c = replicated_jaxpr_computation(jaxpr, devicegrps, consts, (),
+  built_c = replicated_jaxpr_computation(jaxpr, device_groups, consts, (),
                                          *arg_shapes)
   result_shape = xla_shape_to_result_shape(built_c.GetReturnValueShape())
   return built_c.Compile(arg_shapes, xb.get_compile_options()), result_shape
 
-def replicated_jaxpr_computation(jaxpr, devicegrps,
+def replicated_jaxpr_computation(jaxpr, device_groups,
                                  const_vals, freevar_shapes, *arg_shapes):
   c = xb.make_computation_builder("replicated_jaxpr_computation")
 
@@ -211,7 +212,7 @@ def replicated_jaxpr_computation(jaxpr, devicegrps,
       rule = parallel_translation_rules[eqn.primitive]
       axis_name = eqn.params['axis_name']
       params = {k: eqn.params[k] for k in eqn.params if k != 'axis_name'}
-      ans = rule(c, *in_nodes, device_groups=devicegrps[axis_name], **params)
+      ans = rule(c, *in_nodes, device_groups=device_groups, **params)
     else:
       if eqn.bound_subjaxprs: raise NotImplementedError  # TODO check primitive
       ans = translation_rule(eqn.primitive)(c, *in_nodes, **eqn.params)
@@ -287,7 +288,7 @@ def xla_parallel_callable(fun, axis_name, in_axes, out_axes,
   with core.new_master(JaxprTrace, True) as master:
     jaxpr, (pval, consts, env) = trace_to_subjaxpr(fun, master).call_wrapped(pvals)
     assert not env
-    compiled, result_shape = compile_replicated(jaxpr, devicegrps,
+    compiled, result_shape = compile_replicated(jaxpr, device_groups,
                                                 consts, *abstract_args)
     del master, consts, jaxpr, env
   return partial(execute_replicated, in_axes, mesh_axis, mesh_spec, compiled, pval)
@@ -311,6 +312,3 @@ xla_pcall_p = core.Primitive('xla_pcall')
 xla_pcall = partial(core.call_bind, xla_pcall_p)
 xla_pcall_p.def_custom_bind(xla_pcall)
 xla_pcall_p.def_impl(xla_pcall_impl)
-
-
-parallel_translation_rules = {}
