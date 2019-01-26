@@ -270,7 +270,6 @@ class SplitTrace(Trace):
         return SplitTracer(self, name, new_names, val_out)
 
   def process_call(self, call_primitive, f, tracers, params):
-    import ipdb; ipdb.set_trace()
     names_in, vals_in = unzip2((t.name, t.val) for t in tracers)
     if all(name is None for name in names_in):
       return call_primitive.bind(f, *vals, **params)
@@ -282,7 +281,6 @@ class SplitTrace(Trace):
       return SplitTracer(self, name, new_names, val_out)
 
   def post_process_call(self, _, out_tracer):
-    import ipdb; ipdb.set_trace()
     name, new_names, val = out_tracer.name, out_tracer.new_names, out_tracer.val
     master = self.master
     def todo(x):
