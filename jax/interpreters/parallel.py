@@ -146,7 +146,13 @@ class PmapTrace(Trace):
       return PmapTracer(self, name, val_out, axis_out())
 
   def post_process_call(self, _, out_tracer):
-    raise NotImplementedError  # TODO(mattjj,dougalm)
+    name, val, axis = out_tracer.name, out_tracer.val, out_tracer.axis
+    master = self.master
+    def todo(x):
+      trace = PmapTrace(master, core.cur_sublevel())
+      return PmapTracer(trace, name, x, axis)
+
+    return val, todo
 
   def pack(self, tracers):
     vals = pack([t.val for t in tracers])
@@ -275,7 +281,13 @@ class SplitTrace(Trace):
       return SplitTracer(self, name, new_names, val_out)
 
   def post_process_call(self, _, out_tracer):
-    raise NotImplementedError  # TODO(mattjj,dougalm)
+    name, new_names, val = out_tracer.name, out_tracer.new_names, out_tracer.val
+    master = self.master
+    def todo(x):
+      trace = SplitTrace(master, core.cur_sublevel())
+      return SplitTracer(trace, name, new_names, x)
+
+    return val, todo
 
   def pack(self, tracers):
     vals = pack([t.val for t in tracers])
