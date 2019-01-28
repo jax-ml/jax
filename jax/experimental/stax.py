@@ -178,9 +178,9 @@ SumPool = _pooling_layer(lax.add, 0.)
 
 def _normalize_by_window_size(dims, strides, padding):
   def rescale(outputs, inputs):
-    one = np.ones(inputs.shape[1:3], dtype=inputs.dtype)
+    one = np.ones(inputs.shape[1:-1], dtype=inputs.dtype)
     window_sizes = lax.reduce_window(one, 0., lax.add, dims, strides, padding)
-    return outputs / window_sizes
+    return outputs / window_sizes[..., np.newaxis]
   return rescale
 AvgPool = _pooling_layer(lax.add, 0., _normalize_by_window_size)
 
