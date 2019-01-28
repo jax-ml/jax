@@ -395,8 +395,13 @@ def _select_and_scatter_add(source, operand, select_prim, window_dimensions,
 
 def _select_and_gather_add(tangents, operand, select_prim, window_dimensions,
                            window_strides, padding):
+  pair_dtype = _select_and_gather_add_pair_dtype(operand.dtype)
+  pair_select = partial(_select_and_gather_add_pair_reducer,
+                        dtype=operand.dtype, select_prim=select_prim)
+  jaxpr, consts = _reduction_jaxpr(pair_select, pair_dtype(0))
   return select_and_gather_add_p.bind(
       tangents, operand, select_prim=select_prim,
+      pair_select_jaxpr=jaxpr, pair_select_consts=consts,
       window_dimensions=tuple(window_dimensions),
       window_strides=tuple(window_strides), padding=padding)
 
@@ -2383,8 +2388,9 @@ ad.primitive_transposes[select_and_scatter_add_p] = \
     select_and_scatter_add_transpose
 
 
-def select_and_gather_add_shape_rule(
-    tangents, operand, select_prim, window_dimensions, window_strides, padding):
+def _select_and_gather_add_shape_rule(
+    tangents, operand, select_prim, pair_select_jaxpr, pair_select_consts,
+    window_dimensions, window_strides, padding):
   if tangents.shape != operand.shape:
     msg = ("select_and_gather_add tangents and operand shapes must match, "
            "got {} and {}.")
@@ -2392,24 +2398,72 @@ def select_and_gather_add_shape_rule(
   return common_reduce_window_shape_rule(operand, window_dimensions,
                                          window_strides, padding)
 
-def select_and_gather_add_translation(
-    c, tangents, operand, select_prim, window_dimensions, window_strides,
-    padding):
-  raise NotImplementedError("No efficient translation.")
 
-def select_and_gather_add_transpose(
-    t, tangents, operand, select_prim, window_dimensions, window_strides,
-    padding):
+_UINT_DTYPES = {
+  16: onp.uint16,
+  32: onp.uint32,
+  64: onp.uint64,
+}
+
+def _select_and_gather_add_pair_dtype(dtype):
+  bits = onp.finfo(dtype).bits
+  return _UINT_DTYPES[bits * 2]
+
+def _select_and_gather_add_pair_reducer(x, y, dtype=None, select_prim=None):
+  bits = _dtype(x).type(onp.finfo(dtype).bits)
+  uint_dtype = _UINT_DTYPES[bits]
+  sx = convert_element_type(shift_right_logical(x, bits), uint_dtype)
+  sx = bitcast_convert_type(sx, dtype)
+  sy = convert_element_type(shift_right_logical(y, bits), uint_dtype)
+  sy = bitcast_convert_type(sy, dtype)
+  return select(select_prim.bind(sx, sy), x, y)
+
+def _select_and_gather_add_translation(
+    c, tangents, operand, select_prim, pair_select_jaxpr, pair_select_consts,
+    window_dimensions, window_strides, padding):
+  # XLA doesn't yet implement ReduceWindow on tuples (Google bug b/73062247), so
+  # we implement a pair-wise ReduceWindow by packing two k-bit values into
+  # 2k-bit unsigned integer using bit tricks. This will only work for 32-bit
+  # inputs, and furthermore it also requires jax_enable_x64 to be set.
+  dtype = c.GetShape(operand).numpy_dtype()
+  etype = xla_bridge.dtype_to_etype(dtype)
+  bits = onp.finfo(dtype).bits
+  uint_etype = xla_bridge.dtype_to_etype(_UINT_DTYPES[bits])
+  pair_uint_dtype = _select_and_gather_add_pair_dtype(dtype)
+  pair_uint_etype = xla_bridge.dtype_to_etype(pair_uint_dtype)
+  operand = c.BitcastConvertType(operand, uint_etype)
+  tangents = c.BitcastConvertType(tangents, uint_etype)
+  operand = c.ConvertElementType(operand, pair_uint_etype)
+  tangents = c.ConvertElementType(tangents, pair_uint_etype)
+  operand = c.ShiftLeft(operand, c.Constant(pair_uint_dtype(bits)))
+
+  assert select_prim is ge_p or select_prim is le_p
+  init = -onp.inf if select_prim is ge_p else onp.inf
+  init = c.BitcastConvertType(c.Constant(dtype.type(init)), uint_etype)
+  init = c.ConvertElementType(init, pair_uint_etype)
+  init = c.ShiftLeft(init, c.Constant(pair_uint_dtype(bits)))
+
+  xla_computation = _reduction_computation(
+      c, pair_select_jaxpr, pair_select_consts, init)
+  out = c.ReduceWindow(c.Or(operand, tangents), init,
+                       xla_computation, window_dimensions, window_strides,
+                       padding)
+  out = c.ConvertElementType(out, uint_etype)
+  return c.BitcastConvertType(out, etype)
+
+def _select_and_gather_add_transpose(
+    t, tangents, operand, select_prim, pair_select_jaxpr, pair_select_consts,
+    window_dimensions, window_strides, padding):
   assert tangents is None and operand is not None
   result = _select_and_scatter_add(t, operand, select_prim, window_dimensions,
                                    window_strides, padding)
   return [result, None]
 
 select_and_gather_add_p = standard_primitive(
-    select_and_gather_add_shape_rule, _input_dtype, 'select_and_gather_add',
-    select_and_gather_add_translation)
+    _select_and_gather_add_shape_rule, _input_dtype, 'select_and_gather_add',
+    _select_and_gather_add_translation)
 ad.primitive_transposes[select_and_gather_add_p] = \
-    select_and_gather_add_transpose
+    _select_and_gather_add_transpose
 
 
 sort_shape = lambda operand, dimension: operand.shape
