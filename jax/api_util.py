@@ -62,8 +62,11 @@ pytree_to_jaxtupletree = partial(process_pytree, pack)
 def pytree_fun_to_flatjaxtuple_fun(in_tree, *args):
   py_args = tuple(tree_unflatten(in_tree, args))
   ans = yield py_args
-  flat_ans, out_tree = tree_flatten(ans)
+  yield maybe_pytree_to_maybe_jaxtuple(ans)
+
+def maybe_pytree_to_maybe_jaxtuple(maybe_tree):
+  flat_ans, out_tree = tree_flatten(maybe_tree)
   if out_tree is leaf:
-    yield flat_ans[0], out_tree
+    return maybe_tree, None
   else:
-    yield pack(flat_ans), out_tree
+    return pack(flat_ans), out_tree

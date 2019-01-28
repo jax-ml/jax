@@ -272,7 +272,10 @@ def pjit(fun, axis_name, in_axes=0, out_axes=0, mesh_axis=0):
     out_flat = pxla.xla_pcall(f, *args_flat, axis_name=axis_name,
                               in_axes=in_axes_, out_axes=out_axes_,
                               mesh_axis=mesh_axis)
-    return build_tree(out_tree(), out_flat)
+    if out_tree() is None:
+      return out_flat
+    else:
+      return build_tree(out_tree(), out_flat)
 
   f_jitted.__name__ = "pjit({})".format(f_jitted.__name__)
   return f_jitted
