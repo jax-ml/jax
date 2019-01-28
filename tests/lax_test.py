@@ -1730,6 +1730,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       for lhs_shape in [(2,), (3, 2)] for rhs_shape in [(2,), (2, 4)]
       for dtype in float_dtypes))
   @jtu.skip_on_flag("jax_xla_backend", "xrt")
+  @jtu.skip_on_devices("tpu")
   def testDotGrad(self, lhs_shape, rhs_shape, dtype, rng):
     tol = 1e-1 if num_float_bits(dtype) == 32 else 1e-3
     lhs = rng(lhs_shape, dtype)

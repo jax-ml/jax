@@ -63,7 +63,7 @@ def numpy_eq(x, y):
   testing_tpu = FLAGS.jax_test_dut and FLAGS.jax_test_dut.startswith("tpu")
   testing_x32 = not FLAGS.jax_enable_x64
   if testing_tpu or testing_x32:
-    return onp.allclose(x, y, 1e-3, 1e-3)
+    return onp.allclose(x, y, 1e-3, 1e-3, equal_nan=testing_tpu)
   else:
     return onp.allclose(x, y)
 
@@ -76,7 +76,7 @@ def numpy_close(a, b, atol=ATOL, rtol=RTOL, equal_nan=False):
     rtol = max(rtol, 1e-1)
   assert a.shape == b.shape
   return onp.allclose(a, b, atol=atol * a.size, rtol=rtol * b.size,
-                      equal_nan=equal_nan)
+                      equal_nan=equal_nan or testing_tpu)
 
 
 def check_eq(xs, ys):
