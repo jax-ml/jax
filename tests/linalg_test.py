@@ -41,12 +41,12 @@ T = lambda x: onp.swapaxes(x, -1, -2)
 
 
 def float_types():
-  return set(onp.dtype(xla_bridge.canonicalize_dtype(dtype))
-             for dtype in [onp.float32, onp.float64])
+  return {onp.dtype(xla_bridge.canonicalize_dtype(dtype))
+          for dtype in [onp.float32, onp.float64]}
 
 def complex_types():
-  return set(onp.dtype(xla_bridge.canonicalize_dtype(dtype))
-             for dtype in [onp.complex64, onp.complex128])
+  return {onp.dtype(xla_bridge.canonicalize_dtype(dtype))
+          for dtype in [onp.complex64, onp.complex128]}
 
 
 class NumpyLinalgTest(jtu.JaxTestCase):
