@@ -131,7 +131,13 @@ class BatchTrace(Trace):
       return BatchTracer(self, val_out, dim_out())
 
   def post_process_call(self, _, out_tracer):
-    raise NotImplementedError  # TODO(mattjj,dougalm)
+    val, dim = out_tracer.val, out_tracer.batch_dim
+    master = self.master
+    def todo(x):
+      trace = BatchTrace(master, core.cur_sublevel())
+      return BatchTracer(trace, val, dim)
+
+    return val, todo
 
   def pack(self, tracers):
     vals = pack([t.val for t in tracers])

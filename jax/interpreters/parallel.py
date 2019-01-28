@@ -216,6 +216,14 @@ def axisvar_split(name, new_names, *args):
     del master, out_tracer
   yield out_val
 
+@lu.transformation
+def axisvar_split_subtrace(master, name, new_names, *vals):
+  trace = SplitTrace(master, core.cur_sublevel())
+  ans = yield map(partial(SplitTracer, trace, name, new_names), vals)
+  out_tracer = trace.full_raise(ans)
+  out_val = out_tracer.val
+  yield out_val
+
 class SplitTracer(Tracer):
   def __init__(self, trace, name, new_names, val):
     self.trace = trace
