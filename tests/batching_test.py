@@ -368,8 +368,8 @@ class BatchingTest(jtu.JaxTestCase):
                         check_dtypes=True)
   
   def testConvGeneralDilated(self):
-    W = onp.random.randn(3, 3, 1, 5)
-    X = onp.random.randn(10, 5, 5, 1)
+    W = np.array(onp.random.randn(3, 3, 1, 5), dtype=onp.float32)
+    X = np.array(onp.random.randn(10, 5, 5, 1), dtype=onp.float32)
 
     def f(params, x):
       one = (1, 1)
@@ -399,8 +399,8 @@ class BatchingTest(jtu.JaxTestCase):
     self.assertAllClose(per_example, per_example_direct, check_dtypes=True)
 
   def testMaxPool(self):
-    W = onp.random.randn(3, 3, 1, 5)
-    X = onp.random.randn(10, 5, 5, 1)
+    W = np.array(onp.random.randn(3, 3, 1, 5), dtype=onp.float32)
+    X = np.array(onp.random.randn(10, 5, 5, 1), dtype=onp.float32)
 
     def f(params, x):
       one = (1, 1)
@@ -429,8 +429,8 @@ class BatchingTest(jtu.JaxTestCase):
     self.assertAllClose(per_example, per_example_direct, check_dtypes=True)
 
   def testSumPool(self):
-    W = onp.random.randn(3, 3, 1, 5)
-    X = onp.random.randn(10, 5, 5, 1)
+    W = np.array(onp.random.randn(3, 3, 1, 5), dtype=onp.float32)
+    X = np.array(onp.random.randn(10, 5, 5, 1), dtype=onp.float32)
 
     def f(params, x):
       one = (1, 1)
