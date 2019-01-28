@@ -206,6 +206,11 @@ def dtype_to_etype(dtype):
   """Convert from dtype to canonical etype (reading FLAGS.jax_enable_x64)."""
   return _dtype_to_etype[canonicalize_dtype(dtype)]
 
+@memoize
+def dtype_to_etype_exact(dtype):
+  """Convert from dtype to exact etype (ignoring FLAGS.jax_enable_x64)."""
+  return _dtype_to_etype[str(onp.dtype(dtype))]
+
 
 _dtype_to_32bit_dtype = {
     str(onp.dtype('int64')): onp.dtype('int32'),
@@ -301,15 +306,16 @@ class _JaxComputationBuilderBase(object):
     return super(_JaxComputationBuilderBase, self).ParameterWithShape(
         shape_of(value), name=name, parameter_num=parameter_num)
 
-  def NumpyArrayConstant(self, value):
-    normalized_value = normalize_to_xla_dtypes(value)
-    return super(_JaxComputationBuilderBase, self).Constant(normalized_value)
+  def NumpyArrayConstant(self, value, canonicalize_types=True):
+    if canonicalize_types:
+      value = normalize_to_xla_dtypes(value)
+    return super(_JaxComputationBuilderBase, self).Constant(value)
 
-  def ConstantLike(self, example_value, value):
+  def ConstantLike(self, example_value, value, canonicalize_types=True):
     example_value = onp.asarray(example_value)
     return self.Constant(onp.array(value).astype(example_value.dtype))
 
-  def Constant(self, py_val):
+  def Constant(self, py_val, canonicalize_types=True):
     """Translate constant `py_val` to a constant for this ComputationBuilder.
 
     Args:
@@ -320,7 +326,7 @@ class _JaxComputationBuilderBase(object):
     """
     py_type = type(py_val)
     if py_type in _constant_handlers:
-      return _constant_handlers[py_type](self, py_val)
+      return _constant_handlers[py_type](self, py_val, canonicalize_types)
     else:
       raise TypeError("No constant handler for type: {}".format(py_type))
 
@@ -341,7 +347,7 @@ def register_constant_handler(type_, handler_fun):
 _constant_handlers = {}
 
 
-def _ndarray_constant_handler(c, val):
+def _ndarray_constant_handler(c, val, canonicalize_types=True):
   """Constant handler for ndarray literals, handling zero-size strides.
 
   This function essentially calls c.NumpyArrayConstant(val) except it has
@@ -365,18 +371,21 @@ def _ndarray_constant_handler(c, val):
     other_axes, = onp.where(onp.not_equal(0, val.strides))
     collapsed_val = val[tuple(0 if ax in zero_stride_axes else slice(None)
                               for ax in range(val.ndim))]
-    xla_val = c.Broadcast(c.NumpyArrayConstant(collapsed_val),
-                          onp.take(val.shape, zero_stride_axes))
+    xla_val = c.Broadcast(
+        c.NumpyArrayConstant(collapsed_val, canonicalize_types),
+        onp.take(val.shape, zero_stride_axes))
     permutation = onp.argsort(tuple(zero_stride_axes) + tuple(other_axes))
     return c.Transpose(xla_val, permutation)
   else:
-    return c.NumpyArrayConstant(val)
+    return c.NumpyArrayConstant(val, canonicalize_types)
 register_constant_handler(onp.ndarray, _ndarray_constant_handler)
 
+
+def _scalar_constant_handler(c, val, canonicalize_types=True):
+  return c.NumpyArrayConstant(val, canonicalize_types)
 
 for scalar_type in [onp.int8, onp.int16, onp.int32, onp.int64,
                     onp.uint8, onp.uint16, onp.uint32, onp.uint64,
                     onp.float16, onp.float32, onp.float64, onp.float128,
                     float, int, bool, onp.bool_]:
-  register_constant_handler(scalar_type,
-                            lambda c, val: c.NumpyArrayConstant(val))
+  register_constant_handler(scalar_type, _scalar_constant_handler)
