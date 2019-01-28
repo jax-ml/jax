@@ -156,7 +156,7 @@ def xla_destructure(c, ans):
   num_elements = len(c.GetShape(ans).tuple_shapes())
   return [c.GetTupleElement(ans, i) for i in range(num_elements)]
 
-def unit_constant(c, val):
+def unit_constant(c, val, canonicalize_types=True):
   assert not val  # must be unit
   return c.Tuple()
 xb.register_constant_handler(JaxTuple, unit_constant)
@@ -323,8 +323,10 @@ class DeviceArray(DeviceValue):
 core.pytype_aval_mappings[DeviceArray] = ConcreteArray
 pytype_aval_mappings[DeviceArray] = make_shaped_array
 canonicalize_dtype_handlers[DeviceArray] = identity
-xb.register_constant_handler(DeviceArray,
-                             lambda c, val: c.Constant(onp.asarray(val)))
+
+def _device_array_constant_handler(c, val, canonicalize_types=True):
+  return c.Constant(onp.asarray(val), canonicalize_types=canonicalize_types)
+xb.register_constant_handler(DeviceArray, _device_array_constant_handler)
 
 pytype_aval_mappings[ConcreteArray] = make_shaped_array
 pytype_aval_mappings[ShapedArray] = lambda x: x
@@ -332,7 +334,7 @@ pytype_aval_mappings[ShapedArray] = lambda x: x
 
 class DeviceConstant(DeviceArray):
   @staticmethod
-  def constant_handler(c, constant_instance):
+  def constant_handler(c, constant_instance, canonicalize_types=True):
     assert False
 
 def instantiate_device_constant(const, cutoff=1e6):

@@ -399,13 +399,8 @@ def _select_and_scatter_add(source, operand, select_prim, window_dimensions,
 
 def _select_and_gather_add(tangents, operand, select_prim, window_dimensions,
                            window_strides, padding):
-  pair_dtype = _select_and_gather_add_pair_dtype(operand.dtype)
-  pair_select = partial(_select_and_gather_add_pair_reducer,
-                        dtype=operand.dtype, select_prim=select_prim)
-  jaxpr, consts = _reduction_jaxpr(pair_select, pair_dtype(0))
   return select_and_gather_add_p.bind(
       tangents, operand, select_prim=select_prim,
-      pair_select_jaxpr=jaxpr, pair_select_consts=consts,
       window_dimensions=tuple(window_dimensions),
       window_strides=tuple(window_strides), padding=padding)
 
@@ -1038,7 +1033,7 @@ def convert_element_type_dtype_rule(operand, new_dtype, old_dtype):
   return new_dtype
 
 def convert_element_type_translation_rule(c, operand, new_dtype, old_dtype):
-  new_etype = xla_bridge.dtype_to_etype(new_dtype)
+  new_etype = xla_bridge.dtype_to_etype_exact(new_dtype)
   return c.ConvertElementType(operand, new_element_type=new_etype)
 
 convert_element_type_p = standard_primitive(
@@ -2410,8 +2405,7 @@ ad.primitive_transposes[select_and_scatter_add_p] = \
 
 
 def _select_and_gather_add_shape_rule(
-    tangents, operand, select_prim, pair_select_jaxpr, pair_select_consts,
-    window_dimensions, window_strides, padding):
+    tangents, operand, select_prim, window_dimensions, window_strides, padding):
   if tangents.shape != operand.shape:
     msg = ("select_and_gather_add tangents and operand shapes must match, "
            "got {} and {}.")
@@ -2426,52 +2420,61 @@ _UINT_DTYPES = {
   64: onp.uint64,
 }
 
-def _select_and_gather_add_pair_dtype(dtype):
+def _select_and_gather_add_pair_reducer(dtype, select_prim):
   bits = onp.finfo(dtype).bits
-  return _UINT_DTYPES[bits * 2]
+  pair_uint_dtype = _UINT_DTYPES[bits * 2]
+  uint_etype = xla_bridge.dtype_to_etype_exact(_UINT_DTYPES[bits])
+  etype = xla_bridge.dtype_to_etype_exact(dtype)
 
-def _select_and_gather_add_pair_reducer(x, y, dtype=None, select_prim=None):
-  bits = _dtype(x).type(onp.finfo(dtype).bits)
-  uint_dtype = _UINT_DTYPES[bits]
-  sx = convert_element_type(shift_right_logical(x, bits), uint_dtype)
-  sx = bitcast_convert_type(sx, dtype)
-  sy = convert_element_type(shift_right_logical(y, bits), uint_dtype)
-  sy = bitcast_convert_type(sy, dtype)
-  return select(select_prim.bind(sx, sy), x, y)
+  c = xla_bridge.make_computation_builder("select_and_gather_pair_reducer")
+  x = c.ParameterWithShape(xla_bridge.Shape.array_shape(pair_uint_dtype, ()))
+  y = c.ParameterWithShape(xla_bridge.Shape.array_shape(pair_uint_dtype, ()))
+
+  bits_const = c.Constant(pair_uint_dtype(bits), canonicalize_types=False)
+
+  def fst(t):
+    st = c.ConvertElementType(c.ShiftRightLogical(t, bits_const), uint_etype)
+    return c.BitcastConvertType(st, etype)
+  sx = fst(x)
+  sy = fst(y)
+
+  assert select_prim is ge_p or select_prim is le_p
+  which = c.Ge(sx, sy) if select_prim is ge_p else c.Le(sx, sy)
+  c.Select(which, x, y)
+  return c.Build()
 
 def _select_and_gather_add_translation(
-    c, tangents, operand, select_prim, pair_select_jaxpr, pair_select_consts,
-    window_dimensions, window_strides, padding):
+    c, tangents, operand, select_prim, window_dimensions, window_strides,
+    padding):
   # XLA doesn't yet implement ReduceWindow on tuples (Google bug b/73062247), so
   # we implement a pair-wise ReduceWindow by packing two k-bit values into
-  # 2k-bit unsigned integer using bit tricks. This will only work for 32-bit
+  # 2k-bit unsigned integer using bit tricks. This will only work for <= 32-bit
   # inputs (since we don't have 128-bit integer types).
-  # TODO(phawkins): unless jax_enable_x64 is set, we won't have correct 64-bit
-  # types.
   dtype = c.GetShape(operand).numpy_dtype()
   bits = onp.finfo(dtype).bits
-  if not FLAGS.jax_enable_x64 and bits >= 32:
+  if bits > 32:
     raise NotImplementedError(
-        "Translation of select_and_gather_add requires flag --jax_enable_x64 "
-        "to be set")
+        "select_and_gather_add is not implemented for type larger than 32 bits")
   etype = xla_bridge.dtype_to_etype(dtype)
   uint_etype = xla_bridge.dtype_to_etype(_UINT_DTYPES[bits])
-  pair_uint_dtype = _select_and_gather_add_pair_dtype(dtype)
-  pair_uint_etype = xla_bridge.dtype_to_etype(pair_uint_dtype)
+  pair_uint_dtype = _UINT_DTYPES[bits * 2]
+  pair_uint_etype = xla_bridge.dtype_to_etype_exact(pair_uint_dtype)
+
   operand = c.BitcastConvertType(operand, uint_etype)
   tangents = c.BitcastConvertType(tangents, uint_etype)
   operand = c.ConvertElementType(operand, pair_uint_etype)
   tangents = c.ConvertElementType(tangents, pair_uint_etype)
-  operand = c.ShiftLeft(operand, c.Constant(pair_uint_dtype(bits)))
+  operand = c.ShiftLeft(
+    operand, c.Constant(pair_uint_dtype(bits), canonicalize_types=False))
 
   assert select_prim is ge_p or select_prim is le_p
   init = -onp.inf if select_prim is ge_p else onp.inf
   init = c.BitcastConvertType(c.Constant(dtype.type(init)), uint_etype)
   init = c.ConvertElementType(init, pair_uint_etype)
-  init = c.ShiftLeft(init, c.Constant(pair_uint_dtype(bits)))
+  init = c.ShiftLeft(
+    init, c.Constant(pair_uint_dtype(bits), canonicalize_types=False))
 
-  xla_computation = _reduction_computation(
-      c, pair_select_jaxpr, pair_select_consts, init)
+  xla_computation = _select_and_gather_add_pair_reducer(dtype, select_prim)
   out = c.ReduceWindow(c.Or(operand, tangents), init,
                        xla_computation, window_dimensions, window_strides,
                        padding)
@@ -2479,8 +2482,8 @@ def _select_and_gather_add_translation(
   return c.BitcastConvertType(out, etype)
 
 def _select_and_gather_add_transpose(
-    t, tangents, operand, select_prim, pair_select_jaxpr, pair_select_consts,
-    window_dimensions, window_strides, padding):
+    t, tangents, operand, select_prim, window_dimensions, window_strides,
+    padding):
   assert tangents is None and operand is not None
   result = _select_and_scatter_add(t, operand, select_prim, window_dimensions,
                                    window_strides, padding)
@@ -2637,9 +2640,10 @@ class FilledConstant(xla.DeviceConstant):
     return onp.full(self.shape, self.fill_value)
 
   @staticmethod
-  def constant_handler(c, filled_const):
-    return c.Broadcast(c.NumpyArrayConstant(filled_const.fill_value),
-                       filled_const.shape)
+  def constant_handler(c, filled_const, canonicalize_types=True):
+    return c.Broadcast(
+      c.NumpyArrayConstant(filled_const.fill_value, canonicalize_types),
+      filled_const.shape)
 
 
 class IotaConstant(xla.DeviceConstant):
@@ -2664,9 +2668,11 @@ class IotaConstant(xla.DeviceConstant):
     return self._npy_value
 
   @staticmethod
-  def constant_handler(c, iota_constant):
-    return c.BroadcastedIota(iota_constant.dtype, iota_constant.shape,
-                             iota_constant.axis)
+  def constant_handler(c, iota_constant, canonicalize_types=True):
+    dtype = iota_constant.dtype
+    if canonicalize_types:
+      dtype = xla_bridge.canonicalize_dtype(dtype)
+    return c.BroadcastedIota(dtype, iota_constant.shape, iota_constant.axis)
 
 
 class EyeConstant(xla.DeviceConstant):
@@ -2693,7 +2699,11 @@ class EyeConstant(xla.DeviceConstant):
     return self._npy_value
 
   @staticmethod
-  def constant_handler(c, diag_const):
+  def constant_handler(c, diag_const, canonicalize_types=True):
+    if canonicalize_types:
+      etype = xla_bridge.dtype_to_etype(diag_const.dtype)
+    else:
+      etype = xla_bridge.dtype_to_etype_exact(diag_const.dtype)
     etype = xla_bridge.dtype_to_etype(diag_const.dtype)
     iotas = [c.BroadcastedIota(onp.bool_, diag_const.shape, axis)
              for axis in diag_const.axes]
