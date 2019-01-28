@@ -34,6 +34,7 @@ from jax.util import partial, curry
 from jax.config import config
 config.parse_flags_with_absl()
 
+
 class BatchingTest(jtu.JaxTestCase):
 
   def testConstantFunction(self):

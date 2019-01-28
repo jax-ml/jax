@@ -131,7 +131,13 @@ class BatchTrace(Trace):
       return BatchTracer(self, val_out, dim_out())
 
   def post_process_call(self, _, out_tracer):
-    raise NotImplementedError  # TODO(mattjj,dougalm)
+    val, dim = out_tracer.val, out_tracer.batch_dim
+    master = self.master
+    def todo(x):
+      trace = BatchTrace(master, core.cur_sublevel())
+      return BatchTracer(trace, val, dim)
+
+    return val, todo
 
   def pack(self, tracers):
     vals = pack([t.val for t in tracers])
@@ -221,14 +227,14 @@ def broadcast_batcher(prim, batched_args, batch_dims, **params):
 def defreducer(prim):
   primitive_batchers[prim] = partial(reducer_batcher, prim)
 
-def reducer_batcher(prim, batched_args, batch_dims, axes, **kwargs):
+def reducer_batcher(prim, batched_args, batch_dims, axes, **params):
   operand, = batched_args
   bdim, = batch_dims
   axes = tuple(onp.where(onp.less(axes, bdim), axes, onp.add(axes, 1)))
   bdim_out = list(onp.delete(onp.arange(operand.ndim), axes)).index(bdim)
-  if 'input_shape' in kwargs:
-    kwargs['input_shape'] = operand.shape
-  return prim.bind(operand, axes=axes, **kwargs), bdim_out
+  if 'input_shape' in params:
+    params = dict(params, input_shape=operand.shape)
+  return prim.bind(operand, axes=axes, **params), bdim_out
 
 # set up primitive batches for ad_util primitives
 

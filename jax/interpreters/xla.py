@@ -29,6 +29,7 @@ from six.moves import xrange
 from ..config import flags
 from .. import core
 from .. import ad_util
+from .. import tree_util
 from ..abstract_arrays import ConcreteArray, ShapedArray, make_shaped_array, array_types
 from ..core import AbstractTuple, JaxTuple, pack, valid_jaxtype
 from ..util import partial, partialmethod, memoize, unzip2, concatenate, safe_map, prod
@@ -73,10 +74,11 @@ def aval_from_xla_shape(shape):
   return ShapedArray(shape.dimensions(), shape.element_type())
 
 def execute_compiled_primitive(compiled, result_handler, *args):
-  input_bufs = [device_put(canonicalize_pyval_dtype(x)) for x in args]
+  input_bufs = [device_put(x) for x in args]
   return result_handler(compiled.Execute(input_bufs, not core.skip_checks))
 
 def device_put(x):
+  x = canonicalize_pyval_dtype(x)
   if type(x) is DeviceArray:
     return x.device_buffer
   elif isinstance(x, DeviceConstant):
@@ -366,6 +368,7 @@ def xla_shape(x):
 # instead, for values returned to the user, always destructure tuples.
 # The code here is similar to that in tree_util, but is meant to flatten
 # JaxTuple trees only.
+# TODO(mattjj): since pjit does flattening in api.py, can move/de-duplicate this
 
 @transformation_with_aux
 def flatten_fun(in_trees, *flat_args):
@@ -417,25 +420,28 @@ def xla_call_impl(fun, *args):
 
 @linear_memoize
 def xla_callable(fun, *abstract_args):
+  pvals = [PartialVal((aval, core.unit)) for aval in abstract_args]
   with core.new_master(JaxprTrace, True) as master:
-    pvals = [PartialVal((aval, core.unit)) for aval in abstract_args]
     jaxpr, (pval, consts, env) = trace_to_subjaxpr(fun, master).call_wrapped(pvals)
     assert not env  # no subtraces here (though cond might eventually need them)
     compiled, result_shape = compile_jaxpr(jaxpr, consts, *abstract_args)
-    del master, pvals, consts, jaxpr, env
-    handle_result = result_handler(result_shape)
-    return partial(execute_compiled, compiled, pval, handle_result)
+    del master, consts, jaxpr, env
+  handle_result = result_handler(result_shape)
+  return partial(execute_compiled, compiled, pval, handle_result)
 
 def execute_compiled(compiled, pval, handle_result, *args):
-  input_bufs = [device_put(canonicalize_pyval_dtype(x)) for x in args]
+  input_bufs = [device_put(x) for x in args]
   out_buf = compiled.Execute(input_bufs, not core.skip_checks)
   return merge_pvals(handle_result(out_buf), pval)
 
+
+def xla_call_translation_rule(c, subc_a1, *a2):
+  subc, a1 = subc_a1
+  return c.Call(subc, a1 + a2)
 
 xla_call_p = core.Primitive('xla_call')
 xla_call = partial(core.call_bind, xla_call_p)
 xla_call_p.def_custom_bind(xla_call)
 xla_call_p.def_impl(xla_call_impl)
 
-translations[xla_call_p] = lambda c, subc_a1, *a2: c.Call(subc_a1[0],
-                                                          subc_a1[1] + a2)
+translations[xla_call_p] = xla_call_translation_rule
