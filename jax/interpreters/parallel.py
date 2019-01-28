@@ -184,7 +184,7 @@ def psum_pmap_rule(val, axis):
   return val.sum(axis), None
 
 def psum_parallel_translation_rule(c, val, device_groups):
-  # return c.CrossReplicaSum(val, device_grp)  # TODO
+  # return c.CrossReplicaSum(val, device_grp)  # TODO needs updated jaxlib
   return c.CrossReplicaSum(val)
 
 psum_p = PmapPrimitive('psum')
@@ -228,7 +228,11 @@ class SplitTracer(Tracer):
     return core.get_aval(self.val)
 
   def unpack(self):
-    raise NotImplementedError  # TODO(mattjj)
+    if self.name is None:
+      return self.full_lower()
+    else:
+      elt_tracer = partial(SplitTracer, self.trace, self.name, self.new_names)
+      return map(elt_tracer, self.val)
 
   def full_lower(self):
     if self.name is None:
@@ -344,7 +348,7 @@ class PapplyTracer(Tracer):
     return batching.get_aval(self.val)
 
   def unpack(self):
-    raise NotImplementedError  # TODO
+    raise NotImplementedError  # TODO(mattjj,frostig)
 
   def full_lower(self):
     if self.axis is None:
@@ -373,10 +377,10 @@ class PapplyTrace(Trace):
       return PapplyTracer(self, name, val_out, axis_out)
 
   def process_call(self, call_primitive, f, tracers, params):
-    raise NotImplementedError  # TODO(mattjj)
+    raise NotImplementedError  # TODO(mattjj,frostig)
 
   def post_process_call(self, _, out_tracer):
-    raise NotImplementedError  # TODO(mattjj)
+    raise NotImplementedError  # TODO(mattjj,frostig)
 
   def pack(self, tracers):
     vals = core.pack([t.val for t in tracers])

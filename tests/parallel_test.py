@@ -23,7 +23,7 @@ from absl.testing import parameterized
 import jax.numpy as np
 from jax import test_util as jtu
 from jax import lax
-from jax.api import pmap, papply, jit, make_jaxpr, axisvar_split, chunk
+from jax.api import pmap, papply, jit, make_jaxpr, axisvar_split
 from jax.linear_util import wrap_init
 from jax.interpreters.parallel import psum, scatter_like
 
@@ -132,14 +132,6 @@ class SplitTest(jtu.JaxTestCase):
     fsplit = axisvar_split(f, 'i', ('j', 'k'))
     ans = pmap(pmap(fsplit, 'j'), 'k')(x)
     expected = onp.sum(onp.sin(x))
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-  def testChunkingSum(self):
-    f = lambda x: x - psum(x, 'i')
-    x = onp.ones((4, 2))
-    fchunked = chunk(f, 'i', 2)
-    ans = pmap(fchunked, 'i')(x)
-    expected = pmap(f, 'i')(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
 
