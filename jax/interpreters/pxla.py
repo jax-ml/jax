@@ -32,10 +32,11 @@ from .. import tree_util
 from .. import linear_util as lu
 from ..abstract_arrays import ShapedArray
 from ..util import partial, unzip2, concatenate, safe_map, prod
+from ..tree_util import leaf
 from ..lib import xla_bridge as xb
 from .xla import (flatten_fun, tree_flatten, build_tree, xla_shape,
                   xla_destructure, translation_rule, abstractify,
-                  xla_shape_to_result_shape, leaf, JTupleTreeDef)
+                  xla_shape_to_result_shape)
 from .partial_eval import trace_to_subjaxpr, merge_pvals, JaxprTrace, PartialVal
 from .parallel import parallel_translation_rules
 from .batching import moveaxis
@@ -73,35 +74,32 @@ def chunk_aval(chunksize, aval, axis):
     shape[axis] = chunksize
     return ShapedArray(tuple(shape), aval.dtype)
 
-def canonicalize_in_axis_spec(in_trees, spec):
+def canonicalize_in_axis_spec(in_tree, spec_tree_prefix):
   """Given argument list in_trees, canonicalize and flatten an in_axes spec."""
-  spec = (spec,) * len(in_trees) if type(spec) is int else spec
-  spec = map(build_axis_spec_tree, spec, in_trees)
-  return tuple(tree_util.tree_flatten(spec)[0])
+  spec_tree = build_axis_spec_tree(spec_tree_prefix, in_tree)
+  return tuple(tree_util.tree_flatten(spec_tree)[0])
 
-def canonicalize_out_axis_spec(out_tree, spec):
+def canonicalize_out_axis_spec(out_tree, spec_tree_prefix):
   """Given output out_tree, canonicalize and flatten an out_axes spec."""
   if out_tree is leaf:
-    return spec
+    return spec_tree_prefix
   else:
-    spec = build_axis_spec_tree(spec, out_tree)
+    spec_tree = build_axis_spec_tree(spec_tree_prefix, out_tree)
     return tuple(tree_util.tree_flatten(spec)[0])
 
-def build_axis_spec_tree(spec, tree):
-  """Given a JaxTuple treedef, canonicalize an axis spec for that tree."""
-  if tree is leaf:
+def build_axis_spec_tree(spec, treedef):
+  """Given a JaxTuple treedef, canonicalize an axis spec for that treedef."""
+  if treedef is leaf:
     assert type(spec) is int
     return spec
-  elif type(tree) is JTupleTreeDef:
+  else:
     spec_type = type(spec)
     if spec_type is int:
-      return tuple(map(partial(build_axis_spec_tree, spec), tree.child_specs))
+      return tuple(map(partial(build_axis_spec_tree, spec), treedef.children))
     elif spec_type is tuple:
-      return tuple(map(build_axis_spec_tree, spec, tree.child_specs))
+      return tuple(map(build_axis_spec_tree, spec, treedef.children))
     else:
       raise TypeError(spec_type)
-  else:
-    raise TypeError(type(tree))
 
 def shard_arg(mesh_spec, mesh_axis, axis, arg):
   """Shard and device_put an input array argument along a logical axis."""
@@ -142,8 +140,10 @@ def split_array(x, num_splits, axis):
     return x[tuple(idx)]
   return map(get_nth_subarray, range(num_splits))
 
-def chunk_size(mesh_spec, mesh_axis, in_axes, abstract_args):
+def chunk_size(mesh_axis, in_axes, abstract_args):
   """Compute the chunk size for mapped axes, checking for errors."""
+  global mesh_spec
+  mesh_spec_ = mesh_spec or (xb.get_replica_count(),)
   axis_sizes = {arg.shape[axis] for arg, axis in zip(abstract_args, in_axes)
                 if axis is not None}
   if len(axis_sizes) == 0:
@@ -154,13 +154,13 @@ def chunk_size(mesh_spec, mesh_axis, in_axes, abstract_args):
     raise ValueError(msg.format(axis_name, axis_sizes))
   else:
     axis_size = axis_sizes.pop()
-    if axis_size % mesh_spec[mesh_axis]:
+    if axis_size % mesh_spec_[mesh_axis]:
       msg = ("axis name '{}' bound to input axis of size {} mapped to mesh "
              "axis index {} with size {}, which does not evenly divide {}.")
       raise ValueError(msg.format(axis_name, axis_size, mesh_axis,
-                                  mesh_spec[mesh_axis], axis_size))
+                                  mesh_spec_[mesh_axis], axis_size))
 
-  return axis_size // mesh_spec[mesh_axis]
+  return axis_size // mesh_spec_[mesh_axis]
 
 ### xla_pcall
 
@@ -215,30 +215,14 @@ def xla_pcall_impl(fun, *args, **params):
   global mesh_spec
   mesh_spec_ = mesh_spec or (xb.get_replica_count(),)
 
-  flat_args, in_trees = unzip2(map(tree_flatten, args))
-  flat_args = concatenate(flat_args)
-  fun, out_tree = flatten_fun(fun, in_trees)
-
-  abstract_args = map(abstractify, flat_args)
-  in_axes = canonicalize_in_axis_spec(in_trees, in_axes)
-  chunksize = chunk_size(mesh_spec_, mesh_axis, in_axes, abstract_args)
-  out_axes_thunk = lambda: canonicalize_out_axis_spec(out_tree(), out_axes)
-  fun = chunk_transform(fun, chunksize, axis_name, in_axes, out_axes_thunk)
-
   compiled_fun = xla_parallel_callable(fun, axis_name, in_axes, mesh_axis,
-                                       mesh_spec_, *abstract_args)
-  leaf_out = out_tree() is leaf
-  flat_ans = compiled_fun(leaf_out, out_axes_thunk(), *args)
-
-  if leaf_out:
-    return flat_ans
-  else:
-    return build_tree(iter(flat_ans), out_tree())
+                                       mesh_spec_, *map(abstractify, args))
+  return compiled_fun(out_axes(), *args)
 
 @lu.memoize
 def xla_parallel_callable(fun, axis_name, in_axes, mesh_axis, mesh_spec,
                           *abstract_args):
-  chunksize = chunk_size(mesh_spec, mesh_axis, in_axes, abstract_args)
+  chunksize = chunk_size(mesh_axis, in_axes, abstract_args)
   abstract_args = map(partial(chunk_aval, chunksize), abstract_args, in_axes)
   device_groups = replica_groups(mesh_spec, mesh_axis)
   pvals = [PartialVal((aval, core.unit)) for aval in abstract_args]
@@ -251,10 +235,10 @@ def xla_parallel_callable(fun, axis_name, in_axes, mesh_axis, mesh_spec,
   return partial(execute_replicated, in_axes, mesh_axis, mesh_spec, compiled, pval)
 
 def execute_replicated(in_axes, mesh_axis, mesh_spec, compiled, pval,
-                       leaf_out, out_axes, *args):
+                       out_axes, *args):
   input_bufs = map(partial(shard_arg, mesh_spec, mesh_axis), in_axes, args)
   out_bufs = compiled.ExecutePerReplica(zip(*input_bufs))
-  if leaf_out:
+  if True:  # TODO
     # TODO device persistence
     out_shards = [merge_pvals(out_buf.to_py(), pval) for out_buf in out_bufs]
     return unshard_output(mesh_spec, mesh_axis, out_axes, out_shards)

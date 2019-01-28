@@ -32,8 +32,8 @@ import numpy as onp
 from . import core
 from . import linear_util as lu
 from .core import pack, eval_jaxpr
-from .api_util import (pytree_fun_to_jaxtupletree_fun, apply_jaxtree_fun,
-                       pytree_to_jaxtupletree, wraps)
+from .api_util import (pytree_fun_to_jaxtupletree_fun, pytree_to_jaxtupletree,
+                       pytree_fun_to_flatjaxtuple_fun, apply_jaxtree_fun, wraps)
 from .tree_util import (process_pytree, node_types, build_tree, PyTreeDef,
                         tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose)
@@ -258,19 +258,20 @@ def vmap(fun, in_axes=0, out_axes=0):
   return batched_fun
 
 
-def pjit(fun, axis_name, in_axes=0, out_axes=0, mesh_axis=0, static_argnums=()):
+def pjit(fun, axis_name, in_axes=0, out_axes=0, mesh_axis=0):
   """Set up SPMD function for JIT compilation and parallel execution with XLA."""
   @wraps(fun)
   def f_jitted(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
-    dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
-    f, dyn_args = argnums_partial(f, dyn_argnums, args)
-    args_flat, in_trees = unzip2(map(pytree_to_jaxtupletree, dyn_args))
-    check_args(args_flat)
-    jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(f, in_trees)
-    out_flat = pxla.xla_pcall(jaxtree_fun, *args_flat,
-                              axis_name=axis_name, in_axes=in_axes,
-                              out_axes=out_axes, mesh_axis=mesh_axis)
+    args_flat, in_tree = tree_flatten(args)
+    f, out_tree = pytree_fun_to_flatjaxtuple_fun(f, in_tree)
+    in_axes_ = pxla.canonicalize_in_axis_spec(in_tree, in_axes)
+    out_axes_ = lambda: pxla.canonicalize_out_axis_spec(out_tree(), out_axes)
+    chunksize = pxla.chunk_size(mesh_axis, in_axes_, args_flat)
+    f = pxla.chunk_transform(f, chunksize, axis_name, in_axes_, out_axes_)
+    out_flat = pxla.xla_pcall(f, *args_flat, axis_name=axis_name,
+                              in_axes=in_axes_, out_axes=out_axes_,
+                              mesh_axis=mesh_axis)
     return build_tree(out_tree(), out_flat)
 
   f_jitted.__name__ = "pjit({})".format(f_jitted.__name__)
