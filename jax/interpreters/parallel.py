@@ -184,8 +184,10 @@ def psum_pmap_rule(val, axis):
   return val.sum(axis), None
 
 def psum_parallel_translation_rule(c, val, device_groups):
-  # return c.CrossReplicaSum(val, device_grp)  # TODO needs updated jaxlib
-  return c.CrossReplicaSum(val)
+  if len(device_groups) > 1:
+    return c.CrossReplicaSum(val, device_groups)
+  else:
+    return c.CrossReplicaSum(val)
 
 psum_p = PmapPrimitive('psum')
 pmap_primitive_rules[psum_p] = psum_pmap_rule

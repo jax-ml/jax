@@ -129,7 +129,8 @@ def replica_groups(mesh_spec, mesh_axis):
   """Given a mesh axis along which to operate, compute XLA replica_groups."""
   groups = onp.split(onp.arange(prod(mesh_spec)).reshape(mesh_spec),
                      mesh_spec[mesh_axis], axis=mesh_axis)
-  return tuple(tuple(group.ravel()) for group in groups)
+  groups = map(onp.ravel, groups)
+  return tuple(tuple(group) for group in zip(*groups))
 
 def split_array(x, num_splits, axis):
   """A special-case of numpy.split implemented in terms of indexing."""
