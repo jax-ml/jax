@@ -36,7 +36,7 @@ from .api_util import (pytree_fun_to_jaxtupletree_fun, pytree_to_jaxtupletree,
                        pytree_fun_to_flatjaxtuple_fun, apply_jaxtree_fun, wraps)
 from .tree_util import (process_pytree, node_types, build_tree, PyTreeDef,
                         tree_map, tree_flatten, tree_unflatten, tree_structure,
-                        tree_transpose)
+                        tree_transpose, leaf)
 from .util import (unzip2, unzip3, curry, partial, safe_map, safe_zip,
                    WrapHashably, prod)
 from .lib.xla_bridge import canonicalize_dtype
@@ -272,7 +272,7 @@ def pjit(fun, axis_name, in_axes=0, out_axes=0, mesh_axis=0):
     out_flat = pxla.xla_pcall(f, *args_flat, axis_name=axis_name,
                               in_axes=in_axes_, out_axes=out_axes_,
                               mesh_axis=mesh_axis)
-    if out_tree() is None:
+    if out_tree() is leaf:
       return out_flat
     else:
       return build_tree(out_tree(), out_flat)
