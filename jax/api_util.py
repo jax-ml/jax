@@ -17,7 +17,8 @@ from __future__ import division
 from __future__ import print_function
 
 from .core import pack
-from .tree_util import build_tree, process_pytree
+from .tree_util import (build_tree, process_pytree, tree_flatten,
+                        tree_unflatten, leaf)
 from .linear_util import transformation_with_aux
 from .util import safe_map, unzip2, partial, curry
 
@@ -39,10 +40,10 @@ def get_doc(fun): return getattr(fun, "__doc__", "")
 
 
 @transformation_with_aux
-def pytree_fun_to_jaxtupletree_fun(in_trees, *args, **kwargs):
+def pytree_fun_to_jaxtupletree_fun(in_trees, *args):
   py_args = map(build_tree, in_trees, args)
   ans = yield py_args
-  yield process_pytree(pack, ans)
+  yield pytree_to_jaxtupletree(ans)
 
 def apply_jaxtree_fun(fun, io_tree, *py_args):
   in_trees_expected, out_tree = io_tree
@@ -55,3 +56,17 @@ def apply_jaxtree_fun(fun, io_tree, *py_args):
   return build_tree(out_tree, ans)
 
 pytree_to_jaxtupletree = partial(process_pytree, pack)
+
+
+@transformation_with_aux
+def pytree_fun_to_flatjaxtuple_fun(in_tree, *args):
+  py_args = tuple(tree_unflatten(in_tree, args))
+  ans = yield py_args
+  yield maybe_pytree_to_maybe_jaxtuple(ans)
+
+def maybe_pytree_to_maybe_jaxtuple(maybe_tree):
+  flat_ans, out_tree = tree_flatten(maybe_tree)
+  if out_tree is leaf:
+    return maybe_tree, leaf
+  else:
+    return pack(flat_ans), out_tree

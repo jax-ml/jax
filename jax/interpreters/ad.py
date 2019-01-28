@@ -164,7 +164,7 @@ class JVPTrace(Trace):
   def lift(self, val):
     return JVPTracer(self, val, zero)
 
-  def sublift(self,val):
+  def sublift(self, val):
     return JVPTracer(self, val.primal, val.tangent)
 
   def process_primitive(self, primitive, tracers, params):
