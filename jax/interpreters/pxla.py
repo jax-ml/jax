@@ -82,7 +82,7 @@ def canonicalize_in_axis_spec(in_tree, spec_tree_prefix):
 
 def canonicalize_out_axis_spec(out_tree, spec_tree_prefix):
   """Given output out_tree, canonicalize and flatten an out_axes spec."""
-  if out_tree is None:
+  if out_tree is leaf:
     return spec_tree_prefix
   else:
     spec_tree = build_axis_spec_tree(spec_tree_prefix, out_tree)

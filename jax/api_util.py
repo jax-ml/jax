@@ -67,6 +67,6 @@ def pytree_fun_to_flatjaxtuple_fun(in_tree, *args):
 def maybe_pytree_to_maybe_jaxtuple(maybe_tree):
   flat_ans, out_tree = tree_flatten(maybe_tree)
   if out_tree is leaf:
-    return maybe_tree, None
+    return maybe_tree, leaf
   else:
     return pack(flat_ans), out_tree
