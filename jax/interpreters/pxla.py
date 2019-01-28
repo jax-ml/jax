@@ -18,6 +18,7 @@ from __future__ import print_function
 
 from collections import namedtuple, defaultdict
 from distutils.util import strtobool
+from contextlib import contextmanager
 import itertools as it
 import operator as op
 import os
@@ -81,7 +82,7 @@ def canonicalize_in_axis_spec(in_tree, spec_tree_prefix):
 
 def canonicalize_out_axis_spec(out_tree, spec_tree_prefix):
   """Given output out_tree, canonicalize and flatten an out_axes spec."""
-  if out_tree is leaf:
+  if out_tree is None:
     return spec_tree_prefix
   else:
     spec_tree = build_axis_spec_tree(spec_tree_prefix, out_tree)
@@ -143,7 +144,6 @@ def split_array(x, num_splits, axis):
 def chunk_size(mesh_axis, in_axes, abstract_args):
   """Compute the chunk size for mapped axes, checking for errors."""
   global mesh_spec
-  mesh_spec_ = mesh_spec or (xb.get_replica_count(),)
   axis_sizes = {arg.shape[axis] for arg, axis in zip(abstract_args, in_axes)
                 if axis is not None}
   if len(axis_sizes) == 0:
@@ -154,13 +154,27 @@ def chunk_size(mesh_axis, in_axes, abstract_args):
     raise ValueError(msg.format(axis_name, axis_sizes))
   else:
     axis_size = axis_sizes.pop()
-    if axis_size % mesh_spec_[mesh_axis]:
+    if axis_size % mesh_spec()[mesh_axis]:
       msg = ("axis name '{}' bound to input axis of size {} mapped to mesh "
              "axis index {} with size {}, which does not evenly divide {}.")
       raise ValueError(msg.format(axis_name, axis_size, mesh_axis,
-                                  mesh_spec_[mesh_axis], axis_size))
+                                  mesh_spec()[mesh_axis], axis_size))
 
-  return axis_size // mesh_spec_[mesh_axis]
+  return axis_size // mesh_spec()[mesh_axis]
+
+
+def mesh_spec():
+  global _mesh_spec
+  return _mesh_spec or (xb.get_replica_count(),)
+_mesh_spec = None
+
+@contextmanager
+def device_mesh(spec):
+  global _mesh_spec
+  _mesh_spec, prev_spec = spec, _mesh_spec
+  yield
+  _mesh_spec = prev_spec
+
 
 ### xla_pcall
 
@@ -212,11 +226,8 @@ def xla_pcall_impl(fun, *args, **params):
   mesh_axis = params.pop('mesh_axis')  # e.g. 0 or 1
   assert not params
 
-  global mesh_spec
-  mesh_spec_ = mesh_spec or (xb.get_replica_count(),)
-
   compiled_fun = xla_parallel_callable(fun, axis_name, in_axes, mesh_axis,
-                                       mesh_spec_, *map(abstractify, args))
+                                       mesh_spec(), *map(abstractify, args))
   return compiled_fun(out_axes(), *args)
 
 @lu.memoize
