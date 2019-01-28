@@ -155,7 +155,7 @@ class PmapTrace(Trace):
     return val, todo
 
   def pack(self, tracers):
-    vals = pack([t.val for t in tracers])
+    vals = core.pack([t.val for t in tracers])
     axis = tuple(t.axis for t in tracers)
     name = next(t.name for t in tracers if t.name)
     return PmapTracer(self, name, vals, axis)
@@ -290,7 +290,7 @@ class SplitTrace(Trace):
     return val, todo
 
   def pack(self, tracers):
-    vals = pack([t.val for t in tracers])
+    vals = core.pack([t.val for t in tracers])
     name = next(t.name for t in tracers if t.name is not None)
     new_names = next(t.new_names for t in tracers if t.name is not None)
     return SplitTracer(self, name, new_names, vals)
