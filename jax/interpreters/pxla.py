@@ -86,7 +86,7 @@ def canonicalize_out_axis_spec(out_tree, spec_tree_prefix):
     return spec_tree_prefix
   else:
     spec_tree = build_axis_spec_tree(spec_tree_prefix, out_tree)
-    return tuple(tree_util.tree_flatten(spec)[0])
+    return tuple(tree_util.tree_flatten(spec_tree)[0])
 
 def build_axis_spec_tree(spec, treedef):
   """Given a JaxTuple treedef, canonicalize an axis spec for that treedef."""
@@ -249,12 +249,12 @@ def execute_replicated(in_axes, mesh_axis, mesh_spec, compiled, pval,
                        out_axes, *args):
   input_bufs = map(partial(shard_arg, mesh_spec, mesh_axis), in_axes, args)
   out_bufs = compiled.ExecutePerReplica(zip(*input_bufs))
-  if True:  # TODO
-    # TODO device persistence
-    out_shards = [merge_pvals(out_buf.to_py(), pval) for out_buf in out_bufs]
+  out_shards = [merge_pvals(buf.to_py(), pval) for buf in out_bufs]  # TODO
+  if type(out_axes) is int:
     return unshard_output(mesh_spec, mesh_axis, out_axes, out_shards)
   else:
-    raise NotImplementedError  # TODO zip*
+    return map(partial(unshard_output, mesh_spec, mesh_axis), out_axes,
+               zip(*out_shards))
 
 
 xla_pcall_p = core.Primitive('xla_pcall')
