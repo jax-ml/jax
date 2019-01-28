@@ -149,8 +149,7 @@ JAX_REDUCER_RECORDS = [
     op_record("prod", 1, number_dtypes, all_shapes, jtu.rand_small_positive(), []),
     op_record("sum", 1, number_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("var", 1, number_dtypes, nonempty_shapes, jtu.rand_default(), []),
-    # TODO(phawkins): test inexact_dtypes for std after a jaxlib release.
-    op_record("std", 1, float_dtypes, nonempty_shapes, jtu.rand_default(), []),
+    op_record("std", 1, inexact_dtypes, nonempty_shapes, jtu.rand_default(), []),
 ]
 
 JAX_REDUCER_NO_DTYPE_RECORDS = [
