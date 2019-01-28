@@ -45,10 +45,8 @@ def float_types():
              for dtype in [onp.float32, onp.float64])
 
 def complex_types():
-  return {onp.complex64}
-  # TODO(phawkins): change to the following after another jaxlib release.
-  #return set(onp.dtype(xla_bridge.canonicalize_dtype(dtype))
-  #           for dtype in [onp.complex64, onp.complex128])
+  return set(onp.dtype(xla_bridge.canonicalize_dtype(dtype))
+             for dtype in [onp.complex64, onp.complex128])
 
 
 class NumpyLinalgTest(jtu.JaxTestCase):
@@ -304,9 +302,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       for rng in [jtu.rand_default()]))
   @jtu.skip_on_devices("gpu", "tpu")
   def testLu(self, shape, dtype, rng):
-    # TODO(phawkins): remove this after a jaxlib release.
-    if not hasattr(lapack, "jax_getrf"):
-      self.skipTest("No LU implementation available")
     args_maker = lambda: [rng(shape, dtype)]
 
     self._CheckAgainstNumpy(jsp.linalg.lu, osp.linalg.lu, args_maker,
@@ -323,9 +318,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   # TODO(phawkins): enable when there is an LU implementation for GPU/TPU.
   @jtu.skip_on_devices("gpu", "tpu")
   def testLuGrad(self, shape, dtype, rng):
-    # TODO(phawkins): remove this after a jaxlib release.
-    if not hasattr(lapack, "jax_getrf"):
-      self.skipTest("No LU implementation available")
     a = rng(shape, dtype)
 
     jtu.check_grads(jsp.linalg.lu, (a,), 2, rtol=1e-1)
@@ -341,9 +333,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       for rng in [jtu.rand_default()]))
   @jtu.skip_on_devices("gpu", "tpu")
   def testLuFactor(self, n, dtype, rng):
-    # TODO(phawkins): remove this after a jaxlib release.
-    if not hasattr(lapack, "jax_getrf"):
-      self.skipTest("No LU implementation available")
     args_maker = lambda: [rng((n, n), dtype)]
 
     self._CheckAgainstNumpy(jsp.linalg.lu_factor, osp.linalg.lu_factor,
