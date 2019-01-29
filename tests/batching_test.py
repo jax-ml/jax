@@ -366,7 +366,94 @@ class BatchingTest(jtu.JaxTestCase):
     self.assertAllClose(sk, k[:, ::-1], check_dtypes=True)
     self.assertAllClose(sv, onp.broadcast_to(v[0, ::-1], (3, 4)),
                         check_dtypes=True)
+  
+  def testConvGeneralDilated(self):
+    W = np.array(onp.random.randn(3, 3, 1, 5), dtype=onp.float32)
+    X = np.array(onp.random.randn(10, 5, 5, 1), dtype=onp.float32)
 
+    def f(params, x):
+      one = (1, 1)
+      dimension_numbers = ('NHWC', 'HWIO', 'NHWC')
+      y = lax.conv_general_dilated(
+          x, params, one, 'SAME', one, one, dimension_numbers)
+      return y
+    grad_loss = grad(lambda params, x: np.mean(f(params, x) ** 2))
+
+    # Test forward prop.
+    per_example = vmap(partial(f, W))(np.reshape(X, (10, 1, 5, 5, 1)))
+    per_example = np.reshape(per_example, (10, 5, 5, 5))
+    per_example_direct = f(W, X)
+    self.assertAllClose(per_example, per_example_direct, check_dtypes=True)
+
+    # Test gradients.
+    per_example = vmap(partial(grad_loss, W))(np.reshape(X, (10, 1, 5, 5, 1)))
+    per_example_direct = []
+    for i in range(10):
+      g = grad_loss(W, np.reshape(X[i], (1, 5, 5, 1)))
+      per_example_direct += [
+          np.reshape(g, (1,) + g.shape)]
+    per_example_direct = np.concatenate(per_example_direct, axis=0)
+    self.assertAllClose(per_example, per_example_direct, check_dtypes=True)
+
+  def testMaxPool(self):
+    W = np.array(onp.random.randn(3, 3, 1, 5), dtype=onp.float32)
+    X = np.array(onp.random.randn(10, 5, 5, 1), dtype=onp.float32)
+
+    def f(params, x):
+      one = (1, 1)
+      dimension_numbers = ('NHWC', 'HWIO', 'NHWC')
+      y = lax.conv_general_dilated(
+          x, params, one, 'SAME', one, one, dimension_numbers)
+      y = lax.reduce_window(
+          y, -np.inf, lax.max, (1, 2, 2, 1), (1, 1, 1, 1), 'SAME')
+      return y
+    grad_loss = grad(lambda params, x: np.mean(f(params, x) ** 2))
+
+    # Test forward prop.
+    per_example = vmap(partial(f, W))(np.reshape(X, (10, 1, 5, 5, 1)))
+    per_example = np.reshape(per_example, (10, 5, 5, 5))
+    per_example_direct = f(W, X)
+    self.assertAllClose(per_example, per_example_direct, check_dtypes=True)
+
+    # Test gradients.
+    per_example = vmap(partial(grad_loss, W))(np.reshape(X, (10, 1, 5, 5, 1)))
+    per_example_direct = []
+    for i in range(10):
+      g = grad_loss(W, np.reshape(X[i], (1, 5, 5, 1)))
+      per_example_direct += [
+          np.reshape(g, (1,) + g.shape)]
+    per_example_direct = np.concatenate(per_example_direct, axis=0)
+    self.assertAllClose(per_example, per_example_direct, check_dtypes=True)
+
+  def testSumPool(self):
+    W = np.array(onp.random.randn(3, 3, 1, 5), dtype=onp.float32)
+    X = np.array(onp.random.randn(10, 5, 5, 1), dtype=onp.float32)
+
+    def f(params, x):
+      one = (1, 1)
+      dimension_numbers = ('NHWC', 'HWIO', 'NHWC')
+      y = lax.conv_general_dilated(
+          x, params, one, 'SAME', one, one, dimension_numbers)
+      y = lax.reduce_window(
+          y, 0.0, lax.add, (1, 2, 2, 1), (1, 1, 1, 1), 'SAME')
+      return y
+    grad_loss = grad(lambda params, x: np.mean(f(params, x) ** 2))
+
+    # Test forward prop.
+    per_example = vmap(partial(f, W))(np.reshape(X, (10, 1, 5, 5, 1)))
+    per_example = np.reshape(per_example, (10, 5, 5, 5))
+    per_example_direct = f(W, X)
+    self.assertAllClose(per_example, per_example_direct, check_dtypes=True)
+
+    # Test gradients.
+    per_example = vmap(partial(grad_loss, W))(np.reshape(X, (10, 1, 5, 5, 1)))
+    per_example_direct = []
+    for i in range(10):
+      g = grad_loss(W, np.reshape(X[i], (1, 5, 5, 1)))
+      per_example_direct += [
+          np.reshape(g, (1,) + g.shape)]
+    per_example_direct = np.concatenate(per_example_direct, axis=0)
+    self.assertAllClose(per_example, per_example_direct, check_dtypes=True)
 
 if __name__ == '__main__':
   absltest.main()
