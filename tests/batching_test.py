@@ -379,9 +379,6 @@ class BatchingTest(jtu.JaxTestCase):
       return y
     grad_loss = grad(lambda params, x: np.mean(f(params, x) ** 2))
 
-    # NOTE(schsam): We have to do this reshape thing because the current
-    # implementation of conv general expects a 4d-matrix.
-
     # Test forward prop.
     per_example = vmap(partial(f, W))(np.reshape(X, (10, 1, 5, 5, 1)))
     per_example = np.reshape(per_example, (10, 5, 5, 5))
