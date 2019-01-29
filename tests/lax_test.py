@@ -1289,7 +1289,7 @@ class LaxTest(jtu.JaxTestCase):
 
     sum_squares_jit = api.jit(sum_squares)
 
-    xs = np.array([1, 2, 3, 4])
+    xs = onp.array([1, 2, 3, 4])
     self.assertEqual(sum_squares(xs[:1]), 1)
     self.assertEqual(sum_squares(xs[:1]), sum_squares_jit(xs[:1]))
     self.assertEqual(sum_squares(xs[:2]), 5)
