@@ -11,3 +11,4 @@
 .DS_Store
 build/
 dist/
+.mypy_cache/

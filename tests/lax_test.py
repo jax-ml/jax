@@ -1281,6 +1281,24 @@ class LaxTest(jtu.JaxTestCase):
       self.assertAllClose(cfun(x, num), onp.sum(x[:num]), check_dtypes=False)
       self.assertAllClose(cfun(x, num), onp.sum(x[:num]), check_dtypes=False)
 
+  def testForeachLoopBasic(self):
+    def sum_squares(xs):
+        def body_fun(x, y):
+            return y + x * x
+        return lax.foreach_loop(xs, body_fun, 0)
+
+    sum_squares_jit = api.jit(sum_squares)
+
+    xs = onp.array([1, 2, 3, 4])
+    self.assertEqual(sum_squares(xs[:1]), 1)
+    self.assertEqual(sum_squares(xs[:1]), sum_squares_jit(xs[:1]))
+    self.assertEqual(sum_squares(xs[:2]), 5)
+    self.assertEqual(sum_squares(xs[:2]), sum_squares_jit(xs[:2]))
+    self.assertEqual(sum_squares(xs[:3]), 14)
+    self.assertEqual(sum_squares(xs[:3]), sum_squares_jit(xs[:3]))
+    self.assertEqual(sum_squares(xs[:4]), 30)
+    self.assertEqual(sum_squares(xs[:4]), sum_squares_jit(xs[:4]))
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_lhs_shape={}_rhs_shape={}"
        .format(jtu.format_shape_dtype_string(lhs_shape, dtype),

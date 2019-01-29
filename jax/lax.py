@@ -622,7 +622,7 @@ def foreach_loop(sequence, body_fun, init_val):
   """
   _, result = fori_loop(
       0, len(sequence),
-      lambda i, seq_val: body_fun(seq_val[0][i], seq_val[1]),
+      lambda i, seq_val: (seq_val[0], body_fun(seq_val[0][i], seq_val[1])),
       (sequence, init_val))
   return result
 
