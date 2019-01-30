@@ -266,7 +266,7 @@ def pjit(fun, axis_name, in_axes=0, out_axes=0, mesh_axis=0):
     args_flat, in_tree = tree_flatten(args)
     f, out_tree = pytree_fun_to_flatjaxtuple_fun(f, in_tree)
     in_axes_ = pxla.canonicalize_in_axis_spec(in_tree, in_axes)
-    out_axes_ = lambda: pxla.canonicalize_out_axis_spec(out_tree(), out_axes)
+    out_axes_ = OutAxesThunk(out_tree, out_axes)  # for pretty-printing
     chunksize = pxla.chunk_size(mesh_axis, in_axes_, args_flat)
     f = pxla.chunk_transform(f, chunksize, axis_name, in_axes_, out_axes_)
     out_flat = pxla.xla_pcall(f, *args_flat, axis_name=axis_name,
@@ -279,6 +279,20 @@ def pjit(fun, axis_name, in_axes=0, out_axes=0, mesh_axis=0):
 
   f_jitted.__name__ = "pjit({})".format(f_jitted.__name__)
   return f_jitted
+
+class OutAxesThunk(object):
+  # This class is just used for its __repr__ method in pretty-printing jaxprs
+
+  def __init__(self, out_tree_thunk, out_axes):
+    self.out_tree_thunk = out_tree_thunk
+    self.out_axes = out_axes
+
+  def __call__(self):
+    out_tree = self.out_tree_thunk()
+    return pxla.canonicalize_out_axis_spec(out_tree, self.out_axes)
+
+  def __repr__(self):
+    return repr(self())
 
 
 def pmap(fun, axis_name, in_axes=0, out_axes=0):

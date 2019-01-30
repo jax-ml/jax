@@ -76,9 +76,9 @@ def chunk_aval(chunksize, aval, axis):
     return ShapedArray(tuple(shape), aval.dtype)
 
 def canonicalize_in_axis_spec(in_tree, spec_tree_prefix):
-  """Given argument list in_trees, canonicalize and flatten an in_axes spec."""
+  """Given argument list in_tree, canonicalize and flatten an in_axes spec."""
   spec_tree = build_axis_spec_tree(spec_tree_prefix, in_tree)
-  return tuple(tree_util.tree_flatten(spec_tree)[0])
+  return flatten_axis_spec_tree(spec_tree)
 
 def canonicalize_out_axis_spec(out_tree, spec_tree_prefix):
   """Given output out_tree, canonicalize and flatten an out_axes spec."""
@@ -86,21 +86,35 @@ def canonicalize_out_axis_spec(out_tree, spec_tree_prefix):
     return spec_tree_prefix
   else:
     spec_tree = build_axis_spec_tree(spec_tree_prefix, out_tree)
-    return tuple(tree_util.tree_flatten(spec_tree)[0])
+    return flatten_axis_spec_tree(spec_tree)
 
 def build_axis_spec_tree(spec, treedef):
-  """Given a JaxTuple treedef, canonicalize an axis spec for that treedef."""
+  """Given a tree_util treedef, canonicalize an axis spec for that treedef."""
+  spec_type = type(spec)
   if treedef is leaf:
-    assert type(spec) is int
-    return spec
+    if spec_type is int:
+      return spec
+    elif spec_type is type(None):
+      return no_mapped_axis
+    else:
+      raise TypeError(spec_type)
   else:
-    spec_type = type(spec)
     if spec_type is int:
       return tuple(map(partial(build_axis_spec_tree, spec), treedef.children))
     elif spec_type is tuple:
       return tuple(map(build_axis_spec_tree, spec, treedef.children))
     else:
       raise TypeError(spec_type)
+
+def flatten_axis_spec_tree(spec_tree):
+  """Flatten an axis spec tree and replace no_mapped_axis with None."""
+  spec_flat, _ = tree_util.tree_flatten(spec_tree)
+  return tuple(None if i is no_mapped_axis else i for i in spec_flat)
+
+# We use a special symbol for 'no mapped axis' instead of using None because
+# tree_util.py treats None as a tree node.
+class NoMappedAxis(object): pass
+no_mapped_axis = NoMappedAxis()
 
 def shard_arg(mesh_spec, mesh_axis, axis, arg):
   """Shard and device_put an input array argument along a logical axis."""
@@ -134,13 +148,16 @@ def replica_groups(mesh_spec, mesh_axis):
 
 def split_array(x, num_splits, axis):
   """A special-case of numpy.split implemented in terms of indexing."""
-  assert x.shape[axis] % num_splits == 0
-  split_size = x.shape[axis] // num_splits
-  def get_nth_subarray(n):
-    idx = [slice(None)] * x.ndim
-    idx[axis] = slice(n * split_size, (n+1) * split_size)
-    return x[tuple(idx)]
-  return map(get_nth_subarray, range(num_splits))
+  if axis is None:
+    return [x] * num_splits
+  else:
+    assert x.shape[axis] % num_splits == 0
+    split_size = x.shape[axis] // num_splits
+    def get_nth_subarray(n):
+      idx = [slice(None)] * x.ndim
+      idx[axis] = slice(n * split_size, (n+1) * split_size)
+      return x[tuple(idx)]
+    return map(get_nth_subarray, range(num_splits))
 
 def chunk_size(mesh_axis, in_axes, abstract_args):
   """Compute the chunk size for mapped axes, checking for errors."""
@@ -180,15 +197,14 @@ def device_mesh(spec):
 ### xla_pcall
 
 
-def compile_replicated(jaxpr, device_groups, consts, *abstract_args):
+def compile_replicated(jaxpr, axis_env, consts, *abstract_args):
   arg_shapes = list(map(xla_shape, abstract_args))
-  built_c = replicated_jaxpr_computation(jaxpr, device_groups, consts, (),
-                                         *arg_shapes)
+  built_c = replicated_jaxpr_computation(jaxpr, axis_env, consts, (), *arg_shapes)
   result_shape = xla_shape_to_result_shape(built_c.GetReturnValueShape())
   return built_c.Compile(arg_shapes, xb.get_compile_options()), result_shape
 
-def replicated_jaxpr_computation(jaxpr, device_groups,
-                                 const_vals, freevar_shapes, *arg_shapes):
+def replicated_jaxpr_computation(jaxpr, axis_env, const_vals, freevar_shapes,
+                                 *arg_shapes):
   c = xb.make_computation_builder("replicated_jaxpr_computation")
 
   def read(v):
@@ -208,11 +224,11 @@ def replicated_jaxpr_computation(jaxpr, device_groups,
     in_nodes = map(read, eqn.invars)
     if eqn.primitive in parallel_translation_rules:
       rule = parallel_translation_rules[eqn.primitive]
-      axis_name = eqn.params['axis_name']
+      device_groups = axis_env[eqn.params['axis_name']]  # TODO check var sharding
       params = {k: eqn.params[k] for k in eqn.params if k != 'axis_name'}
       ans = rule(c, *in_nodes, device_groups=device_groups, **params)
     else:
-      if eqn.bound_subjaxprs: raise NotImplementedError  # TODO check primitive
+      if eqn.bound_subjaxprs: raise NotImplementedError  # TODO check if pcall
       ans = translation_rule(eqn.primitive)(c, *in_nodes, **eqn.params)
 
     out_nodes = xla_destructure(c, ans) if eqn.destructure else [ans]
@@ -227,22 +243,24 @@ def xla_pcall_impl(fun, *args, **params):
   mesh_axis = params.pop('mesh_axis')  # e.g. 0 or 1
   assert not params
 
-  compiled_fun = xla_parallel_callable(fun, axis_name, in_axes, mesh_axis,
-                                       mesh_spec(), *map(abstractify, args))
-  return compiled_fun(out_axes(), *args)
+  if all(arg is core.unit for arg in args):
+    return fun.call_wrapped(*args)
+  else:
+    compiled_fun = xla_parallel_callable(fun, axis_name, in_axes, mesh_axis,
+                                         mesh_spec(), *map(abstractify, args))
+    return compiled_fun(out_axes(), *args)
 
 @lu.memoize
 def xla_parallel_callable(fun, axis_name, in_axes, mesh_axis, mesh_spec,
                           *abstract_args):
   chunksize = chunk_size(mesh_axis, in_axes, abstract_args)
   abstract_args = map(partial(chunk_aval, chunksize), abstract_args, in_axes)
-  device_groups = replica_groups(mesh_spec, mesh_axis)
+  axis_env = new_env({axis_name: replica_groups(mesh_spec, mesh_axis)})
   pvals = [PartialVal((aval, core.unit)) for aval in abstract_args]
   with core.new_master(JaxprTrace, True) as master:
     jaxpr, (pval, consts, env) = trace_to_subjaxpr(fun, master).call_wrapped(pvals)
     assert not env
-    compiled, result_shape = compile_replicated(jaxpr, device_groups,
-                                                consts, *abstract_args)
+    compiled, _ = compile_replicated(jaxpr, axis_env, consts, *abstract_args)
     del master, consts, jaxpr, env
   return partial(execute_replicated, in_axes, mesh_axis, mesh_spec, compiled, pval)
 
@@ -262,3 +280,30 @@ xla_pcall_p = core.Primitive('xla_pcall')
 xla_pcall = partial(core.call_bind, xla_pcall_p)
 xla_pcall_p.def_custom_bind(xla_pcall)
 xla_pcall_p.def_impl(xla_pcall_impl)
+
+
+
+def new_env(d):
+  return d
+
+def extend_env(d1, d2):
+  return dict(d1, **d2)
+
+
+# def new_env(d):
+#   return AxisEnv(d, {})
+
+# def extend_env(d1, d2):
+#   return AxisEnv(d1, d2)
+
+# class AxisEnv(dict):
+#   def __init__(self, d1, d2):
+#     self.update(d1)
+#     self.parent = d2
+
+#   def __missing__(self, key):
+#     return self.parent[key]
+
+#   def __repr__(self):
+#     flat = dict(self, **self.parent)
+#     return repr(flat)
