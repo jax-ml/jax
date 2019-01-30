@@ -37,11 +37,12 @@ from ..tree_util import leaf
 from ..lib import xla_bridge as xb
 from .xla import (flatten_fun, tree_flatten, build_tree, xla_shape,
                   xla_destructure, translation_rule, abstractify,
-                  xla_shape_to_result_shape)
+                  xla_shape_to_result_shape, jaxpr_computation)
 from .partial_eval import trace_to_subjaxpr, merge_pvals, JaxprTrace, PartialVal
 from .parallel import parallel_translation_rules
 from .batching import moveaxis
 from . import parallel
+from . import xla
 
 map = safe_map
 
@@ -199,13 +200,13 @@ def device_mesh(spec):
 
 def compile_replicated(jaxpr, axis_env, consts, *abstract_args):
   arg_shapes = list(map(xla_shape, abstract_args))
-  built_c = replicated_jaxpr_computation(jaxpr, axis_env, consts, (), *arg_shapes)
+  built_c = replicated_computation(jaxpr, axis_env, consts, (), *arg_shapes)
   result_shape = xla_shape_to_result_shape(built_c.GetReturnValueShape())
   return built_c.Compile(arg_shapes, xb.get_compile_options()), result_shape
 
-def replicated_jaxpr_computation(jaxpr, axis_env, const_vals, freevar_shapes,
+def replicated_computation(jaxpr, axis_env, const_vals, freevar_shapes,
                                  *arg_shapes):
-  c = xb.make_computation_builder("replicated_jaxpr_computation")
+  c = xb.make_computation_builder("replicated_computation")
 
   def read(v):
     return env[v]
@@ -228,8 +229,32 @@ def replicated_jaxpr_computation(jaxpr, axis_env, const_vals, freevar_shapes,
       params = {k: eqn.params[k] for k in eqn.params if k != 'axis_name'}
       ans = rule(c, *in_nodes, device_groups=device_groups, **params)
     else:
-      if eqn.bound_subjaxprs: raise NotImplementedError  # TODO check if pcall
-      ans = translation_rule(eqn.primitive)(c, *in_nodes, **eqn.params)
+      if eqn.bound_subjaxprs:
+        in_shapes = map(c.GetShape, in_nodes)
+        if eqn.primitive is xla_pcall_p:
+          device_groups = replica_groups(mesh_spec(), eqn.params['mesh_axis'])
+          new_axis_binding = {eqn.params['axis_name'] : device_groups}
+          (subjaxpr, const_bindings, freevar_bindings), = eqn.bound_subjaxprs
+          subc = replicated_computation(
+              subjaxpr, extend_env(new_axis_binding, axis_env),
+              [consts_env[b] for b in const_bindings],
+              map(c.GetShape, map(read, freevar_bindings)),
+              *in_shapes)
+          subfun = (subc, tuple(map(read, freevar_bindings)))
+          ans = translation_rule(eqn.primitive)(c, subfun, *in_nodes)
+        else:
+          subcs = [jaxpr_computation(subjaxpr,
+                                     [consts_env[b] for b in const_bindings],
+                                     map(c.GetShape, map(read, freevar_bindings)),
+                                     *in_shapes)
+                   for subjaxpr, const_bindings, freevar_bindings
+                   in eqn.bound_subjaxprs]
+          subfuns = [(subc, tuple(map(read, freevar_bindings)))
+                      for subc, (_, _, freevar_bindings)
+                      in zip(subcs, eqn.bound_subjaxprs)]
+          ans = translation_rule(eqn.primitive)(c, *(subfuns + in_nodes), **eqn.params)
+      else:
+        ans = translation_rule(eqn.primitive)(c, *in_nodes, **eqn.params)
 
     out_nodes = xla_destructure(c, ans) if eqn.destructure else [ans]
     map(write, eqn.outvars, out_nodes)
@@ -280,6 +305,7 @@ xla_pcall_p = core.Primitive('xla_pcall')
 xla_pcall = partial(core.call_bind, xla_pcall_p)
 xla_pcall_p.def_custom_bind(xla_pcall)
 xla_pcall_p.def_impl(xla_pcall_impl)
+xla.translations[xla_pcall_p] = xla.xla_call_translation_rule
 
 
 

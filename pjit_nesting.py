@@ -20,3 +20,4 @@ f = pjit(f, 'j')
 
 x = onp.zeros((3, 4), onp.float32)
 print make_jaxpr(f)(x, x)
+print f(x, x)
