@@ -43,20 +43,24 @@ from .parallel import parallel_translation_rules
 from .batching import moveaxis
 from . import parallel
 from . import xla
+from . import partial_eval as pe
 
 map = safe_map
 
 
 ### util
 
-
 def chunk_transform(fun, chunksize, name, in_axes, out_axes_dst):
   """Rewrite SPMD operations to act first on local chunks then cross-replica."""
-  temp_name = object()  # TODO gensym
+  temp_name = TempAxisName()
   fun = parallel.axisvar_split(fun, name, (temp_name, name))
   fun, out_axes_src = parallel.pmap_transform(fun, temp_name, in_axes)
   fun = move_output_axis_transform(fun, chunksize, out_axes_src, out_axes_dst)
   return fun
+
+class TempAxisName(object):
+  def __repr__(self):
+    return '<temp axis {}>'.format(hex(id(self)))
 
 @lu.transformation
 def move_output_axis_transform(chunksize, src, dst, *args):
