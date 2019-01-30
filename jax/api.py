@@ -267,7 +267,7 @@ def pjit(fun, axis_name, in_axes=0, out_axes=0, mesh_axis=0):
     f, out_tree = pytree_fun_to_flatjaxtuple_fun(f, in_tree)
     in_axes_ = pxla.canonicalize_in_axis_spec(in_tree, in_axes)
     out_axes_ = OutAxesThunk(out_tree, out_axes)  # for pretty-printing
-    chunksize = pxla.chunk_size(mesh_axis, in_axes_, args_flat)
+    chunksize = pxla.chunk_size(axis_name, mesh_axis, in_axes_, args_flat)
     f = pxla.chunk_transform(f, chunksize, axis_name, in_axes_, out_axes_)
     out_flat = pxla.xla_pcall(f, *args_flat, axis_name=axis_name,
                               in_axes=in_axes_, out_axes=out_axes_,

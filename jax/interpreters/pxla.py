@@ -161,7 +161,7 @@ def split_array(x, num_splits, axis):
       return x[tuple(idx)]
     return map(get_nth_subarray, range(num_splits))
 
-def chunk_size(mesh_axis, in_axes, abstract_args):
+def chunk_size(axis_name, mesh_axis, in_axes, abstract_args):
   """Compute the chunk size for mapped axes, checking for errors."""
   global mesh_spec
   axis_sizes = {arg.shape[axis] for arg, axis in zip(abstract_args, in_axes)
@@ -237,7 +237,7 @@ def replicated_computation(jaxpr, axis_env, const_vals, freevar_shapes,
           new_axis_binding = {eqn.params['axis_name'] : device_groups}
           (subjaxpr, const_bindings, freevar_bindings), = eqn.bound_subjaxprs
           subc = replicated_computation(
-              subjaxpr, extend_env(new_axis_binding, axis_env),
+              subjaxpr, extend_axis_env(new_axis_binding, axis_env),
               [consts_env[b] for b in const_bindings],
               map(c.GetShape, map(read, freevar_bindings)),
               *in_shapes)
@@ -269,19 +269,16 @@ def xla_pcall_impl(fun, *args, **params):
   mesh_axis = params.pop('mesh_axis')  # e.g. 0 or 1
   assert not params
 
-  if all(arg is core.unit for arg in args):
-    return fun.call_wrapped(*args)
-  else:
-    compiled_fun = xla_parallel_callable(fun, axis_name, in_axes, mesh_axis,
-                                         mesh_spec(), *map(abstractify, args))
-    return compiled_fun(out_axes(), *args)
+  compiled_fun = xla_parallel_callable(fun, axis_name, in_axes, mesh_axis,
+                                       mesh_spec(), *map(abstractify, args))
+  return compiled_fun(out_axes(), *args)
 
 @lu.memoize
 def xla_parallel_callable(fun, axis_name, in_axes, mesh_axis, mesh_spec,
                           *abstract_args):
-  chunksize = chunk_size(mesh_axis, in_axes, abstract_args)
+  chunksize = chunk_size(axis_name, mesh_axis, in_axes, abstract_args)
   abstract_args = map(partial(chunk_aval, chunksize), abstract_args, in_axes)
-  axis_env = new_env({axis_name: replica_groups(mesh_spec, mesh_axis)})
+  axis_env = new_axis_env({axis_name: replica_groups(mesh_spec, mesh_axis)})
   pvals = [PartialVal((aval, core.unit)) for aval in abstract_args]
   with core.new_master(JaxprTrace, True) as master:
     jaxpr, (pval, consts, env) = trace_to_subjaxpr(fun, master).call_wrapped(pvals)
@@ -309,28 +306,6 @@ xla_pcall_p.def_impl(xla_pcall_impl)
 xla.translations[xla_pcall_p] = xla.xla_call_translation_rule
 
 
-
-def new_env(d):
-  return d
-
-def extend_env(d1, d2):
-  return dict(d1, **d2)
-
-
-# def new_env(d):
-#   return AxisEnv(d, {})
-
-# def extend_env(d1, d2):
-#   return AxisEnv(d1, d2)
-
-# class AxisEnv(dict):
-#   def __init__(self, d1, d2):
-#     self.update(d1)
-#     self.parent = d2
-
-#   def __missing__(self, key):
-#     return self.parent[key]
-
-#   def __repr__(self):
-#     flat = dict(self, **self.parent)
-#     return repr(flat)
+# axis environments are tiny, so we don't worry about the cost of copying keys
+def new_axis_env(d): return d
+def extend_axis_env(d1, d2): return dict(d1, **d2)
