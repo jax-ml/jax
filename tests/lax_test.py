@@ -2186,6 +2186,19 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     y = rng(update_shape, dtype)
     check_grads(scatter_add, (x, y), 2, 1e-2, 1e-2, 1e-2)
 
+  def testStopGradient(self):
+    def f(x):
+      return lax.sin(x) * lax.cos(lax.stop_gradient(x))
+
+    def f2(x, y):
+      return lax.sin(x) * lax.cos(y)
+
+    x = 3.14
+    ans = api.grad(f)(x)
+    expected = api.grad(f2)(x, x)
+
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
 
 if __name__ == '__main__':
   absltest.main()
