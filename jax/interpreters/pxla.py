@@ -47,9 +47,6 @@ from . import xla
 map = safe_map
 
 
-mesh_spec = None
-
-
 ### util
 
 
@@ -205,7 +202,7 @@ def compile_replicated(jaxpr, axis_env, consts, *abstract_args):
   return built_c.Compile(arg_shapes, xb.get_compile_options()), result_shape
 
 def replicated_computation(jaxpr, axis_env, const_vals, freevar_shapes,
-                                 *arg_shapes):
+                           *arg_shapes):
   c = xb.make_computation_builder("replicated_computation")
 
   def read(v):
