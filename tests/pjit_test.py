@@ -58,6 +58,18 @@ class PmapTest(jtu.JaxTestCase):
     expected = x - x.sum(0)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @jtu.skip_on_devices("gpu")
+  def testNested(self):
+    def f(x, y):
+      return psum(psum(x, 'i'), 'j')
+    f = pjit(f, 'i')
+    f = pjit(f, 'j', out_axes=1)
+
+    x = onp.ones((3, 4), onp.float32)
+    ans = f(x, x)
+    expected = 12 * onp.ones((4, 3), onp.float32)
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
 
 if __name__ == '__main__':
   absltest.main()
