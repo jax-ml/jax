@@ -2196,7 +2196,10 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     x = 3.14
     ans = api.grad(f)(x)
     expected = api.grad(f2)(x, x)
+    self.assertAllClose(ans, expected, check_dtypes=True)
 
+    ans = api.grad(api.grad(f))(x)
+    expected = api.grad(api.grad(f2))(x, x)
     self.assertAllClose(ans, expected, check_dtypes=True)
 
 
