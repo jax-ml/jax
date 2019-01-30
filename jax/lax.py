@@ -485,6 +485,10 @@ def broadcasted_eye(dtype, shape, axes):
   return EyeConstant(shape, axes, dtype)
 
 
+def stop_gradient(x):
+  return stop_gradient_p.bind(x)
+
+
 ### convenience wrappers around traceables
 
 
@@ -2825,6 +2829,27 @@ for t in [FilledConstant, IotaConstant, EyeConstant]:
   batching.pytype_aval_mappings[t] = make_shaped_array
   ad_util.jaxval_adders[t] = add
   ad_util.jaxval_zeros_likers[t] = zeros_like_array
+
+
+### stop_gradient
+
+
+def stop_gradient_jvp_rule(primals, tangents):
+  # if we don't call stop_gradient here, we'd only peel off one autodiff tracer
+  x, = primals
+  return stop_gradient(x), ad_util.zero
+
+def stop_gradient_batch_rule(batched_args, batch_dims):
+  x, = batched_args
+  dim, = batch_dims
+  return stop_gradient(x), dim
+
+stop_gradient_p = Primitive('stop_gradient')
+stop_gradient_p.def_impl(identity)
+stop_gradient_p.def_abstract_eval(identity)
+xla.translations[stop_gradient_p] = lambda c, x: x
+ad.primitive_jvps[stop_gradient_p] = stop_gradient_jvp_rule
+batching.primitive_batchers[stop_gradient_p] = stop_gradient_batch_rule
 
 
 ### util
