@@ -16,8 +16,8 @@ from jax.interpreters.parallel import psum
 def f(x, y):
   return psum(psum(x, 'i'), 'j')
 f = pjit(f, 'i')
-f = pjit(f, 'j')
+f = pjit(f, 'j', out_axes=1)
 
-x = onp.zeros((3, 4), onp.float32)
+x = onp.ones((3, 4), onp.float32)
 print make_jaxpr(f)(x, x)
 print f(x, x)
