@@ -224,7 +224,7 @@ def replicated_jaxpr_computation(jaxpr, axis_env, const_vals, freevar_shapes,
     in_nodes = map(read, eqn.invars)
     if eqn.primitive in parallel_translation_rules:
       rule = parallel_translation_rules[eqn.primitive]
-      device_groups = axis_env[eqn.params['axis_name']]  # TODO check var sharding
+      device_groups = axis_env[eqn.params['axis_name']]
       params = {k: eqn.params[k] for k in eqn.params if k != 'axis_name'}
       ans = rule(c, *in_nodes, device_groups=device_groups, **params)
     else:
