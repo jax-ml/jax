@@ -31,32 +31,32 @@ config.parse_flags_with_absl()
 
 class PmapTest(jtu.JaxTestCase):
 
-  @jtu.skip_on_devices("gpu")
-  def testBasic(self):
-    f = lambda x: x - psum(x, 'i')
-    x = onp.arange(8., dtype=onp.float32).reshape(4, 2)
-    f = pjit(f, axis_name='i', in_axes=0, out_axes=0, mesh_axis=0)
-    ans = f(x)
-    expected = x - x.sum(0)
-    self.assertAllClose(ans, expected, check_dtypes=False)
+#   @jtu.skip_on_devices("gpu")
+#   def testBasic(self):
+#     f = lambda x: x - psum(x, 'i')
+#     x = onp.arange(8., dtype=onp.float32).reshape(4, 2)
+#     f = pjit(f, axis_name='i', in_axes=0, out_axes=0, mesh_axis=0)
+#     ans = f(x)
+#     expected = x - x.sum(0)
+#     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @jtu.skip_on_devices("gpu")
-  def testTupleOutput(self):
-    f = lambda x: (x - psum(x, 'i'),)
-    x = onp.arange(8., dtype=onp.float32).reshape(4, 2)
-    f = pjit(f, axis_name='i', in_axes=0, out_axes=0, mesh_axis=0)
-    ans = f(x)
-    expected = (x - x.sum(0),)
-    self.assertAllClose(ans, expected, check_dtypes=False)
+#   @jtu.skip_on_devices("gpu")
+#   def testTupleOutput(self):
+#     f = lambda x: (x - psum(x, 'i'),)
+#     x = onp.arange(8., dtype=onp.float32).reshape(4, 2)
+#     f = pjit(f, axis_name='i', in_axes=0, out_axes=0, mesh_axis=0)
+#     ans = f(x)
+#     expected = (x - x.sum(0),)
+#     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @jtu.skip_on_devices("gpu")
-  def testTupleInput(self):
-    f = lambda x: x[0] - psum(x[0], 'i')
-    x = onp.arange(8., dtype=onp.float32).reshape(4, 2)
-    f = pjit(f, axis_name='i', in_axes=0, out_axes=0, mesh_axis=0)
-    ans = f((x,))
-    expected = x - x.sum(0)
-    self.assertAllClose(ans, expected, check_dtypes=False)
+#   @jtu.skip_on_devices("gpu")
+#   def testTupleInput(self):
+#     f = lambda x: x[0] - psum(x[0], 'i')
+#     x = onp.arange(8., dtype=onp.float32).reshape(4, 2)
+#     f = pjit(f, axis_name='i', in_axes=0, out_axes=0, mesh_axis=0)
+#     ans = f((x,))
+#     expected = x - x.sum(0)
+#     self.assertAllClose(ans, expected, check_dtypes=False)
 
   @jtu.skip_on_devices("gpu")
   def testNested(self):
