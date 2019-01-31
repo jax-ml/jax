@@ -370,6 +370,14 @@ def _reduce_window_sum(operand, window_dimensions, window_strides, padding):
       window_strides=tuple(window_strides), padding=padding,
       input_shape=operand.shape)
 
+def _reduce_window_prod(operand, window_dimensions, window_strides, padding):
+  init_value = _const(operand, 1)
+  jaxpr, consts = _reduction_jaxpr(mul, init_value)
+  return reduce_window_p.bind(
+      operand, init_value, jaxpr=jaxpr, consts=consts,
+      window_dimensions=tuple(window_dimensions),
+      window_strides=tuple(window_strides), padding=padding)
+
 def _reduce_window_max(operand, window_dimensions, window_strides, padding):
   return reduce_window_max_p.bind(
       operand, window_dimensions=tuple(window_dimensions),
