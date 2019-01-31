@@ -1677,11 +1677,17 @@ def transpose_batch_rule(batched_args, batch_dims, permutation):
   perm = tuple(onp.insert(onp.add(permutation, 1), bdim, 0))
   return transpose(operand, perm), 0
 
+def transpose_papply(name, vals, dims, permutation):
+  x, = vals
+  xdim, = dims
+  return transpose(x, permutation), permutation[xdim]
+
 transpose_p = standard_primitive(transpose_shape_rule, _input_dtype,
                                  'transpose')
 ad.deflinear(transpose_p,
              lambda t, permutation: [transpose(t, onp.argsort(permutation))])
 batching.primitive_batchers[transpose_p] = transpose_batch_rule
+parallel.papply_primitive_rules[transpose_p] = transpose_papply
 
 
 def select_shape_rule(pred, on_true, on_false):
