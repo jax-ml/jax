@@ -498,8 +498,8 @@ def fliplr(m):
   return flip(m, 1)
 
 
-@_wraps(onp.flipup)
-def flipup(m):
+@_wraps(onp.flipud)
+def flipud(m):
   return flip(m, 0)
 
 
