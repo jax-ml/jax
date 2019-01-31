@@ -493,6 +493,16 @@ def flip(m, axis):
   return lax.rev(m, [axis])
 
 
+@_wraps(onp.fliplr)
+def fliplr(m):
+  return flip(m, 1)
+
+
+@_wraps(onp.flipup)
+def flipup(m):
+  return flip(m, 0)
+
+
 @_wraps(onp.conjugate)
 def conjugate(x):
   return lax.conj(x) if iscomplexobj(x) else x
