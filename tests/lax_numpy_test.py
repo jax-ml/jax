@@ -912,6 +912,36 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(lnp_op, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}".format(
+          jtu.format_shape_dtype_string(shape, dtype)),
+       "rng": rng, "shape": shape, "dtype": dtype}
+      for shape in [(3,), (2, 3)]
+      for dtype in default_dtypes
+      for rng in [jtu.rand_default()]))
+  def testFlipud(self, shape, dtype, rng):
+    args_maker = self._GetArgsMaker(rng, [shape], [dtype])
+    lnp_op = lambda x: lnp.flipud(x)
+    onp_op = lambda x: onp.flipud(x)
+    self._CheckAgainstNumpy(onp_op, lnp_op, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_op, args_maker, check_dtypes=True)
+
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}".format(
+          jtu.format_shape_dtype_string(shape, dtype)),
+       "rng": rng, "shape": shape, "dtype": dtype}
+      for shape in [(3, 2), (2, 3)]
+      for dtype in default_dtypes
+      for rng in [jtu.rand_default()]))
+  def testFliplr(self, shape, dtype, rng):
+    args_maker = self._GetArgsMaker(rng, [shape], [dtype])
+    lnp_op = lambda x: lnp.fliplr(x)
+    onp_op = lambda x: onp.fliplr(x)
+    self._CheckAgainstNumpy(onp_op, lnp_op, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_op, args_maker, check_dtypes=True)
+
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_k={}_axes={}".format(
           jtu.format_shape_dtype_string(shape, dtype), k, axes),
        "rng": rng, "shape": shape, "dtype": dtype, "k": k, "axes": axes}
