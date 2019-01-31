@@ -530,6 +530,26 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "op={}_shape=[{}]_axis={}_out_dtype={}".format(
+          op, jtu.format_shape_dtype_string(shape, dtype), axis, out_dtype),
+       "axis": axis, "shape": shape, "dtype": dtype, "out_dtype": out_dtype,
+       "rng": jtu.rand_default(), "lnp_op": getattr(lnp, op),
+       "onp_op": getattr(onp, op)}
+      for op in ["cumsum", "cumprod"]
+      for dtype in default_dtypes
+      for out_dtype in default_dtypes
+      for shape in all_shapes
+      for axis in [None] + list(range(-len(shape), len(shape)))))
+  def testCumSum(self, axis, shape, dtype, out_dtype, onp_op, lnp_op, rng):
+    onp_fun = lambda arg: onp_op(arg, axis=axis, dtype=out_dtype)
+    lnp_fun = lambda arg: lnp_op(arg, axis=axis, dtype=out_dtype)
+
+    args_maker = lambda: [rng(shape, dtype)]
+
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}_m={}_n={}_k={}".format(
           onp.dtype(dtype).name, m, n, k),
        "m": m, "n": n, "k": k, "dtype": dtype, "rng": jtu.rand_default()}
