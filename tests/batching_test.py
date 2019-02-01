@@ -166,6 +166,10 @@ class BatchingTest(jtu.JaxTestCase):
     expected_ans = x[:, ::-1]
     self.assertAllClose(ans, expected_ans, check_dtypes=False)
 
+    ans = vmap(fun, (1,), 1)(x)
+    expected_ans = x[::-1, :]
+    self.assertAllClose(ans, expected_ans, check_dtypes=False)
+
   def testRevNumpy(self):
     fun = lambda x: x[:, ::-1]
     R = onp.random.RandomState(0).randn
@@ -173,6 +177,14 @@ class BatchingTest(jtu.JaxTestCase):
 
     ans = vmap(fun)(x)
     expected_ans = x[:, :, ::-1]
+    self.assertAllClose(ans, expected_ans, check_dtypes=False)
+
+    ans = vmap(fun, (1,), 1)(x)
+    expected_ans = x[:, :, ::-1]
+    self.assertAllClose(ans, expected_ans, check_dtypes=False)
+
+    ans = vmap(fun, (2,), 2)(x)
+    expected_ans = x[:, ::-1, :]
     self.assertAllClose(ans, expected_ans, check_dtypes=False)
 
   def testNpMaximum(self):
