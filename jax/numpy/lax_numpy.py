@@ -917,7 +917,7 @@ def _make_cumulative_reduction(onp_reduction, window_reduce, init_val,
     window_dims = [1] * num_dims
     window_dims[axis] = a_shape[axis]
     return window_reduce(
-       a, window_dims, strides, xla_bridge.get_xla_client().PaddingType.VALID )
+       a, window_dims, strides, xla_bridge.get_xla_client().PaddingType.VALID)
 
   return cumulative_reduction
 
