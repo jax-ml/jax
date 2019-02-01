@@ -42,7 +42,7 @@ from .interpreters import xla
 from .interpreters import ad
 from .interpreters import batching
 from .interpreters import parallel
-from .util import curry, safe_zip, unzip2, prod
+from .util import curry, memoize, safe_zip, unzip2, prod
 from .tree_util import build_tree
 from .lib import xla_bridge
 
@@ -51,6 +51,23 @@ FLAGS = flags.FLAGS
 _max = builtins.max
 _min = builtins.max
 _reduce = six.moves.reduce
+
+
+@memoize
+def broadcast_shapes(*shapes):
+  """Returns the shape that results from NumPy broadcasting of `shapes`."""
+  if len(shapes) == 1:
+    return shapes[0]
+  ndim = _max(len(shape) for shape in shapes)
+  shapes = onp.array([(1,) * (ndim - len(shape)) + shape for shape in shapes])
+  min_shape = onp.min(shapes, axis=0)
+  max_shape = onp.max(shapes, axis=0)
+  result_shape = onp.where(min_shape == 0, 0, max_shape)
+  if not onp.all((shapes == result_shape) | (shapes == 1)):
+    raise ValueError("Incompatible shapes for broadcasting: {}"
+                     .format(tuple(map(tuple, shapes))))
+  return tuple(result_shape)
+
 
 def identity(x): return x
 
@@ -97,8 +114,19 @@ def mul(x, y): return mul_p.bind(x, y)
 def div(x, y): return div_p.bind(x, y)
 def rem(x, y): return rem_p.bind(x, y)
 
-def max(x, y): return max_p.bind(x, y)
-def min(x, y): return min_p.bind(x, y)
+def max(x, y):
+  """Elementwise maximum.
+
+  For complex numbers, uses a lexicographic comparison on the
+  `(real, imaginary)` pairs."""
+  return max_p.bind(x, y)
+
+def min(x, y):
+  """Elementwise minimum.
+
+  For complex numbers, uses a lexicographic comparison on the
+  `(real, imaginary)` pairs."""
+  return min_p.bind(x, y)
 
 def shift_left(x, y): return shift_left_p.bind(x, y)
 def shift_right_arithmetic(x, y): return shift_right_arithmetic_p.bind(x, y)
@@ -312,7 +340,7 @@ def _get_monoid_reducer(monoid_op, x):
       return aval.val == _get_min_identity(aval.dtype) and _reduce_and
 
 def _get_max_identity(dtype):
-  if onp.issubdtype(dtype, onp.floating):
+  if onp.issubdtype(dtype, onp.inexact):
     return onp.array(-onp.inf, dtype)
   elif onp.issubdtype(dtype, onp.integer):
     return onp.array(onp.iinfo(dtype).min, dtype)
@@ -320,7 +348,7 @@ def _get_max_identity(dtype):
     return onp.array(False, onp.bool_)
 
 def _get_min_identity(dtype):
-  if onp.issubdtype(dtype, onp.floating):
+  if onp.issubdtype(dtype, onp.inexact):
     return onp.array(onp.inf, dtype)
   elif onp.issubdtype(dtype, onp.integer):
     return onp.array(onp.iinfo(dtype).max, dtype)
@@ -809,10 +837,11 @@ def broadcasting_shape_rule(name, *avals):
   return tuple(result_shape)
 
 
-def binop(result_dtype, accepted_dtypes, name):
+def binop(result_dtype, accepted_dtypes, name, translation_rule=None):
   dtype_rule = partial(binop_dtype_rule, result_dtype, accepted_dtypes, name)
   shape_rule = partial(broadcasting_shape_rule, name)
-  prim = standard_primitive(shape_rule, dtype_rule, name)
+  prim = standard_primitive(shape_rule, dtype_rule, name,
+                            translation_rule=translation_rule)
   batching.defbroadcasting(prim)
   parallel.defbroadcasting(prim)
   return prim
@@ -999,12 +1028,39 @@ ad.defjvp(rem_p,
           lambda g, x, y: mul(neg(g), floor(div(x, y))))
 
 
-max_p = standard_binop([_any, _any], 'max')
+def _broadcasting_select(c, which, x, y):
+  """Wrapper around XLA `Select` that broadcasts its arguments."""
+  which_shape, x_shape, y_shape = (
+    c.GetShape(t).dimensions() for t in (which, x, y))
+  out_shape = broadcast_shapes(which_shape, x_shape, y_shape)
+  bcast_dims = lambda shape: tuple(range(len(out_shape) - len(shape),
+                                         len(out_shape)))
+  which = c.BroadcastInDim(which, out_shape, bcast_dims(which_shape))
+  x = c.BroadcastInDim(x, out_shape, bcast_dims(x_shape))
+  y = c.BroadcastInDim(y, out_shape, bcast_dims(y_shape))
+  return c.Select(which, x, y)
+
+
+def _minmax_translation_rule(c, x, y, minmax=None, cmp=None):
+  dtype = c.GetShape(x).numpy_dtype()
+  if onp.issubdtype(dtype, onp.complexfloating):
+    comparator = cmp(c)
+    rx = c.Real(x)
+    ry = c.Real(y)
+    return _broadcasting_select(
+        c, c.Select(c.Eq(rx, ry), comparator(c.Imag(x), c.Imag(y)),
+                    comparator(rx, ry)),
+        x, y)
+  return minmax(c)(x, y)
+
+max_p = standard_binop([_any, _any], 'max', translation_rule=partial(
+    _minmax_translation_rule, minmax=lambda c: c.Max, cmp=lambda c: c.Gt))
 ad.defjvp2(max_p,
            lambda g, ans, x, y: mul(_brcast(g, y), _balanced_eq(x, ans, y)),
            lambda g, ans, x, y: mul(_brcast(g, x), _balanced_eq(y, ans, x)))
 
-min_p = standard_binop([_any, _any], 'min')
+min_p = standard_binop([_any, _any], 'min', translation_rule=partial(
+    _minmax_translation_rule, minmax=lambda c: c.Min, cmp=lambda c: c.Lt))
 ad.defjvp2(min_p,
            lambda g, ans, x, y: mul(_brcast(g, y), _balanced_eq(x, ans, y)),
            lambda g, ans, x, y: mul(_brcast(g, x), _balanced_eq(y, ans, x)))
@@ -1159,7 +1215,7 @@ def conv_general_dilated_batch_rule(
     # convolution isn't the first dimension.
     if lhs_dim[0] != 0 or out_dim[0] != 0:
       raise NotImplementedError
-      
+
     lhs = batching.move_dim_to_front(lhs, lhs_bdim)
     batched_size = lhs.shape[0]
     n_size = lhs.shape[1]

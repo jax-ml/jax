@@ -132,26 +132,9 @@ def _promote_shapes(*args):
     return args
   else:
     shapes = [shape(arg) for arg in args]
-    nd = len(_broadcast_shapes(*shapes))
+    nd = len(lax.broadcast_shapes(*shapes))
     return [lax.reshape(arg, (1,) * (nd - len(shp)) + shp)
             if len(shp) != nd else arg for arg, shp in zip(args, shapes)]
-
-
-@memoize
-def _broadcast_shapes(*shapes):
-  """Apply Numpy broadcasting rules to the given shapes."""
-  if len(shapes) == 1:
-    return shapes[0]
-  ndim = _max(len(shape) for shape in shapes)
-  shapes = onp.array([(1,) * (ndim - len(shape)) + shape for shape in shapes])
-  min_shape = onp.min(shapes, axis=0)
-  max_shape = onp.max(shapes, axis=0)
-  result_shape = onp.where(min_shape == 0, 0, max_shape)
-  if not onp.all((shapes == result_shape) | (shapes == 1)):
-    raise ValueError("Incompatible shapes for broadcasting: {}"
-                     .format(tuple(map(tuple, shapes))))
-  return tuple(result_shape)
-
 
 def _promote_dtypes(*args):
   """Convenience function to apply Numpy argument dtype promotion."""
@@ -292,6 +275,8 @@ not_equal = _one_to_one_binop(onp.not_equal, lax.ne)
 subtract = _one_to_one_binop(onp.subtract, lax.sub)
 power = _one_to_one_binop(onp.power, lax.pow, True)
 arctan2 = _one_to_one_binop(onp.arctan2, lax.atan2, True)
+minimum = _one_to_one_binop(onp.minimum, lax.min)
+maximum = _one_to_one_binop(onp.maximum, lax.max)
 
 
 def _comparison_op(numpy_fn, lax_fn):
@@ -311,24 +296,6 @@ greater_equal = _comparison_op(onp.greater_equal, lax.ge)
 greater = _comparison_op(onp.greater, lax.gt)
 less_equal = _comparison_op(onp.less_equal, lax.le)
 less = _comparison_op(onp.less, lax.lt)
-
-def _minmax_op(numpy_fn, lax_fn, lax_cmp_fn):
-  def fn(x, y):
-    x, y =  _promote_args(numpy_fn.__name__, x, y)
-    # Comparison on complex types are defined as a lexicographic ordering on
-    # the (real, imag) pair.
-    if issubdtype(_dtype(x), complexfloating):
-      rx = lax.real(x)
-      ry = lax.real(y)
-      return where(
-          lax.select(lax.eq(rx, ry), lax_cmp_fn(lax.imag(x), lax.imag(y)),
-                     lax_cmp_fn(rx, ry)),
-          x, y)
-    return lax_fn(x, y)
-  return _wraps(numpy_fn)(fn)
-
-maximum = _minmax_op(onp.maximum, lax.max, lax.gt)
-minimum = _minmax_op(onp.minimum, lax.min, lax.lt)
 
 
 def _logical_op(np_op, bitwise_op):
@@ -632,7 +599,7 @@ def broadcast_arrays(*args):
   if len(set(shapes)) == 1:
     return [arg if isinstance(arg, ndarray) or isscalar(arg) else array(arg)
             for arg in args]
-  result_shape = _broadcast_shapes(*shapes)
+  result_shape = lax.broadcast_shapes(*shapes)
   return [broadcast_to(arg, result_shape) for arg in args]
 
 
@@ -642,7 +609,7 @@ def broadcast_to(arr, shape):
   if _shape(arr) != shape:
     # TODO(mattjj): revise this to call lax.broadcast_in_dim rather than
     # lax.broadcast and lax.transpose
-    _broadcast_shapes(shape, _shape(arr))  # error checking
+    lax.broadcast_shapes(shape, _shape(arr))  # error checking
     nlead = len(shape) - len(_shape(arr))
     diff, = onp.where(onp.not_equal(shape[nlead:], _shape(arr)))
 
@@ -675,11 +642,11 @@ def clip(a, a_min=None, a_max=None):
   if a_min is not None:
     if _dtype(a_min) != _dtype(a):
       a_min = lax.convert_element_type(a_min, _dtype(a))
-    a = maximum(a_min, a)
+    a = lax.max(a_min, a)
   if a_max is not None:
     if _dtype(a_max) != _dtype(a):
       a_max = lax.convert_element_type(a_max, _dtype(a))
-    a = minimum(a_max, a)
+    a = lax.min(a_max, a)
   return a
 
 
@@ -817,8 +784,8 @@ _cast_to_bool = partial(lax.convert_element_type, new_dtype=onp.bool_)
 
 sum = _make_reduction(onp.sum, lax.add, 0)
 prod = _make_reduction(onp.prod, lax.mul, 1)
-amax = max = _make_reduction(onp.max, maximum, -onp.inf)
-amin = min = _make_reduction(onp.min, minimum, onp.inf)
+amax = max = _make_reduction(onp.max, lax.max, -onp.inf)
+amin = min = _make_reduction(onp.min, lax.min, onp.inf)
 all = alltrue = _make_reduction(onp.all, lax.bitwise_and, True, _cast_to_bool)
 any = sometrue = _make_reduction(onp.any, lax.bitwise_or, False, _cast_to_bool)
 
@@ -1303,7 +1270,7 @@ def matmul(a, b):  # pylint: disable=missing-docstring
   b = lax.reshape(b, shape(b) + (1,)) if b_is_vec else b
 
   a, b = _promote_dtypes(a, b)
-  batch_shape = _broadcast_shapes(shape(a)[:-2], shape(b)[:-2])
+  batch_shape = lax.broadcast_shapes(shape(a)[:-2], shape(b)[:-2])
   a = broadcast_to(a, batch_shape + shape(a)[-2:])
   b = broadcast_to(b, batch_shape + shape(b)[-2:])
   batch_dims = tuple(range(len(batch_shape)))
