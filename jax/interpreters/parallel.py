@@ -197,6 +197,12 @@ parallel_translation_rules[psum_p] = psum_parallel_translation_rule
 def ptranspose(x, split_dim, concat_dim, **params):
   return ptranspose_p.bind(x, split_dim=split_dim, concat_dim=concat_dim, **params)
 
+def ptranspose_shape_rule(x, split_dim, concat_dim, **params):
+  permutation = list(range(x.ndim))
+  permutation[concat_dim] = split_dim
+  permutation[split_dim] = concat_dim
+  return lax.transpose_shape_rule(x, permutation)
+
 def ptranspose_pmap_rule(x, axis, split_dim, concat_dim):
   raise NotImplementedError
 
@@ -204,7 +210,7 @@ def ptranspose_translation_rule(c, x, split_dim, concat_dim):
   return c.AllToAll(x, split_dim, concat_dim)
 
 ptranspose_p = PmapPrimitive('ptranspose')
-ptranspose_p.def_abstract_eval(lambda x, **kwargs: x)
+ptranspose_p.def_abstract_eval(ptranspose_shape_rule)
 pmap_primitive_rules[ptranspose_p] = ptranspose_pmap_rule
 parallel_translation_rules[ptranspose_p] = ptranspose_translation_rule
 
