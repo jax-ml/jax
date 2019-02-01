@@ -536,11 +536,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "rng": jtu.rand_default(), "lnp_op": getattr(lnp, op),
        "onp_op": getattr(onp, op)}
       for op in ["cumsum", "cumprod"]
-      for dtype in default_dtypes
-      for out_dtype in default_dtypes
+      # TODO(phawkins): replace both type lists with default_dtypes after a
+      # Jaxlib update includes
+      # https://github.com/google/jax/commit/86f5d189cf563b027c3cd00eea38072c003905c8
+      for dtype in [onp.float32, onp.int32]
+      for out_dtype in [onp.float32, onp.int32]
       for shape in all_shapes
       for axis in [None] + list(range(-len(shape), len(shape)))))
-  def testCumSum(self, axis, shape, dtype, out_dtype, onp_op, lnp_op, rng):
+  def testCumSumProd(self, axis, shape, dtype, out_dtype, onp_op, lnp_op, rng):
     onp_fun = lambda arg: onp_op(arg, axis=axis, dtype=out_dtype)
     lnp_fun = lambda arg: lnp_op(arg, axis=axis, dtype=out_dtype)
 
