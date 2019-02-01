@@ -1657,8 +1657,15 @@ def rev_shape_rule(operand, dimensions):
     raise TypeError(msg.format(dimensions, operand.ndim))
   return operand.shape
 
+def rev_batch_rule(batched_args, batch_dims, dimensions):
+  operand, = batched_args
+  bdim, = batch_dims
+  new_dimensions = [i + 1 if i >= bdim else i for i in dimensions]
+  return rev(operand, new_dimensions), bdim
+
 rev_p = standard_primitive(rev_shape_rule, _input_dtype, 'rev')
 ad.deflinear(rev_p, lambda t, dimensions: [rev(t, dimensions)])
+batching.primitive_batchers[rev_p] = rev_batch_rule
 
 
 def transpose_shape_rule(operand, permutation):
