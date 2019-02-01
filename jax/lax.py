@@ -39,6 +39,7 @@ from .abstract_arrays import (UnshapedArray, ShapedArray, ConcreteArray,
 from .api_util import pytree_fun_to_jaxtupletree_fun, pytree_to_jaxtupletree
 from .interpreters import partial_eval as pe
 from .interpreters import xla
+from .interpreters import pxla
 from .interpreters import ad
 from .interpreters import batching
 from .interpreters import parallel
@@ -521,8 +522,8 @@ def broadcasted_eye(dtype, shape, axes):
   return EyeConstant(shape, axes, dtype)
 
 
-def stop_gradient(x):
-  return stop_gradient_p.bind(x)
+def psum(x, axis_name):
+  return psum_p.bind(x, axis_name=axis_name)
 
 
 ### convenience wrappers around traceables
@@ -2296,7 +2297,6 @@ reduce_sum_p = standard_primitive(_reduce_sum_shape_rule, _input_dtype,
                                   'reduce_sum', _reduce_sum_translation_rule)
 ad.deflinear(reduce_sum_p, _reduce_sum_transpose_rule)
 batching.defreducer(reduce_sum_p)
-parallel.defreducer(reduce_sum_p, parallel.psum_p)
 
 
 def _reduce_chooser_shape_rule(operand, axes):
@@ -2902,25 +2902,38 @@ for t in [FilledConstant, IotaConstant, EyeConstant]:
   ad_util.jaxval_zeros_likers[t] = zeros_like_array
 
 
-### stop_gradient
+### parallel
+
+def PmapPrimitive(name):
+  prim = Primitive(name)
+  prim.def_impl(partial(unbound_name_error, name))
+  prim.def_abstract_eval(lambda x, *args, **kwargs: x)  # default
+  return prim
+
+def unbound_name_error(primitive_name, *args, **kwargs):
+  axis_name = kwargs['axis_name']
+  msg = "axis name '{}' is unbound for primitive {}."
+  raise NameError(msg.format(axis_name, primitive_name))
 
 
-def _stop_gradient_jvp_rule(primals, tangents):
-  # if we don't call stop_gradient here, we'd only peel off one autodiff tracer
-  x, = primals
-  return stop_gradient(x), ad_util.zero
+def psum_transpose_rule(t, axis_name):
+  return [t]
 
-def _stop_gradient_batch_rule(batched_args, batch_dims):
-  x, = batched_args
-  dim, = batch_dims
-  return stop_gradient(x), dim
+def psum_parallel_translation_rule(c, val, device_groups):
+  if len(device_groups) > 1:
+    return c.CrossReplicaSum(val, device_groups)
+  else:
+    return c.CrossReplicaSum(val)
 
-stop_gradient_p = Primitive('stop_gradient')
-stop_gradient_p.def_impl(identity)
-stop_gradient_p.def_abstract_eval(identity)
-xla.translations[stop_gradient_p] = lambda c, x: x
-ad.primitive_jvps[stop_gradient_p] = _stop_gradient_jvp_rule
-batching.primitive_batchers[stop_gradient_p] = _stop_gradient_batch_rule
+def psum_pmap_rule(val, axis):
+  return _reduce_sum(val, [axis]), None
+
+psum_p = PmapPrimitive('psum')
+parallel.pmap_primitive_rules[psum_p] = psum_pmap_rule
+pxla.parallel_translation_rules[psum_p] = psum_parallel_translation_rule
+ad.deflinear(psum_p, psum_transpose_rule)
+
+parallel.defreducer(reduce_sum_p, psum_p)
 
 
 ### util

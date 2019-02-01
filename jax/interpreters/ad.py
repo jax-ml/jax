@@ -18,12 +18,13 @@ from __future__ import print_function
 
 from . import partial_eval as pe
 from . import xla
+from . import pxla
 from .. import core as core
 from ..core import JaxTuple, Trace, Tracer, new_master, get_aval, pack, call_p, Primitive
 from ..ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval,
                        zeros_like_p, zero, Zero)
 from ..util import unzip2, unzip3, safe_map, safe_zip, partial
-from ..tree_util import process_pytree, build_tree, register_pytree_node
+from ..tree_util import process_pytree, build_tree, register_pytree_node, prune
 from ..linear_util import thunk, staged, transformation, transformation_with_aux, wrap_init
 
 from six.moves import builtins, reduce
@@ -184,6 +185,13 @@ class JVPTrace(Trace):
     tangents = [t.tangent for t in tracers]
     nonzero_tangents, in_tree_def = tree_to_jaxtuples(tangents)
     f, out_tree_def = traceable(jvp_subtrace(f, self.master), in_tree_def)
+    if call_primitive is pxla.xla_pcall_p:
+      in_axes, out_axes = params['in_axes'], params['out_axes']
+      jvp_in_axes = (in_axes, prune(in_tree_def, in_axes))
+      def jvp_out_axes():
+        _, tangent_out_tree = out_tree_def().children
+        return (out_axes(), prune(tangent_out_tree, out_axes()))
+      params = dict(params, in_axes=jvp_in_axes, out_axes=jvp_out_axes)
     result = call_primitive.bind(f, pack(primals), nonzero_tangents, **params)
     primal_out, tangent_out = build_tree(out_tree_def(), result)
     return JVPTracer(self, primal_out, tangent_out)
@@ -386,13 +394,25 @@ def call_transpose(primitive, params, jaxpr, consts, freevar_vals, args, ct):
   fun = wrap_init(backward_pass)
   fun, out_tree_def = transposed_fun(fun, jaxpr, in_tree_def)
   all_args = pack((pack(consts), pack(freevar_vals), ct))
-  # TODO(dougalm): consider signalling to bind that there are no traces in the closure
-  ans = primitive.bind(fun, all_args, **params)
+  if primitive is pxla.xla_pcall_p:
+    in_axes, out_axes = params['in_axes'], params['out_axes']()
+    ct_axes = prune(ct_tree, out_axes)
+    transpose_in_axes = ((None,) * len(consts), (None,) * len(freevar_vals), ct_axes),
+    def transpose_out_axes():
+      return prune(out_tree_def(), (in_axes, (None,) * len(freevar_vals)))
+    new_params = dict(params, in_axes=transpose_in_axes, out_axes=transpose_out_axes)
+    ans = primitive.bind(fun, all_args, **params)
+
+    import ipdb; ipdb.set_trace()
+  else:
+    # TODO(dougalm): consider signalling to bind that there are no traces in the closure
+    ans = primitive.bind(fun, all_args, **params)
   return build_tree(out_tree_def(), ans)
 
 primitive_transposes[core.call_p] = partial(call_transpose, call_p)
 primitive_transposes[pe.compiled_call_p] = partial(call_transpose, pe.compiled_call_p)
 primitive_transposes[xla.xla_call_p] = partial(call_transpose, xla.xla_call_p)
+primitive_transposes[pxla.xla_pcall_p] = partial(call_transpose, pxla.xla_pcall_p)
 
 
 tree_to_jaxtuples = partial(process_pytree, pack)

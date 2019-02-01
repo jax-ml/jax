@@ -376,14 +376,16 @@ def xla_shape(x):
 def flatten_fun(in_trees, *flat_args):
   jtuple_trees = tuple(map(partial(build_tree, iter(flat_args)), in_trees))
   ans = yield jtuple_trees
-  if type(ans) is JaxTuple:
+  aval = core.get_aval(ans)
+  if type(aval) is AbstractTuple:
     ans_flat, out_tree = tree_flatten(ans)
     yield pack(ans_flat), out_tree
   else:
     yield ans, leaf
 
 def tree_flatten(maybe_tree):
-  if type(maybe_tree) is JaxTuple:
+  aval = core.get_aval(maybe_tree)
+  if type(aval) is AbstractTuple:
     flat_children, child_specs = unzip2(map(tree_flatten, maybe_tree))
     return it.chain.from_iterable(flat_children), JTupleTreeDef(child_specs)
   elif core.skip_checks or valid_jaxtype(maybe_tree):
