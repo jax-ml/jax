@@ -53,6 +53,7 @@ def num_float_bits(dtype):
 
 float_dtypes = [onp.float32, onp.float64]
 complex_dtypes = [onp.complex64, onp.complex128]
+inexact_dtypes = float_dtypes + complex_dtypes
 int_dtypes = [onp.int32, onp.int64]
 bool_dtypes = [onp.bool_]
 default_dtypes = float_dtypes + int_dtypes
@@ -122,8 +123,8 @@ LAX_OPS = [
     op_record(lax.div, 2, default_dtypes + complex_dtypes, jtu.rand_nonzero()),
     op_record(lax.rem, 2, default_dtypes, jtu.rand_nonzero()),
 
-    op_record(lax.max, 2, default_dtypes, jtu.rand_small()),
-    op_record(lax.min, 2, default_dtypes, jtu.rand_small()),
+    op_record(lax.max, 2, all_dtypes, jtu.rand_small()),
+    op_record(lax.min, 2, all_dtypes, jtu.rand_small()),
 
     op_record(lax.eq, 2, all_dtypes, jtu.rand_some_equal()),
     op_record(lax.ne, 2, all_dtypes, jtu.rand_small()),
@@ -1976,9 +1977,9 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        "op": op, "init_val": init_val, "shape": shape, "dtype": dtype,
        "dims": dims, "rng": rng}
       for init_val, op, dtypes in [
-          (0, lax.add, float_dtypes),
-          (-onp.inf, lax.max, float_dtypes),
-          (onp.inf, lax.min, float_dtypes),
+          (0, lax.add, inexact_dtypes),
+          (-onp.inf, lax.max, inexact_dtypes),
+          (onp.inf, lax.min, inexact_dtypes),
       ]
       for dtype in dtypes
       for shape, dims in [
