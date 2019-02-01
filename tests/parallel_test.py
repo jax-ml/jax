@@ -123,6 +123,30 @@ class PapplyTest(jtu.JaxTestCase):
     ans = pmap(pfun, axis_name)(x)
     self.assertAllClose(ans, expected, check_dtypes=True)
 
+  def testBinopAfterTransposeRank2(self):
+
+    def fun(x):
+      return x + x.T
+
+    x = onp.reshape(onp.arange(4., dtype=onp.float32), (2, 2))
+    expected = x + x.T
+
+    pfun, axis_name = papply(fun)
+    ans = pmap(pfun, axis_name)(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testBinopAfterTransposeRank3(self):
+
+    def fun(x):
+      return x + x.T
+
+    x = onp.reshape(onp.arange(8., dtype=onp.float32), (2, 2, 2))
+    expected = x + x.T
+
+    pfun, axis_name = papply(fun)
+    ans = pmap(pfun, axis_name)(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
 
 class SplitTest(jtu.JaxTestCase):
 
