@@ -926,6 +926,7 @@ cumsum = _make_cumulative_reduction(
   onp.cumsum, lax._reduce_window_sum, 0, squash_nan=False)
 cumprod = _make_cumulative_reduction(
   onp.cumprod, lax._reduce_window_prod, 1, squash_nan=False)
+cumproduct = cumprod
 nancumsum = _make_cumulative_reduction(
   onp.nancumsum, lax._reduce_window_sum, 0, squash_nan=True)
 nancumprod = _make_cumulative_reduction(
