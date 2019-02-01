@@ -902,7 +902,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "rng": rng, "shape": shape, "dtype": dtype, "axis": axis}
       for shape in [(3,), (2, 3)]
       for dtype in default_dtypes
-      for axis in range(len(shape))
+      for axis in range(-len(shape), len(shape))  # Test negative axes
       for rng in [jtu.rand_default()]))
   def testFlip(self, shape, dtype, axis, rng):
     args_maker = self._GetArgsMaker(rng, [shape], [dtype])
@@ -915,7 +915,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       {"testcase_name": "_{}".format(
           jtu.format_shape_dtype_string(shape, dtype)),
        "rng": rng, "shape": shape, "dtype": dtype}
-      for shape in [(3,), (2, 3)]
+      for shape in [(3,), (2, 3), (3, 2, 4)]
       for dtype in default_dtypes
       for rng in [jtu.rand_default()]))
   def testFlipud(self, shape, dtype, rng):
@@ -930,7 +930,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       {"testcase_name": "_{}".format(
           jtu.format_shape_dtype_string(shape, dtype)),
        "rng": rng, "shape": shape, "dtype": dtype}
-      for shape in [(3, 2), (2, 3)]
+      for shape in [(3, 2), (2, 3), (3, 2, 4)]
       for dtype in default_dtypes
       for rng in [jtu.rand_default()]))
   def testFliplr(self, shape, dtype, rng):

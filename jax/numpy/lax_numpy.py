@@ -490,7 +490,13 @@ def rot90(m, k=1, axes=(0, 1)):
 
 @_wraps(onp.flip)
 def flip(m, axis):
-  return lax.rev(m, [axis])
+  # Negative axes wrap around
+  if axis < 0:
+    rank = len(m.shape)
+    assert axis >= -rank, "axis={} is invalid for the {}-dimensional input array".format(axis, rank)
+    return lax.rev(m, [axis % rank])
+  else:
+    return lax.rev(m, [axis])
 
 
 @_wraps(onp.fliplr)
