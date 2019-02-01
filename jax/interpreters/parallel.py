@@ -197,11 +197,15 @@ parallel_translation_rules[psum_p] = psum_parallel_translation_rule
 def all_to_all(x, split_dim, concat_dim, **params):
   return all_to_all_p.bind(x, split_dim=split_dim, concat_dim=concat_dim, **params)
 
+def all_to_all_pmap_rule(x, axis, split_dim, concat_dim):
+  raise NotImplementedError
+
 def all_to_all_translation_rule(c, x, split_dim, concat_dim):
   return c.AllToAll(x, split_dim, concat_dim)
 
 all_to_all_p = PmapPrimitive('all_to_all')
 all_to_all_p.def_abstract_eval(lambda x, **kwargs: x)
+pmap_primitive_rules[all_to_all_p] = all_to_all_pmap_rule
 parallel_translation_rules[all_to_all_p] = all_to_all_translation_rule
 
 
