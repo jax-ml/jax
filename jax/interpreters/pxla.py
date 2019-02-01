@@ -63,7 +63,7 @@ class TempAxisName(object):
 def move_output_axis_transform(chunksize, src, dst, *args):
   """Function transformation that moves output axes from src to dst."""
   ans = yield args
-  yield moveaxis(chunksize, dst(), src(), ans)
+  yield moveaxis(chunksize, dst, src(), ans)
 
 def chunk_aval(chunksize, aval, axis):
   """Transform an abstract value's shape to have chunksize extent along axis."""
@@ -74,20 +74,20 @@ def chunk_aval(chunksize, aval, axis):
     shape[axis] = chunksize
     return ShapedArray(tuple(shape), aval.dtype)
 
-# TODO these next two functions became pretty trivial, maybe prune them
-def canonicalize_in_axis_spec(in_trees, spec_tree_prefix):
-  """Given argument list in_trees, canonicalize and flatten an in_axes spec."""
-  in_tree = tree_util.PyTreeDef(tree_util.node_types[tuple], None, in_trees)
-  return build_axis_spec_tree(spec_tree_prefix, in_tree)
+# # TODO do we need these next functions?
+# def canonicalize_in_axis_spec(in_trees, spec_tree_prefix):
+#   """Given argument list in_trees, canonicalize and flatten an in_axes spec."""
+#   in_tree = tree_util.PyTreeDef(tree_util.node_types[tuple], None, in_trees)
+#   return build_axis_spec_tree(spec_tree_prefix, in_tree)
 
-def canonicalize_out_axis_spec(out_tree, spec_tree_prefix):
-  """Given output out_tree, canonicalize and flatten an out_axes spec."""
-  return build_axis_spec_tree(spec_tree_prefix, out_tree)
+# def canonicalize_out_axis_spec(out_tree, spec_tree_prefix):
+#   """Given output out_tree, canonicalize and flatten an out_axes spec."""
+#   return build_axis_spec_tree(spec_tree_prefix, out_tree)
 
 def build_axis_spec_tree(spec, treedef):
-  """Given a tree_util treedef, canonicalize an axis spec for that treedef."""
+  """Given a JTupleTreeDef, canonicalize an axis spec for that treedef."""
   spec_type = type(spec)
-  if treedef is tree_util.leaf:
+  if treedef is xla.leaf:
     if spec_type is int:
       return spec
     elif spec_type is type(None):
@@ -96,9 +96,9 @@ def build_axis_spec_tree(spec, treedef):
       raise TypeError(spec_type)
   else:
     if spec_type is int:
-      return tuple(map(partial(build_axis_spec_tree, spec), treedef.children))
+      return tuple(map(partial(build_axis_spec_tree, spec), treedef.child_specs))
     elif spec_type is tuple:
-      return tuple(map(build_axis_spec_tree, spec, treedef.children))
+      return tuple(map(build_axis_spec_tree, spec, treedef.child_specs))
     else:
       raise TypeError(spec_type)
 
@@ -295,13 +295,20 @@ def xla_pcall_impl(fun, *args, **params):
   flat_args = concatenate(flat_args)
   fun, out_tree = xla.flatten_fun(fun, in_trees)
 
-  import ipdb; ipdb.set_trace()  # TODO canonicalize in_axes
-  in_axes = tuple(concatenate(map(tree_flatten_axes, args, in_axes)))
-  assert len(flat_args) == len(in_axes)
+  in_axes_trees = tuple(map(build_axis_spec_tree, in_axes, in_trees))
+  flat_in_axes, _ = unzip2(map(xla.tree_flatten, in_axes_trees))
+  flat_in_axes = tuple(concatenate(flat_in_axes))
 
-  compiled_fun = xla_parallel_callable(fun, axis_name, in_axes, mesh_axis,
+  compiled_fun = xla_parallel_callable(fun, axis_name, flat_in_axes, mesh_axis,
                                        mesh_spec(), *map(abstractify, flat_args))
-  flat_ans = compiled_fun(out_tree(), out_axes(), *flat_args)
+
+  out_axes_tree = build_axis_spec_tree(out_axes, out_tree())
+  if out_tree() is xla.leaf:
+    flat_out_axes = out_axes_tree
+  else:
+    flat_out_axes, _ = xla.tree_flatten(out_axes_tree)
+    flat_out_axes = concatenate(flat_out_axes)
+  flat_ans = compiled_fun(out_tree(), flat_out_axes, *flat_args)
 
   if out_tree() is xla.leaf:
     return flat_ans
