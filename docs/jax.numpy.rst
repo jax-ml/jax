@@ -51,6 +51,9 @@ jax.numpy package
     cos
     cosh
     count_nonzero
+    cumsum
+    cumprod
+    cumproduct
     diag
     diag_indices
     diagonal
@@ -66,6 +69,8 @@ jax.numpy package
     eye
     fabs
     flip
+    fliplr
+    flipud
     floor
     floor_divide
     fmod
@@ -111,6 +116,8 @@ jax.numpy package
     moveaxis
     multiply
     nan_to_num
+    nancumprod
+    nancumsum
     nanmax
     nanmin
     nanprod
