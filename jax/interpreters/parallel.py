@@ -194,8 +194,8 @@ pmap_primitive_rules[psum_p] = psum_pmap_rule
 parallel_translation_rules[psum_p] = psum_parallel_translation_rule
 
 
-def all_to_all(x, split_dim, concat_dim):
-  return all_to_all_p.bind(x, split_dim=split_dim, concat_dim=concat_dim)
+def all_to_all(x, split_dim, concat_dim, **params):
+  return all_to_all_p.bind(x, split_dim=split_dim, concat_dim=concat_dim, **params)
 
 def all_to_all_translation_rule(c, x, split_dim, concat_dim):
   return c.AllToAll(x, split_dim, concat_dim)
@@ -205,9 +205,9 @@ all_to_all_p.def_abstract_eval(lambda x, **kwargs: x)
 parallel_translation_rules[all_to_all_p] = all_to_all_translation_rule
 
 
-def all_gather(x, xdim):
+def all_gather(x, xdim, **params):
   x = x.broadcast((xb.get_replica_count(),))
-  return all_to_all(x, 0, xdim)
+  return all_to_all(x, 0, xdim, **params)
 
 def gather(x, axis_name):
   return gather_p.bind(x, axis_name=axis_name)
@@ -473,5 +473,5 @@ def broadcasting_papply(prim, name, vals, axes, **params):
   elif xdim == ydim:
     return prim.bind(x, y, **params), xdim
   else:
-    x = all_to_all(x, xdim, ydim)
+    x = all_to_all(x, xdim, ydim, axis_name=xdim)
     return prim.bind(x, y, **params), ydim
