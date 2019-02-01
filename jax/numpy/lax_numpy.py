@@ -882,6 +882,56 @@ nanmax = _make_nan_reduction(onp.nanmax, max, -inf, nan_if_all_nan=True)
 nansum = _make_nan_reduction(onp.nansum, sum, 0, nan_if_all_nan=False)
 nanprod = _make_nan_reduction(onp.nanprod, prod, 1, nan_if_all_nan=False)
 
+
+def _make_cumulative_reduction(onp_reduction, window_reduce, init_val,
+                               squash_nan=False):
+  @_wraps(onp_reduction)
+  def cumulative_reduction(a, axis=None, dtype=None):
+    if axis is None or isscalar(a):
+      a = ravel(a)
+      axis = 0
+
+    a_shape = list(shape(a))
+    num_dims = len(a_shape)
+
+    if axis < 0:
+      axis = axis + num_dims
+    if axis < 0 or axis >= num_dims:
+      raise ValueError(
+          "axis {} is out of bounds for array of dimension {}".format(
+              axis, num_dims))
+
+    if squash_nan:
+      a = where(isnan(a), _constant_like(a, init_val), a)
+
+    if dtype:
+      a = lax.convert_element_type(a, dtype)
+
+    if a_shape[axis] == 0:
+      return a
+
+    padding = [(0, 0, 0)] * num_dims
+    padding[axis] = (a_shape[axis] - 1, 0, 0)
+    a = lax.pad(a, _constant_like(a, init_val), padding)
+    strides = [1] * num_dims
+    window_dims = [1] * num_dims
+    window_dims[axis] = a_shape[axis]
+    return window_reduce(
+       a, window_dims, strides, xla_bridge.get_xla_client().PaddingType.VALID)
+
+  return cumulative_reduction
+
+
+cumsum = _make_cumulative_reduction(
+  onp.cumsum, lax._reduce_window_sum, 0, squash_nan=False)
+cumprod = _make_cumulative_reduction(
+  onp.cumprod, lax._reduce_window_prod, 1, squash_nan=False)
+nancumsum = _make_cumulative_reduction(
+  onp.nancumsum, lax._reduce_window_sum, 0, squash_nan=True)
+nancumprod = _make_cumulative_reduction(
+  onp.nancumprod, lax._reduce_window_prod, 1, squash_nan=True)
+
+
 ### Array-creation functions
 
 @_wraps(onp.pad)
