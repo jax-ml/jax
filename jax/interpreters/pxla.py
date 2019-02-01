@@ -37,7 +37,6 @@ from ..lib import xla_bridge as xb
 from .xla import (xla_shape, xla_destructure, translation_rule, abstractify,
                   xla_shape_to_result_shape, jaxpr_computation)
 from .partial_eval import trace_to_subjaxpr, merge_pvals, JaxprTrace, PartialVal
-from .parallel import parallel_translation_rules
 from .batching import moveaxis
 from . import parallel
 from . import xla
@@ -75,7 +74,7 @@ def chunk_aval(chunksize, aval, axis):
     shape[axis] = chunksize
     return ShapedArray(tuple(shape), aval.dtype)
 
-# TODO these next two functions became pretty trivial, maybe prune
+# TODO these next two functions became pretty trivial, maybe prune them
 def canonicalize_in_axis_spec(in_trees, spec_tree_prefix):
   """Given argument list in_trees, canonicalize and flatten an in_axes spec."""
   in_tree = tree_util.PyTreeDef(tree_util.node_types[tuple], None, in_trees)
@@ -108,6 +107,16 @@ def flatten_axis_spec_tree(spec_tree):
   spec_flat, _ = tree_util.tree_flatten(spec_tree)
   return tuple(None if i is no_mapped_axis else i for i in spec_flat)
 
+def tree_flatten_axes(maybe_tree, axes):
+  if type(maybe_tree) is core.JaxTuple:
+    if maybe_tree:
+      flat_children = map(tree_flatten_axes, maybe_tree, axes)
+      return it.chain.from_iterable(flat_children)
+    else:
+      return []
+  else:
+    return [axes]
+
 # We use a special symbol for 'no mapped axis' instead of using None because
 # tree_util.py treats None as a tree node.
 class NoMappedAxis(object): pass
@@ -127,7 +136,7 @@ def unshard_output(mesh_spec, mesh_axis, out_axis, out_shards):
   """Collect and concatenate sharded device results."""
   _, ids = onp.unique(shard_assignments(mesh_spec, mesh_axis), return_index=True)
   shards = [out_shards[i] for i in ids]
-  return onp.concatenate(shards, out_axis)  # TODO device persistence
+  return onp.concatenate(shards, out_axis)
 
 def shard_assignments(mesh_spec, mesh_axis):
   """Given a mesh axis long which to shard data, compute replica assignments."""
@@ -203,6 +212,10 @@ def device_mesh(spec):
   _mesh_spec, prev_spec = spec, _mesh_spec
   yield
   _mesh_spec = prev_spec
+
+# axis environments are tiny, so we don't worry about the cost of copying keys
+def new_axis_env(d): return d
+def extend_axis_env(d1, d2): return dict(d1, **d2)
 
 
 ### xla_pcall
@@ -281,12 +294,14 @@ def xla_pcall_impl(fun, *args, **params):
   flat_args, in_trees = unzip2(map(xla.tree_flatten, args))
   flat_args = concatenate(flat_args)
   fun, out_tree = xla.flatten_fun(fun, in_trees)
+
+  import ipdb; ipdb.set_trace()  # TODO canonicalize in_axes
   in_axes = tuple(concatenate(map(tree_flatten_axes, args, in_axes)))
   assert len(flat_args) == len(in_axes)
 
   compiled_fun = xla_parallel_callable(fun, axis_name, in_axes, mesh_axis,
                                        mesh_spec(), *map(abstractify, flat_args))
-  flat_ans = compiled_fun(out_axes(), *flat_args)
+  flat_ans = compiled_fun(out_tree(), out_axes(), *flat_args)
 
   if out_tree() is xla.leaf:
     return flat_ans
@@ -311,25 +326,17 @@ def xla_parallel_callable(fun, axis_name, in_axes, mesh_axis, mesh_spec,
   return partial(execute_replicated, in_axes, mesh_axis, mesh_spec, compiled, pval)
 
 def execute_replicated(in_axes, mesh_axis, mesh_spec, compiled, pval,
-                       out_axes, *args):
+                       out_tree, out_axes, *args):
   input_bufs = map(partial(shard_arg, mesh_spec, mesh_axis), in_axes, args)
-  out_bufs = compiled.ExecutePerReplica(zip(*input_bufs))
-  out_shards = [merge_pvals(buf.to_py(), pval) for buf in out_bufs]  # TODO
-  if type(out_axes) is int:
+  input_bufs = zip(*input_bufs) if input_bufs else [[]] * xb.get_replica_count()
+  out_bufs = compiled.ExecutePerReplica(input_bufs)
+  out_shards = [merge_pvals(buf.to_py(), pval) for buf in out_bufs]
+  if out_tree is xla.leaf:
     return unshard_output(mesh_spec, mesh_axis, out_axes, out_shards)
   else:
+    raise NotImplementedError
     return map(partial(unshard_output, mesh_spec, mesh_axis), out_axes,
                zip(*out_shards))
-
-def tree_flatten_axes(maybe_tree, axes):
-  if type(maybe_tree) is core.JaxTuple:
-    if maybe_tree:
-      flat_children = map(tree_flatten_axes, maybe_tree, axes)
-      return it.chain.from_iterable(flat_children)
-    else:
-      return []
-  else:
-    return [axes]
 
 
 xla_pcall_p = core.Primitive('xla_pcall')
@@ -339,6 +346,4 @@ xla_pcall_p.def_impl(xla_pcall_impl)
 xla.translations[xla_pcall_p] = xla.xla_call_translation_rule
 
 
-# axis environments are tiny, so we don't worry about the cost of copying keys
-def new_axis_env(d): return d
-def extend_axis_env(d1, d2): return dict(d1, **d2)
+parallel_translation_rules = {}

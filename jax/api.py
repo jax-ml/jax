@@ -266,11 +266,10 @@ def pjit(fun, axis_name, in_axes=0, out_axes=0, mesh_axis=0):
     jaxtupletree_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
     check_args(jaxtupletree_args)
     f, out_tree = pytree_fun_to_jaxtupletree_fun(f, in_trees)
+    chunksize = pxla.chunk_size(axis_name, mesh_axis, in_axes, jaxtupletree_args)
 
-    # transform spmd primitives in f to first act locally then cross-replica
     in_axes_ = pxla.canonicalize_in_axis_spec(in_trees, in_axes)
     out_axes_ = OutAxesThunk(out_tree, out_axes)  # for pretty-printing
-    chunksize = pxla.chunk_size(axis_name, mesh_axis, in_axes_, jaxtupletree_args)
     f = pxla.chunk_transform(f, chunksize, axis_name, in_axes_, out_axes_)
 
     jaxtupletree_out = pxla.xla_pcall(f, *jaxtupletree_args,

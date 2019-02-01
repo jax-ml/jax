@@ -161,47 +161,7 @@ class PmapTrace(Trace):
     return PmapTracer(self, name, vals, axis)
 
 
-def unbound_name_error(primitive_name, *args, **kwargs):
-  axis_name = kwargs['axis_name']
-  msg = "axis name '{}' is unbound for primitive {}."
-  raise NameError(msg.format(axis_name, primitive_name))
-
-def PmapPrimitive(name):
-  prim = Primitive(name)
-  prim.def_impl(partial(unbound_name_error, name))
-  prim.def_abstract_eval(lambda x, *args, **kwargs: x)  # default
-  return prim
-
-
 pmap_primitive_rules = {}
-parallel_translation_rules = {}
-
-
-def psum(x, axis_name):
-  return psum_p.bind(x, axis_name=axis_name)
-
-def psum_pmap_rule(val, axis):
-  return val.sum(axis), None
-
-def psum_parallel_translation_rule(c, val, device_groups):
-  if len(device_groups) > 1:
-    return c.CrossReplicaSum(val, device_groups)
-  else:
-    return c.CrossReplicaSum(val)
-
-psum_p = PmapPrimitive('psum')
-pmap_primitive_rules[psum_p] = psum_pmap_rule
-parallel_translation_rules[psum_p] = psum_parallel_translation_rule
-
-
-def gather(x, axis_name):
-  return gather_p.bind(x, axis_name=axis_name)
-
-def gather_pmap_rule(val, axis):
-  return val, None
-
-gather_p = PmapPrimitive('gather')
-pmap_primitive_rules[gather_p] = gather_pmap_rule
 
 
 ### axis variable splitting and computation chunking
