@@ -37,7 +37,7 @@ from ..lib import xla_bridge as xb
 from .xla import (xla_shape, xla_destructure, translation_rule, abstractify,
                   xla_shape_to_result_shape, jaxpr_computation)
 from .partial_eval import trace_to_subjaxpr, merge_pvals, JaxprTrace, PartialVal
-from .batching import moveaxis
+from .batching import moveaxis, dimsize
 from . import parallel
 from . import xla
 from . import partial_eval as pe
@@ -46,6 +46,7 @@ map = safe_map
 
 
 ### util
+
 
 def chunk_transform(fun, chunksize, name, in_axes, out_axes_dst):
   """Rewrite SPMD operations to act first on local chunks then cross-replica."""
@@ -74,15 +75,6 @@ def chunk_aval(chunksize, aval, axis):
     shape[axis] = chunksize
     return ShapedArray(tuple(shape), aval.dtype)
 
-# # TODO do we need these next functions?
-# def canonicalize_in_axis_spec(in_trees, spec_tree_prefix):
-#   """Given argument list in_trees, canonicalize and flatten an in_axes spec."""
-#   in_tree = tree_util.PyTreeDef(tree_util.node_types[tuple], None, in_trees)
-#   return build_axis_spec_tree(spec_tree_prefix, in_tree)
-
-# def canonicalize_out_axis_spec(out_tree, spec_tree_prefix):
-#   """Given output out_tree, canonicalize and flatten an out_axes spec."""
-#   return build_axis_spec_tree(spec_tree_prefix, out_tree)
 
 def build_axis_spec_tree(spec, treedef):
   """Given a JTupleTreeDef, canonicalize an axis spec for that treedef."""
@@ -102,25 +94,18 @@ def build_axis_spec_tree(spec, treedef):
     else:
       raise TypeError(spec_type)
 
-def flatten_axis_spec_tree(spec_tree):
-  """Flatten an axis spec tree and replace no_mapped_axis with None."""
-  spec_flat, _ = tree_util.tree_flatten(spec_tree)
-  return tuple(None if i is no_mapped_axis else i for i in spec_flat)
-
-def tree_flatten_axes(maybe_tree, axes):
-  if type(maybe_tree) is core.JaxTuple:
-    if maybe_tree:
-      flat_children = map(tree_flatten_axes, maybe_tree, axes)
-      return it.chain.from_iterable(flat_children)
-    else:
-      return []
+def flatten(x):
+  if type(x) is tuple:
+    return tuple(_flatten(x))
   else:
-    return [axes]
+    return x
 
-# We use a special symbol for 'no mapped axis' instead of using None because
-# tree_util.py treats None as a tree node.
-class NoMappedAxis(object): pass
-no_mapped_axis = NoMappedAxis()
+def _flatten(x):
+  if type(x) is tuple:
+    return it.chain.from_iterable((_flatten(elt) for elt in x))
+  else:
+    return [x]
+
 
 def shard_arg(mesh_spec, mesh_axis, axis, arg):
   """Shard and device_put an input array argument along a logical axis."""
@@ -165,6 +150,7 @@ def split_array(x, num_splits, axis):
       return x[tuple(idx)]
     return map(get_nth_subarray, range(num_splits))
 
+
 def chunk_size(axis_name, mesh_axis, in_axes, args):
   """Compute the chunk size for mapped axes, checking for errors."""
   global mesh_spec
@@ -184,21 +170,6 @@ def chunk_size(axis_name, mesh_axis, in_axes, args):
                                   mesh_spec()[mesh_axis], axis_size))
 
   return axis_size // mesh_spec()[mesh_axis]
-
-def dimsize(axis, x):
-  if type(axis) is int:
-    aval = core.get_aval(x)
-    if type(aval) is core.AbstractTuple:
-      assert not aval  # must be an empty tuple
-      return set()
-    elif isinstance(aval, ShapedArray):
-      return {x.shape[axis]}
-    else:
-      raise TypeError(type(aval))
-  elif type(axis) is tuple:
-    return reduce(set.union, map(dimsize, axis, x))
-  else:
-    raise TypeError(type(axis))
 
 
 def mesh_spec():
@@ -286,7 +257,7 @@ def replicated_computation(jaxpr, axis_env, const_vals, freevar_shapes,
 
 def xla_pcall_impl(fun, *args, **params):
   axis_name = params.pop('axis_name')  # e.g. 'i'
-  in_axes = params.pop('in_axes')      # e.g. 0 or (0, None)
+  in_axes = params.pop('in_axes')      # e.g. (0, None) or (0, 1)
   out_axes = params.pop('out_axes')    # e.g. 0 or (None, 1)
   mesh_axis = params.pop('mesh_axis')  # e.g. 0 or 1
   assert not params
@@ -295,19 +266,10 @@ def xla_pcall_impl(fun, *args, **params):
   flat_args = concatenate(flat_args)
   fun, out_tree = xla.flatten_fun(fun, in_trees)
 
-  in_axes_trees = tuple(map(build_axis_spec_tree, in_axes, in_trees))
-  flat_in_axes, _ = unzip2(map(xla.tree_flatten, in_axes_trees))
-  flat_in_axes = tuple(concatenate(flat_in_axes))
-
+  flat_in_axes = flatten(tuple(map(build_axis_spec_tree, in_axes, in_trees)))
   compiled_fun = xla_parallel_callable(fun, axis_name, flat_in_axes, mesh_axis,
                                        mesh_spec(), *map(abstractify, flat_args))
-
-  out_axes_tree = build_axis_spec_tree(out_axes, out_tree())
-  if out_tree() is xla.leaf:
-    flat_out_axes = out_axes_tree
-  else:
-    flat_out_axes, _ = xla.tree_flatten(out_axes_tree)
-    flat_out_axes = concatenate(flat_out_axes)
+  flat_out_axes = flatten(build_axis_spec_tree(out_axes, out_tree()))
   flat_ans = compiled_fun(out_tree(), flat_out_axes, *flat_args)
 
   if out_tree() is xla.leaf:
@@ -341,7 +303,6 @@ def execute_replicated(in_axes, mesh_axis, mesh_spec, compiled, pval,
   if out_tree is xla.leaf:
     return unshard_output(mesh_spec, mesh_axis, out_axes, out_shards)
   else:
-    raise NotImplementedError
     return map(partial(unshard_output, mesh_spec, mesh_axis), out_axes,
                zip(*out_shards))
 

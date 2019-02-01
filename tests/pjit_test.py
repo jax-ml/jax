@@ -49,26 +49,26 @@ class PmapTest(jtu.JaxTestCase):
     expected = (x - x.sum(0),)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-#   @jtu.skip_on_devices("gpu")
-#   def testTupleInput(self):
-#     f = lambda x: x[0] - psum(x[0], 'i')
-#     x = onp.arange(8., dtype=onp.float32).reshape(4, 2)
-#     f = pjit(f, axis_name='i', in_axes=0, out_axes=0, mesh_axis=0)
-#     ans = f((x,))
-#     expected = x - x.sum(0)
-#     self.assertAllClose(ans, expected, check_dtypes=False)
+  @jtu.skip_on_devices("gpu")
+  def testTupleInput(self):
+    f = lambda x: x[0] - psum(x[0], 'i')
+    x = onp.arange(8., dtype=onp.float32).reshape(4, 2)
+    f = pjit(f, axis_name='i', in_axes=0, out_axes=0, mesh_axis=0)
+    ans = f((x,))
+    expected = x - x.sum(0)
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
-#   @jtu.skip_on_devices("gpu")
-#   def testNested(self):
-#     def f(x, y):
-#       return psum(psum(x, 'i'), 'j')
-#     f = pjit(f, 'i')
-#     f = pjit(f, 'j', out_axes=1)
+  @jtu.skip_on_devices("gpu")
+  def testNested(self):
+    def f(x, y):
+      return psum(psum(x, 'i'), 'j')
+    f = pjit(f, 'i')
+    f = pjit(f, 'j', out_axes=1)
 
-#     x = onp.ones((3, 4), onp.float32)
-#     ans = f(x, x)
-#     expected = 12 * onp.ones((4, 3), onp.float32)
-#     self.assertAllClose(ans, expected, check_dtypes=True)
+    x = onp.ones((3, 4), onp.float32)
+    ans = f(x, x)
+    expected = 12 * onp.ones((4, 3), onp.float32)
+    self.assertAllClose(ans, expected, check_dtypes=True)
 
 
 if __name__ == '__main__':
