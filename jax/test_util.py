@@ -108,7 +108,7 @@ def rand_like(rng, x):
   dtype = _dtype(x)
   randn = lambda: onp.asarray(rng.randn(*shape), dtype=dtype)
   if onp.issubdtype(dtype, onp.complexfloating):
-    return randn() + 1.0j * randn()
+    return randn() + dtype.type(1.0j) * randn()
   else:
     return randn()
 
