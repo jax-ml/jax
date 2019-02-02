@@ -1611,6 +1611,53 @@ def argsort(a, axis=-1, kind='quicksort', order=None):
     return perm
 
 
+# TODO(phawkins): use this helper everywhere.
+def _canonicalize_axis(axis, num_dims):
+  """Canonicalize an axis in (-num_dims, num_dims) to [0, num_dims)."""
+  if axis < 0:
+    axis = axis + num_dims
+  if axis < 0 or axis >= num_dims:
+      raise ValueError(
+          "axis {} is out of bounds for array of dimension {}".format(
+              axis, num_dims))
+  return axis
+
+
+@_wraps(onp.take)
+def take(a, indices, axis=None, out=None, mode=None):
+  if out:
+    raise NotImplementedError("The 'out' argument to np.take is not supported.")
+
+  a = asarray(a)
+  indices = asarray(indices)
+
+  if axis is None:
+    a = ravel(a)
+    axis = 0
+  axis = _canonicalize_axis(axis, ndim(a))
+
+  if mode == "raise":
+    # TODO(phawkins): we have no way to report out of bounds errors yet.
+    raise NotImplementedError("The 'raise' mode to np.take is not supported.")
+  elif mode == "wrap":
+    indices = mod(indices, a.shape[axis])
+  elif mode != "clip" and mode is not None:
+    raise ValueError("Invalid mode '{}' for np.take".format(mode))
+
+  index_dims = len(shape(indices))
+  slice_sizes = list(shape(a))
+  slice_sizes[axis] = 1
+  dnums = lax.GatherDimensionNumbers(
+    offset_dims=tuple(
+      list(range(axis)) +
+      list(range(axis + index_dims, len(a.shape) + index_dims - 1))),
+    collapsed_slice_dims=(axis,),
+    start_index_map=(axis,),
+    index_vector_dim=index_dims)
+  return lax.gather(a, indices, dimension_numbers=dnums,
+                    slice_sizes=tuple(slice_sizes))
+
+
 @_wraps(getattr(onp, "take_along_axis", None))
 def take_along_axis(arr, indices, axis):
   if axis is None and ndim(arr) != 1:
@@ -1618,6 +1665,8 @@ def take_along_axis(arr, indices, axis):
   elif ndim(arr) == 1:
     return lax.index_take(arr, (indices,), (0,))
   else:
+    # TODO(mattjj): if we lower directly to lax.gather here, we might be able to
+    # avoid the reshape on the output.
     all_indices = [lax.broadcasted_iota(_dtype(indices), shape(indices), i)
                    for i in range(ndim(arr))]
     all_indices[axis] = indices
@@ -1690,6 +1739,8 @@ def _rewriting_take(arr, idx, axis=0):
   elif isinstance(idx, tuple) and _all(onp.ndim(elt) == 0 for elt in idx):
     canonical_idx = _canonicalize_tuple_index(arr, idx)
     result, axis = arr, 0
+    # TODO(mattjj): could generate a single HLO here, rather than one for each
+    # elt in canonical idx. For example, x[0, :, 0] generates three HLOs now.
     for elt in (elt for elt in canonical_idx if elt is not None):
       result = _rewriting_take(result, elt, axis=axis)
       axis += isinstance(elt, slice)   # advance axis index if not eliminated
@@ -1718,6 +1769,8 @@ def _rewriting_take(arr, idx, axis=0):
       idx = [idx]
 
     flat_idx = tuple([mod(ravel(x), arr.shape[i]) for i, x in enumerate(idx)])
+    # TODO(mattjj): if we instead lower directly to lax.gather, we can probably
+    # eliminate the reshape here.
     out = lax.index_take(arr, flat_idx, tuple(range(len(idx))))
     return lax.reshape(out, idx[0].shape + _shape(arr)[len(idx):])
 
@@ -1735,6 +1788,8 @@ def _rewriting_take(arr, idx, axis=0):
 
     flat_idx = tuple(mod(ravel(x), arr_sliced.shape[i])
                      for i, x in zip(axes, idx_advanced))
+    # TODO(mattjj): if we instead lower directly to lax.gather, we can probably
+    # eliminate the reshape here.
     out = lax.index_take(arr_sliced, flat_idx, axes)
     shape_suffix = tuple(onp.delete(_shape(arr_sliced), axes))
     out = lax.reshape(out, idx_advanced[0].shape + shape_suffix)

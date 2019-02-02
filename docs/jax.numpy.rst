@@ -154,6 +154,7 @@ jax.numpy package
     subtract
     sum
     swapaxes
+    take
     take_along_axis
     tan
     tanh

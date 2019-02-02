@@ -256,54 +256,19 @@ def scatter_add(operand, scatter_indices, updates, dimension_numbers=None):
       update_consts=consts, dimension_numbers=dimension_numbers,
       updates_shape=updates.shape)
 
-
 def index_take(src, idxs, axes):
-  pvals = [_abstractify(arg) for arg in (src,) + idxs]
-  jaxpr, _, consts = pe.trace_unwrapped_to_jaxpr(partial(_index_take, axes), pvals)
-  return index_take_p.bind(src, *idxs, axes=tuple(axes),
-                           input_shape=src.shape, jaxpr=jaxpr, consts=consts)
-
-def _index_take(axes, src, *idxs):
-  n = idxs[0].shape[0]
-  slice_sizes = subvals(src.shape, zip(axes, [1] * len(axes)))
-
-  def body_fun(i, state):
-    src, idxs, out = state
-    src_ind = (dynamic_index_in_dim(x, i, 0, False) for x in idxs)
-    start_indices = subvals([0] * src.ndim, zip(axes, src_ind))
-    update = dynamic_slice(src, start_indices, slice_sizes)
-    update = reshape(update, (1,) + out.shape[1:])
-    out = dynamic_update_slice(out, update, [i] + [0] * (out.ndim - 1))
-    return src, idxs, out
-
-  out = full_like(src, 0, shape=(n,) + tuple(onp.delete(src.shape, axes)))
-  init_val = src, idxs, out
-  _, _, out = fori_loop(0, n, body_fun, init_val)
-  return out
-
-def index_untake(src, dst, idxs, axes):
-  pvals = [_abstractify(arg) for arg in (src, dst) + idxs]
-  jaxpr, _, consts = pe.trace_unwrapped_to_jaxpr(partial(_index_untake, axes), pvals)
-  return index_untake_p.bind(src, dst, *idxs, axes=tuple(axes),
-                             jaxpr=jaxpr, consts=consts)
-
-def _index_untake(axes, src, dst, *idxs):
-  n = idxs[0].shape[0]
-  slice_sizes = subvals(dst.shape, zip(axes, [1] * len(axes)))
-
-  def body_fun(i, state):
-    src, dst, idxs = state
-    vals = dynamic_slice(src, [i] + [0] * (src.ndim - 1), (1,) + src.shape[1:])
-    vals = reshape(vals, subvals(dst.shape, zip(axes, [1] * len(axes))))
-    dst_ind = (dynamic_index_in_dim(x, i, 0, False) for x in idxs)
-    start_indices = subvals([0] * dst.ndim, zip(axes, dst_ind))
-    update = add(vals, dynamic_slice(dst, start_indices, slice_sizes))
-    dst = dynamic_update_slice(dst, update, start_indices)
-    return src, dst, idxs
-
-  init_val = src, dst, idxs
-  _, dst, _ = fori_loop(0, n, body_fun, init_val)
-  return dst
+  indices = concatenate([reshape(i, [i.shape[0], 1]) for i in idxs], 1)
+  slice_sizes = list(src.shape)
+  for ax in axes:
+    slice_sizes[ax] = 1
+  slice_sizes = tuple(slice_sizes)
+  offset_dims = tuple(range(1, src.ndim - indices.shape[1] + 1))
+  dnums = GatherDimensionNumbers(
+      offset_dims=offset_dims,
+      collapsed_slice_dims=axes,
+      start_index_map=axes,
+      index_vector_dim=1)
+  return gather(src, indices, dimension_numbers=dnums, slice_sizes=slice_sizes)
 
 def transpose(operand, permutation):
   permutation = tuple(permutation)
@@ -2182,74 +2147,6 @@ scatter_p = standard_primitive(
     _scatter_translation_rule)
 ad.primitive_jvps[scatter_p] = _scatter_jvp
 ad.primitive_transposes[scatter_p] = _scatter_transpose_rule
-
-
-
-def _index_take_shape_rule(src, *idxs, **kwargs):
-  axes = kwargs['axes']
-  return (idxs[0].shape[0],) + tuple(onp.delete(src.shape, axes))
-
-def _index_take_translation_rule(c, src, *idxs, **kwargs):
-  jaxpr = kwargs['jaxpr']
-  consts = kwargs['consts']
-  shapes = map(c.GetShape, (src,) + idxs)
-  xla_computation = xla.jaxpr_computation(jaxpr, consts, (), *shapes)
-  return c.Call(xla_computation, (src,) + idxs)
-
-def _index_take_jvp(primals, tangents, axes, input_shape, jaxpr, consts):
-  src = primals[0]
-  idxs = tuple(primals[1:])
-  g = ad.instantiate_zeros(src, tangents[0])
-  return index_take(src, idxs, axes), index_take(g, idxs, axes)
-
-def _index_take_transpose_rule(t, src, *idxs, **kwargs):
-  assert src is None
-  axes = kwargs['axes']
-  input_shape = kwargs['input_shape']
-  t_src = index_untake(t, _zeros(t, shape=input_shape), idxs, axes)
-  return [t_src] + [None] * len(idxs)
-
-index_take_p = standard_primitive(_index_take_shape_rule, _input_dtype,
-                                  'index_take', _index_take_translation_rule)
-ad.primitive_jvps[index_take_p] = _index_take_jvp
-ad.primitive_transposes[index_take_p] = _index_take_transpose_rule
-
-
-def _index_untake_shape_rule(src, dst, *idxs, **kwargs):
-  return dst.shape
-
-def _index_untake_translation_rule(c, src, dst, *idxs, **kwargs):
-  jaxpr = kwargs['jaxpr']
-  consts = kwargs['consts']
-  shapes = map(c.GetShape, (src, dst) + idxs)
-  xla_computation = xla.jaxpr_computation(jaxpr, consts, (), *shapes)
-  return c.Call(xla_computation, (src, dst) + idxs)
-
-def _index_untake_jvp(primals, tangents, axes, jaxpr, consts):
-  src, dst = primals[0], primals[1]
-  idxs = tuple(primals[2:])
-  g_src, g_dst = tangents[0], tangents[1]
-  g_src = ad.instantiate_zeros(src, g_src)
-  g_dst = ad.instantiate_zeros(dst, g_dst)
-  val_out = index_untake(src, dst, idxs, axes)
-  tangent_out = index_untake(g_src, g_dst, idxs, axes)
-  return val_out, tangent_out
-
-def _index_untake_transpose_rule(t, src, dst, *idxs, **kwargs):
-  axes = kwargs['axes']
-  t_src = t_dst = None
-  if src is None:
-    t_src = index_take(t, idxs, axes)
-  if dst is None:
-    t_dst = t
-
-  return [t_src, t_dst] + [None] * len(idxs)
-
-index_untake_p = standard_primitive(
-    _index_untake_shape_rule, _input_dtype, 'index_untake',
-    _index_untake_translation_rule)
-ad.primitive_jvps[index_untake_p] = _index_untake_jvp
-ad.primitive_transposes[index_untake_p] = _index_untake_transpose_rule
 
 
 def _reduce_shape_rule(operand, init_value, computation, jaxpr, consts, dimensions):
