@@ -277,20 +277,6 @@ def pjit(fun, axis_name, in_axes=0, out_axes=0, mesh_axis=0):
   f_jitted.__name__ = "pjit({})".format(f_jitted.__name__)
   return f_jitted
 
-class OutAxesThunk(object):
-  # This class is just used for its __repr__ method in pretty-printing jaxprs
-
-  def __init__(self, out_tree_thunk, out_axes):
-    self.out_tree_thunk = out_tree_thunk
-    self.out_axes = out_axes
-
-  def __call__(self):
-    out_tree = self.out_tree_thunk()
-    return pxla.canonicalize_out_axis_spec(out_tree, self.out_axes)
-
-  def __repr__(self):
-    return repr(self())
-
 
 def pmap(fun, axis_name, in_axes=0, out_axes=0):
   """Vectorizing pseudo-map for single-program multiple-data (SPMD) functions."""
