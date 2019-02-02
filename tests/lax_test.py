@@ -1345,28 +1345,6 @@ class LaxTest(jtu.JaxTestCase):
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_dst_shape={}_idxs={}_axes={}".format(
-          jtu.format_shape_dtype_string(dst_shape, dtype), idxs, axes),
-       "dst_shape": dst_shape, "dtype": dtype, "idxs": idxs, "axes": axes,
-       "rng": rng}
-      for dtype in default_dtypes
-      for dst_shape, idxs, axes in [
-          [(3, 4, 5), (onp.array([0, 2, 1]),), (0,)],
-          [(3, 4, 5), (onp.array([-1, -2]),), (0,)],
-          [(3, 4, 5), (onp.array([0, 2]), onp.array([1, 3])), (0, 1)],
-          [(3, 4, 5), (onp.array([0, 2]), onp.array([1, 3])), (0, 2)],
-      ]
-      for rng in [jtu.rand_default()]))
-  def testIndexUntake(self, dst_shape, dtype, idxs, axes, rng):
-    # We call lax.index_take to get the shapes right
-    src_shape = lax.index_take(rng(dst_shape, dtype), idxs, axes).shape
-    ridxs = lambda: tuple(rng(e.shape, e.dtype) for e in idxs)
-    args_maker = lambda: [rng(src_shape, dtype), rng(dst_shape, dtype), ridxs()]
-    fun = lambda src, dst, idxs: lax.index_untake(src, dst, idxs, axes)
-    self._CompileAndCheck(fun, args_maker, check_dtypes=True)
-
-
-  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_idxs={}_dnums={}_slice_sizes={}".format(
           jtu.format_shape_dtype_string(shape, dtype), idxs, dnums,
           slice_sizes),
@@ -2106,29 +2084,6 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     src = rng(shape, dtype)
     index_take = lambda src: lax.index_take(src, idxs, axes)
     check_grads(index_take, (src,), 2, 1e-2, 1e-2, 1e-2)
-
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_dst_shape={}_idxs={}_axes={}".format(
-          jtu.format_shape_dtype_string(dst_shape, dtype), idxs, axes),
-       "dst_shape": dst_shape, "dtype": dtype, "idxs": idxs, "axes": axes,
-       "rng": rng}
-      for dtype in float_dtypes
-      for dst_shape, idxs, axes in [
-          [(3, 4, 5), (onp.array([0, 2, 1]),), (0,)],
-          [(3, 4, 5), (onp.array([-1, -2]),), (0,)],
-          [(3, 4, 5), (onp.array([0, 2]), onp.array([1, 3])), (0, 1)],
-          [(3, 4, 5), (onp.array([0, 2]), onp.array([1, 3])), (0, 2)],
-      ]
-      for rng in [jtu.rand_default()]))
-  def testIndexUntakeGrad(self, dst_shape, dtype, idxs, axes, rng):
-    # We call lax.index_take to get the shapes right
-    src_shape = lax.index_take(rng(dst_shape, dtype), idxs, axes).shape
-
-    idxs = tuple(rng(e.shape, e.dtype) for e in idxs)
-    src = rng(src_shape, dtype)
-    dst = rng(dst_shape, dtype)
-    index_untake = lambda src, dst: lax.index_untake(src, dst, idxs, axes)
-    check_grads(index_untake, (src, dst), 2, 1e-2, 1e-2, 1e-2)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_idxs={}_dnums={}_slice_sizes={}".format(

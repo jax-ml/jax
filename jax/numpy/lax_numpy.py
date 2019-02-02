@@ -1665,6 +1665,8 @@ def take_along_axis(arr, indices, axis):
   elif ndim(arr) == 1:
     return lax.index_take(arr, (indices,), (0,))
   else:
+    # TODO(mattjj): if we lower directly to lax.gather here, we might be able to
+    # avoid the reshape on the output.
     all_indices = [lax.broadcasted_iota(_dtype(indices), shape(indices), i)
                    for i in range(ndim(arr))]
     all_indices[axis] = indices
@@ -1737,6 +1739,8 @@ def _rewriting_take(arr, idx, axis=0):
   elif isinstance(idx, tuple) and _all(onp.ndim(elt) == 0 for elt in idx):
     canonical_idx = _canonicalize_tuple_index(arr, idx)
     result, axis = arr, 0
+    # TODO(mattjj): could generate a single HLO here, rather than one for each
+    # elt in canonical idx. For example, x[0, :, 0] generates three HLOs now.
     for elt in (elt for elt in canonical_idx if elt is not None):
       result = _rewriting_take(result, elt, axis=axis)
       axis += isinstance(elt, slice)   # advance axis index if not eliminated
@@ -1765,6 +1769,8 @@ def _rewriting_take(arr, idx, axis=0):
       idx = [idx]
 
     flat_idx = tuple([mod(ravel(x), arr.shape[i]) for i, x in enumerate(idx)])
+    # TODO(mattjj): if we instead lower directly to lax.gather, we can probably
+    # eliminate the reshape here.
     out = lax.index_take(arr, flat_idx, tuple(range(len(idx))))
     return lax.reshape(out, idx[0].shape + _shape(arr)[len(idx):])
 
@@ -1782,6 +1788,8 @@ def _rewriting_take(arr, idx, axis=0):
 
     flat_idx = tuple(mod(ravel(x), arr_sliced.shape[i])
                      for i, x in zip(axes, idx_advanced))
+    # TODO(mattjj): if we instead lower directly to lax.gather, we can probably
+    # eliminate the reshape here.
     out = lax.index_take(arr_sliced, flat_idx, axes)
     shape_suffix = tuple(onp.delete(_shape(arr_sliced), axes))
     out = lax.reshape(out, idx_advanced[0].shape + shape_suffix)
