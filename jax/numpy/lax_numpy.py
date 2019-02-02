@@ -1611,6 +1611,53 @@ def argsort(a, axis=-1, kind='quicksort', order=None):
     return perm
 
 
+# TODO(phawkins): use this helper everywhere.
+def _canonicalize_axis(axis, num_dims):
+  """Canonicalize an axis in (-num_dims, num_dims) to [0, num_dims)."""
+  if axis < 0:
+    axis = axis + num_dims
+  if axis < 0 or axis >= num_dims:
+      raise ValueError(
+          "axis {} is out of bounds for array of dimension {}".format(
+              axis, num_dims))
+  return axis
+
+
+@_wraps(onp.take)
+def take(a, indices, axis=None, out=None, mode=None):
+  if out:
+    raise NotImplementedError("The 'out' argument to np.take is not supported.")
+
+  a = asarray(a)
+  indices = asarray(indices)
+
+  if axis is None:
+    a = ravel(a)
+    axis = 0
+  axis = _canonicalize_axis(axis, ndim(a))
+
+  if mode == "raise":
+    # TODO(phawkins): we have no way to report out of bounds errors yet.
+    raise NotImplementedError("The 'raise' mode to np.take is not supported.")
+  elif mode == "wrap":
+    indices = mod(indices, a.shape[axis])
+  elif mode != "clip" and mode is not None:
+    raise ValueError("Invalid mode '{}' for np.take".format(mode))
+
+  index_dims = len(shape(indices))
+  slice_sizes = list(shape(a))
+  slice_sizes[axis] = 1
+  dnums = lax.GatherDimensionNumbers(
+    offset_dims=tuple(
+      list(range(axis)) +
+      list(range(axis + index_dims, len(a.shape) + index_dims - 1))),
+    collapsed_slice_dims=(axis,),
+    start_index_map=(axis,),
+    index_vector_dim=index_dims)
+  return lax.gather(a, indices, dimension_numbers=dnums,
+                    slice_sizes=tuple(slice_sizes))
+
+
 @_wraps(getattr(onp, "take_along_axis", None))
 def take_along_axis(arr, indices, axis):
   if axis is None and ndim(arr) != 1:
