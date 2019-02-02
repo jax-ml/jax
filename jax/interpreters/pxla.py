@@ -114,8 +114,13 @@ def shard_arg(mesh_spec, mesh_axis, axis, arg):
 def unshard_output(mesh_spec, mesh_axis, out_axis, out_shards):
   """Collect and concatenate sharded device results."""
   _, ids = onp.unique(shard_assignments(mesh_spec, mesh_axis), return_index=True)
-  shards = [out_shards[i] for i in ids]
-  return onp.concatenate(shards, out_axis)
+  if out_axis is None:
+    return out_shards[0]
+  elif type(out_axis) is int:
+    shards = [out_shards[i] for i in ids]
+    return onp.concatenate(shards, out_axis)
+  else:
+    raise TypeError(type(out_axis))
 
 def shard_assignments(mesh_spec, mesh_axis):
   """Given a mesh axis long which to shard data, compute replica assignments."""
@@ -274,10 +279,10 @@ def xla_pcall_impl(fun, *args, **params):
 @lu.memoize
 def xla_parallel_callable(fun, axis_name, in_axes, mesh_axis, mesh_spec,
                           *abstract_args):
-  if abstract_args:
-    chunksize = next(x.shape[ax] // mesh_spec[mesh_axis]
-                     for x, ax in zip(abstract_args, in_axes)
-                     if ax is not None and type(x) is ShapedArray)
+  chunksize = next((x.shape[ax] // mesh_spec[mesh_axis]
+                    for x, ax in zip(abstract_args, in_axes)
+                    if ax is not None and type(x) is ShapedArray), None)
+  if chunksize is not None:
     abstract_args = map(partial(chunk_aval, chunksize), abstract_args, in_axes)
   axis_env = new_axis_env({axis_name: replica_groups(mesh_spec, mesh_axis)})
   pvals = [PartialVal((aval, core.unit)) for aval in abstract_args]
