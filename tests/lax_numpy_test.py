@@ -1062,6 +1062,34 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertAllClose(expected, ans, check_dtypes=False)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_index={}_axis={}_mode={}".format(
+          jtu.format_shape_dtype_string(shape, dtype),
+          jtu.format_shape_dtype_string(index_shape, index_dtype),
+          axis, mode),
+       "rng": rng, "rng_indices": rng_indices, "shape": shape,
+       "index_shape": index_shape, "dtype": dtype, "index_dtype": index_dtype,
+       "axis": axis, "mode": mode}
+      for shape in [(3,), (3, 4), (3, 4, 5)]
+      for index_shape in scalar_shapes + [(3,), (2, 1, 3)]
+      for axis in itertools.chain(range(-len(shape), len(shape)), [None])
+      for dtype in all_dtypes
+      for index_dtype in int_dtypes
+      for mode in ['wrap', 'clip']
+      for rng in [jtu.rand_default()]
+      for rng_indices in [jtu.rand_int(-5, 5)]))
+  def testTake(self, shape, dtype, index_shape, index_dtype, axis, mode, rng,
+               rng_indices):
+    def args_maker():
+      x = rng(shape, dtype)
+      i = rng_indices(index_shape, index_dtype)
+      return x, i
+
+    lnp_op = lambda x, i: lnp.take(x, i, axis=axis, mode=mode)
+    onp_op = lambda x, i: onp.take(x, i, axis=axis, mode=mode)
+    self._CheckAgainstNumpy(lnp_op, onp_op, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_op, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_axis={}".format(
           jtu.format_shape_dtype_string(shape, dtype), axis),
        "rng": rng, "shape": shape, "dtype": dtype, "axis": axis}
