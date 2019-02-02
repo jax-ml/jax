@@ -78,21 +78,15 @@ def chunk_aval(chunksize, aval, axis):
 
 def build_axis_spec_tree(spec, treedef):
   """Given a JTupleTreeDef, canonicalize an axis spec for that treedef."""
-  spec_type = type(spec)
   if treedef is xla.leaf:
-    if spec_type is int:
-      return spec
-    elif spec_type is type(None):
-      return no_mapped_axis
-    else:
-      raise TypeError(spec_type)
-  else:
-    if spec_type is int:
-      return tuple(map(partial(build_axis_spec_tree, spec), treedef.child_specs))
-    elif spec_type is tuple:
+    return spec
+  elif type(spec) is tuple:
+    if treedef.child_specs:
       return tuple(map(build_axis_spec_tree, spec, treedef.child_specs))
     else:
-      raise TypeError(spec_type)
+      return ()
+  else:
+    return tuple(map(partial(build_axis_spec_tree, spec), treedef.child_specs))
 
 def flatten(x):
   if type(x) is tuple:
