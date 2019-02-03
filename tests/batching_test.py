@@ -485,5 +485,43 @@ class BatchingTest(jtu.JaxTestCase):
     per_example_direct = np.concatenate(per_example_direct, axis=0)
     self.assertAllClose(per_example, per_example_direct, check_dtypes=True)
 
+  def testSelect(self):
+    pred = onp.array([True, False])
+    on_true = onp.array([0, 1])
+    on_false = onp.array([2, 3])
+    ans = vmap(lax.select)(pred, on_true, on_false)
+    expected = onp.array([0, 3])
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
+    pred = onp.array([False, True])
+    on_true = onp.array([0, 1])
+    on_false = onp.array([2, 3])
+    ans = vmap(lax.select, (0, None, None))(pred, on_true, on_false)
+    expected = onp.array([[2, 3],
+                          [0, 1]])
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
+    pred = True
+    on_true = onp.array([0, 1], onp.float32)
+    on_false = onp.array(3, onp.float32)
+    ans = vmap(lax.select, (None, 0, None))(pred, on_true, on_false)
+    expected = onp.array([0, 1], onp.float32)
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
+    pred = onp.array([False, True])
+    on_true = onp.array([0, 1], onp.float32)
+    on_false = onp.array(3, onp.float32)
+    ans = vmap(lax.select, (0, 0, None))(pred, on_true, on_false)
+    expected = onp.array([3, 1], onp.float32)
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
+    pred = onp.array([False, True])
+    on_true = onp.array([2], onp.float32)
+    on_false = onp.array([[3, 4]], onp.float32)
+    ans = vmap(lax.select, (0, None, 1), 1)(pred, on_true, on_false)
+    expected = onp.array([[3, 2]], onp.float32)
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
+
 if __name__ == '__main__':
   absltest.main()

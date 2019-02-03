@@ -265,9 +265,9 @@ primitive_batchers[zeros_like_p] = zeros_like_batched
 # method. To handle that case, the `broadcast` function uses a try/except.
 
 
-def bdim_at_front(x, bdim, broadcast_size=1):
+def bdim_at_front(x, bdim, broadcast_size=1, force_broadcast=False):
   if bdim is None:
-    return broadcast(x, broadcast_size)
+    return broadcast(x, broadcast_size, force_broadcast=force_broadcast)
   else:
     return move_dim_to_front(x, bdim)
 
