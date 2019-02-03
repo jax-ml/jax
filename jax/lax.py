@@ -1760,13 +1760,23 @@ def _select_batch_rule(batched_args, batch_dims, **unused_kwargs):
   size = next(x.shape[i] for x, i in zip(batched_args, batch_dims)
               if i is not None)
 
-  # TODO(mattjj): could avoid broadcasts/transposes in some special cases
+  # avoid transposes and some broadcasts in special cases
+  if pred_bdim == ot_bdim == of_bdim:
+    if onp.shape(pred) == onp.shape(on_true):
+      return select(pred, on_true, on_false), pred_bdim
+    else:
+      # vmapped function had a scalar pred with nonscalar args
+      assert onp.ndim(pred) == 1
+      pred = broadcast_in_dim(pred, on_true.shape, [pred_bdim])
+      return select(pred, on_true, on_false), pred_bdim
+
   pred = batching.bdim_at_front(pred, pred_bdim, size, force_broadcast=True)
   on_true = batching.bdim_at_front(on_true, ot_bdim, size, force_broadcast=True)
   on_false = batching.bdim_at_front(on_false, of_bdim, size, force_broadcast=True)
   assert onp.shape(on_true) == onp.shape(on_false)
   if 0 < onp.ndim(pred) < onp.ndim(on_true):
     # vmapped function had a scalar pred with nonscalar args
+    assert onp.ndim(pred) == 1
     pred = broadcast_in_dim(pred, on_true.shape, [0])
   return select(pred, on_true, on_false), 0
 
