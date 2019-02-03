@@ -37,7 +37,7 @@ from ..lib import xla_bridge as xb
 from .xla import (xla_shape, xla_destructure, translation_rule, abstractify,
                   xla_shape_to_result_shape, jaxpr_computation)
 from .partial_eval import trace_to_subjaxpr, merge_pvals, JaxprTrace, PartialVal
-from .batching import dimsize
+from .batching import dimsize, broadcast
 from . import parallel
 from . import xla
 from . import partial_eval as pe
