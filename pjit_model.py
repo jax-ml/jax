@@ -47,16 +47,30 @@ def predict(params, inputs):
     inputs = np.tanh(outputs)
   return outputs
 
-@partial(pjit, axis_name='i', in_axes=(None, 0), out_axes=None)
 def spmd_loss(params, batch):
   inputs, targets = batch
   preds = predict(params, inputs)
   perex_loss = -np.mean(preds * targets)
   return lax.psum(perex_loss, axis_name='i')  # 'allreduce-sum' on hidden axis
 
-print 'manual spmd program'
-print spmd_loss(params, batch)
-print grad(spmd_loss)(params, batch)
+# compiling the grad function for parallel execution
+gradfun = pjit(grad(spmd_loss), axis_name='i', in_axes=(None, 0), out_axes=None)
+print 'manual spmd program, compile-of-grad version'
+print gradfun(params, batch)  # parallel execution, fwd and bwd fused together
+print
+
+# or, grad-of-compile version
+spmd_loss = pjit(spmd_loss, axis_name='i', in_axes=(None, 0), out_axes=None)
+print 'manual spmd program, grad-of-compile version'
+print spmd_loss(params, batch)        # parallel execution
+print grad(spmd_loss)(params, batch)  # parallel execution, fwd and bwd separate
+print
+
+# or get both with compile-of-grad-of-compile
+gradfun = pjit(grad(spmd_loss), axis_name='i', in_axes=(None, 0), out_axes=None)
+print 'manual spmd program, compile-of-grad-of-compile version'
+print spmd_loss(params, batch)        # parallel execution
+print grad(spmd_loss)(params, batch)  # parallel execution, fwd and bwd fused
 print
 
 

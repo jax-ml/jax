@@ -1961,6 +1961,7 @@ for method_name in _nondiff_methods + _diff_methods:
 setattr(ShapedArray, "flatten", core.aval_method(ravel))
 setattr(ShapedArray, "T", core.aval_property(transpose))
 setattr(ShapedArray, "astype", core.aval_method(lax.convert_element_type))
+setattr(ShapedArray, "psum", core.aval_method(lax.psum))
 
 
 # Forward operators, methods, and properies on DeviceArray to lax_numpy

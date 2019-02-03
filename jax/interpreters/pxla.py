@@ -37,7 +37,7 @@ from ..lib import xla_bridge as xb
 from .xla import (xla_shape, xla_destructure, translation_rule, abstractify,
                   xla_shape_to_result_shape, jaxpr_computation)
 from .partial_eval import trace_to_subjaxpr, merge_pvals, JaxprTrace, PartialVal
-from .batching import moveaxis, dimsize
+from .batching import dimsize
 from . import parallel
 from . import xla
 from . import partial_eval as pe
@@ -53,7 +53,7 @@ def chunk_transform(fun, chunksize, name, in_axes, out_axes_dst):
   temp_name = TempAxisName()
   fun = parallel.axisvar_split(fun, name, (temp_name, name))
   fun, out_axes_src = parallel.pmap_transform(fun, temp_name, in_axes)
-  fun = move_output_axis_transform(fun, chunksize, out_axes_src, out_axes_dst)
+  fun = move_output_axis_transform(fun, name, chunksize, out_axes_src, out_axes_dst)
   return fun
 
 class TempAxisName(object):
@@ -61,10 +61,42 @@ class TempAxisName(object):
     return '<temp axis {}>'.format(hex(id(self)))
 
 @lu.transformation
-def move_output_axis_transform(chunksize, src, dst, *args):
+def move_output_axis_transform(name, chunksize, src, dst, *args):
   """Function transformation that moves output axes from src to dst."""
   ans = yield args
-  yield moveaxis(chunksize, dst, src(), ans)
+  yield moveaxis(name, chunksize, dst, src(), ans)
+
+def moveaxis(name, sz, dst, src, x):
+  aval = core.get_aval(x)
+  if type(aval) is core.AbstractTuple:
+    if type(src) is tuple and type(dst) is tuple:
+      return core.pack(map(partial(moveaxis, name, sz), dst, src, x))
+    elif type(src) is tuple:
+      return core.pack(map(partial(moveaxis, name, sz, dst), src, x))
+    elif type(dst) is tuple:
+      srcs = (src,) * len(dst)
+      return core.pack(map(partial(moveaxis, name, sz), dst, srcs, x))
+    else:
+      return core.pack(map(partial(moveaxis, name, sz, dst, src), x))
+  elif isinstance(aval, ShapedArray):
+    dst_ = (dst % aval.ndim) if dst is not None and aval.ndim else dst
+    if src == dst_:
+      return x
+    else:
+      if src is None:
+        x = broadcast(x, sz, force_broadcast=True)
+        src = 0
+        dst_ = dst % (aval.ndim + 1)
+      elif dst is None:
+        return x.sum(src).psum('i')
+      if src == dst_:
+        return x
+      else:
+        perm = [i for i in range(onp.ndim(x)) if i != src]
+        perm.insert(dst_, src)
+        return x.transpose(perm)
+  else:
+    raise TypeError(type(aval))
 
 def chunk_aval(chunksize, aval, axis):
   """Transform an abstract value's shape to have chunksize extent along axis."""
