@@ -25,7 +25,7 @@ import os
 
 import numpy as onp
 import six
-from six.moves import xrange
+from six.moves import reduce
 
 from .. import core
 from .. import ad_util
