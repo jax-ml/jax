@@ -133,6 +133,15 @@ def tree_structure(tree):
   return spec
 
 
+def prune(treedef, tuple_tree):
+  if treedef is leaf:
+    return tuple_tree
+  elif treedef.children:
+    return tuple(map(prune, treedef.children, tuple_tree))
+  else:
+    return ()
+
+
 class PyTreeDef(object):
   def __init__(self, node_type, node_data, children):
     self.node_type = node_type

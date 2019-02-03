@@ -396,7 +396,7 @@ class BatchingTest(jtu.JaxTestCase):
     self.assertAllClose(sk, k[:, ::-1], check_dtypes=True)
     self.assertAllClose(sv, onp.broadcast_to(v[0, ::-1], (3, 4)),
                         check_dtypes=True)
-  
+
   def testConvGeneralDilated(self):
     W = np.array(onp.random.randn(3, 3, 1, 5), dtype=onp.float32)
     X = np.array(onp.random.randn(10, 5, 5, 1), dtype=onp.float32)

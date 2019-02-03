@@ -25,7 +25,6 @@ from jax import test_util as jtu
 from jax import lax
 from jax.api import pmap, papply, jit, make_jaxpr, axisvar_split
 from jax.linear_util import wrap_init
-from jax.interpreters.parallel import psum, scatter_like
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -40,20 +39,20 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testReduceSum(self):
-    f = lambda x: psum(x, 'i')
+    f = lambda x: lax.psum(x, 'i')
     ans = pmap(f, axis_name='i')(onp.ones(4))
     expected = 4 * onp.ones(4)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testLogSoftmax(self):
-    f = lambda x: x - np.log(psum(np.exp(x), 'i'))
+    f = lambda x: x - np.log(lax.psum(np.exp(x), 'i'))
     x = onp.log(onp.arange(1., 10., dtype=onp.float32))
     ans = pmap(f, axis_name='i')(x)
     expected = x - onp.log(onp.sum(onp.exp(x)))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testNested(self):
-    f = lambda x: psum(psum(x, 'i'), 'j')
+    f = lambda x: lax.psum(lax.psum(x, 'i'), 'j')
     x = onp.ones((2, 2))
     ans1 = pmap(pmap(f, 'i'), 'j')(x)
     ans2 = pmap(pmap(f, 'j'), 'i')(x)
@@ -80,7 +79,7 @@ class PapplyTest(jtu.JaxTestCase):
     pfun, axis_name = papply(np.sum)
 
     jaxpr = make_jaxpr(pfun)(onp.zeros(5))
-    expected_jaxpr = make_jaxpr(lambda x: psum(x, axis_name))(onp.zeros(5))
+    expected_jaxpr = make_jaxpr(lambda x: lax.psum(x, axis_name))(onp.zeros(5))
     assert repr(jaxpr) == repr(expected_jaxpr)
 
     ans = pmap(pfun, axis_name)(onp.arange(3.))
@@ -95,7 +94,7 @@ class PapplyTest(jtu.JaxTestCase):
     pfun, axis_name = papply(fun)
 
     jaxpr = make_jaxpr(pfun)(onp.zeros(5))
-    expected_jaxpr = make_jaxpr(lambda x: x - np.log(psum(np.exp(x), axis_name))
+    expected_jaxpr = make_jaxpr(lambda x: x - np.log(lax.psum(np.exp(x), axis_name))
                                 )(onp.zeros(5))
     assert repr(jaxpr) == repr(expected_jaxpr)
 
@@ -127,7 +126,7 @@ class PapplyTest(jtu.JaxTestCase):
 class SplitTest(jtu.JaxTestCase):
 
   def testSplitBasic(self):
-    f = lambda x: psum(np.sin(x), 'i')
+    f = lambda x: lax.psum(np.sin(x), 'i')
     x = onp.ones((2, 2))
     fsplit = axisvar_split(f, 'i', ('j', 'k'))
     ans = pmap(pmap(fsplit, 'j'), 'k')(x)

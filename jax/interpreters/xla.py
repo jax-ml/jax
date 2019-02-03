@@ -30,10 +30,10 @@ from ..config import flags
 from .. import core
 from .. import ad_util
 from .. import tree_util
+from .. import linear_util as lu
 from ..abstract_arrays import ConcreteArray, ShapedArray, make_shaped_array, array_types
 from ..core import AbstractTuple, JaxTuple, pack, valid_jaxtype
 from ..util import partial, partialmethod, memoize, unzip2, concatenate, safe_map, prod
-from ..linear_util import transformation_with_aux, memoize as linear_memoize
 from ..lib import xla_bridge as xb
 from .partial_eval import trace_to_subjaxpr, merge_pvals, JaxprTrace, PartialVal
 
@@ -372,18 +372,20 @@ def xla_shape(x):
 # JaxTuple trees only.
 # TODO(mattjj): since pjit does flattening in api.py, can move/de-duplicate this
 
-@transformation_with_aux
+@lu.transformation_with_aux
 def flatten_fun(in_trees, *flat_args):
   jtuple_trees = tuple(map(partial(build_tree, iter(flat_args)), in_trees))
   ans = yield jtuple_trees
-  if type(ans) is JaxTuple:
+  aval = core.get_aval(ans)
+  if type(aval) is AbstractTuple:
     ans_flat, out_tree = tree_flatten(ans)
     yield pack(ans_flat), out_tree
   else:
     yield ans, leaf
 
 def tree_flatten(maybe_tree):
-  if type(maybe_tree) is JaxTuple:
+  aval = core.get_aval(maybe_tree)
+  if type(aval) is AbstractTuple:
     flat_children, child_specs = unzip2(map(tree_flatten, maybe_tree))
     return it.chain.from_iterable(flat_children), JTupleTreeDef(child_specs)
   elif core.skip_checks or valid_jaxtype(maybe_tree):
@@ -420,7 +422,7 @@ def xla_call_impl(fun, *args):
   else:
     return build_tree(iter(flat_ans), out_tree())
 
-@linear_memoize
+@lu.memoize
 def xla_callable(fun, *abstract_args):
   pvals = [PartialVal((aval, core.unit)) for aval in abstract_args]
   with core.new_master(JaxprTrace, True) as master:
