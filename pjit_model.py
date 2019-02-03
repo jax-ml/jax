@@ -4,7 +4,7 @@ import numpy.random as npr
 
 import jax.numpy as np
 from jax import lax
-from jax import pjit, grad
+from jax import grad, pjit, papply
 
 
 ### set up some synthetic data
@@ -41,12 +41,6 @@ print
 
 ### writing an spmd program manually
 
-def predict(params, inputs):
-  for W, b in params:
-    outputs = np.dot(inputs, W) + b
-    inputs = np.tanh(outputs)
-  return outputs
-
 def spmd_loss(params, batch):
   inputs, targets = batch
   preds = predict(params, inputs)
@@ -74,6 +68,11 @@ print grad(spmd_loss)(params, batch)  # parallel execution, fwd and bwd fused
 print
 
 
-### getting an spmd program automagically with papply
+### getting an spmd program from the standard definition with papply
 
-# TODO
+# TODO papply!
+# spmd_loss, axis_name = papply(loss, axis_size=5, in_axes=(None, 0))
+# spmd_loss = pjit(spmd_loss, axis_name=axis_name, in_axes=(None, 0), out_axes=None)
+
+# print spmd_loss(params, batch)        # parallel execution
+# print
