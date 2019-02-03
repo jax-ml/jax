@@ -1757,12 +1757,17 @@ def _select_transpose_rule(t, pred, on_true, on_false):
 def _select_batch_rule(batched_args, batch_dims, **unused_kwargs):
   pred, on_true, on_false, = batched_args
   pred_bdim, ot_bdim, of_bdim = batch_dims
-
   size = next(x.shape[i] for x, i in zip(batched_args, batch_dims)
               if i is not None)
-  pred = batching.bdim_at_front(pred, pred_bdim, size)
-  on_true = batching.bdim_at_front(on_true, ot_bdim, size)
-  on_false = batching.bdim_at_front(on_false, of_bdim, size)
+
+  # TODO(mattjj): could avoid broadcasts/transposes in some special cases
+  pred = batching.bdim_at_front(pred, pred_bdim, size, force_broadcast=True)
+  on_true = batching.bdim_at_front(on_true, ot_bdim, size, force_broadcast=True)
+  on_false = batching.bdim_at_front(on_false, of_bdim, size, force_broadcast=True)
+  assert onp.shape(on_true) == onp.shape(on_false)
+  if 0 < onp.ndim(pred) < onp.ndim(on_true):
+    # vmapped function had a scalar pred with nonscalar args
+    pred = broadcast_in_dim(pred, on_true.shape, [0])
   return select(pred, on_true, on_false), 0
 
 select_p = standard_primitive(_select_shape_rule, _select_dtype_rule, 'select')
