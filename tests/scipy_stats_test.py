@@ -23,6 +23,7 @@ from absl.testing import absltest, parameterized
 
 import numpy as onp
 import scipy.stats as osp_stats
+from scipy.stats import random_correlation
 
 from jax import test_util as jtu
 from jax.scipy import stats as lsp_stats
@@ -48,24 +49,10 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
 
     def args_maker():
       x, a, b, loc, scale = map(rng, shapes, dtypes)
-      return [x, onp.abs(a), onp.abs(b), loc, onp.abs(scale)]
+      return [x, a, b, loc, scale]
 
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True,
                             tol=1e-4)
-    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
-
-  @genNamedParametersNArgs(3, jtu.rand_default())
-  def testNormLogPdf(self, rng, shapes, dtypes):
-    scipy_fun = osp_stats.norm.logpdf
-    lax_fun = lsp_stats.norm.logpdf
-
-    def args_maker():
-      x, loc, scale = map(rng, shapes, dtypes)
-      # clipping to ensure that scale is not too low
-      scale = onp.clip(onp.abs(scale), a_min=0.1, a_max=None)
-      return [x, loc, scale]
-
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
   @genNamedParametersNArgs(3, jtu.rand_positive())
@@ -75,7 +62,19 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
 
     def args_maker():
       x, loc, scale = map(rng, shapes, dtypes)
-      return [x, loc, onp.abs(scale)]
+      return [x, loc, scale]
+
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
+
+  @genNamedParametersNArgs(4, jtu.rand_positive())
+  def testGammaLogPdf(self, rng, shapes, dtypes):
+    scipy_fun = osp_stats.gamma.logpdf
+    lax_fun = lsp_stats.gamma.logpdf
+
+    def args_maker():
+      x, a, loc, scale = map(rng, shapes, dtypes)
+      return [x, a, loc, scale]
 
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
@@ -84,6 +83,37 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
   def testLaplaceLogPdf(self, rng, shapes, dtypes):
     scipy_fun = osp_stats.laplace.logpdf
     lax_fun = lsp_stats.laplace.logpdf
+
+    def args_maker():
+      x, loc, scale = map(rng, shapes, dtypes)
+      # clipping to ensure that scale is not too low
+      scale = onp.clip(scale, a_min=0.1, a_max=None)
+      return [x, loc, scale]
+
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
+
+  # TODO: currently it ignores the argument "shapes" and only tests dim=4
+  @genNamedParametersNArgs(3, jtu.rand_default())
+  def testMultivariateNormalLogPdf(self, rng, shapes, dtypes):
+    scipy_fun = osp_stats.multivariate_normal.logpdf
+    lax_fun = lsp_stats.multivariate_normal.logpdf
+    dim = 4
+    shapex = (dim,)
+
+    def args_maker():
+      x, mean, cov = map(rng, (shapex, shapex, (dim, dim)), dtypes)
+      cov = random_correlation.rvs(onp.arange(1, 1+dim) * 2 / (dim + 1))
+      return [x, mean, cov]
+
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True,
+      tol=1e-2)
+    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
+
+  @genNamedParametersNArgs(3, jtu.rand_default())
+  def testNormLogPdf(self, rng, shapes, dtypes):
+    scipy_fun = osp_stats.norm.logpdf
+    lax_fun = lsp_stats.norm.logpdf
 
     def args_maker():
       x, loc, scale = map(rng, shapes, dtypes)
@@ -101,8 +131,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
 
     def args_maker():
       x, loc, scale = map(rng, shapes, dtypes)
-      scale = onp.abs(scale)  # clipping to ensure that scale is not too low
-      return [x, loc, scale]
+      return [x, loc, onp.abs(scale)]
 
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
