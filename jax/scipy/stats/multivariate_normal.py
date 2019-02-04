@@ -28,18 +28,20 @@ from ...numpy.linalg import det, inv
 @_wraps(osp_stats.multivariate_normal.logpdf)
 def logpdf(x, mean, cov):
   # x, mean, cov = _promote_args_like(osp_stats.multivariate_normal.logpdf, x, mean, cov)
+  x = x.astype(cov.dtype)
+  mean = mean.astype(cov.dtype)
   two = _constant_like(x, 2)
   dim = _constant_like(x, mean.shape[0])
-  det_sig = det(cov)
+  det_sig = det(cov).astype(cov.dtype)
   log_normalizer = lax.log(lax.mul(lax.pow(_constant_like(x, 2 * onp.pi), dim),
     det_sig))
   x_shape = x.shape[:-1]
   if x_shape:
     x_2d = x.reshape((-1, mean.shape[0]))
     quadratic = einsum("ij,jk,ik->i", subtract(x_2d, mean), inv(cov), 
-      subtract(x_2d, mean)).reshape(x_shape)
+      subtract(x_2d, mean)).reshape(x_shape).astype(cov.dtype)
   else:
-    quadratic = dot(dot(subtract(x, mean), inv(cov)), subtract(x, mean).T)
+    quadratic = (subtract(x, mean) @ inv(cov) @ subtract(x, mean).T).astype(cov.dtype)
   return lax.div(lax.neg(lax.add(log_normalizer, quadratic)), two)
 
 @_wraps(osp_stats.multivariate_normal.pdf)
