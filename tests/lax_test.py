@@ -1536,8 +1536,6 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       for rec in LAX_GRAD_OPS))
   def testOpGrad(self, op, rng, shapes, dtype, order):
     if FLAGS.jax_test_dut and FLAGS.jax_test_dut.startswith("tpu"):
-      if dtype is onp.complex64:
-        return absltest.unittest.skip("complex grads unimplemented on tpu")
       if op is lax.pow:
         return absltest.unittest.skip("pow grad imprecise on tpu")
     tol = 1e-1 if num_float_bits(dtype) == 32 else None
