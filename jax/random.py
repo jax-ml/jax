@@ -30,24 +30,42 @@ from jax.lib import xla_bridge
 from jax import core
 
 
-def PRNGKey(seed):
-  if onp.shape(seed):
-    raise TypeError("PRNGKey seed must be a scalar.")
-  convert = lambda k: lax.reshape(lax.convert_element_type(k, onp.uint32), [1])
-  if isinstance(seed, (int, onp.ndarray)):
-    # Special handling of raw integer values, which may have be 64bit even
-    # when jax_enable_x64=False and we don't want to drop the top 32 bits
-    k1 = convert(onp.bitwise_and(onp.right_shift(seed, 32), 0xFFFFFFFF))
-  else:
-    k1 = convert(lax.shift_right_logical(seed, 32))
-  k2 = convert(lax.bitwise_and(seed, 0xFFFFFFFF))
-  return lax.concatenate([k1, k2], 0)
+class PRNGKey(object):
+  __slots__ = ["key", "consumed"]
 
-def is_prng_key(key):
-  try:
-    return key.shape == (2,) and key.dtype == onp.uint32
-  except AttributeError:
-    return False
+  def __init__(self, seed):
+    if onp.shape(seed):
+      raise TypeError("PRNGKey seed must be a scalar.")
+    convert = lambda k: lax.reshape(lax.convert_element_type(k, onp.uint32), [1])
+    if isinstance(seed, (int, onp.ndarray)):
+      # Special handling of raw integer values, which may have be 64bit even
+      # when jax_enable_x64=False and we don't want to drop the top 32 bits
+      k1 = convert(onp.bitwise_and(onp.right_shift(seed, 32), 0xFFFFFFFF))
+    else:
+      k1 = convert(lax.shift_right_logical(seed, 32))
+    k2 = convert(lax.bitwise_and(seed, 0xFFFFFFFF))
+    self.key = lax.concatenate([k1, k2], 0)
+    self.consumed = False
+
+  @classmethod
+  def from_data(cls, raw_key, consumed):
+    prng = cls.__new__(cls)
+    prng.key = raw_key
+    prng.consumed = consumed
+    return prng
+
+  def __iter__(self):
+    assert onp.shape(self.key) == (2,)
+    return iter(self.key)
+
+tree_util.register_pytree_node(
+    PRNGKey,
+    lambda k: ((k.key,), k.consumed),
+    lambda consumed, xs: PRNGKey.from_data(xs[0], consumed))
+
+
+def is_prng_key(obj):
+  return isinstance(obj, PRNGKey) and onp.shape(obj.key) == (2,)
 
 
 ### utilities
@@ -154,7 +172,11 @@ def split(key, num=2):
     A tuple of length `num` of new PRNGKey instances.
   """
   counts = lax.tie_in(key, lax.iota(onp.uint32, num * 2))
-  return lax.reshape(threefry_2x32(key, counts), (num, 2))
+  raw_key = lax.reshape(threefry_2x32(key, counts), (num, 2))
+  return PRNGKey.from_data(raw_key, False)
+
+# TODO could bury the array-ness inside the PRNGKey pytree, OR could have a
+# separate type that tracks e.g. shape of leading dimensions
 
 
 def _random_bits(key, bit_width, shape):
