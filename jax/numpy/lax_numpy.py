@@ -1399,9 +1399,9 @@ def _einsum(operands, contractions):
 
       contracted_names = contracted_names & (set(lhs_names) | set(rhs_names))
       batch_names = (set(lhs_names) & set(rhs_names)) - contracted_names
-      lhs_batch, rhs_batch = unzip2((lhs_names.find(n), rhs_names.find(n))
-                                    for n in batch_names)
-
+      lhs_batch = [i for i,l in enumerate(lhs_names) if l in batch_names]
+      rhs_batch = [i for i,r in enumerate(rhs_names) if r in batch_names]
+      
       # NOTE(mattjj): this can fail non-deterministically in python3, maybe
       # due to opt_einsum
       assert _all(name in lhs_names and name in rhs_names and
