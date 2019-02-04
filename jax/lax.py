@@ -32,6 +32,7 @@ from .util import partial, prod
 from . import core
 from . import ad_util
 from . import linear_util as lu
+from . import lax_parallel as parallel
 from .config import flags
 from .core import Primitive
 from .abstract_arrays import (UnshapedArray, ShapedArray, ConcreteArray,
@@ -41,7 +42,7 @@ from .interpreters import partial_eval as pe
 from .interpreters import xla
 from .interpreters import ad
 from .interpreters import batching
-from .interpreters import parallel
+from .interpreters import parallel as parallel_interp
 from .util import curry, safe_zip, unzip2, prod
 from .tree_util import build_tree
 from .lib import xla_bridge
@@ -766,7 +767,7 @@ def unop(result_dtype, accepted_dtypes, name):
   dtype_rule = partial(unop_dtype_rule, result_dtype, accepted_dtypes, name)
   prim = standard_primitive(_attrgetter('shape'), dtype_rule, name)
   batching.defvectorized(prim)
-  parallel.defvectorized(prim)
+  parallel_interp.defvectorized(prim)
   return prim
 standard_unop = partial(unop, identity)
 _attrgetter = lambda name: lambda x, **kwargs: getattr(x, name)
@@ -806,7 +807,7 @@ def binop(result_dtype, accepted_dtypes, name):
   shape_rule = partial(broadcasting_shape_rule, name)
   prim = standard_primitive(shape_rule, dtype_rule, name)
   batching.defbroadcasting(prim)
-  parallel.defbroadcasting(prim)
+  parallel_interp.defbroadcasting(prim)
   return prim
 standard_binop = partial(binop, _input_dtype)
 
@@ -1643,7 +1644,7 @@ reshape_p = standard_primitive(reshape_shape_rule, reshape_dtype_rule,
                                'reshape', reshape_translation_rule)
 ad.deflinear(reshape_p, reshape_transpose_rule)
 batching.primitive_batchers[reshape_p] = reshape_batch_rule
-parallel.papply_primitive_rules[reshape_p] = reshape_papply_rule
+parallel_interp.papply_primitive_rules[reshape_p] = reshape_papply_rule
 
 
 def rev_shape_rule(operand, dimensions):
@@ -1687,7 +1688,7 @@ transpose_p = standard_primitive(transpose_shape_rule, _input_dtype,
 ad.deflinear(transpose_p,
              lambda t, permutation: [transpose(t, onp.argsort(permutation))])
 batching.primitive_batchers[transpose_p] = transpose_batch_rule
-parallel.papply_primitive_rules[transpose_p] = transpose_papply
+parallel_interp.papply_primitive_rules[transpose_p] = transpose_papply
 
 
 def select_shape_rule(pred, on_true, on_false):
@@ -2231,7 +2232,7 @@ reduce_sum_p = standard_primitive(reduce_sum_shape_rule, _input_dtype,
                                   'reduce_sum', reduce_sum_translation_rule)
 ad.deflinear(reduce_sum_p, reduce_sum_transpose_rule)
 batching.defreducer(reduce_sum_p)
-parallel.defreducer(reduce_sum_p, parallel.psum_p)
+parallel_interp.defreducer(reduce_sum_p, parallel.psum_p)
 
 
 def reduce_chooser_shape_rule(operand, axes):
