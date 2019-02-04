@@ -107,7 +107,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       return [x, mean, cov]
 
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True,
-      tol=1e-2)
+      tol=1e-4)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
   @genNamedParametersNArgs(3, jtu.rand_default())
