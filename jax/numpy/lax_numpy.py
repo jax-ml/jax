@@ -120,8 +120,12 @@ iinfo = onp.iinfo
 finfo = onp.finfo
 
 issubdtype = onp.issubdtype
+issubsctype = onp.issubsctype
 
 ComplexWarning = onp.ComplexWarning
+
+array_str = onp.array_str
+array_repr = onp.array_repr
 
 ### utility functions
 
@@ -132,26 +136,9 @@ def _promote_shapes(*args):
     return args
   else:
     shapes = [shape(arg) for arg in args]
-    nd = len(_broadcast_shapes(*shapes))
+    nd = len(lax.broadcast_shapes(*shapes))
     return [lax.reshape(arg, (1,) * (nd - len(shp)) + shp)
             if len(shp) != nd else arg for arg, shp in zip(args, shapes)]
-
-
-@memoize
-def _broadcast_shapes(*shapes):
-  """Apply Numpy broadcasting rules to the given shapes."""
-  if len(shapes) == 1:
-    return shapes[0]
-  ndim = _max(len(shape) for shape in shapes)
-  shapes = onp.array([(1,) * (ndim - len(shape)) + shape for shape in shapes])
-  min_shape = onp.min(shapes, axis=0)
-  max_shape = onp.max(shapes, axis=0)
-  result_shape = onp.where(min_shape == 0, 0, max_shape)
-  if not onp.all((shapes == result_shape) | (shapes == 1)):
-    raise ValueError("Incompatible shapes for broadcasting: {}"
-                     .format(tuple(map(tuple, shapes))))
-  return tuple(result_shape)
-
 
 def _promote_dtypes(*args):
   """Convenience function to apply Numpy argument dtype promotion."""
@@ -280,6 +267,7 @@ arcsinh = _one_to_one_unop(onp.arcsinh, lax.asinh, True)
 arccosh = _one_to_one_unop(onp.arccosh, lax.acosh, True)
 arctanh = _one_to_one_unop(onp.arctanh, lax.atanh, True)
 
+
 add = _one_to_one_binop(onp.add, lax.add)
 bitwise_and = _one_to_one_binop(onp.bitwise_and, lax.bitwise_and)
 bitwise_or = _one_to_one_binop(onp.bitwise_or, lax.bitwise_or)
@@ -292,6 +280,8 @@ not_equal = _one_to_one_binop(onp.not_equal, lax.ne)
 subtract = _one_to_one_binop(onp.subtract, lax.sub)
 power = _one_to_one_binop(onp.power, lax.pow, True)
 arctan2 = _one_to_one_binop(onp.arctan2, lax.atan2, True)
+minimum = _one_to_one_binop(onp.minimum, lax.min)
+maximum = _one_to_one_binop(onp.maximum, lax.max)
 
 
 def _comparison_op(numpy_fn, lax_fn):
@@ -311,24 +301,6 @@ greater_equal = _comparison_op(onp.greater_equal, lax.ge)
 greater = _comparison_op(onp.greater, lax.gt)
 less_equal = _comparison_op(onp.less_equal, lax.le)
 less = _comparison_op(onp.less, lax.lt)
-
-def _minmax_op(numpy_fn, lax_fn, lax_cmp_fn):
-  def fn(x, y):
-    x, y =  _promote_args(numpy_fn.__name__, x, y)
-    # Comparison on complex types are defined as a lexicographic ordering on
-    # the (real, imag) pair.
-    if issubdtype(_dtype(x), complexfloating):
-      rx = lax.real(x)
-      ry = lax.real(y)
-      return where(
-          lax.select(lax.eq(rx, ry), lax_cmp_fn(lax.imag(x), lax.imag(y)),
-                     lax_cmp_fn(rx, ry)),
-          x, y)
-    return lax_fn(x, y)
-  return _wraps(numpy_fn)(fn)
-
-maximum = _minmax_op(onp.maximum, lax.max, lax.gt)
-minimum = _minmax_op(onp.minimum, lax.min, lax.lt)
 
 
 def _logical_op(np_op, bitwise_op):
@@ -463,6 +435,34 @@ def square(x):
   return x * x
 
 
+@_wraps(onp.deg2rad)
+def deg2rad(x):
+  x, = _promote_to_result_dtype(onp.deg2rad, x)
+  return lax.mul(x, lax._const(x, pi / 180))
+
+
+@_wraps(onp.rad2deg)
+def rad2deg(x):
+  x, = _promote_to_result_dtype(onp.rad2deg, x)
+  return lax.mul(x, lax._const(x, 180 / pi))
+
+
+degrees = rad2deg
+radians = deg2rad
+
+
+@_wraps(onp.hypot)
+def hypot(x, y):
+  x, y = _promote_to_result_dtype(onp.hypot, x, y)
+  return lax.sqrt(x*x + y*y)
+
+
+@_wraps(onp.reciprocal)
+def reciprocal(x):
+  x, = _promote_to_result_dtype(onp.reciprocal, x)
+  return lax.div(lax._const(x, 1), x)
+
+
 @_wraps(onp.transpose)
 def transpose(x, axis=None):
   axis = onp.arange(ndim(x))[::-1] if axis is None else axis
@@ -490,7 +490,23 @@ def rot90(m, k=1, axes=(0, 1)):
 
 @_wraps(onp.flip)
 def flip(m, axis):
-  return lax.rev(m, [axis])
+  # Negative axes wrap around
+  if axis < 0:
+    rank = len(m.shape)
+    assert axis >= -rank, "axis={} is invalid for the {}-dimensional input array".format(axis, rank)
+    return lax.rev(m, [axis % rank])
+  else:
+    return lax.rev(m, [axis])
+
+
+@_wraps(onp.fliplr)
+def fliplr(m):
+  return flip(m, 1)
+
+
+@_wraps(onp.flipud)
+def flipud(m):
+  return flip(m, 0)
 
 
 @_wraps(onp.conjugate)
@@ -616,7 +632,7 @@ def broadcast_arrays(*args):
   if len(set(shapes)) == 1:
     return [arg if isinstance(arg, ndarray) or isscalar(arg) else array(arg)
             for arg in args]
-  result_shape = _broadcast_shapes(*shapes)
+  result_shape = lax.broadcast_shapes(*shapes)
   return [broadcast_to(arg, result_shape) for arg in args]
 
 
@@ -626,7 +642,7 @@ def broadcast_to(arr, shape):
   if _shape(arr) != shape:
     # TODO(mattjj): revise this to call lax.broadcast_in_dim rather than
     # lax.broadcast and lax.transpose
-    _broadcast_shapes(shape, _shape(arr))  # error checking
+    lax.broadcast_shapes(shape, _shape(arr))  # error checking
     nlead = len(shape) - len(_shape(arr))
     diff, = onp.where(onp.not_equal(shape[nlead:], _shape(arr)))
 
@@ -651,6 +667,16 @@ def split(ary, indices_or_sections, axis=0):
   return [lax.slice(ary, _subval(starts, axis, start), _subval(ends, axis, end))
           for start, end in zip(split_indices[:-1], split_indices[1:])]
 
+def _split_on_axis(onp_fun, axis):
+  @_wraps(onp_fun)
+  def f(ary, indices_or_sections):
+    return split(ary, indices_or_sections, axis=axis)
+  return f
+
+vsplit = _split_on_axis(onp.vsplit, axis=0)
+hsplit = _split_on_axis(onp.hsplit, axis=1)
+dsplit = _split_on_axis(onp.dsplit, axis=2)
+
 
 @_wraps(onp.clip)
 def clip(a, a_min=None, a_max=None):
@@ -659,11 +685,11 @@ def clip(a, a_min=None, a_max=None):
   if a_min is not None:
     if _dtype(a_min) != _dtype(a):
       a_min = lax.convert_element_type(a_min, _dtype(a))
-    a = maximum(a_min, a)
+    a = lax.max(a_min, a)
   if a_max is not None:
     if _dtype(a_max) != _dtype(a):
       a_max = lax.convert_element_type(a_max, _dtype(a))
-    a = minimum(a_max, a)
+    a = lax.min(a_max, a)
   return a
 
 
@@ -800,9 +826,9 @@ def _reduction_init_val(a, init_val):
 _cast_to_bool = partial(lax.convert_element_type, new_dtype=onp.bool_)
 
 sum = _make_reduction(onp.sum, lax.add, 0)
-prod = _make_reduction(onp.prod, lax.mul, 1)
-amax = max = _make_reduction(onp.max, maximum, -onp.inf)
-amin = min = _make_reduction(onp.min, minimum, onp.inf)
+product = prod = _make_reduction(onp.prod, lax.mul, 1)
+amax = max = _make_reduction(onp.max, lax.max, -onp.inf)
+amin = min = _make_reduction(onp.min, lax.min, onp.inf)
 all = alltrue = _make_reduction(onp.all, lax.bitwise_and, True, _cast_to_bool)
 any = sometrue = _make_reduction(onp.any, lax.bitwise_or, False, _cast_to_bool)
 
@@ -881,6 +907,57 @@ nanmin = _make_nan_reduction(onp.nanmin, min, inf, nan_if_all_nan=True)
 nanmax = _make_nan_reduction(onp.nanmax, max, -inf, nan_if_all_nan=True)
 nansum = _make_nan_reduction(onp.nansum, sum, 0, nan_if_all_nan=False)
 nanprod = _make_nan_reduction(onp.nanprod, prod, 1, nan_if_all_nan=False)
+
+
+def _make_cumulative_reduction(onp_reduction, window_reduce, init_val,
+                               squash_nan=False):
+  @_wraps(onp_reduction)
+  def cumulative_reduction(a, axis=None, dtype=None):
+    if axis is None or isscalar(a):
+      a = ravel(a)
+      axis = 0
+
+    a_shape = list(shape(a))
+    num_dims = len(a_shape)
+
+    if axis < 0:
+      axis = axis + num_dims
+    if axis < 0 or axis >= num_dims:
+      raise ValueError(
+          "axis {} is out of bounds for array of dimension {}".format(
+              axis, num_dims))
+
+    if squash_nan:
+      a = where(isnan(a), _constant_like(a, init_val), a)
+
+    if dtype:
+      a = lax.convert_element_type(a, dtype)
+
+    if a_shape[axis] == 0:
+      return a
+
+    padding = [(0, 0, 0)] * num_dims
+    padding[axis] = (a_shape[axis] - 1, 0, 0)
+    a = lax.pad(a, _constant_like(a, init_val), padding)
+    strides = [1] * num_dims
+    window_dims = [1] * num_dims
+    window_dims[axis] = a_shape[axis]
+    return window_reduce(
+       a, window_dims, strides, xla_bridge.get_xla_client().PaddingType.VALID)
+
+  return cumulative_reduction
+
+
+cumsum = _make_cumulative_reduction(
+  onp.cumsum, lax._reduce_window_sum, 0, squash_nan=False)
+cumprod = _make_cumulative_reduction(
+  onp.cumprod, lax._reduce_window_prod, 1, squash_nan=False)
+cumproduct = cumprod
+nancumsum = _make_cumulative_reduction(
+  onp.nancumsum, lax._reduce_window_sum, 0, squash_nan=True)
+nancumprod = _make_cumulative_reduction(
+  onp.nancumprod, lax._reduce_window_prod, 1, squash_nan=True)
+
 
 ### Array-creation functions
 
@@ -1236,7 +1313,7 @@ def matmul(a, b):  # pylint: disable=missing-docstring
   b = lax.reshape(b, shape(b) + (1,)) if b_is_vec else b
 
   a, b = _promote_dtypes(a, b)
-  batch_shape = _broadcast_shapes(shape(a)[:-2], shape(b)[:-2])
+  batch_shape = lax.broadcast_shapes(shape(a)[:-2], shape(b)[:-2])
   a = broadcast_to(a, batch_shape + shape(a)[-2:])
   b = broadcast_to(b, batch_shape + shape(b)[-2:])
   batch_dims = tuple(range(len(batch_shape)))
@@ -1577,6 +1654,53 @@ def argsort(a, axis=-1, kind='quicksort', order=None):
     return perm
 
 
+# TODO(phawkins): use this helper everywhere.
+def _canonicalize_axis(axis, num_dims):
+  """Canonicalize an axis in (-num_dims, num_dims) to [0, num_dims)."""
+  if axis < 0:
+    axis = axis + num_dims
+  if axis < 0 or axis >= num_dims:
+      raise ValueError(
+          "axis {} is out of bounds for array of dimension {}".format(
+              axis, num_dims))
+  return axis
+
+
+@_wraps(onp.take)
+def take(a, indices, axis=None, out=None, mode=None):
+  if out:
+    raise NotImplementedError("The 'out' argument to np.take is not supported.")
+
+  a = asarray(a)
+  indices = asarray(indices)
+
+  if axis is None:
+    a = ravel(a)
+    axis = 0
+  axis = _canonicalize_axis(axis, ndim(a))
+
+  if mode == "raise":
+    # TODO(phawkins): we have no way to report out of bounds errors yet.
+    raise NotImplementedError("The 'raise' mode to np.take is not supported.")
+  elif mode == "wrap":
+    indices = mod(indices, a.shape[axis])
+  elif mode != "clip" and mode is not None:
+    raise ValueError("Invalid mode '{}' for np.take".format(mode))
+
+  index_dims = len(shape(indices))
+  slice_sizes = list(shape(a))
+  slice_sizes[axis] = 1
+  dnums = lax.GatherDimensionNumbers(
+    offset_dims=tuple(
+      list(range(axis)) +
+      list(range(axis + index_dims, len(a.shape) + index_dims - 1))),
+    collapsed_slice_dims=(axis,),
+    start_index_map=(axis,),
+    index_vector_dim=index_dims)
+  return lax.gather(a, indices, dimension_numbers=dnums,
+                    slice_sizes=tuple(slice_sizes))
+
+
 @_wraps(getattr(onp, "take_along_axis", None))
 def take_along_axis(arr, indices, axis):
   if axis is None and ndim(arr) != 1:
@@ -1584,6 +1708,8 @@ def take_along_axis(arr, indices, axis):
   elif ndim(arr) == 1:
     return lax.index_take(arr, (indices,), (0,))
   else:
+    # TODO(mattjj): if we lower directly to lax.gather here, we might be able to
+    # avoid the reshape on the output.
     all_indices = [lax.broadcasted_iota(_dtype(indices), shape(indices), i)
                    for i in range(ndim(arr))]
     all_indices[axis] = indices
@@ -1656,6 +1782,8 @@ def _rewriting_take(arr, idx, axis=0):
   elif isinstance(idx, tuple) and _all(onp.ndim(elt) == 0 for elt in idx):
     canonical_idx = _canonicalize_tuple_index(arr, idx)
     result, axis = arr, 0
+    # TODO(mattjj): could generate a single HLO here, rather than one for each
+    # elt in canonical idx. For example, x[0, :, 0] generates three HLOs now.
     for elt in (elt for elt in canonical_idx if elt is not None):
       result = _rewriting_take(result, elt, axis=axis)
       axis += isinstance(elt, slice)   # advance axis index if not eliminated
@@ -1684,6 +1812,8 @@ def _rewriting_take(arr, idx, axis=0):
       idx = [idx]
 
     flat_idx = tuple([mod(ravel(x), arr.shape[i]) for i, x in enumerate(idx)])
+    # TODO(mattjj): if we instead lower directly to lax.gather, we can probably
+    # eliminate the reshape here.
     out = lax.index_take(arr, flat_idx, tuple(range(len(idx))))
     return lax.reshape(out, idx[0].shape + _shape(arr)[len(idx):])
 
@@ -1701,6 +1831,8 @@ def _rewriting_take(arr, idx, axis=0):
 
     flat_idx = tuple(mod(ravel(x), arr_sliced.shape[i])
                      for i, x in zip(axes, idx_advanced))
+    # TODO(mattjj): if we instead lower directly to lax.gather, we can probably
+    # eliminate the reshape here.
     out = lax.index_take(arr_sliced, flat_idx, axes)
     shape_suffix = tuple(onp.delete(_shape(arr_sliced), axes))
     out = lax.reshape(out, idx_advanced[0].shape + shape_suffix)
@@ -1872,6 +2004,7 @@ for method_name in _nondiff_methods + _diff_methods:
 setattr(ShapedArray, "flatten", core.aval_method(ravel))
 setattr(ShapedArray, "T", core.aval_property(transpose))
 setattr(ShapedArray, "astype", core.aval_method(lax.convert_element_type))
+setattr(ShapedArray, "psum", core.aval_method(lax.psum))
 
 
 # Forward operators, methods, and properies on DeviceArray to lax_numpy

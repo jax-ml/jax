@@ -157,6 +157,36 @@ class BatchingTest(jtu.JaxTestCase):
     expected_ans = x[:, :, 2]
     self.assertAllClose(ans, expected_ans, check_dtypes=False)
 
+  def testRevLax(self):
+    fun = lambda x: lax.rev(x, [0])
+    R = onp.random.RandomState(0).randn
+    x = R(2, 3)
+
+    ans = vmap(fun)(x)
+    expected_ans = x[:, ::-1]
+    self.assertAllClose(ans, expected_ans, check_dtypes=False)
+
+    ans = vmap(fun, (1,), 1)(x)
+    expected_ans = x[::-1, :]
+    self.assertAllClose(ans, expected_ans, check_dtypes=False)
+
+  def testRevNumpy(self):
+    fun = lambda x: x[:, ::-1]
+    R = onp.random.RandomState(0).randn
+    x = R(3, 2, 4)
+
+    ans = vmap(fun)(x)
+    expected_ans = x[:, :, ::-1]
+    self.assertAllClose(ans, expected_ans, check_dtypes=False)
+
+    ans = vmap(fun, (1,), 1)(x)
+    expected_ans = x[:, :, ::-1]
+    self.assertAllClose(ans, expected_ans, check_dtypes=False)
+
+    ans = vmap(fun, (2,), 2)(x)
+    expected_ans = x[:, ::-1, :]
+    self.assertAllClose(ans, expected_ans, check_dtypes=False)
+
   def testNpMaximum(self):
     fun = lambda x: np.maximum(x, 0.0)
     R = onp.random.RandomState(0).randn
@@ -366,7 +396,7 @@ class BatchingTest(jtu.JaxTestCase):
     self.assertAllClose(sk, k[:, ::-1], check_dtypes=True)
     self.assertAllClose(sv, onp.broadcast_to(v[0, ::-1], (3, 4)),
                         check_dtypes=True)
-  
+
   def testConvGeneralDilated(self):
     W = np.array(onp.random.randn(3, 3, 1, 5), dtype=onp.float32)
     X = np.array(onp.random.randn(10, 5, 5, 1), dtype=onp.float32)
@@ -454,6 +484,44 @@ class BatchingTest(jtu.JaxTestCase):
           np.reshape(g, (1,) + g.shape)]
     per_example_direct = np.concatenate(per_example_direct, axis=0)
     self.assertAllClose(per_example, per_example_direct, check_dtypes=True)
+
+  def testSelect(self):
+    pred = onp.array([True, False])
+    on_true = onp.array([0, 1])
+    on_false = onp.array([2, 3])
+    ans = vmap(lax.select)(pred, on_true, on_false)
+    expected = onp.array([0, 3])
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
+    pred = onp.array([False, True])
+    on_true = onp.array([0, 1])
+    on_false = onp.array([2, 3])
+    ans = vmap(lax.select, (0, None, None))(pred, on_true, on_false)
+    expected = onp.array([[2, 3],
+                          [0, 1]])
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
+    pred = True
+    on_true = onp.array([0, 1], onp.float32)
+    on_false = onp.array(3, onp.float32)
+    ans = vmap(lax.select, (None, 0, None))(pred, on_true, on_false)
+    expected = onp.array([0, 1], onp.float32)
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
+    pred = onp.array([False, True])
+    on_true = onp.array([0, 1], onp.float32)
+    on_false = onp.array(3, onp.float32)
+    ans = vmap(lax.select, (0, 0, None))(pred, on_true, on_false)
+    expected = onp.array([3, 1], onp.float32)
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
+    pred = onp.array([False, True])
+    on_true = onp.array([2], onp.float32)
+    on_false = onp.array([[3, 4]], onp.float32)
+    ans = vmap(lax.select, (0, None, 1), 1)(pred, on_true, on_false)
+    expected = onp.array([[3, 2]], onp.float32)
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
 
 if __name__ == '__main__':
   absltest.main()

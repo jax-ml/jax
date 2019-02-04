@@ -253,7 +253,7 @@ class SplitTrace(Trace):
       name = next(name for name in names_in if name is not None)
       new_names = next(t.new_names for t in tracers if t.name is not None)
       f = axisvar_split_subtrace(f, self.master, name, new_names)
-      val_out = call_primitive.bind(f, *vals, **params)
+      val_out = call_primitive.bind(f, *vals_in, **params)
       return SplitTracer(self, name, new_names, val_out)
 
   def post_process_call(self, _, out_tracer):

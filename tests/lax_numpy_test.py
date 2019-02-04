@@ -69,12 +69,14 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("ceil", 1, float_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("conj", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("conjugate", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
+    op_record("deg2rad", 1, float_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("equal", 2, all_dtypes, all_shapes, jtu.rand_some_equal(), []),
     op_record("exp", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("fabs", 1, float_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("floor", 1, float_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("greater", 2, number_dtypes, all_shapes, jtu.rand_some_equal(), []),
     op_record("greater_equal", 2, number_dtypes, all_shapes, jtu.rand_some_equal(), []),
+    op_record("hypot", 2, default_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("isfinite", 1, number_dtypes, all_shapes, jtu.rand_some_inf(), []),
     op_record("less", 2, number_dtypes, all_shapes, jtu.rand_some_equal(), []),
     op_record("less_equal", 2, number_dtypes, all_shapes, jtu.rand_some_equal(), []),
@@ -89,6 +91,8 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("negative", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("not_equal", 2, number_dtypes, all_shapes, jtu.rand_some_equal(), ["rev"]),
     op_record("power", 2, inexact_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
+    op_record("rad2deg", 1, float_dtypes, all_shapes, jtu.rand_default(), []),
+    op_record("reciprocal", 1, inexact_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("subtract", 2, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("sin", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("cos", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
@@ -101,8 +105,8 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("arccos", 1, float_dtypes, all_shapes, jtu.rand_small(), ["rev"]),
     op_record("arctan", 1, float_dtypes, all_shapes, jtu.rand_small(), ["rev"]),
     op_record("arctan2", 2, float_dtypes, all_shapes, jtu.rand_small(), ["rev"]),
-    op_record("arcsinh", 1, number_dtypes, all_shapes, jtu.rand_small(), ["rev"]),
-    op_record("arccosh", 1, number_dtypes, all_shapes, jtu.rand_small(), ["rev"]),
+    op_record("arcsinh", 1, number_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
+    op_record("arccosh", 1, number_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
     op_record("arctanh", 1, number_dtypes, all_shapes, jtu.rand_small(), ["rev"]),
 ]
 
@@ -530,6 +534,29 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "op={}_shape=[{}]_axis={}_out_dtype={}".format(
+          op, jtu.format_shape_dtype_string(shape, dtype), axis, out_dtype),
+       "axis": axis, "shape": shape, "dtype": dtype, "out_dtype": out_dtype,
+       "rng": jtu.rand_default(), "lnp_op": getattr(lnp, op),
+       "onp_op": getattr(onp, op)}
+      for op in ["cumsum", "cumprod"]
+      # TODO(phawkins): replace both type lists with default_dtypes after a
+      # Jaxlib update includes
+      # https://github.com/google/jax/commit/86f5d189cf563b027c3cd00eea38072c003905c8
+      for dtype in [onp.float32, onp.int32]
+      for out_dtype in [onp.float32, onp.int32]
+      for shape in all_shapes
+      for axis in [None] + list(range(-len(shape), len(shape)))))
+  def testCumSumProd(self, axis, shape, dtype, out_dtype, onp_op, lnp_op, rng):
+    onp_fun = lambda arg: onp_op(arg, axis=axis, dtype=out_dtype)
+    lnp_fun = lambda arg: lnp_op(arg, axis=axis, dtype=out_dtype)
+
+    args_maker = lambda: [rng(shape, dtype)]
+
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}_m={}_n={}_k={}".format(
           onp.dtype(dtype).name, m, n, k),
        "m": m, "n": n, "k": k, "dtype": dtype, "rng": jtu.rand_default()}
@@ -686,6 +713,31 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testSplitStaticInt(self, shape, num_sections, axis, dtype, rng):
     onp_fun = lambda x: onp.split(x, num_sections, axis=axis)
     lnp_fun = lambda x: lnp.split(x, num_sections, axis=axis)
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_axis={}_{}sections".format(
+          jtu.format_shape_dtype_string(shape, dtype), axis, num_sections),
+       "shape": shape, "num_sections": num_sections, "axis": axis,
+       "dtype": dtype, "rng": jtu.rand_default()}
+      for shape, axis, num_sections in [
+          ((12, 4), 0, 4), ((12, 4), 1, 2),
+          ((2, 3, 4), 2, 2), ((4, 3, 4), 0, 2)]
+      for dtype in default_dtypes))
+  def testHVDSplit(self, shape, num_sections, axis, dtype, rng):
+    def fn(module, axis):
+      if axis == 0:
+        return module.vsplit
+      elif axis == 1:
+        return module.hsplit
+      else:
+        assert axis == 2
+        return module.dsplit
+
+    onp_fun = lambda x: fn(onp, axis)(x, num_sections)
+    lnp_fun = lambda x: fn(lnp, axis)(x, num_sections)
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
@@ -902,7 +954,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "rng": rng, "shape": shape, "dtype": dtype, "axis": axis}
       for shape in [(3,), (2, 3)]
       for dtype in default_dtypes
-      for axis in range(len(shape))
+      for axis in range(-len(shape), len(shape))  # Test negative axes
       for rng in [jtu.rand_default()]))
   def testFlip(self, shape, dtype, axis, rng):
     args_maker = self._GetArgsMaker(rng, [shape], [dtype])
@@ -910,6 +962,36 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     onp_op = lambda x: onp.flip(x, axis)
     self._CheckAgainstNumpy(onp_op, lnp_op, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_op, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}".format(
+          jtu.format_shape_dtype_string(shape, dtype)),
+       "rng": rng, "shape": shape, "dtype": dtype}
+      for shape in [(3,), (2, 3), (3, 2, 4)]
+      for dtype in default_dtypes
+      for rng in [jtu.rand_default()]))
+  def testFlipud(self, shape, dtype, rng):
+    args_maker = self._GetArgsMaker(rng, [shape], [dtype])
+    lnp_op = lambda x: lnp.flipud(x)
+    onp_op = lambda x: onp.flipud(x)
+    self._CheckAgainstNumpy(onp_op, lnp_op, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_op, args_maker, check_dtypes=True)
+
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}".format(
+          jtu.format_shape_dtype_string(shape, dtype)),
+       "rng": rng, "shape": shape, "dtype": dtype}
+      for shape in [(3, 2), (2, 3), (3, 2, 4)]
+      for dtype in default_dtypes
+      for rng in [jtu.rand_default()]))
+  def testFliplr(self, shape, dtype, rng):
+    args_maker = self._GetArgsMaker(rng, [shape], [dtype])
+    lnp_op = lambda x: lnp.fliplr(x)
+    onp_op = lambda x: onp.fliplr(x)
+    self._CheckAgainstNumpy(onp_op, lnp_op, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_op, args_maker, check_dtypes=True)
+
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_k={}_axes={}".format(
@@ -1007,6 +1089,38 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     ans = lnp.argsort(x)
     expected = onp.argsort(x)
     self.assertAllClose(expected, ans, check_dtypes=False)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_index={}_axis={}_mode={}".format(
+          jtu.format_shape_dtype_string(shape, dtype),
+          jtu.format_shape_dtype_string(index_shape, index_dtype),
+          axis, mode),
+       "rng": rng, "rng_indices": rng_indices, "shape": shape,
+       "index_shape": index_shape, "dtype": dtype, "index_dtype": index_dtype,
+       "axis": axis, "mode": mode}
+      for shape in [(3,), (3, 4), (3, 4, 5)]
+      for index_shape in scalar_shapes + [(3,), (2, 1, 3)]
+      for axis in itertools.chain(range(-len(shape), len(shape)), [None])
+      for dtype in all_dtypes
+      for index_dtype in int_dtypes
+      for mode in ['wrap', 'clip']
+      for rng in [jtu.rand_default()]
+      for rng_indices in [jtu.rand_int(-5, 5)]))
+  def testTake(self, shape, dtype, index_shape, index_dtype, axis, mode, rng,
+               rng_indices):
+    if (FLAGS.jax_test_dut.startswith("tpu")
+        and onp.issubdtype(dtype, onp.complexfloating)):
+      self.skipTest("skipping complex dtype on TPU")  # TODO(mattjj): investigate failures
+
+    def args_maker():
+      x = rng(shape, dtype)
+      i = rng_indices(index_shape, index_dtype)
+      return x, i
+
+    lnp_op = lambda x, i: lnp.take(x, i, axis=axis, mode=mode)
+    onp_op = lambda x, i: onp.take(x, i, axis=axis, mode=mode)
+    self._CheckAgainstNumpy(lnp_op, onp_op, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_op, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_axis={}".format(
