@@ -33,6 +33,8 @@ jax.numpy package
     argsort
     around
     array
+    array_repr
+    array_str
     asarray
     atleast_1d
     atleast_2d
@@ -54,12 +56,15 @@ jax.numpy package
     cumsum
     cumprod
     cumproduct
+    deg2rad
+    degrees
     diag
     diag_indices
     diagonal
     divide
     divmod
     dot
+    dsplit
     einsum
     equal
     exp
@@ -79,7 +84,9 @@ jax.numpy package
     geomspace
     greater
     greater_equal
+    hsplit
     hstack
+    hypot
     identity
     imag
     inner
@@ -89,6 +96,8 @@ jax.numpy package
     isnan
     isneginf
     isposinf
+    issubdtype
+    issubsctype
     kron
     left_shift
     less
@@ -131,8 +140,12 @@ jax.numpy package
     polyval
     power
     prod
+    product
+    rad2deg
+    radians
     ravel
     real
+    reciprocal
     remainder
     repeat
     reshape
@@ -167,6 +180,7 @@ jax.numpy package
     true_divide
     var
     vdot
+    vsplit
     vstack
     where
     zeros
