@@ -45,7 +45,7 @@ class PRNGKey(object):
       k1 = convert(lax.shift_right_logical(seed, 32))
     k2 = convert(lax.bitwise_and(seed, 0xFFFFFFFF))
     self.key = lax.concatenate([k1, k2], 0)
-    self.consumed = False
+    self.consumed = MutableCell(False)
 
   @classmethod
   def from_data(cls, raw_key, consumed):
@@ -58,6 +58,14 @@ class PRNGKey(object):
     assert onp.shape(self.key) == (2,)
     return iter(self.key)
 
+class MutableCell(object):
+  def __init__(self, val):
+    self.val = val
+  def __hash__(self):
+    return id(self)
+  def __eq__(self, other):
+    return other is self
+
 tree_util.register_pytree_node(
     PRNGKey,
     lambda k: ((k.key,), k.consumed),
@@ -66,6 +74,10 @@ tree_util.register_pytree_node(
 
 def is_prng_key(obj):
   return isinstance(obj, PRNGKey) and onp.shape(obj.key) == (2,)
+
+# TODO vmap is special want to make one PRNGKey object with arrays inside (?)
+# unlike split, which could return separate PRNGKey objects.
+# so what vmap wants to do may be to fold in an iota
 
 
 ### utilities
@@ -159,8 +171,15 @@ def threefry_2x32(keypair, count):
   return lax.reshape(out[:-1] if odd_size else out, count.shape)
 
 
-@partial(jit, static_argnums=(1,))
 def split(key, num=2):
+  if key.consumed.val:
+    raise RuntimeError
+  key.consumed.val = True
+  return _split(key, num)
+
+
+@partial(jit, static_argnums=(1,))
+def _split(key, num=2):
   """Splits a PRNG key pair of 32bit unsigned integers into `num` new key pairs.
 
   Args:
@@ -172,11 +191,11 @@ def split(key, num=2):
     A tuple of length `num` of new PRNGKey instances.
   """
   counts = lax.tie_in(key, lax.iota(onp.uint32, num * 2))
-  raw_key = lax.reshape(threefry_2x32(key, counts), (num, 2))
-  return PRNGKey.from_data(raw_key, False)
+  raw_keys = tuple(lax.reshape(threefry_2x32(key, counts), (num, 2)))
+  return [PRNGKey.from_data(rk, MutableCell(False)) for rk in raw_keys]
 
 # TODO could bury the array-ness inside the PRNGKey pytree, OR could have a
-# separate type that tracks e.g. shape of leading dimensions
+# separate type that tracks e.g. shape of leading dimension
 
 
 def _random_bits(key, bit_width, shape):
@@ -333,8 +352,15 @@ def shuffle(key, x, axis=0):
   return x
 
 
-@partial(jit, static_argnums=(1, 2))
 def normal(key, shape, dtype=onp.float32):
+  if key.consumed.val:
+    raise RuntimeError
+  key.consumed.val = True
+  return _normal(key, shape, dtype)
+
+
+@partial(jit, static_argnums=(1, 2))
+def _normal(key, shape, dtype=onp.float32):
   """Sample standard normal random values with given shape and float dtype.
 
   Args:
