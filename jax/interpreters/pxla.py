@@ -88,7 +88,7 @@ def moveaxis(name, sz, dst, src, x):
         src = 0
         dst_ = dst % (aval.ndim + 1)
       elif dst is None:
-        return x.sum(src).psum('i')
+        return x.sum(src).psum(name)
       if src == dst_:
         return x
       else:
