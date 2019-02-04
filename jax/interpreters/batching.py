@@ -265,9 +265,9 @@ primitive_batchers[zeros_like_p] = zeros_like_batched
 # method. To handle that case, the `broadcast` function uses a try/except.
 
 
-def bdim_at_front(x, bdim, broadcast_size=1):
+def bdim_at_front(x, bdim, broadcast_size=1, force_broadcast=False):
   if bdim is None:
-    return broadcast(x, broadcast_size)
+    return broadcast(x, broadcast_size, force_broadcast=force_broadcast)
   else:
     return move_dim_to_front(x, bdim)
 
@@ -309,18 +309,19 @@ def moveaxis(sz, dst, src, x):
     else:
       return pack(map(partial(moveaxis, sz, dst, src), x))
   elif isinstance(aval, ShapedArray):
-    dst = (dst % aval.ndim) if dst is not None and aval.ndim else dst
-    if src == dst:
+    dst_ = (dst % aval.ndim) if dst is not None and aval.ndim else dst
+    if src == dst_:
       return x
     else:
       if src is None:
         x = broadcast(x, sz, force_broadcast=True)
         src = 0
-      if src == dst:
+        dst_ = dst % (aval.ndim + 1)
+      if src == dst_:
         return x
       else:
         perm = [i for i in range(onp.ndim(x)) if i != src]
-        perm.insert(dst, src)
+        perm.insert(dst_, src)
         return x.transpose(perm)
   else:
     raise TypeError(type(aval))
