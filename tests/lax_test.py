@@ -943,20 +943,14 @@ class LaxTest(jtu.JaxTestCase):
   def testReduceWindow(self, op, init_val, dtype, padding, rng):
     init_val = onp.asarray(init_val, dtype=dtype)
 
-    # We need this conditional and the corresponding loop logic to be in the
-    # test method, rather than at the parameterized test level, because it
-    # depends on FLAGS for the device under test.
-    if FLAGS.jax_test_dut == "tpu":
-      all_configs = [((4, 6), (2, 1), (1, 2))]
-    else:
-      all_configs = itertools.chain(
-          itertools.product(
-              [(4, 6)],
-              [(2, 1), (1, 2)],
-              [(1, 1), (2, 1), (1, 2)]),
-          itertools.product(
-              [(3, 2, 4, 6)], [(1, 1, 2, 1), (2, 1, 2, 1)],
-              [(1, 2, 2, 1), (1, 1, 1, 1)]))
+    all_configs = itertools.chain(
+        itertools.product(
+            [(4, 6)],
+            [(2, 1), (1, 2)],
+            [(1, 1), (2, 1), (1, 2)]),
+        itertools.product(
+            [(3, 2, 4, 6)], [(1, 1, 2, 1), (2, 1, 2, 1)],
+            [(1, 2, 2, 1), (1, 1, 1, 1)]))
 
     def fun(operand, init_val):
       return lax.reduce_window(operand, init_val, op, dims, strides, padding)
@@ -978,7 +972,6 @@ class LaxTest(jtu.JaxTestCase):
       self._CompileAndCheck(fun, args_maker, check_dtypes=True)
     # pylint: enable=cell-var-from-loop
 
-  # TODO(b/205052657): enable more tests when supported
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_axis={}".format(
           jtu.format_shape_dtype_string(shape, dtype), axis),
@@ -988,15 +981,10 @@ class LaxTest(jtu.JaxTestCase):
       for axis in [-1, len(shape) - 1]
       for rng in [jtu.rand_default()]))
   def testSort(self, shape, dtype, axis, rng):
-    if len(shape) > 1 and not FLAGS.jax_test_dut.startswith("tpu"):
-      msg = "sort only implemented for R1 on non-TPU backends"
-      return absltest.unittest.skip(msg)
-
     args_maker = lambda: [rng(shape, dtype)]
     fun = lambda x: lax.sort(x, axis)
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)
 
-  # TODO(b/205052657): enable more tests when supported
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_axis={}".format(
           jtu.format_shape_dtype_string(shape, dtype), axis),
@@ -1006,16 +994,11 @@ class LaxTest(jtu.JaxTestCase):
       for axis in [-1, len(shape) - 1]
       for rng in [jtu.rand_default()]))
   def testSortAgainstNumpy(self, shape, dtype, axis, rng):
-    if len(shape) > 1 and not FLAGS.jax_test_dut.startswith("tpu"):
-      msg = "sort only implemented for R1 on non-TPU backends"
-      return absltest.unittest.skip(msg)
-
     args_maker = lambda: [rng(shape, dtype)]
     op = lambda x: lax.sort(x, axis)
     numpy_op = lambda x: lax_reference.sort(x, axis)
     self._CheckAgainstNumpy(op, numpy_op, args_maker)
 
-  # TODO(b/205052657): enable more tests when supported
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_keyshape={}_valshape={}_axis={}".format(
           jtu.format_shape_dtype_string(shape, key_dtype),
@@ -1029,10 +1012,6 @@ class LaxTest(jtu.JaxTestCase):
       for axis in [-1, len(shape) - 1]
       for rng in [jtu.rand_default()]))
   def testSortKeyVal(self, shape, key_dtype, val_dtype, axis, rng):
-    if len(shape) > 1 and not FLAGS.jax_test_dut.startswith("tpu"):
-      msg = "sort_key_val only implemented for R1 non-TPU backends"
-      return absltest.unittest.skip(msg)
-
     # This test relies on the property that wherever keys are tied, values are
     # too, since we don't guarantee the same ordering of values with equal keys.
     # To avoid that case, we generate unique keys (globally in the key array).
@@ -1046,7 +1025,6 @@ class LaxTest(jtu.JaxTestCase):
     fun = lambda keys, values: lax.sort_key_val(keys, values, axis)
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)
 
-  # TODO(b/205052657): enable more tests when supported
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_keyshape={}_valshape={}_axis={}".format(
           jtu.format_shape_dtype_string(shape, key_dtype),
@@ -1060,10 +1038,6 @@ class LaxTest(jtu.JaxTestCase):
       for axis in [-1, len(shape) - 1]
       for rng in [jtu.rand_default()]))
   def testSortKeyValAgainstNumpy(self, shape, key_dtype, val_dtype, axis, rng):
-    if len(shape) > 1 and not FLAGS.jax_test_dut.startswith("tpu"):
-      msg = "sort_key_val only implemented for R1 non-TPU backends"
-      return absltest.unittest.skip(msg)
-
     # This test relies on the property that wherever keys are tied, values are
     # too, since we don't guarantee the same ordering of values with equal keys.
     # To avoid that case, we generate unique keys (globally in the key array).
@@ -1364,7 +1338,7 @@ class LaxTest(jtu.JaxTestCase):
       ]
       for rng_idx in [jtu.rand_int(max(shape))]
       for rng in [jtu.rand_default()]))
-  @jtu.skip_on_devices("tpu")  # TODO(mattjj): investigate failures
+  @jtu.skip_on_devices("tpu")  # TODO(b/123834001): re-enable when fixed
   def testGather(self, shape, dtype, idxs, dnums, slice_sizes, rng, rng_idx):
     rand_idxs = lambda: rng_idx(idxs.shape, idxs.dtype)
     args_maker = lambda: [rng(shape, dtype), rand_idxs()]
@@ -1392,7 +1366,7 @@ class LaxTest(jtu.JaxTestCase):
       ]
       for rng_idx in [jtu.rand_int(max(arg_shape))]
       for rng in [jtu.rand_default()]))
-  @jtu.skip_on_devices("tpu")  # TODO(mattjj): investigate failures
+  @jtu.skip_on_devices("tpu")  # TODO(b/123834001): re-enable when fixed
   def testScatterAdd(self, arg_shape, dtype, idxs, update_shape, dnums, rng,
                      rng_idx):
     rand_idxs = lambda: rng_idx(idxs.shape, idxs.dtype)
@@ -1995,7 +1969,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     # We need this conditional and the corresponding loop logic to be in the
     # test method, rather than at the parameterized test level, because it
     # depends on FLAGS for the device under test.
-    if FLAGS.jax_test_dut == "tpu":
+    # TODO(b/31565929): enable when fixed.
+    if FLAGS.jax_test_dut == "tpu" and op is not lax.add:
       all_configs = [((6, 5, 4, 3), (2, 2, 1, 1), (1, 2, 1, 1))]
     else:
       all_configs = itertools.chain(
@@ -2107,7 +2082,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       ]
       for rng_idx in [jtu.rand_int(max(shape))]
       for rng in [jtu.rand_default()]))
-  @jtu.skip_on_devices("tpu")  # TODO(mattjj): investigate_failures
+  @jtu.skip_on_devices("tpu")  # TODO(b/123834001): enable when fixed.
   def testGatherGrad(self, shape, dtype, idxs, dnums, slice_sizes, rng, rng_idx):
     idxs = rng_idx(idxs.shape, idxs.dtype)
     gather = lambda x: lax.gather(x, idxs, dimension_numbers=dnums,
@@ -2136,7 +2111,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       ]
       for rng_idx in [jtu.rand_int(max(arg_shape))]
       for rng in [jtu.rand_default()]))
-  @jtu.skip_on_devices("tpu")  # TODO(mattjj): investigate failures
+  @jtu.skip_on_devices("tpu")  # TODO(b/123834001): enable when fixed.
   def testScatterAddGrad(self, arg_shape, dtype, idxs, update_shape, dnums, rng,
                          rng_idx):
     idxs = rng_idx(idxs.shape, idxs.dtype)
