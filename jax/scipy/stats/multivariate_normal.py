@@ -41,7 +41,7 @@ def logpdf(x, mean, cov):
     quadratic = einsum("ij,jk,ik->i", subtract(x_2d, mean), inv(cov), 
       subtract(x_2d, mean)).reshape(x_shape).astype(cov.dtype)
   else:
-    quadratic = (subtract(x, mean) @ inv(cov) @ subtract(x, mean).T).astype(cov.dtype)
+    quadratic = dot(dot(subtract(x, mean), inv(cov)), subtract(x, mean).T).astype(cov.dtype)
   return lax.div(lax.neg(lax.add(log_normalizer, quadratic)), two)
 
 @_wraps(osp_stats.multivariate_normal.pdf)
