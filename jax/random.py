@@ -27,6 +27,7 @@ from . import numpy as np
 from . import tree_util
 from .api import jit
 from jax.lib import xla_bridge
+from jax.interpreters import xla
 from jax import core
 
 
@@ -45,7 +46,7 @@ class PRNGKey(object):
       k1 = convert(lax.shift_right_logical(seed, 32))
     k2 = convert(lax.bitwise_and(seed, 0xFFFFFFFF))
     self.key = lax.concatenate([k1, k2], 0)
-    self.consumed = MutableCell(False)
+    self.consumed = False
 
   @classmethod
   def from_data(cls, raw_key, consumed):
@@ -54,30 +55,23 @@ class PRNGKey(object):
     prng.consumed = consumed
     return prng
 
-  def __iter__(self):
-    assert onp.shape(self.key) == (2,)
-    return iter(self.key)
-
-class MutableCell(object):
-  def __init__(self, val):
-    self.val = val
-  def __hash__(self):
-    return id(self)
-  def __eq__(self, other):
-    return other is self
-
-tree_util.register_pytree_node(
-    PRNGKey,
-    lambda k: ((k.key,), k.consumed),
-    lambda consumed, xs: PRNGKey.from_data(xs[0], consumed))
-
 
 def is_prng_key(obj):
-  return isinstance(obj, PRNGKey) and onp.shape(obj.key) == (2,)
+  return isinstance(obj, PRNGKey)
 
-# TODO vmap is special want to make one PRNGKey object with arrays inside (?)
-# unlike split, which could return separate PRNGKey objects.
-# so what vmap wants to do may be to fold in an iota
+class ShapedPRNGKey(core.AbstractValue):
+  def __init__(self, val, consumed=False):
+    self.consumed = consumed
+
+class ConcretePRNGKey(AbstractPRNGKey):
+  def __init__(self, val, consumed=False):
+    self.val = val
+    self.consumed = consumed
+
+
+# random note: so what vmap wants to do may be to fold in an iota
+core.pytype_aval_mappings[PRNGKey] = ConcretePRNGKey
+xla.pytype_aval_mappings[PRNGKey] = ShapedPRNGKey
 
 
 ### utilities

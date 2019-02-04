@@ -85,9 +85,8 @@ key = PRNGKey(0)
 def f(x):
   return x + normal(key, ())
 
-f(0.)  # should work
-
 # should error (?) not b/c reusing key, but reusing values from the key
+f(0.)  # should work
 try:
   f(0.)
 except:
@@ -95,3 +94,12 @@ except:
 else:
   raise RuntimeError
 
+
+### the plan!
+# have a special PRNGKey data type (like DeviceValue), including avals.
+# both vals and avals carry 'consumed' info.
+# split and random_bits are primitives that manage that info.
+# global 'side-effect' counter that only gets incremented in impl side-effects
+# not abstract value side-effects.
+
+# for vmap: maybe just allow leading dimensions.
