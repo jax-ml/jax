@@ -24,6 +24,7 @@ from jax import lax
 from jax import ad_util
 from jax.interpreters import xla
 from jax.interpreters import ad
+from jax.interpreters import batching
 from jax.util import partial
 from jax.abstract_arrays import ShapedArray
 from jax.core import Primitive
@@ -83,8 +84,15 @@ def cholesky_jvp_rule(primals, tangents):
       L, tmp, left_side=True, transpose_a=False, lower=True)))
   return L, L_dot
 
+def cholesky_batching_rule(batched_args, batch_dims):
+  x, = batched_args
+  bd, = batch_dims
+  x = batching.bdim_at_front(x, bd)
+  return cholesky(x), 0
+
 cholesky_p = standard_unop(_float | _complex, 'cholesky')
 ad.primitive_jvps[cholesky_p] = cholesky_jvp_rule
+batching.primitive_batchers[cholesky_p] = cholesky_batching_rule
 
 
 def cholesky_cpu_translation_rule(c, operand):
