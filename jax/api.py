@@ -303,7 +303,7 @@ def axisvar_split(fun, name, new_names):
   return split_fun
 
 
-def papply(fun, in_axes=0):
+def papply(fun, axis_size, in_axes=0):
   """Apply a function using parallel computation by sharding inputs."""
   axis_name = parallel.newvar()
 
@@ -312,7 +312,7 @@ def papply(fun, in_axes=0):
     in_axes_ = in_axes if isinstance(in_axes, (list, tuple)) else (in_axes,) * len(args)
     args_flat, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
     jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(f, in_trees)
-    out_flat = parallel.papply(jaxtree_fun, axis_name, args_flat, in_axes_)
+    out_flat = parallel.papply(jaxtree_fun, axis_name, args_flat, axis_size, in_axes_)
     return build_tree(out_tree(), out_flat)
 
   return papply_fun, axis_name

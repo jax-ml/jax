@@ -293,14 +293,14 @@ def reshape_axis(chunksize, in_axis, arg):
 
 newvar = pe.gensym('_axis')
 
-def papply(fun, name, in_vals, in_axes):
-  return papply_transform(fun).call_wrapped(name, in_vals, in_axes)
+def papply(fun, name, in_vals, axis_size, in_axes):
+  return papply_transform(fun).call_wrapped(name, in_vals, axis_size, in_axes)
 
 @lu.transformation
-def papply_transform(name, args, axes):
+def papply_transform(name, args, axis_size, axes):
   with new_master(PapplyTrace) as master:
     trace = PapplyTrace(master, core.cur_sublevel())
-    in_tracers = map(partial(PapplyTracer, trace, name), args, axes)
+    in_tracers = map(partial(PapplyTracer, trace, name, axis_size), args, axes)
     out_tracer = yield in_tracers
     out_tracer = trace.full_raise(out_tracer)
     out_val = out_tracer.val
@@ -308,15 +308,19 @@ def papply_transform(name, args, axes):
   yield out_val
 
 class PapplyTracer(Tracer):
-  def __init__(self, trace, name, val, axis):
+  def __init__(self, trace, name, axis_size, val, axis):
     self.trace = trace
     self.name = name
+    self.axis_size = axis_size
     self.val = val
     self.axis = axis
 
   @property
   def aval(self):
-    return batching.get_aval(self.val)
+    aval = batching.get_aval(self.val)
+    shape = list(aval.shape)
+    shape.insert(self.axis, self.axis_size)
+    return ShapedArray(tuple(shape), aval.dtype)
 
   def unpack(self):
     raise NotImplementedError  # TODO(mattjj,frostig)
@@ -329,13 +333,13 @@ class PapplyTracer(Tracer):
 
 class PapplyTrace(Trace):
   def pure(self, val):
-    return PapplyTracer(self, None, val, None)
+    return PapplyTracer(self, None, None, val, None)
 
   def lift(self, val):
-    return PapplyTracer(self, None, val, None)
+    return PapplyTracer(self, None, None, val, None)
 
   def sublift(self, val):
-    return PapplyTracer(self, val.name, val.val, val.axis)
+    return PapplyTracer(self, val.name, val.axis_size, val.val, val.axis)
 
   def process_primitive(self, primitive, tracers, params):
     names, vals, axes = unzip3((t.name, t.val, t.axis) for t in tracers)
@@ -343,9 +347,10 @@ class PapplyTrace(Trace):
       return primitive.bind(*vals, **params)
     else:
       name = next(n for n in names if n is not None)
+      size = next(t.axis_size for t in tracers if t.axis_size is not None)
       rule = papply_primitive_rules[primitive]
       val_out, axis_out = rule(name, vals, axes, **params)
-      return PapplyTracer(self, name, val_out, axis_out)
+      return PapplyTracer(self, name, size, val_out, axis_out)
 
   def process_call(self, call_primitive, f, tracers, params):
     raise NotImplementedError  # TODO(mattjj,frostig)
@@ -357,7 +362,8 @@ class PapplyTrace(Trace):
     vals = core.pack([t.val for t in tracers])
     axis = tuple(t.axis for t in tracers)
     name = tuple(t.name for t in tracers)
-    return PapplyTracer(self, name, vals, axis)
+    size = tuple(t.axis_size for t in tracers)
+    return PapplyTracer(self, name, size, vals, axis)
 
 
 papply_primitive_rules = {}
