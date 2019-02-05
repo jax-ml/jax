@@ -22,12 +22,13 @@ from .core import Trace, Tracer, Primitive, new_master
 
 ### library
 
-def ptranspose(x, split_dim, concat_dim, **params):
-  return ptranspose_p.bind(x, split_dim=split_dim, concat_dim=concat_dim,
-                           **params)
+def ptranspose(x, axis_name, split_dim, concat_dim, **params):
+  return ptranspose_p.bind(x, axis_name=axis_name, split_dim=split_dim,
+                           concat_dim=concat_dim, **params)
 
-def psplit(x, split_dim, target_dim, **params):
-  return psplit_p.bind(x, split_dim=split_dim, target_dim=target_dim, **params)
+def psplit(x, axis_name, split_dim, target_dim, **params):
+  return psplit_p.bind(x, axis_name=axis_name, split_dim=split_dim,
+                       target_dim=target_dim, **params)
 
 def psum(x, axis_name):
   return psum_p.bind(x, axis_name=axis_name)

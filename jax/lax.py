@@ -2875,18 +2875,16 @@ def gather_pmap_rule(val, axis):
 parallel_interp.pmap_primitive_rules[parallel.gather_p] = gather_pmap_rule
 
 def ptranspose_shape_rule(x, split_dim, concat_dim, **params):
-  permutation = list(range(x.ndim))
-  permutation[concat_dim] = split_dim
-  permutation[split_dim] = concat_dim
-  return transpose_shape_rule(x, permutation)
+  shape = transpose_shape_rule(x, (1, 0))
+  return ShapedArray(shape, x.dtype)
 
 def ptranspose_pmap_rule(x, axis, split_dim, concat_dim):
-  raise NotImplementedError
+  return transpose(x, (1, 0)), axis
 
 def ptranspose_translation_rule(c, x, split_dim, concat_dim):
   return c.AllToAll(x, split_dim, split_dim)
 
-def ptranspose_papply_rule(name, vals, dims, permutation):
+def ptranspose_papply_rule(name, vals, dims, split_dim, concat_dim):
   x, = vals
   xdim, = dims
   return transpose(x, permutation), permutation[xdim]
