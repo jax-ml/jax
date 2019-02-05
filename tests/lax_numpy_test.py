@@ -168,8 +168,14 @@ JAX_REDUCER_NO_DTYPE_RECORDS = [
     op_record("any", 1, all_dtypes, all_shapes, jtu.rand_some_zero(), []),
     op_record("max", 1, all_dtypes, nonempty_shapes, jtu.rand_default(), []),
     op_record("min", 1, all_dtypes, nonempty_shapes, jtu.rand_default(), []),
-    op_record("ptp", 1, number_dtypes, nonempty_shapes, jtu.rand_default(), []),
 ]
+
+numpy_version = tuple(map(int, onp.version.version.split('.')))
+if numpy_version >= (1, 15):
+  JAX_REDUCER_NO_DTYPE_RECORDS += [
+      op_record("ptp", 1, number_dtypes, nonempty_shapes, jtu.rand_default(), []),
+  ]
+
 
 JAX_ARGMINMAX_RECORDS = [
     op_record("argmin", 1, all_dtypes, nonempty_shapes, jtu.rand_some_equal(), []),
