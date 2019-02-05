@@ -1919,6 +1919,13 @@ def _static_idx(idx, size):
     return stop_inclusive, end, -step, True
 
 
+blackman = onp.blackman
+bartlett = onp.bartlett
+hamming = onp.hamming
+hanning = onp.hanning
+kaiser = onp.kaiser  # TODO: lower via lax to allow non-constant beta.
+
+
 ### track unimplemented functions
 
 def _not_implemented(fun):
