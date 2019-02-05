@@ -40,7 +40,7 @@ def gather(x, axis_name):
   return gather_p.bind(x, axis_name=axis_name)
 
 
-### primitives and rules
+### primitives
 
 def PmapPrimitive(name):
   prim = Primitive(name)
@@ -53,53 +53,13 @@ def unbound_name_error(primitive_name, *args, **kwargs):
   msg = "axis name '{}' is unbound for primitive {}."
   raise NameError(msg.format(axis_name, primitive_name))
 
-
-def psum_pmap_rule(val, axis):
-  return val.sum(axis), None
-
-def psum_parallel_translation_rule(c, val, device_groups):
-  if len(device_groups) > 1:
-    return c.CrossReplicaSum(val, device_groups)
-  else:
-    return c.CrossReplicaSum(val)
-
 psum_p = PmapPrimitive('psum')
-
-def gather_pmap_rule(val, axis):
-  return val, None
-
 gather_p = PmapPrimitive('gather')
-
-def ptranspose_shape_rule(x, split_dim, concat_dim, **params):
-  permutation = list(range(x.ndim))
-  permutation[concat_dim] = split_dim
-  permutation[split_dim] = concat_dim
-  return transpose_shape_rule(x, permutation)
-
-def ptranspose_pmap_rule(x, axis, split_dim, concat_dim):
-  raise NotImplementedError
-
-def ptranspose_translation_rule(c, x, split_dim, concat_dim):
-  return c.AllToAll(x, split_dim, split_dim)
-
 ptranspose_p = PmapPrimitive('ptranspose')
-ptranspose_p.def_abstract_eval(ptranspose_shape_rule)
-
-
-def scatter_like(source, target):
-  return scatter_like_p.bind(source, target)
-
-def scatter_like_papply_rule(name, vals, axes):
-  source, target = vals
-  source_axis, target_axis = axes
-  assert source_axis is None
-  return _scatter(source, target, target_axis, name)
-
 scatter_like_p = Primitive('scatter_like')
-scatter_like_p.def_abstract_eval(lambda source, target: source)
 
 
-## template papply rules
+### template papply rules
 
 def vectorized_papply(prim, name, vals, axes, **params):
   assert all(axes[0] == a for a in axes[1:])
