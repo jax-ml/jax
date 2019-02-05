@@ -69,12 +69,14 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("ceil", 1, float_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("conj", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("conjugate", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
+    op_record("deg2rad", 1, float_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("equal", 2, all_dtypes, all_shapes, jtu.rand_some_equal(), []),
     op_record("exp", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("fabs", 1, float_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("floor", 1, float_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("greater", 2, number_dtypes, all_shapes, jtu.rand_some_equal(), []),
     op_record("greater_equal", 2, number_dtypes, all_shapes, jtu.rand_some_equal(), []),
+    op_record("hypot", 2, default_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("isfinite", 1, number_dtypes, all_shapes, jtu.rand_some_inf(), []),
     op_record("less", 2, number_dtypes, all_shapes, jtu.rand_some_equal(), []),
     op_record("less_equal", 2, number_dtypes, all_shapes, jtu.rand_some_equal(), []),
@@ -89,6 +91,8 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("negative", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("not_equal", 2, number_dtypes, all_shapes, jtu.rand_some_equal(), ["rev"]),
     op_record("power", 2, inexact_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
+    op_record("rad2deg", 1, float_dtypes, all_shapes, jtu.rand_default(), []),
+    op_record("reciprocal", 1, inexact_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("subtract", 2, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("sin", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("cos", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
@@ -709,6 +713,31 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testSplitStaticInt(self, shape, num_sections, axis, dtype, rng):
     onp_fun = lambda x: onp.split(x, num_sections, axis=axis)
     lnp_fun = lambda x: lnp.split(x, num_sections, axis=axis)
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_axis={}_{}sections".format(
+          jtu.format_shape_dtype_string(shape, dtype), axis, num_sections),
+       "shape": shape, "num_sections": num_sections, "axis": axis,
+       "dtype": dtype, "rng": jtu.rand_default()}
+      for shape, axis, num_sections in [
+          ((12, 4), 0, 4), ((12, 4), 1, 2),
+          ((2, 3, 4), 2, 2), ((4, 3, 4), 0, 2)]
+      for dtype in default_dtypes))
+  def testHVDSplit(self, shape, num_sections, axis, dtype, rng):
+    def fn(module, axis):
+      if axis == 0:
+        return module.vsplit
+      elif axis == 1:
+        return module.hsplit
+      else:
+        assert axis == 2
+        return module.dsplit
+
+    onp_fun = lambda x: fn(onp, axis)(x, num_sections)
+    lnp_fun = lambda x: fn(lnp, axis)(x, num_sections)
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
