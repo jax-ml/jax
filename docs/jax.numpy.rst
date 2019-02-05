@@ -38,10 +38,12 @@ jax.numpy package
     asarray
     atleast_1d
     atleast_2d
+    bartlett
     bitwise_and
     bitwise_not
     bitwise_or
     bitwise_xor
+    blackman
     broadcast_arrays
     broadcast_to
     ceil
@@ -84,6 +86,8 @@ jax.numpy package
     geomspace
     greater
     greater_equal
+    hamming
+    hanning
     hsplit
     hstack
     hypot
@@ -98,6 +102,7 @@ jax.numpy package
     isposinf
     issubdtype
     issubsctype
+    kaiser
     kron
     left_shift
     less
