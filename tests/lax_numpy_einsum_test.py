@@ -276,6 +276,11 @@ class EinsumTest(jtu.JaxTestCase):
 
     check(einstr, *operands)
 
+  def test_ordered_front_batch_dim_case(self):
+    x = onp.ones((1,8,20,4))
+    y = onp.ones((1,8,20,4))
+    s = 'ijkl,ijml->ijkm'
+    check(s, x, y)
 
 if __name__ == '__main__':
   absltest.main()
