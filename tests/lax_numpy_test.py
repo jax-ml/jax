@@ -68,15 +68,12 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("add", 2, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("ceil", 1, float_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("conj", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
-    op_record("conjugate", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
-    op_record("deg2rad", 1, float_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("equal", 2, all_dtypes, all_shapes, jtu.rand_some_equal(), []),
     op_record("exp", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("fabs", 1, float_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("floor", 1, float_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("greater", 2, number_dtypes, all_shapes, jtu.rand_some_equal(), []),
     op_record("greater_equal", 2, number_dtypes, all_shapes, jtu.rand_some_equal(), []),
-    op_record("hypot", 2, default_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("isfinite", 1, number_dtypes, all_shapes, jtu.rand_some_inf(), []),
     op_record("less", 2, number_dtypes, all_shapes, jtu.rand_some_equal(), []),
     op_record("less_equal", 2, number_dtypes, all_shapes, jtu.rand_some_equal(), []),
@@ -91,7 +88,6 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("negative", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("not_equal", 2, number_dtypes, all_shapes, jtu.rand_some_equal(), ["rev"]),
     op_record("power", 2, inexact_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
-    op_record("rad2deg", 1, float_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("reciprocal", 1, inexact_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("subtract", 2, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("sin", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
@@ -111,15 +107,22 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
 ]
 
 JAX_COMPOUND_OP_RECORDS = [
+    op_record("angle", 1, number_dtypes, all_shapes, jtu.rand_default(), []),
+    op_record("conjugate", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
+    op_record("deg2rad", 1, float_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("divide", 2, number_dtypes, all_shapes, jtu.rand_nonzero(), ["rev"]),
     op_record("exp2", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("expm1", 1, number_dtypes, all_shapes, jtu.rand_positive(), [],
               test_name="expm1_large"),
     op_record("expm1", 1, number_dtypes, all_shapes, jtu.rand_small_positive(), []),
     op_record("floor_divide", 2, number_dtypes, all_shapes, jtu.rand_nonzero(), ["rev"]),
+    op_record("hypot", 2, default_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("kron", 2, number_dtypes, nonempty_shapes, jtu.rand_default(), []),
     op_record("outer", 2, number_dtypes, all_shapes, jtu.rand_default(), []),
+    op_record("imag", 1, number_dtypes, all_shapes, jtu.rand_some_inf(), []),
     op_record("isclose", 2, all_dtypes, all_shapes, jtu.rand_small_positive(), []),
+    op_record("iscomplex", 1, number_dtypes, all_shapes, jtu.rand_some_inf(), []),
+    op_record("isreal", 1, number_dtypes, all_shapes, jtu.rand_some_inf(), []),
     op_record("log2", 1, number_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
     op_record("log10", 1, number_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
     op_record("log1p", 1, number_dtypes, all_shapes, jtu.rand_positive(), [],
@@ -128,8 +131,12 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("logaddexp", 2, float_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("logaddexp2", 2, float_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("polyval", 2, number_dtypes, nonempty_nonscalar_array_shapes, jtu.rand_default(), []),
+    op_record("positive", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
+    op_record("rad2deg", 1, float_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("ravel", 1, all_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
+    op_record("real", 1, number_dtypes, all_shapes, jtu.rand_some_inf(), []),
     op_record("remainder", 2, default_dtypes, all_shapes, jtu.rand_nonzero(), []),
+    op_record("sinc", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("square", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("sqrt", 1, number_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
     op_record("transpose", 1, all_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
@@ -161,6 +168,7 @@ JAX_REDUCER_NO_DTYPE_RECORDS = [
     op_record("any", 1, all_dtypes, all_shapes, jtu.rand_some_zero(), []),
     op_record("max", 1, all_dtypes, nonempty_shapes, jtu.rand_default(), []),
     op_record("min", 1, all_dtypes, nonempty_shapes, jtu.rand_default(), []),
+    op_record("ptp", 1, number_dtypes, nonempty_shapes, jtu.rand_default(), []),
 ]
 
 JAX_ARGMINMAX_RECORDS = [
@@ -1142,6 +1150,26 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       onp_op = lambda x, i: onp.take_along_axis(x, i, axis=axis)
       self._CheckAgainstNumpy(lnp_op, onp_op, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_op, args_maker, check_dtypes=True)
+
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_n={}_increasing={}".format(
+          jtu.format_shape_dtype_string([shape], dtype),
+          n, increasing),
+       "dtype": dtype, "shape": shape, "n": n, "increasing": increasing,
+       "rng": jtu.rand_default()}
+      for dtype in inexact_dtypes
+      for shape in [0, 5]
+      for n in [2, 4]
+      for increasing in [False, True]))
+  def testVander(self, shape, dtype, n, increasing, rng):
+    onp_fun = lambda arg: onp.vander(arg, N=n, increasing=increasing)
+    lnp_fun = lambda arg: lnp.vander(arg, N=n, increasing=increasing)
+    args_maker = lambda: [rng([shape], dtype)]
+    # np.vander seems to return float64 for all floating types. We could obey
+    # those semantics, but they seem like a bug.
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=False)
 
 
 if __name__ == "__main__":

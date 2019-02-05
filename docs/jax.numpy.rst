@@ -69,6 +69,8 @@ jax.numpy package
     dsplit
     einsum
     equal
+    empty
+    empty_like
     exp
     exp2
     expand_dims
@@ -95,11 +97,13 @@ jax.numpy package
     imag
     inner
     isclose
+    iscomplex
     isfinite
     isinf
     isnan
     isneginf
     isposinf
+    isreal
     issubdtype
     issubsctype
     kaiser
@@ -144,8 +148,10 @@ jax.numpy package
     pad
     polyval
     power
+    positive
     prod
     product
+    ptp
     rad2deg
     radians
     ravel
@@ -160,6 +166,7 @@ jax.numpy package
     row_stack
     sign
     sin
+    sinc
     sinh
     sometrue
     sort
@@ -183,6 +190,7 @@ jax.numpy package
     tril
     triu
     true_divide
+    vander
     var
     vdot
     vsplit
