@@ -2085,24 +2085,38 @@ def _gather_batching_rule(batched_args, batch_dims, dimension_numbers,
   operand_bdim, start_indices_bdim = batch_dims
 
   if operand_bdim is not None and start_indices_bdim is None:
+    collapsed_slice_dims = set(dimension_numbers.collapsed_slice_dims)
+    num_preceding_window_dims = sum(  # 2
+        1 for i in range(len(slice_sizes))
+        if i < operand_bdim and i not in collapsed_slice_dims)
+    offset_dims = list(dimension_numbers.offset_dims)  # [2, 3, 7]
+    if num_preceding_window_dims == 0:
+      bdim_offset_dim = 0
+    else:
+      bdim_offset_dim = offset_dims[num_preceding_window_dims - 1] + 1
+    new_offset_dims = (offset_dims[:num_preceding_window_dims]
+                       + [bdim_offset_dim]
+                       + list(onp.add(1, offset_dims[num_preceding_window_dims:])))
+    new_offset_dims = tuple(new_offset_dims)
+
     slice_sizes = list(slice_sizes)
     slice_sizes.insert(operand_bdim, operand.shape[operand_bdim])
+    slice_sizes = tuple(slice_sizes)
 
-    offset_dims = tuple(dimension_numbers.offset_dims) + (operand_bdim,)
-
-    collapsed_slice_dims = tuple(i+1 if i >= operand_bdim else i
+    collapsed_slice_dims = tuple(i + 1 if i >= operand_bdim else i
                                  for i in dimension_numbers.collapsed_slice_dims)
 
+    start_index_map = tuple(i + 1 if i > operand_bdim else i
+                            for i in dimension_numbers.start_index_map)
+
     dnums = GatherDimensionNumbers(
-        offset_dims=offset_dims,
+        offset_dims=new_offset_dims,
         collapsed_slice_dims=collapsed_slice_dims,
-        start_index_map=dimension_numbers.start_index_map,
+        start_index_map=start_index_map,
         index_vector_dim=dimension_numbers.index_vector_dim)
 
-    out_bdim = 0  # TODO
-
     return gather(operand, start_indices, dimension_numbers=dnums,
-                  slice_sizes=slice_sizes), out_bdim
+                  slice_sizes=slice_sizes), bdim_offset_dim
   else:
     raise NotImplementedError  # TODO(mattjj): 
 
