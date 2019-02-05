@@ -26,9 +26,12 @@ import scipy.stats as osp_stats
 
 from jax import test_util as jtu
 from jax.scipy import stats as lsp_stats
-from lax_scipy_test import CombosWithReplacement, float_dtypes
 
 all_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4)]
+
+float_dtypes = [onp.float32, onp.float64]
+
+CombosWithReplacement = itertools.combinations_with_replacement
 
 def genNamedParametersNArgs(n, rng):
     return parameterized.named_parameters(
@@ -37,6 +40,7 @@ def genNamedParametersNArgs(n, rng):
             "rng": rng, "shapes": shapes, "dtypes": dtypes}
           for shapes in CombosWithReplacement(all_shapes, n)
           for dtypes in CombosWithReplacement(float_dtypes, n)))
+
 
 class LaxBackedScipyStatsTests(jtu.JaxTestCase):
   """Tests for LAX-backed scipy.stats implementations"""
