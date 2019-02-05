@@ -36,12 +36,44 @@ def cholesky(a, lower=False, overwrite_a=False, check_finite=True):
   warnings.warn(_EXPERIMENTAL_WARNING)
   del overwrite_a, check_finite
   a = np_linalg._promote_arg_dtypes(np.asarray(a))
-  l = lax_linalg.cholesky(a if lower else np.conj(a.T))
-  return l if lower else np.conj(l.T)
+  l = lax_linalg.cholesky(a if lower else np.conj(_T(a)))
+  return l if lower else np.conj(_T(l))
+
+
+@_wraps(scipy.linalg.cho_factor)
+def cho_factor(a, lower=False, overwrite_a=False, check_finite=True):
+  return (cholesky(a, lower=lower), lower)
+
+
+@_wraps(scipy.linalg.cho_solve)
+def cho_solve(c_and_lower, b, overwrite_b=False, check_finite=True):
+  del overwrite_b, check_finite
+  c, lower = c_and_lower
+
+  c, b = np_linalg._promote_arg_dtypes(np.asarray(c), np.asarray(b))
+  c_shape = np.shape(c)
+  b_shape = np.shape(b)
+  c_ndims = len(c_shape)
+  b_ndims = len(b_shape)
+  if not (c_ndims >= 2 and c_shape[-1] == c_shape[-2] and
+          (c_ndims == b_ndims or c_ndims == b_ndims + 1)):
+    msg = ("The arguments to solve must have shapes a=[..., m, m] and "
+           "b=[..., m, k] or b=[..., m]; got a={} and b={}")
+    raise ValueError(msg.format(c_shape, b_shape))
+
+  # TODO(phawkins): triangular_solve only supports matrices on the RHS, so we
+  # add a dummy dimension. Extend it to support vectors and simplify this.
+  b = b if c_ndims == b_ndims else b[..., None]
+  b = lax_linalg.triangular_solve(c, b, left_side=True, lower=lower,
+                                  transpose_a=not lower, conjugate_a=not lower)
+  b = lax_linalg.triangular_solve(c, b, left_side=True, lower=lower,
+                                  transpose_a=lower, conjugate_a=lower)
+  return b[..., 0] if c_ndims != b_ndims else b
 
 
 @_wraps(scipy.linalg.svd)
-def svd(a, full_matrices=True, compute_uv=True, overwrite_a=False, check_finite=True, lapack_driver='gesdd'):
+def svd(a, full_matrices=True, compute_uv=True, overwrite_a=False,
+        check_finite=True, lapack_driver='gesdd'):
   warnings.warn(_EXPERIMENTAL_WARNING)
   del overwrite_a, check_finite, lapack_driver
   a = np_linalg._promote_arg_dtypes(np.asarray(a))
@@ -138,25 +170,7 @@ def solve(a, b, sym_pos=False, lower=False, overwrite_a=False, overwrite_b=False
     return np_linalg.solve(a, b)
 
   a, b = np_linalg._promote_arg_dtypes(np.asarray(a), np.asarray(b))
-  a_shape = np.shape(a)
-  b_shape = np.shape(b)
-  a_ndims = len(a_shape)
-  b_ndims = len(b_shape)
-  if not (a_ndims >= 2 and a_shape[-1] == a_shape[-2] and
-          (a_ndims == b_ndims or a_ndims == b_ndims + 1)):
-    msg = ("The arguments to solve must have shapes a=[..., m, m] and "
-           "b=[..., m, k] or b=[..., m]; got a={} and b={}")
-    raise ValueError(msg.format(a_shape, b_shape))
-
-  # TODO(phawkins): triangular_solve only supports matrices on the RHS, so we
-  # add a dummy dimension. Extend it to support vectors and simplify this.
-  b = b if a_ndims == b_ndims else b[..., None]
-  lu = lax_linalg.cholesky(a if lower else np.conj(_T(a)))
-  b = lax_linalg.triangular_solve(lu, b, left_side=True, lower=True)
-  b = lax_linalg.triangular_solve(lu, b, left_side=True, lower=True,
-                                  transpose_a=True, conjugate_a=True)
-  return b[..., 0] if a_ndims != b_ndims else b
-
+  return cho_solve(cho_factor(a, lower=lower), b)
 
 
 @_wraps(scipy.linalg.solve_triangular)
