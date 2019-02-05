@@ -246,6 +246,7 @@ absolute = abs = _one_to_one_unop(onp.absolute, lax.abs)
 fabs = _one_to_one_unop(onp.fabs, lax.abs, True)
 bitwise_not = _one_to_one_unop(onp.bitwise_not, lax.bitwise_not)
 negative = _one_to_one_unop(onp.negative, lax.neg)
+positive = _one_to_one_unop(onp.positive, lambda x: x)
 sign = _one_to_one_unop(onp.sign, lax.sign)
 
 floor = _one_to_one_unop(onp.floor, lax.floor, True)
@@ -429,6 +430,7 @@ def sqrt(x):
   x, = _promote_to_result_dtype(onp.sqrt, x)
   return power(x, _constant_like(x, 0.5))
 
+
 @_wraps(onp.square)
 def square(x):
   x, = _promote_to_result_dtype(onp.square, x)
@@ -461,6 +463,14 @@ def hypot(x, y):
 def reciprocal(x):
   x, = _promote_to_result_dtype(onp.reciprocal, x)
   return lax.div(lax._const(x, 1), x)
+
+
+@_wraps(onp.sinc)
+def sinc(x):
+  x, = _promote_to_result_dtype(onp.sinc, x)
+  pi_x = lax.mul(lax._const(x, pi), x)
+  return where(lax.eq(x, lax._const(x, 0)),
+               lax._const(x, 1), lax.div(lax.sin(pi_x), pi_x))
 
 
 @_wraps(onp.transpose)
@@ -517,7 +527,7 @@ conj = conjugate
 
 @_wraps(onp.imag)
 def imag(x):
-  return lax.imag(x) if iscomplexobj(x) else x
+  return lax.imag(x) if iscomplexobj(x) else zeros_like(x)
 
 
 @_wraps(onp.real)
@@ -525,12 +535,27 @@ def real(x):
   return lax.real(x) if iscomplexobj(x) else x
 
 
+@_wraps(onp.iscomplex)
+def iscomplex(x):
+  i = imag(x)
+  return lax.ne(i, lax._const(i, 0))
+
+@_wraps(onp.isreal)
+def isreal(x):
+  i = imag(x)
+  return lax.eq(i, lax._const(i, 0))
+
 @_wraps(onp.angle)
 def angle(x):
-  if iscomplexobj(x):
-    return lax.atan2(lax.imag(x), lax.real(x))
-  else:
-    return zeros_like(x)
+  re = real(x)
+  im = imag(x)
+  dtype = _dtype(re)
+  if not issubdtype(dtype, inexact) or (
+      issubdtype(_dtype(x), floating) and ndim(x) == 0):
+    dtype = xla_bridge.canonicalize_dtype(float64)
+    re = lax.convert_element_type(re, dtype)
+    im = lax.convert_element_type(im, dtype)
+  return lax.atan2(im, re)
 
 
 @_wraps(onp.reshape)
@@ -879,6 +904,15 @@ def std(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
   return sqrt(var(a, axis=axis, dtype=dtype, ddof=ddof, keepdims=keepdims))
 
 
+@_wraps(onp.ptp)
+def ptp(a, axis=None, out=None, keepdims=False):
+  if out is not None:
+    raise ValueError("ptp does not support the `out` argument.")
+  x = amax(a, axis=axis, keepdims=keepdims)
+  y = amin(a, axis=axis, keepdims=keepdims)
+  return lax.sub(x, y)
+
+
 @_wraps(onp.allclose)
 def allclose(a, b, rtol=1e-05, atol=1e-08):
   return all(isclose(a, b, rtol, atol))
@@ -1095,11 +1129,15 @@ def zeros(shape, dtype=onp.dtype("float64")):
   shape = (shape,) if onp.isscalar(shape) else shape
   return lax.full(shape, 0, dtype)
 
-
 @_wraps(onp.ones)
 def ones(shape, dtype=onp.dtype("float64")):
   shape = (shape,) if onp.isscalar(shape) else shape
   return lax.full(shape, 1, dtype)
+
+
+# We can't create uninitialized arrays in XLA; use zeros for empty.
+empty_like = zeros_like
+empty = zeros
 
 
 @_wraps(onp.eye)
@@ -1595,6 +1633,24 @@ def kron(a, b):
   b_broadcast = lax.broadcast_in_dim(
     b, b_broadcast_shape, list(range(b_ndims - d)) + b_broadcast_dims)
   return lax.reshape(a_broadcast * b_broadcast, out_shape)
+
+
+@_wraps(onp.vander)
+def vander(x, N=None, increasing=False):
+  x = asarray(x)
+  dtype = _dtype(x)
+  if ndim(x) != 1:
+    raise ValueError("x must be a one-dimensional array")
+  x_shape = shape(x)
+  N = N or x_shape[0]
+  if N < 0:
+    raise ValueError("N must be nonnegative")
+
+  iota = lax.iota(dtype, N)
+  if not increasing:
+    iota = lax.sub(lax._const(iota, N - 1), iota)
+
+  return power(x[..., None], iota)
 
 
 ### Misc
