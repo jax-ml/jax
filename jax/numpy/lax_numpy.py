@@ -120,8 +120,12 @@ iinfo = onp.iinfo
 finfo = onp.finfo
 
 issubdtype = onp.issubdtype
+issubsctype = onp.issubsctype
 
 ComplexWarning = onp.ComplexWarning
+
+array_str = onp.array_str
+array_repr = onp.array_repr
 
 ### utility functions
 
@@ -262,6 +266,7 @@ tanh = _one_to_one_unop(onp.tanh, lax.tanh, True)
 arcsinh = _one_to_one_unop(onp.arcsinh, lax.asinh, True)
 arccosh = _one_to_one_unop(onp.arccosh, lax.acosh, True)
 arctanh = _one_to_one_unop(onp.arctanh, lax.atanh, True)
+
 
 add = _one_to_one_binop(onp.add, lax.add)
 bitwise_and = _one_to_one_binop(onp.bitwise_and, lax.bitwise_and)
@@ -428,6 +433,34 @@ def sqrt(x):
 def square(x):
   x, = _promote_to_result_dtype(onp.square, x)
   return x * x
+
+
+@_wraps(onp.deg2rad)
+def deg2rad(x):
+  x, = _promote_to_result_dtype(onp.deg2rad, x)
+  return lax.mul(x, lax._const(x, pi / 180))
+
+
+@_wraps(onp.rad2deg)
+def rad2deg(x):
+  x, = _promote_to_result_dtype(onp.rad2deg, x)
+  return lax.mul(x, lax._const(x, 180 / pi))
+
+
+degrees = rad2deg
+radians = deg2rad
+
+
+@_wraps(onp.hypot)
+def hypot(x, y):
+  x, y = _promote_to_result_dtype(onp.hypot, x, y)
+  return lax.sqrt(x*x + y*y)
+
+
+@_wraps(onp.reciprocal)
+def reciprocal(x):
+  x, = _promote_to_result_dtype(onp.reciprocal, x)
+  return lax.div(lax._const(x, 1), x)
 
 
 @_wraps(onp.transpose)
@@ -634,6 +667,16 @@ def split(ary, indices_or_sections, axis=0):
   return [lax.slice(ary, _subval(starts, axis, start), _subval(ends, axis, end))
           for start, end in zip(split_indices[:-1], split_indices[1:])]
 
+def _split_on_axis(onp_fun, axis):
+  @_wraps(onp_fun)
+  def f(ary, indices_or_sections):
+    return split(ary, indices_or_sections, axis=axis)
+  return f
+
+vsplit = _split_on_axis(onp.vsplit, axis=0)
+hsplit = _split_on_axis(onp.hsplit, axis=1)
+dsplit = _split_on_axis(onp.dsplit, axis=2)
+
 
 @_wraps(onp.clip)
 def clip(a, a_min=None, a_max=None):
@@ -783,7 +826,7 @@ def _reduction_init_val(a, init_val):
 _cast_to_bool = partial(lax.convert_element_type, new_dtype=onp.bool_)
 
 sum = _make_reduction(onp.sum, lax.add, 0)
-prod = _make_reduction(onp.prod, lax.mul, 1)
+product = prod = _make_reduction(onp.prod, lax.mul, 1)
 amax = max = _make_reduction(onp.max, lax.max, -onp.inf)
 amin = min = _make_reduction(onp.min, lax.min, onp.inf)
 all = alltrue = _make_reduction(onp.all, lax.bitwise_and, True, _cast_to_bool)
@@ -1401,7 +1444,7 @@ def _einsum(operands, contractions):
       batch_names = (set(lhs_names) & set(rhs_names)) - contracted_names
       lhs_batch, rhs_batch = unzip2((lhs_names.find(n), rhs_names.find(n))
                                     for n in batch_names)
-
+      
       # NOTE(mattjj): this can fail non-deterministically in python3, maybe
       # due to opt_einsum
       assert _all(name in lhs_names and name in rhs_names and
@@ -1418,7 +1461,8 @@ def _einsum(operands, contractions):
         batch_names = ''.join(batch_names)
       else:
         batch_dims = tuple(lhs_batch)
-        batch_names = ''.join(lhs_names[i] for i in batch_dims)
+        batch_names = ''.join(lhs_names[i] for i in range(len(lhs_names))
+                              if i in batch_dims)
 
       if contracted_names:
         # contract using lax.dot_general
@@ -1873,6 +1917,13 @@ def _static_idx(idx, size):
   else:
     end = _min(start - step, size)
     return stop_inclusive, end, -step, True
+
+
+blackman = onp.blackman
+bartlett = onp.bartlett
+hamming = onp.hamming
+hanning = onp.hanning
+kaiser = onp.kaiser  # TODO: lower via lax to allow non-constant beta.
 
 
 ### track unimplemented functions
