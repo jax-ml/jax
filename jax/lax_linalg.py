@@ -247,10 +247,8 @@ def lu_jvp_rule(primals, tangents):
   dtype = lax._dtype(a)
   k = min(m, n)
 
-  # TODO(phawkins): use a gather rather than a matrix multiplication here.
   permutation = lu_pivots_to_permutation(pivots, m)
-  p = np.array(permutation[:, None] == np.arange(m), dtype=dtype)
-  x = np.matmul(p, a_dot)
+  x = a_dot[..., permutation, :]
 
   # Differentiation of Matrix Functionals Using Triangular Factorization
   # F. R. De Hoog, R. S. Anderssen, and M. A. Lukas
