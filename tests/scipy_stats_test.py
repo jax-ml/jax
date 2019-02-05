@@ -27,6 +27,9 @@ import scipy.stats as osp_stats
 from jax import test_util as jtu
 from jax.scipy import stats as lsp_stats
 
+from jax.config import config
+config.parse_flags_with_absl()
+
 all_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4)]
 
 float_dtypes = [onp.float32, onp.float64]
