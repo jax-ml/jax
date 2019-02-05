@@ -23,8 +23,8 @@ import six
 from six.moves import reduce
 
 from .. import core
-from .. import linear_util as lu
 from .. import lax_parallel as lp
+from .. import linear_util as lu
 from ..core import Trace, Tracer, Primitive, new_master
 from ..abstract_arrays import ShapedArray, ConcreteArray, make_shaped_array
 from ..util import safe_zip, unzip2, unzip3, partialmethod, prod
@@ -163,7 +163,6 @@ class PmapTrace(Trace):
 
 
 pmap_primitive_rules = {}
-parallel_translation_rules = {}
 
 
 ### axis variable splitting and computation chunking
@@ -362,16 +361,6 @@ class PapplyTrace(Trace):
 
 
 papply_primitive_rules = {}
-
-
-pmap_primitive_rules[lp.psum_p] = lp.psum_pmap_rule
-parallel_translation_rules[lp.psum_p] = lp.psum_parallel_translation_rule
-
-pmap_primitive_rules[lp.gather_p] = lp.gather_pmap_rule
-papply_primitive_rules[lp.scatter_like_p] = lp.scatter_like_papply_rule
-
-pmap_primitive_rules[lp.ptranspose_p] = lp.ptranspose_pmap_rule
-parallel_translation_rules[lp.ptranspose_p] = lp.ptranspose_translation_rule
 
 def defvectorized(prim):
   papply_primitive_rules[prim] = partial(lp.vectorized_papply, prim)

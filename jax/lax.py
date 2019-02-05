@@ -2830,40 +2830,6 @@ for t in [FilledConstant, IotaConstant, EyeConstant]:
   ad_util.jaxval_zeros_likers[t] = zeros_like_array
 
 
-### parallel
-
-def PmapPrimitive(name):
-  prim = Primitive(name)
-  prim.def_impl(partial(unbound_name_error, name))
-  prim.def_abstract_eval(lambda x, *args, **kwargs: x)  # default
-  return prim
-
-def unbound_name_error(primitive_name, *args, **kwargs):
-  axis_name = kwargs['axis_name']
-  msg = "axis name '{}' is unbound for primitive {}."
-  raise NameError(msg.format(axis_name, primitive_name))
-
-
-def psum_transpose_rule(t, axis_name):
-  return [t]
-
-def psum_parallel_translation_rule(c, val, device_groups):
-  if len(device_groups) > 1:
-    return c.CrossReplicaSum(val, device_groups)
-  else:
-    return c.CrossReplicaSum(val)
-
-def psum_pmap_rule(val, axis):
-  return _reduce_sum(val, [axis]), None
-
-psum_p = PmapPrimitive('psum')
-parallel.pmap_primitive_rules[psum_p] = psum_pmap_rule
-pxla.parallel_translation_rules[psum_p] = psum_parallel_translation_rule
-ad.deflinear(psum_p, psum_transpose_rule)
-
-parallel.defreducer(reduce_sum_p, psum_p)
-
-
 ### stop-gradient
 
 def _stop_gradient_jvp_rule(primals, tangents):
@@ -2882,6 +2848,71 @@ stop_gradient_p.def_abstract_eval(identity)
 xla.translations[stop_gradient_p] = lambda c, x: x
 ad.primitive_jvps[stop_gradient_p] = _stop_gradient_jvp_rule
 batching.primitive_batchers[stop_gradient_p] = _stop_gradient_batch_rule
+
+
+### parallel rules (primitives in lax_parallel)
+
+def psum_pmap_rule(val, axis):
+  return _reduce_sum(val, [axis]), None
+
+def psum_transpose_rule(t, axis_name):
+  return [t]
+
+def psum_parallel_translation_rule(c, val, device_groups):
+  if len(device_groups) > 1:
+    return c.CrossReplicaSum(val, device_groups)
+  else:
+    return c.CrossReplicaSum(val)
+
+parallel_interp.pmap_primitive_rules[parallel.psum_p] = psum_pmap_rule
+pxla.parallel_translation_rules[parallel.psum_p] = psum_parallel_translation_rule
+ad.deflinear(parallel.psum_p, psum_transpose_rule)
+parallel_interp.defreducer(reduce_sum_p, parallel.psum_p)
+
+def gather_pmap_rule(val, axis):
+  return val, None
+
+parallel_interp.pmap_primitive_rules[parallel.gather_p] = gather_pmap_rule
+
+def ptranspose_shape_rule(x, split_dim, concat_dim, **params):
+  permutation = list(range(x.ndim))
+  permutation[concat_dim] = split_dim
+  permutation[split_dim] = concat_dim
+  return transpose_shape_rule(x, permutation)
+
+def ptranspose_pmap_rule(x, axis, split_dim, concat_dim):
+  raise NotImplementedError
+
+def ptranspose_translation_rule(c, x, split_dim, concat_dim):
+  return c.AllToAll(x, split_dim, split_dim)
+
+def ptranspose_papply_rule(name, vals, dims, permutation):
+  x, = vals
+  xdim, = dims
+  return transpose(x, permutation), permutation[xdim]
+
+parallel.ptranspose_p.def_abstract_eval(ptranspose_shape_rule)
+parallel_interp.pmap_primitive_rules[parallel.ptranspose_p] = ptranspose_pmap_rule
+parallel_interp.papply_primitive_rules[parallel.ptranspose_p] = ptranspose_papply_rule
+pxla.parallel_translation_rules[parallel.ptranspose_p] = ptranspose_translation_rule
+
+def transpose_papply_rule(name, vals, dims, permutation):
+  raise NotImplementedError
+
+parallel_interp.papply_primitive_rules[transpose_p] = transpose_papply_rule
+
+def scatter_like(source, target):
+  return scatter_like_p.bind(source, target)
+
+def scatter_like_papply_rule(name, vals, axes):
+  source, target = vals
+  source_axis, target_axis = axes
+  assert source_axis is None
+  return _scatter(source, target, target_axis, name)
+
+parallel.scatter_like_p.def_abstract_eval(lambda source, target: source)
+
+parallel_interp.papply_primitive_rules[parallel.scatter_like_p] = scatter_like_papply_rule
 
 
 ### util
