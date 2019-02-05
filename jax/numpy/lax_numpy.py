@@ -1444,7 +1444,7 @@ def _einsum(operands, contractions):
       batch_names = (set(lhs_names) & set(rhs_names)) - contracted_names
       lhs_batch, rhs_batch = unzip2((lhs_names.find(n), rhs_names.find(n))
                                     for n in batch_names)
-
+      
       # NOTE(mattjj): this can fail non-deterministically in python3, maybe
       # due to opt_einsum
       assert _all(name in lhs_names and name in rhs_names and
@@ -1461,7 +1461,8 @@ def _einsum(operands, contractions):
         batch_names = ''.join(batch_names)
       else:
         batch_dims = tuple(lhs_batch)
-        batch_names = ''.join(lhs_names[i] for i in batch_dims)
+        batch_names = ''.join(lhs_names[i] for i in range(len(lhs_names))
+                              if i in batch_dims)
 
       if contracted_names:
         # contract using lax.dot_general
