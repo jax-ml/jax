@@ -117,6 +117,7 @@ class BatchTrace(Trace):
     if all(bdim is None for bdim in dims_in):
       return primitive.bind(*vals_in, **params)
     else:
+      # TODO(mattjj,phawkins): if no rule implemented, could vmap-via-map here
       batched_primitive = get_primitive_batcher(primitive)
       val_out, dim_out = batched_primitive(vals_in, dims_in, **params)
       return BatchTracer(self, val_out, dim_out)
