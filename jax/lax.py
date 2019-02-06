@@ -462,7 +462,8 @@ def full(shape, fill_value, dtype):
   if onp.isscalar(fill_value) or type(fill_value) is onp.ndarray:
     return FilledConstant(onp.asarray(fill_value, dtype), shape)
   elif isinstance(fill_value, xla.DeviceValue):
-    return FilledConstant(convert_element_type(fill_value, dtype), shape)
+    val = onp.asarray(fill_value, dtype)
+    return FilledConstant(val, shape)
   else:
     return broadcast(convert_element_type(fill_value, dtype), shape)
 
