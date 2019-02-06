@@ -18,6 +18,7 @@ from __future__ import print_function
 
 import collections
 import functools
+from functools import partial
 import itertools
 from unittest import skip
 
@@ -108,6 +109,9 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
 
 JAX_COMPOUND_OP_RECORDS = [
     op_record("angle", 1, number_dtypes, all_shapes, jtu.rand_default(), []),
+    op_record("atleast_1d", 1, default_dtypes, all_shapes, jtu.rand_default(), []),
+    op_record("atleast_2d", 1, default_dtypes, all_shapes, jtu.rand_default(), []),
+    op_record("atleast_3d", 1, default_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("conjugate", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("deg2rad", 1, float_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("divide", 2, number_dtypes, all_shapes, jtu.rand_nonzero(), ["rev"]),
@@ -664,9 +668,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(
-          jtu.format_test_name_suffix("", [shape] * len(dtypes), dtypes)),
-       "shape": shape, "dtypes": dtypes, "rng": rng}
+      {"testcase_name": "_{}_axis={}".format(
+          jtu.format_test_name_suffix("", [shape] * len(dtypes), dtypes), axis),
+       "shape": shape, "axis": axis, "dtypes": dtypes, "rng": rng}
       for dtypes in [
         [onp.float32],
         [onp.float32, onp.float32],
@@ -675,10 +679,35 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         [onp.float32, onp.int32, onp.float64],
       ]
       for shape in [(), (2,), (3, 4), (1, 100)]
+      for axis in range(-len(shape), len(shape) + 1)
       for rng in [jtu.rand_default()]))
-  def testStack(self, shape, dtypes, rng):
+  def testStack(self, shape, axis, dtypes, rng):
     args_maker = lambda: [[rng(shape, dtype) for dtype in dtypes]]
-    self._CheckAgainstNumpy(lnp.stack, onp.stack, args_maker, check_dtypes=True)
+    onp_fun = partial(onp.stack, axis=axis)
+    lnp_fun = partial(lnp.stack, axis=axis)
+    self._CheckAgainstNumpy(lnp_fun, onp_fun, args_maker, check_dtypes=True)
+
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_op={}_{}".format(
+          op, jtu.format_test_name_suffix("", [shape] * len(dtypes), dtypes)),
+       "shape": shape, "op": op, "dtypes": dtypes, "rng": rng}
+      for op in ["hstack", "vstack", "dstack"]
+      for dtypes in [
+        [onp.float32],
+        [onp.float32, onp.float32],
+        [onp.float32, onp.int32, onp.float32],
+        [onp.float32, onp.int64, onp.float32],
+        [onp.float32, onp.int32, onp.float64],
+      ]
+      for shape in [(), (2,), (3, 4), (1, 100), (2, 3, 4)]
+      for rng in [jtu.rand_default()]))
+  def testHVDStack(self, shape, op, dtypes, rng):
+    args_maker = lambda: [[rng(shape, dtype) for dtype in dtypes]]
+    onp_fun = getattr(onp, op)
+    lnp_fun = getattr(lnp, op)
+    self._CheckAgainstNumpy(lnp_fun, onp_fun, args_maker, check_dtypes=True)
+
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_outdtype={}".format(
