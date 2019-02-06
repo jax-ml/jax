@@ -62,6 +62,8 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record("erf", 1, float_dtypes, jtu.rand_small_positive(), ["rev"]),
     op_record("erfc", 1, float_dtypes, jtu.rand_small_positive(), ["rev"]),
     op_record("erfinv", 1, float_dtypes, jtu.rand_small_positive(), ["rev"]),
+    op_record("logit", 1, float_dtypes, jtu.rand_small_positive(), ["rev"]),
+    op_record("expit", 1, float_dtypes, jtu.rand_small_positive(), ["rev"]),
 ]
 
 CombosWithReplacement = itertools.combinations_with_replacement
