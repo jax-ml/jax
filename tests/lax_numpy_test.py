@@ -1187,7 +1187,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self._CheckAgainstNumpy(lnp_op, onp_op, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_op, args_maker, check_dtypes=True)
 
-
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_n={}_increasing={}".format(
           jtu.format_shape_dtype_string([shape], dtype),
@@ -1206,6 +1205,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # those semantics, but they seem like a bug.
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=False)
+
+  def testIssue330(self):
+    x = lnp.full((1, 1), lnp.array([1])[0])  # doesn't crash
+    self.assertEqual(x[0, 0], 1)
 
 
 if __name__ == "__main__":
