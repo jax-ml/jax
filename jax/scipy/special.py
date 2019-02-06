@@ -19,7 +19,7 @@ from __future__ import print_function
 import scipy.special as osp_special
 
 from .. import lax
-from ..numpy.lax_numpy import _wraps
+from ..numpy.lax_numpy import _wraps, asarray
 
 
 # need to create new functions because _wraps sets the __name__ attribute
@@ -28,3 +28,16 @@ digamma = _wraps(osp_special.digamma)(lambda x: lax.digamma(x))
 erf = _wraps(osp_special.erf)(lambda x: lax.erf(x))
 erfc = _wraps(osp_special.erfc)(lambda x: lax.erfc(x))
 erfinv = _wraps(osp_special.erfinv)(lambda x: lax.erf_inv(x))
+
+
+@_wraps(osp_special.logit)
+def logit(x):
+  x = asarray(x)
+  return lax.log(lax.div(x, lax.sub(lax._const(x, 1), x)))
+
+
+@_wraps(osp_special.expit)
+def expit(x):
+  x = asarray(x)
+  one = lax._const(x, 1)
+  return lax.div(one, lax.add(one, lax.exp(lax.neg(x))))
