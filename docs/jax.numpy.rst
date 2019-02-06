@@ -38,10 +38,13 @@ jax.numpy package
     asarray
     atleast_1d
     atleast_2d
+    atleast_3d
+    bartlett
     bitwise_and
     bitwise_not
     bitwise_or
     bitwise_xor
+    blackman
     broadcast_arrays
     broadcast_to
     ceil
@@ -65,8 +68,11 @@ jax.numpy package
     divmod
     dot
     dsplit
+    dstack
     einsum
     equal
+    empty
+    empty_like
     exp
     exp2
     expand_dims
@@ -84,6 +90,9 @@ jax.numpy package
     geomspace
     greater
     greater_equal
+    hamming
+    hanning
+    heaviside
     hsplit
     hstack
     hypot
@@ -91,13 +100,16 @@ jax.numpy package
     imag
     inner
     isclose
+    iscomplex
     isfinite
     isinf
     isnan
     isneginf
     isposinf
+    isreal
     issubdtype
     issubsctype
+    kaiser
     kron
     left_shift
     less
@@ -139,8 +151,10 @@ jax.numpy package
     pad
     polyval
     power
+    positive
     prod
     product
+    ptp
     rad2deg
     radians
     ravel
@@ -155,6 +169,7 @@ jax.numpy package
     row_stack
     sign
     sin
+    sinc
     sinh
     sometrue
     sort
@@ -178,6 +193,7 @@ jax.numpy package
     tril
     triu
     true_divide
+    vander
     var
     vdot
     vsplit

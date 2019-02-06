@@ -246,6 +246,7 @@ absolute = abs = _one_to_one_unop(onp.absolute, lax.abs)
 fabs = _one_to_one_unop(onp.fabs, lax.abs, True)
 bitwise_not = _one_to_one_unop(onp.bitwise_not, lax.bitwise_not)
 negative = _one_to_one_unop(onp.negative, lax.neg)
+positive = _one_to_one_unop(onp.positive, lambda x: x)
 sign = _one_to_one_unop(onp.sign, lax.sign)
 
 floor = _one_to_one_unop(onp.floor, lax.floor, True)
@@ -429,6 +430,7 @@ def sqrt(x):
   x, = _promote_to_result_dtype(onp.sqrt, x)
   return power(x, _constant_like(x, 0.5))
 
+
 @_wraps(onp.square)
 def square(x):
   x, = _promote_to_result_dtype(onp.square, x)
@@ -451,6 +453,14 @@ degrees = rad2deg
 radians = deg2rad
 
 
+@_wraps(onp.heaviside)
+def heaviside(x, y):
+  x, y = _promote_to_result_dtype(onp.heaviside, x, y)
+  zero = lax._const(x, 0)
+  return where(lax.lt(x, zero), zero,
+               where(lax.gt(x, zero), lax._const(x, 1), y))
+
+
 @_wraps(onp.hypot)
 def hypot(x, y):
   x, y = _promote_to_result_dtype(onp.hypot, x, y)
@@ -461,6 +471,14 @@ def hypot(x, y):
 def reciprocal(x):
   x, = _promote_to_result_dtype(onp.reciprocal, x)
   return lax.div(lax._const(x, 1), x)
+
+
+@_wraps(onp.sinc)
+def sinc(x):
+  x, = _promote_to_result_dtype(onp.sinc, x)
+  pi_x = lax.mul(lax._const(x, pi), x)
+  return where(lax.eq(x, lax._const(x, 0)),
+               lax._const(x, 1), lax.div(lax.sin(pi_x), pi_x))
 
 
 @_wraps(onp.transpose)
@@ -517,7 +535,7 @@ conj = conjugate
 
 @_wraps(onp.imag)
 def imag(x):
-  return lax.imag(x) if iscomplexobj(x) else x
+  return lax.imag(x) if iscomplexobj(x) else zeros_like(x)
 
 
 @_wraps(onp.real)
@@ -525,12 +543,27 @@ def real(x):
   return lax.real(x) if iscomplexobj(x) else x
 
 
+@_wraps(onp.iscomplex)
+def iscomplex(x):
+  i = imag(x)
+  return lax.ne(i, lax._const(i, 0))
+
+@_wraps(onp.isreal)
+def isreal(x):
+  i = imag(x)
+  return lax.eq(i, lax._const(i, 0))
+
 @_wraps(onp.angle)
 def angle(x):
-  if iscomplexobj(x):
-    return lax.atan2(lax.imag(x), lax.real(x))
-  else:
-    return zeros_like(x)
+  re = real(x)
+  im = imag(x)
+  dtype = _dtype(re)
+  if not issubdtype(dtype, inexact) or (
+      issubdtype(_dtype(x), floating) and ndim(x) == 0):
+    dtype = xla_bridge.canonicalize_dtype(float64)
+    re = lax.convert_element_type(re, dtype)
+    im = lax.convert_element_type(im, dtype)
+  return lax.atan2(im, re)
 
 
 @_wraps(onp.reshape)
@@ -879,6 +912,15 @@ def std(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
   return sqrt(var(a, axis=axis, dtype=dtype, ddof=ddof, keepdims=keepdims))
 
 
+@_wraps(onp.ptp)
+def ptp(a, axis=None, out=None, keepdims=False):
+  if out is not None:
+    raise ValueError("ptp does not support the `out` argument.")
+  x = amax(a, axis=axis, keepdims=keepdims)
+  y = amin(a, axis=axis, keepdims=keepdims)
+  return lax.sub(x, y)
+
+
 @_wraps(onp.allclose)
 def allclose(a, b, rtol=1e-05, atol=1e-08):
   return all(isclose(a, b, rtol, atol))
@@ -961,6 +1003,18 @@ nancumprod = _make_cumulative_reduction(
 
 ### Array-creation functions
 
+# TODO(phawkins): use this helper everywhere.
+def _canonicalize_axis(axis, num_dims):
+  """Canonicalize an axis in (-num_dims, num_dims) to [0, num_dims)."""
+  if axis < 0:
+    axis = axis + num_dims
+  if axis < 0 or axis >= num_dims:
+      raise ValueError(
+          "axis {} is out of bounds for array of dimension {}".format(
+              axis, num_dims))
+  return axis
+
+
 @_wraps(onp.pad)
 def pad(array, pad_width, mode, constant_values=0):
   if mode != "constant":
@@ -980,11 +1034,19 @@ def pad(array, pad_width, mode, constant_values=0):
 
 
 @_wraps(onp.stack)
-def stack(arrays):
+def stack(arrays, axis=0):
   if not arrays:
     raise ValueError("Need at least one array to stack.")
-  new_arrays = [reshape(x, (-1,) + onp.shape(x)) for x in arrays]
-  return reshape(concatenate(new_arrays), (len(arrays),) + arrays[0].shape)
+  shape0 = shape(arrays[0])
+  axis = _canonicalize_axis(axis, len(shape0) + 1)
+  new_shape = list(shape0)
+  new_shape.insert(axis, 1)
+  new_arrays = []
+  for a in arrays:
+    if shape(a) != shape0:
+      raise ValueError("All input arrays must have the same shape.")
+    new_arrays.append(reshape(a, new_shape))
+  return concatenate(new_arrays, axis=axis)
 
 
 @_wraps(onp.concatenate)
@@ -1008,6 +1070,11 @@ def hstack(tup):
   if arrs[0].ndim == 1:
     return concatenate(arrs, 0)
   return concatenate(arrs, 1)
+
+
+@_wraps(onp.dstack)
+def dstack(tup):
+  return concatenate([atleast_3d(m) for m in tup], axis=2)
 
 
 @_wraps(onp.column_stack)
@@ -1037,6 +1104,19 @@ def atleast_2d(*arys):
     return arr if arr.ndim >= 2 else arr.reshape((1, -1))
   else:
     return [atleast_2d(arr) for arr in arys]
+
+
+@_wraps(onp.atleast_3d)
+def atleast_3d(*arys):
+  if len(arys) == 1:
+    arr = array(arys[0])
+    if ndim(arr) <= 1:
+      arr = arr.reshape((1, -1, 1))
+    elif ndim(arr) == 2:
+      arr = arr.reshape(shape(arr) + (1,))
+    return arr
+  else:
+    return [atleast_3d(arr) for arr in arys]
 
 
 # TODO(mattjj): can this be simplified?
@@ -1095,11 +1175,15 @@ def zeros(shape, dtype=onp.dtype("float64")):
   shape = (shape,) if onp.isscalar(shape) else shape
   return lax.full(shape, 0, dtype)
 
-
 @_wraps(onp.ones)
 def ones(shape, dtype=onp.dtype("float64")):
   shape = (shape,) if onp.isscalar(shape) else shape
   return lax.full(shape, 1, dtype)
+
+
+# We can't create uninitialized arrays in XLA; use zeros for empty.
+empty_like = zeros_like
+empty = zeros
 
 
 @_wraps(onp.eye)
@@ -1444,7 +1528,7 @@ def _einsum(operands, contractions):
       batch_names = (set(lhs_names) & set(rhs_names)) - contracted_names
       lhs_batch, rhs_batch = unzip2((lhs_names.find(n), rhs_names.find(n))
                                     for n in batch_names)
-
+      
       # NOTE(mattjj): this can fail non-deterministically in python3, maybe
       # due to opt_einsum
       assert _all(name in lhs_names and name in rhs_names and
@@ -1461,7 +1545,8 @@ def _einsum(operands, contractions):
         batch_names = ''.join(batch_names)
       else:
         batch_dims = tuple(lhs_batch)
-        batch_names = ''.join(lhs_names[i] for i in batch_dims)
+        batch_names = ''.join(lhs_names[i] for i in range(len(lhs_names))
+                              if i in batch_dims)
 
       if contracted_names:
         # contract using lax.dot_general
@@ -1596,6 +1681,24 @@ def kron(a, b):
   return lax.reshape(a_broadcast * b_broadcast, out_shape)
 
 
+@_wraps(onp.vander)
+def vander(x, N=None, increasing=False):
+  x = asarray(x)
+  dtype = _dtype(x)
+  if ndim(x) != 1:
+    raise ValueError("x must be a one-dimensional array")
+  x_shape = shape(x)
+  N = N or x_shape[0]
+  if N < 0:
+    raise ValueError("N must be nonnegative")
+
+  iota = lax.iota(dtype, N)
+  if not increasing:
+    iota = lax.sub(lax._const(iota, N - 1), iota)
+
+  return power(x[..., None], iota)
+
+
 ### Misc
 
 
@@ -1652,18 +1755,6 @@ def argsort(a, axis=-1, kind='quicksort', order=None):
     iota = lax.broadcasted_iota(onp.int64, shape(a), axis)
     _, perm = lax.sort_key_val(a, iota, dimension=axis)
     return perm
-
-
-# TODO(phawkins): use this helper everywhere.
-def _canonicalize_axis(axis, num_dims):
-  """Canonicalize an axis in (-num_dims, num_dims) to [0, num_dims)."""
-  if axis < 0:
-    axis = axis + num_dims
-  if axis < 0 or axis >= num_dims:
-      raise ValueError(
-          "axis {} is out of bounds for array of dimension {}".format(
-              axis, num_dims))
-  return axis
 
 
 @_wraps(onp.take)
@@ -1916,6 +2007,13 @@ def _static_idx(idx, size):
   else:
     end = _min(start - step, size)
     return stop_inclusive, end, -step, True
+
+
+blackman = onp.blackman
+bartlett = onp.bartlett
+hamming = onp.hamming
+hanning = onp.hanning
+kaiser = onp.kaiser  # TODO: lower via lax to allow non-constant beta.
 
 
 ### track unimplemented functions

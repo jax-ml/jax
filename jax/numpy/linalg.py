@@ -159,10 +159,8 @@ def solve(a, b):
   # add a dummy dimension. Extend it to support vectors and simplify this.
   x = b if a_ndims == b_ndims else b[..., None]
 
-  # TODO(phawkins): use a gather rather than a matrix multiplication here.
   permutation = lax_linalg.lu_pivots_to_permutation(pivots, m)
-  p = np.array(permutation[:, None] == np.arange(m), dtype=dtype)
-  x = np.matmul(p, x)
+  x = x[..., permutation, :]
 
   x = lax_linalg.triangular_solve(l, x, left_side=True, lower=True)
   x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=False)

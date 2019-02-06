@@ -24,6 +24,7 @@ import jax.numpy as np
 from jax import test_util as jtu
 from jax.abstract_arrays import ShapedArray
 from jax import lax
+from jax import lax_linalg
 from jax import random
 from jax.api import jit, grad, jvp, vjp, trace_to_jaxpr, jacfwd, jacrev, hessian
 from jax.api import vmap
@@ -521,6 +522,22 @@ class BatchingTest(jtu.JaxTestCase):
     ans = vmap(lax.select, (0, None, 1), 1)(pred, on_true, on_false)
     expected = onp.array([[3, 2]], onp.float32)
     self.assertAllClose(ans, expected, check_dtypes=True)
+
+  def testLaxLinalgCholesky(self):
+    a = onp.random.RandomState(0).randn(10, 5, 5).astype(onp.float32)
+    a = onp.matmul(a, onp.conj(onp.swapaxes(a, -1, -2)))
+
+    ans = vmap(lax_linalg.cholesky)(a)
+    expected = onp.linalg.cholesky(a)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    b = onp.random.RandomState(0).randn(10, 5, 5).astype(onp.float32)
+    b = onp.matmul(b, onp.conj(onp.swapaxes(b, -1, -2)))
+    b_trans = onp.swapaxes(b, 0, 1)  # shape is (5, 10, 5)
+
+    ans = vmap(lax_linalg.cholesky, in_axes=1, out_axes=0)(b_trans)
+    expected = onp.linalg.cholesky(b)
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
 
 if __name__ == '__main__':
