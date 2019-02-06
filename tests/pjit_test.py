@@ -29,7 +29,7 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 
-class PmapTest(jtu.JaxTestCase):
+class PjitTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices("gpu")
   def testBasic(self):
