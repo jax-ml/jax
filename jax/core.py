@@ -52,6 +52,10 @@ class Jaxpr(object):
   def __repr__(self):
     return self.__str__()
 
+  def copy(self):
+    return Jaxpr(self.constvars[:], self.freevars[:], self.invars[:],
+                 self.outvar, self.eqns[:])
+
 
 JaxprEqn = namedtuple('JaxprEqn', ['invars', 'outvars', 'primitive',
                                    'bound_subjaxprs', 'destructure', 'params'])

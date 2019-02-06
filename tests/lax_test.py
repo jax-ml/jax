@@ -1111,6 +1111,37 @@ class LaxTest(jtu.JaxTestCase):
     self.assertEqual(cloop(2), (2, 3))
     self.assertEqual(cloop(4), (4, 10))
 
+  def testWhileWithClosure(self):
+
+    def loop(init, local_limit, inc):
+
+      def loop_cond(state):
+        pos, _ = state
+        return lax.lt(pos, local_limit)
+
+      def loop_body(state):
+        effect[0] = True
+        pos, count = state
+        return (lax.add(pos, 1), lax.add(count, inc))
+
+      result = lax._while_loop(loop_cond, loop_body, (init, 0))
+      _, count = result
+      return count
+
+    cloop = api.jit(loop)
+
+    limit = 10
+    effect = [False]
+    self.assertEqual(loop(2, limit, 1), limit - 2)
+    assert effect[0]
+    effect[0] = False
+    self.assertEqual(cloop(2, limit, 1), limit - 2)
+    assert effect[0]
+    effect[0] = False
+    self.assertEqual(cloop(2, limit, 1), limit - 2)
+    self.assertEqual(cloop(3, limit, 1), limit - 3)
+    assert not effect[0]
+
   def testNestedWhileWithDynamicUpdateSlice(self):
     num = 5
 
@@ -1193,6 +1224,21 @@ class LaxTest(jtu.JaxTestCase):
     self.assertEqual(count(3), 3)
     self.assertEqual(count(3), cfun(3))
     self.assertEqual(count(4), 6)
+    self.assertEqual(count(4), cfun(4))
+
+  def testForiLoopClosure(self):
+    def count(num):
+      def body_fun(i, tot):
+        return lax.add(num, lax.add(tot, i))
+      return lax.fori_loop(0, num, body_fun, 0)
+
+    cfun = api.jit(count)
+
+    self.assertEqual(count(2), 1 + 2**2)
+    self.assertEqual(count(2), cfun(2))
+    self.assertEqual(count(3), 3 + 3**2)
+    self.assertEqual(count(3), cfun(3))
+    self.assertEqual(count(4), 6 + 4**2)
     self.assertEqual(count(4), cfun(4))
 
   def testForiLoopTupleState(self):
