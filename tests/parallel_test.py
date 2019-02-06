@@ -138,7 +138,7 @@ class PapplyTest(jtu.JaxTestCase):
       ans = pmap(pfun, axis_name)(x)
       self.assertAllClose(ans, expected, check_dtypes=False)
 
-  def DISABLED_testBinopAfterTransposeRank2(self):
+  def testTransposeAndAddRank2(self):
 
     def fun(x):
       return x + x.T
@@ -150,7 +150,7 @@ class PapplyTest(jtu.JaxTestCase):
     ans = pmap(pfun, axis_name)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  def DISABLED_testBinopAfterTransposeRank3(self):
+  def DISABLED_testTransposeAndAddRank3(self):
 
     def fun(x):
       return x + x.T
