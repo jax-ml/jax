@@ -38,6 +38,7 @@ jax.numpy package
     asarray
     atleast_1d
     atleast_2d
+    atleast_3d
     bartlett
     bitwise_and
     bitwise_not
@@ -67,6 +68,7 @@ jax.numpy package
     divmod
     dot
     dsplit
+    dstack
     einsum
     equal
     empty
