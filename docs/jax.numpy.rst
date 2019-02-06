@@ -92,6 +92,7 @@ jax.numpy package
     greater_equal
     hamming
     hanning
+    heaviside
     hsplit
     hstack
     hypot

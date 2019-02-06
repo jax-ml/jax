@@ -453,6 +453,14 @@ degrees = rad2deg
 radians = deg2rad
 
 
+@_wraps(onp.heaviside)
+def heaviside(x, y):
+  x, y = _promote_to_result_dtype(onp.heaviside, x, y)
+  zero = lax._const(x, 0)
+  return where(lax.lt(x, zero), zero,
+               where(lax.gt(x, zero), lax._const(x, 1), y))
+
+
 @_wraps(onp.hypot)
 def hypot(x, y):
   x, y = _promote_to_result_dtype(onp.hypot, x, y)
