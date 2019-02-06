@@ -71,7 +71,10 @@ def primitive_computation(prim, *shapes, **kwargs):
     raise e
 
 def aval_from_xla_shape(shape):
-  return ShapedArray(shape.dimensions(), shape.element_type())
+  if shape.is_tuple():
+    return AbstractTuple(map(aval_from_xla_shape, shape.tuple_shapes()))
+  else:
+    return ShapedArray(shape.dimensions(), shape.element_type())
 
 def execute_compiled_primitive(compiled, result_handler, *args):
   input_bufs = [device_put(x) for x in args]
@@ -156,10 +159,9 @@ def xla_destructure(c, ans):
   num_elements = len(c.GetShape(ans).tuple_shapes())
   return [c.GetTupleElement(ans, i) for i in range(num_elements)]
 
-def unit_constant(c, val, canonicalize_types=True):
-  assert not val  # must be unit
-  return c.Tuple()
-xb.register_constant_handler(JaxTuple, unit_constant)
+def tuple_constant(c, val, canonicalize_types=True):
+  return c.Tuple(*map(c.Constant, val))
+xb.register_constant_handler(JaxTuple, tuple_constant)
 
 def translation_rule(p):
   backend_specific_rule = backend_specific_translations[xb._platform_name].get(p)
