@@ -14,7 +14,7 @@
 
 """A mock-up showing a ResNet50 network with training on synthetic data.
 
-This file uses the stax neural network definition library and the minmax
+This file uses the stax neural network definition library and the optimizers
 optimization library.
 """
 from __future__ import absolute_import
@@ -28,7 +28,7 @@ from six.moves import xrange
 import jax.numpy as np
 from jax.config import config
 from jax import jit, grad
-from jax.experimental import minmax
+from jax.experimental import optimizers
 from jax.experimental import stax
 from jax.experimental.stax import (AvgPool, BatchNorm, Conv, Dense, FanInSum,
                                    FanOut, Flatten, GeneralConv, Identity,
@@ -115,16 +115,16 @@ if __name__ == "__main__":
       onehot_labels = labels == np.arange(num_classes)
       yield images, onehot_labels
 
-  opt_init, opt_update = minmax.momentum(step_size, mass=0.9)
+  opt_init, opt_update = optimizers.momentum(step_size, mass=0.9)
   batches = synth_batches()
 
   @jit
   def update(i, opt_state, batch):
-    params = minmax.get_params(opt_state)
+    params = optimizers.get_params(opt_state)
     return opt_update(i, grad(loss)(params, batch), opt_state)
 
   opt_state = opt_init(init_params)
   for i in xrange(num_steps):
     opt_state = update(i, opt_state, next(batches))
-  trained_params = minmax.get_params(opt_state)
+  trained_params = optimizers.get_params(opt_state)
 

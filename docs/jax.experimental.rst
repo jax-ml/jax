@@ -4,7 +4,7 @@ jax.experimental package
 .. toctree::
     :maxdepth: 1
 
-    jax.experimental.minmax
+    jax.experimental.optimizers
     jax.experimental.stax
 
 .. automodule:: jax.experimental
