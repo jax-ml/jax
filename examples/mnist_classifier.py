@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """A basic MNIST example using JAX together with the mini-libraries stax, for
-neural network building, and minmax, for first-order stochastic optimization.
+neural network building, and optimizers, for first-order stochastic optimization.
 """
 
 from __future__ import absolute_import
@@ -28,7 +28,7 @@ import numpy.random as npr
 import jax.numpy as np
 from jax.config import config
 from jax import jit, grad
-from jax.experimental import minmax
+from jax.experimental import optimizers
 from jax.experimental import stax
 from jax.experimental.stax import Dense, Relu, LogSoftmax
 from examples import datasets
@@ -70,11 +70,11 @@ if __name__ == "__main__":
         yield train_images[batch_idx], train_labels[batch_idx]
   batches = data_stream()
 
-  opt_init, opt_update = minmax.momentum(step_size, mass=momentum_mass)
+  opt_init, opt_update = optimizers.momentum(step_size, mass=momentum_mass)
 
   @jit
   def update(i, opt_state, batch):
-    params = minmax.get_params(opt_state)
+    params = optimizers.get_params(opt_state)
     return opt_update(i, grad(loss)(params, batch), opt_state)
 
   _, init_params = init_random_params((-1, 28 * 28))
@@ -88,7 +88,7 @@ if __name__ == "__main__":
       opt_state = update(next(itercount), opt_state, next(batches))
     epoch_time = time.time() - start_time
 
-    params = minmax.get_params(opt_state)
+    params = optimizers.get_params(opt_state)
     train_acc = accuracy(params, (train_images, train_labels))
     test_acc = accuracy(params, (test_images, test_labels))
     print("Epoch {} in {:0.2f} sec".format(epoch, epoch_time))
