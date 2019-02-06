@@ -2874,28 +2874,32 @@ def gather_pmap_rule(val, axis):
 
 parallel_interp.pmap_primitive_rules[parallel.gather_p] = gather_pmap_rule
 
-def ptranspose_shape_rule(x, split_dim, concat_dim, **params):
-  shape = transpose_shape_rule(x, (1, 0))
-  return ShapedArray(shape, x.dtype)
+def pswapaxes_pmap_rule(x, axis_in, axis):
+  if x.shape[axis_in] != x.shape[axis]:
+    raise ValueError("pswapaxes between non-square dimensions")
+  perm = list(range(x.ndim))
+  perm[axis_in] = axis
+  perm[axis] = axis_in
+  return transpose(x, perm), axis_in
 
-def ptranspose_pmap_rule(x, axis, split_dim, concat_dim):
-  return transpose(x, (1, 0)), axis
+def pswapaxes_translation_rule(c, x, axis):
+  # TODO (rf): pass axis_in around pjit rules to allow for the rank > 2
+  # translation; in the AllToAll, use `axis_in` in place of `1-axis`
+  if x.ndim != 2 or axis not in (0, 1):
+    raise NotImplementedError("pswapaxes beyond rank 2")
+  return c.AllToAll(x, axis, 1 - axis)
 
-def ptranspose_translation_rule(c, x, split_dim, concat_dim):
-  return c.AllToAll(x, split_dim, split_dim)
-
-def ptranspose_papply_rule(name, vals, dims, split_dim, concat_dim):
-  x, = vals
-  xdim, = dims
-  return transpose(x, permutation), permutation[xdim]
-
-parallel.ptranspose_p.def_abstract_eval(ptranspose_shape_rule)
-parallel_interp.pmap_primitive_rules[parallel.ptranspose_p] = ptranspose_pmap_rule
-parallel_interp.papply_primitive_rules[parallel.ptranspose_p] = ptranspose_papply_rule
-pxla.parallel_translation_rules[parallel.ptranspose_p] = ptranspose_translation_rule
+parallel.pswapaxes_p.def_abstract_eval(lambda x: x)
+parallel_interp.pmap_primitive_rules[parallel.pswapaxes_p] = pswapaxes_pmap_rule
+pxla.parallel_translation_rules[parallel.pswapaxes_p] = pswapaxes_translation_rule
 
 def transpose_papply_rule(name, vals, dims, permutation):
-  raise NotImplementedError
+  # TODO(rf): in general, want a pswapaxes (if needed) + regular transpose
+  x, = vals
+  xdim, = dims
+  if x.ndim != 1 or set(permutation) != {0, 1}:
+    raise NotImplementedError("tranpose papply beyond rank 2")
+  return parallel.pswapaxes(x, name, permutation[xdim]), xdim
 
 parallel_interp.papply_primitive_rules[transpose_p] = transpose_papply_rule
 

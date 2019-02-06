@@ -22,21 +22,35 @@ from .core import Trace, Tracer, Primitive, new_master
 
 ### library
 
-def ptranspose(x, axis_name, split_dim, concat_dim, **params):
-  return ptranspose_p.bind(x, axis_name=axis_name, split_dim=split_dim,
-                           concat_dim=concat_dim, **params)
+def pswapaxes(x, axis_name, axis):
+  """Analogue to `np.swapaxes` involving a hidden axis.
 
-def psplit(x, axis_name, split_dim, target_dim, **params):
-  return psplit_p.bind(x, axis_name=axis_name, split_dim=split_dim,
-                       target_dim=target_dim, **params)
+  Specifically, transposes the operand along the axis that's currently hidden
+  and the given concrete axis. The implicit position of the hidden axis remains
+  unchanged.
+  """
+  return pswapaxes_p.bind(x, axis_name=axis_name, axis=axis)
+
+def psplit(x, axis_name, axis):
+  """Merge operand along the hidden axis and split it along `axis`.
+
+  The newly split axis becomes the hidden axis for the output, and in particular
+  the implicit position of the hidden axis changes.
+  """
+  # lowering should be:
+  # return xla_all_to_all(x, hidden axis, axis)
+  return psplit_p.bind(x, axis_name=axis_name, axis=axis)
 
 def psum(x, axis_name):
   return psum_p.bind(x, axis_name=axis_name)
 
-def all_gather(x, xdim, **params):
-  x = x.broadcast((xb.get_replica_count(),))
-  return ptranspose(x, 0, xdim, **params)
+def pcollect(x, axis_name, concat_dim):
+  # lowering should be:
+  # x = xla_broadcast(x, (xb.get_replica_count(),))
+  # return xla_all_to_all(x, 0, concat_dim, **params)
+  return pcollect_p.bind(x, axis_name=axis_name, concat_dim=concat_dim)
 
+# TODO(rf,mattjj): what is this for?
 def gather(x, axis_name):
   return gather_p.bind(x, axis_name=axis_name)
 
@@ -56,7 +70,7 @@ def unbound_name_error(primitive_name, *args, **kwargs):
 
 psum_p = PmapPrimitive('psum')
 gather_p = PmapPrimitive('gather')
-ptranspose_p = PmapPrimitive('ptranspose')
+pswapaxes_p = PmapPrimitive('pswapaxes')
 scatter_like_p = Primitive('scatter_like')
 
 
@@ -95,5 +109,5 @@ def broadcasting_papply(prim, name, vals, axes, **params):
   elif xdim == ydim:
     return prim.bind(x, y, **params), xdim
   else:
-    x = ptranspose(x, xdim, ydim, axis_name=xdim)
+    x = psplit(x, axis_name, xdim)
     return prim.bind(x, y, **params), ydim
