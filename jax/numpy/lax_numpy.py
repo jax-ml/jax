@@ -995,6 +995,18 @@ nancumprod = _make_cumulative_reduction(
 
 ### Array-creation functions
 
+# TODO(phawkins): use this helper everywhere.
+def _canonicalize_axis(axis, num_dims):
+  """Canonicalize an axis in (-num_dims, num_dims) to [0, num_dims)."""
+  if axis < 0:
+    axis = axis + num_dims
+  if axis < 0 or axis >= num_dims:
+      raise ValueError(
+          "axis {} is out of bounds for array of dimension {}".format(
+              axis, num_dims))
+  return axis
+
+
 @_wraps(onp.pad)
 def pad(array, pad_width, mode, constant_values=0):
   if mode != "constant":
@@ -1014,11 +1026,19 @@ def pad(array, pad_width, mode, constant_values=0):
 
 
 @_wraps(onp.stack)
-def stack(arrays):
+def stack(arrays, axis=0):
   if not arrays:
     raise ValueError("Need at least one array to stack.")
-  new_arrays = [reshape(x, (-1,) + onp.shape(x)) for x in arrays]
-  return reshape(concatenate(new_arrays), (len(arrays),) + arrays[0].shape)
+  shape0 = shape(arrays[0])
+  axis = _canonicalize_axis(axis, len(shape0) + 1)
+  new_shape = list(shape0)
+  new_shape.insert(axis, 1)
+  new_arrays = []
+  for a in arrays:
+    if shape(a) != shape0:
+      raise ValueError("All input arrays must have the same shape.")
+    new_arrays.append(reshape(a, new_shape))
+  return concatenate(new_arrays, axis=axis)
 
 
 @_wraps(onp.concatenate)
@@ -1042,6 +1062,11 @@ def hstack(tup):
   if arrs[0].ndim == 1:
     return concatenate(arrs, 0)
   return concatenate(arrs, 1)
+
+
+@_wraps(onp.dstack)
+def dstack(tup):
+  return concatenate([atleast_3d(m) for m in tup], axis=2)
 
 
 @_wraps(onp.column_stack)
@@ -1071,6 +1096,19 @@ def atleast_2d(*arys):
     return arr if arr.ndim >= 2 else arr.reshape((1, -1))
   else:
     return [atleast_2d(arr) for arr in arys]
+
+
+@_wraps(onp.atleast_3d)
+def atleast_3d(*arys):
+  if len(arys) == 1:
+    arr = array(arys[0])
+    if ndim(arr) <= 1:
+      arr = arr.reshape((1, -1, 1))
+    elif ndim(arr) == 2:
+      arr = arr.reshape(shape(arr) + (1,))
+    return arr
+  else:
+    return [atleast_3d(arr) for arr in arys]
 
 
 # TODO(mattjj): can this be simplified?
@@ -1709,18 +1747,6 @@ def argsort(a, axis=-1, kind='quicksort', order=None):
     iota = lax.broadcasted_iota(onp.int64, shape(a), axis)
     _, perm = lax.sort_key_val(a, iota, dimension=axis)
     return perm
-
-
-# TODO(phawkins): use this helper everywhere.
-def _canonicalize_axis(axis, num_dims):
-  """Canonicalize an axis in (-num_dims, num_dims) to [0, num_dims)."""
-  if axis < 0:
-    axis = axis + num_dims
-  if axis < 0 or axis >= num_dims:
-      raise ValueError(
-          "axis {} is out of bounds for array of dimension {}".format(
-              axis, num_dims))
-  return axis
 
 
 @_wraps(onp.take)
