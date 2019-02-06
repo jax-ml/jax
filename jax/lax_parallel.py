@@ -71,6 +71,7 @@ def unbound_name_error(primitive_name, *args, **kwargs):
 psum_p = PmapPrimitive('psum')
 gather_p = PmapPrimitive('gather')
 pswapaxes_p = PmapPrimitive('pswapaxes')
+psplit_p = PmapPrimitive('psplit')
 scatter_like_p = Primitive('scatter_like')
 
 

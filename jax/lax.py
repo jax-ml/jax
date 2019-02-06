@@ -493,7 +493,7 @@ def stop_gradient(x):
 
 
 def psum(x, axis_name):
-  return psum_p.bind(x, axis_name=axis_name)
+  return parallel.psum_p.bind(x, axis_name=axis_name)
 
 
 ### convenience wrappers around traceables
@@ -2882,16 +2882,14 @@ def pswapaxes_pmap_rule(x, axis_in, axis):
   perm[axis] = axis_in
   return transpose(x, perm), axis_in
 
-def pswapaxes_translation_rule(c, x, axis):
-  # TODO (rf): pass axis_in around pjit rules to allow for the rank > 2
-  # translation; in the AllToAll, use `axis_in` in place of `1-axis`
-  if x.ndim != 2 or axis not in (0, 1):
-    raise NotImplementedError("pswapaxes beyond rank 2")
-  return c.AllToAll(x, axis, 1 - axis)
-
-parallel.pswapaxes_p.def_abstract_eval(lambda x: x)
 parallel_interp.pmap_primitive_rules[parallel.pswapaxes_p] = pswapaxes_pmap_rule
-pxla.parallel_translation_rules[parallel.pswapaxes_p] = pswapaxes_translation_rule
+
+def psplit_pmap_rule(x, axis_in, axis):
+  if x.shape[axis_in] != x.shape[axis]:
+    raise ValueError("psplit between non-square dimensions")
+  return x
+
+parallel_interp.pmap_primitive_rules[parallel.psplit_p] = psplit_pmap_rule
 
 def transpose_papply_rule(name, vals, dims, permutation):
   # TODO(rf): in general, want a pswapaxes (if needed) + regular transpose
