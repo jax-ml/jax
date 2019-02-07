@@ -119,6 +119,88 @@ def inv(a):
   return lax_linalg.triangular_solve(r, _T(q), lower=False, left_side=True)
 
 
+@_wraps(onp.linalg.norm)
+def norm(x, ord=None, axis=None, keepdims=False):
+  x = _promote_arg_dtypes(np.asarray(x))
+  x_shape = np.shape(x)
+  ndim = len(x_shape)
+
+  if axis is None:
+    axis = tuple(range(ndim))
+  elif isinstance(axis, tuple):
+    axis = tuple(np._canonicalize_axis(x, ndim) for x in axis)
+  else:
+    axis = (np._canonicalize_axis(axis, ndim),)
+
+  num_axes = len(axis)
+  if num_axes == 1:
+    if ord is None or ord == 2:
+      return np.sqrt(np.sum(np.real(x * np.conj(x)), axis=axis,
+                            keepdims=keepdims))
+    elif ord == np.inf:
+      return np.amax(np.abs(x), axis=axis, keepdims=keepdims)
+    elif ord == -np.inf:
+      return np.amin(np.abs(x), axis=axis, keepdims=keepdims)
+    elif ord == 0:
+      return np.sum(x != 0, dtype=np.finfo(lax._dtype(x)).dtype,
+                    axis=axis, keepdims=keepdims)
+    elif ord == 1:
+      # Numpy has a special case for ord == 1 as an optimization. We don't
+      # really need the optimization (XLA could do it for us), but the Numpy
+      # code has slightly different type promotion semantics, so we need a
+      # special case too.
+      return np.sum(np.abs(x), axis=axis, keepdims=keepdims)
+    else:
+      return np.power(np.sum(np.abs(x) ** ord, axis=axis, keepdims=keepdims),
+                      1. / ord)
+
+  elif num_axes == 2:
+    row_axis, col_axis = axis
+    if ord is None or ord in ('f', 'fro'):
+      return np.sqrt(np.sum(np.real(x * np.conj(x)), axis=axis,
+                            keepdims=keepdims))
+    elif ord == 1:
+      if not keepdims and col_axis > row_axis:
+        col_axis -= 1
+      return np.amax(np.sum(np.abs(x), axis=row_axis, keepdims=keepdims),
+                     axis=col_axis, keepdims=keepdims)
+    elif ord == -1:
+      if not keepdims and col_axis > row_axis:
+        col_axis -= 1
+      return np.amin(np.sum(np.abs(x), axis=row_axis, keepdims=keepdims),
+                     axis=col_axis, keepdims=keepdims)
+    elif ord == np.inf:
+      if not keepdims and row_axis > col_axis:
+        row_axis -= 1
+      return np.amax(np.sum(np.abs(x), axis=col_axis, keepdims=keepdims),
+                     axis=row_axis, keepdims=keepdims)
+    elif ord == -np.inf:
+      if not keepdims and row_axis > col_axis:
+        row_axis -= 1
+      return np.amin(np.sum(np.abs(x), axis=col_axis, keepdims=keepdims),
+                     axis=row_axis, keepdims=keepdims)
+    elif ord in ('nuc', 2, -2):
+      x = np.moveaxis(x, axis, (-2, -1))
+      if ord == 2:
+        reducer = np.amax
+      elif ord == -2:
+        reducer = np.amin
+      else:
+        reducer = np.sum
+      y = reducer(svd(x, compute_uv=False), axis=-1)
+      if keepdims:
+        result_shape = list(x_shape)
+        result_shape[axis[0]] = 1
+        result_shape[axis[1]] = 1
+        y = np.reshape(y, result_shape)
+      return y
+    else:
+      raise ValueError("Invalid order '{}' for matrix norm.".format(ord))
+  else:
+    raise ValueError(
+        "Invalid axis values ({}) for np.linalg.norm.".format(axis))
+
+
 @_wraps(onp.linalg.qr)
 def qr(a, mode="reduced"):
   warnings.warn(_EXPERIMENTAL_WARNING)
@@ -166,7 +248,6 @@ def solve(a, b):
   x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=False)
 
   return x[..., 0] if a_ndims != b_ndims else x
-
 
 
 for func in get_module_functions(onp.linalg):
