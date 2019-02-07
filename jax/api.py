@@ -26,8 +26,10 @@ from __future__ import print_function
 
 import itertools
 import operator as op
+import os
 
 import numpy as onp
+from distutils.util import strtobool
 
 from . import core
 from . import linear_util as lu
@@ -47,9 +49,15 @@ from .interpreters import pxla
 from .interpreters import ad
 from .interpreters import batching
 from .interpreters import parallel
+from .config import flags
 
 map = safe_map
 zip = safe_zip
+
+FLAGS = flags.FLAGS
+flags.DEFINE_bool("jax_disable_jit",
+                  strtobool(os.getenv("JAX_DISABLE_JIT", "False")),
+                  "Make @jit into a no-op.")
 
 
 def jit(fun, static_argnums=()):
@@ -69,6 +77,9 @@ def jit(fun, static_argnums=()):
   Returns:
     A wrapped version of `fun`, set up for just-in-time compilation.
   """
+  if FLAGS.jax_disable_jit:
+    return fun
+
   @wraps(fun)
   def f_jitted(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
