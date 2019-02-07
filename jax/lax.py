@@ -426,8 +426,9 @@ def _while_loop(cond_fun, body_fun, init_val):
   body_jaxpr, pvout, body_consts = pe.trace_to_jaxpr(flat_body_fun, (pval_flat,))
   abs_out, _ = pvout
 
-  params = _OpaqueParam((abs_out, cond_jaxpr, cond_consts, body_jaxpr, body_consts))
-  out_flat = while_p.bind(init_val_flat, opaque_params=params)
+  params = _OpaqueParam((abs_out, cond_jaxpr, body_jaxpr))
+  out_flat = while_p.bind(init_val_flat, core.pack(cond_consts), core.pack(body_consts),
+                          opaque_params=params)
   if out_tree() != in_tree:
     raise TypeError("body_fun input and output must have identical structure")
   return build_tree(out_tree(), out_flat)
@@ -463,7 +464,8 @@ def full(shape, fill_value, dtype):
   if onp.isscalar(fill_value) or type(fill_value) is onp.ndarray:
     return FilledConstant(onp.asarray(fill_value, dtype), shape)
   elif isinstance(fill_value, xla.DeviceValue):
-    return FilledConstant(convert_element_type(fill_value, dtype), shape)
+    val = onp.asarray(fill_value, dtype)
+    return FilledConstant(val, shape)
   else:
     return broadcast(convert_element_type(fill_value, dtype), shape)
 
@@ -2695,22 +2697,56 @@ ad.primitive_transposes[sort_key_val_p] = _sort_key_val_transpose_rule
 batching.primitive_batchers[sort_key_val_p] = _sort_key_val_batch_rule
 
 
-def _while_loop_abstract_eval(init_val, opaque_params):
+def _while_loop_abstract_eval(init_val, cond_consts, body_consts, opaque_params):
   abs_out = opaque_params.val[0]
   return maybe_tracer_tuple_to_abstract_tuple(abs_out)
 
-def _while_loop_translation_rule(c, init_val, opaque_params):
-  shape = c.GetShape(init_val)
-  abs_out, cond_jaxpr, cond_consts, body_jaxpr, body_consts = opaque_params.val
-  cond_computation = xla.jaxpr_computation(cond_jaxpr, cond_consts, (), shape)
-  body_computation = xla.jaxpr_computation(body_jaxpr, body_consts, (), shape)
-  return c.While(cond_computation, body_computation, init_val)
+def _while_loop_translation_rule(c, init_val, cond_consts, body_consts, opaque_params):
+  loop_carry = c.Tuple(init_val, cond_consts, body_consts)
+  shape = c.GetShape(loop_carry)
+  abs_out, cond_jaxpr, body_jaxpr = opaque_params.val
+
+  loop_carry_var = pe.Var(0, "loop_carry")
+  outvar = pe.Var(0, "loop_carry_out")
+  cond_var = pe.Var(0, "cond_consts")
+  body_var = pe.Var(0, "body_consts")
+
+  assert len(cond_jaxpr.invars) == 1
+  cond_jaxpr_converted = cond_jaxpr.copy()
+  cond_jaxpr_converted.constvars = []
+  cond_jaxpr_converted.invars = [loop_carry_var]
+  cond_jaxpr_converted.eqns = (
+      [_unpack_eqn(loop_carry_var, [cond_jaxpr.invars[0], cond_var, body_var]),
+       _unpack_eqn(cond_var, cond_jaxpr.constvars)]
+      + list(cond_jaxpr.eqns))
+
+
+  assert len(body_jaxpr.invars) == 1
+  body_jaxpr_converted = body_jaxpr.copy()
+  body_jaxpr_converted.constvars = []
+  body_jaxpr_converted.invars = [loop_carry_var]
+  body_jaxpr_converted.outvar = outvar
+  body_jaxpr_converted.eqns = (
+      [_unpack_eqn(loop_carry_var, [body_jaxpr.invars[0], cond_var, body_var]),
+       _unpack_eqn(body_var, body_jaxpr.constvars)]
+      + list(body_jaxpr.eqns) +
+      [_pack_eqn([body_jaxpr.outvar, cond_var, body_var], outvar)])
+
+  cond_computation = xla.jaxpr_computation(cond_jaxpr_converted, (), (), shape)
+  body_computation = xla.jaxpr_computation(body_jaxpr_converted, (), (), shape)
+  full_ans = c.While(cond_computation, body_computation, loop_carry)
+  return c.GetTupleElement(full_ans, 0)
 
 while_p = Primitive('while')
 while_p.def_impl(partial(xla.apply_primitive, while_p))
 while_p.def_abstract_eval(_while_loop_abstract_eval)
 xla.translations[while_p] = _while_loop_translation_rule
 
+def _unpack_eqn(invar, outvars):
+  return core.JaxprEqn([invar], outvars, core.identity_p, (), True, {})
+
+def _pack_eqn(invars, outvar):
+  return core.JaxprEqn(invars, [outvar], core.pack_p, (), False, {})
 
 def _tie_in_transpose_rule(t):
   return [ad_util.zero, t]

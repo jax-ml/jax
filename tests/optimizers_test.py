@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for the minmax optimizer module."""
+"""Tests for the optimizers module."""
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -23,7 +23,7 @@ from absl.testing import absltest
 import jax.numpy as np
 import jax.test_util as jtu
 from jax import jit, grad
-from jax.experimental import minmax
+from jax.experimental import optimizers
 from jax.lib import xla_bridge as xla
 
 from jax.config import config
@@ -50,7 +50,7 @@ class OptimizerTests(jtu.JaxTestCase):
 
     # def op(infeed, x0):
     #   opt_init, opt_update = optimizer(*args, **kwargs)
-    #   return minmax.run_optimizer(loss, infeed, opt_update, opt_init(x0))
+    #   return optimizers.run_optimizer(loss, infeed, opt_update, opt_init(x0))
     # cop = jit(op)
 
     # a1, _ = op(infeeder(), x0)
@@ -65,14 +65,14 @@ class OptimizerTests(jtu.JaxTestCase):
     x0 = 1.
     num_iters = 100
     step_size = 0.1
-    self._CheckOptimizer(minmax.sgd, loss, x0, num_iters, step_size)
+    self._CheckOptimizer(optimizers.sgd, loss, x0, num_iters, step_size)
 
   def testSgdVector(self):
     def loss(x, _): return np.dot(x, x)
     x0 = np.ones(2)
     num_iters = 100
     step_size = 0.1
-    self._CheckOptimizer(minmax.sgd, loss, x0, num_iters, step_size)
+    self._CheckOptimizer(optimizers.sgd, loss, x0, num_iters, step_size)
 
   def testSgdNestedTuple(self):
     def loss(xyz, _):
@@ -81,7 +81,7 @@ class OptimizerTests(jtu.JaxTestCase):
     x0 = (np.ones(2), (np.ones(2), np.ones(2)))
     num_iters = 100
     step_size = 0.1
-    self._CheckOptimizer(minmax.sgd, loss, x0, num_iters, step_size)
+    self._CheckOptimizer(optimizers.sgd, loss, x0, num_iters, step_size)
 
   def testMomentumVector(self):
     def loss(x, _): return np.dot(x, x)
@@ -89,14 +89,14 @@ class OptimizerTests(jtu.JaxTestCase):
     num_iters = 100
     step_size = 0.1
     mass = 0.
-    self._CheckOptimizer(minmax.momentum, loss, x0, num_iters, step_size, mass)
+    self._CheckOptimizer(optimizers.momentum, loss, x0, num_iters, step_size, mass)
 
   def testRmspropVector(self):
     def loss(x, _): return np.dot(x, x)
     x0 = np.ones(2)
     num_iters = 100
     step_size = 0.1
-    self._CheckOptimizer(minmax.rmsprop, loss, x0, num_iters, step_size)
+    self._CheckOptimizer(optimizers.rmsprop, loss, x0, num_iters, step_size)
 
   @jtu.skip_on_devices('cpu')  # TODO(mattjj): investigate numerical failure
   def testAdamVector(self):
@@ -104,7 +104,7 @@ class OptimizerTests(jtu.JaxTestCase):
     x0 = np.ones(2)
     num_iters = 100
     step_size = 0.1
-    self._CheckOptimizer(minmax.adam, loss, x0, num_iters, step_size)
+    self._CheckOptimizer(optimizers.adam, loss, x0, num_iters, step_size)
 
   def testSgdClosure(self):
     def loss(y, x, _): return y**2 * x**2
@@ -113,43 +113,43 @@ class OptimizerTests(jtu.JaxTestCase):
     num_iters = 20
     step_size = 0.1
     partial_loss = functools.partial(loss, y)
-    self._CheckRun(minmax.sgd, partial_loss, x0, num_iters, step_size)
+    self._CheckRun(optimizers.sgd, partial_loss, x0, num_iters, step_size)
 
   def testSgdVectorExponentialDecaySchedule(self):
     def loss(x, _): return np.dot(x, x)
     x0 = np.ones(2)
     num_iters = 100
-    step_schedule = minmax.exponential_decay(0.1, 3, 2.)
-    self._CheckOptimizer(minmax.sgd, loss, x0, num_iters, step_schedule)
+    step_schedule = optimizers.exponential_decay(0.1, 3, 2.)
+    self._CheckOptimizer(optimizers.sgd, loss, x0, num_iters, step_schedule)
 
   def testSgdVectorInverseTimeDecaySchedule(self):
     def loss(x, _): return np.dot(x, x)
     x0 = np.ones(2)
     num_iters = 100
-    step_schedule = minmax.inverse_time_decay(0.1, 3, 2.)
-    self._CheckOptimizer(minmax.sgd, loss, x0, num_iters, step_schedule)
+    step_schedule = optimizers.inverse_time_decay(0.1, 3, 2.)
+    self._CheckOptimizer(optimizers.sgd, loss, x0, num_iters, step_schedule)
 
   def testAdamVectorInverseTimeDecaySchedule(self):
     def loss(x, _): return np.dot(x, x)
     x0 = np.ones(2)
     num_iters = 100
-    step_schedule = minmax.inverse_time_decay(0.1, 3, 2.)
-    self._CheckOptimizer(minmax.adam, loss, x0, num_iters, step_schedule)
+    step_schedule = optimizers.inverse_time_decay(0.1, 3, 2.)
+    self._CheckOptimizer(optimizers.adam, loss, x0, num_iters, step_schedule)
 
   def testMomentumVectorInverseTimeDecayStaircaseSchedule(self):
     def loss(x, _): return np.dot(x, x)
     x0 = np.ones(2)
     num_iters = 100
-    step_sched = minmax.inverse_time_decay(0.1, 3, 2., staircase=True)
+    step_sched = optimizers.inverse_time_decay(0.1, 3, 2., staircase=True)
     mass = 0.9
-    self._CheckOptimizer(minmax.momentum, loss, x0, num_iters, step_sched, mass)
+    self._CheckOptimizer(optimizers.momentum, loss, x0, num_iters, step_sched, mass)
 
   def testRmspropVectorPiecewiseConstantSchedule(self):
     def loss(x, _): return np.dot(x, x)
     x0 = np.ones(2)
     num_iters = 100
-    step_schedule = minmax.piecewise_constant([25, 75], [1.0, 0.5, 0.1])
-    self._CheckOptimizer(minmax.rmsprop, loss, x0, num_iters, step_schedule)
+    step_schedule = optimizers.piecewise_constant([25, 75], [1.0, 0.5, 0.1])
+    self._CheckOptimizer(optimizers.rmsprop, loss, x0, num_iters, step_schedule)
 
   def testTracedStepSize(self):
     def loss(x, _): return np.dot(x, x)
@@ -157,13 +157,13 @@ class OptimizerTests(jtu.JaxTestCase):
     num_iters = 100
     step_size = 0.1
 
-    init_fun, _ = minmax.sgd(step_size)
+    init_fun, _ = optimizers.sgd(step_size)
     opt_state = init_fun(x0)
 
     @jit
     def update(opt_state, step_size):
-      _, update_fun = minmax.sgd(step_size)
-      x = minmax.get_params(opt_state)
+      _, update_fun = optimizers.sgd(step_size)
+      x = optimizers.get_params(opt_state)
       g = grad(loss)(x, None)
       return update_fun(0, g, opt_state)
 
