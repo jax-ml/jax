@@ -1,7 +1,7 @@
-jax.experimental.minmax module
+jax.experimental.optimizers module
 ==============================
 
-.. automodule:: jax.experimental.minmax
+.. automodule:: jax.experimental.optimizers
     :members:
     :undoc-members:
     :show-inheritance:

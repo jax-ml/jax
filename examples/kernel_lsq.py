@@ -24,7 +24,7 @@ import numpy.random as npr
 
 import jax.numpy as np
 from jax.config import config
-from jax.experimental import minmax
+from jax.experimental import optimizers
 from jax import grad, jit, make_jaxpr, vmap
 
 
@@ -42,17 +42,17 @@ def gram(kernel, xs):
 
 
 def minimize(f, x, num_steps=10000, step_size=0.000001, mass=0.9):
-  opt_init, opt_update = minmax.momentum(step_size, mass)
+  opt_init, opt_update = optimizers.momentum(step_size, mass)
 
   @jit
   def update(i, opt_state):
-    x = minmax.get_params(opt_state)
+    x = optimizers.get_params(opt_state)
     return opt_update(i, grad(f)(x), opt_state)
 
   opt_state = opt_init(x)
   for i in xrange(num_steps):
     opt_state = update(i, opt_state)
-  return minmax.get_params(opt_state)
+  return optimizers.get_params(opt_state)
 
 
 def train(kernel, xs, ys, regularization=0.01):
