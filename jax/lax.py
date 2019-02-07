@@ -2892,12 +2892,21 @@ def psplit_pmap_rule(x, axis_in, axis):
 parallel_interp.pmap_primitive_rules[parallel.psplit_p] = psplit_pmap_rule
 
 def transpose_papply_rule(name, vals, dims, permutation):
-  # TODO(rf): in general, want a pswapaxes (if needed) + regular transpose
   x, = vals
   xdim, = dims
-  if x.ndim != 1 or set(permutation) != {0, 1}:
-    raise NotImplementedError("tranpose papply beyond rank 2")
-  return parallel.pswapaxes(x, name, permutation[xdim]), xdim
+  perm = list(permutation)
+  if perm[xdim] == xdim:
+    x = transpose(x, perm)
+  else:
+    in_dim, = [i for i in range(len(perm)) if perm[i] == xdim]
+    out_dim = perm[xdim]
+    perm[in_dim] = out_dim
+    perm[out_dim] = in_dim
+    perm = perm[:xdim] + perm[xdim + 1:]
+    perm = [i - 1 if i > xdim else i for i in perm]
+    x = transpose(x, perm)
+    x = parallel.pswapaxes(x, name, in_dim)
+  return x, xdim
 
 parallel_interp.papply_primitive_rules[transpose_p] = transpose_papply_rule
 
