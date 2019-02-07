@@ -138,6 +138,21 @@ class PapplyTest(jtu.JaxTestCase):
       ans = pmap(pfun, axis_name)(x)
       self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testTransposeWithOddPermutation(self):
+
+    def fun(x):
+      return np.transpose(x, (2, 0, 1))
+
+    xs = [
+        onp.reshape(onp.arange(8., dtype=onp.float32), (2, 2, 2)),
+        onp.reshape(onp.arange(27., dtype=onp.float32), (3, 3, 3)),
+    ]
+    for x in xs:
+      expected = np.transpose(x, (2, 0, 1))
+      pfun, axis_name = papply(fun, x.shape[0])
+      ans = pmap(pfun, axis_name)(x)
+      self.assertAllClose(ans, expected, check_dtypes=False)
+
   def testTransposeAndAddRank2(self):
 
     def fun(x):
