@@ -26,8 +26,11 @@ from __future__ import print_function
 
 import itertools
 import operator as op
+import os
 
 import numpy as onp
+from contextlib import contextmanager
+from distutils.util import strtobool
 
 from . import core
 from . import linear_util as lu
@@ -47,9 +50,15 @@ from .interpreters import pxla
 from .interpreters import ad
 from .interpreters import batching
 from .interpreters import parallel
+from .config import flags, config
 
 map = safe_map
 zip = safe_zip
+
+FLAGS = flags.FLAGS
+flags.DEFINE_bool("jax_disable_jit",
+                  strtobool(os.getenv("JAX_DISABLE_JIT", "False")),
+                  "Disable JIT compilation and just call original Python.")
 
 
 def jit(fun, static_argnums=()):
@@ -71,6 +80,8 @@ def jit(fun, static_argnums=()):
   """
   @wraps(fun)
   def f_jitted(*args, **kwargs):
+    if _jit_is_disabled or config.read('jax_disable_jit'):
+      return fun(*args, **kwargs)
     f = lu.wrap_init(fun, kwargs)
     dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
     f, dyn_args = argnums_partial(f, dyn_argnums, args)
@@ -82,6 +93,15 @@ def jit(fun, static_argnums=()):
 
   f_jitted.__name__ = "jit({})".format(f_jitted.__name__)
   return f_jitted
+
+
+@contextmanager
+def disable_jit():
+  global _jit_is_disabled
+  _jit_is_disabled, prev_val = True, _jit_is_disabled
+  yield
+  _jit_is_disabled = prev_val
+_jit_is_disabled = False
 
 
 def grad(fun, argnums=0):
