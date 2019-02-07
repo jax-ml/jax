@@ -14,8 +14,8 @@
 
 """A basic variational autoencoder (VAE) on binarized MNIST using Numpy and JAX.
 
-This file uses the stax network definition library and the minmax optimization
-library.
+This file uses the stax network definition library and the optimizers
+optimization library.
 """
 
 from __future__ import absolute_import
@@ -30,7 +30,7 @@ import matplotlib.pyplot as plt
 import jax.numpy as np
 from jax.config import config
 from jax import jit, grad, lax, random
-from jax.experimental import minmax
+from jax.experimental import optimizers
 from jax.experimental import stax
 from jax.experimental.stax import Dense, FanOut, Relu, Softplus
 from examples import datasets
@@ -102,7 +102,7 @@ if __name__ == "__main__":
   _, init_decoder_params = decoder_init((batch_size, 10))
   init_params = init_encoder_params, init_decoder_params
 
-  opt_init, opt_update = minmax.momentum(step_size, mass=0.9)
+  opt_init, opt_update = optimizers.momentum(step_size, mass=0.9)
 
   def binarize_batch(rng, i, images):
     i = i % num_batches
@@ -116,7 +116,7 @@ if __name__ == "__main__":
       rng, elbo_rng, data_rng = random.split(rng, 3)
       batch = binarize_batch(data_rng, i, images)
       loss = lambda params: -elbo(elbo_rng, params, batch) / batch_size
-      g = grad(loss)(minmax.get_params(opt_state))
+      g = grad(loss)(optimizers.get_params(opt_state))
       loop_carry = rng, opt_update(i, g, opt_state), images
       return loop_carry
     init_val = rng, opt_state, train_images
@@ -125,7 +125,7 @@ if __name__ == "__main__":
 
   @jit
   def evaluate(opt_state, images):
-    params = minmax.get_params(opt_state)
+    params = optimizers.get_params(opt_state)
     elbo_rng, data_rng, image_rng = random.split(test_rng, 3)
     binarized_test = random.bernoulli(data_rng, images)
     test_elbo = elbo(elbo_rng, params, binarized_test) / images.shape[0]

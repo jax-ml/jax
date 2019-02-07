@@ -570,9 +570,9 @@ inputs = np.zeros((128, 28, 28, 1))
 predictions = net_apply(net_params, inputs)
 ```
 
-### First-order optimization with Minmax
+### First-order optimization
 
-**Minmax** is an optimization library focused on stochastic first-order
+JAX has a minimal optimization library focused on stochastic first-order
 optimizers. Every optimizer is modeled as an `(init_fun, update_fun)` pair. The
 `init_fun` is used to initialize the optimizer state, which could include things
 like momentum variables, and the `update_fun` accepts a gradient and an
@@ -583,7 +583,7 @@ store your parameters however you’d like.
 Here’s an example, using `jit` to compile the whole update end-to-end:
 
 ```python
-from jax.experimental import minmax
+from jax.experimental import optimizers
 from jax import jit, grad
 
 # Define a simple squared-error loss
@@ -592,13 +592,13 @@ def loss(params, batch):
   predictions = net_apply(params, inputs)
   return np.sum((predictions - targets)**2)
 
-# Use minmax to set optimizer initialization and update functions
-opt_init, opt_update = minmax.momentum(step_size=1e-3, mass=0.9)
+# Use optimizers to set optimizer initialization and update functions
+opt_init, opt_update = optimizers.momentum(step_size=1e-3, mass=0.9)
 
 # Define a compiled update step
 @jit
 def step(i, opt_state, batch):
-  params = minmax.get_params(opt_state)
+  params = optimizers.get_params(opt_state)
   g = grad(loss)(params, batch)
   return opt_update(i, g, opt_state)
 
@@ -610,7 +610,7 @@ data_generator = ((np.zeros((128, 28, 28, 1)), np.zeros((128, 10)))
 opt_state = opt_init(net_params)
 for i in range(10):
   opt_state = step(i, opt_state, next(data_generator))
-net_params = minmax.get_params(opt_state)
+net_params = optimizers.get_params(opt_state)
 ```
 
 ## How it works

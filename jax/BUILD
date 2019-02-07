@@ -46,8 +46,8 @@ py_library(
 )
 
 py_library(
-    name = "minmax",
-    srcs = ["experimental/minmax.py"],
+    name = "optimizers",
+    srcs = ["experimental/optimizers.py"],
     deps = [":libjax"],
 )
 
