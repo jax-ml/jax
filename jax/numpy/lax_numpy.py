@@ -1006,6 +1006,7 @@ nancumprod = _make_cumulative_reduction(
 # TODO(phawkins): use this helper everywhere.
 def _canonicalize_axis(axis, num_dims):
   """Canonicalize an axis in (-num_dims, num_dims) to [0, num_dims)."""
+  axis = int(axis)
   if axis < 0:
     axis = axis + num_dims
   if axis < 0 or axis >= num_dims:
