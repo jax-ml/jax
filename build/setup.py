@@ -20,7 +20,7 @@ binary_libs = [os.path.basename(f) for f in glob('jaxlib/*.so*')]
 
 setup(
     name='jaxlib',
-    version='0.1.6',
+    version='0.1.7',
     description='XLA library for JAX',
     author='JAX team',
     author_email='jax-dev@google.com',
