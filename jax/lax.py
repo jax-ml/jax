@@ -2923,7 +2923,7 @@ parallel_interp.pmap_primitive_rules[parallel.pswapaxes_p] = pswapaxes_pmap_rule
 def psplit_pmap_rule(x, axis_in, axis):
   if x.shape[axis_in] != x.shape[axis]:
     raise ValueError("psplit between non-square dimensions")
-  return x
+  return x, axis
 
 parallel_interp.pmap_primitive_rules[parallel.psplit_p] = psplit_pmap_rule
 
