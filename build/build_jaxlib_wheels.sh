@@ -13,7 +13,8 @@ for PYTHON_VERSION in $PYTHON_VERSIONS
 do
   mkdir -p dist/nocuda/
   docker run -it --tmpfs /build:exec --rm -v $(pwd)/dist:/dist jaxbuild $PYTHON_VERSION nocuda
-  for I in $(find dist/nocuda/ -name "*.whl")
+  mv dist/*.whl dist/nocuda/
+  for I in $(find dist/nocuda/ -name "*linux_x86_64.whl")
   do
     mv $I $(echo $I | sed -e 's/linux_x86_64/manylinux1_x86_64/')
   done

@@ -22,7 +22,6 @@ import itertools
 import numpy as onp
 from absl.testing import absltest
 from absl.testing import parameterized
-import six
 
 import jax.numpy as np
 import jax.test_util as jtu
@@ -214,10 +213,6 @@ class EinsumTest(jtu.JaxTestCase):
     self._check(s, x, y)
 
   def test_tf_unsupported_3(self):
-    # TODO(mattjj): heisenbug! fails sometimes in python3. opt_einsum bug?
-    if six.PY3:
-      return absltest.unittest.skip("py3 failures")
-
     # from https://www.tensorflow.org/api_docs/python/tf/einsum
     r = rng()
     x = r.randn(2, 3)
@@ -250,14 +245,14 @@ class EinsumTest(jtu.JaxTestCase):
           '...ab->...a',
           'a...a->a...',
           # Following 2 from # https://stackoverflow.com/a/19203475/1611416
-          # '...abc,...abcd->...d',  # TODO hard crash
+          '...abc,...abcd->...d',
           'ab...,b->ab...',
           # https://github.com/dask/dask/pull/3412#discussion_r182413444
           'aa->a',
           'ab,ab,c->c',
           'aab,bc->ac',
           'aab,bcc->ac',
-          # 'fdf,cdd,ccd,afe->ae',  # TODO hard crash
+          'fdf,cdd,ccd,afe->ae',
           'fff,fae,bef,def->abd',
       ])
   def test_from_dask(self, einstr):

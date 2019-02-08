@@ -214,6 +214,7 @@ jax.numpy.linalg
   det
   eigh
   inv
+  norm
   qr
   slogdet
   solve

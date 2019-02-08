@@ -321,6 +321,23 @@ class APITest(jtu.JaxTestCase):
                 (onp.array([0., 0.]), onp.array([0., 2.])))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def test_disable_jit(self):
+    effects = []
+
+    @api.jit
+    def f(x):
+      effects.append(1)
+      return x
+
+    with api.disable_jit():
+      f(2)
+      f(2)
+    assert len(effects) == 2
+
+    f(2)
+    f(2)
+    assert len(effects) == 3
+
 
 if __name__ == '__main__':
   absltest.main()
