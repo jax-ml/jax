@@ -250,14 +250,14 @@ class EinsumTest(jtu.JaxTestCase):
           '...ab->...a',
           'a...a->a...',
           # Following 2 from # https://stackoverflow.com/a/19203475/1611416
-          # '...abc,...abcd->...d',  # TODO hard crash
+          '...abc,...abcd->...d',
           'ab...,b->ab...',
           # https://github.com/dask/dask/pull/3412#discussion_r182413444
           'aa->a',
           'ab,ab,c->c',
           'aab,bc->ac',
           'aab,bcc->ac',
-          # 'fdf,cdd,ccd,afe->ae',  # TODO hard crash
+          'fdf,cdd,ccd,afe->ae',
           'fff,fae,bef,def->abd',
       ])
   def test_from_dask(self, einstr):
