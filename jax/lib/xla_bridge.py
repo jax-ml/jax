@@ -47,8 +47,8 @@ flags.DEFINE_string('jax_dump_hlo_optimized', None,
 flags.DEFINE_string('jax_dump_hlo_per_pass', None,
                     'Dirpath for per-pass HLO dump.')
 flags.DEFINE_integer('jax_replica_count', 1, 'Replica count for computations.')
-flags.DEFINE_enum(
-    'jax_xla_backend', 'xla', ['xla', 'xrt'],
+flags.DEFINE_string(
+    'jax_xla_backend', 'xla',
     'Either "xla" for the XLA service directly, or "xrt" for an XRT backend.')
 flags.DEFINE_string(
     'jax_backend_target', 'local',
@@ -59,6 +59,7 @@ flags.DEFINE_string(
     'GPU if available, but fall back to CPU otherwise. To set '
     'the platform manually, pass "Host" for CPU or "CUDA" for '
     'GPU.')
+
 
 # Prefix for HLO-dump flags indicating output should go into Sponge's
 # visible output files.
@@ -120,6 +121,22 @@ def get_xla_client():
                          FLAGS.jax_replica_count)
 
 
+def _jaxlib_version():
+  if hasattr(xla_client, 'version'):
+    return xla_client.version()
+  else:
+    return (0, 1, 6)  # The version before xla_client.version() was added.
+
+
+def _check_jaxlib_version():
+  minimum_version = (0, 1, 6)
+  version = _jaxlib_version()
+  if version < minimum_version:
+    msg = 'jaxlib is version {}, but this version of jax requires version {}.'
+    raise ValueError(msg.format('.'.join(map(str, version)),
+                                '.'.join(map(str, minimum_version))))
+
+
 def _get_xla_client(backend_name, platform_name, replica_count):
   """Configures and returns a handle to the XLA client.
 
@@ -132,6 +149,7 @@ def _get_xla_client(backend_name, platform_name, replica_count):
   Returns:
     A client library module, or an object that behaves identically to one.
   """
+  _check_jaxlib_version()
   global _platform_name
   xla_client.initialize_replica_count(replica_count)
   if backend_name == 'xla':
@@ -153,16 +171,33 @@ def get_replica_count():
   return get_xla_client().get_replica_count()
 
 
-_backend_flag_to_type = {
-    'xla': xla_client.BackendType.XLA_LOCAL,
-    'xrt': xla_client.BackendType.XRT,
-}
+_backends = {}
+
+def register_backend(name, factory):
+  _backends[name] = factory
+
+
+if hasattr(xla_client, 'XlaLocalBackend'):
+  register_backend('xla', lambda: xla_client.XlaLocalBackend())
+  register_backend('xrt',
+                   lambda: xla_client.XrtBackend(FLAGS.jax_backend_target))
+else:
+  # TODO(phawkins): this case is for cross-version compatibility. Delete this
+  # case after a Jaxlib update.
+  register_backend(
+    'xla', lambda: xla_client.BackendSpec(xla_client.BackendType.XLA_LOCAL, ''))
+  register_backend(
+    'xrt', lambda: xla_client.BackendSpec(xla_client.BackendType.XRT,
+                                          FLAGS.jax_backend_target))
 
 
 @memoize_thunk
 def _get_backend():
-  return xla_client.BackendSpec(_backend_flag_to_type[FLAGS.jax_xla_backend],
-                                FLAGS.jax_backend_target)
+  backend = _backends.get(FLAGS.jax_xla_backend)
+  if backend is None:
+    msg = 'Unknown jax_xla_backend value "{}".'
+    raise ValueError(msg.format(FLAGS.jax_xla_backend))
+  return backend()
 
 
 def device_put(pyval, replica=0):

@@ -36,6 +36,7 @@ from jaxlib import lapack
 
 from jax.config import config
 config.parse_flags_with_absl()
+FLAGS = config.FLAGS
 
 T = lambda x: onp.swapaxes(x, -1, -2)
 
@@ -134,6 +135,39 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
     self._CompileAndCheck(partial(np.linalg.eigh, UPLO=uplo), args_maker,
                           check_dtypes=True)
+
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_ord={}_axis={}_keepdims={}".format(
+         jtu.format_shape_dtype_string(shape, dtype), ord, axis, keepdims),
+       "shape": shape, "dtype": dtype, "axis": axis, "keepdims": keepdims,
+       "ord": ord, "rng": rng}
+      for axis, shape in [
+        (None, (1,)), (None, (7,)), (None, (5, 8)),
+        (0, (9,)), (0, (4, 5)), ((1,), (10, 7, 3)), ((-2,), (4, 8)),
+        (-1, (6, 3)), ((0, 2), (3, 4, 5)), ((2, 0), (7, 8, 9))]
+      for keepdims in [False, True]
+      for ord in (
+          [None, 0, 1, 2, 3, -1, -2, -3, np.inf, -np.inf]
+          if (axis is None and len(shape) == 1) or
+             isinstance(axis, int) or
+             (isinstance(axis, tuple) and len(axis) == 1)
+          else [None, 'fro', 1, 2, -1, -2, np.inf, -np.inf, 'nuc'])
+      for dtype in float_types() | complex_types()
+      for rng in [jtu.rand_default()]))
+  def testNorm(self, shape, dtype, ord, axis, keepdims, rng):
+    if (ord in ('nuc', 2, -2) and isinstance(axis, tuple) and len(axis) == 2 and
+        (not FLAGS.jax_test_dut or not FLAGS.jax_test_dut.startswith("cpu") or
+         len(shape) != 2)):
+      return absltest.unittest.skip("No adequate SVD implementation available")
+
+    args_maker = lambda: [rng(shape, dtype)]
+    onp_fn = partial(onp.linalg.norm, ord=ord, axis=axis, keepdims=keepdims)
+    np_fn = partial(np.linalg.norm, ord=ord, axis=axis, keepdims=keepdims)
+    self._CheckAgainstNumpy(onp_fn, np_fn, args_maker,
+                            check_dtypes=True, tol=1e-3)
+    self._CompileAndCheck(np_fn, args_maker, check_dtypes=True)
+
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_n={}_full_matrices={}_compute_uv={}".format(

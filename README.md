@@ -148,7 +148,7 @@ PYTHON_VERSION=cp27  # alternatives: cp27, cp36, cp37
 CUDA_VERSION=cuda92  # alternatives: cuda90, cuda92, cuda100
 PLATFORM=linux_x86_64  # alternatives: linux_x86_64
 BASE_URL='https://storage.googleapis.com/jax-wheels'
-pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.6-$PYTHON_VERSION-none-$PLATFORM.whl
+pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.7-$PYTHON_VERSION-none-$PLATFORM.whl
 
 pip install --upgrade jax  # install jax
 ```
@@ -243,8 +243,8 @@ def logistic_predictions(weights, inputs):
 # Training loss is the negative log-likelihood of the training labels.
 def loss(weights, inputs, targets):
     preds = logistic_predictions(weights, inputs)
-    label_probs = preds * targets + (1 - preds) * (1 - targets)
-    return -np.sum(np.log(label_probs))
+    label_logprobs = np.log(preds) * targets + np.log(1 - preds) * (1 - targets)
+    return -np.sum(label_logprobs)
 
 # Build a toy dataset.
 inputs = np.array([[0.52, 1.12,  0.77],
