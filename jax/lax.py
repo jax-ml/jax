@@ -2206,7 +2206,6 @@ def _scatter_jvp(primals, tangents, update_jaxpr, update_consts,
         updates_shape=updates_shape)
   return val_out, tangent_out
 
-
 def _scatter_transpose_rule(t, operand, scatter_indices, updates,
                             update_jaxpr, update_consts, dimension_numbers,
                             updates_shape):
@@ -2233,12 +2232,61 @@ def _scatter_transpose_rule(t, operand, scatter_indices, updates,
                       slice_sizes=slice_sizes)
   return [operand_t, None, update_t]
 
+def _scatter_batching_rule(batched_args, batch_dims, update_jaxpr,
+                           update_consts, dimension_numbers, updates_shape):
+  operand, scatter_indices, updates = batched_args
+  operand_bdim, scatter_indices_bdim, updates_bdim = batch_dims
+  del update_jaxpr, update_consts, updates_shape  # Unused.
+
+  size = next(x.shape[ax] for x, ax in zip(batched_args, batch_dims)
+              if ax is not None)
+  operand = batching.bdim_at_front(operand, operand_bdim, broadcast_size=size,
+                                   force_broadcast=True)
+  operand_bdim = 0
+
+  if scatter_indices_bdim is not None and updates_bdim is None:
+    raise NotImplementedError  # TODO(mattjj,phawkins)
+  elif scatter_indices_bdim is None and updates_bdim is not None:
+    updates = batching.move_dim_to_front(updates, updates_bdim)
+    inserted_window_dims = tuple(onp.add(1, dimension_numbers.inserted_window_dims))
+    update_window_dims = (0,) + tuple(onp.add(1, dimension_numbers.update_window_dims))
+    scatter_dims_to_operand_dims = tuple(onp.add(1, dimension_numbers.scatter_dims_to_operand_dims))
+    dnums = ScatterDimensionNumbers(
+        update_window_dims=update_window_dims,
+        inserted_window_dims=inserted_window_dims,
+        scatter_dims_to_operand_dims=scatter_dims_to_operand_dims,
+        index_vector_dim=dimension_numbers.index_vector_dim)
+    return scatter_add(operand, scatter_indices, updates, dnums), 0
+  else:
+    # see the third case in _gather_batching_rule for comparison and comments
+    if dimension_numbers.index_vector_dim == scatter_indices.ndim - 1:
+      scatter_indices = reshape(scatter_indices, scatter_indices.shape + (1,))
+
+    scatter_indices = batching.move_dim_to_front(scatter_indices,
+                                                 scatter_indices_bdim)
+    updates = batching.move_dim_to_front(updates, updates_bdim)
+
+    index_vector_dim = dimension_numbers.index_vector_dim + 1
+    counts = broadcasted_iota(scatter_indices.dtype, scatter_indices.shape, 0)
+    scatter_indices = concatenate([counts, scatter_indices], index_vector_dim)
+
+    update_window_dims = tuple(onp.add(1, dimension_numbers.update_window_dims))
+    inserted_window_dims = (0,) + tuple(onp.add(1, dimension_numbers.inserted_window_dims))
+    scatter_dims_to_operand_dims = (0,) + tuple(onp.add(1, dimension_numbers.scatter_dims_to_operand_dims))
+
+    dnums = ScatterDimensionNumbers(
+        update_window_dims=update_window_dims,
+        inserted_window_dims=inserted_window_dims,
+        scatter_dims_to_operand_dims=scatter_dims_to_operand_dims,
+        index_vector_dim=index_vector_dim)
+    return scatter_add(operand, scatter_indices, updates, dnums), 0
 
 scatter_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-add',
     _scatter_translation_rule)
 ad.primitive_jvps[scatter_p] = _scatter_jvp
 ad.primitive_transposes[scatter_p] = _scatter_transpose_rule
+batching.primitive_batchers[scatter_p] = _scatter_batching_rule
 
 
 def _reduce_shape_rule(operand, init_value, computation, jaxpr, consts, dimensions):
