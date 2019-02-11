@@ -2111,19 +2111,34 @@ def _gather_batching_rule(batched_args, batch_dims, dimension_numbers,
                   slice_sizes=slice_sizes), 0
 
   else:
-    # TODO(mattjj,phawkins): this code is wrong
+    # get rid of scalar index case (noticing our start_indices.ndim is
+    # incremented by one compared to the original user code)
+    if dimension_numbers.index_vector_dim == start_indices.ndim - 1:
+      start_indices = reshape(start_indices, start_indices.shape + (1,))
+
+    # move our batch dimensions to the front to preserve sanity
     operand = batching.move_dim_to_front(operand, operand_bdim)
     start_indices = batching.move_dim_to_front(start_indices, start_indices_bdim)
+
+    # Example: user code had start_indices shape (3, 4, 5) and index_vector_dim
+    # of 2, and we have to deal with start_indices shape (7, 3, 4, 5). We
+    # transform that to an index_vector_dim of 3, and a start_indices of shape
+    # (7, 3, 4, 6) where we concatenated an iota that counts along our batch
+    # dimension to the front of the ndindex.
+    index_vector_dim = dimension_numbers.index_vector_dim + 1
+    counts = broadcasted_iota(start_indices.dtype, start_indices.shape, 0)
+    start_indices = concatenate([counts, start_indices], index_vector_dim)
 
     slice_sizes = (1,) + slice_sizes
     collapsed_slice_dims = (0,) + tuple(onp.add(1, dimension_numbers.collapsed_slice_dims))
     offset_dims = tuple(onp.add(1, dimension_numbers.offset_dims))
-    start_index_map = tuple(onp.add(1, dimension_numbers.start_index_map))
+    start_index_map = (0,) + tuple(onp.add(1, dimension_numbers.start_index_map))
+
     dnums = GatherDimensionNumbers(
         offset_dims=offset_dims,
         collapsed_slice_dims=collapsed_slice_dims,
         start_index_map=start_index_map,
-        index_vector_dim=dimension_numbers.index_vector_dim + 1)
+        index_vector_dim=index_vector_dim)
     return gather(operand, start_indices, dimension_numbers=dnums,
                   slice_sizes=slice_sizes), 0
 
