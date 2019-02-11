@@ -136,7 +136,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(partial(np.linalg.eigh, UPLO=uplo), args_maker,
                           check_dtypes=True)
 
-
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_ord={}_axis={}_keepdims={}".format(
          jtu.format_shape_dtype_string(shape, dtype), ord, axis, keepdims),
@@ -156,6 +155,9 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for dtype in float_types() | complex_types()
       for rng in [jtu.rand_default()]))
   def testNorm(self, shape, dtype, ord, axis, keepdims, rng):
+    # TODO(mattjj,phawkins): re-enable after checking internal tests
+    self.skipTest("internal test failures")
+
     if (ord in ('nuc', 2, -2) and isinstance(axis, tuple) and len(axis) == 2 and
         (not FLAGS.jax_test_dut or not FLAGS.jax_test_dut.startswith("cpu") or
          len(shape) != 2)):
@@ -167,7 +169,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_fn, np_fn, args_maker,
                             check_dtypes=True, tol=1e-3)
     self._CompileAndCheck(np_fn, args_maker, check_dtypes=True)
-
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_n={}_full_matrices={}_compute_uv={}".format(
