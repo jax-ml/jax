@@ -1384,7 +1384,6 @@ class LaxTest(jtu.JaxTestCase):
       ]
       for rng_idx in [jtu.rand_int(max(shape))]
       for rng in [jtu.rand_default()]))
-  @jtu.skip_on_devices("tpu")  # TODO(b/123834001): re-enable when fixed
   def testGather(self, shape, dtype, idxs, dnums, slice_sizes, rng, rng_idx):
     rand_idxs = lambda: rng_idx(idxs.shape, idxs.dtype)
     args_maker = lambda: [rng(shape, dtype), rand_idxs()]
@@ -1412,7 +1411,6 @@ class LaxTest(jtu.JaxTestCase):
       ]
       for rng_idx in [jtu.rand_int(max(arg_shape))]
       for rng in [jtu.rand_default()]))
-  @jtu.skip_on_devices("tpu")  # TODO(b/123834001): re-enable when fixed
   def testScatterAdd(self, arg_shape, dtype, idxs, update_shape, dnums, rng,
                      rng_idx):
     rand_idxs = lambda: rng_idx(idxs.shape, idxs.dtype)
@@ -2126,7 +2124,6 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       ]
       for rng_idx in [jtu.rand_int(max(shape))]
       for rng in [jtu.rand_default()]))
-  @jtu.skip_on_devices("tpu")  # TODO(b/123834001): enable when fixed.
   def testGatherGrad(self, shape, dtype, idxs, dnums, slice_sizes, rng, rng_idx):
     idxs = rng_idx(idxs.shape, idxs.dtype)
     gather = lambda x: lax.gather(x, idxs, dimension_numbers=dnums,
@@ -2155,7 +2152,6 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       ]
       for rng_idx in [jtu.rand_int(max(arg_shape))]
       for rng in [jtu.rand_default()]))
-  @jtu.skip_on_devices("tpu")  # TODO(b/123834001): enable when fixed.
   def testScatterAddGrad(self, arg_shape, dtype, idxs, update_shape, dnums, rng,
                          rng_idx):
     idxs = rng_idx(idxs.shape, idxs.dtype)
