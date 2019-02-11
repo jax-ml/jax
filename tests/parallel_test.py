@@ -177,6 +177,22 @@ class PapplyTest(jtu.JaxTestCase):
     ans = pmap(pfun, axis_name)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testDot(self):
+
+    def fun(x, y):
+      return lax.dot(x, y)
+    xs = [
+        onp.reshape(onp.arange(4., dtype=onp.float32), (2, 2)),
+        onp.reshape(onp.arange(9., dtype=onp.float32), (3, 3)),
+    ]
+    in_axes_combos = [(0, 0), (0, 1), (1, 0)]
+    for in_axes in in_axes_combos:
+      for x in xs:
+        expected = fun(x, x)
+        pfun, axis_name = papply(fun, x.shape[0], in_axes=in_axes)
+        ans = pmap(pfun, axis_name)(x, x)
+        self.assertAllClose(ans, expected, check_dtypes=False)
+
 
 class SplitTest(jtu.JaxTestCase):
 
