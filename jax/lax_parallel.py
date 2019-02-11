@@ -44,11 +44,11 @@ def psplit(x, axis_name, axis):
 def psum(x, axis_name):
   return psum_p.bind(x, axis_name=axis_name)
 
-def pcollect(x, axis_name, concat_dim):
+def pcollect(x, axis_name):
   # lowering should be:
   # x = xla_broadcast(x, (xb.get_replica_count(),))
-  # return xla_all_to_all(x, 0, concat_dim, **params)
-  return pcollect_p.bind(x, axis_name=axis_name, concat_dim=concat_dim)
+  # return xla_all_to_all(x, 0, dim(axis_name), **params)
+  return pcollect_p.bind(x, axis_name=axis_name)
 
 # TODO(rf,mattjj): what is this for?
 def gather(x, axis_name):
@@ -72,6 +72,7 @@ psum_p = PmapPrimitive('psum')
 gather_p = PmapPrimitive('gather')
 pswapaxes_p = PmapPrimitive('pswapaxes')
 psplit_p = PmapPrimitive('psplit')
+pcollect_p = PmapPrimitive('pcollect')
 scatter_like_p = Primitive('scatter_like')
 
 

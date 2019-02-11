@@ -2927,12 +2927,18 @@ def psplit_pmap_rule(x, axis_in, axis):
 
 parallel_interp.pmap_primitive_rules[parallel.psplit_p] = psplit_pmap_rule
 
+def pcollect_pmap_rule(x, axis_in):
+  return x, None
+
+parallel_interp.pmap_primitive_rules[parallel.pcollect_p] = pcollect_pmap_rule
+
 def transpose_papply_rule(name, vals, dims, permutation):
   x, = vals
   xdim, = dims
   perm = list(permutation)
   if perm[xdim] == xdim:
     x = transpose(x, perm)
+    out_dim = xdim
   else:
     in_dim, = [i for i in range(len(perm)) if perm[i] == xdim]
     out_dim = perm[xdim]
@@ -2945,6 +2951,24 @@ def transpose_papply_rule(name, vals, dims, permutation):
   return x, xdim
 
 parallel_interp.papply_primitive_rules[transpose_p] = transpose_papply_rule
+
+def dot_papply_rule(name, vals, dims):
+  x, y = vals
+  xdim, ydim = dims
+  #import ipdb; ipdb.set_trace()
+  if xdim is None:
+    return dot(x, y), ydim
+  elif ydim is None:
+    return dot(x, y), xdim
+  elif xdim == x.ndim and ydim == 0:
+    # return parallel.psum(dot(x, y), name), None
+    return dot(x, y), None
+  else:
+    x = parallel.pcollect(x, name)
+    y = parallel.pcollect(y, name)
+    return dot(x, y), None
+
+parallel_interp.papply_primitive_rules[dot_p] = dot_papply_rule
 
 def scatter_like(source, target):
   return scatter_like_p.bind(source, target)
