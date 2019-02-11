@@ -2238,6 +2238,8 @@ def _scatter_batching_rule(batched_args, batch_dims, update_jaxpr,
   operand_bdim, scatter_indices_bdim, updates_bdim = batch_dims
   del update_jaxpr, update_consts, updates_shape  # Unused.
 
+  # move the operand batch dim to the front if it is not None, otherwise create
+  # it at the front (so that we can scatter into it)
   size = next(x.shape[ax] for x, ax in zip(batched_args, batch_dims)
               if ax is not None)
   operand = batching.bdim_at_front(operand, operand_bdim, broadcast_size=size,
