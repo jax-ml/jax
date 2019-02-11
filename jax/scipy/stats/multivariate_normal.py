@@ -27,6 +27,9 @@ from ...numpy.linalg import det, inv
 
 @_wraps(osp_stats.multivariate_normal.logpdf)
 def logpdf(x, mean, cov):
+  # TODO(mattjj): osp_stats.multivariate_normal.logpdf doesn't like being fed
+  # empty-shape arrays, so we can't use _promote_args_like as written; consider
+  # revising the dtype promotion logic here if it's an issue.
   # x, mean, cov = _promote_args_like(osp_stats.multivariate_normal.logpdf, x, mean, cov)
   x = x.astype(cov.dtype)
   mean = mean.astype(cov.dtype)
