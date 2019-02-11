@@ -21,17 +21,29 @@ import scipy.stats as osp_stats
 
 from ... import lax
 from ...numpy.lax_numpy import _promote_args_like, _constant_like, _wraps
+from ...numpy.lax_numpy import dot, subtract, einsum
+from ...numpy.linalg import det, inv
 
 
-@_wraps(osp_stats.norm.logpdf)
-def logpdf(x, loc=0, scale=1):
-  x, loc, scale = _promote_args_like(osp_stats.norm.logpdf, x, loc, scale)
+@_wraps(osp_stats.multivariate_normal.logpdf)
+def logpdf(x, mean, cov):
+  # x, mean, cov = _promote_args_like(osp_stats.multivariate_normal.logpdf, x, mean, cov)
+  x = x.astype(cov.dtype)
+  mean = mean.astype(cov.dtype)
   two = _constant_like(x, 2)
-  scale_sqrd = lax.pow(scale, two)
-  log_normalizer = lax.log(lax.mul(_constant_like(x, 2 * onp.pi), scale_sqrd))
-  quadratic = lax.div(lax.pow(lax.sub(x, loc), two), scale_sqrd)
+  dim = _constant_like(x, mean.shape[0])
+  det_sig = det(cov).astype(cov.dtype)
+  log_normalizer = lax.log(lax.mul(lax.pow(_constant_like(x, 2 * onp.pi), dim),
+    det_sig))
+  x_shape = x.shape[:-1]
+  if x_shape:
+    x_2d = x.reshape((-1, mean.shape[0]))
+    quadratic = einsum("ij,jk,ik->i", subtract(x_2d, mean), inv(cov), 
+      subtract(x_2d, mean)).reshape(x_shape).astype(cov.dtype)
+  else:
+    quadratic = dot(dot(subtract(x, mean), inv(cov)), subtract(x, mean).T).astype(cov.dtype)
   return lax.div(lax.neg(lax.add(log_normalizer, quadratic)), two)
 
-@_wraps(osp_stats.norm.pdf)
-def pdf(x, loc=0, scale=1):
-  return lax.exp(logpdf(x, loc, scale))
+@_wraps(osp_stats.multivariate_normal.pdf)
+def pdf(x, mean, cov):
+  return lax.exp(logpdf(x, mean, cov))

@@ -17,5 +17,6 @@ from . import beta
 from . import expon
 from . import gamma
 from . import laplace
+from . import multivariate_normal
 from . import norm
 from . import uniform
