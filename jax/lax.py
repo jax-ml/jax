@@ -2267,7 +2267,9 @@ def _scatter_batching_rule(batched_args, batch_dims, update_jaxpr,
     updates = batching.move_dim_to_front(updates, updates_bdim)
 
     index_vector_dim = dimension_numbers.index_vector_dim + 1
-    counts = broadcasted_iota(scatter_indices.dtype, scatter_indices.shape, 0)
+    count_shape = list(scatter_indices.shape)
+    count_shape[index_vector_dim] = 1
+    counts = broadcasted_iota(scatter_indices.dtype, tuple(count_shape), 0)
     scatter_indices = concatenate([counts, scatter_indices], index_vector_dim)
 
     update_window_dims = tuple(onp.add(1, dimension_numbers.update_window_dims))

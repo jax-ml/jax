@@ -556,6 +556,9 @@ class BatchingTest(jtu.JaxTestCase):
           (1, (10, 3, 5), onp.array([0, 2, 1]), lax.GatherDimensionNumbers(
             offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0,),
             index_vector_dim=1), (1, 3)),
+          (2, (10, 5, 3), onp.array([[0, 2], [1, 0]]), lax.GatherDimensionNumbers(
+            offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1),
+            index_vector_dim=1), (1, 3)),
       ]
       for rng_idx in [jtu.rand_int(max(shape))]
       for rng in [jtu.rand_default()])
@@ -651,10 +654,14 @@ class BatchingTest(jtu.JaxTestCase):
            lax.GatherDimensionNumbers(
                offset_dims=(1,), collapsed_slice_dims=(), start_index_map=(0,),
                index_vector_dim=1), (2,)),
-          (1, (10, 5,), onp.array([[0, 2, 1], [0, 3, 3]]).T,
+          (1, (10, 5), onp.array([[0, 2, 1], [0, 3, 3]]).T,
            lax.GatherDimensionNumbers(
                offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0,),
                index_vector_dim=1), (1, 3)),
+          (0, (10, 5), onp.array([[[0, 2], [1, 0]],
+                                  [[1, 2], [0, 3]]]), lax.GatherDimensionNumbers(
+            offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1),
+            index_vector_dim=1), (1, 3)),
       ]
       for rng_idx in [jtu.rand_int(max(shape))]
       for rng in [jtu.rand_default()])
@@ -726,6 +733,10 @@ class BatchingTest(jtu.JaxTestCase):
            lax.GatherDimensionNumbers(
                offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0,),
                index_vector_dim=1), (1, 3)),
+          (2, 0, (10, 5, 2), onp.array([[[0, 2], [1, 0]],
+                                        [[1, 0], [2, 0]]]), lax.GatherDimensionNumbers(
+            offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1),
+            index_vector_dim=1), (1, 3)),
       ]
       for rng_idx in [jtu.rand_int(max(shape))]
       for rng in [jtu.rand_default()])
