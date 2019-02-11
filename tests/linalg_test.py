@@ -68,6 +68,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                             check_dtypes=True, tol=1e-3)
     self._CompileAndCheck(np.linalg.cholesky, args_maker, check_dtypes=True)
 
+    jtu.check_grads(np.linalg.cholesky, args_maker(), 1, rtol=1e-1)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),

@@ -80,7 +80,7 @@ def cholesky_jvp_rule(primals, tangents):
   phi = lambda X: np.tril(X) / (1 + np.eye(x.shape[-1]))
   tmp = triangular_solve(L, sigma_dot,
                          left_side=False, transpose_a=True, lower=True)
-  L_dot = lax.dot(L, phi(triangular_solve(
+  L_dot = np.matmul(L, phi(triangular_solve(
       L, tmp, left_side=True, transpose_a=False, lower=True)))
   return L, L_dot
 
