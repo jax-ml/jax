@@ -37,3 +37,8 @@ def logpdf(x, a, b, loc=0, scale=1):
   log_probs = lax.sub(lax.add(shape_term, log_linear_term), lax.log(scale))
   return where(logical_or(lax.ge(x, lax.add(loc, scale)),
                           lax.le(x, loc)), -inf, log_probs)
+
+@_wraps(osp_stats.beta.pdf)
+def pdf(x, a, b, loc=0, scale=1):
+  return lax.exp(logpdf(x, a, b, loc, scale))
+

@@ -30,3 +30,7 @@ def logpdf(x, loc=0, scale=1):
   log_probs = lax.broadcast(fill_value, onp.shape(x))
   return where(logical_or(lax.ge(x, lax.add(loc, scale)),
                           lax.le(x, loc)), -inf, log_probs)
+
+@_wraps(osp_stats.uniform.pdf)
+def pdf(x, loc=0, scale=1):
+  return lax.exp(logpdf(x, loc, scale))
