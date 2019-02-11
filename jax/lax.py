@@ -2142,7 +2142,6 @@ def _gather_batching_rule(batched_args, batch_dims, dimension_numbers,
     return gather(operand, start_indices, dimension_numbers=dnums,
                   slice_sizes=slice_sizes), 0
 
-
 gather_p = standard_primitive(
     _gather_shape_rule, _gather_dtype_rule, 'gather',
     _gather_translation_rule)
