@@ -771,6 +771,28 @@ class BatchingTest(jtu.JaxTestCase):
     expected = onp.stack([f(a[:, i, :]) for i in range(a.shape[1])], axis=1)
     assert onp.all(ans == expected)
 
+  def testTranspose(self):
+    x = onp.arange(4 * 3 * 3).reshape((4, 3, 3))
+    ans = vmap(lambda x: x + x.T)(x)
+    expected = x + onp.swapaxes(x, -1, -2)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testTransposePermutation(self):
+    x = onp.arange(6 * 3 * 4 * 5).reshape((6, 3, 4, 5))
+    ans = vmap(lambda x: np.transpose(x, (1, 0, 2)))(x)
+    expected = onp.transpose(x, (0, 2, 1, 3))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    x = onp.arange(6 * 3 * 4 * 5).reshape((6, 3, 4, 5))
+    ans = vmap(lambda x: np.transpose(x, (1, 2, 0)))(x)
+    expected = onp.transpose(x, (0, 2, 3, 1))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    x = onp.arange(6 * 3 * 4 * 5).reshape((3, 4, 6, 5))
+    ans = vmap(lambda x: np.transpose(x, (1, 2, 0)), in_axes=2)(x)
+    expected = onp.transpose(x, (2, 1, 3, 0))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
 
 if __name__ == '__main__':
   absltest.main()
