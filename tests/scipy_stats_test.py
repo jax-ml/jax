@@ -102,6 +102,8 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
 
   # TODO: currently it ignores the argument "shapes" and only tests dim=4
   @genNamedParametersNArgs(3, jtu.rand_default())
+  # TODO(phawkins): enable when there is an LU implementation for GPU/TPU.
+  @jtu.skip_on_devices("gpu", "tpu")
   def testMultivariateNormalLogPdf(self, rng, shapes, dtypes):
     scipy_fun = osp_stats.multivariate_normal.logpdf
     lax_fun = lsp_stats.multivariate_normal.logpdf
