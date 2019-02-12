@@ -1722,7 +1722,7 @@ def _transpose_shape_rule(operand, permutation):
 def _transpose_batch_rule(batched_args, batch_dims, permutation):
   operand, = batched_args
   bdim, = batch_dims
-  perm = tuple(onp.insert(onp.add(permutation, 1), bdim, 0))
+  perm = (bdim,) + tuple(i if i < bdim else i+1 for i in permutation)
   return transpose(operand, perm), 0
 
 transpose_p = standard_primitive(_transpose_shape_rule, _input_dtype,
