@@ -139,13 +139,13 @@ def jaxpr_computation(jaxpr, const_vals, freevar_shapes, *arg_shapes):
     map(write, jaxpr.constvars, map(c.Constant, const_vals))
     map(write, jaxpr.freevars, map(c.ParameterWithShape, freevar_shapes))
   else:
-    map(write, tuple(jaxpr.constvars) + tuple(jaxpr.freevars), map(c.ParameterWithShape, freevar_shapes))
+    all_freevars = it.chain(jaxpr.constvars, jaxpr.freevars)
+    map(write, all_freevars, map(c.ParameterWithShape, freevar_shapes))
   map(write, jaxpr.invars, map(c.ParameterWithShape, arg_shapes))
   for eqn in jaxpr.eqns:
     in_nodes = map(read, eqn.invars)
     in_shapes = map(c.GetShape, in_nodes)
-    subcs = [jaxpr_computation(subjaxpr,
-                               [],
+    subcs = [jaxpr_computation(subjaxpr, (),
                                map(c.GetShape, map(read, const_bindings + freevar_bindings)),
                                *in_shapes)
              for subjaxpr, const_bindings, freevar_bindings
