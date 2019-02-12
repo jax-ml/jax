@@ -362,7 +362,7 @@ def linearize(traceable, *primals):
   lifted_jvp = partial(lift_linearized, jaxpr, consts, (in_trees, out_tree), out_pval)
   return out_primal_py, lifted_jvp
 
-def lift_linearized(jaxpr, consts, io_tree, out_pval, py_args):
+def lift_linearized(jaxpr, consts, io_tree, out_pval, *py_args):
   def fun(*args):
     primals = pack(args) # doesn't matter what these are-they'll be ignored
     tangents = pack(args)
