@@ -151,7 +151,7 @@ def jaxpr_computation(jaxpr, const_vals, freevar_shapes, *arg_shapes):
              for subjaxpr, const_bindings, freevar_bindings
              in eqn.bound_subjaxprs]
     subfuns = [(subc, tuple(map(read, const_bindings + freevar_bindings)))
-               for subc, (_, _, freevar_bindings)
+               for subc, (_, const_bindings, freevar_bindings)
                in zip(subcs, eqn.bound_subjaxprs)]
     ans = translation_rule(eqn.primitive)(c, *(subfuns + in_nodes), **eqn.params)
     out_nodes = xla_destructure(c, ans) if eqn.destructure else [ans]
