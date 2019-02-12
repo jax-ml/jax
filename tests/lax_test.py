@@ -1142,6 +1142,38 @@ class LaxTest(jtu.JaxTestCase):
     self.assertEqual(cloop(3, limit, 1), limit - 3)
     assert not effect[0]
 
+  def testWhileWithClosureJit(self):
+
+    def loop(init, local_limit, inc):
+
+      def loop_cond(state):
+        pos, _ = state
+        return lax.lt(pos, local_limit)
+
+      def loop_body(state):
+        effect[0] = True
+        pos, count = state
+        f = lambda pos, inc: (lax.add(pos, 1), lax.add(count, inc))
+        return api.jit(f)(pos, inc)
+
+      result = lax._while_loop(loop_cond, loop_body, (init, 0))
+      _, count = result
+      return count
+
+    cloop = api.jit(loop)
+
+    limit = 10
+    effect = [False]
+    self.assertEqual(loop(2, limit, 1), limit - 2)
+    assert effect[0]
+    effect[0] = False
+    self.assertEqual(cloop(2, limit, 1), limit - 2)
+    assert effect[0]
+    effect[0] = False
+    self.assertEqual(cloop(2, limit, 1), limit - 2)
+    self.assertEqual(cloop(3, limit, 1), limit - 3)
+    assert not effect[0]
+
   def testNestedWhileWithDynamicUpdateSlice(self):
     num = 5
 
