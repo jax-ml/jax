@@ -34,7 +34,10 @@ from jaxlib import lapack
 
 # traceables
 
-def cholesky(x): return cholesky_p.bind(x)
+def cholesky(x, symmetrize_input=True):
+  if symmetrize_input:
+    x = symmetrize(x)
+  return cholesky_p.bind(x)
 
 def eigh(x, lower=True): return eigh_p.bind(x, lower=lower)
 
@@ -60,8 +63,9 @@ def triangular_solve(a, b, left_side=False, lower=False, transpose_a=False,
 
 # utilities
 
-def _T(x):
-  return np.swapaxes(x, -1, -2)
+def _T(x): return np.swapaxes(x, -1, -2)
+def _H(x): return np.conj(_T(x))
+def symmetrize(x): return (x + _H(x)) / 2
 
 
 # primitives
@@ -76,11 +80,10 @@ def cholesky_jvp_rule(primals, tangents):
   L = cholesky_p.bind(x)
 
   # Forward-mode rule from https://arxiv.org/pdf/1602.07527.pdf
-  sigma_dot = (sigma_dot + _T(sigma_dot)) / 2
-  phi = lambda X: np.tril(X) / (1 + np.eye(x.shape[-1]))
+  phi = lambda X: np.tril(X) / (1 + np.eye(X.shape[-1], dtype=X.dtype))
   tmp = triangular_solve(L, sigma_dot,
                          left_side=False, transpose_a=True, lower=True)
-  L_dot = np.matmul(L, phi(triangular_solve(
+  L_dot = lax.batch_matmul(L, phi(triangular_solve(
       L, tmp, left_side=True, transpose_a=False, lower=True)))
   return L, L_dot
 
