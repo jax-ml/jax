@@ -93,7 +93,7 @@ def det(a):
 
 
 @_wraps(onp.linalg.eigh)
-def eigh(a, UPLO=None):
+def eigh(a, UPLO=None, symmetrize=True):
   if UPLO is None or UPLO == "L":
     lower = True
   elif UPLO == "U":
@@ -103,7 +103,7 @@ def eigh(a, UPLO=None):
     raise ValueError(msg)
 
   a = _promote_arg_dtypes(np.asarray(a))
-  v, w = lax_linalg.eigh(a, lower=lower)
+  v, w = lax_linalg.eigh(a, lower=lower, symmetrize=symmetrize)
   return w, v
 
 

@@ -132,13 +132,38 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
     a, = args_maker()
     a = (a + onp.conj(a.T)) / 2
-    w, v = np.linalg.eigh(onp.tril(a) if lower else onp.triu(a), UPLO=uplo)
-
+    w, v = np.linalg.eigh(onp.tril(a) if lower else onp.triu(a),
+                          UPLO=uplo, symmetrize=False)
     self.assertTrue(norm(onp.eye(n) - onp.matmul(onp.conj(T(v)), v)) < 5)
     self.assertTrue(norm(onp.matmul(a, v) - w * v) < 30)
 
     self._CompileAndCheck(partial(np.linalg.eigh, UPLO=uplo), args_maker,
                           check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_shape={}_lower={}".format(jtu.format_shape_dtype_string(shape, dtype),
+                                   lower),
+       "shape": shape, "dtype": dtype, "rng": rng, "lower":lower}
+      for shape in [(1, 1), (4, 4), (5, 5), (50, 50)]
+      for dtype in float_types() | complex_types()
+      for rng in [jtu.rand_default()]
+      for lower in [True, False]))
+  # TODO(phawkins): enable when there is an eigendecomposition implementation
+  # for GPU/TPU.
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testEighGrad(self, shape, dtype, rng, lower):
+    if not hasattr(lapack, "jax_syevd"):
+      self.skipTest("No symmetric eigendecomposition implementation available")
+    uplo = "L" if lower else "U"
+    a = rng(shape, dtype)
+    a = (a + onp.conj(a.T)) / 2
+    a = onp.tril(a) if lower else onp.triu(a)
+    # Gradient checks will fail without symmetrization as the eigh jvp rule
+    # is only correct for tangents in the symmetric subspace, whereas the
+    # checker checks against unconstrained (co)tangents.
+    f = partial(np.linalg.eigh, UPLO=uplo, symmetrize=True)
+    jtu.check_grads(f, (a,), 2, rtol=1e-1)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_ord={}_axis={}_keepdims={}".format(

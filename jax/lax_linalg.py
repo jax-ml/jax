@@ -39,7 +39,10 @@ def cholesky(x, symmetrize_input=True):
     x = symmetrize(x)
   return cholesky_p.bind(x)
 
-def eigh(x, lower=True): return eigh_p.bind(x, lower=lower)
+def eigh(x, lower=True, symmetrize=True):
+  if symmetrize:
+    x = (x + _H(x)) / 2  # orthogonal projection onto self-adjoint matrices
+  return eigh_p.bind(x, lower=lower)
 
 def lu(x): return lu_p.bind(x)
 
@@ -146,10 +149,34 @@ def eigh_cpu_translation_rule(c, operand, lower):
     raise NotImplementedError(
         "Only unbatched eigendecomposition is implemented on CPU")
 
+def eigh_jvp_rule(primals, tangents, lower):
+  # Derivative for eigh in the simplest case of distinct eigenvalues.
+  # Simple case from https://people.maths.ox.ac.uk/gilesm/files/NA-08-01.pdf
+  # The general solution treating the case of degenerate eigenvalues is
+  # considerably more complicated. Ambitious readers may refer to the general
+  # methods at:
+  # https://www.win.tue.nl/analysis/reports/rana06-33.pdf and
+  # https://people.orie.cornell.edu/aslewis/publications/99-clarke.pdf
+  a, = primals
+  a_dot, = tangents
+  v, w = eigh_p.bind((a + _H(a)) / 2.0, lower=lower)
+  # for complex numbers we need eigenvalues to be full dtype of v, a:
+  w = w.astype(a.dtype)
+  eye_n = np.eye(a.shape[-1], dtype=a.dtype)
+  # carefully build reciprocal delta-eigenvalue matrix, avoiding NaNs.
+  Fmat = np.reciprocal(eye_n + w - w[..., np.newaxis]) - eye_n
+  # eigh impl doesn't support batch dims, but future-proof the grad.
+  dot = lax.dot if a.ndim == 2 else lax.batch_matmul
+  vdag_adot_v = dot(dot(_H(v), a_dot), v)
+  dv = dot(v, np.multiply(Fmat, vdag_adot_v))
+  dw = np.diagonal(np.multiply(eye_n, vdag_adot_v))
+  return core.pack((v, w)), core.pack((dv, dw))
+
 eigh_p = Primitive('eigh')
 eigh_p.def_impl(eigh_impl)
 eigh_p.def_abstract_eval(eigh_abstract_eval)
 xla.translations[eigh_p] = eigh_translation_rule
+ad.primitive_jvps[eigh_p] = eigh_jvp_rule
 xla.backend_specific_translations['Host'][eigh_p] = eigh_cpu_translation_rule
 
 
