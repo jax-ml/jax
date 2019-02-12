@@ -135,19 +135,22 @@ def jaxpr_computation(jaxpr, const_vals, freevar_shapes, *arg_shapes):
   env = {}
   consts_env = dict(zip(jaxpr.constvars, const_vals))
   write(core.unitvar, c.Tuple())
-  map(write, jaxpr.constvars, map(c.Constant, const_vals))
-  map(write, jaxpr.freevars, map(c.ParameterWithShape, freevar_shapes))
+  if const_vals:
+    map(write, jaxpr.constvars, map(c.Constant, const_vals))
+    map(write, jaxpr.freevars, map(c.ParameterWithShape, freevar_shapes))
+  else:
+    map(write, tuple(jaxpr.constvars) + tuple(jaxpr.freevars), map(c.ParameterWithShape, freevar_shapes))
   map(write, jaxpr.invars, map(c.ParameterWithShape, arg_shapes))
   for eqn in jaxpr.eqns:
     in_nodes = map(read, eqn.invars)
     in_shapes = map(c.GetShape, in_nodes)
     subcs = [jaxpr_computation(subjaxpr,
-                               [consts_env[b] for b in const_bindings],
-                               map(c.GetShape, map(read, freevar_bindings)),
+                               [],
+                               map(c.GetShape, map(read, const_bindings + freevar_bindings)),
                                *in_shapes)
              for subjaxpr, const_bindings, freevar_bindings
              in eqn.bound_subjaxprs]
-    subfuns = [(subc, tuple(map(read, freevar_bindings)))
+    subfuns = [(subc, tuple(map(read, const_bindings + freevar_bindings)))
                for subc, (_, _, freevar_bindings)
                in zip(subcs, eqn.bound_subjaxprs)]
     ans = translation_rule(eqn.primitive)(c, *(subfuns + in_nodes), **eqn.params)
