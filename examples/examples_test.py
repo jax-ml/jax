@@ -82,7 +82,8 @@ class ExamplesTest(jtu.JaxTestCase):
     xs = rng.randn(n, d)
     ys = np.dot(xs, truth)
     kernel = lambda x, y: np.dot(x, y)
-    assert np.all(kernel_lsq.gram(kernel, xs) == np.dot(xs, xs.T))
+    self.assertAllClose(kernel_lsq.gram(kernel, xs), np.dot(xs, xs.T),
+                        check_dtypes=False)
 
   def testKernelRegressionTrainAndPredict(self):
     # TODO(frostig): reenable this test.
@@ -94,7 +95,8 @@ class ExamplesTest(jtu.JaxTestCase):
     ys = np.dot(xs, truth)
     kernel = lambda x, y: np.dot(x, y)
     predict = kernel_lsq.train(kernel, xs, ys)
-    assert np.allclose(predict(xs), ys, atol=1e-3)
+    self.assertAllClose(predict(xs), ys, atol=1e-3, rtol=1e-3,
+                        check_dtypes=False)
 
 
 if __name__ == "__main__":

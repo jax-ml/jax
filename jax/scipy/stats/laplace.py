@@ -29,3 +29,7 @@ def logpdf(x, loc=0, scale=1):
   two = _constant_like(x, 2)
   linear_term = lax.div(lax.abs(lax.sub(x, loc)), scale)
   return lax.neg(lax.add(linear_term, lax.log(lax.mul(two, scale))))
+
+@_wraps(osp_stats.laplace.pdf)
+def pdf(x, loc=0, scale=1):
+  return lax.exp(logpdf(x, loc, scale))

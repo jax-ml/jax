@@ -31,3 +31,7 @@ def logpdf(x, loc=0, scale=1):
   log_normalizer = lax.log(lax.mul(_constant_like(x, 2 * onp.pi), scale_sqrd))
   quadratic = lax.div(lax.pow(lax.sub(x, loc), two), scale_sqrd)
   return lax.div(lax.neg(lax.add(log_normalizer, quadratic)), two)
+
+@_wraps(osp_stats.norm.pdf)
+def pdf(x, loc=0, scale=1):
+  return lax.exp(logpdf(x, loc, scale))
