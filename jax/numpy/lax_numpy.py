@@ -146,11 +146,16 @@ def _promote_dtypes(*args):
   if len(args) < 2:
     return args
   else:
-    from_dtypes = (x if type(x) in (int, float, complex) else _dtype(x)
+    from_dtypes = (x if type(x) in _builtin_numeric_types else _dtype(x)
                    for x in args)
     to_dtype = xla_bridge.canonicalize_dtype(result_type(*from_dtypes))
     return [lax.convert_element_type(x, to_dtype)
             if _dtype(x) != to_dtype else x for x in args]
+
+if six.PY3:
+  _builtin_numeric_types = (int, float, complex)
+else:
+  _builtin_numeric_types = (int, float, long, complex)
 
 def _promote_to_result_dtype(op, *args):
   """Convenience function to promote args directly to the op's result dtype."""
