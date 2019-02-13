@@ -89,7 +89,6 @@ if __name__ == "__main__":
   num_epochs = 100
   batch_size = 32
   nrow, ncol = 10, 10  # sampled image grid size
-  rng = random.PRNGKey(0)
 
   test_rng = random.PRNGKey(1)  # fixed prng key for evaluation
   imfile = os.path.join(os.getenv("TMPDIR", "/tmp/"), "mnist_vae_{:03d}.png")
@@ -111,17 +110,13 @@ if __name__ == "__main__":
 
   @jit
   def run_epoch(rng, opt_state):
-    def body_fun(i, loop_carry):
-      (rng, opt_state, images) = loop_carry
-      rng, elbo_rng, data_rng = random.split(rng, 3)
-      batch = binarize_batch(data_rng, i, images)
+    def body_fun(i, opt_state):
+      elbo_rng, data_rng = random.split(random.fold_in(rng, i))
+      batch = binarize_batch(data_rng, i, train_images)
       loss = lambda params: -elbo(elbo_rng, params, batch) / batch_size
       g = grad(loss)(optimizers.get_params(opt_state))
-      loop_carry = rng, opt_update(i, g, opt_state), images
-      return loop_carry
-    init_val = rng, opt_state, train_images
-    _, opt_state, _ =  lax.fori_loop(0, num_batches, body_fun, init_val)
-    return opt_state
+      return opt_update(i, g, opt_state)
+    return lax.fori_loop(0, num_batches, body_fun, opt_state)
 
   @jit
   def evaluate(opt_state, images):
@@ -135,8 +130,7 @@ if __name__ == "__main__":
   opt_state = opt_init(init_params)
   for epoch in range(num_epochs):
     tic = time.time()
-    rng, epoch_rng = random.split(rng)
-    opt_state = run_epoch(epoch_rng, opt_state)
+    opt_state = run_epoch(random.PRNGKey(epoch), opt_state)
     test_elbo, sampled_images = evaluate(opt_state, test_images)
     print("{: 3d} {} ({:.3f} sec)".format(epoch, test_elbo, time.time() - tic))
     plt.imsave(imfile.format(epoch), sampled_images, cmap=plt.cm.gray)

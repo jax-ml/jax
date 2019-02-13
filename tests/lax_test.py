@@ -1064,7 +1064,7 @@ class LaxTest(jtu.JaxTestCase):
       return (lax.add(pos, 1), lax.add(count, 1))
 
     def loop(init):
-      result = lax._while_loop(loop_cond, loop_body, (init, 0))
+      result = lax.while_loop(loop_cond, loop_body, (init, 0))
       _, count = result
       return count
 
@@ -1087,7 +1087,7 @@ class LaxTest(jtu.JaxTestCase):
         return (num, lax.add(i, 1), inner_loop(i, count))
 
       init_val = (num, 0, 0)
-      _, i, count = lax._while_loop(cond_fun, body_fun, init_val)
+      _, i, count = lax.while_loop(cond_fun, body_fun, init_val)
       return (i, count)
 
     def inner_loop(i, count):  # pylint: disable=missing-docstring
@@ -1100,7 +1100,7 @@ class LaxTest(jtu.JaxTestCase):
         return (i, lax.add(j, 1), lax.add(count, 1))
 
       init_val = (i, 0, count)
-      _, _, count = lax._while_loop(cond_fun, body_fun, init_val)
+      _, _, count = lax.while_loop(cond_fun, body_fun, init_val)
       return count
 
     cloop = api.jit(outer_loop)
@@ -1124,7 +1124,7 @@ class LaxTest(jtu.JaxTestCase):
         pos, count = state
         return (lax.add(pos, 1), lax.add(count, inc))
 
-      result = lax._while_loop(loop_cond, loop_body, (init, 0))
+      result = lax.while_loop(loop_cond, loop_body, (init, 0))
       _, count = result
       return count
 
@@ -1156,7 +1156,7 @@ class LaxTest(jtu.JaxTestCase):
         f = lambda pos, inc: (lax.add(pos, 1), lax.add(count, inc))
         return api.jit(f)(pos, inc)
 
-      result = lax._while_loop(loop_cond, loop_body, (init, 0))
+      result = lax.while_loop(loop_cond, loop_body, (init, 0))
       _, count = result
       return count
 
@@ -1193,7 +1193,7 @@ class LaxTest(jtu.JaxTestCase):
 
       out = onp.zeros(arr.shape, dtype=arr.dtype)
       init_val = (0, num, arr, out)
-      _, _, _, out = lax._while_loop(cond_fun, body_fun, init_val)
+      _, _, _, out = lax.while_loop(cond_fun, body_fun, init_val)
       return out
 
     def inner_loop(i, arr, out):  # pylint: disable=missing-docstring
@@ -1210,7 +1210,7 @@ class LaxTest(jtu.JaxTestCase):
         return (i, lax.add(j, 1), arr, out)
 
       init_val = (i, 0, arr, out)
-      _, _, _, out = lax._while_loop(cond_fun, body_fun, init_val)
+      _, _, _, out = lax.while_loop(cond_fun, body_fun, init_val)
       return out
 
     cloop = api.jit(outer_loop)
@@ -1231,7 +1231,7 @@ class LaxTest(jtu.JaxTestCase):
         return (arr, num, lax.add(i, 1), lax.add(total, arr_i))
 
       init_val = (arr, num, 0, 0.)
-      _, _, _, total = lax._while_loop(cond_fun, body_fun, init_val)
+      _, _, _, total = lax.while_loop(cond_fun, body_fun, init_val)
       return total
 
     cfun = api.jit(sum_first_n)

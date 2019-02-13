@@ -153,6 +153,11 @@ class LaxRandomTest(jtu.JaxTestCase):
     x = random.randint(random.PRNGKey(10003), (), 0, 0)
     assert x == 0
 
+  def testFoldIn(self):
+    key = random.PRNGKey(0)
+    keys = [random.fold_in(key, i) for i in range(10)]
+    assert onp.unique(onp.ravel(keys)).shape == (20,)
+
 
 if __name__ == "__main__":
   absltest.main()
