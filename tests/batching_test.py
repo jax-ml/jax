@@ -793,6 +793,23 @@ class BatchingTest(jtu.JaxTestCase):
     expected = onp.transpose(x, (2, 1, 3, 0))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testIssue354(self):
+    psd_mat = onp.random.randn(20, 10)
+    psd_mat = psd_mat.T.dot(psd_mat)
+    vec = onp.random.randn(10)
+
+    def f(scale):
+      scaled_mat = scale * psd_mat
+      chol = np.linalg.cholesky(scaled_mat)
+      return -0.5 * np.sum((np.einsum('ij,j->i', chol, vec))**2)
+    vmapped_f = vmap(f)
+    vmapped_f_grad = grad(lambda x: np.sum(vmapped_f(x)))
+
+    scales = onp.array([[0.1], [0.2], [0.3], [0.4], [0.5]])
+    ans = vmapped_f_grad(scales)  # don't crash!
+    expected = onp.stack([grad(f)(scale) for scale in scales])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
 
 if __name__ == '__main__':
   absltest.main()

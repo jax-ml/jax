@@ -33,7 +33,6 @@ _EXPERIMENTAL_WARNING = "numpy.linalg support is experimental and may cause sile
 _T = lambda x: np.swapaxes(x, -1, -2)
 
 
-
 def _promote_arg_dtypes(*args):
   """Promotes `args` to a common inexact type."""
   def _to_inexact_type(type):
@@ -45,7 +44,6 @@ def _promote_arg_dtypes(*args):
     return args[0]
   else:
     return args
-
 
 
 @_wraps(onp.linalg.cholesky)
