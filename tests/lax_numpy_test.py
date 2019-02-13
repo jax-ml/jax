@@ -1210,6 +1210,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     x = lnp.full((1, 1), lnp.array([1])[0])  # doesn't crash
     self.assertEqual(x[0, 0], 1)
 
+  def testScalarDtypePromotion(self):
+    orig_numpy_result = (1 + onp.eye(1, dtype=onp.float32)).dtype
+    jax_numpy_result = (1 + lnp.eye(1, dtype=lnp.float32)).dtype
+    self.assertEqual(orig_numpy_result, jax_numpy_result)
+
 
 if __name__ == "__main__":
   absltest.main()
