@@ -415,7 +415,7 @@ def sort_key_val(keys, values, dimension=-1):
   sorted_keys, sorted_values = result
   return sorted_keys, sorted_values
 
-def _while_loop(cond_fun, body_fun, init_val):
+def while_loop(cond_fun, body_fun, init_val):
   init_val_flat, in_tree = pytree_to_jaxtupletree(init_val)
   flat_body_fun, out_tree = pytree_fun_to_jaxtupletree_fun(lu.wrap_init(body_fun), (in_tree,))
   flat_cond_fun, _ = pytree_fun_to_jaxtupletree_fun(lu.wrap_init(cond_fun), (in_tree,))
@@ -618,7 +618,7 @@ def fori_loop(lower, upper, body_fun, init_val):
   """
   # state: (upper limit, index, loop value)
   # The `lt` and `add` functions are added to the namespace programmatically.
-  _, _, result = _while_loop(
+  _, _, result = while_loop(
       lambda upper_i_x: lt(upper_i_x[1], upper_i_x[0]),
       lambda upper_i_x: (upper_i_x[0],
                          add(upper_i_x[1], onp.array(1, _dtype(upper_i_x[1]))),
@@ -3339,7 +3339,7 @@ def subvals(lst, replace):
 
 
 def _abstractify(x):
-  # abstractify wrapper used internally for primitives like _while_loop
+  # abstractify wrapper used internally for primitives like while_loop
   if isinstance(x, core.Tracer):
     return pe.PartialVal((xla.abstractify(x.aval), core.unit))
   else:

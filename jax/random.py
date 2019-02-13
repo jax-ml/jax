@@ -143,18 +143,34 @@ def threefry_2x32(keypair, count):
 
 @partial(jit, static_argnums=(1,))
 def split(key, num=2):
-  """Splits a PRNG key pair of 32bit unsigned integers into `num` new key pairs.
+  """Splits a PRNG key into `num` new keys by adding a leading axis.
 
   Args:
-    key: a PRNGKey used as the random key.
+    key: a PRNGKey (an array with shape (2,) and dtype uint32).
     num: optional, a positive integer indicating the number of keys to produce
       (default 2).
 
   Returns:
-    A tuple of length `num` of new PRNGKey instances.
+    An array with shape (num, 2) and dtype uint32 representing `num` new keys.
   """
   counts = lax.tie_in(key, lax.iota(onp.uint32, num * 2))
   return lax.reshape(threefry_2x32(key, counts), (num, 2))
+
+
+@partial(jit, static_argnums=(1,))
+def fold_in(key, data):
+  """Folds in data to a PRNG key to form a new PRNG key.
+
+  Args:
+    key: a PRNGKey (an array with shape (2,) and dtype uint32).
+    data: an integer representing data to be folded in to the key.
+
+  Returns:
+    A new PRNGKey that is a deterministic function of the inputs and is
+    statistically safe for producing a stream of new pseudo-random values.
+  """
+  key2 = lax.tie_in(key, PRNGKey(data))
+  return threefry_2x32(key, key2)
 
 
 def _random_bits(key, bit_width, shape):
