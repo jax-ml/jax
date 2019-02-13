@@ -326,8 +326,8 @@ logical_xor = _logical_op(onp.logical_xor, lax.bitwise_xor)
 
 @_wraps(onp.true_divide)
 def true_divide(x1, x2):
-  x1, x2 = _promote_shapes(x1, x2)
   result_dtype = _result_dtype(onp.true_divide, x1, x2)
+  x1, x2 = _promote_shapes(x1, x2)
   return lax.div(lax.convert_element_type(x1, result_dtype),
                  lax.convert_element_type(x2, result_dtype))
 
@@ -390,7 +390,7 @@ def _float_divmod(x1, x2):
 
 @_wraps(onp.logaddexp)
 def logaddexp(x1, x2):
-  x1, x2 = _promote_to_result_dtype(onp.logaddexp, *_promote_shapes(x1, x2))
+  x1, x2 = _promote_shapes(*_promote_to_result_dtype(onp.logaddexp, x1, x2))
   amax = lax.max(x1, x2)
   return lax.add(amax, lax.log(lax.add(lax.exp(lax.sub(x1, amax)),
                                        lax.exp(lax.sub(x2, amax)))))
@@ -398,7 +398,7 @@ def logaddexp(x1, x2):
 
 @_wraps(onp.logaddexp2)
 def logaddexp2(x1, x2):
-  x1, x2 = _promote_to_result_dtype(onp.logaddexp2, *_promote_shapes(x1, x2))
+  x1, x2 = _promote_shapes(*_promote_to_result_dtype(onp.logaddexp2, x1, x2))
   amax = lax.max(x1, x2)
   return lax.add(amax, log2(lax.add(exp2(lax.sub(x1, amax)),
                                     exp2(lax.sub(x2, amax)))))
