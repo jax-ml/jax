@@ -146,7 +146,8 @@ def _promote_dtypes(*args):
   if len(args) < 2:
     return args
   else:
-    from_dtypes = (x if type(x) in (int, float) else _dtype(x) for x in args)
+    from_dtypes = (x if type(x) in (int, float, long, complex) else _dtype(x)
+                   for x in args)
     to_dtype = xla_bridge.canonicalize_dtype(result_type(*from_dtypes))
     return [lax.convert_element_type(x, to_dtype)
             if _dtype(x) != to_dtype else x for x in args]
