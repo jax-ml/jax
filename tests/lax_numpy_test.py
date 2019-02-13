@@ -1215,6 +1215,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jax_numpy_result = (1 + lnp.eye(1, dtype=lnp.float32)).dtype
     self.assertEqual(orig_numpy_result, jax_numpy_result)
 
+  def testSymmetrizeDtypePromotion(self):
+    x = onp.eye(3, dtype=onp.float32)
+    orig_numpy_result = ((x + x.T) / 2).dtype
+
+    x = lnp.eye(3, dtype=lnp.float32)
+    jax_numpy_result = ((x + x.T) / 2).dtype
+    self.assertEqual(orig_numpy_result, jax_numpy_result)
+
 
 if __name__ == "__main__":
   absltest.main()
