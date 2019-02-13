@@ -30,6 +30,10 @@ from jax.experimental import lapax
 from jax.config import config
 config.parse_flags_with_absl()
 
+# Primitive 
+
+_cpu_lapack_types = [onp.float32, onp.float64]
+
 class LapaxTest(jtu.JaxTestCase):
 
   def testSolveLowerTriangularVec(self):
@@ -144,7 +148,7 @@ class LapaxTest(jtu.JaxTestCase):
       for lhs_shape, rhs_shape in [
           ((2, 4, 4), (2, 4, 6) if left else (2, 6, 4)),
       ]
-      for dtype in [onp.float32, onp.float64]
+      for dtype in _cpu_lapack_types
       for rng in [jtu.rand_default()]))
   def testSolveTriangular(self, lower, left_side, transpose_a, lhs_shape,
                           rhs_shape, dtype, rng):
@@ -179,7 +183,7 @@ class LapaxTest(jtu.JaxTestCase):
       for lhs_shape, rhs_shape in [
           ((2, 8, 8), (2, 8, 10) if left else (2, 10, 8)),
       ]
-      for dtype in [onp.float32, onp.float64]
+      for dtype in _cpu_lapack_types
       for rng in [jtu.rand_default()]))
   def testSolveTriangularBlocked(self, lower, left_side, transpose_a, lhs_shape,
                                  rhs_shape, dtype, rng):
