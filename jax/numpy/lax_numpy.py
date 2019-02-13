@@ -146,11 +146,10 @@ def _promote_dtypes(*args):
   if len(args) < 2:
     return args
   else:
-    from_dtypes = (_dtype(x) for x in args)
+    from_dtypes = (x if type(x) in (int, float) else _dtype(x) for x in args)
     to_dtype = xla_bridge.canonicalize_dtype(result_type(*from_dtypes))
     return [lax.convert_element_type(x, to_dtype)
             if _dtype(x) != to_dtype else x for x in args]
-
 
 def _promote_to_result_dtype(op, *args):
   """Convenience function to promote args directly to the op's result dtype."""
@@ -1775,7 +1774,7 @@ def take(a, indices, axis=None, out=None, mode=None):
     # TODO(phawkins): we have no way to report out of bounds errors yet.
     raise NotImplementedError("The 'raise' mode to np.take is not supported.")
   elif mode == "wrap":
-    indices = mod(indices, a.shape[axis])
+    indices = mod(indices, onp.array(a.shape[axis], _dtype(indices)))
   elif mode != "clip" and mode is not None:
     raise ValueError("Invalid mode '{}' for np.take".format(mode))
 
@@ -1834,7 +1833,7 @@ def _rewriting_take(arr, idx, axis=0):
   if isinstance(abstract_idx, ConcreteArray) and _int(abstract_idx):
     return lax.index_in_dim(arr, idx, axis, False)
   elif isinstance(abstract_idx, ShapedArray) and _int(abstract_idx):
-    idx = mod(idx, arr.shape[axis])
+    idx = mod(idx, onp.array(arr.shape[axis], _dtype(idx)))
     return lax.dynamic_index_in_dim(arr, idx, axis, False)
 
   # Handle slice index (only static, otherwise an error is raised)
@@ -1903,7 +1902,8 @@ def _rewriting_take(arr, idx, axis=0):
       # The indexer is just a single integer array.
       idx = [idx]
 
-    flat_idx = tuple([mod(ravel(x), arr.shape[i]) for i, x in enumerate(idx)])
+    flat_idx = tuple([mod(ravel(x), onp.array(arr.shape[i], _dtype(x)))
+                      for i, x in enumerate(idx)])
     # TODO(mattjj): if we instead lower directly to lax.gather, we can probably
     # eliminate the reshape here.
     out = lax.index_take(arr, flat_idx, tuple(range(len(idx))))
@@ -1921,7 +1921,7 @@ def _rewriting_take(arr, idx, axis=0):
     idx_advanced, axes = zip(*advanced_pairs)
     idx_advanced = broadcast_arrays(*idx_advanced)
 
-    flat_idx = tuple(mod(ravel(x), arr_sliced.shape[i])
+    flat_idx = tuple(mod(ravel(x), onp.array(arr_sliced.shape[i], _dtype(x)))
                      for i, x in zip(axes, idx_advanced))
     # TODO(mattjj): if we instead lower directly to lax.gather, we can probably
     # eliminate the reshape here.
