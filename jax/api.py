@@ -664,3 +664,23 @@ def check_scalar(x):
       raise TypeError(msg(x))
   except TypeError:
     raise TypeError(msg(x))
+
+
+def primitive(fun):
+  name = getattr(fun, '__name__', '<unnamed user primitive>')
+  fun_p = core.Primitive(name)
+  fun_p.def_impl(fun)
+
+  # generic transformation implementations that rely on traceability of `fun`
+  fun_p.def_abstract_eval(partial(pe.abstract_eval_fun, fun))
+  xla.translations[fun_p] = partial(xla.lower_fun, fun)
+  ad.primitive_jvps[fun_p] = partial(jvp, fun)
+  # TODO(mattjj): batching
+
+  @wraps(fun)
+  def traceable(*args, **kwargs):
+    # TODO(mattjj): pytrees to jaxtupletrees
+    return fun_p.bind(*args, **kwargs)
+  traceable.primitive = fun_p
+
+  return traceable
