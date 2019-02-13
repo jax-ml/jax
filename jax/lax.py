@@ -831,10 +831,12 @@ standard_binop = partial(binop, _input_dtype)
 # a broadcast). but saving the shape info with the primitives isn't great either
 # because then we can't trace these ops without shape data.
 def _brcast(x, *others):
-  # used in jvprules to make binop broadcasting explicit for transposability.
-  # requires shape info during jvp tracing, which isn't strictly necessary.
-  shapes = list(filter(None, map(onp.shape, (x,) + others)))
-  shape = tuple(shapes and onp.max(shapes, axis=0))
+  # Used in jvprules to make binop broadcasting explicit for transposability.
+  # Requires shape info during jvp tracing, which isn't strictly necessary.
+  # We don't need full numpy broadcasting, but otherwise the logic is the same
+  # so we reuse the broadcast_shapes function after filtering out scalars.
+  shapes = tuple(filter(None, map(onp.shape, (x,) + others)))
+  shape = shapes and broadcast_shapes(*shapes)
   if onp.shape(x) != shape:
     return _brcast_to(x, shape)
   else:
@@ -1355,10 +1357,6 @@ def _dot_general_shape_rule(lhs, rhs, dimension_numbers):
     msg = ("dot_general requires rhs batch dimensions to precede contracting "
            "and non-contracting dimensions, got rhs_batch {}.")
     raise TypeError(msg.format(rhs_batch))
-  if not len(lhs_contracting) == len(rhs_contracting) == 1:
-    msg = ("dot_general accepts exactly one lhs_contracting and "
-           "rhs_contracting dimension, got {} and {}.")
-    raise TypeError(msg.format(lhs_contracting, rhs_contracting))
   lhs_contracting_shape = onp.take(lhs.shape, lhs_contracting)
   rhs_contracting_shape = onp.take(rhs.shape, rhs_contracting)
   if not onp.all(onp.equal(lhs_contracting_shape, rhs_contracting_shape)):
