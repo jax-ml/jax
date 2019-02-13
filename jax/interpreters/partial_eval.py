@@ -116,6 +116,13 @@ def partial_eval_wrapper(avals, *consts, **kwargs):
   yield out, (out_pv, jaxpr, env)
 
 
+def abstract_eval_fun(fun, *avals, **params):
+  pvs_in = [PartialVal((a, unit)) for a in avals]
+  _, pvout, _ = trace_unwrapped_to_jaxpr(fun, pvs_in, **params)
+  aval_out, _ = pvout
+  return aval_out
+
+
 class JaxprTracer(Tracer):
   __slots__ = ['pval', 'recipe']
 

@@ -35,7 +35,8 @@ from ..abstract_arrays import ConcreteArray, ShapedArray, make_shaped_array, arr
 from ..core import AbstractTuple, JaxTuple, pack, valid_jaxtype
 from ..util import partial, partialmethod, memoize, unzip2, concatenate, safe_map, prod
 from ..lib import xla_bridge as xb
-from .partial_eval import trace_to_subjaxpr, merge_pvals, JaxprTrace, PartialVal
+from .partial_eval import (trace_to_subjaxpr, trace_unwrapped_to_jaxpr,
+                           merge_pvals, JaxprTrace, PartialVal)
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_device_values',
@@ -173,6 +174,15 @@ def translation_rule(p):
   except KeyError:
     raise NotImplementedError(
         "XLA translation rule for '{}' not implemented".format(p))
+
+
+def lower_fun(fun, c, *xla_args, **params):
+  xla_shapes = map(c.GetShape, xla_args)
+  avals = map(aval_from_xla_shape, xla_shapes)
+  pvals = [PartialVal((a, core.unit)) for a in avals]
+  jaxpr, pvout, consts = trace_unwrapped_to_jaxpr(fun, pvals, **params)
+  built_c = jaxpr_computation(jaxpr, consts, (), *xla_shapes)
+  return c.Call(built_c, xla_args)
 
 
 translations = {}
