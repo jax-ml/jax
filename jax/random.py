@@ -40,7 +40,7 @@ def PRNGKey(seed):
   """Create a psuedo-random number generator (PRNG) key given an integer seed.
 
   Args:
-    seed: a 64- or 32-bit integer type used as the value of the key.
+    seed: a 64- or 32-bit integer used as the value of the key.
 
   Returns:
     A PRNG key, which is modeled as an array of shape (2,) and dtype uint32. The
