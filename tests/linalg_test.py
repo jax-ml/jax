@@ -172,12 +172,12 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       {"testcase_name":
        "_shape={}_lower={}".format(jtu.format_shape_dtype_string(shape, dtype),
                                    lower),
-       "shape": shape, "dtype": dtype, "rng": rng, "lower":lower}
+       "shape": shape, "dtype": dtype, "rng": rng, "lower":lower, "eps":eps}
       for shape in [(1, 1), (4, 4), (5, 5), (50, 50)]
       for dtype in complex_types()
       for rng in [jtu.rand_default()]
-      for lower in [True, False])
-      for eps in [1e-4])
+      for lower in [True, False]
+      for eps in [1e-4]))
   # TODO(phawkins): enable when there is an eigendecomposition implementation
   # for GPU/TPU.
   @jtu.skip_on_devices("gpu", "tpu")
