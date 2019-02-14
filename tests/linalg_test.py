@@ -133,7 +133,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     a, = args_maker()
     a = (a + onp.conj(a.T)) / 2
     w, v = np.linalg.eigh(onp.tril(a) if lower else onp.triu(a),
-                          UPLO=uplo, symmetrize=False)
+                          UPLO=uplo, symmetrize_input=False)
     self.assertTrue(norm(onp.eye(n) - onp.matmul(onp.conj(T(v)), v)) < 5)
     self.assertTrue(norm(onp.matmul(a, v) - w * v) < 30)
 
@@ -162,8 +162,51 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     # Gradient checks will fail without symmetrization as the eigh jvp rule
     # is only correct for tangents in the symmetric subspace, whereas the
     # checker checks against unconstrained (co)tangents.
-    f = partial(np.linalg.eigh, UPLO=uplo, symmetrize=True)
+    if dtype not in complex_types():
+      f = partial(np.linalg.eigh, UPLO=uplo, symmetrize_input=True)
+    else:  # only check eigenvalue grads for complex matrices
+      f = lambda a: partial(np.linalg.eigh, UPLO=uplo, symmetrize_input=True)(a)[0]
     jtu.check_grads(f, (a,), 2, rtol=1e-1)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_shape={}_lower={}".format(jtu.format_shape_dtype_string(shape, dtype),
+                                   lower),
+       "shape": shape, "dtype": dtype, "rng": rng, "lower":lower}
+      for shape in [(1, 1), (4, 4), (5, 5), (50, 50)]
+      for dtype in complex_types()
+      for rng in [jtu.rand_default()]
+      for lower in [True, False])
+      for eps in [1e-4])
+  # TODO(phawkins): enable when there is an eigendecomposition implementation
+  # for GPU/TPU.
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testEighGradVectorComplex(self, shape, dtype, rng, lower, eps):
+    # Special case to test for complex eigenvector grad correctness.
+    # Exact eigenvector coordinate gradients are hard to test numerically for complex
+    # eigensystem solvers given the extra degrees of per-eigenvector phase freedom.
+    # Instead, we numerically verify the eigensystem properties on the perturbed
+    # eigenvectors.  You only ever want to optimize eigenvector directions, not coordinates!
+    if not hasattr(lapack, "jax_syevd"):
+      self.skipTest("No symmetric eigendecomposition implementation available")
+    uplo = "L" if lower else "U"
+    a = rng(shape, dtype)
+    a = (a + onp.conj(a.T)) / 2
+    a = onp.tril(a) if lower else onp.triu(a)
+    a_dot = eps * rng(shape, dtype)
+    a_dot = (a_dot + onp.conj(a_dot.T)) / 2
+    a_dot = onp.tril(a_dot) if lower else onp.triu(a_dot)
+    # evaluate eigenvector gradient and groundtruth eigensystem for perturbed input matrix
+    f = partial(np.linalg.eigh, UPLO=uplo)
+    (w, v), (dw, dv) = jvp(f, primals=(a,), tangents=(da,))
+    new_a = a + a_dot
+    new_w, new_v = f(new_a)
+    # Assert rtol eigenvalue delta between perturbed eigenvectors vs new true eigenvalues.
+    assert onp.max(
+      onp.abs(onp.diag(onp.dot(onp.conj((v+dv).T), onp.dot(new_a,(v+dv)))) - new_w)/eps) < RTOL
+    # Redundant to above, but also assert rtol for eigenvector property with new true eigenvalues.
+    assert onp.max(
+      onp.linalg.norm(onp.abs(new_w*(v+dv) - onp.dot(new_a, (v+dv))), axis=0)/eps) < RTOL
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_ord={}_axis={}_keepdims={}".format(
