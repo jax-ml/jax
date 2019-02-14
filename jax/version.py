@@ -12,12 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '1')
-version_file = os.path.join(os.path.abspath(os.path.dirname(__file__)),
-                            "version.py")
-with open(version_file) as f:
-  exec(f.read(), globals())
-
-from jax.api import *
-import jax.numpy as np  # side-effecting import sets up operator overloads
+__version__ = "0.1.19"
