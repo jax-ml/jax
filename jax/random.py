@@ -12,7 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""LAX-based pseudo-random number generators (PRNGs)."""
+"""JAX pseudo-random number generators (PRNGs).
+
+The JAX PRNG system is based on "Parallel random numbers: as easy as 1, 2, 3"
+(Salmon et al. 2011). For details on the design and its motivation, see:
+
+https://github.com/google/jax/blob/master/design_notes/prng.md
+"""
 
 from __future__ import absolute_import
 from __future__ import division
@@ -31,6 +37,16 @@ from jax import core
 
 
 def PRNGKey(seed):
+  """Create a psuedo-random number generator (PRNG) key given an integer seed.
+
+  Args:
+    seed: a 64- or 32-bit integer type used as the value of the key.
+
+  Returns:
+    A PRNG key, which is modeled as an array of shape (2,) and dtype uint32. The
+    key is constructed from a 64-bit seed by effectively bit-casting to a pair
+    of uint32 values (or from a 32-bit seed by first padding out with zeros).
+  """
   if onp.shape(seed):
     raise TypeError("PRNGKey seed must be a scalar.")
   convert = lambda k: lax.reshape(lax.convert_element_type(k, onp.uint32), [1])
@@ -43,7 +59,7 @@ def PRNGKey(seed):
   k2 = convert(lax.bitwise_and(seed, 0xFFFFFFFF))
   return lax.concatenate([k1, k2], 0)
 
-def is_prng_key(key):
+def _is_prng_key(key):
   try:
     return key.shape == (2,) and key.dtype == onp.uint32
   except AttributeError:
@@ -175,7 +191,7 @@ def fold_in(key, data):
 
 def _random_bits(key, bit_width, shape):
   """Sample uniform random bits of given width and shape using PRNG key."""
-  if not is_prng_key(key):
+  if not _is_prng_key(key):
     raise TypeError("_random_bits got invalid prng key.")
   if bit_width not in (32, 64):
     raise TypeError("requires 32- or 64-bit field width.")
