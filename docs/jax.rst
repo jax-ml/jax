@@ -11,6 +11,7 @@ Subpackages
     jax.scipy
     jax.experimental
     jax.lax
+    jax.random
 
 Module contents
 ---------------
