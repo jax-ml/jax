@@ -237,8 +237,10 @@ def vmap(fun, in_axes=0, out_axes=0):
 
   Args:
     fun: Function to be mapped over additional axes.
-    in_axes, out_axes: Specifies which axes to map over. These may be integers,
-      None, or (possibly nested) tuples of integers or None.
+    in_axes: Specifies which input axes to map over. These may be integers,
+      `None`, or (possibly nested) tuples of integers or `None`.
+    out_axes: Specifies which output axes to map over. These may be integers,
+      `None`, or (possibly nested) tuples of integers or `None`.
 
   Returns:
     Batched/vectorized version of `fun` with arguments that correspond to those
@@ -401,17 +403,57 @@ def lift_jaxpr(jaxpr, consts, io_tree, pvals, py_args):
     return pe.merge_pvals(ans, pvals)
   return apply_jaxtree_fun(fun, io_tree, *py_args)
 
-def make_jaxpr(f):
+def make_jaxpr(fun):
+  """Adapts `fun` to return its `jaxpr` program representation.
+
+  Args:
+    fun: The function whose `jaxpr` is to be computed. Its positional arguments
+      and return value should be arrays, scalars, or standard Python containers
+      (tuple/list/dict) thereof.
+
+  Returns:
+    A wrapped version of `fun`, set up to return a `jaxpr`.
+
+  A `jaxpr` is JAX's intermediate representation for program traces. The `jaxpr`
+  language is based on the untyped first-order lambda calculus with let-bindings.
+  `make_jaxpr` adapts a function to return its `jaxpr`, which we can
+  inspect to understand what JAX is doing internally.
+
+  We do not describe the semantics of the `jaxpr` language in detail here, but
+  instead give a few examples.
+
+  >>> def f(x): return jax.numpy.sin(jax.numpy.cos(x))
+  >>> f(3.0)
+  array(-0.83602184, dtype=float32)
+  >>> jax.make_jaxpr(f)(3.0)
+  { lambda  ;  ; a.
+    let b = cos a
+        c = sin b
+    in c }
+  >>> jax.make_jaxpr(jax.grad(f))(3.0)
+  { lambda b ;  ; a.
+    let c = pack a
+        (d) = id c
+        e = cos d
+        f = cos e
+        g = mul b f
+        h = neg g
+        i = sin d
+        j = mul h i
+        k = pack j
+        (l) = id k
+    in l }
+  """
   def pv_like(x):
     aval = xla.abstractify(x)
     return pe.PartialVal((aval, core.unit))
 
-  fun = lu.wrap_init(f)
+  wrapped = lu.wrap_init(fun)
 
-  @wraps(f)
+  @wraps(fun)
   def jaxpr_maker(*args, **kwargs):
     jax_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
-    jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(fun, in_trees)
+    jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(wrapped, in_trees)
     pvals = map(pv_like, jax_args)
     jaxpr, _, _ = pe.trace_to_jaxpr(jaxtree_fun, pvals, **kwargs)
     return jaxpr
