@@ -13,10 +13,15 @@
 # limitations under the License.
 
 from setuptools import setup, find_packages
+from os.path import join, dirname, abspath
+
+version_file = join(abspath(dirname(__file__)), "jax", "version.py")
+with open('jax/version.py') as f:
+  exec(f.read(), globals())
 
 setup(
     name='jax',
-    version='0.1.19',
+    version=__version__,
     description='Differentiate, compile, and transform Numpy code.',
     author='JAX team',
     author_email='jax-dev@google.com',
