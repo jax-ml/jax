@@ -39,9 +39,9 @@ def cholesky(x, symmetrize_input=True):
     x = symmetrize(x)
   return cholesky_p.bind(x)
 
-def eigh(x, lower=True, symmetrize=True):
-  if symmetrize:
-    x = (x + _H(x)) / 2  # orthogonal projection onto self-adjoint matrices
+def eigh(x, lower=True, symmetrize_input=True):
+  if symmetrize_input:
+    x = symmetrize(x)
   return eigh_p.bind(x, lower=lower)
 
 def lu(x): return lu_p.bind(x)
@@ -151,10 +151,11 @@ def eigh_cpu_translation_rule(c, operand, lower):
 
 def eigh_jvp_rule(primals, tangents, lower):
   # Derivative for eigh in the simplest case of distinct eigenvalues.
-  # Simple case from https://people.maths.ox.ac.uk/gilesm/files/NA-08-01.pdf
+  # This is classic nondegenerate perurbation theory, but also see
+  # https://people.maths.ox.ac.uk/gilesm/files/NA-08-01.pdf
   # The general solution treating the case of degenerate eigenvalues is
   # considerably more complicated. Ambitious readers may refer to the general
-  # methods at:
+  # methods below or refer to degenerate perturbation theory in physics.
   # https://www.win.tue.nl/analysis/reports/rana06-33.pdf and
   # https://people.orie.cornell.edu/aslewis/publications/99-clarke.pdf
   a, = primals
