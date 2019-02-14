@@ -16,8 +16,6 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import functools
-
 from .core import pack
 from .tree_util import (build_tree, process_pytree, tree_flatten,
                         tree_unflatten, leaf)
@@ -29,11 +27,11 @@ map = safe_map
 
 @curry
 def wraps(wrapped, fun, namestr="{fun}", docstr="{doc}", **kwargs):
-  fun = functools.wraps(wrapped)(fun)
   try:
     fun.__name__ = namestr.format(fun=get_name(wrapped))
     fun.__module__ = get_module(wrapped)
     fun.__doc__ = docstr.format(fun=get_name(wrapped), doc=get_doc(wrapped), **kwargs)
+    fun.__wrapped__ = wrapped
   finally:
     return fun
 
