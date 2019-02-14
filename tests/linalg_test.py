@@ -198,15 +198,19 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     a_dot = onp.tril(a_dot) if lower else onp.triu(a_dot)
     # evaluate eigenvector gradient and groundtruth eigensystem for perturbed input matrix
     f = partial(np.linalg.eigh, UPLO=uplo)
-    (w, v), (dw, dv) = jvp(f, primals=(a,), tangents=(da,))
+    (w, v), (dw, dv) = jvp(f, primals=(a,), tangents=(a_dot,))
     new_a = a + a_dot
     new_w, new_v = f(new_a)
+    new_a = (new_a + onp.conj(new_a.T)) / 2
     # Assert rtol eigenvalue delta between perturbed eigenvectors vs new true eigenvalues.
+    RTOL=1e-2
     assert onp.max(
-      onp.abs(onp.diag(onp.dot(onp.conj((v+dv).T), onp.dot(new_a,(v+dv)))) - new_w)/eps) < RTOL
+      onp.abs((onp.diag(onp.dot(onp.conj((v+dv).T), onp.dot(new_a,(v+dv)))) - new_w) / new_w)) < RTOL 
     # Redundant to above, but also assert rtol for eigenvector property with new true eigenvalues.
     assert onp.max(
-      onp.linalg.norm(onp.abs(new_w*(v+dv) - onp.dot(new_a, (v+dv))), axis=0)/eps) < RTOL
+      onp.linalg.norm(onp.abs(new_w*(v+dv) - onp.dot(new_a, (v+dv))), axis=0) /
+      onp.linalg.norm(onp.abs(new_w*(v+dv)), axis=0)
+    ) < RTOL
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_ord={}_axis={}_keepdims={}".format(

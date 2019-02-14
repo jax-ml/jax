@@ -170,7 +170,7 @@ def eigh_jvp_rule(primals, tangents, lower):
   dot = lax.dot if a.ndim == 2 else lax.batch_matmul
   vdag_adot_v = dot(dot(_H(v), a_dot), v)
   dv = dot(v, np.multiply(Fmat, vdag_adot_v))
-  dw = np.diagonal(np.multiply(eye_n, vdag_adot_v))
+  dw = np.diagonal(vdag_adot_v)
   return core.pack((v, w)), core.pack((dv, dw))
 
 eigh_p = Primitive('eigh')
