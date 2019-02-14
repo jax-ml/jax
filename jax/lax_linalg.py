@@ -160,7 +160,7 @@ def eigh_jvp_rule(primals, tangents, lower):
   # https://people.orie.cornell.edu/aslewis/publications/99-clarke.pdf
   a, = primals
   a_dot, = tangents
-  v, w = eigh_p.bind((a + _H(a)) / 2.0, lower=lower)
+  v, w = eigh_p.bind(symmetrize(a), lower=lower)
   # for complex numbers we need eigenvalues to be full dtype of v, a:
   w = w.astype(a.dtype)
   eye_n = np.eye(a.shape[-1], dtype=a.dtype)
