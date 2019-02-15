@@ -1232,7 +1232,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       return lnp.sum(x)
 
     x = lnp.array([[1, 2], [3, 4], [0, 0]], dtype=lnp.float64)
-    result = grad(test_fail)(x)
+    result = api.grad(test_fail)(x)
     assert not onp.any(onp.isnan(result))
 
 

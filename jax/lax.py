@@ -960,8 +960,12 @@ pow_p = standard_binop([_float | _complex, _float | _complex], 'pow')
 
 def pow_jvp_lhs(g, x, y):
   exponent = select(eq(y, _zero(y)), _ones(y), sub(y, _one(y)))
-  x_pow_y = select(eq(x, _zero(x)), _zeros(x), pow(_replace_zero(x), exponent))
-  return mul(_brcast(g, y), mul(y, x_pow_y))
+  x_pow_ym1 = pow(x, exponent)  # x ** (y-1), except where x==0 or y==0
+  x_pow_ym1 = select(_brcast(eq(x, _zero(y)), x_pow_ym1),  # pow(0, a) is 0
+                     _zeros(x_pow_ym1), x_pow_ym1)         # unless a == 0
+  x_pow_ym1 = select(_brcast(eq(y, _zero(y)), x_pow_ym1),  # pow(a, 0) is 0
+                     _ones(x_pow_ym1), x_pow_ym1)
+  return mul(_brcast(g, y), mul(y, x_pow_ym1))
 
 def pow_jvp_rhs(g, x, y):
   return mul(_brcast(g, x), mul(log(_replace_zero(x)), pow(x, y)))
