@@ -77,6 +77,21 @@ def jit(fun, static_argnums=()):
 
   Returns:
     A wrapped version of `fun`, set up for just-in-time compilation.
+
+  In the following example, `selu` can be compiled into a single fused kernel by
+  XLA:
+
+  >>> @jit
+  >>> def selu(x, alpha=1.67, lmbda=1.05):
+  >>>   return lmbda * jax.numpy.where(x > 0, x, alpha * jax.numpy.exp(x) - alpha)
+  >>>
+  >>> key = jax.random.PRNGKey(0)
+  >>> x = jax.random.normal(key, (10,))
+  >>> selu(x)
+  array([-0.54485154,  0.27744263, -0.29255125, -0.91421586, -0.62452525,
+         -0.2474813 , -0.8574326 , -0.7823267 ,  0.7682731 ,  0.59566754],
+        dtype=float32)
+
   """
   @wraps(fun)
   def f_jitted(*args, **kwargs):
@@ -176,7 +191,26 @@ def value_and_grad(fun, argnums=0):
 
 
 def jacfwd(fun, argnums=0):
-  """Jacobian of `fun` evaluated column-by-column using forward-mode AD."""
+  """Jacobian of `fun` evaluated column-by-column using forward-mode AD.
+
+  Args:
+    fun: Function whose Jacobian is to be computed.
+    argnums: Optional, integer or tuple of integers. Specifies which positional
+      argument(s) to differentiate with respect to (default `0`).
+
+  Returns:
+    A function with the same arguments as `fun`, that evaluates the Jacobian of
+    `fun` using forward-mode automatic differentiation.
+
+  >>> def f(x):
+  >>>   return jax.numpy.asarray(
+  >>>     [x[0], 5*x[2], 4*x[1]**2 - 2*x[2], x[2] * jax.numpy.sin(x[0])])
+  >>> jax.jacfwd(f)(np.array([1., 2., 3.]))
+  array([[ 1.        ,  0.        ,  0.        ],
+         [ 0.        ,  0.        ,  5.        ],
+         [ 0.        , 16.        , -2.        ],
+         [ 1.6209068 ,  0.        ,  0.84147096]], dtype=float32)
+  """
 
   def jacfun(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
@@ -189,8 +223,26 @@ def jacfwd(fun, argnums=0):
   return jacfun
 
 def jacrev(fun, argnums=0):
-  """Jacobian of `fun` evaluated row-by-row using reverse-mode AD."""
+  """Jacobian of `fun` evaluated row-by-row using reverse-mode AD.
 
+  Args:
+    fun: Function whose Jacobian is to be computed.
+    argnums: Optional, integer or tuple of integers. Specifies which positional
+      argument(s) to differentiate with respect to (default `0`).
+
+  Returns:
+    A function with the same arguments as `fun`, that evaluates the Jacobian of
+    `fun` using reverse-mode automatic differentiation.
+
+  >>> def f(x):
+  >>>   return jax.numpy.asarray(
+  >>>     [x[0], 5*x[2], 4*x[1]**2 - 2*x[2], x[2] * jax.numpy.sin(x[0])])
+  >>> jax.jacrev(f)(np.array([1., 2., 3.]))
+  array([[ 1.        ,  0.        ,  0.        ],
+         [ 0.        ,  0.        ,  5.        ],
+         [ 0.        , 16.        , -2.        ],
+         [ 1.6209068 ,  0.        ,  0.84147096]], dtype=float32)
+  """
   def jacfun(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
     f_partial, dyn_args = argnums_partial(f, argnums, args)
@@ -204,8 +256,25 @@ def jacrev(fun, argnums=0):
   return jacfun
 jacobian = jacrev
 
-def hessian(fun):
-  return jacfwd(jacrev(fun))
+def hessian(fun, argnums=0):
+  """Hessian of `fun`.
+
+  Args:
+    fun: Function whose Hessian is to be computed.
+    argnums: Optional, integer or tuple of integers. Specifies which positional
+      argument(s) to differentiate with respect to (default `0`).
+
+  Returns:
+    A function with the same arguments as `fun`, that evaluates the Hessian of
+    `fun`.
+
+  >>> g = lambda(x): x[0]**3 - 2*x[0]*x[1] - x[1]**6
+  >>> jax.hessian(g)(jax.numpy.array([1., 2.]))
+  array([[   6.,   -2.],
+         [  -2., -480.]], dtype=float32)
+  """
+
+  return jacfwd(jacrev(fun, argnums=argnums), argnums=argnums)
 
 def _std_basis(pytree):
   leaves, _ = tree_flatten(pytree)
