@@ -1136,7 +1136,7 @@ def _conv_general_dilated_transpose_lhs(
   lhs_sdims, rhs_sdims, out_sdims = map(_conv_sdims, dimension_numbers)
   lhs_spec, rhs_spec, out_spec = dimension_numbers
   t_rhs_spec = _conv_transpose(rhs_spec)
-  trans_dimension_numbers = ConvDimensionNumbers(lhs_spec, t_rhs_spec, out_spec)
+  trans_dimension_numbers = ConvDimensionNumbers(out_spec, t_rhs_spec, lhs_spec)
   padding = _conv_general_vjp_lhs_padding(
       onp.take(lhs_shape, lhs_sdims), onp.take(rhs_shape, rhs_sdims),
       window_strides, onp.take(g.shape, out_sdims), padding, lhs_dilation,
@@ -3194,7 +3194,10 @@ def remaining(original, *removed_lists):
   blacklist = set(itertools.chain(*removed_lists))
   return [i for i in original if i not in blacklist]
 
-
+# lhs_spec and out_spec are lists containing
+#   [batch dim, feature dim, spatial dims ...]
+# rhs_spec is a list containing:
+#   [out feature dim, in feature dim, spatial dims ...]
 ConvDimensionNumbers = collections.namedtuple(
     "ConvDimensionNumbers", ["lhs_spec", "rhs_spec", "out_spec"])
 
