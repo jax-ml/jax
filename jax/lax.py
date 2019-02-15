@@ -957,11 +957,16 @@ _maybe_real = lambda x: real(x) if _iscomplex(x) else x
 
 # TODO handle broadcasting
 pow_p = standard_binop([_float | _complex, _float | _complex], 'pow')
-ad.defjvp(pow_p,
-          lambda g, x, y: mul(_brcast(g, y), mul(y, pow(x, select(
-              eq(y, _zeros(y)), _ones(y), sub(y, _ones(y)))))),
-          lambda g, x, y: mul(_brcast(g, x),
-                              mul(log(_replace_zero(x)), pow(x, y))))
+
+def pow_jvp_lhs(g, x, y):
+  exponent = select(eq(y, _zero(y)), _ones(y), sub(y, _one(y)))
+  x_pow_y = select(eq(x, _zero(x)), _zeros(x), pow(_replace_zero(x), exponent))
+  return mul(_brcast(g, y), mul(y, x_pow_y))
+
+def pow_jvp_rhs(g, x, y):
+  return mul(_brcast(g, x), mul(log(_replace_zero(x)), pow(x, y)))
+
+ad.defjvp(pow_p, pow_jvp_lhs, pow_jvp_rhs)
 _replace_zero = lambda x: select(eq(x, _const(x, 0)), _ones(x), x)
 
 not_p = standard_unop(_int | _bool, 'not')
