@@ -415,9 +415,12 @@ def make_jaxpr(fun):
     A wrapped version of `fun`, set up to return a `jaxpr`.
 
   A `jaxpr` is JAX's intermediate representation for program traces. The `jaxpr`
-  language is based on the untyped first-order lambda calculus with let-bindings.
-  `make_jaxpr` adapts a function to return its `jaxpr`, which we can
-  inspect to understand what JAX is doing internally.
+  language is based on the simply-typed first-order lambda calculus with
+  let-bindings. `make_jaxpr` adapts a function to return its `jaxpr`, which we
+  can inspect to understand what JAX is doing internally.
+
+  The `jaxpr` returned is a trace of `fun` abstracted to `ShapedArray` level.
+  Other levels of abstraction exist internally.
 
   We do not describe the semantics of the `jaxpr` language in detail here, but
   instead give a few examples.
