@@ -29,6 +29,7 @@ from ..core import (Trace, Tracer, new_master, Jaxpr, JaxprEqn, get_aval, pack,
 
 map = safe_map
 zip = safe_zip
+def identity(x): return x
 
 class JaxprTrace(Trace):
   def pure(self, val):
@@ -78,12 +79,14 @@ class JaxprTrace(Trace):
   def process_call(self, call_primitive, f, tracers, params):
     in_pvs, in_consts = unzip2([t.pval for t in tracers])
     fun, aux = partial_eval(f, self, in_pvs)
-    out_pv_const, consts = call_primitive.bind(fun, *in_consts, **params)
+    params1, params2 = call_primitive_peval_params.get(call_primitive, (identity, identity))
+    out_pv_const, consts = call_primitive.bind(fun, *in_consts, **params1(params))
     out_pv, jaxpr, env = aux()
     const_tracers = map(self.new_instantiated_const, consts)
     env_tracers = map(self.full_raise, env)
     bound_subjaxpr = (jaxpr, const_tracers, env_tracers)
-    eqn = JaxprEqn(tracers, None, call_primitive, (bound_subjaxpr,), False, params)
+    eqn = JaxprEqn(tracers, None, call_primitive, (bound_subjaxpr,), False,
+                   params2(params))
     return JaxprTracer(self, PartialVal((out_pv, out_pv_const)), eqn)
 
   def post_process_call(self, call_primitive, out_tracer):
@@ -397,3 +400,6 @@ compiled_call_p = Primitive('compiled_call')
 compiled_call = partial(core.call_bind, compiled_call_p)
 compiled_call_p.def_custom_bind(compiled_call)
 compiled_call_p.def_impl(compiled_call_impl)
+
+
+call_primitive_peval_params = {}

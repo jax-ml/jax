@@ -38,9 +38,10 @@ from .xla import (xla_shape, xla_destructure, translation_rule, abstractify,
                   xla_shape_to_result_shape, jaxpr_computation)
 from .partial_eval import trace_to_subjaxpr, merge_pvals, JaxprTrace, PartialVal
 from .batching import dimsize, broadcast
+from . import partial_eval as pe
 from . import parallel
 from . import xla
-from . import partial_eval as pe
+from . import ad
 
 map = safe_map
 
@@ -243,43 +244,56 @@ def replicated_computation(jaxpr, axis_env, const_vals, freevar_shapes,
   env = {}
   consts_env = dict(zip(jaxpr.constvars, const_vals))
   write(core.unitvar, c.Tuple())
-  map(write, jaxpr.constvars, map(c.Constant, const_vals))
-  map(write, jaxpr.freevars, map(c.ParameterWithShape, freevar_shapes))
+  if const_vals:
+    map(write, jaxpr.constvars, map(c.Constant, const_vals))
+    map(write, jaxpr.freevars, map(c.ParameterWithShape, freevar_shapes))
+  else:
+    all_freevars = it.chain(jaxpr.constvars, jaxpr.freevars)
+    map(write, all_freevars, map(c.ParameterWithShape, freevar_shapes))
   map(write, jaxpr.invars, map(c.ParameterWithShape, arg_shapes))
   for eqn in jaxpr.eqns:
     in_nodes = map(read, eqn.invars)
     if eqn.primitive in parallel_translation_rules:
+      # if we see an spmd primitive (one with a parallel translation rule), then
+      # call that parallel translation rule using axis_env for device_groups
       rule = parallel_translation_rules[eqn.primitive]
       device_groups = axis_env[eqn.params['axis_name']]
       params = {k: eqn.params[k] for k in eqn.params if k != 'axis_name'}
       ans = rule(c, *in_nodes, device_groups=device_groups, **params)
-    else:
-      if eqn.bound_subjaxprs:
-        in_shapes = map(c.GetShape, in_nodes)
-        if eqn.primitive is xla_pcall_p:
-          device_groups = replica_groups(mesh_spec(), eqn.params['mesh_axis'])
-          new_axis_binding = {eqn.params['axis_name'] : device_groups}
-          (subjaxpr, const_bindings, freevar_bindings), = eqn.bound_subjaxprs
-          subc = replicated_computation(
-              subjaxpr, extend_axis_env(new_axis_binding, axis_env),
-              [consts_env[b] for b in const_bindings],
-              map(c.GetShape, map(read, freevar_bindings)),
-              *in_shapes)
-          subfun = (subc, tuple(map(read, freevar_bindings)))
-          ans = translation_rule(eqn.primitive)(c, subfun, *in_nodes)
-        else:
-          subcs = [jaxpr_computation(subjaxpr,
-                                     [consts_env[b] for b in const_bindings],
-                                     map(c.GetShape, map(read, freevar_bindings)),
-                                     *in_shapes)
-                   for subjaxpr, const_bindings, freevar_bindings
-                   in eqn.bound_subjaxprs]
-          subfuns = [(subc, tuple(map(read, freevar_bindings)))
-                      for subc, (_, _, freevar_bindings)
-                      in zip(subcs, eqn.bound_subjaxprs)]
-          ans = translation_rule(eqn.primitive)(c, *(subfuns + in_nodes), **eqn.params)
+    elif eqn.bound_subjaxprs:
+      # if there are bound subjaxprs, we either recursively call
+      # replicated_computation or call into xla.jaxpr_computation
+      in_shapes = map(c.GetShape, in_nodes)
+      if eqn.primitive is xla_pcall_p:
+        # if we're processing an xla_pcall, extend the axis environment and
+        # recursively call replicated_computation
+        device_groups = replica_groups(mesh_spec(), eqn.params['mesh_axis'])
+        new_axis_binding = {eqn.params['axis_name'] : device_groups}
+        (subjaxpr, const_bindings, freevar_bindings), = eqn.bound_subjaxprs
+        subc = replicated_computation(
+            subjaxpr, extend_axis_env(new_axis_binding, axis_env), (),
+            map(c.GetShape, map(read, const_bindings + freevar_bindings)),
+            *in_shapes)
+        subfun = (subc, tuple(map(read, const_bindings + freevar_bindings)))
+        # we've already lowered the subfun to an spmd computation as needed, so
+        # we just generate a regular Call into it
+        ans = translation_rule(eqn.primitive)(c, subfun, *in_nodes)
       else:
-        ans = translation_rule(eqn.primitive)(c, *in_nodes, **eqn.params)
+        # otherwise, act like xla.jaxpr_computation
+        subcs = [
+            jaxpr_computation(
+                subjaxpr, (),
+                map(c.GetShape, map(read, const_bindings + freevar_bindings)),
+                *in_shapes)
+            for subjaxpr, const_bindings, freevar_bindings in eqn.bound_subjaxprs]
+        subfuns = [(subc, tuple(map(read, const_bindings + freevar_bindings)))
+                    for subc, (_, const_bindings, freevar_bindings)
+                    in zip(subcs, eqn.bound_subjaxprs)]
+        ans = translation_rule(eqn.primitive)(c, *(subfuns + in_nodes), **eqn.params)
+    else:
+      # if this is a standard translation rule (not an spmd primitive, not a
+      # call with bound subjaxprs) then we lower like xla.jaxpr_computation does
+      ans = translation_rule(eqn.primitive)(c, *in_nodes, **eqn.params)
 
     out_nodes = xla_destructure(c, ans) if eqn.destructure else [ans]
     map(write, eqn.outvars, out_nodes)
@@ -342,7 +356,37 @@ xla_pcall_p = core.Primitive('xla_pcall')
 xla_pcall = partial(core.call_bind, xla_pcall_p)
 xla_pcall_p.def_custom_bind(xla_pcall)
 xla_pcall_p.def_impl(xla_pcall_impl)
+
+
 xla.translations[xla_pcall_p] = xla.xla_call_translation_rule
+
+
+def xla_pcall_transpose_params(params):
+  in_axes, out_axes = params['in_axes'], params['out_axes']
+  trans_in_axes = (None, None, out_axes),
+  trans_out_axes = (in_axes, None)
+  return dict(params, in_axes=trans_in_axes, out_axes=trans_out_axes)
+ad.primitive_transposes[xla_pcall_p] = partial(ad.call_transpose, xla_pcall_p,
+                                               params_fun=xla_pcall_transpose_params)
+
+def xla_pcall_jvp_params(params):
+  in_ax, out_ax = params['in_axes'], params['out_axes']
+  return dict(params, in_axes=(in_ax, in_ax), out_axes=(out_ax, out_ax))
+ad.call_primitive_jvp_params[xla_pcall_p] = xla_pcall_jvp_params
+
+
+def xla_pcall_peval_params1(params):
+  out_axes = params['out_axes']
+  return dict(params, out_axes=(out_axes, 0))
+
+def xla_pcall_peval_params2(params):
+  # TODO this is wrong...
+  # in_axes = params['in_axes']
+  # return dict(params, in_axes=(None, 0, in_axes))
+  return params
+
+pe.call_primitive_peval_params[xla_pcall_p] = (xla_pcall_peval_params1,
+                                               xla_pcall_peval_params2)
 
 
 parallel_translation_rules = {}
