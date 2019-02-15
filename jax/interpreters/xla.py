@@ -35,8 +35,8 @@ from ..abstract_arrays import ConcreteArray, ShapedArray, make_shaped_array, arr
 from ..core import AbstractTuple, JaxTuple, pack, valid_jaxtype
 from ..util import partial, partialmethod, memoize, unzip2, concatenate, safe_map, prod
 from ..lib import xla_bridge as xb
-from .partial_eval import (trace_to_subjaxpr, trace_unwrapped_to_jaxpr,
-                           merge_pvals, JaxprTrace, PartialVal)
+from . import partial_eval as pe
+from . import ad
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_device_values',
@@ -151,11 +151,12 @@ def jaxpr_computation(jaxpr, const_vals, freevar_shapes, *arg_shapes):
   for eqn in jaxpr.eqns:
     in_nodes = map(read, eqn.invars)
     in_shapes = map(c.GetShape, in_nodes)
-    subcs = [jaxpr_computation(subjaxpr, (),
-                               map(c.GetShape, map(read, const_bindings + freevar_bindings)),
-                               *in_shapes)
-             for subjaxpr, const_bindings, freevar_bindings
-             in eqn.bound_subjaxprs]
+    subcs = [
+        jaxpr_computation(
+            subjaxpr, (),
+            map(c.GetShape, map(read, const_bindings + freevar_bindings)),
+            *in_shapes)
+        for subjaxpr, const_bindings, freevar_bindings in eqn.bound_subjaxprs]
     subfuns = [(subc, tuple(map(read, const_bindings + freevar_bindings)))
                for subc, (_, const_bindings, freevar_bindings)
                in zip(subcs, eqn.bound_subjaxprs)]
@@ -184,8 +185,8 @@ def translation_rule(p):
 def lower_fun(fun, c, *xla_args, **params):
   xla_shapes = map(c.GetShape, xla_args)
   avals = map(aval_from_xla_shape, xla_shapes)
-  pvals = [PartialVal((a, core.unit)) for a in avals]
-  jaxpr, pvout, consts = trace_unwrapped_to_jaxpr(fun, pvals, **params)
+  pvals = [pe.PartialVal((a, core.unit)) for a in avals]
+  jaxpr, pvout, consts = pe.trace_unwrapped_to_jaxpr(fun, pvals, **params)
   built_c = jaxpr_computation(jaxpr, consts, (), *xla_shapes)
   return c.Call(built_c, xla_args)
 
@@ -439,9 +440,9 @@ def xla_call_impl(fun, *args):
 
 @lu.memoize
 def xla_callable(fun, *abstract_args):
-  pvals = [PartialVal((aval, core.unit)) for aval in abstract_args]
-  with core.new_master(JaxprTrace, True) as master:
-    jaxpr, (pval, consts, env) = trace_to_subjaxpr(fun, master).call_wrapped(pvals)
+  pvals = [pe.PartialVal((aval, core.unit)) for aval in abstract_args]
+  with core.new_master(pe.JaxprTrace, True) as master:
+    jaxpr, (pval, consts, env) = pe.trace_to_subjaxpr(fun, master).call_wrapped(pvals)
     assert not env  # no subtraces here (though cond might eventually need them)
     compiled, result_shape = compile_jaxpr(jaxpr, consts, *abstract_args)
     del master, consts, jaxpr, env
@@ -451,7 +452,7 @@ def xla_callable(fun, *abstract_args):
 def execute_compiled(compiled, pval, handle_result, *args):
   input_bufs = [device_put(x) for x in args]
   out_buf = compiled.Execute(input_bufs, not core.skip_checks)
-  return merge_pvals(handle_result(out_buf), pval)
+  return pe.merge_pvals(handle_result(out_buf), pval)
 
 
 def xla_call_translation_rule(c, subc_a1, *a2):
@@ -464,3 +465,4 @@ xla_call_p.def_custom_bind(xla_call)
 xla_call_p.def_impl(xla_call_impl)
 
 translations[xla_call_p] = xla_call_translation_rule
+ad.primitive_transposes[xla_call_p] = partial(ad.call_transpose, xla_call_p)
