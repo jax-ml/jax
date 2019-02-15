@@ -1619,7 +1619,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
         return absltest.unittest.skip("pow grad imprecise on tpu")
     tol = 1e-1 if num_float_bits(dtype) == 32 else None
     args = tuple(rng(shape, dtype) for shape in shapes)
-    check_grads(op, args, order, tol, tol, tol)
+    check_grads(op, args, order, tol, tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_from_dtype={}_to_dtype={}".format(
@@ -2025,7 +2025,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     operand = rng(shape, dtype)
     init_val = onp.asarray(init_val, dtype=dtype)
     reduce = lambda operand: lax.reduce(operand, init_val, op, dims)
-    check_grads(reduce, (operand,), 1, tol, tol, tol)
+    check_grads(reduce, (operand,), 1, tol, tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_op={}_dtype={}_padding={}"
