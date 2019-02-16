@@ -348,7 +348,7 @@ class _JaxComputationBuilderBase(object):
 
   def ConstantLike(self, example_value, value, canonicalize_types=True):
     example_value = onp.asarray(example_value)
-    return self.Constant(onp.array(value).astype(example_value.dtype))
+    return self.Constant(onp.array(value, dtype=example_value.dtype))
 
   def Constant(self, py_val, canonicalize_types=True):
     """Translate constant `py_val` to a constant for this ComputationBuilder.
