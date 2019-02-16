@@ -245,7 +245,8 @@ def add_batched(batched_args, batch_dims):
     xs, ys = batched_args
     return add_jaxvals_p.bind(xs, ys), bdx
   else:
-    xs, ys = map(bdim_at_front, batched_args, batch_dims)
+    move_bdim = partial(bdim_at_front, force_broadcast=True)
+    xs, ys = map(move_bdim, batched_args, batch_dims)
     return add_jaxvals_p.bind(xs, ys), 0
 primitive_batchers[add_jaxvals_p] = add_batched
 
