@@ -37,7 +37,7 @@ from jax import core
 
 
 def PRNGKey(seed):
-  """Create a psuedo-random number generator (PRNG) key given an integer seed.
+  """Create a pseudo-random number generator (PRNG) key given an integer seed.
 
   Args:
     seed: a 64- or 32-bit integer used as the value of the key.
