@@ -92,26 +92,32 @@ ndim = _ndim = onp.ndim
 size = onp.size
 _dtype = lax._dtype
 
-def _wrap_intdtype(cls):
-  class IntDtypeSubclass(cls):
+# Because dtype classes can be used as functions applied to values to construct
+# arrays or convert the element type of arrays (e.g. `np.float32(x)`), and
+# because their arguments could be Tracers, we subclass the dtype classes to
+# allow JAX's tracer to work with this kind of construction/conversion.
+# TODO(mattjj): when https://github.com/google/jax/pull/389 is fixed, consider
+# adding a call to array/asarray here to support array construction.
+def _wrap_dtype(cls):
+  class DtypeSubclass(cls):
     def __new__(_, x):
       return lax.convert_element_type(x, cls)
-  return IntDtypeSubclass
+  return DtypeSubclass
 
-bool_ = _wrap_intdtype(onp.bool_)
-uint8 = _wrap_intdtype(onp.uint8)
-uint16 = _wrap_intdtype(onp.uint16)
-uint32 = _wrap_intdtype(onp.uint32)
-uint64 = _wrap_intdtype(onp.uint64)
-int8 = _wrap_intdtype(onp.int8)
-int16 = _wrap_intdtype(onp.int16)
-int32 = _wrap_intdtype(onp.int32)
-int64 = _wrap_intdtype(onp.int64)
-float16 = onp.float16
-float32 = single = onp.float32
-float64 = double = onp.float64
-complex64 = csingle = onp.complex64
-complex128 = cdouble = onp.complex128
+bool_ = _wrap_dtype(onp.bool_)
+uint8 = _wrap_dtype(onp.uint8)
+uint16 = _wrap_dtype(onp.uint16)
+uint32 = _wrap_dtype(onp.uint32)
+uint64 = _wrap_dtype(onp.uint64)
+int8 = _wrap_dtype(onp.int8)
+int16 = _wrap_dtype(onp.int16)
+int32 = _wrap_dtype(onp.int32)
+int64 = _wrap_dtype(onp.int64)
+float16 = _wrap_dtype(onp.float16)
+float32 = single = _wrap_dtype(onp.float32)
+float64 = double = _wrap_dtype(onp.float64)
+complex64 = csingle = _wrap_dtype(onp.complex64)
+complex128 = cdouble = _wrap_dtype(onp.complex128)
 
 flexible = onp.flexible
 character = onp.character
