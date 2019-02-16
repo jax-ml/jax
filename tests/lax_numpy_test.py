@@ -24,6 +24,7 @@ from unittest import skip
 
 from absl.testing import absltest
 from absl.testing import parameterized
+import six
 
 import numpy as onp
 
@@ -195,8 +196,6 @@ JAX_OPERATOR_OVERLOADS = [
     op_record("__rsub__", 2, number_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("__mul__", 2, number_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("__rmul__", 2, number_dtypes, all_shapes, jtu.rand_default(), []),
-    op_record("__div__", 2, number_dtypes, all_shapes, jtu.rand_nonzero(), []),
-    op_record("__rdiv__", 2, number_dtypes, all_shapes, jtu.rand_nonzero(), []),
     op_record("__eq__", 2, number_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("__ne__", 2, number_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("__lt__", 2, number_dtypes, all_shapes, jtu.rand_default(), []),
@@ -225,6 +224,13 @@ JAX_OPERATOR_OVERLOADS = [
     # op_record("__rdivmod__", 2, number_dtypes, all_shapes, jtu.rand_nonzero(), []),
     # TODO(mattjj): lshift, rshift
 ]
+
+if six.PY2:
+  JAX_OPERATOR_OVERLOADS += [
+    op_record("__div__", 2, number_dtypes, all_shapes, jtu.rand_nonzero(), []),
+    op_record("__rdiv__", 2, number_dtypes, all_shapes, jtu.rand_nonzero(), []),
+  ]
+
 
 CombosWithReplacement = itertools.combinations_with_replacement
 
