@@ -2124,7 +2124,7 @@ setattr(ShapedArray, "astype", core.aval_method(lax.convert_element_type))
 setattr(ShapedArray, "psum", core.aval_method(lax.psum))
 
 
-# Forward operators, methods, and properies on DeviceArray to lax_numpy
+# Forward operators, methods, and properties on DeviceArray to lax_numpy
 # functions (with no Tracers involved; this forwarding is direct)
 for operator_name, function in _operators.items():
   setattr(DeviceArray, "__{}__".format(operator_name), function)

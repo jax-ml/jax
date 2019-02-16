@@ -1229,6 +1229,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       return x
     api.jit(foo)(lnp.array([1.0, 2.0], dtype=lnp.float32))  # don't crash
 
+  def testIssue347(self):
+    # https://github.com/google/jax/issues/347
+    def test_fail(x):
+      x = lnp.sqrt(lnp.sum(x ** 2, axis=1))
+      ones = lnp.ones_like(x)
+      x = lnp.where(x > 0.5, x, ones)
+      return lnp.sum(x)
+
+    x = lnp.array([[1, 2], [3, 4], [0, 0]], dtype=lnp.float64)
+    result = api.grad(test_fail)(x)
+    assert not onp.any(onp.isnan(result))
+
 
 if __name__ == "__main__":
   absltest.main()

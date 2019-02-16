@@ -493,6 +493,9 @@ def stop_gradient(x):
   return stop_gradient_p.bind(x)
 
 
+def _safe_mul(x, y): return safe_mul_p.bind(x, y)
+
+
 def psum(x, axis_name):
   return psum_p.bind(x, axis_name=axis_name)
 
@@ -957,11 +960,18 @@ _maybe_real = lambda x: real(x) if _iscomplex(x) else x
 
 # TODO handle broadcasting
 pow_p = standard_binop([_float | _complex, _float | _complex], 'pow')
-ad.defjvp(pow_p,
-          lambda g, x, y: mul(_brcast(g, y), mul(y, pow(x, select(
-              eq(y, _zeros(y)), _ones(y), sub(y, _ones(y)))))),
-          lambda g, x, y: mul(_brcast(g, x),
-                              mul(log(_replace_zero(x)), pow(x, y))))
+
+def pow_jvp_lhs(g, x, y):
+  # we call _safe_mul here so that we get the behavior 0*inf = 0, since when a
+  # coefficient in `g` is zero we want to keep it at zero, not produce a nan.
+  # see https://github.com/google/jax/pull/383
+  jac = mul(y, pow(x, select(eq(y, _zeros(y)), _ones(y), sub(y, _ones(y)))))
+  return _safe_mul(_brcast(g, y), jac)
+
+def pow_jvp_rhs(g, x, y):
+  return mul(_brcast(g, x), mul(log(_replace_zero(x)), pow(x, y)))
+
+ad.defjvp(pow_p, pow_jvp_lhs, pow_jvp_rhs)
 _replace_zero = lambda x: select(eq(x, _const(x, 0)), _ones(x), x)
 
 not_p = standard_unop(_int | _bool, 'not')
@@ -990,6 +1000,20 @@ ad.defjvp(sub_p,
 
 mul_p = standard_binop([_num, _num], 'mul')
 ad.defbilinear_broadcasting(_brcast, mul_p, mul, mul)  # TODO
+
+
+def _safe_mul_translation_rule(c, x, y):
+  dtype = c.GetShape(x).numpy_dtype()
+  zero = c.Constant(onp.array(0, dtype=dtype))
+  out_shape = tuple(onp.maximum(c.GetShape(x).dimensions(),
+                                c.GetShape(y).dimensions()))
+  return c.Select(c.Or(c.Eq(x, zero), c.Eq(y, zero)),
+                  c.Broadcast(zero, out_shape),
+                  c.Mul(x, y))
+
+safe_mul_p = standard_binop([_num, _num], 'safe_mul',
+                            translation_rule=_safe_mul_translation_rule)
+ad.defbilinear_broadcasting(_brcast, safe_mul_p, _safe_mul, _safe_mul)
 
 
 def _div_transpose_rule(cotangent, x, y):
