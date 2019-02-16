@@ -1223,6 +1223,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jax_numpy_result = ((x + x.T) / 2).dtype
     self.assertEqual(orig_numpy_result, jax_numpy_result)
 
+  def testIssue367(self):
+    def foo(x):
+      bar = lnp.int32(x)
+      return x
+    api.jit(foo)(lnp.array([1.0, 2.0], dtype=lnp.float32))  # don't crash
+
 
 if __name__ == "__main__":
   absltest.main()

@@ -92,15 +92,21 @@ ndim = _ndim = onp.ndim
 size = onp.size
 _dtype = lax._dtype
 
-bool_ = onp.bool_
-uint8 = onp.uint8
-uint16 = onp.uint16
-uint32 = onp.uint32
-uint64 = onp.uint64
-int8 = onp.int8
-int16 = onp.int16
-int32 = onp.int32
-int64 = onp.int64
+def _wrap_intdtype(cls):
+  class IntDtypeSubclass(cls):
+    def __new__(_, x):
+      return lax.convert_element_type(x, cls)
+  return IntDtypeSubclass
+
+bool_ = _wrap_intdtype(onp.bool_)
+uint8 = _wrap_intdtype(onp.uint8)
+uint16 = _wrap_intdtype(onp.uint16)
+uint32 = _wrap_intdtype(onp.uint32)
+uint64 = _wrap_intdtype(onp.uint64)
+int8 = _wrap_intdtype(onp.int8)
+int16 = _wrap_intdtype(onp.int16)
+int32 = _wrap_intdtype(onp.int32)
+int64 = _wrap_intdtype(onp.int64)
 float16 = onp.float16
 float32 = single = onp.float32
 float64 = double = onp.float64
