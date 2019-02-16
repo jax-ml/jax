@@ -422,10 +422,11 @@ class LaxTest(jtu.JaxTestCase):
       for lhs_dilation, rhs_dilation in itertools.product(
           [(1, 1), (1, 2)], repeat=2)
       for rng in [jtu.rand_small()]
-      for dim_nums, perms in [(("NCHW", "OIHW", "NCHW"),
-                              ([0, 1, 2, 3], [0, 1, 2, 3])),
-                             (("NHWC", "HWIO", "NHWC"),
-                              ([0, 2, 3, 1], [2, 3, 1, 0]))]))
+      for dim_nums, perms in [
+        (("NCHW", "OIHW", "NCHW"), ([0, 1, 2, 3], [0, 1, 2, 3])),
+        (("NHWC", "HWIO", "NHWC"), ([0, 2, 3, 1], [2, 3, 1, 0])),
+        (("NCHW", "HWIO", "NHWC"), ([0, 1, 2, 3], [2, 3, 1, 0])),
+      ]))
   def testConvGeneralDilated(self, lhs_shape, rhs_shape, dtype, strides,
                              padding, lhs_dilation, rhs_dilation,
                              dimension_numbers, perms, rng):
@@ -1756,7 +1757,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       for rng in [jtu.rand_default()]
       for dim_nums, perms in [
           (("NCHW", "OIHW", "NCHW"), ([0, 1, 2, 3], [0, 1, 2, 3])),
-          (("NHWC", "HWIO", "NHWC"), ([0, 2, 3, 1], [2, 3, 1, 0]))
+          (("NHWC", "HWIO", "NHWC"), ([0, 2, 3, 1], [2, 3, 1, 0])),
+          (("NHWC", "OIHW", "NCHW"), ([0, 2, 3, 1], [0, 1, 2, 3]))
       ]))
   @jtu.skip_on_devices("tpu")
   def testConvGeneralDilatedGrad(self, lhs_shape, rhs_shape, dtype, strides,
