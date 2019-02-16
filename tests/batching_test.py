@@ -810,6 +810,23 @@ class BatchingTest(jtu.JaxTestCase):
     expected = onp.stack([grad(f)(scale) for scale in scales])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testIssue387(self):
+    # https://github.com/google/jax/issues/387
+    R = onp.random.RandomState(0).rand(100, 2)
+
+    def dist_sq(R):
+      dR = R[:, np.newaxis, :] - R[np.newaxis, :, :]
+      zero = np.zeros_like(dR)
+      dR = dR - np.where(np.abs(dR) < 0.5, zero, 0.5 * np.sign(dR))
+      return np.sum(dR ** 2, axis=2)
+
+    @jit
+    def f(R):
+      dr = dist_sq(R)
+      return np.sum(R ** 2)
+
+    H = hessian(f)(R)  # don't crash on UnshapedArray
+
 
 if __name__ == '__main__':
   absltest.main()
