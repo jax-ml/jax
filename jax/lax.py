@@ -1326,11 +1326,9 @@ def _dot_batch_rule(batched_args, batch_dims):
 
     assert lbd is not None and rbd is not None
     assert lhs.ndim == rhs.ndim == 2  # dot only supports rank 1 and above
-    if lbd != 0:
-      batching.move_dim_to_front(lhs, lbd)
-    if rbd != 0:
-      batching.move_dim_to_front(rhs, rbd)
-    return dot_general(lhs, rhs, [((1,), (1,)), ((0,), (0,))])
+    lhs = batching.move_dim_to_front(lhs, lbd)
+    rhs = batching.move_dim_to_front(rhs, rbd)
+    return dot_general(lhs, rhs, [((1,), (1,)), ((0,), (0,))]), 0
 
   if lbd is None:
     assert rbd is not None
