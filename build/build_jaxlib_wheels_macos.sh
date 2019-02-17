@@ -40,5 +40,6 @@ build_jax () {
 
 rm -fr build/dist
 build_jax 2.7.15 cp27
+build_jax 3.5.6 cp35
 build_jax 3.6.8 cp36
 build_jax 3.7.2 cp37
