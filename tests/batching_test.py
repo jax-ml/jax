@@ -271,8 +271,7 @@ class BatchingTest(jtu.JaxTestCase):
 
     assert vecvec(np.zeros((3,)), np.zeros((3,))).shape == ()
     assert vecvec(np.zeros((2, 3)), np.zeros((3,))).shape == (2,)
-    # TODO(mattjj): this fails due to an xla error in dot_general
-    # assert vecvec(np.zeros((4, 2, 3)), np.zeros((3,))).shape == (4, 2)
+    assert vecvec(np.zeros((4, 2, 3)), np.zeros((3,))).shape == (4, 2)
 
   def testDot2(self):
     R = onp.random.RandomState(0).randn
