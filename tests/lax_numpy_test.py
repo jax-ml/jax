@@ -58,12 +58,15 @@ all_dtypes = number_dtypes + bool_dtypes
 
 OpRecord = collections.namedtuple(
   "OpRecord",
-  ["name", "nargs", "dtypes", "shapes", "rng", "diff_modes", "test_name"])
+  ["name", "nargs", "dtypes", "shapes", "rng", "diff_modes", "test_name",
+   "check_dtypes"])
 
 
-def op_record(name, nargs, dtypes, shapes, rng, diff_modes, test_name=None):
+def op_record(name, nargs, dtypes, shapes, rng, diff_modes, test_name=None,
+              check_dtypes=True):
   test_name = test_name or name
-  return OpRecord(name, nargs, dtypes, shapes, rng, diff_modes, test_name)
+  return OpRecord(name, nargs, dtypes, shapes, rng, diff_modes, test_name,
+                  check_dtypes)
 
 JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("abs", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
@@ -109,7 +112,9 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
 ]
 
 JAX_COMPOUND_OP_RECORDS = [
-    op_record("angle", 1, number_dtypes, all_shapes, jtu.rand_default(), []),
+    # angle has inconsistent 32/64-bit return types across numpy versions.
+    op_record("angle", 1, number_dtypes, all_shapes, jtu.rand_default(), [],
+              check_dtypes=False),
     op_record("atleast_1d", 1, default_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("atleast_2d", 1, default_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("atleast_3d", 1, default_dtypes, all_shapes, jtu.rand_default(), []),
@@ -271,16 +276,19 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         {"testcase_name": jtu.format_test_name_suffix(rec.test_name, shapes,
                                                       dtypes),
          "rng": rec.rng, "shapes": shapes, "dtypes": dtypes,
-         "onp_op": getattr(onp, rec.name), "lnp_op": getattr(lnp, rec.name)}
+         "onp_op": getattr(onp, rec.name), "lnp_op": getattr(lnp, rec.name),
+          "check_dtypes": rec.check_dtypes}
         for shapes in filter(
           _shapes_are_broadcast_compatible,
           CombosWithReplacement(rec.shapes, rec.nargs))
         for dtypes in CombosWithReplacement(rec.dtypes, rec.nargs))
-      for rec in itertools.chain(JAX_ONE_TO_ONE_OP_RECORDS, JAX_COMPOUND_OP_RECORDS)))
-  def testOp(self, onp_op, lnp_op, rng, shapes, dtypes):
+      for rec in itertools.chain(JAX_ONE_TO_ONE_OP_RECORDS,
+                                 JAX_COMPOUND_OP_RECORDS)))
+  def testOp(self, onp_op, lnp_op, rng, shapes, dtypes, check_dtypes):
     args_maker = self._GetArgsMaker(rng, shapes, dtypes)
-    self._CheckAgainstNumpy(onp_op, lnp_op, args_maker, check_dtypes=True)
-    self._CompileAndCheck(lnp_op, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(onp_op, lnp_op, args_maker,
+                            check_dtypes=check_dtypes)
+    self._CompileAndCheck(lnp_op, args_maker, check_dtypes=check_dtypes)
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
       jtu.cases_from_list(
