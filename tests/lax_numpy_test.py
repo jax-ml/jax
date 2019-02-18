@@ -1220,10 +1220,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for rng_indices in [jtu.rand_int(-5, 5)]))
   def testTake(self, shape, dtype, index_shape, index_dtype, axis, mode, rng,
                rng_indices):
-    if (FLAGS.jax_test_dut.startswith("tpu")
-        and onp.issubdtype(dtype, onp.complexfloating)):
-      self.skipTest("skipping complex dtype on TPU")  # TODO(mattjj): investigate failures
-
     def args_maker():
       x = rng(shape, dtype)
       i = rng_indices(index_shape, index_dtype)
