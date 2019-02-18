@@ -427,7 +427,7 @@ def while_loop(cond_fun, body_fun, init_val):
   Returns:
     The output from the final iteration of body_fun, of type `T`.
 
-  The semantics of `while_loop` are given by this Python implementation:
+  The semantics of `while_loop` are given by this Python implementation::
 
     def while_loop(cond_fun, body_fun, init_val):
       val = init_val
@@ -648,7 +648,7 @@ def fori_loop(lower, upper, body_fun, init_val):
   Returns:
     Loop value from the final iteration, of type T.
 
-  The semantics of `fori_loop` are given by this Python implementation:
+  The semantics of `fori_loop` are given by this Python implementation::
 
     def fori_loop(lower, upper, body_fun, init_val):
       val = init_val
