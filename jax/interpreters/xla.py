@@ -187,7 +187,7 @@ translations[core.identity_p] = lambda c, x: x
 def zeros_like_translation_rule(c, x):
   def _zeros_like(shape):
     if shape.is_tuple():
-      return c.Tuple(*tuple(_zeros_like(x) for x in shape.tuple_shapes()))
+      return c.Tuple(*(_zeros_like(x) for x in shape.tuple_shapes()))
     else:
       return c.Broadcast(c.Constant(onp.array(0, shape.element_type())),
                          shape.dimensions())
