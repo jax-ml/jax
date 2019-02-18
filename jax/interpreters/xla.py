@@ -183,11 +183,16 @@ translations[core.call_p] = lambda c, subc_a1, *a2: c.Call(subc_a1[0],
                                                            subc_a1[1] + a2)
 translations[core.identity_p] = lambda c, x: x
 
-# TODO(mattjj): zeros_like and add_jaxvals should handle any jaxval
+# TODO(mattjj): add_jaxvals should handle any jaxval
 def zeros_like_translation_rule(c, x):
-  x_shape = c.GetShape(x)
-  return c.Broadcast(c.Constant(onp.array(0, x_shape.element_type())),
-                     x_shape.dimensions())
+  def _zeros_like(shape):
+    if shape.is_tuple():
+      return c.Tuple(*tuple(_zeros_like(x) for x in shape.tuple_shapes()))
+    else:
+      return c.Broadcast(c.Constant(onp.array(0, shape.element_type())),
+                         shape.dimensions())
+  return _zeros_like(c.GetShape(x))
+
 translations[ad_util.zeros_like_p] = zeros_like_translation_rule
 translations[ad_util.add_jaxvals_p] = lambda c, x, y: c.Add(x, y)
 
