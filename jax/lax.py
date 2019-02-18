@@ -442,7 +442,7 @@ def while_loop(cond_fun, body_fun, init_val):
   computations.
 
   Another difference from using Python-native loop constructs is that
-  `while_loop` is not reverse-mode differentiable because XLA computations
+  `while_loop` is not (yet) reverse-mode differentiable because XLA computations
   require static bounds on memory requirements.
   """
   init_val_flat, in_tree = pytree_to_jaxtupletree(init_val)
