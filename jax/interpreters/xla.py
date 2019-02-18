@@ -262,17 +262,7 @@ class DeviceArray(DeviceValue):
   def _value(self):
     if self._npy_value is None:
       self._npy_value = self.device_buffer.to_py()
-      try:
-        self._npy_value.flags.writeable = False
-      except AttributeError:
-        # TODO(mattjj): bug with C64 on TPU backend, C64 values returned as pair
-        if onp.issubdtype(self.dtype, onp.complexfloating):
-          a, b = self._npy_value
-          npy_value = onp.stack([a, b], -1).view(self.dtype).reshape(self.shape)
-          npy_value.flags.writeable = False
-          self._npy_value = npy_value
-        else:
-          raise
+      self._npy_value.flags.writeable = False
     return self._npy_value
 
   def copy(self):
