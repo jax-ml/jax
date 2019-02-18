@@ -657,7 +657,7 @@ def fori_loop(lower, upper, body_fun, init_val):
       return val
 
   Unlike that pure Python version, `fori_loop` is implemented in terms of a call
-  to `while_loop`. See the docstring for `while` for more information.
+  to `while_loop`. See the docstring for `while_loop` for more information.
   """
   def while_cond_fun(loop_carry):
     i, _ = loop_carry
