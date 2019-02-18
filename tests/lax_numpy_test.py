@@ -1203,6 +1203,29 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertAllClose(expected, ans, check_dtypes=False)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_shifts={}_axis={}".format(
+          jtu.format_shape_dtype_string(shape, dtype),
+          shifts, axis),
+       "rng": rng, "shape": shape, "dtype": dtype, "shifts": shifts,
+       "axis": axis}
+      for dtype in all_dtypes
+      for shape in [(3, 4), (3, 4, 5), (7, 4, 0)]
+      for shifts, axis in [
+        (3, None),
+        (1, 1),
+        ((3,), (0,)),
+        ((-2,), (-2,)),
+        ((1, 2), (0, -1))
+      ]
+      for rng in [jtu.rand_default()]))
+  def testRoll(self, shape, dtype, shifts, axis, rng):
+    args_maker = lambda: [rng(shape, dtype)]
+    lnp_op = lambda x: lnp.roll(x, shifts, axis=axis)
+    onp_op = lambda x: onp.roll(x, shifts, axis=axis)
+    self._CheckAgainstNumpy(lnp_op, onp_op, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_op, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_index={}_axis={}_mode={}".format(
           jtu.format_shape_dtype_string(shape, dtype),
           jtu.format_shape_dtype_string(index_shape, index_dtype),
