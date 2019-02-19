@@ -1016,10 +1016,16 @@ add_p = standard_binop([_num, _num], 'add')
 ad.defjvp(add_p, lambda g, x, y: _brcast(g, y), lambda g, x, y: _brcast(g, x))
 ad.primitive_transposes[add_p] = _add_transpose
 
+
+def _sub_transpose(t, x, y):
+  assert x is None and y is None  # computation must be linear, not affine
+  return [t, -t]
+
 sub_p = standard_binop([_num, _num], 'sub')
 ad.defjvp(sub_p,
           lambda g, x, y: _brcast(g, y),
           lambda g, x, y: _brcast(neg(g), x))
+ad.primitive_transposes[sub_p] = _sub_transpose
 
 mul_p = standard_binop([_num, _num], 'mul')
 ad.defbilinear_broadcasting(_brcast, mul_p, mul, mul)  # TODO
