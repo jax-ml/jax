@@ -14,10 +14,7 @@
 
 import os
 os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '1')
-version_file = os.path.join(os.path.abspath(os.path.dirname(__file__)),
-                            "version.py")
-with open(version_file) as f:
-  exec(f.read(), globals())
 
+from jax.version import __version__
 from jax.api import *
 import jax.numpy as np  # side-effecting import sets up operator overloads
