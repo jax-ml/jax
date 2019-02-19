@@ -164,6 +164,7 @@ jax.numpy package
     repeat
     reshape
     right_shift
+    roll
     rot90
     round
     row_stack
