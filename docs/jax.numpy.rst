@@ -87,6 +87,7 @@ jax.numpy package
     fmod
     full
     full_like
+    gcd
     geomspace
     greater
     greater_equal
@@ -111,6 +112,7 @@ jax.numpy package
     issubsctype
     kaiser
     kron
+    lcm
     left_shift
     less
     less_equal
