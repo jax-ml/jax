@@ -648,11 +648,12 @@ def while_loop(cond_fun, body_fun, init_val):
   body_jaxpr, pvout, body_consts = pe.trace_to_jaxpr(flat_body_fun, (pval_flat,))
   abs_out, _ = pvout
 
+  if out_tree() != in_tree:
+    raise TypeError("body_fun input and output must have identical structure")
+
   params = _OpaqueParam((abs_out, cond_jaxpr, body_jaxpr))
   out_flat = while_p.bind(init_val_flat, core.pack(cond_consts), core.pack(body_consts),
                           opaque_params=params)
-  if out_tree() != in_tree:
-    raise TypeError("body_fun input and output must have identical structure")
   return build_tree(out_tree(), out_flat)
 
 class _OpaqueParam(object):
@@ -663,6 +664,31 @@ class _OpaqueParam(object):
   def __hash__(self):
     return self.id
 opaque_param_ids = itertools.count()
+
+
+def cond(pred, true_operand, true_fun, false_operand, false_fun):
+  true_op_flat, true_tree = pytree_to_jaxtupletree(true_operand)
+  true_fun_flat, true_out_tree = pytree_fun_to_jaxtupletree_fun(
+      lu.wrap_init(true_fun), (true_tree,))
+  true_jaxpr, true_pvout, true_consts = pe.trace_to_jaxpr(
+      true_fun_flat, (_abstractify(true_op_flat),))
+  true_abs_out, _ = true_pvout
+
+  false_op_flat, false_tree = pytree_to_jaxtupletree(false_operand)
+  false_fun_flat, false_out_tree = pytree_fun_to_jaxtupletree_fun(
+      lu.wrap_init(false_fun), (false_tree,))
+  false_jaxpr, false_pvout, false_consts = pe.trace_to_jaxpr(
+      false_fun_flat, (_abstractify(false_op_flat),))
+  false_abs_out, _ = false_pvout
+
+  if true_out_tree() != false_out_tree():
+    raise TypeError("true_fun and false_fun must have identical structure")
+
+  params = _OpaqueParam((true_abs_out, false_abs_out, true_jaxpr, false_jaxpr))
+  out_flat = cond_p.bind(pred, true_op_flat, core.pack(true_consts),
+                         false_op_flat, core.pack(false_consts),
+                         opaque_params=params)
+  return build_tree(true_out_tree(), out_flat)
 
 
 def tie_in(x, y):
@@ -3076,7 +3102,7 @@ def _while_loop_abstract_eval(init_val, cond_consts, body_consts, opaque_params)
 def _while_loop_translation_rule(c, init_val, cond_consts, body_consts, opaque_params):
   loop_carry = c.Tuple(init_val, cond_consts, body_consts)
   shape = c.GetShape(loop_carry)
-  abs_out, cond_jaxpr, body_jaxpr = opaque_params.val
+  _, cond_jaxpr, body_jaxpr = opaque_params.val
 
   loop_carry_var = pe.Var(0, "loop_carry")
   outvar = pe.Var(0, "loop_carry_out")
@@ -3091,7 +3117,6 @@ def _while_loop_translation_rule(c, init_val, cond_consts, body_consts, opaque_p
       [_unpack_eqn(loop_carry_var, [cond_jaxpr.invars[0], cond_var, body_var]),
        _unpack_eqn(cond_var, cond_jaxpr.constvars)]
       + list(cond_jaxpr.eqns))
-
 
   assert len(body_jaxpr.invars) == 1
   body_jaxpr_converted = body_jaxpr.copy()
@@ -3119,6 +3144,57 @@ def _unpack_eqn(invar, outvars):
 
 def _pack_eqn(invars, outvar):
   return core.JaxprEqn(invars, [outvar], core.pack_p, (), False, {})
+
+
+def _cond_abstract_eval(pred, true_op, true_consts, false_op, false_consts,
+                        opaque_params):
+  true_aval, false_aval, _, _ = opaque_params.val
+  true_aval, false_aval = map(maybe_tracer_tuple_to_abstract_tuple,
+                              (true_aval, false_aval))
+  if isinstance(pred, ConcreteArray):
+    return true_aval if pred else false_aval
+  else:
+    return core.lattice_join(true_aval, false_aval)
+
+def _cond_translation_rule(c, pred, true_op, true_consts, false_op,
+                           false_consts, opaque_params):
+  _, _, true_jaxpr, false_jaxpr = opaque_params.val
+  true_arg = c.Tuple(true_op, true_consts)
+  false_arg = c.Tuple(false_op, false_consts)
+
+  assert len(true_jaxpr.invars) == 1
+  true_arg_var = pe.Var(0, "true_arg")
+  true_consts_var = pe.Var(0, "true_consts")
+  true_jaxpr_converted = true_jaxpr.copy()
+  true_jaxpr_converted.constvars = []
+  true_jaxpr_converted.invars = [true_arg_var]
+  true_jaxpr_converted.eqns = (
+      [_unpack_eqn(true_arg_var, [true_jaxpr.invars[0], true_consts_var]),
+       _unpack_eqn(true_consts_var, true_jaxpr.constvars)]
+      + list(true_jaxpr.eqns))
+
+  assert len(false_jaxpr.invars) == 1
+  false_arg_var = pe.Var(0, "false_arg")
+  false_consts_var = pe.Var(0, "false_consts")
+  false_jaxpr_converted = false_jaxpr.copy()
+  false_jaxpr_converted.constvars = []
+  false_jaxpr_converted.invars = [false_arg_var]
+  false_jaxpr_converted.eqns = (
+      [_unpack_eqn(false_arg_var, [false_jaxpr.invars[0], false_consts_var]),
+       _unpack_eqn(false_consts_var, false_jaxpr.constvars)]
+      + list(false_jaxpr.eqns))
+
+  true_comp = xla.jaxpr_computation(true_jaxpr_converted, (), (),
+                                    c.GetShape(true_arg))
+  false_comp = xla.jaxpr_computation(false_jaxpr_converted, (), (),
+                                     c.GetShape(false_arg))
+  return c.Conditional(pred, true_arg, true_comp, false_arg, false_comp)
+
+cond_p = Primitive('cond')
+cond_p.def_impl(partial(xla.apply_primitive, cond_p))
+cond_p.def_abstract_eval(_cond_abstract_eval)
+xla.translations[cond_p] = _cond_translation_rule
+
 
 def _tie_in_transpose_rule(t):
   return [ad_util.zero, t]
