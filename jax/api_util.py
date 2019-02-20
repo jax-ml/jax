@@ -31,6 +31,7 @@ def wraps(wrapped, fun, namestr="{fun}", docstr="{doc}", **kwargs):
     fun.__name__ = namestr.format(fun=get_name(wrapped))
     fun.__module__ = get_module(wrapped)
     fun.__doc__ = docstr.format(fun=get_name(wrapped), doc=get_doc(wrapped), **kwargs)
+    fun.__wrapped__ = wrapped
   finally:
     return fun
 

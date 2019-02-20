@@ -241,11 +241,13 @@ def reducer_batcher(prim, batched_args, batch_dims, axes, **params):
 
 def add_batched(batched_args, batch_dims):
   bdx, bdy = batch_dims
+  xs, ys = batched_args
   if bdx == bdy:
-    xs, ys = batched_args
     return add_jaxvals_p.bind(xs, ys), bdx
   else:
-    xs, ys = map(bdim_at_front, batched_args, batch_dims)
+    sz = (dimsize(bdx, xs) | dimsize(bdy, ys)).pop()
+    move_bdim = partial(bdim_at_front, broadcast_size=sz, force_broadcast=True)
+    xs, ys = map(move_bdim, batched_args, batch_dims)
     return add_jaxvals_p.bind(xs, ys), 0
 primitive_batchers[add_jaxvals_p] = add_batched
 

@@ -114,10 +114,10 @@ def rand_like(rng, x):
 
 
 def numerical_jvp(f, primals, tangents, eps=EPS):
-  delta = scalar_mul(tangents, EPS)
+  delta = scalar_mul(tangents, eps)
   f_pos = f(*add(primals, delta))
   f_neg = f(*sub(primals, delta))
-  return scalar_mul(sub(f_pos, f_neg), 0.5 / EPS)
+  return scalar_mul(sub(f_pos, f_neg), 0.5 / eps)
 
 
 def check_jvp(f, f_jvp, args, atol=ATOL, rtol=RTOL, eps=EPS):
@@ -136,7 +136,7 @@ def check_vjp(f, f_vjp, args, atol=ATOL, rtol=RTOL, eps=EPS):
   v_out_expected = f(*args)
   check_eq(v_out, v_out_expected)
   tangent = tree_map(_rand_like, args)
-  tangent_out = numerical_jvp(f, args, tangent, eps=EPS)
+  tangent_out = numerical_jvp(f, args, tangent, eps=eps)
   cotangent = tree_map(_rand_like, v_out)
   cotangent_out = conj(vjpfun(conj(cotangent)))
   ip = inner_prod(tangent, cotangent_out)
@@ -155,7 +155,7 @@ def check_grads(f, args, order, atol=None, rtol=None, eps=None):
     default_tol = 1e-6 if FLAGS.jax_enable_x64 else 1e-2
     atol = atol or default_tol
     rtol = rtol or default_tol
-    eps = eps or default_tol
+    eps = eps or EPS
     check_jvp(f, partial(api.jvp, f), args, atol, rtol, eps)
     check_vjp(f, partial(api.vjp, f), args, atol, rtol, eps)
 

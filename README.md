@@ -144,11 +144,11 @@ cloud VM), you can run
 
 ```bash
 # install jaxlib
-PYTHON_VERSION=cp27  # alternatives: cp27, cp36, cp37
+PYTHON_VERSION=cp27  # alternatives: cp27, cp35, cp36, cp37
 CUDA_VERSION=cuda92  # alternatives: cuda90, cuda92, cuda100
 PLATFORM=linux_x86_64  # alternatives: linux_x86_64
 BASE_URL='https://storage.googleapis.com/jax-wheels'
-pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.7-$PYTHON_VERSION-none-$PLATFORM.whl
+pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.8-$PYTHON_VERSION-none-$PLATFORM.whl
 
 pip install --upgrade jax  # install jax
 ```
@@ -326,6 +326,8 @@ debugging but they may only be executed once if they're under a `jit` decorator.
 >     `np.dot(A, B)` instead)
 > *   Side-effects like mutation of arguments or mutation of global variables
 > *   The `out` argument of NumPy functions
+> *   Dtype casting like `np.float64(x)` (use `x.astype('float64')` or
+>     `x.astype(np.float64)` instead).
 >
 > **For jit functions, also don’t use**
 >
@@ -702,8 +704,10 @@ code to compile and end-to-end optimize much bigger functions.
 ## Current gotchas
 
 Some things we don't handle that might surprise NumPy users:
-1. No in-place mutation syntax. Functional code. Can use lax.dynamic\_update\_slice.
-2. PRNG can be awkward, and linearity is not checked with a warning.
+1. No in-place mutation syntax. JAX requires functional code. You can use
+   lax.dynamic\_update\_slice for slice updating that, under `@jit`, will be
+   optimized to in-place buffer updating.
+2. PRNGs can be awkward, and linearity is not checked with a warning.
 
 ## Contributors
 

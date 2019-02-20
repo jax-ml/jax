@@ -35,7 +35,8 @@ from ..abstract_arrays import ConcreteArray, ShapedArray, make_shaped_array, arr
 from ..core import AbstractTuple, JaxTuple, pack, valid_jaxtype
 from ..util import partial, partialmethod, memoize, unzip2, concatenate, safe_map, prod
 from ..lib import xla_bridge as xb
-from .partial_eval import trace_to_subjaxpr, merge_pvals, JaxprTrace, PartialVal
+from .partial_eval import (trace_to_subjaxpr, trace_unwrapped_to_jaxpr,
+                           merge_pvals, JaxprTrace, PartialVal)
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_device_values',
@@ -122,6 +123,11 @@ def compile_jaxpr(jaxpr, const_vals, *abstract_args):
   result_shape = xla_shape_to_result_shape(built_c.GetReturnValueShape())
   return built_c.Compile(arg_shapes, xb.get_compile_options()), result_shape
 
+def build_jaxpr(jaxpr, const_vals, *abstract_args):
+  arg_shapes = list(map(xla_shape, abstract_args))
+  built_c = jaxpr_computation(jaxpr, const_vals, (), *arg_shapes)
+  return built_c
+
 def jaxpr_computation(jaxpr, const_vals, freevar_shapes, *arg_shapes):
   c = xb.make_computation_builder("jaxpr_computation")
 
@@ -135,20 +141,23 @@ def jaxpr_computation(jaxpr, const_vals, freevar_shapes, *arg_shapes):
   env = {}
   consts_env = dict(zip(jaxpr.constvars, const_vals))
   write(core.unitvar, c.Tuple())
-  map(write, jaxpr.constvars, map(c.Constant, const_vals))
-  map(write, jaxpr.freevars, map(c.ParameterWithShape, freevar_shapes))
+  if const_vals:
+    map(write, jaxpr.constvars, map(c.Constant, const_vals))
+    map(write, jaxpr.freevars, map(c.ParameterWithShape, freevar_shapes))
+  else:
+    all_freevars = it.chain(jaxpr.constvars, jaxpr.freevars)
+    map(write, all_freevars, map(c.ParameterWithShape, freevar_shapes))
   map(write, jaxpr.invars, map(c.ParameterWithShape, arg_shapes))
   for eqn in jaxpr.eqns:
     in_nodes = map(read, eqn.invars)
     in_shapes = map(c.GetShape, in_nodes)
-    subcs = [jaxpr_computation(subjaxpr,
-                               [consts_env[b] for b in const_bindings],
-                               map(c.GetShape, map(read, freevar_bindings)),
+    subcs = [jaxpr_computation(subjaxpr, (),
+                               map(c.GetShape, map(read, const_bindings + freevar_bindings)),
                                *in_shapes)
              for subjaxpr, const_bindings, freevar_bindings
              in eqn.bound_subjaxprs]
-    subfuns = [(subc, tuple(map(read, freevar_bindings)))
-               for subc, (_, _, freevar_bindings)
+    subfuns = [(subc, tuple(map(read, const_bindings + freevar_bindings)))
+               for subc, (_, const_bindings, freevar_bindings)
                in zip(subcs, eqn.bound_subjaxprs)]
     ans = translation_rule(eqn.primitive)(c, *(subfuns + in_nodes), **eqn.params)
     out_nodes = xla_destructure(c, ans) if eqn.destructure else [ans]
@@ -172,6 +181,15 @@ def translation_rule(p):
         "XLA translation rule for '{}' not implemented".format(p))
 
 
+def lower_fun(fun, c, *xla_args, **params):
+  xla_shapes = map(c.GetShape, xla_args)
+  avals = map(aval_from_xla_shape, xla_shapes)
+  pvals = [PartialVal((a, core.unit)) for a in avals]
+  jaxpr, pvout, consts = trace_unwrapped_to_jaxpr(fun, pvals, **params)
+  built_c = jaxpr_computation(jaxpr, consts, (), *xla_shapes)
+  return c.Call(built_c, xla_args)
+
+
 translations = {}
 backend_specific_translations = defaultdict(dict)
 
@@ -180,11 +198,16 @@ translations[core.call_p] = lambda c, subc_a1, *a2: c.Call(subc_a1[0],
                                                            subc_a1[1] + a2)
 translations[core.identity_p] = lambda c, x: x
 
-# TODO(mattjj): zeros_like and add_jaxvals should handle any jaxval
+# TODO(mattjj): add_jaxvals should handle any jaxval
 def zeros_like_translation_rule(c, x):
-  x_shape = c.GetShape(x)
-  return c.Broadcast(c.Constant(onp.array(0, x_shape.element_type())),
-                     x_shape.dimensions())
+  def _zeros_like(shape):
+    if shape.is_tuple():
+      return c.Tuple(*(_zeros_like(x) for x in shape.tuple_shapes()))
+    else:
+      return c.Broadcast(c.Constant(onp.array(0, shape.element_type())),
+                         shape.dimensions())
+  return _zeros_like(c.GetShape(x))
+
 translations[ad_util.zeros_like_p] = zeros_like_translation_rule
 translations[ad_util.add_jaxvals_p] = lambda c, x, y: c.Add(x, y)
 
@@ -254,17 +277,7 @@ class DeviceArray(DeviceValue):
   def _value(self):
     if self._npy_value is None:
       self._npy_value = self.device_buffer.to_py()
-      try:
-        self._npy_value.flags.writeable = False
-      except AttributeError:
-        # TODO(mattjj): bug with C64 on TPU backend, C64 values returned as pair
-        if onp.issubdtype(self.dtype, onp.complexfloating):
-          a, b = self._npy_value
-          npy_value = onp.stack([a, b], -1).view(self.dtype).reshape(self.shape)
-          npy_value.flags.writeable = False
-          self._npy_value = npy_value
-        else:
-          raise
+      self._npy_value.flags.writeable = False
     return self._npy_value
 
   def copy(self):

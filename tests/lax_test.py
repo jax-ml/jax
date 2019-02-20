@@ -422,10 +422,11 @@ class LaxTest(jtu.JaxTestCase):
       for lhs_dilation, rhs_dilation in itertools.product(
           [(1, 1), (1, 2)], repeat=2)
       for rng in [jtu.rand_small()]
-      for dim_nums, perms in [(("NCHW", "OIHW", "NCHW"),
-                              ([0, 1, 2, 3], [0, 1, 2, 3])),
-                             (("NHWC", "HWIO", "NHWC"),
-                              ([0, 2, 3, 1], [2, 3, 1, 0]))]))
+      for dim_nums, perms in [
+        (("NCHW", "OIHW", "NCHW"), ([0, 1, 2, 3], [0, 1, 2, 3])),
+        (("NHWC", "HWIO", "NHWC"), ([0, 2, 3, 1], [2, 3, 1, 0])),
+        (("NCHW", "HWIO", "NHWC"), ([0, 1, 2, 3], [2, 3, 1, 0])),
+      ]))
   def testConvGeneralDilated(self, lhs_shape, rhs_shape, dtype, strides,
                              padding, lhs_dilation, rhs_dilation,
                              dimension_numbers, perms, rng):
@@ -1064,7 +1065,7 @@ class LaxTest(jtu.JaxTestCase):
       return (lax.add(pos, 1), lax.add(count, 1))
 
     def loop(init):
-      result = lax._while_loop(loop_cond, loop_body, (init, 0))
+      result = lax.while_loop(loop_cond, loop_body, (init, 0))
       _, count = result
       return count
 
@@ -1087,7 +1088,7 @@ class LaxTest(jtu.JaxTestCase):
         return (num, lax.add(i, 1), inner_loop(i, count))
 
       init_val = (num, 0, 0)
-      _, i, count = lax._while_loop(cond_fun, body_fun, init_val)
+      _, i, count = lax.while_loop(cond_fun, body_fun, init_val)
       return (i, count)
 
     def inner_loop(i, count):  # pylint: disable=missing-docstring
@@ -1100,7 +1101,7 @@ class LaxTest(jtu.JaxTestCase):
         return (i, lax.add(j, 1), lax.add(count, 1))
 
       init_val = (i, 0, count)
-      _, _, count = lax._while_loop(cond_fun, body_fun, init_val)
+      _, _, count = lax.while_loop(cond_fun, body_fun, init_val)
       return count
 
     cloop = api.jit(outer_loop)
@@ -1124,7 +1125,39 @@ class LaxTest(jtu.JaxTestCase):
         pos, count = state
         return (lax.add(pos, 1), lax.add(count, inc))
 
-      result = lax._while_loop(loop_cond, loop_body, (init, 0))
+      result = lax.while_loop(loop_cond, loop_body, (init, 0))
+      _, count = result
+      return count
+
+    cloop = api.jit(loop)
+
+    limit = 10
+    effect = [False]
+    self.assertEqual(loop(2, limit, 1), limit - 2)
+    assert effect[0]
+    effect[0] = False
+    self.assertEqual(cloop(2, limit, 1), limit - 2)
+    assert effect[0]
+    effect[0] = False
+    self.assertEqual(cloop(2, limit, 1), limit - 2)
+    self.assertEqual(cloop(3, limit, 1), limit - 3)
+    assert not effect[0]
+
+  def testWhileWithClosureJit(self):
+
+    def loop(init, local_limit, inc):
+
+      def loop_cond(state):
+        pos, _ = state
+        return lax.lt(pos, local_limit)
+
+      def loop_body(state):
+        effect[0] = True
+        pos, count = state
+        f = lambda pos, inc: (lax.add(pos, 1), lax.add(count, inc))
+        return api.jit(f)(pos, inc)
+
+      result = lax.while_loop(loop_cond, loop_body, (init, 0))
       _, count = result
       return count
 
@@ -1161,7 +1194,7 @@ class LaxTest(jtu.JaxTestCase):
 
       out = onp.zeros(arr.shape, dtype=arr.dtype)
       init_val = (0, num, arr, out)
-      _, _, _, out = lax._while_loop(cond_fun, body_fun, init_val)
+      _, _, _, out = lax.while_loop(cond_fun, body_fun, init_val)
       return out
 
     def inner_loop(i, arr, out):  # pylint: disable=missing-docstring
@@ -1178,7 +1211,7 @@ class LaxTest(jtu.JaxTestCase):
         return (i, lax.add(j, 1), arr, out)
 
       init_val = (i, 0, arr, out)
-      _, _, _, out = lax._while_loop(cond_fun, body_fun, init_val)
+      _, _, _, out = lax.while_loop(cond_fun, body_fun, init_val)
       return out
 
     cloop = api.jit(outer_loop)
@@ -1199,7 +1232,7 @@ class LaxTest(jtu.JaxTestCase):
         return (arr, num, lax.add(i, 1), lax.add(total, arr_i))
 
       init_val = (arr, num, 0, 0.)
-      _, _, _, total = lax._while_loop(cond_fun, body_fun, init_val)
+      _, _, _, total = lax.while_loop(cond_fun, body_fun, init_val)
       return total
 
     cfun = api.jit(sum_first_n)
@@ -1301,24 +1334,6 @@ class LaxTest(jtu.JaxTestCase):
                           check_dtypes=False)
       self.assertAllClose(cfun(x, num), onp.sum(x[:num]), check_dtypes=False)
       self.assertAllClose(cfun(x, num), onp.sum(x[:num]), check_dtypes=False)
-
-  def testForeachLoopBasic(self):
-    def sum_squares(xs):
-        def body_fun(x, y):
-            return y + x * x
-        return lax.foreach_loop(xs, body_fun, 0)
-
-    sum_squares_jit = api.jit(sum_squares)
-
-    xs = onp.array([1, 2, 3, 4])
-    self.assertEqual(sum_squares(xs[:1]), 1)
-    self.assertEqual(sum_squares(xs[:1]), sum_squares_jit(xs[:1]))
-    self.assertEqual(sum_squares(xs[:2]), 5)
-    self.assertEqual(sum_squares(xs[:2]), sum_squares_jit(xs[:2]))
-    self.assertEqual(sum_squares(xs[:3]), 14)
-    self.assertEqual(sum_squares(xs[:3]), sum_squares_jit(xs[:3]))
-    self.assertEqual(sum_squares(xs[:4]), 30)
-    self.assertEqual(sum_squares(xs[:4]), sum_squares_jit(xs[:4]))
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_lhs_shape={}_rhs_shape={}"
@@ -1587,7 +1602,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
         return absltest.unittest.skip("pow grad imprecise on tpu")
     tol = 1e-1 if num_float_bits(dtype) == 32 else None
     args = tuple(rng(shape, dtype) for shape in shapes)
-    check_grads(op, args, order, tol, tol, tol)
+    check_grads(op, args, order, tol, tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_from_dtype={}_to_dtype={}".format(
@@ -1724,7 +1739,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       for rng in [jtu.rand_default()]
       for dim_nums, perms in [
           (("NCHW", "OIHW", "NCHW"), ([0, 1, 2, 3], [0, 1, 2, 3])),
-          (("NHWC", "HWIO", "NHWC"), ([0, 2, 3, 1], [2, 3, 1, 0]))
+          (("NHWC", "HWIO", "NHWC"), ([0, 2, 3, 1], [2, 3, 1, 0])),
+          (("NHWC", "OIHW", "NCHW"), ([0, 2, 3, 1], [0, 1, 2, 3]))
       ]))
   @jtu.skip_on_devices("tpu")
   def testConvGeneralDilatedGrad(self, lhs_shape, rhs_shape, dtype, strides,
@@ -1993,7 +2009,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     operand = rng(shape, dtype)
     init_val = onp.asarray(init_val, dtype=dtype)
     reduce = lambda operand: lax.reduce(operand, init_val, op, dims)
-    check_grads(reduce, (operand,), 1, tol, tol, tol)
+    check_grads(reduce, (operand,), 1, tol, tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_op={}_dtype={}_padding={}"

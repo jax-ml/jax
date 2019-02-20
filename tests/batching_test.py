@@ -271,8 +271,15 @@ class BatchingTest(jtu.JaxTestCase):
 
     assert vecvec(np.zeros((3,)), np.zeros((3,))).shape == ()
     assert vecvec(np.zeros((2, 3)), np.zeros((3,))).shape == (2,)
-    # TODO(mattjj): this fails due to an xla error in dot_general
-    # assert vecvec(np.zeros((4, 2, 3)), np.zeros((3,))).shape == (4, 2)
+    assert vecvec(np.zeros((4, 2, 3)), np.zeros((3,))).shape == (4, 2)
+
+  def testDot2(self):
+    R = onp.random.RandomState(0).randn
+    xs = R(10, 3)
+    ys = R(10, 3)
+    ans = vmap(np.dot)(xs, ys)
+    expected = onp.einsum('ni,ni->n', xs, ys)
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testPad(self):
     R = onp.random.RandomState(0).randn
@@ -770,6 +777,62 @@ class BatchingTest(jtu.JaxTestCase):
     ans = vmap(f)(a)
     expected = onp.stack([f(a[:, i, :]) for i in range(a.shape[1])], axis=1)
     assert onp.all(ans == expected)
+
+  def testTranspose(self):
+    x = onp.arange(4 * 3 * 3).reshape((4, 3, 3))
+    ans = vmap(lambda x: x + x.T)(x)
+    expected = x + onp.swapaxes(x, -1, -2)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testTransposePermutation(self):
+    x = onp.arange(6 * 3 * 4 * 5).reshape((6, 3, 4, 5))
+    ans = vmap(lambda x: np.transpose(x, (1, 0, 2)))(x)
+    expected = onp.transpose(x, (0, 2, 1, 3))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    x = onp.arange(6 * 3 * 4 * 5).reshape((6, 3, 4, 5))
+    ans = vmap(lambda x: np.transpose(x, (1, 2, 0)))(x)
+    expected = onp.transpose(x, (0, 2, 3, 1))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    x = onp.arange(6 * 3 * 4 * 5).reshape((3, 4, 6, 5))
+    ans = vmap(lambda x: np.transpose(x, (1, 2, 0)), in_axes=2)(x)
+    expected = onp.transpose(x, (2, 1, 3, 0))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testIssue354(self):
+    psd_mat = onp.random.randn(20, 10)
+    psd_mat = psd_mat.T.dot(psd_mat)
+    vec = onp.random.randn(10)
+
+    def f(scale):
+      scaled_mat = scale * psd_mat
+      chol = np.linalg.cholesky(scaled_mat)
+      return -0.5 * np.sum((np.einsum('ij,j->i', chol, vec))**2)
+    vmapped_f = vmap(f)
+    vmapped_f_grad = grad(lambda x: np.sum(vmapped_f(x)))
+
+    scales = onp.array([[0.1], [0.2], [0.3], [0.4], [0.5]])
+    ans = vmapped_f_grad(scales)  # don't crash!
+    expected = onp.stack([grad(f)(scale) for scale in scales])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testIssue387(self):
+    # https://github.com/google/jax/issues/387
+    R = onp.random.RandomState(0).rand(100, 2)
+
+    def dist_sq(R):
+      dR = R[:, np.newaxis, :] - R[np.newaxis, :, :]
+      zero = np.zeros_like(dR)
+      dR = dR - np.where(np.abs(dR) < 0.5, zero, 0.5 * np.sign(dR))
+      return np.sum(dR ** 2, axis=2)
+
+    @jit
+    def f(R):
+      dr = dist_sq(R)
+      return np.sum(R ** 2)
+
+    H = hessian(f)(R)  # don't crash on UnshapedArray
 
 
 if __name__ == '__main__':

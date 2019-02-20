@@ -240,7 +240,7 @@ class Tracer(object):
   def __ror__(self, other): return self.aval._ror(self, other)
   def __xor__(self, other): return self.aval._xor(self, other)
   def __rxor__(self, other): return self.aval._rxor(self, other)
-  def __invert__(self, other): return self.aval._invert(self, other)
+  def __invert__(self): return self.aval._invert(self)
   def __lshift__(self, other): return self.aval._lshift(self, other)
   def __rshift__(self, other): return self.aval._rshift(self, other)
   def __getitem__(self, idx): return self.aval._getitem(self, idx)
