@@ -386,7 +386,6 @@ def xla_shape(x):
 # instead, for values returned to the user, always destructure tuples.
 # The code here is similar to that in tree_util, but is meant to flatten
 # JaxTuple trees only.
-# TODO(mattjj): since pjit does flattening in api.py, can move/de-duplicate this
 
 @lu.transformation_with_aux
 def flatten_fun(in_trees, *flat_args):

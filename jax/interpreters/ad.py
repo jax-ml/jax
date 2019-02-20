@@ -185,8 +185,7 @@ class JVPTrace(Trace):
     tangents = [t.tangent for t in tracers]
     nonzero_tangents, in_tree_def = tree_to_jaxtuples(tangents)
     f, out_tree_def = traceable(jvp_subtrace(f, self.master), in_tree_def)
-    new_params = call_primitive_jvp_params.get(call_primitive, identity)(params)
-    result = call_primitive.bind(f, pack(primals), nonzero_tangents, **new_params)
+    result = call_primitive.bind(f, pack(primals), nonzero_tangents, **params)
     primal_out, tangent_out = build_tree(out_tree_def(), result)
     return JVPTracer(self, primal_out, tangent_out)
 
@@ -295,8 +294,8 @@ def defjvp(primitive, *jvprules):
 
 def standard_jvp(jvprules, primitive, primals, tangents, **params):
   val_out = primitive.bind(*primals, **params)
-  tangents_out = (rule(t, *primals, **params) for rule, t in zip(jvprules, tangents)
-                  if rule is not None and t is not zero)
+  tangents_out = [rule(t, *primals, **params) for rule, t in zip(jvprules, tangents)
+                  if rule is not None and t is not zero]
   return val_out, reduce(add_tangents, tangents_out, zero)
 
 

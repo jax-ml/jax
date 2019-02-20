@@ -79,17 +79,33 @@ class JaxprTrace(Trace):
   def process_call(self, call_primitive, f, tracers, params):
     in_pvs, in_consts = unzip2([t.pval for t in tracers])
     fun, aux = partial_eval(f, self, in_pvs)
-    params1, params2 = call_primitive_peval_params.get(call_primitive, (identity, identity))
-    out_pv_const, consts = call_primitive.bind(fun, *in_consts, **params1(params))
+    out_pv_const, consts = call_primitive.bind(fun, *in_consts, **params)
     out_pv, jaxpr, env = aux()
     const_tracers = map(self.new_instantiated_const, consts)
     env_tracers = map(self.full_raise, env)
     bound_subjaxpr = (jaxpr, const_tracers, env_tracers)
-    eqn = JaxprEqn(tracers, None, call_primitive, (bound_subjaxpr,), False,
-                   params2(params))
+    eqn = JaxprEqn(tracers, None, call_primitive, (bound_subjaxpr,), False, params)
     return JaxprTracer(self, PartialVal((out_pv, out_pv_const)), eqn)
 
+  def process_map(self, call_primitive, f, tracers, params):
+    in_pvs, in_consts = unzip2([t.pval for t in tracers])
+    fun, aux = partial_eval(f, self, map(remove_axis_from_pv, in_pvs))
+    out_pv_const, reduced_consts = call_primitive.bind(fun, *in_consts, **params)
+    consts = map(partial(add_axis_to_pv, 0), in_pvs)
+    out_pv, jaxpr, env = aux()
+    const_tracers = map(self.new_instantiated_const, consts)
+    env_tracers = map(self.full_raise, env)
+    jaxpr_converted = jaxpr.copy()
+    jaxpr_converted.constvars = []
+    jaxpr_converted.invars = list(it.chain(jaxpr.constvars, jaxpr.invars))
+    invars = tuple(it.chain(const_tracers, eqn.invars))
+    bound_subjaxpr = (jaxpr_converted, (), env)
+    eqn = JaxprEqn(invars, None, call_primitive, (bound_subjaxpr,), False, params)
+    return JaxprTracer(self, PartialVal((out_pv, out_pv_const)), eqn)
+
+
   def post_process_call(self, call_primitive, out_tracer):
+    # TODO(mattjj): post_process_map
     jaxpr, consts, env = tracers_to_jaxpr([], out_tracer)
     out_pv, out_pv_const = out_tracer.pval
     out = pack((out_pv_const, pack(consts)))
@@ -402,4 +418,4 @@ compiled_call_p.def_custom_bind(compiled_call)
 compiled_call_p.def_impl(compiled_call_impl)
 
 
-call_primitive_peval_params = {}
+call_peval_rewrites = {}
