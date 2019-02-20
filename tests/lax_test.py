@@ -1387,6 +1387,23 @@ class LaxTest(jtu.JaxTestCase):
     self.assertEqual(cfun(3), fun(3))
     self.assertEqual(cfun(6), fun(6))
 
+  # TODO(mattjj): fix this, see https://github.com/google/jax/issues/415
+  # def testCondOneBranchConstant(self):
+  #   def fun(x):
+  #     if x < 3:
+  #       return 5.
+  #     else:
+  #       return x
+
+  #   @api.jit
+  #   def cfun(x):
+  #     return lax.cond(lax.lt(x, 3), x, lambda x: 5., x, lambda x: x)
+
+  #   self.assertEqual(fun(0), cfun(0))
+  #   self.assertEqual(cfun(0), 5.)
+  #   self.assertEqual(fun(4), cfun(4))
+  #   self.assertEqual(cfun(4), 4)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_lhs_shape={}_rhs_shape={}"
        .format(jtu.format_shape_dtype_string(lhs_shape, dtype),
