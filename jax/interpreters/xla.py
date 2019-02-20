@@ -123,6 +123,11 @@ def compile_jaxpr(jaxpr, const_vals, *abstract_args):
   result_shape = xla_shape_to_result_shape(built_c.GetReturnValueShape())
   return built_c.Compile(arg_shapes, xb.get_compile_options()), result_shape
 
+def build_jaxpr(jaxpr, const_vals, *abstract_args):
+  arg_shapes = list(map(xla_shape, abstract_args))
+  built_c = jaxpr_computation(jaxpr, const_vals, (), *arg_shapes)
+  return built_c
+
 def jaxpr_computation(jaxpr, const_vals, freevar_shapes, *arg_shapes):
   c = xb.make_computation_builder("jaxpr_computation")
 
