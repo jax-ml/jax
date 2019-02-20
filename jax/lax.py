@@ -3268,7 +3268,6 @@ def _while_loop_translation_rule(c, init_val, cond_consts, body_consts, opaque_p
        _unpack_eqn(cond_var, cond_jaxpr.constvars)]
       + list(cond_jaxpr.eqns))
 
-
   assert len(body_jaxpr.invars) == 1
   body_jaxpr_converted = body_jaxpr.copy()
   body_jaxpr_converted.constvars = []

@@ -6,7 +6,7 @@ from jax.lax import psum
 
 @partial(pjit, axis_name='i')
 def f(x):
-  return np.sin(np.sin(x))
+  return np.sin(x)
 
 x = onp.arange(2).reshape(1, 2).astype(onp.float32)
 print f(x)
@@ -15,7 +15,7 @@ def splitjvp(x):
   _, jvp = linearize(f, x)
   return jvp(np.ones_like(x))
 
-print splitjvp(x)
+# print splitjvp(x)
 print make_jaxpr(splitjvp)(x)
 print grad(lambda x: np.sum(np.sin(x)))(x)
 print grad(lambda x: np.sum(f(x)))(x)
