@@ -182,15 +182,6 @@ JAX_REDUCER_NO_DTYPE_RECORDS = [
     op_record("min", 1, all_dtypes, nonempty_shapes, jtu.rand_default(), []),
 ]
 
-numpy_version = tuple(map(int, onp.version.version.split('.')))
-if numpy_version >= (1, 15):
-  JAX_REDUCER_NO_DTYPE_RECORDS += [
-      op_record("gcd", 2, int_dtypes, all_shapes, jtu.rand_default(), []),
-      op_record("lcm", 2, int_dtypes, all_shapes, jtu.rand_default(), []),
-      op_record("ptp", 1, number_dtypes, nonempty_shapes, jtu.rand_default(), []),
-  ]
-
-
 JAX_ARGMINMAX_RECORDS = [
     op_record("argmin", 1, all_dtypes, nonempty_shapes, jtu.rand_some_equal(), []),
     op_record("argmax", 1, all_dtypes, nonempty_shapes, jtu.rand_some_equal(), []),
@@ -231,6 +222,16 @@ JAX_OPERATOR_OVERLOADS = [
     # op_record("__rdivmod__", 2, number_dtypes, all_shapes, jtu.rand_nonzero(), []),
     # TODO(mattjj): lshift, rshift
 ]
+
+numpy_version = tuple(map(int, onp.version.version.split('.')))
+if numpy_version >= (1, 15):
+  JAX_COMPOUND_OP_RECORDS += [
+      op_record("gcd", 2, int_dtypes, all_shapes, jtu.rand_default(), []),
+      op_record("lcm", 2, int_dtypes, all_shapes, jtu.rand_default(), []),
+  ]
+  JAX_REDUCER_NO_DTYPE_RECORDS += [
+      op_record("ptp", 1, number_dtypes, nonempty_shapes, jtu.rand_default(), []),
+  ]
 
 if six.PY2:
   JAX_OPERATOR_OVERLOADS += [
