@@ -87,6 +87,7 @@ jax.numpy package
     fmod
     full
     full_like
+    gcd
     geomspace
     greater
     greater_equal
@@ -111,6 +112,7 @@ jax.numpy package
     issubsctype
     kaiser
     kron
+    lcm
     left_shift
     less
     less_equal
@@ -164,6 +166,7 @@ jax.numpy package
     repeat
     reshape
     right_shift
+    roll
     rot90
     round
     row_stack

@@ -123,7 +123,7 @@ test_specs_base = [
 
 def jvp_unlinearized(f, primals, tangents):
   out, jvp = linearize(f, *primals)
-  return out, jvp(tangents)
+  return out, jvp(*tangents)
 
 test_specs = []
 for ts in test_specs_base:

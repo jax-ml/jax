@@ -12,21 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from setuptools import setup
-from glob import glob
-import os
-
-binary_libs = [os.path.basename(f) for f in glob('jaxlib/*.so*')]
-
-setup(
-    name='jaxlib',
-    version='0.1.8',
-    description='XLA library for JAX',
-    author='JAX team',
-    author_email='jax-dev@google.com',
-    packages=['jaxlib'],
-    install_requires=['scipy', 'numpy>=1.12', 'six', 'protobuf>=3.6.0', 'absl-py'],
-    url='https://github.com/google/jax',
-    license='Apache-2.0',
-    package_data={'jaxlib': binary_libs},
-)
+__version__ = "0.1.20"

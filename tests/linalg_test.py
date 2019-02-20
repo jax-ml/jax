@@ -61,12 +61,16 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for rng in [jtu.rand_default()]))
   def testCholesky(self, shape, dtype, rng):
     def args_maker():
-      a = rng(shape, dtype)
+      factor_shape = shape[:-1] + (2 * shape[-1],)
+      a = rng(factor_shape, dtype)
       return [onp.matmul(a, np.conj(T(a)))]
 
     self._CheckAgainstNumpy(onp.linalg.cholesky, np.linalg.cholesky, args_maker,
                             check_dtypes=True, tol=1e-3)
     self._CompileAndCheck(np.linalg.cholesky, args_maker, check_dtypes=True)
+
+    if onp.finfo(dtype).bits == 64:
+      jtu.check_grads(np.linalg.cholesky, args_maker(), order=2)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -128,13 +132,85 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
     a, = args_maker()
     a = (a + onp.conj(a.T)) / 2
-    w, v = np.linalg.eigh(onp.tril(a) if lower else onp.triu(a), UPLO=uplo)
-
+    w, v = np.linalg.eigh(onp.tril(a) if lower else onp.triu(a),
+                          UPLO=uplo, symmetrize_input=False)
     self.assertTrue(norm(onp.eye(n) - onp.matmul(onp.conj(T(v)), v)) < 5)
     self.assertTrue(norm(onp.matmul(a, v) - w * v) < 30)
 
     self._CompileAndCheck(partial(np.linalg.eigh, UPLO=uplo), args_maker,
                           check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_shape={}_lower={}".format(jtu.format_shape_dtype_string(shape, dtype),
+                                   lower),
+       "shape": shape, "dtype": dtype, "rng": rng, "lower":lower}
+      for shape in [(1, 1), (4, 4), (5, 5), (50, 50)]
+      for dtype in float_types() | complex_types()
+      for rng in [jtu.rand_default()]
+      for lower in [True, False]))
+  # TODO(phawkins): enable when there is an eigendecomposition implementation
+  # for GPU/TPU.
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testEighGrad(self, shape, dtype, rng, lower):
+    if not hasattr(lapack, "jax_syevd"):
+      self.skipTest("No symmetric eigendecomposition implementation available")
+    uplo = "L" if lower else "U"
+    a = rng(shape, dtype)
+    a = (a + onp.conj(a.T)) / 2
+    a = onp.tril(a) if lower else onp.triu(a)
+    # Gradient checks will fail without symmetrization as the eigh jvp rule
+    # is only correct for tangents in the symmetric subspace, whereas the
+    # checker checks against unconstrained (co)tangents.
+    if dtype not in complex_types():
+      f = partial(np.linalg.eigh, UPLO=uplo, symmetrize_input=True)
+    else:  # only check eigenvalue grads for complex matrices
+      f = lambda a: partial(np.linalg.eigh, UPLO=uplo, symmetrize_input=True)(a)[0]
+    jtu.check_grads(f, (a,), 2, rtol=1e-1)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_shape={}_lower={}".format(jtu.format_shape_dtype_string(shape, dtype),
+                                   lower),
+       "shape": shape, "dtype": dtype, "rng": rng, "lower":lower, "eps":eps}
+      for shape in [(1, 1), (4, 4), (5, 5), (50, 50)]
+      for dtype in complex_types()
+      for rng in [jtu.rand_default()]
+      for lower in [True, False]
+      for eps in [1e-4]))
+  # TODO(phawkins): enable when there is an eigendecomposition implementation
+  # for GPU/TPU.
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testEighGradVectorComplex(self, shape, dtype, rng, lower, eps):
+    # Special case to test for complex eigenvector grad correctness.
+    # Exact eigenvector coordinate gradients are hard to test numerically for complex
+    # eigensystem solvers given the extra degrees of per-eigenvector phase freedom.
+    # Instead, we numerically verify the eigensystem properties on the perturbed
+    # eigenvectors.  You only ever want to optimize eigenvector directions, not coordinates!
+    if not hasattr(lapack, "jax_syevd"):
+      self.skipTest("No symmetric eigendecomposition implementation available")
+    uplo = "L" if lower else "U"
+    a = rng(shape, dtype)
+    a = (a + onp.conj(a.T)) / 2
+    a = onp.tril(a) if lower else onp.triu(a)
+    a_dot = eps * rng(shape, dtype)
+    a_dot = (a_dot + onp.conj(a_dot.T)) / 2
+    a_dot = onp.tril(a_dot) if lower else onp.triu(a_dot)
+    # evaluate eigenvector gradient and groundtruth eigensystem for perturbed input matrix
+    f = partial(np.linalg.eigh, UPLO=uplo)
+    (w, v), (dw, dv) = jvp(f, primals=(a,), tangents=(a_dot,))
+    new_a = a + a_dot
+    new_w, new_v = f(new_a)
+    new_a = (new_a + onp.conj(new_a.T)) / 2
+    # Assert rtol eigenvalue delta between perturbed eigenvectors vs new true eigenvalues.
+    RTOL=1e-2
+    assert onp.max(
+      onp.abs((onp.diag(onp.dot(onp.conj((v+dv).T), onp.dot(new_a,(v+dv)))) - new_w) / new_w)) < RTOL 
+    # Redundant to above, but also assert rtol for eigenvector property with new true eigenvalues.
+    assert onp.max(
+      onp.linalg.norm(onp.abs(new_w*(v+dv) - onp.dot(new_a, (v+dv))), axis=0) /
+      onp.linalg.norm(onp.abs(new_w*(v+dv)), axis=0)
+    ) < RTOL
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_ord={}_axis={}_keepdims={}".format(
@@ -300,7 +376,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                             check_dtypes=True, tol=1e-3)
     self._CompileAndCheck(np.linalg.solve, args_maker, check_dtypes=True)
 
-
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
@@ -374,7 +449,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
                             args_maker, check_dtypes=True, tol=1e-3)
     self._CompileAndCheck(jsp.linalg.lu_factor, args_maker, check_dtypes=True)
 
-
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_lhs={}_rhs={}_sym_pos={}_lower={}".format(
@@ -413,7 +487,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
                             check_dtypes=True, tol=1e-3)
     self._CompileAndCheck(jsp_fun, args_maker, check_dtypes=True)
-
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -481,6 +554,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     f = partial(jsp.linalg.solve_triangular, lower=lower,
                 trans=1 if transpose_a else 0)
     jtu.check_grads(f, (A, B), 2, rtol=1e-3)
+
 
 if __name__ == "__main__":
   absltest.main()

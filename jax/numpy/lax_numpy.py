@@ -146,11 +146,16 @@ def _promote_dtypes(*args):
   if len(args) < 2:
     return args
   else:
-    from_dtypes = (_dtype(x) for x in args)
+    from_dtypes = (x if type(x) in _builtin_numeric_types else _dtype(x)
+                   for x in args)
     to_dtype = xla_bridge.canonicalize_dtype(result_type(*from_dtypes))
     return [lax.convert_element_type(x, to_dtype)
             if _dtype(x) != to_dtype else x for x in args]
 
+if six.PY3:
+  _builtin_numeric_types = (int, float, complex)
+else:
+  _builtin_numeric_types = (int, float, long, complex)
 
 def _promote_to_result_dtype(op, *args):
   """Convenience function to promote args directly to the op's result dtype."""
@@ -321,8 +326,8 @@ logical_xor = _logical_op(onp.logical_xor, lax.bitwise_xor)
 
 @_wraps(onp.true_divide)
 def true_divide(x1, x2):
-  x1, x2 = _promote_shapes(x1, x2)
   result_dtype = _result_dtype(onp.true_divide, x1, x2)
+  x1, x2 = _promote_shapes(x1, x2)
   return lax.div(lax.convert_element_type(x1, result_dtype),
                  lax.convert_element_type(x2, result_dtype))
 
@@ -385,7 +390,7 @@ def _float_divmod(x1, x2):
 
 @_wraps(onp.logaddexp)
 def logaddexp(x1, x2):
-  x1, x2 = _promote_to_result_dtype(onp.logaddexp, *_promote_shapes(x1, x2))
+  x1, x2 = _promote_shapes(*_promote_to_result_dtype(onp.logaddexp, x1, x2))
   amax = lax.max(x1, x2)
   return lax.add(amax, lax.log(lax.add(lax.exp(lax.sub(x1, amax)),
                                        lax.exp(lax.sub(x2, amax)))))
@@ -393,7 +398,7 @@ def logaddexp(x1, x2):
 
 @_wraps(onp.logaddexp2)
 def logaddexp2(x1, x2):
-  x1, x2 = _promote_to_result_dtype(onp.logaddexp2, *_promote_shapes(x1, x2))
+  x1, x2 = _promote_shapes(*_promote_to_result_dtype(onp.logaddexp2, x1, x2))
   amax = lax.max(x1, x2)
   return lax.add(amax, log2(lax.add(exp2(lax.sub(x1, amax)),
                                     exp2(lax.sub(x2, amax)))))
@@ -1758,6 +1763,41 @@ def argsort(a, axis=-1, kind='quicksort', order=None):
     return perm
 
 
+@_wraps(onp.roll)
+def roll(a, shift, axis=None):
+  a = asarray(a)
+  a_shape = shape(a)
+  if axis is None:
+    return lax.reshape(roll(ravel(a), shift, axis=0), a_shape)
+
+  a_ndim = len(a_shape)
+  if isinstance(shift, tuple):
+    if isinstance(axis, tuple):
+      if len(axis) != len(shift):
+        msg = "Mismatched lengths between shift ({}) and axis ({}) for np.roll."
+        raise ValueError(msg.format(len(shift), len(axis)))
+      axis = tuple(a for a in axis)
+    else:
+      axis = (axis,) * len(shift)
+  elif isinstance(axis, tuple):
+    shift = (shift,) * len(axis)
+  else:
+    shift = (shift,)
+    axis = (axis,)
+
+  for offset, i in zip(shift, axis):
+    i = _canonicalize_axis(i, a_ndim)
+    offset = offset % (a_shape[i] or 1)
+    slices = [slice(None)] * a_ndim
+    slices[i] = slice(None, -offset)
+    before = a[tuple(slices)]
+    slices[i] = slice(-offset, None)
+    after = a[tuple(slices)]
+    a = lax.concatenate((after, before), i)
+
+  return a
+
+
 @_wraps(onp.take)
 def take(a, indices, axis=None, out=None, mode=None):
   if out:
@@ -1775,7 +1815,7 @@ def take(a, indices, axis=None, out=None, mode=None):
     # TODO(phawkins): we have no way to report out of bounds errors yet.
     raise NotImplementedError("The 'raise' mode to np.take is not supported.")
   elif mode == "wrap":
-    indices = mod(indices, a.shape[axis])
+    indices = mod(indices, _constant_like(indices, a.shape[axis]))
   elif mode != "clip" and mode is not None:
     raise ValueError("Invalid mode '{}' for np.take".format(mode))
 
@@ -1834,7 +1874,7 @@ def _rewriting_take(arr, idx, axis=0):
   if isinstance(abstract_idx, ConcreteArray) and _int(abstract_idx):
     return lax.index_in_dim(arr, idx, axis, False)
   elif isinstance(abstract_idx, ShapedArray) and _int(abstract_idx):
-    idx = mod(idx, arr.shape[axis])
+    idx = mod(idx, _constant_like(idx, arr.shape[axis]))
     return lax.dynamic_index_in_dim(arr, idx, axis, False)
 
   # Handle slice index (only static, otherwise an error is raised)
@@ -1903,7 +1943,8 @@ def _rewriting_take(arr, idx, axis=0):
       # The indexer is just a single integer array.
       idx = [idx]
 
-    flat_idx = tuple([mod(ravel(x), arr.shape[i]) for i, x in enumerate(idx)])
+    flat_idx = tuple([mod(ravel(x), _constant_like(x, arr.shape[i]))
+                      for i, x in enumerate(idx)])
     # TODO(mattjj): if we instead lower directly to lax.gather, we can probably
     # eliminate the reshape here.
     out = lax.index_take(arr, flat_idx, tuple(range(len(idx))))
@@ -1921,7 +1962,7 @@ def _rewriting_take(arr, idx, axis=0):
     idx_advanced, axes = zip(*advanced_pairs)
     idx_advanced = broadcast_arrays(*idx_advanced)
 
-    flat_idx = tuple(mod(ravel(x), arr_sliced.shape[i])
+    flat_idx = tuple(mod(ravel(x), _constant_like(x, arr_sliced.shape[i]))
                      for i, x in zip(axes, idx_advanced))
     # TODO(mattjj): if we instead lower directly to lax.gather, we can probably
     # eliminate the reshape here.
@@ -2017,6 +2058,32 @@ hanning = onp.hanning
 kaiser = onp.kaiser  # TODO: lower via lax to allow non-constant beta.
 
 
+@_wraps(getattr(onp, "gcd", None))
+def gcd(x1, x2):
+  if (not issubdtype(lax._dtype(x1), integer) or
+      not issubdtype(lax._dtype(x2), integer)):
+    raise ValueError("Arguments to gcd must be integers.")
+  def cond_fn(xs):
+    x1, x2 = xs
+    return any(x2 != 0)
+  def body_fn(xs):
+    x1, x2 = xs
+    x1, x2 = (where(x2 != 0, x2, x1),
+              where(x2 != 0, lax.rem(x1, x2), lax._const(x2, 0)))
+    return (where(x1 < x2, x2, x1), where(x1 < x2, x1, x2))
+  x1, x2 = _promote_dtypes(lax.abs(x1), lax.abs(x2))
+  x1, x2 = broadcast_arrays(x1, x2)
+  gcd, _ = lax.while_loop(cond_fn, body_fn, (x1, x2))
+  return gcd
+
+
+@_wraps(getattr(onp, "lcm", None))
+def lcm(x1, x2):
+  d = gcd(x1, x2)
+  return where(d == 0, lax._const(d, 0),
+               lax.div(lax.abs(multiply(x1, x2)), d))
+
+
 ### track unimplemented functions
 
 def _not_implemented(fun):
@@ -2106,7 +2173,7 @@ setattr(ShapedArray, "astype", core.aval_method(lax.convert_element_type))
 setattr(ShapedArray, "psum", core.aval_method(lax.psum))
 
 
-# Forward operators, methods, and properies on DeviceArray to lax_numpy
+# Forward operators, methods, and properties on DeviceArray to lax_numpy
 # functions (with no Tracers involved; this forwarding is direct)
 for operator_name, function in _operators.items():
   setattr(DeviceArray, "__{}__".format(operator_name), function)

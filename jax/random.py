@@ -12,7 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""LAX-based pseudo-random number generators (PRNGs)."""
+"""JAX pseudo-random number generators (PRNGs).
+
+The JAX PRNG system is based on "Parallel random numbers: as easy as 1, 2, 3"
+(Salmon et al. 2011). For details on the design and its motivation, see:
+
+https://github.com/google/jax/blob/master/design_notes/prng.md
+"""
 
 from __future__ import absolute_import
 from __future__ import division
@@ -31,6 +37,16 @@ from jax import core
 
 
 def PRNGKey(seed):
+  """Create a pseudo-random number generator (PRNG) key given an integer seed.
+
+  Args:
+    seed: a 64- or 32-bit integer used as the value of the key.
+
+  Returns:
+    A PRNG key, which is modeled as an array of shape (2,) and dtype uint32. The
+    key is constructed from a 64-bit seed by effectively bit-casting to a pair
+    of uint32 values (or from a 32-bit seed by first padding out with zeros).
+  """
   if onp.shape(seed):
     raise TypeError("PRNGKey seed must be a scalar.")
   convert = lambda k: lax.reshape(lax.convert_element_type(k, onp.uint32), [1])
@@ -43,7 +59,7 @@ def PRNGKey(seed):
   k2 = convert(lax.bitwise_and(seed, 0xFFFFFFFF))
   return lax.concatenate([k1, k2], 0)
 
-def is_prng_key(key):
+def _is_prng_key(key):
   try:
     return key.shape == (2,) and key.dtype == onp.uint32
   except AttributeError:
@@ -143,23 +159,39 @@ def threefry_2x32(keypair, count):
 
 @partial(jit, static_argnums=(1,))
 def split(key, num=2):
-  """Splits a PRNG key pair of 32bit unsigned integers into `num` new key pairs.
+  """Splits a PRNG key into `num` new keys by adding a leading axis.
 
   Args:
-    key: a PRNGKey used as the random key.
+    key: a PRNGKey (an array with shape (2,) and dtype uint32).
     num: optional, a positive integer indicating the number of keys to produce
       (default 2).
 
   Returns:
-    A tuple of length `num` of new PRNGKey instances.
+    An array with shape (num, 2) and dtype uint32 representing `num` new keys.
   """
   counts = lax.tie_in(key, lax.iota(onp.uint32, num * 2))
   return lax.reshape(threefry_2x32(key, counts), (num, 2))
 
 
+@partial(jit, static_argnums=(1,))
+def fold_in(key, data):
+  """Folds in data to a PRNG key to form a new PRNG key.
+
+  Args:
+    key: a PRNGKey (an array with shape (2,) and dtype uint32).
+    data: an integer representing data to be folded in to the key.
+
+  Returns:
+    A new PRNGKey that is a deterministic function of the inputs and is
+    statistically safe for producing a stream of new pseudo-random values.
+  """
+  key2 = lax.tie_in(key, PRNGKey(data))
+  return threefry_2x32(key, key2)
+
+
 def _random_bits(key, bit_width, shape):
   """Sample uniform random bits of given width and shape using PRNG key."""
-  if not is_prng_key(key):
+  if not _is_prng_key(key):
     raise TypeError("_random_bits got invalid prng key.")
   if bit_width not in (32, 64):
     raise TypeError("requires 32- or 64-bit field width.")

@@ -12,6 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""
+`lax` is a library of primitives that underpins libraries such as `jax.numpy`.
+
+Many of the primitives are thin wrappers around equivalent XLA operations,
+described by the `XLA operation semantics
+<https://www.tensorflow.org/xla/operation_semantics>`_ documentation.
+"""
+
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -71,77 +79,240 @@ def broadcast_shapes(*shapes):
   return tuple(result_shape)
 
 
-def identity(x): return x
+def identity(x):
+  r"""Identity function: :math:`x`."""
+  return x
 
 ### traceables
 
-def neg(x): return neg_p.bind(x)
-def sign(x): return sign_p.bind(x)
-def floor(x): return floor_p.bind(x)
-def ceil(x): return ceil_p.bind(x)
-def round(x): return round_p.bind(x)
+def neg(x):
+  r"""Elementwise negation: :math:`-x`."""
+  return neg_p.bind(x)
 
-def is_finite(x): return is_finite_p.bind(x)
+def sign(x):
+  r"""Elementwise sign.
 
-def exp(x): return exp_p.bind(x)
-def expm1(x): return expm1_p.bind(x)
-def log(x): return log_p.bind(x)
-def log1p(x): return log1p_p.bind(x)
-def tanh(x): return tanh_p.bind(x)
-def sin(x): return sin_p.bind(x)
-def cos(x): return cos_p.bind(x)
-def atan2(x, y): return atan2_p.bind(x, y)
+  :math:`\mathrm{sign}(x) = \begin{cases}
+  -1 & x < 0\\
+  -0 & x = -0\\
+  \mathit{NaN} & x = \mathit{NaN}\\
+  +0 & x = +0\\
+  1 & x > 0
+  \end{cases}`.
+  """
+  return sign_p.bind(x)
 
-def lgamma(x): return lgamma_p.bind(x)
-def digamma(x): return digamma_p.bind(x)
-def erf(x): return erf_p.bind(x)
-def erfc(x): return erfc_p.bind(x)
-def erf_inv(x): return erf_inv_p.bind(x)
+def floor(x):
+  r"""Elementwise floor: :math:`\left\lfloor x \right\rfloor`."""
+  return floor_p.bind(x)
 
-def real(x): return real_p.bind(x)
-def imag(x): return imag_p.bind(x)
-def complex(x, y): return complex_p.bind(_brcast(x, y), _brcast(y, x))
-def conj(x): return conj_p.bind(x, input_dtype=_dtype(x))
-def abs(x): return abs_p.bind(x)
-def pow(x, y): return pow_p.bind(x, y)
+def ceil(x):
+  r"""Elementwise ceiling: :math:`\left\lceil x \right\rceil`."""
+  return ceil_p.bind(x)
 
-def bitwise_not(x): return not_p.bind(x)
-def bitwise_and(x, y): return and_p.bind(x, y)
-def bitwise_or(x, y): return or_p.bind(x, y)
-def bitwise_xor(x, y): return xor_p.bind(x, y)
+def round(x):
+  r"""Elementwise round.
 
-def add(x, y): return add_p.bind(x, y)
-def sub(x, y): return sub_p.bind(x, y)
-def mul(x, y): return mul_p.bind(x, y)
-def div(x, y): return div_p.bind(x, y)
-def rem(x, y): return rem_p.bind(x, y)
+  Rounds values to the nearest integer. Halfway values (e.g., `0.5`) are rounded
+  away from zero."""
+  return round_p.bind(x)
+
+def is_finite(x):
+  r"""Elementwise :math:`\mathrm{isfinite}`.
+
+  For each element x returns `True` if and only if x is not :math:`\pm\infty` or
+  :math:`\mathit{NaN}`.
+  """
+  return is_finite_p.bind(x)
+
+def exp(x):
+  r"""Elementwise exponential: :math:`e^x`."""
+  return exp_p.bind(x)
+
+def expm1(x):
+  r"""Elementwise :math:`e^{x - 1}`."""
+  return expm1_p.bind(x)
+
+def log(x):
+  r"""Elementwise natural logarithm: :math:`\mathrm{log}(x)`."""
+  return log_p.bind(x)
+
+def log1p(x):
+  r"""Elementwise :math:`\mathrm{log}(1 + x)`."""
+  return log1p_p.bind(x)
+
+def tanh(x):
+  r"""Elementwise hyperbolic tangent: :math:`\mathrm{tanh}(x)`."""
+  return tanh_p.bind(x)
+
+def sin(x):
+  r"""Elementwise sine: :math:`\mathrm{sin}(x)`."""
+  return sin_p.bind(x)
+
+def cos(x):
+  r"""Elementwise cosine: :math:`\mathrm{cos}(x)`."""
+  return cos_p.bind(x)
+
+def atan2(x, y):
+  r"""Elementwise arc tangent of two variables:
+    :math:`\mathrm{atan}({x \over y})`."""
+  return atan2_p.bind(x, y)
+
+def lgamma(x):
+  r"""Elementwise log gamma: :math:`\mathrm{log}(\Gamma(x))`."""
+  return lgamma_p.bind(x)
+
+def digamma(x):
+  r"""Elementwise digamma: :math:`\psi(x)`."""
+  return digamma_p.bind(x)
+
+def erf(x):
+  r"""Elementwise error function: :math:`\mathrm{erf}(x)`."""
+  return erf_p.bind(x)
+
+def erfc(x):
+  r"""Elementwise complementary error function:
+    :math:`\mathrm{erfc}(x) = 1 - \mathrm{erf}(x)`."""
+  return erfc_p.bind(x)
+
+def erf_inv(x):
+  r"""Elementwise inverse error function: :math:`\mathrm{erf}^{-1}(x)`."""
+  return erf_inv_p.bind(x)
+
+def real(x):
+  r"""Elementwise extract real part: :math:`\mathrm{Re}(x)`.
+
+  Returns the real part of a complex number.
+  """
+  return real_p.bind(x)
+
+def imag(x):
+  r"""Elementwise extract imaginary part: :math:`\mathrm{Im}(x)`.
+
+  Returns the imaginary part of a complex number.
+  """
+  return imag_p.bind(x)
+
+def complex(x, y):
+  r"""Elementwise make complex number: :math:`x + jy`.
+
+  Builds a complex number from real and imaginary parts.
+  """
+  return complex_p.bind(_brcast(x, y), _brcast(y, x))
+
+def conj(x):
+  r"""Elementwise complex conjugate function: :math:`\overline{x}`."""
+  return conj_p.bind(x, input_dtype=_dtype(x))
+
+def abs(x):
+  r"""Elementwise absolute value: :math:`|x|`."""
+  return abs_p.bind(x)
+
+def pow(x, y):
+  r"""Elementwise power: :math:`x^y`."""
+  return pow_p.bind(x, y)
+
+def bitwise_not(x):
+  r"""Elementwise NOT: :math:`\neg x`."""
+  return not_p.bind(x)
+
+def bitwise_and(x, y):
+  r"""Elementwise AND: :math:`x \wedge y`."""
+  return and_p.bind(x, y)
+
+def bitwise_or(x, y):
+  r"""Elementwise OR: :math:`x \vee y`."""
+  return or_p.bind(x, y)
+
+def bitwise_xor(x, y):
+  r"""Elementwise exclusive OR: :math:`x \oplus y`."""
+  return xor_p.bind(x, y)
+
+def add(x, y):
+  r"""Elementwise addition: :math:`x + y`."""
+  return add_p.bind(x, y)
+
+def sub(x, y):
+  r"""Elementwise subtraction: :math:`x - y`."""
+  return sub_p.bind(x, y)
+
+def mul(x, y):
+  r"""Elementwise multiplication: :math:`x \times y`."""
+  return mul_p.bind(x, y)
+
+def div(x, y):
+  r"""Elementwise division: :math:`x \over y`."""
+  return div_p.bind(x, y)
+
+def rem(x, y):
+  r"""Elementwise remainder: :math:`x \bmod y`."""
+  return rem_p.bind(x, y)
 
 def max(x, y):
-  """Elementwise maximum.
+  r"""Elementwise maximum: :math:`\mathrm{max}(x, y)`
 
   For complex numbers, uses a lexicographic comparison on the
   `(real, imaginary)` pairs."""
   return max_p.bind(x, y)
 
 def min(x, y):
-  """Elementwise minimum.
+  r"""Elementwise minimum:  :math:`\mathrm{min}(x, y)`
 
   For complex numbers, uses a lexicographic comparison on the
   `(real, imaginary)` pairs."""
   return min_p.bind(x, y)
 
-def shift_left(x, y): return shift_left_p.bind(x, y)
-def shift_right_arithmetic(x, y): return shift_right_arithmetic_p.bind(x, y)
-def shift_right_logical(x, y): return shift_right_logical_p.bind(x, y)
+def shift_left(x, y):
+  r"""Elementwise left shift: :math:`x \ll y`."""
+  return shift_left_p.bind(x, y)
 
-def eq(x, y): return eq_p.bind(x, y)
-def ne(x, y): return ne_p.bind(x, y)
-def ge(x, y): return ge_p.bind(x, y)
-def gt(x, y): return gt_p.bind(x, y)
-def le(x, y): return le_p.bind(x, y)
-def lt(x, y): return lt_p.bind(x, y)
+def shift_right_arithmetic(x, y):
+  r"""Elementwise arithmetic right shift: :math:`x \gg y`."""
+  return shift_right_arithmetic_p.bind(x, y)
+
+def shift_right_logical(x, y):
+  r"""Elementwise logical right shift: :math:`x \gg y`."""
+  return shift_right_logical_p.bind(x, y)
+
+def eq(x, y):
+  r"""Elementwise equals: :math:`x = y`."""
+  return eq_p.bind(x, y)
+
+def ne(x, y):
+  r"""Elementwise not-equals: :math:`x \neq y`."""
+  return ne_p.bind(x, y)
+
+def ge(x, y):
+  r"""Elementwise greater-than-or-equals: :math:`x \geq y`."""
+  return ge_p.bind(x, y)
+
+def gt(x, y):
+  r"""Elementwise greater-than: :math:`x > y`."""
+  return gt_p.bind(x, y)
+
+def le(x, y):
+  r"""Elementwise less-than-or-equals: :math:`x \leq y`."""
+  return le_p.bind(x, y)
+
+def lt(x, y):
+  r"""Elementwise less-than: :math:`x < y`."""
+  return lt_p.bind(x, y)
 
 def convert_element_type(operand, new_dtype):
+  """Elementwise cast.
+
+  Wraps XLA's `ConvertElementType
+  <https://www.tensorflow.org/xla/operation_semantics#convertelementtype>`_
+  operator, which performs an elementwise conversion from one type to another.
+  Similar to a C++ `static_cast`.
+
+  Args:
+    operand: an array or scalar value to be cast
+    new_dtype: the new type. Should be a NumPy type.
+
+  Returns:
+    An array with the same shape as `operand`, cast elementwise to `new_dtype`.
+  """
   new_dtype = xla_bridge.canonicalize_dtype(new_dtype)
   old_dtype = _dtype(operand)
   if old_dtype != new_dtype:
@@ -156,6 +327,21 @@ def convert_element_type(operand, new_dtype):
     return operand
 
 def bitcast_convert_type(operand, new_dtype):
+  """Elementwise bitcast.
+
+  Wraps XLA's `BitcastConvertType
+  <https://www.tensorflow.org/xla/operation_semantics#bitcastconverttype>`_
+  operator, which performs a bit cast from one type to another. The bitwidth
+  of the source and destination types must match.
+
+  Args:
+    operand: an array or scalar value to be cast
+    new_dtype: the new type. Should be a NumPy type.
+
+  Returns:
+    An array with the same shape as `operand`, bitcast elementwise to
+    `new_dtype`.
+  """
   new_dtype = xla_bridge.canonicalize_dtype(new_dtype)
   old_dtype = _dtype(operand)
   if old_dtype != new_dtype:
@@ -163,15 +349,88 @@ def bitcast_convert_type(operand, new_dtype):
   else:
     return operand
 
-def clamp(min, operand, max):
-  return clamp_p.bind(min, operand, max)
+def clamp(min, x, max):
+  r"""Elementwise clamp.
+
+  Returns :math:`\mathrm{clamp}(x) = \begin{cases}
+  \mathit{min} & \text{if } x < \mathit{min},\\
+  \mathit{max} & \text{if } x > \mathit{max},\\
+  x & \text{otherwise}
+  \end{cases}`.
+  """
+  return clamp_p.bind(min, x, max)
 
 def concatenate(operands, dimension):
+  """Concatenates a sequence of arrays along `dimension`.
+
+  Wraps XLA's `Concatenate
+  <https://www.tensorflow.org/xla/operation_semantics#concatenate>`_
+  operator.
+
+  Args:
+    operands: a sequence of arrays to concatenate. The arrays must have equal
+      shapes, except in the `dimension` axis.
+    dimension: the dimension along which to concatenate the arrays.
+
+  Returns:
+    An array containing the concatenation.
+  """
   return concatenate_p.bind(*operands, dimension=dimension,
                             operand_shapes=tuple(o.shape for o in operands))
 
 def conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation=None,
                          rhs_dilation=None, dimension_numbers=None):
+  """General n-dimensional convolution operator, with optional dilation.
+
+  Wraps XLA's `Conv
+  <https://www.tensorflow.org/xla/operation_semantics#conv_convolution>`_
+  operator.
+
+  Args:
+    lhs: a rank `n+2` dimensional input array.
+    rhs: a rank `n+2` dimensional array of kernel weights.
+    window_strides: a sequence of `n` integers, representing the inter-window
+      strides.
+    padding: either the string `'SAME'`, the string `'VALID'`, or a sequence of
+      `n` `(low, high)` integer pairs that give the padding to apply before and
+      after each spatial dimension.
+    lhs_dilation: `None`, or a sequence of `n` integers, giving the
+      dilation factor to apply in each spatial dimension of `lhs`. LHS dilation
+      is also known as transposed convolution.
+    rhs_dilation: `None`, or a sequence of `n` integers, giving the
+      dilation factor to apply in each spatial dimension of `rhs`. RHS dilation
+      is also known as atrous convolution.
+    dimension_numbers: either `None`, a `ConvDimensionNumbers` object, or
+      a 3-tuple `(lhs_spec, rhs_spec, out_spec)`, where each element is a string
+      of length `n+2`.
+
+  Returns:
+    An array containing the convolution result.
+
+  In the string case of `dimension_numbers`, each character identifies by
+  position:
+
+  - the batch dimensions in `lhs`, `rhs`, and the output with the character
+    'N',
+  - the feature dimensions in `lhs` and the output with the character 'C',
+  - the input and output feature dimensions in rhs with the characters 'I'
+    and 'O' respectively, and
+  - spatial dimension correspondences between lhs, rhs, and the output using
+    any distinct characters.
+
+  For example, to indicate dimension numbers consistent with the `conv` function
+  with two spatial dimensions, one could use `('NCHW', 'OIHW', 'NCHW')`. As
+  another example, to indicate dimension numbers consistent with the TensorFlow
+  Conv2D operation, one could use `('NHWC', 'HWIO', 'NHWC')`. When using the
+  latter form of convolution dimension specification, window strides are
+  associated with spatial dimension character labels according to the order in
+  which the labels appear in the `rhs_spec` string, so that `window_strides[0]`
+  is matched with the dimension corresponding to the first character
+  appearing in rhs_spec that is not `'I'` or `'O'`.
+
+  If `dimension_numbers` is `None`, the default is `('NCHW', 'OIHW', 'NCHW')`
+  (for a 2D convolution).
+  """
   if type(dimension_numbers) is not ConvDimensionNumbers:
     dimension_numbers = conv_dimension_numbers(
         lhs.shape, rhs.shape, dimension_numbers)
@@ -416,7 +675,36 @@ def sort_key_val(keys, values, dimension=-1):
   sorted_keys, sorted_values = result
   return sorted_keys, sorted_values
 
-def _while_loop(cond_fun, body_fun, init_val):
+def while_loop(cond_fun, body_fun, init_val):
+  """Call `body_fun` repeatedly in a loop while `cond_fun` is True.
+
+  Arguments:
+    cond_fun: pure function of type `T -> Bool`.
+    body_fun: pure function of type `T -> T`.
+    init_val: value of type `T`, a type that can be a scalar, array, or any
+      (nested) Python tuple/list/dict thereof.
+
+  Returns:
+    The output from the final iteration of body_fun, of type `T`.
+
+  The semantics of `while_loop` are given by this Python implementation::
+
+    def while_loop(cond_fun, body_fun, init_val):
+      val = init_val
+      while cond_fun(val):
+        val = body_fun(val)
+      return val
+
+  Unlike that pure Python version, `while_loop` is a JAX primitive and is
+  lowered to a single XLA While HLO. That makes it useful for reducing
+  compilation times for jit-compiled functions, since native Python loop
+  constructs in an `@jit` function are unrolled, leading to large XLA
+  computations.
+
+  Another difference from using Python-native loop constructs is that
+  `while_loop` is not (yet) reverse-mode differentiable because XLA computations
+  require static bounds on memory requirements.
+  """
   init_val_flat, in_tree = pytree_to_jaxtupletree(init_val)
   flat_body_fun, out_tree = pytree_fun_to_jaxtupletree_fun(lu.wrap_init(body_fun), (in_tree,))
   flat_cond_fun, _ = pytree_fun_to_jaxtupletree_fun(lu.wrap_init(cond_fun), (in_tree,))
@@ -494,6 +782,9 @@ def stop_gradient(x):
   return stop_gradient_p.bind(x)
 
 
+def _safe_mul(x, y): return safe_mul_p.bind(x, y)
+
+
 def psum(x, axis_name):
   return parallel.psum_p.bind(x, axis_name=axis_name)
 
@@ -502,11 +793,43 @@ def psum(x, axis_name):
 
 
 def conv(lhs, rhs, window_strides, padding):
+  """Convenience wrapper around `conv_general_dilated`.
+
+  Args:
+    lhs: a rank `n+2` dimensional input array.
+    rhs: a rank `n+2` dimensional array of kernel weights.
+    window_strides: a sequence of `n` integers, representing the inter-window
+      strides.
+    padding: either the string `'SAME'`, the string `'VALID'`.
+
+  Returns:
+    An array containing the convolution result.
+  """
   pads = padtype_to_pads(lhs.shape[2:], rhs.shape[2:], window_strides, padding)
   return conv_general_dilated(lhs, rhs, window_strides, padding)
 
 def conv_with_general_padding(lhs, rhs, window_strides, padding,
                               lhs_dilation, rhs_dilation):
+  """Convenience wrapper around `conv_general_dilated`.
+
+  Args:
+    lhs: a rank `n+2` dimensional input array.
+    rhs: a rank `n+2` dimensional array of kernel weights.
+    window_strides: a sequence of `n` integers, representing the inter-window
+      strides.
+    padding: either the string `'SAME'`, the string `'VALID'`, or a sequence of
+      `n` `(low, high)` integer pairs that give the padding to apply before and
+      after each spatial dimension.
+    lhs_dilation: `None`, or a sequence of `n` integers, giving the
+      dilation factor to apply in each spatial dimension of `lhs`. LHS dilation
+      is also known as transposed convolution.
+    rhs_dilation: `None`, or a sequence of `n` integers, giving the
+      dilation factor to apply in each spatial dimension of `rhs`. RHS dilation
+      is also known as atrous convolution.
+
+  Returns:
+    An array containing the convolution result.
+  """
   return conv_general_dilated(
       lhs, rhs, window_strides, padding, lhs_dilation=lhs_dilation,
       rhs_dilation=rhs_dilation)
@@ -572,7 +895,8 @@ def dynamic_slice_in_dim(operand, start_index, slice_size, axis=0):
   slice_sizes = list(operand.shape)
 
   axis = int(axis)
-  start_indices[axis] = reshape(rem(start_index, operand.shape[axis]), [1])
+  axis_size = _const(start_index, operand.shape[axis])
+  start_indices[axis] = reshape(rem(start_index, axis_size), [1])
   slice_sizes[axis] = int(slice_size)
 
   start_indices = concatenate(start_indices, 0)
@@ -615,33 +939,27 @@ def fori_loop(lower, upper, body_fun, init_val):
 
   Returns:
     Loop value from the final iteration, of type T.
+
+  The semantics of `fori_loop` are given by this Python implementation::
+
+    def fori_loop(lower, upper, body_fun, init_val):
+      val = init_val
+      for i in range(lower, upper):
+        val = body_fun(i, val)
+      return val
+
+  Unlike that pure Python version, `fori_loop` is implemented in terms of a call
+  to `while_loop`. See the docstring for `while_loop` for more information.
   """
-  # state: (upper limit, index, loop value)
-  # The `lt` and `add` functions are added to the namespace programmatically.
-  _, _, result = _while_loop(
-      lambda upper_i_x: lt(upper_i_x[1], upper_i_x[0]),
-      lambda upper_i_x: (upper_i_x[0],
-                         add(upper_i_x[1], onp.array(1, _dtype(upper_i_x[1]))),
-                         body_fun(upper_i_x[1], upper_i_x[2])),
-      (upper, lower, init_val))
-  return result
+  def while_cond_fun(loop_carry):
+    i, _ = loop_carry
+    return lt(i, upper)
 
+  def while_body_fun(loop_carry):
+    i, x = loop_carry
+    return add(i, _const(i, 1)), body_fun(i, x)
 
-def foreach_loop(sequence, body_fun, init_val):
-  """Loop over `sequence` by reduction to `while_loop`.
-
-  Arguments:
-    sequence: tuple of loop items, each of type U
-    body_fun: function of type (U, T) -> T, where T is the type of `init_val`
-    init_val: initial loop value, of type T
-
-  Returns:
-    Loop value from the final iteration, of type T.
-  """
-  _, result = fori_loop(
-      0, len(sequence),
-      lambda i, seq_val: (seq_val[0], body_fun(seq_val[0][i], seq_val[1])),
-      (sequence, init_val))
+  _, result = while_loop(while_cond_fun, while_body_fun, (lower, init_val))
   return result
 
 
@@ -663,47 +981,60 @@ def batch_matmul(lhs, rhs):
 # as non-primitive to maintain a smaller set of autodiff primitives.
 
 def sqrt(x):
+  r"""Elementwise square root: :math:`\sqrt{x}`."""
   return pow(x, _const(x, 0.5))
 
 def rsqrt(x):
+  r"""Elementwise reciprocal square root: :math:`1 \over \sqrt{x}`."""
   return pow(x, _const(x, -0.5))
 
 def square(x):
+  r"""Elementwise square: :math:`x^2`."""
   return mul(x, x)
 
 def reciprocal(x):
+  r"""Elementwise reciprocal: :math:`1 \over x`."""
   return div(_const(x, 1), x)
 
 def tan(x):
+  r"""Elementwise tangent: :math:`\mathrm{tan}(x)`."""
   return div(sin(x), cos(x))
 
 def asin(x):
+  r"""Elementwise arc sine: :math:`\mathrm{asin}(x)`."""
   return mul(_const(x, 2),
              atan2(x, add(_const(x, 1), sqrt(sub(_const(x, 1), square(x))))))
 
 def acos(x):
+  r"""Elementwise arc cosine: :math:`\mathrm{acos}(x)`."""
   return mul(_const(x, 2),
              atan2(sqrt(sub(_const(x, 1), square(x))), add(_const(x, 1), x)))
 
 def atan(x):
+  r"""Elementwise arc tangent: :math:`\mathrm{atan}(x)`."""
   return atan2(x, _const(x, 1))
 
 def sinh(x):
+  r"""Elementwise hyperbolic sine: :math:`\mathrm{sinh}(x)`."""
   return mul(_const(x, 0.5), sub(exp(x), exp(neg(x))))
 
 def cosh(x):
+  r"""Elementwise hyperbolic cosine: :math:`\mathrm{cosh}(x)`."""
   return mul(_const(x, 0.5), add(exp(x), exp(neg(x))))
 
 def asinh(x):
+  r"""Elementwise arc hyperbolic sine: :math:`\mathrm{asinh}(x)`."""
   # asinh(x) = log(x + sqrt(x**2 + 1))
   return log(add(x, sqrt(add(mul(x, x), _const(x, 1)))))
 
 def acosh(x):
+  r"""Elementwise arc hyperbolic cosine: :math:`\mathrm{acosh}(x)`."""
   # acosh(x) = log(x + sqrt((x + 1) * (x - 1)))
   return log(add(x, mul(sqrt(add(x, _const(x, 1))),
                         sqrt(sub(x, _const(x, 1))))))
 
 def atanh(x):
+  r"""Elementwise arc hyperbolic tangent: :math:`\mathrm{atanh}(x)`."""
   # atanh(x) = 0.5 * log((1 + x) / (1 - x))
   return mul(_const(x, 0.5), log(div(add(_const(x, 1), x),
                                      sub(_const(x, 1), x))))
@@ -799,7 +1130,7 @@ def binop_dtype_rule(result_dtype, accepted_dtypes, name, *avals, **kwargs):
   return result_dtype(*avals)
 
 
-def broadcasting_shape_rule(name, *avals):
+def _broadcasting_shape_rule(name, *avals):
   shapes = onp.array([aval.shape for aval in avals if aval.shape])
   if not shapes.size:
     return ()
@@ -817,7 +1148,7 @@ def broadcasting_shape_rule(name, *avals):
 
 def binop(result_dtype, accepted_dtypes, name, translation_rule=None):
   dtype_rule = partial(binop_dtype_rule, result_dtype, accepted_dtypes, name)
-  shape_rule = partial(broadcasting_shape_rule, name)
+  shape_rule = partial(_broadcasting_shape_rule, name)
   prim = standard_primitive(shape_rule, dtype_rule, name,
                             translation_rule=translation_rule)
   batching.defbroadcasting(prim)
@@ -831,10 +1162,12 @@ standard_binop = partial(binop, _input_dtype)
 # a broadcast). but saving the shape info with the primitives isn't great either
 # because then we can't trace these ops without shape data.
 def _brcast(x, *others):
-  # used in jvprules to make binop broadcasting explicit for transposability.
-  # requires shape info during jvp tracing, which isn't strictly necessary.
-  shapes = list(filter(None, map(onp.shape, (x,) + others)))
-  shape = tuple(shapes and onp.max(shapes, axis=0))
+  # Used in jvprules to make binop broadcasting explicit for transposability.
+  # Requires shape info during jvp tracing, which isn't strictly necessary.
+  # We don't need full numpy broadcasting, but otherwise the logic is the same
+  # so we reuse the broadcast_shapes function after filtering out scalars.
+  shapes = tuple(filter(None, map(onp.shape, (x,) + others)))
+  shape = shapes and broadcast_shapes(*shapes)
   if onp.shape(x) != shape:
     return _brcast_to(x, shape)
   else:
@@ -955,11 +1288,18 @@ _maybe_real = lambda x: real(x) if _iscomplex(x) else x
 
 # TODO handle broadcasting
 pow_p = standard_binop([_float | _complex, _float | _complex], 'pow')
-ad.defjvp(pow_p,
-          lambda g, x, y: mul(_brcast(g, y), mul(y, pow(x, select(
-              eq(y, _zeros(y)), _ones(y), sub(y, _ones(y)))))),
-          lambda g, x, y: mul(_brcast(g, x),
-                              mul(log(_replace_zero(x)), pow(x, y))))
+
+def _pow_jvp_lhs(g, x, y):
+  # we call _safe_mul here so that we get the behavior 0*inf = 0, since when a
+  # coefficient in `g` is zero we want to keep it at zero, not produce a nan.
+  # see https://github.com/google/jax/pull/383
+  jac = mul(y, pow(x, select(eq(y, _zeros(y)), _ones(y), sub(y, _ones(y)))))
+  return _safe_mul(_brcast(g, y), jac)
+
+def _pow_jvp_rhs(g, x, y):
+  return mul(_brcast(g, x), mul(log(_replace_zero(x)), pow(x, y)))
+
+ad.defjvp(pow_p, _pow_jvp_lhs, _pow_jvp_rhs)
 _replace_zero = lambda x: select(eq(x, _const(x, 0)), _ones(x), x)
 
 not_p = standard_unop(_int | _bool, 'not')
@@ -981,13 +1321,33 @@ add_p = standard_binop([_num, _num], 'add')
 ad.defjvp(add_p, lambda g, x, y: _brcast(g, y), lambda g, x, y: _brcast(g, x))
 ad.primitive_transposes[add_p] = _add_transpose
 
+
+def _sub_transpose(t, x, y):
+  assert x is None and y is None  # computation must be linear, not affine
+  return [t, neg(t)]
+
 sub_p = standard_binop([_num, _num], 'sub')
 ad.defjvp(sub_p,
           lambda g, x, y: _brcast(g, y),
           lambda g, x, y: _brcast(neg(g), x))
+ad.primitive_transposes[sub_p] = _sub_transpose
 
 mul_p = standard_binop([_num, _num], 'mul')
 ad.defbilinear_broadcasting(_brcast, mul_p, mul, mul)  # TODO
+
+
+def _safe_mul_translation_rule(c, x, y):
+  dtype = c.GetShape(x).numpy_dtype()
+  zero = c.Constant(onp.array(0, dtype=dtype))
+  out_shape = tuple(onp.maximum(c.GetShape(x).dimensions(),
+                                c.GetShape(y).dimensions()))
+  return c.Select(c.Or(c.Eq(x, zero), c.Eq(y, zero)),
+                  c.Broadcast(zero, out_shape),
+                  c.Mul(x, y))
+
+safe_mul_p = standard_binop([_num, _num], 'safe_mul',
+                            translation_rule=_safe_mul_translation_rule)
+ad.defbilinear_broadcasting(_brcast, safe_mul_p, _safe_mul, _safe_mul)
 
 
 def _div_transpose_rule(cotangent, x, y):
@@ -1134,7 +1494,7 @@ def _conv_general_dilated_transpose_lhs(
   lhs_sdims, rhs_sdims, out_sdims = map(_conv_sdims, dimension_numbers)
   lhs_spec, rhs_spec, out_spec = dimension_numbers
   t_rhs_spec = _conv_transpose(rhs_spec)
-  trans_dimension_numbers = ConvDimensionNumbers(lhs_spec, t_rhs_spec, out_spec)
+  trans_dimension_numbers = ConvDimensionNumbers(out_spec, t_rhs_spec, lhs_spec)
   padding = _conv_general_vjp_lhs_padding(
       onp.take(lhs_shape, lhs_sdims), onp.take(rhs_shape, rhs_sdims),
       window_strides, onp.take(g.shape, out_sdims), padding, lhs_dilation,
@@ -1300,11 +1660,9 @@ def _dot_batch_rule(batched_args, batch_dims):
 
     assert lbd is not None and rbd is not None
     assert lhs.ndim == rhs.ndim == 2  # dot only supports rank 1 and above
-    if lbd != 0:
-      batching.move_dim_to_front(lhs, lbd)
-    if rbd != 0:
-      batching.move_dim_to_front(rhs, rbd)
-    return dot_general(lhs, rhs, [((1,), (1,)), ((0,), (0,))])
+    lhs = batching.move_dim_to_front(lhs, lbd)
+    rhs = batching.move_dim_to_front(rhs, rbd)
+    return dot_general(lhs, rhs, [((1,), (1,)), ((0,), (0,))]), 0
 
   if lbd is None:
     assert rbd is not None
@@ -1355,10 +1713,6 @@ def _dot_general_shape_rule(lhs, rhs, dimension_numbers):
     msg = ("dot_general requires rhs batch dimensions to precede contracting "
            "and non-contracting dimensions, got rhs_batch {}.")
     raise TypeError(msg.format(rhs_batch))
-  if not len(lhs_contracting) == len(rhs_contracting) == 1:
-    msg = ("dot_general accepts exactly one lhs_contracting and "
-           "rhs_contracting dimension, got {} and {}.")
-    raise TypeError(msg.format(lhs_contracting, rhs_contracting))
   lhs_contracting_shape = onp.take(lhs.shape, lhs_contracting)
   rhs_contracting_shape = onp.take(rhs.shape, rhs_contracting)
   if not onp.all(onp.equal(lhs_contracting_shape, rhs_contracting_shape)):
@@ -1723,7 +2077,7 @@ def _transpose_shape_rule(operand, permutation):
 def _transpose_batch_rule(batched_args, batch_dims, permutation):
   operand, = batched_args
   bdim, = batch_dims
-  perm = tuple(onp.insert(onp.add(permutation, 1), bdim, 0))
+  perm = (bdim,) + tuple(i if i < bdim else i+1 for i in permutation)
   return transpose(operand, perm), 0
 
 transpose_p = standard_primitive(_transpose_shape_rule, _input_dtype,
@@ -2973,14 +3327,14 @@ class EyeConstant(xla.DeviceConstant):
     return c.ConvertElementType(_reduce(c.And, eyes), etype)
 
 
-for t in [FilledConstant, IotaConstant, EyeConstant]:
-  xla_bridge.register_constant_handler(t, t.constant_handler)
-  core.pytype_aval_mappings[t] = ConcreteArray
-  xla.pytype_aval_mappings[t] = xla.pytype_aval_mappings[xla.DeviceArray]
-  xla.canonicalize_dtype_handlers[t] = identity
-  batching.pytype_aval_mappings[t] = make_shaped_array
-  ad_util.jaxval_adders[t] = add
-  ad_util.jaxval_zeros_likers[t] = zeros_like_array
+for _t in [FilledConstant, IotaConstant, EyeConstant]:
+  xla_bridge.register_constant_handler(_t, _t.constant_handler)
+  core.pytype_aval_mappings[_t] = ConcreteArray
+  xla.pytype_aval_mappings[_t] = xla.pytype_aval_mappings[xla.DeviceArray]
+  xla.canonicalize_dtype_handlers[_t] = identity
+  batching.pytype_aval_mappings[_t] = make_shaped_array
+  ad_util.jaxval_adders[_t] = add
+  ad_util.jaxval_zeros_likers[_t] = zeros_like_array
 
 
 ### stop-gradient
@@ -3005,21 +3359,21 @@ batching.primitive_batchers[stop_gradient_p] = _stop_gradient_batch_rule
 
 ### parallel rules (primitives in lax_parallel)
 
-def psum_pmap_rule(val, axis):
+def _psum_pmap_rule(val, axis):
   return _reduce_sum(val, [axis]), None
 
-def psum_transpose_rule(t, axis_name):
+def _psum_transpose_rule(t, axis_name):
   return [t]
 
-def psum_parallel_translation_rule(c, val, device_groups):
+def _psum_parallel_translation_rule(c, val, device_groups):
   if len(device_groups) > 1:
     return c.CrossReplicaSum(val, device_groups)
   else:
     return c.CrossReplicaSum(val)
 
-parallel_interp.pmap_primitive_rules[parallel.psum_p] = psum_pmap_rule
-pxla.parallel_translation_rules[parallel.psum_p] = psum_parallel_translation_rule
-ad.deflinear(parallel.psum_p, psum_transpose_rule)
+parallel_interp.pmap_primitive_rules[parallel.psum_p] = _psum_pmap_rule
+pxla.parallel_translation_rules[parallel.psum_p] = _psum_parallel_translation_rule
+ad.deflinear(parallel.psum_p, _psum_transpose_rule)
 parallel_interp.defreducer(reduce_sum_p, parallel.psum_p)
 
 def gather_pmap_rule(val, axis):
@@ -3261,12 +3615,25 @@ def remaining(original, *removed_lists):
   blacklist = set(itertools.chain(*removed_lists))
   return [i for i in original if i not in blacklist]
 
+# lhs_spec and out_spec are lists containing
+#   [batch dim, feature dim, spatial dims ...]
+# rhs_spec is a list containing:
+#   [out feature dim, in feature dim, spatial dims ...]
+class ConvDimensionNumbers(collections.namedtuple(
+    "ConvDimensionNumbers", ["lhs_spec", "rhs_spec", "out_spec"])):
+  """Describes batch, spatial, and feature dimensions of a convolution.
 
-ConvDimensionNumbers = collections.namedtuple(
-    "ConvDimensionNumbers", ["lhs_spec", "rhs_spec", "out_spec"])
+  Args:
+    lhs_spec: a tuple of nonnegative integer dimension numbers containing
+      `(batch dimension, feature dimension, spatial dimensions...)`.
+    rhs_spec: a tuple of nonnegative integer dimension numbers containing
+      `(out feature dimension, in feature dimension, spatial dimensions...)`.
+    out_spec: a tuple of nonnegative integer dimension numbers containing
+      `(batch dimension, feature dimension, spatial dimensions...)`.
+  """
 
 def conv_dimension_numbers(lhs_shape, rhs_shape, dimension_numbers):
-  """Convert from user spec of dimension_numbers to ConvDimensionNumbers.
+  """Converts convolution `dimension_numbers` to a `ConvDimensionNumbers`.
 
   Args:
     lhs_shape: tuple of nonnegative integers, shape of the convolution input.
@@ -3275,8 +3642,8 @@ def conv_dimension_numbers(lhs_shape, rhs_shape, dimension_numbers):
       convolution dimension number specification format in xla_client.py.
 
   Returns:
-    A ConvDimensionNumbers namedtuple representing dimension_numbers in a
-    canonical form that is handled by internal lax functions.
+    A `ConvDimensionNumbers` object that represents `dimension_numbers` in the
+    canonical form used by lax functions.
   """
   if len(lhs_shape) != len(rhs_shape):
     msg = "convolution requires lhs and rhs ndim to be equal, got {} and {}."
@@ -3406,7 +3773,7 @@ def subvals(lst, replace):
 
 
 def _abstractify(x):
-  # abstractify wrapper used internally for primitives like _while_loop
+  # abstractify wrapper used internally for primitives like while_loop
   if isinstance(x, core.Tracer):
     return pe.PartialVal((xla.abstractify(x.aval), core.unit))
   else:

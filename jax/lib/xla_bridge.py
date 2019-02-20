@@ -210,41 +210,15 @@ Shape = xla_client.Shape        # pylint: disable=invalid-name
 
 ### utility functions
 
-# Similar or identical dtype-to-etype conversion tables exist in the XLA
-# clients, but because their organization hasn't been made consistent across
-# clients yet, we repeat the information here.
-_etype_to_dtype = {
-    xla_data_pb2.PRED: onp.dtype('bool'),
-    xla_data_pb2.S8: onp.dtype('int8'),
-    xla_data_pb2.S16: onp.dtype('int16'),
-    xla_data_pb2.S32: onp.dtype('int32'),
-    xla_data_pb2.S64: onp.dtype('int64'),
-    xla_data_pb2.U8: onp.dtype('uint8'),
-    xla_data_pb2.U16: onp.dtype('uint16'),
-    xla_data_pb2.U32: onp.dtype('uint32'),
-    xla_data_pb2.U64: onp.dtype('uint64'),
-    xla_data_pb2.F16: onp.dtype('float16'),
-    xla_data_pb2.F32: onp.dtype('float32'),
-    xla_data_pb2.F64: onp.dtype('float64'),
-    xla_data_pb2.C64: onp.dtype('complex64'),
-    xla_data_pb2.C128: onp.dtype('complex128'),
-}
-
-# Note the conversion on the key. Numpy has a known issue wherein dtype hashing
-# doesn't work as expected (https://github.com/numpy/numpy/issues/7242). Thus,
-# when keying by dtype in this dict, we use the string form of dtypes.
-_dtype_to_etype = {str(dt): et for et, dt in _etype_to_dtype.items()}
-
-
 @memoize
 def dtype_to_etype(dtype):
   """Convert from dtype to canonical etype (reading FLAGS.jax_enable_x64)."""
-  return _dtype_to_etype[canonicalize_dtype(dtype)]
+  return xla_client.DTYPE_TO_XLA_ELEMENT_TYPE[canonicalize_dtype(dtype)]
 
 @memoize
 def dtype_to_etype_exact(dtype):
   """Convert from dtype to exact etype (ignoring FLAGS.jax_enable_x64)."""
-  return _dtype_to_etype[str(onp.dtype(dtype))]
+  return xla_client.dtype_to_etype(dtype)
 
 
 _dtype_to_32bit_dtype = {
@@ -268,7 +242,8 @@ def canonicalize_dtype(dtype):
 
 @memoize_thunk
 def supported_numpy_dtypes():
-  return {canonicalize_dtype(dtype) for dtype in _etype_to_dtype.values()}
+  return {canonicalize_dtype(dtype)
+          for dtype in xla_client.XLA_ELEMENT_TYPE_TO_DTYPE.values()}
 
 
 def canonicalize_shape(shape):
@@ -348,7 +323,7 @@ class _JaxComputationBuilderBase(object):
 
   def ConstantLike(self, example_value, value, canonicalize_types=True):
     example_value = onp.asarray(example_value)
-    return self.Constant(onp.array(value).astype(example_value.dtype))
+    return self.Constant(onp.array(value, dtype=example_value.dtype))
 
   def Constant(self, py_val, canonicalize_types=True):
     """Translate constant `py_val` to a constant for this ComputationBuilder.
