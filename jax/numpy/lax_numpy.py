@@ -2058,7 +2058,7 @@ hanning = onp.hanning
 kaiser = onp.kaiser  # TODO: lower via lax to allow non-constant beta.
 
 
-@_wraps(onp.gcd)
+@_wraps(getattr(onp, "gcd", None))
 def gcd(x1, x2):
   if (not issubdtype(lax._dtype(x1), integer) or
       not issubdtype(lax._dtype(x2), integer)):
@@ -2077,7 +2077,7 @@ def gcd(x1, x2):
   return gcd
 
 
-@_wraps(onp.lcm)
+@_wraps(getattr(onp, "lcm", None))
 def lcm(x1, x2):
   d = gcd(x1, x2)
   return where(d == 0, lax._const(d, 0),
