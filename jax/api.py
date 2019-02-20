@@ -99,9 +99,9 @@ def jit(fun, static_argnums=()):
       return fun(*args, **kwargs)
     f = lu.wrap_init(fun, kwargs)
     dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
-    f, dyn_args = argnums_partial(f, dyn_argnums, args)
+    f, dyn_args = _argnums_partial(f, dyn_argnums, args)
     jaxtupletree_args, in_trees = unzip2(map(pytree_to_jaxtupletree, dyn_args))
-    check_args(jaxtupletree_args)
+    _check_args(jaxtupletree_args)
     jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(f, in_trees)
     jaxtupletree_out = xla.xla_call(jaxtree_fun, *jaxtupletree_args)
     return build_tree(out_tree(), jaxtupletree_out)
@@ -219,9 +219,9 @@ def value_and_grad(fun, argnums=0):
   @wraps(fun, docstr=docstr, argnums=argnums)
   def value_and_grad_f(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
-    f_partial, dyn_args = argnums_partial(f, argnums, args)
+    f_partial, dyn_args = _argnums_partial(f, argnums, args)
     ans, vjp_py = vjp(f_partial, *dyn_args)
-    check_scalar(ans)
+    _check_scalar(ans)
     g = vjp_py(onp.ones((), onp.result_type(ans)))
     g = g[0] if isinstance(argnums, int) else g
     return (ans, g)
@@ -253,7 +253,7 @@ def jacfwd(fun, argnums=0):
 
   def jacfun(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
-    f_partial, dyn_args = argnums_partial(f, argnums, args)
+    f_partial, dyn_args = _argnums_partial(f, argnums, args)
     pushfwd = partial(jvp, f_partial, dyn_args)
     y, jac = vmap(pushfwd, out_axes=(None, -1))(_std_basis(dyn_args))
     example_args = dyn_args[0] if isinstance(argnums, int) else dyn_args
@@ -284,7 +284,7 @@ def jacrev(fun, argnums=0):
   """
   def jacfun(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
-    f_partial, dyn_args = argnums_partial(f, argnums, args)
+    f_partial, dyn_args = _argnums_partial(f, argnums, args)
     y, pullback = vjp(f_partial, *dyn_args)
     jac = vmap(pullback)(_std_basis(y))
     jac = jac[0] if isinstance(argnums, int) else jac
@@ -394,7 +394,7 @@ def pjit(fun, axis_name, in_axes=0, out_axes=0, mesh_axis=0):
   def f_jitted(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
     jaxtupletree_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
-    check_args(jaxtupletree_args)
+    _check_args(jaxtupletree_args)
     f, out_tree = pytree_fun_to_jaxtupletree_fun(f, in_trees)
     in_axes_ = in_axes if isinstance(in_axes, (list, tuple)) else (in_axes,) * len(args)
     chunksize = pxla.chunk_size(axis_name, mesh_axis, in_axes_, jaxtupletree_args)
@@ -537,7 +537,7 @@ def vjp(fun, *primals):
   if not isinstance(fun, lu.WrappedFun):
     fun = lu.wrap_init(fun)
   primals_flat, in_trees = unzip2(map(pytree_to_jaxtupletree, primals))
-  check_args(primals_flat)
+  _check_args(primals_flat)
   jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(fun, in_trees)
   out_primal, out_vjp = ad.vjp(jaxtree_fun, primals_flat)
   out_tree = out_tree()
@@ -632,7 +632,7 @@ device_get_array = lambda x: x.copy() if type(x) is xla.DeviceArray else x
 device_get = partial(tree_map, device_get_array)
 
 
-def argnums_partial(f, dyn_argnums, args):
+def _argnums_partial(f, dyn_argnums, args):
   if isinstance(dyn_argnums, int):
     dyn_argnums = (dyn_argnums,)
   else:
@@ -640,23 +640,23 @@ def argnums_partial(f, dyn_argnums, args):
   fixed_args = tuple([None if i in dyn_argnums else WrapHashably(arg)
                       for i, arg in enumerate(args)])
   dyn_args = tuple(args[i] for i in dyn_argnums)
-  return argnums_partial_(f, dyn_argnums, fixed_args), dyn_args
+  return _argnums_partial_(f, dyn_argnums, fixed_args), dyn_args
 
 @lu.transformation
-def argnums_partial_(dyn_argnums, fixed_args, *dyn_args):
+def _argnums_partial_(dyn_argnums, fixed_args, *dyn_args):
   args = [None if arg is None else arg.val for arg in fixed_args]
   for i, arg in zip(dyn_argnums, dyn_args):
     args[i] = arg
   ans = yield args
   yield ans
 
-def check_args(args):
+def _check_args(args):
   for arg in args:
     if not (isinstance(arg, core.Tracer) or core.valid_jaxtype(arg)):
       raise TypeError("Argument '{}' of type {} is not a valid JAX type"
                       .format(arg, type(arg)))
 
-def check_scalar(x):
+def _check_scalar(x):
   msg = "Gradient only defined for scalar-output functions. Output was: {}".format
   try:
     aval = core.get_aval(x)
@@ -666,7 +666,7 @@ def check_scalar(x):
     raise TypeError(msg(x))
 
 
-def primitive(fun):
+def _primitive(fun):
   name = getattr(fun, '__name__', '<unnamed user primitive>')
   fun_p = core.Primitive(name)
   fun_p.def_impl(fun)
