@@ -417,19 +417,18 @@ def conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation=None,
   - spatial dimension correspondences between lhs, rhs, and the output using
     any distinct characters.
 
-  For example, to indicate dimension numbers
-  consistent with the Conv operation with two spatial dimensions, one
-  could use `('NCHW', 'OIHW', 'NCHW')`. As another example, to indicate
-  dimension numbers consistent with the TensorFlow Conv2D operation, one
-  could use `('NHWC', 'HWIO', 'NHWC')`. When using the latter form of
-  convolution dimension specification, window strides are associated with
-  spatial dimension character labels according to the order in which the
-  labels appear in the `rhs_spec` string, so that `window_strides[0]` is
-  matched with the dimension corresponding to the first character
+  For example, to indicate dimension numbers consistent with the `conv` function
+  with two spatial dimensions, one could use `('NCHW', 'OIHW', 'NCHW')`. As
+  another example, to indicate dimension numbers consistent with the TensorFlow
+  Conv2D operation, one could use `('NHWC', 'HWIO', 'NHWC')`. When using the
+  latter form of convolution dimension specification, window strides are
+  associated with spatial dimension character labels according to the order in
+  which the labels appear in the `rhs_spec` string, so that `window_strides[0]`
+  is matched with the dimension corresponding to the first character
   appearing in rhs_spec that is not `'I'` or `'O'`.
 
-  If `dimension_numbers` is `None`, the default is `(NCHW, OIHW, NCHW)` (for
-  a 2D convolution).
+  If `dimension_numbers` is `None`, the default is `('NCHW', 'OIHW', 'NCHW')`
+  (for a 2D convolution).
   """
   if type(dimension_numbers) is not ConvDimensionNumbers:
     dimension_numbers = conv_dimension_numbers(
