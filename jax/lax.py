@@ -3541,6 +3541,9 @@ def _pack_eqn(invars, outvar):
 
 def _cond_abstract_eval(pred, true_op, true_consts, false_op, false_consts,
                         opaque_params):
+  if not isinstance(pred, ShapedArray) or pred.shape or pred.dtype != onp.bool_:
+    msg = "cond pred must be a scalar boolean type, got {}."
+    raise TypeError(msg.format(pred))
   true_aval, false_aval, _, _ = opaque_params.val
   true_aval, false_aval = map(maybe_tracer_tuple_to_abstract_tuple,
                               (true_aval, false_aval))
