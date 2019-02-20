@@ -418,15 +418,18 @@ def jvp(fun, primals, tangents):
       array, scalar, or standard Python container of arrays or scalars.
     primals: The primal values at which the Jacobian of `fun` should be
       evaluated. Should be a tuple of arrays, scalar, or standard Python
-      container thereof.
+      container thereof. The length of the tuple is equal to the number of
+      positional parameters of `fun`.
     tangents: The tangent vector for which the Jacobian-vector product should be
       evaluated. Should be a tuple of arrays, scalar, or standard Python
-      container thereof.
+      container thereof, with the same tree structure and array shapes as
+      `primals`.
 
   Returns:
-    A `(primals_out, tangents_out)` pair, where `primals_out` is `fun(primals)`,
-    and `tangents_out` is the Jacobian-vector product of `function` evaluated at
-    `primals` with `tangents`.
+    A `(primals_out, tangents_out)` pair, where `primals_out` is
+    `fun(*primals)`, and `tangents_out` is the Jacobian-vector product of
+    `function` evaluated at `primals` with `tangents`. The `tangents_out` value
+    has the same Python tree structure and shapes as `primals_out`.
 
   For example:
 
@@ -468,22 +471,23 @@ def lift_linearized(jaxpr, consts, io_tree, out_pval, *py_args):
 def vjp(fun, *primals):
   """Compute a (reverse-mode) vector-Jacobian product of `fun`.
 
-  This is a more general form of `grad` that can be used for functions with
-  non-scalar outputs. For most common use cases, you most likely want `grad`
-  instead of `vjp`.
+  `grad` is implemented as a special case of `vjp`.
 
   Args:
     fun: Function to be differentiated. Its arguments should be arrays, scalars,
       or standard Python containers of arrays or scalars. It should return an
       array, scalar, or standard Python container of arrays or scalars.
-    primals: A sequence of of primal values at which the Jacobian of `fun`
-      should be evaluated. Should be a tuple of arrays, scalar, or standard
-      Python containers thereof.
+    primals: A sequence of primal values at which the Jacobian of `fun`
+      should be evaluated. The length of `primals` should be equal to the number
+      of positional parameters to `fun`. Each primal value should be a tuple of
+      arrays, scalar, or standard Python containers thereof.
 
   Returns:
-    A `(primals_out, gradient)` pair, where `primals_out` is `fun(*primals)`.
-    `gradient` is a function from tangent values that computes vector-Jacobian
-    product of `fun` in an epsilon ball around `primals`.
+    A `(primals_out, vjpfun)` pair, where `primals_out` is `fun(*primals)`.
+    `vjpfun` is a function from a cotangent vector with the same shape as
+    `primals_out` to a tuple of cotangent vectors with the same shape as
+    `primals`, representing the vector-Jacobian product of `fun` evaluated at
+    `primals`.
 
   >>> def f(x, y):
   >>>   return jax.numpy.sin(x), jax.numpy.cos(y)
