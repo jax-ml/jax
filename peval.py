@@ -16,6 +16,4 @@ def splitjvp(x):
   return jvp(np.ones_like(x))
 
 print splitjvp(x)
-# print make_jaxpr(splitjvp)(x)
-
-# TODO TODO register process_map stuff
+print make_jaxpr(splitjvp)(x)
