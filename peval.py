@@ -1,8 +1,7 @@
 from functools import partial
 import numpy as onp
 import jax.numpy as np
-from jax import jit, pjit, grad, linearize, jvp, make_jaxpr
-from jax.lax import psum
+from jax import jit, pjit, grad, linearize, make_jaxpr
 
 @partial(pjit, axis_name='i', axis_size=1)
 def f(x):
@@ -17,3 +16,4 @@ def splitjvp(x):
 
 print splitjvp(x)
 print make_jaxpr(splitjvp)(x)
+print grad(lambda x: np.sum(splitjvp(x)))(x)

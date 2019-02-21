@@ -203,6 +203,7 @@ xla_pcall_p = core.Primitive('xla_pcall')
 xla_pcall = partial(core.call_bind, xla_pcall_p)
 xla_pcall_p.def_custom_bind(xla_pcall)
 xla_pcall_p.def_impl(xla_pcall_impl)
+ad.primitive_transposes[xla_pcall_p] = partial(ad.call_transpose, xla_pcall_p)
 xla.translations[xla_pcall_p] = xla.xla_call_translation_rule
 pe.map_primitives.add(xla_pcall_p)
 
