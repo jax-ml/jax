@@ -4,7 +4,7 @@ import jax.numpy as np
 from jax import jit, pjit, grad, linearize, jvp, make_jaxpr
 from jax.lax import psum
 
-@partial(pjit, axis_name='i')
+@partial(pjit, axis_name='i', axis_size=1)
 def f(x):
   return np.sin(x)
 
@@ -15,20 +15,7 @@ def splitjvp(x):
   _, jvp = linearize(f, x)
   return jvp(np.ones_like(x))
 
-# print splitjvp(x)
-print make_jaxpr(splitjvp)(x)
-print grad(lambda x: np.sum(np.sin(x)))(x)
-print grad(lambda x: np.sum(f(x)))(x)
+print splitjvp(x)
+# print make_jaxpr(splitjvp)(x)
 
-print grad(lambda x: np.sum(splitjvp(x)))(x)
-print grad(lambda x: np.sum(jvp(np.sin, (x,), (np.ones_like(x),))[1]))(x)
-
-
-###
-
-@partial(pjit, axis_name='i')
-@partial(pjit, axis_name='j')
-def f(x):
-  return psum(psum(x, 'i'), 'j')
-
-print f(x.reshape((1, 1, -1)))
+# TODO TODO register process_map stuff

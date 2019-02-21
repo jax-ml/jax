@@ -405,7 +405,8 @@ def vmap(fun, in_axes=0, out_axes=0):
   return batched_fun
 
 
-def pjit(fun, axis_name):
+# TODO pull axis_size off of args rather than having user pass it in
+def pjit(fun, axis_name, axis_size):
   """Set up SPMD function for JIT compilation and parallel execution with XLA."""
   @wraps(fun)
   def f_jitted(*args, **kwargs):
@@ -413,7 +414,8 @@ def pjit(fun, axis_name):
     check_args(jaxtupletree_args)
     f = lu.wrap_init(fun, kwargs)
     f, out_tree = pytree_fun_to_jaxtupletree_fun(f, in_trees)
-    jaxtupletree_out = pxla.xla_pcall(f, *jaxtupletree_args, axis_name=axis_name)
+    jaxtupletree_out = pxla.xla_pcall(f, *jaxtupletree_args,
+                                      axis_name=axis_name, axis_size=axis_size)
     return build_tree(out_tree(), jaxtupletree_out)
 
   f_jitted.__name__ = "pjit({})".format(f_jitted.__name__)
