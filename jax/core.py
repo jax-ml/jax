@@ -82,6 +82,10 @@ class Primitive(object):
     self.impl = impl
     return impl
 
+  def def_abstract_eval(self, abstract_eval):
+    self.abstract_eval = abstract_eval
+    return abstract_eval
+
   def def_custom_bind(self, bind):
     self.bind = bind
     return bind
@@ -89,6 +93,10 @@ class Primitive(object):
   def impl(self, *args, **kwargs):
     raise NotImplementedError("Evaluation rule for '{}' not implemented"
                               .format(self.name))
+
+  def abstract_eval(self, *args, **kwargs):
+    raise NotImplementedError("Abstract evaluation for '{}' not implemented"
+                              .format(primitive.name))
 
 
 # -------------------- lifting --------------------

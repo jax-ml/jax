@@ -21,6 +21,7 @@ from collections import namedtuple, Counter, defaultdict
 
 from .. import core
 from .. import linear_util as lu
+from ..abstract_arrays import ShapedArray, ConcreteArray
 from ..linear_util import thunk, transformation, transformation_with_aux
 from ..util import unzip2, safe_zip, safe_map, toposort, partial
 from ..core import (Trace, Tracer, new_master, Jaxpr, JaxprEqn, get_aval, pack,
@@ -77,6 +78,8 @@ class JaxprTrace(Trace):
     return JaxprTracer(self, pval, eqn)
 
   def process_call(self, call_primitive, f, tracers, params):
+    if call_primitive in map_primitives:
+      return self.process_map(call_primitive, f, tracers, params)
     in_pvs, in_consts = unzip2([t.pval for t in tracers])
     fun, aux = partial_eval(f, self, in_pvs)
     out_pv_const, consts = call_primitive.bind(fun, *in_consts, **params)
@@ -89,20 +92,20 @@ class JaxprTrace(Trace):
 
   def process_map(self, call_primitive, f, tracers, params):
     in_pvs, in_consts = unzip2([t.pval for t in tracers])
-    fun, aux = partial_eval(f, self, map(remove_axis_from_pv, in_pvs))
-    out_pv_const, reduced_consts = call_primitive.bind(fun, *in_consts, **params)
-    consts = map(partial(add_axis_to_pv, 0), in_pvs)
-    out_pv, jaxpr, env = aux()
+    reduced_pvs = map(remove_axis_from_pv, in_pvs)  #
+    fun, aux = partial_eval(f, self, reduced_pvs)
+    out_const, consts = call_primitive.bind(fun, *in_consts, **params)
+    out_pv_reduced, jaxpr, env = aux()
+    out_pv = add_axis_to_pv(params['axis_size'], out_pv_reduced)
     const_tracers = map(self.new_instantiated_const, consts)
     env_tracers = map(self.full_raise, env)
     jaxpr_converted = jaxpr.copy()
     jaxpr_converted.constvars = []
     jaxpr_converted.invars = list(it.chain(jaxpr.constvars, jaxpr.invars))
-    invars = tuple(it.chain(const_tracers, eqn.invars))
+    invars = tuple(it.chain(const_tracers, tracers))
     bound_subjaxpr = (jaxpr_converted, (), env)
     eqn = JaxprEqn(invars, None, call_primitive, (bound_subjaxpr,), False, params)
-    return JaxprTracer(self, PartialVal((out_pv, out_pv_const)), eqn)
-
+    return JaxprTracer(self, PartialVal((out_pv, out_const)), eqn)
 
   def post_process_call(self, call_primitive, out_tracer):
     # TODO(mattjj): post_process_map
@@ -121,6 +124,45 @@ class JaxprTrace(Trace):
 
     return out, todo
 
+map_primitives = set()
+
+def remove_axis_from_pv(pv):
+  if pv is None:
+    return pv
+  elif isinstance(pv, AbstractValue):
+    return remove_axis_from_aval(pv)
+  elif type(pv) is JaxprTracerTuple:
+    return JaxprTracerTuple(map(remove_axis_from_pv, pv))
+  else:
+    raise TypeError(type(pv))
+
+def remove_axis_from_aval(aval):
+  if type(aval) is AbstractTuple:
+    return AbstractTuple(map(remove_axis_from_aval, aval))
+  elif isinstance(aval, ShapedArray):
+    # might be raising abstraction level from Concrete here
+    return ShapedArray(aval.shape[1:], aval.dtype)
+  else:
+    raise NotImplementedError  # TODO(mattjj)
+
+def add_axis_to_pv(size, pv):
+  if pv is None:
+    return pv
+  elif isinstance(pv, AbstractValue):
+    return add_axis_to_aval(size, pv)
+  elif type(pv) is JaxprTracerTuple:
+    return JaxprTracerTuple(map(partial(add_axis_to_pv, size), pv))
+  else:
+    raise TypeError(type(pv))
+
+def add_axis_to_aval(size, aval):
+  if type(aval) is AbstractTuple:
+    return AbstractTuple(map(partial(add_axis_to_aval, size), aval))
+  elif isinstance(aval, ShapedArray):
+    return ShapedArray((size,) + aval.shape, aval.dtype)
+  else:
+    raise NotImplementedError  # TODO(mattjj)
+
 
 def partial_eval(f, trace, pvs):
   f = trace_to_subjaxpr(f, trace.master)
@@ -130,8 +172,8 @@ def partial_eval(f, trace, pvs):
 @transformation_with_aux
 def partial_eval_wrapper(avals, *consts, **kwargs):
   jaxpr, (out_pval, consts, env) = yield (map(PartialVal, zip(avals, consts)),)
-  out_pv, out_pv_const = out_pval
-  out = pack((out_pv_const, pack(consts)))
+  out_pv, out_const = out_pval
+  out = pack((out_const, pack(consts)))
   yield out, (out_pv, jaxpr, env)
 
 
@@ -213,16 +255,6 @@ class PartialVal(tuple):
 
 valid_pv_types = (AbstractValue, JaxprTracerTuple, type(None))
 
-
-def def_abstract_eval(primitive, abstract_eval):
-  primitive.abstract_eval = abstract_eval
-
-def abstract_eval_unimplemented(primitive, *args, **kwargs):
-  raise NotImplementedError("Abstract evaluation for '{}' not implemented"
-                            .format(primitive.name))
-
-Primitive.def_abstract_eval = def_abstract_eval
-Primitive.abstract_eval = abstract_eval_unimplemented
 
 abstract_unit = core.AbstractTuple()
 
