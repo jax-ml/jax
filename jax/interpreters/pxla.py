@@ -51,7 +51,7 @@ def shard_arg(arg):
   return [xb.device_put(shards[i], n) for n, i in enumerate(assign_shards(sz))]
 
 def unshard_output(axis_size, out_shards):
-  _, ids = onp.unique(shard_assignments((axis_size,)), return_index=True)
+  _, ids = onp.unique(assign_shards(axis_size), return_index=True)
   return onp.stack([out_shards[i] for i in ids])
 
 def assign_shards(size):
@@ -71,7 +71,7 @@ def replica_groups(mesh_spec, mesh_axis):
 ### xla_pcall
 
 
-AxisEnv = collections.namedtuple("AxisEnv", ["names", "sizes"])
+AxisEnv = namedtuple("AxisEnv", ["names", "sizes"])
 
 def extend_env(axis_env, name, size):
   return AxisEnv(axis_env.names + [name], axis_env.sizes + [size])
@@ -189,7 +189,7 @@ def parallel_callable(fun, axis_name, axis_size, *avals):
     del master, consts, jaxpr, env
   return partial(execute_replicated, compiled, pval, axis_size)
 
-def execute_replicated(compiled, pval, out_tree, *args):
+def execute_replicated(compiled, pval, axis_size, out_tree, *args):
   input_bufs = zip(*map(shard_arg, args)) if args else [[]] * xb.get_replica_count()
   out_bufs = compiled.ExecutePerReplica(input_bufs)
   out_shards = [merge_pvals(buf.to_py(), pval) for buf in out_bufs]
