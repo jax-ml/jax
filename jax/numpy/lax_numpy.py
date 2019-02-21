@@ -115,6 +115,8 @@ inexact = onp.inexact
 complexfloating = onp.complexfloating
 floating = onp.floating
 integer = onp.integer
+signedinteger = onp.signedinteger
+unsignedinteger = onp.unsignedinteger
 
 iinfo = onp.iinfo
 finfo = onp.finfo
@@ -284,7 +286,6 @@ equal = _one_to_one_binop(onp.equal, lax.eq)
 multiply = _one_to_one_binop(onp.multiply, lax.mul)
 not_equal = _one_to_one_binop(onp.not_equal, lax.ne)
 subtract = _one_to_one_binop(onp.subtract, lax.sub)
-power = _one_to_one_binop(onp.power, lax.pow, True)
 arctan2 = _one_to_one_binop(onp.arctan2, lax.atan2, True)
 minimum = _one_to_one_binop(onp.minimum, lax.min)
 maximum = _one_to_one_binop(onp.maximum, lax.max)
@@ -386,6 +387,28 @@ def _float_divmod(x1, x2):
   div = lax.select(ind, div - _constant_like(div, 1), div)
 
   return lax.round(div), mod
+
+
+@_wraps(onp.power)
+def power(x1, x2):
+  x1 = asarray(x1)
+  x2 = asarray(x2)
+  x1, x2 = _promote_args_like(onp.power, x1, x2)
+  dtype = lax._dtype(x1)
+  if not issubdtype(dtype, integer):
+    return lax.pow(x1, x2)
+
+  # Integer power => use binary exponentiation.
+
+  # TODO(phawkins): add integer pow support to XLA.
+  bits = 6  # Anything more would overflow for any x1 > 1
+  acc = ones(shape(x1), dtype=dtype)
+  for _ in xrange(bits):
+    acc = where(lax.bitwise_and(x2, _constant_like(x2, 1)),
+                lax.mul(acc, x1), acc)
+    x1 = lax.mul(x1, x1)
+    x2 = lax.shift_right_logical(x2, _constant_like(x2, 1))
+  return acc
 
 
 @_wraps(onp.logaddexp)
