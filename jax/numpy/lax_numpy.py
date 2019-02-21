@@ -286,7 +286,6 @@ equal = _one_to_one_binop(onp.equal, lax.eq)
 multiply = _one_to_one_binop(onp.multiply, lax.mul)
 not_equal = _one_to_one_binop(onp.not_equal, lax.ne)
 subtract = _one_to_one_binop(onp.subtract, lax.sub)
-power = _one_to_one_binop(onp.power, lax.pow, True)
 arctan2 = _one_to_one_binop(onp.arctan2, lax.atan2, True)
 minimum = _one_to_one_binop(onp.minimum, lax.min)
 maximum = _one_to_one_binop(onp.maximum, lax.max)
@@ -394,23 +393,15 @@ def _float_divmod(x1, x2):
 def power(x1, x2):
   x1 = asarray(x1)
   x2 = asarray(x2)
-  x2_type = lax._dtype(x2)
-  if not issubdtype(x2_type, integer):
-    return lax.pow(*_promote_args_like(onp.power, x1, x2))
+  x1, x2 = _promote_args_like(onp.power, x1, x2)
+  dtype = lax._dtype(x1)
+  if not issubdtype(dtype, integer):
+    return lax.pow(x1, x2)
 
   # Integer power => use binary exponentiation.
-  dtype = _result_dtype(onp.power, x1, x2)
-  x1 = lax.convert_element_type(x1, dtype)
 
-  # TODO(phawkins): consider using clz and a loop here, rather than unrolling
-  # up to the bitwidth of x2.
-  x2_signed = issubdtype(x2_type, signedinteger)
-  bits = iinfo(x2_type).bits
-  if x2_signed:
-    x1 = where(x2 < 0, lax.div(_constant_like(x1, 1), x1), x1)
-    x2 = lax.abs(x2)
-    bits -= 1  # Sign bit is 0.
-
+  # TODO(phawkins): add integer pow support to XLA.
+  bits = 6  # Anything more would overflow for any x1 > 1
   acc = ones(shape(x1), dtype=dtype)
   for _ in xrange(bits):
     acc = where(lax.bitwise_and(x2, _constant_like(x2, 1)),
