@@ -31,6 +31,7 @@ import os
 import numpy as onp
 from contextlib import contextmanager
 from distutils.util import strtobool
+from six.moves import reduce
 
 from . import core
 from . import linear_util as lu
@@ -405,11 +406,17 @@ def vmap(fun, in_axes=0, out_axes=0):
   return batched_fun
 
 
-# TODO pull axis_size off of args rather than having user pass it in
-def pjit(fun, axis_name, axis_size):
+def pjit(fun, axis_name):
   """Set up SPMD function for JIT compilation and parallel execution with XLA."""
   @wraps(fun)
   def f_jitted(*args, **kwargs):
+    leaves, _ = tree_flatten(args)
+    axis_sizes = set(onp.shape(leaf)[0] for leaf in leaves)
+    if len(axis_sizes) != 1:
+      msg = "pjit requires all leading axes to have equal length, got {}."
+      raise TypeError(msg.format(axis_sizes))
+    axis_size = axis_sizes.pop()
+
     jaxtupletree_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
     check_args(jaxtupletree_args)
     f = lu.wrap_init(fun, kwargs)
