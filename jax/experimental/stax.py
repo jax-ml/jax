@@ -29,11 +29,16 @@ import numpy as onp
 import numpy.random as npr
 from six.moves import reduce
 
+from jax.core import Primitive, unit, unitvar
+from jax.api import make_jaxpr
 from jax import lax
 from jax import random
 from jax.scipy.misc import logsumexp
+from jax.util import safe_map
 import jax.numpy as np
 
+
+map = safe_map
 
 # Following the convention used in Keras and tf.layers, we use CamelCase for the
 # names of layer constructors, like Conv and Relu, while using snake_case for
@@ -320,4 +325,70 @@ def shape_dependent(make_layer):
     return make_layer(input_shape)[0](input_shape)
   def apply_fun(params, inputs, rng=None):
     return make_layer(inputs.shape)[1](params, inputs, rng)
+  return init_fun, apply_fun
+
+
+def to_pointy(layer, name):
+  layer_p = Primitive(name)
+  layer_p.stax_layer = layer
+  def impl(*args, **kwargs):
+    raise ValueError  # TODO: explain that you're not meant to call this function
+  layer_p.def_impl(impl)
+  layer_p.def_abstract_eval(lambda x: x)
+  return lambda inputs: layer_p.bind(inputs)
+
+def to_pointy_with_params(layer):
+  def pointy(inputs, *params, **kwparams):
+    layer_ = layer(*params, **kwparams)
+    name = getattr(layer, '__name__', 'UnknownLayer')
+    return to_pointy(layer_, name)(inputs)
+  return pointy
+
+relu_pointy = to_pointy(Relu, 'relu')
+dense_pointy = to_pointy_with_params(Dense)
+
+def pointy_to_stax_layer(fun):
+  jaxpr = make_jaxpr(fun)(0)  # Trace on a dummy value
+  def init_fun(input_shape):
+    def read(v):
+      return env[v]
+
+    def write(v, val):
+      env[v] = val
+
+    env = {}
+    params = {}
+    write(unitvar, unit)
+    assert not jaxpr.constvars
+    assert not jaxpr.freevars
+    map(write, jaxpr.invars, [input_shape])
+    for eqn in jaxpr.eqns:
+      input_shape, = map(read, eqn.invars)
+      assert not eqn.bound_subjaxprs
+      init_fun, _ = eqn.primitive.stax_layer
+      ans, param = init_fun(input_shape)
+      outvals = list(ans) if eqn.destructure else [ans]
+      map(write, eqn.outvars, outvals)
+      params[id(eqn)] = param
+    return read(jaxpr.outvar), params
+  def apply_fun(params, inputs, rng=None):
+    def read(v):
+      return env[v]
+
+    def write(v, val):
+      env[v] = val
+
+    env = {}
+    write(unitvar, unit)
+    assert not jaxpr.constvars
+    assert not jaxpr.freevars
+    map(write, jaxpr.invars, [inputs])
+    for eqn in jaxpr.eqns:
+      inputs, = map(read, eqn.invars)
+      assert not eqn.bound_subjaxprs
+      _, apply_fun = eqn.primitive.stax_layer
+      ans = apply_fun(params[id(eqn)], inputs)
+      outvals = list(ans) if eqn.destructure else [ans]
+      map(write, eqn.outvars, outvals)
+    return read(jaxpr.outvar)
   return init_fun, apply_fun
