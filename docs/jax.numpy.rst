@@ -82,6 +82,7 @@ jax.numpy package
     flip
     fliplr
     flipud
+    float_power
     floor
     floor_divide
     fmod
