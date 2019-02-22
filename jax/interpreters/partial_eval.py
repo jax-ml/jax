@@ -92,7 +92,7 @@ class JaxprTrace(Trace):
 
   def process_map(self, call_primitive, f, tracers, params):
     in_pvs, in_consts = unzip2([t.pval for t in tracers])
-    reduced_pvs = map(remove_axis_from_pv, in_pvs)  #
+    reduced_pvs = map(remove_axis_from_pv, in_pvs)
     fun, aux = partial_eval(f, self, reduced_pvs)
     out_const, consts = call_primitive.bind(fun, *in_consts, **params)
     out_pv_reduced, jaxpr, env = aux()
@@ -448,6 +448,3 @@ compiled_call_p = Primitive('compiled_call')
 compiled_call = partial(core.call_bind, compiled_call_p)
 compiled_call_p.def_custom_bind(compiled_call)
 compiled_call_p.def_impl(compiled_call_impl)
-
-
-call_peval_rewrites = {}
