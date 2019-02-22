@@ -105,20 +105,15 @@ def replicated_comp(jaxpr, axis_env, const_vals, freevar_shapes, *arg_shapes):
   for eqn in jaxpr.eqns:
     in_nodes = map(read, eqn.invars)
     if eqn.primitive in parallel_translation_rules:
-      # if we see an spmd primitive (one with a parallel translation rule), then
-      # call that parallel translation rule using axis_env for device_groups
       name = eqn.params['axis_name']
       device_groups = replica_groups(axis_env.sizes, axis_env.names.index(name))
       params = {k: eqn.params[k] for k in eqn.params if k != 'axis_name'}
       rule = parallel_translation_rules[eqn.primitive]
       ans = rule(c, *in_nodes, device_groups=device_groups, **params)
     elif eqn.bound_subjaxprs:
-      # if there are bound subjaxprs, we either recursively call
-      # replicated_computation or call into xla.jaxpr_computation
-      in_shapes = map(c.GetShape, in_nodes)
       if eqn.primitive is xla_pcall_p:
-        # if we're processing an xla_pcall, extend the axis environment and
-        # recursively call replicated_computation
+        in_nodes = map(partial(xla_split, c), in_nodes)
+        in_shapes = map(c.GetShape, in_nodes)
         (subjaxpr, const_bindings, freevar_bindings), = eqn.bound_subjaxprs
         subc = replicated_comp(
             subjaxpr,
@@ -126,11 +121,9 @@ def replicated_comp(jaxpr, axis_env, const_vals, freevar_shapes, *arg_shapes):
             (), map(c.GetShape, map(read, const_bindings + freevar_bindings)),
             *in_shapes)
         subfun = (subc, tuple(map(read, const_bindings + freevar_bindings)))
-        # select the correct subarray for this replica, call subfun
-        in_nodes = map(partial(xla_split, c), in_nodes)
-        ans = translation_rule(eqn.primitive)(c, subfun, *in_nodes)
+        ans = xla.xla_call_translation_rule(c, subfun, *in_nodes)
       else:
-        # otherwise, act like xla.jaxpr_computation
+        in_shapes = map(c.GetShape, in_nodes)
         subcs = [
             jaxpr_computation(
                 subjaxpr, (),
@@ -142,8 +135,6 @@ def replicated_comp(jaxpr, axis_env, const_vals, freevar_shapes, *arg_shapes):
                     in zip(subcs, eqn.bound_subjaxprs)]
         ans = translation_rule(eqn.primitive)(c, *(subfuns + in_nodes), **eqn.params)
     else:
-      # if this is a standard translation rule (not an spmd primitive, not a
-      # call with bound subjaxprs) then we lower like xla.jaxpr_computation does
       ans = translation_rule(eqn.primitive)(c, *in_nodes, **eqn.params)
 
     out_nodes = xla_destructure(c, ans) if eqn.destructure else [ans]
@@ -152,8 +143,10 @@ def replicated_comp(jaxpr, axis_env, const_vals, freevar_shapes, *arg_shapes):
 
 def xla_split(c, x):
   shape = list(c.GetShape(x).dimensions())
-  start_indices = [c.ReplicaId()] + [c.Constant(0)] * len(shape)
-  return c.Reshape(c.DynamicSlice(x, start_indices, [1] + shape[1:]), shape[1:])
+  start_indices = c.Constant(onp.array([0] * len(shape)))
+  # start_indices = [c.ReplicaId()] + [c.Constant(0)] * len(shape)  # TODO
+  return c.Reshape(c.DynamicSlice(x, start_indices, [1] + shape[1:]),
+                   None, shape[1:])
 
 
 def xla_pcall_impl(fun, *args, **params):
@@ -204,7 +197,7 @@ xla_pcall = partial(core.call_bind, xla_pcall_p)
 xla_pcall_p.def_custom_bind(xla_pcall)
 xla_pcall_p.def_impl(xla_pcall_impl)
 ad.primitive_transposes[xla_pcall_p] = partial(ad.call_transpose, xla_pcall_p)
-xla.translations[xla_pcall_p] = xla.xla_call_translation_rule
+# xla.translations[xla_pcall_p] = xla.xla_call_translation_rule  # TODO
 pe.map_primitives.add(xla_pcall_p)
 
 

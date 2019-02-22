@@ -75,7 +75,8 @@ def vjp(traceable, primals):
   def vjp_(ct):
     ct = ignore_consts(ct, pval)
     dummy_primal_and_ct = pack((core.unit, ct))
-    _, arg_cts = backward_pass(jaxpr, consts, (), dummy_primal_and_ct)
+    dummy_args = (None,) * len(jaxpr.invars)
+    _, arg_cts = backward_pass(jaxpr, consts, (), dummy_args, dummy_primal_and_ct)
     return instantiate_zeros(pack(primals), arg_cts[1])
 
   return out_primal, vjp_
@@ -100,7 +101,7 @@ def unpair_pval(pval):
     aval_1, aval_2 = aval
     return (aval_1, const_1), (aval_2, const_2)
 
-def backward_pass(jaxpr, consts, freevar_vals, cotangent_in):
+def backward_pass(jaxpr, consts, freevar_vals, args, cotangent_in):
   def write_cotangent(v, ct):
     # assert v not in primal_env
     if ct is not None:
@@ -109,10 +110,11 @@ def backward_pass(jaxpr, consts, freevar_vals, cotangent_in):
   def read_cotangent(v):
     return ct_env.get(v, zero)
 
-  primal_env = {v: val
-                for v, val in zip(jaxpr.freevars, freevar_vals)
+  primal_env = {v: val for v, val in zip(jaxpr.freevars, freevar_vals)
                 if val is not None}
   primal_env.update(zip(jaxpr.constvars, consts))
+  primal_env.update((v, val) for v, val in zip(jaxpr.invars, args)
+                    if val is not None)
   ct_env = {jaxpr.outvar: cotangent_in}
 
   for eqn in jaxpr.eqns[::-1]:
@@ -371,25 +373,23 @@ def traceable(in_tree_def, new_primals, new_tangents):
 
 @transformation_with_aux
 def transposed_fun(jaxpr, in_tree_def, args):
-  consts, freevar_vals, ct = args
-  ct, freevar_vals = build_tree(in_tree_def, (ct, freevar_vals))
-  freevar_cts, cotangents_out = yield jaxpr, consts, freevar_vals, ct
+  args, consts, freevar_vals, ct = args
+  args, ct, freevar_vals = build_tree(in_tree_def, (args, ct, freevar_vals))
+  freevar_cts, cotangents_out = yield jaxpr, consts, freevar_vals, args, ct
   out_jtuple, tree_def = tree_to_jaxtuples((cotangents_out, freevar_cts))
   yield out_jtuple, tree_def
 
-def call_transpose(primitive, params, jaxpr, consts, freevar_vals, args, ct,
-                   params_fun=identity):
+def call_transpose(primitive, params, jaxpr, consts, freevar_vals, args, ct):
   jaxpr, = jaxpr
   consts, = consts
   freevar_vals, = freevar_vals
   assert isinstance(jaxpr, core.Jaxpr)
-  assert all(a is None for a in args), "TODO(dougalm): handle non-tangent primal args"
-  (ct, freevar_vals), in_tree_def = tree_to_jaxtuples((ct, freevar_vals))
+  (args, ct, freevar_vals), in_tree_def = tree_to_jaxtuples((args, ct, freevar_vals))
   fun = wrap_init(backward_pass)
   fun, out_tree_def = transposed_fun(fun, jaxpr, in_tree_def)
-  all_args = pack((pack(consts), pack(freevar_vals), ct))
+  all_args = pack((pack(args), pack(consts), pack(freevar_vals), ct))
   # TODO(dougalm): consider signalling to bind that no traces in fun closure
-  ans = primitive.bind(fun, all_args, **params_fun(params))
+  ans = primitive.bind(fun, all_args, **params)
   return build_tree(out_tree_def(), ans)
 
 
