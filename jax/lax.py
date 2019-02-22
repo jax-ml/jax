@@ -503,7 +503,7 @@ def dynamic_update_slice(operand, update, start_indices):
   return dynamic_update_slice_p.bind(operand, update, start_indices,
                                      update_shape=update.shape)
 
-def gather(operand, start_indices, dimension_numbers=None, slice_sizes=None):
+def gather(operand, start_indices, dimension_numbers, slice_sizes):
   """Gather operator.
 
   Wraps `XLA's Gather operator
@@ -525,16 +525,11 @@ def gather(operand, start_indices, dimension_numbers=None, slice_sizes=None):
   Returns:
     An array containing the gather output.
   """
-  if not dimension_numbers:
-    msg = "The dimension_numbers argument to gather must be non-None."
-    raise ValueError(msg)
-  if not slice_sizes:
-    raise ValueError("The slice_sizes argument to gather must be non-None.")
   return gather_p.bind(
       operand, start_indices, dimension_numbers=dimension_numbers,
       slice_sizes=tuple(slice_sizes), operand_shape=operand.shape)
 
-def scatter_add(operand, scatter_indices, updates, dimension_numbers=None):
+def scatter_add(operand, scatter_indices, updates, dimension_numbers):
   """Scatter operator.
 
   Wraps `XLA's Scatter operator
@@ -554,9 +549,6 @@ def scatter_add(operand, scatter_indices, updates, dimension_numbers=None):
   Returns:
     An array containing the sum of `operand` and the scattered updates.
   """
-  if not dimension_numbers:
-    msg = "The dimension_numbers argument to scatter_add must be non-None."
-    raise ValueError(msg)
   jaxpr, consts = _reduction_jaxpr(add, _const(operand, 0))
   return scatter_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
