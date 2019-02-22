@@ -96,7 +96,7 @@ class Primitive(object):
 
   def abstract_eval(self, *args, **kwargs):
     raise NotImplementedError("Abstract evaluation for '{}' not implemented"
-                              .format(primitive.name))
+                              .format(self.name))
 
 
 # -------------------- lifting --------------------
