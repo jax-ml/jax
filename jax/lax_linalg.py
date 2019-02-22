@@ -37,7 +37,7 @@ from jaxlib import lapack
 def cholesky(x, symmetrize_input=True):
   if symmetrize_input:
     x = symmetrize(x)
-  return cholesky_p.bind(x)
+  return np.tril(cholesky_p.bind(x))
 
 def eigh(x, lower=True, symmetrize_input=True):
   if symmetrize_input:
@@ -80,7 +80,7 @@ _cpu_lapack_types = {np.float32, np.float64, np.complex64, np.complex128}
 def cholesky_jvp_rule(primals, tangents):
   x, = primals
   sigma_dot, = tangents
-  L = cholesky_p.bind(x)
+  L = np.tril(cholesky_p.bind(x))
 
   # Forward-mode rule from https://arxiv.org/pdf/1602.07527.pdf
   phi = lambda X: np.tril(X) / (1 + np.eye(X.shape[-1], dtype=X.dtype))
