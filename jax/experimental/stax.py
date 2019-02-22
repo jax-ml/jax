@@ -338,14 +338,15 @@ def to_pointy(layer, name):
   return lambda inputs: layer_p.bind(inputs)
 
 def to_pointy_with_params(layer):
-  def pointy(inputs, *params, **kwparams):
-    layer_ = layer(*params, **kwparams)
+  def pointy(inputs, *args, **kwargs):
+    layer_ = layer(*args, **kwargs)
     name = getattr(layer, '__name__', 'UnknownLayer')
     return to_pointy(layer_, name)(inputs)
   return pointy
 
 relu_pointy = to_pointy(Relu, 'relu')
 dense_pointy = to_pointy_with_params(Dense)
+dropout_pointy = to_pointy_with_params(Dropout)
 
 def pointy_to_stax_layer(fun):
   jaxpr = make_jaxpr(fun)(0)  # Trace on a dummy value
@@ -387,7 +388,8 @@ def pointy_to_stax_layer(fun):
       inputs, = map(read, eqn.invars)
       assert not eqn.bound_subjaxprs
       _, apply_fun = eqn.primitive.stax_layer
-      ans = apply_fun(params[id(eqn)], inputs)
+      rng, subrng = random.split(rng) if rng is not None else (None, None)
+      ans = apply_fun(params[id(eqn)], inputs, subrng)
       outvals = list(ans) if eqn.destructure else [ans]
       map(write, eqn.outvars, outvals)
     return read(jaxpr.outvar)
