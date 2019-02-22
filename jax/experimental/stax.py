@@ -90,6 +90,21 @@ ones = functools.partial(np.ones, dtype='float32')
 #   apply_fun: takes params, inputs, and an rng key and applies the layer.
 
 
+class StaxLayer(tuple):
+  def __new__(cls, *args, **kwargs):
+    return super(StaxLayer, cls).__new__(cls, tuple(*args, **kwargs))
+
+  def __init__(self, *args, **kwargs):
+    self.primitive = Primitive('StaxLayer')
+    self.primitive.stax_layer = self
+    def impl(*args, **kwargs):
+      raise ValueError  # TODO: explain that you're not meant to call this function
+    self.primitive.def_impl(impl)
+    self.primitive.def_abstract_eval(lambda x: x)
+
+  def __call__(self, inputs):
+    return self.primitive.bind(inputs)
+
 def Dense(out_dim, W_init=glorot(), b_init=randn()):
   """Layer constructor function for a dense (fully-connected) layer."""
   def init_fun(input_shape):
@@ -99,7 +114,7 @@ def Dense(out_dim, W_init=glorot(), b_init=randn()):
   def apply_fun(params, inputs, rng=None):
     W, b = params
     return np.dot(inputs, W) + b
-  return init_fun, apply_fun
+  return StaxLayer((init_fun, apply_fun))
 
 
 def GeneralConv(dimension_numbers, out_chan, filter_shape,
@@ -124,7 +139,7 @@ def GeneralConv(dimension_numbers, out_chan, filter_shape,
     W, b = params
     return lax.conv_general_dilated(inputs, W, strides, padding, one, one,
                                     dimension_numbers) + b
-  return init_fun, apply_fun
+  return StaxLayer((init_fun, apply_fun))
 Conv = functools.partial(GeneralConv, ('NHWC', 'HWIO', 'NHWC'))
 
 
@@ -147,13 +162,13 @@ def BatchNorm(axis=(0, 1, 2), epsilon=1e-5, center=True, scale=True,
     if center: return z + beta
     if scale: return gamma * z
     return z
-  return init_fun, apply_fun
+  return StaxLayer((init_fun, apply_fun))
 
 
 def _elemwise_no_params(fun, **kwargs):
   init_fun = lambda input_shape: (input_shape, ())
   apply_fun = lambda params, inputs, rng=None: fun(inputs, **kwargs)
-  return init_fun, apply_fun
+  return StaxLayer((init_fun, apply_fun))
 Tanh = _elemwise_no_params(np.tanh)
 Relu = _elemwise_no_params(relu)
 Exp = _elemwise_no_params(np.exp)
@@ -175,7 +190,7 @@ def _pooling_layer(reducer, init_val, rescaler=None):
     def apply_fun(params, inputs, rng=None):
       out = lax.reduce_window(inputs, init_val, reducer, dims, strides, padding)
       return rescale(out, inputs) if rescale else out
-    return init_fun, apply_fun
+    return StaxLayer((init_fun, apply_fun))
   return PoolingLayer
 MaxPool = _pooling_layer(lax.max, -np.inf)
 SumPool = _pooling_layer(lax.add, 0.)
@@ -197,7 +212,7 @@ def Flatten():
     return output_shape, ()
   def apply_fun(params, inputs, rng=None):
     return np.reshape(inputs, (inputs.shape[0], -1))
-  return init_fun, apply_fun
+  return StaxLayer((init_fun, apply_fun))
 Flatten = Flatten()
 
 
@@ -205,7 +220,7 @@ def Identity():
   """Layer construction function for an identity layer."""
   init_fun = lambda input_shape: (input_shape, ())
   apply_fun = lambda params, inputs, rng=None: inputs
-  return init_fun, apply_fun
+  return StaxLayer((init_fun, apply_fun))
 Identity = Identity()
 
 
@@ -213,14 +228,14 @@ def FanOut(num):
   """Layer construction function for a fan-out layer."""
   init_fun = lambda input_shape: ([input_shape] * num, ())
   apply_fun = lambda params, inputs, rng=None: [inputs] * num
-  return init_fun, apply_fun
+  return StaxLayer((init_fun, apply_fun))
 
 
 def FanInSum():
   """Layer construction function for a fan-in sum layer."""
   init_fun = lambda input_shape: (input_shape[0], ())
   apply_fun = lambda params, inputs, rng=None: sum(inputs)
-  return init_fun, apply_fun
+  return StaxLayer((init_fun, apply_fun))
 FanInSum = FanInSum()
 
 
@@ -233,7 +248,7 @@ def FanInConcat(axis=-1):
     return out_shape, ()
   def apply_fun(params, inputs, rng=None):
     return np.concatenate(inputs, axis)
-  return init_fun, apply_fun
+  return StaxLayer((init_fun, apply_fun))
 
 
 def Dropout(rate, mode='train'):
@@ -252,7 +267,7 @@ def Dropout(rate, mode='train'):
       return np.where(keep, inputs / rate, 0)
     else:
       return inputs
-  return init_fun, apply_fun
+  return StaxLayer((init_fun, apply_fun))
 
 
 # Composing layers via combinators
@@ -281,7 +296,7 @@ def serial(*layers):
     for fun, param, rng in zip(apply_funs, params, rngs):
       inputs = fun(param, inputs, rng)
     return inputs
-  return init_fun, apply_fun
+  return StaxLayer((init_fun, apply_fun))
 
 
 def parallel(*layers):
@@ -306,7 +321,7 @@ def parallel(*layers):
   def apply_fun(params, inputs, rng=None):
     rngs = random.split(rng, nlayers) if rng is not None else (None,) * nlayers
     return [f(p, x, r) for f, p, x, r in zip(apply_funs, params, inputs, rngs)]
-  return init_fun, apply_fun
+  return StaxLayer((init_fun, apply_fun))
 
 
 def shape_dependent(make_layer):
@@ -325,28 +340,8 @@ def shape_dependent(make_layer):
     return make_layer(input_shape)[0](input_shape)
   def apply_fun(params, inputs, rng=None):
     return make_layer(inputs.shape)[1](params, inputs, rng)
-  return init_fun, apply_fun
+  return StaxLayer((init_fun, apply_fun))
 
-
-def to_pointy(layer, name):
-  layer_p = Primitive(name)
-  layer_p.stax_layer = layer
-  def impl(*args, **kwargs):
-    raise ValueError  # TODO: explain that you're not meant to call this function
-  layer_p.def_impl(impl)
-  layer_p.def_abstract_eval(lambda x: x)
-  return lambda inputs: layer_p.bind(inputs)
-
-def to_pointy_with_params(layer):
-  def pointy(inputs, *args, **kwargs):
-    layer_ = layer(*args, **kwargs)
-    name = getattr(layer, '__name__', 'UnknownLayer')
-    return to_pointy(layer_, name)(inputs)
-  return pointy
-
-relu_pointy = to_pointy(Relu, 'relu')
-dense_pointy = to_pointy_with_params(Dense)
-dropout_pointy = to_pointy_with_params(Dropout)
 
 def pointy_to_stax_layer(fun):
   jaxpr = make_jaxpr(fun)(0)  # Trace on a dummy value
@@ -393,4 +388,4 @@ def pointy_to_stax_layer(fun):
       outvals = list(ans) if eqn.destructure else [ans]
       map(write, eqn.outvars, outvals)
     return read(jaxpr.outvar)
-  return init_fun, apply_fun
+  return StaxLayer((init_fun, apply_fun))
