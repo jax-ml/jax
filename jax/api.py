@@ -418,7 +418,7 @@ def pjit(fun, axis_name):
     axis_size = axis_sizes.pop()
 
     jaxtupletree_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
-    check_args(jaxtupletree_args)
+    _check_args(jaxtupletree_args)
     f = lu.wrap_init(fun, kwargs)
     f, out_tree = pytree_fun_to_jaxtupletree_fun(f, in_trees)
     jaxtupletree_out = pxla.xla_pcall(f, *jaxtupletree_args,
