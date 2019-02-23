@@ -31,6 +31,7 @@ import os
 import numpy as onp
 from contextlib import contextmanager
 from distutils.util import strtobool
+from six.moves import reduce
 
 from . import core
 from . import linear_util as lu
@@ -405,20 +406,23 @@ def vmap(fun, in_axes=0, out_axes=0):
   return batched_fun
 
 
-def pjit(fun, axis_name, in_axes=0, out_axes=0, mesh_axis=0):
+def pjit(fun, axis_name):
   """Set up SPMD function for JIT compilation and parallel execution with XLA."""
   @wraps(fun)
   def f_jitted(*args, **kwargs):
-    f = lu.wrap_init(fun, kwargs)
+    leaves, _ = tree_flatten(args)
+    axis_sizes = set(onp.shape(leaf)[0] for leaf in leaves)
+    if len(axis_sizes) != 1:
+      msg = "pjit requires all leading axes to have equal length, got {}."
+      raise TypeError(msg.format(axis_sizes))
+    axis_size = axis_sizes.pop()
+
     jaxtupletree_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
     _check_args(jaxtupletree_args)
+    f = lu.wrap_init(fun, kwargs)
     f, out_tree = pytree_fun_to_jaxtupletree_fun(f, in_trees)
-    in_axes_ = in_axes if isinstance(in_axes, (list, tuple)) else (in_axes,) * len(args)
-    chunksize = pxla.chunk_size(axis_name, mesh_axis, in_axes_, jaxtupletree_args)
-    f = pxla.chunk_transform(f, chunksize, axis_name, in_axes_, out_axes)
     jaxtupletree_out = pxla.xla_pcall(f, *jaxtupletree_args,
-                                      axis_name=axis_name, in_axes=in_axes_,
-                                      out_axes=out_axes, mesh_axis=mesh_axis)
+                                      axis_name=axis_name, axis_size=axis_size)
     return build_tree(out_tree(), jaxtupletree_out)
 
   f_jitted.__name__ = "pjit({})".format(f_jitted.__name__)
