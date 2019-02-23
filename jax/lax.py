@@ -1860,7 +1860,7 @@ def _broadcast_in_dim_shape_rule(operand, shape, broadcast_dimensions):
                    broadcast_dimensions)
   if operand.ndim != len(broadcast_dimensions):
     msg = ('broadcast_in_dim broadcast_dimensions must have length equal to '
-           'operand ndim, got broadcast_dimensions for operand ndim {}.')
+           'operand ndim, got broadcast_dimensions {} for operand ndim {}.')
     raise TypeError(msg.format(broadcast_dimensions, operand.ndim))
   if not set(broadcast_dimensions).issubset(set(range(len(shape)))):
     msg = ('broadcast_in_dim broadcast_dimensions must be a subset of output '
