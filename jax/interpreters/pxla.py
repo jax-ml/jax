@@ -150,7 +150,7 @@ def replicated_comp(jaxpr, axis_env, const_vals, freevar_shapes, *arg_shapes):
 def xla_split(c, axis_sizes, x):
   def _xla_split(shape, x):
     if shape.is_tuple():
-      elts = map(_xla_split, shape.tuple_shapes(), _xla_destructure(c, x))
+      elts = map(_xla_split, shape.tuple_shapes(), xla_destructure(c, x))
       return c.Tuple(*elts)
     else:
       size = onp.array(prod(axis_sizes), onp.uint32)
@@ -167,7 +167,7 @@ def xla_split(c, axis_sizes, x):
 def xla_join(c, device_groups, x):
   def _xla_join(shape, x):
     if shape.is_tuple():
-      elts = map(_xla_join, shape.tuple_shapes(), _xla_destructure(c, x))
+      elts = map(_xla_join, shape.tuple_shapes(), xla_destructure(c, x))
       return c.Tuple(*elts)
     else:
       group_size = len(device_groups[0])
