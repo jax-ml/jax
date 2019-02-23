@@ -73,8 +73,8 @@ def replica_groups(mesh_spec, mesh_axis):
 
 AxisEnv = namedtuple("AxisEnv", ["names", "sizes"])
 
-def extend_env(axis_env, name, size):
-  return AxisEnv(axis_env.names + [name], axis_env.sizes + [size])
+def axis_read(axis_env, axis_name):
+  return max(i for i, name in enumerate(axis_env.names) if name == axis_name)
 
 def compile_replicated(jaxpr, axis_name, axis_size, consts, *abstract_args):
   axis_env = AxisEnv([axis_name], [axis_size])
@@ -93,6 +93,9 @@ def replicated_comp(jaxpr, axis_env, const_vals, freevar_shapes, *arg_shapes):
     assert node is not None
     env[v] = node
 
+  def axis_env_extend(name, size):
+    return AxisEnv(axis_env.names + [name], axis_env.sizes + [size])
+
   env = {}
   write(core.unitvar, c.Tuple())
   if const_vals:
@@ -106,22 +109,25 @@ def replicated_comp(jaxpr, axis_env, const_vals, freevar_shapes, *arg_shapes):
     in_nodes = map(read, eqn.invars)
     if eqn.primitive in parallel_translation_rules:
       name = eqn.params['axis_name']
-      device_groups = replica_groups(axis_env.sizes, axis_env.names.index(name))
+      device_groups = replica_groups(axis_env.sizes, axis_read(axis_env, name))
       params = {k: eqn.params[k] for k in eqn.params if k != 'axis_name'}
       rule = parallel_translation_rules[eqn.primitive]
       ans = rule(c, *in_nodes, device_groups=device_groups, **params)
     elif eqn.bound_subjaxprs:
       if eqn.primitive is xla_pcall_p:
-        in_nodes = map(partial(xla_split, c), in_nodes)
+        name = eqn.params['axis_name']
+        new_env = axis_env_extend(name, eqn.params['axis_size'])
+        in_nodes = map(partial(xla_split, c, new_env.sizes), in_nodes)
         in_shapes = map(c.GetShape, in_nodes)
         (subjaxpr, const_bindings, freevar_bindings), = eqn.bound_subjaxprs
         subc = replicated_comp(
-            subjaxpr,
-            extend_env(axis_env, eqn.params['axis_name'], eqn.params['axis_size']),
-            (), map(c.GetShape, map(read, const_bindings + freevar_bindings)),
+            subjaxpr, new_env, (),
+            map(c.GetShape, map(read, const_bindings + freevar_bindings)),
             *in_shapes)
         subfun = (subc, tuple(map(read, const_bindings + freevar_bindings)))
-        ans = xla.xla_call_translation_rule(c, subfun, *in_nodes)
+        sharded_result = xla.xla_call_translation_rule(c, subfun, *in_nodes)
+        device_groups = replica_groups(new_env.sizes, axis_read(new_env, name))
+        ans = xla_join(c, device_groups, sharded_result)
       else:
         in_shapes = map(c.GetShape, in_nodes)
         subcs = [
@@ -141,12 +147,33 @@ def replicated_comp(jaxpr, axis_env, const_vals, freevar_shapes, *arg_shapes):
     map(write, eqn.outvars, out_nodes)
   return c.Build(read(jaxpr.outvar))
 
-def xla_split(c, x):
-  shape = list(c.GetShape(x).dimensions())
-  start_indices = c.Constant(onp.array([0] * len(shape)))
-  # start_indices = [c.ReplicaId()] + [c.Constant(0)] * len(shape)  # TODO
-  return c.Reshape(c.DynamicSlice(x, start_indices, [1] + shape[1:]),
-                   None, shape[1:])
+def xla_split(c, axis_sizes, x):
+  def _xla_split(shape, x):
+    if shape.is_tuple():
+      elts = map(_xla_split, shape.tuple_shapes(), _xla_destructure(c, x))
+      return c.Tuple(*elts)
+    else:
+      size = onp.array(prod(axis_sizes), onp.uint32)
+      idx = c.Rem(c.ReplicaId(), c.Constant(size))
+      dims = list(shape.dimensions())
+      zero = onp.zeros(len(dims) - 1, onp.uint32)
+      start_indices = c.Concatenate([c.Reshape(idx, None, [1]),
+                                     c.Constant(zero)], 0)
+      return c.Reshape(c.DynamicSlice(x, start_indices, [1] + dims[1:]),
+                      None, dims[1:])
+  return _xla_split(c.GetShape(x), x)
+
+# TODO(b/110096942): more efficient gather
+def xla_join(c, device_groups, x):
+  def _xla_join(shape, x):
+    if shape.is_tuple():
+      elts = map(_xla_join, shape.tuple_shapes(), _xla_destructure(c, x))
+      return c.Tuple(*elts)
+    else:
+      group_size = len(device_groups[0])
+      broadcasted = c.Broadcast(x, (group_size,))
+      return c.AllToAll(broadcasted, 0, 0, device_groups)
+  return _xla_join(c.GetShape(x), x)
 
 
 def xla_pcall_impl(fun, *args, **params):
@@ -197,7 +224,7 @@ xla_pcall = partial(core.call_bind, xla_pcall_p)
 xla_pcall_p.def_custom_bind(xla_pcall)
 xla_pcall_p.def_impl(xla_pcall_impl)
 ad.primitive_transposes[xla_pcall_p] = partial(ad.call_transpose, xla_pcall_p)
-# xla.translations[xla_pcall_p] = xla.xla_call_translation_rule  # TODO
+# xla.translations[xla_pcall_p] = xla.xla_call_translation_rule  # TODO(mattjj)
 pe.map_primitives.add(xla_pcall_p)
 
 
