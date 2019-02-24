@@ -773,6 +773,10 @@ opaque_param_ids = itertools.count()
 def tie_in(x, y):
   return tie_in_p.bind(x, y)
 
+def shaped_identity(x):
+  return shaped_identity_p.bind(x, shape=x.shape)
+
+
 def full(shape, fill_value, dtype):
   try:
     shape = tuple(map(int, shape))
@@ -3309,6 +3313,15 @@ tie_in_p.def_abstract_eval(lambda x, y: y)
 xla.translations[tie_in_p] = lambda c, x, y: y
 ad.deflinear(tie_in_p, _tie_in_transpose_rule)
 batching.primitive_batchers[tie_in_p] = _tie_in_batch_rule
+
+
+shaped_identity_p = Primitive('shape_id')
+shaped_identity_p.def_impl(lambda x, shape: x)
+shaped_identity_p.def_abstract_eval(lambda x, shape: x)
+xla.translations[shaped_identity_p] = lambda c, x, shape: x
+ad.deflinear(shaped_identity_p, lambda t, shape: [shaped_identity(t)])
+batching.primitive_batchers[shaped_identity_p] = \
+    lambda a, d, shape: (shaped_identity(a[0]), d[0])
 
 
 ### constants
