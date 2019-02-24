@@ -257,7 +257,7 @@ xla_pcall_p.def_custom_bind(xla_pcall)
 xla_pcall_p.def_impl(xla_pcall_impl)
 ad.primitive_transposes[xla_pcall_p] = partial(ad.map_transpose, xla_pcall_p)
 pe.map_primitives.add(xla_pcall_p)
-# TODO(mattjj): enable pjit inside jit
+# TODO(mattjj): enable pjit inside jit, maybe by merging xla_pcall and xla_call
 # xla.translations[xla_pcall_p] = xla.xla_call_translation_rule
 
 
