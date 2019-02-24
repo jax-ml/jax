@@ -329,10 +329,9 @@ class PapplyTracer(Tracer):
 
   @property
   def aval(self):
-    aval = batching.get_aval(self.val)
-    shape = list(aval.shape)
-    shape.insert(self.axis, self.axis_size)
-    return ShapedArray(tuple(shape), aval.dtype)
+    batched_aval = batching.get_aval(self.val)
+    return batching.add_batch_dim_to_aval(
+        self.axis, self.axis_size, batched_aval)
 
   def unpack(self):
     raise NotImplementedError  # TODO(mattjj,frostig)

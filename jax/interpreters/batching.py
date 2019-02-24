@@ -186,6 +186,23 @@ def remove_batch_dim_from_aval(bdim, aval):
   else:
     raise TypeError(t)
 
+def add_batch_dim_to_aval(bdim, size, aval):
+  t = type(aval)
+  if t is AbstractTuple:
+    if type(bdim) is tuple:
+      return AbstractTuple(map(add_batch_dim_to_aval, bdim, size, aval))
+    else:
+      return AbstractTuple(map(partial(add_batch_dim_to_aval, bdim, size), aval))
+  elif t is ShapedArray:
+    if bdim is None:
+      return ShapedArray(aval.shape, aval.dtype)
+    else:
+      assert 0 <= bdim <= aval.ndim
+      batched_shape = tuple(onp.insert(aval.shape, bdim, size))
+      return ShapedArray(batched_shape, aval.dtype)
+  else:
+    raise TypeError(t)
+
 pytype_aval_mappings = {}
 
 def shaped_jaxtuple(xs):
