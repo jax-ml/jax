@@ -16,13 +16,15 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import itertools as it
+
 from . import partial_eval as pe
 from .. import core as core
 from ..core import JaxTuple, Trace, Tracer, new_master, get_aval, pack, call_p, Primitive
 from ..ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval,
                        zeros_like_p, zero, Zero)
 from ..util import unzip2, unzip3, safe_map, safe_zip, partial
-from ..tree_util import process_pytree, build_tree, register_pytree_node, prune
+from ..tree_util import process_pytree, build_tree, register_pytree_node, prune, tree_map
 from ..linear_util import thunk, staged, transformation, transformation_with_aux, wrap_init
 
 from six.moves import builtins, reduce
@@ -138,11 +140,10 @@ def backward_pass(jaxpr, consts, freevar_vals, args, cotangent_in):
 
     if cts_out is zero:
       cts_out = [zero for _ in eqn.invars]
+    map(write_cotangent, eqn.invars, cts_out)
 
-    for var, ct in zip(eqn.invars, cts_out):
-      write_cotangent(var, ct)
-
-  cotangents_out = map(read_cotangent, jaxpr.invars)
+  cotangents_out = [read_cotangent(var) if argval is None else None
+                    for var, argval in zip(jaxpr.invars, args)]
   freevar_cts = map(read_cotangent, jaxpr.freevars)
   return freevar_cts, cotangents_out
 
@@ -392,12 +393,36 @@ def call_transpose(primitive, params, jaxpr, consts, freevar_vals, args, ct):
   ans = primitive.bind(fun, all_args, **params)
   return build_tree(out_tree_def(), ans)
 
+@transformation_with_aux
+def transposed_mapped(jaxpr, in_tree_def, freevar_vals, args):
+  args, consts, ct = args
+  args, ct = build_tree(in_tree_def, (args, ct))
+  freevar_cts, cotangents_out = yield jaxpr, consts, freevar_vals, args, ct
+  out_jtuple, tree_def = tree_to_jaxtuples((cotangents_out, freevar_cts))
+  yield out_jtuple, tree_def
+
+def map_transpose(primitive, params, jaxpr, consts, freevar_vals, args, ct):
+  jaxpr, = jaxpr
+  consts, = consts
+  freevar_vals, = freevar_vals
+  (args, ct), in_tree_def = tree_to_jaxtuples((args, ct))
+  fun = wrap_init(backward_pass)
+  fun, out_tree_def = transposed_mapped(fun, jaxpr, in_tree_def, tuple(freevar_vals))
+  all_args = pack((pack(args), pack(consts), ct))
+  ans = primitive.bind(fun, all_args, **params)
+  cts_out, freevar_cts = build_tree(out_tree_def(), ans)
+  freevar_cts = tree_map(_sum_leading_axis, freevar_cts)
+  return cts_out, freevar_cts
+
+def _sum_leading_axis(x):
+  try:
+    return x.sum(0)
+  except AttributeError:
+    return onp.sum(x, 0)
+
 
 primitive_transposes[core.call_p] = partial(call_transpose, call_p)
 primitive_transposes[pe.compiled_call_p] = partial(call_transpose, pe.compiled_call_p)
 
 
 tree_to_jaxtuples = partial(process_pytree, pack)
-
-
-call_primitive_jvp_params = {}
