@@ -31,7 +31,7 @@ from six.moves import reduce
 
 from jax import lax
 from jax import random
-from jax.scipy.misc import logsumexp
+from jax.scipy.special import logsumexp
 import jax.numpy as np
 
 
