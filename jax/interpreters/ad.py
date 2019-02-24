@@ -411,14 +411,8 @@ def map_transpose(primitive, params, jaxpr, consts, freevar_vals, args, ct):
   all_args = pack((pack(args), pack(consts), ct))
   ans = primitive.bind(fun, all_args, **params)
   cts_out, freevar_cts = build_tree(out_tree_def(), ans)
-  freevar_cts = tree_map(_sum_leading_axis, freevar_cts)
+  freevar_cts = tree_map(lambda x: x.sum(0), freevar_cts)
   return cts_out, freevar_cts
-
-def _sum_leading_axis(x):
-  try:
-    return x.sum(0)
-  except AttributeError:
-    return onp.sum(x, 0)
 
 
 primitive_transposes[core.call_p] = partial(call_transpose, call_p)
