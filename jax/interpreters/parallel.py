@@ -293,16 +293,28 @@ def reshape_axis(chunksize, in_axis, arg):
 
 newvar = pe.gensym('_axis')
 
-def papply(fun, name, in_vals, axis_size, in_axes):
-  return papply_transform(fun).call_wrapped(name, in_vals, axis_size, in_axes)
+def papply(fun, name, in_vals, axis_size, in_axes, out_axis):
+  out_val = papply_transform(fun).call_wrapped(
+      name, in_vals, axis_size, in_axes, out_axis)
+  return out_val
+
+def _moveaxis(x, src, dst):
+  if src == dst or src is None:
+    return x
+  else:
+    perm = list(range(x.ndim))
+    perm[src] = dst
+    perm[dst] = src
+    return x.transpose(perm)
 
 @lu.transformation
-def papply_transform(name, args, axis_size, axes):
+def papply_transform(name, args, axis_size, in_axes, out_axis):
   with new_master(PapplyTrace) as master:
     trace = PapplyTrace(master, core.cur_sublevel())
-    in_tracers = map(partial(PapplyTracer, trace, name, axis_size), args, axes)
+    in_tracers = map(partial(PapplyTracer, trace, name, axis_size), args, in_axes)
     out_tracer = yield in_tracers
     out_tracer = trace.full_raise(out_tracer)
+    out_tracer = _moveaxis(out_tracer, out_tracer.axis, out_axis)
     out_val = out_tracer.val
     del master, out_tracer
   yield out_val
