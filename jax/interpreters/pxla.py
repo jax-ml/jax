@@ -143,36 +143,56 @@ def replicated_comp(jaxpr, axis_env, const_vals, freevar_shapes, *arg_shapes):
     else:
       ans = translation_rule(eqn.primitive)(c, *in_nodes, **eqn.params)
 
-    out_nodes = xla_destructure(c, ans) if eqn.destructure else [ans]
+    try:
+      out_nodes = xla_destructure(c, ans) if eqn.destructure else [ans]
+    except:
+      import ipdb; ipdb.set_trace()
     map(write, eqn.outvars, out_nodes)
   return c.Build(read(jaxpr.outvar))
 
 def xla_split(c, axis_sizes, x):
-  def _xla_split(shape, x):
-    if shape.is_tuple():
-      elts = map(_xla_split, shape.tuple_shapes(), xla_destructure(c, x))
-      return c.Tuple(*elts)
+  def split_array(shape, x):
+    if xb.get_replica_count() == 1:
+      # TODO(mattjj): remove this special case, used for debugging on cpu
+      dims = c.GetShape(x).dimensions()
+      return c.Reshape(x, None, dims[1:])
     else:
       size = onp.array(prod(axis_sizes), onp.uint32)
       idx = c.Rem(c.ReplicaId(), c.Constant(size))
       dims = list(shape.dimensions())
       zero = onp.zeros(len(dims) - 1, onp.uint32)
-      start_indices = c.Concatenate([c.Reshape(idx, None, [1]),
-                                     c.Constant(zero)], 0)
+      start_indices = c.Concatenate([c.Reshape(idx, None, [1]), c.Constant(zero)], 0)
       return c.Reshape(c.DynamicSlice(x, start_indices, [1] + dims[1:]),
                       None, dims[1:])
+
+  def _xla_split(shape, x):
+    if shape.is_tuple():
+      elts = map(_xla_split, shape.tuple_shapes(), xla_destructure(c, x))
+      return c.Tuple(*elts)
+    else:
+      return split_array(shape, x)
+
   return _xla_split(c.GetShape(x), x)
 
 # TODO(b/110096942): more efficient gather
 def xla_join(c, device_groups, x):
+  def join_arrays(x):
+    # TODO(mattjj): remove this special case, used for debugging on cpu
+    if xb.get_replica_count() == 1:
+      dims = c.GetShape(x).dimensions()
+      return c.Reshape(x, None, (1,) + tuple(dims))
+    else:
+      group_size = len(device_groups[0])
+      broadcasted = c.Broadcast(x, (group_size,))
+      return c.AllToAll(broadcasted, 0, 0, device_groups)
+
   def _xla_join(shape, x):
     if shape.is_tuple():
       elts = map(_xla_join, shape.tuple_shapes(), xla_destructure(c, x))
       return c.Tuple(*elts)
     else:
-      group_size = len(device_groups[0])
-      broadcasted = c.Broadcast(x, (group_size,))
-      return c.AllToAll(broadcasted, 0, 0, device_groups)
+      return join_arrays(x)
+
   return _xla_join(c.GetShape(x), x)
 
 
@@ -223,7 +243,7 @@ xla_pcall_p = core.Primitive('xla_pcall')
 xla_pcall = partial(core.call_bind, xla_pcall_p)
 xla_pcall_p.def_custom_bind(xla_pcall)
 xla_pcall_p.def_impl(xla_pcall_impl)
-ad.primitive_transposes[xla_pcall_p] = partial(ad.call_transpose, xla_pcall_p)
+ad.primitive_transposes[xla_pcall_p] = partial(ad.map_transpose, xla_pcall_p)
 # xla.translations[xla_pcall_p] = xla.xla_call_translation_rule  # TODO(mattjj)
 pe.map_primitives.add(xla_pcall_p)
 
