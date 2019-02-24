@@ -45,25 +45,28 @@ map = safe_map
 ### util
 
 
-def shard_arg(arg):
+def shard_arg(nrep, arg):
   sz = arg.shape[0]
   shards = [arg[i] for i in range(sz)]
-  return [xb.device_put(shards[i], n) for n, i in enumerate(assign_shards(sz))]
+  assignments = assign_shards(nrep, sz)
+  return [xb.device_put(shards[i], n) for n, i in enumerate(assignments)]
 
-def unshard_output(axis_size, out_shards):
-  _, ids = onp.unique(assign_shards(axis_size), return_index=True)
+def unshard_output(nrep, axis_size, out_shards):
+  _, ids = onp.unique(assign_shards(nrep, axis_size), return_index=True)
   return onp.stack([out_shards[i] for i in ids])
 
-def assign_shards(size):
-  groupsize, ragged = divmod(xb.get_replica_count(), size)
+def assign_shards(nrep, size):
+  groupsize, ragged = divmod(nrep, size)
   assert not ragged
   indices = onp.tile(onp.arange(size)[:, None], (1, groupsize))
   return tuple(indices.ravel())
 
-def replica_groups(mesh_spec, mesh_axis):
-  mesh_spec = mesh_spec + [xb.get_replica_count() // prod(mesh_spec)]
-  groups = onp.split(onp.arange(prod(mesh_spec)).reshape(mesh_spec),
-                     mesh_spec[mesh_axis], axis=mesh_axis)
+def replica_groups(nrep, mesh_spec, mesh_axis):
+  trailing_size, ragged = divmod(nrep, prod(mesh_spec))
+  assert not ragged
+  full_spec = mesh_spec + [trailing_size]
+  groups = onp.split(onp.arange(prod(full_spec)).reshape(full_spec),
+                     full_spec[mesh_axis], axis=mesh_axis)
   groups = map(onp.ravel, groups)
   return tuple(tuple(group) for group in zip(*groups))
 
@@ -71,19 +74,31 @@ def replica_groups(mesh_spec, mesh_axis):
 ### xla_pcall
 
 
-AxisEnv = namedtuple("AxisEnv", ["names", "sizes"])
+AxisEnv = namedtuple("AxisEnv", ["nreps", "names", "sizes"])
 
 def axis_read(axis_env, axis_name):
   return max(i for i, name in enumerate(axis_env.names) if name == axis_name)
 
+def axis_groups(axis_env, name):
+  mesh_axis = axis_read(axis_env, name)
+  return replica_groups(axis_env.nreps, axis_env.sizes, mesh_axis)
+
 def compile_replicated(jaxpr, axis_name, axis_size, consts, *abstract_args):
-  axis_env = AxisEnv([axis_name], [axis_size])
+  num_replicas = axis_size * jaxpr_replicas(jaxpr)
+  assert num_replicas <= xb.get_replica_count()
+  axis_env = AxisEnv(num_replicas, [axis_name], [axis_size])
   arg_shapes = list(map(xla_shape, abstract_args))
   built_c = replicated_comp(jaxpr, axis_env, consts, (), *arg_shapes)
   result_shape = xla_shape_to_result_shape(built_c.GetReturnValueShape())
-  return built_c.Compile(arg_shapes, xb.get_compile_options()), result_shape
+  compiled = built_c.Compile(arg_shapes, xb.get_compile_options(num_replicas))
+  return compiled, num_replicas, result_shape
 
-def replicated_comp(jaxpr, axis_env, const_vals, freevar_shapes, *arg_shapes):
+def jaxpr_replicas(jaxpr):
+  return _max(eqn.params['axis_size'] * jaxpr_replicas(eqn.bound_subjaxprs[0][0])
+              for eqn in jaxpr.eqns if eqn.primitive is xla_pcall_p)
+def _max(itr): return max(list(itr) or [1])
+
+def replicated_comp(jaxpr, ax_env, const_vals, freevar_shapes, *arg_shapes):
   c = xb.make_computation_builder("replicated_computation")
 
   def read(v):
@@ -94,7 +109,7 @@ def replicated_comp(jaxpr, axis_env, const_vals, freevar_shapes, *arg_shapes):
     env[v] = node
 
   def axis_env_extend(name, size):
-    return AxisEnv(axis_env.names + [name], axis_env.sizes + [size])
+    return AxisEnv(ax_env.nreps, ax_env.names + [name], ax_env.sizes + [size])
 
   env = {}
   write(core.unitvar, c.Tuple())
@@ -109,10 +124,9 @@ def replicated_comp(jaxpr, axis_env, const_vals, freevar_shapes, *arg_shapes):
     in_nodes = map(read, eqn.invars)
     if eqn.primitive in parallel_translation_rules:
       name = eqn.params['axis_name']
-      device_groups = replica_groups(axis_env.sizes, axis_read(axis_env, name))
       params = {k: eqn.params[k] for k in eqn.params if k != 'axis_name'}
       rule = parallel_translation_rules[eqn.primitive]
-      ans = rule(c, *in_nodes, device_groups=device_groups, **params)
+      ans = rule(c, *in_nodes, device_groups=axis_groups(ax_env, name), **params)
     elif eqn.bound_subjaxprs:
       if eqn.primitive is xla_pcall_p:
         name = eqn.params['axis_name']
@@ -126,8 +140,7 @@ def replicated_comp(jaxpr, axis_env, const_vals, freevar_shapes, *arg_shapes):
             *in_shapes)
         subfun = (subc, tuple(map(read, const_bindings + freevar_bindings)))
         sharded_result = xla.xla_call_translation_rule(c, subfun, *in_nodes)
-        device_groups = replica_groups(new_env.sizes, axis_read(new_env, name))
-        ans = xla_join(c, device_groups, sharded_result)
+        ans = xla_join(c, axis_groups(new_env, name), sharded_result)
       else:
         in_shapes = map(c.GetShape, in_nodes)
         subcs = [
@@ -143,10 +156,7 @@ def replicated_comp(jaxpr, axis_env, const_vals, freevar_shapes, *arg_shapes):
     else:
       ans = translation_rule(eqn.primitive)(c, *in_nodes, **eqn.params)
 
-    try:
-      out_nodes = xla_destructure(c, ans) if eqn.destructure else [ans]
-    except:
-      import ipdb; ipdb.set_trace()
+    out_nodes = xla_destructure(c, ans) if eqn.destructure else [ans]
     map(write, eqn.outvars, out_nodes)
   return c.Build(read(jaxpr.outvar))
 
@@ -227,18 +237,18 @@ def parallel_callable(fun, axis_name, axis_size, *avals):
   with core.new_master(JaxprTrace, True) as master:
     jaxpr, (pval, consts, env) = trace_to_subjaxpr(fun, master).call_wrapped(pvals)
     assert not env
-    compiled, _ = compile_replicated(jaxpr, axis_name, axis_size, consts, *avals)
+    compiled, nrep, _ = compile_replicated(jaxpr, axis_name, axis_size, consts, *avals)
     del master, consts, jaxpr, env
-  return partial(execute_replicated, compiled, pval, axis_size)
+  return partial(execute_replicated, compiled, pval, axis_size, nrep)
 
-def execute_replicated(compiled, pval, axis_size, out_tree, *args):
-  input_bufs = zip(*map(shard_arg, args)) if args else [[]] * xb.get_replica_count()
+def execute_replicated(compiled, pval, axis_size, nrep, out_tree, *args):
+  input_bufs = zip(*map(partial(shard_arg, nrep), args)) if args else [[]] * nrep
   out_bufs = compiled.ExecutePerReplica(input_bufs)
   out_shards = [merge_pvals(buf.to_py(), pval) for buf in out_bufs]
   if out_tree is xla.leaf:
-    return unshard_output(axis_size, out_shards)
+    return unshard_output(nrep, axis_size, out_shards)
   else:
-    return map(partial(unshard_output, axis_size), zip(*out_shards))
+    return map(partial(unshard_output, nrep, axis_size), zip(*out_shards))
 
 
 xla_pcall_p = core.Primitive('xla_pcall')
