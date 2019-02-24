@@ -153,7 +153,8 @@ def replicated_comp(jaxpr, axis_env, const_vals, freevar_shapes, *arg_shapes):
 def xla_split(c, axis_sizes, x):
   def split_array(shape, x):
     if xb.get_replica_count() == 1:
-      # TODO(mattjj): remove this special case, used for debugging on cpu
+      # TODO(mattjj): remove this special case, used for debugging on CPU
+      # because CPU doesn't have some collectives implemented
       dims = c.GetShape(x).dimensions()
       return c.Reshape(x, None, dims[1:])
     else:
@@ -177,7 +178,8 @@ def xla_split(c, axis_sizes, x):
 # TODO(b/110096942): more efficient gather
 def xla_join(c, device_groups, x):
   def join_arrays(x):
-    # TODO(mattjj): remove this special case, used for debugging on cpu
+      # TODO(mattjj): remove this special case, used for debugging on CPU
+      # because CPU doesn't have some collectives implemented
     if xb.get_replica_count() == 1:
       dims = c.GetShape(x).dimensions()
       return c.Reshape(x, None, (1,) + tuple(dims))
@@ -244,8 +246,9 @@ xla_pcall = partial(core.call_bind, xla_pcall_p)
 xla_pcall_p.def_custom_bind(xla_pcall)
 xla_pcall_p.def_impl(xla_pcall_impl)
 ad.primitive_transposes[xla_pcall_p] = partial(ad.map_transpose, xla_pcall_p)
-# xla.translations[xla_pcall_p] = xla.xla_call_translation_rule  # TODO(mattjj)
 pe.map_primitives.add(xla_pcall_p)
+# TODO(mattjj): enable pjit inside jit
+# xla.translations[xla_pcall_p] = xla.xla_call_translation_rule
 
 
 parallel_translation_rules = {}
