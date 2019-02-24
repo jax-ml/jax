@@ -27,7 +27,7 @@ from .. import core
 from .. import ad_util
 from .. import tree_util
 from .. import linear_util as lu
-from ..abstract_arrays import ShapedArray
+from ..abstract_arrays import ConcreteArray, ShapedArray
 from ..util import partial, unzip2, concatenate, safe_map, prod
 from ..lib import xla_bridge as xb
 from .xla import (xla_shape, xla_destructure, translation_rule,
@@ -46,14 +46,26 @@ map = safe_map
 
 
 def shard_arg(nrep, arg):
-  sz = arg.shape[0]
-  shards = [arg[i] for i in range(sz)]
-  assignments = assign_shards(nrep, sz)
-  return [xb.device_put(shards[i], n) for n, i in enumerate(assignments)]
+  if type(arg) is ShardedDeviceArray and arg.nrep == nrep:
+    return arg.device_buffer
+  else:
+    arg = xla.canonicalize_ndarray_dtype(arg)
+    shards = [arg[i] for i in range(arg.shape[0])]
+    assignments = assign_shards(nrep, arg.shape[0])
+    return [xb.device_put(shards[i], n) for n, i in enumerate(assignments)]
 
-def unshard_output(nrep, axis_size, out_shards):
-  _, ids = onp.unique(assign_shards(nrep, axis_size), return_index=True)
-  return onp.stack([out_shards[i] for i in ids])
+def unshard_output(axis_size, replica_results):
+  nrep = len(replica_results)
+  if all(type(res) is xla.DeviceArray for res in replica_results):
+    r = replica_results[0]
+    shape = (axis_size,) + r.shape
+    ndim = 1 + r.ndim
+    size = axis_size * r.size
+    bufs = [res.device_buffer for res in replica_results]
+    return ShardedDeviceArray(bufs, shape, r.dtype, ndim, size)
+  else:
+    _, ids = onp.unique(assign_shards(nrep, axis_size), return_index=True)
+    return onp.stack([replica_results[i] for i in ids])
 
 def assign_shards(nrep, size):
   groupsize, ragged = divmod(nrep, size)
@@ -208,6 +220,26 @@ def replicated_comp(jaxpr, ax_env, const_vals, freevar_shapes, *arg_shapes):
   return c.Build(read(jaxpr.outvar))
 
 
+class ShardedDeviceArray(xla.DeviceArray):
+  # we're reusing the 'device_buffer' slot to mean a list of device buffers
+  @property
+  def _value(self):
+    if self._npy_value is None:
+      npy_shards = [buf.to_py() for buf in self.device_buffer]
+      self._npy_value = unshard_output(self.shape[0], npy_shards)
+    return self._npy_value
+
+  @property
+  def nrep(self):
+    return len(self.device_buffer)
+
+core.pytype_aval_mappings[ShardedDeviceArray] = ConcreteArray
+xla.pytype_aval_mappings[ShardedDeviceArray] = \
+    xla.pytype_aval_mappings[xla.DeviceArray]
+xla.canonicalize_dtype_handlers[ShardedDeviceArray] = \
+    xla.canonicalize_dtype_handlers[xla.DeviceArray]
+
+
 def xla_pcall_impl(fun, *args, **params):
   axis_name = params.pop('axis_name')
   axis_size = params.pop('axis_size')
@@ -237,18 +269,20 @@ def parallel_callable(fun, axis_name, axis_size, *avals):
   with core.new_master(JaxprTrace, True) as master:
     jaxpr, (pval, consts, env) = trace_to_subjaxpr(fun, master).call_wrapped(pvals)
     assert not env
-    compiled, nrep, _ = compile_replicated(jaxpr, axis_name, axis_size, consts, *avals)
+    out = compile_replicated(jaxpr, axis_name, axis_size, consts, *avals)
+    compiled, nrep, result_shape = out
     del master, consts, jaxpr, env
-  return partial(execute_replicated, compiled, pval, axis_size, nrep)
+  handle_result = xla.result_handler(result_shape)
+  return partial(execute_replicated, compiled, pval, axis_size, nrep, handle_result)
 
-def execute_replicated(compiled, pval, axis_size, nrep, out_tree, *args):
+def execute_replicated(compiled, pval, axis_size, nrep, handler, out_tree, *args):
   input_bufs = zip(*map(partial(shard_arg, nrep), args)) if args else [[]] * nrep
   out_bufs = compiled.ExecutePerReplica(input_bufs)
-  out_shards = [merge_pvals(buf.to_py(), pval) for buf in out_bufs]
+  replica_results = [merge_pvals(handler(buf), pval) for buf in out_bufs]
   if out_tree is xla.leaf:
-    return unshard_output(nrep, axis_size, out_shards)
+    return unshard_output(axis_size, replica_results)
   else:
-    return map(partial(unshard_output, nrep, axis_size), zip(*out_shards))
+    return map(partial(unshard_output, axis_size), zip(*replica_results))
 
 
 xla_pcall_p = core.Primitive('xla_pcall')
