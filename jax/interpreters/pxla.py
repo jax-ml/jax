@@ -70,6 +70,53 @@ def replica_groups(nrep, mesh_spec, mesh_axis):
   groups = map(onp.ravel, groups)
   return tuple(tuple(group) for group in zip(*groups))
 
+def xla_shard(c, axis_sizes, x):
+  def _xla_shard(shape, x):
+    if shape.is_tuple():
+      elts = map(_xla_shard, shape.tuple_shapes(), xla_destructure(c, x))
+      return c.Tuple(*elts)
+    else:
+      return shard_array(shape, x)
+
+  def shard_array(shape, x):
+    if xb.get_replica_count() == 1:
+      # TODO(mattjj): remove this special case, used for debugging on CPU
+      # because CPU doesn't have some collectives implemented
+      dims = c.GetShape(x).dimensions()
+      return c.Reshape(x, None, dims[1:])
+    else:
+      size = onp.array(prod(axis_sizes), onp.uint32)
+      idx = c.Rem(c.ReplicaId(), c.Constant(size))
+      dims = list(shape.dimensions())
+      zero = onp.zeros(len(dims) - 1, onp.uint32)
+      start_indices = c.Concatenate([c.Reshape(idx, None, [1]), c.Constant(zero)], 0)
+      return c.Reshape(c.DynamicSlice(x, start_indices, [1] + dims[1:]),
+                      None, dims[1:])
+
+  return _xla_shard(c.GetShape(x), x)
+
+# TODO(b/110096942): more efficient gather
+def xla_unshard(c, device_groups, x):
+  def _xla_unshard(shape, x):
+    if shape.is_tuple():
+      elts = map(_xla_unshard, shape.tuple_shapes(), xla_destructure(c, x))
+      return c.Tuple(*elts)
+    else:
+      return unshard_array(x)
+
+  def unshard_array(x):
+      # TODO(mattjj): remove this special case, used for debugging on CPU
+      # because CPU doesn't have some collectives implemented
+    if xb.get_replica_count() == 1:
+      dims = c.GetShape(x).dimensions()
+      return c.Reshape(x, None, (1,) + tuple(dims))
+    else:
+      group_size = len(device_groups[0])
+      broadcasted = c.Broadcast(x, (group_size,))
+      return c.AllToAll(broadcasted, 0, 0, device_groups)
+
+  return _xla_unshard(c.GetShape(x), x)
+
 
 ### xla_pcall
 
@@ -131,7 +178,7 @@ def replicated_comp(jaxpr, ax_env, const_vals, freevar_shapes, *arg_shapes):
       if eqn.primitive is xla_pcall_p:
         name = eqn.params['axis_name']
         new_env = axis_env_extend(name, eqn.params['axis_size'])
-        in_nodes = map(partial(xla_split, c, new_env.sizes), in_nodes)
+        in_nodes = map(partial(xla_shard, c, new_env.sizes), in_nodes)
         in_shapes = map(c.GetShape, in_nodes)
         (subjaxpr, const_bindings, freevar_bindings), = eqn.bound_subjaxprs
         subc = replicated_comp(
@@ -140,7 +187,7 @@ def replicated_comp(jaxpr, ax_env, const_vals, freevar_shapes, *arg_shapes):
             *in_shapes)
         subfun = (subc, tuple(map(read, const_bindings + freevar_bindings)))
         sharded_result = xla.xla_call_translation_rule(c, subfun, *in_nodes)
-        ans = xla_join(c, axis_groups(new_env, name), sharded_result)
+        ans = xla_unshard(c, axis_groups(new_env, name), sharded_result)
       else:
         in_shapes = map(c.GetShape, in_nodes)
         subcs = [
@@ -159,53 +206,6 @@ def replicated_comp(jaxpr, ax_env, const_vals, freevar_shapes, *arg_shapes):
     out_nodes = xla_destructure(c, ans) if eqn.destructure else [ans]
     map(write, eqn.outvars, out_nodes)
   return c.Build(read(jaxpr.outvar))
-
-def xla_split(c, axis_sizes, x):
-  def split_array(shape, x):
-    if xb.get_replica_count() == 1:
-      # TODO(mattjj): remove this special case, used for debugging on CPU
-      # because CPU doesn't have some collectives implemented
-      dims = c.GetShape(x).dimensions()
-      return c.Reshape(x, None, dims[1:])
-    else:
-      size = onp.array(prod(axis_sizes), onp.uint32)
-      idx = c.Rem(c.ReplicaId(), c.Constant(size))
-      dims = list(shape.dimensions())
-      zero = onp.zeros(len(dims) - 1, onp.uint32)
-      start_indices = c.Concatenate([c.Reshape(idx, None, [1]), c.Constant(zero)], 0)
-      return c.Reshape(c.DynamicSlice(x, start_indices, [1] + dims[1:]),
-                      None, dims[1:])
-
-  def _xla_split(shape, x):
-    if shape.is_tuple():
-      elts = map(_xla_split, shape.tuple_shapes(), xla_destructure(c, x))
-      return c.Tuple(*elts)
-    else:
-      return split_array(shape, x)
-
-  return _xla_split(c.GetShape(x), x)
-
-# TODO(b/110096942): more efficient gather
-def xla_join(c, device_groups, x):
-  def join_arrays(x):
-      # TODO(mattjj): remove this special case, used for debugging on CPU
-      # because CPU doesn't have some collectives implemented
-    if xb.get_replica_count() == 1:
-      dims = c.GetShape(x).dimensions()
-      return c.Reshape(x, None, (1,) + tuple(dims))
-    else:
-      group_size = len(device_groups[0])
-      broadcasted = c.Broadcast(x, (group_size,))
-      return c.AllToAll(broadcasted, 0, 0, device_groups)
-
-  def _xla_join(shape, x):
-    if shape.is_tuple():
-      elts = map(_xla_join, shape.tuple_shapes(), xla_destructure(c, x))
-      return c.Tuple(*elts)
-    else:
-      return join_arrays(x)
-
-  return _xla_join(c.GetShape(x), x)
 
 
 def xla_pcall_impl(fun, *args, **params):
