@@ -20,18 +20,9 @@ import numpy as onp
 import scipy.misc as osp_misc
 
 from .. import lax
+from ..scipy import special
 from ..numpy.lax_numpy import _wraps, _reduction_dims, _constant_like
 
 
-@_wraps(osp_misc.logsumexp)
-def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
-  if b is not None or return_sign:
-    raise NotImplementedError("Only implemented for b=None, return_sign=False")
-  dims = _reduction_dims(a, axis)
-  shape = lax.subvals(onp.shape(a), zip(dims, (1,) * len(dims)))
-  dimadd = lambda x: lax.reshape(x, shape)
-  amax = lax.reduce(a, _constant_like(a, -onp.inf), lax.max, dims)
-  amax_singletons = dimadd(amax)
-  out = lax.add(lax.log(lax.reduce(lax.exp(lax.sub(a, amax_singletons)),
-                                   _constant_like(a, 0), lax.add, dims)), amax)
-  return dimadd(out) if keepdims else out
+if hasattr(osp_misc, 'logsumexp'):
+  logsumexp = special.logsumexp

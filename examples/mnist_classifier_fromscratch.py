@@ -27,7 +27,7 @@ import numpy.random as npr
 
 from jax.api import jit, grad
 from jax.config import config
-from jax.scipy.misc import logsumexp
+from jax.scipy.special import logsumexp
 import jax.numpy as np
 from examples import datasets
 
