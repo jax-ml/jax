@@ -47,22 +47,16 @@ map = safe_map
 
 def shard_arg(nrep, arg):
   if type(arg) is ShardedDeviceArray and arg.nrep == nrep:
-    return arg.device_buffer
+    return arg.device_buffers
   else:
-    arg = xla.canonicalize_ndarray_dtype(arg)
     shards = [arg[i] for i in range(arg.shape[0])]
     assignments = assign_shards(nrep, arg.shape[0])
-    return [xb.device_put(shards[i], n) for n, i in enumerate(assignments)]
+    return [xla.device_put(shards[i], n) for n, i in enumerate(assignments)]
 
 def unshard_output(axis_size, replica_results):
   nrep = len(replica_results)
   if all(type(res) is xla.DeviceArray for res in replica_results):
-    r = replica_results[0]
-    shape = (axis_size,) + r.shape
-    ndim = 1 + r.ndim
-    size = axis_size * r.size
-    bufs = [res.device_buffer for res in replica_results]
-    return ShardedDeviceArray(bufs, shape, r.dtype, ndim, size)
+    return ShardedDeviceArray(axis_size, replica_results)
   else:
     _, ids = onp.unique(assign_shards(nrep, axis_size), return_index=True)
     return onp.stack([replica_results[i] for i in ids])
@@ -221,17 +215,24 @@ def replicated_comp(jaxpr, ax_env, const_vals, freevar_shapes, *arg_shapes):
 
 
 class ShardedDeviceArray(xla.DeviceArray):
-  # we're reusing the 'device_buffer' slot to mean a list of device buffers
+  __slots__ = ["device_buffers", "nrep"]
+
+  def __init__(self, axis_size, replica_results):
+    self.device_buffers = [res.device_buffer for res in replica_results]
+    self.nrep = len(replica_results)
+    r = replica_results[0]
+    self.shape = (axis_size,) + r.shape
+    self.dtype = r.dtype
+    self.ndim = 1 + r.ndim
+    self.size = axis_size * r.size
+    self._npy_value = None
+
   @property
   def _value(self):
     if self._npy_value is None:
-      npy_shards = [buf.to_py() for buf in self.device_buffer]
+      npy_shards = [buf.to_py() for buf in self.device_buffers]
       self._npy_value = unshard_output(self.shape[0], npy_shards)
     return self._npy_value
-
-  @property
-  def nrep(self):
-    return len(self.device_buffer)
 
 core.pytype_aval_mappings[ShardedDeviceArray] = ConcreteArray
 xla.pytype_aval_mappings[ShardedDeviceArray] = \
