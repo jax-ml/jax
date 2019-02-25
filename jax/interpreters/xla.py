@@ -81,14 +81,17 @@ def execute_compiled_primitive(compiled, result_handler, *args):
   input_bufs = [device_put(x) for x in args]
   return result_handler(compiled.Execute(input_bufs, not core.skip_checks))
 
-def device_put(x):
+def device_put(x, device_num=0):
   x = canonicalize_pyval_dtype(x)
   if type(x) is DeviceArray:
-    return x.device_buffer
+    if x.device_buffer.device() == device_num:
+      return x.device_buffer
+    else:
+      return device_put(x.device_buffer.to_py(), device_num)
   elif isinstance(x, DeviceConstant):
-    return instantiate_device_constant(x)
+    return instantiate_device_constant(x, device_num=device_num)
   else:
-    return xb.device_put(x)  # can round-trip elements of tuples here
+    return xb.device_put(x, device_num)  # round-trips tuple elements
 
 def result_handler(result_shape):
   if type(result_shape) is ResultArray and FLAGS.jax_device_values:
@@ -353,17 +356,17 @@ class DeviceConstant(DeviceArray):
   def constant_handler(c, constant_instance, canonicalize_types=True):
     assert False
 
-def instantiate_device_constant(const, cutoff=1e6):
+def instantiate_device_constant(const, cutoff=1e6, device_num=0):
   # dispatch an XLA Computation to build the constant on the device if it's
   # large, or alternatively build it on the host and transfer it if it's small
   assert isinstance(const, DeviceConstant)
   if const.size > cutoff:
     c = xb.make_computation_builder("constant_instantiating_computation")
     xla_const = const.constant_handler(c, const)
-    compiled = c.Build(xla_const).Compile((), xb.get_compile_options())
+    compiled = c.Build(xla_const).Compile((), xb.get_compile_options(device_num))
     return compiled.Execute(())
   else:
-    return xb.device_put(onp.asarray(const))
+    return xb.device_put(onp.asarray(const), device_num)
 
 
 def xla_shape(x):
