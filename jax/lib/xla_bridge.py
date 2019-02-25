@@ -203,9 +203,9 @@ def _get_backend():
   return backend()
 
 
-def device_put(pyval, replica=0):
+def device_put(pyval, device_num=0):
   client = get_xla_client()
-  return client.LocalBuffer.from_pyval(pyval, replica, backend=_get_backend())
+  return client.LocalBuffer.from_pyval(pyval, device_num, backend=_get_backend())
 
 
 Shape = xla_client.Shape        # pylint: disable=invalid-name

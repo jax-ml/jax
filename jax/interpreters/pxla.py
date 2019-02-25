@@ -44,24 +44,64 @@ map = safe_map
 
 ### util
 
-def shard_arg(nrep, arg):
+def shard_arg(device_ordinals, nrep, arg):
+  """Shard an argument data array arg along its leading axis.
+
+  Args:
+    # TODO(mattjj)
+
+  Returns:
+    A list of length nrep of DeviceValues indexed by replica number, where the
+    nth element is the argument to be passed to the nth replica.
+  """
+  assignments = assign_shards_to_replicas(nrep, arg.shape[0])
   if type(arg) is ShardedDeviceArray and arg.nrep == nrep:
-    return arg.device_buffers
+    # TODO(mattjj,phawkins): could make this exchange more efficient
+    def replace_shard(buf, device_num):
+      if buf.device() == device_num:
+        return buf
+      else:
+        msg = "Warning: device data movement on dispatch: {} to {}."
+        print(msg.format(buf.device(), device_num))
+        return xla.device_put(buf.to_py(), device_num)
+    return [replace_shard(buf, device_ordinals[n])
+            for buf, n in zip(arg.device_buffers, assignments)]
   else:
     shards = [arg[i] for i in range(arg.shape[0])]
-    assignments = assign_shards(nrep, arg.shape[0])
-    return [xla.device_put(shards[i], n) for n, i in enumerate(assignments)]
+    return [xla.device_put(shards[i], device_ordinals[n])
+            for n, i in enumerate(assignments)]
 
 def unshard_output(axis_size, replica_results):
+  """Collect together replica results into a result value.
+
+  Args:
+    axis_size: size of the sharded output data axis.
+    replica_results: list of either ndarrays or DeviceArrays indexed by replica
+      number.
+
+  Returns:
+    Either an ndarray or a ShardedDeviceArray representing the result of the
+    computation, stacking together the results from the replicas.
+  """
   nrep = len(replica_results)
   if all(type(res) is xla.DeviceArray for res in replica_results):
     return ShardedDeviceArray(axis_size, replica_results)
   else:
-    _, ids = onp.unique(assign_shards(nrep, axis_size), return_index=True)
+    assignments = assign_shards_to_replicas(nrep, axis_size)
+    _, ids = onp.unique(assignments, return_index=True)
     return onp.stack([replica_results[i] for i in ids])
 
-# TODO(mattjj): this code needs to map from replica number to device number
-def assign_shards(nrep, size):
+def assign_shards_to_replicas(nrep, size):
+  """Produce a mapping from replica id to shard index.
+
+  Args:
+    nrep: int, number of relpicas (a computation-dependent value).
+    size: int, size of the data array axis being sharded.
+
+  Returns:
+    A tuple of integers of length nrep in which the elements take on values from
+    0 to size-1. Replica n is assgined shard data_array[assignments[n]].
+  """
   groupsize, ragged = divmod(nrep, size)
   assert not ragged
   indices = onp.tile(onp.arange(size)[:, None], (1, groupsize))
@@ -111,8 +151,8 @@ def xla_unshard(c, device_groups, x):
       return unshard_array(x)
 
   def unshard_array(x):
-      # TODO(mattjj): remove this special case, used for debugging on CPU
-      # because CPU doesn't have some collectives implemented
+    # TODO(mattjj): remove this special case, used for debugging on CPU
+    # because CPU doesn't have some collectives implemented
     if xb.get_replica_count() == 1:
       dims = c.GetShape(x).dimensions()
       return c.Reshape(x, None, (1,) + tuple(dims))
@@ -138,7 +178,6 @@ def axis_groups(axis_env, name):
 
 def compile_replicated(jaxpr, axis_name, axis_size, consts, *abstract_args):
   num_replicas = axis_size * jaxpr_replicas(jaxpr)
-  assert num_replicas <= xb.get_replica_count()
   axis_env = AxisEnv(num_replicas, [axis_name], [axis_size])
   arg_shapes = list(map(xla_shape, abstract_args))
   built_c = replicated_comp(jaxpr, axis_env, consts, (), *arg_shapes)
@@ -276,13 +315,16 @@ def parallel_callable(fun, axis_name, axis_size, *avals):
     out = compile_replicated(jaxpr, axis_name, axis_size, consts, *avals)
     compiled, nrep, result_shape = out
     del master, consts, jaxpr, env
+  handle_arg = partial(shard_arg, compiled._device_ordinals, nrep)
   handle_result = xla.result_handler(result_shape)
-  return partial(execute_replicated, compiled, pval, axis_size, nrep, handle_result)
+  return partial(execute_replicated, compiled, pval, axis_size, nrep,
+                 handle_arg, handle_result)
 
-def execute_replicated(compiled, pval, axis_size, nrep, handler, out_tree, *args):
-  input_bufs = zip(*map(partial(shard_arg, nrep), args)) if args else [[]] * nrep
+def execute_replicated(compiled, pval, axis_size, nrep, handle_in, handle_out,
+                       out_tree, *args):
+  input_bufs = zip(*map(handle_in, args)) if args else [[]] * nrep
   out_bufs = compiled.ExecutePerReplica(input_bufs)
-  replica_results = [merge_pvals(handler(buf), pval) for buf in out_bufs]
+  replica_results = [merge_pvals(handle_out(buf), pval) for buf in out_bufs]
   if out_tree is xla.leaf:
     return unshard_output(axis_size, replica_results)
   else:
