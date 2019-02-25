@@ -137,7 +137,7 @@ def BatchNorm(axis=(0, 1, 2), epsilon=1e-5, center=True, scale=True,
   def apply_fun(params, x, rng=None):
     beta, gamma = params
     mean, var = np.mean(x, axis, keepdims=True), fastvar(x, axis, keepdims=True)
-    z = (x - mean) / (var + epsilon)**2
+    z = (x - mean) / np.sqrt(var + epsilon)
     if center and scale: return gamma * z + beta
     if center: return z + beta
     if scale: return gamma * z
