@@ -1160,6 +1160,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
     else:
       return object
   elif hasattr(object, '__array__'):
+    # this case is for duck-typed handling of objects that implement `__array__`
     return array(object.__array__(), dtype)
   elif isinstance(object, (list, tuple)):
     if object:
