@@ -337,6 +337,9 @@ class APITest(jtu.JaxTestCase):
     f(2)
     assert len(effects) == 3
 
+  def test_large_device_constant(self):
+    jit(lambda x: x)(np.zeros(int(2e6)))  # doesn't crash
+
 
 if __name__ == '__main__':
   absltest.main()
