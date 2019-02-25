@@ -359,11 +359,12 @@ class DeviceConstant(DeviceArray):
 def instantiate_device_constant(const, cutoff=1e6, device_num=0):
   # dispatch an XLA Computation to build the constant on the device if it's
   # large, or alternatively build it on the host and transfer it if it's small
+  # TODO(mattjj): need a way to instantiate on a specific device
   assert isinstance(const, DeviceConstant)
-  if const.size > cutoff:
+  if const.size > cutoff and device_num == 0:
     c = xb.make_computation_builder("constant_instantiating_computation")
     xla_const = const.constant_handler(c, const)
-    compiled = c.Build(xla_const).Compile((), xb.get_compile_options(device_num))
+    compiled = c.Build(xla_const).Compile((), xb.get_compile_options())
     return compiled.Execute(())
   else:
     return xb.device_put(onp.asarray(const), device_num)
