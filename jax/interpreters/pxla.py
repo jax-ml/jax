@@ -240,6 +240,9 @@ xla.pytype_aval_mappings[ShardedDeviceArray] = \
 xla.canonicalize_dtype_handlers[ShardedDeviceArray] = \
     xla.canonicalize_dtype_handlers[xla.DeviceArray]
 
+xb.register_constant_handler(ShardedDeviceArray,
+                             xla._device_array_constant_handler)
+
 
 def xla_pcall_impl(fun, *args, **params):
   axis_name = params.pop('axis_name')
