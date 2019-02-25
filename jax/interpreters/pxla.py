@@ -44,7 +44,6 @@ map = safe_map
 
 ### util
 
-
 def shard_arg(nrep, arg):
   if type(arg) is ShardedDeviceArray and arg.nrep == nrep:
     return arg.device_buffers
@@ -61,6 +60,7 @@ def unshard_output(axis_size, replica_results):
     _, ids = onp.unique(assign_shards(nrep, axis_size), return_index=True)
     return onp.stack([replica_results[i] for i in ids])
 
+# TODO(mattjj): this code needs to map from replica number to device number
 def assign_shards(nrep, size):
   groupsize, ragged = divmod(nrep, size)
   assert not ragged
