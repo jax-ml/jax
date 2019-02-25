@@ -3423,21 +3423,25 @@ def transpose_papply_rule(name, vals, dims, permutation):
 
 parallel_interp.papply_primitive_rules[transpose_p] = transpose_papply_rule
 
+def _pdot(x, y, axis_name):
+  x = x[..., None]
+  y = y[..., None, :]
+  return parallel.psum(x * y, axis_name)
+
 def dot_papply_rule(name, vals, dims):
   x, y = vals
   xdim, ydim = dims
-  #import ipdb; ipdb.set_trace()
   if xdim is None:
     return dot(x, y), ydim
   elif ydim is None:
     return dot(x, y), xdim
-  elif xdim == x.ndim and ydim == 0:
-    # return parallel.psum(dot(x, y), name), None
-    return dot(x, y), None
+  elif ydim == 0:
+    if xdim != x.ndim:
+      x = parallel.psplit(x, name, x.ndim)
+    return _pdot(x, y, name), None
   else:
-    x = parallel.pcollect(x, name)
     y = parallel.pcollect(y, name)
-    return dot(x, y), None
+    return dot(x, y), xdim
 
 parallel_interp.papply_primitive_rules[dot_p] = dot_papply_rule
 
