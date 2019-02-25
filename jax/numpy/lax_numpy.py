@@ -1149,24 +1149,23 @@ def atleast_3d(*arys):
     return [atleast_3d(arr) for arr in arys]
 
 
-# TODO(mattjj): can this be simplified?
 @_wraps(onp.array)
 def array(object, dtype=None, copy=True, order="K", ndmin=0):
   del copy  # Unused.
   if ndmin != 0 or order != "K":
     raise NotImplementedError("Only implemented for order='K', ndmin=0.")
 
-  if hasattr(object, '__asarray__'):
-    return object.__asarray__(dtype)
-  elif isinstance(object, ndarray):
+  if isinstance(object, ndarray):
     if dtype and _dtype(object) != dtype:
       return lax.convert_element_type(object, dtype)
     else:
       return object
+  elif hasattr(object, '__array__'):
+    # this case is for duck-typed handling of objects that implement `__array__`
+    return array(object.__array__(), dtype)
   elif isinstance(object, (list, tuple)):
     if object:
-      subarrays = [expand_dims(array(elt, dtype=dtype), 0) for elt in object]
-      return concatenate(subarrays)
+      return stack([array(elt, dtype=dtype) for elt in object])
     else:
       return onp.array([], dtype)
   elif isscalar(object):
