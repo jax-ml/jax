@@ -87,10 +87,10 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   def testLogSumExp(self, rng, shape, dtype, axis, keepdims):
     # TODO(mattjj): test autodiff
     def scipy_fun(array_to_reduce):
-      return osp_misc.logsumexp(array_to_reduce, axis, keepdims=keepdims)
+      return osp_special.logsumexp(array_to_reduce, axis, keepdims=keepdims)
 
     def lax_fun(array_to_reduce):
-      return lsp_misc.logsumexp(array_to_reduce, axis, keepdims=keepdims)
+      return lsp_special.logsumexp(array_to_reduce, axis, keepdims=keepdims)
 
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
