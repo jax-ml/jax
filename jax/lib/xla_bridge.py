@@ -30,8 +30,25 @@ from distutils.util import strtobool
 from ..config import flags
 import numpy as onp  # 'onp' rather than 'np' to distinguish from autograd.numpy
 
-from jaxlib import xla_data_pb2
+import jaxlib
+
+# Check the jaxlib version before importing anything else from jaxlib.
+def _check_jaxlib_version():
+  minimum_version = (0, 1, 9)
+  if hasattr(jaxlib, '__version__'):
+    version = tuple(int(x) for x in jaxlib.__version__.split('.'))
+  else:
+    version = (0, 1, 9)  # The version before jaxlib.__version__ was added.
+  if version < minimum_version:
+    msg = 'jaxlib is version {}, but this version of jax requires version {}.'
+    raise ValueError(msg.format('.'.join(map(str, version)),
+                                '.'.join(map(str, minimum_version))))
+
+_check_jaxlib_version()
+
+
 from jaxlib import xla_client
+from jaxlib import xla_data_pb2
 
 
 FLAGS = flags.FLAGS
@@ -124,22 +141,6 @@ def get_xla_client():
                          FLAGS.jax_replica_count)
 
 
-def _jaxlib_version():
-  if hasattr(xla_client, 'version'):
-    return xla_client.version()
-  else:
-    return (0, 1, 6)  # The version before xla_client.version() was added.
-
-
-def _check_jaxlib_version():
-  minimum_version = (0, 1, 6)
-  version = _jaxlib_version()
-  if version < minimum_version:
-    msg = 'jaxlib is version {}, but this version of jax requires version {}.'
-    raise ValueError(msg.format('.'.join(map(str, version)),
-                                '.'.join(map(str, minimum_version))))
-
-
 def _get_xla_client(backend_name, platform_name, replica_count):
   """Configures and returns a handle to the XLA client.
 
@@ -152,7 +153,6 @@ def _get_xla_client(backend_name, platform_name, replica_count):
   Returns:
     A client library module, or an object that behaves identically to one.
   """
-  _check_jaxlib_version()
   global _platform_name
   xla_client.initialize_replica_count(replica_count)
   if backend_name == 'xla':
