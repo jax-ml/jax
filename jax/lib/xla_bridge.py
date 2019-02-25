@@ -77,7 +77,7 @@ def _hlo_path(path, name):
   return path
 
 
-def get_compile_options():
+def get_compile_options(num_replicas=None):
   """Returns the compile options to use, as derived from flag values."""
   compile_options = None
   if FLAGS.jax_dump_hlo_graph is not None:
@@ -98,6 +98,9 @@ def get_compile_options():
     compile_options = compile_options or get_xla_client().CompileOptions()
     path = _hlo_path(FLAGS.jax_dump_hlo_per_pass, 'hlo_per_pass')
     compile_options.dump_per_pass_hlo_proto_to = path
+  if num_replicas is not None:
+    compile_options = compile_options or get_xla_client().CompileOptions()
+    compile_options.num_replicas = num_replicas
   return compile_options
 
 
