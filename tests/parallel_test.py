@@ -194,16 +194,5 @@ class PapplyTest(jtu.JaxTestCase):
         self.assertAllClose(ans, expected, check_dtypes=False)
 
 
-class SplitTest(jtu.JaxTestCase):
-
-  def testSplitBasic(self):
-    f = lambda x: lax.parallel.psum(np.sin(x), 'i')
-    x = onp.ones((2, 2))
-    fsplit = axisvar_split(f, 'i', ('j', 'k'))
-    ans = pmap(pmap(fsplit, 'j'), 'k')(x)
-    expected = onp.sum(onp.sin(x))
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-
 if __name__ == '__main__':
   absltest.main()

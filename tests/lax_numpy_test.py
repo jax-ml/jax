@@ -76,6 +76,7 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("equal", 2, all_dtypes, all_shapes, jtu.rand_some_equal(), []),
     op_record("exp", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("fabs", 1, float_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
+    op_record("float_power", 2, inexact_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("floor", 1, float_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("greater", 2, number_dtypes, all_shapes, jtu.rand_some_equal(), []),
     op_record("greater_equal", 2, number_dtypes, all_shapes, jtu.rand_some_equal(), []),
@@ -92,7 +93,6 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("multiply", 2, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("negative", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("not_equal", 2, number_dtypes, all_shapes, jtu.rand_some_equal(), ["rev"]),
-    op_record("power", 2, inexact_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
     op_record("reciprocal", 1, inexact_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("subtract", 2, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("sin", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
@@ -143,6 +143,7 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("logaddexp2", 2, float_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("polyval", 2, number_dtypes, nonempty_nonscalar_array_shapes, jtu.rand_default(), []),
     op_record("positive", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
+    op_record("power", 2, number_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
     op_record("rad2deg", 1, float_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("ravel", 1, all_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("real", 1, number_dtypes, all_shapes, jtu.rand_some_inf(), []),
@@ -942,9 +943,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp.array, lnp.array, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp.array, args_maker, check_dtypes=True)
 
-  def testArrayAsarrayMethod(self):
+  def testArrayMethod(self):
     class arraylike(object):
-      def __asarray__(self, dtype=None):
+      dtype = onp.float32
+      def __array__(self, dtype=None):
         return 3.
     a = arraylike()
     ans = lnp.array(a)

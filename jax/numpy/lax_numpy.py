@@ -115,6 +115,8 @@ inexact = onp.inexact
 complexfloating = onp.complexfloating
 floating = onp.floating
 integer = onp.integer
+signedinteger = onp.signedinteger
+unsignedinteger = onp.unsignedinteger
 
 iinfo = onp.iinfo
 finfo = onp.finfo
@@ -284,10 +286,10 @@ equal = _one_to_one_binop(onp.equal, lax.eq)
 multiply = _one_to_one_binop(onp.multiply, lax.mul)
 not_equal = _one_to_one_binop(onp.not_equal, lax.ne)
 subtract = _one_to_one_binop(onp.subtract, lax.sub)
-power = _one_to_one_binop(onp.power, lax.pow, True)
 arctan2 = _one_to_one_binop(onp.arctan2, lax.atan2, True)
 minimum = _one_to_one_binop(onp.minimum, lax.min)
 maximum = _one_to_one_binop(onp.maximum, lax.max)
+float_power = _one_to_one_binop(onp.float_power, lax.pow, True)
 
 
 def _comparison_op(numpy_fn, lax_fn):
@@ -386,6 +388,28 @@ def _float_divmod(x1, x2):
   div = lax.select(ind, div - _constant_like(div, 1), div)
 
   return lax.round(div), mod
+
+
+@_wraps(onp.power)
+def power(x1, x2):
+  x1 = asarray(x1)
+  x2 = asarray(x2)
+  x1, x2 = _promote_args_like(onp.power, x1, x2)
+  dtype = lax._dtype(x1)
+  if not issubdtype(dtype, integer):
+    return lax.pow(x1, x2)
+
+  # Integer power => use binary exponentiation.
+
+  # TODO(phawkins): add integer pow support to XLA.
+  bits = 6  # Anything more would overflow for any x1 > 1
+  acc = ones(shape(x1), dtype=dtype)
+  for _ in xrange(bits):
+    acc = where(lax.bitwise_and(x2, _constant_like(x2, 1)),
+                lax.mul(acc, x1), acc)
+    x1 = lax.mul(x1, x1)
+    x2 = lax.shift_right_logical(x2, _constant_like(x2, 1))
+  return acc
 
 
 @_wraps(onp.logaddexp)
@@ -1125,24 +1149,23 @@ def atleast_3d(*arys):
     return [atleast_3d(arr) for arr in arys]
 
 
-# TODO(mattjj): can this be simplified?
 @_wraps(onp.array)
 def array(object, dtype=None, copy=True, order="K", ndmin=0):
   del copy  # Unused.
   if ndmin != 0 or order != "K":
     raise NotImplementedError("Only implemented for order='K', ndmin=0.")
 
-  if hasattr(object, '__asarray__'):
-    return object.__asarray__(dtype)
-  elif isinstance(object, ndarray):
+  if isinstance(object, ndarray):
     if dtype and _dtype(object) != dtype:
       return lax.convert_element_type(object, dtype)
     else:
       return object
+  elif hasattr(object, '__array__'):
+    # this case is for duck-typed handling of objects that implement `__array__`
+    return array(object.__array__(), dtype)
   elif isinstance(object, (list, tuple)):
     if object:
-      subarrays = [expand_dims(array(elt, dtype=dtype), 0) for elt in object]
-      return concatenate(subarrays)
+      return stack([array(elt, dtype=dtype) for elt in object])
     else:
       return onp.array([], dtype)
   elif isscalar(object):
