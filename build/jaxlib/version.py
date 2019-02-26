@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2019 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,21 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from setuptools import setup, find_packages
-
-with open('jax/version.py') as f:
-  exec(f.read(), globals())
-
-setup(
-    name='jax',
-    version=__version__,
-    description='Differentiate, compile, and transform Numpy code.',
-    author='JAX team',
-    author_email='jax-dev@google.com',
-    packages=find_packages(),
-    install_requires=[
-        'numpy>=1.12', 'six', 'protobuf>=3.6.0', 'absl-py', 'opt_einsum'
-    ],
-    url='https://github.com/google/jax',
-    license='Apache-2.0',
-)
+__version__ = "0.1.10"
