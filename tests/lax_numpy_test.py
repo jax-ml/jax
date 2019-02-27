@@ -1327,6 +1327,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     result = api.grad(test_fail)(x)
     assert not onp.any(onp.isnan(result))
 
+  def testIssue453(self):
+    # https://github.com/google/jax/issues/453
+    a = onp.arange(6) + 1
+    ans = lnp.reshape(a, (3, 2), order='F')
+    expected = onp.reshape(a, (3, 2), order='F')
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
 
 if __name__ == "__main__":
   absltest.main()
