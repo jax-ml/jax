@@ -603,7 +603,8 @@ def reshape(a, newshape, order="C"):  # pylint: disable=missing-docstring
   if order == "C":
     return lax.reshape(a, computed_newshape, None)
   elif order == "F":
-    return lax.reshape(a, computed_newshape[::-1], None).T
+    dims = onp.arange(ndim(a))[::-1]
+    return lax.reshape(a, computed_newshape[::-1], dims).T
   elif order == "A":
     raise NotImplementedError("np.reshape order=A is not implemented.")
   else:
