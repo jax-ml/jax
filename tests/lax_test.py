@@ -1457,15 +1457,15 @@ class DeviceConstantTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_fill={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), fill_value),
+          jtu.format_shape_dtype_string(shape, dtype) if dtype else shape,
+          fill_value),
        "shape": shape, "dtype": dtype, "fill_value": fill_value}
-      # for dtype in itertools.chain(all_dtypes, [None])
-      for dtype in [None]
+      for dtype in itertools.chain(default_dtypes, [None])
       for shape in [(), (3,), (2, 3), (2, 3, 4)]
       for fill_value in [0, 1, onp.pi]))
   def testFilledConstant(self, shape, fill_value, dtype):
     make_const = lambda: lax.full(shape, fill_value, dtype)
-    expected = onp.full(shape, fill_value, xla_bridge.canonicalize_dtype(dtype))
+    expected = onp.full(shape, fill_value, dtype)
     self._CheckDeviceConstant(make_const, expected)
 
   @parameterized.named_parameters(jtu.cases_from_list(
