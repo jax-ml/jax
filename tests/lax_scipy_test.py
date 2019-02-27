@@ -57,13 +57,16 @@ def op_record(name, nargs, dtypes, rng, diff_modes, test_name=None):
   return OpRecord(name, nargs, dtypes, rng, diff_modes, test_name)
 
 JAX_SPECIAL_FUNCTION_RECORDS = [
-    op_record("gammaln", 1, float_dtypes, jtu.rand_positive(), ["rev"]),
     op_record("digamma", 1, float_dtypes, jtu.rand_positive(), []),
     op_record("erf", 1, float_dtypes, jtu.rand_small_positive(), ["rev"]),
     op_record("erfc", 1, float_dtypes, jtu.rand_small_positive(), ["rev"]),
     op_record("erfinv", 1, float_dtypes, jtu.rand_small_positive(), ["rev"]),
-    op_record("logit", 1, float_dtypes, jtu.rand_small_positive(), ["rev"]),
     op_record("expit", 1, float_dtypes, jtu.rand_small_positive(), ["rev"]),
+    op_record("gammaln", 1, float_dtypes, jtu.rand_positive(), ["rev"]),
+    op_record("logit", 1, float_dtypes, jtu.rand_small_positive(), ["rev"]),
+    op_record("log_ndtr", 1, float_dtypes, jtu.rand_default(), []),
+    op_record("ndtri", 1, float_dtypes, jtu.rand_uniform(0., 1.), []),
+    op_record("ndtr", 1, float_dtypes, jtu.rand_default(), []),
 ]
 
 CombosWithReplacement = itertools.combinations_with_replacement
