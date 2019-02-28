@@ -39,6 +39,7 @@ from .util import partial, prod
 
 from . import core
 from . import ad_util
+from . import api
 from . import linear_util as lu
 from .config import flags
 from .core import Primitive
@@ -53,7 +54,7 @@ from .interpreters import ad
 from .interpreters import batching
 from .interpreters import parallel
 from .util import curry, memoize, safe_zip, unzip2, prod
-from .tree_util import build_tree, tree_unflatten
+from .tree_util import build_tree, tree_flatten, tree_unflatten
 from .lib import xla_bridge
 
 FLAGS = flags.FLAGS
@@ -956,6 +957,91 @@ def _revise_cond_jaxpr(new_pval, old_pval, jaxpr, consts):
     return new_jaxpr, new_consts
 
 
+def scan(f, a, bs):
+  return scan_p.bind(a, bs, f=f)
+
+def _scan_impl(a, bs, f=None):
+  """Scans over a list.
+
+  Arguments:
+    f: function with signature `a -> b -> a`
+    a: `a` value.
+    bs: `b` values.
+  """
+  a_flat, a_tree = tree_flatten(a)
+  bs_flat, bs_tree = tree_flatten(bs)
+
+  # Verifies that the bs are all arrays of the same length
+  if len(bs_flat) == 0:
+    raise ValueError("bs argument to scan does not contain any arrays")
+
+  if any(len(b.shape) == 0 for b in bs_flat):
+      msg = "bs argument arrays must be rank >= 1, got shapes {}"
+      raise ValueError(msg.format(",".join(str(b.shape) for b in bs_flat)))
+
+  length = bs_flat[0].shape[0]
+  for b in bs_flat[1:]:
+    if b.shape[0] != length:
+      msg = ("bs argument arrays must have equal most-major dimensions; got "
+             "shapes {}")
+      raise ValueError(msg.format(",".join(str(b.shape) for b in bs_flat)))
+
+  # Form the initial outputs as zeros like `a` with a new leading `length`
+  # dimension.
+  out_flat = []
+  for a in a_flat:
+    out_flat.append(full((length,) + tuple(a.shape), 0, _dtype(a)))
+
+  def body_fun(i, vals):
+    a_flat, state_flat = vals
+    assert len(a_flat) == len(state_flat)
+    a = tree_unflatten(a_tree, a_flat)
+
+    b_flat = []
+    for b in bs_flat:
+      b_flat.append(dynamic_index_in_dim(b, i, keepdims=False))
+    bs = tree_unflatten(bs_tree, b_flat)
+
+    a = f(a, bs)
+    a_out_flat, a_out_tree = tree_flatten(a)
+    if len(a_out_flat) != len(a_flat) or a_tree != a_out_tree:
+      raise ValueError(
+        "The first input of f must have the same tree structure as the output: "
+        "{} vs {}.".format(a_tree, a_out_tree))
+
+    state_out_flat = []
+    for a, a_out, state in zip(a_flat, a_out_flat, state_flat):
+      if a.shape != a_out.shape:
+        raise ValueError(
+           "Output shape mismatch for f: {} vs {}".format(a.shape, a_out.shape))
+
+      state_out = dynamic_update_index_in_dim(state, a_out[None, ...], i, axis=0)
+      state_out_flat.append(state_out)
+
+    return a_out_flat, state_out_flat
+
+  _, out_flat = fori_loop(0, length, body_fun, (a_flat, out_flat))
+  return tree_unflatten(a_tree, out_flat)
+
+def _scan_jvp(primals, tangents, f=None):
+  # (ap, bp), (adot, bdot)
+  def f_jvp(a_pt, b_pt):
+    a, a_dot = a_pt
+    b, b_dot = b_pt
+    return api.jvp(f, (a, b), (a_dot, b_dot))
+
+  a, bs = primals
+  a_dot, bs_dot = tangents
+
+  return scan(f_jvp, (a, a_dot), (bs, bs_dot))
+
+scan_p = core.Primitive("scan")
+scan_p.def_impl(_scan_impl)
+scan_p.def_abstract_eval(partial(pe.abstract_eval_fun, _scan_impl))
+xla.translations[scan_p] = partial(xla.lower_fun, _scan_impl)
+ad.primitive_jvps[scan_p] = _scan_jvp
+
+
 def tie_in(x, y):
   return tie_in_p.bind(x, y)
 
@@ -964,6 +1050,14 @@ def shaped_identity(x):
 
 
 def full(shape, fill_value, dtype=None):
+  """Returns an array of `shape` filled with `fill_value`.
+
+  Arguments:
+    shape: sequence of integers, describing the shape of the output array
+    fill_value: the value to fill the new array with
+    dtype: the type of the output array, or `None`. If not `None`, `fill_value`
+      will be cast to `dtype`.
+  """
   try:
     shape = tuple(map(int, shape))
   except TypeError:
