@@ -781,16 +781,15 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     lnp_fun = getattr(lnp, op)
     self._CheckAgainstNumpy(lnp_fun, onp_fun, args_maker, check_dtypes=True)
 
-
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_outdtype={}".format(
           jtu.format_shape_dtype_string(shape, fill_value_dtype),
-          onp.dtype(out_dtype).name),
+          onp.dtype(out_dtype).name if out_dtype else "None"),
        "shape": shape, "fill_value_dtype": fill_value_dtype,
        "out_dtype": out_dtype, "rng": jtu.rand_default()}
       for shape in array_shapes
       for fill_value_dtype in default_dtypes
-      for out_dtype in default_dtypes))
+      for out_dtype in [None] + default_dtypes))
   def testFull(self, shape, fill_value_dtype, out_dtype, rng):
     onp_fun = lambda fill_value: onp.full(shape, fill_value, dtype=out_dtype)
     lnp_fun = lambda fill_value: lnp.full(shape, fill_value, dtype=out_dtype)
