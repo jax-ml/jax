@@ -777,7 +777,7 @@ def shaped_identity(x):
   return shaped_identity_p.bind(x, shape=x.shape)
 
 
-def full(shape, fill_value, dtype):
+def full(shape, fill_value, dtype=None):
   try:
     shape = tuple(map(int, shape))
   except TypeError:
@@ -788,6 +788,7 @@ def full(shape, fill_value, dtype):
   if onp.shape(fill_value):
     msg = "full must be called with scalar fill_value, got fill_value.shape {}."
     raise TypeError(msg.format(onp.shape(fill_value)))
+  dtype = dtype or _dtype(fill_value)
   dtype = xla_bridge.canonicalize_dtype(dtype)
 
   # For constants (defined as Python scalars, raw ndarrays, or DeviceValues),
