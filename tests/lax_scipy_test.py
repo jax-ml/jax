@@ -49,21 +49,27 @@ numeric_dtypes = float_dtypes + complex_dtypes + int_dtypes
 
 
 OpRecord = collections.namedtuple("OpRecord", ["name", "nargs", "dtypes", "rng",
-                                               "diff_modes", "test_name"])
+                                               "test_autodiff", "test_name"])
 
 
-def op_record(name, nargs, dtypes, rng, diff_modes, test_name=None):
+def op_record(name, nargs, dtypes, rng, test_grad, test_name=None):
   test_name = test_name or name
-  return OpRecord(name, nargs, dtypes, rng, diff_modes, test_name)
+  return OpRecord(name, nargs, dtypes, rng, test_grad, test_name)
 
 JAX_SPECIAL_FUNCTION_RECORDS = [
-    op_record("gammaln", 1, float_dtypes, jtu.rand_positive(), ["rev"]),
-    op_record("digamma", 1, float_dtypes, jtu.rand_positive(), []),
-    op_record("erf", 1, float_dtypes, jtu.rand_small_positive(), ["rev"]),
-    op_record("erfc", 1, float_dtypes, jtu.rand_small_positive(), ["rev"]),
-    op_record("erfinv", 1, float_dtypes, jtu.rand_small_positive(), ["rev"]),
-    op_record("logit", 1, float_dtypes, jtu.rand_small_positive(), ["rev"]),
-    op_record("expit", 1, float_dtypes, jtu.rand_small_positive(), ["rev"]),
+    # TODO: digamma has no JVP implemented.
+    op_record("digamma", 1, float_dtypes, jtu.rand_positive(), False),
+    op_record("erf", 1, float_dtypes, jtu.rand_small_positive(), True),
+    op_record("erfc", 1, float_dtypes, jtu.rand_small_positive(), True),
+    op_record("erfinv", 1, float_dtypes, jtu.rand_small_positive(), True),
+    op_record("expit", 1, float_dtypes, jtu.rand_small_positive(), True),
+    # TODO: gammaln has slightly high error.
+    op_record("gammaln", 1, float_dtypes, jtu.rand_positive(), False),
+    # TODO: NaNs in gradient for logit.
+    op_record("logit", 1, float_dtypes, jtu.rand_small_positive(), False),
+    op_record("log_ndtr", 1, float_dtypes, jtu.rand_default(), True),
+    op_record("ndtri", 1, float_dtypes, jtu.rand_uniform(0., 1.), True),
+    op_record("ndtr", 1, float_dtypes, jtu.rand_default(), True),
 ]
 
 CombosWithReplacement = itertools.combinations_with_replacement
@@ -100,15 +106,15 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       {"testcase_name": jtu.format_test_name_suffix(
           rec.test_name, shapes, dtypes),
        "rng": rec.rng, "shapes": shapes, "dtypes": dtypes,
-       "modes": rec.diff_modes,
+       "test_autodiff": rec.test_autodiff,
        "scipy_op": getattr(osp_special, rec.name),
        "lax_op": getattr(lsp_special, rec.name)}
       for rec in JAX_SPECIAL_FUNCTION_RECORDS
       for shapes in CombosWithReplacement(all_shapes, rec.nargs)
       for dtypes in CombosWithReplacement(rec.dtypes, rec.nargs)))
-  def testScipySpecialFun(self, scipy_op, lax_op, rng, shapes, dtypes, modes):
+  def testScipySpecialFun(self, scipy_op, lax_op, rng, shapes, dtypes,
+                          test_autodiff):
     # TODO(mattjj): unskip this test combination when real() on tpu is improved
-    # TODO(mattjj): test autodiff
     if (FLAGS.jax_test_dut and FLAGS.jax_test_dut.startswith("tpu")
         and not shapes[0]):
       return absltest.unittest.skip("real() on scalar not supported on tpu")
@@ -118,6 +124,10 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self.assertAllClose(scipy_op(*args), lax_op(*args), atol=1e-3, rtol=1e-3,
                         check_dtypes=False)
     self._CompileAndCheck(lax_op, args_maker, check_dtypes=True)
+
+    if test_autodiff:
+      jtu.check_grads(lax_op, args, order=1, atol=1e-3, rtol=3e-3)
+
 
 if __name__ == "__main__":
   absltest.main()
