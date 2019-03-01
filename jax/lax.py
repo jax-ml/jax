@@ -448,14 +448,60 @@ def conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation=None,
       dimension_numbers=dimension_numbers, lhs_shape=lhs.shape,
       rhs_shape=rhs.shape)
 
-def dot(lhs, rhs): return dot_p.bind(lhs, rhs)
+def dot(lhs, rhs):
+  """Vector/vector, matrix/vector, and matrix/matrix multiplication.
+
+  Wraps XLA's `Dot
+  <https://www.tensorflow.org/xla/operation_semantics#dot>`_
+  operator.
+
+  For more general contraction, see the `dot_general` operator.
+
+  Args:
+    lhs: an array of rank 1 or 2.
+    rhs: an array of rank 1 or 2.
+
+  Returns:
+    An array containing the product.
+  """
+  return dot_p.bind(lhs, rhs)
 
 def dot_general(lhs, rhs, dimension_numbers):
+  """More general contraction operator.
+
+  Wraps XLA's `DotGeneral
+  <https://www.tensorflow.org/xla/operation_semantics#dotgeneral>`_
+  operator.
+
+  Args:
+    lhs: an array
+    rhs: an array
+    dimension_numbers: a tuple of tuples of the form
+      `((lhs_contracting_dims, rhs_contracting_dims),
+      (lhs_batch_dims, rhs_batch_dims))`
+
+  Returns:
+    An array containing the result.
+  """
   lhs_dims, rhs_dims = dimension_numbers
   dimension_numbers = (tuple(map(tuple, lhs_dims)), tuple(map(tuple, rhs_dims)))
   return dot_general_p.bind(lhs, rhs, dimension_numbers=dimension_numbers)
 
 def broadcast(operand, sizes):
+  """Broadcasts an array, adding new major dimensions.
+
+  Wraps XLA's `Broadcast
+  <https://www.tensorflow.org/xla/operation_semantics#broadcast>`_
+  operator.
+
+  Args:
+    operand: an array
+    sizes: a sequence of integers, giving the sizes of new major dimensions
+      to add.
+
+  Returns:
+    An array containing the result.
+  """
   return broadcast_p.bind(operand, sizes=tuple(sizes))
 
 def broadcast_in_dim(operand, shape, broadcast_dimensions):
@@ -467,6 +513,10 @@ def broadcast_in_dim(operand, shape, broadcast_dimensions):
         broadcast_dimensions=tuple(broadcast_dimensions))
 
 def reshape(operand, new_sizes, dimensions=None):
+  """Wraps XLA's `Reshape
+  <https://www.tensorflow.org/xla/operation_semantics#reshape>`_
+  operator.
+  """
   same_shape = onp.shape(operand) == tuple(new_sizes)
   same_dims = dimensions is None or tuple(dimensions) == tuple(range(onp.ndim(operand)))
   if same_shape and same_dims:
@@ -478,27 +528,51 @@ def reshape(operand, new_sizes, dimensions=None):
         old_sizes=onp.shape(operand))
 
 def pad(operand, padding_value, padding_config):
+  """Wraps XLA's `Pad
+  <https://www.tensorflow.org/xla/operation_semantics#pad>`_
+  operator.
+  """
   return pad_p.bind(operand, padding_value, padding_config=tuple(padding_config))
 
 def rev(operand, dimensions):
+  """Wraps XLA's `Rev
+  <https://www.tensorflow.org/xla/operation_semantics#rev_reverse>`_
+  operator.
+  """
   return rev_p.bind(operand, dimensions=tuple(dimensions))
 
 def select(pred, on_true, on_false):
+  """Wraps XLA's `Select
+  <https://www.tensorflow.org/xla/operation_semantics#select>`_
+  operator.
+  """
   return select_p.bind(pred, on_true, on_false)
 
 def slice(operand, start_indices, limit_indices, strides=None):
+  """Wraps XLA's `Slice
+  <https://www.tensorflow.org/xla/operation_semantics#slice>`_
+  operator.
+  """
   return slice_p.bind(operand, start_indices=tuple(start_indices),
                       limit_indices=tuple(limit_indices),
                       strides=None if strides is None else tuple(strides),
                       operand_shape=operand.shape)
 
 def dynamic_slice(operand, start_indices, slice_sizes):
+  """Wraps XLA's `DynamicSlice
+  <https://www.tensorflow.org/xla/operation_semantics#dynamicslice>`_
+  operator.
+  """
   start_indices = _dynamic_slice_indices(operand, start_indices)
   return dynamic_slice_p.bind(
       operand, start_indices, slice_sizes=tuple(slice_sizes),
       operand_shape=operand.shape)
 
 def dynamic_update_slice(operand, update, start_indices):
+  """Wraps XLA's `DynamicUpdateSlice
+  <https://www.tensorflow.org/xla/operation_semantics#dynamicupdateslice>`_
+  operator.
+  """
   start_indices = _dynamic_slice_indices(operand, start_indices)
   return dynamic_update_slice_p.bind(operand, update, start_indices,
                                      update_shape=update.shape)
@@ -570,6 +644,10 @@ def index_take(src, idxs, axes):
   return gather(src, indices, dimension_numbers=dnums, slice_sizes=slice_sizes)
 
 def transpose(operand, permutation):
+  """Wraps XLA's `Transpose
+  <https://www.tensorflow.org/xla/operation_semantics#transpose>`_
+  operator.
+  """
   permutation = tuple(permutation)
   if permutation == tuple(range(len(permutation))):
     return operand
@@ -577,6 +655,10 @@ def transpose(operand, permutation):
     return transpose_p.bind(operand, permutation=permutation)
 
 def reduce(operand, init_value, computation, dimensions):
+  """Wraps XLA's `Reduce
+  <https://www.tensorflow.org/xla/operation_semantics#reduce>`_
+  operator.
+  """
   monoid_reducer = _get_monoid_reducer(computation, init_value)
   if monoid_reducer:
     return monoid_reducer(operand, dimensions)
@@ -637,6 +719,10 @@ def _reduce_and(operand, axes):
 
 def reduce_window(operand, init_value, computation, window_dimensions,
                   window_strides, padding):
+  """Wraps XLA's `ReduceWindow
+  <https://www.tensorflow.org/xla/operation_semantics#reducewindow>`_
+  operator.
+  """
   monoid_reducer = _get_monoid_window_reducer(computation, init_value)
   if monoid_reducer:
     return monoid_reducer(operand, window_dimensions, window_strides, padding)
@@ -706,6 +792,10 @@ def _select_and_gather_add(tangents, operand, select_prim, window_dimensions,
       window_strides=tuple(window_strides), padding=padding)
 
 def sort(operand, dimension=-1):
+  """Wraps XLA's `Sort
+  <https://www.tensorflow.org/xla/operation_semantics#sort>`_
+  operator.
+  """
   return sort_p.bind(operand, dimension=dimension)
 
 def sort_key_val(keys, values, dimension=-1):
@@ -792,23 +882,31 @@ def full(shape, fill_value, dtype=None):
   dtype = xla_bridge.canonicalize_dtype(dtype)
 
   # For constants (defined as Python scalars, raw ndarrays, or DeviceValues),
-  # create a FilledConstant value, otherwise just call broadcast.
+  # create a _FilledConstant value, otherwise just call broadcast.
   if onp.isscalar(fill_value) or type(fill_value) is onp.ndarray:
-    return FilledConstant(onp.asarray(fill_value, dtype), shape)
+    return _FilledConstant(onp.asarray(fill_value, dtype), shape)
   elif isinstance(fill_value, xla.DeviceValue):
     val = onp.asarray(fill_value, dtype)
-    return FilledConstant(val, shape)
+    return _FilledConstant(val, shape)
   else:
     return broadcast(convert_element_type(fill_value, dtype), shape)
 
 def iota(dtype, size):
+  """Wraps XLA's `Iota
+  <https://www.tensorflow.org/xla/operation_semantics#iota>`_
+  operator.
+  """
   return broadcasted_iota(dtype, (int(size),), 0)
 
 def broadcasted_iota(dtype, shape, dimension):
+  """Wraps XLA's `Iota
+  <https://www.tensorflow.org/xla/operation_semantics#iota>`_
+  operator.
+  """
   dtype = xla_bridge.canonicalize_dtype(dtype)
   shape = tuple(map(int, shape))
   dimension = int(dimension)
-  return IotaConstant(dtype, shape, dimension)
+  return _IotaConstant(dtype, shape, dimension)
 
 def eye(dtype, size):
   return broadcasted_eye(dtype, (size, size), (0, 1))
@@ -819,7 +917,7 @@ def broadcasted_eye(dtype, shape, axes):
   dtype = xla_bridge.canonicalize_dtype(dtype)
   shape = tuple(map(int, shape))
   axes = tuple(map(int, axes))
-  return EyeConstant(shape, axes, dtype)
+  return _EyeConstant(shape, axes, dtype)
 
 
 def stop_gradient(x):
@@ -1727,8 +1825,8 @@ def _dot_batch_rule(batched_args, batch_dims):
   dim_nums = [(lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch)]
   return dot_general(lhs, rhs, dim_nums), 0
 
-dot_dtype_rule = partial(binop_dtype_rule, _input_dtype, [_num, _num], 'dot')
-dot_p = standard_primitive(_dot_shape_rule, dot_dtype_rule, 'dot')
+_dot_dtype_rule = partial(binop_dtype_rule, _input_dtype, [_num, _num], 'dot')
+dot_p = standard_primitive(_dot_shape_rule, _dot_dtype_rule, 'dot')
 ad.defbilinear(dot_p, _dot_transpose_lhs, _dot_transpose_rhs)
 batching.primitive_batchers[dot_p] = _dot_batch_rule
 
@@ -1903,10 +2001,10 @@ def _clamp_shape_rule(min, operand, max):
     raise TypeError(m.format(max.shape))
   return operand.shape
 
-clamp_dtype_rule = partial(binop_dtype_rule, _input_dtype, [_any, _any, _any],
-                           'clamp')
+_clamp_dtype_rule = partial(binop_dtype_rule, _input_dtype, [_any, _any, _any],
+                            'clamp')
 
-clamp_p = standard_primitive(_clamp_shape_rule, clamp_dtype_rule, 'clamp')
+clamp_p = standard_primitive(_clamp_shape_rule, _clamp_dtype_rule, 'clamp')
 ad.defjvp(clamp_p,
           lambda g, min, operand, max:
           select(bitwise_and(gt(min, operand), lt(min, max)),
@@ -3328,7 +3426,7 @@ batching.primitive_batchers[shaped_identity_p] = \
 ### constants
 
 
-class FilledConstant(xla.DeviceConstant):
+class _FilledConstant(xla.DeviceConstant):
   __slots__ = ["fill_value"]
 
   def __init__(self, fill_value, shape):
@@ -3352,7 +3450,7 @@ class FilledConstant(xla.DeviceConstant):
       filled_const.shape)
 
 
-class IotaConstant(xla.DeviceConstant):
+class _IotaConstant(xla.DeviceConstant):
   __slots__ = ["axis"]
 
   def __init__(self, dtype, shape, axis):
@@ -3381,7 +3479,7 @@ class IotaConstant(xla.DeviceConstant):
     return c.BroadcastedIota(dtype, iota_constant.shape, iota_constant.axis)
 
 
-class EyeConstant(xla.DeviceConstant):
+class _EyeConstant(xla.DeviceConstant):
   __slots__ = ["axes"]
 
   def __init__(self, shape, axes, dtype):
@@ -3417,7 +3515,7 @@ class EyeConstant(xla.DeviceConstant):
     return c.ConvertElementType(_reduce(c.And, eyes), etype)
 
 
-for _t in [FilledConstant, IotaConstant, EyeConstant]:
+for _t in [_FilledConstant, _IotaConstant, _EyeConstant]:
   xla_bridge.register_constant_handler(_t, _t.constant_handler)
   core.pytype_aval_mappings[_t] = ConcreteArray
   xla.pytype_aval_mappings[_t] = xla.pytype_aval_mappings[xla.DeviceArray]
