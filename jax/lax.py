@@ -2633,7 +2633,7 @@ def _gather_batching_rule(batched_args, batch_dims, dimension_numbers,
     count_shape = list(start_indices.shape)
     count_shape[-1] = 1
     counts = broadcasted_iota(start_indices.dtype, tuple(count_shape), 0)
-    start_indices = concatenate([counts, start_indices], len(counts_shape) - 1)
+    start_indices = concatenate([counts, start_indices], len(count_shape) - 1)
 
     slice_sizes = (1,) + slice_sizes
     collapsed_slice_dims = (0,) + tuple(onp.add(1, dimension_numbers.collapsed_slice_dims))
