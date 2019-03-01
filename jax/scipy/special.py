@@ -134,25 +134,24 @@ _LOGNDTR_FLOAT32_UPPER = onp.array(5, onp.float32)
 
 
 def ndtr(x):
-  """Normal distribution function.
+  r"""Normal distribution function.
 
   Returns the area under the Gaussian probability density function, integrated
   from minus infinity to x:
 
-  ```
-                    1       / x
-     ndtr(x)  = ----------  |    exp(-0.5 t**2) dt
-                sqrt(2 pi)  /-inf
-
-              = 0.5 (1 + erf(x / sqrt(2)))
-              = 0.5 erfc(x / sqrt(2))
-  ```
+  .. math::
+    \begin{align}
+    \mathrm{ndtr}(x) =&
+      \ \frac{1}{\sqrt{2 \pi}}\int_{-\infty}^{x} e^{-\frac{1}{2}t^2} dt \\
+    =&\ \frac{1}{2} (1 + \mathrm{erf}(\frac{x}{\sqrt{2}})) \\
+    =&\ \frac{1}{2} \mathrm{erfc}(\frac{x}{\sqrt{2}})
+    \end{align}
 
   Args:
     x: An array of type `float32`, `float64`.
 
   Returns:
-    ndtr: An array with `dtype=x.dtype`.
+    An array with `dtype=x.dtype`.
 
   Raises:
     TypeError: if `x` is not floating-type.
@@ -181,19 +180,19 @@ def _ndtr(x):
 
 
 def ndtri(p):
-  """The inverse of the CDF of the Normal distribution function.
+  r"""The inverse of the CDF of the Normal distribution function.
 
-  Returns x such that the area under the pdf from minus infinity to x is equal
-  to p.
+  Returns `x` such that the area under the PDF from :math:`-\infty` to `x` is equal
+  to `p`.
 
   A piece-wise rational approximation is done for the function.
-  This is a port of the implementation in netlib.
+  This is a based on the implementation in netlib.
 
   Args:
     p: an array of type `float32`, `float64`.
 
   Returns:
-    x: an array with `dtype=p.dtype`.
+    an array with `dtype=p.dtype`.
 
   Raises:
     TypeError: if `p` is not floating-type.
@@ -317,48 +316,59 @@ def _ndtri(p):
 
 
 def log_ndtr(x, series_order=3):
-  """Log Normal distribution function.
+  r"""Log Normal distribution function.
 
   For details of the Normal distribution function see `ndtr`.
 
-  This function calculates `(log o ndtr)(x)` by either calling `log(ndtr(x))` or
-  using an asymptotic series. Specifically:
+  This function calculates :math:`\log(\mathrm{ndtr}(x))` by either calling
+  :math:`\log(\mathrm{ndtr}(x))` or using an asymptotic series. Specifically:
+
   - For `x > upper_segment`, use the approximation `-ndtr(-x)` based on
-    `log(1-x) ~= -x, x << 1`.
+    :math:`\log(1-x) \approx -x, x \ll 1`.
   - For `lower_segment < x <= upper_segment`, use the existing `ndtr` technique
     and take a log.
-  - For `x <= lower_segment`, we use the series approximation of erf to compute
+  - For `x <= lower_segment`, we use the series approximation of `erf` to compute
     the log CDF directly.
 
   The `lower_segment` is set based on the precision of the input:
 
-  ```
-  lower_segment = { -20,  x.dtype=float64
-                  { -10,  x.dtype=float32
-  upper_segment = {   8,  x.dtype=float64
-                  {   5,  x.dtype=float32
-  ```
+  .. math::
+    \begin{align}
+    \mathit{lower\_segment} =&
+      \ \begin{cases}
+        -20 &  x.\mathrm{dtype}=\mathit{float64} \\
+        -10 &  x.\mathrm{dtype}=\mathit{float32} \\
+        \end{cases} \\
+    \mathit{upper\_segment} =&
+      \ \begin{cases}
+        8&  x.\mathrm{dtype}=\mathit{float64} \\
+        5&  x.\mathrm{dtype}=\mathit{float32} \\
+        \end{cases}
+    \end{align}
+
 
   When `x < lower_segment`, the `ndtr` asymptotic series approximation is:
 
-  ```
-     ndtr(x) = scale * (1 + sum) + R_N
-     scale   = exp(-0.5 x**2) / (-x sqrt(2 pi))
-     sum     = Sum{(-1)^n (2n-1)!! / (x**2)^n, n=1:N}
-     R_N     = O(exp(-0.5 x**2) (2N+1)!! / |x|^{2N+3})
-  ```
+  .. math::
+    \begin{align}
+     \mathrm{ndtr}(x) =&\  \mathit{scale} * (1 + \mathit{sum}) + R_N \\
+     \mathit{scale}   =&\  \frac{e^{-0.5 x^2}}{-x \sqrt{2 \pi}} \\
+     \mathit{sum}     =&\  \sum_{n=1}^N {-1}^n (2n-1)!! / (x^2)^n \\
+     R_N     =&\  O(e^{-0.5 x^2} (2N+1)!! / |x|^{2N+3})
+    \end{align}
 
-  where `(2n-1)!! = (2n-1) (2n-3) (2n-5) ...  (3) (1)` is a
-  [double-factorial](https://en.wikipedia.org/wiki/Double_factorial).
+  where :math:`(2n-1)!! = (2n-1) (2n-3) (2n-5) ...  (3) (1)` is a
+  `double-factorial
+  <https://en.wikipedia.org/wiki/Double_factorial>`_ operator.
 
 
   Args:
     x: an array of type `float32`, `float64`.
-    series_order: Positive Python `integer`. Maximum depth to
+    series_order: Positive Python integer. Maximum depth to
       evaluate the asymptotic expansion. This is the `N` above.
 
   Returns:
-    log_ndtr: an array with `dtype=x.dtype`.
+    an array with `dtype=x.dtype`.
 
   Raises:
     TypeError: if `x.dtype` is not handled.
