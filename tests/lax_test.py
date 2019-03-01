@@ -1437,6 +1437,35 @@ class LaxTest(jtu.JaxTestCase):
     fun = partial(lax.scatter_add, dimension_numbers=dnums)
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_idxs={}_update={}_dnums={}".format(
+          jtu.format_shape_dtype_string(arg_shape, dtype),
+          idxs, update_shape, dnums),
+       "arg_shape": arg_shape, "dtype": dtype, "idxs": idxs,
+       "update_shape": update_shape, "dnums": dnums, "rng": rng,
+       "rng_idx": rng_idx}
+      for dtype in float_dtypes
+      for arg_shape, idxs, update_shape, dnums in [
+          ((5,), onp.array([[0], [2]]), (2,), lax.ScatterDimensionNumbers(
+            update_window_dims=(), inserted_window_dims=(0,),
+            scatter_dims_to_operand_dims=(0,))),
+          ((10,), onp.array([[0], [0], [0]]), (3, 2), lax.ScatterDimensionNumbers(
+            update_window_dims=(1,), inserted_window_dims=(),
+            scatter_dims_to_operand_dims=(0,))),
+          ((10, 5,), onp.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
+            update_window_dims=(1,), inserted_window_dims=(0,),
+            scatter_dims_to_operand_dims=(0,))),
+      ]
+      for rng_idx in [jtu.rand_int(max(arg_shape))]
+      for rng in [jtu.rand_default()]))
+  def testScatter(self, arg_shape, dtype, idxs, update_shape, dnums, rng,
+                  rng_idx):
+    rand_idxs = lambda: rng_idx(idxs.shape, idxs.dtype)
+    args_maker = lambda: [rng(arg_shape, dtype), rand_idxs(),
+                          rng(update_shape, dtype)]
+    fun = partial(lax.scatter, dimension_numbers=dnums)
+    self._CompileAndCheck(fun, args_maker, check_dtypes=True)
+
 
 class DeviceConstantTest(jtu.JaxTestCase):
   def _CheckDeviceConstant(self, make_const, expected):
@@ -2121,7 +2150,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     idxs = tuple(rng(e.shape, e.dtype) for e in idxs)
     src = rng(shape, dtype)
     index_take = lambda src: lax.index_take(src, idxs, axes)
-    check_grads(index_take, (src,), 2, 1e-2, 1e-2, 1e-2)
+    check_grads(index_take, (src,), 2, 1e-2, 1e-2, 1)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_idxs={}_dnums={}_slice_sizes={}".format(
@@ -2148,7 +2177,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     gather = lambda x: lax.gather(x, idxs, dimension_numbers=dnums,
                                   slice_sizes=slice_sizes)
     x = rng(shape, dtype)
-    check_grads(gather, (x,), 2, 1e-2, 1e-2, 1e-2)
+    check_grads(gather, (x,), 2, 1e-2, 1e-2, 1.)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_idxs={}_update={}_dnums={}".format(
@@ -2178,7 +2207,37 @@ class LaxAutodiffTest(jtu.JaxTestCase):
                                                dimension_numbers=dnums)
     x = rng(arg_shape, dtype)
     y = rng(update_shape, dtype)
-    check_grads(scatter_add, (x, y), 2, 1e-2, 1e-2, 1e-2)
+    check_grads(scatter_add, (x, y), 2, 1e-2, 1e-2, 1.)
+
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_idxs={}_update={}_dnums={}".format(
+          jtu.format_shape_dtype_string(arg_shape, dtype),
+          idxs, update_shape, dnums),
+       "arg_shape": arg_shape, "dtype": dtype, "idxs": idxs,
+       "update_shape": update_shape, "dnums": dnums, "rng": rng,
+       "rng_idx": rng_idx}
+      for dtype in float_dtypes
+      for arg_shape, idxs, update_shape, dnums in [
+          ((5,), onp.array([[0], [2]]), (2,), lax.ScatterDimensionNumbers(
+            update_window_dims=(), inserted_window_dims=(0,),
+            scatter_dims_to_operand_dims=(0,))),
+          ((10,), onp.array([[0], [0], [0]]), (3, 2), lax.ScatterDimensionNumbers(
+            update_window_dims=(1,), inserted_window_dims=(),
+            scatter_dims_to_operand_dims=(0,))),
+          ((10, 5,), onp.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
+            update_window_dims=(1,), inserted_window_dims=(0,),
+            scatter_dims_to_operand_dims=(0,))),
+      ]
+      for rng_idx in [jtu.rand_int(max(arg_shape))]
+      for rng in [jtu.rand_default()]))
+  def testScatterGrad(self, arg_shape, dtype, idxs, update_shape, dnums, rng,
+                         rng_idx):
+    idxs = rng_idx(idxs.shape, idxs.dtype)
+    scatter = lambda x, y: lax.scatter(x, idxs, y, dimension_numbers=dnums)
+    x = rng(arg_shape, dtype)
+    y = rng(update_shape, dtype)
+    check_grads(scatter, (x, y), 2, 1e-2, 1e-2, 1.)
 
   def testStopGradient(self):
     def f(x):
