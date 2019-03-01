@@ -475,6 +475,8 @@ class AbstractTuple(AbstractValue, tuple):
   def __repr__(self):
     return '({})'.format(','.join(map(repr, self)))
 
+  # TODO(mattjj,phawkins): bool, maybe getitem
+
 
 unit = JaxTuple(())
 unitvar = '*'

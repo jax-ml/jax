@@ -91,7 +91,6 @@ def build_tree(treedef, xs):
 tree_flatten = partial(walk_pytree, concatenate, lambda x: [x])
 
 def tree_unflatten(treedef, xs):
-  # like build_tree, but handles empty containers in the tree
   return _tree_unflatten(iter(xs), treedef)
 
 def _tree_unflatten(xs, treedef):

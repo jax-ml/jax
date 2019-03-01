@@ -302,9 +302,16 @@ def xla_pcall_impl(fun, *args, **params):
     return xla.build_tree(iter(flat_ans), out_tree())
 
 def abstractify(axis_size, x):
-  assert onp.shape(x)[0] == axis_size
-  aval = xla.abstractify(x)
-  return ShapedArray(aval.shape[1:], aval.dtype)
+  return _shard_aval(axis_size, xla.abstractify(x))
+
+def _shard_aval(axis_size, aval):
+  if type(aval) is AbstractTuple:
+    return AbstractTuple(map(partial(_shard_aval, axis_size), aval))
+  elif type(aval) is ShapedArray:
+    assert aval.shape[0] == axis_size
+    return ShapedArray(aval.shape[1:], aval.dtype)
+  else:
+    raise TypeError(type(aval))
 
 @lu.memoize
 def parallel_callable(fun, axis_name, axis_size, *avals):
