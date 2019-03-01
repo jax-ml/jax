@@ -597,18 +597,18 @@ def angle(x):
 
 @_wraps(onp.reshape)
 def reshape(a, newshape, order="C"):  # pylint: disable=missing-docstring
-  if order == "C" or order is None:
-    dims = None
+  dummy_val = onp.broadcast_to(0, shape(a))  # zero strides
+  computed_newshape = onp.reshape(dummy_val, newshape).shape
+
+  if order == "C":
+    return lax.reshape(a, computed_newshape, None)
   elif order == "F":
     dims = onp.arange(ndim(a))[::-1]
+    return lax.reshape(a, computed_newshape[::-1], dims).T
   elif order == "A":
     raise NotImplementedError("np.reshape order=A is not implemented.")
   else:
     raise ValueError("Unexpected value for 'order' argument: {}.".format(order))
-
-  dummy_val = onp.broadcast_to(0, shape(a))  # zero strides
-  computed_newshape = onp.reshape(dummy_val, newshape).shape
-  return lax.reshape(a, computed_newshape, dims)
 
 
 @_wraps(onp.ravel)
