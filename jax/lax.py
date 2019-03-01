@@ -958,9 +958,19 @@ def _revise_cond_jaxpr(new_pval, old_pval, jaxpr, consts):
 
 
 def scan(f, a, bs):
-  return scan_p.bind(a, bs, f=f)
+  assert type(bs) is tuple
+  assert type(a) is tuple
 
-def _scan_impl(a, bs, f=None):
+  a = core.pack(a)
+  bs = core.pack(bs)
+  a_pv = _abstractify(a)
+  b_pv = _abstractify(core.pack([b[0] for b in bs]))
+  jaxpr, _, consts = pe.trace_to_jaxpr(lu.wrap_init(f), (a_pv, b_pv))
+  assert not consts  # TODO
+
+  return scan_p.bind(a, bs, jaxpr=jaxpr)
+
+def _scan_impl(a, bs, jaxpr):
   """Scans over a list.
 
   Arguments:
@@ -968,8 +978,8 @@ def _scan_impl(a, bs, f=None):
     a: `a` value.
     bs: `b` values.
   """
-  a_flat, a_tree = tree_flatten(a)
-  bs_flat, bs_tree = tree_flatten(bs)
+  a_flat = tuple(a)
+  bs_flat = tuple(bs)
 
   # Verifies that the bs are all arrays of the same length
   if len(bs_flat) == 0:
@@ -995,19 +1005,12 @@ def _scan_impl(a, bs, f=None):
   def body_fun(i, vals):
     a_flat, state_flat = vals
     assert len(a_flat) == len(state_flat)
-    a = tree_unflatten(a_tree, a_flat)
 
     b_flat = []
     for b in bs_flat:
       b_flat.append(dynamic_index_in_dim(b, i, keepdims=False))
-    bs = tree_unflatten(bs_tree, b_flat)
 
-    a = f(a, bs)
-    a_out_flat, a_out_tree = tree_flatten(a)
-    if len(a_out_flat) != len(a_flat) or a_tree != a_out_tree:
-      raise ValueError(
-        "The first input of f must have the same tree structure as the output: "
-        "{} vs {}.".format(a_tree, a_out_tree))
+    a_out_flat = core.eval_jaxpr(jaxpr, (), (), a_flat, core.pack(b_flat))
 
     state_out_flat = []
     for a, a_out, state in zip(a_flat, a_out_flat, state_flat):
@@ -1018,10 +1021,10 @@ def _scan_impl(a, bs, f=None):
       state_out = dynamic_update_index_in_dim(state, a_out[None, ...], i, axis=0)
       state_out_flat.append(state_out)
 
-    return a_out_flat, state_out_flat
+    return tuple(a_out_flat), state_out_flat
 
   _, out_flat = fori_loop(0, length, body_fun, (a_flat, out_flat))
-  return tree_unflatten(a_tree, out_flat)
+  return core.pack(out_flat)
 
 def _scan_jvp(primals, tangents, f=None):
   # (ap, bp), (adot, bdot)
