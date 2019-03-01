@@ -43,7 +43,7 @@ def _CheckShapeAgreement(test_case, init_fun, apply_fun, input_shape):
   result_shape, params = init_fun(input_shape)
   inputs = random_inputs(onp.random.RandomState(0), input_shape)
   rng_key = random.PRNGKey(0)
-  result = apply_fun(params, inputs, rng_key)
+  result = apply_fun(params, inputs, rng=rng_key)
   test_case.assertEqual(result.shape, result_shape)
 
 
