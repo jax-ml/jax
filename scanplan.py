@@ -3,7 +3,7 @@ import numpy as onp
 
 import jax.numpy as np
 from jax import core
-from jax import make_jaxpr, vjp
+from jax import make_jaxpr, vjp, jvp
 from jax import lax
 
 
@@ -16,6 +16,9 @@ bs = onp.array([2, 4, -2, 6], onp.float32)
 out = g(a, bs)
 
 jaxpr = make_jaxpr(g)(a, bs)
+
+
+primal, tangent = jvp(g, (a, bs), (a, bs))
 
 
 ###
