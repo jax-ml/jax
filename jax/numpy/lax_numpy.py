@@ -1850,9 +1850,8 @@ def take(a, indices, axis=None, out=None, mode=None):
       list(range(axis)) +
       list(range(axis + index_dims, len(a.shape) + index_dims - 1))),
     collapsed_slice_dims=(axis,),
-    start_index_map=(axis,),
-    index_vector_dim=index_dims)
-  return lax.gather(a, indices, dimension_numbers=dnums,
+    start_index_map=(axis,))
+  return lax.gather(a, indices[..., None], dimension_numbers=dnums,
                     slice_sizes=tuple(slice_sizes))
 
 
