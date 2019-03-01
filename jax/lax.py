@@ -639,8 +639,7 @@ def index_take(src, idxs, axes):
   dnums = GatherDimensionNumbers(
       offset_dims=offset_dims,
       collapsed_slice_dims=axes,
-      start_index_map=axes,
-      index_vector_dim=1)
+      start_index_map=axes)
   return gather(src, indices, dimension_numbers=dnums, slice_sizes=slice_sizes)
 
 def transpose(operand, permutation):
@@ -1066,7 +1065,7 @@ def dynamic_update_index_in_dim(operand, update, index, axis):
   if _ndim(update) != _ndim(operand):
     assert _ndim(update) + 1 == _ndim(operand)
     ax = axis % _ndim(operand)
-    update = reshape(update, operand.shape[:ax] + (1,) + operand.shape[ax:])
+    update = reshape(update, operand.shape[:ax] + (1,) + operand.shape[ax+1:])
   return dynamic_update_slice_in_dim(operand, update, index, axis)
 
 
@@ -2509,8 +2508,7 @@ ad.primitive_transposes[dynamic_update_slice_p] = \
 
 class GatherDimensionNumbers(collections.namedtuple(
     "GatherDimensionNumbers",
-    ["offset_dims", "collapsed_slice_dims", "start_index_map",
-     "index_vector_dim"])):
+    ["offset_dims", "collapsed_slice_dims", "start_index_map"])):
   """
   Describes the dimension number arguments to an `XLA's Gather operator
   <https://www.tensorflow.org/xla/operation_semantics#gather>`_. See the XLA
@@ -2526,19 +2524,21 @@ class GatherDimensionNumbers(collections.namedtuple(
       order.
     start_index_map: for each dimension in `start_indices`, gives the
       corresponding dimension in `operand` that is to be sliced. Must be a
-      tuple of integers with size equal to `ndim(start_indices)`.
-    index_vector_dim: describes which dimension of `start_indices` "contains"
-      the start indices. If equal to `len(start_indices)` the indices are
-      taken to be scalars.
+      tuple of integers with size equal to `start_indices.shape[-1]`.
+
+  Unlike XLA's `GatherDimensionNumbers` structure, `index_vector_dim` is
+  implicit; there is always an index vector dimension and it must always be the
+  last dimension. To gather scalar indices, add a trailing dimension of size 1.
   """
 
-def _gather_dimensions_proto(dimension_numbers):
+def _gather_dimensions_proto(indices_shape, dimension_numbers):
   assert type(dimension_numbers) is GatherDimensionNumbers
   proto = xla_bridge.xla_data_pb2.GatherDimensionNumbers()
   proto.offset_dims.extend(dimension_numbers.offset_dims)
   proto.collapsed_slice_dims.extend(dimension_numbers.collapsed_slice_dims)
   proto.start_index_map.extend(dimension_numbers.start_index_map)
-  proto.index_vector_dim = dimension_numbers.index_vector_dim
+  assert len(indices_shape) > 0
+  proto.index_vector_dim = len(indices_shape) - 1
   return proto
 
 def _gather_dtype_rule(operand, start_indices, **kwargs):
@@ -2554,8 +2554,6 @@ def _gather_shape_rule(operand, start_indices, dimension_numbers, slice_sizes,
           "operand.shape={}, slice_sizes={}".format(operand_shape, slice_sizes))
     raise ValueError(msg)
   expanded_start_indices_shape = list(start_indices.shape)
-  if len(expanded_start_indices_shape) == dimension_numbers.index_vector_dim:
-    expanded_start_indices_shape.append(1)
   result_rank = len(dimension_numbers.offset_dims)
   result_rank += len(expanded_start_indices_shape) - 1
   output_shape = []
@@ -2568,16 +2566,16 @@ def _gather_shape_rule(operand, start_indices, dimension_numbers, slice_sizes,
       output_shape.append(slice_sizes[offset_dims_seen])
       offset_dims_seen += 1
     else:
-      if gather_dims_seen == dimension_numbers.index_vector_dim:
-        gather_dims_seen += 1
       output_shape.append(expanded_start_indices_shape[gather_dims_seen])
       gather_dims_seen += 1
   return tuple(output_shape)
 
 def _gather_translation_rule(c, operand, start_indices, dimension_numbers,
                              slice_sizes, operand_shape):
-  return c.Gather(operand, start_indices,
-                  _gather_dimensions_proto(dimension_numbers), slice_sizes)
+  indices_shape = c.GetShape(start_indices)
+  return c.Gather(
+    operand, start_indices,
+    _gather_dimensions_proto(indices_shape, dimension_numbers), slice_sizes)
 
 def _gather_jvp_rule(g, operand, start_indices, dimension_numbers, slice_sizes,
                      operand_shape):
@@ -2592,8 +2590,7 @@ def _gather_transpose_rule(t, operand, start_indices, dimension_numbers,
   scatter_dnums = ScatterDimensionNumbers(
     update_window_dims=dimension_numbers.offset_dims,
     inserted_window_dims=dimension_numbers.collapsed_slice_dims,
-    scatter_dims_to_operand_dims=dimension_numbers.start_index_map,
-    index_vector_dim=dimension_numbers.index_vector_dim)
+    scatter_dims_to_operand_dims=dimension_numbers.start_index_map)
   return [scatter_add(zeros, start_indices, t, scatter_dnums), ad_util.zero]
 
 def _gather_batching_rule(batched_args, batch_dims, dimension_numbers,
@@ -2610,43 +2607,33 @@ def _gather_batching_rule(batched_args, batch_dims, dimension_numbers,
     dnums = GatherDimensionNumbers(
         offset_dims=offset_dims,
         collapsed_slice_dims=collapsed_slice_dims,
-        start_index_map=start_index_map,
-        index_vector_dim=dimension_numbers.index_vector_dim)
+        start_index_map=start_index_map)
     return gather(operand, start_indices, dimension_numbers=dnums,
                   slice_sizes=slice_sizes), 0
 
   elif operand_bdim is None and start_indices_bdim is not None:
     start_indices = batching.move_dim_to_front(start_indices, start_indices_bdim)
     offset_dims = tuple(onp.add(1, dimension_numbers.offset_dims))
-    index_vector_dim = dimension_numbers.index_vector_dim + 1
     dnums = GatherDimensionNumbers(
         offset_dims=offset_dims,
         collapsed_slice_dims=dimension_numbers.collapsed_slice_dims,
-        start_index_map=dimension_numbers.start_index_map,
-        index_vector_dim=index_vector_dim)
+        start_index_map=dimension_numbers.start_index_map)
     return gather(operand, start_indices, dimension_numbers=dnums,
                   slice_sizes=slice_sizes), 0
 
   else:
-    # get rid of scalar index case (noticing our start_indices.ndim is
-    # incremented by one compared to the original user code)
-    if dimension_numbers.index_vector_dim == start_indices.ndim - 1:
-      start_indices = reshape(start_indices, start_indices.shape + (1,))
-
     # move our batch dimensions to the front to preserve sanity
     operand = batching.move_dim_to_front(operand, operand_bdim)
     start_indices = batching.move_dim_to_front(start_indices, start_indices_bdim)
 
-    # Example: user code had start_indices shape (3, 4, 5) and index_vector_dim
-    # of 2, and we have to deal with start_indices shape (7, 3, 4, 5). We
-    # transform that to an index_vector_dim of 3, and a start_indices of shape
-    # (7, 3, 4, 6) where we concatenated an iota that counts along our batch
-    # dimension to the front of the ndindex.
-    index_vector_dim = dimension_numbers.index_vector_dim + 1
+    # Example: user code had start_indices shape (3, 4, 5), and we have to deal
+    # with start_indices shape (7, 3, 4, 5). We transform that to a
+    # start_indices of shape (7, 3, 4, 6) where we concatenated an iota that
+    # counts along our batch dimension to the front of the ndindex.
     count_shape = list(start_indices.shape)
-    count_shape[index_vector_dim] = 1
+    count_shape[-1] = 1
     counts = broadcasted_iota(start_indices.dtype, tuple(count_shape), 0)
-    start_indices = concatenate([counts, start_indices], index_vector_dim)
+    start_indices = concatenate([counts, start_indices], len(counts_shape) - 1)
 
     slice_sizes = (1,) + slice_sizes
     collapsed_slice_dims = (0,) + tuple(onp.add(1, dimension_numbers.collapsed_slice_dims))
@@ -2656,8 +2643,7 @@ def _gather_batching_rule(batched_args, batch_dims, dimension_numbers,
     dnums = GatherDimensionNumbers(
         offset_dims=offset_dims,
         collapsed_slice_dims=collapsed_slice_dims,
-        start_index_map=start_index_map,
-        index_vector_dim=index_vector_dim)
+        start_index_map=start_index_map)
     return gather(operand, start_indices, dimension_numbers=dnums,
                   slice_sizes=slice_sizes), 0
 
@@ -2672,7 +2658,7 @@ batching.primitive_batchers[gather_p] = _gather_batching_rule
 class ScatterDimensionNumbers(collections.namedtuple(
     "ScatterDimensionNumbers",
     ["update_window_dims", "inserted_window_dims",
-     "scatter_dims_to_operand_dims", "index_vector_dim"])):
+     "scatter_dims_to_operand_dims"])):
   """
   Describes the dimension number arguments to an `XLA's Scatter operator
   <https://www.tensorflow.org/xla/operation_semantics#scatter>`_. See the XLA
@@ -2687,20 +2673,23 @@ class ScatterDimensionNumbers(collections.namedtuple(
       order, each representing a dimension number of the output. These are the
       mirror image of `collapsed_slice_dims` in the case of `gather`.
     scatter_dims_to_operand_dims: for each dimension in `scatter_indices`, gives
-      the corresponding dimension in `operand`.
-    index_vector_dim: describes which dimension of `scatter_indices` "contains"
-      the start indices. If equal to `len(scatter_indices)` the indices are
-      taken to be scalars.
+      the corresponding dimension in `operand`. Must be a sequence of integers
+      with size equal to indices.shape[-1].
+
+  Unlike XLA's `ScatterDimensionNumbers` structure, `index_vector_dim` is
+  implicit; there is always an index vector dimension and it must always be the
+  last dimension. To scatter scalar indices, add a trailing dimension of size 1.
   """
 
-def _scatter_dimensions_proto(dimension_numbers):
+def _scatter_dimensions_proto(indices_shape, dimension_numbers):
   assert type(dimension_numbers) is ScatterDimensionNumbers
   proto = xla_bridge.xla_data_pb2.ScatterDimensionNumbers()
   proto.update_window_dims.extend(dimension_numbers.update_window_dims)
   proto.inserted_window_dims.extend(dimension_numbers.inserted_window_dims)
   proto.scatter_dims_to_operand_dims.extend(
       dimension_numbers.scatter_dims_to_operand_dims)
-  proto.index_vector_dim = dimension_numbers.index_vector_dim
+  assert len(indices_shape) > 0
+  proto.index_vector_dim = len(indices_shape) - 1
   return proto
 
 def _scatter_dtype_rule(operand, scatter_indices, updates, **kwargs):
@@ -2719,8 +2708,9 @@ def _scatter_translation_rule(c, operand, scatter_indices, updates,
   init_value = c.Constant(onp.array(0, dtype))
   update_computation = _reduction_computation(
       c, update_jaxpr, update_consts, init_value)
+  indices_shape = c.GetShape(scatter_indices)
   return c.Scatter(operand, scatter_indices, updates, update_computation,
-                  _scatter_dimensions_proto(dimension_numbers))
+                  _scatter_dimensions_proto(indices_shape, dimension_numbers))
 
 def _scatter_jvp(primals, tangents, update_jaxpr, update_consts,
                  dimension_numbers, updates_shape):
@@ -2754,8 +2744,7 @@ def _scatter_transpose_rule(t, operand, scatter_indices, updates,
     gather_dnums = GatherDimensionNumbers(
       offset_dims=dimension_numbers.update_window_dims,
       collapsed_slice_dims=dimension_numbers.inserted_window_dims,
-      start_index_map=dimension_numbers.scatter_dims_to_operand_dims,
-      index_vector_dim=dimension_numbers.index_vector_dim)
+      start_index_map=dimension_numbers.scatter_dims_to_operand_dims)
     slice_sizes = []
     pos = 0
     for i in xrange(len(t.shape)):
@@ -2792,23 +2781,19 @@ def _scatter_batching_rule(batched_args, batch_dims, update_jaxpr,
     dnums = ScatterDimensionNumbers(
         update_window_dims=update_window_dims,
         inserted_window_dims=inserted_window_dims,
-        scatter_dims_to_operand_dims=scatter_dims_to_operand_dims,
-        index_vector_dim=dimension_numbers.index_vector_dim)
+        scatter_dims_to_operand_dims=scatter_dims_to_operand_dims)
     return scatter_add(operand, scatter_indices, updates, dnums), 0
   else:
     # see the third case in _gather_batching_rule for comparison and comments
-    if dimension_numbers.index_vector_dim == scatter_indices.ndim - 1:
-      scatter_indices = reshape(scatter_indices, scatter_indices.shape + (1,))
-
     scatter_indices = batching.move_dim_to_front(scatter_indices,
                                                  scatter_indices_bdim)
     updates = batching.move_dim_to_front(updates, updates_bdim)
 
-    index_vector_dim = dimension_numbers.index_vector_dim + 1
     count_shape = list(scatter_indices.shape)
-    count_shape[index_vector_dim] = 1
+    count_shape[-1] = 1
     counts = broadcasted_iota(scatter_indices.dtype, tuple(count_shape), 0)
-    scatter_indices = concatenate([counts, scatter_indices], index_vector_dim)
+    scatter_indices = concatenate([counts, scatter_indices],
+                                  len(count_shape) - 1)
 
     update_window_dims = tuple(onp.add(1, dimension_numbers.update_window_dims))
     inserted_window_dims = (0,) + tuple(onp.add(1, dimension_numbers.inserted_window_dims))
@@ -2817,8 +2802,7 @@ def _scatter_batching_rule(batched_args, batch_dims, update_jaxpr,
     dnums = ScatterDimensionNumbers(
         update_window_dims=update_window_dims,
         inserted_window_dims=inserted_window_dims,
-        scatter_dims_to_operand_dims=scatter_dims_to_operand_dims,
-        index_vector_dim=index_vector_dim)
+        scatter_dims_to_operand_dims=scatter_dims_to_operand_dims)
     return scatter_add(operand, scatter_indices, updates, dnums), 0
 
 scatter_p = standard_primitive(
