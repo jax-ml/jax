@@ -54,7 +54,7 @@ from .interpreters import ad
 from .interpreters import batching
 from .interpreters import parallel
 from .util import curry, memoize, safe_zip, unzip2, prod
-from .tree_util import build_tree, tree_flatten, tree_unflatten
+from .tree_util import build_tree, tree_unflatten
 from .lib import xla_bridge
 
 FLAGS = flags.FLAGS
@@ -872,8 +872,8 @@ def while_loop(cond_fun, body_fun, init_val):
 
   pval_flat = _abstractify(init_val_flat)
   cond_jaxpr, _, cond_consts = pe.trace_to_jaxpr(flat_cond_fun, (pval_flat,))
-  body_jaxpr, pvout, body_consts = pe.trace_to_jaxpr(flat_body_fun, (pval_flat,))
-  aval_out, _ = pvout
+  body_jaxpr, pval_out, body_consts = pe.trace_to_jaxpr(flat_body_fun, (pval_flat,))
+  aval_out, _ = pval_out
 
   if out_tree() != in_tree:
     raise TypeError("body_fun input and output must have identical structure")
@@ -958,19 +958,37 @@ def _revise_cond_jaxpr(new_pval, old_pval, jaxpr, consts):
 
 
 def scan(f, a, bs):
-  assert type(bs) is tuple
-  assert type(a) is tuple
+  a, a_tree = pytree_to_flatjaxtuple(a)
+  bs, b_tree = pytree_to_flatjaxtuple(bs)  # b_tree is the same as bs_tree
+  f, out_tree = pytree_fun_to_flatjaxtuple_fun(lu.wrap_init(f), (a_tree, b_tree))
 
-  a = core.pack(a)
-  bs = core.pack(bs)
-  a_pv = _abstractify(a)
-  b_pv = _abstractify(core.pack([b[0] for b in bs]))
-  jaxpr, _, consts = pe.trace_to_jaxpr(lu.wrap_init(f), (a_pv, b_pv))
-  assert not consts  # TODO
+  if not len(bs):
+    raise TypeError("bs argument to scan does not contain any arrays")
+  if any(b.ndim == 0 for b in bs):
+    msg = "bs argument arrays must be rank >=1, got shapes {}."
+    raise TypeError(msg.format(", ".format(str(b.shape) for b in bs)))
+  if len({b.shape[0] for b in bs}) != 1:
+    msg = "arrays in bs must have equal most-major dimensions, got shapes {}."
+    raise TypeError(msg.format(", ".format(str(b.shape) for b in bs)))
 
-  return scan_p.bind(a, bs, jaxpr=jaxpr)
+  a_pval = a_aval, _ = _abstractify(a)
+  bs_aval, _ = _abstractify(bs)
+  b_aval = core.AbstractTuple([ShapedArray(b.shape[1:], b.dtype) for b in bs_aval])
+  b_pval = pe.PartialVal((b_aval, core.unit))
+  jaxpr, pval_out, consts = pe.trace_to_jaxpr(f, (a_pval, b_pval))
+  aval_out, _ = pval_out
 
-def _scan_impl(a, bs, jaxpr):
+  if a_tree != out_tree():
+    msg = "scanned function input and output must have identical structure"
+    raise TypeError(msg)
+  if a_aval != aval_out:
+    msg = "output shape mismatch for scanned function: {} vs {}"
+    raise TypeError(msg.format(a_aval, aval_out))
+
+  out = scan_p.bind(a, bs, core.pack(consts), aval_out=aval_out, jaxpr=jaxpr)
+  return tree_unflatten(out_tree(), out)
+
+def _scan_impl(a, bs, consts, aval_out, jaxpr):
   """Scans over a list.
 
   Arguments:
@@ -978,53 +996,20 @@ def _scan_impl(a, bs, jaxpr):
     a: `a` value.
     bs: `b` values.
   """
-  a_flat = tuple(a)
-  bs_flat = tuple(bs)
-
-  # Verifies that the bs are all arrays of the same length
-  if len(bs_flat) == 0:
-    raise ValueError("bs argument to scan does not contain any arrays")
-
-  if any(len(b.shape) == 0 for b in bs_flat):
-      msg = "bs argument arrays must be rank >= 1, got shapes {}"
-      raise ValueError(msg.format(",".join(str(b.shape) for b in bs_flat)))
-
-  length = bs_flat[0].shape[0]
-  for b in bs_flat[1:]:
-    if b.shape[0] != length:
-      msg = ("bs argument arrays must have equal most-major dimensions; got "
-             "shapes {}")
-      raise ValueError(msg.format(",".join(str(b.shape) for b in bs_flat)))
-
-  # Form the initial outputs as zeros like `a` with a new leading `length`
-  # dimension.
-  out_flat = []
-  for a in a_flat:
-    out_flat.append(full((length,) + tuple(a.shape), 0, _dtype(a)))
+  length = tuple(bs)[0].shape[0]
+  state = [full((length,) + elt.shape, 0, _dtype(elt)) for elt in a]
 
   def body_fun(i, vals):
-    a_flat, state_flat = vals
-    assert len(a_flat) == len(state_flat)
+    a, state = vals
+    assert len(a) == len(state)
+    b = [dynamic_index_in_dim(b, i, keepdims=False) for b in bs]
+    a_out = core.eval_jaxpr(jaxpr, consts, (), a, core.pack(b))
+    state_out = [dynamic_update_index_in_dim(s, a[None, ...], i, axis=0)
+                 for a, s in zip(a_out, state)]
+    return a_out, state_out
 
-    b_flat = []
-    for b in bs_flat:
-      b_flat.append(dynamic_index_in_dim(b, i, keepdims=False))
-
-    a_out_flat = core.eval_jaxpr(jaxpr, (), (), a_flat, core.pack(b_flat))
-
-    state_out_flat = []
-    for a, a_out, state in zip(a_flat, a_out_flat, state_flat):
-      if a.shape != a_out.shape:
-        raise ValueError(
-           "Output shape mismatch for f: {} vs {}".format(a.shape, a_out.shape))
-
-      state_out = dynamic_update_index_in_dim(state, a_out[None, ...], i, axis=0)
-      state_out_flat.append(state_out)
-
-    return tuple(a_out_flat), state_out_flat
-
-  _, out_flat = fori_loop(0, length, body_fun, (a_flat, out_flat))
-  return core.pack(out_flat)
+  _, out = fori_loop(0, length, body_fun, (a, state))
+  return core.pack(out)
 
 def _scan_jvp(primals, tangents, f=None):
   # (ap, bp), (adot, bdot)
@@ -1040,7 +1025,7 @@ def _scan_jvp(primals, tangents, f=None):
 
 scan_p = core.Primitive("scan")
 scan_p.def_impl(_scan_impl)
-scan_p.def_abstract_eval(partial(pe.abstract_eval_fun, _scan_impl))
+scan_p.def_abstract_eval(partial(pe.abstract_eval_fun, _scan_impl))  # TODO
 xla.translations[scan_p] = partial(xla.lower_fun, _scan_impl)
 ad.primitive_jvps[scan_p] = _scan_jvp
 
