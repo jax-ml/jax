@@ -126,7 +126,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self._CompileAndCheck(lax_op, args_maker, check_dtypes=True)
 
     if test_autodiff:
-      jtu.check_grads(lax_op, args, order=1, atol=1e-3, rtol=1e-3)
+      jtu.check_grads(lax_op, args, order=1, atol=1e-3, rtol=3e-3)
 
 
 if __name__ == "__main__":
