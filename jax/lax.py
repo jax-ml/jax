@@ -964,7 +964,7 @@ def scan(f, a, bs):
 
   if not len(bs):
     raise TypeError("bs argument to scan does not contain any arrays")
-  if any(b.ndim == 0 for b in bs):
+  if any([b.ndim == 0 for b in bs]):
     msg = "bs argument arrays must be rank >=1, got shapes {}."
     raise TypeError(msg.format(", ".format(str(b.shape) for b in bs)))
   if len({b.shape[0] for b in bs}) != 1:
@@ -1011,17 +1011,23 @@ def _scan_impl(a, bs, consts, aval_out, jaxpr):
   _, out = fori_loop(0, length, body_fun, (a, state))
   return core.pack(out)
 
-def _scan_jvp(primals, tangents, f=None):
-  # (ap, bp), (adot, bdot)
+def _scan_jvp(primals, tangents, aval_out, jaxpr):
+  a, bs, consts_primals = primals
+  a_dot, bs_dot, consts_tangents = tangents
+  assert consts_tangents is ad_util.zero  # TODO figure out
+
+  primal_out = scan_p.bind(a, bs, consts_primals,
+                           aval_out=aval_out, jaxpr=jaxpr)
+
+  # TODO jaxtuple packing issue
   def f_jvp(a_pt, b_pt):
     a, a_dot = a_pt
     b, b_dot = b_pt
-    return api.jvp(f, (a, b), (a_dot, b_dot))
+    f = lambda a, b, c: core.eval_jaxpr(jaxpr, c, (), a, b)
+    return api.jvp(f, (a, b, consts), (b, b_dot, consts_tangents))
+  tangent_out = scan(f_jvp, (a, a_dot), (b, b_dot))
 
-  a, bs = primals
-  a_dot, bs_dot = tangents
-
-  return scan(f_jvp, (a, a_dot), (bs, bs_dot))
+  return primal_out, tangent_out
 
 scan_p = core.Primitive("scan")
 scan_p.def_impl(_scan_impl)
