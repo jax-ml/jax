@@ -210,7 +210,8 @@ In [4]: x = random.normal(key, (5000, 5000))
 In [5]: print(np.dot(x, x.T) / 2)  # fast!
 [[  2.52727051e+03   8.15895557e+00  -8.53276134e-01 ...,  # ...
 
-In [6]: print(np.dot(x, x.T) / 2)  # even faster! (JIT-compiled code is cached and reused in the second call)
+In [6]: print(np.dot(x, x.T) / 2)  # even faster!
+# JIT-compiled code is cached and reused in the 2nd call
 [[  2.52727051e+03   8.15895557e+00  -8.53276134e-01 ...,  # ...
 ```
 
