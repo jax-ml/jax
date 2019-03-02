@@ -60,19 +60,19 @@ def get_python_bin_path(python_bin_path_flag):
 
 # Bazel
 
-BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/0.19.2/"
+BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/0.22.0/"
 BazelPackage = collections.namedtuple("BazelPackage", ["file", "sha256"])
 bazel_packages = {
     "Linux":
         BazelPackage(
-            file="bazel-0.19.2-linux-x86_64",
+            file="bazel-0.22.0-linux-x86_64",
             sha256=
-            "2ee9f23b49fb47725f725579c47f4f50272f4f9d23643e32add1fdef6aa0c5e0"),
+            "8474ed28ed4998e2f5671ddf3a9a80ae9e484a5de3b8b70c8b654c017c65d363"),
     "Darwin":
         BazelPackage(
-            file="bazel-0.19.2-darwin-x86_64",
+            file="bazel-0.22.0-darwin-x86_64",
             sha256=
-            "74ae65127b46b59305fc5ea0c6baca355fce7e87c8624448e06f8cf2366b507e"),
+            "0fcd80d8a20b7c8b7b70ea9da4bea9b2ce3985c792d0cc7676a9e4c2f9600478"),
 }
 
 
