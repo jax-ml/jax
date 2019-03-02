@@ -40,6 +40,33 @@ import jax.numpy as np
 # other functions, like lax.conv and relu.
 
 
+class StaxLayer(tuple):
+  """A StaxLayer is a tuple (init_fun, apply_fun)
+
+  Some layers expose additional immutable properties.
+  """
+
+  def __new__(cls, init_fun, apply_fun, props=None):
+    return tuple.__new__(cls, (init_fun, apply_fun))
+
+  def __init__(self, init_fun, apply_fun, props=None):
+    self._props = dict(props)
+
+  @property
+  def init_fun(self):
+    return self[0]
+
+  @property
+  def apply_fun(self):
+    return self[1]
+
+  def __getattr__(self, prop_name):
+    if prop_name in self._props:
+      return self._props[prop_name]
+    else:
+      return super(StaxLayer, self).__getattr__(prop_name)
+
+
 def relu(x): return np.maximum(x, 0.)
 def softplus(x): return np.logaddexp(x, 0.)
 
@@ -278,7 +305,7 @@ def serial(*layers):
     for fun, param, rng in zip(apply_funs, params, rngs):
       inputs = fun(param, inputs, rng=rng, **kwargs)
     return inputs
-  return init_fun, apply_fun
+  return StaxLayer(init_fun, apply_fun, props={"layers": layers})
 
 
 def parallel(*layers):
@@ -304,7 +331,7 @@ def parallel(*layers):
     rng = kwargs.pop('rng', None)
     rngs = random.split(rng, nlayers) if rng is not None else (None,) * nlayers
     return [f(p, x, rng=r, **kwargs) for f, p, x, r in zip(apply_funs, params, inputs, rngs)]
-  return init_fun, apply_fun
+  return StaxLayer(init_fun, apply_fun, props={"layers": layers})
 
 
 def shape_dependent(make_layer):

@@ -96,6 +96,9 @@ cd jax
 pip install scipy
 ```
 
+If you are building on Linux, make sure `libpythonX.X-dev` corresponding to your
+Python version is installed (e.g. `libpython3.6-dev`).
+
 If you are building on a Mac, make sure XCode and the XCode command line tools
 are installed.
 

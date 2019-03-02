@@ -135,6 +135,17 @@ class StaxTest(jtu.JaxTestCase):
     init_fun, apply_fun = stax.serial(*spec)
     _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)
 
+  def testStaxLayerProperties(self):
+    layers = [stax.Conv(3, (2, 2)), stax.Conv(3, (2, 2))]
+    serial = stax.serial(*layers)
+    [self.assertIs(l1, l2) for (l1, l2) in zip(layers, serial.layers)]
+    [self.assertIs(f1, f2) for (f1, f2) in zip(
+        (serial.init_fun, serial.apply_fun),
+        serial)]
+
+    parallel = stax.parallel(*layers)
+    [self.assertIs(l1, l2) for (l1, l2) in zip(layers, serial.layers)]
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_input_shape={}".format(input_shape),
        "input_shape": input_shape}
@@ -163,7 +174,7 @@ class StaxTest(jtu.JaxTestCase):
     init_fun, apply_fun = stax.FanInConcat(axis)
     _CheckShapeAgreement(self, init_fun, apply_fun, input_shapes)
 
-  def testIsuse182(self):
+  def testIssue182(self):
     init_fun, apply_fun = stax.Softmax
     input_shape = (10, 3)
     inputs = onp.arange(30.).astype("float32").reshape(input_shape)
