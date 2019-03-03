@@ -68,7 +68,10 @@ class UnshapedArray(core.AbstractValue):
     return self
 
   def join(self, other):
-    return self
+    if self.dtype == other.dtype:
+      return self
+    else:
+      raise TypeError(other)
 
   def str_short(self):
     return onp.dtype(self.dtype).name

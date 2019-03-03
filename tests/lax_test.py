@@ -1335,6 +1335,92 @@ class LaxTest(jtu.JaxTestCase):
       self.assertAllClose(cfun(x, num), onp.sum(x[:num]), check_dtypes=False)
       self.assertAllClose(cfun(x, num), onp.sum(x[:num]), check_dtypes=False)
 
+  def testCond(self):
+    def fun(x):
+      if x < 3:
+        return (x, x)
+      else:
+        y = lax.mul(2, x)
+        return y, lax.mul(2, y)
+
+    @api.jit
+    def cfun(x):
+      def false_fun(x):
+        y = lax.mul(2, x)
+        return y, lax.mul(2, y)
+      return lax.cond(lax.lt(x, 3), x, lambda x: (x, x), x, false_fun)
+
+    self.assertEqual(fun(0), cfun(0))
+    self.assertEqual(fun(0), (0, 0))
+    self.assertEqual(fun(1), cfun(1))
+    self.assertEqual(fun(1), (1, 1))
+    self.assertEqual(fun(2), cfun(2))
+    self.assertEqual(fun(2), (2, 2))
+    self.assertEqual(fun(3), cfun(3))
+    self.assertEqual(fun(3), (6, 12))
+    self.assertEqual(fun(4), cfun(4))
+    self.assertEqual(fun(4), (8, 16))
+
+  def testNestedCond(self):
+    def fun(x):
+      if x < 2:
+        return lax.mul(2, x)
+      else:
+        if x < 5:
+          return lax.mul(3, x)
+        else:
+          return lax.mul(4, x)
+
+    @api.jit
+    def cfun(x):
+      return lax.cond(
+          lax.lt(x, 2),
+          x, lambda x: lax.mul(2, x),
+          x, lambda x: lax.cond(lax.lt(x, 5),
+                                x, lambda x: lax.mul(3, x),
+                                4, lambda y: lax.mul(y, x)))
+
+    self.assertEqual(cfun(1), 2)
+    self.assertEqual(cfun(3), 9)
+    self.assertEqual(cfun(6), 24)
+    self.assertEqual(cfun(1), fun(1))
+    self.assertEqual(cfun(3), fun(3))
+    self.assertEqual(cfun(6), fun(6))
+
+  def testCondOneBranchConstant(self):
+    def fun(x):
+      if x < 3:
+        return 5.
+      else:
+        return x
+
+    @api.jit
+    def cfun(x):
+      return lax.cond(lax.lt(x, 3), x, lambda x: 5, x, lambda x: x)
+
+    self.assertEqual(fun(0), cfun(0))
+    self.assertEqual(cfun(0), 5)
+    self.assertEqual(fun(4), cfun(4))
+    self.assertEqual(cfun(4), 4)
+
+  def testCondOneBranchConstantTuple(self):
+    def fun(x):
+      if x < 3:
+        return (1., 2., 3.)
+      else:
+        return (x, 2., 4.)
+
+    @api.jit
+    def cfun(x):
+      return lax.cond(lax.lt(x, 3),
+                      x, lambda x: (1, 2., 3.),
+                      x, lambda x: (x, 2., 4.))
+
+    self.assertEqual(fun(0), cfun(0))
+    self.assertEqual(cfun(0), (1, 2., 3.))
+    self.assertEqual(fun(4), cfun(4))
+    self.assertEqual(cfun(4), (4, 2., 4.))
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_lhs_shape={}_rhs_shape={}"
        .format(jtu.format_shape_dtype_string(lhs_shape, dtype),
@@ -2208,7 +2294,6 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     x = rng(arg_shape, dtype)
     y = rng(update_shape, dtype)
     check_grads(scatter_add, (x, y), 2, 1e-2, 1e-2, 1.)
-
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_idxs={}_update={}_dnums={}".format(
