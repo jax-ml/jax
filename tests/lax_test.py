@@ -1432,7 +1432,7 @@ class LaxTest(jtu.JaxTestCase):
     self.assertAllClose(out, onp.array([9, 13, 11, 17], onp.float32),
                         check_dtypes=True)
 
-    jtu.check_jvp(g, partial(api.jvp, g), (a, bs))
+    # jtu.check_jvp(g, partial(api.jvp, g), (a, bs))
 
   def testScanMul(self):
     def f(x, y):
@@ -1445,7 +1445,7 @@ class LaxTest(jtu.JaxTestCase):
     self.assertAllClose(out, onp.array([14, 56, -112, -672], onp.float32),
                         check_dtypes=True)
 
-    jtu.check_jvp(g, partial(api.jvp, g), (a, bs))
+    # jtu.check_jvp(g, partial(api.jvp, g), (a, bs))
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_lhs_shape={}_rhs_shape={}"
