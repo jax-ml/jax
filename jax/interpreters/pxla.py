@@ -305,7 +305,7 @@ def abstractify(axis_size, x):
   return _shard_aval(axis_size, xla.abstractify(x))
 
 def _shard_aval(axis_size, aval):
-  if type(aval) is AbstractTuple:
+  if type(aval) is core.AbstractTuple:
     return AbstractTuple(map(partial(_shard_aval, axis_size), aval))
   elif type(aval) is ShapedArray:
     assert aval.shape[0] == axis_size
