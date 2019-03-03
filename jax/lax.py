@@ -958,6 +958,19 @@ def _revise_cond_jaxpr(new_pval, old_pval, jaxpr, consts):
 
 
 def scan(f, a, bs):
+  """Scans over the leading axis of an array.
+
+  Arguments:
+    f: function with signature `a -> b -> a`
+    a: `a` value, or a pytree of `a` values.
+    bs: an array of `b` values, or a pytree of arrays of `b` values with the
+      same leading axis size.
+
+  Returns:
+    An array of `a` values, or a pytree of arrays of `a` values, representing
+    the result of scanning the function `f` over the leading axis of `bs`, with
+    each application producing an `a` for the next and collecting the results.
+  """
   a, a_tree = pytree_to_flatjaxtuple(a)
   bs, b_tree = pytree_to_flatjaxtuple(bs)  # b_tree is the same as bs_tree
   f, out_tree = pytree_fun_to_flatjaxtuple_fun(lu.wrap_init(f), (a_tree, b_tree))
@@ -989,13 +1002,6 @@ def scan(f, a, bs):
   return tree_unflatten(out_tree(), out)
 
 def _scan_impl(a, bs, consts, aval_out, jaxpr):
-  """Scans over a list.
-
-  Arguments:
-    f: function with signature `a -> b -> a`
-    a: `a` value.
-    bs: `b` values.
-  """
   length = tuple(bs)[0].shape[0]
   state = [full((length,) + elt.shape, 0, _dtype(elt)) for elt in a]
 
@@ -1011,15 +1017,15 @@ def _scan_impl(a, bs, consts, aval_out, jaxpr):
   _, out = fori_loop(0, length, body_fun, (a, state))
   return core.pack(out)
 
+# TODO(mattjj, phawkins): figure out what to do with consts_tangents, and the
+# jaxtuple packing issues
 def _scan_jvp(primals, tangents, aval_out, jaxpr):
   a, bs, consts_primals = primals
   a_dot, bs_dot, consts_tangents = tangents
-  assert consts_tangents is ad_util.zero  # TODO figure out
 
   primal_out = scan_p.bind(a, bs, consts_primals,
                            aval_out=aval_out, jaxpr=jaxpr)
 
-  # TODO jaxtuple packing issue
   def f_jvp(a_pt, b_pt):
     a, a_dot = a_pt
     b, b_dot = b_pt
@@ -1029,11 +1035,14 @@ def _scan_jvp(primals, tangents, aval_out, jaxpr):
 
   return primal_out, tangent_out
 
+def _scan_abstract_eval(a, bs, consts, aval_out, jaxpr):
+  return maybe_tracer_tuple_to_abstract_tuple(aval_out)
+
 scan_p = core.Primitive("scan")
 scan_p.def_impl(_scan_impl)
-scan_p.def_abstract_eval(partial(pe.abstract_eval_fun, _scan_impl))  # TODO
+scan_p.def_abstract_eval(_scan_abstract_eval)
 xla.translations[scan_p] = partial(xla.lower_fun, _scan_impl)
-ad.primitive_jvps[scan_p] = _scan_jvp
+# ad.primitive_jvps[scan_p] = _scan_jvp  # TODO(mattjj, phawkins)
 
 
 def tie_in(x, y):
