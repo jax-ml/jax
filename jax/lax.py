@@ -44,7 +44,8 @@ from .config import flags
 from .core import Primitive
 from .abstract_arrays import (UnshapedArray, ShapedArray, ConcreteArray,
                               array_types, make_shaped_array)
-from .api_util import pytree_fun_to_jaxtupletree_fun, pytree_to_jaxtupletree
+from .api_util import (pytree_fun_to_jaxtupletree_fun, pytree_to_jaxtupletree,
+                       pytree_fun_to_flatjaxtuple_fun, pytree_to_flatjaxtuple)
 from .interpreters import partial_eval as pe
 from .interpreters import xla
 from .interpreters import pxla
@@ -52,7 +53,7 @@ from .interpreters import ad
 from .interpreters import batching
 from .interpreters import parallel
 from .util import curry, memoize, safe_zip, unzip2, prod
-from .tree_util import build_tree
+from .tree_util import build_tree, tree_unflatten
 from .lib import xla_bridge
 
 FLAGS = flags.FLAGS
@@ -893,22 +894,72 @@ opaque_param_ids = itertools.count()
 
 def cond(pred, true_operand, true_fun, false_operand, false_fun):
   def trace_jaxpr(fun, operand):
-    op_flat, in_tree = pytree_to_jaxtupletree(operand)
-    fun_flat, out_tree = pytree_fun_to_jaxtupletree_fun(lu.wrap_init(fun), (in_tree,))
+    op_flat, in_tree = pytree_to_flatjaxtuple(operand)
+    fun_flat, out_tree = pytree_fun_to_flatjaxtuple_fun(lu.wrap_init(fun), (in_tree,))
     jaxpr, pvout, consts = pe.trace_to_jaxpr(fun_flat, (_abstractify(op_flat),))
-    abs_out, _ = pvout
-    return op_flat, jaxpr, consts, abs_out, out_tree
+    return op_flat, jaxpr, consts, pvout, out_tree
 
-  true_op, true_jaxpr, true_consts, true_aval, true_tree = trace_jaxpr(true_fun, true_operand)
-  false_op, false_jaxpr, false_consts, false_aval, false_tree = trace_jaxpr(false_fun, false_operand)
+  true_data = trace_jaxpr(true_fun, true_operand)
+  true_op, true_jaxpr, true_consts, true_pval, true_tree = true_data
+  false_data = trace_jaxpr(false_fun, false_operand)
+  false_op, false_jaxpr, false_consts, false_pval, false_tree = false_data
 
   if true_tree() != false_tree():
-    raise TypeError("true_fun and false_fun must have identical structure")
+    msg = "true_fun and false_fun outputs must have identical structure"
+    raise TypeError(msg)
 
-  params = _OpaqueParam((true_aval, false_aval, true_jaxpr, false_jaxpr))
+  joined_pval = pe.join_pvals(true_pval, false_pval)
+  revis = _revise_cond_jaxpr(joined_pval, true_pval, true_jaxpr, true_consts)
+  true_jaxpr, true_consts = revis
+  revis = _revise_cond_jaxpr(joined_pval, false_pval, false_jaxpr, false_consts)
+  false_jaxpr, false_consts = revis
+  aval_out, _ = joined_pval
+
   out = cond_p.bind(pred, true_op, core.pack(true_consts), false_op,
-                    core.pack(false_consts), opaque_params=params)
-  return build_tree(true_tree(), out)
+                    core.pack(false_consts), aval_out=aval_out,
+                    true_jaxpr=true_jaxpr, false_jaxpr=false_jaxpr)
+  out = pe.merge_pvals(out, joined_pval)
+  return tree_unflatten(true_tree(), out)
+
+def _revise_cond_jaxpr(new_pval, old_pval, jaxpr, consts):
+  new_pv, new_const = new_pval
+  old_pv, old_const = old_pval
+  if new_pv == old_pv:
+    # we didn't move up the lattice by joining with the other side
+    return jaxpr, consts
+  elif old_pv is None:
+    # we moved up the lattice from totally-known, so make a new jaxpr that
+    # returns a single constant JaxTuple with elements that are constants
+    # drawn from consts where new_pv is unknown
+    assert not jaxpr.eqns and not consts
+    outvar = pe.Var(0, "_cond")
+    new_jaxpr = jaxpr.copy()
+    new_jaxpr.constvars = [outvar]
+    new_jaxpr.outvar = outvar
+    new_consts = (core.pack([core.unit if pv is None else old_c
+                              for pv, old_c in zip(new_pv, old_const)]),)
+    return new_jaxpr, new_consts
+  else:
+    # we moved up the lattice, but not from totally-constant, so adapt the
+    # japxr to return some new constants in places that are now unknown but
+    # weren't before
+    eqn = jaxpr.eqns[-1]
+    assert eqn.primitive == core.pack_p
+    assert len(eqn.outvars) == 1 and eqn.outvars[0] == jaxpr.outvar
+    newvar = pe.gensym("_cond")
+    new_constvars, new_constvals = unzip2(
+        [(newvar(), c) for new, old, c in zip(new_pv, old_pv, old_const)
+          if old is None and new is not None])
+    new_consts = consts + tuple(new_constvals)
+    new_jaxpr = jaxpr.copy()
+    new_jaxpr.constvars = tuple(jaxpr.constvars) + tuple(new_constvars)
+    newvars = iter(new_constvars)
+    new_invars = [next(newvars) if old is None and new is not None else v
+                  for new, old, v in zip(new_pv, old_pv, eqn.invars)]
+    new_jaxpr.eqns = (list(jaxpr.eqns[:-1]) +
+                      [_pack_eqn(new_invars, jaxpr.outvar)])
+    return new_jaxpr, new_consts
+
 
 
 def tie_in(x, y):
@@ -3540,22 +3591,17 @@ def _pack_eqn(invars, outvar):
 
 
 def _cond_abstract_eval(pred, true_op, true_consts, false_op, false_consts,
-                        opaque_params):
+                        aval_out, true_jaxpr, false_jaxpr):
   if not isinstance(pred, ShapedArray) or pred.shape or pred.dtype != onp.bool_:
     msg = "cond pred must be a scalar boolean type, got {}."
     raise TypeError(msg.format(pred))
-  true_aval, false_aval, _, _ = opaque_params.val
-  true_aval, false_aval = map(maybe_tracer_tuple_to_abstract_tuple,
-                              (true_aval, false_aval))
   if isinstance(pred, ConcreteArray):
-    return true_aval if pred else false_aval
+    return true_op if pred else false_op
   else:
-    return core.lattice_join(true_aval, false_aval)
+    return maybe_tracer_tuple_to_abstract_tuple(aval_out)
 
 def _cond_translation_rule(c, pred, true_op, true_consts, false_op,
-                           false_consts, opaque_params):
-  _, _, true_jaxpr, false_jaxpr = opaque_params.val
-
+                           false_consts, aval_out, true_jaxpr, false_jaxpr):
   def make_computation(jaxpr, operand):
     assert len(jaxpr.invars) == 1
     arg_var = pe.Var(0, "arg")
