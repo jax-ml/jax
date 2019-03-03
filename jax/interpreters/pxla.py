@@ -44,6 +44,7 @@ map = safe_map
 
 ### util
 
+
 def shard_arg(device_ordinals, arg):
   """Shard an argument data array arg along its leading axis.
 
@@ -125,19 +126,11 @@ def xla_shard(c, sizes, x):
       return shard_array(shape, x)
 
   def shard_array(shape, x):
-    if xb.get_replica_count() == 1:
-      # TODO(mattjj): remove this special case, used for debugging on CPU
-      dims = c.GetShape(x).dimensions()
-      return c.Reshape(x, None, dims[1:])
-    else:
-      dims = list(shape.dimensions())
-      assert dims[0] == sizes[-1]
-      idx = c.Rem(c.ReplicaId(), c.Constant(onp.array(prod(sizes), onp.uint32)))
-      zero = onp.zeros(len(dims) - 1, onp.uint32)
-      start_indices = c.Concatenate([c.Reshape(idx, None, [1]),
-                                     c.Constant(zero)], 0)
-      return c.Reshape(c.DynamicSlice(x, start_indices, [1] + dims[1:]),
-                       None, dims[1:])
+    dims = list(shape.dimensions())
+    assert dims[0] == sizes[-1]
+    start_indices = xla_shard_start_indices(c, dims[0], len(dims))
+    return c.Reshape(c.DynamicSlice(x, start_indices, [1] + dims[1:]),
+                     None, dims[1:])
 
   return _xla_shard(c.GetShape(x), x)
 
@@ -148,20 +141,19 @@ def xla_unshard(c, device_groups, x):
       elts = map(_xla_unshard, shape.tuple_shapes(), xla_destructure(c, x))
       return c.Tuple(*elts)
     else:
-      return unshard_array(x)
+      return unshard_array(shape, x)
 
-  def unshard_array(x):
-    # TODO(mattjj): remove this special case, used for debugging on CPU
-    # because CPU doesn't have some collectives implemented
-    if xb.get_replica_count() == 1:
-      dims = c.GetShape(x).dimensions()
-      return c.Reshape(x, None, (1,) + tuple(dims))
-    else:
-      group_size = len(device_groups[0])
-      broadcasted = c.Broadcast(x, (group_size,))
-      return c.AllToAll(broadcasted, 0, 0, device_groups)
+  def unshard_array(shape, x):
+    group_size = len(device_groups[0])
+    broadcasted = c.Broadcast(x, (group_size,))
+    return c.AllToAll(broadcasted, 0, 0, device_groups)
 
   return _xla_unshard(c.GetShape(x), x)
+
+def xla_shard_start_indices(c, axis_size, ndim):
+  idx = c.Rem(c.ReplicaId(), c.Constant(onp.array(axis_size, onp.uint32)))
+  zero = onp.zeros(ndim - 1, onp.uint32)
+  return c.Concatenate([c.Reshape(idx, None, [1]), c.Constant(zero)], 0)
 
 
 ### xla_pcall
@@ -321,7 +313,7 @@ def parallel_callable(fun, axis_name, axis_size, *avals):
     out = compile_replicated(jaxpr, axis_name, axis_size, consts, *avals)
     compiled, nrep, result_shape = out
     del master, consts, jaxpr, env
-  handle_arg = partial(shard_arg, compiled._device_ordinals, nrep)
+  handle_arg = partial(shard_arg, compiled._device_ordinals)
   handle_result = xla.result_handler(result_shape)
   return partial(execute_replicated, compiled, pval, axis_size, nrep,
                  handle_arg, handle_result)
