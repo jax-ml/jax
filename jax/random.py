@@ -379,5 +379,5 @@ def bernoulli(key, mean=onp.float32(0.5), shape=()):
   if not onp.issubdtype(lax._dtype(mean), onp.float32):
     mean = lax.convert_element_type(mean, onp.float32)
   if onp.shape(mean) != shape:
-    mean = lax.broadcast(mean, shape)
+    mean = np.broadcast_to(mean, shape)
   return lax.lt(uniform(key, shape), mean)
