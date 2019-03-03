@@ -475,7 +475,9 @@ class AbstractTuple(AbstractValue, tuple):
   def __repr__(self):
     return '({})'.format(','.join(map(repr, self)))
 
-  # TODO(mattjj,phawkins): bool, maybe getitem
+  def __bool__(self, ignored_tracer):
+    return bool(self)
+  __nonzero__ = __bool__
 
 
 unit = JaxTuple(())

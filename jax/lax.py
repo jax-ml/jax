@@ -975,7 +975,7 @@ def scan(f, a, bs):
   bs, b_tree = pytree_to_flatjaxtuple(bs)  # b_tree is the same as bs_tree
   f, out_tree = pytree_fun_to_flatjaxtuple_fun(lu.wrap_init(f), (a_tree, b_tree))
 
-  if not len(bs):
+  if not bs:
     raise TypeError("bs argument to scan does not contain any arrays")
   if any([b.ndim == 0 for b in bs]):
     msg = "bs argument arrays must be rank >=1, got shapes {}."
