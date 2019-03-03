@@ -39,6 +39,7 @@ from .util import partial, prod
 
 from . import core
 from . import ad_util
+from . import api
 from . import linear_util as lu
 from .config import flags
 from .core import Primitive
@@ -871,8 +872,8 @@ def while_loop(cond_fun, body_fun, init_val):
 
   pval_flat = _abstractify(init_val_flat)
   cond_jaxpr, _, cond_consts = pe.trace_to_jaxpr(flat_cond_fun, (pval_flat,))
-  body_jaxpr, pvout, body_consts = pe.trace_to_jaxpr(flat_body_fun, (pval_flat,))
-  aval_out, _ = pvout
+  body_jaxpr, pval_out, body_consts = pe.trace_to_jaxpr(flat_body_fun, (pval_flat,))
+  aval_out, _ = pval_out
 
   if out_tree() != in_tree:
     raise TypeError("body_fun input and output must have identical structure")
@@ -956,6 +957,94 @@ def _revise_cond_jaxpr(new_pval, old_pval, jaxpr, consts):
     return new_jaxpr, new_consts
 
 
+def scan(f, a, bs):
+  """Scans over the leading axis of an array.
+
+  Arguments:
+    f: function with signature `a -> b -> a`
+    a: `a` value, or a pytree of `a` values.
+    bs: an array of `b` values, or a pytree of arrays of `b` values with the
+      same leading axis size.
+
+  Returns:
+    An array of `a` values, or a pytree of arrays of `a` values, representing
+    the result of scanning the function `f` over the leading axis of `bs`, with
+    each application producing an `a` for the next and collecting the results.
+  """
+  a, a_tree = pytree_to_flatjaxtuple(a)
+  bs, b_tree = pytree_to_flatjaxtuple(bs)  # b_tree is the same as bs_tree
+  f, out_tree = pytree_fun_to_flatjaxtuple_fun(lu.wrap_init(f), (a_tree, b_tree))
+
+  if not bs:
+    raise TypeError("bs argument to scan does not contain any arrays")
+  if any([b.ndim == 0 for b in bs]):
+    msg = "bs argument arrays must be rank >=1, got shapes {}."
+    raise TypeError(msg.format(", ".format(str(b.shape) for b in bs)))
+  if len({b.shape[0] for b in bs}) != 1:
+    msg = "arrays in bs must have equal most-major dimensions, got shapes {}."
+    raise TypeError(msg.format(", ".format(str(b.shape) for b in bs)))
+
+  a_pval = a_aval, _ = _abstractify(a)
+  bs_aval, _ = _abstractify(bs)
+  b_aval = core.AbstractTuple([ShapedArray(b.shape[1:], b.dtype) for b in bs_aval])
+  b_pval = pe.PartialVal((b_aval, core.unit))
+  jaxpr, pval_out, consts = pe.trace_to_jaxpr(f, (a_pval, b_pval))
+  aval_out, _ = pval_out
+
+  if a_tree != out_tree():
+    msg = "scanned function input and output must have identical structure"
+    raise TypeError(msg)
+  if a_aval != aval_out:
+    msg = "output shape mismatch for scanned function: {} vs {}"
+    raise TypeError(msg.format(a_aval, aval_out))
+
+  out = scan_p.bind(a, bs, core.pack(consts), aval_out=aval_out, jaxpr=jaxpr)
+  return tree_unflatten(out_tree(), out)
+
+def _scan_impl(a, bs, consts, aval_out, jaxpr):
+  length = tuple(bs)[0].shape[0]
+  state = [full((length,) + elt.shape, 0, _dtype(elt)) for elt in a]
+
+  def body_fun(i, vals):
+    a, state = vals
+    assert len(a) == len(state)
+    b = [dynamic_index_in_dim(b, i, keepdims=False) for b in bs]
+    a_out = core.eval_jaxpr(jaxpr, consts, (), a, core.pack(b))
+    state_out = [dynamic_update_index_in_dim(s, a[None, ...], i, axis=0)
+                 for a, s in zip(a_out, state)]
+    return a_out, state_out
+
+  _, out = fori_loop(0, length, body_fun, (a, state))
+  return core.pack(out)
+
+# TODO(mattjj, phawkins): figure out what to do with consts_tangents, and the
+# jaxtuple packing issues
+def _scan_jvp(primals, tangents, aval_out, jaxpr):
+  a, bs, consts_primals = primals
+  a_dot, bs_dot, consts_tangents = tangents
+
+  primal_out = scan_p.bind(a, bs, consts_primals,
+                           aval_out=aval_out, jaxpr=jaxpr)
+
+  def f_jvp(a_pt, b_pt):
+    a, a_dot = a_pt
+    b, b_dot = b_pt
+    f = lambda a, b, c: core.eval_jaxpr(jaxpr, c, (), a, b)
+    return api.jvp(f, (a, b, consts), (b, b_dot, consts_tangents))
+  tangent_out = scan(f_jvp, (a, a_dot), (b, b_dot))
+
+  return primal_out, tangent_out
+
+def _scan_abstract_eval(a, bs, consts, aval_out, jaxpr):
+  return maybe_tracer_tuple_to_abstract_tuple(aval_out)
+
+scan_p = core.Primitive("scan")
+scan_p.def_impl(_scan_impl)
+scan_p.def_abstract_eval(_scan_abstract_eval)
+xla.translations[scan_p] = partial(xla.lower_fun, _scan_impl)
+# ad.primitive_jvps[scan_p] = _scan_jvp  # TODO(mattjj, phawkins)
+
+
 def tie_in(x, y):
   return tie_in_p.bind(x, y)
 
@@ -964,6 +1053,14 @@ def shaped_identity(x):
 
 
 def full(shape, fill_value, dtype=None):
+  """Returns an array of `shape` filled with `fill_value`.
+
+  Arguments:
+    shape: sequence of integers, describing the shape of the output array
+    fill_value: the value to fill the new array with
+    dtype: the type of the output array, or `None`. If not `None`, `fill_value`
+      will be cast to `dtype`.
+  """
   try:
     shape = tuple(map(int, shape))
   except TypeError:
