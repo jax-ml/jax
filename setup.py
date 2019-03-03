@@ -13,9 +13,7 @@
 # limitations under the License.
 
 from setuptools import setup, find_packages
-from os.path import join, dirname, abspath
 
-version_file = join(abspath(dirname(__file__)), "jax", "version.py")
 with open('jax/version.py') as f:
   exec(f.read(), globals())
 

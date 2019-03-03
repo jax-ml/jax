@@ -21,7 +21,7 @@ import scipy.stats as osp_stats
 
 from ... import lax
 from ...numpy.lax_numpy import _promote_args_like, _constant_like, _wraps
-
+from .. import special
 
 @_wraps(osp_stats.norm.logpdf)
 def logpdf(x, loc=0, scale=1):
@@ -32,6 +32,19 @@ def logpdf(x, loc=0, scale=1):
   quadratic = lax.div(lax.pow(lax.sub(x, loc), two), scale_sqrd)
   return lax.div(lax.neg(lax.add(log_normalizer, quadratic)), two)
 
+
 @_wraps(osp_stats.norm.pdf)
 def pdf(x, loc=0, scale=1):
   return lax.exp(logpdf(x, loc, scale))
+
+
+@_wraps(osp_stats.norm.cdf)
+def cdf(x, loc=0, scale=1):
+  x, loc, scale = _promote_args_like(osp_stats.norm.cdf, x, loc, scale)
+  return special.ndtr(lax.div(lax.sub(x, loc), scale))
+
+
+@_wraps(osp_stats.norm.logcdf)
+def logcdf(x, loc=0, scale=1):
+  x, loc, scale = _promote_args_like(osp_stats.norm.logcdf, x, loc, scale)
+  return special.log_ndtr(lax.div(lax.sub(x, loc), scale))

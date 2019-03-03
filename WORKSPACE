@@ -16,12 +16,12 @@ http_archive(
 #    curl -L https://github.com/tensorflow/tensorflow/archive/<git hash>.tar.gz | sha256sum
 #    and update the sha256 with the result.
 http_archive(
-   name = "org_tensorflow",
-   sha256 = "6c71ae56217b49c23ee1d76f6e8679d4e2ad050de325c9b3e1858dcce120a6e5",
-   strip_prefix = "tensorflow-dafd60bab8ba61717ab4d431ffc6669f1e8c013e",
-   urls = [
-       "https://github.com/tensorflow/tensorflow/archive/dafd60bab8ba61717ab4d431ffc6669f1e8c013e.tar.gz",
-   ],
+    name = "org_tensorflow",
+    sha256 = "439598337c4eb0b8c2ad31d53fbb1878567de2f69ddd9b059a4909a3eefc333c",
+    strip_prefix = "tensorflow-ba48c8e6fb610b820526ad231269e5741df616ec",
+    urls = [
+        "https://github.com/tensorflow/tensorflow/archive/ba48c8e6fb610b820526ad231269e5741df616ec.tar.gz",
+    ],
 )
 
 # For development, one can use a local TF repository instead.
