@@ -44,32 +44,32 @@ map = safe_map
 
 ### util
 
-def shard_arg(device_ordinals, nrep, arg):
+def shard_arg(device_ordinals, arg):
   """Shard an argument data array arg along its leading axis.
 
   Args:
-    # TODO(mattjj)
+    device_ordinals: list of integers of length num_replicas mapping a logical
+      replica index to a physical device number.
+    arg: an array type representing an argument value to be sharded along its
+      leading axis and placed on the devices/replicas.
 
   Returns:
-    A list of length nrep of DeviceValues indexed by replica number, where the
-    nth element is the argument to be passed to the nth replica.
+    A list of length num_replicas of device buffers indexed by replica number,
+    where the nth element is the argument to be passed to the nth replica.
   """
+  nrep = len(device_ordinals)
   assignments = assign_shards_to_replicas(nrep, arg.shape[0])
-  if type(arg) is ShardedDeviceArray and arg.nrep == nrep:
-    # TODO(mattjj,phawkins): could make this exchange more efficient
-    def replace_shard(buf, device_num):
-      if buf.device() == device_num:
-        return buf
-      else:
-        msg = "Warning: device data movement on dispatch: {} to {}."
-        print(msg.format(buf.device(), device_num))
-        return xla.device_put(buf.to_py(), device_num)
-    return [replace_shard(buf, device_ordinals[n])
-            for buf, n in zip(arg.device_buffers, assignments)]
+  if type(arg) is ShardedDeviceArray and nrep == len(arg.device_buffers):
+    # TODO(mattjj, phawkins): improve re-distribution not to copy to host
+    _, ids = onp.unique(assignments, return_index=True)
+    shards = [arg.device_buffers[i].to_py() for i in ids]  # TODO(mattjj): lazy
+    return [buf if buf.device() == device_ordinals[r]
+            else xla.device_put(shards[i], device_ordinals[r])
+            for r, (i, buf) in enumerate(zip(assignments, arg.device_buffers))]
   else:
     shards = [arg[i] for i in range(arg.shape[0])]
-    return [xla.device_put(shards[i], device_ordinals[n])
-            for n, i in enumerate(assignments)]
+    return [xla.device_put(shards[i], device_ordinals[r])
+            for r, i in enumerate(assignments)]
 
 def unshard_output(axis_size, replica_results):
   """Collect together replica results into a result value.
@@ -116,7 +116,7 @@ def replica_groups(nrep, mesh_spec, mesh_axis):
   groups = map(onp.ravel, groups)
   return tuple(tuple(group) for group in zip(*groups))
 
-def xla_shard(c, axis_sizes, x):
+def xla_shard(c, sizes, x):
   def _xla_shard(shape, x):
     if shape.is_tuple():
       elts = map(_xla_shard, shape.tuple_shapes(), xla_destructure(c, x))
@@ -127,17 +127,17 @@ def xla_shard(c, axis_sizes, x):
   def shard_array(shape, x):
     if xb.get_replica_count() == 1:
       # TODO(mattjj): remove this special case, used for debugging on CPU
-      # because CPU doesn't have some collectives implemented
       dims = c.GetShape(x).dimensions()
       return c.Reshape(x, None, dims[1:])
     else:
-      size = onp.array(prod(axis_sizes), onp.uint32)
-      idx = c.Rem(c.ReplicaId(), c.Constant(size))
       dims = list(shape.dimensions())
+      assert dims[0] == sizes[-1]
+      idx = c.Rem(c.ReplicaId(), c.Constant(onp.array(prod(sizes), onp.uint32)))
       zero = onp.zeros(len(dims) - 1, onp.uint32)
-      start_indices = c.Concatenate([c.Reshape(idx, None, [1]), c.Constant(zero)], 0)
+      start_indices = c.Concatenate([c.Reshape(idx, None, [1]),
+                                     c.Constant(zero)], 0)
       return c.Reshape(c.DynamicSlice(x, start_indices, [1] + dims[1:]),
-                      None, dims[1:])
+                       None, dims[1:])
 
   return _xla_shard(c.GetShape(x), x)
 
@@ -221,17 +221,17 @@ def replicated_comp(jaxpr, ax_env, const_vals, freevar_shapes, *arg_shapes):
       ans = rule(c, *in_nodes, device_groups=axis_groups(ax_env, name), **params)
     elif eqn.bound_subjaxprs:
       if eqn.primitive is xla_pcall_p:
-        name = eqn.params['axis_name']
-        new_env = axis_env_extend(name, eqn.params['axis_size'])
-        in_nodes = map(partial(xla_shard, c, new_env.sizes), in_nodes)
-        in_shapes = map(c.GetShape, in_nodes)
+        name, size = eqn.params['axis_name'], eqn.params['axis_size']
+        new_env = axis_env_extend(name, size)
+        in_shards = map(partial(xla_shard, c, new_env.sizes), in_nodes)
+        in_shapes = map(c.GetShape, in_shards)
         (subjaxpr, const_bindings, freevar_bindings), = eqn.bound_subjaxprs
         subc = replicated_comp(
             subjaxpr, new_env, (),
             map(c.GetShape, map(read, const_bindings + freevar_bindings)),
             *in_shapes)
         subfun = (subc, tuple(map(read, const_bindings + freevar_bindings)))
-        sharded_result = xla.xla_call_translation_rule(c, subfun, *in_nodes)
+        sharded_result = xla.xla_call_translation_rule(c, subfun, *in_shards)
         ans = xla_unshard(c, axis_groups(new_env, name), sharded_result)
       else:
         in_shapes = map(c.GetShape, in_nodes)
@@ -254,11 +254,10 @@ def replicated_comp(jaxpr, ax_env, const_vals, freevar_shapes, *arg_shapes):
 
 
 class ShardedDeviceArray(xla.DeviceArray):
-  __slots__ = ["device_buffers", "nrep"]
+  __slots__ = ["device_buffers"]
 
   def __init__(self, axis_size, replica_results):
     self.device_buffers = [res.device_buffer for res in replica_results]
-    self.nrep = len(replica_results)
     r = replica_results[0]
     self.shape = (axis_size,) + r.shape
     self.dtype = r.dtype
