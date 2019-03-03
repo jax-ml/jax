@@ -899,7 +899,11 @@ def cond(pred, true_operand, true_fun, false_operand, false_fun):
     msg = "true_fun and false_fun outputs must have identical structure"
     raise TypeError(msg)
 
-  joined_pval = pe.join_pvals(true_pval, false_pval)
+  try:
+    joined_pval = pe.join_pvals(true_pval, false_pval)
+  except TypeError:
+    msg = "could not merge true_fun and false_fun output pvals: {} and {}."
+    raise TypeError(msg.format(true_pval, false_pval))
   revis = _revise_cond_jaxpr(joined_pval, true_pval, true_jaxpr, true_consts)
   true_jaxpr, true_consts = revis
   revis = _revise_cond_jaxpr(joined_pval, false_pval, false_jaxpr, false_consts)
