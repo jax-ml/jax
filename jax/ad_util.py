@@ -16,8 +16,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from .core import JaxTuple, lattice_join
-from .interpreters.partial_eval import Primitive
+from .core import JaxTuple, lattice_join, Primitive
 from .tree_util import register_pytree_node
 from .util import safe_map
 

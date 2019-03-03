@@ -16,21 +16,23 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import itertools as it
+
 from . import partial_eval as pe
-from . import xla
-from . import pxla
 from .. import core as core
 from ..core import JaxTuple, Trace, Tracer, new_master, get_aval, pack, call_p, Primitive
 from ..ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval,
                        zeros_like_p, zero, Zero)
 from ..util import unzip2, unzip3, safe_map, safe_zip, partial
-from ..tree_util import process_pytree, build_tree, register_pytree_node, prune
+from ..tree_util import process_pytree, build_tree, register_pytree_node, prune, tree_map
 from ..linear_util import thunk, staged, transformation, transformation_with_aux, wrap_init
 
 from six.moves import builtins, reduce
 
 zip = safe_zip
 map = safe_map
+def identity(x): return x
+
 
 def jvp(fun):
   return jvpfun(jvp_subtrace(fun))
@@ -75,7 +77,8 @@ def vjp(traceable, primals):
   def vjp_(ct):
     ct = ignore_consts(ct, pval)
     dummy_primal_and_ct = pack((core.unit, ct))
-    _, arg_cts = backward_pass(jaxpr, consts, (), dummy_primal_and_ct)
+    dummy_args = (None,) * len(jaxpr.invars)
+    _, arg_cts = backward_pass(jaxpr, consts, (), dummy_args, dummy_primal_and_ct)
     return instantiate_zeros(pack(primals), arg_cts[1])
 
   return out_primal, vjp_
@@ -100,7 +103,7 @@ def unpair_pval(pval):
     aval_1, aval_2 = aval
     return (aval_1, const_1), (aval_2, const_2)
 
-def backward_pass(jaxpr, consts, freevar_vals, cotangent_in):
+def backward_pass(jaxpr, consts, freevar_vals, args, cotangent_in):
   def write_cotangent(v, ct):
     # assert v not in primal_env
     if ct is not None:
@@ -109,10 +112,11 @@ def backward_pass(jaxpr, consts, freevar_vals, cotangent_in):
   def read_cotangent(v):
     return ct_env.get(v, zero)
 
-  primal_env = {v: val
-                for v, val in zip(jaxpr.freevars, freevar_vals)
+  primal_env = {v: val for v, val in zip(jaxpr.freevars, freevar_vals)
                 if val is not None}
   primal_env.update(zip(jaxpr.constvars, consts))
+  primal_env.update((v, val) for v, val in zip(jaxpr.invars, args)
+                    if val is not None)
   ct_env = {jaxpr.outvar: cotangent_in}
 
   for eqn in jaxpr.eqns[::-1]:
@@ -136,11 +140,10 @@ def backward_pass(jaxpr, consts, freevar_vals, cotangent_in):
 
     if cts_out is zero:
       cts_out = [zero for _ in eqn.invars]
+    map(write_cotangent, eqn.invars, cts_out)
 
-    for var, ct in zip(eqn.invars, cts_out):
-      write_cotangent(var, ct)
-
-  cotangents_out = map(read_cotangent, jaxpr.invars)
+  cotangents_out = [read_cotangent(var) if argval is None else None
+                    for var, argval in zip(jaxpr.invars, args)]
   freevar_cts = map(read_cotangent, jaxpr.freevars)
   return freevar_cts, cotangents_out
 
@@ -185,12 +188,7 @@ class JVPTrace(Trace):
     tangents = [t.tangent for t in tracers]
     nonzero_tangents, in_tree_def = tree_to_jaxtuples(tangents)
     f, out_tree_def = traceable(jvp_subtrace(f, self.master), in_tree_def)
-    if call_primitive is pxla.xla_pcall_p:
-      in_ax, out_ax = params['in_axes'], params['out_axes']
-      new_params = dict(params, in_axes=(in_ax, in_ax), out_axes=(out_ax, out_ax))
-      result = call_primitive.bind(f, pack(primals), nonzero_tangents, **new_params)
-    else:
-      result = call_primitive.bind(f, pack(primals), nonzero_tangents, **params)
+    result = call_primitive.bind(f, pack(primals), nonzero_tangents, **params)
     primal_out, tangent_out = build_tree(out_tree_def(), result)
     return JVPTracer(self, primal_out, tangent_out)
 
@@ -299,8 +297,8 @@ def defjvp(primitive, *jvprules):
 
 def standard_jvp(jvprules, primitive, primals, tangents, **params):
   val_out = primitive.bind(*primals, **params)
-  tangents_out = (rule(t, *primals, **params) for rule, t in zip(jvprules, tangents)
-                  if rule is not None and t is not zero)
+  tangents_out = [rule(t, *primals, **params) for rule, t in zip(jvprules, tangents)
+                  if rule is not None and t is not zero]
   return val_out, reduce(add_tangents, tangents_out, zero)
 
 
@@ -376,9 +374,9 @@ def traceable(in_tree_def, new_primals, new_tangents):
 
 @transformation_with_aux
 def transposed_fun(jaxpr, in_tree_def, args):
-  consts, freevar_vals, ct = args
-  ct, freevar_vals = build_tree(in_tree_def, (ct, freevar_vals))
-  freevar_cts, cotangents_out = yield jaxpr, consts, freevar_vals, ct
+  args, consts, freevar_vals, ct = args
+  args, ct, freevar_vals = build_tree(in_tree_def, (args, ct, freevar_vals))
+  freevar_cts, cotangents_out = yield jaxpr, consts, freevar_vals, args, ct
   out_jtuple, tree_def = tree_to_jaxtuples((cotangents_out, freevar_cts))
   yield out_jtuple, tree_def
 
@@ -387,26 +385,38 @@ def call_transpose(primitive, params, jaxpr, consts, freevar_vals, args, ct):
   consts, = consts
   freevar_vals, = freevar_vals
   assert isinstance(jaxpr, core.Jaxpr)
-  assert all(a is None for a in args), "TODO(dougalm): handle non-tangent primal args"
-  (ct, freevar_vals), in_tree_def = tree_to_jaxtuples((ct, freevar_vals))
+  (args, ct, freevar_vals), in_tree_def = tree_to_jaxtuples((args, ct, freevar_vals))
   fun = wrap_init(backward_pass)
   fun, out_tree_def = transposed_fun(fun, jaxpr, in_tree_def)
-  all_args = pack((pack(consts), pack(freevar_vals), ct))
+  all_args = pack((pack(args), pack(consts), pack(freevar_vals), ct))
   # TODO(dougalm): consider signalling to bind that no traces in fun closure
-  if primitive is pxla.xla_pcall_p:
-    in_axes, out_axes = params['in_axes'], params['out_axes']
-    trans_in_axes = (None, None, out_axes),
-    trans_out_axes = (in_axes, None)
-    new_params = dict(params, in_axes=trans_in_axes, out_axes=trans_out_axes)
-    ans = primitive.bind(fun, all_args, **new_params)
-  else:
-    ans = primitive.bind(fun, all_args, **params)
+  ans = primitive.bind(fun, all_args, **params)
   return build_tree(out_tree_def(), ans)
+
+@transformation_with_aux
+def transposed_mapped(jaxpr, in_tree_def, freevar_vals, args):
+  args, consts, ct = args
+  args, ct = build_tree(in_tree_def, (args, ct))
+  freevar_cts, cotangents_out = yield jaxpr, consts, freevar_vals, args, ct
+  out_jtuple, tree_def = tree_to_jaxtuples((cotangents_out, freevar_cts))
+  yield out_jtuple, tree_def
+
+def map_transpose(primitive, params, jaxpr, consts, freevar_vals, args, ct):
+  jaxpr, = jaxpr
+  consts, = consts
+  freevar_vals, = freevar_vals
+  (args, ct), in_tree_def = tree_to_jaxtuples((args, ct))
+  fun = wrap_init(backward_pass)
+  fun, out_tree_def = transposed_mapped(fun, jaxpr, in_tree_def, tuple(freevar_vals))
+  all_args = pack((pack(args), pack(consts), ct))
+  ans = primitive.bind(fun, all_args, **params)
+  cts_out, freevar_cts = build_tree(out_tree_def(), ans)
+  freevar_cts = tree_map(lambda x: x.sum(0), freevar_cts)
+  return cts_out, freevar_cts
+
 
 primitive_transposes[core.call_p] = partial(call_transpose, call_p)
 primitive_transposes[pe.compiled_call_p] = partial(call_transpose, pe.compiled_call_p)
-primitive_transposes[xla.xla_call_p] = partial(call_transpose, xla.xla_call_p)
-primitive_transposes[pxla.xla_pcall_p] = partial(call_transpose, pxla.xla_pcall_p)
 
 
 tree_to_jaxtuples = partial(process_pytree, pack)

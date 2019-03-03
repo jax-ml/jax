@@ -333,18 +333,6 @@ cdef void lapack_spotrf(void* out_tuple, void** data) nogil:
 
   spotrf(&uplo, &n, a_out, &n, info)
 
-  # spotrf leaves junk in the part of the triangle that is not written; zero it.
-  cdef int i
-  cdef int j
-  if lower:
-    for i in range(n):
-      for j in range(i):
-        a_out[i * n + j] = 0
-  else:
-    for i in range(n):
-      for j in range(i, n):
-        a_out[i * n + j] = 0
-
 register_cpu_custom_call_target(b"lapack_spotrf", <void*>(lapack_spotrf))
 
 
@@ -361,18 +349,6 @@ cdef void lapack_dpotrf(void* out_tuple, void** data) nogil:
     memcpy(a_out, a_in, n * n * sizeof(double))
 
   dpotrf(&uplo, &n, a_out, &n, info)
-
-  # dpotrf leaves junk in the part of the triangle that is not written; zero it.
-  cdef int i
-  cdef int j
-  if lower:
-    for i in range(n):
-      for j in range(i):
-        a_out[i * n + j] = 0
-  else:
-    for i in range(n):
-      for j in range(i, n):
-        a_out[i * n + j] = 0
 
 register_cpu_custom_call_target(b"lapack_dpotrf", <void*>(lapack_dpotrf))
 
@@ -391,18 +367,6 @@ cdef void lapack_cpotrf(void* out_tuple, void** data) nogil:
 
   cpotrf(&uplo, &n, a_out, &n, info)
 
-  # cpotrf leaves junk in the part of the triangle that is not written; zero it.
-  cdef int i
-  cdef int j
-  if lower:
-    for i in range(n):
-      for j in range(i):
-        a_out[i * n + j] = 0
-  else:
-    for i in range(n):
-      for j in range(i, n):
-        a_out[i * n + j] = 0
-
 register_cpu_custom_call_target(b"lapack_cpotrf", <void*>(lapack_cpotrf))
 
 cdef void lapack_zpotrf(void* out_tuple, void** data) nogil:
@@ -418,18 +382,6 @@ cdef void lapack_zpotrf(void* out_tuple, void** data) nogil:
     memcpy(a_out, a_in, n * n * sizeof(double complex))
 
   zpotrf(&uplo, &n, a_out, &n, info)
-
-  # zpotrf leaves junk in the part of the triangle that is not written; zero it.
-  cdef int i
-  cdef int j
-  if lower:
-    for i in range(n):
-      for j in range(i):
-        a_out[i * n + j] = 0
-  else:
-    for i in range(n):
-      for j in range(i, n):
-        a_out[i * n + j] = 0
 
 register_cpu_custom_call_target(b"lapack_zpotrf", <void*>(lapack_zpotrf))
 

@@ -31,6 +31,7 @@ import os
 import numpy as onp
 from contextlib import contextmanager
 from distutils.util import strtobool
+from six.moves import reduce
 
 from . import core
 from . import linear_util as lu
@@ -81,7 +82,7 @@ def jit(fun, static_argnums=()):
   In the following example, `selu` can be compiled into a single fused kernel by
   XLA:
 
-  >>> @jit
+  >>> @jax.jit
   >>> def selu(x, alpha=1.67, lmbda=1.05):
   >>>   return lmbda * jax.numpy.where(x > 0, x, alpha * jax.numpy.exp(x) - alpha)
   >>>
@@ -99,9 +100,9 @@ def jit(fun, static_argnums=()):
       return fun(*args, **kwargs)
     f = lu.wrap_init(fun, kwargs)
     dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
-    f, dyn_args = argnums_partial(f, dyn_argnums, args)
+    f, dyn_args = _argnums_partial(f, dyn_argnums, args)
     jaxtupletree_args, in_trees = unzip2(map(pytree_to_jaxtupletree, dyn_args))
-    check_args(jaxtupletree_args)
+    _check_args(jaxtupletree_args)
     jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(f, in_trees)
     jaxtupletree_out = xla.xla_call(jaxtree_fun, *jaxtupletree_args)
     return build_tree(out_tree(), jaxtupletree_out)
@@ -112,12 +113,61 @@ def jit(fun, static_argnums=()):
 
 @contextmanager
 def disable_jit():
+  """Context manager that disables `jit`.
+
+  For debugging purposes, it is useful to have a mechanism that disables `jit`
+  everywhere in a block of code, namely the `disable_jit` decorator.
+
+  Inside a `jit`-ted function the values flowing through
+  traced code can be abstract (i.e., shaped arrays with an unknown values),
+  instead of concrete (i.e., specific arrays with known values).
+
+  For example:
+
+  >>> @jax.jit
+  >>> def f(x):
+  >>>   y = x *2
+  >>>   print("Value of y is", y)
+  >>>   return y + 3
+  >>>
+  >>> print(f(jax.numpy.array([1, 2, 3])))
+  Value of y is Traced<ShapedArray(int32[3]):JaxprTrace(level=-1/1)>
+  [5 7 9]
+
+  Here `y` has been abstracted by `jit` to a `ShapedArray`, which represents an
+  array with a fixed shape and type but an arbitrary value. If we want to see a
+  concrete values while debugging, we can use the `disable_jit` decorator, at
+  the cost of slower code:
+
+  >>> with jax.disable_jit():
+  >>>   print(f(np.array([1, 2, 3])))
+  >>>
+  Value of y is [2 4 6]
+  [5 7 9]
+  """
   global _jit_is_disabled
   _jit_is_disabled, prev_val = True, _jit_is_disabled
   yield
   _jit_is_disabled = prev_val
 _jit_is_disabled = False
 
+
+def xla_computation(fun, static_argnums=()):
+  def pv_like(x):
+    aval = xla.abstractify(x)
+    return pe.PartialVal((aval, core.unit))
+
+  wrapped = lu.wrap_init(fun)
+
+  @wraps(fun)
+  def computation_maker(*args, **kwargs):
+    jax_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
+    jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(wrapped, in_trees)
+    pvals = map(pv_like, jax_args)
+    jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals, **kwargs)
+    return xla.build_jaxpr(jaxpr, consts, *map(xla.abstractify, args))
+
+  return computation_maker
 
 def grad(fun, argnums=0):
   """Creates a function which evaluates the gradient of `fun`.
@@ -136,6 +186,13 @@ def grad(fun, argnums=0):
     type as the positional argument indicated by that integer. If argnums is a
     tuple of integers, the gradient is a tuple of values with the same shapes
     and types as the corresponding arguments.
+
+  For example:
+
+  >>> grad_tanh = jax.grad(jax.numpy.tanh)
+  >>> grad_tanh(0.2)
+  array(0.961043, dtype=float32)
+
   """
   value_and_grad_f = value_and_grad(fun, argnums)
 
@@ -180,9 +237,9 @@ def value_and_grad(fun, argnums=0):
   @wraps(fun, docstr=docstr, argnums=argnums)
   def value_and_grad_f(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
-    f_partial, dyn_args = argnums_partial(f, argnums, args)
+    f_partial, dyn_args = _argnums_partial(f, argnums, args)
     ans, vjp_py = vjp(f_partial, *dyn_args)
-    check_scalar(ans)
+    _check_scalar(ans)
     g = vjp_py(onp.ones((), onp.result_type(ans)))
     g = g[0] if isinstance(argnums, int) else g
     return (ans, g)
@@ -214,7 +271,7 @@ def jacfwd(fun, argnums=0):
 
   def jacfun(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
-    f_partial, dyn_args = argnums_partial(f, argnums, args)
+    f_partial, dyn_args = _argnums_partial(f, argnums, args)
     pushfwd = partial(jvp, f_partial, dyn_args)
     y, jac = vmap(pushfwd, out_axes=(None, -1))(_std_basis(dyn_args))
     example_args = dyn_args[0] if isinstance(argnums, int) else dyn_args
@@ -245,7 +302,7 @@ def jacrev(fun, argnums=0):
   """
   def jacfun(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
-    f_partial, dyn_args = argnums_partial(f, argnums, args)
+    f_partial, dyn_args = _argnums_partial(f, argnums, args)
     y, pullback = vjp(f_partial, *dyn_args)
     jac = vmap(pullback)(_std_basis(y))
     jac = jac[0] if isinstance(argnums, int) else jac
@@ -349,20 +406,23 @@ def vmap(fun, in_axes=0, out_axes=0):
   return batched_fun
 
 
-def pjit(fun, axis_name, in_axes=0, out_axes=0, mesh_axis=0):
+def pjit(fun, axis_name):
   """Set up SPMD function for JIT compilation and parallel execution with XLA."""
   @wraps(fun)
   def f_jitted(*args, **kwargs):
-    f = lu.wrap_init(fun, kwargs)
+    leaves, _ = tree_flatten(args)
+    axis_sizes = set(onp.shape(leaf)[0] for leaf in leaves)
+    if len(axis_sizes) != 1:
+      msg = "pjit requires all leading axes to have equal length, got {}."
+      raise TypeError(msg.format(axis_sizes))
+    axis_size = axis_sizes.pop()
+
     jaxtupletree_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
-    check_args(jaxtupletree_args)
+    _check_args(jaxtupletree_args)
+    f = lu.wrap_init(fun, kwargs)
     f, out_tree = pytree_fun_to_jaxtupletree_fun(f, in_trees)
-    in_axes_ = in_axes if isinstance(in_axes, (list, tuple)) else (in_axes,) * len(args)
-    chunksize = pxla.chunk_size(axis_name, mesh_axis, in_axes_, jaxtupletree_args)
-    f = pxla.chunk_transform(f, chunksize, axis_name, in_axes_, out_axes)
     jaxtupletree_out = pxla.xla_pcall(f, *jaxtupletree_args,
-                                      axis_name=axis_name, in_axes=in_axes_,
-                                      out_axes=out_axes, mesh_axis=mesh_axis)
+                                      axis_name=axis_name, axis_size=axis_size)
     return build_tree(out_tree(), jaxtupletree_out)
 
   f_jitted.__name__ = "pjit({})".format(f_jitted.__name__)
@@ -410,6 +470,32 @@ def papply(fun, in_axes=0):
 
 
 def jvp(fun, primals, tangents):
+  """Computes a (forward-mode) Jacobian-vector product of `fun`.
+
+  Args:
+    fun: Function to be differentiated. Its arguments should be arrays, scalars,
+      or standard Python containers of arrays or scalars. It should return an
+      array, scalar, or standard Python container of arrays or scalars.
+    primals: The primal values at which the Jacobian of `fun` should be
+      evaluated. Should be a tuple of arrays, scalar, or standard Python
+      container thereof. The length of the tuple is equal to the number of
+      positional parameters of `fun`.
+    tangents: The tangent vector for which the Jacobian-vector product should be
+      evaluated. Should be a tuple of arrays, scalar, or standard Python
+      container thereof, with the same tree structure and array shapes as
+      `primals`.
+
+  Returns:
+    A `(primals_out, tangents_out)` pair, where `primals_out` is
+    `fun(*primals)`, and `tangents_out` is the Jacobian-vector product of
+    `function` evaluated at `primals` with `tangents`. The `tangents_out` value
+    has the same Python tree structure and shapes as `primals_out`.
+
+  For example:
+
+  >>> jax.jvp(jax.numpy.sin, (0.1,), (0.2,))
+  (array(0.09983342, dtype=float32), array(0.19900084, dtype=float32))
+  """
   def trim_arg(primal, tangent):
     primal_jtuple, tree_def = pytree_to_jaxtupletree(primal)
     tangent_jtuple, tree_def_2 = pytree_to_jaxtupletree(tangent)
@@ -443,10 +529,36 @@ def lift_linearized(jaxpr, consts, io_tree, out_pval, *py_args):
   return apply_jaxtree_fun(fun, io_tree, *py_args)
 
 def vjp(fun, *primals):
+  """Compute a (reverse-mode) vector-Jacobian product of `fun`.
+
+  `grad` is implemented as a special case of `vjp`.
+
+  Args:
+    fun: Function to be differentiated. Its arguments should be arrays, scalars,
+      or standard Python containers of arrays or scalars. It should return an
+      array, scalar, or standard Python container of arrays or scalars.
+    primals: A sequence of primal values at which the Jacobian of `fun`
+      should be evaluated. The length of `primals` should be equal to the number
+      of positional parameters to `fun`. Each primal value should be a tuple of
+      arrays, scalar, or standard Python containers thereof.
+
+  Returns:
+    A `(primals_out, vjpfun)` pair, where `primals_out` is `fun(*primals)`.
+    `vjpfun` is a function from a cotangent vector with the same shape as
+    `primals_out` to a tuple of cotangent vectors with the same shape as
+    `primals`, representing the vector-Jacobian product of `fun` evaluated at
+    `primals`.
+
+  >>> def f(x, y):
+  >>>   return jax.numpy.sin(x), jax.numpy.cos(y)
+  >>> primals, g = jax.vjp(f, 0.5, 1.0)
+  >>> g((-0.7, 0.3))
+  (array(-0.61430776, dtype=float32), array(-0.2524413, dtype=float32))
+  """
   if not isinstance(fun, lu.WrappedFun):
     fun = lu.wrap_init(fun)
   primals_flat, in_trees = unzip2(map(pytree_to_jaxtupletree, primals))
-  check_args(primals_flat)
+  _check_args(primals_flat)
   jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(fun, in_trees)
   out_primal, out_vjp = ad.vjp(jaxtree_fun, primals_flat)
   out_tree = out_tree()
@@ -541,7 +653,7 @@ device_get_array = lambda x: x.copy() if type(x) is xla.DeviceArray else x
 device_get = partial(tree_map, device_get_array)
 
 
-def argnums_partial(f, dyn_argnums, args):
+def _argnums_partial(f, dyn_argnums, args):
   if isinstance(dyn_argnums, int):
     dyn_argnums = (dyn_argnums,)
   else:
@@ -549,23 +661,23 @@ def argnums_partial(f, dyn_argnums, args):
   fixed_args = tuple([None if i in dyn_argnums else WrapHashably(arg)
                       for i, arg in enumerate(args)])
   dyn_args = tuple(args[i] for i in dyn_argnums)
-  return argnums_partial_(f, dyn_argnums, fixed_args), dyn_args
+  return _argnums_partial_(f, dyn_argnums, fixed_args), dyn_args
 
 @lu.transformation
-def argnums_partial_(dyn_argnums, fixed_args, *dyn_args):
+def _argnums_partial_(dyn_argnums, fixed_args, *dyn_args):
   args = [None if arg is None else arg.val for arg in fixed_args]
   for i, arg in zip(dyn_argnums, dyn_args):
     args[i] = arg
   ans = yield args
   yield ans
 
-def check_args(args):
+def _check_args(args):
   for arg in args:
     if not (isinstance(arg, core.Tracer) or core.valid_jaxtype(arg)):
       raise TypeError("Argument '{}' of type {} is not a valid JAX type"
                       .format(arg, type(arg)))
 
-def check_scalar(x):
+def _check_scalar(x):
   msg = "Gradient only defined for scalar-output functions. Output was: {}".format
   try:
     aval = core.get_aval(x)
@@ -573,3 +685,23 @@ def check_scalar(x):
       raise TypeError(msg(x))
   except TypeError:
     raise TypeError(msg(x))
+
+
+def _primitive(fun):
+  name = getattr(fun, '__name__', '<unnamed user primitive>')
+  fun_p = core.Primitive(name)
+  fun_p.def_impl(fun)
+
+  # generic transformation implementations that rely on traceability of `fun`
+  fun_p.def_abstract_eval(partial(pe.abstract_eval_fun, fun))
+  xla.translations[fun_p] = partial(xla.lower_fun, fun)
+  ad.primitive_jvps[fun_p] = partial(jvp, fun)
+  # TODO(mattjj): batching
+
+  @wraps(fun)
+  def traceable(*args, **kwargs):
+    # TODO(mattjj): pytrees to jaxtupletrees
+    return fun_p.bind(*args, **kwargs)
+  traceable.primitive = fun_p
+
+  return traceable
