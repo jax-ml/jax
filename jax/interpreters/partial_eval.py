@@ -179,7 +179,7 @@ def partial_eval_wrapper(avals, *consts, **kwargs):
 
 def abstract_eval_fun(fun, *avals, **params):
   pvs_in = [PartialVal((a, unit)) for a in avals]
-  _, pvout, _ = trace_unwrapped_to_jaxpr(fun, pvs_in, **params)
+  _, pvout, _ = trace_to_jaxpr(lu.wrap_init(fun, params), pvs_in)
   aval_out, _ = pvout
   return aval_out
 
