@@ -1447,6 +1447,19 @@ class LaxTest(jtu.JaxTestCase):
 
     # jtu.check_jvp(g, partial(api.jvp, g), (a, bs))
 
+  def testScanJit(self):
+    @api.jit
+    def f(x, yz):
+      y, z = yz
+      return 5. * lax.exp(lax.sin(x) * lax.cos(y)) + z
+
+    a = onp.array(7, onp.float32)
+    bs = (onp.array([3., 1., -4., 1.], onp.float32),
+          onp.array([5., 9., -2., 6.], onp.float32))
+    ans = lax.scan(f, a, bs)
+    expected = onp.array([7.609, 17.445, 7.52596, 14.3389172], onp.float32)
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_lhs_shape={}_rhs_shape={}"
        .format(jtu.format_shape_dtype_string(lhs_shape, dtype),
