@@ -304,6 +304,13 @@ class _JaxComputationBuilderBase(object):
     else:
       raise TypeError("No constant handler for type: {}".format(py_type))
 
+  def AllToAll(self, operand, split_dimension, concat_dimension, replica_groups):
+    """Workaround for AllToAll not being implemented on some backends."""
+    if split_dimension == concat_dimension and len(replica_groups[0]) == 1:
+      return operand
+    else:
+      return self.AllToAll(operand, split_dimension, concat_dimension, replica_gruops)
+
 
 @memoize_thunk
 def get_jax_computation_builder_class():
