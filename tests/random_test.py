@@ -149,6 +149,11 @@ class LaxRandomTest(jtu.JaxTestCase):
     self.assertFalse(onp.all(perm1 == x))  # seems unlikely!
     self.assertTrue(onp.all(onp.sort(perm1) == x))
 
+  def testBernoulli(self):
+    key = random.PRNGKey(0)
+    x = random.bernoulli(key, onp.array([0.2, 0.3]), shape=(3, 2))
+    assert x.shape == (3, 2)
+
   def testIssue222(self):
     x = random.randint(random.PRNGKey(10003), (), 0, 0)
     assert x == 0
