@@ -872,24 +872,15 @@ def while_loop(cond_fun, body_fun, init_val):
   pval_flat = _abstractify(init_val_flat)
   cond_jaxpr, _, cond_consts = pe.trace_to_jaxpr(flat_cond_fun, (pval_flat,))
   body_jaxpr, pvout, body_consts = pe.trace_to_jaxpr(flat_body_fun, (pval_flat,))
-  abs_out, _ = pvout
+  aval_out, _ = pvout
 
   if out_tree() != in_tree:
     raise TypeError("body_fun input and output must have identical structure")
 
-  params = _OpaqueParam((abs_out, cond_jaxpr, body_jaxpr))
-  out_flat = while_p.bind(init_val_flat, core.pack(cond_consts), core.pack(body_consts),
-                          opaque_params=params)
+  out_flat = while_p.bind(init_val_flat, core.pack(cond_consts),
+                          core.pack(body_consts), aval_out=aval_out,
+                          cond_jaxpr=cond_jaxpr, body_jaxpr=body_jaxpr)
   return build_tree(out_tree(), out_flat)
-
-class _OpaqueParam(object):
-  __slots__ = ["val", "id"]
-  def __init__(self, val):
-    self.val = val
-    self.id = next(opaque_param_ids)
-  def __hash__(self):
-    return self.id
-opaque_param_ids = itertools.count()
 
 
 def cond(pred, true_operand, true_fun, false_operand, false_fun):
@@ -3538,14 +3529,14 @@ ad.primitive_transposes[sort_key_val_p] = _sort_key_val_transpose_rule
 batching.primitive_batchers[sort_key_val_p] = _sort_key_val_batch_rule
 
 
-def _while_loop_abstract_eval(init_val, cond_consts, body_consts, opaque_params):
-  abs_out = opaque_params.val[0]
-  return maybe_tracer_tuple_to_abstract_tuple(abs_out)
+def _while_loop_abstract_eval(init_val, cond_consts, body_consts, aval_out,
+                              cond_jaxpr, body_jaxpr):
+  return maybe_tracer_tuple_to_abstract_tuple(aval_out)
 
-def _while_loop_translation_rule(c, init_val, cond_consts, body_consts, opaque_params):
+def _while_loop_translation_rule(c, init_val, cond_consts, body_consts,
+                                 aval_out, cond_jaxpr, body_jaxpr):
   loop_carry = c.Tuple(init_val, cond_consts, body_consts)
   shape = c.GetShape(loop_carry)
-  _, cond_jaxpr, body_jaxpr = opaque_params.val
 
   loop_carry_var = pe.Var(0, "loop_carry")
   outvar = pe.Var(0, "loop_carry_out")
