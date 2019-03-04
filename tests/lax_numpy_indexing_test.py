@@ -17,9 +17,10 @@ from __future__ import division
 from __future__ import print_function
 
 import collections
+import enum
 from functools import partial
 import itertools
-from unittest import skip
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -29,6 +30,7 @@ import numpy as onp
 from jax import api
 from jax import lax
 from jax import numpy as lnp
+from jax import ops
 from jax import test_util as jtu
 
 from jax.config import config
@@ -59,102 +61,172 @@ def check_grads(f, args, order, atol=None, rtol=None, eps=None):
   jtu.check_vjp(f, partial(api.vjp, f), args, atol, rtol, eps)
 
 
+STATIC_INDEXING_TESTS = [
+    ("OneIntIndex", [
+        IndexSpec(shape=(3,), indexer=1),
+        IndexSpec(shape=(3, 3), indexer=0),
+        IndexSpec(shape=(3, 4, 5), indexer=2),
+        IndexSpec(shape=(3,), indexer=-1),
+        IndexSpec(shape=(3,), indexer=-2),
+    ]),
+    ("TwoIntIndices", [
+        IndexSpec(shape=(3, 3), indexer=(2, 1)),
+        IndexSpec(shape=(3, 4, 5), indexer=(1, 2)),
+        IndexSpec(shape=(3, 4, 5), indexer=(-1, 2)),
+    ]),
+    ("ThreeIntIndices", [IndexSpec((3, 4, 5), indexer=(1, 2, 3))]),
+    ("OneSliceIndex", [
+        IndexSpec(shape=(10,), indexer=slice(1, 3)),
+        IndexSpec(shape=(10,), indexer=slice(1, -1)),
+        IndexSpec(shape=(10,), indexer=slice(None, -1)),
+        IndexSpec(shape=(10,), indexer=slice(None, None, None)),
+        IndexSpec(shape=(10, 8), indexer=slice(1, 3)),
+        IndexSpec(shape=(10, 8), indexer=slice(1, None)),
+        IndexSpec(shape=(10, 8), indexer=slice(None, 3)),
+        IndexSpec(shape=(10, 8), indexer=slice(-3, None)),
+    ]),
+    ("OneSliceIndexNegativeStride", [
+        IndexSpec(shape=(10,), indexer=slice(3, 1, -1)),
+        IndexSpec(shape=(10,), indexer=slice(1, 8, -1)),  # empty result
+        IndexSpec(shape=(10,), indexer=slice(None, 1, -2)),
+        IndexSpec(shape=(10,), indexer=slice(None, None, -1)),
+        IndexSpec(shape=(10, 8), indexer=slice(3, 1, -1)),
+        IndexSpec(shape=(10, 8), indexer=slice(0, 8, -1)),  # empty result
+        IndexSpec(shape=(10, 8), indexer=slice(None, None, -1)),
+    ]),
+    ("OneSliceIndexNonUnitStride", [
+        IndexSpec(shape=(10,), indexer=slice(0, 8, 2)),
+        IndexSpec(shape=(10,), indexer=slice(0, 8, 3)),
+        IndexSpec(shape=(10,), indexer=slice(1, 3, 2)),
+        IndexSpec(shape=(10,), indexer=slice(1, None, 2)),
+        IndexSpec(shape=(10,), indexer=slice(None, 1, -2)),
+        IndexSpec(shape=(10, 8), indexer=slice(1, 8, 3)),
+        IndexSpec(shape=(10, 8), indexer=slice(None, None, 2)),
+        IndexSpec(shape=(10, 8), indexer=slice(None, 1, -2)),
+        IndexSpec(shape=(10, 8), indexer=slice(None, None, -2)),
+    ]),
+    ("TwoSliceIndices", [
+        IndexSpec(shape=(10, 8), indexer=(slice(1, 3), slice(0, 2))),
+        IndexSpec(shape=(10, 8), indexer=(slice(1, None), slice(None, 2))),
+        IndexSpec(
+            shape=(10, 8), indexer=(slice(None, None, -1), slice(None, 2))),
+        IndexSpec(shape=(10, 8, 3), indexer=(slice(1, 3), slice(0, 2))),
+        IndexSpec(shape=(10, 8, 3), indexer=(slice(1, 3), slice(0, None))),
+        IndexSpec(shape=(10, 8, 3), indexer=(slice(1, None), slice(0, 2))),
+    ]),
+    ("OneColonIndex", [
+        IndexSpec(shape=(3,), indexer=slice(None)),
+        IndexSpec(shape=(3, 4), indexer=slice(None)),
+    ]),
+    ("MultipleColonIndices", [
+        IndexSpec(shape=(3, 4), indexer=(slice(None), slice(None))),
+        IndexSpec(shape=(3, 4, 5), indexer=(slice(None), slice(None))),
+    ]),
+    ("MixedSliceIndices", [
+        IndexSpec(shape=(10, 4), indexer=(slice(None), slice(0, 2))),
+        IndexSpec(shape=(10, 4), indexer=(1, slice(None))),
+    ]),
+    ("EllipsisIndex", [
+        IndexSpec(shape=(3,), indexer=Ellipsis),
+        IndexSpec(shape=(3, 4), indexer=Ellipsis),
+        IndexSpec(shape=(3, 4, 5), indexer=(0, Ellipsis)),
+        IndexSpec(shape=(3, 4, 5), indexer=(Ellipsis, 2, 3)),
+    ]),
+    ("NoneIndex", [
+        IndexSpec(shape=(), indexer=None),
+        IndexSpec(shape=(), indexer=(None, None)),
+        IndexSpec(shape=(), indexer=(Ellipsis, None)),
+        IndexSpec(shape=(3,), indexer=None),
+        IndexSpec(shape=(3, 4), indexer=None),
+        IndexSpec(shape=(3, 4), indexer=(Ellipsis, None)),
+        IndexSpec(shape=(3, 4), indexer=(0, None, Ellipsis)),
+        IndexSpec(shape=(3, 4, 5), indexer=(1, None, Ellipsis)),
+    ]),
+    ("EmptyIndex", [
+        IndexSpec(shape=(), indexer=()),
+        IndexSpec(shape=(3,), indexer=()),
+        IndexSpec(shape=(3, 4), indexer=()),
+    ]),
+]
+
+STATIC_INDEXING_GRAD_TESTS = [
+    ("OneIntIndex", [
+        IndexSpec(shape=(3,), indexer=1),
+        IndexSpec(shape=(3, 3), indexer=0),
+        IndexSpec(shape=(3, 4, 5), indexer=2),
+        IndexSpec(shape=(3,), indexer=-1),
+        IndexSpec(shape=(3,), indexer=-2),
+    ]),
+    ("TwoIntIndices", [
+        IndexSpec(shape=(3, 3), indexer=(2, 1)),
+        IndexSpec(shape=(3, 4, 5), indexer=(1, 2)),
+        IndexSpec(shape=(3, 4, 5), indexer=(-1, 2)),
+    ]),
+    ("ThreeIntIndices", [IndexSpec((3, 4, 5), indexer=(1, 2, 3))]),
+    ("OneSliceIndex", [
+        IndexSpec(shape=(5,), indexer=slice(1, 3)),
+        IndexSpec(shape=(5,), indexer=slice(1, -1)),
+        IndexSpec(shape=(5,), indexer=slice(None, -1)),
+        IndexSpec(shape=(5,), indexer=slice(None, None, None)),
+        IndexSpec(shape=(5, 4), indexer=slice(1, 3)),
+        IndexSpec(shape=(5, 4), indexer=slice(1, None)),
+        IndexSpec(shape=(5, 4), indexer=slice(None, 3)),
+        IndexSpec(shape=(5, 4), indexer=slice(-3, None)),
+    ]),
+    ("TwoSliceIndices", [
+        IndexSpec(shape=(5, 4), indexer=(slice(1, 3), slice(0, 2))),
+        IndexSpec(shape=(5, 4), indexer=(slice(1, None), slice(None, 2))),
+        IndexSpec(shape=(5, 4, 3), indexer=(slice(1, 3), slice(0, 2))),
+        IndexSpec(shape=(5, 4, 3), indexer=(slice(1, 3), slice(0, None))),
+        IndexSpec(shape=(5, 4, 3), indexer=(slice(1, None), slice(0, 2))),
+    ]),
+    ("OneColonIndex", [
+        IndexSpec(shape=(3,), indexer=slice(None)),
+        IndexSpec(shape=(3, 4), indexer=slice(None)),
+    ]),
+    ("MultipleColonIndices", [
+        IndexSpec(shape=(3, 4), indexer=(slice(None), slice(None))),
+        IndexSpec(shape=(3, 4, 5), indexer=(slice(None), slice(None))),
+    ]),
+    ("MixedSliceIndices", [
+        IndexSpec(shape=(5, 4), indexer=(slice(None), slice(0, 2))),
+        IndexSpec(shape=(5, 4), indexer=(1, slice(None))),
+    ]),
+    ("EllipsisIndex", [
+        IndexSpec(shape=(3,), indexer=Ellipsis),
+        IndexSpec(shape=(3, 4), indexer=Ellipsis),
+        IndexSpec(shape=(3, 4, 5), indexer=(0, Ellipsis)),
+        IndexSpec(shape=(3, 4, 5), indexer=(Ellipsis, 2, 3)),
+    ]),
+    ("NoneIndex", [
+        IndexSpec(shape=(), indexer=None),
+        IndexSpec(shape=(), indexer=(None, None)),
+        IndexSpec(shape=(), indexer=(Ellipsis, None)),
+        IndexSpec(shape=(3,), indexer=None),
+        IndexSpec(shape=(3, 4), indexer=None),
+        IndexSpec(shape=(3, 4), indexer=(Ellipsis, None)),
+        IndexSpec(shape=(3, 4), indexer=(0, None, Ellipsis)),
+        IndexSpec(shape=(3, 4, 5), indexer=(1, None, Ellipsis)),
+    ]),
+    # TODO(mattjj): these fail for uninteresting dtype reasons
+    # ("EmptyIndex",
+    #  [IndexSpec(shape=(), indexer=()),
+    #   IndexSpec(shape=(3,), indexer=()),
+    #   IndexSpec(shape=(3, 4), indexer=()),
+    #   ]),
+]
+
 class IndexingTest(jtu.JaxTestCase):
   """Tests for Numpy indexing translation rules."""
 
-  @parameterized.named_parameters({
+  @parameterized.named_parameters(jtu.cases_from_list({
       "testcase_name": "{}_inshape={}_indexer={}".format(
           name, jtu.format_shape_dtype_string( shape, dtype), indexer),
        "shape": shape, "dtype": dtype, "rng": rng, "indexer": indexer
-  } for name, index_specs in [
-      ("OneIntIndex", [
-          IndexSpec(shape=(3,), indexer=1),
-          IndexSpec(shape=(3, 3), indexer=0),
-          IndexSpec(shape=(3, 4, 5), indexer=2),
-          IndexSpec(shape=(3,), indexer=-1),
-          IndexSpec(shape=(3,), indexer=-2),
-      ]),
-      ("TwoIntIndices", [
-          IndexSpec(shape=(3, 3), indexer=(2, 1)),
-          IndexSpec(shape=(3, 4, 5), indexer=(1, 2)),
-          IndexSpec(shape=(3, 4, 5), indexer=(-1, 2)),
-      ]),
-      ("ThreeIntIndices", [IndexSpec((3, 4, 5), indexer=(1, 2, 3))]),
-      ("OneSliceIndex", [
-          IndexSpec(shape=(10,), indexer=slice(1, 3)),
-          IndexSpec(shape=(10,), indexer=slice(1, -1)),
-          IndexSpec(shape=(10,), indexer=slice(None, -1)),
-          IndexSpec(shape=(10,), indexer=slice(None, None, None)),
-          IndexSpec(shape=(10, 8), indexer=slice(1, 3)),
-          IndexSpec(shape=(10, 8), indexer=slice(1, None)),
-          IndexSpec(shape=(10, 8), indexer=slice(None, 3)),
-          IndexSpec(shape=(10, 8), indexer=slice(-3, None)),
-      ]),
-      ("OneSliceIndexNegativeStride", [
-          IndexSpec(shape=(10,), indexer=slice(3, 1, -1)),
-          IndexSpec(shape=(10,), indexer=slice(1, 8, -1)),  # empty result
-          IndexSpec(shape=(10,), indexer=slice(None, 1, -2)),
-          IndexSpec(shape=(10,), indexer=slice(None, None, -1)),
-          IndexSpec(shape=(10, 8), indexer=slice(3, 1, -1)),
-          IndexSpec(shape=(10, 8), indexer=slice(0, 8, -1)),  # empty result
-          IndexSpec(shape=(10, 8), indexer=slice(None, None, -1)),
-      ]),
-      ("OneSliceIndexNonUnitStride", [
-          IndexSpec(shape=(10,), indexer=slice(0, 8, 2)),
-          IndexSpec(shape=(10,), indexer=slice(0, 8, 3)),
-          IndexSpec(shape=(10,), indexer=slice(1, 3, 2)),
-          IndexSpec(shape=(10,), indexer=slice(1, None, 2)),
-          IndexSpec(shape=(10,), indexer=slice(None, 1, -2)),
-          IndexSpec(shape=(10, 8), indexer=slice(1, 8, 3)),
-          IndexSpec(shape=(10, 8), indexer=slice(None, None, 2)),
-          IndexSpec(shape=(10, 8), indexer=slice(None, 1, -2)),
-          IndexSpec(shape=(10, 8), indexer=slice(None, None, -2)),
-      ]),
-      ("TwoSliceIndices", [
-          IndexSpec(shape=(10, 8), indexer=(slice(1, 3), slice(0, 2))),
-          IndexSpec(shape=(10, 8), indexer=(slice(1, None), slice(None, 2))),
-          IndexSpec(
-              shape=(10, 8), indexer=(slice(None, None, -1), slice(None, 2))),
-          IndexSpec(shape=(10, 8, 3), indexer=(slice(1, 3), slice(0, 2))),
-          IndexSpec(shape=(10, 8, 3), indexer=(slice(1, 3), slice(0, None))),
-          IndexSpec(shape=(10, 8, 3), indexer=(slice(1, None), slice(0, 2))),
-      ]),
-      ("OneColonIndex", [
-          IndexSpec(shape=(3,), indexer=slice(None)),
-          IndexSpec(shape=(3, 4), indexer=slice(None)),
-      ]),
-      ("MultipleColonIndices", [
-          IndexSpec(shape=(3, 4), indexer=(slice(None), slice(None))),
-          IndexSpec(shape=(3, 4, 5), indexer=(slice(None), slice(None))),
-      ]),
-      ("MixedSliceIndices", [
-          IndexSpec(shape=(10, 4), indexer=(slice(None), slice(0, 2))),
-          IndexSpec(shape=(10, 4), indexer=(1, slice(None))),
-      ]),
-      ("EllipsisIndex", [
-          IndexSpec(shape=(3,), indexer=Ellipsis),
-          IndexSpec(shape=(3, 4), indexer=Ellipsis),
-          IndexSpec(shape=(3, 4, 5), indexer=(0, Ellipsis)),
-          IndexSpec(shape=(3, 4, 5), indexer=(Ellipsis, 2, 3)),
-      ]),
-      ("NoneIndex", [
-          IndexSpec(shape=(), indexer=None),
-          IndexSpec(shape=(), indexer=(None, None)),
-          IndexSpec(shape=(), indexer=(Ellipsis, None)),
-          IndexSpec(shape=(3,), indexer=None),
-          IndexSpec(shape=(3, 4), indexer=None),
-          IndexSpec(shape=(3, 4), indexer=(Ellipsis, None)),
-          IndexSpec(shape=(3, 4), indexer=(0, None, Ellipsis)),
-          IndexSpec(shape=(3, 4, 5), indexer=(1, None, Ellipsis)),
-      ]),
-      ("EmptyIndex", [
-          IndexSpec(shape=(), indexer=()),
-          IndexSpec(shape=(3,), indexer=()),
-          IndexSpec(shape=(3, 4), indexer=()),
-      ]),
-  ] for shape, indexer in index_specs for dtype in all_dtypes
-                                  for rng in [jtu.rand_default()])
-  @jtu.skip_on_devices("tpu")
+  } for name, index_specs in STATIC_INDEXING_TESTS
+    for shape, indexer in index_specs
+    for dtype in all_dtypes
+    for rng in [jtu.rand_default()]))
   def testStaticIndexing(self, shape, dtype, rng, indexer):
     args_maker = lambda: [rng(shape, dtype)]
     fun = lambda x: x[indexer]
@@ -166,74 +238,10 @@ class IndexingTest(jtu.JaxTestCase):
                                             jtu.format_shape_dtype_string(
                                                 shape, dtype), indexer),
       "shape": shape, "dtype": dtype, "rng": rng, "indexer": indexer
-  } for name, index_specs in [
-      ("OneIntIndex", [
-          IndexSpec(shape=(3,), indexer=1),
-          IndexSpec(shape=(3, 3), indexer=0),
-          IndexSpec(shape=(3, 4, 5), indexer=2),
-          IndexSpec(shape=(3,), indexer=-1),
-          IndexSpec(shape=(3,), indexer=-2),
-      ]),
-      ("TwoIntIndices", [
-          IndexSpec(shape=(3, 3), indexer=(2, 1)),
-          IndexSpec(shape=(3, 4, 5), indexer=(1, 2)),
-          IndexSpec(shape=(3, 4, 5), indexer=(-1, 2)),
-      ]),
-      ("ThreeIntIndices", [IndexSpec((3, 4, 5), indexer=(1, 2, 3))]),
-      ("OneSliceIndex", [
-          IndexSpec(shape=(5,), indexer=slice(1, 3)),
-          IndexSpec(shape=(5,), indexer=slice(1, -1)),
-          IndexSpec(shape=(5,), indexer=slice(None, -1)),
-          IndexSpec(shape=(5,), indexer=slice(None, None, None)),
-          IndexSpec(shape=(5, 4), indexer=slice(1, 3)),
-          IndexSpec(shape=(5, 4), indexer=slice(1, None)),
-          IndexSpec(shape=(5, 4), indexer=slice(None, 3)),
-          IndexSpec(shape=(5, 4), indexer=slice(-3, None)),
-      ]),
-      ("TwoSliceIndices", [
-          IndexSpec(shape=(5, 4), indexer=(slice(1, 3), slice(0, 2))),
-          IndexSpec(shape=(5, 4), indexer=(slice(1, None), slice(None, 2))),
-          IndexSpec(shape=(5, 4, 3), indexer=(slice(1, 3), slice(0, 2))),
-          IndexSpec(shape=(5, 4, 3), indexer=(slice(1, 3), slice(0, None))),
-          IndexSpec(shape=(5, 4, 3), indexer=(slice(1, None), slice(0, 2))),
-      ]),
-      ("OneColonIndex", [
-          IndexSpec(shape=(3,), indexer=slice(None)),
-          IndexSpec(shape=(3, 4), indexer=slice(None)),
-      ]),
-      ("MultipleColonIndices", [
-          IndexSpec(shape=(3, 4), indexer=(slice(None), slice(None))),
-          IndexSpec(shape=(3, 4, 5), indexer=(slice(None), slice(None))),
-      ]),
-      ("MixedSliceIndices", [
-          IndexSpec(shape=(5, 4), indexer=(slice(None), slice(0, 2))),
-          IndexSpec(shape=(5, 4), indexer=(1, slice(None))),
-      ]),
-      ("EllipsisIndex", [
-          IndexSpec(shape=(3,), indexer=Ellipsis),
-          IndexSpec(shape=(3, 4), indexer=Ellipsis),
-          IndexSpec(shape=(3, 4, 5), indexer=(0, Ellipsis)),
-          IndexSpec(shape=(3, 4, 5), indexer=(Ellipsis, 2, 3)),
-      ]),
-      ("NoneIndex", [
-          IndexSpec(shape=(), indexer=None),
-          IndexSpec(shape=(), indexer=(None, None)),
-          IndexSpec(shape=(), indexer=(Ellipsis, None)),
-          IndexSpec(shape=(3,), indexer=None),
-          IndexSpec(shape=(3, 4), indexer=None),
-          IndexSpec(shape=(3, 4), indexer=(Ellipsis, None)),
-          IndexSpec(shape=(3, 4), indexer=(0, None, Ellipsis)),
-          IndexSpec(shape=(3, 4, 5), indexer=(1, None, Ellipsis)),
-      ]),
-      # TODO(mattjj): these fail for uninteresting dtype reasons
-      # ("EmptyIndex",
-      #  [IndexSpec(shape=(), indexer=()),
-      #   IndexSpec(shape=(3,), indexer=()),
-      #   IndexSpec(shape=(3, 4), indexer=()),
-      #   ]),
-  ] for shape, indexer in index_specs for dtype in float_dtypes
-                                  for rng in [jtu.rand_default()])
-  @jtu.skip_on_devices("tpu")
+  } for name, index_specs in STATIC_INDEXING_GRAD_TESTS
+    for shape, indexer in index_specs
+    for dtype in float_dtypes
+    for rng in [jtu.rand_default()])
   def testStaticIndexingGrads(self, shape, dtype, rng, indexer):
     tol = 1e-2 if onp.finfo(dtype).bits == 32 else None
     arg = rng(shape, dtype)
@@ -322,7 +330,7 @@ class IndexingTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype), unpacked_indexer]
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)
 
-  @skip
+  @unittest.skip
   @parameterized.named_parameters(
       {"testcase_name": "{}_inshape={}_indexer={}"
        .format(name, jtu.format_shape_dtype_string(shape, dtype), indexer),
@@ -642,6 +650,92 @@ class IndexingTest(jtu.JaxTestCase):
     ans = api.jit(lambda x: x[[0, 2, 4], [0, 2, 4]])(x)
     expected = x[[0, 2, 4], [0, 2, 4]]
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+
+def _broadcastable_shapes(shape):
+  """Returns all shapes that broadcast to `shape`."""
+  def f(rshape):
+    yield []
+    if rshape:
+      for s in f(rshape[1:]):
+        yield rshape[0:1] + s
+      if rshape[0] != 1:
+        for s in f(rshape[1:]):
+          yield [1] + s
+  for x in f(list(reversed(shape))):
+    yield list(reversed(x))
+
+def _update_shape(shape, indexer):
+  return onp.zeros(shape)[indexer].shape
+
+
+class UpdateOps(enum.Enum):
+  UPDATE = 0
+  ADD = 1
+
+class IndexedUpdateTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(jtu.cases_from_list({
+      "testcase_name": "{}_inshape={}_indexer={}_update={}_op={}".format(
+          name, jtu.format_shape_dtype_string(shape, dtype), indexer,
+          jtu.format_shape_dtype_string(update_shape, update_dtype), op.name),
+       "shape": shape, "dtype": dtype, "rng": rng, "indexer": indexer,
+       "update_shape": update_shape, "update_dtype": update_dtype,
+       "op": op
+  } for name, index_specs in STATIC_INDEXING_TESTS
+    for shape, indexer in index_specs
+    for op in [UpdateOps.UPDATE, UpdateOps.ADD]
+    for dtype in (all_dtypes if op == UpdateOps.UPDATE else default_dtypes)
+    for update_shape in _broadcastable_shapes(_update_shape(shape, indexer))
+    for update_dtype in ([dtype] if op == UpdateOps.ADD else all_dtypes)
+    for rng in [jtu.rand_default()]))
+  def testStaticIndexing(self, shape, dtype, update_shape, update_dtype,
+                         rng, indexer, op):
+    if FLAGS.jax_test_dut == "cpu" and not shape:
+      # TODO(b/127315062): this case causes an XLA crash on CPU. Reenable when
+      # fixed.
+      raise unittest.SkipTest("Test case crashes on CPU")
+    args_maker = lambda: [rng(shape, dtype), rng(update_shape, update_dtype)]
+    def onp_fn(x, y):
+      x = x.copy()
+      if op == UpdateOps.UPDATE:
+        x[indexer] = y
+      else:
+        x[indexer] += y
+      return x
+
+    jax_op = ops.index_update if op == UpdateOps.UPDATE else ops.index_add
+    jax_fn = lambda x, y: jax_op(x, indexer, y)
+    self._CheckAgainstNumpy(onp_fn, jax_fn, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jax_fn, args_maker, check_dtypes=True)
+
+
+  @parameterized.named_parameters(jtu.cases_from_list({
+      "testcase_name": "{}_inshape={}_indexer={}_update={}_op={}".format(
+          name, jtu.format_shape_dtype_string(shape, dtype), indexer,
+          jtu.format_shape_dtype_string(update_shape, update_dtype), op.name),
+       "shape": shape, "dtype": dtype, "rng": rng, "indexer": indexer,
+       "update_shape": update_shape, "update_dtype": update_dtype,
+       "op": op
+  } for name, index_specs in STATIC_INDEXING_TESTS
+    for shape, indexer in index_specs
+    for op in [UpdateOps.UPDATE, UpdateOps.ADD]
+    for dtype in float_dtypes
+    for update_shape in _broadcastable_shapes(_update_shape(shape, indexer))
+    for update_dtype in ([dtype] if op == UpdateOps.ADD else float_dtypes)
+    for rng in [jtu.rand_default()]))
+  def testStaticIndexingGrads(self, shape, dtype, update_shape, update_dtype,
+                         rng, indexer, op):
+    if FLAGS.jax_test_dut == "cpu" and not shape:
+      # TODO(b/127315062): this case causes an XLA crash on CPU. Reenable when
+      # fixed.
+      raise unittest.SkipTest("Test case crashes on CPU")
+
+    jax_op = ops.index_update if op == UpdateOps.UPDATE else ops.index_add
+    jax_fn = lambda x, y: jax_op(x, indexer, y)
+    x = rng(shape, dtype)
+    y = rng(update_shape, update_dtype)
+    check_grads(jax_fn, (x, y), 2, rtol=1e-3, atol=1e-3, eps=1.)
 
 
 if __name__ == "__main__":
