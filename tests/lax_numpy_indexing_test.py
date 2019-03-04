@@ -735,7 +735,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     jax_fn = lambda x, y: jax_op(x, indexer, y)
     x = rng(shape, dtype)
     y = rng(update_shape, update_dtype)
-    check_grads(jax_fn, (x, y), 2, eps=1.)
+    check_grads(jax_fn, (x, y), 2, rtol=1e-3, atol=1e-3, eps=1.)
 
 
 if __name__ == "__main__":
