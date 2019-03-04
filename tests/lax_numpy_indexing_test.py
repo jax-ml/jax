@@ -657,10 +657,13 @@ def _broadcastable_shapes(shape):
   def f(rshape):
     yield []
     if rshape:
-      yield from (rshape[0:1] + list(s) for s in f(rshape[1:]))
+      for s in f(rshape[1:]):
+        yield rshape[0:1] + s
       if rshape[0] != 1:
-        yield from ([1] + s for s in f(rshape[1:]))
-  yield from (list(reversed(x)) for x in f(list(reversed(shape))))
+        for s in f(rshape[1:]):
+          yield [1] + s
+  for x in f(list(reversed(shape))):
+    yield list(reversed(x))
 
 def _update_shape(shape, indexer):
   return onp.zeros(shape)[indexer].shape
