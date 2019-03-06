@@ -28,6 +28,7 @@ py_library(
             "lib/*.py",
             "interpreters/*.py",
             "numpy/*.py",
+            "ops/*.py",
             "scipy/*.py",
             "scipy/stats/*.py",
         ],

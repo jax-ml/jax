@@ -179,7 +179,7 @@ def partial_eval_wrapper(avals, *consts, **kwargs):
 
 def abstract_eval_fun(fun, *avals, **params):
   pvs_in = [PartialVal((a, unit)) for a in avals]
-  _, pvout, _ = trace_unwrapped_to_jaxpr(fun, pvs_in, **params)
+  _, pvout, _ = trace_to_jaxpr(lu.wrap_init(fun, params), pvs_in)
   aval_out, _ = pvout
   return aval_out
 
@@ -269,6 +269,37 @@ def merge_pvals(val, pval):
   else:
     raise TypeError(pv)
 
+def join_pvals(pval1, pval2):
+  pv1, const1 = pval1
+  pv2, const2 = pval2
+  if pv1 is None and pv2 is None:
+    aval1, aval2 = core.get_aval(const1), core.get_aval(const2)
+    if aval1 == aval2:
+      return pval1  # both pvals known, equal constants
+    else:
+      aval = core.lattice_join(aval1, aval2)
+      return PartialVal((aval, unit))  # both pvals known, different constants
+  elif pv1 is None and isinstance(pv2, AbstractValue):
+    aval = pv2
+    return PartialVal((aval, unit))  # first pval known, second not known
+  elif isinstance(pv1, AbstractValue) and pv2 is None:
+    aval = pv1
+    return PartialVal((aval, unit))  # first pval not known, second known
+  elif isinstance(pv1, AbstractValue) and isinstance(pv2, AbstractValue):
+    aval = core.lattice_join(pv1, pv2)
+    return PartialVal((aval, unit))  # neither is known
+  else:
+    # the pvals are tuples with some mixtures of known/unknown
+    assert isinstance(pv1, JaxprTracerTuple) or isinstance(pv2, JaxprTracerTuple)
+    pv1 = [None] * len(pv2) if pv1 is None else pv1
+    pv2 = [None] * len(pv1) if pv2 is None else pv2
+    pvals1, pvals2 = zip(pv1, const1), zip(pv2, const2)
+    join_pvs, join_consts = unzip2(map(join_pvals, pvals1, pvals2))
+    if all(isinstance(pv, AbstractValue) for pv in join_pvs):
+      return PartialVal(AbstractTuple(join_pvs), tuple(join_consts))
+    else:
+      return PartialVal((JaxprTracerTuple(join_pvs), tuple(join_consts)))
+
 def as_abstract_val(pv):
   if isinstance(pv, AbstractValue):
     return pv
@@ -276,7 +307,6 @@ def as_abstract_val(pv):
     return AbstractTuple(map(as_abstract_val, pv))
   elif pv is None:
     raise TypeError("{} is not abstract".format(pv))
-
 
 def partial_val_aval(pv, const):
   if isinstance(pv, AbstractValue):
@@ -287,7 +317,6 @@ def partial_val_aval(pv, const):
     return get_aval(const)
   else:
     raise TypeError(pv)
-
 
 def pack_pvals(pvals):
   pvs, consts = unzip2(pvals)

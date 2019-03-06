@@ -148,7 +148,7 @@ PYTHON_VERSION=cp27  # alternatives: cp27, cp35, cp36, cp37
 CUDA_VERSION=cuda92  # alternatives: cuda90, cuda92, cuda100
 PLATFORM=linux_x86_64  # alternatives: linux_x86_64
 BASE_URL='https://storage.googleapis.com/jax-wheels'
-pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.8-$PYTHON_VERSION-none-$PLATFORM.whl
+pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.11-$PYTHON_VERSION-none-$PLATFORM.whl
 
 pip install --upgrade jax  # install jax
 ```
@@ -211,6 +211,7 @@ In [5]: print(np.dot(x, x.T) / 2)  # fast!
 [[  2.52727051e+03   8.15895557e+00  -8.53276134e-01 ...,  # ...
 
 In [6]: print(np.dot(x, x.T) / 2)  # even faster!
+# JIT-compiled code is cached and reused in the 2nd call
 [[  2.52727051e+03   8.15895557e+00  -8.53276134e-01 ...,  # ...
 ```
 

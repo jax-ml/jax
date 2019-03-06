@@ -1335,6 +1335,131 @@ class LaxTest(jtu.JaxTestCase):
       self.assertAllClose(cfun(x, num), onp.sum(x[:num]), check_dtypes=False)
       self.assertAllClose(cfun(x, num), onp.sum(x[:num]), check_dtypes=False)
 
+  def testCond(self):
+    def fun(x):
+      if x < 3:
+        return (x, x)
+      else:
+        y = lax.mul(2, x)
+        return y, lax.mul(2, y)
+
+    @api.jit
+    def cfun(x):
+      def false_fun(x):
+        y = lax.mul(2, x)
+        return y, lax.mul(2, y)
+      return lax.cond(lax.lt(x, 3), x, lambda x: (x, x), x, false_fun)
+
+    self.assertEqual(fun(0), cfun(0))
+    self.assertEqual(fun(0), (0, 0))
+    self.assertEqual(fun(1), cfun(1))
+    self.assertEqual(fun(1), (1, 1))
+    self.assertEqual(fun(2), cfun(2))
+    self.assertEqual(fun(2), (2, 2))
+    self.assertEqual(fun(3), cfun(3))
+    self.assertEqual(fun(3), (6, 12))
+    self.assertEqual(fun(4), cfun(4))
+    self.assertEqual(fun(4), (8, 16))
+
+  def testNestedCond(self):
+    def fun(x):
+      if x < 2:
+        return lax.mul(2, x)
+      else:
+        if x < 5:
+          return lax.mul(3, x)
+        else:
+          return lax.mul(4, x)
+
+    @api.jit
+    def cfun(x):
+      return lax.cond(
+          lax.lt(x, 2),
+          x, lambda x: lax.mul(2, x),
+          x, lambda x: lax.cond(lax.lt(x, 5),
+                                x, lambda x: lax.mul(3, x),
+                                4, lambda y: lax.mul(y, x)))
+
+    self.assertEqual(cfun(1), 2)
+    self.assertEqual(cfun(3), 9)
+    self.assertEqual(cfun(6), 24)
+    self.assertEqual(cfun(1), fun(1))
+    self.assertEqual(cfun(3), fun(3))
+    self.assertEqual(cfun(6), fun(6))
+
+  def testCondOneBranchConstant(self):
+    def fun(x):
+      if x < 3:
+        return 5.
+      else:
+        return x
+
+    @api.jit
+    def cfun(x):
+      return lax.cond(lax.lt(x, 3), x, lambda x: 5, x, lambda x: x)
+
+    self.assertEqual(fun(0), cfun(0))
+    self.assertEqual(cfun(0), 5)
+    self.assertEqual(fun(4), cfun(4))
+    self.assertEqual(cfun(4), 4)
+
+  def testCondOneBranchConstantTuple(self):
+    def fun(x):
+      if x < 3:
+        return (1., 2., 3.)
+      else:
+        return (x, 2., 4.)
+
+    @api.jit
+    def cfun(x):
+      return lax.cond(lax.lt(x, 3),
+                      x, lambda x: (1, 2., 3.),
+                      x, lambda x: (x, 2., 4.))
+
+    self.assertEqual(fun(0), cfun(0))
+    self.assertEqual(cfun(0), (1, 2., 3.))
+    self.assertEqual(fun(4), cfun(4))
+    self.assertEqual(cfun(4), (4, 2., 4.))
+
+  def testScanAdd(self):
+    def f(x, y):
+      return x + y
+
+    g = partial(lax.scan, f)
+    a = onp.array(7, onp.float32)
+    bs = onp.array([2, 4, -2, 6], onp.float32)
+    out = g(a, bs)
+    self.assertAllClose(out, onp.array([9, 13, 11, 17], onp.float32),
+                        check_dtypes=True)
+
+    # jtu.check_jvp(g, partial(api.jvp, g), (a, bs))
+
+  def testScanMul(self):
+    def f(x, y):
+      return x * y
+
+    g = partial(lax.scan, f)
+    a = onp.array(7, onp.float32)
+    bs = onp.array([2, 4, -2, 6], onp.float32)
+    out = g(a, bs)
+    self.assertAllClose(out, onp.array([14, 56, -112, -672], onp.float32),
+                        check_dtypes=True)
+
+    # jtu.check_jvp(g, partial(api.jvp, g), (a, bs))
+
+  def testScanJit(self):
+    @api.jit
+    def f(x, yz):
+      y, z = yz
+      return 5. * lax.exp(lax.sin(x) * lax.cos(y)) + z
+
+    a = onp.array(7, onp.float32)
+    bs = (onp.array([3., 1., -4., 1.], onp.float32),
+          onp.array([5., 9., -2., 6.], onp.float32))
+    ans = lax.scan(f, a, bs)
+    expected = onp.array([7.609, 17.445, 7.52596, 14.3389172], onp.float32)
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_lhs_shape={}_rhs_shape={}"
        .format(jtu.format_shape_dtype_string(lhs_shape, dtype),
@@ -1387,18 +1512,18 @@ class LaxTest(jtu.JaxTestCase):
        "slice_sizes": slice_sizes, "rng": rng, "rng_idx": rng_idx}
       for dtype in all_dtypes
       for shape, idxs, dnums, slice_sizes in [
-          ((5,), onp.array([0, 2]), lax.GatherDimensionNumbers(
-            offset_dims=(), collapsed_slice_dims=(0,), start_index_map=(0,),
-            index_vector_dim=1), (1,)),
-          ((10,), onp.array([0, 0, 0]), lax.GatherDimensionNumbers(
-            offset_dims=(1,), collapsed_slice_dims=(), start_index_map=(0,),
-            index_vector_dim=1), (2,)),
-          ((10, 5,), onp.array([0, 2, 1]), lax.GatherDimensionNumbers(
-            offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0,),
-            index_vector_dim=1), (1, 3)),
+          ((5,), onp.array([[0], [2]]), lax.GatherDimensionNumbers(
+            offset_dims=(), collapsed_slice_dims=(0,), start_index_map=(0,)),
+            (1,)),
+          ((10,), onp.array([[0], [0], [0]]), lax.GatherDimensionNumbers(
+            offset_dims=(1,), collapsed_slice_dims=(), start_index_map=(0,)),
+            (2,)),
+          ((10, 5,), onp.array([[0], [2], [1]]), lax.GatherDimensionNumbers(
+            offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0,)),
+            (1, 3)),
           ((10, 5), onp.array([[0, 2], [1, 0]]), lax.GatherDimensionNumbers(
-            offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1),
-            index_vector_dim=1), (1, 3)),
+            offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1)),
+            (1, 3)),
       ]
       for rng_idx in [jtu.rand_int(max(shape))]
       for rng in [jtu.rand_default()]))
@@ -1417,15 +1542,15 @@ class LaxTest(jtu.JaxTestCase):
        "rng_idx": rng_idx}
       for dtype in float_dtypes
       for arg_shape, idxs, update_shape, dnums in [
-          ((5,), onp.array([0, 2]), (2,), lax.ScatterDimensionNumbers(
+          ((5,), onp.array([[0], [2]]), (2,), lax.ScatterDimensionNumbers(
             update_window_dims=(), inserted_window_dims=(0,),
-            scatter_dims_to_operand_dims=(0,), index_vector_dim=1)),
-          ((10,), onp.array([0, 0, 0]), (3, 2), lax.ScatterDimensionNumbers(
+            scatter_dims_to_operand_dims=(0,))),
+          ((10,), onp.array([[0], [0], [0]]), (3, 2), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(),
-            scatter_dims_to_operand_dims=(0,), index_vector_dim=1)),
-          ((10, 5,), onp.array([0, 2, 1]), (3, 3), lax.ScatterDimensionNumbers(
+            scatter_dims_to_operand_dims=(0,))),
+          ((10, 5,), onp.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(0,),
-            scatter_dims_to_operand_dims=(0,), index_vector_dim=1)),
+            scatter_dims_to_operand_dims=(0,))),
       ]
       for rng_idx in [jtu.rand_int(max(arg_shape))]
       for rng in [jtu.rand_default()]))
@@ -1435,6 +1560,35 @@ class LaxTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(arg_shape, dtype), rand_idxs(),
                           rng(update_shape, dtype)]
     fun = partial(lax.scatter_add, dimension_numbers=dnums)
+    self._CompileAndCheck(fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_idxs={}_update={}_dnums={}".format(
+          jtu.format_shape_dtype_string(arg_shape, dtype),
+          idxs, update_shape, dnums),
+       "arg_shape": arg_shape, "dtype": dtype, "idxs": idxs,
+       "update_shape": update_shape, "dnums": dnums, "rng": rng,
+       "rng_idx": rng_idx}
+      for dtype in float_dtypes
+      for arg_shape, idxs, update_shape, dnums in [
+          ((5,), onp.array([[0], [2]]), (2,), lax.ScatterDimensionNumbers(
+            update_window_dims=(), inserted_window_dims=(0,),
+            scatter_dims_to_operand_dims=(0,))),
+          ((10,), onp.array([[0], [0], [0]]), (3, 2), lax.ScatterDimensionNumbers(
+            update_window_dims=(1,), inserted_window_dims=(),
+            scatter_dims_to_operand_dims=(0,))),
+          ((10, 5,), onp.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
+            update_window_dims=(1,), inserted_window_dims=(0,),
+            scatter_dims_to_operand_dims=(0,))),
+      ]
+      for rng_idx in [jtu.rand_int(max(arg_shape))]
+      for rng in [jtu.rand_default()]))
+  def testScatter(self, arg_shape, dtype, idxs, update_shape, dnums, rng,
+                  rng_idx):
+    rand_idxs = lambda: rng_idx(idxs.shape, idxs.dtype)
+    args_maker = lambda: [rng(arg_shape, dtype), rand_idxs(),
+                          rng(update_shape, dtype)]
+    fun = partial(lax.scatter, dimension_numbers=dnums)
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)
 
 
@@ -1457,15 +1611,15 @@ class DeviceConstantTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_fill={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), fill_value),
+          jtu.format_shape_dtype_string(shape, dtype) if dtype else shape,
+          fill_value),
        "shape": shape, "dtype": dtype, "fill_value": fill_value}
-      # for dtype in itertools.chain(all_dtypes, [None])
-      for dtype in [None]
+      for dtype in itertools.chain(default_dtypes, [None])
       for shape in [(), (3,), (2, 3), (2, 3, 4)]
       for fill_value in [0, 1, onp.pi]))
   def testFilledConstant(self, shape, fill_value, dtype):
     make_const = lambda: lax.full(shape, fill_value, dtype)
-    expected = onp.full(shape, fill_value, xla_bridge.canonicalize_dtype(dtype))
+    expected = onp.full(shape, fill_value, dtype)
     self._CheckDeviceConstant(make_const, expected)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -2121,7 +2275,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     idxs = tuple(rng(e.shape, e.dtype) for e in idxs)
     src = rng(shape, dtype)
     index_take = lambda src: lax.index_take(src, idxs, axes)
-    check_grads(index_take, (src,), 2, 1e-2, 1e-2, 1e-2)
+    check_grads(index_take, (src,), 2, 1e-2, 1e-2, 1)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_idxs={}_dnums={}_slice_sizes={}".format(
@@ -2131,15 +2285,15 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        "slice_sizes": slice_sizes, "rng": rng, "rng_idx": rng_idx}
       for dtype in float_dtypes
       for shape, idxs, dnums, slice_sizes in [
-          ((5,), onp.array([0, 2]), lax.GatherDimensionNumbers(
-            offset_dims=(), collapsed_slice_dims=(0,), start_index_map=(0,),
-            index_vector_dim=1), (1,)),
-          ((10,), onp.array([0, 0, 0]), lax.GatherDimensionNumbers(
-            offset_dims=(1,), collapsed_slice_dims=(), start_index_map=(0,),
-            index_vector_dim=1), (2,)),
-          ((10, 5,), onp.array([0, 2, 1]), lax.GatherDimensionNumbers(
-            offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0,),
-            index_vector_dim=1), (1, 3)),
+          ((5,), onp.array([[0], [2]]), lax.GatherDimensionNumbers(
+            offset_dims=(), collapsed_slice_dims=(0,), start_index_map=(0,)),
+            (1,)),
+          ((10,), onp.array([[0], [0], [0]]), lax.GatherDimensionNumbers(
+            offset_dims=(1,), collapsed_slice_dims=(), start_index_map=(0,)),
+            (2,)),
+          ((10, 5,), onp.array([[0], [2], [1]]), lax.GatherDimensionNumbers(
+            offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0,)),
+            (1, 3)),
       ]
       for rng_idx in [jtu.rand_int(max(shape))]
       for rng in [jtu.rand_default()]))
@@ -2148,7 +2302,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     gather = lambda x: lax.gather(x, idxs, dimension_numbers=dnums,
                                   slice_sizes=slice_sizes)
     x = rng(shape, dtype)
-    check_grads(gather, (x,), 2, 1e-2, 1e-2, 1e-2)
+    check_grads(gather, (x,), 2, 1e-2, 1e-2, 1.)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_idxs={}_update={}_dnums={}".format(
@@ -2159,15 +2313,15 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        "rng_idx": rng_idx}
       for dtype in float_dtypes
       for arg_shape, idxs, update_shape, dnums in [
-          ((5,), onp.array([0, 2]), (2,), lax.ScatterDimensionNumbers(
+          ((5,), onp.array([[0], [2]]), (2,), lax.ScatterDimensionNumbers(
             update_window_dims=(), inserted_window_dims=(0,),
-            scatter_dims_to_operand_dims=(0,), index_vector_dim=1)),
-          ((10,), onp.array([0, 0, 0]), (3, 2), lax.ScatterDimensionNumbers(
+            scatter_dims_to_operand_dims=(0,))),
+          ((10,), onp.array([[0], [0], [0]]), (3, 2), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(),
-            scatter_dims_to_operand_dims=(0,), index_vector_dim=1)),
-          ((10, 5,), onp.array([0, 2, 1]), (3, 3), lax.ScatterDimensionNumbers(
+            scatter_dims_to_operand_dims=(0,))),
+          ((10, 5,), onp.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(0,),
-            scatter_dims_to_operand_dims=(0,), index_vector_dim=1)),
+            scatter_dims_to_operand_dims=(0,))),
       ]
       for rng_idx in [jtu.rand_int(max(arg_shape))]
       for rng in [jtu.rand_default()]))
@@ -2178,7 +2332,36 @@ class LaxAutodiffTest(jtu.JaxTestCase):
                                                dimension_numbers=dnums)
     x = rng(arg_shape, dtype)
     y = rng(update_shape, dtype)
-    check_grads(scatter_add, (x, y), 2, 1e-2, 1e-2, 1e-2)
+    check_grads(scatter_add, (x, y), 2, 1e-2, 1e-2, 1.)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_idxs={}_update={}_dnums={}".format(
+          jtu.format_shape_dtype_string(arg_shape, dtype),
+          idxs, update_shape, dnums),
+       "arg_shape": arg_shape, "dtype": dtype, "idxs": idxs,
+       "update_shape": update_shape, "dnums": dnums, "rng": rng,
+       "rng_idx": rng_idx}
+      for dtype in float_dtypes
+      for arg_shape, idxs, update_shape, dnums in [
+          ((5,), onp.array([[0], [2]]), (2,), lax.ScatterDimensionNumbers(
+            update_window_dims=(), inserted_window_dims=(0,),
+            scatter_dims_to_operand_dims=(0,))),
+          ((10,), onp.array([[0], [0], [0]]), (3, 2), lax.ScatterDimensionNumbers(
+            update_window_dims=(1,), inserted_window_dims=(),
+            scatter_dims_to_operand_dims=(0,))),
+          ((10, 5,), onp.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
+            update_window_dims=(1,), inserted_window_dims=(0,),
+            scatter_dims_to_operand_dims=(0,))),
+      ]
+      for rng_idx in [jtu.rand_int(max(arg_shape))]
+      for rng in [jtu.rand_default()]))
+  def testScatterGrad(self, arg_shape, dtype, idxs, update_shape, dnums, rng,
+                         rng_idx):
+    idxs = rng_idx(idxs.shape, idxs.dtype)
+    scatter = lambda x, y: lax.scatter(x, idxs, y, dimension_numbers=dnums)
+    x = rng(arg_shape, dtype)
+    y = rng(update_shape, dtype)
+    check_grads(scatter, (x, y), 2, 1e-2, 1e-2, 1.)
 
   def testStopGradient(self):
     def f(x):

@@ -30,22 +30,31 @@ from distutils.util import strtobool
 from ..config import flags
 import numpy as onp  # 'onp' rather than 'np' to distinguish from autograd.numpy
 
-from jaxlib import xla_data_pb2
+import jaxlib
+
+# Check the jaxlib version before importing anything else from jaxlib.
+def _check_jaxlib_version():
+  minimum_version = (0, 1, 9)
+  if hasattr(jaxlib, '__version__'):
+    version = tuple(int(x) for x in jaxlib.__version__.split('.'))
+  else:
+    version = (0, 1, 9)  # The version before jaxlib.__version__ was added.
+  if version < minimum_version:
+    msg = 'jaxlib is version {}, but this version of jax requires version {}.'
+    raise ValueError(msg.format('.'.join(map(str, version)),
+                                '.'.join(map(str, minimum_version))))
+
+_check_jaxlib_version()
+
+
 from jaxlib import xla_client
+from jaxlib import xla_data_pb2
 
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_enable_x64',
                   strtobool(os.getenv('JAX_ENABLE_X64', "False")),
                   'Enable 64-bit types to be used.')
-flags.DEFINE_string('jax_dump_hlo_graph', None, 'Regexp of HLO graphs to dump.')
-flags.DEFINE_bool('jax_hlo_profile', False, 'Enables HLO profiling mode.')
-flags.DEFINE_string('jax_dump_hlo_unoptimized', None,
-                    'Dirpath for unoptimized HLO dump.')
-flags.DEFINE_string('jax_dump_hlo_optimized', None,
-                    'Dirpath for optimized HLO dump.')
-flags.DEFINE_string('jax_dump_hlo_per_pass', None,
-                    'Dirpath for per-pass HLO dump.')
 flags.DEFINE_integer('jax_replica_count', 1, 'Replica count for computations.')
 flags.DEFINE_string(
     'jax_xla_backend', 'xla',
@@ -61,43 +70,12 @@ flags.DEFINE_string(
     'GPU.')
 
 
-# Prefix for HLO-dump flags indicating output should go into Sponge's
-# visible output files.
-_SPONGE_PREFIX = '/SPONGE/'
-
 _platform_name = None  # set to the active platform name
-
-
-def _hlo_path(path, name):
-  path = path.replace(_SPONGE_PREFIX,
-                      os.getenv('TEST_UNDECLARED_OUTPUTS_DIR', ''))
-  path = os.path.join(path, name)
-  if not os.path.exists(path):
-    os.mkdir(path)
-  return path
 
 
 def get_compile_options(num_replicas=None):
   """Returns the compile options to use, as derived from flag values."""
   compile_options = None
-  if FLAGS.jax_dump_hlo_graph is not None:
-    compile_options = get_xla_client().CompileOptions()
-    compile_options.generate_hlo_graph = FLAGS.jax_dump_hlo_graph
-  if FLAGS.jax_hlo_profile:
-    compile_options = compile_options or get_xla_client().CompileOptions()
-    compile_options.hlo_profile = True
-  if FLAGS.jax_dump_hlo_unoptimized:
-    compile_options = compile_options or get_xla_client().CompileOptions()
-    path = _hlo_path(FLAGS.jax_dump_hlo_unoptimized, 'hlo_unoptimized')
-    compile_options.dump_unoptimized_hlo_proto_to = path
-  if FLAGS.jax_dump_hlo_optimized:
-    compile_options = compile_options or get_xla_client().CompileOptions()
-    path = _hlo_path(FLAGS.jax_dump_hlo_optimized, 'hlo_optimized')
-    compile_options.dump_optimized_hlo_proto_to = path
-  if FLAGS.jax_dump_hlo_per_pass:
-    compile_options = compile_options or get_xla_client().CompileOptions()
-    path = _hlo_path(FLAGS.jax_dump_hlo_per_pass, 'hlo_per_pass')
-    compile_options.dump_per_pass_hlo_proto_to = path
   if num_replicas is not None:
     compile_options = compile_options or get_xla_client().CompileOptions()
     compile_options.num_replicas = num_replicas
@@ -124,22 +102,6 @@ def get_xla_client():
                          FLAGS.jax_replica_count)
 
 
-def _jaxlib_version():
-  if hasattr(xla_client, 'version'):
-    return xla_client.version()
-  else:
-    return (0, 1, 6)  # The version before xla_client.version() was added.
-
-
-def _check_jaxlib_version():
-  minimum_version = (0, 1, 6)
-  version = _jaxlib_version()
-  if version < minimum_version:
-    msg = 'jaxlib is version {}, but this version of jax requires version {}.'
-    raise ValueError(msg.format('.'.join(map(str, version)),
-                                '.'.join(map(str, minimum_version))))
-
-
 def _get_xla_client(backend_name, platform_name, replica_count):
   """Configures and returns a handle to the XLA client.
 
@@ -152,7 +114,6 @@ def _get_xla_client(backend_name, platform_name, replica_count):
   Returns:
     A client library module, or an object that behaves identically to one.
   """
-  _check_jaxlib_version()
   global _platform_name
   xla_client.initialize_replica_count(replica_count)
   if backend_name == 'xla':
@@ -203,9 +164,9 @@ def _get_backend():
   return backend()
 
 
-def device_put(pyval, replica=0):
+def device_put(pyval, device_num=0):
   client = get_xla_client()
-  return client.LocalBuffer.from_pyval(pyval, replica, backend=_get_backend())
+  return client.LocalBuffer.from_pyval(pyval, device_num, backend=_get_backend())
 
 
 Shape = xla_client.Shape        # pylint: disable=invalid-name
