@@ -423,8 +423,10 @@ def vmap(fun, in_axes=0, out_axes=0):
   return batched_fun
 
 
-def pjit(fun, axis_name):
+def pjit(fun, axis_name=None):
   """Set up SPMD function for JIT compilation and parallel execution with XLA."""
+  axis_name = _TempAxisName() if axis_name is None else axis_name
+
   @wraps(fun)
   def f_jitted(*args, **kwargs):
     leaves, _ = tree_flatten(args)
@@ -444,6 +446,10 @@ def pjit(fun, axis_name):
 
   f_jitted.__name__ = "pjit({})".format(f_jitted.__name__)
   return f_jitted
+
+class _TempAxisName(object):
+  def __repr__(self):
+    return '<temp axis {}>'.format(hex(id(self)))
 
 
 def pmap(fun, axis_name, in_axes=0, out_axes=0):
