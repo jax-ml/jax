@@ -3902,11 +3902,11 @@ def gather(x, axis_name):
 
 def PmapPrimitive(name):
   prim = Primitive(name)
-  prim.def_impl(partial(unbound_name_error, name))
+  prim.def_impl(partial(_unbound_name_error, name))
   prim.def_abstract_eval(lambda x, *args, **kwargs: x)  # default
   return prim
 
-def unbound_name_error(primitive_name, *args, **kwargs):
+def _unbound_name_error(primitive_name, *args, **kwargs):
   axis_name = kwargs['axis_name']
   msg = "axis name '{}' is unbound for primitive {}."
   raise NameError(msg.format(axis_name, primitive_name))
