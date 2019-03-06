@@ -55,14 +55,6 @@ FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_enable_x64',
                   strtobool(os.getenv('JAX_ENABLE_X64', "False")),
                   'Enable 64-bit types to be used.')
-flags.DEFINE_string('jax_dump_hlo_graph', None, 'Regexp of HLO graphs to dump.')
-flags.DEFINE_bool('jax_hlo_profile', False, 'Enables HLO profiling mode.')
-flags.DEFINE_string('jax_dump_hlo_unoptimized', None,
-                    'Dirpath for unoptimized HLO dump.')
-flags.DEFINE_string('jax_dump_hlo_optimized', None,
-                    'Dirpath for optimized HLO dump.')
-flags.DEFINE_string('jax_dump_hlo_per_pass', None,
-                    'Dirpath for per-pass HLO dump.')
 flags.DEFINE_integer('jax_replica_count', 1, 'Replica count for computations.')
 flags.DEFINE_string(
     'jax_xla_backend', 'xla',
@@ -78,43 +70,12 @@ flags.DEFINE_string(
     'GPU.')
 
 
-# Prefix for HLO-dump flags indicating output should go into Sponge's
-# visible output files.
-_SPONGE_PREFIX = '/SPONGE/'
-
 _platform_name = None  # set to the active platform name
-
-
-def _hlo_path(path, name):
-  path = path.replace(_SPONGE_PREFIX,
-                      os.getenv('TEST_UNDECLARED_OUTPUTS_DIR', ''))
-  path = os.path.join(path, name)
-  if not os.path.exists(path):
-    os.mkdir(path)
-  return path
 
 
 def get_compile_options(num_replicas=None):
   """Returns the compile options to use, as derived from flag values."""
   compile_options = None
-  if FLAGS.jax_dump_hlo_graph is not None:
-    compile_options = get_xla_client().CompileOptions()
-    compile_options.generate_hlo_graph = FLAGS.jax_dump_hlo_graph
-  if FLAGS.jax_hlo_profile:
-    compile_options = compile_options or get_xla_client().CompileOptions()
-    compile_options.hlo_profile = True
-  if FLAGS.jax_dump_hlo_unoptimized:
-    compile_options = compile_options or get_xla_client().CompileOptions()
-    path = _hlo_path(FLAGS.jax_dump_hlo_unoptimized, 'hlo_unoptimized')
-    compile_options.dump_unoptimized_hlo_proto_to = path
-  if FLAGS.jax_dump_hlo_optimized:
-    compile_options = compile_options or get_xla_client().CompileOptions()
-    path = _hlo_path(FLAGS.jax_dump_hlo_optimized, 'hlo_optimized')
-    compile_options.dump_optimized_hlo_proto_to = path
-  if FLAGS.jax_dump_hlo_per_pass:
-    compile_options = compile_options or get_xla_client().CompileOptions()
-    path = _hlo_path(FLAGS.jax_dump_hlo_per_pass, 'hlo_per_pass')
-    compile_options.dump_per_pass_hlo_proto_to = path
   if num_replicas is not None:
     compile_options = compile_options or get_xla_client().CompileOptions()
     compile_options.num_replicas = num_replicas
