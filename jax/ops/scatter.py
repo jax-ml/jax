@@ -175,7 +175,7 @@ index = _Indexable()
 def index_add(x, idx, y):
   """Pure equivalent of :code:`x[idx] += y`.
 
-  Returns the the value of `x` that would result from the
+  Returns the value of `x` that would result from the
   NumPy-style :mod:`indexed assignment <numpy.doc.indexing>`::
     x[idx] += y
 
@@ -212,7 +212,7 @@ def index_add(x, idx, y):
 def index_update(x, idx, y):
   """Pure equivalent of :code:`x[idx] = y`.
 
-  Returns the the value of `x` that would result from the
+  Returns the value of `x` that would result from the
   NumPy-style :mod:`indexed assignment <numpy.doc.indexing>`::
     x[idx] += y
 
