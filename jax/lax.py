@@ -52,7 +52,7 @@ from .interpreters import xla
 from .interpreters import pxla
 from .interpreters import ad
 from .interpreters import batching
-from .interpreters import parallel as parallel_interp
+from .interpreters import parallel
 from .util import curry, memoize, safe_zip, unzip2, prod
 from .tree_util import build_tree, tree_unflatten
 from .lib import xla_bridge
@@ -1442,7 +1442,7 @@ def unop(result_dtype, accepted_dtypes, name):
   dtype_rule = partial(unop_dtype_rule, result_dtype, accepted_dtypes, name)
   prim = standard_primitive(_attrgetter('shape'), dtype_rule, name)
   batching.defvectorized(prim)
-  parallel_interp.defvectorized(prim)
+  parallel.defvectorized(prim)
   return prim
 standard_unop = partial(unop, identity)
 _attrgetter = lambda name: lambda x, **kwargs: getattr(x, name)
@@ -1483,7 +1483,7 @@ def binop(result_dtype, accepted_dtypes, name, translation_rule=None):
   prim = standard_primitive(shape_rule, dtype_rule, name,
                             translation_rule=translation_rule)
   batching.defbroadcasting(prim)
-  parallel_interp.defbroadcasting(prim)
+  parallel.defbroadcasting(prim)
   return prim
 standard_binop = partial(binop, _input_dtype)
 
@@ -2370,7 +2370,7 @@ reshape_p = standard_primitive(_reshape_shape_rule, _reshape_dtype_rule,
                                'reshape', _reshape_translation_rule)
 ad.deflinear(reshape_p, _reshape_transpose_rule)
 batching.primitive_batchers[reshape_p] = _reshape_batch_rule
-parallel_interp.papply_primitive_rules[reshape_p] = _reshape_papply_rule
+parallel.papply_primitive_rules[reshape_p] = _reshape_papply_rule
 
 
 def _rev_shape_rule(operand, dimensions):
@@ -3933,15 +3933,15 @@ def _psum_parallel_translation_rule(c, val, device_groups):
   else:
     return c.CrossReplicaSum(val)
 
-parallel_interp.pmap_primitive_rules[psum_p] = _psum_pmap_rule
+parallel.pmap_primitive_rules[psum_p] = _psum_pmap_rule
 pxla.parallel_translation_rules[psum_p] = _psum_parallel_translation_rule
 ad.deflinear(psum_p, _psum_transpose_rule)
-parallel_interp.defreducer(reduce_sum_p, psum_p)
+parallel.defreducer(reduce_sum_p, psum_p)
 
 def gather_pmap_rule(val, axis):
   return val, None
 
-parallel_interp.pmap_primitive_rules[gather_p] = gather_pmap_rule
+parallel.pmap_primitive_rules[gather_p] = gather_pmap_rule
 
 def pswapaxes_pmap_rule(x, axis_in, axis):
   if x.shape[axis_in] != x.shape[axis]:
@@ -3951,19 +3951,19 @@ def pswapaxes_pmap_rule(x, axis_in, axis):
   perm[axis] = axis_in
   return transpose(x, perm), axis_in
 
-parallel_interp.pmap_primitive_rules[pswapaxes_p] = pswapaxes_pmap_rule
+parallel.pmap_primitive_rules[pswapaxes_p] = pswapaxes_pmap_rule
 
 def psplit_pmap_rule(x, axis_in, axis):
   if x.shape[axis_in] != x.shape[axis]:
     raise ValueError("psplit between non-square dimensions")
   return x, axis
 
-parallel_interp.pmap_primitive_rules[psplit_p] = psplit_pmap_rule
+parallel.pmap_primitive_rules[psplit_p] = psplit_pmap_rule
 
 def pcollect_pmap_rule(x, axis_in):
   return x, None
 
-parallel_interp.pmap_primitive_rules[pcollect_p] = pcollect_pmap_rule
+parallel.pmap_primitive_rules[pcollect_p] = pcollect_pmap_rule
 
 def transpose_papply_rule(name, vals, dims, permutation):
   x, = vals
@@ -3983,7 +3983,7 @@ def transpose_papply_rule(name, vals, dims, permutation):
     x = pswapaxes(x, name, in_dim)
   return x, xdim
 
-parallel_interp.papply_primitive_rules[transpose_p] = transpose_papply_rule
+parallel.papply_primitive_rules[transpose_p] = transpose_papply_rule
 
 def _pdot(x, y, axis_name):
   x = x[..., None]
@@ -4005,7 +4005,7 @@ def dot_papply_rule(name, vals, dims):
     y = pcollect(y, name)
     return dot(x, y), xdim
 
-parallel_interp.papply_primitive_rules[dot_p] = dot_papply_rule
+parallel.papply_primitive_rules[dot_p] = dot_papply_rule
 
 def scatter_like(source, target):
   return scatter_like_p.bind(source, target)
@@ -4018,7 +4018,7 @@ def scatter_like_papply_rule(name, vals, axes):
 
 scatter_like_p.def_abstract_eval(lambda source, target: source)
 
-parallel_interp.papply_primitive_rules[scatter_like_p] = scatter_like_papply_rule
+parallel.papply_primitive_rules[scatter_like_p] = scatter_like_papply_rule
 
 
 ### util

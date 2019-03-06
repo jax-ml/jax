@@ -26,7 +26,6 @@ from six.moves import reduce
 from .. import core
 from .. import ad_util
 from .. import tree_util
-from .. import lax_parallel as lp
 from .. import linear_util as lu
 from ..abstract_arrays import ConcreteArray, ShapedArray
 from ..util import partial, unzip2, concatenate, safe_map, prod
