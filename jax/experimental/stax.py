@@ -91,7 +91,7 @@ def Dense(out_dim, W_init=glorot(), b_init=randn()):
     output_shape = input_shape[:-1] + (out_dim,)
     W, b = W_init((input_shape[-1], out_dim)), b_init((out_dim,))
     return output_shape, (W, b)
-  def apply_fun(params, inputs, rng=None):
+  def apply_fun(params, inputs, **kwargs):
     W, b = params
     return np.dot(inputs, W) + b
   return init_fun, apply_fun
@@ -115,7 +115,7 @@ def GeneralConv(dimension_numbers, out_chan, filter_shape,
     bias_shape = tuple(itertools.dropwhile(lambda x: x == 1, bias_shape))
     W, b = W_init(kernel_shape), b_init(bias_shape)
     return output_shape, (W, b)
-  def apply_fun(params, inputs, rng=None):
+  def apply_fun(params, inputs, **kwargs):
     W, b = params
     return lax.conv_general_dilated(inputs, W, strides, padding, one, one,
                                     dimension_numbers) + b
@@ -134,7 +134,7 @@ def BatchNorm(axis=(0, 1, 2), epsilon=1e-5, center=True, scale=True,
     shape = tuple(itertools.dropwhile(lambda x: x == 1, shape))
     beta, gamma = _beta_init(shape), _gamma_init(shape)
     return input_shape, (beta, gamma)
-  def apply_fun(params, x, rng=None):
+  def apply_fun(params, x, **kwargs):
     beta, gamma = params
     mean, var = np.mean(x, axis, keepdims=True), fastvar(x, axis, keepdims=True)
     z = (x - mean) / np.sqrt(var + epsilon)
@@ -145,9 +145,9 @@ def BatchNorm(axis=(0, 1, 2), epsilon=1e-5, center=True, scale=True,
   return init_fun, apply_fun
 
 
-def _elemwise_no_params(fun, **kwargs):
+def _elemwise_no_params(fun, **fun_kwargs):
   init_fun = lambda input_shape: (input_shape, ())
-  apply_fun = lambda params, inputs, rng=None: fun(inputs, **kwargs)
+  apply_fun = lambda params, inputs, **kwargs: fun(inputs, **fun_kwargs)
   return init_fun, apply_fun
 Tanh = _elemwise_no_params(np.tanh)
 Relu = _elemwise_no_params(relu)
@@ -167,7 +167,7 @@ def _pooling_layer(reducer, init_val, rescaler=None):
     def init_fun(input_shape):
       out_shape = lax.reduce_window_shape_tuple(input_shape, dims, strides, padding)
       return out_shape, ()
-    def apply_fun(params, inputs, rng=None):
+    def apply_fun(params, inputs, **kwargs):
       out = lax.reduce_window(inputs, init_val, reducer, dims, strides, padding)
       return rescale(out, inputs) if rescale else out
     return init_fun, apply_fun
@@ -190,7 +190,7 @@ def Flatten():
   def init_fun(input_shape):
     output_shape = input_shape[0], reduce(op.mul, input_shape[1:], 1)
     return output_shape, ()
-  def apply_fun(params, inputs, rng=None):
+  def apply_fun(params, inputs, **kwargs):
     return np.reshape(inputs, (inputs.shape[0], -1))
   return init_fun, apply_fun
 Flatten = Flatten()
@@ -199,7 +199,7 @@ Flatten = Flatten()
 def Identity():
   """Layer construction function for an identity layer."""
   init_fun = lambda input_shape: (input_shape, ())
-  apply_fun = lambda params, inputs, rng=None: inputs
+  apply_fun = lambda params, inputs, **kwargs: inputs
   return init_fun, apply_fun
 Identity = Identity()
 
@@ -207,14 +207,14 @@ Identity = Identity()
 def FanOut(num):
   """Layer construction function for a fan-out layer."""
   init_fun = lambda input_shape: ([input_shape] * num, ())
-  apply_fun = lambda params, inputs, rng=None: [inputs] * num
+  apply_fun = lambda params, inputs, **kwargs: [inputs] * num
   return init_fun, apply_fun
 
 
 def FanInSum():
   """Layer construction function for a fan-in sum layer."""
   init_fun = lambda input_shape: (input_shape[0], ())
-  apply_fun = lambda params, inputs, rng=None: sum(inputs)
+  apply_fun = lambda params, inputs, **kwargs: sum(inputs)
   return init_fun, apply_fun
 FanInSum = FanInSum()
 
@@ -226,7 +226,7 @@ def FanInConcat(axis=-1):
     concat_size = sum(shape[ax] for shape in input_shape)
     out_shape = input_shape[0][:ax] + (concat_size,) + input_shape[0][ax+1:]
     return out_shape, ()
-  def apply_fun(params, inputs, rng=None):
+  def apply_fun(params, inputs, **kwargs):
     return np.concatenate(inputs, axis)
   return init_fun, apply_fun
 
@@ -235,7 +235,8 @@ def Dropout(rate, mode='train'):
   """Layer construction function for a dropout layer with given rate."""
   def init_fun(input_shape):
     return input_shape, ()
-  def apply_fun(params, inputs, rng):
+  def apply_fun(params, inputs, **kwargs):
+    rng = kwargs.get('rng', None)
     if rng is None:
       msg = ("Dropout layer requires apply_fun to be called with a PRNG key "
              "argument. That is, instead of `apply_fun(params, inputs)`, call "
@@ -271,10 +272,11 @@ def serial(*layers):
       input_shape, param = init_fun(input_shape)
       params.append(param)
     return input_shape, params
-  def apply_fun(params, inputs, rng=None):
+  def apply_fun(params, inputs, **kwargs):
+    rng = kwargs.pop('rng', None)
     rngs = random.split(rng, nlayers) if rng is not None else (None,) * nlayers
     for fun, param, rng in zip(apply_funs, params, rngs):
-      inputs = fun(param, inputs, rng)
+      inputs = fun(param, inputs, rng=rng, **kwargs)
     return inputs
   return init_fun, apply_fun
 
@@ -298,9 +300,10 @@ def parallel(*layers):
   init_funs, apply_funs = zip(*layers)
   def init_fun(input_shape):
     return zip(*[init(shape) for init, shape in zip(init_funs, input_shape)])
-  def apply_fun(params, inputs, rng=None):
+  def apply_fun(params, inputs, **kwargs):
+    rng = kwargs.pop('rng', None)
     rngs = random.split(rng, nlayers) if rng is not None else (None,) * nlayers
-    return [f(p, x, r) for f, p, x, r in zip(apply_funs, params, inputs, rngs)]
+    return [f(p, x, rng=r, **kwargs) for f, p, x, r in zip(apply_funs, params, inputs, rngs)]
   return init_fun, apply_fun
 
 
@@ -318,6 +321,6 @@ def shape_dependent(make_layer):
   """
   def init_fun(input_shape):
     return make_layer(input_shape)[0](input_shape)
-  def apply_fun(params, inputs, rng=None):
-    return make_layer(inputs.shape)[1](params, inputs, rng)
+  def apply_fun(params, inputs, **kwargs):
+    return make_layer(inputs.shape)[1](params, inputs, **kwargs)
   return init_fun, apply_fun

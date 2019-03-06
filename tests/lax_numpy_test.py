@@ -781,16 +781,15 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     lnp_fun = getattr(lnp, op)
     self._CheckAgainstNumpy(lnp_fun, onp_fun, args_maker, check_dtypes=True)
 
-
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_outdtype={}".format(
           jtu.format_shape_dtype_string(shape, fill_value_dtype),
-          onp.dtype(out_dtype).name),
+          onp.dtype(out_dtype).name if out_dtype else "None"),
        "shape": shape, "fill_value_dtype": fill_value_dtype,
        "out_dtype": out_dtype, "rng": jtu.rand_default()}
       for shape in array_shapes
       for fill_value_dtype in default_dtypes
-      for out_dtype in default_dtypes))
+      for out_dtype in [None] + default_dtypes))
   def testFull(self, shape, fill_value_dtype, out_dtype, rng):
     onp_fun = lambda fill_value: onp.full(shape, fill_value, dtype=out_dtype)
     lnp_fun = lambda fill_value: lnp.full(shape, fill_value, dtype=out_dtype)
@@ -859,12 +858,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inshape={}_outshape={}".format(
+      {"testcase_name": "_inshape={}_outshape={}_order={}".format(
           jtu.format_shape_dtype_string(arg_shape, dtype),
-          jtu.format_shape_dtype_string(out_shape, dtype)),
+          jtu.format_shape_dtype_string(out_shape, dtype),
+          order),
        "arg_shape": arg_shape, "out_shape": out_shape, "dtype": dtype,
-       "rng": jtu.rand_default()}
+       "order": order, "rng": jtu.rand_default()}
       for dtype in default_dtypes
+      for order in ["C", "F"]
       for arg_shape, out_shape in [
           (jtu.NUMPY_SCALAR_SHAPE, (1, 1, 1)),
           ((), (1, 1, 1)),
@@ -875,9 +876,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           ((2, 1, 4), (-1,)),
           ((2, 2, 4), (2, 8))
       ]))
-  def testReshape(self, arg_shape, out_shape, dtype, rng):
-    onp_fun = lambda x: onp.reshape(x, out_shape)
-    lnp_fun = lambda x: lnp.reshape(x, out_shape)
+  def testReshape(self, arg_shape, out_shape, dtype, order, rng):
+    onp_fun = lambda x: onp.reshape(x, out_shape, order=order)
+    lnp_fun = lambda x: lnp.reshape(x, out_shape, order=order)
     args_maker = lambda: [rng(arg_shape, dtype)]
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
@@ -1326,6 +1327,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     x = lnp.array([[1, 2], [3, 4], [0, 0]], dtype=lnp.float64)
     result = api.grad(test_fail)(x)
     assert not onp.any(onp.isnan(result))
+
+  def testIssue453(self):
+    # https://github.com/google/jax/issues/453
+    a = onp.arange(6) + 1
+    ans = lnp.reshape(a, (3, 2), order='F')
+    expected = onp.reshape(a, (3, 2), order='F')
+    self.assertAllClose(ans, expected, check_dtypes=True)
 
 
 if __name__ == "__main__":

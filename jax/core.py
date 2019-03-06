@@ -475,6 +475,10 @@ class AbstractTuple(AbstractValue, tuple):
   def __repr__(self):
     return '({})'.format(','.join(map(repr, self)))
 
+  def __bool__(self, ignored_tracer):
+    return bool(self)
+  __nonzero__ = __bool__
+
 
 unit = JaxTuple(())
 unitvar = '*'

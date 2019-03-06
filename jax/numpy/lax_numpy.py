@@ -597,18 +597,18 @@ def angle(x):
 
 @_wraps(onp.reshape)
 def reshape(a, newshape, order="C"):  # pylint: disable=missing-docstring
-  if order == "C" or order is None:
-    dims = None
+  dummy_val = onp.broadcast_to(0, shape(a))  # zero strides
+  computed_newshape = onp.reshape(dummy_val, newshape).shape
+
+  if order == "C":
+    return lax.reshape(a, computed_newshape, None)
   elif order == "F":
     dims = onp.arange(ndim(a))[::-1]
+    return lax.reshape(a, computed_newshape[::-1], dims).T
   elif order == "A":
     raise NotImplementedError("np.reshape order=A is not implemented.")
   else:
     raise ValueError("Unexpected value for 'order' argument: {}.".format(order))
-
-  dummy_val = onp.broadcast_to(0, shape(a))  # zero strides
-  computed_newshape = onp.reshape(dummy_val, newshape).shape
-  return lax.reshape(a, computed_newshape, dims)
 
 
 @_wraps(onp.ravel)
@@ -1850,9 +1850,8 @@ def take(a, indices, axis=None, out=None, mode=None):
       list(range(axis)) +
       list(range(axis + index_dims, len(a.shape) + index_dims - 1))),
     collapsed_slice_dims=(axis,),
-    start_index_map=(axis,),
-    index_vector_dim=index_dims)
-  return lax.gather(a, indices, dimension_numbers=dnums,
+    start_index_map=(axis,))
+  return lax.gather(a, indices[..., None], dimension_numbers=dnums,
                     slice_sizes=tuple(slice_sizes))
 
 
