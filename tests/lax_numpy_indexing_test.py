@@ -726,9 +726,9 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     for rng in [jtu.rand_default()]))
   def testStaticIndexingGrads(self, shape, dtype, update_shape, update_dtype,
                          rng, indexer, op):
-    if FLAGS.jax_test_dut == "cpu" and not shape:
-      # TODO(b/127315062): this case causes an XLA crash on CPU. Reenable when
-      # fixed.
+    if FLAGS.jax_test_dut == ("cpu", "tpu") and not shape:
+      # TODO(b/127315062): this case causes an XLA crash on CPU/TPU. Reenable
+      # when fixed.
       raise unittest.SkipTest("Test case crashes on CPU")
 
     jax_op = ops.index_update if op == UpdateOps.UPDATE else ops.index_add
