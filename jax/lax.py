@@ -3919,45 +3919,6 @@ pcollect_p = PmapPrimitive('pcollect')
 scatter_like_p = Primitive('scatter_like')
 
 
-### parallel template rules
-
-def vectorized_papply(prim, name, vals, axes, **params):
-  assert all(axes[0] == a for a in axes[1:])
-  return prim.bind(*vals, **params), axes[0]
-
-
-def reducer_papply(prim, cprim, name, vals, papply_axes, input_shape, axes):
-  operand, = vals
-  papply_axis, = papply_axes
-
-  other_axes = [i for i in axes if i != papply_axis]
-  if other_axes:
-    result = prim.bind(operand, axes=other_axes, input_shape=input_shape)
-  else:
-    result = operand
-
-  if not axes or papply_axis in axes:
-    return cprim.bind(result, axis_name=name), None
-  else:
-    new_papply_axis = papply_axis - onp.sum(onp.less(other_axes, papply_axis))
-    return result, new_papply_axis
-
-
-def broadcasting_papply(prim, name, vals, axes, **params):
-  x, y = vals
-  xdim, ydim = axes
-
-  if xdim is None:
-    return prim.bind(x, y, **params), ydim
-  elif ydim is None:
-    return prim.bind(x, y, **params), xdim
-  elif xdim == ydim:
-    return prim.bind(x, y, **params), xdim
-  else:
-    x = psplit(x, axis_name, xdim)
-    return prim.bind(x, y, **params), ydim
-
-
 ### parallel rules
 
 def _psum_pmap_rule(val, axis):
