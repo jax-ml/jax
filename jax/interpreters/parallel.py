@@ -23,7 +23,6 @@ import six
 from six.moves import reduce
 
 from .. import core
-from .. import lax_parallel as lp
 from .. import linear_util as lu
 from ..core import Trace, Tracer, Primitive, new_master
 from ..abstract_arrays import ShapedArray, ConcreteArray, make_shaped_array
@@ -254,14 +253,49 @@ class PapplyTrace(Trace):
     return PapplyTracer(self, name, size, vals, axis)
 
 
+def vectorized_papply(prim, name, vals, axes, **params):
+  assert all(axes[0] == a for a in axes[1:])
+  return prim.bind(*vals, **params), axes[0]
+
+def reducer_papply(prim, cprim, name, vals, papply_axes, input_shape, axes):
+  operand, = vals
+  papply_axis, = papply_axes
+
+  other_axes = [i for i in axes if i != papply_axis]
+  if other_axes:
+    result = prim.bind(operand, axes=other_axes, input_shape=input_shape)
+  else:
+    result = operand
+
+  if not axes or papply_axis in axes:
+    return cprim.bind(result, axis_name=name), None
+  else:
+    new_papply_axis = papply_axis - onp.sum(onp.less(other_axes, papply_axis))
+    return result, new_papply_axis
+
+def broadcasting_papply(prim, name, vals, axes, **params):
+  x, y = vals
+  xdim, ydim = axes
+
+  if xdim is None:
+    return prim.bind(x, y, **params), ydim
+  elif ydim is None:
+    return prim.bind(x, y, **params), xdim
+  elif xdim == ydim:
+    return prim.bind(x, y, **params), xdim
+  else:
+    x = psplit(x, axis_name, xdim)
+    return prim.bind(x, y, **params), ydim
+
+
 papply_primitive_rules = {}
 
 def defvectorized(prim):
-  papply_primitive_rules[prim] = partial(lp.vectorized_papply, prim)
+  papply_primitive_rules[prim] = partial(vectorized_papply, prim)
 
 def defreducer(prim, collective_prim):
-  papply_primitive_rules[prim] = partial(lp.reducer_papply, prim,
+  papply_primitive_rules[prim] = partial(reducer_papply, prim,
                                          collective_prim)
 
 def defbroadcasting(prim):
-  papply_primitive_rules[prim] = partial(lp.broadcasting_papply, prim)
+  papply_primitive_rules[prim] = partial(broadcasting_papply, prim)
