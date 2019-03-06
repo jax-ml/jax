@@ -39,20 +39,20 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testReduceSum(self):
-    f = lambda x: lax.parallel.psum(x, 'i')
+    f = lambda x: lax.psum(x, 'i')
     ans = pmap(f, axis_name='i')(onp.ones(4))
     expected = 4 * onp.ones(4)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testLogSoftmax(self):
-    f = lambda x: x - np.log(lax.parallel.psum(np.exp(x), 'i'))
+    f = lambda x: x - np.log(lax.psum(np.exp(x), 'i'))
     x = onp.log(onp.arange(1., 10., dtype=onp.float32))
     ans = pmap(f, axis_name='i')(x)
     expected = x - onp.log(onp.sum(onp.exp(x)))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testNested(self):
-    f = lambda x: lax.parallel.psum(lax.parallel.psum(x, 'i'), 'j')
+    f = lambda x: lax.psum(lax.psum(x, 'i'), 'j')
     x = onp.ones((2, 2))
     ans1 = pmap(pmap(f, 'i'), 'j')(x)
     ans2 = pmap(pmap(f, 'j'), 'i')(x)
@@ -80,7 +80,7 @@ class PapplyTest(jtu.JaxTestCase):
 
     jaxpr = make_jaxpr(pfun)(onp.zeros(5))
     expected_jaxpr = make_jaxpr(
-        lambda x: lax.parallel.psum(x, axis_name))(onp.zeros(5))
+        lambda x: lax.psum(x, axis_name))(onp.zeros(5))
     assert repr(jaxpr) == repr(expected_jaxpr)
 
     ans = pmap(pfun, axis_name)(onp.arange(3.))
@@ -96,7 +96,7 @@ class PapplyTest(jtu.JaxTestCase):
 
     jaxpr = make_jaxpr(pfun)(onp.zeros(5))
     expected_jaxpr = make_jaxpr(
-        lambda x: x - np.log(lax.parallel.psum(np.exp(x), axis_name)))(onp.zeros(5))
+        lambda x: x - np.log(lax.psum(np.exp(x), axis_name)))(onp.zeros(5))
     assert repr(jaxpr) == repr(expected_jaxpr)
 
     ans = pmap(pfun, axis_name)(onp.arange(1., 5.))

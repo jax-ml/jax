@@ -41,7 +41,6 @@ from . import core
 from . import ad_util
 from . import api
 from . import linear_util as lu
-from . import lax_parallel as parallel
 from .config import flags
 from .core import Primitive
 from .abstract_arrays import (UnshapedArray, ShapedArray, ConcreteArray,
@@ -1119,10 +1118,6 @@ def stop_gradient(x):
 
 
 def _safe_mul(x, y): return safe_mul_p.bind(x, y)
-
-
-def psum(x, axis_name):
-  return parallel.psum_p.bind(x, axis_name=axis_name)
 
 
 ### convenience wrappers around traceables
@@ -3161,7 +3156,6 @@ reduce_sum_p = standard_primitive(_reduce_sum_shape_rule, _input_dtype,
                                   'reduce_sum', _reduce_sum_translation_rule)
 ad.deflinear(reduce_sum_p, _reduce_sum_transpose_rule)
 batching.defreducer(reduce_sum_p)
-parallel_interp.defreducer(reduce_sum_p, parallel.psum_p)
 
 
 def _reduce_chooser_shape_rule(operand, axes):
@@ -3869,7 +3863,102 @@ ad.primitive_jvps[stop_gradient_p] = _stop_gradient_jvp_rule
 batching.primitive_batchers[stop_gradient_p] = _stop_gradient_batch_rule
 
 
-### parallel rules (primitives in lax_parallel)
+### parallel library
+
+def psum(x, axis_name):
+  return psum_p.bind(x, axis_name=axis_name)
+
+def pswapaxes(x, axis_name, axis):
+  """Analogue to `np.swapaxes` involving a hidden axis.
+
+  Specifically, transposes the operand along the axis that's currently hidden
+  and the given concrete axis. The implicit position of the hidden axis remains
+  unchanged.
+  """
+  return pswapaxes_p.bind(x, axis_name=axis_name, axis=axis)
+
+def psplit(x, axis_name, axis):
+  """Merge operand along the hidden axis and split it along `axis`.
+
+  The newly split axis becomes the hidden axis for the output, and in particular
+  the implicit position of the hidden axis changes.
+  """
+  # lowering should be:
+  # return xla_all_to_all(x, hidden axis, axis)
+  return psplit_p.bind(x, axis_name=axis_name, axis=axis)
+
+def pcollect(x, axis_name):
+  # lowering should be:
+  # x = xla_broadcast(x, (xb.get_replica_count(),))
+  # return xla_all_to_all(x, 0, dim(axis_name), **params)
+  return pcollect_p.bind(x, axis_name=axis_name)
+
+# TODO(rf,mattjj): what is this for?
+def gather(x, axis_name):
+  return gather_p.bind(x, axis_name=axis_name)
+
+
+### parallel primitives
+
+def PmapPrimitive(name):
+  prim = Primitive(name)
+  prim.def_impl(partial(unbound_name_error, name))
+  prim.def_abstract_eval(lambda x, *args, **kwargs: x)  # default
+  return prim
+
+def unbound_name_error(primitive_name, *args, **kwargs):
+  axis_name = kwargs['axis_name']
+  msg = "axis name '{}' is unbound for primitive {}."
+  raise NameError(msg.format(axis_name, primitive_name))
+
+psum_p = PmapPrimitive('psum')
+gather_p = PmapPrimitive('gather')
+pswapaxes_p = PmapPrimitive('pswapaxes')
+psplit_p = PmapPrimitive('psplit')
+pcollect_p = PmapPrimitive('pcollect')
+scatter_like_p = Primitive('scatter_like')
+
+
+### parallel template rules
+
+def vectorized_papply(prim, name, vals, axes, **params):
+  assert all(axes[0] == a for a in axes[1:])
+  return prim.bind(*vals, **params), axes[0]
+
+
+def reducer_papply(prim, cprim, name, vals, papply_axes, input_shape, axes):
+  operand, = vals
+  papply_axis, = papply_axes
+
+  other_axes = [i for i in axes if i != papply_axis]
+  if other_axes:
+    result = prim.bind(operand, axes=other_axes, input_shape=input_shape)
+  else:
+    result = operand
+
+  if not axes or papply_axis in axes:
+    return cprim.bind(result, axis_name=name), None
+  else:
+    new_papply_axis = papply_axis - onp.sum(onp.less(other_axes, papply_axis))
+    return result, new_papply_axis
+
+
+def broadcasting_papply(prim, name, vals, axes, **params):
+  x, y = vals
+  xdim, ydim = axes
+
+  if xdim is None:
+    return prim.bind(x, y, **params), ydim
+  elif ydim is None:
+    return prim.bind(x, y, **params), xdim
+  elif xdim == ydim:
+    return prim.bind(x, y, **params), xdim
+  else:
+    x = psplit(x, axis_name, xdim)
+    return prim.bind(x, y, **params), ydim
+
+
+### parallel rules
 
 def _psum_pmap_rule(val, axis):
   return _reduce_sum(val, [axis]), None
@@ -3883,15 +3972,15 @@ def _psum_parallel_translation_rule(c, val, device_groups):
   else:
     return c.CrossReplicaSum(val)
 
-parallel_interp.pmap_primitive_rules[parallel.psum_p] = _psum_pmap_rule
-pxla.parallel_translation_rules[parallel.psum_p] = _psum_parallel_translation_rule
-ad.deflinear(parallel.psum_p, _psum_transpose_rule)
-parallel_interp.defreducer(reduce_sum_p, parallel.psum_p)
+parallel_interp.pmap_primitive_rules[psum_p] = _psum_pmap_rule
+pxla.parallel_translation_rules[psum_p] = _psum_parallel_translation_rule
+ad.deflinear(psum_p, _psum_transpose_rule)
+parallel_interp.defreducer(reduce_sum_p, psum_p)
 
 def gather_pmap_rule(val, axis):
   return val, None
 
-parallel_interp.pmap_primitive_rules[parallel.gather_p] = gather_pmap_rule
+parallel_interp.pmap_primitive_rules[gather_p] = gather_pmap_rule
 
 def pswapaxes_pmap_rule(x, axis_in, axis):
   if x.shape[axis_in] != x.shape[axis]:
@@ -3901,19 +3990,19 @@ def pswapaxes_pmap_rule(x, axis_in, axis):
   perm[axis] = axis_in
   return transpose(x, perm), axis_in
 
-parallel_interp.pmap_primitive_rules[parallel.pswapaxes_p] = pswapaxes_pmap_rule
+parallel_interp.pmap_primitive_rules[pswapaxes_p] = pswapaxes_pmap_rule
 
 def psplit_pmap_rule(x, axis_in, axis):
   if x.shape[axis_in] != x.shape[axis]:
     raise ValueError("psplit between non-square dimensions")
   return x, axis
 
-parallel_interp.pmap_primitive_rules[parallel.psplit_p] = psplit_pmap_rule
+parallel_interp.pmap_primitive_rules[psplit_p] = psplit_pmap_rule
 
 def pcollect_pmap_rule(x, axis_in):
   return x, None
 
-parallel_interp.pmap_primitive_rules[parallel.pcollect_p] = pcollect_pmap_rule
+parallel_interp.pmap_primitive_rules[pcollect_p] = pcollect_pmap_rule
 
 def transpose_papply_rule(name, vals, dims, permutation):
   x, = vals
@@ -3930,7 +4019,7 @@ def transpose_papply_rule(name, vals, dims, permutation):
     perm = perm[:xdim] + perm[xdim + 1:]
     perm = [i - 1 if i > xdim else i for i in perm]
     x = transpose(x, perm)
-    x = parallel.pswapaxes(x, name, in_dim)
+    x = pswapaxes(x, name, in_dim)
   return x, xdim
 
 parallel_interp.papply_primitive_rules[transpose_p] = transpose_papply_rule
@@ -3938,7 +4027,7 @@ parallel_interp.papply_primitive_rules[transpose_p] = transpose_papply_rule
 def _pdot(x, y, axis_name):
   x = x[..., None]
   y = y[..., None, :]
-  return parallel.psum(x * y, axis_name)
+  return psum(x * y, axis_name)
 
 def dot_papply_rule(name, vals, dims):
   x, y = vals
@@ -3949,10 +4038,10 @@ def dot_papply_rule(name, vals, dims):
     return dot(x, y), xdim
   elif ydim == 0:
     if xdim != x.ndim:
-      x = parallel.psplit(x, name, x.ndim)
+      x = psplit(x, name, x.ndim)
     return _pdot(x, y, name), None
   else:
-    y = parallel.pcollect(y, name)
+    y = pcollect(y, name)
     return dot(x, y), xdim
 
 parallel_interp.papply_primitive_rules[dot_p] = dot_papply_rule
@@ -3966,9 +4055,9 @@ def scatter_like_papply_rule(name, vals, axes):
   assert source_axis is None
   return _scatter(source, target, target_axis, name)
 
-parallel.scatter_like_p.def_abstract_eval(lambda source, target: source)
+scatter_like_p.def_abstract_eval(lambda source, target: source)
 
-parallel_interp.papply_primitive_rules[parallel.scatter_like_p] = scatter_like_papply_rule
+parallel_interp.papply_primitive_rules[scatter_like_p] = scatter_like_papply_rule
 
 
 ### util
