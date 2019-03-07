@@ -164,6 +164,10 @@ def _get_backend():
   return backend()
 
 
+def device_count():
+  return _get_backend().device_count()
+
+
 def device_put(pyval, device_num=0):
   client = get_xla_client()
   return client.LocalBuffer.from_pyval(pyval, device_num, backend=_get_backend())
