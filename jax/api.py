@@ -457,7 +457,7 @@ def serial_pmap(fun, axis_name=None, in_axes=0, out_axes=0):
     in_axes_ = in_axes if isinstance(in_axes, (list, tuple)) else (in_axes,) * len(args)
     in_flat, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
     jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(f, in_trees)
-    out_flat = parallel.serial_pmap(jaxtree_fun, axis_name, args, in_axes_, out_axes)
+    out_flat = parallel.serial_pmap(jaxtree_fun, axis_name, in_flat, in_axes_, out_axes)
     return build_tree(out_tree(), out_flat)
 
   return map_fun

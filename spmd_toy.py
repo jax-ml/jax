@@ -4,7 +4,7 @@ import operator as op
 import numpy as onp
 
 import jax.numpy as np
-from jax import pmap, grad
+from jax import pmap, serial_pmap, grad
 from jax import lax
 from jax.tree_util import tree_map
 from jax.lib.xla_bridge import device_count
@@ -49,7 +49,7 @@ print(update(params, batch)[0][0])
 
 # reshape / replicate data
 num_devices = device_count()
-spmd_params = pmap(lambda _: params)(onp.arange(num_devices))
+spmd_params = tree_map(partial(lax.broadcast, sizes=(num_devices,)), params)
 spmd_inputs = inputs.reshape((num_devices, -1, 2))
 spmd_targets = targets.reshape((num_devices, -1, 3))
 spmd_batch = (spmd_inputs, spmd_targets)
@@ -65,7 +65,7 @@ print(spmd_loss(spmd_params, spmd_batch))
 @partial(pmap, axis_name='i')
 def spmd_update(params, batch):
   grads = grad(loss)(params, batch)  # loss, not spmd_loss
-  grads = tree_map(lambda x: lax.psum(x, 'i'), grads)
+  grads = tree_map(partial(lax.psum, axis_name='i'), grads)
   new_params = [(W - step_size * dW, b - step_size * db)
                 for (W, b), (dW, db) in zip(params, grads)]
   return new_params
