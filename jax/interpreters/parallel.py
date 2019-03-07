@@ -17,6 +17,7 @@ from __future__ import division
 from __future__ import print_function
 
 from functools import partial
+import warnings
 
 import numpy as onp
 import six
@@ -190,7 +191,8 @@ def ensure_axis(dst, src, x):
     if src == dst:
       return x
     elif src is None:
-      raise NotImplementedError('split to match user-specified output axis')
+      warnings.warn('split output axis requested for an array with no split')
+      return x
     else:
       perm = list(range(x.ndim))
       perm[src] = dst
