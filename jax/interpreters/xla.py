@@ -42,6 +42,9 @@ FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_device_values',
                   strtobool(os.getenv('JAX_DEVICE_VALUES', "True")),
                   'Enable device-persistent values.')
+flags.DEFINE_bool('jax_debug_nans',
+                  strtobool(os.getenv('JAX_DEBUG_NANS', "False")),
+                  'Add nan checks to every operation.')
 
 map = safe_map
 
@@ -95,8 +98,16 @@ def device_put(x, device_num=0):
 
 def result_handler(result_shape):
   if type(result_shape) is ResultArray and FLAGS.jax_device_values:
-    def handle_result(device_buffer):
-      return DeviceArray(device_buffer, *result_shape)
+    if FLAGS.jax_debug_nans and onp.issubdtype(result_shape[1], onp.floating):
+      def handle_result(device_buffer):
+        py_val = device_buffer.to_py()
+        if onp.any(onp.isnan(py_val)):
+          raise FloatingPointError("invalid value")
+        else:
+          return DeviceArray(device_buffer, *result_shape)
+    else:
+      def handle_result(device_buffer):
+        return DeviceArray(device_buffer, *result_shape)
   elif type(result_shape) is ResultArray:
     def handle_result(device_buffer):
       return onp.asarray(DeviceArray(device_buffer, *result_shape))
@@ -434,12 +445,19 @@ def xla_call_impl(fun, *args):
   fun, out_tree = flatten_fun(fun, in_trees)
 
   compiled_fun = xla_callable(fun, *map(abstractify, flat_args))
-  flat_ans = compiled_fun(*flat_args)
+  try:
+    flat_ans = compiled_fun(*flat_args)
+  except FloatingPointError:
+    msg = ("Invalid value encountered in the output of a jit function. "
+           "Calling the de-optimized version.")
+    print(msg)
+    return fun.call_wrapped(*args)  # probably won't return
 
   if out_tree() is leaf:
     return flat_ans
   else:
     return build_tree(iter(flat_ans), out_tree())
+
 
 @lu.memoize
 def xla_callable(fun, *abstract_args):
