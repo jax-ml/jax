@@ -372,6 +372,10 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(g, grad(lambda x: x**3)(4.))
     self.assertEqual(aux, [4.])
 
+    g, aux = grad(lambda x: (x**3, [x**2, 4.]), has_aux=True)(4.)
+    self.assertEqual(g, grad(lambda x: x**3)(4.))
+    self.assertEqual(aux, [4.**2, 4.])
+
 
 if __name__ == '__main__':
   absltest.main()
