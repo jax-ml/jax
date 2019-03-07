@@ -3893,11 +3893,6 @@ def pcollect(x, axis_name):
   # return xla_all_to_all(x, 0, dim(axis_name), **params)
   return pcollect_p.bind(x, axis_name=axis_name)
 
-# TODO(rf,mattjj): what is this for?
-def gather(x, axis_name):
-  return gather_p.bind(x, axis_name=axis_name)
-
-
 ### parallel primitives
 
 def PmapPrimitive(name):
@@ -3912,7 +3907,6 @@ def _unbound_name_error(primitive_name, *args, **kwargs):
   raise NameError(msg.format(axis_name, primitive_name))
 
 psum_p = PmapPrimitive('psum')
-gather_p = PmapPrimitive('gather')
 pswapaxes_p = PmapPrimitive('pswapaxes')
 psplit_p = PmapPrimitive('psplit')
 pcollect_p = PmapPrimitive('pcollect')
