@@ -17,6 +17,7 @@ from __future__ import division
 from __future__ import print_function
 
 from functools import partial
+import warnings
 
 import numpy as onp
 import six
@@ -169,30 +170,62 @@ pmap_primitive_rules = {}
 
 newvar = pe.gensym('_axis')
 
-def papply(fun, name, in_vals, in_axes):
-  return papply_transform(fun).call_wrapped(name, in_vals, in_axes)
+def papply(fun, name, in_vals, axis_size, in_axes, out_axis):
+  out_val = papply_transform(fun).call_wrapped(
+      name, in_vals, axis_size, in_axes, out_axis)
+  return out_val
+
+def ensure_axis(dst, src, x):
+  aval = batching.get_aval(x)
+  if type(aval) is core.AbstractTuple:
+    if type(src) is tuple and type(dst) is tuple:
+      return core.pack(map(ensure_axis, dst, src, x))
+    elif type(src) is tuple:
+      return core.pack(map(partial(ensure_axis, dst), src, x))
+    elif type(dst) is tuple:
+      srcs = (src,) * len(dst)
+      return core.pack(map(ensure_axis, dst, srcs, x))
+    else:
+      return core.pack(map(partial(ensure_axis, dst, src), x))
+  elif isinstance(aval, ShapedArray):
+    if src == dst:
+      return x
+    elif src is None:
+      warnings.warn('split output axis requested for an array with no split')
+      return x
+    else:
+      perm = list(range(x.ndim))
+      perm[src] = dst
+      perm[dst] = src
+      return x.transpose(perm)
+  else:
+    raise TypeError(type(aval))
 
 @lu.transformation
-def papply_transform(name, args, axes):
+def papply_transform(name, args, axis_size, in_axes, out_axis):
   with new_master(PapplyTrace) as master:
     trace = PapplyTrace(master, core.cur_sublevel())
-    in_tracers = map(partial(PapplyTracer, trace, name), args, axes)
+    in_tracers = map(partial(PapplyTracer, trace, name, axis_size), args, in_axes)
     out_tracer = yield in_tracers
     out_tracer = trace.full_raise(out_tracer)
+    out_tracer = ensure_axis(out_axis, out_tracer.axis, out_tracer)
     out_val = out_tracer.val
     del master, out_tracer
   yield out_val
 
 class PapplyTracer(Tracer):
-  def __init__(self, trace, name, val, axis):
+  def __init__(self, trace, name, axis_size, val, axis):
     self.trace = trace
     self.name = name
+    self.axis_size = axis_size
     self.val = val
     self.axis = axis
 
   @property
   def aval(self):
-    return batching.get_aval(self.val)
+    batched_aval = batching.get_aval(self.val)
+    return batching.add_batch_dim_to_aval(
+        self.axis, self.axis_size, batched_aval)
 
   def unpack(self):
     raise NotImplementedError  # TODO(mattjj,frostig)
@@ -205,13 +238,13 @@ class PapplyTracer(Tracer):
 
 class PapplyTrace(Trace):
   def pure(self, val):
-    return PapplyTracer(self, None, val, None)
+    return PapplyTracer(self, None, None, val, None)
 
   def lift(self, val):
-    return PapplyTracer(self, None, val, None)
+    return PapplyTracer(self, None, None, val, None)
 
   def sublift(self, val):
-    return PapplyTracer(self, val.name, val.val, val.axis)
+    return PapplyTracer(self, val.name, val.axis_size, val.val, val.axis)
 
   def process_primitive(self, primitive, tracers, params):
     names, vals, axes = unzip3((t.name, t.val, t.axis) for t in tracers)
@@ -219,9 +252,10 @@ class PapplyTrace(Trace):
       return primitive.bind(*vals, **params)
     else:
       name = next(n for n in names if n is not None)
+      size = next(t.axis_size for t in tracers if t.axis_size is not None)
       rule = papply_primitive_rules[primitive]
       val_out, axis_out = rule(name, vals, axes, **params)
-      return PapplyTracer(self, name, val_out, axis_out)
+      return PapplyTracer(self, name, size, val_out, axis_out)
 
   def process_call(self, call_primitive, f, tracers, params):
     raise NotImplementedError  # TODO(mattjj,frostig)
@@ -233,36 +267,13 @@ class PapplyTrace(Trace):
     vals = core.pack([t.val for t in tracers])
     axis = tuple(t.axis for t in tracers)
     name = tuple(t.name for t in tracers)
-    return PapplyTracer(self, name, vals, axis)
+    size = tuple(t.axis_size for t in tracers)
+    return PapplyTracer(self, name, size, vals, axis)
 
-
-papply_primitive_rules = {}
-
-
-def scatter_like(source, target):
-  return scatter_like_p.bind(source, target)
-
-def scatter_like_papply_rule(name, vals, axes):
-  source, target = vals
-  source_axis, target_axis = axes
-  assert source_axis is None
-  return _scatter(source, target, target_axis, name)
-
-scatter_like_p = Primitive('scatter_like')
-scatter_like_p.def_abstract_eval(lambda source, target: source)
-papply_primitive_rules[scatter_like_p] = scatter_like_papply_rule
-
-
-def defvectorized(prim):
-  papply_primitive_rules[prim] = partial(vectorized_papply, prim)
 
 def vectorized_papply(prim, name, vals, axes, **params):
   assert all(axes[0] == a for a in axes[1:])
   return prim.bind(*vals, **params), axes[0]
-
-
-def defreducer(prim, collective_prim):
-  papply_primitive_rules[prim] = partial(reducer_papply, prim, collective_prim)
 
 def reducer_papply(prim, cprim, name, vals, papply_axes, input_shape, axes):
   operand, = vals
@@ -280,10 +291,6 @@ def reducer_papply(prim, cprim, name, vals, papply_axes, input_shape, axes):
     new_papply_axis = papply_axis - onp.sum(onp.less(other_axes, papply_axis))
     return result, new_papply_axis
 
-
-def defbroadcasting(prim):
-  papply_primitive_rules[prim] = partial(broadcasting_papply, prim)
-
 def broadcasting_papply(prim, name, vals, axes, **params):
   x, y = vals
   xdim, ydim = axes
@@ -295,6 +302,18 @@ def broadcasting_papply(prim, name, vals, axes, **params):
   elif xdim == ydim:
     return prim.bind(x, y, **params), xdim
   else:
-    raise NotImplementedError  # this isn't right, need to think about names
-    x = rescatter(x, ydim, name)
+    x = psplit(x, axis_name, xdim)
     return prim.bind(x, y, **params), ydim
+
+
+papply_primitive_rules = {}
+
+def defvectorized(prim):
+  papply_primitive_rules[prim] = partial(vectorized_papply, prim)
+
+def defreducer(prim, collective_prim):
+  papply_primitive_rules[prim] = partial(reducer_papply, prim,
+                                         collective_prim)
+
+def defbroadcasting(prim):
+  papply_primitive_rules[prim] = partial(broadcasting_papply, prim)

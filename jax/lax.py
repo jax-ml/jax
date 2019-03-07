@@ -1120,10 +1120,6 @@ def stop_gradient(x):
 def _safe_mul(x, y): return safe_mul_p.bind(x, y)
 
 
-def psum(x, axis_name):
-  return psum_p.bind(x, axis_name=axis_name)
-
-
 ### convenience wrappers around traceables
 
 
@@ -3847,40 +3843,6 @@ for _t in [_FilledConstant, _IotaConstant, _EyeConstant]:
   ad_util.jaxval_zeros_likers[_t] = zeros_like_array
 
 
-### parallel
-
-def PmapPrimitive(name):
-  prim = Primitive(name)
-  prim.def_impl(partial(_unbound_name_error, name))
-  prim.def_abstract_eval(lambda x, *args, **kwargs: x)  # default
-  return prim
-
-def _unbound_name_error(primitive_name, *args, **kwargs):
-  axis_name = kwargs['axis_name']
-  msg = "axis name '{}' is unbound for primitive {}."
-  raise NameError(msg.format(axis_name, primitive_name))
-
-
-def _psum_transpose_rule(t, axis_name):
-  return [t]
-
-def _psum_parallel_translation_rule(c, val, device_groups):
-  if len(device_groups) > 1:
-    return c.CrossReplicaSum(val, device_groups)
-  else:
-    return c.CrossReplicaSum(val)
-
-def _psum_pmap_rule(val, axis):
-  return _reduce_sum(val, [axis]), None
-
-psum_p = PmapPrimitive('psum')
-parallel.pmap_primitive_rules[psum_p] = _psum_pmap_rule
-pxla.parallel_translation_rules[psum_p] = _psum_parallel_translation_rule
-ad.deflinear(psum_p, _psum_transpose_rule)
-
-parallel.defreducer(reduce_sum_p, psum_p)
-
-
 ### stop-gradient
 
 def _stop_gradient_jvp_rule(primals, tangents):
@@ -3899,6 +3861,158 @@ stop_gradient_p.def_abstract_eval(identity)
 xla.translations[stop_gradient_p] = lambda c, x: x
 ad.primitive_jvps[stop_gradient_p] = _stop_gradient_jvp_rule
 batching.primitive_batchers[stop_gradient_p] = _stop_gradient_batch_rule
+
+
+### parallel library
+
+def psum(x, axis_name):
+  return psum_p.bind(x, axis_name=axis_name)
+
+def pswapaxes(x, axis_name, axis):
+  """Analogue to `np.swapaxes` involving a hidden axis.
+
+  Specifically, transposes the operand along the axis that's currently hidden
+  and the given concrete axis. The implicit position of the hidden axis remains
+  unchanged.
+  """
+  return pswapaxes_p.bind(x, axis_name=axis_name, axis=axis)
+
+def psplit(x, axis_name, axis):
+  """Merge operand along the hidden axis and split it along `axis`.
+
+  The newly split axis becomes the hidden axis for the output, and in particular
+  the implicit position of the hidden axis changes.
+  """
+  # lowering should be:
+  # return xla_all_to_all(x, hidden axis, axis)
+  return psplit_p.bind(x, axis_name=axis_name, axis=axis)
+
+def pcollect(x, axis_name):
+  # lowering should be:
+  # x = xla_broadcast(x, (xb.get_replica_count(),))
+  # return xla_all_to_all(x, 0, dim(axis_name), **params)
+  return pcollect_p.bind(x, axis_name=axis_name)
+
+### parallel primitives
+
+def PmapPrimitive(name):
+  prim = Primitive(name)
+  prim.def_impl(partial(_unbound_name_error, name))
+  prim.def_abstract_eval(lambda x, *args, **kwargs: x)  # default
+  return prim
+
+def _unbound_name_error(primitive_name, *args, **kwargs):
+  axis_name = kwargs['axis_name']
+  msg = "axis name '{}' is unbound for primitive {}."
+  raise NameError(msg.format(axis_name, primitive_name))
+
+psum_p = PmapPrimitive('psum')
+pswapaxes_p = PmapPrimitive('pswapaxes')
+psplit_p = PmapPrimitive('psplit')
+pcollect_p = PmapPrimitive('pcollect')
+scatter_like_p = Primitive('scatter_like')
+
+
+### parallel rules
+
+def _psum_pmap_rule(val, axis):
+  return _reduce_sum(val, [axis]), None
+
+def _psum_transpose_rule(t, axis_name):
+  return [t]
+
+def _psum_parallel_translation_rule(c, val, device_groups):
+  if len(device_groups) > 1:
+    return c.CrossReplicaSum(val, device_groups)
+  else:
+    return c.CrossReplicaSum(val)
+
+parallel.pmap_primitive_rules[psum_p] = _psum_pmap_rule
+pxla.parallel_translation_rules[psum_p] = _psum_parallel_translation_rule
+ad.deflinear(psum_p, _psum_transpose_rule)
+parallel.defreducer(reduce_sum_p, psum_p)
+
+def gather_pmap_rule(val, axis):
+  return val, None
+
+parallel.pmap_primitive_rules[gather_p] = gather_pmap_rule
+
+def pswapaxes_pmap_rule(x, axis_in, axis):
+  if x.shape[axis_in] != x.shape[axis]:
+    raise ValueError("pswapaxes between non-square dimensions")
+  perm = list(range(x.ndim))
+  perm[axis_in] = axis
+  perm[axis] = axis_in
+  return transpose(x, perm), axis_in
+
+parallel.pmap_primitive_rules[pswapaxes_p] = pswapaxes_pmap_rule
+
+def psplit_pmap_rule(x, axis_in, axis):
+  if x.shape[axis_in] != x.shape[axis]:
+    raise ValueError("psplit between non-square dimensions")
+  return x, axis
+
+parallel.pmap_primitive_rules[psplit_p] = psplit_pmap_rule
+
+def pcollect_pmap_rule(x, axis_in):
+  return x, None
+
+parallel.pmap_primitive_rules[pcollect_p] = pcollect_pmap_rule
+
+def transpose_papply_rule(name, vals, dims, permutation):
+  x, = vals
+  xdim, = dims
+  perm = list(permutation)
+  if perm[xdim] == xdim:
+    x = transpose(x, perm)
+    out_dim = xdim
+  else:
+    in_dim, = [i for i in range(len(perm)) if perm[i] == xdim]
+    out_dim = perm[xdim]
+    perm[in_dim] = out_dim
+    perm[out_dim] = in_dim
+    perm = perm[:xdim] + perm[xdim + 1:]
+    perm = [i - 1 if i > xdim else i for i in perm]
+    x = transpose(x, perm)
+    x = pswapaxes(x, name, in_dim)
+  return x, xdim
+
+parallel.papply_primitive_rules[transpose_p] = transpose_papply_rule
+
+def _pdot(x, y, axis_name):
+  x = x[..., None]
+  y = y[..., None, :]
+  return psum(x * y, axis_name)
+
+def dot_papply_rule(name, vals, dims):
+  x, y = vals
+  xdim, ydim = dims
+  if xdim is None:
+    return dot(x, y), ydim
+  elif ydim is None:
+    return dot(x, y), xdim
+  elif ydim == 0:
+    if xdim != x.ndim:
+      x = psplit(x, name, x.ndim)
+    return _pdot(x, y, name), None
+  else:
+    y = pcollect(y, name)
+    return dot(x, y), xdim
+
+parallel.papply_primitive_rules[dot_p] = dot_papply_rule
+
+def scatter_like(source, target):
+  return scatter_like_p.bind(source, target)
+
+def scatter_like_papply_rule(name, vals, axes):
+  source, target = vals
+  source_axis, target_axis = axes
+  assert source_axis is None
+  return _scatter(source, target, target_axis, name)
+
+scatter_like_p.def_abstract_eval(lambda source, target: source)
+
+parallel.papply_primitive_rules[scatter_like_p] = scatter_like_papply_rule
 
 
 ### util
