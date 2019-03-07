@@ -66,8 +66,8 @@ def jvp_subtrace_aux(master, primals, tangents):
   for x in list(primals) + list(tangents):
     if isinstance(x, Tracer):
       assert x.trace.level < trace.level
-  ans_and_aux = yield map(partial(JVPTracer, trace), primals, tangents)
-  out_tracer, aux_tracer = trace.full_raise(ans_and_aux)
+  ans, aux = yield map(partial(JVPTracer, trace), primals, tangents)
+  out_tracer, aux_tracer = map(trace.full_raise, (ans, aux))
   out_primal, out_tangent = out_tracer.primal, out_tracer.tangent
   aux = aux_tracer.primal  # ignore aux tangent
   yield (out_primal, out_tangent), aux

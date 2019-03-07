@@ -343,7 +343,7 @@ class APITest(jtu.JaxTestCase):
 
   def test_grad_and_aux_basic(self):
     g, aux = grad(lambda x: (x**3, [x**2]), has_aux=True)(3.)
-    self.assertEqual(type(aux), list)
+    self.assertEqual(g, grad(lambda x: x**3)(3.))
     self.assertEqual(aux, [9.])
 
   def test_grad_and_aux_nested(self):
@@ -366,6 +366,11 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(grad(f)(4.), grad(f2)(4.))
     self.assertEqual(jit(grad(f))(4.), grad(f2)(4.))
     self.assertEqual(jit(grad(jit(f)))(4.), grad(f2)(4.))
+
+  def test_grad_and_aux_constant(self):
+    g, aux = grad(lambda x: (x**3, [4.]), has_aux=True)(4.)
+    self.assertEqual(g, grad(lambda x: x**3)(4.))
+    self.assertEqual(aux, [4.])
 
 
 if __name__ == '__main__':
