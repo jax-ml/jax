@@ -174,14 +174,30 @@ def papply(fun, name, in_vals, axis_size, in_axes, out_axis):
       name, in_vals, axis_size, in_axes, out_axis)
   return out_val
 
-def _moveaxis(x, src, dst):
-  if src == dst or src is None:
-    return x
+def ensure_axis(dst, src, x):
+  aval = get_aval(x)
+  if type(aval) is AbstractTuple:
+    if type(src) is tuple and type(dst) is tuple:
+      return core.pack(map(ensure_axis, dst, src, x))
+    elif type(src) is tuple:
+      return core.pack(map(partial(ensure_axis, dst), src, x))
+    elif type(dst) is tuple:
+      srcs = (src,) * len(dst)
+      return core.pack(map(ensure_axis, dst, srcs, x))
+    else:
+      return core.pack(map(partial(ensure_axis, dst, src), x))
+  elif isinstance(aval, ShapedArray):
+    if src == dst:
+      return x
+    elif src is None:
+      raise NotImplementedError('split to match user-specified output axis')
+    else:
+      perm = list(range(x.ndim))
+      perm[src] = dst
+      perm[dst] = src
+      return x.transpose(perm)
   else:
-    perm = list(range(x.ndim))
-    perm[src] = dst
-    perm[dst] = src
-    return x.transpose(perm)
+    raise TypeError(type(aval))
 
 @lu.transformation
 def papply_transform(name, args, axis_size, in_axes, out_axis):
@@ -190,7 +206,7 @@ def papply_transform(name, args, axis_size, in_axes, out_axis):
     in_tracers = map(partial(PapplyTracer, trace, name, axis_size), args, in_axes)
     out_tracer = yield in_tracers
     out_tracer = trace.full_raise(out_tracer)
-    out_tracer = _moveaxis(out_tracer, out_tracer.axis, out_axis)
+    out_tracer = ensure_axis(out_axis, out_tracer.axis, out_tracer)
     out_val = out_tracer.val
     del master, out_tracer
   yield out_val
