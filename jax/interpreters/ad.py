@@ -34,8 +34,12 @@ map = safe_map
 def identity(x): return x
 
 
-def jvp(fun):
-  return jvpfun(jvp_subtrace(fun))
+def jvp(fun, has_aux=False):
+  if not has_aux:
+    return jvpfun(jvp_subtrace(fun))
+  else:
+    fun, aux = jvp_subtrace_aux(fun)
+    return jvpfun(fun), aux
 
 @transformation
 def jvpfun(primals, tangents):
@@ -56,13 +60,31 @@ def jvp_subtrace(master, primals, tangents):
   out_primal, out_tangent = out_tracer.primal, out_tracer.tangent
   yield (out_primal, out_tangent)
 
+@transformation_with_aux
+def jvp_subtrace_aux(master, primals, tangents):
+  trace = JVPTrace(master, core.cur_sublevel())
+  for x in list(primals) + list(tangents):
+    if isinstance(x, Tracer):
+      assert x.trace.level < trace.level
+  ans_and_aux = yield map(partial(JVPTracer, trace), primals, tangents)
+  out_tracer, aux_tracer = trace.full_raise(ans_and_aux)
+  out_primal, out_tangent = out_tracer.primal, out_tracer.tangent
+  aux = aux_tracer.primal  # ignore aux tangent
+  yield (out_primal, out_tangent), aux
+
+
 @transformation
 def pack_output(*args):
   ans = yield args
   yield pack(ans)
 
-def linearize(traceable, *primals):
-  jvpfun = pack_output(jvp(traceable))
+def linearize(traceable, *primals, **kwargs):
+  has_aux = kwargs.pop('has_aux', False)
+  if not has_aux:
+    jvpfun = pack_output(jvp(traceable))
+  else:
+    jvpfun, aux = jvp(traceable, has_aux=True)
+    jvpfun = pack_output(jvpfun)
   tangent_avals = [get_aval(p).at_least_vspace() for p in primals]
   in_pvals = (pe.PartialVal((None, pack(primals))),
               pe.PartialVal((core.AbstractTuple(tangent_avals), core.unit)))
@@ -70,10 +92,16 @@ def linearize(traceable, *primals):
   pval_primal, pval_tangent = unpair_pval(out_pval)
   aval_primal, const_primal = pval_primal
   assert aval_primal is None
-  return const_primal, pval_tangent, jaxpr, consts
+  if not has_aux:
+    return const_primal, pval_tangent, jaxpr, consts
+  else:
+    return const_primal, pval_tangent, jaxpr, consts, aux()
 
-def vjp(traceable, primals):
-  out_primal, pval, jaxpr, consts = linearize(traceable, *primals)
+def vjp(traceable, primals, has_aux=False):
+  if not has_aux:
+    out_primal, pval, jaxpr, consts = linearize(traceable, *primals)
+  else:
+    out_primal, pval, jaxpr, consts, aux = linearize(traceable, *primals, has_aux=True)
   def vjp_(ct):
     ct = ignore_consts(ct, pval)
     dummy_primal_and_ct = pack((core.unit, ct))
@@ -81,7 +109,10 @@ def vjp(traceable, primals):
     _, arg_cts = backward_pass(jaxpr, consts, (), dummy_args, dummy_primal_and_ct)
     return instantiate_zeros(pack(primals), arg_cts[1])
 
-  return out_primal, vjp_
+  if not has_aux:
+    return out_primal, vjp_
+  else:
+    return out_primal, vjp_, aux
 
 def ignore_consts(ct, pval):
   aval, const = pval
