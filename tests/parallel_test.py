@@ -16,6 +16,8 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from unittest import skip
+
 import numpy as onp
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -75,6 +77,7 @@ class PapplyTest(jtu.JaxTestCase):
     expected = onp.sin(onp.arange(3.))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @skip
   def DISABLED_testSum(self):
     pfun, axis_name = papply(np.sum, 5)
 
@@ -87,6 +90,7 @@ class PapplyTest(jtu.JaxTestCase):
     expected = onp.sum(onp.arange(3.))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @skip
   def DISABLED_testLogSoftmax(self):
 
     def fun(x):
@@ -111,6 +115,7 @@ class PapplyTest(jtu.JaxTestCase):
     ans = pmap(pfun, axis_name)(x, x)
     self.assertAllClose(ans, expected, check_dtypes=True)
 
+  @skip
   def DISABLED_testAddBroadcasting(self):
 
     def fun(x):
@@ -165,6 +170,7 @@ class PapplyTest(jtu.JaxTestCase):
     ans = pmap(pfun, axis_name)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @skip
   def DISABLED_testTransposeAndAddRank3(self):
 
     def fun(x):
