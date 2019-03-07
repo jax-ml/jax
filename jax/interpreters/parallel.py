@@ -175,8 +175,8 @@ def papply(fun, name, in_vals, axis_size, in_axes, out_axis):
   return out_val
 
 def ensure_axis(dst, src, x):
-  aval = get_aval(x)
-  if type(aval) is AbstractTuple:
+  aval = batching.get_aval(x)
+  if type(aval) is core.AbstractTuple:
     if type(src) is tuple and type(dst) is tuple:
       return core.pack(map(ensure_axis, dst, src, x))
     elif type(src) is tuple:
