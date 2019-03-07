@@ -341,6 +341,32 @@ class APITest(jtu.JaxTestCase):
     ans = jit(lambda x: 2 * x)(np.ones(int(2e6)))  # doesn't crash
     self.assertAllClose(ans, 2., check_dtypes=False)
 
+  def test_grad_and_aux_basic(self):
+    g, aux = grad(lambda x: (x**3, [x**2]), has_aux=True)(3.)
+    self.assertEqual(type(aux), list)
+    self.assertEqual(aux, [9.])
+
+  def test_grad_and_aux_nested(self):
+    def f(x):
+      g, aux = grad(lambda x: (x**3, [x**3]), has_aux=True)(x)
+      return aux[0]
+
+    f2 = lambda x: x**3
+
+    self.assertEqual(grad(f)(4.), grad(f2)(4.))
+    self.assertEqual(jit(grad(f))(4.), grad(f2)(4.))
+    self.assertEqual(jit(grad(jit(f)))(4.), grad(f2)(4.))
+
+    def f(x):
+      g, aux = grad(lambda x: (x**3, [x**3]), has_aux=True)(x)
+      return aux[0] * np.sin(x)
+
+    f2 = lambda x: x**3 * np.sin(x)
+
+    self.assertEqual(grad(f)(4.), grad(f2)(4.))
+    self.assertEqual(jit(grad(f))(4.), grad(f2)(4.))
+    self.assertEqual(jit(grad(jit(f)))(4.), grad(f2)(4.))
+
 
 if __name__ == '__main__':
   absltest.main()

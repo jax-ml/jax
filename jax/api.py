@@ -169,7 +169,7 @@ def xla_computation(fun, static_argnums=()):
 
   return computation_maker
 
-def grad(fun, argnums=0):
+def grad(fun, argnums=0, has_aux=False):
   """Creates a function which evaluates the gradient of `fun`.
 
   Args:
@@ -179,6 +179,9 @@ def grad(fun, argnums=0):
       arrays with shape `(1,)` etc.)
     argnums: Optional, integer or tuple of integers. Specifies which positional
       argument(s) to differentiate with respect to (default 0).
+    has_aux: Optional, bool. Indicates whether `fun` returns a pair where the
+     first element is considered the output of the mathematical functoin to be
+     differentiated and the second element is auxiliary data. Default False.
 
   Returns:
     A function with the same arguments as `fun`, that evaluates the gradient of
@@ -194,7 +197,7 @@ def grad(fun, argnums=0):
   array(0.961043, dtype=float32)
 
   """
-  value_and_grad_f = value_and_grad(fun, argnums)
+  value_and_grad_f = value_and_grad(fun, argnums, has_aux=has_aux)
 
   docstr = ("Gradient of {fun} with respect to positional argument(s) "
             "{argnums}. Takes the same arguments as {fun} but returns the "
@@ -203,12 +206,16 @@ def grad(fun, argnums=0):
 
   @wraps(fun, docstr=docstr, argnums=argnums)
   def grad_f(*args, **kwargs):
-    ans, g = value_and_grad_f(*args, **kwargs)
-    return g
+    if not has_aux:
+      _, g = value_and_grad_f(*args, **kwargs)
+      return g
+    else:
+      (_, aux), g = value_and_grad_f(*args, **kwargs)
+      return g, aux
 
   return grad_f
 
-def value_and_grad(fun, argnums=0):
+def value_and_grad(fun, argnums=0, has_aux=False):
   """Creates a function which evaluates both `fun` and the gradient of `fun`.
 
   Args:
@@ -218,6 +225,9 @@ def value_and_grad(fun, argnums=0):
       arrays with shape `(1,)` etc.)
     argnums: Optional, integer or tuple of integers. Specifies which positional
       argument(s) to differentiate with respect to (default 0).
+    has_aux: Optional, bool. Indicates whether `fun` returns a pair where the
+     first element is considered the output of the mathematical functoin to be
+     differentiated and the second element is auxiliary data. Default False.
 
   Returns:
     A function with the same arguments as `fun` that evaluates both `fun` and
@@ -238,11 +248,17 @@ def value_and_grad(fun, argnums=0):
   def value_and_grad_f(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
     f_partial, dyn_args = _argnums_partial(f, argnums, args)
-    ans, vjp_py = vjp(f_partial, *dyn_args)
+    if not has_aux:
+      ans, vjp_py = vjp(f_partial, *dyn_args)
+    else:
+      ans, vjp_py, aux = vjp(f_partial, *dyn_args, has_aux=True)
     _check_scalar(ans)
     g = vjp_py(onp.ones((), onp.result_type(ans)))
     g = g[0] if isinstance(argnums, int) else g
-    return (ans, g)
+    if not has_aux:
+      return ans, g
+    else:
+      return (ans, aux), g
 
   return value_and_grad_f
 
@@ -529,7 +545,7 @@ def lift_linearized(jaxpr, consts, io_tree, out_pval, *py_args):
 
   return apply_jaxtree_fun(fun, io_tree, *py_args)
 
-def vjp(fun, *primals):
+def vjp(fun, *primals, **kwargs):
   """Compute a (reverse-mode) vector-Jacobian product of `fun`.
 
   `grad` is implemented as a special case of `vjp`.
@@ -542,6 +558,9 @@ def vjp(fun, *primals):
       should be evaluated. The length of `primals` should be equal to the number
       of positional parameters to `fun`. Each primal value should be a tuple of
       arrays, scalar, or standard Python containers thereof.
+    has_aux: Optional, bool. Indicates whether `fun` returns a pair where the
+     first element is considered the output of the mathematical functoin to be
+     differentiated and the second element is auxiliary data. Default False.
 
   Returns:
     A `(primals_out, vjpfun)` pair, where `primals_out` is `fun(*primals)`.
@@ -556,20 +575,30 @@ def vjp(fun, *primals):
   >>> g((-0.7, 0.3))
   (array(-0.61430776, dtype=float32), array(-0.2524413, dtype=float32))
   """
+  has_aux = kwargs.pop('has_aux', False)
+  assert not kwargs
   if not isinstance(fun, lu.WrappedFun):
     fun = lu.wrap_init(fun)
   primals_flat, in_trees = unzip2(map(pytree_to_jaxtupletree, primals))
   _check_args(primals_flat)
   jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(fun, in_trees)
-  out_primal, out_vjp = ad.vjp(jaxtree_fun, primals_flat)
+  if not has_aux:
+    out_primal, out_vjp = ad.vjp(jaxtree_fun, primals_flat)
+  else:
+    out_primal, out_vjp, aux = ad.vjp(jaxtree_fun, primals_flat, has_aux=True)
   out_tree = out_tree()
+  if has_aux:
+    out_tree, aux_tree = out_tree.children
   out_primal_py = build_tree(out_tree, out_primal)
   ct_in_trees = [out_tree]
   ct_out_tree = PyTreeDef(node_types[tuple], None, in_trees)
   def out_vjp_packed(cotangent_in):
     return out_vjp(cotangent_in)
   vjp_py = partial(apply_jaxtree_fun, out_vjp_packed, (ct_in_trees, ct_out_tree))
-  return out_primal_py, vjp_py
+  if not has_aux:
+    return out_primal_py, vjp_py
+  else:
+    return out_primal_py, vjp_py, build_tree(aux_tree, aux)
 
 
 def trace_to_jaxpr(traceable, py_pvals, **kwargs):
