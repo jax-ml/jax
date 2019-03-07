@@ -180,7 +180,7 @@ def grad(fun, argnums=0, has_aux=False):
     argnums: Optional, integer or tuple of integers. Specifies which positional
       argument(s) to differentiate with respect to (default 0).
     has_aux: Optional, bool. Indicates whether `fun` returns a pair where the
-     first element is considered the output of the mathematical functoin to be
+     first element is considered the output of the mathematical function to be
      differentiated and the second element is auxiliary data. Default False.
 
   Returns:
@@ -188,7 +188,8 @@ def grad(fun, argnums=0, has_aux=False):
     `fun`. If `argnums` is an integer then the gradient has the same shape and
     type as the positional argument indicated by that integer. If argnums is a
     tuple of integers, the gradient is a tuple of values with the same shapes
-    and types as the corresponding arguments.
+    and types as the corresponding arguments. If `has_aux` is True then a pair
+    of (gradient, auxiliary_data) is returned.
 
   For example:
 
@@ -226,7 +227,7 @@ def value_and_grad(fun, argnums=0, has_aux=False):
     argnums: Optional, integer or tuple of integers. Specifies which positional
       argument(s) to differentiate with respect to (default 0).
     has_aux: Optional, bool. Indicates whether `fun` returns a pair where the
-     first element is considered the output of the mathematical functoin to be
+     first element is considered the output of the mathematical function to be
      differentiated and the second element is auxiliary data. Default False.
 
   Returns:
@@ -559,7 +560,7 @@ def vjp(fun, *primals, **kwargs):
       of positional parameters to `fun`. Each primal value should be a tuple of
       arrays, scalar, or standard Python containers thereof.
     has_aux: Optional, bool. Indicates whether `fun` returns a pair where the
-     first element is considered the output of the mathematical functoin to be
+     first element is considered the output of the mathematical function to be
      differentiated and the second element is auxiliary data. Default False.
 
   Returns:
