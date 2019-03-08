@@ -307,13 +307,21 @@ def move_dim_to_front(x, dim):
 def dimsize(dim, x):
   aval = get_aval(x)
   if type(aval) is AbstractTuple:
-    return reduce(set.union, map(partial(dimsize, dim), x))
-  elif type(dim) is int:
-    return {x.shape[dim]}
-  elif dim is None:
-    return set()
+    if type(dim) is tuple:
+      return reduce(set.union, map(dimsize, dim, x))
+    elif type(dim) is int:
+      return reduce(set.union, map(partial(dimsize, dim), x))
+    elif dim is None:
+      return set()
+    else:
+      raise TypeError(type(dim))
   else:
-    raise TypeError(type(dim))
+    if type(dim) is int:
+      return {x.shape[dim]}
+    elif dim is None:
+      return set()
+    else:
+      raise TypeError(type(dim))
 
 def moveaxis(sz, dst, src, x):
   aval = get_aval(x)
