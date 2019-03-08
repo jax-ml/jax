@@ -343,8 +343,8 @@ class APITest(jtu.JaxTestCase):
 
   def test_grad_and_aux_basic(self):
     g, aux = grad(lambda x: (x**3, [x**2]), has_aux=True)(3.)
-    self.assertEqual(g, grad(lambda x: x**3)(3.))
-    self.assertEqual(aux, [9.])
+    self.assertAllClose(g, grad(lambda x: x**3)(3.), check_dtypes=True)
+    self.assertAllClose(aux, [9.], check_dtypes=True)
 
   def test_grad_and_aux_nested(self):
     def f(x):
