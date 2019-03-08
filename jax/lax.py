@@ -3667,6 +3667,15 @@ def _while_loop_translation_rule(c, init_val, cond_consts, body_consts,
 
 def _while_loop_batching_rule(batched_args, batch_dims, aval_out, cond_jaxpr,
                               body_jaxpr):
+  # See https://github.com/google/jax/issues/441 for a discussion.
+  # To batch a while_loop, we need to do some masking, since the elements of the
+  # batch may run for different numbers of iterations. We perform that masking
+  # usnig lax.select, and keep the loop running so long as any of the batch
+  # elements need by effectively using an np.any(...) in the cond_fun.
+  # The basic strategy here is to lift `cond_jaxpr` and `body_jaxpr` back into
+  # traceable Python functions using `core.eval_jaxpr`. Then we can batch them
+  # using `batching.batch_transform` (the transform underlying `api.vmap`). This
+  # code also avoids broadcasting `cond_consts` and `body_consts`.
   init_val, cond_consts, body_consts = batched_args
   init_val_bd, cond_consts_bd, body_consts_bd = batch_dims
 
