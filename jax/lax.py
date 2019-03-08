@@ -3665,10 +3665,47 @@ def _while_loop_translation_rule(c, init_val, cond_consts, body_consts,
   full_ans = c.While(cond_computation, body_computation, loop_carry)
   return c.GetTupleElement(full_ans, 0)
 
+def _while_loop_batching_rule(batched_args, batch_dims, aval_out, cond_jaxpr,
+                              body_jaxpr):
+  init_val, cond_consts, body_consts = batched_args
+  init_val_bd, cond_consts_bd, body_consts_bd = batch_dims
+
+  sizes = _reduce(set.union, map(batching.dimsize, batch_dims, batched_args))
+  size = sizes.pop()
+  assert not sizes
+
+  if init_val_bd is None:
+    # TODO(mattjj): if cond_consts_bd is also None, we could keep cond_fun
+    # unbatched and avoid the masking logic, but we ignore that optimiztaion
+    init_val = batching.bdim_at_front(init_val, init_val_bd, size,
+                                      force_broadcast=True)
+    init_val_bd = 0
+
+  def batched_cond_fun(batched_loop_carry):
+    @lu.wrap_init
+    def lifted(loop_carry, cond_consts):
+      return core.eval_jaxpr(cond_jaxpr, cond_consts, (), loop_carry)
+    f = batching.batch_transform(lifted, size, (init_val_bd, cond_consts_bd), 0)
+    preds = f.call_wrapped((batched_loop_carry, cond_consts))
+    return reduce(preds, onp.array(False), bitwise_or, [0])
+
+  def batched_body_fun(batched_loop_carry):
+    @lu.wrap_init
+    def lifted(loop_carry, cond_consts, body_consts):
+      pred = core.eval_jaxpr(cond_jaxpr, cond_consts, (), loop_carry)
+      new_loop_carry = core.eval_jaxpr(body_jaxpr, body_consts, (), loop_carry)
+      return select(pred, new_loop_carry, loop_carry)
+    f = batching.batch_transform(
+        lifted, size, (init_val_bd, cond_consts_bd, body_consts_bd), init_val_bd)
+    return f.call_wrapped((batched_loop_carry, cond_consts, body_consts))
+
+  return while_loop(batched_cond_fun, batched_body_fun, init_val), init_val_bd
+
 while_p = Primitive('while')
 while_p.def_impl(partial(xla.apply_primitive, while_p))
 while_p.def_abstract_eval(_while_loop_abstract_eval)
 xla.translations[while_p] = _while_loop_translation_rule
+batching.primitive_batchers[while_p] = _while_loop_batching_rule
 
 def _unpack_eqn(invar, outvars):
   return core.JaxprEqn([invar], outvars, core.identity_p, (), True, {})
