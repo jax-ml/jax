@@ -43,7 +43,7 @@ from .tree_util import (process_pytree, node_types, build_tree, PyTreeDef,
                         tree_transpose, leaf)
 from .util import (unzip2, unzip3, curry, partial, safe_map, safe_zip,
                    WrapHashably, prod)
-from .lib.xla_bridge import canonicalize_dtype
+from .lib.xla_bridge import canonicalize_dtype, device_count
 from .abstract_arrays import ShapedArray
 from .interpreters import partial_eval as pe
 from .interpreters import xla
@@ -678,6 +678,8 @@ tree_to_pval_tuples = partial(process_pytree, pe.pack_pvals)
 device_put = jit(lambda x: x)
 device_get_array = lambda x: x.copy() if type(x) is xla.DeviceArray else x
 device_get = partial(tree_map, device_get_array)
+replicate = lambda x: pmap(lambda _: x)(onp.arange(device_count()))
+unreplicate = lambda x: tree_map(op.itemgetter(0), x)
 
 
 def _argnums_partial(f, dyn_argnums, args):
