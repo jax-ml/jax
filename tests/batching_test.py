@@ -833,6 +833,19 @@ class BatchingTest(jtu.JaxTestCase):
 
     H = hessian(f)(R)  # don't crash on UnshapedArray
 
+  def testWhileLoop(self):
+    def fun(x):
+      return lax.while_loop(lambda x: x < 3, lambda x: x + 2, x)
+
+    ans = vmap(fun)(onp.array([0, 1, 2, 3]))
+    expected = onp.array([4, 3, 4, 3])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    fun = jit(fun)
+    ans = vmap(fun)(onp.array([0, 1, 2, 3]))
+    expected = onp.array([4, 3, 4, 3])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
 
 if __name__ == '__main__':
   absltest.main()

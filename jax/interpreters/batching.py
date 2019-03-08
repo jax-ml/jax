@@ -35,28 +35,27 @@ from ..util import unzip2, partial, safe_map
 map = safe_map
 
 
-def batch(fun, in_vals, in_dims, out_dim_target):
+def batch(fun, in_vals, in_dims, out_dim_dst):
   sizes = reduce(set.union, map(dimsize, in_dims, in_vals))
   if not sizes:
     return fun.call_wrapped(*in_vals), None  # no mapped dimensions
   elif len(sizes) == 1:
-    out_val, out_dim = batch_transform(fun).call_wrapped(in_vals, in_dims)
-    return moveaxis(sizes.pop(), out_dim_target, out_dim, out_val)
+    sz = sizes.pop()
+    return batch_transform(fun, sz, in_dims, out_dim_dst).call_wrapped(in_vals)
   else:
     raise TypeError("got inconsistent map dimension sizes: {}".format(sizes))
 
 
-# TODO(mattjj,dougalm): could call batch_subtrace here (a bit redundant)
 @transformation
-def batch_transform(vals, dims):
+def batch_transform(size, in_dims, out_dim_dst, vals):
   with new_master(BatchTrace) as master:
     trace = BatchTrace(master, core.cur_sublevel())
-    in_tracers = map(partial(BatchTracer, trace), vals, dims)
+    in_tracers = map(partial(BatchTracer, trace), vals, in_dims)
     out_tracer = yield in_tracers
     out_tracer = trace.full_raise(out_tracer)
     out_val, out_dim = out_tracer.val, out_tracer.batch_dim
     del master
-  yield (out_val, out_dim)
+  yield moveaxis(size, out_dim_dst, out_dim, out_val)
 
 
 @transformation_with_aux
