@@ -2432,13 +2432,14 @@ def _reshape_papply_rule(name, vals, axes, new_sizes, dimensions, old_sizes):
   axis, = axes
 
   if dimensions is None:
-    # if there is an i such that prod(new_sizes[:i]) == prod(old_sizes[:axis])
-    # and new_sizes[i] == old_sizes[axis], then we can maintain sharding.
-    # otherwise, it's ambiguous, and we could either gather or just make up a
-    # way to rescatter.
-    raise NotImplementedError  # TODO
+    if new_sizes[axis] == old_sizes[axis]:
+      new_sizes = new_sizes[:axis] + new_sizes[axis + 1:]
+      return reshape(operand, new_sizes, dimensions=dimensions)
+    else:
+      raise NotImplementedError(
+          'papply of reshape that would change hidden dimension size')
   else:
-    raise NotImplementedError  # TODO(mattjj): handle reshape w/ dimensions
+    raise NotImplementedError('papply of reshape with dimensions')
 
 reshape_p = standard_primitive(_reshape_shape_rule, _reshape_dtype_rule,
                                'reshape', _reshape_translation_rule)
