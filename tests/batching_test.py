@@ -862,6 +862,23 @@ class BatchingTest(jtu.JaxTestCase):
     expected = onp.array([4, 3])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testWhileLoopTuple(self):
+    def cond_fun(loop_carry):
+      x, y = loop_carry
+      return x + y < 5
+
+    def body_fun(loop_carry):
+      x, y = loop_carry
+      x = x + 1
+      return x, y
+
+    def fun(x, y):
+      return lax.while_loop(cond_fun, body_fun, (x, y))
+
+    ans = vmap(fun)(onp.array([0, 0]), onp.array([1, 2]))
+    expected = (onp.array([4, 3]), onp.array([1, 2]))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
 
 if __name__ == '__main__':
   absltest.main()
