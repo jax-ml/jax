@@ -3703,12 +3703,21 @@ def _while_loop_batching_rule(batched_args, batch_dims, aval_out, cond_jaxpr,
     def lifted(loop_carry, cond_consts, body_consts):
       pred = core.eval_jaxpr(cond_jaxpr, cond_consts, (), loop_carry)
       new_loop_carry = core.eval_jaxpr(body_jaxpr, body_consts, (), loop_carry)
-      return select(pred, new_loop_carry, loop_carry)
+      return _jaxtupletree_select(pred, new_loop_carry, loop_carry)
     f = batching.batch_transform(
         lifted, size, (init_val_bd, cond_consts_bd, body_consts_bd), init_val_bd)
     return f.call_wrapped((batched_loop_carry, cond_consts, body_consts))
 
   return while_loop(batched_cond_fun, batched_body_fun, init_val), init_val_bd
+
+def _jaxtupletree_select(pred, on_true, on_false):
+  aval = core.get_aval(on_true)
+  if type(aval) is core.AbstractTuple:
+    return core.pack(map(partial(_jaxtupletree_select, pred), on_true, on_false))
+  elif isinstance(aval, UnshapedArray):
+    return select(pred, on_true, on_false)
+  else:
+    raise TypeError(aval)
 
 while_p = Primitive('while')
 while_p.def_impl(partial(xla.apply_primitive, while_p))
