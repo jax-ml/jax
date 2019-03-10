@@ -505,8 +505,8 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       ]
       for dtype in float_types()
       for rng in [jtu.rand_default()]))
-  def testSolveTriangular(self, lower, transpose_a, lhs_shape,
-                                 rhs_shape, dtype, rng):
+  def testSolveTriangular(self, lower, transpose_a, lhs_shape, rhs_shape, dtype,
+                          rng):
     k = rng(lhs_shape, dtype)
     l = onp.linalg.cholesky(onp.matmul(k, T(k))
                             + lhs_shape[-1] * onp.eye(lhs_shape[-1]))
