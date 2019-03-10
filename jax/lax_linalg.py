@@ -217,10 +217,25 @@ def triangular_solve_jvp_rule_a(
 
 def triangular_solve_transpose_rule(
     cotangent, a, b, left_side, lower, transpose_a, conjugate_a):
+  # Triangular solve is linear in its first argument and nonlinear in its second
+  # argument, similar to `div`. We need both a JVP rule and a transpose rule
+  # for the first argument.
   assert a is not None and b is None
   cotangent_b = triangular_solve(a, cotangent, left_side, lower,
                                  not transpose_a, conjugate_a)
   return [None, cotangent_b]
+
+
+def triangular_solve_batching_rule(batched_args, batch_dims, left_side,
+                                   lower, transpose_a, conjugate_a):
+  x, y = batched_args
+  bx, by = batch_dims
+  size = next(t.shape[i] for t, i in zip(batched_args, batch_dims)
+              if i is not None)
+  x = batching.bdim_at_front(x, bx, size, force_broadcast=True)
+  y = batching.bdim_at_front(y, by, size, force_broadcast=True)
+  return triangular_solve(x, y, left_side=left_side, lower=lower,
+                          transpose_a=transpose_a, conjugate_a=conjugate_a), 0
 
 triangular_solve_p = standard_primitive(
     triangular_solve_shape_rule, triangular_solve_dtype_rule,
@@ -229,6 +244,7 @@ ad.defjvp2(triangular_solve_p,
            triangular_solve_jvp_rule_a,
            lambda g_b, _, a, b, **kws: triangular_solve(a, g_b, **kws))
 ad.primitive_transposes[triangular_solve_p] = triangular_solve_transpose_rule
+batching.primitive_batchers[triangular_solve_p] = triangular_solve_batching_rule
 
 
 def triangular_solve_cpu_translation_rule(
