@@ -546,6 +546,26 @@ class BatchingTest(jtu.JaxTestCase):
     expected = onp.linalg.cholesky(b)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testLaxLinalgTriangularSolve(self):
+    a = onp.random.RandomState(0).randn(4, 10, 4).astype(onp.float32)
+    a += onp.eye(4, dtype=np.float32)[:, None, :]
+    b = onp.random.RandomState(0).randn(5, 4, 10).astype(onp.float32)
+
+    ans = vmap(lax_linalg.triangular_solve, in_axes=(1, 2))(a, b)
+    expected = onp.stack(
+      [lax_linalg.triangular_solve(a[:, i], b[..., i]) for i in range(10)])
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
+    ans = vmap(lax_linalg.triangular_solve, in_axes=(None, 2))(a[:, 0], b)
+    expected = onp.stack(
+      [lax_linalg.triangular_solve(a[:, 0], b[..., i]) for i in range(10)])
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
+    ans = vmap(lax_linalg.triangular_solve, in_axes=(1, None))(a, b[..., 0])
+    expected = onp.stack(
+      [lax_linalg.triangular_solve(a[:, i], b[..., 0]) for i in range(10)])
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
   @parameterized.named_parameters(
       {"testcase_name": "_shape={}_axis={}_idxs={}_dnums={}_slice_sizes={}".format(
           jtu.format_shape_dtype_string(shape, dtype), axis, idxs, dnums,
