@@ -917,7 +917,7 @@ class BatchingTest(jtu.JaxTestCase):
     def f(key):
       def body_fn(uk):
         key = uk[1]
-        u = random.uniform(key, ())
+        u = random.uniform(key, (), dtype=np.float64)
         key, _ = random.split(key)
         return u, key
 
