@@ -3683,12 +3683,11 @@ def _while_loop_batching_rule(batched_args, batch_dims, aval_out, cond_jaxpr,
   size = sizes.pop()
   assert not sizes
 
-  if init_val_bd is None:
-    # TODO(mattjj): if cond_consts_bd is also None, we could keep cond_fun
-    # unbatched and avoid the masking logic, but we ignore that optimiztaion
-    init_val = batching.bdim_at_front(init_val, init_val_bd, size,
-                                      force_broadcast=True)
-    init_val_bd = 0
+  # TODO(mattjj): if cond_consts_bd is also None, we could keep cond_fun
+  # unbatched and avoid the masking logic, but we ignore that optimiztaion
+  init_val = batching.bdim_at_front(init_val, init_val_bd, size,
+                                    force_broadcast=True)
+  init_val_bd = 0
 
   def batched_cond_fun(batched_loop_carry):
     @lu.wrap_init
