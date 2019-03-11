@@ -3987,12 +3987,12 @@ pxla.parallel_translation_rules[psum_p] = _psum_parallel_translation_rule
 ad.deflinear(psum_p, _psum_transpose_rule)
 parallel.defreducer(reduce_sum_p, psum_p)
 
-def gather_pmap_rule(val, axis):
+def _gather_pmap_rule(val, axis):
   return val, None
 
-parallel.pmap_primitive_rules[gather_p] = gather_pmap_rule
+parallel.pmap_primitive_rules[gather_p] = _gather_pmap_rule
 
-def pswapaxes_pmap_rule(x, axis_in, axis):
+def _pswapaxes_pmap_rule(x, axis_in, axis):
   if x.shape[axis_in] != x.shape[axis]:
     raise ValueError("pswapaxes between non-square dimensions")
   perm = list(range(x.ndim))
@@ -4000,21 +4000,21 @@ def pswapaxes_pmap_rule(x, axis_in, axis):
   perm[axis] = axis_in
   return transpose(x, perm), axis_in
 
-parallel.pmap_primitive_rules[pswapaxes_p] = pswapaxes_pmap_rule
+parallel.pmap_primitive_rules[pswapaxes_p] = _pswapaxes_pmap_rule
 
-def psplit_pmap_rule(x, axis_in, axis):
+def _psplit_pmap_rule(x, axis_in, axis):
   if x.shape[axis_in] != x.shape[axis]:
     raise ValueError("psplit between non-square dimensions")
   return x, axis
 
-parallel.pmap_primitive_rules[psplit_p] = psplit_pmap_rule
+parallel.pmap_primitive_rules[psplit_p] = _psplit_pmap_rule
 
-def pcollect_pmap_rule(x, axis_in):
+def _pcollect_pmap_rule(x, axis_in):
   return x, None
 
-parallel.pmap_primitive_rules[pcollect_p] = pcollect_pmap_rule
+parallel.pmap_primitive_rules[pcollect_p] = _pcollect_pmap_rule
 
-def transpose_papply_rule(name, vals, dims, permutation):
+def _transpose_papply_rule(name, vals, dims, permutation):
   x, = vals
   xdim, = dims
   perm = list(permutation)
@@ -4032,14 +4032,14 @@ def transpose_papply_rule(name, vals, dims, permutation):
     x = pswapaxes(x, name, in_dim)
   return x, xdim
 
-parallel.papply_primitive_rules[transpose_p] = transpose_papply_rule
+parallel.papply_primitive_rules[transpose_p] = _transpose_papply_rule
 
 def _pdot(x, y, axis_name):
   x = x[..., None]
   y = y[..., None, :]
   return psum(x * y, axis_name)
 
-def dot_papply_rule(name, vals, dims):
+def _dot_papply_rule(name, vals, dims):
   x, y = vals
   xdim, ydim = dims
   if xdim is None:
@@ -4054,12 +4054,12 @@ def dot_papply_rule(name, vals, dims):
     y = pcollect(y, name)
     return dot(x, y), xdim
 
-parallel.papply_primitive_rules[dot_p] = dot_papply_rule
+parallel.papply_primitive_rules[dot_p] = _dot_papply_rule
 
 def scatter_like(source, target):
   return scatter_like_p.bind(source, target)
 
-def scatter_like_papply_rule(name, vals, axes):
+def _scatter_like_papply_rule(name, vals, axes):
   source, target = vals
   source_axis, target_axis = axes
   assert source_axis is None
@@ -4067,7 +4067,7 @@ def scatter_like_papply_rule(name, vals, axes):
 
 scatter_like_p.def_abstract_eval(lambda source, target: source)
 
-parallel.papply_primitive_rules[scatter_like_p] = scatter_like_papply_rule
+parallel.papply_primitive_rules[scatter_like_p] = _scatter_like_papply_rule
 
 
 ### util
