@@ -913,6 +913,19 @@ class BatchingTest(jtu.JaxTestCase):
     expected = (onp.array([10, 11]), onp.array([20, 20]))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testIssue489(self):
+    def f(key):
+      def body_fn(uk):
+        key = uk[1]
+        u = random.uniform(key, ())
+        key, _ = random.split(key)
+        return u, key
+
+      u, _ = lax.while_loop(lambda uk: uk[0] > 0.5, body_fn, (1., key))
+      return u
+
+    print(vmap(f)(random.split(random.PRNGKey(0), 2)))  # no crash
+
 
 if __name__ == '__main__':
   absltest.main()
