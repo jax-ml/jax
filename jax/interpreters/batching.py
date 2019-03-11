@@ -285,24 +285,11 @@ primitive_batchers[zeros_like_p] = zeros_like_batched
 
 
 def bdim_at_front(x, bdim, broadcast_size=1, force_broadcast=False):
-  if bdim is None:
-    return broadcast(x, broadcast_size, force_broadcast=force_broadcast)
-  else:
-    return move_dim_to_front(x, bdim)
+  return moveaxis(broadcast_size, 0, bdim, x, force_broadcast=force_broadcast)
 
 def move_dim_to_front(x, dim):
-  aval = get_aval(x)
-  if type(aval) is AbstractTuple:
-    return pack(map(partial(move_dim_to_front, dim=dim), x))
-  elif isinstance(aval, ShapedArray):
-    assert 0 <= dim < onp.ndim(x)
-    if dim == 0:
-      return x
-    else:
-      perm = (dim,) + tuple(range(dim)) + tuple(range(dim + 1, onp.ndim(x)))
-      return x.transpose(perm)
-  else:
-    raise TypeError(type(x))
+  assert dim is not None
+  return moveaxis(None, 0, dim, x)
 
 def dimsize(dim, x):
   aval = get_aval(x)
@@ -323,7 +310,7 @@ def dimsize(dim, x):
     else:
       raise TypeError(type(dim))
 
-def moveaxis(sz, dst, src, x):
+def moveaxis(sz, dst, src, x, force_broadcast=True):
   aval = get_aval(x)
   if type(aval) is AbstractTuple:
     if type(src) is tuple and type(dst) is tuple:
@@ -341,7 +328,7 @@ def moveaxis(sz, dst, src, x):
       return x
     else:
       if src is None:
-        x = broadcast(x, sz, force_broadcast=True)
+        x = broadcast(x, sz, force_broadcast=force_broadcast)
         src = 0
         dst_ = dst % (aval.ndim + 1)
       if src == dst_:
