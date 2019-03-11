@@ -376,6 +376,14 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(g, grad(lambda x: x**3)(4.))
     self.assertEqual(aux, [4.**2, 4.])
 
+  def test_jvp_and_aux(self):
+    fun = lambda x: (x**3, [x**2])
+    primals, tangents, aux = api.jvp(fun, (3.,), (4.,), has_aux=True)
+    expected_primals, expected_tangents = api.jvp(lambda x: x**3, (3.,), (4.,))
+    self.assertAllClose(primals, expected_primals, check_dtypes=True)
+    self.assertAllClose(tangents, expected_tangents, check_dtypes=True)
+    self.assertEqual(aux, [3.**2])
+
 
 if __name__ == '__main__':
   absltest.main()

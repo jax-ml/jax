@@ -487,7 +487,7 @@ def papply(fun, axis_size, in_axes=0, out_axes=0):
   return papply_fun, axis_name
 
 
-def jvp(fun, primals, tangents):
+def jvp(fun, primals, tangents, **kwargs):
   """Computes a (forward-mode) Jacobian-vector product of `fun`.
 
   Args:
@@ -514,18 +514,30 @@ def jvp(fun, primals, tangents):
   >>> jax.jvp(jax.numpy.sin, (0.1,), (0.2,))
   (array(0.09983342, dtype=float32), array(0.19900084, dtype=float32))
   """
+  has_aux = kwargs.pop('has_aux', False)
+  assert not kwargs
+  if not isinstance(fun, lu.WrappedFun):
+    fun = lu.wrap_init(fun)
+
   def trim_arg(primal, tangent):
     primal_jtuple, tree_def = pytree_to_jaxtupletree(primal)
     tangent_jtuple, tree_def_2 = pytree_to_jaxtupletree(tangent)
     assert tree_def == tree_def_2, (tree_def, tree_def_2)
     return primal_jtuple, tangent_jtuple, tree_def
 
-  if not isinstance(fun, lu.WrappedFun):
-    fun = lu.wrap_init(fun)
   ps_flat, ts_flat, in_trees = unzip3(map(trim_arg, primals, tangents))
   jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(fun, in_trees)
-  out_primal, out_tangent = ad.jvp(jaxtree_fun).call_wrapped(ps_flat, ts_flat)
-  return (build_tree(out_tree(), out_primal), build_tree(out_tree(), out_tangent))
+  if not has_aux:
+    out_primal, out_tangent = ad.jvp(jaxtree_fun).call_wrapped(ps_flat, ts_flat)
+    return build_tree(out_tree(), out_primal), build_tree(out_tree(), out_tangent)
+  else:
+    jvp_fun, aux = ad.jvp(jaxtree_fun, has_aux=True)
+    out_primal, out_tangent = jvp_fun.call_wrapped(ps_flat, ts_flat)
+    out_tree, aux_tree = out_tree().children
+    out_primal = build_tree(out_tree, out_primal)
+    out_tangent = build_tree(out_tree, out_tangent)
+    aux = build_tree(aux_tree, aux())
+    return out_primal, out_tangent, aux
 
 def linearize(traceable, *primals):
   fun = lu.wrap_init(traceable)
