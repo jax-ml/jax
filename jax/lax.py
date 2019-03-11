@@ -3684,7 +3684,7 @@ def _while_loop_batching_rule(batched_args, batch_dims, aval_out, cond_jaxpr,
   assert not sizes
 
   # TODO(mattjj): if cond_consts_bd is also None, we could keep cond_fun
-  # unbatched and avoid the masking logic, but we ignore that optimiztaion
+  # unbatched and avoid the masking logic, but we ignore that optimization
   init_val = batching.bdim_at_front(init_val, init_val_bd, size,
                                     force_broadcast=True)
   init_val_bd = 0
