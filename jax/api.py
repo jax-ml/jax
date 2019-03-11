@@ -736,3 +736,6 @@ def _primitive(fun):
   traceable.primitive = fun_p
 
   return traceable
+
+# for people who miss the good ol' matlab syntax
+bsxfun = vmap
