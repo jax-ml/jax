@@ -38,7 +38,7 @@ print(g.call_wrapped(3.))  # Call the transformed function.
 
 
 A `WrappedFun` object represents a function `f`, together with a
-sequence of nested transformations that to be applied to the positional
+sequence of nested transformations that are to be applied to the positional
 arguments at call time and function return values at return time.
 `WrappedFun` objects explicitly represent the set of transformations so that
 they can be used as dictionary keys for memoization. `WrappedFun` objects
@@ -48,7 +48,7 @@ Transformations are implemented as generators to save call stack frames.
 A transformation's generator takes arguments `gen args + args`, and yields
 a tuple of transformed arguments that should be passed to the wrapped
 function. The result of the wrapped function is passed back to the generator
-using gen.send(), and the generator yields the transformed results to pass
+using `gen.send()`, and the generator yields the transformed results to pass
 back to the caller.
 
 Transformations can also return auxiliary data using the `transform_with_aux`
@@ -114,7 +114,7 @@ def staged(f, *init_args):
 
 
 class WrappedFun(object):
-  """Represents a function `f` to which a stack of `transforms` is to be applied.
+  """Represents a function `f` to which `transforms` are to be applied.
 
   Arguments:
     f: the function to be transformed.
