@@ -82,6 +82,19 @@ class partialmethod(functools.partial):
                      *(self.args or ()), **(self.keywords or {}))
 
 def curry(f):
+  """Curries arguments of f, returning a function on any remaining arguments.
+
+  For example:
+  >>> f = lambda x, y, z, w: x * y + z * w
+  >>> f(2,3,4,5)
+  26
+  >>> curry(f)(2)(3, 4, 5)
+  26
+  >>> curry(f)(2, 3)(4, 5)
+  26
+  >>> curry(f)(2, 3, 4, 5)()
+  26
+  """
   return partial(partial, f)
 
 def toposort(end_node):
