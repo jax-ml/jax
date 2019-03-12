@@ -26,7 +26,7 @@ from jax import linear_util as lu
 @lu.transformation
 def scale_transformer(scale, x):
   ans = yield (x / scale,)
-  yield (x * scale,)
+  yield x * scale
 
 def f(x):
   return x + 1
@@ -57,7 +57,7 @@ decorator. For example:
 @lu.transformation_with_aux
 def scale_transformer_aux(scale, x):
   ans = yield (x / scale,)
-  yield ((x * scale,), "Auxiliary data: {}".format(x))
+  yield (x * scale, "Auxiliary data: {}".format(x))
 
 g = lu.wrap_init(f)  # Wraps `f` as a `WrappedFun`.
 g, aux_thunk = scale_transformer_aux(g, 2.0)  # Scale inputs/outputs by 2.0
