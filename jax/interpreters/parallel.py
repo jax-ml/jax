@@ -37,25 +37,25 @@ zip = safe_zip
 def identity(x): return x
 
 
-### pmap
+### serial_pmap is like pmap but executes in a single-machine vectorized way
 
 
-def pmap(fun, name, in_vals, in_axes, out_axis_target):
+def serial_pmap(fun, name, in_vals, in_axes, out_axis_target):
   sizes = reduce(set.union, map(batching.dimsize, in_axes, in_vals))
   if not sizes:
     return fun.call_wrapped(*in_vals)
   elif len(sizes) == 1:
-    fun, out_axis = pmap_transform(fun, name, in_axes)
+    fun, out_axis = serial_pmap_transform(fun, name, in_axes)
     out_val = fun.call_wrapped(*in_vals)
     return batching.moveaxis(sizes.pop(), out_axis_target, out_axis(), out_val)
   else:
     raise TypeError("got inconsistent map dimension sizes: {}".format(sizes))
 
 @lu.transformation_with_aux
-def pmap_transform(name, axes, *vals):
-  with new_master(PmapTrace) as master:
-    trace = PmapTrace(master, core.cur_sublevel())
-    in_tracers = map(partial(PmapTracer, trace, name), vals, axes)
+def serial_pmap_transform(name, axes, *vals):
+  with new_master(SerialPmapTrace) as master:
+    trace = SerialPmapTrace(master, core.cur_sublevel())
+    in_tracers = map(partial(SerialPmapTracer, trace, name), vals, axes)
     ans = yield in_tracers
     out_tracer = trace.full_raise(ans)
     out_val, out_axis = out_tracer.val, out_tracer.axis
@@ -63,14 +63,14 @@ def pmap_transform(name, axes, *vals):
   yield out_val, out_axis
 
 @lu.transformation_with_aux
-def pmap_subtrace(master, name, axes, *vals):
-  trace = PmapTrace(master, core.cur_sublevel())
-  ans = yield map(partial(PmapTracer, trace, name), vals, axes)
+def serial_pmap_subtrace(master, name, axes, *vals):
+  trace = SerialPmapTrace(master, core.cur_sublevel())
+  ans = yield map(partial(SerialPmapTracer, trace, name), vals, axes)
   out_tracer = trace.full_raise(ans)
   out_val, out_axis = out_tracer.val, out_tracer.axis
   yield out_val, out_axis
 
-class PmapTracer(Tracer):
+class SerialPmapTracer(Tracer):
   def __init__(self, trace, name, val, axis):
     self.trace = trace
     self.name = name
@@ -92,7 +92,7 @@ class PmapTracer(Tracer):
       return tuple(self.val)
     else:
       raise TypeError(t)
-    return map(partial(PmapTracer, self.trace, self.name), self.val, axes)
+    return map(partial(SerialPmapTracer, self.trace, self.name), self.val, axes)
 
   def full_lower(self):
     if self.axis is None:
@@ -100,15 +100,15 @@ class PmapTracer(Tracer):
     else:
       return self
 
-class PmapTrace(Trace):
+class SerialPmapTrace(Trace):
   def pure(self, val):
-    return PmapTracer(self, None, val, None)
+    return SerialPmapTracer(self, None, val, None)
 
   def lift(self, val):
-    return PmapTracer(self, None, val, None)
+    return SerialPmapTracer(self, None, val, None)
 
   def sublift(self, val):
-    return PmapTracer(self, val.name, val.val, val.axis)
+    return SerialPmapTracer(self, val.name, val.val, val.axis)
 
   def process_primitive(self, primitive, tracers, params):
     names_in, vals_in, axes_in = unzip3((t.name, t.val, t.axis) for t in tracers)
@@ -116,25 +116,25 @@ class PmapTrace(Trace):
       return primitive.bind(*vals_in, **params)
     else:
       name = next(name for name in names_in if name is not None)  # all same
-      if primitive in pmap_primitive_rules:
+      if primitive in serial_pmap_primitive_rules:
         # if it's a pmap collective primitive, do something special
         val_in, = vals_in
         axis_in, = axes_in
         if name == params['axis_name']:
           # if the name matches this tracer's name, apply the pmap rule
-          rule = pmap_primitive_rules[primitive]
+          rule = serial_pmap_primitive_rules[primitive]
           params = {k: params[k] for k in params if k != 'axis_name'}
           val_out, axis_out = rule(val_in, axis_in, **params)
-          return PmapTracer(self, name, val_out, axis_out)
+          return SerialPmapTracer(self, name, val_out, axis_out)
         else:
           # if not, bind the primitive so that any other pmap tracers can see it
           val_out = primitive.bind(val_in, **params)
-          return PmapTracer(self, name, val_out, axis_in)
+          return SerialPmapTracer(self, name, val_out, axis_in)
       else:
         # if it's not a pmap collective primitive, act just like vmap
         rule = batching.get_primitive_batcher(primitive)
         val_out, axis_out = rule(vals_in, axes_in, **params)
-        return PmapTracer(self, name, val_out, axis_out)
+        return SerialPmapTracer(self, name, val_out, axis_out)
 
   def process_call(self, call_primitive, f, tracers, params):
     names, vals, axes = unzip3((t.name, t.val, t.axis) for t in tracers)
@@ -142,16 +142,16 @@ class PmapTrace(Trace):
       return call_primitive.bind(f, *vals, **params)
     else:
       name = next(name for name in names if name is not None)  # all same
-      f, axis_out = pmap_subtrace(f, self.master, name, axes)
+      f, axis_out = serial_pmap_subtrace(f, self.master, name, axes)
       val_out = call_primitive.bind(f, *vals, **params)
-      return PmapTracer(self, name, val_out, axis_out())
+      return SerialPmapTracer(self, name, val_out, axis_out())
 
   def post_process_call(self, _, out_tracer):
     name, val, axis = out_tracer.name, out_tracer.val, out_tracer.axis
     master = self.master
     def todo(x):
-      trace = PmapTrace(master, core.cur_sublevel())
-      return PmapTracer(trace, name, x, axis)
+      trace = SerialPmapTrace(master, core.cur_sublevel())
+      return SerialPmapTracer(trace, name, x, axis)
 
     return val, todo
 
@@ -159,10 +159,10 @@ class PmapTrace(Trace):
     vals = core.pack([t.val for t in tracers])
     axis = tuple(t.axis for t in tracers)
     name = next(t.name for t in tracers if t.name)
-    return PmapTracer(self, name, vals, axis)
+    return SerialPmapTracer(self, name, vals, axis)
 
 
-pmap_primitive_rules = {}
+serial_pmap_primitive_rules = {}
 
 
 ### papply

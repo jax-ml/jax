@@ -25,7 +25,7 @@ from absl.testing import parameterized
 import jax.numpy as np
 from jax import test_util as jtu
 from jax import lax
-from jax.api import pjit, pmap, vmap, jvp, grad, make_jaxpr, linearize
+from jax.api import pmap, vmap, jvp, grad, make_jaxpr, linearize
 from jax.lax import psum
 from jax.lib import xla_bridge
 
@@ -33,18 +33,18 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 
-class PjitTest(jtu.JaxTestCase):
+class PmapTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices("gpu", "tpu")
   def testNestedWithClosure(self):
     assert xla_bridge.get_replica_count() == 1  # OSS CPU testing only
     x = onp.arange(3, dtype=onp.float32).reshape(1, 1, 3)
 
-    @partial(pjit, axis_name='i')
+    @partial(pmap, axis_name='i')
     def test_fun(x):
       y = np.sum(np.sin(x))
 
-      @partial(pjit, axis_name='j')
+      @partial(pmap, axis_name='j')
       def g(z):
         return 3. * np.exp(np.sin(x).sum() * np.cos(y) * np.tan(z))
 
