@@ -841,13 +841,10 @@ class _OpaqueParam(object):
   """Wrapper that hashes on its identity, instead of its contents.
 
   Used to pass unhashable parameters as primitive attributes."""
-  __slots__ = ["val", "id"]
+  __slots__ = ["val"]
+
   def __init__(self, val):
     self.val = val
-    self.id = next(_opaque_param_ids)
-  def __hash__(self):
-    return self.id
-_opaque_param_ids = itertools.count()
 
 
 def while_loop(cond_fun, body_fun, init_val):
