@@ -43,7 +43,7 @@ from .tree_util import (process_pytree, node_types, build_tree, PyTreeDef,
                         tree_transpose, leaf)
 from .util import (unzip2, unzip3, curry, partial, safe_map, safe_zip,
                    WrapHashably, prod)
-from .lib.xla_bridge import canonicalize_dtype
+from .lib.xla_bridge import canonicalize_dtype, device_count
 from .abstract_arrays import ShapedArray
 from .interpreters import partial_eval as pe
 from .interpreters import xla
@@ -423,14 +423,16 @@ def vmap(fun, in_axes=0, out_axes=0):
   return batched_fun
 
 
-def pjit(fun, axis_name):
+def pmap(fun, axis_name=None):
   """Set up SPMD function for JIT compilation and parallel execution with XLA."""
+  axis_name = _TempAxisName() if axis_name is None else axis_name
+
   @wraps(fun)
   def f_jitted(*args, **kwargs):
     leaves, _ = tree_flatten(args)
     axis_sizes = set(onp.shape(leaf)[0] for leaf in leaves)
     if len(axis_sizes) != 1:
-      msg = "pjit requires all leading axes to have equal length, got {}."
+      msg = "pmap requires all leading axes to have equal length, got {}."
       raise TypeError(msg.format(axis_sizes))
     axis_size = axis_sizes.pop()
 
@@ -442,33 +444,27 @@ def pjit(fun, axis_name):
                                       axis_name=axis_name, axis_size=axis_size)
     return build_tree(out_tree(), jaxtupletree_out)
 
-  f_jitted.__name__ = "pjit({})".format(f_jitted.__name__)
+  namestr = "pmap({}, axis_name={})".format
+  f_jitted.__name__ = namestr(f_jitted.__name__, axis_name)
   return f_jitted
 
-
-def pmap(fun, axis_name, in_axes=0, out_axes=0):
+def serial_pmap(fun, axis_name=None, in_axes=0, out_axes=0):
   """Vectorizing pseudo-map for single-program multiple-data (SPMD) functions."""
-  def pmap_fun(*args, **kwargs):
+  axis_name = _TempAxisName() if axis_name is None else axis_name
+
+  def map_fun(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
     in_axes_ = in_axes if isinstance(in_axes, (list, tuple)) else (in_axes,) * len(args)
     in_flat, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
     jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(f, in_trees)
-    out_flat = parallel.pmap(jaxtree_fun, axis_name, args, in_axes_, out_axes)
+    out_flat = parallel.serial_pmap(jaxtree_fun, axis_name, in_flat, in_axes_, out_axes)
     return build_tree(out_tree(), out_flat)
 
-  return pmap_fun
+  return map_fun
 
-
-def axisvar_split(fun, name, new_names):
-  """Split axis variable names into new names in an SPMD function."""
-  def split_fun(*args, **kwargs):
-    f = lu.wrap_init(fun, kwargs)
-    in_flat, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
-    jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(f, in_trees)
-    out_flat = parallel.axisvar_split(jaxtree_fun, name, new_names).call_wrapped(*args)
-    return build_tree(out_tree(), out_flat)
-
-  return split_fun
+class _TempAxisName(object):
+  def __repr__(self):
+    return '<temp axis {}>'.format(hex(id(self)))
 
 
 def papply(fun, axis_size, in_axes=0, out_axes=0):
@@ -682,6 +678,8 @@ tree_to_pval_tuples = partial(process_pytree, pe.pack_pvals)
 device_put = jit(lambda x: x)
 device_get_array = lambda x: x.copy() if type(x) is xla.DeviceArray else x
 device_get = partial(tree_map, device_get_array)
+replicate = lambda x: pmap(lambda _: x)(onp.arange(device_count()))
+unreplicate = lambda x: tree_map(op.itemgetter(0), x)
 
 
 def _argnums_partial(f, dyn_argnums, args):

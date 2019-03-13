@@ -25,39 +25,39 @@ from absl.testing import parameterized
 import jax.numpy as np
 from jax import test_util as jtu
 from jax import lax
-from jax.api import pmap, papply, jit, make_jaxpr, axisvar_split
+from jax.api import serial_pmap, papply, jit, make_jaxpr
 from jax.linear_util import wrap_init
 
 from jax.config import config
 config.parse_flags_with_absl()
 
 
-class PmapTest(jtu.JaxTestCase):
+class SerialPmapTest(jtu.JaxTestCase):
 
   def testConstantFunction(self):
     f = lambda x: 3
-    ans = pmap(f, axis_name='i')(onp.ones(4))
+    ans = serial_pmap(f, axis_name='i')(onp.ones(4))
     expected = 3 * onp.ones(4)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testReduceSum(self):
     f = lambda x: lax.psum(x, 'i')
-    ans = pmap(f, axis_name='i')(onp.ones(4))
+    ans = serial_pmap(f, axis_name='i')(onp.ones(4))
     expected = 4 * onp.ones(4)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testLogSoftmax(self):
     f = lambda x: x - np.log(lax.psum(np.exp(x), 'i'))
     x = onp.log(onp.arange(1., 10., dtype=onp.float32))
-    ans = pmap(f, axis_name='i')(x)
+    ans = serial_pmap(f, axis_name='i')(x)
     expected = x - onp.log(onp.sum(onp.exp(x)))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testNested(self):
     f = lambda x: lax.psum(lax.psum(x, 'i'), 'j')
     x = onp.ones((2, 2))
-    ans1 = pmap(pmap(f, 'i'), 'j')(x)
-    ans2 = pmap(pmap(f, 'j'), 'i')(x)
+    ans1 = serial_pmap(serial_pmap(f, 'i'), 'j')(x)
+    ans2 = serial_pmap(serial_pmap(f, 'j'), 'i')(x)
     expected = 4 * onp.ones((2, 2))
     self.assertAllClose(ans1, expected, check_dtypes=False)
     self.assertAllClose(ans2, expected, check_dtypes=False)
@@ -86,7 +86,7 @@ class PapplyTest(jtu.JaxTestCase):
         lambda x: lax.psum(x, axis_name))(onp.zeros(5))
     assert repr(jaxpr) == repr(expected_jaxpr)
 
-    ans = pmap(pfun, axis_name)(onp.arange(3.))
+    ans = serial_pmap(pfun, axis_name)(onp.arange(3.))
     expected = onp.sum(onp.arange(3.))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
@@ -103,7 +103,7 @@ class PapplyTest(jtu.JaxTestCase):
         lambda x: x - np.log(lax.psum(np.exp(x), axis_name)))(onp.zeros(5))
     assert repr(jaxpr) == repr(expected_jaxpr)
 
-    ans = pmap(pfun, axis_name)(onp.arange(1., 5.))
+    ans = serial_pmap(pfun, axis_name)(onp.arange(1., 5.))
     expected = fun(onp.arange(1., 5.))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
@@ -112,7 +112,7 @@ class PapplyTest(jtu.JaxTestCase):
     expected = x + x
 
     pfun, axis_name = papply(np.add, 2)
-    ans = pmap(pfun, axis_name)(x, x)
+    ans = serial_pmap(pfun, axis_name)(x, x)
     self.assertAllClose(ans, expected, check_dtypes=True)
 
   @skip
@@ -125,7 +125,7 @@ class PapplyTest(jtu.JaxTestCase):
     expected = x + 3
 
     pfun, axis_name = papply(fun, 2)
-    ans = pmap(pfun, axis_name)(x)
+    ans = serial_pmap(pfun, axis_name)(x)
     self.assertAllClose(ans, expected, check_dtypes=True)
 
   def testTranspose(self):
@@ -140,7 +140,7 @@ class PapplyTest(jtu.JaxTestCase):
     for x in xs:
       expected = x.T
       pfun, axis_name = papply(fun, x.shape[0])
-      ans = pmap(pfun, axis_name)(x)
+      ans = serial_pmap(pfun, axis_name)(x)
       self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testTransposeWithOddPermutation(self):
@@ -155,7 +155,7 @@ class PapplyTest(jtu.JaxTestCase):
     for x in xs:
       expected = np.transpose(x, (2, 0, 1))
       pfun, axis_name = papply(fun, x.shape[0])
-      ans = pmap(pfun, axis_name)(x)
+      ans = serial_pmap(pfun, axis_name)(x)
       self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testTransposeAndAddRank2(self):
@@ -167,7 +167,7 @@ class PapplyTest(jtu.JaxTestCase):
     expected = x + x.T
 
     pfun, axis_name = papply(fun, 2)
-    ans = pmap(pfun, axis_name)(x)
+    ans = serial_pmap(pfun, axis_name)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   @skip
@@ -180,7 +180,7 @@ class PapplyTest(jtu.JaxTestCase):
     expected = x + x.T
 
     pfun, axis_name = papply(fun, 2)
-    ans = pmap(pfun, axis_name)(x)
+    ans = serial_pmap(pfun, axis_name)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testDot(self):
@@ -196,7 +196,7 @@ class PapplyTest(jtu.JaxTestCase):
       for x in xs:
         expected = fun(x, x)
         pfun, axis_name = papply(fun, x.shape[0], in_axes=in_axes)
-        ans = pmap(pfun, axis_name)(x, x)
+        ans = serial_pmap(pfun, axis_name)(x, x)
         self.assertAllClose(ans, expected, check_dtypes=False)
 
 
