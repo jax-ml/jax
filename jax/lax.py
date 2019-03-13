@@ -2033,10 +2033,28 @@ def _dot_batch_rule(batched_args, batch_dims):
   dim_nums = [(lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch)]
   return dot_general(lhs, rhs, dim_nums), 0
 
+def _dot_papply_rule(name, vals, dims):
+  x, y = vals
+  xdim, ydim = dims
+  if xdim is None:
+    return dot(x, y), ydim
+  elif ydim is None:
+    return dot(x, y), xdim
+  elif ydim == 0:
+    if xdim != x.ndim:
+      x = psplit(x, name, x.ndim)
+    x = x[..., None]
+    y = y[..., None, :]
+    return psum(x * y, name), None
+  else:
+    y = pcollect(y, name)
+    return dot(x, y), xdim
+
 _dot_dtype_rule = partial(binop_dtype_rule, _input_dtype, [_num, _num], 'dot')
 dot_p = standard_primitive(_dot_shape_rule, _dot_dtype_rule, 'dot')
 ad.defbilinear(dot_p, _dot_transpose_lhs, _dot_transpose_rhs)
 batching.primitive_batchers[dot_p] = _dot_batch_rule
+parallel.papply_primitive_rules[dot_p] = _dot_papply_rule
 
 
 def _dot_general_shape_rule(lhs, rhs, dimension_numbers):
@@ -2430,11 +2448,31 @@ def _transpose_batch_rule(batched_args, batch_dims, permutation):
   perm = (bdim,) + tuple(i if i < bdim else i+1 for i in permutation)
   return transpose(operand, perm), 0
 
+def _transpose_papply_rule(name, vals, dims, permutation):
+  x, = vals
+  xdim, = dims
+  perm = list(permutation)
+  if perm[xdim] == xdim:
+    x = transpose(x, perm)
+    out_dim = xdim
+  else:
+    in_dim, = [i for i in range(len(perm)) if perm[i] == xdim]
+    out_dim = perm[xdim]
+    perm[in_dim] = out_dim
+    perm[out_dim] = in_dim
+    perm = perm[:xdim] + perm[xdim + 1:]
+    perm = [i - 1 if i > xdim else i for i in perm]
+    x = transpose(x, perm)
+    x = pswapaxes(x, name, in_dim)
+  return x, xdim
+
+
 transpose_p = standard_primitive(_transpose_shape_rule, _input_dtype,
                                  'transpose')
 ad.deflinear(transpose_p,
              lambda t, permutation: [transpose(t, onp.argsort(permutation))])
 batching.primitive_batchers[transpose_p] = _transpose_batch_rule
+parallel.papply_primitive_rules[transpose_p] = _transpose_papply_rule
 
 
 def _select_shape_rule(pred, on_true, on_false):
@@ -2856,12 +2894,16 @@ def _gather_batching_rule(batched_args, batch_dims, dimension_numbers,
     return gather(operand, start_indices, dimension_numbers=dnums,
                   slice_sizes=slice_sizes), 0
 
+def _gather_serial_pmap_rule(val, axis):
+  return val, None
+
 gather_p = standard_primitive(
     _gather_shape_rule, _gather_dtype_rule, 'gather',
     _gather_translation_rule)
 ad.defjvp(gather_p, _gather_jvp_rule, None)
 ad.primitive_transposes[gather_p] = _gather_transpose_rule
 batching.primitive_batchers[gather_p] = _gather_batching_rule
+parallel.serial_pmap_primitive_rules[gather_p] = _gather_serial_pmap_rule
 
 
 class ScatterDimensionNumbers(collections.namedtuple(
@@ -3936,7 +3978,7 @@ ad.primitive_jvps[stop_gradient_p] = _stop_gradient_jvp_rule
 batching.primitive_batchers[stop_gradient_p] = _stop_gradient_batch_rule
 
 
-### parallel library
+### parallel traceables
 
 def psum(x, axis_name):
   return psum_p.bind(x, axis_name=axis_name)
@@ -3966,29 +4008,22 @@ def pcollect(x, axis_name):
   # return xla_all_to_all(x, 0, dim(axis_name), **params)
   return pcollect_p.bind(x, axis_name=axis_name)
 
-### parallel primitives
 
-def PmapPrimitive(name):
-  prim = Primitive(name)
-  prim.def_impl(partial(_unbound_name_error, name))
-  prim.def_abstract_eval(lambda x, *args, **kwargs: x)  # default
-  return prim
+### parallel primitives
 
 def _unbound_name_error(primitive_name, *args, **kwargs):
   axis_name = kwargs['axis_name']
   msg = "axis name '{}' is unbound for primitive {}."
   raise NameError(msg.format(axis_name, primitive_name))
 
-psum_p = PmapPrimitive('psum')
-pswapaxes_p = PmapPrimitive('pswapaxes')
-psplit_p = PmapPrimitive('psplit')
-pcollect_p = PmapPrimitive('pcollect')
-scatter_like_p = Primitive('scatter_like')
+def PmapPrimitive(name):
+  prim = Primitive(name)
+  prim.def_impl(partial(_unbound_name_error, name))
+  prim.def_abstract_eval(lambda x, *args, **kwargs: x)
+  return prim
 
 
-### parallel rules
-
-def _psum_pmap_rule(val, axis):
+def _psum_serial_pmap_rule(val, axis):
   return _reduce_sum(val, [axis]), None
 
 def _psum_transpose_rule(t, axis_name):
@@ -4000,17 +4035,16 @@ def _psum_parallel_translation_rule(c, val, device_groups):
   else:
     return c.CrossReplicaSum(val)
 
-parallel.pmap_primitive_rules[psum_p] = _psum_pmap_rule
+psum_p = PmapPrimitive('psum')
+psum_p.def_impl(partial(_unbound_name_error, 'psum'))
+psum_p.def_abstract_eval(lambda x, *args, **kwargs: x)
+parallel.serial_pmap_primitive_rules[psum_p] = _psum_serial_pmap_rule
 pxla.parallel_translation_rules[psum_p] = _psum_parallel_translation_rule
 ad.deflinear(psum_p, _psum_transpose_rule)
 parallel.defreducer(reduce_sum_p, psum_p)
 
-def _gather_pmap_rule(val, axis):
-  return val, None
 
-parallel.pmap_primitive_rules[gather_p] = _gather_pmap_rule
-
-def _pswapaxes_pmap_rule(x, axis_in, axis):
+def _pswapaxes_serial_pmap_rule(x, axis_in, axis):
   if x.shape[axis_in] != x.shape[axis]:
     raise ValueError("pswapaxes between non-square dimensions")
   perm = list(range(x.ndim))
@@ -4018,74 +4052,24 @@ def _pswapaxes_pmap_rule(x, axis_in, axis):
   perm[axis] = axis_in
   return transpose(x, perm), axis_in
 
-parallel.pmap_primitive_rules[pswapaxes_p] = _pswapaxes_pmap_rule
+pswapaxes_p = PmapPrimitive('pswapaxes')
+parallel.serial_pmap_primitive_rules[pswapaxes_p] = _pswapaxes_serial_pmap_rule
 
-def _psplit_pmap_rule(x, axis_in, axis):
+
+def _psplit_serial_pmap_rule(x, axis_in, axis):
   if x.shape[axis_in] != x.shape[axis]:
     raise ValueError("psplit between non-square dimensions")
   return x, axis
 
-parallel.pmap_primitive_rules[psplit_p] = _psplit_pmap_rule
+psplit_p = PmapPrimitive('psplit')
+parallel.serial_pmap_primitive_rules[psplit_p] = _psplit_serial_pmap_rule
 
-def _pcollect_pmap_rule(x, axis_in):
+
+def _pcollect_serial_pmap_rule(x, axis_in):
   return x, None
 
-parallel.pmap_primitive_rules[pcollect_p] = _pcollect_pmap_rule
-
-def _transpose_papply_rule(name, vals, dims, permutation):
-  x, = vals
-  xdim, = dims
-  perm = list(permutation)
-  if perm[xdim] == xdim:
-    x = transpose(x, perm)
-    out_dim = xdim
-  else:
-    in_dim, = [i for i in range(len(perm)) if perm[i] == xdim]
-    out_dim = perm[xdim]
-    perm[in_dim] = out_dim
-    perm[out_dim] = in_dim
-    perm = perm[:xdim] + perm[xdim + 1:]
-    perm = [i - 1 if i > xdim else i for i in perm]
-    x = transpose(x, perm)
-    x = pswapaxes(x, name, in_dim)
-  return x, xdim
-
-parallel.papply_primitive_rules[transpose_p] = _transpose_papply_rule
-
-def _pdot(x, y, axis_name):
-  x = x[..., None]
-  y = y[..., None, :]
-  return psum(x * y, axis_name)
-
-def _dot_papply_rule(name, vals, dims):
-  x, y = vals
-  xdim, ydim = dims
-  if xdim is None:
-    return dot(x, y), ydim
-  elif ydim is None:
-    return dot(x, y), xdim
-  elif ydim == 0:
-    if xdim != x.ndim:
-      x = psplit(x, name, x.ndim)
-    return _pdot(x, y, name), None
-  else:
-    y = pcollect(y, name)
-    return dot(x, y), xdim
-
-parallel.papply_primitive_rules[dot_p] = _dot_papply_rule
-
-def scatter_like(source, target):
-  return scatter_like_p.bind(source, target)
-
-def _scatter_like_papply_rule(name, vals, axes):
-  source, target = vals
-  source_axis, target_axis = axes
-  assert source_axis is None
-  return _scatter(source, target, target_axis, name)
-
-scatter_like_p.def_abstract_eval(lambda source, target: source)
-
-parallel.papply_primitive_rules[scatter_like_p] = _scatter_like_papply_rule
+pcollect_p = PmapPrimitive('pcollect')
+parallel.serial_pmap_primitive_rules[pcollect_p] = _pcollect_serial_pmap_rule
 
 
 ### util

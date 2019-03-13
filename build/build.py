@@ -176,6 +176,9 @@ build --define=no_gcp_support=true
 build --define=no_hdfs_support=true
 build --define=no_kafka_support=true
 build --define=no_ignite_support=true
+
+build:cuda --crosstool_top=@local_config_cuda//crosstool:toolchain
+build:cuda --define=using_cuda=true --define=using_cuda_nvcc=true
 """
 
 
@@ -298,6 +301,8 @@ def main():
     config_args += ["--config=opt"]
   if args.enable_mkl_dnn:
     config_args += ["--config=mkl_open_source_only"]
+  if args.enable_cuda:
+    config_args += ["--config=cuda"]
   shell(
     [bazel_path, "run", "--verbose_failures=true"] +
     config_args +
