@@ -2356,20 +2356,16 @@ def _pad_shape_rule(operand, padding_value, padding_config):
 
 def _pad_transpose(t, operand, padding_value, padding_config):
   lo, hi, interior = zip(*padding_config)
-  if onp.any(onp.less(lo, 0)) or onp.any(onp.less(hi, 0)):
-    msg = "pad transpose not implemented for negative padding, got {}."
-    raise NotImplementedError(msg.format(padding_config))
 
   total = lambda x: _reduce_sum(x, list(range(t.ndim)))
 
-  t_op = lambda: slice(t, lo, onp.subtract(t.shape, hi), onp.add(interior, 1))
-  t_operand = t_op() if operand is None else None
+  def t_op():
+    unpad_config = zip(onp.negative(lo), onp.negative(hi), onp.zeros_like(interior))
+    unpadded = pad(t, 0., unpad_config)
+    return slice(unpadded, onp.zeros_like(lo), unpadded.shape, onp.add(interior, 1))
 
-  if padding_value is None:
-    t_operand = t_op() if t_operand is None else t_operand
-    t_padv = sub(total(t), total(t_operand))
-  else:
-    t_padv = None
+  t_operand = t_op() if operand is None else None
+  t_padv = sub(total(t), total(t_operand)) if padding_value is None else None
 
   return [t_operand, t_padv]
 
