@@ -2361,7 +2361,7 @@ def _pad_transpose(t, operand, padding_value, padding_config):
 
   def t_op():
     unpad_config = zip(onp.negative(lo), onp.negative(hi), onp.zeros_like(interior))
-    unpadded = pad(t, 0., unpad_config)
+    unpadded = pad(t, onp.array(0., t.dtype), unpad_config)
     return slice(unpadded, onp.zeros_like(lo), unpadded.shape, onp.add(interior, 1))
 
   t_operand = t_op() if operand is None else None
