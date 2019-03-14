@@ -20,14 +20,14 @@ import numpy as onp
 import scipy.stats as osp_stats
 
 from ... import lax
-from ...numpy.lax_numpy import _promote_args_like, _wraps, where, inf, logical_or
+from ...numpy.lax_numpy import _promote_args_like, _wraps, where, inf, logical_or, broadcast_to
 
 
 @_wraps(osp_stats.uniform.logpdf)
 def logpdf(x, loc=0, scale=1):
   x, loc, scale = _promote_args_like(osp_stats.uniform.logpdf, x, loc, scale)
   fill_value = lax.neg(lax.log(scale))
-  log_probs = lax.broadcast(fill_value, onp.shape(x))
+  log_probs = broadcast_to(fill_value, onp.shape(x))
   return where(logical_or(lax.ge(x, lax.add(loc, scale)),
                           lax.le(x, loc)), -inf, log_probs)
 
