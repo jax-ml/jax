@@ -27,7 +27,7 @@ from ...numpy.lax_numpy import _promote_args_like, _wraps, where, inf, logical_o
 def logpdf(x, loc=0, scale=1):
   x, loc, scale = _promote_args_like(osp_stats.uniform.logpdf, x, loc, scale)
   fill_value = lax.neg(lax.log(scale))
-  log_probs_shape = lax.broadcast_shapes(*[onp.shape(x), onp.shape(loc), onp.shape(scale)])
+  log_probs_shape = lax.broadcast_shapes(onp.shape(x), onp.shape(loc), onp.shape(scale))
   log_probs = broadcast_to(fill_value, log_probs_shape)
   return where(logical_or(lax.ge(x, lax.add(loc, scale)),
                           lax.le(x, loc)), -inf, log_probs)

@@ -25,6 +25,7 @@ import numpy as onp
 import scipy.stats as osp_stats
 from scipy.stats import random_correlation
 
+from jax import lax
 from jax import test_util as jtu
 from jax.scipy import stats as lsp_stats
 
@@ -174,13 +175,9 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       x, loc, scale = map(rng, shapes, dtypes)
       return [x, loc, onp.abs(scale)]
 
-    def args_maker2():
-      _, loc, scale = map(rng, shapes, dtypes)
-      return [0.5, loc, onp.abs(scale)]
-
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker2, check_dtypes=True)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
+    assert lax_fun(*args_maker()).shape == lax.broadcast_shapes(*shapes)
 
 if __name__ == "__main__":
     absltest.main()
