@@ -339,7 +339,7 @@ class APITest(jtu.JaxTestCase):
 
   def test_large_device_constant(self):
     ans = jit(lambda x: 2 * x)(np.ones(int(2e6)))  # doesn't crash
-    self.assertAllClose(ans, 2., check_dtypes=False)
+    self.assertAllClose(ans, onp.ones(int(2e6)) * 2., check_dtypes=False)
 
   def test_grad_and_aux_basic(self):
     g, aux = grad(lambda x: (x**3, [x**2]), has_aux=True)(3.)

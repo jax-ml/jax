@@ -1151,7 +1151,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # from https://github.com/google/jax/issues/125
     x = lax.add(lnp.eye(3), 0.)
     ans = onp.mean(x)
-    self.assertAllClose(ans, onp.array([1./3, 1./3, 1./3]), check_dtypes=False)
+    self.assertAllClose(ans, onp.array(1./3), check_dtypes=False)
 
   # TODO(mattjj): more exhaustive arange tests
   def testArangeOnFloats(self):
@@ -1169,7 +1169,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     a = onp.array([[1, 4], [3, 1]])
     ans = lnp.sort(a, axis=None)
-    expected = onp.array([[1, 1, 3, 4]])
+    expected = onp.array([1, 1, 3, 4])
     self.assertAllClose(expected, ans, check_dtypes=True)
 
     a = onp.array([[1, 4], [3, 1]])
