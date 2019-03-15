@@ -401,6 +401,7 @@ class JaxTestCase(parameterized.TestCase):
 
   def assertArraysAllClose(self, x, y, check_dtypes, atol=None, rtol=None):
     """Assert that x and y are close (up to numerical tolerances)."""
+    self.assertEqual(x.shape, y.shape)
     dtype = lambda x: str(onp.asarray(x).dtype)
     tol = 1e-2 if str(onp.dtype(onp.float32)) in {dtype(x), dtype(y)} else 1e-5
     atol = atol or tol
