@@ -25,7 +25,6 @@ import numpy as onp
 import scipy.stats as osp_stats
 from scipy.stats import random_correlation
 
-from jax import lax
 from jax import test_util as jtu
 from jax.scipy import stats as lsp_stats
 
