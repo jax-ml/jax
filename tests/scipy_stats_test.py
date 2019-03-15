@@ -177,7 +177,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
 
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
-    assert lax_fun(*args_maker()).shape == lax.broadcast_shapes(*shapes)
 
 if __name__ == "__main__":
     absltest.main()
