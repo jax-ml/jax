@@ -171,6 +171,7 @@ class PyTreeDef(object):
 
 
 class PyLeaf(object):
+  include_subclasses = True
   def __repr__(self):
     return '*'
 
@@ -192,13 +193,37 @@ node_types = {}
 def get_node_type(py_type):
   for cls in py_type.__mro__:
     node_type = node_types.get(cls)
-    if node_type is not None and (cls is py_type or node_type.include_subclasses):
+    if node_type is not None and (
+        cls is py_type or node_type.include_subclasses):
       return node_type
   return leaf
 
-def register_pytree_node(py_type, to_iterable, from_iterable, include_subclasses=True):
+def register_pytree_node(py_type, to_iterable, from_iterable,
+                         include_subclasses=True):
+  """Registers a Python type as a container-like data structure.
+
+  Many JAX functions work equally well with individual arrays and
+  nested trees of tuples, lists, dicts and other containers. This
+  function registers a new container data type with the tree-handling
+  machinery that enables that functionality. If multiple handlers
+  are registered that apply to the same type, the most specific one
+  is used.
+
+  Args:
+    py_type: A type object, such as a user-defined class.
+    to_iterable: A function that takes an instance of that type and
+      returns an iterable containing the instance's child objects
+      and an object holding other state needed to rebuild the
+      instance.
+    from_iterable: A function that takes a state object returned by
+      the to_iterable function, plus an iterable, and returns an
+      instance of the py_type type or a subclass.
+    include_subclasses: Whether the handlers being registered should
+      also apply to subclasses of the provided type.
+  """
   assert py_type not in node_types
-  node_types[py_type] = NodeType(str(py_type), to_iterable, from_iterable, include_subclasses)
+  node_types[py_type] = NodeType(
+    str(py_type), to_iterable, from_iterable, include_subclasses)
 
 def register_pytree_leaf(py_type):
   assert py_type not in node_types
