@@ -26,6 +26,7 @@ import types
 from . import linear_util as lu
 from .util import unzip2, safe_zip, safe_map, partial
 from .pprint_util import pp, vcat, hcat, pp_kv_pairs
+from .tree_util import register_pytree_leaf
 
 # TODO(dougalm): the trace cache breaks the leak detector. Consisder solving.
 check_leaks = False
@@ -456,6 +457,8 @@ class JaxTuple(tuple):
       return unitvar
     else:
       return 'JaxTuple({})'.format(','.join(map(repr, self)))
+
+register_pytree_leaf(JaxTuple)
 
 
 class AbstractTuple(AbstractValue, tuple):

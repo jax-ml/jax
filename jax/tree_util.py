@@ -26,8 +26,8 @@ map = safe_map
 
 
 def tree_map(f, tree):
-  node_type = node_types.get(type(tree))
-  if node_type:
+  node_type = get_node_type(type(tree))
+  if node_type is not leaf:
     children, node_spec = node_type.to_iterable(tree)
     new_children = [tree_map(f, child) for child in children]
     return node_type.from_iterable(node_spec, new_children)
@@ -36,9 +36,8 @@ def tree_map(f, tree):
 
 
 def tree_multimap(f, tree, *rest):
-  tree_type = type(tree)
-  node_type = node_types.get(tree_type)
-  if node_type:
+  node_type = get_node_type(type(tree))
+  if node_type is not leaf:
     children, node_spec = node_type.to_iterable(tree)
     all_children = [children]
     for other_tree in rest:
@@ -68,8 +67,8 @@ def process_pytree(process_node, tree):
 
 
 def walk_pytree(f_node, f_leaf, tree):
-  node_type = node_types.get(type(tree))
-  if node_type:
+  node_type = get_node_type(type(tree))
+  if node_type is not leaf:
     children, node_spec = node_type.to_iterable(tree)
     proc_children, child_specs = unzip2([walk_pytree(f_node, f_leaf, child)
                                          for child in children])
@@ -178,22 +177,35 @@ class PyLeaf(object):
 leaf = PyLeaf()
 
 def dict_to_iterable(xs):
-  keys = tuple(sorted(xs.keys()))
-  return tuple(map(xs.get, keys)), keys
+  keys, values = zip(*sorted(xs.items()))
+  return values, keys
 
 class NodeType(object):
-  def __init__(self, name, to_iterable, from_iterable):
+  def __init__(self, name, to_iterable, from_iterable, include_subclasses):
     self.name = name
     self.to_iterable = to_iterable
     self.from_iterable = from_iterable
+    self.include_subclasses = include_subclasses
 
 node_types = {}
 
-def register_pytree_node(py_type, to_iterable, from_iterable):
-  assert py_type not in node_types
-  node_types[py_type] = NodeType(str(py_type), to_iterable, from_iterable)
+def get_node_type(py_type):
+  for cls in py_type.__mro__:
+    node_type = node_types.get(cls)
+    if node_type is not None and (cls is py_type or node_type.include_subclasses):
+      return node_type
+  return leaf
 
-register_pytree_node(tuple, lambda xs: (xs, None), lambda _, xs: tuple(xs))
+def register_pytree_node(py_type, to_iterable, from_iterable, include_subclasses=True):
+  assert py_type not in node_types
+  node_types[py_type] = NodeType(str(py_type), to_iterable, from_iterable, include_subclasses)
+
+def register_pytree_leaf(py_type):
+  assert py_type not in node_types
+  node_types[py_type] = leaf
+
+register_pytree_node(tuple, lambda xs: (tuple(xs), type(xs)),
+                     lambda t, xs: t(xs) if t is tuple else t(*xs))
 register_pytree_node(list, lambda xs: (tuple(xs), None), lambda _, xs: list(xs))
 register_pytree_node(dict, dict_to_iterable, lambda keys, xs: dict(zip(keys, xs)))
 register_pytree_node(type(None), lambda z: ((), None), lambda _, xs: None)

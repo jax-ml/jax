@@ -588,7 +588,7 @@ def vjp(fun, *primals, **kwargs):
     out_tree, aux_tree = out_tree.children
   out_primal_py = build_tree(out_tree, out_primal)
   ct_in_trees = [out_tree]
-  ct_out_tree = PyTreeDef(node_types[tuple], None, in_trees)
+  ct_out_tree = PyTreeDef(node_types[tuple], tuple, in_trees)
   def out_vjp_packed(cotangent_in):
     return out_vjp(cotangent_in)
   vjp_py = partial(apply_jaxtree_fun, out_vjp_packed, (ct_in_trees, ct_out_tree))

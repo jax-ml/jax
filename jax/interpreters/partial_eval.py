@@ -23,6 +23,7 @@ from .. import core
 from .. import linear_util as lu
 from ..abstract_arrays import ShapedArray, ConcreteArray
 from ..linear_util import thunk, transformation, transformation_with_aux
+from ..tree_util import register_pytree_leaf
 from ..util import unzip2, safe_zip, safe_map, toposort, partial
 from ..core import (Trace, Tracer, new_master, Jaxpr, JaxprEqn, get_aval, pack,
                     AbstractValue, AbstractTuple, unit, unitvar, Primitive,
@@ -252,6 +253,8 @@ class PartialVal(tuple):
         and isinstance(xs[1], core.Tracer) or core.valid_jaxtype(xs[1])
     ), xs
     return tuple.__new__(cls, xs)
+
+register_pytree_leaf(PartialVal)
 
 valid_pv_types = (AbstractValue, JaxprTracerTuple, type(None))
 

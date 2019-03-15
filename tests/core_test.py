@@ -174,10 +174,13 @@ class CoreTest(jtu.JaxTestCase):
     pe.trace_to_jaxpr(foo, (_,))
 
   def test_tree_multimap(self):
-    xs = ({'a': 1}, [2, 3])
-    ys = ({'a': 10}, [20, 30])
-    ys_bad = ({'a': 10, 'b': 10}, [20, 30])
-    zs = ({'a': 11}, [22, 33])
+    class MyDict(dict):
+      pass
+    MyNT = namedtuple('MyNT', ['a', 'b'])
+    xs = ({'a': 1}, [2, 3], MyDict({'c': 4}), MyNT(5, 6))
+    ys = ({'a': 10}, [20, 30], MyDict({'c': 40}), MyNT(50, 60))
+    ys_bad = ({'a': 10, 'b': 10}, [20, 30], MyDict({'c': 40}), MyNT(50, 60))
+    zs = ({'a': 11}, [22, 33], MyDict({'c': 44}), MyNT(55, 66))
 
     f = lambda x, y: x + y
     assert tree_multimap(f, xs, ys) == zs
