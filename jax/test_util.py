@@ -222,16 +222,19 @@ def _cast_to_shape(value, shape, dtype):
     return dtype(value)
 
 
+def dtype_str(dtype):
+  return onp.dtype(dtype).name
+
+
 def format_shape_dtype_string(shape, dtype):
-  typestr = onp.dtype(dtype).name
   if shape == NUMPY_SCALAR_SHAPE:
-    return typestr
+    return dtype_str(dtype)
 
   if onp.isscalar(shape):
     shapestr = str(shape) + ','
   else:
     shapestr = ','.join(str(dim) for dim in shape)
-  return '{}[{}]'.format(typestr, shapestr)
+  return '{}[{}]'.format(dtype_str(dtype), shapestr)
 
 
 def _rand_dtype(rand, shape, dtype, scale=1., post=lambda x: x):
