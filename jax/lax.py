@@ -322,6 +322,7 @@ def convert_element_type(operand, new_dtype):
       msg = "Casting complex values to real discards the imaginary part"
       warnings.warn(msg, onp.ComplexWarning)
       operand = real(operand)
+      old_dtype = _dtype(operand)
     return convert_element_type_p.bind(
         operand, new_dtype=new_dtype, old_dtype=old_dtype)
   else:

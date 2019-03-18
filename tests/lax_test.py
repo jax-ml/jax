@@ -1760,15 +1760,16 @@ class LaxAutodiffTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_from_dtype={}_to_dtype={}".format(
-          from_dtype, to_dtype),
+          jtu.dtype_str(from_dtype), jtu.dtype_str(to_dtype)),
        "from_dtype": from_dtype, "to_dtype": to_dtype, "rng": rng}
       for from_dtype, to_dtype in itertools.product(
-          [onp.float32, onp.float64], repeat=2)
+          float_dtypes + complex_dtypes, repeat=2)
       for rng in [jtu.rand_default()]))
   def testConvertElementTypeGrad(self, from_dtype, to_dtype, rng):
     args = (rng((2, 3), from_dtype),)
     convert_element_type = lambda x: lax.convert_element_type(x, to_dtype)
     check_grads(convert_element_type, args, 1, 1e-3, 1e-3, 1e-3)
+    check_grads(convert_element_type, args, 2, 1e-3, 1e-3, 1e-3)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_min_shape={}_operand_shape={}_max_shape={}".format(
