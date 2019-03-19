@@ -20,7 +20,7 @@ import collections
 import functools
 from functools import partial
 import itertools
-from unittest import skip
+from unittest import skip, SkipTest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -1759,7 +1759,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
   def testOpGrad(self, op, rng, shapes, dtype, order):
     if FLAGS.jax_test_dut and FLAGS.jax_test_dut.startswith("tpu"):
       if op is lax.pow:
-        return absltest.unittest.skip("pow grad imprecise on tpu")
+        raise SkipTest("pow grad imprecise on tpu")
     tol = 1e-1 if num_float_bits(dtype) == 32 else None
     args = tuple(rng(shape, dtype) for shape in shapes)
     check_grads(op, args, order, tol, tol)
