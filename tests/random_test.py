@@ -16,6 +16,8 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from unittest import SkipTest
+
 from absl.testing import absltest
 from absl.testing import parameterized
 
@@ -54,7 +56,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       for dtype in [onp.float32, onp.float64]))
   def testNumpyAndXLAAgreeOnFloatEndianness(self, dtype):
     if not FLAGS.jax_enable_x64 and onp.issubdtype(dtype, onp.float64):
-      return absltest.unittest.skip("can't test float64 agreement")
+      raise SkipTest("can't test float64 agreement")
 
     bits_dtype = onp.uint32 if onp.finfo(dtype).bits == 32 else onp.uint64
     numpy_bits = onp.array(1., dtype).view(bits_dtype)
