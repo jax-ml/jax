@@ -1421,6 +1421,12 @@ class LaxTest(jtu.JaxTestCase):
     self.assertEqual(fun(4), cfun(4))
     self.assertEqual(cfun(4), (4, 2., 4.))
 
+  def testIssue514(self):
+    # just check this doesn't crash
+    lax.cond(True,
+            (0, 0), lambda x: (x[0], 0),
+            (1, 1), lambda x: x)
+
   def testScanAdd(self):
     def f(x, y):
       return x + y
