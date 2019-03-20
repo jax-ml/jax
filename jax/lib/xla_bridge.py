@@ -313,7 +313,8 @@ class _JaxComputationBuilderBase(object):
     if split_dimension == concat_dimension and len(replica_groups[0]) == 1:
       return operand
     else:
-      return self.AllToAll(operand, split_dimension, concat_dimension, replica_groups)
+      return super(_JaxComputationBuliderBase, self).AllToAll(
+          operand, split_dimension, concat_dimension, replica_groups)
 
 
 @memoize_thunk
