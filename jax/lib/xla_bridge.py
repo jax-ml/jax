@@ -155,6 +155,7 @@ def _get_backend():
 
 
 def device_count():
+  _ = get_xla_client()  # ensure initialize_platform_name is called
   return _get_backend().device_count()
 
 
