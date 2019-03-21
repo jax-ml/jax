@@ -52,11 +52,14 @@ class PmapTest(jtu.JaxTestCase):
     f = lambda x: lax.psum(lax.psum(x, 'i'), 'j')
     f = pmap(pmap(f, 'i'), 'j')
 
+    def sum_and_broadcast(x, axis):
+      return onp.repeat(onp.sum(x, axis, keepdims=True), x.shape[axis], axis)
+
     shape = (xla_bridge.device_count(), 1, 4)
     x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
-    expected = onp.broadcast_to(onp.sum(x, (0, 1)), shape)
 
     ans = f(x)
+    expected = sum_and_broadcast(sum_and_broadcast(x, 0), 1)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   @parameterized.named_parameters(
@@ -75,8 +78,9 @@ class PmapTest(jtu.JaxTestCase):
 
     shape = mesh_shape + (4,)
     x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
-    expected = x
+
     ans = f(x)
+    expected = x
     self.assertEqual(ans.shape, expected.shape)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
