@@ -27,9 +27,11 @@ import functools
 
 import jax.numpy as np
 from jax.core import pack
-from jax.util import partial
+from jax.util import partial, safe_zip, safe_map, unzip2
 from jax.tree_util import tree_multimap, tree_flatten, tree_unflatten
 
+map = safe_map
+zip = safe_zip
 
 def optimizer(opt_maker):
   """Decorator to make an optimizer map over tuple/list/dict containers."""
@@ -42,11 +44,17 @@ def optimizer(opt_maker):
       x0_flat, treedef = tree_flatten(x0_tree)
       state_flat = zip(*map(init_fun, x0_flat))
       state_trees = map(partial(tree_unflatten, treedef), state_flat)
+      assert all(treedef == tree_flatten(tree)[1] for tree in state_trees)
       return tuple(state_trees)
 
     @functools.wraps(update_fun)
     def fmapped_update_fun(i, grad_tree, state_trees):
-      return tree_multimap(partial(update_fun, i), grad_tree, *state_trees)
+      grad_flat, treedef = tree_flatten(grad_tree)
+      state_flat, treedefs = unzip2(map(tree_flatten, state_trees))
+      assert all(td == treedef for td in treedefs)
+      state_flat = zip(*map(partial(update_fun, i), grad_flat, *state_flat))
+      state_trees = map(partial(tree_unflatten, treedef), state_flat)
+      return tuple(state_trees)
 
     return fmapped_init_fun, fmapped_update_fun
   return tree_opt_maker
