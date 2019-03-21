@@ -96,7 +96,7 @@ def assign_shards_to_replicas(nrep, size):
   """Produce a mapping from replica id to shard index.
 
   Args:
-    nrep: int, number of relpicas (a computation-dependent value).
+    nrep: int, number of replicas (a computation-dependent value).
     size: int, size of the data array axis being sharded.
 
   Returns:
@@ -111,8 +111,8 @@ def assign_shards_to_replicas(nrep, size):
 def replica_groups(nrep, mesh_spec, mesh_axis):
   """Compute XLA replica groups from a replica count and device mesh data.
 
-  ArgS:
-    nrep: int, number of relpicas (a computation-dependent value).
+  Args:
+    nrep: int, number of replicas (a computation-dependent value).
     mesh_spec: tuple of integers, a specification of the logical device mesh,
       which depends on the lexical context of nested xla_pcalls. In particular,
       each xla_pcall effectively appends its mapped axis size to this tuple.
