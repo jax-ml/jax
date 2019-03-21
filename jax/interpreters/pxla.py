@@ -109,6 +109,21 @@ def assign_shards_to_replicas(nrep, size):
   return tuple(indices.ravel())
 
 def replica_groups(nrep, mesh_spec, mesh_axis):
+  """Compute XLA replica groups from a replica count and device mesh data.
+
+  ArgS:
+    nrep: int, number of relpicas (a computation-dependent value).
+    mesh_spec: tuple of integers, a specification of the logical device mesh,
+      which depends on the lexical context of nested xla_pcalls. In particular,
+      each xla_pcall effectively appends its mapped axis size to this tuple.
+    mesh_axis: int, logical device mesh axis index indicating the axis along
+      which collective operations are to be executed.
+
+  Returns:
+    replica_groups, a list of lists of ints encoding a partition of the set
+      {0, 1, ..., nrep} into equally-sized replica groups (within which
+      collectives are executed). XLA consumes this replica group specification.
+  """
   trailing_size, ragged = divmod(nrep, prod(mesh_spec))
   assert not ragged
   full_spec = mesh_spec + [trailing_size]
@@ -118,6 +133,7 @@ def replica_groups(nrep, mesh_spec, mesh_axis):
   return tuple(tuple(group) for group in zip(*groups))
 
 def xla_shard(c, sizes, x):
+  """Analog of shard_arg that performs sharding within an XLA computation."""
   def _xla_shard(shape, x):
     if shape.is_tuple():
       elts = map(_xla_shard, shape.tuple_shapes(), xla_destructure(c, x))
@@ -128,14 +144,20 @@ def xla_shard(c, sizes, x):
   def shard_array(shape, x):
     dims = list(shape.dimensions())
     assert dims[0] == sizes[-1]
-    start_indices = xla_shard_start_indices(c, dims[0], len(dims))
+    start_indices = _xla_shard_start_indices(c, dims[0], len(dims))
     return c.Reshape(c.DynamicSlice(x, start_indices, [1] + dims[1:]),
                      None, dims[1:])
 
   return _xla_shard(c.GetShape(x), x)
 
+def _xla_shard_start_indices(c, axis_size, ndim):
+  idx = c.Rem(c.ReplicaId(), c.Constant(onp.array(axis_size, onp.uint32)))
+  zero = onp.zeros(ndim - 1, onp.uint32)
+  return c.Concatenate([c.Reshape(idx, None, [1]), c.Constant(zero)], 0)
+
 # TODO(b/110096942): more efficient gather
 def xla_unshard(c, device_groups, x):
+  """Analog of unshard_output that un-shards within an XLA computation."""
   def _xla_unshard(shape, x):
     if shape.is_tuple():
       elts = map(_xla_unshard, shape.tuple_shapes(), xla_destructure(c, x))
@@ -149,11 +171,6 @@ def xla_unshard(c, device_groups, x):
     return c.AllToAll(broadcasted, 0, 0, device_groups)
 
   return _xla_unshard(c.GetShape(x), x)
-
-def xla_shard_start_indices(c, axis_size, ndim):
-  idx = c.Rem(c.ReplicaId(), c.Constant(onp.array(axis_size, onp.uint32)))
-  zero = onp.zeros(ndim - 1, onp.uint32)
-  return c.Concatenate([c.Reshape(idx, None, [1]), c.Constant(zero)], 0)
 
 
 ### xla_pcall
