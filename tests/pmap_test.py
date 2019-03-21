@@ -38,6 +38,21 @@ config.parse_flags_with_absl()
 
 class PmapTest(jtu.JaxTestCase):
 
+  def _getMeshShape(self, device_mesh_shape):
+    device_count = xla_bridge.device_count()
+    if any(size == -1 for size in device_mesh_shape):
+      try:
+        return onp.arange(device_count).reshape(device_mesh_shape).shape
+      except ValueError:
+        msg = "device mesh shape {} not compatible with device count {}"
+        raise SkipTest(msg.format(device_mesh_shape, device_count))
+    else:
+      if device_count % prod(device_mesh_shape):
+        msg = "device mesh size {} does not divide available device count {}"
+        raise SkipTest(msg.format(prod(device_mesh_shape), device_count))
+      else:
+        return device_mesh_shape
+
   def testBasic(self):
     f = pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i')
 
@@ -67,11 +82,7 @@ class PmapTest(jtu.JaxTestCase):
        "device_mesh_shape": device_mesh_shape}
       for device_mesh_shape in [(1, 1), (2, -1), (-1, 2)])
   def testNestedShardingAndStacking(self, device_mesh_shape):
-    device_count = xla_bridge.device_count()
-    try:
-      mesh_shape = onp.arange(device_count).reshape(device_mesh_shape).shape
-    except ValueError:
-      raise SkipTest("incompatible device count for test: {}")
+    mesh_shape = self._getMeshShape(device_mesh_shape)
 
     f = lambda x: x
     f = pmap(pmap(f, 'i'), 'j')
@@ -153,11 +164,7 @@ class PmapTest(jtu.JaxTestCase):
        "device_mesh_shape": device_mesh_shape}
       for device_mesh_shape in [(1, 1), (2, -1), (-1, 2)])
   def testNestedWithClosure(self, device_mesh_shape):
-    device_count = xla_bridge.device_count()
-    try:
-      mesh_shape = onp.arange(device_count).reshape(device_mesh_shape).shape
-    except ValueError:
-      raise SkipTest("incompatible device count for test: {}")
+    mesh_shape = self._getMeshShape(device_mesh_shape)
 
     @partial(pmap, axis_name='i')
     def test_fun(x):
