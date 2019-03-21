@@ -40,7 +40,7 @@ def optimizer(opt_maker):
     init_fun, update_fun = opt_maker(*args, **kwargs)
 
     @functools.wraps(init_fun)
-    def fmapped_init_fun(x0_tree):
+    def treemapped_init_fun(x0_tree):
       x0_flat, treedef = tree_flatten(x0_tree)
       state_flat = zip(*map(init_fun, x0_flat))
       state_trees = map(partial(tree_unflatten, treedef), state_flat)
@@ -48,15 +48,15 @@ def optimizer(opt_maker):
       return tuple(state_trees)
 
     @functools.wraps(update_fun)
-    def fmapped_update_fun(i, grad_tree, state_trees):
+    def treemapped_update_fun(i, grad_tree, state_trees):
       grad_flat, treedef = tree_flatten(grad_tree)
       state_flat, treedefs = unzip2(map(tree_flatten, state_trees))
       assert all(td == treedef for td in treedefs)
-      state_flat = zip(*map(partial(update_fun, i), grad_flat, *state_flat))
+      state_flat = zip(*map(partial(update_fun, i), grad_flat, zip(*state_flat)))
       state_trees = map(partial(tree_unflatten, treedef), state_flat)
       return tuple(state_trees)
 
-    return fmapped_init_fun, fmapped_update_fun
+    return treemapped_init_fun, treemapped_update_fun
   return tree_opt_maker
 
 def iterate(state_trees):
@@ -80,7 +80,8 @@ def sgd(step_size):
   step_size = make_schedule(step_size)
   def init_fun(x0):
     return (x0,)
-  def update_fun(i, g, x):
+  def update_fun(i, g, state):
+    x, = state
     return (x - step_size(i) * g,)
   return init_fun, update_fun
 
@@ -99,7 +100,8 @@ def momentum(step_size, mass):
   def init_fun(x0):
     v0 = np.zeros_like(x0)
     return x0, v0
-  def update_fun(i, g, x, velocity):
+  def update_fun(i, g, state):
+    x, velocity = state
     velocity = mass * velocity - (1. - mass) * g
     x = x + step_size(i) * velocity
     return x, velocity
@@ -120,7 +122,8 @@ def rmsprop(step_size, gamma=0.9, eps=1e-8):
   def init_fun(x0):
     avg_sq_grad = np.ones_like(x0)
     return x0, avg_sq_grad
-  def update_fun(i, g, x, avg_sq_grad):
+  def update_fun(i, g, state):
+    x, avg_sq_grad = state
     avg_sq_grad = avg_sq_grad * gamma + g**2 * (1. - gamma)
     x = x - step_size(i) * g / (np.sqrt(avg_sq_grad) + eps)
     return x, avg_sq_grad
@@ -148,7 +151,8 @@ def adam(step_size, b1=0.9, b2=0.999, eps=1e-8):
     m0 = np.zeros_like(x0)
     v0 = np.zeros_like(x0)
     return x0, m0, v0
-  def update_fun(i, g, x, m, v):
+  def update_fun(i, g, state):
+    x, m, v = state
     m = (1 - b1) * g + b1 * m  # First  moment estimate.
     v = (1 - b2) * (g ** 2) + b2 * v  # Second moment estimate.
     mhat = m / (1 - b1 ** (i + 1))  # Bias correction.
