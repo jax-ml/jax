@@ -27,7 +27,8 @@ import functools
 
 import jax.numpy as np
 from jax.core import pack
-from jax.tree_util import tree_map, tree_multimap
+from jax.util import partial
+from jax.tree_util import tree_multimap, tree_flatten, tree_unflatten
 
 
 def optimizer(opt_maker):
@@ -38,19 +39,21 @@ def optimizer(opt_maker):
 
     @functools.wraps(init_fun)
     def fmapped_init_fun(x0_tree):
-      return tree_map(lambda x0: pack(init_fun(x0)), x0_tree)
+      x0_flat, treedef = tree_flatten(x0_tree)
+      state_flat = zip(*map(init_fun, x0_flat))
+      state_trees = map(partial(tree_unflatten, treedef), state_flat)
+      return tuple(state_trees)
 
     @functools.wraps(update_fun)
-    def fmapped_update_fun(i, grad_tree, state_tree):
-      update = lambda g, state: pack(update_fun(i, g, *state))
-      return tree_multimap(update, grad_tree, state_tree)
+    def fmapped_update_fun(i, grad_tree, state_trees):
+      return tree_multimap(partial(update_fun, i), grad_tree, *state_trees)
 
     return fmapped_init_fun, fmapped_update_fun
   return tree_opt_maker
 
-def iterate(state_tree):
+def iterate(state_trees):
   """Extract the current iterate from an optimizer state."""
-  return tree_map(lambda state: tuple(state)[0], state_tree)
+  return state_trees[0]
 get_params = iterate
 
 # optimizers
