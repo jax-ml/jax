@@ -36,21 +36,47 @@ def tree_map(f, tree):
 
 
 def tree_multimap(f, tree, *rest):
-  tree_type = type(tree)
-  node_type = node_types.get(tree_type)
+  node_type = node_types.get(type(tree))
   if node_type:
     children, node_spec = node_type.to_iterable(tree)
     all_children = [children]
     for other_tree in rest:
-      other_children, other_node_spec = node_type.to_iterable(other_tree)
-      if other_node_spec != node_spec:
-        raise TypeError('Mismatch: {} != {}'.format(other_node_spec, node_spec))
+      other_node_type = node_types.get(type(other_tree))
+      if node_type != other_node_type:
+        raise TypeError('Mismatch: {} != {}'.format(other_node_type, node_type))
+      other_children, other_node_data = node_type.to_iterable(other_tree)
+      if other_node_data != node_spec:
+        raise TypeError('Mismatch: {} != {}'.format(other_node_data, node_spec))
       all_children.append(other_children)
 
     new_children = [tree_multimap(f, *xs) for xs in zip(*all_children)]
     return node_type.from_iterable(node_spec, new_children)
   else:
     return f(tree, *rest)
+
+
+def prefix_multimap(f, treedef, tree, *rest):
+  """Like tree_multimap but only maps down through a tree prefix."""
+  if treedef is leaf:
+    return f(tree, *rest)
+  else:
+    node_type = node_types.get(type(tree))
+    if node_type != treedef.node_type:
+      raise TypeError('Mismatch: {} != {}'.format(treedef.node_type, node_type))
+    children, node_data = node_type.to_iterable(tree)
+    if node_data != treedef.node_data:
+      raise TypeError('Mismatch: {} != {}'.format(treedef.node_data, node_data))
+    all_children = [children]
+    for other_tree in rest:
+      other_children, other_node_data = node_type.to_iterable(other_tree)
+      if other_node_data != node_data:
+        raise TypeError('Mismatch: {} != {}'.format(other_node_data, node_data))
+      all_children.append(other_children)
+    all_children = zip(*all_children)
+
+    new_children = [tree_multimap_prefix(f, td, *xs)
+                    for td, xs in zip(treedef.children, all_children)]
+    return node_type.from_iterable(node_data, new_children)
 
 
 def tree_reduce(f, tree):
@@ -130,15 +156,6 @@ def _nested_treedef(inner, outer):
 def tree_structure(tree):
   _, spec = process_pytree(lambda _: None, tree)
   return spec
-
-
-def prune(treedef, tuple_tree):
-  if treedef is leaf:
-    return tuple_tree
-  elif treedef.children:
-    return tuple(map(prune, treedef.children, tuple_tree))
-  else:
-    return ()
 
 
 class PyTreeDef(object):

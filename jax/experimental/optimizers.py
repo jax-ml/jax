@@ -28,7 +28,7 @@ import functools
 import jax.numpy as np
 from jax.core import pack
 from jax.util import partial, safe_zip, safe_map, unzip2
-from jax.tree_util import tree_multimap, tree_flatten, tree_unflatten
+from jax.tree_util import tree_map, prefix_multimap, tree_structure
 
 map = safe_map
 zip = safe_zip
@@ -41,27 +41,19 @@ def optimizer(opt_maker):
 
     @functools.wraps(init_fun)
     def treemapped_init_fun(x0_tree):
-      x0_flat, treedef = tree_flatten(x0_tree)
-      state_flat = zip(*map(init_fun, x0_flat))
-      state_trees = map(partial(tree_unflatten, treedef), state_flat)
-      assert all(treedef == tree_flatten(tree)[1] for tree in state_trees)
-      return tuple(state_trees)
+      return tree_map(init_fun, x0_tree)
 
     @functools.wraps(update_fun)
-    def treemapped_update_fun(i, grad_tree, state_trees):
-      grad_flat, treedef = tree_flatten(grad_tree)
-      state_flat, treedefs = unzip2(map(tree_flatten, state_trees))
-      assert all(td == treedef for td in treedefs)
-      state_flat = zip(*map(partial(update_fun, i), grad_flat, zip(*state_flat)))
-      state_trees = map(partial(tree_unflatten, treedef), state_flat)
-      return tuple(state_trees)
+    def treemapped_update_fun(i, grad_tree, state_tree):
+      tdf = tree_structure(grad_tree)
+      return prefix_multimap(partial(update_fun, i), tdf, grad_tree, state_tree)
 
     return treemapped_init_fun, treemapped_update_fun
   return tree_opt_maker
 
 def iterate(state_trees):
   """Extract the current iterate from an optimizer state."""
-  return state_trees[0]
+  raise NotImplementedError  # TODO don't have tree structure... assume flat?
 get_params = iterate
 
 # optimizers
