@@ -74,7 +74,7 @@ def prefix_multimap(f, treedef, tree, *rest):
       all_children.append(other_children)
     all_children = zip(*all_children)
 
-    new_children = [tree_multimap_prefix(f, td, *xs)
+    new_children = [prefix_multimap(f, td, *xs)
                     for td, xs in zip(treedef.children, all_children)]
     return node_type.from_iterable(node_data, new_children)
 
