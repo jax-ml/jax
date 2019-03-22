@@ -67,8 +67,9 @@ def tree_multimap(f, tree, *rest):
     all_children = [children]
     for other_tree in rest:
       other_node_type = node_types.get(type(other_tree))
-      if node_type != other_node_type:
-        raise TypeError('Mismatch: {} != {}'.format(other_node_type, node_type))
+      # TODO(mattjj): enable this check
+      # if node_type != other_node_type:
+      #   raise TypeError('Mismatch: {} != {}'.format(other_node_type, node_type))
       other_children, other_node_data = node_type.to_iterable(other_tree)
       if other_node_data != node_spec:
         raise TypeError('Mismatch: {} != {}'.format(other_node_data, node_spec))
