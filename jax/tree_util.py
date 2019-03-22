@@ -26,6 +26,17 @@ map = safe_map
 
 
 def tree_map(f, tree):
+  """Map a function over a pytree to produce a new pytree.
+
+  Args:
+    f: function to be applied at each leaf.
+    tree: a pytree to be mapped over.
+
+  Returns:
+    A new pytree with the same structure as `tree` but with the value at each
+    leaf given by `f(x)` where `x` is the value at the corresponding leaf in
+    `tree`.
+  """
   node_type = node_types.get(type(tree))
   if node_type:
     children, node_spec = node_type.to_iterable(tree)
@@ -34,8 +45,22 @@ def tree_map(f, tree):
   else:
     return f(tree)
 
-
 def tree_multimap(f, tree, *rest):
+  """Map a multi-input function over pytree args to produce a new pytree.
+
+  Args:
+    f: function that takes `1 + len(rest)` arguments, to be applied at the
+      corresponding leaves of the pytrees.
+    tree: a pytree to be mapped over, with each leaf providing the first
+      positional argument to `f`.
+    *rest: a tuple of pytrees, each with the same structure as `tree`.
+
+  Returns:
+    A new pytree with the same structure as `tree` but with the value at each
+    leaf given by `f(x, *xs)` where `x` is the value at the corresponding leaf
+    in `tree` and `xs` is the tuple of values at corresponding leaves in `rest`.
+  """
+  # equivalent to prefix_multimap(f, tree_structure(tree), tree, *rest)
   node_type = node_types.get(type(tree))
   if node_type:
     children, node_spec = node_type.to_iterable(tree)
@@ -53,7 +78,6 @@ def tree_multimap(f, tree, *rest):
     return node_type.from_iterable(node_spec, new_children)
   else:
     return f(tree, *rest)
-
 
 def prefix_multimap(f, treedef, tree, *rest):
   """Like tree_multimap but only maps down through a tree prefix."""
@@ -77,6 +101,28 @@ def prefix_multimap(f, treedef, tree, *rest):
     new_children = [prefix_multimap(f, td, *xs)
                     for td, xs in zip(treedef.children, all_children)]
     return node_type.from_iterable(node_data, new_children)
+
+def tree_mimomap(f, tree, *rest):
+  """Map a multi-input tuple-output over pytree args to form a tuple of pytrees.
+
+  Args:
+    f: function that takes `1 + len(rest)` arguments and returns a tuple, to be
+      applied at the corresponding leaves of the pytrees.
+    tree: a pytree to be mapped over, with each leaf providing the first
+      positional argument to `f`.
+    *rest: a tuple of pytrees, each with the same structure as `tree`.
+
+  Returns:
+    A tuple of pytrees with length given by the length of the output of `f` and
+    with each pytree element having the same structure as `tree`.
+  """
+  flat, treedef = tree_flatten(tree)
+  rest_flat, treedefs = unzip2(map(tree_flatten, rest))
+  if not all(td == treedef for td in treedefs):
+    td = next(td for td in treedefs if td != treedef)
+    raise TypeError('Mismatch: {} != {}'.format(treedef, td))
+  out_flat = zip(*map(f, flat, *rest_flat))
+  return tuple(map(partial(tree_unflatten, treedef), out_flat))
 
 
 def tree_reduce(f, tree):

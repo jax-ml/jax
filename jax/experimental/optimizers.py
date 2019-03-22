@@ -29,7 +29,7 @@ import operator
 import jax.numpy as np
 from jax.core import pack
 from jax.util import partial, safe_zip, safe_map, unzip2
-from jax.tree_util import (tree_map, prefix_multimap, tree_structure,
+from jax.tree_util import (tree_map, tree_mimomap, tree_structure,
                            register_pytree_node)
 
 map = safe_map
@@ -43,29 +43,19 @@ def optimizer(opt_maker):
 
     @functools.wraps(init_fun)
     def tree_init_fun(x0_tree):
-      prefix = tree_structure(x0_tree)
-      return OptState(prefix, tree_map(init_fun, x0_tree))
+      return tree_mimomap(init_fun, x0_tree)
 
     @functools.wraps(update_fun)
-    def tree_update_fun(i, grad_tree, state_tree):
-      assert type(state_tree) is OptState
-      prefix, tree = state_tree
-      tree = prefix_multimap(partial(update_fun, i), prefix, grad_tree, tree)
-      return OptState(prefix, tree)
+    def tree_update_fun(i, grad_tree, state_trees):
+      return tree_mimomap(partial(update_fun, i), grad_tree, *state_trees)
 
     return tree_init_fun, tree_update_fun
   return tree_opt_maker
 
-def iterate(state_tree):
+def iterate(state_trees):
   """Extract the current iterate from an optimizer state."""
-  assert type(state_tree) is OptState
-  prefix, tree = state_tree
-  return prefix_multimap(operator.itemgetter(0), prefix, tree)
+  return state_trees[0]
 get_params = iterate
-
-OptState = collections.namedtuple("OptState", ["prefix", "tree"])
-register_pytree_node(OptState, lambda xs: ([xs.tree], xs.prefix),
-                     lambda prefix, xs: OptState(prefix, xs[0]))
 
 # optimizers
 
@@ -83,8 +73,7 @@ def sgd(step_size):
   step_size = make_schedule(step_size)
   def init_fun(x0):
     return (x0,)
-  def update_fun(i, g, state):
-    x, = state
+  def update_fun(i, g, x):
     return (x - step_size(i) * g,)
   return init_fun, update_fun
 
@@ -103,8 +92,7 @@ def momentum(step_size, mass):
   def init_fun(x0):
     v0 = np.zeros_like(x0)
     return x0, v0
-  def update_fun(i, g, state):
-    x, velocity = state
+  def update_fun(i, g, x, velocity):
     velocity = mass * velocity - (1. - mass) * g
     x = x + step_size(i) * velocity
     return x, velocity
@@ -125,8 +113,7 @@ def rmsprop(step_size, gamma=0.9, eps=1e-8):
   def init_fun(x0):
     avg_sq_grad = np.ones_like(x0)
     return x0, avg_sq_grad
-  def update_fun(i, g, state):
-    x, avg_sq_grad = state
+  def update_fun(i, g, x, avg_sq_grad):
     avg_sq_grad = avg_sq_grad * gamma + g**2 * (1. - gamma)
     x = x - step_size(i) * g / (np.sqrt(avg_sq_grad) + eps)
     return x, avg_sq_grad
@@ -154,8 +141,7 @@ def adam(step_size, b1=0.9, b2=0.999, eps=1e-8):
     m0 = np.zeros_like(x0)
     v0 = np.zeros_like(x0)
     return x0, m0, v0
-  def update_fun(i, g, state):
-    x, m, v = state
+  def update_fun(i, g, x, m, v):
     m = (1 - b1) * g + b1 * m  # First  moment estimate.
     v = (1 - b2) * (g ** 2) + b2 * v  # Second moment estimate.
     mhat = m / (1 - b1 ** (i + 1))  # Bias correction.
