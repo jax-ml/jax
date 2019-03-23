@@ -717,7 +717,7 @@ def _check_scalar(x):
     raise TypeError(msg(x))
 
 
-def _primitive(fun):
+def custom_transforms(fun):
   name = getattr(fun, '__name__', '<unnamed user primitive>')
   fun_p = core.Primitive(name)
   fun_p.def_impl(fun)
@@ -748,7 +748,7 @@ def _elementwise_std_basis(pytree):
   return _unravel_array_into_pytree(pytree, 1, basis_array)
 
 def jarrett(fun):
-  new_fun = _primitive(fun)
+  new_fun = custom_transforms(fun)
 
   def elementwise_jvp(primals, tangents):
     pushfwd = partial(jvp, fun, primals)
@@ -756,6 +756,6 @@ def jarrett(fun):
     flat_tangents, _ = tree_flatten(tangents)
     out_tangent = sum([t * jac for t, jac in zip(flat_tangents, jacs)])
     return y, out_tangent
-
   ad.primitive_jvps[new_fun.primitive] = elementwise_jvp
+
   return new_fun
