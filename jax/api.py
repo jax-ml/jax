@@ -753,7 +753,8 @@ def jarrett(fun):
   def elementwise_jvp(primals, tangents):
     pushfwd = partial(jvp, fun, primals)
     y, jacs = vmap(pushfwd, out_axes=(None, 0))(_elementwise_std_basis(tangents))
-    out_tangent = sum([tangent * jac for tangent, jac in zip(tangents, jacs)])
+    flat_tangents, _ = tree_flatten(tangents)
+    out_tangent = sum([t * jac for t, jac in zip(flat_tangents, jacs)])
     return y, out_tangent
 
   ad.primitive_jvps[new_fun.primitive] = elementwise_jvp
