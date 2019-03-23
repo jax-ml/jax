@@ -1707,7 +1707,7 @@ xor_p = standard_binop([_any, _any], 'xor')
 ad.defjvp_zero(xor_p)
 
 def _add_transpose(t, x, y):
-  assert x is None and y is None  # computation must be linear, not affine
+  # assert x is None and y is None  # computation must be linear, not affine
   return [t, t]
 
 add_p = standard_binop([_num, _num], 'add')
