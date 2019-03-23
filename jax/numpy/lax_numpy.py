@@ -667,11 +667,24 @@ def isclose(a, b, rtol=1e-05, atol=1e-08):
       dtype = _result_dtype(real, a)
     rtol = lax.convert_element_type(rtol, dtype)
     atol = lax.convert_element_type(atol, dtype)
-    return lax.le(
+    out = lax.le(
       lax.abs(lax.sub(a, b)),
       lax.add(atol, lax.mul(rtol, lax.abs(b))))
+    return _maybe_numpy_1_13_isclose_behavior(a, out)
   else:
     return lax.eq(a, b)
+
+numpy_version = tuple(map(int, onp.version.version.split('.')))
+if numpy_version < (1, 14):
+  # see discussion at https://github.com/numpy/numpy/pull/9720
+  def _maybe_numpy_1_13_isclose_behavior(a, out):
+    if size(out) == 1 and issubdtype(_dtype(a), complexfloating):
+      return lax.reshape(out, (1,))
+    else:
+      return out
+else:
+  def _maybe_numpy_1_13_isclose_behavior(a, out):
+    return out
 
 
 @_wraps(onp.where)

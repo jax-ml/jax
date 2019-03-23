@@ -488,7 +488,7 @@ class JaxTestCase(parameterized.TestCase):
 
     self.assertAllClose(python_ans, compiled_ans, check_dtypes, rtol, atol)
 
-  def _CheckAgainstNumpy(self, lax_op, numpy_reference_op, args_maker,
+  def _CheckAgainstNumpy(self, numpy_reference_op, lax_op, args_maker,
                          check_dtypes=False, tol=1e-5):
     args = args_maker()
     numpy_ans = numpy_reference_op(*args)
