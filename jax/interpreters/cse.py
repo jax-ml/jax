@@ -23,8 +23,10 @@ import six
 
 from .. import core
 from ..core import Trace, Tracer, new_master, pack, AbstractTuple, JaxTuple
-from ..linear_util import transformation, transformation_with_aux, wrap_init
 from ..util import unzip2, partial, safe_map, safe_zip, WrapHashably
+from ..linear_util import transformation, transformation_with_aux, wrap_init
+from ..ad_util import add_jaxvals_p
+from ..tree_util import tree_map, tree_multimap
 
 map = safe_map
 zip = safe_zip
@@ -54,43 +56,40 @@ class ID(object):
 
 class IDUnique(WrapHashably):
   def __repr__(self):
-    return '!'
+    return 'UniqueID'
   __str__ = __repr__
 
 class IDTuple(tuple): pass
 
-class IDAdd(tuple):
+class IDAssocCommut(tuple):
   @staticmethod
   def add(id1, id2):
     t1, t2 = type(id1), type(id2)
-    if t1 is IDAdd and t2 is IDAdd:
-      return IDAdd(merge_heaps(id1, id2))
-    elif t1 is IDAdd:
-      return IDAdd.insert(id1, id2)
-    elif t2 is IDAdd:
-      return IDAdd.insert(id2, id1)
+    if t1 is IDAssocCommut and t2 is IDAssocCommut:
+      return IDAssocCommut(merge_heaps(id1, id2))
+    elif t1 is IDAssocCommut:
+      return IDAssocCommut.insert(id1, id2)
+    elif t2 is IDAssocCommut:
+      return IDAssocCommut.insert(id2, id1)
     else:
-      return IDAdd(sorted((id1, id2), key=hash))
+      return IDAssocCommut(sorted((id1, id2), key=hash))
 
-id_types = set((ID, IDUnique, IDTuple, IDAdd))
+  @staticmethod
+  def insert(id_add, id):
+    pos = bisect.bisect(map(hash, id_add), hash(id))
+    return IDAssocCommut(id_add[:pos] + (id,) + id_add[pos:])
 
-def const_id(val):
-  try:
-    hash(val)
-    return ID(val)
-  except TypeError:
-    return IDUnique(val)
+id_types = set((ID, IDUnique, IDTuple, IDAssocCommut))
 
 @transformation
 def cse(*args):
   with new_master(CSETrace) as master:
     cse_table = {}
-    arg_ids = map(const_id, args)
     trace = CSETrace(master, core.cur_sublevel())
-    in_tracers = map(partial(CSETracer, trace, cse_table), args, arg_ids)
+    make_tracer = partial(CSETracer, trace, cse_table)
+    in_tracers = tree_multimap(make_tracer, args, tree_map(const_id, args))
     out = yield in_tracers
-    out_tracer = trace.full_raise(out)
-    out_val = out_tracer.val
+    out_val = tree_map(lambda x: trace.full_raise(x).val, out)
     del master, cse_table
   yield out_val
 
@@ -156,4 +155,18 @@ def default_id(primitive, *ids_in, **params):
   return ID(((primitive,) + tuple(ids_in)
              + tuple(sorted((k, const_id(v)) for k, v in params.items()))))
 
+def const_id(val):
+  if isinstance(val, tuple):
+    return IDTuple(map(const_id, val))
+  elif isinstance(val, (int, float)):
+    return ID(val)
+  else:
+    return IDUnique(val)
+
+def assoc_commut_binop_id(primitive, x_id, y_id):
+  return ID((primitive, IDAssocCommut.add(x_id, y_id)))
+
 idfuns = {}
+
+def defassoccommut(primitive):
+  idfuns[primitive] = assoc_commut_binop_id

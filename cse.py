@@ -18,8 +18,6 @@ print grad(cse.cse(lu.wrap_init(f)).call_wrapped)(3.)
 print grad(f)(3.)
 print cse.cse(lu.wrap_init(grad(f))).call_wrapped(3.)
 
-###
-
 print
 print
 
@@ -31,3 +29,7 @@ def f(x):
 print f(3.)
 print cse.cse(lu.wrap_init(f)).call_wrapped(3.)
 print make_jaxpr(cse.cse(lu.wrap_init(f)).call_wrapped)(3.)
+
+print
+print
+

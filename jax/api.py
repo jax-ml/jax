@@ -37,7 +37,7 @@ from . import core
 from . import linear_util as lu
 from .core import pack, eval_jaxpr
 from .api_util import (pytree_fun_to_jaxtupletree_fun, pytree_to_jaxtupletree,
-                       pytree_fun_to_flatjaxtuple_fun, apply_jaxtree_fun, wraps)
+                       apply_jaxtree_fun, wraps)
 from .tree_util import (process_pytree, node_types, build_tree, PyTreeDef,
                         tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, leaf)
@@ -51,6 +51,7 @@ from .interpreters import pxla
 from .interpreters import ad
 from .interpreters import batching
 from .interpreters import parallel
+from .interpreters import cse
 from .config import flags, config
 
 map = safe_map
@@ -157,17 +158,17 @@ def xla_computation(fun, static_argnums=()):
     aval = xla.abstractify(x)
     return pe.PartialVal((aval, core.unit))
 
-  wrapped = lu.wrap_init(fun)
-
   @wraps(fun)
   def computation_maker(*args, **kwargs):
     jax_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
+    wrapped = lu.wrap_init(fun)
     jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(wrapped, in_trees)
     pvals = map(pv_like, jax_args)
     jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals, **kwargs)
     return xla.build_jaxpr(jaxpr, consts, *map(xla.abstractify, args))
 
   return computation_maker
+
 
 def grad(fun, argnums=0, has_aux=False):
   """Creates a function which evaluates the gradient of `fun`.
@@ -520,7 +521,7 @@ def jvp(fun, primals, tangents):
     fun = lu.wrap_init(fun)
   ps_flat, ts_flat, in_trees = unzip3(map(trim_arg, primals, tangents))
   jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(fun, in_trees)
-  out_primal, out_tangent = ad.jvp(jaxtree_fun).call_wrapped(ps_flat, ts_flat)
+  out_primal, out_tangent = cse.cse(ad.jvp(jaxtree_fun)).call_wrapped(ps_flat, ts_flat)
   return (build_tree(out_tree(), out_primal), build_tree(out_tree(), out_tangent))
 
 def linearize(traceable, *primals):

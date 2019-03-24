@@ -1711,13 +1711,10 @@ def _add_transpose(t, x, y):
   assert x is None and y is None  # computation must be linear, not affine
   return [t, t]
 
-def _add_cse_id_fun(prim, x_id, y_id):
-  return cse.IDAdd.add(x_id, y_id)
-
 add_p = standard_binop([_num, _num], 'add')
 ad.defjvp(add_p, lambda g, x, y: _brcast(g, y), lambda g, x, y: _brcast(g, x))
 ad.primitive_transposes[add_p] = _add_transpose
-cse.idfuns[add_p] = _add_cse_id_fun
+cse.defassoccommut(add_p)
 
 
 def _sub_transpose(t, x, y):
