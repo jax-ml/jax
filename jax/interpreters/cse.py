@@ -12,6 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
+import bisect
+import heapq
+
+import six
+
 from .. import core
 from ..core import Trace, Tracer, new_master, pack, AbstractTuple, JaxTuple
 from ..linear_util import transformation, transformation_with_aux, wrap_init
@@ -20,17 +29,57 @@ from ..util import unzip2, partial, safe_map, safe_zip, WrapHashably
 map = safe_map
 zip = safe_zip
 
+if six.PY2:
+  def merge_heaps(a, b):
+    return sorted(a + b, key=hash)
+else:
+  merge_heaps = partial(heapq.merge, key=hash)
 
-class ID(WrapHashably): pass
+
+class ID(object):
+  __slots__ = ['val']
+  def __init__(self, val):
+    self.val = val
+
+  def __hash__(self):
+    return hash(self.val)
+
+  def __eq__(self, other):
+    return type(other) is ID and self.val == other.val
+
+  def __repr__(self):
+    return 'ID({})'.format(hash(self))
+  __str__ = __repr__
+
+
+class IDUnique(WrapHashably):
+  def __repr__(self):
+    return '!'
+  __str__ = __repr__
+
 class IDTuple(tuple): pass
-class IDAddList(list): pass
+
+class IDAdd(tuple):
+  @staticmethod
+  def add(id1, id2):
+    t1, t2 = type(id1), type(id2)
+    if t1 is IDAdd and t2 is IDAdd:
+      return IDAdd(merge_heaps(id1, id2))
+    elif t1 is IDAdd:
+      return IDAdd.insert(id1, id2)
+    elif t2 is IDAdd:
+      return IDAdd.insert(id2, id1)
+    else:
+      return IDAdd(sorted((id1, id2), key=hash))
+
+id_types = set((ID, IDUnique, IDTuple, IDAdd))
 
 def const_id(val):
   try:
     hash(val)
-    return val
-  except TypeError:
     return ID(val)
+  except TypeError:
+    return IDUnique(val)
 
 @transformation
 def cse(*args):
@@ -83,10 +132,9 @@ class CSETrace(Trace):
 
   def process_primitive(self, primitive, tracers, params):
     vals_in, ids_in = unzip2((t.val, t.id) for t in tracers)
+    assert all(type(id) in id_types for id in ids_in)
+    id = idfuns.get(primitive, default_id)(primitive, *ids_in, **params)
     cse_table = next(t.cse_table for t in tracers if t.cse_table is not None)
-    # TODO(mattjj); handle add with a primitive registry of id-computing rules
-    id = ((primitive,) + tuple(ids_in)
-           + tuple(sorted((k, const_id(v)) for k, v in params.items())))
     if id not in cse_table:
       cse_table[id] = primitive.bind(*vals_in, **params)
     return CSETracer(self, cse_table, cse_table[id], id)
@@ -102,3 +150,10 @@ class CSETrace(Trace):
     id = IDTuple([t.id for t in tracers])
     cse_table = next(t.cse_table for t in tracers if t.cse_table is not None)
     return CSETracer(self, cse_table, val, id)
+
+
+def default_id(primitive, *ids_in, **params):
+  return ID(((primitive,) + tuple(ids_in)
+             + tuple(sorted((k, const_id(v)) for k, v in params.items()))))
+
+idfuns = {}

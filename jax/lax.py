@@ -53,6 +53,7 @@ from .interpreters import pxla
 from .interpreters import ad
 from .interpreters import batching
 from .interpreters import parallel
+from .interpreters import cse
 from .util import curry, memoize, safe_zip, unzip2, prod
 from .tree_util import build_tree, tree_unflatten
 from .lib import xla_bridge
@@ -1710,9 +1711,13 @@ def _add_transpose(t, x, y):
   assert x is None and y is None  # computation must be linear, not affine
   return [t, t]
 
+def _add_cse_id_fun(prim, x_id, y_id):
+  return cse.IDAdd.add(x_id, y_id)
+
 add_p = standard_binop([_num, _num], 'add')
 ad.defjvp(add_p, lambda g, x, y: _brcast(g, y), lambda g, x, y: _brcast(g, x))
 ad.primitive_transposes[add_p] = _add_transpose
+cse.idfuns[add_p] = _add_cse_id_fun
 
 
 def _sub_transpose(t, x, y):
