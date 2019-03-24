@@ -33,7 +33,7 @@ are instances of such transformations. Another is [`vmap`](#auto-vectorization-w
 for automatic vectorization, with more to come.
 
 This is a research project, not an official Google product. Expect bugs and
-[sharp edges](https://github.com/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb).
+[sharp edges](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb).
 Please help by trying it out, [reporting
 bugs](https://github.com/google/jax/issues), and letting us know what you
 think!
@@ -85,7 +85,7 @@ Jump right in using a notebook in your browser, connected to a Google Cloud GPU.
 - [Training a Simple Neural Network, with TensorFlow Dataset Data Loading](https://colab.research.google.com/github/google/jax/blob/master/notebooks/neural_network_with_tfds_data.ipynb)
 
 And for a deeper dive into JAX:
-- [Common gotchas and sharp edges](https://github.com/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb)
+- [Common gotchas and sharp edges](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb)
 - [The Autodiff Cookbook, Part 1: easy and powerful automatic differentiation in JAX](https://colab.research.google.com/github/google/jax/blob/master/notebooks/autodiff_cookbook.ipynb)
 - [Directly using XLA in Python](https://colab.research.google.com/github/google/jax/blob/autodiff-cookbook/notebooks/XLA_in_Python.ipynb)
 - [MAML Tutorial with JAX](https://colab.research.google.com/github/google/jax/blob/autodiff-cookbook/notebooks/maml.ipynb).
@@ -712,13 +712,13 @@ code to compile and end-to-end optimize much bigger functions.
 
 ## Current gotchas
 
-For a survey of current gotchas, with examples and explanations, we highly recommend reading the [Gotchas Notebook](https://github.com/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb).
+For a survey of current gotchas, with examples and explanations, we highly recommend reading the [Gotchas Notebook](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb).
 
 Two stand-out gotchas that might surprise NumPy users:
 1. In-place mutation of arrays isn't supported. Generally JAX requires functional code.
 2. PRNGs can be awkward, and non-reuse (linearity) is not checked.
 
-See [the notebook](https://github.com/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb) for much more information.
+See [the notebook](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb) for much more information.
 
 ## Contributors
 
