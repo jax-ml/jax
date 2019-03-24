@@ -109,8 +109,9 @@ class CSETracer(Tracer):
 
   def unpack(self):
     t = type(self.id)
-    if t is ID:
-      raise NotImplementedError  # reachable?
+    if t is IDUnique:
+      ids = (ID(('unpack', self.id, i)) for i in range(len(self.val)))
+      return map(partial(CSETracer, self.trace, self.cse_table), self.val, ids)
     elif t is IDTuple:
       return map(partial(CSETracer, self.trace, self.cse_table), self.val, self.id)
     else:
