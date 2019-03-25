@@ -66,10 +66,9 @@ def deriv(f):
 
 
 def f(x):
-  return np.sin(x) + np.cos(x)
+  return 0.3 * np.sin(x) * x ** 10
 
-# g = f
-g = np.sin
+g = f
 for i in range(8):
   jaxpr = make_jaxpr(g)(3.)
   print(g(3.), Counter(eqn.primitive for eqn in jaxpr.eqns).most_common())
