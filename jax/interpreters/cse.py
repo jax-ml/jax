@@ -17,6 +17,7 @@ from __future__ import division
 from __future__ import print_function
 
 import bisect
+import collections
 import heapq
 
 import six
@@ -31,11 +32,17 @@ from ..tree_util import tree_map, tree_multimap
 map = safe_map
 zip = safe_zip
 
+# TODO cache hashes
 if six.PY2:
-  def merge_heaps(a, b):
-    return sorted(a + b, key=hash)
+  def heap_merge(a, b):
+    return tuple(sorted(a + b, key=hash))
 else:
-  merge_heaps = partial(heapq.merge, key=hash)
+  def heap_merge(a, b):
+    return tuple(heapq.merge(a, b, key=hash))
+
+def heap_insert(heap, item):
+  pos = bisect.bisect(map(hash, heap), hash(item))
+  return heap[:pos] + (id,) + heap[pos:]
 
 
 class ID(object):
@@ -54,32 +61,22 @@ class ID(object):
   __str__ = __repr__
 
 
-class IDUnique(WrapHashably):
+class UniqueID(WrapHashably):
   def __repr__(self):
     return 'UniqueID'
   __str__ = __repr__
 
+AssocCommutID = collections.namedtuple('AssocCommutID', ['prim', 'sorted_ids'])
+
 class IDTuple(tuple): pass
 
-class IDAssocCommut(tuple):
-  @staticmethod
-  def add(id1, id2):
-    t1, t2 = type(id1), type(id2)
-    if t1 is IDAssocCommut and t2 is IDAssocCommut:
-      return IDAssocCommut(merge_heaps(id1, id2))
-    elif t1 is IDAssocCommut:
-      return IDAssocCommut.insert(id1, id2)
-    elif t2 is IDAssocCommut:
-      return IDAssocCommut.insert(id2, id1)
-    else:
-      return IDAssocCommut(sorted((id1, id2), key=hash))
-
-  @staticmethod
-  def insert(id_add, id):
-    pos = bisect.bisect(map(hash, id_add), hash(id))
-    return IDAssocCommut(id_add[:pos] + (id,) + id_add[pos:])
-
-id_types = set((ID, IDUnique, IDTuple, IDAssocCommut))
+# class IDCyclic(tuple):
+#   @staticmethod
+#   def cycle(id):
+#     t = type(id)
+#     if t is IDCyclic:
+#       id, index = id
+#       return IDCyclic((
 
 @transformation
 def cse(*args):
@@ -109,7 +106,7 @@ class CSETracer(Tracer):
 
   def unpack(self):
     t = type(self.id)
-    if t is IDUnique:
+    if t is UniqueID:
       ids = (ID(('unpack', self.id, i)) for i in range(len(self.val)))
       return map(partial(CSETracer, self.trace, self.cse_table), self.val, ids)
     elif t is IDTuple:
@@ -132,7 +129,6 @@ class CSETrace(Trace):
 
   def process_primitive(self, primitive, tracers, params):
     vals_in, ids_in = unzip2((t.val, t.id) for t in tracers)
-    assert all(type(id) in id_types for id in ids_in)
     id = idfuns.get(primitive, default_id)(primitive, *ids_in, **params)
     cse_table = next(t.cse_table for t in tracers if t.cse_table is not None)
     if id not in cse_table:
@@ -162,12 +158,27 @@ def const_id(val):
   elif isinstance(val, (int, float)):
     return ID(val)
   else:
-    return IDUnique(val)
+    return UniqueID(val)
 
-def assoc_commut_binop_id(primitive, x_id, y_id):
-  return ID((primitive, IDAssocCommut.add(x_id, y_id)))
+def assoc_commut_binop_id(prim, id1, id2):
+  t1, t2 = type(id1), type(id2)
+  if t1 is AssocCommutID and t2 is AssocCommutID and id1.prim == id2.prim == prim:
+    return AssocCommutID(prim, heap_merge(id1.sorted_ids, id2.sorted_ids))
+  elif t1 is AssocCommutID and id1.prim == prim:
+    return AssocCommutID(prim, heap_insert(id1.sorted_ids, id2))
+  elif t2 is AssocCommutID and id2.prim == prim:
+    return AssocCommutID(prim, heap_insert(id2.sorted_ids, id1))
+  else:
+    return AssocCommutID(prim, tuple(sorted((id1, id2), key=hash)))
+
 
 idfuns = {}
 
 def defassoccommut(primitive):
   idfuns[primitive] = assoc_commut_binop_id
+
+# def defcyclic(primitive, period):
+#   idfuns[primitive] = cyclic_unop_id
+
+
+# defassoccommut(add_jaxvals_p)

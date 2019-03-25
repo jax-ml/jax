@@ -3888,6 +3888,7 @@ tie_in_p.def_abstract_eval(lambda x, y: y)
 xla.translations[tie_in_p] = lambda c, x, y: y
 ad.deflinear(tie_in_p, _tie_in_transpose_rule)
 batching.primitive_batchers[tie_in_p] = _tie_in_batch_rule
+cse.idfuns[tie_in_p] = lambda prim, _, y_id: y_id
 
 
 shaped_identity_p = Primitive('shape_id')
