@@ -2475,15 +2475,39 @@ def _reshape_papply_rule(name, vals, axes, new_sizes, dimensions, old_sizes):
   operand, = vals
   axis, = axes
 
+  def filter_ones(xs):
+    return filter(lambda x: x != 1, xs)
+
+  def find_new_axis(old_axis, old_sizes, new_sizes):
+    if len(filter_ones(new_sizes)) != len(filter_ones(old_sizes)):
+      return None
+    num_before = len(filter_ones(old_sizes[:old_axis]))
+    sz = old_sizes[old_axis]
+    for i, new_sz in enumerate(new_sizes):
+      if num_before == 0:
+        if new_sz == sz:
+          return i
+        elif new_sz != 1:
+          return None
+      elif new_sz != 1:
+        num_before -= 1
+    return None
+
+  err = NotImplementedError(
+      'papply of reshape that would change hidden dimension size')
+
   if dimensions is None:
-    if new_sizes[axis] == old_sizes[axis]:
-      new_sizes = new_sizes[:axis] + new_sizes[axis + 1:]
-      return reshape(operand, new_sizes, dimensions=dimensions)
+    new_axis = find_new_axis(axis, old_sizes, new_sizes)
+    if new_axis is not None:
+      if (prod(old_sizes[:axis]) != prod(new_sizes[:new_axis]) or
+          prod(old_sizes[axis + 1:]) != prod(new_sizes[new_axis + 1:])):
+        raise err
+      new_sizes_ = new_sizes[:new_axis] + new_sizes[new_axis + 1:]
+      return reshape(operand, new_sizes_, dimensions=dimensions), new_axis
     else:
-      raise NotImplementedError(
-          'papply of reshape that would change hidden dimension size')
+      raise err
   else:
-    raise NotImplementedError('papply of reshape with dimensions')
+    raise NotImplementedError('papply of reshape with `dimensions`')
 
 reshape_p = standard_primitive(_reshape_shape_rule, _reshape_dtype_rule,
                                'reshape', _reshape_translation_rule)
