@@ -4090,6 +4090,9 @@ batching.primitive_batchers[stop_gradient_p] = _stop_gradient_batch_rule
 def psum(x, axis_name):
   return psum_p.bind(x, axis_name=axis_name)
 
+def pmax(x, axis_name):
+  return pmax_p.bind(x, axis_name=axis_name)
+
 def pswapaxes(x, axis_name, axis):
   """Analogue to `np.swapaxes` involving a hidden axis.
 
@@ -4149,6 +4152,12 @@ parallel.serial_pmap_primitive_rules[psum_p] = _psum_serial_pmap_rule
 pxla.parallel_translation_rules[psum_p] = _psum_parallel_translation_rule
 ad.deflinear(psum_p, _psum_transpose_rule)
 parallel.defreducer(reduce_sum_p, psum_p)
+
+
+pmax_p = PmapPrimitive('pmax')
+pmax_p.def_impl(partial(_unbound_name_error, 'pmax'))
+pmax_p.def_abstract_eval(lambda x, *args, **kwargs: x)
+parallel.defreducer(reduce_max_p, pmax_p)
 
 
 def _pswapaxes_serial_pmap_rule(x, axis_in, axis):
