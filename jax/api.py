@@ -564,17 +564,17 @@ def linearize(fun, *primals):
 
   Here's a more complete example of using `linearize`:
 
-    >>> def f(x): return 3. * np.sin(x) + np.cos(x / 2.)
-    ...
-    >>> jax.jvp(f, (2.,), (3.,))
-    (array(3.2681944, dtype=float32), array(-5.007528, dtype=float32))
-    >>> y, f_jvp = jax.linearize(f, 2.)
-    >>> y
-    array(3.2681944, dtype=float32)
-    >>> f_jvp(3.)
-    array(-5.007528, dtype=float32)
-    >>> f_jvp(4.)
-    array(-5.007528, dtype=float32)
+  >>> def f(x): return 3. * np.sin(x) + np.cos(x / 2.)
+  ...
+  >>> jax.jvp(f, (2.,), (3.,))
+  (array(3.2681944, dtype=float32), array(-5.007528, dtype=float32))
+  >>> y, f_jvp = jax.linearize(f, 2.)
+  >>> y
+  array(3.2681944, dtype=float32)
+  >>> f_jvp(3.)
+  array(-5.007528, dtype=float32)
+  >>> f_jvp(4.)
+  array(-5.007528, dtype=float32)
   """
   f = lu.wrap_init(fun)
   primals_flat, in_trees = unzip2(map(pytree_to_jaxtupletree, primals))
