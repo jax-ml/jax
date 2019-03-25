@@ -222,16 +222,19 @@ def _cast_to_shape(value, shape, dtype):
     return dtype(value)
 
 
+def dtype_str(dtype):
+  return onp.dtype(dtype).name
+
+
 def format_shape_dtype_string(shape, dtype):
-  typestr = onp.dtype(dtype).name
   if shape == NUMPY_SCALAR_SHAPE:
-    return typestr
+    return dtype_str(dtype)
 
   if onp.isscalar(shape):
     shapestr = str(shape) + ','
   else:
     shapestr = ','.join(str(dim) for dim in shape)
-  return '{}[{}]'.format(typestr, shapestr)
+  return '{}[{}]'.format(dtype_str(dtype), shapestr)
 
 
 def _rand_dtype(rand, shape, dtype, scale=1., post=lambda x: x):
@@ -401,6 +404,7 @@ class JaxTestCase(parameterized.TestCase):
 
   def assertArraysAllClose(self, x, y, check_dtypes, atol=None, rtol=None):
     """Assert that x and y are close (up to numerical tolerances)."""
+    self.assertEqual(x.shape, y.shape)
     dtype = lambda x: str(onp.asarray(x).dtype)
     tol = 1e-2 if str(onp.dtype(onp.float32)) in {dtype(x), dtype(y)} else 1e-5
     atol = atol or tol
@@ -484,7 +488,7 @@ class JaxTestCase(parameterized.TestCase):
 
     self.assertAllClose(python_ans, compiled_ans, check_dtypes, rtol, atol)
 
-  def _CheckAgainstNumpy(self, lax_op, numpy_reference_op, args_maker,
+  def _CheckAgainstNumpy(self, numpy_reference_op, lax_op, args_maker,
                          check_dtypes=False, tol=1e-5):
     args = args_maker()
     numpy_ans = numpy_reference_op(*args)

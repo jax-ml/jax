@@ -24,7 +24,7 @@ from ..core import JaxTuple, Trace, Tracer, new_master, get_aval, pack, call_p, 
 from ..ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval,
                        zeros_like_p, zero, Zero)
 from ..util import unzip2, unzip3, safe_map, safe_zip, partial
-from ..tree_util import process_pytree, build_tree, register_pytree_node, prune, tree_map
+from ..tree_util import process_pytree, build_tree, register_pytree_node, tree_map
 from ..linear_util import thunk, staged, transformation, transformation_with_aux, wrap_init
 
 from six.moves import builtins, reduce

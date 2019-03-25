@@ -26,6 +26,17 @@ map = safe_map
 
 
 def tree_map(f, tree):
+  """Map a function over a pytree to produce a new pytree.
+
+  Args:
+    f: function to be applied at each leaf.
+    tree: a pytree to be mapped over.
+
+  Returns:
+    A new pytree with the same structure as `tree` but with the value at each
+    leaf given by `f(x)` where `x` is the value at the corresponding leaf in
+    `tree`.
+  """
   node_type = node_types.get(type(tree))
   if node_type:
     children, node_spec = node_type.to_iterable(tree)
@@ -34,23 +45,85 @@ def tree_map(f, tree):
   else:
     return f(tree)
 
-
 def tree_multimap(f, tree, *rest):
-  tree_type = type(tree)
-  node_type = node_types.get(tree_type)
+  """Map a multi-input function over pytree args to produce a new pytree.
+
+  Args:
+    f: function that takes `1 + len(rest)` arguments, to be applied at the
+      corresponding leaves of the pytrees.
+    tree: a pytree to be mapped over, with each leaf providing the first
+      positional argument to `f`.
+    *rest: a tuple of pytrees, each with the same structure as `tree`.
+
+  Returns:
+    A new pytree with the same structure as `tree` but with the value at each
+    leaf given by `f(x, *xs)` where `x` is the value at the corresponding leaf
+    in `tree` and `xs` is the tuple of values at corresponding leaves in `rest`.
+  """
+  # equivalent to prefix_multimap(f, tree_structure(tree), tree, *rest)
+  node_type = node_types.get(type(tree))
   if node_type:
     children, node_spec = node_type.to_iterable(tree)
     all_children = [children]
     for other_tree in rest:
-      other_children, other_node_spec = node_type.to_iterable(other_tree)
-      if other_node_spec != node_spec:
-        raise TypeError('Mismatch: {} != {}'.format(other_node_spec, node_spec))
+      other_node_type = node_types.get(type(other_tree))
+      # TODO(mattjj): enable this check
+      # if node_type != other_node_type:
+      #   raise TypeError('Mismatch: {} != {}'.format(other_node_type, node_type))
+      other_children, other_node_data = node_type.to_iterable(other_tree)
+      if other_node_data != node_spec:
+        raise TypeError('Mismatch: {} != {}'.format(other_node_data, node_spec))
       all_children.append(other_children)
 
     new_children = [tree_multimap(f, *xs) for xs in zip(*all_children)]
     return node_type.from_iterable(node_spec, new_children)
   else:
     return f(tree, *rest)
+
+def prefix_multimap(f, treedef, tree, *rest):
+  """Like tree_multimap but only maps down through a tree prefix."""
+  if treedef is leaf:
+    return f(tree, *rest)
+  else:
+    node_type = node_types.get(type(tree))
+    if node_type != treedef.node_type:
+      raise TypeError('Mismatch: {} != {}'.format(treedef.node_type, node_type))
+    children, node_data = node_type.to_iterable(tree)
+    if node_data != treedef.node_data:
+      raise TypeError('Mismatch: {} != {}'.format(treedef.node_data, node_data))
+    all_children = [children]
+    for other_tree in rest:
+      other_children, other_node_data = node_type.to_iterable(other_tree)
+      if other_node_data != node_data:
+        raise TypeError('Mismatch: {} != {}'.format(other_node_data, node_data))
+      all_children.append(other_children)
+    all_children = zip(*all_children)
+
+    new_children = [prefix_multimap(f, td, *xs)
+                    for td, xs in zip(treedef.children, all_children)]
+    return node_type.from_iterable(node_data, new_children)
+
+def tree_mimomap(f, tree, *rest):
+  """Map a multi-input tuple-output over pytree args to form a tuple of pytrees.
+
+  Args:
+    f: function that takes `1 + len(rest)` arguments and returns a tuple, to be
+      applied at the corresponding leaves of the pytrees.
+    tree: a pytree to be mapped over, with each leaf providing the first
+      positional argument to `f`.
+    *rest: a tuple of pytrees, each with the same structure as `tree`.
+
+  Returns:
+    A tuple of pytrees with length given by the length of the output of `f` and
+    with each pytree element having the same structure as `tree`.
+  """
+  flat, treedef = tree_flatten(tree)
+  rest_flat, treedefs = unzip2(map(tree_flatten, rest))
+  if not all(td == treedef for td in treedefs):
+    td = next(td for td in treedefs if td != treedef)
+    raise TypeError('Mismatch: {} != {}'.format(treedef, td))
+  out_flat = zip(*map(f, flat, *rest_flat))
+  return tuple(map(partial(tree_unflatten, treedef), out_flat))
 
 
 def tree_reduce(f, tree):
@@ -130,15 +203,6 @@ def _nested_treedef(inner, outer):
 def tree_structure(tree):
   _, spec = process_pytree(lambda _: None, tree)
   return spec
-
-
-def prune(treedef, tuple_tree):
-  if treedef is leaf:
-    return tuple_tree
-  elif treedef.children:
-    return tuple(map(prune, treedef.children, tuple_tree))
-  else:
-    return ()
 
 
 class PyTreeDef(object):

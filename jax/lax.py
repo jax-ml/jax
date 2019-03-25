@@ -322,6 +322,7 @@ def convert_element_type(operand, new_dtype):
       msg = "Casting complex values to real discards the imaginary part"
       warnings.warn(msg, onp.ComplexWarning)
       operand = real(operand)
+      old_dtype = _dtype(operand)
     return convert_element_type_p.bind(
         operand, new_dtype=new_dtype, old_dtype=old_dtype)
   else:
@@ -555,10 +556,15 @@ def slice(operand, start_indices, limit_indices, strides=None):
   <https://www.tensorflow.org/xla/operation_semantics#slice>`_
   operator.
   """
-  return slice_p.bind(operand, start_indices=tuple(start_indices),
-                      limit_indices=tuple(limit_indices),
-                      strides=None if strides is None else tuple(strides),
-                      operand_shape=operand.shape)
+  if (onp.all(onp.equal(start_indices, 0))
+      and onp.all(onp.equal(limit_indices, operand.shape))
+      and strides is None):
+    return operand
+  else:
+    return slice_p.bind(operand, start_indices=tuple(start_indices),
+                        limit_indices=tuple(limit_indices),
+                        strides=None if strides is None else tuple(strides),
+                        operand_shape=operand.shape)
 
 def dynamic_slice(operand, start_indices, slice_sizes):
   """Wraps XLA's `DynamicSlice
@@ -2400,20 +2406,16 @@ def _pad_shape_rule(operand, padding_value, padding_config):
 
 def _pad_transpose(t, operand, padding_value, padding_config):
   lo, hi, interior = zip(*padding_config)
-  if onp.any(onp.less(lo, 0)) or onp.any(onp.less(hi, 0)):
-    msg = "pad transpose not implemented for negative padding, got {}."
-    raise NotImplementedError(msg.format(padding_config))
 
   total = lambda x: _reduce_sum(x, list(range(t.ndim)))
 
-  t_op = lambda: slice(t, lo, onp.subtract(t.shape, hi), onp.add(interior, 1))
-  t_operand = t_op() if operand is None else None
+  def t_op():
+    unpad_config = zip(onp.negative(lo), onp.negative(hi), onp.zeros_like(interior))
+    unpadded = pad(t, onp.array(0., t.dtype), unpad_config)
+    return slice(unpadded, onp.zeros_like(lo), unpadded.shape, onp.add(interior, 1))
 
-  if padding_value is None:
-    t_operand = t_op() if t_operand is None else t_operand
-    t_padv = sub(total(t), total(t_operand))
-  else:
-    t_padv = None
+  t_operand = t_op() if operand is None else None
+  t_padv = sub(total(t), total(t_operand)) if padding_value is None else None
 
   return [t_operand, t_padv]
 
