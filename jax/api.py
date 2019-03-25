@@ -552,7 +552,17 @@ def linearize(fun, *primals):
   means the memory usage scales with the size of the computation, much like in
   reverse-mode. (Indeed, `linearize` has a similar signature to `vjp`!)
 
-  Here's a more complete example:
+  This function is mainly useful if you want to apply `f_jvp` multiple times,
+  i.e. to evaluate a pushforward for many different input tangent vectors at the
+  same linearization point. Moreover if all the input tangent vectors are known
+  at once, it can be more efficient to vectorize using `vmap`, as in::
+    pushfwd = partial(jvp, f, (x,))
+    y, out_tangents = vmap(pushfwd, out_axes=(None, 0))((in_tangents,))
+  By using `vmap` and `jvp` together like this we avoid the stored-linearization
+  memory cost that scales with the depth of the computation, which is incurred
+  by both `linearize` and `vjp`.
+
+  Here's a more complete example of using `linearize`:
 
     >>> def f(x): return 3. * np.sin(x) + np.cos(x / 2.)
     ...
@@ -562,6 +572,8 @@ def linearize(fun, *primals):
     >>> y
     array(3.2681944, dtype=float32)
     >>> f_jvp(3.)
+    array(-5.007528, dtype=float32)
+    >>> f_jvp(4.)
     array(-5.007528, dtype=float32)
   """
   f = lu.wrap_init(fun)
