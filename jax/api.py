@@ -523,10 +523,50 @@ def jvp(fun, primals, tangents):
   out_primal, out_tangent = ad.jvp(jaxtree_fun).call_wrapped(ps_flat, ts_flat)
   return (build_tree(out_tree(), out_primal), build_tree(out_tree(), out_tangent))
 
-def linearize(traceable, *primals):
-  fun = lu.wrap_init(traceable)
+def linearize(fun, *primals):
+  """Produce a linear approximation to `fun` using `jvp` and partial evaluation.
+
+  Args:
+    fun: Function to be differentiated. Its arguments should be arrays, scalars,
+      or standard Python containers of arrays or scalars. It should return an
+      array, scalar, or standard python container of arrays or scalars.
+    primals: The primal values at which the Jacobian of `fun` should be
+      evaluated. Should be a tuple of arrays, scalar, or standard Python
+      container thereof. The length of the tuple is equal to the number of
+      positional parameters of `fun`.
+
+  Returns:
+    A pair where the first element is the value of `f(*primals)` and the second
+    element is a function that evaluates the (forward-mode) Jacobian-vector
+    product of `fun` evaluated at `primals` without re-doing the linearization
+    work.
+
+  In terms of values computed, `linearize` behaves much like a curried `jvp`::
+    y, out_tangent = jax.jvp(f, (x,), (in_tangent,))
+
+    y, f_jvp = jax.linearize(f, x)
+    out_tangent = f_jvp(in_tangent)
+
+  However, the difference is that `linearize` uses partial evaluation so that
+  the function `f` is not re-linearized on calls to `f_jvp`. In general that
+  means the memory usage scales with the size of the computation, much like in
+  reverse-mode. (Indeed, `linearize` has a similar signature to `vjp`!)
+
+  Here's a more complete example:
+
+    >>> def f(x): return 3. * np.sin(x) + np.cos(x / 2.)
+    ...
+    >>> jax.jvp(f, (2.,), (3.,))
+    (array(3.2681944, dtype=float32), array(-5.007528, dtype=float32))
+    >>> y, f_jvp = jax.linearize(f, 2.)
+    >>> y
+    array(3.2681944, dtype=float32)
+    >>> f_jvp(3.)
+    array(-5.007528, dtype=float32)
+  """
+  f = lu.wrap_init(fun)
   primals_flat, in_trees = unzip2(map(pytree_to_jaxtupletree, primals))
-  jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(fun, in_trees)
+  jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(f, in_trees)
   out_primal, out_pval, jaxpr, consts = ad.linearize(jaxtree_fun, *primals_flat)
   out_tree = out_tree()
   out_primal_py = build_tree(out_tree, out_primal)
