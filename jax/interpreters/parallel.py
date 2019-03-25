@@ -275,13 +275,18 @@ def vectorized_papply(prim, name, vals, axes, **params):
   assert all(axes[0] == a for a in axes[1:])
   return prim.bind(*vals, **params), axes[0]
 
-def reducer_papply(prim, cprim, name, vals, papply_axes, input_shape, axes):
+def reducer_papply(prim, cprim, name, vals, papply_axes, axes, **kwargs):
   operand, = vals
   papply_axis, = papply_axes
 
   other_axes = [i for i in axes if i != papply_axis]
+  other_axes = [i - 1 if i > papply_axis else i for i in other_axes]
+
   if other_axes:
-    result = prim.bind(operand, axes=other_axes, input_shape=input_shape)
+    if 'input_shape' in kwargs:  # special to the reduce-sum family
+      s = kwargs['input_shape']
+      kwargs['input_shape'] = s[:papply_axis] + s[papply_axis + 1:]
+    result = prim.bind(operand, axes=tuple(other_axes), **kwargs)
   else:
     result = operand
 
