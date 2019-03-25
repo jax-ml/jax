@@ -575,7 +575,7 @@ def linearize(fun, *primals):
   >>> f_jvp(3.)
   array(-5.007528, dtype=float32)
   >>> f_jvp(4.)
-  array(-5.007528, dtype=float32)
+  array(-6.676704, dtype=float32)
   """
   f = lu.wrap_init(fun)
   primals_flat, in_trees = unzip2(map(pytree_to_jaxtupletree, primals))
