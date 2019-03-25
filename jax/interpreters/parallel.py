@@ -291,18 +291,23 @@ def reducer_papply(prim, cprim, name, vals, papply_axes, input_shape, axes):
     new_papply_axis = papply_axis - onp.sum(onp.less(other_axes, papply_axis))
     return result, new_papply_axis
 
+
 def broadcasting_papply(prim, name, vals, axes, **params):
   x, y = vals
   xdim, ydim = axes
 
   if xdim is None:
+    assert x.shape[ydim] == 1
+    x = x.reshape(onp.delete(x.shape, ydim))
     return prim.bind(x, y, **params), ydim
   elif ydim is None:
+    assert y.shape[xdim] == 1
+    y = y.reshape(onp.delete(y.shape, xdim))
     return prim.bind(x, y, **params), xdim
   elif xdim == ydim:
     return prim.bind(x, y, **params), xdim
   else:
-    x = psplit(x, axis_name, xdim)
+    x = psplit(x, axis_name, ydim)
     return prim.bind(x, y, **params), ydim
 
 
