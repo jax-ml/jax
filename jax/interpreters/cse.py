@@ -19,6 +19,7 @@ from __future__ import print_function
 import bisect
 import collections
 import heapq
+import itertools
 
 import six
 
@@ -32,7 +33,7 @@ from ..tree_util import tree_map, tree_multimap
 map = safe_map
 zip = safe_zip
 
-# TODO cache hashes
+# TODO store hashes instead of recomputing them in these heap functions
 if six.PY2:
   def heap_merge(a, b):
     return tuple(sorted(a + b, key=hash))
@@ -42,9 +43,10 @@ else:
 
 def heap_insert(heap, item):
   pos = bisect.bisect(map(hash, heap), hash(item))
-  return heap[:pos] + (id,) + heap[pos:]
+  return heap[:pos] + (item,) + heap[pos:]
 
 
+# TODO eliminate this proxy for performance?
 class ID(object):
   __slots__ = ['val']
   def __init__(self, val):
@@ -59,7 +61,6 @@ class ID(object):
   def __repr__(self):
     return 'ID({})'.format(hash(self))
   __str__ = __repr__
-
 
 class UniqueID(WrapHashably):
   def __repr__(self):

@@ -24,16 +24,16 @@ from jax import make_jaxpr, grad, jvp
 
 ###
 
-# def f(x):
-#   # return (np.sin(x) + np.cos(x)) + (np.cos(x) + np.sin(x))
-#   return (np.sin(x) + np.cos(x)) + (np.sin(x) * np.cos(x))
+def f(x):
+  return (np.sin(x) + np.cos(x)) + (np.cos(x) + np.sin(x))
+  # return (np.sin(x) + np.cos(x)) + (np.sin(x) * np.cos(x))
 
-# print f(3.)
-# print cse.cse(lu.wrap_init(f)).call_wrapped(3.)
-# print make_jaxpr(cse.cse(lu.wrap_init(f)).call_wrapped)(3.)
+print f(3.)
+print cse.cse(lu.wrap_init(f)).call_wrapped(3.)
+print make_jaxpr(cse.cse(lu.wrap_init(f)).call_wrapped)(3.)
 
-# print
-# print
+print
+print
 
 ###
 
@@ -44,6 +44,18 @@ from jax import make_jaxpr, grad, jvp
 # print f(3.)
 # print cse.cse(lu.wrap_init(f)).call_wrapped(3.)
 # print make_jaxpr(cse.cse(lu.wrap_init(f)).call_wrapped)(3.)
+
+###
+
+# def f(x, y, z):
+#   a = (x + y) + z
+#   b = x + (y + z)
+#   return a * b
+
+# print f(1., 2., 3.)
+# print make_jaxpr(f)(1., 2., 3.)
+# print cse.cse(lu.wrap_init(f)).call_wrapped(1., 2., 3.)
+# print make_jaxpr(cse.cse(lu.wrap_init(f)).call_wrapped)(1., 2., 3.)
 
 ###
 
