@@ -541,7 +541,8 @@ def linearize(fun, *primals):
     product of `fun` evaluated at `primals` without re-doing the linearization
     work.
 
-  In terms of values computed, `linearize` behaves much like a curried `jvp`::
+  In terms of values computed, `linearize` behaves much like a curried `jvp`,
+  where these two code blocks compute the same values::
     y, out_tangent = jax.jvp(f, (x,), (in_tangent,))
 
     y, f_jvp = jax.linearize(f, x)
