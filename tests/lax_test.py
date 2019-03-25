@@ -20,7 +20,7 @@ import collections
 import functools
 from functools import partial
 import itertools
-from unittest import skip
+from unittest import skip, SkipTest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -1421,6 +1421,12 @@ class LaxTest(jtu.JaxTestCase):
     self.assertEqual(fun(4), cfun(4))
     self.assertEqual(cfun(4), (4, 2., 4.))
 
+  def testIssue514(self):
+    # just check this doesn't crash
+    lax.cond(True,
+            (0, 0), lambda x: (x[0], 0),
+            (1, 1), lambda x: x)
+
   def testScanAdd(self):
     def f(x, y):
       return x + y
@@ -1753,22 +1759,23 @@ class LaxAutodiffTest(jtu.JaxTestCase):
   def testOpGrad(self, op, rng, shapes, dtype, order):
     if FLAGS.jax_test_dut and FLAGS.jax_test_dut.startswith("tpu"):
       if op is lax.pow:
-        return absltest.unittest.skip("pow grad imprecise on tpu")
+        raise SkipTest("pow grad imprecise on tpu")
     tol = 1e-1 if num_float_bits(dtype) == 32 else None
     args = tuple(rng(shape, dtype) for shape in shapes)
     check_grads(op, args, order, tol, tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_from_dtype={}_to_dtype={}".format(
-          from_dtype, to_dtype),
+          jtu.dtype_str(from_dtype), jtu.dtype_str(to_dtype)),
        "from_dtype": from_dtype, "to_dtype": to_dtype, "rng": rng}
       for from_dtype, to_dtype in itertools.product(
-          [onp.float32, onp.float64], repeat=2)
+          float_dtypes + complex_dtypes, repeat=2)
       for rng in [jtu.rand_default()]))
   def testConvertElementTypeGrad(self, from_dtype, to_dtype, rng):
     args = (rng((2, 3), from_dtype),)
     convert_element_type = lambda x: lax.convert_element_type(x, to_dtype)
     check_grads(convert_element_type, args, 1, 1e-3, 1e-3, 1e-3)
+    check_grads(convert_element_type, args, 2, 1e-3, 1e-3, 1e-3)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_min_shape={}_operand_shape={}_max_shape={}".format(
@@ -2007,7 +2014,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        "shape": shape, "dtype": dtype, "pads": pads, "rng": jtu.rand_small()}
       for shape in [(2, 3)]
       for dtype in float_dtypes
-      for pads in [[(1, 2, 1), (0, 1, 0)]]))
+      for pads in [[(1, 2, 1), (0, 1, 0)], [(-1, 0, 0), (-1, 0, 2)]]))
   def testPadGrad(self, shape, dtype, pads, rng):
     tol = 1e-2 if onp.finfo(dtype).bits == 32 else None
 

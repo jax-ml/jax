@@ -163,7 +163,7 @@ class StaxTest(jtu.JaxTestCase):
     init_fun, apply_fun = stax.FanInConcat(axis)
     _CheckShapeAgreement(self, init_fun, apply_fun, input_shapes)
 
-  def testIsuse182(self):
+  def testIssue182(self):
     init_fun, apply_fun = stax.Softmax
     input_shape = (10, 3)
     inputs = onp.arange(30.).astype("float32").reshape(input_shape)
@@ -174,6 +174,35 @@ class StaxTest(jtu.JaxTestCase):
     assert out_shape == out.shape
     assert onp.allclose(onp.sum(onp.asarray(out), -1), 1.)
 
+
+  def testBatchNormShapeNHWC(self):
+    init_fun, apply_fun = stax.BatchNorm(axis=(0, 1, 2))
+    input_shape = (4, 5, 6, 7)
+    inputs = random_inputs(onp.random.RandomState(0), input_shape)
+
+    out_shape, params = init_fun(input_shape)
+    out = apply_fun(params, inputs)
+
+    self.assertEqual(out_shape, input_shape)
+    beta, gamma = params
+    self.assertEqual(beta.shape, (7,))
+    self.assertEqual(gamma.shape, (7,))
+    self.assertEqual(out_shape, out.shape)
+
+  def testBatchNormShapeNCHW(self):
+    # Regression test for https://github.com/google/jax/issues/461
+    init_fun, apply_fun = stax.BatchNorm(axis=(0, 2, 3))
+    input_shape = (4, 5, 6, 7)
+    inputs = random_inputs(onp.random.RandomState(0), input_shape)
+
+    out_shape, params = init_fun(input_shape)
+    out = apply_fun(params, inputs)
+
+    self.assertEqual(out_shape, input_shape)
+    beta, gamma = params
+    self.assertEqual(beta.shape, (5,))
+    self.assertEqual(gamma.shape, (5,))
+    self.assertEqual(out_shape, out.shape)
 
 if __name__ == "__main__":
   absltest.main()

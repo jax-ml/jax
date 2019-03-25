@@ -19,6 +19,7 @@ from __future__ import print_function
 
 from functools import partial
 import itertools
+from unittest import SkipTest
 
 import numpy as onp
 import scipy as osp
@@ -237,7 +238,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     if (ord in ('nuc', 2, -2) and isinstance(axis, tuple) and len(axis) == 2 and
         (not FLAGS.jax_test_dut or not FLAGS.jax_test_dut.startswith("cpu") or
          len(shape) != 2)):
-      return absltest.unittest.skip("No adequate SVD implementation available")
+      raise SkipTest("No adequate SVD implementation available")
 
     args_maker = lambda: [rng(shape, dtype)]
     onp_fn = partial(onp.linalg.norm, ord=ord, axis=axis, keepdims=keepdims)

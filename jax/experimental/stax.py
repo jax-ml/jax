@@ -130,12 +130,16 @@ def BatchNorm(axis=(0, 1, 2), epsilon=1e-5, center=True, scale=True,
   _gamma_init = lambda shape: gamma_init(shape) if scale else ()
   axis = (axis,) if np.isscalar(axis) else axis
   def init_fun(input_shape):
-    shape = (1 if i in axis else d for i, d in enumerate(input_shape))
-    shape = tuple(itertools.dropwhile(lambda x: x == 1, shape))
+    shape = tuple(d for i, d in enumerate(input_shape) if i not in axis)
     beta, gamma = _beta_init(shape), _gamma_init(shape)
     return input_shape, (beta, gamma)
   def apply_fun(params, x, **kwargs):
     beta, gamma = params
+    # TODO(phawkins): np.expand_dims should accept an axis tuple.
+    # (https://github.com/numpy/numpy/issues/12290)
+    ed = tuple(None if i in axis else slice(None) for i in range(np.ndim(x)))
+    beta = beta[ed]
+    gamma = gamma[ed]
     mean, var = np.mean(x, axis, keepdims=True), fastvar(x, axis, keepdims=True)
     z = (x - mean) / np.sqrt(var + epsilon)
     if center and scale: return gamma * z + beta

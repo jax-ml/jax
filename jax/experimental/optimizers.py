@@ -22,13 +22,18 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import operator
+import collections
 import functools
+import operator
 
 import jax.numpy as np
 from jax.core import pack
-from jax.tree_util import tree_map, tree_multimap
+from jax.util import partial, safe_zip, safe_map, unzip2
+from jax.tree_util import (tree_map, tree_mimomap, tree_structure,
+                           register_pytree_node)
 
+map = safe_map
+zip = safe_zip
 
 def optimizer(opt_maker):
   """Decorator to make an optimizer map over tuple/list/dict containers."""
@@ -37,20 +42,19 @@ def optimizer(opt_maker):
     init_fun, update_fun = opt_maker(*args, **kwargs)
 
     @functools.wraps(init_fun)
-    def fmapped_init_fun(x0_tree):
-      return tree_map(lambda x0: pack(init_fun(x0)), x0_tree)
+    def tree_init_fun(x0_tree):
+      return tree_mimomap(init_fun, x0_tree)
 
     @functools.wraps(update_fun)
-    def fmapped_update_fun(i, grad_tree, state_tree):
-      update = lambda g, state: pack(update_fun(i, g, *state))
-      return tree_multimap(update, grad_tree, state_tree)
+    def tree_update_fun(i, grad_tree, state_trees):
+      return tree_mimomap(partial(update_fun, i), grad_tree, *state_trees)
 
-    return fmapped_init_fun, fmapped_update_fun
+    return tree_init_fun, tree_update_fun
   return tree_opt_maker
 
-def iterate(state_tree):
+def iterate(state_trees):
   """Extract the current iterate from an optimizer state."""
-  return tree_map(lambda state: tuple(state)[0], state_tree)
+  return state_trees[0]
 get_params = iterate
 
 # optimizers

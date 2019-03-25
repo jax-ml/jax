@@ -55,7 +55,6 @@ FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_enable_x64',
                   strtobool(os.getenv('JAX_ENABLE_X64', "False")),
                   'Enable 64-bit types to be used.')
-flags.DEFINE_integer('jax_replica_count', 1, 'Replica count for computations.')
 flags.DEFINE_string(
     'jax_xla_backend', 'xla',
     'Either "xla" for the XLA service directly, or "xrt" for an XRT backend.')
@@ -97,25 +96,20 @@ def memoize_thunk(func):
 
 @memoize_thunk
 def get_xla_client():
-  return _get_xla_client(FLAGS.jax_xla_backend,
-                         FLAGS.jax_platform_name,
-                         FLAGS.jax_replica_count)
+  return _get_xla_client(FLAGS.jax_xla_backend, FLAGS.jax_platform_name)
 
 
-def _get_xla_client(backend_name, platform_name, replica_count):
+def _get_xla_client(backend_name, platform_name):
   """Configures and returns a handle to the XLA client.
 
   Args:
     backend_name: backend name, 'xla' or 'xrt'
     platform_name: platform name for XLA backend
-    replica_count: number of computation replicas with which to configure the
-      backend library.
 
   Returns:
     A client library module, or an object that behaves identically to one.
   """
   global _platform_name
-  xla_client.initialize_replica_count(replica_count)
   if backend_name == 'xla':
     if platform_name:
       xla_client.initialize_platform_name(platform_name)
@@ -129,10 +123,6 @@ def _get_xla_client(backend_name, platform_name, replica_count):
         xla_client.initialize_platform_name('Host')
         _platform_name = 'Host'
   return xla_client
-
-
-def get_replica_count():
-  return get_xla_client().get_replica_count()
 
 
 _backends = {}
@@ -165,6 +155,7 @@ def _get_backend():
 
 
 def device_count():
+  _ = get_xla_client()  # ensure initialize_platform_name is called
   return _get_backend().device_count()
 
 
@@ -313,7 +304,8 @@ class _JaxComputationBuilderBase(object):
     if split_dimension == concat_dimension and len(replica_groups[0]) == 1:
       return operand
     else:
-      return self.AllToAll(operand, split_dimension, concat_dimension, replica_groups)
+      return super(_JaxComputationBuilderBase, self).AllToAll(
+          operand, split_dimension, concat_dimension, replica_groups)
 
 
 @memoize_thunk

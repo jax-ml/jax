@@ -19,6 +19,7 @@ from __future__ import print_function
 import collections
 import functools
 import itertools
+from unittest import SkipTest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -117,7 +118,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     # TODO(mattjj): unskip this test combination when real() on tpu is improved
     if (FLAGS.jax_test_dut and FLAGS.jax_test_dut.startswith("tpu")
         and not shapes[0]):
-      return absltest.unittest.skip("real() on scalar not supported on tpu")
+      raise SkipTest("real() on scalar not supported on tpu")
 
     args_maker = self._GetArgsMaker(rng, shapes, dtypes)
     args = args_maker()
