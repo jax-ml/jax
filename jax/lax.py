@@ -1744,6 +1744,7 @@ def _safe_mul_translation_rule(c, x, y):
 safe_mul_p = standard_binop([_num, _num], 'safe_mul',
                             translation_rule=_safe_mul_translation_rule)
 ad.defbilinear_broadcasting(_brcast, safe_mul_p, _safe_mul, _safe_mul)
+cse.defassoccommut(safe_mul_p)
 
 
 def _div_transpose_rule(cotangent, x, y):

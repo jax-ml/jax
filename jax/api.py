@@ -521,8 +521,8 @@ def jvp(fun, primals, tangents):
     fun = lu.wrap_init(fun)
   ps_flat, ts_flat, in_trees = unzip3(map(trim_arg, primals, tangents))
   jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(fun, in_trees)
-  out_primal, out_tangent = cse.cse(ad.jvp(jaxtree_fun)).call_wrapped(ps_flat, ts_flat)
-  # out_primal, out_tangent = ad.jvp(jaxtree_fun).call_wrapped(ps_flat, ts_flat)
+  # out_primal, out_tangent = cse.cse(ad.jvp(jaxtree_fun)).call_wrapped(ps_flat, ts_flat)
+  out_primal, out_tangent = ad.jvp(jaxtree_fun).call_wrapped(ps_flat, ts_flat)
   return (build_tree(out_tree(), out_primal), build_tree(out_tree(), out_tangent))
 
 def linearize(traceable, *primals):

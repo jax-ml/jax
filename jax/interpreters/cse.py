@@ -46,14 +46,14 @@ def heap_insert(heap, item):
   return heap[:pos] + (item,) + heap[pos:]
 
 
-# TODO eliminate this proxy for performance?
 class ID(object):
-  __slots__ = ['val']
+  __slots__ = ['val', 'hash']
   def __init__(self, val):
     self.val = val
+    self.hash = hash(val)
 
   def __hash__(self):
-    return hash(self.val)
+    return self.hash
 
   def __eq__(self, other):
     return type(other) is ID and self.val == other.val
@@ -182,4 +182,4 @@ def defassoccommut(primitive):
 #   idfuns[primitive] = cyclic_unop_id
 
 
-# defassoccommut(add_jaxvals_p)
+defassoccommut(add_jaxvals_p)
