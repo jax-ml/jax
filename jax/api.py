@@ -353,6 +353,7 @@ def hessian(fun, argnums=0):
 def _std_basis(pytree):
   leaves, _ = tree_flatten(pytree)
   ndim = sum(map(onp.size, leaves))
+  # TODO(mattjj): use a symbolic identity matrix here
   return _unravel_array_into_pytree(pytree, 1, onp.eye(ndim))
 
 def _unravel_array_into_pytree(pytree, axis, arr):
@@ -523,10 +524,63 @@ def jvp(fun, primals, tangents):
   out_primal, out_tangent = ad.jvp(jaxtree_fun).call_wrapped(ps_flat, ts_flat)
   return (build_tree(out_tree(), out_primal), build_tree(out_tree(), out_tangent))
 
-def linearize(traceable, *primals):
-  fun = lu.wrap_init(traceable)
+def linearize(fun, *primals):
+  """Produce a linear approximation to `fun` using `jvp` and partial evaluation.
+
+  Args:
+    fun: Function to be differentiated. Its arguments should be arrays, scalars,
+      or standard Python containers of arrays or scalars. It should return an
+      array, scalar, or standard python container of arrays or scalars.
+    primals: The primal values at which the Jacobian of `fun` should be
+      evaluated. Should be a tuple of arrays, scalar, or standard Python
+      container thereof. The length of the tuple is equal to the number of
+      positional parameters of `fun`.
+
+  Returns:
+    A pair where the first element is the value of `f(*primals)` and the second
+    element is a function that evaluates the (forward-mode) Jacobian-vector
+    product of `fun` evaluated at `primals` without re-doing the linearization
+    work.
+
+  In terms of values computed, `linearize` behaves much like a curried `jvp`,
+  where these two code blocks compute the same values::
+    y, out_tangent = jax.jvp(f, (x,), (in_tangent,))
+
+    y, f_jvp = jax.linearize(f, x)
+    out_tangent = f_jvp(in_tangent)
+
+  However, the difference is that `linearize` uses partial evaluation so that
+  the function `f` is not re-linearized on calls to `f_jvp`. In general that
+  means the memory usage scales with the size of the computation, much like in
+  reverse-mode. (Indeed, `linearize` has a similar signature to `vjp`!)
+
+  This function is mainly useful if you want to apply `f_jvp` multiple times,
+  i.e. to evaluate a pushforward for many different input tangent vectors at the
+  same linearization point. Moreover if all the input tangent vectors are known
+  at once, it can be more efficient to vectorize using `vmap`, as in::
+    pushfwd = partial(jvp, f, (x,))
+    y, out_tangents = vmap(pushfwd, out_axes=(None, 0))((in_tangents,))
+  By using `vmap` and `jvp` together like this we avoid the stored-linearization
+  memory cost that scales with the depth of the computation, which is incurred
+  by both `linearize` and `vjp`.
+
+  Here's a more complete example of using `linearize`:
+
+  >>> def f(x): return 3. * np.sin(x) + np.cos(x / 2.)
+  ...
+  >>> jax.jvp(f, (2.,), (3.,))
+  (array(3.2681944, dtype=float32), array(-5.007528, dtype=float32))
+  >>> y, f_jvp = jax.linearize(f, 2.)
+  >>> y
+  array(3.2681944, dtype=float32)
+  >>> f_jvp(3.)
+  array(-5.007528, dtype=float32)
+  >>> f_jvp(4.)
+  array(-6.676704, dtype=float32)
+  """
+  f = lu.wrap_init(fun)
   primals_flat, in_trees = unzip2(map(pytree_to_jaxtupletree, primals))
-  jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(fun, in_trees)
+  jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(f, in_trees)
   out_primal, out_pval, jaxpr, consts = ad.linearize(jaxtree_fun, *primals_flat)
   out_tree = out_tree()
   out_primal_py = build_tree(out_tree, out_primal)
@@ -716,7 +770,7 @@ def _check_scalar(x):
     raise TypeError(msg(x))
 
 
-def _primitive(fun):
+def custom_transforms(fun):
   name = getattr(fun, '__name__', '<unnamed user primitive>')
   fun_p = core.Primitive(name)
   fun_p.def_impl(fun)
@@ -734,3 +788,27 @@ def _primitive(fun):
   traceable.primitive = fun_p
 
   return traceable
+
+
+def _elementwise_std_basis(pytree):
+  leaves, _ = tree_flatten(pytree)
+  arity = len(leaves)
+  dims = map(onp.size, leaves)
+  # TODO(mattjj): use symbolic constants
+  basis_array = onp.stack(
+      [onp.concatenate([onp.ones(dims[j]) if i == j else onp.zeros(dims[j])
+                        for j in range(arity)]) for i in range(arity)])
+  return _unravel_array_into_pytree(pytree, 1, basis_array)
+
+def jarrett(fun):
+  new_fun = custom_transforms(fun)
+
+  def elementwise_jvp(primals, tangents):
+    pushfwd = partial(jvp, fun, primals)
+    y, jacs = vmap(pushfwd, out_axes=(None, 0))(_elementwise_std_basis(tangents))
+    flat_tangents, _ = tree_flatten(tangents)
+    out_tangent = sum([t * jac for t, jac in zip(flat_tangents, jacs)])
+    return y, out_tangent
+  ad.primitive_jvps[new_fun.primitive] = elementwise_jvp
+
+  return new_fun

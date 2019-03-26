@@ -667,11 +667,24 @@ def isclose(a, b, rtol=1e-05, atol=1e-08):
       dtype = _result_dtype(real, a)
     rtol = lax.convert_element_type(rtol, dtype)
     atol = lax.convert_element_type(atol, dtype)
-    return lax.le(
+    out = lax.le(
       lax.abs(lax.sub(a, b)),
       lax.add(atol, lax.mul(rtol, lax.abs(b))))
+    return _maybe_numpy_1_13_isclose_behavior(a, out)
   else:
     return lax.eq(a, b)
+
+numpy_version = tuple(map(int, onp.version.version.split('.')))
+if numpy_version < (1, 14):
+  # see discussion at https://github.com/numpy/numpy/pull/9720
+  def _maybe_numpy_1_13_isclose_behavior(a, out):
+    if size(out) == 1 and issubdtype(_dtype(a), complexfloating):
+      return lax.reshape(out, (1,))
+    else:
+      return out
+else:
+  def _maybe_numpy_1_13_isclose_behavior(a, out):
+    return out
 
 
 @_wraps(onp.where)
@@ -1409,13 +1422,13 @@ def dot(a, b):  # pylint: disable=missing-docstring
     return lax.mul(a, b)
   if _max(a_ndim, b_ndim) <= 2:
     return lax.dot(a, b)
-  a_reshaped = reshape(a, (-1, shape(a)[-1]))
-  if _ndim(b) in {1, 2}:
-    out = lax.dot(a_reshaped, b)
+
+  if b_ndim == 1:
+    contract_dims = ((a_ndim - 1,), (0,))
   else:
-    b_reshaped = reshape(moveaxis(b, -2, 0), (shape(b)[-2], -1))
-    out = lax.dot(a_reshaped, b_reshaped)
-  return lax.reshape(out, a.shape[:-1] + b.shape[:-2] + b.shape[-2:][1:])
+    contract_dims = ((a_ndim - 1,), (b_ndim - 2,))
+  batch_dims = ((), ())
+  return lax.dot_general(a, b, (contract_dims, batch_dims))
 
 
 @_wraps(onp.matmul)
@@ -1557,7 +1570,7 @@ def _einsum(operands, contractions):
       batch_names = (set(lhs_names) & set(rhs_names)) - contracted_names
       lhs_batch, rhs_batch = unzip2((lhs_names.find(n), rhs_names.find(n))
                                     for n in batch_names)
-      
+
       # NOTE(mattjj): this can fail non-deterministically in python3, maybe
       # due to opt_einsum
       assert _all(name in lhs_names and name in rhs_names and
@@ -1674,6 +1687,48 @@ def outer(a, b, out=None):
     raise NotImplementedError("The 'out' argument to outer is not supported.")
   return ravel(a)[:, None] * ravel(b)
 
+@_wraps(onp.cross)
+def cross(a, b, axisa=-1, axisb=-1, axisc=-1, axis=None):
+    if axis is not None:
+        axisa = axis
+        axisb = axis
+        axisc = axis
+
+    a_ndims = len(shape(a))
+    b_ndims = len(shape(b))
+    axisa = _canonicalize_axis(axisa, a_ndims)
+    axisb = _canonicalize_axis(axisb, b_ndims)
+    a = moveaxis(a, axisa, -1)
+    b = moveaxis(b, axisb, -1)
+    a_shape = shape(a)
+    b_shape = shape(b)
+
+    if a_shape[-1] not in (2, 3) or b_shape[-1] not in (2, 3):
+        raise ValueError("Dimension must be either 2 or 3 for cross product")
+
+    if a_shape[-1] == 2 and b_shape[-1] == 2:
+        return a[..., 0] * b[..., 1] - a[..., 1] * b[..., 0]
+
+    if a_shape[-1] == 2:
+        a = concatenate((a, zeros(a_shape[:-1] + (1,), dtype=a.dtype)), axis=-1)
+    elif b_shape[-1] == 2:
+        b = concatenate((b, zeros(b_shape[:-1] + (1,), dtype=b.dtype)), axis=-1)
+
+    a0 = a[..., 0]
+    a1 = a[..., 1]
+    a2 = a[..., 2]
+    b0 = b[..., 0]
+    b1 = b[..., 1]
+    b2 = b[..., 2]
+
+    c = array([a1 * b2 - a2 * b1,
+               a2 * b0 - a0 * b2,
+               a0 * b1 - a1 * b0])
+
+    c_ndims = len(shape(c))
+    axisc = _canonicalize_axis(axisc, c_ndims)
+
+    return moveaxis(c, 0, axisc)
 
 @_wraps(onp.kron)
 def kron(a, b):

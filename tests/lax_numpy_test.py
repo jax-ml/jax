@@ -406,6 +406,36 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_{}_{}".format(
+          jtu.format_shape_dtype_string(lhs_shape, lhs_dtype),
+          jtu.format_shape_dtype_string(rhs_shape, rhs_dtype),
+          axes),
+       "lhs_shape": lhs_shape, "lhs_dtype": lhs_dtype,
+       "rhs_shape": rhs_shape, "rhs_dtype": rhs_dtype,
+       "axes": axes, "rng": rng}
+      for rng in [jtu.rand_default()]
+      for lhs_shape, rhs_shape, axes in [
+          [(2,), (2,), (-1, -1, -1, None)], # scalar output
+          [(2, 4), (2, 4), (-1, -1, -1, 0)], # 2D vectors
+          [(3, 4), (3, 4), (-1, -1, -1, 0)], # 3D vectors
+          [(3, 4), (3, 6, 5, 4), (-1, -1, -1, 0)], # broadcasting
+          [(4, 3), (3, 6, 5, 4), (1, 0, -1, None)], # different axes
+          [(6, 1, 3), (5, 3), (-1, -1, -1, None)], # more broadcasting
+          [(6, 1, 2), (5, 3), (-1, -1, -1, None)], # mixed 2D and 3D vectors
+          [(10, 5, 2, 8), (1, 5, 1, 3), (-2, -1, -3, None)], # axes/broadcasting
+          [(4, 5, 2), (4, 5, 2), (-1, -1, 0, None)], # axisc should do nothing
+          [(4, 5, 2), (4, 5, 2), (-1, -1, -1, None)] # same as before
+      ]
+      for lhs_dtype, rhs_dtype in CombosWithReplacement(number_dtypes, 2)))
+  def testCross(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype, axes, rng):
+    args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
+    axisa, axisb, axisc, axis = axes
+    lnp_fun = lambda a, b: lnp.cross(a, b, axisa, axisb, axisc, axis)
+    onp_fun = lambda a, b: onp.cross(a, b, axisa, axisb, axisc, axis)
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_{}_{}".format(
           name,
           jtu.format_shape_dtype_string(lhs_shape, lhs_dtype),
           jtu.format_shape_dtype_string(rhs_shape, rhs_dtype)),
