@@ -33,7 +33,6 @@ from ..tree_util import tree_map, tree_multimap
 map = safe_map
 zip = safe_zip
 
-# TODO store hashes instead of recomputing them in these heap functions
 if six.PY2:
   def heap_merge(a, b):
     return tuple(sorted(a + b, key=hash))
@@ -69,15 +68,18 @@ class UniqueID(WrapHashably):
 
 AssocCommutID = collections.namedtuple('AssocCommutID', ['prim', 'sorted_ids'])
 
+
+def const_id(val):
+  if isinstance(val, tuple):
+    return IDTuple(map(const_id, val))
+  elif isinstance(val, (int, float)):
+    return ID(val)
+  else:
+    return UniqueID(val)
+
+
 class IDTuple(tuple): pass
 
-# class IDCyclic(tuple):
-#   @staticmethod
-#   def cycle(id):
-#     t = type(id)
-#     if t is IDCyclic:
-#       id, index = id
-#       return IDCyclic((
 
 @transformation
 def cse(*args):
@@ -153,14 +155,6 @@ def default_id(primitive, *ids_in, **params):
   return ID(((primitive,) + tuple(ids_in)
              + tuple(sorted((k, const_id(v)) for k, v in params.items()))))
 
-def const_id(val):
-  if isinstance(val, tuple):
-    return IDTuple(map(const_id, val))
-  elif isinstance(val, (int, float)):
-    return ID(val)
-  else:
-    return UniqueID(val)
-
 def assoc_commut_binop_id(prim, id1, id2):
   t1, t2 = type(id1), type(id2)
   if t1 is AssocCommutID and t2 is AssocCommutID and id1.prim == id2.prim == prim:
@@ -177,9 +171,6 @@ idfuns = {}
 
 def defassoccommut(primitive):
   idfuns[primitive] = assoc_commut_binop_id
-
-# def defcyclic(primitive, period):
-#   idfuns[primitive] = cyclic_unop_id
 
 
 defassoccommut(add_jaxvals_p)

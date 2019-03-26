@@ -1594,6 +1594,7 @@ _any = _int | _float | _complex | _bool
 neg_p = standard_unop(_num, 'neg')
 ad.deflinear(neg_p, lambda t: [neg(t)])
 batching.defvectorized(neg_p)
+# cse.defcyclic(neg_p, 2)
 
 sign_p = standard_unop(_num, 'sign')
 ad.defjvp_zero(sign_p)

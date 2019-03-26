@@ -47,30 +47,40 @@ from jax import make_jaxpr, grad, jvp
 
 ###
 
-# def f(x, y, z):
-#   a = (x + y) + z
-#   b = x + (y + z)
-#   return a * b
+def f(x, y, z):
+  a = (x + y) + z
+  b = x + (y + z)
+  return a * b
 
-# print f(1., 2., 3.)
-# print make_jaxpr(f)(1., 2., 3.)
-# print cse.cse(lu.wrap_init(f)).call_wrapped(1., 2., 3.)
-# print make_jaxpr(cse.cse(lu.wrap_init(f)).call_wrapped)(1., 2., 3.)
+print f(1., 2., 3.)
+print make_jaxpr(f)(1., 2., 3.)
+print cse.cse(lu.wrap_init(f)).call_wrapped(1., 2., 3.)
+print make_jaxpr(cse.cse(lu.wrap_init(f)).call_wrapped)(1., 2., 3.)
 
 ###
 
-from collections import Counter
+# def f(x):
+#   return -(-x)
 
-def deriv(f):
-  return lambda x: jvp(f, (x,), (1.,))[1]
+# print f(3.)
+# print make_jaxpr(f)(3.)
+# print cse.cse(lu.wrap_init(f)).call_wrapped(3.)
+# print make_jaxpr(cse.cse(lu.wrap_init(f)).call_wrapped)(3.)
+
+###
+
+# from collections import Counter
+
+# def deriv(f):
+#   return lambda x: jvp(f, (x,), (1.,))[1]
 
 
-def f(x):
-  return 0.3 * np.sin(x) * x ** 10
+# def f(x):
+#   return 0.3 * np.sin(x) * x ** 10
 
-g = f
-for i in range(8):
-  jaxpr = make_jaxpr(g)(3.)
-  print(g(3.), Counter(eqn.primitive for eqn in jaxpr.eqns).most_common())
+# g = f
+# for i in range(8):
+#   jaxpr = make_jaxpr(g)(3.)
+#   print(g(3.), Counter(eqn.primitive for eqn in jaxpr.eqns).most_common())
 
-  g = deriv(g)
+#   g = deriv(g)
