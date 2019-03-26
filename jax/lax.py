@@ -1669,6 +1669,7 @@ def _conj_transpose_rule(t, x, input_dtype):
   else:
     return [real(t)]
 
+xla.translations[conj_p] = lambda c, x, **kwargs: c.Conj(x)
 ad.primitive_jvps[conj_p] = partial(ad.linear_jvp, conj_p)
 ad.primitive_transposes[conj_p] = _conj_transpose_rule
 
