@@ -1710,9 +1710,9 @@ def cross(a, b, axisa=-1, axisb=-1, axisc=-1, axis=None):
         return a[..., 0] * b[..., 1] - a[..., 1] * b[..., 0]
 
     if a_shape[-1] == 2:
-        a = concatenate((a, zeros(a_shape[:-1])[..., None]), axis=-1)
+        a = concatenate((a, zeros(a_shape[:-1] + (1,), dtype=a.dtype)), axis=-1)
     elif b_shape[-1] == 2:
-        b = concatenate((b, zeros(b_shape[:-1])[..., None]), axis=-1)
+        b = concatenate((b, zeros(b_shape[:-1] + (1,), dtype=b.dtype)), axis=-1)
 
     a0 = a[..., 0]
     a1 = a[..., 1]
