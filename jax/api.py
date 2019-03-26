@@ -353,6 +353,7 @@ def hessian(fun, argnums=0):
 def _std_basis(pytree):
   leaves, _ = tree_flatten(pytree)
   ndim = sum(map(onp.size, leaves))
+  # TODO(mattjj): use a symbolic identity matrix here
   return _unravel_array_into_pytree(pytree, 1, onp.eye(ndim))
 
 def _unravel_array_into_pytree(pytree, axis, arr):
@@ -769,7 +770,7 @@ def _check_scalar(x):
     raise TypeError(msg(x))
 
 
-def _primitive(fun):
+def custom_transforms(fun):
   name = getattr(fun, '__name__', '<unnamed user primitive>')
   fun_p = core.Primitive(name)
   fun_p.def_impl(fun)
@@ -787,3 +788,27 @@ def _primitive(fun):
   traceable.primitive = fun_p
 
   return traceable
+
+
+def _elementwise_std_basis(pytree):
+  leaves, _ = tree_flatten(pytree)
+  arity = len(leaves)
+  dims = map(onp.size, leaves)
+  # TODO(mattjj): use symbolic constants
+  basis_array = onp.stack(
+      [onp.concatenate([onp.ones(dims[j]) if i == j else onp.zeros(dims[j])
+                        for j in range(arity)]) for i in range(arity)])
+  return _unravel_array_into_pytree(pytree, 1, basis_array)
+
+def jarrett(fun):
+  new_fun = custom_transforms(fun)
+
+  def elementwise_jvp(primals, tangents):
+    pushfwd = partial(jvp, fun, primals)
+    y, jacs = vmap(pushfwd, out_axes=(None, 0))(_elementwise_std_basis(tangents))
+    flat_tangents, _ = tree_flatten(tangents)
+    out_tangent = sum([t * jac for t, jac in zip(flat_tangents, jacs)])
+    return y, out_tangent
+  ad.primitive_jvps[new_fun.primitive] = elementwise_jvp
+
+  return new_fun
