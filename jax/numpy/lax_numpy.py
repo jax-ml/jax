@@ -1422,13 +1422,13 @@ def dot(a, b):  # pylint: disable=missing-docstring
     return lax.mul(a, b)
   if _max(a_ndim, b_ndim) <= 2:
     return lax.dot(a, b)
-  a_reshaped = reshape(a, (-1, shape(a)[-1]))
-  if _ndim(b) in {1, 2}:
-    out = lax.dot(a_reshaped, b)
+
+  if b_ndim == 1:
+    contract_dims = ((a_ndim - 1,), (0,))
   else:
-    b_reshaped = reshape(moveaxis(b, -2, 0), (shape(b)[-2], -1))
-    out = lax.dot(a_reshaped, b_reshaped)
-  return lax.reshape(out, a.shape[:-1] + b.shape[:-2] + b.shape[-2:][1:])
+    contract_dims = ((a_ndim - 1,), (b_ndim - 2,))
+  batch_dims = ((), ())
+  return lax.dot_general(a, b, (contract_dims, batch_dims))
 
 
 @_wraps(onp.matmul)
