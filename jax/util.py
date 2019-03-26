@@ -176,6 +176,14 @@ def memoize(fun, max_size=4096):
   return memoized_fun
 
 
+def memoize_unary(func):
+  class memodict(dict):
+    def __missing__(self, key):
+      val = self[key] = func(key)
+      return val
+  return memodict().__getitem__
+
+
 def prod(xs):
   return functools.reduce(mul, xs, 1)
 
