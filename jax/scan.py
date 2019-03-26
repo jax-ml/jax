@@ -136,7 +136,7 @@ def _scan_jvp(primals, tangents, avals, jaxpr):
   def f_jvp_c(carry_dual, x_dual):
     init, init_dot = carry_dual
     x, x_dot = x_dual
-    ans = f_jvp(core.pack((consts, core.unit, init, x)),
+    ans = f_jvp(core.pack((consts    , core.unit, init    , x)),
                 core.pack((consts_dot, core.unit, init_dot, x_dot)))
     (y, carry_out), (y_dot, carry_out_dot) = ans
     return core.pack((core.pack((y, y_dot)),
@@ -149,8 +149,10 @@ def _scan_jvp(primals, tangents, avals, jaxpr):
 
   # TODO: plumb symbolic zeros in and out of jvp transformation so we can test
   # that they're the same as the inputs and re-run if not
-  return scan_p.bind(core.pack(consts), init_dual, xs_dual,
-                     avals=avals, jaxpr=jvp_jaxpr)
+  ans = scan_p.bind(core.pack(consts), init_dual, xs_dual,
+                    avals=avals, jaxpr=jvp_jaxpr)
+  (y, y_dot), (carry_out, carry_out_dot) = ans
+  return core.pack((y, carry_out)), core.pack((y_dot, carry_out_dot))
 
 
 scan_p = core.Primitive("scan")
