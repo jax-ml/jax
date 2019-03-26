@@ -65,7 +65,7 @@ def promote_aval_rank(n, xs):
     return ShapedArray((n,) + xs.shape, xs.dtype)
 
 def leading_dim_size(xs):
-  if isinstance(xs, core.AbstractTuple):
+  if isinstance(xs, core.JaxTuple):
     return leading_dim_size(xs[0])
   else:
     return xs.shape[0]
@@ -131,29 +131,26 @@ def _scan_jvp(primals, tangents, avals, jaxpr):
   init_dot   = ad.instantiate_zeros(init  , init_dot)
   xs_dot     = ad.instantiate_zeros(xs    , xs_dot)
 
-  # consts_dual = core.pack((consts, consts_dot))
-  init_dual   = core.pack((init  , init_dot))
-  xs_dual     = core.pack((xs    , xs_dot))
-
-  # f_jvp :: (consts, init, xs) ->  (consts_t, init_t, xs_t) -> ...
   f_jvp = ad.jvp(lu.wrap_init(f)).call_wrapped
 
   def f_jvp_c(carry_dual, x_dual):
     init, init_dot = carry_dual
     x, x_dot = x_dual
-    ans = f_jvp(core.pack((consts, init, x)),
-                core.pack((consts_dot, init_dot, x_dot)))
+    ans = f_jvp(core.pack((consts, core.unit, init, x)),
+                core.pack((consts_dot, core.unit, init_dot, x_dot)))
     (y, carry_out), (y_dot, carry_out_dot) = ans
-    return (core.pack((y, y_dot)),
-            core.pack((carry_out, carry_out_dot)))
+    return core.pack((core.pack((y, y_dot)),
+                      core.pack((carry_out, carry_out_dot))))
 
-
-  consts, avals, jaxpr = trace_scan_fun(f_jvp_c, init_dual, xs_dual)
-
+  consts_dual = core.pack((consts, consts_dot))
+  init_dual   = core.pack((init  , init_dot))
+  xs_dual     = core.pack((xs    , xs_dot))
+  consts, avals, jvp_jaxpr = trace_scan_fun(f_jvp_c, init_dual, xs_dual)
 
   # TODO: plumb symbolic zeros in and out of jvp transformation so we can test
   # that they're the same as the inputs and re-run if not
-  return scan_p.bind(init, xs, core.pack(consts), avals=avals, jaxpr=jaxpr_jvp)
+  return scan_p.bind(core.pack(consts), init_dual, xs_dual,
+                     avals=avals, jaxpr=jvp_jaxpr)
 
 
 scan_p = core.Primitive("scan")

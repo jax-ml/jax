@@ -7,7 +7,7 @@ from jax import jvp
 # scan :: (a -> c -> (b,c)) -> c -> [a] -> ([b],c)
 
 def f(x, carry):
-  carry = carry + np.sin(x)
+  carry = carry + x
   y = pack((carry**2, -carry))
   return pack((y, carry))
 
@@ -19,7 +19,7 @@ ans = scan(f, 0.0, np.arange(4))
 
 def cumsum(xs):
   def f(x, carry):
-    carry = carry + np.sin(x)
+    carry = carry + x
     return pack((carry, carry))
 
   ys, _ = scan(f, 0.0, xs)
