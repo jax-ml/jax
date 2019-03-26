@@ -50,7 +50,8 @@ def scan_reference(f, init, xs):
     (y, carry) = f(x, carry)
     ys.append(y)
 
-  return ys, carry
+  ys = core.pack(map(np.stack, zip(*ys)))
+  return ys, np.array(carry)
 
 def demote_aval_rank(xs):
   if isinstance(xs, core.AbstractTuple):
@@ -91,7 +92,8 @@ def update_arrays(i, aval, xs, x):
 # scan :: (a -> c -> (b,c)) -> c -> [a] -> ([b],c)
 def scan(f, init, xs):
   consts, avals, jaxpr = trace_scan_fun(f, init, xs)
-  return scan_p.bind(core.pack(consts), init, xs, avals=avals, jaxpr=jaxpr)
+  ys, carry = scan_p.bind(core.pack(consts), init, xs, avals=avals, jaxpr=jaxpr)
+  return ys, carry
 
 def trace_scan_fun(f, init, xs):
   f = lu.wrap_init(f)
@@ -127,6 +129,8 @@ def _scan_jvp(primals, tangents, avals, jaxpr):
   consts_dot, init_dot, xs_dot = tangents
   f = partial(core.eval_jaxpr, jaxpr)
 
+  # TODO: plumb symbolic zeros in and out of jvp transformation so we can test
+  # that they're the same as the inputs and re-run if not
   consts_dot = ad.instantiate_zeros(consts, consts_dot)
   init_dot   = ad.instantiate_zeros(init  , init_dot)
   xs_dot     = ad.instantiate_zeros(xs    , xs_dot)
@@ -147,8 +151,6 @@ def _scan_jvp(primals, tangents, avals, jaxpr):
   xs_dual     = core.pack((xs    , xs_dot))
   consts, avals, jvp_jaxpr = trace_scan_fun(f_jvp_c, init_dual, xs_dual)
 
-  # TODO: plumb symbolic zeros in and out of jvp transformation so we can test
-  # that they're the same as the inputs and re-run if not
   ans = scan_p.bind(core.pack(consts), init_dual, xs_dual,
                     avals=avals, jaxpr=jvp_jaxpr)
   (y, y_dot), (carry_out, carry_out_dot) = ans
