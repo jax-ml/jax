@@ -1,4 +1,4 @@
-from jax.scan import scan
+from jax.scan import scan, scan_reference
 from jax.core import pack
 import jax.core as core
 import jax.numpy as np
@@ -11,26 +11,23 @@ def f(x, carry):
   y = pack((carry**2, -carry))
   return pack((y, carry))
 
-x = np.array(np.arange(4), dtype=np.float64)
+print scan(f, 0.0, np.arange(4))
+print scan_reference(f, 0.0, np.arange(4))
 
-[0, 1, 9, 36]
+# def cumsum(xs):
+#   def f(x, carry):
+#     carry = carry + x
+#     return pack((carry, carry))
 
-ans = scan(f, 0.0, np.arange(4))
+#   ys, _ = scan(f, 0.0, xs)
+#   return ys
 
-def cumsum(xs):
-  def f(x, carry):
-    carry = carry + x
-    return pack((carry, carry))
+# x = np.linspace(0, 3, 4)
 
-  ys, _ = scan(f, 0.0, xs)
-  return ys
-
-x = np.linspace(0, 3, 4)
-
-print x
-print np.cumsum(x)
-print cumsum(x)
+# print x
+# print np.cumsum(x)
+# print cumsum(x)
 
 
-print jvp(np.cumsum, (x,), (x*0.1,))
-print jvp(cumsum, (x,), (x*0.1,))
+# print jvp(np.cumsum, (x,), (x*0.1,))
+# print jvp(cumsum, (x,), (x*0.1,))
