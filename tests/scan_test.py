@@ -13,21 +13,22 @@ def f(x, carry):
 
 print scan(f, 0.0, np.arange(4))
 print scan_reference(f, 0.0, np.arange(4))
+print
 
-# def cumsum(xs):
-#   def f(x, carry):
-#     carry = carry + x
-#     return pack((carry, carry))
+def cumsum(xs):
+  def f(x, carry):
+    carry = carry + x
+    return pack((carry, carry))
 
-#   ys, _ = scan(f, 0.0, xs)
-#   return ys
+  ys, _ = scan(f, 0.0, xs)
+  return ys
 
-# x = np.linspace(0, 3, 4)
+x = np.linspace(0, 3, 4)
 
-# print x
-# print np.cumsum(x)
-# print cumsum(x)
+print np.cumsum(x)
+print cumsum(x)
+print
 
-
-# print jvp(np.cumsum, (x,), (x*0.1,))
-# print jvp(cumsum, (x,), (x*0.1,))
+print jvp(np.cumsum, (x,), (x*0.1,))
+print jvp(cumsum, (x,), (x*0.1,))
+print
