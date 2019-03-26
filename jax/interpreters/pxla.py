@@ -28,7 +28,7 @@ from .. import ad_util
 from .. import tree_util
 from .. import linear_util as lu
 from ..abstract_arrays import ConcreteArray, ShapedArray
-from ..util import partial, unzip2, concatenate, safe_map, prod
+from ..util import partial, unzip2, concatenate, safe_map, prod, memoize_unary
 from ..lib import xla_bridge as xb
 from .xla import (xla_shape, xla_destructure, translation_rule,
                   xla_shape_to_result_shape, jaxpr_computation)
@@ -63,9 +63,9 @@ def shard_arg(device_ordinals, arg):
   if type(arg) is ShardedDeviceArray and nrep == len(arg.device_buffers):
     # TODO(mattjj, phawkins): improve re-distribution not to copy to host
     _, ids = onp.unique(assignments, return_index=True)
-    shards = [arg.device_buffers[i].to_py() for i in ids]  # TODO(mattjj): lazy
+    get_shard = memoize_unary(lambda i: arg.device_buffers[i].to_py())
     return [buf if buf.device() == device_ordinals[r]
-            else xla.device_put(shards[i], device_ordinals[r])
+            else xla.device_put(get_shard(i), device_ordinals[r])
             for r, (i, buf) in enumerate(zip(assignments, arg.device_buffers))]
   else:
     shards = [arg[i] for i in range(arg.shape[0])]
