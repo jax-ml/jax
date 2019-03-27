@@ -56,6 +56,7 @@ jax.numpy package
     cos
     cosh
     count_nonzero
+    cross
     cumsum
     cumprod
     cumproduct

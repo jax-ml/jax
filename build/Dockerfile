@@ -6,11 +6,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
             dh-autoreconf git curl \
             build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev \
             libsqlite3-dev wget llvm libncurses5-dev xz-utils tk-dev \
-            libxml2-dev libxmlsec1-dev libffi-dev openjdk-8-jdk curl
+            libxml2-dev libxmlsec1-dev libffi-dev openjdk-8-jdk curl \
+            bash-completion unzip python
 
-RUN echo "deb [arch=amd64] http://storage.googleapis.com/bazel-apt stable jdk1.8" | tee /etc/apt/sources.list.d/bazel.list
-RUN curl https://bazel.build/bazel-release.pub.gpg | apt-key add -
-RUN apt-get update && apt-get install -y bazel
+RUN wget "https://github.com/bazelbuild/bazel/releases/download/0.24.0/bazel_0.24.0-linux-x86_64.deb" && \
+    dpkg -i bazel_0.24.0-linux-x86_64.deb
 
 RUN git clone https://github.com/nixos/patchelf /tmp/patchelf
 WORKDIR /tmp/patchelf
