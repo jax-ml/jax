@@ -83,17 +83,17 @@ class PapplyTest(jtu.JaxTestCase):
     expected = onp.sin(onp.arange(3.))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @skip
-  def DISABLED_testSum(self):
-    pfun, axis_name = papply(np.sum, 5)
+  def testSum(self):
+    pfun, axis_name = papply(lambda x: np.sum(x, axis=0), 5)
 
-    jaxpr = make_jaxpr(pfun)(onp.zeros(5))
+    jaxpr = make_jaxpr(pfun)(onp.ones(3))
     expected_jaxpr = make_jaxpr(
-        lambda x: lax.psum(x, axis_name))(onp.zeros(5))
+        lambda x: lax.psum(x, axis_name))(onp.zeros((5, 3)))
     assert repr(jaxpr) == repr(expected_jaxpr)
 
-    ans = serial_pmap(pfun, axis_name)(onp.arange(3.))
-    expected = onp.sum(onp.arange(3.))
+    arg = onp.arange(15.).reshape((5, 3))
+    ans = serial_pmap(pfun, axis_name)(arg)[0]
+    expected = onp.sum(arg, axis=0)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   @skip
