@@ -43,6 +43,9 @@ map = ju.safe_map
 #  pro: feels cleaner for transposition
 #  pro: accumulation without saving intermediates
 
+# design indecision: store intermediates from within f vs *just inputs*
+# design indecision: *jvp splits scan* or partial eval splits scan
+
 def scan_reference(f, init, xs):
   carry = init
   ys = []

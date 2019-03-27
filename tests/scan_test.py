@@ -4,7 +4,7 @@ from jax.scan import scan, scan_reference
 from jax.core import pack
 import jax.core as core
 import jax.numpy as np
-from jax import jvp
+from jax import jvp, linearize
 
 # scan :: (a -> c -> (b,c)) -> c -> [a] -> ([b],c)
 
@@ -36,3 +36,5 @@ print
 print jvp(np.cumsum, (x,), (x*0.1,))
 print jvp(cumsum, (x,), (x*0.1,))
 print
+print linearize(np.cumsum, x)[1](x*0.1)
+print linearize(cumsum, x)[1](x*0.1)
