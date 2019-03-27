@@ -96,6 +96,19 @@ class PapplyTest(jtu.JaxTestCase):
     expected = onp.sum(arg, axis=0)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testMax(self):
+    pfun, axis_name = papply(lambda x: np.max(x, axis=0), 5)
+
+    jaxpr = make_jaxpr(pfun)(onp.ones(3))
+    expected_jaxpr = make_jaxpr(
+        lambda x: lax.pmax(x, axis_name))(onp.zeros((5, 3)))
+    assert repr(jaxpr) == repr(expected_jaxpr)
+
+    arg = onp.arange(15.).reshape((5, 3))
+    ans = serial_pmap(pfun, axis_name)(arg)[0]
+    expected = onp.max(arg, axis=0)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   @skip
   def DISABLED_testLogSoftmax(self):
 
