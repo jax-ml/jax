@@ -19,16 +19,11 @@ from __future__ import division
 from __future__ import print_function
 
 from functools import partial
-import itertools
 import time
 
-import numpy.random as npr
-
 import jax.numpy as np
-from jax.config import config
-from jax import jit, grad, papply, pmap, serial_pmap, make_jaxpr
+from jax import jit, papply, serial_pmap, make_jaxpr
 from jax import lax
-from jax.experimental import optimizers
 from jax.experimental import stax
 from jax.experimental.stax import Dense, Relu, LogSoftmax
 from examples import datasets
