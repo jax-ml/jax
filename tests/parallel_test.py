@@ -46,6 +46,12 @@ class SerialPmapTest(jtu.JaxTestCase):
     expected = 4 * onp.ones(4)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testReduceMax(self):
+    f = lambda x: lax.pmax(x, 'i')
+    ans = serial_pmap(f, axis_name='i')(onp.arange(4))
+    expected = 3 * onp.ones(4)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def testLogSoftmax(self):
     f = lambda x: x - np.log(lax.psum(np.exp(x), 'i'))
     x = onp.log(onp.arange(1., 10., dtype=onp.float32))

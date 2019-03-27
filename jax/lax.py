@@ -4147,9 +4147,13 @@ ad.deflinear(psum_p, _psum_transpose_rule)
 parallel.defreducer(reduce_sum_p, psum_p)
 
 
+def _pmax_serial_pmap_rule(val, axis):
+  return _reduce_max(val, [axis]), None
+
 pmax_p = PmapPrimitive('pmax')
 pmax_p.def_impl(partial(_unbound_name_error, 'pmax'))
 pmax_p.def_abstract_eval(lambda x, *args, **kwargs: x)
+parallel.serial_pmap_primitive_rules[pmax_p] = _pmax_serial_pmap_rule
 parallel.defreducer(reduce_max_p, pmax_p)
 
 
