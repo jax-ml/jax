@@ -1669,6 +1669,7 @@ def _conj_transpose_rule(t, x, input_dtype):
   else:
     return [real(t)]
 
+xla.translations[conj_p] = lambda c, x, **kwargs: c.Conj(x)
 ad.primitive_jvps[conj_p] = partial(ad.linear_jvp, conj_p)
 ad.primitive_transposes[conj_p] = _conj_transpose_rule
 
@@ -1707,7 +1708,7 @@ xor_p = standard_binop([_any, _any], 'xor')
 ad.defjvp_zero(xor_p)
 
 def _add_transpose(t, x, y):
-  assert x is None and y is None  # computation must be linear, not affine
+  # assert x is None and y is None  # computation must be linear, not affine
   return [t, t]
 
 add_p = standard_binop([_num, _num], 'add')
@@ -1732,8 +1733,8 @@ ad.defbilinear_broadcasting(_brcast, mul_p, mul, mul)  # TODO
 def _safe_mul_translation_rule(c, x, y):
   dtype = c.GetShape(x).numpy_dtype()
   zero = c.Constant(onp.array(0, dtype=dtype))
-  out_shape = tuple(onp.maximum(c.GetShape(x).dimensions(),
-                                c.GetShape(y).dimensions()))
+  out_shape = broadcast_shapes(c.GetShape(x).dimensions(),
+                               c.GetShape(y).dimensions())
   return c.Select(c.Or(c.Eq(x, zero), c.Eq(y, zero)),
                   c.Broadcast(zero, out_shape),
                   c.Mul(x, y))
@@ -2130,16 +2131,6 @@ def _dot_general_shape_rule(lhs, rhs, dimension_numbers):
     msg = ("dot_general requires contracting dimensions to have the same "
            "shape, got {} and {}.")
     raise TypeError(msg.format(lhs_contracting_shape, rhs_contracting_shape))
-  if lhs.ndim > len(lhs_batch) + len(lhs_contracting) + 1:
-    msg = ("dot_general requires either one or zero non-batch non-contracting "
-           "lhs dimension, got {}.")
-    diff = lhs.ndim - len(lhs_batch) - len(lhs_contracting)
-    raise TypeError(msg.format(diff))
-  if rhs.ndim > len(rhs_batch) + len(rhs_contracting) + 1:
-    msg = ("dot_general requires either one or zero non-batch non-contracting "
-           "rhs dimension, got {}.")
-    diff = rhs.ndim - len(rhs_batch) - len(rhs_contracting)
-    raise TypeError(msg.format(diff))
 
   batch_shape = tuple(onp.take(lhs.shape, lhs_batch))
   lhs_contract_or_batch = tuple(lhs_contracting) + tuple(lhs_batch)

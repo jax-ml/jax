@@ -68,7 +68,7 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record("gammaln", 1, float_dtypes, jtu.rand_positive(), False),
     # TODO: NaNs in gradient for logit.
     op_record("logit", 1, float_dtypes, jtu.rand_small_positive(), False),
-    op_record("log_ndtr", 1, float_dtypes, jtu.rand_default(), True),
+    op_record("log_ndtr", 1, float_dtypes, jtu.rand_small(), True),
     op_record("ndtri", 1, float_dtypes, jtu.rand_uniform(0., 1.), True),
     op_record("ndtr", 1, float_dtypes, jtu.rand_default(), True),
 ]
