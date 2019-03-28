@@ -179,9 +179,9 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
 
 
   @genNamedParametersNArgs(3, jtu.rand_default())
-  def testNormLogPdf(self, rng, shapes, dtypes):
-    scipy_fun = osp_stats.norm.logpdf
-    lax_fun = lsp_stats.norm.logpdf
+  def testCauchyLogPdf(self, rng, shapes, dtypes):
+    scipy_fun = osp_stats.cauchy.logpdf
+    lax_fun = lsp_stats.cauchy.logpdf
 
     def args_maker():
       x, loc, scale = map(rng, shapes, dtypes)
