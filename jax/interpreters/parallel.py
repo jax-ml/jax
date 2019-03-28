@@ -316,6 +316,10 @@ def broadcasting_papply(prim, name, vals, axes, **params):
     return prim.bind(x, y, **params), ydim
 
 
+def identity_papply(prim, argnum, name, vals, axes, **params):
+  return prim.bind(*vals, **params), axes[argnum]
+
+
 papply_primitive_rules = {}
 
 def defvectorized(prim):
@@ -327,3 +331,6 @@ def defreducer(prim, collective_prim):
 
 def defbroadcasting(prim):
   papply_primitive_rules[prim] = partial(broadcasting_papply, prim)
+
+def defidentity(prim, argnum=0):
+  papply_primitive_rules[prim] = partial(identity_papply, prim, argnum)
