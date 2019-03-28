@@ -87,8 +87,8 @@ Jump right in using a notebook in your browser, connected to a Google Cloud GPU.
 And for a deeper dive into JAX:
 - [Common gotchas and sharp edges](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb)
 - [The Autodiff Cookbook, Part 1: easy and powerful automatic differentiation in JAX](https://colab.research.google.com/github/google/jax/blob/master/notebooks/autodiff_cookbook.ipynb)
-- [Directly using XLA in Python](https://colab.research.google.com/github/google/jax/blob/autodiff-cookbook/notebooks/XLA_in_Python.ipynb)
-- [MAML Tutorial with JAX](https://colab.research.google.com/github/google/jax/blob/autodiff-cookbook/notebooks/maml.ipynb).
+- [Directly using XLA in Python](https://colab.research.google.com/github/google/jax/blob/master/notebooks/XLA_in_Python.ipynb)
+- [MAML Tutorial with JAX](https://colab.research.google.com/github/google/jax/blob/master/notebooks/maml.ipynb).
 
 ## Installation
 JAX is written in pure Python, but it depends on XLA, which needs to be
