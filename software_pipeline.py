@@ -27,34 +27,34 @@ def producer(fun, q_out):
   def produce():
     while True:
       q_out.put(fun())
-  return spawn(produce)
+  spawn(produce)
 
 @curry
 def producer_consumer(fun, q_in, q_out):
   def produce_consume():
     while True:
       q_out.put(fun(q_in.get()))
-  return spawn(produce_consume)
+  spawn(produce_consume)
 
 @curry
 def consumer(fun, q_in):
   def consume():
     while True:
       fun(q_in.get())
-  return spawn(consume)
+  spawn(consume)
 
 def round_robin_splitter(q_in, qs_out):
   def round_robin_split():
     while True:
       for q_out in qs_out:
         q_out.put(q_in.get())
-  return spawn(round_robin_split)
+  spawn(round_robin_split)
 
 def fan_in_concat(qs_in, q_out):
   def fan_in_concat():
     while True:
       q_out.put([q_in.get() for q_in in qs_in])
-  return spawn(fan_in_concat)
+  spawn(fan_in_concat)
 
 @curry
 def pipeline(makers, q_out):
@@ -66,7 +66,7 @@ def pipeline(makers, q_out):
 @curry
 def parallel(makers, qs_in, qs_out):
   assert len(funs) == len(qs_in) == len(qs_out)
-  return map(makers, qs_in, qs_out)
+  map(makers, qs_in, qs_out)
 
 
 # using the combinators directly
