@@ -14,6 +14,7 @@
 
 from __future__ import absolute_import
 from . import beta
+from . import cauchy
 from . import expon
 from . import gamma
 from . import laplace
