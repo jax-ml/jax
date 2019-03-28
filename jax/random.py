@@ -32,6 +32,7 @@ from . import lax
 from . import numpy as np
 from . import tree_util
 from .api import jit
+from .numpy.lax_numpy import _constant_like
 from jax.lib import xla_bridge
 from jax import core
 
@@ -381,3 +382,21 @@ def bernoulli(key, mean=onp.float32(0.5), shape=()):
   if onp.shape(mean) != shape:
     mean = np.broadcast_to(mean, shape)
   return lax.lt(uniform(key, shape), mean)
+
+
+@partial(jit, static_argnums=(1, 2))
+def cauchy(key, shape=(), dtype=onp.float32):
+  """Sample Cauchy random values with given shape and float dtype.
+
+  Args:
+    key: a PRNGKey used as the random key.
+    shape: optional, a tuple of nonnegative integers representing the shape
+      (default scalar).
+    dtype: optional, a float dtype for the returned values (default float32).
+
+  Returns:
+    A random array with the specified shape and dtype.
+  """
+  u = uniform(key, shape, dtype)
+  pi = _constant_like(u, onp.pi)
+  return lax.tan(pi * lax.sub(u, _constant_like(u, 0.5)))

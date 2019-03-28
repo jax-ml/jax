@@ -177,5 +177,20 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
+
+  @genNamedParametersNArgs(3, jtu.rand_default())
+  def testNormLogPdf(self, rng, shapes, dtypes):
+    scipy_fun = osp_stats.norm.logpdf
+    lax_fun = lsp_stats.norm.logpdf
+
+    def args_maker():
+      x, loc, scale = map(rng, shapes, dtypes)
+      # clipping to ensure that scale is not too low
+      scale = onp.clip(onp.abs(scale), a_min=0.1, a_max=None)
+      return [x, loc, scale]
+
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
+
 if __name__ == "__main__":
     absltest.main()
