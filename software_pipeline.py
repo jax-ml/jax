@@ -1,3 +1,4 @@
+from collections import namedtuple
 from functools import partial
 from itertools import count
 from threading import Thread
@@ -18,6 +19,17 @@ def spawn(fun):
 
 def curry(f):
   return partial(partial, f)
+
+def memoize_on_id(fun):
+  cache = {}
+  def memoized_fun(x):
+    key = id(x)
+    if key in cache:
+      val, _ = cache[key]
+    else:
+      val, _ = cache[key] = (fun(x), x)
+    return val
+  return memoized_fun
 
 
 # combinators
@@ -57,11 +69,19 @@ def fan_in_concat(qs_in, q_out):
   spawn(fan_in_concat)
 
 @curry
-def pipeline(makers, q_out):
+def source_pipeline(makers, q_out):
   qs = [new_queue() for _ in makers[:-1]] + [q_out]
   makers[0](qs[0])
   for maker, q_in, q_out in zip(makers[1:], qs[:-1], qs[1:]):
     maker(q_in, q_out)
+
+@curry
+def sink_pipeline(makers, q_in):
+  raise NotImplementedError
+
+@curry
+def producer_consumer_pipeline(makers, q_in, q_out):
+  raise NotImplementedError
 
 @curry
 def parallel(makers, qs_in, qs_out):
@@ -75,18 +95,16 @@ if __name__ == '__main__':
   counter = count().next
   square = lambda x: x**2
 
-  make_pipeline = pipeline([producer(counter), producer_consumer(square)])
+  make_source = source_pipeline([producer(counter), producer_consumer(square)])
   stream = new_queue()
-  make_pipeline(stream)
+  make_source(stream)
 
   for _ in range(10):
     print stream.get()
   print
 
 
-# a language
-
-from collections import namedtuple
+# ast constructors for a daxpr language
 
 Source = SourceLiteral = namedtuple('Source', ['pyfun'])
 Sink = SinkLiteral = namedtuple('Sink', ['pyfun'])
@@ -111,35 +129,34 @@ SourceT = DaxprType('SourceT')
 SinkT = DaxprType('SinkT')
 ProducerConsumerT = DaxprType('ProducerConsumerT')
 
-def memoize_on_id(fun):
-  cache = {}
-  def memoized_fun(x):
-    key = id(x)
-    if key in cache:
-      val, _ = cache[key]
-    else:
-      val, _ = cache[key] = (fun(x), x)
-    return val
-  return memoized_fun
+literals = {
+  SourceLiteral: SourceT,
+  SinkLiteral: SinkT,
+  ProducerConsumerLiteral: ProducerConsumerT,
+}
 
 @memoize_on_id
 def type_daxpr(daxpr):
-  t = type(daxpr)
-  if t is Source:
-    return SourceT
-  elif t is Sink:
-    return SinkT
-  elif t is ProducerConsumer:
-    return ProducerConsumerT
+  t = type(daxpr)  # syntax analysis
+  if t in literals:
+    return literals[t]
   elif t is Pipeline:
-    start_type = type_daxpr(daxpr.daxprs[0])
-    rest_types = map(type_daxpr, daxpr.daxprs[1:])
-    if start_type is SourceT and all(d is ProducerConsumerT for d in rest_types):
+    types = map(type_daxpr, daxpr.daxprs)
+    if all(d is ProducerConsumerT for d in types):
+      return ProducerConsumerT
+    elif types[0] is SourceT and all(d is ProducerConsumerT for d in types[1:]):
       return SourceT
+    elif types[-1] is SinkT and all(d is ProducerConsumerT for d in types[:-1]):
+      return SinkT
     else:
-      raise TypeError((start_type, rest_types))
+      raise DaxprTypeError(types)
+  elif t is Parallel:
+    raise NotImplementedError
   else:
-    raise TypeError(t)
+    raise DaxprSyntaxError(t)
+
+class DaxprTypeError(TypeError): pass
+class DaxprSyntaxError(SyntaxError): pass
 
 
 # an interpreter
