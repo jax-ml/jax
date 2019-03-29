@@ -46,6 +46,12 @@ class SerialPmapTest(jtu.JaxTestCase):
     expected = 4 * onp.ones(4)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testReduceMax(self):
+    f = lambda x: lax.pmax(x, 'i')
+    ans = serial_pmap(f, axis_name='i')(onp.arange(4))
+    expected = 3 * onp.ones(4)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def testLogSoftmax(self):
     f = lambda x: x - np.log(lax.psum(np.exp(x), 'i'))
     x = onp.log(onp.arange(1., 10., dtype=onp.float32))
@@ -77,17 +83,30 @@ class PapplyTest(jtu.JaxTestCase):
     expected = onp.sin(onp.arange(3.))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @skip
-  def DISABLED_testSum(self):
-    pfun, axis_name = papply(np.sum, 5)
+  def testSum(self):
+    pfun, axis_name = papply(lambda x: np.sum(x, axis=0), 5)
 
-    jaxpr = make_jaxpr(pfun)(onp.zeros(5))
+    jaxpr = make_jaxpr(pfun)(onp.ones(3))
     expected_jaxpr = make_jaxpr(
-        lambda x: lax.psum(x, axis_name))(onp.zeros(5))
+        lambda x: lax.psum(x, axis_name))(onp.zeros((5, 3)))
     assert repr(jaxpr) == repr(expected_jaxpr)
 
-    ans = serial_pmap(pfun, axis_name)(onp.arange(3.))
-    expected = onp.sum(onp.arange(3.))
+    arg = onp.arange(15.).reshape((5, 3))
+    ans = serial_pmap(pfun, axis_name)(arg)[0]
+    expected = onp.sum(arg, axis=0)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testMax(self):
+    pfun, axis_name = papply(lambda x: np.max(x, axis=0), 5)
+
+    jaxpr = make_jaxpr(pfun)(onp.ones(3))
+    expected_jaxpr = make_jaxpr(
+        lambda x: lax.pmax(x, axis_name))(onp.zeros((5, 3)))
+    assert repr(jaxpr) == repr(expected_jaxpr)
+
+    arg = onp.arange(15.).reshape((5, 3))
+    ans = serial_pmap(pfun, axis_name)(arg)[0]
+    expected = onp.max(arg, axis=0)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   @skip

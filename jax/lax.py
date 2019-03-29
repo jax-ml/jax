@@ -2194,11 +2194,55 @@ def _dot_general_batch_rule(batched_args, batch_dims, dimension_numbers):
   batched_out = dot_general(lhs, rhs, new_dimension_numbers)
   return batched_out, 0
 
+
+def _dot_general_papply_rule(name, vals, dims, dimension_numbers):
+  x, y = vals
+  xdim, ydim = dims
+
+  (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
+
+  if len(lhs_batch) > 0 or len(rhs_batch) > 0:
+    raise NotImplementedError
+
+  def adjust_dims(dims, thresh):
+    return tuple(i - 1 if i >= thresh else i for i in dims if i != thresh)
+
+  sub_lhs_contract, sub_rhs_contract = lhs_contract, rhs_contract
+  if xdim is not None:
+    sub_lhs_contract = adjust_dims(lhs_contract, xdim)
+  if ydim is not None:
+    sub_rhs_contract = adjust_dims(rhs_contract, ydim)
+
+  sub_dimension_numbers = (
+      (sub_lhs_contract, sub_rhs_contract), (lhs_batch, rhs_batch))
+
+  if xdim in lhs_contract and ydim in rhs_contract:
+    z = dot_general(x, y, sub_dimension_numbers)
+    return psum(z, name), None
+  elif xdim in lhs_contract:
+    if ydim is not None:        # Cannot hide two dimensions, so collect one
+      y = pcollect(y, name)
+    return dot_general(x, y, sub_dimension_numbers), xdim
+  elif ydim in rhs_contract:
+    if xdim is not None:        # Cannot hide two dimensions, so collect one
+      x = pcollect(x, name)
+    return dot_general(x, y, sub_dimension_numbers), ydim
+  elif xdim is not None:
+    if ydim is not None:        # Cannot hide two dimensions, so collect one
+      y = pcollect(y, name)
+    return dot_general(x, y, sub_dimension_numbers), xdim
+  elif ydim is not None:
+    return dot_general(x, y, sub_dimension_numbers), ydim
+  else:
+    return dot_general(x, y, sub_dimension_numbers), None
+
+
 dot_general_p = standard_primitive(_dot_general_shape_rule,
                                    _dot_general_dtype_rule, 'dot_general')
 ad.defbilinear(dot_general_p,
                _dot_general_transpose_lhs, _dot_general_transpose_rhs)
 batching.primitive_batchers[dot_general_p] = _dot_general_batch_rule
+parallel.papply_primitive_rules[dot_general_p] = _dot_general_papply_rule
 
 
 def _broadcast_shape_rule(operand, sizes):
@@ -2424,14 +2468,39 @@ def _reshape_papply_rule(name, vals, axes, new_sizes, dimensions, old_sizes):
   operand, = vals
   axis, = axes
 
+  def filter_ones(xs):
+    return filter(lambda x: x != 1, xs)
+
+  def find_new_axis(old_axis, old_sizes, new_sizes):
+    if len(filter_ones(new_sizes)) != len(filter_ones(old_sizes)):
+      return None
+    num_before = len(filter_ones(old_sizes[:old_axis]))
+    sz = old_sizes[old_axis]
+    for i, new_sz in enumerate(new_sizes):
+      if num_before == 0:
+        if new_sz == sz:
+          return i
+        elif new_sz != 1:
+          return None
+      elif new_sz != 1:
+        num_before -= 1
+    return None
+
+  err = NotImplementedError(
+      'papply of reshape that would change hidden dimension size')
+
   if dimensions is None:
-    # if there is an i such that prod(new_sizes[:i]) == prod(old_sizes[:axis])
-    # and new_sizes[i] == old_sizes[axis], then we can maintain sharding.
-    # otherwise, it's ambiguous, and we could either gather or just make up a
-    # way to rescatter.
-    raise NotImplementedError  # TODO
+    new_axis = find_new_axis(axis, old_sizes, new_sizes)
+    if new_axis is not None:
+      if (prod(old_sizes[:axis]) != prod(new_sizes[:new_axis]) or
+          prod(old_sizes[axis + 1:]) != prod(new_sizes[new_axis + 1:])):
+        raise err
+      new_sizes_ = new_sizes[:new_axis] + new_sizes[new_axis + 1:]
+      return reshape(operand, new_sizes_, dimensions=dimensions), new_axis
+    else:
+      raise err
   else:
-    raise NotImplementedError  # TODO(mattjj): handle reshape w/ dimensions
+    raise NotImplementedError('papply of reshape with `dimensions`')
 
 reshape_p = standard_primitive(_reshape_shape_rule, _reshape_dtype_rule,
                                'reshape', _reshape_translation_rule)
@@ -4014,6 +4083,9 @@ batching.primitive_batchers[stop_gradient_p] = _stop_gradient_batch_rule
 def psum(x, axis_name):
   return psum_p.bind(x, axis_name=axis_name)
 
+def pmax(x, axis_name):
+  return pmax_p.bind(x, axis_name=axis_name)
+
 def pswapaxes(x, axis_name, axis):
   """Analogue to `np.swapaxes` involving a hidden axis.
 
@@ -4073,6 +4145,16 @@ parallel.serial_pmap_primitive_rules[psum_p] = _psum_serial_pmap_rule
 pxla.parallel_translation_rules[psum_p] = _psum_parallel_translation_rule
 ad.deflinear(psum_p, _psum_transpose_rule)
 parallel.defreducer(reduce_sum_p, psum_p)
+
+
+def _pmax_serial_pmap_rule(val, axis):
+  return _reduce_max(val, [axis]), None
+
+pmax_p = PmapPrimitive('pmax')
+pmax_p.def_impl(partial(_unbound_name_error, 'pmax'))
+pmax_p.def_abstract_eval(lambda x, *args, **kwargs: x)
+parallel.serial_pmap_primitive_rules[pmax_p] = _pmax_serial_pmap_rule
+parallel.defreducer(reduce_max_p, pmax_p)
 
 
 def _pswapaxes_serial_pmap_rule(x, axis_in, axis):
