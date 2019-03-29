@@ -59,7 +59,8 @@ def xla_primitive_callable(prim, *abstract_args, **kwargs):
   built_c = primitive_computation(prim, *shapes, **kwargs)
   result_shape = xla_shape_to_result_shape(built_c.GetReturnValueShape())
   handle_result = result_handler(result_shape)
-  compiled = built_c.Compile(shapes, xb.get_compile_options())
+  compiled = built_c.Compile(shapes, xb.get_compile_options(),
+                             backend=xb.get_backend())
   return partial(execute_compiled_primitive, compiled, handle_result)
 
 @memoize
@@ -188,7 +189,8 @@ def tuple_constant(c, val, canonicalize_types=True):
 xb.register_constant_handler(JaxTuple, tuple_constant)
 
 def translation_rule(p):
-  backend_specific_rule = backend_specific_translations[xb._platform_name].get(p)
+  backend = xb.get_backend()
+  backend_specific_rule = backend_specific_translations[backend.platform].get(p)
   try:
     return backend_specific_rule or translations[p]
   except KeyError:
