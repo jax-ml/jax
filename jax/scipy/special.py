@@ -20,6 +20,8 @@ import numpy as onp
 import scipy.special as osp_special
 
 from .. import lax
+from ..api import custom_transforms
+from ..interpreters import ad, batching
 from ..numpy import lax_numpy as np
 from ..numpy.lax_numpy import _wraps, asarray, _reduction_dims, _constant_like
 
@@ -33,16 +35,22 @@ erfinv = _wraps(osp_special.erfinv)(lambda x: lax.erf_inv(x))
 
 
 @_wraps(osp_special.logit)
+@custom_transforms
 def logit(x):
   x = asarray(x)
   return lax.log(lax.div(x, lax.sub(lax._const(x, 1), x)))
+ad.defjvp2(logit.primitive, lambda g, ans, x: g / (x * (1 - x)))
+batching.defvectorized(logit.primitive)
 
 
 @_wraps(osp_special.expit)
+@custom_transforms
 def expit(x):
   x = asarray(x)
   one = lax._const(x, 1)
   return lax.div(one, lax.add(one, lax.exp(lax.neg(x))))
+ad.defjvp2(expit.primitive, lambda g, ans, x: g * ans * (1 - ans))
+batching.defvectorized(expit.primitive)
 
 
 @_wraps(osp_special.logsumexp)
