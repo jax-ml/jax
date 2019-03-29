@@ -82,14 +82,6 @@ def source_pipeline(makers, q_out):
   for maker, q_in, q_out in zip(makers[1:], qs[:-1], qs[1:]):
     maker(q_in, q_out)
 
-@curry
-def sink_pipeline(makers, q_in):
-  raise NotImplementedError
-
-@curry
-def producer_consumer_pipeline(makers, q_in, q_out):
-  raise NotImplementedError
-
 
 # using the combinators directly
 
@@ -238,3 +230,7 @@ if __name__ == '__main__':
   ])
 
   q = build_threaded(daxpr)
+
+  for _ in range(10):
+    print q.get()
+  print
