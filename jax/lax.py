@@ -56,6 +56,7 @@ from .interpreters import parallel
 from .util import curry, memoize, safe_zip, unzip2, prod
 from .tree_util import build_tree, tree_unflatten
 from .lib import xla_bridge
+from .lib.xla_bridge import xla_client
 
 FLAGS = flags.FLAGS
 
@@ -3342,7 +3343,7 @@ def _reduce_window_sum_transpose_rule(cotangent, window_dimensions,
                     for (lo, hi), stride in zip(pads, window_strides)]
   pad_cotangent = pad(cotangent, _zero(cotangent), padding_config)
   result = _reduce_window_sum(pad_cotangent, window_dimensions, ones,
-                              xla_bridge.get_xla_client().PaddingType.VALID)
+                              xla_client.PaddingType.VALID)
   assert result.shape == input_shape
   return [result]
 
@@ -4121,7 +4122,7 @@ def _dilate_shape(shape, dilation):
 
 def padtype_to_pads(in_shape, window_shape, window_strides, padding):
   """Convert padding string to list of pairs of pad values."""
-  PaddingType = xla_bridge.get_xla_client().PaddingType
+  PaddingType = xla_client.PaddingType
 
   if isinstance(padding, str):
     mapping = {'VALID': PaddingType.VALID, 'SAME': PaddingType.SAME}
