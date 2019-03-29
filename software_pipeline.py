@@ -6,6 +6,8 @@ from Queue import Queue
 
 import numpy as onp
 
+from jax.util import unzip2
+
 
 # utils
 
@@ -69,6 +71,11 @@ def fan_in_concat(qs_in, q_out):
   spawn(fan_in_concat)
 
 @curry
+def parallel(makers, qs_in, qs_out):
+  assert len(funs) == len(qs_in) == len(qs_out)
+  map(makers, qs_in, qs_out)
+
+@curry
 def source_pipeline(makers, q_out):
   qs = [new_queue() for _ in makers[:-1]] + [q_out]
   makers[0](qs[0])
@@ -82,11 +89,6 @@ def sink_pipeline(makers, q_in):
 @curry
 def producer_consumer_pipeline(makers, q_in, q_out):
   raise NotImplementedError
-
-@curry
-def parallel(makers, qs_in, qs_out):
-  assert len(funs) == len(qs_in) == len(qs_out)
-  map(makers, qs_in, qs_out)
 
 
 # using the combinators directly
@@ -110,8 +112,8 @@ Source = SourceLiteral = namedtuple('Source', ['pyfun'])
 Sink = SinkLiteral = namedtuple('Sink', ['pyfun'])
 ProducerConsumer = ProducerConsumerLiteral = namedtuple('ProducerConsumer', ['pyfun'])
 
-FanOutRoundRobin = namedtuple('FanOutRoundRobin', [])()
-FanInConcatenate = namedtuple('FanInConcatenate', [])()
+FanOutRoundRobin = namedtuple('FanOutRoundRobin', ['arity'])
+FanInConcatenate = namedtuple('FanInConcatenate', ['arity'])
 
 Pipeline = namedtuple('Pipeline', ['daxprs'])
 Parallel = namedtuple('Parallel', ['daxprs'])
@@ -119,41 +121,35 @@ Parallel = namedtuple('Parallel', ['daxprs'])
 
 # a typer
 
-class DaxprType(object):
-  def __init__(self, name):
-    self.name =  name
-  def __repr__(self):
-    return self.name
-
-SourceT = DaxprType('SourceT')
-SinkT = DaxprType('SinkT')
-ProducerConsumerT = DaxprType('ProducerConsumerT')
+DaxprType = namedtuple('DaxprType', ['arity_in', 'arity_out'])
 
 literals = {
-  SourceLiteral: SourceT,
-  SinkLiteral: SinkT,
-  ProducerConsumerLiteral: ProducerConsumerT,
+    SourceLiteral: lambda _: DaxprType(0, 1),
+    SinkLiteral: lambda _: DaxprType(1, 0),
+    ProducerConsumerLiteral: lambda _: DaxprType(1, 1),
+    FanOutRoundRobin: lambda daxpr: DaxprType(1, daxpr.arity),
+    FanInConcatenate: lambda daxpr: DaxprType(daxpr.arity, 1),
 }
 
 @memoize_on_id
 def type_daxpr(daxpr):
-  t = type(daxpr)  # syntax analysis
-  if t in literals:
-    return literals[t]
-  elif t is Pipeline:
-    types = map(type_daxpr, daxpr.daxprs)
-    if all(d is ProducerConsumerT for d in types):
-      return ProducerConsumerT
-    elif types[0] is SourceT and all(d is ProducerConsumerT for d in types[1:]):
-      return SourceT
-    elif types[-1] is SinkT and all(d is ProducerConsumerT for d in types[:-1]):
-      return SinkT
-    else:
-      raise DaxprTypeError(types)
-  elif t is Parallel:
-    raise NotImplementedError
+  s = type(daxpr)  # syntax analysis
+  if s in literals:
+    return literals[s](daxpr)
   else:
-    raise DaxprSyntaxError(t)
+    assert daxpr.daxprs  # TODO raise syntax error in ast constructors
+    daxpr_types = map(type_daxpr, daxpr.daxprs)
+    ins, outs = unzip2((dt.arity_in, dt.arity_out) for dt in daxpr_types)
+    if s is Parallel:
+      if not all(ain == aout == 1 for ain, aout in zip(ins, outs)):
+        raise DaxprTypeError("parallel combination of multi-arity daxprs")
+      return DaxprType(sum(ins), sum(outs))
+    elif s is Pipeline:
+      if ins[1:] != outs[:-1]:
+        raise DaxprTypeError("pipeline arity mismatch: {}".format(daxpr_types))
+      return DaxprType(ins[0], outs[-1])
+    else:
+      raise DaxprSyntaxError(s)
 
 class DaxprTypeError(TypeError): pass
 class DaxprSyntaxError(SyntaxError): pass
@@ -162,37 +158,51 @@ class DaxprSyntaxError(SyntaxError): pass
 # an interpreter
 
 def build_threaded(daxpr):
-  t = type_daxpr(daxpr)
-  if t is SourceT:
-    return build_source(daxpr, new_queue())
-  elif t is SinkT:
-    return build_sink(daxpr, new_queue())
-  elif t is ProducerConsumerT:
-    return build_producer_consumer(daxpr, new_queue(), new_queue())
+  dt = type_daxpr(daxpr)
+  arity_in, arity_out = dt.arity_in, dt.arity_out
+  qs_in = [new_queue() for _ in range(arity_in)]
+  qs_out = [new_queue() for _ in range(arity_out)]
+  _build_threaded(daxpr, qs_in, qs_out)
 
-def build_source(daxpr, q_out):
-  t = type(daxpr)
-  if t is SourceLiteral:
+  # convenience unpacking
+  qs_in = qs_in[0] if len(qs_in) == 1 else qs_in
+  qs_out = qs_out[0] if len(qs_out) == 1 else qs_out
+  if arity_in == 0:
+    return qs_out
+  elif arity_out == 0:
+    return qs_in
+  else:
+    return qs_in, qs_out
+
+def _build_threaded(daxpr, qs_in, qs_out):
+  s = type(daxpr)  # syntax analysis
+  if s is SourceLiteral:
+    q_out, = qs_out
     producer(daxpr.pyfun)(q_out)
-    return q_out
-  elif t is Pipeline:
-    qs = [new_queue() for _ in daxpr.daxprs[:-1]] + [q_out]
-    build_source(daxpr.daxprs[0], qs[0])
-    map(build_producer_consumer, daxpr.daxprs[1:], qs[:-1], qs[1:])
-    return q_out
-  else:
-    raise NotImplementedError
-
-def build_sink(daxpr, q_in):
-  raise NotImplementedError
-
-def build_producer_consumer(daxpr, q_in, q_out):
-  t = type(daxpr)
-  if t is ProducerConsumerLiteral:
+  elif s is SinkLiteral:
+    q_in, = qs_in
+    consumer(daxpr.pyfun)(q_in)
+  elif s is ProducerConsumerLiteral:
+    q_in, = qs_in
+    q_out, = qs_out
     producer_consumer(daxpr.pyfun)(q_in, q_out)
-    return q_in, q_out
+  elif s is FanOutRoundRobin:
+    q_in, = qs_in
+    round_robin_splitter(q_in, qs_out)
+  elif s is FanInConcatenate:
+    q_out, = qs_out
+    fan_in_concat(qs_in, q_out)
   else:
-    raise NotImplementedError
+    daxpr_types = map(type_daxpr, daxpr.daxprs)
+    ins, outs = unzip2((dt.arity_in, dt.arity_out) for dt in daxpr_types)
+    if s is Parallel:
+      for d, q_in, q_out in zip(daxpr.daxprs, qs_in, qs_out):
+        _build_threaded(d, [q_in], [q_out])
+    elif s is Pipeline:
+      qs = [[new_queue() for _ in range(arity)] for arity in ins[1:]]
+      map(_build_threaded, daxpr.daxprs, [qs_in] + qs, qs + [qs_out])
+    else:
+      assert False  # unreachable, syntax errors should be caught earlier
 
 
 # using the language
@@ -216,3 +226,15 @@ if __name__ == '__main__':
   for _ in range(10):
     print q.get()
   print
+
+
+  # another example
+  daxpr = Pipeline([
+      Source(count().next),
+      ProducerConsumer(square),
+      FanOutRoundRobin(2),
+      Parallel([ProducerConsumer(lambda x: x), ProducerConsumer(onp.sqrt)]),
+      FanInConcatenate(2),
+  ])
+
+  q = build_threaded(daxpr)
