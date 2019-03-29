@@ -399,4 +399,39 @@ def cauchy(key, shape=(), dtype=onp.float32):
   """
   u = uniform(key, shape, dtype)
   pi = _constant_like(u, onp.pi)
-  return lax.tan(pi * lax.sub(u, _constant_like(u, 0.5)))
+  return lax.tan(lax.mul(pi, lax.sub(u, _constant_like(u, 0.5))))
+
+
+@partial(jit, static_argnums=(1, 2))
+def exponential(key, shape=(), dtype=onp.float32):
+  """Sample Exponential random values with given shape and float dtype.
+
+  Args:
+    key: a PRNGKey used as the random key.
+    shape: optional, a tuple of nonnegative integers representing the shape
+      (default scalar).
+    dtype: optional, a float dtype for the returned values (default float32).
+
+  Returns:
+    A random array with the specified shape and dtype.
+  """
+  u = uniform(key, shape, dtype)
+  # taking 1 - u to move the domain of log to (0, 1] instead of [0, 1)
+  return lax.neg(lax.log(lax.sub(_constant_like(u, 1), u)))
+
+
+@partial(jit, static_argnums=(1, 2))
+def laplace(key, shape=(), dtype=onp.float32):
+  """Sample Laplace random values with given shape and float dtype.
+
+  Args:
+    key: a PRNGKey used as the random key.
+    shape: optional, a tuple of nonnegative integers representing the shape
+      (default scalar).
+    dtype: optional, a float dtype for the returned values (default float32).
+
+  Returns:
+    A random array with the specified shape and dtype.
+  """
+  u = uniform(key, shape, dtype, minval=-1., maxval=1.)
+  return lax.mul(lax.sign(u), lax.log1p(lax.neg(lax.abs(u))))
