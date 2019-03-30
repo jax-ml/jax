@@ -151,7 +151,8 @@ class LaxRandomTest(jtu.JaxTestCase):
     self.assertFalse(onp.all(perm1 == x))  # seems unlikely!
     self.assertTrue(onp.all(onp.sort(perm1) == x))
 
-  def testBernoulli(self):
+  # TODO: add Kolmogorov-Smirnov test for Bernoulli
+  def testBernoulliShape(self):
     key = random.PRNGKey(0)
     x = random.bernoulli(key, onp.array([0.2, 0.3]), shape=(3, 2))
     assert x.shape == (3, 2)
@@ -197,6 +198,27 @@ class LaxRandomTest(jtu.JaxTestCase):
 
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.laplace().cdf)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_b={}_{}".format(b, dtype),
+       "b": b, "dtype": onp.dtype(dtype).name}
+      for b in [0.1, 1., 10.]
+      for dtype in [onp.float32, onp.float64]))
+  def testPareto(self, b, dtype):
+    key = random.PRNGKey(0)
+    rand = lambda key, b: random.pareto(key, b, (10000,), dtype)
+    crand = api.jit(rand)
+
+    uncompiled_samples = rand(key, b)
+    compiled_samples = crand(key, b)
+
+    for samples in [uncompiled_samples, compiled_samples]:
+      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.pareto(b).cdf)
+
+  def testParetoShape(self):
+    key = random.PRNGKey(0)
+    x = random.pareto(key, onp.array([0.2, 0.3]), shape=(3, 2))
+    assert x.shape == (3, 2)
 
   def testIssue222(self):
     x = random.randint(random.PRNGKey(10003), (), 0, 0)
