@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
 from collections import Counter
 import itertools as it
 
@@ -20,7 +24,7 @@ from six.moves import reduce
 
 from .. import core
 from ..core import Trace, Tracer, new_master, pack, AbstractTuple, JaxTuple
-from ..util import unzip2, partial, safe_map, safe_zip, WrapHashably
+from ..util import unzip2, partial, safe_map, safe_zip, memoize, prod
 from ..linear_util import transformation, transformation_with_aux, wrap_init
 from ..ad_util import add_jaxvals_p
 from ..tree_util import tree_map, tree_multimap
@@ -51,13 +55,16 @@ def polysimp(vals):
     out_poly, out_aval = out_tracer.poly, out_tracer.aval
     del master, out_tracer
   env = dict(zip(symbols, vals))
+  print(out_poly)
   yield eval_polynomial(env, out_poly, out_aval)
 
 
-class UnitCoeff(object): pass
+class UnitCoeff(object):
+  def __repr__(self): return '1'
 one = UnitCoeff()
 
-class ZeroCoeff(object): pass
+class ZeroCoeff(object):
+  def __repr__(self): return '0'
 zero = ZeroCoeff()
 
 def mul_coeffs(a, b):
@@ -117,7 +124,7 @@ def apply_linear(prim, p):
 def eval_polynomial(env, p, aval):
   pow = memoize(lambda x, n: env[x] ** n)
   eval_mon = lambda m: prod(pow(x, n) for x, n in Counter(m).items())
-  terms = [mul_coeffs(coeff, eval_mon(mon)) for mon, coef in p.items()]
+  terms = [mul_coeffs(coeff, eval_mon(mon)) for mon, coeff in p.items()]
   return instantiate_symbolic(aval, reduce(add_coeffs, terms))
 
 def instantiate_symbolic(aval, x):
@@ -163,7 +170,7 @@ class PolySimpTrace(Trace):
 
   def process_primitive(self, primitive, tracers, params):
     polys_in, avals_in = unzip2((t.poly, t.aval) for t in tracers)
-    aval_out = primitive.abstract_eval(*avals, **params)
+    aval_out = primitive.abstract_eval(*avals_in, **params)
     if primitive in addition_primitives:  # e.g. add
       p1, p2 = polys_in
       return PolySimpTracer(self, p1 + p2, aval_out)
@@ -188,6 +195,6 @@ class PolySimpTrace(Trace):
     return PolySimpTracer(self, PolyTuple(polys), avals)
 
 
-addition_primitives = {}
-multiplication_primitives = {}
-identity_primitives = {}
+addition_primitives = set()
+multiplication_primitives = set()
+linear_primitives = set()
