@@ -20,4 +20,5 @@ from . import gamma
 from . import laplace
 from . import multivariate_normal
 from . import norm
+from . import t
 from . import uniform
