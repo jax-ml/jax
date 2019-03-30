@@ -23,15 +23,20 @@ from ... import lax
 from ...numpy.lax_numpy import _promote_args_like, _constant_like, _wraps
 
 
-@_wraps(osp_stats.cauchy.logpdf)
-def logpdf(x, loc=0, scale=1):
-  x, loc, scale = _promote_args_like(osp_stats.cauchy.logpdf, x, loc, scale)
-  one = _constant_like(x, 1)
-  pi = _constant_like(x, onp.pi)
+@_wraps(osp_stats.t.logpdf)
+def logpdf(x, df, loc=0, scale=1):
+  x, df, loc, scale = _promote_args_like(osp_stats.t.logpdf, x, df, loc, scale)
+  two = _constant_like(x, 2)
   scaled_x = lax.div(lax.sub(x, loc), scale)
-  normalize_term = lax.log(lax.mul(pi, scale))
-  return lax.neg(lax.add(normalize_term, lax.log(one + lax.mul(scaled_x, scaled_x))))
+  df_over_two = lax.div(df, two)
+  df_plus_one_over_two = lax.add(df_over_two, _constant_like(x, 0.5))
+  normalize_term_const = lax.mul(lax.mul(scale, scale), _constant_like(x, onp.pi))
+  normalize_term_tmp = lax.div(lax.log(lax.mul(normalize_term_const, df)), two)
+  normalize_term = lax.sub(lax.add(lax.lgamma(df_over_two), normalize_term_tmp),
+                           lax.lgamma(df_plus_one_over_two))
+  quadratic = lax.div(lax.mul(scaled_x, scaled_x), df)
+  return lax.neg(lax.add(normalize_term, lax.mul(df_plus_one_over_two, lax.log1p(quadratic))))
 
-@_wraps(osp_stats.cauchy.pdf)
+@_wraps(osp_stats.t.pdf)
 def pdf(x, loc=0, scale=1):
   return lax.exp(logpdf(x, loc, scale))
