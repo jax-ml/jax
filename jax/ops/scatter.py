@@ -214,7 +214,7 @@ def index_update(x, idx, y):
 
   Returns the value of `x` that would result from the
   NumPy-style :mod:`indexed assignment <numpy.doc.indexing>`::
-    x[idx] += y
+    x[idx] = y
 
   Note the `index_update` operator is pure; `x` itself is
   not modified, instead the new value that `x` would have taken is returned.
