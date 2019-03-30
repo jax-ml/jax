@@ -151,7 +151,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     self.assertFalse(onp.all(perm1 == x))  # seems unlikely!
     self.assertTrue(onp.all(onp.sort(perm1) == x))
 
-  # TODO: add Kolmogorov-Smirnov test for Bernoulli
+  # TODO: add Chi-squared test for Bernoulli
   def testBernoulliShape(self):
     key = random.PRNGKey(0)
     x = random.bernoulli(key, onp.array([0.2, 0.3]), shape=(3, 2))
