@@ -62,6 +62,20 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                             tol=1e-4)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
+  @genNamedParametersNArgs(3, jtu.rand_default())
+  def testCauchyLogPdf(self, rng, shapes, dtypes):
+    scipy_fun = osp_stats.cauchy.logpdf
+    lax_fun = lsp_stats.cauchy.logpdf
+
+    def args_maker():
+      x, loc, scale = map(rng, shapes, dtypes)
+      # clipping to ensure that scale is not too low
+      scale = onp.clip(onp.abs(scale), a_min=0.1, a_max=None)
+      return [x, loc, scale]
+
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
+
   @genNamedParametersNArgs(3, jtu.rand_positive())
   def testExponLogPdf(self, rng, shapes, dtypes):
     scipy_fun = osp_stats.expon.logpdf
@@ -165,6 +179,21 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
 
+  @genNamedParametersNArgs(4, jtu.rand_default())
+  def testTLogPdf(self, rng, shapes, dtypes):
+    scipy_fun = osp_stats.t.logpdf
+    lax_fun = lsp_stats.t.logpdf
+
+    def args_maker():
+      x, df, loc, scale = map(rng, shapes, dtypes)
+      # clipping to ensure that scale is not too low
+      scale = onp.clip(onp.abs(scale), a_min=0.1, a_max=None)
+      return [x, df, loc, scale]
+
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
+
+
   @genNamedParametersNArgs(3, jtu.rand_default())
   def testUniformLogPdf(self, rng, shapes, dtypes):
     scipy_fun = osp_stats.uniform.logpdf
@@ -173,21 +202,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     def args_maker():
       x, loc, scale = map(rng, shapes, dtypes)
       return [x, loc, onp.abs(scale)]
-
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
-    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
-
-
-  @genNamedParametersNArgs(3, jtu.rand_default())
-  def testCauchyLogPdf(self, rng, shapes, dtypes):
-    scipy_fun = osp_stats.cauchy.logpdf
-    lax_fun = lsp_stats.cauchy.logpdf
-
-    def args_maker():
-      x, loc, scale = map(rng, shapes, dtypes)
-      # clipping to ensure that scale is not too low
-      scale = onp.clip(onp.abs(scale), a_min=0.1, a_max=None)
-      return [x, loc, scale]
 
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
