@@ -31,7 +31,7 @@ import numpy as onp
 from . import lax
 from . import numpy as np
 from . import tree_util
-from .api import jit
+from .api import jit, vmap
 from .numpy.lax_numpy import _constant_like
 from jax.lib import xla_bridge
 from jax import core
@@ -418,6 +418,68 @@ def exponential(key, shape=(), dtype=onp.float32):
   u = uniform(key, shape, dtype)
   # taking 1 - u to move the domain of log to (0, 1] instead of [0, 1)
   return lax.neg(lax.log(lax.sub(_constant_like(u, 1), u)))
+
+
+def _gamma_one(key, alpha):
+  # Ref: A simple method for generating gamma variables, George Marsaglia and Wai Wan Tsang
+  key, subkey = split(key)
+  boost = np.where(alpha >= 1.0, 1.0, uniform(subkey, ()) ** (1.0 / alpha))
+  alpha = np.where(alpha >= 1.0, alpha, alpha + 1.0)
+
+  d = alpha - 1.0 / 3.0
+  c = 1.0 / np.sqrt(9.0 * d)
+
+  def _cond_fn(kXVU):
+    _, X, V, U = kXVU
+    # FIXME: find a way to avoid evaluating second condition which involves log+log
+    # if the first condition is satisfied
+    # note: lax.cond does not support batching rule yet
+    return (U >= 1.0 - 0.0331 * X * X) & (np.log(U) >= 0.5 * X + d * (1.0 - V + np.log(V)))
+
+  def _body_fn(kXVU):
+    def _next_kxv(kxv):
+      key = kxv[0]
+      key, subkey = split(key)
+      x = normal(subkey, ())
+      v = 1.0 + c * x
+      return key, x, v
+
+    key = kXVU[0]
+    key, x, v = lax.while_loop(lambda kxv: kxv[2] <= 0.0, _next_kxv, (key, 0.0, -1.0))
+    key, subkey = split(key)
+    X = x * x
+    V = v * v * v
+    U = uniform(subkey, ())
+    return key, X, V, U
+
+  _, _, V, _ = lax.while_loop(_cond_fn, _body_fn, (key, 1.0, 1.0, 2.0))
+  z = d * V * boost
+  return np.where(z == 0, np.finfo(z.dtype).tiny, z)
+
+
+@partial(jit, static_argnums=(2, 3))
+def gamma(key, a, shape=(), dtype=onp.float32):
+  """Sample Gamma random values with given shape and float dtype.
+
+  Args:
+    key: a PRNGKey used as the random key.
+    a: an array-like broadcastable to `shape` and used as the shape parameter
+      of the random variables.
+    shape: optional, a tuple of nonnegative integers representing the shape
+      (default scalar).
+    dtype: optional, a float dtype for the returned values (default float32).
+
+  Returns:
+    A random array with the specified shape and dtype.
+  """
+  a = lax.convert_element_type(a, dtype)
+  shape = shape or onp.shape(a)
+  if onp.shape(a) != shape:
+    a = np.broadcast_to(a, shape)
+  alphas = np.reshape(a, -1)
+  keys = split(key, onp.size(alphas))
+  samples = vmap(_gamma_one)(keys, alphas)
+  return np.reshape(samples, shape)
 
 
 @partial(jit, static_argnums=(1, 2))
