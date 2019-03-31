@@ -49,7 +49,12 @@ _check_jaxlib_version()
 
 from jaxlib import xla_client
 from jaxlib import xla_data_pb2
-from jaxlib import xrt
+
+# Workaround for older jaxlib versions. Remove after a jaxlib release.
+try:
+  from jaxlib import xrt
+except ImportError:
+  xrt = None
 
 
 FLAGS = flags.FLAGS
