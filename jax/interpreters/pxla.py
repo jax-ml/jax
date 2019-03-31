@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2019 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -191,7 +191,8 @@ def compile_replicated(jaxpr, axis_name, axis_size, consts, *abstract_args):
   arg_shapes = list(map(xla_shape, abstract_args))
   built_c = replicated_comp(jaxpr, axis_env, consts, (), *arg_shapes)
   result_shape = xla_shape_to_result_shape(built_c.GetReturnValueShape())
-  compiled = built_c.Compile(arg_shapes, xb.get_compile_options(num_replicas))
+  compiled = built_c.Compile(arg_shapes, xb.get_compile_options(num_replicas),
+                             backend=xb.get_backend())
   return compiled, num_replicas, result_shape
 
 def jaxpr_replicas(jaxpr):
