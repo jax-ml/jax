@@ -112,7 +112,7 @@ def cholesky_cpu_translation_rule(c, operand):
     # TODO(phawkins): support LAPACK primitives in batched mode.
     return c.Cholesky(operand)
 
-xla.backend_specific_translations['Host'][cholesky_p] = cholesky_cpu_translation_rule
+xla.backend_specific_translations['cpu'][cholesky_p] = cholesky_cpu_translation_rule
 
 
 # Symmetric/Hermitian eigendecomposition
@@ -178,7 +178,7 @@ eigh_p.def_impl(eigh_impl)
 eigh_p.def_abstract_eval(eigh_abstract_eval)
 xla.translations[eigh_p] = eigh_translation_rule
 ad.primitive_jvps[eigh_p] = eigh_jvp_rule
-xla.backend_specific_translations['Host'][eigh_p] = eigh_cpu_translation_rule
+xla.backend_specific_translations['cpu'][eigh_p] = eigh_cpu_translation_rule
 
 
 
@@ -261,7 +261,7 @@ def triangular_solve_cpu_translation_rule(
     # TODO(phawkins): support BLAS primitives in batched mode.
     return c.TriangularSolve(a, b, left_side, lower, transpose_a, conjugate_a)
 
-xla.backend_specific_translations['Host'][triangular_solve_p] = triangular_solve_cpu_translation_rule
+xla.backend_specific_translations['cpu'][triangular_solve_p] = triangular_solve_cpu_translation_rule
 
 
 # LU decomposition
@@ -360,7 +360,7 @@ def lu_cpu_translation_rule(c, operand):
 # TODO(phawkins): The hasattr() test here is to avoid incompatibilities between
 # jax and an older jaxlib. Remove after a jaxlib release includes jax_getrf.
 if hasattr(lapack, "jax_getrf"):
-  xla.backend_specific_translations['Host'][lu_p] = lu_cpu_translation_rule
+  xla.backend_specific_translations['cpu'][lu_p] = lu_cpu_translation_rule
 
 
 def lu_pivots_to_permutation(swaps, k):
@@ -471,4 +471,4 @@ svd_p = Primitive('svd')
 svd_p.def_impl(svd_impl)
 svd_p.def_abstract_eval(svd_abstract_eval)
 xla.translations[svd_p] = svd_translation_rule
-xla.backend_specific_translations['Host'][svd_p] = svd_cpu_translation_rule
+xla.backend_specific_translations['cpu'][svd_p] = svd_cpu_translation_rule
