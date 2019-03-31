@@ -52,12 +52,16 @@ fi
 
 # Copy the XLA dependencies into jax/lib, fixing up some imports to point to the
 # new location.
-cp -f "$(rlocation org_tensorflow/tensorflow/compiler/xla/python/pywrap_xla.py)" \
-  "${TARGET}/jaxlib"
-cp -f "$(rlocation org_tensorflow/tensorflow/compiler/xla/python/_pywrap_xla.so)" \
-  "${TARGET}/jaxlib"
 cp -f "$(rlocation __main__/jaxlib/lapack.so)" "${TARGET}/jaxlib"
+cp -f "$(rlocation org_tensorflow/tensorflow/compiler/xla/python/xla_extension.so)" \
+  "${TARGET}/jaxlib"
 sed \
-  -e 's/from tensorflow.compiler.xla.python import pywrap_xla as c_api/from . import pywrap_xla as c_api/' \
+  -e 's/from tensorflow.compiler.xla.python import xla_extension as _xla/from . import xla_extension as _xla/' \
+  -e 's/from tensorflow.compiler.xla.python.xla_extension import ops/from .xla_extension import ops/' \
   < "$(rlocation org_tensorflow/tensorflow/compiler/xla/python/xla_client.py)" \
   > "${TARGET}/jaxlib/xla_client.py"
+sed \
+  -e 's/from tensorflow.compiler.xla.python import xla_client/from . import xla_client/' \
+  -e 's/from tensorflow.compiler.xla.python import xla_extension as _xla/from . import xla_extension as _xla/' \
+  < "$(rlocation org_tensorflow/tensorflow/compiler/xla/python/xrt.py)" \
+  > "${TARGET}/jaxlib/xrt.py"

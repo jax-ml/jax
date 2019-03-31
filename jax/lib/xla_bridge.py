@@ -49,6 +49,7 @@ _check_jaxlib_version()
 
 from jaxlib import xla_client
 from jaxlib import xla_data_pb2
+from jaxlib import xrt
 
 
 FLAGS = flags.FLAGS
@@ -133,11 +134,20 @@ def _get_local_backend():
 
   return backend
 
+def _get_xrt_backend():
+  # TODO(phawkins): support non-TPU devices.
+  tf_device_name = "TPU"
+  worker = "tpu_worker"
+  tf_context = xrt.get_tf_context(FLAGS.jax_backend_target, worker)
+  backend = xrt.XrtBackend(tf_context, tf_device_name)
+  #  TODO(phawkins) fix XrtBackend to set the following and remove this line.
+  backend.platform = "TPU"
+  return backend
 
 
 register_backend('xla', _get_local_backend)
-register_backend('xrt',
-                 lambda: xla_client.XrtBackend(FLAGS.jax_backend_target))
+register_backend('xrt', _get_xrt_backend)
+
 
 @memoize_thunk
 def get_backend():
