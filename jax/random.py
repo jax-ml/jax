@@ -429,13 +429,14 @@ def _gamma_one(key, alpha):
   one_over_two = _constant_like(alpha, 0.5)
   one_over_three = _constant_like(alpha, 1. / 3.)
   squeeze_const = _constant_like(alpha, 0.0331)
+  dtype = lax._dtype(alpha)
 
   key, subkey = split(key)
   # for alpha < 1, we boost alpha to alpha + 1 and get a sample according to
   # Gamma(alpha) ~ Gamma(alpha+1) * Uniform()^(1 / alpha)
   boost = lax.select(lax.ge(alpha, one),
                      one,
-                     lax.pow(uniform(subkey, ()), lax.div(one, alpha)))
+                     lax.pow(uniform(subkey, (), dtype=dtype), lax.div(one, alpha)))
   alpha = lax.select(lax.ge(alpha, one), alpha, lax.add(alpha, one))
 
   d = lax.sub(alpha, one_over_three)
@@ -455,11 +456,11 @@ def _gamma_one(key, alpha):
   def _body_fn(kXVU):
     key = kXVU[0]
     key, x_key, U_key = split(key, 3)
-    x = normal(x_key, ())
+    x = normal(x_key, (), dtype=dtype)
     v = lax.add(one, lax.mul(x, c))
     X = lax.mul(x, x)
     V = lax.mul(lax.mul(v, v), v)
-    U = uniform(U_key, ())
+    U = uniform(U_key, (), dtype=dtype)
     return key, X, V, U
 
   # initial state is chosen such that _cond_fn will return True
