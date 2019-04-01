@@ -47,7 +47,7 @@ else:
 def polysimp(vals):
   newvar = pe.gensym('')
   symbols = [newvar() for _ in vals]
-  new_poly = lambda symbol: Poly({Mon(symbol): one})
+  new_poly = lambda symbol: Poly({Mon((symbol,)): one})
   with new_master(PolySimpTrace) as master:
     trace = PolySimpTrace(master, core.cur_sublevel())
     in_tracers = [PolySimpTracer(trace, new_poly(x), core.get_aval(v))
@@ -88,19 +88,16 @@ def add_coeffs(a, b):
   else:
     return a + b
 
-class Mon(tuple):
-  def __new__(cls, *elts):
-    return tuple.__new__(cls, sorted(elts))
-
+class Mon(tuple): pass
 class Poly(dict): pass
 
 def mul_polynomials(mul, p1, p2):
   new_terms = {}
   for i1, i2 in it.product(p1, p2):
-    mon = Mon(*heap_merge(i1, i2))
+    mon = Mon(heap_merge(i1, i2))
     coeff = mul_coeffs(mul, p1[i1], p2[i2])
     new_terms[mon] = add_coeffs(new_terms.get(mon, zero), coeff)
-  return new_terms
+  return Poly(new_terms)
 
 def add_polynomials(p1, p2):
   indets1, indets2 = set(p1), set(p2)
@@ -109,11 +106,11 @@ def add_polynomials(p1, p2):
     new_terms[i] = p1[i]
   for i in set.difference(indets2, indets1):
     new_terms[i] = p2[i]
-  return new_terms
+  return Poly(new_terms)
 
 def apply_linear(linear_fun, p, aval):
   inst = lambda x: instantiate_symbolic(aval, x) if x is one else x
-  return {i: linear_fun(inst(coeff)) for i, coeff in p.items()}
+  return Poly({i: linear_fun(inst(coeff)) for i, coeff in p.items()})
 
 def eval_polynomial(env, p, aval):
   if len(env) > 1:
@@ -143,7 +140,7 @@ symbolic_instantiators = {}
 class PolyTuple(tuple): pass
 
 def const_poly(val):
-  return Poly({Mon(): val})
+  return Poly({Mon(()): val})
 
 class PolySimpTracer(Tracer):
   __slots__ = ['poly', 'aval']
