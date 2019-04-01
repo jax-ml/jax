@@ -687,6 +687,27 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_{}_{}".format(
+          jtu.format_shape_dtype_string(shape, dtype),
+          "None" if end_dtype is None else onp.dtype(end_dtype).name,
+          "None" if begin_dtype is None else onp.dtype(begin_dtype).name,),
+       "shape": shape, "dtype": dtype, "end_dtype": end_dtype,
+       "begin_dtype": begin_dtype, "rng": jtu.rand_default()}
+      for dtype in number_dtypes
+      for end_dtype in [None] + number_dtypes
+      for begin_dtype in [None] + number_dtypes
+      for shape in all_shapes))
+  def testEDiff1d(self, shape, dtype, end_dtype, begin_dtype, rng):
+    args_maker = lambda: [rng(shape, dtype),
+                          (None if end_dtype is None else rng(shape, end_dtype)),
+                          (None if begin_dtype is None else rng(shape, begin_dtype))]
+    onp_fun = lambda x, to_end, to_begin: onp.ediff1d(x, to_end, to_begin)
+    lnp_fun = lambda x, to_end, to_begin: lnp.ediff1d(x, to_end, to_begin)
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    # TODO(avaidya): re-enable once it's JITtable
+    #self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}_m={}_n={}_k={}".format(
           onp.dtype(dtype).name, m, n, k),
        "m": m, "n": n, "k": k, "dtype": dtype, "rng": jtu.rand_default()}

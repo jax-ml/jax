@@ -628,6 +628,32 @@ def diff(a, n=1, axis=-1,):
 
   return a
 
+@_wraps(onp.ediff1d)
+def ediff1d(array, to_end=None, to_begin=None):
+    array = ravel(asarray(array))
+
+    difference = array[1:] - array[:-1]
+
+    difference_dtype = difference.dtype
+
+    if to_begin is not None:
+        _to_begin = asarray(to_begin, dtype=difference_dtype)
+        if not all(ravel(equal(to_begin, _to_begin))):
+            raise ValueError("cannot convert 'to_begin' to array with dtype {} "
+                             "as required for input array".format(difference_dtype))
+        to_begin = ravel(_to_begin)
+        difference = concatenate((to_begin, difference))
+
+    if to_end is not None:
+        _to_end = asarray(to_end, dtype=difference_dtype)
+        if not equal(to_end, _to_end).all():
+            raise ValueError("cannot convert 'to_end' to array with dtype {} "
+                             "as required for input array".format(difference_dtype))
+        to_end = ravel(_to_end)
+        difference = concatenate((difference, to_end))
+
+    return difference
+
 
 @_wraps(onp.isrealobj)
 def isrealobj(a):
@@ -1086,7 +1112,6 @@ nancumsum = _make_cumulative_reduction(
   onp.nancumsum, lax._reduce_window_sum, 0, squash_nan=True)
 nancumprod = _make_cumulative_reduction(
   onp.nancumprod, lax._reduce_window_prod, 1, squash_nan=True)
-
 
 ### Array-creation functions
 
