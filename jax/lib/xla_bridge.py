@@ -50,7 +50,8 @@ _check_jaxlib_version()
 from jaxlib import xla_client
 from jaxlib import xla_data_pb2
 
-# Workaround for older jaxlib versions. Remove after a jaxlib release.
+# TODO(phawkins): This is a workaround for older jaxlib versions. Remove after a
+# jaxlib release.
 try:
   from jaxlib import xrt
 except ImportError:
