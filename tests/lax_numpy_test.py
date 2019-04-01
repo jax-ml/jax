@@ -20,6 +20,7 @@ import collections
 import functools
 from functools import partial
 import itertools
+import unittest
 from unittest import skip
 
 from absl.testing import absltest
@@ -393,6 +394,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for shape in rec.shapes for dtype in rec.dtypes
       for axis in range(-len(shape), len(shape))))
   def testArgMinMax(self, onp_op, lnp_op, rng, shape, dtype, axis):
+    if (dtype == onp.complex128 and FLAGS.jax_test_dut and
+        FLAGS.jax_test_dut.startswith("gpu")):
+      raise unittest.SkipTest("complex128 reductions not supported on GPU")
 
     def onp_fun(array_to_reduce):
       return onp_op(array_to_reduce, axis)
