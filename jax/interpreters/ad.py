@@ -34,20 +34,22 @@ map = safe_map
 def identity(x): return x
 
 
-def jvp(fun, has_aux=False):
+def jvp(fun, has_aux=False, instantiate=True):
   if not has_aux:
-    return jvpfun(jvp_subtrace(fun))
+    return jvpfun(jvp_subtrace(fun), instantiate)
   else:
-    fun, aux = jvp_subtrace_aux(fun)
-    return jvpfun(fun), aux
+    fun, aux = jvp_subtrace_aux(fun, instantiate)
+    return jvpfun(fun, instantiate), aux
 
 @transformation
-def jvpfun(primals, tangents):
+def jvpfun(instantiate, primals, tangents):
   with new_master(JVPTrace) as master:
     out_primal, out_tangent = yield master, primals, tangents
     del master
-  out_tangent = instantiate_zeros(out_primal, out_tangent)
+  if instantiate:
+    out_tangent = instantiate_zeros(out_primal, out_tangent)
   yield (out_primal, out_tangent)
+
 
 @transformation
 def jvp_subtrace(master, primals, tangents):
@@ -445,6 +447,51 @@ def map_transpose(primitive, params, jaxpr, consts, freevar_vals, args, ct):
   freevar_cts = tree_map(lambda x: x.sum(0), freevar_cts)
   return cts_out, freevar_cts
 
+def jaxpr_as_fun(jaxpr, consts, *args):
+  return core.eval_jaxpr(jaxpr, consts, (), *args)
+
+def get_zeros(tangent):
+  if tangent is zero:
+    return True
+  elif isinstance(tangent, TangentTuple):
+    return tuple(map(get_zeros, tangent))
+  else:
+    return False
+
+def put_zeros(pack, iszero, x):
+  if iszero is True:
+    return zero
+  elif iszero is False:
+    return x
+  else:
+    return pack(map(partial(put_zeros, pack), iszero, x))
+
+def strip_zeros(unit, pack, iszero, x):
+  if iszero is True:
+    return unit
+  elif iszero is False:
+    return x
+  else:
+    return pack(map(partial(strip_zeros, unit, pack), iszero, x))
+
+@transformation_with_aux
+def f_jvp_traceable(zero_components, primals, tangents):
+  tangents_zeros = map(partial(put_zeros, TangentTuple), zero_components, tangents)
+  primal_out, tangent_out = yield primals, tangents_zeros
+  zeros_out = get_zeros(tangent_out)
+  tangent_out_nozero = strip_zeros(core.unit, pack, zeros_out, tangent_out)
+  yield core.pack((primal_out, tangent_out_nozero)), zeros_out
+
+def jvp_jaxpr(jaxpr, avals, zeros):
+  f = wrap_init(partial(jaxpr_as_fun, jaxpr))
+  f_jvp, out_zeros = f_jvp_traceable(jvp(f, instantiate=False), zeros)
+  primal_aval  = core.AbstractTuple(avals)
+  tangent_aval = strip_zeros(core.AbstractTuple(()), core.AbstractTuple, zeros, primal_aval)
+  primal_pvals  = pe.PartialVal((primal_aval , core.unit))
+  tangent_pvals = pe.PartialVal((tangent_aval, core.unit))
+  jaxpr_out, pval_out, consts_out = pe.trace_to_jaxpr(
+      f_jvp, (primal_pvals, tangent_pvals), instantiate=True)
+  return jaxpr_out, consts_out, out_zeros()
 
 primitive_transposes[core.call_p] = partial(call_transpose, call_p)
 primitive_transposes[pe.compiled_call_p] = partial(call_transpose, pe.compiled_call_p)
