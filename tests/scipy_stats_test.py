@@ -179,6 +179,19 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
 
+  @genNamedParametersNArgs(4, jtu.rand_positive())
+  def testParetoLogPdf(self, rng, shapes, dtypes):
+    scipy_fun = osp_stats.pareto.logpdf
+    lax_fun = lsp_stats.pareto.logpdf
+
+    def args_maker():
+      x, b, loc, scale = map(rng, shapes, dtypes)
+      return [x, b, loc, scale]
+
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
+
+
   @genNamedParametersNArgs(4, jtu.rand_default())
   def testTLogPdf(self, rng, shapes, dtypes):
     scipy_fun = osp_stats.t.logpdf
