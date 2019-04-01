@@ -1369,6 +1369,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     expected = onp.reshape(a, (3, 2), order='F')
     self.assertAllClose(ans, expected, check_dtypes=True)
 
+  def testLongLong(self):
+    self.assertAllClose(onp.int64(7), api.jit(lambda x: x)(onp.longlong(7)),
+                        check_dtypes=True)
+
 
 if __name__ == "__main__":
   absltest.main()
