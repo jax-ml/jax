@@ -53,6 +53,7 @@ fi
 # Copy the XLA dependencies into jax/lib, fixing up some imports to point to the
 # new location.
 cp -f "$(rlocation __main__/jaxlib/lapack.so)" "${TARGET}/jaxlib"
+cp -f "$(rlocation __main__/jaxlib/version.py)" "${TARGET}/jaxlib"
 cp -f "$(rlocation org_tensorflow/tensorflow/compiler/xla/python/xla_extension.so)" \
   "${TARGET}/jaxlib"
 sed \
@@ -65,3 +66,4 @@ sed \
   -e 's/from tensorflow.compiler.xla.python import xla_extension as _xla/from . import xla_extension as _xla/' \
   < "$(rlocation org_tensorflow/tensorflow/compiler/xla/python/xrt.py)" \
   > "${TARGET}/jaxlib/xrt.py"
+

@@ -32,13 +32,14 @@ import numpy as onp  # 'onp' rather than 'np' to distinguish from autograd.numpy
 
 import jaxlib
 
+
 # Check the jaxlib version before importing anything else from jaxlib.
 def _check_jaxlib_version():
   minimum_version = (0, 1, 11)
-  if hasattr(jaxlib, '__version__'):
-    version = tuple(int(x) for x in jaxlib.__version__.split('.'))
+  if hasattr(jaxlib, 'version'):
+    version = tuple(int(x) for x in jaxlib.version.__version__.split('.'))
   else:
-    version = (0, 1, 9)  # The version before jaxlib.__version__ was added.
+    version = (0, 1, 9)  # The version before jaxlib.version was added.
   if version < minimum_version:
     msg = 'jaxlib is version {}, but this version of jax requires version {}.'
     raise ValueError(msg.format('.'.join(map(str, version)),
