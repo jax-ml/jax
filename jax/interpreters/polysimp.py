@@ -18,13 +18,14 @@ from __future__ import print_function
 
 from collections import Counter
 import itertools as it
+import operator as op
 
 import six
 from six.moves import reduce
 
 from .. import core
 from ..core import Trace, Tracer, new_master, pack, AbstractTuple, JaxTuple
-from ..util import unzip2, partial, safe_map, safe_zip, memoize, prod
+from ..util import unzip2, partial, safe_map, safe_zip, prod
 from ..linear_util import transformation, transformation_with_aux, wrap_init
 from ..ad_util import add_jaxvals_p
 from ..tree_util import tree_map, tree_multimap
@@ -55,7 +56,6 @@ def polysimp(vals):
     out_poly, out_aval = out_tracer.poly, out_tracer.aval
     del master, out_tracer
   env = dict(zip(symbols, vals))
-  print(out_poly)
   yield eval_polynomial(env, out_poly, out_aval)
 
 
@@ -67,7 +67,7 @@ class ZeroCoeff(object):
   def __repr__(self): return '0'
 zero = ZeroCoeff()
 
-def mul_coeffs(a, b):
+def mul_coeffs(mul, a, b):
   if a is zero or b is zero:
     return zero
   elif a is one:
@@ -75,7 +75,7 @@ def mul_coeffs(a, b):
   elif b is one:
     return a
   else:
-    return a * b
+    return mul(a, b)
 
 def add_coeffs(a, b):
   if a is zero:
@@ -91,21 +91,13 @@ class Mon(tuple):
   def __new__(cls, *elts):
     return tuple.__new__(cls, sorted(elts))
 
-class Poly(dict):
-  def __add__(self, other):
-    return Poly(add_polynomials(self, other))
+class Poly(dict): pass
 
-  def __mul__(self, other):
-    return Poly(mul_polynomials(self, other))
-
-  def apply_linear(self, prim):
-    return Poly(apply_linear(prim, self))
-
-def mul_polynomials(p1, p2):
+def mul_polynomials(mul, p1, p2):
   new_terms = {}
   for i1, i2 in it.product(p1, p2):
     mon = Mon(*heap_merge(i1, i2))
-    coeff = mul_coeffs(p1[i1], p2[i2])
+    coeff = mul_coeffs(mul, p1[i1], p2[i2])
     new_terms[mon] = add_coeffs(new_terms.get(mon, zero), coeff)
   return new_terms
 
@@ -118,14 +110,24 @@ def add_polynomials(p1, p2):
     new_terms[i] = p2[i]
   return new_terms
 
-def apply_linear(prim, p):
-  return {i: prim.bind(coeff) for i, coeff in p.items()}
+def apply_linear(linear_fun, p):
+  return {i: linear_fun(coeff) for i, coeff in p.items()}
 
 def eval_polynomial(env, p, aval):
-  pow = memoize(lambda x, n: env[x] ** n)
-  eval_mon = lambda m: prod(pow(x, n) for x, n in Counter(m).items())
-  terms = [mul_coeffs(coeff, eval_mon(mon)) for mon, coeff in p.items()]
-  return instantiate_symbolic(aval, reduce(add_coeffs, terms))
+  if len(env) > 1:
+    raise NotImplementedError  # TODO(mattjj): see np.polyval3
+  x, = env.values()
+  coeffs = [zero] * (1 + max(len(mon) for mon in p))
+  for mon, coeff in p.items():
+    coeffs[len(mon)] = coeff
+  out = eval_univariate_polynomial(x, coeffs)
+  return instantiate_symbolic(aval, out)
+
+def eval_univariate_polynomial(x, coeffs):
+  out = zero
+  for coeff in reversed(coeffs):
+    out = add_coeffs(mul_coeffs(op.mul, out, x), coeff)
+  return out
 
 def instantiate_symbolic(aval, x):
   if x is zero or x is one:
@@ -173,13 +175,16 @@ class PolySimpTrace(Trace):
     aval_out = primitive.abstract_eval(*avals_in, **params)
     if primitive in addition_primitives:  # e.g. add
       p1, p2 = polys_in
-      return PolySimpTracer(self, p1 + p2, aval_out)
+      p_out = add_polynomials(p1, p2)
+      return PolySimpTracer(self, p_out, aval_out)
     elif primitive in multiplication_primitives:  # e.g. mul
       p1, p2 = polys_in
-      return PolySimpTracer(self, p1 * p2, aval_out)
-    elif primitive in linear_primitives:  # e.g. broadcast, reduce_sum
+      p_out = mul_polynomials(primitive.bind, p1, p2)
+      return PolySimpTracer(self, p_out, aval_out)
+    elif primitive in linear_primitives:  # e.g. broadcast, reduce_sum, neg
       p, = polys_in
-      return PolySimpTracer(self, p.apply_linear(primitive), aval_out)
+      p_out = apply_linear(primitive.bind, p)
+      return PolySimpTracer(self, p_out, aval_out)
     else:
       # could eval the polynomial in env and call bind, but we assume a promise
       assert False
