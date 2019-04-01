@@ -136,7 +136,8 @@ def compile_jaxpr(jaxpr, const_vals, *abstract_args):
   arg_shapes = list(map(xla_shape, abstract_args))
   built_c = jaxpr_computation(jaxpr, const_vals, (), *arg_shapes)
   result_shape = xla_shape_to_result_shape(built_c.GetReturnValueShape())
-  return built_c.Compile(arg_shapes, xb.get_compile_options()), result_shape
+  return built_c.Compile(arg_shapes, xb.get_compile_options(),
+                         backend=xb.get_backend()), result_shape
 
 def build_jaxpr(jaxpr, const_vals, *abstract_args):
   arg_shapes = list(map(xla_shape, abstract_args))
@@ -377,7 +378,8 @@ def instantiate_device_constant(const, cutoff=1e6, device_num=0):
   if const.size > cutoff and device_num == 0:
     c = xb.make_computation_builder("constant_instantiating_computation")
     xla_const = const.constant_handler(c, const)
-    compiled = c.Build(xla_const).Compile((), xb.get_compile_options())
+    compiled = c.Build(xla_const).Compile((), xb.get_compile_options(),
+                                          backend=xb.get_backend())
     return compiled.Execute(())
   else:
     return xb.device_put(onp.asarray(const), device_num)
