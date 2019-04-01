@@ -25,6 +25,7 @@ from six.moves import reduce
 
 from .. import core
 from ..core import Trace, Tracer, new_master, pack, AbstractTuple, JaxTuple
+from ..abstract_arrays import ShapedArray
 from ..util import unzip2, partial, safe_map, safe_zip, prod
 from ..linear_util import transformation, transformation_with_aux, wrap_init
 from ..ad_util import add_jaxvals_p
@@ -60,11 +61,11 @@ def polysimp(vals):
 
 
 class UnitCoeff(object):
-  def __repr__(self): return '1'
+  def __repr__(self): return 'one'
 one = UnitCoeff()
 
 class ZeroCoeff(object):
-  def __repr__(self): return '0'
+  def __repr__(self): return 'zero'
 zero = ZeroCoeff()
 
 def mul_coeffs(mul, a, b):
@@ -110,8 +111,9 @@ def add_polynomials(p1, p2):
     new_terms[i] = p2[i]
   return new_terms
 
-def apply_linear(linear_fun, p):
-  return {i: linear_fun(coeff) for i, coeff in p.items()}
+def apply_linear(linear_fun, p, aval):
+  inst = lambda x: instantiate_symbolic(aval, x) if x is one else x
+  return {i: linear_fun(inst(coeff)) for i, coeff in p.items()}
 
 def eval_polynomial(env, p, aval):
   if len(env) > 1:
@@ -131,9 +133,11 @@ def eval_univariate_polynomial(x, coeffs):
 
 def instantiate_symbolic(aval, x):
   if x is zero or x is one:
-    raise NotImplementedError  # TODO
+    return symbolic_instantiators[(type(aval), x)](aval)
   else:
     return x
+
+symbolic_instantiators = {}
 
 
 class PolyTuple(tuple): pass
@@ -179,11 +183,12 @@ class PolySimpTrace(Trace):
       return PolySimpTracer(self, p_out, aval_out)
     elif primitive in multiplication_primitives:  # e.g. mul
       p1, p2 = polys_in
-      p_out = mul_polynomials(primitive.bind, p1, p2)
+      p_out = mul_polynomials(partial(primitive.bind, **params), p1, p2)
       return PolySimpTracer(self, p_out, aval_out)
     elif primitive in linear_primitives:  # e.g. broadcast, reduce_sum, neg
       p, = polys_in
-      p_out = apply_linear(primitive.bind, p)
+      aval, = avals_in
+      p_out = apply_linear(partial(primitive.bind, **params), p, aval)
       return PolySimpTracer(self, p_out, aval_out)
     else:
       # could eval the polynomial in env and call bind, but we assume a promise

@@ -54,6 +54,7 @@ from .interpreters import ad
 from .interpreters import batching
 from .interpreters import parallel
 from .interpreters import cse
+from .interpreters import polysimp
 from .util import curry, memoize, safe_zip, unzip2, prod
 from .tree_util import build_tree, tree_unflatten
 from .lib import xla_bridge
@@ -1458,6 +1459,15 @@ ad_util.jaxval_zeros_likers[xla.DeviceArray] = zeros_like_array
 
 batching.pytype_aval_mappings[xla.DeviceArray] = make_shaped_array
 
+def zeros_like_shaped_array(aval):
+  return full(aval.shape, 0, aval.dtype)
+
+def ones_like_shaped_array(aval):
+  return full(aval.shape, 1, aval.dtype)
+
+for t in [ConcreteArray, ShapedArray]:
+  polysimp.symbolic_instantiators[(t, polysimp.zero)] = zeros_like_shaped_array
+  polysimp.symbolic_instantiators[(t, polysimp.one)] = ones_like_shaped_array
 
 ### primitives
 
