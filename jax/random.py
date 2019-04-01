@@ -510,3 +510,26 @@ def laplace(key, shape=(), dtype=onp.float32):
   """
   u = uniform(key, shape, dtype, minval=-1., maxval=1.)
   return lax.mul(lax.sign(u), lax.log1p(lax.neg(lax.abs(u))))
+
+
+@partial(jit, static_argnums=(2, 3))
+def pareto(key, b, shape=(), dtype=onp.float32):
+  """Sample Pareto random values with given shape and float dtype.
+
+  Args:
+    key: a PRNGKey used as the random key.
+    b: an array-like broadcastable to `shape` and used as the shape parameter
+      of the random variables.
+    shape: optional, a tuple of nonnegative integers representing the shape
+      (default scalar).
+    dtype: optional, a float dtype for the returned values (default float32).
+
+  Returns:
+    A random array with the specified shape and dtype.
+  """
+  b = lax.convert_element_type(b, dtype)
+  shape = shape or onp.shape(b)
+  if onp.shape(b) != shape:
+    b = np.broadcast_to(b, shape)
+  e = exponential(key, shape, dtype)
+  return lax.exp(lax.div(e, b))
