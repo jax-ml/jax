@@ -422,39 +422,52 @@ def exponential(key, shape=(), dtype=onp.float32):
 
 def _gamma_one(key, alpha):
   # Ref: A simple method for generating gamma variables, George Marsaglia and Wai Wan Tsang
-  key, subkey = split(key)
-  boost = np.where(alpha >= 1.0, 1.0, uniform(subkey, ()) ** (1.0 / alpha))
-  alpha = np.where(alpha >= 1.0, alpha, alpha + 1.0)
+  # The algorithm can also be founded in:
+  # https://en.wikipedia.org/wiki/Gamma_distribution#Generating_gamma-distributed_random_variables
+  zero = _constant_like(alpha, 0)
+  one = _constant_like(alpha, 1)
+  one_over_two = _constant_like(alpha, 0.5)
+  one_over_three = _constant_like(alpha, 1. / 3.)
+  squeeze_const = _constant_like(alpha, 0.0331)
 
-  d = alpha - 1.0 / 3.0
-  c = 1.0 / np.sqrt(9.0 * d)
+  key, subkey = split(key)
+  # for alpha < 1, we boost alpha to alpha + 1 and get a sample according to
+  # Gamma(alpha) ~ Gamma(alpha+1) * Uniform()^(1 / alpha)
+  boost = lax.select(lax.ge(alpha, one),
+                     one,
+                     lax.pow(uniform(subkey, ()), lax.div(one, alpha)))
+  alpha = lax.select(lax.ge(alpha, one), alpha, lax.add(alpha, one))
+
+  d = lax.sub(alpha, one_over_three)
+  c = lax.div(one_over_three, lax.pow(d, one_over_two))
 
   def _cond_fn(kXVU):
     _, X, V, U = kXVU
-    # FIXME: find a way to avoid evaluating second condition which involves log+log
+    # TODO: use lax.cond when its batching rule is supported
+    # The reason is to avoid evaluating second condition which involves log+log
     # if the first condition is satisfied
-    # note: lax.cond does not support batching rule yet
-    return (U >= 1.0 - 0.0331 * X * X) & (np.log(U) >= 0.5 * X + d * (1.0 - V + np.log(V)))
+    cond = lax.bitwise_and(lax.ge(U, lax.sub(one, lax.mul(squeeze_const, lax.mul(X, X)))),
+                           lax.ge(lax.log(U), lax.add(lax.mul(X, one_over_two),
+                                                      lax.mul(d, lax.add(lax.sub(one, V),
+                                                                         lax.log(V))))))
+    return lax.bitwise_or(lax.le(V, zero), cond)
 
   def _body_fn(kXVU):
-    def _next_kxv(kxv):
-      key = kxv[0]
-      key, subkey = split(key)
-      x = normal(subkey, ())
-      v = 1.0 + c * x
-      return key, x, v
-
     key = kXVU[0]
-    key, x, v = lax.while_loop(lambda kxv: kxv[2] <= 0.0, _next_kxv, (key, 0.0, -1.0))
-    key, subkey = split(key)
-    X = x * x
-    V = v * v * v
-    U = uniform(subkey, ())
+    key, x_key, U_key = split(key, 3)
+    x = normal(x_key, ())
+    v = lax.add(one, lax.mul(x, c))
+    X = lax.mul(x, x)
+    V = lax.mul(lax.mul(v, v), v)
+    U = uniform(U_key, ())
     return key, X, V, U
 
-  _, _, V, _ = lax.while_loop(_cond_fn, _body_fn, (key, 1.0, 1.0, 2.0))
-  z = d * V * boost
-  return np.where(z == 0, np.finfo(z.dtype).tiny, z)
+  # initial state is chosen such that _cond_fn will return True
+  _, _, V, _ = lax.while_loop(_cond_fn,
+                              _body_fn,
+                              (key, zero, _constant_like(alpha, -1), zero))
+  z = lax.mul(lax.mul(d, V), boost)
+  return lax.select(lax.eq(z, zero), onp.finfo(z.dtype).tiny, z)
 
 
 @partial(jit, static_argnums=(2, 3))
