@@ -440,8 +440,8 @@ def pmap(fun, axis_name=None):
     _check_args(jaxtupletree_args)
     f = lu.wrap_init(fun, kwargs)
     f, out_tree = pytree_fun_to_jaxtupletree_fun(f, in_trees)
-    jaxtupletree_out = pxla.xla_pcall(f, *jaxtupletree_args,
-                                      axis_name=axis_name, axis_size=axis_size)
+    jaxtupletree_out = pxla.xla_pmap(f, *jaxtupletree_args,
+                                     axis_name=axis_name, axis_size=axis_size)
     return build_tree(out_tree(), jaxtupletree_out)
 
   namestr = "pmap({}, axis_name={})".format
