@@ -231,10 +231,6 @@ translations[ad_util.add_jaxvals_p] = lambda c, x, y: c.Add(x, y)
 
 
 def canonicalize_pyval_dtype(x):
-  # Workaround for pyvals whose dtypes don't compare as equal.
-  if isinstance(x, onp.number):
-    return canonicalize_ndarray_dtype(x)
-
   try:
     return canonicalize_dtype_handlers[type(x)](x)
   except KeyError:
