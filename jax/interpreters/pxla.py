@@ -114,8 +114,8 @@ def replica_groups(nrep, mesh_spec, mesh_axis):
   Args:
     nrep: int, number of replicas (a computation-dependent value).
     mesh_spec: tuple of integers, a specification of the logical device mesh,
-      which depends on the lexical context of nested xla_pcalls. In particular,
-      each xla_pcall effectively appends its mapped axis size to this tuple.
+      which depends on the lexical context of nested xla_pmaps. In particular,
+      each xla_pmap effectively appends its mapped axis size to this tuple.
     mesh_axis: int, logical device mesh axis index indicating the axis along
       which collective operations are to be executed.
 
@@ -173,7 +173,7 @@ def xla_unshard(c, device_groups, x):
   return _xla_unshard(c.GetShape(x), x)
 
 
-### xla_pcall
+### xla_pmap
 
 
 AxisEnv = namedtuple("AxisEnv", ["nreps", "names", "sizes"])
@@ -197,7 +197,7 @@ def compile_replicated(jaxpr, axis_name, axis_size, consts, *abstract_args):
 
 def jaxpr_replicas(jaxpr):
   return _max(eqn.params['axis_size'] * jaxpr_replicas(eqn.bound_subjaxprs[0][0])
-              for eqn in jaxpr.eqns if eqn.primitive is xla_pcall_p)
+              for eqn in jaxpr.eqns if eqn.primitive is xla_pmap_p)
 def _max(itr): return max(list(itr) or [1])
 
 def replicated_comp(jaxpr, ax_env, const_vals, freevar_shapes, *arg_shapes):
@@ -230,7 +230,7 @@ def replicated_comp(jaxpr, ax_env, const_vals, freevar_shapes, *arg_shapes):
       rule = parallel_translation_rules[eqn.primitive]
       ans = rule(c, *in_nodes, device_groups=axis_groups(ax_env, name), **params)
     elif eqn.bound_subjaxprs:
-      if eqn.primitive is xla_pcall_p:
+      if eqn.primitive is xla_pmap_p:
         name, size = eqn.params['axis_name'], eqn.params['axis_size']
         new_env = axis_env_extend(name, size)
         in_shards = map(partial(xla_shard, c, new_env.sizes), in_nodes)
@@ -292,7 +292,7 @@ xb.register_constant_handler(ShardedDeviceArray,
                              xla._device_array_constant_handler)
 
 
-def xla_pcall_impl(fun, *args, **params):
+def xla_pmap_impl(fun, *args, **params):
   axis_name = params.pop('axis_name')
   axis_size = params.pop('axis_size')
   assert not params
@@ -347,14 +347,14 @@ def execute_replicated(compiled, pval, axis_size, nrep, handle_in, handle_out,
     return map(partial(unshard_output, axis_size), zip(*replica_results))
 
 
-xla_pcall_p = core.Primitive('xla_pcall')
-xla_pcall = partial(core.call_bind, xla_pcall_p)
-xla_pcall_p.def_custom_bind(xla_pcall)
-xla_pcall_p.def_impl(xla_pcall_impl)
-ad.primitive_transposes[xla_pcall_p] = partial(ad.map_transpose, xla_pcall_p)
-pe.map_primitives.add(xla_pcall_p)
-# TODO(mattjj): enable pjit inside jit, maybe by merging xla_pcall and xla_call
-# xla.translations[xla_pcall_p] = xla.xla_call_translation_rule
+xla_pmap_p = core.Primitive('xla_pmap')
+xla_pmap = partial(core.call_bind, xla_pmap_p)
+xla_pmap_p.def_custom_bind(xla_pmap)
+xla_pmap_p.def_impl(xla_pmap_impl)
+ad.primitive_transposes[xla_pmap_p] = partial(ad.map_transpose, xla_pmap_p)
+pe.map_primitives.add(xla_pmap_p)
+# TODO(mattjj): enable pjit inside jit, maybe by merging xla_pmap and xla_call
+# xla.translations[xla_pmap_p] = xla.xla_call_translation_rule
 
 
 parallel_translation_rules = {}
