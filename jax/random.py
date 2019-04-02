@@ -458,3 +458,19 @@ def pareto(key, b, shape=(), dtype=onp.float32):
     b = np.broadcast_to(b, shape)
   e = exponential(key, shape, dtype)
   return lax.exp(lax.div(e, b))
+
+
+@partial(jit, static_argnums=(1, 2))
+def gumbel(key, shape=(), dtype=onp.float32):
+  """Sample Gumbel random values with given shape and float dtype.
+
+  Args:
+    key: a PRNGKey used as the random key.
+    shape: optional, a tuple of nonnegative integers representing the shape
+      (default scalar).
+    dtype: optional, a float dtype for the returned values (default float32).
+
+  Returns:
+    A random array with the specified shape and dtype.
+  """
+  return -np.log(-np.log(uniform(key, shape, dtype=dtype)))
