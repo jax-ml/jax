@@ -108,7 +108,7 @@ def assign_shards_to_replicas(nrep, size):
   indices = onp.tile(onp.arange(size)[:, None], (1, groupsize))
   return tuple(indices.ravel())
 
-def replica_groups(nrep, mesh_spec, mesh_axis):
+def replica_groups(nrep, mesh_spec, mesh_axes):
   """Compute XLA replica groups from a replica count and device mesh data.
 
   Args:
@@ -116,8 +116,8 @@ def replica_groups(nrep, mesh_spec, mesh_axis):
     mesh_spec: tuple of integers, a specification of the logical device mesh,
       which depends on the lexical context of nested xla_pmaps. In particular,
       each xla_pmap effectively appends its mapped axis size to this tuple.
-    mesh_axis: int, logical device mesh axis index indicating the axis along
-      which collective operations are to be executed.
+    mesh_axes: tuple of ints, logical device mesh axis indices indicating the
+      axes along which collective operations are to be executed.
 
   Returns:
     replica_groups, a list of lists of ints encoding a partition of the set
@@ -127,10 +127,11 @@ def replica_groups(nrep, mesh_spec, mesh_axis):
   trailing_size, ragged = divmod(nrep, prod(mesh_spec))
   assert not ragged
   full_spec = mesh_spec + [trailing_size]
-  groups = onp.split(onp.arange(prod(full_spec)).reshape(full_spec),
-                     full_spec[mesh_axis], axis=mesh_axis)
-  groups = map(onp.ravel, groups)
-  return tuple(tuple(group) for group in zip(*groups))
+  iota = onp.arange(prod(full_spec)).reshape(full_spec)
+  groups = onp.reshape(
+      onp.moveaxis(iota, mesh_axes, onp.arange(len(mesh_axes))),
+      (prod(onp.take(full_spec, mesh_axes)), -1))
+  return tuple(map(tuple, groups.T))
 
 def xla_shard(c, sizes, x):
   """Analog of shard_arg that performs sharding within an XLA computation."""
@@ -182,8 +183,11 @@ def axis_read(axis_env, axis_name):
   return max(i for i, name in enumerate(axis_env.names) if name == axis_name)
 
 def axis_groups(axis_env, name):
-  mesh_axis = axis_read(axis_env, name)
-  return replica_groups(axis_env.nreps, axis_env.sizes, mesh_axis)
+  if isinstance(name, (list, tuple)):
+    mesh_axes = tuple(map(partial(axis_read, axis_env), name))
+  else:
+    mesh_axes = (axis_read(axis_env, name),)
+  return replica_groups(axis_env.nreps, axis_env.sizes, mesh_axes)
 
 def compile_replicated(jaxpr, axis_name, axis_size, consts, *abstract_args):
   num_replicas = axis_size * jaxpr_replicas(jaxpr)
