@@ -473,4 +473,4 @@ def gumbel(key, shape=(), dtype=onp.float32):
   Returns:
     A random array with the specified shape and dtype.
   """
-  return -np.log(-np.log(uniform(key, shape, dtype=dtype)))
+  return -np.log(-np.log(uniform(key, shape, dtype)))
