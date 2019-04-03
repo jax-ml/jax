@@ -61,7 +61,7 @@ def fastvar(x, axis, keepdims):
 def randn(stddev=1e-2):
   """An initializer function for random normal coefficients."""
   def init(rng, shape):
-    return stddev * random.normal(rng, shape)
+    return (stddev * random.normal(rng, shape)).astype('float32')
   return init
 
 def glorot(out_dim=0, in_dim=1, scale=onp.sqrt(2)):
@@ -70,7 +70,7 @@ def glorot(out_dim=0, in_dim=1, scale=onp.sqrt(2)):
     fan_in, fan_out = shape[in_dim], shape[out_dim]
     size = onp.prod(onp.delete(shape, [in_dim, out_dim]))
     std = scale / np.sqrt((fan_in + fan_out) / 2. * size)
-    return std * random.normal(rng, shape)
+    return (std * random.normal(rng, shape)).astype('float32')
   return init
 
 zeros = lambda rng, shape: np.zeros(shape, dtype='float32')
