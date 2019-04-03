@@ -2637,6 +2637,19 @@ def _select_batch_rule(batched_args, batch_dims, **unused_kwargs):
     pred = broadcast_in_dim(pred, on_true.shape, [0])
   return select(pred, on_true, on_false), 0
 
+def _select_papply_rule(name, vals, dims):
+  dimset = set([d for d in dims if d is not None])
+  if len(dimset) != 1:
+    raise NotImplementedError(
+        'papply of select with operands split along different dimensions')
+  like_val, like_dim = [(v, d) for v, d in zip(vals, dims) if d is not None][0]
+
+  def normalize_split(val, dim):
+    return psplit_like(val, like_val, name) if dim is None else val
+
+  vals = [normalize_split(v, d) for v, d in zip(vals, dims)]
+  return select_p.bind(*vals), like_dim
+
 select_p = standard_primitive(_select_shape_rule, _select_dtype_rule, 'select')
 ad.defjvp(select_p,
           None,
@@ -2644,6 +2657,8 @@ ad.defjvp(select_p,
           lambda g, b, x, y: select(b, _zeros(g), g))
 ad.primitive_transposes[select_p] = _select_transpose_rule
 batching.primitive_batchers[select_p] = _select_batch_rule
+parallel.papply_primitive_rules[select_p] = _select_papply_rule
+
 
 def _slice_shape_rule(operand, start_indices, limit_indices, strides,
                       operand_shape):
