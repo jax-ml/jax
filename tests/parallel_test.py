@@ -52,6 +52,13 @@ class SerialPmapTest(jtu.JaxTestCase):
     expected = 3 * onp.ones(4)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testPsplitLike(self):
+    f = lambda x, y: lax.psplit_like(x, y, 'i')
+    arg = onp.arange(3 * 2 * 3 * 5).reshape(3, 2, 3, 5)
+    ans = serial_pmap(f, axis_name='i', in_axes=(None, 2), out_axes=2)(arg, arg)
+    expected = arg
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def testLogSoftmax(self):
     f = lambda x: x - np.log(lax.psum(np.exp(x), 'i'))
     x = onp.log(onp.arange(1., 10., dtype=onp.float32))

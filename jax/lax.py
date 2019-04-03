@@ -4108,6 +4108,10 @@ def psplit(x, axis_name, axis):
   # return xla_all_to_all(x, hidden axis, axis)
   return psplit_p.bind(x, axis_name=axis_name, axis=axis)
 
+def psplit_like(x, y, axis_name):
+  """Split `x` along any axis on which `y` is split, if it is."""
+  return psplit_like_p.bind(x, y, axis_name=axis_name)
+
 def pcollect(x, axis_name):
   # lowering should be:
   # x = xla_broadcast(x, (xb.get_replica_count(),))
@@ -4187,6 +4191,21 @@ def _psplit_serial_pmap_rule(vals, axes, axis):
 
 psplit_p = PmapPrimitive('psplit')
 parallel.serial_pmap_primitive_rules[psplit_p] = _psplit_serial_pmap_rule
+
+
+def _psplit_like_serial_pmap_rule(vals, axes):
+  x, y = vals
+  xaxis, yaxis = axes
+  if xaxis is not None and x.shape[xaxis] != x.shape[yaxis]:
+    raise ValueError(
+        "psplit_like is a non-square re-split along {} and {} of {}".format(
+            axis, yaxis, x.shape))
+  return x, yaxis
+
+psplit_like_p = PmapPrimitive('psplit_like')
+psplit_like_p.def_abstract_eval(
+    lambda x, y, *args, **kwargs: ShapedArray(y.shape, x.dtype))
+parallel.serial_pmap_primitive_rules[psplit_like_p] = _psplit_like_serial_pmap_rule
 
 
 def _pcollect_serial_pmap_rule(vals, axes):
