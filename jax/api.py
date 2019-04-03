@@ -712,10 +712,9 @@ def make_jaxpr(fun):
     aval = xla.abstractify(x)
     return pe.PartialVal((aval, core.unit))
 
-  wrapped = lu.wrap_init(fun)
-
   @wraps(fun)
   def jaxpr_maker(*args, **kwargs):
+    wrapped = lu.wrap_init(fun)
     jax_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
     jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(wrapped, in_trees)
     pvals = map(pv_like, jax_args)
@@ -811,3 +810,63 @@ def jarrett(fun):
   ad.primitive_jvps[new_fun.primitive] = elementwise_jvp
 
   return new_fun
+
+
+def make_graphviz(fun):
+  """Adapts `fun` to return a graphviz dot string of its program representation.
+
+  Args:
+    fun: The function whose `jaxpr` is to be rendered into graphviz dot. Its
+      positional arguments and return value should be arrays, scalars, or
+      standard Python containers (tuple/list/dict) thereof.
+
+  Returns:
+    A wrapped version of `fun`, set up to return a graphviz dot string.
+
+  See make_jaxpr for a related function.
+  """
+
+  def pv_like(x):
+    aval = xla.abstractify(x)
+    return pe.PartialVal((aval, core.unit))
+
+  id_names = ("id{}".format(i) for i in itertools.count())
+
+  def jaxpr_to_graphviz(jaxpr, consts):
+    fragment = []
+
+    fragment.extend(map(invar_node, jaxpr.invars, jaxpr.invars))
+    fragment.extend(map(freevar_node, jaxpr.freevars, jaxpr.freevars))
+    fragment.extend(map(constant_node, jaxpr.constvars, consts))
+
+    for eqn in jaxpr.eqns:
+      if eqn.destructure:
+        id_name = next(id_names)
+        fragment.append(function_node(id_name, eqn.primitive.name))
+        fragment.extend(edge(invar, id_name) for invar in eqn.invars)
+        fragment.extend(edge(id_name, outvar) for outvar in eqn.outvars)
+      else:
+        fragment.append(function_node(eqn.outvars[0], eqn.primitive.name))
+        fragment.extend(edge(invar, eqn.outvars[0]) for invar in eqn.invars)
+    fragment.append(outvar_node(jaxpr.outvar, "out"))
+    return graph(''.join(fragment))
+
+  edge = '{} -> {} [color=gray30];\n'.format
+  function_node = '{} [label="{}", shape=box, color=lightskyblue, style=filled];\n'.format
+  invar_node = '{} [rank=2, label="{}", color=mediumspringgreen, style=filled];\n'.format
+  outvar_node = '{} [label="{}", fillcolor=indianred1, style="filled,dashed", color=black];\n'.format
+  constant_node = '{} [rank=2, label="{}", color=goldenrod1, style=filled];\n'.format
+  freevar_node = '{} [rank=2, label="{}", color=palegreen, style=filled];\n'.format
+  graph = 'digraph G {{{}}}'.format
+
+  @wraps(fun)
+  def graphviz_maker(*args, **kwargs):
+    wrapped = lu.wrap_init(fun)
+    jax_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
+    jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(wrapped, in_trees)
+    pvals = map(pv_like, jax_args)
+    jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals, **kwargs)
+    return jaxpr_to_graphviz(jaxpr, consts)
+
+  graphviz_maker.__name__ = "make_graphviz({})".format(graphviz_maker.__name__)
+  return graphviz_maker
