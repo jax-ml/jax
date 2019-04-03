@@ -2982,7 +2982,8 @@ def _gather_batching_rule(batched_args, batch_dims, dimension_numbers,
     return gather(operand, start_indices, dimension_numbers=dnums,
                   slice_sizes=slice_sizes), 0
 
-def _gather_serial_pmap_rule(val, axis):
+def _gather_serial_pmap_rule(vals, axes):
+  val, = vals
   return val, None
 
 gather_p = standard_primitive(
@@ -4128,7 +4129,9 @@ def PmapPrimitive(name):
   return prim
 
 
-def _psum_serial_pmap_rule(val, axis):
+def _psum_serial_pmap_rule(vals, axes):
+  val, = vals
+  axis, = axes
   return _reduce_sum(val, [axis]), None
 
 def _psum_transpose_rule(t, axis_name):
@@ -4149,7 +4152,9 @@ ad.deflinear(psum_p, _psum_transpose_rule)
 parallel.defreducer(reduce_sum_p, psum_p)
 
 
-def _pmax_serial_pmap_rule(val, axis):
+def _pmax_serial_pmap_rule(vals, axes):
+  val, = vals
+  axis, = axes
   return _reduce_max(val, [axis]), None
 
 pmax_p = PmapPrimitive('pmax')
@@ -4159,7 +4164,9 @@ parallel.serial_pmap_primitive_rules[pmax_p] = _pmax_serial_pmap_rule
 parallel.defreducer(reduce_max_p, pmax_p)
 
 
-def _pswapaxes_serial_pmap_rule(x, axis_in, axis):
+def _pswapaxes_serial_pmap_rule(vals, axes, axis):
+  x, = vals
+  axis_in, = axes
   if x.shape[axis_in] != x.shape[axis]:
     raise ValueError("pswapaxes between non-square dimensions")
   perm = list(range(x.ndim))
@@ -4171,7 +4178,9 @@ pswapaxes_p = PmapPrimitive('pswapaxes')
 parallel.serial_pmap_primitive_rules[pswapaxes_p] = _pswapaxes_serial_pmap_rule
 
 
-def _psplit_serial_pmap_rule(x, axis_in, axis):
+def _psplit_serial_pmap_rule(vals, axes, axis):
+  x, = vals
+  axis_in, = axes
   if x.shape[axis_in] != x.shape[axis]:
     raise ValueError("psplit between non-square dimensions")
   return x, axis
@@ -4180,7 +4189,8 @@ psplit_p = PmapPrimitive('psplit')
 parallel.serial_pmap_primitive_rules[psplit_p] = _psplit_serial_pmap_rule
 
 
-def _pcollect_serial_pmap_rule(x, axis_in):
+def _pcollect_serial_pmap_rule(vals, axes):
+  x, = vals
   return x, None
 
 pcollect_p = PmapPrimitive('pcollect')
