@@ -4452,9 +4452,10 @@ def _conv_general_vjp_lhs_padding(
     in_shape, window_dimensions, window_strides, out_shape, padding,
     lhs_dilation, rhs_dilation):
   lhs_dilated_shape = _dilate_shape(in_shape, lhs_dilation)
+  rhs_dilated_shape = _dilate_shape(window_dimensions, rhs_dilation)
   out_dilated_shape = _dilate_shape(out_shape, window_strides)
-  pad_before = onp.subtract(window_dimensions, [lo for lo, _ in padding]) - 1
-  pad_after = (onp.add(lhs_dilated_shape, window_dimensions) - 1
+  pad_before = onp.subtract(rhs_dilated_shape, [lo for lo, _ in padding]) - 1
+  pad_after = (onp.add(lhs_dilated_shape, rhs_dilated_shape) - 1
                - out_dilated_shape - pad_before)
   return zip(pad_before, pad_after)
 

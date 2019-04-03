@@ -1890,7 +1890,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
            [(1, 1), (1, 2), (2, 1)],  # strides
            [((0, 0), (0, 0)), ((1, 0), (0, 1)), ((0, -1), (0, 0))],  # pads
            [(1, 1), (2, 1)],  # lhs_dils
-           [(1, 1)])  # rhs_dils
+           [(1, 1), (2, 2)])  # rhs_dils
           for b, i, j in itertools.product([1, 2], repeat=3)]
       for strides in all_strides
       for rhs_dil in rhs_dils
