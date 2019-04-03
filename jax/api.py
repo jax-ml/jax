@@ -833,23 +833,23 @@ def make_graphviz(fun):
   id_names = ("id{}".format(i) for i in itertools.count())
 
   def jaxpr_to_graphviz(jaxpr, consts):
-    fragment = ''
+    fragment = []
 
-    fragment += ''.join(map(invar_node, jaxpr.invars, jaxpr.invars))
-    fragment += ''.join(map(freevar_node, jaxpr.freevars, jaxpr.freevars))
-    fragment += ''.join(map(constant_node, jaxpr.constvars, consts))
+    fragment.extend(map(invar_node, jaxpr.invars, jaxpr.invars))
+    fragment.extend(map(freevar_node, jaxpr.freevars, jaxpr.freevars))
+    fragment.extend(map(constant_node, jaxpr.constvars, consts))
 
     for eqn in jaxpr.eqns:
       if eqn.destructure:
         id_name = next(id_names)
-        fragment += function_node(id_name, eqn.primitive.name)
-        fragment += ''.join(edge(invar, id_name) for invar in eqn.invars)
-        fragment += ''.join(edge(id_name, outvar) for outvar in eqn.outvars)
+        fragment.append(function_node(id_name, eqn.primitive.name))
+        fragment.extend(edge(invar, id_name) for invar in eqn.invars)
+        fragment.extend(edge(id_name, outvar) for outvar in eqn.outvars)
       else:
-        fragment += function_node(eqn.outvars[0], eqn.primitive.name)
-        fragment += ''.join(edge(invar, eqn.outvars[0]) for invar in eqn.invars)
-    fragment += outvar_node(jaxpr.outvar, "out")
-    return graph(fragment)
+        fragment.append(function_node(eqn.outvars[0], eqn.primitive.name))
+        fragment.extend(edge(invar, eqn.outvars[0]) for invar in eqn.invars)
+    fragment.append(outvar_node(jaxpr.outvar, "out"))
+    return graph(''.join(fragment))
 
   edge = '{} -> {} [color=gray30];\n'.format
   function_node = '{} [label="{}", shape=box, color=lightskyblue, style=filled];\n'.format
