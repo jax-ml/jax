@@ -123,6 +123,28 @@ class PapplyTest(jtu.JaxTestCase):
     expected = onp.max(arg, axis=0)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testSelect(self):
+    pfun, axis_name = papply(lax.select, 5,
+                             in_axes=(None, 0, None))
+
+    p = onp.arange(15).reshape((5, 3)) % 4 == 1
+    t = onp.ones((5, 3))
+    f = onp.zeros((5, 3))
+    jaxpr = make_jaxpr(pfun)(p, t[0], f)
+
+    def expected_spmd(p, t, f):
+      return lax.select(
+          lax.psplit_like(p, t, axis_name),
+          t,
+          lax.psplit_like(f, t, axis_name))
+
+    expected_jaxpr = make_jaxpr(expected_spmd)(p, t[0], f)
+    assert repr(jaxpr) == repr(expected_jaxpr)
+
+    ans = serial_pmap(pfun, axis_name, in_axes=(None, 0, None))(p, t, f)
+    expected = lax.select(p, t, f)
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
   @skip
   def DISABLED_testLogSoftmax(self):
 
