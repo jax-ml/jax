@@ -52,6 +52,13 @@ class SerialPmapTest(jtu.JaxTestCase):
     expected = 3 * onp.ones(4)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testPsplit(self):
+    f = lambda x: lax.psplit(x, 'i', 2)
+    arg = onp.arange(3 * 2 * 3 * 5).reshape(3, 2, 3, 5)
+    ans = serial_pmap(f, axis_name='i', out_axes=2)(arg)
+    expected = arg
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def testPsplitLike(self):
     f = lambda x, y: lax.psplit_like(x, y, 'i')
     arg = onp.arange(3 * 2 * 3 * 5).reshape(3, 2, 3, 5)
