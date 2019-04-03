@@ -4186,7 +4186,9 @@ def _psplit_serial_pmap_rule(vals, axes, axis):
   x, = vals
   axis_in, = axes
   if x.shape[axis_in] != x.shape[axis]:
-    raise ValueError("psplit between non-square dimensions")
+    raise ValueError(
+        "psplit between non-square dimensions {} and {} of {}".format(
+            axis_in, axis, x.shape))
   return x, axis
 
 psplit_p = PmapPrimitive('psplit')
