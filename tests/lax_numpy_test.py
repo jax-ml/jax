@@ -1369,6 +1369,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     expected = onp.reshape(a, (3, 2), order='F')
     self.assertAllClose(ans, expected, check_dtypes=True)
 
+  # TODO(phawkins): enable after a Jaxlib update.
+  @skip("Test disabled until jaxlib 0.1.13 is released.")
+  def testLongLong(self):
+    self.assertAllClose(onp.int64(7), api.jit(lambda x: x)(onp.longlong(7)),
+                        check_dtypes=True)
+
 
 if __name__ == "__main__":
   absltest.main()

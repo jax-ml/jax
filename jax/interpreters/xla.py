@@ -231,10 +231,6 @@ translations[ad_util.add_jaxvals_p] = lambda c, x, y: c.Add(x, y)
 
 
 def canonicalize_pyval_dtype(x):
-  # Workaround for pyvals whose dtypes don't compare as equal.
-  if isinstance(x, onp.number):
-    return canonicalize_ndarray_dtype(x)
-
   try:
     return canonicalize_dtype_handlers[type(x)](x)
   except KeyError:
@@ -306,6 +302,10 @@ class DeviceArray(DeviceValue):
     """Returns an ndarray (backed by host memory, not device memory)."""
     return onp.asarray(self)
 
+  def __repr__(self):
+    shape_str = ",".join(map(str, self.shape))
+    return "DeviceArray{{{}[{}]}}".format(onp.dtype(self.dtype).name, shape_str)
+
   def __len__(self):
     try:
       return self.shape[0]
@@ -333,7 +333,6 @@ class DeviceArray(DeviceValue):
 
   __array__ = partialmethod(forward_to_value, onp.asarray)
   __str__ = partialmethod(forward_to_value, str)
-  __repr__ = partialmethod(forward_to_value, repr)
   __bool__ = __nonzero__ = partialmethod(forward_to_value, bool)
   __float__ = partialmethod(forward_to_value, float)
   __int__ = partialmethod(forward_to_value, int)
