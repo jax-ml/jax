@@ -433,6 +433,25 @@ class BatchingTest(jtu.JaxTestCase):
     per_example_direct = np.concatenate(per_example_direct, axis=0)
     self.assertAllClose(per_example, per_example_direct, check_dtypes=True)
 
+  def testConvGeneralDilatedBatchNotMajor(self):
+    W = np.array(onp.random.randn(3, 3, 1, 4), dtype=onp.float32)
+    x = np.array(onp.random.randn(3, 5, 7, 5, 1), dtype=onp.float32)
+
+    def f(params, x):
+      one = (1, 1)
+      dimension_numbers = ('HNWC', 'HWIO', 'HWNC')
+      y = lax.conv_general_dilated(
+          x, params, one, 'SAME', one, one, dimension_numbers)
+      return y
+
+    per_example = vmap(partial(f, W))(x)
+    per_example = np.reshape(np.transpose(per_example, (1, 2, 0, 3, 4)),
+                             (5, 5, 21, 4))
+    per_example_direct = f(W, np.reshape(np.transpose(x, (1, 0, 2, 3, 4)),
+                                         (5, 21, 5, 1)))
+    self.assertAllClose(per_example, per_example_direct, check_dtypes=True)
+
+
   def testMaxPool(self):
     W = np.array(onp.random.randn(3, 3, 1, 5), dtype=onp.float32)
     X = np.array(onp.random.randn(10, 5, 5, 1), dtype=onp.float32)

@@ -1944,19 +1944,30 @@ def _conv_general_dilated_batch_rule(
     return outputs, 0
 
   elif lhs_bdim is not None:
-    # Currently we don't handle cases where the batch dimension of the
-    # convolution isn't the first dimension.
-    if lhs_dim[0] != 0 or out_dim[0] != 0:
-      raise NotImplementedError
-
     lhs = batching.move_dim_to_front(lhs, lhs_bdim)
+    lhs_perm = ((0, lhs_dim[0] + 1) + tuple(range(1, lhs_dim[0] + 1)) +
+                tuple(range(lhs_dim[0] + 2, len(lhs_dim) + 1)))
+    new_lhs_dim = (0,) + tuple(x + 1 if x < lhs_dim[0] else x
+                               for x in lhs_dim[1:])
+    new_out_dim = (0,) + tuple(x + 1 if x < out_dim[0] else x
+                               for x in out_dim[1:])
+
     batched_size = lhs.shape[0]
-    n_size = lhs.shape[1]
+    n_size = lhs.shape[lhs_dim[0] + 1]
+    if lhs_dim[0] != 0:
+      lhs = transpose(lhs, lhs_perm)
     lhs = reshape(lhs, (batched_size * n_size,) + lhs.shape[2:])
     outputs = conv_general_dilated(
         lhs, rhs, window_strides, padding,
-        lhs_dilation, rhs_dilation, dimension_numbers)
+        lhs_dilation, rhs_dilation,
+        ConvDimensionNumbers(new_lhs_dim, dimension_numbers.rhs_spec,
+                             new_out_dim))
     outputs = reshape(outputs, (batched_size, n_size,) + outputs.shape[1:])
+
+    if out_dim[0] != 0:
+      out_perm = ((0,) + tuple(range(2, out_dim[0] + 2)) + (1,) +
+              tuple(range(out_dim[0] + 2, len(out_dim) + 1)))
+      outputs = transpose(outputs, out_perm)
 
     return outputs, 0
   elif rhs_bdim is not None:
@@ -4499,9 +4510,10 @@ def _conv_general_vjp_lhs_padding(
     in_shape, window_dimensions, window_strides, out_shape, padding,
     lhs_dilation, rhs_dilation):
   lhs_dilated_shape = _dilate_shape(in_shape, lhs_dilation)
+  rhs_dilated_shape = _dilate_shape(window_dimensions, rhs_dilation)
   out_dilated_shape = _dilate_shape(out_shape, window_strides)
-  pad_before = onp.subtract(window_dimensions, [lo for lo, _ in padding]) - 1
-  pad_after = (onp.add(lhs_dilated_shape, window_dimensions) - 1
+  pad_before = onp.subtract(rhs_dilated_shape, [lo for lo, _ in padding]) - 1
+  pad_after = (onp.add(lhs_dilated_shape, rhs_dilated_shape) - 1
                - out_dilated_shape - pad_before)
   return zip(pad_before, pad_after)
 
