@@ -304,7 +304,7 @@ def parallel(*layers):
   nlayers = len(layers)
   init_funs, apply_funs = zip(*layers)
   def init_fun(rng, input_shape):
-    rngs = random.split(rng, len(init_funs))
+    rngs = random.split(rng, nlayers)
     return zip(*[init(rng, shape) for init, rng, shape
                  in zip(init_funs, rngs, input_shape)])
   def apply_fun(params, inputs, **kwargs):
