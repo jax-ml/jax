@@ -728,9 +728,11 @@ tree_to_pval_tuples = partial(process_pytree, pe.pack_pvals)
 
 
 device_put = jit(lambda x: x)
-device_get_array = lambda x: x.copy() if type(x) is xla.DeviceArray else x
-device_get = partial(tree_map, device_get_array)
-replicate = lambda x: pmap(lambda _: x)(onp.arange(device_count()))
+_device_get_array = lambda x: x.copy() if type(x) is xla.DeviceArray else x
+device_get = partial(tree_map, _device_get_array)
+
+_replicate_array = lambda x: onp.broadcast_to(x, (device_count(),) + onp.shape(x))
+replicate = partial(tree_map, _replicate_array)
 unreplicate = lambda x: tree_map(op.itemgetter(0), x)
 
 
