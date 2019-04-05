@@ -217,7 +217,7 @@ def partial_eval(f, trace, pvs):
 
 
 @transformation_with_aux
-def partial_eval_wrapper(avals, *consts, **kwargs):
+def partial_eval_wrapper(avals, *consts):
   jaxpr, (out_pval, consts, env) = yield (map(PartialVal, zip(avals, consts)),)
   out_pv, out_const = out_pval
   out = pack((out_const, pack(consts)))
@@ -532,15 +532,67 @@ compiled_call_p.def_impl(compiled_call_impl)
 
 
 
-def partial_eval_traceable():
-  assert False
+# @transformation_with_aux
+# def partial_eval_traceable(first_components, pvals):
+  
+
+
+def unzip_tracer_tuple(pvals):
+  pvs, consts = unzip2(pvals)
+  return PartialVal((JaxprTracerTuple(pvs), pack(consts)))
+
+def as_pval(aval, is_known, val):
+  t = type(is_known)
+  if t is tuple:
+    return unzip_tracer_tuple(map(as_pval, aval, is_known, val))
+  elif t is bool:
+    if is_known:
+      return PartialVal((None, val))
+    else:
+      return PartialVal((aval, core.unit))
+  else:
+    raise TypeError(t)
+
+def as_pval2(aval, is_known):
+  t = type(is_known)
+  if t is tuple:
+    return unzip_tracer_tuple(map(as_pval2, aval, is_known))
+  elif t is bool:
+    if is_known:
+      return PartialVal((aval, core.unit))
+    else:
+      return PartialVal((core.AbstractTuple(()), core.unit))
+  else:
+    raise TypeError(t)
+
+def jaxpr_as_fun(jaxpr, consts, *args):
+  consts = core.full_lower(consts)
+  args = map(core.full_lower, args)
+  return core.eval_jaxpr(jaxpr, consts, (), *args)
 
 def partial_eval_jaxpr(jaxpr, avals, first_components):
-  f = wrap_init(partial(jaxpr_as_fun, jaxpr))
-  pvals = map(as_pval, avals, first_components)
-  f_pe = partial_eval_traceable(f)
-  jaxpr_1, out_pval, consts = trace_to_jaxpr(f_pe, pvals)
-  return jaxpr_1, jaxpr_2, avals_out, first_components_out
+  f = lu.wrap_init(partial(jaxpr_as_fun, jaxpr))
+  cell = []
+
+  def fun(*vals):
+    pvals = map(as_pval, avals, first_components, vals)
+    jaxpr, out_pval, consts = trace_to_jaxpr(f, pvals)
+    out_pv, out_const = out_pval
+    out = pack((out_const, pack(consts)))
+    cell.append((out_pv, jaxpr))
+    return out
+
+  pvals = map(as_pval2, avals, first_components)
+  jaxpr, out_pval, consts = trace_to_jaxpr(lu.wrap_init(fun), pvals)
+  assert False  # turn these guys into trues and falses
+
+  jaxpr_2, out_pval, consts = trace_to_jaxpr(f, pvals)
+
+  f_pe, jaxpr_1 = partial_eval_traceable(f)
+  jaxpr_2, out_pval, consts = trace_to_jaxpr(f_pe, pvals)
+  first_components_out = undefined
+  avals_out = undefined
+  return jaxpr_1(), jaxpr_2, avals_out, first_components_out
 
 
 
