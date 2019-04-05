@@ -716,9 +716,10 @@ code to compile and end-to-end optimize much bigger functions.
 
 For a survey of current gotchas, with examples and explanations, we highly recommend reading the [Gotchas Notebook](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb).
 
-Two stand-out gotchas that might surprise NumPy users:
-1. In-place mutation of arrays isn't supported. Generally JAX requires functional code.
-2. PRNGs can be awkward, and non-reuse (linearity) is not checked.
+Some stand-out gotchas that might surprise NumPy users:
+1. [`np.isnan` doesn't yet work](https://github.com/google/jax/issues/276), and in general nan semantics aren't preserved on some backends.
+1. In-place mutation of arrays isn't supported, though [there is an alternative](https://jax.readthedocs.io/en/latest/jax.ops.html). Generally JAX requires functional code.
+2. PRNGs are different and can be awkward, though for [good reasons](https://github.com/google/jax/blob/master/design_notes/prng.md), and non-reuse (linearity) is not yet checked.
 
 See [the notebook](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb) for much more information.
 
