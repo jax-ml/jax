@@ -157,15 +157,15 @@ def xla_computation(fun, static_argnums=()):
     aval = xla.abstractify(x)
     return pe.PartialVal((aval, core.unit))
 
-  wrapped = lu.wrap_init(fun)
 
   @wraps(fun)
   def computation_maker(*args, **kwargs):
+    wrapped = lu.wrap_init(fun)
     jax_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
     jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(wrapped, in_trees)
     pvals = map(pv_like, jax_args)
     jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals, **kwargs)
-    return xla.build_jaxpr(jaxpr, consts, *map(xla.abstractify, args))
+    return xla.build_jaxpr(jaxpr, consts, *map(xla.abstractify, jax_args))
 
   return computation_maker
 
