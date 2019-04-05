@@ -25,6 +25,7 @@ from absl.testing import parameterized
 import numpy as onp
 
 from jax import test_util as jtu
+from jax import random
 import jax.numpy as np
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -38,7 +39,8 @@ FLAGS = config.FLAGS
 
 
 def _CheckShapeAgreement(test_case, init_fun, apply_fun, input_shape):
-  result_shape, params = init_fun(input_shape)
+  jax_rng = random.PRNGKey(0)
+  result_shape, params = init_fun(jax_rng, input_shape)
   rng = onp.random.RandomState(0)
   result = apply_fun(params, rng.randn(*input_shape).astype(dtype="float32"))
   test_case.assertEqual(result.shape, result_shape)
