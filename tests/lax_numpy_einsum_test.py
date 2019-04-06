@@ -294,6 +294,7 @@ class EinsumTest(jtu.JaxTestCase):
     onp.einsum_path('ea,fb,abcd,gc,hd->efgh', C, C, I, C, C, optimize='greedy')
 
   def test_einsum_kpmurphy_example(self):
+    # code from an email with @murphyk
     N = 2; C = 3; D = 4; K = 5; T = 6;
     r = rng()
     S = r.randn(N, T, K)
