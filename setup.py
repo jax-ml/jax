@@ -23,7 +23,7 @@ setup(
     description='Differentiate, compile, and transform Numpy code.',
     author='JAX team',
     author_email='jax-dev@google.com',
-    packages=find_packages(),
+    packages=find_packages(exclude=["examples"]),
     install_requires=[
         'numpy>=1.12', 'six', 'protobuf>=3.6.0', 'absl-py', 'opt_einsum'
     ],
