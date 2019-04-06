@@ -1509,6 +1509,11 @@ def einsum(*operands):
   contractions = tuple(data[:3] for data in contractions)
   return _einsum(operands, contractions)
 
+@_wraps(onp.einsum_path)
+def einsum_path(subscripts, *operands, **kwargs):
+  optimize = kwargs.pop('optimize', 'greedy')
+  # using einsum_call=True here is an internal api for opt_einsum
+  return opt_einsum.contract_path(subscripts, *operands, optimize=optimize)
 
 @partial(jit, static_argnums=(1,))
 def _einsum(operands, contractions):
