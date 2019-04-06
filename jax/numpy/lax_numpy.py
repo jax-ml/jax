@@ -1504,10 +1504,15 @@ def tensordot(a, b, axes=2):
 
 
 @_wraps(onp.einsum)
-def einsum(*operands):
+def einsum(*operands, **kwargs):
+  optimize = kwargs.pop('optimize', 'auto')
+  optimize = 'greedy' if optimize is True else optimize
+  if kwargs:
+    msg = 'invalid keyword arguments for einsum: {}'
+    raise TypeError(msg.format(', '.join(kwargs)))
   # using einsum_call=True here is an internal api for opt_einsum
   operands, contractions = opt_einsum.contract_path(
-      *operands, einsum_call=True, use_blas=True)
+      *operands, einsum_call=True, use_blas=True, optimize=optimize)
   contractions = tuple(data[:3] for data in contractions)
   return _einsum(operands, contractions)
 
