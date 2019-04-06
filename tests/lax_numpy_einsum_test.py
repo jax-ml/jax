@@ -293,6 +293,25 @@ class EinsumTest(jtu.JaxTestCase):
     C = onp.random.rand(10, 10)
     onp.einsum_path('ea,fb,abcd,gc,hd->efgh', C, C, I, C, C, optimize='greedy')
 
+  def test_einsum_kpmurphy_example(self):
+    N = 2; C = 3; D = 4; K = 5; T = 6;
+    r = rng()
+    S = r.randn(N, T, K)
+    W = r.randn(K, D)
+    V = r.randn(D, C)
+    L = onp.zeros((N,C))
+    for n in range(N):
+      for c in range(C):
+        s = 0
+        for d in range(D):
+          for k in range(K):
+            for t in range(T):
+                s += S[n,t,k] * W[k,d] * V[d,c]
+        L[n,c] = s
+
+    path = np.einsum_path('ntk,kd,dc->nc', S, W, V, optimize='optimal')[0]
+    assert np.allclose(L, np.einsum('ntk,kd,dc->nc', S, W, V, optimize=path))
+
 
 if __name__ == '__main__':
   absltest.main()
