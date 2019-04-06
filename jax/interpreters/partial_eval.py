@@ -565,6 +565,16 @@ def as_pval2(aval, is_known):
   else:
     raise TypeError(t)
 
+def isnone(x):
+  if x is None:
+    return True
+  elif type(x) is JaxprTracerTuple:
+    return tuple(map(isnone, x))
+  elif isinstance(x, AbstractValue):
+    return False
+  else:
+    raise TypeError(type(x))
+
 def jaxpr_as_fun(jaxpr, consts, *args):
   consts = core.full_lower(consts)
   args = map(core.full_lower, args)
@@ -572,8 +582,8 @@ def jaxpr_as_fun(jaxpr, consts, *args):
 
 def partial_eval_jaxpr(jaxpr, avals, first_components):
   f = lu.wrap_init(partial(jaxpr_as_fun, jaxpr))
-  cell = []
 
+  cell = []
   def fun(*vals):
     pvals = map(as_pval, avals, first_components, vals)
     jaxpr, out_pval, consts = trace_to_jaxpr(f, pvals)
@@ -583,17 +593,11 @@ def partial_eval_jaxpr(jaxpr, avals, first_components):
     return out
 
   pvals = map(as_pval2, avals, first_components)
-  jaxpr, out_pval, consts = trace_to_jaxpr(lu.wrap_init(fun), pvals)
-  assert False  # turn these guys into trues and falses
-
-  jaxpr_2, out_pval, consts = trace_to_jaxpr(f, pvals)
-
-  f_pe, jaxpr_1 = partial_eval_traceable(f)
-  jaxpr_2, out_pval, consts = trace_to_jaxpr(f_pe, pvals)
-  first_components_out = undefined
-  avals_out = undefined
-  return jaxpr_1(), jaxpr_2, avals_out, first_components_out
-
+  jaxpr_1, out_pval, consts = trace_to_jaxpr(lu.wrap_init(fun), pvals)
+  assert not consts
+  out_pv_2, jaxpr_2 = cell[0]
+  first_component_out = isnone(out_pv_2)
+  return jaxpr_1, jaxpr_2, out_pv_2, first_component_out
 
 
 custom_partial_eval_rules = {}
