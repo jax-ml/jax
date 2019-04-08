@@ -8,6 +8,7 @@ from jax.core import pack
 import jax.core as core
 import jax.numpy as np
 from jax import jvp, linearize
+from jax import lax
 
 # scan :: (a -> c -> (b,c)) -> c -> [a] -> ([b],c)
 
@@ -15,7 +16,8 @@ from jax import jvp, linearize
 
 def cumsum(xs):
   def f(x, carry):
-    carry = carry + x
+    # carry = carry + x  # TODO
+    carry = carry + x + 3.14
     return pack((carry, carry))
 
   ys, _ = scan_initial(f, 0.0, xs)
@@ -23,12 +25,12 @@ def cumsum(xs):
 
 x = np.linspace(0, 3, 4)
 
-print np.cumsum(x)
+# print np.cumsum(x)
 print cumsum(x)
 print
 
 # print jvp(np.cumsum, (x,), (x*0.1,))
-# print jvp(cumsum, (x,), (x*0.1,))
+print jvp(cumsum, (x,), (x*0.1,))
 # print
 # print linearize(np.cumsum, x)[1](x*0.1)
 # print linearize(cumsum, x)[1](x*0.1)
