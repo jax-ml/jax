@@ -156,6 +156,7 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("transpose", 1, all_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("true_divide", 2, all_dtypes, all_shapes, jtu.rand_nonzero(), ["rev"]),
     op_record("where", 3, (onp.float32, onp.int64), all_shapes, jtu.rand_some_zero(), []),
+    op_record("diff", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
 ]
 
 JAX_BITWISE_OP_RECORDS = [
