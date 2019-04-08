@@ -149,7 +149,7 @@ def scan_initial(f, init, xs):
       lu.wrap_init(f), (carry_pval, x_pval), instantiate=True)
   (y_aval, carry_aval_out), _ = pval_out
   assert carry_aval == carry_aval_out
-  consts_aval, _ = unzip2(map(_abstractify, consts))
+  consts_aval, _ = _abstractify(core.pack(consts))
   avals = (consts_aval, x_aval, y_aval, carry_aval)
   return scan_initial_p.bind(core.pack(consts), init, xs,
                              avals=avals, jaxpr=jaxpr)
@@ -179,8 +179,8 @@ def _scan_initial_jvp(primals, tangents, avals, jaxpr):
   consts_dot, init_dot, xs_dot = tangents
   consts_aval, x_aval, y_aval, carry_aval = avals
 
-  consts_where_zeros = ad.get_zeros(consts_dot)
-  nonzero_consts_dot = strip_zeros(consts_where_zeros, consts_dot)
+  where_consts_zeros = ad.get_zeros(consts_dot)
+  nonzero_consts_dot = strip_zeros(where_consts_zeros, consts_dot)
 
   where_init_zeros = ad.get_zeros(init_dot)
   nonzero_init_dot = strip_zeros(where_init_zeros, init_dot)
@@ -188,11 +188,13 @@ def _scan_initial_jvp(primals, tangents, avals, jaxpr):
   where_xs_zeros = ad.get_zeros(xs_dot)  # same as where_x_zeros b/c arrays
   nonzero_xs_dot = strip_zeros(where_xs_zeros, xs_dot)
 
-
   jaxpr_jvp, new_consts, where_zeros_out = ad.jvp_jaxpr(
       jaxpr, (consts_aval, carry_aval, x_aval),
       (where_consts_zeros, where_init_zeros, where_xs_zeros))
-  _, where_carry_zeros, _ = where_zeros_out
+  _, where_carry_zeros = where_zeros_out
+  assert not new_consts  # TODO
+
+  import ipdb; ipdb.set_trace()
   assert where_carry_zeros == where_init_zeros  # TODO while
 
   # TODO we realized consts are tricky... can't just add a new arg every time we
