@@ -24,6 +24,8 @@ def pvals_with_zeros(zero_components, aval):
 def transpose_jaxpr(jaxpr, avals, tangent_components):
   assert False
 
+strip_zeros = partial(ad.strip_zeros, core.unit, core.pack)
+
 
 @curry
 def jaxpr_as_fun(jaxpr, consts, *args):
@@ -33,7 +35,7 @@ def jaxpr_as_fun(jaxpr, consts, *args):
 def call_initial(f, *args):
   pvals = map(_abstractify, args)
   avals = [aval for (aval, _) in pvals]
-  jaxpr, pval_out, consts = pe.trace_to_jaxpr(
+  jaxpr, _, consts = pe.trace_to_jaxpr(
       lu.wrap_init(f), pvals, instantiate=True)
   return call_initial_p.bind(core.pack(consts), *args, jaxpr=jaxpr)
 
@@ -44,8 +46,7 @@ def _call_initial_impl(consts, *args, **kwargs):
 def _call_initial_jvp(primals, tangents, jaxpr):
   avals = [aval for (aval, _) in map(_abstractify, primals)]
   where_zeros = map(ad.get_zeros, tangents)
-  nonzero_tangents = ad.strip_zeros(core.unit, core.pack, where_zeros,
-                                    tangents)
+  nonzero_tangents = strip_zeros(where_zeros, tangents)
   jaxpr_jvp, consts, where_zeros_out = ad.jvp_jaxpr(jaxpr, avals, where_zeros)
   primal_out, tangent_out = call_initial_p.bind(
       core.pack(consts), core.pack(primals),
@@ -92,7 +93,123 @@ def _call_initial_partial_eval(trace, *tracers, **kwargs):
 def _call_initial_transpose():
   assert False
 
-call_initial_p = core.Primitive("scan")
+call_initial_p = core.Primitive("call_initial")
 call_initial_p.def_impl(_call_initial_impl)
 ad.primitive_jvps[call_initial_p] = _call_initial_jvp
 pe.custom_partial_eval_rules[call_initial_p] = _call_initial_partial_eval
+
+
+###
+
+
+def demote_aval_rank(xs):
+  if isinstance(xs, core.AbstractTuple):
+    return core.AbstractTuple(map(demote_aval_rank, xs))
+  else:
+    return ShapedArray(xs.shape[1:], xs.dtype)
+
+def promote_aval_rank(n, xs):
+  if isinstance(xs, core.AbstractTuple):
+    return core.AbstractTuple(map(partial(promote_aval_rank, n), xs))
+  else:
+    return ShapedArray((n,) + xs.shape, xs.dtype)
+
+def leading_dim_size(xs):
+  if isinstance(xs, core.JaxTuple):
+    return leading_dim_size(xs[0])
+  else:
+    return xs.shape[0]
+
+def empty_arrays(aval):
+  if isinstance(aval, core.AbstractTuple):
+    return core.pack(map(empty_arrays, aval))
+  else:
+    return lax.full(aval.shape, 0, aval.dtype)
+
+def index_arrays(i, aval, xs):
+  if isinstance(aval, core.AbstractTuple):
+    return core.pack(map(partial(index_arrays, i), aval, xs))
+  else:
+    return lax.dynamic_index_in_dim(xs, i, keepdims=False)
+
+def update_arrays(i, aval, xs, x):
+  if isinstance(aval, core.AbstractTuple):
+    return core.pack(map(partial(update_arrays, i), aval, xs, x))
+  else:
+    return lax.dynamic_update_index_in_dim(xs, x[None, ...], i, axis=0)
+
+
+# scan :: (a -> c -> (b, c)) -> c -> [a] -> ([b], c)
+def scan_initial(f, init, xs):
+  carry_pval = carry_aval, _ = _abstractify(init)
+  xs_aval, _ = _abstractify(xs)
+  x_aval = demote_aval_rank(xs_aval)
+  x_pval = pe.PartialVal((x_aval, core.unit))
+  jaxpr, pval_out, consts = pe.trace_to_jaxpr(
+      lu.wrap_init(f), (carry_pval, x_pval), instantiate=True)
+  (y_aval, carry_aval_out), _ = pval_out
+  assert carry_aval == carry_aval_out
+  consts_aval, _ = unzip2(map(_abstractify, consts))
+  avals = (consts_aval, x_aval, y_aval, carry_aval)
+  return scan_initial_p.bind(core.pack(consts), init, xs,
+                             avals=avals, jaxpr=jaxpr)
+
+
+# scan_p :: (d -> a -> c -> (b, c)) -> d -> c -> [a] -> ([b], c)
+def _scan_initial_impl(consts, init, xs, avals, jaxpr):
+  # TODO maybe can do this work in the traceable, not every impl call
+  length = leading_dim_size(xs)
+  (_, x_aval, y_aval, _) = avals
+  ys_aval = promote_aval_rank(length, y_aval)
+
+  def body_fun(i, vals):
+    carry, ys = vals
+    x = index_arrays(i, x_aval, xs)
+    y, carry_out = jaxpr_as_fun(jaxpr)(consts, x, carry)
+    ys_out = update_arrays(i, y_aval, ys, y)
+    return (carry_out, ys_out)
+
+  ys_init = empty_arrays(ys_aval)
+  carry, ys = lax.fori_loop(0, length, body_fun, (init, ys_init))
+  return core.pack((ys, carry))
+
+
+def _scan_initial_jvp(primals, tangents, avals, jaxpr):
+  consts, init, xs = primals
+  consts_dot, init_dot, xs_dot = tangents
+  consts_aval, x_aval, y_aval, carry_aval = avals
+
+  consts_where_zeros = ad.get_zeros(consts_dot)
+  nonzero_consts_dot = strip_zeros(consts_where_zeros, consts_dot)
+
+  where_init_zeros = ad.get_zeros(init_dot)
+  nonzero_init_dot = strip_zeros(where_init_zeros, init_dot)
+
+  where_xs_zeros = ad.get_zeros(xs_dot)  # same as where_x_zeros b/c arrays
+  nonzero_xs_dot = strip_zeros(where_xs_zeros, xs_dot)
+
+
+  jaxpr_jvp, new_consts, where_zeros_out = ad.jvp_jaxpr(
+      jaxpr, (consts_aval, carry_aval, x_aval),
+      (where_consts_zeros, where_init_zeros, where_xs_zeros))
+  _, where_carry_zeros, _ = where_zeros_out
+  assert where_carry_zeros == where_init_zeros  # TODO while
+
+  # TODO we realized consts are tricky... can't just add a new arg every time we
+  # jvp like in n-ary call
+
+  # out = scan_initial_p.bind(
+  # (ys, ys_dot), (carry, carry_dot) = 
+
+  # primal_out, tangent_out = call_initial_p.bind(
+  #     core.pack(consts), core.pack(primals),
+  #     core.pack(nonzero_tangents), jaxpr=jaxpr_jvp)
+  # tangent_out_zeros = ad.put_zeros(ad.TangentTuple, where_zeros_out,
+  #                                  tangent_out)
+  # return primal_out, tangent_out_zeros
+
+
+scan_initial_p = core.Primitive("scan_initial")
+scan_initial_p.def_impl(_scan_initial_impl)
+ad.primitive_jvps[scan_initial_p] = _scan_initial_jvp
+# pe.custom_partial_eval_rules[scan_initial_p] = _scan_initial_partial_eval
