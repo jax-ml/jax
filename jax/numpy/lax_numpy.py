@@ -598,13 +598,13 @@ def angle(x):
 
 @_wraps(onp.diff)
 def diff(a, n=1, axis=-1):
+  a, = _promote_to_result_dtype(onp.diff, a)
   if n == 0:
     return a
   if n < 0:
     raise ValueError(
       "order must be non-negative but got " + repr(n))
 
-  a, = _promote_to_result_dtype(onp.diff, a)
   nd = len(a.shape)
   slice1 = [slice(None)] * nd
   slice2 = [slice(None)] * nd
