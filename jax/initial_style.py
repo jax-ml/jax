@@ -188,14 +188,26 @@ def _scan_initial_jvp(primals, tangents, avals, jaxpr):
   where_xs_zeros = ad.get_zeros(xs_dot)  # same as where_x_zeros b/c arrays
   nonzero_xs_dot = strip_zeros(where_xs_zeros, xs_dot)
 
-  jaxpr_jvp, new_consts, where_zeros_out = ad.jvp_jaxpr(
-      jaxpr, (consts_aval, carry_aval, x_aval),
-      (where_consts_zeros, where_init_zeros, where_xs_zeros))
-  _, where_carry_zeros = where_zeros_out
-  assert not new_consts  # TODO
+  where_carry_zeros = where_init_zeros
+  while True:
+    jaxpr_jvp, new_consts, where_zeros_out = ad.jvp_jaxpr2(
+        jaxpr, (consts_aval, carry_aval, x_aval),
+        (where_consts_zeros, where_carry_zeros, where_xs_zeros))
+    assert not new_consts  # TODO
+    _, where_carry_zeros_out = where_zeros_out
+    if where_carry_zeros_out == where_carry_zeros:
+      break
+    else:
+      where_carry_zeros = zeros_join(where_carry_zeros_out, where_carry_zeros)
 
   import ipdb; ipdb.set_trace()
-  assert where_carry_zeros == where_init_zeros  # TODO while
+
+def zeros_join(a, b):
+  if type(a) is tuple:
+    return tuple(map(zeros_join, a, b))
+  else:
+    return a and b
+
 
   # TODO we realized consts are tricky... can't just add a new arg every time we
   # jvp like in n-ary call
