@@ -1492,6 +1492,7 @@ def vdot(a, b):
     a = conj(a)
   return dot(a.ravel(), b.ravel())
 
+
 @_wraps(onp.tensordot)
 def tensordot(a, b, axes=2):
   _check_arraylike("tensordot", a, b)
