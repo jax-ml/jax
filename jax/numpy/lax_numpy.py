@@ -596,6 +596,28 @@ def angle(x):
   return lax.atan2(im, re)
 
 
+@_wraps(onp.diff)
+def diff(a, n=1, axis=-1):
+  if n == 0:
+    return a
+  if n < 0:
+    raise ValueError(
+      "order must be non-negative but got " + repr(n))
+
+  a, = _promote_to_result_dtype(onp.diff, a)
+  nd = len(a.shape)
+  slice1 = [slice(None)] * nd
+  slice2 = [slice(None)] * nd
+  slice1[axis] = slice(1, None)
+  slice2[axis] = slice(None, -1)
+  slice1 = tuple(slice1)
+  slice2 = tuple(slice2)
+  if n > 1:
+    return diff(a[slice1] - a[slice2], n - 1, axis=axis)
+  else:
+    return a[slice1] - a[slice2]
+
+
 @_wraps(onp.reshape)
 def reshape(a, newshape, order="C"):
   try:
@@ -1469,7 +1491,6 @@ def vdot(a, b):
   if onp.issubdtype(_dtype(a), onp.complexfloating):
     a = conj(a)
   return dot(a.ravel(), b.ravel())
-
 
 @_wraps(onp.tensordot)
 def tensordot(a, b, axes=2):
