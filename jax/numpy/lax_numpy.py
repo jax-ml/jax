@@ -21,6 +21,7 @@ import itertools
 import re
 import string
 import warnings
+import types
 
 import numpy as onp
 import opt_einsum
@@ -1221,6 +1222,8 @@ def full_like(a, fill_value, dtype=None):
 
 @_wraps(onp.zeros)
 def zeros(shape, dtype=onp.dtype("float64")):
+  if isinstance(shape, types.GeneratorType):
+    raise TypeError("expected sequence object with len >= 0 or a single integer")
   shape = (shape,) if onp.isscalar(shape) else shape
   return lax.full(shape, 0, dtype)
 
