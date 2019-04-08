@@ -30,5 +30,3 @@ print jvp(f2, xs, xst)
 print "\nlinearize"
 print linearize(f1, *xs)[1](*xst)
 print linearize(f2, *xs)[1](*xst)
-
-
