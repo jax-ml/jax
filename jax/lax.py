@@ -1229,6 +1229,88 @@ def conv_with_general_padding(lhs, rhs, window_strides, padding,
       rhs_dilation=rhs_dilation)
 
 
+def _conv_transpose_padding(k, s, padding):
+  """Calculate before and after padding for a dim of transposed convolution.
+
+  Args:
+    k: int: kernel dimension.
+    s: int: dimension stride value.
+    padding: 'same' or 'valid' padding mode for original forward conv.
+
+  Returns:
+    2-tuple: ints: before and after padding for transposed convolution.
+  """
+  if padding.lower() == 'same':
+    pad_len = k + s - 2
+    if s > k - 1:
+      pad_a = k - 1
+    else:
+      pad_a = int(onp.ceil(pad_len / 2))
+  elif padding.lower() == 'valid':
+    pad_len = k + s - 2 + max(k - s, 0)
+    pad_a = k - 1
+  else:
+    raise ValueError('Padding mode must be `same` or `valid`.')
+  pad_b = pad_len - pad_a
+  return pad_a, pad_b
+
+
+def _flip_axes(x, axes):
+  """Flip ndarray 'x' along each axis specified in axes tuple."""
+  for axis in axes:
+    x = onp.flip(x, axis)
+  return x
+
+
+def conv_transpose(data, kernel, strides, padding, dimension_numbers=None):
+  """Convenience wrapper for calculating the N-d convolution transpose.
+
+  This function directly calculates convT rather than indirectly calculating
+  the gradient (transpose) of a forward convolution.
+
+  Args:
+    data: a rank `n+2` dimensional input array.
+    kernel: a rank `n+2` dimensional array of kernel weights.
+    strides: sequence of `n` integers, sets fractional stride.
+    padding: 'same', 'valid' will set as transpose of corresponding forward
+      conv, or a sequence of `n` integer 2-tuples describing before-and-after
+      padding for each `n` spatial dimension.
+    dimension_numbers: tuple of dimension descriptors as in
+      lax.conv_general_dilated. Defaults to tensorflow convention.
+
+  Returns:
+    Transposed N-d convolution, with padding following the conventions of the
+    corresponding keras and tensorflow conv-transpose operators.
+  """
+  assert len(data.shape) == len(kernel.shape) and len(data.shape) > 2
+  ndims = len(data.shape)
+  one = (1,) * (ndims - 2)
+  #Set dimensional layout defaults if not specified.
+  if dimension_numbers is None:
+    if ndims == 3:
+      dimension_numbers = ('NHC', 'HIO', 'NHC')
+    elif ndims == 4:
+      dimension_numbers = ('NHWC', 'HWIO', 'NHWC')
+    elif ndims == 5:
+      dimension_numbers = ('NHWDC', 'HWDIO', 'NHWDC')
+    else:
+      raise ValueError('No 4+ dimensional dimension_number defaults.')
+  dn = conv_dimension_numbers(data.shape, kernel.shape, dimension_numbers)
+  k_shape = onp.take(kernel.shape, dn.rhs_spec)
+  k_sdims = k_shape[2:]
+  # Calculate correct output shape given padding and strides.
+  if padding.lower() in {'same', 'valid'}:
+    pads = [_conv_transpose_padding(k, s, padding)
+            for k,s in zip(k_sdims.tolist(), strides)]
+  else:
+    pads = padding
+  # transposed conv = flipped kernel plus LHS dilation
+  kernel_t = _flip_axes(kernel, onp.array(dn.rhs_spec)[2:])
+  # flip input/output channel axes
+  kernel_t = onp.swapaxes(kernel_t, dn.rhs_spec[0],  dn.rhs_spec[1])
+  return conv_general_dilated(data, kernel_t, one, pads, strides, one, dn)
+
+
 def full_like(x, fill_value, dtype=None, shape=None):
   """Create a full array like np.full based on the example array `x`.
 

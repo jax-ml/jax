@@ -446,6 +446,67 @@ class LaxTest(jtu.JaxTestCase):
   # TODO(mattjj): test conv_general_dilated against numpy
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_lhs_shape={}_rhs_shape={}_strides={}_padding={}".format(
+           jtu.format_shape_dtype_string(lhs_shape, dtype),
+           jtu.format_shape_dtype_string(rhs_shape, dtype), strides, padding),
+          "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
+          "strides": strides, "padding": padding, "rng": rng, 'dspec': dspec}
+      for lhs_shape, rhs_shape in [
+          ((b, 9, 10, i), (3, 3, i, j))
+          for b, i, j in itertools.product([2, 3], repeat=3)]
+      for dtype in [onp.float32]
+      for strides in [(1, 1), (1, 2), (2, 1), (2, 2), (3, 3)]
+      for padding in ["VALID", "SAME"]
+      for dspec in [('NHWC', 'HWIO', 'NHWC'),]
+      for rng in [jtu.rand_small()]))
+  def testConvTranspose(self, lhs_shape, rhs_shape, dtype, strides,
+                        padding, dspec, rng):
+    def deconv_output_length(input_length, filter_size, padding, stride=0):
+      if padding.lower() == 'valid':
+        length = input_length * stride + max(filter_size - stride, 0)
+      elif padding.lower() == 'same':
+        length = input_length * stride
+      return length
+    def inv_permutation(p):
+      return [x[0] for x in sorted(enumerate(p), key=lambda x: x[1])]
+    def conv_transpose_via_grad(data, kernel, strides, padding,
+                                dimension_numbers=dspec):
+      assert len(data.shape) == len(kernel.shape)
+      ndims = len(data.shape)
+      nspatial = ndims - 2
+      one = (1,) * nspatial
+      dn = lax.conv_dimension_numbers(data.shape, kernel.shape,
+                                      dimension_numbers)
+      in_shape = onp.take(data.shape, dn.lhs_spec)
+      in_sdims = in_shape[2:]
+      k_shape = onp.take(kernel.shape, dn.rhs_spec)
+      k_sdims = k_shape[2:]
+      o_sdims = [deconv_output_length(in_sdims[i], k_sdims[i], padding,
+                                      stride=strides[i])
+                 for i in range(nspatial)]
+      o_shape =  [in_shape[0], k_shape[1]] + o_sdims
+      o_layout = onp.take(onp.array(o_shape), inv_permutation(dn.out_spec))
+      placeholder = onp.ones(o_layout, data.dtype)
+      conv = lambda x: lax.conv_general_dilated(x, kernel, strides, padding,
+                                                one, one, dn)
+      _, g = api.vjp(conv, placeholder)
+      return g(data)[0]
+
+    args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
+
+    def fun(lhs, rhs):
+      return lax.conv_transpose(lhs, rhs, strides, padding,
+                                dimension_numbers=dspec)
+
+    def fun_via_grad(lhs, rhs):
+      return conv_transpose_via_grad(lhs, rhs, strides, padding,
+                                     dimension_numbers=dspec)
+
+    # self._CompileAndCheck(fun, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(fun, fun_via_grad, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_lhs_shape={}_rhs_shape={}".format(
           jtu.format_shape_dtype_string(lhs_shape, dtype),
           jtu.format_shape_dtype_string(rhs_shape, dtype)),
