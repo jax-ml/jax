@@ -2648,6 +2648,19 @@ def _select_batch_rule(batched_args, batch_dims, **unused_kwargs):
     pred = broadcast_in_dim(pred, on_true.shape, [0])
   return select(pred, on_true, on_false), 0
 
+def _select_papply_rule(name, vals, dims):
+  dimset = set([d for d in dims if d is not None])
+  if len(dimset) != 1:
+    raise NotImplementedError(
+        'papply of select with operands split along different dimensions')
+  like_val, like_dim = [(v, d) for v, d in zip(vals, dims) if d is not None][0]
+
+  def normalize_split(val, dim):
+    return psplit_like(val, like_val, name) if dim is None else val
+
+  vals = [normalize_split(v, d) for v, d in zip(vals, dims)]
+  return select_p.bind(*vals), like_dim
+
 select_p = standard_primitive(_select_shape_rule, _select_dtype_rule, 'select')
 ad.defjvp(select_p,
           None,
@@ -2655,6 +2668,8 @@ ad.defjvp(select_p,
           lambda g, b, x, y: select(b, _zeros(g), g))
 ad.primitive_transposes[select_p] = _select_transpose_rule
 batching.primitive_batchers[select_p] = _select_batch_rule
+parallel.papply_primitive_rules[select_p] = _select_papply_rule
+
 
 def _slice_shape_rule(operand, start_indices, limit_indices, strides,
                       operand_shape):
@@ -2993,7 +3008,8 @@ def _gather_batching_rule(batched_args, batch_dims, dimension_numbers,
     return gather(operand, start_indices, dimension_numbers=dnums,
                   slice_sizes=slice_sizes), 0
 
-def _gather_serial_pmap_rule(val, axis):
+def _gather_serial_pmap_rule(vals, axes):
+  val, = vals
   return val, None
 
 gather_p = standard_primitive(
@@ -3957,6 +3973,7 @@ tie_in_p.def_abstract_eval(lambda x, y: y)
 xla.translations[tie_in_p] = lambda c, x, y: y
 ad.deflinear(tie_in_p, _tie_in_transpose_rule)
 batching.primitive_batchers[tie_in_p] = _tie_in_batch_rule
+parallel.defidentity(tie_in_p, argnum=1)
 
 
 shaped_identity_p = Primitive('shape_id')
@@ -4117,6 +4134,10 @@ def psplit(x, axis_name, axis):
   # return xla_all_to_all(x, hidden axis, axis)
   return psplit_p.bind(x, axis_name=axis_name, axis=axis)
 
+def psplit_like(x, y, axis_name):
+  """Split `x` along any axis on which `y` is split, if it is."""
+  return psplit_like_p.bind(x, y, axis_name=axis_name)
+
 def pcollect(x, axis_name):
   # lowering should be:
   # x = xla_broadcast(x, (xb.get_replica_count(),))
@@ -4138,7 +4159,9 @@ def PmapPrimitive(name):
   return prim
 
 
-def _psum_serial_pmap_rule(val, axis):
+def _psum_serial_pmap_rule(vals, axes):
+  val, = vals
+  axis, = axes
   return _reduce_sum(val, [axis]), None
 
 def _psum_transpose_rule(t, axis_name):
@@ -4159,7 +4182,9 @@ ad.deflinear(psum_p, _psum_transpose_rule)
 parallel.defreducer(reduce_sum_p, psum_p)
 
 
-def _pmax_serial_pmap_rule(val, axis):
+def _pmax_serial_pmap_rule(vals, axes):
+  val, = vals
+  axis, = axes
   return _reduce_max(val, [axis]), None
 
 pmax_p = PmapPrimitive('pmax')
@@ -4169,7 +4194,9 @@ parallel.serial_pmap_primitive_rules[pmax_p] = _pmax_serial_pmap_rule
 parallel.defreducer(reduce_max_p, pmax_p)
 
 
-def _pswapaxes_serial_pmap_rule(x, axis_in, axis):
+def _pswapaxes_serial_pmap_rule(vals, axes, axis):
+  x, = vals
+  axis_in, = axes
   if x.shape[axis_in] != x.shape[axis]:
     raise ValueError("pswapaxes between non-square dimensions")
   perm = list(range(x.ndim))
@@ -4181,16 +4208,36 @@ pswapaxes_p = PmapPrimitive('pswapaxes')
 parallel.serial_pmap_primitive_rules[pswapaxes_p] = _pswapaxes_serial_pmap_rule
 
 
-def _psplit_serial_pmap_rule(x, axis_in, axis):
+def _psplit_serial_pmap_rule(vals, axes, axis):
+  x, = vals
+  axis_in, = axes
   if x.shape[axis_in] != x.shape[axis]:
-    raise ValueError("psplit between non-square dimensions")
+    raise ValueError(
+        "psplit between non-square dimensions {} and {} of {}".format(
+            axis_in, axis, x.shape))
   return x, axis
 
 psplit_p = PmapPrimitive('psplit')
 parallel.serial_pmap_primitive_rules[psplit_p] = _psplit_serial_pmap_rule
 
 
-def _pcollect_serial_pmap_rule(x, axis_in):
+def _psplit_like_serial_pmap_rule(vals, axes):
+  x, y = vals
+  xaxis, yaxis = axes
+  if xaxis is not None and x.shape[xaxis] != x.shape[yaxis]:
+    raise ValueError(
+        "psplit_like is a non-square re-split along {} and {} of {}".format(
+            axis, yaxis, x.shape))
+  return x, yaxis
+
+psplit_like_p = PmapPrimitive('psplit_like')
+psplit_like_p.def_abstract_eval(
+    lambda x, y, *args, **kwargs: ShapedArray(y.shape, x.dtype))
+parallel.serial_pmap_primitive_rules[psplit_like_p] = _psplit_like_serial_pmap_rule
+
+
+def _pcollect_serial_pmap_rule(vals, axes):
+  x, = vals
   return x, None
 
 pcollect_p = PmapPrimitive('pcollect')

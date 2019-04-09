@@ -52,6 +52,20 @@ class SerialPmapTest(jtu.JaxTestCase):
     expected = 3 * onp.ones(4)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testPsplit(self):
+    f = lambda x: lax.psplit(x, 'i', 2)
+    arg = onp.arange(3 * 2 * 3 * 5).reshape(3, 2, 3, 5)
+    ans = serial_pmap(f, axis_name='i', out_axes=2)(arg)
+    expected = arg
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testPsplitLike(self):
+    f = lambda x, y: lax.psplit_like(x, y, 'i')
+    arg = onp.arange(3 * 2 * 3 * 5).reshape(3, 2, 3, 5)
+    ans = serial_pmap(f, axis_name='i', in_axes=(None, 2), out_axes=2)(arg, arg)
+    expected = arg
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def testLogSoftmax(self):
     f = lambda x: x - np.log(lax.psum(np.exp(x), 'i'))
     x = onp.log(onp.arange(1., 10., dtype=onp.float32))
@@ -108,6 +122,28 @@ class PapplyTest(jtu.JaxTestCase):
     ans = serial_pmap(pfun, axis_name)(arg)[0]
     expected = onp.max(arg, axis=0)
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testSelect(self):
+    pfun, axis_name = papply(lax.select, 5,
+                             in_axes=(None, 0, None))
+
+    p = onp.arange(15).reshape((5, 3)) % 4 == 1
+    t = onp.ones((5, 3))
+    f = onp.zeros((5, 3))
+    jaxpr = make_jaxpr(pfun)(p, t[0], f)
+
+    def expected_spmd(p, t, f):
+      return lax.select(
+          lax.psplit_like(p, t, axis_name),
+          t,
+          lax.psplit_like(f, t, axis_name))
+
+    expected_jaxpr = make_jaxpr(expected_spmd)(p, t[0], f)
+    assert repr(jaxpr) == repr(expected_jaxpr)
+
+    ans = serial_pmap(pfun, axis_name, in_axes=(None, 0, None))(p, t, f)
+    expected = lax.select(p, t, f)
+    self.assertAllClose(ans, expected, check_dtypes=True)
 
   @skip
   def DISABLED_testLogSoftmax(self):
