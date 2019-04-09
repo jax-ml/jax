@@ -1187,7 +1187,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     ans = onp.mean(x)
     self.assertAllClose(ans, onp.array(1./3), check_dtypes=False)
 
-  # TODO(mattjj): more exhaustive arange tests
   def testArangeOnFloats(self):
     # from https://github.com/google/jax/issues/145
     expected = onp.arange(0.0, 1.0, 0.1)
@@ -1374,6 +1373,31 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testLongLong(self):
     self.assertAllClose(onp.int64(7), api.jit(lambda x: x)(onp.longlong(7)),
                         check_dtypes=True)
+
+  def testArange(self):
+    # test cases inspired by dask tests at
+    # https://github.com/dask/dask/blob/master/dask/array/tests/test_creation.py#L92
+    self.assertAllClose(lnp.arange(77),
+                        onp.arange(77), check_dtypes=True)
+    self.assertAllClose(lnp.arange(2, 13),
+                        onp.arange(2, 13), check_dtypes=True)
+    self.assertAllClose(lnp.arange(4, 21, 9),
+                        onp.arange(4, 21, 9), check_dtypes=True)
+    self.assertAllClose(lnp.arange(53, 5, -3),
+                        onp.arange(53, 5, -3), check_dtypes=True)
+    # TODO(mattjj): make these tests work when jax_enable_x64=True
+    # self.assertAllClose(lnp.arange(77, dtype=float),
+    #                     onp.arange(77, dtype=float), check_dtypes=True)
+    # self.assertAllClose(lnp.arange(2, 13, dtype=int),
+    #                     onp.arange(2, 13, dtype=int), check_dtypes=True)
+    self.assertAllClose(lnp.arange(0, 1, -0.5),
+                        onp.arange(0, 1, -0.5), check_dtypes=True)
+
+    self.assertRaises(TypeError, lambda: lnp.arange())
+
+    # test that lnp.arange(N) doesn't instantiate an ndarray
+    self.assertFalse(type(lnp.arange(77)) == type(onp.arange(77)))
+    self.assertTrue(type(lnp.arange(77)) == type(lax.iota(onp.int32, 77)))
 
 
 if __name__ == "__main__":

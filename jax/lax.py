@@ -1611,7 +1611,7 @@ is_finite_p = unop(_fixed_dtype(onp.bool_), _float, 'is_finite')
 ad.defjvp_zero(is_finite_p)
 
 exp_p = standard_unop(_float | _complex, 'exp')
-ad.defjvp2(exp_p, lambda g, ans, x: mul(g, ans))
+ad.defjvp2(exp_p, lambda g, ans, x: _safe_mul(g, ans))
 
 log_p = standard_unop(_float | _complex, 'log')
 ad.defjvp(log_p, lambda g, x: div(g, x))
