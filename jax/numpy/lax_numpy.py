@@ -636,10 +636,12 @@ def diff(a, n=1, axis=-1, prepend=onp._NoValue, append=onp._NoValue):
   slice2[axis] = slice(None, -1)
   slice1 = tuple(slice1)
   slice2 = tuple(slice2)
-  if n > 1:
-    return diff(a[slice1] - a[slice2], n - 1, axis=axis)
-  else:
-    return a[slice1] - a[slice2]
+
+  op = not_equal if a.dtype == onp.bool_ else subtract
+  for _ in range(n):
+    a = op(a[slice1], a[slice2])
+
+  return a
 
 
 @_wraps(onp.reshape)
