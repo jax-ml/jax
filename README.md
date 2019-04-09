@@ -560,6 +560,7 @@ Here’s an example:
 
 ```python
 import jax.numpy as np
+from jax import random
 from jax.experimental import stax
 from jax.experimental.stax import Conv, Dense, MaxPool, Relu, Flatten, LogSoftmax
 
@@ -573,8 +574,9 @@ net_init, net_apply = stax.serial(
 )
 
 # Initialize parameters, not committing to a batch shape
+rng = random.PRNGKey(0)
 in_shape = (-1, 28, 28, 1)
-out_shape, net_params = net_init(in_shape)
+out_shape, net_params = net_init(rng, in_shape)
 
 # Apply network to dummy inputs
 inputs = np.zeros((128, 28, 28, 1))
@@ -689,7 +691,7 @@ specialized on shapes and dtypes, but not specialized all the way to concrete
 values, the Python code under a `jit` decorator must be applicable to abstract
 values. If we try to evaluate `x > 0` on an abstract `x`, the result is an
 abstract value representing the set `{True, False}`, and so a Python branch like
-`if x > 0` will raise an error: it doesn’t know which way to go! 
+`if x > 0` will raise an error: it doesn’t know which way to go!
 See [What’s supported](#whats-supported) for more
 information about `jit` requirements.
 
@@ -714,9 +716,10 @@ code to compile and end-to-end optimize much bigger functions.
 
 For a survey of current gotchas, with examples and explanations, we highly recommend reading the [Gotchas Notebook](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb).
 
-Two stand-out gotchas that might surprise NumPy users:
-1. In-place mutation of arrays isn't supported. Generally JAX requires functional code.
-2. PRNGs can be awkward, and non-reuse (linearity) is not checked.
+Some stand-out gotchas that might surprise NumPy users:
+1. [`np.isnan` doesn't yet work](https://github.com/google/jax/issues/276), and in general nan semantics aren't preserved on some backends.
+1. In-place mutation of arrays isn't supported, though [there is an alternative](https://jax.readthedocs.io/en/latest/jax.ops.html). Generally JAX requires functional code.
+2. PRNGs are different and can be awkward, though for [good reasons](https://github.com/google/jax/blob/master/design_notes/prng.md), and non-reuse (linearity) is not yet checked.
 
 See [the notebook](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb) for much more information.
 
