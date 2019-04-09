@@ -48,6 +48,7 @@ from .abstract_arrays import (UnshapedArray, ShapedArray, ConcreteArray,
 from .api_util import (pytree_fun_to_jaxtupletree_fun, pytree_to_jaxtupletree,
                        pytree_fun_to_flatjaxtuple_fun, pytree_to_flatjaxtuple)
 from .interpreters import partial_eval as pe
+from .interpreters.partial_eval import _unpack_eqn, _pack_eqn
 from .interpreters import xla
 from .interpreters import pxla
 from .interpreters import ad
@@ -960,6 +961,7 @@ def cond(pred, true_operand, true_fun, false_operand, false_fun):
   out = pe.merge_pvals(out, joined_pval)
   return tree_unflatten(true_tree(), out)
 
+# TODO(mattjj, dougalm): gensym broken under nesting
 def _revise_cond_jaxpr(new_pval, old_pval, jaxpr, consts):
   new_pv, new_const = new_pval
   old_pv, old_const = old_pval

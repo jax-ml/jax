@@ -6,7 +6,7 @@ import jax.numpy as np
 import jax.lax as lax
 
 from jax.util import curry, unzip2
-from jax.lax import _abstractify
+from jax.lax import _abstractify, _unpack_eqn
 from jax.abstract_arrays import ShapedArray
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import ad
@@ -32,27 +32,31 @@ def jaxpr_as_fun(jaxpr, consts, *args):
   return core.eval_jaxpr(jaxpr, consts, (), *args)
 
 
+_call_const = pe.gensym('_consts')
+
 def call_initial(f, *args):
   pvals = map(_abstractify, args)
   avals = [aval for (aval, _) in pvals]
   jaxpr, _, consts = pe.trace_to_jaxpr(
       lu.wrap_init(f), pvals, instantiate=True)
-  return call_initial_p.bind(core.pack(consts), *args, jaxpr=jaxpr)
+  lifted_jaxpr = pe._closure_convert_jaxpr(jaxpr, _call_const)
+  lifted_args = (core.pack(consts),) + args
+  return call_initial_p.bind(*lifted_args, jaxpr=lifted_jaxpr, consts=())
 
-def _call_initial_impl(consts, *args, **kwargs):
+def _call_initial_impl(*args, **kwargs):
   jaxpr = kwargs.pop('jaxpr')
-  return jaxpr_as_fun(jaxpr)(consts, *args)
+  consts = kwargs.pop('consts')
+  return jaxpr_as_fun(jaxpr, consts)(*args)
 
-def _call_initial_jvp(primals, tangents, jaxpr):
+def _call_initial_jvp(primals, tangents, jaxpr, consts):
   avals = [aval for (aval, _) in map(_abstractify, primals)]
   where_zeros = map(ad.get_zeros, tangents)
   nonzero_tangents = strip_zeros(where_zeros, tangents)
-  jaxpr_jvp, consts, where_zeros_out = ad.jvp_jaxpr(jaxpr, avals, where_zeros)
+  jaxpr_jvp, new_consts, where_zeros_out = ad.jvp_jaxpr(jaxpr, consts, avals, where_zeros)
   primal_out, tangent_out = call_initial_p.bind(
-      core.pack(consts), core.pack(primals),
-      core.pack(nonzero_tangents), jaxpr=jaxpr_jvp)
-  tangent_out_zeros = ad.put_zeros(ad.TangentTuple, where_zeros_out,
-                                   tangent_out)
+      core.pack(primals), core.pack(nonzero_tangents), jaxpr=jaxpr_jvp,
+      consts=new_consts)
+  tangent_out_zeros = ad.put_zeros(ad.TangentTuple, where_zeros_out, tangent_out)
   return primal_out, tangent_out_zeros
 
 def is_const(x):
@@ -78,15 +82,17 @@ def as_aval(pv, const):
 
 def _call_initial_partial_eval(trace, *tracers, **kwargs):
   jaxpr = kwargs.pop('jaxpr')
+  consts = kwargs.pop('consts')
   in_pvs, in_consts = unzip2([t.pval for t in tracers])
   first_components = map(is_const, in_pvs)
   avals = map(as_aval, in_pvs, in_consts)
-  jaxpr_1, jaxpr_2, out_pv, first_components_out = pe.partial_eval_jaxpr(
-      jaxpr, avals, first_components)
-  out_pv_const, consts = call_initial_p.bind(core.unit, *in_consts, jaxpr=jaxpr_1)
-  const_tracers = core.pack(map(trace.new_instantiated_const, consts))
-  eqn = core.JaxprEqn((const_tracers,) + tracers, None, call_initial_p, (), False,
-                      dict(jaxpr=jaxpr_2))
+  (jaxpr_1, consts_1), (jaxpr_2, consts_2), out_pv, first_components_out = \
+      pe.partial_eval_jaxpr(jaxpr, consts, avals, first_components)
+  out_pv_const, residuals = call_initial_p.bind(
+      *in_consts, jaxpr=jaxpr_1, consts=consts_1)
+  residual_tracers = core.pack(map(trace.new_instantiated_const, residuals))
+  eqn = core.JaxprEqn((residual_tracers,) + tracers, None, call_initial_p, (),
+                      False, dict(jaxpr=jaxpr_2, consts=consts_2))
   return pe.JaxprTracer(trace, pe.PartialVal((out_pv, out_pv_const)), eqn)
 
 
