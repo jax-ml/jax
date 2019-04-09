@@ -597,7 +597,8 @@ def angle(x):
 
 
 @_wraps(onp.diff)
-def diff(a, n=1, axis=-1):
+def diff(a, n=1, axis=-1, prepend=onp._NoValue, append=onp._NoValue):
+
   a, = _promote_to_result_dtype(onp.diff, a)
   if n == 0:
     return a
@@ -606,6 +607,29 @@ def diff(a, n=1, axis=-1):
       "order must be non-negative but got " + repr(n))
 
   nd = len(a.shape)
+
+  combined = []
+  if prepend is not onp._NoValue:
+    prepend = asarray(prepend)
+    if prepend.ndim == 0:
+      shape = list(a.shape)
+      shape[axis] = 1
+      prepend = broadcast_to(prepend, tuple(shape))
+    combined.append(prepend)
+
+  combined.append(a)
+
+  if append is not onp._NoValue:
+    append = asarray(append)
+    if append.ndim == 0:
+      shape = list(a.shape)
+      shape[axis] = 1
+      append = broadcast_to(append, tuple(shape))
+    combined.append(append)
+
+  if len(combined) > 1:
+    a = concatenate(combined, axis)
+
   slice1 = [slice(None)] * nd
   slice2 = [slice(None)] * nd
   slice1[axis] = slice(1, None)
