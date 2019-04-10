@@ -84,6 +84,39 @@ class StaxTest(jtu.JaxTestCase):
     _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_channels={}_filter_shape={}_padding={}_strides={}_input_shape={}"
+       .format(channels, filter_shape, padding, strides, input_shape),
+       "channels": channels, "filter_shape": filter_shape, "padding": padding,
+       "strides": strides, "input_shape": input_shape}
+      for channels in [2, 3]
+      for filter_shape in [(1, 1), (2, 3), (3, 3)]
+      for padding in ["SAME", "VALID"]
+      for strides in [None, (2, 1), (2, 2)]
+      for input_shape in [(2, 10, 11, 1)]))
+  def testConvTransposeShape(self, channels, filter_shape, padding, strides,
+                               input_shape):
+    init_fun, apply_fun = stax.ConvTranspose(channels, filter_shape,  # 2D
+                                               strides=strides, padding=padding)
+    _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_channels={}_filter_shape={}_padding={}_strides={}_input_shape={}"
+       .format(channels, filter_shape, padding, strides, input_shape),
+       "channels": channels, "filter_shape": filter_shape, "padding": padding,
+       "strides": strides, "input_shape": input_shape}
+      for channels in [2, 3]
+      for filter_shape in [(1,), (2,), (3,)]
+      for padding in ["SAME", "VALID"]
+      for strides in [None, (1,), (2,)]
+      for input_shape in [(2, 10, 1)]))
+  def testConv1DTransposeShape(self, channels, filter_shape, padding, strides,
+                               input_shape):
+    init_fun, apply_fun = stax.Conv1DTranspose(channels, filter_shape,
+                                               strides=strides, padding=padding)
+    _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_out_dim={}_input_shape={}"
                         .format(out_dim, input_shape),
        "out_dim": out_dim, "input_shape": input_shape}
