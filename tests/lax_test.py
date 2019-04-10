@@ -368,7 +368,6 @@ class LaxTest(jtu.JaxTestCase):
 
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)
 
-  @skip
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_lhs_shape={}_rhs_shape={}_strides={}_padding={}"
        "_lhs_dilation={}_rhs_dilation={}".format(
@@ -390,6 +389,7 @@ class LaxTest(jtu.JaxTestCase):
       self, lhs_shape, rhs_shape, dtype, strides, padding, lhs_dilation,
       rhs_dilation, rng):
     # TODO(mattjj): make this test pass
+    return SkipTest("this test is incomplete")
     args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
 
     def fun(lhs, rhs):
