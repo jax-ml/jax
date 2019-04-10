@@ -497,6 +497,39 @@ def jvp_jaxpr(jaxpr, consts, avals, zeros):
   return jaxpr_out, consts_out, out_zeros()
 
 
+# TODO ideas to simplify:
+# - try jaxpr munging
+# - try writing as an @transform
+
+@transformation_with_aux
+def f_jvp_traceable2(zero_components, *primal_tangent_pairs):
+  primals, tangents = unzip2(primal_tangent_pairs)
+  tangents_zeros = map(partial(put_zeros, TangentTuple), zero_components, tangents)
+  primal_out, tangent_out = yield primals, tangents_zeros
+  # TODO check output is tuple
+  zeros_out = get_zeros(tangent_out)
+  tangent_out_nonzero = strip_zeros(core.unit, pack, zeros_out, tangent_out)
+  primal_tangent_pairs_out = [pack((p, t)) for p, t in zip(primal_out, tangent_out_nonzero)]
+  yield pack(primal_tangent_pairs_out), zeros_out
+
+def jvp_jaxpr2(jaxpr, consts, avals, zeros):
+  # jaxpr :: d -> a -> b -> (c1, c2)
+  # avals = (d, a, b)
+  f = wrap_init(partial(jaxpr_as_fun, jaxpr, consts))  # f :: d -> a -> b -> (c1, c2)  [with consts]
+  f_jvp, out_zeros = f_jvp_traceable2(jvp(f, instantiate=False), zeros)
+  # f_jvp :: (d, d') -> (a, a') -> (b, b') -> ((c1, c1'), (c2, c2'))
+  tangent_avals = map(partial(strip_zeros, core.AbstractTuple(()), core.AbstractTuple),
+                      zeros, avals)
+  pt_pvals = [pe.PartialVal((core.AbstractTuple((p_aval, t_aval)), core.unit))
+              for p_aval, t_aval in zip(avals, tangent_avals)]
+  jaxpr_out, pval_out, consts_out = pe.trace_to_jaxpr(
+      f_jvp, pt_pvals, instantiate=True)
+  # jaxpr_out :: (d, d') -> (a, a') -> (b, b') -> ((c1, c1'), (c2, c2'))  [with consts]
+  # out_zeros :: (zeros(c1), zeros(c2))
+  return jaxpr_out, consts_out, out_zeros()
+
+
+
 primitive_transposes[core.call_p] = partial(call_transpose, call_p)
 primitive_transposes[pe.compiled_call_p] = partial(call_transpose, pe.compiled_call_p)
 

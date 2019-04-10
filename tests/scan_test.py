@@ -28,9 +28,10 @@ print np.cumsum(x)
 print cumsum(x)
 print
 
-# # print jvp(np.cumsum, (x,), (x*0.1,))
-# print jvp(cumsum, (x,), (x*0.1,))
-# # print
+print jvp(np.cumsum, (x,), (x*0.1,))
+print jvp(cumsum, (x,), (x*0.1,))
+print
+
 # # print linearize(np.cumsum, x)[1](x*0.1)
 # # print linearize(cumsum, x)[1](x*0.1)
 
@@ -38,19 +39,20 @@ print
 # ###
 
 
-# def f(x, carry):
-#   carry = carry + np.sin(x)
-#   y = pack((carry**2, -carry))
-#   return pack((y, carry))
+def f(x, carry):
+  carry = carry + np.sin(x)
+  y = pack((carry**2, -carry))
+  return pack((y, carry))
 
-# ys, z = scan_initial(f, 0.0, np.arange(4.))
-# ys_ref, z_ref = scan_reference(f, 0.0, np.arange(4.))
-# print onp.allclose(z, z_ref)
+ys, z = scan_initial(f, 0.0, np.arange(4.))
+ys_ref, z_ref = scan_reference(f, 0.0, np.arange(4.))
+print onp.allclose(z, z_ref)
 
-# print ys
-# print ys_ref
-# print z
-# print z_ref
-# # print jvp(partial(scan_initial, f), (0.0, np.arange(4.)), (1., np.array([0.3, 0.2, 0.1, 0.1])))
-# # print jvp(partial(scan_reference, f), (0.0, np.arange(4.)), (1., np.array([0.3, 0.2, 0.1, 0.1])))
-# print
+print ys
+print ys_ref
+print z
+print z_ref
+print
+print jvp(partial(scan_initial, f), (0.0, np.arange(4.)), (1., np.array([0.3, 0.2, 0.1, 0.1])))
+print jvp(partial(scan_reference, f), (0.0, np.arange(4.)), (1., np.array([0.3, 0.2, 0.1, 0.1])))
+print

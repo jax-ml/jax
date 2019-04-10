@@ -25,7 +25,18 @@ def transpose_jaxpr(jaxpr, avals, tangent_components):
   assert False
 
 strip_zeros = partial(ad.strip_zeros, core.unit, core.pack)
+strip_zeros_aval = partial(ad.strip_zeros, core.AbstractTuple(()), core.AbstractTuple)
 
+def convert_zeros(keep_symbolic, example, tangent):
+  if tangent is ad.zero:
+    if keep_symbolic:
+      return core.unit
+    else:
+      return ad.zeros_like_jaxval(example)
+  elif type(tangent) is ad.TangentTuple:
+    return core.pack(map(convert_zeros, keep_symbolic, example, tangent))
+  else:
+    return tangent
 
 @curry
 def jaxpr_as_fun(jaxpr, consts, *args):
@@ -188,47 +199,64 @@ def _scan_initial_jvp(primals, tangents, avals, jaxpr, true_consts):
   consts_aval, x_aval, y_aval, carry_aval = avals
 
   where_consts_zeros = ad.get_zeros(consts_dot)
-  nonzero_consts_dot = strip_zeros(where_consts_zeros, consts_dot)
-
   where_init_zeros = ad.get_zeros(init_dot)
-  nonzero_init_dot = strip_zeros(where_init_zeros, init_dot)
-
   where_xs_zeros = ad.get_zeros(xs_dot)  # same as where_x_zeros b/c arrays
-  nonzero_xs_dot = strip_zeros(where_xs_zeros, xs_dot)
 
   where_carry_zeros = where_init_zeros
   while True:
     jaxpr_jvp, new_consts, where_zeros_out = ad.jvp_jaxpr2(
-        jaxpr, (consts_aval, carry_aval, x_aval),
+        jaxpr, true_consts, (consts_aval, carry_aval, x_aval),
         (where_consts_zeros, where_carry_zeros, where_xs_zeros))
-    assert not new_consts  # TODO
-    _, where_carry_zeros_out = where_zeros_out
+    where_ys_zeros, where_carry_zeros_out = where_zeros_out
     if where_carry_zeros_out == where_carry_zeros:
       break
     else:
       where_carry_zeros = zeros_join(where_carry_zeros_out, where_carry_zeros)
 
-  import ipdb; ipdb.set_trace()
+  # convert_zeros is like strip_zeros but uses explicit lattice information to
+  # instantiate zeros in some cases, namely in init_dot based on the fixed point
+  nonzero_init_dot = convert_zeros(where_carry_zeros, init, init_dot)
+  nonzero_consts_dot = convert_zeros(where_consts_zeros, consts, consts_dot)
+  nonzero_xs_dot = convert_zeros(where_xs_zeros, xs, xs_dot)
+
+  consts_dual = core.pack((consts, nonzero_consts_dot))
+  init_dual = core.pack((init, nonzero_init_dot))
+  xs_dual = core.pack((xs, nonzero_xs_dot))
+
+  consts_dual_aval = core.AbstractTuple((consts_aval, strip_zeros_aval(where_consts_zeros, consts_aval)))
+  x_dual_aval = core.AbstractTuple((x_aval, strip_zeros_aval(where_xs_zeros, x_aval)))
+  y_dual_aval = core.AbstractTuple((y_aval, strip_zeros_aval(where_ys_zeros, y_aval)))
+  carry_dual_aval = core.AbstractTuple((carry_aval, strip_zeros_aval(where_carry_zeros, carry_aval)))
+  avals = (consts_dual_aval, x_dual_aval, y_dual_aval, carry_dual_aval)
+
+  ys_dual, carry_out_dual = scan_initial_p.bind(
+      consts_dual, init_dual, xs_dual, avals=avals, jaxpr=jaxpr_jvp,
+      true_consts=new_consts)
+
+  ys, ys_dot = ys_dual
+  ys_dot = ad.put_zeros(ad.TangentTuple, where_ys_zeros, ys_dot)
+
+  carry_out, carry_out_dot = carry_out_dual
+  carry_out_dot = ad.put_zeros(ad.TangentTuple, where_carry_zeros_out, carry_out_dot)
+
+  return core.pack((ys, carry_out)), ad.TangentTuple((ys_dot, carry_out_dot))
+
+def instantiate_zeros(example, tangent, keep_symbolic):
+  if tangent is ad.zero:
+    if keep_symbolic:
+      return tangent
+    else:
+      return ad.zeros_like_jaxval(example)
+  elif isinstance(tangent, ad.TangentTuple):
+    return ad.TangentTuple(map(instantiate_zeros, example, tangent, keep_symbolic))
+  else:
+    return tangent
 
 def zeros_join(a, b):
   if type(a) is tuple:
     return tuple(map(zeros_join, a, b))
   else:
     return a and b
-
-
-  # TODO we realized consts are tricky... can't just add a new arg every time we
-  # jvp like in n-ary call
-
-  # out = scan_initial_p.bind(
-  # (ys, ys_dot), (carry, carry_dot) = 
-
-  # primal_out, tangent_out = call_initial_p.bind(
-  #     core.pack(consts), core.pack(primals),
-  #     core.pack(nonzero_tangents), jaxpr=jaxpr_jvp)
-  # tangent_out_zeros = ad.put_zeros(ad.TangentTuple, where_zeros_out,
-  #                                  tangent_out)
-  # return primal_out, tangent_out_zeros
 
 
 scan_initial_p = core.Primitive("scan_initial")
