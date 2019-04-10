@@ -1240,17 +1240,17 @@ def _conv_transpose_padding(k, s, padding):
   Returns:
     2-tuple: ints: before and after padding for transposed convolution.
   """
-  if padding.lower() == 'same':
+  if padding == 'SAME':
     pad_len = k + s - 2
     if s > k - 1:
       pad_a = k - 1
     else:
       pad_a = int(onp.ceil(pad_len / 2))
-  elif padding.lower() == 'valid':
+  elif padding == 'VALID':
     pad_len = k + s - 2 + max(k - s, 0)
     pad_a = k - 1
   else:
-    raise ValueError('Padding mode must be `same` or `valid`.')
+    raise ValueError('Padding mode must be `SAME` or `VALID`.')
   pad_b = pad_len - pad_a
   return pad_a, pad_b
 
@@ -1262,30 +1262,36 @@ def _flip_axes(x, axes):
   return x
 
 
-def conv_transpose(data, kernel, strides, padding, dimension_numbers=None):
-  """Convenience wrapper for calculating the N-d convolution transpose.
+def conv_transpose(lhs, rhs, strides, padding, dimension_numbers=None,
+                   transpose_kernel=False):
+  """Convenience wrapper for calculating the N-d convolution "transpose".
 
-  This function directly calculates convT rather than indirectly calculating
-  the gradient (transpose) of a forward convolution.
+  This function directly calculates a fractionally strided conv rather than
+  indirectly calculating the gradient (transpose) of a forward convolution.
 
   Args:
-    data: a rank `n+2` dimensional input array.
-    kernel: a rank `n+2` dimensional array of kernel weights.
+    lhs: a rank `n+2` dimensional input array.
+    rhs: a rank `n+2` dimensional array of kernel weights.
     strides: sequence of `n` integers, sets fractional stride.
-    padding: 'same', 'valid' will set as transpose of corresponding forward
+    padding: 'SAME', 'VALID' will set as transpose of corresponding forward
       conv, or a sequence of `n` integer 2-tuples describing before-and-after
       padding for each `n` spatial dimension.
     dimension_numbers: tuple of dimension descriptors as in
       lax.conv_general_dilated. Defaults to tensorflow convention.
+    transpose_kernel: if True flips spatial axes and swaps the input/output
+      channel axes of the kernel. This makes the output of this function identical
+      to the gradient-derived functions like keras.layers.Conv2DTranspose
+      applied to the same kernel. For typical use in neural nets this is completely
+      pointless and just makes input/output channel specification confusing.
 
   Returns:
-    Transposed N-d convolution, with padding following the conventions of the
-    corresponding keras and tensorflow conv-transpose operators.
+    Transposed N-d convolution, with output padding following the conventions of
+    keras.layers.Conv2DTranspose.
   """
-  assert len(data.shape) == len(kernel.shape) and len(data.shape) > 2
-  ndims = len(data.shape)
+  assert len(lhs.shape) == len(rhs.shape) and len(lhs.shape) > 2
+  ndims = len(lhs.shape)
   one = (1,) * (ndims - 2)
-  #Set dimensional layout defaults if not specified.
+  # Set dimensional layout defaults if not specified.
   if dimension_numbers is None:
     if ndims == 3:
       dimension_numbers = ('NHC', 'HIO', 'NHC')
@@ -1295,20 +1301,20 @@ def conv_transpose(data, kernel, strides, padding, dimension_numbers=None):
       dimension_numbers = ('NHWDC', 'HWDIO', 'NHWDC')
     else:
       raise ValueError('No 4+ dimensional dimension_number defaults.')
-  dn = conv_dimension_numbers(data.shape, kernel.shape, dimension_numbers)
-  k_shape = onp.take(kernel.shape, dn.rhs_spec)
+  dn = conv_dimension_numbers(lhs.shape, rhs.shape, dimension_numbers)
+  k_shape = onp.take(rhs.shape, dn.rhs_spec)
   k_sdims = k_shape[2:]
   # Calculate correct output shape given padding and strides.
-  if padding.lower() in {'same', 'valid'}:
+  if padding in {'SAME', 'VALID'}:
     pads = [_conv_transpose_padding(k, s, padding)
             for k,s in zip(k_sdims.tolist(), strides)]
   else:
     pads = padding
-  # transposed conv = flipped kernel plus LHS dilation
-  kernel_t = _flip_axes(kernel, onp.array(dn.rhs_spec)[2:])
-  # flip input/output channel axes
-  kernel_t = onp.swapaxes(kernel_t, dn.rhs_spec[0],  dn.rhs_spec[1])
-  return conv_general_dilated(data, kernel_t, one, pads, strides, one, dn)
+  if transpose_kernel:
+    # flip spatial dims and swap input / output channel axes
+    rhs = _flip_axes(rhs, onp.array(dn.rhs_spec)[2:])
+    rhs = onp.swapaxes(rhs, dn.rhs_spec[0], dn.rhs_spec[1])
+  return conv_general_dilated(lhs, rhs, one, pads, strides, one, dn)
 
 
 def full_like(x, fill_value, dtype=None, shape=None):
@@ -4382,6 +4388,24 @@ def conv_general_shape_tuple(lhs_shape, rhs_shape, window_strides, padding,
   lhs_trans = onp.take(lhs_shape, lhs_perm)
   rhs_trans = onp.take(rhs_shape, rhs_perm)
   out_trans = conv_shape_tuple(lhs_trans, rhs_trans, window_strides, padding)
+  return tuple(onp.take(out_trans, onp.argsort(out_perm)))
+
+
+def conv_transpose_shape_tuple(lhs_shape, rhs_shape, window_strides, padding,
+                             dimension_numbers):
+  lhs_perm, rhs_perm, out_perm = conv_general_permutations(dimension_numbers)
+  lhs_trans = onp.take(lhs_shape, lhs_perm)
+  rhs_trans = onp.take(rhs_shape, rhs_perm)
+  if isinstance(padding, str):
+    padding = [_conv_transpose_padding(k, s, padding)
+               for k,s in zip(rhs_trans[2:], window_strides)]
+  padding = list(map(onp.sum, padding))
+  unpad_out_space = [(i-1) * s - k + 2
+                     for i, k, s in zip(lhs_trans[2:],
+                                        rhs_trans[2:],
+                                        window_strides)]
+  out_space = onp.sum([unpad_out_space, padding], axis=0).tolist()
+  out_trans = tuple((lhs_trans[0], rhs_trans[0]) + tuple(out_space))
   return tuple(onp.take(out_trans, onp.argsort(out_perm)))
 
 
