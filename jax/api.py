@@ -53,6 +53,8 @@ from .interpreters import batching
 from .interpreters import parallel
 from .config import flags, config
 
+from . import lax_parallel
+
 map = safe_map
 zip = safe_zip
 

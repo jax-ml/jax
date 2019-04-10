@@ -39,7 +39,6 @@ from .util import partial, prod
 
 from . import core
 from . import ad_util
-from . import api
 from . import linear_util as lu
 from .config import flags
 from .core import Primitive
@@ -1063,6 +1062,8 @@ def _scan_impl(a, bs, consts, aval_out, jaxpr):
 # TODO(mattjj, phawkins): figure out what to do with consts_tangents, and the
 # jaxtuple packing issues
 def _scan_jvp(primals, tangents, aval_out, jaxpr):
+  from . import api
+
   a, bs, consts_primals = primals
   a_dot, bs_dot, consts_tangents = tangents
 
