@@ -96,7 +96,7 @@ class StaxTest(jtu.JaxTestCase):
       for input_shape in [(2, 10, 11, 1)]))
   def testConvTransposeShape(self, channels, filter_shape, padding, strides,
                                input_shape):
-    init_fun, apply_fun = stax.ConvTranspose(channels, filter_shape,
+    init_fun, apply_fun = stax.ConvTranspose(channels, filter_shape,  # 2D
                                                strides=strides, padding=padding)
     _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)
   @parameterized.named_parameters(jtu.cases_from_list(
