@@ -16,8 +16,7 @@ from jax import lax
 
 def cumsum(xs):
   def f(x, carry):
-    # carry = carry + x  # TODO
-    carry = carry + x + 3.14
+    carry = carry + x
     return pack((carry, carry))
 
   ys, _ = scan_initial(f, 0.0, xs)
@@ -25,9 +24,9 @@ def cumsum(xs):
 
 x = np.linspace(0, 3, 4)
 
-# # print np.cumsum(x)
-# print cumsum(x)
-# print
+print np.cumsum(x)
+print cumsum(x)
+print
 
 # # print jvp(np.cumsum, (x,), (x*0.1,))
 # print jvp(cumsum, (x,), (x*0.1,))
