@@ -27,7 +27,7 @@ import jax.numpy as np
 from jax import test_util as jtu
 from jax import lax
 from jax.api import pmap, vmap, jvp, grad, make_jaxpr, linearize, device_put
-from jax.lax import psum
+from jax.lax_parallel import psum
 from jax.lib import xla_bridge
 from jax.util import prod
 from jax.interpreters import pxla
@@ -54,7 +54,7 @@ class PmapTest(jtu.JaxTestCase):
         return device_mesh_shape
 
   def testBasic(self):
-    f = pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i')
+    f = pmap(lambda x: x - psum(x, 'i'), axis_name='i')
 
     shape = (xla_bridge.device_count(), 4)
     x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
@@ -64,7 +64,7 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testNestedBasic(self):
-    f = lambda x: lax.psum(lax.psum(x, 'i'), 'j')
+    f = lambda x: psum(psum(x, 'i'), 'j')
     f = pmap(pmap(f, 'i'), 'j')
 
     def sum_and_broadcast(x, axis):
@@ -145,7 +145,7 @@ class PmapTest(jtu.JaxTestCase):
 
   def testTwoArgsGrad(self):
     def f(x, y):
-      return lax.psum(5. * np.cos(x) * np.sin(y), 'i')
+      return psum(5. * np.cos(x) * np.sin(y), 'i')
     f = pmap(f, 'i')
 
     def g(x, y):
@@ -223,7 +223,7 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(z, 2 * 2 * x[::-1], check_dtypes=False)
 
   def testPsumMultiple(self):
-    f = lambda x: lax.psum(x, ('i', 'j'))
+    f = lambda x: psum(x, ('i', 'j'))
     f = pmap(pmap(f, 'i'), 'j')
 
     def sum_and_broadcast(x, axis):
