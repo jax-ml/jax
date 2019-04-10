@@ -118,18 +118,17 @@ class SerialPmapTrace(Trace):
       name = next(name for name in names_in if name is not None)  # all same
       if primitive in serial_pmap_primitive_rules:
         # if it's a pmap collective primitive, do something special
-        val_in, = vals_in
-        axis_in, = axes_in
         if name == params['axis_name']:
           # if the name matches this tracer's name, apply the pmap rule
           rule = serial_pmap_primitive_rules[primitive]
           params = {k: params[k] for k in params if k != 'axis_name'}
-          val_out, axis_out = rule(val_in, axis_in, **params)
+          val_out, axis_out = rule(vals_in, axes_in, **params)
           return SerialPmapTracer(self, name, val_out, axis_out)
         else:
-          # if not, bind the primitive so that any other pmap tracers can see it
-          val_out = primitive.bind(val_in, **params)
-          return SerialPmapTracer(self, name, val_out, axis_in)
+          # if not, bind the primitive so that any other pmap tracers can see it,
+          # assuming an axis equal to that of the first operand
+          val_out = primitive.bind(*vals_in, **params)
+          return SerialPmapTracer(self, name, val_out, axes_in[0])
       else:
         # if it's not a pmap collective primitive, act just like vmap
         rule = batching.get_primitive_batcher(primitive)
@@ -316,6 +315,10 @@ def broadcasting_papply(prim, name, vals, axes, **params):
     return prim.bind(x, y, **params), ydim
 
 
+def identity_papply(prim, argnum, name, vals, axes, **params):
+  return prim.bind(*vals, **params), axes[argnum]
+
+
 papply_primitive_rules = {}
 
 def defvectorized(prim):
@@ -327,3 +330,6 @@ def defreducer(prim, collective_prim):
 
 def defbroadcasting(prim):
   papply_primitive_rules[prim] = partial(broadcasting_papply, prim)
+
+def defidentity(prim, argnum=0):
+  papply_primitive_rules[prim] = partial(identity_papply, prim, argnum)
