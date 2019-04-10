@@ -29,6 +29,7 @@ from functools import partial
 import numpy as onp
 
 from . import lax
+from . import lax_control_flow
 from . import numpy as np
 from . import tree_util
 from .api import jit, vmap
@@ -471,7 +472,7 @@ def _gamma_one(key, alpha):
 
   def _cond_fn(kXVU):
     _, X, V, U = kXVU
-    # TODO: use lax.cond when its batching rule is supported
+    # TODO: use lax_control_flow.cond when its batching rule is supported
     # The reason is to avoid evaluating second condition which involves log+log
     # if the first condition is satisfied
     cond = lax.bitwise_and(lax.ge(U, lax.sub(one, lax.mul(squeeze_const, lax.mul(X, X)))),
@@ -491,9 +492,8 @@ def _gamma_one(key, alpha):
     return key, X, V, U
 
   # initial state is chosen such that _cond_fn will return True
-  _, _, V, _ = lax.while_loop(_cond_fn,
-                              _body_fn,
-                              (key, zero, _constant_like(alpha, -1), zero))
+  _, _, V, _ = lax_control_flow.while_loop(
+      _cond_fn, _body_fn, (key, zero, _constant_like(alpha, -1), zero))
   z = lax.mul(lax.mul(d, V), boost)
   return lax.select(lax.eq(z, zero), onp.finfo(z.dtype).tiny, z)
 
@@ -513,7 +513,7 @@ def gamma(key, a, shape=(), dtype=onp.float32):
     A random array with the specified shape and dtype.
   """
   return _gamma(key, a, shape, dtype)
-  
+
 @partial(jit, static_argnums=(2, 3))
 def _gamma(key, a, shape=(), dtype=onp.float32):
   a = lax.convert_element_type(a, dtype)
