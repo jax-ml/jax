@@ -16,7 +16,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from unittest import skip
+from unittest import SkipTest
 
 import numpy as onp
 from absl.testing import absltest
@@ -145,8 +145,8 @@ class PapplyTest(jtu.JaxTestCase):
     expected = lax.select(p, t, f)
     self.assertAllClose(ans, expected, check_dtypes=True)
 
-  @skip
-  def DISABLED_testLogSoftmax(self):
+  def testLogSoftmax(self):
+    return SkipTest("test doesn't pass yet")  # TODO(frostig)
 
     def fun(x):
       return x - np.log(np.sum(np.exp(x)))
@@ -170,8 +170,8 @@ class PapplyTest(jtu.JaxTestCase):
     ans = serial_pmap(pfun, axis_name)(x, x)
     self.assertAllClose(ans, expected, check_dtypes=True)
 
-  @skip
-  def DISABLED_testAddBroadcasting(self):
+  def testAddBroadcasting(self):
+    return SkipTest("test doesn't pass yet")  # TODO(frostig)
 
     def fun(x):
       return x + 3
@@ -225,8 +225,7 @@ class PapplyTest(jtu.JaxTestCase):
     ans = serial_pmap(pfun, axis_name)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @skip
-  def DISABLED_testTransposeAndAddRank3(self):
+  def testTransposeAndAddRank3(self):
 
     def fun(x):
       return x + x.T
@@ -238,9 +237,8 @@ class PapplyTest(jtu.JaxTestCase):
     ans = serial_pmap(pfun, axis_name)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  # Fails with shape mismatch.
-  @skip
   def testDot(self):
+    return SkipTest("test doesn't pass yet")  # TODO(frostig)
 
     def fun(x, y):
       return lax.dot(x, y)

@@ -123,6 +123,35 @@ def GeneralConv(dimension_numbers, out_chan, filter_shape,
 Conv = functools.partial(GeneralConv, ('NHWC', 'HWIO', 'NHWC'))
 
 
+def GeneralConvTranspose(dimension_numbers, out_chan, filter_shape,
+                         strides=None, padding='VALID', W_init=None,
+                         b_init=randn(1e-6)):
+  """Layer construction function for a general transposed-convolution layer."""
+  lhs_spec, rhs_spec, out_spec = dimension_numbers
+  one = (1,) * len(filter_shape)
+  strides = strides or one
+  W_init = W_init or glorot(rhs_spec.index('O'), rhs_spec.index('I'))
+  def init_fun(rng, input_shape):
+    filter_shape_iter = iter(filter_shape)
+    kernel_shape = [out_chan if c == 'O' else
+                    input_shape[lhs_spec.index('C')] if c == 'I' else
+                    next(filter_shape_iter) for c in rhs_spec]
+    output_shape = lax.conv_transpose_shape_tuple(
+        input_shape, kernel_shape, strides, padding, dimension_numbers)
+    bias_shape = [out_chan if c == 'C' else 1 for c in out_spec]
+    bias_shape = tuple(itertools.dropwhile(lambda x: x == 1, bias_shape))
+    W, b = W_init(rng, kernel_shape), b_init(rng, bias_shape)
+    return output_shape, (W, b)
+  def apply_fun(params, inputs, **kwargs):
+    W, b = params
+    return lax.conv_transpose(inputs, W, strides, padding,
+                              dimension_numbers) + b
+  return init_fun, apply_fun
+Conv1DTranspose = functools.partial(GeneralConvTranspose, ('NHC', 'HIO', 'NHC'))
+ConvTranspose = functools.partial(GeneralConvTranspose,
+                                  ('NHWC', 'HWIO', 'NHWC'))
+
+
 def BatchNorm(axis=(0, 1, 2), epsilon=1e-5, center=True, scale=True,
               beta_init=zeros, gamma_init=ones):
   """Layer construction function for a batch normalization layer."""
