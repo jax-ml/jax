@@ -33,6 +33,7 @@ from .. import core
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
 from ..interpreters.xla import DeviceArray
 from .. import lax
+from .. import lax_control_flow
 from ..util import memoize, partial, get_module_functions, unzip2, prod as _prod
 from ..lib import xla_bridge
 from ..lib.xla_bridge import xla_client
@@ -2177,7 +2178,7 @@ def gcd(x1, x2):
     return (where(x1 < x2, x2, x1), where(x1 < x2, x1, x2))
   x1, x2 = _promote_dtypes(lax.abs(x1), lax.abs(x2))
   x1, x2 = broadcast_arrays(x1, x2)
-  gcd, _ = lax.while_loop(cond_fn, body_fn, (x1, x2))
+  gcd, _ = lax_control_flow.while_loop(cond_fn, body_fn, (x1, x2))
   return gcd
 
 
