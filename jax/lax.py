@@ -1837,6 +1837,11 @@ def _convert_element_type_translation_rule(c, operand, new_dtype, old_dtype):
   new_etype = xla_bridge.dtype_to_etype_exact(new_dtype)
   return c.ConvertElementType(operand, new_element_type=new_etype)
 
+def _convert_element_type_papply_rule(name, vals, dims, new_dtype, **kwargs):
+  operand, = vals
+  dim, = dims
+  return convert_element_type(operand, new_dtype), dim
+
 convert_element_type_p = standard_primitive(
     _convert_element_type_shape_rule, _convert_element_type_dtype_rule,
     'convert_element_type', _convert_element_type_translation_rule)
@@ -1844,6 +1849,7 @@ ad.deflinear(
     convert_element_type_p,
     lambda t, new_dtype, old_dtype: [convert_element_type(t, old_dtype)])
 batching.defvectorized(convert_element_type_p)
+parallel.papply_primitive_rules[convert_element_type_p] = _convert_element_type_papply_rule
 
 
 def _bitcast_convert_type_shape_rule(operand, new_dtype):
