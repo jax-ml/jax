@@ -144,6 +144,7 @@ def update_arrays(i, aval, xs, x):
   else:
     return lax.dynamic_update_index_in_dim(xs, x[None, ...], i, axis=0)
 
+_scan_const = pe.gensym('_consts')
 
 # scan :: (a -> c -> (b, c)) -> c -> [a] -> ([b], c)
 def scan_initial(f, init, xs):
@@ -155,14 +156,15 @@ def scan_initial(f, init, xs):
       lu.wrap_init(f), (carry_pval, x_pval), instantiate=True)
   (y_aval, carry_aval_out), _ = pval_out
   assert carry_aval == carry_aval_out
+  lifted_jaxpr = pe._closure_convert_jaxpr(jaxpr, _scan_const)
   consts_aval, _ = _abstractify(core.pack(consts))
   avals = (consts_aval, x_aval, y_aval, carry_aval)
   return scan_initial_p.bind(core.pack(consts), init, xs,
-                             avals=avals, jaxpr=jaxpr)
+                             avals=avals, jaxpr=lifted_jaxpr, true_consts=())
 
 
 # scan_p :: (d -> a -> c -> (b, c)) -> d -> c -> [a] -> ([b], c)
-def _scan_initial_impl(consts, init, xs, avals, jaxpr):
+def _scan_initial_impl(consts, init, xs, avals, jaxpr, true_consts):
   # TODO maybe can do this work in the traceable, not every impl call
   length = leading_dim_size(xs)
   (_, x_aval, y_aval, _) = avals
@@ -171,7 +173,7 @@ def _scan_initial_impl(consts, init, xs, avals, jaxpr):
   def body_fun(i, vals):
     carry, ys = vals
     x = index_arrays(i, x_aval, xs)
-    y, carry_out = jaxpr_as_fun(jaxpr)(consts, x, carry)
+    y, carry_out = jaxpr_as_fun(jaxpr, true_consts)(consts, x, carry)
     ys_out = update_arrays(i, y_aval, ys, y)
     return (carry_out, ys_out)
 
@@ -180,7 +182,7 @@ def _scan_initial_impl(consts, init, xs, avals, jaxpr):
   return core.pack((ys, carry))
 
 
-def _scan_initial_jvp(primals, tangents, avals, jaxpr):
+def _scan_initial_jvp(primals, tangents, avals, jaxpr, true_consts):
   consts, init, xs = primals
   consts_dot, init_dot, xs_dot = tangents
   consts_aval, x_aval, y_aval, carry_aval = avals
