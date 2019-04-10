@@ -2307,11 +2307,24 @@ def _broadcast_in_dim_batch_rule(batched_args, batch_dims, shape,
   new_broadcast_dimensions.insert(bdim, bdim)
   return broadcast_in_dim(operand, new_shape, new_broadcast_dimensions), bdim
 
+def _broadcast_in_dim_papply_rule(name, vals, dims, shape, broadcast_dimensions):
+  operand, = vals
+  dim, = dims
+  out_dim = broadcast_dimensions[dim]
+  if shape[out_dim] != shape[dim]:
+    raise ValueError(
+        "broadcast_in_dim changes hidden dimension size: {} to {}".format(
+            shape[dim], shape[out_dim]))
+  sub_bdims = tuple(onp.delete(broadcast_dimensions, dim))
+  sub_shape = tuple(onp.delete(shape, out_dim))
+  return broadcast_in_dim(operand, sub_shape, sub_bdims), out_dim
+
 
 broadcast_in_dim_p = standard_primitive(
     _broadcast_in_dim_shape_rule, _input_dtype, 'broadcast_in_dim')
 ad.deflinear(broadcast_in_dim_p, _broadcast_in_dim_transpose_rule)
 batching.primitive_batchers[broadcast_in_dim_p] = _broadcast_in_dim_batch_rule
+parallel.papply_primitive_rules[broadcast_in_dim_p] = _broadcast_in_dim_papply_rule
 
 
 def _clamp_shape_rule(min, operand, max):
