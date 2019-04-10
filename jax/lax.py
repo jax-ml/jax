@@ -4351,6 +4351,23 @@ pcollect_p = PmapPrimitive('pcollect')
 parallel.serial_pmap_primitive_rules[pcollect_p] = _pcollect_serial_pmap_rule
 
 
+def _add_jaxvals_papply_rule(name, vals, dims):
+  x, y = vals
+  xdim, ydim = dims
+  if xdim == ydim:
+    out_dim = xdim
+  elif ydim is None:
+    y = lax.psplit_like(y, x, name)
+    out_dim = xdim
+  else:
+    x = lax.psplit_like(x, y, name)
+    out_dim = ydim
+  return ad_util.add_jaxvals_p.bind(x, y), out_dim
+
+parallel.papply_primitive_rules[ad_util.add_jaxvals_p] = (
+    _add_jaxvals_papply_rule)
+
+
 ### util
 
 def _ndim(x):
