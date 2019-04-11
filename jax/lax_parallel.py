@@ -244,7 +244,10 @@ def _reshape_papply_rule(name, vals, axes, new_sizes, dimensions, old_sizes):
         if new_sz == sz:
           return i
         elif new_sz != 1:
-          return None
+          if sz == 1:
+            return i - 1
+          else:
+            return None
       elif new_sz != 1:
         num_before -= 1
     return None
@@ -259,6 +262,8 @@ def _reshape_papply_rule(name, vals, axes, new_sizes, dimensions, old_sizes):
           lax.prod(old_sizes[axis + 1:]) != lax.prod(new_sizes[new_axis + 1:])):
         raise err
       new_sizes_ = new_sizes[:new_axis] + new_sizes[new_axis + 1:]
+      if new_axis == -1:  # reshape squeezes only and all major singleton axes
+        new_axis = None
       return lax.reshape(operand, new_sizes_, dimensions=dimensions), new_axis
     else:
       raise err
