@@ -597,6 +597,11 @@ def angle(x):
   return lax.atan2(im, re)
 
 
+@_wraps(onp.isrealobj)
+def isrealobj(a):
+  return not iscomplexobj(a)
+
+
 @_wraps(onp.reshape)
 def reshape(a, newshape, order="C"):
   try:
