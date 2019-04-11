@@ -92,13 +92,18 @@ class APITest(jtu.JaxTestCase):
       side.append(None)
       return 100*x + 10*y + z
 
-    f1 = jit(f)
-    assert f1(1, 2, 3) == 123
+    f = jit(f)
+    assert f(1, 2, 3) == 123
     assert len(side) == 1
-    assert f1(1, 2, z=3) == 123
-    # assert len(side) == 1  # actually recompiles
+    assert f(1, 2, 3) == 123
+    assert len(side) == 1
 
-    f1(1, 2, z=onp.zeros(3))  # doesn't crash
+    assert f(1, 2, z=3) == 123
+    assert len(side) == 2  # actually recompiles from kwarg
+    assert f(1, 2, z=3) == 123
+    assert len(side) == 2  # but should still cache
+
+    f(1, 2, z=onp.zeros(3))  # doesn't crash
 
   def test_grad_of_jit(self):
     side = []
