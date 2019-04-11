@@ -135,6 +135,7 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("isclose", 2, all_dtypes, all_shapes, jtu.rand_small_positive(), []),
     op_record("iscomplex", 1, number_dtypes, all_shapes, jtu.rand_some_inf(), []),
     op_record("isreal", 1, number_dtypes, all_shapes, jtu.rand_some_inf(), []),
+    op_record("isrealobj", 1, number_dtypes, all_shapes, jtu.rand_some_inf(), []),
     op_record("log2", 1, number_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
     op_record("log10", 1, number_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
     op_record("log1p", 1, number_dtypes, all_shapes, jtu.rand_positive(), [],
