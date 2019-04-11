@@ -50,7 +50,7 @@ class UnshapedArray(core.AbstractValue):
     return type(self) is type(other) and self.dtype == other.dtype
 
   def __hash__(self):
-    return hash(str(self.dtype))
+    return hash(self.dtype)
 
   def __repr__(self):
     return '{}({})'.format(self.__class__.__name__, self.str_short())
@@ -93,7 +93,7 @@ class ShapedArray(UnshapedArray):
             and self.dtype == other.dtype and self.shape == other.shape)
 
   def __hash__(self):
-    return hash((self.shape, str(self.dtype)))
+    return hash((self.shape, self.dtype))
 
   def at_least_vspace(self):
     return self

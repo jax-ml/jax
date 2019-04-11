@@ -28,7 +28,7 @@ from .. import ad_util
 from .. import tree_util
 from .. import linear_util as lu
 from ..abstract_arrays import ConcreteArray, ShapedArray
-from ..util import partial, unzip2, concatenate, safe_map, prod, memoize_unary
+from ..util import partial, concatenate, prod, memoize_unary, unzip2
 from ..lib import xla_bridge as xb
 from .xla import (xla_shape, xla_destructure, translation_rule,
                   xla_shape_to_result_shape, jaxpr_computation)
@@ -38,8 +38,6 @@ from . import partial_eval as pe
 from . import parallel
 from . import xla
 from . import ad
-
-map = safe_map
 
 
 ### util

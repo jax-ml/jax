@@ -33,7 +33,7 @@ from .. import tree_util
 from .. import linear_util as lu
 from ..abstract_arrays import ConcreteArray, ShapedArray, make_shaped_array, array_types
 from ..core import AbstractTuple, JaxTuple, pack, valid_jaxtype
-from ..util import partial, partialmethod, memoize, unzip2, concatenate, safe_map, prod
+from ..util import partial, partialmethod, memoize, concatenate, unzip2, prod
 from ..lib import xla_bridge as xb
 from . import partial_eval as pe
 from . import ad
@@ -45,8 +45,6 @@ flags.DEFINE_bool('jax_device_values',
 flags.DEFINE_bool('jax_debug_nans',
                   strtobool(os.getenv('JAX_DEBUG_NANS', "False")),
                   'Add nan checks to every operation.')
-
-map = safe_map
 
 def apply_primitive(prim, *args, **kwargs):
   abstract_args = map(abstractify, args)
@@ -422,8 +420,11 @@ def flatten_fun(in_trees, *flat_args):
 
 def tree_flatten(maybe_tree):
   aval = core.get_aval(maybe_tree)
+  return _tree_flatten(aval, maybe_tree)
+
+def _tree_flatten(aval, maybe_tree):
   if type(aval) is AbstractTuple:
-    flat_children, child_specs = unzip2(map(tree_flatten, maybe_tree))
+    flat_children, child_specs = unzip2(map(_tree_flatten, aval, maybe_tree))
     return it.chain.from_iterable(flat_children), JTupleTreeDef(child_specs)
   elif core.skip_checks or valid_jaxtype(maybe_tree):
     return [maybe_tree], leaf
