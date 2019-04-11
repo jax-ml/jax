@@ -120,15 +120,15 @@ class WrappedFun(object):
     f: the function to be transformed.
     transforms: a list of `(gen, gen_args, out_store)` tuples representing
       transformations to apply to `f.`
-    kwargs: keyword arguments to pass to `f`.
+    params: extra parameters to pass as keyword arguments to `f`.
   """
-  def __init__(self, f, transforms, kwargs):
+  def __init__(self, f, transforms, params):
     self.f = f
     self.transforms = transforms
-    self.kwargs = kwargs
+    self.params = params
 
   def wrap(self, *transformation):
-    return WrappedFun(self.f, [transformation] + self.transforms, self.kwargs)
+    return WrappedFun(self.f, [transformation] + self.transforms, self.params)
 
   def populate_stores(self, other):
     for (_, _, self_store), (_, _, other_store) in zip(self.transforms,
@@ -136,15 +136,15 @@ class WrappedFun(object):
       if self_store is not None:
         self_store.store(other_store.val)
 
-  def call_wrapped(self, *args):
+  def call_wrapped(self, *args, **kwargs):
     stack = []
     for gen, gen_args, out_store in self.transforms:
-      gen = gen(*(gen_args + tuple(args)))
-      args = next(gen)
+      gen = gen(*(gen_args + tuple(args)), **kwargs)
+      args, kwargs = next(gen)
       stack.append((gen, out_store))
 
     del gen
-    ans = self.f(*args, **self.kwargs)
+    ans = self.f(*args, **dict(self.params, **kwargs))
     del args
     while stack:
       gen, out_store = stack.pop()
@@ -165,7 +165,7 @@ class WrappedFun(object):
   def hashable_payload(self):
     return (self.f,
             tuple((gen, tuple(gen_args)) for gen, gen_args, _ in self.transforms),
-            tuple(sorted(self.kwargs.items())))
+            tuple(sorted(self.params.items())))
 
   def __hash__(self):
     return hash(self.hashable_payload())
@@ -189,9 +189,9 @@ def fun_name(f):
   except:
     return str(f)
 
-def wrap_init(f, kwargs={}):
+def wrap_init(f, params={}):
   """Wraps function `f` as a `WrappedFun`, suitable for transformation."""
-  return WrappedFun(f, [], kwargs)
+  return WrappedFun(f, [], params)
 
 
 def memoize(call, max_size=4096):

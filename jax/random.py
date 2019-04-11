@@ -158,7 +158,6 @@ def threefry_2x32(keypair, count):
   return lax.reshape(out[:-1] if odd_size else out, count.shape)
 
 
-@partial(jit, static_argnums=(1,))
 def split(key, num=2):
   """Splits a PRNG key into `num` new keys by adding a leading axis.
 
@@ -170,11 +169,14 @@ def split(key, num=2):
   Returns:
     An array with shape (num, 2) and dtype uint32 representing `num` new keys.
   """
+  return _split(key, num)
+
+@partial(jit, static_argnums=(1,))
+def _split(key, num):
   counts = lax.tie_in(key, lax.iota(onp.uint32, num * 2))
   return lax.reshape(threefry_2x32(key, counts), (num, 2))
 
 
-@partial(jit, static_argnums=(1,))
 def fold_in(key, data):
   """Folds in data to a PRNG key to form a new PRNG key.
 
@@ -186,6 +188,10 @@ def fold_in(key, data):
     A new PRNGKey that is a deterministic function of the inputs and is
     statistically safe for producing a stream of new pseudo-random values.
   """
+  return _fold_in(key, data)
+
+@partial(jit, static_argnums=(1,))
+def _fold_in(key, data):
   key2 = lax.tie_in(key, PRNGKey(data))
   return threefry_2x32(key, key2)
 
@@ -212,7 +218,6 @@ def _random_bits(key, bit_width, shape):
 ### random samplers
 
 
-@partial(jit, static_argnums=(1, 2))
 def uniform(key, shape, dtype=onp.float32, minval=0., maxval=1.):
   """Sample uniform random values in [minval, maxval) with given shape/dtype.
 
@@ -226,6 +231,10 @@ def uniform(key, shape, dtype=onp.float32, minval=0., maxval=1.):
   Returns:
     A random array with the specified shape and dtype.
   """
+  return _uniform(key, shape, dtype, minval, maxval)
+
+@partial(jit, static_argnums=(1, 2))
+def _uniform(key, shape, dtype, minval, maxval):
   if not onp.issubdtype(dtype, onp.floating):
     raise TypeError("uniform only accepts floating point dtypes.")
 
@@ -253,7 +262,6 @@ def uniform(key, shape, dtype=onp.float32, minval=0., maxval=1.):
       lax.reshape(floats * (maxval - minval) + minval, shape))
 
 
-@partial(jit, static_argnums=(1, 4))
 def randint(key, shape, minval, maxval, dtype=onp.int32):
   """Sample uniform random values in [minval, maxval) with given shape/dtype.
 
@@ -267,6 +275,10 @@ def randint(key, shape, minval, maxval, dtype=onp.int32):
   Returns:
     A random array with the specified shape and dtype.
   """
+  return _randint(key, shape, minval, maxval, dtype)
+
+@partial(jit, static_argnums=(1, 4))
+def _randint(key, shape, minval, maxval, dtype=onp.int32):
   if not onp.issubdtype(dtype, onp.integer):
     raise TypeError("randint only accepts integer dtypes.")
 
@@ -306,7 +318,6 @@ def randint(key, shape, minval, maxval, dtype=onp.int32):
   return lax.add(minval, lax.convert_element_type(random_offset, dtype))
 
 
-@partial(jit, static_argnums=(2,))
 def shuffle(key, x, axis=0):
   """Shuffle the elements of an array uniformly at random along an axis.
 
@@ -318,6 +329,10 @@ def shuffle(key, x, axis=0):
   Returns:
     A shuffled version of x.
   """
+  return _shuffle(key, x, axis)
+
+@partial(jit, static_argnums=(2,))
+def _shuffle(key, x, axis):
   # On parallel architectures, Fisher-Yates is more expensive than doing
   # multiple sorts. This algorithm is based on one developed and analyzed by
   # tjablin@. We sort according to randomly-generated 32bit keys, but those keys
@@ -344,7 +359,6 @@ def shuffle(key, x, axis=0):
   return x
 
 
-@partial(jit, static_argnums=(1, 2))
 def normal(key, shape, dtype=onp.float32):
   """Sample standard normal random values with given shape and float dtype.
 
@@ -356,13 +370,16 @@ def normal(key, shape, dtype=onp.float32):
   Returns:
     A random array with the specified shape and dtype.
   """
+  return _normal(key, shape, dtype)
+
+@partial(jit, static_argnums=(1, 2))
+def _normal(key, shape, dtype):
   lo = onp.nextafter(onp.array(-1., dtype), 0., dtype=dtype)
   hi = onp.array(1., dtype)
   u = uniform(key, shape, dtype, lo, hi)
   return onp.array(onp.sqrt(2), dtype) * lax.erf_inv(u)
 
 
-@partial(jit, static_argnums=(2,))
 def bernoulli(key, mean=onp.float32(0.5), shape=()):
   """Sample Bernoulli random values with given shape and mean.
 
@@ -376,6 +393,10 @@ def bernoulli(key, mean=onp.float32(0.5), shape=()):
   Returns:
     A random array with the specified shape and boolean dtype.
   """
+  return _bernoulli(key, mean, shape)
+
+@partial(jit, static_argnums=(2,))
+def _bernoulli(key, mean, shape):
   shape = shape or onp.shape(mean)
   if not onp.issubdtype(lax._dtype(mean), onp.float32):
     mean = lax.convert_element_type(mean, onp.float32)
@@ -384,7 +405,6 @@ def bernoulli(key, mean=onp.float32(0.5), shape=()):
   return lax.lt(uniform(key, shape), mean)
 
 
-@partial(jit, static_argnums=(1, 2))
 def cauchy(key, shape=(), dtype=onp.float32):
   """Sample Cauchy random values with given shape and float dtype.
 
@@ -397,12 +417,15 @@ def cauchy(key, shape=(), dtype=onp.float32):
   Returns:
     A random array with the specified shape and dtype.
   """
+  return _cauchy(key, shape, dtype)
+
+@partial(jit, static_argnums=(1, 2))
+def _cauchy(key, shape, dtype):
   u = uniform(key, shape, dtype)
   pi = _constant_like(u, onp.pi)
   return lax.tan(lax.mul(pi, lax.sub(u, _constant_like(u, 0.5))))
 
 
-@partial(jit, static_argnums=(1, 2))
 def exponential(key, shape=(), dtype=onp.float32):
   """Sample Exponential random values with given shape and float dtype.
 
@@ -415,12 +438,15 @@ def exponential(key, shape=(), dtype=onp.float32):
   Returns:
     A random array with the specified shape and dtype.
   """
+  return _exponential(key, shape, dtype)
+
+@partial(jit, static_argnums=(1, 2))
+def _exponential(key, shape, dtype):
   u = uniform(key, shape, dtype)
   # taking 1 - u to move the domain of log to (0, 1] instead of [0, 1)
   return lax.neg(lax.log(lax.sub(_constant_like(u, 1), u)))
 
 
-@partial(jit, static_argnums=(1, 2))
 def laplace(key, shape=(), dtype=onp.float32):
   """Sample Laplace random values with given shape and float dtype.
 
@@ -433,11 +459,14 @@ def laplace(key, shape=(), dtype=onp.float32):
   Returns:
     A random array with the specified shape and dtype.
   """
+  return _laplace(key, shape, dtype)
+
+@partial(jit, static_argnums=(1, 2))
+def _laplace(key, shape, dtype):
   u = uniform(key, shape, dtype, minval=-1., maxval=1.)
   return lax.mul(lax.sign(u), lax.log1p(lax.neg(lax.abs(u))))
 
 
-@partial(jit, static_argnums=(2, 3))
 def pareto(key, b, shape=(), dtype=onp.float32):
   """Sample Pareto random values with given shape and float dtype.
 
@@ -452,6 +481,10 @@ def pareto(key, b, shape=(), dtype=onp.float32):
   Returns:
     A random array with the specified shape and dtype.
   """
+  return _pareto(key, b, shape, dtype)
+
+@partial(jit, static_argnums=(2, 3))
+def _pareto(key, b, shape, dtype):
   b = lax.convert_element_type(b, dtype)
   shape = shape or onp.shape(b)
   if onp.shape(b) != shape:
@@ -460,7 +493,6 @@ def pareto(key, b, shape=(), dtype=onp.float32):
   return lax.exp(lax.div(e, b))
 
 
-@partial(jit, static_argnums=(1, 2))
 def gumbel(key, shape=(), dtype=onp.float32):
   """Sample Gumbel random values with given shape and float dtype.
 
@@ -473,4 +505,8 @@ def gumbel(key, shape=(), dtype=onp.float32):
   Returns:
     A random array with the specified shape and dtype.
   """
+  return _gumbel(key, shape, dtype)
+
+@partial(jit, static_argnums=(1, 2))
+def _gumbel(key, shape, dtype):
   return -np.log(-np.log(uniform(key, shape, dtype)))

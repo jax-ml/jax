@@ -525,7 +525,7 @@ def apply_todos(todos, x):
 
 @lu.transformation_with_aux
 def process_env_traces(primitive, level, *args):
-  ans = yield args
+  ans = yield args, {}
   todo = []
   while isinstance(ans, Tracer) and ans.trace.level > level:
     t = ans.trace
