@@ -93,12 +93,12 @@ class APITest(jtu.JaxTestCase):
       return 100*x + 10*y + z
 
     f1 = jit(f)
-    assert f(1, 2, 3) == 123
+    assert f1(1, 2, 3) == 123
     assert len(side) == 1
-    assert f(1, 2, z=3) == 123
+    assert f1(1, 2, z=3) == 123
     # assert len(side) == 1  # actually recompiles
 
-    f(1, 2, z=onp.zeros(3))  # doesn't crash
+    f1(1, 2, z=onp.zeros(3))  # doesn't crash
 
   def test_grad_of_jit(self):
     side = []
