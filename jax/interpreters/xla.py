@@ -53,7 +53,7 @@ def apply_primitive(prim, *args, **kwargs):
 
 @memoize
 def xla_primitive_callable(prim, *abstract_args, **kwargs):
-  shapes = map(xla_shape, abstract_args)
+  shapes = tuple(map(xla_shape, abstract_args))
   built_c = primitive_computation(prim, *shapes, **kwargs)
   result_shape = xla_shape_to_result_shape(built_c.GetReturnValueShape())
   handle_result = result_handler(result_shape)
@@ -75,7 +75,7 @@ def primitive_computation(prim, *shapes, **kwargs):
 
 def aval_from_xla_shape(shape):
   if shape.is_tuple():
-    return AbstractTuple(map(aval_from_xla_shape, shape.tuple_shapes()))
+    return AbstractTuple(tuple(map(aval_from_xla_shape, shape.tuple_shapes())))
   else:
     return ShapedArray(shape.dimensions(), shape.element_type())
 
@@ -156,28 +156,30 @@ def jaxpr_computation(jaxpr, const_vals, freevar_shapes, *arg_shapes):
   consts_env = dict(zip(jaxpr.constvars, const_vals))
   write(core.unitvar, c.Tuple())
   if const_vals:
-    map(write, jaxpr.constvars, map(c.Constant, const_vals))
-    map(write, jaxpr.freevars, map(c.ParameterWithShape, freevar_shapes))
+    _map(write, jaxpr.constvars, map(c.Constant, const_vals))
+    _map(write, jaxpr.freevars, map(c.ParameterWithShape, freevar_shapes))
   else:
     all_freevars = it.chain(jaxpr.constvars, jaxpr.freevars)
-    map(write, all_freevars, map(c.ParameterWithShape, freevar_shapes))
-  map(write, jaxpr.invars, map(c.ParameterWithShape, arg_shapes))
+    _map(write, all_freevars, map(c.ParameterWithShape, freevar_shapes))
+  _map(write, jaxpr.invars, map(c.ParameterWithShape, arg_shapes))
   for eqn in jaxpr.eqns:
-    in_nodes = map(read, eqn.invars)
-    in_shapes = map(c.GetShape, in_nodes)
+    in_nodes = list(map(read, eqn.invars))
     subcs = [
         jaxpr_computation(
             subjaxpr, (),
-            map(c.GetShape, map(read, const_bindings + freevar_bindings)),
-            *in_shapes)
+            _map(c.GetShape, map(read, const_bindings + freevar_bindings)),
+            *map(c.GetShape, in_nodes))
         for subjaxpr, const_bindings, freevar_bindings in eqn.bound_subjaxprs]
     subfuns = [(subc, tuple(map(read, const_bindings + freevar_bindings)))
                for subc, (_, const_bindings, freevar_bindings)
                in zip(subcs, eqn.bound_subjaxprs)]
     ans = translation_rule(eqn.primitive)(c, *(subfuns + in_nodes), **eqn.params)
     out_nodes = xla_destructure(c, ans) if eqn.destructure else [ans]
-    map(write, eqn.outvars, out_nodes)
+    _map(write, eqn.outvars, out_nodes)
   return c.Build(read(jaxpr.outvar))
+
+def _map(f, *args):
+  return tuple(map(f, *args))
 
 def xla_destructure(c, ans):
   num_elements = len(c.GetShape(ans).tuple_shapes())
@@ -198,7 +200,7 @@ def translation_rule(p):
 
 
 def lower_fun(fun, c, *xla_args, **params):
-  xla_shapes = map(c.GetShape, xla_args)
+  xla_shapes = tuple(map(c.GetShape, xla_args))
   avals = map(aval_from_xla_shape, xla_shapes)
   pvals = [pe.PartialVal((a, core.unit)) for a in avals]
   jaxpr, pvout, consts = pe.trace_unwrapped_to_jaxpr(fun, pvals, **params)
@@ -259,7 +261,7 @@ def abstractify(x):
 pytype_aval_mappings = {}
 
 def abstractify_tuple(tup):
-  return AbstractTuple(tuple(map(abstractify, tup)))
+  return AbstractTuple(map(abstractify, tup))
 pytype_aval_mappings[JaxTuple] = abstractify_tuple
 pytype_aval_mappings[AbstractTuple] = abstractify_tuple
 
