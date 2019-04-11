@@ -62,28 +62,43 @@ class APITest(jtu.JaxTestCase):
       side.append(None)
       return 100*x + 10*y + z
 
-    f1 = jit(f)
-    assert f1(1, 2, 3, flag=True) == 123
+    f1 = jit(f, static_argnums=(3, 4))
+    assert f1(1, 2, 3, True, False) == 123
     assert len(side) == 1
-    assert f1(2, 1, 3, flag=True) == 213
+    assert f1(2, 1, 3, True, False) == 213
     assert len(side) == 1
-    assert f1(2, 1, 3, flag=True, flag2=True) == 213
+    assert f1(2, 1, 3, True, True) == 213
     assert len(side) == 2
 
     side[:] = []
-    f2 = jit(f, static_argnums=[0,2])
-    assert f2(1, 2, 3, flag=True) == 123
+    f2 = jit(f, static_argnums=(0, 2, 3, 4))
+    assert f2(1, 2, 3, True, False) == 123
     assert len(side) == 1
-    assert f2(1, 3, 3, flag=True) == 133
+    assert f2(1, 3, 3, True, False) == 133
     assert len(side) == 1
-    assert f2(2, 2, 3, flag=True) == 223
+    assert f2(2, 2, 3, True, False) == 223
     assert len(side) == 2
-    assert f2(2, 4, 3, flag=True) == 243
+    assert f2(2, 4, 3, True, False) == 243
     assert len(side) == 2
-    assert f2(2, 4, 3, flag=True, flag2=True) == 243
+    assert f2(2, 4, 3, True, True) == 243
     assert len(side) == 3
-    assert f2(2, 5, 3, flag=True, flag2=True) == 253
+    assert f2(2, 5, 3, True, True) == 253
     assert len(side) == 3
+
+  def test_jit_kwargs(self):
+    side = []
+
+    def f(x, y, z):
+      side.append(None)
+      return 100*x + 10*y + z
+
+    f1 = jit(f)
+    assert f(1, 2, 3) == 123
+    assert len(side) == 1
+    assert f(1, 2, z=3) == 123
+    # assert len(side) == 1  # actually recompiles
+
+    f(1, 2, z=onp.zeros(3))  # doesn't crash
 
   def test_grad_of_jit(self):
     side = []
