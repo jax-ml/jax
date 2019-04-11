@@ -99,12 +99,12 @@ def _call_initial_partial_eval(trace, *tracers, **kwargs):
   avals = map(as_aval, in_pvs, in_consts)
   (jaxpr_1, consts_1), (jaxpr_2, consts_2), out_pv, first_components_out = \
       pe.partial_eval_jaxpr(jaxpr, consts, avals, first_components)
-  out_pv_const, residuals = call_initial_p.bind(
+  out_const, residuals = call_initial_p.bind(
       *in_consts, jaxpr=jaxpr_1, consts=consts_1)
   residual_tracers = core.pack(map(trace.new_instantiated_const, residuals))
   eqn = core.JaxprEqn((residual_tracers,) + tracers, None, call_initial_p, (),
                       False, dict(jaxpr=jaxpr_2, consts=consts_2))
-  return pe.JaxprTracer(trace, pe.PartialVal((out_pv, out_pv_const)), eqn)
+  return pe.JaxprTracer(trace, pe.PartialVal((out_pv, out_const)), eqn)
 
 
 def _call_initial_transpose():
@@ -211,7 +211,7 @@ def _scan_initial_jvp(primals, tangents, avals, jaxpr, true_consts):
     if where_carry_zeros_out == where_carry_zeros:
       break
     else:
-      where_carry_zeros = zeros_join(where_carry_zeros_out, where_carry_zeros)
+      where_carry_zeros = binary_lattice_join(where_carry_zeros_out, where_carry_zeros)
 
   # convert_zeros is like strip_zeros but uses explicit lattice information to
   # instantiate zeros in some cases, namely in init_dot based on the fixed point
@@ -252,14 +252,44 @@ def instantiate_zeros(example, tangent, keep_symbolic):
   else:
     return tangent
 
-def zeros_join(a, b):
+def binary_lattice_join(a, b):
   if type(a) is tuple:
-    return tuple(map(zeros_join, a, b))
+    return tuple(map(binary_lattice_join, a, b))
   else:
     return a and b
+
+
+def _scan_initial_partial_eval(trace, *tracers, **kwargs):
+  jaxpr = kwargs.pop('jaxpr')
+  true_consts = kwargs.pop('true_consts')
+  in_pvs, in_consts = unzip2([t.pval for t in tracers])
+  fc_consts, fc_init, fc_xs = map(is_const, in_pvs)
+  avals = map(as_aval, in_pvs, in_consts)
+
+  fc_carry = fc_init
+  while True:
+    first_components = (fc_consts, fc_carry, fc_xs)
+    (jaxpr_1, consts_1), (jaxpr_2, consts_2), out_pv, fc_carry_out = \
+        pe.partial_eval_jaxpr2(jaxpr, true_consts, avals, first_components)
+    if fc_carry_out == fc_carry:
+      break
+    else:
+      fc_carry = binary_lattice_join(fc_carry, fc_carry_out)
+  # TODO lift args according to lattice join result fc_carry
+  # TODO maybe update tracers too... instantiate_const
+
+  (ys, residuals), out_const = scan_initial_p.bind(
+      *in_consts, avals=avals_1, jaxpr=jaxpr_1, true_consts=consts_1)
+  residual_tracers = core.pack(map(trace.new_instantiated_const, residuals))
+  d, c, a = tracers
+  new_tracers = (d, c, core.pack((residual_tracers, a)))
+  eqn = core.JaxprEqn(new_tracers, None, scan_initial_p, (), False,
+                      dict(jaxpr=jaxpr_2, true_consts=consts_2, avals=avals_2))
+  import ipdb; ipdb.set_trace()
+  return pe.JaxprTracer((trace, pe.PartialVal((out_pv, out_const)), eqn))
 
 
 scan_initial_p = core.Primitive("scan_initial")
 scan_initial_p.def_impl(_scan_initial_impl)
 ad.primitive_jvps[scan_initial_p] = _scan_initial_jvp
-# pe.custom_partial_eval_rules[scan_initial_p] = _scan_initial_partial_eval
+pe.custom_partial_eval_rules[scan_initial_p] = _scan_initial_partial_eval

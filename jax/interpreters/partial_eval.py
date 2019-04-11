@@ -583,6 +583,7 @@ def jaxpr_as_fun(jaxpr, consts, *args):
 _partial_eval_gensym = gensym('_peval')
 
 def partial_eval_jaxpr(jaxpr, consts, avals, first_components):
+  # jaxpr :: a -> b -> c
   f = lu.wrap_init(partial(jaxpr_as_fun, jaxpr, consts))
 
   cell = []
@@ -590,9 +591,8 @@ def partial_eval_jaxpr(jaxpr, consts, avals, first_components):
     pvals = map(as_pval, avals, first_components, vals)
     jaxpr_2, out_pval, consts_2 = trace_to_jaxpr(f, pvals)
     out_pv, out_const = out_pval
-    out = pack((out_const, pack(consts_2)))
     cell.append((out_pv, jaxpr_2))
-    return out
+    return pack((out_const, pack(consts_2)))
 
   pvals = map(as_pval2, avals, first_components)
   jaxpr_1, out_pval, consts_1 = trace_to_jaxpr(
@@ -600,7 +600,10 @@ def partial_eval_jaxpr(jaxpr, consts, avals, first_components):
   out_pv_2, jaxpr_2 = cell[0]
   lifted_jaxpr_2 = _closure_convert_jaxpr(jaxpr_2, _partial_eval_gensym)
   first_component_out = isnone(out_pv_2)
+  # jaxpr_1 :: a1 -> b1 -> (c1, res)
+  # lifted_jaxpr_2 :: res -> a2 -> b2 -> c2
   return (jaxpr_1, consts_1), (lifted_jaxpr_2, ()), out_pv_2, first_component_out
+
 
 def _closure_convert_jaxpr(jaxpr, newvar):
   lifted_jaxpr = jaxpr.copy()
@@ -616,6 +619,45 @@ def _unpack_eqn(invar, outvars):
 
 def _pack_eqn(invars, outvar):
   return core.JaxprEqn(invars, [outvar], core.pack_p, (), False, {})
+
+
+def partial_eval_jaxpr2(jaxpr, consts, avals, first_components):
+  # jaxpr :: d -> c -> a -> (b, c)
+  f = lu.wrap_init(partial(jaxpr_as_fun, jaxpr, consts))
+
+  cell = []
+  def fun(*vals):
+    pvals = map(as_pval, avals, first_components, vals)
+    jaxpr_2, out_pval, consts_2 = trace_to_jaxpr(f, pvals)
+    (out_pv_b, out_pv_c), (out_const_b, out_const_c) = out_pval
+    cell.append(((out_pv_b, out_pv_c), jaxpr_2))
+    return pack((pack((out_const_b, pack(consts_2))), out_const_c))
+
+  pvals = map(as_pval2, avals, first_components)
+  jaxpr_1, out_pval, consts_1 = trace_to_jaxpr(
+      lu.wrap_init(fun), pvals, instantiate=True)
+  out_pv_2, jaxpr_2 = cell[0]
+
+  # jaxpr_1 :: d1 -> c1 -> a1 -> ((b1, res), c1)
+  # jaxpr_2 :: res | d2 -> c2 -> a2 -> (b2, c2)
+  # lifted_jaxpr_2 :: res -> d2 -> c2 -> a2 -> (b2, c2)
+  lifted_jaxpr_2 = _closure_convert_jaxpr(jaxpr_2, _partial_eval_gensym)
+  # doubly_lifted_jaxpr_2 :: d2 -> c2 -> (res, a2) -> (b2, c2)
+  doubly_lifted_jaxpr_2 = _move_and_pair_arg(lifted_jaxpr_2, _partial_eval_gensym)
+  out_pv_b, out_pv_c = out_pv_2
+  first_component_c_out = isnone(out_pv_c)
+
+  return ((jaxpr_1, consts_1), (doubly_lifted_jaxpr_2, ()),
+          out_pv_2, first_component_c_out)
+
+def _move_and_pair_arg(jaxpr, newvar):
+  moved_jaxpr = jaxpr.copy()
+  res, d, c, a = jaxpr.invars
+  pair_var = newvar()
+  moved_jaxpr.invars = [d, c, pair_var]
+  moved_jaxpr.eqns = (
+      [_unpack_eqn(pair_var, [res, a])] + list(jaxpr.eqns))
+  return moved_jaxpr
 
 
 custom_partial_eval_rules = {}
