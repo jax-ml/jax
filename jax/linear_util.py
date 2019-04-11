@@ -141,7 +141,6 @@ class WrappedFun(object):
     for gen, gen_args, out_store in self.transforms:
       gen = gen(*(gen_args + tuple(args)), **kwargs)
       args, kwargs = next(gen)
-      assert type(args) in (tuple, list) and type(kwargs) is dict
       stack.append((gen, out_store))
 
     del gen
