@@ -32,8 +32,8 @@ print jvp(np.cumsum, (x,), (x*0.1,))
 print jvp(cumsum, (x,), (x*0.1,))
 print
 
-# # print linearize(np.cumsum, x)[1](x*0.1)
-# # print linearize(cumsum, x)[1](x*0.1)
+print linearize(np.cumsum, x)[1](x*0.1)
+print linearize(cumsum, x)[1](x*0.1)
 
 
 # ###
