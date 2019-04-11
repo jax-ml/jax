@@ -412,7 +412,7 @@ def xla_shape(x):
 @lu.transformation_with_aux
 def flatten_fun(in_trees, *flat_args):
   jtuple_trees = tuple(map(partial(build_tree, iter(flat_args)), in_trees))
-  ans = yield jtuple_trees
+  ans = yield jtuple_trees, {}
   aval = core.get_aval(ans)
   if type(aval) is AbstractTuple:
     ans_flat, out_tree = tree_flatten(ans)

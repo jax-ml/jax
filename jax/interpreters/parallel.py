@@ -56,7 +56,7 @@ def serial_pmap_transform(name, axes, *vals):
   with new_master(SerialPmapTrace) as master:
     trace = SerialPmapTrace(master, core.cur_sublevel())
     in_tracers = map(partial(SerialPmapTracer, trace, name), vals, axes)
-    ans = yield in_tracers
+    ans = yield in_tracers, {}
     out_tracer = trace.full_raise(ans)
     out_val, out_axis = out_tracer.val, out_tracer.axis
     del master, out_tracer
@@ -65,7 +65,7 @@ def serial_pmap_transform(name, axes, *vals):
 @lu.transformation_with_aux
 def serial_pmap_subtrace(master, name, axes, *vals):
   trace = SerialPmapTrace(master, core.cur_sublevel())
-  ans = yield map(partial(SerialPmapTracer, trace, name), vals, axes)
+  ans = yield map(partial(SerialPmapTracer, trace, name), vals, axes), {}
   out_tracer = trace.full_raise(ans)
   out_val, out_axis = out_tracer.val, out_tracer.axis
   yield out_val, out_axis
@@ -205,7 +205,7 @@ def papply_transform(name, args, axis_size, in_axes, out_axis):
   with new_master(PapplyTrace) as master:
     trace = PapplyTrace(master, core.cur_sublevel())
     in_tracers = map(partial(PapplyTracer, trace, name, axis_size), args, in_axes)
-    out_tracer = yield in_tracers
+    out_tracer = yield in_tracers, {}
     out_tracer = trace.full_raise(out_tracer)
     out_tracer = ensure_axis(out_axis, out_tracer.axis, out_tracer)
     out_val = out_tracer.val
