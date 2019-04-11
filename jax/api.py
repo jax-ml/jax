@@ -27,6 +27,7 @@ from __future__ import print_function
 import itertools
 import operator as op
 import os
+from warnings import warn
 
 import numpy as onp
 from contextlib import contextmanager
@@ -101,9 +102,17 @@ def jit(fun, static_argnums=()):
     if _jit_is_disabled or config.read('jax_disable_jit'):
       return fun(*args, **kwargs)
     if static_argnums and max(static_argnums) >= len(args):
-      msg = ("jitted function has static_argnums={} but was called with only {}"
-             " positional arguments")
+      msg = ("Jitted function has static_argnums={} but was called with only {}"
+             " positional arguments.")
       raise TypeError(msg.format(static_argnums, len(args)))
+    if kwargs:
+      # TODO(mattjj, dougalm): remove warning by May 1 2019
+      msg = ("Until recently jitted functions called with keyword arguments "
+             "treated those arguments as if they were part of static_argnums, "
+             "but now they are treated just like other arguments. If you were "
+             "relying on the previous behavior, you may need to update your "
+             "code to use static_argnums. See the jit docstring.")
+      warn(msg)
     f = lu.wrap_init(fun)
     dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
     f, dyn_args = _argnums_partial(f, dyn_argnums, args)
@@ -757,11 +766,11 @@ def _argnums_partial(f, dyn_argnums, args):
   return _argnums_partial_(f, dyn_argnums, fixed_args), dyn_args
 
 @lu.transformation
-def _argnums_partial_(dyn_argnums, fixed_args, *dyn_args):
+def _argnums_partial_(dyn_argnums, fixed_args, *dyn_args, **kwargs):
   args = [None if arg is None else arg.val for arg in fixed_args]
   for i, arg in zip(dyn_argnums, dyn_args):
     args[i] = arg
-  ans = yield args, {}
+  ans = yield args, kwargs
   yield ans
 
 def _check_args(args):
