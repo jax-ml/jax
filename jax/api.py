@@ -37,7 +37,8 @@ from . import core
 from . import linear_util as lu
 from .core import pack, eval_jaxpr
 from .api_util import (pytree_fun_to_jaxtupletree_fun, pytree_to_jaxtupletree,
-                       pytree_fun_to_flatjaxtuple_fun, apply_jaxtree_fun, wraps)
+                       pytree_fun_to_flatjaxtuple_fun, apply_jaxtree_fun, wraps,
+                       pytree_fun_to_jaxtupletree_fun2)
 from .tree_util import (process_pytree, node_types, build_tree, PyTreeDef,
                         tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, leaf)
@@ -69,12 +70,13 @@ def jit(fun, static_argnums=()):
     fun: Function to be jitted. Should be a pure function, as side-effects may
       only be executed once. Its positional arguments and return value should be
       arrays, scalars, or standard Python containers (tuple/list/dict) thereof.
-      Keyword arguments and positional arguments specified by `static_argnums`
-      can be anything at all. These are treated as static (see below).
-    static_argnums: A tuple of ints. Specifies which arguments to treat as
-      static (compile-time constant). Operations that only depend on static
-      arguments will be constant-folded. Calling the jitted function with
-      different values for these constants will trigger recompilation.
+      Positional arguments indicated by `static_argnums` can be anything at all.
+    static_argnums: A tuple of ints. Specifies which positional arguments to
+      treat as static (compile-time constant). Operations that only depend on
+      static arguments will be constant-folded. Calling the jitted function with
+      different values for these constants will trigger recompilation. If the
+      jitted function is called with fewer positional arguments than indicated
+      by `static_argnums` then an error is raised.
 
   Returns:
     A wrapped version of `fun`, set up for just-in-time compilation.
@@ -98,16 +100,22 @@ def jit(fun, static_argnums=()):
   def f_jitted(*args, **kwargs):
     if _jit_is_disabled or config.read('jax_disable_jit'):
       return fun(*args, **kwargs)
-    f = lu.wrap_init(fun, kwargs)
+    if static_argnums and max(static_argnums) >= len(args):
+      msg = ("jitted function has static_argnums={} but was called with only {}"
+             " positional arguments")
+      raise TypeError(msg.format(static_argnums, len(args)))
+    f = lu.wrap_init(fun)
     dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
     f, dyn_args = _argnums_partial(f, dyn_argnums, args)
-    jaxtupletree_args, in_trees = unzip2(map(pytree_to_jaxtupletree, dyn_args))
-    _check_args(jaxtupletree_args)
-    jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(f, in_trees)
-    jaxtupletree_out = xla.xla_call(jaxtree_fun, *jaxtupletree_args)
-    return build_tree(out_tree(), jaxtupletree_out)
+    jaxtuple_args, in_trees = unzip2(map(pytree_to_jaxtupletree, dyn_args))
+    jaxtuple_kwargs, kwargs_tree = pytree_to_jaxtupletree(kwargs)
+    _check_args(jaxtuple_args)
+    jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun2(f, kwargs_tree, in_trees)
+    out = xla.xla_call(jaxtree_fun, jaxtuple_kwargs, *jaxtuple_args)
+    return build_tree(out_tree(), out)
 
-  f_jitted.__name__ = "jit({})".format(f_jitted.__name__)
+  jitted_name =  "jit({}, static_argnums={})"
+  f_jitted.__name__ = jitted_name.format(f_jitted.__name__, static_argnums)
   return f_jitted
 
 
@@ -157,15 +165,16 @@ def xla_computation(fun, static_argnums=()):
     aval = xla.abstractify(x)
     return pe.PartialVal((aval, core.unit))
 
-
   @wraps(fun)
   def computation_maker(*args, **kwargs):
     wrapped = lu.wrap_init(fun)
+    jax_kwargs, kwargs_tree = pytree_to_jaxtupletree(kwargs)
     jax_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
-    jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(wrapped, in_trees)
-    pvals = map(pv_like, jax_args)
-    jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals, **kwargs)
-    return xla.build_jaxpr(jaxpr, consts, *map(xla.abstractify, jax_args))
+    jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun2(wrapped, kwargs_tree, in_trees)
+    pvals = map(pv_like, (jax_kwargs,) + tuple(jax_args))
+    jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
+    return xla.build_jaxpr(jaxpr, consts, xla.abstractify(jax_kwargs),
+                           *map(xla.abstractify, jax_args))
 
   return computation_maker
 
@@ -436,19 +445,20 @@ def pmap(fun, axis_name=None):
       raise TypeError(msg.format(axis_sizes))
     axis_size = axis_sizes.pop()
 
-    jaxtupletree_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
-    _check_args(jaxtupletree_args)
-    f = lu.wrap_init(fun, kwargs)
-    f, out_tree = pytree_fun_to_jaxtupletree_fun(f, in_trees)
-    jaxtupletree_out = pxla.xla_pmap(f, *jaxtupletree_args,
-                                     axis_name=axis_name, axis_size=axis_size)
-    return build_tree(out_tree(), jaxtupletree_out)
+    f = lu.wrap_init(fun)
+    jaxtuple_kwargs, kwargs_tree = pytree_to_jaxtupletree(kwargs)
+    jaxtuple_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
+    _check_args(jaxtuple_args)
+    f, out_tree = pytree_fun_to_jaxtupletree_fun2(f, kwargs_tree, in_trees)
+    out = pxla.xla_pmap(f, jaxtuple_kwargs, *jaxtuple_args,
+                        axis_name=axis_name, axis_size=axis_size)
+    return build_tree(out_tree(), out)
 
   namestr = "pmap({}, axis_name={})".format
   f_jitted.__name__ = namestr(f_jitted.__name__, axis_name)
   return f_jitted
 
-def serial_pmap(fun, axis_name=None, in_axes=0, out_axes=0):
+def _serial_pmap(fun, axis_name=None, in_axes=0, out_axes=0):
   """Vectorizing pseudo-map for single-program multiple-data (SPMD) functions."""
   axis_name = _TempAxisName() if axis_name is None else axis_name
 
@@ -467,7 +477,7 @@ class _TempAxisName(object):
     return '<temp axis {}>'.format(hex(id(self)))
 
 
-def papply(fun, axis_size, in_axes=0, out_axes=0):
+def _papply(fun, axis_size, in_axes=0, out_axes=0):
   """Apply a function using parallel computation by sharding inputs."""
   axis_name = parallel.newvar()
 
@@ -652,10 +662,10 @@ def vjp(fun, *primals, **kwargs):
 
 
 def trace_to_jaxpr(traceable, py_pvals, **kwargs):
-  fun = lu.wrap_init(traceable)
+  fun = lu.wrap_init(traceable, kwargs)
   pvals, in_trees = unzip2(map(tree_to_pval_tuples, py_pvals))
   jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(fun, in_trees)
-  jaxpr, out_pval, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals, **kwargs)
+  jaxpr, out_pval, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
   return jaxpr, consts, out_pval, (in_trees, out_tree())
 
 def lift_jaxpr(jaxpr, consts, io_tree, pvals, py_args):
@@ -714,11 +724,11 @@ def make_jaxpr(fun):
 
   @wraps(fun)
   def jaxpr_maker(*args, **kwargs):
-    wrapped = lu.wrap_init(fun)
+    wrapped = lu.wrap_init(fun, kwargs)
     jax_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
     jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(wrapped, in_trees)
     pvals = map(pv_like, jax_args)
-    jaxpr, _, _ = pe.trace_to_jaxpr(jaxtree_fun, pvals, **kwargs)
+    jaxpr, _, _ = pe.trace_to_jaxpr(jaxtree_fun, pvals)
     return jaxpr
 
   jaxpr_maker.__name__ = "make_jaxpr({})".format(jaxpr_maker.__name__)
@@ -751,7 +761,7 @@ def _argnums_partial_(dyn_argnums, fixed_args, *dyn_args):
   args = [None if arg is None else arg.val for arg in fixed_args]
   for i, arg in zip(dyn_argnums, dyn_args):
     args[i] = arg
-  ans = yield args
+  ans = yield args, {}
   yield ans
 
 def _check_args(args):
@@ -863,11 +873,11 @@ def make_graphviz(fun):
 
   @wraps(fun)
   def graphviz_maker(*args, **kwargs):
-    wrapped = lu.wrap_init(fun)
+    wrapped = lu.wrap_init(fun, kwargs)
     jax_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
     jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(wrapped, in_trees)
     pvals = map(pv_like, jax_args)
-    jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals, **kwargs)
+    jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
     return jaxpr_to_graphviz(jaxpr, consts)
 
   graphviz_maker.__name__ = "make_graphviz({})".format(graphviz_maker.__name__)
