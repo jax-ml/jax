@@ -448,7 +448,7 @@ class LaxTest(jtu.JaxTestCase):
   @staticmethod
   def _conv_transpose_via_grad(data, kernel, strides, padding,
                                dimension_numbers=None):
-    """Helper method: calculates conv tranpose via grad for testing."""
+    """Helper method: calculates conv transpose via grad for testing."""
     assert len(data.shape) == len(kernel.shape)
     nspatial = len(data.shape) - 2
     one = (1,) * nspatial
