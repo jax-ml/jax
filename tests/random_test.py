@@ -186,6 +186,27 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.expon().cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_a={}_{}".format(a, dtype),
+       "a": a, "dtype": onp.dtype(dtype).name}
+      for a in [0.1, 1., 10.]
+      for dtype in [onp.float32, onp.float64]))
+  def testGamma(self, a, dtype):
+    key = random.PRNGKey(0)
+    rand = lambda key, a: random.gamma(key, a, (10000,), dtype)
+    crand = api.jit(rand)
+
+    uncompiled_samples = rand(key, a)
+    compiled_samples = crand(key, a)
+
+    for samples in [uncompiled_samples, compiled_samples]:
+      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.gamma(a).cdf)
+
+  def testGammaShape(self):
+    key = random.PRNGKey(0)
+    x = random.gamma(key, onp.array([0.2, 0.3]), shape=(3, 2))
+    assert x.shape == (3, 2)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
       for dtype in [onp.float32, onp.float64]))
   def testLaplace(self, dtype):
