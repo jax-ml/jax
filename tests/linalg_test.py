@@ -43,12 +43,12 @@ T = lambda x: onp.swapaxes(x, -1, -2)
 
 
 def float_types():
-  return {onp.dtype(xla_bridge.canonicalize_dtype(dtype))
-          for dtype in [onp.float32, onp.float64]}
+  return sorted(list({onp.dtype(xla_bridge.canonicalize_dtype(dtype))
+                     for dtype in [onp.float32, onp.float64]}))
 
 def complex_types():
-  return {onp.dtype(xla_bridge.canonicalize_dtype(dtype))
-          for dtype in [onp.complex64, onp.complex128]}
+  return sorted(list({onp.dtype(xla_bridge.canonicalize_dtype(dtype))
+                     for dtype in [onp.complex64, onp.complex128]}))
 
 
 class NumpyLinalgTest(jtu.JaxTestCase):
@@ -58,7 +58,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype, "rng": rng}
       for shape in [(1, 1), (4, 4), (2, 5, 5), (200, 200), (1000, 0, 0)]
-      for dtype in sorted(float_types())
+      for dtype in float_types()
       for rng in [jtu.rand_default()]))
   def testCholesky(self, shape, dtype, rng):
     def args_maker():
@@ -78,7 +78,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
        "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),
        "n": n, "dtype": dtype, "rng": rng}
       for n in [0, 4, 5, 25]  # TODO(mattjj): complex64 unstable on large sizes?
-      for dtype in sorted(float_types() | complex_types())
+      for dtype in float_types() + complex_types()
       for rng in [jtu.rand_default()]))
   # TODO(phawkins): enable when there is an LU implementation for GPU/TPU.
   @jtu.skip_on_devices("gpu", "tpu")
@@ -94,7 +94,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
        "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),
        "n": n, "dtype": dtype, "rng": rng}
       for n in [0, 4, 10, 200]
-      for dtype in sorted(float_types() | complex_types())
+      for dtype in float_types() + complex_types()
       for rng in [jtu.rand_default()]))
   @jtu.skip_on_devices("gpu", "tpu")
   def testSlogdet(self, n, dtype, rng):
@@ -109,7 +109,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
            jtu.format_shape_dtype_string((n,n), dtype), lower),
        "n": n, "dtype": dtype, "lower": lower, "rng": rng}
       for n in [0, 4, 5, 50]
-      for dtype in sorted(float_types() | complex_types())
+      for dtype in float_types() + complex_types()
       for lower in [False, True]
       for rng in [jtu.rand_default()]))
   # TODO(phawkins): enable when there is an eigendecomposition implementation
@@ -141,7 +141,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                                    lower),
        "shape": shape, "dtype": dtype, "rng": rng, "lower":lower}
       for shape in [(1, 1), (4, 4), (5, 5), (50, 50)]
-      for dtype in sorted(float_types() | complex_types())
+      for dtype in float_types() + complex_types()
       for rng in [jtu.rand_default()]
       for lower in [True, False]))
   # TODO(phawkins): enable when there is an eigendecomposition implementation
@@ -168,7 +168,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                                    lower),
        "shape": shape, "dtype": dtype, "rng": rng, "lower":lower, "eps":eps}
       for shape in [(1, 1), (4, 4), (5, 5), (50, 50)]
-      for dtype in sorted(complex_types())
+      for dtype in complex_types()
       for rng in [jtu.rand_default()]
       for lower in [True, False]
       for eps in [1e-4]))
@@ -220,7 +220,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
              isinstance(axis, int) or
              (isinstance(axis, tuple) and len(axis) == 1)
           else [None, 'fro', 1, 2, -1, -2, np.inf, -np.inf, 'nuc'])
-      for dtype in sorted(float_types() | complex_types())
+      for dtype in float_types() + complex_types()
       for rng in [jtu.rand_default()]))
   def testNorm(self, shape, dtype, ord, axis, keepdims, rng):
     # TODO(mattjj,phawkins): re-enable after checking internal tests
@@ -245,7 +245,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
        "compute_uv": compute_uv, "rng": rng}
       for m in [2, 7, 29, 53]
       for n in [2, 7, 29, 53]
-      for dtype in sorted(float_types() | complex_types())
+      for dtype in float_types() + complex_types()
       for full_matrices in [False, True]
       for compute_uv in [False, True]
       for rng in [jtu.rand_default()]))
@@ -352,7 +352,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
           ((4, 4), (4,)),
           ((8, 8), (8, 4)),
       ]
-      for dtype in float_types() | complex_types()
+      for dtype in float_types() + complex_types()
       for rng in [jtu.rand_default()]))
   # TODO(phawkins): enable when there is an LU implementation for GPU/TPU.
   @jtu.skip_on_devices("gpu", "tpu")
@@ -395,7 +395,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype, "rng": rng}
       for shape in [(1, 1), (4, 5), (10, 5), (50, 50)]
-      for dtype in sorted(float_types() | complex_types())
+      for dtype in float_types() + complex_types()
       for rng in [jtu.rand_default()]))
   @jtu.skip_on_devices("gpu", "tpu")
   def testLu(self, shape, dtype, rng):
@@ -410,7 +410,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype, "rng": rng}
       for shape in [(1, 1), (4, 5), (10, 5), (10, 10)]
-      for dtype in sorted(float_types() | complex_types())
+      for dtype in float_types() + complex_types()
       for rng in [jtu.rand_default()]))
   # TODO(phawkins): enable when there is an LU implementation for GPU/TPU.
   @jtu.skip_on_devices("gpu", "tpu")
@@ -426,7 +426,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
        "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),
        "n": n, "dtype": dtype, "rng": rng}
       for n in [1, 4, 5, 200]
-      for dtype in sorted(float_types() | complex_types())
+      for dtype in float_types() + complex_types()
       for rng in [jtu.rand_default()]))
   @jtu.skip_on_devices("gpu", "tpu")
   def testLuFactor(self, n, dtype, rng):
@@ -454,7 +454,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
         (True, False),
         (True, True),
       ]
-      for dtype in sorted(float_types() | complex_types())
+      for dtype in float_types() + complex_types()
       for rng in [jtu.rand_default()]))
   # TODO(phawkins): enable when there is an LU implementation for GPU/TPU.
   @jtu.skip_on_devices("gpu", "tpu")
