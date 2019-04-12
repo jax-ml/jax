@@ -53,7 +53,7 @@ class UnshapedArray(core.AbstractValue):
     # can use hash(self.dtype) and rely on the fact that numpy reuses base dtype
     # objects, e.g. `onp.zeros(3).dtype is onp.zeros(4).dtype`, or we can use
     # the unique character code via hash(self.dtype.char)
-    return hash(self.dtype)
+    return hash(self.dtype.char)
 
   def __repr__(self):
     return '{}({})'.format(self.__class__.__name__, self.str_short())
@@ -99,7 +99,7 @@ class ShapedArray(UnshapedArray):
     # can use hash(self.dtype) and rely on the fact that numpy reuses base dtype
     # objects, e.g. `onp.zeros(3).dtype is onp.zeros(4).dtype`, or we can use
     # the unique character code via hash(self.dtype.char)
-    return hash((self.shape, self.dtype))
+    return hash((self.shape, self.dtype.char))
 
   def at_least_vspace(self):
     return self
