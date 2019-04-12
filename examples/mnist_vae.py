@@ -97,8 +97,9 @@ if __name__ == "__main__":
   num_complete_batches, leftover = divmod(train_images.shape[0], batch_size)
   num_batches = num_complete_batches + bool(leftover)
 
-  _, init_encoder_params = encoder_init((batch_size, 28 * 28))
-  _, init_decoder_params = decoder_init((batch_size, 10))
+  enc_init_rng, dec_init_rng = random.split(random.PRNGKey(2))
+  _, init_encoder_params = encoder_init(enc_init_rng, (batch_size, 28 * 28))
+  _, init_decoder_params = decoder_init(dec_init_rng, (batch_size, 10))
   init_params = init_encoder_params, init_decoder_params
 
   opt_init, opt_update = optimizers.momentum(step_size, mass=0.9)

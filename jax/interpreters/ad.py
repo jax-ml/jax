@@ -44,7 +44,7 @@ def jvp(fun, has_aux=False):
 @transformation
 def jvpfun(primals, tangents):
   with new_master(JVPTrace) as master:
-    out_primal, out_tangent = yield master, primals, tangents
+    out_primal, out_tangent = yield (master, primals, tangents), {}
     del master
   out_tangent = instantiate_zeros(out_primal, out_tangent)
   yield (out_primal, out_tangent)
@@ -55,7 +55,7 @@ def jvp_subtrace(master, primals, tangents):
   for x in list(primals) + list(tangents):
     if isinstance(x, Tracer):
       assert x.trace.level < trace.level
-  ans = yield map(partial(JVPTracer, trace), primals, tangents)
+  ans = yield map(partial(JVPTracer, trace), primals, tangents), {}
   out_tracer = trace.full_raise(ans)
   out_primal, out_tangent = out_tracer.primal, out_tracer.tangent
   yield (out_primal, out_tangent)
@@ -66,7 +66,7 @@ def jvp_subtrace_aux(master, primals, tangents):
   for x in list(primals) + list(tangents):
     if isinstance(x, Tracer):
       assert x.trace.level < trace.level
-  ans, aux = yield map(partial(JVPTracer, trace), primals, tangents)
+  ans, aux = yield map(partial(JVPTracer, trace), primals, tangents), {}
   out_tracer, aux_tracer = map(trace.full_raise, (ans, aux))
   out_primal, out_tangent = out_tracer.primal, out_tracer.tangent
   aux = aux_tracer.primal  # ignore aux tangent
@@ -75,7 +75,7 @@ def jvp_subtrace_aux(master, primals, tangents):
 
 @transformation
 def pack_output(*args):
-  ans = yield args
+  ans = yield args, {}
   yield pack(ans)
 
 def linearize(traceable, *primals, **kwargs):
@@ -399,7 +399,7 @@ def instantiate_zeros(example, tangent):
 @transformation_with_aux
 def traceable(in_tree_def, new_primals, new_tangents):
   new_tangents = build_tree(in_tree_def, new_tangents)
-  primal_out, tangent_out = yield new_primals, new_tangents
+  primal_out, tangent_out = yield (new_primals, new_tangents), {}
   out_jtuple, tree_def = tree_to_jaxtuples((primal_out, tangent_out))
   yield out_jtuple, tree_def
 
@@ -407,7 +407,7 @@ def traceable(in_tree_def, new_primals, new_tangents):
 def transposed_fun(jaxpr, in_tree_def, args):
   args, consts, freevar_vals, ct = args
   args, ct, freevar_vals = build_tree(in_tree_def, (args, ct, freevar_vals))
-  freevar_cts, cotangents_out = yield jaxpr, consts, freevar_vals, args, ct
+  freevar_cts, cotangents_out = yield (jaxpr, consts, freevar_vals, args, ct), {}
   out_jtuple, tree_def = tree_to_jaxtuples((cotangents_out, freevar_cts))
   yield out_jtuple, tree_def
 
@@ -428,7 +428,7 @@ def call_transpose(primitive, params, jaxpr, consts, freevar_vals, args, ct):
 def transposed_mapped(jaxpr, in_tree_def, freevar_vals, args):
   args, consts, ct = args
   args, ct = build_tree(in_tree_def, (args, ct))
-  freevar_cts, cotangents_out = yield jaxpr, consts, freevar_vals, args, ct
+  freevar_cts, cotangents_out = yield (jaxpr, consts, freevar_vals, args, ct), {}
   out_jtuple, tree_def = tree_to_jaxtuples((cotangents_out, freevar_cts))
   yield out_jtuple, tree_def
 

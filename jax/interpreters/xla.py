@@ -136,7 +136,8 @@ def compile_jaxpr(jaxpr, const_vals, *abstract_args):
   arg_shapes = list(map(xla_shape, abstract_args))
   built_c = jaxpr_computation(jaxpr, const_vals, (), *arg_shapes)
   result_shape = xla_shape_to_result_shape(built_c.GetReturnValueShape())
-  return built_c.Compile(arg_shapes, xb.get_compile_options()), result_shape
+  return built_c.Compile(arg_shapes, xb.get_compile_options(),
+                         backend=xb.get_backend()), result_shape
 
 def build_jaxpr(jaxpr, const_vals, *abstract_args):
   arg_shapes = list(map(xla_shape, abstract_args))
@@ -301,6 +302,10 @@ class DeviceArray(DeviceValue):
     """Returns an ndarray (backed by host memory, not device memory)."""
     return onp.asarray(self)
 
+  def __repr__(self):
+    shape_str = ",".join(map(str, self.shape))
+    return "DeviceArray{{{}[{}]}}".format(onp.dtype(self.dtype).name, shape_str)
+
   def __len__(self):
     try:
       return self.shape[0]
@@ -328,7 +333,6 @@ class DeviceArray(DeviceValue):
 
   __array__ = partialmethod(forward_to_value, onp.asarray)
   __str__ = partialmethod(forward_to_value, str)
-  __repr__ = partialmethod(forward_to_value, repr)
   __bool__ = __nonzero__ = partialmethod(forward_to_value, bool)
   __float__ = partialmethod(forward_to_value, float)
   __int__ = partialmethod(forward_to_value, int)
@@ -377,7 +381,8 @@ def instantiate_device_constant(const, cutoff=1e6, device_num=0):
   if const.size > cutoff and device_num == 0:
     c = xb.make_computation_builder("constant_instantiating_computation")
     xla_const = const.constant_handler(c, const)
-    compiled = c.Build(xla_const).Compile((), xb.get_compile_options())
+    compiled = c.Build(xla_const).Compile((), xb.get_compile_options(),
+                                          backend=xb.get_backend())
     return compiled.Execute(())
   else:
     return xb.device_put(onp.asarray(const), device_num)
@@ -407,7 +412,7 @@ def xla_shape(x):
 @lu.transformation_with_aux
 def flatten_fun(in_trees, *flat_args):
   jtuple_trees = tuple(map(partial(build_tree, iter(flat_args)), in_trees))
-  ans = yield jtuple_trees
+  ans = yield jtuple_trees, {}
   aval = core.get_aval(ans)
   if type(aval) is AbstractTuple:
     ans_flat, out_tree = tree_flatten(ans)

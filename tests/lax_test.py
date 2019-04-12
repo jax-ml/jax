@@ -368,7 +368,6 @@ class LaxTest(jtu.JaxTestCase):
 
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)
 
-  @skip
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_lhs_shape={}_rhs_shape={}_strides={}_padding={}"
        "_lhs_dilation={}_rhs_dilation={}".format(
@@ -390,6 +389,7 @@ class LaxTest(jtu.JaxTestCase):
       self, lhs_shape, rhs_shape, dtype, strides, padding, lhs_dilation,
       rhs_dilation, rng):
     # TODO(mattjj): make this test pass
+    return SkipTest("this test is incomplete")
     args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
 
     def fun(lhs, rhs):
@@ -444,6 +444,141 @@ class LaxTest(jtu.JaxTestCase):
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)
 
   # TODO(mattjj): test conv_general_dilated against numpy
+
+  @staticmethod
+  def _conv_transpose_via_grad(data, kernel, strides, padding,
+                               dimension_numbers=None):
+    """Helper method: calculates conv transpose via grad for testing."""
+    assert len(data.shape) == len(kernel.shape)
+    nspatial = len(data.shape) - 2
+    one = (1,) * nspatial
+    dn = lax.conv_dimension_numbers(data.shape, kernel.shape,
+                                    dimension_numbers)
+    in_shape = onp.take(data.shape, dn.lhs_spec)
+    in_sdims = in_shape[2:]
+    k_shape = onp.take(kernel.shape, dn.rhs_spec)
+    k_sdims = k_shape[2:]
+    if padding == 'VALID':
+      o_sdims = [in_sdims[i]*strides[i] + max(k_sdims[i]-strides[i],0)
+                 for i in range(nspatial)]
+    elif padding == 'SAME':
+      o_sdims = [in_sdims[i]*strides[i] for i in range(nspatial)]
+    o_shape =  [in_shape[0], k_shape[1]] + o_sdims
+    out_spec_inv = [x[0] for x in
+                    sorted(enumerate(dn.out_spec), key=lambda x: x[1])]
+    o_layout = onp.take(onp.array(o_shape), out_spec_inv)
+    placeholder = onp.ones(o_layout, data.dtype)
+    conv = lambda x: lax.conv_general_dilated(x, kernel, strides, padding,
+                                              one, one, dn)
+    _, g = api.vjp(conv, placeholder)
+    return g(data)[0]
+
+  @staticmethod
+  def _transpose_conv_kernel(data, kernel, dimension_numbers):
+    dn = lax.conv_dimension_numbers(data.shape, kernel.shape,
+                                    dimension_numbers)
+    spatial_axes = onp.array(dn.rhs_spec)[2:]
+    for axis in spatial_axes:
+      kernel = onp.flip(kernel, axis)
+    kernel = onp.swapaxes(kernel, dn.rhs_spec[0], dn.rhs_spec[1])
+    return kernel
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_lhs_shape={}_rhs_shape={}_strides={}_padding={}".format(
+           jtu.format_shape_dtype_string(lhs_shape, dtype),
+           jtu.format_shape_dtype_string(rhs_shape, dtype), strides, padding),
+          "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
+          "strides": strides, "padding": padding, "rng": rng, 'dspec': dspec}
+      for lhs_shape, rhs_shape in [
+          ((b, 9, 10, i), (k, k, j, i))  # NB: i,j flipped in RHS for transpose
+          for b, i, j, k in itertools.product([2,3],[2,3],[2,3],[3,4,5])]
+      for dtype in [onp.float32]
+      for strides in [(1, 1), (1, 2), (2, 1), (2, 2), (3, 3)]
+      for padding in ["VALID", "SAME"]
+      for dspec in [('NHWC', 'HWIO', 'NHWC'),]
+      for rng in [jtu.rand_small()]))
+  def testConvTranspose2DT(self, lhs_shape, rhs_shape, dtype, strides,
+                          padding, dspec, rng):
+    args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
+
+    # NB: this test calculates conv_transpose performing identically to the
+    # lhs-grad of conv.
+    def fun(lhs, rhs):
+      return lax.conv_transpose(lhs, rhs, strides, padding,
+                                dimension_numbers=dspec,
+                                transpose_kernel=True)
+
+    def fun_via_grad(lhs, rhs):
+      return self._conv_transpose_via_grad(lhs, rhs, strides, padding,
+                                           dimension_numbers=dspec)
+
+    # NB: below just checks for agreement, we're not calling numpy.
+    self._CheckAgainstNumpy(fun, fun_via_grad, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_lhs_shape={}_rhs_shape={}_strides={}_padding={}".format(
+           jtu.format_shape_dtype_string(lhs_shape, dtype),
+           jtu.format_shape_dtype_string(rhs_shape, dtype), strides, padding),
+          "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
+          "strides": strides, "padding": padding, "rng": rng, 'dspec': dspec}
+      for lhs_shape, rhs_shape in [
+          ((b, 9, 10, i), (k, k, i, j))
+          for b, i, j, k in itertools.product([2,3],[2,3],[2,3],[3,4,5])]
+      for dtype in [onp.float32]
+      for strides in [(1, 1), (1, 2), (2, 1), (2, 2), (3, 3)]
+      for padding in ["VALID", "SAME"]
+      for dspec in [('NHWC', 'HWIO', 'NHWC'),]
+      for rng in [jtu.rand_small()]))
+  def testConvTranspose2D(self, lhs_shape, rhs_shape, dtype, strides,
+                          padding, dspec, rng):
+    args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
+
+    def fun(lhs, rhs):
+      return lax.conv_transpose(lhs, rhs, strides, padding,
+                                dimension_numbers=dspec,
+                                transpose_kernel=False)
+
+    def fun_via_grad(lhs, rhs):
+      rhs_t = self._transpose_conv_kernel(lhs, rhs, dimension_numbers=dspec)
+      return self._conv_transpose_via_grad(lhs, rhs_t, strides, padding,
+                                           dimension_numbers=dspec)
+
+    # NB: below just checks for agreement, we're not calling numpy.
+    self._CheckAgainstNumpy(fun, fun_via_grad, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_lhs_shape={}_rhs_shape={}_strides={}_padding={}".format(
+           jtu.format_shape_dtype_string(lhs_shape, dtype),
+           jtu.format_shape_dtype_string(rhs_shape, dtype), strides, padding),
+          "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
+          "strides": strides, "padding": padding, "rng": rng, 'dspec': dspec}
+      for lhs_shape, rhs_shape in [
+          ((b, 10, i), (k, i, j))
+          for b, i, j, k in itertools.product([2,3],[2,3],[2,3],[3,4,5])]
+      for dtype in [onp.float32]
+      for strides in [(1,), (2,), (3,)]
+      for padding in ["VALID", "SAME"]
+      for dspec in [('NHC', 'HIO', 'NHC'),]
+      for rng in [jtu.rand_small()]))
+  def testConvTranspose1D(self, lhs_shape, rhs_shape, dtype, strides,
+                          padding, dspec, rng):
+    args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
+
+    def fun(lhs, rhs):
+      return lax.conv_transpose(lhs, rhs, strides, padding,
+                                dimension_numbers=dspec,
+                                transpose_kernel=False)
+
+    def fun_via_grad(lhs, rhs):
+      rhs_t = self._transpose_conv_kernel(lhs, rhs, dimension_numbers=dspec)
+      return self._conv_transpose_via_grad(lhs, rhs_t, strides, padding,
+                                           dimension_numbers=dspec)
+
+    # NB: below just checks for agreement, we're not calling numpy.
+    self._CheckAgainstNumpy(fun, fun_via_grad, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_lhs_shape={}_rhs_shape={}".format(
@@ -1427,45 +1562,6 @@ class LaxTest(jtu.JaxTestCase):
             (0, 0), lambda x: (x[0], 0),
             (1, 1), lambda x: x)
 
-  def testScanAdd(self):
-    def f(x, y):
-      return x + y
-
-    g = partial(lax.scan, f)
-    a = onp.array(7, onp.float32)
-    bs = onp.array([2, 4, -2, 6], onp.float32)
-    out = g(a, bs)
-    self.assertAllClose(out, onp.array([9, 13, 11, 17], onp.float32),
-                        check_dtypes=True)
-
-    # jtu.check_jvp(g, partial(api.jvp, g), (a, bs))
-
-  def testScanMul(self):
-    def f(x, y):
-      return x * y
-
-    g = partial(lax.scan, f)
-    a = onp.array(7, onp.float32)
-    bs = onp.array([2, 4, -2, 6], onp.float32)
-    out = g(a, bs)
-    self.assertAllClose(out, onp.array([14, 56, -112, -672], onp.float32),
-                        check_dtypes=True)
-
-    # jtu.check_jvp(g, partial(api.jvp, g), (a, bs))
-
-  def testScanJit(self):
-    @api.jit
-    def f(x, yz):
-      y, z = yz
-      return 5. * lax.exp(lax.sin(x) * lax.cos(y)) + z
-
-    a = onp.array(7, onp.float32)
-    bs = (onp.array([3., 1., -4., 1.], onp.float32),
-          onp.array([5., 9., -2., 6.], onp.float32))
-    ans = lax.scan(f, a, bs)
-    expected = onp.array([7.609, 17.445, 7.52596, 14.3389172], onp.float32)
-    self.assertAllClose(ans, expected, check_dtypes=True)
-
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_lhs_shape={}_rhs_shape={}"
        .format(jtu.format_shape_dtype_string(lhs_shape, dtype),
@@ -1890,7 +1986,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
            [(1, 1), (1, 2), (2, 1)],  # strides
            [((0, 0), (0, 0)), ((1, 0), (0, 1)), ((0, -1), (0, 0))],  # pads
            [(1, 1), (2, 1)],  # lhs_dils
-           [(1, 1)])  # rhs_dils
+           [(1, 1), (2, 2)])  # rhs_dils
           for b, i, j in itertools.product([1, 2], repeat=3)]
       for strides in all_strides
       for rhs_dil in rhs_dils

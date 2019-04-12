@@ -27,7 +27,7 @@ import numpy.random as npr
 
 import jax.numpy as np
 from jax.config import config
-from jax import jit, grad
+from jax import jit, grad, random
 from jax.experimental import optimizers
 from jax.experimental import stax
 from jax.experimental.stax import Dense, Relu, LogSoftmax
@@ -51,6 +51,8 @@ init_random_params, predict = stax.serial(
     Dense(10), LogSoftmax)
 
 if __name__ == "__main__":
+  rng = random.PRNGKey(0)
+
   step_size = 0.001
   num_epochs = 10
   batch_size = 128
@@ -77,7 +79,7 @@ if __name__ == "__main__":
     params = optimizers.get_params(opt_state)
     return opt_update(i, grad(loss)(params, batch), opt_state)
 
-  _, init_params = init_random_params((-1, 28 * 28))
+  _, init_params = init_random_params(rng, (-1, 28 * 28))
   opt_state = opt_init(init_params)
   itercount = itertools.count()
 

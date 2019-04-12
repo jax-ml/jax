@@ -60,19 +60,19 @@ def get_python_bin_path(python_bin_path_flag):
 
 # Bazel
 
-BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/0.22.0/"
+BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/0.24.0/"
 BazelPackage = collections.namedtuple("BazelPackage", ["file", "sha256"])
 bazel_packages = {
     "Linux":
         BazelPackage(
-            file="bazel-0.22.0-linux-x86_64",
+            file="bazel-0.24.0-linux-x86_64",
             sha256=
-            "8474ed28ed4998e2f5671ddf3a9a80ae9e484a5de3b8b70c8b654c017c65d363"),
+            "cf78da6f1b65e9e35f485eab421756c4b5188a705695276843759f3c3586bb0c"),
     "Darwin":
         BazelPackage(
-            file="bazel-0.22.0-darwin-x86_64",
+            file="bazel-0.24.0-darwin-x86_64",
             sha256=
-            "0fcd80d8a20b7c8b7b70ea9da4bea9b2ce3985c792d0cc7676a9e4c2f9600478"),
+            "adaacec710cae5a217dd967766fe489b8034aa9c0cb44d4eb06813d224489e01"),
 }
 
 
@@ -146,7 +146,7 @@ def check_bazel_version(bazel_path, min_version):
   match = re.search("Build label: *([0-9\\.]+)[^0-9\\.]", version_output)
   if match is None:
     print("Warning: bazel installation is not a release version. Make sure "
-          "bazel is at least 0.19.2")
+          "bazel is at least {}".format(min_version))
     return
   version = match.group(1)
   min_ints = [int(x) for x in min_version.split(".")]
@@ -179,6 +179,7 @@ build --define=no_gcp_support=true
 build --define=no_hdfs_support=true
 build --define=no_kafka_support=true
 build --define=no_ignite_support=true
+build --define=grpc_no_ares=true
 
 build:cuda --crosstool_top=@local_config_cuda//crosstool:toolchain
 build:cuda --define=using_cuda=true --define=using_cuda_nvcc=true
@@ -277,7 +278,7 @@ def main():
 
   # Find a working Bazel.
   bazel_path = get_bazel_path(args.bazel_path)
-  check_bazel_version(bazel_path, "0.19.2")
+  check_bazel_version(bazel_path, "0.24.0")
   print("Bazel binary path: {}".format(bazel_path))
 
   python_bin_path = get_python_bin_path(args.python_bin_path)

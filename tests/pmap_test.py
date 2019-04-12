@@ -27,7 +27,7 @@ import jax.numpy as np
 from jax import test_util as jtu
 from jax import lax
 from jax.api import pmap, vmap, jvp, grad, make_jaxpr, linearize, device_put
-from jax.lax import psum
+from jax.lax_parallel import psum
 from jax.lib import xla_bridge
 from jax.util import prod
 from jax.interpreters import pxla
@@ -54,7 +54,7 @@ class PmapTest(jtu.JaxTestCase):
         return device_mesh_shape
 
   def testBasic(self):
-    f = pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i')
+    f = pmap(lambda x: x - psum(x, 'i'), axis_name='i')
 
     shape = (xla_bridge.device_count(), 4)
     x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
@@ -64,7 +64,7 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testNestedBasic(self):
-    f = lambda x: lax.psum(lax.psum(x, 'i'), 'j')
+    f = lambda x: psum(psum(x, 'i'), 'j')
     f = pmap(pmap(f, 'i'), 'j')
 
     def sum_and_broadcast(x, axis):
@@ -145,7 +145,7 @@ class PmapTest(jtu.JaxTestCase):
 
   def testTwoArgsGrad(self):
     def f(x, y):
-      return lax.psum(5. * np.cos(x) * np.sin(y), 'i')
+      return psum(5. * np.cos(x) * np.sin(y), 'i')
     f = pmap(f, 'i')
 
     def g(x, y):
@@ -221,6 +221,40 @@ class PmapTest(jtu.JaxTestCase):
     y.device_buffers = y.device_buffers[::-1]
     z = f(y)
     self.assertAllClose(z, 2 * 2 * x[::-1], check_dtypes=False)
+
+  def testPsumMultiple(self):
+    f = lambda x: psum(x, ('i', 'j'))
+    f = pmap(pmap(f, 'i'), 'j')
+
+    def sum_and_broadcast(x, axis):
+      return onp.repeat(onp.sum(x, axis, keepdims=True), x.shape[axis], axis)
+
+    device_count = xla_bridge.device_count()
+    num_pairs, ragged = divmod(device_count, 2)
+    if num_pairs > 1 and not ragged:
+      shape = (num_pairs, 2, 4)
+    else:
+      shape = (device_count, 1, 4)
+    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+
+    ans = f(x)
+    expected = sum_and_broadcast(sum_and_broadcast(x, 0), 1)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testReplicaGroups(self):
+    groups = pxla.replica_groups(8, [4, 2], (0,))
+    self.assertEqual(groups, ((0, 2, 4, 6), (1, 3, 5, 7)))
+
+    groups = pxla.replica_groups(8, [4, 2], (1,))
+    self.assertEqual(groups, ((0, 1), (2, 3), (4, 5), (6, 7)))
+
+    groups = pxla.replica_groups(8, [4, 2], (0, 1))
+    self.assertEqual(groups, ((0, 1, 2, 3, 4, 5, 6, 7,),))
+
+    groups = pxla.replica_groups(8, [4, 2], (1, 0))
+    self.assertEqual(len(groups), 1)
+    self.assertEqual((tuple(sorted(groups[0])),),
+                     ((0, 1, 2, 3, 4, 5, 6, 7,),))  # order doesn't matter
 
 
 if __name__ == '__main__':

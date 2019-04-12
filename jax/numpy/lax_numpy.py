@@ -21,6 +21,7 @@ import itertools
 import re
 import string
 import warnings
+import types
 
 import numpy as onp
 import opt_einsum
@@ -596,8 +597,19 @@ def angle(x):
   return lax.atan2(im, re)
 
 
+@_wraps(onp.isrealobj)
+def isrealobj(a):
+  return not iscomplexobj(a)
+
+
 @_wraps(onp.reshape)
-def reshape(a, newshape, order="C"):  # pylint: disable=missing-docstring
+def reshape(a, newshape, order="C"):
+  try:
+    return a.reshape(newshape, order=order)
+  except AttributeError:
+    return _reshape(a, newshape, order=order)
+
+def _reshape(a, newshape, order="C"):
   dummy_val = onp.broadcast_to(0, shape(a))  # zero strides
   computed_newshape = onp.reshape(dummy_val, newshape).shape
 
@@ -1215,6 +1227,8 @@ def full_like(a, fill_value, dtype=None):
 
 @_wraps(onp.zeros)
 def zeros(shape, dtype=onp.dtype("float64")):
+  if isinstance(shape, types.GeneratorType):
+    raise TypeError("expected sequence object with len >= 0 or a single integer")
   shape = (shape,) if onp.isscalar(shape) else shape
   return lax.full(shape, 0, dtype)
 
@@ -1254,16 +1268,18 @@ def identity(n, dtype=None):
 
 @_wraps(onp.arange)
 def arange(*args, **kwargs):
-  # attempt to generate a lazy IotaConstant, otherwise fall back to raw numpy
-  # TODO(mattjj): add tests for this function, then re-enable
-  # dtype = kwargs.pop("dtype", None)
-  # if not args:
-  #   raise TypeError("Required argument 'start' (pos 1) not found")  # same as numpy error
-  # elif len(args) == 1 and not kwargs:
-  #   stop, = args
-  #   dtype = dtype or _dtype(stop)
-  #   if onp.issubdtype(dtype, onp.integer):
-  #     return lax.iota(dtype, stop)  # avoids materializing
+  dtype = kwargs.pop("dtype", None)
+  if not args:
+    raise TypeError("Required argument 'start' (pos 1) not found")  # same as numpy error
+
+  # If called like np.arange(N), we create a lazy lax._IotaConstant.
+  if len(args) == 1 and not kwargs:
+    stop, = args
+    dtype = dtype or _dtype(stop)
+    if onp.issubdtype(dtype, onp.integer):
+      return lax.iota(dtype, stop)  # avoids materializing
+
+  # Fall back to instantiating an ndarray in host memory
   return onp.arange(*args, **kwargs)
 
 linspace = onp.linspace
@@ -1496,13 +1512,23 @@ def tensordot(a, b, axes=2):
 
 
 @_wraps(onp.einsum)
-def einsum(*operands):
+def einsum(*operands, **kwargs):
+  optimize = kwargs.pop('optimize', 'auto')
+  optimize = 'greedy' if optimize is True else optimize
+  if kwargs:
+    msg = 'invalid keyword arguments for einsum: {}'
+    raise TypeError(msg.format(', '.join(kwargs)))
   # using einsum_call=True here is an internal api for opt_einsum
   operands, contractions = opt_einsum.contract_path(
-      *operands, einsum_call=True, use_blas=True)
+      *operands, einsum_call=True, use_blas=True, optimize=optimize)
   contractions = tuple(data[:3] for data in contractions)
   return _einsum(operands, contractions)
 
+@_wraps(onp.einsum_path)
+def einsum_path(subscripts, *operands, **kwargs):
+  optimize = kwargs.pop('optimize', 'greedy')
+  # using einsum_call=True here is an internal api for opt_einsum
+  return opt_einsum.contract_path(subscripts, *operands, optimize=optimize)
 
 @partial(jit, static_argnums=(1,))
 def _einsum(operands, contractions):
@@ -2233,7 +2259,7 @@ _nondiff_methods = ["all", "any", "argmax", "argmin", "argpartition", "argsort",
                     "nonzero", "searchsorted", "round"]
 _diff_methods = ["clip", "compress", "conj", "conjugate", "cumprod", "cumsum",
                  "diagonal", "dot", "max", "mean", "min", "prod", "ptp",
-                 "ravel", "repeat", "reshape", "sort", "squeeze", "std", "sum",
+                 "ravel", "repeat", "sort", "squeeze", "std", "sum",
                  "swapaxes", "take", "trace", "transpose", "var"]
 
 
@@ -2245,10 +2271,10 @@ for operator_name, function in _operators.items():
 # Forward methods and properties using core.aval_method and core.aval_property:
 for method_name in _nondiff_methods + _diff_methods:
   setattr(ShapedArray, method_name, core.aval_method(globals()[method_name]))
+setattr(ShapedArray, "reshape", core.aval_method(_reshape))
 setattr(ShapedArray, "flatten", core.aval_method(ravel))
 setattr(ShapedArray, "T", core.aval_property(transpose))
 setattr(ShapedArray, "astype", core.aval_method(lax.convert_element_type))
-setattr(ShapedArray, "psum", core.aval_method(lax.psum))
 
 
 # Forward operators, methods, and properties on DeviceArray to lax_numpy
@@ -2257,6 +2283,7 @@ for operator_name, function in _operators.items():
   setattr(DeviceArray, "__{}__".format(operator_name), function)
 for method_name in _nondiff_methods + _diff_methods:
   setattr(DeviceArray, method_name, globals()[method_name])
+setattr(DeviceArray, "reshape", _reshape)
 setattr(DeviceArray, "flatten", ravel)
 setattr(DeviceArray, "T", property(transpose))
 setattr(DeviceArray, "astype", lax.convert_element_type)
