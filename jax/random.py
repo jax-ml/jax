@@ -31,7 +31,7 @@ import numpy as onp
 from . import lax
 from . import numpy as np
 from . import tree_util
-from .api import jit
+from .api import jit, vmap
 from .numpy.lax_numpy import _constant_like
 from jax.lib import xla_bridge
 from jax import core
@@ -445,6 +445,85 @@ def _exponential(key, shape, dtype):
   u = uniform(key, shape, dtype)
   # taking 1 - u to move the domain of log to (0, 1] instead of [0, 1)
   return lax.neg(lax.log(lax.sub(_constant_like(u, 1), u)))
+
+
+def _gamma_one(key, alpha):
+  # Ref: A simple method for generating gamma variables, George Marsaglia and Wai Wan Tsang
+  # The algorithm can also be founded in:
+  # https://en.wikipedia.org/wiki/Gamma_distribution#Generating_gamma-distributed_random_variables
+  zero = _constant_like(alpha, 0)
+  one = _constant_like(alpha, 1)
+  one_over_two = _constant_like(alpha, 0.5)
+  one_over_three = _constant_like(alpha, 1. / 3.)
+  squeeze_const = _constant_like(alpha, 0.0331)
+  dtype = lax._dtype(alpha)
+
+  key, subkey = split(key)
+  # for alpha < 1, we boost alpha to alpha + 1 and get a sample according to
+  # Gamma(alpha) ~ Gamma(alpha+1) * Uniform()^(1 / alpha)
+  boost = lax.select(lax.ge(alpha, one),
+                     one,
+                     lax.pow(uniform(subkey, (), dtype=dtype), lax.div(one, alpha)))
+  alpha = lax.select(lax.ge(alpha, one), alpha, lax.add(alpha, one))
+
+  d = lax.sub(alpha, one_over_three)
+  c = lax.div(one_over_three, lax.pow(d, one_over_two))
+
+  def _cond_fn(kXVU):
+    _, X, V, U = kXVU
+    # TODO: use lax.cond when its batching rule is supported
+    # The reason is to avoid evaluating second condition which involves log+log
+    # if the first condition is satisfied
+    cond = lax.bitwise_and(lax.ge(U, lax.sub(one, lax.mul(squeeze_const, lax.mul(X, X)))),
+                           lax.ge(lax.log(U), lax.add(lax.mul(X, one_over_two),
+                                                      lax.mul(d, lax.add(lax.sub(one, V),
+                                                                         lax.log(V))))))
+    return lax.bitwise_or(lax.le(V, zero), cond)
+
+  def _body_fn(kXVU):
+    key = kXVU[0]
+    key, x_key, U_key = split(key, 3)
+    x = normal(x_key, (), dtype=dtype)
+    v = lax.add(one, lax.mul(x, c))
+    X = lax.mul(x, x)
+    V = lax.mul(lax.mul(v, v), v)
+    U = uniform(U_key, (), dtype=dtype)
+    return key, X, V, U
+
+  # initial state is chosen such that _cond_fn will return True
+  _, _, V, _ = lax.while_loop(_cond_fn,
+                              _body_fn,
+                              (key, zero, _constant_like(alpha, -1), zero))
+  z = lax.mul(lax.mul(d, V), boost)
+  return lax.select(lax.eq(z, zero), onp.finfo(z.dtype).tiny, z)
+
+
+def gamma(key, a, shape=(), dtype=onp.float32):
+  """Sample Gamma random values with given shape and float dtype.
+
+  Args:
+    key: a PRNGKey used as the random key.
+    a: an array-like broadcastable to `shape` and used as the shape parameter
+      of the random variables.
+    shape: optional, a tuple of nonnegative integers representing the shape
+      (default scalar).
+    dtype: optional, a float dtype for the returned values (default float32).
+
+  Returns:
+    A random array with the specified shape and dtype.
+  """
+  return _gamma(key, a, shape, dtype)
+  
+@partial(jit, static_argnums=(2, 3))
+def _gamma(key, a, shape=(), dtype=onp.float32):
+  a = lax.convert_element_type(a, dtype)
+  shape = shape or onp.shape(a)
+  if onp.shape(a) != shape:
+    a = np.broadcast_to(a, shape)
+  alphas = np.reshape(a, -1)
+  keys = split(key, onp.size(alphas))
+  samples = vmap(_gamma_one)(keys, alphas)
+  return np.reshape(samples, shape)
 
 
 def laplace(key, shape=(), dtype=onp.float32):
