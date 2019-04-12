@@ -49,7 +49,6 @@ from .api_util import (pytree_fun_to_jaxtupletree_fun, pytree_to_jaxtupletree,
                        pytree_fun_to_flatjaxtuple_fun, pytree_to_flatjaxtuple)
 from .interpreters import partial_eval as pe
 from .interpreters import xla
-from .interpreters import pxla
 from .interpreters import ad
 from .interpreters import batching
 from .interpreters import parallel
@@ -1001,94 +1000,6 @@ def _revise_cond_jaxpr(new_pval, old_pval, jaxpr, consts):
     return new_jaxpr, new_consts
 
 
-def scan(f, a, bs):
-  """Scans over the leading axis of an array.
-
-  Arguments:
-    f: function with signature `a -> b -> a`
-    a: `a` value, or a pytree of `a` values.
-    bs: an array of `b` values, or a pytree of arrays of `b` values with the
-      same leading axis size.
-
-  Returns:
-    An array of `a` values, or a pytree of arrays of `a` values, representing
-    the result of scanning the function `f` over the leading axis of `bs`, with
-    each application producing an `a` for the next and collecting the results.
-  """
-  a, a_tree = pytree_to_flatjaxtuple(a)
-  bs, b_tree = pytree_to_flatjaxtuple(bs)  # b_tree is the same as bs_tree
-  f, out_tree = pytree_fun_to_flatjaxtuple_fun(lu.wrap_init(f), (a_tree, b_tree))
-
-  if not bs:
-    raise TypeError("bs argument to scan does not contain any arrays")
-  if any([b.ndim == 0 for b in bs]):
-    msg = "bs argument arrays must be rank >=1, got shapes {}."
-    raise TypeError(msg.format(", ".format(str(b.shape) for b in bs)))
-  if len({b.shape[0] for b in bs}) != 1:
-    msg = "arrays in bs must have equal most-major dimensions, got shapes {}."
-    raise TypeError(msg.format(", ".format(str(b.shape) for b in bs)))
-
-  a_pval = a_aval, _ = _abstractify(a)
-  bs_aval, _ = _abstractify(bs)
-  b_aval = core.AbstractTuple([ShapedArray(b.shape[1:], b.dtype) for b in bs_aval])
-  b_pval = pe.PartialVal((b_aval, core.unit))
-  jaxpr, pval_out, consts = pe.trace_to_jaxpr(f, (a_pval, b_pval))
-  aval_out, _ = pval_out
-
-  if a_tree != out_tree():
-    msg = "scanned function input and output must have identical structure"
-    raise TypeError(msg)
-  if a_aval != aval_out:
-    msg = "output shape mismatch for scanned function: {} vs {}"
-    raise TypeError(msg.format(a_aval, aval_out))
-
-  out = scan_p.bind(a, bs, core.pack(consts), aval_out=aval_out, jaxpr=jaxpr)
-  return tree_unflatten(out_tree(), out)
-
-def _scan_impl(a, bs, consts, aval_out, jaxpr):
-  length = tuple(bs)[0].shape[0]
-  state = [full((length,) + elt.shape, 0, _dtype(elt)) for elt in a]
-
-  def body_fun(i, vals):
-    a, state = vals
-    assert len(a) == len(state)
-    b = [dynamic_index_in_dim(b, i, keepdims=False) for b in bs]
-    a_out = core.eval_jaxpr(jaxpr, consts, (), a, core.pack(b))
-    state_out = [dynamic_update_index_in_dim(s, a[None, ...], i, axis=0)
-                 for a, s in zip(a_out, state)]
-    return a_out, state_out
-
-  _, out = fori_loop(0, length, body_fun, (a, state))
-  return core.pack(out)
-
-# TODO(mattjj, phawkins): figure out what to do with consts_tangents, and the
-# jaxtuple packing issues
-def _scan_jvp(primals, tangents, aval_out, jaxpr):
-  a, bs, consts_primals = primals
-  a_dot, bs_dot, consts_tangents = tangents
-
-  primal_out = scan_p.bind(a, bs, consts_primals,
-                           aval_out=aval_out, jaxpr=jaxpr)
-
-  def f_jvp(a_pt, b_pt):
-    a, a_dot = a_pt
-    b, b_dot = b_pt
-    f = lambda a, b, c: core.eval_jaxpr(jaxpr, c, (), a, b)
-    return api.jvp(f, (a, b, consts), (b, b_dot, consts_tangents))
-  tangent_out = scan(f_jvp, (a, a_dot), (b, b_dot))
-
-  return primal_out, tangent_out
-
-def _scan_abstract_eval(a, bs, consts, aval_out, jaxpr):
-  return maybe_tracer_tuple_to_abstract_tuple(aval_out)
-
-scan_p = core.Primitive("scan")
-scan_p.def_impl(_scan_impl)
-scan_p.def_abstract_eval(_scan_abstract_eval)
-xla.translations[scan_p] = partial(xla.lower_fun, _scan_impl)
-# ad.primitive_jvps[scan_p] = _scan_jvp  # TODO(mattjj, phawkins)
-
-
 def tie_in(x, y):
   return tie_in_p.bind(x, y)
 
@@ -1227,6 +1138,94 @@ def conv_with_general_padding(lhs, rhs, window_strides, padding,
   return conv_general_dilated(
       lhs, rhs, window_strides, padding, lhs_dilation=lhs_dilation,
       rhs_dilation=rhs_dilation)
+
+
+def _conv_transpose_padding(k, s, padding):
+  """Calculate before and after padding for a dim of transposed convolution.
+
+  Args:
+    k: int: kernel dimension.
+    s: int: dimension stride value.
+    padding: 'same' or 'valid' padding mode for original forward conv.
+
+  Returns:
+    2-tuple: ints: before and after padding for transposed convolution.
+  """
+  if padding == 'SAME':
+    pad_len = k + s - 2
+    if s > k - 1:
+      pad_a = k - 1
+    else:
+      pad_a = int(onp.ceil(pad_len / 2))
+  elif padding == 'VALID':
+    pad_len = k + s - 2 + max(k - s, 0)
+    pad_a = k - 1
+  else:
+    raise ValueError('Padding mode must be `SAME` or `VALID`.')
+  pad_b = pad_len - pad_a
+  return pad_a, pad_b
+
+
+def _flip_axes(x, axes):
+  """Flip ndarray 'x' along each axis specified in axes tuple."""
+  for axis in axes:
+    x = onp.flip(x, axis)
+  return x
+
+
+def conv_transpose(lhs, rhs, strides, padding, dimension_numbers=None,
+                   transpose_kernel=False):
+  """Convenience wrapper for calculating the N-d convolution "transpose".
+
+  This function directly calculates a fractionally strided conv rather than
+  indirectly calculating the gradient (transpose) of a forward convolution.
+
+  Args:
+    lhs: a rank `n+2` dimensional input array.
+    rhs: a rank `n+2` dimensional array of kernel weights.
+    strides: sequence of `n` integers, sets fractional stride.
+    padding: 'SAME', 'VALID' will set as transpose of corresponding forward
+      conv, or a sequence of `n` integer 2-tuples describing before-and-after
+      padding for each `n` spatial dimension.
+    dimension_numbers: tuple of dimension descriptors as in
+      lax.conv_general_dilated. Defaults to tensorflow convention.
+    transpose_kernel: if True flips spatial axes and swaps the input/output
+      channel axes of the kernel. This makes the output of this function identical
+      to the gradient-derived functions like keras.layers.Conv2DTranspose
+      applied to the same kernel. For typical use in neural nets this is completely
+      pointless and just makes input/output channel specification confusing.
+
+  Returns:
+    Transposed N-d convolution, with output padding following the conventions of
+    keras.layers.Conv2DTranspose.
+  """
+  assert len(lhs.shape) == len(rhs.shape) and len(lhs.shape) > 2
+  ndims = len(lhs.shape)
+  one = (1,) * (ndims - 2)
+  # Set dimensional layout defaults if not specified.
+  if dimension_numbers is None:
+    if ndims == 3:
+      dimension_numbers = ('NHC', 'HIO', 'NHC')
+    elif ndims == 4:
+      dimension_numbers = ('NHWC', 'HWIO', 'NHWC')
+    elif ndims == 5:
+      dimension_numbers = ('NHWDC', 'HWDIO', 'NHWDC')
+    else:
+      raise ValueError('No 4+ dimensional dimension_number defaults.')
+  dn = conv_dimension_numbers(lhs.shape, rhs.shape, dimension_numbers)
+  k_shape = onp.take(rhs.shape, dn.rhs_spec)
+  k_sdims = k_shape[2:]
+  # Calculate correct output shape given padding and strides.
+  if padding in {'SAME', 'VALID'}:
+    pads = [_conv_transpose_padding(k, s, padding)
+            for k,s in zip(k_sdims.tolist(), strides)]
+  else:
+    pads = padding
+  if transpose_kernel:
+    # flip spatial dims and swap input / output channel axes
+    rhs = _flip_axes(rhs, onp.array(dn.rhs_spec)[2:])
+    rhs = onp.swapaxes(rhs, dn.rhs_spec[0], dn.rhs_spec[1])
+  return conv_general_dilated(lhs, rhs, one, pads, strides, one, dn)
 
 
 def full_like(x, fill_value, dtype=None, shape=None):
@@ -1611,7 +1610,7 @@ is_finite_p = unop(_fixed_dtype(onp.bool_), _float, 'is_finite')
 ad.defjvp_zero(is_finite_p)
 
 exp_p = standard_unop(_float | _complex, 'exp')
-ad.defjvp2(exp_p, lambda g, ans, x: mul(g, ans))
+ad.defjvp2(exp_p, lambda g, ans, x: _safe_mul(g, ans))
 
 log_p = standard_unop(_float | _complex, 'log')
 ad.defjvp(log_p, lambda g, x: div(g, x))
@@ -1944,19 +1943,30 @@ def _conv_general_dilated_batch_rule(
     return outputs, 0
 
   elif lhs_bdim is not None:
-    # Currently we don't handle cases where the batch dimension of the
-    # convolution isn't the first dimension.
-    if lhs_dim[0] != 0 or out_dim[0] != 0:
-      raise NotImplementedError
-
     lhs = batching.move_dim_to_front(lhs, lhs_bdim)
+    lhs_perm = ((0, lhs_dim[0] + 1) + tuple(range(1, lhs_dim[0] + 1)) +
+                tuple(range(lhs_dim[0] + 2, len(lhs_dim) + 1)))
+    new_lhs_dim = (0,) + tuple(x + 1 if x < lhs_dim[0] else x
+                               for x in lhs_dim[1:])
+    new_out_dim = (0,) + tuple(x + 1 if x < out_dim[0] else x
+                               for x in out_dim[1:])
+
     batched_size = lhs.shape[0]
-    n_size = lhs.shape[1]
+    n_size = lhs.shape[lhs_dim[0] + 1]
+    if lhs_dim[0] != 0:
+      lhs = transpose(lhs, lhs_perm)
     lhs = reshape(lhs, (batched_size * n_size,) + lhs.shape[2:])
     outputs = conv_general_dilated(
         lhs, rhs, window_strides, padding,
-        lhs_dilation, rhs_dilation, dimension_numbers)
+        lhs_dilation, rhs_dilation,
+        ConvDimensionNumbers(new_lhs_dim, dimension_numbers.rhs_spec,
+                             new_out_dim))
     outputs = reshape(outputs, (batched_size, n_size,) + outputs.shape[1:])
+
+    if out_dim[0] != 0:
+      out_perm = ((0,) + tuple(range(2, out_dim[0] + 2)) + (1,) +
+              tuple(range(out_dim[0] + 2, len(out_dim) + 1)))
+      outputs = transpose(outputs, out_perm)
 
     return outputs, 0
   elif rhs_bdim is not None:
@@ -2078,28 +2088,10 @@ def _dot_batch_rule(batched_args, batch_dims):
   dim_nums = [(lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch)]
   return dot_general(lhs, rhs, dim_nums), 0
 
-def _dot_papply_rule(name, vals, dims):
-  x, y = vals
-  xdim, ydim = dims
-  if xdim is None:
-    return dot(x, y), ydim
-  elif ydim is None:
-    return dot(x, y), xdim
-  elif ydim == 0:
-    if xdim != x.ndim:
-      x = psplit(x, name, x.ndim)
-    x = x[..., None]
-    y = y[..., None, :]
-    return psum(x * y, name), None
-  else:
-    y = pcollect(y, name)
-    return dot(x, y), xdim
-
 _dot_dtype_rule = partial(binop_dtype_rule, _input_dtype, [_num, _num], 'dot')
 dot_p = standard_primitive(_dot_shape_rule, _dot_dtype_rule, 'dot')
 ad.defbilinear(dot_p, _dot_transpose_lhs, _dot_transpose_rhs)
 batching.primitive_batchers[dot_p] = _dot_batch_rule
-parallel.papply_primitive_rules[dot_p] = _dot_papply_rule
 
 
 def _dot_general_shape_rule(lhs, rhs, dimension_numbers):
@@ -2196,54 +2188,11 @@ def _dot_general_batch_rule(batched_args, batch_dims, dimension_numbers):
   return batched_out, 0
 
 
-def _dot_general_papply_rule(name, vals, dims, dimension_numbers):
-  x, y = vals
-  xdim, ydim = dims
-
-  (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
-
-  if len(lhs_batch) > 0 or len(rhs_batch) > 0:
-    raise NotImplementedError
-
-  def adjust_dims(dims, thresh):
-    return tuple(i - 1 if i >= thresh else i for i in dims if i != thresh)
-
-  sub_lhs_contract, sub_rhs_contract = lhs_contract, rhs_contract
-  if xdim is not None:
-    sub_lhs_contract = adjust_dims(lhs_contract, xdim)
-  if ydim is not None:
-    sub_rhs_contract = adjust_dims(rhs_contract, ydim)
-
-  sub_dimension_numbers = (
-      (sub_lhs_contract, sub_rhs_contract), (lhs_batch, rhs_batch))
-
-  if xdim in lhs_contract and ydim in rhs_contract:
-    z = dot_general(x, y, sub_dimension_numbers)
-    return psum(z, name), None
-  elif xdim in lhs_contract:
-    if ydim is not None:        # Cannot hide two dimensions, so collect one
-      y = pcollect(y, name)
-    return dot_general(x, y, sub_dimension_numbers), xdim
-  elif ydim in rhs_contract:
-    if xdim is not None:        # Cannot hide two dimensions, so collect one
-      x = pcollect(x, name)
-    return dot_general(x, y, sub_dimension_numbers), ydim
-  elif xdim is not None:
-    if ydim is not None:        # Cannot hide two dimensions, so collect one
-      y = pcollect(y, name)
-    return dot_general(x, y, sub_dimension_numbers), xdim
-  elif ydim is not None:
-    return dot_general(x, y, sub_dimension_numbers), ydim
-  else:
-    return dot_general(x, y, sub_dimension_numbers), None
-
-
 dot_general_p = standard_primitive(_dot_general_shape_rule,
                                    _dot_general_dtype_rule, 'dot_general')
 ad.defbilinear(dot_general_p,
                _dot_general_transpose_lhs, _dot_general_transpose_rhs)
 batching.primitive_batchers[dot_general_p] = _dot_general_batch_rule
-parallel.papply_primitive_rules[dot_general_p] = _dot_general_papply_rule
 
 
 def _broadcast_shape_rule(operand, sizes):
@@ -2465,49 +2414,10 @@ def _reshape_batch_rule(batched_args, batch_dims, new_sizes, dimensions, **unuse
     dimensions = (0,) + tuple(onp.add(1, dimensions))
   return reshape(operand, operand.shape[:1] + new_sizes, dimensions), 0
 
-def _reshape_papply_rule(name, vals, axes, new_sizes, dimensions, old_sizes):
-  operand, = vals
-  axis, = axes
-
-  def filter_ones(xs):
-    return filter(lambda x: x != 1, xs)
-
-  def find_new_axis(old_axis, old_sizes, new_sizes):
-    if len(filter_ones(new_sizes)) != len(filter_ones(old_sizes)):
-      return None
-    num_before = len(filter_ones(old_sizes[:old_axis]))
-    sz = old_sizes[old_axis]
-    for i, new_sz in enumerate(new_sizes):
-      if num_before == 0:
-        if new_sz == sz:
-          return i
-        elif new_sz != 1:
-          return None
-      elif new_sz != 1:
-        num_before -= 1
-    return None
-
-  err = NotImplementedError(
-      'papply of reshape that would change hidden dimension size')
-
-  if dimensions is None:
-    new_axis = find_new_axis(axis, old_sizes, new_sizes)
-    if new_axis is not None:
-      if (prod(old_sizes[:axis]) != prod(new_sizes[:new_axis]) or
-          prod(old_sizes[axis + 1:]) != prod(new_sizes[new_axis + 1:])):
-        raise err
-      new_sizes_ = new_sizes[:new_axis] + new_sizes[new_axis + 1:]
-      return reshape(operand, new_sizes_, dimensions=dimensions), new_axis
-    else:
-      raise err
-  else:
-    raise NotImplementedError('papply of reshape with `dimensions`')
-
 reshape_p = standard_primitive(_reshape_shape_rule, _reshape_dtype_rule,
                                'reshape', _reshape_translation_rule)
 ad.deflinear(reshape_p, _reshape_transpose_rule)
 batching.primitive_batchers[reshape_p] = _reshape_batch_rule
-parallel.papply_primitive_rules[reshape_p] = _reshape_papply_rule
 
 
 def _rev_shape_rule(operand, dimensions):
@@ -2548,31 +2458,11 @@ def _transpose_batch_rule(batched_args, batch_dims, permutation):
   perm = (bdim,) + tuple(i if i < bdim else i+1 for i in permutation)
   return transpose(operand, perm), 0
 
-def _transpose_papply_rule(name, vals, dims, permutation):
-  x, = vals
-  xdim, = dims
-  perm = list(permutation)
-  if perm[xdim] == xdim:
-    x = transpose(x, perm)
-    out_dim = xdim
-  else:
-    in_dim, = [i for i in range(len(perm)) if perm[i] == xdim]
-    out_dim = perm[xdim]
-    perm[in_dim] = out_dim
-    perm[out_dim] = in_dim
-    perm = perm[:xdim] + perm[xdim + 1:]
-    perm = [i - 1 if i > xdim else i for i in perm]
-    x = transpose(x, perm)
-    x = pswapaxes(x, name, in_dim)
-  return x, xdim
-
-
 transpose_p = standard_primitive(_transpose_shape_rule, _input_dtype,
                                  'transpose')
 ad.deflinear(transpose_p,
              lambda t, permutation: [transpose(t, onp.argsort(permutation))])
 batching.primitive_batchers[transpose_p] = _transpose_batch_rule
-parallel.papply_primitive_rules[transpose_p] = _transpose_papply_rule
 
 
 def _select_shape_rule(pred, on_true, on_false):
@@ -2644,6 +2534,7 @@ ad.defjvp(select_p,
           lambda g, b, x, y: select(b, _zeros(g), g))
 ad.primitive_transposes[select_p] = _select_transpose_rule
 batching.primitive_batchers[select_p] = _select_batch_rule
+
 
 def _slice_shape_rule(operand, start_indices, limit_indices, strides,
                       operand_shape):
@@ -2982,7 +2873,8 @@ def _gather_batching_rule(batched_args, batch_dims, dimension_numbers,
     return gather(operand, start_indices, dimension_numbers=dnums,
                   slice_sizes=slice_sizes), 0
 
-def _gather_serial_pmap_rule(val, axis):
+def _gather_serial_pmap_rule(vals, axes):
+  val, = vals
   return val, None
 
 gather_p = standard_primitive(
@@ -3946,6 +3838,7 @@ tie_in_p.def_abstract_eval(lambda x, y: y)
 xla.translations[tie_in_p] = lambda c, x, y: y
 ad.deflinear(tie_in_p, _tie_in_transpose_rule)
 batching.primitive_batchers[tie_in_p] = _tie_in_batch_rule
+parallel.defidentity(tie_in_p, argnum=1)
 
 
 shaped_identity_p = Primitive('shape_id')
@@ -4079,113 +3972,6 @@ ad.primitive_jvps[stop_gradient_p] = _stop_gradient_jvp_rule
 batching.primitive_batchers[stop_gradient_p] = _stop_gradient_batch_rule
 
 
-### parallel traceables
-
-def psum(x, axis_name):
-  return psum_p.bind(x, axis_name=axis_name)
-
-def pmax(x, axis_name):
-  return pmax_p.bind(x, axis_name=axis_name)
-
-def pswapaxes(x, axis_name, axis):
-  """Analogue to `np.swapaxes` involving a hidden axis.
-
-  Specifically, transposes the operand along the axis that's currently hidden
-  and the given concrete axis. The implicit position of the hidden axis remains
-  unchanged.
-  """
-  return pswapaxes_p.bind(x, axis_name=axis_name, axis=axis)
-
-def psplit(x, axis_name, axis):
-  """Merge operand along the hidden axis and split it along `axis`.
-
-  The newly split axis becomes the hidden axis for the output, and in particular
-  the implicit position of the hidden axis changes.
-  """
-  # lowering should be:
-  # return xla_all_to_all(x, hidden axis, axis)
-  return psplit_p.bind(x, axis_name=axis_name, axis=axis)
-
-def pcollect(x, axis_name):
-  # lowering should be:
-  # x = xla_broadcast(x, (xb.get_replica_count(),))
-  # return xla_all_to_all(x, 0, dim(axis_name), **params)
-  return pcollect_p.bind(x, axis_name=axis_name)
-
-
-### parallel primitives
-
-def _unbound_name_error(primitive_name, *args, **kwargs):
-  axis_name = kwargs['axis_name']
-  msg = "axis name '{}' is unbound for primitive {}."
-  raise NameError(msg.format(axis_name, primitive_name))
-
-def PmapPrimitive(name):
-  prim = Primitive(name)
-  prim.def_impl(partial(_unbound_name_error, name))
-  prim.def_abstract_eval(lambda x, *args, **kwargs: x)
-  return prim
-
-
-def _psum_serial_pmap_rule(val, axis):
-  return _reduce_sum(val, [axis]), None
-
-def _psum_transpose_rule(t, axis_name):
-  return [t]
-
-def _psum_parallel_translation_rule(c, val, device_groups):
-  if len(device_groups) > 1:
-    return c.CrossReplicaSum(val, device_groups)
-  else:
-    return c.CrossReplicaSum(val)
-
-psum_p = PmapPrimitive('psum')
-psum_p.def_impl(partial(_unbound_name_error, 'psum'))
-psum_p.def_abstract_eval(lambda x, *args, **kwargs: x)
-parallel.serial_pmap_primitive_rules[psum_p] = _psum_serial_pmap_rule
-pxla.parallel_translation_rules[psum_p] = _psum_parallel_translation_rule
-ad.deflinear(psum_p, _psum_transpose_rule)
-parallel.defreducer(reduce_sum_p, psum_p)
-
-
-def _pmax_serial_pmap_rule(val, axis):
-  return _reduce_max(val, [axis]), None
-
-pmax_p = PmapPrimitive('pmax')
-pmax_p.def_impl(partial(_unbound_name_error, 'pmax'))
-pmax_p.def_abstract_eval(lambda x, *args, **kwargs: x)
-parallel.serial_pmap_primitive_rules[pmax_p] = _pmax_serial_pmap_rule
-parallel.defreducer(reduce_max_p, pmax_p)
-
-
-def _pswapaxes_serial_pmap_rule(x, axis_in, axis):
-  if x.shape[axis_in] != x.shape[axis]:
-    raise ValueError("pswapaxes between non-square dimensions")
-  perm = list(range(x.ndim))
-  perm[axis_in] = axis
-  perm[axis] = axis_in
-  return transpose(x, perm), axis_in
-
-pswapaxes_p = PmapPrimitive('pswapaxes')
-parallel.serial_pmap_primitive_rules[pswapaxes_p] = _pswapaxes_serial_pmap_rule
-
-
-def _psplit_serial_pmap_rule(x, axis_in, axis):
-  if x.shape[axis_in] != x.shape[axis]:
-    raise ValueError("psplit between non-square dimensions")
-  return x, axis
-
-psplit_p = PmapPrimitive('psplit')
-parallel.serial_pmap_primitive_rules[psplit_p] = _psplit_serial_pmap_rule
-
-
-def _pcollect_serial_pmap_rule(x, axis_in):
-  return x, None
-
-pcollect_p = PmapPrimitive('pcollect')
-parallel.serial_pmap_primitive_rules[pcollect_p] = _pcollect_serial_pmap_rule
-
-
 ### util
 
 def _ndim(x):
@@ -4289,6 +4075,24 @@ def conv_general_shape_tuple(lhs_shape, rhs_shape, window_strides, padding,
   lhs_trans = onp.take(lhs_shape, lhs_perm)
   rhs_trans = onp.take(rhs_shape, rhs_perm)
   out_trans = conv_shape_tuple(lhs_trans, rhs_trans, window_strides, padding)
+  return tuple(onp.take(out_trans, onp.argsort(out_perm)))
+
+
+def conv_transpose_shape_tuple(lhs_shape, rhs_shape, window_strides, padding,
+                             dimension_numbers):
+  lhs_perm, rhs_perm, out_perm = conv_general_permutations(dimension_numbers)
+  lhs_trans = onp.take(lhs_shape, lhs_perm)
+  rhs_trans = onp.take(rhs_shape, rhs_perm)
+  if isinstance(padding, str):
+    padding = [_conv_transpose_padding(k, s, padding)
+               for k,s in zip(rhs_trans[2:], window_strides)]
+  padding = list(map(onp.sum, padding))
+  unpad_out_space = [(i-1) * s - k + 2
+                     for i, k, s in zip(lhs_trans[2:],
+                                        rhs_trans[2:],
+                                        window_strides)]
+  out_space = onp.sum([unpad_out_space, padding], axis=0).tolist()
+  out_trans = tuple((lhs_trans[0], rhs_trans[0]) + tuple(out_space))
   return tuple(onp.take(out_trans, onp.argsort(out_perm)))
 
 
@@ -4452,9 +4256,10 @@ def _conv_general_vjp_lhs_padding(
     in_shape, window_dimensions, window_strides, out_shape, padding,
     lhs_dilation, rhs_dilation):
   lhs_dilated_shape = _dilate_shape(in_shape, lhs_dilation)
+  rhs_dilated_shape = _dilate_shape(window_dimensions, rhs_dilation)
   out_dilated_shape = _dilate_shape(out_shape, window_strides)
-  pad_before = onp.subtract(window_dimensions, [lo for lo, _ in padding]) - 1
-  pad_after = (onp.add(lhs_dilated_shape, window_dimensions) - 1
+  pad_before = onp.subtract(rhs_dilated_shape, [lo for lo, _ in padding]) - 1
+  pad_after = (onp.add(lhs_dilated_shape, rhs_dilated_shape) - 1
                - out_dilated_shape - pad_before)
   return zip(pad_before, pad_after)
 

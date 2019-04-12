@@ -23,6 +23,7 @@ sh_binary(
     srcs = ["install_xla_in_source_tree.sh"],
     data = [
         "@org_tensorflow//tensorflow/compiler/xla/python:xla_client",
+        "//jaxlib",
         "//jaxlib:lapack.so",
     ],
     deps = ["@bazel_tools//tools/bash/runfiles"],

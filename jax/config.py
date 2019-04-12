@@ -73,6 +73,8 @@ class Config(object):
       flag_type, meta_args, meta_kwargs = self.meta[name]
       absl_defs[flag_type](name, val, *meta_args, **meta_kwargs)
 
+    app.call_after_init(lambda: self.complete_absl_config(absl_flags))
+
   def complete_absl_config(self, absl_flags):
     for name, _ in self.values.items():
       self.update(name, getattr(absl_flags.FLAGS, name))
@@ -83,6 +85,7 @@ class Config(object):
       import absl.flags
       self.config_with_absl()
       absl.flags.FLAGS(sys.argv)
+      self.complete_absl_config(absl.flags)
       already_configured_with_absl = True
 
 

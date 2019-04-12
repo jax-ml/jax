@@ -51,7 +51,7 @@ def batch_transform(size, in_dims, out_dim_dst, vals):
   with new_master(BatchTrace) as master:
     trace = BatchTrace(master, core.cur_sublevel())
     in_tracers = map(partial(BatchTracer, trace), vals, in_dims)
-    out_tracer = yield in_tracers
+    out_tracer = yield in_tracers, {}
     out_tracer = trace.full_raise(out_tracer)
     out_val, out_dim = out_tracer.val, out_tracer.batch_dim
     del master
@@ -61,7 +61,7 @@ def batch_transform(size, in_dims, out_dim_dst, vals):
 @transformation_with_aux
 def batch_subtrace(master, dims, *vals):
   trace = BatchTrace(master, core.cur_sublevel())
-  ans = yield map(partial(BatchTracer, trace), vals, dims)
+  ans = yield map(partial(BatchTracer, trace), vals, dims), {}
   out_tracer = trace.full_raise(ans)
   out_val, out_dim = out_tracer.val, out_tracer.batch_dim
   yield out_val, out_dim

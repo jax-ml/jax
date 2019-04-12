@@ -25,3 +25,8 @@ pyx_library(
     srcs = ["lapack.pyx"],
     py_deps = ["@org_tensorflow//third_party/py/numpy"],
 )
+
+py_library(
+    name = "jaxlib",
+    srcs = ["version.py"],
+)

@@ -27,7 +27,7 @@ from six.moves import xrange
 
 import jax.numpy as np
 from jax.config import config
-from jax import jit, grad
+from jax import jit, grad, random
 from jax.experimental import optimizers
 from jax.experimental import stax
 from jax.experimental.stax import (AvgPool, BatchNorm, Conv, Dense, FanInSum,
@@ -87,6 +87,8 @@ def ResNet50(num_classes):
 
 
 if __name__ == "__main__":
+  rng_key = random.PRNGKey(0)
+
   batch_size = 8
   num_classes = 1001
   input_shape = (224, 224, 3, batch_size)
@@ -94,7 +96,7 @@ if __name__ == "__main__":
   num_steps = 10
 
   init_fun, predict_fun = ResNet50(num_classes)
-  _, init_params = init_fun(input_shape)
+  _, init_params = init_fun(rng_key, input_shape)
 
   def loss(params, batch):
     inputs, targets = batch
