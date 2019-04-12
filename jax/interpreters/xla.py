@@ -91,11 +91,55 @@ def device_put(x, device_num=0):
     if x.device_buffer.device() == device_num:
       return x.device_buffer
     else:
+      # TODO(phawkins): perform a direct device-to-device copy rather than
+      # bouncing via the host.
       return device_put(x.device_buffer.to_py(), device_num)
   elif isinstance(x, DeviceConstant):
     return instantiate_device_constant(x, device_num=device_num)
   else:
     return xb.device_put(x, device_num)  # round-trips tuple elements
+
+def device_put_many(xs_and_devices):
+  """Place multiple Python values on multiple devices in parallel.
+
+  This is a wrapper around jax.lib.xla_bridge.device_put_many to handle
+  additional Python array types, namely DeviceArray (which is already backed by
+  device memory, though may be on the wrong device) and DeviceConstant. In
+  particular, it avoids transferring data already placed on the correct device,
+  and handles instantiating DeviceConstants.
+
+  Args:
+    xs_and_devices: a sequence of (pyval, device_num) pairs where pyval is an
+      ndarray, DeviceArray, DeviceConstant, or JaxTuple and device_num is an int
+      representing the physical device number on which pyval should be placed.
+
+  Returns:
+    A sequence of buffers representing the inputs placed on the corresponding
+    device numbers.
+  """
+  transfer_indices = []
+  transfers = []
+  outputs = [None] * len(xs_and_devices)
+  for i, (x, device_num) in enumerate(xs_and_devices):
+    x = canonicalize_pyval_dtype(x)
+    if type(x) is DeviceArray:
+      if x.device_buffer.device() == device_num:
+        outputs[i] = x.device_buffer
+      else:
+        transfer_indices.append(i)
+        # TODO(phawkins): perform a direct device-to-device copy rather than
+        # bouncing via the host.
+        transfers.append((x.device_buffer.to_py(), device_num))
+    elif isinstance(x, DeviceConstant):
+      outputs[i] = instantiate_device_constant(x, device_num=device_num)
+    else:
+      transfer_indices.append(i)
+      transfers.append((x, device_num))
+
+  transfer_results = xb.device_put_many(transfers)
+  for i, result in zip(transfer_indices, transfer_results):
+    outputs[i] = result
+  return outputs
 
 def result_handler(result_shape):
   if type(result_shape) is ResultArray and FLAGS.jax_device_values:
