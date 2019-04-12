@@ -20,7 +20,6 @@ import functools
 import re
 import itertools as it
 import os
-import random
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -49,7 +48,7 @@ flags.DEFINE_enum(
 
 flags.DEFINE_integer(
   'num_generated_cases',
-  os.getenv('JAX_NUM_GENERATED_CASES', 10),
+  int(os.getenv('JAX_NUM_GENERATED_CASES', 10)),
   help='Number of generated cases to test')
 
 EPS = 1e-4
@@ -384,12 +383,12 @@ def check_raises_regexp(thunk, err_type, pattern):
   except err_type as e:
     assert re.match(pattern, str(e)), "{}\n\n{}\n".format(e, pattern)
 
-random.seed(0) # TODO: consider managing prng state more carefully
-
 def cases_from_list(xs):
+  rng = npr.RandomState(42)
   xs = list(xs)
   k = min(len(xs), FLAGS.num_generated_cases)
-  return random.sample(xs, k)
+  indices = rng.choice(onp.arange(len(xs)), k, replace=False)
+  return [xs[i] for i in indices]
 
 def cases_from_gens(*gens):
   sizes = [1, 3, 10]
