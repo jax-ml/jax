@@ -100,7 +100,7 @@ def device_put(x, device_num=0):
     return xb.device_put(x, device_num)  # round-trips tuple elements
 
 def device_put_many(xs_and_devices):
- """Place multiple Python values on multiple devices in parallel.
+  """Place multiple Python values on multiple devices in parallel.
 
   This is a wrapper around jax.lib.xla_bridge.device_put_many to handle
   additional Python array types, namely DeviceArray (which is already backed by
