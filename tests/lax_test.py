@@ -1790,9 +1790,9 @@ LAX_GRAD_OPS = [
     GradTestSpec(lax.tanh, nargs=1, order=2, rng=jtu.rand_default(),
                  dtypes=[onp.float64, onp.complex64]),
     GradTestSpec(lax.sin, nargs=1, order=2, rng=jtu.rand_default(),
-                 dtypes=[onp.float64]),
+                 dtypes=[onp.float64, onp.complex64]),
     GradTestSpec(lax.cos, nargs=1, order=2, rng=jtu.rand_default(),
-                 dtypes=[onp.float64]),
+                 dtypes=[onp.float64, onp.complex64]),
 
     GradTestSpec(lax.erf, nargs=1, order=2, rng=jtu.rand_small(),
                  dtypes=[onp.float64]),
