@@ -97,6 +97,29 @@ def device_put(x, device_num=0):
   else:
     return xb.device_put(x, device_num)  # round-trips tuple elements
 
+def device_put_many(xs_and_devices):
+  transfer_indices = []
+  transfers = []
+  outputs = [None] * len(xs_and_devices)
+  for i, (x, device_num) in enumerate(xs_and_devices):
+    x = canonicalize_pyval_dtype(x)
+    if type(x) is DeviceArray:
+      if x.device_buffer.device() == device_num:
+        outputs[i] = x.device_buffer
+      else:
+        transfer_indices.append(i)
+        transfers.append((x.device_buffer.to_py(), device_num))
+    elif isinstance(x, DeviceConstant):
+      outputs[i] = instantiate_device_constant(x, device_num=device_num)
+    else:
+      transfer_indices.append(i)
+      transfers.append((x, device_num))
+
+  transfer_results = xb.device_put_many(transfers)
+  for i, result in zip(transfer_indices, transfer_results):
+    outputs[i] = result
+  return outputs
+
 def result_handler(result_shape):
   if type(result_shape) is ResultArray and FLAGS.jax_device_values:
     if FLAGS.jax_debug_nans and onp.issubdtype(result_shape[1], onp.floating):
