@@ -68,9 +68,9 @@ def shard_arg(device_ordinals, arg):
             else xla.device_put(get_shard(i), device_ordinals[r])
             for r, (i, buf) in enumerate(zip(assignments, arg.device_buffers))]
   else:
-    shards = [arg[i] for i in range(arg.shape[0])]
-    return [xla.device_put(shards[i], device_ordinals[r])
-            for r, i in enumerate(assignments)]
+    shards = [(arg[assignments[i]], device_ordinals[i])
+              for i in range(len(assignments))]
+    return xla.device_put_many(shards)
 
 def unshard_output(axis_size, replica_results):
   """Collect together replica results into a result value.
