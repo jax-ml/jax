@@ -218,14 +218,14 @@ def replicated_comp(jaxpr, ax_env, const_vals, freevar_shapes, *arg_shapes):
   env = {}
   write(core.unitvar, c.Tuple())
   if const_vals:
-    map(write, jaxpr.constvars, map(c.Constant, const_vals))
-    map(write, jaxpr.freevars, map(c.ParameterWithShape, freevar_shapes))
+    _map(write, jaxpr.constvars, map(c.Constant, const_vals))
+    _map(write, jaxpr.freevars, map(c.ParameterWithShape, freevar_shapes))
   else:
     all_freevars = it.chain(jaxpr.constvars, jaxpr.freevars)
-    map(write, all_freevars, map(c.ParameterWithShape, freevar_shapes))
-  map(write, jaxpr.invars, map(c.ParameterWithShape, arg_shapes))
+    _map(write, all_freevars, map(c.ParameterWithShape, freevar_shapes))
+  _map(write, jaxpr.invars, map(c.ParameterWithShape, arg_shapes))
   for eqn in jaxpr.eqns:
-    in_nodes = map(read, eqn.invars)
+    in_nodes = _map(read, eqn.invars)
     if eqn.primitive in parallel_translation_rules:
       name = eqn.params['axis_name']
       params = {k: eqn.params[k] for k in eqn.params if k != 'axis_name'}
@@ -235,23 +235,21 @@ def replicated_comp(jaxpr, ax_env, const_vals, freevar_shapes, *arg_shapes):
       if eqn.primitive is xla_pmap_p:
         name, size = eqn.params['axis_name'], eqn.params['axis_size']
         new_env = axis_env_extend(name, size)
-        in_shards = map(partial(xla_shard, c, new_env.sizes), in_nodes)
-        in_shapes = map(c.GetShape, in_shards)
+        in_shards = _map(partial(xla_shard, c, new_env.sizes), in_nodes)
         (subjaxpr, const_bindings, freevar_bindings), = eqn.bound_subjaxprs
         subc = replicated_comp(
             subjaxpr, new_env, (),
-            map(c.GetShape, map(read, const_bindings + freevar_bindings)),
-            *in_shapes)
+            _map(c.GetShape, map(read, const_bindings + freevar_bindings)),
+            *map(c.GetShape, in_shards))
         subfun = (subc, tuple(map(read, const_bindings + freevar_bindings)))
         sharded_result = xla.xla_call_translation_rule(c, subfun, *in_shards)
         ans = xla_unshard(c, axis_groups(new_env, name), sharded_result)
       else:
-        in_shapes = map(c.GetShape, in_nodes)
         subcs = [
             jaxpr_computation(
                 subjaxpr, (),
-                map(c.GetShape, map(read, const_bindings + freevar_bindings)),
-                *in_shapes)
+                _map(c.GetShape, map(read, const_bindings + freevar_bindings)),
+                *map(c.GetShape, in_nodes))
             for subjaxpr, const_bindings, freevar_bindings in eqn.bound_subjaxprs]
         subfuns = [(subc, tuple(map(read, const_bindings + freevar_bindings)))
                     for subc, (_, const_bindings, freevar_bindings)
@@ -261,8 +259,12 @@ def replicated_comp(jaxpr, ax_env, const_vals, freevar_shapes, *arg_shapes):
       ans = translation_rule(eqn.primitive)(c, *in_nodes, **eqn.params)
 
     out_nodes = xla_destructure(c, ans) if eqn.destructure else [ans]
-    map(write, eqn.outvars, out_nodes)
+    _map(write, eqn.outvars, out_nodes)
   return c.Build(read(jaxpr.outvar))
+
+def _map(f, *args):
+  return tuple(map(f, *args))
+
 
 
 class ShardedDeviceArray(xla.DeviceArray):
