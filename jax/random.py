@@ -29,7 +29,6 @@ from functools import partial
 import numpy as onp
 
 from . import lax
-from . import lax_control_flow
 from . import numpy as np
 from . import tree_util
 from .api import jit, vmap
@@ -77,7 +76,7 @@ def _make_rotate_left(dtype):
   nbits = onp.array(onp.iinfo(dtype).bits, dtype)
 
   def _rotate_left(x, d):
-    if lax._dtype(d) != lax._dtype(x):
+    if lax.dtype(d) != lax.dtype(x):
       d = lax.convert_element_type(d, x.dtype)
     return (x << d) | lax.shift_right_logical(x, nbits - d)
   return _rotate_left
@@ -104,11 +103,11 @@ def threefry_2x32(keypair, count):
   """
   # Based on ThreeFry2x32 by phawkins@ in //.../xla/client/lib/prng.cc
   key1, key2 = keypair
-  if not lax._dtype(key1) == lax._dtype(key2) == lax._dtype(count) == onp.uint32:
+  if not lax.dtype(key1) == lax.dtype(key2) == lax.dtype(count) == onp.uint32:
     msg = "threefry_2x32 requires uint32 arguments, got {}"
-    raise TypeError(msg.format([lax._dtype(x) for x in [key1, key2, count]]))
+    raise TypeError(msg.format([lax.dtype(x) for x in [key1, key2, count]]))
 
-  rotate_left = _make_rotate_left(lax._dtype(count))
+  rotate_left = _make_rotate_left(lax.dtype(count))
 
   def apply_round(v, rot):
     v = v[:]
@@ -255,7 +254,7 @@ def _uniform(key, shape, dtype, minval, maxval):
   # bit-level transformation we use relies on Numpy and XLA having bit-for-bit
   # equivalent float representations, which might not be true on all platforms.
   float_bits = lax.bitwise_or(
-      lax.shift_right_logical(bits, onp.array(nbits - nmant, lax._dtype(bits))),
+      lax.shift_right_logical(bits, onp.array(nbits - nmant, lax.dtype(bits))),
       onp.array(1., dtype).view(onp.uint32 if nbits == 32 else onp.uint64))
   floats = lax.bitcast_convert_type(float_bits, dtype) - onp.array(1., dtype)
   return lax.max(
@@ -399,7 +398,7 @@ def bernoulli(key, mean=onp.float32(0.5), shape=()):
 @partial(jit, static_argnums=(2,))
 def _bernoulli(key, mean, shape):
   shape = shape or onp.shape(mean)
-  if not onp.issubdtype(lax._dtype(mean), onp.float32):
+  if not onp.issubdtype(lax.dtype(mean), onp.float32):
     mean = lax.convert_element_type(mean, onp.float32)
   if onp.shape(mean) != shape:
     mean = np.broadcast_to(mean, shape)
@@ -457,7 +456,7 @@ def _gamma_one(key, alpha):
   one_over_two = _constant_like(alpha, 0.5)
   one_over_three = _constant_like(alpha, 1. / 3.)
   squeeze_const = _constant_like(alpha, 0.0331)
-  dtype = lax._dtype(alpha)
+  dtype = lax.dtype(alpha)
 
   key, subkey = split(key)
   # for alpha < 1, we boost alpha to alpha + 1 and get a sample according to
@@ -472,7 +471,7 @@ def _gamma_one(key, alpha):
 
   def _cond_fn(kXVU):
     _, X, V, U = kXVU
-    # TODO: use lax_control_flow.cond when its batching rule is supported
+    # TODO: use lax.cond when its batching rule is supported
     # The reason is to avoid evaluating second condition which involves log+log
     # if the first condition is satisfied
     cond = lax.bitwise_and(lax.ge(U, lax.sub(one, lax.mul(squeeze_const, lax.mul(X, X)))),
@@ -492,7 +491,7 @@ def _gamma_one(key, alpha):
     return key, X, V, U
 
   # initial state is chosen such that _cond_fn will return True
-  _, _, V, _ = lax_control_flow.while_loop(
+  _, _, V, _ = lax.while_loop(
       _cond_fn, _body_fn, (key, zero, _constant_like(alpha, -1), zero))
   z = lax.mul(lax.mul(d, V), boost)
   return lax.select(lax.eq(z, zero), onp.finfo(z.dtype).tiny, z)

@@ -23,7 +23,7 @@ import numpy as onp
 
 from jax import api
 from jax import core
-from jax import lax
+from jax.lax import lax
 from jax import linear_util as lu
 from jax.abstract_arrays import ConcreteArray, ShapedArray, UnshapedArray
 from jax.api_util import (

@@ -129,7 +129,7 @@ def lu(a, permute_l=False, overwrite_a=False, check_finite=True):
   del overwrite_a, check_finite
   a = np_linalg._promote_arg_dtypes(np.asarray(a))
   lu, pivots = lax_linalg.lu(a)
-  dtype = lax._dtype(a)
+  dtype = lax.dtype(a)
   m, n = np.shape(a)
   permutation = lax_linalg.lu_pivots_to_permutation(pivots, m)
   p = np.real(np.array(permutation == np.arange(m)[:, None], dtype=dtype))

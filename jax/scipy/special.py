@@ -165,7 +165,7 @@ def ndtr(x):
     TypeError: if `x` is not floating-type.
   """
   x = np.asarray(x)
-  dtype = lax._dtype(x)
+  dtype = lax.dtype(x)
   if dtype not in (np.float32, np.float64):
     raise TypeError(
         "x.dtype={} is not supported, see docstring for supported types."
@@ -175,7 +175,7 @@ def ndtr(x):
 
 def _ndtr(x):
   """Implements ndtr core logic."""
-  dtype = lax._dtype(x).type
+  dtype = lax.dtype(x).type
   half_sqrt_2 = dtype(0.5) * onp.sqrt(2., dtype=dtype)
   w = x * half_sqrt_2
   z = lax.abs(w)
@@ -206,7 +206,7 @@ def ndtri(p):
     TypeError: if `p` is not floating-type.
   """
   x = np.asarray(p)
-  dtype = lax._dtype(p)
+  dtype = lax.dtype(p)
   if dtype not in (np.float32, np.float64):
     raise TypeError(
         "x.dtype={} is not supported, see docstring for supported types."
@@ -271,7 +271,7 @@ def _ndtri(p):
                       2.89247864745380683936E-6,
                       6.79019408009981274425E-9]))
 
-  dtype = lax._dtype(p).type
+  dtype = lax.dtype(p).type
   shape = np.shape(p)
 
   def _create_polynomial(var, coeffs):
@@ -391,7 +391,7 @@ def log_ndtr(x, series_order=3):
     raise ValueError("series_order must be <= 30.")
 
   x = np.asarray(x)
-  dtype = lax._dtype(x)
+  dtype = lax.dtype(x)
 
   if dtype == np.float64:
     lower_segment = _LOGNDTR_FLOAT64_LOWER
@@ -427,7 +427,7 @@ def log_ndtr(x, series_order=3):
 
 def _log_ndtr_lower(x, series_order):
   """Asymptotic expansion version of `Log[cdf(x)]`, appropriate for `x<<-1`."""
-  dtype = lax._dtype(x).type
+  dtype = lax.dtype(x).type
   x_2 = lax.square(x)
   # Log of the term multiplying (1 + sum)
   log_scale = -dtype(0.5) * x_2 - lax.log(-x) - dtype(0.5 * onp.log(2. * onp.pi))
@@ -436,7 +436,7 @@ def _log_ndtr_lower(x, series_order):
 
 def _log_ndtr_asymptotic_series(x, series_order):
   """Calculates the asymptotic series used in log_ndtr."""
-  dtype = lax._dtype(x).type
+  dtype = lax.dtype(x).type
   if series_order <= 0:
     return onp.array(1, dtype)
   x_2 = lax.square(x)
