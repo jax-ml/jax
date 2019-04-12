@@ -15,7 +15,7 @@
 Parallelization primitives.
 """
 
-from jax import lax
+from jax.lax import lax
 from jax.abstract_arrays import ShapedArray
 from jax.core import Primitive
 from jax.interpreters import ad

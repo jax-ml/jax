@@ -43,7 +43,7 @@ def _scatter_update(x, idx, y, scatter_op):
   y = np.asarray(y)
   x_shape = np.shape(x)
   y_shape = np.shape(y)
-  y = lax.convert_element_type(y, lax._dtype(x))
+  y = lax.convert_element_type(y, lax.dtype(x))
 
   if not isinstance(idx, tuple):
     idx = (idx,)

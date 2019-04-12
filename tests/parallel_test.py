@@ -25,7 +25,6 @@ from absl.testing import parameterized
 import jax.numpy as np
 from jax import test_util as jtu
 from jax import lax
-from jax import lax_parallel
 from jax.api import _serial_pmap, _papply, jit, make_jaxpr
 from jax.linear_util import wrap_init
 
@@ -42,40 +41,40 @@ class SerialPmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testReduceSum(self):
-    f = lambda x: lax_parallel.psum(x, 'i')
+    f = lambda x: lax.psum(x, 'i')
     ans = _serial_pmap(f, axis_name='i')(onp.ones(4))
     expected = 4 * onp.ones(4)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testReduceMax(self):
-    f = lambda x: lax_parallel.pmax(x, 'i')
+    f = lambda x: lax.pmax(x, 'i')
     ans = _serial_pmap(f, axis_name='i')(onp.arange(4))
     expected = 3 * onp.ones(4)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testPsplit(self):
-    f = lambda x: lax_parallel.psplit(x, 'i', 2)
+    f = lambda x: lax.psplit(x, 'i', 2)
     arg = onp.arange(3 * 2 * 3 * 5).reshape(3, 2, 3, 5)
     ans = _serial_pmap(f, axis_name='i', out_axes=2)(arg)
     expected = arg
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testPsplitLike(self):
-    f = lambda x, y: lax_parallel.psplit_like(x, y, 'i')
+    f = lambda x, y: lax.psplit_like(x, y, 'i')
     arg = onp.arange(3 * 2 * 3 * 5).reshape(3, 2, 3, 5)
     ans = _serial_pmap(f, axis_name='i', in_axes=(None, 2), out_axes=2)(arg, arg)
     expected = arg
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testLogSoftmax(self):
-    f = lambda x: x - np.log(lax_parallel.psum(np.exp(x), 'i'))
+    f = lambda x: x - np.log(lax.psum(np.exp(x), 'i'))
     x = onp.log(onp.arange(1., 10., dtype=onp.float32))
     ans = _serial_pmap(f, axis_name='i')(x)
     expected = x - onp.log(onp.sum(onp.exp(x)))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testNested(self):
-    f = lambda x: lax_parallel.psum(lax_parallel.psum(x, 'i'), 'j')
+    f = lambda x: lax.psum(lax.psum(x, 'i'), 'j')
     x = onp.ones((2, 2))
     ans1 = _serial_pmap(_serial_pmap(f, 'i'), 'j')(x)
     ans2 = _serial_pmap(_serial_pmap(f, 'j'), 'i')(x)
@@ -103,7 +102,7 @@ class PapplyTest(jtu.JaxTestCase):
 
     jaxpr = make_jaxpr(pfun)(onp.ones(3))
     expected_jaxpr = make_jaxpr(
-        lambda x: lax_parallel.psum(x, axis_name))(onp.zeros((5, 3)))
+        lambda x: lax.psum(x, axis_name))(onp.zeros((5, 3)))
     assert repr(jaxpr) == repr(expected_jaxpr)
 
     arg = onp.arange(15.).reshape((5, 3))
@@ -116,7 +115,7 @@ class PapplyTest(jtu.JaxTestCase):
 
     jaxpr = make_jaxpr(pfun)(onp.ones(3))
     expected_jaxpr = make_jaxpr(
-        lambda x: lax_parallel.pmax(x, axis_name))(onp.zeros((5, 3)))
+        lambda x: lax.pmax(x, axis_name))(onp.zeros((5, 3)))
     assert repr(jaxpr) == repr(expected_jaxpr)
 
     arg = onp.arange(15.).reshape((5, 3))
@@ -135,9 +134,9 @@ class PapplyTest(jtu.JaxTestCase):
 
     def expected_spmd(p, t, f):
       return lax.select(
-          lax_parallel.psplit_like(p, t, axis_name),
+          lax.psplit_like(p, t, axis_name),
           t,
-          lax_parallel.psplit_like(f, t, axis_name))
+          lax.psplit_like(f, t, axis_name))
 
     expected_jaxpr = make_jaxpr(expected_spmd)(p, t[0], f)
     assert repr(jaxpr) == repr(expected_jaxpr)
@@ -156,7 +155,7 @@ class PapplyTest(jtu.JaxTestCase):
 
     jaxpr = make_jaxpr(pfun)(onp.zeros(5))
     expected_jaxpr = make_jaxpr(
-        lambda x: x - np.log(lax_parallel.psum(np.exp(x), axis_name)))(onp.zeros(5))
+        lambda x: x - np.log(lax.psum(np.exp(x), axis_name)))(onp.zeros(5))
     assert repr(jaxpr) == repr(expected_jaxpr)
 
     ans = _serial_pmap(pfun, axis_name)(onp.arange(1., 5.))

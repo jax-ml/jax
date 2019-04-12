@@ -35,27 +35,27 @@ from six.moves import builtins, xrange
 
 import numpy as onp
 
-from .util import partial, prod
+from ..util import partial, prod
 
-from . import core
-from . import ad_util
-from . import api
-from . import linear_util as lu
-from .config import flags
-from .core import Primitive
-from .abstract_arrays import (UnshapedArray, ShapedArray, ConcreteArray,
-                              array_types, make_shaped_array)
-from .api_util import (pytree_fun_to_jaxtupletree_fun, pytree_to_jaxtupletree,
-                       pytree_fun_to_flatjaxtuple_fun, pytree_to_flatjaxtuple)
-from .interpreters import partial_eval as pe
-from .interpreters import xla
-from .interpreters import ad
-from .interpreters import batching
-from .interpreters import parallel
-from .util import curry, memoize, safe_zip, unzip2, prod
-from .tree_util import build_tree, tree_unflatten
-from .lib import xla_bridge
-from .lib.xla_bridge import xla_client
+from .. import core
+from .. import ad_util
+from .. import api
+from .. import linear_util as lu
+from ..config import flags
+from ..core import Primitive
+from ..abstract_arrays import (UnshapedArray, ShapedArray, ConcreteArray,
+                               array_types, make_shaped_array)
+from ..api_util import (pytree_fun_to_jaxtupletree_fun, pytree_to_jaxtupletree,
+                        pytree_fun_to_flatjaxtuple_fun, pytree_to_flatjaxtuple)
+from ..interpreters import partial_eval as pe
+from ..interpreters import xla
+from ..interpreters import ad
+from ..interpreters import batching
+from ..interpreters import parallel
+from ..util import curry, memoize, safe_zip, unzip2, prod
+from ..tree_util import build_tree, tree_unflatten
+from ..lib import xla_bridge
+from ..lib.xla_bridge import xla_client
 
 FLAGS = flags.FLAGS
 
@@ -3795,7 +3795,7 @@ _one = partial(full_like, shape=(), fill_value=1)
 _twos = partial(full_like, fill_value=2)
 _two = partial(full_like, shape=(), fill_value=2)
 
-_dtype = onp.result_type
+_dtype = dtype = onp.result_type
 _iscomplex = lambda x: onp.issubdtype(_dtype(x), onp.complexfloating)
 
 

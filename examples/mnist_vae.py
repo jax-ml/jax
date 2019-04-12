@@ -29,7 +29,7 @@ import matplotlib.pyplot as plt
 
 import jax.numpy as np
 from jax.config import config
-from jax import jit, grad, lax, lax_control_flow, random
+from jax import jit, grad, lax, random
 from jax.experimental import optimizers
 from jax.experimental import stax
 from jax.experimental.stax import Dense, FanOut, Relu, Softplus
@@ -117,7 +117,7 @@ if __name__ == "__main__":
       loss = lambda params: -elbo(elbo_rng, params, batch) / batch_size
       g = grad(loss)(optimizers.get_params(opt_state))
       return opt_update(i, g, opt_state)
-    return lax_control_flow.fori_loop(0, num_batches, body_fun, opt_state)
+    return lax.fori_loop(0, num_batches, body_fun, opt_state)
 
   @jit
   def evaluate(opt_state, images):

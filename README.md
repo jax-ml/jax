@@ -307,10 +307,10 @@ Because `jit` aims to specialize Python functions only on shapes and dtypes
 during tracing, rather than on concrete values, Python control flow that depends
 on concrete values won’t be able to execute and will instead raise an error. If
 you want compiled control flow, use structured control flow primitives like
-lax_control_flow.cond and lax_control_flow.while_loop. Some indexing features,
-like slice-based indexing `A[i:i+5]` for argument-dependent `i`, or
-boolean-based indexing `A[bool_ind]` for argument-dependent `bool_ind`, produce
-abstract values of unknown shape and are thus unsupported in `jit` functions.
+lax.cond and lax.while_loop. Some indexing features, like slice-based indexing
+`A[i:i+5]` for argument-dependent `i`, or boolean-based indexing `A[bool_ind]`
+for argument-dependent `bool_ind`, produce abstract values of unknown shape and
+are thus unsupported in `jit` functions.
 
 In general, JAX is intended to be used with a functional style of Python
 programming. Functions passed to transformations like `grad` and `jit` are

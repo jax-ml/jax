@@ -24,7 +24,6 @@ import jax.numpy as np
 from jax import test_util as jtu
 from jax.abstract_arrays import ShapedArray
 from jax import lax
-from jax import lax_control_flow
 from jax import lax_linalg
 from jax import random
 from jax.api import jit, grad, jvp, vjp, trace_to_jaxpr, jacfwd, jacrev, hessian
@@ -875,7 +874,7 @@ class BatchingTest(jtu.JaxTestCase):
 
   def testWhileLoop(self):
     def fun(x):
-      return lax_control_flow.while_loop(lambda x: x < 3, lambda x: x + 2, x)
+      return lax.while_loop(lambda x: x < 3, lambda x: x + 2, x)
 
     ans = vmap(fun)(onp.array([0, 1, 2, 3]))
     expected = onp.array([4, 3, 4, 3])
@@ -888,7 +887,7 @@ class BatchingTest(jtu.JaxTestCase):
 
   def testWhileLoopCondConstsBatched(self):
     def fun(x, y):
-      return lax_control_flow.while_loop(lambda x: x < y, lambda x: x + 2, x)
+      return lax.while_loop(lambda x: x < y, lambda x: x + 2, x)
 
     ans = vmap(fun, in_axes=(None, 0))(0, onp.array([2, 3]))
     expected = onp.array([2, 4])
@@ -896,7 +895,7 @@ class BatchingTest(jtu.JaxTestCase):
 
   def testWhileLoopBodyConstsBatched(self):
     def fun(x, y):
-      return lax_control_flow.while_loop(lambda x: x < 3, lambda x: x + y, x)
+      return lax.while_loop(lambda x: x < 3, lambda x: x + y, x)
 
     ans = vmap(fun, in_axes=(None, 0))(0, onp.array([2, 3]))
     expected = onp.array([4, 3])
@@ -913,7 +912,7 @@ class BatchingTest(jtu.JaxTestCase):
       return x, y
 
     def fun(x, y):
-      return lax_control_flow.while_loop(cond_fun, body_fun, (x, y))
+      return lax.while_loop(cond_fun, body_fun, (x, y))
 
     ans = vmap(fun)(onp.array([0, 0]), onp.array([1, 2]))
     expected = (onp.array([4, 3]), onp.array([1, 2]))
@@ -927,7 +926,7 @@ class BatchingTest(jtu.JaxTestCase):
       return x, y
 
     def fun(x):
-      return lax_control_flow.fori_loop(0, 10, body_fun, (x, 0))
+      return lax.fori_loop(0, 10, body_fun, (x, 0))
 
     ans = vmap(fun)(onp.array([0, 1]))
     expected = (onp.array([10, 11]), onp.array([20, 20]))
@@ -941,7 +940,7 @@ class BatchingTest(jtu.JaxTestCase):
         key, _ = random.split(key)
         return u, key
 
-      u, _ = lax_control_flow.while_loop(lambda uk: uk[0] > 0.5, body_fn, (1., key))
+      u, _ = lax.while_loop(lambda uk: uk[0] > 0.5, body_fn, (1., key))
       return u
 
     print(vmap(f)(random.split(random.PRNGKey(0), 2)))  # no crash
