@@ -21,7 +21,6 @@ import numpy as onp
 from jax.numpy import lax_numpy as np
 from jax import core
 from jax import lax
-from jax import lax_control_flow
 from jax import ad_util
 from jax.interpreters import xla
 from jax.interpreters import ad
@@ -300,7 +299,7 @@ def lu_jvp_rule(primals, tangents):
 
   a_shape = np.shape(a)
   m, n = a_shape[-2:]
-  dtype = lax._dtype(a)
+  dtype = lax.dtype(a)
   k = min(m, n)
 
   permutation = lu_pivots_to_permutation(pivots, m)
@@ -377,7 +376,7 @@ def lu_pivots_to_permutation(swaps, k):
 
   n, = np.shape(swaps)
   permutation = np.arange(k)
-  _, permutation = lax_control_flow.fori_loop(
+  _, permutation = lax.fori_loop(
       onp.array(0, onp.int32), onp.array(n, onp.int32), body_fn, (swaps, permutation))
   return permutation
 

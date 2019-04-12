@@ -25,7 +25,6 @@ import numpy.random as npr
 
 from jax import api
 from jax import lax
-from jax import lax_control_flow
 from jax import test_util as jtu
 
 
@@ -43,7 +42,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return (lax.add(pos, 1), lax.add(count, 1))
 
     def loop(init):
-      result = lax_control_flow.while_loop(loop_cond, loop_body, (init, 0))
+      result = lax.while_loop(loop_cond, loop_body, (init, 0))
       _, count = result
       return count
 
@@ -66,7 +65,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         return (num, lax.add(i, 1), inner_loop(i, count))
 
       init_val = (num, 0, 0)
-      _, i, count = lax_control_flow.while_loop(cond_fun, body_fun, init_val)
+      _, i, count = lax.while_loop(cond_fun, body_fun, init_val)
       return (i, count)
 
     def inner_loop(i, count):  # pylint: disable=missing-docstring
@@ -79,7 +78,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         return (i, lax.add(j, 1), lax.add(count, 1))
 
       init_val = (i, 0, count)
-      _, _, count = lax_control_flow.while_loop(cond_fun, body_fun, init_val)
+      _, _, count = lax.while_loop(cond_fun, body_fun, init_val)
       return count
 
     cloop = api.jit(outer_loop)
@@ -103,7 +102,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         pos, count = state
         return (lax.add(pos, 1), lax.add(count, inc))
 
-      result = lax_control_flow.while_loop(loop_cond, loop_body, (init, 0))
+      result = lax.while_loop(loop_cond, loop_body, (init, 0))
       _, count = result
       return count
 
@@ -135,7 +134,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         f = lambda pos, inc: (lax.add(pos, 1), lax.add(count, inc))
         return api.jit(f)(pos, inc)
 
-      result = lax_control_flow.while_loop(loop_cond, loop_body, (init, 0))
+      result = lax.while_loop(loop_cond, loop_body, (init, 0))
       _, count = result
       return count
 
@@ -172,7 +171,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
       out = onp.zeros(arr.shape, dtype=arr.dtype)
       init_val = (0, num, arr, out)
-      _, _, _, out = lax_control_flow.while_loop(cond_fun, body_fun, init_val)
+      _, _, _, out = lax.while_loop(cond_fun, body_fun, init_val)
       return out
 
     def inner_loop(i, arr, out):  # pylint: disable=missing-docstring
@@ -189,7 +188,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         return (i, lax.add(j, 1), arr, out)
 
       init_val = (i, 0, arr, out)
-      _, _, _, out = lax_control_flow.while_loop(cond_fun, body_fun, init_val)
+      _, _, _, out = lax.while_loop(cond_fun, body_fun, init_val)
       return out
 
     cloop = api.jit(outer_loop)
@@ -210,7 +209,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         return (arr, num, lax.add(i, 1), lax.add(total, arr_i))
 
       init_val = (arr, num, 0, 0.)
-      _, _, _, total = lax_control_flow.while_loop(cond_fun, body_fun, init_val)
+      _, _, _, total = lax.while_loop(cond_fun, body_fun, init_val)
       return total
 
     cfun = api.jit(sum_first_n)
@@ -226,7 +225,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def count(num):
       def body_fun(i, tot):
         return lax.add(tot, i)
-      return lax_control_flow.fori_loop(0, num, body_fun, 0)
+      return lax.fori_loop(0, num, body_fun, 0)
 
     cfun = api.jit(count)
 
@@ -241,7 +240,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def count(num):
       def body_fun(i, tot):
         return lax.add(num, lax.add(tot, i))
-      return lax_control_flow.fori_loop(0, num, body_fun, 0)
+      return lax.fori_loop(0, num, body_fun, 0)
 
     cfun = api.jit(count)
 
@@ -260,7 +259,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         return (arr, lax.add(total, arr_i))
 
       init_val = (arr, 0.)
-      _, total = lax_control_flow.fori_loop(0, lax.min(arr.shape[0], num), body_fun,
+      _, total = lax.fori_loop(0, lax.min(arr.shape[0], num), body_fun,
                                init_val)
       return total
 
@@ -281,7 +280,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         return {'arr': arr, 'total': lax.add(total, arr_i)}
 
       init_val = {'arr': arr, 'total': 0.}
-      out_val = lax_control_flow.fori_loop(0, lax.min(arr.shape[0], num), body_fun, init_val)
+      out_val = lax.fori_loop(0, lax.min(arr.shape[0], num), body_fun, init_val)
       return out_val['total']
 
     cfun = api.jit(sum_first_n)
@@ -301,7 +300,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         return (arr, lax.add(total, arr_i), ())
 
       init_val = (arr, 0., ())
-      _, tot, _ = lax_control_flow.fori_loop(0, lax.min(arr.shape[0], num), body_fun, init_val)
+      _, tot, _ = lax.fori_loop(0, lax.min(arr.shape[0], num), body_fun, init_val)
       return tot
 
     cfun = api.jit(sum_first_n)
@@ -326,7 +325,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       def false_fun(x):
         y = lax.mul(2, x)
         return y, lax.mul(2, y)
-      return lax_control_flow.cond(lax.lt(x, 3), x, lambda x: (x, x), x, false_fun)
+      return lax.cond(lax.lt(x, 3), x, lambda x: (x, x), x, false_fun)
 
     self.assertEqual(fun(0), cfun(0))
     self.assertEqual(fun(0), (0, 0))
@@ -351,10 +350,10 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     @api.jit
     def cfun(x):
-      return lax_control_flow.cond(
+      return lax.cond(
           lax.lt(x, 2),
           x, lambda x: lax.mul(2, x),
-          x, lambda x: lax_control_flow.cond(lax.lt(x, 5),
+          x, lambda x: lax.cond(lax.lt(x, 5),
                                 x, lambda x: lax.mul(3, x),
                                 4, lambda y: lax.mul(y, x)))
 
@@ -374,7 +373,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     @api.jit
     def cfun(x):
-      return lax_control_flow.cond(lax.lt(x, 3), x, lambda x: 5, x, lambda x: x)
+      return lax.cond(lax.lt(x, 3), x, lambda x: 5, x, lambda x: x)
 
     self.assertEqual(fun(0), cfun(0))
     self.assertEqual(cfun(0), 5)
@@ -390,7 +389,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     @api.jit
     def cfun(x):
-      return lax_control_flow.cond(lax.lt(x, 3),
+      return lax.cond(lax.lt(x, 3),
                       x, lambda x: (1, 2., 3.),
                       x, lambda x: (x, 2., 4.))
 
@@ -401,7 +400,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   def testIssue514(self):
     # just check this doesn't crash
-    lax_control_flow.cond(True,
+    lax.cond(True,
             (0, 0), lambda x: (x[0], 0),
             (1, 1), lambda x: x)
 

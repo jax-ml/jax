@@ -33,7 +33,6 @@ from .. import core
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
 from ..interpreters.xla import DeviceArray
 from .. import lax
-from .. import lax_control_flow
 from ..util import memoize, partial, get_module_functions, unzip2, prod as _prod
 from ..lib import xla_bridge
 from ..lib.xla_bridge import xla_client
@@ -93,7 +92,7 @@ result_type = onp.result_type
 shape = _shape = onp.shape
 ndim = _ndim = onp.ndim
 size = onp.size
-_dtype = lax._dtype
+_dtype = lax.dtype
 
 bool_ = onp.bool_
 uint8 = onp.uint8
@@ -398,7 +397,7 @@ def power(x1, x2):
   x1 = asarray(x1)
   x2 = asarray(x2)
   x1, x2 = _promote_args_like(onp.power, x1, x2)
-  dtype = lax._dtype(x1)
+  dtype = _dtype(x1)
   if not issubdtype(dtype, integer):
     return lax.pow(x1, x2)
 
@@ -2165,8 +2164,8 @@ kaiser = onp.kaiser  # TODO: lower via lax to allow non-constant beta.
 
 @_wraps(getattr(onp, "gcd", None))
 def gcd(x1, x2):
-  if (not issubdtype(lax._dtype(x1), integer) or
-      not issubdtype(lax._dtype(x2), integer)):
+  if (not issubdtype(_dtype(x1), integer) or
+      not issubdtype(_dtype(x2), integer)):
     raise ValueError("Arguments to gcd must be integers.")
   def cond_fn(xs):
     x1, x2 = xs
@@ -2178,7 +2177,7 @@ def gcd(x1, x2):
     return (where(x1 < x2, x2, x1), where(x1 < x2, x1, x2))
   x1, x2 = _promote_dtypes(lax.abs(x1), lax.abs(x2))
   x1, x2 = broadcast_arrays(x1, x2)
-  gcd, _ = lax_control_flow.while_loop(cond_fn, body_fn, (x1, x2))
+  gcd, _ = lax.while_loop(cond_fn, body_fn, (x1, x2))
   return gcd
 
 
