@@ -309,7 +309,7 @@ def jacfwd(fun, argnums=0):
     f_partial, dyn_args = _argnums_partial(f, argnums, args)
     pushfwd = partial(jvp, f_partial, dyn_args)
     y, jac = vmap(pushfwd, out_axes=(None, -1))(_std_basis(dyn_args))
-    _check_real(y)
+    tree_map(_check_real, y)
     example_args = dyn_args[0] if isinstance(argnums, int) else dyn_args
     return tree_map(partial(_unravel_array_into_pytree, example_args, -1), jac)
 
@@ -339,7 +339,7 @@ def jacrev(fun, argnums=0):
   def jacfun(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
     f_partial, dyn_args = _argnums_partial(f, argnums, args)
-    _check_real(dyn_args)
+    tree_map(_check_real, dyn_args)
     y, pullback = vjp(f_partial, *dyn_args)
     jac = vmap(pullback)(_std_basis(y))
     jac = jac[0] if isinstance(argnums, int) else jac
