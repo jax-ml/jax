@@ -307,9 +307,9 @@ def jacfwd(fun, argnums=0):
   def jacfun(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
     f_partial, dyn_args = _argnums_partial(f, argnums, args)
+    tree_map(_check_real_input_jacfwd, dyn_args)
     pushfwd = partial(jvp, f_partial, dyn_args)
     y, jac = vmap(pushfwd, out_axes=(None, -1))(_std_basis(dyn_args))
-    tree_map(_check_real, y)
     example_args = dyn_args[0] if isinstance(argnums, int) else dyn_args
     return tree_map(partial(_unravel_array_into_pytree, example_args, -1), jac)
 
@@ -339,8 +339,8 @@ def jacrev(fun, argnums=0):
   def jacfun(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
     f_partial, dyn_args = _argnums_partial(f, argnums, args)
-    tree_map(_check_real, dyn_args)
     y, pullback = vjp(f_partial, *dyn_args)
+    tree_map(_check_real_output_jacrev, y)
     jac = vmap(pullback)(_std_basis(y))
     jac = jac[0] if isinstance(argnums, int) else jac
     example_args = dyn_args[0] if isinstance(argnums, int) else dyn_args
@@ -375,21 +375,15 @@ def _std_basis(pytree):
   ndim = sum(map(onp.size, leaves))
   # TODO(mattjj): use a symbolic identity matrix here
   dtype = onp.result_type(*leaves)
-  if not onp.issubdtype(dtype, onp.floating):
-    msg = ("Jacobian only defined for functions with floating input and output "
-           "dtypes (i.e. dtypes that model real numbers), got {}.")
-    raise TypeError(msg.format(dtype))  # TODO(mattjj, dougalm): handle complex
   flat_basis = onp.eye(ndim, dtype=dtype)
   return _unravel_array_into_pytree(pytree, 1, flat_basis)
 
 def _unravel_array_into_pytree(pytree, axis, arr):
   leaves, treedef = tree_flatten(pytree)
   axis = axis % arr.ndim
-  dtypes = map(_dtype, leaves)
   shapes = [arr.shape[:axis] + onp.shape(l) + arr.shape[axis+1:] for l in leaves]
   parts = _split(arr, onp.cumsum(map(onp.size, leaves[:-1])), axis)
-  reshaped_parts = [onp.reshape(part.astype(dtype), shape)
-                    for part, dtype, shape in zip(parts, dtypes, shapes)]
+  reshaped_parts = [onp.reshape(x, shape) for x, shape in zip(parts, shapes)]
   return tree_unflatten(treedef, reshaped_parts)
 
 def _split(x, indices, axis):
@@ -799,15 +793,26 @@ def _check_scalar_real(x):
     if not onp.issubdtype(aval.dtype, onp.floating):
       msg2 = ("Gradient only defined for functions with output dtypes that are "
               "sub-dtypes of `np.floating` (i.e. that model real scalars), but "
-              "got {}. For holomorphic differentiation, apply `np.real` at the "
-              "end of the function.")
+              "got {}. For holomorphic differentiation, apply np.real to the "
+              "output, e.g. grad(lambda x: np.real(holomorphic_fun(x))).")
       raise TypeError(msg2.format(aval.dtype.name))
 
-def _check_real(x):
+def _check_real_output_jacrev(x):
   aval = core.get_aval(x)
   if not onp.issubdtype(aval.dtype, onp.floating):
-    msg = ("Jacobian only defined for functions with floating input and output "
-           "dtypes (i.e. dtypes that model real numbers), got {}.")
+    msg = ("jacrev only defined for functions with output dtypes that are "
+           "sub-dtypes of `np.floating` (i.e. that model real values), but got "
+           "{}. For holomorphic differentiation, apply np.real to the output, "
+           "e.g. jacrev(lambda x: np.real(holomorphic_fun(x))).")
+    raise TypeError(msg.format(aval.dtype.name))
+
+def _check_real_input_jacfwd(x):
+  aval = core.get_aval(x)
+  if not onp.issubdtype(aval.dtype, onp.floating):
+    msg = ("jacfwd only defined for functions with input dtypes that are "
+           "sub-dtypes of `np.floating` (i.e. that model real values), but got "
+           "{}. For holomorphic differentiation, use jacrev together with "
+           "np.real, e.g. jacrev(lambda x: np.real(holomorphic_fun(x))).")
     raise TypeError(msg.format(aval.dtype.name))
 
 

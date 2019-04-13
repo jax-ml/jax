@@ -429,45 +429,35 @@ class APITest(jtu.JaxTestCase):
 
   def test_complex_grad_raises_error(self):
     self.assertRaises(TypeError, lambda: grad(lambda x: np.sin(x))(1 + 2j))
-    grad(lambda x: np.real(np.sin(x)))(1 + 2j)  # doesn't crash
 
-  # TODO(mattjj, dougalm): make this work if we can, and delete subsequent test
-  # def test_complex_jacfwd(self):
-  #   # code based on https://github.com/google/jax/issues/603
-  #   zs = 0.5j * onp.arange(5) + onp.arange(5)
+  def test_holomorphic_grad(self):
+    out = grad(lambda x: np.real(np.sin(x)))(1 + 2j)
+    expected = 2.0327230070196656 - 3.0518977991518j
+    self.assertAllClose(out, expected, check_dtypes=False)
 
-  #   def f(z):
-  #     return np.cos(np.linalg.norm(2 * z))
+  def test_complex_jacrev_raises_error(self):
+    self.assertRaises(TypeError, lambda: jacrev(lambda x: np.sin(x))(1 + 2j))
 
-  #   ans = jacfwd(f)(zs)
-  #   expected = grad(f)(zs)
-  #   self.assertAllClose(ans, expected, check_dtypes=True)
+  def test_holomorphic_jacrev(self):
+    # code based on https://github.com/google/jax/issues/603
+    zs = 0.5j * onp.arange(5) + onp.arange(5)
 
+    def f(z):
+      return np.cos(np.linalg.norm(2 * z))
+
+    ans = jacrev(f)(zs)
+    expected = grad(f)(zs)
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
+  # TODO(mattjj,dougalm): can we make jacfwd act like jacrev with our
+  # differentiation convention here, modeling C->R as R^2->R, without rewriting
+  # the tangent jaxpr?
   def test_complex_jacfwd_raises_error(self):
     # code based on https://github.com/google/jax/issues/603
     zs = 0.5j * onp.arange(5) + onp.arange(5)
     def f(z):
       return np.cos(np.linalg.norm(2 * z))
     self.assertRaises(TypeError, lambda: jacfwd(f)(zs))
-
-  # TODO(mattjj, dougalm): make this work if we can, and delete subsequent test
-  # def test_complex_jacrev(self):
-  #   # code based on https://github.com/google/jax/issues/603
-  #   zs = 0.5j * onp.arange(5) + onp.arange(5)
-
-  #   def f(z):
-  #     return np.cos(np.linalg.norm(2 * z))
-
-  #   ans = jacrev(f)(zs)
-  #   expected = grad(f)(zs)
-  #   self.assertAllClose(ans, expected, check_dtypes=True)
-
-  def test_complex_jacrev_raises_error(self):
-    # code based on https://github.com/google/jax/issues/603
-    zs = 0.5j * onp.arange(5) + onp.arange(5)
-    def f(z):
-      return np.cos(np.linalg.norm(2 * z))
-    self.assertRaises(TypeError, lambda: jacrev(f)(zs))
 
 
 if __name__ == '__main__':
