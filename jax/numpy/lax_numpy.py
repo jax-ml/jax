@@ -2296,7 +2296,7 @@ setattr(DeviceArray, "astype", lax.convert_element_type)
 
 # Override NumPy's public API.
 
-_HANDLED_TYPES = (DeviceArray, onp.ndarray, numbers.Number)
+_HANDLED_TYPES = (DeviceArray, core.Tracer, onp.ndarray, numbers.Number)
 
 
 def __array_ufunc__(self, ufunc, method, *inputs, **kwargs):
