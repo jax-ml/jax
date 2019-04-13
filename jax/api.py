@@ -187,7 +187,7 @@ def xla_computation(fun, static_argnums=()):
 
   return computation_maker
 
-def grad(fun, argnums=0, has_aux=False):
+def grad(fun, argnums=0, has_aux=False, holomorphic=False):
   """Creates a function which evaluates the gradient of `fun`.
 
   Args:
@@ -198,8 +198,10 @@ def grad(fun, argnums=0, has_aux=False):
     argnums: Optional, integer or tuple of integers. Specifies which positional
       argument(s) to differentiate with respect to (default 0).
     has_aux: Optional, bool. Indicates whether `fun` returns a pair where the
-     first element is considered the output of the mathematical function to be
-     differentiated and the second element is auxiliary data. Default False.
+      first element is considered the output of the mathematical function to be
+      differentiated and the second element is auxiliary data. Default False.
+    holomorphic: Optional, bool. Indicates whether `fun` is promised to be
+      holomorphic. Default False.
 
   Returns:
     A function with the same arguments as `fun`, that evaluates the gradient of
@@ -216,7 +218,8 @@ def grad(fun, argnums=0, has_aux=False):
   array(0.961043, dtype=float32)
 
   """
-  value_and_grad_f = value_and_grad(fun, argnums, has_aux=has_aux)
+  value_and_grad_f = value_and_grad(fun, argnums, has_aux=has_aux,
+                                    holomorphic=holomorphic)
 
   docstr = ("Gradient of {fun} with respect to positional argument(s) "
             "{argnums}. Takes the same arguments as {fun} but returns the "
@@ -234,7 +237,7 @@ def grad(fun, argnums=0, has_aux=False):
 
   return grad_f
 
-def value_and_grad(fun, argnums=0, has_aux=False):
+def value_and_grad(fun, argnums=0, has_aux=False, holomorphic=False):
   """Creates a function which evaluates both `fun` and the gradient of `fun`.
 
   Args:
@@ -247,6 +250,8 @@ def value_and_grad(fun, argnums=0, has_aux=False):
     has_aux: Optional, bool. Indicates whether `fun` returns a pair where the
      first element is considered the output of the mathematical function to be
      differentiated and the second element is auxiliary data. Default False.
+    holomorphic: Optional, bool. Indicates whether `fun` is promised to be
+      holomorphic. Default False.
 
   Returns:
     A function with the same arguments as `fun` that evaluates both `fun` and
@@ -271,8 +276,14 @@ def value_and_grad(fun, argnums=0, has_aux=False):
       ans, vjp_py = vjp(f_partial, *dyn_args)
     else:
       ans, vjp_py, aux = vjp(f_partial, *dyn_args, has_aux=True)
-    _check_scalar_real(ans)
-    g = vjp_py(onp.ones((), onp.result_type(ans)))
+    _check_scalar(ans)
+    dtype = onp.result_type(ans)
+    if not (holomorphic or onp.issubdtype(dtype, onp.floating)):
+      msg = ("Gradient only defined for real-output functions (with dtype that "
+             "is a subdtype of np.floating), but got dtype {}. For holomorphic "
+             "differentiation, pass holomorphic=True.")
+      raise TypeError(msg.format(dtype))
+    g = vjp_py(onp.ones((), dtype=dtype))
     g = g[0] if isinstance(argnums, int) else g
     if not has_aux:
       return ans, g
@@ -281,14 +292,26 @@ def value_and_grad(fun, argnums=0, has_aux=False):
 
   return value_and_grad_f
 
+def _check_scalar(x):
+  msg = "Gradient only defined for scalar-output functions. Output was: {}".format
+  try:
+    aval = core.get_aval(x)
+  except TypeError:
+    raise TypeError(msg(x))
+  else:
+    if not (isinstance(aval, ShapedArray) and aval.shape == ()):
+      raise TypeError(msg(x))
 
-def jacfwd(fun, argnums=0):
+
+def jacfwd(fun, argnums=0, holomorphic=False):
   """Jacobian of `fun` evaluated column-by-column using forward-mode AD.
 
   Args:
     fun: Function whose Jacobian is to be computed.
     argnums: Optional, integer or tuple of integers. Specifies which positional
       argument(s) to differentiate with respect to (default `0`).
+    holomorphic: Optional, bool. Indicates whether `fun` is promised to be
+      holomorphic. Default False.
 
   Returns:
     A function with the same arguments as `fun`, that evaluates the Jacobian of
@@ -307,7 +330,7 @@ def jacfwd(fun, argnums=0):
   def jacfun(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
     f_partial, dyn_args = _argnums_partial(f, argnums, args)
-    tree_map(_check_real_input_jacfwd, dyn_args)
+    holomorphic or tree_map(_check_real_input_jacfwd, dyn_args)
     pushfwd = partial(jvp, f_partial, dyn_args)
     y, jac = vmap(pushfwd, out_axes=(None, -1))(_std_basis(dyn_args))
     example_args = dyn_args[0] if isinstance(argnums, int) else dyn_args
@@ -315,13 +338,24 @@ def jacfwd(fun, argnums=0):
 
   return jacfun
 
-def jacrev(fun, argnums=0):
+def _check_real_input_jacfwd(x):
+  aval = core.get_aval(x)
+  if not onp.issubdtype(aval.dtype, onp.floating):
+    msg = ("jacfwd only defined for functions with input dtypes that are "
+           "sub-dtypes of `np.floating` (i.e. that model real values), but got "
+           "{}. For holomorphic differentiation, pass holomorphic=True.")
+    raise TypeError(msg.format(aval.dtype.name))
+
+
+def jacrev(fun, argnums=0, holomorphic=False):
   """Jacobian of `fun` evaluated row-by-row using reverse-mode AD.
 
   Args:
     fun: Function whose Jacobian is to be computed.
     argnums: Optional, integer or tuple of integers. Specifies which positional
       argument(s) to differentiate with respect to (default `0`).
+    holomorphic: Optional, bool. Indicates whether `fun` is promised to be
+      holomorphic. Default False.
 
   Returns:
     A function with the same arguments as `fun`, that evaluates the Jacobian of
@@ -340,7 +374,7 @@ def jacrev(fun, argnums=0):
     f = lu.wrap_init(fun, kwargs)
     f_partial, dyn_args = _argnums_partial(f, argnums, args)
     y, pullback = vjp(f_partial, *dyn_args)
-    tree_map(_check_real_output_jacrev, y)
+    holomorphic or tree_map(_check_real_output_jacrev, y)
     jac = vmap(pullback)(_std_basis(y))
     jac = jac[0] if isinstance(argnums, int) else jac
     example_args = dyn_args[0] if isinstance(argnums, int) else dyn_args
@@ -350,13 +384,24 @@ def jacrev(fun, argnums=0):
   return jacfun
 jacobian = jacrev
 
-def hessian(fun, argnums=0):
+def _check_real_output_jacrev(x):
+  aval = core.get_aval(x)
+  if not onp.issubdtype(aval.dtype, onp.floating):
+    msg = ("jacrev only defined for functions with output dtypes that are "
+           "sub-dtypes of `np.floating` (i.e. that model real values), but got "
+           "{}. For holomorphic differentiation, pass holomorphic=True.")
+    raise TypeError(msg.format(aval.dtype.name))
+
+
+def hessian(fun, argnums=0, holomorphic=False):
   """Hessian of `fun`.
 
   Args:
     fun: Function whose Hessian is to be computed.
     argnums: Optional, integer or tuple of integers. Specifies which positional
       argument(s) to differentiate with respect to (default `0`).
+    holomorphic: Optional, bool. Indicates whether `fun` is promised to be
+      holomorphic. Default False.
 
   Returns:
     A function with the same arguments as `fun`, that evaluates the Hessian of
@@ -367,8 +412,7 @@ def hessian(fun, argnums=0):
   array([[   6.,   -2.],
          [  -2., -480.]], dtype=float32)
   """
-
-  return jacfwd(jacrev(fun, argnums=argnums), argnums=argnums)
+  return jacfwd(jacrev(fun, argnums, holomorphic), argnums, holomorphic)
 
 def _std_basis(pytree):
   leaves, _ = tree_flatten(pytree)
@@ -780,40 +824,6 @@ def _check_args(args):
     if not (isinstance(arg, core.Tracer) or core.valid_jaxtype(arg)):
       raise TypeError("Argument '{}' of type {} is not a valid JAX type"
                       .format(arg, type(arg)))
-
-def _check_scalar_real(x):
-  msg = "Gradient only defined for scalar-output functions. Output was: {}".format
-  try:
-    aval = core.get_aval(x)
-  except TypeError:
-    raise TypeError(msg(x))
-  else:
-    if not (isinstance(aval, ShapedArray) and aval.shape == ()):
-      raise TypeError(msg(x))
-    if not onp.issubdtype(aval.dtype, onp.floating):
-      msg2 = ("Gradient only defined for functions with output dtypes that are "
-              "sub-dtypes of `np.floating` (i.e. that model real scalars), but "
-              "got {}. For holomorphic differentiation, apply np.real to the "
-              "output, e.g. grad(lambda x: np.real(holomorphic_fun(x))).")
-      raise TypeError(msg2.format(aval.dtype.name))
-
-def _check_real_output_jacrev(x):
-  aval = core.get_aval(x)
-  if not onp.issubdtype(aval.dtype, onp.floating):
-    msg = ("jacrev only defined for functions with output dtypes that are "
-           "sub-dtypes of `np.floating` (i.e. that model real values), but got "
-           "{}. For holomorphic differentiation, apply np.real to the output, "
-           "e.g. jacrev(lambda x: np.real(holomorphic_fun(x))).")
-    raise TypeError(msg.format(aval.dtype.name))
-
-def _check_real_input_jacfwd(x):
-  aval = core.get_aval(x)
-  if not onp.issubdtype(aval.dtype, onp.floating):
-    msg = ("jacfwd only defined for functions with input dtypes that are "
-           "sub-dtypes of `np.floating` (i.e. that model real values), but got "
-           "{}. For holomorphic differentiation, use jacrev together with "
-           "np.real, e.g. jacrev(lambda x: np.real(holomorphic_fun(x))).")
-    raise TypeError(msg.format(aval.dtype.name))
 
 
 def custom_transforms(fun):

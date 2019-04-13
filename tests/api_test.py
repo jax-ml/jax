@@ -431,14 +431,28 @@ class APITest(jtu.JaxTestCase):
     self.assertRaises(TypeError, lambda: grad(lambda x: np.sin(x))(1 + 2j))
 
   def test_holomorphic_grad(self):
-    out = grad(lambda x: np.real(np.sin(x)))(1 + 2j)
+    out = grad(lambda x: np.sin(x), holomorphic=True)(1 + 2j)
     expected = 2.0327230070196656 - 3.0518977991518j
     self.assertAllClose(out, expected, check_dtypes=False)
 
-  def test_complex_jacrev_raises_error(self):
+  def test_nonholomorphic_grad(self):
+    zs = 0.5j * onp.arange(5) + onp.arange(5)
+
+    def f(z):
+      return np.sum(np.cos(np.abs(z)))
+
+    ans = grad(f)(zs)
+    expected = onp.array([ 0.        +0.j,
+                          -0.80430663+0.40215331j,
+                          -0.70368982+0.35184491j,
+                           0.1886467 -0.09432335j,
+                           0.86873727-0.43436864j])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_complex_output_jacrev_raises_error(self):
     self.assertRaises(TypeError, lambda: jacrev(lambda x: np.sin(x))(1 + 2j))
 
-  def test_holomorphic_jacrev(self):
+  def test_nonholomorphic_jacrev(self):
     # code based on https://github.com/google/jax/issues/603
     zs = 0.5j * onp.arange(5) + onp.arange(5)
 
@@ -449,15 +463,8 @@ class APITest(jtu.JaxTestCase):
     expected = grad(f)(zs)
     self.assertAllClose(ans, expected, check_dtypes=True)
 
-  # TODO(mattjj,dougalm): can we make jacfwd act like jacrev with our
-  # differentiation convention here, modeling C->R as R^2->R, without rewriting
-  # the tangent jaxpr?
-  def test_complex_jacfwd_raises_error(self):
-    # code based on https://github.com/google/jax/issues/603
-    zs = 0.5j * onp.arange(5) + onp.arange(5)
-    def f(z):
-      return np.cos(np.linalg.norm(2 * z))
-    self.assertRaises(TypeError, lambda: jacfwd(f)(zs))
+  def test_complex_input_jacfwd_raises_error(self):
+    self.assertRaises(TypeError, lambda: jacfwd(lambda x: np.sin(x))(1 + 2j))
 
 
 if __name__ == '__main__':
