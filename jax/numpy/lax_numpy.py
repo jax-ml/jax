@@ -733,7 +733,7 @@ def broadcast_to(arr, shape):
     # lax.broadcast and lax.transpose
     lax.broadcast_shapes(shape, _shape(arr))  # error checking
     nlead = len(shape) - len(_shape(arr))
-    diff, = onp.where(onp.not_equal(shape[nlead:], _shape(arr)))
+    diff, = onp.nonzero(onp.not_equal(shape[nlead:], _shape(arr)))
 
     new_dims = tuple(range(nlead)) + tuple(nlead + diff)
     kept_dims = tuple(onp.delete(onp.arange(len(shape)), new_dims))
@@ -2011,8 +2011,9 @@ def _rewriting_take(arr, idx, axis=0):
         msg = "Boolean index shape did not match indexed array shape prefix."
         raise IndexError(msg)
       else:
+        idx = onp.asarray(idx)
         reshaped_arr = arr.reshape((-1,) + arr.shape[idx.ndim:])
-        int_idx, = onp.where(idx.ravel())
+        int_idx, = onp.nonzero(idx.ravel())
         return lax.index_take(reshaped_arr, (int_idx,), (0,))
 
   # Handle non-advanced tuple indices by recursing once
@@ -2194,8 +2195,8 @@ def lcm(x1, x2):
 def _not_implemented(fun):
   @_wraps(fun)
   def wrapped(*args, **kwargs):
-    msg = "Numpy function {} not yet implemented"
-    raise NotImplementedError(msg.format(fun))
+    msg = "'{}.{}' is not yet implemented by JAX"
+    raise NotImplementedError(msg.format(fun.__module__, fun.__name__))
   return wrapped
 
 # Build a set of all unimplemented NumPy functions.
@@ -2338,13 +2339,15 @@ def __array_function__(self, func, types, args, kwargs):
         # This matchs NumPy's original implementation
         return issubclass(args[0].dtype.type, onp.complexfloating)
       elif func is onp.result_type:
-        return onp.result_type(*[getattr(x, 'dtype', 'x') for x in args])
+        return onp.result_type(*[getattr(x, 'dtype', x) for x in args])
       elif func is onp.shape:
         return args[0].shape
       elif func is onp.ndim:
         return args[0].ndim
       elif func is onp.size:
         return args[0].size
+      else:
+        raise AssertionError('{} needs an override'.format(func))
 
   return lax_func(*args, **kwargs)
 

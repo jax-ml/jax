@@ -61,6 +61,8 @@ _dtype = lambda x: getattr(x, 'dtype', None) or onp.asarray(x).dtype
 def numpy_eq(x, y):
   testing_tpu = FLAGS.jax_test_dut and FLAGS.jax_test_dut.startswith("tpu")
   testing_x32 = not FLAGS.jax_enable_x64
+  x = onp.asarray(x)
+  y = onp.asarray(y)
   if testing_tpu or testing_x32:
     return onp.allclose(x, y, 1e-3, 1e-3, equal_nan=testing_tpu)
   else:
@@ -74,6 +76,8 @@ def numpy_close(a, b, atol=ATOL, rtol=RTOL, equal_nan=False):
     atol = max(atol, 1e-1)
     rtol = max(rtol, 1e-1)
   assert a.shape == b.shape
+  a = onp.asarray(a)
+  b = onp.asarray(b)
   return onp.allclose(a, b, atol=atol * a.size, rtol=rtol * b.size,
                       equal_nan=equal_nan or testing_tpu)
 
@@ -99,7 +103,7 @@ conj = partial(tree_map, onp.conj)
 
 
 def scalar_mul(xs, a):
-  return tree_map(lambda x: onp.multiply(x, a, dtype=_dtype(x)), xs)
+  return tree_map(lambda x: onp.multiply(onp.array(x), a, dtype=_dtype(x)), xs)
 
 
 def rand_like(rng, x):
@@ -413,6 +417,8 @@ class JaxTestCase(parameterized.TestCase):
       atol = max(atol, 0.5)
       rtol = max(rtol, 1e-1)
 
+    x = onp.asarray(x)
+    y = onp.asarray(y)
     if not onp.allclose(x, y, atol=atol, rtol=rtol, equal_nan=True):
       msg = ('Arguments x and y not equal to tolerance atol={}, rtol={}:\n'
              'x:\n{}\n'

@@ -44,7 +44,7 @@ class LapaxTest(jtu.JaxTestCase):
     rhs2 = npr.randn(3, 1)
 
     def check(fun, lhs, rhs):
-      a1 = onp.linalg.solve(lhs, rhs)
+      a1 = onp.linalg.solve(onp.asarray(lhs), onp.asarray(rhs))
       a2 = fun(lhs, rhs)
       a3 = fun(lhs, rhs)
       self.assertArraysAllClose(a1, a2, check_dtypes=True)
@@ -65,7 +65,7 @@ class LapaxTest(jtu.JaxTestCase):
     rhs2 = npr.randn(4, 3)
 
     def check(fun, lhs, rhs):
-      a1 = onp.linalg.solve(lhs, rhs)
+      a1 = onp.linalg.solve(onp.asarray(lhs), onp.asarray(rhs))
       a2 = fun(lhs, rhs)
       a3 = fun(lhs, rhs)
       self.assertArraysAllClose(a1, a2, check_dtypes=True)
@@ -86,7 +86,7 @@ class LapaxTest(jtu.JaxTestCase):
     rhs2 = npr.randn(3, 3, 2)
 
     def check(fun, lhs, rhs):
-      a1 = onp.linalg.solve(lhs, rhs)
+      a1 = onp.linalg.solve(onp.asarray(lhs), onp.asarray(rhs))
       a2 = fun(lhs, rhs)
       a3 = fun(lhs, rhs)
       self.assertArraysAllClose(a1, a2, check_dtypes=True)

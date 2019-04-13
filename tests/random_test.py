@@ -39,6 +39,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   def _CheckCollisions(self, samples, nbits):
     fail_prob = 0.01  # conservative bound on statistical fail prob by Chebyshev
+    samples = onp.asarray(samples)
     nitems = len(samples)
     nbins = 2 ** nbits
     nexpected = nbins * (1 - ((nbins - 1) / nbins) ** nitems)

@@ -373,7 +373,7 @@ class BatchingTest(jtu.JaxTestCase):
     expected = onp.stack([random.normal(random.PRNGKey(seed), (3, 2))
                           for seed in onp.arange(10)])
     self.assertAllClose(ans, expected, check_dtypes=False)
-    assert len(onp.unique(ans)) == 10 * 3 * 2
+    assert len(onp.unique(onp.asarray(ans))) == 10 * 3 * 2
 
   def testSortKeyVal(self):
     k = onp.arange(12)[::-1].reshape(3, 4)
