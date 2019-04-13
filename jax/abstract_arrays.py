@@ -76,14 +76,6 @@ class UnshapedArray(core.AbstractValue):
   def str_short(self):
     return onp.dtype(self.dtype).name
 
-  def __array_ufunc__(self, *args, **kwargs):
-    from .numpy.lax_numpy import __array_ufunc__
-    return __array_ufunc__(self, *args, **kwargs)
-
-  def __array_function__(self, *args, **kwargs):
-    from .numpy.lax_numpy import __array_function__
-    return __array_function__(self, *args, **kwargs)
-
 
 class ShapedArray(UnshapedArray):
   __slots__ = ['shape']

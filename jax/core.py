@@ -263,6 +263,17 @@ class Tracer(object):
   def __hex__(self): return self.aval._hex(self)
   def __oct__(self): return self.aval._oct(self)
 
+  # Like Python's checks for arithmetic special methods, NumPy doesn't check
+  # instance attributes when looking up __array_ufunc__ and __array_function__,
+  # so these need to be defined here rather than on UnshapedArray.
+  def __array_ufunc__(self, *args, **kwargs):
+    from .numpy.lax_numpy import __array_ufunc__
+    return __array_ufunc__(self, *args, **kwargs)
+
+  def __array_function__(self, *args, **kwargs):
+    from .numpy.lax_numpy import __array_function__
+    return __array_function__(self, *args, **kwargs)
+
   def __setitem__(self, idx, val):
     raise TypeError("JAX 'Tracer' objects do not support item assignment")
 

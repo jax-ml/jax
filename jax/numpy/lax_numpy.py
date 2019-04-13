@@ -688,7 +688,8 @@ def isclose(a, b, rtol=1e-05, atol=1e-08):
   else:
     return lax.eq(a, b)
 
-numpy_version = tuple(map(int, onp.version.version.split('.')))
+# ignore suffixes in NumPy's development version, e.g., 1.17.0.dev0+cc8b978
+numpy_version = tuple(map(int, onp.__version__.split('+')[0].split('.')[:3]))
 if numpy_version < (1, 14):
   # see discussion at https://github.com/numpy/numpy/pull/9720
   def _maybe_numpy_1_13_isclose_behavior(a, out):
@@ -2301,10 +2302,28 @@ _HANDLED_TYPES = (DeviceArray, core.Tracer, onp.ndarray, numbers.Number)
 
 def __array_ufunc__(self, ufunc, method, *inputs, **kwargs):
   """Override NumPy ufuncs, per NEP-13."""
-  if method != '__call__' or kwargs or not _all(
-      isinstance(x, _HANDLED_TYPES) for x in inputs
-  ):
+
+  if not _all(isinstance(x, _HANDLED_TYPES) for x in inputs):
     return NotImplemented
+
+  # We special case the 'out' argument so we can support in-place arithmetic
+  # that assigns to NumPy arrays, e.g., np_array += jax_device_array
+  out = kwargs.pop('out', None)
+  if out is not None:
+    if isinstance(out, (DeviceArray, core.Tracer)):
+      raise TypeError("JAX arrays cannot be modified inplace.")
+    inputs = tuple(map(onp.asarray, inputs))
+    return getattr(ufunc, method)(*inputs, out=out, **kwargs)
+
+  if method != '__call__':
+    raise NotImplementedError(
+        'JAX does not yet support the {!r} method of NumPy universal functions'
+        .format(method))
+
+  if kwargs:
+    raise NotImplementedError(
+        'JAX does not yet support keyword arguments on NumPy universal '
+        'functions: {}'.format(list(kwargs)))
 
   lax_func = globals().get(ufunc.__name__)
   if lax_func is None:
