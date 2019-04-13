@@ -597,11 +597,6 @@ def angle(x):
   return lax.atan2(im, re)
 
 
-@_wraps(onp.isrealobj)
-def isrealobj(a):
-  return not iscomplexobj(a)
-
-
 @_wraps(onp.reshape)
 def reshape(a, newshape, order="C"):
   try:
@@ -1236,6 +1231,17 @@ def zeros(shape, dtype=onp.dtype("float64")):
 def ones(shape, dtype=onp.dtype("float64")):
   shape = (shape,) if onp.isscalar(shape) else shape
   return lax.full(shape, 1, dtype)
+
+
+@_wraps(onp.array_equal)
+def array_equal(a1, a2):
+  try:
+    a1, a2 = asarray(a1), asarray(a2)
+  except Exception:
+    return False
+  if a1.shape != a2.shape:
+    return False
+  return bool(asarray(a1==a2).all())
 
 
 # We can't create uninitialized arrays in XLA; use zeros for empty.
