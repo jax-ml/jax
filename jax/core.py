@@ -203,14 +203,6 @@ class Tracer(object):
     raise Exception("Tracer can't be used with raw numpy functions. "
                     "You might have\n  import numpy as np\ninstead of\n  import jax.numpy as np")
 
-  def __array_ufunc__(self, *args, **kwargs):
-    from .numpy.lax_numpy import __array_ufunc__
-    return __array_ufunc__(self, *args, **kwargs)
-
-  def __array_function__(self, *args, **kwargs):
-    from .numpy.lax_numpy import __array_function__
-    return __array_function__(self, *args, **kwargs)
-
   def __init__(self, trace):
     self.trace = trace
 
