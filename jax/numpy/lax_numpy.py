@@ -2325,32 +2325,33 @@ def __array_function__(self, func, types, args, kwargs):
     try:
       module = getattr(module, submodule)
     except AttributeError:
-      lax_func = _not_implemented(func)
+      lax_func = None
       break
   else:
     lax_func = getattr(module, func.__name__, None)
-    if lax_func is None:
-      lax_func = _not_implemented(func)
-    elif lax_func is func:
-      # TODO(shoyer): remove these special cases once we've settled on a
-      # protocol for using original NumPy implementations upstream and it's
-      # made it into a NumPy release (see
-      # https://github.com/numpy/numpy/pull/13305). These could be replaced by
-      # something like:
-      #   lax_func = func.__numpy_implementation__
-      if func is onp.iscomplexobj:
-        # This matchs NumPy's original implementation
-        return issubclass(args[0].dtype.type, onp.complexfloating)
-      elif func is onp.result_type:
-        return onp.result_type(*[getattr(x, 'dtype', x) for x in args])
-      elif func is onp.shape:
-        return args[0].shape
-      elif func is onp.ndim:
-        return args[0].ndim
-      elif func is onp.size:
-        return args[0].size
-      else:
-        raise AssertionError('{} needs an override'.format(func))
+
+  if lax_func is None:
+    lax_func = _not_implemented(func)
+  elif lax_func is func:
+    # TODO(shoyer): remove these special cases once we've settled on a
+    # protocol for using original NumPy implementations upstream and it's
+    # made it into a NumPy release (see
+    # https://github.com/numpy/numpy/pull/13305). These could be replaced by
+    # something like:
+    #   lax_func = func.__numpy_implementation__
+    if func is onp.iscomplexobj:
+      # This matchs NumPy's original implementation
+      return issubclass(args[0].dtype.type, onp.complexfloating)
+    elif func is onp.result_type:
+      return onp.result_type(*[getattr(x, 'dtype', x) for x in args])
+    elif func is onp.shape:
+      return args[0].shape
+    elif func is onp.ndim:
+      return args[0].ndim
+    elif func is onp.size:
+      return args[0].size
+    else:
+      raise AssertionError('{} needs an override'.format(func))
 
   return lax_func(*args, **kwargs)
 
