@@ -1238,6 +1238,17 @@ def ones(shape, dtype=onp.dtype("float64")):
   return lax.full(shape, 1, dtype)
 
 
+@_wraps(onp.array_equal)
+def array_equal(a1, a2):
+  try:
+    a1, a2 = asarray(a1), asarray(a2)
+  except Exception:
+    return False
+  if a1.shape != a2.shape:
+    return False
+  return asarray(a1==a2).all()
+
+
 # We can't create uninitialized arrays in XLA; use zeros for empty.
 empty_like = zeros_like
 empty = zeros
