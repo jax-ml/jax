@@ -243,6 +243,21 @@ if six.PY2:
   ]
 
 
+# __array_function__ overrides are enabled if using NumPy 1.17+ (not yet
+# released) or if the NUMPY_EXPERIMENTAL_ARRAY_FUNCTION environment is set:
+# https://www.numpy.org/neps/nep-0018-array-function-protocol.html
+class _Dummy(object):
+  def __array_function__(self, *args, **kwargs):
+    return True
+  def __array__(self, *args, **kwargs):
+    return TypeError
+
+try:
+  array_function_overrides_enabled = onp.atleast_1d(_Dummy())
+except TypeError:
+  array_function_overrides_enabled = False
+
+
 CombosWithReplacement = itertools.combinations_with_replacement
 
 
@@ -1399,6 +1414,54 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # test that lnp.arange(N) doesn't instantiate an ndarray
     self.assertFalse(type(lnp.arange(77)) == type(onp.arange(77)))
     self.assertTrue(type(lnp.arange(77)) == type(lax.iota(onp.int32, 77)))
+
+  def testArrayUfuncUnary(self):
+    lnp_array = lnp.sqrt(onp.array([1, 2]))  # make a DeviceArray object
+    onp_array = onp.sqrt(onp.array([1, 2]))  # make a DeviceArray object
+    lnp_on_lnp = lnp.sin(lnp_array)
+    onp_on_lnp = onp.sin(lnp_array)
+    onp_on_onp = onp.sin(onp_array)
+    self.assertEqual(type(onp_on_lnp), type(lnp_on_lnp))
+    self.assertAllClose(onp_on_lnp, onp_on_onp, check_dtypes=True)
+
+  def testArrayUfuncErrors(self):
+    x = lnp.sqrt(onp.array([1, 2]))  # make a DeviceArray object
+    with self.assertRaises(TypeError):
+      onp.sin(x, out=x)
+    with self.assertRaises(NotImplementedError):
+      onp.isnat(x)
+
+  def testArrayUfuncBinary(self):
+    x = lnp.sqrt(onp.array([1, 2]))  # make a DeviceArray object
+    lnp_expected = lnp.array(x) + 3
+    onp_expected = onp.array(x) + 3
+
+    result = onp.add(lnp.array(x), 3)
+    self.assertEqual(type(result), type(lnp_expected))
+    self.assertAllClose(result, onp_expected, check_dtypes=True)
+
+    result = onp.add(lnp.array(x), onp.array(3))
+    self.assertEqual(type(result), type(lnp_expected))
+    self.assertAllClose(result, onp_expected, check_dtypes=True)
+
+    result = onp.add(onp.array(3), lnp.array(x))
+    self.assertEqual(type(result), type(lnp_expected))
+    self.assertAllClose(result, onp_expected, check_dtypes=True)
+
+  def testArrayFunction(self):
+    if not array_function_overrides_enabled:
+      self.skipTest('__array_function__ overrides not enabled')
+    lnp_array = lnp.sqrt(onp.array([1, 2]))  # make a DeviceArray object
+    onp_array = onp.sqrt(onp.array([1, 2]))  # make a DeviceArray object
+    lnp_on_lnp = lnp.concatenate([lnp_array] * 2)
+    onp_on_lnp = onp.concatenate([lnp_array] * 2)
+    onp_on_onp = onp.concatenate([onp_array] * 2)
+    self.assertEqual(type(onp_on_lnp), type(lnp_on_lnp))
+    self.assertAllClose(onp_on_lnp, onp_on_onp, check_dtypes=True)
+
+    onp_on_mixed = onp.concatenate([onp_array, lnp_array])
+    self.assertEqual(type(onp_on_mixed), type(lnp_on_lnp))
+    self.assertAllClose(onp_on_mixed, onp_on_onp, check_dtypes=True)
 
 
 if __name__ == "__main__":

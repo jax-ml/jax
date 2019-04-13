@@ -18,6 +18,7 @@ from __future__ import print_function
 
 import collections
 import itertools
+import numbers
 import re
 import string
 import warnings
@@ -2287,6 +2288,69 @@ setattr(DeviceArray, "reshape", _reshape)
 setattr(DeviceArray, "flatten", ravel)
 setattr(DeviceArray, "T", property(transpose))
 setattr(DeviceArray, "astype", lax.convert_element_type)
+
+
+# Override NumPy's public API.
+
+_HANDLED_TYPES = (DeviceArray, onp.ndarray, numbers.Number)
+
+
+def __array_ufunc__(self, ufunc, method, *inputs, **kwargs):
+  """Override NumPy ufuncs, per NEP-13."""
+  if method != '__call__' or kwargs or not _all(
+      isinstance(x, _HANDLED_TYPES) for x in inputs
+  ):
+    return NotImplemented
+
+  lax_func = globals().get(ufunc.__name__)
+  if lax_func is None:
+    lax_func = _not_implemented(func)
+
+  return lax_func(*inputs)
+
+
+def __array_function__(self, func, types, args, kwargs):
+  """Override other NumPy functions, per NEP-18."""
+  from .. import numpy
+
+  if not _all(issubclass(t, _HANDLED_TYPES) for t in types):
+    return NotImplemented
+
+  module = numpy
+  for submodule in func.__module__.split('.')[1:]:
+    try:
+      module = getattr(module, submodule)
+    except AttributeError:
+      lax_func = _not_implemented(func)
+      break
+  else:
+    lax_func = getattr(module, func.__name__, None)
+    if lax_func is None:
+      lax_func = _not_implemented(func)
+    elif lax_func is func:
+      # TODO(shoyer): remove these special cases once we've settled on a
+      # protocol for using original NumPy implementations upstream and it's
+      # made it into a NumPy release (see
+      # https://github.com/numpy/numpy/pull/13305). These could be replaced by
+      # something like:
+      #   lax_func = func.__numpy_implementation__
+      if func is onp.iscomplexobj:
+        # This matchs NumPy's original implementation
+        return issubclass(args[0].dtype.type, onp.complexfloating)
+      elif func is onp.result_type:
+        return onp.result_type(*[getattr(x, 'dtype', 'x') for x in args])
+      elif func is onp.shape:
+        return args[0].shape
+      elif func is onp.ndim:
+        return args[0].ndim
+      elif func is onp.size:
+        return args[0].size
+
+  return lax_func(*args, **kwargs)
+
+
+setattr(DeviceArray, '__array_ufunc__', __array_ufunc__)
+setattr(DeviceArray, '__array_function__', __array_function__)
 
 
 # Extra methods that are handy
