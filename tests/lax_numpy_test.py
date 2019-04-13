@@ -28,6 +28,7 @@ from absl.testing import parameterized
 import six
 
 import numpy as onp
+import numpy.lib.recfunctions
 
 from jax import api
 from jax import lax
@@ -1429,6 +1430,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     with self.assertRaises(TypeError):
       onp.sin(x, out=x)
     with self.assertRaises(NotImplementedError):
+      # JAX is unlikely to ever implement datetime64 ufuncs
       onp.isnat(x)
 
   def testArrayUfuncBinary(self):
@@ -1453,15 +1455,32 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self.skipTest('__array_function__ overrides not enabled')
     lnp_array = lnp.sqrt(onp.array([1, 2]))  # make a DeviceArray object
     onp_array = onp.sqrt(onp.array([1, 2]))  # make a DeviceArray object
-    lnp_on_lnp = lnp.concatenate([lnp_array] * 2)
-    onp_on_lnp = onp.concatenate([lnp_array] * 2)
+
     onp_on_onp = onp.concatenate([onp_array] * 2)
+    onp_on_lnp = onp.concatenate([lnp_array] * 2)
+    lnp_on_lnp = lnp.concatenate([lnp_array] * 2)
     self.assertEqual(type(onp_on_lnp), type(lnp_on_lnp))
     self.assertAllClose(onp_on_lnp, onp_on_onp, check_dtypes=True)
 
     onp_on_mixed = onp.concatenate([onp_array, lnp_array])
     self.assertEqual(type(onp_on_mixed), type(lnp_on_lnp))
     self.assertAllClose(onp_on_mixed, onp_on_onp, check_dtypes=True)
+
+  def testArrayFunctionSubModule(self):
+    if not array_function_overrides_enabled:
+      self.skipTest('__array_function__ overrides not enabled')
+    onp_array = onp.sqrt(onp.array([[1, 2], [2, 1]]))
+    lnp_array = lnp.sqrt(onp.array([[1, 2], [2, 1]]))
+
+    onp_on_onp = onp.linalg.inv(onp_array)
+    onp_on_lnp = onp.linalg.inv(lnp_array)
+    lnp_on_lnp = lnp.linalg.inv(lnp_array)
+    self.assertEqual(type(onp_on_lnp), type(lnp_on_lnp))
+    self.assertAllClose(onp_on_lnp, onp_on_onp, check_dtypes=True)
+
+    with self.assertRaisesRegexp(NotImplementedError, 'repack_fields'):
+      # An arbitrary choice from the long tail of NumPy's API
+      onp.lib.recfunctions.repack_fields(lnp_array)
 
 
 if __name__ == "__main__":

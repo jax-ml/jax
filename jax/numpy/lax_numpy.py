@@ -2195,8 +2195,11 @@ def lcm(x1, x2):
 def _not_implemented(fun):
   @_wraps(fun)
   def wrapped(*args, **kwargs):
-    msg = "'{}.{}' is not yet implemented by JAX"
-    raise NotImplementedError(msg.format(fun.__module__, fun.__name__))
+    try:
+      name = "'{}.{}'".format(fun.__module__, fun.__name__)
+    except AttributeError:
+      name = "NumPy function {}".format(fun)
+    raise NotImplementedError("{} is not yet implemented by JAX".format(name))
   return wrapped
 
 # Build a set of all unimplemented NumPy functions.
