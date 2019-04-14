@@ -459,8 +459,7 @@ fmod = _wraps(onp.fmod)(lambda x, y: lax.rem(x, y))
 @_wraps(onp.cbrt)
 def cbrt(x):
   x, = _promote_to_result_dtype(onp.cbrt, x)
-  abs_x = lax.abs(x)
-  return lax._safe_mul(lax.div(x, abs_x), power(abs_x, _constant_like(x, 1. / 3.)))
+  return lax.sign(x) * power(lax.abs(x), _constant_like(x, 1. / 3.))
 
 
 @_wraps(onp.sqrt)
