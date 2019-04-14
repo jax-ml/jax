@@ -27,7 +27,6 @@ import jax.numpy as np
 from jax import test_util as jtu
 from jax import lax
 from jax.api import pmap, vmap, jvp, grad, make_jaxpr, linearize, device_put
-from jax.lax import psum
 from jax.lib import xla_bridge
 from jax.util import prod
 from jax.interpreters import pxla

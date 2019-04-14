@@ -21,6 +21,7 @@ import itertools
 import re
 import string
 import warnings
+import types
 
 import numpy as onp
 import opt_einsum
@@ -91,7 +92,7 @@ result_type = onp.result_type
 shape = _shape = onp.shape
 ndim = _ndim = onp.ndim
 size = onp.size
-_dtype = lax._dtype
+_dtype = lax.dtype
 
 bool_ = onp.bool_
 uint8 = onp.uint8
@@ -396,7 +397,7 @@ def power(x1, x2):
   x1 = asarray(x1)
   x2 = asarray(x2)
   x1, x2 = _promote_args_like(onp.power, x1, x2)
-  dtype = lax._dtype(x1)
+  dtype = _dtype(x1)
   if not issubdtype(dtype, integer):
     return lax.pow(x1, x2)
 
@@ -620,6 +621,11 @@ def diff(a, n=1, axis=-1,):
     a = op(a[slice1], a[slice2])
 
   return a
+
+
+@_wraps(onp.isrealobj)
+def isrealobj(a):
+  return not iscomplexobj(a)
 
 
 @_wraps(onp.reshape)
@@ -1247,6 +1253,8 @@ def full_like(a, fill_value, dtype=None):
 
 @_wraps(onp.zeros)
 def zeros(shape, dtype=onp.dtype("float64")):
+  if isinstance(shape, types.GeneratorType):
+    raise TypeError("expected sequence object with len >= 0 or a single integer")
   shape = (shape,) if onp.isscalar(shape) else shape
   return lax.full(shape, 0, dtype)
 
@@ -1254,6 +1262,17 @@ def zeros(shape, dtype=onp.dtype("float64")):
 def ones(shape, dtype=onp.dtype("float64")):
   shape = (shape,) if onp.isscalar(shape) else shape
   return lax.full(shape, 1, dtype)
+
+
+@_wraps(onp.array_equal)
+def array_equal(a1, a2):
+  try:
+    a1, a2 = asarray(a1), asarray(a2)
+  except Exception:
+    return False
+  if a1.shape != a2.shape:
+    return False
+  return asarray(a1==a2).all()
 
 
 # We can't create uninitialized arrays in XLA; use zeros for empty.
@@ -2182,8 +2201,8 @@ kaiser = onp.kaiser  # TODO: lower via lax to allow non-constant beta.
 
 @_wraps(getattr(onp, "gcd", None))
 def gcd(x1, x2):
-  if (not issubdtype(lax._dtype(x1), integer) or
-      not issubdtype(lax._dtype(x2), integer)):
+  if (not issubdtype(_dtype(x1), integer) or
+      not issubdtype(_dtype(x2), integer)):
     raise ValueError("Arguments to gcd must be integers.")
   def cond_fn(xs):
     x1, x2 = xs
