@@ -97,7 +97,7 @@ JAX from source or install a binary package with pip.
 
 We support installing or building `jaxlib` on Linux and macOS platforms, but not
 Windows. We're not currently working on Windows support, but contributions are
-welcome (see #438).
+welcome (see [#438](https://github.com/google/jax/issues/438)).
 
 ### Building JAX from source
 First, obtain the JAX source code, and make sure `scipy` is installed.
