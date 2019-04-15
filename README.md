@@ -91,9 +91,13 @@ And for a deeper dive into JAX:
 - [MAML Tutorial with JAX](https://colab.research.google.com/github/google/jax/blob/master/notebooks/maml.ipynb).
 
 ## Installation
-JAX is written in pure Python, but it depends on XLA, which needs to be
-compiled and installed as the `jaxlib` package. Use the following instructions
-to build JAX from source or install a binary package with pip.
+JAX is written in pure Python, but it depends on XLA, which needs to be compiled
+and installed as the `jaxlib` package. Use the following instructions to build
+JAX from source or install a binary package with pip.
+
+We support installing or building `jaxlib` on Linux and macOS platforms, but not
+Windows. We're not currently working on Windows support, but contributions are
+welcome (see #438).
 
 ### Building JAX from source
 First, obtain the JAX source code, and make sure `scipy` is installed.
