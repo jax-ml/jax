@@ -456,6 +456,12 @@ mod = remainder
 fmod = _wraps(onp.fmod)(lambda x, y: lax.rem(x, y))
 
 
+@_wraps(onp.cbrt)
+def cbrt(x):
+  x, = _promote_to_result_dtype(onp.cbrt, x)
+  return lax.sign(x) * power(lax.abs(x), _constant_like(x, 1. / 3.))
+
+
 @_wraps(onp.sqrt)
 def sqrt(x):
   x, = _promote_to_result_dtype(onp.sqrt, x)
