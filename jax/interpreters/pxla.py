@@ -225,7 +225,7 @@ def replicated_comp(jaxpr, ax_env, const_vals, freevar_shapes, *arg_shapes):
     _map(write, all_freevars, map(c.ParameterWithShape, freevar_shapes))
   _map(write, jaxpr.invars, map(c.ParameterWithShape, arg_shapes))
   for eqn in jaxpr.eqns:
-    in_nodes = tuple(map(read, eqn.invars))
+    in_nodes = list(map(read, eqn.invars))
     if eqn.primitive in parallel_translation_rules:
       name = eqn.params['axis_name']
       params = {k: eqn.params[k] for k in eqn.params if k != 'axis_name'}
