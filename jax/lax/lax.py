@@ -12,14 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-`lax` is a library of primitives that underpins libraries such as `jax.numpy`.
-
-Many of the primitives are thin wrappers around equivalent XLA operations,
-described by the `XLA operation semantics
-<https://www.tensorflow.org/xla/operation_semantics>`_ documentation.
-"""
-
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
