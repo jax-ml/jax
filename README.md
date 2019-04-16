@@ -4,6 +4,10 @@
 
 # JAX: Autograd and XLA [![Test status](https://travis-ci.org/google/jax.svg?branch=master)](https://travis-ci.org/google/jax)
 
+[**Reference docs**](https://jax.readthedocs.io/en/latest/)
+| [**Install guide**](#installation)
+| [**Quickstart**](#quickstart-colab-in-the-cloud)
+
 JAX is [Autograd](https://github.com/hips/autograd) and
 [XLA](https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/g3doc/overview.md),
 brought together for high-performance machine learning research.
@@ -181,23 +185,25 @@ for Python 2.7, 3.6, and 3.7; for anything else, you must build from source.
 
 ## Running the tests
 
-To run all the JAX tests, from the repository root directory run
+To run all the JAX tests, we recommend using `pytest-xdist`, which can run tests in
+parallel. First, install `pytest-xdist` by running `pip install pytest-xdist`.
+Then, from the repository root directory run
 
 ```bash
-nosetests tests
+pytest-xdist -n auto tests
 ```
 
 JAX generates test cases combinatorially, and you can control the number of
 cases that are generated and checked for each test (default 10):
 
 ```bash
-JAX_NUM_GENERATED_CASES=100 nosetests tests
+JAX_NUM_GENERATED_CASES=100 pytest-xdist -n auto tests
 ```
 
 You can run a more specific set of tests using
-[`nose`](https://nose.readthedocs.io/en/latest/usage.html)'s built-in selection
-mechanisms, or alternatively you can run a specific test file directly to see
-more detailed information about the cases being run:
+[`pytest`](https://docs.pytest.org/en/latest/usage.html#specifying-tests-selecting-tests)'s
+built-in selection mechanisms, or alternatively you can run a specific test
+file directly to see more detailed information about the cases being run:
 
 ```bash
 python tests/lax_numpy_test.py --num_generated_cases=5
