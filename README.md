@@ -190,14 +190,14 @@ parallel. First, install `pytest-xdist` by running `pip install pytest-xdist`.
 Then, from the repository root directory run
 
 ```bash
-pytest-xdist -n auto tests
+pytest -n auto tests
 ```
 
 JAX generates test cases combinatorially, and you can control the number of
 cases that are generated and checked for each test (default 10):
 
 ```bash
-JAX_NUM_GENERATED_CASES=100 pytest-xdist -n auto tests
+JAX_NUM_GENERATED_CASES=100 pytest -n auto tests
 ```
 
 You can run a more specific set of tests using
