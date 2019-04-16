@@ -133,7 +133,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self.assertTrue(norm(onp.matmul(a, v) - w * v) < 30)
 
     self._CompileAndCheck(partial(np.linalg.eigh, UPLO=uplo), args_maker,
-                          check_dtypes=True)
+                          check_dtypes=True, rtol=1e-3)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
