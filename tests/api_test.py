@@ -166,7 +166,7 @@ class APITest(jtu.JaxTestCase):
 
   def test_unwrapped_numpy(self):
     def f(x):
-      return onp.exp(x)
+      return onp.array(x)
 
     jtu.check_raises(lambda: grad(f)(onp.zeros(3)), Exception,
                      "Tracer can't be used with raw numpy functions. "
