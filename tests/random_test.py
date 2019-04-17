@@ -86,6 +86,16 @@ class LaxRandomTest(jtu.JaxTestCase):
         onp.uint32([0x243f6a88, 0x85a308d3]))
     self.assertEqual(expected, result_to_hex(result))
 
+  def testManyRandomBits(self):
+    prev, random._max_randvals_per_key = random._max_randvals_per_key, 32
+
+    n = 150
+    key = random.PRNGKey(0)
+    bits = random._random_bits(key, 32, (n,))
+    assert bits.shape == (n,) and len(onp.unique(bits)) == n
+
+    random._max_randvals_per_key = prev
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
       for dtype in [onp.float32, onp.float64]))

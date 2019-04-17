@@ -34,6 +34,7 @@ from . import tree_util
 from .api import jit, vmap
 from .numpy.lax_numpy import _constant_like
 from jax.lib import xla_bridge
+from jax.util import prod
 from jax import core
 
 
@@ -196,23 +197,41 @@ def _fold_in(key, data):
   return threefry_2x32(key, key2)
 
 
+@partial(jit, static_argnums=(1, 2))
 def _random_bits(key, bit_width, shape):
   """Sample uniform random bits of given width and shape using PRNG key."""
   if not _is_prng_key(key):
     raise TypeError("_random_bits got invalid prng key.")
   if bit_width not in (32, 64):
     raise TypeError("requires 32- or 64-bit field width.")
-  max_count = (bit_width // 32) * onp.prod(shape)
-  if max_count >= onp.iinfo(onp.uint32).max:
-    # TODO(mattjj): just split the key here
-    raise TypeError("requesting more random bits than a single call provides.")
 
-  counts = lax.tie_in(key, lax.iota(onp.uint32, max_count))
-  bits = threefry_2x32(key, counts)
-  if bit_width == 64:
-    bits = [lax.convert_element_type(x, onp.uint64) for x in np.split(bits, 2)]
-    bits = (bits[0] << onp.uint64(32)) | bits[1]
-  return lax.reshape(bits, shape)
+  n = (bit_width // 32) * prod(shape)  # number of 32-bit values to generate
+  maxn = _max_randvals_per_key
+  num_chunks, extra = divmod(n, maxn)
+  num_chunks = num_chunks + bool(extra)
+  if num_chunks == 1:
+    keys = [key]
+  else:
+    keys = split(key, num_chunks)
+
+  dtype = onp.uint64 if bit_width == 64 else onp.uint32
+  out = lax.full((prod(shape),), lax.tie_in(key, dtype(0)), dtype)
+  for key in keys:
+    counts = lax.tie_in(key, lax.iota(onp.uint32, min(n, maxn)))
+    bits = threefry_2x32(key, counts)
+    if bit_width == 64:
+      bits = [lax.convert_element_type(x, onp.uint64) for x in np.split(bits, 2)]
+      bits = (bits[0] << onp.uint64(32)) | bits[1]
+    out = lax.dynamic_update_slice(out, bits, onp.array([out.shape[0] - n]))
+    n -= min(n, maxn)
+  assert n == 0
+
+  return lax.reshape(out, shape)
+
+
+# keep the maximum number of random 32bit bit fields as a global constant, so
+# that we can adjust it in tests
+_max_randvals_per_key = onp.iinfo(onp.uint32).max
 
 
 ### random samplers
