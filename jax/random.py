@@ -209,7 +209,7 @@ def _random_bits(key, bit_width, shape):
   num_chunks, extra = divmod(n, _max_randvals_per_key)
   num_chunks = num_chunks + bool(extra)
 
-  # helper that can sample up to _max_randvals_per_key random 32-bit bit fields
+  # helper that can sample up to _max_randvals_per_key random bit fields
   def randbits32(key, n):
     assert n <= _max_randvals_per_key
     counts = lax.tie_in(key, lax.iota(onp.uint32, n))
