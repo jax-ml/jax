@@ -1419,6 +1419,11 @@ LAX_GRAD_OPS = [
                  dtypes=[onp.float64, onp.complex64]),
     GradTestSpec(lax.cos, nargs=1, order=2, rng=jtu.rand_default(),
                  dtypes=[onp.float64, onp.complex64]),
+    # TODO(proteneer): atan2 input is already a representation of a
+    # complex number. Need to think harder about what this even means
+    # if each input itself is a complex number.
+    GradTestSpec(lax.atan2, nargs=2, order=2, rng=jtu.rand_default(),
+                 dtypes=[onp.float64]),
 
     GradTestSpec(lax.erf, nargs=1, order=2, rng=jtu.rand_small(),
                  dtypes=[onp.float64]),
