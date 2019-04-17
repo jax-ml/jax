@@ -3654,7 +3654,7 @@ def padtype_to_pads(in_shape, window_shape, window_strides, padding):
       raise RuntimeError(msg.format(padding))
 
   if padding == PaddingType.SAME:
-    out_shape = onp.ceil(onp.true_divide(in_shape, window_strides)).astype(int)
+    out_shape = onp.ceil(onp.true_divide(in_shape, window_strides).astype(float)).astype(int)
     pad_sizes = [_max((out_size - 1) * stride + window_shape - in_size, 0)
                  for out_size, stride, window_shape, in_size
                  in zip(out_shape, window_strides, window_shape, in_shape)]
