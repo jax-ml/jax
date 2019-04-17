@@ -206,25 +206,29 @@ def _random_bits(key, bit_width, shape):
     raise TypeError("requires 32- or 64-bit field width.")
 
   n = (bit_width // 32) * prod(shape)  # number of 32-bit values to generate
-  maxn = _max_randvals_per_key
-  num_chunks, extra = divmod(n, maxn)
+  num_chunks, extra = divmod(n, _max_randvals_per_key)
   num_chunks = num_chunks + bool(extra)
-  if num_chunks == 1:
-    keys = [key]
-  else:
-    keys = split(key, num_chunks)
 
-  dtype = onp.uint64 if bit_width == 64 else onp.uint32
-  out = lax.full((prod(shape),), lax.tie_in(key, dtype(0)), dtype)
-  for key in keys:
-    counts = lax.tie_in(key, lax.iota(onp.uint32, min(n, maxn)))
+  # helper that can sample up to _max_randvals_per_key random 32-bit bit fields
+  def randbits32(key, n):
+    assert n <= _max_randvals_per_key
+    counts = lax.tie_in(key, lax.iota(onp.uint32, n))
     bits = threefry_2x32(key, counts)
     if bit_width == 64:
       bits = [lax.convert_element_type(x, onp.uint64) for x in np.split(bits, 2)]
       bits = (bits[0] << onp.uint64(32)) | bits[1]
-    out = lax.dynamic_update_slice(out, bits, onp.array([out.shape[0] - n]))
-    n -= min(n, maxn)
-  assert n == 0
+    return bits
+
+  if num_chunks == 1:
+    out = randbits32(key, n)
+  else:
+    dtype = onp.uint64 if bit_width == 64 else onp.uint32
+    out = lax.full((prod(shape),), lax.tie_in(key, dtype(0)), dtype)
+    for k in split(key, num_chunks):
+      bits = randbits32(k, min(n, _max_randvals_per_key))
+      out = lax.dynamic_update_slice(out, bits, onp.array([out.shape[0] - n]))
+      n -= min(n, _max_randvals_per_key)
+    assert n == 0
 
   return lax.reshape(out, shape)
 
