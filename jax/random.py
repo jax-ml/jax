@@ -210,7 +210,7 @@ def _random_bits(key, bit_width, shape):
   num_chunks = num_chunks + bool(extra)
 
   # helper that can sample up to _max_randvals_per_key random bit fields
-  def randbits32(key, n):
+  def randbits_onekey(key, n):
     assert n <= _max_randvals_per_key
     counts = lax.tie_in(key, lax.iota(onp.uint32, n))
     bits = threefry_2x32(key, counts)
@@ -220,12 +220,12 @@ def _random_bits(key, bit_width, shape):
     return bits
 
   if num_chunks == 1:
-    out = randbits32(key, n)
+    out = randbits_onekey(key, n)
   else:
     dtype = onp.uint64 if bit_width == 64 else onp.uint32
     out = lax.full((prod(shape),), lax.tie_in(key, dtype(0)), dtype)
     for k in split(key, num_chunks):
-      bits = randbits32(k, min(n, _max_randvals_per_key))
+      bits = randbits_onekey(k, min(n, _max_randvals_per_key))
       out = lax.dynamic_update_slice(out, bits, onp.array([out.shape[0] - n]))
       n -= min(n, _max_randvals_per_key)
     assert n == 0
