@@ -1441,7 +1441,9 @@ cos_p = standard_unop(_float | _complex, 'cos')
 ad.defjvp(cos_p, lambda g, x: neg(mul(g, sin(x))))
 
 atan2_p = standard_binop([_float, _float], 'atan2')
-ad.defjvp(atan2_p, lambda g, x, y: -mul(g,y)/(mul(x,x)+mul(y,y)), lambda g, x, y: mul(g,x)/(mul(x,x)+mul(y,y)))
+ad.defjvp(atan2_p,
+  lambda g, x, y: -(g*y)/(square(x)+square(y)),
+  lambda g, x, y: (g*x)/(square(x)+square(y)))
 
 lgamma_p = standard_unop(_float, 'lgamma')
 ad.defjvp(lgamma_p, lambda g, x: mul(g, digamma(x)))
