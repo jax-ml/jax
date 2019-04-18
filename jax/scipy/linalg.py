@@ -93,7 +93,7 @@ def eigh(a, b=None, lower=True, eigvals_only=False, overwrite_a=False,
          check_finite=True):
   del overwrite_a, overwrite_b, turbo, check_finite
   if b is not None:
-    raise NotImplemented("Only the b=None case of eigh is implemented")
+    raise NotImplementedError("Only the b=None case of eigh is implemented")
   if type != 1:
     raise NotImplementedError("Only the type=1 case of eigh is implemented.")
   if eigvals is not None:
