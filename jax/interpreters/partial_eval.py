@@ -647,7 +647,8 @@ def partial_eval_jaxpr2(jaxpr, consts, avals, first_components):
   out_pv_b, out_pv_c = out_pv_2
   first_component_c_out = isnone(out_pv_c)
 
-  return ((jaxpr_1, consts_1), (doubly_lifted_jaxpr_2, ()),
+  avals_1, avals_2 = unzip2(map(_split_avals, first_components, avals))
+  return ((jaxpr_1, consts_1, avals_1), (doubly_lifted_jaxpr_2, (), avals_2),
           out_pv_2, first_component_c_out)
 
 def _move_and_pair_arg(jaxpr, newvar):
@@ -658,6 +659,19 @@ def _move_and_pair_arg(jaxpr, newvar):
   moved_jaxpr.eqns = (
       [_unpack_eqn(pair_var, [res, a])] + list(jaxpr.eqns))
   return moved_jaxpr
+
+def _split_avals(first_component, aval):
+  t = type(first_component)
+  if t is tuple:
+    assert type(aval) is core.AbstractTuple
+    return unzip2(map(_split_avals, first_component, aval))
+  elif t is bool:
+    if first_component:
+      return aval, core.AbstractTuple(())
+    else:
+      return core.AbstractTuple(()), aval
+  else:
+    raise TypeError(t)
 
 
 custom_partial_eval_rules = {}
