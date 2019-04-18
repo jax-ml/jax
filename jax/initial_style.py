@@ -264,22 +264,20 @@ def binary_lattice_join(a, b):
 
 def _scan_initial_partial_eval(trace, *tracers, **kwargs):
   jaxpr = kwargs.pop('jaxpr')
-  true_consts = kwargs.pop('true_consts')
   in_pvs, in_consts = unzip2([t.pval for t in tracers])
   fc_consts, fc_init, fc_xs = map(is_const, in_pvs)
-  avals = map(as_aval, in_pvs, in_consts)
 
   fc_carry = fc_init
   while True:
     first_components = (fc_consts, fc_carry, fc_xs)
-    full_jaxpr_1, full_jaxpr_2, out_pv, fc_carry_out = \
-        pe.partial_eval_jaxpr2(jaxpr, true_consts, avals, first_components)
-    jaxpr_1, consts_1, avals_1 = full_jaxpr_1
-    jaxpr_2, consts_2, avals_2 = full_jaxpr_2
+    jaxpr_1, jaxpr_2, fc_out = pe.partial_eval_jaxpr2(jaxpr, first_components)
+    fc_ys, fc_carry_out = fc_out
     if fc_carry_out == fc_carry:
       break
     else:
       fc_carry = binary_lattice_join(fc_carry, fc_carry_out)
+
+  import ipdb; ipdb.set_trace()
 
   consts_tracer, init_tracer, xs_tracer = tracers
   lifted_init_tracer = _lift_tracer(trace, init_tracer, fc_carry)

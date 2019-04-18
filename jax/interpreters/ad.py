@@ -533,7 +533,6 @@ def jvp_jaxpr2(jaxpr, zeros):
   return jaxpr_out, out_zeros()
 
 
-
 primitive_transposes[core.call_p] = partial(call_transpose, call_p)
 primitive_transposes[pe.compiled_call_p] = partial(call_transpose, pe.compiled_call_p)
 

@@ -26,7 +26,7 @@ from ..linear_util import thunk, transformation, transformation_with_aux
 from ..util import unzip2, safe_zip, safe_map, toposort, partial
 from ..core import (Trace, Tracer, new_master, Jaxpr, JaxprEqn, get_aval, pack,
                     AbstractValue, AbstractTuple, unit, unitvar, Primitive,
-                    call_p)
+                    call_p, TypedJaxpr)
 
 map = safe_map
 zip = safe_zip
@@ -575,6 +575,7 @@ def isnone(x):
   else:
     raise TypeError(type(x))
 
+# TODO revise for typedjaxprs
 def jaxpr_as_fun(jaxpr, consts, *args):
   consts = core.full_lower(consts)
   args = map(core.full_lower, args)
@@ -621,19 +622,19 @@ def _pack_eqn(invars, outvar):
   return core.JaxprEqn(invars, [outvar], core.pack_p, (), False, {})
 
 
-def partial_eval_jaxpr2(jaxpr, consts, avals, first_components):
+def partial_eval_jaxpr2(jaxpr, first_components):
   # jaxpr :: d -> c -> a -> (b, c)
-  f = lu.wrap_init(partial(jaxpr_as_fun, jaxpr, consts))
+  f = lu.wrap_init(partial(jaxpr_as_fun, jaxpr.jaxpr, jaxpr.literals))
 
   cell = []
   def fun(*vals):
-    pvals = map(as_pval, avals, first_components, vals)
+    pvals = map(as_pval, jaxpr.in_avals, first_components, vals)
     jaxpr_2, out_pval, consts_2 = trace_to_jaxpr(f, pvals)
     (out_pv_b, out_pv_c), (out_const_b, out_const_c) = out_pval
     cell.append(((out_pv_b, out_pv_c), jaxpr_2))
     return pack((pack((out_const_b, pack(consts_2))), out_const_c))
 
-  pvals = map(as_pval2, avals, first_components)
+  pvals = map(as_pval2, jaxpr.in_avals, first_components)
   jaxpr_1, out_pval, consts_1 = trace_to_jaxpr(
       lu.wrap_init(fun), pvals, instantiate=True)
   out_pv_2, jaxpr_2 = cell[0]
@@ -641,15 +642,35 @@ def partial_eval_jaxpr2(jaxpr, consts, avals, first_components):
   # jaxpr_1 :: d1 -> c1 -> a1 -> ((b1, res), c1)
   # jaxpr_2 :: res | d2 -> c2 -> a2 -> (b2, c2)
   # lifted_jaxpr_2 :: res -> d2 -> c2 -> a2 -> (b2, c2)
-  lifted_jaxpr_2 = _closure_convert_jaxpr(jaxpr_2, _partial_eval_gensym)
   # doubly_lifted_jaxpr_2 :: d2 -> c2 -> (res, a2) -> (b2, c2)
+  lifted_jaxpr_2 = _closure_convert_jaxpr(jaxpr_2, _partial_eval_gensym)
   doubly_lifted_jaxpr_2 = _move_and_pair_arg(lifted_jaxpr_2, _partial_eval_gensym)
   out_pv_b, out_pv_c = out_pv_2
-  first_component_c_out = isnone(out_pv_c)
+  fc_out = fc_b_out, fc_c_out = isnone(out_pv_b), isnone(out_pv_c)
 
-  avals_1, avals_2 = unzip2(map(_split_avals, first_components, avals))
-  return ((jaxpr_1, consts_1, avals_1), (doubly_lifted_jaxpr_2, (), avals_2),
-          out_pv_2, first_component_c_out)
+  in_avals_1, in_avals_2 = unzip2(map(_split_avals, first_components,
+                                      jaxpr.in_avals))
+  out_aval_1, out_aval_2 = _split_avals(fc_out, jaxpr.out_aval)
+
+  # in_avals_1 is already (d1, c1, a1), and out_aval_2 is already (b2, c2), but
+  # we must munge:
+  # 1. form out_aval_1 to include the residuals as ((b1, res), c1)
+  # 2. form in_avals_2 to include the residuals as (d2, c2, (res, a2))
+
+  out_pv, _ = out_pval
+  (_, res), _ = out_pv
+  assert isinstance(res, AbstractValue)
+
+  b1, c1 = out_aval_1
+  lifted_out_aval_1 = AbstractTuple((AbstractTuple((b1, res)), c1))
+
+  d2, c2, a2 = in_avals_2
+  lifted_in_avals_2 = AbstractTuple((d2, c2, AbstractTuple((res, a2))))
+
+  typed_jaxpr_1 = TypedJaxpr(jaxpr_1, consts_1, in_avals_1, lifted_out_aval_1)
+  typed_jaxpr_2 = TypedJaxpr(doubly_lifted_jaxpr_2, (), lifted_in_avals_2,
+                             out_aval_2)
+  return typed_jaxpr_1, typed_jaxpr_2, fc_out
 
 def _move_and_pair_arg(jaxpr, newvar):
   moved_jaxpr = jaxpr.copy()
@@ -663,13 +684,13 @@ def _move_and_pair_arg(jaxpr, newvar):
 def _split_avals(first_component, aval):
   t = type(first_component)
   if t is tuple:
-    assert type(aval) is core.AbstractTuple
+    assert type(aval) is AbstractTuple
     return unzip2(map(_split_avals, first_component, aval))
   elif t is bool:
     if first_component:
-      return aval, core.AbstractTuple(())
+      return aval, AbstractTuple(())
     else:
-      return core.AbstractTuple(()), aval
+      return AbstractTuple(()), aval
   else:
     raise TypeError(t)
 
