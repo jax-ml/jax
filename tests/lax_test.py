@@ -1945,9 +1945,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
         self.assertEqual(onp.unique(operand).size, operand.size,
                          msg="test requires operand elements to be unique.")
       jtu.check_vjp(fun, partial(api.vjp, fun), (operand,), 1e-2, 1e-2, 1e-2)
-
-      # TODO(phawkins): enable both gradients after a jaxlib update.
-      # check_grads(fun, (operand,), 1, 1e-2, 1e-2, 1e-2)
+      check_grads(fun, (operand,), 2, 1e-2, 1e-2, 1e-2)
     # pylint: enable=cell-var-from-loop
 
   # TODO(b/205052657): enable more tests when supported
