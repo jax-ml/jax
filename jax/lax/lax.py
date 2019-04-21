@@ -3393,6 +3393,23 @@ def _select_and_gather_add_translation(
   out = c.ConvertElementType(out, uint_etype)
   return c.BitcastConvertType(out, etype)
 
+def _select_and_gather_add_jvp(
+    primals, tangents, select_prim, window_dimensions, window_strides,
+    padding):
+  source, operand = primals
+  g_source, g_operand = tangents
+  val_out = _select_and_gather_add(
+      source, operand, select_prim, window_dimensions, window_strides,
+      padding)
+  del g_operand
+  if g_source is ad_util.zero:
+    tangent_out = ad_util.zero
+  else:
+    tangent_out = _select_and_gather_add(
+        g_source, operand, select_prim, window_dimensions,
+        window_strides, padding)
+  return val_out, tangent_out
+
 def _select_and_gather_add_transpose(
     t, tangents, operand, select_prim, window_dimensions, window_strides,
     padding):
@@ -3404,6 +3421,7 @@ def _select_and_gather_add_transpose(
 select_and_gather_add_p = standard_primitive(
     _select_and_gather_add_shape_rule, _input_dtype, 'select_and_gather_add',
     _select_and_gather_add_translation)
+ad.primitive_jvps[select_and_gather_add_p] = _select_and_gather_add_jvp
 ad.primitive_transposes[select_and_gather_add_p] = \
     _select_and_gather_add_transpose
 
