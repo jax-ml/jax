@@ -3252,13 +3252,30 @@ def _select_and_scatter_add_translation(
   return c.SelectAndScatter(operand, select, window_dimensions, window_strides,
                             padding, source, zero, scatter)
 
+def _select_and_scatter_add_jvp(
+    primals, tangents, select_prim, window_dimensions, window_strides,
+    padding):
+  source, operand = primals
+  g_source, g_operand = tangents
+  val_out = _select_and_scatter_add(
+      source, operand, select_prim, window_dimensions, window_strides,
+      padding)
+  del g_operand
+  if g_source is ad_util.zero:
+    tangent_out = ad_util.zero
+  else:
+    tangent_out = _select_and_scatter_add(
+        g_source, operand, select_prim, window_dimensions,
+        window_strides, padding)
+  return val_out, tangent_out
+
 def _select_and_scatter_add_transpose(
     t, source, operand, select_prim, window_dimensions, window_strides,
     padding):
   assert source is None and operand is not None
-  result = _select_and_gather_add(t, operand, select_prim, window_dimensions,
-                                  window_strides, padding)
-  return [result, None]
+  source_t = _select_and_gather_add(t, operand, select_prim, window_dimensions,
+                                    window_strides, padding)
+  return [source_t, None]
 
 def _select_and_scatter_add_batch_rule(batched_args, batch_dims, **kwargs):
   source, operand = batched_args
@@ -3295,6 +3312,7 @@ select_and_scatter_add_p = standard_primitive(
     _select_and_scatter_add_translation)
 ad.primitive_transposes[select_and_scatter_add_p] = \
     _select_and_scatter_add_transpose
+ad.primitive_jvps[select_and_scatter_add_p] = _select_and_scatter_add_jvp
 batching.primitive_batchers[select_and_scatter_add_p] = \
     _select_and_scatter_add_batch_rule
 
@@ -3375,6 +3393,23 @@ def _select_and_gather_add_translation(
   out = c.ConvertElementType(out, uint_etype)
   return c.BitcastConvertType(out, etype)
 
+def _select_and_gather_add_jvp(
+    primals, tangents, select_prim, window_dimensions, window_strides,
+    padding):
+  source, operand = primals
+  g_source, g_operand = tangents
+  val_out = _select_and_gather_add(
+      source, operand, select_prim, window_dimensions, window_strides,
+      padding)
+  del g_operand
+  if g_source is ad_util.zero:
+    tangent_out = ad_util.zero
+  else:
+    tangent_out = _select_and_gather_add(
+        g_source, operand, select_prim, window_dimensions,
+        window_strides, padding)
+  return val_out, tangent_out
+
 def _select_and_gather_add_transpose(
     t, tangents, operand, select_prim, window_dimensions, window_strides,
     padding):
@@ -3386,6 +3421,7 @@ def _select_and_gather_add_transpose(
 select_and_gather_add_p = standard_primitive(
     _select_and_gather_add_shape_rule, _input_dtype, 'select_and_gather_add',
     _select_and_gather_add_translation)
+ad.primitive_jvps[select_and_gather_add_p] = _select_and_gather_add_jvp
 ad.primitive_transposes[select_and_gather_add_p] = \
     _select_and_gather_add_transpose
 
