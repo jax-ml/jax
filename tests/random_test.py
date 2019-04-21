@@ -158,6 +158,24 @@ class LaxRandomTest(jtu.JaxTestCase):
     assert x.shape == (3, 2)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_a={}_b={}_{}".format(a, b, dtype),
+       "a": a, "b": b, "dtype": onp.dtype(dtype).name}
+      for a in [0.2, 5.]
+      for b in [0.2, 5.]
+      for dtype in [onp.float32, onp.float64]))
+  @jtu.skip_on_devices("tpu")  # TODO(phawkins): re-enable
+  def testBeta(self, a, b, dtype):
+    key = random.PRNGKey(0)
+    rand = lambda key, a, b: random.beta(key, a, b, (10000,), dtype)
+    crand = api.jit(rand)
+
+    uncompiled_samples = rand(key, a, b)
+    compiled_samples = crand(key, a, b)
+
+    for samples in [uncompiled_samples, compiled_samples]:
+      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.beta(a, b).cdf)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
       for dtype in [onp.float32, onp.float64]))
   def testCauchy(self, dtype):
@@ -256,6 +274,23 @@ class LaxRandomTest(jtu.JaxTestCase):
     key = random.PRNGKey(0)
     x = random.pareto(key, onp.array([0.2, 0.3]), shape=(3, 2))
     assert x.shape == (3, 2)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_df={}_{}".format(df, dtype),
+       "df": df, "dtype": onp.dtype(dtype).name}
+      for df in [0.1, 1., 10.]
+      for dtype in [onp.float32, onp.float64]))
+  @jtu.skip_on_devices("tpu")  # TODO(phawkins): re-enable
+  def testT(self, df, dtype):
+    key = random.PRNGKey(0)
+    rand = lambda key, df: random.t(key, df, (10000,), dtype)
+    crand = api.jit(rand)
+
+    uncompiled_samples = rand(key, df)
+    compiled_samples = crand(key, df)
+
+    for samples in [uncompiled_samples, compiled_samples]:
+      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.t(df).cdf)
 
   def testIssue222(self):
     x = random.randint(random.PRNGKey(10003), (), 0, 0)
