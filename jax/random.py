@@ -32,7 +32,7 @@ from . import lax
 from . import numpy as np
 from . import tree_util
 from .api import jit, vmap
-from .numpy.lax_numpy import _constant_like
+from .numpy.lax_numpy import _constant_like, asarray
 from jax.lib import xla_bridge
 from jax import core
 
@@ -424,6 +424,30 @@ def _cauchy(key, shape, dtype):
   u = uniform(key, shape, dtype)
   pi = _constant_like(u, onp.pi)
   return lax.tan(lax.mul(pi, lax.sub(u, _constant_like(u, 0.5))))
+
+
+def dirichlet(key, alpha, shape=(), dtype=onp.float32):
+  """Sample Cauchy random values with given shape and float dtype.
+
+  Args:
+    key: a PRNGKey used as the random key.
+    alpha: an array-like with `alpha.shape[:-1]` broadcastable to `shape` and
+      used as the concentration parameter of the random variables.
+    shape: optional, a tuple of nonnegative integers representing the batch
+      shape (defaults to `alpha.shape[:-1]`).
+    dtype: optional, a float dtype for the returned values (default float32).
+
+  Returns:
+    A random array with the specified shape and dtype.
+  """
+  return _dirichlet(key, alpha, shape, dtype)
+
+@partial(jit, static_argnums=(2, 3))
+def _dirichlet(key, alpha, shape, dtype):
+  alpha = asarray(alpha, dtype)
+  shape = shape or alpha.shape[:-1]
+  gamma_samples = gamma(key, alpha, shape + alpha.shape[-1:], dtype)
+  return gamma_samples / np.sum(gamma_samples, axis=-1, keepdims=True)
 
 
 def exponential(key, shape=(), dtype=onp.float32):

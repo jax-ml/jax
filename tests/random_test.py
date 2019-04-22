@@ -172,6 +172,26 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.cauchy().cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_alpha={}_{}".format(alpha, dtype),
+       "alpha": alpha, "dtype": onp.dtype(dtype).name}
+      for alpha in [[0.2, 1., 5.]]
+      for dtype in [onp.float32, onp.float64]))
+  @jtu.skip_on_devices("tpu")  # TODO(phawkins): re-enable
+  def testDirichlet(self, alpha, dtype):
+    key = random.PRNGKey(0)
+    rand = lambda key, alpha: random.dirichlet(key, alpha, (10000,), dtype)
+    crand = api.jit(rand)
+
+    uncompiled_samples = rand(key, alpha)
+    compiled_samples = crand(key, alpha)
+
+    for samples in [uncompiled_samples, compiled_samples]:
+      self.assertAllClose(samples.sum(-1), onp.ones(10000, dtype=dtype), check_dtypes=True)
+      alpha_sum = sum(alpha)
+      for i, a in enumerate(alpha):
+        self._CheckKolmogorovSmirnovCDF(samples[..., i], scipy.stats.beta(a, alpha_sum - a).cdf)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
       for dtype in [onp.float32, onp.float64]))
   def testExponential(self, dtype):
