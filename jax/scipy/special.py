@@ -23,7 +23,8 @@ from .. import lax
 from ..api import custom_transforms
 from ..interpreters import ad, batching
 from ..numpy import lax_numpy as np
-from ..numpy.lax_numpy import _wraps, asarray, _reduction_dims, _constant_like
+from ..numpy.lax_numpy import (_wraps, asarray, _reduction_dims, _constant_like,
+                               _promote_args_like)
 
 
 # need to create new functions because _wraps sets the __name__ attribute
@@ -65,6 +66,12 @@ def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
   out = lax.add(lax.log(lax.reduce(lax.exp(lax.sub(a, amax_singletons)),
                                    _constant_like(a, 0), lax.add, dims)), amax)
   return dimadd(out) if keepdims else out
+
+
+@_wraps(osp_special.xlogy)
+def xlogy(x, y):
+  x, y = _promote_args_like(osp_special.xlogy, x, y)
+  return lax._safe_mul(x, lax.log(y))
 
 
 # Normal distributions
