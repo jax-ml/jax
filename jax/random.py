@@ -380,12 +380,12 @@ def _normal(key, shape, dtype):
   return onp.array(onp.sqrt(2), dtype) * lax.erf_inv(u)
 
 
-def bernoulli(key, mean=onp.float32(0.5), shape=()):
+def bernoulli(key, p=onp.float32(0.5), shape=()):
   """Sample Bernoulli random values with given shape and mean.
 
   Args:
     key: a PRNGKey used as the random key.
-    mean: optional, an array-like broadcastable to `shape` for the mean of the
+    p: optional, an array-like broadcastable to `shape` for the mean of the
       random variables (default 0.5).
     shape: optional, a tuple of nonnegative integers representing the shape
       (default scalar).
@@ -393,16 +393,16 @@ def bernoulli(key, mean=onp.float32(0.5), shape=()):
   Returns:
     A random array with the specified shape and boolean dtype.
   """
-  return _bernoulli(key, mean, shape)
+  return _bernoulli(key, p, shape)
 
 @partial(jit, static_argnums=(2,))
-def _bernoulli(key, mean, shape):
-  shape = shape or onp.shape(mean)
-  if not onp.issubdtype(lax.dtype(mean), onp.float32):
-    mean = lax.convert_element_type(mean, onp.float32)
-  if onp.shape(mean) != shape:
-    mean = np.broadcast_to(mean, shape)
-  return lax.lt(uniform(key, shape), mean)
+def _bernoulli(key, p, shape):
+  shape = shape or onp.shape(p)
+  if not onp.issubdtype(onp.float32, lax.dtype(p)):
+    p = lax.convert_element_type(p, onp.float32)
+  if onp.shape(p) != shape:
+    p = np.broadcast_to(p, shape)
+  return lax.lt(uniform(key, shape, lax.dtype(p)), p)
 
 
 def cauchy(key, shape=(), dtype=onp.float32):
