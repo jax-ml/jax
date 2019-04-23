@@ -66,11 +66,15 @@ class JaxprTrace(Trace):
       raise TypeError(pv)
 
   def process_primitive(self, primitive, tracers, params):
-    tracers = map(self.instantiate_const, tracers)
-    avals = [t.aval for t in tracers]
-    out_aval = primitive.abstract_eval(*avals, **params)
-    eqn = JaxprEqn(tracers, None, primitive, (), False, params)
-    return JaxprTracer(self, PartialVal((out_aval, unit)), eqn)
+    if primitive in custom_partial_eval_rules:
+      partial_eval = custom_partial_eval_rules[primitive]
+      return partial_eval(self, *tracers, **params)
+    else:
+      tracers = map(self.instantiate_const, tracers)
+      avals = [t.aval for t in tracers]
+      out_aval = primitive.abstract_eval(*avals, **params)
+      eqn = JaxprEqn(tracers, None, primitive, (), False, params)
+      return JaxprTracer(self, PartialVal((out_aval, unit)), eqn)
 
   def pack(self, tracers):
     eqn = JaxprEqn(tracers, None, core.pack_p, (), False, {})
@@ -478,3 +482,5 @@ compiled_call_p = Primitive('compiled_call')
 compiled_call = partial(core.call_bind, compiled_call_p)
 compiled_call_p.def_custom_bind(compiled_call)
 compiled_call_p.def_impl(compiled_call_impl)
+
+custom_partial_eval_rules = {}

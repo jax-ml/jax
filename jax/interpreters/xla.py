@@ -247,7 +247,7 @@ def lower_fun(fun, c, *xla_args, **params):
   xla_shapes = tuple(map(c.GetShape, xla_args))
   avals = map(aval_from_xla_shape, xla_shapes)
   pvals = [pe.PartialVal((a, core.unit)) for a in avals]
-  jaxpr, pvout, consts = pe.trace_unwrapped_to_jaxpr(fun, pvals, **params)
+  jaxpr, _, consts = pe.trace_unwrapped_to_jaxpr(fun, pvals, **params)
   built_c = jaxpr_computation(jaxpr, consts, (), *xla_shapes)
   return c.Call(built_c, xla_args)
 
