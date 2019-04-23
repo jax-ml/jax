@@ -27,6 +27,7 @@ from scipy.stats import random_correlation
 
 from jax import test_util as jtu
 from jax.scipy import stats as lsp_stats
+from jax.scipy.special import expit
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -48,6 +49,22 @@ def genNamedParametersNArgs(n, rng):
 
 class LaxBackedScipyStatsTests(jtu.JaxTestCase):
   """Tests for LAX-backed scipy.stats implementations"""
+
+  @genNamedParametersNArgs(3, jtu.rand_default())
+  def testBernoulliLogPmf(self, rng, shapes, dtypes):
+    scipy_fun = osp_stats.bernoulli.logpmf
+    lax_fun = lsp_stats.bernoulli.logpmf
+
+    def args_maker():
+      x, logit, loc = map(rng, shapes, dtypes)
+      x = onp.floor(x)
+      p = expit(logit)
+      loc = onp.floor(loc)
+      return [x, p, loc]
+
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True,
+                            tol=1e-4)
+    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
   @genNamedParametersNArgs(5, jtu.rand_positive())
   def testBetaLogPdf(self, rng, shapes, dtypes):
