@@ -600,10 +600,10 @@ def partial_eval_jaxpr(jaxpr, consts, avals, first_components):
       lu.wrap_init(fun), pvals, instantiate=True)
   out_pv_2, jaxpr_2 = cell[0]
   lifted_jaxpr_2 = _closure_convert_jaxpr(jaxpr_2, _partial_eval_gensym)
-  first_component_out = isnone(out_pv_2)
+  fc_out = isnone(out_pv_2)
   # jaxpr_1 :: a1 -> b1 -> (c1, res)
   # lifted_jaxpr_2 :: res -> a2 -> b2 -> c2
-  return (jaxpr_1, consts_1), (lifted_jaxpr_2, ()), out_pv_2, first_component_out
+  return (jaxpr_1, consts_1), (lifted_jaxpr_2, ()), out_pv_2, fc_out
 
 
 def _closure_convert_jaxpr(jaxpr, newvar):
@@ -623,49 +623,50 @@ def _pack_eqn(invars, outvar):
 
 
 def partial_eval_jaxpr2(jaxpr, first_components):
-  # jaxpr :: d -> c -> a -> (b, c)
-  f = lu.wrap_init(partial(jaxpr_as_fun, jaxpr.jaxpr, jaxpr.literals))
+  # jaxpr :: d -> c -> a -> (c, b)
+  f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
 
   cell = []
+  # we do some final-style output munging to place residuals
+  # fun :: d1 -> c1 -> a1 -> (c1, (b1, res))
   def fun(*vals):
     pvals = map(as_pval, jaxpr.in_avals, first_components, vals)
     jaxpr_2, out_pval, consts_2 = trace_to_jaxpr(f, pvals)
-    (out_pv_b, out_pv_c), (out_const_b, out_const_c) = out_pval
-    cell.append(((out_pv_b, out_pv_c), jaxpr_2))
-    return pack((pack((out_const_b, pack(consts_2))), out_const_c))
+    (out_pv_c, out_pv_b), (out_const_c, out_const_b) = out_pval
+    cell.append((out_pv_c, out_pv_b, jaxpr_2))
+    return pack((out_const_c, pack((out_const_b, pack(consts_2)))))
 
   pvals = map(as_pval2, jaxpr.in_avals, first_components)
   jaxpr_1, out_pval, consts_1 = trace_to_jaxpr(
       lu.wrap_init(fun), pvals, instantiate=True)
-  out_pv_2, jaxpr_2 = cell[0]
+  out_pv_c, out_pv_b, jaxpr_2 = cell[0]
 
-  # jaxpr_1 :: d1 -> c1 -> a1 -> ((b1, res), c1)
-  # jaxpr_2 :: res | d2 -> c2 -> a2 -> (b2, c2)
-  # lifted_jaxpr_2 :: res -> d2 -> c2 -> a2 -> (b2, c2)
-  # doubly_lifted_jaxpr_2 :: d2 -> c2 -> (res, a2) -> (b2, c2)
+  #               jaxpr_1 :: d1 -> c1 -> a1 -> (c1, (b1, res))
+  #               jaxpr_2 :: res | d2 -> c2 -> a2 -> (c2, b2)
+  #        lifted_jaxpr_2 :: res -> d2 -> c2 -> a2 -> (c2, b2)
+  # doubly_lifted_jaxpr_2 :: d2 -> c2 -> (a2, res) -> (c2, b2)
   lifted_jaxpr_2 = _closure_convert_jaxpr(jaxpr_2, _partial_eval_gensym)
   doubly_lifted_jaxpr_2 = _move_and_pair_arg(lifted_jaxpr_2, _partial_eval_gensym)
-  out_pv_b, out_pv_c = out_pv_2
-  fc_out = fc_b_out, fc_c_out = isnone(out_pv_b), isnone(out_pv_c)
+  fc_out = fc_c_out, fc_b_out = isnone(out_pv_c), isnone(out_pv_b)
 
   in_avals_1, in_avals_2 = unzip2(map(_split_avals, first_components,
                                       jaxpr.in_avals))
   out_aval_1, out_aval_2 = _split_avals(fc_out, jaxpr.out_aval)
 
-  # in_avals_1 is already (d1, c1, a1), and out_aval_2 is already (b2, c2), but
+  # in_avals_1 is already (d1, c1, a1), and out_aval_2 is already (c2, b2), but
   # we must munge:
-  # 1. form out_aval_1 to include the residuals as ((b1, res), c1)
-  # 2. form in_avals_2 to include the residuals as (d2, c2, (res, a2))
+  # 1. form out_aval_1 to include the residuals as (c1, (b1, res))
+  # 2. form in_avals_2 to include the residuals as (d2, c2, (a2, res))
 
   out_pv, _ = out_pval
-  (_, res), _ = out_pv
+  _, (_, res) = out_pv
   assert isinstance(res, AbstractValue)
 
-  b1, c1 = out_aval_1
-  lifted_out_aval_1 = AbstractTuple((AbstractTuple((b1, res)), c1))
+  c1, b1 = out_aval_1
+  lifted_out_aval_1 = AbstractTuple((c1, AbstractTuple((b1, res))))
 
   d2, c2, a2 = in_avals_2
-  lifted_in_avals_2 = AbstractTuple((d2, c2, AbstractTuple((res, a2))))
+  lifted_in_avals_2 = (d2, c2, AbstractTuple((a2, res)))
 
   typed_jaxpr_1 = TypedJaxpr(jaxpr_1, consts_1, in_avals_1, lifted_out_aval_1)
   typed_jaxpr_2 = TypedJaxpr(doubly_lifted_jaxpr_2, (), lifted_in_avals_2,
@@ -678,14 +679,15 @@ def _move_and_pair_arg(jaxpr, newvar):
   pair_var = newvar()
   moved_jaxpr.invars = [d, c, pair_var]
   moved_jaxpr.eqns = (
-      [_unpack_eqn(pair_var, [res, a])] + list(jaxpr.eqns))
+      [_unpack_eqn(pair_var, [a, res])] + list(jaxpr.eqns))
   return moved_jaxpr
 
 def _split_avals(first_component, aval):
   t = type(first_component)
   if t is tuple:
     assert type(aval) is AbstractTuple
-    return unzip2(map(_split_avals, first_component, aval))
+    avals1, avals2 = unzip2(map(_split_avals, first_component, aval))
+    return AbstractTuple(avals1), AbstractTuple(avals2)
   elif t is bool:
     if first_component:
       return aval, AbstractTuple(())

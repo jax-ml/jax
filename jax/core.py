@@ -24,13 +24,13 @@ import six
 import types
 
 from . import linear_util as lu
-from .util import unzip2, safe_zip, safe_map, partial
+from .util import unzip2, safe_zip, safe_map, partial, curry
 from .pprint_util import pp, vcat, hcat, pp_kv_pairs
 
 # TODO(dougalm): the trace cache breaks the leak detector. Consisder solving.
 check_leaks = False
 # TODO(dougalm): put this behind a flag that's enabled during testing
-skip_checks = True  # not __debug__  # google doesn't use -O
+skip_checks = False  # not __debug__  # google doesn't use -O
 
 zip = safe_zip
 map = safe_map
@@ -62,6 +62,20 @@ class TypedJaxpr(namedtuple('TypedJaxpr', ['jaxpr', 'literals', 'in_avals', 'out
     assert len(literals) == len(jaxpr.constvars)
     assert len(in_avals) == len(jaxpr.invars)
     super(TypedJaxpr, self).__init__(jaxpr, literals, in_avals, out_aval)
+
+
+@curry
+def jaxpr_as_fun(typed_jaxpr, *args):
+  from jax.lax import _abstractify
+  for arg, in_aval in zip(args, typed_jaxpr.in_avals):
+    arg_aval, _ = _abstractify(arg)
+    if arg_aval != in_aval:
+      raise TypeError("input type tag mismatch")
+  out = eval_jaxpr(typed_jaxpr.jaxpr, typed_jaxpr.literals, (), *args)
+  out_aval, _ = _abstractify(out)
+  if out_aval != typed_jaxpr.out_aval:
+    raise TypeError("output type tag mismatch")
+  return out
 
 
 JaxprEqn = namedtuple('JaxprEqn', ['invars', 'outvars', 'primitive',
@@ -466,6 +480,11 @@ class JaxTuple(tuple):
 
 
 class AbstractTuple(AbstractValue, tuple):
+  def __new__(cls, elts=()):
+    elts = tuple(elts)
+    assert skip_checks or all(isinstance(e, AbstractValue) for e in elts)
+    return tuple.__new__(cls, elts)
+
   @staticmethod
   def _iter(tracer):
     return map(full_lower, tracer.unpack())

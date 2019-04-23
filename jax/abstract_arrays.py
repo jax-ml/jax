@@ -49,6 +49,9 @@ class UnshapedArray(core.AbstractValue):
   def __eq__(self, other):
     return type(self) is type(other) and self.dtype == other.dtype
 
+  def __ne__(self, other):
+    return not self == other
+
   def __hash__(self):
     return hash(str(self.dtype))
 

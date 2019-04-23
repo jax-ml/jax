@@ -2,7 +2,6 @@ from functools import partial
 
 import numpy as onp
 
-from jax.scan import scan_reference
 from jax.initial_style import scan_initial
 from jax.core import pack
 import jax.core as core
@@ -10,30 +9,40 @@ import jax.numpy as np
 from jax import jvp, linearize
 from jax import lax
 
-# scan :: (a -> c -> (b,c)) -> c -> [a] -> ([b],c)
-
 ###
 
-def cumsum(xs):
-  def f(x, carry):
-    carry = carry + x
-    return pack((carry, carry))
+def scan_reference(f, init, xs):
+  carry = init
+  ys = []
+  for x in xs:
+    (carry, y) = f(carry, x)
+    ys.append(y)
+  ys = np.stack(ys)
+  return core.pack((np.array(carry), ys))
 
-  ys, _ = scan_initial(f, 0.0, xs)
-  return ys
+d = np.zeros(2)
+def f(c, a):
+  assert a.shape == (3,)
+  assert c.shape == (4,)
+  b = np.sum(np.sin(a)) + np.sum(np.sin(c)) + np.sum(np.sin(d))
+  c = np.sin(c * b)
+  assert b.shape == ()
+  return core.pack((c, b))
 
-x = np.linspace(0, 3, 4)
+as_ = np.ones((5, 3))
+c = np.ones(4)
 
-print np.cumsum(x)
-print cumsum(x)
+print scan_reference(f, c, as_)
+print scan_initial(f, c, as_)
 print
 
-print jvp(np.cumsum, (x,), (x*0.1,))
-print jvp(cumsum, (x,), (x*0.1,))
+print jvp(lambda c, as_: scan_reference(f, c, as_), (c, as_), (c, as_))[1]
+print jvp(lambda c, as_:   scan_initial(f, c, as_), (c, as_), (c, as_))[1]
 print
 
-print linearize(np.cumsum, x)[1](x*0.1)
-print linearize(cumsum, x)[1](x*0.1)
+print linearize(lambda c, as_: scan_reference(f, c, as_), c, as_)[1](c, as_)
+print linearize(lambda c, as_:   scan_initial(f, c, as_), c, as_)[1](c, as_)
+print
 
 
 # ###

@@ -40,10 +40,6 @@ def convert_zeros(keep_symbolic, example, tangent):
   else:
     return tangent
 
-@curry
-def jaxpr_as_fun(jaxpr, consts, *args):
-  return core.eval_jaxpr(jaxpr, consts, (), *args)
-
 
 _call_const = pe.gensym('_consts')
 
@@ -59,7 +55,7 @@ def call_initial(f, *args):
 def _call_initial_impl(*args, **kwargs):
   jaxpr = kwargs.pop('jaxpr')
   consts = kwargs.pop('consts')
-  return jaxpr_as_fun(jaxpr, consts)(*args)
+  return core.jaxpr_as_fun(jaxpr, consts)(*args)
 
 def _call_initial_jvp(primals, tangents, jaxpr, consts):
   avals = [aval for (aval, _) in map(_abstractify, primals)]
@@ -159,7 +155,7 @@ def update_arrays(i, aval, xs, x):
 
 _scan_const = pe.gensym('_consts')
 
-# scan :: (a -> c -> (b, c)) -> c -> [a] -> ([b], c)
+# scan :: (c -> a -> (b, c)) -> c -> [a] -> (c, [b])
 def scan_initial(f, init, xs):
   carry_pval = carry_aval, _ = _abstractify(init)
   xs_aval, _ = _abstractify(xs)
@@ -167,41 +163,40 @@ def scan_initial(f, init, xs):
   x_pval = pe.PartialVal((x_aval, core.unit))
   jaxpr, pval_out, consts = pe.trace_to_jaxpr(
       lu.wrap_init(f), (carry_pval, x_pval), instantiate=True)
-  (y_aval, carry_aval_out), _ = pval_out
+  (carry_aval_out, y_aval), _ = pval_out
   assert carry_aval == carry_aval_out
   lifted_jaxpr = pe._closure_convert_jaxpr(jaxpr, _scan_const)
   consts_aval, _ = _abstractify(core.pack(consts))
   in_avals = (consts_aval, carry_aval, x_aval)
-  out_aval = core.AbstractTuple((y_aval, carry_aval))
+  out_aval = core.AbstractTuple((carry_aval, y_aval))
   jaxpr = core.TypedJaxpr(lifted_jaxpr, (), in_avals, out_aval)
-  return scan_initial_p.bind(core.pack(consts), init, xs, jaxpr=jaxpr)
-
-
-# scan_p :: (d -> a -> c -> (b, c)) -> d -> c -> [a] -> ([b], c)
-def _scan_initial_impl(consts, init, xs, jaxpr):
-  # TODO maybe can do this work in the traceable, not every impl call
   length = leading_dim_size(xs)
+  return scan_initial_p.bind(core.pack(consts), init, xs,
+                             length=length, jaxpr=jaxpr)
+
+
+def _scan_initial_impl(consts, init, xs, length, jaxpr):
   _, _, x_aval = jaxpr.in_avals
-  y_aval, _ = jaxpr.out_aval
+  _, y_aval = jaxpr.out_aval
   ys_aval = promote_aval_rank(length, y_aval)
 
   def body_fun(i, vals):
     carry, ys = vals
     x = index_arrays(i, x_aval, xs)
-    y, carry_out = jaxpr_as_fun(jaxpr.jaxpr, jaxpr.literals)(consts, x, carry)
+    carry_out, y = core.jaxpr_as_fun(jaxpr)(consts, carry, x)
     ys_out = update_arrays(i, y_aval, ys, y)
     return (carry_out, ys_out)
 
   ys_init = empty_arrays(ys_aval)
   carry, ys = lax.fori_loop(0, length, body_fun, (init, ys_init))
-  return core.pack((ys, carry))
+  return core.pack((carry, ys))
 
 
-def _scan_initial_jvp(primals, tangents, jaxpr):
+def _scan_initial_jvp(primals, tangents, length, jaxpr):
   consts, init, xs = primals
   consts_dot, init_dot, xs_dot = tangents
   consts_aval, carry_aval, x_aval = jaxpr.in_avals
-  y_aval, _ = jaxpr.out_aval
+  _, y_aval = jaxpr.out_aval
 
   where_consts_zeros = ad.get_zeros(consts_dot)
   where_init_zeros = ad.get_zeros(init_dot)
@@ -211,7 +206,7 @@ def _scan_initial_jvp(primals, tangents, jaxpr):
   while True:
     where_zeros = (where_consts_zeros, where_carry_zeros, where_xs_zeros)
     jaxpr_jvp, where_zeros_out = ad.jvp_jaxpr2(jaxpr, where_zeros)
-    where_ys_zeros, where_carry_zeros_out = where_zeros_out
+    where_carry_zeros_out, where_ys_zeros = where_zeros_out
     if where_carry_zeros_out == where_carry_zeros:
       break
     else:
@@ -227,15 +222,15 @@ def _scan_initial_jvp(primals, tangents, jaxpr):
   init_dual = core.pack((init, nonzero_init_dot))
   xs_dual = core.pack((xs, nonzero_xs_dot))
 
-  ys_dual, carry_out_dual = scan_initial_p.bind(
-      consts_dual, init_dual, xs_dual, jaxpr=jaxpr_jvp)
+  carry_out_dual, ys_dual = scan_initial_p.bind(
+      consts_dual, init_dual, xs_dual, length=length, jaxpr=jaxpr_jvp)
 
   ys, ys_dot = ys_dual
   ys_dot = ad.put_zeros(ad.TangentTuple, where_ys_zeros, ys_dot)
 
   carry_out, carry_out_dot = carry_out_dual
   carry_out_dot = ad.put_zeros(ad.TangentTuple, where_carry_zeros_out, carry_out_dot)
-  return core.pack((ys, carry_out)), ad.TangentTuple((ys_dot, carry_out_dot))
+  return core.pack((carry_out, ys)), ad.TangentTuple((carry_out_dot, ys_dot))
 
 def instantiate_zeros(example, tangent, keep_symbolic):
   if tangent is ad.zero:
@@ -264,6 +259,7 @@ def binary_lattice_join(a, b):
 
 def _scan_initial_partial_eval(trace, *tracers, **kwargs):
   jaxpr = kwargs.pop('jaxpr')
+  length = kwargs.pop('length')
   in_pvs, in_consts = unzip2([t.pval for t in tracers])
   fc_consts, fc_init, fc_xs = map(is_const, in_pvs)
 
@@ -271,31 +267,28 @@ def _scan_initial_partial_eval(trace, *tracers, **kwargs):
   while True:
     first_components = (fc_consts, fc_carry, fc_xs)
     jaxpr_1, jaxpr_2, fc_out = pe.partial_eval_jaxpr2(jaxpr, first_components)
-    fc_ys, fc_carry_out = fc_out
+    fc_carry_out, fc_ys = fc_out
     if fc_carry_out == fc_carry:
       break
     else:
       fc_carry = binary_lattice_join(fc_carry, fc_carry_out)
-
-  import ipdb; ipdb.set_trace()
 
   consts_tracer, init_tracer, xs_tracer = tracers
   lifted_init_tracer = _lift_tracer(trace, init_tracer, fc_carry)
   lifted_tracers = consts_tracer, lifted_init_tracer, xs_tracer
   in_pvs, in_consts = unzip2([t.pval for t in lifted_tracers])
 
-  # TODO first_components reconciled with aval splitting
-  # TODO avals_2 reconciled with residuals
+  out_pv = _put_known_pvs(fc_out, jaxpr.out_aval)
 
-  (ys, residuals), out_const = scan_initial_p.bind(
-      *in_consts, avals=avals_1, jaxpr=jaxpr_1, true_consts=consts_1)
+  out_carry, (ys, residuals) = scan_initial_p.bind(
+      *in_consts, length=length, jaxpr=jaxpr_1)
+  out_const = core.pack((out_carry, ys))
   residual_tracers = core.pack(map(trace.new_instantiated_const, residuals))
   d, c, a = lifted_tracers
-  new_tracers = (d, c, core.pack((residual_tracers, a)))
+  new_tracers = (d, c, core.pack((a, residual_tracers)))
   eqn = core.JaxprEqn(new_tracers, None, scan_initial_p, (), False,
-                      dict(jaxpr=jaxpr_2, true_consts=consts_2, avals=avals_2))
-  import ipdb; ipdb.set_trace()
-  return pe.JaxprTracer((trace, pe.PartialVal((out_pv, out_const)), eqn))
+                      dict(length=length, jaxpr=jaxpr_2))
+  return pe.JaxprTracer(trace, pe.PartialVal((out_pv, out_const)), eqn)
 
 def _lift_tracer(trace, tracer, is_const):
   t = type(is_const)
@@ -309,6 +302,14 @@ def _lift_tracer(trace, tracer, is_const):
     return core.pack(map(partial(_lift_tracer, trace), tracers, is_const))
   else:
     raise TypeError(t)
+
+def _put_known_pvs(is_known, aval):
+  if is_known is True:
+    return None
+  elif is_known is False:
+    return aval
+  else:
+    return pe.JaxprTracerTuple(map(_put_known_pvs, is_known, aval))
 
 
 scan_initial_p = core.Primitive("scan_initial")
