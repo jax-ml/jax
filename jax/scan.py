@@ -50,7 +50,7 @@ def scan_reference(f, init, xs):
   carry = init
   ys = []
   for x in xs:
-    (y, carry) = f(x, carry)
+    (carry, y) = f(x, carry)
     ys.append(y)
 
   ys = core.pack(map(np.stack, zip(*ys)))
