@@ -38,5 +38,5 @@ def logpdf(x, df, loc=0, scale=1):
   return lax.neg(lax.add(normalize_term, lax.mul(df_plus_one_over_two, lax.log1p(quadratic))))
 
 @_wraps(osp_stats.t.pdf)
-def pdf(x, loc=0, scale=1):
-  return lax.exp(logpdf(x, loc, scale))
+def pdf(x, df, loc=0, scale=1):
+  return lax.exp(logpdf(x, df, loc, scale))
