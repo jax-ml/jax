@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2019 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,14 +13,10 @@
 # limitations under the License.
 
 from __future__ import absolute_import
-from . import bernoulli
-from . import beta
-from . import cauchy
-from . import expon
-from . import gamma
-from . import laplace
-from . import multivariate_normal
-from . import norm
-from . import pareto
-from . import t
-from . import uniform
+from .lax import *
+from .lax import (_reduce_sum, _reduce_max, _reduce_min, _reduce_or,
+                  _reduce_and, _reduce_window_sum, _reduce_window_max,
+                  _reduce_window_min, _reduce_window_prod, _float, _complex,
+                  _input_dtype, _const, _eq_meet, _safe_mul)
+from .lax_control_flow import *
+from .lax_parallel import *

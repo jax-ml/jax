@@ -66,11 +66,15 @@ class JaxprTrace(Trace):
       raise TypeError(pv)
 
   def process_primitive(self, primitive, tracers, params):
-    tracers = map(self.instantiate_const, tracers)
-    avals = [t.aval for t in tracers]
-    out_aval = primitive.abstract_eval(*avals, **params)
-    eqn = JaxprEqn(tracers, None, primitive, (), False, params)
-    return JaxprTracer(self, PartialVal((out_aval, unit)), eqn)
+    if primitive in custom_partial_eval_rules:
+      partial_eval = custom_partial_eval_rules[primitive]
+      return partial_eval(self, *tracers, **params)
+    else:
+      tracers = map(self.instantiate_const, tracers)
+      avals = [t.aval for t in tracers]
+      out_aval = primitive.abstract_eval(*avals, **params)
+      eqn = JaxprEqn(tracers, None, primitive, (), False, params)
+      return JaxprTracer(self, PartialVal((out_aval, unit)), eqn)
 
   def pack(self, tracers):
     eqn = JaxprEqn(tracers, None, core.pack_p, (), False, {})
@@ -170,8 +174,9 @@ def partial_eval(f, trace, pvs):
 
 
 @transformation_with_aux
-def partial_eval_wrapper(avals, *consts, **kwargs):
-  jaxpr, (out_pval, consts, env) = yield (map(PartialVal, zip(avals, consts)),)
+def partial_eval_wrapper(avals, *consts):
+  py_args = (map(PartialVal, zip(avals, consts)),)
+  jaxpr, (out_pval, consts, env) = yield py_args, {}
   out_pv, out_const = out_pval
   out = pack((out_const, pack(consts)))
   yield out, (out_pv, jaxpr, env)
@@ -334,13 +339,13 @@ def abstractify(x):
   return PartialVal((core.concrete_aval(x), unit))
 
 def trace_unwrapped_to_jaxpr(fun, pvals, **kwargs):
-  return trace_to_jaxpr(lu.wrap_init(fun), pvals, **kwargs)
+  return trace_to_jaxpr(lu.wrap_init(fun, kwargs), pvals)
 
-def trace_to_jaxpr(fun, pvals, **kwargs):
+def trace_to_jaxpr(fun, pvals):
   """Traces a function, given abstract inputs, to a jaxpr."""
   with new_master(JaxprTrace) as master:
     fun = trace_to_subjaxpr(fun, master)
-    jaxpr, (out_pval, consts, env) = fun.call_wrapped(pvals, **kwargs)
+    jaxpr, (out_pval, consts, env) = fun.call_wrapped(pvals)
     assert not env
     del master
 
@@ -351,7 +356,7 @@ def trace_to_subjaxpr(master, pvals):
   assert all([isinstance(pv, PartialVal) for pv in pvals]), pvals
   trace = JaxprTrace(master, core.cur_sublevel())
   in_tracers = map(trace.new_arg, pvals)
-  out_tracer = yield in_tracers
+  out_tracer = yield in_tracers, {}
   out_tracer = trace.full_raise(out_tracer)
   jaxpr, consts, env = tracers_to_jaxpr(in_tracers, out_tracer)
   out_pval = out_tracer.pval
@@ -464,7 +469,7 @@ def eval_jaxpr_raw(jaxpr, consts, freevar_vals, *args):
     map(write, eqn.outvars, outvals)
   return read(jaxpr.outvar)
 
-def compiled_call_impl(fun, *args, **kwargs):
+def compiled_call_impl(fun, *args):
   with new_master(JaxprTrace, True) as master:
     pvals = map(abstractify, args)
     jaxpr, (pval, consts, env) = trace_to_subjaxpr(fun, master).call_wrapped(pvals)
@@ -477,3 +482,5 @@ compiled_call_p = Primitive('compiled_call')
 compiled_call = partial(core.call_bind, compiled_call_p)
 compiled_call_p.def_custom_bind(compiled_call)
 compiled_call_p.def_impl(compiled_call_impl)
+
+custom_partial_eval_rules = {}

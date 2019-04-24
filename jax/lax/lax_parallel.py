@@ -15,8 +15,8 @@
 Parallelization primitives.
 """
 
-from jax import lax
 from jax import ad_util
+from jax.lax import lax
 from jax.abstract_arrays import ShapedArray
 from jax.core import Primitive
 from jax.interpreters import ad
@@ -145,7 +145,7 @@ def _psplit_like_serial_pmap_rule(vals, axes):
   if xaxis is not None and x.shape[xaxis] != x.shape[yaxis]:
     raise ValueError(
         "psplit_like is a non-square re-split along {} and {} of {}".format(
-            axis, yaxis, x.shape))
+            xaxis, yaxis, x.shape))
   return x, yaxis
 
 psplit_like_p = PmapPrimitive('psplit_like')

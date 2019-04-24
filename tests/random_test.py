@@ -51,6 +51,13 @@ class LaxRandomTest(jtu.JaxTestCase):
     statistic = scipy.stats.kstest(samples, cdf).statistic
     self.assertLess(1. - scipy.special.kolmogorov(statistic), fail_prob)
 
+  def _CheckChiSquared(self, samples, pmf):
+    alpha = 0.01  # significance level, threshold for p-value
+    values, actual_freq = onp.unique(samples, return_counts=True)
+    expected_freq = pmf(values) * len(values)
+    _, p_value = scipy.stats.chisquare(actual_freq, expected_freq)
+    self.assertLess(p_value, alpha)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
       for dtype in [onp.float32, onp.float64]))
@@ -151,11 +158,45 @@ class LaxRandomTest(jtu.JaxTestCase):
     self.assertFalse(onp.all(perm1 == x))  # seems unlikely!
     self.assertTrue(onp.all(onp.sort(perm1) == x))
 
-  # TODO: add Chi-squared test for Bernoulli
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_p={}_{}".format(p, dtype),
+       "p": p, "dtype": onp.dtype(dtype).name}
+      for p in [0.1, 0.5, 0.9]
+      for dtype in [onp.float32, onp.float64]))
+  def testBernoulli(self, p, dtype):
+    key = random.PRNGKey(0)
+    p = onp.array(p, dtype=dtype)
+    rand = lambda key, p: random.bernoulli(key, p, (10000,))
+    crand = api.jit(rand)
+
+    uncompiled_samples = rand(key, p)
+    compiled_samples = crand(key, p)
+
+    for samples in [uncompiled_samples, compiled_samples]:
+      self._CheckChiSquared(samples, scipy.stats.bernoulli(p).pmf)
+
   def testBernoulliShape(self):
     key = random.PRNGKey(0)
     x = random.bernoulli(key, onp.array([0.2, 0.3]), shape=(3, 2))
     assert x.shape == (3, 2)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_a={}_b={}_{}".format(a, b, dtype),
+       "a": a, "b": b, "dtype": onp.dtype(dtype).name}
+      for a in [0.2, 5.]
+      for b in [0.2, 5.]
+      for dtype in [onp.float32, onp.float64]))
+  @jtu.skip_on_devices("tpu")  # TODO(phawkins): re-enable
+  def testBeta(self, a, b, dtype):
+    key = random.PRNGKey(0)
+    rand = lambda key, a, b: random.beta(key, a, b, (10000,), dtype)
+    crand = api.jit(rand)
+
+    uncompiled_samples = rand(key, a, b)
+    compiled_samples = crand(key, a, b)
+
+    for samples in [uncompiled_samples, compiled_samples]:
+      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.beta(a, b).cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
@@ -172,6 +213,26 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.cauchy().cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_alpha={}_{}".format(alpha, dtype),
+       "alpha": alpha, "dtype": onp.dtype(dtype).name}
+      for alpha in [[0.2, 1., 5.]]
+      for dtype in [onp.float32, onp.float64]))
+  @jtu.skip_on_devices("tpu")  # TODO(phawkins): re-enable
+  def testDirichlet(self, alpha, dtype):
+    key = random.PRNGKey(0)
+    rand = lambda key, alpha: random.dirichlet(key, alpha, (10000,), dtype)
+    crand = api.jit(rand)
+
+    uncompiled_samples = rand(key, alpha)
+    compiled_samples = crand(key, alpha)
+
+    for samples in [uncompiled_samples, compiled_samples]:
+      self.assertAllClose(samples.sum(-1), onp.ones(10000, dtype=dtype), check_dtypes=True)
+      alpha_sum = sum(alpha)
+      for i, a in enumerate(alpha):
+        self._CheckKolmogorovSmirnovCDF(samples[..., i], scipy.stats.beta(a, alpha_sum - a).cdf)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
       for dtype in [onp.float32, onp.float64]))
   def testExponential(self, dtype):
@@ -184,6 +245,43 @@ class LaxRandomTest(jtu.JaxTestCase):
 
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.expon().cdf)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_a={}_{}".format(a, dtype),
+       "a": a, "dtype": onp.dtype(dtype).name}
+      for a in [0.1, 1., 10.]
+      for dtype in [onp.float32, onp.float64]))
+  @jtu.skip_on_devices("tpu")  # TODO(phawkins): re-enable
+  def testGamma(self, a, dtype):
+    key = random.PRNGKey(0)
+    rand = lambda key, a: random.gamma(key, a, (10000,), dtype)
+    crand = api.jit(rand)
+
+    uncompiled_samples = rand(key, a)
+    compiled_samples = crand(key, a)
+
+    for samples in [uncompiled_samples, compiled_samples]:
+      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.gamma(a).cdf)
+
+  @jtu.skip_on_devices("tpu")  # TODO(phawkins): re-enable
+  def testGammaShape(self):
+    key = random.PRNGKey(0)
+    x = random.gamma(key, onp.array([0.2, 0.3]), shape=(3, 2))
+    assert x.shape == (3, 2)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
+      for dtype in [onp.float32, onp.float64]))
+  def testGumbel(self, dtype):
+    key = random.PRNGKey(0)
+    rand = lambda key: random.gumbel(key, (10000,), dtype)
+    crand = api.jit(rand)
+
+    uncompiled_samples = rand(key)
+    compiled_samples = crand(key)
+
+    for samples in [uncompiled_samples, compiled_samples]:
+      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.gumbel_r().cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
@@ -220,6 +318,23 @@ class LaxRandomTest(jtu.JaxTestCase):
     x = random.pareto(key, onp.array([0.2, 0.3]), shape=(3, 2))
     assert x.shape == (3, 2)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_df={}_{}".format(df, dtype),
+       "df": df, "dtype": onp.dtype(dtype).name}
+      for df in [0.1, 1., 10.]
+      for dtype in [onp.float32, onp.float64]))
+  @jtu.skip_on_devices("tpu")  # TODO(phawkins): re-enable
+  def testT(self, df, dtype):
+    key = random.PRNGKey(0)
+    rand = lambda key, df: random.t(key, df, (10000,), dtype)
+    crand = api.jit(rand)
+
+    uncompiled_samples = rand(key, df)
+    compiled_samples = crand(key, df)
+
+    for samples in [uncompiled_samples, compiled_samples]:
+      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.t(df).cdf)
+
   def testIssue222(self):
     x = random.randint(random.PRNGKey(10003), (), 0, 0)
     assert x == 0
@@ -228,20 +343,6 @@ class LaxRandomTest(jtu.JaxTestCase):
     key = random.PRNGKey(0)
     keys = [random.fold_in(key, i) for i in range(10)]
     assert onp.unique(onp.ravel(keys)).shape == (20,)
-
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
-      for dtype in [onp.float32, onp.float64]))
-  def testGumbel(self, dtype):
-    key = random.PRNGKey(0)
-    rand = lambda key: random.gumbel(key, (10000,), dtype)
-    crand = api.jit(rand)
-
-    uncompiled_samples = rand(key)
-    compiled_samples = crand(key)
-
-    for samples in [uncompiled_samples, compiled_samples]:
-      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.gumbel_r().cdf)
 
 
 if __name__ == "__main__":

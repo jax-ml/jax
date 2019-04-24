@@ -46,8 +46,6 @@ flags.DEFINE_bool('jax_debug_nans',
                   strtobool(os.getenv('JAX_DEBUG_NANS', "False")),
                   'Add nan checks to every operation.')
 
-map = safe_map
-
 def apply_primitive(prim, *args, **kwargs):
   abstract_args = map(abstractify, args)
   compiled_fun = xla_primitive_callable(prim, *abstract_args, **kwargs)
@@ -55,7 +53,7 @@ def apply_primitive(prim, *args, **kwargs):
 
 @memoize
 def xla_primitive_callable(prim, *abstract_args, **kwargs):
-  shapes = map(xla_shape, abstract_args)
+  shapes = tuple(map(xla_shape, abstract_args))
   built_c = primitive_computation(prim, *shapes, **kwargs)
   result_shape = xla_shape_to_result_shape(built_c.GetReturnValueShape())
   handle_result = result_handler(result_shape)
@@ -91,11 +89,55 @@ def device_put(x, device_num=0):
     if x.device_buffer.device() == device_num:
       return x.device_buffer
     else:
+      # TODO(phawkins): perform a direct device-to-device copy rather than
+      # bouncing via the host.
       return device_put(x.device_buffer.to_py(), device_num)
   elif isinstance(x, DeviceConstant):
     return instantiate_device_constant(x, device_num=device_num)
   else:
     return xb.device_put(x, device_num)  # round-trips tuple elements
+
+def device_put_many(xs_and_devices):
+  """Place multiple Python values on multiple devices in parallel.
+
+  This is a wrapper around jax.lib.xla_bridge.device_put_many to handle
+  additional Python array types, namely DeviceArray (which is already backed by
+  device memory, though may be on the wrong device) and DeviceConstant. In
+  particular, it avoids transferring data already placed on the correct device,
+  and handles instantiating DeviceConstants.
+
+  Args:
+    xs_and_devices: a sequence of (pyval, device_num) pairs where pyval is an
+      ndarray, DeviceArray, DeviceConstant, or JaxTuple and device_num is an int
+      representing the physical device number on which pyval should be placed.
+
+  Returns:
+    A sequence of buffers representing the inputs placed on the corresponding
+    device numbers.
+  """
+  transfer_indices = []
+  transfers = []
+  outputs = [None] * len(xs_and_devices)
+  for i, (x, device_num) in enumerate(xs_and_devices):
+    x = canonicalize_pyval_dtype(x)
+    if type(x) is DeviceArray:
+      if x.device_buffer.device() == device_num:
+        outputs[i] = x.device_buffer
+      else:
+        transfer_indices.append(i)
+        # TODO(phawkins): perform a direct device-to-device copy rather than
+        # bouncing via the host.
+        transfers.append((x.device_buffer.to_py(), device_num))
+    elif isinstance(x, DeviceConstant):
+      outputs[i] = instantiate_device_constant(x, device_num=device_num)
+    else:
+      transfer_indices.append(i)
+      transfers.append((x, device_num))
+
+  transfer_results = xb.device_put_many(transfers)
+  for i, result in zip(transfer_indices, transfer_results):
+    outputs[i] = result
+  return outputs
 
 def result_handler(result_shape):
   if type(result_shape) is ResultArray and FLAGS.jax_device_values:
@@ -158,28 +200,30 @@ def jaxpr_computation(jaxpr, const_vals, freevar_shapes, *arg_shapes):
   consts_env = dict(zip(jaxpr.constvars, const_vals))
   write(core.unitvar, c.Tuple())
   if const_vals:
-    map(write, jaxpr.constvars, map(c.Constant, const_vals))
-    map(write, jaxpr.freevars, map(c.ParameterWithShape, freevar_shapes))
+    _map(write, jaxpr.constvars, map(c.Constant, const_vals))
+    _map(write, jaxpr.freevars, map(c.ParameterWithShape, freevar_shapes))
   else:
     all_freevars = it.chain(jaxpr.constvars, jaxpr.freevars)
-    map(write, all_freevars, map(c.ParameterWithShape, freevar_shapes))
-  map(write, jaxpr.invars, map(c.ParameterWithShape, arg_shapes))
+    _map(write, all_freevars, map(c.ParameterWithShape, freevar_shapes))
+  _map(write, jaxpr.invars, map(c.ParameterWithShape, arg_shapes))
   for eqn in jaxpr.eqns:
-    in_nodes = map(read, eqn.invars)
-    in_shapes = map(c.GetShape, in_nodes)
+    in_nodes = list(map(read, eqn.invars))
     subcs = [
         jaxpr_computation(
             subjaxpr, (),
-            map(c.GetShape, map(read, const_bindings + freevar_bindings)),
-            *in_shapes)
+            tuple(map(c.GetShape, map(read, const_bindings + freevar_bindings))),
+            *map(c.GetShape, in_nodes))
         for subjaxpr, const_bindings, freevar_bindings in eqn.bound_subjaxprs]
     subfuns = [(subc, tuple(map(read, const_bindings + freevar_bindings)))
                for subc, (_, const_bindings, freevar_bindings)
                in zip(subcs, eqn.bound_subjaxprs)]
     ans = translation_rule(eqn.primitive)(c, *(subfuns + in_nodes), **eqn.params)
     out_nodes = xla_destructure(c, ans) if eqn.destructure else [ans]
-    map(write, eqn.outvars, out_nodes)
+    _map(write, eqn.outvars, out_nodes)
   return c.Build(read(jaxpr.outvar))
+
+def _map(f, *xs):
+  return tuple(map(f, *xs))
 
 def xla_destructure(c, ans):
   num_elements = len(c.GetShape(ans).tuple_shapes())
@@ -200,10 +244,10 @@ def translation_rule(p):
 
 
 def lower_fun(fun, c, *xla_args, **params):
-  xla_shapes = map(c.GetShape, xla_args)
+  xla_shapes = tuple(map(c.GetShape, xla_args))
   avals = map(aval_from_xla_shape, xla_shapes)
   pvals = [pe.PartialVal((a, core.unit)) for a in avals]
-  jaxpr, pvout, consts = pe.trace_unwrapped_to_jaxpr(fun, pvals, **params)
+  jaxpr, _, consts = pe.trace_unwrapped_to_jaxpr(fun, pvals, **params)
   built_c = jaxpr_computation(jaxpr, consts, (), *xla_shapes)
   return c.Call(built_c, xla_args)
 
@@ -261,7 +305,7 @@ def abstractify(x):
 pytype_aval_mappings = {}
 
 def abstractify_tuple(tup):
-  return AbstractTuple(tuple(map(abstractify, tup)))
+  return AbstractTuple(map(abstractify, tup))
 pytype_aval_mappings[JaxTuple] = abstractify_tuple
 pytype_aval_mappings[AbstractTuple] = abstractify_tuple
 
@@ -303,8 +347,7 @@ class DeviceArray(DeviceValue):
     return onp.asarray(self)
 
   def __repr__(self):
-    shape_str = ",".join(map(str, self.shape))
-    return "DeviceArray{{{}[{}]}}".format(onp.dtype(self.dtype).name, shape_str)
+    return onp.array_repr(self)
 
   def __len__(self):
     try:
@@ -412,7 +455,7 @@ def xla_shape(x):
 @lu.transformation_with_aux
 def flatten_fun(in_trees, *flat_args):
   jtuple_trees = tuple(map(partial(build_tree, iter(flat_args)), in_trees))
-  ans = yield jtuple_trees
+  ans = yield jtuple_trees, {}
   aval = core.get_aval(ans)
   if type(aval) is AbstractTuple:
     ans_flat, out_tree = tree_flatten(ans)
@@ -422,8 +465,11 @@ def flatten_fun(in_trees, *flat_args):
 
 def tree_flatten(maybe_tree):
   aval = core.get_aval(maybe_tree)
+  return _tree_flatten(aval, maybe_tree)
+
+def _tree_flatten(aval, maybe_tree):
   if type(aval) is AbstractTuple:
-    flat_children, child_specs = unzip2(map(tree_flatten, maybe_tree))
+    flat_children, child_specs = unzip2(map(_tree_flatten, aval, maybe_tree))
     return it.chain.from_iterable(flat_children), JTupleTreeDef(child_specs)
   elif core.skip_checks or valid_jaxtype(maybe_tree):
     return [maybe_tree], leaf

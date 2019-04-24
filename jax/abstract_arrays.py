@@ -44,13 +44,16 @@ class UnshapedArray(core.AbstractValue):
   array_abstraction_level = 3
 
   def __init__(self, dtype):
-    self.dtype = dtype
+    self.dtype = onp.dtype(xla_bridge.canonicalize_dtype(dtype))
 
   def __eq__(self, other):
     return type(self) is type(other) and self.dtype == other.dtype
 
   def __hash__(self):
-    return hash(str(self.dtype))
+    # can use hash(self.dtype) and rely on the fact that numpy reuses base dtype
+    # objects, e.g. `onp.zeros(3).dtype is onp.zeros(4).dtype`, or we can use
+    # the unique character code via hash(self.dtype.char)
+    return hash(self.dtype)
 
   def __repr__(self):
     return '{}({})'.format(self.__class__.__name__, self.str_short())
@@ -74,7 +77,7 @@ class UnshapedArray(core.AbstractValue):
       raise TypeError(other)
 
   def str_short(self):
-    return onp.dtype(self.dtype).name
+    return self.dtype.name
 
 
 class ShapedArray(UnshapedArray):
@@ -93,7 +96,10 @@ class ShapedArray(UnshapedArray):
             and self.dtype == other.dtype and self.shape == other.shape)
 
   def __hash__(self):
-    return hash((self.shape, str(self.dtype)))
+    # can use hash(self.dtype) and rely on the fact that numpy reuses base dtype
+    # objects, e.g. `onp.zeros(3).dtype is onp.zeros(4).dtype`, or we can use
+    # the unique character code via hash(self.dtype.char)
+    return hash((self.shape, self.dtype))
 
   def at_least_vspace(self):
     return self
@@ -107,9 +113,8 @@ class ShapedArray(UnshapedArray):
       raise TypeError(other)
 
   def str_short(self):
-    dtypestr = onp.dtype(self.dtype).name
     shapestr = ','.join(map(str, self.shape))
-    return '{}[{}]'.format(dtypestr, shapestr)
+    return '{}[{}]'.format(self.dtype.name, shapestr)
 
   def __len__(self):
     try:
@@ -173,3 +178,12 @@ array_types = [onp.ndarray, onp.float64, onp.float32, onp.float16,
 for t in array_types:
   core.pytype_aval_mappings[t] = ConcreteArray
   ad_util.jaxval_zeros_likers[t] = zeros_like_array
+
+
+def raise_to_shaped(aval):
+  if type(aval) is core.AbstractTuple:
+    return core.AbstractTuple(map(raise_to_shaped, aval))
+  elif isinstance(aval, ShapedArray):
+    return ShapedArray(aval.shape, aval.dtype)
+  else:
+    raise TypeError(type(aval))
