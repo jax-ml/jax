@@ -74,6 +74,12 @@ def xlogy(x, y):
   return lax._safe_mul(x, lax.log(y))
 
 
+@_wraps(osp_special.xlog1py)
+def xlog1py(x, y):
+  x, y = _promote_args_like(osp_special.xlog1py, x, y)
+  return lax._safe_mul(x, lax.log1p(y))
+
+
 # Normal distributions
 
 # Functions "ndtr" and "ndtri" are derived from calculations made in:

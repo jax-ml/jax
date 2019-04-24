@@ -380,12 +380,12 @@ def _normal(key, shape, dtype):
   return onp.array(onp.sqrt(2), dtype) * lax.erf_inv(u)
 
 
-def bernoulli(key, mean=onp.float32(0.5), shape=()):
+def bernoulli(key, p=onp.float32(0.5), shape=()):
   """Sample Bernoulli random values with given shape and mean.
 
   Args:
     key: a PRNGKey used as the random key.
-    mean: optional, an array-like broadcastable to `shape` for the mean of the
+    p: optional, an array-like broadcastable to `shape` for the mean of the
       random variables (default 0.5).
     shape: optional, a tuple of nonnegative integers representing the shape
       (default scalar).
@@ -393,16 +393,45 @@ def bernoulli(key, mean=onp.float32(0.5), shape=()):
   Returns:
     A random array with the specified shape and boolean dtype.
   """
-  return _bernoulli(key, mean, shape)
+  return _bernoulli(key, p, shape)
 
 @partial(jit, static_argnums=(2,))
-def _bernoulli(key, mean, shape):
-  shape = shape or onp.shape(mean)
-  if not onp.issubdtype(lax.dtype(mean), onp.float32):
-    mean = lax.convert_element_type(mean, onp.float32)
-  if onp.shape(mean) != shape:
-    mean = np.broadcast_to(mean, shape)
-  return lax.lt(uniform(key, shape), mean)
+def _bernoulli(key, p, shape):
+  shape = shape or onp.shape(p)
+  if not onp.issubdtype(onp.float32, lax.dtype(p)):
+    p = lax.convert_element_type(p, onp.float32)
+  if onp.shape(p) != shape:
+    p = np.broadcast_to(p, shape)
+  return lax.lt(uniform(key, shape, lax.dtype(p)), p)
+
+
+def beta(key, a, b, shape=(), dtype=onp.float32):
+  """Sample Bernoulli random values with given shape and mean.
+
+  Args:
+    key: a PRNGKey used as the random key.
+    a: an array-like broadcastable to `shape` and used as the shape parameter
+      alpha of the random variables.
+    b: an array-like broadcastable to `shape` and used as the shape parameter
+      beta of the random variables.
+    shape: optional, a tuple of nonnegative integers representing the shape
+      (default scalar).
+    dtype: optional, a float dtype for the returned values (default float32).
+
+  Returns:
+    A random array with the specified shape and dtype.
+  """
+  return _beta(key, a, b, shape, dtype)
+
+@partial(jit, static_argnums=(3, 4))
+def _beta(key, a, b, shape, dtype):
+  a = lax.convert_element_type(a, dtype)
+  b = lax.convert_element_type(b, dtype)
+  shape = shape or lax.broadcast_shapes(np.shape(a), np.shape(b))
+  key_a, key_b = split(key)
+  gamma_a = gamma(key_a, a, shape, dtype)
+  gamma_b = gamma(key_b, b, shape, dtype)
+  return gamma_a / (gamma_a + gamma_b)
 
 
 def cauchy(key, shape=(), dtype=onp.float32):
@@ -549,6 +578,25 @@ def _gamma(key, a, shape=(), dtype=onp.float32):
   return np.reshape(samples, shape)
 
 
+def gumbel(key, shape=(), dtype=onp.float32):
+  """Sample Gumbel random values with given shape and float dtype.
+
+  Args:
+    key: a PRNGKey used as the random key.
+    shape: optional, a tuple of nonnegative integers representing the shape
+      (default scalar).
+    dtype: optional, a float dtype for the returned values (default float32).
+
+  Returns:
+    A random array with the specified shape and dtype.
+  """
+  return _gumbel(key, shape, dtype)
+
+@partial(jit, static_argnums=(1, 2))
+def _gumbel(key, shape, dtype):
+  return -np.log(-np.log(uniform(key, shape, dtype)))
+
+
 def laplace(key, shape=(), dtype=onp.float32):
   """Sample Laplace random values with given shape and float dtype.
 
@@ -595,11 +643,13 @@ def _pareto(key, b, shape, dtype):
   return lax.exp(lax.div(e, b))
 
 
-def gumbel(key, shape=(), dtype=onp.float32):
-  """Sample Gumbel random values with given shape and float dtype.
+def t(key, df, shape=(), dtype=onp.float32):
+  """Sample Student's t random values with given shape and float dtype.
 
   Args:
     key: a PRNGKey used as the random key.
+    df: an array-like broadcastable to `shape` and used as the shape parameter
+      of the random variables.
     shape: optional, a tuple of nonnegative integers representing the shape
       (default scalar).
     dtype: optional, a float dtype for the returned values (default float32).
@@ -607,8 +657,15 @@ def gumbel(key, shape=(), dtype=onp.float32):
   Returns:
     A random array with the specified shape and dtype.
   """
-  return _gumbel(key, shape, dtype)
+  return _t(key, df, shape, dtype)
 
-@partial(jit, static_argnums=(1, 2))
-def _gumbel(key, shape, dtype):
-  return -np.log(-np.log(uniform(key, shape, dtype)))
+@partial(jit, static_argnums=(2, 3))
+def _t(key, df, shape, dtype):
+  df = lax.convert_element_type(df, dtype)
+  shape = shape or onp.shape(df)
+  key_n, key_g = split(key)
+  n = normal(key_n, shape, dtype)
+  two = _constant_like(n, 2)
+  half_df = lax.div(df, two)
+  g = gamma(key_n, half_df, shape, dtype)
+  return n * np.sqrt(half_df / g)
