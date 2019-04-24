@@ -26,7 +26,7 @@ from six.moves import reduce
 
 from .. import core
 from ..core import Trace, Tracer, new_master, pack, AbstractTuple, JaxTuple
-from ..abstract_arrays import ShapedArray, make_shaped_array, array_types
+from ..abstract_arrays import ShapedArray, make_shaped_array, array_types, raise_to_shaped
 from ..ad_util import add_jaxvals_p, zeros_like_p, zeros_like_jaxval
 from ..linear_util import transformation, transformation_with_aux, wrap_init
 from ..tree_util import register_pytree_node
@@ -159,14 +159,6 @@ def shaped_aval(x):
     return pytype_aval_mappings[type(x)](x)
   except KeyError:
     raise TypeError("{} is not a valid type for batching".format(type(x)))
-
-def raise_to_shaped(aval):
-  if type(aval) is AbstractTuple:
-    return AbstractTuple(map(raise_to_shaped, aval))
-  elif isinstance(aval, ShapedArray):
-    return ShapedArray(aval.shape, aval.dtype)
-  else:
-    raise TypeError(type(aval))
 
 def remove_batch_dim_from_aval(bdim, aval):
   t = type(aval)
