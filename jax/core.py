@@ -61,6 +61,7 @@ class TypedJaxpr(namedtuple('TypedJaxpr', ['jaxpr', 'literals', 'in_avals', 'out
     assert type(jaxpr) is Jaxpr
     assert len(literals) == len(jaxpr.constvars)
     assert len(in_avals) == len(jaxpr.invars)
+    assert not jaxpr.freevars
     super(TypedJaxpr, self).__init__(jaxpr, literals, in_avals, out_aval)
 
 
@@ -70,11 +71,11 @@ def jaxpr_as_fun(typed_jaxpr, *args):
   for arg, in_aval in zip(args, typed_jaxpr.in_avals):
     arg_aval, _ = _abstractify(arg)
     if arg_aval != in_aval:
-      raise TypeError("input type tag mismatch")
+      raise TypeError("input type mismatch")
   out = eval_jaxpr(typed_jaxpr.jaxpr, typed_jaxpr.literals, (), *args)
   out_aval, _ = _abstractify(out)
   if out_aval != typed_jaxpr.out_aval:
-    raise TypeError("output type tag mismatch")
+    raise TypeError("output type mismatch")
   return out
 
 

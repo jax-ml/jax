@@ -6,7 +6,7 @@ from jax.initial_style import scan_initial
 from jax.core import pack
 import jax.core as core
 import jax.numpy as np
-from jax import jvp, linearize
+from jax import jvp, linearize, grad
 from jax import lax
 
 ###
@@ -44,6 +44,9 @@ print linearize(lambda c, as_: scan_reference(f, c, as_), c, as_)[1](c, as_)
 print linearize(lambda c, as_:   scan_initial(f, c, as_), c, as_)[1](c, as_)
 print
 
+# print grad(lambda c, as_: scan_reference(f, c, as_)[0].sum())(c, as_)
+print grad(lambda c, as_:   list(scan_initial(f, c, as_))[0].sum())(c, as_)
+print
 
 # ###
 

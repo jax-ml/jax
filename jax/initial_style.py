@@ -23,9 +23,6 @@ def pvals_with_zeros(zero_components, aval):
     return pe.PartialVal((core.AbstractTuple(avals),
                           core.JaxprTracerTuple(consts)))
 
-def transpose_jaxpr(jaxpr, avals, tangent_components):
-  assert False
-
 strip_zeros = partial(ad.strip_zeros, core.unit, core.pack)
 strip_zeros_aval = partial(ad.strip_zeros, core.AbstractTuple(()), core.AbstractTuple)
 
@@ -155,7 +152,7 @@ def update_arrays(i, aval, xs, x):
 
 _scan_const = pe.gensym('_consts')
 
-# scan :: (c -> a -> (b, c)) -> c -> [a] -> (c, [b])
+# scan :: (c -> a -> (c, b)) -> c -> [a] -> (c, [b])
 def scan_initial(f, init, xs):
   carry_pval = carry_aval, _ = _abstractify(init)
   xs_aval, _ = _abstractify(xs)
@@ -285,7 +282,14 @@ def _scan_initial_partial_eval(trace, *tracers, **kwargs):
   out_const = core.pack((out_carry, ys))
   residual_tracers = core.pack(map(trace.new_instantiated_const, residuals))
   d, c, a = lifted_tracers
-  new_tracers = (d, c, core.pack((a, residual_tracers)))
+  new_tracers = (d, c, core.pack((a, residual_tracers)))  # TODO nonlin pack
+  # TODO adapt scan to
+  # option #1:
+  # scan :: (d -> c -> a -> b) -> d -> c -> [a] -> [b]
+  # scan :: (d -> c -> a -> alin -> b) -> d -> c -> [a] -> [alin] -> [b]
+  # option #2:
+  # extend jaxpr language to have destructuring tuples of variables in invars
+  # b = g(a, (x, a))
   eqn = core.JaxprEqn(new_tracers, None, scan_initial_p, (), False,
                       dict(length=length, jaxpr=jaxpr_2))
   return pe.JaxprTracer(trace, pe.PartialVal((out_pv, out_const)), eqn)
@@ -312,7 +316,44 @@ def _put_known_pvs(is_known, aval):
     return pe.JaxprTracerTuple(map(_put_known_pvs, is_known, aval))
 
 
+def _scan_initial_transpose(ct, consts, init, xs, length, jaxpr):
+  assert consts is None and init is None
+  import ipdb; ipdb.set_trace()  # TODO but xs is also None!
+
+  # jaxpr :: d -> c -> (a, res) ->  (c, b)
+  # jaxpr_lifted :: res -> (d, c, a) -> (c, b)
+  # jaxpr_lifted_trans :: res -> (CT c, CT b) -> (CT d, CT c, CT a)
+  # jaxpr_trans :: * -> (CT c, CT d) -> (CT b, res) -> ((CT d, CT c), CT a)
+  jaxpr_lifted = _move_res_and_uncurry(jaxpr)
+  jaxpr_lifted_trans = transpose_jaxpr2(jaxpr_lifted)
+  jaxpr_trans = _move_stuff_and_add_add(jaxpr_lifted_trans)
+
+  assert False
+  # c_bar, bs_bar = ct
+  # d_bar = zeros
+
+  # return scan_initial_p.bind(core.unit, 
+
+# transpose_jaxpr :: (res -> a -> b) -> (res -> CT b -> CT a)
+def transpose_jaxpr2(jaxpr):
+  assert len(jaxpr.in_avals) == 2
+  def transposed(res, b_bar):
+    _, a_bar = ad.backward_pass(jaxpr.jaxpr, jaxpr.literals, (),
+                                (res, None), b_bar)
+    return a_bar
+  return make_typed_jaxpr(transposed, (jaxpr.in_avals[0], jaxpr.out_aval))
+
+def make_typed_jaxpr(py_callable, in_avals):
+  pvals = [pe.PartialVal((aval, core.unit)) for aval in in_avals]
+  jaxpr, pval_out, consts = pe.trace_to_jaxpr(
+      lu.wrap_init(py_callable), pvals, instantiate=True)
+  out_aval, _ = pval_out
+  assert isinstance(out_aval, core.AbstractValue)
+  return core.TypedJaxpr(jaxpr, consts, in_avals, out_aval)
+
+
 scan_initial_p = core.Primitive("scan_initial")
 scan_initial_p.def_impl(_scan_initial_impl)
 ad.primitive_jvps[scan_initial_p] = _scan_initial_jvp
+ad.primitive_transposes[scan_initial_p] = _scan_initial_transpose
 pe.custom_partial_eval_rules[scan_initial_p] = _scan_initial_partial_eval
