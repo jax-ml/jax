@@ -84,6 +84,21 @@ def execute_compiled_primitive(compiled, result_handler, *args):
   return result_handler(compiled.Execute(input_bufs, not core.skip_checks))
 
 def device_put(x, device_num=0):
+  """Place a Python value `x` on device number `device_num`.
+
+  This is a wrapper around jax.lib.xla_bridge.device_put to handle
+  additional Python array types, namely DeviceArray (which is already backed by
+  device memory, though may be on the wrong device) and DeviceConstant. In
+  particular, it avoids transferring data already placed on the correct device,
+  and handles instantiating DeviceConstants.
+
+  Args:
+    x: an ndarray, DeviceArray, DeviceConstant, or JaxTuple to be transferred.
+    device_num: an int representing the target physical device number.
+
+  Returns:
+    A buffer representing the input `x` placed on the appropriate device.
+  """
   x = canonicalize_pyval_dtype(x)
   if type(x) is DeviceArray:
     if x.device_buffer.device() == device_num:
