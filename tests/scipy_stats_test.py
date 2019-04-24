@@ -93,6 +93,21 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
+  @genNamedParametersNArgs(2, jtu.rand_positive())
+  def testDirichletLogPdf(self, rng, shapes, dtypes):
+    scipy_fun = osp_stats.cauchy.logpdf
+    lax_fun = lsp_stats.cauchy.logpdf
+    dim = 4
+    shapes = (shapes[0] + (dim,), shapes[1] + (dim,))
+
+    def args_maker():
+      x, alpha = map(rng, shapes, dtypes)
+      x = x / onp.sum(x, axis=-1, keepdims=True)
+      return [x, alpha]
+
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
+
   @genNamedParametersNArgs(3, jtu.rand_positive())
   def testExponLogPdf(self, rng, shapes, dtypes):
     scipy_fun = osp_stats.expon.logpdf
