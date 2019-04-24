@@ -91,11 +91,9 @@ def jit(fun, static_argnums=()):
   >>>
   >>> key = jax.random.PRNGKey(0)
   >>> x = jax.random.normal(key, (10,))
-  >>> selu(x)
-  array([-0.54485154,  0.27744263, -0.29255125, -0.91421586, -0.62452525,
-         -0.2474813 , -0.8574326 , -0.7823267 ,  0.7682731 ,  0.59566754],
-        dtype=float32)
-
+  >>> print(selu(x))
+  [-0.54485154  0.27744263 -0.29255125 -0.91421586 -0.62452525 -0.2474813
+   -0.8574326  -0.7823267   0.7682731   0.59566754]
   """
   @wraps(fun)
   def f_jitted(*args, **kwargs):
@@ -214,9 +212,8 @@ def grad(fun, argnums=0, has_aux=False, holomorphic=False):
   For example:
 
   >>> grad_tanh = jax.grad(jax.numpy.tanh)
-  >>> grad_tanh(0.2)
-  array(0.961043, dtype=float32)
-
+  >>> print(grad_tanh(0.2))
+  0.961043
   """
   value_and_grad_f = value_and_grad(fun, argnums, has_aux=has_aux,
                                     holomorphic=holomorphic)
@@ -320,11 +317,11 @@ def jacfwd(fun, argnums=0, holomorphic=False):
   >>> def f(x):
   >>>   return jax.numpy.asarray(
   >>>     [x[0], 5*x[2], 4*x[1]**2 - 2*x[2], x[2] * jax.numpy.sin(x[0])])
-  >>> jax.jacfwd(f)(np.array([1., 2., 3.]))
-  array([[ 1.        ,  0.        ,  0.        ],
-         [ 0.        ,  0.        ,  5.        ],
-         [ 0.        , 16.        , -2.        ],
-         [ 1.6209068 ,  0.        ,  0.84147096]], dtype=float32)
+  >>> print(jax.jacfwd(f)(np.array([1., 2., 3.])))
+  [[ 1.        ,  0.        ,  0.        ],
+   [ 0.        ,  0.        ,  5.        ],
+   [ 0.        , 16.        , -2.        ],
+   [ 1.6209068 ,  0.        ,  0.84147096]]
   """
 
   def jacfun(*args, **kwargs):
@@ -364,11 +361,11 @@ def jacrev(fun, argnums=0, holomorphic=False):
   >>> def f(x):
   >>>   return jax.numpy.asarray(
   >>>     [x[0], 5*x[2], 4*x[1]**2 - 2*x[2], x[2] * jax.numpy.sin(x[0])])
-  >>> jax.jacrev(f)(np.array([1., 2., 3.]))
-  array([[ 1.        ,  0.        ,  0.        ],
-         [ 0.        ,  0.        ,  5.        ],
-         [ 0.        , 16.        , -2.        ],
-         [ 1.6209068 ,  0.        ,  0.84147096]], dtype=float32)
+  >>> print(jax.jacrev(f)(np.array([1., 2., 3.])))
+  [[ 1.        ,  0.        ,  0.        ],
+   [ 0.        ,  0.        ,  5.        ],
+   [ 0.        , 16.        , -2.        ],
+   [ 1.6209068 ,  0.        ,  0.84147096]]
   """
   def jacfun(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
@@ -408,9 +405,9 @@ def hessian(fun, argnums=0, holomorphic=False):
     `fun`.
 
   >>> g = lambda(x): x[0]**3 - 2*x[0]*x[1] - x[1]**6
-  >>> jax.hessian(g)(jax.numpy.array([1., 2.]))
-  array([[   6.,   -2.],
-         [  -2., -480.]], dtype=float32)
+  >>> print(jax.hessian(g)(jax.numpy.array([1., 2.])))
+  [[   6.,   -2.],
+   [  -2., -480.]]
   """
   return jacfwd(jacrev(fun, argnums, holomorphic), argnums, holomorphic)
 
@@ -463,7 +460,7 @@ def vmap(fun, in_axes=0, out_axes=0):
   >>> mv = vmap(vv, (0, None), 0)      #  ([a,b], [b]) -> [a]
   >>> mm = vmap(mv, (None, 1), 1)      #  ([a,b], [b,c]) -> [a,c]
 
-  (`[a,b]` indicates an array with shape (a,b))
+  (here we use `[a,b]` to indicate an array with shape (a,b))
   """
 
   docstr = ("Vectorized version of {fun}. Takes similar arguments as {fun} "
@@ -572,8 +569,11 @@ def jvp(fun, primals, tangents):
 
   For example:
 
-  >>> jax.jvp(jax.numpy.sin, (0.1,), (0.2,))
-  (array(0.09983342, dtype=float32), array(0.19900084, dtype=float32))
+  >>> y, v = jax.jvp(jax.numpy.sin, (0.1,), (0.2,))
+  >>> print(y)
+  0.09983342
+  >>> print(v)
+  0.19900084
   """
   def trim_arg(primal, tangent):
     primal_jtuple, tree_def = pytree_to_jaxtupletree(primal)
@@ -635,12 +635,12 @@ def linearize(fun, *primals):
   >>> jax.jvp(f, (2.,), (3.,))
   (array(3.2681944, dtype=float32), array(-5.007528, dtype=float32))
   >>> y, f_jvp = jax.linearize(f, 2.)
-  >>> y
-  array(3.2681944, dtype=float32)
-  >>> f_jvp(3.)
-  array(-5.007528, dtype=float32)
-  >>> f_jvp(4.)
-  array(-6.676704, dtype=float32)
+  >>> print(y)
+  3.2681944
+  >>> print(f_jvp(3.))
+  -5.007528
+  >>> print(f_jvp(4.))
+  -6.676704
   """
   f = lu.wrap_init(fun)
   primals_flat, in_trees = unzip2(map(pytree_to_jaxtupletree, primals))
@@ -686,9 +686,12 @@ def vjp(fun, *primals, **kwargs):
 
   >>> def f(x, y):
   >>>   return jax.numpy.sin(x), jax.numpy.cos(y)
-  >>> primals, g = jax.vjp(f, 0.5, 1.0)
-  >>> g((-0.7, 0.3))
-  (array(-0.61430776, dtype=float32), array(-0.2524413, dtype=float32))
+  >>> primals, f_vjp = jax.vjp(f, 0.5, 1.0)
+  >>> xbar, ybar = f_vjp((-0.7, 0.3))
+  >>> print(xbar)
+  -0.61430776
+  >>> print(ybar)
+  -0.2524413
   """
   has_aux = kwargs.pop('has_aux', False)
   assert not kwargs
@@ -752,8 +755,8 @@ def make_jaxpr(fun):
   instead give a few examples.
 
   >>> def f(x): return jax.numpy.sin(jax.numpy.cos(x))
-  >>> f(3.0)
-  array(-0.83602184, dtype=float32)
+  >>> print(f(3.0))
+  -0.83602184
   >>> jax.make_jaxpr(f)(3.0)
   { lambda  ;  ; a.
     let b = cos a
