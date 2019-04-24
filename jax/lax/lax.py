@@ -2203,10 +2203,27 @@ def _pad_batch_rule(batched_args, batch_dims, padding_config):
   else:
     raise NotImplementedError  # loop and stack
 
+def _pad_papply_rule(name, vals, dims, padding_config):
+  operand, padding_value = vals
+  operand_dim, padding_value_dim = dims
+  assert padding_value_dim is None
+  padding_config = list(padding_config)
+  if padding_config[operand_dim] == (0, 0, 0):
+    padded = pad(
+        operand,
+        padding_value,
+        padding_config[:operand_dim] + padding_config[operand_dim + 1:])
+    return padded, operand_dim
+  else:
+    raise NotImplementedError(
+        'pad changes size of hidden dimension {} with config {}'.format(
+            operand_dim, padding_config))
+
 pad_p = standard_primitive(_pad_shape_rule, _input_dtype, 'pad')
 ad.deflinear(pad_p, _pad_transpose)
 ad.primitive_transposes[pad_p] = _pad_transpose
 batching.primitive_batchers[pad_p] = _pad_batch_rule
+parallel.papply_primitive_rules[pad_p] = _pad_papply_rule
 
 
 def _reshape_shape_rule(operand, new_sizes, dimensions, **unused_kwargs):
