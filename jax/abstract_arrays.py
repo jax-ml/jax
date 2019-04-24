@@ -178,3 +178,12 @@ array_types = [onp.ndarray, onp.float64, onp.float32, onp.float16,
 for t in array_types:
   core.pytype_aval_mappings[t] = ConcreteArray
   ad_util.jaxval_zeros_likers[t] = zeros_like_array
+
+
+def raise_to_shaped(aval):
+  if type(aval) is core.AbstractTuple:
+    return core.AbstractTuple(map(raise_to_shaped, aval))
+  elif isinstance(aval, ShapedArray):
+    return ShapedArray(aval.shape, aval.dtype)
+  else:
+    raise TypeError(type(aval))
