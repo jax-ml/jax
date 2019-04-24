@@ -26,7 +26,7 @@ import jax.numpy as np
 from jax import jit, grad, device_get, device_put, jacfwd, jacrev, hessian
 from jax import api
 from jax.core import Primitive
-from jax.interpreters.ad import defjvp
+from jax.interpreters.ad import defjvp, defvjp, defvjp2, defvjp_all
 from jax.interpreters.xla import DeviceArray
 from jax.abstract_arrays import concretization_err_msg
 
@@ -465,6 +465,77 @@ class APITest(jtu.JaxTestCase):
 
   def test_complex_input_jacfwd_raises_error(self):
     self.assertRaises(TypeError, lambda: jacfwd(lambda x: np.sin(x))(1 + 2j))
+
+  def test_defvjp_all(self):
+    foo_p = Primitive('foo')
+    def foo(x): return 2. * foo_p.bind(x)
+
+    defvjp_all(foo_p, lambda x: (x**2, lambda g: (4 * g * np.sin(x),)))
+    val_ans, grad_ans = api.value_and_grad(foo)(3.)
+    self.assertAllClose(val_ans, 2 * 3.**2, check_dtypes=False)
+    self.assertAllClose(grad_ans, 4 * 2 * onp.sin(3.), check_dtypes=False)
+
+  def test_defvjp_all_const(self):
+    foo_p = Primitive('foo')
+    def foo(x): return foo_p.bind(x)
+
+    defvjp_all(foo_p, lambda x: (x**2, lambda g: (12.,)))
+    val_ans, grad_ans = api.value_and_grad(foo)(3.)
+    self.assertAllClose(val_ans, 9., check_dtypes=False)
+    self.assertAllClose(grad_ans, 12., check_dtypes=True)
+
+  def test_defvjp_all_higher_order_revmode(self):
+    foo_p = Primitive('foo')
+    def foo(x): return 2. * foo_p.bind(x)
+
+    defvjp_all(foo_p, lambda x: (x**2, lambda g: (g * x ** 2,)))
+    ans = api.grad(api.grad(foo))(3.)
+    self.assertAllClose(ans, 2 * 2 * 3., check_dtypes=False)
+
+  def test_defvjp_all_multiple_arguments(self):
+    # also tests passing in symbolic zero tangents b/c we differentiate wrt only
+    # the first argument in one case
+
+    foo_p = Primitive('foo')
+    def foo(x, y): return foo_p.bind(x, y)
+
+    def vjpfun(x, y):
+      out = x**2 + y**3
+      vjp = lambda g: (g + x + y, g * x * 9.)
+      return out, vjp
+
+    defvjp_all(foo_p, vjpfun)
+    val_ans, grad_ans = api.value_and_grad(foo)(3., 4.)
+    self.assertAllClose(val_ans, 3.**2 + 4.**3, check_dtypes=False)
+    self.assertAllClose(grad_ans, 1. + 3. + 4., check_dtypes=False)
+
+    ans = api.grad(foo, (0, 1))(3., 4.)
+    self.assertAllClose(ans, (1. + 3. + 4., 1. * 3. * 9.), check_dtypes=False)
+
+  def test_defvjp(self):
+    @api.custom_transforms
+    def foo(x, y):
+      return np.sin(x * y)
+
+    defvjp(foo.primitive, None, lambda g, x, y: g * x * y)
+    val_ans, grad_ans = api.value_and_grad(foo)(3., 4.)
+    self.assertAllClose(val_ans, onp.sin(3. * 4.), check_dtypes=False)
+    self.assertAllClose(grad_ans, 0., check_dtypes=False)
+
+    ans_0, ans_1 = api.grad(foo, (0, 1))(3., 4.)
+    self.assertAllClose(ans_0, 0., check_dtypes=False)
+    self.assertAllClose(ans_1, 3. * 4., check_dtypes=False)
+
+  def test_defvjp2(self):
+    @api.custom_transforms
+    def foo(x, y):
+      return np.sin(x * y)
+
+    defvjp2(foo.primitive, None, lambda g, ans, x, y: g * x * y + np.cos(ans))
+    val_ans, grad_ans = api.value_and_grad(foo, 1)(3., 4.)
+    self.assertAllClose(val_ans, onp.sin(3. * 4.), check_dtypes=False)
+    self.assertAllClose(grad_ans, 3. * 4. + onp.cos(onp.sin(3. * 4)),
+                        check_dtypes=False)
 
 
 if __name__ == '__main__':

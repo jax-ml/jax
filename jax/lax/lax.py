@@ -36,7 +36,7 @@ from .. import linear_util as lu
 from ..config import flags
 from ..core import Primitive
 from ..abstract_arrays import (UnshapedArray, ShapedArray, ConcreteArray,
-                               array_types, make_shaped_array)
+                               array_types, make_shaped_array, raise_to_shaped)
 from ..api_util import (pytree_fun_to_jaxtupletree_fun, pytree_to_jaxtupletree,
                         pytree_fun_to_flatjaxtuple_fun, pytree_to_flatjaxtuple)
 from ..interpreters import partial_eval as pe
@@ -3990,8 +3990,5 @@ def subvals(lst, replace):
 
 
 def _abstractify(x):
-  # abstractify wrapper used internally for primitives like while_loop
-  if isinstance(x, core.Tracer):
-    return pe.PartialVal((xla.abstractify(x.aval), core.unit))
-  else:
-    return pe.PartialVal((xla.abstractify(x), core.unit))
+  # used internally for initial-style higher-order primitives
+  return pe.PartialVal((raise_to_shaped(core.get_aval(x)), core.unit))
