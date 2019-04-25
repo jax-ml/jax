@@ -16,7 +16,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from .core import JaxTuple, lattice_join, Primitive
+from .core import JaxTuple, lattice_join, Primitive, AbstractTuple
 from .tree_util import register_pytree_node
 from .util import safe_map
 
@@ -50,6 +50,15 @@ def zeros_like_impl_jaxtuple(xs):
 
 jaxval_zeros_likers = {}
 jaxval_zeros_likers[JaxTuple] = zeros_like_impl_jaxtuple
+
+
+def zeros_like_aval(aval):
+  return aval_zeros_likers[type(aval)](aval)
+aval_zeros_likers = {}
+
+def zeros_like_abstract_tuple(tup):
+  return AbstractTuple(map(zeros_like_aval, tup))
+aval_zeros_likers[AbstractTuple] = zeros_like_abstract_tuple
 
 
 def zeros_like_jaxval(val):

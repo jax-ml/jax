@@ -163,7 +163,7 @@ def jaxpr_computation(jaxpr, const_vals, freevar_shapes, *arg_shapes):
     map(write, all_freevars, map(c.ParameterWithShape, freevar_shapes))
   map(write, jaxpr.invars, map(c.ParameterWithShape, arg_shapes))
   for eqn in jaxpr.eqns:
-    in_nodes = map(read, eqn.invars)
+    in_nodes = map(read, eqn.invars)  # TODO
     in_shapes = map(c.GetShape, in_nodes)
     subcs = [
         jaxpr_computation(

@@ -176,3 +176,10 @@ array_types = [onp.ndarray, onp.float64, onp.float32, onp.float16,
 for t in array_types:
   core.pytype_aval_mappings[t] = ConcreteArray
   ad_util.jaxval_zeros_likers[t] = zeros_like_array
+
+
+def zeros_like_shaped_array(aval):
+  assert isinstance(aval, ShapedArray)
+  return onp.zeros(aval.shape, dtype=aval.dtype)
+
+ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
