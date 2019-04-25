@@ -145,6 +145,9 @@ def backward_pass(jaxpr, consts, freevar_vals, args, cotangent_in):
   def read_cotangent(v):
     return ct_env.get(v, zero)
 
+  def read_primal(v):
+    return primal_env.get(v)
+
   primal_env = {v: val for v, val in zip(jaxpr.freevars, freevar_vals)
                 if val is not None}
   primal_env.update(zip(jaxpr.constvars, consts))
@@ -155,12 +158,16 @@ def backward_pass(jaxpr, consts, freevar_vals, args, cotangent_in):
   for eqn in jaxpr.eqns[::-1]:
     cts_in = map(read_cotangent, eqn.outvars)
     ct_in = TangentTuple(cts_in) if eqn.destructure else cts_in[0]
-    invals = map(primal_env.get, eqn.invars)
+    if not eqn.restructure:
+      invals = map(read_primal, eqn.invars)
+    else:
+      invals = [tuple(map(read_primal, v)) if type(v) is tuple
+                else read_primal(v) for v in eqn.invars]
     if eqn.bound_subjaxprs:
       subjaxprs, sub_consts, sub_freevar_vals = unzip3([
           (subjaxpr,
-           map(primal_env.get, const_vars),
-           map(primal_env.get, bound_vars))
+           map(read_primal, const_vars),
+           map(read_primal, bound_vars))
           for subjaxpr, const_vars, bound_vars in eqn.bound_subjaxprs])
       cts_out, ct_free_vars_out = get_primitive_transpose(eqn.primitive)(
           eqn.params, subjaxprs, sub_consts, sub_freevar_vals, invals, ct_in)

@@ -80,7 +80,8 @@ def jaxpr_as_fun(typed_jaxpr, *args):
 
 
 JaxprEqn = namedtuple('JaxprEqn', ['invars', 'outvars', 'primitive',
-                                   'bound_subjaxprs', 'destructure', 'params'])
+                                   'bound_subjaxprs', 'restructure',
+                                   'destructure', 'params'])
 
 class Primitive(object):
   def __init__(self, name):
@@ -137,7 +138,11 @@ def eval_jaxpr(jaxpr, consts, freevar_vals, *args):
   map(write, jaxpr.invars, args)
   map(write, jaxpr.freevars, freevar_vals)
   for eqn in jaxpr.eqns:
-    in_vals = map(read, eqn.invars)
+    if not eqn.restructure:
+      in_vals = map(read, eqn.invars)
+    else:
+      in_vals = [pack(map(read, invars)) if type(invars) is tuple else read(invars)
+                 for invars in eqn.invars]
     subfuns = [partial(eval_jaxpr, subjaxpr, map(read, const_bindings),
                                              map(read, freevar_bindings))
                for subjaxpr, const_bindings, freevar_bindings
@@ -615,7 +620,11 @@ def check_jaxpr(jaxpr):
   map(write, jaxpr.freevars)
   map(write, jaxpr.invars)
   for eqn in jaxpr.eqns:
-    map(read, eqn.invars)
+    if not eqn.restructure:
+      map(read, eqn.invars)
+    else:
+      [map(read, invar) if type(invar) is tuple else read(invar)
+       for invar in eqn.invars]
     for subjaxpr, constvars, freevars in eqn.bound_subjaxprs:
       map(read, freevars)
       map(read_const, constvars)
