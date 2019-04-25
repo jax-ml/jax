@@ -58,6 +58,14 @@ RTOL = 1e-4
 _dtype = lambda x: getattr(x, 'dtype', None) or onp.asarray(x).dtype
 
 
+def is_sequence(x):
+  try:
+    iter(x)
+  except TypeError:
+    return False
+  else:
+    return True
+
 def numpy_eq(x, y):
   testing_tpu = FLAGS.jax_test_dut and FLAGS.jax_test_dut.startswith("tpu")
   testing_x32 = not FLAGS.jax_enable_x64
@@ -437,23 +445,23 @@ class JaxTestCase(parameterized.TestCase):
 
   def assertAllClose(self, x, y, check_dtypes, atol=None, rtol=None):
     """Assert that x and y, either arrays or nested tuples/lists, are close."""
-    if isinstance(x, (tuple, list)):
-      self.assertIsInstance(y, (tuple, list))
-      self.assertEqual(len(x), len(y))
-      for x_elt, y_elt in zip(x, y):
-        self.assertAllClose(x_elt, y_elt, check_dtypes, atol=atol, rtol=rtol)
-    elif isinstance(x, dict):
+    if isinstance(x, dict):
       self.assertIsInstance(y, dict)
       self.assertEqual(set(x.keys()), set(y.keys()))
       for k in x.keys():
         self.assertAllClose(x[k], y[k], check_dtypes, atol=atol, rtol=rtol)
-    else:
-      is_array = lambda x: hasattr(x, '__array__') or onp.isscalar(x)
-      self.assertTrue(is_array(x))
-      self.assertTrue(is_array(y))
+    elif is_sequence(x) and not hasattr(x, '__array__'):
+      self.assertTrue(is_sequence(y) and not hasattr(y, '__array__'))
+      self.assertEqual(len(x), len(y))
+      for x_elt, y_elt in zip(x, y):
+        self.assertAllClose(x_elt, y_elt, check_dtypes, atol=atol, rtol=rtol)
+    elif hasattr(x, '__array__') or onp.isscalar(x):
+      self.assertTrue(hasattr(y, '__array__') or onp.isscalar(y))
       x = onp.asarray(x)
       y = onp.asarray(y)
       self.assertArraysAllClose(x, y, check_dtypes, atol=atol, rtol=rtol)
+    else:
+      raise TypeError((type(x), type(y)))
 
   def _CompileAndCheck(self, fun, args_maker, check_dtypes,
                        rtol=None, atol=None):

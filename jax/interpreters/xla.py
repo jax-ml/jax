@@ -59,7 +59,7 @@ def xla_primitive_callable(prim, *abstract_args, **kwargs):
   handle_result = result_handler(result_shape)
   compiled = built_c.Compile(shapes, xb.get_compile_options(),
                              backend=xb.get_backend())
-  return partial(execute_compiled_primitive, compiled, handle_result)
+  return partial(execute_compiled_primitive, prim.name, compiled, handle_result)
 
 @memoize
 def primitive_computation(prim, *shapes, **kwargs):
@@ -79,28 +79,52 @@ def aval_from_xla_shape(shape):
   else:
     return ShapedArray(shape.dimensions(), shape.element_type())
 
-def execute_compiled_primitive(compiled, result_handler, *args):
+def execute_compiled_primitive(name, compiled, result_handler, *args):
   input_bufs = [device_put(x) for x in args]
-  return result_handler(compiled.Execute(input_bufs, not core.skip_checks))
+  out_buf = compiled.Execute(input_bufs, not core.skip_checks)
+  check_nans(name, out_buf)
+  return result_handler(out_buf)
+
+def check_nans(name, buf):
+  FLAGS.jax_debug_nans and _check_nans(name, buf.shape(), buf)
+
+def _check_nans(name, xla_shape, buf):
+  if xla_shape.is_tuple():
+    _map(partial(_check_nans, name), xla_shape.tuple_shapes(), buf.destructure())
+  else:
+    if onp.issubdtype(xla_shape.element_type(), onp.floating):
+      pyval = buf.to_py()
+      if onp.any(onp.isnan(pyval)):
+        msg = "invalid value (nan) encountered in {}"
+        raise FloatingPointError(msg.format(name))
 
 def device_put(x, device_num=0):
   """Place a Python value `x` on device number `device_num`.
 
   This is a wrapper around jax.lib.xla_bridge.device_put to handle
-  additional Python array types, namely DeviceArray (which is already backed by
-  device memory, though may be on the wrong device) and DeviceConstant. In
-  particular, it avoids transferring data already placed on the correct device,
-  and handles instantiating DeviceConstants.
+  additional Python types, namely
+    1. the array-like types DeviceArray (which is already backed by device
+    memory, though may be on the wrong device) and its subclass DeviceConstant
+    (which represents a lazy value to be instantiated), and
+    2. the tuple-like types DeviceTuple (which is already backed by device
+    memory, though may be on the wrong device) and JaxTuple (which may have some
+    elements that are backed by device memory on the correct device).
+  In particular, this function avoids transferring data already placed on the
+  correct device, and handles instantiating DeviceConstants.
 
   Args:
-    x: an ndarray, DeviceArray, DeviceConstant, or JaxTuple to be transferred.
+    x: a tuplelike-tree with arraylike leaves representing the value to be
+      transferred to the device, where tuplelike means a JaxTuple or
+      DeviceTuple, and arraylike includes DeviceArray, DeviceConstant, and
+      anything that has an '__array__' attr.
     device_num: an int representing the target physical device number.
 
   Returns:
     A buffer representing the input `x` placed on the appropriate device.
   """
   x = canonicalize_pyval_dtype(x)
-  if type(x) is DeviceArray:
+  t = type(x)
+  if t is DeviceArray or t is DeviceTuple:
     if x.device_buffer.device() == device_num:
       return x.device_buffer
     else:
@@ -109,22 +133,26 @@ def device_put(x, device_num=0):
       return device_put(x.device_buffer.to_py(), device_num)
   elif isinstance(x, DeviceConstant):
     return instantiate_device_constant(x, device_num=device_num)
+  elif hasattr(x, '__array__'):
+    return xb.device_put(x, device_num)  # handle arraylikes
+  elif t is JaxTuple:
+    # TODO(mattjj, phawkins): for the JaxTuple case, this implementation can
+    # round-trip tuple elements already on the correct device; consider revising
+    return xb.device_put(x, device_num)
   else:
-    return xb.device_put(x, device_num)  # round-trips tuple elements
+    raise TypeError(t)
 
 def device_put_many(xs_and_devices):
   """Place multiple Python values on multiple devices in parallel.
 
   This is a wrapper around jax.lib.xla_bridge.device_put_many to handle
-  additional Python array types, namely DeviceArray (which is already backed by
-  device memory, though may be on the wrong device) and DeviceConstant. In
-  particular, it avoids transferring data already placed on the correct device,
-  and handles instantiating DeviceConstants.
+  additional Python types. See the docstring for jax.interpreters.xla.device_put
+  for more information.
 
   Args:
-    xs_and_devices: a sequence of (pyval, device_num) pairs where pyval is an
-      ndarray, DeviceArray, DeviceConstant, or JaxTuple and device_num is an int
-      representing the physical device number on which pyval should be placed.
+    xs_and_devices: a sequence of (pyval, device_num) pairs in which  device_num
+      is an int representing the target physical device number and pyval is a
+      tuple-like tree with arraylike leaves (see the device_put docstring).
 
   Returns:
     A sequence of buffers representing the inputs placed on the corresponding
@@ -135,7 +163,8 @@ def device_put_many(xs_and_devices):
   outputs = [None] * len(xs_and_devices)
   for i, (x, device_num) in enumerate(xs_and_devices):
     x = canonicalize_pyval_dtype(x)
-    if type(x) is DeviceArray:
+    t = type(x)
+    if t is DeviceArray or t is DeviceTuple:
       if x.device_buffer.device() == device_num:
         outputs[i] = x.device_buffer
       else:
@@ -145,9 +174,13 @@ def device_put_many(xs_and_devices):
         transfers.append((x.device_buffer.to_py(), device_num))
     elif isinstance(x, DeviceConstant):
       outputs[i] = instantiate_device_constant(x, device_num=device_num)
-    else:
+    elif t is onp.ndarray or t is JaxTuple:
+      # TODO(mattjj, phawkins): for the JaxTuple case, this implementation can
+      # round-trip tuple elements already on the correct device, revise?
       transfer_indices.append(i)
       transfers.append((x, device_num))
+    else:
+      raise TypeError(t)
 
   transfer_results = xb.device_put_many(transfers)
   for i, result in zip(transfer_indices, transfer_results):
@@ -155,28 +188,30 @@ def device_put_many(xs_and_devices):
   return outputs
 
 def result_handler(result_shape):
-  if type(result_shape) is ResultArray and FLAGS.jax_device_values:
-    if FLAGS.jax_debug_nans and onp.issubdtype(result_shape[1], onp.floating):
-      def handle_result(device_buffer):
-        py_val = device_buffer.to_py()
-        if onp.any(onp.isnan(py_val)):
-          raise FloatingPointError("invalid value")
-        else:
-          return DeviceArray(device_buffer, *result_shape)
-    else:
-      def handle_result(device_buffer):
-        return DeviceArray(device_buffer, *result_shape)
-  elif type(result_shape) is ResultArray:
-    def handle_result(device_buffer):
-      return onp.asarray(DeviceArray(device_buffer, *result_shape))
-  elif type(result_shape) is ResultTuple:
-    handlers = list(map(result_handler, result_shape))
-    def handle_result(device_buffer):
-      bufs = device_buffer.destructure()
-      return JaxTuple(handler(buf) for handler, buf in zip(handlers, bufs))
+  if FLAGS.jax_device_values:
+    return device_persistent_result_handler(result_shape)
   else:
-    raise TypeError(type(result_shape))
-  return handle_result
+    return pyval_result_handler(result_shape)
+
+def device_persistent_result_handler(result_shape):
+  t = type(result_shape)
+  if t is ResultArray:
+    return lambda buf: DeviceArray(buf, *result_shape)
+  elif t is ResultTuple:
+    return DeviceTuple
+  else:
+    raise TypeError(t)
+
+def pyval_result_handler(result_shape):
+  t = type(result_shape)
+  if t is ResultArray:
+    return lambda buf: buf.to_py()
+  elif t is ResultTuple:
+    handlers = list(map(result_handler, result_shape))
+    return lambda buf: JaxTuple(h(b) for h, b in zip(handlers, buf.destructure()))
+  else:
+    raise TypeError(t)
+
 
 def xla_shape_to_result_shape(xla_shape):
   if xla_shape.is_tuple():
@@ -275,7 +310,6 @@ translations[core.call_p] = lambda c, subc_a1, *a2: c.Call(subc_a1[0],
                                                            subc_a1[1] + a2)
 translations[core.identity_p] = lambda c, x: x
 
-# TODO(mattjj): add_jaxvals should handle any jaxval
 def zeros_like_translation_rule(c, x):
   def _zeros_like(shape):
     if shape.is_tuple():
@@ -284,8 +318,9 @@ def zeros_like_translation_rule(c, x):
       return c.Broadcast(c.Constant(onp.array(0, shape.element_type())),
                          shape.dimensions())
   return _zeros_like(c.GetShape(x))
-
 translations[ad_util.zeros_like_p] = zeros_like_translation_rule
+
+# TODO(mattjj): add_jaxvals should handle any jaxval
 translations[ad_util.add_jaxvals_p] = lambda c, x, y: c.Add(x, y)
 
 
@@ -332,6 +367,37 @@ class DeviceValue(object):
   __slots__ = ["device_buffer"]
   def __init__(self, device_buffer):
     self.device_buffer = device_buffer
+
+
+class DeviceTuple(DeviceValue):
+  __slots__ = ["elt_xla_shapes", "elt_handlers"]
+  def __init__(self, device_buffer):
+    self.device_buffer = device_buffer
+    self.elt_xla_shapes = device_buffer.shape().tuple_shapes()
+    self.elt_handlers = list(map(_tuple_elt_handler, self.elt_xla_shapes))
+
+  def __iter__(self):
+    bufs = self.device_buffer.destructure()
+    elts = [handler(buf) for handler, buf in zip(self.elt_handlers, bufs)]
+    return iter(elts)
+
+  def __len__(self):
+    return len(self.elt_xla_shapes)
+
+def _tuple_elt_handler(xla_shape):
+  if xla_shape.is_tuple():
+    return DeviceTuple
+  else:
+    result_shape = xla_shape_to_result_shape(xla_shape)
+    return lambda buf: DeviceArray(buf, *result_shape)
+
+def abstractify_device_tuple(tup):
+  return AbstractTuple(map(aval_from_xla_shape, tup.elt_xla_shapes))
+
+core.pytype_aval_mappings[DeviceTuple] = AbstractTuple
+pytype_aval_mappings[DeviceTuple] = abstractify_device_tuple
+canonicalize_dtype_handlers[DeviceTuple] = identity
+
 
 def forward_method(attrname, self, fun, *args):
   return fun(getattr(self, attrname), *args)
@@ -423,7 +489,7 @@ def _device_array_constant_handler(c, val, canonicalize_types=True):
 xb.register_constant_handler(DeviceArray, _device_array_constant_handler)
 
 pytype_aval_mappings[ConcreteArray] = make_shaped_array
-pytype_aval_mappings[ShapedArray] = lambda x: x
+pytype_aval_mappings[ShapedArray] = identity
 
 
 class DeviceConstant(DeviceArray):
@@ -456,75 +522,14 @@ def xla_shape(x):
       raise TypeError(type(x))
 
 
-# For callable XLA Computations (as opposed to, e.g., Computations used in the
-# body of a While) we flatten functions to take multiple array arguments (no
-# tuple arguments) and return either an array output or a flat tuple output that
-# is immediately destructured. This flattening avoids the need for the runtime
-# to manage multiple references to DeviceValues caused by tuple membership
-# (since the XLA runtime depends on single-ownership, rather than e.g.
-# refcounting). In particular, we don't have a DeviceTuple representation, and
-# instead, for values returned to the user, always destructure tuples.
-# The code here is similar to that in tree_util, but is meant to flatten
-# JaxTuple trees only.
-
-@lu.transformation_with_aux
-def flatten_fun(in_trees, *flat_args):
-  jtuple_trees = tuple(map(partial(build_tree, iter(flat_args)), in_trees))
-  ans = yield jtuple_trees, {}
-  aval = core.get_aval(ans)
-  if type(aval) is AbstractTuple:
-    ans_flat, out_tree = tree_flatten(ans)
-    yield pack(ans_flat), out_tree
-  else:
-    yield ans, leaf
-
-def tree_flatten(maybe_tree):
-  aval = core.get_aval(maybe_tree)
-  return _tree_flatten(aval, maybe_tree)
-
-def _tree_flatten(aval, maybe_tree):
-  if type(aval) is AbstractTuple:
-    flat_children, child_specs = unzip2(map(_tree_flatten, aval, maybe_tree))
-    return it.chain.from_iterable(flat_children), JTupleTreeDef(child_specs)
-  elif core.skip_checks or valid_jaxtype(maybe_tree):
-    return [maybe_tree], leaf
-  else:
-    raise TypeError(type(maybe_tree))
-
-JTupleTreeDef = namedtuple("JTupleTreeDef", ["child_specs"])
-
-class Leaf(object):
-  def __repr__(self):
-    return '*'
-leaf = Leaf()
-
-def build_tree(xs, tree_spec):
-  if tree_spec is leaf:
-    return next(xs)
-  elif type(tree_spec) is JTupleTreeDef:
-    return pack(map(partial(build_tree, xs), tree_spec.child_specs))
-  else:
-    raise TypeError(type(tree_spec))
-
-
 def xla_call_impl(fun, *args):
-  flat_args, in_trees = unzip2(map(tree_flatten, args))
-  flat_args = concatenate(flat_args)
-  fun, out_tree = flatten_fun(fun, in_trees)
-
-  compiled_fun = xla_callable(fun, *map(abstractify, flat_args))
+  compiled_fun = xla_callable(fun, *map(abstractify, args))
   try:
-    flat_ans = compiled_fun(*flat_args)
+    return compiled_fun(*args)
   except FloatingPointError:
-    msg = ("Invalid value encountered in the output of a jit function. "
-           "Calling the de-optimized version.")
-    print(msg)
+    print("Invalid value encountered in the output of a jit function. "
+          "Calling the de-optimized version.")
     return fun.call_wrapped(*args)  # probably won't return
-
-  if out_tree() is leaf:
-    return flat_ans
-  else:
-    return build_tree(iter(flat_ans), out_tree())
 
 
 @lu.memoize
@@ -541,6 +546,7 @@ def xla_callable(fun, *abstract_args):
 def execute_compiled(compiled, pval, handle_result, *args):
   input_bufs = [device_put(x) for x in args]
   out_buf = compiled.Execute(input_bufs, not core.skip_checks)
+  check_nans("jit-compiled computation", out_buf)
   return pe.merge_pvals(handle_result(out_buf), pval)
 
 

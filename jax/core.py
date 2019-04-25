@@ -418,11 +418,7 @@ def lattice_join(x, y):
 
 
 def valid_jaxtype(x):
-  try:
-    concrete_aval(x)
-  except TypeError:
-    return False
-  return True
+  return type(x) in pytype_aval_mappings
 
 
 def concrete_aval(x):
