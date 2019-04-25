@@ -31,6 +31,7 @@ from ..ad_util import add_jaxvals_p, zeros_like_p, zeros_like_jaxval
 from ..linear_util import transformation, transformation_with_aux, wrap_init
 from ..tree_util import register_pytree_node
 from ..util import unzip2, partial, safe_map
+from . import xla
 
 map = safe_map
 
@@ -200,8 +201,9 @@ def shaped_jaxtuple(xs):
   return AbstractTuple(map(shaped_aval, xs))
 
 pytype_aval_mappings[JaxTuple] = shaped_jaxtuple
+pytype_aval_mappings[xla.DeviceTuple] = xla.abstractify_device_tuple
 
-for t in array_types:
+for t in it.chain(array_types, [xla.DeviceArray]):
   pytype_aval_mappings[t] = make_shaped_array
 
 
