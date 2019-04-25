@@ -978,6 +978,50 @@ def mean(a, axis=None, dtype=None, out=None, keepdims=False):
       sum(a, axis, dtype=dtype, keepdims=keepdims),
       lax.convert_element_type(normalizer, dtype))
 
+@_wraps(onp.average)
+def average(a, axis=None, weights=None, returned=False):
+    a = asarray(a)
+
+    if weights is None: # Treat all weights as 1
+        avg = mean(a, axis=axis)
+        if axis is None:
+            weights_sum = full((), size(a), dtype=avg.dtype)
+        else:
+            weights_sum = full_like(avg, avg.shape[axis], dtype=avg.dtype)
+    else:
+        weights = asarray(weights)
+
+        out_dtype = _result_dtype(onp.average, a, axis, weights, returned=False)
+
+        a_shape = shape(a)
+        a_ndim = len(a_shape)
+        weights_shape = shape(weights)
+        axis = _canonicalize_axis(axis, a_ndim)
+
+        if a_shape != weights_shape:
+            # Make sure the dimensions work out
+            if axis is None:
+                raise ValueError("Axis must be specified when shapes of a and "
+                                 "weights differ.")
+            if len(weights_shape) != 1:
+                raise ValueError("1D weights expected when shapes of a and "
+                                 "weights differ.")
+            if weights_shape[0] != a_shape[axis]:
+                raise ValueError("Length of weights not "
+                                 "compatible with specified axis.")
+
+            weights = broadcast_to(weights, weights_shape + (a_ndim - 1) * (1,))
+            weights = moveaxis(weights, 0, axis)
+
+        weights_sum = sum(weights, axis=axis, dtype=out_dtype)
+        avg = sum(multiply(a, weights), axis=axis, dtype=out_dtype) / weights_sum
+
+    if returned:
+        if avg.shape != weights_sum.shape:
+            weights_sum = broadcast_to(weights_sum, avg.shape)
+        return avg, weights_sum
+    return avg
+
 
 @_wraps(onp.var)
 def var(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
