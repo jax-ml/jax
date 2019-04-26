@@ -969,10 +969,9 @@ def mean(a, axis=None, dtype=None, out=None, keepdims=False):
     else:
       dtype = _dtype(a)
 
-  td = true_divide(
+  return lax.div(
       sum(a, axis, dtype=dtype, keepdims=keepdims),
       lax.convert_element_type(normalizer, dtype))
-  return lax.convert_element_type(td, dtype)
 
 
 @_wraps(onp.var)
