@@ -54,7 +54,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   def _CheckChiSquared(self, samples, pmf):
     alpha = 0.01  # significance level, threshold for p-value
-    values, actual_freq = onp.unique(samples, return_counts=True)
+    values, actual_freq = onp.unique(onp.asarray(samples), return_counts=True)
     expected_freq = pmf(values) * len(values)
     _, p_value = scipy.stats.chisquare(actual_freq, expected_freq)
     self.assertLess(p_value, alpha)
