@@ -26,7 +26,7 @@ import jax.numpy as np
 from jax import jit, grad, device_get, device_put, jacfwd, jacrev, hessian
 from jax import api
 from jax.core import Primitive
-from jax.interpreters.ad import defjvp
+from jax.interpreters.ad import defjvp, defvjp, defvjp2, defvjp_all
 from jax.interpreters.xla import DeviceArray
 from jax.abstract_arrays import concretization_err_msg
 
@@ -429,45 +429,113 @@ class APITest(jtu.JaxTestCase):
 
   def test_complex_grad_raises_error(self):
     self.assertRaises(TypeError, lambda: grad(lambda x: np.sin(x))(1 + 2j))
-    grad(lambda x: np.real(np.sin(x)))(1 + 2j)  # doesn't crash
 
-  # TODO(mattjj, dougalm): make this work if we can, and delete subsequent test
-  # def test_complex_jacfwd(self):
-  #   # code based on https://github.com/google/jax/issues/603
-  #   zs = 0.5j * onp.arange(5) + onp.arange(5)
+  def test_holomorphic_grad(self):
+    out = grad(lambda x: np.sin(x), holomorphic=True)(1 + 2j)
+    expected = 2.0327230070196656 - 3.0518977991518j
+    self.assertAllClose(out, expected, check_dtypes=False)
 
-  #   def f(z):
-  #     return np.cos(np.linalg.norm(2 * z))
+  def test_nonholomorphic_grad(self):
+    zs = 0.5j * onp.arange(5) + onp.arange(5)
 
-  #   ans = jacfwd(f)(zs)
-  #   expected = grad(f)(zs)
-  #   self.assertAllClose(ans, expected, check_dtypes=True)
+    def f(z):
+      return np.sum(np.cos(np.abs(z)))
 
-  def test_complex_jacfwd_raises_error(self):
+    ans = grad(f)(zs)
+    expected = onp.array([ 0.        +0.j,
+                          -0.80430663+0.40215331j,
+                          -0.70368982+0.35184491j,
+                           0.1886467 -0.09432335j,
+                           0.86873727-0.43436864j])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_complex_output_jacrev_raises_error(self):
+    self.assertRaises(TypeError, lambda: jacrev(lambda x: np.sin(x))(1 + 2j))
+
+  def test_nonholomorphic_jacrev(self):
     # code based on https://github.com/google/jax/issues/603
     zs = 0.5j * onp.arange(5) + onp.arange(5)
+
     def f(z):
       return np.cos(np.linalg.norm(2 * z))
-    self.assertRaises(TypeError, lambda: jacfwd(f)(zs))
 
-  # TODO(mattjj, dougalm): make this work if we can, and delete subsequent test
-  # def test_complex_jacrev(self):
-  #   # code based on https://github.com/google/jax/issues/603
-  #   zs = 0.5j * onp.arange(5) + onp.arange(5)
+    ans = jacrev(f)(zs)
+    expected = grad(f)(zs)
+    self.assertAllClose(ans, expected, check_dtypes=True)
 
-  #   def f(z):
-  #     return np.cos(np.linalg.norm(2 * z))
+  def test_complex_input_jacfwd_raises_error(self):
+    self.assertRaises(TypeError, lambda: jacfwd(lambda x: np.sin(x))(1 + 2j))
 
-  #   ans = jacrev(f)(zs)
-  #   expected = grad(f)(zs)
-  #   self.assertAllClose(ans, expected, check_dtypes=True)
+  def test_defvjp_all(self):
+    foo_p = Primitive('foo')
+    def foo(x): return 2. * foo_p.bind(x)
 
-  def test_complex_jacrev_raises_error(self):
-    # code based on https://github.com/google/jax/issues/603
-    zs = 0.5j * onp.arange(5) + onp.arange(5)
-    def f(z):
-      return np.cos(np.linalg.norm(2 * z))
-    self.assertRaises(TypeError, lambda: jacrev(f)(zs))
+    defvjp_all(foo_p, lambda x: (x**2, lambda g: (4 * g * np.sin(x),)))
+    val_ans, grad_ans = api.value_and_grad(foo)(3.)
+    self.assertAllClose(val_ans, 2 * 3.**2, check_dtypes=False)
+    self.assertAllClose(grad_ans, 4 * 2 * onp.sin(3.), check_dtypes=False)
+
+  def test_defvjp_all_const(self):
+    foo_p = Primitive('foo')
+    def foo(x): return foo_p.bind(x)
+
+    defvjp_all(foo_p, lambda x: (x**2, lambda g: (12.,)))
+    val_ans, grad_ans = api.value_and_grad(foo)(3.)
+    self.assertAllClose(val_ans, 9., check_dtypes=False)
+    self.assertAllClose(grad_ans, 12., check_dtypes=True)
+
+  def test_defvjp_all_higher_order_revmode(self):
+    foo_p = Primitive('foo')
+    def foo(x): return 2. * foo_p.bind(x)
+
+    defvjp_all(foo_p, lambda x: (x**2, lambda g: (g * x ** 2,)))
+    ans = api.grad(api.grad(foo))(3.)
+    self.assertAllClose(ans, 2 * 2 * 3., check_dtypes=False)
+
+  def test_defvjp_all_multiple_arguments(self):
+    # also tests passing in symbolic zero tangents b/c we differentiate wrt only
+    # the first argument in one case
+
+    foo_p = Primitive('foo')
+    def foo(x, y): return foo_p.bind(x, y)
+
+    def vjpfun(x, y):
+      out = x**2 + y**3
+      vjp = lambda g: (g + x + y, g * x * 9.)
+      return out, vjp
+
+    defvjp_all(foo_p, vjpfun)
+    val_ans, grad_ans = api.value_and_grad(foo)(3., 4.)
+    self.assertAllClose(val_ans, 3.**2 + 4.**3, check_dtypes=False)
+    self.assertAllClose(grad_ans, 1. + 3. + 4., check_dtypes=False)
+
+    ans = api.grad(foo, (0, 1))(3., 4.)
+    self.assertAllClose(ans, (1. + 3. + 4., 1. * 3. * 9.), check_dtypes=False)
+
+  def test_defvjp(self):
+    @api.custom_transforms
+    def foo(x, y):
+      return np.sin(x * y)
+
+    defvjp(foo.primitive, None, lambda g, x, y: g * x * y)
+    val_ans, grad_ans = api.value_and_grad(foo)(3., 4.)
+    self.assertAllClose(val_ans, onp.sin(3. * 4.), check_dtypes=False)
+    self.assertAllClose(grad_ans, 0., check_dtypes=False)
+
+    ans_0, ans_1 = api.grad(foo, (0, 1))(3., 4.)
+    self.assertAllClose(ans_0, 0., check_dtypes=False)
+    self.assertAllClose(ans_1, 3. * 4., check_dtypes=False)
+
+  def test_defvjp2(self):
+    @api.custom_transforms
+    def foo(x, y):
+      return np.sin(x * y)
+
+    defvjp2(foo.primitive, None, lambda g, ans, x, y: g * x * y + np.cos(ans))
+    val_ans, grad_ans = api.value_and_grad(foo, 1)(3., 4.)
+    self.assertAllClose(val_ans, onp.sin(3. * 4.), check_dtypes=False)
+    self.assertAllClose(grad_ans, 3. * 4. + onp.cos(onp.sin(3. * 4)),
+                        check_dtypes=False)
 
 
 if __name__ == '__main__':

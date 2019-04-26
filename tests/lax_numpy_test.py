@@ -46,6 +46,7 @@ empty_array_shapes = [(0,), (0, 4), (3, 0),]
 
 scalar_shapes = [jtu.NUMPY_SCALAR_SHAPE]
 array_shapes = nonempty_array_shapes + empty_array_shapes
+nonzerodim_shapes = nonempty_nonscalar_array_shapes + empty_array_shapes
 nonempty_shapes = scalar_shapes + nonempty_array_shapes
 all_shapes =  scalar_shapes + array_shapes
 
@@ -96,6 +97,7 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("multiply", 2, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("negative", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("not_equal", 2, number_dtypes, all_shapes, jtu.rand_some_equal(), ["rev"]),
+    op_record("array_equal", 2, number_dtypes, all_shapes, jtu.rand_some_equal(), ["rev"]),
     op_record("reciprocal", 1, inexact_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("subtract", 2, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("sin", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
@@ -121,6 +123,7 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("atleast_1d", 1, default_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("atleast_2d", 1, default_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("atleast_3d", 1, default_dtypes, all_shapes, jtu.rand_default(), []),
+    op_record("cbrt", 1, default_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("conjugate", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("deg2rad", 1, float_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("divide", 2, number_dtypes, all_shapes, jtu.rand_nonzero(), ["rev"]),
@@ -159,6 +162,7 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("transpose", 1, all_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("true_divide", 2, all_dtypes, all_shapes, jtu.rand_nonzero(), ["rev"]),
     op_record("where", 3, (onp.float32, onp.int64), all_shapes, jtu.rand_some_zero(), []),
+    op_record("diff", 1, number_dtypes, nonzerodim_shapes, jtu.rand_default(), ["rev"]),
 ]
 
 JAX_BITWISE_OP_RECORDS = [

@@ -91,11 +91,9 @@ def jit(fun, static_argnums=()):
   >>>
   >>> key = jax.random.PRNGKey(0)
   >>> x = jax.random.normal(key, (10,))
-  >>> selu(x)
-  array([-0.54485154,  0.27744263, -0.29255125, -0.91421586, -0.62452525,
-         -0.2474813 , -0.8574326 , -0.7823267 ,  0.7682731 ,  0.59566754],
-        dtype=float32)
-
+  >>> print(selu(x))
+  [-0.54485154  0.27744263 -0.29255125 -0.91421586 -0.62452525 -0.2474813
+   -0.8574326  -0.7823267   0.7682731   0.59566754]
   """
   @wraps(fun)
   def f_jitted(*args, **kwargs):
@@ -187,7 +185,7 @@ def xla_computation(fun, static_argnums=()):
 
   return computation_maker
 
-def grad(fun, argnums=0, has_aux=False):
+def grad(fun, argnums=0, has_aux=False, holomorphic=False):
   """Creates a function which evaluates the gradient of `fun`.
 
   Args:
@@ -198,8 +196,10 @@ def grad(fun, argnums=0, has_aux=False):
     argnums: Optional, integer or tuple of integers. Specifies which positional
       argument(s) to differentiate with respect to (default 0).
     has_aux: Optional, bool. Indicates whether `fun` returns a pair where the
-     first element is considered the output of the mathematical function to be
-     differentiated and the second element is auxiliary data. Default False.
+      first element is considered the output of the mathematical function to be
+      differentiated and the second element is auxiliary data. Default False.
+    holomorphic: Optional, bool. Indicates whether `fun` is promised to be
+      holomorphic. Default False.
 
   Returns:
     A function with the same arguments as `fun`, that evaluates the gradient of
@@ -212,11 +212,11 @@ def grad(fun, argnums=0, has_aux=False):
   For example:
 
   >>> grad_tanh = jax.grad(jax.numpy.tanh)
-  >>> grad_tanh(0.2)
-  array(0.961043, dtype=float32)
-
+  >>> print(grad_tanh(0.2))
+  0.961043
   """
-  value_and_grad_f = value_and_grad(fun, argnums, has_aux=has_aux)
+  value_and_grad_f = value_and_grad(fun, argnums, has_aux=has_aux,
+                                    holomorphic=holomorphic)
 
   docstr = ("Gradient of {fun} with respect to positional argument(s) "
             "{argnums}. Takes the same arguments as {fun} but returns the "
@@ -234,7 +234,7 @@ def grad(fun, argnums=0, has_aux=False):
 
   return grad_f
 
-def value_and_grad(fun, argnums=0, has_aux=False):
+def value_and_grad(fun, argnums=0, has_aux=False, holomorphic=False):
   """Creates a function which evaluates both `fun` and the gradient of `fun`.
 
   Args:
@@ -247,6 +247,8 @@ def value_and_grad(fun, argnums=0, has_aux=False):
     has_aux: Optional, bool. Indicates whether `fun` returns a pair where the
      first element is considered the output of the mathematical function to be
      differentiated and the second element is auxiliary data. Default False.
+    holomorphic: Optional, bool. Indicates whether `fun` is promised to be
+      holomorphic. Default False.
 
   Returns:
     A function with the same arguments as `fun` that evaluates both `fun` and
@@ -271,8 +273,14 @@ def value_and_grad(fun, argnums=0, has_aux=False):
       ans, vjp_py = vjp(f_partial, *dyn_args)
     else:
       ans, vjp_py, aux = vjp(f_partial, *dyn_args, has_aux=True)
-    _check_scalar_real(ans)
-    g = vjp_py(onp.ones((), onp.result_type(ans)))
+    _check_scalar(ans)
+    dtype = onp.result_type(ans)
+    if not (holomorphic or onp.issubdtype(dtype, onp.floating)):
+      msg = ("Gradient only defined for real-output functions (with dtype that "
+             "is a subdtype of np.floating), but got dtype {}. For holomorphic "
+             "differentiation, pass holomorphic=True.")
+      raise TypeError(msg.format(dtype))
+    g = vjp_py(onp.ones((), dtype=dtype))
     g = g[0] if isinstance(argnums, int) else g
     if not has_aux:
       return ans, g
@@ -281,14 +289,26 @@ def value_and_grad(fun, argnums=0, has_aux=False):
 
   return value_and_grad_f
 
+def _check_scalar(x):
+  msg = "Gradient only defined for scalar-output functions. Output was: {}".format
+  try:
+    aval = core.get_aval(x)
+  except TypeError:
+    raise TypeError(msg(x))
+  else:
+    if not (isinstance(aval, ShapedArray) and aval.shape == ()):
+      raise TypeError(msg(x))
 
-def jacfwd(fun, argnums=0):
+
+def jacfwd(fun, argnums=0, holomorphic=False):
   """Jacobian of `fun` evaluated column-by-column using forward-mode AD.
 
   Args:
     fun: Function whose Jacobian is to be computed.
     argnums: Optional, integer or tuple of integers. Specifies which positional
       argument(s) to differentiate with respect to (default `0`).
+    holomorphic: Optional, bool. Indicates whether `fun` is promised to be
+      holomorphic. Default False.
 
   Returns:
     A function with the same arguments as `fun`, that evaluates the Jacobian of
@@ -297,31 +317,42 @@ def jacfwd(fun, argnums=0):
   >>> def f(x):
   >>>   return jax.numpy.asarray(
   >>>     [x[0], 5*x[2], 4*x[1]**2 - 2*x[2], x[2] * jax.numpy.sin(x[0])])
-  >>> jax.jacfwd(f)(np.array([1., 2., 3.]))
-  array([[ 1.        ,  0.        ,  0.        ],
-         [ 0.        ,  0.        ,  5.        ],
-         [ 0.        , 16.        , -2.        ],
-         [ 1.6209068 ,  0.        ,  0.84147096]], dtype=float32)
+  >>> print(jax.jacfwd(f)(np.array([1., 2., 3.])))
+  [[ 1.        ,  0.        ,  0.        ],
+   [ 0.        ,  0.        ,  5.        ],
+   [ 0.        , 16.        , -2.        ],
+   [ 1.6209068 ,  0.        ,  0.84147096]]
   """
 
   def jacfun(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
     f_partial, dyn_args = _argnums_partial(f, argnums, args)
+    holomorphic or tree_map(_check_real_input_jacfwd, dyn_args)
     pushfwd = partial(jvp, f_partial, dyn_args)
     y, jac = vmap(pushfwd, out_axes=(None, -1))(_std_basis(dyn_args))
-    tree_map(_check_real, y)
     example_args = dyn_args[0] if isinstance(argnums, int) else dyn_args
     return tree_map(partial(_unravel_array_into_pytree, example_args, -1), jac)
 
   return jacfun
 
-def jacrev(fun, argnums=0):
+def _check_real_input_jacfwd(x):
+  aval = core.get_aval(x)
+  if not onp.issubdtype(aval.dtype, onp.floating):
+    msg = ("jacfwd only defined for functions with input dtypes that are "
+           "sub-dtypes of `np.floating` (i.e. that model real values), but got "
+           "{}. For holomorphic differentiation, pass holomorphic=True.")
+    raise TypeError(msg.format(aval.dtype.name))
+
+
+def jacrev(fun, argnums=0, holomorphic=False):
   """Jacobian of `fun` evaluated row-by-row using reverse-mode AD.
 
   Args:
     fun: Function whose Jacobian is to be computed.
     argnums: Optional, integer or tuple of integers. Specifies which positional
       argument(s) to differentiate with respect to (default `0`).
+    holomorphic: Optional, bool. Indicates whether `fun` is promised to be
+      holomorphic. Default False.
 
   Returns:
     A function with the same arguments as `fun`, that evaluates the Jacobian of
@@ -330,17 +361,17 @@ def jacrev(fun, argnums=0):
   >>> def f(x):
   >>>   return jax.numpy.asarray(
   >>>     [x[0], 5*x[2], 4*x[1]**2 - 2*x[2], x[2] * jax.numpy.sin(x[0])])
-  >>> jax.jacrev(f)(np.array([1., 2., 3.]))
-  array([[ 1.        ,  0.        ,  0.        ],
-         [ 0.        ,  0.        ,  5.        ],
-         [ 0.        , 16.        , -2.        ],
-         [ 1.6209068 ,  0.        ,  0.84147096]], dtype=float32)
+  >>> print(jax.jacrev(f)(np.array([1., 2., 3.])))
+  [[ 1.        ,  0.        ,  0.        ],
+   [ 0.        ,  0.        ,  5.        ],
+   [ 0.        , 16.        , -2.        ],
+   [ 1.6209068 ,  0.        ,  0.84147096]]
   """
   def jacfun(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
     f_partial, dyn_args = _argnums_partial(f, argnums, args)
-    tree_map(_check_real, dyn_args)
     y, pullback = vjp(f_partial, *dyn_args)
+    holomorphic or tree_map(_check_real_output_jacrev, y)
     jac = vmap(pullback)(_std_basis(y))
     jac = jac[0] if isinstance(argnums, int) else jac
     example_args = dyn_args[0] if isinstance(argnums, int) else dyn_args
@@ -350,46 +381,50 @@ def jacrev(fun, argnums=0):
   return jacfun
 jacobian = jacrev
 
-def hessian(fun, argnums=0):
+def _check_real_output_jacrev(x):
+  aval = core.get_aval(x)
+  if not onp.issubdtype(aval.dtype, onp.floating):
+    msg = ("jacrev only defined for functions with output dtypes that are "
+           "sub-dtypes of `np.floating` (i.e. that model real values), but got "
+           "{}. For holomorphic differentiation, pass holomorphic=True.")
+    raise TypeError(msg.format(aval.dtype.name))
+
+
+def hessian(fun, argnums=0, holomorphic=False):
   """Hessian of `fun`.
 
   Args:
     fun: Function whose Hessian is to be computed.
     argnums: Optional, integer or tuple of integers. Specifies which positional
       argument(s) to differentiate with respect to (default `0`).
+    holomorphic: Optional, bool. Indicates whether `fun` is promised to be
+      holomorphic. Default False.
 
   Returns:
     A function with the same arguments as `fun`, that evaluates the Hessian of
     `fun`.
 
   >>> g = lambda(x): x[0]**3 - 2*x[0]*x[1] - x[1]**6
-  >>> jax.hessian(g)(jax.numpy.array([1., 2.]))
-  array([[   6.,   -2.],
-         [  -2., -480.]], dtype=float32)
+  >>> print(jax.hessian(g)(jax.numpy.array([1., 2.])))
+  [[   6.,   -2.],
+   [  -2., -480.]]
   """
-
-  return jacfwd(jacrev(fun, argnums=argnums), argnums=argnums)
+  return jacfwd(jacrev(fun, argnums, holomorphic), argnums, holomorphic)
 
 def _std_basis(pytree):
   leaves, _ = tree_flatten(pytree)
   ndim = sum(map(onp.size, leaves))
   # TODO(mattjj): use a symbolic identity matrix here
   dtype = onp.result_type(*leaves)
-  if not onp.issubdtype(dtype, onp.floating):
-    msg = ("Jacobian only defined for functions with floating input and output "
-           "dtypes (i.e. dtypes that model real numbers), got {}.")
-    raise TypeError(msg.format(dtype))  # TODO(mattjj, dougalm): handle complex
   flat_basis = onp.eye(ndim, dtype=dtype)
   return _unravel_array_into_pytree(pytree, 1, flat_basis)
 
 def _unravel_array_into_pytree(pytree, axis, arr):
   leaves, treedef = tree_flatten(pytree)
   axis = axis % arr.ndim
-  dtypes = map(_dtype, leaves)
   shapes = [arr.shape[:axis] + onp.shape(l) + arr.shape[axis+1:] for l in leaves]
   parts = _split(arr, onp.cumsum(map(onp.size, leaves[:-1])), axis)
-  reshaped_parts = [onp.reshape(part.astype(dtype), shape)
-                    for part, dtype, shape in zip(parts, dtypes, shapes)]
+  reshaped_parts = [onp.reshape(x, shape) for x, shape in zip(parts, shapes)]
   return tree_unflatten(treedef, reshaped_parts)
 
 def _split(x, indices, axis):
@@ -425,7 +460,7 @@ def vmap(fun, in_axes=0, out_axes=0):
   >>> mv = vmap(vv, (0, None), 0)      #  ([a,b], [b]) -> [a]
   >>> mm = vmap(mv, (None, 1), 1)      #  ([a,b], [b,c]) -> [a,c]
 
-  (`[a,b]` indicates an array with shape (a,b))
+  (here we use `[a,b]` to indicate an array with shape (a,b))
   """
 
   docstr = ("Vectorized version of {fun}. Takes similar arguments as {fun} "
@@ -534,8 +569,11 @@ def jvp(fun, primals, tangents):
 
   For example:
 
-  >>> jax.jvp(jax.numpy.sin, (0.1,), (0.2,))
-  (array(0.09983342, dtype=float32), array(0.19900084, dtype=float32))
+  >>> y, v = jax.jvp(jax.numpy.sin, (0.1,), (0.2,))
+  >>> print(y)
+  0.09983342
+  >>> print(v)
+  0.19900084
   """
   def trim_arg(primal, tangent):
     primal_jtuple, tree_def = pytree_to_jaxtupletree(primal)
@@ -597,12 +635,12 @@ def linearize(fun, *primals):
   >>> jax.jvp(f, (2.,), (3.,))
   (array(3.2681944, dtype=float32), array(-5.007528, dtype=float32))
   >>> y, f_jvp = jax.linearize(f, 2.)
-  >>> y
-  array(3.2681944, dtype=float32)
-  >>> f_jvp(3.)
-  array(-5.007528, dtype=float32)
-  >>> f_jvp(4.)
-  array(-6.676704, dtype=float32)
+  >>> print(y)
+  3.2681944
+  >>> print(f_jvp(3.))
+  -5.007528
+  >>> print(f_jvp(4.))
+  -6.676704
   """
   f = lu.wrap_init(fun)
   primals_flat, in_trees = unzip2(map(pytree_to_jaxtupletree, primals))
@@ -648,9 +686,12 @@ def vjp(fun, *primals, **kwargs):
 
   >>> def f(x, y):
   >>>   return jax.numpy.sin(x), jax.numpy.cos(y)
-  >>> primals, g = jax.vjp(f, 0.5, 1.0)
-  >>> g((-0.7, 0.3))
-  (array(-0.61430776, dtype=float32), array(-0.2524413, dtype=float32))
+  >>> primals, f_vjp = jax.vjp(f, 0.5, 1.0)
+  >>> xbar, ybar = f_vjp((-0.7, 0.3))
+  >>> print(xbar)
+  -0.61430776
+  >>> print(ybar)
+  -0.2524413
   """
   has_aux = kwargs.pop('has_aux', False)
   assert not kwargs
@@ -714,8 +755,8 @@ def make_jaxpr(fun):
   instead give a few examples.
 
   >>> def f(x): return jax.numpy.sin(jax.numpy.cos(x))
-  >>> f(3.0)
-  array(-0.83602184, dtype=float32)
+  >>> print(f(3.0))
+  -0.83602184
   >>> jax.make_jaxpr(f)(3.0)
   { lambda  ;  ; a.
     let b = cos a
@@ -786,29 +827,6 @@ def _check_args(args):
     if not (isinstance(arg, core.Tracer) or core.valid_jaxtype(arg)):
       raise TypeError("Argument '{}' of type {} is not a valid JAX type"
                       .format(arg, type(arg)))
-
-def _check_scalar_real(x):
-  msg = "Gradient only defined for scalar-output functions. Output was: {}".format
-  try:
-    aval = core.get_aval(x)
-  except TypeError:
-    raise TypeError(msg(x))
-  else:
-    if not (isinstance(aval, ShapedArray) and aval.shape == ()):
-      raise TypeError(msg(x))
-    if not onp.issubdtype(aval.dtype, onp.floating):
-      msg2 = ("Gradient only defined for functions with output dtypes that are "
-              "sub-dtypes of `np.floating` (i.e. that model real scalars), but "
-              "got {}. For holomorphic differentiation, apply `np.real` at the "
-              "end of the function.")
-      raise TypeError(msg2.format(aval.dtype.name))
-
-def _check_real(x):
-  aval = core.get_aval(x)
-  if not onp.issubdtype(aval.dtype, onp.floating):
-    msg = ("Jacobian only defined for functions with floating input and output "
-           "dtypes (i.e. dtypes that model real numbers), got {}.")
-    raise TypeError(msg.format(aval.dtype.name))
 
 
 def custom_transforms(fun):

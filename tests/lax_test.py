@@ -1419,6 +1419,11 @@ LAX_GRAD_OPS = [
                  dtypes=[onp.float64, onp.complex64]),
     GradTestSpec(lax.cos, nargs=1, order=2, rng=jtu.rand_default(),
                  dtypes=[onp.float64, onp.complex64]),
+    # TODO(proteneer): atan2 input is already a representation of a
+    # complex number. Need to think harder about what this even means
+    # if each input itself is a complex number.
+    GradTestSpec(lax.atan2, nargs=2, order=2, rng=jtu.rand_default(),
+                 dtypes=[onp.float64]),
 
     GradTestSpec(lax.erf, nargs=1, order=2, rng=jtu.rand_small(),
                  dtypes=[onp.float64]),
@@ -1940,9 +1945,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
         self.assertEqual(onp.unique(operand).size, operand.size,
                          msg="test requires operand elements to be unique.")
       jtu.check_vjp(fun, partial(api.vjp, fun), (operand,), 1e-2, 1e-2, 1e-2)
-
-      # TODO(phawkins): enable both gradients after a jaxlib update.
-      # check_grads(fun, (operand,), 1, 1e-2, 1e-2, 1e-2)
+      check_grads(fun, (operand,), 3, 1e-2, 1e-2, 1e-2)
     # pylint: enable=cell-var-from-loop
 
   # TODO(b/205052657): enable more tests when supported
