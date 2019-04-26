@@ -2310,7 +2310,7 @@ def __array_ufunc__(self, ufunc, method, *inputs, **kwargs):
   # that assigns to NumPy arrays, e.g., np_array += jax_device_array
   out = kwargs.pop('out', None)
   if out is not None:
-    if isinstance(out, (DeviceArray, core.Tracer)):
+    if _any(isinstance(o, (DeviceArray, core.Tracer)) for o in out):
       raise TypeError("JAX arrays cannot be modified inplace.")
     inputs = tuple(map(onp.asarray, inputs))
     return getattr(ufunc, method)(*inputs, out=out, **kwargs)

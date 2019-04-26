@@ -34,6 +34,7 @@ from jax import api
 from jax import lax
 from jax import numpy as lnp
 from jax import test_util as jtu
+from jax.numpy.lax_numpy import numpy_version
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -227,7 +228,6 @@ JAX_OPERATOR_OVERLOADS = [
     # TODO(mattjj): lshift, rshift
 ]
 
-numpy_version = tuple(map(int, onp.version.version.split('.')))
 if numpy_version >= (1, 15):
   JAX_COMPOUND_OP_RECORDS += [
       op_record("gcd", 2, int_dtypes, all_shapes, jtu.rand_default(), []),
@@ -1183,6 +1183,16 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(lnp_op, args_maker, check_dtypes=True)
 
   # TODO(mattjj): test infix operator overrides
+
+  @parameterized.named_parameters(
+      ('_numpy_on_lax', onp, lnp),
+      ('_lax_on_numpy', lnp, onp),
+      ('_lax_on_lax', lnp, lnp),
+  )
+  def testInplaceArithmetic(self, inplace_mod, other_mod):
+    x = inplace_mod.zeros(3)
+    x += other_mod.arange(3)
+    self.assertAllClose(x, onp.arange(3), check_dtypes=True)
 
   def testRavel(self):
     rng = onp.random.RandomState(0)
