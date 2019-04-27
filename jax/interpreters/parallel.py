@@ -253,7 +253,7 @@ class PapplyTrace(Trace):
       name = next(n for n in names if n is not None)
       size = next(t.axis_size for t in tracers if t.axis_size is not None)
       rule = papply_primitive_rules[primitive]
-      val_out, axis_out = rule(name, vals, axes, **params)
+      val_out, axis_out = rule(name, size, vals, axes, **params)
       return PapplyTracer(self, name, size, val_out, axis_out)
 
   def process_call(self, call_primitive, f, tracers, params):
@@ -270,11 +270,11 @@ class PapplyTrace(Trace):
     return PapplyTracer(self, name, size, vals, axis)
 
 
-def vectorized_papply(prim, name, vals, axes, **params):
+def vectorized_papply(prim, name, size, vals, axes, **params):
   assert all(axes[0] == a for a in axes[1:])
   return prim.bind(*vals, **params), axes[0]
 
-def reducer_papply(prim, cprim, name, vals, papply_axes, axes, **kwargs):
+def reducer_papply(prim, cprim, name, size, vals, papply_axes, axes, **kwargs):
   operand, = vals
   papply_axis, = papply_axes
 
@@ -296,7 +296,7 @@ def reducer_papply(prim, cprim, name, vals, papply_axes, axes, **kwargs):
     return result, new_papply_axis
 
 
-def broadcasting_papply(prim, name, vals, axes, **params):
+def broadcasting_papply(prim, name, size, vals, axes, **params):
   x, y = vals
   xdim, ydim = axes
 
@@ -315,7 +315,7 @@ def broadcasting_papply(prim, name, vals, axes, **params):
     return prim.bind(x, y, **params), ydim
 
 
-def identity_papply(prim, argnum, name, vals, axes, **params):
+def identity_papply(prim, argnum, name, size, vals, axes, **params):
   return prim.bind(*vals, **params), axes[argnum]
 
 

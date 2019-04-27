@@ -1649,7 +1649,8 @@ def _convert_element_type_translation_rule(c, operand, new_dtype, old_dtype):
   new_etype = xla_bridge.dtype_to_etype_exact(new_dtype)
   return c.ConvertElementType(operand, new_element_type=new_etype)
 
-def _convert_element_type_papply_rule(name, vals, dims, new_dtype, **kwargs):
+def _convert_element_type_papply_rule(name, size, vals, dims, new_dtype,
+                                      **kwargs):
   operand, = vals
   dim, = dims
   return convert_element_type(operand, new_dtype), dim
@@ -2058,7 +2059,8 @@ def _broadcast_in_dim_batch_rule(batched_args, batch_dims, shape,
   new_broadcast_dimensions.insert(bdim, bdim)
   return broadcast_in_dim(operand, new_shape, new_broadcast_dimensions), bdim
 
-def _broadcast_in_dim_papply_rule(name, vals, dims, shape, broadcast_dimensions):
+def _broadcast_in_dim_papply_rule(name, size, vals, dims, shape,
+                                  broadcast_dimensions):
   operand, = vals
   dim, = dims
   out_dim = broadcast_dimensions[dim]
@@ -2203,7 +2205,7 @@ def _pad_batch_rule(batched_args, batch_dims, padding_config):
   else:
     raise NotImplementedError  # loop and stack
 
-def _pad_papply_rule(name, vals, dims, padding_config):
+def _pad_papply_rule(name, size, vals, dims, padding_config):
   operand, padding_value = vals
   operand_dim, padding_value_dim = dims
   assert padding_value_dim is None

@@ -167,7 +167,7 @@ parallel.serial_pmap_primitive_rules[pcollect_p] = _pcollect_serial_pmap_rule
 # primitives, but that currently causes circular dependencies. More refactoring
 # might fix this.
 
-def _dot_papply_rule(name, vals, dims):
+def _dot_papply_rule(name, size, vals, dims):
   x, y = vals
   xdim, ydim = dims
   if xdim is None:
@@ -185,7 +185,7 @@ def _dot_papply_rule(name, vals, dims):
     return lax.dot(x, y), xdim
 
 
-def _dot_general_papply_rule(name, vals, dims, dimension_numbers):
+def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers):
   x, y = vals
   xdim, ydim = dims
 
@@ -227,7 +227,8 @@ def _dot_general_papply_rule(name, vals, dims, dimension_numbers):
     return lax.dot_general(x, y, sub_dimension_numbers), None
 
 
-def _reshape_papply_rule(name, vals, axes, new_sizes, dimensions, old_sizes):
+def _reshape_papply_rule(name, size, vals, axes, new_sizes, dimensions,
+                         old_sizes):
   operand, = vals
   axis, = axes
 
@@ -271,7 +272,7 @@ def _reshape_papply_rule(name, vals, axes, new_sizes, dimensions, old_sizes):
     raise NotImplementedError('papply of reshape with `dimensions`')
 
 
-def _transpose_papply_rule(name, vals, dims, permutation):
+def _transpose_papply_rule(name, size, vals, dims, permutation):
   x, = vals
   xdim, = dims
   perm = list(permutation)
@@ -290,7 +291,7 @@ def _transpose_papply_rule(name, vals, dims, permutation):
   return x, xdim
 
 
-def _select_papply_rule(name, vals, dims):
+def _select_papply_rule(name, size, vals, dims):
   dimset = set([d for d in dims if d is not None])
   if len(dimset) != 1:
     raise NotImplementedError(
@@ -304,7 +305,7 @@ def _select_papply_rule(name, vals, dims):
   return lax.select_p.bind(*vals), like_dim
 
 
-def _add_jaxvals_papply_rule(name, vals, dims):
+def _add_jaxvals_papply_rule(name, size, vals, dims):
   x, y = vals
   xdim, ydim = dims
   if xdim == ydim:
