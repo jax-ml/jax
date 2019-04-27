@@ -2465,10 +2465,30 @@ def _slice_batching_rule(batched_args, batch_dims, start_indices, limit_indices,
   out = slice(operand, new_start_indices, new_limit_indices, new_strides)
   return out, bdim
 
+def _slice_papply_rule(name, size, vals, dims, start_indices, limit_indices,
+                       strides, **kwargs):
+  operand, = vals
+  dim, = dims
+  start_indices = list(start_indices)
+  limit_indices = list(limit_indices)
+
+  if (start_indices[dim] != 0 or
+      limit_indices[dim] != size or
+      strides is not None and strides[dim] != 1):
+    raise NotImplementedError('slice changes side of hidden dimension')
+
+  out = slice(
+      operand,
+      start_indices[:dim] + start_indices[dim + 1:],
+      limit_indices[:dim] + limit_indices[dim + 1:],
+      strides[:dim] + strides[dim + 1:] if strides is not None else None)
+  return out, dim
+
 slice_p = standard_primitive(_slice_shape_rule, _input_dtype, 'slice',
                              _slice_translation_rule)
 ad.deflinear(slice_p, _slice_transpose_rule)
 batching.primitive_batchers[slice_p] = _slice_batching_rule
+parallel.papply_primitive_rules[slice_p] = _slice_papply_rule
 
 
 def _dynamic_slice_shape_rule(operand, start_indices, slice_sizes,
