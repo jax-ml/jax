@@ -987,11 +987,11 @@ def average(a, axis=None, weights=None, returned=False):
         if axis is None:
             weights_sum = full((), size(a), dtype=avg.dtype)
         else:
-            weights_sum = full_like(avg, avg.shape[axis], dtype=avg.dtype)
+            weights_sum = full_like(avg, a.shape[axis], dtype=avg.dtype)
     else:
         weights = asarray(weights)
 
-        out_dtype = _result_dtype(onp.average, a, axis, weights, returned=False)
+        out_dtype = _result_dtype(onp.average, a, axis, weights)
 
         a_shape = shape(a)
         a_ndim = len(a_shape)
