@@ -997,11 +997,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_axis={}_weights={}_returned={}".format(
           jtu.format_shape_dtype_string(shape, dtype),
+          axis,
           (None if weights_shape == None else jtu.format_shape_dtype_string(weights_shape, dtype)),
-          axis, returned),
+          returned),
        "rng": jtu.rand_default(), "shape": shape, "dtype": dtype,
        "axis": axis, "weights_shape": weights_shape, "returned": returned}
-      for shape in all_shapes
+      for shape in nonempty_shapes
       for dtype in number_dtypes
       for axis in set(range(-len(shape), len(shape))) | set([None])
       # `weights_shape` is either `None`, same as the averaged axis, or same as
