@@ -1373,6 +1373,22 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     expected = onp.reshape(a, (3, 2), order='F')
     self.assertAllClose(ans, expected, check_dtypes=True)
 
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_op={}_dtype={}".format(
+          op, {bool: "bool", int: "int", float: "float"}[dtype]),
+       "dtype": dtype, "op": op}
+      for dtype in [int, float, bool]
+      for op in ["atleast_1d", "atleast_2d", "atleast_3d"]))
+  def testAtLeastNdLiterals(self, dtype, op):
+    # Fixes: https://github.com/google/jax/issues/634
+    onp_fun = lambda arg: getattr(onp, op)(arg)
+    lnp_fun = lambda arg: getattr(lnp, op)(arg)
+    args_maker = lambda: [dtype(2)]
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+
   def testLongLong(self):
     # TODO(phawkins): enable after a Jaxlib update.
     return SkipTest("Test disabled until jaxlib 0.1.13 is released.")
