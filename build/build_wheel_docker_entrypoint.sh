@@ -34,11 +34,11 @@ echo "Python tag $PY_TAG"
 
 case $2 in
   cuda-included)
-    python build.py --enable_cuda --cudnn_path /usr/lib/x86_64-linux-gnu/
+    python build.py --enable_cuda
     python include_cuda.py
     ;;
   cuda)
-    python build.py --enable_cuda --cudnn_path /usr/lib/x86_64-linux-gnu/
+    python build.py --enable_cuda
     ;;
   nocuda)
     python build.py
