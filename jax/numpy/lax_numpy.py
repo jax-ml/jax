@@ -1179,7 +1179,7 @@ def column_stack(tup):
 def atleast_1d(*arys):
   if len(arys) == 1:
     arr = array(arys[0])
-    return arr if arr.ndim >= 1 else arr.reshape(-1)
+    return arr if ndim(arr) >= 1 else reshape(arr, -1)
   else:
     return [atleast_1d(arr) for arr in arys]
 
@@ -1188,7 +1188,7 @@ def atleast_1d(*arys):
 def atleast_2d(*arys):
   if len(arys) == 1:
     arr = array(arys[0])
-    return arr if arr.ndim >= 2 else arr.reshape((1, -1))
+    return arr if ndim(arr) >= 2 else reshape(arr, (1, -1))
   else:
     return [atleast_2d(arr) for arr in arys]
 
@@ -1198,9 +1198,9 @@ def atleast_3d(*arys):
   if len(arys) == 1:
     arr = array(arys[0])
     if ndim(arr) <= 1:
-      arr = arr.reshape((1, -1, 1))
+      arr = reshape(arr, (1, -1, 1))
     elif ndim(arr) == 2:
-      arr = arr.reshape(shape(arr) + (1,))
+      arr = reshape(arr, shape(arr) + (1,))
     return arr
   else:
     return [atleast_3d(arr) for arr in arys]
