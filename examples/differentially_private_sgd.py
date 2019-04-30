@@ -12,21 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-r"""JAX trains a differentially private conv net on MNIST 30X faster than TF.
+r"""JAX efficiently trains a differentially private conv net on MNIST.
 
 This script contains a JAX implementation of Differentially Private Stochastic
 Gradient Descent (https://arxiv.org/abs/1607.00133). DPSGD requires clipping
 the per-example parameter gradients, which is non-trivial to implement
-efficiently for convolutional neural networks. For example, the reference
-tensorflow implementation
-(https://github.com/tensorflow/privacy/tree/master/tutorials) takes upwards of 2
-minutes per epoch to train on MNIST. The JAX XLA compilier shines in this
-setting, cutting train time down to a few seconds per epoch (after tens of
-seconds to compile the algorithm to XLA instructions on the first call).
-
-We can now reproduce the MNIST results from the tensorflow reference
-implementation at a 30X speedup for the simple convolutional architecture used
-in the original DPSGD paper.
+efficiently for convolutional neural networks.  The JAX XLA compiler shines in
+this setting by optimizing the minibatch-vectorized computation for 
+convolutional architectures. Train time takes a few seconds per epoch on a
+commodity GPU.
 
 This code depends on tensorflow_privacy (https://github.com/tensorflow/privacy)
   Install instructions:
@@ -35,7 +29,7 @@ This code depends on tensorflow_privacy (https://github.com/tensorflow/privacy)
     $ cd privacy
     $ pip install .
 
-The results match those in the tensorflow baseline implementation:
+The results match those in the reference TensorFlow baseline implementation:
   https://github.com/tensorflow/privacy/tree/master/tutorials
 
 Example invocations:
