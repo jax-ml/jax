@@ -843,6 +843,14 @@ def round(a, decimals=0):
 around = round
 
 
+@_wraps(onp.fix)
+def fix(x, out=None):
+  if out is not None:
+    raise ValueError("fix does not support the `out` argument.")
+  zero = lax._const(x, 0)
+  return where(lax.ge(x, zero), lax.floor(x), lax.ceil(x))
+
+
 # Caution: If fast math mode is enabled, the semantics of inf and nan are not
 # preserved by XLA/LLVM, and the behavior of inf/nan values is unpredictable.
 # To disable fast math mode on CPU, set the environment variable
