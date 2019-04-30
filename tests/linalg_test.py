@@ -340,6 +340,15 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     if not full_matrices and m >= n:
         jtu.check_jvp(np.linalg.qr, partial(jvp, np.linalg.qr), (a,))
 
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testQrBatching(self):
+    shape = (10, 4, 5)
+    dtype = np.float32
+    rng = jtu.rand_default()
+    args = rng(shape, np.float32)
+    qs, rs = vmap(jsp.linalg.qr)(args)
+    self.assertTrue(onp.all(onp.linalg.norm(args - onp.matmul(qs, rs)) < 1e-3))
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_lhs={}_rhs={}".format(
