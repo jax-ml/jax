@@ -135,7 +135,6 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("kron", 2, number_dtypes, nonempty_shapes, jtu.rand_default(), []),
     op_record("outer", 2, number_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("imag", 1, number_dtypes, all_shapes, jtu.rand_some_inf(), []),
-    op_record("isclose", 2, all_dtypes, all_shapes, jtu.rand_small_positive(), []),
     op_record("iscomplex", 1, number_dtypes, all_shapes, jtu.rand_some_inf(), []),
     op_record("isreal", 1, number_dtypes, all_shapes, jtu.rand_some_inf(), []),
     op_record("isrealobj", 1, number_dtypes, all_shapes, jtu.rand_some_inf(), []),
@@ -242,6 +241,7 @@ if numpy_version >= (1, 15):
 
 if six.PY2:
   JAX_OPERATOR_OVERLOADS += [
+    op_record("isclose", 2, all_dtypes, all_shapes, jtu.rand_small_positive(), []),
     op_record("__div__", 2, number_dtypes, all_shapes, jtu.rand_nonzero(), []),
     op_record("__rdiv__", 2, number_dtypes, all_shapes, jtu.rand_nonzero(), []),
   ]
