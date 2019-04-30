@@ -69,10 +69,26 @@ def while_loop(cond_fun, body_fun, init_val):
   flat_body_fun, out_tree = pytree_fun_to_jaxtupletree_fun(lu.wrap_init(body_fun), (in_tree,))
   flat_cond_fun, _ = pytree_fun_to_jaxtupletree_fun(lu.wrap_init(cond_fun), (in_tree,))
 
-  pval_flat = lax._abstractify(init_val_flat)
-  cond_jaxpr, _, cond_consts = pe.trace_to_jaxpr(flat_cond_fun, (pval_flat,))
-  body_jaxpr, pval_out, body_consts = pe.trace_to_jaxpr(flat_body_fun, (pval_flat,))
-  aval_out, _ = pval_out
+  carry_pval_flat = carry_aval, _ = lax._abstractify(init_val_flat)
+  cond_jaxpr, cond_pval_out, cond_consts = pe.trace_to_jaxpr(flat_cond_fun, (carry_pval_flat,))
+  body_jaxpr, body_pval_out, body_consts = pe.trace_to_jaxpr(flat_body_fun, (carry_pval_flat,), instantiate=True)
+  carry_aval_out, _ = body_pval_out
+  assert isinstance(carry_aval_out, core.AbstractValue)
+  assert carry_aval == core.lattice_join(carry_aval, carry_aval_out)
+
+  cond_pv, cond_const = cond_pval_out
+  if cond_pv is None:
+    # cond_fun evaluates to a constant, so don't need to generate a while_loop
+    if cond_const:
+      raise ValueError("infinite loop with no effects")
+    else:
+      return init_val
+  else:
+    assert isinstance(cond_pv, core.AbstractValue)
+    if (not isinstance(cond_pv, ShapedArray) or cond_pv.shape
+        or cond_pv.dtype != onp.bool_):
+      msg = "while_loop cond_fun must return a scalar boolean, got {}."
+      raise TypeError(msg.format(cond_pv))
 
   # We don't want to promote literal constants as loop arguments; there are
   # sometimes many of them. We pass tracers as loop arguments, but leave
@@ -97,7 +113,6 @@ def while_loop(cond_fun, body_fun, init_val):
   body_split = split_tracers_and_nontracers(body_jaxpr, body_consts)
   body_jaxpr.constvars, body_nontracer_consts, body_tracer_consts = body_split
 
-
   if out_tree() != in_tree:
     raise TypeError("body_fun input and output must have identical structure")
   out_flat = while_p.bind(
@@ -105,7 +120,7 @@ def while_loop(cond_fun, body_fun, init_val):
       core.pack(cond_tracer_consts), core.pack(body_tracer_consts),
       cond_consts=lax._OpaqueParam(cond_nontracer_consts),
       body_consts=lax._OpaqueParam(body_nontracer_consts),
-      aval_out=aval_out, cond_jaxpr=cond_jaxpr, body_jaxpr=body_jaxpr)
+      aval_out=carry_aval_out, cond_jaxpr=cond_jaxpr, body_jaxpr=body_jaxpr)
   return build_tree(out_tree(), out_flat)
 
 
