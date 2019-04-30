@@ -1921,6 +1921,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     # TODO(b/31565929): enable when fixed.
     if FLAGS.jax_test_dut == "tpu" and op is not lax.add:
       all_configs = [((6, 5, 4, 3), (2, 2, 1, 1), (1, 2, 1, 1))]
+      test_gradients = False  # TODO(b/73062247): need variadic reduce-window.
     else:
       all_configs = itertools.chain(
           itertools.product(
@@ -1933,6 +1934,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
               [(1, 1, 2, 1), (2, 1, 2, 1)],  # window_dimensions
               [(1, 2, 2, 1), (1, 1, 1, 1)]),  # strides
       )
+      test_gradients = True
 
     def fun(operand):
       return lax.reduce_window(operand, init_val, op, dims, strides, padding)
@@ -1945,7 +1947,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
         self.assertEqual(onp.unique(operand).size, operand.size,
                          msg="test requires operand elements to be unique.")
       jtu.check_vjp(fun, partial(api.vjp, fun), (operand,), 1e-2, 1e-2, 1e-2)
-      check_grads(fun, (operand,), 3, 1e-2, 1e-2, 1e-2)
+      if test_gradients:
+        check_grads(fun, (operand,), 3, 1e-2, 1e-2, 1e-2)
     # pylint: enable=cell-var-from-loop
 
   # TODO(b/205052657): enable more tests when supported
