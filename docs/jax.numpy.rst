@@ -192,6 +192,7 @@ jax.numpy package
     tan
     tanh
     tensordot
+    tile
     trace
     transpose
     tri
