@@ -599,6 +599,23 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape=[{}]_reps={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), reps),
+       "shape": shape, "dtype": dtype, "reps": reps,
+       "rng": jtu.rand_default()}
+      for reps in [(), (2,), (3, 4), (2, 3, 4)]
+      for dtype in default_dtypes
+      for shape in all_shapes
+      ))
+  def testTile(self, shape, dtype, reps, rng):
+    onp_fun = lambda arg: onp.tile(arg, reps)
+    lnp_fun = lambda arg: lnp.tile(arg, reps)
+
+    args_maker = lambda: [rng(shape, dtype)]
+
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_axis={}_baseshape=[{}]_dtypes=[{}]".format(

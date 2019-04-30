@@ -1135,6 +1135,15 @@ def stack(arrays, axis=0):
     new_arrays.append(reshape(a, new_shape))
   return concatenate(new_arrays, axis=axis)
 
+@_wraps(onp.tile)
+def tile(a, reps):
+    if isinstance(reps, int):
+        reps = (reps,)
+    a = a[(None,) * (len(reps) - a.ndim)]
+    reps = (1,) * (a.ndim - len(reps)) + reps
+    for i, rep in enumerate(reps):
+        a = concatenate([a] * rep, axis=i)
+    return a
 
 @_wraps(onp.concatenate)
 def concatenate(arrays, axis=0):
@@ -2302,7 +2311,7 @@ _nondiff_methods = ["all", "any", "argmax", "argmin", "argpartition", "argsort",
 _diff_methods = ["clip", "compress", "conj", "conjugate", "cumprod", "cumsum",
                  "diagonal", "dot", "max", "mean", "min", "prod", "ptp",
                  "ravel", "repeat", "sort", "squeeze", "std", "sum",
-                 "swapaxes", "take", "trace", "transpose", "var"]
+                 "swapaxes", "take", "tile", "trace", "transpose", "var"]
 
 
 # Set up operator, method, and property forwarding on Tracer instances containing
