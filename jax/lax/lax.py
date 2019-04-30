@@ -2536,12 +2536,31 @@ def _dynamic_update_slice_translation_rule(c, operand, update, start_indices,
                                            update_shape):
   return c.DynamicUpdateSlice(operand, update, start_indices)
 
+def _dynamic_update_slice_batching_rule(batched_args, batch_dims, update_shape):
+  # A dynamic update slice is a special case of scatter; we can delegate to the
+  # scatter batching rule.
+  # TODO(phawkins): consider removing dynamic_update_slice entirely and using
+  # scatter always.
+  operand, update, index = batched_args
+  operand_bdims, update_bdims, index_bdims = batch_dims
+  dims = tuple(range(len(update_shape)))
+  dnums = ScatterDimensionNumbers(update_window_dims=dims,
+                                  inserted_window_dims=(),
+                                  scatter_dims_to_operand_dims=dims)
+  return _scatter_batching_rule(
+    scatter,
+    (operand, index, update), (operand_bdims, index_bdims, update_bdims),
+    None, None, dnums, update_shape)
+
+
 dynamic_update_slice_p = standard_primitive(
     _dynamic_update_slice_shape_rule, _dynamic_update_slice_dtype_rule,
     'dynamic_update_slice', _dynamic_update_slice_translation_rule)
 ad.primitive_jvps[dynamic_update_slice_p] = _dynamic_update_slice_jvp
 ad.primitive_transposes[dynamic_update_slice_p] = \
     _dynamic_update_slice_transpose_rule
+batching.primitive_batchers[dynamic_update_slice_p] = \
+    _dynamic_update_slice_batching_rule
 
 
 
