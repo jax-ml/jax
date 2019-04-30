@@ -47,8 +47,7 @@ def eigh(x, lower=True, symmetrize_input=True):
 def lu(x): return lu_p.bind(x)
 
 def qr(x, full_matrices=True):
-  q, r = qr_p.bind(x, full_matrices=full_matrices)
-  return q, r
+  return qr_p.bind(x, full_matrices=full_matrices)
 
 def svd(x, full_matrices=True, compute_uv=True):
   s, u, v = svd_p.bind(x, full_matrices=full_matrices, compute_uv=compute_uv)
@@ -427,7 +426,8 @@ def qr_batching_rule(batched_args, batch_dims, full_matrices):
   x, = batched_args
   bd, = batch_dims
   x = batching.bdim_at_front(x, bd)
-  return qr(x, full_matrices=full_matrices), 0
+  q, r = qr(x, full_matrices=full_matrices)
+  return core.pack((q, r)), 0
 
 qr_p = Primitive('qr')
 qr_p.def_impl(qr_impl)
