@@ -71,7 +71,11 @@ def jit(fun, static_argnums=()):
     fun: Function to be jitted. Should be a pure function, as side-effects may
       only be executed once. Its positional arguments and return value should be
       arrays, scalars, or standard Python containers (tuple/list/dict) thereof.
-      Positional arguments indicated by `static_argnums` can be anything at all.
+
+      Positional arguments indicated by `static_argnums` can be anything at all,
+      provided they are hashable and have an equality operation defined. Static
+      arguments are included as part of a compilation cache key, which is why
+      hash and equality operators must be defined.
     static_argnums: A tuple of ints. Specifies which positional arguments to
       treat as static (compile-time constant). Operations that only depend on
       static arguments will be constant-folded. Calling the jitted function with
