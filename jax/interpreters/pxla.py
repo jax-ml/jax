@@ -329,7 +329,7 @@ def _shard_aval(axis_size, aval):
 def parallel_callable(fun, axis_name, axis_size, *avals):
   pvals = [PartialVal((aval, core.unit)) for aval in avals]
   with core.new_master(JaxprTrace, True) as master:
-    jaxpr, (pval, consts, env) = trace_to_subjaxpr(fun, master).call_wrapped(pvals)
+    jaxpr, (pval, consts, env) = trace_to_subjaxpr(fun, master, False).call_wrapped(pvals)
     assert not env
     out = compile_replicated(jaxpr, axis_name, axis_size, consts, *avals)
     compiled, nrep, result_shape = out
