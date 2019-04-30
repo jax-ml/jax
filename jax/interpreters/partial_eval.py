@@ -169,7 +169,7 @@ def add_axis_to_aval(size, aval):
 
 
 def partial_eval(f, trace, pvs):
-  f = trace_to_subjaxpr(f, trace.master)
+  f = trace_to_subjaxpr(f, trace.master, False)
   return partial_eval_wrapper(f, tuple(pvs))
 
 
@@ -341,10 +341,11 @@ def abstractify(x):
 def trace_unwrapped_to_jaxpr(fun, pvals, **kwargs):
   return trace_to_jaxpr(lu.wrap_init(fun, kwargs), pvals)
 
-def trace_to_jaxpr(fun, pvals):
+def trace_to_jaxpr(fun, pvals, **kwargs):
   """Traces a function, given abstract inputs, to a jaxpr."""
+  instantiate = kwargs.pop('instantiate', False)
   with new_master(JaxprTrace) as master:
-    fun = trace_to_subjaxpr(fun, master)
+    fun = trace_to_subjaxpr(fun, master, instantiate)
     jaxpr, (out_pval, consts, env) = fun.call_wrapped(pvals)
     assert not env
     del master
@@ -352,12 +353,16 @@ def trace_to_jaxpr(fun, pvals):
   return jaxpr, out_pval, consts
 
 @transformation
-def trace_to_subjaxpr(master, pvals):
+def trace_to_subjaxpr(master, instantiate, pvals):
   assert all([isinstance(pv, PartialVal) for pv in pvals]), pvals
   trace = JaxprTrace(master, core.cur_sublevel())
   in_tracers = map(trace.new_arg, pvals)
   out_tracer = yield in_tracers, {}
   out_tracer = trace.full_raise(out_tracer)
+
+  if instantiate:
+    out_tracer = trace.instantiate_const(out_tracer)
+
   jaxpr, consts, env = tracers_to_jaxpr(in_tracers, out_tracer)
   out_pval = out_tracer.pval
   del trace, in_tracers, out_tracer
@@ -472,7 +477,7 @@ def eval_jaxpr_raw(jaxpr, consts, freevar_vals, *args):
 def compiled_call_impl(fun, *args):
   with new_master(JaxprTrace, True) as master:
     pvals = map(abstractify, args)
-    jaxpr, (pval, consts, env) = trace_to_subjaxpr(fun, master).call_wrapped(pvals)
+    jaxpr, (pval, consts, env) = trace_to_subjaxpr(fun, master, False).call_wrapped(pvals)
     jaxpr_ans = eval_jaxpr_raw(jaxpr, consts, env, *args)
     ans = merge_pvals(jaxpr_ans, pval)
     del master, pvals, pval, consts, env, jaxpr_ans, jaxpr
