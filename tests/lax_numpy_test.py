@@ -232,6 +232,7 @@ JAX_OPERATOR_OVERLOADS = [
 numpy_version = tuple(map(int, onp.version.version.split('.')))
 if numpy_version >= (1, 15):
   JAX_COMPOUND_OP_RECORDS += [
+      op_record("isclose", 2, all_dtypes, all_shapes, jtu.rand_small_positive(), []),
       op_record("gcd", 2, int_dtypes, all_shapes, jtu.rand_default(), []),
       op_record("lcm", 2, int_dtypes, all_shapes, jtu.rand_default(), []),
   ]
@@ -241,7 +242,6 @@ if numpy_version >= (1, 15):
 
 if six.PY2:
   JAX_OPERATOR_OVERLOADS += [
-    op_record("isclose", 2, all_dtypes, all_shapes, jtu.rand_small_positive(), []),
     op_record("__div__", 2, number_dtypes, all_shapes, jtu.rand_nonzero(), []),
     op_record("__rdiv__", 2, number_dtypes, all_shapes, jtu.rand_nonzero(), []),
   ]
