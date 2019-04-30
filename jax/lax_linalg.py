@@ -338,29 +338,31 @@ def lu_jvp_rule(primals, tangents):
   return core.pack((lu, pivots)), ad.TangentTuple((lu_dot, ad_util.zero))
 
 
+def lu_batching_rule(batched_args, batch_dims):
+  x, = batched_args
+  bd, = batch_dims
+  x = batching.bdim_at_front(x, bd)
+  return lu(x), 0
+
+
 lu_p = Primitive('lu')
 lu_p.def_impl(lu_impl)
 lu_p.def_abstract_eval(lu_abstract_eval)
 xla.translations[lu_p] = lu_translation_rule
 ad.primitive_jvps[lu_p] = lu_jvp_rule
+batching.primitive_batchers[lu_p] = lu_batching_rule
 
 def lu_cpu_translation_rule(c, operand):
   shape = c.GetShape(operand)
   dtype = shape.element_type().type
-  if len(shape.dimensions()) == 2 and dtype in _cpu_lapack_types:
-    out = lapack.jax_getrf(c, operand)
-    lu = c.GetTupleElement(out, 0)
-    # Subtract 1 from the pivot to get 0-based indices.
-    pivot = c.Sub(c.GetTupleElement(out, 1), c.ConstantS32Scalar(1))
-    # Throw away the `info` value, because we have no way to report errors.
-    return c.Tuple(lu, pivot)
-  else:
-    raise NotImplementedError("Only unbatched LU decomposition is implemented")
+  out = lapack.jax_getrf(c, operand)
+  lu = c.GetTupleElement(out, 0)
+  # Subtract 1 from the pivot to get 0-based indices.
+  pivot = c.Sub(c.GetTupleElement(out, 1), c.ConstantS32Scalar(1))
+  # Throw away the `info` value, because we have no way to report errors.
+  return c.Tuple(lu, pivot)
 
-# TODO(phawkins): The hasattr() test here is to avoid incompatibilities between
-# jax and an older jaxlib. Remove after a jaxlib release includes jax_getrf.
-if hasattr(lapack, "jax_getrf"):
-  xla.backend_specific_translations['cpu'][lu_p] = lu_cpu_translation_rule
+xla.backend_specific_translations['cpu'][lu_p] = lu_cpu_translation_rule
 
 
 def lu_pivots_to_permutation(swaps, k):
@@ -421,11 +423,18 @@ def qr_jvp_rule(primals, tangents, full_matrices):
   dr = np.matmul(qt_dx_rinv - domega, r)
   return core.pack((q, r)), core.pack((dq, dr))
 
+def qr_batching_rule(batched_args, batch_dims, full_matrices):
+  x, = batched_args
+  bd, = batch_dims
+  x = batching.bdim_at_front(x, bd)
+  return qr(x, full_matrices=full_matrices), 0
+
 qr_p = Primitive('qr')
 qr_p.def_impl(qr_impl)
 qr_p.def_abstract_eval(qr_abstract_eval)
 xla.translations[qr_p] = qr_translation_rule
 ad.primitive_jvps[qr_p] = qr_jvp_rule
+batching.primitive_batchers[qr_p] = qr_batching_rule
 
 
 # Singular value decomposition
@@ -467,8 +476,15 @@ def svd_cpu_translation_rule(c, operand, full_matrices, compute_uv):
     raise NotImplementedError(
         "Only unbatched singular value decomposition is implemented on CPU")
 
+def svd_batching_rule(batched_args, batch_dims, full_matrices, compute_uv):
+  x, = batched_args
+  bd, = batch_dims
+  x = batching.bdim_at_front(x, bd)
+  return svd(x, full_matrices=full_matrices, compute_uv=compute_uv), 0
+
 svd_p = Primitive('svd')
 svd_p.def_impl(svd_impl)
 svd_p.def_abstract_eval(svd_abstract_eval)
 xla.translations[svd_p] = svd_translation_rule
 xla.backend_specific_translations['cpu'][svd_p] = svd_cpu_translation_rule
+batching.primitive_batchers[svd_p] = svd_batching_rule
