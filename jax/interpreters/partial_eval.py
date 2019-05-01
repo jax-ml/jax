@@ -595,13 +595,11 @@ def partial_eval_jaxpr(jaxpr, consts, avals, first_components):
   return (jaxpr_1, consts_1), (lifted_jaxpr_2, ()), out_pv_2, fc_out
 
 
-def _closure_convert_jaxpr(jaxpr, newvar):
+def _closure_convert_jaxpr(jaxpr):
   lifted_jaxpr = jaxpr.copy()
   lifted_jaxpr.constvars = ()
-  consts_var = newvar()
-  lifted_jaxpr.invars = [consts_var] + jaxpr.invars
-  lifted_jaxpr.eqns = (
-      [_unpack_eqn(consts_var, jaxpr.constvars)] + list(jaxpr.eqns))
+  lifted_jaxpr.invars = [tuple(jaxpr.constvars)] + list(jaxpr.invars)
+  core.skip_checks or core.check_jaxpr(lifted_jaxpr)
   return lifted_jaxpr
 
 def _unpack_eqn(invar, outvars):
@@ -634,8 +632,8 @@ def partial_eval_jaxpr2(jaxpr, first_components):
   #               jaxpr_2 :: res | d2 -> c2 -> a2 -> (c2, b2)
   #        lifted_jaxpr_2 :: res -> d2 -> c2 -> a2 -> (c2, b2)
   # doubly_lifted_jaxpr_2 :: d2 -> c2 -> (a2, res) -> (c2, b2)
-  lifted_jaxpr_2 = _closure_convert_jaxpr(jaxpr_2, _partial_eval_gensym)
-  doubly_lifted_jaxpr_2 = _move_and_pair_arg(lifted_jaxpr_2, _partial_eval_gensym)
+  lifted_jaxpr_2 = _closure_convert_jaxpr(jaxpr_2)
+  doubly_lifted_jaxpr_2 = _move_and_pair_arg(lifted_jaxpr_2)
   fc_out = fc_c_out, fc_b_out = isnone(out_pv_c), isnone(out_pv_b)
 
   in_avals_1, in_avals_2 = unzip2(map(_split_avals, first_components,
@@ -662,13 +660,11 @@ def partial_eval_jaxpr2(jaxpr, first_components):
                              out_aval_2)
   return typed_jaxpr_1, typed_jaxpr_2, fc_out
 
-def _move_and_pair_arg(jaxpr, newvar):
+def _move_and_pair_arg(jaxpr):
   moved_jaxpr = jaxpr.copy()
   res, d, c, a = jaxpr.invars
-  pair_var = newvar()
-  moved_jaxpr.invars = [d, c, pair_var]
-  moved_jaxpr.eqns = (
-      [_unpack_eqn(pair_var, [a, res])] + list(jaxpr.eqns))
+  moved_jaxpr.invars = [d, c, (a, res)]
+  core.skip_checks or core.check_jaxpr(moved_jaxpr)
   return moved_jaxpr
 
 def _split_avals(first_component, aval):
