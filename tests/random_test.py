@@ -186,7 +186,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       for a in [0.2, 5.]
       for b in [0.2, 5.]
       for dtype in [onp.float32, onp.float64]))
-  @jtu.skip_on_devices("cpu")  # TODO(phawkins): slow compilation times
+  @jtu.skip_on_devices("cpu", "tpu")  # TODO(phawkins): slow compilation times
   def testBeta(self, a, b, dtype):
     key = random.PRNGKey(0)
     rand = lambda key, a, b: random.beta(key, a, b, (10000,), dtype)
@@ -322,7 +322,7 @@ class LaxRandomTest(jtu.JaxTestCase):
        "df": df, "dtype": onp.dtype(dtype).name}
       for df in [0.1, 1., 10.]
       for dtype in [onp.float32, onp.float64]))
-  @jtu.skip_on_devices("cpu")  # TODO(phawkins): slow compilation times
+  @jtu.skip_on_devices("cpu", "tpu")  # TODO(phawkins): slow compilation times
   def testT(self, df, dtype):
     key = random.PRNGKey(0)
     rand = lambda key, df: random.t(key, df, (10000,), dtype)
