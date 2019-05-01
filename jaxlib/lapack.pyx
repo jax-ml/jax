@@ -218,69 +218,89 @@ def jax_trsm(c, alpha, a, b, left_side=False, lower=False, trans_a=False,
 # ?getrf: LU decomposition
 
 cdef void lapack_sgetrf(void* out_tuple, void** data) nogil:
-  cdef int m = (<int32_t*>(data[0]))[0]
-  cdef int n = (<int32_t*>(data[1]))[0]
-  cdef const float* a_in = <float*>(data[2])
+  cdef int b = (<int32_t*>(data[0]))[0]
+  cdef int m = (<int32_t*>(data[1]))[0]
+  cdef int n = (<int32_t*>(data[2]))[0]
+  cdef const float* a_in = <float*>(data[3])
 
   cdef void** out = <void**>(out_tuple)
   cdef float* a_out = <float*>(out[0])
   cdef int* ipiv = <int*>(out[1])
   cdef int* info = <int*>(out[2])
   if a_out != a_in:
-    memcpy(a_out, a_in, m * n * sizeof(float))
+    memcpy(a_out, a_in, b * m * n * sizeof(float))
 
-  sgetrf(&m, &n, a_out, &m, ipiv, info)
+  for i in range(b):
+    sgetrf(&m, &n, a_out, &m, ipiv, info)
+    a_out += m * n
+    ipiv += min(m, n)
+    info += 1
 
 register_cpu_custom_call_target(b"lapack_sgetrf", <void*>(lapack_sgetrf))
 
 
 cdef void lapack_dgetrf(void* out_tuple, void** data) nogil:
-  cdef int m = (<int32_t*>(data[0]))[0]
-  cdef int n = (<int32_t*>(data[1]))[0]
-  cdef const double* a_in = <double*>(data[2])
+  cdef int b = (<int32_t*>(data[0]))[0]
+  cdef int m = (<int32_t*>(data[1]))[0]
+  cdef int n = (<int32_t*>(data[2]))[0]
+  cdef const double* a_in = <double*>(data[3])
 
   cdef void** out = <void**>(out_tuple)
   cdef double* a_out = <double*>(out[0])
   cdef int* ipiv = <int*>(out[1])
   cdef int* info = <int*>(out[2])
   if a_out != a_in:
-    memcpy(a_out, a_in, m * n * sizeof(double))
+    memcpy(a_out, a_in, b * m * n * sizeof(double))
 
-  dgetrf(&m, &n, a_out, &m, ipiv, info)
+  for i in range(b):
+    dgetrf(&m, &n, a_out, &m, ipiv, info)
+    a_out += m * n
+    ipiv += min(m, n)
+    info += 1
 
 register_cpu_custom_call_target(b"lapack_dgetrf", <void*>(lapack_dgetrf))
 
 
 cdef void lapack_cgetrf(void* out_tuple, void** data) nogil:
-  cdef int m = (<int32_t*>(data[0]))[0]
-  cdef int n = (<int32_t*>(data[1]))[0]
-  cdef const float complex* a_in = <float complex*>(data[2])
+  cdef int b = (<int32_t*>(data[0]))[0]
+  cdef int m = (<int32_t*>(data[1]))[0]
+  cdef int n = (<int32_t*>(data[2]))[0]
+  cdef const float complex* a_in = <float complex*>(data[3])
 
   cdef void** out = <void**>(out_tuple)
   cdef float complex* a_out = <float complex*>(out[0])
   cdef int* ipiv = <int*>(out[1])
   cdef int* info = <int*>(out[2])
   if a_out != a_in:
-    memcpy(a_out, a_in, m * n * sizeof(float complex))
+    memcpy(a_out, a_in, b * m * n * sizeof(float complex))
 
-  cgetrf(&m, &n, a_out, &m, ipiv, info)
+  for i in range(b):
+    cgetrf(&m, &n, a_out, &m, ipiv, info)
+    a_out += m * n
+    ipiv += min(m, n)
+    info += 1
 
 register_cpu_custom_call_target(b"lapack_cgetrf", <void*>(lapack_cgetrf))
 
 
 cdef void lapack_zgetrf(void* out_tuple, void** data) nogil:
-  cdef int m = (<int32_t*>(data[0]))[0]
-  cdef int n = (<int32_t*>(data[1]))[0]
-  cdef const double complex* a_in = <double complex*>(data[2])
+  cdef int b = (<int32_t*>(data[0]))[0]
+  cdef int m = (<int32_t*>(data[1]))[0]
+  cdef int n = (<int32_t*>(data[2]))[0]
+  cdef const double complex* a_in = <double complex*>(data[3])
 
   cdef void** out = <void**>(out_tuple)
   cdef double complex* a_out = <double complex*>(out[0])
   cdef int* ipiv = <int*>(out[1])
   cdef int* info = <int*>(out[2])
   if a_out != a_in:
-    memcpy(a_out, a_in, m * n * sizeof(double complex))
+    memcpy(a_out, a_in, b * m * n * sizeof(double complex))
 
-  zgetrf(&m, &n, a_out, &m, ipiv, info)
+  for i in range(b):
+    zgetrf(&m, &n, a_out, &m, ipiv, info)
+    a_out += m * n
+    ipiv += min(m, n)
+    info += 1
 
 register_cpu_custom_call_target(b"lapack_zgetrf", <void*>(lapack_zgetrf))
 
@@ -289,7 +309,15 @@ def jax_getrf(c, a):
 
   a_shape = c.GetShape(a)
   dtype = a_shape.element_type()
-  m, n = a_shape.dimensions()
+  dims = a_shape.dimensions()
+  assert len(dims) >= 2
+  m, n = dims[-2:]
+  batch_dims = tuple(dims[:-2])
+  num_bd = len(batch_dims)
+  b = 1
+  for d in batch_dims:
+    b *= d
+
   if dtype == np.float32:
     fn = b"lapack_sgetrf"
   elif dtype == np.float64:
@@ -303,16 +331,31 @@ def jax_getrf(c, a):
 
   return c.CustomCall(
       fn,
-      operands=(c.ConstantS32Scalar(m), c.ConstantS32Scalar(n), a),
+      operands=(
+        c.ConstantS32Scalar(b),
+        c.ConstantS32Scalar(m),
+        c.ConstantS32Scalar(n),
+        a),
       shape_with_layout=Shape.tuple_shape((
-          Shape.array_shape(dtype, (m, n), (0, 1)),
-          Shape.array_shape(np.int32, (min(m, n),), (0,)),
-          Shape.array_shape(np.int32, (), ()),
+          Shape.array_shape(
+            dtype,
+            batch_dims + (m, n),
+            (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
+          Shape.array_shape(
+            np.int32,
+            batch_dims + (min(m, n),),
+            tuple(range(num_bd, -1, -1))),
+          Shape.array_shape(np.int32, batch_dims,
+            tuple(range(num_bd - 1, -1, -1))),
       )),
       operand_shapes_with_layout=(
           Shape.array_shape(np.int32, (), ()),
           Shape.array_shape(np.int32, (), ()),
-          Shape.array_shape(dtype, (m, n), (0, 1)),
+          Shape.array_shape(np.int32, (), ()),
+          Shape.array_shape(
+            dtype,
+            batch_dims + (m, n),
+            (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
       ))
 
 

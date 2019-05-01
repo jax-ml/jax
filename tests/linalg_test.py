@@ -27,7 +27,7 @@ import scipy as osp
 from absl.testing import absltest
 from absl.testing import parameterized
 
-from jax import jvp
+from jax import jvp, vmap
 from jax import numpy as np
 from jax import scipy as jsp
 from jax import test_util as jtu
@@ -340,6 +340,15 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     if not full_matrices and m >= n:
         jtu.check_jvp(np.linalg.qr, partial(jvp, np.linalg.qr), (a,))
 
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testQrBatching(self):
+    shape = (10, 4, 5)
+    dtype = np.float32
+    rng = jtu.rand_default()
+    args = rng(shape, np.float32)
+    qs, rs = vmap(jsp.linalg.qr)(args)
+    self.assertTrue(onp.all(onp.linalg.norm(args - onp.matmul(qs, rs)) < 1e-3))
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_lhs={}_rhs={}".format(
@@ -419,6 +428,22 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
     jtu.check_grads(jsp.linalg.lu, (a,), 2, rtol=1e-1)
 
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testLuBatching(self):
+    self.skipTest("Test disabled until Jaxlib 0.1.14 is released")
+    shape = (4, 5)
+    dtype = np.float32
+    rng = jtu.rand_default()
+    args = [rng(shape, np.float32) for _ in range(10)]
+    expected = list(osp.linalg.lu(x) for x in args)
+    ps = onp.stack([out[0] for out in expected])
+    ls = onp.stack([out[1] for out in expected])
+    us = onp.stack([out[2] for out in expected])
+
+    actual_ps, actual_ls, actual_us = vmap(jsp.linalg.lu)(np.stack(args))
+    self.assertAllClose(ps, actual_ps, check_dtypes=True)
+    self.assertAllClose(ls, actual_ls, check_dtypes=True)
+    self.assertAllClose(us, actual_us, check_dtypes=True)
 
   # TODO(phawkins): enable when there is an LU implementation for GPU/TPU.
   @parameterized.named_parameters(jtu.cases_from_list(
