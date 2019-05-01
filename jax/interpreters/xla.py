@@ -173,11 +173,13 @@ def device_put_many(xs_and_devices):
         transfers.append((x.device_buffer.to_py(), device_num))
     elif isinstance(x, DeviceConstant):
       outputs[i] = instantiate_device_constant(x, device_num=device_num)
-    elif t is onp.ndarray or t is JaxTuple:
-      # TODO(mattjj, phawkins): for the JaxTuple case, this implementation can
-      # round-trip tuple elements already on the correct device, revise?
+    elif hasattr(t, '__array__'):
       transfer_indices.append(i)
-      transfers.append((x, device_num))
+      transfers.append((x, device_num))  # handle arraylikes
+    elif t is JaxTuple:
+      # TODO(mattjj,phawkins): improve this to avoid device_put call
+      element_bufs = tuple(map(partial(device_put, device_num=device_num), x))
+      outputs[i] = xb.make_tuple(element_bufs, device_num)
     else:
       raise TypeError(t)
 
