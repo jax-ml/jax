@@ -343,8 +343,8 @@ class ShardedDeviceArray(xla.DeviceArray):
     xla_shape = device_buffers[0].shape()
     self.shape = (axis_size,) + tuple(xla_shape.dimensions())
     self.dtype = xla_shape.element_type()
-    self.ndim = 1 + len(self.shape)
-    self.size = axis_size * prod(self.shape)
+    self.ndim = len(self.shape)
+    self.size = prod(self.shape)
     self._npy_value = None
 
   @property
