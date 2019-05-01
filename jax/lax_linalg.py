@@ -42,12 +42,16 @@ def cholesky(x, symmetrize_input=True):
 def eigh(x, lower=True, symmetrize_input=True):
   if symmetrize_input:
     x = symmetrize(x)
-  return eigh_p.bind(x, lower=lower)
+  v, w = eigh_p.bind(x, lower=lower)
+  return v, w
 
-def lu(x): return lu_p.bind(x)
+def lu(x):
+  lu, pivots = lu_p.bind(x)
+  return lu, pivots
 
 def qr(x, full_matrices=True):
-  return qr_p.bind(x, full_matrices=full_matrices)
+  q, r = qr_p.bind(x, full_matrices=full_matrices)
+  return q, r
 
 def svd(x, full_matrices=True, compute_uv=True):
   s, u, v = svd_p.bind(x, full_matrices=full_matrices, compute_uv=compute_uv)
@@ -341,7 +345,7 @@ def lu_batching_rule(batched_args, batch_dims):
   x, = batched_args
   bd, = batch_dims
   x = batching.bdim_at_front(x, bd)
-  return lu(x), 0
+  return lu_p.bind(x), 0
 
 
 lu_p = Primitive('lu')
@@ -427,7 +431,7 @@ def qr_batching_rule(batched_args, batch_dims, full_matrices):
   bd, = batch_dims
   x = batching.bdim_at_front(x, bd)
   q, r = qr(x, full_matrices=full_matrices)
-  return core.pack((q, r)), 0
+  return qr_p.bind(x, full_matrices=full_matrices), 0
 
 qr_p = Primitive('qr')
 qr_p.def_impl(qr_impl)
@@ -480,7 +484,7 @@ def svd_batching_rule(batched_args, batch_dims, full_matrices, compute_uv):
   x, = batched_args
   bd, = batch_dims
   x = batching.bdim_at_front(x, bd)
-  return svd(x, full_matrices=full_matrices, compute_uv=compute_uv), 0
+  return svd_p.bind(x, full_matrices=full_matrices, compute_uv=compute_uv), 0
 
 svd_p = Primitive('svd')
 svd_p.def_impl(svd_impl)
