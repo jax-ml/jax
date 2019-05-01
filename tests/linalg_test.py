@@ -430,6 +430,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices("gpu", "tpu")
   def testLuBatching(self):
+    self.skipTest("Test disabled until Jaxlib 0.1.14 is released")
     shape = (4, 5)
     dtype = np.float32
     rng = jtu.rand_default()
