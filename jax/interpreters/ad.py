@@ -148,13 +148,16 @@ def backward_pass(jaxpr, consts, freevar_vals, args, cotangent_in):
   def read_primal(v):
     return primal_env.get(v)
 
-  primal_env = {v: val for v, val in zip(jaxpr.freevars, freevar_vals)
-                if val is not None}
-  primal_env.update(zip(jaxpr.constvars, consts))
-  primal_env.update((v, val) for v, val in zip(jaxpr.invars, args)
-                    if val is not None)
-  ct_env = {jaxpr.outvar: cotangent_in}
+  def write_primal(v, val):
+    if val is not None:
+      primal_env[v] = val
 
+  primal_env = {}
+  core.pat_fmap(write_primal, jaxpr.constvars, consts)
+  core.pat_fmap(write_primal, jaxpr.freevars, freevar_vals)
+  core.pat_fmap(write_primal, jaxpr.invars, args)
+
+  ct_env = {jaxpr.outvar: cotangent_in}
   for eqn in jaxpr.eqns[::-1]:
     cts_in = map(read_cotangent, eqn.outvars)
     ct_in = TangentTuple(cts_in) if eqn.destructure else cts_in[0]
@@ -182,9 +185,10 @@ def backward_pass(jaxpr, consts, freevar_vals, args, cotangent_in):
       cts_out = [zero for _ in eqn.invars]
     map(write_cotangent, eqn.invars, cts_out)
 
-  cotangents_out = [read_cotangent(var) if argval is None else None
-                    for var, argval in zip(jaxpr.invars, args)]
-  freevar_cts = map(read_cotangent, jaxpr.freevars)
+  cotangents_out = core.pat_fmap(
+      lambda var, argval: read_cotangent(var) if argval is None else None,
+      jaxpr.invars, args)
+  freevar_cts = core.pat_fmap(read_cotangent, jaxpr.freevars)
   return freevar_cts, cotangents_out
 
 def get_primitive_transpose(p):

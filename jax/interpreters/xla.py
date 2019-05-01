@@ -155,6 +155,7 @@ def jaxpr_computation(jaxpr, const_vals, freevar_shapes, *arg_shapes):
   env = {}
   consts_env = dict(zip(jaxpr.constvars, const_vals))
   write(core.unitvar, c.Tuple())
+  # TODO update with core.fmap
   if const_vals:
     map(write, jaxpr.constvars, map(c.Constant, const_vals))
     map(write, jaxpr.freevars, map(c.ParameterWithShape, freevar_shapes))
@@ -163,7 +164,7 @@ def jaxpr_computation(jaxpr, const_vals, freevar_shapes, *arg_shapes):
     map(write, all_freevars, map(c.ParameterWithShape, freevar_shapes))
   map(write, jaxpr.invars, map(c.ParameterWithShape, arg_shapes))
   for eqn in jaxpr.eqns:
-    in_nodes = map(read, eqn.invars)  # TODO
+    in_nodes = map(read, eqn.invars)
     in_shapes = map(c.GetShape, in_nodes)
     subcs = [
         jaxpr_computation(

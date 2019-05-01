@@ -134,9 +134,9 @@ def eval_jaxpr(jaxpr, consts, freevar_vals, *args):
 
   env = {}
   write(unitvar, unit)
-  map(write, jaxpr.constvars, consts)
-  map(write, jaxpr.invars, args)
-  map(write, jaxpr.freevars, freevar_vals)
+  pat_fmap(write, jaxpr.constvars, consts)
+  pat_fmap(write, jaxpr.invars, args)
+  pat_fmap(write, jaxpr.freevars, freevar_vals)
   for eqn in jaxpr.eqns:
     if not eqn.restructure:
       in_vals = map(read, eqn.invars)
@@ -152,6 +152,14 @@ def eval_jaxpr(jaxpr, consts, freevar_vals, *args):
     outvals = list(ans) if eqn.destructure else [ans]
     map(write, eqn.outvars, outvals)
   return read(jaxpr.outvar)
+
+
+# TODO enforce a specific set of types for jaxpr vars
+def pat_fmap(f, v, *xs):
+  if type(v) in (tuple, list):
+    return tuple(map(partial(pat_fmap, f), v, *xs))
+  else:
+    return f(v, *xs)
 
 
 def full_lower(val):
@@ -611,14 +619,14 @@ def check_jaxpr(jaxpr):
   write = partial(write_env, env)
 
   const_env = set()
-  read_const= partial(read_env, const_env)
+  read_const = partial(read_env, const_env)
   write_const= partial(write_env, const_env)
 
-  map(write_const, jaxpr.constvars)
+  pat_fmap(write_const, jaxpr.constvars)
   write(unitvar)
-  map(write, jaxpr.constvars)
-  map(write, jaxpr.freevars)
-  map(write, jaxpr.invars)
+  pat_fmap(write, jaxpr.constvars)
+  pat_fmap(write, jaxpr.freevars)
+  pat_fmap(write, jaxpr.invars)
   for eqn in jaxpr.eqns:
     if not eqn.restructure:
       map(read, eqn.invars)

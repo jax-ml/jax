@@ -7,7 +7,8 @@ import jax.numpy as np
 import jax.lax as lax
 
 from jax.util import curry, unzip2
-from jax.lax import _abstractify, _unpack_eqn
+from jax.api_util import pytree_to_jaxtupletree
+from jax.lax import _abstractify, _unpack_eqn, _pack_eqn
 from jax.abstract_arrays import ShapedArray
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import ad
@@ -151,8 +152,6 @@ def update_arrays(i, aval, xs, x):
   else:
     return lax.dynamic_update_index_in_dim(xs, x[None, ...], i, axis=0)
 
-_scan_newvar = pe.gensym('_scan')
-
 # scan :: (c -> a -> (c, b)) -> c -> [a] -> (c, [b])
 def scan_initial(f, init, xs):
   carry_pval = carry_aval, _ = _abstractify(init)
@@ -163,7 +162,7 @@ def scan_initial(f, init, xs):
       lu.wrap_init(f), (carry_pval, x_pval), instantiate=True)
   (carry_aval_out, y_aval), _ = pval_out
   assert carry_aval == carry_aval_out
-  lifted_jaxpr = pe._closure_convert_jaxpr(jaxpr, _scan_newvar)
+  lifted_jaxpr = pe._closure_convert_jaxpr(jaxpr)
   consts_aval, _ = _abstractify(core.pack(consts))
   in_avals = (consts_aval, carry_aval, x_aval)
   out_aval = core.AbstractTuple((carry_aval, y_aval))
@@ -320,63 +319,102 @@ def _scan_initial_transpose(ct, consts, init, xs, forward, length, jaxpr):
   a, res = xs
   assert a is None and res is not None
 
-  # jaxpr :: d -> c -> (a, res) ->  (c, b)
+  # jaxpr :: d -> c -> (a, res) ->  (c, b)  # TODO assuming restructuring input
   # jaxpr_lifted :: res -> (d, c, a) -> (c, b)
   # jaxpr_lifted_trans :: res -> (CT c, CT b) -> (CT d, CT c, CT a)
   # jaxpr_trans :: * -> (CT c, CT d) -> (CT b, res) -> ((CT d, CT c), CT a)
-  jaxpr_lifted = _move_res_and_uncurry(jaxpr, _scan_newvar)
-  import ipdb; ipdb.set_trace()
-  jaxpr_lifted_trans = transpose_jaxpr2(jaxpr_lifted)
+  jaxpr_lifted = rearrange_binders(
+      lambda d, c, a_res: (a_res[1], (d, c, a_res[0])), jaxpr)
+  jaxpr_lifted_trans, out_tree = transpose_jaxpr2(jaxpr_lifted)
   jaxpr_trans = _move_stuff_and_add_add(jaxpr_lifted_trans)
+  import ipdb; ipdb.set_trace()
 
   ct_c, ct_bs = ct
   carry_ct = core.pack((ct_c, ad_util.zeros_like_aval(jaxpr.in_avals[0])))
 
   # jaxpr_trans :: * -> (CT c, CT d) -> (CT b, res) -> ((CT d, CT c), CT a)
   # scan_p.bind :: (d -> c -> a -> (c, b)) -> d -> c -> [a] -> (c, [b])
-  scan_initial_p.bind(
+  out = scan_initial_p.bind(
       core.unit, carry_ct, core.pack((ct_bs, res)),
       forward=not forward, length=length, jaxpr=jaxpr_trans)
+  import ipdb; ipdb.set_trace()
 
-def _move_res_and_uncurry(jaxpr, newvar):
-  # jaxpr :: d -> c -> (a, res) ->  (c, b)
-  # jaxpr_lifted :: res -> (d, c, a) -> (c, b)
-  assert len(jaxpr.in_avals) == 3
-  assert type(jaxpr.in_avals[2]) is core.AbstractTuple
+def rearrange_binders(f, typed_jaxpr):
+  jaxpr = typed_jaxpr.jaxpr.copy()
+  jaxpr.invars = f(*jaxpr.invars)
+  in_avals = f(*typed_jaxpr.in_avals)
+  core.skip_checks or core.check_jaxpr(jaxpr)
+  return core.TypedJaxpr(jaxpr, typed_jaxpr.literals, in_avals,
+                         typed_jaxpr.out_aval)
 
-  d_aval, c_aval, (a_aval, res_aval) = jaxpr.in_avals
-  in_avals = [res_aval, core.AbstractTuple((d_aval, c_aval, a_aval))]
+_scan_newvar = pe.gensym('_scan')
 
-  d, c, a_res = jaxpr.jaxpr.invars
-  a = newvar()
-  res = newvar()
-  d_c_a = newvar()
-  invars = [res, d_c_a]
-  eqns = (
-      [pe._unpack_eqn(d_c_a, [d, c, a]),
-       pe._pack_eqn([a, res], a_res)]
-      + list(jaxpr.jaxpr.eqns))
+def _move_stuff_and_add_add(typed_jaxpr):
+  # jaxpr_lifted_trans :: res -> (CT c, CT b) -> (CT d, CT c, CT a)
+  # jaxpr_trans :: * -> (CT c, CT d) -> (CT b, res) -> ((CT d, CT c), CT a)
 
-  new_jaxpr = core.Jaxpr(jaxpr.jaxpr.constvars, jaxpr.jaxpr.freevars,
-                         invars, jaxpr.jaxpr.outvar, eqns)
-  core.skip_checks or core.check_jaxpr(new_jaxpr)
-  return core.TypedJaxpr(new_jaxpr, jaxpr.literals, in_avals, jaxpr.out_aval)
+  res_aval, (CTc_aval, CTb_aval) = typed_jaxpr.in_avals
+  CTd_aval, CTc_aval2, CTa_aval = typed_jaxpr.out_aval
+  assert CTc_aval == CTc_aval2
+  in_avals = (core.AbstractTuple(()), core.AbstractTuple((CTc_aval, CTd_aval)),
+              core.AbstractTuple((CTb_aval, res_aval)))
+  out_aval = core.AbstractTuple((core.AbstractTuple((CTd_aval, CTc_aval)),
+                                 CTa_aval))
+
+  jaxpr = typed_jaxpr.jaxpr.copy()
+
+  # munge input side
+  CTc_in = _scan_newvar()
+  CTb_in = _scan_newvar()
+  res_in, CTc_CTb_in = jaxpr.invars
+  jaxpr.invars = ((), (CTc_in, CTd_in), (CTb_in, res_in))
+  jaxpr.eqns = (
+      [_pack_eqn([CTc_in, CTb_in], CTc_CTb_in)] +
+      jaxpr.eqns)
+
+  # munge output side
+  CTd_in = _scan_newvar()
+  CTd_new = _scan_newvar()
+  CTd_sum = _scan_newvar()
+  CTc = _scan_newvar()
+  CTa = _scan_newvar()
+  partial_out = _scan_newvar()
+  outvar = _scan_newvar()
+  jaxpr.eqns = (
+      jaxpr.eqns +
+      [_unpack_eqn(jaxpr.outvar, [CTd_new, CTc, CTa]),
+       _add_any_eqn(CTd_sum, CTd_new, CTd_in),
+       _pack_eqn([CTd_sum, CTc], partial_out),
+       _pack_eqn([partial_out, CTa], outvar)])
+  jaxpr.outvar = outvar
+
+  return core.TypedJaxpr(jaxpr, typed_jaxpr.literals,
+                         in_avals, out_aval)
 
 
 # transpose_jaxpr :: (res -> a -> b) -> (res -> CT b -> CT a)
-# TODO either top-level restructure, or else munge somehow
 def transpose_jaxpr2(jaxpr):
   assert len(jaxpr.in_avals) == 2
+  nones = core.pat_fmap(lambda _: None, jaxpr.jaxpr.invars[1])
+
+  @lu.wrap_init
   def transposed(res, b_bar):
     _, a_bar = ad.backward_pass(jaxpr.jaxpr, jaxpr.literals, (),
-                                (res, None), b_bar)
+                                (res, nones), b_bar)
     return a_bar
-  return make_typed_jaxpr(transposed, (jaxpr.in_avals[0], jaxpr.out_aval))
 
-def make_typed_jaxpr(py_callable, in_avals):
+  @lu.transformation_with_aux
+  def flatten_out(*args):
+    ans = yield args
+    yield pytree_to_jaxtupletree(ans)
+
+  transposed, out_tree = flatten_out(transposed)
+  transposed_jaxpr = make_typed_jaxpr(transposed, (jaxpr.in_avals[0], jaxpr.out_aval))
+  return transposed_jaxpr, out_tree()
+
+def make_typed_jaxpr(traceable, in_avals):
   pvals = [pe.PartialVal((aval, core.unit)) for aval in in_avals]
-  jaxpr, pval_out, consts = pe.trace_to_jaxpr(
-      lu.wrap_init(py_callable), pvals, instantiate=True)
+  jaxpr, pval_out, consts = pe.trace_to_jaxpr(traceable, pvals, instantiate=True)
   out_aval, _ = pval_out
   assert isinstance(out_aval, core.AbstractValue)
   return core.TypedJaxpr(jaxpr, consts, in_avals, out_aval)
