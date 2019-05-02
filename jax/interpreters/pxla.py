@@ -341,6 +341,7 @@ class ShardedDeviceTuple(xla.DeviceTuple):
     all_bufs = zip(*[buf.destructure() for buf in self.device_buffers])
     elts = [_tuple_elt_handler(self.axis_size, bufs) for bufs in all_bufs]
     return iter(elts)
+core.tuple_types.add(ShardedDeviceTuple)
 
 def _tuple_elt_handler(axis_size, bufs):
   is_tuple = {buf.shape().is_tuple() for buf in bufs}
