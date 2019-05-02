@@ -403,6 +403,8 @@ def abstractify_device_tuple(tup):
 
 core.pytype_aval_mappings[DeviceTuple] = AbstractTuple
 pytype_aval_mappings[DeviceTuple] = abstractify_device_tuple
+# DeviceValues don't need to be canonicalized because we assume values on the
+# device have already been canonicalized.
 canonicalize_dtype_handlers[DeviceTuple] = identity
 
 
@@ -492,6 +494,8 @@ class DeviceArray(DeviceValue):
 
 core.pytype_aval_mappings[DeviceArray] = ConcreteArray
 pytype_aval_mappings[DeviceArray] = make_shaped_array
+# DeviceValues don't need to be canonicalized because we assume values on the
+# device have already been canonicalized.
 canonicalize_dtype_handlers[DeviceArray] = identity
 
 def _device_array_constant_handler(c, val, canonicalize_types=True):
