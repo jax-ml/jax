@@ -13,11 +13,13 @@
 # limitations under the License.
 
 """
-User-facing transformations.
+JAX user-facing transformations and utilities.
 
-These mostly wrap internal transformations, providing convenience flags to
-control behavior and handling Python containers (tuples/lists/dicts) of
-arguments and outputs.
+The transformations here mostly wrap internal transformations, providing
+convenience flags to control behavior and handling Python containers of
+arguments and outputs. The Python containers handled are pytrees (see
+tree_util.py), which include nested tuples/lists/dicts, where the leaves are
+arrays or JaxTuples.
 """
 
 from __future__ import absolute_import
