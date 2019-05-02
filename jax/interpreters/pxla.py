@@ -360,7 +360,7 @@ xla.canonicalize_dtype_handlers[ShardedDeviceTuple] = \
 class ShardedDeviceArray(xla.DeviceArray):
   """A ShardedDeviceArray is an ndarray sharded across devices.
 
-  The purposes of a ShardedDeviceArray is to reduce the number of transfers when
+  The purpose of a ShardedDeviceArray is to reduce the number of transfers when
   executing replicated computations, by allowing results to persist on the
   devices that produced them. That way dispatching a similarly replicated
   computation that consumes the same sharded memory layout does not incur any
