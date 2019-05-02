@@ -308,6 +308,26 @@ def _map(f, *xs):
 
 
 class ShardedDeviceTuple(xla.DeviceTuple):
+  """A ShardedDeviceTuple is a JaxTuple sharded across devices.
+
+  The purpose of a ShardedDeviceTuple is to reduce the number of transfers when
+  executing replicated computations, by allowing results to persist on the
+  devices that produced them. That way dispatching a similarly replicated
+  computation that consumes the same sharded memory layout does not incur any
+  transfers.
+
+  A ShardedDeviceTuple represents one logical JaxTuple value, and simulates the
+  behavior of a JaxTuple so that it can be treated by user code as a JaxTuple;
+  that is, it is only an optimization to reduce transfers.
+
+  The number of device buffers underlying a ShardedDeviceTuple instance is equal
+  to the number of replicas of the computation that produced it. Each buffer
+  represents a shard of the logical tuple value represented by the
+  ShardedDeviceTuple, where a shard of an array is a slice along its leading
+  axis, and a shard of a tuple is a tuple of corresponding shards of its
+  elements. These component buffers reside on distinct devices, but need not
+  represent distinct logical shards.
+  """
   __slots__ = ["axis_size", "device_buffers"]
 
   def __init__(self, axis_size, device_buffers):
@@ -315,6 +335,9 @@ class ShardedDeviceTuple(xla.DeviceTuple):
     self.device_buffers = device_buffers
 
   def __iter__(self):
+    # To destructure, we destructure the constituent buffers on each device,
+    # then logically concatenate those shards across devices producing one
+    # logically concatenated result per element.
     all_bufs = zip(*[buf.destructure() for buf in self.device_buffers])
     elts = [_tuple_elt_handler(self.axis_size, bufs) for bufs in all_bufs]
     return iter(elts)
@@ -335,6 +358,25 @@ xla.canonicalize_dtype_handlers[ShardedDeviceTuple] = \
 
 
 class ShardedDeviceArray(xla.DeviceArray):
+  """A ShardedDeviceArray is an ndarray sharded across devices.
+
+  The purposes of a ShardedDeviceArray is to reduce the number of transfers when
+  executing replicated computations, by allowing results to persist on the
+  devices that produced them. That way dispatching a similarly replicated
+  computation that consumes the same sharded memory layout does not incur any
+  transfers.
+
+  A ShardedDeviceArray represents one logical ndarray value, and simulates the
+  behavior of an ndarray so that it can be treated by user code as an ndarray;
+  that is, it is only an optimizatoin to reduce transfers.
+
+  The number of device buffers underlying a ShardedDeviceArray instance is equal
+  to the number of replicas of the computation that produced it. Each buffer
+  represents a shard of the original array, meaning a slice along its leading
+  axis. These component buffers reside on distinct devices, but need not
+  represent distinct logical shards. The correspondence can be computed with
+  the assign_shards_to_replicas function.
+  """
   __slots__ = ["device_buffers"]
 
   def __init__(self, axis_size, device_buffers):
