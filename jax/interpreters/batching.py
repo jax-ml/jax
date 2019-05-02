@@ -309,7 +309,7 @@ def _dimsize(dim, aval, x):
 def moveaxis(sz, dst, src, x, force_broadcast=True):
   return _moveaxis(sz, dst, src, get_aval(x), x, force_broadcast)
 
-# TODO(mattjj): not passing forece_broadcast recursively... intentional?
+# TODO(mattjj): not passing force_broadcast recursively... intentional?
 def _moveaxis(sz, dst, src, aval, x, force_broadcast=True):
   if type(aval) is AbstractTuple:
     if type(src) is tuple and type(dst) is tuple:
@@ -342,7 +342,7 @@ def _moveaxis(sz, dst, src, aval, x, force_broadcast=True):
 def broadcast(x, sz, force_broadcast=False):
   return _broadcast(sz, get_aval(x), x, force_broadcast)
 
-# TODO(mattjj): not passing forece_broadcast recursively... intentional?
+# TODO(mattjj): not passing force_broadcast recursively... intentional?
 def _broadcast(sz, aval, x, force_broadcast=False):
   if type(aval) is AbstractTuple:
     return pack(map(partial(_broadcast, sz), aval, x))

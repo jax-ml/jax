@@ -365,13 +365,15 @@ for t in array_types:
 
 
 class DeviceValue(object):
+  """A DeviceValue represents a value backed by device memory."""
   __slots__ = ["device_buffer"]
   def __init__(self, device_buffer):
     self.device_buffer = device_buffer
 
-
 class DeviceTuple(DeviceValue):
+  """A DeviceTuple is a JaxTuple backed by a single device memory buffer."""
   __slots__ = ["elt_xla_shapes", "elt_handlers"]
+
   def __init__(self, device_buffer):
     self.device_buffer = device_buffer
     self.elt_xla_shapes = device_buffer.shape().tuple_shapes()
@@ -384,6 +386,10 @@ class DeviceTuple(DeviceValue):
 
   def __len__(self):
     return len(self.elt_xla_shapes)
+
+  def __repr__(self):
+    return 'DeviceTuple[{}]'.format(len(self.elt_xla_shapes))
+core.tuple_types.add(DeviceTuple)
 
 def _tuple_elt_handler(xla_shape):
   if xla_shape.is_tuple():
@@ -405,6 +411,9 @@ def forward_method(attrname, self, fun, *args):
 forward_to_value = partial(forward_method, "_value")
 
 class DeviceArray(DeviceValue):
+  """A DeviceArray is an ndarray backed by a single device memory buffer."""
+  # We don't subclass ndarray because that would open up a host of issues,
+  # but lax_numpy.py overrides isinstance behavior and attaches ndarray methods.
   __slots__ = ["shape", "dtype", "ndim", "size", "_npy_value"]
   __array_priority__ = 100.
 

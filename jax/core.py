@@ -440,18 +440,34 @@ pytype_aval_mappings = {}
 
 # ------------------- Products -------------------
 
-class JaxTuple(tuple):
-  def __new__(cls, xs):
+# We set up a registry of tuple types so that we can control the behavior of
+# isinstance(val, JaxTuple) without subclassing JaxTuple, which can be difficult
+# when slots are defined and multiple inheritance is necessary.
+class _TupleMeta(type(tuple)):
+  def __instancecheck__(self, instance):
+    return type(instance) in tuple_types
+tuple_types = set()
+
+class JaxTuple(six.with_metaclass(_TupleMeta)):
+  __slots__ = ['xs']
+
+  def __init__(self, xs):
+    self.xs = xs = tuple(xs)
     if not skip_checks:
-      xs = list(xs)
       assert all(map(valid_jaxtype, xs)), xs
-    return tuple.__new__(cls, xs)
+
+  def __iter__(self):
+    return iter(self.xs)
+
+  def __len__(self):
+    return len(self.xs)
 
   def __repr__(self):
     if self is unit:
       return unitvar
     else:
       return 'JaxTuple({})'.format(','.join(map(repr, self)))
+tuple_types.add(JaxTuple)
 
 
 class AbstractTuple(AbstractValue, tuple):
