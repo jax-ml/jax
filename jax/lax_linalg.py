@@ -468,6 +468,31 @@ def svd_abstract_eval(operand, full_matrices, compute_uv):
     vt = operand
   return core.AbstractTuple((s, u, vt))
 
+def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
+  if full_matrices:
+    raise NotImplementedError("Singular value decomposition JVP not implemented for full matrices")
+  A, = primals
+  dA, = tangents
+  s, U, Vt = svd_p.bind(A, full_matrices=False, compute_uv=True)
+
+  k = s.shape[-1]
+  Ut, V = U.T, Vt.T
+  s_dim = s[..., None, :]
+  dS = Ut.dot(dA).dot(V)
+  ds = np.diag(dS)
+  F = 1 / (np.square(s_dim) - np.square(s_dim.T) + np.eye(k)) - np.eye(k)
+  dSS = s_dim * dS
+  SdS = s_dim.T * dS
+  dU = U.dot(F * (dSS + dSS.T))
+  dV = V.dot(F * (SdS + SdS.T))
+
+  m, n = A.shape[-2], A.shape[-1]
+  if m > n:
+    dU = dU + (np.eye(m) - U.dot(Ut)).dot(dA).dot(V) / s_dim
+  if n > m:
+    dV = dV + (np.eye(n) - V.dot(Vt)).dot(dA.T).dot(U) / s_dim
+  return core.pack((s, U, Vt)), core.pack((ds, dU, dV.T))
+
 def svd_cpu_translation_rule(c, operand, full_matrices, compute_uv):
   shape = c.GetShape(operand)
   dtype = shape.element_type().type
@@ -491,4 +516,5 @@ svd_p.def_impl(svd_impl)
 svd_p.def_abstract_eval(svd_abstract_eval)
 xla.translations[svd_p] = svd_translation_rule
 xla.backend_specific_translations['cpu'][svd_p] = svd_cpu_translation_rule
+ad.primitive_jvps[svd_p] = svd_jvp_rule
 batching.primitive_batchers[svd_p] = svd_batching_rule
