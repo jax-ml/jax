@@ -172,14 +172,14 @@ def optimizer(opt_maker):
 
 @optimizer
 def sgd(step_size):
-  """Construct init and update step functions for stochastic gradient descent.
+  """Construct optimizer triple for stochastic gradient descent.
 
   Args:
     step_size: positive scalar, or a callable representing a step size schedule
       that maps the iteration index to positive scalar.
 
   Returns:
-    An (init, update) pair.
+    An (init_fun, update_fun, get_params) triple.
   """
   step_size = make_schedule(step_size)
   def init(x0):
@@ -192,14 +192,14 @@ def sgd(step_size):
 
 @optimizer
 def momentum(step_size, mass):
-  """Construct init and update step functions for SGD with Nesterov momentum.
+  """Construct optimizer triple for SGD with Nesterov momentum.
 
   Args:
     step_size: positive scalar, or a callable representing a step size schedule
       that maps the iteration index to positive scalar.
 
   Returns:
-    An (init, update) pair.
+    An (init_fun, update_fun, get_params) triple.
   """
   step_size = make_schedule(step_size)
   def init(x0):
@@ -217,14 +217,14 @@ def momentum(step_size, mass):
 
 @optimizer
 def rmsprop(step_size, gamma=0.9, eps=1e-8):
-  """Construct init and update step functions for RMSProp.
+  """Construct optimizer triple for RMSProp.
 
   Args:
     step_size: positive scalar, or a callable representing a step size schedule
       that maps the iteration index to positive scalar.
 
   Returns:
-    An (init, update) pair.
+    An (init_fun, update_fun, get_params) triple.
   """
   step_size = make_schedule(step_size)
   def init(x0):
@@ -242,7 +242,7 @@ def rmsprop(step_size, gamma=0.9, eps=1e-8):
 
 @optimizer
 def adam(step_size, b1=0.9, b2=0.999, eps=1e-8):
-  """Construct init and update step functions for Adam.
+  """Construct optimizer triple for Adam.
 
   Args:
     step_size: positive scalar, or a callable representing a step size schedule
@@ -255,7 +255,7 @@ def adam(step_size, b1=0.9, b2=0.999, eps=1e-8):
       numerical stability (default 1e-8).
 
   Returns:
-    An (init, update) pair.
+    An (init_fun, update_fun, get_params) triple.
   """
   step_size = make_schedule(step_size)
   def init(x0):
