@@ -537,6 +537,15 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(grad_ans, 3. * 4. + onp.cos(onp.sin(3. * 4)),
                         check_dtypes=False)
 
+  def test_devicearray_repr(self):
+    x = device_put(np.zeros(3))
+    self.assertIsInstance(x, DeviceArray)
+    repr(x)  # doesn't crash
+
+    x = device_put(np.ones(3) + 1j * np.ones(3))
+    self.assertIsInstance(x, DeviceArray)
+    repr(x)  # doesn't crash
+
 
 if __name__ == '__main__':
   absltest.main()
