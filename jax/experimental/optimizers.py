@@ -51,13 +51,13 @@ functions, where the component functions have these signatures:
 
   Args:
     step: integer representing the step index.
-    grads: a pytree with the same structure as `get_params(opt_state)` representing
-      the gradients to be used in updating the optimizer state.
+    grads: a pytree with the same structure as `get_params(opt_state)`
+      representing the gradients to be used in updating the optimizer state.
     opt_state: a pytree representing the optimizer state to be updated.
 
   Returns:
-    A pytree with the same structure as the `opt_state` argument representing the
-    updated optimizer state.
+    A pytree with the same structure as the `opt_state` argument representing
+    the updated optimizer state.
 
 
 Notice that an optimizer implementation has a lot of flexibility in the form of
@@ -73,6 +73,8 @@ from __future__ import print_function
 import collections
 import functools
 import operator
+
+from six.moves import reduce
 
 import jax.numpy as np
 from jax.core import pack
@@ -273,6 +275,52 @@ def adam(step_size, b1=0.9, b2=0.999, eps=1e-8):
   def get_params(state):
     x, m, v = state
     return x
+  return init, update, get_params
+
+@optimizer
+def sm3(step_size, momentum=0.9):
+  """Construct optimizer triple for SM3.
+
+  Memory-Efficient Adaptive Optimization for Large-Scale Learning.
+  https://arxiv.org/abs/1901.11150
+
+  Args:
+    step_size: positive scalar, or a callable representing a step size schedule
+      that maps the iteration index to positive scalar.
+    momentum: optional, a positive scalar value for momentum
+
+  Returns:
+    An (init_fun, update_fun, get_params) triple.
+  """
+  step_size = make_schedule(step_size)
+
+  def splice(seq, i, x):
+    lst = list(seq)
+    lst[i:i+1] = x
+    return lst
+
+  def broadcast_into(ndim, x, axis):
+    idx = splice([None] * ndim, axis, [slice(None)])
+    return x[tuple(idx)]
+
+  def init(x0):
+    vs = [np.zeros(sz, dtype=x0.dtype) for sz in x0.shape]
+    return (x0, np.zeros_like(x0), vs)
+
+  def update(i, g, state):
+    x, m, vs = state
+    vs = [broadcast_into(g.ndim, v, i) for i, v in enumerate(vs)]
+    accum = reduce(np.minimum, vs[1:], vs[0]) + g ** 2
+    accum_inv_sqrt = np.where(accum > 0, 1. / np.sqrt(accum), 0)
+    m = (1. - momentum) * (g * accum_inv_sqrt) + momentum * m
+    x = x - step_size(i) * m
+    vs = [accum.max(splice(range(x.ndim), j, [])) for j in range(x.ndim)]
+    return x, m, vs
+
+  def get_params(state):
+    x, _, _ = state
+    return x
+
   return init, update, get_params
 
 

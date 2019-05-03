@@ -31,8 +31,6 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 
-dummy_data = None
-
 class OptimizerTests(jtu.JaxTestCase):
 
   def _CheckOptimizer(self, optimizer, loss, x0, num_steps, *args, **kwargs):
@@ -40,50 +38,50 @@ class OptimizerTests(jtu.JaxTestCase):
     self._CheckRun(optimizer, loss, x0, num_steps, *args, **kwargs)
 
   def _CheckFuns(self, optimizer, loss, x0, *args):
-    init_fun, update_fun, get_params_fun = optimizer(*args)
+    init_fun, update_fun, get_params = optimizer(*args)
     opt_state = init_fun(x0)
-    self.assertAllClose(x0, get_params_fun(opt_state), check_dtypes=True)
-    opt_state2 = update_fun(0, grad(loss)(x0, dummy_data), opt_state)  # doesn't crash
+    self.assertAllClose(x0, get_params(opt_state), check_dtypes=True)
+    opt_state2 = update_fun(0, grad(loss)(x0), opt_state)  # doesn't crash
     self.assertEqual(tree_util.tree_structure(opt_state),
                      tree_util.tree_structure(opt_state2))
 
   @jtu.skip_on_devices('gpu')
   def _CheckRun(self, optimizer, loss, x0, num_steps, *args, **kwargs):
-    init_fun, update_fun, get_params_fun = optimizer(*args)
+    init_fun, update_fun, get_params = optimizer(*args)
 
     opt_state = init_fun(x0)
     for i in range(num_steps):
-      x = get_params_fun(opt_state)
-      g = grad(loss)(x, dummy_data)
+      x = get_params(opt_state)
+      g = grad(loss)(x)
       opt_state = update_fun(i, g, opt_state)
-    xstar = get_params_fun(opt_state)
-    self.assertLess(loss(xstar, dummy_data), 1e-2)
+    xstar = get_params(opt_state)
+    self.assertLess(loss(xstar), 1e-2)
 
     update_fun_jitted = jit(update_fun)
     opt_state = init_fun(x0)
     for i in range(num_steps):
-      x = get_params_fun(opt_state)
-      g = grad(loss)(x, dummy_data)
+      x = get_params(opt_state)
+      g = grad(loss)(x)
       opt_state = update_fun_jitted(i, g, opt_state)
-    xstar = get_params_fun(opt_state)
-    self.assertLess(loss(xstar, dummy_data), 1e-2)
+    xstar = get_params(opt_state)
+    self.assertLess(loss(xstar), 1e-2)
 
   def testSgdScalar(self):
-    def loss(x, _): return x**2
+    def loss(x): return x**2
     x0 = 1.
     num_iters = 100
     step_size = 0.1
     self._CheckOptimizer(optimizers.sgd, loss, x0, num_iters, step_size)
 
   def testSgdVector(self):
-    def loss(x, _): return np.dot(x, x)
+    def loss(x): return np.dot(x, x)
     x0 = np.ones(2)
     num_iters = 100
     step_size = 0.1
     self._CheckOptimizer(optimizers.sgd, loss, x0, num_iters, step_size)
 
   def testSgdNestedTuple(self):
-    def loss(xyz, _):
+    def loss(xyz):
       x, (y, z) = xyz
       return sum(np.dot(a, a) for a in [x, y, z])
     x0 = (np.ones(2), (np.ones(2), np.ones(2)))
@@ -92,7 +90,7 @@ class OptimizerTests(jtu.JaxTestCase):
     self._CheckOptimizer(optimizers.sgd, loss, x0, num_iters, step_size)
 
   def testMomentumVector(self):
-    def loss(x, _): return np.dot(x, x)
+    def loss(x): return np.dot(x, x)
     x0 = np.ones(2)
     num_iters = 100
     step_size = 0.1
@@ -100,7 +98,7 @@ class OptimizerTests(jtu.JaxTestCase):
     self._CheckOptimizer(optimizers.momentum, loss, x0, num_iters, step_size, mass)
 
   def testMomentumDict(self):
-    def loss(dct, _): return np.dot(dct['x'], dct['x'])
+    def loss(dct): return np.dot(dct['x'], dct['x'])
     x0 = {'x': np.ones(2)}
     num_iters = 100
     step_size = 0.1
@@ -108,7 +106,7 @@ class OptimizerTests(jtu.JaxTestCase):
     self._CheckOptimizer(optimizers.momentum, loss, x0, num_iters, step_size, mass)
 
   def testRmspropVector(self):
-    def loss(x, _): return np.dot(x, x)
+    def loss(x): return np.dot(x, x)
     x0 = np.ones(2)
     num_iters = 100
     step_size = 0.1
@@ -116,14 +114,14 @@ class OptimizerTests(jtu.JaxTestCase):
 
   @jtu.skip_on_devices('cpu')  # TODO(mattjj): investigate numerical failure
   def testAdamVector(self):
-    def loss(x, _): return np.dot(x, x)
+    def loss(x): return np.dot(x, x)
     x0 = np.ones(2)
     num_iters = 100
     step_size = 0.1
     self._CheckOptimizer(optimizers.adam, loss, x0, num_iters, step_size)
 
   def testSgdClosure(self):
-    def loss(y, x, _): return y**2 * x**2
+    def loss(y, x): return y**2 * x**2
     x0 = 1.
     y = 1.
     num_iters = 20
@@ -131,39 +129,49 @@ class OptimizerTests(jtu.JaxTestCase):
     partial_loss = functools.partial(loss, y)
     self._CheckRun(optimizers.sgd, partial_loss, x0, num_iters, step_size)
 
+  def testSM3(self):
+    def loss(xs):
+      x1, x2 = xs
+      return np.sum(x1 ** 2) + np.sum(x2 ** 2)
+
+    num_iters = 100
+    step_size = 0.1
+    x0 = (np.ones(2), np.ones((2, 2)))
+    self._CheckOptimizer(optimizers.sm3, loss, x0, num_iters, step_size)
+
   def testSgdVectorExponentialDecaySchedule(self):
-    def loss(x, _): return np.dot(x, x)
+    def loss(x): return np.dot(x, x)
     x0 = np.ones(2)
     step_schedule = optimizers.exponential_decay(0.1, 3, 2.)
     self._CheckFuns(optimizers.sgd, loss, x0, step_schedule)
 
   def testSgdVectorInverseTimeDecaySchedule(self):
-    def loss(x, _): return np.dot(x, x)
+    def loss(x): return np.dot(x, x)
     x0 = np.ones(2)
     step_schedule = optimizers.inverse_time_decay(0.1, 3, 2.)
     self._CheckFuns(optimizers.sgd, loss, x0, step_schedule)
 
   def testAdamVectorInverseTimeDecaySchedule(self):
-    def loss(x, _): return np.dot(x, x)
+    def loss(x): return np.dot(x, x)
     x0 = np.ones(2)
     step_schedule = optimizers.inverse_time_decay(0.1, 3, 2.)
     self._CheckFuns(optimizers.adam, loss, x0, step_schedule)
 
   def testMomentumVectorInverseTimeDecayStaircaseSchedule(self):
-    def loss(x, _): return np.dot(x, x)
+    def loss(x): return np.dot(x, x)
     x0 = np.ones(2)
     step_sched = optimizers.inverse_time_decay(0.1, 3, 2., staircase=True)
     mass = 0.9
     self._CheckFuns(optimizers.momentum, loss, x0, step_sched, mass)
 
   def testRmspropVectorPiecewiseConstantSchedule(self):
-    def loss(x, _): return np.dot(x, x)
+    def loss(x): return np.dot(x, x)
     x0 = np.ones(2)
     step_schedule = optimizers.piecewise_constant([25, 75], [1.0, 0.5, 0.1])
     self._CheckFuns(optimizers.rmsprop, loss, x0, step_schedule)
 
   def testTracedStepSize(self):
-    def loss(x, _): return np.dot(x, x)
+    def loss(x): return np.dot(x, x)
     x0 = np.ones(2)
     step_size = 0.1
 
@@ -174,7 +182,7 @@ class OptimizerTests(jtu.JaxTestCase):
     def update(opt_state, step_size):
       _, update_fun, get_params = optimizers.sgd(step_size)
       x = get_params(opt_state)
-      g = grad(loss)(x, None)
+      g = grad(loss)(x)
       return update_fun(0, g, opt_state)
 
     update(opt_state, 0.9)  # doesn't crash
