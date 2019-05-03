@@ -2333,6 +2333,8 @@ for method_name in _nondiff_methods + _diff_methods:
 setattr(ShapedArray, "reshape", core.aval_method(_reshape))
 setattr(ShapedArray, "flatten", core.aval_method(ravel))
 setattr(ShapedArray, "T", core.aval_property(transpose))
+setattr(ShapedArray, "real", core.aval_property(real))
+setattr(ShapedArray, "imag", core.aval_property(imag))
 setattr(ShapedArray, "astype", core.aval_method(lax.convert_element_type))
 
 
@@ -2345,6 +2347,8 @@ for method_name in _nondiff_methods + _diff_methods:
 setattr(DeviceArray, "reshape", _reshape)
 setattr(DeviceArray, "flatten", ravel)
 setattr(DeviceArray, "T", property(transpose))
+setattr(DeviceArray, "real", property(real))
+setattr(DeviceArray, "imag", property(imag))
 setattr(DeviceArray, "astype", lax.convert_element_type)
 
 
