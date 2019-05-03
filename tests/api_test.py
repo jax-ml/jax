@@ -25,9 +25,9 @@ from jax import test_util as jtu
 import jax.numpy as np
 from jax import jit, grad, device_get, device_put, jacfwd, jacrev, hessian
 from jax import api
-from jax.core import Primitive
+from jax.core import Primitive, pack, JaxTuple
 from jax.interpreters.ad import defjvp, defvjp, defvjp2, defvjp_all
-from jax.interpreters.xla import DeviceArray
+from jax.interpreters.xla import DeviceArray, DeviceTuple
 from jax.abstract_arrays import concretization_err_msg
 
 from jax.config import config
@@ -536,6 +536,28 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(val_ans, onp.sin(3. * 4.), check_dtypes=False)
     self.assertAllClose(grad_ans, 3. * 4. + onp.cos(onp.sin(3. * 4)),
                         check_dtypes=False)
+
+  def test_devicetuple_iteration(self):
+    tup = device_put(pack((1, 2)))
+    self.assertIsInstance(tup, DeviceTuple)
+    self.assertEqual(tuple(tup), (1, 2))
+
+    tup = device_put(pack((1, pack((2, 3)))))
+    self.assertIsInstance(tup, DeviceTuple)
+    self.assertAllClose(tup, (1, (2, 3)), check_dtypes=False)
+
+  def test_devicetuple_isinstance(self):
+    tup = device_put(pack((1, 2)))
+    self.assertIsInstance(tup, DeviceTuple)
+    self.assertIsInstance(tup, JaxTuple)
+
+  def test_devicetuple_repr(self):
+    tup = device_put(pack((1, 2)))
+    self.assertEqual(repr(tup), 'DeviceTuple(len=2)')
+
+  def test_legacy_devicearray_repr(self):
+    dx = device_put(3.)
+    str(dx.item())  # doesn't crash
 
   def test_devicearray_repr(self):
     x = device_put(np.zeros(3))
