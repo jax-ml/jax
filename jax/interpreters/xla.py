@@ -442,6 +442,18 @@ class DeviceArray(DeviceValue):
   def __repr__(self):
     return onp.array_repr(self)
 
+  def item(self):
+    if onp.issubdtype(self.dtype, onp.complexfloating):
+      return complex(self)
+    elif onp.issubdtype(self.dtype, onp.floating):
+      return float(self)
+    elif onp.issubdtype(self.dtype, onp.integer):
+      return int(self)
+    elif onp.issubdtype(self.dtype, onp.bool_):
+      return bool(self)
+    else:
+      raise TypeError(self.dtype)
+
   def __len__(self):
     try:
       return self.shape[0]

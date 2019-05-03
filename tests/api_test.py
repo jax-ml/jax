@@ -555,6 +555,10 @@ class APITest(jtu.JaxTestCase):
     tup = device_put(pack((1, 2)))
     self.assertEqual(repr(tup), 'DeviceTuple(len=2)')
 
+  def test_legacy_devicearray_repr(self):
+    dx = device_put(3.)
+    str(dx.item())  # doesn't crash
+
 
 if __name__ == '__main__':
   absltest.main()
