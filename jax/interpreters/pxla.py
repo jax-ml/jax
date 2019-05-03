@@ -371,7 +371,7 @@ def tuple_element_handler(axis_size, aval):
     raise TypeError(t)
 
 
-core.pytype_aval_mappings[ShardedDeviceTuple] = core.AbstractTuple
+core.pytype_aval_mappings[ShardedDeviceTuple] = core.pytype_aval_mappings[core.JaxTuple]
 xla.pytype_aval_mappings[ShardedDeviceTuple] = op.attrgetter('aval')
 xla.canonicalize_dtype_handlers[ShardedDeviceTuple] = \
     xla.canonicalize_dtype_handlers[xla.DeviceTuple]
