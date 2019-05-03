@@ -41,7 +41,7 @@ from . import linear_util as lu
 from .core import pack, eval_jaxpr
 from .api_util import (pytree_fun_to_jaxtupletree_fun, pytree_to_jaxtupletree,
                        pytree_fun_to_flatjaxtuple_fun, apply_jaxtree_fun, wraps,
-                       pytree_fun_to_jaxtupletree_fun2)
+                       pytree_fun_to_jaxtupletree_fun2, flatten_fun)
 from .tree_util import (process_pytree, node_types, build_tree, PyTreeDef,
                         tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, leaf)
@@ -109,23 +109,14 @@ def jit(fun, static_argnums=()):
       msg = ("Jitted function has static_argnums={} but was called with only {}"
              " positional arguments.")
       raise TypeError(msg.format(static_argnums, len(args)))
-    if kwargs:
-      # TODO(mattjj, dougalm): remove warning by May 1 2019
-      msg = ("Until recently jitted functions called with keyword arguments "
-             "treated those arguments as if they were part of static_argnums, "
-             "but now they are treated just like other arguments. If you were "
-             "relying on the previous behavior, you may need to update your "
-             "code to use static_argnums. See the jit docstring.")
-      warn(msg)
     f = lu.wrap_init(fun)
     dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
     f, dyn_args = _argnums_partial(f, dyn_argnums, args)
-    jaxtuple_args, in_trees = unzip2(map(pytree_to_jaxtupletree, dyn_args))
-    jaxtuple_kwargs, kwargs_tree = pytree_to_jaxtupletree(kwargs)
-    _check_args(jaxtuple_args)
-    jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun2(f, kwargs_tree, in_trees)
-    out = xla.xla_call(jaxtree_fun, jaxtuple_kwargs, *jaxtuple_args)
-    return build_tree(out_tree(), out)
+    args_flat, in_tree = tree_flatten((dyn_args, kwargs))
+    _check_args(args_flat)
+    flat_fun, out_tree = flatten_fun(f, in_tree)
+    out = xla.xla_call(flat_fun, *args_flat)
+    return tree_unflatten(out_tree(), out)
 
   jitted_name =  "jit({}, static_argnums={})"
   f_jitted.__name__ = jitted_name.format(f_jitted.__name__, static_argnums)
