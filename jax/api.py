@@ -496,13 +496,7 @@ def pmap(fun, axis_name=None):
 
   @wraps(fun)
   def f_jitted(*args, **kwargs):
-    leaves, _ = tree_flatten(args)
-    axis_sizes = set(onp.shape(leaf)[0] for leaf in leaves)
-    if len(axis_sizes) != 1:
-      msg = "pmap requires all leading axes to have equal length, got {}."
-      raise TypeError(msg.format(axis_sizes))
-    axis_size = axis_sizes.pop()
-
+    axis_size = _pmap_axis_size(args)
     f = lu.wrap_init(fun)
     jaxtuple_kwargs, kwargs_tree = pytree_to_jaxtupletree(kwargs)
     jaxtuple_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
@@ -515,6 +509,26 @@ def pmap(fun, axis_name=None):
   namestr = "pmap({}, axis_name={})".format
   f_jitted.__name__ = namestr(f_jitted.__name__, axis_name)
   return f_jitted
+
+def _pmap_axis_size(args):
+  leaves, _ = tree_flatten(args)
+  axis_sizes = reduce(set.union, map(_jaxtype_axis_size, leaves), set())
+  if len(axis_sizes) == 0:
+    raise TypeError("pmap requires a leading axis to map over")
+  if len(axis_sizes) > 1:
+    msg = "pmap requires all leading axes to have equal length, got {}."
+    raise TypeError(msg.format(axis_sizes))
+  return axis_sizes.pop()
+
+def _jaxtype_axis_size(x):
+  return _aval_axis_size(core.get_aval(x))
+
+def _aval_axis_size(aval):
+  if isinstance(aval, core.AbstractTuple):
+    return reduce(set.union, map(_aval_axis_size, aval), set())
+  else:
+    return {aval.shape[0]}
+
 
 def _serial_pmap(fun, axis_name=None, in_axes=0, out_axes=0):
   """Vectorizing pseudo-map for single-program multiple-data (SPMD) functions."""
