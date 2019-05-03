@@ -17,7 +17,55 @@
 This short module contains some convenient optimizer definitions, specifically
 initialization and update functions, which can be used with ndarrays or
 arbitrarily-nested tuple/list/dicts of ndarrays.
+
+An optimizer is modeled as an ``(init_fun, update_fun, get_params)`` triple of
+functions, where the component functions have these signatures:
+
+::
+
+  init_fun(params)
+
+  Args:
+    params: pytree representing the initial parameters.
+
+  Returns:
+    A pytree representing the initial optimizer state, which includes the
+    initial parameters and may also include auxiliary values like initial
+    momentum. The optimizer state pytree structure generally differs from that
+    of `params`.
+
+::
+
+  get_params(opt_state)
+
+  Args:
+    opt_state: pytree representing an optimizer state.
+
+  Returns:
+    A pytree representing the parameters extracted from `opt_state`, such that
+    the invariant `params == get_params(init_params(params))` holds true.
+
+::
+
+  update_fun(step, grads, opt_state)
+
+  Args:
+    step: integer representing the step index.
+    grads: a pytree with the same structure as `get_params(opt_state)` representing
+      the gradients to be used in updating the optimizer state.
+    opt_state: a pytree representing the optimizer state to be updated.
+
+  Returns:
+    A pytree with the same structure as the `opt_state` argument representing the
+    updated optimizer state.
+
+
+Notice that an optimizer implementation has a lot of flexibility in the form of
+opt_state: it just has to be a pytree of JaxTypes (so that it can be passed to
+the JAX transforms defined in api.py) and it has to be consumable by update_fun
+and get_params.
 """
+
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -35,6 +83,18 @@ from jax.tree_util import tree_flatten, tree_unflatten, register_pytree_node
 map = safe_map
 zip = safe_zip
 
+
+# The implementation here basically works by flattening pytrees. There are two
+# levels of pytrees to think about: the pytree of params, which we can think of
+# as defining an "outer pytree", and a pytree produced by applying init_fun to
+# each leaf of the params pytree, which we can think of as the "inner pytrees".
+# Since pytrees can be flattened, that structure is isomorphic to a list of
+# lists (with no further nesting). This implementation represents that structure
+# as a JaxTuple-of-JaxTuples so that we can maintain the entire optimizer state
+# as a single DeviceTuple, and thus pay no pytree traversal overhead when we
+# dispatch to a `jit`-compiled `update_fun`. That JaxTuple-of-JaxTuples is
+# stored together with the tree structure data in an OptimizerState instance.
+
 OptimizerState = collections.namedtuple("OptimizerState",
                                         ["packed_state", "tree", "subtrees"])
 register_pytree_node(OptimizerState,
@@ -42,7 +102,33 @@ register_pytree_node(OptimizerState,
                      lambda data, xs: OptimizerState(xs[0], data[0], data[1]))
 
 def optimizer(opt_maker):
-  """Decorator to make an optimizer map over tuple/list/dict containers."""
+  """Decorator to make an optimizer defined for arrays generalize to containers.
+
+  Args:
+    opt_maker: a function that returns an ``(init_fun, update_fun, get_params)``
+      triple of functions that might only work with ndarrays, as per
+
+      .. code-block:: haskell
+
+          init_fun :: ndarray -> OptStatePytree ndarray
+          update_fun :: OptStatePytree ndarray -> OptStatePytree ndarray
+          get_params :: OptStatePytree ndarray -> ndarray
+
+  Returns:
+    An ``(init_fun, update_fun, get_params)`` triple of functions that work on
+    arbitrary pytrees, as per
+
+    .. code-block:: haskell
+
+          init_fun :: ParameterPytree ndarray -> OptimizerState
+          update_fun :: OptimizerState -> OptimizerState
+          get_params :: OptimizerState -> ParameterPytree ndarray
+
+    The OptimizerState pytree type used by the returned functions is isomorphic
+    to ``ParameterPytree (OptStatePytree ndarray)`` but has an implementation
+    based on JaxTuples to avoid pytree structuring/destructuring overheads.
+  """
+
   @functools.wraps(opt_maker)
   def tree_opt_maker(*args, **kwargs):
     init, update, get_params = opt_maker(*args, **kwargs)
