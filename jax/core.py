@@ -545,7 +545,7 @@ def apply_todos(todos, x):
   return x
 
 @lu.transformation_with_aux
-def process_env_traces(primitive, level, *args):
+def process_env_traces(primitive, level, params_tuple, *args):
   ans = yield args, {}
   todo = []
   while isinstance(ans, Tracer) and ans.trace.level > level:
@@ -553,25 +553,26 @@ def process_env_traces(primitive, level, *args):
     sublevel = cur_sublevel()
     trace = type(t)(t.master, sublevel)
     ans = trace.full_raise(ans)
-    ans, cur_todo = ans.trace.post_process_call(primitive, ans)
+    ans, cur_todo = ans.trace.post_process_call(primitive, ans, dict(params_tuple))
     todo.append(cur_todo)
   yield ans, todo
 
-def call_bind(primitive, f, *args, **kwargs):
+def call_bind(primitive, f, *args, **params):
   top_trace = find_top_trace(args)
   level = trace_stack.next_level(True) if top_trace is None else top_trace.level
-  f, env_trace_todo = process_env_traces(f, primitive, level)
+  params_tuple = tuple(params.items())
+  f, env_trace_todo = process_env_traces(f, primitive, level, params_tuple)
   if top_trace is None:
     with new_sublevel():
-      ans = primitive.impl(f, *args, **kwargs)
+      ans = primitive.impl(f, *args, **params)
   else:
     tracers = map(top_trace.full_raise, args)
-    ans = full_lower(top_trace.process_call(primitive, f, tracers, kwargs))
+    ans = full_lower(top_trace.process_call(primitive, f, tracers, params))
   return apply_todos(env_trace_todo(), ans)
 
 
-def call_impl(f, *args, **kwargs):
-  return f(*args, **kwargs)
+def call_impl(f, *args, **params):
+  return f(*args, **params)
 
 
 call_p = Primitive('call')

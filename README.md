@@ -596,10 +596,12 @@ predictions = net_apply(net_params, inputs)
 ### First-order optimization
 
 JAX has a minimal optimization library focused on stochastic first-order
-optimizers. Every optimizer is modeled as an `(init_fun, update_fun)` pair. The
-`init_fun` is used to initialize the optimizer state, which could include things
-like momentum variables, and the `update_fun` accepts a gradient and an
-optimizer state to produce a new optimizer state. The parameters being optimized
+optimizers. Every optimizer is modeled as an `(init_fun, update_fun,
+get_params)` triple of functions. The `init_fun` is used to initialize the
+optimizer state, which could include things like momentum variables, and the
+`update_fun` accepts a gradient and an optimizer state to produce a new
+optimizer state. The `get_params` function extracts the current iterate (i.e.
+the current parameters) from the optimizer state. The parameters being optimized
 can be ndarrays or arbitrarily-nested list/tuple/dict structures, so you can
 store your parameters however you’d like.
 
@@ -616,12 +618,12 @@ def loss(params, batch):
   return np.sum((predictions - targets)**2)
 
 # Use optimizers to set optimizer initialization and update functions
-opt_init, opt_update = optimizers.momentum(step_size=1e-3, mass=0.9)
+opt_init, opt_update, get_params = optimizers.momentum(step_size=1e-3, mass=0.9)
 
 # Define a compiled update step
 @jit
 def step(i, opt_state, batch):
-  params = optimizers.get_params(opt_state)
+  params = get_params(opt_state)
   g = grad(loss)(params, batch)
   return opt_update(i, g, opt_state)
 
@@ -633,7 +635,7 @@ data_generator = ((np.zeros((128, 28, 28, 1)), np.zeros((128, 10)))
 opt_state = opt_init(net_params)
 for i in range(10):
   opt_state = step(i, opt_state, next(data_generator))
-net_params = optimizers.get_params(opt_state)
+net_params = get_params(opt_state)
 ```
 
 ## How it works

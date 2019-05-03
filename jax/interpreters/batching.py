@@ -131,7 +131,7 @@ class BatchTrace(Trace):
       val_out = call_primitive.bind(f, *vals, **params)
       return BatchTracer(self, val_out, dim_out())
 
-  def post_process_call(self, _, out_tracer):
+  def post_process_call(self, call_primitive, out_tracer, params):
     val, dim = out_tracer.val, out_tracer.batch_dim
     master = self.master
     def todo(x):

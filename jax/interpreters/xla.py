@@ -200,6 +200,11 @@ def device_put_many(xs_and_devices):
 # manipulate than simple Python builtins, we store the metadata required for
 # forming the DeviceValue result in special ResultArray / ResultTuple classes.
 
+# Every JaxType needs to map to an XLA type. However this function's design is
+# based on the assumption that XLA types can be mapped uniquely back to a
+# JaxType, i.e. that the mapping is bijective. That assumption could be relaxed,
+# but it would mean we need to do a bit more bookkeping on the Python side to
+# track abstract values of outputs.
 def xla_shape_to_result_shape(xla_shape):
   if xla_shape.is_tuple():
     aval = aval_from_xla_shape(xla_shape)
@@ -232,7 +237,8 @@ def pyval_result_handler(result_shape):
   if t is ResultArray:
     return lambda buf: buf.to_py()
   elif t is ResultTuple:
-    handlers = list(map(pyval_result_handler, result_shape))
+    _, result_shapes = result_shape
+    handlers = list(map(pyval_result_handler, result_shapes))
     return lambda buf: JaxTuple(h(b) for h, b in zip(handlers, buf.destructure()))
   else:
     raise TypeError(t)
@@ -548,8 +554,9 @@ def xla_shape(x):
       raise TypeError(type(x))
 
 
-def xla_call_impl(fun, *args):
-  compiled_fun = xla_callable(fun, *map(abstractify, args))
+def xla_call_impl(fun, *args, **params):
+  device_values = FLAGS.jax_device_values and params.pop('device_values')
+  compiled_fun = xla_callable(fun, device_values, *map(abstractify, args))
   try:
     return compiled_fun(*args)
   except FloatingPointError:
@@ -559,14 +566,17 @@ def xla_call_impl(fun, *args):
 
 
 @lu.memoize
-def xla_callable(fun, *abstract_args):
+def xla_callable(fun, device_values, *abstract_args):
   pvals = [pe.PartialVal((aval, core.unit)) for aval in abstract_args]
   with core.new_master(pe.JaxprTrace, True) as master:
     jaxpr, (pval, consts, env) = pe.trace_to_subjaxpr(fun, master, False).call_wrapped(pvals)
     assert not env  # no subtraces here (though cond might eventually need them)
     compiled, result_shape = compile_jaxpr(jaxpr, consts, *abstract_args)
     del master, consts, jaxpr, env
-  handle_result = result_handler(result_shape)
+  if device_values:
+    handle_result = device_persistent_result_handler(result_shape)
+  else:
+    handle_result = pyval_result_handler(result_shape)
   return partial(execute_compiled, compiled, pval, handle_result)
 
 def execute_compiled(compiled, pval, handle_result, *args):
@@ -576,7 +586,7 @@ def execute_compiled(compiled, pval, handle_result, *args):
   return pe.merge_pvals(handle_result(out_buf), pval)
 
 
-def xla_call_translation_rule(c, subc_a1, *a2):
+def xla_call_translation_rule(c, subc_a1, *a2, **params):
   subc, a1 = subc_a1
   return c.Call(subc, a1 + a2)
 
