@@ -13,11 +13,13 @@
 # limitations under the License.
 
 """
-User-facing transformations.
+JAX user-facing transformations and utilities.
 
-These mostly wrap internal transformations, providing convenience flags to
-control behavior and handling Python containers (tuples/lists/dicts) of
-arguments and outputs.
+The transformations here mostly wrap internal transformations, providing
+convenience flags to control behavior and handling Python containers of
+arguments and outputs. The Python containers handled are pytrees (see
+tree_util.py), which include nested tuples/lists/dicts, where the leaves are
+arrays or JaxTuples.
 """
 
 from __future__ import absolute_import
@@ -39,7 +41,7 @@ from . import linear_util as lu
 from .core import pack, eval_jaxpr
 from .api_util import (pytree_fun_to_jaxtupletree_fun, pytree_to_jaxtupletree,
                        pytree_fun_to_flatjaxtuple_fun, apply_jaxtree_fun, wraps,
-                       pytree_fun_to_jaxtupletree_fun2)
+                       pytree_fun_to_jaxtupletree_fun2, flatten_fun)
 from .tree_util import (process_pytree, node_types, build_tree, PyTreeDef,
                         tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, leaf)
@@ -107,23 +109,14 @@ def jit(fun, static_argnums=()):
       msg = ("Jitted function has static_argnums={} but was called with only {}"
              " positional arguments.")
       raise TypeError(msg.format(static_argnums, len(args)))
-    if kwargs:
-      # TODO(mattjj, dougalm): remove warning by May 1 2019
-      msg = ("Until recently jitted functions called with keyword arguments "
-             "treated those arguments as if they were part of static_argnums, "
-             "but now they are treated just like other arguments. If you were "
-             "relying on the previous behavior, you may need to update your "
-             "code to use static_argnums. See the jit docstring.")
-      warn(msg)
     f = lu.wrap_init(fun)
     dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
     f, dyn_args = _argnums_partial(f, dyn_argnums, args)
-    jaxtuple_args, in_trees = unzip2(map(pytree_to_jaxtupletree, dyn_args))
-    jaxtuple_kwargs, kwargs_tree = pytree_to_jaxtupletree(kwargs)
-    _check_args(jaxtuple_args)
-    jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun2(f, kwargs_tree, in_trees)
-    out = xla.xla_call(jaxtree_fun, jaxtuple_kwargs, *jaxtuple_args)
-    return build_tree(out_tree(), out)
+    args_flat, in_tree = tree_flatten((dyn_args, kwargs))
+    _check_args(args_flat)
+    flat_fun, out_tree = flatten_fun(f, in_tree)
+    out = xla.xla_call(flat_fun, *args_flat)
+    return tree_unflatten(out_tree(), out)
 
   jitted_name =  "jit({}, static_argnums={})"
   f_jitted.__name__ = jitted_name.format(f_jitted.__name__, static_argnums)
@@ -494,13 +487,7 @@ def pmap(fun, axis_name=None):
 
   @wraps(fun)
   def f_jitted(*args, **kwargs):
-    leaves, _ = tree_flatten(args)
-    axis_sizes = set(onp.shape(leaf)[0] for leaf in leaves)
-    if len(axis_sizes) != 1:
-      msg = "pmap requires all leading axes to have equal length, got {}."
-      raise TypeError(msg.format(axis_sizes))
-    axis_size = axis_sizes.pop()
-
+    axis_size = _pmap_axis_size(args)
     f = lu.wrap_init(fun)
     jaxtuple_kwargs, kwargs_tree = pytree_to_jaxtupletree(kwargs)
     jaxtuple_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
@@ -513,6 +500,26 @@ def pmap(fun, axis_name=None):
   namestr = "pmap({}, axis_name={})".format
   f_jitted.__name__ = namestr(f_jitted.__name__, axis_name)
   return f_jitted
+
+def _pmap_axis_size(args):
+  leaves, _ = tree_flatten(args)
+  axis_sizes = reduce(set.union, map(_jaxtype_axis_size, leaves), set())
+  if len(axis_sizes) == 0:
+    raise TypeError("pmap requires a leading axis to map over")
+  if len(axis_sizes) > 1:
+    msg = "pmap requires all leading axes to have equal length, got {}."
+    raise TypeError(msg.format(axis_sizes))
+  return axis_sizes.pop()
+
+def _jaxtype_axis_size(x):
+  return _aval_axis_size(core.get_aval(x))
+
+def _aval_axis_size(aval):
+  if isinstance(aval, core.AbstractTuple):
+    return reduce(set.union, map(_aval_axis_size, aval), set())
+  else:
+    return {aval.shape[0]}
+
 
 def _serial_pmap(fun, axis_name=None, in_axes=0, out_axes=0):
   """Vectorizing pseudo-map for single-program multiple-data (SPMD) functions."""
