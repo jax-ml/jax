@@ -470,6 +470,7 @@ def svd_abstract_eval(operand, full_matrices, compute_uv):
 
 def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
   if full_matrices:
+    #TODO: implement full matrices case, documented here: https://people.maths.ox.ac.uk/gilesm/files/NA-08-01.pdf
     raise NotImplementedError("Singular value decomposition JVP not implemented for full matrices")
   A, = primals
   dA, = tangents
