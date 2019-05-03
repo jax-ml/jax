@@ -74,3 +74,10 @@ def pytree_fun_to_flatjaxtuple_fun(in_trees, *args):
 def pytree_to_flatjaxtuple(pytree):
   flat_ans, out_tree = tree_flatten(pytree)
   return pack(flat_ans), out_tree
+
+
+@transformation_with_aux
+def flatten_fun(in_tree, *args_flat):
+  py_args, py_kwargs = tree_unflatten(in_tree, args_flat)
+  ans = yield py_args, py_kwargs
+  yield pytree_to_flatjaxtuple(ans)
