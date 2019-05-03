@@ -445,8 +445,7 @@ pytype_aval_mappings = {}
 # when slots are defined and multiple inheritance is necessary.
 class _TupleMeta(type(tuple)):
   def __instancecheck__(self, instance):
-    return type(instance) in tuple_types
-tuple_types = set()
+    return type(get_aval(instance)) is AbstractTuple
 
 class JaxTuple(six.with_metaclass(_TupleMeta)):
   __slots__ = ['xs']
@@ -467,7 +466,6 @@ class JaxTuple(six.with_metaclass(_TupleMeta)):
       return unitvar
     else:
       return 'JaxTuple({})'.format(','.join(map(repr, self)))
-tuple_types.add(JaxTuple)
 
 
 class AbstractTuple(AbstractValue, tuple):

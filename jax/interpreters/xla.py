@@ -133,9 +133,9 @@ def device_put(x, device_num=0):
       return device_put(x.device_buffer.to_py(), device_num)
   elif isinstance(x, DeviceConstant):
     return instantiate_device_constant(x, device_num=device_num)
-  elif hasattr(x, '__array__'):
+  elif isinstance(x, (DeviceArray, onp.ndarray)):
     return xb.device_put(x, device_num)  # handle arraylikes
-  elif t is JaxTuple:
+  elif isinstance(x, JaxTuple):
     element_bufs = tuple(map(partial(device_put, device_num=device_num), x))
     return xb.make_tuple(element_bufs, device_num)
   else:
@@ -188,6 +188,30 @@ def device_put_many(xs_and_devices):
     outputs[i] = result
   return outputs
 
+
+# When we execute an XLA computation, we get a raw device buffer back and need
+# to package it into a suitable Python object to return to the user. To avoid
+# unnecessary device-to-host transfers, we typically return a DeviceValue that
+# acts just like a familiar Python type (e.g. an ndarray or JaxTuple) but is
+# lazy in that it only copies data back to the host as required. Since the same
+# DeviceValue type is formed on every execution of a compiled computation, at
+# compile time we set up result handler functions and thus avoid redoing some of
+# the Python bookkeeping work on every execution. Since XLA shapes are slower to
+# manipulate than simple Python builtins, we store the metadata required for
+# forming the DeviceValue result in special ResultArray / ResultTuple classes.
+
+def xla_shape_to_result_shape(xla_shape):
+  if xla_shape.is_tuple():
+    aval = aval_from_xla_shape(xla_shape)
+    result_shapes = tuple(map(xla_shape_to_result_shape, xla_shape.tuple_shapes()))
+    return ResultTuple((aval, result_shapes))
+  else:
+    shape, dtype = xla_shape.dimensions(), xla_shape.element_type()
+    ndim, size = len(shape), prod(shape)
+    return ResultArray((shape, dtype, ndim, size))
+class ResultTuple(tuple): pass
+class ResultArray(tuple): pass
+
 def result_handler(result_shape):
   if FLAGS.jax_device_values:
     return device_persistent_result_handler(result_shape)
@@ -197,9 +221,9 @@ def result_handler(result_shape):
 def device_persistent_result_handler(result_shape):
   t = type(result_shape)
   if t is ResultArray:
-    return lambda buf: DeviceArray(buf, *result_shape)
+    return partial(DeviceArray, result_shape)
   elif t is ResultTuple:
-    return DeviceTuple
+    return partial(DeviceTuple, result_shape)
   else:
     raise TypeError(t)
 
@@ -212,17 +236,6 @@ def pyval_result_handler(result_shape):
     return lambda buf: JaxTuple(h(b) for h, b in zip(handlers, buf.destructure()))
   else:
     raise TypeError(t)
-
-
-def xla_shape_to_result_shape(xla_shape):
-  if xla_shape.is_tuple():
-    return ResultTuple(map(xla_shape_to_result_shape, xla_shape.tuple_shapes()))
-  else:
-    shape, dtype = xla_shape.dimensions(), xla_shape.element_type()
-    ndim, size = len(shape), prod(shape)
-    return ResultArray((shape, dtype, ndim, size))
-class ResultTuple(tuple): pass
-class ResultArray(tuple): pass
 
 
 def compile_jaxpr(jaxpr, const_vals, *abstract_args):
@@ -372,39 +385,29 @@ class DeviceValue(object):
 
 class DeviceTuple(DeviceValue):
   """A DeviceTuple is a JaxTuple backed by a single device memory buffer."""
-  __slots__ = ["elt_xla_shapes", "elt_handlers"]
+  __slots__ = ["aval", "result_shapes"]
 
-  def __init__(self, device_buffer):
+  def __init__(self, result_shape, device_buffer):
     self.device_buffer = device_buffer
-    self.elt_xla_shapes = device_buffer.shape().tuple_shapes()
-    self.elt_handlers = list(map(_tuple_elt_handler, self.elt_xla_shapes))
+    self.aval, self.result_shapes = result_shape
 
   def __iter__(self):
     bufs = self.device_buffer.destructure()
-    elts = [handler(buf) for handler, buf in zip(self.elt_handlers, bufs)]
+    handlers = map(device_persistent_result_handler, self.result_shapes)
+    elts = [handler(buf) for handler, buf in zip(handlers, bufs)]
     return iter(elts)
 
   def __len__(self):
-    return len(self.elt_xla_shapes)
+    return len(self.aval)
 
   def __repr__(self):
-    return 'DeviceTuple[{}]'.format(len(self.elt_xla_shapes))
-core.tuple_types.add(DeviceTuple)
+    return 'DeviceTuple(len={length})'.format(length=len(self))
 
-def _tuple_elt_handler(xla_shape):
-  if xla_shape.is_tuple():
-    return DeviceTuple
-  else:
-    result_shape = xla_shape_to_result_shape(xla_shape)
-    return lambda buf: DeviceArray(buf, *result_shape)
 
-def abstractify_device_tuple(tup):
-  return AbstractTuple(map(aval_from_xla_shape, tup.elt_xla_shapes))
-
+# DeviceValues don't need to be dtype-canonicalized because we assume values on
+# the device have already been canonicalized.
 core.pytype_aval_mappings[DeviceTuple] = AbstractTuple
-pytype_aval_mappings[DeviceTuple] = abstractify_device_tuple
-# DeviceValues don't need to be canonicalized because we assume values on the
-# device have already been canonicalized.
+pytype_aval_mappings[DeviceTuple] = op.attrgetter('aval')
 canonicalize_dtype_handlers[DeviceTuple] = identity
 
 
@@ -419,12 +422,9 @@ class DeviceArray(DeviceValue):
   __slots__ = ["shape", "dtype", "ndim", "size", "_npy_value"]
   __array_priority__ = 100.
 
-  def __init__(self, device_buffer, shape, dtype, ndim, size):
+  def __init__(self, result_shape, device_buffer):
     self.device_buffer = device_buffer
-    self.shape = shape
-    self.dtype = dtype
-    self.ndim = ndim
-    self.size = size
+    self.shape, self.dtype, self.ndim, self.size = result_shape
     self._npy_value = None
 
   # TODO make device_buffer a property, make the _npy_value writeable, invalidate
@@ -492,10 +492,10 @@ class DeviceArray(DeviceValue):
     return id(self)
 
 
-core.pytype_aval_mappings[DeviceArray] = ConcreteArray
-pytype_aval_mappings[DeviceArray] = make_shaped_array
 # DeviceValues don't need to be canonicalized because we assume values on the
 # device have already been canonicalized.
+core.pytype_aval_mappings[DeviceArray] = ConcreteArray
+pytype_aval_mappings[DeviceArray] = make_shaped_array
 canonicalize_dtype_handlers[DeviceArray] = identity
 
 def _device_array_constant_handler(c, val, canonicalize_types=True):

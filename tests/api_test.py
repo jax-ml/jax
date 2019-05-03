@@ -542,10 +542,18 @@ class APITest(jtu.JaxTestCase):
     self.assertIsInstance(tup, DeviceTuple)
     self.assertEqual(tuple(tup), (1, 2))
 
+    tup = device_put(pack((1, pack((2, 3)))))
+    self.assertIsInstance(tup, DeviceTuple)
+    self.assertAllClose(tup, (1, (2, 3)), check_dtypes=False)
+
   def test_devicetuple_isinstance(self):
     tup = device_put(pack((1, 2)))
     self.assertIsInstance(tup, DeviceTuple)
     self.assertIsInstance(tup, JaxTuple)
+
+  def test_devicetuple_repr(self):
+    tup = device_put(pack((1, 2)))
+    self.assertEqual(repr(tup), 'DeviceTuple(len=2)')
 
 
 if __name__ == '__main__':

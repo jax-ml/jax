@@ -201,7 +201,7 @@ def shaped_jaxtuple(xs):
   return AbstractTuple(map(shaped_aval, xs))
 
 pytype_aval_mappings[JaxTuple] = shaped_jaxtuple
-pytype_aval_mappings[xla.DeviceTuple] = xla.abstractify_device_tuple
+pytype_aval_mappings[xla.DeviceTuple] = xla.pytype_aval_mappings[xla.DeviceTuple]
 
 for t in it.chain(array_types, [xla.DeviceArray]):
   pytype_aval_mappings[t] = make_shaped_array
