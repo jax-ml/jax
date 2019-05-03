@@ -80,6 +80,7 @@ jax.numpy package
     expm1
     eye
     fabs
+    fftn
     fix
     flip
     fliplr

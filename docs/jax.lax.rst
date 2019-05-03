@@ -63,6 +63,7 @@ Operators
     erf_inv
     exp
     expm1
+    fft
     floor
     full
     full_like
