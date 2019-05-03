@@ -418,7 +418,11 @@ def lattice_join(x, y):
 
 
 def valid_jaxtype(x):
-  return type(x) in pytype_aval_mappings
+  try:
+    concrete_aval(x)
+  except TypeError:
+    return False
+  return True
 
 
 def concrete_aval(x):
@@ -440,9 +444,10 @@ pytype_aval_mappings = {}
 
 # ------------------- Products -------------------
 
-# We set up a registry of tuple types so that we can control the behavior of
-# isinstance(val, JaxTuple) without subclassing JaxTuple, which can be difficult
-# when slots are defined and multiple inheritance is necessary.
+# We override isinstance(x, JaxTuple) behavior (using a metaclass) because
+# defining __slots__ (for performance) is incompatible with multiple
+# inheritance, and both isinstance(x, JaxTuple) and isinstance(x, DeviceValue)
+# can be true.
 class _TupleMeta(type(tuple)):
   def __instancecheck__(self, instance):
     return type(get_aval(instance)) is AbstractTuple
