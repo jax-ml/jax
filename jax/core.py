@@ -474,6 +474,12 @@ class JaxTuple(six.with_metaclass(_TupleMeta)):
 
 
 class AbstractTuple(AbstractValue, tuple):
+  def __new__(cls, xs=()):
+    if not skip_checks:
+      xs = tuple(xs)
+      assert all(isinstance(x, AbstractValue) for x in xs), xs
+    return tuple.__new__(cls, xs)
+
   @staticmethod
   def _iter(tracer):
     return map(full_lower, tracer.unpack())

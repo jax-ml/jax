@@ -406,7 +406,7 @@ class DeviceTuple(DeviceValue):
 
 # DeviceValues don't need to be dtype-canonicalized because we assume values on
 # the device have already been canonicalized.
-core.pytype_aval_mappings[DeviceTuple] = AbstractTuple
+core.pytype_aval_mappings[DeviceTuple] = core.pytype_aval_mappings[JaxTuple]
 pytype_aval_mappings[DeviceTuple] = op.attrgetter('aval')
 canonicalize_dtype_handlers[DeviceTuple] = identity
 
