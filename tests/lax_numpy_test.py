@@ -129,6 +129,7 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("expm1", 1, number_dtypes, all_shapes, jtu.rand_positive(), [],
               test_name="expm1_large"),
     op_record("expm1", 1, number_dtypes, all_shapes, jtu.rand_small_positive(), []),
+    op_record("fix", 1, float_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("floor_divide", 2, number_dtypes, all_shapes, jtu.rand_nonzero(), ["rev"]),
     op_record("heaviside", 2, default_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("hypot", 2, default_dtypes, all_shapes, jtu.rand_default(), []),
@@ -599,6 +600,23 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape=[{}]_reps={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), reps),
+       "shape": shape, "dtype": dtype, "reps": reps,
+       "rng": jtu.rand_default()}
+      for reps in [(), (2,), (3, 4), (2, 3, 4)]
+      for dtype in default_dtypes
+      for shape in all_shapes
+      ))
+  def testTile(self, shape, dtype, reps, rng):
+    onp_fun = lambda arg: onp.tile(arg, reps)
+    lnp_fun = lambda arg: lnp.tile(arg, reps)
+
+    args_maker = lambda: [rng(shape, dtype)]
+
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_axis={}_baseshape=[{}]_dtypes=[{}]".format(

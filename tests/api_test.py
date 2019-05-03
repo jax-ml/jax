@@ -559,6 +559,15 @@ class APITest(jtu.JaxTestCase):
     dx = device_put(3.)
     str(dx.item())  # doesn't crash
 
+  def test_devicearray_repr(self):
+    x = device_put(np.zeros(3))
+    self.assertIsInstance(x, DeviceArray)
+    repr(x)  # doesn't crash
+
+    x = device_put(np.ones(3) + 1j * np.ones(3))
+    self.assertIsInstance(x, DeviceArray)
+    repr(x)  # doesn't crash
+
 
 if __name__ == '__main__':
   absltest.main()
