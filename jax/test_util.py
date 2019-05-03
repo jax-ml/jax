@@ -152,6 +152,7 @@ def check_vjp(f, f_vjp, args, atol=ATOL, rtol=RTOL, eps=EPS):
 
 
 def check_grads(f, args, order, atol=None, rtol=None, eps=None):
+  args = tuple(args)
   if order > 1:
     def f_vjp(*args):
       out_primal_py, vjp_py = api.vjp(f, *args)

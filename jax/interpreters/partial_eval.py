@@ -111,7 +111,7 @@ class JaxprTrace(Trace):
     eqn = JaxprEqn(invars, None, call_primitive, (bound_subjaxpr,), False, params)
     return JaxprTracer(self, PartialVal((out_pv, out_const)), eqn)
 
-  def post_process_call(self, call_primitive, out_tracer):
+  def post_process_call(self, call_primitive, out_tracer, params):
     # TODO(mattjj): post_process_map
     jaxpr, consts, env = tracers_to_jaxpr([], out_tracer)
     out_pv, out_pv_const = out_tracer.pval
@@ -123,7 +123,7 @@ class JaxprTrace(Trace):
       const_tracers = map(trace.new_instantiated_const, consts)
       env_tracers = map(trace.full_raise, env)
       bound_subjaxpr = (jaxpr, const_tracers, env_tracers)
-      eqn = JaxprEqn([], None, call_primitive, (bound_subjaxpr,), False, {})
+      eqn = JaxprEqn([], None, call_primitive, (bound_subjaxpr,), False, params)
       return JaxprTracer(trace, PartialVal((out_pv, out_pv_const)), eqn)
 
     return out, todo

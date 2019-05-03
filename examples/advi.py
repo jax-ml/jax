@@ -120,12 +120,12 @@ if __name__ == "__main__":
     init_mean = np.zeros(D)
     init_std  = np.zeros(D)
     init_params = (init_mean, init_std)
-    opt_init, opt_update = optimizers.momentum(step_size=0.1, mass=0.9)
+    opt_init, opt_update, get_params = optimizers.momentum(step_size=0.1, mass=0.9)
     opt_state = opt_init(init_params)
 
     @jit
     def update(i, opt_state):
-        params = optimizers.get_params(opt_state)
+        params = get_params(opt_state)
         gradient = grad(objective)(params, i)
         return opt_update(i, gradient, opt_state)
 
@@ -134,6 +134,6 @@ if __name__ == "__main__":
     print("Optimizing variational parameters...")
     for t in range(100):
         opt_state = update(t, opt_state)
-        params = optimizers.get_params(opt_state)
+        params = get_params(opt_state)
         callback(params, t)
     plt.show(block=True)
