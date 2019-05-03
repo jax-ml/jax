@@ -843,6 +843,14 @@ def round(a, decimals=0):
 around = round
 
 
+@_wraps(onp.fix)
+def fix(x, out=None):
+  if out is not None:
+    raise ValueError("fix does not support the `out` argument.")
+  zero = lax._const(x, 0)
+  return where(lax.ge(x, zero), lax.floor(x), lax.ceil(x))
+
+
 # Caution: If fast math mode is enabled, the semantics of inf and nan are not
 # preserved by XLA/LLVM, and the behavior of inf/nan values is unpredictable.
 # To disable fast math mode on CPU, set the environment variable
@@ -1135,6 +1143,15 @@ def stack(arrays, axis=0):
     new_arrays.append(reshape(a, new_shape))
   return concatenate(new_arrays, axis=axis)
 
+@_wraps(onp.tile)
+def tile(a, reps):
+    if isinstance(reps, int):
+        reps = (reps,)
+    a = a[(None,) * (len(reps) - a.ndim)]
+    reps = (1,) * (a.ndim - len(reps)) + reps
+    for i, rep in enumerate(reps):
+        a = concatenate([a] * rep, axis=i)
+    return a
 
 @_wraps(onp.concatenate)
 def concatenate(arrays, axis=0):
@@ -2302,7 +2319,7 @@ _nondiff_methods = ["all", "any", "argmax", "argmin", "argpartition", "argsort",
 _diff_methods = ["clip", "compress", "conj", "conjugate", "cumprod", "cumsum",
                  "diagonal", "dot", "max", "mean", "min", "prod", "ptp",
                  "ravel", "repeat", "sort", "squeeze", "std", "sum",
-                 "swapaxes", "take", "trace", "transpose", "var"]
+                 "swapaxes", "take", "tile", "trace", "transpose", "var"]
 
 
 # Set up operator, method, and property forwarding on Tracer instances containing
@@ -2316,6 +2333,8 @@ for method_name in _nondiff_methods + _diff_methods:
 setattr(ShapedArray, "reshape", core.aval_method(_reshape))
 setattr(ShapedArray, "flatten", core.aval_method(ravel))
 setattr(ShapedArray, "T", core.aval_property(transpose))
+setattr(ShapedArray, "real", core.aval_property(real))
+setattr(ShapedArray, "imag", core.aval_property(imag))
 setattr(ShapedArray, "astype", core.aval_method(lax.convert_element_type))
 
 
@@ -2328,6 +2347,8 @@ for method_name in _nondiff_methods + _diff_methods:
 setattr(DeviceArray, "reshape", _reshape)
 setattr(DeviceArray, "flatten", ravel)
 setattr(DeviceArray, "T", property(transpose))
+setattr(DeviceArray, "real", property(real))
+setattr(DeviceArray, "imag", property(imag))
 setattr(DeviceArray, "astype", lax.convert_element_type)
 
 
