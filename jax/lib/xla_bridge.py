@@ -187,7 +187,8 @@ def device_put_many(pyvals_and_devices):
     return [device_put(pyval, device) for (pyval, device) in pyvals_and_devices]
 
 def make_tuple(bufs, device_num=0):
-  return xla_client.Buffer.make_tuple(bufs, device=device_num)
+  return xla_client.Buffer.make_tuple(bufs, device=device_num,
+                                      backend=get_backend())
 
 
 Shape = xla_client.Shape        # pylint: disable=invalid-name
