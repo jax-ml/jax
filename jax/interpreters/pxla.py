@@ -77,8 +77,7 @@ def shard_arg(device_ordinals, axis_size, arg):
 
 def _slice(x, i):
   """Return the ith slice of a JaxType (tuple or array)."""
-  t = type(x)
-  if t is core.JaxTuple or t is xla.DeviceTuple:
+  if isinstance(x, core.JaxTuple):
     return core.pack(_slice(elt, i) for elt in x)
   else:
     return x[i]
