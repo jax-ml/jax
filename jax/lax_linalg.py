@@ -137,7 +137,7 @@ def eigh_abstract_eval(operand, lower):
     batch_dims = operand.shape[:-2]
     n = operand.shape[-1]
     v = ShapedArray(batch_dims + (n, n), operand.dtype)
-    w = ShapedArray(batch_dims + (n,), operand.dtype)
+    w = ShapedArray(batch_dims + (n,), lax.lax._complex_basetype(operand.dtype))
   else:
     v, w = operand, operand
   return core.AbstractTuple((v, w))
