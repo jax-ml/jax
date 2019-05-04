@@ -479,19 +479,19 @@ def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
   k = s.shape[-1]
   Ut, V = np.conj(U).T, np.conj(Vt).T
   s_dim = s[..., None, :]
-  dS = Ut.dot(dA).dot(V)
+  dS = np.dot(np.dot(Ut, dA), V)
   ds = np.diag(dS)
   F = 1 / (np.square(s_dim) - np.square(s_dim.T) + np.eye(k)) - np.eye(k)
   dSS = s_dim * dS
   SdS = s_dim.T * dS
-  dU = U.dot(F * (dSS + dSS.T))
-  dV = V.dot(F * (SdS + SdS.T))
+  dU = np.dot(U, F * (dSS + dSS.T))
+  dV = np.dot(V, F * (SdS + SdS.T))
 
   m, n = A.shape[-2], A.shape[-1]
   if m > n:
-    dU = dU + (np.eye(m) - U.dot(Ut)).dot(dA).dot(V) / s_dim
+    dU = dU + np.dot(np.eye(m) - np.dot(U, Ut), np.dot(dA, V)) / s_dim
   if n > m:
-    dV = dV + (np.eye(n) - V.dot(Vt)).dot(dA.T).dot(U) / s_dim
+    dV = dV + np.dot(np.eye(n) - np.dot(V, Vt), np.dot(np.conj(dA).T, U)) / s_dim
   return core.pack((s, U, Vt)), core.pack((ds, dU, dV.T))
 
 def svd_cpu_translation_rule(c, operand, full_matrices, compute_uv):
