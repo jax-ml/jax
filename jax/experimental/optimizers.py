@@ -14,7 +14,7 @@
 
 """Optimizers for use with JAX.
 
-This short module contains some convenient optimizer definitions, specifically
+This module contains some convenient optimizer definitions, specifically
 initialization and update functions, which can be used with ndarrays or
 arbitrarily-nested tuple/list/dicts of ndarrays.
 
@@ -36,17 +36,6 @@ functions, where the component functions have these signatures:
 
 ::
 
-  get_params(opt_state)
-
-  Args:
-    opt_state: pytree representing an optimizer state.
-
-  Returns:
-    A pytree representing the parameters extracted from `opt_state`, such that
-    the invariant `params == get_params(init_params(params))` holds true.
-
-::
-
   update_fun(step, grads, opt_state)
 
   Args:
@@ -59,6 +48,17 @@ functions, where the component functions have these signatures:
     A pytree with the same structure as the `opt_state` argument representing
     the updated optimizer state.
 
+::
+
+  get_params(opt_state)
+
+  Args:
+    opt_state: pytree representing an optimizer state.
+
+  Returns:
+    A pytree representing the parameters extracted from `opt_state`, such that
+    the invariant `params == get_params(init_params(params))` holds true.
+
 
 Notice that an optimizer implementation has a lot of flexibility in the form of
 opt_state: it just has to be a pytree of JaxTypes (so that it can be passed to
@@ -70,7 +70,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import collections
+from collections import namedtuple
 import functools
 import operator
 
@@ -97,14 +97,20 @@ zip = safe_zip
 # dispatch to a `jit`-compiled `update_fun`. That JaxTuple-of-JaxTuples is
 # stored together with the tree structure data in an OptimizerState instance.
 
-OptimizerState = collections.namedtuple("OptimizerState",
-                                        ["packed_state", "tree", "subtrees"])
-register_pytree_node(OptimizerState,
-                     lambda xs: ((xs.packed_state,), (xs.tree, xs.subtrees)),
-                     lambda data, xs: OptimizerState(xs[0], data[0], data[1]))
+OptimizerState = namedtuple("OptimizerState",
+                            ["packed_state", "tree_def", "subtree_defs"])
+register_pytree_node(
+    OptimizerState,
+    lambda xs: ((xs.packed_state,), (xs.tree_def, xs.subtree_defs)),
+    lambda data, xs: OptimizerState(xs[0], data[0], data[1]))
 
 def optimizer(opt_maker):
   """Decorator to make an optimizer defined for arrays generalize to containers.
+
+  With this decorator, you can write init, update, and get_params functions that
+  each operate only on single arrays, and convert them to corresponding
+  functions that operate on pytrees of parameters. See the optimizers defined in
+  optimizers.py for examples.
 
   Args:
     opt_maker: a function that returns an ``(init_fun, update_fun, get_params)``
@@ -147,12 +153,16 @@ def optimizer(opt_maker):
     def tree_update(i, grad_tree, opt_state):
       packed_state, tree, subtrees = opt_state
       grad_flat, tree2 = tree_flatten(grad_tree)
-      assert tree == tree2
+      if tree2 != tree:
+        msg = ("optimizer update function was passed a gradient tree that did "
+               "not match the parameter tree structure with which it was "
+               "initialized: parameter tree {} and grad tree {}.")
+        raise TypeError(msg.format(tree, tree2))
       states = map(tree_unflatten, subtrees, packed_state)
       new_states = map(partial(update, i), grad_flat, states)
       new_states_flat, subtrees2 = unzip2(map(tree_flatten, new_states))
       for subtree, subtree2 in zip(subtrees, subtrees2):
-        if subtree != subtree2:
+        if subtree2 != subtree:
           msg = ("optimizer update function produced an output structure that "
                  "did not match its input structure: input {} and output {}.")
           raise TypeError(msg.format(subtree, subtree2))
@@ -305,12 +315,12 @@ def sm3(step_size, momentum=0.9):
 
   def init(x0):
     vs = [np.zeros(sz, dtype=x0.dtype) for sz in x0.shape]
-    return (x0, np.zeros_like(x0), vs)
+    return x0, np.zeros_like(x0), vs
 
   def update(i, g, state):
     x, m, vs = state
     vs = [broadcast_into(g.ndim, v, i) for i, v in enumerate(vs)]
-    accum = reduce(np.minimum, vs[1:], vs[0]) + g ** 2
+    accum = reduce(np.minimum, vs) + g ** 2
     accum_inv_sqrt = np.where(accum > 0, 1. / np.sqrt(accum), 0)
     m = (1. - momentum) * (g * accum_inv_sqrt) + momentum * m
     x = x - step_size(i) * m
