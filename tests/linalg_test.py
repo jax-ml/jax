@@ -286,7 +286,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                           args_maker, check_dtypes=True)
     if not full_matrices:
       svd = partial(np.linalg.svd, full_matrices=False)
-      jtu.check_jvp(svd, partial(jvp, svd), (a,))
+      jtu.check_jvp(svd, partial(jvp, svd), (a,), atol=1e-2 if FLAGS.jax_enable_x64 else jtu.ATOL)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_fullmatrices={}".format(
