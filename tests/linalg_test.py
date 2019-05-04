@@ -27,7 +27,7 @@ import scipy as osp
 from absl.testing import absltest
 from absl.testing import parameterized
 
-from jax import jvp, vmap
+from jax import jit, grad, jvp, vmap
 from jax import numpy as np
 from jax import scipy as jsp
 from jax import test_util as jtu
@@ -394,6 +394,16 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp.linalg.inv, np.linalg.inv, args_maker,
                             check_dtypes=True, tol=1e-3)
     self._CompileAndCheck(np.linalg.inv, args_maker, check_dtypes=True)
+
+  # Regression test for incorrect type for eigenvalues of a complex matrix.
+  def testIssue669(self):
+    def test(x):
+      val, vec = np.linalg.eigh(x)
+      return np.real(np.sum(val))
+
+    grad_test_jc = jit(grad(jit(test)))
+    xc = onp.eye(3, dtype=onp.complex)
+    self.assertAllClose(xc, grad_test_jc(xc), check_dtypes=True)
 
 
 class ScipyLinalgTest(jtu.JaxTestCase):
