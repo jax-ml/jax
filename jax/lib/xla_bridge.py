@@ -32,7 +32,7 @@ import numpy as onp  # 'onp' rather than 'np' to distinguish from autograd.numpy
 
 import jaxlib
 
-_minimum_jaxlib_version = (0, 1, 11)
+_minimum_jaxlib_version = (0, 1, 12)
 try:
   from jaxlib import version as jaxlib_version
 except:
@@ -122,21 +122,7 @@ def _get_local_backend():
   elif platform == '':
     platform = None
 
-  backend = None
-  if hasattr(xla_client, 'get_local_backend'):
-    backend = xla_client.get_local_backend(platform)
-  else:
-    # This case is for backward compatibility with Jaxlib versions that don't
-    # have xla_client.get_local_backend().
-    platforms = [gpu, cpu] if platform is None else [platform]
-    for p in platforms:
-      try:
-        backend = xla_client.XlaLocalBackend(p)
-        backend.platform = p
-        break
-      except RuntimeError:
-        continue
-
+  backend = xla_client.get_local_backend(platform)
   if backend is None:
     raise RuntimeError("No local XLA backends found.")
 
