@@ -387,7 +387,7 @@ class ShardedDeviceArray(xla.DeviceArray):
 
   A ShardedDeviceArray represents one logical ndarray value, and simulates the
   behavior of an ndarray so that it can be treated by user code as an ndarray;
-  that is, it is only an optimizatoin to reduce transfers.
+  that is, it is only an optimization to reduce transfers.
 
   The number of device buffers underlying a ShardedDeviceArray instance is equal
   to the number of replicas of the computation that produced it. Each buffer
