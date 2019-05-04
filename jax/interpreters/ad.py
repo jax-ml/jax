@@ -224,7 +224,7 @@ class JVPTrace(Trace):
     primal_out, tangent_out = build_tree(out_tree_def(), result)
     return JVPTracer(self, primal_out, tangent_out)
 
-  def post_process_call(self, _, out_tracer):
+  def post_process_call(self, call_primitive, out_tracer, params):
     out_jtuple, tree_def = tree_to_jaxtuples((out_tracer.primal, out_tracer.tangent))
     master = self.master
     def todo(x):
