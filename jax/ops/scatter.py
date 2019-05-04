@@ -26,6 +26,19 @@ from .. import lax
 from ..numpy import lax_numpy as np
 
 
+# TODO(mattjj): clean up this logic
+def _is_advanced_int_indexer(idx):
+  _int = lambda aval: not aval.shape and onp.issubdtype(aval.dtype, onp.integer)
+  try:
+    abstract_idx = core.get_aval(idx)
+  except TypeError:
+    abstract_idx = None
+  out = not (isinstance(abstract_idx, ConcreteArray) and _int(abstract_idx) or
+             isinstance(abstract_idx, ShapedArray) and _int(abstract_idx) or
+             isinstance(idx, slice) or
+             isinstance(idx, tuple) and all(onp.ndim(elt) == 0 for elt in idx))
+  return out and np._is_advanced_int_indexer(idx)
+
 def _scatter_update(x, idx, y, scatter_op):
   """Helper for indexed updates.
 
@@ -55,34 +68,37 @@ def _scatter_update(x, idx, y, scatter_op):
 
   # Check if there's advanced indexing going on, and handle differently based on
   # whether it is or isn't mixed with basic indexing.
-  if np._is_advanced_int_indexer_without_slices(idx):
-    if isinstance(idx, (tuple, list)):
-      if any(onp.shape(e) for e in idx):
-        # At least one sequence element in the index list means broadcasting.
-        idx = np.broadcast_arrays(*idx)
+  if _is_advanced_int_indexer(idx):
+    if np._is_advanced_int_indexer_without_slices(idx):
+      if isinstance(idx, (tuple, list)):
+        if any(onp.shape(e) for e in idx):
+          # At least one sequence element in the index list means broadcasting.
+          idx = np.broadcast_arrays(*idx)
+        else:
+          # The index list is a flat list of integers.
+          idx = [lax.concatenate([lax.reshape(e, (1,)) for e in idx], 0)]
       else:
-        # The index list is a flat list of integers.
-        idx = [lax.concatenate([lax.reshape(e, (1,)) for e in idx], 0)]
+        # The indexer is just a single integer array.
+        idx = [idx]
+
+      stacked_idx = np.concatenate(
+          [np.mod(np.reshape(a, (-1, 1)), np._constant_like(a, x.shape[i]))
+          for i, a in enumerate(idx)], axis=1)
+
+      y = np.broadcast_to(y, idx[0].shape + onp.shape(x)[len(idx):])
+      y = lax.reshape(y, (stacked_idx.shape[0],) + onp.shape(x)[len(idx):])
+
+      dnums = lax.ScatterDimensionNumbers(
+          update_window_dims=tuple(range(1, y.ndim)),
+          inserted_window_dims=tuple(range(len(idx))),
+          scatter_dims_to_operand_dims=tuple(range(len(idx))))
+      return scatter_op(x, stacked_idx, y, dnums)
+    elif np._is_advanced_int_indexer(idx):
+      # TODO(mattjj, phawkins): one of us is going to implement this case someday
+      msg = "Unimplemented case for indexed update. Open a feature request!"
+      raise NotImplementedError(msg)
     else:
-      # The indexer is just a single integer array.
-      idx = [idx]
-
-    stacked_idx = np.concatenate(
-        [np.mod(np.reshape(a, (-1, 1)), np._constant_like(a, x.shape[i]))
-         for i, a in enumerate(idx)], axis=1)
-
-    y = np.broadcast_to(y, idx[0].shape + onp.shape(x)[len(idx):])
-    y = lax.reshape(y, (stacked_idx.shape[0],) + onp.shape(x)[len(idx):])
-
-    dnums = lax.ScatterDimensionNumbers(
-        update_window_dims=tuple(range(1, y.ndim)),
-        inserted_window_dims=tuple(range(len(idx))),
-        scatter_dims_to_operand_dims=tuple(range(len(idx))))
-    return scatter_op(x, stacked_idx, y, dnums)
-  elif np._is_advanced_int_indexer(idx):
-    # TODO(mattjj, phawkins): one of us is going to implement this case someday
-    msg = "Unimplemented case for indexed update. Open a feature request!"
-    raise NotImplementedError(msg)
+      assert False  # unreachable
 
   # At this point there's no advanced indexing going on, so we process each
   # element of the index one at a time to build up a scatter.
