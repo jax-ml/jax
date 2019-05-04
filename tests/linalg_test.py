@@ -396,6 +396,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(np.linalg.inv, args_maker, check_dtypes=True)
 
   # Regression test for incorrect type for eigenvalues of a complex matrix.
+  @jtu.skip_on_devices("gpu", "tpu")
   def testIssue669(self):
     def test(x):
       val, vec = np.linalg.eigh(x)
