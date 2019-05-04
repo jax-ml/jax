@@ -204,16 +204,16 @@ def main(_):
 
   batches = data_stream()
 
-  opt_init, opt_update = optimizers.sgd(FLAGS.learning_rate)
+  opt_init, opt_update, get_params = optimizers.sgd(FLAGS.learning_rate)
 
   @jit
   def update(_, i, opt_state, batch):
-    params = optimizers.get_params(opt_state)
+    params = get_params(opt_state)
     return opt_update(i, grad(loss)(params, batch), opt_state)
 
   @jit
   def private_update(rng, i, opt_state, batch):
-    params = optimizers.get_params(opt_state)
+    params = get_params(opt_state)
     rng = random.fold_in(rng, i)  # get new key for new random numbers
     return opt_update(
         i,
@@ -243,7 +243,7 @@ def main(_):
     print('Epoch {} in {:0.2f} sec'.format(epoch, epoch_time))
 
     # evaluate test accuracy
-    params = optimizers.get_params(opt_state)
+    params = get_params(opt_state)
     test_acc = accuracy(params, shape_as_image(test_images, test_labels))
     test_loss = loss(params, shape_as_image(test_images, test_labels))
     print('Test set loss, accuracy (%): ({:.2f}, {:.2f})'.format(

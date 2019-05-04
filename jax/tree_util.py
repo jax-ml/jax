@@ -79,70 +79,23 @@ def tree_multimap(f, tree, *rest):
     leaf given by `f(x, *xs)` where `x` is the value at the corresponding leaf
     in `tree` and `xs` is the tuple of values at corresponding leaves in `rest`.
   """
-  # equivalent to prefix_multimap(f, tree_structure(tree), tree, *rest)
   node_type = node_types.get(type(tree))
   if node_type:
-    children, node_spec = node_type.to_iterable(tree)
+    children, aux_data = node_type.to_iterable(tree)
     all_children = [children]
     for other_tree in rest:
       other_node_type = node_types.get(type(other_tree))
-      # TODO(mattjj): enable this check
-      # if node_type != other_node_type:
-      #   raise TypeError('Mismatch: {} != {}'.format(other_node_type, node_type))
-      other_children, other_node_data = node_type.to_iterable(other_tree)
-      if other_node_data != node_spec:
-        raise TypeError('Mismatch: {} != {}'.format(other_node_data, node_spec))
+      if node_type != other_node_type:
+        raise TypeError('Mismatch: {} != {}'.format(other_node_type, node_type))
+      other_children, other_aux_data = node_type.to_iterable(other_tree)
+      if other_aux_data != aux_data:
+        raise TypeError('Mismatch: {} != {}'.format(other_aux_data, aux_data))
       all_children.append(other_children)
 
     new_children = [tree_multimap(f, *xs) for xs in zip(*all_children)]
-    return node_type.from_iterable(node_spec, new_children)
+    return node_type.from_iterable(aux_data, new_children)
   else:
     return f(tree, *rest)
-
-def prefix_multimap(f, treedef, tree, *rest):
-  """Like tree_multimap but only maps down through a tree prefix."""
-  if treedef is leaf:
-    return f(tree, *rest)
-  else:
-    node_type = node_types.get(type(tree))
-    if node_type != treedef.node_type:
-      raise TypeError('Mismatch: {} != {}'.format(treedef.node_type, node_type))
-    children, node_data = node_type.to_iterable(tree)
-    if node_data != treedef.node_data:
-      raise TypeError('Mismatch: {} != {}'.format(treedef.node_data, node_data))
-    all_children = [children]
-    for other_tree in rest:
-      other_children, other_node_data = node_type.to_iterable(other_tree)
-      if other_node_data != node_data:
-        raise TypeError('Mismatch: {} != {}'.format(other_node_data, node_data))
-      all_children.append(other_children)
-    all_children = zip(*all_children)
-
-    new_children = [prefix_multimap(f, td, *xs)
-                    for td, xs in zip(treedef.children, all_children)]
-    return node_type.from_iterable(node_data, new_children)
-
-def tree_mimomap(f, tree, *rest):
-  """Map a multi-input tuple-output over pytree args to form a tuple of pytrees.
-
-  Args:
-    f: function that takes `1 + len(rest)` arguments and returns a tuple, to be
-      applied at the corresponding leaves of the pytrees.
-    tree: a pytree to be mapped over, with each leaf providing the first
-      positional argument to `f`.
-    *rest: a tuple of pytrees, each with the same structure as `tree`.
-
-  Returns:
-    A tuple of pytrees with length given by the length of the output of `f` and
-    with each pytree element having the same structure as `tree`.
-  """
-  flat, treedef = tree_flatten(tree)
-  rest_flat, treedefs = unzip2(map(tree_flatten, rest))
-  if not all(td == treedef for td in treedefs):
-    td = next(td for td in treedefs if td != treedef)
-    raise TypeError('Mismatch: {} != {}'.format(treedef, td))
-  out_flat = zip(*map(f, flat, *rest_flat))
-  return tuple(map(partial(tree_unflatten, treedef), out_flat))
 
 
 def tree_reduce(f, tree):
@@ -269,6 +222,9 @@ class NodeType(object):
     self.name = name
     self.to_iterable = to_iterable
     self.from_iterable = from_iterable
+
+  def __repr__(self):
+    return self.name
 
 node_types = {}
 
