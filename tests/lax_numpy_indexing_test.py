@@ -689,12 +689,9 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     for update_shape in _broadcastable_shapes(_update_shape(shape, indexer))
     for update_dtype in ([dtype] if op == UpdateOps.ADD else all_dtypes)
     for rng in [jtu.rand_default()]))
+  @jtu.skip_on_devices("gpu")  # TODO(b/132005708): llvm assert failure on GPU
   def testStaticIndexing(self, shape, dtype, update_shape, update_dtype,
                          rng, indexer, op):
-    if FLAGS.jax_test_dut == "cpu" and not shape:
-      # TODO(b/127315062): this case causes an XLA crash on CPU. Reenable when
-      # fixed.
-      raise unittest.SkipTest("Test case crashes on CPU")
     args_maker = lambda: [rng(shape, dtype), rng(update_shape, update_dtype)]
     def onp_fn(x, y):
       x = x.copy()
@@ -726,15 +723,6 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     for rng in [jtu.rand_default()]))
   def testStaticIndexingGrads(self, shape, dtype, update_shape, update_dtype,
                               rng, indexer, op):
-    if FLAGS.jax_test_dut in ("cpu", "tpu") and not shape:
-      # TODO(b/127315062): this case causes an XLA crash on CPU/TPU. Reenable
-      # when fixed.
-      raise unittest.SkipTest("Test case crashes on CPU")
-    if (FLAGS.jax_test_dut == "tpu" and isinstance(indexer, slice)
-        and onp.zeros(shape)[indexer].size == 0):
-      # TODO(phawkins): this case causes an XLA crash on TPU. Reenable when fixed.
-      raise unittest.SkipTest("Test case crashes on TPU")
-
     jax_op = ops.index_update if op == UpdateOps.UPDATE else ops.index_add
     jax_fn = lambda x, y: jax_op(x, indexer, y)
     x = rng(shape, dtype)
