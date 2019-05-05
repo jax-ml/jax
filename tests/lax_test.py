@@ -1881,11 +1881,13 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        "dims": dims, "rng": rng}
       for init_val, op, dtypes in [
           (0, lax.add, inexact_dtypes),
+          (1, lax.mul, inexact_dtypes),
           (-onp.inf, lax.max, inexact_dtypes),
           (onp.inf, lax.min, inexact_dtypes),
       ]
       for dtype in dtypes
       for shape, dims in [
+          [(3, 4, 5), ()],
           [(3, 4, 5), (0,)],
           [(3, 4, 5), (1, 2)],
           [(3, 4, 5), (0, 2)],
