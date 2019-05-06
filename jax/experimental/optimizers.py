@@ -79,7 +79,8 @@ from six.moves import reduce
 import jax.numpy as np
 from jax.util import partial, safe_zip, safe_map, unzip2
 from jax import tree_util
-from jax.tree_util import tree_flatten, tree_unflatten, register_pytree_node
+from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
+                           register_pytree_node)
 
 map = safe_map
 zip = safe_zip
@@ -376,3 +377,17 @@ def make_schedule(scalar_or_schedule):
     return constant(scalar_or_schedule)
   else:
     raise TypeError(type(scalar_or_schedule))
+
+
+### utilities
+
+def l2_norm(tree):
+  """Compute the l2 norm of a pytree of arrays. Useful for weight decay."""
+  leaves, _ = tree_flatten(tree)
+  return np.sqrt(sum(np.vdot(x, x) for x in leaves))
+
+def clip_grads(grad_tree, max_norm):
+  """Clip gradients stored as a pytree of arrays to maximum norm `max_norm`."""
+  norm = l2_norm(grad_tree)
+  normalize = lambda g: np.where(norm < max_norm, g, g * (max_norm / norm))
+  return tree_map(normalize, grad_tree)
