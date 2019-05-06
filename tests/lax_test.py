@@ -389,7 +389,7 @@ class LaxTest(jtu.JaxTestCase):
       self, lhs_shape, rhs_shape, dtype, strides, padding, lhs_dilation,
       rhs_dilation, rng):
     # TODO(mattjj): make this test pass
-    return SkipTest("this test is incomplete")
+    raise SkipTest("this test is incomplete")
     args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
 
     def fun(lhs, rhs):
@@ -1895,6 +1895,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       ]
       for rng in [jtu.rand_small()]))
   def testReduceGrad(self, op, init_val, shape, dtype, dims, rng):
+    if "tpu" in FLAGS.jax_test_dut and op is lax.mul:
+      raise SkipTest("unimplemented case")
     tol = 1e-2 if onp.finfo(dtype).bits == 32 else None
     operand = rng(shape, dtype)
     init_val = onp.asarray(init_val, dtype=dtype)
