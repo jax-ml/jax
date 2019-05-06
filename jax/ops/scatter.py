@@ -142,7 +142,6 @@ def _scatter_update(x, idx, y, scatter_op):
       i = lax.convert_element_type(i, np.int32)
       i = np.broadcast_to(i, tuple(scatter_indices.shape[:-1]) + (1,))
       scatter_indices = np.concatenate((scatter_indices, i), -1)
-      # (a, b, c, 3) -> (a, b, c, 4)
       inserted_window_dims.append(x_axis)
       scatter_dims_to_operand_dims.append(x_axis)
       x_axis += 1
