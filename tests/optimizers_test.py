@@ -20,6 +20,8 @@ from __future__ import print_function
 import functools
 
 from absl.testing import absltest
+import numpy as onp
+
 import jax.numpy as np
 import jax.test_util as jtu
 from jax import jit, grad
@@ -212,6 +214,26 @@ class OptimizerTests(jtu.JaxTestCase):
     init_fun, update_fun, get_params = opt_maker()
     opt_state = init_fun(np.zeros(3))
     self.assertRaises(TypeError, lambda: update_fun(opt_state))
+
+  def testUtilityNorm(self):
+    x0 = (np.ones(2), (np.ones(3), np.ones(4)))
+    norm = optimizers.l2_norm(x0)
+    expected = onp.sqrt(onp.sum(onp.ones(2+3+4)**2))
+    self.assertAllClose(norm, expected, check_dtypes=False)
+
+  def testUtilityClipGrads(self):
+    g = (np.ones(2), (np.ones(3), np.ones(4)))
+    norm = optimizers.l2_norm(g)
+
+    ans = optimizers.clip_grads(g, 1.1 * norm)
+    expected = g
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = optimizers.l2_norm(optimizers.clip_grads(g, 0.9 * norm))
+    expected = 0.9 * norm
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+
 
 
 if __name__ == '__main__':
