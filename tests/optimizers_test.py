@@ -187,14 +187,15 @@ class OptimizerTests(jtu.JaxTestCase):
 
     update(opt_state, 0.9)  # doesn't crash
 
-  def testDeviceTupleState(self):
-    init_fun, update_fun, _ = optimizers.sgd(0.1)
-    opt_state = init_fun(np.zeros(3))
-    self.assertIsInstance(opt_state, optimizers.OptimizerState)
-    self.assertIsInstance(opt_state.packed_state, core.JaxTuple)
-    opt_state = jit(update_fun)(0, np.zeros(3), opt_state)
-    self.assertIsInstance(opt_state, optimizers.OptimizerState)
-    self.assertIsInstance(opt_state.packed_state, xla.DeviceTuple)
+  # TODO(mattjj): re-enable when DeviceTuples are ready
+  # def testDeviceTupleState(self):
+  #   init_fun, update_fun, _ = optimizers.sgd(0.1)
+  #   opt_state = init_fun(np.zeros(3))
+  #   self.assertIsInstance(opt_state, optimizers.OptimizerState)
+  #   self.assertIsInstance(opt_state.packed_state, core.JaxTuple)
+  #   opt_state = jit(update_fun)(0, np.zeros(3), opt_state)
+  #   self.assertIsInstance(opt_state, optimizers.OptimizerState)
+  #   self.assertIsInstance(opt_state.packed_state, xla.DeviceTuple)
 
   def testUpdateFunStructureMismatchErrorMessage(self):
     @optimizers.optimizer
