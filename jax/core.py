@@ -450,7 +450,10 @@ pytype_aval_mappings = {}
 # can be true.
 class _TupleMeta(type(tuple)):
   def __instancecheck__(self, instance):
-    return type(get_aval(instance)) is AbstractTuple
+    try:
+      return type(get_aval(instance)) is AbstractTuple
+    except TypeError:
+      return False
 
 class JaxTuple(six.with_metaclass(_TupleMeta)):
   __slots__ = ['xs']

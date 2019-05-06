@@ -492,13 +492,12 @@ def pmap(fun, axis_name=None):
   def f_jitted(*args, **kwargs):
     axis_size = _pmap_axis_size(args)
     f = lu.wrap_init(fun)
-    jaxtuple_kwargs, kwargs_tree = pytree_to_jaxtupletree(kwargs)
-    jaxtuple_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
-    _check_args(jaxtuple_args)
-    f, out_tree = pytree_fun_to_jaxtupletree_fun2(f, kwargs_tree, in_trees)
-    out = pxla.xla_pmap(f, jaxtuple_kwargs, *jaxtuple_args,
+    args_flat, in_tree = tree_flatten((args, kwargs))
+    _check_args(args_flat)
+    flat_fun, out_tree = flatten_fun(f, in_tree)
+    out = pxla.xla_pmap(flat_fun, *args_flat,
                         axis_name=axis_name, axis_size=axis_size)
-    return build_tree(out_tree(), out)
+    return tree_unflatten(out_tree(), out)
 
   namestr = "pmap({}, axis_name={})".format
   f_jitted.__name__ = namestr(f_jitted.__name__, axis_name)
