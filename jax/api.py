@@ -507,10 +507,10 @@ def _pmap_axis_size(args):
   leaves, _ = tree_flatten(args)
   axis_sizes = reduce(set.union, map(_jaxtype_axis_size, leaves), set())
   if len(axis_sizes) == 0:
-    raise TypeError("pmap requires a leading axis to map over")
+    raise ValueError("pmap requires a leading axis to map over.")
   if len(axis_sizes) > 1:
     msg = "pmap requires all leading axes to have equal length, got {}."
-    raise TypeError(msg.format(axis_sizes))
+    raise ValueError(msg.format(axis_sizes))
   return axis_sizes.pop()
 
 def _jaxtype_axis_size(x):
@@ -520,7 +520,10 @@ def _aval_axis_size(aval):
   if isinstance(aval, core.AbstractTuple):
     return reduce(set.union, map(_aval_axis_size, aval), set())
   else:
-    return {aval.shape[0]}
+    if aval.shape:
+      return {aval.shape[0]}
+    else:
+      raise ValueError("pmap can't map over scalars.")
 
 
 def _serial_pmap(fun, axis_name=None, in_axes=0, out_axes=0):
