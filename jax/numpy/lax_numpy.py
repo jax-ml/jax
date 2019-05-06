@@ -2153,9 +2153,7 @@ def _is_slice_none(idx):
 def _is_advanced_int_indexer(idx):
   """Returns True if idx should trigger int array indexing, False otherwise."""
   # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#advanced-indexing
-  if isinstance(idx, (tuple, list)):
-    # We assume this check comes *after* the check for non-advanced tuple index,
-    # and hence we already know at least one element is a sequence if it's a tuple
+  if isinstance(idx, (tuple, list)) and _any(onp.ndim(elt) != 0 for elt in idx):
     return _all(e is None or e is Ellipsis or isinstance(e, slice)
                 or _is_int_arraylike(e) for e in idx)
   else:
