@@ -77,7 +77,6 @@ import operator
 from six.moves import reduce
 
 import jax.numpy as np
-from jax.core import pack
 from jax.util import partial, safe_zip, safe_map, unzip2
 from jax import tree_util
 from jax.tree_util import tree_flatten, tree_unflatten, register_pytree_node
@@ -96,6 +95,9 @@ zip = safe_zip
 # as a single DeviceTuple, and thus pay no pytree traversal overhead when we
 # dispatch to a `jit`-compiled `update_fun`. That JaxTuple-of-JaxTuples is
 # stored together with the tree structure data in an OptimizerState instance.
+
+# TODO(mattjj): replace this with core.pack when DeviceTuples are ready
+pack = tuple
 
 OptimizerState = namedtuple("OptimizerState",
                             ["packed_state", "tree_def", "subtree_defs"])
