@@ -33,6 +33,7 @@ from jax import api
 from jax import lax
 from jax import numpy as lnp
 from jax import test_util as jtu
+from jax.lib import xla_bridge
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -82,7 +83,6 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("floor", 1, float_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("greater", 2, number_dtypes, all_shapes, jtu.rand_some_equal(), []),
     op_record("greater_equal", 2, number_dtypes, all_shapes, jtu.rand_some_equal(), []),
-    op_record("isfinite", 1, number_dtypes, all_shapes, jtu.rand_some_inf(), []),
     op_record("less", 2, number_dtypes, all_shapes, jtu.rand_some_equal(), []),
     op_record("less_equal", 2, number_dtypes, all_shapes, jtu.rand_some_equal(), []),
     op_record("log", 1, number_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
@@ -137,6 +137,11 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("outer", 2, number_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("imag", 1, number_dtypes, all_shapes, jtu.rand_some_inf(), []),
     op_record("iscomplex", 1, number_dtypes, all_shapes, jtu.rand_some_inf(), []),
+    op_record("isfinite", 1, inexact_dtypes, all_shapes, jtu.rand_some_inf_and_nan(), []),
+    op_record("isinf", 1, inexact_dtypes, all_shapes, jtu.rand_some_inf_and_nan(), []),
+    op_record("isnan", 1, inexact_dtypes, all_shapes, jtu.rand_some_inf_and_nan(), []),
+    op_record("isneginf", 1, float_dtypes, all_shapes, jtu.rand_some_inf_and_nan(), []),
+    op_record("isposinf", 1, float_dtypes, all_shapes, jtu.rand_some_inf_and_nan(), []),
     op_record("isreal", 1, number_dtypes, all_shapes, jtu.rand_some_inf(), []),
     op_record("isrealobj", 1, number_dtypes, all_shapes, jtu.rand_some_inf(), []),
     op_record("log2", 1, number_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
@@ -1354,6 +1359,19 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # those semantics, but they seem like a bug.
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=False)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+        {"testcase_name": jtu.format_test_name_suffix("nan_to_num", [shape],
+                                                      [dtype]),
+         "rng": jtu.rand_some_inf_and_nan(), "shape": shape, "dtype": dtype}
+        for shape in all_shapes
+        for dtype in inexact_dtypes))
+  def testNanToNum(self, rng, shape, dtype):
+    dtype = onp.dtype(xla_bridge.canonicalize_dtype(dtype)).type
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(onp.nan_to_num, lnp.nan_to_num, args_maker,
+                            check_dtypes=True)
+    self._CompileAndCheck(lnp.nan_to_num, args_maker, check_dtypes=True)
 
   def testIssue330(self):
     x = lnp.full((1, 1), lnp.array([1])[0])  # doesn't crash
