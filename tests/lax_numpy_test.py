@@ -1000,8 +1000,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           axis,
           (None if weights_shape == None else jtu.format_shape_dtype_string(weights_shape, dtype)),
           returned),
-       "rng": jtu.rand_default(), "shape": shape, "dtype": dtype,
-       "axis": axis, "weights_shape": weights_shape, "returned": returned}
+       "rng": jtu.rand_default(), "shape": shape, "dtype": dtype, "axis": axis,
+       "weights_shape": weights_shape, "returned": returned}
       for shape in nonempty_shapes
       for dtype in number_dtypes
       for axis in set(range(-len(shape), len(shape))) | set([None])
@@ -1015,7 +1015,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype),
                           None if weights_shape is None else rng(weights_shape, dtype)]
 
-    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    try:
+        self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    except ZeroDivisionError:
+        self.skipTest("don't support checking for ZeroDivisionError")
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(

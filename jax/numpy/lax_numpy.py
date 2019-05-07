@@ -991,12 +991,17 @@ def average(a, axis=None, weights=None, returned=False):
     else:
         weights = asarray(weights)
 
-        out_dtype = _result_dtype(onp.average, a, axis, weights)
+        if issubdtype(a.dtype, integer) or issubdtype(a.dtype, bool_):
+            out_dtype = xla_bridge.canonicalize_dtype(result_type(a.dtype,
+                                                                  weights.dtype,
+                                                                  floating))
+        else:
+            out_dtype = xla_bridge.canonicalize_dtype(result_type(a.dtype, weights.dtype))
 
         a_shape = shape(a)
         a_ndim = len(a_shape)
         weights_shape = shape(weights)
-        axis = _canonicalize_axis(axis, a_ndim)
+        axis = None if axis is None else _canonicalize_axis(axis, a_ndim)
 
         if a_shape != weights_shape:
             # Make sure the dimensions work out
@@ -1010,8 +1015,8 @@ def average(a, axis=None, weights=None, returned=False):
                 raise ValueError("Length of weights not "
                                  "compatible with specified axis.")
 
-            weights = broadcast_to(weights, weights_shape + (a_ndim - 1) * (1,))
-            weights = moveaxis(weights, 0, axis)
+            weights = broadcast_to(weights, (a_ndim - 1) * (1,) + weights_shape)
+            weights = moveaxis(weights, -1, axis)
 
         weights_sum = sum(weights, axis=axis, dtype=out_dtype)
         avg = sum(multiply(a, weights), axis=axis, dtype=out_dtype) / weights_sum
