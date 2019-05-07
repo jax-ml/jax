@@ -33,6 +33,7 @@ from jax import api
 from jax import lax
 from jax import numpy as lnp
 from jax import test_util as jtu
+from jax.lib import xla_bridge
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -150,7 +151,6 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("log1p", 1, number_dtypes, all_shapes, jtu.rand_small_positive(), []),
     op_record("logaddexp", 2, float_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("logaddexp2", 2, float_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
-    op_record("nan_to_num", 1, inexact_dtypes, all_shapes, jtu.rand_some_inf_and_nan(), []),
     op_record("polyval", 2, number_dtypes, nonempty_nonscalar_array_shapes, jtu.rand_default(), []),
     op_record("positive", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("power", 2, number_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
@@ -1359,6 +1359,19 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # those semantics, but they seem like a bug.
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=False)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+        {"testcase_name": jtu.format_test_name_suffix("nan_to_num", [shape],
+                                                      [dtype]),
+         "rng": jtu.rand_some_inf_and_nan(), "shape": shape, "dtype": dtype}
+        for shape in all_shapes
+        for dtype in inexact_dtypes))
+  def testNanToNum(self, rng, shape, dtype):
+    dtype = onp.dtype(xla_bridge.canonicalize_dtype(dtype)).type
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(onp.nan_to_num, lnp.nan_to_num, args_maker,
+                            check_dtypes=True)
+    self._CompileAndCheck(lnp.nan_to_num, args_maker, check_dtypes=True)
 
   def testIssue330(self):
     x = lnp.full((1, 1), lnp.array([1])[0])  # doesn't crash
