@@ -422,7 +422,8 @@ def valid_jaxtype(x):
     concrete_aval(x)
   except TypeError:
     return False
-  return True
+  else:
+    return True
 
 
 def concrete_aval(x):
