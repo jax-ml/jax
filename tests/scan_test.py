@@ -32,19 +32,19 @@ def f(c, a):
 as_ = np.ones((5, 3))
 c = np.ones(4)
 
-# print scan_reference(f, c, as_)
-# print scan_initial(f, c, as_)
-# print
+print scan_reference(f, c, as_)
+print scan_initial(f, c, as_)
+print
 
-# print jvp(lambda c, as_: scan_reference(f, c, as_), (c, as_), (c, as_))[1]
-# print jvp(lambda c, as_:   scan_initial(f, c, as_), (c, as_), (c, as_))[1]
-# print
+print jvp(lambda c, as_: scan_reference(f, c, as_), (c, as_), (c, as_))[1]
+print jvp(lambda c, as_:   scan_initial(f, c, as_), (c, as_), (c, as_))[1]
+print
 
-# print linearize(lambda c, as_: scan_reference(f, c, as_), c, as_)[1](c, as_)
-# print linearize(lambda c, as_:   scan_initial(f, c, as_), c, as_)[1](c, as_)
-# print
+print linearize(lambda c, as_: scan_reference(f, c, as_), c, as_)[1](c, as_)
+print linearize(lambda c, as_:   scan_initial(f, c, as_), c, as_)[1](c, as_)
+print
 
-# print grad(lambda c, as_: scan_reference(f, c, as_)[0].sum())(c, as_)
+print grad(lambda c, as_: list(scan_reference(f, c, as_))[0].sum())(c, as_)
 print grad(lambda c, as_:   list(scan_initial(f, c, as_))[0].sum())(c, as_)
 print
 

@@ -67,11 +67,12 @@ class TypedJaxpr(namedtuple('TypedJaxpr', ['jaxpr', 'literals', 'in_avals', 'out
 
 @curry
 def jaxpr_as_fun(typed_jaxpr, *args):
-  from jax.lax import _abstractify
-  for arg, in_aval in zip(args, typed_jaxpr.in_avals):
+  from jax.lax import _abstractify  # TODO
+  invars = typed_jaxpr.jaxpr.invars
+  for arg, in_aval, varname in zip(args, typed_jaxpr.in_avals, invars):
     arg_aval, _ = _abstractify(arg)
     if arg_aval != in_aval:
-      raise TypeError("input type mismatch")
+      raise TypeError("input type mismatch for arg {}".format(varname))
   out = eval_jaxpr(typed_jaxpr.jaxpr, typed_jaxpr.literals, (), *args)
   out_aval, _ = _abstractify(out)
   if out_aval != typed_jaxpr.out_aval:
@@ -157,7 +158,10 @@ def eval_jaxpr(jaxpr, consts, freevar_vals, *args):
 # TODO enforce a specific set of types for jaxpr vars
 def pat_fmap(f, v, *xs):
   if type(v) in (tuple, list):
-    return tuple(map(partial(pat_fmap, f), v, *xs))
+    if len(xs) == 1 and xs[0] is None:
+      return tuple(map(partial(pat_fmap, f), v, [None] * len(v)))
+    else:
+      return tuple(map(partial(pat_fmap, f), v, *xs))
   else:
     return f(v, *xs)
 

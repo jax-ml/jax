@@ -57,7 +57,7 @@ def zeros_like_aval(aval):
 aval_zeros_likers = {}
 
 def zeros_like_abstract_tuple(tup):
-  return AbstractTuple(map(zeros_like_aval, tup))
+  return JaxTuple(map(zeros_like_aval, tup))
 aval_zeros_likers[AbstractTuple] = zeros_like_abstract_tuple
 
 

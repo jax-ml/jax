@@ -21,7 +21,7 @@ import itertools as it
 from . import partial_eval as pe
 from .. import core as core
 from ..core import JaxTuple, Trace, Tracer, new_master, get_aval, pack, call_p, Primitive
-from ..ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval,
+from ..ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_aval,
                        zeros_like_p, zero, Zero)
 from ..util import unzip2, unzip3, safe_map, safe_zip, partial
 from ..tree_util import process_pytree, build_tree, register_pytree_node, tree_map
@@ -185,11 +185,28 @@ def backward_pass(jaxpr, consts, freevar_vals, args, cotangent_in):
       cts_out = [zero for _ in eqn.invars]
     map(write_cotangent, eqn.invars, cts_out)
 
-  cotangents_out = core.pat_fmap(
-      lambda var, argval: read_cotangent(var) if argval is None else None,
-      jaxpr.invars, args)
   freevar_cts = core.pat_fmap(read_cotangent, jaxpr.freevars)
+  cotangents_out = core.pat_fmap(lambda v, _: read_cotangent(v), jaxpr.invars, None)
+  cotangents_out = tuple(map(pack_cotangents_like_caller, args, cotangents_out))
   return freevar_cts, cotangents_out
+
+def pack_cotangents_like_caller(arg, ct):
+  if type(arg) is tuple:
+    return tuple(map(pack_cotangents_like_caller, arg, ct))
+  elif arg is None:
+    return recursively_pack(ct)
+  else:
+    return None
+
+def recursively_pack(ct):
+  if type(ct) is tuple:
+    ct = tuple(map(recursively_pack, ct))
+    if any(elt is zero or isinstance(elt, TangentTuple) for elt in ct):
+      return TangentTuple(ct)
+    else:
+      return pack(ct)
+  else:
+    return ct
 
 def get_primitive_transpose(p):
   try:
@@ -406,6 +423,14 @@ def instantiate_zeros(example, tangent):
     return zeros_like_jaxval(example)
   elif isinstance(tangent, TangentTuple):
     return pack(map(instantiate_zeros, example, tangent))
+  else:
+    return tangent
+
+def instantiate_zeros_aval(aval, tangent):
+  if tangent is zero:
+    return zeros_like_aval(aval)
+  elif isinstance(tangent, TangentTuple):
+    return pack(map(instantiate_zeros_aval, aval, tangent))
   else:
     return tangent
 
