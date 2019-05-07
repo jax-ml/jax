@@ -505,7 +505,7 @@ def pmap(fun, axis_name=None):
 
 def _pmap_axis_size(args):
   leaves, _ = tree_flatten(args)
-  axis_sizes = reduce(set.union, map(_jaxtype_axis_size, leaves), set())
+  axis_sizes = reduce(set.union, map(_axis_size, leaves), set())
   if len(axis_sizes) == 0:
     raise ValueError("pmap requires a leading axis to map over.")
   if len(axis_sizes) > 1:
@@ -513,8 +513,12 @@ def _pmap_axis_size(args):
     raise ValueError(msg.format(axis_sizes))
   return axis_sizes.pop()
 
-def _jaxtype_axis_size(x):
-  return _aval_axis_size(core.get_aval(x))
+def _axis_size(x):
+  if isinstance(x, core.Tracer):
+    aval = x.aval
+  else:
+    aval = xla.abstractify(x)
+  return _aval_axis_size(aval)
 
 def _aval_axis_size(aval):
   if isinstance(aval, core.AbstractTuple):
@@ -835,9 +839,17 @@ def _argnums_partial_(dyn_argnums, fixed_args, *dyn_args, **kwargs):
 
 def _check_args(args):
   for arg in args:
-    if not (isinstance(arg, core.Tracer) or core.valid_jaxtype(arg)):
+    if not (isinstance(arg, core.Tracer) or _valid_jaxtype(arg)):
       raise TypeError("Argument '{}' of type {} is not a valid JAX type"
                       .format(arg, type(arg)))
+
+def _valid_jaxtype(arg):
+  try:
+    xla.abstractify(arg)
+  except TypeError:
+    return False
+  else:
+    return True
 
 
 def custom_transforms(fun):
