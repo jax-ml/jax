@@ -850,12 +850,6 @@ def fix(x, out=None):
   zero = lax._const(x, 0)
   return where(lax.ge(x, zero), lax.floor(x), lax.ceil(x))
 
-
-# Caution: If fast math mode is enabled, the semantics of inf and nan are not
-# preserved by XLA/LLVM, and the behavior of inf/nan values is unpredictable.
-# To disable fast math mode on CPU, set the environment variable
-# XLA_FLAGS=--xla_cpu_enable_fast_math=false.
-
 @_wraps(onp.isfinite)
 def isfinite(x):
   dtype = _dtype(x)
@@ -870,17 +864,19 @@ def isfinite(x):
 def isinf(x):
   dtype = _dtype(x)
   if issubdtype(dtype, floating):
-    return lax.eq(lax.abs(x), inf)
+    return lax.eq(lax.abs(x), _constant_like(x, inf))
   elif issubdtype(dtype, complexfloating):
-    return lax.bitwise_or(lax.eq(lax.abs(real(x)), inf),
-                          lax.eq(lax.abs(imag(x)), inf))
+    re = lax.real(x)
+    im = lax.imag(x)
+    return lax.bitwise_or(lax.eq(lax.abs(re), _constant_like(re, inf)),
+                          lax.eq(lax.abs(im), _constant_like(im, inf)))
   else:
     return full_like(x, False, dtype=bool_)
 
 def _isposneginf(infinity, x):
   dtype = _dtype(x)
   if issubdtype(dtype, floating):
-    return lax.eq(x, infinity)
+    return lax.eq(x, _constant_like(x, infinity))
   elif issubdtype(dtype, complexfloating):
     raise ValueError("isposinf/isneginf are not well defined for complex types")
   else:
@@ -897,9 +893,10 @@ def isnan(x):
 @_wraps(onp.nan_to_num)
 def nan_to_num(x, copy=True):
   del copy
-  if iscomplexobj(x):
-    raise ValueError("nan_to_num is not well defined for complex types")
-  info = finfo(xla_bridge.canonicalize_dtype(_dtype(x)))
+  dtype = _dtype(x)
+  if issubdtype(dtype, complexfloating):
+    return lax.complex(nan_to_num(lax.real(x)), nan_to_num(lax.imag(x)))
+  info = finfo(xla_bridge.canonicalize_dtype(dtype))
   x = where(isnan(x), _constant_like(x, 0), x)
   x = where(isposinf(x), _constant_like(x, info.max), x)
   x = where(isneginf(x), _constant_like(x, info.min), x)
