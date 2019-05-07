@@ -896,7 +896,7 @@ def nan_to_num(x, copy=True):
   dtype = _dtype(x)
   if issubdtype(dtype, complexfloating):
     return lax.complex(nan_to_num(lax.real(x)), nan_to_num(lax.imag(x)))
-  info = finfo(xla_bridge.canonicalize_dtype(_dtype(x)))
+  info = finfo(xla_bridge.canonicalize_dtype(dtype))
   x = where(isnan(x), _constant_like(x, 0), x)
   x = where(isposinf(x), _constant_like(x, info.max), x)
   x = where(isneginf(x), _constant_like(x, info.min), x)
