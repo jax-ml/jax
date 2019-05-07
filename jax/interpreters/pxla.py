@@ -355,7 +355,7 @@ class ShardedDeviceTuple(xla.DeviceTuple):
     return iter(elts)
 
   def __len__(self):
-    return len(self.device_buffers[0].destructure())
+    return len(self.aval)
 
   def __repr__(self):
     return 'ShardedDeviceTuple(len={length})'.format(length=len(self))
