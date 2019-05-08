@@ -2,12 +2,10 @@ from functools import partial
 
 import numpy as onp
 
-from jax.initial_style import scan
 from jax.core import pack
-import jax.core as core
+from jax.lax import scan
 import jax.numpy as np
 from jax import jvp, linearize, grad
-from jax import lax
 
 ###
 
@@ -18,7 +16,7 @@ def scan_reference(f, init, xs):
     (carry, y) = f(carry, x)
     ys.append(y)
   ys = np.stack(ys)
-  return core.pack((np.array(carry), ys))
+  return pack((np.array(carry), ys))
 
 d = np.zeros(2)
 def f(c, a):
@@ -27,7 +25,7 @@ def f(c, a):
   b = np.sum(np.sin(a)) + np.sum(np.sin(c)) + np.sum(np.sin(d))
   c = np.sin(c * b)
   assert b.shape == ()
-  return core.pack((c, b))
+  return pack((c, b))
 
 as_ = np.ones((5, 3))
 c = np.ones(4)
