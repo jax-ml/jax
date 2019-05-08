@@ -15,69 +15,69 @@ from jax.interpreters import ad
 from jax import ad_util
 
 
-def convert_zeros(keep_symbolic, example, tangent):
+def _convert_zeros(keep_symbolic, example, tangent):
   if tangent is ad.zero:
     if keep_symbolic:
       return core.unit
     else:
       return ad.zeros_like_jaxval(example)
   elif type(tangent) is ad.TangentTuple:
-    return core.pack(map(convert_zeros, keep_symbolic, example, tangent))
+    return core.pack(map(_convert_zeros, keep_symbolic, example, tangent))
   else:
     return tangent
 
-def is_const(x):
+def _is_const(x):
   if x is None:
     return True
   elif type(x) is pe.JaxprTracerTuple:
-    return tuple(map(is_const, x))
+    return tuple(map(_is_const, x))
   elif isinstance(x, core.AbstractValue):
     return False
   else:
     raise TypeError(type(x))
 
 
-def demote_aval_rank(xs):
+def _demote_aval_rank(xs):
   if isinstance(xs, core.AbstractTuple):
-    return core.AbstractTuple(map(demote_aval_rank, xs))
+    return core.AbstractTuple(map(_demote_aval_rank, xs))
   else:
     return ShapedArray(xs.shape[1:], xs.dtype)
 
-def promote_aval_rank(n, xs):
+def _promote_aval_rank(n, xs):
   if isinstance(xs, core.AbstractTuple):
-    return core.AbstractTuple(map(partial(promote_aval_rank, n), xs))
+    return core.AbstractTuple(map(partial(_promote_aval_rank, n), xs))
   else:
     return ShapedArray((n,) + xs.shape, xs.dtype)
 
-def leading_dim_size(xs):
+def _leading_dim_size(xs):
   if isinstance(xs, core.JaxTuple):
-    return leading_dim_size(xs[0])
+    return _leading_dim_size(xs[0])
   else:
     return xs.shape[0]
 
-def empty_arrays(aval):
+def _empty_arrays(aval):
   if isinstance(aval, core.AbstractTuple):
-    return core.pack(map(empty_arrays, aval))
+    return core.pack(map(_empty_arrays, aval))
   else:
     return lax.full(aval.shape, 0, aval.dtype)
 
-def index_arrays(i, aval, xs):
+def _index_arrays(i, aval, xs):
   if isinstance(aval, core.AbstractTuple):
-    return core.pack(map(partial(index_arrays, i), aval, xs))
+    return core.pack(map(partial(_index_arrays, i), aval, xs))
   else:
     return lax.dynamic_index_in_dim(xs, i, keepdims=False)
 
-def update_arrays(i, aval, xs, x):
+def _update_arrays(i, aval, xs, x):
   if isinstance(aval, core.AbstractTuple):
-    return core.pack(map(partial(update_arrays, i), aval, xs, x))
+    return core.pack(map(partial(_update_arrays, i), aval, xs, x))
   else:
     return lax.dynamic_update_index_in_dim(xs, x[None, ...], i, axis=0)
 
 # scan :: (c -> a -> (c, b)) -> c -> [a] -> (c, [b])
-def scan_initial(f, init, xs):
+def scan(f, init, xs):
   carry_pval = carry_aval, _ = _abstractify(init)
   xs_aval, _ = _abstractify(xs)
-  x_aval = demote_aval_rank(xs_aval)
+  x_aval = _demote_aval_rank(xs_aval)
   x_pval = pe.PartialVal((x_aval, core.unit))
   jaxpr, pval_out, consts = pe.trace_to_jaxpr(
       lu.wrap_init(f), (carry_pval, x_pval), instantiate=True)
@@ -91,30 +91,30 @@ def scan_initial(f, init, xs):
   in_avals = (consts_aval, carry_aval, x_aval)
   out_aval = core.AbstractTuple((carry_aval, y_aval))
   jaxpr = core.TypedJaxpr(lifted_jaxpr, (), in_avals, out_aval)
-  length = leading_dim_size(xs)
-  return scan_initial_p.bind(core.pack(consts), init, xs,
-                             forward=True, length=length, jaxpr=jaxpr)
+  length = _leading_dim_size(xs)
+  return scan_p.bind(core.pack(consts), init, xs,
+                     forward=True, length=length, jaxpr=jaxpr)
 
 
-def _scan_initial_impl(consts, init, xs, forward, length, jaxpr):
+def _scan_impl(consts, init, xs, forward, length, jaxpr):
   _, _, x_aval = jaxpr.in_avals
   _, y_aval = jaxpr.out_aval
-  ys_aval = promote_aval_rank(length, y_aval)
+  ys_aval = _promote_aval_rank(length, y_aval)
 
   def body_fun(i, vals):
     idx = i if forward else length - i - 1
     carry, ys = vals
-    x = index_arrays(idx, x_aval, xs)
+    x = _index_arrays(idx, x_aval, xs)
     carry_out, y = core.jaxpr_as_fun(jaxpr)(consts, carry, x)
-    ys_out = update_arrays(idx, y_aval, ys, y)
+    ys_out = _update_arrays(idx, y_aval, ys, y)
     return (carry_out, ys_out)
 
-  ys_init = empty_arrays(ys_aval)
+  ys_init = _empty_arrays(ys_aval)
   carry, ys = lax.fori_loop(0, length, body_fun, (init, ys_init))
   return core.pack((carry, ys))
 
 
-def _scan_initial_jvp(primals, tangents, forward, length, jaxpr):
+def _scan_jvp(primals, tangents, forward, length, jaxpr):
   consts, init, xs = primals
   consts_dot, init_dot, xs_dot = tangents
   consts_aval, carry_aval, x_aval = jaxpr.in_avals
@@ -132,19 +132,19 @@ def _scan_initial_jvp(primals, tangents, forward, length, jaxpr):
     if where_carry_zeros_out == where_carry_zeros:
       break
     else:
-      where_carry_zeros = binary_lattice_join(where_carry_zeros_out, where_carry_zeros)
+      where_carry_zeros = _binary_lattice_join(where_carry_zeros_out, where_carry_zeros)
 
   # convert_zeros is like strip_zeros but uses explicit lattice information to
   # instantiate zeros in some cases, namely in init_dot based on the fixed point
-  nonzero_init_dot = convert_zeros(where_carry_zeros, init, init_dot)
-  nonzero_consts_dot = convert_zeros(where_consts_zeros, consts, consts_dot)
-  nonzero_xs_dot = convert_zeros(where_xs_zeros, xs, xs_dot)
+  nonzero_init_dot = _convert_zeros(where_carry_zeros, init, init_dot)
+  nonzero_consts_dot = _convert_zeros(where_consts_zeros, consts, consts_dot)
+  nonzero_xs_dot = _convert_zeros(where_xs_zeros, xs, xs_dot)
 
   consts_dual = core.pack((consts, nonzero_consts_dot))
   init_dual = core.pack((init, nonzero_init_dot))
   xs_dual = core.pack((xs, nonzero_xs_dot))
 
-  carry_out_dual, ys_dual = scan_initial_p.bind(
+  carry_out_dual, ys_dual = scan_p.bind(
       consts_dual, init_dual, xs_dual,
       forward=forward, length=length, jaxpr=jaxpr_jvp)
 
@@ -155,27 +155,27 @@ def _scan_initial_jvp(primals, tangents, forward, length, jaxpr):
   carry_out_dot = ad.put_zeros(ad.TangentTuple, where_carry_zeros_out, carry_out_dot)
   return core.pack((carry_out, ys)), ad.TangentTuple((carry_out_dot, ys_dot))
 
-def binary_lattice_join(a, b):
+def _binary_lattice_join(a, b):
   t = (type(a), type(b))
   if t == (tuple, tuple):
-    return tuple(map(binary_lattice_join, a, b))
+    return tuple(map(_binary_lattice_join, a, b))
   elif t == (tuple, bool):
-    return tuple(map(binary_lattice_join, a, (b,) * len(a)))
+    return tuple(map(_binary_lattice_join, a, (b,) * len(a)))
   elif t == (bool, tuple):
-    return tuple(map(binary_lattice_join, (a,) * len(b), b))
+    return tuple(map(_binary_lattice_join, (a,) * len(b), b))
   elif t == (bool, bool):
     return a and b
   else:
     raise TypeError((type(a), type(b)))
 
 
-def _scan_initial_partial_eval(trace, *tracers, **kwargs):
+def _scan_partial_eval(trace, *tracers, **kwargs):
   jaxpr = kwargs.pop('jaxpr')
   length = kwargs.pop('length')
   forward = kwargs.pop('forward')
   assert not kwargs
   in_pvs, in_consts = unzip2([t.pval for t in tracers])
-  fc_consts, fc_init, fc_xs = map(is_const, in_pvs)
+  fc_consts, fc_init, fc_xs = map(_is_const, in_pvs)
 
   fc_carry = fc_init
   while True:
@@ -185,7 +185,7 @@ def _scan_initial_partial_eval(trace, *tracers, **kwargs):
     if fc_carry_out == fc_carry:
       break
     else:
-      fc_carry = binary_lattice_join(fc_carry, fc_carry_out)
+      fc_carry = _binary_lattice_join(fc_carry, fc_carry_out)
 
   consts_tracer, init_tracer, xs_tracer = tracers
   lifted_init_tracer = _lift_tracer(trace, init_tracer, fc_carry)
@@ -194,13 +194,13 @@ def _scan_initial_partial_eval(trace, *tracers, **kwargs):
 
   out_pv = _put_known_pvs(fc_out, jaxpr.out_aval)
 
-  out_carry, (ys, residuals) = scan_initial_p.bind(
+  out_carry, (ys, residuals) = scan_p.bind(
       *in_consts, forward=forward, length=length, jaxpr=jaxpr_1)
   out_const = core.pack((out_carry, ys))
   residuals_tracer = trace.new_instantiated_const(core.pack(residuals))
   d, c, a = lifted_tracers
   new_tracers = (d, c, (a, residuals_tracer))
-  eqn = core.JaxprEqn(new_tracers, None, scan_initial_p, (), True, False,
+  eqn = core.JaxprEqn(new_tracers, None, scan_p, (), True, False,
                       dict(forward=forward, length=length, jaxpr=jaxpr_2))
   return pe.JaxprTracer(trace, pe.PartialVal((out_pv, out_const)), eqn)
 
@@ -226,7 +226,7 @@ def _put_known_pvs(is_known, aval):
     return pe.JaxprTracerTuple(map(_put_known_pvs, is_known, aval))
 
 
-def _scan_initial_transpose(ct, consts, init, xs, forward, length, jaxpr):
+def _scan_transpose(ct, consts, init, xs, forward, length, jaxpr):
   assert consts is None and init is None
   assert type(xs) is tuple
   a, res = xs
@@ -245,7 +245,7 @@ def _scan_initial_transpose(ct, consts, init, xs, forward, length, jaxpr):
   c_aval, b_aval = jaxpr.out_aval
   d_aval, c_aval2, _ = jaxpr.in_avals
   assert c_aval == c_aval2
-  bs_aval = promote_aval_rank(length, b_aval)
+  bs_aval = _promote_aval_rank(length, b_aval)
   ct_d = ad_util.zeros_like_aval(d_aval)
   ct_c, ct_bs = ad.instantiate_zeros_aval(core.AbstractTuple((c_aval, bs_aval)), ct)
   carry_ct = core.pack((ct_c, ct_d))
@@ -256,7 +256,7 @@ def _scan_initial_transpose(ct, consts, init, xs, forward, length, jaxpr):
   assert core.lattice_join(ct_c_aval, core.get_aval(ct_c)) == ct_c_aval
   assert core.lattice_join(ct_d_aval, core.get_aval(ct_d)) == ct_d_aval
 
-  out = scan_initial_p.bind(
+  out = scan_p.bind(
       core.unit, carry_ct, core.pack((ct_bs, res)),
       forward=not forward, length=length, jaxpr=jaxpr_trans)
   (ct_init, ct_consts), ct_as = out
@@ -344,8 +344,8 @@ def _make_typed_jaxpr(traceable, in_avals):
   return core.TypedJaxpr(jaxpr, consts, in_avals, out_aval)
 
 
-scan_initial_p = core.Primitive("scan_initial")
-scan_initial_p.def_impl(_scan_initial_impl)
-ad.primitive_jvps[scan_initial_p] = _scan_initial_jvp
-ad.primitive_transposes[scan_initial_p] = _scan_initial_transpose
-pe.custom_partial_eval_rules[scan_initial_p] = _scan_initial_partial_eval
+scan_p = core.Primitive("scan")
+scan_p.def_impl(_scan_impl)
+ad.primitive_jvps[scan_p] = _scan_jvp
+ad.primitive_transposes[scan_p] = _scan_transpose
+pe.custom_partial_eval_rules[scan_p] = _scan_partial_eval

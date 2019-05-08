@@ -155,7 +155,6 @@ def eval_jaxpr(jaxpr, consts, freevar_vals, *args):
   return read(jaxpr.outvar)
 
 
-# TODO enforce a specific set of types for jaxpr vars
 def pat_fmap(f, v, *xs):
   if type(v) in (tuple, list):
     if len(xs) == 1 and xs[0] is None:
