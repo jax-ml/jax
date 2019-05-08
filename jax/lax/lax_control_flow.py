@@ -311,10 +311,10 @@ def _revise_cond_jaxpr(new_pval, old_pval, jaxpr, consts):
     return new_jaxpr, new_consts
 
 def _unpack_eqn(invar, outvars):
-  return core.JaxprEqn([invar], outvars, core.identity_p, (), True, {})
+  return core.JaxprEqn([invar], outvars, core.identity_p, (), False, True, {})
 
 def _pack_eqn(invars, outvar):
-  return core.JaxprEqn(invars, [outvar], core.pack_p, (), False, {})
+  return core.JaxprEqn(invars, [outvar], core.pack_p, (), False, False, {})
 
 
 def _cond_abstract_eval(pred, true_op, true_consts, false_op, false_consts,
