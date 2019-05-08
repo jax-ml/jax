@@ -1270,6 +1270,25 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertAllClose(expected, ans, check_dtypes=False)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape=[{}]_axis={}_returned={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), axis, returned),
+       "shape": shape, "axis": axis, "dtype": dtype, "returned": returned,
+       "rng": jtu.rand_default()}
+      for shape in [(4,), (3, 4), (3, 1), (1, 4), (2, 1, 4), (2, 3, 4)]
+      for axis in range(len(shape))
+      for returned in [True, False]
+      for dtype in default_dtypes
+      ))
+  def testAverage(self, shape, axis, returned, dtype, rng):
+    onp_fun = lambda a, weights: onp.average(a, axis=axis, weights=weights, returned=returned)
+    lnp_fun = lambda a, weights: lnp.average(a, axis=axis, weights=weights, returned=returned)
+
+    args_maker = lambda: [rng(shape, dtype), rng(shape, onp.float32)]
+
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_shifts={}_axis={}".format(
           jtu.format_shape_dtype_string(shape, dtype),
           shifts, axis),

@@ -978,6 +978,26 @@ def mean(a, axis=None, dtype=None, out=None, keepdims=False):
       sum(a, axis, dtype=dtype, keepdims=keepdims),
       lax.convert_element_type(normalizer, dtype))
 
+@_wraps(onp.average)
+def average(a, axis=None, weights=None, returned=False):
+  if weights is None:
+    avg = mean(a, axis=axis)
+    scale = 1.0
+  else:
+    if a.shape != weights.shape:
+      if axis is None:
+        raise TypeError(
+          "Axis must be specified when shapes of a and weights "
+          "differ")
+
+    scale = sum(weights, axis=axis)
+    avg = sum(multiply(a, weights), axis=axis) / scale
+  if returned:
+    if scale.shape != avg.shape:
+      scale = broadcast_to(scale, avg.shape)
+    return avg, scale
+  return avg
+
 
 @_wraps(onp.var)
 def var(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
