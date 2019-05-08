@@ -64,7 +64,7 @@ def jvp_subtrace(master, primals, tangents):
   yield (out_primal, out_tangent)
 
 @transformation_with_aux
-def jvp_subtrace_aux(master, primals, tangents):
+def jvp_subtrace_aux(instantiate, master, primals, tangents):
   trace = JVPTrace(master, core.cur_sublevel())
   for x in list(primals) + list(tangents):
     if isinstance(x, Tracer):
@@ -73,6 +73,8 @@ def jvp_subtrace_aux(master, primals, tangents):
   out_tracer, aux_tracer = map(trace.full_raise, (ans, aux))
   out_primal, out_tangent = out_tracer.primal, out_tracer.tangent
   aux = aux_tracer.primal  # ignore aux tangent
+  if instantiate:
+    out_tangent = instantiate_zeros(out_primal, out_tangent)
   yield (out_primal, out_tangent), aux
 
 

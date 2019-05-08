@@ -560,6 +560,7 @@ def isnone(x):
 
 
 def _closure_convert_jaxpr(jaxpr):
+  core.skip_checks or core.check_jaxpr(jaxpr)
   lifted_jaxpr = jaxpr.copy()
   lifted_jaxpr.constvars = ()
   lifted_jaxpr.invars = [tuple(jaxpr.constvars)] + list(jaxpr.invars)
