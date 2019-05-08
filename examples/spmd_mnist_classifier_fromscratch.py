@@ -24,12 +24,14 @@ from __future__ import print_function
 from functools import partial
 import time
 
+import numpy as onp
 import numpy.random as npr
 
-from jax import jit, grad, pmap, replicate, unreplicate
+from jax import jit, grad, pmap
 from jax.config import config
 from jax.scipy.special import logsumexp
 from jax.lib import xla_bridge
+from jax.tree_util import tree_map
 from jax import lax
 import jax.numpy as np
 from examples import datasets
@@ -74,9 +76,8 @@ if __name__ == "__main__":
   num_complete_batches, leftover = divmod(num_train, batch_size)
   num_batches = num_complete_batches + bool(leftover)
 
-
   # For this manual SPMD example, we get the number of devices (e.g. GPUs or
-  # TPUs) that we're using, and use it to reshape data minibatches.
+  # TPU cores) that we're using, and use it to reshape data minibatches.
   num_devices = xla_bridge.device_count()
   def data_stream():
     rng = npr.RandomState(0)
@@ -106,20 +107,23 @@ if __name__ == "__main__":
     return [(w - step_size * dw, b - step_size * db)
             for (w, b), (dw, db) in zip(params, grads)]
 
-  # We replicate parameters out across devices. (Check the implementation of
-  # replicate; analogous to device_put, it's a simple wrapper around pmap.)
-  params = replicate(init_random_params(param_scale, layer_sizes))
+  # We replicate the parameters so that the constituent arrays have a leading
+  # dimension of size equal to the number of devices we're pmapping over.
+  init_params = init_random_params(param_scale, layer_sizes)
+  replicate_array = lambda x: onp.broadcast_to(x, (num_devices,) + x.shape)
+  replicated_params = tree_map(replicate_array, init_params)
 
   for epoch in range(num_epochs):
     start_time = time.time()
     for _ in range(num_batches):
-      params = spmd_update(params, next(batches))
+      replicated_params = spmd_update(replicated_params, next(batches))
     epoch_time = time.time() - start_time
 
     # We evaluate using the jitted `accuracy` function (not using pmap) by
     # grabbing just one of the replicated parameter values.
-    train_acc = accuracy(unreplicate(params), (train_images, train_labels))
-    test_acc = accuracy(unreplicate(params), (test_images, test_labels))
+    params = tree_map(lambda x: x[0], replicated_params)
+    train_acc = accuracy(params, (train_images, train_labels))
+    test_acc = accuracy(params, (test_images, test_labels))
     print("Epoch {} in {:0.2f} sec".format(epoch, epoch_time))
     print("Training set accuracy {}".format(train_acc))
     print("Test set accuracy {}".format(test_acc))

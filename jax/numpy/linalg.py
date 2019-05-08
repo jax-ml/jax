@@ -63,7 +63,7 @@ def svd(a, full_matrices=True, compute_uv=True):
 @_wraps(onp.linalg.slogdet)
 def slogdet(a):
   a = _promote_arg_dtypes(np.asarray(a))
-  dtype = lax._dtype(a)
+  dtype = lax.dtype(a)
   a_shape = np.shape(a)
   if len(a_shape) < 2 or a_shape[-1] != a_shape[-2]:
     msg = "Argument to slogdet() must have shape [..., n, n], got {}"
@@ -140,7 +140,7 @@ def norm(x, ord=None, axis=None, keepdims=False):
     elif ord == -np.inf:
       return np.amin(np.abs(x), axis=axis, keepdims=keepdims)
     elif ord == 0:
-      return np.sum(x != 0, dtype=np.finfo(lax._dtype(x)).dtype,
+      return np.sum(x != 0, dtype=np.finfo(lax.dtype(x)).dtype,
                     axis=axis, keepdims=keepdims)
     elif ord == 1:
       # Numpy has a special case for ord == 1 as an optimization. We don't
@@ -228,7 +228,7 @@ def solve(a, b):
            "b=[..., m, k] or b=[..., m]; got a={} and b={}")
     raise ValueError(msg.format(a_shape, b_shape))
   lu, pivots = lax_linalg.lu(a)
-  dtype = lax._dtype(a)
+  dtype = lax.dtype(a)
 
   # TODO(phawkins): add unit_diagonal support to solve_triangular, use it here
   # instead of explicit masking of l.

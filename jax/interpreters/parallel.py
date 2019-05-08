@@ -56,7 +56,7 @@ def serial_pmap_transform(name, axes, *vals):
   with new_master(SerialPmapTrace) as master:
     trace = SerialPmapTrace(master, core.cur_sublevel())
     in_tracers = map(partial(SerialPmapTracer, trace, name), vals, axes)
-    ans = yield in_tracers
+    ans = yield in_tracers, {}
     out_tracer = trace.full_raise(ans)
     out_val, out_axis = out_tracer.val, out_tracer.axis
     del master, out_tracer
@@ -65,7 +65,7 @@ def serial_pmap_transform(name, axes, *vals):
 @lu.transformation_with_aux
 def serial_pmap_subtrace(master, name, axes, *vals):
   trace = SerialPmapTrace(master, core.cur_sublevel())
-  ans = yield map(partial(SerialPmapTracer, trace, name), vals, axes)
+  ans = yield map(partial(SerialPmapTracer, trace, name), vals, axes), {}
   out_tracer = trace.full_raise(ans)
   out_val, out_axis = out_tracer.val, out_tracer.axis
   yield out_val, out_axis
@@ -118,18 +118,17 @@ class SerialPmapTrace(Trace):
       name = next(name for name in names_in if name is not None)  # all same
       if primitive in serial_pmap_primitive_rules:
         # if it's a pmap collective primitive, do something special
-        val_in, = vals_in
-        axis_in, = axes_in
         if name == params['axis_name']:
           # if the name matches this tracer's name, apply the pmap rule
           rule = serial_pmap_primitive_rules[primitive]
           params = {k: params[k] for k in params if k != 'axis_name'}
-          val_out, axis_out = rule(val_in, axis_in, **params)
+          val_out, axis_out = rule(vals_in, axes_in, **params)
           return SerialPmapTracer(self, name, val_out, axis_out)
         else:
-          # if not, bind the primitive so that any other pmap tracers can see it
-          val_out = primitive.bind(val_in, **params)
-          return SerialPmapTracer(self, name, val_out, axis_in)
+          # if not, bind the primitive so that any other pmap tracers can see it,
+          # assuming an axis equal to that of the first operand
+          val_out = primitive.bind(*vals_in, **params)
+          return SerialPmapTracer(self, name, val_out, axes_in[0])
       else:
         # if it's not a pmap collective primitive, act just like vmap
         rule = batching.get_primitive_batcher(primitive)
@@ -146,7 +145,7 @@ class SerialPmapTrace(Trace):
       val_out = call_primitive.bind(f, *vals, **params)
       return SerialPmapTracer(self, name, val_out, axis_out())
 
-  def post_process_call(self, _, out_tracer):
+  def post_process_call(self, call_primitive, out_tracer, params):
     name, val, axis = out_tracer.name, out_tracer.val, out_tracer.axis
     master = self.master
     def todo(x):
@@ -206,7 +205,7 @@ def papply_transform(name, args, axis_size, in_axes, out_axis):
   with new_master(PapplyTrace) as master:
     trace = PapplyTrace(master, core.cur_sublevel())
     in_tracers = map(partial(PapplyTracer, trace, name, axis_size), args, in_axes)
-    out_tracer = yield in_tracers
+    out_tracer = yield in_tracers, {}
     out_tracer = trace.full_raise(out_tracer)
     out_tracer = ensure_axis(out_axis, out_tracer.axis, out_tracer)
     out_val = out_tracer.val
@@ -275,13 +274,18 @@ def vectorized_papply(prim, name, vals, axes, **params):
   assert all(axes[0] == a for a in axes[1:])
   return prim.bind(*vals, **params), axes[0]
 
-def reducer_papply(prim, cprim, name, vals, papply_axes, input_shape, axes):
+def reducer_papply(prim, cprim, name, vals, papply_axes, axes, **kwargs):
   operand, = vals
   papply_axis, = papply_axes
 
   other_axes = [i for i in axes if i != papply_axis]
+  other_axes = [i - 1 if i > papply_axis else i for i in other_axes]
+
   if other_axes:
-    result = prim.bind(operand, axes=other_axes, input_shape=input_shape)
+    if 'input_shape' in kwargs:  # special to the reduce-sum family
+      s = kwargs['input_shape']
+      kwargs['input_shape'] = s[:papply_axis] + s[papply_axis + 1:]
+    result = prim.bind(operand, axes=tuple(other_axes), **kwargs)
   else:
     result = operand
 
@@ -291,19 +295,28 @@ def reducer_papply(prim, cprim, name, vals, papply_axes, input_shape, axes):
     new_papply_axis = papply_axis - onp.sum(onp.less(other_axes, papply_axis))
     return result, new_papply_axis
 
+
 def broadcasting_papply(prim, name, vals, axes, **params):
   x, y = vals
   xdim, ydim = axes
 
   if xdim is None:
+    assert x.shape[ydim] == 1
+    x = x.reshape(onp.delete(x.shape, ydim))
     return prim.bind(x, y, **params), ydim
   elif ydim is None:
+    assert y.shape[xdim] == 1
+    y = y.reshape(onp.delete(y.shape, xdim))
     return prim.bind(x, y, **params), xdim
   elif xdim == ydim:
     return prim.bind(x, y, **params), xdim
   else:
-    x = psplit(x, axis_name, xdim)
+    x = psplit(x, axis_name, ydim)
     return prim.bind(x, y, **params), ydim
+
+
+def identity_papply(prim, argnum, name, vals, axes, **params):
+  return prim.bind(*vals, **params), axes[argnum]
 
 
 papply_primitive_rules = {}
@@ -317,3 +330,6 @@ def defreducer(prim, collective_prim):
 
 def defbroadcasting(prim):
   papply_primitive_rules[prim] = partial(broadcasting_papply, prim)
+
+def defidentity(prim, argnum=0):
+  papply_primitive_rules[prim] = partial(identity_papply, prim, argnum)

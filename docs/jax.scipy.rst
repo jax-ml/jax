@@ -5,19 +5,45 @@ jax.scipy.linalg
 -----------------------
 
 .. automodule:: jax.scipy.linalg
-    :members:
 
-jax.scipy.misc
----------------------
+.. autosummary::
+  :toctree: _autosummary
 
-.. automodule:: jax.scipy.misc
-    :members:
+   cho_factor
+   cho_solve
+   cholesky
+   det
+   eigh
+   inv
+   lu_factor
+   lu
+   qr
+   solve
+   solve_triangular
+   svd
+   tril
+   triu
+
 
 jax.scipy.special
 ------------------------
 
 .. automodule:: jax.scipy.special
-    :members:
+
+.. autosummary::
+  :toctree: _autosummary
+
+   digamma
+   erf
+   erfc
+   erfinv
+   expit
+   gammaln
+   logit
+   logsumexp
+   ndtr
+   ndtri
+
 
 jax.scipy.stats
 -----------------------
@@ -25,29 +51,56 @@ jax.scipy.stats
 jax.scipy.stats.beta
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.beta
-    :members:
+
+.. autosummary::
+  :toctree: _autosummary
+
+   logpdf
+   pdf
 
 jax.scipy.stats.expon
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.expon
-    :members:
+.. autosummary::
+  :toctree: _autosummary
+
+   logpdf
+   pdf
 
 jax.scipy.stats.gamma
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.gamma
-    :members:
+.. autosummary::
+  :toctree: _autosummary
+
+   logpdf
+   pdf
 
 jax.scipy.stats.laplace
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.laplace
-    :members:
+.. autosummary::
+  :toctree: _autosummary
+
+   logpdf
+   pdf
 
 jax.scipy.stats.norm
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.norm
-    :members:
+.. autosummary::
+  :toctree: _autosummary
+
+   cdf
+   logcdf
+   logpdf
+   pdf
 
 jax.scipy.stats.uniform
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.uniform
-    :members:
+.. autosummary::
+  :toctree: _autosummary
+
+   logpdf
+   pdf

@@ -25,9 +25,9 @@ from jax import test_util as jtu
 import jax.numpy as np
 from jax import jit, grad, device_get, device_put, jacfwd, jacrev, hessian
 from jax import api
-from jax.core import Primitive
-from jax.interpreters.ad import defjvp
-from jax.interpreters.xla import DeviceArray
+from jax.core import Primitive, pack, JaxTuple
+from jax.interpreters.ad import defjvp, defvjp, defvjp2, defvjp_all
+from jax.interpreters.xla import DeviceArray, DeviceTuple
 from jax.abstract_arrays import concretization_err_msg
 
 from jax.config import config
@@ -62,28 +62,48 @@ class APITest(jtu.JaxTestCase):
       side.append(None)
       return 100*x + 10*y + z
 
-    f1 = jit(f)
-    assert f1(1, 2, 3, flag=True) == 123
+    f1 = jit(f, static_argnums=(3, 4))
+    assert f1(1, 2, 3, True, False) == 123
     assert len(side) == 1
-    assert f1(2, 1, 3, flag=True) == 213
+    assert f1(2, 1, 3, True, False) == 213
     assert len(side) == 1
-    assert f1(2, 1, 3, flag=True, flag2=True) == 213
+    assert f1(2, 1, 3, True, True) == 213
     assert len(side) == 2
 
     side[:] = []
-    f2 = jit(f, static_argnums=[0,2])
-    assert f2(1, 2, 3, flag=True) == 123
+    f2 = jit(f, static_argnums=(0, 2, 3, 4))
+    assert f2(1, 2, 3, True, False) == 123
     assert len(side) == 1
-    assert f2(1, 3, 3, flag=True) == 133
+    assert f2(1, 3, 3, True, False) == 133
     assert len(side) == 1
-    assert f2(2, 2, 3, flag=True) == 223
+    assert f2(2, 2, 3, True, False) == 223
     assert len(side) == 2
-    assert f2(2, 4, 3, flag=True) == 243
+    assert f2(2, 4, 3, True, False) == 243
     assert len(side) == 2
-    assert f2(2, 4, 3, flag=True, flag2=True) == 243
+    assert f2(2, 4, 3, True, True) == 243
     assert len(side) == 3
-    assert f2(2, 5, 3, flag=True, flag2=True) == 253
+    assert f2(2, 5, 3, True, True) == 253
     assert len(side) == 3
+
+  def test_jit_kwargs(self):
+    side = []
+
+    def f(x, y, z):
+      side.append(None)
+      return 100*x + 10*y + z
+
+    f = jit(f)
+    assert f(1, 2, 3) == 123
+    assert len(side) == 1
+    assert f(1, 2, 3) == 123
+    assert len(side) == 1
+
+    assert f(1, 2, z=3) == 123
+    assert len(side) == 2  # actually recompiles from kwarg
+    assert f(1, 2, z=3) == 123
+    assert len(side) == 2  # but should still cache
+
+    f(1, 2, z=onp.zeros(3))  # doesn't crash
 
   def test_grad_of_jit(self):
     side = []
@@ -406,6 +426,147 @@ class APITest(jtu.JaxTestCase):
 
       jaxpr2 = api.make_jaxpr(f2_vjp)(y)
       assert len(jaxpr2.constvars) == 2
+
+  def test_complex_grad_raises_error(self):
+    self.assertRaises(TypeError, lambda: grad(lambda x: np.sin(x))(1 + 2j))
+
+  def test_holomorphic_grad(self):
+    out = grad(lambda x: np.sin(x), holomorphic=True)(1 + 2j)
+    expected = 2.0327230070196656 - 3.0518977991518j
+    self.assertAllClose(out, expected, check_dtypes=False)
+
+  def test_nonholomorphic_grad(self):
+    zs = 0.5j * onp.arange(5) + onp.arange(5)
+
+    def f(z):
+      return np.sum(np.cos(np.abs(z)))
+
+    ans = grad(f)(zs)
+    expected = onp.array([ 0.        +0.j,
+                          -0.80430663+0.40215331j,
+                          -0.70368982+0.35184491j,
+                           0.1886467 -0.09432335j,
+                           0.86873727-0.43436864j])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_complex_output_jacrev_raises_error(self):
+    self.assertRaises(TypeError, lambda: jacrev(lambda x: np.sin(x))(1 + 2j))
+
+  def test_nonholomorphic_jacrev(self):
+    # code based on https://github.com/google/jax/issues/603
+    zs = 0.5j * onp.arange(5) + onp.arange(5)
+
+    def f(z):
+      return np.cos(np.linalg.norm(2 * z))
+
+    ans = jacrev(f)(zs)
+    expected = grad(f)(zs)
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
+  def test_complex_input_jacfwd_raises_error(self):
+    self.assertRaises(TypeError, lambda: jacfwd(lambda x: np.sin(x))(1 + 2j))
+
+  def test_defvjp_all(self):
+    foo_p = Primitive('foo')
+    def foo(x): return 2. * foo_p.bind(x)
+
+    defvjp_all(foo_p, lambda x: (x**2, lambda g: (4 * g * np.sin(x),)))
+    val_ans, grad_ans = api.value_and_grad(foo)(3.)
+    self.assertAllClose(val_ans, 2 * 3.**2, check_dtypes=False)
+    self.assertAllClose(grad_ans, 4 * 2 * onp.sin(3.), check_dtypes=False)
+
+  def test_defvjp_all_const(self):
+    foo_p = Primitive('foo')
+    def foo(x): return foo_p.bind(x)
+
+    defvjp_all(foo_p, lambda x: (x**2, lambda g: (12.,)))
+    val_ans, grad_ans = api.value_and_grad(foo)(3.)
+    self.assertAllClose(val_ans, 9., check_dtypes=False)
+    self.assertAllClose(grad_ans, 12., check_dtypes=True)
+
+  def test_defvjp_all_higher_order_revmode(self):
+    foo_p = Primitive('foo')
+    def foo(x): return 2. * foo_p.bind(x)
+
+    defvjp_all(foo_p, lambda x: (x**2, lambda g: (g * x ** 2,)))
+    ans = api.grad(api.grad(foo))(3.)
+    self.assertAllClose(ans, 2 * 2 * 3., check_dtypes=False)
+
+  def test_defvjp_all_multiple_arguments(self):
+    # also tests passing in symbolic zero tangents b/c we differentiate wrt only
+    # the first argument in one case
+
+    foo_p = Primitive('foo')
+    def foo(x, y): return foo_p.bind(x, y)
+
+    def vjpfun(x, y):
+      out = x**2 + y**3
+      vjp = lambda g: (g + x + y, g * x * 9.)
+      return out, vjp
+
+    defvjp_all(foo_p, vjpfun)
+    val_ans, grad_ans = api.value_and_grad(foo)(3., 4.)
+    self.assertAllClose(val_ans, 3.**2 + 4.**3, check_dtypes=False)
+    self.assertAllClose(grad_ans, 1. + 3. + 4., check_dtypes=False)
+
+    ans = api.grad(foo, (0, 1))(3., 4.)
+    self.assertAllClose(ans, (1. + 3. + 4., 1. * 3. * 9.), check_dtypes=False)
+
+  def test_defvjp(self):
+    @api.custom_transforms
+    def foo(x, y):
+      return np.sin(x * y)
+
+    defvjp(foo.primitive, None, lambda g, x, y: g * x * y)
+    val_ans, grad_ans = api.value_and_grad(foo)(3., 4.)
+    self.assertAllClose(val_ans, onp.sin(3. * 4.), check_dtypes=False)
+    self.assertAllClose(grad_ans, 0., check_dtypes=False)
+
+    ans_0, ans_1 = api.grad(foo, (0, 1))(3., 4.)
+    self.assertAllClose(ans_0, 0., check_dtypes=False)
+    self.assertAllClose(ans_1, 3. * 4., check_dtypes=False)
+
+  def test_defvjp2(self):
+    @api.custom_transforms
+    def foo(x, y):
+      return np.sin(x * y)
+
+    defvjp2(foo.primitive, None, lambda g, ans, x, y: g * x * y + np.cos(ans))
+    val_ans, grad_ans = api.value_and_grad(foo, 1)(3., 4.)
+    self.assertAllClose(val_ans, onp.sin(3. * 4.), check_dtypes=False)
+    self.assertAllClose(grad_ans, 3. * 4. + onp.cos(onp.sin(3. * 4)),
+                        check_dtypes=False)
+
+  def test_devicetuple_iteration(self):
+    tup = device_put(pack((1, 2)))
+    self.assertIsInstance(tup, DeviceTuple)
+    self.assertEqual(tuple(tup), (1, 2))
+
+    tup = device_put(pack((1, pack((2, 3)))))
+    self.assertIsInstance(tup, DeviceTuple)
+    self.assertAllClose(tup, (1, (2, 3)), check_dtypes=False)
+
+  def test_devicetuple_isinstance(self):
+    tup = device_put(pack((1, 2)))
+    self.assertIsInstance(tup, DeviceTuple)
+    self.assertIsInstance(tup, JaxTuple)
+
+  def test_devicetuple_repr(self):
+    tup = device_put(pack((1, 2)))
+    self.assertEqual(repr(tup), 'DeviceTuple(len=2)')
+
+  def test_legacy_devicearray_repr(self):
+    dx = device_put(3.)
+    str(dx.item())  # doesn't crash
+
+  def test_devicearray_repr(self):
+    x = device_put(np.zeros(3))
+    self.assertIsInstance(x, DeviceArray)
+    repr(x)  # doesn't crash
+
+    x = device_put(np.ones(3) + 1j * np.ones(3))
+    self.assertIsInstance(x, DeviceArray)
+    repr(x)  # doesn't crash
 
 
 if __name__ == '__main__':

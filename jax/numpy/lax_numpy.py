@@ -21,6 +21,7 @@ import itertools
 import re
 import string
 import warnings
+import types
 
 import numpy as onp
 import opt_einsum
@@ -34,6 +35,7 @@ from ..interpreters.xla import DeviceArray
 from .. import lax
 from ..util import memoize, partial, get_module_functions, unzip2, prod as _prod
 from ..lib import xla_bridge
+from ..lib.xla_bridge import xla_client
 
 if six.PY3:
   def removechars(s, chars):
@@ -90,7 +92,7 @@ result_type = onp.result_type
 shape = _shape = onp.shape
 ndim = _ndim = onp.ndim
 size = onp.size
-_dtype = lax._dtype
+_dtype = lax.dtype
 
 bool_ = onp.bool_
 uint8 = onp.uint8
@@ -395,7 +397,7 @@ def power(x1, x2):
   x1 = asarray(x1)
   x2 = asarray(x2)
   x1, x2 = _promote_args_like(onp.power, x1, x2)
-  dtype = lax._dtype(x1)
+  dtype = _dtype(x1)
   if not issubdtype(dtype, integer):
     return lax.pow(x1, x2)
 
@@ -452,6 +454,12 @@ def remainder(x1, x2):
   return lax.rem(lax.add(lax.rem(x1, x2), x2), x2)
 mod = remainder
 fmod = _wraps(onp.fmod)(lambda x, y: lax.rem(x, y))
+
+
+@_wraps(onp.cbrt)
+def cbrt(x):
+  x, = _promote_to_result_dtype(onp.cbrt, x)
+  return lax.sign(x) * power(lax.abs(x), _constant_like(x, 1. / 3.))
 
 
 @_wraps(onp.sqrt)
@@ -595,8 +603,45 @@ def angle(x):
   return lax.atan2(im, re)
 
 
+@_wraps(onp.diff)
+def diff(a, n=1, axis=-1,):
+  if not isinstance(a, ndarray) or a.ndim == 0:
+    return a
+  if n == 0:
+    return a
+  if n < 0:
+    raise ValueError(
+      "order must be non-negative but got " + repr(n))
+
+  nd = a.ndim
+
+  slice1 = [slice(None)] * nd
+  slice2 = [slice(None)] * nd
+  slice1[axis] = slice(1, None)
+  slice2[axis] = slice(None, -1)
+  slice1 = tuple(slice1)
+  slice2 = tuple(slice2)
+
+  op = not_equal if a.dtype == onp.bool_ else subtract
+  for _ in range(n):
+    a = op(a[slice1], a[slice2])
+
+  return a
+
+
+@_wraps(onp.isrealobj)
+def isrealobj(a):
+  return not iscomplexobj(a)
+
+
 @_wraps(onp.reshape)
-def reshape(a, newshape, order="C"):  # pylint: disable=missing-docstring
+def reshape(a, newshape, order="C"):
+  try:
+    return a.reshape(newshape, order=order)
+  except AttributeError:
+    return _reshape(a, newshape, order=order)
+
+def _reshape(a, newshape, order="C"):
   dummy_val = onp.broadcast_to(0, shape(a))  # zero strides
   computed_newshape = onp.reshape(dummy_val, newshape).shape
 
@@ -798,10 +843,12 @@ def round(a, decimals=0):
 around = round
 
 
-# Caution: If fast math mode is enabled, the semantics of inf and nan are not
-# preserved by XLA/LLVM, and the behavior of inf/nan values is unpredictable.
-# To disable fast math mode on CPU, set the environment variable
-# XLA_FLAGS=--xla_cpu_enable_fast_math=false.
+@_wraps(onp.fix)
+def fix(x, out=None):
+  if out is not None:
+    raise ValueError("fix does not support the `out` argument.")
+  zero = lax._const(x, 0)
+  return where(lax.ge(x, zero), lax.floor(x), lax.ceil(x))
 
 @_wraps(onp.isfinite)
 def isfinite(x):
@@ -817,17 +864,19 @@ def isfinite(x):
 def isinf(x):
   dtype = _dtype(x)
   if issubdtype(dtype, floating):
-    return lax.eq(lax.abs(x), inf)
+    return lax.eq(lax.abs(x), _constant_like(x, inf))
   elif issubdtype(dtype, complexfloating):
-    return lax.bitwise_or(lax.eq(lax.abs(real(x)), inf),
-                          lax.eq(lax.abs(imag(x)), inf))
+    re = lax.real(x)
+    im = lax.imag(x)
+    return lax.bitwise_or(lax.eq(lax.abs(re), _constant_like(re, inf)),
+                          lax.eq(lax.abs(im), _constant_like(im, inf)))
   else:
     return full_like(x, False, dtype=bool_)
 
 def _isposneginf(infinity, x):
   dtype = _dtype(x)
   if issubdtype(dtype, floating):
-    return lax.eq(x, infinity)
+    return lax.eq(x, _constant_like(x, infinity))
   elif issubdtype(dtype, complexfloating):
     raise ValueError("isposinf/isneginf are not well defined for complex types")
   else:
@@ -844,9 +893,10 @@ def isnan(x):
 @_wraps(onp.nan_to_num)
 def nan_to_num(x, copy=True):
   del copy
-  if iscomplexobj(x):
-    raise ValueError("nan_to_num is not well defined for complex types")
-  info = finfo(xla_bridge.canonicalize_dtype(_dtype(x)))
+  dtype = _dtype(x)
+  if issubdtype(dtype, complexfloating):
+    return lax.complex(nan_to_num(lax.real(x)), nan_to_num(lax.imag(x)))
+  info = finfo(xla_bridge.canonicalize_dtype(dtype))
   x = where(isnan(x), _constant_like(x, 0), x)
   x = where(isposinf(x), _constant_like(x, info.max), x)
   x = where(isneginf(x), _constant_like(x, info.min), x)
@@ -924,10 +974,9 @@ def mean(a, axis=None, dtype=None, out=None, keepdims=False):
     else:
       dtype = _dtype(a)
 
-  td = true_divide(
+  return lax.div(
       sum(a, axis, dtype=dtype, keepdims=keepdims),
       lax.convert_element_type(normalizer, dtype))
-  return lax.convert_element_type(td, dtype)
 
 
 @_wraps(onp.var)
@@ -1027,7 +1076,7 @@ def _make_cumulative_reduction(onp_reduction, window_reduce, init_val,
     window_dims = [1] * num_dims
     window_dims[axis] = a_shape[axis]
     return window_reduce(
-       a, window_dims, strides, xla_bridge.get_xla_client().PaddingType.VALID)
+       a, window_dims, strides, xla_client.PaddingType.VALID)
 
   return cumulative_reduction
 
@@ -1091,6 +1140,15 @@ def stack(arrays, axis=0):
     new_arrays.append(reshape(a, new_shape))
   return concatenate(new_arrays, axis=axis)
 
+@_wraps(onp.tile)
+def tile(a, reps):
+    if isinstance(reps, int):
+        reps = (reps,)
+    a = a[(None,) * (len(reps) - a.ndim)]
+    reps = (1,) * (a.ndim - len(reps)) + reps
+    for i, rep in enumerate(reps):
+        a = concatenate([a] * rep, axis=i)
+    return a
 
 @_wraps(onp.concatenate)
 def concatenate(arrays, axis=0):
@@ -1135,7 +1193,7 @@ def column_stack(tup):
 def atleast_1d(*arys):
   if len(arys) == 1:
     arr = array(arys[0])
-    return arr if arr.ndim >= 1 else arr.reshape(-1)
+    return arr if ndim(arr) >= 1 else reshape(arr, -1)
   else:
     return [atleast_1d(arr) for arr in arys]
 
@@ -1144,7 +1202,7 @@ def atleast_1d(*arys):
 def atleast_2d(*arys):
   if len(arys) == 1:
     arr = array(arys[0])
-    return arr if arr.ndim >= 2 else arr.reshape((1, -1))
+    return arr if ndim(arr) >= 2 else reshape(arr, (1, -1))
   else:
     return [atleast_2d(arr) for arr in arys]
 
@@ -1154,9 +1212,9 @@ def atleast_3d(*arys):
   if len(arys) == 1:
     arr = array(arys[0])
     if ndim(arr) <= 1:
-      arr = arr.reshape((1, -1, 1))
+      arr = reshape(arr, (1, -1, 1))
     elif ndim(arr) == 2:
-      arr = arr.reshape(shape(arr) + (1,))
+      arr = reshape(arr, shape(arr) + (1,))
     return arr
   else:
     return [atleast_3d(arr) for arr in arys]
@@ -1214,6 +1272,8 @@ def full_like(a, fill_value, dtype=None):
 
 @_wraps(onp.zeros)
 def zeros(shape, dtype=onp.dtype("float64")):
+  if isinstance(shape, types.GeneratorType):
+    raise TypeError("expected sequence object with len >= 0 or a single integer")
   shape = (shape,) if onp.isscalar(shape) else shape
   return lax.full(shape, 0, dtype)
 
@@ -1221,6 +1281,17 @@ def zeros(shape, dtype=onp.dtype("float64")):
 def ones(shape, dtype=onp.dtype("float64")):
   shape = (shape,) if onp.isscalar(shape) else shape
   return lax.full(shape, 1, dtype)
+
+
+@_wraps(onp.array_equal)
+def array_equal(a1, a2):
+  try:
+    a1, a2 = asarray(a1), asarray(a2)
+  except Exception:
+    return False
+  if a1.shape != a2.shape:
+    return False
+  return asarray(a1==a2).all()
 
 
 # We can't create uninitialized arrays in XLA; use zeros for empty.
@@ -1253,16 +1324,18 @@ def identity(n, dtype=None):
 
 @_wraps(onp.arange)
 def arange(*args, **kwargs):
-  # attempt to generate a lazy IotaConstant, otherwise fall back to raw numpy
-  # TODO(mattjj): add tests for this function, then re-enable
-  # dtype = kwargs.pop("dtype", None)
-  # if not args:
-  #   raise TypeError("Required argument 'start' (pos 1) not found")  # same as numpy error
-  # elif len(args) == 1 and not kwargs:
-  #   stop, = args
-  #   dtype = dtype or _dtype(stop)
-  #   if onp.issubdtype(dtype, onp.integer):
-  #     return lax.iota(dtype, stop)  # avoids materializing
+  dtype = kwargs.pop("dtype", None)
+  if not args:
+    raise TypeError("Required argument 'start' (pos 1) not found")  # same as numpy error
+
+  # If called like np.arange(N), we create a lazy lax._IotaConstant.
+  if len(args) == 1 and not kwargs:
+    stop, = args
+    dtype = dtype or _dtype(stop)
+    if onp.issubdtype(dtype, onp.integer):
+      return lax.iota(dtype, stop)  # avoids materializing
+
+  # Fall back to instantiating an ndarray in host memory
   return onp.arange(*args, **kwargs)
 
 linspace = onp.linspace
@@ -1495,13 +1568,23 @@ def tensordot(a, b, axes=2):
 
 
 @_wraps(onp.einsum)
-def einsum(*operands):
+def einsum(*operands, **kwargs):
+  optimize = kwargs.pop('optimize', 'auto')
+  optimize = 'greedy' if optimize is True else optimize
+  if kwargs:
+    msg = 'invalid keyword arguments for einsum: {}'
+    raise TypeError(msg.format(', '.join(kwargs)))
   # using einsum_call=True here is an internal api for opt_einsum
   operands, contractions = opt_einsum.contract_path(
-      *operands, einsum_call=True, use_blas=True)
+      *operands, einsum_call=True, use_blas=True, optimize=optimize)
   contractions = tuple(data[:3] for data in contractions)
   return _einsum(operands, contractions)
 
+@_wraps(onp.einsum_path)
+def einsum_path(subscripts, *operands, **kwargs):
+  optimize = kwargs.pop('optimize', 'greedy')
+  # using einsum_call=True here is an internal api for opt_einsum
+  return opt_einsum.contract_path(subscripts, *operands, optimize=optimize)
 
 @partial(jit, static_argnums=(1,))
 def _einsum(operands, contractions):
@@ -2067,9 +2150,7 @@ def _is_slice_none(idx):
 def _is_advanced_int_indexer(idx):
   """Returns True if idx should trigger int array indexing, False otherwise."""
   # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#advanced-indexing
-  if isinstance(idx, (tuple, list)):
-    # We assume this check comes *after* the check for non-advanced tuple index,
-    # and hence we already know at least one element is a sequence if it's a tuple
+  if isinstance(idx, (tuple, list)) and _any(onp.ndim(elt) != 0 for elt in idx):
     return _all(e is None or e is Ellipsis or isinstance(e, slice)
                 or _is_int_arraylike(e) for e in idx)
   else:
@@ -2137,8 +2218,8 @@ kaiser = onp.kaiser  # TODO: lower via lax to allow non-constant beta.
 
 @_wraps(getattr(onp, "gcd", None))
 def gcd(x1, x2):
-  if (not issubdtype(lax._dtype(x1), integer) or
-      not issubdtype(lax._dtype(x2), integer)):
+  if (not issubdtype(_dtype(x1), integer) or
+      not issubdtype(_dtype(x2), integer)):
     raise ValueError("Arguments to gcd must be integers.")
   def cond_fn(xs):
     x1, x2 = xs
@@ -2232,8 +2313,8 @@ _nondiff_methods = ["all", "any", "argmax", "argmin", "argpartition", "argsort",
                     "nonzero", "searchsorted", "round"]
 _diff_methods = ["clip", "compress", "conj", "conjugate", "cumprod", "cumsum",
                  "diagonal", "dot", "max", "mean", "min", "prod", "ptp",
-                 "ravel", "repeat", "reshape", "sort", "squeeze", "std", "sum",
-                 "swapaxes", "take", "trace", "transpose", "var"]
+                 "ravel", "repeat", "sort", "squeeze", "std", "sum",
+                 "swapaxes", "take", "tile", "trace", "transpose", "var"]
 
 
 # Set up operator, method, and property forwarding on Tracer instances containing
@@ -2244,10 +2325,12 @@ for operator_name, function in _operators.items():
 # Forward methods and properties using core.aval_method and core.aval_property:
 for method_name in _nondiff_methods + _diff_methods:
   setattr(ShapedArray, method_name, core.aval_method(globals()[method_name]))
+setattr(ShapedArray, "reshape", core.aval_method(_reshape))
 setattr(ShapedArray, "flatten", core.aval_method(ravel))
 setattr(ShapedArray, "T", core.aval_property(transpose))
+setattr(ShapedArray, "real", core.aval_property(real))
+setattr(ShapedArray, "imag", core.aval_property(imag))
 setattr(ShapedArray, "astype", core.aval_method(lax.convert_element_type))
-setattr(ShapedArray, "psum", core.aval_method(lax.psum))
 
 
 # Forward operators, methods, and properties on DeviceArray to lax_numpy
@@ -2256,8 +2339,11 @@ for operator_name, function in _operators.items():
   setattr(DeviceArray, "__{}__".format(operator_name), function)
 for method_name in _nondiff_methods + _diff_methods:
   setattr(DeviceArray, method_name, globals()[method_name])
+setattr(DeviceArray, "reshape", _reshape)
 setattr(DeviceArray, "flatten", ravel)
 setattr(DeviceArray, "T", property(transpose))
+setattr(DeviceArray, "real", property(real))
+setattr(DeviceArray, "imag", property(imag))
 setattr(DeviceArray, "astype", lax.convert_element_type)
 
 

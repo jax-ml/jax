@@ -97,11 +97,12 @@ if __name__ == "__main__":
   num_complete_batches, leftover = divmod(train_images.shape[0], batch_size)
   num_batches = num_complete_batches + bool(leftover)
 
-  _, init_encoder_params = encoder_init((batch_size, 28 * 28))
-  _, init_decoder_params = decoder_init((batch_size, 10))
+  enc_init_rng, dec_init_rng = random.split(random.PRNGKey(2))
+  _, init_encoder_params = encoder_init(enc_init_rng, (batch_size, 28 * 28))
+  _, init_decoder_params = decoder_init(dec_init_rng, (batch_size, 10))
   init_params = init_encoder_params, init_decoder_params
 
-  opt_init, opt_update = optimizers.momentum(step_size, mass=0.9)
+  opt_init, opt_update, get_params = optimizers.momentum(step_size, mass=0.9)
 
   def binarize_batch(rng, i, images):
     i = i % num_batches
@@ -114,13 +115,13 @@ if __name__ == "__main__":
       elbo_rng, data_rng = random.split(random.fold_in(rng, i))
       batch = binarize_batch(data_rng, i, train_images)
       loss = lambda params: -elbo(elbo_rng, params, batch) / batch_size
-      g = grad(loss)(optimizers.get_params(opt_state))
+      g = grad(loss)(get_params(opt_state))
       return opt_update(i, g, opt_state)
     return lax.fori_loop(0, num_batches, body_fun, opt_state)
 
   @jit
   def evaluate(opt_state, images):
-    params = optimizers.get_params(opt_state)
+    params = get_params(opt_state)
     elbo_rng, data_rng, image_rng = random.split(test_rng, 3)
     binarized_test = random.bernoulli(data_rng, images)
     test_elbo = elbo(elbo_rng, params, binarized_test) / images.shape[0]

@@ -277,6 +277,43 @@ class EinsumTest(jtu.JaxTestCase):
     s = 'ijkl,ijml->ijkm'
     self._check(s, x, y)
 
+  def test_einsum_path(self):
+    # just check examples from onp.einsum_path docstring
+    a = onp.random.rand(2, 2)
+    b = onp.random.rand(2, 5)
+    c = onp.random.rand(5, 2)
+
+    path_info = onp.einsum_path('ij,jk,kl->il', a, b, c, optimize='greedy')
+    self.assertEqual(str(path_info[0]), "['einsum_path', (1, 2), (0, 1)]")
+    self.assertEqual(path_info[1].split('\n')[0],
+                     '  Complete contraction:  ij,jk,kl->il')
+
+    # check this doesn't crash
+    I = onp.random.rand(10, 10, 10, 10)
+    C = onp.random.rand(10, 10)
+    onp.einsum_path('ea,fb,abcd,gc,hd->efgh', C, C, I, C, C, optimize='greedy')
+
+  def test_einsum_kpmurphy_example(self):
+    # code from an email with @murphyk
+    N = 2; C = 3; D = 4; K = 5; T = 6;
+    r = rng()
+    S = r.randn(N, T, K)
+    W = r.randn(K, D)
+    V = r.randn(D, C)
+    L = onp.zeros((N, C))
+    for n in range(N):
+      for c in range(C):
+        s = 0
+        for d in range(D):
+          for k in range(K):
+            for t in range(T):
+                s += S[n,t,k] * W[k,d] * V[d,c]
+        L[n,c] = s
+
+    path = np.einsum_path('ntk,kd,dc->nc', S, W, V, optimize='optimal')[0]
+    self.assertAllClose(L, np.einsum('ntk,kd,dc->nc', S, W, V, optimize=path),
+                        check_dtypes=False)
+
 
 if __name__ == '__main__':
   absltest.main()

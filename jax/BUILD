@@ -21,12 +21,13 @@ package(default_visibility = ["//visibility:public"])
 # top-level EF placeholder
 
 py_library(
-    name = "libjax",
+    name = "jax",
     srcs = glob(
         [
             "*.py",
             "lib/*.py",
             "interpreters/*.py",
+            "lax/*.py",
             "numpy/*.py",
             "ops/*.py",
             "scipy/*.py",
@@ -40,22 +41,28 @@ py_library(
     deps = ["@org_tensorflow//tensorflow/compiler/xla/python:xla_client"],
 )
 
+# Old name for library, use ":jax" instead.
+py_library(
+    name = "libjax",
+    deps = [":jax"],
+)
+
 py_library(
     name = "stax",
     srcs = ["experimental/stax.py"],
-    deps = [":libjax"],
+    deps = [":jax"],
 )
 
 py_library(
     name = "optimizers",
     srcs = ["experimental/optimizers.py"],
-    deps = [":libjax"],
+    deps = [":jax"],
 )
 
 py_library(
     name = "lapax",
     srcs = ["experimental/lapax.py"],
-    deps = [":libjax"],
+    deps = [":jax"],
 )
 
 # this is a dummy target for building purposes
@@ -63,5 +70,5 @@ py_binary(
     name = "build_jax",
     srcs = ["__init__.py"],
     main = "__init__.py",
-    deps = [":libjax"],
+    deps = [":jax"],
 )

@@ -460,7 +460,8 @@ def valid_jaxtype(x):
     concrete_aval(x)
   except TypeError:
     return False
-  return True
+  else:
+    return True
 
 
 def concrete_aval(x):
@@ -482,12 +483,30 @@ pytype_aval_mappings = {}
 
 # ------------------- Products -------------------
 
-class JaxTuple(tuple):
-  def __new__(cls, xs):
+# We override isinstance(x, JaxTuple) behavior (using a metaclass) because
+# defining __slots__ (for performance) is incompatible with multiple
+# inheritance, and both isinstance(x, JaxTuple) and isinstance(x, DeviceValue)
+# can be true.
+class _TupleMeta(type(tuple)):
+  def __instancecheck__(self, instance):
+    try:
+      return type(get_aval(instance)) is AbstractTuple
+    except TypeError:
+      return False
+
+class JaxTuple(six.with_metaclass(_TupleMeta)):
+  __slots__ = ['xs']
+
+  def __init__(self, xs):
+    self.xs = xs = tuple(xs)
     if not skip_checks:
-      xs = list(xs)
       assert all(map(valid_jaxtype, xs)), xs
-    return tuple.__new__(cls, xs)
+
+  def __iter__(self):
+    return iter(self.xs)
+
+  def __len__(self):
+    return len(self.xs)
 
   def __repr__(self):
     if self is unit:
@@ -497,10 +516,11 @@ class JaxTuple(tuple):
 
 
 class AbstractTuple(AbstractValue, tuple):
-  def __new__(cls, elts=()):
-    elts = tuple(elts)
-    assert skip_checks or all(isinstance(e, AbstractValue) for e in elts)
-    return tuple.__new__(cls, elts)
+  def __new__(cls, xs=()):
+    if not skip_checks:
+      xs = tuple(xs)
+      assert all(isinstance(x, AbstractValue) for x in xs), xs
+    return tuple.__new__(cls, xs)
 
   @staticmethod
   def _iter(tracer):
@@ -567,33 +587,34 @@ def apply_todos(todos, x):
   return x
 
 @lu.transformation_with_aux
-def process_env_traces(primitive, level, *args):
-  ans = yield args
+def process_env_traces(primitive, level, params_tuple, *args):
+  ans = yield args, {}
   todo = []
   while isinstance(ans, Tracer) and ans.trace.level > level:
     t = ans.trace
     sublevel = cur_sublevel()
     trace = type(t)(t.master, sublevel)
     ans = trace.full_raise(ans)
-    ans, cur_todo = ans.trace.post_process_call(primitive, ans)
+    ans, cur_todo = ans.trace.post_process_call(primitive, ans, dict(params_tuple))
     todo.append(cur_todo)
   yield ans, todo
 
-def call_bind(primitive, f, *args, **kwargs):
+def call_bind(primitive, f, *args, **params):
   top_trace = find_top_trace(args)
   level = trace_stack.next_level(True) if top_trace is None else top_trace.level
-  f, env_trace_todo = process_env_traces(f, primitive, level)
+  params_tuple = tuple(params.items())
+  f, env_trace_todo = process_env_traces(f, primitive, level, params_tuple)
   if top_trace is None:
     with new_sublevel():
-      ans = primitive.impl(f, *args, **kwargs)
+      ans = primitive.impl(f, *args, **params)
   else:
     tracers = map(top_trace.full_raise, args)
-    ans = full_lower(top_trace.process_call(primitive, f, tracers, kwargs))
+    ans = full_lower(top_trace.process_call(primitive, f, tracers, params))
   return apply_todos(env_trace_todo(), ans)
 
 
-def call_impl(f, *args, **kwargs):
-  return f(*args, **kwargs)
+def call_impl(f, *args, **params):
+  return f(*args, **params)
 
 
 call_p = Primitive('call')

@@ -32,23 +32,35 @@ import numpy as onp  # 'onp' rather than 'np' to distinguish from autograd.numpy
 
 import jaxlib
 
+_minimum_jaxlib_version = (0, 1, 12)
+try:
+  from jaxlib import version as jaxlib_version
+except:
+  # jaxlib is too old to have version number.
+  msg = 'This version of jax requires jaxlib version >= {}.'
+  raise ImportError(msg.format('.'.join(map(str, _minimum_jaxlib_version))))
+
+
 # Check the jaxlib version before importing anything else from jaxlib.
 def _check_jaxlib_version():
-  minimum_version = (0, 1, 9)
-  if hasattr(jaxlib, '__version__'):
-    version = tuple(int(x) for x in jaxlib.__version__.split('.'))
-  else:
-    version = (0, 1, 9)  # The version before jaxlib.__version__ was added.
-  if version < minimum_version:
+  version = tuple(int(x) for x in jaxlib_version.__version__.split('.'))
+  if version < _minimum_jaxlib_version:
     msg = 'jaxlib is version {}, but this version of jax requires version {}.'
     raise ValueError(msg.format('.'.join(map(str, version)),
-                                '.'.join(map(str, minimum_version))))
+                                '.'.join(map(str, _minimum_jaxlib_version))))
 
 _check_jaxlib_version()
 
 
 from jaxlib import xla_client
 from jaxlib import xla_data_pb2
+
+# TODO(phawkins): This is a workaround for older jaxlib versions. Remove after a
+# jaxlib release.
+try:
+  from jaxlib import xrt
+except ImportError:
+  xrt = None
 
 
 FLAGS = flags.FLAGS
@@ -65,18 +77,16 @@ flags.DEFINE_string(
     'jax_platform_name', '',
     'Platform name for XLA. The default is to attempt to use a '
     'GPU if available, but fall back to CPU otherwise. To set '
-    'the platform manually, pass "Host" for CPU or "CUDA" for '
+    'the platform manually, pass "cpu" for CPU or "gpu" for '
     'GPU.')
 
-
-_platform_name = None  # set to the active platform name
 
 
 def get_compile_options(num_replicas=None):
   """Returns the compile options to use, as derived from flag values."""
   compile_options = None
   if num_replicas is not None:
-    compile_options = compile_options or get_xla_client().CompileOptions()
+    compile_options = compile_options or xla_client.CompileOptions()
     compile_options.num_replicas = num_replicas
   return compile_options
 
@@ -94,59 +104,50 @@ def memoize_thunk(func):
   return lambda: cached[0] if cached else (cached.append(func()) or cached[0])
 
 
-@memoize_thunk
-def get_xla_client():
-  return _get_xla_client(FLAGS.jax_xla_backend, FLAGS.jax_platform_name)
-
-
-def _get_xla_client(backend_name, platform_name):
-  """Configures and returns a handle to the XLA client.
-
-  Args:
-    backend_name: backend name, 'xla' or 'xrt'
-    platform_name: platform name for XLA backend
-
-  Returns:
-    A client library module, or an object that behaves identically to one.
-  """
-  global _platform_name
-  if backend_name == 'xla':
-    if platform_name:
-      xla_client.initialize_platform_name(platform_name)
-      _platform_name = platform_name
-    else:
-      try:
-        xla_client.initialize_platform_name('CUDA')
-        _platform_name = 'CUDA'
-      except RuntimeError:
-        warnings.warn('No GPU found, falling back to CPU.')
-        xla_client.initialize_platform_name('Host')
-        _platform_name = 'Host'
-  return xla_client
-
-
 _backends = {}
 
 def register_backend(name, factory):
   _backends[name] = factory
 
+def _get_local_backend():
+  platform = FLAGS.jax_platform_name
 
-if hasattr(xla_client, 'XlaLocalBackend'):
-  register_backend('xla', lambda: xla_client.XlaLocalBackend())
-  register_backend('xrt',
-                   lambda: xla_client.XrtBackend(FLAGS.jax_backend_target))
-else:
-  # TODO(phawkins): this case is for cross-version compatibility. Delete this
-  # case after a Jaxlib update.
-  register_backend(
-    'xla', lambda: xla_client.BackendSpec(xla_client.BackendType.XLA_LOCAL, ''))
-  register_backend(
-    'xrt', lambda: xla_client.BackendSpec(xla_client.BackendType.XRT,
-                                          FLAGS.jax_backend_target))
+  # Canonicalize platform names.
+  cpu = 'cpu'
+  gpu = 'gpu'
+  if platform == 'Host':
+    platform = cpu
+  elif platform == 'CUDA':
+    platform = gpu
+  elif platform == '':
+    platform = None
+
+  backend = xla_client.get_local_backend(platform)
+  if backend is None:
+    raise RuntimeError("No local XLA backends found.")
+
+  if backend.platform == cpu and platform != cpu:
+    warnings.warn('No GPU/TPU found, falling back to CPU.')
+
+  return backend
+
+def _get_xrt_backend():
+  # TODO(phawkins): support non-TPU devices.
+  tf_device_name = "TPU"
+  worker = "tpu_worker"
+  tf_context = xrt.get_tf_context(FLAGS.jax_backend_target, worker)
+  backend = xrt.XrtBackend(tf_context, tf_device_name)
+  #  TODO(phawkins) fix XrtBackend to set the following and remove this line.
+  backend.platform = "TPU"
+  return backend
+
+
+register_backend('xla', _get_local_backend)
+register_backend('xrt', _get_xrt_backend)
 
 
 @memoize_thunk
-def _get_backend():
+def get_backend():
   backend = _backends.get(FLAGS.jax_xla_backend)
   if backend is None:
     msg = 'Unknown jax_xla_backend value "{}".'
@@ -155,13 +156,25 @@ def _get_backend():
 
 
 def device_count():
-  _ = get_xla_client()  # ensure initialize_platform_name is called
-  return _get_backend().device_count()
+  return get_backend().device_count()
 
 
 def device_put(pyval, device_num=0):
-  client = get_xla_client()
-  return client.LocalBuffer.from_pyval(pyval, device_num, backend=_get_backend())
+  return xla_client.LocalBuffer.from_pyval(pyval, device_num,
+                                           backend=get_backend())
+
+def device_put_many(pyvals_and_devices):
+  # TODO(phawkins): remove the fallback path after dropping dependencies on
+  # Jaxlib older than 0.1.13.
+  if hasattr(xla_client.LocalBuffer, "from_pyvals"):
+    return xla_client.LocalBuffer.from_pyvals(pyvals_and_devices,
+                                              backend=get_backend())
+  else:
+    return [device_put(pyval, device) for (pyval, device) in pyvals_and_devices]
+
+def make_tuple(bufs, device_num=0):
+  return xla_client.Buffer.make_tuple(bufs, device=device_num,
+                                      backend=get_backend())
 
 
 Shape = xla_client.Shape        # pylint: disable=invalid-name
@@ -241,44 +254,32 @@ def shape_of(value):
 
 def infeed_put(replica_id, pyval):
   pyval = normalize_to_xla_dtypes(pyval)
-  return get_xla_client().transfer_to_infeed(
+  return xla_client.transfer_to_infeed(
       pyval, replica_number=replica_id)
 
 
-class _JaxComputationBuilderBase(object):
+class _JaxComputationBuilder(xla_client.ComputationBuilder):
   """Base class implementing all of JaxComputationBuilder.
 
   This class is intended to override and augment the interface of an XLA
-  ComputationBuilder to form JaxComputationBuilder, as made clear by
-  `get_jax_computation_builder_class`, which relies on Python's
-  method-resolution order to set up inheritance-like behavior. The class
-  inheritance setup is deferred because the choice of the XLA ComputationBuilder
-  class is based on the result of `get_xla_client()`. That is, the choice is
-  based at least on the setting of flags, which are available only after module
-  initialization time.
+  ComputationBuilder to form JaxComputationBuilder
   """
-  # The JAXComputationBuilder is implemented using subclassing and inheritance
-  # (via this base class), rather than a wrap-and-delegate style, simply to
-  # avoid having to spell out all the methods to be forwarded to a wrapped
-  # ComputationBuilder, especially since the underlying ComputationBuilders are
-  # likely to be revised in the future. An alternative is to generate these
-  # forwarding methods programmatically.
 
   # Method name case follows that of the XLA ComputationBuilder
   # pylint: disable=invalid-name
 
   def Build(self, *args, **kwargs):
-    return super(_JaxComputationBuilderBase, self).Build(
-        *args, backend=_get_backend(), **kwargs)
+    return super(_JaxComputationBuilder, self).Build(
+        *args, **kwargs)
 
   def Parameter(self, value, name=None, parameter_num=None):
-    return super(_JaxComputationBuilderBase, self).ParameterWithShape(
+    return super(_JaxComputationBuilder, self).ParameterWithShape(
         shape_of(value), name=name, parameter_num=parameter_num)
 
   def NumpyArrayConstant(self, value, canonicalize_types=True):
     if canonicalize_types:
       value = normalize_to_xla_dtypes(value)
-    return super(_JaxComputationBuilderBase, self).Constant(value)
+    return super(_JaxComputationBuilder, self).Constant(value)
 
   def ConstantLike(self, example_value, value, canonicalize_types=True):
     example_value = onp.asarray(example_value)
@@ -304,19 +305,12 @@ class _JaxComputationBuilderBase(object):
     if split_dimension == concat_dimension and len(replica_groups[0]) == 1:
       return operand
     else:
-      return super(_JaxComputationBuilderBase, self).AllToAll(
+      return super(_JaxComputationBuilder, self).AllToAll(
           operand, split_dimension, concat_dimension, replica_groups)
 
 
-@memoize_thunk
-def get_jax_computation_builder_class():
-  xla_base = get_xla_client().ComputationBuilder
-  jax_base = _JaxComputationBuilderBase
-  return type('JaxComputationBuilder', (jax_base, xla_base), {})
-
-
 def make_computation_builder(name):
-  return get_jax_computation_builder_class()(name)
+  return _JaxComputationBuilder(name)
 
 
 def register_constant_handler(type_, handler_fun):

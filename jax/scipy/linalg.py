@@ -93,7 +93,7 @@ def eigh(a, b=None, lower=True, eigvals_only=False, overwrite_a=False,
          check_finite=True):
   del overwrite_a, overwrite_b, turbo, check_finite
   if b is not None:
-    raise NotImplemented("Only the b=None case of eigh is implemented")
+    raise NotImplementedError("Only the b=None case of eigh is implemented")
   if type != 1:
     raise NotImplementedError("Only the type=1 case of eigh is implemented.")
   if eigvals is not None:
@@ -129,7 +129,7 @@ def lu(a, permute_l=False, overwrite_a=False, check_finite=True):
   del overwrite_a, check_finite
   a = np_linalg._promote_arg_dtypes(np.asarray(a))
   lu, pivots = lax_linalg.lu(a)
-  dtype = lax._dtype(a)
+  dtype = lax.dtype(a)
   m, n = np.shape(a)
   permutation = lax_linalg.lu_pivots_to_permutation(pivots, m)
   p = np.real(np.array(permutation == np.arange(m)[:, None], dtype=dtype))

@@ -39,11 +39,17 @@ def get_name(fun): return getattr(fun, "__name__", "<unnamed function>")
 def get_module(fun): return getattr(fun, "__module__", "<unknown module>")
 def get_doc(fun): return getattr(fun, "__doc__", "")
 
+@transformation_with_aux
+def pytree_fun_to_jaxtupletree_fun(args_trees, *args):
+  py_args = map(build_tree, args_trees, args)
+  ans = yield py_args, {}
+  yield pytree_to_jaxtupletree(ans)
 
 @transformation_with_aux
-def pytree_fun_to_jaxtupletree_fun(in_trees, *args):
-  py_args = map(build_tree, in_trees, args)
-  ans = yield py_args
+def pytree_fun_to_jaxtupletree_fun2(kwargs_tree, args_trees, kwargs, *args):
+  py_args = map(build_tree, args_trees, args)
+  py_kwargs = build_tree(kwargs_tree, kwargs)
+  ans = yield py_args, py_kwargs
   yield pytree_to_jaxtupletree(ans)
 
 def apply_jaxtree_fun(fun, io_tree, *py_args):
@@ -62,9 +68,16 @@ pytree_to_jaxtupletree = partial(process_pytree, pack)
 @transformation_with_aux
 def pytree_fun_to_flatjaxtuple_fun(in_trees, *args):
   py_args = map(tree_unflatten, in_trees, args)
-  ans = yield py_args
+  ans = yield py_args, {}
   yield pytree_to_flatjaxtuple(ans)
 
 def pytree_to_flatjaxtuple(pytree):
   flat_ans, out_tree = tree_flatten(pytree)
   return pack(flat_ans), out_tree
+
+
+@transformation_with_aux
+def flatten_fun(in_tree, *args_flat):
+  py_args, py_kwargs = tree_unflatten(in_tree, args_flat)
+  ans = yield py_args, py_kwargs
+  yield pytree_to_flatjaxtuple(ans)

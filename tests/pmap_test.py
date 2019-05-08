@@ -25,9 +25,9 @@ from absl.testing import parameterized
 
 import jax.numpy as np
 from jax import test_util as jtu
+from jax import core
 from jax import lax
-from jax.api import pmap, vmap, jvp, grad, make_jaxpr, linearize, device_put
-from jax.lax import psum
+from jax.api import pmap, jit, vmap, jvp, grad, make_jaxpr, linearize, device_put
 from jax.lib import xla_bridge
 from jax.util import prod
 from jax.interpreters import pxla
@@ -193,7 +193,7 @@ class PmapTest(jtu.JaxTestCase):
     expected = grad(lambda x: np.sum(baseline_fun(x)))(x)
     self.assertAllClose(ans, expected, check_dtypes=True)
 
-  def testShardedDeviceValues(self):
+  def testShardedDeviceArrays(self):
     f = lambda x: 2 * x
     f = pmap(f, axis_name='i')
 
@@ -202,15 +202,16 @@ class PmapTest(jtu.JaxTestCase):
 
     # test that we can pass in and out ShardedDeviceArrays
     y = f(x)
-    assert type(y) is pxla.ShardedDeviceArray  # pylint: disable=unidiomatic-typecheck
+    self.assertIsInstance(y, np.ndarray)
+    self.assertIsInstance(y, pxla.ShardedDeviceArray)
     self.assertAllClose(y, 2 * x, check_dtypes=False)
     z = f(y)
-    assert type(z) is pxla.ShardedDeviceArray  # pylint: disable=unidiomatic-typecheck
+    self.assertIsInstance(z, pxla.ShardedDeviceArray)
     self.assertAllClose(z, 2 * 2 * x, check_dtypes=False)
 
     # test that we can pass in a regular DeviceArray
     y = f(device_put(x))
-    assert type(y) is pxla.ShardedDeviceArray  # pylint: disable=unidiomatic-typecheck
+    self.assertIsInstance(y, pxla.ShardedDeviceArray)
     self.assertAllClose(y, 2 * x, check_dtypes=False)
 
     # test that we can pass a ShardedDeviceArray to a regular jit computation
@@ -221,6 +222,63 @@ class PmapTest(jtu.JaxTestCase):
     y.device_buffers = y.device_buffers[::-1]
     z = f(y)
     self.assertAllClose(z, 2 * 2 * x[::-1], check_dtypes=False)
+
+    # test that the repr doesn't crash
+    repr(z)
+
+  def testPsumMultiple(self):
+    f = lambda x: lax.psum(x, ('i', 'j'))
+    f = pmap(pmap(f, 'i'), 'j')
+
+    def sum_and_broadcast(x, axis):
+      return onp.repeat(onp.sum(x, axis, keepdims=True), x.shape[axis], axis)
+
+    device_count = xla_bridge.device_count()
+    num_pairs, ragged = divmod(device_count, 2)
+    if num_pairs > 1 and not ragged:
+      shape = (num_pairs, 2, 4)
+    else:
+      shape = (device_count, 1, 4)
+    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+
+    ans = f(x)
+    expected = sum_and_broadcast(sum_and_broadcast(x, 0), 1)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testReplicaGroups(self):
+    groups = pxla.replica_groups(8, [4, 2], (0,))
+    self.assertEqual(groups, ((0, 2, 4, 6), (1, 3, 5, 7)))
+
+    groups = pxla.replica_groups(8, [4, 2], (1,))
+    self.assertEqual(groups, ((0, 1), (2, 3), (4, 5), (6, 7)))
+
+    groups = pxla.replica_groups(8, [4, 2], (0, 1))
+    self.assertEqual(groups, ((0, 1, 2, 3, 4, 5, 6, 7,),))
+
+    groups = pxla.replica_groups(8, [4, 2], (1, 0))
+    self.assertEqual(len(groups), 1)
+    self.assertEqual((tuple(sorted(groups[0])),),
+                     ((0, 1, 2, 3, 4, 5, 6, 7,),))  # order doesn't matter
+
+  def testShardedDeviceTuple(self):
+    f = lambda x: core.pack((x, x))
+    f = pmap(f)
+
+    shape = (xla_bridge.device_count(), 4)
+    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+
+    # test that we can pass in and out ShardedDeviceTuples (and unpack them)
+    y = f(x)
+    self.assertIsInstance(y, pxla.ShardedDeviceTuple)
+    self.assertIsInstance(y, core.JaxTuple)
+    self.assertAllClose(y, (x, x), check_dtypes=False)
+    z = f(y)
+    self.assertIsInstance(z, pxla.ShardedDeviceTuple)
+    self.assertAllClose(z, (y, y), check_dtypes=True)
+
+    # test that we can pass a ShardedDeviceTuple to a regular jit computation
+    w = jit(lambda x: list(x)[0])(y)
+    self.assertAllClose(w, x, check_dtypes=False)
 
 
 if __name__ == '__main__':

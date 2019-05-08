@@ -42,9 +42,12 @@ def cholesky(x, symmetrize_input=True):
 def eigh(x, lower=True, symmetrize_input=True):
   if symmetrize_input:
     x = symmetrize(x)
-  return eigh_p.bind(x, lower=lower)
+  v, w = eigh_p.bind(x, lower=lower)
+  return v, w
 
-def lu(x): return lu_p.bind(x)
+def lu(x):
+  lu, pivots = lu_p.bind(x)
+  return lu, pivots
 
 def qr(x, full_matrices=True):
   q, r = qr_p.bind(x, full_matrices=full_matrices)
@@ -112,7 +115,7 @@ def cholesky_cpu_translation_rule(c, operand):
     # TODO(phawkins): support LAPACK primitives in batched mode.
     return c.Cholesky(operand)
 
-xla.backend_specific_translations['Host'][cholesky_p] = cholesky_cpu_translation_rule
+xla.backend_specific_translations['cpu'][cholesky_p] = cholesky_cpu_translation_rule
 
 
 # Symmetric/Hermitian eigendecomposition
@@ -134,7 +137,7 @@ def eigh_abstract_eval(operand, lower):
     batch_dims = operand.shape[:-2]
     n = operand.shape[-1]
     v = ShapedArray(batch_dims + (n, n), operand.dtype)
-    w = ShapedArray(batch_dims + (n,), operand.dtype)
+    w = ShapedArray(batch_dims + (n,), lax.lax._complex_basetype(operand.dtype))
   else:
     v, w = operand, operand
   return core.AbstractTuple((v, w))
@@ -178,7 +181,7 @@ eigh_p.def_impl(eigh_impl)
 eigh_p.def_abstract_eval(eigh_abstract_eval)
 xla.translations[eigh_p] = eigh_translation_rule
 ad.primitive_jvps[eigh_p] = eigh_jvp_rule
-xla.backend_specific_translations['Host'][eigh_p] = eigh_cpu_translation_rule
+xla.backend_specific_translations['cpu'][eigh_p] = eigh_cpu_translation_rule
 
 
 
@@ -261,7 +264,7 @@ def triangular_solve_cpu_translation_rule(
     # TODO(phawkins): support BLAS primitives in batched mode.
     return c.TriangularSolve(a, b, left_side, lower, transpose_a, conjugate_a)
 
-xla.backend_specific_translations['Host'][triangular_solve_p] = triangular_solve_cpu_translation_rule
+xla.backend_specific_translations['cpu'][triangular_solve_p] = triangular_solve_cpu_translation_rule
 
 
 # LU decomposition
@@ -299,7 +302,7 @@ def lu_jvp_rule(primals, tangents):
 
   a_shape = np.shape(a)
   m, n = a_shape[-2:]
-  dtype = lax._dtype(a)
+  dtype = lax.dtype(a)
   k = min(m, n)
 
   permutation = lu_pivots_to_permutation(pivots, m)
@@ -338,29 +341,31 @@ def lu_jvp_rule(primals, tangents):
   return core.pack((lu, pivots)), ad.TangentTuple((lu_dot, ad_util.zero))
 
 
+def lu_batching_rule(batched_args, batch_dims):
+  x, = batched_args
+  bd, = batch_dims
+  x = batching.bdim_at_front(x, bd)
+  return lu_p.bind(x), 0
+
+
 lu_p = Primitive('lu')
 lu_p.def_impl(lu_impl)
 lu_p.def_abstract_eval(lu_abstract_eval)
 xla.translations[lu_p] = lu_translation_rule
 ad.primitive_jvps[lu_p] = lu_jvp_rule
+batching.primitive_batchers[lu_p] = lu_batching_rule
 
 def lu_cpu_translation_rule(c, operand):
   shape = c.GetShape(operand)
   dtype = shape.element_type().type
-  if len(shape.dimensions()) == 2 and dtype in _cpu_lapack_types:
-    out = lapack.jax_getrf(c, operand)
-    lu = c.GetTupleElement(out, 0)
-    # Subtract 1 from the pivot to get 0-based indices.
-    pivot = c.Sub(c.GetTupleElement(out, 1), c.ConstantS32Scalar(1))
-    # Throw away the `info` value, because we have no way to report errors.
-    return c.Tuple(lu, pivot)
-  else:
-    raise NotImplementedError("Only unbatched LU decomposition is implemented")
+  out = lapack.jax_getrf(c, operand)
+  lu = c.GetTupleElement(out, 0)
+  # Subtract 1 from the pivot to get 0-based indices.
+  pivot = c.Sub(c.GetTupleElement(out, 1), c.ConstantS32Scalar(1))
+  # Throw away the `info` value, because we have no way to report errors.
+  return c.Tuple(lu, pivot)
 
-# TODO(phawkins): The hasattr() test here is to avoid incompatibilities between
-# jax and an older jaxlib. Remove after a jaxlib release includes jax_getrf.
-if hasattr(lapack, "jax_getrf"):
-  xla.backend_specific_translations['Host'][lu_p] = lu_cpu_translation_rule
+xla.backend_specific_translations['cpu'][lu_p] = lu_cpu_translation_rule
 
 
 def lu_pivots_to_permutation(swaps, k):
@@ -376,8 +381,8 @@ def lu_pivots_to_permutation(swaps, k):
 
   n, = np.shape(swaps)
   permutation = np.arange(k)
-  _, permutation = lax.fori_loop(onp.array(0, onp.int32), onp.array(n, onp.int32),
-                                 body_fn, (swaps, permutation))
+  _, permutation = lax.fori_loop(
+      onp.array(0, onp.int32), onp.array(n, onp.int32), body_fn, (swaps, permutation))
   return permutation
 
 
@@ -421,11 +426,19 @@ def qr_jvp_rule(primals, tangents, full_matrices):
   dr = np.matmul(qt_dx_rinv - domega, r)
   return core.pack((q, r)), core.pack((dq, dr))
 
+def qr_batching_rule(batched_args, batch_dims, full_matrices):
+  x, = batched_args
+  bd, = batch_dims
+  x = batching.bdim_at_front(x, bd)
+  q, r = qr(x, full_matrices=full_matrices)
+  return qr_p.bind(x, full_matrices=full_matrices), 0
+
 qr_p = Primitive('qr')
 qr_p.def_impl(qr_impl)
 qr_p.def_abstract_eval(qr_abstract_eval)
 xla.translations[qr_p] = qr_translation_rule
 ad.primitive_jvps[qr_p] = qr_jvp_rule
+batching.primitive_batchers[qr_p] = qr_batching_rule
 
 
 # Singular value decomposition
@@ -455,6 +468,32 @@ def svd_abstract_eval(operand, full_matrices, compute_uv):
     vt = operand
   return core.AbstractTuple((s, u, vt))
 
+def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
+  if full_matrices:
+    #TODO: implement full matrices case, documented here: https://people.maths.ox.ac.uk/gilesm/files/NA-08-01.pdf
+    raise NotImplementedError("Singular value decomposition JVP not implemented for full matrices")
+  A, = primals
+  dA, = tangents
+  s, U, Vt = svd_p.bind(A, full_matrices=False, compute_uv=True)
+
+  k = s.shape[-1]
+  Ut, V = np.conj(U).T, np.conj(Vt).T
+  s_dim = s[..., None, :]
+  dS = np.dot(np.dot(Ut, dA), V)
+  ds = np.diag(dS)
+  F = 1 / (np.square(s_dim) - np.square(s_dim.T) + np.eye(k)) - np.eye(k)
+  dSS = s_dim * dS
+  SdS = s_dim.T * dS
+  dU = np.dot(U, F * (dSS + dSS.T))
+  dV = np.dot(V, F * (SdS + SdS.T))
+
+  m, n = A.shape[-2], A.shape[-1]
+  if m > n:
+    dU = dU + np.dot(np.eye(m) - np.dot(U, Ut), np.dot(dA, V)) / s_dim
+  if n > m:
+    dV = dV + np.dot(np.eye(n) - np.dot(V, Vt), np.dot(np.conj(dA).T, U)) / s_dim
+  return core.pack((s, U, Vt)), core.pack((ds, dU, dV.T))
+
 def svd_cpu_translation_rule(c, operand, full_matrices, compute_uv):
   shape = c.GetShape(operand)
   dtype = shape.element_type().type
@@ -467,8 +506,16 @@ def svd_cpu_translation_rule(c, operand, full_matrices, compute_uv):
     raise NotImplementedError(
         "Only unbatched singular value decomposition is implemented on CPU")
 
+def svd_batching_rule(batched_args, batch_dims, full_matrices, compute_uv):
+  x, = batched_args
+  bd, = batch_dims
+  x = batching.bdim_at_front(x, bd)
+  return svd_p.bind(x, full_matrices=full_matrices, compute_uv=compute_uv), 0
+
 svd_p = Primitive('svd')
 svd_p.def_impl(svd_impl)
 svd_p.def_abstract_eval(svd_abstract_eval)
 xla.translations[svd_p] = svd_translation_rule
-xla.backend_specific_translations['Host'][svd_p] = svd_cpu_translation_rule
+xla.backend_specific_translations['cpu'][svd_p] = svd_cpu_translation_rule
+ad.primitive_jvps[svd_p] = svd_jvp_rule
+batching.primitive_batchers[svd_p] = svd_batching_rule
