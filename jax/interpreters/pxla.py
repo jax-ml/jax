@@ -214,6 +214,7 @@ def replicated_comp(jaxpr, ax_env, const_vals, freevar_shapes, *arg_shapes):
 
   env = {}
   write(core.unitvar, c.Tuple())
+  assert False  # TODO update with pat_fmap
   if const_vals:
     map(write, jaxpr.constvars, map(c.Constant, const_vals))
     map(write, jaxpr.freevars, map(c.ParameterWithShape, freevar_shapes))
@@ -222,7 +223,8 @@ def replicated_comp(jaxpr, ax_env, const_vals, freevar_shapes, *arg_shapes):
     map(write, all_freevars, map(c.ParameterWithShape, freevar_shapes))
   map(write, jaxpr.invars, map(c.ParameterWithShape, arg_shapes))
   for eqn in jaxpr.eqns:
-    in_nodes = map(read, eqn.invars)  # TODO
+    assert False  # TODO udpate with eqn.restructure
+    in_nodes = map(read, eqn.invars)
     if eqn.primitive in parallel_translation_rules:
       name = eqn.params['axis_name']
       params = {k: eqn.params[k] for k in eqn.params if k != 'axis_name'}

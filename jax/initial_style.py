@@ -15,19 +15,6 @@ from jax.interpreters import ad
 from jax import ad_util
 
 
-def pvals_with_zeros(zero_components, aval):
-  if zero_components is True:
-    return pe.PartialVal((None, ad.zero))
-  elif zero_components is False:
-    return pe.PartialVal((aval, core.unit))
-  elif isinstance(zero_components, ZeroTuple):
-    avals, consts = unzip(map, pvals_with_zeros, zero_components, aval)
-    return pe.PartialVal((core.AbstractTuple(avals),
-                          core.JaxprTracerTuple(consts)))
-
-strip_zeros = partial(ad.strip_zeros, core.unit, core.pack)
-strip_zeros_aval = partial(ad.strip_zeros, core.AbstractTuple(()), core.AbstractTuple)
-
 def convert_zeros(keep_symbolic, example, tangent):
   if tangent is ad.zero:
     if keep_symbolic:
@@ -39,34 +26,6 @@ def convert_zeros(keep_symbolic, example, tangent):
   else:
     return tangent
 
-
-_call_const = pe.gensym('_consts')
-
-def call_initial(f, *args):
-  pvals = map(_abstractify, args)
-  avals = [aval for (aval, _) in pvals]
-  jaxpr, _, consts = pe.trace_to_jaxpr(
-      lu.wrap_init(f), pvals, instantiate=True)
-  lifted_jaxpr = pe._closure_convert_jaxpr(jaxpr, _call_const)
-  lifted_args = (core.pack(consts),) + args
-  return call_initial_p.bind(*lifted_args, jaxpr=lifted_jaxpr, consts=())
-
-def _call_initial_impl(*args, **kwargs):
-  jaxpr = kwargs.pop('jaxpr')
-  consts = kwargs.pop('consts')
-  return core.jaxpr_as_fun(jaxpr, consts)(*args)
-
-def _call_initial_jvp(primals, tangents, jaxpr, consts):
-  avals = [aval for (aval, _) in map(_abstractify, primals)]
-  where_zeros = map(ad.get_zeros, tangents)
-  nonzero_tangents = strip_zeros(where_zeros, tangents)
-  jaxpr_jvp, new_consts, where_zeros_out = ad.jvp_jaxpr(jaxpr, consts, avals, where_zeros)
-  primal_out, tangent_out = call_initial_p.bind(
-      core.pack(primals), core.pack(nonzero_tangents), jaxpr=jaxpr_jvp,
-      consts=new_consts)
-  tangent_out_zeros = ad.put_zeros(ad.TangentTuple, where_zeros_out, tangent_out)
-  return primal_out, tangent_out_zeros
-
 def is_const(x):
   if x is None:
     return True
@@ -76,44 +35,6 @@ def is_const(x):
     return False
   else:
     raise TypeError(type(x))
-
-def as_aval(pv, const):
-  if pv is None:
-    pv, _ = _abstractify(const)
-    return pv
-  elif type(pv) is pe.JaxprTracerTuple:
-    return core.AbstractTuple(map(as_aval, pv, const))
-  elif isinstance(pv, core.AbstractValue):
-    return pv
-  else:
-    raise TypeError((pv, const))
-
-def _call_initial_partial_eval(trace, *tracers, **kwargs):
-  jaxpr = kwargs.pop('jaxpr')
-  consts = kwargs.pop('consts')
-  in_pvs, in_consts = unzip2([t.pval for t in tracers])
-  first_components = map(is_const, in_pvs)
-  avals = map(as_aval, in_pvs, in_consts)
-  (jaxpr_1, consts_1), (jaxpr_2, consts_2), out_pv, first_components_out = \
-      pe.partial_eval_jaxpr(jaxpr, consts, avals, first_components)
-  out_const, residuals = call_initial_p.bind(
-      *in_consts, jaxpr=jaxpr_1, consts=consts_1)
-  residual_tracers = core.pack(map(trace.new_instantiated_const, residuals))
-  eqn = core.JaxprEqn((residual_tracers,) + tracers, None, call_initial_p, (),
-                      False, False, dict(jaxpr=jaxpr_2, consts=consts_2))
-  return pe.JaxprTracer(trace, pe.PartialVal((out_pv, out_const)), eqn)
-
-
-def _call_initial_transpose():
-  assert False
-
-call_initial_p = core.Primitive("call_initial")
-call_initial_p.def_impl(_call_initial_impl)
-ad.primitive_jvps[call_initial_p] = _call_initial_jvp
-pe.custom_partial_eval_rules[call_initial_p] = _call_initial_partial_eval
-
-
-###
 
 
 def demote_aval_rank(xs):
@@ -161,7 +82,10 @@ def scan_initial(f, init, xs):
   jaxpr, pval_out, consts = pe.trace_to_jaxpr(
       lu.wrap_init(f), (carry_pval, x_pval), instantiate=True)
   (carry_aval_out, y_aval), _ = pval_out
-  assert carry_aval == carry_aval_out
+  if carry_aval != carry_aval_out:
+    msg = ("scanned function carry output does not match carry input: "
+           "input carry is {} and output carry is {}")
+    raise TypeError(msg.format(carry_aval, carry_aval_out))
   lifted_jaxpr = pe._closure_convert_jaxpr(jaxpr)
   consts_aval, _ = _abstractify(core.pack(consts))
   in_avals = (consts_aval, carry_aval, x_aval)
@@ -186,16 +110,8 @@ def _scan_initial_impl(consts, init, xs, forward, length, jaxpr):
     return (carry_out, ys_out)
 
   ys_init = empty_arrays(ys_aval)
-  # carry, ys = lax.fori_loop(0, length, body_fun, (init, ys_init))
-  carry, ys = fori_loop(0, length, body_fun, (init, ys_init))
+  carry, ys = lax.fori_loop(0, length, body_fun, (init, ys_init))
   return core.pack((carry, ys))
-
-# TODO remove
-def fori_loop(start, stop, body_fun, init_val):
-  carry = init_val
-  for i in range(start, stop):
-    carry = body_fun(i, carry)
-  return carry
 
 
 def _scan_initial_jvp(primals, tangents, forward, length, jaxpr):
@@ -211,7 +127,7 @@ def _scan_initial_jvp(primals, tangents, forward, length, jaxpr):
   where_carry_zeros = where_init_zeros
   while True:
     where_zeros = (where_consts_zeros, where_carry_zeros, where_xs_zeros)
-    jaxpr_jvp, where_zeros_out = ad.jvp_jaxpr2(jaxpr, where_zeros)
+    jaxpr_jvp, where_zeros_out = ad.jvp_jaxpr(jaxpr, where_zeros)
     where_carry_zeros_out, where_ys_zeros = where_zeros_out
     if where_carry_zeros_out == where_carry_zeros:
       break
@@ -239,17 +155,6 @@ def _scan_initial_jvp(primals, tangents, forward, length, jaxpr):
   carry_out_dot = ad.put_zeros(ad.TangentTuple, where_carry_zeros_out, carry_out_dot)
   return core.pack((carry_out, ys)), ad.TangentTuple((carry_out_dot, ys_dot))
 
-def instantiate_zeros(example, tangent, keep_symbolic):
-  if tangent is ad.zero:
-    if keep_symbolic:
-      return tangent
-    else:
-      return ad.zeros_like_jaxval(example)
-  elif isinstance(tangent, ad.TangentTuple):
-    return ad.TangentTuple(map(instantiate_zeros, example, tangent, keep_symbolic))
-  else:
-    return tangent
-
 def binary_lattice_join(a, b):
   t = (type(a), type(b))
   if t == (tuple, tuple):
@@ -275,7 +180,7 @@ def _scan_initial_partial_eval(trace, *tracers, **kwargs):
   fc_carry = fc_init
   while True:
     first_components = (fc_consts, fc_carry, fc_xs)
-    jaxpr_1, jaxpr_2, fc_out = pe.partial_eval_jaxpr2(jaxpr, first_components)
+    jaxpr_1, jaxpr_2, fc_out = pe.partial_eval_jaxpr(jaxpr, first_components)
     fc_carry_out, fc_ys = fc_out
     if fc_carry_out == fc_carry:
       break
@@ -327,13 +232,14 @@ def _scan_initial_transpose(ct, consts, init, xs, forward, length, jaxpr):
   a, res = xs
   assert a is None and res is not None
 
-  # jaxpr :: d -> c -> (a, res) ->  (c, b)  # TODO assuming restructuring input
+  # jaxpr :: d -> c -> (a, res) ->  (c, b)
   # jaxpr_lifted :: res -> (d, c, a) -> (c, b)
   # jaxpr_lifted_trans :: res -> (CT c, CT b) -> (CT d, CT c, CT a)
   # jaxpr_trans :: * -> (CT c, CT d) -> (CT b, res) -> ((CT c, CT d), CT a)
+  assert type(jaxpr.jaxpr.invars[2]) is tuple  # assume restructuring
   jaxpr_lifted = rearrange_binders(
       lambda d, c, a_res: (a_res[1], (d, c, a_res[0])), jaxpr)
-  jaxpr_lifted_trans = transpose_jaxpr2(jaxpr_lifted)
+  jaxpr_lifted_trans = _transpose_jaxpr(jaxpr_lifted)
   jaxpr_trans = _move_stuff_and_add_add(jaxpr_lifted_trans)
 
   c_aval, b_aval = jaxpr.out_aval
@@ -379,7 +285,7 @@ def _move_stuff_and_add_add(typed_jaxpr):
                                  CTa_aval))
 
   jaxpr = typed_jaxpr.jaxpr.copy()
-  # TODO assume not restructuring input
+  # assume the jaxpr isn't restructuring any inputs
   assert not any(type(invar) is tuple for invar in jaxpr.invars)
 
   # munge input side
@@ -407,7 +313,7 @@ def _move_stuff_and_add_add(typed_jaxpr):
        _pack_eqn([partial_out, CTa], outvar)])
   jaxpr.outvar = outvar
 
-  # TODO should really have a check_typed_jaxpr
+  # TODO(mattjj): use check_typed_jaxpr
   core.skip_checks or core.check_jaxpr(jaxpr)
   return core.TypedJaxpr(jaxpr, typed_jaxpr.literals,
                          in_avals, out_aval)
@@ -417,7 +323,7 @@ def _add_any_eqn(tot, a, b):
 
 
 # transpose_jaxpr :: (res -> a -> b) -> (res -> CT b -> CT a)
-def transpose_jaxpr2(jaxpr):
+def _transpose_jaxpr(jaxpr):
   assert len(jaxpr.in_avals) == 2
 
   @lu.wrap_init
@@ -427,10 +333,10 @@ def transpose_jaxpr2(jaxpr):
     a_bar = ad.instantiate_zeros_aval(jaxpr.in_avals[1], a_bar)
     return a_bar
 
-  transposed_jaxpr = make_typed_jaxpr(transposed, (jaxpr.in_avals[0], jaxpr.out_aval))
+  transposed_jaxpr = _make_typed_jaxpr(transposed, (jaxpr.in_avals[0], jaxpr.out_aval))
   return transposed_jaxpr
 
-def make_typed_jaxpr(traceable, in_avals):
+def _make_typed_jaxpr(traceable, in_avals):
   pvals = [pe.PartialVal((aval, core.unit)) for aval in in_avals]
   jaxpr, pval_out, consts = pe.trace_to_jaxpr(traceable, pvals, instantiate=True)
   out_aval, _ = pval_out

@@ -152,19 +152,25 @@ def jaxpr_computation(jaxpr, const_vals, freevar_shapes, *arg_shapes):
     assert node is not None
     env[v] = node
 
+  def write_constant(v, val): write(v, c.Constant(val))
+  def write_param(v, shape): write(v, c.ParameterWithShape(shape))
+
   env = {}
-  consts_env = dict(zip(jaxpr.constvars, const_vals))
   write(core.unitvar, c.Tuple())
-  # TODO update with core.fmap
+  core.pat_fmap(write_param, jaxpr.invars, arg_shapes)
   if const_vals:
-    map(write, jaxpr.constvars, map(c.Constant, const_vals))
-    map(write, jaxpr.freevars, map(c.ParameterWithShape, freevar_shapes))
+    core.pat_fmap(write_constant, jaxpr.constvars, const_vals)
+    core.pat_fmap(write_param, jaxpr.freevars, freevar_shapes)
   else:
     all_freevars = it.chain(jaxpr.constvars, jaxpr.freevars)
-    map(write, all_freevars, map(c.ParameterWithShape, freevar_shapes))
-  map(write, jaxpr.invars, map(c.ParameterWithShape, arg_shapes))
+    core.pat_fmap(write_param, all_freevars, freevar_shapes)
+
   for eqn in jaxpr.eqns:
-    in_nodes = map(read, eqn.invars)
+    if not eqn.restructure:
+      in_nodes = map(read, eqn.invars)
+    else:
+      in_nodes = [xla_pack(c, map(read, invars)) if type(invars) is tuple
+                  else read(invars) for invars in eqn.invars]
     in_shapes = map(c.GetShape, in_nodes)
     subcs = [
         jaxpr_computation(
@@ -183,6 +189,9 @@ def jaxpr_computation(jaxpr, const_vals, freevar_shapes, *arg_shapes):
 def xla_destructure(c, ans):
   num_elements = len(c.GetShape(ans).tuple_shapes())
   return [c.GetTupleElement(ans, i) for i in range(num_elements)]
+
+def xla_pack(c, xs):
+  return c.Tuple(*xs)
 
 def tuple_constant(c, val, canonicalize_types=True):
   return c.Tuple(*map(c.Constant, val))
@@ -224,8 +233,17 @@ def zeros_like_translation_rule(c, x):
                          shape.dimensions())
   return _zeros_like(c.GetShape(x))
 
+def add_jaxvals_translation_rule(c, x, y):
+  x_shape, y_shape = map(c.GetShape, (x, y))
+  if x_shape.is_tuple() and y_shape.is_tuple():
+    xs = xla_destructure(c, x)
+    ys = xla_destructure(c, y)
+    return c.Tuple(*map(partial(add_jaxvals_translation_rule, c), xs, ys))
+  else:
+    return c.Add(x, y)
+
 translations[ad_util.zeros_like_p] = zeros_like_translation_rule
-translations[ad_util.add_jaxvals_p] = lambda c, x, y: c.Add(x, y)
+translations[ad_util.add_jaxvals_p] = add_jaxvals_translation_rule
 
 
 def canonicalize_pyval_dtype(x):
