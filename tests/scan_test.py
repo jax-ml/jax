@@ -2,7 +2,7 @@ from functools import partial
 
 import numpy as onp
 
-from jax.initial_style import scan_initial
+from jax.initial_style import scan
 from jax.core import pack
 import jax.core as core
 import jax.numpy as np
@@ -33,19 +33,19 @@ as_ = np.ones((5, 3))
 c = np.ones(4)
 
 print scan_reference(f, c, as_)
-print scan_initial(f, c, as_)
+print scan(f, c, as_)
 print
 
 print jvp(lambda c, as_: scan_reference(f, c, as_), (c, as_), (c, as_))[1]
-print jvp(lambda c, as_:   scan_initial(f, c, as_), (c, as_), (c, as_))[1]
+print jvp(lambda c, as_:   scan(f, c, as_), (c, as_), (c, as_))[1]
 print
 
 print linearize(lambda c, as_: scan_reference(f, c, as_), c, as_)[1](c, as_)
-print linearize(lambda c, as_:   scan_initial(f, c, as_), c, as_)[1](c, as_)
+print linearize(lambda c, as_:   scan(f, c, as_), c, as_)[1](c, as_)
 print
 
 print grad(lambda c, as_: list(scan_reference(f, c, as_))[0].sum())(c, as_)
-print grad(lambda c, as_:   list(scan_initial(f, c, as_))[0].sum())(c, as_)
+print grad(lambda c, as_:   list(scan(f, c, as_))[0].sum())(c, as_)
 print
 
 # ###
