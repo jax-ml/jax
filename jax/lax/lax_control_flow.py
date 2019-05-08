@@ -482,12 +482,11 @@ def _update_arrays(i, aval, xs, x):
   else:
     return lax.dynamic_update_index_in_dim(xs, x[None, ...], i, axis=0)
 
-# scan :: (c -> a -> (c, b)) -> c -> [a] -> (c, [b])
-def scan(f, init, xs):
-  """Scan a function over array axes while carrying along state.
 
-  Scan is similar to a fold, but also returns the successive reduced values. Its
-  type signature in brief is
+def scan(f, init, xs):
+  """Scan a function over leading array axes while carrying along state.
+
+  The type signature in brief is
 
   .. code-block:: haskell
 
@@ -496,8 +495,8 @@ def scan(f, init, xs):
   where we use [t] here to denote the type t with an additional leading axis.
   That is, if t is an array type then [t] represents the type with an additional
   leading axis, and if t is a pytree (container) type with array leaves then [t]
-  represents the type type with the same pytree structure and corresponding
-  leaves each with an additional leading axis.
+  represents the type with the same pytree structure and corresponding leaves
+  each with an additional leading axis.
 
   When both ``a`` and ``b`` are array types, the semantics of ``scan`` are given
   by this Python implementation::
