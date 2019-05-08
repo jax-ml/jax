@@ -42,18 +42,15 @@ from jax import ad_util
 ### fori_loop and while_loop
 
 def fori_loop(lower, upper, body_fun, init_val):
-  """Loop from `lower` to `upper` by reduction to `while_loop`.
+  """Loop from ``lower`` to ``upper`` by reduction to ``while_loop``.
 
-  Arguments:
-    lower: loop index lower bound (inclusive)
-    upper: loop index upper bound (exclusive)
-    body_fun: function of type (int, T) -> T, where T is the type of `init_val`
-    init_val: initial loop value, of type T
+  The type signature in brief is
 
-  Returns:
-    Loop value from the final iteration, of type T.
+  .. code-block:: haskell
 
-  The semantics of `fori_loop` are given by this Python implementation::
+    fori_loop :: Int -> Int -> ((int, a) -> a) -> a -> a
+
+  The semantics of ``fori_loop`` are given by this Python implementation::
 
     def fori_loop(lower, upper, body_fun, init_val):
       val = init_val
@@ -61,8 +58,17 @@ def fori_loop(lower, upper, body_fun, init_val):
         val = body_fun(i, val)
       return val
 
-  Unlike that pure Python version, `fori_loop` is implemented in terms of a call
-  to `while_loop`. See the docstring for `while_loop` for more information.
+  Unlike that Python version, ``fori_loop`` is implemented in terms of a call to
+  ``while_loop``. See the docstring for ``while_loop`` for more information.
+
+  Args:
+    lower: an integer representing the loop index lower bound (inclusive)
+    upper: an integer representing the loop index upper bound (exclusive)
+    body_fun: function of type ``(int, a) -> a``.
+    init_val: initial loop carry value of type ``a``.
+
+  Returns:
+    Loop value from the final iteration, of type ``a``.
   """
   def while_cond_fun(loop_carry):
     i, _ = loop_carry
@@ -77,18 +83,15 @@ def fori_loop(lower, upper, body_fun, init_val):
 
 
 def while_loop(cond_fun, body_fun, init_val):
-  """Call `body_fun` repeatedly in a loop while `cond_fun` is True.
+  """Call ``body_fun`` repeatedly in a loop while ``cond_fun`` is True.
 
-  Arguments:
-    cond_fun: pure function of type `T -> Bool`.
-    body_fun: pure function of type `T -> T`.
-    init_val: value of type `T`, a type that can be a scalar, array, or any
-      (nested) Python tuple/list/dict thereof.
+  The type signature in brief is
 
-  Returns:
-    The output from the final iteration of body_fun, of type `T`.
+  .. code-block:: haskell
 
-  The semantics of `while_loop` are given by this Python implementation::
+    while_loop :: (a -> Bool) -> (a -> a) -> a -> a
+
+  The semantics of ``while_loop`` are given by this Python implementation::
 
     def while_loop(cond_fun, body_fun, init_val):
       val = init_val
@@ -96,15 +99,24 @@ def while_loop(cond_fun, body_fun, init_val):
         val = body_fun(val)
       return val
 
-  Unlike that pure Python version, `while_loop` is a JAX primitive and is
-  lowered to a single XLA While HLO. That makes it useful for reducing
-  compilation times for jit-compiled functions, since native Python loop
-  constructs in an `@jit` function are unrolled, leading to large XLA
-  computations.
+  Unlike that Python version, ``while_loop`` is a JAX primitive and is lowered
+  to a single XLA While HLO. That makes it useful for reducing compilation times
+  for jit-compiled functions, since native Python loop constructs in an ``@jit``
+  function are unrolled, leading to large XLA computations.
 
   Another difference from using Python-native loop constructs is that
-  `while_loop` is not (yet) reverse-mode differentiable because XLA computations
+  ``while_loop`` is not reverse-mode differentiable because XLA computations
   require static bounds on memory requirements.
+
+  Args:
+    cond_fun: function of type ``a -> Bool``.
+    body_fun: function of type ``a -> a``.
+    init_val: value of type ``a``, a type that can be a scalar, array, or any
+      pytree (nested Python tuple/list/dict) thereof, representing the initial
+      loop carry value.
+
+  Returns:
+    The output from the final iteration of body_fun, of type ``a``.
   """
   init_val_flat, in_tree = pytree_to_jaxtupletree(init_val)
   flat_body_fun, out_tree = pytree_fun_to_jaxtupletree_fun(lu.wrap_init(body_fun), (in_tree,))
@@ -472,6 +484,58 @@ def _update_arrays(i, aval, xs, x):
 
 # scan :: (c -> a -> (c, b)) -> c -> [a] -> (c, [b])
 def scan(f, init, xs):
+  """Scan a function over array axes while carrying along state.
+
+  Scan is similar to a fold, but also returns the successive reduced values. Its
+  type signature in brief is
+
+  .. code-block:: haskell
+
+    scan :: (c -> a -> (c, b)) -> c -> [a] -> (c, [b])
+
+  where we use [t] here to denote the type t with an additional leading axis.
+  That is, if t is an array type then [t] represents the type with an additional
+  leading axis, and if t is a pytree (container) type with array leaves then [t]
+  represents the type type with the same pytree structure and corresponding
+  leaves each with an additional leading axis.
+
+  When both ``a`` and ``b`` are array types, the semantics of ``scan`` are given
+  by this Python implementation::
+
+    def scan(f, init, xs):
+      carry = init
+      ys = []
+      for x in xs:
+        carry, y = f(carry, x)
+        ys.append(y)
+      return carry, np.stack(ys)
+
+  Unlike that Python version, both ``a`` and ``b`` may be arbitrary pytree
+  types, and so multiple arrays can be scanned over at once.
+
+  Also unlike that Python version, ``scan`` is a JAX primitive and is lowered to
+  a single XLA While HLO. That makes it useful for reducing compilation times
+  for jit-compiled functions, since native Python loop constructs in an ``@jit``
+  function are unrolled, leading to large XLA computations.
+
+  Args:
+    f: a Python function to be scanned of type ``c -> a -> (c, b)``, meaning
+      that ``f`` accepts two arguments where the first is a value of the loop
+      carry and the second is a slice of ``xs`` along its leading axis, and that
+      ``f`` returns a pair where the first element represents a new value for
+      the loop carry and the second represents a slice of the output.
+    init: an initial loop carry value of type ``c``, which can be a scalar,
+      array, or any pytree (nested Python tuple/list/dict) thereof, representing
+      the initial loop carry value.
+    xs: the value of type ``[a]`` over which to scan along the leading axis,
+      where ``[a]`` can be an array or any pytree (nested Python
+      tuple/list/dict) thereof with consistent leading axis sizes.
+
+  Returns:
+    A pair of type ``(c, [b])`` where the first element represents the final
+    loop carry value and the second element represents the stacked outputs of
+    the second output of ``f`` when scanned over the leading axis of the inputs.
+  """
   carry_pval = carry_aval, _ = _abstractify(init)
   xs_aval, _ = _abstractify(xs)
   x_aval = _demote_aval_rank(xs_aval)
@@ -710,10 +774,9 @@ def _move_stuff_and_add_add(typed_jaxpr):
        pe._pack_eqn([partial_out, CTa], outvar)])
   jaxpr.outvar = outvar
 
-  # TODO(mattjj): use check_typed_jaxpr
+  # TODO(mattjj): add a check_typed_jaxpr and use it here
   core.skip_checks or core.check_jaxpr(jaxpr)
-  return core.TypedJaxpr(jaxpr, typed_jaxpr.literals,
-                         in_avals, out_aval)
+  return core.TypedJaxpr(jaxpr, typed_jaxpr.literals, in_avals, out_aval)
 
 def _add_any_eqn(tot, a, b):
   return core.JaxprEqn([a, b], [tot], ad_util.add_jaxvals_p, (), False, False, {})
