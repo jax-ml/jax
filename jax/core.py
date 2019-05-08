@@ -142,8 +142,8 @@ def eval_jaxpr(jaxpr, consts, freevar_vals, *args):
     if not eqn.restructure:
       in_vals = map(read, eqn.invars)
     else:
-      in_vals = [pack(map(read, invars)) if type(invars) is tuple else read(invars)
-                 for invars in eqn.invars]
+      in_vals = [pack(map(read, invars)) if type(invars) is tuple
+                 else read(invars) for invars in eqn.invars]
     subfuns = [partial(eval_jaxpr, subjaxpr, map(read, const_bindings),
                                              map(read, freevar_bindings))
                for subjaxpr, const_bindings, freevar_bindings

@@ -572,28 +572,6 @@ def jaxpr_as_fun(jaxpr, consts, *args):
 
 _partial_eval_gensym = gensym('_peval')
 
-def partial_eval_jaxpr(jaxpr, consts, avals, first_components):
-  # jaxpr :: a -> b -> c
-  f = lu.wrap_init(partial(jaxpr_as_fun, jaxpr, consts))
-
-  cell = []
-  def fun(*vals):
-    pvals = map(as_pval, avals, first_components, vals)
-    jaxpr_2, out_pval, consts_2 = trace_to_jaxpr(f, pvals)
-    out_pv, out_const = out_pval
-    cell.append((out_pv, jaxpr_2))
-    return pack((out_const, pack(consts_2)))
-
-  pvals = map(as_pval2, avals, first_components)
-  jaxpr_1, out_pval, consts_1 = trace_to_jaxpr(
-      lu.wrap_init(fun), pvals, instantiate=True)
-  out_pv_2, jaxpr_2 = cell[0]
-  lifted_jaxpr_2 = _closure_convert_jaxpr(jaxpr_2, _partial_eval_gensym)
-  fc_out = isnone(out_pv_2)
-  # jaxpr_1 :: a1 -> b1 -> (c1, res)
-  # lifted_jaxpr_2 :: res -> a2 -> b2 -> c2
-  return (jaxpr_1, consts_1), (lifted_jaxpr_2, ()), out_pv_2, fc_out
-
 
 def _closure_convert_jaxpr(jaxpr):
   lifted_jaxpr = jaxpr.copy()
@@ -609,7 +587,7 @@ def _pack_eqn(invars, outvar):
   return core.JaxprEqn(invars, [outvar], core.pack_p, (), False, False, {})
 
 
-def partial_eval_jaxpr2(jaxpr, first_components):
+def partial_eval_jaxpr(jaxpr, first_components):
   # jaxpr :: d -> c -> a -> (c, b)
   f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
 
