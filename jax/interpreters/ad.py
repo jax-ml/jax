@@ -559,7 +559,7 @@ def strip_zeros(unit, pack, iszero, x):
 def f_jvp_traceable(zero_components, *primal_tangent_pairs):
   primals, tangents = unzip2(primal_tangent_pairs)
   tangents_zeros = map(partial(put_zeros, TangentTuple), zero_components, tangents)
-  primal_out, tangent_out = yield primals, tangents_zeros
+  primal_out, tangent_out = yield (primals, tangents_zeros), {}
   # TODO check output is tuple
   zeros_out = get_zeros(tangent_out)
   tangent_out_nonzero = strip_zeros(core.unit, pack, zeros_out, tangent_out)

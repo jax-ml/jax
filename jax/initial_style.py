@@ -8,7 +8,7 @@ import jax.lax as lax
 
 from jax.util import curry, unzip2
 from jax.api_util import pytree_to_jaxtupletree
-from jax.lax import _abstractify, _unpack_eqn, _pack_eqn
+from jax.lax import _abstractify  # TODO remove
 from jax.abstract_arrays import ShapedArray
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import ad
@@ -295,7 +295,7 @@ def _move_stuff_and_add_add(typed_jaxpr):
   res_in, CTc_CTb_in = jaxpr.invars
   jaxpr.invars = ((), (CTc_in, CTd_in), (CTb_in, res_in))
   jaxpr.eqns = (
-      [_pack_eqn([CTc_in, CTb_in], CTc_CTb_in)] +
+      [pe._pack_eqn([CTc_in, CTb_in], CTc_CTb_in)] +
       jaxpr.eqns)
 
   # munge output side
@@ -307,10 +307,10 @@ def _move_stuff_and_add_add(typed_jaxpr):
   outvar = _scan_newvar()
   jaxpr.eqns = (
       jaxpr.eqns +
-      [_unpack_eqn(jaxpr.outvar, [CTd_new, CTc, CTa]),
+      [pe._unpack_eqn(jaxpr.outvar, [CTd_new, CTc, CTa]),
        _add_any_eqn(CTd_sum, CTd_new, CTd_in),
-       _pack_eqn([CTc, CTd_sum], partial_out),
-       _pack_eqn([partial_out, CTa], outvar)])
+       pe._pack_eqn([CTc, CTd_sum], partial_out),
+       pe._pack_eqn([partial_out, CTa], outvar)])
   jaxpr.outvar = outvar
 
   # TODO(mattjj): use check_typed_jaxpr
