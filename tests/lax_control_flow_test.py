@@ -418,6 +418,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     out = lax.while_loop(cond, body, (33, 4))
     self.assertEqual(out, (7, 10))
 
+  # def testScanImpl(self):
+
 
 if __name__ == '__main__':
   absltest.main()
