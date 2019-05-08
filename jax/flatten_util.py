@@ -39,5 +39,5 @@ def ravel_list(*lst):
 @transformation_with_aux
 def ravel_fun(unravel_inputs, flat_in, **kwargs):
   pytree_args = unravel_inputs(flat_in)
-  ans = yield pytree_args
+  ans = yield pytree_args, {}
   yield ravel_pytree(ans)

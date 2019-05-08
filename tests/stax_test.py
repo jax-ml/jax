@@ -40,9 +40,10 @@ def random_inputs(rng, input_shape):
 
 
 def _CheckShapeAgreement(test_case, init_fun, apply_fun, input_shape):
-  result_shape, params = init_fun(input_shape)
-  inputs = random_inputs(onp.random.RandomState(0), input_shape)
   rng_key = random.PRNGKey(0)
+  rng_key, init_key = random.split(rng_key)
+  result_shape, params = init_fun(init_key, input_shape)
+  inputs = random_inputs(onp.random.RandomState(0), input_shape)
   result = apply_fun(params, inputs, rng=rng_key)
   test_case.assertEqual(result.shape, result_shape)
 
@@ -53,14 +54,16 @@ class StaxTest(jtu.JaxTestCase):
       {"testcase_name": "_shape={}".format(shape), "shape": shape}
       for shape in [(2, 3), (5,)]))
   def testRandnInitShape(self, shape):
-    out = stax.randn()(shape)
+    key = random.PRNGKey(0)
+    out = stax.randn()(key, shape)
     self.assertEqual(out.shape, shape)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}".format(shape), "shape": shape}
       for shape in [(2, 3), (2, 3, 4)]))
   def testGlorotInitShape(self, shape):
-    out = stax.glorot()(shape)
+    key = random.PRNGKey(0)
+    out = stax.glorot()(key, shape)
     self.assertEqual(out.shape, shape)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -78,6 +81,39 @@ class StaxTest(jtu.JaxTestCase):
                     input_shape):
     init_fun, apply_fun = stax.Conv(channels, filter_shape, strides=strides,
                                     padding=padding)
+    _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_channels={}_filter_shape={}_padding={}_strides={}_input_shape={}"
+       .format(channels, filter_shape, padding, strides, input_shape),
+       "channels": channels, "filter_shape": filter_shape, "padding": padding,
+       "strides": strides, "input_shape": input_shape}
+      for channels in [2, 3]
+      for filter_shape in [(1, 1), (2, 3), (3, 3)]
+      for padding in ["SAME", "VALID"]
+      for strides in [None, (2, 1), (2, 2)]
+      for input_shape in [(2, 10, 11, 1)]))
+  def testConvTransposeShape(self, channels, filter_shape, padding, strides,
+                               input_shape):
+    init_fun, apply_fun = stax.ConvTranspose(channels, filter_shape,  # 2D
+                                               strides=strides, padding=padding)
+    _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_channels={}_filter_shape={}_padding={}_strides={}_input_shape={}"
+       .format(channels, filter_shape, padding, strides, input_shape),
+       "channels": channels, "filter_shape": filter_shape, "padding": padding,
+       "strides": strides, "input_shape": input_shape}
+      for channels in [2, 3]
+      for filter_shape in [(1,), (2,), (3,)]
+      for padding in ["SAME", "VALID"]
+      for strides in [None, (1,), (2,)]
+      for input_shape in [(2, 10, 1)]))
+  def testConv1DTransposeShape(self, channels, filter_shape, padding, strides,
+                               input_shape):
+    init_fun, apply_fun = stax.Conv1DTranspose(channels, filter_shape,
+                                               strides=strides, padding=padding)
     _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -164,11 +200,12 @@ class StaxTest(jtu.JaxTestCase):
     _CheckShapeAgreement(self, init_fun, apply_fun, input_shapes)
 
   def testIssue182(self):
+    key = random.PRNGKey(0)
     init_fun, apply_fun = stax.Softmax
     input_shape = (10, 3)
     inputs = onp.arange(30.).astype("float32").reshape(input_shape)
 
-    out_shape, params = init_fun(input_shape)
+    out_shape, params = init_fun(key, input_shape)
     out = apply_fun(params, inputs)
 
     assert out_shape == out.shape
@@ -176,11 +213,12 @@ class StaxTest(jtu.JaxTestCase):
 
 
   def testBatchNormShapeNHWC(self):
+    key = random.PRNGKey(0)
     init_fun, apply_fun = stax.BatchNorm(axis=(0, 1, 2))
     input_shape = (4, 5, 6, 7)
     inputs = random_inputs(onp.random.RandomState(0), input_shape)
 
-    out_shape, params = init_fun(input_shape)
+    out_shape, params = init_fun(key, input_shape)
     out = apply_fun(params, inputs)
 
     self.assertEqual(out_shape, input_shape)
@@ -190,12 +228,13 @@ class StaxTest(jtu.JaxTestCase):
     self.assertEqual(out_shape, out.shape)
 
   def testBatchNormShapeNCHW(self):
+    key = random.PRNGKey(0)
     # Regression test for https://github.com/google/jax/issues/461
     init_fun, apply_fun = stax.BatchNorm(axis=(0, 2, 3))
     input_shape = (4, 5, 6, 7)
     inputs = random_inputs(onp.random.RandomState(0), input_shape)
 
-    out_shape, params = init_fun(input_shape)
+    out_shape, params = init_fun(key, input_shape)
     out = apply_fun(params, inputs)
 
     self.assertEqual(out_shape, input_shape)

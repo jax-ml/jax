@@ -73,9 +73,8 @@ class JaxprTrace(Trace):
       tracers = map(self.instantiate_const, tracers)
       avals = [t.aval for t in tracers]
       out_aval = primitive.abstract_eval(*avals, **params)
-      partial_val = PartialVal((out_aval, unit))
       eqn = JaxprEqn(tracers, None, primitive, (), False, False, params)
-      return JaxprTracer(self, partial_val, eqn)
+      return JaxprTracer(self, PartialVal((out_aval, unit)), eqn)
 
   def pack(self, tracers):
     eqn = JaxprEqn(tracers, None, core.pack_p, (), False, False, {})
@@ -114,7 +113,7 @@ class JaxprTrace(Trace):
                    False, False, params)
     return JaxprTracer(self, PartialVal((out_pv, out_const)), eqn)
 
-  def post_process_call(self, call_primitive, out_tracer):
+  def post_process_call(self, call_primitive, out_tracer, params):
     # TODO(mattjj): post_process_map
     jaxpr, consts, env = tracers_to_jaxpr([], out_tracer)
     out_pv, out_pv_const = out_tracer.pval
@@ -221,7 +220,8 @@ def partial_eval(f, trace, pvs):
 
 @transformation_with_aux
 def partial_eval_wrapper(avals, *consts):
-  jaxpr, (out_pval, consts, env) = yield (map(PartialVal, zip(avals, consts)),)
+  py_args = (map(PartialVal, zip(avals, consts)),)
+  jaxpr, (out_pval, consts, env) = yield py_args, {}
   out_pv, out_const = out_pval
   out = pack((out_const, pack(consts)))
   yield out, (out_pv, jaxpr, env)
@@ -346,9 +346,9 @@ def join_pvals(pval1, pval2):
     pvals1, pvals2 = zip(pv1, const1), zip(pv2, const2)
     join_pvs, join_consts = unzip2(map(join_pvals, pvals1, pvals2))
     if all(isinstance(pv, AbstractValue) for pv in join_pvs):
-      return PartialVal((AbstractTuple(join_pvs), tuple(join_consts)))
+      return PartialVal((AbstractTuple(join_pvs), pack(join_consts)))
     else:
-      return PartialVal((JaxprTracerTuple(join_pvs), tuple(join_consts)))
+      return PartialVal((JaxprTracerTuple(join_pvs), pack(join_consts)))
 
 def as_abstract_val(pv):
   if isinstance(pv, AbstractValue):
@@ -384,14 +384,14 @@ def abstractify(x):
   return PartialVal((core.concrete_aval(x), unit))
 
 def trace_unwrapped_to_jaxpr(fun, pvals, **kwargs):
-  return trace_to_jaxpr(lu.wrap_init(fun), pvals, **kwargs)
+  return trace_to_jaxpr(lu.wrap_init(fun, kwargs), pvals)
 
 def trace_to_jaxpr(fun, pvals, **kwargs):
   """Traces a function, given abstract inputs, to a jaxpr."""
   instantiate = kwargs.pop('instantiate', False)
   with new_master(JaxprTrace) as master:
     fun = trace_to_subjaxpr(fun, master, instantiate)
-    jaxpr, (out_pval, consts, env) = fun.call_wrapped(pvals, **kwargs)
+    jaxpr, (out_pval, consts, env) = fun.call_wrapped(pvals)
     assert not env
     del master
 
@@ -402,7 +402,7 @@ def trace_to_subjaxpr(master, instantiate, pvals):
   assert all([isinstance(pv, PartialVal) for pv in pvals]), pvals
   trace = JaxprTrace(master, core.cur_sublevel())
   in_tracers = map(trace.new_arg, pvals)
-  out_tracer = yield in_tracers
+  out_tracer = yield in_tracers, {}
   out_tracer = trace.full_raise(out_tracer)
 
   if instantiate:
@@ -505,7 +505,7 @@ def eqn_parents(eqn):
     return list(it.chain(invars, *subjaxpr_tracers))
 
 
-def compiled_call_impl(fun, *args, **kwargs):
+def compiled_call_impl(fun, *args):
   with new_master(JaxprTrace, True) as master:
     pvals = map(abstractify, args)
     jaxpr, (pval, consts, env) = trace_to_subjaxpr(fun, master, False).call_wrapped(pvals)
@@ -518,12 +518,6 @@ compiled_call_p = Primitive('compiled_call')
 compiled_call = partial(core.call_bind, compiled_call_p)
 compiled_call_p.def_custom_bind(compiled_call)
 compiled_call_p.def_impl(compiled_call_impl)
-
-
-
-# @transformation_with_aux
-# def partial_eval_traceable(first_components, pvals):
-  
 
 
 def unzip_tracer_tuple(pvals):
@@ -563,14 +557,6 @@ def isnone(x):
     return False
   else:
     raise TypeError(type(x))
-
-# TODO revise for typedjaxprs
-def jaxpr_as_fun(jaxpr, consts, *args):
-  consts = core.full_lower(consts)
-  args = map(core.full_lower, args)
-  return core.eval_jaxpr(jaxpr, consts, (), *args)
-
-_partial_eval_gensym = gensym('_peval')
 
 
 def _closure_convert_jaxpr(jaxpr):

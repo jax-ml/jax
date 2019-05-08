@@ -18,6 +18,7 @@ from __future__ import print_function
 
 from collections import namedtuple
 import itertools as it
+import operator as op
 
 import numpy as onp
 import six
@@ -28,7 +29,7 @@ from .. import ad_util
 from .. import tree_util
 from .. import linear_util as lu
 from ..abstract_arrays import ConcreteArray, ShapedArray
-from ..util import partial, unzip2, concatenate, safe_map, prod, memoize_unary
+from ..util import partial, unzip2, concatenate, prod, memoize_unary
 from ..lib import xla_bridge as xb
 from .xla import (xla_shape, xla_destructure, translation_rule,
                   xla_shape_to_result_shape, jaxpr_computation)
@@ -39,58 +40,104 @@ from . import parallel
 from . import xla
 from . import ad
 
-map = safe_map
-
 
 ### util
 
 
-def shard_arg(device_ordinals, arg):
+# TODO(mattjj, phawkins): improve re-distribution not to copy to host
+def shard_arg(device_ordinals, axis_size, arg):
   """Shard an argument data array arg along its leading axis.
 
   Args:
     device_ordinals: list of integers of length num_replicas mapping a logical
       replica index to a physical device number.
-    arg: an array type representing an argument value to be sharded along its
-      leading axis and placed on the devices/replicas.
+    axis_size: int, size of the axis to be sharded.
+    arg: a JaxType representing an argument to be sharded along its leading axis
+      (or the leading axis of its leaves in the tuple case) and placed on the
+      devices indicated by `device_ordinals`.
 
   Returns:
-    A list of length num_replicas of device buffers indexed by replica number,
-    where the nth element is the argument to be passed to the nth replica.
+    A list of device buffers with the same length as `device_ordinals` indexed
+    by replica number, so that the nth element is the argument to be passed to
+    the nth replica.
   """
   nrep = len(device_ordinals)
-  assignments = assign_shards_to_replicas(nrep, arg.shape[0])
-  if type(arg) is ShardedDeviceArray and nrep == len(arg.device_buffers):
-    # TODO(mattjj, phawkins): improve re-distribution not to copy to host
+  assignments = assign_shards_to_replicas(nrep, axis_size)
+  if (type(arg) in (ShardedDeviceArray, ShardedDeviceTuple)
+      and nrep == len(arg.device_buffers)):
     _, ids = onp.unique(assignments, return_index=True)
     get_shard = memoize_unary(lambda i: arg.device_buffers[i].to_py())
     return [buf if buf.device() == device_ordinals[r]
             else xla.device_put(get_shard(i), device_ordinals[r])
             for r, (i, buf) in enumerate(zip(assignments, arg.device_buffers))]
   else:
-    shards = [arg[i] for i in range(arg.shape[0])]
-    return [xla.device_put(shards[i], device_ordinals[r])
-            for r, i in enumerate(assignments)]
+    shards = [(_slice(arg, assignments[i]), device_ordinals[i])
+              for i in range(len(assignments))]
+    return xla.device_put_many(shards)
 
-def unshard_output(axis_size, replica_results):
-  """Collect together replica results into a result value.
-
-  Args:
-    axis_size: size of the sharded output data axis.
-    replica_results: list of either ndarrays or DeviceArrays indexed by replica
-      number.
-
-  Returns:
-    Either an ndarray or a ShardedDeviceArray representing the result of the
-    computation, stacking together the results from the replicas.
-  """
-  nrep = len(replica_results)
-  if all(type(res) is xla.DeviceArray for res in replica_results):
-    return ShardedDeviceArray(axis_size, replica_results)
+def _slice(x, i):
+  """Return the ith slice of a JaxType (tuple or array)."""
+  if isinstance(x, core.JaxTuple):
+    return core.pack(_slice(elt, i) for elt in x)
   else:
-    assignments = assign_shards_to_replicas(nrep, axis_size)
+    return x[i]
+
+
+def sharded_result_handler(axis_size, aval):
+  full_aval = add_axis_to_aval(axis_size, aval)
+  t = type(aval)
+  if t is ShapedArray:
+    return partial(sharded_array_result_handler, full_aval)
+  elif t is core.AbstractTuple:
+    return partial(sharded_tuple_result_handler, axis_size, full_aval)
+  else:
+    raise TypeError(t)
+
+def sharded_array_result_handler(aval, replica_results):
+  t, = set(map(type, replica_results))
+  if t is xla.DeviceArray:
+    bufs = [r.device_buffer for r in replica_results]
+    return ShardedDeviceArray(aval, bufs)
+  elif issubclass(t, (onp.ndarray, xla.DeviceConstant, ShardedDeviceArray)):
+    assignments = assign_shards_to_replicas(len(replica_results), aval.shape[0])
     _, ids = onp.unique(assignments, return_index=True)
     return onp.stack([replica_results[i] for i in ids])
+  else:
+    raise TypeError(t)
+
+def sharded_tuple_result_handler(axis_size, aval, replica_results):
+  t, = set(map(type, replica_results))
+  if t is xla.DeviceTuple:
+    bufs = [r.device_buffer for r in replica_results]
+    return ShardedDeviceTuple(axis_size, aval, bufs)
+  elif t is core.JaxTuple:
+    # e.g. pmap(lambda x: core.pack((3, x)))(...)
+    reduced_aval = remove_axis_from_aval(aval)
+    all_results = zip(*replica_results)
+    return core.pack([sharded_result_handler(axis_size, elt_aval)(results)
+                      for elt_aval, results in zip(reduced_aval, all_results)])
+  else:
+    raise TypeError(t)
+
+
+def add_axis_to_aval(n, aval):
+  t = type(aval)
+  if t is core.AbstractTuple:
+    return core.AbstractTuple(map(partial(add_axis_to_aval, n), aval))
+  elif t is ShapedArray:
+    return ShapedArray((n,) + aval.shape, aval.dtype)
+  else:
+    raise TypeError(t)
+
+def remove_axis_from_aval(aval):
+  t = type(aval)
+  if t is core.AbstractTuple:
+    return core.AbstractTuple(map(remove_axis_from_aval, aval))
+  elif t is ShapedArray:
+    return ShapedArray(aval.shape[1:], aval.dtype)
+  else:
+    raise TypeError(t)
+
 
 def assign_shards_to_replicas(nrep, size):
   """Produce a mapping from replica id to shard index.
@@ -108,16 +155,16 @@ def assign_shards_to_replicas(nrep, size):
   indices = onp.tile(onp.arange(size)[:, None], (1, groupsize))
   return tuple(indices.ravel())
 
-def replica_groups(nrep, mesh_spec, mesh_axis):
+def replica_groups(nrep, mesh_spec, mesh_axes):
   """Compute XLA replica groups from a replica count and device mesh data.
 
   Args:
     nrep: int, number of replicas (a computation-dependent value).
     mesh_spec: tuple of integers, a specification of the logical device mesh,
-      which depends on the lexical context of nested xla_pcalls. In particular,
-      each xla_pcall effectively appends its mapped axis size to this tuple.
-    mesh_axis: int, logical device mesh axis index indicating the axis along
-      which collective operations are to be executed.
+      which depends on the lexical context of nested xla_pmaps. In particular,
+      each xla_pmap effectively appends its mapped axis size to this tuple.
+    mesh_axes: tuple of ints, logical device mesh axis indices indicating the
+      axes along which collective operations are to be executed.
 
   Returns:
     replica_groups, a list of lists of ints encoding a partition of the set
@@ -127,10 +174,11 @@ def replica_groups(nrep, mesh_spec, mesh_axis):
   trailing_size, ragged = divmod(nrep, prod(mesh_spec))
   assert not ragged
   full_spec = mesh_spec + [trailing_size]
-  groups = onp.split(onp.arange(prod(full_spec)).reshape(full_spec),
-                     full_spec[mesh_axis], axis=mesh_axis)
-  groups = map(onp.ravel, groups)
-  return tuple(tuple(group) for group in zip(*groups))
+  iota = onp.arange(prod(full_spec)).reshape(full_spec)
+  groups = onp.reshape(
+      onp.moveaxis(iota, mesh_axes, onp.arange(len(mesh_axes))),
+      (prod(onp.take(full_spec, mesh_axes)), -1))
+  return tuple(map(tuple, groups.T))
 
 def xla_shard(c, sizes, x):
   """Analog of shard_arg that performs sharding within an XLA computation."""
@@ -173,7 +221,7 @@ def xla_unshard(c, device_groups, x):
   return _xla_unshard(c.GetShape(x), x)
 
 
-### xla_pcall
+### xla_pmap
 
 
 AxisEnv = namedtuple("AxisEnv", ["nreps", "names", "sizes"])
@@ -182,8 +230,11 @@ def axis_read(axis_env, axis_name):
   return max(i for i, name in enumerate(axis_env.names) if name == axis_name)
 
 def axis_groups(axis_env, name):
-  mesh_axis = axis_read(axis_env, name)
-  return replica_groups(axis_env.nreps, axis_env.sizes, mesh_axis)
+  if isinstance(name, (list, tuple)):
+    mesh_axes = tuple(map(partial(axis_read, axis_env), name))
+  else:
+    mesh_axes = (axis_read(axis_env, name),)
+  return replica_groups(axis_env.nreps, axis_env.sizes, mesh_axes)
 
 def compile_replicated(jaxpr, axis_name, axis_size, consts, *abstract_args):
   num_replicas = axis_size * jaxpr_replicas(jaxpr)
@@ -191,12 +242,13 @@ def compile_replicated(jaxpr, axis_name, axis_size, consts, *abstract_args):
   arg_shapes = list(map(xla_shape, abstract_args))
   built_c = replicated_comp(jaxpr, axis_env, consts, (), *arg_shapes)
   result_shape = xla_shape_to_result_shape(built_c.GetReturnValueShape())
-  compiled = built_c.Compile(arg_shapes, xb.get_compile_options(num_replicas))
+  compiled = built_c.Compile(arg_shapes, xb.get_compile_options(num_replicas),
+                             backend=xb.get_backend())
   return compiled, num_replicas, result_shape
 
 def jaxpr_replicas(jaxpr):
   return _max(eqn.params['axis_size'] * jaxpr_replicas(eqn.bound_subjaxprs[0][0])
-              for eqn in jaxpr.eqns if eqn.primitive is xla_pcall_p)
+              for eqn in jaxpr.eqns if eqn.primitive is xla_pmap_p)
 def _max(itr): return max(list(itr) or [1])
 
 def replicated_comp(jaxpr, ax_env, const_vals, freevar_shapes, *arg_shapes):
@@ -216,41 +268,39 @@ def replicated_comp(jaxpr, ax_env, const_vals, freevar_shapes, *arg_shapes):
   write(core.unitvar, c.Tuple())
   assert False  # TODO update with pat_fmap
   if const_vals:
-    map(write, jaxpr.constvars, map(c.Constant, const_vals))
-    map(write, jaxpr.freevars, map(c.ParameterWithShape, freevar_shapes))
+    _map(write, jaxpr.constvars, map(c.Constant, const_vals))
+    _map(write, jaxpr.freevars, map(c.ParameterWithShape, freevar_shapes))
   else:
     all_freevars = it.chain(jaxpr.constvars, jaxpr.freevars)
-    map(write, all_freevars, map(c.ParameterWithShape, freevar_shapes))
-  map(write, jaxpr.invars, map(c.ParameterWithShape, arg_shapes))
+    _map(write, all_freevars, map(c.ParameterWithShape, freevar_shapes))
+  _map(write, jaxpr.invars, map(c.ParameterWithShape, arg_shapes))
   for eqn in jaxpr.eqns:
     assert False  # TODO udpate with eqn.restructure
-    in_nodes = map(read, eqn.invars)
+    in_nodes = list(map(read, eqn.invars))
     if eqn.primitive in parallel_translation_rules:
       name = eqn.params['axis_name']
       params = {k: eqn.params[k] for k in eqn.params if k != 'axis_name'}
       rule = parallel_translation_rules[eqn.primitive]
       ans = rule(c, *in_nodes, device_groups=axis_groups(ax_env, name), **params)
     elif eqn.bound_subjaxprs:
-      if eqn.primitive is xla_pcall_p:
+      if eqn.primitive is xla_pmap_p:
         name, size = eqn.params['axis_name'], eqn.params['axis_size']
         new_env = axis_env_extend(name, size)
-        in_shards = map(partial(xla_shard, c, new_env.sizes), in_nodes)
-        in_shapes = map(c.GetShape, in_shards)
+        in_shards = tuple(map(partial(xla_shard, c, new_env.sizes), in_nodes))
         (subjaxpr, const_bindings, freevar_bindings), = eqn.bound_subjaxprs
         subc = replicated_comp(
             subjaxpr, new_env, (),
-            map(c.GetShape, map(read, const_bindings + freevar_bindings)),
-            *in_shapes)
+            tuple(map(c.GetShape, map(read, const_bindings + freevar_bindings))),
+            *map(c.GetShape, in_shards))
         subfun = (subc, tuple(map(read, const_bindings + freevar_bindings)))
         sharded_result = xla.xla_call_translation_rule(c, subfun, *in_shards)
         ans = xla_unshard(c, axis_groups(new_env, name), sharded_result)
       else:
-        in_shapes = map(c.GetShape, in_nodes)
         subcs = [
             jaxpr_computation(
                 subjaxpr, (),
-                map(c.GetShape, map(read, const_bindings + freevar_bindings)),
-                *in_shapes)
+                tuple(map(c.GetShape, map(read, const_bindings + freevar_bindings))),
+                *map(c.GetShape, in_nodes))
             for subjaxpr, const_bindings, freevar_bindings in eqn.bound_subjaxprs]
         subfuns = [(subc, tuple(map(read, const_bindings + freevar_bindings)))
                     for subc, (_, const_bindings, freevar_bindings)
@@ -260,27 +310,109 @@ def replicated_comp(jaxpr, ax_env, const_vals, freevar_shapes, *arg_shapes):
       ans = translation_rule(eqn.primitive)(c, *in_nodes, **eqn.params)
 
     out_nodes = xla_destructure(c, ans) if eqn.destructure else [ans]
-    map(write, eqn.outvars, out_nodes)
+    _map(write, eqn.outvars, out_nodes)
   return c.Build(read(jaxpr.outvar))
+
+def _map(f, *xs):
+  return tuple(map(f, *xs))
+
+
+class ShardedDeviceTuple(xla.DeviceTuple):
+  """A ShardedDeviceTuple is a JaxTuple sharded across devices.
+
+  The purpose of a ShardedDeviceTuple is to reduce the number of transfers when
+  executing replicated computations, by allowing results to persist on the
+  devices that produced them. That way dispatching a similarly replicated
+  computation that consumes the same sharded memory layout does not incur any
+  transfers.
+
+  A ShardedDeviceTuple represents one logical JaxTuple value, and simulates the
+  behavior of a JaxTuple so that it can be treated by user code as a JaxTuple;
+  that is, it is only an optimization to reduce transfers.
+
+  The number of device buffers underlying a ShardedDeviceTuple instance is equal
+  to the number of replicas of the computation that produced it. Each buffer
+  represents a shard of the logical tuple value represented by the
+  ShardedDeviceTuple, where a shard of an array is a slice along its leading
+  axis, and a shard of a tuple is a tuple of corresponding shards of its
+  elements. These component buffers reside on distinct devices, but need not
+  represent distinct logical shards.
+  """
+  __slots__ = ["device_buffers", "axis_size", "aval"]
+
+  def __init__(self, axis_size, aval, device_buffers):
+    assert device_buffers
+    self.device_buffers = device_buffers
+    self.axis_size = axis_size
+    self.aval = aval
+
+  # To destructure, we destructure the constituent buffers on each device, then
+  # logically concatenate those shards across devices producing one logically
+  # concatenated result per element. The logical concatenation is performed with
+  # the result handler logic applied to the elements.
+  def __iter__(self):
+    all_bufs = zip(*[buf.destructure() for buf in self.device_buffers])
+    handlers = map(partial(tuple_element_handler, self.axis_size), self.aval)
+    elts = [handler(bufs) for handler, bufs in zip(handlers, all_bufs)]
+    return iter(elts)
+
+  def __len__(self):
+    return len(self.aval)
+
+  def __repr__(self):
+    return 'ShardedDeviceTuple(len={length})'.format(length=len(self))
+
+def tuple_element_handler(axis_size, aval):
+  t = type(aval)
+  if t is core.AbstractTuple:
+    return partial(ShardedDeviceTuple, axis_size, aval)
+  elif t is ShapedArray:
+    return partial(ShardedDeviceArray, aval)
+  else:
+    raise TypeError(t)
+
+
+core.pytype_aval_mappings[ShardedDeviceTuple] = core.pytype_aval_mappings[core.JaxTuple]
+xla.pytype_aval_mappings[ShardedDeviceTuple] = op.attrgetter('aval')
+xla.canonicalize_dtype_handlers[ShardedDeviceTuple] = \
+    xla.canonicalize_dtype_handlers[xla.DeviceTuple]
 
 
 class ShardedDeviceArray(xla.DeviceArray):
+  """A ShardedDeviceArray is an ndarray sharded across devices.
+
+  The purpose of a ShardedDeviceArray is to reduce the number of transfers when
+  executing replicated computations, by allowing results to persist on the
+  devices that produced them. That way dispatching a similarly replicated
+  computation that consumes the same sharded memory layout does not incur any
+  transfers.
+
+  A ShardedDeviceArray represents one logical ndarray value, and simulates the
+  behavior of an ndarray so that it can be treated by user code as an ndarray;
+  that is, it is only an optimization to reduce transfers.
+
+  The number of device buffers underlying a ShardedDeviceArray instance is equal
+  to the number of replicas of the computation that produced it. Each buffer
+  represents a shard of the original array, meaning a slice along its leading
+  axis. These component buffers reside on distinct devices, but need not
+  represent distinct logical shards. The correspondence can be computed with
+  the assign_shards_to_replicas function.
+  """
   __slots__ = ["device_buffers"]
 
-  def __init__(self, axis_size, replica_results):
-    self.device_buffers = [res.device_buffer for res in replica_results]
-    r = replica_results[0]
-    self.shape = (axis_size,) + r.shape
-    self.dtype = r.dtype
-    self.ndim = 1 + r.ndim
-    self.size = axis_size * r.size
+  def __init__(self, aval, device_buffers):
+    self.device_buffers = device_buffers
+    self.shape, self.dtype = aval.shape, aval.dtype
+    self.ndim, self.size = len(aval.shape), prod(aval.shape)
     self._npy_value = None
 
   @property
   def _value(self):
     if self._npy_value is None:
       npy_shards = [buf.to_py() for buf in self.device_buffers]
-      self._npy_value = unshard_output(self.shape[0], npy_shards)
+      assignments = assign_shards_to_replicas(len(npy_shards), self.shape[0])
+      _, ids = onp.unique(assignments, return_index=True)
+      self._npy_value = onp.stack([npy_shards[i] for i in ids])
     return self._npy_value
 
 core.pytype_aval_mappings[ShardedDeviceArray] = ConcreteArray
@@ -293,30 +425,20 @@ xb.register_constant_handler(ShardedDeviceArray,
                              xla._device_array_constant_handler)
 
 
-def xla_pcall_impl(fun, *args, **params):
+def xla_pmap_impl(fun, *args, **params):
   axis_name = params.pop('axis_name')
   axis_size = params.pop('axis_size')
   assert not params
-
-  flat_args, in_trees = unzip2(map(xla.tree_flatten, args))
-  flat_args = concatenate(flat_args)
-  fun, out_tree = xla.flatten_fun(fun, in_trees)
-
-  abstract_args = map(partial(abstractify, axis_size), flat_args)
+  abstract_args = map(partial(abstractify, axis_size), args)
   compiled_fun = parallel_callable(fun, axis_name, axis_size, *abstract_args)
-  flat_ans = compiled_fun(out_tree(), *flat_args)
-
-  if out_tree() is xla.leaf:
-    return flat_ans
-  else:
-    return xla.build_tree(iter(flat_ans), out_tree())
+  return compiled_fun(*args)
 
 def abstractify(axis_size, x):
   return _shard_aval(axis_size, xla.abstractify(x))
 
 def _shard_aval(axis_size, aval):
   if type(aval) is core.AbstractTuple:
-    return AbstractTuple(map(partial(_shard_aval, axis_size), aval))
+    return core.AbstractTuple(map(partial(_shard_aval, axis_size), aval))
   elif type(aval) is ShapedArray:
     assert aval.shape[0] == axis_size
     return ShapedArray(aval.shape[1:], aval.dtype)
@@ -327,35 +449,44 @@ def _shard_aval(axis_size, aval):
 def parallel_callable(fun, axis_name, axis_size, *avals):
   pvals = [PartialVal((aval, core.unit)) for aval in avals]
   with core.new_master(JaxprTrace, True) as master:
-    jaxpr, (pval, consts, env) = trace_to_subjaxpr(fun, master).call_wrapped(pvals)
+    jaxpr, (pval, consts, env) = trace_to_subjaxpr(fun, master, False).call_wrapped(pvals)
     assert not env
     out = compile_replicated(jaxpr, axis_name, axis_size, consts, *avals)
-    compiled, nrep, result_shape = out
+    compiled, nrep, shard_result_shape = out
     del master, consts, jaxpr, env
-  handle_arg = partial(shard_arg, compiled._device_ordinals)
-  handle_result = xla.result_handler(result_shape)
-  return partial(execute_replicated, compiled, pval, axis_size, nrep,
-                 handle_arg, handle_result)
+  handle_arg = partial(shard_arg, compiled._device_ordinals, axis_size)
+  handle_replica_result = xla.result_handler(shard_result_shape)
+  handle_full_result = sharded_result_handler(axis_size, merged_aval(pval))
+  return partial(execute_replicated, compiled, pval, nrep,
+                 handle_arg, handle_replica_result, handle_full_result)
 
-def execute_replicated(compiled, pval, axis_size, nrep, handle_in, handle_out,
-                       out_tree, *args):
+def merged_aval(pval):
+  pv, const = pval
+  if isinstance(pv, core.AbstractValue):
+    return pv
+  elif isinstance(pv, pe.JaxprTracerTuple):
+    return core.AbstractTuple(map(merged_aval, zip(pv, const)))
+  elif pv is None:
+    return xla.abstractify(const)
+  else:
+    raise TypeError(type(pv))
+
+def execute_replicated(compiled, pval, nrep, handle_in,
+                       handle_replica_result, handle_full_result, *args):
   input_bufs = zip(*map(handle_in, args)) if args else [[]] * nrep
   out_bufs = compiled.ExecutePerReplica(input_bufs)
-  replica_results = [merge_pvals(handle_out(buf), pval) for buf in out_bufs]
-  if out_tree is xla.leaf:
-    return unshard_output(axis_size, replica_results)
-  else:
-    return map(partial(unshard_output, axis_size), zip(*replica_results))
+  results = [merge_pvals(handle_replica_result(buf), pval) for buf in out_bufs]
+  return handle_full_result(results)
 
 
-xla_pcall_p = core.Primitive('xla_pcall')
-xla_pcall = partial(core.call_bind, xla_pcall_p)
-xla_pcall_p.def_custom_bind(xla_pcall)
-xla_pcall_p.def_impl(xla_pcall_impl)
-ad.primitive_transposes[xla_pcall_p] = partial(ad.map_transpose, xla_pcall_p)
-pe.map_primitives.add(xla_pcall_p)
-# TODO(mattjj): enable pjit inside jit, maybe by merging xla_pcall and xla_call
-# xla.translations[xla_pcall_p] = xla.xla_call_translation_rule
+xla_pmap_p = core.Primitive('xla_pmap')
+xla_pmap = partial(core.call_bind, xla_pmap_p)
+xla_pmap_p.def_custom_bind(xla_pmap)
+xla_pmap_p.def_impl(xla_pmap_impl)
+ad.primitive_transposes[xla_pmap_p] = partial(ad.map_transpose, xla_pmap_p)
+pe.map_primitives.add(xla_pmap_p)
+# TODO(mattjj): enable pjit inside jit, maybe by merging xla_pmap and xla_call
+# xla.translations[xla_pmap_p] = xla.xla_call_translation_rule
 
 
 parallel_translation_rules = {}

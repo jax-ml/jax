@@ -29,7 +29,7 @@ def logpdf(x, loc=0, scale=1):
   log_scale = lax.log(scale)
   linear_term = lax.div(lax.sub(x, loc), scale)
   log_probs = lax.neg(lax.add(linear_term, log_scale))
-  return where(lax.le(x, loc), -inf, log_probs)
+  return where(lax.lt(x, loc), -inf, log_probs)
 
 @_wraps(osp_stats.expon.pdf)
 def pdf(x, loc=0, scale=1):

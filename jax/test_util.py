@@ -20,7 +20,6 @@ import functools
 import re
 import itertools as it
 import os
-import random
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -49,7 +48,7 @@ flags.DEFINE_enum(
 
 flags.DEFINE_integer(
   'num_generated_cases',
-  os.getenv('JAX_NUM_GENERATED_CASES', 10),
+  int(os.getenv('JAX_NUM_GENERATED_CASES', 10)),
   help='Number of generated cases to test')
 
 EPS = 1e-4
@@ -58,6 +57,14 @@ RTOL = 1e-4
 
 _dtype = lambda x: getattr(x, 'dtype', None) or onp.asarray(x).dtype
 
+
+def is_sequence(x):
+  try:
+    iter(x)
+  except TypeError:
+    return False
+  else:
+    return True
 
 def numpy_eq(x, y):
   testing_tpu = FLAGS.jax_test_dut and FLAGS.jax_test_dut.startswith("tpu")
@@ -145,6 +152,7 @@ def check_vjp(f, f_vjp, args, atol=ATOL, rtol=RTOL, eps=EPS):
 
 
 def check_grads(f, args, order, atol=None, rtol=None, eps=None):
+  args = tuple(args)
   if order > 1:
     def f_vjp(*args):
       out_primal_py, vjp_py = api.vjp(f, *args)
@@ -314,7 +322,6 @@ def rand_some_equal():
   return partial(_rand_dtype, randn, scale=100., post=post)
 
 
-# TODO(mattjj): doesn't handle complex types
 def rand_some_inf():
   """Return a random sampler that produces infinities in floating types."""
   rng = npr.RandomState(1)
@@ -325,6 +332,10 @@ def rand_some_inf():
     if not onp.issubdtype(dtype, onp.floating):
       # only float types have inf
       return base_rand(shape, dtype)
+
+    if onp.issubdtype(dtype, onp.complexfloating):
+      base_dtype = onp.real(onp.array(0, dtype=dtype)).dtype
+      return rand(shape, base_dtype) + 1j * rand(shape, base_dtype)
 
     dims = _dims_of_shape(shape)
     posinf_flips = rng.rand(*dims) < 0.1
@@ -338,6 +349,34 @@ def rand_some_inf():
 
   return rand
 
+def rand_some_inf_and_nan():
+  """Return a random sampler that produces infinities in floating types."""
+  rng = npr.RandomState(1)
+  base_rand = rand_default()
+
+  def rand(shape, dtype):
+    """The random sampler function."""
+    if not onp.issubdtype(dtype, onp.floating):
+      # only float types have inf
+      return base_rand(shape, dtype)
+
+    if onp.issubdtype(dtype, onp.complexfloating):
+      base_dtype = onp.real(onp.array(0, dtype=dtype)).dtype
+      return rand(shape, base_dtype) + 1j * rand(shape, base_dtype)
+
+    dims = _dims_of_shape(shape)
+    posinf_flips = rng.rand(*dims) < 0.1
+    neginf_flips = rng.rand(*dims) < 0.1
+    nan_flips = rng.rand(*dims) < 0.1
+
+    vals = base_rand(shape, dtype)
+    vals = onp.where(posinf_flips, onp.inf, vals)
+    vals = onp.where(neginf_flips, -onp.inf, vals)
+    vals = onp.where(nan_flips, onp.nan, vals)
+
+    return _cast_to_shape(onp.asarray(vals, dtype=dtype), shape, dtype)
+
+  return rand
 
 # TODO(mattjj): doesn't handle complex types
 def rand_some_zero():
@@ -384,12 +423,12 @@ def check_raises_regexp(thunk, err_type, pattern):
   except err_type as e:
     assert re.match(pattern, str(e)), "{}\n\n{}\n".format(e, pattern)
 
-random.seed(0) # TODO: consider managing prng state more carefully
-
 def cases_from_list(xs):
+  rng = npr.RandomState(42)
   xs = list(xs)
   k = min(len(xs), FLAGS.num_generated_cases)
-  return random.sample(xs, k)
+  indices = rng.choice(onp.arange(len(xs)), k, replace=False)
+  return [xs[i] for i in indices]
 
 def cases_from_gens(*gens):
   sizes = [1, 3, 10]
@@ -438,23 +477,23 @@ class JaxTestCase(parameterized.TestCase):
 
   def assertAllClose(self, x, y, check_dtypes, atol=None, rtol=None):
     """Assert that x and y, either arrays or nested tuples/lists, are close."""
-    if isinstance(x, (tuple, list)):
-      self.assertIsInstance(y, (tuple, list))
-      self.assertEqual(len(x), len(y))
-      for x_elt, y_elt in zip(x, y):
-        self.assertAllClose(x_elt, y_elt, check_dtypes, atol=atol, rtol=rtol)
-    elif isinstance(x, dict):
+    if isinstance(x, dict):
       self.assertIsInstance(y, dict)
       self.assertEqual(set(x.keys()), set(y.keys()))
       for k in x.keys():
         self.assertAllClose(x[k], y[k], check_dtypes, atol=atol, rtol=rtol)
-    else:
-      is_array = lambda x: hasattr(x, '__array__') or onp.isscalar(x)
-      self.assertTrue(is_array(x))
-      self.assertTrue(is_array(y))
+    elif is_sequence(x) and not hasattr(x, '__array__'):
+      self.assertTrue(is_sequence(y) and not hasattr(y, '__array__'))
+      self.assertEqual(len(x), len(y))
+      for x_elt, y_elt in zip(x, y):
+        self.assertAllClose(x_elt, y_elt, check_dtypes, atol=atol, rtol=rtol)
+    elif hasattr(x, '__array__') or onp.isscalar(x):
+      self.assertTrue(hasattr(y, '__array__') or onp.isscalar(y))
       x = onp.asarray(x)
       y = onp.asarray(y)
       self.assertArraysAllClose(x, y, check_dtypes, atol=atol, rtol=rtol)
+    else:
+      raise TypeError((type(x), type(y)))
 
   def _CompileAndCheck(self, fun, args_maker, check_dtypes,
                        rtol=None, atol=None):

@@ -26,6 +26,19 @@ from .. import lax
 from ..numpy import lax_numpy as np
 
 
+# TODO(mattjj): clean up this logic
+def _is_advanced_int_indexer(idx):
+  _int = lambda aval: not aval.shape and onp.issubdtype(aval.dtype, onp.integer)
+  try:
+    abstract_idx = core.get_aval(idx)
+  except TypeError:
+    abstract_idx = None
+  out = not (isinstance(abstract_idx, ConcreteArray) and _int(abstract_idx) or
+             isinstance(abstract_idx, ShapedArray) and _int(abstract_idx) or
+             isinstance(idx, slice) or
+             isinstance(idx, tuple) and all(onp.ndim(elt) == 0 for elt in idx))
+  return out and np._is_advanced_int_indexer(idx)
+
 def _scatter_update(x, idx, y, scatter_op):
   """Helper for indexed updates.
 
@@ -33,25 +46,64 @@ def _scatter_update(x, idx, y, scatter_op):
     x[idx] op= y
   except in a pure functional way, with no in-place updating.
 
-  Support NumPy-style basic indexing only, i.e., `idx` must be
-  `None`, an integer, a `slice` object, or ellipses, or a tuple of the above.
+  Args:
+    x: ndarray to be updated.
+    idx: None, an integer, a slice, an ellipsis, an ndarray with integer dtype,
+      or a tuple of those indicating the locations of `x` into which to scatter-
+      update the values in `y`.
+    y: values to be scattered.
+    scatter_op: callable, either lax.scatter or lax.scatter_add.
 
-  TODO(phawkins): support advanced indexing.
+  Returns:
+    An ndarray representing an updated `x` after performing the scatter-update.
   """
+  # For more clues on the logic of this implementation, see the code for
+  # jax.numpy._rewriting_take (which has links to NumPy docs).
 
   x = np.asarray(x)
   y = np.asarray(y)
   x_shape = np.shape(x)
   y_shape = np.shape(y)
-  y = lax.convert_element_type(y, lax._dtype(x))
+  y = lax.convert_element_type(y, lax.dtype(x))
 
+  # Check if there's advanced indexing going on, and handle differently based on
+  # whether it is or isn't mixed with basic indexing.
+  if _is_advanced_int_indexer(idx):
+    if np._is_advanced_int_indexer_without_slices(idx):
+      if isinstance(idx, (tuple, list)):
+        if any(onp.shape(e) for e in idx):
+          # At least one sequence element in the index list means broadcasting.
+          idx = np.broadcast_arrays(*idx)
+        else:
+          # The index list is a flat list of integers.
+          idx = [lax.concatenate([lax.reshape(e, (1,)) for e in idx], 0)]
+      else:
+        # The indexer is just a single integer array.
+        idx = [idx]
+
+      stacked_idx = np.concatenate(
+          [np.mod(np.reshape(a, (-1, 1)), np._constant_like(a, x.shape[i]))
+          for i, a in enumerate(idx)], axis=1)
+
+      y = np.broadcast_to(y, idx[0].shape + onp.shape(x)[len(idx):])
+      y = lax.reshape(y, (stacked_idx.shape[0],) + onp.shape(x)[len(idx):])
+
+      dnums = lax.ScatterDimensionNumbers(
+          update_window_dims=tuple(range(1, y.ndim)),
+          inserted_window_dims=tuple(range(len(idx))),
+          scatter_dims_to_operand_dims=tuple(range(len(idx))))
+      return scatter_op(x, stacked_idx, y, dnums)
+    elif np._is_advanced_int_indexer(idx):
+      # TODO(mattjj, phawkins): one of us is going to implement this case someday
+      msg = "Unimplemented case for indexed update. Open a feature request!"
+      raise NotImplementedError(msg)
+    else:
+      assert False  # unreachable
+
+  # At this point there's no advanced indexing going on, so we process each
+  # element of the index one at a time to build up a scatter.
   if not isinstance(idx, tuple):
     idx = (idx,)
-
-  # Test for unsupported advanced indexing and report an error.
-  if any(onp.ndim(elt) != 0 for elt in idx):
-    raise NotImplementedError("Unimplemented case for indexed update. Advanced "
-                              "indexing is not yet implemented.")
 
   # Remove ellipses and add trailing slice(None)s.
   idx = np._canonicalize_tuple_index(x, idx)
@@ -189,10 +241,11 @@ def index_add(x, idx, y):
   (e.g., due to concurrency on some hardware platforms).
 
   Args:
-    x: an array.
-    idx: a Numpy-style basic index, consisting of `None`, integers, `slice`
-      objects, ellipses, or a tuple of the above. A convenient syntactic sugar
-      for forming indices is via the :data:`jax.ops.index` object.
+    x: an array with the values to be updated.
+    idx: a Numpy-style index, consisting of `None`, integers, `slice` objects,
+      ellipses, ndarrays with integer dtypes, or a tuple of the above. A
+      convenient syntactic sugar for forming indices is via the
+      :data:`jax.ops.index` object.
     y: the array of updates. `y` must be broadcastable to the shape of the
       array that would be returned by `x[idx]`.
 
@@ -214,7 +267,7 @@ def index_update(x, idx, y):
 
   Returns the value of `x` that would result from the
   NumPy-style :mod:`indexed assignment <numpy.doc.indexing>`::
-    x[idx] += y
+    x[idx] = y
 
   Note the `index_update` operator is pure; `x` itself is
   not modified, instead the new value that `x` would have taken is returned.
@@ -225,10 +278,11 @@ def index_update(x, idx, y):
   updates on some hardware platforms).
 
   Args:
-    x: an array.
-    idx: a Numpy-style basic index, consisting of `None`, integers, `slice`
-      objects, ellipses, or a tuple of the above. A convenient syntactic sugar
-      for forming indices is via the :data:`jax.ops.index` object.
+    x: an array with the values to be updated.
+    idx: a Numpy-style index, consisting of `None`, integers, `slice` objects,
+      ellipses, ndarrays with integer dtypes, or a tuple of the above. A
+      convenient syntactic sugar for forming indices is via the
+      :data:`jax.ops.index` object.
     y: the array of updates. `y` must be broadcastable to the shape of the
       array that would be returned by `x[idx]`.
 
@@ -244,3 +298,32 @@ def index_update(x, idx, y):
          [1., 1., 1., 6., 6., 6.]], dtype=float32)
   """
   return _scatter_update(x, idx, y, lax.scatter)
+
+def segment_sum(data, segment_ids, num_segments=None):
+  """Computes the sum within segments of an array.
+
+  Similar to TensorFlow's segment_sum:
+  https://www.tensorflow.org/api_docs/python/tf/math/segment_sum
+
+  Args:
+    data: an array with the values to be summed.
+    segment_ids: an array with integer dtype that indicates the segments of
+      `data` (along its leading axis) to be summed. Values can be repeated and
+      need not be sorted. Values outside of the range [0, num_segments) are
+      wrapped into that range by applying np.mod.
+    num_segments: optional, an int with positive value indicating the number of
+      segments. The default is ``max(segment_ids % data.shape[0]) + 1`` but
+      since `num_segments` determines the size of the output, a static value
+      must be provided to use `segment_sum` in a `jit`-compiled function.
+
+  Returns:
+    An array with shape ``(num_segments,) + data.shape[1:]`` representing the
+    segment sums.
+  """
+  if num_segments is None:
+    num_segments = np.max(np.mod(segment_ids, data.shape[0])) + 1
+  num_segments = int(num_segments)
+
+  out = np.zeros((num_segments,) + data.shape[1:], dtype=data.dtype)
+  segment_ids = np.mod(segment_ids, num_segments)
+  return index_add(out, segment_ids, data)

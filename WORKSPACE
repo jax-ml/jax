@@ -10,6 +10,12 @@ http_archive(
     ],
 )
 
+http_archive(
+    name = "bazel_skylib",
+    sha256 = "2ef429f5d7ce7111263289644d233707dba35e39696377ebab8b0bc701f7818e",
+    urls = ["https://github.com/bazelbuild/bazel-skylib/releases/download/0.8.0/bazel-skylib.0.8.0.tar.gz"],
+)  # https://github.com/bazelbuild/bazel-skylib/releases
+
 # To update TensorFlow to a new revision,
 # a) update URL and strip_prefix to the new git commit hash
 # b) get the sha256 hash of the commit by running:
@@ -17,10 +23,10 @@ http_archive(
 #    and update the sha256 with the result.
 http_archive(
     name = "org_tensorflow",
-    sha256 = "439598337c4eb0b8c2ad31d53fbb1878567de2f69ddd9b059a4909a3eefc333c",
-    strip_prefix = "tensorflow-ba48c8e6fb610b820526ad231269e5741df616ec",
+    sha256 = "ae242ac2047396e7e4f6a47b7ca2925fea7f39075df19b2e1d8b07c4691bed03",
+    strip_prefix = "tensorflow-20c979ea235dfb6a923dde6b9c8f4c7e9f310efa",
     urls = [
-        "https://github.com/tensorflow/tensorflow/archive/ba48c8e6fb610b820526ad231269e5741df616ec.tar.gz",
+        "https://github.com/tensorflow/tensorflow/archive/20c979ea235dfb6a923dde6b9c8f4c7e9f310efa.tar.gz",
     ],
 )
 

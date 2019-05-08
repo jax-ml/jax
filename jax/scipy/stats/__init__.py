@@ -13,10 +13,14 @@
 # limitations under the License.
 
 from __future__ import absolute_import
+from . import bernoulli
 from . import beta
+from . import cauchy
 from . import expon
 from . import gamma
 from . import laplace
 from . import multivariate_normal
 from . import norm
+from . import pareto
+from . import t
 from . import uniform

@@ -20,8 +20,11 @@ import numpy as onp
 import scipy.special as osp_special
 
 from .. import lax
+from ..api import custom_transforms
+from ..interpreters import ad, batching
 from ..numpy import lax_numpy as np
-from ..numpy.lax_numpy import _wraps, asarray, _reduction_dims, _constant_like
+from ..numpy.lax_numpy import (_wraps, asarray, _reduction_dims, _constant_like,
+                               _promote_args_like)
 
 
 # need to create new functions because _wraps sets the __name__ attribute
@@ -33,16 +36,22 @@ erfinv = _wraps(osp_special.erfinv)(lambda x: lax.erf_inv(x))
 
 
 @_wraps(osp_special.logit)
+@custom_transforms
 def logit(x):
   x = asarray(x)
   return lax.log(lax.div(x, lax.sub(lax._const(x, 1), x)))
+ad.defjvp2(logit.primitive, lambda g, ans, x: g / (x * (1 - x)))
+batching.defvectorized(logit.primitive)
 
 
 @_wraps(osp_special.expit)
+@custom_transforms
 def expit(x):
   x = asarray(x)
   one = lax._const(x, 1)
   return lax.div(one, lax.add(one, lax.exp(lax.neg(x))))
+ad.defjvp2(expit.primitive, lambda g, ans, x: g * ans * (1 - ans))
+batching.defvectorized(expit.primitive)
 
 
 @_wraps(osp_special.logsumexp)
@@ -57,6 +66,18 @@ def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
   out = lax.add(lax.log(lax.reduce(lax.exp(lax.sub(a, amax_singletons)),
                                    _constant_like(a, 0), lax.add, dims)), amax)
   return dimadd(out) if keepdims else out
+
+
+@_wraps(osp_special.xlogy)
+def xlogy(x, y):
+  x, y = _promote_args_like(osp_special.xlogy, x, y)
+  return lax._safe_mul(x, lax.log(y))
+
+
+@_wraps(osp_special.xlog1py)
+def xlog1py(x, y):
+  x, y = _promote_args_like(osp_special.xlog1py, x, y)
+  return lax._safe_mul(x, lax.log1p(y))
 
 
 # Normal distributions
@@ -157,7 +178,7 @@ def ndtr(x):
     TypeError: if `x` is not floating-type.
   """
   x = np.asarray(x)
-  dtype = lax._dtype(x)
+  dtype = lax.dtype(x)
   if dtype not in (np.float32, np.float64):
     raise TypeError(
         "x.dtype={} is not supported, see docstring for supported types."
@@ -167,7 +188,7 @@ def ndtr(x):
 
 def _ndtr(x):
   """Implements ndtr core logic."""
-  dtype = lax._dtype(x).type
+  dtype = lax.dtype(x).type
   half_sqrt_2 = dtype(0.5) * onp.sqrt(2., dtype=dtype)
   w = x * half_sqrt_2
   z = lax.abs(w)
@@ -198,7 +219,7 @@ def ndtri(p):
     TypeError: if `p` is not floating-type.
   """
   x = np.asarray(p)
-  dtype = lax._dtype(p)
+  dtype = lax.dtype(p)
   if dtype not in (np.float32, np.float64):
     raise TypeError(
         "x.dtype={} is not supported, see docstring for supported types."
@@ -263,7 +284,7 @@ def _ndtri(p):
                       2.89247864745380683936E-6,
                       6.79019408009981274425E-9]))
 
-  dtype = lax._dtype(p).type
+  dtype = lax.dtype(p).type
   shape = np.shape(p)
 
   def _create_polynomial(var, coeffs):
@@ -383,7 +404,7 @@ def log_ndtr(x, series_order=3):
     raise ValueError("series_order must be <= 30.")
 
   x = np.asarray(x)
-  dtype = lax._dtype(x)
+  dtype = lax.dtype(x)
 
   if dtype == np.float64:
     lower_segment = _LOGNDTR_FLOAT64_LOWER
@@ -419,7 +440,7 @@ def log_ndtr(x, series_order=3):
 
 def _log_ndtr_lower(x, series_order):
   """Asymptotic expansion version of `Log[cdf(x)]`, appropriate for `x<<-1`."""
-  dtype = lax._dtype(x).type
+  dtype = lax.dtype(x).type
   x_2 = lax.square(x)
   # Log of the term multiplying (1 + sum)
   log_scale = -dtype(0.5) * x_2 - lax.log(-x) - dtype(0.5 * onp.log(2. * onp.pi))
@@ -428,7 +449,7 @@ def _log_ndtr_lower(x, series_order):
 
 def _log_ndtr_asymptotic_series(x, series_order):
   """Calculates the asymptotic series used in log_ndtr."""
-  dtype = lax._dtype(x).type
+  dtype = lax.dtype(x).type
   if series_order <= 0:
     return onp.array(1, dtype)
   x_2 = lax.square(x)

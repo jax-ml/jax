@@ -4,6 +4,10 @@
 
 # JAX: Autograd and XLA [![Test status](https://travis-ci.org/google/jax.svg?branch=master)](https://travis-ci.org/google/jax)
 
+[**Reference docs**](https://jax.readthedocs.io/en/latest/)
+| [**Install guide**](#installation)
+| [**Quickstart**](#quickstart-colab-in-the-cloud)
+
 JAX is [Autograd](https://github.com/hips/autograd) and
 [XLA](https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/g3doc/overview.md),
 brought together for high-performance machine learning research.
@@ -87,13 +91,17 @@ Jump right in using a notebook in your browser, connected to a Google Cloud GPU.
 And for a deeper dive into JAX:
 - [Common gotchas and sharp edges](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb)
 - [The Autodiff Cookbook, Part 1: easy and powerful automatic differentiation in JAX](https://colab.research.google.com/github/google/jax/blob/master/notebooks/autodiff_cookbook.ipynb)
-- [Directly using XLA in Python](https://colab.research.google.com/github/google/jax/blob/autodiff-cookbook/notebooks/XLA_in_Python.ipynb)
-- [MAML Tutorial with JAX](https://colab.research.google.com/github/google/jax/blob/autodiff-cookbook/notebooks/maml.ipynb).
+- [Directly using XLA in Python](https://colab.research.google.com/github/google/jax/blob/master/notebooks/XLA_in_Python.ipynb)
+- [MAML Tutorial with JAX](https://colab.research.google.com/github/google/jax/blob/master/notebooks/maml.ipynb).
 
 ## Installation
-JAX is written in pure Python, but it depends on XLA, which needs to be
-compiled and installed as the `jaxlib` package. Use the following instructions
-to build JAX from source or install a binary package with pip.
+JAX is written in pure Python, but it depends on XLA, which needs to be compiled
+and installed as the `jaxlib` package. Use the following instructions to build
+JAX from source or install a binary package with pip.
+
+We support installing or building `jaxlib` on Linux and macOS platforms, but not
+Windows. We're not currently working on Windows support, but contributions are
+welcome (see [#438](https://github.com/google/jax/issues/438)).
 
 ### Building JAX from source
 First, obtain the JAX source code, and make sure `scipy` is installed.
@@ -156,7 +164,7 @@ PYTHON_VERSION=cp27  # alternatives: cp27, cp35, cp36, cp37
 CUDA_VERSION=cuda92  # alternatives: cuda90, cuda92, cuda100
 PLATFORM=linux_x86_64  # alternatives: linux_x86_64
 BASE_URL='https://storage.googleapis.com/jax-wheels'
-pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.11-$PYTHON_VERSION-none-$PLATFORM.whl
+pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.13-$PYTHON_VERSION-none-$PLATFORM.whl
 
 pip install --upgrade jax  # install jax
 ```
@@ -177,23 +185,25 @@ for Python 2.7, 3.6, and 3.7; for anything else, you must build from source.
 
 ## Running the tests
 
-To run all the JAX tests, from the repository root directory run
+To run all the JAX tests, we recommend using `pytest-xdist`, which can run tests in
+parallel. First, install `pytest-xdist` by running `pip install pytest-xdist`.
+Then, from the repository root directory run
 
 ```bash
-nosetests tests
+pytest -n auto tests
 ```
 
 JAX generates test cases combinatorially, and you can control the number of
 cases that are generated and checked for each test (default 10):
 
 ```bash
-JAX_NUM_GENERATED_CASES=100 nosetests tests
+JAX_NUM_GENERATED_CASES=100 pytest -n auto tests
 ```
 
 You can run a more specific set of tests using
-[`nose`](https://nose.readthedocs.io/en/latest/usage.html)'s built-in selection
-mechanisms, or alternatively you can run a specific test file directly to see
-more detailed information about the cases being run:
+[`pytest`](https://docs.pytest.org/en/latest/usage.html#specifying-tests-selecting-tests)'s
+built-in selection mechanisms, or alternatively you can run a specific test
+file directly to see more detailed information about the cases being run:
 
 ```bash
 python tests/lax_numpy_test.py --num_generated_cases=5
@@ -307,7 +317,7 @@ Because `jit` aims to specialize Python functions only on shapes and dtypes
 during tracing, rather than on concrete values, Python control flow that depends
 on concrete values won’t be able to execute and will instead raise an error. If
 you want compiled control flow, use structured control flow primitives like
-lax.cond and lax.while. Some indexing features, like slice-based indexing
+lax.cond and lax.while_loop. Some indexing features, like slice-based indexing
 `A[i:i+5]` for argument-dependent `i`, or boolean-based indexing `A[bool_ind]`
 for argument-dependent `bool_ind`, produce abstract values of unknown shape and
 are thus unsupported in `jit` functions.
@@ -560,6 +570,7 @@ Here’s an example:
 
 ```python
 import jax.numpy as np
+from jax import random
 from jax.experimental import stax
 from jax.experimental.stax import Conv, Dense, MaxPool, Relu, Flatten, LogSoftmax
 
@@ -573,8 +584,9 @@ net_init, net_apply = stax.serial(
 )
 
 # Initialize parameters, not committing to a batch shape
+rng = random.PRNGKey(0)
 in_shape = (-1, 28, 28, 1)
-out_shape, net_params = net_init(in_shape)
+out_shape, net_params = net_init(rng, in_shape)
 
 # Apply network to dummy inputs
 inputs = np.zeros((128, 28, 28, 1))
@@ -584,10 +596,12 @@ predictions = net_apply(net_params, inputs)
 ### First-order optimization
 
 JAX has a minimal optimization library focused on stochastic first-order
-optimizers. Every optimizer is modeled as an `(init_fun, update_fun)` pair. The
-`init_fun` is used to initialize the optimizer state, which could include things
-like momentum variables, and the `update_fun` accepts a gradient and an
-optimizer state to produce a new optimizer state. The parameters being optimized
+optimizers. Every optimizer is modeled as an `(init_fun, update_fun,
+get_params)` triple of functions. The `init_fun` is used to initialize the
+optimizer state, which could include things like momentum variables, and the
+`update_fun` accepts a gradient and an optimizer state to produce a new
+optimizer state. The `get_params` function extracts the current iterate (i.e.
+the current parameters) from the optimizer state. The parameters being optimized
 can be ndarrays or arbitrarily-nested list/tuple/dict structures, so you can
 store your parameters however you’d like.
 
@@ -604,12 +618,12 @@ def loss(params, batch):
   return np.sum((predictions - targets)**2)
 
 # Use optimizers to set optimizer initialization and update functions
-opt_init, opt_update = optimizers.momentum(step_size=1e-3, mass=0.9)
+opt_init, opt_update, get_params = optimizers.momentum(step_size=1e-3, mass=0.9)
 
 # Define a compiled update step
 @jit
 def step(i, opt_state, batch):
-  params = optimizers.get_params(opt_state)
+  params = get_params(opt_state)
   g = grad(loss)(params, batch)
   return opt_update(i, g, opt_state)
 
@@ -621,7 +635,7 @@ data_generator = ((np.zeros((128, 28, 28, 1)), np.zeros((128, 10)))
 opt_state = opt_init(net_params)
 for i in range(10):
   opt_state = step(i, opt_state, next(data_generator))
-net_params = optimizers.get_params(opt_state)
+net_params = get_params(opt_state)
 ```
 
 ## How it works
@@ -689,7 +703,7 @@ specialized on shapes and dtypes, but not specialized all the way to concrete
 values, the Python code under a `jit` decorator must be applicable to abstract
 values. If we try to evaluate `x > 0` on an abstract `x`, the result is an
 abstract value representing the set `{True, False}`, and so a Python branch like
-`if x > 0` will raise an error: it doesn’t know which way to go! 
+`if x > 0` will raise an error: it doesn’t know which way to go!
 See [What’s supported](#whats-supported) for more
 information about `jit` requirements.
 
@@ -714,9 +728,12 @@ code to compile and end-to-end optimize much bigger functions.
 
 For a survey of current gotchas, with examples and explanations, we highly recommend reading the [Gotchas Notebook](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb).
 
-Two stand-out gotchas that might surprise NumPy users:
-1. In-place mutation of arrays isn't supported. Generally JAX requires functional code.
-2. PRNGs can be awkward, and non-reuse (linearity) is not checked.
+Some stand-out gotchas that might surprise NumPy users:
+1. [`np.isnan` doesn't yet work](https://github.com/google/jax/issues/276), and in general nan semantics aren't preserved on some backends.
+2. In-place mutation of arrays isn't supported, though [there is an alternative](https://jax.readthedocs.io/en/latest/jax.ops.html). Generally JAX requires functional code.
+3. JAX enforces single-precision numbers (32-bit or `float32`) by default and to use double-precision (64-bit or
+`float64`), one needs to set the `jax_enable_x64` variable **at startup** (set environment variable `JAX_ENABLE_x64 = True` or for other ways, see [here](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb#scrollTo=YTktlwTTMgFl))
+4. PRNGs are different and can be awkward, though for [good reasons](https://github.com/google/jax/blob/master/design_notes/prng.md), and non-reuse (linearity) is not yet checked.
 
 See [the notebook](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb) for much more information.
 

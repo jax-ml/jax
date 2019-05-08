@@ -16,19 +16,24 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import numpy as onp
 import scipy.stats as osp_stats
 
 from ... import lax
-from ...numpy.lax_numpy import _promote_args_like, _wraps, where, inf, logical_or
+from ...numpy.lax_numpy import (_promote_args_like, _constant_like, _wraps,
+                                where, inf, logical_or)
+from ..special import xlogy, xlog1py
 
 
-@_wraps(osp_stats.uniform.logpdf)
-def logpdf(x, loc=0, scale=1):
-  x, loc, scale = _promote_args_like(osp_stats.uniform.logpdf, x, loc, scale)
-  log_probs = lax.neg(lax.log(scale))
-  return where(logical_or(lax.gt(x, lax.add(loc, scale)),
-                          lax.lt(x, loc)), -inf, log_probs)
+@_wraps(osp_stats.bernoulli.logpmf)
+def logpmf(k, p, loc=0):
+  k, p, loc = _promote_args_like(osp_stats.bernoulli.logpmf, k, p, loc)
+  zero = _constant_like(k, 0)
+  one = _constant_like(k, 1)
+  x = lax.sub(k, loc)
+  log_probs = xlogy(x, p) + xlog1py(lax.sub(one, x), -p)
+  return where(logical_or(lax.lt(x, zero), lax.gt(x, one)), -inf, log_probs)
 
-@_wraps(osp_stats.uniform.pdf)
-def pdf(x, loc=0, scale=1):
-  return lax.exp(logpdf(x, loc, scale))
+@_wraps(osp_stats.bernoulli.pmf)
+def pmf(k, p, loc=0):
+  return np.exp(pmf(k, p, loc))

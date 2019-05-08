@@ -27,7 +27,7 @@ from six.moves import xrange
 
 import jax.numpy as np
 from jax.config import config
-from jax import jit, grad
+from jax import jit, grad, random
 from jax.experimental import optimizers
 from jax.experimental import stax
 from jax.experimental.stax import (AvgPool, BatchNorm, Conv, Dense, FanInSum,
@@ -87,6 +87,8 @@ def ResNet50(num_classes):
 
 
 if __name__ == "__main__":
+  rng_key = random.PRNGKey(0)
+
   batch_size = 8
   num_classes = 1001
   input_shape = (224, 224, 3, batch_size)
@@ -94,7 +96,7 @@ if __name__ == "__main__":
   num_steps = 10
 
   init_fun, predict_fun = ResNet50(num_classes)
-  _, init_params = init_fun(input_shape)
+  _, init_params = init_fun(rng_key, input_shape)
 
   def loss(params, batch):
     inputs, targets = batch
@@ -115,16 +117,16 @@ if __name__ == "__main__":
       onehot_labels = labels == np.arange(num_classes)
       yield images, onehot_labels
 
-  opt_init, opt_update = optimizers.momentum(step_size, mass=0.9)
+  opt_init, opt_update, get_params = optimizers.momentum(step_size, mass=0.9)
   batches = synth_batches()
 
   @jit
   def update(i, opt_state, batch):
-    params = optimizers.get_params(opt_state)
+    params = get_params(opt_state)
     return opt_update(i, grad(loss)(params, batch), opt_state)
 
   opt_state = opt_init(init_params)
   for i in xrange(num_steps):
     opt_state = update(i, opt_state, next(batches))
-  trained_params = optimizers.get_params(opt_state)
+  trained_params = get_params(opt_state)
 

@@ -26,11 +26,12 @@ from six.moves import reduce
 
 from .. import core
 from ..core import Trace, Tracer, new_master, pack, AbstractTuple, JaxTuple
-from ..abstract_arrays import ShapedArray, make_shaped_array, array_types
+from ..abstract_arrays import ShapedArray, make_shaped_array, array_types, raise_to_shaped
 from ..ad_util import add_jaxvals_p, zeros_like_p, zeros_like_jaxval
 from ..linear_util import transformation, transformation_with_aux, wrap_init
 from ..tree_util import register_pytree_node
 from ..util import unzip2, partial, safe_map
+from . import xla
 
 map = safe_map
 
@@ -51,7 +52,7 @@ def batch_transform(size, in_dims, out_dim_dst, vals):
   with new_master(BatchTrace) as master:
     trace = BatchTrace(master, core.cur_sublevel())
     in_tracers = map(partial(BatchTracer, trace), vals, in_dims)
-    out_tracer = yield in_tracers
+    out_tracer = yield in_tracers, {}
     out_tracer = trace.full_raise(out_tracer)
     out_val, out_dim = out_tracer.val, out_tracer.batch_dim
     del master
@@ -61,7 +62,7 @@ def batch_transform(size, in_dims, out_dim_dst, vals):
 @transformation_with_aux
 def batch_subtrace(master, dims, *vals):
   trace = BatchTrace(master, core.cur_sublevel())
-  ans = yield map(partial(BatchTracer, trace), vals, dims)
+  ans = yield map(partial(BatchTracer, trace), vals, dims), {}
   out_tracer = trace.full_raise(ans)
   out_val, out_dim = out_tracer.val, out_tracer.batch_dim
   yield out_val, out_dim
@@ -130,7 +131,7 @@ class BatchTrace(Trace):
       val_out = call_primitive.bind(f, *vals, **params)
       return BatchTracer(self, val_out, dim_out())
 
-  def post_process_call(self, _, out_tracer):
+  def post_process_call(self, call_primitive, out_tracer, params):
     val, dim = out_tracer.val, out_tracer.batch_dim
     master = self.master
     def todo(x):
@@ -159,14 +160,6 @@ def shaped_aval(x):
     return pytype_aval_mappings[type(x)](x)
   except KeyError:
     raise TypeError("{} is not a valid type for batching".format(type(x)))
-
-def raise_to_shaped(aval):
-  if type(aval) is AbstractTuple:
-    return AbstractTuple(map(raise_to_shaped, aval))
-  elif isinstance(aval, ShapedArray):
-    return ShapedArray(aval.shape, aval.dtype)
-  else:
-    raise TypeError(type(aval))
 
 def remove_batch_dim_from_aval(bdim, aval):
   t = type(aval)
@@ -208,8 +201,9 @@ def shaped_jaxtuple(xs):
   return AbstractTuple(map(shaped_aval, xs))
 
 pytype_aval_mappings[JaxTuple] = shaped_jaxtuple
+pytype_aval_mappings[xla.DeviceTuple] = xla.pytype_aval_mappings[xla.DeviceTuple]
 
-for t in array_types:
+for t in it.chain(array_types, [xla.DeviceArray]):
   pytype_aval_mappings[t] = make_shaped_array
 
 
@@ -292,12 +286,14 @@ def move_dim_to_front(x, dim):
   return moveaxis(None, 0, dim, x)
 
 def dimsize(dim, x):
-  aval = get_aval(x)
+  return _dimsize(dim, get_aval(x), x)
+
+def _dimsize(dim, aval, x):
   if type(aval) is AbstractTuple:
     if type(dim) is tuple:
-      return reduce(set.union, map(dimsize, dim, x))
+      return reduce(set.union, map(_dimsize, dim, aval, x))
     elif type(dim) is int:
-      return reduce(set.union, map(partial(dimsize, dim), x))
+      return reduce(set.union, map(partial(_dimsize, dim), aval, x))
     elif dim is None:
       return set()
     else:
@@ -311,17 +307,20 @@ def dimsize(dim, x):
       raise TypeError(type(dim))
 
 def moveaxis(sz, dst, src, x, force_broadcast=True):
-  aval = get_aval(x)
+  return _moveaxis(sz, dst, src, get_aval(x), x, force_broadcast)
+
+# TODO(mattjj): not passing force_broadcast recursively... intentional?
+def _moveaxis(sz, dst, src, aval, x, force_broadcast=True):
   if type(aval) is AbstractTuple:
     if type(src) is tuple and type(dst) is tuple:
-      return pack(map(partial(moveaxis, sz), dst, src, x))
+      return pack(map(partial(_moveaxis, sz), dst, src, aval, x))
     elif type(src) is tuple:
-      return pack(map(partial(moveaxis, sz, dst), src, x))
+      return pack(map(partial(_moveaxis, sz, dst), src, aval, x))
     elif type(dst) is tuple:
       srcs = (src,) * len(dst)
-      return pack(map(partial(moveaxis, sz), dst, srcs, x))
+      return pack(map(partial(_moveaxis, sz), dst, srcs, aval, x))
     else:
-      return pack(map(partial(moveaxis, sz, dst, src), x))
+      return pack(map(partial(_moveaxis, sz, dst, src), aval, x))
   elif isinstance(aval, ShapedArray):
     dst_ = (dst % aval.ndim) if dst is not None and aval.ndim else dst
     if src == dst_:
@@ -341,9 +340,12 @@ def moveaxis(sz, dst, src, x, force_broadcast=True):
     raise TypeError(type(aval))
 
 def broadcast(x, sz, force_broadcast=False):
-  aval = get_aval(x)
+  return _broadcast(sz, get_aval(x), x, force_broadcast)
+
+# TODO(mattjj): not passing force_broadcast recursively... intentional?
+def _broadcast(sz, aval, x, force_broadcast=False):
   if type(aval) is AbstractTuple:
-    return pack(map(partial(broadcast, sz=sz), x))
+    return pack(map(partial(_broadcast, sz), aval, x))
   elif isinstance(aval, ShapedArray):
     # for scalars, maybe don't actually broadcast
     if not onp.ndim(x) and not force_broadcast:

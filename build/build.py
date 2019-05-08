@@ -60,19 +60,19 @@ def get_python_bin_path(python_bin_path_flag):
 
 # Bazel
 
-BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/0.22.0/"
+BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/0.24.0/"
 BazelPackage = collections.namedtuple("BazelPackage", ["file", "sha256"])
 bazel_packages = {
     "Linux":
         BazelPackage(
-            file="bazel-0.22.0-linux-x86_64",
+            file="bazel-0.24.0-linux-x86_64",
             sha256=
-            "8474ed28ed4998e2f5671ddf3a9a80ae9e484a5de3b8b70c8b654c017c65d363"),
+            "cf78da6f1b65e9e35f485eab421756c4b5188a705695276843759f3c3586bb0c"),
     "Darwin":
         BazelPackage(
-            file="bazel-0.22.0-darwin-x86_64",
+            file="bazel-0.24.0-darwin-x86_64",
             sha256=
-            "0fcd80d8a20b7c8b7b70ea9da4bea9b2ce3985c792d0cc7676a9e4c2f9600478"),
+            "adaacec710cae5a217dd967766fe489b8034aa9c0cb44d4eb06813d224489e01"),
 }
 
 
@@ -146,7 +146,7 @@ def check_bazel_version(bazel_path, min_version):
   match = re.search("Build label: *([0-9\\.]+)[^0-9\\.]", version_output)
   if match is None:
     print("Warning: bazel installation is not a release version. Make sure "
-          "bazel is at least 0.19.2")
+          "bazel is at least {}".format(min_version))
     return
   version = match.group(1)
   min_ints = [int(x) for x in min_version.split(".")]
@@ -161,8 +161,6 @@ BAZELRC_TEMPLATE = """
 build --action_env PYTHON_BIN_PATH="{python_bin_path}"
 build --python_path="{python_bin_path}"
 build --action_env TF_NEED_CUDA="{tf_need_cuda}"
-build --action_env CUDA_TOOLKIT_PATH="{cuda_toolkit_path}"
-build --action_env CUDNN_INSTALL_PATH="{cudnn_install_path}"
 build --distinct_host_configuration=false
 build --copt=-Wno-sign-compare
 build -c opt
@@ -170,21 +168,32 @@ build:opt --copt=-march=native
 build:opt --host_copt=-march=native
 build:mkl_open_source_only --define=tensorflow_mkldnn_contraction_kernel=1
 
+# Sets the default Apple platform to macOS.
+build --apple_platform_type=macos
+
 # Disable enabled-by-default TensorFlow features that we don't care about.
 build --define=no_aws_support=true
 build --define=no_gcp_support=true
 build --define=no_hdfs_support=true
 build --define=no_kafka_support=true
 build --define=no_ignite_support=true
+build --define=grpc_no_ares=true
 
 build:cuda --crosstool_top=@local_config_cuda//crosstool:toolchain
 build:cuda --define=using_cuda=true --define=using_cuda_nvcc=true
 """
 
 
-def write_bazelrc(**kwargs):
+
+def write_bazelrc(cuda_toolkit_path=None, cudnn_install_path=None, **kwargs):
   f = open("../.bazelrc", "w")
   f.write(BAZELRC_TEMPLATE.format(**kwargs))
+  if cuda_toolkit_path:
+    f.write("build --action_env CUDA_TOOLKIT_PATH=\"{cuda_toolkit_path}\"\n"
+            .format(cuda_toolkit_path=cuda_toolkit_path))
+  if cudnn_install_path:
+    f.write("build --action_env CUDNN_INSTALL_PATH=\"{cudnn_install_path}\"\n"
+            .format(cudnn_install_path=cudnn_install_path))
   f.close()
 
 
@@ -261,11 +270,11 @@ def main():
       help_str="Should we build with CUDA enabled? Requires CUDA and CuDNN.")
   parser.add_argument(
       "--cuda_path",
-      default="/usr/local/cuda",
+      default=None,
       help="Path to the CUDA toolkit.")
   parser.add_argument(
       "--cudnn_path",
-      default="/usr/local/cuda",
+      default=None,
       help="Path to CUDNN libraries.")
   args = parser.parse_args()
 
@@ -274,7 +283,7 @@ def main():
 
   # Find a working Bazel.
   bazel_path = get_bazel_path(args.bazel_path)
-  check_bazel_version(bazel_path, "0.19.2")
+  check_bazel_version(bazel_path, "0.24.0")
   print("Bazel binary path: {}".format(bazel_path))
 
   python_bin_path = get_python_bin_path(args.python_bin_path)
@@ -287,8 +296,10 @@ def main():
   cudnn_install_path = args.cudnn_path
   print("CUDA enabled: {}".format("yes" if args.enable_cuda else "no"))
   if args.enable_cuda:
-    print("CUDA toolkit path: {}".format(cuda_toolkit_path))
-    print("CUDNN library path: {}".format(cudnn_install_path))
+    if cuda_toolkit_path:
+      print("CUDA toolkit path: {}".format(cuda_toolkit_path))
+    if cudnn_install_path:
+      print("CUDNN library path: {}".format(cudnn_install_path))
   write_bazelrc(
       python_bin_path=python_bin_path,
       tf_need_cuda=1 if args.enable_cuda else 0,
