@@ -268,36 +268,33 @@ def jaxpr_computation(jaxpr, const_vals, freevar_shapes, *arg_shapes):
     assert node is not None
     env[v] = node
 
-  def write_constant(v, val): write(v, c.Constant(val))
-  def write_param(v, shape): write(v, c.ParameterWithShape(shape))
-
   env = {}
   write(core.unitvar, c.Tuple())
-  core.pat_fmap(write_param, jaxpr.invars, arg_shapes)
   if const_vals:
-    core.pat_fmap(write_constant, jaxpr.constvars, const_vals)
-    core.pat_fmap(write_param, jaxpr.freevars, freevar_shapes)
+    _map(write, jaxpr.constvars, map(c.Constant, const_vals))
+    _map(write, jaxpr.freevars, map(c.ParameterWithShape, freevar_shapes))
   else:
     all_freevars = it.chain(jaxpr.constvars, jaxpr.freevars)
-    core.pat_fmap(write_param, all_freevars, freevar_shapes)
-
+    _map(write, all_freevars, map(c.ParameterWithShape, freevar_shapes))
+  _map(write, jaxpr.invars, map(c.ParameterWithShape, arg_shapes))
   for eqn in jaxpr.eqns:
     if not eqn.restructure:
-      in_nodes = map(read, eqn.invars)
+      in_nodes = list(map(read, eqn.invars))
     else:
       in_nodes = [xla_pack(c, map(read, invars)) if type(invars) is tuple
                   else read(invars) for invars in eqn.invars]
-    in_shapes = map(c.GetShape, in_nodes)
+    in_shapes = _map(c.GetShape, in_nodes)
     subcs = [
         jaxpr_computation(
             subjaxpr, (),
-            tuple(map(c.GetShape, map(read, const_bindings + freevar_bindings))),
-            *map(c.GetShape, in_nodes))
+            _map(c.GetShape, map(read, const_bindings + freevar_bindings)),
+            *in_shapes)
         for subjaxpr, const_bindings, freevar_bindings in eqn.bound_subjaxprs]
-    subfuns = [(subc, tuple(map(read, const_bindings + freevar_bindings)))
+    subfuns = [(subc, _map(read, const_bindings + freevar_bindings))
                for subc, (_, const_bindings, freevar_bindings)
                in zip(subcs, eqn.bound_subjaxprs)]
     ans = translation_rule(eqn.primitive)(c, *(subfuns + in_nodes), **eqn.params)
+    c.GetShape(ans)  # force xla to do shape error checking
     out_nodes = xla_destructure(c, ans) if eqn.destructure else [ans]
     _map(write, eqn.outvars, out_nodes)
   return c.Build(read(jaxpr.outvar))
