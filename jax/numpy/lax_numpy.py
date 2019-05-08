@@ -982,7 +982,7 @@ def mean(a, axis=None, dtype=None, out=None, keepdims=False):
 def average(a, axis=None, weights=None, returned=False):
   if weights is None:
     avg = mean(a, axis=axis)
-    scale = 1.0
+    scale = avg.dtype.type(a.size/avg.size)
   else:
     if a.shape != weights.shape:
       if axis is None:
