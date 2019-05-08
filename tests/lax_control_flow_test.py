@@ -24,8 +24,19 @@ import numpy as onp
 import numpy.random as npr
 
 from jax import api
+from jax import core
 from jax import lax
 from jax import test_util as jtu
+import jax.numpy as np  # scan tests use numpy
+
+def scan_reference(f, init, xs):
+  carry = init
+  ys = []
+  for x in xs:
+    (carry, y) = f(carry, x)
+    ys.append(lax.reshape(y, (1,) + onp.shape(y)))
+  ys = lax.concatenate(ys, 0)
+  return core.pack((carry, ys))
 
 
 class LaxControlFlowTest(jtu.JaxTestCase):
@@ -418,7 +429,73 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     out = lax.while_loop(cond, body, (33, 4))
     self.assertEqual(out, (7, 10))
 
-  # def testScanImpl(self):
+  def testScanImpl(self):
+    d = np.zeros(2)
+    def f(c, a):
+      assert a.shape == (3,)
+      assert c.shape == (4,)
+      b = np.sum(np.sin(a)) + np.sum(np.sin(c)) + np.sum(np.sin(d))
+      c = np.sin(c * b)
+      assert b.shape == ()
+      return core.pack((c, b))
+
+    as_ = np.ones((5, 3))
+    c = np.ones(4)
+
+    ans =            lax.scan(f, c, as_)
+    expected = scan_reference(f, c, as_)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testScanJVP(self):
+    d = np.zeros(2)
+    def f(c, a):
+      assert a.shape == (3,)
+      assert c.shape == (4,)
+      b = np.sum(np.sin(a)) + np.sum(np.sin(c)) + np.sum(np.sin(d))
+      c = np.sin(c * b)
+      assert b.shape == ()
+      return core.pack((c, b))
+
+    as_ = np.ones((5, 3))
+    c = np.ones(4)
+
+    ans = api.jvp(lambda c, as_:            lax.scan(f, c, as_), (c, as_), (c, as_))[1]
+    expected = api.jvp(lambda c, as_: scan_reference(f, c, as_), (c, as_), (c, as_))[1]
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testScanLinearize(self):
+    d = np.zeros(2)
+    def f(c, a):
+      assert a.shape == (3,)
+      assert c.shape == (4,)
+      b = np.sum(np.sin(a)) + np.sum(np.sin(c)) + np.sum(np.sin(d))
+      c = np.sin(c * b)
+      assert b.shape == ()
+      return core.pack((c, b))
+
+    as_ = np.ones((5, 3))
+    c = np.ones(4)
+
+    ans = api.linearize(lambda c, as_:            lax.scan(f, c, as_), c, as_)[1](c, as_)
+    expected = api.linearize(lambda c, as_: scan_reference(f, c, as_), c, as_)[1](c, as_)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testScanGrad(self):
+    d = np.zeros(2)
+    def f(c, a):
+      assert a.shape == (3,)
+      assert c.shape == (4,)
+      b = np.sum(np.sin(a)) + np.sum(np.sin(c)) + np.sum(np.sin(d))
+      c = np.sin(c * b)
+      assert b.shape == ()
+      return core.pack((c, b))
+
+    as_ = np.ones((5, 3))
+    c = np.ones(4)
+
+    ans = api.grad(lambda c, as_:      list(      lax.scan(f, c, as_))[0].sum())(c, as_)
+    expected = api.grad(lambda c, as_: list(scan_reference(f, c, as_))[0].sum())(c, as_)
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
 
 if __name__ == '__main__':
