@@ -510,7 +510,8 @@ def scan(f, init, xs):
       return carry, np.stack(ys)
 
   Unlike that Python version, both ``a`` and ``b`` may be arbitrary pytree
-  types, and so multiple arrays can be scanned over at once.
+  types, and so multiple arrays can be scanned over at once and produce multiple
+  output arrays.
 
   Also unlike that Python version, ``scan`` is a JAX primitive and is lowered to
   a single XLA While HLO. That makes it useful for reducing compilation times
