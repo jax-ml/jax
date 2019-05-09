@@ -642,11 +642,6 @@ def check_jaxpr(jaxpr):
   read = partial(read_env, env)
   write = partial(write_env, env)
 
-  const_env = set()
-  read_const = partial(read_env, const_env)
-  write_const= partial(write_env, const_env)
-
-  pat_fmap(write_const, jaxpr.constvars)
   write(unitvar)
   pat_fmap(write, jaxpr.constvars)
   pat_fmap(write, jaxpr.freevars)
@@ -659,7 +654,7 @@ def check_jaxpr(jaxpr):
        for invar in eqn.invars]
     for subjaxpr, constvars, freevars in eqn.bound_subjaxprs:
       map(read, freevars)
-      map(read_const, constvars)
+      map(read, constvars)
       check_jaxpr(subjaxpr)
     map(write, eqn.outvars)
   read(jaxpr.outvar)
