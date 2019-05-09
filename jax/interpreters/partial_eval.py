@@ -32,6 +32,19 @@ map = safe_map
 zip = safe_zip
 def identity(x): return x
 
+# A partial value (pval) is modeled as a pair (pv, const), as per
+#   type PVal = (PV, Const)
+#   data PV = NonePV | AbstractPV AbstractValue | JaxprTracerTuple [PV]
+#   type Const = MaybeTraced JaxType
+# where the NonePV arm indicates a known (constant) value, the AbstractPV arm
+# indicates an unknown value, and the JaxprTracerTuple indicates a finer-grained
+# representation that might be a mixture.
+# There are two additional invariants:
+#   1. when the pv is a JaxprTracerTuple, then the const is a JaxTuple of the
+#      same length (or a traced version);
+#   2. when the pv is an AbstractValue, then the const must be unit.
+
+
 class JaxprTrace(Trace):
   def pure(self, val):
     return self.new_const(val)
@@ -126,7 +139,7 @@ class JaxprTrace(Trace):
       env_tracers = map(trace.full_raise, env)
       bound_subjaxpr = (jaxpr, const_tracers, env_tracers)
       eqn = JaxprEqn([], None, call_primitive, (bound_subjaxpr,),
-                     False, False, {})
+                     False, False, params)
       return JaxprTracer(trace, PartialVal((out_pv, out_pv_const)), eqn)
 
     return out, todo
@@ -297,10 +310,16 @@ Destructuring = namedtuple('Destructuring', ['i', 'eqn', 'key'])
 
 class PartialVal(tuple):
   def __new__(cls, xs):
-    assert core.skip_checks or (
-        isinstance(xs[0], valid_pv_types)
-        and isinstance(xs[1], core.Tracer) or core.valid_jaxtype(xs[1])
-    ), xs
+    pv, const = xs
+    if not core.skip_checks:
+      # type checks
+      assert isinstance(pv, valid_pv_types), xs
+      assert isinstance(const, core.Tracer) or core.valid_jaxtype(const), xs
+      # invariant checks
+      if type(pv) is JaxprTracerTuple:
+        assert len(pv) == len(const), xs
+      if isinstance(pv, AbstractValue):
+        assert const == core.unit, xs
     return tuple.__new__(cls, xs)
 
 valid_pv_types = (AbstractValue, JaxprTracerTuple, type(None))
@@ -371,13 +390,13 @@ def partial_val_aval(pv, const):
 def pack_pvals(pvals):
   pvs, consts = unzip2(pvals)
   if all(pv is None for pv in pvs):
-    pv_out = None
+    return PartialVal((None, pack(consts)))
   elif all(isinstance(pv, AbstractValue) for pv in pvs):
     pv_out = AbstractTuple(pvs)
+    return PartialVal((pv_out, unit))
   else:
     pv_out = JaxprTracerTuple(pvs)
-  return PartialVal((pv_out, pack(consts)))
-
+    return PartialVal((pv_out, pack(consts)))
 
 
 def abstractify(x):
@@ -584,7 +603,11 @@ def partial_eval_jaxpr(jaxpr, first_components):
   def fun(*vals):
     pvals = map(as_pval, jaxpr.in_avals, first_components, vals)
     jaxpr_2, out_pval, consts_2 = trace_to_jaxpr(f, pvals)
-    (out_pv_c, out_pv_b), (out_const_c, out_const_b) = out_pval
+    (out_pv_c, out_pv_b), out_const = out_pval
+    if out_const is core.unit:
+      out_const_c, out_const_b = core.unit, core.unit
+    else:
+      out_const_c, out_const_b = out_const
     cell.append((out_pv_c, out_pv_b, jaxpr_2))
     return pack((out_const_c, pack((out_const_b, pack(consts_2)))))
 
@@ -645,6 +668,13 @@ def _split_avals(first_component, aval):
       return AbstractTuple(()), aval
   else:
     raise TypeError(t)
+
+# TODO do we want this?
+# def _abstract_unit_tree_like(aval):
+#   if type(aval) is AbstractTuple:
+#     return AbstractTuple(map(_abstract_unit_tree_like, aval))
+#   else:
+#     return AbstractTuple(())
 
 
 custom_partial_eval_rules = {}
