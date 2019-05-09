@@ -863,7 +863,7 @@ def jax_syevd(c, a, lower=False):
     fn = b"lapack_cheevd"
     eigvals_type = np.float32
     workspace = (Shape.array_shape(dtype, (heevd_work_size(n),), (0,)),
-                 Shape.array_shape(np.dtype(np.float32)
+                 Shape.array_shape(np.dtype(np.float32),
                                    (heevd_rwork_size(n),), (0,)),
                  Shape.array_shape(np.dtype(np.int32),
                                    (syevd_iwork_size(n),), (0,)))
