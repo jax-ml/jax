@@ -19,3 +19,4 @@ does not support NumPy-style indexed assignment directly.
     index
     index_update
     index_add
+    segment_sum
