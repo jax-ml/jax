@@ -72,11 +72,13 @@ def jaxpr_as_fun(typed_jaxpr, *args):
   for arg, in_aval, varname in zip(args, typed_jaxpr.in_avals, invars):
     arg_aval, _ = _abstractify(arg)
     if arg_aval != in_aval:
-      raise TypeError("input type mismatch for arg {}".format(varname))
+      msg = "input type mismatch for arg {}: arg {} for parameter {}."
+      raise TypeError(msg.format(varname, arg_aval, in_aval))
   out = eval_jaxpr(typed_jaxpr.jaxpr, typed_jaxpr.literals, (), *args)
   out_aval, _ = _abstractify(out)
   if out_aval != typed_jaxpr.out_aval:
-    raise TypeError("output type mismatch")
+    msg = "output type mismatch: output value {} for output type {}."
+    raise TypeError(msg.format(out_aval, typed_jaxpr.out_aval))
   return out
 
 
@@ -538,9 +540,12 @@ class AbstractTuple(AbstractValue, tuple):
   def __repr__(self):
     return '({})'.format(','.join(map(repr, self)))
 
-  def __bool__(self, ignored_tracer):
+  def _bool(self, ignored_tracer):
     return bool(self)
-  __nonzero__ = __bool__
+  _nonzero = _bool
+
+  def _eq(self, self_traced, other):
+    return tuple(self_traced) == tuple(other)
 
 
 unit = JaxTuple(())

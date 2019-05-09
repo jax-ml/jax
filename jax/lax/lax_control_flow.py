@@ -34,9 +34,12 @@ from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax.interpreters import ad
-from jax.util import partial, unzip2
+from jax.util import partial, unzip2, safe_map, safe_zip
 from jax.tree_util import build_tree, tree_unflatten
 from jax import ad_util
+
+map = safe_map
+zip = safe_zip
 
 
 ### fori_loop and while_loop
@@ -447,12 +450,14 @@ def _is_const(x):
 
 
 def _demote_aval_rank(xs):
+  assert isinstance(xs, core.AbstractValue)
   if isinstance(xs, core.AbstractTuple):
     return core.AbstractTuple(map(_demote_aval_rank, xs))
   else:
     return ShapedArray(xs.shape[1:], xs.dtype)
 
 def _promote_aval_rank(n, xs):
+  assert isinstance(xs, core.AbstractValue)
   if isinstance(xs, core.AbstractTuple):
     return core.AbstractTuple(map(partial(_promote_aval_rank, n), xs))
   else:
@@ -465,18 +470,21 @@ def _leading_dim_size(xs):
     return xs.shape[0]
 
 def _empty_arrays(aval):
+  assert isinstance(aval, core.AbstractValue)
   if isinstance(aval, core.AbstractTuple):
     return core.pack(map(_empty_arrays, aval))
   else:
     return lax.full(aval.shape, 0, aval.dtype)
 
 def _index_arrays(i, aval, xs):
+  assert isinstance(aval, core.AbstractValue)
   if isinstance(aval, core.AbstractTuple):
     return core.pack(map(partial(_index_arrays, i), aval, xs))
   else:
     return lax.dynamic_index_in_dim(xs, i, keepdims=False)
 
 def _update_arrays(i, aval, xs, x):
+  assert isinstance(aval, core.AbstractValue)
   if isinstance(aval, core.AbstractTuple):
     return core.pack(map(partial(_update_arrays, i), aval, xs, x))
   else:
