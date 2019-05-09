@@ -185,9 +185,9 @@ class APITest(jtu.JaxTestCase):
     def f(x, y):
       return np.dot(x, y)
 
-    jtu.check_raises(lambda: grad(f)(onp.zeros(3), onp.zeros(4)),
-                     TypeError,
-                     "Incompatible shapes for dot: got (3,) and (4,).")
+    jtu.check_raises_regexp(
+        lambda: grad(f)(onp.zeros(3), onp.zeros(4)), TypeError,
+        "Incompatible shapes for dot: got \\(3L?,\\) and \\(4L?,\\).")
 
   def test_switch_value_jit(self):
     def f(x):
