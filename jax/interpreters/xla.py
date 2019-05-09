@@ -427,6 +427,9 @@ class DeviceTuple(DeviceValue):
   def __repr__(self):
     return 'DeviceTuple(len={length})'.format(length=len(self))
 
+  def __eq__(self, other):
+    return tuple(self) == tuple(other)
+
 
 # DeviceValues don't need to be dtype-canonicalized because we assume values on
 # the device have already been canonicalized.
