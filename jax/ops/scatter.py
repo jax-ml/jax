@@ -317,7 +317,7 @@ def segment_sum(data, segment_ids, num_segments=None):
       must be provided to use `segment_sum` in a `jit`-compiled function.
 
   Returns:
-    An array with shape ``(num_segments,) + data.shape[1:]`` representing the
+    An array with shape :code:`(num_segments,) + data.shape[1:]` representing the
     segment sums.
   """
   if num_segments is None:
