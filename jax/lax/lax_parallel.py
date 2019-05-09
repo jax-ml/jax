@@ -20,8 +20,10 @@ from jax.abstract_arrays import ShapedArray
 from jax.core import Primitive
 from jax.interpreters import ad
 from jax.interpreters import parallel
+from jax.interpreters import xla
 from jax.interpreters import pxla
-from jax.util import partial
+from jax.util import partial, unzip2
+from jax.lib import xla_bridge
 
 
 ### parallel traceables
@@ -31,6 +33,12 @@ def psum(x, axis_name):
 
 def pmax(x, axis_name):
   return pmax_p.bind(x, axis_name=axis_name)
+
+def pmin(x, axis_name):
+  return pmin_p.bind(x, axis_name=axis_name)
+
+def ppermute(x, axis_name, perm):
+  return ppermute_p.bind(x, axis_name=axis_name, perm=perm)
 
 def pswapaxes(x, axis_name, axis):
   """Analogue to `np.swapaxes` involving a hidden axis.
@@ -72,43 +80,74 @@ def _unbound_name_error(primitive_name, *args, **kwargs):
 def PmapPrimitive(name):
   prim = Primitive(name)
   prim.def_impl(partial(_unbound_name_error, name))
-  prim.def_abstract_eval(lambda x, *args, **kwargs: x)
+  prim.def_abstract_eval(lambda x, *args, **params: x)
   return prim
 
 
-def _psum_serial_pmap_rule(vals, axes):
+def _allreduce_serial_pmap_rule(reducer, vals, axes):
   val, = vals
   axis, = axes
-  return lax._reduce_sum(val, [axis]), None
+  return reducer(val, [axis]), None
 
-def _psum_transpose_rule(t, axis_name):
-  return [t]
+def _allreduce_translation_rule(prim, c, val, device_groups):
+  dtype = c.GetShape(val).numpy_dtype()
+  scalar = xla_bridge.Shape.array_shape(dtype, ())
+  computation = xla.primitive_computation(prim, scalar, scalar)
+  return c.AllReduce(val, computation, replica_groups=device_groups)
 
-def _psum_parallel_translation_rule(c, val, device_groups):
-  if len(device_groups) > 1:
-    return c.CrossReplicaSum(val, device_groups)
-  else:
-    return c.CrossReplicaSum(val)
 
 psum_p = PmapPrimitive('psum')
-psum_p.def_impl(partial(_unbound_name_error, 'psum'))
-psum_p.def_abstract_eval(lambda x, *args, **kwargs: x)
-parallel.serial_pmap_primitive_rules[psum_p] = _psum_serial_pmap_rule
-pxla.parallel_translation_rules[psum_p] = _psum_parallel_translation_rule
-ad.deflinear(psum_p, _psum_transpose_rule)
 parallel.defreducer(lax.reduce_sum_p, psum_p)
+parallel.serial_pmap_primitive_rules[psum_p] = \
+    partial(_allreduce_serial_pmap_rule, lax._reduce_sum)
+# TODO(mattjj): replace translation rule when we update jaxlib
+# pxla.parallel_translation_rules[psum_p] = \
+#     partial(_allreduce_translation_rule, lax.add_p)
+pxla.parallel_translation_rules[psum_p] = \
+    lambda c, val, device_groups: c.CrossReplicaSum(val, device_groups)
 
+ad.deflinear(psum_p, lambda t, axis_name: [t])
 
-def _pmax_serial_pmap_rule(vals, axes):
-  val, = vals
-  axis, = axes
-  return lax._reduce_max(val, [axis]), None
 
 pmax_p = PmapPrimitive('pmax')
-pmax_p.def_impl(partial(_unbound_name_error, 'pmax'))
-pmax_p.def_abstract_eval(lambda x, *args, **kwargs: x)
-parallel.serial_pmap_primitive_rules[pmax_p] = _pmax_serial_pmap_rule
 parallel.defreducer(lax.reduce_max_p, pmax_p)
+parallel.serial_pmap_primitive_rules[pmax_p] = \
+    partial(_allreduce_serial_pmap_rule, lax._reduce_max)
+pxla.parallel_translation_rules[pmax_p] = \
+    partial(_allreduce_translation_rule, lax.max_p)
+
+
+pmin_p = PmapPrimitive('pmin')
+parallel.defreducer(lax.reduce_min_p, pmin_p)
+parallel.serial_pmap_primitive_rules[pmin_p] = \
+    partial(_allreduce_serial_pmap_rule, lax._reduce_min)
+pxla.parallel_translation_rules[pmin_p] = \
+    partial(_allreduce_translation_rule, lax.min_p)
+
+
+def _ppermute_translation_rule(c, x, device_groups, perm):
+  group_size = len(perm)
+  if not all(len(grp) == group_size for grp in device_groups):
+    msg = ("ppermute permutation must match device group size, got permutation "
+           "{} for device_groups {}.".format(perm, device_groups))
+    raise ValueError(msg)
+  if not all(0 <= i < group_size and 0 <= j < group_size for i, j in perm):
+    msg = ("ppermute permutation elements must take on values between 0 and "
+           "the group size {}, but got {}.")
+    raise ValueError(msg.format(group_size, perm))
+  sources, dests = unzip2(perm)
+  if not (len(sources) == len(set(sources)) and len(dests) == len(set(dests))):
+    msg = "ppermute sources and destinations must be unique, got {}."
+    raise ValueError(msg.format(perm))
+
+  full_perm = []
+  for grp in device_groups:
+    grp = list(sorted(grp))
+    full_perm.extend((grp[src], grp[dst]) for src, dst in perm)
+  return c.CollectivePermute(x, full_perm)
+
+ppermute_p = PmapPrimitive('ppermute')
+pxla.parallel_translation_rules[ppermute_p] = _ppermute_translation_rule
 
 
 def _pswapaxes_serial_pmap_rule(vals, axes, axis):

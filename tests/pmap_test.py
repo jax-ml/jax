@@ -280,6 +280,106 @@ class PmapTest(jtu.JaxTestCase):
     w = jit(lambda x: list(x)[0])(y)
     self.assertAllClose(w, x, check_dtypes=False)
 
+  @jtu.skip_on_devices("cpu", "gpu")
+  def testCollectivePermute(self):
+    device_count = xla_bridge.device_count()
+    if device_count != 2:
+      raise SkipTest("skipping because device_count != 2")
+
+    f = lambda x: lax.ppermute(x, perm=[(0, 1), (1, 0)], axis_name='i')
+    f = pmap(f, 'i')
+
+    x = np.arange(4 * device_count).reshape((device_count, 4))
+    ans = f(x)
+    expected = x[::-1]
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @jtu.skip_on_devices("cpu", "gpu")
+  def testRule30(self):
+    device_count = xla_bridge.device_count()
+    if device_count != 2:
+      raise SkipTest("skipping because device_count != 2")
+
+    def update_board(board):
+      # rule 30: https://en.wikipedia.org/wiki/Rule_30
+      left = board[:-2]
+      right = board[2:]
+      center = board[1:-1]
+      return lax.bitwise_xor(left, lax.bitwise_or(center, right))
+
+    @partial(pmap, axis_name='i')
+    def step(board_slice):
+      left, right = board_slice[:1], board_slice[-1:]
+      left = lax.ppermute(left, perm=[(0, 1), (1, 0)], axis_name='i')
+      right = lax.ppermute(right, perm=[(0, 1), (1, 0)], axis_name='i')
+      left, right = right, left
+
+      enlarged_board_slice = np.concatenate([left, board_slice, right])
+      return update_board(enlarged_board_slice)
+
+    board = onp.zeros(40, dtype=bool)
+    board[board.shape[0] // 2] = True
+    reshaped_board = board.reshape((device_count, -1))
+
+    boards = []
+    def print_board(board):
+      boards.append(''.join('*' if x else ' ' for x in board.ravel()))
+
+    print_board(reshaped_board)
+    for _ in range(20):
+      reshaped_board = step(reshaped_board)
+      print_board(reshaped_board)
+
+    ans = '\n'.join(boards)
+    expected = '\n'.join((
+        '                    *                   ',
+        '                   ***                  ',
+        '                  **  *                 ',
+        '                 ** ****                ',
+        '                **  *   *               ',
+        '               ** **** ***              ',
+        '              **  *    *  *             ',
+        '             ** ****  ******            ',
+        '            **  *   ***     *           ',
+        '           ** **** **  *   ***          ',
+        '          **  *    * **** **  *         ',
+        '         ** ****  ** *    * ****        ',
+        '        **  *   ***  **  ** *   *       ',
+        '       ** **** **  *** ***  ** ***      ',
+        '      **  *    * ***   *  ***  *  *     ',
+        '     ** ****  ** *  * *****  *******    ',
+        '    **  *   ***  **** *    ***      *   ',
+        '   ** **** **  ***    **  **  *    ***  ',
+        '  **  *    * ***  *  ** *** ****  **  * ',
+        ' ** ****  ** *  ******  *   *   *** ****',
+        ' *  *   ***  ****     **** *** **   *   ',
+    ))
+
+    print(ans)
+    self.assertEqual(ans, expected)
+
+  @jtu.skip_on_devices("cpu", "gpu")
+  def testReduceMax(self):
+    f = pmap(lambda x: x - lax.pmax(x, 'i'), axis_name='i')
+
+    shape = (xla_bridge.device_count(), 4)
+    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+    expected = x - onp.max(x, 0)
+
+    ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @jtu.skip_on_devices("cpu", "gpu")
+  def testReduceMin(self):
+    f = pmap(lambda x: x - lax.pmin(x, 'i'), axis_name='i')
+
+    shape = (xla_bridge.device_count(), 4)
+    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+    expected = x - onp.min(x, 0)
+
+    ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
 
 if __name__ == '__main__':
   absltest.main()
