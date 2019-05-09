@@ -3124,7 +3124,7 @@ def _reduce_logical_shape_rule(operand, axes):
   return tuple(onp.delete(operand.shape, axes))
 
 def _reduce_logical_translation_rule(prim, identity, c, operand, axes):
-  scalar = xla_bridge.Shape.array_shape(onp.bool_, ())
+  scalar = xla_bridge.Shape.array_shape(onp.dtype(onp.bool_), ())
   return c.Reduce(operand, c.Constant(identity(onp.bool_)),
                   xla.primitive_computation(prim, scalar, scalar), axes)
 
@@ -3409,8 +3409,10 @@ def _select_and_gather_add_pair_reducer(dtype, select_prim):
   etype = xla_bridge.dtype_to_etype_exact(dtype)
 
   c = xla_bridge.make_computation_builder("select_and_gather_pair_reducer")
-  x = c.ParameterWithShape(xla_bridge.Shape.array_shape(pair_uint_dtype, ()))
-  y = c.ParameterWithShape(xla_bridge.Shape.array_shape(pair_uint_dtype, ()))
+  x = c.ParameterWithShape(
+    xla_bridge.Shape.array_shape(onp.dtype(pair_uint_dtype), ()))
+  y = c.ParameterWithShape(
+    xla_bridge.Shape.array_shape(onp.dtype(pair_uint_dtype), ()))
 
   bits_const = c.Constant(pair_uint_dtype(bits), canonicalize_types=False)
 

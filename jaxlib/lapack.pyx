@@ -203,12 +203,12 @@ def jax_trsm(c, alpha, a, b, left_side=False, lower=False, trans_a=False,
         alpha, a, b),
       shape_with_layout=Shape.array_shape(dtype, b_shape.dimensions(), (0, 1)),
       operand_shapes_with_layout=(
-          Shape.array_shape(np.int32, (), ()),
-          Shape.array_shape(np.int32, (), ()),
-          Shape.array_shape(np.int32, (), ()),
-          Shape.array_shape(np.int32, (), ()),
-          Shape.array_shape(np.int32, (), ()),
-          Shape.array_shape(np.int32, (), ()),
+          Shape.array_shape(np.dtype(np.int32), (), ()),
+          Shape.array_shape(np.dtype(np.int32), (), ()),
+          Shape.array_shape(np.dtype(np.int32), (), ()),
+          Shape.array_shape(np.dtype(np.int32), (), ()),
+          Shape.array_shape(np.dtype(np.int32), (), ()),
+          Shape.array_shape(np.dtype(np.int32), (), ()),
           Shape.array_shape(dtype, (), ()),
           Shape.array_shape(dtype, a_shape.dimensions(), (0, 1)),
           Shape.array_shape(dtype, b_shape.dimensions(), (0, 1)),
@@ -342,16 +342,16 @@ def jax_getrf(c, a):
             batch_dims + (m, n),
             (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
           Shape.array_shape(
-            np.int32,
+            np.dtype(np.int32),
             batch_dims + (min(m, n),),
             tuple(range(num_bd, -1, -1))),
-          Shape.array_shape(np.int32, batch_dims,
+          Shape.array_shape(np.dtype(np.int32), batch_dims,
             tuple(range(num_bd - 1, -1, -1))),
       )),
       operand_shapes_with_layout=(
-          Shape.array_shape(np.int32, (), ()),
-          Shape.array_shape(np.int32, (), ()),
-          Shape.array_shape(np.int32, (), ()),
+          Shape.array_shape(np.dtype(np.int32), (), ()),
+          Shape.array_shape(np.dtype(np.int32), (), ()),
+          Shape.array_shape(np.dtype(np.int32), (), ()),
           Shape.array_shape(
             dtype,
             batch_dims + (m, n),
@@ -452,11 +452,11 @@ def jax_potrf(c, a, lower=False):
       operands=(c.ConstantS32Scalar(int(lower)), c.ConstantS32Scalar(n), a),
       shape_with_layout=Shape.tuple_shape((
           Shape.array_shape(dtype, (n, n), (0, 1)),
-          Shape.array_shape(np.int32, (), ()),
+          Shape.array_shape(np.dtype(np.int32), (), ()),
       )),
       operand_shapes_with_layout=(
-          Shape.array_shape(np.int32, (), ()),
-          Shape.array_shape(np.int32, (), ()),
+          Shape.array_shape(np.dtype(np.int32), (), ()),
+          Shape.array_shape(np.dtype(np.int32), (), ()),
           Shape.array_shape(dtype, (n, n), (0, 1)),
       ))
 
@@ -675,21 +675,29 @@ def jax_gesdd(c, a, full_matrices=True, compute_uv=True):
   if dtype == np.float32:
     fn = b"lapack_sgesdd"
     singular_vals_dtype = np.float32
-    workspace = (Shape.array_shape(np.int32, (gesdd_iwork_size(m, n),), (0,)),)
+    workspace = (Shape.array_shape(np.dtype(np.int32),
+                                   (gesdd_iwork_size(m, n),), (0,)),)
   elif dtype == np.float64:
     fn = b"lapack_dgesdd"
     singular_vals_dtype = np.float64
-    workspace = (Shape.array_shape(np.int32, (gesdd_iwork_size(m, n),), (0,)),)
+    workspace = (Shape.array_shape(np.dtype(np.int32),
+                                   (gesdd_iwork_size(m, n),), (0,)),)
   elif dtype == np.complex64:
     fn = b"lapack_cgesdd"
     singular_vals_dtype = np.float32
-    workspace = (Shape.array_shape(np.int32, (gesdd_iwork_size(m, n),), (0,)),
-                 Shape.array_shape(np.float32, (cgesdd_rwork_size(m, n, int(compute_uv)),), (0,)))
+    workspace = (Shape.array_shape(np.dtype(np.int32),
+                                   (gesdd_iwork_size(m, n),), (0,)),
+                 Shape.array_shape(np.dtype(np.float32),
+                                   (cgesdd_rwork_size(m, n, int(compute_uv)),),
+                                   (0,)))
   elif dtype == np.complex128:
     fn = b"lapack_zgesdd"
     singular_vals_dtype = np.float64
-    workspace = (Shape.array_shape(np.int32, (gesdd_iwork_size(m, n),), (0,)),
-                 Shape.array_shape(np.float64, (cgesdd_rwork_size(m, n, int(compute_uv)),), (0,)))
+    workspace = (Shape.array_shape(np.dtype(np.int32),
+                                   (gesdd_iwork_size(m, n),), (0,)),
+                 Shape.array_shape(np.dtype(np.float64),
+                                   (cgesdd_rwork_size(m, n, int(compute_uv)),),
+                                   (0,)))
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
 
@@ -699,16 +707,16 @@ def jax_gesdd(c, a, full_matrices=True, compute_uv=True):
                 c.ConstantS32Scalar(m), c.ConstantS32Scalar(n), a),
       shape_with_layout=Shape.tuple_shape((
           Shape.array_shape(dtype, (m, n), (0, 1)),
-          Shape.array_shape(singular_vals_dtype, (min(m, n),), (0,)),
+          Shape.array_shape(np.dtype(singular_vals_dtype), (min(m, n),), (0,)),
           Shape.array_shape(dtype, (m, m if full_matrices else min(m, n)), (0, 1)),
           Shape.array_shape(dtype, (n if full_matrices else min(m, n), n), (0, 1)),
-          Shape.array_shape(np.int32, (), ())) + workspace
+          Shape.array_shape(np.dtype(np.int32), (), ())) + workspace
       ),
       operand_shapes_with_layout=(
-          Shape.array_shape(np.int32, (), ()),
-          Shape.array_shape(np.int32, (), ()),
-          Shape.array_shape(np.int32, (), ()),
-          Shape.array_shape(np.int32, (), ()),
+          Shape.array_shape(np.dtype(np.int32), (), ()),
+          Shape.array_shape(np.dtype(np.int32), (), ()),
+          Shape.array_shape(np.dtype(np.int32), (), ()),
+          Shape.array_shape(np.dtype(np.int32), (), ()),
           Shape.array_shape(dtype, (m, n), (0, 1)),
       ))
   return c.Tuple(c.GetTupleElement(out, 1), c.GetTupleElement(out, 2),
@@ -843,24 +851,30 @@ def jax_syevd(c, a, lower=False):
     fn = b"lapack_ssyevd"
     eigvals_type = np.float32
     workspace = (Shape.array_shape(dtype, (syevd_work_size(n),), (0,)),
-                 Shape.array_shape(np.int32, (syevd_iwork_size(n),), (0,)))
+                 Shape.array_shape(np.dtype(np.int32)
+                                   (syevd_iwork_size(n),), (0,)))
   elif dtype == np.float64:
     fn = b"lapack_dsyevd"
     eigvals_type = np.float64
     workspace = (Shape.array_shape(dtype, (syevd_work_size(n),), (0,)),
-                 Shape.array_shape(np.int32, (syevd_iwork_size(n),), (0,)))
+                 Shape.array_shape(np.dtype(np.int32),
+                                   (syevd_iwork_size(n),), (0,)))
   elif dtype == np.complex64:
     fn = b"lapack_cheevd"
     eigvals_type = np.float32
     workspace = (Shape.array_shape(dtype, (heevd_work_size(n),), (0,)),
-                 Shape.array_shape(np.float32, (heevd_rwork_size(n),), (0,)),
-                 Shape.array_shape(np.int32, (syevd_iwork_size(n),), (0,)))
+                 Shape.array_shape(np.dtype(np.float32)
+                                   (heevd_rwork_size(n),), (0,)),
+                 Shape.array_shape(np.dtype(np.int32),
+                                   (syevd_iwork_size(n),), (0,)))
   elif dtype == np.complex128:
     fn = b"lapack_zheevd"
     eigvals_type = np.float64
     workspace = (Shape.array_shape(dtype, (heevd_work_size(n),), (0,)),
-                 Shape.array_shape(np.float64, (heevd_rwork_size(n),), (0,)),
-                 Shape.array_shape(np.int32, (syevd_iwork_size(n),), (0,)))
+                 Shape.array_shape(np.dtype(np.float64),
+                                   (heevd_rwork_size(n),), (0,)),
+                 Shape.array_shape(np.dtype(np.int32),
+                                   (syevd_iwork_size(n),), (0,)))
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
 
@@ -871,12 +885,12 @@ def jax_syevd(c, a, lower=False):
                 a),
       shape_with_layout=Shape.tuple_shape((
           Shape.array_shape(dtype, (n, n), (0, 1)),
-          Shape.array_shape(eigvals_type, (n,), (0,)),
-          Shape.array_shape(np.int32, (), ())) + workspace
+          Shape.array_shape(np.dtype(eigvals_type), (n,), (0,)),
+          Shape.array_shape(np.dtype(np.int32), (), ())) + workspace
       ),
       operand_shapes_with_layout=(
-          Shape.array_shape(np.int32, (), ()),
-          Shape.array_shape(np.int32, (), ()),
+          Shape.array_shape(np.dtype(np.int32), (), ()),
+          Shape.array_shape(np.dtype(np.int32), (), ()),
           Shape.array_shape(dtype, (n, n), (0, 1)),
       ))
   return c.Tuple(c.GetTupleElement(out, 0), c.GetTupleElement(out, 1),
