@@ -439,6 +439,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       assert b.shape == ()
       return core.pack((c, b))
 
+    f_jit = api.jit(f)
+
     as_ = np.ones((5, 3))
     c = np.ones(4)
 
@@ -446,18 +448,17 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = scan_reference(f, c, as_)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    # ans =    api.jit(lax.scan, (0,))(f, c, as_)
-    # expected =  scan_reference(f, c, as_)
-    # self.assertAllClose(ans, expected, check_dtypes=False)
-
-    f = api.jit(f)
-
-    ans =            lax.scan(f, c, as_)
-    expected = scan_reference(f, c, as_)
+    ans =    api.jit(lax.scan, (0,))(f, c, as_)
+    expected =        scan_reference(f, c, as_)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    # ans =    api.jit(lax.scan, (0,))(f, c, as_)
-    # expected =  scan_reference(f, c, as_)
+    ans =            lax.scan(f_jit, c, as_)
+    expected = scan_reference(f_jit, c, as_)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    # TODO(mattjj): debug!
+    # ans =    api.jit(lax.scan, (0,))(f_jit, c, as_)
+    # expected =        scan_reference(f_jit, c, as_)
     # self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testScanJVP(self):
