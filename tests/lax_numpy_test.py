@@ -995,6 +995,33 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_axis={}_weights={}_returned={}".format(
+          jtu.format_shape_dtype_string(shape, dtype),
+          axis,
+          (None if weights_shape == None else jtu.format_shape_dtype_string(weights_shape, dtype)),
+          returned),
+       "rng": jtu.rand_default(), "shape": shape, "dtype": dtype, "axis": axis,
+       "weights_shape": weights_shape, "returned": returned}
+      for shape in nonempty_shapes
+      for dtype in number_dtypes
+      for axis in set(range(-len(shape), len(shape))) | set([None])
+      # `weights_shape` is either `None`, same as the averaged axis, or same as
+      # that of the input
+      for weights_shape in ([None, shape] if axis is None else [None, (shape[axis],), shape])
+      for returned in [False, True]))
+  def testAverage(self, shape, dtype, axis, weights_shape, returned, rng):
+    onp_fun = lambda x, weights: onp.average(x, axis, weights, returned)
+    lnp_fun = lambda x, weights: lnp.average(x, axis, weights, returned)
+    args_maker = lambda: [rng(shape, dtype),
+                          None if weights_shape is None else rng(weights_shape, dtype)]
+
+    try:
+        self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    except ZeroDivisionError:
+        self.skipTest("don't support checking for ZeroDivisionError")
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_arg{}".format(i), "arg": arg}
       for i, arg in enumerate([
           [1, 2, 3], [1., 2., 3.],
