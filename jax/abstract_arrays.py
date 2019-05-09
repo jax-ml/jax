@@ -175,6 +175,9 @@ array_types = [onp.ndarray, onp.float64, onp.float32, onp.float16,
                onp.bool_, onp.uint64, onp.uint32, onp.uint16, onp.uint8,
                onp.longlong, complex, float, int, bool]
 
+if six.PY2:
+  array_types.append(long)
+
 for t in array_types:
   core.pytype_aval_mappings[t] = ConcreteArray
   ad_util.jaxval_zeros_likers[t] = zeros_like_array
