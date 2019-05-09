@@ -773,6 +773,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     for update_shape in _broadcastable_shapes(_update_shape(shape, indexer))
     for update_dtype in ([dtype] if op == UpdateOps.ADD else all_dtypes)
     for rng in [jtu.rand_default()]))
+  @jtu.skip_on_devices("gpu")  # TODO(b/132005708): llvm assert failure on GPU
   def testAdvancedIndexing(self, shape, dtype, update_shape, update_dtype,
                            rng, indexer, op):
     args_maker = lambda: [rng(shape, dtype), rng(update_shape, update_dtype)]
