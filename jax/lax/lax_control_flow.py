@@ -594,14 +594,17 @@ def _scan_jvp(primals, tangents, forward, length, jaxpr):
   where_xs_zeros = ad.get_zeros(xs_dot)  # same as where_x_zeros b/c arrays
 
   where_carry_zeros = where_init_zeros
-  while True:
+  for i in range(1000):
     where_zeros = (where_consts_zeros, where_carry_zeros, where_xs_zeros)
     jaxpr_jvp, where_zeros_out = ad.jvp_jaxpr(jaxpr, where_zeros)
+    # TODO instantiate_as_far_as=(where_carry_zeros, True/False)
     where_carry_zeros_out, where_ys_zeros = where_zeros_out
     if where_carry_zeros_out == where_carry_zeros:
       break
     else:
       where_carry_zeros = _binary_lattice_join(where_carry_zeros_out, where_carry_zeros)
+  else:
+    raise FixedPointError
 
   # convert_zeros is like strip_zeros but uses explicit lattice information to
   # instantiate zeros in some cases, namely in init_dot based on the fixed point
@@ -647,14 +650,17 @@ def _scan_partial_eval(trace, *tracers, **kwargs):
   fc_consts, fc_init, fc_xs = map(_is_const, in_pvs)
 
   fc_carry = fc_init
-  while True:
+  for i in range(1000):
     first_components = (fc_consts, fc_carry, fc_xs)
     jaxpr_1, jaxpr_2, fc_out = pe.partial_eval_jaxpr(jaxpr, first_components)
+    # TODO instantiate_as_far_as=(fc_carry, True/False)
     fc_carry_out, fc_ys = fc_out
     if fc_carry_out == fc_carry:
       break
     else:
       fc_carry = _binary_lattice_join(fc_carry, fc_carry_out)
+  else:
+    raise FixedPointError
 
   consts_tracer, init_tracer, xs_tracer = tracers
   lifted_init_tracer = _lift_tracer(trace, init_tracer, fc_carry)
@@ -810,6 +816,9 @@ def _make_typed_jaxpr(traceable, in_avals):
   out_aval, _ = pval_out
   assert isinstance(out_aval, core.AbstractValue)
   return core.TypedJaxpr(jaxpr, consts, in_avals, out_aval)
+
+
+class FixedPointError(Exception): pass
 
 
 scan_p = core.Primitive("scan")
