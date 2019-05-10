@@ -424,13 +424,24 @@ def trace_to_subjaxpr(master, instantiate, pvals):
   out_tracer = yield in_tracers, {}
   out_tracer = trace.full_raise(out_tracer)
 
-  if instantiate:
-    out_tracer = trace.instantiate_const(out_tracer)
+  out_tracer = instantiate_const_at(trace, instantiate, out_tracer)
 
   jaxpr, consts, env = tracers_to_jaxpr(in_tracers, out_tracer)
   out_pval = out_tracer.pval
   del trace, in_tracers, out_tracer
   yield jaxpr, (out_pval, consts, env)
+
+def instantiate_const_at(trace, instantiate, tracer):
+  t = type(instantiate)
+  if t is tuple:
+    return pack(map(partial(instantiate_const_at, trace), instantiate, tracer))
+  elif t is bool:
+    if instantiate:
+      return trace.instantiate_const(tracer)
+    else:
+      return tracer
+  else:
+    raise TypeError(t)
 
 
 FreeVar = namedtuple('FreeVar', ['val'])
@@ -592,7 +603,7 @@ def _pack_eqn(invars, outvar):
   return core.JaxprEqn(invars, [outvar], core.pack_p, (), False, False, {})
 
 
-def partial_eval_jaxpr(jaxpr, second_components):
+def partial_eval_jaxpr(jaxpr, second_components, instantiate):
   # jaxpr :: d -> c -> a -> (c, b)
   f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
 
@@ -601,7 +612,7 @@ def partial_eval_jaxpr(jaxpr, second_components):
   # fun :: d1 -> c1 -> a1 -> (c1, (b1, res))
   def fun(*vals):
     pvals = map(as_pval, jaxpr.in_avals, second_components, vals)
-    jaxpr_2, out_pval, consts_2 = trace_to_jaxpr(f, pvals)
+    jaxpr_2, out_pval, consts_2 = trace_to_jaxpr(f, pvals, instantiate=instantiate)
     (out_pv_c, out_pv_b), out_const = out_pval
     if out_const is core.unit:
       out_const_c, out_const_b = core.unit, core.unit

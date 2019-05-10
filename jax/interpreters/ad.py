@@ -47,8 +47,7 @@ def jvpfun(instantiate, primals, tangents):
   with new_master(JVPTrace) as master:
     out_primal, out_tangent = yield (master, primals, tangents), {}
     del master
-  if instantiate:
-    out_tangent = instantiate_zeros(out_primal, out_tangent)
+  out_tangent = instantiate_zeros_at(instantiate, out_primal, out_tangent)
   yield (out_primal, out_tangent)
 
 
@@ -73,8 +72,7 @@ def jvp_subtrace_aux(instantiate, master, primals, tangents):
   out_tracer, aux_tracer = map(trace.full_raise, (ans, aux))
   out_primal, out_tangent = out_tracer.primal, out_tracer.tangent
   aux = aux_tracer.primal  # ignore aux tangent
-  if instantiate:
-    out_tangent = instantiate_zeros(out_primal, out_tangent)
+  out_tangent = instantiate_zeros_at(instantiate, out_primal, out_tangent)
   yield (out_primal, out_tangent), aux
 
 
@@ -465,6 +463,19 @@ deflinear(core.pack_p, lambda t: list(t) if t is not zero else zero)
 deflinear(add_jaxvals_p, lambda t: (t, t))
 
 
+def instantiate_zeros_at(instantiate, example, tangent):
+  t = type(instantiate)
+  if t is tuple:
+    # note to future selves: it wasn't clear whether to pack here
+    return TangentTuple(map(instantiate_zeros_at, instantiate, example, tangent))
+  elif t is bool:
+    if instantiate:
+      return instantiate_zeros(example, tangent)
+    else:
+      return tangent
+  else:
+    raise TypeError(t)
+
 def instantiate_zeros(example, tangent):
   if tangent is zero:
     return zeros_like_jaxval(example)
@@ -568,12 +579,12 @@ def f_jvp_traceable(nonzero_components, *primal_tangent_pairs):
   primal_tangent_pairs_out = [pack((p, t)) for p, t in zip(primal_out, tangent_out_nonzero)]
   yield pack(primal_tangent_pairs_out), nonzeros_out
 
-def jvp_jaxpr(jaxpr, nonzeros):
+def jvp_jaxpr(jaxpr, nonzeros, instantiate):
   # jaxpr :: d -> a -> b -> (c1, c2)
   # avals = (d, a, b)
   # f :: d -> a -> b -> (c1, c2)
   f = wrap_init(partial(jaxpr_as_fun, jaxpr.jaxpr, jaxpr.literals))
-  f_jvp, out_nonzeros = f_jvp_traceable(jvp(f, instantiate=False), nonzeros)
+  f_jvp, out_nonzeros = f_jvp_traceable(jvp(f, instantiate=instantiate), nonzeros)
   # f_jvp :: (d, d') -> (a, a') -> (b, b') -> ((c1, c1'), (c2, c2'))
   tangent_avals = map(partial(strip_zeros, core.AbstractTuple(()), core.AbstractTuple),
                       nonzeros, jaxpr.in_avals)
