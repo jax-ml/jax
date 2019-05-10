@@ -143,14 +143,8 @@ def eigh_abstract_eval(operand, lower):
   return core.AbstractTuple((v, w))
 
 def eigh_cpu_translation_rule(c, operand, lower):
-  shape = c.GetShape(operand)
-  dtype = shape.element_type().type
-  if len(shape.dimensions()) == 2 and dtype in _cpu_lapack_types:
-    out = lapack.jax_syevd(c, operand, lower=lower)
-    return c.Tuple(c.GetTupleElement(out, 0), c.GetTupleElement(out, 1))
-  else:
-    raise NotImplementedError(
-        "Only unbatched eigendecomposition is implemented on CPU")
+  out = lapack.jax_syevd(c, operand, lower=lower)
+  return c.Tuple(c.GetTupleElement(out, 0), c.GetTupleElement(out, 1))
 
 def eigh_jvp_rule(primals, tangents, lower):
   # Derivative for eigh in the simplest case of distinct eigenvalues.
@@ -176,12 +170,19 @@ def eigh_jvp_rule(primals, tangents, lower):
   dw = np.diagonal(vdag_adot_v)
   return core.pack((v, w)), core.pack((dv, dw))
 
+def eigh_batching_rule(batched_args, batch_dims, lower):
+  x, = batched_args
+  bd, = batch_dims
+  x = batching.bdim_at_front(x, bd)
+  return eigh_p.bind(x, lower=lower), 0
+
 eigh_p = Primitive('eigh')
 eigh_p.def_impl(eigh_impl)
 eigh_p.def_abstract_eval(eigh_abstract_eval)
 xla.translations[eigh_p] = eigh_translation_rule
 ad.primitive_jvps[eigh_p] = eigh_jvp_rule
 xla.backend_specific_translations['cpu'][eigh_p] = eigh_cpu_translation_rule
+batching.primitive_batchers[eigh_p] = eigh_batching_rule
 
 
 
@@ -430,7 +431,6 @@ def qr_batching_rule(batched_args, batch_dims, full_matrices):
   x, = batched_args
   bd, = batch_dims
   x = batching.bdim_at_front(x, bd)
-  q, r = qr(x, full_matrices=full_matrices)
   return qr_p.bind(x, full_matrices=full_matrices), 0
 
 qr_p = Primitive('qr')
