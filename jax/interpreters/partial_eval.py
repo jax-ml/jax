@@ -360,8 +360,17 @@ def join_pvals(pval1, pval2):
   else:
     # the pvals are tuples with some mixtures of known/unknown
     assert isinstance(pv1, JaxprTracerTuple) or isinstance(pv2, JaxprTracerTuple)
-    pv1 = [None] * len(pv2) if pv1 is None else pv1
-    pv2 = [None] * len(pv1) if pv2 is None else pv2
+    def explode(pv, const):
+      if isinstance(pv, AbstractValue):
+        assert const == core.unit
+        const = [core.unit] * len(pv)
+      elif pv is None:
+        pv = [None] * len(const)
+      else:
+        assert isinstance(pv, JaxprTracerTuple)
+      return pv, const
+    pv1, const1 = explode(pv1, const1)
+    pv2, const2 = explode(pv2, const2)
     pvals1, pvals2 = zip(pv1, const1), zip(pv2, const2)
     join_pvs, join_consts = unzip2(map(join_pvals, pvals1, pvals2))
     if all(isinstance(pv, AbstractValue) for pv in join_pvs):
