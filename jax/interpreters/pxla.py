@@ -452,7 +452,7 @@ def parallel_callable(fun, axis_name, axis_size, *avals):
     out = compile_replicated(jaxpr, axis_name, axis_size, consts, *avals)
     compiled, nrep, shard_result_shape = out
     del master, consts, jaxpr, env
-  handle_arg = partial(shard_arg, compiled._device_ordinals, axis_size)
+  handle_arg = partial(shard_arg, compiled.DeviceOrdinals(), axis_size)
   handle_replica_result = xla.result_handler(shard_result_shape)
   handle_full_result = sharded_result_handler(axis_size, merged_aval(pval))
   return partial(execute_replicated, compiled, pval, nrep,
