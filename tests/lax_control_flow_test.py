@@ -546,6 +546,52 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = api.grad(lambda c, as_: list(scan_reference(f, c, as_))[0].sum())(c, as_)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testScanRnn(self):
+    r = npr.RandomState(0)
+
+    n_in = 4
+    n_hid = 3
+    n_out = 2
+    length = 5
+
+    W_trans = r.randn(n_hid, n_hid + n_in)
+    W_out = r.randn(n_out, n_hid + n_in)
+    params = W_trans, W_out
+
+    inputs = r.randn(length, n_in)
+    targets = r.randn(length, n_out)
+
+    def step(params, state, input):
+      W_trans, W_out = params
+      stacked = np.concatenate([state, input])
+      output = np.tanh(np.dot(W_out, stacked))
+      next_state = np.tanh(np.dot(W_trans, stacked))
+      return core.pack((next_state, output))
+
+    def rnn(params, inputs):
+      init_state = np.zeros(n_hid)
+      _, outputs = lax.scan(partial(step, params), init_state, inputs)
+      return outputs
+
+    def loss(params, inputs, targets):
+      predictions = rnn(params, inputs)
+      return np.sum((predictions - targets)**2)
+
+    # evaluation doesn't crash
+    loss(params, inputs, targets)
+
+    # jvp evaluation doesn't crash
+    api.jvp(lambda params: loss(params, inputs, targets), (params,), (params,))
+
+    # gradient evaluation doesn't crash
+    api.grad(loss)(params, inputs, targets)
+
+    # gradient is zero in the right place
+    predictions = rnn(params, inputs)
+    ans = api.grad(loss)(params, inputs, predictions)
+    expected = (onp.zeros_like(W_trans), onp.zeros_like(W_out))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
 
 if __name__ == '__main__':
   absltest.main()

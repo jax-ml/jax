@@ -533,13 +533,17 @@ def scan(f, init, xs):
     loop carry value and the second element represents the stacked outputs of
     the second output of ``f`` when scanned over the leading axis of the inputs.
   """
+  (init, xs), in_trees = unzip2(map(pytree_to_jaxtupletree, (init, xs)))
+  f, out_tree = pytree_fun_to_jaxtupletree_fun(lu.wrap_init(f), in_trees)
   carry_pval = carry_aval, _ = _abstractify(init)
   xs_aval, _ = _abstractify(xs)
   x_aval = _demote_aval_rank(xs_aval)
   x_pval = pe.PartialVal((x_aval, core.unit))
   jaxpr, pval_out, consts = pe.trace_to_jaxpr(
-      lu.wrap_init(f), (carry_pval, x_pval), instantiate=True)
-  (carry_aval_out, y_aval), _ = pval_out
+      f, (carry_pval, x_pval), instantiate=True)
+  pv_out, const_out = pval_out
+  assert isinstance(pv_out, core.AbstractTuple) and const_out == core.unit
+  carry_aval_out, y_aval = pv_out
   if carry_aval != carry_aval_out:
     msg = ("scanned function carry output does not match carry input: "
            "input carry is {} and output carry is {}")
@@ -550,8 +554,9 @@ def scan(f, init, xs):
   out_aval = core.AbstractTuple((carry_aval, y_aval))
   jaxpr = core.TypedJaxpr(lifted_jaxpr, (), in_avals, out_aval)
   length = _leading_dim_size(xs)
-  return scan_p.bind(core.pack(consts), init, xs,
-                     forward=True, length=length, jaxpr=jaxpr)
+  out = scan_p.bind(core.pack(consts), init, xs,
+                    forward=True, length=length, jaxpr=jaxpr)
+  return build_tree(out_tree(), out)
 
 
 def _scan_impl(consts, init, xs, forward, length, jaxpr):
@@ -631,7 +636,6 @@ def _binary_lattice_join(a, b):
 
 
 def _scan_partial_eval(trace, *tracers, **kwargs):
-  # Implements the Rumsfeld Transform: turn uknown unknowns into known unknowns
   jaxpr = kwargs.pop('jaxpr')
   length = kwargs.pop('length')
   forward = kwargs.pop('forward')
@@ -657,7 +661,10 @@ def _scan_partial_eval(trace, *tracers, **kwargs):
   lifted_tracers = consts_tracer, lifted_init_tracer, xs_tracer
   in_pvs, in_consts = unzip2([t.pval for t in lifted_tracers])
 
-  out_pv = _put_known_pvs(sc_out, jaxpr.out_aval)
+  carry_aval, y_aval = jaxpr.out_aval
+  ys_aval = _promote_aval_rank(length, y_aval)
+  out_aval = core.AbstractTuple((carry_aval, ys_aval))
+  out_pv = _put_known_pvs(sc_out, out_aval)
 
   out_carry, (ys, residuals) = scan_p.bind(
       *in_consts, forward=forward, length=length, jaxpr=jaxpr_1)

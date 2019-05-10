@@ -374,7 +374,8 @@ def join_pvals(pval1, pval2):
     pvals1, pvals2 = zip(pv1, const1), zip(pv2, const2)
     join_pvs, join_consts = unzip2(map(join_pvals, pvals1, pvals2))
     if all(isinstance(pv, AbstractValue) for pv in join_pvs):
-      return PartialVal((AbstractTuple(join_pvs), pack(join_consts)))
+      assert all(const == core.unit for const in join_consts)
+      return PartialVal((AbstractTuple(join_pvs), core.unit))
     else:
       return PartialVal((JaxprTracerTuple(join_pvs), pack(join_consts)))
 
