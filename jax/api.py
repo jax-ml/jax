@@ -46,7 +46,7 @@ from .tree_util import (process_pytree, node_types, build_tree, PyTreeDef,
                         tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, leaf)
 from .util import (unzip2, unzip3, curry, partial, safe_map, safe_zip,
-                   WrapHashably, prod)
+                   WrapHashably, Hashable, prod)
 from .lib.xla_bridge import canonicalize_dtype, device_count
 from .abstract_arrays import ShapedArray
 from .interpreters import partial_eval as pe
@@ -824,10 +824,18 @@ def _argnums_partial(f, dyn_argnums, args):
     dyn_argnums = (dyn_argnums,)
   else:
     dyn_argnums = tuple(dyn_argnums)
-  fixed_args = tuple([None if i in dyn_argnums else WrapHashably(arg)
+  fixed_args = tuple([None if i in dyn_argnums else _wrap_hashably(arg)
                       for i, arg in enumerate(args)])
   dyn_args = tuple(args[i] for i in dyn_argnums)
   return _argnums_partial_(f, dyn_argnums, fixed_args), dyn_args
+
+def _wrap_hashably(arg):
+  try:
+    hash(arg)
+  except TypeError:
+    return WrapHashably(arg)
+  else:
+    return Hashable(arg)
 
 @lu.transformation
 def _argnums_partial_(dyn_argnums, fixed_args, *dyn_args, **kwargs):
