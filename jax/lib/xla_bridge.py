@@ -65,7 +65,7 @@ except ImportError:
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_enable_x64',
-                  strtobool(os.getenv('JAX_ENABLE_X64', "False")),
+                  strtobool(os.getenv('JAX_ENABLE_X64', 'False')),
                   'Enable 64-bit types to be used.')
 flags.DEFINE_string(
     'jax_xla_backend', 'xla',
@@ -74,12 +74,11 @@ flags.DEFINE_string(
     'jax_backend_target', 'local',
     'Either "local" or "rpc:address" to connect to a remote service target.')
 flags.DEFINE_string(
-    'jax_platform_name', '',
-    'Platform name for XLA. The default is to attempt to use a '
-    'GPU if available, but fall back to CPU otherwise. To set '
-    'the platform manually, pass "cpu" for CPU or "gpu" for '
-    'GPU.')
-
+    'jax_platform_name',
+    os.getenv('JAX_PLATFORM_NAME', ''),
+    'Platform name for XLA. The default is to attempt to use a GPU if '
+    'available, but fall back to CPU otherwise. To set the platform manually, '
+    'pass "cpu" for CPU or "gpu" for GPU.')
 
 
 def get_compile_options(num_replicas=None):
