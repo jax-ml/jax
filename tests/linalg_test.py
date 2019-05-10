@@ -205,6 +205,22 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     ) < RTOL
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype, "rng": rng}
+      for shape in [(1, 1), (4, 4), (5, 5)]
+      for dtype in float_types() + complex_types()
+      for rng in [jtu.rand_default()]))
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testEighBatching(self, shape, dtype, rng):
+    shape = (10,) + shape
+    args = rng(shape, dtype)
+    args = (args + onp.conj(T(args))) / 2
+    ws, vs = vmap(jsp.linalg.eigh)(args)
+    self.assertTrue(onp.all(onp.linalg.norm(
+        onp.matmul(args, vs) - ws[..., None, :] * vs) < 1e-3))
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_ord={}_axis={}_keepdims={}".format(
          jtu.format_shape_dtype_string(shape, dtype), ord, axis, keepdims),
        "shape": shape, "dtype": dtype, "axis": axis, "keepdims": keepdims,

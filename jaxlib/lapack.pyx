@@ -734,9 +734,9 @@ cdef int syevd_iwork_size(int n) nogil:
 
 cdef void lapack_ssyevd(void* out_tuple, void** data) nogil:
   cdef int32_t lower = (<int32_t*>(data[0]))[0]
-  cdef int n = (<int32_t*>(data[1]))[0]
-  cdef const float* a_in = <float*>(data[2])
-
+  cdef int b = (<int32_t*>(data[1]))[0]
+  cdef int n = (<int32_t*>(data[2]))[0]
+  cdef const float* a_in = <float*>(data[3])
   cdef void** out = <void**>(out_tuple)
   cdef float* a_out = <float*>(out[0])
   cdef float* w_out = <float*>(out[1])
@@ -744,22 +744,27 @@ cdef void lapack_ssyevd(void* out_tuple, void** data) nogil:
   cdef float* work = <float*>(out[3])
   cdef int* iwork = <int*>(out[4])
   if a_out != a_in:
-    memcpy(a_out, a_in, n * n * sizeof(float))
+    memcpy(a_out, a_in, b * n * n * sizeof(float))
 
   cdef char jobz = 'V'
   cdef char uplo = 'L' if lower else 'U'
 
   cdef int lwork = syevd_work_size(n)
   cdef int liwork = syevd_iwork_size(n)
-  ssyevd(&jobz, &uplo, &n, a_out, &n, w_out, work, &lwork, iwork, &liwork,
-         info_out)
+  for i in range(b):
+    ssyevd(&jobz, &uplo, &n, a_out, &n, w_out, work, &lwork, iwork, &liwork,
+           info_out)
+    a_out += n * n
+    w_out += n
+    info_out += 1
 
 register_cpu_custom_call_target(b"lapack_ssyevd", <void*>(lapack_ssyevd))
 
 cdef void lapack_dsyevd(void* out_tuple, void** data) nogil:
   cdef int32_t lower = (<int32_t*>(data[0]))[0]
-  cdef int n = (<int32_t*>(data[1]))[0]
-  cdef const double* a_in = <double*>(data[2])
+  cdef int b = (<int32_t*>(data[1]))[0]
+  cdef int n = (<int32_t*>(data[2]))[0]
+  cdef const double* a_in = <double*>(data[3])
 
   cdef void** out = <void**>(out_tuple)
   cdef double* a_out = <double*>(out[0])
@@ -768,15 +773,19 @@ cdef void lapack_dsyevd(void* out_tuple, void** data) nogil:
   cdef double* work = <double*>(out[3])
   cdef int* iwork = <int*>(out[4])
   if a_out != a_in:
-    memcpy(a_out, a_in, n * n * sizeof(double))
+    memcpy(a_out, a_in, b * n * n * sizeof(double))
 
   cdef char jobz = 'V'
   cdef char uplo = 'L' if lower else 'U'
 
   cdef int lwork = syevd_work_size(n)
   cdef int liwork = syevd_iwork_size(n)
-  dsyevd(&jobz, &uplo, &n, a_out, &n, w_out, work, &lwork, iwork, &liwork,
-         info_out)
+  for i in range(b):
+    dsyevd(&jobz, &uplo, &n, a_out, &n, w_out, work, &lwork, iwork, &liwork,
+           info_out)
+    a_out += n * n
+    w_out += n
+    info_out += 1
 
 register_cpu_custom_call_target(b"lapack_dsyevd", <void*>(lapack_dsyevd))
 
@@ -790,8 +799,9 @@ cdef int heevd_rwork_size(int n) nogil:
 
 cdef void lapack_cheevd(void* out_tuple, void** data) nogil:
   cdef int32_t lower = (<int32_t*>(data[0]))[0]
-  cdef int n = (<int32_t*>(data[1]))[0]
-  cdef const float complex* a_in = <float complex*>(data[2])
+  cdef int b = (<int32_t*>(data[1]))[0]
+  cdef int n = (<int32_t*>(data[2]))[0]
+  cdef const float complex* a_in = <float complex*>(data[3])
 
   cdef void** out = <void**>(out_tuple)
   cdef float complex* a_out = <float complex*>(out[0])
@@ -801,7 +811,7 @@ cdef void lapack_cheevd(void* out_tuple, void** data) nogil:
   cdef float* rwork = <float*>(out[4])
   cdef int* iwork = <int*>(out[5])
   if a_out != a_in:
-    memcpy(a_out, a_in, n * n * sizeof(float complex))
+    memcpy(a_out, a_in, b * n * n * sizeof(float complex))
 
   cdef char jobz = 'V'
   cdef char uplo = 'L' if lower else 'U'
@@ -809,16 +819,21 @@ cdef void lapack_cheevd(void* out_tuple, void** data) nogil:
   cdef int lwork = heevd_work_size(n)
   cdef int lrwork = heevd_rwork_size(n)
   cdef int liwork = syevd_iwork_size(n)
-  cheevd(&jobz, &uplo, &n, a_out, &n, w_out, work, &lwork, rwork, &lrwork,
-         iwork, &liwork, info_out)
+  for i in range(b):
+    cheevd(&jobz, &uplo, &n, a_out, &n, w_out, work, &lwork, rwork, &lrwork,
+           iwork, &liwork, info_out)
+    a_out += n * n
+    w_out += n
+    info_out += 1
 
 register_cpu_custom_call_target(b"lapack_cheevd", <void*>(lapack_cheevd))
 
 
 cdef void lapack_zheevd(void* out_tuple, void** data) nogil:
   cdef int32_t lower = (<int32_t*>(data[0]))[0]
-  cdef int n = (<int32_t*>(data[1]))[0]
-  cdef const double complex* a_in = <double complex*>(data[2])
+  cdef int b = (<int32_t*>(data[1]))[0]
+  cdef int n = (<int32_t*>(data[2]))[0]
+  cdef const double complex* a_in = <double complex*>(data[3])
 
   cdef void** out = <void**>(out_tuple)
   cdef double complex* a_out = <double complex*>(out[0])
@@ -828,7 +843,7 @@ cdef void lapack_zheevd(void* out_tuple, void** data) nogil:
   cdef double* rwork = <double*>(out[4])
   cdef int* iwork = <int*>(out[5])
   if a_out != a_in:
-    memcpy(a_out, a_in, n * n * sizeof(double complex))
+    memcpy(a_out, a_in, b * n * n * sizeof(double complex))
 
   cdef char jobz = 'V'
   cdef char uplo = 'L' if lower else 'U'
@@ -836,8 +851,12 @@ cdef void lapack_zheevd(void* out_tuple, void** data) nogil:
   cdef int lwork = heevd_work_size(n)
   cdef int lrwork = heevd_rwork_size(n)
   cdef int liwork = syevd_iwork_size(n)
-  zheevd(&jobz, &uplo, &n, a_out, &n, w_out, work, &lwork, rwork, &lrwork,
-         iwork, &liwork, info_out)
+  for i in range(b):
+    zheevd(&jobz, &uplo, &n, a_out, &n, w_out, work, &lwork, rwork, &lrwork,
+           iwork, &liwork, info_out)
+    a_out += n * n
+    w_out += n
+    info_out += 1
 
 register_cpu_custom_call_target(b"lapack_zheevd", <void*>(lapack_zheevd))
 
@@ -846,7 +865,17 @@ def jax_syevd(c, a, lower=False):
 
   a_shape = c.GetShape(a)
   dtype = a_shape.element_type()
-  m, n = a_shape.dimensions()
+  dims = a_shape.dimensions()
+  assert len(dims) >= 2
+  m, n = dims[-2:]
+  assert m == n
+  batch_dims = tuple(dims[:-2])
+  num_bd = len(batch_dims)
+  b = 1
+  for d in batch_dims:
+    b *= d
+  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
+
   if dtype == np.float32:
     fn = b"lapack_ssyevd"
     eigvals_type = np.float32
@@ -881,17 +910,22 @@ def jax_syevd(c, a, lower=False):
   out = c.CustomCall(
       fn,
       operands=(c.ConstantS32Scalar(1 if lower else 0),
+                c.ConstantS32Scalar(b),
                 c.ConstantS32Scalar(n),
                 a),
       shape_with_layout=Shape.tuple_shape((
-          Shape.array_shape(dtype, (n, n), (0, 1)),
-          Shape.array_shape(np.dtype(eigvals_type), (n,), (0,)),
-          Shape.array_shape(np.dtype(np.int32), (), ())) + workspace
+          Shape.array_shape(dtype, dims, layout),
+          Shape.array_shape(np.dtype(eigvals_type), batch_dims + (n,),
+                            tuple(range(num_bd, -1, -1))),
+          Shape.array_shape(np.dtype(np.int32), batch_dims,
+                            tuple(range(num_bd - 1, -1, -1))))
+          + workspace
       ),
       operand_shapes_with_layout=(
           Shape.array_shape(np.dtype(np.int32), (), ()),
           Shape.array_shape(np.dtype(np.int32), (), ()),
-          Shape.array_shape(dtype, (n, n), (0, 1)),
+          Shape.array_shape(np.dtype(np.int32), (), ()),
+          Shape.array_shape(dtype, dims, layout),
       ))
   return c.Tuple(c.GetTupleElement(out, 0), c.GetTupleElement(out, 1),
                  c.GetTupleElement(out, 2))
