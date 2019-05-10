@@ -585,7 +585,8 @@ def _scan_jvp(primals, tangents, forward, length, jaxpr):
   carry_nonzeros = init_nonzeros
   for _ in range(1000):
     nonzeros = (consts_nonzeros, carry_nonzeros, xs_nonzeros)
-    jaxpr_jvp, nonzeros_out = ad.jvp_jaxpr(jaxpr, nonzeros)
+    jaxpr_jvp, nonzeros_out = ad.jvp_jaxpr(jaxpr, nonzeros,
+                                           instantiate=(carry_nonzeros, False))
     carry_nonzeros_out, ys_nonzeros = nonzeros_out
     if carry_nonzeros_out == carry_nonzeros:
       break
@@ -641,7 +642,8 @@ def _scan_partial_eval(trace, *tracers, **kwargs):
   sc_carry = sc_init
   for i in range(1000):
     second_components = (sc_consts, sc_carry, sc_xs)
-    jaxpr_1, jaxpr_2, sc_out = pe.partial_eval_jaxpr(jaxpr, second_components)
+    jaxpr_1, jaxpr_2, sc_out = pe.partial_eval_jaxpr(jaxpr, second_components,
+                                                     instantiate=(sc_carry, False))
     sc_carry_out, sc_ys = sc_out
     if sc_carry_out == sc_carry:
       break

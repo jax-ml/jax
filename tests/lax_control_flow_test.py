@@ -542,19 +542,17 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = api.grad(lambda c, as_: list(scan_reference(f, c, as_))[0].sum())(c, as_)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    # TODO(mattjj): scan fix
-    # ans = api.grad(lambda c, as_:      list(api.jit(lax.scan, (0,))(f, c, as_))[0].sum())(c, as_)
-    # expected = api.grad(lambda c, as_: list(         scan_reference(f, c, as_))[0].sum())(c, as_)
-    # self.assertAllClose(ans, expected, check_dtypes=False)
+    ans = api.grad(lambda c, as_:      list(api.jit(lax.scan, (0,))(f, c, as_))[0].sum())(c, as_)
+    expected = api.grad(lambda c, as_: list(         scan_reference(f, c, as_))[0].sum())(c, as_)
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
     ans = api.grad(lambda c, as_:      list(      lax.scan(f_jit, c, as_))[0].sum())(c, as_)
     expected = api.grad(lambda c, as_: list(scan_reference(f_jit, c, as_))[0].sum())(c, as_)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    # TODO(mattjj): scan fix
-    # ans = api.grad(lambda c, as_:      list(api.jit(lax.scan, (0,))(f_jit, c, as_))[0].sum())(c, as_)
-    # expected = api.grad(lambda c, as_: list(         scan_reference(f_jit, c, as_))[0].sum())(c, as_)
-    # self.assertAllClose(ans, expected, check_dtypes=False)
+    ans = api.grad(lambda c, as_:      list(api.jit(lax.scan, (0,))(f_jit, c, as_))[0].sum())(c, as_)
+    expected = api.grad(lambda c, as_: list(         scan_reference(f_jit, c, as_))[0].sum())(c, as_)
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
 
 if __name__ == '__main__':
