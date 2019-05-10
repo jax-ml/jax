@@ -56,13 +56,20 @@ class Jaxpr(object):
     return Jaxpr(self.constvars[:], self.freevars[:], self.invars[:],
                  self.outvar, self.eqns[:])
 
-class TypedJaxpr(namedtuple('TypedJaxpr', ['jaxpr', 'literals', 'in_avals', 'out_aval'])):
+class TypedJaxpr(object):
   def __init__(self, jaxpr, literals, in_avals, out_aval):
     assert type(jaxpr) is Jaxpr
     assert len(literals) == len(jaxpr.constvars)
     assert len(in_avals) == len(jaxpr.invars)
     assert not jaxpr.freevars
-    super(TypedJaxpr, self).__init__(jaxpr, literals, in_avals, out_aval)
+
+    self.jaxpr = jaxpr
+    self.literals = literals
+    self.in_avals = in_avals
+    self.out_aval = out_aval
+
+  def __iter__(self):
+    return iter((self.jaxpr, self.literals, self.in_avals, self.out_aval))
 
 
 @curry

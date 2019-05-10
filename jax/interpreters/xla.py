@@ -38,8 +38,6 @@ from ..lib import xla_bridge as xb
 from . import partial_eval as pe
 from . import ad
 
-_map = safe_map  # TODO remove
-
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_device_values',
                   strtobool(os.getenv('JAX_DEVICE_VALUES', "True")),
@@ -259,6 +257,8 @@ def build_jaxpr(jaxpr, const_vals, *abstract_args):
   return built_c
 
 def jaxpr_computation(jaxpr, const_vals, freevar_shapes, *arg_shapes):
+  # TODO(mattjj): support argument pattern-matching
+  assert not any(type(invar) in (tuple, list) for invar in jaxpr.invars)
   c = xb.make_computation_builder("jaxpr_computation")
 
   def read(v):
