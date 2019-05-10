@@ -427,27 +427,16 @@ def _maybe_tracer_tuple_to_abstract_tuple(tup):
 
 ### scan
 
-def _convert_zeros(keep_symbolic, example, tangent):
+def _convert_zeros(convert_symbolic, example, tangent):
   if tangent is ad.zero:
-    if keep_symbolic:
+    if not convert_symbolic:
       return core.unit
     else:
       return ad.zeros_like_jaxval(example)
   elif type(tangent) is ad.TangentTuple:
-    return core.pack(map(_convert_zeros, keep_symbolic, example, tangent))
+    return core.pack(map(_convert_zeros, convert_symbolic, example, tangent))
   else:
     return tangent
-
-def _is_const(x):
-  if x is None:
-    return True
-  elif type(x) is pe.JaxprTracerTuple:
-    return tuple(map(_is_const, x))
-  elif isinstance(x, core.AbstractValue):
-    return False
-  else:
-    raise TypeError(type(x))
-
 
 def _demote_aval_rank(xs):
   assert isinstance(xs, core.AbstractValue)
@@ -589,28 +578,27 @@ def _scan_jvp(primals, tangents, forward, length, jaxpr):
   consts_aval, carry_aval, x_aval = jaxpr.in_avals
   _, y_aval = jaxpr.out_aval
 
-  where_consts_zeros = ad.get_zeros(consts_dot)
-  where_init_zeros = ad.get_zeros(init_dot)
-  where_xs_zeros = ad.get_zeros(xs_dot)  # same as where_x_zeros b/c arrays
+  consts_nonzeros = ad.get_nonzeros(consts_dot)
+  init_nonzeros = ad.get_nonzeros(init_dot)
+  xs_nonzeros = ad.get_nonzeros(xs_dot)  # same as x_nonzeros b/c arrays
 
-  where_carry_zeros = where_init_zeros
-  for i in range(1000):
-    where_zeros = (where_consts_zeros, where_carry_zeros, where_xs_zeros)
-    jaxpr_jvp, where_zeros_out = ad.jvp_jaxpr(jaxpr, where_zeros)
-    # TODO instantiate_as_far_as=(where_carry_zeros, True/False)
-    where_carry_zeros_out, where_ys_zeros = where_zeros_out
-    if where_carry_zeros_out == where_carry_zeros:
+  carry_nonzeros = init_nonzeros
+  for _ in range(1000):
+    nonzeros = (consts_nonzeros, carry_nonzeros, xs_nonzeros)
+    jaxpr_jvp, nonzeros_out = ad.jvp_jaxpr(jaxpr, nonzeros)
+    carry_nonzeros_out, ys_nonzeros = nonzeros_out
+    if carry_nonzeros_out == carry_nonzeros:
       break
     else:
-      where_carry_zeros = _binary_lattice_join(where_carry_zeros_out, where_carry_zeros)
+      carry_nonzeros = _binary_lattice_join(carry_nonzeros_out, carry_nonzeros)
   else:
     raise FixedPointError
 
   # convert_zeros is like strip_zeros but uses explicit lattice information to
   # instantiate zeros in some cases, namely in init_dot based on the fixed point
-  nonzero_init_dot = _convert_zeros(where_carry_zeros, init, init_dot)
-  nonzero_consts_dot = _convert_zeros(where_consts_zeros, consts, consts_dot)
-  nonzero_xs_dot = _convert_zeros(where_xs_zeros, xs, xs_dot)
+  nonzero_init_dot = _convert_zeros(carry_nonzeros, init, init_dot)
+  nonzero_consts_dot = _convert_zeros(consts_nonzeros, consts, consts_dot)
+  nonzero_xs_dot = _convert_zeros(xs_nonzeros, xs, xs_dot)
 
   consts_dual = core.pack((consts, nonzero_consts_dot))
   init_dual = core.pack((init, nonzero_init_dot))
@@ -621,10 +609,10 @@ def _scan_jvp(primals, tangents, forward, length, jaxpr):
       forward=forward, length=length, jaxpr=jaxpr_jvp)
 
   ys, ys_dot = ys_dual
-  ys_dot = ad.put_zeros(ad.TangentTuple, where_ys_zeros, ys_dot)
+  ys_dot = ad.put_zeros(ad.TangentTuple, ys_nonzeros, ys_dot)
 
   carry_out, carry_out_dot = carry_out_dual
-  carry_out_dot = ad.put_zeros(ad.TangentTuple, where_carry_zeros_out, carry_out_dot)
+  carry_out_dot = ad.put_zeros(ad.TangentTuple, carry_nonzeros_out, carry_out_dot)
   return core.pack((carry_out, ys)), ad.TangentTuple((carry_out_dot, ys_dot))
 
 def _binary_lattice_join(a, b):
@@ -636,38 +624,38 @@ def _binary_lattice_join(a, b):
   elif t == (bool, tuple):
     return tuple(map(_binary_lattice_join, (a,) * len(b), b))
   elif t == (bool, bool):
-    return a and b
+    return a or b
   else:
     raise TypeError((type(a), type(b)))
 
 
 def _scan_partial_eval(trace, *tracers, **kwargs):
+  # Implements the Rumsfeld Transform: turn uknown unknowns into known unknowns
   jaxpr = kwargs.pop('jaxpr')
   length = kwargs.pop('length')
   forward = kwargs.pop('forward')
   assert not kwargs
   in_pvs, in_consts = unzip2([t.pval for t in tracers])
-  fc_consts, fc_init, fc_xs = map(_is_const, in_pvs)
+  sc_consts, sc_init, sc_xs = map(pe.unknown, in_pvs)
 
-  fc_carry = fc_init
+  sc_carry = sc_init
   for i in range(1000):
-    first_components = (fc_consts, fc_carry, fc_xs)
-    jaxpr_1, jaxpr_2, fc_out = pe.partial_eval_jaxpr(jaxpr, first_components)
-    # TODO instantiate_as_far_as=(fc_carry, True/False)
-    fc_carry_out, fc_ys = fc_out
-    if fc_carry_out == fc_carry:
+    second_components = (sc_consts, sc_carry, sc_xs)
+    jaxpr_1, jaxpr_2, sc_out = pe.partial_eval_jaxpr(jaxpr, second_components)
+    sc_carry_out, sc_ys = sc_out
+    if sc_carry_out == sc_carry:
       break
     else:
-      fc_carry = _binary_lattice_join(fc_carry, fc_carry_out)
+      sc_carry = _binary_lattice_join(sc_carry, sc_carry_out)
   else:
     raise FixedPointError
 
   consts_tracer, init_tracer, xs_tracer = tracers
-  lifted_init_tracer = _lift_tracer(trace, init_tracer, fc_carry)
+  lifted_init_tracer = _lift_tracer(trace, init_tracer, sc_carry)
   lifted_tracers = consts_tracer, lifted_init_tracer, xs_tracer
   in_pvs, in_consts = unzip2([t.pval for t in lifted_tracers])
 
-  out_pv = _put_known_pvs(fc_out, jaxpr.out_aval)
+  out_pv = _put_known_pvs(sc_out, jaxpr.out_aval)
 
   out_carry, (ys, residuals) = scan_p.bind(
       *in_consts, forward=forward, length=length, jaxpr=jaxpr_1)
@@ -679,26 +667,26 @@ def _scan_partial_eval(trace, *tracers, **kwargs):
                       dict(forward=forward, length=length, jaxpr=jaxpr_2))
   return pe.JaxprTracer(trace, pe.PartialVal((out_pv, out_const)), eqn)
 
-def _lift_tracer(trace, tracer, is_const):
-  t = type(is_const)
+def _lift_tracer(trace, tracer, is_unkown):
+  t = type(is_unkown)
   if t is bool:
-    if not is_const:
+    if is_unkown:
       return trace.instantiate_const(tracer)
     else:
       return tracer
   elif t is tuple:
     tracers = map(trace.full_raise, tracer)
-    return core.pack(map(partial(_lift_tracer, trace), tracers, is_const))
+    return core.pack(map(partial(_lift_tracer, trace), tracers, is_unkown))
   else:
     raise TypeError(t)
 
-def _put_known_pvs(is_known, aval):
-  if is_known is True:
+def _put_known_pvs(is_unknown, aval):
+  if is_unknown is False:
     return None
-  elif is_known is False:
+  elif is_unknown is True:
     return aval
   else:
-    return pe.JaxprTracerTuple(map(_put_known_pvs, is_known, aval))
+    return pe.JaxprTracerTuple(map(_put_known_pvs, is_unknown, aval))
 
 
 def _scan_transpose(ct, consts, init, xs, forward, length, jaxpr):
