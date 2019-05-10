@@ -218,6 +218,14 @@ def _random_bits(key, bit_width, shape):
 ### random samplers
 
 
+def _check_shape(name, shape):
+  try:
+    shape = tuple(map(int, shape))
+  except TypeError:
+    msg = "{} requires a concrete tuple of integers as shape argument, got {}."
+    raise ValueError(msg.format(name, shape))
+
+
 def uniform(key, shape, dtype=onp.float32, minval=0., maxval=1.):
   """Sample uniform random values in [minval, maxval) with given shape/dtype.
 
@@ -235,6 +243,7 @@ def uniform(key, shape, dtype=onp.float32, minval=0., maxval=1.):
 
 @partial(jit, static_argnums=(1, 2))
 def _uniform(key, shape, dtype, minval, maxval):
+  _check_shape("uniform", shape)
   if not onp.issubdtype(dtype, onp.floating):
     raise TypeError("uniform only accepts floating point dtypes.")
 
@@ -279,6 +288,7 @@ def randint(key, shape, minval, maxval, dtype=onp.int32):
 
 @partial(jit, static_argnums=(1, 4))
 def _randint(key, shape, minval, maxval, dtype=onp.int32):
+  _check_shape("randint", shape)
   if not onp.issubdtype(dtype, onp.integer):
     raise TypeError("randint only accepts integer dtypes.")
 
@@ -374,6 +384,7 @@ def normal(key, shape, dtype=onp.float32):
 
 @partial(jit, static_argnums=(1, 2))
 def _normal(key, shape, dtype):
+  _check_shape("normal", shape)
   lo = onp.nextafter(onp.array(-1., dtype), 0., dtype=dtype)
   hi = onp.array(1., dtype)
   u = uniform(key, shape, dtype, lo, hi)
@@ -397,6 +408,7 @@ def bernoulli(key, p=onp.float32(0.5), shape=()):
 
 @partial(jit, static_argnums=(2,))
 def _bernoulli(key, p, shape):
+  _check_shape("bernoulli", shape)
   shape = shape or onp.shape(p)
   if not onp.issubdtype(onp.float32, lax.dtype(p)):
     p = lax.convert_element_type(p, onp.float32)
@@ -425,6 +437,7 @@ def beta(key, a, b, shape=(), dtype=onp.float32):
 
 @partial(jit, static_argnums=(3, 4))
 def _beta(key, a, b, shape, dtype):
+  _check_shape("beta", shape)
   a = lax.convert_element_type(a, dtype)
   b = lax.convert_element_type(b, dtype)
   shape = shape or lax.broadcast_shapes(np.shape(a), np.shape(b))
@@ -450,6 +463,7 @@ def cauchy(key, shape=(), dtype=onp.float32):
 
 @partial(jit, static_argnums=(1, 2))
 def _cauchy(key, shape, dtype):
+  _check_shape("cauchy", shape)
   u = uniform(key, shape, dtype)
   pi = _constant_like(u, onp.pi)
   return lax.tan(lax.mul(pi, lax.sub(u, _constant_like(u, 0.5))))
@@ -473,6 +487,7 @@ def dirichlet(key, alpha, shape=(), dtype=onp.float32):
 
 @partial(jit, static_argnums=(2, 3))
 def _dirichlet(key, alpha, shape, dtype):
+  _check_shape("dirichlet", shape)
   alpha = asarray(alpha, dtype)
   shape = shape or alpha.shape[:-1]
   gamma_samples = gamma(key, alpha, shape + alpha.shape[-1:], dtype)
@@ -495,6 +510,7 @@ def exponential(key, shape=(), dtype=onp.float32):
 
 @partial(jit, static_argnums=(1, 2))
 def _exponential(key, shape, dtype):
+  _check_shape("exponential", shape)
   u = uniform(key, shape, dtype)
   # taking 1 - u to move the domain of log to (0, 1] instead of [0, 1)
   return lax.neg(lax.log(lax.sub(_constant_like(u, 1), u)))
@@ -568,6 +584,7 @@ def gamma(key, a, shape=(), dtype=onp.float32):
 
 @partial(jit, static_argnums=(2, 3))
 def _gamma(key, a, shape=(), dtype=onp.float32):
+  _check_shape("gamma", shape)
   a = lax.convert_element_type(a, dtype)
   shape = shape or onp.shape(a)
   if onp.shape(a) != shape:
@@ -594,6 +611,7 @@ def gumbel(key, shape=(), dtype=onp.float32):
 
 @partial(jit, static_argnums=(1, 2))
 def _gumbel(key, shape, dtype):
+  _check_shape("gumbel", shape)
   return -np.log(-np.log(uniform(key, shape, dtype)))
 
 
@@ -613,6 +631,7 @@ def laplace(key, shape=(), dtype=onp.float32):
 
 @partial(jit, static_argnums=(1, 2))
 def _laplace(key, shape, dtype):
+  _check_shape("laplace", shape)
   u = uniform(key, shape, dtype, minval=-1., maxval=1.)
   return lax.mul(lax.sign(u), lax.log1p(lax.neg(lax.abs(u))))
 
@@ -635,6 +654,7 @@ def pareto(key, b, shape=(), dtype=onp.float32):
 
 @partial(jit, static_argnums=(2, 3))
 def _pareto(key, b, shape, dtype):
+  _check_shape("pareto", shape)
   b = lax.convert_element_type(b, dtype)
   shape = shape or onp.shape(b)
   if onp.shape(b) != shape:
@@ -661,6 +681,7 @@ def t(key, df, shape=(), dtype=onp.float32):
 
 @partial(jit, static_argnums=(2, 3))
 def _t(key, df, shape, dtype):
+  _check_shape("t", shape)
   df = lax.convert_element_type(df, dtype)
   shape = shape or onp.shape(df)
   key_n, key_g = split(key)
