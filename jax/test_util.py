@@ -20,6 +20,7 @@ import functools
 import re
 import itertools as it
 import os
+from unittest import SkipTest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -33,15 +34,15 @@ from . import api
 from .config import flags
 from .util import partial
 from .tree_util import tree_multimap, tree_all, tree_map, tree_reduce
+from .lib import xla_bridge
 
 # lbr tests placeholder
 
 
 FLAGS = flags.FLAGS
 flags.DEFINE_enum(
-    'jax_test_dut',
-    'cpu',
-    enum_values=['cpu', 'gpu', 'tpu'],
+    'jax_test_dut', '',
+    enum_values=['', 'cpu', 'gpu', 'tpu'],
     help=
     'Describes the device under test in case special consideration is required.'
 )
@@ -173,11 +174,11 @@ def skip_on_devices(*disabled_devices):
   def skip(test_method):
     @functools.wraps(test_method)
     def test_method_wrapper(self, *args, **kwargs):
-      device = FLAGS.jax_test_dut
+      device = FLAGS.jax_test_dut or xla_bridge.get_backend().platform
       if device in disabled_devices:
         test_name = getattr(test_method, '__name__', '[unknown test]')
-        return absltest.unittest.skip(
-            '{} not supported on {}.'.format(test_name, device.upper()))
+        raise SkipTest('{} not supported on {}.'
+                       .format(test_name, device.upper()))
       return test_method(self, *args, **kwargs)
     return test_method_wrapper
   return skip
@@ -191,9 +192,8 @@ def skip_on_flag(flag_name, skip_value):
       flag_value = getattr(FLAGS, flag_name)
       if flag_value == skip_value:
         test_name = getattr(test_method, '__name__', '[unknown test]')
-        return absltest.unittest.skip(
-            '{} not supported when FLAGS.{} is {}'.format(
-                test_name, flag_name, flag_value))
+        raise SkipTest('{} not supported when FLAGS.{} is {}'
+                       .format(test_name, flag_name, flag_value))
       return test_method(self, *args, **kwargs)
     return test_method_wrapper
   return skip
