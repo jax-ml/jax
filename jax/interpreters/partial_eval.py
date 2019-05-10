@@ -543,40 +543,39 @@ def unzip_tracer_tuple(pvals):
   pvs, consts = unzip2(pvals)
   return PartialVal((JaxprTracerTuple(pvs), pack(consts)))
 
-def as_pval(aval, is_known, val):
-  t = type(is_known)
+def as_pval(aval, is_unknown, val):
+  t = type(is_unknown)
   if t is tuple:
-    return unzip_tracer_tuple(map(as_pval, aval, is_known, val))
+    return unzip_tracer_tuple(map(as_pval, aval, is_unknown, val))
   elif t is bool:
-    if is_known:
+    if is_unknown:
+      return PartialVal((aval, core.unit))
+    else:
       return PartialVal((None, val))
-    else:
-      return PartialVal((aval, core.unit))
   else:
     raise TypeError(t)
 
-def as_pval2(aval, is_known):
-  t = type(is_known)
+def as_pval2(aval, is_unknown):
+  t = type(is_unknown)
   if t is tuple:
-    return unzip_tracer_tuple(map(as_pval2, aval, is_known))
+    return unzip_tracer_tuple(map(as_pval2, aval, is_unknown))
   elif t is bool:
-    if is_known:
-      return PartialVal((aval, core.unit))
-    else:
+    if is_unknown:
       return PartialVal((core.AbstractTuple(()), core.unit))
+    else:
+      return PartialVal((aval, core.unit))
   else:
     raise TypeError(t)
 
-def isnone(x):
+def unknown(x):
   if x is None:
-    return True
-  elif type(x) is JaxprTracerTuple:
-    return tuple(map(isnone, x))
-  elif isinstance(x, AbstractValue):
     return False
+  elif type(x) is JaxprTracerTuple:
+    return tuple(map(unknown, x))
+  elif isinstance(x, core.AbstractValue):
+    return True
   else:
     raise TypeError(type(x))
-
 
 def _closure_convert_jaxpr(jaxpr):
   core.skip_checks or core.check_jaxpr(jaxpr)
@@ -593,7 +592,7 @@ def _pack_eqn(invars, outvar):
   return core.JaxprEqn(invars, [outvar], core.pack_p, (), False, False, {})
 
 
-def partial_eval_jaxpr(jaxpr, first_components):
+def partial_eval_jaxpr(jaxpr, second_components):
   # jaxpr :: d -> c -> a -> (c, b)
   f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
 
@@ -601,7 +600,7 @@ def partial_eval_jaxpr(jaxpr, first_components):
   # we do some final-style output munging to place residuals
   # fun :: d1 -> c1 -> a1 -> (c1, (b1, res))
   def fun(*vals):
-    pvals = map(as_pval, jaxpr.in_avals, first_components, vals)
+    pvals = map(as_pval, jaxpr.in_avals, second_components, vals)
     jaxpr_2, out_pval, consts_2 = trace_to_jaxpr(f, pvals)
     (out_pv_c, out_pv_b), out_const = out_pval
     if out_const is core.unit:
@@ -611,7 +610,7 @@ def partial_eval_jaxpr(jaxpr, first_components):
     cell.append((out_pv_c, out_pv_b, jaxpr_2))
     return pack((out_const_c, pack((out_const_b, pack(consts_2)))))
 
-  pvals = map(as_pval2, jaxpr.in_avals, first_components)
+  pvals = map(as_pval2, jaxpr.in_avals, second_components)
   jaxpr_1, out_pval, consts_1 = trace_to_jaxpr(
       lu.wrap_init(fun), pvals, instantiate=True)
   out_pv_c, out_pv_b, jaxpr_2 = cell[0]
@@ -622,11 +621,11 @@ def partial_eval_jaxpr(jaxpr, first_components):
   # doubly_lifted_jaxpr_2 :: d2 -> c2 -> (a2, res) -> (c2, b2)
   lifted_jaxpr_2 = _closure_convert_jaxpr(jaxpr_2)
   doubly_lifted_jaxpr_2 = _move_and_pair_arg(lifted_jaxpr_2)
-  fc_out = fc_c_out, fc_b_out = isnone(out_pv_c), isnone(out_pv_b)
+  sc_out = sc_c_out, sc_b_out = unknown(out_pv_c), unknown(out_pv_b)
 
-  in_avals_1, in_avals_2 = unzip2(map(_split_avals, first_components,
+  in_avals_1, in_avals_2 = unzip2(map(_split_avals, second_components,
                                       jaxpr.in_avals))
-  out_aval_1, out_aval_2 = _split_avals(fc_out, jaxpr.out_aval)
+  out_aval_1, out_aval_2 = _split_avals(sc_out, jaxpr.out_aval)
 
   # in_avals_1 is already (d1, c1, a1), and out_aval_2 is already (c2, b2), but
   # we must munge:
@@ -646,7 +645,7 @@ def partial_eval_jaxpr(jaxpr, first_components):
   typed_jaxpr_1 = TypedJaxpr(jaxpr_1, consts_1, in_avals_1, lifted_out_aval_1)
   typed_jaxpr_2 = TypedJaxpr(doubly_lifted_jaxpr_2, (), lifted_in_avals_2,
                              out_aval_2)
-  return typed_jaxpr_1, typed_jaxpr_2, fc_out
+  return typed_jaxpr_1, typed_jaxpr_2, sc_out
 
 def _move_and_pair_arg(jaxpr):
   moved_jaxpr = jaxpr.copy()
@@ -655,26 +654,19 @@ def _move_and_pair_arg(jaxpr):
   core.skip_checks or core.check_jaxpr(moved_jaxpr)
   return moved_jaxpr
 
-def _split_avals(first_component, aval):
-  t = type(first_component)
+def _split_avals(second_component, aval):
+  t = type(second_component)
   if t is tuple:
     assert type(aval) is AbstractTuple
-    avals1, avals2 = unzip2(map(_split_avals, first_component, aval))
+    avals1, avals2 = unzip2(map(_split_avals, second_component, aval))
     return AbstractTuple(avals1), AbstractTuple(avals2)
   elif t is bool:
-    if first_component:
-      return aval, AbstractTuple(())
-    else:
+    if second_component:
       return AbstractTuple(()), aval
+    else:
+      return aval, AbstractTuple(())
   else:
     raise TypeError(t)
-
-# TODO do we want this?
-# def _abstract_unit_tree_like(aval):
-#   if type(aval) is AbstractTuple:
-#     return AbstractTuple(map(_abstract_unit_tree_like, aval))
-#   else:
-#     return AbstractTuple(())
 
 
 custom_partial_eval_rules = {}
