@@ -283,7 +283,7 @@ class PmapTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("cpu", "gpu")
   def testCollectivePermute(self):
     device_count = xla_bridge.device_count()
-    rotation = [(i, i + 1 % device_count) for i in range(device_count)]
+    rotation = [(i, (i + 1) % device_count) for i in range(device_count)]
     f = lambda x: lax.ppermute(x, perm=rotation, axis_name='i')
     f = pmap(f, 'i')
 
