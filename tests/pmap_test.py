@@ -283,25 +283,32 @@ class PmapTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("cpu", "gpu")
   def testCollectivePermute(self):
     device_count = xla_bridge.device_count()
-    if device_count != 2:
-      raise SkipTest("skipping because device_count != 2")
-
-    f = lambda x: lax.ppermute(x, perm=[(0, 1), (1, 0)], axis_name='i')
+    rotation = [(i, i + 1 % device_count) for i in range(device_count)]
+    f = lambda x: lax.ppermute(x, perm=rotation, axis_name='i')
     f = pmap(f, 'i')
 
     x = np.arange(4 * device_count).reshape((device_count, 4))
     ans = f(x)
-    expected = x[::-1]
+    expected = onp.roll(x, shift=1, axis=0)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   @jtu.skip_on_devices("cpu", "gpu")
   def testRule30(self):
+    # This is a test of collective_permute implementing a simple halo exchange
+    # to run a rule 30 simulation: https://en.wikipedia.org/wiki/Rule_30
+    # Halo exchange should be useful in spatially-sharded convolutions and in
+    # other simulations.
     device_count = xla_bridge.device_count()
-    if device_count != 2:
-      raise SkipTest("skipping because device_count != 2")
+
+    def send_right(x, axis_name):
+      left_perm = [(i, (i + 1) % device_count) for i in range(device_count)]
+      return lax.ppermute(x, perm=left_perm, axis_name=axis_name)
+
+    def send_left(x, axis_name):
+      left_perm = [((i + 1) % device_count, i) for i in range(device_count)]
+      return lax.ppermute(x, perm=left_perm, axis_name=axis_name)
 
     def update_board(board):
-      # rule 30: https://en.wikipedia.org/wiki/Rule_30
       left = board[:-2]
       right = board[2:]
       center = board[1:-1]
@@ -310,10 +317,7 @@ class PmapTest(jtu.JaxTestCase):
     @partial(pmap, axis_name='i')
     def step(board_slice):
       left, right = board_slice[:1], board_slice[-1:]
-      left = lax.ppermute(left, perm=[(0, 1), (1, 0)], axis_name='i')
-      right = lax.ppermute(right, perm=[(0, 1), (1, 0)], axis_name='i')
-      left, right = right, left
-
+      right, left = send_left(left, 'i'), send_right(right, 'i')
       enlarged_board_slice = np.concatenate([left, board_slice, right])
       return update_board(enlarged_board_slice)
 
