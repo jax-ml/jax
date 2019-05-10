@@ -17,6 +17,7 @@ from __future__ import division
 from __future__ import print_function
 
 from unittest import SkipTest
+import re
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -342,6 +343,20 @@ class LaxRandomTest(jtu.JaxTestCase):
     key = random.PRNGKey(0)
     keys = [random.fold_in(key, i) for i in range(10)]
     assert onp.unique(onp.ravel(keys)).shape == (20,)
+
+  def testStaticShapeErrors(self):
+    @api.jit
+    def feature_map(n, d, sigma=1.0, seed=123):
+      key = random.PRNGKey(seed)
+      W = random.normal(key, (d, n)) / sigma
+      w = random.normal(key, (d, )) / sigma
+      b = 2 * np.pi * random.uniform(key, (d, ))
+
+      phi = lambda x, t: np.sqrt(2.0 / d) * np.cos(np.matmul(W, x) + w*t + b)
+      return phi
+
+    self.assertRaisesRegex(ValueError, re.compile(r'.*requires a concrete.*'),
+                           lambda: feature_map(5, 3))
 
 
 if __name__ == "__main__":
