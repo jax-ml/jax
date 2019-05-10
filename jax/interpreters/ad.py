@@ -302,11 +302,11 @@ class JVPTracer(Tracer):
   __slots__ = ['primal', 'tangent']
 
   def __init__(self, trace, primal, tangent):
+    if not core.skip_checks:
+      _primal_tangent_shapes_match(primal, tangent)
     self.trace = trace
     self.primal = primal
     self.tangent = tangent
-    # TODO(mattjj,dougalm): behind skip_checks, check primal/tangent shapes and
-    # dtypes agree (up to jax_enable_x64 flag)
 
   @property
   def aval(self):
@@ -324,6 +324,15 @@ class JVPTracer(Tracer):
       return core.full_lower(self.primal)
     else:
       return self
+
+def _primal_tangent_shapes_match(primal, tangent):
+  if type(tangent) is TangentTuple:
+    for p, t in zip(primal, tangent):
+      _primal_tangent_shapes_match(p, t)
+  elif tangent is not zero:
+    primal_aval = raise_to_shaped(get_aval(primal))
+    tangent_aval = raise_to_shaped(get_aval(tangent))
+    assert primal_aval == tangent_aval
 
 # -------------------- Primitives --------------------
 
