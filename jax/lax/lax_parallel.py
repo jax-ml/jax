@@ -105,7 +105,6 @@ parallel.serial_pmap_primitive_rules[psum_p] = \
 #     partial(_allreduce_translation_rule, lax.add_p)
 pxla.parallel_translation_rules[psum_p] = \
     lambda c, val, device_groups: c.CrossReplicaSum(val, device_groups)
-
 ad.deflinear(psum_p, lambda t, axis_name: [t])
 
 
@@ -126,11 +125,7 @@ pxla.parallel_translation_rules[pmin_p] = \
 
 
 def _ppermute_translation_rule(c, x, device_groups, perm):
-  group_size = len(perm)
-  if not all(len(grp) == group_size for grp in device_groups):
-    msg = ("ppermute permutation must match device group size, got permutation "
-           "{} for device_groups {}.".format(perm, device_groups))
-    raise ValueError(msg)
+  group_size = len(device_groups[0])
   if not all(0 <= i < group_size and 0 <= j < group_size for i, j in perm):
     msg = ("ppermute permutation elements must take on values between 0 and "
            "the group size {}, but got {}.")
@@ -146,7 +141,13 @@ def _ppermute_translation_rule(c, x, device_groups, perm):
     full_perm.extend((grp[src], grp[dst]) for src, dst in perm)
   return c.CollectivePermute(x, full_perm)
 
+def _ppermute_transpose_rule(t, perm, axis_name):
+  sources, dests = unzip2(perm)
+  inverse_perm = zip(dests, srcs)
+  return ppermute(t, axis_name=axis_name, perm=inverse_perm)
+
 ppermute_p = PmapPrimitive('ppermute')
+# ad.deflinear(ppermute_p, _ppermute_transpose_rule)  # TODO(mattjj): test this
 pxla.parallel_translation_rules[ppermute_p] = _ppermute_translation_rule
 
 
