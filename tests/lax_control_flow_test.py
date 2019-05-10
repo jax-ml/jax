@@ -19,6 +19,7 @@ from __future__ import print_function
 from functools import partial
 
 from absl.testing import absltest
+from absl.testing import parameterized
 
 import numpy as onp
 import numpy.random as npr
@@ -429,7 +430,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     out = lax.while_loop(cond, body, (33, 4))
     self.assertEqual(out, (7, 10))
 
-  def testScanImpl(self):
+  @parameterized.named_parameters(
+      {"testcase_name": "jit_scan={}_jit_f={}".format(jit_scan, jit_f),
+       "jit_scan": jit_scan, "jit_f": jit_f}
+      for jit_scan in [False, True]
+      for jit_f in [False, True])
+  def testScanImpl(self, jit_scan, jit_f):
     d = np.zeros(2)
     def f(c, a):
       assert a.shape == (3,)
@@ -439,28 +445,26 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       assert b.shape == ()
       return core.pack((c, b))
 
-    f_jit = api.jit(f)
+    if jit_f:
+      f = api.jit(f)
+    if jit_scan:
+      scan = api.jit(lax.scan, (0,))
+    else:
+      scan = lax.scan
 
     as_ = np.ones((5, 3))
     c = np.ones(4)
 
-    ans =            lax.scan(f, c, as_)
+    ans =                scan(f, c, as_)
     expected = scan_reference(f, c, as_)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    ans = api.jit(lax.scan, (0,))(f, c, as_)
-    expected =     scan_reference(f, c, as_)
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-    ans =            lax.scan(f_jit, c, as_)
-    expected = scan_reference(f_jit, c, as_)
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-    ans = api.jit(lax.scan, (0,))(f_jit, c, as_)
-    expected =     scan_reference(f_jit, c, as_)
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-  def testScanJVP(self):
+  @parameterized.named_parameters(
+      {"testcase_name": "jit_scan={}_jit_f={}".format(jit_scan, jit_f),
+       "jit_scan": jit_scan, "jit_f": jit_f}
+      for jit_scan in [False, True]
+      for jit_f in [False, True])
+  def testScanJVP(self, jit_scan, jit_f):
     d = np.zeros(2)
     def f(c, a):
       assert a.shape == (3,)
@@ -470,28 +474,26 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       assert b.shape == ()
       return core.pack((c, b))
 
-    f_jit = api.jit(f)
+    if jit_f:
+      f = api.jit(f)
+    if jit_scan:
+      scan = api.jit(lax.scan, (0,))
+    else:
+      scan = lax.scan
 
     as_ = np.ones((5, 3))
     c = np.ones(4)
 
-    ans = api.jvp(lambda c, as_:            lax.scan(f, c, as_), (c, as_), (c, as_))[1]
+    ans = api.jvp(lambda c, as_:                scan(f, c, as_), (c, as_), (c, as_))[1]
     expected = api.jvp(lambda c, as_: scan_reference(f, c, as_), (c, as_), (c, as_))[1]
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    ans = api.jvp(lambda c, as_: api.jit(lax.scan, (0,))(f, c, as_), (c, as_), (c, as_))[1]
-    expected = api.jvp(lambda c, as_:     scan_reference(f, c, as_), (c, as_), (c, as_))[1]
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-    ans = api.jvp(lambda c, as_:            lax.scan(f_jit, c, as_), (c, as_), (c, as_))[1]
-    expected = api.jvp(lambda c, as_: scan_reference(f_jit, c, as_), (c, as_), (c, as_))[1]
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-    ans = api.jvp(lambda c, as_: api.jit(lax.scan, (0,))(f_jit, c, as_), (c, as_), (c, as_))[1]
-    expected = api.jvp(lambda c, as_:     scan_reference(f_jit, c, as_), (c, as_), (c, as_))[1]
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-  def testScanLinearize(self):
+  @parameterized.named_parameters(
+      {"testcase_name": "jit_scan={}_jit_f={}".format(jit_scan, jit_f),
+       "jit_scan": jit_scan, "jit_f": jit_f}
+      for jit_scan in [False, True]
+      for jit_f in [False, True])
+  def testScanLinearize(self, jit_scan, jit_f):
     d = np.zeros(2)
     def f(c, a):
       assert a.shape == (3,)
@@ -501,28 +503,26 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       assert b.shape == ()
       return core.pack((c, b))
 
-    f_jit = api.jit(f)
+    if jit_f:
+      f = api.jit(f)
+    if jit_scan:
+      scan = api.jit(lax.scan, (0,))
+    else:
+      scan = lax.scan
 
     as_ = np.ones((5, 3))
     c = np.ones(4)
 
-    ans = api.linearize(lambda c, as_:            lax.scan(f, c, as_), c, as_)[1](c, as_)
+    ans = api.linearize(lambda c, as_:                scan(f, c, as_), c, as_)[1](c, as_)
     expected = api.linearize(lambda c, as_: scan_reference(f, c, as_), c, as_)[1](c, as_)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    ans = api.linearize(lambda c, as_: api.jit(lax.scan, (0,))(f, c, as_), c, as_)[1](c, as_)
-    expected = api.linearize(lambda c, as_:     scan_reference(f, c, as_), c, as_)[1](c, as_)
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-    ans = api.linearize(lambda c, as_:            lax.scan(f_jit, c, as_), c, as_)[1](c, as_)
-    expected = api.linearize(lambda c, as_: scan_reference(f_jit, c, as_), c, as_)[1](c, as_)
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-    ans = api.linearize(lambda c, as_: api.jit(lax.scan, (0,))(f_jit, c, as_), c, as_)[1](c, as_)
-    expected = api.linearize(lambda c, as_:     scan_reference(f_jit, c, as_), c, as_)[1](c, as_)
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-  def testScanGrad(self):
+  @parameterized.named_parameters(
+      {"testcase_name": "jit_scan={}_jit_f={}".format(jit_scan, jit_f),
+       "jit_scan": jit_scan, "jit_f": jit_f}
+      for jit_scan in [False, True]
+      for jit_f in [False, True])
+  def testScanGrad(self, jit_scan, jit_f):
     d = np.zeros(2)
     def f(c, a):
       assert a.shape == (3,)
@@ -532,25 +532,18 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       assert b.shape == ()
       return core.pack((c, b))
 
-    f_jit = api.jit(f)
+    if jit_f:
+      f = api.jit(f)
+    if jit_scan:
+      scan = api.jit(lax.scan, (0,))
+    else:
+      scan = lax.scan
 
     as_ = np.ones((5, 3))
     c = np.ones(4)
 
-    ans = api.grad(lambda c, as_:      list(      lax.scan(f, c, as_))[0].sum())(c, as_)
+    ans = api.grad(lambda c, as_:      list(          scan(f, c, as_))[0].sum())(c, as_)
     expected = api.grad(lambda c, as_: list(scan_reference(f, c, as_))[0].sum())(c, as_)
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-    ans = api.grad(lambda c, as_:      list(api.jit(lax.scan, (0,))(f, c, as_))[0].sum())(c, as_)
-    expected = api.grad(lambda c, as_: list(         scan_reference(f, c, as_))[0].sum())(c, as_)
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-    ans = api.grad(lambda c, as_:      list(      lax.scan(f_jit, c, as_))[0].sum())(c, as_)
-    expected = api.grad(lambda c, as_: list(scan_reference(f_jit, c, as_))[0].sum())(c, as_)
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-    ans = api.grad(lambda c, as_:      list(api.jit(lax.scan, (0,))(f_jit, c, as_))[0].sum())(c, as_)
-    expected = api.grad(lambda c, as_: list(         scan_reference(f_jit, c, as_))[0].sum())(c, as_)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
 
