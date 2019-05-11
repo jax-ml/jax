@@ -37,7 +37,7 @@ def scan_reference(f, init, xs):
     (carry, y) = f(carry, x)
     ys.append(lax.reshape(y, (1,) + onp.shape(y)))
   ys = lax.concatenate(ys, 0)
-  return core.pack((carry, ys))
+  return carry, ys
 
 
 class LaxControlFlowTest(jtu.JaxTestCase):
@@ -443,7 +443,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       b = np.sum(np.sin(a)) + np.sum(np.sin(c)) + np.sum(np.sin(d))
       c = np.sin(c * b)
       assert b.shape == ()
-      return core.pack((c, b))
+      return c, b
 
     if jit_f:
       f = api.jit(f)
@@ -472,7 +472,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       b = np.sum(np.sin(a)) + np.sum(np.sin(c)) + np.sum(np.sin(d))
       c = np.sin(c * b)
       assert b.shape == ()
-      return core.pack((c, b))
+      return c, b
 
     if jit_f:
       f = api.jit(f)
@@ -501,7 +501,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       b = np.sum(np.sin(a)) + np.sum(np.sin(c)) + np.sum(np.sin(d))
       c = np.sin(c * b)
       assert b.shape == ()
-      return core.pack((c, b))
+      return c, b
 
     if jit_f:
       f = api.jit(f)
@@ -530,7 +530,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       b = np.sum(np.sin(a)) + np.sum(np.sin(c)) + np.sum(np.sin(d))
       c = np.sin(c * b)
       assert b.shape == ()
-      return core.pack((c, b))
+      return c, b
 
     if jit_f:
       f = api.jit(f)
@@ -566,7 +566,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       stacked = np.concatenate([state, input])
       output = np.tanh(np.dot(W_out, stacked))
       next_state = np.tanh(np.dot(W_trans, stacked))
-      return core.pack((next_state, output))
+      return next_state, output
 
     def rnn(params, inputs):
       init_state = np.zeros(n_hid)
