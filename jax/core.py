@@ -71,6 +71,13 @@ class TypedJaxpr(object):
   def __iter__(self):
     return iter((self.jaxpr, self.literals, self.in_avals, self.out_aval))
 
+  def __str__(self):
+    # TODO(mattjj): improve this with type annotations?
+    return str(pp_jaxpr(self.jaxpr))
+
+  def __repr__(self):
+    return self.__str__()
+
 
 @curry
 def jaxpr_as_fun(typed_jaxpr, *args):
