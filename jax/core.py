@@ -30,7 +30,7 @@ from .pprint_util import pp, vcat, hcat, pp_kv_pairs
 # TODO(dougalm): the trace cache breaks the leak detector. Consisder solving.
 check_leaks = False
 # TODO(dougalm): put this behind a flag that's enabled during testing
-skip_checks = False  # not __debug__  # google doesn't use -O
+skip_checks = True  # not __debug__  # google doesn't use -O
 
 zip = safe_zip
 map = safe_map
@@ -522,6 +522,9 @@ class JaxTuple(six.with_metaclass(_TupleMeta)):
       return unitvar
     else:
       return 'JaxTuple({})'.format(','.join(map(repr, self)))
+
+  def __eq__(self, other):
+    return isinstance(other, JaxTuple) and tuple(self) == tuple(other)
 
 
 class AbstractTuple(AbstractValue, tuple):
