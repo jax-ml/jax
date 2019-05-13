@@ -124,8 +124,7 @@ xla.backend_specific_translations['cpu'][cholesky_p] = cholesky_cpu_translation_
 # Asymmetric eigendecomposition
 
 def eig_impl(operand):
-  w, vl, vr = xla.apply_primitive(eig_p, operand)
-  return core.pack((w, vl, vr))
+  return xla.apply_primitive(eig_p, operand)
 
 def eig_translation_rule(c, operand):
   raise NotImplementedError(
@@ -135,7 +134,7 @@ def eig_abstract_eval(operand):
   if isinstance(operand, ShapedArray):
     if operand.ndim < 2 or operand.shape[-2] != operand.shape[-1]:
       raise ValueError("Argument to nonsymmetric eigendecomposition must have "
-                       "shape [..., n, n]")
+                       "shape [..., n, n], got shape {}".format(operand.shape))
 
     batch_dims = operand.shape[:-2]
     n = operand.shape[-1]
@@ -178,7 +177,8 @@ def eigh_abstract_eval(operand, lower):
   if isinstance(operand, ShapedArray):
     if operand.ndim < 2 or operand.shape[-2] != operand.shape[-1]:
       raise ValueError(
-        "Argument to symmetric eigendecomposition must have shape [..., n, n]")
+        "Argument to symmetric eigendecomposition must have shape [..., n, n],"
+        "got shape {}".format(operand.shape))
 
     batch_dims = operand.shape[:-2]
     n = operand.shape[-1]

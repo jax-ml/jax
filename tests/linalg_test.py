@@ -105,18 +105,19 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(np.linalg.slogdet, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_n={}".format(
-           jtu.format_shape_dtype_string((n,n), dtype)),
-       "n": n, "dtype": dtype, "rng": rng}
-      for n in [0, 4, 5, 50]
+      {"testcase_name": "_shape={}".format(
+           jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype, "rng": rng}
+      for shape in [(0, 0), (4, 4), (5, 5), (50, 50), (2, 6, 6)]
       for dtype in float_types() + complex_types()
       for rng in [jtu.rand_default()]))
   # TODO(phawkins): enable when there is an eigendecomposition implementation
   # for GPU/TPU.
   @jtu.skip_on_devices("gpu", "tpu")
-  def testEig(self, n, dtype, rng):
+  def testEig(self, shape, dtype, rng):
     self.skipTest("Test disabled until Jaxlib 0.1.15 is released") # TODO(phawkins)
-    args_maker = lambda: [rng((n, n), dtype)]
+    n = shape[-1]
+    args_maker = lambda: [rng(shape, dtype)]
 
     # Norm, adjusted for dimension and type.
     def norm(x):
@@ -125,7 +126,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
     a, = args_maker()
     w, v = np.linalg.eig(a)
-    self.assertTrue(norm(onp.matmul(a, v) - w * v) < 100)
+    self.assertTrue(onp.all(norm(onp.matmul(a, v) - w[..., None, :] * v) < 100))
 
     self._CompileAndCheck(partial(np.linalg.eig), args_maker,
                           check_dtypes=True, rtol=1e-3)
