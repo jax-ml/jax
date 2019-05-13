@@ -358,7 +358,7 @@ def _scalar_constant_handler(c, val, canonicalize_types=True):
 for scalar_type in [onp.int8, onp.int16, onp.int32, onp.int64,
                     onp.uint8, onp.uint16, onp.uint32, onp.uint64,
                     onp.float16, onp.float32, onp.float64, onp.float128,
-                    float, int, bool, onp.bool_]:
+                    float, int, bool, onp.bool_, onp.longlong]:
   register_constant_handler(scalar_type, _scalar_constant_handler)
 
 if six.PY2:
