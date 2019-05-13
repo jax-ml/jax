@@ -677,16 +677,16 @@ def _scan_partial_eval(trace, *tracers, **kwargs):
                       dict(forward=forward, length=length, jaxpr=jaxpr_2))
   return pe.JaxprTracer(trace, pe.PartialVal((out_pv, out_const)), eqn)
 
-def _lift_tracer(trace, tracer, is_unkown):
-  t = type(is_unkown)
+def _lift_tracer(trace, tracer, is_unknown):
+  t = type(is_unknown)
   if t is bool:
-    if is_unkown:
+    if is_unknown:
       return trace.instantiate_const(tracer)
     else:
       return tracer
   elif t is tuple:
     tracers = map(trace.full_raise, tracer)
-    return core.pack(map(partial(_lift_tracer, trace), tracers, is_unkown))
+    return core.pack(map(partial(_lift_tracer, trace), tracers, is_unknown))
   else:
     raise TypeError(t)
 
