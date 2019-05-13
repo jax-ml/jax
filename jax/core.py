@@ -100,6 +100,7 @@ def jaxpr_as_fun(typed_jaxpr, *args):
 JaxprEqn = namedtuple('JaxprEqn', ['invars', 'outvars', 'primitive',
                                    'bound_subjaxprs', 'restructure',
                                    'destructure', 'params'])
+Literal = namedtuple('Literal', ['val'])
 
 class Primitive(object):
   def __init__(self, name):
@@ -145,7 +146,10 @@ class Primitive(object):
 
 def eval_jaxpr(jaxpr, consts, freevar_vals, *args):
   def read(v):
-    return env[v]
+    if type(v) is Literal:
+      return v.val
+    else:
+      return env[v]
 
   def write(v, val):
     env[v] = val
@@ -653,7 +657,7 @@ def check_jaxpr(jaxpr):
     return "\njaxpr:\n{}\n".format(jaxpr)
 
   def read_env(env, v):
-    if v not in env:
+    if v not in env and type(v) is not Literal:
       raise Exception("Variable '{}' not defined".format(v) + context())
 
   def write_env(env, v):

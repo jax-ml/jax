@@ -20,7 +20,7 @@ import itertools as it
 
 from . import partial_eval as pe
 from .. import core as core
-from ..core import JaxTuple, Trace, Tracer, new_master, get_aval, pack, call_p, Primitive
+from ..core import JaxTuple, Trace, Tracer, new_master, get_aval, pack, call_p, Primitive, Literal
 from ..ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_aval,
                        zeros_like_p, zero, Zero)
 from ..abstract_arrays import raise_to_shaped
@@ -147,7 +147,10 @@ def backward_pass(jaxpr, consts, freevar_vals, args, cotangent_in):
     return ct_env.get(v, zero)
 
   def read_primal(v):
-    return primal_env.get(v)
+    if type(v) is Literal:
+      return v.val
+    else:
+      return primal_env.get(v)
 
   def write_primal(v, val):
     if val is not None:

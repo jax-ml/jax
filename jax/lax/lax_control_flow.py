@@ -361,7 +361,8 @@ def _revise_cond_jaxpr(new_pval, old_pval, jaxpr, consts):
     new_jaxpr = jaxpr.copy()
     new_jaxpr.constvars = tuple(jaxpr.constvars) + tuple(new_constvars)
     newvars = iter(new_constvars)
-    new_invars = [next(newvars) if old is None and new is not None else v
+    new_invars = [next(newvars) if old is None and new is not None else
+                  (core.unitvar if new is None and old is None else v)
                   for new, old, v in zip(new_pv, old_pv, eqn.invars)]
     new_jaxpr.eqns = (list(jaxpr.eqns[:-1]) +
                       [_pack_eqn(new_invars, jaxpr.outvar)])

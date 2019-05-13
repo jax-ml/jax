@@ -257,7 +257,10 @@ def replicated_comp(jaxpr, ax_env, const_vals, freevar_shapes, *arg_shapes):
   c = xb.make_computation_builder("replicated_computation")
 
   def read(v):
-    return env[v]
+    if type(v) is core.Literal:
+      return c.Constant(v.val)
+    else:
+      return env[v]
 
   def write(v, node):
     assert node is not None

@@ -24,9 +24,9 @@ from .. import linear_util as lu
 from ..abstract_arrays import ShapedArray, ConcreteArray
 from ..linear_util import thunk, transformation, transformation_with_aux
 from ..util import unzip2, safe_zip, safe_map, toposort, partial
-from ..core import (Trace, Tracer, new_master, Jaxpr, JaxprEqn, get_aval, pack,
-                    AbstractValue, AbstractTuple, unit, unitvar, Primitive,
-                    call_p, TypedJaxpr)
+from ..core import (Trace, Tracer, new_master, Jaxpr, JaxprEqn, Literal,
+                    get_aval, pack, AbstractValue, AbstractTuple, unit, unitvar,
+                    Primitive, call_p, TypedJaxpr)
 
 map = safe_map
 zip = safe_zip
@@ -47,7 +47,10 @@ def identity(x): return x
 
 class JaxprTrace(Trace):
   def pure(self, val):
-    return self.new_const(val)
+    if type(val) in (int, float):
+      return JaxprTracer(self, PartialVal((None, val)), Literal(val))
+    else:
+      return self.new_const(val)
 
   def lift(self, val):
     return self.new_const(val)
@@ -59,6 +62,9 @@ class JaxprTrace(Trace):
     if isinstance(val, Tracer) and val.trace.level == self.level:
       raise Exception
     return JaxprTracer(self, PartialVal((None, val)), unit)
+
+  def new_instantiated_literal(self, val):
+    return JaxprTracer(self, PartialVal((get_aval(val), unit)), Literal(val))
 
   def new_instantiated_const(self, val):
     return JaxprTracer(self, PartialVal((get_aval(val), unit)), ConstVar(val))
@@ -74,7 +80,10 @@ class JaxprTrace(Trace):
     elif isinstance(pv, JaxprTracerTuple):
       return pack(map(lambda t: self.instantiate_const(self.full_raise(t)), tracer))
     elif pv is None:
-      return self.new_instantiated_const(const)
+      if type(tracer.recipe) is Literal:
+        return self.new_instantiated_literal(tracer.recipe.val)
+      else:
+        return self.new_instantiated_const(const)
     else:
       raise TypeError(pv)
 
@@ -491,6 +500,8 @@ def tracers_to_jaxpr(in_tracers, out_tracer):
       env[var(t)] = recipe.val
     elif isinstance(recipe, ConstVar):
       consts[var(t)] = recipe.val
+    elif isinstance(recipe, Literal):
+      t_to_var[id(t)] = recipe
     elif isinstance(recipe, Destructuring):
       i, eqn, key = recipe
       if key not in destructuring_vars:
