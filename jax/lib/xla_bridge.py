@@ -29,6 +29,7 @@ from distutils.util import strtobool
 
 from ..config import flags
 import numpy as onp  # 'onp' rather than 'np' to distinguish from autograd.numpy
+import six
 
 import jaxlib
 
@@ -359,3 +360,6 @@ for scalar_type in [onp.int8, onp.int16, onp.int32, onp.int64,
                     onp.float16, onp.float32, onp.float64, onp.float128,
                     float, int, bool, onp.bool_]:
   register_constant_handler(scalar_type, _scalar_constant_handler)
+
+if six.PY2:
+  register_constant_handler(long, _scalar_constant_handler)
