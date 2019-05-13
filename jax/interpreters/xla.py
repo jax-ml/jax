@@ -81,7 +81,7 @@ def aval_from_xla_shape(shape):
 
 def execute_compiled_primitive(name, compiled, result_handler, *args):
   input_bufs = [device_put(x) for x in args]
-  out_buf = compiled.Execute(input_bufs, not core.skip_checks)
+  out_buf = compiled.Execute(input_bufs)
   check_nans(name, out_buf)
   return result_handler(out_buf)
 
@@ -613,7 +613,7 @@ def xla_callable(fun, device_values, *abstract_args):
 
 def execute_compiled(compiled, pval, handle_result, *args):
   input_bufs = [device_put(x) for x in args]
-  out_buf = compiled.Execute(input_bufs, not core.skip_checks)
+  out_buf = compiled.Execute(input_bufs)
   check_nans("jit-compiled computation", out_buf)
   return pe.merge_pvals(handle_result(out_buf), pval)
 

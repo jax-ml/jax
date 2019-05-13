@@ -480,7 +480,7 @@ def merged_aval(pval):
 def execute_replicated(compiled, pval, nrep, handle_in,
                        handle_replica_result, handle_full_result, *args):
   input_bufs = zip(*map(handle_in, args)) if args else [[]] * nrep
-  out_bufs = compiled.ExecutePerReplica(input_bufs)
+  out_bufs = compiled.ExecutePerReplica(list(input_bufs))
   results = [merge_pvals(handle_replica_result(buf), pval) for buf in out_bufs]
   return handle_full_result(results)
 
