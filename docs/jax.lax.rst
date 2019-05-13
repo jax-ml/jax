@@ -126,6 +126,7 @@ Control flow operators
 
     cond
     fori_loop
+    scan
     while_loop
 
 
