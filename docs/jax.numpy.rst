@@ -219,6 +219,7 @@ jax.numpy.linalg
 
   cholesky
   det
+  eig
   eigh
   inv
   norm
