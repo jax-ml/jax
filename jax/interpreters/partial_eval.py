@@ -155,47 +155,6 @@ class JaxprTrace(Trace):
 
 map_primitives = set()
 
-def unzip_scan_jaxpr(jaxpr, consts, init, xs, avals):
-  f = lu.wrap_init(partial(core.eval_jaxpr, jaxpr))
-
-
-  assert False
-
-
-def scan_process_primitive(trace, consts, init, xs, avals, jaxpr):
-  jaxpr1, jaxpr2, avals1, avals2, ans_pv = unzip_scan_jaxpr(
-    jaxpr, consts, init, xs, avals)
-  const_pv , consts_const = consts
-  init_pv  , inits_const = init
-  xs_pv    , xs_const = xs
-
-  ans = scan_p.bind(consts_const, inits_const, xs_const,
-                    avals=avals1, jaxpr=jaxpr1)
-
-  params_out = {'avals' : avals2, 'jaxpr' : jaxpr2}
-  eqn = JaxprEqn([consts, init, xs], None, scan_p, (), False, False, params_out)
-  return JaxprTracer(trace, PartialVal((ans, ans_pv)),  )
-
-    # in_pvs, in_consts = unzip2([t.pval for t in tracers])
-    # fun, aux = partial_eval(f, self, in_pvs)
-    # out_pv_const, consts = call_primitive.bind(fun, *in_consts, **params)
-    # out_pv, jaxpr, env = aux()
-    # const_tracers = map(self.new_instantiated_const, consts)
-    # env_tracers = map(self.full_raise, env)
-    # bound_subjaxpr = (jaxpr, const_tracers, env_tracers)
-    # eqn = JaxprEqn(tracers, None, call_primitive, (bound_subjaxpr,), False, params)
-    # return JaxprTracer(self, PartialVal((out_pv, out_pv_const)), eqn)
-
-
-
-    # tracers = map(self.instantiate_const, tracers)
-    # avals = [t.aval for t in tracers]
-    # out_aval = primitive.abstract_eval(*avals, **params)
-    # eqn = JaxprEqn(tracers, None, primitive, (), False, params)
-    # return JaxprTracer(self, PartialVal((out_aval, unit)), eqn)
-  assert False
-
-
 
 def remove_axis_from_pv(pv):
   if pv is None:
