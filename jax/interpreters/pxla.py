@@ -252,7 +252,6 @@ def jaxpr_replicas(jaxpr):
 def _max(itr): return max(list(itr) or [1])
 
 def replicated_comp(jaxpr, ax_env, const_vals, freevar_shapes, *arg_shapes):
-  # TODO(mattjj): support argument pattern-matching
   assert not any(type(invar) in (tuple, list) for invar in jaxpr.invars)
   c = xb.make_computation_builder("replicated_computation")
 
