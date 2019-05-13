@@ -932,9 +932,7 @@ def jax_syevd(c, a, lower=False):
                  c.GetTupleElement(out, 2))
 
 
-# Nonsymmetric eigendecomposition
-
-# syevd: Symmetric eigendecomposition
+# geev: Nonsymmetric eigendecomposition
 
 # LAPACK uses a packed representation to represent a mixture of real
 # eigenvectors and complex conjugate pairs. This helper unpacks the
