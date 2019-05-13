@@ -30,6 +30,7 @@ from scipy.linalg.cython_lapack cimport sgetrf, dgetrf, cgetrf, zgetrf
 from scipy.linalg.cython_lapack cimport spotrf, dpotrf, cpotrf, zpotrf
 from scipy.linalg.cython_lapack cimport sgesdd, dgesdd, cgesdd, zgesdd
 from scipy.linalg.cython_lapack cimport ssyevd, dsyevd, cheevd, zheevd
+from scipy.linalg.cython_lapack cimport sgeev, dgeev, cgeev, zgeev
 
 import numpy as np
 from jaxlib import xla_client
@@ -929,3 +930,295 @@ def jax_syevd(c, a, lower=False):
       ))
   return c.Tuple(c.GetTupleElement(out, 0), c.GetTupleElement(out, 1),
                  c.GetTupleElement(out, 2))
+
+
+# Nonsymmetric eigendecomposition
+
+# syevd: Symmetric eigendecomposition
+
+# LAPACK uses a packed representation to represent a mixture of real
+# eigenvectors and complex conjugate pairs. This helper unpacks the
+# representation into regular complex matrices.
+cdef void _unpack_float_eigenvectors(
+    int n, const float* im_eigenvalues, const float* packed,
+    float complex* unpacked) nogil:
+  cdef float re, im
+  cdef int j, k
+  j = 0
+  while j < n:
+    if im_eigenvalues[j] == 0.:
+      for k in range(n):
+        unpacked[j*n + k].real = packed[j*n + k]
+        unpacked[j*n + k].imag = 0.
+      j += 1
+    else:
+      for k in range(n):
+        re = packed[j*n + k]
+        im = packed[(j+1)*n + k]
+        unpacked[j*n + k].real = unpacked[(j + 1)*n + k].real = re
+        unpacked[j*n + k].imag = im
+        unpacked[(j + 1)*n + k].imag = -im
+      j += 2
+
+cdef void lapack_sgeev(void* out_tuple, void** data) nogil:
+  cdef int b = (<int32_t*>(data[0]))[0]
+  cdef int n = (<int32_t*>(data[1]))[0]
+  cdef const float* a_in = <float*>(data[2])
+
+  cdef void** out = <void**>(out_tuple)
+  cdef float* a_work = <float*>(out[0])
+  cdef float* vl_work = <float*>(out[1])
+  cdef float* vr_work = <float*>(out[2])
+
+  cdef float* wr_out = <float*>(out[3])
+  cdef float* wi_out = <float*>(out[4])
+  cdef float complex* vl_out = <float complex*>(out[5])
+  cdef float complex* vr_out = <float complex*>(out[6])
+  cdef int* info_out = <int*>(out[7])
+
+  cdef char jobvlr = 'V'
+  cdef float work_query
+  cdef int lwork = -1
+  sgeev(&jobvlr, &jobvlr, &n, a_work, &n, wr_out, wi_out, vl_work, &n,
+        vr_work, &n, &work_query, &lwork, info_out)
+  lwork = <int>(work_query)
+  cdef float* work = <float*> malloc(lwork * sizeof(float))
+
+  for i in range(b):
+    memcpy(a_work, a_in, n * n * sizeof(float))
+    sgeev(&jobvlr, &jobvlr, &n, a_work, &n, wr_out, wi_out, vl_work, &n,
+          vr_work, &n, work, &lwork, info_out)
+    _unpack_float_eigenvectors(n, wi_out, vl_work, vl_out)
+    _unpack_float_eigenvectors(n, wi_out, vr_work, vr_out)
+
+    a_in += n * n
+    wr_out += n
+    wi_out += n
+    vl_out += n * n
+    vr_out += n * n
+    info_out += 1
+  free(work)
+
+register_cpu_custom_call_target(b"lapack_sgeev", <void*>(lapack_sgeev))
+
+
+cdef void _unpack_double_eigenvectors(
+    int n, const double* im_eigenvalues, const double* packed,
+    double complex* unpacked) nogil:
+  cdef double re, im
+  cdef int j, k
+  j = 0
+  while j < n:
+    if im_eigenvalues[j] == 0.:
+      for k in range(n):
+        unpacked[j*n + k].real = packed[j*n + k]
+        unpacked[j*n + k].imag = 0.
+      j += 1
+    else:
+      for k in range(n):
+        re = packed[j*n + k]
+        im = packed[(j+1)*n + k]
+        unpacked[j*n + k].real = unpacked[(j + 1)*n + k].real = re
+        unpacked[j*n + k].imag = im
+        unpacked[(j + 1)*n + k].imag = -im
+      j += 2
+
+cdef void lapack_dgeev(void* out_tuple, void** data) nogil:
+  cdef int b = (<int32_t*>(data[0]))[0]
+  cdef int n = (<int32_t*>(data[1]))[0]
+  cdef const double* a_in = <double*>(data[2])
+
+  cdef void** out = <void**>(out_tuple)
+  cdef double* a_work = <double*>(out[0])
+  cdef double* vl_work = <double*>(out[1])
+  cdef double* vr_work = <double*>(out[2])
+
+  cdef double* wr_out = <double*>(out[3])
+  cdef double* wi_out = <double*>(out[4])
+  cdef double complex* vl_out = <double complex*>(out[5])
+  cdef double complex* vr_out = <double complex*>(out[6])
+  cdef int* info_out = <int*>(out[7])
+
+  cdef char jobvlr = 'V'
+  cdef double work_query
+  cdef int lwork = -1
+  dgeev(&jobvlr, &jobvlr, &n, a_work, &n, wr_out, wi_out, vl_work, &n,
+        vr_work, &n, &work_query, &lwork, info_out)
+  lwork = <int>(work_query)
+  cdef double* work = <double*> malloc(lwork * sizeof(double))
+
+  for i in range(b):
+    memcpy(a_work, a_in, n * n * sizeof(double))
+    dgeev(&jobvlr, &jobvlr, &n, a_work, &n, wr_out, wi_out, vl_work, &n,
+          vr_work, &n, work, &lwork, info_out)
+    _unpack_double_eigenvectors(n, wi_out, vl_work, vl_out)
+    _unpack_double_eigenvectors(n, wi_out, vr_work, vr_out)
+
+    a_in += n * n
+    wr_out += n
+    wi_out += n
+    vl_out += n * n
+    vr_out += n * n
+    info_out += 1
+  free(work)
+
+register_cpu_custom_call_target(b"lapack_dgeev", <void*>(lapack_dgeev))
+
+
+cdef void lapack_cgeev(void* out_tuple, void** data) nogil:
+  cdef int b = (<int32_t*>(data[0]))[0]
+  cdef int n = (<int32_t*>(data[1]))[0]
+  cdef const float complex* a_in = <float complex*>(data[2])
+
+  cdef void** out = <void**>(out_tuple)
+  cdef float complex* a_work = <float complex*>(out[0])
+  cdef float* r_work = <float*>(out[1])
+
+  cdef float complex* w_out = <float complex*>(out[2])
+  cdef float complex* vl_out = <float complex*>(out[3])
+  cdef float complex* vr_out = <float complex*>(out[4])
+  cdef int* info_out = <int*>(out[5])
+
+  cdef char jobvlr = 'V'
+  cdef float complex work_query
+  cdef int lwork = -1
+  cgeev(&jobvlr, &jobvlr, &n, a_work, &n, w_out, vl_out, &n,
+        vr_out, &n, &work_query, &lwork, r_work, info_out)
+  lwork = <int>(work_query.real)
+  cdef float complex* work = <float complex*>malloc(
+      lwork * sizeof(float complex))
+
+  for i in range(b):
+    memcpy(a_work, a_in, n * n * sizeof(float complex))
+    cgeev(&jobvlr, &jobvlr, &n, a_work, &n, w_out, vl_out, &n, vr_out, &n,
+          work, &lwork, r_work, info_out)
+
+    a_in += n * n
+    w_out += n
+    vl_out += n * n
+    vr_out += n * n
+    info_out += 1
+  free(work)
+
+register_cpu_custom_call_target(b"lapack_cgeev", <void*>(lapack_cgeev))
+
+
+cdef void lapack_zgeev(void* out_tuple, void** data) nogil:
+  cdef int b = (<int32_t*>(data[0]))[0]
+  cdef int n = (<int32_t*>(data[1]))[0]
+  cdef const double complex* a_in = <double complex*>(data[2])
+
+  cdef void** out = <void**>(out_tuple)
+  cdef double complex* a_work = <double complex*>(out[0])
+  cdef double* r_work = <double*>(out[1])
+
+  cdef double complex* w_out = <double complex*>(out[2])
+  cdef double complex* vl_out = <double complex*>(out[3])
+  cdef double complex* vr_out = <double complex*>(out[4])
+  cdef int* info_out = <int*>(out[5])
+
+  cdef char jobvlr = 'V'
+  cdef double complex work_query
+  cdef int lwork = -1
+  zgeev(&jobvlr, &jobvlr, &n, a_work, &n, w_out, vl_out, &n,
+        vr_out, &n, &work_query, &lwork, r_work, info_out)
+  lwork = <int>(work_query.real)
+  cdef double complex* work = <double complex*>malloc(
+      lwork * sizeof(double complex))
+
+  for i in range(b):
+    memcpy(a_work, a_in, n * n * sizeof(double complex))
+    zgeev(&jobvlr, &jobvlr, &n, a_work, &n, w_out, vl_out, &n, vr_out, &n,
+          work, &lwork, r_work, info_out)
+
+    a_in += n * n
+    w_out += n
+    vl_out += n * n
+    vr_out += n * n
+    info_out += 1
+  free(work)
+
+register_cpu_custom_call_target(b"lapack_zgeev", <void*>(lapack_zgeev))
+
+
+
+def jax_geev(c, a):
+  assert sizeof(int32_t) == sizeof(int)
+
+  a_shape = c.GetShape(a)
+  dtype = a_shape.element_type()
+  dims = a_shape.dimensions()
+  assert len(dims) >= 2
+  m, n = dims[-2:]
+  assert m == n
+  batch_dims = tuple(dims[:-2])
+  num_bd = len(batch_dims)
+  b = 1
+  for d in batch_dims:
+    b *= d
+  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
+
+  if dtype == np.float32:
+    fn = b"lapack_sgeev"
+    real = True
+    eigvecs_type = np.complex64
+    workspaces = (Shape.array_shape(np.float32, (n, n), (0, 1)),
+                  Shape.array_shape(np.float32, (n, n), (0, 1)),
+                  Shape.array_shape(np.float32, (n, n), (0, 1)))
+    eigvals = (Shape.array_shape(np.float32, batch_dims + (n,),
+                                 tuple(range(num_bd, -1, -1))),
+               Shape.array_shape(np.float32, batch_dims + (n,),
+                                 tuple(range(num_bd, -1, -1))))
+  elif dtype == np.float64:
+    fn = b"lapack_dgeev"
+    real = True
+    eigvecs_type = np.complex128
+    workspaces = (Shape.array_shape(np.float64, (n, n), (0, 1)),
+                  Shape.array_shape(np.float64, (n, n), (0, 1)),
+                  Shape.array_shape(np.float64, (n, n), (0, 1)))
+    eigvals = (Shape.array_shape(np.float64, batch_dims + (n,),
+                                 tuple(range(num_bd, -1, -1))),
+               Shape.array_shape(np.float64, batch_dims + (n,),
+                                 tuple(range(num_bd, -1, -1))))
+  elif dtype == np.complex64:
+    fn = b"lapack_cgeev"
+    real = False
+    eigvecs_type = np.complex64
+    workspaces = (Shape.array_shape(np.complex64, (n, n), (0, 1)),
+                  Shape.array_shape(np.float32, (2 * n,), (0,)))
+    eigvals = (Shape.array_shape(np.complex64, batch_dims + (n,),
+                                 tuple(range(num_bd, -1, -1))),)
+  elif dtype == np.complex128:
+    fn = b"lapack_zgeev"
+    real = False
+    eigvecs_type = np.complex128
+    workspaces = (Shape.array_shape(np.complex128, (n, n), (0, 1)),
+                  Shape.array_shape(np.float64, (2 * n,), (0,)))
+    eigvals = (Shape.array_shape(np.complex128, batch_dims + (n,),
+                                 tuple(range(num_bd, -1, -1))),)
+  else:
+    raise NotImplementedError("Unsupported dtype {}".format(dtype))
+
+  out = c.CustomCall(
+      fn,
+      operands=(c.ConstantS32Scalar(b), c.ConstantS32Scalar(n), a),
+      shape_with_layout=Shape.tuple_shape(workspaces + eigvals + (
+          Shape.array_shape(np.dtype(eigvecs_type), dims, layout),
+          Shape.array_shape(np.dtype(eigvecs_type), dims, layout),
+          Shape.array_shape(np.dtype(np.int32), batch_dims,
+                            tuple(range(num_bd - 1, -1, -1))))
+      ),
+      operand_shapes_with_layout=(
+          Shape.array_shape(np.dtype(np.int32), (), ()),
+          Shape.array_shape(np.dtype(np.int32), (), ()),
+          Shape.array_shape(dtype, dims, layout),
+      ))
+  if real:
+    return c.Tuple(
+      c.Complex(c.GetTupleElement(out, 3), c.GetTupleElement(out, 4)),
+      c.GetTupleElement(out, 5), c.GetTupleElement(out, 6),
+      c.GetTupleElement(out, 7))
+  else:
+    return c.Tuple(
+      c.GetTupleElement(out, 2), c.GetTupleElement(out, 3),
+      c.GetTupleElement(out, 4), c.GetTupleElement(out, 5))
