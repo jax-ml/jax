@@ -909,7 +909,8 @@ def jarrett(fun):
   return new_fun
 
 
-def make_graphviz(fun):
+# This function mostly exists for making slides about JAX.
+def _make_graphviz(fun):
   """Adapts `fun` to return a graphviz dot string of its program representation.
 
   Args:
@@ -922,6 +923,8 @@ def make_graphviz(fun):
 
   See make_jaxpr for a related function.
   """
+  # TODO(mattjj): handle eqn.restructure
+  # TODO(mattjj): handle subjaxprs
 
   def pv_like(x):
     aval = xla.abstractify(x)

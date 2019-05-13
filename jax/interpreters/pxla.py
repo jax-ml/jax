@@ -252,10 +252,14 @@ def jaxpr_replicas(jaxpr):
 def _max(itr): return max(list(itr) or [1])
 
 def replicated_comp(jaxpr, ax_env, const_vals, freevar_shapes, *arg_shapes):
+  assert not any(type(invar) in (tuple, list) for invar in jaxpr.invars)
   c = xb.make_computation_builder("replicated_computation")
 
   def read(v):
-    return env[v]
+    if type(v) is core.Literal:
+      return c.Constant(v.val)
+    else:
+      return env[v]
 
   def write(v, node):
     assert node is not None
@@ -274,7 +278,11 @@ def replicated_comp(jaxpr, ax_env, const_vals, freevar_shapes, *arg_shapes):
     _map(write, all_freevars, map(c.ParameterWithShape, freevar_shapes))
   _map(write, jaxpr.invars, map(c.ParameterWithShape, arg_shapes))
   for eqn in jaxpr.eqns:
-    in_nodes = list(map(read, eqn.invars))
+    if not eqn.restructure:
+      in_nodes = list(map(read, eqn.invars))
+    else:
+      in_nodes = [xla.xla_pack(c, map(read, invars)) if type(invars) is tuple
+                  else read(invars) for invars in eqn.invars]
     if eqn.primitive in parallel_translation_rules:
       name = eqn.params['axis_name']
       params = {k: eqn.params[k] for k in eqn.params if k != 'axis_name'}

@@ -32,7 +32,7 @@ from .. import ad_util
 from .. import tree_util
 from .. import linear_util as lu
 from ..abstract_arrays import ConcreteArray, ShapedArray, make_shaped_array, array_types
-from ..core import AbstractTuple, JaxTuple, pack, valid_jaxtype
+from ..core import AbstractTuple, JaxTuple, pack, valid_jaxtype, Literal
 from ..util import partial, partialmethod, memoize, unzip2, concatenate, safe_map, prod
 from ..lib import xla_bridge as xb
 from . import partial_eval as pe
@@ -257,17 +257,20 @@ def build_jaxpr(jaxpr, const_vals, *abstract_args):
   return built_c
 
 def jaxpr_computation(jaxpr, const_vals, freevar_shapes, *arg_shapes):
+  assert not any(type(invar) in (tuple, list) for invar in jaxpr.invars)
   c = xb.make_computation_builder("jaxpr_computation")
 
   def read(v):
-    return env[v]
+    if type(v) is Literal:
+      return c.Constant(canonicalize_pyval_dtype(v.val))
+    else:
+      return env[v]
 
   def write(v, node):
     assert node is not None
     env[v] = node
 
   env = {}
-  consts_env = dict(zip(jaxpr.constvars, const_vals))
   write(core.unitvar, c.Tuple())
   if const_vals:
     _map(write, jaxpr.constvars, map(c.Constant, const_vals))
@@ -277,17 +280,23 @@ def jaxpr_computation(jaxpr, const_vals, freevar_shapes, *arg_shapes):
     _map(write, all_freevars, map(c.ParameterWithShape, freevar_shapes))
   _map(write, jaxpr.invars, map(c.ParameterWithShape, arg_shapes))
   for eqn in jaxpr.eqns:
-    in_nodes = list(map(read, eqn.invars))
+    if not eqn.restructure:
+      in_nodes = list(map(read, eqn.invars))
+    else:
+      in_nodes = [xla_pack(c, map(read, invars)) if type(invars) is tuple
+                  else read(invars) for invars in eqn.invars]
+    in_shapes = _map(c.GetShape, in_nodes)
     subcs = [
         jaxpr_computation(
             subjaxpr, (),
-            tuple(map(c.GetShape, map(read, const_bindings + freevar_bindings))),
-            *map(c.GetShape, in_nodes))
+            _map(c.GetShape, map(read, const_bindings + freevar_bindings)),
+            *in_shapes)
         for subjaxpr, const_bindings, freevar_bindings in eqn.bound_subjaxprs]
-    subfuns = [(subc, tuple(map(read, const_bindings + freevar_bindings)))
+    subfuns = [(subc, _map(read, const_bindings + freevar_bindings))
                for subc, (_, const_bindings, freevar_bindings)
                in zip(subcs, eqn.bound_subjaxprs)]
     ans = translation_rule(eqn.primitive)(c, *(subfuns + in_nodes), **eqn.params)
+    c.GetShape(ans)  # force xla to do shape error checking
     out_nodes = xla_destructure(c, ans) if eqn.destructure else [ans]
     _map(write, eqn.outvars, out_nodes)
   return c.Build(read(jaxpr.outvar))
@@ -298,6 +307,9 @@ def _map(f, *xs):
 def xla_destructure(c, ans):
   num_elements = len(c.GetShape(ans).tuple_shapes())
   return [c.GetTupleElement(ans, i) for i in range(num_elements)]
+
+def xla_pack(c, xs):
+  return c.Tuple(*xs)
 
 def tuple_constant(c, val, canonicalize_types=True):
   return c.Tuple(*map(c.Constant, val))
@@ -338,10 +350,18 @@ def zeros_like_translation_rule(c, x):
       return c.Broadcast(c.Constant(onp.array(0, shape.element_type())),
                          shape.dimensions())
   return _zeros_like(c.GetShape(x))
-translations[ad_util.zeros_like_p] = zeros_like_translation_rule
 
-# TODO(mattjj): add_jaxvals should handle any jaxval
-translations[ad_util.add_jaxvals_p] = lambda c, x, y: c.Add(x, y)
+def add_jaxvals_translation_rule(c, x, y):
+  x_shape, y_shape = map(c.GetShape, (x, y))
+  if x_shape.is_tuple() and y_shape.is_tuple():
+    xs = xla_destructure(c, x)
+    ys = xla_destructure(c, y)
+    return c.Tuple(*map(partial(add_jaxvals_translation_rule, c), xs, ys))
+  else:
+    return c.Add(x, y)
+
+translations[ad_util.zeros_like_p] = zeros_like_translation_rule
+translations[ad_util.add_jaxvals_p] = add_jaxvals_translation_rule
 
 
 def canonicalize_pyval_dtype(x):
@@ -409,12 +429,24 @@ class DeviceTuple(DeviceValue):
   def __repr__(self):
     return 'DeviceTuple(len={length})'.format(length=len(self))
 
+  def __eq__(self, other):
+    return tuple(self) == tuple(other)
+
 
 # DeviceValues don't need to be dtype-canonicalized because we assume values on
 # the device have already been canonicalized.
 core.pytype_aval_mappings[DeviceTuple] = core.pytype_aval_mappings[JaxTuple]
 pytype_aval_mappings[DeviceTuple] = op.attrgetter('aval')
 canonicalize_dtype_handlers[DeviceTuple] = identity
+
+def _device_tuple_constant_handler(c, val, canonicalize_types=True):
+  py_val = pack(c.Constant(elt, canonicalize_types=canonicalize_types)
+                for elt in val)
+  return c.Constant(py_val)
+xb.register_constant_handler(DeviceTuple, _device_tuple_constant_handler)
+
+# TODO(mattjj): could jit-compile a computation here
+ad_util.jaxval_adders[DeviceTuple] = ad_util.add_jaxtuples
 
 
 def forward_method(attrname, self, fun, *args):

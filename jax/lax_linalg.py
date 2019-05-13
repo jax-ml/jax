@@ -472,6 +472,7 @@ def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
   if full_matrices:
     #TODO: implement full matrices case, documented here: https://people.maths.ox.ac.uk/gilesm/files/NA-08-01.pdf
     raise NotImplementedError("Singular value decomposition JVP not implemented for full matrices")
+
   A, = primals
   dA, = tangents
   s, U, Vt = svd_p.bind(A, full_matrices=False, compute_uv=True)
@@ -480,7 +481,7 @@ def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
   Ut, V = np.conj(U).T, np.conj(Vt).T
   s_dim = s[..., None, :]
   dS = np.dot(np.dot(Ut, dA), V)
-  ds = np.diag(dS)
+  ds = np.real(np.diag(dS))
   F = 1 / (np.square(s_dim) - np.square(s_dim.T) + np.eye(k)) - np.eye(k)
   dSS = s_dim * dS
   SdS = s_dim.T * dS
