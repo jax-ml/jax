@@ -39,6 +39,10 @@ def cholesky(x, symmetrize_input=True):
     x = symmetrize(x)
   return np.tril(cholesky_p.bind(x))
 
+def eig(x):
+  w, vl, vr = eig_p.bind(x)
+  return w, vl, vr
+
 def eigh(x, lower=True, symmetrize_input=True):
   if symmetrize_input:
     x = symmetrize(x)
@@ -117,6 +121,47 @@ def cholesky_cpu_translation_rule(c, operand):
 
 xla.backend_specific_translations['cpu'][cholesky_p] = cholesky_cpu_translation_rule
 
+# Asymmetric eigendecomposition
+
+def eig_impl(operand):
+  return xla.apply_primitive(eig_p, operand)
+
+def eig_translation_rule(c, operand):
+  raise NotImplementedError(
+    "Nonsymmetric eigendecomposition is only implemented on the CPU backend")
+
+def eig_abstract_eval(operand):
+  if isinstance(operand, ShapedArray):
+    if operand.ndim < 2 or operand.shape[-2] != operand.shape[-1]:
+      raise ValueError("Argument to nonsymmetric eigendecomposition must have "
+                       "shape [..., n, n], got shape {}".format(operand.shape))
+
+    batch_dims = operand.shape[:-2]
+    n = operand.shape[-1]
+    vl = vr = ShapedArray(batch_dims + (n, n), operand.dtype)
+    w = ShapedArray(batch_dims + (n,), lax.lax._complex_basetype(operand.dtype))
+  else:
+    w = vl = vr = operand
+  return core.AbstractTuple((w, vl, vr))
+
+def eig_cpu_translation_rule(c, operand):
+  out = lapack.jax_geev(c, operand)
+  return c.Tuple(c.GetTupleElement(out, 0), c.GetTupleElement(out, 1),
+                 c.GetTupleElement(out, 2))
+
+def eig_batching_rule(batched_args, batch_dims):
+  x, = batched_args
+  bd, = batch_dims
+  x = batching.bdim_at_front(x, bd)
+  return eig_p.bind(x), 0
+
+eig_p = Primitive('eig')
+eig_p.def_impl(eig_impl)
+eig_p.def_abstract_eval(eig_abstract_eval)
+xla.translations[eig_p] = eig_translation_rule
+xla.backend_specific_translations['cpu'][eig_p] = eig_cpu_translation_rule
+batching.primitive_batchers[eig_p] = eig_batching_rule
+
 
 # Symmetric/Hermitian eigendecomposition
 
@@ -132,7 +177,8 @@ def eigh_abstract_eval(operand, lower):
   if isinstance(operand, ShapedArray):
     if operand.ndim < 2 or operand.shape[-2] != operand.shape[-1]:
       raise ValueError(
-        "Argument to symmetric eigendecomposition must have shape [..., n, n]")
+        "Argument to symmetric eigendecomposition must have shape [..., n, n],"
+        "got shape {}".format(operand.shape))
 
     batch_dims = operand.shape[:-2]
     n = operand.shape[-1]
