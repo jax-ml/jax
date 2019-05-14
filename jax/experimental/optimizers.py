@@ -248,18 +248,17 @@ def adagrad(step_size, momentum=0.9):
   step_size = make_schedule(step_size)
 
   def init(x0):
-    sq_grad_sum = np.zeros_like(x0)
+    g_sq = np.zeros_like(x0)
     m = np.zeros_like(x0)
     return x0, sq_grad_sum, m
 
   def update(i, g, state):
-    x, sq_grad_sum, m = state
-    sq_grad_sum = sq_grad_sum + g**2
-    sq_grad_sum_inv_sqrt = np.where(sq_grad_sum > 0, 1. / np.sqrt(sq_grad_sum),
-                                    0.0)
-    m = (1. - momentum) * (g * sq_grad_sum_inv_sqrt) + momentum * m
+    x, g_sq, m = state
+    g_sq += g**2
+    g_sq_inv_sqrt = np.where(g_sq > 0, 1. / np.sqrt(g_sq), 0.0)
+    m = (1. - momentum) * (g * g_sq_inv_sqrt) + momentum * m
     x = x - step_size(i) * m
-    return x, sq_grad_sum, m
+    return x, g_sq, m
 
   def get_params(state):
     x, _, _ = state
