@@ -229,6 +229,45 @@ def momentum(step_size, mass):
     return x
   return init, update, get_params
 
+
+@optimizer
+def adagrad(step_size, momentum=0.9):
+  """Construct optimizer triple for Adagrad.
+
+  Adaptive Subgradient Methods for Online Learning and Stochastic Optimization:
+  http://www.jmlr.org/papers/volume12/duchi11a/duchi11a.pdf
+
+  Args:
+    step_size: positive scalar, or a callable representing a step size schedule
+      that maps the iteration index to positive scalar.
+    momentum: optional, a positive scalar value for momentum
+
+  Returns:
+    An (init_fun, update_fun, get_params) triple.
+  """
+  step_size = make_schedule(step_size)
+
+  def init(x0):
+    sq_grad_sum = np.zeros_like(x0)
+    m = np.zeros_like(x0)
+    return x0, sq_grad_sum, m
+
+  def update(i, g, state):
+    x, sq_grad_sum, m = state
+    sq_grad_sum = sq_grad_sum + g**2
+    sq_grad_sum_inv_sqrt = np.where(sq_grad_sum > 0, 1. / np.sqrt(sq_grad_sum),
+                                    0.0)
+    m = (1. - momentum) * (g * sq_grad_sum_inv_sqrt) + momentum * m
+    x = x - step_size(i) * m
+    return x, sq_grad_sum, m
+
+  def get_params(state):
+    x, _, _ = state
+    return x
+
+  return init, update, get_params
+
+
 @optimizer
 def rmsprop(step_size, gamma=0.9, eps=1e-8):
   """Construct optimizer triple for RMSProp.
