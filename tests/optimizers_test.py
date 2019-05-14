@@ -131,6 +131,17 @@ class OptimizerTests(jtu.JaxTestCase):
     partial_loss = functools.partial(loss, y)
     self._CheckRun(optimizers.sgd, partial_loss, x0, num_iters, step_size)
 
+  def testAdagrad(self):
+
+    def loss(xs):
+      x1, x2 = xs
+      return np.sum(x1**2) + np.sum(x2**2)
+
+    num_iters = 100
+    step_size = 0.1
+    x0 = (np.ones(2), np.ones((2, 2)))
+    self._CheckOptimizer(optimizers.adagrad, loss, x0, num_iters, step_size)
+
   def testSM3(self):
     def loss(xs):
       x1, x2 = xs
