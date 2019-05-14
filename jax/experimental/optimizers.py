@@ -250,7 +250,7 @@ def adagrad(step_size, momentum=0.9):
   def init(x0):
     g_sq = np.zeros_like(x0)
     m = np.zeros_like(x0)
-    return x0, sq_grad_sum, m
+    return x0, g_sq, m
 
   def update(i, g, state):
     x, g_sq, m = state
