@@ -481,7 +481,6 @@ class IndexingTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype), unpacked_indexer]
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)
 
-  @unittest.skip
   @parameterized.named_parameters(
       {"testcase_name": "{}_inshape={}_indexer={}"
        .format(name, jtu.format_shape_dtype_string(shape, dtype), indexer),
@@ -505,8 +504,7 @@ class IndexingTest(jtu.JaxTestCase):
       for shape, indexer in index_specs
       for dtype in float_dtypes
       for rng in [jtu.rand_default()])
-  def DISABLED_testDynamicIndexingWithIntegersGrads(self, shape, dtype, rng, indexer):
-    # TODO(mattjj): re-enable (test works but for grad-of-compile, in flux)
+  def testDynamicIndexingWithIntegersGrads(self, shape, dtype, rng, indexer):
     tol = 1e-2 if onp.finfo(dtype).bits == 32 else None
     unpacked_indexer, pack_indexer = self._ReplaceSlicesWithTuples(indexer)
 
@@ -742,7 +740,6 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     for update_shape in _broadcastable_shapes(_update_shape(shape, indexer))
     for update_dtype in ([dtype] if op == UpdateOps.ADD else all_dtypes)
     for rng in [jtu.rand_default()]))
-  @jtu.skip_on_devices("gpu")  # TODO(b/132005708): llvm assert failure on GPU
   def testStaticIndexing(self, shape, dtype, update_shape, update_dtype,
                          rng, indexer, op):
     args_maker = lambda: [rng(shape, dtype), rng(update_shape, update_dtype)]
@@ -773,7 +770,6 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     for update_shape in _broadcastable_shapes(_update_shape(shape, indexer))
     for update_dtype in ([dtype] if op == UpdateOps.ADD else all_dtypes)
     for rng in [jtu.rand_default()]))
-  @jtu.skip_on_devices("gpu")  # TODO(b/132005708): llvm assert failure on GPU
   def testAdvancedIndexing(self, shape, dtype, update_shape, update_dtype,
                            rng, indexer, op):
     args_maker = lambda: [rng(shape, dtype), rng(update_shape, update_dtype)]
