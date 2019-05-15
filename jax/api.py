@@ -438,7 +438,7 @@ def _dtype(x):
 
 
 def vmap(fun, in_axes=0, out_axes=0):
-  """Vectorizing map. Creates a function which maps `fun` over additional axes.
+  """Vectorizing map. Creates a function which maps `fun` over argument axes.
 
   Args:
     fun: Function to be mapped over additional axes.
@@ -485,7 +485,89 @@ def vmap(fun, in_axes=0, out_axes=0):
 
 
 def pmap(fun, axis_name=None):
-  """Set up SPMD function for JIT compilation and parallel execution with XLA."""
+  """Parallel map with support for collectives.
+
+  The purpose of ``pmap`` is to express single-program multiple-data (SPMD)
+  programs and execute them in parallel on XLA devices, such as multiple GPUs or
+  multiple TPU cores. Semantically it is comparable to ``vmap`` because both
+  transformations map a function over array axes, but where ``vmap`` vectorizes
+  functions by pushing the mapped axis down into primitive operations, ``pmap``
+  instead replicates the function and executes each replica on its own XLA
+  device in parallel.
+
+  Another key difference with ``vmap`` is that while ``vmap`` can only express
+  pure maps, ``pmap`` enables the use of parallel SPMD collective operations,
+  like all-reduce sum.
+
+  The mapped axis size must be less than or equal to the number of XLA devices
+  available. For nested ``pmap`` calls, the product of the mapped axis sizes
+  must be less than or equal to the number of XLA devices.
+
+  Args:
+    fun: Function to be mapped over argument axes.
+    axis_name: Optional, a hashable Python object used to identify the mapped
+      axis so that parallel collectives can be applied.
+
+  Returns:
+    A parallelized version of ``fun`` with arguments that correspond to those of
+    ``fun`` but each with an additional leading array axis (with equal sizes)
+    and with output that has an additional leading array axis (with the same
+    size).
+
+  For example, assuming 8 XLA devices are available, ``pmap`` can be used as a
+  map along a leading array axes:
+
+  >>> out = pmap(lambda x: x ** 2)(np.arange(8))
+  >>> print(out)
+  [0, 1, 4, 9, 16, 25, 36, 49]
+  >>> x = np.arange(3 * 2 * 2.).reshape((3, 2, 2))
+  >>> y = np.arange(3 * 2 * 2.).reshape((3, 2, 2)) ** 2
+  >>> out = pmap(np.dot)(x, y)
+  >>> print(out)
+  [[[    4.     9.]
+    [   12.    29.]]
+   [[  244.   345.]
+    [  348.   493.]]
+   [[ 1412.  1737.]
+    [ 1740.  2141.]]]
+
+  In addition to expressing pure maps, ``pmap`` can also be used to express
+  parallel single-program multiple-data (SPMD) programs that communicate via
+  collective operations. For example:
+
+  >>> f = lambda x: x / jax.lax.psum(x, axis_name='i')
+  >>> out = pmap(f, axis_name='i')(np.arange(4.))
+  >>> print(out)
+  [ 0.          0.16666667  0.33333334  0.5       ]
+  >>> print(out.sum())
+  1.0
+
+  In this example, ``axis_name`` is a string, but it can be any Python object
+  with ``__hash__`` and ``__eq__`` defined.
+
+  The argument ``axis_name`` to ``pmap`` names the mapped axis so that
+  collective operations, like ``jax.lax.psum``, can refer to it. Axis names are
+  important particularly in the case of nested ``pmap`` functions, where
+  collectives can operate over distinct axes:
+
+  >>> from functools import partial
+  >>> @partial(pmap, axis_name='rows')
+  >>> @partial(pmap, axis_name='cols')
+  >>> def normalize(x):
+  >>>   row_normed = x / jax.lax.psum(x, 'rows')
+  >>>   col_normed = x / jax.lax.psum(x, 'cols')
+  >>>   doubly_normed = x / jax.lax.psum(x, ('rows', 'cols'))
+  >>>   return row_normed, col_normed, doubly_normed
+  >>>
+  >>> x = np.arange(8.).reshape((4, 2))
+  >>> row_normed, col_normed, doubly_normed = normalize(x)
+  >>> print(row_normed.sum(0))
+  [ 1.  1.]
+  >>> print(col_normed.sum(1))
+  [ 1.  1.  1.  1.]
+  >>> print(doubly_normed.sum((0, 1)))
+  1.0
+  """
   axis_name = _TempAxisName() if axis_name is None else axis_name
 
   @wraps(fun)
