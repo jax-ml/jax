@@ -13,6 +13,7 @@ Subpackages
     jax.lax
     jax.ops
     jax.random
+    jax.tree_util
 
 Module contents
 ---------------
