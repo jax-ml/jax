@@ -506,7 +506,7 @@ def pmap(fun, axis_name=None):
   Args:
     fun: Function to be mapped over argument axes.
     axis_name: Optional, a hashable Python object used to identify the mapped
-      axis so that parallel collectives, like all-reduce, can be applied.
+      axis so that parallel collectives can be applied.
 
   Returns:
     A parallelized version of ``fun`` with arguments that correspond to those of
@@ -514,7 +514,7 @@ def pmap(fun, axis_name=None):
     and with output that has an additional leading array axis (with the same
     size).
 
-  For example, assuming 8 XLA devices are available,``pmap`` can be used as a
+  For example, assuming 8 XLA devices are available, ``pmap`` can be used as a
   map along a leading array axes:
 
   >>> out = pmap(lambda x: x ** 2)(np.arange(8))
@@ -533,7 +533,7 @@ def pmap(fun, axis_name=None):
 
   In addition to expressing pure maps, ``pmap`` can also be used to express
   parallel single-program multiple-data (SPMD) programs that communicate via
-  collectivce operations. For example:
+  collective operations. For example:
 
   >>> f = lambda x: x / jax.lax.psum(x, axis_name='i')
   >>> out = pmap(f, axis_name='i')(np.arange(4.))
