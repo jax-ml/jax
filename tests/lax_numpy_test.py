@@ -1453,8 +1453,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
 
   def testLongLong(self):
-    # TODO(phawkins): enable after a Jaxlib update.
-    return SkipTest("Test disabled until jaxlib 0.1.13 is released.")
     self.assertAllClose(onp.int64(7), api.jit(lambda x: x)(onp.longlong(7)),
                         check_dtypes=True)
 

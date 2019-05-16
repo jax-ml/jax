@@ -164,13 +164,7 @@ def device_put(pyval, device_num=0):
                                            backend=get_backend())
 
 def device_put_many(pyvals_and_devices):
-  # TODO(phawkins): remove the fallback path after dropping dependencies on
-  # Jaxlib older than 0.1.13.
-  if hasattr(xla_client.LocalBuffer, "from_pyvals"):
-    return xla_client.LocalBuffer.from_pyvals(pyvals_and_devices,
-                                              backend=get_backend())
-  else:
-    return [device_put(pyval, device) for (pyval, device) in pyvals_and_devices]
+  return [device_put(pyval, device) for (pyval, device) in pyvals_and_devices]
 
 def make_tuple(bufs, device_num=0):
   return xla_client.Buffer.make_tuple(bufs, device=device_num,
