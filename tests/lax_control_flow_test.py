@@ -234,6 +234,66 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       self.assertAllClose(cfun(x, num), onp.sum(x[:num]), check_dtypes=False)
       self.assertAllClose(cfun(x, num), onp.sum(x[:num]), check_dtypes=False)
 
+  def testWhileLoopBatched(self):
+    def fun(x):
+      return lax.while_loop(lambda x: x < 3, lambda x: x + 2, x)
+
+    ans = api.vmap(fun)(onp.array([0, 1, 2, 3]))
+    expected = onp.array([4, 3, 4, 3])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    fun = api.jit(fun)
+    ans = api.vmap(fun)(onp.array([0, 1, 2, 3]))
+    expected = onp.array([4, 3, 4, 3])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testWhileLoopCondConstsBatched(self):
+    def fun(x, y):
+      return lax.while_loop(lambda x: x < y, lambda x: x + 2, x)
+
+    ans = api.vmap(fun, in_axes=(None, 0))(0, onp.array([2, 3]))
+    expected = onp.array([2, 4])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testWhileLoopBodyConstsBatched(self):
+    def fun(x, y):
+      return lax.while_loop(lambda x: x < 3, lambda x: x + y, x)
+
+    ans = api.vmap(fun, in_axes=(None, 0))(0, onp.array([2, 3]))
+    expected = onp.array([4, 3])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testWhileLoopTupleBatched(self):
+    def cond_fun(loop_carry):
+      x, y = loop_carry
+      return x + y < 5
+
+    def body_fun(loop_carry):
+      x, y = loop_carry
+      x = x + 1
+      return x, y
+
+    def fun(x, y):
+      return lax.while_loop(cond_fun, body_fun, (x, y))
+
+    ans = api.vmap(fun)(onp.array([0, 0]), onp.array([1, 2]))
+    expected = (onp.array([4, 3]), onp.array([1, 2]))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testForiLoopBatched(self):
+    def body_fun(i, loop_carry):
+      x, y = loop_carry
+      x = x + 1
+      y = y + 2
+      return x, y
+
+    def fun(x):
+      return lax.fori_loop(0, 10, body_fun, (x, 0))
+
+    ans = api.vmap(fun)(onp.array([0, 1]))
+    expected = (onp.array([10, 11]), onp.array([20, 20]))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def testForiLoopBasic(self):
     def count(num):
       def body_fun(i, tot):
