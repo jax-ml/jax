@@ -277,8 +277,10 @@ def randint(key, shape, minval, maxval, dtype=onp.int32):
   Args:
     key: a PRNGKey used as the random key.
     shape: a tuple of nonnegative integers representing the shape.
-    minval: optional, a minimum (inclusive) value for the range (default 0).
-    maxval: optional, a maximum (exclusive) value for the range (default 1).
+    minval: int or array of ints broadcast-compatible with ``shape``, a minimum
+      (inclusive) value for the range.
+    maxval: int or array of ints broadcast-compatible with  ``shape``, a maximum
+      (exclusive) value for the range.
     dtype: optional, an int dtype for the returned values (default int32).
 
   Returns:
