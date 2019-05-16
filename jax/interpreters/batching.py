@@ -368,6 +368,8 @@ def handle_scalar_broadcasting(nd, x, bdim):
     return x.reshape(x.shape + (1,) * (nd - x.ndim))
 
 
+# TODO(mattjj): try to de-duplicate utility functions with above
+
 def where_batched(bdim):
   t = type(bdim)
   if t is tuple:
@@ -452,9 +454,9 @@ def _broadcast2(size, axis, x, aval):
   else:
     # see comment at the top of this section
     if isinstance(x, onp.ndarray) or onp.isscalar(x):
-      return onp.broadcast_to(x, (sz,) + onp.shape(x))
+      return onp.broadcast_to(x, (size,) + onp.shape(x))
     else:
-      return x.broadcast((sz,))  # should be a JAX arraylike
+      return x.broadcast((size,))  # should be a JAX arraylike
 
 def _promote_aval_rank(n, batched, aval):
   assert isinstance(aval, core.AbstractValue)
@@ -480,8 +482,8 @@ def batch_jaxpr(jaxpr, size, is_batched, instantiate):
   f_batched, where_out_batched = batched_traceable(f, size, is_batched, instantiate)
   in_avals = map(partial(_promote_aval_rank, size), is_batched, jaxpr.in_avals)
   in_pvals = [pe.PartialVal((aval, core.unit)) for aval in in_avals]
-  jaxpr_out, pval_out, literals_out = pe.trace_to_jaxpr(f_batched, in_pvals,
-                                                        instantiate=True)
+  jaxpr_out, pval_out, literals_out = pe.trace_to_jaxpr(
+      f_batched, in_pvals, instantiate=True)
   out_aval, _ = pval_out
   jaxpr_out = core.TypedJaxpr(jaxpr_out, literals_out, in_avals, out_aval)
   return jaxpr_out, where_out_batched()

@@ -18,6 +18,7 @@ from __future__ import print_function
 
 import collections
 from functools import partial
+import itertools
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -29,6 +30,7 @@ from jax import api
 from jax import core
 from jax import lax
 from jax import test_util as jtu
+from jax.util import unzip2
 import jax.numpy as np  # scan tests use numpy
 
 def scan_reference(f, init, xs):
@@ -492,12 +494,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertEqual(out, (7, 10))
 
   @parameterized.named_parameters(
-      {"testcase_name": "jit_scan={}_jit_f={}".format(jit_scan, jit_f),
+      {"testcase_name": "_jit_scan={}_jit_f={}".format(jit_scan, jit_f),
        "jit_scan": jit_scan, "jit_f": jit_f}
       for jit_scan in [False, True]
       for jit_f in [False, True])
   def testScanImpl(self, jit_scan, jit_f):
-    d = np.zeros(2)
+    d = np.array([1., 2.])
     def f(c, a):
       assert a.shape == (3,)
       assert c.shape == (4,)
@@ -521,12 +523,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   @parameterized.named_parameters(
-      {"testcase_name": "jit_scan={}_jit_f={}".format(jit_scan, jit_f),
+      {"testcase_name": "_jit_scan={}_jit_f={}".format(jit_scan, jit_f),
        "jit_scan": jit_scan, "jit_f": jit_f}
       for jit_scan in [False, True]
       for jit_f in [False, True])
   def testScanJVP(self, jit_scan, jit_f):
-    d = np.zeros(2)
+    d = np.array([1., 2.])
     def f(c, a):
       assert a.shape == (3,)
       assert c.shape == (4,)
@@ -550,12 +552,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   @parameterized.named_parameters(
-      {"testcase_name": "jit_scan={}_jit_f={}".format(jit_scan, jit_f),
+      {"testcase_name": "_jit_scan={}_jit_f={}".format(jit_scan, jit_f),
        "jit_scan": jit_scan, "jit_f": jit_f}
       for jit_scan in [False, True]
       for jit_f in [False, True])
   def testScanLinearize(self, jit_scan, jit_f):
-    d = np.zeros(2)
+    d = np.array([1., 2.])
     def f(c, a):
       assert a.shape == (3,)
       assert c.shape == (4,)
@@ -579,12 +581,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   @parameterized.named_parameters(
-      {"testcase_name": "jit_scan={}_jit_f={}".format(jit_scan, jit_f),
+      {"testcase_name": "_jit_scan={}_jit_f={}".format(jit_scan, jit_f),
        "jit_scan": jit_scan, "jit_f": jit_f}
       for jit_scan in [False, True]
       for jit_f in [False, True])
   def testScanGrad(self, jit_scan, jit_f):
-    d = np.zeros(2)
+    d = np.ones(2)
     def f(c, a):
       assert a.shape == (3,)
       assert c.shape == (4,)
@@ -611,9 +613,9 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     r = npr.RandomState(0)
 
     n_in = 4
-    n_hid = 3
-    n_out = 2
-    length = 5
+    n_hid = 2
+    n_out = 1
+    length = 3
 
     W_trans = r.randn(n_hid, n_hid + n_in)
     W_out = r.randn(n_out, n_hid + n_in)
@@ -647,11 +649,18 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     # gradient evaluation doesn't crash
     api.grad(loss)(params, inputs, targets)
 
-    # gradient is zero in the right place
-    predictions = rnn(params, inputs)
-    ans = api.grad(loss)(params, inputs, predictions)
-    expected = (onp.zeros_like(W_trans), onp.zeros_like(W_out))
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    # gradient check passes
+    jtu.check_grads(loss, (params, inputs, targets), order=1)
+
+    # we can vmap to batch things
+    batch_size = 7
+    batched_inputs = r.randn(batch_size, length, n_in)
+    batched_targets = r.randn(batch_size, length, n_out)
+    batched_loss = api.vmap(lambda x, y: loss(params, x, y))
+    losses = batched_loss(batched_inputs, batched_targets)
+    expected = onp.stack(list(map(lambda x, y: loss(params, x, y),
+                                  batched_inputs, batched_targets)))
+    self.assertAllClose(losses, expected, check_dtypes=False)
 
   def testIssue711(self):
     # Tests reverse-mode differentiation through a scan for which the scanned
@@ -708,6 +717,75 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     jtu.check_grads(lambda c, as_: lax.scan(f, c, as_), (c, as_),
                     modes=["fwd", "rev"], order=2)
+
+  @parameterized.named_parameters(
+      {"testcase_name": "_jit_scan={}_jit_f={}_in_axes={}".format(
+          jit_scan, jit_f, in_axes),
+       "jit_scan": jit_scan, "jit_f": jit_f, "in_axes": in_axes}
+      for jit_scan in [False, True]
+      for jit_f in [False, True]
+      for in_axes in itertools.product([None, 0, 1], [None, 0, 1, 2])
+      if in_axes != (None, None))
+  def testScanVmap(self, jit_scan, jit_f, in_axes):
+    d = np.array([1., 2.])
+    def f(c, a):
+      assert a.shape == (3,)
+      assert c.shape == (4,)
+      b = np.sum(np.sin(a)) + np.sum(np.sin(c)) + np.sum(np.sin(d))
+      c = np.sin(c * b)
+      assert b.shape == ()
+      return c, b
+
+    if jit_f:
+      f = api.jit(f)
+    if jit_scan:
+      scan = api.jit(lax.scan, (0,))
+    else:
+      scan = lax.scan
+
+    as_shape = [5, 3]
+    c_shape = [4]
+
+    c_bdim, as_bdim = in_axes
+    if c_bdim is not None:
+      c_shape.insert(c_bdim, 7)
+    if as_bdim is not None:
+      as_shape.insert(as_bdim, 7)
+
+    r = onp.random.RandomState(0)
+    as_ = r.randn(*as_shape)
+    c = r.randn(*c_shape)
+
+    ans = api.vmap(lambda c, as_:                scan(f, c, as_), in_axes)(c, as_)
+    expected = api.vmap(lambda c, as_: scan_reference(f, c, as_), in_axes)(c, as_)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testScanVmapTuples(self):
+    def f(c, a):
+      a1, a2 = a
+      c1, c2 = c
+      b = np.sum(np.cos(a1)) * np.sum(np.tan(c2 * a2))
+      c = c1 * np.sin(np.sum(a1 * a2)), c2 * np.cos(np.sum(a1))
+      return c, b
+
+    in_axes = (0, (1, 2))
+
+    r = onp.random.RandomState(0)
+    as_ = (r.randn(3, 7), r.randn(3, 4, 7))
+    c = (r.randn(7, 2), r.randn(7))
+
+    expected_c_out, expected_bs = [], []
+    for i in range(7):
+      c_out, bs = lax.scan(f, (c[0][i], c[1][i]), (as_[0][:,i], as_[1][:,:,i]))
+      expected_c_out.append(c_out)
+      expected_bs.append(bs)
+    expected_c_out_0, expected_c_out_1 = unzip2(expected_c_out)
+    expected_c_out = (np.stack(expected_c_out_0), np.stack(expected_c_out_1))
+    expected_bs = np.stack(expected_bs)
+    expected = expected_c_out, expected_bs
+
+    ans = api.vmap(lambda c, as_:            lax.scan(f, c, as_), in_axes)(c, as_)
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
 
 if __name__ == '__main__':
