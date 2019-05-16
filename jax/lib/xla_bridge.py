@@ -33,7 +33,7 @@ import six
 
 import jaxlib
 
-_minimum_jaxlib_version = (0, 1, 12)
+_minimum_jaxlib_version = (0, 1, 13)
 try:
   from jaxlib import version as jaxlib_version
 except:
