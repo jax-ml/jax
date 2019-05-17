@@ -294,13 +294,14 @@ class _JaxComputationBuilder(xla_client.ComputationBuilder):
     else:
       raise TypeError("No constant handler for type: {}".format(py_type))
 
-  def AllToAll(self, operand, split_dimension, concat_dimension, replica_groups):
-    """Workaround for AllToAll not being implemented on some backends."""
-    if split_dimension == concat_dimension and len(replica_groups[0]) == 1:
+  # TODO(mattjj): remove when CRS is added to XLA:CPU
+  def CrossReplicaSum(self, operand, replica_groups):
+    """Workaround for CrossReplicaSum not being implemented on some backends."""
+    if len(replica_groups[0]) == 1:
       return operand
     else:
-      return super(_JaxComputationBuilder, self).AllToAll(
-          operand, split_dimension, concat_dimension, replica_groups)
+      return super(_JaxComputationBuilder, self).CrossReplicaSum(operand,
+                                                                 replica_groups)
 
 
 def make_computation_builder(name):
