@@ -246,6 +246,10 @@ def axis_groups(axis_env, name):
 
 def compile_replicated(jaxpr, axis_name, axis_size, consts, *abstract_args):
   num_replicas = axis_size * jaxpr_replicas(jaxpr)
+  if num_replicas > xb.device_count():
+    msg = ("compiling pmap computation that requires {} replicas, but only {} "
+           "XLA devices are available")
+    raise ValueError(msg.format(num_replicas, xb.device_count()))
   axis_env = AxisEnv(num_replicas, [axis_name], [axis_size])
   arg_shapes = list(map(xla_shape, abstract_args))
   built_c = replicated_comp(jaxpr, axis_env, consts, (), *arg_shapes)
