@@ -142,5 +142,4 @@ Parallelism support is experimental.
     psum
     pmax
     pmin
-    pswapaxes
     ppermute
