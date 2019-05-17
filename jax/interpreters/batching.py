@@ -136,7 +136,7 @@ class BatchTrace(Trace):
     master = self.master
     def todo(x):
       trace = BatchTrace(master, core.cur_sublevel())
-      return BatchTracer(trace, val, dim)
+      return BatchTracer(trace, x, dim)
 
     return val, todo
 
