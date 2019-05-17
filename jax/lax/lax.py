@@ -3646,7 +3646,7 @@ class _IotaConstant(xla.DeviceConstant):
 
   def __init__(self, dtype, shape, axis):
     self.shape = shape
-    self.dtype = dtype
+    self.dtype = onp.dtype(dtype)
     self.ndim = len(shape)
     self.size = prod(shape)
     self._npy_value = None
@@ -3675,7 +3675,7 @@ class _EyeConstant(xla.DeviceConstant):
 
   def __init__(self, shape, axes, dtype):
     self.shape = shape
-    self.dtype = dtype
+    self.dtype = onp.dtype(dtype)
     self.ndim = len(shape)
     self.size = prod(shape)
     self._npy_value = None
@@ -3700,7 +3700,7 @@ class _EyeConstant(xla.DeviceConstant):
     else:
       etype = xla_bridge.dtype_to_etype_exact(diag_const.dtype)
     etype = xla_bridge.dtype_to_etype(diag_const.dtype)
-    iotas = [c.BroadcastedIota(onp.bool_, diag_const.shape, axis)
+    iotas = [c.BroadcastedIota(onp.uint32, diag_const.shape, axis)
              for axis in diag_const.axes]
     eyes = [c.Eq(i1, i2) for i1, i2 in zip(iotas[:-1], iotas[1:])]
     return c.ConvertElementType(_reduce(c.And, eyes), etype)

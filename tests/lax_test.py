@@ -1343,13 +1343,16 @@ class DeviceConstantTest(jtu.JaxTestCase):
     self.assertAllClose(argument_result, expected, check_dtypes=True)
     self.assertAllClose(jit_result, expected, check_dtypes=True)
 
+    # ensure repr doesn't crash
+    repr(make_const())
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_fill={}".format(
           jtu.format_shape_dtype_string(shape, dtype) if dtype else shape,
           fill_value),
        "shape": shape, "dtype": dtype, "fill_value": fill_value}
       for dtype in itertools.chain(default_dtypes, [None])
-      for shape in [(), (3,), (2, 3), (2, 3, 4)]
+      for shape in [(), (3,), (2, 3), (2, 3, 4), (1001, 1001)]
       for fill_value in [0, 1, onp.pi]))
   def testFilledConstant(self, shape, fill_value, dtype):
     make_const = lambda: lax.full(shape, fill_value, dtype)
@@ -1361,7 +1364,7 @@ class DeviceConstantTest(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, dtype), dimension),
        "shape": shape, "dtype": dtype, "dimension": dimension}
       for dtype in default_dtypes
-      for shape in [(), (3,), (2, 3), (2, 3, 4)]
+      for shape in [(), (3,), (2, 3), (2, 3, 4), (1001, 1001), (101, 101, 101)]
       for dimension in range(len(shape))))
   def testIotaConstant(self, dtype, shape, dimension):
     make_const = lambda: lax.broadcasted_iota(dtype, shape, dimension)
@@ -1386,6 +1389,7 @@ class DeviceConstantTest(jtu.JaxTestCase):
           [(2, 3, 4), (0, 1, 2)],
           [(2, 3, 4, 2), (0, 1, 2)],
           [(2, 3, 4, 2), (0, 2, 3)],
+          [(1001, 1001), (0, 1)],
       ]))
   def testEyeConstant(self, dtype, shape, axes):
     make_const = lambda: lax.broadcasted_eye(dtype, shape, axes)

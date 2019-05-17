@@ -1481,6 +1481,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertFalse(type(lnp.arange(77)) == type(onp.arange(77)))
     self.assertTrue(type(lnp.arange(77)) == type(lax.iota(onp.int32, 77)))
 
+  def testIssue728(self):
+    assert lnp.allclose(lnp.eye(5000), onp.eye(5000))
+    self.assertEqual(0, onp.sum(lnp.eye(1050) - onp.eye(1050)))
+
 
 if __name__ == "__main__":
   absltest.main()
