@@ -487,7 +487,7 @@ def merged_aval(pval):
 
 def execute_replicated(compiled, pval, nrep, handle_in,
                        handle_replica_result, handle_full_result, *args):
-  if not nrep < xb.device_count():
+  if nrep > xb.device_count():
     msg = ("executing pmap computation that requires {} replicas, but only {} "
            "XLA devices are available")
     raise ValueError(msg.format(nrep, xb.device_count()))
