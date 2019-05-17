@@ -384,6 +384,30 @@ class PmapTest(jtu.JaxTestCase):
     ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testDeviceCountError(self):
+    device_count = xla_bridge.device_count()
+
+    f = pmap(lambda x: x)
+    x = np.arange(device_count + 1)
+    self.assertRaisesRegexp(
+        ValueError,
+        ".*requires.*replicas",
+        lambda: f(x))
+
+    f = pmap(lambda x: x)
+    x = onp.ones((device_count + 1, 10))
+    self.assertRaisesRegexp(
+        ValueError,
+        ".*requires.*replicas",
+        lambda: f(x))
+
+    f = pmap(lambda x: pmap(lambda x: x)(x))
+    x = onp.ones((device_count, 2, 10))
+    self.assertRaisesRegexp(
+        ValueError,
+        ".*requires.*replicas",
+        lambda: f(x))
+
 
 if __name__ == '__main__':
   absltest.main()

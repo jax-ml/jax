@@ -479,6 +479,10 @@ def merged_aval(pval):
 
 def execute_replicated(compiled, pval, nrep, handle_in,
                        handle_replica_result, handle_full_result, *args):
+  if not nrep < xb.device_count():
+    msg = ("executing pmap computation that requires {} replicas, but only {} "
+           "XLA devices are available")
+    raise ValueError(msg.format(nrep, xb.device_count()))
   input_bufs = zip(*map(handle_in, args)) if args else [[]] * nrep
   out_bufs = compiled.ExecutePerReplica(list(input_bufs))
   results = [merge_pvals(handle_replica_result(buf), pval) for buf in out_bufs]
