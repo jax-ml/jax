@@ -29,44 +29,125 @@ from jax.lib import xla_bridge
 ### parallel traceables
 
 def psum(x, axis_name):
+  """Compute an all-reduce sum on ``x`` over the pmapped axis ``axis_name``.
+
+  Args:
+    x: array with a mapped axis named ``axis_name``.
+    axis_name: hashable Python object used to name a pmapped axis (see the
+      ``pmap`` docstring for more details).
+
+  Returns:
+    An array with the same shape as ``x`` representing the result of an
+    all-reduce sum along the axis ``axis_name``.
+
+  For example, with 4 XLA devices available:
+
+  >>> x = np.arange(4)
+  >>> y = jax.pmap(lambda x: jax.lax.psum(x, 'i'), axis_name='i')(x)
+  >>> print(y)
+  [6 6 6 6]
+  >>> y = jax.pmap(lambda x: x / jax.lax.psum(x, 'i'), axis_name='i')(x)
+  >>> print(y)
+  [ 0.          0.16666667  0.33333334  0.5       ]
+  """
   return psum_p.bind(x, axis_name=axis_name)
 
 def pmax(x, axis_name):
+  """Compute an all-reduce max on ``x`` over the pmapped axis ``axis_name``.
+
+  Args:
+    x: array with a mapped axis named ``axis_name``.
+    axis_name: hashable Python object used to name a pmapped axis (see the
+      ``pmap`` docstring for more details).
+
+  Returns:
+    An array with the same shape as ``x`` representing the result of an
+    all-reduce max along the axis ``axis_name``.
+  """
   return pmax_p.bind(x, axis_name=axis_name)
 
 def pmin(x, axis_name):
+  """Compute an all-reduce min on ``x`` over the pmapped axis ``axis_name``.
+
+  Args:
+    x: array with a mapped axis named ``axis_name``.
+    axis_name: hashable Python object used to name a pmapped axis (see the
+      ``pmap`` docstring for more details).
+
+  Returns:
+    An array with the same shape as ``x`` representing the result of an
+    all-reduce min along the axis ``axis_name``.
+  """
   return pmin_p.bind(x, axis_name=axis_name)
 
 def ppermute(x, axis_name, perm):
+  """Perform a collective permutation according to the permutation ``perm``.
+
+  This function is an analog of the CollectivePermute XLA HLO.
+
+  Args:
+    x: array with a mapped axis named ``axis_name``.
+    axis_name: hashable Python object used to name a pmapped axis (see the
+      ``pmap`` docstring for more details).
+    perm: list of pairs of ints, representing (source_index, destination_index)
+      pairs that encode how the mapped axis named ``axis_name`` should be
+      shuffled. The integer values are treated as indices into the mapped axis
+      ``axis_name``. Any two pairs should not have the same source index or the
+      same destination index. For each index of the axis ``axis_name`` that does
+      not correspond to a destination index in ``perm``, the corresponding
+      values in ``x`` are filled with zeros of the appropriate type.
+
+  Returns:
+    An array with the same shape as ``x`` representing the result of an
+    all-reduce min along the axis ``axis_name``.
+  """
   return ppermute_p.bind(x, axis_name=axis_name, perm=perm)
 
 def pswapaxes(x, axis_name, axis):
-  """Analogue to `np.swapaxes` involving a hidden axis.
+  """Swap the pmapped axis ``axis_name`` with the unmapped axis ``axis``.
 
-  Specifically, transposes the operand along the axis that's currently hidden
-  and the given concrete axis. The implicit position of the hidden axis remains
-  unchanged.
+  This function is similar to ``psplit`` except the pmapped axis of the input is
+  placed at the position ``axis`` in the output.
+
+  Args:
+    x: array with a mapped axis named ``axis_name``.
+    axis_name: hashable Python object used to name a pmapped axis (see the
+      ``pmap`` docstring for more details).
+    axis: int indicating the unmapped axis of ``x`` to map with the name
+      ``axis_name``.
+
+  Returns:
+    An array with shape ``np.insert(np.delete(x.shape, axis), axis, axis_size)``
+    where ``axis_size`` is the size of the mapped axis named ``axis_name`` in
+    the input ``x``.
   """
   return pswapaxes_p.bind(x, axis_name=axis_name, axis=axis)
 
 def psplit(x, axis_name, axis):
-  """Merge operand along the hidden axis and split it along `axis`.
+  """Unmap the pmapped axis ``axis_name`` and map ``axis`` with the same name.
 
-  The newly split axis becomes the hidden axis for the output, and in particular
-  the implicit position of the hidden axis changes.
+  This function is similar to ``pswapaxes`` except the pmapped axis of the input
+  is placed as the leading logical axis of the output.
+
+  Args:
+    x: array with a mapped axis named ``axis_name``.
+    axis_name: hashable Python object used to name a pmapped axis (see the
+      ``pmap`` docstring for more details).
+    axis: int indicating the unmapped axis of ``x`` to map with the name
+      ``axis_name``.
+
+  Returns:
+    An array with shape ``(axis_size,) + tuple(np.delete(x.shape, axis))`` where
+    ``axis_size`` is the size of the mapped axis named ``axis_name`` in the
+    input ``x``.
   """
-  # lowering should be:
-  # return xla_all_to_all(x, hidden axis, axis)
   return psplit_p.bind(x, axis_name=axis_name, axis=axis)
 
 def psplit_like(x, y, axis_name):
-  """Split `x` along any axis on which `y` is split, if it is."""
+  """Ensure the named mapped axis of ``x`` aligns with that of ``y``."""
   return psplit_like_p.bind(x, y, axis_name=axis_name)
 
 def pcollect(x, axis_name):
-  # lowering should be:
-  # x = xla_broadcast(x, (xb.get_replica_count(),))
-  # return xla_all_to_all(x, 0, dim(axis_name), **params)
   return pcollect_p.bind(x, axis_name=axis_name)
 
 
@@ -126,12 +207,8 @@ pxla.parallel_translation_rules[pmin_p] = \
 
 def _ppermute_translation_rule(c, x, device_groups, perm):
   group_size = len(device_groups[0])
-  if not all(0 <= i < group_size and 0 <= j < group_size for i, j in perm):
-    msg = ("ppermute permutation elements must take on values between 0 and "
-           "the group size {}, but got {}.")
-    raise ValueError(msg.format(group_size, perm))
-  sources, dests = unzip2(perm)
-  if not (len(sources) == len(set(sources)) and len(dests) == len(set(dests))):
+  srcs, dsts = unzip2((src % group_size, dst % group_size) for src, dst in perm)
+  if not (len(srcs) == len(set(srcs)) and len(dsts) == len(set(dsts))):
     msg = "ppermute sources and destinations must be unique, got {}."
     raise ValueError(msg.format(perm))
 
