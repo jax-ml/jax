@@ -182,6 +182,7 @@ def replica_groups(nrep, mesh_spec, mesh_axes):
 
 def xla_shard(c, sizes, x):
   """Analog of shard_arg that performs sharding within an XLA computation."""
+
   def _xla_shard(shape, x):
     if shape.is_tuple():
       elts = map(_xla_shard, shape.tuple_shapes(), xla_destructure(c, x))
@@ -198,6 +199,7 @@ def xla_shard(c, sizes, x):
 
   return _xla_shard(c.GetShape(x), x)
 
+# TODO(mattjj): plumb more ergonimic form of DynamicSlice / DynamicUpdateSlice
 def _xla_shard_start_indices(c, axis_size, ndim):
   idx = c.Rem(c.ReplicaId(), c.Constant(onp.array(axis_size, onp.uint32)))
   zero = onp.zeros(ndim - 1, onp.uint32)
@@ -206,6 +208,7 @@ def _xla_shard_start_indices(c, axis_size, ndim):
 # TODO(b/110096942): more efficient gather
 def xla_unshard(c, device_groups, x):
   """Analog of unshard_output that un-shards within an XLA computation."""
+
   def _xla_unshard(shape, x):
     if shape.is_tuple():
       elts = map(_xla_unshard, shape.tuple_shapes(), xla_destructure(c, x))
@@ -214,9 +217,14 @@ def xla_unshard(c, device_groups, x):
       return unshard_array(shape, x)
 
   def unshard_array(shape, x):
-    group_size = len(device_groups[0])
-    broadcasted = c.Broadcast(x, (group_size,))
-    return c.AllToAll(broadcasted, 0, 0, device_groups)
+    axis_size = len(device_groups[0])
+    dims = list(shape.dimensions())
+    start_indices = _xla_shard_start_indices(c, axis_size, len(dims) + 1)
+    padded = c.Broadcast(c.Constant(onp.array(0, shape.numpy_dtype())),
+                         [axis_size] + dims)
+    padded = c.DynamicUpdateSlice(padded, c.Reshape(x, None, [1] + dims),
+                                  start_indices)
+    return c.CrossReplicaSum(padded, device_groups)
 
   return _xla_unshard(c.GetShape(x), x)
 
@@ -479,6 +487,10 @@ def merged_aval(pval):
 
 def execute_replicated(compiled, pval, nrep, handle_in,
                        handle_replica_result, handle_full_result, *args):
+  if nrep > xb.device_count():
+    msg = ("executing pmap computation that requires {} replicas, but only {} "
+           "XLA devices are available")
+    raise ValueError(msg.format(nrep, xb.device_count()))
   input_bufs = zip(*map(handle_in, args)) if args else [[]] * nrep
   out_bufs = compiled.ExecutePerReplica(list(input_bufs))
   results = [merge_pvals(handle_replica_result(buf), pval) for buf in out_bufs]
