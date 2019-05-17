@@ -41,7 +41,7 @@ from . import linear_util as lu
 from .core import pack, eval_jaxpr
 from .api_util import (pytree_fun_to_jaxtupletree_fun, pytree_to_jaxtupletree,
                        pytree_fun_to_flatjaxtuple_fun, apply_jaxtree_fun, wraps,
-                       pytree_fun_to_jaxtupletree_fun2, flatten_fun)
+                       pytree_fun_to_jaxtupletree_fun2, flatten_fun_leafout)
 from .tree_util import (process_pytree, node_types, build_tree, PyTreeDef,
                         tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, leaf)
@@ -117,9 +117,9 @@ def _jit(fun, static_argnums, device_values=True):
     f, dyn_args = _argnums_partial(f, dyn_argnums, args)
     args_flat, in_tree = tree_flatten((dyn_args, kwargs))
     _check_args(args_flat)
-    flat_fun, out_tree = flatten_fun(f, in_tree)
+    flat_fun, out_tree = flatten_fun_leafout(f, in_tree)
     out = xla.xla_call(flat_fun, *args_flat, device_values=device_values)
-    return tree_unflatten(out_tree(), out)
+    return out if out_tree() is leaf else tree_unflatten(out_tree(), out)
 
   jitted_name =  "jit({}, static_argnums={})"
   f_jitted.__name__ = jitted_name.format(f_jitted.__name__, static_argnums)
@@ -571,19 +571,19 @@ def pmap(fun, axis_name=None):
   axis_name = _TempAxisName() if axis_name is None else axis_name
 
   @wraps(fun)
-  def f_jitted(*args, **kwargs):
+  def f_pmapped(*args, **kwargs):
     axis_size = _pmap_axis_size(args)
     f = lu.wrap_init(fun)
     args_flat, in_tree = tree_flatten((args, kwargs))
     _check_args(args_flat)
-    flat_fun, out_tree = flatten_fun(f, in_tree)
+    flat_fun, out_tree = flatten_fun_leafout(f, in_tree)
     out = pxla.xla_pmap(flat_fun, *args_flat,
                         axis_name=axis_name, axis_size=axis_size)
-    return tree_unflatten(out_tree(), out)
+    return out if out_tree() is leaf else tree_unflatten(out_tree(), out)
 
   namestr = "pmap({}, axis_name={})".format
-  f_jitted.__name__ = namestr(f_jitted.__name__, axis_name)
-  return f_jitted
+  f_pmapped.__name__ = namestr(f_pmapped.__name__, axis_name)
+  return f_pmapped
 
 def _pmap_axis_size(args):
   leaves, _ = tree_flatten(args)
