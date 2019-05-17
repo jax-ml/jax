@@ -145,7 +145,7 @@ class SerialPmapTrace(Trace):
       val_out = call_primitive.bind(f, *vals, **params)
       return SerialPmapTracer(self, name, val_out, axis_out())
 
-  def post_process_call(self, _, out_tracer):
+  def post_process_call(self, call_primitive, out_tracer, params):
     name, val, axis = out_tracer.name, out_tracer.val, out_tracer.axis
     master = self.master
     def todo(x):

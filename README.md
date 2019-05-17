@@ -164,7 +164,7 @@ PYTHON_VERSION=cp27  # alternatives: cp27, cp35, cp36, cp37
 CUDA_VERSION=cuda92  # alternatives: cuda90, cuda92, cuda100
 PLATFORM=linux_x86_64  # alternatives: linux_x86_64
 BASE_URL='https://storage.googleapis.com/jax-wheels'
-pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.13-$PYTHON_VERSION-none-$PLATFORM.whl
+pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.15-$PYTHON_VERSION-none-$PLATFORM.whl
 
 pip install --upgrade jax  # install jax
 ```
@@ -596,10 +596,12 @@ predictions = net_apply(net_params, inputs)
 ### First-order optimization
 
 JAX has a minimal optimization library focused on stochastic first-order
-optimizers. Every optimizer is modeled as an `(init_fun, update_fun)` pair. The
-`init_fun` is used to initialize the optimizer state, which could include things
-like momentum variables, and the `update_fun` accepts a gradient and an
-optimizer state to produce a new optimizer state. The parameters being optimized
+optimizers. Every optimizer is modeled as an `(init_fun, update_fun,
+get_params)` triple of functions. The `init_fun` is used to initialize the
+optimizer state, which could include things like momentum variables, and the
+`update_fun` accepts a gradient and an optimizer state to produce a new
+optimizer state. The `get_params` function extracts the current iterate (i.e.
+the current parameters) from the optimizer state. The parameters being optimized
 can be ndarrays or arbitrarily-nested list/tuple/dict structures, so you can
 store your parameters however you’d like.
 
@@ -616,12 +618,12 @@ def loss(params, batch):
   return np.sum((predictions - targets)**2)
 
 # Use optimizers to set optimizer initialization and update functions
-opt_init, opt_update = optimizers.momentum(step_size=1e-3, mass=0.9)
+opt_init, opt_update, get_params = optimizers.momentum(step_size=1e-3, mass=0.9)
 
 # Define a compiled update step
 @jit
 def step(i, opt_state, batch):
-  params = optimizers.get_params(opt_state)
+  params = get_params(opt_state)
   g = grad(loss)(params, batch)
   return opt_update(i, g, opt_state)
 
@@ -633,7 +635,7 @@ data_generator = ((np.zeros((128, 28, 28, 1)), np.zeros((128, 10)))
 opt_state = opt_init(net_params)
 for i in range(10):
   opt_state = step(i, opt_state, next(data_generator))
-net_params = optimizers.get_params(opt_state)
+net_params = get_params(opt_state)
 ```
 
 ## How it works
@@ -728,8 +730,10 @@ For a survey of current gotchas, with examples and explanations, we highly recom
 
 Some stand-out gotchas that might surprise NumPy users:
 1. [`np.isnan` doesn't yet work](https://github.com/google/jax/issues/276), and in general nan semantics aren't preserved on some backends.
-1. In-place mutation of arrays isn't supported, though [there is an alternative](https://jax.readthedocs.io/en/latest/jax.ops.html). Generally JAX requires functional code.
-2. PRNGs are different and can be awkward, though for [good reasons](https://github.com/google/jax/blob/master/design_notes/prng.md), and non-reuse (linearity) is not yet checked.
+2. In-place mutation of arrays isn't supported, though [there is an alternative](https://jax.readthedocs.io/en/latest/jax.ops.html). Generally JAX requires functional code.
+3. JAX enforces single-precision numbers (32-bit or `float32`) by default and to use double-precision (64-bit or
+`float64`), one needs to set the `jax_enable_x64` variable **at startup** (set environment variable `JAX_ENABLE_x64 = True` or for other ways, see [here](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb#scrollTo=YTktlwTTMgFl))
+4. PRNGs are different and can be awkward, though for [good reasons](https://github.com/google/jax/blob/master/design_notes/prng.md), and non-reuse (linearity) is not yet checked.
 
 See [the notebook](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb) for much more information.
 

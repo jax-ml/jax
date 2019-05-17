@@ -707,6 +707,8 @@ def _get_monoid_reducer(monoid_op, x):
   if (type(aval) is ConcreteArray) and aval.shape == ():
     if monoid_op is add:
       return aval.val == 0 and _reduce_sum
+    if monoid_op is mul:
+      return aval.val == 1 and _reduce_prod
     elif monoid_op is max:
       return aval.val == _get_max_identity(aval.dtype) and _reduce_max
     elif monoid_op is min:
@@ -734,6 +736,9 @@ def _get_min_identity(dtype):
 
 def _reduce_sum(operand, axes):
   return reduce_sum_p.bind(operand, axes=tuple(axes), input_shape=operand.shape)
+
+def _reduce_prod(operand, axes):
+  return reduce_prod_p.bind(operand, axes=tuple(axes))
 
 def _reduce_max(operand, axes):
   return reduce_max_p.bind(operand, axes=tuple(axes))
@@ -1264,8 +1269,6 @@ def zeros_like_array(x):
 for t in itertools.chain(array_types, [xla.DeviceArray]):
   ad_util.jaxval_adders[t] = add
 ad_util.jaxval_zeros_likers[xla.DeviceArray] = zeros_like_array
-
-batching.pytype_aval_mappings[xla.DeviceArray] = make_shaped_array
 
 
 ### primitives
@@ -2594,12 +2597,31 @@ def _dynamic_update_slice_translation_rule(c, operand, update, start_indices,
                                            update_shape):
   return c.DynamicUpdateSlice(operand, update, start_indices)
 
+def _dynamic_update_slice_batching_rule(batched_args, batch_dims, update_shape):
+  # A dynamic update slice is a special case of scatter; we can delegate to the
+  # scatter batching rule.
+  # TODO(phawkins): consider removing dynamic_update_slice entirely and using
+  # scatter always.
+  operand, update, index = batched_args
+  operand_bdims, update_bdims, index_bdims = batch_dims
+  dims = tuple(range(len(update_shape)))
+  dnums = ScatterDimensionNumbers(update_window_dims=dims,
+                                  inserted_window_dims=(),
+                                  scatter_dims_to_operand_dims=dims)
+  return _scatter_batching_rule(
+    scatter,
+    (operand, index, update), (operand_bdims, index_bdims, update_bdims),
+    None, None, dnums, update_shape)
+
+
 dynamic_update_slice_p = standard_primitive(
     _dynamic_update_slice_shape_rule, _dynamic_update_slice_dtype_rule,
     'dynamic_update_slice', _dynamic_update_slice_translation_rule)
 ad.primitive_jvps[dynamic_update_slice_p] = _dynamic_update_slice_jvp
 ad.primitive_transposes[dynamic_update_slice_p] = \
     _dynamic_update_slice_transpose_rule
+batching.primitive_batchers[dynamic_update_slice_p] = \
+    _dynamic_update_slice_batching_rule
 
 
 
@@ -3070,6 +3092,54 @@ ad.deflinear(reduce_sum_p, _reduce_sum_transpose_rule)
 batching.defreducer(reduce_sum_p)
 
 
+
+
+def _reduce_prod_shape_rule(operand, axes):
+  return tuple(onp.delete(operand.shape, axes))
+
+def _reduce_prod_translation_rule(c, operand, axes):
+  dtype = c.GetShape(operand).numpy_dtype()
+  scalar = xla_bridge.Shape.array_shape(dtype, ())
+  return c.Reduce(operand, c.Constant(onp.array(1, dtype)),
+                  xla.primitive_computation(mul_p, scalar, scalar),
+                  axes)
+
+def _reduce_prod_jvp_rule(tangent, operand, axes):
+  input_shape = onp.array(operand.shape)
+
+  n = onp.prod(input_shape[list(axes)])
+  non_axes = onp.delete(onp.arange(len(input_shape)), axes)
+
+  # Move the reduced axes to the front, and flatten them to 1D.
+  permutation = axes + tuple(non_axes)
+  new_shape = (n,) + tuple(input_shape[non_axes])
+  operand = reshape(operand, new_shape, permutation)
+  tangent = reshape(tangent, new_shape, permutation)
+
+  one = _const(operand, 1)
+  window_dims = [n] + [1] * len(non_axes)
+  window_strides = [1] * (len(non_axes) + 1)
+
+  # Form the partial products of all elements to the left and right of each
+  # element.
+  left_padding = [(n, -1, 0)] + [(0, 0, 0)] * len(non_axes)
+  right_padding = [(-1, n, 0)] + [(0, 0, 0)] * len(non_axes)
+  left_products = _reduce_window_prod(pad(operand, one, left_padding),
+                                      window_dims, window_strides,
+                                      xla_client.PaddingType.VALID)
+  right_products = _reduce_window_prod(pad(operand, one, right_padding),
+                                       window_dims, window_strides,
+                                       xla_client.PaddingType.VALID)
+
+  # Multiply partial products with the tangents and sum.
+  return _reduce_sum(mul(tangent, mul(left_products, right_products)), (0,))
+
+reduce_prod_p = standard_primitive(_reduce_prod_shape_rule, _input_dtype,
+                                   'reduce_prod', _reduce_prod_translation_rule)
+ad.defjvp(reduce_prod_p, _reduce_prod_jvp_rule)
+batching.defreducer(reduce_prod_p)
+
+
 def _reduce_chooser_shape_rule(operand, axes):
   return tuple(onp.delete(operand.shape, axes))
 
@@ -3112,7 +3182,7 @@ def _reduce_logical_shape_rule(operand, axes):
   return tuple(onp.delete(operand.shape, axes))
 
 def _reduce_logical_translation_rule(prim, identity, c, operand, axes):
-  scalar = xla_bridge.Shape.array_shape(onp.bool_, ())
+  scalar = xla_bridge.Shape.array_shape(onp.dtype(onp.bool_), ())
   return c.Reduce(operand, c.Constant(identity(onp.bool_)),
                   xla.primitive_computation(prim, scalar, scalar), axes)
 
@@ -3397,8 +3467,10 @@ def _select_and_gather_add_pair_reducer(dtype, select_prim):
   etype = xla_bridge.dtype_to_etype_exact(dtype)
 
   c = xla_bridge.make_computation_builder("select_and_gather_pair_reducer")
-  x = c.ParameterWithShape(xla_bridge.Shape.array_shape(pair_uint_dtype, ()))
-  y = c.ParameterWithShape(xla_bridge.Shape.array_shape(pair_uint_dtype, ()))
+  x = c.ParameterWithShape(
+    xla_bridge.Shape.array_shape(onp.dtype(pair_uint_dtype), ()))
+  y = c.ParameterWithShape(
+    xla_bridge.Shape.array_shape(onp.dtype(pair_uint_dtype), ()))
 
   bits_const = c.Constant(pair_uint_dtype(bits), canonicalize_types=False)
 
@@ -3632,7 +3704,7 @@ class _IotaConstant(xla.DeviceConstant):
 
   def __init__(self, dtype, shape, axis):
     self.shape = shape
-    self.dtype = dtype
+    self.dtype = onp.dtype(dtype)
     self.ndim = len(shape)
     self.size = prod(shape)
     self._npy_value = None
@@ -3661,7 +3733,7 @@ class _EyeConstant(xla.DeviceConstant):
 
   def __init__(self, shape, axes, dtype):
     self.shape = shape
-    self.dtype = dtype
+    self.dtype = onp.dtype(dtype)
     self.ndim = len(shape)
     self.size = prod(shape)
     self._npy_value = None
@@ -3686,7 +3758,7 @@ class _EyeConstant(xla.DeviceConstant):
     else:
       etype = xla_bridge.dtype_to_etype_exact(diag_const.dtype)
     etype = xla_bridge.dtype_to_etype(diag_const.dtype)
-    iotas = [c.BroadcastedIota(onp.bool_, diag_const.shape, axis)
+    iotas = [c.BroadcastedIota(onp.uint32, diag_const.shape, axis)
              for axis in diag_const.axes]
     eyes = [c.Eq(i1, i2) for i1, i2 in zip(iotas[:-1], iotas[1:])]
     return c.ConvertElementType(_reduce(c.And, eyes), etype)

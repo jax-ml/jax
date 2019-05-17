@@ -2,7 +2,7 @@
 # Script that builds wheels for a JAX release on Mac OS X.
 # Builds wheels for multiple Python versions, using pyenv instead of Docker.
 # Usage: run from root of JAX source tree as:
-# build/build_wheels_macos.sh
+# build/build_jaxlib_wheels_macos.sh
 # The wheels will end up in build/dist.
 #
 # Requires pyenv, pyenv-virtualenv (e.g., from Homebrew). If you have Homebrew

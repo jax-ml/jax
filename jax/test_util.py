@@ -20,6 +20,7 @@ import functools
 import re
 import itertools as it
 import os
+from unittest import SkipTest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -33,15 +34,15 @@ from . import api
 from .config import flags
 from .util import partial
 from .tree_util import tree_multimap, tree_all, tree_map, tree_reduce
+from .lib import xla_bridge
 
 # lbr tests placeholder
 
 
 FLAGS = flags.FLAGS
 flags.DEFINE_enum(
-    'jax_test_dut',
-    'cpu',
-    enum_values=['cpu', 'gpu', 'tpu'],
+    'jax_test_dut', '',
+    enum_values=['', 'cpu', 'gpu', 'tpu'],
     help=
     'Describes the device under test in case special consideration is required.'
 )
@@ -57,6 +58,14 @@ RTOL = 1e-4
 
 _dtype = lambda x: getattr(x, 'dtype', None) or onp.asarray(x).dtype
 
+
+def is_sequence(x):
+  try:
+    iter(x)
+  except TypeError:
+    return False
+  else:
+    return True
 
 def numpy_eq(x, y):
   testing_tpu = FLAGS.jax_test_dut and FLAGS.jax_test_dut.startswith("tpu")
@@ -144,6 +153,7 @@ def check_vjp(f, f_vjp, args, atol=ATOL, rtol=RTOL, eps=EPS):
 
 
 def check_grads(f, args, order, atol=None, rtol=None, eps=None):
+  args = tuple(args)
   if order > 1:
     def f_vjp(*args):
       out_primal_py, vjp_py = api.vjp(f, *args)
@@ -164,11 +174,11 @@ def skip_on_devices(*disabled_devices):
   def skip(test_method):
     @functools.wraps(test_method)
     def test_method_wrapper(self, *args, **kwargs):
-      device = FLAGS.jax_test_dut
+      device = FLAGS.jax_test_dut or xla_bridge.get_backend().platform
       if device in disabled_devices:
         test_name = getattr(test_method, '__name__', '[unknown test]')
-        return absltest.unittest.skip(
-            '{} not supported on {}.'.format(test_name, device.upper()))
+        raise SkipTest('{} not supported on {}.'
+                       .format(test_name, device.upper()))
       return test_method(self, *args, **kwargs)
     return test_method_wrapper
   return skip
@@ -182,9 +192,8 @@ def skip_on_flag(flag_name, skip_value):
       flag_value = getattr(FLAGS, flag_name)
       if flag_value == skip_value:
         test_name = getattr(test_method, '__name__', '[unknown test]')
-        return absltest.unittest.skip(
-            '{} not supported when FLAGS.{} is {}'.format(
-                test_name, flag_name, flag_value))
+        raise SkipTest('{} not supported when FLAGS.{} is {}'
+                       .format(test_name, flag_name, flag_value))
       return test_method(self, *args, **kwargs)
     return test_method_wrapper
   return skip
@@ -313,7 +322,6 @@ def rand_some_equal():
   return partial(_rand_dtype, randn, scale=100., post=post)
 
 
-# TODO(mattjj): doesn't handle complex types
 def rand_some_inf():
   """Return a random sampler that produces infinities in floating types."""
   rng = npr.RandomState(1)
@@ -324,6 +332,10 @@ def rand_some_inf():
     if not onp.issubdtype(dtype, onp.floating):
       # only float types have inf
       return base_rand(shape, dtype)
+
+    if onp.issubdtype(dtype, onp.complexfloating):
+      base_dtype = onp.real(onp.array(0, dtype=dtype)).dtype
+      return rand(shape, base_dtype) + 1j * rand(shape, base_dtype)
 
     dims = _dims_of_shape(shape)
     posinf_flips = rng.rand(*dims) < 0.1
@@ -337,6 +349,34 @@ def rand_some_inf():
 
   return rand
 
+def rand_some_inf_and_nan():
+  """Return a random sampler that produces infinities in floating types."""
+  rng = npr.RandomState(1)
+  base_rand = rand_default()
+
+  def rand(shape, dtype):
+    """The random sampler function."""
+    if not onp.issubdtype(dtype, onp.floating):
+      # only float types have inf
+      return base_rand(shape, dtype)
+
+    if onp.issubdtype(dtype, onp.complexfloating):
+      base_dtype = onp.real(onp.array(0, dtype=dtype)).dtype
+      return rand(shape, base_dtype) + 1j * rand(shape, base_dtype)
+
+    dims = _dims_of_shape(shape)
+    posinf_flips = rng.rand(*dims) < 0.1
+    neginf_flips = rng.rand(*dims) < 0.1
+    nan_flips = rng.rand(*dims) < 0.1
+
+    vals = base_rand(shape, dtype)
+    vals = onp.where(posinf_flips, onp.inf, vals)
+    vals = onp.where(neginf_flips, -onp.inf, vals)
+    vals = onp.where(nan_flips, onp.nan, vals)
+
+    return _cast_to_shape(onp.asarray(vals, dtype=dtype), shape, dtype)
+
+  return rand
 
 # TODO(mattjj): doesn't handle complex types
 def rand_some_zero():
@@ -437,23 +477,23 @@ class JaxTestCase(parameterized.TestCase):
 
   def assertAllClose(self, x, y, check_dtypes, atol=None, rtol=None):
     """Assert that x and y, either arrays or nested tuples/lists, are close."""
-    if isinstance(x, (tuple, list)):
-      self.assertIsInstance(y, (tuple, list))
-      self.assertEqual(len(x), len(y))
-      for x_elt, y_elt in zip(x, y):
-        self.assertAllClose(x_elt, y_elt, check_dtypes, atol=atol, rtol=rtol)
-    elif isinstance(x, dict):
+    if isinstance(x, dict):
       self.assertIsInstance(y, dict)
       self.assertEqual(set(x.keys()), set(y.keys()))
       for k in x.keys():
         self.assertAllClose(x[k], y[k], check_dtypes, atol=atol, rtol=rtol)
-    else:
-      is_array = lambda x: hasattr(x, '__array__') or onp.isscalar(x)
-      self.assertTrue(is_array(x))
-      self.assertTrue(is_array(y))
+    elif is_sequence(x) and not hasattr(x, '__array__'):
+      self.assertTrue(is_sequence(y) and not hasattr(y, '__array__'))
+      self.assertEqual(len(x), len(y))
+      for x_elt, y_elt in zip(x, y):
+        self.assertAllClose(x_elt, y_elt, check_dtypes, atol=atol, rtol=rtol)
+    elif hasattr(x, '__array__') or onp.isscalar(x):
+      self.assertTrue(hasattr(y, '__array__') or onp.isscalar(y))
       x = onp.asarray(x)
       y = onp.asarray(y)
       self.assertArraysAllClose(x, y, check_dtypes, atol=atol, rtol=rtol)
+    else:
+      raise TypeError((type(x), type(y)))
 
   def _CompileAndCheck(self, fun, args_maker, check_dtypes,
                        rtol=None, atol=None):

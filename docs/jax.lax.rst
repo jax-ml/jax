@@ -63,6 +63,7 @@ Operators
     erf_inv
     exp
     expm1
+    fft
     floor
     full
     full_like
@@ -126,6 +127,7 @@ Control flow operators
 
     cond
     fori_loop
+    scan
     while_loop
 
 
@@ -137,9 +139,7 @@ Parallelism support is experimental.
 .. autosummary::
   :toctree: _autosummary
 
-    pcollect
-    pmax
-    psplit
-    psplit_like
     psum
-    pswapaxes
+    pmax
+    pmin
+    ppermute

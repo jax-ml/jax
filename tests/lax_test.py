@@ -27,6 +27,7 @@ from absl.testing import parameterized
 
 import numpy as onp
 import numpy.random as npr
+import six
 
 from jax import api
 from jax import core
@@ -389,7 +390,7 @@ class LaxTest(jtu.JaxTestCase):
       self, lhs_shape, rhs_shape, dtype, strides, padding, lhs_dilation,
       rhs_dilation, rng):
     # TODO(mattjj): make this test pass
-    return SkipTest("this test is incomplete")
+    raise SkipTest("this test is incomplete")
     args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
 
     def fun(lhs, rhs):
@@ -1319,6 +1320,11 @@ class LaxTest(jtu.JaxTestCase):
     fun = partial(lax.scatter, dimension_numbers=dnums)
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)
 
+  def testLongConstantHandling(self):
+    if six.PY3:
+      self.skipTest("Test is Python 2 specific")
+    self.assertTrue(api.jit(lambda x: lax.lt(x, long(10)))(long(3)))
+
 
 class DeviceConstantTest(jtu.JaxTestCase):
   def _CheckDeviceConstant(self, make_const, expected):
@@ -1337,13 +1343,16 @@ class DeviceConstantTest(jtu.JaxTestCase):
     self.assertAllClose(argument_result, expected, check_dtypes=True)
     self.assertAllClose(jit_result, expected, check_dtypes=True)
 
+    # ensure repr doesn't crash
+    repr(make_const())
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_fill={}".format(
           jtu.format_shape_dtype_string(shape, dtype) if dtype else shape,
           fill_value),
        "shape": shape, "dtype": dtype, "fill_value": fill_value}
       for dtype in itertools.chain(default_dtypes, [None])
-      for shape in [(), (3,), (2, 3), (2, 3, 4)]
+      for shape in [(), (3,), (2, 3), (2, 3, 4), (1001, 1001)]
       for fill_value in [0, 1, onp.pi]))
   def testFilledConstant(self, shape, fill_value, dtype):
     make_const = lambda: lax.full(shape, fill_value, dtype)
@@ -1355,7 +1364,7 @@ class DeviceConstantTest(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, dtype), dimension),
        "shape": shape, "dtype": dtype, "dimension": dimension}
       for dtype in default_dtypes
-      for shape in [(), (3,), (2, 3), (2, 3, 4)]
+      for shape in [(), (3,), (2, 3), (2, 3, 4), (1001, 1001), (101, 101, 101)]
       for dimension in range(len(shape))))
   def testIotaConstant(self, dtype, shape, dimension):
     make_const = lambda: lax.broadcasted_iota(dtype, shape, dimension)
@@ -1380,6 +1389,7 @@ class DeviceConstantTest(jtu.JaxTestCase):
           [(2, 3, 4), (0, 1, 2)],
           [(2, 3, 4, 2), (0, 1, 2)],
           [(2, 3, 4, 2), (0, 2, 3)],
+          [(1001, 1001), (0, 1)],
       ]))
   def testEyeConstant(self, dtype, shape, axes):
     make_const = lambda: lax.broadcasted_eye(dtype, shape, axes)
@@ -1881,11 +1891,13 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        "dims": dims, "rng": rng}
       for init_val, op, dtypes in [
           (0, lax.add, inexact_dtypes),
+          (1, lax.mul, inexact_dtypes),
           (-onp.inf, lax.max, inexact_dtypes),
           (onp.inf, lax.min, inexact_dtypes),
       ]
       for dtype in dtypes
       for shape, dims in [
+          [(3, 4, 5), ()],
           [(3, 4, 5), (0,)],
           [(3, 4, 5), (1, 2)],
           [(3, 4, 5), (0, 2)],
@@ -1893,6 +1905,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       ]
       for rng in [jtu.rand_small()]))
   def testReduceGrad(self, op, init_val, shape, dtype, dims, rng):
+    if "tpu" in FLAGS.jax_test_dut and op is lax.mul:
+      raise SkipTest("unimplemented case")
     tol = 1e-2 if onp.finfo(dtype).bits == 32 else None
     operand = rng(shape, dtype)
     init_val = onp.asarray(init_val, dtype=dtype)
@@ -1921,6 +1935,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     # TODO(b/31565929): enable when fixed.
     if FLAGS.jax_test_dut == "tpu" and op is not lax.add:
       all_configs = [((6, 5, 4, 3), (2, 2, 1, 1), (1, 2, 1, 1))]
+      test_gradients = False  # TODO(b/73062247): need variadic reduce-window.
     else:
       all_configs = itertools.chain(
           itertools.product(
@@ -1933,6 +1948,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
               [(1, 1, 2, 1), (2, 1, 2, 1)],  # window_dimensions
               [(1, 2, 2, 1), (1, 1, 1, 1)]),  # strides
       )
+      test_gradients = True
 
     def fun(operand):
       return lax.reduce_window(operand, init_val, op, dims, strides, padding)
@@ -1945,7 +1961,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
         self.assertEqual(onp.unique(operand).size, operand.size,
                          msg="test requires operand elements to be unique.")
       jtu.check_vjp(fun, partial(api.vjp, fun), (operand,), 1e-2, 1e-2, 1e-2)
-      check_grads(fun, (operand,), 3, 1e-2, 1e-2, 1e-2)
+      if test_gradients:
+        check_grads(fun, (operand,), 3, 1e-2, 1e-2, 1e-2)
     # pylint: enable=cell-var-from-loop
 
   # TODO(b/205052657): enable more tests when supported

@@ -92,6 +92,13 @@ def det(a):
   return sign * np.exp(logdet)
 
 
+@_wraps(onp.linalg.eig)
+def eig(a):
+  a = _promote_arg_dtypes(np.asarray(a))
+  w, vl, vr = lax_linalg.eig(a)
+  return w, vr
+
+
 @_wraps(onp.linalg.eigh)
 def eigh(a, UPLO=None, symmetrize_input=True):
   if UPLO is None or UPLO == "L":

@@ -13,11 +13,13 @@
 # limitations under the License.
 
 """
-User-facing transformations.
+JAX user-facing transformations and utilities.
 
-These mostly wrap internal transformations, providing convenience flags to
-control behavior and handling Python containers (tuples/lists/dicts) of
-arguments and outputs.
+The transformations here mostly wrap internal transformations, providing
+convenience flags to control behavior and handling Python containers of
+arguments and outputs. The Python containers handled are pytrees (see
+tree_util.py), which include nested tuples/lists/dicts, where the leaves are
+arrays or JaxTuples.
 """
 
 from __future__ import absolute_import
@@ -39,12 +41,12 @@ from . import linear_util as lu
 from .core import pack, eval_jaxpr
 from .api_util import (pytree_fun_to_jaxtupletree_fun, pytree_to_jaxtupletree,
                        pytree_fun_to_flatjaxtuple_fun, apply_jaxtree_fun, wraps,
-                       pytree_fun_to_jaxtupletree_fun2)
+                       pytree_fun_to_jaxtupletree_fun2, flatten_fun_leafout)
 from .tree_util import (process_pytree, node_types, build_tree, PyTreeDef,
                         tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, leaf)
 from .util import (unzip2, unzip3, curry, partial, safe_map, safe_zip,
-                   WrapHashably, prod)
+                   WrapHashably, Hashable, prod)
 from .lib.xla_bridge import canonicalize_dtype, device_count
 from .abstract_arrays import ShapedArray
 from .interpreters import partial_eval as pe
@@ -71,13 +73,17 @@ def jit(fun, static_argnums=()):
     fun: Function to be jitted. Should be a pure function, as side-effects may
       only be executed once. Its positional arguments and return value should be
       arrays, scalars, or standard Python containers (tuple/list/dict) thereof.
-      Positional arguments indicated by `static_argnums` can be anything at all.
-    static_argnums: A tuple of ints. Specifies which positional arguments to
+
+      Positional arguments indicated by `static_argnums` can be anything at all,
+      provided they are hashable and have an equality operation defined. Static
+      arguments are included as part of a compilation cache key, which is why
+      hash and equality operators must be defined.
+    static_argnums: A tuple of ints specifying which positional arguments to
       treat as static (compile-time constant). Operations that only depend on
       static arguments will be constant-folded. Calling the jitted function with
       different values for these constants will trigger recompilation. If the
       jitted function is called with fewer positional arguments than indicated
-      by `static_argnums` then an error is raised.
+      by `static_argnums` then an error is raised. Defaults to ().
 
   Returns:
     A wrapped version of `fun`, set up for just-in-time compilation.
@@ -95,6 +101,9 @@ def jit(fun, static_argnums=()):
   [-0.54485154  0.27744263 -0.29255125 -0.91421586 -0.62452525 -0.2474813
    -0.8574326  -0.7823267   0.7682731   0.59566754]
   """
+  return _jit(fun, static_argnums)
+
+def _jit(fun, static_argnums, device_values=True):
   @wraps(fun)
   def f_jitted(*args, **kwargs):
     if _jit_is_disabled or config.read('jax_disable_jit'):
@@ -103,23 +112,14 @@ def jit(fun, static_argnums=()):
       msg = ("Jitted function has static_argnums={} but was called with only {}"
              " positional arguments.")
       raise TypeError(msg.format(static_argnums, len(args)))
-    if kwargs:
-      # TODO(mattjj, dougalm): remove warning by May 1 2019
-      msg = ("Until recently jitted functions called with keyword arguments "
-             "treated those arguments as if they were part of static_argnums, "
-             "but now they are treated just like other arguments. If you were "
-             "relying on the previous behavior, you may need to update your "
-             "code to use static_argnums. See the jit docstring.")
-      warn(msg)
     f = lu.wrap_init(fun)
     dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
     f, dyn_args = _argnums_partial(f, dyn_argnums, args)
-    jaxtuple_args, in_trees = unzip2(map(pytree_to_jaxtupletree, dyn_args))
-    jaxtuple_kwargs, kwargs_tree = pytree_to_jaxtupletree(kwargs)
-    _check_args(jaxtuple_args)
-    jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun2(f, kwargs_tree, in_trees)
-    out = xla.xla_call(jaxtree_fun, jaxtuple_kwargs, *jaxtuple_args)
-    return build_tree(out_tree(), out)
+    args_flat, in_tree = tree_flatten((dyn_args, kwargs))
+    _check_args(args_flat)
+    flat_fun, out_tree = flatten_fun_leafout(f, in_tree)
+    out = xla.xla_call(flat_fun, *args_flat, device_values=device_values)
+    return out if out_tree() is leaf else tree_unflatten(out_tree(), out)
 
   jitted_name =  "jit({}, static_argnums={})"
   f_jitted.__name__ = jitted_name.format(f_jitted.__name__, static_argnums)
@@ -438,7 +438,7 @@ def _dtype(x):
 
 
 def vmap(fun, in_axes=0, out_axes=0):
-  """Vectorizing map. Creates a function which maps `fun` over additional axes.
+  """Vectorizing map. Creates a function which maps `fun` over argument axes.
 
   Args:
     fun: Function to be mapped over additional axes.
@@ -485,30 +485,132 @@ def vmap(fun, in_axes=0, out_axes=0):
 
 
 def pmap(fun, axis_name=None):
-  """Set up SPMD function for JIT compilation and parallel execution with XLA."""
+  """Parallel map with support for collectives.
+
+  The purpose of ``pmap`` is to express single-program multiple-data (SPMD)
+  programs and execute them in parallel on XLA devices, such as multiple GPUs or
+  multiple TPU cores. Semantically it is comparable to ``vmap`` because both
+  transformations map a function over array axes, but where ``vmap`` vectorizes
+  functions by pushing the mapped axis down into primitive operations, ``pmap``
+  instead replicates the function and executes each replica on its own XLA
+  device in parallel.
+
+  Another key difference with ``vmap`` is that while ``vmap`` can only express
+  pure maps, ``pmap`` enables the use of parallel SPMD collective operations,
+  like all-reduce sum.
+
+  The mapped axis size must be less than or equal to the number of XLA devices
+  available. For nested ``pmap`` calls, the product of the mapped axis sizes
+  must be less than or equal to the number of XLA devices.
+
+  Args:
+    fun: Function to be mapped over argument axes.
+    axis_name: Optional, a hashable Python object used to identify the mapped
+      axis so that parallel collectives can be applied.
+
+  Returns:
+    A parallelized version of ``fun`` with arguments that correspond to those of
+    ``fun`` but each with an additional leading array axis (with equal sizes)
+    and with output that has an additional leading array axis (with the same
+    size).
+
+  For example, assuming 8 XLA devices are available, ``pmap`` can be used as a
+  map along a leading array axes:
+
+  >>> out = pmap(lambda x: x ** 2)(np.arange(8))
+  >>> print(out)
+  [0, 1, 4, 9, 16, 25, 36, 49]
+  >>> x = np.arange(3 * 2 * 2.).reshape((3, 2, 2))
+  >>> y = np.arange(3 * 2 * 2.).reshape((3, 2, 2)) ** 2
+  >>> out = pmap(np.dot)(x, y)
+  >>> print(out)
+  [[[    4.     9.]
+    [   12.    29.]]
+   [[  244.   345.]
+    [  348.   493.]]
+   [[ 1412.  1737.]
+    [ 1740.  2141.]]]
+
+  In addition to expressing pure maps, ``pmap`` can also be used to express
+  parallel single-program multiple-data (SPMD) programs that communicate via
+  collective operations. For example:
+
+  >>> f = lambda x: x / jax.lax.psum(x, axis_name='i')
+  >>> out = pmap(f, axis_name='i')(np.arange(4.))
+  >>> print(out)
+  [ 0.          0.16666667  0.33333334  0.5       ]
+  >>> print(out.sum())
+  1.0
+
+  In this example, ``axis_name`` is a string, but it can be any Python object
+  with ``__hash__`` and ``__eq__`` defined.
+
+  The argument ``axis_name`` to ``pmap`` names the mapped axis so that
+  collective operations, like ``jax.lax.psum``, can refer to it. Axis names are
+  important particularly in the case of nested ``pmap`` functions, where
+  collectives can operate over distinct axes:
+
+  >>> from functools import partial
+  >>> @partial(pmap, axis_name='rows')
+  >>> @partial(pmap, axis_name='cols')
+  >>> def normalize(x):
+  >>>   row_normed = x / jax.lax.psum(x, 'rows')
+  >>>   col_normed = x / jax.lax.psum(x, 'cols')
+  >>>   doubly_normed = x / jax.lax.psum(x, ('rows', 'cols'))
+  >>>   return row_normed, col_normed, doubly_normed
+  >>>
+  >>> x = np.arange(8.).reshape((4, 2))
+  >>> row_normed, col_normed, doubly_normed = normalize(x)
+  >>> print(row_normed.sum(0))
+  [ 1.  1.]
+  >>> print(col_normed.sum(1))
+  [ 1.  1.  1.  1.]
+  >>> print(doubly_normed.sum((0, 1)))
+  1.0
+  """
   axis_name = _TempAxisName() if axis_name is None else axis_name
 
   @wraps(fun)
-  def f_jitted(*args, **kwargs):
-    leaves, _ = tree_flatten(args)
-    axis_sizes = set(onp.shape(leaf)[0] for leaf in leaves)
-    if len(axis_sizes) != 1:
-      msg = "pmap requires all leading axes to have equal length, got {}."
-      raise TypeError(msg.format(axis_sizes))
-    axis_size = axis_sizes.pop()
-
+  def f_pmapped(*args, **kwargs):
+    axis_size = _pmap_axis_size(args)
     f = lu.wrap_init(fun)
-    jaxtuple_kwargs, kwargs_tree = pytree_to_jaxtupletree(kwargs)
-    jaxtuple_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
-    _check_args(jaxtuple_args)
-    f, out_tree = pytree_fun_to_jaxtupletree_fun2(f, kwargs_tree, in_trees)
-    out = pxla.xla_pmap(f, jaxtuple_kwargs, *jaxtuple_args,
+    args_flat, in_tree = tree_flatten((args, kwargs))
+    _check_args(args_flat)
+    flat_fun, out_tree = flatten_fun_leafout(f, in_tree)
+    out = pxla.xla_pmap(flat_fun, *args_flat,
                         axis_name=axis_name, axis_size=axis_size)
-    return build_tree(out_tree(), out)
+    return out if out_tree() is leaf else tree_unflatten(out_tree(), out)
 
   namestr = "pmap({}, axis_name={})".format
-  f_jitted.__name__ = namestr(f_jitted.__name__, axis_name)
-  return f_jitted
+  f_pmapped.__name__ = namestr(f_pmapped.__name__, axis_name)
+  return f_pmapped
+
+def _pmap_axis_size(args):
+  leaves, _ = tree_flatten(args)
+  axis_sizes = reduce(set.union, map(_axis_size, leaves), set())
+  if len(axis_sizes) == 0:
+    raise ValueError("pmap requires a leading axis to map over.")
+  if len(axis_sizes) > 1:
+    msg = "pmap requires all leading axes to have equal length, got {}."
+    raise ValueError(msg.format(axis_sizes))
+  return axis_sizes.pop()
+
+def _axis_size(x):
+  if isinstance(x, core.Tracer):
+    aval = x.aval
+  else:
+    aval = xla.abstractify(x)
+  return _aval_axis_size(aval)
+
+def _aval_axis_size(aval):
+  if isinstance(aval, core.AbstractTuple):
+    return reduce(set.union, map(_aval_axis_size, aval), set())
+  else:
+    if aval.shape:
+      return {aval.shape[0]}
+    else:
+      raise ValueError("pmap can't map over scalars.")
+
 
 def _serial_pmap(fun, axis_name=None, in_axes=0, out_axes=0):
   """Vectorizing pseudo-map for single-program multiple-data (SPMD) functions."""
@@ -796,12 +898,7 @@ tree_to_pval_tuples = partial(process_pytree, pe.pack_pvals)
 
 
 device_put = jit(lambda x: x)
-_device_get_array = lambda x: x.copy() if type(x) is xla.DeviceArray else x
-device_get = partial(tree_map, _device_get_array)
-
-_replicate_array = lambda x: onp.broadcast_to(x, (device_count(),) + onp.shape(x))
-replicate = partial(tree_map, _replicate_array)
-unreplicate = lambda x: tree_map(op.itemgetter(0), x)
+device_get = _jit(lambda x: x, (), device_values=False)
 
 
 def _argnums_partial(f, dyn_argnums, args):
@@ -809,10 +906,18 @@ def _argnums_partial(f, dyn_argnums, args):
     dyn_argnums = (dyn_argnums,)
   else:
     dyn_argnums = tuple(dyn_argnums)
-  fixed_args = tuple([None if i in dyn_argnums else WrapHashably(arg)
+  fixed_args = tuple([None if i in dyn_argnums else _wrap_hashably(arg)
                       for i, arg in enumerate(args)])
   dyn_args = tuple(args[i] for i in dyn_argnums)
   return _argnums_partial_(f, dyn_argnums, fixed_args), dyn_args
+
+def _wrap_hashably(arg):
+  try:
+    hash(arg)
+  except TypeError:
+    return WrapHashably(arg)
+  else:
+    return Hashable(arg)
 
 @lu.transformation
 def _argnums_partial_(dyn_argnums, fixed_args, *dyn_args, **kwargs):
@@ -824,9 +929,17 @@ def _argnums_partial_(dyn_argnums, fixed_args, *dyn_args, **kwargs):
 
 def _check_args(args):
   for arg in args:
-    if not (isinstance(arg, core.Tracer) or core.valid_jaxtype(arg)):
+    if not (isinstance(arg, core.Tracer) or _valid_jaxtype(arg)):
       raise TypeError("Argument '{}' of type {} is not a valid JAX type"
                       .format(arg, type(arg)))
+
+def _valid_jaxtype(arg):
+  try:
+    xla.abstractify(arg)
+  except TypeError:
+    return False
+  else:
+    return True
 
 
 def custom_transforms(fun):
@@ -878,7 +991,8 @@ def jarrett(fun):
   return new_fun
 
 
-def make_graphviz(fun):
+# This function mostly exists for making slides about JAX.
+def _make_graphviz(fun):
   """Adapts `fun` to return a graphviz dot string of its program representation.
 
   Args:
@@ -891,6 +1005,8 @@ def make_graphviz(fun):
 
   See make_jaxpr for a related function.
   """
+  # TODO(mattjj): handle eqn.restructure
+  # TODO(mattjj): handle subjaxprs
 
   def pv_like(x):
     aval = xla.abstractify(x)

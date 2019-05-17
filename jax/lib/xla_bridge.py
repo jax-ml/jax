@@ -29,10 +29,11 @@ from distutils.util import strtobool
 
 from ..config import flags
 import numpy as onp  # 'onp' rather than 'np' to distinguish from autograd.numpy
+import six
 
 import jaxlib
 
-_minimum_jaxlib_version = (0, 1, 11)
+_minimum_jaxlib_version = (0, 1, 14)
 try:
   from jaxlib import version as jaxlib_version
 except:
@@ -65,7 +66,7 @@ except ImportError:
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_enable_x64',
-                  strtobool(os.getenv('JAX_ENABLE_X64', "False")),
+                  strtobool(os.getenv('JAX_ENABLE_X64', 'False')),
                   'Enable 64-bit types to be used.')
 flags.DEFINE_string(
     'jax_xla_backend', 'xla',
@@ -74,12 +75,11 @@ flags.DEFINE_string(
     'jax_backend_target', 'local',
     'Either "local" or "rpc:address" to connect to a remote service target.')
 flags.DEFINE_string(
-    'jax_platform_name', '',
-    'Platform name for XLA. The default is to attempt to use a '
-    'GPU if available, but fall back to CPU otherwise. To set '
-    'the platform manually, pass "cpu" for CPU or "gpu" for '
-    'GPU.')
-
+    'jax_platform_name',
+    os.getenv('JAX_PLATFORM_NAME', ''),
+    'Platform name for XLA. The default is to attempt to use a GPU if '
+    'available, but fall back to CPU otherwise. To set the platform manually, '
+    'pass "cpu" for CPU or "gpu" for GPU.')
 
 
 def get_compile_options(num_replicas=None):
@@ -122,21 +122,7 @@ def _get_local_backend():
   elif platform == '':
     platform = None
 
-  backend = None
-  if hasattr(xla_client, 'get_local_backend'):
-    backend = xla_client.get_local_backend(platform)
-  else:
-    # This case is for backward compatibility with Jaxlib versions that don't
-    # have xla_client.get_local_backend().
-    platforms = [gpu, cpu] if platform is None else [platform]
-    for p in platforms:
-      try:
-        backend = xla_client.XlaLocalBackend(p)
-        backend.platform = p
-        break
-      except RuntimeError:
-        continue
-
+  backend = xla_client.get_local_backend(platform)
   if backend is None:
     raise RuntimeError("No local XLA backends found.")
 
@@ -178,13 +164,11 @@ def device_put(pyval, device_num=0):
                                            backend=get_backend())
 
 def device_put_many(pyvals_and_devices):
-  # TODO(phawkins): remove the fallback path after dropping dependencies on
-  # Jaxlib older than 0.1.13.
-  if hasattr(xla_client.LocalBuffer, "from_pyvals"):
-    return xla_client.LocalBuffer.from_pyvals(pyvals_and_devices,
-                                              backend=get_backend())
-  else:
-    return [device_put(pyval, device) for (pyval, device) in pyvals_and_devices]
+  return [device_put(pyval, device) for (pyval, device) in pyvals_and_devices]
+
+def make_tuple(bufs, device_num=0):
+  return xla_client.Buffer.make_tuple(bufs, device=device_num,
+                                      backend=get_backend())
 
 
 Shape = xla_client.Shape        # pylint: disable=invalid-name
@@ -310,13 +294,14 @@ class _JaxComputationBuilder(xla_client.ComputationBuilder):
     else:
       raise TypeError("No constant handler for type: {}".format(py_type))
 
-  def AllToAll(self, operand, split_dimension, concat_dimension, replica_groups):
-    """Workaround for AllToAll not being implemented on some backends."""
-    if split_dimension == concat_dimension and len(replica_groups[0]) == 1:
+  # TODO(mattjj): remove when CRS is added to XLA:CPU
+  def CrossReplicaSum(self, operand, replica_groups):
+    """Workaround for CrossReplicaSum not being implemented on some backends."""
+    if len(replica_groups[0]) == 1:
       return operand
     else:
-      return super(_JaxComputationBuilder, self).AllToAll(
-          operand, split_dimension, concat_dimension, replica_groups)
+      return super(_JaxComputationBuilder, self).CrossReplicaSum(operand,
+                                                                 replica_groups)
 
 
 def make_computation_builder(name):
@@ -368,5 +353,8 @@ def _scalar_constant_handler(c, val, canonicalize_types=True):
 for scalar_type in [onp.int8, onp.int16, onp.int32, onp.int64,
                     onp.uint8, onp.uint16, onp.uint32, onp.uint64,
                     onp.float16, onp.float32, onp.float64, onp.float128,
-                    float, int, bool, onp.bool_]:
+                    float, int, bool, onp.bool_, onp.longlong]:
   register_constant_handler(scalar_type, _scalar_constant_handler)
+
+if six.PY2:
+  register_constant_handler(long, _scalar_constant_handler)

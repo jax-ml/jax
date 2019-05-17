@@ -2,11 +2,11 @@ load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
 http_archive(
     name = "io_bazel_rules_closure",
-    sha256 = "43c9b882fa921923bcba764453f4058d102bece35a37c9f6383c713004aacff1",
-    strip_prefix = "rules_closure-9889e2348259a5aad7e805547c1a0cf311cfcd91",
+    sha256 = "e0a111000aeed2051f29fcc7a3f83be3ad8c6c93c186e64beb1ad313f0c7f9f9",
+    strip_prefix = "rules_closure-cf1e44edb908e9616030cc83d085989b8e6cd6df",
     urls = [
-        "https://mirror.bazel.build/github.com/bazelbuild/rules_closure/archive/9889e2348259a5aad7e805547c1a0cf311cfcd91.tar.gz",
-        "https://github.com/bazelbuild/rules_closure/archive/9889e2348259a5aad7e805547c1a0cf311cfcd91.tar.gz",  # 2018-12-21
+        "http://mirror.tensorflow.org/github.com/bazelbuild/rules_closure/archive/cf1e44edb908e9616030cc83d085989b8e6cd6df.tar.gz",
+        "https://github.com/bazelbuild/rules_closure/archive/cf1e44edb908e9616030cc83d085989b8e6cd6df.tar.gz",  # 2019-04-04
     ],
 )
 
@@ -23,10 +23,10 @@ http_archive(
 #    and update the sha256 with the result.
 http_archive(
     name = "org_tensorflow",
-    sha256 = "469a096c0df6bdd0eb02fb44654949e90020c6313fcc805d49a24b257811b94a",
-    strip_prefix = "tensorflow-30d0432d3173a86270708a4de164345553478976",
+    sha256 = "8ec131f482db00818a065a44de572e0b2c27e9df547e334e160ee0fd0456ec34",
+    strip_prefix = "tensorflow-0166739974484dcf0054775d7ebff897b631662d",
     urls = [
-        "https://github.com/tensorflow/tensorflow/archive/30d0432d3173a86270708a4de164345553478976.tar.gz",
+        "https://github.com/tensorflow/tensorflow/archive/0166739974484dcf0054775d7ebff897b631662d.tar.gz",
     ],
 )
 

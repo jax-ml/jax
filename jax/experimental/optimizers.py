@@ -14,114 +14,287 @@
 
 """Optimizers for use with JAX.
 
-This short module contains some convenient optimizer definitions, specifically
+This module contains some convenient optimizer definitions, specifically
 initialization and update functions, which can be used with ndarrays or
 arbitrarily-nested tuple/list/dicts of ndarrays.
+
+An optimizer is modeled as an ``(init_fun, update_fun, get_params)`` triple of
+functions, where the component functions have these signatures:
+
+::
+
+  init_fun(params)
+
+  Args:
+    params: pytree representing the initial parameters.
+
+  Returns:
+    A pytree representing the initial optimizer state, which includes the
+    initial parameters and may also include auxiliary values like initial
+    momentum. The optimizer state pytree structure generally differs from that
+    of `params`.
+
+::
+
+  update_fun(step, grads, opt_state)
+
+  Args:
+    step: integer representing the step index.
+    grads: a pytree with the same structure as `get_params(opt_state)`
+      representing the gradients to be used in updating the optimizer state.
+    opt_state: a pytree representing the optimizer state to be updated.
+
+  Returns:
+    A pytree with the same structure as the `opt_state` argument representing
+    the updated optimizer state.
+
+::
+
+  get_params(opt_state)
+
+  Args:
+    opt_state: pytree representing an optimizer state.
+
+  Returns:
+    A pytree representing the parameters extracted from `opt_state`, such that
+    the invariant `params == get_params(init_params(params))` holds true.
+
+
+Notice that an optimizer implementation has a lot of flexibility in the form of
+opt_state: it just has to be a pytree of JaxTypes (so that it can be passed to
+the JAX transforms defined in api.py) and it has to be consumable by update_fun
+and get_params.
 """
+
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import collections
+from collections import namedtuple
 import functools
 import operator
 
+from six.moves import reduce
+
 import jax.numpy as np
-from jax.core import pack
 from jax.util import partial, safe_zip, safe_map, unzip2
-from jax.tree_util import (tree_map, tree_mimomap, tree_structure,
+from jax import tree_util
+from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
                            register_pytree_node)
 
 map = safe_map
 zip = safe_zip
 
+
+# The implementation here basically works by flattening pytrees. There are two
+# levels of pytrees to think about: the pytree of params, which we can think of
+# as defining an "outer pytree", and a pytree produced by applying init_fun to
+# each leaf of the params pytree, which we can think of as the "inner pytrees".
+# Since pytrees can be flattened, that structure is isomorphic to a list of
+# lists (with no further nesting). This implementation represents that structure
+# as a JaxTuple-of-JaxTuples so that we can maintain the entire optimizer state
+# as a single DeviceTuple, and thus pay no pytree traversal overhead when we
+# dispatch to a `jit`-compiled `update_fun`. That JaxTuple-of-JaxTuples is
+# stored together with the tree structure data in an OptimizerState instance.
+
+pack = tuple  # TODO(mattjj): replace with core.pack
+
+OptimizerState = namedtuple("OptimizerState",
+                            ["packed_state", "tree_def", "subtree_defs"])
+register_pytree_node(
+    OptimizerState,
+    lambda xs: ((xs.packed_state,), (xs.tree_def, xs.subtree_defs)),
+    lambda data, xs: OptimizerState(xs[0], data[0], data[1]))
+
 def optimizer(opt_maker):
-  """Decorator to make an optimizer map over tuple/list/dict containers."""
+  """Decorator to make an optimizer defined for arrays generalize to containers.
+
+  With this decorator, you can write init, update, and get_params functions that
+  each operate only on single arrays, and convert them to corresponding
+  functions that operate on pytrees of parameters. See the optimizers defined in
+  optimizers.py for examples.
+
+  Args:
+    opt_maker: a function that returns an ``(init_fun, update_fun, get_params)``
+      triple of functions that might only work with ndarrays, as per
+
+      .. code-block:: haskell
+
+          init_fun :: ndarray -> OptStatePytree ndarray
+          update_fun :: OptStatePytree ndarray -> OptStatePytree ndarray
+          get_params :: OptStatePytree ndarray -> ndarray
+
+  Returns:
+    An ``(init_fun, update_fun, get_params)`` triple of functions that work on
+    arbitrary pytrees, as per
+
+    .. code-block:: haskell
+
+          init_fun :: ParameterPytree ndarray -> OptimizerState
+          update_fun :: OptimizerState -> OptimizerState
+          get_params :: OptimizerState -> ParameterPytree ndarray
+
+    The OptimizerState pytree type used by the returned functions is isomorphic
+    to ``ParameterPytree (OptStatePytree ndarray)`` but has an implementation
+    based on JaxTuples to avoid pytree structuring/destructuring overheads.
+  """
+
   @functools.wraps(opt_maker)
   def tree_opt_maker(*args, **kwargs):
-    init_fun, update_fun = opt_maker(*args, **kwargs)
+    init, update, get_params = opt_maker(*args, **kwargs)
 
-    @functools.wraps(init_fun)
-    def tree_init_fun(x0_tree):
-      return tree_mimomap(init_fun, x0_tree)
+    @functools.wraps(init)
+    def tree_init(x0_tree):
+      x0_flat, tree = tree_flatten(x0_tree)
+      initial_states = [init(x0) for x0 in x0_flat]
+      states_flat, subtrees = unzip2(map(tree_flatten, initial_states))
+      packed_state = pack(map(pack, states_flat))
+      return OptimizerState(packed_state, tree, subtrees)
 
-    @functools.wraps(update_fun)
-    def tree_update_fun(i, grad_tree, state_trees):
-      return tree_mimomap(partial(update_fun, i), grad_tree, *state_trees)
+    @functools.wraps(update)
+    def tree_update(i, grad_tree, opt_state):
+      packed_state, tree, subtrees = opt_state
+      grad_flat, tree2 = tree_flatten(grad_tree)
+      if tree2 != tree:
+        msg = ("optimizer update function was passed a gradient tree that did "
+               "not match the parameter tree structure with which it was "
+               "initialized: parameter tree {} and grad tree {}.")
+        raise TypeError(msg.format(tree, tree2))
+      states = map(tree_unflatten, subtrees, packed_state)
+      new_states = map(partial(update, i), grad_flat, states)
+      new_states_flat, subtrees2 = unzip2(map(tree_flatten, new_states))
+      for subtree, subtree2 in zip(subtrees, subtrees2):
+        if subtree2 != subtree:
+          msg = ("optimizer update function produced an output structure that "
+                 "did not match its input structure: input {} and output {}.")
+          raise TypeError(msg.format(subtree, subtree2))
+      new_packed_state = pack(map(pack, new_states_flat))
+      return OptimizerState(new_packed_state, tree, subtrees)
 
-    return tree_init_fun, tree_update_fun
+    @functools.wraps(get_params)
+    def tree_get_params(opt_state):
+      packed_state, tree, subtrees = opt_state
+      states = map(tree_unflatten, subtrees, packed_state)
+      params = map(get_params, states)
+      return tree_unflatten(tree, params)
+
+    return tree_init, tree_update, tree_get_params
   return tree_opt_maker
 
-def iterate(state_trees):
-  """Extract the current iterate from an optimizer state."""
-  return state_trees[0]
-get_params = iterate
 
-# optimizers
+### optimizers
 
 @optimizer
 def sgd(step_size):
-  """Construct init and update step functions for stochastic gradient descent.
+  """Construct optimizer triple for stochastic gradient descent.
 
   Args:
     step_size: positive scalar, or a callable representing a step size schedule
       that maps the iteration index to positive scalar.
 
   Returns:
-    An (init_fun, update_fun) pair.
+    An (init_fun, update_fun, get_params) triple.
   """
   step_size = make_schedule(step_size)
-  def init_fun(x0):
-    return (x0,)
-  def update_fun(i, g, x):
-    return (x - step_size(i) * g,)
-  return init_fun, update_fun
+  def init(x0):
+    return x0
+  def update(i, g, x):
+    return x - step_size(i) * g
+  def get_params(x):
+    return x
+  return init, update, get_params
 
 @optimizer
 def momentum(step_size, mass):
-  """Construct init and update step functions for SGD with Nesterov momentum.
+  """Construct optimizer triple for SGD with Nesterov momentum.
 
   Args:
     step_size: positive scalar, or a callable representing a step size schedule
       that maps the iteration index to positive scalar.
 
   Returns:
-    An (init_fun, update_fun) pair.
+    An (init_fun, update_fun, get_params) triple.
   """
   step_size = make_schedule(step_size)
-  def init_fun(x0):
+  def init(x0):
     v0 = np.zeros_like(x0)
     return x0, v0
-  def update_fun(i, g, x, velocity):
+  def update(i, g, state):
+    x, velocity = state
     velocity = mass * velocity - (1. - mass) * g
     x = x + step_size(i) * velocity
     return x, velocity
-  return init_fun, update_fun
+  def get_params(state):
+    x, _ = state
+    return x
+  return init, update, get_params
+
+
+@optimizer
+def adagrad(step_size, momentum=0.9):
+  """Construct optimizer triple for Adagrad.
+
+  Adaptive Subgradient Methods for Online Learning and Stochastic Optimization:
+  http://www.jmlr.org/papers/volume12/duchi11a/duchi11a.pdf
+
+  Args:
+    step_size: positive scalar, or a callable representing a step size schedule
+      that maps the iteration index to positive scalar.
+    momentum: optional, a positive scalar value for momentum
+
+  Returns:
+    An (init_fun, update_fun, get_params) triple.
+  """
+  step_size = make_schedule(step_size)
+
+  def init(x0):
+    g_sq = np.zeros_like(x0)
+    m = np.zeros_like(x0)
+    return x0, g_sq, m
+
+  def update(i, g, state):
+    x, g_sq, m = state
+    g_sq += g**2
+    g_sq_inv_sqrt = np.where(g_sq > 0, 1. / np.sqrt(g_sq), 0.0)
+    m = (1. - momentum) * (g * g_sq_inv_sqrt) + momentum * m
+    x = x - step_size(i) * m
+    return x, g_sq, m
+
+  def get_params(state):
+    x, _, _ = state
+    return x
+
+  return init, update, get_params
+
 
 @optimizer
 def rmsprop(step_size, gamma=0.9, eps=1e-8):
-  """Construct init and update step functions for RMSProp.
+  """Construct optimizer triple for RMSProp.
 
   Args:
     step_size: positive scalar, or a callable representing a step size schedule
       that maps the iteration index to positive scalar.
 
   Returns:
-    An (init_fun, update_fun) pair.
+    An (init_fun, update_fun, get_params) triple.
   """
   step_size = make_schedule(step_size)
-  def init_fun(x0):
+  def init(x0):
     avg_sq_grad = np.ones_like(x0)
     return x0, avg_sq_grad
-  def update_fun(i, g, x, avg_sq_grad):
+  def update(i, g, state):
+    x, avg_sq_grad = state
     avg_sq_grad = avg_sq_grad * gamma + g**2 * (1. - gamma)
     x = x - step_size(i) * g / (np.sqrt(avg_sq_grad) + eps)
     return x, avg_sq_grad
-  return init_fun, update_fun
+  def get_params(state):
+    x, _ = state
+    return x
+  return init, update, get_params
 
 @optimizer
 def adam(step_size, b1=0.9, b2=0.999, eps=1e-8):
-  """Construct init and update step functions for Adam.
+  """Construct optimizer triple for Adam.
 
   Args:
     step_size: positive scalar, or a callable representing a step size schedule
@@ -134,23 +307,74 @@ def adam(step_size, b1=0.9, b2=0.999, eps=1e-8):
       numerical stability (default 1e-8).
 
   Returns:
-    An (init_fun, update_fun) pair.
+    An (init_fun, update_fun, get_params) triple.
   """
   step_size = make_schedule(step_size)
-  def init_fun(x0):
+  def init(x0):
     m0 = np.zeros_like(x0)
     v0 = np.zeros_like(x0)
     return x0, m0, v0
-  def update_fun(i, g, x, m, v):
+  def update(i, g, state):
+    x, m, v = state
     m = (1 - b1) * g + b1 * m  # First  moment estimate.
     v = (1 - b2) * (g ** 2) + b2 * v  # Second moment estimate.
     mhat = m / (1 - b1 ** (i + 1))  # Bias correction.
     vhat = v / (1 - b2 ** (i + 1))
     x = x - step_size(i) * mhat / (np.sqrt(vhat) + eps)
     return x, m, v
-  return init_fun, update_fun
+  def get_params(state):
+    x, m, v = state
+    return x
+  return init, update, get_params
 
-# learning rate schedules
+@optimizer
+def sm3(step_size, momentum=0.9):
+  """Construct optimizer triple for SM3.
+
+  Memory-Efficient Adaptive Optimization for Large-Scale Learning.
+  https://arxiv.org/abs/1901.11150
+
+  Args:
+    step_size: positive scalar, or a callable representing a step size schedule
+      that maps the iteration index to positive scalar.
+    momentum: optional, a positive scalar value for momentum
+
+  Returns:
+    An (init_fun, update_fun, get_params) triple.
+  """
+  step_size = make_schedule(step_size)
+
+  def splice(seq, i, x):
+    lst = list(seq)
+    lst[i:i+1] = x
+    return lst
+
+  def broadcast_into(ndim, x, axis):
+    idx = splice([None] * ndim, axis, [slice(None)])
+    return x[tuple(idx)]
+
+  def init(x0):
+    vs = [np.zeros(sz, dtype=x0.dtype) for sz in x0.shape]
+    return x0, np.zeros_like(x0), vs
+
+  def update(i, g, state):
+    x, m, vs = state
+    vs = [broadcast_into(g.ndim, v, i) for i, v in enumerate(vs)]
+    accum = reduce(np.minimum, vs) + g ** 2
+    accum_inv_sqrt = np.where(accum > 0, 1. / np.sqrt(accum), 0)
+    m = (1. - momentum) * (g * accum_inv_sqrt) + momentum * m
+    x = x - step_size(i) * m
+    vs = [accum.max(splice(range(x.ndim), j, [])) for j in range(x.ndim)]
+    return x, m, vs
+
+  def get_params(state):
+    x, _, _ = state
+    return x
+
+  return init, update, get_params
+
+
+### learning rate schedules
 
 def constant(step_size):
   def schedule(i):
@@ -183,10 +407,24 @@ def piecewise_constant(boundaries, values):
     return values[np.sum(i > boundaries)]
   return schedule
 
-def make_schedule(scalar_or_schedule_fun):
-  if callable(scalar_or_schedule_fun):
-    return scalar_or_schedule_fun
-  elif np.ndim(scalar_or_schedule_fun) == 0:
-    return constant(scalar_or_schedule_fun)
+def make_schedule(scalar_or_schedule):
+  if callable(scalar_or_schedule):
+    return scalar_or_schedule
+  elif np.ndim(scalar_or_schedule) == 0:
+    return constant(scalar_or_schedule)
   else:
-    raise TypeError(type(scalar_or_schedule_fun))
+    raise TypeError(type(scalar_or_schedule))
+
+
+### utilities
+
+def l2_norm(tree):
+  """Compute the l2 norm of a pytree of arrays. Useful for weight decay."""
+  leaves, _ = tree_flatten(tree)
+  return np.sqrt(sum(np.vdot(x, x) for x in leaves))
+
+def clip_grads(grad_tree, max_norm):
+  """Clip gradients stored as a pytree of arrays to maximum norm `max_norm`."""
+  norm = l2_norm(grad_tree)
+  normalize = lambda g: np.where(norm < max_norm, g, g * (max_norm / norm))
+  return tree_map(normalize, grad_tree)

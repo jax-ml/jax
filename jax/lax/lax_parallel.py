@@ -21,45 +21,134 @@ from jax.abstract_arrays import ShapedArray
 from jax.core import Primitive
 from jax.interpreters import ad
 from jax.interpreters import parallel
+from jax.interpreters import xla
 from jax.interpreters import pxla
-from jax.util import partial
+from jax.util import partial, unzip2
+from jax.lib import xla_bridge
 
 
 ### parallel traceables
 
 def psum(x, axis_name):
+  """Compute an all-reduce sum on ``x`` over the pmapped axis ``axis_name``.
+
+  Args:
+    x: array with a mapped axis named ``axis_name``.
+    axis_name: hashable Python object used to name a pmapped axis (see the
+      ``pmap`` docstring for more details).
+
+  Returns:
+    An array with the same shape as ``x`` representing the result of an
+    all-reduce sum along the axis ``axis_name``.
+
+  For example, with 4 XLA devices available:
+
+  >>> x = np.arange(4)
+  >>> y = jax.pmap(lambda x: jax.lax.psum(x, 'i'), axis_name='i')(x)
+  >>> print(y)
+  [6 6 6 6]
+  >>> y = jax.pmap(lambda x: x / jax.lax.psum(x, 'i'), axis_name='i')(x)
+  >>> print(y)
+  [ 0.          0.16666667  0.33333334  0.5       ]
+  """
   return psum_p.bind(x, axis_name=axis_name)
 
 def pmax(x, axis_name):
+  """Compute an all-reduce max on ``x`` over the pmapped axis ``axis_name``.
+
+  Args:
+    x: array with a mapped axis named ``axis_name``.
+    axis_name: hashable Python object used to name a pmapped axis (see the
+      ``pmap`` docstring for more details).
+
+  Returns:
+    An array with the same shape as ``x`` representing the result of an
+    all-reduce max along the axis ``axis_name``.
+  """
   return pmax_p.bind(x, axis_name=axis_name)
 
-def pswapaxes(x, axis_name, axis):
-  """Analogue to `np.swapaxes` involving a hidden axis.
+def pmin(x, axis_name):
+  """Compute an all-reduce min on ``x`` over the pmapped axis ``axis_name``.
 
-  Specifically, transposes the operand along the axis that's currently hidden
-  and the given concrete axis. The implicit position of the hidden axis remains
-  unchanged.
+  Args:
+    x: array with a mapped axis named ``axis_name``.
+    axis_name: hashable Python object used to name a pmapped axis (see the
+      ``pmap`` docstring for more details).
+
+  Returns:
+    An array with the same shape as ``x`` representing the result of an
+    all-reduce min along the axis ``axis_name``.
+  """
+  return pmin_p.bind(x, axis_name=axis_name)
+
+def ppermute(x, axis_name, perm):
+  """Perform a collective permutation according to the permutation ``perm``.
+
+  This function is an analog of the CollectivePermute XLA HLO.
+
+  Args:
+    x: array with a mapped axis named ``axis_name``.
+    axis_name: hashable Python object used to name a pmapped axis (see the
+      ``pmap`` docstring for more details).
+    perm: list of pairs of ints, representing (source_index, destination_index)
+      pairs that encode how the mapped axis named ``axis_name`` should be
+      shuffled. The integer values are treated as indices into the mapped axis
+      ``axis_name``. Any two pairs should not have the same source index or the
+      same destination index. For each index of the axis ``axis_name`` that does
+      not correspond to a destination index in ``perm``, the corresponding
+      values in ``x`` are filled with zeros of the appropriate type.
+
+  Returns:
+    An array with the same shape as ``x`` representing the result of an
+    all-reduce min along the axis ``axis_name``.
+  """
+  return ppermute_p.bind(x, axis_name=axis_name, perm=perm)
+
+def pswapaxes(x, axis_name, axis):
+  """Swap the pmapped axis ``axis_name`` with the unmapped axis ``axis``.
+
+  This function is similar to ``psplit`` except the pmapped axis of the input is
+  placed at the position ``axis`` in the output.
+
+  Args:
+    x: array with a mapped axis named ``axis_name``.
+    axis_name: hashable Python object used to name a pmapped axis (see the
+      ``pmap`` docstring for more details).
+    axis: int indicating the unmapped axis of ``x`` to map with the name
+      ``axis_name``.
+
+  Returns:
+    An array with shape ``np.insert(np.delete(x.shape, axis), axis, axis_size)``
+    where ``axis_size`` is the size of the mapped axis named ``axis_name`` in
+    the input ``x``.
   """
   return pswapaxes_p.bind(x, axis_name=axis_name, axis=axis)
 
 def psplit(x, axis_name, axis):
-  """Merge operand along the hidden axis and split it along `axis`.
+  """Unmap the pmapped axis ``axis_name`` and map ``axis`` with the same name.
 
-  The newly split axis becomes the hidden axis for the output, and in particular
-  the implicit position of the hidden axis changes.
+  This function is similar to ``pswapaxes`` except the pmapped axis of the input
+  is placed as the leading logical axis of the output.
+
+  Args:
+    x: array with a mapped axis named ``axis_name``.
+    axis_name: hashable Python object used to name a pmapped axis (see the
+      ``pmap`` docstring for more details).
+    axis: int indicating the unmapped axis of ``x`` to map with the name
+      ``axis_name``.
+
+  Returns:
+    An array with shape ``(axis_size,) + tuple(np.delete(x.shape, axis))`` where
+    ``axis_size`` is the size of the mapped axis named ``axis_name`` in the
+    input ``x``.
   """
-  # lowering should be:
-  # return xla_all_to_all(x, hidden axis, axis)
   return psplit_p.bind(x, axis_name=axis_name, axis=axis)
 
 def psplit_like(x, y, axis_name):
-  """Split `x` along any axis on which `y` is split, if it is."""
+  """Ensure the named mapped axis of ``x`` aligns with that of ``y``."""
   return psplit_like_p.bind(x, y, axis_name=axis_name)
 
 def pcollect(x, axis_name):
-  # lowering should be:
-  # x = xla_broadcast(x, (xb.get_replica_count(),))
-  # return xla_all_to_all(x, 0, dim(axis_name), **params)
   return pcollect_p.bind(x, axis_name=axis_name)
 
 
@@ -73,43 +162,71 @@ def _unbound_name_error(primitive_name, *args, **kwargs):
 def PmapPrimitive(name):
   prim = Primitive(name)
   prim.def_impl(partial(_unbound_name_error, name))
-  prim.def_abstract_eval(lambda x, *args, **kwargs: x)
+  prim.def_abstract_eval(lambda x, *args, **params: x)
   return prim
 
 
-def _psum_serial_pmap_rule(vals, axes):
+def _allreduce_serial_pmap_rule(reducer, vals, axes):
   val, = vals
   axis, = axes
-  return lax._reduce_sum(val, [axis]), None
+  return reducer(val, [axis]), None
 
-def _psum_transpose_rule(t, axis_name):
-  return [t]
+def _allreduce_translation_rule(prim, c, val, device_groups):
+  dtype = c.GetShape(val).numpy_dtype()
+  scalar = xla_bridge.Shape.array_shape(dtype, ())
+  computation = xla.primitive_computation(prim, scalar, scalar)
+  return c.AllReduce(val, computation, replica_groups=device_groups)
 
-def _psum_parallel_translation_rule(c, val, device_groups):
-  if len(device_groups) > 1:
-    return c.CrossReplicaSum(val, device_groups)
-  else:
-    return c.CrossReplicaSum(val)
 
 psum_p = PmapPrimitive('psum')
-psum_p.def_impl(partial(_unbound_name_error, 'psum'))
-psum_p.def_abstract_eval(lambda x, *args, **kwargs: x)
-parallel.serial_pmap_primitive_rules[psum_p] = _psum_serial_pmap_rule
-pxla.parallel_translation_rules[psum_p] = _psum_parallel_translation_rule
-ad.deflinear(psum_p, _psum_transpose_rule)
 parallel.defreducer(lax.reduce_sum_p, psum_p)
+parallel.serial_pmap_primitive_rules[psum_p] = \
+    partial(_allreduce_serial_pmap_rule, lax._reduce_sum)
+# TODO(mattjj): replace translation rule when we update jaxlib
+# pxla.parallel_translation_rules[psum_p] = \
+#     partial(_allreduce_translation_rule, lax.add_p)
+pxla.parallel_translation_rules[psum_p] = \
+    lambda c, val, device_groups: c.CrossReplicaSum(val, device_groups)
+ad.deflinear(psum_p, lambda t, axis_name: [t])
 
-
-def _pmax_serial_pmap_rule(vals, axes):
-  val, = vals
-  axis, = axes
-  return lax._reduce_max(val, [axis]), None
 
 pmax_p = PmapPrimitive('pmax')
-pmax_p.def_impl(partial(_unbound_name_error, 'pmax'))
-pmax_p.def_abstract_eval(lambda x, *args, **kwargs: x)
-parallel.serial_pmap_primitive_rules[pmax_p] = _pmax_serial_pmap_rule
 parallel.defreducer(lax.reduce_max_p, pmax_p)
+parallel.serial_pmap_primitive_rules[pmax_p] = \
+    partial(_allreduce_serial_pmap_rule, lax._reduce_max)
+pxla.parallel_translation_rules[pmax_p] = \
+    partial(_allreduce_translation_rule, lax.max_p)
+
+
+pmin_p = PmapPrimitive('pmin')
+parallel.defreducer(lax.reduce_min_p, pmin_p)
+parallel.serial_pmap_primitive_rules[pmin_p] = \
+    partial(_allreduce_serial_pmap_rule, lax._reduce_min)
+pxla.parallel_translation_rules[pmin_p] = \
+    partial(_allreduce_translation_rule, lax.min_p)
+
+
+def _ppermute_translation_rule(c, x, device_groups, perm):
+  group_size = len(device_groups[0])
+  srcs, dsts = unzip2((src % group_size, dst % group_size) for src, dst in perm)
+  if not (len(srcs) == len(set(srcs)) and len(dsts) == len(set(dsts))):
+    msg = "ppermute sources and destinations must be unique, got {}."
+    raise ValueError(msg.format(perm))
+
+  full_perm = []
+  for grp in device_groups:
+    grp = list(sorted(grp))
+    full_perm.extend((grp[src], grp[dst]) for src, dst in perm)
+  return c.CollectivePermute(x, full_perm)
+
+def _ppermute_transpose_rule(t, perm, axis_name):
+  sources, dests = unzip2(perm)
+  inverse_perm = zip(dests, srcs)
+  return ppermute(t, axis_name=axis_name, perm=inverse_perm)
+
+ppermute_p = PmapPrimitive('ppermute')
+# ad.deflinear(ppermute_p, _ppermute_transpose_rule)  # TODO(mattjj): test this
+pxla.parallel_translation_rules[ppermute_p] = _ppermute_translation_rule
 
 
 def _pswapaxes_serial_pmap_rule(vals, axes, axis):

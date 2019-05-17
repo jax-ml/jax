@@ -1,5 +1,5 @@
 jax.experimental.optimizers module
-==============================
+==================================
 
 .. automodule:: jax.experimental.optimizers
     :members:

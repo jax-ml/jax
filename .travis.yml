@@ -24,4 +24,4 @@ install:
   - pip install jaxlib
   - pip install -v .
 script:
-  - pytest -n 2 tests examples
+  - pytest -n 2 tests examples -W ignore
