@@ -3646,7 +3646,7 @@ class _IotaConstant(xla.DeviceConstant):
 
   def __init__(self, dtype, shape, axis):
     self.shape = shape
-    self.dtype = dtype
+    self.dtype = onp.dtype(dtype)
     self.ndim = len(shape)
     self.size = prod(shape)
     self._npy_value = None
@@ -3675,7 +3675,7 @@ class _EyeConstant(xla.DeviceConstant):
 
   def __init__(self, shape, axes, dtype):
     self.shape = shape
-    self.dtype = dtype
+    self.dtype = onp.dtype(dtype)
     self.ndim = len(shape)
     self.size = prod(shape)
     self._npy_value = None

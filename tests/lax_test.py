@@ -1343,6 +1343,9 @@ class DeviceConstantTest(jtu.JaxTestCase):
     self.assertAllClose(argument_result, expected, check_dtypes=True)
     self.assertAllClose(jit_result, expected, check_dtypes=True)
 
+    # ensure repr doesn't crash
+    repr(make_const())
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_fill={}".format(
           jtu.format_shape_dtype_string(shape, dtype) if dtype else shape,
