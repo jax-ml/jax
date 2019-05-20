@@ -21,6 +21,7 @@ from contextlib import contextmanager
 from collections import namedtuple, Counter, defaultdict
 from weakref import ref
 import six
+import threading
 import types
 
 from . import linear_util as lu
@@ -398,42 +399,47 @@ class TraceStack(object):
       map('  {}\n'.format, self.downward))
 
 
-trace_stack = TraceStack()
-
 class Sublevel(int): pass
-substack = [Sublevel(0)]
+
+_state = threading.local()
+def state():
+  if not hasattr(_state, 'trace_stack'):
+    _state.trace_stack = TraceStack()
+    _state.substack = [Sublevel(0)]
+  return _state
+
 
 def cur_sublevel():
-  return substack[-1]
+  return state().substack[-1]
 
 
 @contextmanager
 def new_master(trace_type, bottom=False):
-  level = trace_stack.next_level(bottom)
+  level = state().trace_stack.next_level(bottom)
   master = MasterTrace(level, trace_type)
-  trace_stack.push(master, bottom)
+  state().trace_stack.push(master, bottom)
 
   try:
     yield master
   finally:
-    trace_stack.pop(bottom)
+    state().trace_stack.pop(bottom)
 
   if check_leaks:
     t = ref(master)
     del master
     if t() is not None:
-      print(trace_stack)
+      print(state().trace_stack)
       raise Exception('Leaked trace {}'.format(t()))
 
 
 @contextmanager
 def new_sublevel():
-  sublevel = Sublevel(len(substack))
-  substack.append(sublevel)
+  sublevel = Sublevel(len(state().substack))
+  state().substack.append(sublevel)
   try:
     yield
   finally:
-    substack.pop()
+    state().substack.pop()
 
   if check_leaks:
     t = ref(sublevel)
@@ -628,7 +634,7 @@ def process_env_traces(primitive, level, params_tuple, *args):
 
 def call_bind(primitive, f, *args, **params):
   top_trace = find_top_trace(args)
-  level = trace_stack.next_level(True) if top_trace is None else top_trace.level
+  level = state().trace_stack.next_level(True) if top_trace is None else top_trace.level
   params_tuple = tuple(params.items())
   f, env_trace_todo = process_env_traces(f, primitive, level, params_tuple)
   if top_trace is None:

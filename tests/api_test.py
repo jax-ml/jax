@@ -16,7 +16,13 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from functools import partial
+import unittest
+
 import six
+
+if six.PY3:
+  import concurrent.futures
 
 import numpy as onp
 from absl.testing import absltest
@@ -567,6 +573,19 @@ class APITest(jtu.JaxTestCase):
     x = device_put(np.ones(3) + 1j * np.ones(3))
     self.assertIsInstance(x, DeviceArray)
     repr(x)  # doesn't crash
+
+  @unittest.skipIf(six.PY2, "Test requires Python 3")
+  def test_concurrent_jit(self):
+    @jit
+    def f(x):
+      return x + x - 3.
+
+    xs = [onp.random.randn(i) for i in range(10)]
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+      futures = [executor.submit(partial(f, x)) for x in xs]
+      ys = [f.result() for f in futures]
+    for x, y in zip(xs, ys):
+      self.assertAllClose(x * 2 - 3., y, check_dtypes=True)
 
 
 if __name__ == '__main__':
