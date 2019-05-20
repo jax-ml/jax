@@ -219,13 +219,9 @@ JAX_OPERATOR_OVERLOADS = [
     op_record("__invert__", 1, int_dtypes, all_shapes, jtu.rand_default(), []),
     # TODO(mattjj): investigate these failures
     # op_record("__or__", 2, number_dtypes, all_shapes, jtu.rand_bool(), []),
-    # op_record("__ror__", 2, number_dtypes, all_shapes, jtu.rand_bool(), []),
     # op_record("__and__", 2, number_dtypes, all_shapes, jtu.rand_default(), []),
-    # op_record("__rand__", 2, number_dtypes, all_shapes, jtu.rand_default(), []),
     # op_record("__xor__", 2, number_dtypes, all_shapes, jtu.rand_bool(), []),
-    # op_record("__rxor__", 2, number_dtypes, all_shapes, jtu.rand_bool(), []),
     # op_record("__divmod__", 2, number_dtypes, all_shapes, jtu.rand_nonzero(), []),
-    # # op_record("__rdivmod__", 2, number_dtypes, all_shapes, jtu.rand_nonzero(), []),
     # TODO(mattjj): lshift, rshift
 ]
 
@@ -237,6 +233,10 @@ JAX_RIGHT_OPERATOR_OVERLOADS = [
     op_record("__rmod__", 2, default_dtypes, all_shapes, jtu.rand_nonzero(), []),
     op_record("__rfloordiv__", 2, default_dtypes, all_shapes, jtu.rand_nonzero(), []),
     op_record("__rtruediv__", 2, number_dtypes, all_shapes, jtu.rand_nonzero(), []),
+    # op_record("__ror__", 2, number_dtypes, all_shapes, jtu.rand_bool(), []),
+    # op_record("__rand__", 2, number_dtypes, all_shapes, jtu.rand_default(), []),
+    # op_record("__rxor__", 2, number_dtypes, all_shapes, jtu.rand_bool(), []),
+    # op_record("__rdivmod__", 2, number_dtypes, all_shapes, jtu.rand_nonzero(), []),
 ]
 
 numpy_version = tuple(map(int, onp.version.version.split('.')))
