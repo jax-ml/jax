@@ -735,7 +735,8 @@ def _get_min_identity(dtype):
     return onp.array(True, onp.bool_)
 
 def _reduce_sum(operand, axes):
-  return reduce_sum_p.bind(operand, axes=tuple(axes), input_shape=operand.shape)
+  return reduce_sum_p.bind(operand, axes=tuple(axes),
+                           input_shape=onp.shape(operand))
 
 def _reduce_prod(operand, axes):
   return reduce_prod_p.bind(operand, axes=tuple(axes))

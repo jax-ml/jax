@@ -150,16 +150,10 @@ def _promote_dtypes(*args):
   if len(args) < 2:
     return args
   else:
-    from_dtypes = (x if type(x) in _builtin_numeric_types else _dtype(x)
-                   for x in args)
+    from_dtypes = map(_dtype, args)
     to_dtype = xla_bridge.canonicalize_dtype(result_type(*from_dtypes))
     return [lax.convert_element_type(x, to_dtype)
             if _dtype(x) != to_dtype else x for x in args]
-
-if six.PY3:
-  _builtin_numeric_types = (int, float, complex)
-else:
-  _builtin_numeric_types = (int, float, long, complex)
 
 def _promote_to_result_dtype(op, *args):
   """Convenience function to promote args directly to the op's result dtype."""
@@ -1163,10 +1157,11 @@ def pad(array, pad_width, mode, constant_values=0):
     raise NotImplementedError(msg.format(mode))
 
   array = asarray(array)
-  pad_width = onp.broadcast_to(onp.asarray(pad_width), (array.ndim, 2))
-  constant_values = broadcast_to(asarray(constant_values), (array.ndim, 2))
-  for i in xrange(array.ndim):
-    widths = [(0, 0, 0)] * array.ndim
+  nd = ndim(array)
+  pad_width = onp.broadcast_to(onp.asarray(pad_width), (nd, 2))
+  constant_values = broadcast_to(asarray(constant_values), (nd, 2))
+  for i in xrange(nd):
+    widths = [(0, 0, 0)] * nd
     widths[i] = (pad_width[i, 0], 0, 0)
     array = lax.pad(array, constant_values[i, 0], widths)
     widths[i] = (0, pad_width[i, 1], 0)
@@ -1191,13 +1186,13 @@ def stack(arrays, axis=0):
 
 @_wraps(onp.tile)
 def tile(a, reps):
-    if isinstance(reps, int):
-        reps = (reps,)
-    a = a[(None,) * (len(reps) - a.ndim)]
-    reps = (1,) * (a.ndim - len(reps)) + reps
-    for i, rep in enumerate(reps):
-        a = concatenate([a] * rep, axis=i)
-    return a
+  if isinstance(reps, int):
+    reps = (reps,)
+  a = reshape(a, (1,) * (len(reps) - ndim(a)) + shape(a))
+  reps = (1,) * (ndim(a) - len(reps)) + reps
+  for i, rep in enumerate(reps):
+    a = concatenate([a] * rep, axis=i)
+  return a
 
 @_wraps(onp.concatenate)
 def concatenate(arrays, axis=0):
@@ -1338,9 +1333,7 @@ def array_equal(a1, a2):
     a1, a2 = asarray(a1), asarray(a2)
   except Exception:
     return False
-  if a1.shape != a2.shape:
-    return False
-  return asarray(a1==a2).all()
+  return shape(a1) == shape(a2) and all(asarray(a1 == a2))
 
 
 # We can't create uninitialized arrays in XLA; use zeros for empty.
@@ -1864,37 +1857,15 @@ def cross(a, b, axisa=-1, axisb=-1, axisc=-1, axis=None):
 
 @_wraps(onp.kron)
 def kron(a, b):
-  a_shape = shape(a)
-  b_shape = shape(b)
-  a_ndims = len(a_shape)
-  b_ndims = len(b_shape)
-  a = array(a)
-  b = array(b)
-  d = _min(a_ndims, b_ndims)
-  if d == 0:
-    return a * b
-  a_broadcast_dims = list(range(a_ndims - d, a_ndims + d, 2))
-  a_broadcast_shape = onp.ones(a_ndims + d, dtype=onp.int64)
-  a_broadcast_shape[:-2*d] = a_shape[:-d]
-  a_broadcast_shape[a_broadcast_dims] = a_shape[-d:]
-
-  b_broadcast_dims = list(range(b_ndims -d + 1, b_ndims + d + 1, 2))
-  b_broadcast_shape = onp.ones(b_ndims + d, dtype=onp.int64)
-  b_broadcast_shape[:-2*d] = b_shape[:-d]
-  b_broadcast_shape[b_broadcast_dims] = b_shape[-d:]
-
-  if a_ndims > b_ndims:
-    out_shape = onp.array(a_shape, dtype=onp.int64)
-    out_shape[-d:] *= onp.array(b_shape, dtype=onp.int64)
-  else:
-    out_shape = onp.array(b_shape, dtype=onp.int64)
-    out_shape[-d:] *= onp.array(a_shape, dtype=onp.int64)
-
-  a_broadcast = lax.broadcast_in_dim(
-    a, a_broadcast_shape, list(range(a_ndims - d)) + a_broadcast_dims)
-  b_broadcast = lax.broadcast_in_dim(
-    b, b_broadcast_shape, list(range(b_ndims - d)) + b_broadcast_dims)
-  return lax.reshape(a_broadcast * b_broadcast, out_shape)
+  a, b = _promote_dtypes(a, b)
+  if ndim(a) < ndim(b):
+    a = reshape(a, (1,) * (ndim(b) - ndim(a)) + shape(a))
+  elif ndim(b) < ndim(a):
+    b = reshape(b, (1,) * (ndim(a) - ndim(b)) + shape(b))
+  a_reshaped = reshape(a, [i for d in shape(a) for i in (d, 1)])
+  b_reshaped = reshape(b, [i for d in shape(b) for i in (1, d)])
+  out_shape = tuple(onp.multiply(shape(a), shape(b)))
+  return reshape(lax.mul(a_reshaped, b_reshaped), out_shape)
 
 
 @_wraps(onp.vander)

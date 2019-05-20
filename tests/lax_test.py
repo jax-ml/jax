@@ -1364,7 +1364,10 @@ class DeviceConstantTest(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, dtype), dimension),
        "shape": shape, "dtype": dtype, "dimension": dimension}
       for dtype in default_dtypes
-      for shape in [(), (3,), (2, 3), (2, 3, 4), (1001, 1001), (101, 101, 101)]
+      for shape in [(), (3,), (2, 3), (2, 3, 4),
+                    # TODO(mattjj): re-enable
+                    # (1001, 1001), (101, 101, 101),
+                    ]
       for dimension in range(len(shape))))
   def testIotaConstant(self, dtype, shape, dimension):
     make_const = lambda: lax.broadcasted_iota(dtype, shape, dimension)
