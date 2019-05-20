@@ -428,16 +428,25 @@ def _maybe_tracer_tuple_to_abstract_tuple(tup):
 
 ### scan
 
-def _convert_zeros(convert_symbolic, example, tangent):
-  if tangent is ad.zero:
-    if not convert_symbolic:
+def _convert_zeros(instantiate, example, tangent):
+  t = type(instantiate)
+  if t is bool:
+    if instantiate:
+      return ad.instantiate_zeros(example, tangent)
+    elif tangent is ad_util.zero:
       return core.unit
     else:
-      return ad.zeros_like_jaxval(example)
-  elif type(tangent) is ad.TangentTuple:
-    return core.pack(map(_convert_zeros, convert_symbolic, example, tangent))
+      raise TypeError(tangent)  # not clear if ever reachable
+  elif t is tuple:
+    if type(tangent) is ad.TangentTuple:
+      return core.pack(map(_convert_zeros, instantiate, example, tangent))
+    elif tangent is ad_util.zero:
+      zeros = [ad_util.zero] * len(instantiate)
+      return core.pack(map(_convert_zeros, instantiate, example, zeros))
+    else:
+      raise TypeError(tangent)
   else:
-    return tangent
+    raise TypeError(t)
 
 def _demote_aval_rank(xs):
   assert isinstance(xs, core.AbstractValue)
@@ -641,7 +650,7 @@ def _scan_partial_eval(trace, *tracers, **kwargs):
   length = kwargs.pop('length')
   forward = kwargs.pop('forward')
   assert not kwargs
-  in_pvs, in_consts = unzip2([t.pval for t in tracers])
+  in_pvs, _ = unzip2([t.pval for t in tracers])
   sc_consts, sc_init, sc_xs = map(pe.unknown, in_pvs)
 
   sc_carry = sc_init
@@ -819,7 +828,19 @@ def _make_typed_jaxpr(traceable, in_avals):
 class FixedPointError(Exception): pass
 
 
+# We use a custom bind for scan just to add some error checks
+def scan_bind(consts, init, xs, forward, length, jaxpr):
+  if not core.skip_checks:
+    assert type(jaxpr.in_avals) is tuple
+    consts_aval, init_aval, xs_aval = jaxpr.in_avals
+    assert type(jaxpr.out_aval) is core.AbstractTuple
+    carry_aval, y_aval = jaxpr.out_aval
+    assert init_aval == carry_aval
+  return core.Primitive.bind(scan_p, consts, init, xs,
+                             forward=forward, length=length, jaxpr=jaxpr)
+
 scan_p = core.Primitive("scan")
+scan_p.def_custom_bind(scan_bind)
 scan_p.def_impl(_scan_impl)
 ad.primitive_jvps[scan_p] = _scan_jvp
 ad.primitive_transposes[scan_p] = _scan_transpose

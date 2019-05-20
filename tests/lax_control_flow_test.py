@@ -592,6 +592,37 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = (onp.zeros_like(W_trans), onp.zeros_like(W_out))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testIssue711(self):
+    # Tests reverse-mode differentiation through a scan for which the scanned
+    # function also involves reverse-mode differentiation.
+    # See https://github.com/google/jax/issues/711
+    def harmonic_bond(conf, params):
+      return np.sum(conf * params)
+
+    def minimize_structure(test_params):
+      energy_fn = partial(harmonic_bond, params=test_params)
+      grad_fn = api.grad(energy_fn)
+
+      def apply_carry(carry, _):
+        i, x = carry
+        new_x = x - 0.1 * api.grad(energy_fn)(x)
+        new_carry = (i+1, new_x)
+        return new_carry, _
+
+      x0 = np.array([1., 2., 3.])
+      carry_final, _ = lax.scan(apply_carry, (0, x0), np.zeros((75, 0)))
+      _, x_final = carry_final
+      return x_final
+
+    initial_params = 0.5
+    minimize_structure(initial_params)  # doesn't crash
+
+    def loss(test_params):
+      x_final = minimize_structure(test_params)
+      return np.sum(np.sin(1.0 - x_final))
+
+    api.grad(loss)(0.25)  # doesn't crash
+
 
 if __name__ == '__main__':
   absltest.main()
