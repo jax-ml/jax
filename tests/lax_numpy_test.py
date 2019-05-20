@@ -1051,7 +1051,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_arg{}".format(i), "arg": arg}
       for i, arg in enumerate([
-          [1, 2, 3], [1., 2., 3.],
+          3., [1, 2, 3], [1., 2., 3.],
           [[1, 2], [3, 4], [5, 6]], [[1, 2.], [3, 4], [5, 6]],
           [[3, onp.array(2), 1], onp.arange(3.)],
       ])))
@@ -1059,6 +1059,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [arg]
     self._CheckAgainstNumpy(onp.array, lnp.array, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp.array, args_maker, check_dtypes=True)
+
+  def testIssue121(self):
+    assert not onp.isscalar(lnp.array(3))
 
   def testArrayMethod(self):
     class arraylike(object):
