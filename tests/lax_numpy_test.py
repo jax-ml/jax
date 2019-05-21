@@ -539,6 +539,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "axes": axes, "rng": rng}
       for rng in [jtu.rand_default()]
       for lhs_shape, rhs_shape, axes in [
+          [(2, 3, 4), (5, 6, 7), 0],  # from issue #740
           [(2, 3, 4), (3, 4, 5, 6), 2],
           [(2, 3, 4), (5, 4, 3, 6), [1, 2]],
           [(2, 3, 4), (5, 4, 3, 6), [[1, 2], [2, 1]]],
