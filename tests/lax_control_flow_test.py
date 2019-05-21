@@ -16,6 +16,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import collections
 from functools import partial
 
 from absl.testing import absltest
@@ -622,6 +623,18 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return np.sum(np.sin(1.0 - x_final))
 
     api.grad(loss)(0.25)  # doesn't crash
+
+  def testIssue744(self):
+    Point = collections.namedtuple('Point', ['x', 'y'])
+    p0 = Point(x=np.array(1), y=np.array(2))
+
+    def plus_one(p, iter_idx):
+      return Point(p.x+1, p.y+1), iter_idx
+
+    self.assertRaisesRegexp(
+        ValueError,
+        '.*no leading.*',
+        lambda: lax.scan(plus_one, p0, list(range(5))))
 
 
 if __name__ == '__main__':
