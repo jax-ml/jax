@@ -633,7 +633,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     self.assertRaisesRegexp(
         ValueError,
-        '.*no leading.*',
+        'scan got value with no leading axis to scan over.*',
         lambda: lax.scan(plus_one, p0, list(range(5))))
 
 
