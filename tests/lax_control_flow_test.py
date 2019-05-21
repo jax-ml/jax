@@ -636,6 +636,17 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         'scan got value with no leading axis to scan over.*',
         lambda: lax.scan(plus_one, p0, list(range(5))))
 
+  def testScanHigherOrderDifferentiation(self):
+    def f(c, a):
+      b = np.sin(c * a)
+      c = 0.9 * c
+      return c, b
+
+    as_ = np.arange(3.).reshape((3, 1))
+    c = 1.
+
+    jtu.check_grads(lambda c, as_: lax.scan(f, c, as_), (c, as_), order=2)
+
 
 if __name__ == '__main__':
   absltest.main()
