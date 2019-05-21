@@ -1444,6 +1444,9 @@ def trace(a, offset=0, axis1=0, axis2=1, dtype=None, out=None):
   if out:
     raise NotImplementedError("The 'out' argument to trace is not supported.")
 
+  axis1 = axis1 % ndim(a)
+  axis2 = axis2 % ndim(a)
+
   a_shape = shape(a)
   if dtype is None:
     dtype = _dtype(a)

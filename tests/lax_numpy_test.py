@@ -820,7 +820,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for dtype in default_dtypes
       for out_dtype in [None] + number_dtypes
       for shape in [shape for shape in all_shapes if len(shape) >= 2]
-      for (axis1, axis2) in itertools.combinations(range(len(shape)), 2)
+      for axis1 in range(-len(shape), len(shape))
+      for axis2 in range(-len(shape), len(shape))
+      if (axis1 % len(shape)) != (axis2 % len(shape))
       for offset in list(range(-4, 4))))
   def testTrace(self, shape, dtype, out_dtype, offset, axis1, axis2, rng):
     onp_fun = lambda arg: onp.trace(arg, offset, axis1, axis2, out_dtype)
