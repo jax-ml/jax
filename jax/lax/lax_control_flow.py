@@ -464,9 +464,21 @@ def _promote_aval_rank(n, xs):
 
 def _leading_dim_size(xs):
   if isinstance(xs, core.JaxTuple):
-    return _leading_dim_size(xs[0])
+    sizes = set(map(_leading_dim_size, xs))
+    if len(sizes) == 1:
+      return sizes.pop()
+    elif len(sizes) > 1:
+      msg = "scan got inconsistent leading axis sizes: {}"
+      raise ValueError(msg.format(sizes))
+    else:
+      raise ValueError("scan found no leading axis to scan over")
   else:
-    return xs.shape[0]
+    shape = onp.shape(xs)
+    if shape:
+      return shape[0]
+    else:
+      msg = "scan got value with no leading axis to scan over: {}"
+      raise ValueError(msg.format(xs))
 
 def _empty_arrays(aval):
   assert isinstance(aval, core.AbstractValue)
@@ -556,7 +568,7 @@ def scan(f, init, xs):
   carry_aval_out, y_aval = pv_out
   if carry_aval != carry_aval_out:
     msg = ("scanned function carry output does not match carry input: "
-           "input carry is {} and output carry is {}")
+           "input carry is {} and output carry is {}.")
     raise TypeError(msg.format(carry_aval, carry_aval_out))
   lifted_jaxpr = pe._closure_convert_jaxpr(jaxpr)
   consts_aval, _ = _abstractify(core.pack(consts))
