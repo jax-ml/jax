@@ -324,6 +324,7 @@ def main():
     [bazel_path, "run", "--verbose_failures=true"] +
     config_args +
     [":install_xla_in_source_tree", os.getcwd()])
+  shell([bazel_path, "shutdown"])
 
 
 if __name__ == "__main__":
