@@ -12,6 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Utilities for working with tree-like container data structures.
+
+The code here is independent of JAX. The only dependence is on jax.util, which
+itself has no JAX-specific code.
+
+This module provides a small set of utility functions for working with tree-like
+data structures, such as nested tuples, lists, and dicts. We call these
+structures pytrees. They are trees in that they are defined recursively (any
+non-pytree is a pytree, i.e. a leaf, and any pytree of pytrees is a pytree) and
+can be operated on recursively (object identity equivalence is not preserved by
+mapping operations, and the structures cannot contain reference cycles).
+
+The set of Python types that are considered pytree nodes (e.g. that can be
+mapped over, rather than treated as leaves) is extensible. There is a single
+module-level registry of types, and class hierarchy is ignored. By registering a
+new pytree node type, that type in effect becomes transparent to the utility
+functions in this file.
+"""
+
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -37,7 +56,7 @@ def tree_map(f, tree):
     leaf given by `f(x)` where `x` is the value at the corresponding leaf in
     `tree`.
   """
-  node_type = node_types.get(type(tree))
+  node_type = _get_node_type(tree)
   if node_type:
     children, node_spec = node_type.to_iterable(tree)
     new_children = [tree_map(f, child) for child in children]
@@ -60,70 +79,23 @@ def tree_multimap(f, tree, *rest):
     leaf given by `f(x, *xs)` where `x` is the value at the corresponding leaf
     in `tree` and `xs` is the tuple of values at corresponding leaves in `rest`.
   """
-  # equivalent to prefix_multimap(f, tree_structure(tree), tree, *rest)
-  node_type = node_types.get(type(tree))
+  node_type = _get_node_type(tree)
   if node_type:
-    children, node_spec = node_type.to_iterable(tree)
+    children, aux_data = node_type.to_iterable(tree)
     all_children = [children]
     for other_tree in rest:
-      other_node_type = node_types.get(type(other_tree))
-      # TODO(mattjj): enable this check
-      # if node_type != other_node_type:
-      #   raise TypeError('Mismatch: {} != {}'.format(other_node_type, node_type))
-      other_children, other_node_data = node_type.to_iterable(other_tree)
-      if other_node_data != node_spec:
-        raise TypeError('Mismatch: {} != {}'.format(other_node_data, node_spec))
+      other_node_type = _get_node_type(other_tree)
+      if node_type != other_node_type:
+        raise TypeError('Mismatch: {} != {}'.format(other_node_type, node_type))
+      other_children, other_aux_data = node_type.to_iterable(other_tree)
+      if other_aux_data != aux_data:
+        raise TypeError('Mismatch: {} != {}'.format(other_aux_data, aux_data))
       all_children.append(other_children)
 
     new_children = [tree_multimap(f, *xs) for xs in zip(*all_children)]
-    return node_type.from_iterable(node_spec, new_children)
+    return node_type.from_iterable(aux_data, new_children)
   else:
     return f(tree, *rest)
-
-def prefix_multimap(f, treedef, tree, *rest):
-  """Like tree_multimap but only maps down through a tree prefix."""
-  if treedef is leaf:
-    return f(tree, *rest)
-  else:
-    node_type = node_types.get(type(tree))
-    if node_type != treedef.node_type:
-      raise TypeError('Mismatch: {} != {}'.format(treedef.node_type, node_type))
-    children, node_data = node_type.to_iterable(tree)
-    if node_data != treedef.node_data:
-      raise TypeError('Mismatch: {} != {}'.format(treedef.node_data, node_data))
-    all_children = [children]
-    for other_tree in rest:
-      other_children, other_node_data = node_type.to_iterable(other_tree)
-      if other_node_data != node_data:
-        raise TypeError('Mismatch: {} != {}'.format(other_node_data, node_data))
-      all_children.append(other_children)
-    all_children = zip(*all_children)
-
-    new_children = [prefix_multimap(f, td, *xs)
-                    for td, xs in zip(treedef.children, all_children)]
-    return node_type.from_iterable(node_data, new_children)
-
-def tree_mimomap(f, tree, *rest):
-  """Map a multi-input tuple-output over pytree args to form a tuple of pytrees.
-
-  Args:
-    f: function that takes `1 + len(rest)` arguments and returns a tuple, to be
-      applied at the corresponding leaves of the pytrees.
-    tree: a pytree to be mapped over, with each leaf providing the first
-      positional argument to `f`.
-    *rest: a tuple of pytrees, each with the same structure as `tree`.
-
-  Returns:
-    A tuple of pytrees with length given by the length of the output of `f` and
-    with each pytree element having the same structure as `tree`.
-  """
-  flat, treedef = tree_flatten(tree)
-  rest_flat, treedefs = unzip2(map(tree_flatten, rest))
-  if not all(td == treedef for td in treedefs):
-    td = next(td for td in treedefs if td != treedef)
-    raise TypeError('Mismatch: {} != {}'.format(treedef, td))
-  out_flat = zip(*map(f, flat, *rest_flat))
-  return tuple(map(partial(tree_unflatten, treedef), out_flat))
 
 
 def tree_reduce(f, tree):
@@ -141,7 +113,7 @@ def process_pytree(process_node, tree):
 
 
 def walk_pytree(f_node, f_leaf, tree):
-  node_type = node_types.get(type(tree))
+  node_type = _get_node_type(tree)
   if node_type:
     children, node_spec = node_type.to_iterable(tree)
     proc_children, child_specs = unzip2([walk_pytree(f_node, f_leaf, child)
@@ -251,6 +223,9 @@ class NodeType(object):
     self.to_iterable = to_iterable
     self.from_iterable = from_iterable
 
+  def __repr__(self):
+    return self.name
+
 node_types = {}
 
 def register_pytree_node(py_type, to_iterable, from_iterable):
@@ -261,3 +236,20 @@ register_pytree_node(tuple, lambda xs: (xs, None), lambda _, xs: tuple(xs))
 register_pytree_node(list, lambda xs: (tuple(xs), None), lambda _, xs: list(xs))
 register_pytree_node(dict, dict_to_iterable, lambda keys, xs: dict(zip(keys, xs)))
 register_pytree_node(type(None), lambda z: ((), None), lambda _, xs: None)
+
+
+# To handle namedtuples, we can't just use the standard table of node_types
+# because every namedtuple creates its own type and thus would require its own
+# entry in the table. Instead we use a heuristic check on the type itself to
+# decide whether it's a namedtuple type, and if so treat it as a pytree node.
+def _get_node_type(maybe_tree):
+  t = type(maybe_tree)
+  return node_types.get(t) or _namedtuple_node(t)
+
+def _namedtuple_node(t):
+  if t.__bases__ == (tuple,) and hasattr(t, '_fields'):
+    return NamedtupleNode
+
+NamedtupleNode = NodeType('namedtuple',
+                          lambda xs: (tuple(xs), type(xs)),
+                          lambda t, xs: t(*xs))

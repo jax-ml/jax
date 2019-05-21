@@ -80,6 +80,8 @@ jax.numpy package
     expm1
     eye
     fabs
+    fftn
+    fix
     flip
     fliplr
     flipud
@@ -192,6 +194,7 @@ jax.numpy package
     tan
     tanh
     tensordot
+    tile
     trace
     transpose
     tri
@@ -217,6 +220,7 @@ jax.numpy.linalg
 
   cholesky
   det
+  eig
   eigh
   inv
   norm

@@ -27,7 +27,7 @@ import scipy as osp
 from absl.testing import absltest
 from absl.testing import parameterized
 
-from jax import jvp
+from jax import jit, grad, jvp, vmap
 from jax import numpy as np
 from jax import scipy as jsp
 from jax import test_util as jtu
@@ -103,6 +103,49 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp.linalg.slogdet, np.linalg.slogdet, args_maker,
                             check_dtypes=True, tol=1e-3)
     self._CompileAndCheck(np.linalg.slogdet, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}".format(
+           jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype, "rng": rng}
+      for shape in [(0, 0), (4, 4), (5, 5), (50, 50), (2, 6, 6)]
+      for dtype in float_types() + complex_types()
+      for rng in [jtu.rand_default()]))
+  # TODO(phawkins): enable when there is an eigendecomposition implementation
+  # for GPU/TPU.
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testEig(self, shape, dtype, rng):
+    self.skipTest("Test disabled until Jaxlib 0.1.15 is released") # TODO(phawkins)
+    n = shape[-1]
+    args_maker = lambda: [rng(shape, dtype)]
+
+    # Norm, adjusted for dimension and type.
+    def norm(x):
+      norm = onp.linalg.norm(x, axis=(-2, -1))
+      return norm / ((n + 1) * onp.finfo(dtype).eps)
+
+    a, = args_maker()
+    w, v = np.linalg.eig(a)
+    self.assertTrue(onp.all(norm(onp.matmul(a, v) - w[..., None, :] * v) < 100))
+
+    self._CompileAndCheck(partial(np.linalg.eig), args_maker,
+                          check_dtypes=True, rtol=1e-3)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype, "rng": rng}
+      for shape in [(1, 1), (4, 4), (5, 5)]
+      for dtype in float_types() + complex_types()
+      for rng in [jtu.rand_default()]))
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testEigBatching(self, shape, dtype, rng):
+    self.skipTest("Test disabled until Jaxlib 0.1.15 is released") # TODO(phawkins)
+    shape = (10,) + shape
+    args = rng(shape, dtype)
+    ws, vs = vmap(np.linalg.eig)(args)
+    self.assertTrue(onp.all(onp.linalg.norm(
+        onp.matmul(args, vs) - ws[..., None, :] * vs) < 1e-3))
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_n={}_lower={}".format(
@@ -197,12 +240,29 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     # Assert rtol eigenvalue delta between perturbed eigenvectors vs new true eigenvalues.
     RTOL=1e-2
     assert onp.max(
-      onp.abs((onp.diag(onp.dot(onp.conj((v+dv).T), onp.dot(new_a,(v+dv)))) - new_w) / new_w)) < RTOL 
+      onp.abs((onp.diag(onp.dot(onp.conj((v+dv).T), onp.dot(new_a,(v+dv)))) - new_w) / new_w)) < RTOL
     # Redundant to above, but also assert rtol for eigenvector property with new true eigenvalues.
     assert onp.max(
       onp.linalg.norm(onp.abs(new_w*(v+dv) - onp.dot(new_a, (v+dv))), axis=0) /
       onp.linalg.norm(onp.abs(new_w*(v+dv)), axis=0)
     ) < RTOL
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype, "rng": rng}
+      for shape in [(1, 1), (4, 4), (5, 5)]
+      for dtype in float_types() + complex_types()
+      for rng in [jtu.rand_default()]))
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testEighBatching(self, shape, dtype, rng):
+    self.skipTest("Test disabled until Jaxlib 0.1.15 is released") # TODO(phawkins)
+    shape = (10,) + shape
+    args = rng(shape, dtype)
+    args = (args + onp.conj(T(args))) / 2
+    ws, vs = vmap(jsp.linalg.eigh)(args)
+    self.assertTrue(onp.all(onp.linalg.norm(
+        onp.matmul(args, vs) - ws[..., None, :] * vs) < 1e-3))
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_ord={}_axis={}_keepdims={}".format(
@@ -284,6 +344,9 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
     self._CompileAndCheck(partial(np.linalg.svd, full_matrices=full_matrices, compute_uv=compute_uv),
                           args_maker, check_dtypes=True)
+    if not full_matrices:
+      svd = partial(np.linalg.svd, full_matrices=False)
+      jtu.check_jvp(svd, partial(jvp, svd), (a,), atol=1e-1 if FLAGS.jax_enable_x64 else jtu.ATOL)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_fullmatrices={}".format(
@@ -340,6 +403,15 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     if not full_matrices and m >= n:
         jtu.check_jvp(np.linalg.qr, partial(jvp, np.linalg.qr), (a,))
 
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testQrBatching(self):
+    shape = (10, 4, 5)
+    dtype = np.float32
+    rng = jtu.rand_default()
+    args = rng(shape, np.float32)
+    qs, rs = vmap(jsp.linalg.qr)(args)
+    self.assertTrue(onp.all(onp.linalg.norm(args - onp.matmul(qs, rs)) < 1e-3))
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_lhs={}_rhs={}".format(
@@ -386,6 +458,17 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                             check_dtypes=True, tol=1e-3)
     self._CompileAndCheck(np.linalg.inv, args_maker, check_dtypes=True)
 
+  # Regression test for incorrect type for eigenvalues of a complex matrix.
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testIssue669(self):
+    def test(x):
+      val, vec = np.linalg.eigh(x)
+      return np.real(np.sum(val))
+
+    grad_test_jc = jit(grad(jit(test)))
+    xc = onp.eye(3, dtype=onp.complex)
+    self.assertAllClose(xc, grad_test_jc(xc), check_dtypes=True)
+
 
 class ScipyLinalgTest(jtu.JaxTestCase):
 
@@ -419,6 +502,21 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
     jtu.check_grads(jsp.linalg.lu, (a,), 2, rtol=1e-1)
 
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testLuBatching(self):
+    shape = (4, 5)
+    dtype = np.float32
+    rng = jtu.rand_default()
+    args = [rng(shape, np.float32) for _ in range(10)]
+    expected = list(osp.linalg.lu(x) for x in args)
+    ps = onp.stack([out[0] for out in expected])
+    ls = onp.stack([out[1] for out in expected])
+    us = onp.stack([out[2] for out in expected])
+
+    actual_ps, actual_ls, actual_us = vmap(jsp.linalg.lu)(np.stack(args))
+    self.assertAllClose(ps, actual_ps, check_dtypes=True)
+    self.assertAllClose(ls, actual_ls, check_dtypes=True)
+    self.assertAllClose(us, actual_us, check_dtypes=True)
 
   # TODO(phawkins): enable when there is an LU implementation for GPU/TPU.
   @parameterized.named_parameters(jtu.cases_from_list(

@@ -19,13 +19,25 @@ from __future__ import print_function
 from functools import partial
 
 from absl.testing import absltest
+from absl.testing import parameterized
 
 import numpy as onp
 import numpy.random as npr
 
 from jax import api
+from jax import core
 from jax import lax
 from jax import test_util as jtu
+import jax.numpy as np  # scan tests use numpy
+
+def scan_reference(f, init, xs):
+  carry = init
+  ys = []
+  for x in xs:
+    (carry, y) = f(carry, x)
+    ys.append(lax.reshape(y, (1,) + onp.shape(y)))
+  ys = lax.concatenate(ys, 0)
+  return carry, ys
 
 
 class LaxControlFlowTest(jtu.JaxTestCase):
@@ -403,6 +415,213 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     lax.cond(True,
             (0, 0), lambda x: (x[0], 0),
             (1, 1), lambda x: x)
+
+  def testIssue649(self):
+    from jax import lax
+
+    def body(x):
+      a, b = x
+      return (7, b + 1)
+
+    def cond(x):
+      a, b = x
+      return b < 10
+
+    out = lax.while_loop(cond, body, (33, 4))
+    self.assertEqual(out, (7, 10))
+
+  @parameterized.named_parameters(
+      {"testcase_name": "jit_scan={}_jit_f={}".format(jit_scan, jit_f),
+       "jit_scan": jit_scan, "jit_f": jit_f}
+      for jit_scan in [False, True]
+      for jit_f in [False, True])
+  def testScanImpl(self, jit_scan, jit_f):
+    d = np.zeros(2)
+    def f(c, a):
+      assert a.shape == (3,)
+      assert c.shape == (4,)
+      b = np.sum(np.sin(a)) + np.sum(np.sin(c)) + np.sum(np.sin(d))
+      c = np.sin(c * b)
+      assert b.shape == ()
+      return c, b
+
+    if jit_f:
+      f = api.jit(f)
+    if jit_scan:
+      scan = api.jit(lax.scan, (0,))
+    else:
+      scan = lax.scan
+
+    as_ = np.ones((5, 3))
+    c = np.ones(4)
+
+    ans =                scan(f, c, as_)
+    expected = scan_reference(f, c, as_)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @parameterized.named_parameters(
+      {"testcase_name": "jit_scan={}_jit_f={}".format(jit_scan, jit_f),
+       "jit_scan": jit_scan, "jit_f": jit_f}
+      for jit_scan in [False, True]
+      for jit_f in [False, True])
+  def testScanJVP(self, jit_scan, jit_f):
+    d = np.zeros(2)
+    def f(c, a):
+      assert a.shape == (3,)
+      assert c.shape == (4,)
+      b = np.sum(np.sin(a)) + np.sum(np.sin(c)) + np.sum(np.sin(d))
+      c = np.sin(c * b)
+      assert b.shape == ()
+      return c, b
+
+    if jit_f:
+      f = api.jit(f)
+    if jit_scan:
+      scan = api.jit(lax.scan, (0,))
+    else:
+      scan = lax.scan
+
+    as_ = np.ones((5, 3))
+    c = np.ones(4)
+
+    ans = api.jvp(lambda c, as_:                scan(f, c, as_), (c, as_), (c, as_))[1]
+    expected = api.jvp(lambda c, as_: scan_reference(f, c, as_), (c, as_), (c, as_))[1]
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @parameterized.named_parameters(
+      {"testcase_name": "jit_scan={}_jit_f={}".format(jit_scan, jit_f),
+       "jit_scan": jit_scan, "jit_f": jit_f}
+      for jit_scan in [False, True]
+      for jit_f in [False, True])
+  def testScanLinearize(self, jit_scan, jit_f):
+    d = np.zeros(2)
+    def f(c, a):
+      assert a.shape == (3,)
+      assert c.shape == (4,)
+      b = np.sum(np.sin(a)) + np.sum(np.sin(c)) + np.sum(np.sin(d))
+      c = np.sin(c * b)
+      assert b.shape == ()
+      return c, b
+
+    if jit_f:
+      f = api.jit(f)
+    if jit_scan:
+      scan = api.jit(lax.scan, (0,))
+    else:
+      scan = lax.scan
+
+    as_ = np.ones((5, 3))
+    c = np.ones(4)
+
+    ans = api.linearize(lambda c, as_:                scan(f, c, as_), c, as_)[1](c, as_)
+    expected = api.linearize(lambda c, as_: scan_reference(f, c, as_), c, as_)[1](c, as_)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @parameterized.named_parameters(
+      {"testcase_name": "jit_scan={}_jit_f={}".format(jit_scan, jit_f),
+       "jit_scan": jit_scan, "jit_f": jit_f}
+      for jit_scan in [False, True]
+      for jit_f in [False, True])
+  def testScanGrad(self, jit_scan, jit_f):
+    d = np.zeros(2)
+    def f(c, a):
+      assert a.shape == (3,)
+      assert c.shape == (4,)
+      b = np.sum(np.sin(a)) + np.sum(np.sin(c)) + np.sum(np.sin(d))
+      c = np.sin(c * b)
+      assert b.shape == ()
+      return c, b
+
+    if jit_f:
+      f = api.jit(f)
+    if jit_scan:
+      scan = api.jit(lax.scan, (0,))
+    else:
+      scan = lax.scan
+
+    as_ = np.ones((5, 3))
+    c = np.ones(4)
+
+    ans = api.grad(lambda c, as_:      list(          scan(f, c, as_))[0].sum())(c, as_)
+    expected = api.grad(lambda c, as_: list(scan_reference(f, c, as_))[0].sum())(c, as_)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testScanRnn(self):
+    r = npr.RandomState(0)
+
+    n_in = 4
+    n_hid = 3
+    n_out = 2
+    length = 5
+
+    W_trans = r.randn(n_hid, n_hid + n_in)
+    W_out = r.randn(n_out, n_hid + n_in)
+    params = W_trans, W_out
+
+    inputs = r.randn(length, n_in)
+    targets = r.randn(length, n_out)
+
+    def step(params, state, input):
+      W_trans, W_out = params
+      stacked = np.concatenate([state, input])
+      output = np.tanh(np.dot(W_out, stacked))
+      next_state = np.tanh(np.dot(W_trans, stacked))
+      return next_state, output
+
+    def rnn(params, inputs):
+      init_state = np.zeros(n_hid)
+      _, outputs = lax.scan(partial(step, params), init_state, inputs)
+      return outputs
+
+    def loss(params, inputs, targets):
+      predictions = rnn(params, inputs)
+      return np.sum((predictions - targets)**2)
+
+    # evaluation doesn't crash
+    loss(params, inputs, targets)
+
+    # jvp evaluation doesn't crash
+    api.jvp(lambda params: loss(params, inputs, targets), (params,), (params,))
+
+    # gradient evaluation doesn't crash
+    api.grad(loss)(params, inputs, targets)
+
+    # gradient is zero in the right place
+    predictions = rnn(params, inputs)
+    ans = api.grad(loss)(params, inputs, predictions)
+    expected = (onp.zeros_like(W_trans), onp.zeros_like(W_out))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testIssue711(self):
+    # Tests reverse-mode differentiation through a scan for which the scanned
+    # function also involves reverse-mode differentiation.
+    # See https://github.com/google/jax/issues/711
+    def harmonic_bond(conf, params):
+      return np.sum(conf * params)
+
+    def minimize_structure(test_params):
+      energy_fn = partial(harmonic_bond, params=test_params)
+      grad_fn = api.grad(energy_fn)
+
+      def apply_carry(carry, _):
+        i, x = carry
+        new_x = x - 0.1 * api.grad(energy_fn)(x)
+        new_carry = (i+1, new_x)
+        return new_carry, _
+
+      x0 = np.array([1., 2., 3.])
+      carry_final, _ = lax.scan(apply_carry, (0, x0), np.zeros((75, 0)))
+      _, x_final = carry_final
+      return x_final
+
+    initial_params = 0.5
+    minimize_structure(initial_params)  # doesn't crash
+
+    def loss(test_params):
+      x_final = minimize_structure(test_params)
+      return np.sum(np.sin(1.0 - x_final))
+
+    api.grad(loss)(0.25)  # doesn't crash
 
 
 if __name__ == '__main__':

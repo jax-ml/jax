@@ -367,6 +367,23 @@ class BatchingTest(jtu.JaxTestCase):
     expected = x[idx]
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testDynamicUpdateSlice(self):
+    x = onp.random.randn(10, 3)
+    y = onp.random.randn(10)
+    ans = vmap(lambda x, y, i: lax.dynamic_update_index_in_dim(x, y, i, axis=0),
+               in_axes=(0, 0, None))(x, y, 1)
+    expected = x.copy()
+    expected[:, 1] = y
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    x = onp.random.randn(3)
+    idx = onp.array([0, 1, 2, 1, 0] * 2)
+    ans = vmap(lambda x, y, i: lax.dynamic_update_index_in_dim(x, y, i, axis=0),
+               in_axes=(None, 0, 0))(x, y, idx)
+    expected = onp.broadcast_to(x, (10, 3)).copy()
+    expected[onp.arange(10), idx] = y
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def testRandom(self):
     seeds = vmap(random.PRNGKey)(onp.arange(10))
     ans = vmap(partial(random.normal, shape=(3, 2)))(seeds)

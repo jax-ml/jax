@@ -71,6 +71,24 @@ def pytree_fun_to_flatjaxtuple_fun(in_trees, *args):
   ans = yield py_args, {}
   yield pytree_to_flatjaxtuple(ans)
 
+@transformation_with_aux
+def flatten_fun(in_tree, *args_flat):
+  py_args, py_kwargs = tree_unflatten(in_tree, args_flat)
+  ans = yield py_args, py_kwargs
+  yield pytree_to_flatjaxtuple(ans)
+
 def pytree_to_flatjaxtuple(pytree):
-  flat_ans, out_tree = tree_flatten(pytree)
-  return pack(flat_ans), out_tree
+  flat, out_tree = tree_flatten(pytree)
+  return pack(flat), out_tree
+
+
+@transformation_with_aux
+def flatten_fun_leafout(in_tree, *args_flat):
+  # like flatten_fun but doesn't pack output leaves
+  py_args, py_kwargs = tree_unflatten(in_tree, args_flat)
+  ans = yield py_args, py_kwargs
+  flat_ans, out_tree = tree_flatten(ans)
+  if out_tree is leaf:
+    yield ans, out_tree
+  else:
+    yield pack(flat_ans), out_tree

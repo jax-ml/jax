@@ -60,19 +60,19 @@ def get_python_bin_path(python_bin_path_flag):
 
 # Bazel
 
-BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/0.24.0/"
+BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/0.24.1/"
 BazelPackage = collections.namedtuple("BazelPackage", ["file", "sha256"])
 bazel_packages = {
     "Linux":
         BazelPackage(
-            file="bazel-0.24.0-linux-x86_64",
+            file="bazel-0.24.1-linux-x86_64",
             sha256=
-            "cf78da6f1b65e9e35f485eab421756c4b5188a705695276843759f3c3586bb0c"),
+            "e18e2877e18a447eb5d94f5efbec375366d82af6443c6a83a93c62657a7b1c32"),
     "Darwin":
         BazelPackage(
-            file="bazel-0.24.0-darwin-x86_64",
+            file="bazel-0.24.1-darwin-x86_64",
             sha256=
-            "adaacec710cae5a217dd967766fe489b8034aa9c0cb44d4eb06813d224489e01"),
+            "cf763752550050d117e03659aaa6ccd6f97da1f983a6029300a497fdaeaaec46"),
 }
 
 
@@ -140,8 +140,8 @@ def get_bazel_path(bazel_path_flag):
   sys.exit(-1)
 
 
-def check_bazel_version(bazel_path, min_version):
-  """Checks Bazel's version is at least `min_version`."""
+def check_bazel_version(bazel_path, min_version, max_version):
+  """Checks Bazel's version is in the range [`min_version`, `max_version`)."""
   version_output = shell([bazel_path, "--bazelrc=/dev/null", "version"])
   match = re.search("Build label: *([0-9\\.]+)[^0-9\\.]", version_output)
   if match is None:
@@ -155,6 +155,12 @@ def check_bazel_version(bazel_path, min_version):
     print("Outdated bazel revision (>= {} required, found {})".format(
         min_version, version))
     sys.exit(0)
+  if max_version is not None:
+    max_ints = [int(x) for x in max_version.split(".")]
+    if actual_ints >= max_ints:
+      print("Please downgrade your bazel revision to build JAX (>= {} and < {}"
+            " required, found {})".format(min_version, max_version, version))
+      sys.exit(0)
 
 
 BAZELRC_TEMPLATE = """
@@ -283,7 +289,7 @@ def main():
 
   # Find a working Bazel.
   bazel_path = get_bazel_path(args.bazel_path)
-  check_bazel_version(bazel_path, "0.24.0")
+  check_bazel_version(bazel_path, min_version="0.24.0", max_version="0.25.0")
   print("Bazel binary path: {}".format(bazel_path))
 
   python_bin_path = get_python_bin_path(args.python_bin_path)
@@ -318,6 +324,7 @@ def main():
     [bazel_path, "run", "--verbose_failures=true"] +
     config_args +
     [":install_xla_in_source_tree", os.getcwd()])
+  shell([bazel_path, "shutdown"])
 
 
 if __name__ == "__main__":

@@ -50,7 +50,7 @@ def expit(x):
   x = asarray(x)
   one = lax._const(x, 1)
   return lax.div(one, lax.add(one, lax.exp(lax.neg(x))))
-ad.defjvp2(expit.primitive, lambda g, ans, x: g * ans * (1 - ans))
+ad.defjvp2(expit.primitive, lambda g, ans, x: g * ans * (lax._const(ans, 1) - ans))
 batching.defvectorized(expit.primitive)
 
 
