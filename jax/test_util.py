@@ -152,21 +152,32 @@ def check_vjp(f, f_vjp, args, atol=ATOL, rtol=RTOL, eps=EPS):
   check_close(ip, ip_expected, atol=atol, rtol=rtol)
 
 
-def check_grads(f, args, order, atol=None, rtol=None, eps=None):
+def check_grads(f, args, order,
+                modes=["fwd", "rev"], atol=None, rtol=None, eps=None):
   args = tuple(args)
-  if order > 1:
-    def f_vjp(*args):
-      out_primal_py, vjp_py = api.vjp(f, *args)
-      return vjp_py(out_primal_py)
+  default_tol = 1e-6 if FLAGS.jax_enable_x64 else 1e-2
+  atol = atol or default_tol
+  rtol = rtol or default_tol
+  eps = eps or EPS
 
-    check_grads(f_vjp, args, order - 1, atol=atol, rtol=rtol, eps=eps)
-  else:
-    default_tol = 1e-6 if FLAGS.jax_enable_x64 else 1e-2
-    atol = atol or default_tol
-    rtol = rtol or default_tol
-    eps = eps or EPS
-    check_jvp(f, partial(api.jvp, f), args, atol, rtol, eps)
-    check_vjp(f, partial(api.vjp, f), args, atol, rtol, eps)
+  _check_jvp = partial(check_jvp, atol=atol, rtol=rtol, eps=eps)
+  _check_vjp = partial(check_vjp, atol=atol, rtol=rtol, eps=eps)
+
+  def _check_grads(f, args, order):
+    if "fwd" in modes:
+      _check_jvp(f, partial(api.jvp, f), args)
+      if order > 1:
+        _check_grads(partial(api.jvp, f), (args, args), order - 1)
+
+    if "rev" in modes:
+      _check_vjp(f, partial(api.vjp, f), args)
+      if order > 1:
+        def f_vjp(*args):
+          out_primal_py, vjp_py = api.vjp(f, *args)
+          return vjp_py(out_primal_py)
+        _check_grads(f_vjp, args, order - 1)
+
+  _check_grads(f, args, order)
 
 
 def skip_on_devices(*disabled_devices):

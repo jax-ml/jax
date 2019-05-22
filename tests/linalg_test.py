@@ -499,8 +499,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("gpu", "tpu")
   def testLuGrad(self, shape, dtype, rng):
     a = rng(shape, dtype)
-
-    jtu.check_grads(jsp.linalg.lu, (a,), 2, rtol=1e-1)
+    jtu.check_grads(jsp.linalg.lu, (a,), 2, atol=5e-2, rtol=1e-1)
 
   @jtu.skip_on_devices("gpu", "tpu")
   def testLuBatching(self):
