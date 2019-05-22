@@ -557,9 +557,6 @@ def map_transpose(primitive, params, jaxpr, consts, freevar_vals, args, ct):
   freevar_cts = tree_map(lambda x: x.sum(0), freevar_cts)
   return cts_out, freevar_cts
 
-def jaxpr_as_fun(jaxpr, consts, *args):
-  return core.eval_jaxpr(jaxpr, consts, (), *args)
-
 def get_nonzeros(tangent):
   if tangent is zero:
     return False
@@ -599,7 +596,7 @@ def jvp_jaxpr(jaxpr, nonzeros, instantiate):
   # jaxpr :: d -> a -> b -> (c1, c2)
   # avals = (d, a, b)
   # f :: d -> a -> b -> (c1, c2)
-  f = wrap_init(partial(jaxpr_as_fun, jaxpr.jaxpr, jaxpr.literals))
+  f = wrap_init(core.jaxpr_as_fun(jaxpr))
   f_jvp, out_nonzeros = f_jvp_traceable(jvp(f, instantiate=instantiate), nonzeros)
   # f_jvp :: (d, d') -> (a, a') -> (b, b') -> ((c1, c1'), (c2, c2'))
   tangent_avals = map(partial(strip_zeros, core.AbstractTuple(()), core.AbstractTuple),

@@ -35,7 +35,7 @@ from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax.interpreters import ad
 from jax.util import partial, unzip2, safe_map, safe_zip
-from jax.tree_util import build_tree, tree_unflatten
+from jax.tree_util import build_tree, tree_unflatten, tree_map
 from jax import ad_util
 
 map = safe_map
@@ -236,6 +236,8 @@ def _while_loop_batching_rule(batched_args, batch_dims, cond_consts,
   # traceable Python functions using `core.eval_jaxpr`. Then we can batch them
   # using `batching.batch_transform` (the transform underlying `api.vmap`). This
   # code also avoids broadcasting `cond_tracer_consts` and `body_tracer_consts`.
+  # TODO(mattjj): Revise this using scan machinery (and fixed-point the loop
+  # carry instead of lifting it all the way!)
   init_val, cond_tracer_consts, body_tracer_consts = batched_args
   init_val_bd, cond_tracer_consts_bd, body_tracer_consts_bd = batch_dims
 
@@ -500,6 +502,8 @@ def _update_arrays(i, aval, xs, x):
     return core.pack(map(partial(_update_arrays, i), aval, xs, x))
   else:
     return lax.dynamic_update_index_in_dim(xs, x[None, ...], i, axis=0)
+
+class FixedPointError(Exception): pass
 
 
 def scan(f, init, xs):
@@ -814,7 +818,6 @@ def _move_stuff_and_add_add(typed_jaxpr):
 def _add_any_eqn(tot, a, b):
   return core.JaxprEqn([a, b], [tot], ad_util.add_jaxvals_p, (), False, False, {})
 
-
 # transpose_jaxpr :: (res -> a -> b) -> (res -> CT b -> CT a)
 def _transpose_jaxpr(jaxpr):
   assert len(jaxpr.in_avals) == 2
@@ -837,7 +840,42 @@ def _make_typed_jaxpr(traceable, in_avals):
   return core.TypedJaxpr(jaxpr, consts, in_avals, out_aval)
 
 
-class FixedPointError(Exception): pass
+def _scan_batching_rule(batched_args, batch_dims, forward, length, jaxpr):
+  consts, init, xs = batched_args
+  consts_bdim, init_bdim, xs_bdim = batch_dims
+
+  sizes = lax._reduce(set.union, map(batching.dimsize, batch_dims, batched_args))
+  size = sizes.pop()
+  assert not sizes
+
+  consts_batched = batching.where_batched(consts_bdim)
+  init_batched = batching.where_batched(init_bdim)
+  xs_batched = batching.where_batched(xs_bdim)
+
+  carry_batched = init_batched
+  for _ in range(1000):
+    which_batched = (consts_batched, carry_batched, xs_batched)
+    jaxpr_batched, batched_out = batching.batch_jaxpr(jaxpr, size, which_batched,
+                                                      instantiate=(carry_batched, False))
+    carry_batched_out, ys_batched = batched_out
+    if carry_batched_out == carry_batched:
+      break
+    else:
+      carry_batched = _binary_lattice_join(carry_batched_out, carry_batched)
+  else:
+    raise FixedPointError
+
+  consts_batched = batching.instantiate_bdim(size, 0, consts_batched, consts_bdim, consts)
+  init_batched = batching.instantiate_bdim(size, 0, carry_batched, init_bdim, init)
+  xs_batched = batching.instantiate_bdim(size, 1, xs_batched, xs_bdim, xs)
+
+  carry_out, ys = scan_p.bind(
+      consts_batched, init_batched, xs_batched,
+      forward=forward, length=length, jaxpr=jaxpr_batched)
+
+  carry_out_bdim = batching.bools_to_bdims(0, carry_batched)
+  ys_bdim = batching.bools_to_bdims(1, ys_batched)
+  return core.pack((carry_out, ys)), (carry_out_bdim, ys_bdim)
 
 
 # We use a custom bind for scan just to add some error checks
@@ -858,3 +896,4 @@ ad.primitive_jvps[scan_p] = _scan_jvp
 ad.primitive_transposes[scan_p] = _scan_transpose
 pe.custom_partial_eval_rules[scan_p] = _scan_partial_eval
 xla.translations[scan_p] = partial(xla.lower_fun, _scan_impl)
+batching.primitive_batchers[scan_p] = _scan_batching_rule
