@@ -187,7 +187,11 @@ def backward_pass(jaxpr, consts, freevar_vals, args, cotangent_in):
 
     if cts_out is zero:
       cts_out = [zero for _ in eqn.invars]
-    map(write_cotangent, eqn.invars, cts_out)
+    if not eqn.restructure:
+      map(write_cotangent, eqn.invars, cts_out)
+    else:
+      [map(write_cotangent, v, ct) if type(v) is tuple
+       else write_cotangent(v, ct) for v, ct in zip(eqn.invars, cts_out)]
 
   freevar_cts = core.pat_fmap(read_cotangent, jaxpr.freevars)
   cotangents_out = core.pat_fmap(lambda v, _: read_cotangent(v), jaxpr.invars, None)

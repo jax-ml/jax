@@ -637,27 +637,16 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         lambda: lax.scan(plus_one, p0, list(range(5))))
 
   def testScanHigherOrderDifferentiation(self):
+    d = 0.75
     def f(c, a):
-      b = np.sin(c * a)
-      c = 0.9 * c
+      b = np.sin(c * np.sum(np.cos(d * a)))
+      c = 0.9 * np.cos(d * np.sum(np.sin(c * a)))
       return c, b
 
-    as_ = np.arange(3.).reshape((3, 1))
+    as_ = np.arange(6.).reshape((3, 2))
     c = 1.
 
-    # pass
-    jtu.check_grads(lambda as_: lax.scan(f, c, as_), (as_,), modes=["fwd"], order=2)
-    jtu.check_grads(lambda c: lax.scan(f, c, as_), (c,), modes=["fwd"], order=2)
-    jtu.check_grads(lambda c: lax.scan(f, c, as_)[0], (c,), modes=["rev"], order=2)
-
-    # fail w/ zero
-    # jtu.check_grads(lambda as_: lax.scan(f, c, as_), (as_,), modes=["rev"], order=2)
-    # jtu.check_grads(lambda as_: lax.scan(f, c, as_), (as_,), modes=["fwd", "rev"], order=1)
-    # jtu.check_grads(lambda as_: lax.scan(f, c, as_), (as_,), modes=["fwd", "rev"], order=2)
-    # jtu.check_grads(lambda c: lax.scan(f, c, as_)[1], (c,), modes=["rev"], order=2)
-
-    # fail w/ nonzero
-    # jtu.check_grads(lambda c: lax.scan(f, c, as_), (c,), modes=["fwd", "rev"], order=2)
+    jtu.check_grads(lambda c: lax.scan(f, c, as_), (c,), modes=["fwd", "rev"], order=2)
 
 
 if __name__ == '__main__':
