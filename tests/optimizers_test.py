@@ -24,8 +24,9 @@ import numpy as onp
 
 import jax.numpy as np
 import jax.test_util as jtu
-from jax import jit, grad
+from jax import jit, grad, jacfwd, jacrev
 from jax import core, tree_util
+from jax import lax
 from jax.experimental import optimizers
 from jax.interpreters import xla
 
@@ -244,7 +245,48 @@ class OptimizerTests(jtu.JaxTestCase):
     expected = 0.9 * norm
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testIssue758(self):
+    # code from https://github.com/google/jax/issues/758
+    # this is more of a scan + jacfwd/jacrev test, but it lives here to use the
+    # optimizers.py code
 
+    def harmonic_bond(conf, params):
+      return np.sum(conf * params)
+
+    opt_init, opt_update, get_params = optimizers.sgd(5e-2)
+
+    x0 = onp.array([0.5], dtype=onp.float64)
+    params = onp.array([0.3], dtype=onp.float64)
+
+    def minimize_structure(test_params):
+      energy_fn = functools.partial(harmonic_bond, params=test_params)
+      grad_fn = grad(energy_fn, argnums=(0,))
+      opt_state = opt_init(x0)
+
+      def apply_carry(carry, _):
+        i, x = carry
+        g = grad_fn(get_params(x))[0]
+        new_state = opt_update(i, g, x)
+        new_carry = (i+1, new_state)
+        return new_carry, _
+
+      carry_final, _ = lax.scan(apply_carry, (0, opt_state), np.zeros((75, 0)))
+      trip, opt_final = carry_final
+      assert trip == 75
+      return opt_final
+
+    initial_params = 0.5
+    minimize_structure(initial_params)
+
+    def loss(test_params):
+      opt_final = minimize_structure(test_params)
+      return 1.0 - get_params(opt_final)[0]
+
+    loss_opt_init, loss_opt_update, loss_get_params = optimizers.sgd(5e-2)
+
+    J1 = jacrev(loss, argnums=(0,))(initial_params)
+    J2 = jacfwd(loss, argnums=(0,))(initial_params)
+    self.assertAllClose(J1, J2, check_dtypes=True)
 
 
 if __name__ == '__main__':

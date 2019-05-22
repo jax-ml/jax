@@ -252,14 +252,16 @@ def reducer_batcher(prim, batched_args, batch_dims, axes, **params):
 
 def add_batched(batched_args, batch_dims):
   bdx, bdy = batch_dims
-  xs, ys = batched_args
-  if bdx == bdy:
-    return add_jaxvals_p.bind(xs, ys), bdx
+  x, y = batched_args
+  x_aval, y_aval = map(get_aval, batched_args)
+  assert core.skip_checks or x_aval == y_aval
+  if bdx == bdy or x_aval == AbstractTuple(()):
+    return add_jaxvals_p.bind(x, y), bdx
   else:
-    sz = (dimsize(bdx, xs) | dimsize(bdy, ys)).pop()
+    sz = (dimsize(bdx, x) | dimsize(bdy, y)).pop()
     move_bdim = partial(bdim_at_front, broadcast_size=sz, force_broadcast=True)
-    xs, ys = map(move_bdim, batched_args, batch_dims)
-    return add_jaxvals_p.bind(xs, ys), 0
+    x, y = map(move_bdim, batched_args, batch_dims)
+    return add_jaxvals_p.bind(x, y), 0
 primitive_batchers[add_jaxvals_p] = add_batched
 
 def zeros_like_batched(batched_args, batch_dims):
@@ -409,23 +411,20 @@ def instantiate_bdim(size, axis, instantiate, bdim, x):
   """
   def _inst(instantiate, bdim, x):
     if type(instantiate) is tuple:
-      assert type(bdim) is tuple  # instantiate at same granularity as bdim
-      return core.pack(map(_inst, instantiate, bdim, x))
-    elif type(instantiate) is bool:
-      if not instantiate:
-        if bdim is None:
-          return x
-        elif type(bdim) is int:
-          return moveaxis2(bdim, axis, x)
-        else:
-          raise TypeError(type(bdim))
+      if type(bdim) is tuple:
+        return core.pack(map(_inst, instantiate, bdim, x))
       else:
-        if bdim is None:
-          return broadcast2(size, axis, x)
-        elif type(bdim) is int:
-          return moveaxis2(bdim, axis, x)
-        else:
-          raise TypeError(type(bdim))
+        bdims = (bdim,) * len(instantiate)
+        return core.pack(map(_inst, instantiate, bdims, x))
+    elif type(instantiate) is bool:
+      if bdim is None:
+        return broadcast2(size, axis, x) if instantiate else x
+      elif type(bdim) is int:
+        return moveaxis2(bdim, axis, x)
+      elif type(bdim) is tuple:
+        return pack(map(partial(_inst, instantiate), bdim, x))
+      else:
+        raise TypeError(type(bdim))
     else:
       raise TypeError(type(instantiate))
 
@@ -449,7 +448,7 @@ def broadcast2(size, axis, x):
   return _broadcast2(size, axis, x, get_aval(x))
 
 def _broadcast2(size, axis, x, aval):
-  if type(aval) is JaxTuple:
+  if type(aval) is AbstractTuple:
     return core.pack(map(partial(_broadcast2, size, axis), x, aval))
   else:
     # see comment at the top of this section
@@ -460,13 +459,13 @@ def _broadcast2(size, axis, x, aval):
 
 def _promote_aval_rank(n, batched, aval):
   assert isinstance(aval, core.AbstractValue)
-  if isinstance(aval, core.AbstractTuple):
+  if isinstance(aval, AbstractTuple):
     t = type(batched)
     if t is tuple:
-      return core.AbstractTuple(map(partial(_promote_aval_rank, n), batched, aval))
+      return AbstractTuple(map(partial(_promote_aval_rank, n), batched, aval))
     elif t is bool:
       if batched:
-        return core.AbstractTuple(map(partial(_promote_aval_rank, n, batched), aval))
+        return AbstractTuple(map(partial(_promote_aval_rank, n, batched), aval))
       else:
         return aval
     else:
