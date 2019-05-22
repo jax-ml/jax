@@ -662,6 +662,7 @@ def scatter(operand, scatter_indices, updates, dimension_numbers):
 
 def index_take(src, idxs, axes):
   indices = concatenate([reshape(i, [i.shape[0], 1]) for i in idxs], 1)
+  indices = indices % onp.array([src.shape[ax] for ax in axes])
   slice_sizes = list(src.shape)
   for ax in axes:
     slice_sizes[ax] = 1

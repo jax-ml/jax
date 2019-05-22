@@ -2038,12 +2038,9 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       ]
       for rng in [jtu.rand_default()]))
   def testIndexTakeGrad(self, shape, dtype, idxs, axes, rng):
-    idxs = tuple(rng(e.shape, e.dtype) for e in idxs)
     src = rng(shape, dtype)
     index_take = lambda src: lax.index_take(src, idxs, axes)
-    check_grads(index_take, (src,), 2, ["fwd"], 1e-2, 1e-2, 1)
-    # TODO(mattjj): fix rev mode failures here!
-    # check_grads(index_take, (src,), 2, ["fwd", "rev"], 1e-2, 1e-2, 1)
+    check_grads(index_take, (src,), 2, ["fwd", "rev"], 1e-2, 1e-2, 1)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_idxs={}_dnums={}_slice_sizes={}".format(
