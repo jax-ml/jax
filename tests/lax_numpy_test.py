@@ -976,6 +976,25 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_inshape={}_outshape={}".format(
+          jtu.format_shape_dtype_string(arg_shape, dtype),
+          jtu.format_shape_dtype_string(out_shape, dtype)),
+       "arg_shape": arg_shape, "out_shape": out_shape, "dtype": dtype,
+       "rng": jtu.rand_default()}
+      for dtype in default_dtypes
+      for arg_shape, out_shape in [
+          ((7, 0), (0, 42, 101)),
+          ((2, 1, 4), (-1,)),
+          ((2, 2, 4), (2, 8))
+      ]))
+  def testReshapeMethod(self, arg_shape, out_shape, dtype, rng):
+    onp_fun = lambda x: onp.reshape(x, out_shape)
+    lnp_fun = lambda x: x.reshape(*out_shape)
+    args_maker = lambda: [rng(arg_shape, dtype)]
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_expanddim={}".format(
           jtu.format_shape_dtype_string(arg_shape, dtype), dim),
        "arg_shape": arg_shape, "dtype": dtype, "dim": dim,
@@ -1521,6 +1540,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testIssue728(self):
     assert lnp.allclose(lnp.eye(5000), onp.eye(5000))
     self.assertEqual(0, onp.sum(lnp.eye(1050) - onp.eye(1050)))
+
+  def testIssue746(self):
+    lnp.arange(12).reshape(3, 4)  # doesn't crash
 
 
 if __name__ == "__main__":

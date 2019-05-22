@@ -649,6 +649,20 @@ def _reshape(a, newshape, order="C"):
   else:
     raise ValueError("Unexpected value for 'order' argument: {}.".format(order))
 
+def _reshape_method(a, *newshape, **kwargs):
+  order = kwargs.pop("order", "C")
+  if len(kwargs) == 1:
+    invalid_kwarg, = kwargs
+    msg = "'{}' is an invalid keyword argument for this function"
+    raise TypeError(msg.format(invalid_kwarg))  # same as NumPy error
+  elif kwargs:
+    invalid_kwargs = "'{}'".format("'".join(kwargs))
+    msg = "{} are invalid keyword arguments for this function"
+    raise TypeError(msg.format(invalid_kwargs))  # different from NumPy error
+  if len(newshape) == 1 and not isinstance(newshape[0], int):
+    newshape = newshape[0]
+  return _reshape(a, newshape, order=order)
+
 
 @_wraps(onp.ravel)
 def ravel(a, order="C"):
@@ -2353,7 +2367,7 @@ for operator_name, function in _operators.items():
 # Forward methods and properties using core.aval_method and core.aval_property:
 for method_name in _nondiff_methods + _diff_methods:
   setattr(ShapedArray, method_name, core.aval_method(globals()[method_name]))
-setattr(ShapedArray, "reshape", core.aval_method(_reshape))
+setattr(ShapedArray, "reshape", core.aval_method(_reshape_method))
 setattr(ShapedArray, "flatten", core.aval_method(ravel))
 setattr(ShapedArray, "T", core.aval_property(transpose))
 setattr(ShapedArray, "real", core.aval_property(real))
@@ -2367,7 +2381,7 @@ for operator_name, function in _operators.items():
   setattr(DeviceArray, "__{}__".format(operator_name), function)
 for method_name in _nondiff_methods + _diff_methods:
   setattr(DeviceArray, method_name, globals()[method_name])
-setattr(DeviceArray, "reshape", _reshape)
+setattr(DeviceArray, "reshape", _reshape_method)
 setattr(DeviceArray, "flatten", ravel)
 setattr(DeviceArray, "T", property(transpose))
 setattr(DeviceArray, "real", property(real))
