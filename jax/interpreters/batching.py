@@ -413,9 +413,11 @@ def instantiate_bdim(size, axis, instantiate, bdim, x):
     if type(instantiate) is tuple:
       if type(bdim) is tuple:
         return core.pack(map(_inst, instantiate, bdim, x))
-      else:
+      elif type(bdim) is int or bdim is None:
         bdims = (bdim,) * len(instantiate)
         return core.pack(map(_inst, instantiate, bdims, x))
+      else:
+        raise TypeError(type(bdim))
     elif type(instantiate) is bool:
       if bdim is None:
         return broadcast2(size, axis, x) if instantiate else x
