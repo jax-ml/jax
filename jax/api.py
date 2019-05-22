@@ -175,13 +175,19 @@ def xla_computation(fun, static_argnums=()):
   @wraps(fun)
   def computation_maker(*args, **kwargs):
     wrapped = lu.wrap_init(fun)
-    jax_kwargs, kwargs_tree = pytree_to_jaxtupletree(kwargs)
     jax_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
-    jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun2(wrapped, kwargs_tree, in_trees)
-    pvals = map(pv_like, (jax_kwargs,) + tuple(jax_args))
-    jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
-    return xla.build_jaxpr(jaxpr, consts, xla.abstractify(jax_kwargs),
-                           *map(xla.abstractify, jax_args))
+    if not kwargs:
+      jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(wrapped, in_trees)
+      pvals = map(pv_like, jax_args)
+      jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
+      return xla.build_jaxpr(jaxpr, consts, *map(xla.abstractify, jax_args))
+    else:
+      jax_kwargs, kwargs_tree = pytree_to_jaxtupletree(kwargs)
+      jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun2(wrapped, kwargs_tree, in_trees)
+      pvals = map(pv_like, (jax_kwargs,) + tuple(jax_args))
+      jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
+      return xla.build_jaxpr(jaxpr, consts, xla.abstractify(jax_kwargs),
+                            *map(xla.abstractify, jax_args))
 
   return computation_maker
 
