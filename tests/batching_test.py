@@ -962,6 +962,15 @@ class BatchingTest(jtu.JaxTestCase):
 
     print(vmap(f)(random.split(random.PRNGKey(0), 2)))  # no crash
 
+  def testEmptyTuples(self):
+    # Ensure there is no crash when a vectorized input contains empty tuples.
+    result = vmap(lambda x, _: x + 1)(onp.array([0, 1]), ())
+    self.assertAllClose(result, onp.array([1, 2]), check_dtypes=False)
+    # Ensure there is no crash when a vectorized output contains empty tuples.
+    result, empty_tuple = vmap(lambda x: (x + 1, ()))(onp.array([0, 1]))
+    self.assertAllClose(result, onp.array([1, 2]), check_dtypes=False)
+    self.assertEqual((), empty_tuple)
+
 
 if __name__ == '__main__':
   absltest.main()

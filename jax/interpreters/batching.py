@@ -291,9 +291,9 @@ def dimsize(dim, x):
 def _dimsize(dim, aval, x):
   if type(aval) is AbstractTuple:
     if type(dim) is tuple:
-      return reduce(set.union, map(_dimsize, dim, aval, x))
+      return reduce(set.union, map(_dimsize, dim, aval, x), set())
     elif type(dim) is int:
-      return reduce(set.union, map(partial(_dimsize, dim), aval, x))
+      return reduce(set.union, map(partial(_dimsize, dim), aval, x), set())
     elif dim is None:
       return set()
     else:
