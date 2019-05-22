@@ -787,6 +787,26 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     ans = api.vmap(lambda c, as_:            lax.scan(f, c, as_), in_axes)(c, as_)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testIssue757(self):
+    # code from https://github.com/google/jax/issues/757
+    def fn(a):
+        return np.cos(a)
+
+    def loop(val):
+        iterations = 10
+        def apply_carry(x, i):
+            return api.grad(fn, argnums=(0,))(x)[0], i
+
+        final_val, _ = lax.scan(
+            apply_carry,
+            val,
+            np.arange(iterations)
+        )
+        return final_val
+
+    arg = 0.5
+    print(api.jit(api.jacfwd(loop, argnums=(0,)))(arg))
+
 
 if __name__ == '__main__':
   absltest.main()

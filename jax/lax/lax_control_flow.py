@@ -19,6 +19,8 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import operator
+
 import numpy as onp
 
 from jax import api
@@ -619,7 +621,7 @@ def _scan_jvp(primals, tangents, forward, length, jaxpr):
     jaxpr_jvp, nonzeros_out = ad.jvp_jaxpr(jaxpr, nonzeros,
                                            instantiate=(carry_nonzeros, False))
     carry_nonzeros_out, ys_nonzeros = nonzeros_out
-    if carry_nonzeros_out == carry_nonzeros:
+    if _binary_lattice_eq(carry_nonzeros_out, carry_nonzeros):
       break
     else:
       carry_nonzeros = _binary_lattice_join(carry_nonzeros_out, carry_nonzeros)
@@ -647,18 +649,22 @@ def _scan_jvp(primals, tangents, forward, length, jaxpr):
   carry_out_dot = ad.put_zeros(ad.TangentTuple, carry_nonzeros_out, carry_out_dot)
   return core.pack((carry_out, ys)), ad.TangentTuple((carry_out_dot, ys_dot))
 
-def _binary_lattice_join(a, b):
+def _binary_lattice_fold(f, pack, a, b):
+  recur = partial(_binary_lattice_fold, f, pack)
   t = (type(a), type(b))
   if t == (tuple, tuple):
-    return tuple(map(_binary_lattice_join, a, b))
+    return pack(map(recur, a, b))
   elif t == (tuple, bool):
-    return tuple(map(_binary_lattice_join, a, (b,) * len(a)))
+    return pack(map(recur, a, (b,) * len(a)))
   elif t == (bool, tuple):
-    return tuple(map(_binary_lattice_join, (a,) * len(b), b))
+    return pack(map(recur, (a,) * len(b), b))
   elif t == (bool, bool):
-    return a or b
+    return f(a, b)
   else:
     raise TypeError((type(a), type(b)))
+
+_binary_lattice_join = partial(_binary_lattice_fold, operator.or_, tuple)
+_binary_lattice_eq = partial(_binary_lattice_fold, operator.eq, all)
 
 
 def _scan_partial_eval(trace, *tracers, **kwargs):
@@ -675,7 +681,7 @@ def _scan_partial_eval(trace, *tracers, **kwargs):
     jaxpr_1, jaxpr_2, sc_out = pe.partial_eval_jaxpr(jaxpr, second_components,
                                                      instantiate=(sc_carry, False))
     sc_carry_out, sc_ys = sc_out
-    if sc_carry_out == sc_carry:
+    if _binary_lattice_eq(sc_carry_out, sc_carry):
       break
     else:
       sc_carry = _binary_lattice_join(sc_carry, sc_carry_out)
@@ -858,7 +864,7 @@ def _scan_batching_rule(batched_args, batch_dims, forward, length, jaxpr):
     jaxpr_batched, batched_out = batching.batch_jaxpr(jaxpr, size, which_batched,
                                                       instantiate=(carry_batched, False))
     carry_batched_out, ys_batched = batched_out
-    if carry_batched_out == carry_batched:
+    if _binary_lattice_eq(carry_batched_out, carry_batched):
       break
     else:
       carry_batched = _binary_lattice_join(carry_batched_out, carry_batched)
