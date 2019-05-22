@@ -646,7 +646,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     as_ = np.arange(6.).reshape((3, 2))
     c = 1.
 
-    jtu.check_grads(lambda c: lax.scan(f, c, as_), (c,), modes=["fwd", "rev"], order=2)
+    jtu.check_grads(lambda c, as_: lax.scan(f, c, as_), (c, as_),
+                    modes=["fwd", "rev"], order=2)
 
 
 if __name__ == '__main__':
