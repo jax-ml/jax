@@ -570,7 +570,11 @@ def scan(f, init, xs):
   jaxpr, pval_out, consts = pe.trace_to_jaxpr(
       f, (carry_pval, x_pval), instantiate=True)
   pv_out, const_out = pval_out
-  assert isinstance(pv_out, core.AbstractTuple) and const_out == core.unit
+  assert isinstance(pv_out, core.AbstractValue) and const_out == core.unit
+  if not isinstance(pv_out, core.AbstractTuple) or len(pv_out) != 2:
+    msg = ("scanned function must have signature `c -> a -> (c, b)`, but the "
+           "output was not a pair: got type {}.")
+    raise TypeError(msg.format(pv_out))
   carry_aval_out, y_aval = pv_out
   if carry_aval != carry_aval_out:
     msg = ("scanned function carry output does not match carry input: "
