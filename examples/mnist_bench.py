@@ -12,11 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A basic MNIST example using JAX with the mini-libraries stax and optimizers.
-
-The mini-library jax.experimental.stax is for neural network building, and
-the mini-library jax.experimentaloptimizers is for first-order stochastic
-optimization.
+"""A basic MNIST example using JAX together with the mini-libraries stax, for
+neural network building, and optimizers, for first-order stochastic optimization.
 """
 
 from __future__ import absolute_import
@@ -57,7 +54,7 @@ if __name__ == "__main__":
   rng = random.PRNGKey(0)
 
   step_size = 0.001
-  num_epochs = 10
+  num_epochs = 3
   batch_size = 128
   momentum_mass = 0.9
 
@@ -75,11 +72,11 @@ if __name__ == "__main__":
         yield train_images[batch_idx], train_labels[batch_idx]
   batches = data_stream()
 
-  opt_init, opt_update, get_params = optimizers.momentum(step_size, mass=momentum_mass)
+  opt_init, opt_update = optimizers.momentum(step_size, mass=momentum_mass)
 
   @jit
   def update(i, opt_state, batch):
-    params = get_params(opt_state)
+    params = optimizers.get_params(opt_state)
     return opt_update(i, grad(loss)(params, batch), opt_state)
 
   _, init_params = init_random_params(rng, (-1, 28 * 28))
@@ -93,7 +90,7 @@ if __name__ == "__main__":
       opt_state = update(next(itercount), opt_state, next(batches))
     epoch_time = time.time() - start_time
 
-    params = get_params(opt_state)
+    params = optimizers.get_params(opt_state)
     train_acc = accuracy(params, (train_images, train_labels))
     test_acc = accuracy(params, (test_images, test_labels))
     print("Epoch {} in {:0.2f} sec".format(epoch, epoch_time))
