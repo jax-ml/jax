@@ -424,14 +424,29 @@ class ShardedDeviceArray(xla.DeviceArray):
     self.ndim, self.size = len(aval.shape), prod(aval.shape)
     self._npy_value = None
 
+  def _ids(self):
+    num_bufs = len(self.device_buffers)
+    assignments = assign_shards_to_replicas(num_bufs, self.shape[0])
+    _, ids = onp.unique(assignments, return_index=True)
+    return ids
+
   @property
   def _value(self):
     if self._npy_value is None:
+      ids = self._ids()
       npy_shards = [buf.to_py() for buf in self.device_buffers]
-      assignments = assign_shards_to_replicas(len(npy_shards), self.shape[0])
-      _, ids = onp.unique(assignments, return_index=True)
       self._npy_value = onp.stack([npy_shards[i] for i in ids])
     return self._npy_value
+
+  def __getitem__(self, idx):
+    if self._npy_value is None and type(idx) is int:
+      # When we don't have a copy of the data on the host, and we're just trying
+      # to extract a simple integer-indexed slice of the logical array, we can
+      # avoid transferring from all the devices and just communicate with one.
+      ids = self._ids()
+      return self.device_buffers[ids[idx]].to_py()
+    else:
+      return super(ShardedDeviceArray, self).__getitem__(idx)
 
 core.pytype_aval_mappings[ShardedDeviceArray] = ConcreteArray
 xla.pytype_aval_mappings[ShardedDeviceArray] = \
