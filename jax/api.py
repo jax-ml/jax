@@ -438,6 +438,23 @@ def _check_scalar(x):
       raise TypeError(msg("had abstract value {}".format(aval)))
 
 
+def _jacfwd(fun, argnums=0, holomorphic=False, return_value=False):
+
+  def jacfun(*args, **kwargs):
+    f = lu.wrap_init(fun, kwargs)
+    f_partial, dyn_args = _argnums_partial(f, argnums, args)
+    holomorphic or tree_map(_check_real_input_jacfwd, dyn_args)
+    pushfwd = partial(jvp, f_partial, dyn_args)
+    y, jac = vmap(pushfwd, out_axes=(None, batching.last))(_std_basis(dyn_args))
+    example_args = dyn_args[0] if isinstance(argnums, int) else dyn_args
+    jac = tree_map(partial(_unravel_array_into_pytree, example_args, -1), jac)
+    if return_value:
+        return jac, y
+    else:
+        return jac
+
+  return jacfun
+
 def jacfwd(fun, argnums=0, holomorphic=False):
   """Jacobian of `fun` evaluated column-by-column using forward-mode AD.
 
@@ -462,17 +479,47 @@ def jacfwd(fun, argnums=0, holomorphic=False):
    [ 0.        , 16.        , -2.        ],
    [ 1.6209068 ,  0.        ,  0.84147096]]
   """
+  return _jacfwd(fun, argnums, holomorphic, return_value=False)
 
-  def jacfun(*args, **kwargs):
-    f = lu.wrap_init(fun, kwargs)
-    f_partial, dyn_args = _argnums_partial(f, argnums, args)
-    holomorphic or tree_map(_check_real_input_jacfwd, dyn_args)
-    pushfwd = partial(jvp, f_partial, dyn_args)
-    y, jac = vmap(pushfwd, out_axes=(None, batching.last))(_std_basis(dyn_args))
-    example_args = dyn_args[0] if isinstance(argnums, int) else dyn_args
-    return tree_map(partial(_unravel_array_into_pytree, example_args, -1), jac)
+def value_and_jacfwd(fun, argnums=0, holomorphic=False):
+  """Creates a function which evaluates both `fun` and the Jacobian of `fun`.
 
-  return jacfun
+  The Jacobian of `fun` is evaluated column-by-column using forward-mode AD.
+
+  Args:
+    fun: Function whose Jacobian is to be computed.
+    argnums: Optional, integer or tuple of integers. Specifies which positional
+      argument(s) to differentiate with respect to (default `0`).
+    holomorphic: Optional, bool. Indicates whether `fun` is promised to be
+      holomorphic. Default False.
+
+  Returns:
+    A function with the same arguments as `fun`, that evaluates both `fun` and
+    the Jacobian of `fun` using forward-mode automatic differentiation, and
+    returns them as a two-element tuple `(val, jac)` where `val` is the
+    value of `fun` and `jac` is the Jacobian of `fun`.
+
+  >>> def f(x):
+  ...   return jax.numpy.asarray(
+  ...     [x[0], 5*x[2], 4*x[1]**2 - 2*x[2], x[2] * jax.numpy.sin(x[0])])
+  ...
+  ... val, jac = jax.value_and_jacfwd(f)(np.array([1., 2., 3.])))
+  ...
+  >>> print(val)
+  [ 1.         15.         10.          2.52441295]
+  >>> print(jac)
+  [[ 1.        ,  0.        ,  0.        ],
+   [ 0.        ,  0.        ,  5.        ],
+   [ 0.        , 16.        , -2.        ],
+   [ 1.6209068 ,  0.        ,  0.84147096]]
+  """
+  jacfun = _jacfwd(fun, argnums, holomorphic, return_value=True)
+
+  def value_and_jacobian_func(*args, **kwargs):
+      jacobian, value = jacfun(*args, **kwargs)
+      return value, jacobian
+
+  return value_and_jacobian_func
 
 def _check_real_input_jacfwd(x):
   aval = core.get_aval(x)
@@ -482,6 +529,25 @@ def _check_real_input_jacfwd(x):
            "{}. For holomorphic differentiation, pass holomorphic=True.")
     raise TypeError(msg.format(aval.dtype.name))
 
+
+def _jacrev(fun, argnums=0, holomorphic=False, return_value=False):
+
+  def jacfun(*args, **kwargs):
+    f = lu.wrap_init(fun, kwargs)
+    f_partial, dyn_args = _argnums_partial(f, argnums, args)
+    y, pullback = vjp(f_partial, *dyn_args)
+    holomorphic or tree_map(_check_real_output_jacrev, y)
+    jac = vmap(pullback)(_std_basis(y))
+    jac = jac[0] if isinstance(argnums, int) else jac
+    example_args = dyn_args[0] if isinstance(argnums, int) else dyn_args
+    jac = tree_map(partial(_unravel_array_into_pytree, y, 0), jac)
+    jac = tree_transpose(tree_structure(example_args), tree_structure(y), jac)
+    if return_value:
+        return jac, y
+    else:
+        return jac
+
+  return jacfun
 
 def jacrev(fun, argnums=0, holomorphic=False):
   """Jacobian of `fun` evaluated row-by-row using reverse-mode AD.
@@ -507,19 +573,50 @@ def jacrev(fun, argnums=0, holomorphic=False):
    [ 0.        , 16.        , -2.        ],
    [ 1.6209068 ,  0.        ,  0.84147096]]
   """
-  def jacfun(*args, **kwargs):
-    f = lu.wrap_init(fun, kwargs)
-    f_partial, dyn_args = _argnums_partial(f, argnums, args)
-    y, pullback = vjp(f_partial, *dyn_args)
-    holomorphic or tree_map(_check_real_output_jacrev, y)
-    jac = vmap(pullback)(_std_basis(y))
-    jac = jac[0] if isinstance(argnums, int) else jac
-    example_args = dyn_args[0] if isinstance(argnums, int) else dyn_args
-    jac = tree_map(partial(_unravel_array_into_pytree, y, 0), jac)
-    return tree_transpose(tree_structure(example_args), tree_structure(y), jac)
+  return _jacrev(fun, argnums, holomorphic, return_value=False)
 
-  return jacfun
+def value_and_jacrev(fun, argnums=0, holomorphic=False):
+  """Creates a function which evaluates both `fun` and the Jacobian of `fun`.
+
+  The Jacobian of `fun` is evaluated row-by-row using reverse-mode AD.
+
+  Args:
+    fun: Function whose value and Jacobian are to be computed.
+    argnums: Optional, integer or tuple of integers. Specifies which positional
+      argument(s) to differentiate with respect to (default `0`).
+    holomorphic: Optional, bool. Indicates whether `fun` is promised to be
+      holomorphic. Default False.
+
+  Returns:
+    A function with the same arguments as `fun`, that evaluates both `fun` and
+    the Jacobian of `fun` using reverse-mode automatic differentiation, and
+    returns them as a two-element tuple `(val, jac)` where `val` is the
+    value of `fun` and `jac` is the Jacobian of `fun`.
+
+  >>> def f(x):
+  ...   return jax.numpy.asarray(
+  ...     [x[0], 5*x[2], 4*x[1]**2 - 2*x[2], x[2] * jax.numpy.sin(x[0])])
+  ...
+  ... val, jac = jax.value_and_jacrev(f)(np.array([1., 2., 3.])))
+  ...
+  >>> print(val)
+  [ 1.         15.         10.          2.52441295]
+  >>> print(jac)
+  [[ 1.        ,  0.        ,  0.        ],
+   [ 0.        ,  0.        ,  5.        ],
+   [ 0.        , 16.        , -2.        ],
+   [ 1.6209068 ,  0.        ,  0.84147096]]
+  """
+  jacfun = _jacrev(fun, argnums, holomorphic, return_value=True)
+
+  def value_and_jacobian_func(*args, **kwargs):
+      jacobian, value = jacfun(*args, **kwargs)
+      return value, jacobian
+
+  return value_and_jacobian_func
+
 jacobian = jacrev
+value_and_jacobian = value_and_jacrev
 
 def _check_real_output_jacrev(x):
   aval = core.get_aval(x)
