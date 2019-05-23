@@ -226,7 +226,7 @@ def _check_shape(name, shape):
     raise ValueError(msg.format(name, shape))
 
 
-def uniform(key, shape, dtype=onp.float64, minval=0., maxval=1.):
+def uniform(key, shape=(), dtype=onp.float64, minval=0., maxval=1.):
   """Sample uniform random values in [minval, maxval) with given shape/dtype.
 
   Args:
@@ -373,7 +373,7 @@ def _shuffle(key, x, axis):
   return x
 
 
-def normal(key, shape, dtype=onp.float64):
+def normal(key, shape=(), dtype=onp.float64):
   """Sample standard normal random values with given shape and float dtype.
 
   Args:
@@ -402,22 +402,25 @@ def bernoulli(key, p=onp.float32(0.5), shape=()):
 
   Args:
     key: a PRNGKey used as the random key.
-    p: optional, an array-like broadcastable to `shape` for the mean of the
-      random variables (default 0.5).
+    p: optional, an array-like of floating dtype broadcastable to `shape` for
+      the mean of the random variables (default 0.5).
     shape: optional, a tuple of nonnegative integers representing the shape
       (default scalar).
 
   Returns:
     A random array with the specified shape and boolean dtype.
   """
+  dtype = xla_bridge.canonicalize_dtype(lax.dtype(p))
+  if not onp.issubdtype(dtype, onp.floating):
+    msg = "bernoulli probability `p` must have a floating dtype, got {}."
+    raise TypeError(msg.format(dtype))
+  p = lax.convert_element_type(p, dtype)
   return _bernoulli(key, p, shape)
 
 @partial(jit, static_argnums=(2,))
 def _bernoulli(key, p, shape):
   _check_shape("bernoulli", shape)
   shape = shape or onp.shape(p)
-  if not onp.issubdtype(onp.float64, lax.dtype(p)):
-    p = lax.convert_element_type(p, onp.float64)
   if onp.shape(p) != shape:
     p = np.broadcast_to(p, shape)
   return lax.lt(uniform(key, shape, lax.dtype(p)), p)
