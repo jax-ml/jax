@@ -53,7 +53,7 @@ def erfc(x):
 
 @_wraps(osp_special.erfinv)
 def erfinv(x):
-    x, = _promote_args_like(osp_special.erf_inv, x)
+    x, = _promote_args_like(osp_special.erfinv, x)
     return lax.erf_inv(x)
 
 
