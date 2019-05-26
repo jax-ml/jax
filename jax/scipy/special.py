@@ -29,31 +29,31 @@ from ..numpy.lax_numpy import (_wraps, asarray, _reduction_dims, _constant_like,
 
 @_wraps(osp_special.gammaln)
 def gammaln(x):
-    x = _promote_args_like(osp_special.gammaln, x)
+    x, = _promote_args_like(osp_special.gammaln, x)
     return lax.lgamma(x)
 
 
 @_wraps(osp_special.digamma)
 def digamma(x):
-    x = _promote_args_like(osp_special.digamma, x)
+    x, = _promote_args_like(osp_special.digamma, x)
     return lax.digamma(x)
 
 
 @_wraps(osp_special.erf)
 def erf(x):
-    x = _promote_args_like(osp_special.erf, x)
+    x, = _promote_args_like(osp_special.erf, x)
     return lax.erf(x)
 
 
 @_wraps(osp_special.erfc)
 def erfc(x):
-    x = _promote_args_like(osp_special.erfc, x)
+    x, = _promote_args_like(osp_special.erfc, x)
     return lax.erfc(x)
 
 
 @_wraps(osp_special.erfinv)
 def erfinv(x):
-    x = _promote_args_like(osp_special.erf_inv, x)
+    x, = _promote_args_like(osp_special.erf_inv, x)
     return lax.erf_inv(x)
 
 
