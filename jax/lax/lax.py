@@ -2809,6 +2809,7 @@ def _scatter_add_transpose_rule(t, operand, scatter_indices, updates,
     operand_t = t
 
   if updates is None:
+    t = ad.instantiate_zeros(operand, t)
     gather_dnums = GatherDimensionNumbers(
       offset_dims=dimension_numbers.update_window_dims,
       collapsed_slice_dims=dimension_numbers.inserted_window_dims,
