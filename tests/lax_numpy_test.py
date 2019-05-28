@@ -30,6 +30,7 @@ import six
 
 import numpy as onp
 
+import jax.ops
 from jax import api
 from jax import lax
 from jax import numpy as lnp
@@ -1551,6 +1552,17 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     expected = onp.array([3.71669453e-165, 4.72999108e-168, 6.01954653e-171,
                           7.66067839e-174], onp.float64)
     self.assertAllClose(f(x), expected, check_dtypes=False)
+
+  def testIssue776(self):
+    """Tests that the scatter-add transpose rule instantiates symbolic zeros."""
+    def f(u):
+      y = jax.ops.index_add(onp.ones(10,), [2, 4, 5], u)
+      # The transpose rule for lax.tie_in returns a symbolic zero for its first
+      # argument.
+      return lax.tie_in(y, 7.)
+
+    self.assertAllClose(onp.zeros(3,), api.grad(f)(onp.ones(3,)),
+                        check_dtypes=True)
 
 
 if __name__ == "__main__":

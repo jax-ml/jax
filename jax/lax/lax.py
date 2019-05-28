@@ -2804,6 +2804,9 @@ def _scatter_add_transpose_rule(t, operand, scatter_indices, updates,
                                 update_jaxpr, update_consts, dimension_numbers,
                                 updates_shape):
   assert scatter_indices is not None
+  if t is ad_util.zero:
+    return [ad_util.zero, None, ad_util.zero]
+
   operand_t = update_t = None
   if operand is None:
     operand_t = t
