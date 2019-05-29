@@ -614,7 +614,5 @@ def jvp_jaxpr(jaxpr, nonzeros, instantiate):
 
 
 primitive_transposes[core.call_p] = partial(call_transpose, call_p)
-primitive_transposes[pe.compiled_call_p] = partial(call_transpose, pe.compiled_call_p)
-
 
 tree_to_jaxtuples = partial(process_pytree, pack)
