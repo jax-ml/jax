@@ -1160,39 +1160,39 @@ def jax_geev(c, a):
     fn = b"lapack_sgeev"
     real = True
     eigvecs_type = np.complex64
-    workspaces = (Shape.array_shape(np.float32, (n, n), (0, 1)),
-                  Shape.array_shape(np.float32, (n, n), (0, 1)),
-                  Shape.array_shape(np.float32, (n, n), (0, 1)))
-    eigvals = (Shape.array_shape(np.float32, batch_dims + (n,),
+    workspaces = (Shape.array_shape(np.dtype(np.float32), (n, n), (0, 1)),
+                  Shape.array_shape(np.dtype(np.float32), (n, n), (0, 1)),
+                  Shape.array_shape(np.dtype(np.float32), (n, n), (0, 1)))
+    eigvals = (Shape.array_shape(np.dtype(np.float32), batch_dims + (n,),
                                  tuple(range(num_bd, -1, -1))),
-               Shape.array_shape(np.float32, batch_dims + (n,),
+               Shape.array_shape(np.dtype(np.float32), batch_dims + (n,),
                                  tuple(range(num_bd, -1, -1))))
   elif dtype == np.float64:
     fn = b"lapack_dgeev"
     real = True
     eigvecs_type = np.complex128
-    workspaces = (Shape.array_shape(np.float64, (n, n), (0, 1)),
-                  Shape.array_shape(np.float64, (n, n), (0, 1)),
-                  Shape.array_shape(np.float64, (n, n), (0, 1)))
-    eigvals = (Shape.array_shape(np.float64, batch_dims + (n,),
+    workspaces = (Shape.array_shape(np.dtype(np.float64), (n, n), (0, 1)),
+                  Shape.array_shape(np.dtype(np.float64), (n, n), (0, 1)),
+                  Shape.array_shape(np.dtype(np.float64), (n, n), (0, 1)))
+    eigvals = (Shape.array_shape(np.dtype(np.float64), batch_dims + (n,),
                                  tuple(range(num_bd, -1, -1))),
-               Shape.array_shape(np.float64, batch_dims + (n,),
+               Shape.array_shape(np.dtype(np.float64), batch_dims + (n,),
                                  tuple(range(num_bd, -1, -1))))
   elif dtype == np.complex64:
     fn = b"lapack_cgeev"
     real = False
     eigvecs_type = np.complex64
-    workspaces = (Shape.array_shape(np.complex64, (n, n), (0, 1)),
-                  Shape.array_shape(np.float32, (2 * n,), (0,)))
-    eigvals = (Shape.array_shape(np.complex64, batch_dims + (n,),
+    workspaces = (Shape.array_shape(np.dtype(np.complex64), (n, n), (0, 1)),
+                  Shape.array_shape(np.dtype(np.float32), (2 * n,), (0,)))
+    eigvals = (Shape.array_shape(np.dtype(np.complex64), batch_dims + (n,),
                                  tuple(range(num_bd, -1, -1))),)
   elif dtype == np.complex128:
     fn = b"lapack_zgeev"
     real = False
     eigvecs_type = np.complex128
-    workspaces = (Shape.array_shape(np.complex128, (n, n), (0, 1)),
-                  Shape.array_shape(np.float64, (2 * n,), (0,)))
-    eigvals = (Shape.array_shape(np.complex128, batch_dims + (n,),
+    workspaces = (Shape.array_shape(np.dtype(np.complex128), (n, n), (0, 1)),
+                  Shape.array_shape(np.dtype(np.float64), (2 * n,), (0,)))
+    eigvals = (Shape.array_shape(np.dtype(np.complex128), batch_dims + (n,),
                                  tuple(range(num_bd, -1, -1))),)
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))

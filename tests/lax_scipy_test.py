@@ -114,11 +114,6 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       for dtypes in CombosWithReplacement(rec.dtypes, rec.nargs)))
   def testScipySpecialFun(self, scipy_op, lax_op, rng, shapes, dtypes,
                           test_autodiff):
-    # TODO(mattjj): unskip this test combination when real() on tpu is improved
-    if (FLAGS.jax_test_dut and FLAGS.jax_test_dut.startswith("tpu")
-        and not shapes[0]):
-      raise SkipTest("real() on scalar not supported on tpu")
-
     args_maker = self._GetArgsMaker(rng, shapes, dtypes)
     args = args_maker()
     self.assertAllClose(scipy_op(*args), lax_op(*args), atol=1e-3, rtol=1e-3,
