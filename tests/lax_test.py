@@ -82,8 +82,7 @@ LAX_OPS = [
     op_record(lax.expm1, 1, float_dtypes + complex_dtypes, jtu.rand_small()),
     op_record(lax.log, 1, float_dtypes + complex_dtypes, jtu.rand_positive()),
     op_record(lax.log1p, 1, float_dtypes + complex_dtypes, jtu.rand_positive()),
-    op_record(lax.tanh, 1, float_dtypes + complex_dtypes, jtu.rand_small(),
-              tol=1e-3),
+    op_record(lax.tanh, 1, float_dtypes + complex_dtypes, jtu.rand_small()),
     op_record(lax.sin, 1, float_dtypes + complex_dtypes, jtu.rand_default()),
     op_record(lax.cos, 1, float_dtypes + complex_dtypes, jtu.rand_default()),
     op_record(lax.atan2, 2, float_dtypes, jtu.rand_default()),
@@ -1405,9 +1404,9 @@ class DeviceConstantTest(jtu.JaxTestCase):
 
 
 GradTestSpec = collections.namedtuple(
-    "GradTestSpec", ["op", "nargs", "order", "rng", "dtypes", "name"])
-def grad_test_spec(op, nargs, order, rng, dtypes, name=None):
-  return GradTestSpec(op, nargs, order, rng, dtypes, name or op.__name__)
+    "GradTestSpec", ["op", "nargs", "order", "rng", "dtypes", "name", "tol"])
+def grad_test_spec(op, nargs, order, rng, dtypes, name=None, tol=None):
+  return GradTestSpec(op, nargs, order, rng, dtypes, name or op.__name__, tol)
 
 LAX_GRAD_OPS = [
     grad_test_spec(lax.neg, nargs=1, order=2, rng=jtu.rand_default(),
@@ -1430,7 +1429,7 @@ LAX_GRAD_OPS = [
     grad_test_spec(lax.log1p, nargs=1, order=2, rng=jtu.rand_positive(),
                    dtypes=[onp.float64, onp.complex64]),
     grad_test_spec(lax.tanh, nargs=1, order=2, rng=jtu.rand_default(),
-                   dtypes=[onp.float64, onp.complex64]),
+                   dtypes=[onp.float64, onp.complex64], tol=1e-5),
     grad_test_spec(lax.sin, nargs=1, order=2, rng=jtu.rand_default(),
                    dtypes=[onp.float64, onp.complex64]),
     grad_test_spec(lax.cos, nargs=1, order=2, rng=jtu.rand_default(),
@@ -1502,16 +1501,16 @@ class LaxAutodiffTest(jtu.JaxTestCase):
         {"testcase_name": jtu.format_test_name_suffix(
             rec.name, shapes, itertools.repeat(dtype)),
          "op": rec.op, "rng": rec.rng, "shapes": shapes, "dtype": dtype,
-         "order": rec.order}
+         "order": rec.order, "tol": rec.tol}
         for shape_group in compatible_shapes
         for shapes in CombosWithReplacement(shape_group, rec.nargs)
         for dtype in rec.dtypes)
       for rec in LAX_GRAD_OPS))
-  def testOpGrad(self, op, rng, shapes, dtype, order):
+  def testOpGrad(self, op, rng, shapes, dtype, order, tol):
     if FLAGS.jax_test_dut and FLAGS.jax_test_dut.startswith("tpu"):
       if op is lax.pow:
         raise SkipTest("pow grad imprecise on tpu")
-    tol = 1e-1 if num_float_bits(dtype) == 32 else None
+    tol = 1e-1 if num_float_bits(dtype) == 32 else tol
     args = tuple(rng(shape, dtype) for shape in shapes)
     check_grads(op, args, order, ["fwd", "rev"], tol, tol)
 
