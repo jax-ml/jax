@@ -31,7 +31,8 @@ from .. import core
 from .. import ad_util
 from .. import tree_util
 from .. import linear_util as lu
-from ..abstract_arrays import ConcreteArray, ShapedArray, make_shaped_array, array_types
+from ..abstract_arrays import (ConcreteArray, ShapedArray, make_shaped_array,
+                               array_types, scalar_types)
 from ..core import AbstractTuple, JaxTuple, pack, valid_jaxtype, Literal
 from ..util import partial, partialmethod, memoize, unzip2, concatenate, safe_map, prod
 from ..lib import xla_bridge as xb
@@ -540,6 +541,8 @@ class DeviceArray(DeviceValue):
     # main use case at the moment is memoization for which false negatives are
     # fine.
     return id(self)
+
+scalar_types.add(DeviceArray)
 
 
 # DeviceValues don't need to be canonicalized because we assume values on the
