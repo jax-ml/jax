@@ -1564,6 +1564,32 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertAllClose(onp.zeros(3,), api.grad(f)(onp.ones(3,)),
                         check_dtypes=True)
 
+  @parameterized.named_parameters(
+      jtu.cases_from_list(
+        {"testcase_name": jtu.format_test_name_suffix(op, [()], [dtype]),
+         "dtype": dtype, "op": op}
+      for dtype in float_dtypes
+      for op in ("sqrt", "arccos", "arcsin", "arctan", "sin", "cos", "tan",
+                 "sinh", "cosh", "tanh", "arccosh", "arcsinh", "arctanh", "exp",
+                 "log", "expm1", "log1p")))
+  def testMathSpecialFloatValues(self, op, dtype):
+    onp_op = getattr(onp, op)
+    lnp_op = getattr(lnp, op)
+    dtype = onp.dtype(xla_bridge.canonicalize_dtype(dtype)).type
+    for x in (onp.nan, -onp.inf, -100., -2. -1., 0., 1., 2., 100., onp.inf,
+              onp.finfo(dtype).max, onp.sqrt(onp.finfo(dtype).max),
+              onp.sqrt(onp.finfo(dtype).max) * 2.):
+      if onp.isnan(x) and op in ("cosh", "expm1", "exp"):
+        # TODO(b/133842876, b/)133842870: these return wrong outputs on CPU for
+        # NaN inputs.
+        continue
+      x = dtype(x)
+      expected = onp_op(x)
+      actual = lnp_op(x)
+      if expected != actual:
+        print(x, expected, actual)
+      self.assertAllClose(expected, actual, check_dtypes=True)
+
 
 if __name__ == "__main__":
   absltest.main()

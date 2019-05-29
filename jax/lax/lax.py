@@ -1182,7 +1182,7 @@ def batch_matmul(lhs, rhs):
 
 def sqrt(x):
   r"""Elementwise square root: :math:`\sqrt{x}`."""
-  return pow(x, _const(x, 0.5))
+  return sqrt_p.bind(x)
 
 def rsqrt(x):
   r"""Elementwise reciprocal square root: :math:`1 \over \sqrt{x}`."""
@@ -1207,8 +1207,11 @@ def asin(x):
 
 def acos(x):
   r"""Elementwise arc cosine: :math:`\mathrm{acos}(x)`."""
-  return mul(_const(x, 2),
-             atan2(sqrt(sub(_const(x, 1), square(x))), add(_const(x, 1), x)))
+  return select(
+      ne(x, _const(x, -1.0)),
+      mul(_const(x, 2),
+          atan2(sqrt(sub(_const(x, 1), square(x))), add(_const(x, 1), x))),
+      full_like(x, onp.pi))
 
 def atan(x):
   r"""Elementwise arc tangent: :math:`\mathrm{atan}(x)`."""
@@ -1216,22 +1219,42 @@ def atan(x):
 
 def sinh(x):
   r"""Elementwise hyperbolic sine: :math:`\mathrm{sinh}(x)`."""
-  return mul(_const(x, 0.5), sub(exp(x), exp(neg(x))))
+  log_half = _const(x, onp.log(0.5))
+  # This formulation avoids overflow when e^x is inf but e^x/2 is not inf.
+  return sub(exp(add(log_half, x)), exp(sub(log_half, x)))
 
 def cosh(x):
   r"""Elementwise hyperbolic cosine: :math:`\mathrm{cosh}(x)`."""
-  return mul(_const(x, 0.5), add(exp(x), exp(neg(x))))
+  log_half = _const(x, onp.log(0.5))
+  # This formulation avoids overflow when e^x is inf but e^x/2 is not inf.
+  return add(exp(add(log_half, x)), exp(sub(log_half, x)))
 
 def asinh(x):
   r"""Elementwise arc hyperbolic sine: :math:`\mathrm{asinh}(x)`."""
   # asinh(x) = log(x + sqrt(x**2 + 1))
-  return log(add(x, sqrt(add(mul(x, x), _const(x, 1)))))
+  result = log(add(x, sqrt(add(mul(x, x), _const(x, 1)))))
+  if onp.issubdtype(_dtype(result), onp.complexfloating):
+    return result
+  a = abs(x)
+  sqrt_max_value = onp.sqrt(onp.finfo(_dtype(x)).max)
+  return select(lt(a, _const(a, sqrt_max_value)),
+                result,
+                mul(sign(x), add(log(a), _const(a, onp.log(2.)))))
 
 def acosh(x):
   r"""Elementwise arc hyperbolic cosine: :math:`\mathrm{acosh}(x)`."""
-  # acosh(x) = log(x + sqrt((x + 1) * (x - 1)))
-  return log(add(x, mul(sqrt(add(x, _const(x, 1))),
-                        sqrt(sub(x, _const(x, 1))))))
+  # acosh(x) = log(x + sqrt((x + 1) * (x - 1))) if x < sqrt_max_value
+  #            log(x) + log(2) otherwise
+  sqrt_max_value = onp.sqrt(onp.finfo(_dtype(x)).max)
+  result = log(add(x, mul(sqrt(add(x, _const(x, 1))),
+                          sqrt(sub(x, _const(x, 1))))))
+  if onp.issubdtype(_dtype(result), onp.complexfloating):
+    return result
+  return select(
+    lt(x, _const(x, sqrt_max_value)),
+    result,
+    add(log(x), _const(x, onp.log(2.))))
+
 
 def atanh(x):
   r"""Elementwise arc hyperbolic tangent: :math:`\mathrm{atanh}(x)`."""
@@ -1487,6 +1510,9 @@ ad.defjvp2(abs_p,
            div(_maybe_real(mul(g, _maybe_conj(x))), _replace_zero(ans)))
 _maybe_conj = lambda x: conj(x) if _iscomplex(x) else x
 _maybe_real = lambda x: real(x) if _iscomplex(x) else x
+
+sqrt_p = standard_unop(_float | _complex, 'sqrt')
+ad.defjvp2(sqrt_p, lambda g, ans, x: _safe_mul(g, div(_const(x, 0.5), ans)))
 
 # TODO handle broadcasting
 pow_p = standard_binop([_float | _complex, _float | _complex], 'pow')

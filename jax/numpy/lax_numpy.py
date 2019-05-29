@@ -274,6 +274,7 @@ tanh = _one_to_one_unop(onp.tanh, lax.tanh, True)
 arcsinh = _one_to_one_unop(onp.arcsinh, lax.asinh, True)
 arccosh = _one_to_one_unop(onp.arccosh, lax.acosh, True)
 arctanh = _one_to_one_unop(onp.arctanh, lax.atanh, True)
+sqrt = _one_to_one_unop(onp.sqrt, lax.sqrt, True)
 
 
 add = _one_to_one_binop(onp.add, lax.add)
@@ -458,12 +459,6 @@ fmod = _wraps(onp.fmod)(lambda x, y: lax.rem(x, y))
 def cbrt(x):
   x, = _promote_to_result_dtype(onp.cbrt, x)
   return lax.sign(x) * power(lax.abs(x), _constant_like(x, 1. / 3.))
-
-
-@_wraps(onp.sqrt)
-def sqrt(x):
-  x, = _promote_to_result_dtype(onp.sqrt, x)
-  return power(x, _constant_like(x, 0.5))
 
 
 @_wraps(onp.square)
