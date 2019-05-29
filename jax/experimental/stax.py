@@ -61,8 +61,8 @@ def fastvar(x, axis, keepdims):
 def randn(stddev=1e-2):
   """An initializer function for random normal coefficients."""
   def init(rng, shape):
-    stddev = lax.convert_element_type(stddev, np.float32)
-    return stddev * random.normal(rng, shape, dtype=np.float32)
+    std = lax.convert_element_type(stddev, np.float32)
+    return std * random.normal(rng, shape, dtype=np.float32)
   return init
 
 def glorot(out_axis=0, in_axis=1, scale=onp.sqrt(2)):
