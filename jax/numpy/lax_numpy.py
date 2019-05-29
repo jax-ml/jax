@@ -131,6 +131,10 @@ ComplexWarning = onp.ComplexWarning
 array_str = onp.array_str
 array_repr = onp.array_repr
 
+save = onp.save
+savez = onp.savez
+load = onp.load
+
 ### utility functions
 
 
