@@ -100,7 +100,23 @@ def jaxpr_as_fun(typed_jaxpr, *args):
 JaxprEqn = namedtuple('JaxprEqn', ['invars', 'outvars', 'primitive',
                                    'bound_subjaxprs', 'restructure',
                                    'destructure', 'params'])
-class Literal(WrapHashably): pass
+class Literal(object):
+  __slots__ = ["val", "hashable"]
+
+  def __init__(self, val):
+    self.val = val
+    try:
+      hash(val)
+    except TypeError:
+      self.hashable = False
+    else:
+      self.hashable = True
+
+  def __hash__(self):
+    return hash(self.val) if self.hashable else id(self.val)
+
+  def __eq__(self, other):
+    return self.val == other.val if self.hashable else self.val is other.val
 
 class Primitive(object):
   def __init__(self, name):
