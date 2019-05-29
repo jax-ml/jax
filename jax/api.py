@@ -296,14 +296,17 @@ def value_and_grad(fun, argnums=0, has_aux=False, holomorphic=False):
   return value_and_grad_f
 
 def _check_scalar(x):
-  msg = "Gradient only defined for scalar-output functions. Output was: {}".format
+  msg = "Gradient only defined for scalar-output functions. Output {}.".format
   try:
     aval = core.get_aval(x)
   except TypeError:
-    raise TypeError(msg(x))
+    raise TypeError(msg("was {}".format(x)))
   else:
-    if not (isinstance(aval, ShapedArray) and aval.shape == ()):
-      raise TypeError(msg(aval))
+    if isinstance(aval, ShapedArray):
+      if aval.shape != ():
+        raise TypeError(msg("had shape: {}".format(aval.shape)))
+    else:
+      raise TypeError(msg("had abstract value {}".format(aval)))
 
 
 def jacfwd(fun, argnums=0, holomorphic=False):
