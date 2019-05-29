@@ -33,7 +33,7 @@ import matplotlib.pyplot as plt
 FLAGS = flags.FLAGS
 
 
-def main():
+def main(unused_argv):
 
   numpts = 7
   key = random.PRNGKey(0)
