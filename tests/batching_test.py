@@ -31,6 +31,7 @@ from jax.api import vmap
 from jax.core import unit
 from jax.interpreters import partial_eval as pe
 from jax.util import partial, curry
+import jax.ops
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -910,6 +911,11 @@ class BatchingTest(jtu.JaxTestCase):
     result, empty_tuple = vmap(lambda x: (x + 1, ()))(onp.array([0, 1]))
     self.assertAllClose(result, onp.array([1, 2]), check_dtypes=False)
     self.assertEqual((), empty_tuple)
+
+  def testIndexAddBatchedIndexesOnly(self):
+    f = lambda x, idx, y: jax.ops.index_add(x, jax.ops.index[idx], y)
+    result = vmap(f, (None, 0, None))(onp.zeros((10,)), onp.arange(10,), 1.)
+    self.assertAllClose(result, onp.eye(10), check_dtypes=False)
 
 
 if __name__ == '__main__':
