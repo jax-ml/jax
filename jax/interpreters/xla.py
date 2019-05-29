@@ -47,15 +47,15 @@ flags.DEFINE_bool('jax_debug_nans',
                   strtobool(os.getenv('JAX_DEBUG_NANS', "False")),
                   'Add nan checks to every operation.')
 
-def apply_primitive(prim, *args, **kwargs):
+def apply_primitive(prim, *args, **params):
   abstract_args = map(abstractify, args)
-  compiled_fun = xla_primitive_callable(prim, *abstract_args, **kwargs)
+  compiled_fun = xla_primitive_callable(prim, *abstract_args, **params)
   return compiled_fun(*args)
 
 @memoize
-def xla_primitive_callable(prim, *abstract_args, **kwargs):
+def xla_primitive_callable(prim, *abstract_args, **params):
   shapes = tuple(map(xla_shape, abstract_args))
-  built_c = primitive_computation(prim, *shapes, **kwargs)
+  built_c = primitive_computation(prim, *shapes, **params)
   result_shape = xla_shape_to_result_shape(built_c.GetReturnValueShape())
   handle_result = result_handler(result_shape)
   compiled = built_c.Compile(shapes, xb.get_compile_options(),
@@ -63,15 +63,15 @@ def xla_primitive_callable(prim, *abstract_args, **kwargs):
   return partial(execute_compiled_primitive, prim.name, compiled, handle_result)
 
 @memoize
-def primitive_computation(prim, *shapes, **kwargs):
+def primitive_computation(prim, *shapes, **params):
   c = xb.make_computation_builder("primitive_computation")
   xla_args = map(c.ParameterWithShape, shapes)
-  xla_result = translation_rule(prim)(c, *xla_args, **kwargs)
+  xla_result = translation_rule(prim)(c, *xla_args, **params)
   try:
     return c.Build()
   except RuntimeError as e:
     # try for a better error message by using the abstract_eval checks
-    prim.abstract_eval(*map(aval_from_xla_shape, shapes), **kwargs)
+    prim.abstract_eval(*map(aval_from_xla_shape, shapes), **params)
     raise e
 
 def aval_from_xla_shape(shape):
