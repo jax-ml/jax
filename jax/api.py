@@ -303,7 +303,7 @@ def _check_scalar(x):
     raise TypeError(msg(x))
   else:
     if not (isinstance(aval, ShapedArray) and aval.shape == ()):
-      raise TypeError(msg(x))
+      raise TypeError(msg(aval))
 
 
 def jacfwd(fun, argnums=0, holomorphic=False):
