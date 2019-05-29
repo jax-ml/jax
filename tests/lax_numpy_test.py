@@ -1586,8 +1586,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       x = dtype(x)
       expected = onp_op(x)
       actual = lnp_op(x)
-      if expected != actual:
-        print(x, expected, actual)
       self.assertAllClose(expected, actual, check_dtypes=True)
 
 
