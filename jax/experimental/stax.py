@@ -60,8 +60,8 @@ def fastvar(x, axis, keepdims):
 
 def randn(stddev=1e-2):
   """An initializer function for random normal coefficients."""
-  stddev = lax.convert_element_type(stddev, np.float32)
   def init(rng, shape):
+    stddev = lax.convert_element_type(stddev, np.float32)
     return stddev * random.normal(rng, shape, dtype=np.float32)
   return init
 
