@@ -2860,8 +2860,10 @@ def _scatter_batching_rule(
   operand_bdim = 0
 
   if scatter_indices_bdim is not None and updates_bdim is None:
-    raise NotImplementedError  # TODO(mattjj,phawkins)
-  elif scatter_indices_bdim is None and updates_bdim is not None:
+    updates = broadcast(updates, (size,))
+    updates_bdim = 0
+
+  if scatter_indices_bdim is None and updates_bdim is not None:
     updates = batching.move_dim_to_front(updates, updates_bdim)
     inserted_window_dims = tuple(onp.add(1, dimension_numbers.inserted_window_dims))
     update_window_dims = (0,) + tuple(onp.add(1, dimension_numbers.update_window_dims))
