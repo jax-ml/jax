@@ -517,21 +517,6 @@ def eqn_parents(eqn):
     return list(it.chain(invars, *subjaxpr_tracers))
 
 
-def compiled_call_impl(fun, *args):
-  with new_master(JaxprTrace, True) as master:
-    pvals = map(abstractify, args)
-    jaxpr, (pval, consts, env) = trace_to_subjaxpr(fun, master, False).call_wrapped(pvals)
-    jaxpr_ans = eval_jaxpr_raw(jaxpr, consts, env, *args)
-    ans = merge_pvals(jaxpr_ans, pval)
-    del master, pvals, pval, consts, env, jaxpr_ans, jaxpr
-    return ans
-
-compiled_call_p = Primitive('compiled_call')
-compiled_call = partial(core.call_bind, compiled_call_p)
-compiled_call_p.def_custom_bind(compiled_call)
-compiled_call_p.def_impl(compiled_call_impl)
-
-
 def unzip_tracer_tuple(pvals):
   pvs, consts = unzip2(pvals)
   return PartialVal((JaxprTracerTuple(pvs), pack(consts)))
