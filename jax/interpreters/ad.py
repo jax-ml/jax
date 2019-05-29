@@ -293,7 +293,7 @@ class JVPTrace(Trace):
         xt = TangentTuple((zero,) * len(yt))
       elif yt is zero:
         yt = TangentTuple((zero,) * len(xt))
-      return TangentTuple(map(self.join), xt, yt)
+      return TangentTuple(map(self.join, xt, yt))
     elif xt is zero and yt is zero:
       return xt, yt
     else:
