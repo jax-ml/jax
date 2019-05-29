@@ -842,16 +842,6 @@ def sort_key_val(keys, values, dimension=-1):
   return sorted_keys, sorted_values
 
 
-class _OpaqueParam(object):
-  """Wrapper that hashes on its identity, instead of its contents.
-
-  Used to pass unhashable parameters as primitive attributes."""
-  __slots__ = ["val"]
-
-  def __init__(self, val):
-    self.val = val
-
-
 def tie_in(x, y):
   return tie_in_p.bind(x, y)
 

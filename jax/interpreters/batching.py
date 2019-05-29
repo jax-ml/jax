@@ -75,7 +75,7 @@ class BatchTracer(Tracer):
   __slots__ = ['val', 'batch_dim']
 
   def __init__(self, trace, val, batch_dim):
-    assert core.skip_checks or type(batch_dim) in (int, tuple)
+    assert core.skip_checks or type(batch_dim) in (int, tuple, type(None))
     self.trace = trace
     self.val = val
     self.batch_dim = batch_dim
@@ -481,7 +481,7 @@ def _promote_aval_rank(n, batched, aval):
 def batch_jaxpr(jaxpr, size, is_batched, instantiate):
   f = wrap_init(core.jaxpr_as_fun(jaxpr))
   f_batched, where_out_batched = batched_traceable(f, size, is_batched, instantiate)
-  in_avals = map(partial(_promote_aval_rank, size), is_batched, jaxpr.in_avals)
+  in_avals = tuple(map(partial(_promote_aval_rank, size), is_batched, jaxpr.in_avals))
   in_pvals = [pe.PartialVal((aval, core.unit)) for aval in in_avals]
   jaxpr_out, pval_out, literals_out = pe.trace_to_jaxpr(
       f_batched, in_pvals, instantiate=True)

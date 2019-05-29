@@ -787,6 +787,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     ans = api.vmap(lambda c, as_:            lax.scan(f, c, as_), in_axes)(c, as_)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  # TODO(mattjj, dougalm): fix this test when skip_checks is False
   def testIssue757(self):
     # code from https://github.com/google/jax/issues/757
     def fn(a):
