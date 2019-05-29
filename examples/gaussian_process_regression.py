@@ -20,77 +20,98 @@ from __future__ import division
 from __future__ import print_function
 from absl import app
 from absl import flags
+from functools import partial
 from jax import grad
 from jax import jit
+from jax import vmap
 from jax.config import config
 import jax.numpy as np
 import jax.random as random
 import jax.scipy as scipy
 import matplotlib.pyplot as plt
 
-
 FLAGS = flags.FLAGS
 
 
-def main(unused_argv):
+def main():
 
-  numpts = 25
+  numpts = 7
   key = random.PRNGKey(0)
   eye = np.eye(numpts)
 
-  def sqdist(x1, x2):
-    return (-2. * np.dot(x1, x2.T) + np.sum(x2**2, axis=1) +
-            np.sum(x1**2, axis=1)[:, None])
+  def cov_map(cov_func, xs, xs2=None):
+    """Compute a covariance matrix from a covariance function and data points.
 
-  def cov(params, x1, x2):
-    x1 = x1/np.exp(params[2])
-    x2 = x2/np.exp(params[2])
-    return np.exp(params[0]) * np.exp(-sqdist(x1, x2)/(2. * np.exp(params[1])))
+    Args:
+      cov_func: callable function, maps pairs of data points to scalars.
+      xs: array of data points, stacked along the leading dimension.
+    Returns:
+      A 2d array `a` such that `a[i, j] = cov_func(xs[i], xs[j])`.
+    """
+    if xs2 is None:
+      return vmap(lambda x: vmap(lambda y: cov_func(x, y))(xs))(xs)
+    else:
+      return vmap(lambda x: vmap(lambda y: cov_func(x, y))(xs))(xs2).T
 
-  def marginal_likelihood(params, x, y):
-    train_cov = cov(params, x, x) + eye * 1e-6
-    chol = np.linalg.cholesky(train_cov + eye * 1e-4).T
-    inv_chol = scipy.linalg.solve_triangular(chol, eye, lower=True)
-    inv_train_cov = np.dot(inv_chol.T, inv_chol)
-    ml = np.sum(
-        -0.5 * np.dot(y.T, np.dot(inv_train_cov, y)) -
-        0.5 * np.sum(2.0 * np.log(np.dot(inv_chol * eye, np.ones(
-            (numpts, 1))))) - (numpts / 2.) * np.log(2. * 3.1415))
-    return ml
-  grad_fun = jit(grad(marginal_likelihood))
+  def softplus(x):
+    return np.logaddexp(x, 0.)
 
-  def predict(params, x, y, xtest):
-    train_cov = cov(params, x, x) + eye * 1e-6
-    chol = np.linalg.cholesky(train_cov + eye * 1e-4)
-    inv_chol = scipy.linalg.solve_triangular(chol, eye, lower=True)
-    inv_train_cov = np.dot(inv_chol.T, inv_chol)
-    cross_cov = cov(params, x, xtest)
-    mu = np.dot(cross_cov.T, np.dot(inv_train_cov, y))
-    var = (cov(params, xtest, xtest) -
-           np.dot(cross_cov.T, np.dot(inv_train_cov, cross_cov)))
+  def exp_quadratic(x1, x2):
+    return np.exp(-np.sum((x1 - x2)**2))
+
+  def gp(params, x, y, xtest=None, compute_marginal_likelihood=False):
+    noise = softplus(params['noise'])
+    amp = softplus(params['amplitude'])
+    ls = softplus(params['lengthscale'])
+    ymean = np.mean(y)
+    y = y - ymean
+    x = x / ls
+    train_cov = amp*cov_map(exp_quadratic, x) + eye * (noise + 1e-6)
+    chol = scipy.linalg.cholesky(train_cov, lower=True)
+    kinvy = scipy.linalg.solve_triangular(
+        chol.T, scipy.linalg.solve_triangular(chol, y, lower=True))
+    if compute_marginal_likelihood:
+      log2pi = np.log(2. * 3.1415)
+      ml = np.sum(
+          -0.5 * np.dot(y.T, kinvy) -
+          np.sum(np.log(np.diag(chol))) -
+          (numpts / 2.) * log2pi)
+      ml -= np.sum(-0.5 * np.log(2 * 3.1415) - np.log(amp)**2) # lognormal prior
+      return -ml
+
+    if xtest is not None:
+      xtest = xtest / ls
+    cross_cov = amp*cov_map(exp_quadratic, x, xtest)
+    mu = np.dot(cross_cov.T, kinvy) + ymean
+    v = scipy.linalg.solve_triangular(chol, cross_cov, lower=True)
+    var = (amp * cov_map(exp_quadratic, xtest) - np.dot(v.T, v))
     return mu, var
 
+  marginal_likelihood = partial(gp, compute_marginal_likelihood=True)
+  predict = partial(gp, compute_marginal_likelihood=False)
+  grad_fun = jit(grad(marginal_likelihood))
+
   # Covariance hyperparameters to be learned
-  params = [np.zeros((1, 1)),  # Amplitude
-            np.zeros((1, 1)),  # Bandwidth
-            np.zeros((1, 1))]  # Length-scale
-  momentums = [p * 0. for p in params]
-  scales = [p * 0. + 1. for p in params]
+  params = {"amplitude": np.zeros((1, 1)),
+            "noise": np.zeros((1, 1)) - 5.,
+            "lengthscale": np.zeros((1, 1))}
+  momentums = dict([(k, p * 0.) for k, p in params.items()])
+  scales = dict([(k, p * 0. + 1.) for k, p in params.items()])
 
   lr = 0.01  # Learning rate
   def train_step(params, momentums, scales, x, y):
     grads = grad_fun(params, x, y)
-    for i in range(len(params)):
-      momentums[i] = 0.9 * momentums[i] + 0.1 * grads[i][0]
-      scales[i] = 0.9 * scales[i] + 0.1 * grads[i][0]**2
-      params[i] -= lr * momentums[i]/np.sqrt(scales[i] + 1e-5)
+    for k in (params):
+      momentums[k] = 0.9 * momentums[k] + 0.1 * grads[k][0]
+      scales[k] = 0.9 * scales[k] + 0.1 * grads[k][0]**2
+      params[k] -= lr * momentums[k]/np.sqrt(scales[k] + 1e-5)
     return params, momentums, scales
 
   # Create a really simple toy 1D function
-  y_fun = lambda x: np.sin(x) + 0.01 * random.normal(key, shape=(x.shape[0], 1))
-  x = np.linspace(1., 4., numpts)[:, None]
+  y_fun = lambda x: np.sin(x) + 0.1 * random.normal(key, shape=(x.shape[0], 1))
+  x = (random.uniform(key, shape=(numpts, 1)) * 4.) + 1
   y = y_fun(x)
-  xtest = np.linspace(0, 5., 200)[:, None]
+  xtest = np.linspace(0, 6., 200)[:, None]
   ytest = y_fun(xtest)
 
   for i in range(1000):
@@ -99,14 +120,13 @@ def main(unused_argv):
       ml = marginal_likelihood(params, x, y)
       print("Step: %d, neg marginal likelihood: %f" % (i, ml))
 
-  print([i.copy() for i in params])
+  print(params)
   mu, var = predict(params, x, y, xtest)
   std = np.sqrt(np.diag(var))
   plt.plot(x, y, "k.")
   plt.plot(xtest, mu)
   plt.fill_between(xtest.flatten(),
-                   mu.flatten() - std * 2, mu.flatten() + std * 2)
-
+                    mu.flatten() - std * 2, mu.flatten() + std * 2)
 
 if __name__ == "__main__":
   config.config_with_absl()
