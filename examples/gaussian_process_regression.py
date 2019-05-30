@@ -56,6 +56,9 @@ def main(unused_argv):
   def softplus(x):
     return np.logaddexp(x, 0.)
 
+  # Note, writing out the vectorized form of the identity
+  # ||x-y||^2 = <x-y,x-y> = ||x||^2 + ||y||^2 - 2<x,y>
+  # for computing squared distances would be more efficient (but less succinct).
   def exp_quadratic(x1, x2):
     return np.exp(-np.sum((x1 - x2)**2))
 
