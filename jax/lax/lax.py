@@ -72,9 +72,7 @@ def broadcast_shapes(*shapes):
   return tuple(result_shape)
 
 
-def identity(x):
-  r"""Identity function: :math:`x`."""
-  return x
+def _identity(x): return x
 
 ### traceables
 
@@ -1334,7 +1332,7 @@ def unop(result_dtype, accepted_dtypes, name):
   batching.defvectorized(prim)
   parallel.defvectorized(prim)
   return prim
-standard_unop = partial(unop, identity)
+standard_unop = partial(unop, _identity)
 _attrgetter = lambda name: lambda x, **kwargs: getattr(x, name)
 
 
@@ -1514,7 +1512,6 @@ _maybe_real = lambda x: real(x) if _iscomplex(x) else x
 sqrt_p = standard_unop(_float | _complex, 'sqrt')
 ad.defjvp2(sqrt_p, lambda g, ans, x: _safe_mul(g, div(_const(x, 0.5), ans)))
 
-# TODO handle broadcasting
 pow_p = standard_binop([_float | _complex, _float | _complex], 'pow')
 
 def _pow_jvp_lhs(g, x, y):
@@ -2582,7 +2579,6 @@ ad.primitive_transposes[dynamic_update_slice_p] = \
     _dynamic_update_slice_transpose_rule
 batching.primitive_batchers[dynamic_update_slice_p] = \
     _dynamic_update_slice_batching_rule
-
 
 
 class GatherDimensionNumbers(collections.namedtuple(
@@ -3733,7 +3729,7 @@ for _t in [_FilledConstant, _IotaConstant, _EyeConstant]:
   xla_bridge.register_constant_handler(_t, _t.constant_handler)
   core.pytype_aval_mappings[_t] = ConcreteArray
   xla.pytype_aval_mappings[_t] = xla.pytype_aval_mappings[xla.DeviceArray]
-  xla.canonicalize_dtype_handlers[_t] = identity
+  xla.canonicalize_dtype_handlers[_t] = _identity
   batching.pytype_aval_mappings[_t] = make_shaped_array
   ad_util.jaxval_adders[_t] = add
   ad_util.jaxval_zeros_likers[_t] = zeros_like_array
@@ -3752,8 +3748,8 @@ def _stop_gradient_batch_rule(batched_args, batch_dims):
   return stop_gradient(x), dim
 
 stop_gradient_p = Primitive('stop_gradient')
-stop_gradient_p.def_impl(identity)
-stop_gradient_p.def_abstract_eval(identity)
+stop_gradient_p.def_impl(_identity)
+stop_gradient_p.def_abstract_eval(_identity)
 xla.translations[stop_gradient_p] = lambda c, x: x
 ad.primitive_jvps[stop_gradient_p] = _stop_gradient_jvp_rule
 batching.primitive_batchers[stop_gradient_p] = _stop_gradient_batch_rule

@@ -408,6 +408,55 @@ class PmapTest(jtu.JaxTestCase):
         ".*requires.*replicas",
         lambda: f(x))
 
+  def testPmapConstant(self):
+    device_count = xla_bridge.device_count()
+    f = pmap(lambda x: 3)
+    x = np.arange(device_count)
+    ans = f(x)
+    expected = onp.repeat(3, device_count)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testCollectiveConstant(self):
+    device_count = xla_bridge.device_count()
+    f = pmap(lambda x: lax.psum(1, 'i'), 'i')
+    x = np.arange(device_count)
+    ans = f(x)
+    expected = onp.repeat(device_count, device_count)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testCollectiveConstantNested(self):
+    device_count = xla_bridge.device_count()
+
+    @partial(pmap, axis_name='i')
+    def f(x):
+      @partial(pmap, axis_name='j')
+      def g(y):
+        a = lax.psum(1, 'i')
+        b = lax.psum(1, 'j')
+        c = lax.psum(1, ('i', 'j'))
+        return a, b, c
+      return g(x)
+
+    shape = (device_count, 1, 4)
+    x = np.arange(prod(shape)).reshape(shape)
+    a, b, c = f(x)
+
+    self.assertEqual(a.shape, shape[:-1])
+    self.assertEqual(b.shape, shape[:-1])
+    self.assertEqual(c.shape, shape[:-1])
+
+    self.assertEqual(a.ravel()[0], device_count)
+    self.assertEqual(b.ravel()[0], 1)
+    self.assertEqual(c.ravel()[0], device_count * 1)
+
+  def testAxisIndex(self):
+    device_count = xla_bridge.device_count()
+    f = pmap(lambda x: x + pxla.axis_index('i'), 'i')
+    x = np.ones(device_count)
+    ans = f(x)
+    expected = 1 + onp.arange(device_count)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
 
 if __name__ == '__main__':
   absltest.main()
