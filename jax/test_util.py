@@ -151,6 +151,22 @@ def check_vjp(f, f_vjp, args, atol=ATOL, rtol=RTOL, eps=EPS):
   ip_expected = inner_prod(tangent_out, cotangent)
   check_close(ip, ip_expected, atol=atol, rtol=rtol)
 
+def check_jvps(f, args, order, atol=none, rtol=none, eps=none):
+  args = tuple(args)
+  rng = onp.random.randomstate(0)
+  tangent = tree_map(partial(rand_like, rng), args)
+  if order > 1:
+    def f_jvp(*args):
+      out_primal_py, jvp_py = api.jvp(f, args, tangent)
+      return jvp_py
+
+    check_jvps(f_jvp, args, order - 1, atol=atol, rtol=rtol, eps=eps)
+  else:
+    default_tol = 1e-6 if flags.jax_enable_x64 else 1e-2
+    atol = atol or default_tol
+    rtol = rtol or default_tol
+    eps = eps or eps
+    check_jvp(f, partial(api.jvp, f), args, atol, rtol, eps)
 
 def check_grads(f, args, order,
                 modes=["fwd", "rev"], atol=None, rtol=None, eps=None):
