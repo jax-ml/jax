@@ -571,6 +571,12 @@ class APITest(jtu.JaxTestCase):
     self.assertIsInstance(x, DeviceArray)
     repr(x)  # doesn't crash
 
+  def test_devicearray_delete(self):
+    x = device_put(1.)
+    x.delete()
+    jtu.check_raises_regexp(lambda: repr(x), ValueError,
+                            "Cannot fetch the value of a deleted DeviceArray.")
+
   def test_namedtuple_transparency(self):
     # See https://github.com/google/jax/issues/446
     Point = collections.namedtuple("Point", ["x", "y"])
@@ -586,7 +592,6 @@ class APITest(jtu.JaxTestCase):
 
     f_jit = api.jit(f)
     self.assertAllClose(f(pt), f_jit(pt), check_dtypes=False)
-
 
 if __name__ == '__main__':
   absltest.main()

@@ -469,6 +469,8 @@ class DeviceArray(DeviceValue):
   # TODO make device_buffer a property, make the _npy_value writeable, invalidate
   @property
   def _value(self):
+    if self.device_buffer is None:
+      raise ValueError("Cannot fetch the value of a deleted DeviceArray.")
     if self._npy_value is None:
       self._npy_value = self.device_buffer.to_py()
       self._npy_value.flags.writeable = False
@@ -477,6 +479,21 @@ class DeviceArray(DeviceValue):
   def copy(self):
     """Returns an ndarray (backed by host memory, not device memory)."""
     return onp.asarray(self)
+
+  def delete(self):
+    """Deletes the device array and any cached copy on the host.
+
+    It is an error to access the contents of a `DeviceArray` after it has
+    been deleted.
+
+    Use of this method is optional; device buffers will be reclaimed
+    automatically by Python when a DeviceArray object is garbage collected.
+    However, it is sometimes useful to have more explicit control over the
+    time of deletion.
+    """
+    self.device_buffer.delete()
+    self.device_buffer = None
+    self._npy_value = None
 
   def __repr__(self):
     return onp.array_repr(self)
