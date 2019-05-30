@@ -25,13 +25,11 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 import numpy as onp
-import scipy.misc as osp_misc
 import scipy.special as osp_special
 import scipy.stats as osp_stats
 
 from jax import api
 from jax import test_util as jtu
-from jax.scipy import misc as lsp_misc
 from jax.scipy import special as lsp_special
 from jax.scipy import stats as lsp_stats
 
