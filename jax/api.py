@@ -494,7 +494,7 @@ def vmap(fun, in_axes=0, out_axes=0):
   return batched_fun
 
 
-def pmap(fun, axis_name=None):
+def pmap(fun, axis_name=None, axis_size=None):
   """Parallel map with support for collectives.
 
   The purpose of ``pmap`` is to express single-program multiple-data (SPMD)
@@ -582,13 +582,13 @@ def pmap(fun, axis_name=None):
 
   @wraps(fun)
   def f_pmapped(*args, **kwargs):
-    axis_size = _pmap_axis_size(args)
+    axis_size_ = axis_size or _pmap_axis_size(args)
     f = lu.wrap_init(fun)
     args_flat, in_tree = tree_flatten((args, kwargs))
     _check_args(args_flat)
     flat_fun, out_tree = flatten_fun_leafout(f, in_tree)
     out = pxla.xla_pmap(flat_fun, *args_flat,
-                        axis_name=axis_name, axis_size=axis_size)
+                        axis_name=axis_name, axis_size=axis_size_)
     return out if out_tree() is leaf else tree_unflatten(out_tree(), out)
 
   namestr = "pmap({}, axis_name={})".format
