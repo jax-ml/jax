@@ -233,17 +233,23 @@ def device_persistent_result_handler(result_shape):
   else:
     raise TypeError(t)
 
-def pyval_result_handler(result_shape):
+def _pyval_result_fetcher(result_shape):
   t = type(result_shape)
   if t is ResultArray:
     return lambda buf: buf.to_py()
   elif t is ResultTuple:
     _, result_shapes = result_shape
-    handlers = list(map(pyval_result_handler, result_shapes))
+    handlers = list(map(_pyval_result_fetcher, result_shapes))
     return lambda buf: JaxTuple(h(b) for h, b in zip(handlers, buf.destructure()))
   else:
     raise TypeError(t)
 
+def pyval_result_handler(result_shape):
+  fetcher = _pyval_result_fetcher(result_shape)
+  def f(buf):
+    _copy_to_host_async(buf)
+    return fetcher(buf)
+  return f
 
 def compile_jaxpr(jaxpr, const_vals, *abstract_args):
   arg_shapes = list(map(xla_shape, abstract_args))
@@ -256,6 +262,18 @@ def build_jaxpr(jaxpr, const_vals, *abstract_args):
   arg_shapes = list(map(xla_shape, abstract_args))
   built_c = jaxpr_computation(jaxpr, const_vals, (), *arg_shapes)
   return built_c
+
+
+def _prefetch_jaxpr_literals(jaxpr):
+  """Prefetches any DeviceArray values inside a jaxpr to the host."""
+  for eqn in jaxpr.eqns:
+    for v in eqn.invars:
+      if type(v) is core.Literal and isinstance(v.val, DeviceArray):
+        v.val.copy_to_host_async()
+    if eqn.bound_subjaxprs:
+      for subjaxpr, _const_bindings, _freevar_bindings in eqn.bound_subjaxprs:
+        _prefetch_jaxpr_literals(subjaxpr)
+
 
 def jaxpr_computation(jaxpr, const_vals, freevar_shapes, *arg_shapes):
   assert not any(type(invar) in (tuple, list) for invar in jaxpr.invars)
@@ -274,12 +292,16 @@ def jaxpr_computation(jaxpr, const_vals, freevar_shapes, *arg_shapes):
   env = {}
   write(core.unitvar, c.Tuple())
   if const_vals:
+    for val in const_vals:
+      if isinstance(val, DeviceArray):
+        val.copy_to_host_async()
     _map(write, jaxpr.constvars, map(c.Constant, const_vals))
     _map(write, jaxpr.freevars, map(c.ParameterWithShape, freevar_shapes))
   else:
     all_freevars = it.chain(jaxpr.constvars, jaxpr.freevars)
     _map(write, all_freevars, map(c.ParameterWithShape, freevar_shapes))
   _map(write, jaxpr.invars, map(c.ParameterWithShape, arg_shapes))
+  _prefetch_jaxpr_literals(jaxpr)
   for eqn in jaxpr.eqns:
     if not eqn.restructure:
       in_nodes = list(map(read, eqn.invars))
@@ -449,6 +471,13 @@ xb.register_constant_handler(DeviceTuple, _device_tuple_constant_handler)
 # TODO(mattjj): could jit-compile a computation here
 ad_util.jaxval_adders[DeviceTuple] = ad_util.add_jaxtuples
 
+# TODO(phawkins): after Jaxlib 0.1.17 has been released, bump the minimum
+# jaxlib version and change callers of this function to simply call
+# the copy_to_host_async method directly.
+def _copy_to_host_async(buffer):
+  if hasattr(buffer, "copy_to_host_async"):
+    buffer.copy_to_host_async()
+
 
 def forward_method(attrname, self, fun, *args):
   return fun(getattr(self, attrname), *args)
@@ -466,11 +495,14 @@ class DeviceArray(DeviceValue):
     self.shape, self.dtype, self.ndim, self.size = result_shape
     self._npy_value = None
 
+  def _check_if_deleted(self):
+    if self.device_buffer is None:
+      raise ValueError("Cannot fetch the value of a deleted DeviceArray.")
+
   # TODO make device_buffer a property, make the _npy_value writeable, invalidate
   @property
   def _value(self):
-    if self.device_buffer is None:
-      raise ValueError("Cannot fetch the value of a deleted DeviceArray.")
+    self._check_if_deleted()
     if self._npy_value is None:
       self._npy_value = self.device_buffer.to_py()
       self._npy_value.flags.writeable = False
@@ -479,6 +511,12 @@ class DeviceArray(DeviceValue):
   def copy(self):
     """Returns an ndarray (backed by host memory, not device memory)."""
     return onp.asarray(self)
+
+  def copy_to_host_async(self):
+    """Requests a copy of the buffer to the host."""
+    self._check_if_deleted()
+    if self._npy_value is None:
+      _copy_to_host_async(self.device_buffer)
 
   def delete(self):
     """Deletes the device array and any cached copy on the host.
@@ -577,6 +615,8 @@ pytype_aval_mappings[ShapedArray] = identity
 
 
 class DeviceConstant(DeviceArray):
+  def copy_to_host_async(self): pass
+
   @staticmethod
   def constant_handler(c, constant_instance, canonicalize_types=True):
     assert False
