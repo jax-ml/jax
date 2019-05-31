@@ -233,20 +233,6 @@ def device_persistent_result_handler(result_shape):
   else:
     raise TypeError(t)
 
-def _pyval_result_prefetcher(result_shape):
-  t = type(result_shape)
-  if t is ResultArray:
-    return lambda buf: _copy_to_host_async(buf)
-  elif t is ResultTuple:
-    _, result_shapes = result_shape
-    handlers = list(map(_pyval_result_prefetcher, result_shapes))
-    def f(buf):
-      for h, b in zip(handlers, buf.destructure()):
-        h(b)
-    return f
-  else:
-    raise TypeError(t)
-
 def _pyval_result_fetcher(result_shape):
   t = type(result_shape)
   if t is ResultArray:
@@ -259,10 +245,9 @@ def _pyval_result_fetcher(result_shape):
     raise TypeError(t)
 
 def pyval_result_handler(result_shape):
-  prefetcher = _pyval_result_prefetcher(result_shape)
   fetcher = _pyval_result_fetcher(result_shape)
   def f(buf):
-    prefetcher(buf)
+    _copy_to_host_async(buf)
     return fetcher(buf)
   return f
 

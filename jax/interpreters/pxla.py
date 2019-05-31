@@ -289,6 +289,18 @@ def replicated_comp(jaxpr, ax_env, const_vals, freevar_shapes, *arg_shapes):
     all_freevars = it.chain(jaxpr.constvars, jaxpr.freevars)
     _map(write, all_freevars, map(c.ParameterWithShape, freevar_shapes))
   _map(write, jaxpr.invars, map(c.ParameterWithShape, arg_shapes))
+
+  # Prefetch any DeviceArray values inside jaxprs to the host.
+  for eqn in jaxpr.eqns:
+    for v in eqn.invars:
+      if type(v) is core.Literal and isinstance(v.val, xla.DeviceArray):
+        v.val.copy_to_host_async()
+    if eqn.bound_subjaxprs:
+      (_, const_bindings, freevar_bindings), = eqn.bound_subjaxprs
+      for v in it.chain(const_bindings, freevar_bindings):
+        if type(v) is core.Literal and isinstance(v.val, xla.DeviceArray):
+          v.val.copy_to_host_async()
+
   for eqn in jaxpr.eqns:
     if not eqn.restructure:
       in_nodes = list(map(read, eqn.invars))
