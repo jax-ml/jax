@@ -34,7 +34,7 @@ from .. import linear_util as lu
 from ..abstract_arrays import (ConcreteArray, ShapedArray, make_shaped_array,
                                array_types, scalar_types)
 from ..core import AbstractTuple, JaxTuple, pack, valid_jaxtype, Literal
-from ..util import partial, partialmethod, memoize, unzip2, concatenate, safe_map, prod
+from ..util import partial, partialmethod, memoize, concatenate, safe_map, prod
 from ..lib import xla_bridge as xb
 from . import partial_eval as pe
 from . import ad
