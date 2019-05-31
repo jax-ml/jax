@@ -1802,6 +1802,23 @@ def _conv_general_dilated_batch_rule(
     outputs = [reshape(out, (1,) + out.shape) for out in outputs]
     outputs = concatenate(outputs, 0)
     return outputs, 0
+
+def _conv_general_dilated_papply_rule(
+    name, size, vals, dims, window_strides, padding, lhs_dilation, rhs_dilation,
+    dimension_numbers, **unused_kwargs):
+  lhs, rhs = vals
+  lhs_dim, rhs_dim = dims
+  lhs_spec_batch_dim = dimension_numbers.lhs_spec[0]
+  if rhs_dim is None and lhs_dim == lhs_spec_batch_dim:
+    lhs = reshape(lhs, tuple(onp.insert(lhs.shape, lhs_dim, 1)))
+    out = conv_general_dilated(
+        lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
+        dimension_numbers)
+    return out, lhs_dim
+  else:
+    raise NotImplementedError(
+        "splitting a convolution along anything but input batch dimension")
+
 conv_general_dilated_p = standard_primitive(
     _conv_general_dilated_shape_rule, _conv_general_dilated_dtype_rule,
     'conv_general_dilated', _conv_general_dilated_translation_rule)
@@ -1810,6 +1827,9 @@ ad.defbilinear(conv_general_dilated_p,
                _conv_general_dilated_transpose_rhs)
 batching.primitive_batchers[
     conv_general_dilated_p] = _conv_general_dilated_batch_rule
+parallel.papply_primitive_rules[
+    conv_general_dilated_p] = _conv_general_dilated_papply_rule
+
 
 def _dot_shape_rule(lhs, rhs):
   if lhs.ndim == 0 or rhs.ndim == 0:
