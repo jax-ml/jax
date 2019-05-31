@@ -91,14 +91,9 @@ zip = safe_zip
 # as defining an "outer pytree", and a pytree produced by applying init_fun to
 # each leaf of the params pytree, which we can think of as the "inner pytrees".
 # Since pytrees can be flattened, that structure is isomorphic to a list of
-# lists (with no further nesting). This implementation represents that structure
-# as a JaxTuple-of-JaxTuples so that we can maintain the entire optimizer state
-# as a single DeviceTuple, and thus pay no pytree traversal overhead when we
-# dispatch to a `jit`-compiled `update_fun`. That JaxTuple-of-JaxTuples is
-# stored together with the tree structure data in an OptimizerState instance.
+# lists (with no further nesting).
 
-pack = tuple  # TODO(mattjj): replace with core.pack
-
+pack = tuple
 OptimizerState = namedtuple("OptimizerState",
                             ["packed_state", "tree_def", "subtree_defs"])
 register_pytree_node(
@@ -135,8 +130,8 @@ def optimizer(opt_maker):
           get_params :: OptimizerState -> ParameterPytree ndarray
 
     The OptimizerState pytree type used by the returned functions is isomorphic
-    to ``ParameterPytree (OptStatePytree ndarray)`` but has an implementation
-    based on JaxTuples to avoid pytree structuring/destructuring overheads.
+    to ``ParameterPytree (OptStatePytree ndarray)``, but may store the state
+    instead as e.g. a partially-flattened data structure for performance.
   """
 
   @functools.wraps(opt_maker)

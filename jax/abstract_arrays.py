@@ -199,3 +199,7 @@ def raise_to_shaped(aval):
     return ShapedArray(aval.shape, aval.dtype)
   else:
     raise TypeError(type(aval))
+
+def is_scalar(x):
+  return isinstance(x, tuple(scalar_types)) and onp.shape(x) == ()
+scalar_types = set(array_types)

@@ -24,7 +24,7 @@ import six
 import types
 
 from . import linear_util as lu
-from .util import unzip2, safe_zip, safe_map, partial, curry
+from .util import unzip2, safe_zip, safe_map, partial, curry, WrapHashably
 from .pprint_util import pp, vcat, hcat, pp_kv_pairs
 
 # TODO(dougalm): the trace cache breaks the leak detector. Consisder solving.
@@ -100,7 +100,26 @@ def jaxpr_as_fun(typed_jaxpr, *args):
 JaxprEqn = namedtuple('JaxprEqn', ['invars', 'outvars', 'primitive',
                                    'bound_subjaxprs', 'restructure',
                                    'destructure', 'params'])
-Literal = namedtuple('Literal', ['val'])
+class Literal(object):
+  __slots__ = ["val", "hashable"]
+
+  def __init__(self, val):
+    self.val = val
+    try:
+      hash(val)
+    except TypeError:
+      self.hashable = False
+    else:
+      self.hashable = True
+
+  def __hash__(self):
+    return hash(self.val) if self.hashable else id(self.val)
+
+  def __eq__(self, other):
+    return self.val == other.val if self.hashable else self.val is other.val
+
+  def __repr__(self):
+    return 'Literal(val={}, hashable={})'.format(self.val, self.hashable)
 
 class Primitive(object):
   def __init__(self, name):

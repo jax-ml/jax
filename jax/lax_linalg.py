@@ -29,7 +29,7 @@ from jax.util import partial
 from jax.abstract_arrays import ShapedArray
 from jax.core import Primitive
 from jax.lax import (standard_primitive, standard_unop, binop_dtype_rule,
-                     _float, _complex, _input_dtype)
+                     _float, _complex, _input_dtype, _broadcasting_select)
 from jaxlib import lapack
 
 # traceables
@@ -107,12 +107,24 @@ cholesky_p = standard_unop(_float | _complex, 'cholesky')
 ad.primitive_jvps[cholesky_p] = cholesky_jvp_rule
 batching.primitive_batchers[cholesky_p] = cholesky_batching_rule
 
+def _nan_like(c, operand):
+  shape = c.GetShape(operand)
+  dtype = shape.element_type()
+  if onp.issubdtype(dtype, onp.complexfloating):
+    nan = c.Constant(onp.array(onp.nan * (1. + 1j), dtype=dtype))
+  else:
+    nan = c.Constant(onp.array(onp.nan, dtype=dtype))
+  return c.Broadcast(nan, shape.dimensions())
 
 def cholesky_cpu_translation_rule(c, operand):
   shape = c.GetShape(operand)
   dtype = shape.element_type().type
   if len(shape.dimensions()) == 2 and dtype in _cpu_lapack_types:
-    return c.GetTupleElement(lapack.jax_potrf(c, operand, lower=True), 0)
+    potrf_output = lapack.jax_potrf(c, operand, lower=True)
+    result = c.GetTupleElement(potrf_output, 0)
+    info = c.GetTupleElement(potrf_output, 1)
+    return c.Select(c.Eq(info, c.ConstantS32Scalar(0)), result,
+                    _nan_like(c, result))
   else:
     # Fall back to the HLO implementation for batched Cholesky decomposition or
     # unsupported types.
@@ -144,10 +156,22 @@ def eig_abstract_eval(operand):
     w = vl = vr = operand
   return core.AbstractTuple((w, vl, vr))
 
+
 def eig_cpu_translation_rule(c, operand):
-  out = lapack.jax_geev(c, operand)
-  return c.Tuple(c.GetTupleElement(out, 0), c.GetTupleElement(out, 1),
-                 c.GetTupleElement(out, 2))
+  shape = c.GetShape(operand)
+  batch_dims = shape.dimensions()[:-2]
+  geev_out = lapack.jax_geev(c, operand)
+  w = c.GetTupleElement(geev_out, 0)
+  vl = c.GetTupleElement(geev_out, 1)
+  vr = c.GetTupleElement(geev_out, 2)
+  ok = c.Eq(c.GetTupleElement(geev_out, 3), c.ConstantS32Scalar(0))
+  w = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1,)), w,
+                           _nan_like(c, w))
+  vl = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), vl,
+                            _nan_like(c, vl))
+  vr = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), vr,
+                            _nan_like(c, vr))
+  return c.Tuple(w, vl, vr)
 
 def eig_batching_rule(batched_args, batch_dims):
   x, = batched_args
@@ -189,8 +213,17 @@ def eigh_abstract_eval(operand, lower):
   return core.AbstractTuple((v, w))
 
 def eigh_cpu_translation_rule(c, operand, lower):
-  out = lapack.jax_syevd(c, operand, lower=lower)
-  return c.Tuple(c.GetTupleElement(out, 0), c.GetTupleElement(out, 1))
+  shape = c.GetShape(operand)
+  batch_dims = shape.dimensions()[:-2]
+  syevd_out = lapack.jax_syevd(c, operand, lower=lower)
+  v = c.GetTupleElement(syevd_out, 0)
+  w = c.GetTupleElement(syevd_out, 1)
+  ok = c.Eq(c.GetTupleElement(syevd_out, 2), c.ConstantS32Scalar(0))
+  v = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), v,
+                           _nan_like(c, v))
+  w = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1,)), w,
+                           _nan_like(c, w))
+  return c.Tuple(v, w)
 
 def eigh_jvp_rule(primals, tangents, lower):
   # Derivative for eigh in the simplest case of distinct eigenvalues.
@@ -404,12 +437,14 @@ batching.primitive_batchers[lu_p] = lu_batching_rule
 
 def lu_cpu_translation_rule(c, operand):
   shape = c.GetShape(operand)
-  dtype = shape.element_type().type
-  out = lapack.jax_getrf(c, operand)
-  lu = c.GetTupleElement(out, 0)
+  batch_dims = shape.dimensions()[:-2]
+  getrf_out = lapack.jax_getrf(c, operand)
+  lu = c.GetTupleElement(getrf_out, 0)
   # Subtract 1 from the pivot to get 0-based indices.
-  pivot = c.Sub(c.GetTupleElement(out, 1), c.ConstantS32Scalar(1))
-  # Throw away the `info` value, because we have no way to report errors.
+  pivot = c.Sub(c.GetTupleElement(getrf_out, 1), c.ConstantS32Scalar(1))
+  ok = c.Eq(c.GetTupleElement(getrf_out, 2), c.ConstantS32Scalar(0))
+  lu = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), lu,
+                            _nan_like(c, lu))
   return c.Tuple(lu, pivot)
 
 xla.backend_specific_translations['cpu'][lu_p] = lu_cpu_translation_rule
@@ -545,10 +580,19 @@ def svd_cpu_translation_rule(c, operand, full_matrices, compute_uv):
   shape = c.GetShape(operand)
   dtype = shape.element_type().type
   if len(shape.dimensions()) == 2 and dtype in _cpu_lapack_types:
-    out = lapack.jax_gesdd(c, operand, full_matrices=full_matrices, compute_uv=compute_uv)
-    return c.Tuple(c.GetTupleElement(out, 0),
-                   c.GetTupleElement(out, 1),
-                   c.GetTupleElement(out, 2))
+    gesdd_out = lapack.jax_gesdd(c, operand, full_matrices=full_matrices,
+                                 compute_uv=compute_uv)
+    s = c.GetTupleElement(gesdd_out, 0)
+    u = c.GetTupleElement(gesdd_out, 1)
+    vt = c.GetTupleElement(gesdd_out, 2)
+    ok = c.Eq(c.GetTupleElement(gesdd_out, 3), c.ConstantS32Scalar(0))
+    s = _broadcasting_select(c, c.Reshape(ok, None, (1,)), s,
+                             _nan_like(c, s))
+    u = _broadcasting_select(c, c.Reshape(ok, None, (1, 1)), u,
+                             _nan_like(c, u))
+    vt = _broadcasting_select(c, c.Reshape(ok, None, (1, 1)), vt,
+                              _nan_like(c, vt))
+    return c.Tuple(s, u, vt)
   else:
     raise NotImplementedError(
         "Only unbatched singular value decomposition is implemented on CPU")

@@ -31,9 +31,10 @@ from .. import core
 from .. import ad_util
 from .. import tree_util
 from .. import linear_util as lu
-from ..abstract_arrays import ConcreteArray, ShapedArray, make_shaped_array, array_types
+from ..abstract_arrays import (ConcreteArray, ShapedArray, make_shaped_array,
+                               array_types, scalar_types)
 from ..core import AbstractTuple, JaxTuple, pack, valid_jaxtype, Literal
-from ..util import partial, partialmethod, memoize, unzip2, concatenate, safe_map, prod
+from ..util import partial, partialmethod, memoize, concatenate, safe_map, prod
 from ..lib import xla_bridge as xb
 from . import partial_eval as pe
 from . import ad
@@ -46,15 +47,15 @@ flags.DEFINE_bool('jax_debug_nans',
                   strtobool(os.getenv('JAX_DEBUG_NANS', "False")),
                   'Add nan checks to every operation.')
 
-def apply_primitive(prim, *args, **kwargs):
+def apply_primitive(prim, *args, **params):
   abstract_args = map(abstractify, args)
-  compiled_fun = xla_primitive_callable(prim, *abstract_args, **kwargs)
+  compiled_fun = xla_primitive_callable(prim, *abstract_args, **params)
   return compiled_fun(*args)
 
 @memoize
-def xla_primitive_callable(prim, *abstract_args, **kwargs):
+def xla_primitive_callable(prim, *abstract_args, **params):
   shapes = tuple(map(xla_shape, abstract_args))
-  built_c = primitive_computation(prim, *shapes, **kwargs)
+  built_c = primitive_computation(prim, *shapes, **params)
   result_shape = xla_shape_to_result_shape(built_c.GetReturnValueShape())
   handle_result = result_handler(result_shape)
   compiled = built_c.Compile(shapes, xb.get_compile_options(),
@@ -62,15 +63,15 @@ def xla_primitive_callable(prim, *abstract_args, **kwargs):
   return partial(execute_compiled_primitive, prim.name, compiled, handle_result)
 
 @memoize
-def primitive_computation(prim, *shapes, **kwargs):
+def primitive_computation(prim, *shapes, **params):
   c = xb.make_computation_builder("primitive_computation")
   xla_args = map(c.ParameterWithShape, shapes)
-  xla_result = translation_rule(prim)(c, *xla_args, **kwargs)
+  xla_result = translation_rule(prim)(c, *xla_args, **params)
   try:
     return c.Build()
   except RuntimeError as e:
     # try for a better error message by using the abstract_eval checks
-    prim.abstract_eval(*map(aval_from_xla_shape, shapes), **kwargs)
+    prim.abstract_eval(*map(aval_from_xla_shape, shapes), **params)
     raise e
 
 def aval_from_xla_shape(shape):
@@ -468,6 +469,8 @@ class DeviceArray(DeviceValue):
   # TODO make device_buffer a property, make the _npy_value writeable, invalidate
   @property
   def _value(self):
+    if self.device_buffer is None:
+      raise ValueError("Cannot fetch the value of a deleted DeviceArray.")
     if self._npy_value is None:
       self._npy_value = self.device_buffer.to_py()
       self._npy_value.flags.writeable = False
@@ -476,6 +479,21 @@ class DeviceArray(DeviceValue):
   def copy(self):
     """Returns an ndarray (backed by host memory, not device memory)."""
     return onp.asarray(self)
+
+  def delete(self):
+    """Deletes the device array and any cached copy on the host.
+
+    It is an error to access the contents of a `DeviceArray` after it has
+    been deleted.
+
+    Use of this method is optional; device buffers will be reclaimed
+    automatically by Python when a DeviceArray object is garbage collected.
+    However, it is sometimes useful to have more explicit control over the
+    time of deletion.
+    """
+    self.device_buffer.delete()
+    self.device_buffer = None
+    self._npy_value = None
 
   def __repr__(self):
     return onp.array_repr(self)
@@ -540,6 +558,8 @@ class DeviceArray(DeviceValue):
     # main use case at the moment is memoization for which false negatives are
     # fine.
     return id(self)
+
+scalar_types.add(DeviceArray)
 
 
 # DeviceValues don't need to be canonicalized because we assume values on the

@@ -14,6 +14,5 @@
 
 from __future__ import absolute_import
 from . import linalg
-from . import misc
 from . import special
 from . import stats

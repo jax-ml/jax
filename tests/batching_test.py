@@ -31,6 +31,7 @@ from jax.api import vmap
 from jax.core import unit
 from jax.interpreters import partial_eval as pe
 from jax.util import partial, curry
+import jax.ops
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -889,66 +890,6 @@ class BatchingTest(jtu.JaxTestCase):
 
     H = hessian(f)(R)  # don't crash on UnshapedArray
 
-  def testWhileLoop(self):
-    def fun(x):
-      return lax.while_loop(lambda x: x < 3, lambda x: x + 2, x)
-
-    ans = vmap(fun)(onp.array([0, 1, 2, 3]))
-    expected = onp.array([4, 3, 4, 3])
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-    fun = jit(fun)
-    ans = vmap(fun)(onp.array([0, 1, 2, 3]))
-    expected = onp.array([4, 3, 4, 3])
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-  def testWhileLoopCondConstsBatched(self):
-    def fun(x, y):
-      return lax.while_loop(lambda x: x < y, lambda x: x + 2, x)
-
-    ans = vmap(fun, in_axes=(None, 0))(0, onp.array([2, 3]))
-    expected = onp.array([2, 4])
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-  def testWhileLoopBodyConstsBatched(self):
-    def fun(x, y):
-      return lax.while_loop(lambda x: x < 3, lambda x: x + y, x)
-
-    ans = vmap(fun, in_axes=(None, 0))(0, onp.array([2, 3]))
-    expected = onp.array([4, 3])
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-  def testWhileLoopTuple(self):
-    def cond_fun(loop_carry):
-      x, y = loop_carry
-      return x + y < 5
-
-    def body_fun(loop_carry):
-      x, y = loop_carry
-      x = x + 1
-      return x, y
-
-    def fun(x, y):
-      return lax.while_loop(cond_fun, body_fun, (x, y))
-
-    ans = vmap(fun)(onp.array([0, 0]), onp.array([1, 2]))
-    expected = (onp.array([4, 3]), onp.array([1, 2]))
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-  def testForiLoop(self):
-    def body_fun(i, loop_carry):
-      x, y = loop_carry
-      x = x + 1
-      y = y + 2
-      return x, y
-
-    def fun(x):
-      return lax.fori_loop(0, 10, body_fun, (x, 0))
-
-    ans = vmap(fun)(onp.array([0, 1]))
-    expected = (onp.array([10, 11]), onp.array([20, 20]))
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
   def testIssue489(self):
     def f(key):
       def body_fn(uk):
@@ -961,6 +902,20 @@ class BatchingTest(jtu.JaxTestCase):
       return u
 
     print(vmap(f)(random.split(random.PRNGKey(0), 2)))  # no crash
+
+  def testEmptyTuples(self):
+    # Ensure there is no crash when a vectorized input contains empty tuples.
+    result = vmap(lambda x, _: x + 1)(onp.array([0, 1]), ())
+    self.assertAllClose(result, onp.array([1, 2]), check_dtypes=False)
+    # Ensure there is no crash when a vectorized output contains empty tuples.
+    result, empty_tuple = vmap(lambda x: (x + 1, ()))(onp.array([0, 1]))
+    self.assertAllClose(result, onp.array([1, 2]), check_dtypes=False)
+    self.assertEqual((), empty_tuple)
+
+  def testIndexAddBatchedIndexesOnly(self):
+    f = lambda x, idx, y: jax.ops.index_add(x, jax.ops.index[idx], y)
+    result = vmap(f, (None, 0, None))(onp.zeros((10,)), onp.arange(10,), 1.)
+    self.assertAllClose(result, onp.eye(10), check_dtypes=False)
 
 
 if __name__ == '__main__':

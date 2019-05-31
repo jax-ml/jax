@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A basic MNIST example using JAX together with the mini-libraries stax, for
-neural network building, and optimizers, for first-order stochastic optimization.
+"""A basic MNIST example using JAX with the mini-libraries stax and optimizers.
+
+The mini-library jax.experimental.stax is for neural network building, and
+the mini-library jax.experimentaloptimizers is for first-order stochastic
+optimization.
 """
 
 from __future__ import absolute_import

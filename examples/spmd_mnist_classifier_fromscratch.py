@@ -12,9 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A basic MNIST example using Numpy and JAX.
+"""An MNIST example with single-program multiple-data (SPMD) data parallelism.
 
-The primary aim here is simplicity and minimal dependencies.
+The aim here is to illustrate how to use JAX's `pmap` to express and execute
+SPMD programs for data parallelism along a batch dimension, while also
+minimizing dependencies by avoiding the use of higher-level layers and
+optimizers libraries.
 """
 
 from __future__ import absolute_import

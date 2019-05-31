@@ -187,7 +187,11 @@ def backward_pass(jaxpr, consts, freevar_vals, args, cotangent_in):
 
     if cts_out is zero:
       cts_out = [zero for _ in eqn.invars]
-    map(write_cotangent, eqn.invars, cts_out)
+    if not eqn.restructure:
+      map(write_cotangent, eqn.invars, cts_out)
+    else:
+      [map(write_cotangent, v, ct) if type(v) is tuple
+       else write_cotangent(v, ct) for v, ct in zip(eqn.invars, cts_out)]
 
   freevar_cts = core.pat_fmap(read_cotangent, jaxpr.freevars)
   cotangents_out = core.pat_fmap(lambda v, _: read_cotangent(v), jaxpr.invars, None)
@@ -289,7 +293,7 @@ class JVPTrace(Trace):
         xt = TangentTuple((zero,) * len(yt))
       elif yt is zero:
         yt = TangentTuple((zero,) * len(xt))
-      return TangentTuple(map(self.join), xt, yt)
+      return TangentTuple(map(self.join, xt, yt))
     elif xt is zero and yt is zero:
       return xt, yt
     else:
@@ -553,9 +557,6 @@ def map_transpose(primitive, params, jaxpr, consts, freevar_vals, args, ct):
   freevar_cts = tree_map(lambda x: x.sum(0), freevar_cts)
   return cts_out, freevar_cts
 
-def jaxpr_as_fun(jaxpr, consts, *args):
-  return core.eval_jaxpr(jaxpr, consts, (), *args)
-
 def get_nonzeros(tangent):
   if tangent is zero:
     return False
@@ -595,7 +596,7 @@ def jvp_jaxpr(jaxpr, nonzeros, instantiate):
   # jaxpr :: d -> a -> b -> (c1, c2)
   # avals = (d, a, b)
   # f :: d -> a -> b -> (c1, c2)
-  f = wrap_init(partial(jaxpr_as_fun, jaxpr.jaxpr, jaxpr.literals))
+  f = wrap_init(core.jaxpr_as_fun(jaxpr))
   f_jvp, out_nonzeros = f_jvp_traceable(jvp(f, instantiate=instantiate), nonzeros)
   # f_jvp :: (d, d') -> (a, a') -> (b, b') -> ((c1, c1'), (c2, c2'))
   tangent_avals = map(partial(strip_zeros, core.AbstractTuple(()), core.AbstractTuple),
@@ -613,7 +614,5 @@ def jvp_jaxpr(jaxpr, nonzeros, instantiate):
 
 
 primitive_transposes[core.call_p] = partial(call_transpose, call_p)
-primitive_transposes[pe.compiled_call_p] = partial(call_transpose, pe.compiled_call_p)
-
 
 tree_to_jaxtuples = partial(process_pytree, pack)

@@ -175,13 +175,19 @@ def xla_computation(fun, static_argnums=()):
   @wraps(fun)
   def computation_maker(*args, **kwargs):
     wrapped = lu.wrap_init(fun)
-    jax_kwargs, kwargs_tree = pytree_to_jaxtupletree(kwargs)
     jax_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
-    jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun2(wrapped, kwargs_tree, in_trees)
-    pvals = map(pv_like, (jax_kwargs,) + tuple(jax_args))
-    jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
-    return xla.build_jaxpr(jaxpr, consts, xla.abstractify(jax_kwargs),
-                           *map(xla.abstractify, jax_args))
+    if not kwargs:
+      jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(wrapped, in_trees)
+      pvals = map(pv_like, jax_args)
+      jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
+      return xla.build_jaxpr(jaxpr, consts, *map(xla.abstractify, jax_args))
+    else:
+      jax_kwargs, kwargs_tree = pytree_to_jaxtupletree(kwargs)
+      jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun2(wrapped, kwargs_tree, in_trees)
+      pvals = map(pv_like, (jax_kwargs,) + tuple(jax_args))
+      jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
+      return xla.build_jaxpr(jaxpr, consts, xla.abstractify(jax_kwargs),
+                            *map(xla.abstractify, jax_args))
 
   return computation_maker
 
@@ -290,14 +296,17 @@ def value_and_grad(fun, argnums=0, has_aux=False, holomorphic=False):
   return value_and_grad_f
 
 def _check_scalar(x):
-  msg = "Gradient only defined for scalar-output functions. Output was: {}".format
+  msg = "Gradient only defined for scalar-output functions. Output {}.".format
   try:
     aval = core.get_aval(x)
   except TypeError:
-    raise TypeError(msg(x))
+    raise TypeError(msg("was {}".format(x)))
   else:
-    if not (isinstance(aval, ShapedArray) and aval.shape == ()):
-      raise TypeError(msg(x))
+    if isinstance(aval, ShapedArray):
+      if aval.shape != ():
+        raise TypeError(msg("had shape: {}".format(aval.shape)))
+    else:
+      raise TypeError(msg("had abstract value {}".format(aval)))
 
 
 def jacfwd(fun, argnums=0, holomorphic=False):

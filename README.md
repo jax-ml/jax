@@ -164,7 +164,7 @@ PYTHON_VERSION=cp27  # alternatives: cp27, cp35, cp36, cp37
 CUDA_VERSION=cuda92  # alternatives: cuda90, cuda92, cuda100
 PLATFORM=linux_x86_64  # alternatives: linux_x86_64
 BASE_URL='https://storage.googleapis.com/jax-wheels'
-pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.15-$PYTHON_VERSION-none-$PLATFORM.whl
+pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.16-$PYTHON_VERSION-none-$PLATFORM.whl
 
 pip install --upgrade jax  # install jax
 ```
@@ -726,14 +726,24 @@ code to compile and end-to-end optimize much bigger functions.
 
 ## Current gotchas
 
-For a survey of current gotchas, with examples and explanations, we highly recommend reading the [Gotchas Notebook](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb).
+For a survey of current gotchas, with examples and explanations, we highly
+recommend reading the [Gotchas Notebook](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb).
 
 Some stand-out gotchas that might surprise NumPy users:
-1. [`np.isnan` doesn't yet work](https://github.com/google/jax/issues/276), and in general nan semantics aren't preserved on some backends.
-2. In-place mutation of arrays isn't supported, though [there is an alternative](https://jax.readthedocs.io/en/latest/jax.ops.html). Generally JAX requires functional code.
-3. JAX enforces single-precision numbers (32-bit or `float32`) by default and to use double-precision (64-bit or
-`float64`), one needs to set the `jax_enable_x64` variable **at startup** (set environment variable `JAX_ENABLE_x64 = True` or for other ways, see [here](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb#scrollTo=YTktlwTTMgFl))
-4. PRNGs are different and can be awkward, though for [good reasons](https://github.com/google/jax/blob/master/design_notes/prng.md), and non-reuse (linearity) is not yet checked.
+1. JAX enforces single-precision (32-bit, e.g. `float32`) values by default, and
+   to enable double-precision (64-bit, e.g. `float64`) one needs to set the
+   `jax_enable_x64` variable **at startup** (or set the environment variable
+   `JAX_ENABLE_x64=True`, see [the Gotchas Notebook](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb#scrollTo=YTktlwTTMgFl))
+2. Some of NumPy's dtype promotion semantics involving a mix of Python scalars
+   and NumPy types aren't preserved, namely `np.add(1, np.array([2],
+   np.float32)).dtype` is `float64` rather than `float32`.
+3. In-place mutation of arrays isn't supported, though [there is an
+   alternative](https://jax.readthedocs.io/en/latest/jax.ops.html). Generally
+   JAX requires functional code.
+4. PRNGs are different and can be awkward, though for [good
+   reasons](https://github.com/google/jax/blob/master/design_notes/prng.md), and
+   non-reuse (linearity) is not yet checked.
+5. NumPy's nan semantics aren't preserved on some backends
 
 See [the notebook](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb) for much more information.
 

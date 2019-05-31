@@ -72,9 +72,7 @@ def broadcast_shapes(*shapes):
   return tuple(result_shape)
 
 
-def identity(x):
-  r"""Identity function: :math:`x`."""
-  return x
+def _identity(x): return x
 
 ### traceables
 
@@ -514,7 +512,7 @@ def reshape(operand, new_sizes, dimensions=None):
   """
   same_shape = onp.shape(operand) == tuple(new_sizes)
   same_dims = dimensions is None or tuple(dimensions) == tuple(range(onp.ndim(operand)))
-  if same_shape and same_dims:
+  if onp.shape(operand) and same_shape and same_dims:
     return operand
   else:
     return reshape_p.bind(
@@ -662,6 +660,7 @@ def scatter(operand, scatter_indices, updates, dimension_numbers):
 
 def index_take(src, idxs, axes):
   indices = concatenate([reshape(i, [i.shape[0], 1]) for i in idxs], 1)
+  indices = indices % onp.array([src.shape[ax] for ax in axes])
   slice_sizes = list(src.shape)
   for ax in axes:
     slice_sizes[ax] = 1
@@ -735,7 +734,8 @@ def _get_min_identity(dtype):
     return onp.array(True, onp.bool_)
 
 def _reduce_sum(operand, axes):
-  return reduce_sum_p.bind(operand, axes=tuple(axes), input_shape=operand.shape)
+  return reduce_sum_p.bind(operand, axes=tuple(axes),
+                           input_shape=onp.shape(operand))
 
 def _reduce_prod(operand, axes):
   return reduce_prod_p.bind(operand, axes=tuple(axes))
@@ -838,16 +838,6 @@ def sort_key_val(keys, values, dimension=-1):
   result = sort_key_val_p.bind(keys, values, dimension=dimension)
   sorted_keys, sorted_values = result
   return sorted_keys, sorted_values
-
-
-class _OpaqueParam(object):
-  """Wrapper that hashes on its identity, instead of its contents.
-
-  Used to pass unhashable parameters as primitive attributes."""
-  __slots__ = ["val"]
-
-  def __init__(self, val):
-    self.val = val
 
 
 def tie_in(x, y):
@@ -1190,7 +1180,7 @@ def batch_matmul(lhs, rhs):
 
 def sqrt(x):
   r"""Elementwise square root: :math:`\sqrt{x}`."""
-  return pow(x, _const(x, 0.5))
+  return sqrt_p.bind(x)
 
 def rsqrt(x):
   r"""Elementwise reciprocal square root: :math:`1 \over \sqrt{x}`."""
@@ -1215,8 +1205,11 @@ def asin(x):
 
 def acos(x):
   r"""Elementwise arc cosine: :math:`\mathrm{acos}(x)`."""
-  return mul(_const(x, 2),
-             atan2(sqrt(sub(_const(x, 1), square(x))), add(_const(x, 1), x)))
+  return select(
+      ne(x, _const(x, -1.0)),
+      mul(_const(x, 2),
+          atan2(sqrt(sub(_const(x, 1), square(x))), add(_const(x, 1), x))),
+      full_like(x, onp.pi))
 
 def atan(x):
   r"""Elementwise arc tangent: :math:`\mathrm{atan}(x)`."""
@@ -1224,22 +1217,42 @@ def atan(x):
 
 def sinh(x):
   r"""Elementwise hyperbolic sine: :math:`\mathrm{sinh}(x)`."""
-  return mul(_const(x, 0.5), sub(exp(x), exp(neg(x))))
+  log_half = _const(x, onp.log(0.5))
+  # This formulation avoids overflow when e^x is inf but e^x/2 is not inf.
+  return sub(exp(add(log_half, x)), exp(sub(log_half, x)))
 
 def cosh(x):
   r"""Elementwise hyperbolic cosine: :math:`\mathrm{cosh}(x)`."""
-  return mul(_const(x, 0.5), add(exp(x), exp(neg(x))))
+  log_half = _const(x, onp.log(0.5))
+  # This formulation avoids overflow when e^x is inf but e^x/2 is not inf.
+  return add(exp(add(log_half, x)), exp(sub(log_half, x)))
 
 def asinh(x):
   r"""Elementwise arc hyperbolic sine: :math:`\mathrm{asinh}(x)`."""
   # asinh(x) = log(x + sqrt(x**2 + 1))
-  return log(add(x, sqrt(add(mul(x, x), _const(x, 1)))))
+  result = log(add(x, sqrt(add(mul(x, x), _const(x, 1)))))
+  if onp.issubdtype(_dtype(result), onp.complexfloating):
+    return result
+  a = abs(x)
+  sqrt_max_value = onp.sqrt(onp.finfo(_dtype(x)).max)
+  return select(lt(a, _const(a, sqrt_max_value)),
+                result,
+                mul(sign(x), add(log(a), _const(a, onp.log(2.)))))
 
 def acosh(x):
   r"""Elementwise arc hyperbolic cosine: :math:`\mathrm{acosh}(x)`."""
-  # acosh(x) = log(x + sqrt((x + 1) * (x - 1)))
-  return log(add(x, mul(sqrt(add(x, _const(x, 1))),
-                        sqrt(sub(x, _const(x, 1))))))
+  # acosh(x) = log(x + sqrt((x + 1) * (x - 1))) if x < sqrt_max_value
+  #            log(x) + log(2) otherwise
+  sqrt_max_value = onp.sqrt(onp.finfo(_dtype(x)).max)
+  result = log(add(x, mul(sqrt(add(x, _const(x, 1))),
+                          sqrt(sub(x, _const(x, 1))))))
+  if onp.issubdtype(_dtype(result), onp.complexfloating):
+    return result
+  return select(
+    lt(x, _const(x, sqrt_max_value)),
+    result,
+    add(log(x), _const(x, onp.log(2.))))
+
 
 def atanh(x):
   r"""Elementwise arc hyperbolic tangent: :math:`\mathrm{atanh}(x)`."""
@@ -1319,7 +1332,7 @@ def unop(result_dtype, accepted_dtypes, name):
   batching.defvectorized(prim)
   parallel.defvectorized(prim)
   return prim
-standard_unop = partial(unop, identity)
+standard_unop = partial(unop, _identity)
 _attrgetter = lambda name: lambda x, **kwargs: getattr(x, name)
 
 
@@ -1435,7 +1448,7 @@ log1p_p = standard_unop(_float | _complex, 'log1p')
 ad.defjvp(log1p_p, lambda g, x: div(g, add(x, _one(x))))
 
 tanh_p = standard_unop(_float | _complex, 'tanh')
-ad.defjvp(tanh_p, lambda g, x: div(g, pow(cosh(x), _two(x))))
+ad.defjvp2(tanh_p, lambda g, ans, x: mul(g, sub(_one(x), mul(ans, ans))))
 
 sin_p = standard_unop(_float | _complex, 'sin')
 ad.defjvp(sin_p, lambda g, x: mul(g, cos(x)))
@@ -1496,7 +1509,9 @@ ad.defjvp2(abs_p,
 _maybe_conj = lambda x: conj(x) if _iscomplex(x) else x
 _maybe_real = lambda x: real(x) if _iscomplex(x) else x
 
-# TODO handle broadcasting
+sqrt_p = standard_unop(_float | _complex, 'sqrt')
+ad.defjvp2(sqrt_p, lambda g, ans, x: _safe_mul(g, div(_const(x, 0.5), ans)))
+
 pow_p = standard_binop([_float | _complex, _float | _complex], 'pow')
 
 def _pow_jvp_lhs(g, x, y):
@@ -2644,7 +2659,6 @@ batching.primitive_batchers[dynamic_update_slice_p] = \
     _dynamic_update_slice_batching_rule
 
 
-
 class GatherDimensionNumbers(collections.namedtuple(
     "GatherDimensionNumbers",
     ["offset_dims", "collapsed_slice_dims", "start_index_map"])):
@@ -2880,6 +2894,9 @@ def _scatter_add_transpose_rule(t, operand, scatter_indices, updates,
                                 update_jaxpr, update_consts, dimension_numbers,
                                 updates_shape):
   assert scatter_indices is not None
+  if t is ad_util.zero:
+    return [ad_util.zero, None, ad_util.zero]
+
   operand_t = update_t = None
   if operand is None:
     operand_t = t
@@ -2917,8 +2934,10 @@ def _scatter_batching_rule(
   operand_bdim = 0
 
   if scatter_indices_bdim is not None and updates_bdim is None:
-    raise NotImplementedError  # TODO(mattjj,phawkins)
-  elif scatter_indices_bdim is None and updates_bdim is not None:
+    updates = broadcast(updates, (size,))
+    updates_bdim = 0
+
+  if scatter_indices_bdim is None and updates_bdim is not None:
     updates = batching.move_dim_to_front(updates, updates_bdim)
     inserted_window_dims = tuple(onp.add(1, dimension_numbers.inserted_window_dims))
     update_window_dims = (0,) + tuple(onp.add(1, dimension_numbers.update_window_dims))
@@ -3788,7 +3807,7 @@ for _t in [_FilledConstant, _IotaConstant, _EyeConstant]:
   xla_bridge.register_constant_handler(_t, _t.constant_handler)
   core.pytype_aval_mappings[_t] = ConcreteArray
   xla.pytype_aval_mappings[_t] = xla.pytype_aval_mappings[xla.DeviceArray]
-  xla.canonicalize_dtype_handlers[_t] = identity
+  xla.canonicalize_dtype_handlers[_t] = _identity
   batching.pytype_aval_mappings[_t] = make_shaped_array
   ad_util.jaxval_adders[_t] = add
   ad_util.jaxval_zeros_likers[_t] = zeros_like_array
@@ -3807,8 +3826,8 @@ def _stop_gradient_batch_rule(batched_args, batch_dims):
   return stop_gradient(x), dim
 
 stop_gradient_p = Primitive('stop_gradient')
-stop_gradient_p.def_impl(identity)
-stop_gradient_p.def_abstract_eval(identity)
+stop_gradient_p.def_impl(_identity)
+stop_gradient_p.def_abstract_eval(_identity)
 xla.translations[stop_gradient_p] = lambda c, x: x
 ad.primitive_jvps[stop_gradient_p] = _stop_gradient_jvp_rule
 batching.primitive_batchers[stop_gradient_p] = _stop_gradient_batch_rule

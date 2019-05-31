@@ -152,21 +152,32 @@ def check_vjp(f, f_vjp, args, atol=ATOL, rtol=RTOL, eps=EPS):
   check_close(ip, ip_expected, atol=atol, rtol=rtol)
 
 
-def check_grads(f, args, order, atol=None, rtol=None, eps=None):
+def check_grads(f, args, order,
+                modes=["fwd", "rev"], atol=None, rtol=None, eps=None):
   args = tuple(args)
-  if order > 1:
-    def f_vjp(*args):
-      out_primal_py, vjp_py = api.vjp(f, *args)
-      return vjp_py(out_primal_py)
+  default_tol = 1e-6 if FLAGS.jax_enable_x64 else 1e-2
+  atol = atol or default_tol
+  rtol = rtol or default_tol
+  eps = eps or EPS
 
-    check_grads(f_vjp, args, order - 1, atol=atol, rtol=rtol, eps=eps)
-  else:
-    default_tol = 1e-6 if FLAGS.jax_enable_x64 else 1e-2
-    atol = atol or default_tol
-    rtol = rtol or default_tol
-    eps = eps or EPS
-    check_jvp(f, partial(api.jvp, f), args, atol, rtol, eps)
-    check_vjp(f, partial(api.vjp, f), args, atol, rtol, eps)
+  _check_jvp = partial(check_jvp, atol=atol, rtol=rtol, eps=eps)
+  _check_vjp = partial(check_vjp, atol=atol, rtol=rtol, eps=eps)
+
+  def _check_grads(f, args, order):
+    if "fwd" in modes:
+      _check_jvp(f, partial(api.jvp, f), args)
+      if order > 1:
+        _check_grads(partial(api.jvp, f), (args, args), order - 1)
+
+    if "rev" in modes:
+      _check_vjp(f, partial(api.vjp, f), args)
+      if order > 1:
+        def f_vjp(*args):
+          out_primal_py, vjp_py = api.vjp(f, *args)
+          return vjp_py(out_primal_py)
+        _check_grads(f_vjp, args, order - 1)
+
+  _check_grads(f, args, order)
 
 
 def skip_on_devices(*disabled_devices):
@@ -205,29 +216,39 @@ def format_test_name_suffix(opname, shapes, dtypes):
   return '{}_{}'.format(opname.capitalize(), '_'.join(arg_descriptions))
 
 
-class _NumpyScalar(object):
-
-  def __len__(self):
-    return 0
-
-# A special singleton "shape" that denotes numpy scalars. Numpy scalars are not
-# identical to 0-D arrays, and we want to write tests that exercise both paths.
+# We use special symbols, represented as singleton objects, to distinguish
+# between NumPy scalars, Python scalars, and 0-D arrays.
+class ScalarShape(object):
+  def __len__(self): return 0
+class _NumpyScalar(ScalarShape): pass
+class _PythonScalar(ScalarShape): pass
 NUMPY_SCALAR_SHAPE = _NumpyScalar()
+PYTHON_SCALAR_SHAPE = _PythonScalar()
 
 
 def _dims_of_shape(shape):
   """Converts `shape` to a tuple of dimensions."""
-  return shape if shape != NUMPY_SCALAR_SHAPE else ()
+  if type(shape) in (list, tuple):
+    return shape
+  elif isinstance(shape, ScalarShape):
+    return ()
+  else:
+    raise TypeError(type(shape))
 
 
 def _cast_to_shape(value, shape, dtype):
   """Casts `value` to the correct Python type for `shape` and `dtype`."""
-  if shape != NUMPY_SCALAR_SHAPE:
+  if shape is NUMPY_SCALAR_SHAPE:
+    # explicitly cast to NumPy scalar in case `value` is a Python scalar.
+    return dtype(value)
+  elif shape is PYTHON_SCALAR_SHAPE:
+    # explicitly cast to Python scalar via https://stackoverflow.com/a/11389998
+    return onp.asarray(value).item()
+  elif type(shape) in (list, tuple):
+    assert onp.shape(value) == tuple(shape)
     return value
   else:
-    # A numpy scalar was requested. Explicitly cast in case `value` is a Python
-    # scalar.
-    return dtype(value)
+    raise TypeError(type(shape))
 
 
 def dtype_str(dtype):
@@ -235,14 +256,17 @@ def dtype_str(dtype):
 
 
 def format_shape_dtype_string(shape, dtype):
-  if shape == NUMPY_SCALAR_SHAPE:
+  if shape is NUMPY_SCALAR_SHAPE:
     return dtype_str(dtype)
-
-  if onp.isscalar(shape):
-    shapestr = str(shape) + ','
-  else:
+  elif shape is PYTHON_SCALAR_SHAPE:
+    return 'py' + dtype_str(dtype)
+  elif type(shape) in (list, tuple):
     shapestr = ','.join(str(dim) for dim in shape)
-  return '{}[{}]'.format(dtype_str(dtype), shapestr)
+    return '{}[{}]'.format(dtype_str(dtype), shapestr)
+  elif type(shape) is int:
+    return '{}[{},]'.format(dtype_str(dtype), shape)
+  else:
+    raise TypeError(type(shape))
 
 
 def _rand_dtype(rand, shape, dtype, scale=1., post=lambda x: x):

@@ -61,16 +61,18 @@ def fastvar(x, axis, keepdims):
 def randn(stddev=1e-2):
   """An initializer function for random normal coefficients."""
   def init(rng, shape):
-    return (stddev * random.normal(rng, shape)).astype('float32')
+    std = lax.convert_element_type(stddev, np.float32)
+    return std * random.normal(rng, shape, dtype=np.float32)
   return init
 
-def glorot(out_dim=0, in_dim=1, scale=onp.sqrt(2)):
+def glorot(out_axis=0, in_axis=1, scale=onp.sqrt(2)):
   """An initializer function for random Glorot-scaled coefficients."""
   def init(rng, shape):
-    fan_in, fan_out = shape[in_dim], shape[out_dim]
-    size = onp.prod(onp.delete(shape, [in_dim, out_dim]))
+    fan_in, fan_out = shape[in_axis], shape[out_axis]
+    size = onp.prod(onp.delete(shape, [in_axis, out_axis]))
     std = scale / np.sqrt((fan_in + fan_out) / 2. * size)
-    return (std * random.normal(rng, shape)).astype('float32')
+    std = lax.convert_element_type(std, np.float32)
+    return std * random.normal(rng, shape, dtype=np.float32)
   return init
 
 zeros = lambda rng, shape: np.zeros(shape, dtype='float32')
@@ -89,7 +91,8 @@ def Dense(out_dim, W_init=glorot(), b_init=randn()):
   """Layer constructor function for a dense (fully-connected) layer."""
   def init_fun(rng, input_shape):
     output_shape = input_shape[:-1] + (out_dim,)
-    W, b = W_init(rng, (input_shape[-1], out_dim)), b_init(rng, (out_dim,))
+    k1, k2 = random.split(rng)
+    W, b = W_init(k1, (input_shape[-1], out_dim)), b_init(k2, (out_dim,))
     return output_shape, (W, b)
   def apply_fun(params, inputs, **kwargs):
     W, b = params
@@ -113,7 +116,8 @@ def GeneralConv(dimension_numbers, out_chan, filter_shape,
         input_shape, kernel_shape, strides, padding, dimension_numbers)
     bias_shape = [out_chan if c == 'C' else 1 for c in out_spec]
     bias_shape = tuple(itertools.dropwhile(lambda x: x == 1, bias_shape))
-    W, b = W_init(rng, kernel_shape), b_init(rng, bias_shape)
+    k1, k2 = random.split(rng)
+    W, b = W_init(k1, kernel_shape), b_init(k2, bias_shape)
     return output_shape, (W, b)
   def apply_fun(params, inputs, **kwargs):
     W, b = params
@@ -140,7 +144,8 @@ def GeneralConvTranspose(dimension_numbers, out_chan, filter_shape,
         input_shape, kernel_shape, strides, padding, dimension_numbers)
     bias_shape = [out_chan if c == 'C' else 1 for c in out_spec]
     bias_shape = tuple(itertools.dropwhile(lambda x: x == 1, bias_shape))
-    W, b = W_init(rng, kernel_shape), b_init(rng, bias_shape)
+    k1, k2 = random.split(rng)
+    W, b = W_init(k1, kernel_shape), b_init(k2, bias_shape)
     return output_shape, (W, b)
   def apply_fun(params, inputs, **kwargs):
     W, b = params
@@ -160,7 +165,8 @@ def BatchNorm(axis=(0, 1, 2), epsilon=1e-5, center=True, scale=True,
   axis = (axis,) if np.isscalar(axis) else axis
   def init_fun(rng, input_shape):
     shape = tuple(d for i, d in enumerate(input_shape) if i not in axis)
-    beta, gamma = _beta_init(rng, shape), _gamma_init(rng, shape)
+    k1, k2 = random.split(rng)
+    beta, gamma = _beta_init(k1, shape), _gamma_init(k2, shape)
     return input_shape, (beta, gamma)
   def apply_fun(params, x, **kwargs):
     beta, gamma = params

@@ -23,7 +23,7 @@ from jax.interpreters import ad
 from jax.interpreters import parallel
 from jax.interpreters import xla
 from jax.interpreters import pxla
-from jax.util import partial, unzip2
+from jax.util import partial, unzip2, prod
 from jax.lib import xla_bridge
 
 
@@ -154,14 +154,9 @@ def pcollect(x, axis_name):
 
 ### parallel primitives
 
-def _unbound_name_error(primitive_name, *args, **kwargs):
-  axis_name = kwargs['axis_name']
-  msg = "axis name '{}' is unbound for primitive {}."
-  raise NameError(msg.format(axis_name, primitive_name))
-
-def PmapPrimitive(name):
+def standard_pmap_primitive(name):
   prim = Primitive(name)
-  prim.def_impl(partial(_unbound_name_error, name))
+  prim.def_impl(partial(pxla.apply_parallel_primitive, prim))
   prim.def_abstract_eval(lambda x, *args, **params: x)
   return prim
 
@@ -171,26 +166,26 @@ def _allreduce_serial_pmap_rule(reducer, vals, axes):
   axis, = axes
   return reducer(val, [axis]), None
 
-def _allreduce_translation_rule(prim, c, val, device_groups):
+def _allreduce_translation_rule(prim, c, val, replica_groups):
   dtype = c.GetShape(val).numpy_dtype()
   scalar = xla_bridge.Shape.array_shape(dtype, ())
   computation = xla.primitive_computation(prim, scalar, scalar)
-  return c.AllReduce(val, computation, replica_groups=device_groups)
+  return c.AllReduce(val, computation, replica_groups=replica_groups)
 
 
-psum_p = PmapPrimitive('psum')
+psum_p = standard_pmap_primitive('psum')
 parallel.defreducer(lax.reduce_sum_p, psum_p)
 parallel.serial_pmap_primitive_rules[psum_p] = \
     partial(_allreduce_serial_pmap_rule, lax._reduce_sum)
-# TODO(mattjj): replace translation rule when we update jaxlib
-# pxla.parallel_translation_rules[psum_p] = \
-#     partial(_allreduce_translation_rule, lax.add_p)
 pxla.parallel_translation_rules[psum_p] = \
-    lambda c, val, device_groups: c.CrossReplicaSum(val, device_groups)
+    partial(_allreduce_translation_rule, lax.add_p)
+pxla.parallel_translation_rules[psum_p] = \
+    lambda c, val, replica_groups: c.CrossReplicaSum(val, replica_groups)
+pxla.parallel_pure_rules[psum_p] = lambda x, shape: x * prod(shape)
 ad.deflinear(psum_p, lambda t, axis_name: [t])
 
 
-pmax_p = PmapPrimitive('pmax')
+pmax_p = standard_pmap_primitive('pmax')
 parallel.defreducer(lax.reduce_max_p, pmax_p)
 parallel.serial_pmap_primitive_rules[pmax_p] = \
     partial(_allreduce_serial_pmap_rule, lax._reduce_max)
@@ -198,7 +193,7 @@ pxla.parallel_translation_rules[pmax_p] = \
     partial(_allreduce_translation_rule, lax.max_p)
 
 
-pmin_p = PmapPrimitive('pmin')
+pmin_p = standard_pmap_primitive('pmin')
 parallel.defreducer(lax.reduce_min_p, pmin_p)
 parallel.serial_pmap_primitive_rules[pmin_p] = \
     partial(_allreduce_serial_pmap_rule, lax._reduce_min)
@@ -206,15 +201,15 @@ pxla.parallel_translation_rules[pmin_p] = \
     partial(_allreduce_translation_rule, lax.min_p)
 
 
-def _ppermute_translation_rule(c, x, device_groups, perm):
-  group_size = len(device_groups[0])
+def _ppermute_translation_rule(c, x, replica_groups, perm):
+  group_size = len(replica_groups[0])
   srcs, dsts = unzip2((src % group_size, dst % group_size) for src, dst in perm)
   if not (len(srcs) == len(set(srcs)) and len(dsts) == len(set(dsts))):
     msg = "ppermute sources and destinations must be unique, got {}."
     raise ValueError(msg.format(perm))
 
   full_perm = []
-  for grp in device_groups:
+  for grp in replica_groups:
     grp = list(sorted(grp))
     full_perm.extend((grp[src], grp[dst]) for src, dst in perm)
   return c.CollectivePermute(x, full_perm)
@@ -224,7 +219,7 @@ def _ppermute_transpose_rule(t, perm, axis_name):
   inverse_perm = zip(dests, srcs)
   return ppermute(t, axis_name=axis_name, perm=inverse_perm)
 
-ppermute_p = PmapPrimitive('ppermute')
+ppermute_p = standard_pmap_primitive('ppermute')
 # ad.deflinear(ppermute_p, _ppermute_transpose_rule)  # TODO(mattjj): test this
 pxla.parallel_translation_rules[ppermute_p] = _ppermute_translation_rule
 
@@ -239,7 +234,7 @@ def _pswapaxes_serial_pmap_rule(vals, axes, axis):
   perm[axis] = axis_in
   return lax.transpose(x, perm), axis_in
 
-pswapaxes_p = PmapPrimitive('pswapaxes')
+pswapaxes_p = standard_pmap_primitive('pswapaxes')
 parallel.serial_pmap_primitive_rules[pswapaxes_p] = _pswapaxes_serial_pmap_rule
 
 
@@ -252,7 +247,7 @@ def _psplit_serial_pmap_rule(vals, axes, axis):
             axis_in, axis, x.shape))
   return x, axis
 
-psplit_p = PmapPrimitive('psplit')
+psplit_p = standard_pmap_primitive('psplit')
 parallel.serial_pmap_primitive_rules[psplit_p] = _psplit_serial_pmap_rule
 
 
@@ -265,7 +260,7 @@ def _psplit_like_serial_pmap_rule(vals, axes):
             xaxis, yaxis, x.shape))
   return x, yaxis
 
-psplit_like_p = PmapPrimitive('psplit_like')
+psplit_like_p = standard_pmap_primitive('psplit_like')
 psplit_like_p.def_abstract_eval(
     lambda x, y, *args, **kwargs: ShapedArray(y.shape, x.dtype))
 parallel.serial_pmap_primitive_rules[psplit_like_p] = _psplit_like_serial_pmap_rule
@@ -275,7 +270,7 @@ def _pcollect_serial_pmap_rule(vals, axes):
   x, = vals
   return x, None
 
-pcollect_p = PmapPrimitive('pcollect')
+pcollect_p = standard_pmap_primitive('pcollect')
 parallel.serial_pmap_primitive_rules[pcollect_p] = _pcollect_serial_pmap_rule
 
 

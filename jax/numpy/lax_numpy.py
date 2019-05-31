@@ -131,6 +131,10 @@ ComplexWarning = onp.ComplexWarning
 array_str = onp.array_str
 array_repr = onp.array_repr
 
+save = onp.save
+savez = onp.savez
+load = onp.load
+
 ### utility functions
 
 
@@ -150,16 +154,10 @@ def _promote_dtypes(*args):
   if len(args) < 2:
     return args
   else:
-    from_dtypes = (x if type(x) in _builtin_numeric_types else _dtype(x)
-                   for x in args)
+    from_dtypes = map(_dtype, args)
     to_dtype = xla_bridge.canonicalize_dtype(result_type(*from_dtypes))
     return [lax.convert_element_type(x, to_dtype)
             if _dtype(x) != to_dtype else x for x in args]
-
-if six.PY3:
-  _builtin_numeric_types = (int, float, complex)
-else:
-  _builtin_numeric_types = (int, float, long, complex)
 
 def _promote_to_result_dtype(op, *args):
   """Convenience function to promote args directly to the op's result dtype."""
@@ -276,6 +274,7 @@ tanh = _one_to_one_unop(onp.tanh, lax.tanh, True)
 arcsinh = _one_to_one_unop(onp.arcsinh, lax.asinh, True)
 arccosh = _one_to_one_unop(onp.arccosh, lax.acosh, True)
 arctanh = _one_to_one_unop(onp.arctanh, lax.atanh, True)
+sqrt = _one_to_one_unop(onp.sqrt, lax.sqrt, True)
 
 
 add = _one_to_one_binop(onp.add, lax.add)
@@ -460,12 +459,6 @@ fmod = _wraps(onp.fmod)(lambda x, y: lax.rem(x, y))
 def cbrt(x):
   x, = _promote_to_result_dtype(onp.cbrt, x)
   return lax.sign(x) * power(lax.abs(x), _constant_like(x, 1. / 3.))
-
-
-@_wraps(onp.sqrt)
-def sqrt(x):
-  x, = _promote_to_result_dtype(onp.sqrt, x)
-  return power(x, _constant_like(x, 0.5))
 
 
 @_wraps(onp.square)
@@ -654,6 +647,20 @@ def _reshape(a, newshape, order="C"):
     raise NotImplementedError("np.reshape order=A is not implemented.")
   else:
     raise ValueError("Unexpected value for 'order' argument: {}.".format(order))
+
+def _reshape_method(a, *newshape, **kwargs):
+  order = kwargs.pop("order", "C")
+  if len(kwargs) == 1:
+    invalid_kwarg, = kwargs
+    msg = "'{}' is an invalid keyword argument for this function"
+    raise TypeError(msg.format(invalid_kwarg))  # same as NumPy error
+  elif kwargs:
+    invalid_kwargs = "'{}'".format("'".join(kwargs))
+    msg = "{} are invalid keyword arguments for this function"
+    raise TypeError(msg.format(invalid_kwargs))  # different from NumPy error
+  if len(newshape) == 1 and not isinstance(newshape[0], int):
+    newshape = newshape[0]
+  return _reshape(a, newshape, order=order)
 
 
 @_wraps(onp.ravel)
@@ -1163,10 +1170,11 @@ def pad(array, pad_width, mode, constant_values=0):
     raise NotImplementedError(msg.format(mode))
 
   array = asarray(array)
-  pad_width = onp.broadcast_to(onp.asarray(pad_width), (array.ndim, 2))
-  constant_values = broadcast_to(asarray(constant_values), (array.ndim, 2))
-  for i in xrange(array.ndim):
-    widths = [(0, 0, 0)] * array.ndim
+  nd = ndim(array)
+  pad_width = onp.broadcast_to(onp.asarray(pad_width), (nd, 2))
+  constant_values = broadcast_to(asarray(constant_values), (nd, 2))
+  for i in xrange(nd):
+    widths = [(0, 0, 0)] * nd
     widths[i] = (pad_width[i, 0], 0, 0)
     array = lax.pad(array, constant_values[i, 0], widths)
     widths[i] = (0, pad_width[i, 1], 0)
@@ -1191,13 +1199,13 @@ def stack(arrays, axis=0):
 
 @_wraps(onp.tile)
 def tile(a, reps):
-    if isinstance(reps, int):
-        reps = (reps,)
-    a = a[(None,) * (len(reps) - a.ndim)]
-    reps = (1,) * (a.ndim - len(reps)) + reps
-    for i, rep in enumerate(reps):
-        a = concatenate([a] * rep, axis=i)
-    return a
+  if isinstance(reps, int):
+    reps = (reps,)
+  a = reshape(a, (1,) * (len(reps) - ndim(a)) + shape(a))
+  reps = (1,) * (ndim(a) - len(reps)) + reps
+  for i, rep in enumerate(reps):
+    a = concatenate([a] * rep, axis=i)
+  return a
 
 @_wraps(onp.concatenate)
 def concatenate(arrays, axis=0):
@@ -1338,9 +1346,7 @@ def array_equal(a1, a2):
     a1, a2 = asarray(a1), asarray(a2)
   except Exception:
     return False
-  if a1.shape != a2.shape:
-    return False
-  return asarray(a1==a2).all()
+  return shape(a1) == shape(a2) and all(asarray(a1 == a2))
 
 
 # We can't create uninitialized arrays in XLA; use zeros for empty.
@@ -1450,6 +1456,9 @@ def triu(m, k=0):
 def trace(a, offset=0, axis1=0, axis2=1, dtype=None, out=None):
   if out:
     raise NotImplementedError("The 'out' argument to trace is not supported.")
+
+  axis1 = axis1 % ndim(a)
+  axis2 = axis2 % ndim(a)
 
   a_shape = shape(a)
   if dtype is None:
@@ -1592,11 +1601,16 @@ def tensordot(a, b, axes=2):
     raise TypeError(msg.format(ndim(a), ndim(b)))
 
   if type(axes) is int:
-    a, b = _promote_dtypes(a, b)
-    a_reshape = lax.reshape(a, (_prod(a.shape[:-axes]), _prod(a.shape[-axes:])))
-    b_reshape = lax.reshape(b, (_prod(b.shape[:axes]), _prod(b.shape[axes:])))
-    out_reshape = lax.dot(a_reshape, b_reshape)
-    return lax.reshape(out_reshape, a.shape[:-axes] + b.shape[axes:])
+    if axes == 0:
+      a, b = _promote_dtypes(a, b)
+      return lax.mul(lax.reshape(a, shape(a) + (1,) * ndim(b)),
+                     lax.reshape(b, (1,) * ndim(a) + shape(b)))
+    else:
+      a, b = _promote_dtypes(a, b)
+      a_reshape = lax.reshape(a, (_prod(a.shape[:-axes]), _prod(a.shape[-axes:])))
+      b_reshape = lax.reshape(b, (_prod(b.shape[:axes]), _prod(b.shape[axes:])))
+      out_reshape = lax.dot(a_reshape, b_reshape)
+      return lax.reshape(out_reshape, a.shape[:-axes] + b.shape[axes:])
   elif type(axes) in (list, tuple) and len(axes) == 2:
     ax1, ax2 = axes
     if type(ax1) == type(ax2) == int:
@@ -1864,37 +1878,15 @@ def cross(a, b, axisa=-1, axisb=-1, axisc=-1, axis=None):
 
 @_wraps(onp.kron)
 def kron(a, b):
-  a_shape = shape(a)
-  b_shape = shape(b)
-  a_ndims = len(a_shape)
-  b_ndims = len(b_shape)
-  a = array(a)
-  b = array(b)
-  d = _min(a_ndims, b_ndims)
-  if d == 0:
-    return a * b
-  a_broadcast_dims = list(range(a_ndims - d, a_ndims + d, 2))
-  a_broadcast_shape = onp.ones(a_ndims + d, dtype=onp.int64)
-  a_broadcast_shape[:-2*d] = a_shape[:-d]
-  a_broadcast_shape[a_broadcast_dims] = a_shape[-d:]
-
-  b_broadcast_dims = list(range(b_ndims -d + 1, b_ndims + d + 1, 2))
-  b_broadcast_shape = onp.ones(b_ndims + d, dtype=onp.int64)
-  b_broadcast_shape[:-2*d] = b_shape[:-d]
-  b_broadcast_shape[b_broadcast_dims] = b_shape[-d:]
-
-  if a_ndims > b_ndims:
-    out_shape = onp.array(a_shape, dtype=onp.int64)
-    out_shape[-d:] *= onp.array(b_shape, dtype=onp.int64)
-  else:
-    out_shape = onp.array(b_shape, dtype=onp.int64)
-    out_shape[-d:] *= onp.array(a_shape, dtype=onp.int64)
-
-  a_broadcast = lax.broadcast_in_dim(
-    a, a_broadcast_shape, list(range(a_ndims - d)) + a_broadcast_dims)
-  b_broadcast = lax.broadcast_in_dim(
-    b, b_broadcast_shape, list(range(b_ndims - d)) + b_broadcast_dims)
-  return lax.reshape(a_broadcast * b_broadcast, out_shape)
+  a, b = _promote_dtypes(a, b)
+  if ndim(a) < ndim(b):
+    a = reshape(a, (1,) * (ndim(b) - ndim(a)) + shape(a))
+  elif ndim(b) < ndim(a):
+    b = reshape(b, (1,) * (ndim(a) - ndim(b)) + shape(b))
+  a_reshaped = reshape(a, [i for d in shape(a) for i in (d, 1)])
+  b_reshaped = reshape(b, [i for d in shape(b) for i in (1, d)])
+  out_shape = tuple(onp.multiply(shape(a), shape(b)))
+  return reshape(lax.mul(a_reshaped, b_reshaped), out_shape)
 
 
 @_wraps(onp.vander)
@@ -2374,7 +2366,7 @@ for operator_name, function in _operators.items():
 # Forward methods and properties using core.aval_method and core.aval_property:
 for method_name in _nondiff_methods + _diff_methods:
   setattr(ShapedArray, method_name, core.aval_method(globals()[method_name]))
-setattr(ShapedArray, "reshape", core.aval_method(_reshape))
+setattr(ShapedArray, "reshape", core.aval_method(_reshape_method))
 setattr(ShapedArray, "flatten", core.aval_method(ravel))
 setattr(ShapedArray, "T", core.aval_property(transpose))
 setattr(ShapedArray, "real", core.aval_property(real))
@@ -2388,7 +2380,7 @@ for operator_name, function in _operators.items():
   setattr(DeviceArray, "__{}__".format(operator_name), function)
 for method_name in _nondiff_methods + _diff_methods:
   setattr(DeviceArray, method_name, globals()[method_name])
-setattr(DeviceArray, "reshape", _reshape)
+setattr(DeviceArray, "reshape", _reshape_method)
 setattr(DeviceArray, "flatten", ravel)
 setattr(DeviceArray, "T", property(transpose))
 setattr(DeviceArray, "real", property(real))
