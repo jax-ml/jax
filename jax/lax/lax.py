@@ -1257,8 +1257,11 @@ def acosh(x):
 def atanh(x):
   r"""Elementwise arc hyperbolic tangent: :math:`\mathrm{atanh}(x)`."""
   # atanh(x) = 0.5 * log((1 + x) / (1 - x))
-  return mul(_const(x, 0.5), log(div(add(_const(x, 1), x),
-                                     sub(_const(x, 1), x))))
+  result = mul(_const(x, 0.5), log(div(add(_const(x, 1), x),
+                                       sub(_const(x, 1), x))))
+  if onp.issubdtype(_dtype(result), onp.complexfloating):
+    return result
+  return select(le(abs(x), _one(x)), result, full_like(x, onp.nan))
 
 # Add some methods to ShapedArray that rely on lax primitives
 
