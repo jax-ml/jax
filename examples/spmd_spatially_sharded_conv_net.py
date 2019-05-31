@@ -69,12 +69,20 @@ def spmd_glorot(axis_name, out_axis=0, in_axis=1, scale=onp.sqrt(2)):
     return std * random.normal(rng, shape, dtype=np.float32)
   return init
 
+def send_right(x, axis_name):
+  left_perm = [(i, (i + 1)) for i in range(device_count - 1)]
+  return lax.ppermute(x, perm=left_perm, axis_name=axis_name)
 
-# spmd layers for non-batch sharding
+def send_left(x, axis_name):
+  left_perm = [((i + 1), i) for i in range(device_count - 1)]
+  return lax.ppermute(x, perm=left_perm, axis_name=axis_name)
+
+
+# spmd layers for spatial sharding
 
 def LogSoftmax(axis_name):
-  def init_fun(rng, input_shard_shape):
-    return (input_shard_shape, ())
+  def init_fun(rng, input_shape):
+    return (input_shape, ())
   def apply_fun(_, input_shard, **kwargs):
     return spmd_softmax(input_shard, axis_name)
   return init_fun, apply_fun
@@ -96,12 +104,18 @@ def Dense(axis_name, out_dim, W_init=None, b_init=stax.randn()):
 def Conv(axis_name, out_chan, filter_shape, strides=None, padding='valid',
          W_init=None, b_init=stax.randn(1e-6)):
   kernel_height, kernel_width = filter_shape
+  strides = strides or (1, 1)
   ribbon_size = kernel_height // 2
-  def init_fun(rng, input_shard_shape):
-    pass  # TODO
+  init_fun, _ = stax.Conv(out_chan, filter_shape, strides, padding, W_init, b_init)
   def apply_fun(params, input_shard, **kwargs):
+    # TODO test this code in a separate unit test!
     W, b = params
-    pass  # TODO halo exchange of ribbon_size on both sides
+    left, right = input_shard[:, :ribbon_size], input_shard[:, -ribbon_size:]
+    right, left = send_left(left, axis_name), send_right(right, axis_name)
+    enlarged_input_shard = np.concatenate([left, input_shard, right], 1)
+    return b + lax.conv_general_dilated(
+        enlarged_input_shard, W, strides, padding,
+        (1, 1), (1, 1), ("NHWC", "HWIO", "NHWC"))
   return init_fun, apply_fun
 
 # def MaxpoolSpatialShard(axis_name, window_shape):
@@ -113,11 +127,11 @@ ax = AxisName()
 
 init_random_params, predict = stax.serial(
     # Conv(ax, 32, (3, 3), padding='SAME'), Relu,
-    Conv(ax, 64, (3, 3), padding='SAME'), Relu,
+    # Conv(ax, 64, (3, 3), padding='SAME'), Relu,
     # MaxpoolSpatialShard(ax, (2, 2)),
-    Flatten,
-    # Dense(ax, 128), Relu
-    Dense(ax, 10),
+    # Flatten,
+    Dense(ax, 128), Relu
+    # Dense(ax, 10),
     # LogSoftmax(ax),
 )
 

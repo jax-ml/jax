@@ -124,7 +124,7 @@ def GeneralConv(dimension_numbers, out_chan, filter_shape,
     return lax.conv_general_dilated(inputs, W, strides, padding, one, one,
                                     dimension_numbers) + b
   return init_fun, apply_fun
-Conv = functools.partial(GeneralConv, ('NHWC', 'HWIO', 'NHWC'))
+Conv = Conv2D = functools.partial(GeneralConv, ('NHWC', 'HWIO', 'NHWC'))
 
 
 def GeneralConvTranspose(dimension_numbers, out_chan, filter_shape,
