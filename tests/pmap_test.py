@@ -303,7 +303,19 @@ class PmapTest(jtu.JaxTestCase):
     x = onp.arange(device_count, dtype=onp.float32)
     ans = grad(g)(x)
     expected = onp.concatenate([onp.pi + onp.arange(1, device_count), [0]])
-    print(ans)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @jtu.skip_on_devices("cpu", "gpu")
+  def testCollectivePermuteCyclicGrad(self):
+    device_count = xla_bridge.device_count()
+    shift_right = [(i, (i + 1) % device_count) for i in range(device_count)]
+    f = lambda x: lax.ppermute(x, perm=shift_right, axis_name='i')
+    y = onp.pi + onp.arange(device_count, dtype=onp.float32)
+    g = lambda x: np.sum(y * pmap(f, 'i')(x))
+
+    x = onp.arange(device_count, dtype=onp.float32)
+    ans = grad(g)(x)
+    expected = onp.roll(onp.pi + onp.arange(device_count), 1)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   @jtu.skip_on_devices("cpu", "gpu")
