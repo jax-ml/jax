@@ -635,12 +635,12 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(out_shape, (2,))
 
   def test_eval_shape_output_dict(self):
-    def fun4(x, y):
+    def fun(x, y):
       return {'hi': x[0] + x[1] + y}
 
     x = (np.ones(2), np.ones(2))
     y = 3.
-    out_shape = api.eval_shape(fun4, x, y)
+    out_shape = api.eval_shape(fun, x, y)
 
     self.assertEqual(out_shape, {'hi': (2,)})
 
@@ -652,6 +652,22 @@ class APITest(jtu.JaxTestCase):
     y = np.ones((4, 4))
 
     self.assertRaises(TypeError, lambda: api.eval_shape(fun, x, y))
+
+  def test_eval_shape_duck_typing(self):
+    def fun(A, b, x):
+      return np.dot(A, x) + b
+
+    class MyArgArray(object):
+      def __init__(self, shape, dtype):
+        self.shape = shape
+        self.dtype = dtype
+
+    A = MyArgArray((3, 4), np.float32)
+    b = MyArgArray((5,), np.float32)
+    x = MyArgArray((4, 5), np.float32)
+    out_shape = api.eval_shape(fun, A, b, x)
+
+    self.assertEqual(out_shape, (3, 5))
 
 
 if __name__ == '__main__':

@@ -1083,21 +1083,26 @@ def eval_shape(fun, *args, **kwargs):
 
   Args:
     *args: a positional argument tuple of arrays, scalars, or (nested) standard
-      Python containers (pytrees) of those types. Since only the ``shape`` and
-      ``dtype`` attributes are accessed, only values that duck-type arrays are
-      required, rather than real ndarrays.
+      Python containers (tuples, lists, dicts, namedtuples, i.e. pytrees) of
+      those types. Since only the ``shape`` and ``dtype`` attributes are
+      accessed, only values that duck-type arrays are required, rather than real
+      ndarrays. The duck-typed objects cannot be namedtuples because those are
+      treated as standard Python containers. See the example below.
     **kwargs: a keyword argument dict of arrays, scalars, or (nested) standard
       Python containers (pytrees) of those types. As in ``args``, array values
       need only be duck-typed to have ``shape`` and ``dtype`` attributes.
 
   For example:
 
-  >>> f = lambda A, b, x: np.tanh(np.dot(A, x) + b)
-  >>> MyArgArray = collections.namedtuple("MyArgArray", ["shape", "dtype"])
+  >>> f = lambda A, x: np.tanh(np.dot(A, x))
+  >>> class MyArgArray(object):
+  ...   def __init__(self, shape, dtype):
+  ...     self.shape = shape
+  ...     self.dtype = dtype
+  ...
   >>> A = MyArgArray((2000, 3000), np.float32)
-  >>> b = MyArgArray((2000,), np.float32)
   >>> x = MyArgArray((3000, 1000), np.float32)
-  >>> out_shape = jax.eval_shape(f, A, b, x)  # no FLOPs performed
+  >>> out_shape = jax.eval_shape(f, A, x)  # no FLOPs performed
   >>> print(out_shape)
   (2000, 1000)
   """
