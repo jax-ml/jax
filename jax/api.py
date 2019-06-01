@@ -128,16 +128,17 @@ def _jit(fun, static_argnums, device_values=True):
 
 @contextmanager
 def disable_jit():
-  """Context manager that disables `jit`.
+  """Context manager that disables `jit` behavior under its dynamic context.
 
   For debugging purposes, it is useful to have a mechanism that disables `jit`
-  everywhere in a block of code, namely the `disable_jit` decorator.
+  everywhere in a dynamic context.
 
-  Inside a `jit`-ted function the values flowing through
-  traced code can be abstract (i.e., shaped arrays with an unknown values),
-  instead of concrete (i.e., specific arrays with known values).
-
-  For example:
+  Values that have a data dependence on the arguments to a jitted function are
+  traced and abstracted. For example, an abstract value may be a ShapedArray
+  instance, representing the set of all possible arrays with a given shape and
+  dtype, but not representing one concrete array with specific values. You might
+  notice those if you use a benign side-effecting operation in a jitted
+  function, like a print:
 
   >>> @jax.jit
   >>> def f(x):
@@ -150,9 +151,9 @@ def disable_jit():
   [5 7 9]
 
   Here `y` has been abstracted by `jit` to a `ShapedArray`, which represents an
-  array with a fixed shape and type but an arbitrary value. If we want to see a
-  concrete values while debugging, we can use the `disable_jit` decorator, at
-  the cost of slower code:
+  array with a fixed shape and type but an arbitrary value. It's also traced. If
+  we want to see a concrete value while debugging, and avoid the tracer too, we
+  can use the `disable_jit` context manager:
 
   >>> with jax.disable_jit():
   >>>   print(f(np.array([1, 2, 3])))
