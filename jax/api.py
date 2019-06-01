@@ -1062,3 +1062,54 @@ def _make_graphviz(fun):
 
   graphviz_maker.__name__ = "make_graphviz({})".format(graphviz_maker.__name__)
   return graphviz_maker
+
+
+def eval_shape(fun, *args, **kwargs):
+  """Compute the shape of ``fun(*args, **kwargs)`` without incurring any FLOPs.
+
+  This utility function is useful for performing shape inference. Its
+  input/output behavior is defined by:
+
+    def eval_shape(fun, *args, **kwargs):
+      out = fun(*args, **kwargs)
+      return jax.tree_util.tree_map(np.shape, out)
+
+  But instead of applying ``fun`` directly, which might be expensive, it uses
+  JAX's abstract interpretation machinery to evaluate the shapes without doing
+  any FLOPs.
+
+  Using ``eval_shape`` can also catch shape errors, and will raise same shape
+  errors as evaluating ``fun(*args, **kwargs)``.
+
+  Args:
+    *args: a positional argument tuple of arrays, scalars, or (nested) standard
+      Python containers (pytrees) of those types. Since only the ``shape`` and
+      ``dtype`` attributes are accessed, only values that duck-type arrays are
+      required, rather than real ndarrays.
+    **kwargs: a keyword argument dict of arrays, scalars, or (nested) standard
+      Python containers (pytrees) of those types. As in ``args``, array values
+      need only be duck-typed to have ``shape`` and ``dtype`` attributes.
+
+  For example:
+
+  >>> f = lambda A, b, x: np.tanh(np.dot(A, x) + b)
+  >>> MyArgArray = collections.namedtuple("MyArgArray", ["shape", "dtype"])
+  >>> A = MyArgArray((2000, 3000), np.float32)
+  >>> b = MyArgArray((2000,), np.float32)
+  >>> x = MyArgArray((3000, 1000), np.float32)
+  >>> out_shape = jax.eval_shape(f, A, b, x)  # no FLOPs performed
+  >>> print(out_shape)
+  (2000, 1000)
+  """
+  def abstractify(x):
+    if type(x) is core.JaxTuple:
+      return core.AbstractTuple(map(abstractify, x))
+    else:
+      return ShapedArray(onp.shape(x), onp.result_type(x))
+
+  jax_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
+  jax_kwargs, kwargs_tree = pytree_to_jaxtupletree(kwargs)
+  f, out_tree = pytree_fun_to_jaxtupletree_fun2(lu.wrap_init(fun), kwargs_tree, in_trees)
+  abstract_args = map(abstractify, (jax_kwargs,) + tuple(jax_args))
+  out = pe.abstract_eval_fun(f.call_wrapped, *abstract_args)
+  return tree_map(onp.shape, build_tree(out_tree(), out))

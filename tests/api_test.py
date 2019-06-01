@@ -593,5 +593,66 @@ class APITest(jtu.JaxTestCase):
     f_jit = api.jit(f)
     self.assertAllClose(f(pt), f_jit(pt), check_dtypes=False)
 
+  def test_eval_shape(self):
+    def fun(x, y):
+      return np.tanh(np.dot(x, y) + 3.)
+
+    x = np.ones((2, 3))
+    y = np.ones((3, 4))
+    out_shape = api.eval_shape(fun, x, y)
+
+    self.assertEqual(out_shape, (2, 4))
+
+  def test_eval_shape_constants(self):
+    def fun():
+      x = np.ones((2, 3))
+      y = np.ones((3, 4))
+      return np.tanh(np.dot(x, y) + 3.)
+
+    out_shape = api.eval_shape(fun)
+
+    self.assertEqual(out_shape, (2, 4))
+
+  def test_eval_shape_tuple_unpacking(self):
+    def fun(x, y):
+      a, b = x
+      return a + b + y
+
+    x = (np.ones(2), np.ones(2))
+    y = 3.
+    out_shape = api.eval_shape(fun, x, y)
+
+    self.assertEqual(out_shape, (2,))
+
+  def test_eval_shape_tuple_itemgetting(self):
+    def fun(x, y):
+      return x[0] + x[1] + y
+
+    x = (np.ones(2), np.ones(2))
+    y = 3.
+    out_shape = api.eval_shape(fun, x, y)
+
+    self.assertEqual(out_shape, (2,))
+
+  def test_eval_shape_output_dict(self):
+    def fun4(x, y):
+      return {'hi': x[0] + x[1] + y}
+
+    x = (np.ones(2), np.ones(2))
+    y = 3.
+    out_shape = api.eval_shape(fun4, x, y)
+
+    self.assertEqual(out_shape, {'hi': (2,)})
+
+  def test_eval_shape_shape_error(self):
+    def fun(x, y):
+      return np.tanh(np.dot(x, y) + 3.)
+
+    x = np.ones((3, 3))
+    y = np.ones((4, 4))
+
+    self.assertRaises(TypeError, lambda: api.eval_shape(fun, x, y))
+
+
 if __name__ == '__main__':
   absltest.main()
