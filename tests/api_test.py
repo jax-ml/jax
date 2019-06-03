@@ -26,7 +26,7 @@ import jax.numpy as np
 from jax import jit, grad, device_get, device_put, jacfwd, jacrev, hessian
 from jax import api
 from jax.core import Primitive, pack, JaxTuple
-from jax.interpreters.ad import defjvp, defvjp, defvjp2, defvjp_all
+from jax.interpreters import ad
 from jax.interpreters.xla import DeviceArray, DeviceTuple
 from jax.abstract_arrays import concretization_err_msg
 from jax import test_util as jtu
@@ -242,7 +242,7 @@ class APITest(jtu.JaxTestCase):
                      "XLA translation rule for 'foo' not implemented")
 
     foo_p.def_impl(lambda x: x)
-    defjvp(foo_p, lambda g, x: foo(g))
+    ad.defjvp(foo_p, lambda g, x: foo(g))
 
     jtu.check_raises(lambda: grad(foo)(1.0), NotImplementedError,
                      "Reverse-mode differentiation rule for 'foo' not implemented")
@@ -473,7 +473,7 @@ class APITest(jtu.JaxTestCase):
     foo_p = Primitive('foo')
     def foo(x): return 2. * foo_p.bind(x)
 
-    defvjp_all(foo_p, lambda x: (x**2, lambda g: (4 * g * np.sin(x),)))
+    ad.defvjp_all(foo_p, lambda x: (x**2, lambda g: (4 * g * np.sin(x),)))
     val_ans, grad_ans = api.value_and_grad(foo)(3.)
     self.assertAllClose(val_ans, 2 * 3.**2, check_dtypes=False)
     self.assertAllClose(grad_ans, 4 * 2 * onp.sin(3.), check_dtypes=False)
@@ -482,7 +482,7 @@ class APITest(jtu.JaxTestCase):
     foo_p = Primitive('foo')
     def foo(x): return foo_p.bind(x)
 
-    defvjp_all(foo_p, lambda x: (x**2, lambda g: (12.,)))
+    ad.defvjp_all(foo_p, lambda x: (x**2, lambda g: (12.,)))
     val_ans, grad_ans = api.value_and_grad(foo)(3.)
     self.assertAllClose(val_ans, 9., check_dtypes=False)
     self.assertAllClose(grad_ans, 12., check_dtypes=True)
@@ -491,7 +491,7 @@ class APITest(jtu.JaxTestCase):
     foo_p = Primitive('foo')
     def foo(x): return 2. * foo_p.bind(x)
 
-    defvjp_all(foo_p, lambda x: (x**2, lambda g: (g * x ** 2,)))
+    ad.defvjp_all(foo_p, lambda x: (x**2, lambda g: (g * x ** 2,)))
     ans = api.grad(api.grad(foo))(3.)
     self.assertAllClose(ans, 2 * 2 * 3., check_dtypes=False)
 
@@ -507,7 +507,7 @@ class APITest(jtu.JaxTestCase):
       vjp = lambda g: (g + x + y, g * x * 9.)
       return out, vjp
 
-    defvjp_all(foo_p, vjpfun)
+    ad.defvjp_all(foo_p, vjpfun)
     val_ans, grad_ans = api.value_and_grad(foo)(3., 4.)
     self.assertAllClose(val_ans, 3.**2 + 4.**3, check_dtypes=False)
     self.assertAllClose(grad_ans, 1. + 3. + 4., check_dtypes=False)
@@ -515,12 +515,22 @@ class APITest(jtu.JaxTestCase):
     ans = api.grad(foo, (0, 1))(3., 4.)
     self.assertAllClose(ans, (1. + 3. + 4., 1. * 3. * 9.), check_dtypes=False)
 
+  def test_defvjp_all(self):
+    @api.custom_transforms
+    def foo(x):
+      return np.sin(x)
+
+    api.defvjp_all(foo, lambda x: (np.sin(x), lambda g: (g * x,)))
+    val_ans, grad_ans = api.value_and_grad(foo)(3.)
+    self.assertAllClose(val_ans, onp.sin(3.), check_dtypes=False)
+    self.assertAllClose(grad_ans, 3., check_dtypes=False)
+
   def test_defvjp(self):
     @api.custom_transforms
     def foo(x, y):
       return np.sin(x * y)
 
-    defvjp(foo.primitive, None, lambda g, x, y: g * x * y)
+    api.defvjp(foo, None, lambda g, x, y: g * x * y)
     val_ans, grad_ans = api.value_and_grad(foo)(3., 4.)
     self.assertAllClose(val_ans, onp.sin(3. * 4.), check_dtypes=False)
     self.assertAllClose(grad_ans, 0., check_dtypes=False)
@@ -529,16 +539,78 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(ans_0, 0., check_dtypes=False)
     self.assertAllClose(ans_1, 3. * 4., check_dtypes=False)
 
+  def test_defvjp_higher_order(self):
+    @api.custom_transforms
+    def foo(x):
+      return np.sin(2. * x)
+
+    api.defvjp(foo, lambda g, x: g * np.cos(x))
+    ans = api.grad(api.grad(foo))(2.)
+    expected = api.grad(api.grad(np.sin))(2.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def test_defvjp2(self):
     @api.custom_transforms
     def foo(x, y):
       return np.sin(x * y)
 
-    defvjp2(foo.primitive, None, lambda g, ans, x, y: g * x * y + np.cos(ans))
+    api.defvjp2(foo, None, lambda g, ans, x, y: g * x * y + np.cos(ans))
     val_ans, grad_ans = api.value_and_grad(foo, 1)(3., 4.)
     self.assertAllClose(val_ans, onp.sin(3. * 4.), check_dtypes=False)
     self.assertAllClose(grad_ans, 3. * 4. + onp.cos(onp.sin(3. * 4)),
                         check_dtypes=False)
+
+  def test_custom_transforms_eval_with_pytrees(self):
+    @api.custom_transforms
+    def f(x):
+      a, b = x[0], x[1]
+      return {'hi': 2 * a, 'bye': 2 * b}
+
+    ans = f((1, 2))
+    self.assertEqual(ans, {'hi': 2 * 1, 'bye': 2 * 2})
+
+  def test_custom_transforms_jit_with_pytrees(self):
+    @api.custom_transforms
+    def f(x):
+      a, b = x[0], x[1]
+      return {'hi': 2 * a, 'bye': 2 * b}
+
+    ans = jit(f)((1, 2))
+    self.assertEqual(ans, {'hi': 2 * 1, 'bye': 2 * 2})
+
+  def test_custom_transforms_jit_with_pytrees_consts(self):
+    # The purpose of this test is to exercise the custom_transforms default
+    # translation rule in how it deals with constants that are too large to be
+    # treated as literals (at the time of writing).
+    z = onp.arange(10.)
+
+    @api.custom_transforms
+    def f(x):
+      a, b = x[0], x[1]
+      return {'hi': 2 * a, 'bye': z * b}
+
+    ans = jit(f)((1, 2))
+    self.assertAllClose(ans, {'hi': 2 * 1, 'bye': z * 2}, check_dtypes=False)
+
+  def test_custom_transforms_jvp_with_pytrees(self):
+    @api.custom_transforms
+    def f(x):
+      a, b = x[0], x[1]
+      return {'hi': 2 * a, 'bye': 2 * b}
+
+    ans, out_tangent = api.jvp(f, ((1, 2),), ((3, 4),))
+    self.assertEqual(ans, {'hi': 2 * 1, 'bye': 2 * 2})
+    self.assertEqual(out_tangent, {'hi': 2 * 3, 'bye': 2 * 4})
+
+  def test_custom_transforms_vmap_with_pytrees(self):
+    @api.custom_transforms
+    def f(x):
+      a, b = x[0], x[1]
+      return {'hi': 2 * a, 'bye': 2 * b}
+
+    ans = api.vmap(f)((onp.arange(3), onp.ones((3, 2))))
+    expected = {'hi': 2 * onp.arange(3), 'bye': 2 * onp.ones((3, 2))}
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_devicetuple_iteration(self):
     tup = device_put(pack((1, 2)))
