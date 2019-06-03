@@ -577,6 +577,12 @@ class APITest(jtu.JaxTestCase):
     jtu.check_raises_regexp(lambda: repr(x), ValueError,
                             "Cannot fetch the value of a deleted DeviceArray.")
 
+
+  def test_devicearray_block_until_ready(self):
+    x = device_put(1.)
+    x.block_until_ready()
+    # Tests only that block_until_ready() does not produce an error.
+
   def test_namedtuple_transparency(self):
     # See https://github.com/google/jax/issues/446
     Point = collections.namedtuple("Point", ["x", "y"])
