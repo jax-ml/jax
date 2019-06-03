@@ -233,22 +233,14 @@ def device_persistent_result_handler(result_shape):
   else:
     raise TypeError(t)
 
-def _pyval_result_fetcher(result_shape):
-  t = type(result_shape)
-  if t is ResultArray:
-    return lambda buf: buf.to_py()
-  elif t is ResultTuple:
-    _, result_shapes = result_shape
-    handlers = list(map(_pyval_result_fetcher, result_shapes))
-    return lambda buf: JaxTuple(h(b) for h, b in zip(handlers, buf.destructure()))
-  else:
-    raise TypeError(t)
-
 def pyval_result_handler(result_shape):
-  fetcher = _pyval_result_fetcher(result_shape)
+  del result_shape
+  def _tuple_to_jaxtuple(v):
+    if isinstance(v, tuple):
+      return JaxTuple(_tuple_to_jaxtuple(t) for t in v)
+    return v
   def f(buf):
-    _copy_to_host_async(buf)
-    return fetcher(buf)
+    return _tuple_to_jaxtuple(buf.to_py())
   return f
 
 def compile_jaxpr(jaxpr, const_vals, *abstract_args):
