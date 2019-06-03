@@ -575,7 +575,7 @@ class APITest(jtu.JaxTestCase):
     x = device_put(1.)
     x.delete()
     jtu.check_raises_regexp(lambda: repr(x), ValueError,
-                            "Cannot fetch the value of a deleted DeviceArray.")
+                            "DeviceValue has been deleted.")
 
 
   def test_devicearray_block_until_ready(self):

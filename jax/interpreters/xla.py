@@ -432,6 +432,21 @@ class DeviceValue(object):
   def __init__(self, device_buffer):
     self.device_buffer = device_buffer
 
+  def _check_if_deleted(self):
+    if self.device_buffer is None:
+      raise ValueError("DeviceValue has been deleted.")
+
+  def block_until_ready(self):
+    """Blocks the caller until the buffer's value has been computed on device.
+
+    This method is mostly useful for timing microbenchmarks that wish to
+    time how long a computation takes, without transferring the result back
+    to the host.
+    """
+    self._check_if_deleted()
+    self.device_buffer.block_host_until_ready()
+
+
 class DeviceTuple(DeviceValue):
   """A DeviceTuple is a JaxTuple backed by a single device memory buffer."""
   __slots__ = ["aval", "result_shapes"]
@@ -495,10 +510,6 @@ class DeviceArray(DeviceValue):
     self.shape, self.dtype, self.ndim, self.size = result_shape
     self._npy_value = None
 
-  def _check_if_deleted(self):
-    if self.device_buffer is None:
-      raise ValueError("Cannot fetch the value of a deleted DeviceArray.")
-
   # TODO make device_buffer a property, make the _npy_value writeable, invalidate
   @property
   def _value(self):
@@ -517,16 +528,6 @@ class DeviceArray(DeviceValue):
     self._check_if_deleted()
     if self._npy_value is None:
       _copy_to_host_async(self.device_buffer)
-
-  def block_until_ready(self):
-    """Blocks the caller until the buffer's value has been computed on device.
-
-    This method is mostly useful for timing microbenchmarks that wish to
-    time how long a computation takes, without transferring the result back
-    to the host.
-    """
-    self._check_if_deleted()
-    self.device_buffer.block_host_until_ready()
 
   def delete(self):
     """Deletes the device array and any cached copy on the host.
