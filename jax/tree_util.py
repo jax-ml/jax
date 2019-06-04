@@ -247,7 +247,7 @@ def _get_node_type(maybe_tree):
   return node_types.get(t) or _namedtuple_node(t)
 
 def _namedtuple_node(t):
-  if t.__bases__ == (tuple,) and hasattr(t, '_fields'):
+  if issubclass(t, tuple) and hasattr(t, '_fields'):
     return NamedtupleNode
 
 NamedtupleNode = NodeType('namedtuple',

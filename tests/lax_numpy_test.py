@@ -1583,6 +1583,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         # TODO(b/133842876, b/133842870): these return wrong outputs on CPU for
         # NaN inputs.
         continue
+      if (op in ("sin", "cos", "tan", "arctan") and FLAGS.jax_test_dut and
+          FLAGS.jax_test_dut.startswith("tpu")):
+        continue  # TODO(b/132196789, b/134175194): fix and reenable.
       x = dtype(x)
       expected = onp_op(x)
       actual = lnp_op(x)

@@ -575,7 +575,13 @@ class APITest(jtu.JaxTestCase):
     x = device_put(1.)
     x.delete()
     jtu.check_raises_regexp(lambda: repr(x), ValueError,
-                            "Cannot fetch the value of a deleted DeviceArray.")
+                            "DeviceValue has been deleted.")
+
+
+  def test_devicearray_block_until_ready(self):
+    x = device_put(1.)
+    x.block_until_ready()
+    # Tests only that block_until_ready() does not produce an error.
 
   def test_namedtuple_transparency(self):
     # See https://github.com/google/jax/issues/446
@@ -592,6 +598,100 @@ class APITest(jtu.JaxTestCase):
 
     f_jit = api.jit(f)
     self.assertAllClose(f(pt), f_jit(pt), check_dtypes=False)
+
+  def test_namedtuple_subclass_transparency(self):
+    # See https://github.com/google/jax/issues/806
+    Point = collections.namedtuple("Point", ["x", "y"])
+
+    class ZeroPoint(Point):
+      def is_zero(self):
+        return (self.x == 0) and (self.y == 0)
+
+    pt = ZeroPoint(0., 0.)
+
+    def f(pt):
+      return 0. if pt.is_zero() else np.sqrt(pt.x ** 2 + pt.y ** 2)
+
+    f(pt)  # doesn't crash
+    g = api.grad(f)(pt)
+    self.assertIsInstance(pt, ZeroPoint)
+
+  def test_eval_shape(self):
+    def fun(x, y):
+      return np.tanh(np.dot(x, y) + 3.)
+
+    x = np.ones((2, 3))
+    y = np.ones((3, 4))
+    out_shape = api.eval_shape(fun, x, y)
+
+    self.assertEqual(out_shape, (2, 4))
+
+  def test_eval_shape_constants(self):
+    def fun():
+      x = np.ones((2, 3))
+      y = np.ones((3, 4))
+      return np.tanh(np.dot(x, y) + 3.)
+
+    out_shape = api.eval_shape(fun)
+
+    self.assertEqual(out_shape, (2, 4))
+
+  def test_eval_shape_tuple_unpacking(self):
+    def fun(x, y):
+      a, b = x
+      return a + b + y
+
+    x = (np.ones(2), np.ones(2))
+    y = 3.
+    out_shape = api.eval_shape(fun, x, y)
+
+    self.assertEqual(out_shape, (2,))
+
+  def test_eval_shape_tuple_itemgetting(self):
+    def fun(x, y):
+      return x[0] + x[1] + y
+
+    x = (np.ones(2), np.ones(2))
+    y = 3.
+    out_shape = api.eval_shape(fun, x, y)
+
+    self.assertEqual(out_shape, (2,))
+
+  def test_eval_shape_output_dict(self):
+    def fun(x, y):
+      return {'hi': x[0] + x[1] + y}
+
+    x = (np.ones(2), np.ones(2))
+    y = 3.
+    out_shape = api.eval_shape(fun, x, y)
+
+    self.assertEqual(out_shape, {'hi': (2,)})
+
+  def test_eval_shape_shape_error(self):
+    def fun(x, y):
+      return np.tanh(np.dot(x, y) + 3.)
+
+    x = np.ones((3, 3))
+    y = np.ones((4, 4))
+
+    self.assertRaises(TypeError, lambda: api.eval_shape(fun, x, y))
+
+  def test_eval_shape_duck_typing(self):
+    def fun(A, b, x):
+      return np.dot(A, x) + b
+
+    class MyArgArray(object):
+      def __init__(self, shape, dtype):
+        self.shape = shape
+        self.dtype = dtype
+
+    A = MyArgArray((3, 4), np.float32)
+    b = MyArgArray((5,), np.float32)
+    x = MyArgArray((4, 5), np.float32)
+    out_shape = api.eval_shape(fun, A, b, x)
+
+    self.assertEqual(out_shape, (3, 5))
+
 
 if __name__ == '__main__':
   absltest.main()

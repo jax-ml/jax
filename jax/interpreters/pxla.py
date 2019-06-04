@@ -280,12 +280,16 @@ def replicated_comp(jaxpr, ax_env, const_vals, freevar_shapes, *arg_shapes):
   env = {}
   write(core.unitvar, c.Tuple())
   if const_vals:
+    for val in const_vals:
+      if isinstance(val, xla.DeviceArray):
+        val.copy_to_host_async()
     _map(write, jaxpr.constvars, map(c.Constant, const_vals))
     _map(write, jaxpr.freevars, map(c.ParameterWithShape, freevar_shapes))
   else:
     all_freevars = it.chain(jaxpr.constvars, jaxpr.freevars)
     _map(write, all_freevars, map(c.ParameterWithShape, freevar_shapes))
   _map(write, jaxpr.invars, map(c.ParameterWithShape, arg_shapes))
+  xla._prefetch_jaxpr_literals(jaxpr)
   for eqn in jaxpr.eqns:
     if not eqn.restructure:
       in_nodes = list(map(read, eqn.invars))
@@ -493,10 +497,16 @@ class ShardedDeviceArray(xla.DeviceArray):
     _, ids = onp.unique(assignments, return_index=True)
     return ids
 
+  def copy_to_host_async(self):
+    if self._npy_value is None:
+      for buf in self.device_buffers:
+        xla._copy_to_host_async(buf)
+
   @property
   def _value(self):
     if self._npy_value is None:
       ids = self._ids()
+      self.copy_to_host_async()
       npy_shards = [buf.to_py() for buf in self.device_buffers]
       self._npy_value = onp.stack([npy_shards[i] for i in ids])
     return self._npy_value

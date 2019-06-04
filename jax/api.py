@@ -128,16 +128,17 @@ def _jit(fun, static_argnums, device_values=True):
 
 @contextmanager
 def disable_jit():
-  """Context manager that disables `jit`.
+  """Context manager that disables `jit` behavior under its dynamic context.
 
   For debugging purposes, it is useful to have a mechanism that disables `jit`
-  everywhere in a block of code, namely the `disable_jit` decorator.
+  everywhere in a dynamic context.
 
-  Inside a `jit`-ted function the values flowing through
-  traced code can be abstract (i.e., shaped arrays with an unknown values),
-  instead of concrete (i.e., specific arrays with known values).
-
-  For example:
+  Values that have a data dependence on the arguments to a jitted function are
+  traced and abstracted. For example, an abstract value may be a ShapedArray
+  instance, representing the set of all possible arrays with a given shape and
+  dtype, but not representing one concrete array with specific values. You might
+  notice those if you use a benign side-effecting operation in a jitted
+  function, like a print:
 
   >>> @jax.jit
   >>> def f(x):
@@ -150,9 +151,9 @@ def disable_jit():
   [5 7 9]
 
   Here `y` has been abstracted by `jit` to a `ShapedArray`, which represents an
-  array with a fixed shape and type but an arbitrary value. If we want to see a
-  concrete values while debugging, we can use the `disable_jit` decorator, at
-  the cost of slower code:
+  array with a fixed shape and type but an arbitrary value. It's also traced. If
+  we want to see a concrete value while debugging, and avoid the tracer too, we
+  can use the `disable_jit` context manager:
 
   >>> with jax.disable_jit():
   >>>   print(f(np.array([1, 2, 3])))
@@ -1061,3 +1062,59 @@ def _make_graphviz(fun):
 
   graphviz_maker.__name__ = "make_graphviz({})".format(graphviz_maker.__name__)
   return graphviz_maker
+
+
+def eval_shape(fun, *args, **kwargs):
+  """Compute the shape of ``fun(*args, **kwargs)`` without incurring any FLOPs.
+
+  This utility function is useful for performing shape inference. Its
+  input/output behavior is defined by:
+
+    def eval_shape(fun, *args, **kwargs):
+      out = fun(*args, **kwargs)
+      return jax.tree_util.tree_map(np.shape, out)
+
+  But instead of applying ``fun`` directly, which might be expensive, it uses
+  JAX's abstract interpretation machinery to evaluate the shapes without doing
+  any FLOPs.
+
+  Using ``eval_shape`` can also catch shape errors, and will raise same shape
+  errors as evaluating ``fun(*args, **kwargs)``.
+
+  Args:
+    *args: a positional argument tuple of arrays, scalars, or (nested) standard
+      Python containers (tuples, lists, dicts, namedtuples, i.e. pytrees) of
+      those types. Since only the ``shape`` and ``dtype`` attributes are
+      accessed, only values that duck-type arrays are required, rather than real
+      ndarrays. The duck-typed objects cannot be namedtuples because those are
+      treated as standard Python containers. See the example below.
+    **kwargs: a keyword argument dict of arrays, scalars, or (nested) standard
+      Python containers (pytrees) of those types. As in ``args``, array values
+      need only be duck-typed to have ``shape`` and ``dtype`` attributes.
+
+  For example:
+
+  >>> f = lambda A, x: np.tanh(np.dot(A, x))
+  >>> class MyArgArray(object):
+  ...   def __init__(self, shape, dtype):
+  ...     self.shape = shape
+  ...     self.dtype = dtype
+  ...
+  >>> A = MyArgArray((2000, 3000), np.float32)
+  >>> x = MyArgArray((3000, 1000), np.float32)
+  >>> out_shape = jax.eval_shape(f, A, x)  # no FLOPs performed
+  >>> print(out_shape)
+  (2000, 1000)
+  """
+  def abstractify(x):
+    if type(x) is core.JaxTuple:
+      return core.AbstractTuple(map(abstractify, x))
+    else:
+      return ShapedArray(onp.shape(x), onp.result_type(x))
+
+  jax_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
+  jax_kwargs, kwargs_tree = pytree_to_jaxtupletree(kwargs)
+  f, out_tree = pytree_fun_to_jaxtupletree_fun2(lu.wrap_init(fun), kwargs_tree, in_trees)
+  abstract_args = map(abstractify, (jax_kwargs,) + tuple(jax_args))
+  out = pe.abstract_eval_fun(f.call_wrapped, *abstract_args)
+  return tree_map(onp.shape, build_tree(out_tree(), out))
