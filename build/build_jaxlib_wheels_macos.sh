@@ -27,7 +27,7 @@ build_jax () {
   pyenv activate "${VENV}"
   # We pin the Numpy wheel to a version < 1.16.0, because Numpy extensions built
   # at 1.16.0 are not backward compatible to earlier Numpy versions.
-  pip install numpy==1.15.4 scipy==1.2.0 wheel
+  pip install numpy==1.15.4 scipy==1.2.0 wheel future
   rm -fr build/build
   python build/build.py
   cd build
