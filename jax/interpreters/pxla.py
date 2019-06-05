@@ -459,6 +459,7 @@ def tuple_element_handler(axis_size, aval):
 
 core.pytype_aval_mappings[ShardedDeviceTuple] = core.pytype_aval_mappings[core.JaxTuple]
 xla.pytype_aval_mappings[ShardedDeviceTuple] = op.attrgetter('aval')
+batching.pytype_aval_mappings[ShardedDeviceTuple] = op.attrgetter('aval')
 xla.canonicalize_dtype_handlers[ShardedDeviceTuple] = \
     xla.canonicalize_dtype_handlers[xla.DeviceTuple]
 
@@ -524,6 +525,8 @@ class ShardedDeviceArray(xla.DeviceArray):
 core.pytype_aval_mappings[ShardedDeviceArray] = ConcreteArray
 xla.pytype_aval_mappings[ShardedDeviceArray] = \
     xla.pytype_aval_mappings[xla.DeviceArray]
+batching.pytype_aval_mappings[ShardedDeviceArray] = \
+    batching.pytype_aval_mappings[xla.DeviceArray]
 xla.canonicalize_dtype_handlers[ShardedDeviceArray] = \
     xla.canonicalize_dtype_handlers[xla.DeviceArray]
 
