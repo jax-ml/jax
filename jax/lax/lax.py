@@ -1913,7 +1913,7 @@ def _dot_batch_rule(batched_args, batch_dims):
 
   if rbd is None:
     assert lbd is not None
-    rhs = broadcast(rhs, (lhs.shape[lbd],))
+    rhs = broadcast(rhs, (lhs.shape[0],))
   else:
     rhs = batching.move_dim_to_front(rhs, rbd)
   rhs_batch = (0,)
