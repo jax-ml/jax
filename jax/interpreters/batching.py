@@ -124,6 +124,8 @@ class BatchTrace(Trace):
       return BatchTracer(self, val_out, dim_out)
 
   def process_call(self, call_primitive, f, tracers, params):
+    if call_primitive in pe.map_primitives:
+      return self.process_map(call_primitive, f, tracers, params)
     vals, dims = unzip2((t.val, t.batch_dim) for t in tracers)
     if all(bdim is None for bdim in dims):
       return call_primitive.bind(f, *vals, **params)
@@ -131,6 +133,19 @@ class BatchTrace(Trace):
       f, dim_out = batch_subtrace(f, self.master, dims)
       val_out = call_primitive.bind(f, *vals, **params)
       return BatchTracer(self, val_out, dim_out())
+
+  def process_map(self, map_primitive, f, tracers, params):
+    vals, dims = unzip2((t.val, t.batch_dim) for t in tracers)
+    if all(dim is None for dim in dims):
+      return map_primitive.bind(f, *vals, **params)
+    else:
+      size = reduce(set.union, map(dimsize, dims, vals)).pop()
+      is_batched = tuple(map(where_batched, dims))
+      vals = map(partial(instantiate_bdim, size, 1), is_batched, dims, vals)
+      dims = tuple(map(partial(bools_to_bdims, 0), is_batched))
+      f, dim_out = batch_subtrace(f, self.master, dims)
+      val_out = map_primitive.bind(f, *vals, **params)
+      return BatchTracer(self, val_out, increment_bdim(dim_out()))
 
   def post_process_call(self, call_primitive, out_tracer, params):
     val, dim = out_tracer.val, out_tracer.batch_dim
@@ -310,27 +325,28 @@ def _dimsize(dim, aval, x):
       raise TypeError(type(dim))
 
 def moveaxis(sz, dst, src, x, force_broadcast=True):
-  return _moveaxis(sz, dst, src, get_aval(x), x, force_broadcast)
+  return _moveaxis(force_broadcast, sz, dst, src, get_aval(x), x)
 
-# TODO(mattjj): not passing force_broadcast recursively... intentional?
-def _moveaxis(sz, dst, src, aval, x, force_broadcast=True):
+def _moveaxis(force_bcast, sz, dst, src, aval, x):
   if type(aval) is AbstractTuple:
     if type(src) is tuple and type(dst) is tuple:
-      return pack(map(partial(_moveaxis, sz), dst, src, aval, x))
+      return pack(map(partial(_moveaxis, force_bcast, sz), dst, src, aval, x))
     elif type(src) is tuple:
-      return pack(map(partial(_moveaxis, sz, dst), src, aval, x))
+      return pack(map(partial(_moveaxis, force_bcast, sz, dst), src, aval, x))
     elif type(dst) is tuple:
       srcs = (src,) * len(dst)
-      return pack(map(partial(_moveaxis, sz), dst, srcs, aval, x))
+      return pack(map(partial(_moveaxis, force_bcast, sz), dst, srcs, aval, x))
+    elif type(src) in (int, type(None)):
+      return pack(map(partial(_moveaxis, force_bcast, sz, dst, src), aval, x))
     else:
-      return pack(map(partial(_moveaxis, sz, dst, src), aval, x))
+      raise TypeError(type(src))
   elif isinstance(aval, ShapedArray):
     dst_ = (dst % aval.ndim) if dst is not None and aval.ndim else dst
     if src == dst_:
       return x
     else:
       if src is None:
-        x = broadcast(x, sz, force_broadcast=force_broadcast)
+        x = broadcast(x, sz, force_broadcast=force_bcast)
         src = 0
         dst_ = dst % (aval.ndim + 1)
       if src == dst_:
@@ -343,15 +359,14 @@ def _moveaxis(sz, dst, src, aval, x, force_broadcast=True):
     raise TypeError(type(aval))
 
 def broadcast(x, sz, force_broadcast=False):
-  return _broadcast(sz, get_aval(x), x, force_broadcast)
+  return _broadcast(force_broadcast, sz, get_aval(x), x)
 
-# TODO(mattjj): not passing force_broadcast recursively... intentional?
-def _broadcast(sz, aval, x, force_broadcast=False):
+def _broadcast(force_bcast, sz, aval, x):
   if type(aval) is AbstractTuple:
     return pack(map(partial(_broadcast, sz), aval, x))
   elif isinstance(aval, ShapedArray):
     # for scalars, maybe don't actually broadcast
-    if not onp.ndim(x) and not force_broadcast:
+    if not onp.ndim(x) and not force_bcast:
       return x
 
     # see comment at the top of this section
@@ -372,14 +387,16 @@ def handle_scalar_broadcasting(nd, x, bdim):
 
 # TODO(mattjj): try to de-duplicate utility functions with above
 
-def where_batched(bdim):
+def _bdim_map(f, bdim):
   t = type(bdim)
   if t is tuple:
-    return tuple(map(where_batched, bdim))
+    return tuple(map(partial(_bdim_map, f), bdim))
   elif t in (int, type(None)):
-    return bdim is not None
+    return f(bdim)
   else:
     raise TypeError(t)
+where_batched = partial(_bdim_map, lambda x: x is not None)
+increment_bdim = partial(_bdim_map, lambda x: None if x is None else x + 1)
 
 def bools_to_bdims(bdim, batched_indicator_tree):
   t = type(batched_indicator_tree)
@@ -402,7 +419,7 @@ def instantiate_bdim(size, axis, instantiate, bdim, x):
       the tree structure in x, indicating whether to instantiate the batch
       dimension at the corresponding subtree in x.
     bdim: tuple-tree of ints or NoneTypes, with identical tree structure to
-      `instantaite`, indicating where the batch dimension exists in the
+      `instantiate`, indicating where the batch dimension exists in the
       corresponding subtree of x.
     x: JaxType value on which to instantiate or move batch dimensions.
 
