@@ -73,8 +73,8 @@ def jit(fun, static_argnums=()):
 
   Args:
     fun: Function to be jitted. Should be a pure function, as side-effects may
-      only be executed once. Its positional arguments and return value should be
-      arrays, scalars, or standard Python containers (tuple/list/dict) thereof.
+      only be executed once. Its arguments and return value should be arrays,
+      scalars, or (nested) standard Python containers (tuple/list/dict) thereof.
 
       Positional arguments indicated by `static_argnums` can be anything at all,
       provided they are hashable and have an equality operation defined. Static
@@ -972,6 +972,58 @@ class CustomTransformsFunction(object):
     return build_tree(out_tree.val, ans)
 
 def custom_transforms(fun):
+  """Wraps a function so that its transformation behavior can be overridden.
+
+  A primary use case of ``custom_transforms`` is defining custom VJP rules (aka
+  custom gradients) for a Python function, while still supporting other
+  transformations like ``jax.jit`` and ``jax.vmap``. Custom differentiation
+  rules can be supplied using the ``jax.defjvp`` and ``jax.defvjp`` functions.
+
+  JAX transforms Python functions by tracing which primitive operations (like
+  black-box numerical kernels) are applied to the function's input arguments to
+  produce its output, then transforming that recorded composition of primitives
+  using a table of transformation rules for each primitive. That is, for each
+  transformation (e.g. ``jax.jvp`` or ``jax.vmap``) there is a table of rules
+  that specifies how each primitive is transformed. When a new primitive is
+  added to the system, it also needs a rule for each transformation we might
+  want to apply to it.
+
+  But in some cases instead of introducing a new primitive and specifying every
+  transformation rule, we might start with a traceable/transformable Python
+  function and want to override just its VJP (i.e. give it a custom gradient).
+  More concretely, we might start with a Python function to which we can already
+  apply ``jax.jit``, but we want to change how ``jax.grad`` behaves on it. These
+  are the cases that ``custom_transforms`` handles.
+
+  The ``custom_transforms`` decorator wraps ``fun`` so that its transformation
+  behavior can be overridden, but not all transformation rules need to be
+  specified manually. For rules that aren't overridden, a default rule is used
+  for each transformation that relies on tracing ``fun``.
+
+  Args:
+    fun: a Python function. Must be functionally pure. Its arguments and return
+      value should be arrays, scalars, or (nested) standard Python containers
+      (tuple/list/dict) thereof.
+
+  Returns:
+    A Python callable with the same input/output and transformation behavior as
+    ``fun``, but for which custom transformation rules can be supplied, e.g.
+    using ``jax.defvjp``.
+
+  For example:
+
+  >>> @jax.custom_transforms
+  ... def f(x):
+  ...   return np.sin(x ** 2)
+  ...
+  >>> print(f(3.))
+  0.4121185
+  >>> print(jax.grad(f)(3.))
+  -5.4667816
+  >>> jax.defvjp(f, lambda g, x: g * x)
+  >>> print(jax.grad(f)(3.))
+  3.0
+  """
   name = getattr(fun, '__name__', '<unnamed custom_transforms primitive>')
   fun_p = core.Primitive(name)
 
