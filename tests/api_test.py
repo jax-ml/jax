@@ -612,6 +612,14 @@ class APITest(jtu.JaxTestCase):
     expected = {'hi': 2 * onp.arange(3), 'bye': 2 * onp.ones((3, 2))}
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def test_custom_gradient(self):
+    @api.custom_gradient
+    def f(x):
+      return x ** 2, lambda g: (g * x,)
+
+    self.assertEqual(f(3.), 9.)
+    self.assertEqual(api.grad(f)(3.), 3.)
+
   def test_devicetuple_iteration(self):
     tup = device_put(pack((1, 2)))
     self.assertIsInstance(tup, DeviceTuple)

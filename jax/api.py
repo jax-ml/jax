@@ -972,7 +972,7 @@ class CustomTransformsFunction(object):
     return build_tree(out_tree.val, ans)
 
 def custom_transforms(fun):
-  """Wraps a function so that its transformation behavior can be overridden.
+  """Wraps a function so that its transformation behavior can be controlled.
 
   A primary use case of ``custom_transforms`` is defining custom VJP rules (aka
   custom gradients) for a Python function, while still supporting other
@@ -1001,7 +1001,7 @@ def custom_transforms(fun):
   for each transformation that relies on tracing ``fun``.
 
   Args:
-    fun: a Python function. Must be functionally pure. Its arguments and return
+    fun: a Python callable. Must be functionally pure. Its arguments and return
       value should be arrays, scalars, or (nested) standard Python containers
       (tuple/list/dict) thereof.
 
@@ -1076,6 +1076,7 @@ def _check_custom_transforms_type(name, fun):
     raise TypeError(msg.format(name, type(fun)))
 
 def defjvp_all(fun, custom_jvp):
+  """Define a custom JVP rule for a custom_transforms function."""
   _check_custom_transforms_type("defjvp_all", fun)
   def custom_transforms_jvp(primals, tangents, **params):
     jax_kwargs, jax_args = primals[0], primals[1:]
@@ -1151,6 +1152,50 @@ def defvjp2(fun, *vjprules):
                          for x, vjp in zip(primals, vjprules)]
     return ans, vjpfun
   defvjp_all(fun, custom_vjp)
+
+def custom_gradient(fun):
+  """Convenience function for defining custom VJP rules (aka custom gradients).
+
+  While the canonical way to define custom VJP rules is via ``jax.defvjp_all``
+  and its convenience wrappers, the ``custom_gradient`` convenience wrapper
+  follows TensorFlow's tf.custom_gradient API.
+
+  See https://www.tensorflow.org/api_docs/python/tf/custom_gradient.
+
+  If the function to be differentiated has type signature ``a -> b``, then the
+  Python callable ``fun`` should have signature ``a -> (b, CT b -> CT a)`` where
+  we use ``CT x`` to denote a cotangent type for ``x``. See the example below.
+
+  Args:
+    fun: a Python callable specifying both the function to be differentiated and
+      its reverse-mode differentiation rule. It should return a pair consisting
+      of an output value and a Python callable that represents the custom
+      gradient function.
+
+  Returns:
+    A Python callable with signature ``a -> b``, i.e. that returns the output
+    value specified by the first element of ``fun``'s output pair. A side effect
+    is that under-the-hood ``jax.defvjp_all`` was called to set up the returned
+    Python callable to have the custom VJP rule specified by the second element
+    of ``fun``'s output pair.
+
+  For example:
+
+  >>> @jax.custom_gradient
+  ... def f(x):
+  ...     return x ** 2, lambda g: (g * x,)
+  ...
+  >>> print(f(3.))
+  9.0
+  >>> print(jax.grad(f)(3.))
+  3.0
+  """
+  def primal_fun(*args, **kwargs):
+    ans, _ = fun(*args, **kwargs)
+    return ans
+  primal_fun = custom_transforms(primal_fun)
+  defvjp_all(primal_fun, fun)
+  return primal_fun
 
 
 def jarrett(fun):
