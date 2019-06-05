@@ -301,12 +301,14 @@ def broadcasting_papply(prim, name, size, vals, axes, **params):
   xdim, ydim = axes
 
   if xdim is None:
-    assert x.shape[ydim] == 1
-    x = x.reshape(onp.delete(x.shape, ydim))
+    if x.shape:
+      assert x.shape[ydim] == 1
+      x = x.reshape(onp.delete(x.shape, ydim))
     return prim.bind(x, y, **params), ydim
   elif ydim is None:
-    assert y.shape[xdim] == 1
-    y = y.reshape(onp.delete(y.shape, xdim))
+    if y.shape:
+      assert y.shape[xdim] == 1
+      y = y.reshape(onp.delete(y.shape, xdim))
     return prim.bind(x, y, **params), xdim
   elif xdim == ydim:
     return prim.bind(x, y, **params), xdim
