@@ -457,6 +457,17 @@ def dot(lhs, rhs):
   Returns:
     An array containing the product.
   """
+  # XLA doesn't support integer dots, so emit a sum of products instead.
+  if onp.issubdtype(lhs.dtype, onp.integer):
+    lhs_shape = onp.shape(lhs)
+    lhs_ndim = len(lhs_shape)
+    rhs_ndim = onp.ndim(rhs)
+    if rhs_ndim > 1:
+      lhs = broadcast_in_dim(lhs, lhs_shape + (1,), tuple(range(len(lhs_shape))))
+    if lhs_ndim > 1:
+      rhs = broadcast(rhs, (1,))
+    return reduce(mul(lhs, rhs), _zero(lhs), add, (len(lhs_shape) - 1,))
+
   return dot_p.bind(lhs, rhs)
 
 def dot_general(lhs, rhs, dimension_numbers):
@@ -476,9 +487,35 @@ def dot_general(lhs, rhs, dimension_numbers):
   Returns:
     An array containing the result.
   """
-  lhs_dims, rhs_dims = dimension_numbers
-  dimension_numbers = (tuple(map(tuple, lhs_dims)), tuple(map(tuple, rhs_dims)))
-  return dot_general_p.bind(lhs, rhs, dimension_numbers=dimension_numbers)
+  contract_dims, batch_dims = dimension_numbers
+  contract_dims = tuple(map(tuple, contract_dims))
+  batch_dims = tuple(map(tuple, batch_dims))
+  if onp.issubdtype(lhs.dtype, onp.integer):
+    # XLA doesn't support integer dots, so emit a sum of products instead.
+    lhs_contract_dims, rhs_contract_dims = contract_dims
+    lhs_batch_dims, rhs_batch_dims = batch_dims
+    lhs_noncontract_dims = tuple(sorted(
+      set(range(onp.ndim(lhs))) - set(lhs_batch_dims) - set(lhs_contract_dims)))
+    rhs_noncontract_dims = tuple(sorted(
+      set(range(onp.ndim(rhs))) - set(rhs_batch_dims) - set(rhs_contract_dims)))
+    lhs = transpose(lhs,
+                    lhs_batch_dims + lhs_noncontract_dims + lhs_contract_dims)
+    rhs = transpose(rhs,
+                    rhs_batch_dims + rhs_noncontract_dims + rhs_contract_dims)
+    new_lhs_shape = onp.insert(
+      onp.shape(lhs), len(lhs_batch_dims) + len(lhs_noncontract_dims),
+      (1,) * len(rhs_noncontract_dims))
+    new_rhs_shape = onp.insert(onp.shape(rhs), len(lhs_batch_dims),
+                               (1,) * len(lhs_noncontract_dims))
+    lhs = reshape(lhs, new_lhs_shape)
+    rhs = reshape(rhs, new_rhs_shape)
+    out_ndim = (len(lhs_batch_dims) + len(lhs_noncontract_dims) +
+                len(rhs_noncontract_dims))
+    return reduce(mul(lhs, rhs), _zero(lhs), add,
+                  tuple(range(out_ndim, out_ndim + len(lhs_contract_dims))))
+
+  return dot_general_p.bind(lhs, rhs,
+                            dimension_numbers=(contract_dims, batch_dims))
 
 def broadcast(operand, sizes):
   """Broadcasts an array, adding new major dimensions.
