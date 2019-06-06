@@ -979,26 +979,10 @@ def custom_transforms(fun):
   transformations like ``jax.jit`` and ``jax.vmap``. Custom differentiation
   rules can be supplied using the ``jax.defjvp`` and ``jax.defvjp`` functions.
 
-  JAX transforms Python functions by tracing which primitive operations (like
-  black-box numerical kernels) are applied to the function's input arguments to
-  produce its output, then transforming that recorded composition of primitives
-  using a table of transformation rules for each primitive. That is, for each
-  transformation (e.g. ``jax.jvp`` or ``jax.vmap``) there is a table of rules
-  that specifies how each primitive is transformed. When a new primitive is
-  added to the system, it also needs a rule for each transformation we might
-  want to apply to it.
-
-  But in some cases instead of introducing a new primitive and specifying every
-  transformation rule, we might start with a traceable/transformable Python
-  function and want to override just its VJP (i.e. give it a custom gradient).
-  More concretely, we might start with a Python function to which we can already
-  apply ``jax.jit``, but we want to change how ``jax.grad`` behaves on it. These
-  are the cases that ``custom_transforms`` handles.
-
   The ``custom_transforms`` decorator wraps ``fun`` so that its transformation
   behavior can be overridden, but not all transformation rules need to be
-  specified manually. For rules that aren't overridden, a default rule is used
-  for each transformation that relies on tracing ``fun``.
+  specified manually. The default behavior is retained for any non-overridden
+  rules.
 
   Args:
     fun: a Python callable. Must be functionally pure. Its arguments and return
@@ -1079,11 +1063,11 @@ def defjvp_all(fun, custom_jvp):
   """Define a custom JVP rule for a ``custom_transforms`` function.
 
   If ``fun`` represents a function with signature ``a -> b``, then
-  ``custom_jvp`` represents a function with signature ``a -> T a -> (b, Tb)``,
+  ``custom_jvp`` represents a function with signature ``a -> T a -> (b, T b)``,
   where we use ``T x`` to represent a tangent type for the type ``x``.
 
-  In more detail, ``custom_jvp`` must two arguments, both tuples of length equal
-  to the number of positional arguments to ``fun``. The first argument to
+  In more detail, ``custom_jvp`` must take two arguments, both tuples of length
+  equal to the number of positional arguments to ``fun``. The first argument to
   ``custom_jvp`` represents the input primal values, and the second represents
   the input tangent values. ``custom_jvp`` must return a pair where the first
   element represents the output primal value and the second element represents
@@ -1097,8 +1081,10 @@ def defjvp_all(fun, custom_jvp):
     custom_jvp: a Python callable specifying the JVP rule, taking two tuples as
       arguments specifying the input primal values and tangent values,
       respectively. The tuple elements can be arrays, scalars, or (nested)
-      standard Python containers (tuple/list/dict) thereof. Must be functionally
-      pure.
+      standard Python containers (tuple/list/dict) thereof. The output must be a
+      pair representing the primal output and tangent output, which  can be
+      arrays, scalars, or (nested) standard Python containers. Must be
+      functionally pure.
 
   Returns:
     None. A side-effect is that ``fun`` is associated with the JVP rule
@@ -1230,6 +1216,9 @@ def defjvp2(fun, *jvprules):
   defining JVP rules for each of the function's arguments. This convenience
   wrapper does not provide a mechanism for depending on anything other than the
   function arguments and its primal output value.
+
+  This function is like ``jax.defjvp`` except the component JVP rules also take
+  the output primal as an argument.
 
   The signature of each component JVP rule is ``lambda g, ans, *primals: ...``
   where ``g`` represents the tangent of the corresponding positional argument,
