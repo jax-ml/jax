@@ -1326,6 +1326,14 @@ def custom_gradient(fun):
   If the function to be differentiated has type signature ``a -> b``, then the
   Python callable ``fun`` should have signature ``a -> (b, CT b -> CT a)`` where
   we use ``CT x`` to denote a cotangent type for ``x``. See the example below.
+  That is, ``fun`` should return a pair where the first element represents the
+  value of the function to be differentiated and the second element is a
+  function that represents the custom VJP rule.
+
+  The custom VJP function returned as the second element of the output of ``fun``
+  can close over intermediate values computed when evaluating the function to be
+  differentiated. That is, use lexical closure to share work between the forward
+  pass and the backward pass of reverse-mode automatic differentiation.
 
   Args:
     fun: a Python callable specifying both the function to be differentiated and
