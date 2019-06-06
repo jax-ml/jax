@@ -588,7 +588,7 @@ class LaxTest(jtu.JaxTestCase):
        "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
        "rng": rng}
       for lhs_shape in [(3,), (4, 3)] for rhs_shape in [(3,), (3, 6)]
-      for dtype in float_dtypes
+      for dtype in default_dtypes
       for rng in [jtu.rand_default()]))
   def testDot(self, lhs_shape, rhs_shape, dtype, rng):
     args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
@@ -601,7 +601,7 @@ class LaxTest(jtu.JaxTestCase):
        "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
        "rng": rng}
       for lhs_shape in [(3,), (4, 3)] for rhs_shape in [(3,), (3, 6)]
-      for dtype in float_dtypes
+      for dtype in default_dtypes
       for rng in [jtu.rand_default()]))
   def testDotAgainstNumpy(self, lhs_shape, rhs_shape, dtype, rng):
     args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
@@ -626,7 +626,7 @@ class LaxTest(jtu.JaxTestCase):
           # [(1, 2, 2, 3), (1, 2, 3, 1), [1], [1]],
           [(3, 2), (2, 4), [1], [0]],
       ]
-      for dtype in float_dtypes
+      for dtype in default_dtypes
       for rng in [jtu.rand_small()]))
   def testDotGeneralContractOnly(self, lhs_shape, rhs_shape, dtype,
                                  lhs_contracting, rhs_contracting, rng):
@@ -650,7 +650,7 @@ class LaxTest(jtu.JaxTestCase):
           ((3, 3, 2), (3, 2, 4), (([2], [1]), ([0], [0]))),
           ((3, 4, 2, 4), (3, 4, 3, 2), (([2], [3]), ([0, 1], [0, 1]))),
       ]
-      for dtype in float_dtypes
+      for dtype in default_dtypes
       for rng in [jtu.rand_small()]))
   def testDotGeneralContractAndBatch(self, lhs_shape, rhs_shape, dtype,
                                      dimension_numbers, rng):
@@ -673,7 +673,7 @@ class LaxTest(jtu.JaxTestCase):
           ((3, 3, 2), (3, 2, 4), (([2], [1]), ([0], [0]))),
           ((3, 4, 2, 4), (3, 4, 3, 2), (([2], [3]), ([0, 1], [0, 1]))),
       ]
-      for dtype in float_dtypes
+      for dtype in default_dtypes
       for rng in [jtu.rand_small()]))
   def testDotGeneralAgainstNumpy(self, lhs_shape, rhs_shape, dtype,
                                  dimension_numbers, rng):

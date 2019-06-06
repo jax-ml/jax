@@ -497,7 +497,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           ("tensor-matrix", (4, 3, 2), (2, 5)),
           ("matrix-tensor", (5, 2), (3, 2, 4)),
           ("tensor-tensor", (2, 3, 4), (5, 4, 1))]
-      for lhs_dtype, rhs_dtype in CombosWithReplacement(inexact_dtypes, 2)))
+      for lhs_dtype, rhs_dtype in CombosWithReplacement(number_dtypes, 2)))
   def testDot(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype, rng):
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
     self._CheckAgainstNumpy(onp.dot, lnp.dot, args_maker, check_dtypes=True)
@@ -523,7 +523,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           ("tensor-matrix", (5, 2, 3), (3, 2)),
           ("tensor-tensor", (5, 3, 4), (5, 4, 1)),
           ("tensor-tensor-broadcast", (3, 1, 3, 4), (5, 4, 1))]
-      for lhs_dtype, rhs_dtype in CombosWithReplacement(inexact_dtypes, 2)))
+      for lhs_dtype, rhs_dtype in CombosWithReplacement(number_dtypes, 2)))
   def testMatmul(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype, rng):
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
     self._CheckAgainstNumpy(onp.matmul, lnp.matmul, args_maker,
@@ -546,7 +546,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           [(2, 3, 4), (5, 4, 3, 6), [[1, 2], [2, 1]]],
           [(1, 2, 3, 4), (4, 5, 3, 6), [[2, 3], [2, 0]]],
       ]
-      for lhs_dtype, rhs_dtype in CombosWithReplacement(inexact_dtypes, 2)))
+      for lhs_dtype, rhs_dtype in CombosWithReplacement(number_dtypes, 2)))
   def testTensordot(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype, axes, rng):
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
     lnp_fun = lambda a, b: lnp.tensordot(a, b, axes)
