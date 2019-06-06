@@ -423,3 +423,51 @@ def clip_grads(grad_tree, max_norm):
   norm = l2_norm(grad_tree)
   normalize = lambda g: np.where(norm < max_norm, g, g * (max_norm / norm))
   return tree_map(normalize, grad_tree)
+
+
+### serialization utilities
+
+class JoinPoint(object):
+  """Marks the boundary between two joined (nested) pytrees."""
+  def __init__(self, subtree):
+    self.subtree = subtree
+
+  # Since pytrees are containers of numpy arrays, look iterable.
+  def __iter__(self):
+    yield self.subtree
+
+def unpack_optimizer_state(opt_state):
+  """Converts an OptimizerState to a marked pytree.
+
+  Converts an OptimizerState to a marked pytree with the leaves of the outer
+  pytree represented as JoinPoints to avoid losing information. This function is
+  intended to be useful when serializing optimizer states.
+
+  Args:
+    opt_state: An OptimizerState
+  Returns:
+    A pytree with JoinPoint leaves that contain a second level of pytrees.
+  """
+  packed_state, tree_def, subtree_defs = opt_state
+  subtrees = map(tree_unflatten, subtree_defs, packed_state)
+  sentinels = [JoinPoint(subtree) for subtree in subtrees]
+  return tree_util.tree_unflatten(tree_def, sentinels)
+
+def pack_optimizer_state(marked_pytree):
+  """Converts a marked pytree to an OptimizerState.
+
+  The inverse of unpack_optimizer_state. Converts a marked pytree with the
+  leaves of the outer pytree represented as JoinPoints back into an
+  OptimizerState. This function is intended to be useful when deserializing
+  optimizer states.
+
+  Args:
+    marked_pytree: A pytree containing JoinPoint leaves that hold more pytrees.
+  Returns:
+    An equivalent OptimizerState to the input argument.
+  """
+  sentinels, tree_def = tree_flatten(marked_pytree)
+  assert all(isinstance(s, JoinPoint) for s in sentinels)
+  subtrees = [s.subtree for s in sentinels]
+  packed_state, subtree_defs = unzip2(map(tree_flatten, subtrees))
+  return OptimizerState(packed_state, tree_def, subtree_defs)
