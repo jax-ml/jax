@@ -1509,8 +1509,8 @@ def custom_gradient(fun):
   Returns:
     A Python callable with signature ``a -> b``, i.e. that returns the output
     value specified by the first element of ``fun``'s output pair. A side effect
-    is that under-the-hood ``jax.defvjp_all`` was called to set up the returned
-    Python callable to have the custom VJP rule specified by the second element
+    is that under-the-hood ``jax.defvjp_all`` is called to set up the returned
+    Python callable with the custom VJP rule specified by the second element
     of ``fun``'s output pair.
 
   For example:
