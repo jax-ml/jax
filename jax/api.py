@@ -1082,8 +1082,15 @@ def defjvp_all(fun, custom_jvp):
   ``custom_jvp`` represents a function with signature ``a -> T a -> (b, Tb)``,
   where we use ``T x`` to represent a tangent type for the type ``x``.
 
-  Defining a custom JVP rule will also affect the dfeault VJP rule, which is
-  derived from the JVP rule automatically via transposition.
+  In more detail, ``custom_jvp`` must two arguments, both tuples of length equal
+  to the number of positional arguments to ``fun``. The first argument to
+  ``custom_jvp`` represents the input primal values, and the second represents
+  the input tangent values. ``custom_jvp`` must return a pair where the first
+  element represents the output primal value and the second element represents
+  the output tangent value.
+
+  Defining a custom JVP rule also affects the default VJP rule, which is derived
+  from the JVP rule automatically via transposition.
 
   Args:
     fun: a custom_transforms function.
@@ -1140,6 +1147,73 @@ def defjvp_all(fun, custom_jvp):
   ad.primitive_jvps[fun.prim] = custom_transforms_jvp
 
 def defjvp(fun, *jvprules):
+  """Definine JVP rules for each argument separately.
+
+  This function is a convenience wrapper around ``jax.defjvp_all`` for separately
+  defining JVP rules for each of the function's arguments. This convenience
+  wrapper does not provide a mechanism for depending on anything other than the
+  function arguments, so JVP rules defined in this way can't share work with the
+  primal computation or with each other, though those things are possible using
+  ``jax.defjvp_all``. See ``jax.defjvp2`` for a variant that allows for defining
+  rules that depend on the output primal value. See also the ``jax.defjvp_all``
+  docstring for more detail.
+
+  The signature of each component JVP rule is ``lambda g, *primals: ...`` where
+  ``g`` represents the tangent of the corresponding positional argument and
+  ``*primals`` represents all the primal positional arguments.
+
+  Defining a custom JVP rule also affects the default VJP rule, which is derived
+  from the JVP rule automatically via transposition.
+
+  Args:
+    fun: a custom_transforms function.
+    *jvprules: a sequence of functions or Nones specifying the JVP rule for each
+      corresponding positional argument. When an element is None, it indicates
+      that the Jacobian from the corresponding input to the output is zero.
+
+  Returns:
+    None. A side-effect is that ``fun`` is associated with the JVP rule
+    specified by ``*jvprules``.
+
+  For example:
+
+  >>> @jax.custom_transforms
+  ... def f(x):
+  ...   return np.sin(x ** 2)
+  ...
+  >>> print(f(3.))
+  0.4121185
+  >>> out_primal, out_tangent = jax.jvp(f, (3.,), (2.,))
+  >>> print(out_primal)
+  0.4121185
+  >>> print(out_tangent)
+  -10.933563
+  >>> jax.defjvp(f, lambda g, x: 8. * g)
+  >>> out_primal, out_tangent = jax.jvp(f, (3.,), (2.,))
+  >>> print(out_primal)
+  0.4121185
+  >>> print(out_tangent)
+  16.0
+
+  An example with a function on two arguments:
+  >>> @jax.custom_transforms
+  ... def f(x, y):
+  ...   return np.sin(x ** 2 + y)
+  ...
+  >>> print(f(3., 4.))
+  0.42016703
+  >>> out_primal, out_tangent = jax.jvp(f, (3., 4.), (1., 2.))
+  >>> print(out_primal)
+  0.42016703
+  >>> print(out_tangent)
+  7.2595744
+  >>> jax.defjvp(f, None, lambda g, x, y: 8. * g + y)
+  >>> out_primal, out_tangent = jax.jvp(f, (3., 4.), (1., 2.))
+  >>> print(out_primal)
+  0.42016703
+  >>> print(out_tangent)
+  20.0
+  """
   _check_custom_transforms_type("defjvp", fun)
   def custom_jvp(primals, tangents):
     ans = fun(*primals)
@@ -1149,6 +1223,53 @@ def defjvp(fun, *jvprules):
   defjvp_all(fun, custom_jvp)
 
 def defjvp2(fun, *jvprules):
+  """Definine JVP rules for each argument separately.
+
+  This function is a convenience wrapper around ``jax.defjvp_all`` for separately
+  defining JVP rules for each of the function's arguments. This convenience
+  wrapper does not provide a mechanism for depending on anything other than the
+  function arguments, so JVP rules defined in this way can't share work with the
+  primal computation or with each other, though those things are possible using
+  ``jax.defjvp_all``. See the ``jax.defjvp_all`` docstring for more detail.
+
+  The signature of each component JVP rule is ``lambda g, ans, *primals: ...``
+  where ``g`` represents the tangent of the corresponding positional argument,
+  ``ans`` represents the output primal, and ``*primals`` represents all the
+  primal positional arguments.
+
+  Defining a custom JVP rule also affects the default VJP rule, which is derived
+  from the JVP rule automatically via transposition.
+
+  Args:
+    fun: a custom_transforms function.
+    *jvprules: a sequence of functions or Nones specifying the JVP rule for each
+      corresponding positional argument. When an element is None, it indicates
+      that the Jacobian from the corresponding input to the output is zero.
+
+  Returns:
+    None. A side-effect is that ``fun`` is associated with the JVP rule
+    specified by ``*jvprules``.
+
+  For example:
+
+  >>> @jax.custom_transforms
+  ... def f(x):
+  ...   return np.sin(x ** 2)
+  ...
+  >>> print(f(3.))
+  0.4121185
+  >>> out_primal, out_tangent = jax.jvp(f, (3.,), (2.,))
+  >>> print(out_primal)
+  0.4121185
+  >>> print(out_tangent)
+  -10.933563
+  >>> jax.defjvp2(f, lambda g, ans, x: 8. * g + ans)
+  >>> out_primal, out_tangent = jax.jvp(f, (3.,), (2.,))
+  >>> print(out_primal)
+  0.4121185
+  >>> print(out_tangent)
+  16.412119
+  """
   _check_custom_transforms_type("defjvp2", fun)
   def custom_jvp(primals, tangents):
     ans = fun(*primals)
