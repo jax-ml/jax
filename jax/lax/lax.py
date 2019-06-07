@@ -2803,9 +2803,27 @@ def _gather_batching_rule(batched_args, batch_dims, dimension_numbers,
     return gather(operand, start_indices, dimension_numbers=dnums,
                   slice_sizes=slice_sizes), 0
 
-def _gather_serial_pmap_rule(vals, axes):
-  val, = vals
-  return val, None
+def _gather_papply_rule(
+    name, size, vals, dims, dimension_numbers, slice_sizes, operand_shape):
+  operand, start_indices = vals
+  operand_dim, start_indices_dim = dims
+  if (operand_dim is None and
+      start_indices_dim is not None and
+      start_indices_dim not in dimension_numbers.offset_dims and
+      dimension_numbers.collapsed_slice_dims == (0,)):
+    offset_dims = tuple(i - 1 if i > start_indices_dim else i
+                        for i in dimension_numbers.offset_dims)
+    dnums = GatherDimensionNumbers(
+        offset_dims=offset_dims,
+        collapsed_slice_dims=dimension_numbers.collapsed_slice_dims,
+        start_index_map=dimension_numbers.start_index_map)
+    out = gather(operand, start_indices, dimension_numbers=dnums,
+                  slice_sizes=slice_sizes)
+    out_dim = start_indices_dim + onp.sum(
+        onp.less_equal(offset_dims, start_indices_dim))
+    return out, out_dim
+  else:
+    raise NotImplementedError
 
 gather_p = standard_primitive(
     _gather_shape_rule, _gather_dtype_rule, 'gather',
@@ -2813,8 +2831,7 @@ gather_p = standard_primitive(
 ad.defjvp(gather_p, _gather_jvp_rule, None)
 ad.primitive_transposes[gather_p] = _gather_transpose_rule
 batching.primitive_batchers[gather_p] = _gather_batching_rule
-parallel.serial_pmap_primitive_rules[gather_p] = _gather_serial_pmap_rule
-
+parallel.papply_primitive_rules[gather_p] = _gather_papply_rule
 
 class ScatterDimensionNumbers(collections.namedtuple(
     "ScatterDimensionNumbers",
