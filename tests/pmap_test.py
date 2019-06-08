@@ -519,6 +519,16 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(expected_bz1, bz1, check_dtypes=False)
     self.assertAllClose(bz2, bz2, check_dtypes=False)
 
+  @jtu.skip_on_devices("cpu", "gpu")
+  def testPswapaxes(self):
+    device_count = xla_bridge.device_count()
+    shape = (device_count, 3, device_count, 5)
+    x = onp.arange(prod(shape)).reshape(shape)
+
+    ans = pmap(lambda x: lax.pswapaxes(x, 'i', 1), axis_name='i')(x)
+    expected = onp.swapaxes(x, 0, 2)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
 
 if __name__ == '__main__':
   absltest.main()

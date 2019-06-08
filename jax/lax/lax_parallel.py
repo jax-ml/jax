@@ -106,6 +106,9 @@ def ppermute(x, axis_name, perm):
 def pswapaxes(x, axis_name, axis):
   """Swap the pmapped axis ``axis_name`` with the unmapped axis ``axis``.
 
+  The mapped axis size must be equal to the size of the unmapped axis; that is,
+  we must have ``lax.psum(1, axis_name) == x.shape[axis]``.
+
   This function is similar to ``psplit`` except the pmapped axis of the input is
   placed at the position ``axis`` in the output.
 
@@ -121,6 +124,11 @@ def pswapaxes(x, axis_name, axis):
     where ``axis_size`` is the size of the mapped axis named ``axis_name`` in
     the input ``x``.
   """
+  axis_size = psum(1, axis_name)
+  if axis_size != x.shape[axis]:
+    msg = ("pswapaxes requires the size of the mapped axis ``axis_name`` equal "
+           "``x.shape[axis]``, but they are {} and {} respectively.")
+    raise ValueError(msg.format(axis_size(axis_name), x.shape[axis]))
   return pswapaxes_p.bind(x, axis_name=axis_name, axis=axis)
 
 def psplit(x, axis_name, axis):
@@ -233,7 +241,11 @@ def _pswapaxes_serial_pmap_rule(vals, axes, axis):
   perm[axis] = axis_in
   return lax.transpose(x, perm), axis_in
 
+def _pswapaxes_translation_rule(c, xla_x, axis, replica_groups):
+  return c.AllToAll(xla_x, axis, axis, replica_groups)
+
 pswapaxes_p = standard_pmap_primitive('pswapaxes')
+pxla.parallel_translation_rules[pswapaxes_p] = _pswapaxes_translation_rule
 parallel.serial_pmap_primitive_rules[pswapaxes_p] = _pswapaxes_serial_pmap_rule
 
 
