@@ -17,7 +17,6 @@ Parallelization primitives.
 
 from jax.lax import lax
 from jax.abstract_arrays import ShapedArray
-from jax.core import Primitive
 from jax.interpreters import ad
 from jax.interpreters import parallel
 from jax.interpreters import xla
@@ -163,7 +162,7 @@ def pcollect(x, axis_name):
 ### parallel primitives
 
 def standard_pmap_primitive(name):
-  prim = Primitive(name)
+  prim = pxla.PmapPrimitive(name)
   prim.def_impl(partial(pxla.apply_parallel_primitive, prim))
   prim.def_abstract_eval(lambda x, *args, **params: x)
   return prim

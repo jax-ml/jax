@@ -229,6 +229,8 @@ def xla_unshard(c, replica_groups, x):
 
 ### the main pmap machinery lowers SPMD jaxprs to multi-replica XLA computations
 
+class PmapPrimitive(core.Primitive): pass
+
 AxisEnv = namedtuple("AxisEnv", ["nreps", "names", "sizes"])
 
 def axis_read(axis_env, axis_name):
@@ -296,10 +298,14 @@ def replicated_comp(jaxpr, ax_env, const_vals, freevar_shapes, *arg_shapes):
     else:
       in_nodes = [xla.xla_pack(c, map(read, invars)) if type(invars) is tuple
                   else read(invars) for invars in eqn.invars]
-    if eqn.primitive in parallel_translation_rules:
+    if type(eqn.primitive) is PmapPrimitive:
       name = eqn.params['axis_name']
       params = {k: eqn.params[k] for k in eqn.params if k != 'axis_name'}
-      rule = parallel_translation_rules[eqn.primitive]
+      try:
+        rule = parallel_translation_rules[eqn.primitive]
+      except KeyError:
+        msg = 'XLA translation rule for parallel primitive {} not implemented.'
+        raise NotImplementedError(msg.format(eqn.primitive.name))
       ans = rule(c, *in_nodes, replica_groups=axis_groups(ax_env, name), **params)
     elif eqn.bound_subjaxprs:
       if eqn.primitive is xla_pmap_p:
