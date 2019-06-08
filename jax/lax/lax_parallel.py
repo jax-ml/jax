@@ -124,11 +124,12 @@ def pswapaxes(x, axis_name, axis):
     where ``axis_size`` is the size of the mapped axis named ``axis_name`` in
     the input ``x``.
   """
-  axis_size = psum(1, axis_name)
-  if axis_size != x.shape[axis]:
-    msg = ("pswapaxes requires the size of the mapped axis ``axis_name`` equal "
-           "``x.shape[axis]``, but they are {} and {} respectively.")
-    raise ValueError(msg.format(axis_size(axis_name), x.shape[axis]))
+  # TODO(mattjj): enable this check when _serial_pmap works with psum(1, ax)
+  # axis_size = psum(1, axis_name)
+  # if axis_size != x.shape[axis]:
+  #   msg = ("pswapaxes requires the size of the mapped axis ``axis_name`` equal "
+  #          "``x.shape[axis]``, but they are {} and {} respectively.")
+  #   raise ValueError(msg.format(axis_size(axis_name), x.shape[axis]))
   return pswapaxes_p.bind(x, axis_name=axis_name, axis=axis)
 
 def psplit(x, axis_name, axis):
