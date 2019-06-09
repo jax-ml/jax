@@ -470,9 +470,8 @@ pytype_aval_mappings[DeviceTuple] = op.attrgetter('aval')
 canonicalize_dtype_handlers[DeviceTuple] = identity
 
 def _device_tuple_constant_handler(c, val, canonicalize_types=True):
-  py_val = pack(c.Constant(elt, canonicalize_types=canonicalize_types)
-                for elt in val)
-  return c.Constant(py_val)
+  const = partial(c.Constant, canonicalize_types=canonicalize_types)
+  return c.Tuple(*map(const, val))
 xb.register_constant_handler(DeviceTuple, _device_tuple_constant_handler)
 
 # TODO(mattjj): could jit-compile a computation here

@@ -1325,6 +1325,14 @@ class LaxTest(jtu.JaxTestCase):
       self.skipTest("Test is Python 2 specific")
     self.assertTrue(api.jit(lambda x: lax.lt(x, long(10)))(long(3)))
 
+  def testIssue831(self):
+    # Tests the DeviceTuple constant handler
+    def f(x):
+      g = lambda *args: args[1]
+      return api.jit(lax.fori_loop, static_argnums=(2,))( 0, 10, g, x)
+
+    api.jit(f)(1.)  # doesn't crash
+
 
 class DeviceConstantTest(jtu.JaxTestCase):
   def _CheckDeviceConstant(self, make_const, expected):
