@@ -1493,7 +1493,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     expected = onp.reshape(a, (3, 2), order='F')
     self.assertAllClose(ans, expected, check_dtypes=True)
 
-
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_op={}_dtype={}".format(
           op, {bool: "bool", int: "int", float: "float"}[dtype]),
@@ -1537,6 +1536,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # test that lnp.arange(N) doesn't instantiate an ndarray
     self.assertFalse(type(lnp.arange(77)) == type(onp.arange(77)))
     self.assertTrue(type(lnp.arange(77)) == type(lax.iota(onp.int32, 77)))
+
+  def testIssue830(self):
+    a = lnp.arange(4, dtype=lnp.complex64)
+    self.assertEqual(a.dtype, lnp.complex64)
 
   def testIssue728(self):
     assert lnp.allclose(lnp.eye(5000), onp.eye(5000))

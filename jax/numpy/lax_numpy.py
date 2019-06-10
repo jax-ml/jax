@@ -1379,7 +1379,7 @@ def identity(n, dtype=None):
 
 @_wraps(onp.arange)
 def arange(*args, **kwargs):
-  dtype = kwargs.pop("dtype", None)
+  dtype = kwargs.get("dtype", None)
   if not args:
     raise TypeError("Required argument 'start' (pos 1) not found")  # same as numpy error
 
