@@ -57,7 +57,7 @@ functions, where the component functions have these signatures:
 
   Returns:
     A pytree representing the parameters extracted from `opt_state`, such that
-    the invariant `params == get_params(init_params(params))` holds true.
+    the invariant `params == get_params(init_fun(params))` holds true.
 
 
 Notice that an optimizer implementation has a lot of flexibility in the form of
