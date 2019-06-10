@@ -512,9 +512,9 @@ def sinc(x):
 
 
 @_wraps(onp.transpose)
-def transpose(x, axis=None):
-  axis = onp.arange(ndim(x))[::-1] if axis is None else axis
-  return lax.transpose(x, axis)
+def transpose(x, axes=None):
+  axes = onp.arange(ndim(x))[::-1] if axes is None else axes
+  return lax.transpose(x, axes)
 
 
 @_wraps(onp.rot90)
