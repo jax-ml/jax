@@ -78,7 +78,7 @@ def _make_rotate_left(dtype):
   def _rotate_left(x, d):
     if lax.dtype(d) != lax.dtype(x):
       d = lax.convert_element_type(d, x.dtype)
-    return (x << d) | lax.shift_right_logical(x, nbits - d)
+    return lax.shift_left(x, d) | lax.shift_right_logical(x, nbits - d)
   return _rotate_left
 
 
@@ -122,7 +122,7 @@ def threefry_2x32(keypair, count):
   else:
     x = list(np.split(count.ravel(), 2))
 
-  rotations = [13, 15, 26, 6, 17, 29, 16, 24]
+  rotations = onp.uint32([13, 15, 26, 6, 17, 29, 16, 24])
   ks = [key1, key2, key1 ^ key2 ^ onp.uint32(0x1BD11BDA)]
 
   x[0] = x[0] + ks[0]
@@ -211,7 +211,7 @@ def _random_bits(key, bit_width, shape):
   bits = threefry_2x32(key, counts)
   if bit_width == 64:
     bits = [lax.convert_element_type(x, onp.uint64) for x in np.split(bits, 2)]
-    bits = (bits[0] << onp.uint64(32)) | bits[1]
+    bits = lax.shift_left(bits[0], onp.uint64(32)) | bits[1]
   return lax.reshape(bits, shape)
 
 
