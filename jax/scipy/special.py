@@ -20,7 +20,7 @@ import numpy as onp
 import scipy.special as osp_special
 
 from .. import lax
-from ..api import custom_transforms, defjvp2
+from ..api import custom_transforms, defjvp
 from ..numpy import lax_numpy as np
 from ..numpy.lax_numpy import (_wraps, asarray, _reduction_dims, _constant_like,
                                _promote_args_like)
@@ -61,7 +61,7 @@ def erfinv(x):
 def logit(x):
   x = asarray(x)
   return lax.log(lax.div(x, lax.sub(lax._const(x, 1), x)))
-defjvp2(logit, lambda g, ans, x: g / (x * (1 - x)))
+defjvp(logit, lambda g, ans, x: g / (x * (1 - x)))
 
 
 @_wraps(osp_special.expit)
@@ -70,7 +70,7 @@ def expit(x):
   x = asarray(x)
   one = lax._const(x, 1)
   return lax.div(one, lax.add(one, lax.exp(lax.neg(x))))
-defjvp2(expit, lambda g, ans, x: g * ans * (lax._const(ans, 1) - ans))
+defjvp(expit, lambda g, ans, x: g * ans * (lax._const(ans, 1) - ans))
 
 
 @_wraps(osp_special.logsumexp)
