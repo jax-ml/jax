@@ -211,9 +211,10 @@ def partial_eval_wrapper(avals, *consts):
 
 
 def abstract_eval_fun(fun, *avals, **params):
-  pvs_in = [PartialVal((a, unit)) for a in avals]
-  _, pvout, _ = trace_to_jaxpr(lu.wrap_init(fun, params), pvs_in, instantiate=True)
-  aval_out, _ = pvout
+  pvals_in = [PartialVal((a, unit)) for a in avals]
+  _, pval_out, _ = trace_to_jaxpr(lu.wrap_init(fun, params), pvals_in,
+                                  instantiate=True)
+  aval_out, _ = pval_out
   assert isinstance(aval_out, AbstractValue)  # instantiate=True
   return aval_out
 

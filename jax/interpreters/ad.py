@@ -397,18 +397,19 @@ def add_tangents(x, y):
 
 
 def defvjp_all(prim, custom_vjp):
+  # see https://github.com/google/jax/pull/636
   name = prim.name
 
-  def fun_jvp(xs, ts):
+  def fun_jvp(xs, ts, **params):
     ts = map(instantiate_zeros, xs, ts)  # TODO(mattjj): avoid instantiation?
-    primal_out, tangent_out = fun_jvp_p.bind(pack(xs), pack(ts))
+    primal_out, tangent_out = fun_jvp_p.bind(pack(xs), pack(ts), **params)
     return primal_out, tangent_out
   primitive_jvps[prim] = fun_jvp
 
   fun_jvp_p = core.Primitive('{name}_jvp'.format(name=name))
-  def fun_jvp_partial_eval(trace, *tracers):
+  def fun_jvp_partial_eval(trace, *tracers, **params):
     primals_tracer, tangents_tracer = tracers
-    primal_out, vjp_py = custom_vjp(*primals_tracer)
+    primal_out, vjp_py = custom_vjp(*primals_tracer, **params)
 
     in_aval = raise_to_shaped(get_aval(primal_out))
     ct_pval = pe.PartialVal((in_aval, core.unit))
