@@ -1138,87 +1138,8 @@ def defjvp(fun, *jvprules):
   This function is a convenience wrapper around ``jax.defjvp_all`` for
   separately defining JVP rules for each of the function's arguments. This
   convenience wrapper does not provide a mechanism for depending on anything
-  other than the function arguments, so JVP rules defined in this way can't
-  share work with the primal computation or with each other, though those things
-  are possible using ``jax.defjvp_all``. See ``jax.defjvp2`` for a variant that
-  allows for defining rules that depend on the output primal value. See also the
-  ``jax.defjvp_all`` docstring for more detail.
-
-  The signature of each component JVP rule is ``lambda g, *primals: ...`` where
-  ``g`` represents the tangent of the corresponding positional argument and
-  ``*primals`` represents all the primal positional arguments.
-
-  Defining a custom JVP rule also affects the default VJP rule, which is derived
-  from the JVP rule automatically via transposition.
-
-  Args:
-    fun: a custom_transforms function.
-    *jvprules: a sequence of functions or Nones specifying the JVP rule for each
-      corresponding positional argument. When an element is None, it indicates
-      that the Jacobian from the corresponding input to the output is zero.
-
-  Returns:
-    None. A side-effect is that ``fun`` is associated with the JVP rule
-    specified by ``*jvprules``.
-
-  For example:
-
-  >>> @jax.custom_transforms
-  ... def f(x):
-  ...   return np.sin(x ** 2)
-  ...
-  >>> print(f(3.))
-  0.4121185
-  >>> out_primal, out_tangent = jax.jvp(f, (3.,), (2.,))
-  >>> print(out_primal)
-  0.4121185
-  >>> print(out_tangent)
-  -10.933563
-  >>> jax.defjvp(f, lambda g, x: 8. * g)
-  >>> out_primal, out_tangent = jax.jvp(f, (3.,), (2.,))
-  >>> print(out_primal)
-  0.4121185
-  >>> print(out_tangent)
-  16.0
-
-  An example with a function on two arguments:
-
-  >>> @jax.custom_transforms
-  ... def f(x, y):
-  ...   return np.sin(x ** 2 + y)
-  ...
-  >>> print(f(3., 4.))
-  0.42016703
-  >>> out_primal, out_tangent = jax.jvp(f, (3., 4.), (1., 2.))
-  >>> print(out_primal)
-  0.42016703
-  >>> print(out_tangent)
-  7.2595744
-  >>> jax.defjvp(f, None, lambda g, x, y: 8. * g + y)
-  >>> out_primal, out_tangent = jax.jvp(f, (3., 4.), (1., 2.))
-  >>> print(out_primal)
-  0.42016703
-  >>> print(out_tangent)
-  20.0
-  """
-  _check_custom_transforms_type("defjvp", fun)
-  def custom_jvp(primals, tangents):
-    ans = fun(*primals)
-    tangents_out = [rule(t, *primals) for rule, t in zip(jvprules, tangents)
-                    if rule is not None and t is not ad_util.zero]
-    return ans, reduce(ad.add_tangents, tangents_out, ad_util.zero)
-  defjvp_all(fun, custom_jvp)
-
-def defjvp2(fun, *jvprules):
-  """Definine JVP rules for each argument separately.
-
-  This function is a convenience wrapper around ``jax.defjvp_all`` for separately
-  defining JVP rules for each of the function's arguments. This convenience
-  wrapper does not provide a mechanism for depending on anything other than the
-  function arguments and its primal output value.
-
-  This function is like ``jax.defjvp`` except the component JVP rules also take
-  the output primal as an argument.
+  other than the function arguments and its primal output value, though
+  depending on intermediate results is possible using ``jax.defjvp_all``.
 
   The signature of each component JVP rule is ``lambda g, ans, *primals: ...``
   where ``g`` represents the tangent of the corresponding positional argument,
@@ -1251,14 +1172,14 @@ def defjvp2(fun, *jvprules):
   0.4121185
   >>> print(out_tangent)
   -10.933563
-  >>> jax.defjvp2(f, lambda g, ans, x: 8. * g + ans)
+  >>> jax.defjvp(f, lambda g, ans, x: 8. * g + ans)
   >>> out_primal, out_tangent = jax.jvp(f, (3.,), (2.,))
   >>> print(out_primal)
   0.4121185
   >>> print(out_tangent)
   16.412119
   """
-  _check_custom_transforms_type("defjvp2", fun)
+  _check_custom_transforms_type("defjvp", fun)
   def custom_jvp(primals, tangents):
     ans = fun(*primals)
     tangents_out = [rule(t, ans, *primals) for rule, t in zip(jvprules, tangents)
@@ -1359,73 +1280,8 @@ def defvjp(fun, *vjprules):
   This function is a convenience wrapper around ``jax.defvjp_all`` for
   separately defining VJP rules for each of the function's arguments. This
   convenience wrapper does not provide a mechanism for depending on anything
-  other than the function arguments, so VJP rules defined in this way can't
-  share work with the primal computation or with each other, though those things
-  are possible using ``jax.defvjp_all`` or ``jax.custom_gradient``. See
-  ``jax.defvjp2`` for a variant that allows for defining rules that depend on
-  the output primal value. See also the ``jax.defvjp_all`` docstring.
-
-  The signature of each component VJP rule is ``lambda g, *primals: ...`` where
-  ``g`` represents the output cotangent and ``*primals`` represents all the
-  primal positional arguments.
-
-  Args:
-    fun: a custom_transforms function.
-    *vjprules: a sequence of functions or Nones specifying the VJP rule for each
-      corresponding positional argument. When an element is None, it indicates
-      that the Jacobian from the corresponding input to the output is zero.
-
-  Returns:
-    None. A side-effect is that ``fun`` is associated with the VJP rule
-    specified by ``*vjprules``.
-
-  For example:
-
-  >>> @jax.custom_transforms
-  ... def f(x):
-  ...   return np.sin(x ** 2)
-  ...
-  >>> print(f(3.))
-  0.4121185
-  >>> print(jax.grad(f)(3.))
-  >>> jax.defvjp(f, lambda g, x: 8. * g)
-  >>> print(jax.grad(f)(3.))
-  8.0
-
-  An example with a function on two arguments:
-
-  >>> @jax.custom_transforms
-  ... def f(x, y):
-  ...   return np.sin(x ** 2 + y)
-  ...
-  >>> print(f(3., 4.))
-  0.42016703
-  >>> print(jax.grad(f)(3., 4.))
-  5.4446807
-  >>> print(jax.grad(f, 1)(3., 4.))
-  0.9074468
-  >>> jax.defvjp(f, None, lambda g, x, y: g + x + y)
-  >>> print(jax.grad(f)(3., 4.))
-  0.0
-  >>> print(jax.grad(f, 1)(3., 4.))
-  8.0
-  """
-  _check_custom_transforms_type("defvjp", fun)
-  def custom_vjp(*primals):
-    ans = fun(*primals)
-    # TODO(mattjj): avoid instantiating zeros?
-    vjpfun = lambda ct: [vjp(ct, *primals) if vjp else ad_util.zeros_like_jaxval(x)
-                         for x, vjp in zip(primals, vjprules)]
-    return ans, vjpfun
-  defvjp_all(fun, custom_vjp)
-
-def defvjp2(fun, *vjprules):
-  """Define VJP rules for each argument separately.
-
-  This function is a convenience wrapper around ``jax.defvjp_all`` for
-  separately defining VJP rules for each of the function's arguments. This
-  convenience wrapper does not provide a mechanism for depending on anything
-  other than the function arguments and its primal output value.
+  other than the function arguments and its primal output value, though
+  depending on intermediate results is possible using ``jax.defvjp_all``.
 
   The signature of each component VJP rule is ``lambda g, ans, *primals: ...``
   where ``g`` represents the output cotangent, ``ans`` represents the output
@@ -1453,13 +1309,13 @@ def defvjp2(fun, *vjprules):
   5.4446807
   >>> print(jax.grad(f, 1)(3., 4.))
   0.9074468
-  >>> jax.defvjp2(f, None, lambda g, ans, x, y: g + x + y + ans)
+  >>> jax.defvjp(f, None, lambda g, ans, x, y: g + x + y + ans)
   >>> print(jax.grad(f)(3., 4.))
   0.0
   >>> print(jax.grad(f, 1)(3., 4.))
   8.420167
   """
-  _check_custom_transforms_type("defvjp2", fun)
+  _check_custom_transforms_type("defvjp", fun)
   def custom_vjp(*primals):
     ans = fun(*primals)
     # TODO(mattjj): avoid instantiating zeros?
@@ -1473,16 +1329,20 @@ def custom_gradient(fun):
 
   While the canonical way to define custom VJP rules is via ``jax.defvjp_all``
   and its convenience wrappers, the ``custom_gradient`` convenience wrapper
-  follows TensorFlow's tf.custom_gradient API.
+  follows TensorFlow's ``tf.custom_gradient`` API. The difference here is that
+  ``custom_gradient`` can be used as a decorator on one function that returns
+  both the primal value (representing the output of the mathematical function to
+  be differentiated) and the VJP (gradient) function.
 
   See https://www.tensorflow.org/api_docs/python/tf/custom_gradient.
 
-  If the function to be differentiated has type signature ``a -> b``, then the
-  Python callable ``fun`` should have signature ``a -> (b, CT b -> CT a)`` where
-  we use ``CT x`` to denote a cotangent type for ``x``. See the example below.
-  That is, ``fun`` should return a pair where the first element represents the
-  value of the function to be differentiated and the second element is a
-  function that represents the custom VJP rule.
+  If the mathematical function to be differentiated has type signature
+  ``a -> b``, then the Python callable ``fun`` should have signature
+  ``a -> (b, CT b -> CT a)`` where we use ``CT x`` to denote a cotangent type
+  for ``x``. See the example below. That is, ``fun`` should return a pair where
+  the first element represents the value of the mathematical function to be
+  differentiated and the second element is a function that represents the custom
+  VJP rule.
 
   The custom VJP function returned as the second element of the output of ``fun``
   can close over intermediate values computed when evaluating the function to be
@@ -1490,10 +1350,10 @@ def custom_gradient(fun):
   pass and the backward pass of reverse-mode automatic differentiation.
 
   Args:
-    fun: a Python callable specifying both the function to be differentiated and
-      its reverse-mode differentiation rule. It should return a pair consisting
-      of an output value and a Python callable that represents the custom
-      gradient function.
+    fun: a Python callable specifying both the mathematical function to be
+      differentiated and its reverse-mode differentiation rule. It should return
+      a pair consisting of an output value and a Python callable that represents
+      the custom gradient function.
 
   Returns:
     A Python callable with signature ``a -> b``, i.e. that returns the output

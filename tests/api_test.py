@@ -525,12 +525,14 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(val_ans, onp.sin(3.), check_dtypes=False)
     self.assertAllClose(grad_ans, 3., check_dtypes=False)
 
+  # TODO(mattjj): add defvjp_all test with pytree arguments
+
   def test_defvjp(self):
     @api.custom_transforms
     def foo(x, y):
       return np.sin(x * y)
 
-    api.defvjp(foo, None, lambda g, x, y: g * x * y)
+    api.defvjp(foo, None, lambda g, _, x, y: g * x * y)
     val_ans, grad_ans = api.value_and_grad(foo)(3., 4.)
     self.assertAllClose(val_ans, onp.sin(3. * 4.), check_dtypes=False)
     self.assertAllClose(grad_ans, 0., check_dtypes=False)
@@ -544,17 +546,17 @@ class APITest(jtu.JaxTestCase):
     def foo(x):
       return np.sin(2. * x)
 
-    api.defvjp(foo, lambda g, x: g * np.cos(x))
+    api.defvjp(foo, lambda g, _, x: g * np.cos(x))
     ans = api.grad(api.grad(foo))(2.)
     expected = api.grad(api.grad(np.sin))(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  def test_defvjp2(self):
+  def test_defvjp_use_ans(self):
     @api.custom_transforms
     def foo(x, y):
       return np.sin(x * y)
 
-    api.defvjp2(foo, None, lambda g, ans, x, y: g * x * y + np.cos(ans))
+    api.defvjp(foo, None, lambda g, ans, x, y: g * x * y + np.cos(ans))
     val_ans, grad_ans = api.value_and_grad(foo, 1)(3., 4.)
     self.assertAllClose(val_ans, onp.sin(3. * 4.), check_dtypes=False)
     self.assertAllClose(grad_ans, 3. * 4. + onp.cos(onp.sin(3. * 4)),
