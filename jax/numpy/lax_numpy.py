@@ -146,7 +146,7 @@ def _promote_shapes(*args):
     shapes = [shape(arg) for arg in args]
     nd = len(lax.broadcast_shapes(*shapes))
     return [lax.reshape(arg, (1,) * (nd - len(shp)) + shp)
-            if len(shp) != nd else arg for arg, shp in zip(args, shapes)]
+            if shp and len(shp) != nd else arg for arg, shp in zip(args, shapes)]
 
 def _promote_dtypes(*args):
   """Convenience function to apply Numpy argument dtype promotion."""

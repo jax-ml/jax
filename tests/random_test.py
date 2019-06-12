@@ -30,6 +30,7 @@ from jax import api
 from jax import lax
 from jax import random
 from jax import test_util as jtu
+from jax.interpreters import xla
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -365,6 +366,12 @@ class LaxRandomTest(jtu.JaxTestCase):
       self.assertEqual(onp.result_type(w), onp.float64)
     else:
       self.assertEqual(onp.result_type(w), onp.float32)
+
+  def testNoOpByOpUnderHash(self):
+    def fail(): assert False
+    apply_primitive, xla.apply_primitive = xla.apply_primitive, fail
+    out = random.threefry_2x32(onp.zeros(2, onp.uint32), onp.arange(10, dtype=onp.uint32))
+    xla.apply_primitive = apply_primitive
 
 
 if __name__ == "__main__":
