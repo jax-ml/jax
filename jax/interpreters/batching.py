@@ -349,6 +349,9 @@ def _moveaxis(force_bcast, sz, dst, src, aval, x):
         x = broadcast(x, sz, force_broadcast=force_bcast)
         src = 0
         dst_ = dst % (aval.ndim + 1)
+      elif src >= aval.ndim:
+        raise ValueError(
+          "cannot move axis {} in {}-dimensional array".format(src, aval.ndim))
       if src == dst_:
         return x
       else:
