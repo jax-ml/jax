@@ -1927,12 +1927,12 @@ def _dot_batch_rule(batched_args, batch_dims):
       if lbd == 0:
         return dot(lhs, rhs), 0
       else:
-        return dot(T(rhs), lhs), 1
+        return dot(T(rhs), lhs), onp.ndim(rhs) - 1
 
     if lbd is None:
       assert rbd in (0, 1)
       if rbd == onp.ndim(rhs) - 1:
-        return dot(lhs, rhs), 1
+        return dot(lhs, rhs), onp.ndim(lhs) - 1
       else:
         return dot(rhs, T(lhs)), 0
 
