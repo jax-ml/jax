@@ -45,7 +45,6 @@ think!
 ```python
 import jax.numpy as np
 from jax import grad, jit, vmap
-from functools import partial
 
 def predict(params, inputs):
   for W, b in params:
