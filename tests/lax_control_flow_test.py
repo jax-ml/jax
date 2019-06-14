@@ -808,6 +808,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     arg = 0.5
     print(api.jit(api.jacfwd(loop, argnums=(0,)))(arg))
 
+  # TODO(mattjj): add a test for "the David Sussillo bug"
+
 
 if __name__ == '__main__':
   absltest.main()
