@@ -371,7 +371,8 @@ def concatenate(operands, dimension):
                             operand_shapes=tuple(o.shape for o in operands))
 
 def conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation=None,
-                         rhs_dilation=None, dimension_numbers=None):
+                         rhs_dilation=None, dimension_numbers=None,
+                         feature_group_count=1, batch_group_count=1):
   """General n-dimensional convolution operator, with optional dilation.
 
   Wraps XLA's `Conv
@@ -395,6 +396,8 @@ def conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation=None,
     dimension_numbers: either `None`, a `ConvDimensionNumbers` object, or
       a 3-tuple `(lhs_spec, rhs_spec, out_spec)`, where each element is a string
       of length `n+2`.
+    feature_group_count: integer, default 1. See XLA HLO docs.
+    batch_group_count: integer, default 1. See XLA HLO docs.
 
   Returns:
     An array containing the convolution result.
@@ -438,8 +441,10 @@ def conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation=None,
   return conv_general_dilated_p.bind(
       lhs, rhs, window_strides=tuple(window_strides), padding=tuple(padding),
       lhs_dilation=tuple(lhs_dilation), rhs_dilation=tuple(rhs_dilation),
-      dimension_numbers=dimension_numbers, lhs_shape=lhs.shape,
-      rhs_shape=rhs.shape)
+      dimension_numbers=dimension_numbers,
+      feature_group_count=feature_group_count,
+      batch_group_count=batch_group_count,
+      lhs_shape=lhs.shape, rhs_shape=rhs.shape)
 
 def dot(lhs, rhs):
   """Vector/vector, matrix/vector, and matrix/matrix multiplication.
@@ -1737,8 +1742,33 @@ batching.defvectorized(bitcast_convert_type_p)
 
 def _conv_general_dilated_shape_rule(
     lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
-    dimension_numbers, **unused_kwargs):
+    dimension_numbers, feature_group_count, batch_group_count, **unused_kwargs):
   assert type(dimension_numbers) is ConvDimensionNumbers
+  if not feature_group_count > 0 or not batch_group_count > 0:
+    msg = ("conv_general_dilated feature_group_count and batch_group_count "
+           "must be positive integers, got {} and {}.")
+    raise ValueError(msg.format(feature_group_count, batch_group_count))
+  if feature_group_count > 1 and batch_group_count > 1:
+    msg = ("conv_general_dilated feature_group_count and batch_group_count "
+           "cannot both be greater than 1, got {} and {}.")
+    raise ValueError(msg.format(feature_group_count, batch_group_count))
+  lhs_feature_count = lhs.shape[dimension_numbers.lhs_spec[1]]
+  quot, rem = divmod(lhs_feature_count, feature_group_count)
+  if rem:
+    msg = ("conv_general_dilated feature_group_count must divide lhs feature "
+           "dimension size, but {} does not divide {}.")
+    raise ValueError(msg.format(feature_group_count, lhs_feature_count))
+  if quot != rhs.shape[dimension_numbers.rhs_spec[1]]:
+    msg = ("conv_general_dilated lhs feature dimension size divided by "
+           "feature_group_count must equal the rhs input feature dimension "
+           "size, but {} // {} != {}.")
+    raise ValueError(msg.format(lhs_feature_count, feature_group_count,
+                                rhs.shape[dimension_numbers.rhs_spec[1]]))
+  if rhs.shape[dimension_numbers.rhs_spec[0]] % feature_group_count:
+    msg = ("conv_general_dilated rhs output feature dimension size must be a "
+           "multiple of feature_group_count, but {} is not a multiple of {}.")
+    raise ValueError(msg.format(rhs.shape[dimension_numbers.rhs_spec[0]],
+                                feature_group_count))
   lhs_perm, rhs_perm, out_perm = dimension_numbers
   lhs_trans = _dilate_shape(onp.take(lhs.shape, lhs_perm), lhs_dilation)
   rhs_trans = _dilate_shape(onp.take(rhs.shape, rhs_perm), rhs_dilation)
@@ -1751,16 +1781,27 @@ def _conv_general_dilated_dtype_rule(
   return binop_dtype_rule(_input_dtype, [_f32, _f32], 'conv_general_dilated',
                           lhs, rhs)
 
-_conv_transpose = lambda spec: (spec[1], spec[0]) + spec[2:]
+_conv_spec_transpose = lambda spec: (spec[1], spec[0]) + spec[2:]
 _conv_sdims = lambda spec: spec[2:]
 
 def _conv_general_dilated_transpose_lhs(
     g, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
-    dimension_numbers, lhs_shape, rhs_shape):
+    dimension_numbers, feature_group_count, batch_group_count,
+    lhs_shape, rhs_shape):
   assert type(dimension_numbers) is ConvDimensionNumbers
+  if batch_group_count != 1:
+    msg = ("conv_general_dilated transpose rule is only implemented for "
+           "batch_group_count = 1, but got {}. Open a feature request!")
+    raise NotImplementedError(msg.format(batch_group_count))  # TODO(mattjj)
   lhs_sdims, rhs_sdims, out_sdims = map(_conv_sdims, dimension_numbers)
   lhs_spec, rhs_spec, out_spec = dimension_numbers
-  t_rhs_spec = _conv_transpose(rhs_spec)
+  t_rhs_spec = _conv_spec_transpose(rhs_spec)
+  if feature_group_count > 1:
+    # in addition to switching the dims in the spec, need to move the feature
+    # group axis into the transposed rhs's output feature dim
+    rhs = _reshape_axis_out_of(rhs_spec[0], feature_group_count, rhs)
+    rhs = _reshape_axis_into(rhs_spec[0],
+                             rhs_spec[1] + int(rhs_spec[0] < rhs_spec[1]), rhs)
   trans_dimension_numbers = ConvDimensionNumbers(out_spec, t_rhs_spec, lhs_spec)
   padding = _conv_general_vjp_lhs_padding(
       onp.take(lhs_shape, lhs_sdims), onp.take(rhs_shape, rhs_sdims),
@@ -1770,14 +1811,22 @@ def _conv_general_dilated_transpose_lhs(
   return conv_general_dilated(
       g, revd_weights, window_strides=lhs_dilation, padding=padding,
       lhs_dilation=window_strides, rhs_dilation=rhs_dilation,
-      dimension_numbers=trans_dimension_numbers)
+      dimension_numbers=trans_dimension_numbers,
+      feature_group_count=feature_group_count,
+      batch_group_count=batch_group_count)
 
 def _conv_general_dilated_transpose_rhs(
     g, lhs, window_strides, padding, lhs_dilation, rhs_dilation,
-    dimension_numbers, lhs_shape, rhs_shape):
+    dimension_numbers, feature_group_count, batch_group_count,
+    lhs_shape, rhs_shape):
   assert type(dimension_numbers) is ConvDimensionNumbers
+  if not feature_group_count == batch_group_count == 1:
+    msg = ("conv_general_dilated transpose rule is only implemented for "
+           "feature_group_count == batch_group_count == 1, but got {} and {}. "
+           "Open a feature request!")
+    raise NotImplementedError(msg.format(feature_group_count, batch_group_count))
   lhs_sdims, rhs_sdims, out_sdims = map(_conv_sdims, dimension_numbers)
-  lhs_trans, rhs_trans, out_trans = map(_conv_transpose, dimension_numbers)
+  lhs_trans, rhs_trans, out_trans = map(_conv_spec_transpose, dimension_numbers)
   trans_dimension_numbers = ConvDimensionNumbers(lhs_trans, out_trans, rhs_trans)
   padding = _conv_general_vjp_rhs_padding(
       onp.take(lhs_shape, lhs_sdims), onp.take(rhs_shape, rhs_sdims),
@@ -1786,70 +1835,75 @@ def _conv_general_dilated_transpose_rhs(
   return conv_general_dilated(
       lhs, g, window_strides=rhs_dilation, padding=padding,
       lhs_dilation=lhs_dilation, rhs_dilation=window_strides,
-      dimension_numbers=trans_dimension_numbers)
+      dimension_numbers=trans_dimension_numbers,
+      feature_group_count=feature_group_count,
+      batch_group_count=batch_group_count)
 
 def _conv_general_dilated_translation_rule(
     c, lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
-    dimension_numbers, **unused_kwargs):
+    dimension_numbers, feature_group_count, batch_group_count, **unused_kwargs):
   assert type(dimension_numbers) is ConvDimensionNumbers
   dimension_numbers = _conv_general_proto(dimension_numbers)
   return c.ConvGeneralDilated(lhs, rhs, window_strides, padding, lhs_dilation,
-                              rhs_dilation, dimension_numbers)
+                              rhs_dilation, dimension_numbers,
+                              feature_group_count, batch_group_count)
 
 def _conv_general_dilated_batch_rule(
     batched_args, batch_dims, window_strides, padding,
-    lhs_dilation, rhs_dilation, dimension_numbers, **unused_kwargs):
+    lhs_dilation, rhs_dilation, dimension_numbers,
+    feature_group_count, batch_group_count, **unused_kwargs):
   lhs, rhs = batched_args
   lhs_bdim, rhs_bdim = batch_dims
-  lhs_dim, rhs_dim, out_dim = dimension_numbers
+  lhs_spec, rhs_spec, out_spec = dimension_numbers
 
   if lhs_bdim is not None and rhs_bdim is not None:
-    #TODO(#212): use a map construct instead of unrolling.
-    lhs = batching.move_dim_to_front(lhs, lhs_bdim)
-    rhs = batching.move_dim_to_front(rhs, rhs_bdim)
-    outputs = [
-        conv_general_dilated(l, r, window_strides, padding,
-                             lhs_dilation, rhs_dilation, dimension_numbers)
-        for l, r in zip(lhs, rhs)]
-    outputs = [reshape(out, (1,) + out.shape) for out in outputs]
-    outputs = concatenate(outputs, 0)
-    return outputs, 0
+    assert lhs.shape[lhs_bdim] == rhs.shape[rhs_bdim]
+    new_lhs = _reshape_axis_into(lhs_bdim, lhs_spec[1], lhs)
+    new_rhs = _reshape_axis_into(rhs_bdim, rhs_spec[0], rhs)
+    out = conv_general_dilated(new_lhs, new_rhs, window_strides, padding,
+                               lhs_dilation, rhs_dilation, dimension_numbers,
+                               feature_group_count=lhs.shape[lhs_bdim] * feature_group_count,
+                               batch_group_count=batch_group_count)
+    out = _reshape_axis_out_of(out_spec[1], lhs.shape[lhs_bdim], out)
+    return out, out_spec[1]
 
   elif lhs_bdim is not None:
-    lhs = batching.move_dim_to_front(lhs, lhs_bdim)
-    lhs_perm = ((0, lhs_dim[0] + 1) + tuple(range(1, lhs_dim[0] + 1)) +
-                tuple(range(lhs_dim[0] + 2, len(lhs_dim) + 1)))
-    new_lhs_dim = (0,) + tuple(x + 1 if x < lhs_dim[0] else x
-                               for x in lhs_dim[1:])
-    new_out_dim = (0,) + tuple(x + 1 if x < out_dim[0] else x
-                               for x in out_dim[1:])
+    new_lhs = _reshape_axis_into(lhs_bdim, lhs_spec[0], lhs)
+    out = conv_general_dilated(new_lhs, rhs, window_strides, padding,
+                               lhs_dilation, rhs_dilation, dimension_numbers,
+                               feature_group_count, batch_group_count)
+    out = _reshape_axis_out_of(out_spec[0], lhs.shape[lhs_bdim], out)
+    return out, out_spec[0]
 
-    batched_size = lhs.shape[0]
-    n_size = lhs.shape[lhs_dim[0] + 1]
-    if lhs_dim[0] != 0:
-      lhs = transpose(lhs, lhs_perm)
-    lhs = reshape(lhs, (batched_size * n_size,) + lhs.shape[2:])
-    outputs = conv_general_dilated(
-        lhs, rhs, window_strides, padding,
-        lhs_dilation, rhs_dilation,
-        ConvDimensionNumbers(new_lhs_dim, dimension_numbers.rhs_spec,
-                             new_out_dim))
-    outputs = reshape(outputs, (batched_size, n_size,) + outputs.shape[1:])
-
-    if out_dim[0] != 0:
-      out_perm = ((0,) + tuple(range(2, out_dim[0] + 2)) + (1,) +
-              tuple(range(out_dim[0] + 2, len(out_dim) + 1)))
-      outputs = transpose(outputs, out_perm)
-
-    return outputs, 0
   elif rhs_bdim is not None:
-    # move and reshape the bdim into the rhs output channels dimension
-    _, rhs_spec, out_spec = dimension_numbers
-    new_rhs = _reshape_axis_into(rhs_bdim, rhs_spec[0], rhs)
-    out = conv_general_dilated(lhs, new_rhs, window_strides, padding,
-                               lhs_dilation, rhs_dilation, dimension_numbers)
-    out = _reshape_axis_out_of(out_spec[1], rhs.shape[rhs_bdim], out)
-    return out, out_spec[1]
+    num_output_features = feature_group_count
+    if feature_group_count == 1:
+      new_rhs = _reshape_axis_into(rhs_bdim, rhs_spec[0], rhs)
+      out = conv_general_dilated(lhs, new_rhs, window_strides, padding,
+                                lhs_dilation, rhs_dilation, dimension_numbers,
+                                feature_group_count, batch_group_count)
+      out = _reshape_axis_out_of(out_spec[1], rhs.shape[rhs_bdim], out)
+      return out, out_spec[1]
+    else:
+      # feature_group needs to be outermost, so we need to factor it out of the
+      # rhs output feature dim, then factor the batch dim into the remaining rhs
+      # output feature dim, then put feature_group back in. we do something
+      # similar on the output. an alternative which would require more FLOPs but
+      # fewer reshapes would be to broadcast lhs.
+      new_rhs = _reshape_axis_out_of(rhs_spec[0] + int(rhs_bdim <= rhs_spec[0]),
+                                     feature_group_count, rhs)
+      new_rhs = _reshape_axis_into(rhs_bdim + int(rhs_spec[0] < rhs_bdim),
+                                   rhs_spec[0] + 1,
+                                   new_rhs)
+      new_rhs = _reshape_axis_into(rhs_spec[0], rhs_spec[0], new_rhs)
+      out = conv_general_dilated(lhs, new_rhs, window_strides, padding,
+                                lhs_dilation, rhs_dilation, dimension_numbers,
+                                feature_group_count, batch_group_count)
+      out = _reshape_axis_out_of(out_spec[1], feature_group_count, out)
+      out = _reshape_axis_out_of(out_spec[1] + 1, rhs.shape[rhs_bdim], out)
+      out = _reshape_axis_into(out_spec[1], out_spec[1] + 1, out)
+      return out, out_spec[1]
+
 conv_general_dilated_p = standard_primitive(
     _conv_general_dilated_shape_rule, _conv_general_dilated_dtype_rule,
     'conv_general_dilated', _conv_general_dilated_translation_rule)

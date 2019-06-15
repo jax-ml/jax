@@ -1635,14 +1635,15 @@ class LaxAutodiffTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_lhs_shape={}_rhs_shape={}_strides={}_padding={}_lhs_dilation={}_"
-       "rhs_dilation={}_dims={}"
+       "rhs_dilation={}_dims={}_feature_group_count={}"
        .format(jtu.format_shape_dtype_string(lhs_shape, dtype),
                jtu.format_shape_dtype_string(rhs_shape, dtype),
-               strides, padding, lhs_dil, rhs_dil, ",".join(dim_nums)),
+               strides, padding, lhs_dil, rhs_dil, ",".join(dim_nums),
+               feature_group_count),
        "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
        "strides": strides, "padding": padding, "lhs_dil": lhs_dil,
        "rhs_dil": rhs_dil, "rng": rng, "dimension_numbers": dim_nums,
-       "perms": perms}
+       "perms": perms, "feature_group_count": feature_group_count}
       for lhs_shape, rhs_shape, all_strides, all_pads, lhs_dils, rhs_dils in [
           ((b, i, 6, 7),  # lhs_shape
            (j, i, 1, 2),  # rhs_shape
@@ -1651,6 +1652,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
            [(1, 1), (2, 1)],  # lhs_dils
            [(1, 1), (2, 2)])  # rhs_dils
           for b, i, j in itertools.product([1, 2], repeat=3)]
+      for feature_group_count in [1]  # TODO(mattjj): feature_group_count=2
       for strides in all_strides
       for rhs_dil in rhs_dils
       for lhs_dil in lhs_dils
@@ -1665,14 +1667,23 @@ class LaxAutodiffTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu")
   def testConvGeneralDilatedGrad(self, lhs_shape, rhs_shape, dtype, strides,
                                  padding, lhs_dil, rhs_dil, dimension_numbers,
-                                 perms, rng):
+                                 perms, feature_group_count, rng):
     tol = 1e-1 if onp.finfo(dtype).bits == 32 else 1e-3
-    lhs_perm, rhs_perm = perms  # permute to compatible shapes
-    lhs = onp.transpose(rng(lhs_shape, dtype), lhs_perm)
-    rhs = onp.transpose(rng(rhs_shape, dtype), rhs_perm)
+
+    # permute shapes to match dim_spec, scale by feature_group_count
+    lhs_perm, rhs_perm = perms
+    lhs_shape = list(onp.take(lhs_shape, lhs_perm))
+    rhs_shape = list(onp.take(rhs_shape, rhs_perm))
+    dim_spec = lax.conv_dimension_numbers(lhs_shape, rhs_shape, dimension_numbers)
+    lhs_shape[dim_spec.lhs_spec[1]] *= feature_group_count
+    rhs_shape[dim_spec.rhs_spec[0]] *= feature_group_count
+
+    lhs = rng(lhs_shape, dtype)
+    rhs = rng(rhs_shape, dtype)
     conv = partial(lax.conv_general_dilated, window_strides=strides,
                    padding=padding, lhs_dilation=lhs_dil, rhs_dilation=rhs_dil,
-                   dimension_numbers=dimension_numbers)
+                   dimension_numbers=dimension_numbers,
+                   feature_group_count=feature_group_count)
     check_grads_bilinear(conv, (lhs, rhs), order=2, modes=["fwd", "rev"],
                          atol=tol, rtol=tol)
 
@@ -2164,15 +2175,16 @@ class LaxVmapTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_lhs_shape={}_rhs_shape={}_strides={}_padding={}_lhs_dilation={}_"
-       "rhs_dilation={}_dims={}_lhs_bdim={}_rhs_bdim={}"
+       "rhs_dilation={}_dims={}_feature_group_count={}_lhs_bdim={}_rhs_bdim={}"
        .format(jtu.format_shape_dtype_string(lhs_shape, dtype),
                jtu.format_shape_dtype_string(rhs_shape, dtype),
                strides, padding, lhs_dil, rhs_dil, ",".join(dim_nums),
-               lhs_bdim, rhs_bdim),
+               feature_group_count, lhs_bdim, rhs_bdim),
        "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
        "strides": strides, "padding": padding, "lhs_dil": lhs_dil,
        "rhs_dil": rhs_dil, "rng": rng, "dimension_numbers": dim_nums,
-       "perms": perms, "lhs_bdim": lhs_bdim, "rhs_bdim": rhs_bdim}
+       "perms": perms, "lhs_bdim": lhs_bdim, "rhs_bdim": rhs_bdim,
+       "feature_group_count": feature_group_count}
       for lhs_shape, rhs_shape, all_strides, all_pads, lhs_dils, rhs_dils in [
           ((b, i, 6, 7),  # lhs_shape
            (j, i, 1, 2),  # rhs_shape
@@ -2181,6 +2193,7 @@ class LaxVmapTest(jtu.JaxTestCase):
            [(1, 1), (2, 1)],  # lhs_dils
            [(1, 1), (2, 2)])  # rhs_dils
           for b, i, j in itertools.product([1, 2], repeat=3)]
+      for feature_group_count in [1, 2]
       for strides in all_strides
       for rhs_dil in rhs_dils
       for lhs_dil in lhs_dils
@@ -2197,14 +2210,17 @@ class LaxVmapTest(jtu.JaxTestCase):
   ))
   def testConvGeneralDilatedBatching(
       self, lhs_shape, rhs_shape, dtype, strides, padding, lhs_dil, rhs_dil,
-      dimension_numbers, perms, lhs_bdim, rhs_bdim, rng):
+      dimension_numbers, perms, feature_group_count, lhs_bdim, rhs_bdim, rng):
     tol = 1e-1 if onp.finfo(dtype).bits == 32 else 1e-3
     bdim_size = 10
 
-    # permute shapes to match dimension_numbers
+    # permute shapes to match dim_spec, scale by feature_group_count
     lhs_perm, rhs_perm = perms
     lhs_shape = list(onp.take(lhs_shape, lhs_perm))
     rhs_shape = list(onp.take(rhs_shape, rhs_perm))
+    dim_spec = lax.conv_dimension_numbers(lhs_shape, rhs_shape, dimension_numbers)
+    lhs_shape[dim_spec.lhs_spec[1]] *= feature_group_count
+    rhs_shape[dim_spec.rhs_spec[0]] *= feature_group_count
 
     # add batch dimension
     if lhs_bdim is not None:
@@ -2220,10 +2236,11 @@ class LaxVmapTest(jtu.JaxTestCase):
 
     conv = partial(lax.conv_general_dilated, window_strides=strides,
                    padding=padding, lhs_dilation=lhs_dil, rhs_dilation=rhs_dil,
-                   dimension_numbers=dimension_numbers)
+                   dimension_numbers=dimension_numbers,
+                   feature_group_count=feature_group_count)
     ans = api.vmap(conv, (lhs_bdim, rhs_bdim))(lhs, rhs)
     expected = onp.stack([conv(lhs_slice(i), rhs_slice(i)) for i in range(bdim_size)])
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected, True, tol, tol)
 
 
 if __name__ == '__main__':
