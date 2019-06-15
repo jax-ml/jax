@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-def jax_to_hlo(src, fn, input_shapes):
+def jax_to_hlo(name, deps, fn, input_shapes):
     """Creates a genrule that uses jax_to_hlo.py to make HLO from a JAX func.
 
     Suppose we have
@@ -34,7 +34,8 @@ def jax_to_hlo(src, fn, input_shapes):
       load("//jax/tools:build_defs.bzl", "jax_to_hlo")
 
       jax_to_hlo(
-        src = "//your/thing:prog",
+        name = "prog_hlo",
+        deps = ["//your/thing:prog"],
         fn = "your.thing.prog.fn",  # Fully-qualified module name
         input_shapes = {
           "x": "f32[8,128]",
@@ -51,7 +52,8 @@ def jax_to_hlo(src, fn, input_shapes):
     then depend on these as data dependencies from e.g. C++.
 
     Args:
-      src: Target which contains the JAX function.
+      name: Name of this genrule, which will produce <name>.pb and <name>.txt.
+      deps: Targets to depend on, one of which must contain the JAX function.
       fn: Fully-qualified Python name of function (e.g. "path.to.fn")
       input_shapes: Python dictionary mapping arg names to XLA shapes, e.g.
         {"x": "f32[10,20]", "y": "f32[]"}
@@ -59,34 +61,38 @@ def jax_to_hlo(src, fn, input_shapes):
 
     # Create a py_binary for jax_to_hlo.py which links in `src`.  This is how
     # jax_to_hlo will get access to the function in `src`.
-    gen_bin = src + "_jax_to_hlo_gen_binary"
+    gen_bin = name + "_jax_to_hlo_gen_binary"
     native.py_binary(
         name = gen_bin,
         srcs = [
-            "//jax/tools:jax_to_hlo.py",
+            "//third_party/py/jax/tools:jax_to_hlo.py",
         ],
-        deps = [
-            src,
-            "//jax/tools:jax_to_hlo",
+        deps = deps + [
+            "//third_party/py/jax/jaxlib",
+            "//third_party/py/jax/tools:jax_to_hlo",
         ],
-        main = "//jax/tools:jax_to_hlo.py",
+        main = "//third_party/py/jax/tools:jax_to_hlo.py",
     )
 
     # Create a genrule which invokes the py_binary created above.
+    #
+    # Set JAX_PLATFORM_NAME to "cpu" to silence the "no GPU/TPU backend found,
+    # falling back to CPU" warning.
     native.genrule(
-        name = src + "_jax_to_hlo_genrule",
-        outs = [src + "_hlo.pb", src + "_hlo.txt"],
+        name = name + "_jax_to_hlo_genrule",
+        outs = [name + ".pb", name + ".txt"],
         tools = [gen_bin],
         cmd = """
+        JAX_PLATFORM_NAME=cpu \
         $(location {gen_bin}) \
           --fn {fn} \
           --input_shapes '{input_shapes}' \
-          --hlo_proto_dest '$(location {src}_hlo.pb)' \
-          --hlo_text_dest '$(location {src}_hlo.txt)'
+          --hlo_proto_dest '$(location {name}.pb)' \
+          --hlo_text_dest '$(location {name}.txt)' \
         """.format(
-            gen_bin = gen_bin,
-            src = src,
+            name = name,
             fn = fn,
             input_shapes = input_shapes,
+            gen_bin = gen_bin,
         ),
     )
