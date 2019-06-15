@@ -405,9 +405,8 @@ def trace_to_subjaxpr(master, instantiate, pvals):
   in_tracers = map(trace.new_arg, pvals)
   out_tracer = yield in_tracers, {}
   out_tracer = trace.full_raise(out_tracer)
-
   out_tracer = instantiate_const_at(trace, instantiate, out_tracer)
-
+  out_tracer = trace.full_raise(out_tracer)  # instantiation (unpack) can lower
   jaxpr, consts, env = tracers_to_jaxpr(in_tracers, out_tracer)
   out_pval = out_tracer.pval
   del trace, in_tracers, out_tracer
@@ -582,11 +581,11 @@ def partial_eval_jaxpr(jaxpr, second_components, instantiate):
   def fun(*vals):
     pvals = map(as_pval, jaxpr.in_avals, second_components, vals)
     jaxpr_2, out_pval, consts_2 = trace_to_jaxpr(f, pvals, instantiate=instantiate)
-    (out_pv_c, out_pv_b), out_const = out_pval
-    if out_const is core.unit:
-      out_const_c, out_const_b = core.unit, core.unit
-    else:
-      out_const_c, out_const_b = out_const
+    out_pv, out_const = out_pval
+    out_pv = (None, None) if out_pv is None else out_pv
+    out_const = (core.unit, core.unit) if out_const is core.unit else out_const
+    out_pv_c, out_pv_b = out_pv
+    out_const_c, out_const_b = out_const
     cell.append((out_pv_c, out_pv_b, jaxpr_2))
     return pack((out_const_c, pack((out_const_b, pack(consts_2)))))
 
