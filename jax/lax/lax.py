@@ -1843,15 +1843,13 @@ def _conv_general_dilated_batch_rule(
 
     return outputs, 0
   elif rhs_bdim is not None:
-    #TODO(#212): use a map construct instead of unrolling.
-    rhs = batching.move_dim_to_front(rhs, rhs_bdim)
-    outputs = [
-        conv_general_dilated(lhs, x, window_strides, padding,
-                                 lhs_dilation, rhs_dilation, dimension_numbers)
-        for x in rhs]
-    outputs = [reshape(out, (1,) + out.shape) for out in outputs]
-    outputs = concatenate(outputs, 0)
-    return outputs, 0
+    # move and reshape the bdim into the rhs output channels dimension
+    _, rhs_spec, out_spec = dimension_numbers
+    new_rhs = _reshape_axis_into(rhs_bdim, rhs_spec[0], rhs)
+    out = conv_general_dilated(lhs, new_rhs, window_strides, padding,
+                               lhs_dilation, rhs_dilation, dimension_numbers)
+    out = _reshape_axis_out_of(out_spec[1], rhs.shape[rhs_bdim], out)
+    return out, out_spec[1]
 conv_general_dilated_p = standard_primitive(
     _conv_general_dilated_shape_rule, _conv_general_dilated_dtype_rule,
     'conv_general_dilated', _conv_general_dilated_translation_rule)
@@ -1860,6 +1858,21 @@ ad.defbilinear(conv_general_dilated_p,
                _conv_general_dilated_transpose_rhs)
 batching.primitive_batchers[
     conv_general_dilated_p] = _conv_general_dilated_batch_rule
+
+def _reshape_axis_into(src, dst, x):
+  perm = [i for i in range(x.ndim) if i != src]
+  perm.insert(dst, src)
+  new_shape = list(onp.delete(x.shape, src))
+  new_shape[dst] *= x.shape[src]
+  return reshape(transpose(x, perm), new_shape)  # TODO(mattjj): manually fuse
+
+def _reshape_axis_out_of(src, size1, x):
+  shape = list(x.shape)
+  size2, ragged = divmod(shape[src], size1)
+  assert not ragged
+  shape[src:src+1] = [size1, size2]
+  return reshape(x, shape)
+
 
 def _dot_shape_rule(lhs, rhs):
   if lhs.ndim == 0 or rhs.ndim == 0:

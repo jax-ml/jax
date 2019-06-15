@@ -507,6 +507,7 @@ class JaxTestCase(parameterized.TestCase):
       for k in x.keys():
         self.assertAllClose(x[k], y[k], check_dtypes, atol=atol, rtol=rtol)
     elif is_sequence(x) and not hasattr(x, '__array__'):
+      import ipdb; ipdb.set_trace()
       self.assertTrue(is_sequence(y) and not hasattr(y, '__array__'))
       self.assertEqual(len(x), len(y))
       for x_elt, y_elt in zip(x, y):

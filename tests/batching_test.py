@@ -485,7 +485,6 @@ class BatchingTest(jtu.JaxTestCase):
                                          (5, 21, 5, 1)))
     self.assertAllClose(per_example, per_example_direct, check_dtypes=True)
 
-
   def testMaxPool(self):
     W = np.array(onp.random.randn(3, 3, 1, 5), dtype=onp.float32)
     X = np.array(onp.random.randn(10, 5, 5, 1), dtype=onp.float32)
