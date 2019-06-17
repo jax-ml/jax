@@ -774,6 +774,16 @@ class APITest(jtu.JaxTestCase):
 
     self.assertEqual(out_shape, (3, 5))
 
+  def test_detuplification(self):
+    def fun(x):
+      y = pack((x, x))
+      z = pack((y, x))
+      y1, _ = z
+      y2, _ = y1
+      return y2
+
+    assert len(api.make_jaxpr(fun)(1).eqns) == 0
+
 
 if __name__ == '__main__':
   absltest.main()
