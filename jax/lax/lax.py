@@ -1600,7 +1600,7 @@ ad.defjvp(sub_p,
 ad.primitive_transposes[sub_p] = _sub_transpose
 
 mul_p = standard_binop([_num, _num], 'mul')
-ad.defbilinear_broadcasting(_brcast, mul_p, mul, mul)  # TODO
+ad.defbilinear_broadcasting(_brcast, mul_p, mul, mul)
 
 
 def _safe_mul_translation_rule(c, x, y):
@@ -2272,11 +2272,11 @@ def _reshape_translation_rule(c, operand, new_sizes, dimensions, old_sizes):
   return c.Reshape(operand, new_sizes=new_sizes, dimensions=dimensions)
 
 def _reshape_transpose_rule(t, new_sizes, dimensions, old_sizes):
-  out = reshape(t, old_sizes)
   if dimensions is None:
-    return [out]
+    return [reshape(t, old_sizes)]
   else:
-    return [transpose(out, onp.argsort(dimensions))]
+    return [transpose(reshape(t, onp.take(old_sizes, dimensions)),
+                      onp.argsort(dimensions))]
 
 def _reshape_batch_rule(batched_args, batch_dims, new_sizes, dimensions, **unused):
   operand, = batched_args
@@ -3082,8 +3082,6 @@ reduce_sum_p = standard_primitive(_reduce_sum_shape_rule, _input_dtype,
                                   'reduce_sum', _reduce_sum_translation_rule)
 ad.deflinear(reduce_sum_p, _reduce_sum_transpose_rule)
 batching.defreducer(reduce_sum_p)
-
-
 
 
 def _reduce_prod_shape_rule(operand, axes):

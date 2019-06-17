@@ -1035,6 +1035,7 @@ class LaxTest(jtu.JaxTestCase):
        "dims": dims, "rng": rng}
       for init_val, op, dtypes in [
           (0, lax.add, default_dtypes),
+          (1, lax.mul, default_dtypes),
           (-onp.inf, lax.max, float_dtypes),
           (onp.iinfo(onp.int32).min, lax.max, [onp.int32]),
           (onp.iinfo(onp.int64).min, lax.max, [onp.int64]),
@@ -1754,20 +1755,29 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     check_grads(broadcast_in_dim, (operand,), 2, ["fwd", "rev"], tol, tol, tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inshape={}_outshape={}".format(
+      {"testcase_name": "_inshape={}_outshape={}_perm={}".format(
           jtu.format_shape_dtype_string(arg_shape, dtype),
-          jtu.format_shape_dtype_string(out_shape, dtype)),
+          jtu.format_shape_dtype_string(out_shape, dtype),
+          permutation),
        "arg_shape": arg_shape, "out_shape": out_shape, "dtype": dtype,
-       "rng": rng}
+       "rng": rng, "permutation": permutation}
       for dtype in float_dtypes
-      for arg_shape, out_shape in [
-          [(3, 4), (12,)], [(2, 1, 4), (8,)], [(2, 2, 4), (2, 8)]
+      for arg_shape, out_shape, permutation in [
+          [(3, 4), (12,), None],
+          [(2, 1, 4), (8,), None],
+          [(2, 2, 4), (2, 8), None],
+          [(3, 4), (12,), (0, 1)],
+          [(3, 4), (12,), (1, 0)],
+          [(2, 1, 4), (8,), (0, 2, 1)],
+          [(2, 1, 4), (8,), (2, 0, 1)],
+          [(2, 2, 4), (2, 8), (0, 2, 1)],
+          [(2, 2, 4), (2, 8), (2, 0, 1)],
       ]
       for rng in [jtu.rand_default()]))
-  def testReshapeGrad(self, arg_shape, out_shape, dtype, rng):
+  def testReshapeGrad(self, arg_shape, out_shape, permutation, dtype, rng):
     tol = 1e-2 if onp.finfo(dtype).bits == 32 else None
     operand = rng(arg_shape, dtype)
-    reshape = lambda x: lax.reshape(x, out_shape)
+    reshape = lambda x: lax.reshape(x, out_shape, permutation)
     check_grads(reshape, (operand,), 2, ["fwd", "rev"], tol, tol, tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -1916,9 +1926,9 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        "dims": dims, "rng": rng}
       for init_val, op, dtypes in [
           (0, lax.add, inexact_dtypes),
-          (1, lax.mul, inexact_dtypes),
           (-onp.inf, lax.max, inexact_dtypes),
           (onp.inf, lax.min, inexact_dtypes),
+          (1, lax.mul, inexact_dtypes),
       ]
       for dtype in dtypes
       for shape, dims in [
@@ -1926,7 +1936,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
           [(3, 4, 5), (0,)],
           [(3, 4, 5), (1, 2)],
           [(3, 4, 5), (0, 2)],
-          [(3, 4, 5), (0, 1, 2)]
+          [(3, 4, 5), (0, 1, 2)],
+          [(3, 1), (1,)],
       ]
       for rng in [jtu.rand_small()]))
   def testReduceGrad(self, op, init_val, shape, dtype, dims, rng):
