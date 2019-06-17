@@ -114,6 +114,7 @@ jax.numpy package
     isreal
     issubdtype
     issubsctype
+    ix_
     kaiser
     kron
     lcm
