@@ -1453,6 +1453,22 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                             check_dtypes=True)
     self._CompileAndCheck(lnp.nan_to_num, args_maker, check_dtypes=True)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+        {"testcase_name": jtu.format_test_name_suffix("ix_", shapes, dtypes),
+         "rng": jtu.rand_default(), "shapes": shapes, "dtypes": dtypes}
+        for shapes, dtypes in (
+          ((), ()),
+          (((7,),), (onp.float32,)),
+          (((3,), (4,)), (onp.float32, onp.int32)),
+          (((3,), (0,), (4,)), (onp.int32, onp.float32, onp.int32)),
+        )))
+  def testIx_(self, rng, shapes, dtypes):
+    args_maker = lambda: [rng(shape, dtype)
+                          for shape, dtype in zip(shapes, dtypes)]
+    self._CheckAgainstNumpy(onp.ix_, lnp.ix_, args_maker,
+                            check_dtypes=True)
+    self._CompileAndCheck(lnp.ix_, args_maker, check_dtypes=True)
+
   def testIssue330(self):
     x = lnp.full((1, 1), lnp.array([1])[0])  # doesn't crash
     self.assertEqual(x[0, 0], 1)

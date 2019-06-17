@@ -1398,6 +1398,25 @@ logspace = onp.logspace
 geomspace = onp.geomspace
 meshgrid = onp.meshgrid
 
+
+@_wraps(onp.ix_)
+def ix_(*args):
+  n = len(args)
+  output = []
+  for i, a in enumerate(args):
+    a = asarray(a)
+    if len(a.shape) != 1:
+      msg = "Arguments to jax.numpy.ix_ must be 1-dimensional, got shape {}"
+      raise ValueError(msg.format(a.shape))
+    if _dtype(a) == bool_:
+      raise NotImplementedError(
+        "Boolean arguments to jax.numpy.ix_ are not implemented")
+    shape = [1] * n
+    shape[i] = a.shape[0]
+    output.append(lax.reshape(a, shape))
+  return tuple(output)
+
+
 @_wraps(onp.repeat)
 def repeat(a, repeats, axis=None):
   if not isscalar(repeats):

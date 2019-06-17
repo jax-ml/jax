@@ -549,13 +549,14 @@ def reshape(operand, new_sizes, dimensions=None):
   <https://www.tensorflow.org/xla/operation_semantics#reshape>`_
   operator.
   """
-  same_shape = onp.shape(operand) == tuple(new_sizes)
+  new_sizes = tuple(new_sizes)
+  same_shape = onp.shape(operand) == new_sizes
   same_dims = dimensions is None or tuple(dimensions) == tuple(range(onp.ndim(operand)))
   if onp.shape(operand) and same_shape and same_dims:
     return operand
   else:
     return reshape_p.bind(
-        operand, new_sizes=tuple(new_sizes),
+        operand, new_sizes=new_sizes,
         dimensions=None if dimensions is None else tuple(dimensions),
         old_sizes=onp.shape(operand))
 
