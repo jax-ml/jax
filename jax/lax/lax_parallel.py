@@ -15,6 +15,8 @@
 Parallelization primitives.
 """
 
+import numpy as onp
+
 from jax import ad_util
 from jax.lax import lax
 from jax.abstract_arrays import ShapedArray
@@ -360,38 +362,23 @@ def _reshape_papply_rule(name, size, vals, axes, new_sizes, dimensions,
     return filter(lambda x: x != 1, xs)
 
   def find_new_axis(old_axis, old_sizes, new_sizes):
-    if len(filter_ones(new_sizes)) != len(filter_ones(old_sizes)):
-      return None
-    num_before = len(filter_ones(old_sizes[:old_axis]))
-    sz = old_sizes[old_axis]
-    for i, new_sz in enumerate(new_sizes):
-      if num_before == 0:
-        if new_sz == sz:
-          return i
-        elif new_sz != 1:
-          if sz == 1:
-            return i - 1
-          else:
-            return None
-      elif new_sz != 1:
-        num_before -= 1
+    left = onp.prod(old_sizes[:old_axis])
+    size = old_sizes[old_axis]
+    prod = 1
+    for i, cur_sz in enumerate(new_sizes):
+      if prod == left and cur_sz == size:
+        return i
+      prod = prod * sz
     return None
-
-  err = NotImplementedError(
-      'papply of reshape that would change hidden dimension size')
 
   if dimensions is None:
     new_axis = find_new_axis(axis, old_sizes, new_sizes)
     if new_axis is not None:
-      if (lax.prod(old_sizes[:axis]) != lax.prod(new_sizes[:new_axis]) or
-          lax.prod(old_sizes[axis + 1:]) != lax.prod(new_sizes[new_axis + 1:])):
-        raise err
       new_sizes_ = new_sizes[:new_axis] + new_sizes[new_axis + 1:]
-      if new_axis == -1:  # reshape squeezes only and all major singleton axes
-        new_axis = None
       return lax.reshape(operand, new_sizes_, dimensions=dimensions), new_axis
     else:
-      raise err
+      raise NotImplementedError(
+          'papply of reshape that would change hidden dimension size')
   else:
     raise NotImplementedError('papply of reshape with `dimensions`')
 
