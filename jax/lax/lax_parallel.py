@@ -388,6 +388,8 @@ def _transpose_papply_rule(name, size, vals, dims, permutation):
   xdim, = dims
   perm = list(permutation)
   if perm[xdim] == xdim:
+    perm = perm[:xdim] + perm[xdim + 1:]
+    perm = [i - 1 if i > xdim else i for i in perm]
     x = lax.transpose(x, perm)
     out_dim = xdim
   else:
