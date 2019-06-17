@@ -1652,7 +1652,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
            [(1, 1), (2, 1)],  # lhs_dils
            [(1, 1), (2, 2)])  # rhs_dils
           for b, i, j in itertools.product([1, 2], repeat=3)]
-      for feature_group_count in [1]  # TODO(mattjj): feature_group_count=2
+      for feature_group_count in [1, 2]
       for strides in all_strides
       for rhs_dil in rhs_dils
       for lhs_dil in lhs_dils
