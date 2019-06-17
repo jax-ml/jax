@@ -59,19 +59,42 @@ def jax_to_hlo(name, deps, fn, input_shapes):
         {"x": "f32[10,20]", "y": "f32[]"}
     """
 
-    # Create a py_binary for jax_to_hlo.py which links in `src`.  This is how
-    # jax_to_hlo will get access to the function in `src`.
-    gen_bin = name + "_jax_to_hlo_gen_binary"
+    # Our goal here is to create a py_binary which depends on `deps` and
+    # invokes the main function defined in jax_to_hlo.py.
+    #
+    # At first blush it seems that we can do this in a straightforward way:
+    #
+    #   native.py_binary(main = "jax_to_hlo.py").
+    #
+    # The problem with this is that this py_binary lives in the user's package,
+    # whereas jax_to_hlo.py lives inside JAX's package.  Bazel delivers a stern
+    # warning if you name a file in `main` that's outside of your package.
+    #
+    # To avoid the warning, we generate a simple "main file" in the user's
+    # package.  It only complicates the rules a bit.
+    runner = name + "_jax_to_hlo_main"
+    native.genrule(
+        name = runner + "_gen",
+        outs = [runner + ".py"],
+        cmd = """cat <<EOF > '$(location {runner}.py)'
+from absl import app
+import jax.tools.jax_to_hlo as jax_to_hlo
+
+jax_to_hlo.set_up_flags()
+app.run(jax_to_hlo.main)
+EOF
+        """.format(runner = runner),
+    )
+
     native.py_binary(
-        name = gen_bin,
+        name = runner,
         srcs = [
-            "//third_party/py/jax/tools:jax_to_hlo.py",
+            runner + ".py",
         ],
         deps = deps + [
             "//third_party/py/jax/jaxlib",
             "//third_party/py/jax/tools:jax_to_hlo",
         ],
-        main = "//third_party/py/jax/tools:jax_to_hlo.py",
     )
 
     # Create a genrule which invokes the py_binary created above.
@@ -81,10 +104,10 @@ def jax_to_hlo(name, deps, fn, input_shapes):
     native.genrule(
         name = name + "_jax_to_hlo_genrule",
         outs = [name + ".pb", name + ".txt"],
-        tools = [gen_bin],
+        tools = [runner],
         cmd = """
         JAX_PLATFORM_NAME=cpu \
-        $(location {gen_bin}) \
+        '$(location {runner})' \
           --fn {fn} \
           --input_shapes '{input_shapes}' \
           --hlo_proto_dest '$(location {name}.pb)' \
@@ -93,6 +116,6 @@ def jax_to_hlo(name, deps, fn, input_shapes):
             name = name,
             fn = fn,
             input_shapes = input_shapes,
-            gen_bin = gen_bin,
+            runner = runner,
         ),
     )
