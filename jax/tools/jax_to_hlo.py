@@ -86,6 +86,8 @@ import jax.api
 import jax.numpy as np
 from jaxlib import xla_client
 
+FLAGS = flags.FLAGS
+
 
 def jax_to_hlo(fn, input_shapes):
   """Converts a JAX function to an HLO module.
@@ -148,9 +150,7 @@ def main(argv):
     with open(FLAGS.hlo_text_dest, 'w') as f:
       f.write(hlo_text)
 
-
-if __name__ == '__main__':
-  FLAGS = flags.FLAGS
+def set_up_flags():
   flags.DEFINE_string(
       'fn', None,
       "Fully-qualified name of function that we're going to convert")
@@ -161,4 +161,7 @@ if __name__ == '__main__':
   flags.mark_flag_as_required('fn')
   flags.mark_flag_as_required('input_shapes')
 
+
+if __name__ == '__main__':
+  set_up_flags()
   app.run(main)
