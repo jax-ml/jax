@@ -483,6 +483,52 @@ class PmapTest(jtu.JaxTestCase):
     expected = 1 + onp.arange(device_count)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testVmapOfPmap(self):
+    device_count = xla_bridge.device_count()
+    f0 = lambda x: x
+    f1 = pmap(f0, axis_name='i')
+    ax = onp.random.randn(2, device_count, 50, 60)
+    bx = vmap(f1)(ax)
+    self.assertAllClose(ax, bx, check_dtypes=False)
+
+  def testVmapOfPmapNonLeadingAxis(self):
+    device_count = xla_bridge.device_count()
+    f0 = lambda x: x
+    f1 = pmap(f0, axis_name='i')
+    ax = onp.random.randn(device_count, 2, 50, 60)
+    bx = vmap(f1, in_axes=2, out_axes=2)(ax)
+    self.assertAllClose(ax, bx, check_dtypes=False)
+
+  def testVmapOfPmapTuple(self):
+    device_count = xla_bridge.device_count()
+    f0 = lambda *x: x
+    f1 = pmap(f0, axis_name='i')
+
+    ax = onp.random.randn(device_count, 2, 50, 60)
+    ay = onp.random.randn(device_count, 30, 2)
+    az1 = onp.random.randn(device_count, 20)
+    az2 = onp.random.randn(2, device_count, 20)
+
+    bx, by, bz = vmap(f1, in_axes=(1, 2, (None, 0)), out_axes=(1, 2, 0))(ax, ay, (az1, az2))
+
+    self.assertAllClose(ax, bx, check_dtypes=False)
+    self.assertAllClose(ay, by, check_dtypes=False)
+
+    bz1, bz2 = bz
+    expected_bz1 = onp.broadcast_to(az1, (2,) + az1.shape)
+    self.assertAllClose(expected_bz1, bz1, check_dtypes=False)
+    self.assertAllClose(bz2, bz2, check_dtypes=False)
+
+  @jtu.skip_on_devices("cpu", "gpu")
+  def testPswapaxes(self):
+    device_count = xla_bridge.device_count()
+    shape = (device_count, 3, device_count, 5)
+    x = onp.arange(prod(shape)).reshape(shape)
+
+    ans = pmap(lambda x: lax.pswapaxes(x, 'i', 1), axis_name='i')(x)
+    expected = onp.swapaxes(x, 0, 2)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
 
 if __name__ == '__main__':
   absltest.main()

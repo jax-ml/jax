@@ -12,4 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-__version__ = "0.1.20"
+licenses(["notice"])  # Apache 2
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "jax_to_hlo",
+    srcs = ["jax_to_hlo.py"],
+    deps = [
+        "//third_party/py/jax",
+    ],
+)

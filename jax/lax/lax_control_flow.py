@@ -463,7 +463,8 @@ def _update_arrays(i, aval, xs, x):
   if isinstance(aval, core.AbstractTuple):
     return core.pack(map(partial(_update_arrays, i), aval, xs, x))
   else:
-    return lax.dynamic_update_index_in_dim(xs, x[None, ...], i, axis=0)
+    x = lax.reshape(x, (1,) + onp.shape(x))
+    return lax.dynamic_update_index_in_dim(xs, x, i, axis=0)
 
 class FixedPointError(Exception): pass
 

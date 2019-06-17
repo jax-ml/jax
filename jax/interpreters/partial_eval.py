@@ -119,11 +119,11 @@ class JaxprTrace(Trace):
                    False, False, params)
     return JaxprTracer(self, PartialVal((out_pv, out_pv_const)), eqn)
 
-  def process_map(self, call_primitive, f, tracers, params):
+  def process_map(self, map_primitive, f, tracers, params):
     in_pvs, in_consts = unzip2([t.pval for t in tracers])
     reduced_pvs = map(remove_axis_from_pv, in_pvs)
     fun, aux = partial_eval(f, self, reduced_pvs)
-    out_const, consts = call_primitive.bind(fun, *in_consts, **params)
+    out_const, consts = map_primitive.bind(fun, *in_consts, **params)
     out_pv_reduced, jaxpr, env = aux()
     out_pv = add_axis_to_pv(params['axis_size'], out_pv_reduced)
     const_tracers = map(self.new_instantiated_const, consts)
@@ -133,7 +133,7 @@ class JaxprTrace(Trace):
     jaxpr_converted.invars = list(it.chain(jaxpr.constvars, jaxpr.invars))
     invars = tuple(it.chain(const_tracers, tracers))
     bound_subjaxpr = (jaxpr_converted, (), env)
-    eqn = JaxprEqn(invars, None, call_primitive, (bound_subjaxpr,),
+    eqn = JaxprEqn(invars, None, map_primitive, (bound_subjaxpr,),
                    False, False, params)
     return JaxprTracer(self, PartialVal((out_pv, out_const)), eqn)
 
@@ -211,9 +211,10 @@ def partial_eval_wrapper(avals, *consts):
 
 
 def abstract_eval_fun(fun, *avals, **params):
-  pvs_in = [PartialVal((a, unit)) for a in avals]
-  _, pvout, _ = trace_to_jaxpr(lu.wrap_init(fun, params), pvs_in, instantiate=True)
-  aval_out, _ = pvout
+  pvals_in = [PartialVal((a, unit)) for a in avals]
+  _, pval_out, _ = trace_to_jaxpr(lu.wrap_init(fun, params), pvals_in,
+                                  instantiate=True)
+  aval_out, _ = pval_out
   assert isinstance(aval_out, AbstractValue)  # instantiate=True
   return aval_out
 
@@ -404,9 +405,8 @@ def trace_to_subjaxpr(master, instantiate, pvals):
   in_tracers = map(trace.new_arg, pvals)
   out_tracer = yield in_tracers, {}
   out_tracer = trace.full_raise(out_tracer)
-
   out_tracer = instantiate_const_at(trace, instantiate, out_tracer)
-
+  out_tracer = trace.full_raise(out_tracer)  # instantiation (unpack) can lower
   jaxpr, consts, env = tracers_to_jaxpr(in_tracers, out_tracer)
   out_pval = out_tracer.pval
   del trace, in_tracers, out_tracer
@@ -581,11 +581,11 @@ def partial_eval_jaxpr(jaxpr, second_components, instantiate):
   def fun(*vals):
     pvals = map(as_pval, jaxpr.in_avals, second_components, vals)
     jaxpr_2, out_pval, consts_2 = trace_to_jaxpr(f, pvals, instantiate=instantiate)
-    (out_pv_c, out_pv_b), out_const = out_pval
-    if out_const is core.unit:
-      out_const_c, out_const_b = core.unit, core.unit
-    else:
-      out_const_c, out_const_b = out_const
+    out_pv, out_const = out_pval
+    out_pv = (None, None) if out_pv is None else out_pv
+    out_const = (core.unit, core.unit) if out_const is core.unit else out_const
+    out_pv_c, out_pv_b = out_pv
+    out_const_c, out_const_b = out_const
     cell.append((out_pv_c, out_pv_b, jaxpr_2))
     return pack((out_const_c, pack((out_const_b, pack(consts_2)))))
 

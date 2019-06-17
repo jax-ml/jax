@@ -18,7 +18,6 @@ Parallelization primitives.
 from jax import ad_util
 from jax.lax import lax
 from jax.abstract_arrays import ShapedArray
-from jax.core import Primitive
 from jax.interpreters import ad
 from jax.interpreters import parallel
 from jax.interpreters import xla
@@ -107,6 +106,9 @@ def ppermute(x, axis_name, perm):
 def pswapaxes(x, axis_name, axis):
   """Swap the pmapped axis ``axis_name`` with the unmapped axis ``axis``.
 
+  The mapped axis size must be equal to the size of the unmapped axis; that is,
+  we must have ``lax.psum(1, axis_name) == x.shape[axis]``.
+
   This function is similar to ``psplit`` except the pmapped axis of the input is
   placed at the position ``axis`` in the output.
 
@@ -122,6 +124,12 @@ def pswapaxes(x, axis_name, axis):
     where ``axis_size`` is the size of the mapped axis named ``axis_name`` in
     the input ``x``.
   """
+  # TODO(mattjj): enable this check when _serial_pmap works with psum(1, ax)
+  # axis_size = psum(1, axis_name)
+  # if axis_size != x.shape[axis]:
+  #   msg = ("pswapaxes requires the size of the mapped axis ``axis_name`` equal "
+  #          "``x.shape[axis]``, but they are {} and {} respectively.")
+  #   raise ValueError(msg.format(axis_size(axis_name), x.shape[axis]))
   return pswapaxes_p.bind(x, axis_name=axis_name, axis=axis)
 
 def psplit(x, axis_name, axis):
@@ -155,7 +163,7 @@ def pcollect(x, axis_name):
 ### parallel primitives
 
 def standard_pmap_primitive(name):
-  prim = Primitive(name)
+  prim = pxla.PmapPrimitive(name)
   prim.def_impl(partial(pxla.apply_parallel_primitive, prim))
   prim.def_abstract_eval(lambda x, *args, **params: x)
   return prim
@@ -234,7 +242,11 @@ def _pswapaxes_serial_pmap_rule(vals, axes, axis):
   perm[axis] = axis_in
   return lax.transpose(x, perm), axis_in
 
+def _pswapaxes_translation_rule(c, xla_x, axis, replica_groups):
+  return c.AllToAll(xla_x, axis, axis, replica_groups)
+
 pswapaxes_p = standard_pmap_primitive('pswapaxes')
+pxla.parallel_translation_rules[pswapaxes_p] = _pswapaxes_translation_rule
 parallel.serial_pmap_primitive_rules[pswapaxes_p] = _pswapaxes_serial_pmap_rule
 
 

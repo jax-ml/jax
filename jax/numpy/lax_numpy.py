@@ -146,7 +146,7 @@ def _promote_shapes(*args):
     shapes = [shape(arg) for arg in args]
     nd = len(lax.broadcast_shapes(*shapes))
     return [lax.reshape(arg, (1,) * (nd - len(shp)) + shp)
-            if len(shp) != nd else arg for arg, shp in zip(args, shapes)]
+            if shp and len(shp) != nd else arg for arg, shp in zip(args, shapes)]
 
 def _promote_dtypes(*args):
   """Convenience function to apply Numpy argument dtype promotion."""
@@ -512,9 +512,9 @@ def sinc(x):
 
 
 @_wraps(onp.transpose)
-def transpose(x, axis=None):
-  axis = onp.arange(ndim(x))[::-1] if axis is None else axis
-  return lax.transpose(x, axis)
+def transpose(x, axes=None):
+  axes = onp.arange(ndim(x))[::-1] if axes is None else axes
+  return lax.transpose(x, axes)
 
 
 @_wraps(onp.rot90)
@@ -1379,7 +1379,7 @@ def identity(n, dtype=None):
 
 @_wraps(onp.arange)
 def arange(*args, **kwargs):
-  dtype = kwargs.pop("dtype", None)
+  dtype = kwargs.get("dtype", None)
   if not args:
     raise TypeError("Required argument 'start' (pos 1) not found")  # same as numpy error
 

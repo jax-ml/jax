@@ -20,8 +20,7 @@ import numpy as onp
 import scipy.special as osp_special
 
 from .. import lax
-from ..api import custom_transforms
-from ..interpreters import ad, batching
+from ..api import custom_transforms, defjvp
 from ..numpy import lax_numpy as np
 from ..numpy.lax_numpy import (_wraps, asarray, _reduction_dims, _constant_like,
                                _promote_args_like)
@@ -29,32 +28,32 @@ from ..numpy.lax_numpy import (_wraps, asarray, _reduction_dims, _constant_like,
 
 @_wraps(osp_special.gammaln)
 def gammaln(x):
-    x, = _promote_args_like(osp_special.gammaln, x)
-    return lax.lgamma(x)
+  x, = _promote_args_like(osp_special.gammaln, x)
+  return lax.lgamma(x)
 
 
 @_wraps(osp_special.digamma)
 def digamma(x):
-    x, = _promote_args_like(osp_special.digamma, x)
-    return lax.digamma(x)
+  x, = _promote_args_like(osp_special.digamma, x)
+  return lax.digamma(x)
 
 
 @_wraps(osp_special.erf)
 def erf(x):
-    x, = _promote_args_like(osp_special.erf, x)
-    return lax.erf(x)
+  x, = _promote_args_like(osp_special.erf, x)
+  return lax.erf(x)
 
 
 @_wraps(osp_special.erfc)
 def erfc(x):
-    x, = _promote_args_like(osp_special.erfc, x)
-    return lax.erfc(x)
+  x, = _promote_args_like(osp_special.erfc, x)
+  return lax.erfc(x)
 
 
 @_wraps(osp_special.erfinv)
 def erfinv(x):
-    x, = _promote_args_like(osp_special.erfinv, x)
-    return lax.erf_inv(x)
+  x, = _promote_args_like(osp_special.erfinv, x)
+  return lax.erf_inv(x)
 
 
 @_wraps(osp_special.logit)
@@ -62,8 +61,7 @@ def erfinv(x):
 def logit(x):
   x = asarray(x)
   return lax.log(lax.div(x, lax.sub(lax._const(x, 1), x)))
-ad.defjvp2(logit.primitive, lambda g, ans, x: g / (x * (1 - x)))
-batching.defvectorized(logit.primitive)
+defjvp(logit, lambda g, ans, x: g / (x * (1 - x)))
 
 
 @_wraps(osp_special.expit)
@@ -72,8 +70,7 @@ def expit(x):
   x = asarray(x)
   one = lax._const(x, 1)
   return lax.div(one, lax.add(one, lax.exp(lax.neg(x))))
-ad.defjvp2(expit.primitive, lambda g, ans, x: g * ans * (lax._const(ans, 1) - ans))
-batching.defvectorized(expit.primitive)
+defjvp(expit, lambda g, ans, x: g * ans * (lax._const(ans, 1) - ans))
 
 
 @_wraps(osp_special.logsumexp)

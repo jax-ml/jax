@@ -282,6 +282,22 @@ class BatchingTest(jtu.JaxTestCase):
     expected = onp.einsum('ni,ni->n', xs, ys)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testDot3(self):
+    R = onp.random.RandomState(0).randn
+    xs = R(5, 8, 10)
+    ys = R(10, 1)
+    ans = vmap(np.dot, in_axes=(1, None))(xs, ys)
+    expected = onp.einsum('inj,jk->nik', xs, ys)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testDot4(self):
+    R = onp.random.RandomState(0).randn
+    xs = R(3, 2)
+    ys = R(3)
+    ans = vmap(np.dot, in_axes=(1, None))(xs, ys)
+    expected = onp.einsum('ij,i->j', xs, ys)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def testPad(self):
     R = onp.random.RandomState(0).randn
 

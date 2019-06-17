@@ -457,6 +457,18 @@ def dot(lhs, rhs):
   Returns:
     An array containing the product.
   """
+  # TODO(b/134526360): XLA doesn't support integer dots, so we emit a sum of
+  # products instead.
+  if onp.issubdtype(lhs.dtype, onp.integer):
+    lhs_shape = onp.shape(lhs)
+    lhs_ndim = len(lhs_shape)
+    rhs_ndim = onp.ndim(rhs)
+    if rhs_ndim > 1:
+      lhs = broadcast_in_dim(lhs, lhs_shape + (1,), tuple(range(len(lhs_shape))))
+    if lhs_ndim > 1:
+      rhs = broadcast(rhs, (1,))
+    return reduce(mul(lhs, rhs), _zero(lhs), add, (len(lhs_shape) - 1,))
+
   return dot_p.bind(lhs, rhs)
 
 def dot_general(lhs, rhs, dimension_numbers):
@@ -476,9 +488,36 @@ def dot_general(lhs, rhs, dimension_numbers):
   Returns:
     An array containing the result.
   """
-  lhs_dims, rhs_dims = dimension_numbers
-  dimension_numbers = (tuple(map(tuple, lhs_dims)), tuple(map(tuple, rhs_dims)))
-  return dot_general_p.bind(lhs, rhs, dimension_numbers=dimension_numbers)
+  contract_dims, batch_dims = dimension_numbers
+  contract_dims = tuple(map(tuple, contract_dims))
+  batch_dims = tuple(map(tuple, batch_dims))
+  if onp.issubdtype(lhs.dtype, onp.integer):
+    # TODO(b/134526360): XLA doesn't support integer dots, so we emit a sum of
+    # products instead.
+    lhs_contract_dims, rhs_contract_dims = contract_dims
+    lhs_batch_dims, rhs_batch_dims = batch_dims
+    lhs_noncontract_dims = tuple(sorted(
+      set(range(onp.ndim(lhs))) - set(lhs_batch_dims) - set(lhs_contract_dims)))
+    rhs_noncontract_dims = tuple(sorted(
+      set(range(onp.ndim(rhs))) - set(rhs_batch_dims) - set(rhs_contract_dims)))
+    lhs = transpose(lhs,
+                    lhs_batch_dims + lhs_noncontract_dims + lhs_contract_dims)
+    rhs = transpose(rhs,
+                    rhs_batch_dims + rhs_noncontract_dims + rhs_contract_dims)
+    new_lhs_shape = onp.insert(
+      onp.shape(lhs), len(lhs_batch_dims) + len(lhs_noncontract_dims),
+      (1,) * len(rhs_noncontract_dims))
+    new_rhs_shape = onp.insert(onp.shape(rhs), len(lhs_batch_dims),
+                               (1,) * len(lhs_noncontract_dims))
+    lhs = reshape(lhs, new_lhs_shape)
+    rhs = reshape(rhs, new_rhs_shape)
+    out_ndim = (len(lhs_batch_dims) + len(lhs_noncontract_dims) +
+                len(rhs_noncontract_dims))
+    return reduce(mul(lhs, rhs), _zero(lhs), add,
+                  tuple(range(out_ndim, out_ndim + len(lhs_contract_dims))))
+
+  return dot_general_p.bind(lhs, rhs,
+                            dimension_numbers=(contract_dims, batch_dims))
 
 def broadcast(operand, sizes):
   """Broadcasts an array, adding new major dimensions.
@@ -1915,12 +1954,12 @@ def _dot_batch_rule(batched_args, batch_dims):
       if lbd == 0:
         return dot(lhs, rhs), 0
       else:
-        return dot(T(rhs), lhs), 1
+        return dot(T(rhs), lhs), onp.ndim(rhs) - 1
 
     if lbd is None:
       assert rbd in (0, 1)
       if rbd == onp.ndim(rhs) - 1:
-        return dot(lhs, rhs), 1
+        return dot(lhs, rhs), onp.ndim(lhs) - 1
       else:
         return dot(rhs, T(lhs)), 0
 
@@ -1940,7 +1979,7 @@ def _dot_batch_rule(batched_args, batch_dims):
 
   if rbd is None:
     assert lbd is not None
-    rhs = broadcast(rhs, (lhs.shape[lbd],))
+    rhs = broadcast(rhs, (lhs.shape[0],))
   else:
     rhs = batching.move_dim_to_front(rhs, rbd)
   rhs_batch = (0,)
@@ -2709,22 +2748,11 @@ def _gather_shape_rule(operand, start_indices, dimension_numbers, slice_sizes,
     msg = ("slice_sizes must have rank equal to the gather operand; "
           "operand.shape={}, slice_sizes={}".format(operand_shape, slice_sizes))
     raise ValueError(msg)
-  expanded_start_indices_shape = list(start_indices.shape)
-  result_rank = len(dimension_numbers.offset_dims)
-  result_rank += len(expanded_start_indices_shape) - 1
-  output_shape = []
-  offset_dims_seen = 0
-  gather_dims_seen = 0
-  for i in xrange(result_rank):
-    if i in dimension_numbers.offset_dims:
-      while offset_dims_seen in dimension_numbers.collapsed_slice_dims:
-        offset_dims_seen += 1
-      output_shape.append(slice_sizes[offset_dims_seen])
-      offset_dims_seen += 1
-    else:
-      output_shape.append(expanded_start_indices_shape[gather_dims_seen])
-      gather_dims_seen += 1
-  return tuple(output_shape)
+  result_rank = len(dimension_numbers.offset_dims) + start_indices.ndim - 1
+  start_indices_shape = iter(start_indices.shape[:-1])
+  slice_sizes = iter(onp.delete(slice_sizes, dimension_numbers.collapsed_slice_dims))
+  return tuple(next(slice_sizes) if i in dimension_numbers.offset_dims
+               else next(start_indices_shape) for i in range(result_rank))
 
 def _gather_translation_rule(c, operand, start_indices, dimension_numbers,
                              slice_sizes, operand_shape):
@@ -2742,7 +2770,7 @@ def _gather_transpose_rule(t, operand, start_indices, dimension_numbers,
   assert operand is None
   if t is ad_util.zero:
     return [ad_util.zero, ad_util.zero]
-  zeros = broadcast(_const(t, 0), operand_shape)
+  zeros = full(operand_shape, 0, dtype=t.dtype)
   scatter_dnums = ScatterDimensionNumbers(
     update_window_dims=dimension_numbers.offset_dims,
     inserted_window_dims=dimension_numbers.collapsed_slice_dims,
