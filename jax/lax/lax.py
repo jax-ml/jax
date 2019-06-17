@@ -2692,7 +2692,7 @@ def _gather_transpose_rule(t, operand, start_indices, dimension_numbers,
   assert operand is None
   if t is ad_util.zero:
     return [ad_util.zero, ad_util.zero]
-  zeros = broadcast(_const(t, 0), operand_shape)
+  zeros = full(operand_shape, 0, dtype=t.dtype)
   scatter_dnums = ScatterDimensionNumbers(
     update_window_dims=dimension_numbers.offset_dims,
     inserted_window_dims=dimension_numbers.collapsed_slice_dims,
