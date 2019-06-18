@@ -119,7 +119,10 @@ class Literal(object):
     return self.val == other.val if self.hashable else self.val is other.val
 
   def __repr__(self):
-    return 'Literal(val={}, hashable={})'.format(self.val, self.hashable)
+    if self.hashable:
+      return '{}'.format(self.val)
+    else:
+      return 'Literal(val={}, hashable={})'.format(self.val, self.hashable)
 
 class Primitive(object):
   def __init__(self, name):
