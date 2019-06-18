@@ -784,6 +784,20 @@ class APITest(jtu.JaxTestCase):
 
     assert len(api.make_jaxpr(fun)(1).eqns) == 0
 
+  def test_issue_871(self):
+    T = np.array([[1., 2.], [3., 4.], [5., 6.]])
+    x = np.array([1, 2, 3])
+
+    y, f_jvp = api.linearize(np.sum, x)
+    jtu.check_raises(lambda: f_jvp(T), ValueError,
+                     ("linearized function called on tangent values "
+                      "inconsistent with the original primal values."))
+
+    y, f_jvp = api.linearize(api.jit(np.sum), x)
+    jtu.check_raises(lambda: f_jvp(T), ValueError,
+                     ("linearized function called on tangent values "
+                      "inconsistent with the original primal values."))
+
 
 if __name__ == '__main__':
   absltest.main()
