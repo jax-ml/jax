@@ -1903,7 +1903,7 @@ def _reshape_axis_into(src, dst, x):
   perm.insert(dst, src)
   new_shape = list(onp.delete(x.shape, src))
   new_shape[dst] *= x.shape[src]
-  return reshape(transpose(x, perm), new_shape)  # TODO(mattjj): manually fuse
+  return reshape(x, new_shape, perm)
 
 def _reshape_axis_out_of(src, size1, x):
   shape = list(x.shape)
