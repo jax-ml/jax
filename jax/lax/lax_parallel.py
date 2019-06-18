@@ -317,20 +317,26 @@ def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers):
 
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
 
-  if len(lhs_batch) > 0 or len(rhs_batch) > 0:
-    raise NotImplementedError
-
   def adjust_dims(dims, thresh):
-    return tuple(i - 1 if i >= thresh else i for i in dims if i != thresh)
+    return tuple(i - 1 if i > thresh else i for i in dims if i != thresh)
 
   sub_lhs_contract, sub_rhs_contract = lhs_contract, rhs_contract
-  if xdim is not None:
-    sub_lhs_contract = adjust_dims(lhs_contract, xdim)
-  if ydim is not None:
-    sub_rhs_contract = adjust_dims(rhs_contract, ydim)
+  sub_lhs_batch, sub_rhs_batch = lhs_batch, rhs_batch
+
+  if xdim is not None and xdim in lhs_batch:
+    # case: split dimensions take part in batching
+    assert ydim is not None and ydim in rhs_batch
+    sub_lhs_batch = adjust_dims(lhs_batch, xdim)
+    sub_rhs_batch = adjust_dims(rhs_batch, ydim)
+  else:
+    # case: split dimensions either take part in contraction or don't exist
+    if xdim is not None:
+      sub_lhs_contract = adjust_dims(lhs_contract, xdim)
+    if ydim is not None:
+      sub_rhs_contract = adjust_dims(rhs_contract, ydim)
 
   sub_dimension_numbers = (
-      (sub_lhs_contract, sub_rhs_contract), (lhs_batch, rhs_batch))
+      (sub_lhs_contract, sub_rhs_contract), (sub_lhs_batch, sub_rhs_batch))
 
   if xdim in lhs_contract and ydim in rhs_contract:
     z = lax.dot_general(x, y, sub_dimension_numbers)
