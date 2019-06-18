@@ -454,6 +454,7 @@ def tracers_to_jaxpr(in_tracers, out_tracer):
   eqns = []
   env = {}
   consts = {}
+  const_to_var = defaultdict(newvar)
   destructuring_vars = {}
   for t in sorted_tracers:
     recipe = t.recipe
@@ -464,7 +465,8 @@ def tracers_to_jaxpr(in_tracers, out_tracer):
     elif isinstance(recipe, FreeVar):
       env[var(t)] = recipe.val
     elif isinstance(recipe, ConstVar):
-      consts[var(t)] = recipe.val
+      v = t_to_var[id(t)] = const_to_var[id(recipe.val)]
+      consts[v] = recipe.val
     elif isinstance(recipe, Literal):
       t_to_var[id(t)] = recipe
     elif isinstance(recipe, Destructuring):
