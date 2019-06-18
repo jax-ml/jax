@@ -759,7 +759,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "dtype": dtype, "shape": shape, "op": op, "k": k,
        "rng": jtu.rand_default()}
       for dtype in default_dtypes
-      for shape in [shape for shape in all_shapes if len(shape) >= 1]
+      for shape in [shape for shape in all_shapes if len(shape) >= 2]
       for op in ["tril", "triu"]
       for k in list(range(-3, 3))))
   def testTriLU(self, dtype, shape, op, k, rng):
