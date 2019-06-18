@@ -115,7 +115,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   # for GPU/TPU.
   @jtu.skip_on_devices("gpu", "tpu")
   def testEig(self, shape, dtype, rng):
-    self.skipTest("Test disabled until Jaxlib 0.1.15 is released") # TODO(phawkins)
     n = shape[-1]
     args_maker = lambda: [rng(shape, dtype)]
 
@@ -140,7 +139,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for rng in [jtu.rand_default()]))
   @jtu.skip_on_devices("gpu", "tpu")
   def testEigBatching(self, shape, dtype, rng):
-    self.skipTest("Test disabled until Jaxlib 0.1.15 is released") # TODO(phawkins)
     shape = (10,) + shape
     args = rng(shape, dtype)
     ws, vs = vmap(np.linalg.eig)(args)
