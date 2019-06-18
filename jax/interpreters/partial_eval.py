@@ -260,6 +260,9 @@ class JaxprTracer(Tracer):
       return self
 
   def unpack(self):
+    if type(self.recipe) is JaxprEqn and self.recipe.primitive is core.pack_p:
+      return tuple(self.recipe.invars)
+
     pv, const = self.pval
     if isinstance(pv, (AbstractValue, JaxprTracerTuple)):
       n = len(pv)
