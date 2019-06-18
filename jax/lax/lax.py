@@ -822,19 +822,20 @@ def _reduction_jaxpr(computation, init_value):
 
 def _get_monoid_reducer(monoid_op, x):
   aval = core.get_aval(x)
+  dtype = _dtype(x)
   if (type(aval) is ConcreteArray) and aval.shape == ():
     if monoid_op is add:
       return aval.val == 0 and _reduce_sum
     if monoid_op is mul:
       return aval.val == 1 and _reduce_prod
+    elif monoid_op is bitwise_or and dtype == onp.bool_:
+      return aval.val == _get_max_identity(dtype) and _reduce_or
+    elif monoid_op is bitwise_and and dtype == onp.bool_:
+      return aval.val == _get_min_identity(dtype) and _reduce_and
     elif monoid_op is max:
-      return aval.val == _get_max_identity(aval.dtype) and _reduce_max
+      return aval.val == _get_max_identity(dtype) and _reduce_max
     elif monoid_op is min:
-      return aval.val == _get_min_identity(aval.dtype) and _reduce_min
-    elif monoid_op is bitwise_or and aval.dtype == onp.bool_:
-      return aval.val == _get_max_identity(aval.dtype) and _reduce_or
-    elif monoid_op is bitwise_and and aval.dtype == onp.bool_:
-      return aval.val == _get_min_identity(aval.dtype) and _reduce_and
+      return aval.val == _get_min_identity(dtype) and _reduce_min
 
 def _get_max_identity(dtype):
   if onp.issubdtype(dtype, onp.inexact):
