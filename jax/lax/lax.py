@@ -1167,7 +1167,7 @@ def index_in_dim(operand, index, axis=0, keepdims=True):
 
 def dynamic_slice_in_dim(operand, start_index, slice_size, axis=0):
   """Convenience wrapper around dynamic_slice applying to one dimension."""
-  start_indices = [onp.array([0])] * operand.ndim
+  start_indices = [onp.array([0], dtype=_dtype(start_index))] * operand.ndim
   slice_sizes = list(operand.shape)
 
   axis = int(axis)

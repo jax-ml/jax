@@ -420,6 +420,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
           ((1, 1), (1, 1)),
           ((4, 4), (4,)),
           ((8, 8), (8, 4)),
+          ((1, 2, 2), (3, 2)),
+          ((2, 1, 3, 3), (2, 4, 3, 4)),
       ]
       for dtype in float_types() + complex_types()
       for rng in [jtu.rand_default()]))
