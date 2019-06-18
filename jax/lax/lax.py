@@ -2576,7 +2576,7 @@ def _dynamic_slice_jvp_rule(g, operand, start_indices, slice_sizes,
 def _dynamic_slice_transpose_rule(t, operand, start_indices, slice_sizes,
                                   operand_shape):
   assert operand is None
-  zeros = broadcast(_const(t, 0), operand_shape)
+  zeros = full(operand_shape, 0, dtype=t.dtype)
   return [dynamic_update_slice(zeros, t, start_indices), ad_util.zero]
 
 def _dynamic_slice_batching_rule(batched_args, batch_dims, slice_sizes,
