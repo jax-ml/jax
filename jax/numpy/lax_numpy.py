@@ -1413,7 +1413,11 @@ def ix_(*args):
         "Boolean arguments to jax.numpy.ix_ are not implemented")
     shape = [1] * n
     shape[i] = a.shape[0]
-    output.append(lax.reshape(a, shape))
+    if a.size == 0:
+      # Numpy uses an integer index type for empty arrays.
+      output.append(lax.full(shape, onp.zeros((), onp.intp)))
+    else:
+      output.append(lax.reshape(a, shape))
   return tuple(output)
 
 
