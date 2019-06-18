@@ -365,6 +365,9 @@ MIXED_ADVANCED_INDEXING_TESTS = [
                                          None,
                                          onp.array([-1, 2]))),
      ]),
+    ("IntArrayWithInt32Type",
+     [IndexSpec(shape=(3, 4), indexer=(Ellipsis, onp.array(1, dtype=onp.int32)))
+     ]),
 ]
 
 class IndexingTest(jtu.JaxTestCase):
