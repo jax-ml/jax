@@ -1041,7 +1041,7 @@ def _conv_transpose_padding(k, s, padding):
     else:
       pad_a = int(onp.ceil(pad_len / 2))
   elif padding == 'VALID':
-    pad_len = k + s - 2 + max(k - s, 0)
+    pad_len = k + s - 2 + _max(k - s, 0)
     pad_a = k - 1
   else:
     raise ValueError('Padding mode must be `SAME` or `VALID`.')

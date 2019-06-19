@@ -213,7 +213,6 @@ class Hashable(object):
     return self.val == other.val
 
 
-
 def get_module_functions(module):
   """Finds functions in module.
   Args:

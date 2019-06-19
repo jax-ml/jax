@@ -1610,6 +1610,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       actual = lnp_op(x)
       self.assertAllClose(expected, actual, check_dtypes=True)
 
+  def testIssue883(self):
+    # from https://github.com/google/jax/issues/883
+
+    @partial(api.jit, static_argnums=(1,))
+    def f(x, v):
+      return x
+
+    x = lnp.ones((10, 10))
+    v = lnp.array([1, 2, 3])
+    first_call = f(x, v)
+    second_call = f(x, v)  # doesn't crash
+
 
 if __name__ == "__main__":
   absltest.main()
