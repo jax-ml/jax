@@ -617,24 +617,24 @@ class ScipyLinalgTest(jtu.JaxTestCase):
        "lower": lower, "transpose_a": transpose_a,
        "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
        "rng": rng}
-      for lower, transpose_a in itertools.product([False, True], repeat=2)
+      for lower in [False, True]
+      for dtype in float_types() + complex_types()
+      for transpose_a in (
+        [0, 1] if onp.issubdtype(dtype, np.floating) else [0, 1, 2])
       for lhs_shape, rhs_shape in [
           ((4, 4), (4,)),
           ((4, 4), (4, 3)),
           ((2, 8, 8), (2, 8, 10)),
       ]
-      for dtype in float_types()
       for rng in [jtu.rand_default()]))
+  @jtu.skip_on_devices("tpu")  # TODO(phawkins): Test fails on TPU.
   def testSolveTriangularGrad(self, lower, transpose_a, lhs_shape,
-                                     rhs_shape, dtype, rng):
-    # TODO(frostig): change ensemble to support a bigger rtol
-    self.skipTest("rtol does not cover all devices and precision modes")
+                              rhs_shape, dtype, rng):
     A = np.tril(rng(lhs_shape, dtype) + 5 * onp.eye(lhs_shape[-1], dtype=dtype))
     A = A if lower else T(A)
     B = rng(rhs_shape, dtype)
-    f = partial(jsp.linalg.solve_triangular, lower=lower,
-                trans=1 if transpose_a else 0)
-    jtu.check_grads(f, (A, B), 2, rtol=1e-3)
+    f = partial(jsp.linalg.solve_triangular, lower=lower, trans=transpose_a)
+    jtu.check_grads(f, (A, B), 2, rtol=2e-2, eps=1e-3)
 
 
 if __name__ == "__main__":
