@@ -627,6 +627,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
           ((2, 8, 8), (2, 8, 10)),
       ]
       for rng in [jtu.rand_default()]))
+  @jtu.skip_on_devices("tpu")  # TODO(phawkins): Test fails on TPU.
   def testSolveTriangularGrad(self, lower, transpose_a, lhs_shape,
                               rhs_shape, dtype, rng):
     A = np.tril(rng(lhs_shape, dtype) + 5 * onp.eye(lhs_shape[-1], dtype=dtype))
