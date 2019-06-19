@@ -739,7 +739,11 @@ else:
     return out
 
 
+# The `jit` on `where` exists to avoid materializing constants in cases like
+# `np.where(np.zeros(1000), 7, 4)`. In op-by-op mode, we don't want to
+# materialize the broadcast forms of scalar arguments.
 @_wraps(onp.where)
+@jit
 def where(condition, x=None, y=None):
   if x is None or y is None:
     raise ValueError("Must use the three-argument form of where().")
@@ -1465,14 +1469,20 @@ def tri(N, M=None, k=0, dtype=None):
 
 @_wraps(onp.tril)
 def tril(m, k=0):
-  mask = tri(*shape(m)[-2:], k=k, dtype=bool)
-  return where(mask, m, zeros_like(m))
+  m_shape = shape(m)
+  if len(m_shape) < 2:
+    raise ValueError("Argument to jax.numpy.tril must be at least 2D")
+  mask = tri(*m_shape[-2:], k=k, dtype=bool)
+  return lax.select(lax.broadcast(mask, m_shape[:-2]), m, zeros_like(m))
 
 
 @_wraps(onp.triu)
 def triu(m, k=0):
-  mask = tri(*shape(m)[-2:], k=k - 1, dtype=bool)
-  return where(mask, zeros_like(m), m)
+  m_shape = shape(m)
+  if len(m_shape) < 2:
+    raise ValueError("Argument to jax.numpy.triu must be at least 2D")
+  mask = tri(*m_shape[-2:], k=k - 1, dtype=bool)
+  return lax.select(lax.broadcast(mask, m_shape[:-2]), zeros_like(m), m)
 
 
 @_wraps(onp.trace)
