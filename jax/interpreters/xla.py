@@ -575,7 +575,9 @@ class DeviceArray(DeviceValue):
     else:
       return format(self._value, format_spec)
 
-  __array__ = partialmethod(forward_to_value, onp.asarray)
+  def __array__(self, dtype=None, context=None):
+    return onp.asarray(self._value, dtype=dtype)
+
   __str__ = partialmethod(forward_to_value, str)
   __bool__ = __nonzero__ = partialmethod(forward_to_value, bool)
   __float__ = partialmethod(forward_to_value, float)
