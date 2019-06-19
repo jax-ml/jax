@@ -23,10 +23,10 @@ http_archive(
 #    and update the sha256 with the result.
 http_archive(
     name = "org_tensorflow",
-    sha256 = "3d7c424ef4ad16046000279b3b68cb2a98ec828069d5c17d63b91c5cd1c8d1f2",
-    strip_prefix = "tensorflow-26b14a84d3739e7477d15ef7a2fbca3e6ad0e41d",
+    sha256 = "665d9d0653a8a18b5aec5c27cac77af18933e4550a342ef9dd6a33b60802921b",
+    strip_prefix = "tensorflow-f4e64ca17ce392da2d3fa3959d3d8bdd27de2b39",
     urls = [
-        "https://github.com/tensorflow/tensorflow/archive/26b14a84d3739e7477d15ef7a2fbca3e6ad0e41d.tar.gz",
+        "https://github.com/tensorflow/tensorflow/archive/f4e64ca17ce392da2d3fa3959d3d8bdd27de2b39.tar.gz",
     ],
 )
 
@@ -36,9 +36,11 @@ http_archive(
 #    path = "tensorflow",
 # )
 
-load("@org_tensorflow//tensorflow:workspace.bzl", "tf_workspace")
+load("@org_tensorflow//tensorflow:workspace.bzl", "tf_workspace", "tf_bind")
 
 tf_workspace(
     path_prefix = "",
     tf_repo_name = "org_tensorflow",
 )
+
+tf_bind()
