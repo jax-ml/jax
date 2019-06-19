@@ -58,13 +58,18 @@ class NumpyLinalgTest(jtu.JaxTestCase):
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype, "rng": rng}
       for shape in [(1, 1), (4, 4), (2, 5, 5), (200, 200), (1000, 0, 0)]
-      for dtype in float_types()
+      for dtype in float_types() + complex_types()
       for rng in [jtu.rand_default()]))
   def testCholesky(self, shape, dtype, rng):
     def args_maker():
       factor_shape = shape[:-1] + (2 * shape[-1],)
       a = rng(factor_shape, dtype)
       return [onp.matmul(a, np.conj(T(a)))]
+
+    if np.issubdtype(dtype, np.complexfloating) and (
+        len(shape) > 2 or
+        (not FLAGS.jax_test_dut or not FLAGS.jax_test_dut.startswith("cpu"))):
+      self.skipTest("Unimplemented case for complex Cholesky decomposition.")
 
     self._CheckAgainstNumpy(onp.linalg.cholesky, np.linalg.cholesky, args_maker,
                             check_dtypes=True, tol=1e-3)
