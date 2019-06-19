@@ -94,6 +94,9 @@ class JaxprTrace(Trace):
       partial_eval = custom_partial_eval_rules[primitive]
       return partial_eval(self, *tracers, **params)
     else:
+      pvs, consts = unzip2(t.pval for t in tracers)
+      if all(pv is None for pv in pvs):
+        return primitive.bind(*consts, **params)
       tracers = map(self.instantiate_const, tracers)
       avals = [t.aval for t in tracers]
       out_aval = primitive.abstract_eval(*avals, **params)
