@@ -313,7 +313,7 @@ def broadcasting_papply(prim, name, size, vals, axes, **params):
   elif xdim == ydim:
     return prim.bind(x, y, **params), xdim
   else:
-    x = psplit(x, axis_name, ydim)
+    x = psplit(x, axis_name, ydim, xdim)
     return prim.bind(x, y, **params), ydim
 
 

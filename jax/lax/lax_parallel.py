@@ -134,7 +134,7 @@ def pswapaxes(x, axis_name, axis):
   #   raise ValueError(msg.format(axis_size(axis_name), x.shape[axis]))
   return pswapaxes_p.bind(x, axis_name=axis_name, axis=axis)
 
-def psplit(x, axis_name, axis):
+def psplit(x, axis_name, split_axis, concat_axis):
   """Unmap the pmapped axis ``axis_name`` and map ``axis`` with the same name.
 
   This function is similar to ``pswapaxes`` except the pmapped axis of the input
@@ -144,15 +144,18 @@ def psplit(x, axis_name, axis):
     x: array with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
       ``pmap`` docstring for more details).
-    axis: int indicating the unmapped axis of ``x`` to map with the name
+    split_axis: int indicating the unmapped axis of ``x`` to map with the name
       ``axis_name``.
+    concat_axis: int indicating the dimension at which to materialize the axis
+      of ``x`` mapped with ``axis_name``.
 
   Returns:
-    An array with shape ``(axis_size,) + tuple(np.delete(x.shape, axis))`` where
-    ``axis_size`` is the size of the mapped axis named ``axis_name`` in the
-    input ``x``.
+    An array with shape ``np.insert(np.delete(x.shape, split_axis), concat_axis,
+    axis_size)`` where ``axis_size`` is the size of the mapped axis named
+    ``axis_name`` in the input ``x``.
   """
-  return psplit_p.bind(x, axis_name=axis_name, axis=axis)
+  return psplit_p.bind(x, axis_name=axis_name, concat_axis=concat_axis,
+                       split_axis=split_axis)
 
 def psplit_like(x, y, axis_name):
   """Ensure the named mapped axis of ``x`` aligns with that of ``y``."""
@@ -252,14 +255,17 @@ pxla.parallel_translation_rules[pswapaxes_p] = _pswapaxes_translation_rule
 parallel.serial_pmap_primitive_rules[pswapaxes_p] = _pswapaxes_serial_pmap_rule
 
 
-def _psplit_serial_pmap_rule(vals, axes, axis):
+def _psplit_serial_pmap_rule(vals, axes, split_axis, concat_axis):
   x, = vals
   axis_in, = axes
-  if x.shape[axis_in] != x.shape[axis]:
+  if x.shape[axis_in] != x.shape[split_axis]:
     raise ValueError(
         "psplit between non-square dimensions {} and {} of {}".format(
-            axis_in, axis, x.shape))
-  return x, axis
+            axis_in, split_axis, x.shape))
+  perm = list(range(x.ndim))
+  perm[axis_in] = concat_axis
+  perm[concat_axis] = axis_in
+  return lax.transpose(x, perm), split_axis
 
 psplit_p = standard_pmap_primitive('psplit')
 parallel.serial_pmap_primitive_rules[psplit_p] = _psplit_serial_pmap_rule
@@ -302,7 +308,7 @@ def _dot_papply_rule(name, size, vals, dims):
     return lax.dot(x, y), xdim
   elif ydim == 0:
     if xdim != x.ndim:
-      x = psplit(x, name, x.ndim)
+      x = psplit(x, name, x.ndim, xdim)
     x = x[..., None]
     y = y[..., None, :]
     return psum(x * y, name), None
