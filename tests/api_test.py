@@ -24,7 +24,7 @@ import six
 
 import jax.numpy as np
 from jax import jit, grad, device_get, device_put, jacfwd, jacrev, hessian
-from jax import api
+from jax import api, lax
 from jax.core import Primitive, pack, JaxTuple
 from jax.interpreters import ad
 from jax.interpreters.xla import DeviceArray, DeviceTuple
@@ -797,6 +797,23 @@ class APITest(jtu.JaxTestCase):
     jtu.check_raises(lambda: f_jvp(T), ValueError,
                      ("linearized function called on tangent values "
                       "inconsistent with the original primal values."))
+
+  def test_partial_eval_lower(self):
+    # this is a simplified model of a bug that arose when we first used @jit in
+    # a jvp rule. it's in this file because we want to use make_jaxpr.
+    @api.jit
+    def f(a, b, c):
+      a = lax.broadcast(a, (2,))
+      return lax.select(a, b, c)
+
+    a = onp.ones((3, 3), dtype=onp.bool_)
+    b = onp.ones((2, 3, 3))
+    c = onp.ones((2, 3, 3))
+
+    jaxpr = api.make_jaxpr(lambda b, c: f(a, b, c))(b, c)
+    subjaxpr = next(eqn.bound_subjaxprs[0][0] for eqn in jaxpr.eqns
+                    if eqn.bound_subjaxprs)
+    self.assertEqual(len(subjaxpr.eqns), 1)
 
 
 if __name__ == '__main__':
