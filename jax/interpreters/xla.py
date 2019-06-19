@@ -32,7 +32,7 @@ from .. import ad_util
 from .. import tree_util
 from .. import linear_util as lu
 from ..abstract_arrays import (ConcreteArray, ShapedArray, make_shaped_array,
-                               array_types, scalar_types)
+                               array_types)
 from ..core import AbstractTuple, JaxTuple, pack, valid_jaxtype, Literal
 from ..util import partial, partialmethod, memoize, concatenate, safe_map, prod
 from ..lib import xla_bridge as xb
@@ -599,7 +599,7 @@ class DeviceArray(DeviceValue):
     # fine.
     return id(self)
 
-scalar_types.add(DeviceArray)
+core.literalable_types.add(DeviceArray)
 
 
 # DeviceValues don't need to be canonicalized because we assume values on the

@@ -23,7 +23,7 @@ import numpy as onp
 
 from .. import core
 from .. import linear_util as lu
-from ..abstract_arrays import ShapedArray, ConcreteArray, is_scalar
+from ..abstract_arrays import ShapedArray, ConcreteArray
 from ..linear_util import thunk, transformation, transformation_with_aux
 from ..util import unzip2, safe_zip, safe_map, toposort, partial
 from ..core import (Trace, Tracer, new_master, Jaxpr, JaxprEqn, Literal,
@@ -49,7 +49,7 @@ def identity(x): return x
 
 class JaxprTrace(Trace):
   def pure(self, val):
-    if is_scalar(val):
+    if type(val) in core.literalable_types and onp.shape(val) == ():
       return JaxprTracer(self, PartialVal((None, val)), Literal(val))
     else:
       return self.new_const(val)

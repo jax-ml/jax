@@ -200,6 +200,4 @@ def raise_to_shaped(aval):
   else:
     raise TypeError(type(aval))
 
-def is_scalar(x):
-  return isinstance(x, tuple(scalar_types)) and onp.shape(x) == ()
-scalar_types = set(array_types)
+core.literalable_types.update(array_types)

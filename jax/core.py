@@ -22,7 +22,6 @@ from collections import namedtuple, Counter, defaultdict
 from weakref import ref
 import types
 
-import numpy as onp
 import six
 
 from . import linear_util as lu
@@ -110,9 +109,9 @@ class Literal(object):
     try:
       self.hash = hash(val)
     except TypeError:
-      if type(val) is onp.ndarray:
+      if type(val) in literalable_types:
         try:
-          self.hash = hash(val.item())
+          self.hash = hash((val.item(), val.dtype))
         except (TypeError, AttributeError):
           self.hash = None
 
@@ -127,6 +126,8 @@ class Literal(object):
       return 'Literal(val={}, hashable={})'.format(self.val, self.hashable)
     else:
       return '{}'.format(self.val)
+
+literalable_types = set()
 
 class Primitive(object):
   def __init__(self, name):
