@@ -20,8 +20,10 @@ from operator import attrgetter
 from contextlib import contextmanager
 from collections import namedtuple, Counter, defaultdict
 from weakref import ref
-import six
 import types
+
+import numpy as onp
+import six
 
 from . import linear_util as lu
 from .util import unzip2, safe_zip, safe_map, partial, curry, WrapHashably
@@ -101,28 +103,30 @@ JaxprEqn = namedtuple('JaxprEqn', ['invars', 'outvars', 'primitive',
                                    'bound_subjaxprs', 'restructure',
                                    'destructure', 'params'])
 class Literal(object):
-  __slots__ = ["val", "hashable"]
+  __slots__ = ["val", "hash"]
 
   def __init__(self, val):
     self.val = val
     try:
-      hash(val)
+      self.hash = hash(val)
     except TypeError:
-      self.hashable = False
-    else:
-      self.hashable = True
+      if type(val) is onp.ndarray:
+        try:
+          self.hash = hash(val.item())
+        except (TypeError, AttributeError):
+          self.hash = None
 
   def __hash__(self):
-    return hash(self.val) if self.hashable else id(self.val)
+    return id(self.val) if self.hash is None else self.hash
 
   def __eq__(self, other):
-    return self.val == other.val if self.hashable else self.val is other.val
+    return self.val is other.val if self.hash is None else self.val == other.val
 
   def __repr__(self):
-    if self.hashable:
-      return '{}'.format(self.val)
-    else:
+    if self.hash is None:
       return 'Literal(val={}, hashable={})'.format(self.val, self.hashable)
+    else:
+      return '{}'.format(self.val)
 
 class Primitive(object):
   def __init__(self, name):
