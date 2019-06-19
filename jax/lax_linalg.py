@@ -67,6 +67,7 @@ def svd(x, full_matrices=True, compute_uv=True):
 
 def triangular_solve(a, b, left_side=False, lower=False, transpose_a=False,
                      conjugate_a=False):
+  conjugate_a = conjugate_a and np.issubdtype(lax.dtype(a), np.complexfloating)
   return triangular_solve_p.bind(
       a, b, left_side=left_side, lower=lower, transpose_a=transpose_a,
       conjugate_a=conjugate_a)
@@ -292,6 +293,7 @@ def triangular_solve_jvp_rule_a(
     g_a, ans, a, b, left_side, lower, transpose_a, conjugate_a):
   g_a = lax.neg(g_a)
   g_a = np.swapaxes(g_a, -1, -2) if transpose_a else g_a
+  g_a = np.conj(g_a) if conjugate_a else g_a
   tmp = triangular_solve(a, g_a, left_side, lower, transpose_a, conjugate_a)
   dot = lax.dot if g_a.ndim == 2 else lax.batch_matmul
   if left_side:
@@ -336,6 +338,9 @@ def triangular_solve_cpu_translation_rule(
   shape = c.GetShape(a)
   dtype = shape.element_type().type
   if len(shape.dimensions()) == 2 and dtype in _cpu_lapack_types:
+    if conjugate_a and not transpose_a:
+      a = c.Conj(a)
+      conjugate_a = False
     return lapack.jax_trsm(
       c, c.Constant(onp.array(1, dtype=dtype)), a, b, left_side, lower,
                     transpose_a, conjugate_a)
