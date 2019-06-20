@@ -61,7 +61,7 @@ This generates two BUILD targets:
   //your/thing:prog_hlo.txt
 
 You can then depend on one of these as a data dependency and invoke it using
-XLA's public C++ APIs.
+XLA's public C++ APIs (See tensorflow/compiler/xla/service/hlo_runner.h).
 
 Note that XLA's backwards-compatibility guarantees for saved HLO are currently
 (2019-06-13) best-effort.  It will mostly work, but it will occasionally break,
