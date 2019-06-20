@@ -1622,6 +1622,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     first_call = f(x, v)
     second_call = f(x, v)  # doesn't crash
 
+  def testReductionOfOutOfBoundsAxis(self):  # Issue 888
+    x = lnp.ones((3, 4))
+    self.assertRaises(ValueError, lambda: lnp.sum(x, axis=2))
+
 
 if __name__ == "__main__":
   absltest.main()
