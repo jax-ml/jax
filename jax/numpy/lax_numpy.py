@@ -231,6 +231,17 @@ def _wraps(fun):
       return op
   return wrap
 
+# TODO(phawkins): use this helper everywhere.
+def _canonicalize_axis(axis, num_dims):
+  """Canonicalize an axis in (-num_dims, num_dims) to [0, num_dims)."""
+  axis = int(axis)
+  if axis < 0:
+    axis = axis + num_dims
+  if axis < 0 or axis >= num_dims:
+      raise ValueError(
+          "axis {} is out of bounds for array of dimension {}".format(
+              axis, num_dims))
+  return axis
 
 ### implementations of numpy functions in terms of lax
 
@@ -944,9 +955,9 @@ def _reduction_dims(a, axis):
   if axis is None:
     return onp.arange(ndim(a))
   elif isinstance(axis, (onp.ndarray, tuple, list)):
-    return onp.mod(onp.asarray(axis), ndim(a))
+    return tuple(_canonicalize_axis(x, ndim(a)) for x in axis)
   elif isinstance(axis, int):
-    return onp.mod([axis], ndim(a))
+    return (_canonicalize_axis(axis, ndim(a)),)
   else:
     raise TypeError("Unexpected type of axis argument: {}".format(type(axis)))
 
@@ -1153,19 +1164,6 @@ nancumprod = _make_cumulative_reduction(
 
 
 ### Array-creation functions
-
-# TODO(phawkins): use this helper everywhere.
-def _canonicalize_axis(axis, num_dims):
-  """Canonicalize an axis in (-num_dims, num_dims) to [0, num_dims)."""
-  axis = int(axis)
-  if axis < 0:
-    axis = axis + num_dims
-  if axis < 0 or axis >= num_dims:
-      raise ValueError(
-          "axis {} is out of bounds for array of dimension {}".format(
-              axis, num_dims))
-  return axis
-
 
 @_wraps(onp.pad)
 def pad(array, pad_width, mode, constant_values=0):
