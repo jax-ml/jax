@@ -45,7 +45,7 @@ from ..interpreters import ad
 from ..interpreters import batching
 from ..interpreters import parallel
 from ..util import curry, memoize, safe_zip, unzip2, prod
-from ..tree_util import build_tree, tree_unflatten
+from ..tree_util import build_tree, tree_unflatten, tree_map
 from ..lib import xla_bridge
 from ..lib.xla_bridge import xla_client
 
@@ -971,7 +971,7 @@ def stop_gradient(x):
    >>> jax.grad(jax.grad(lambda x: jax.lax.stop_gradient(x)**2))(3.)
    array(0., dtype=float32)
    """
-  return stop_gradient_p.bind(x)
+  return tree_map(stop_gradient_p.bind, x)
 
 
 def _safe_mul(x, y): return safe_mul_p.bind(x, y)
