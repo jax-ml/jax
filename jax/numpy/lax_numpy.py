@@ -1165,23 +1165,64 @@ nancumprod = _make_cumulative_reduction(
 
 ### Array-creation functions
 
-@_wraps(onp.pad)
-def pad(array, pad_width, mode, constant_values=0):
-  if mode != "constant":
-    msg = "Only the 'constant' case of np.pad is implemented, got mode={}."
-    raise NotImplementedError(msg.format(mode))
-
+@partial(jit, static_argnums=(1, 2))
+def _pad(array, pad_width, mode, constant_values):
   array = asarray(array)
   nd = ndim(array)
   pad_width = onp.broadcast_to(onp.asarray(pad_width), (nd, 2))
-  constant_values = broadcast_to(asarray(constant_values), (nd, 2))
-  for i in xrange(nd):
-    widths = [(0, 0, 0)] * nd
-    widths[i] = (pad_width[i, 0], 0, 0)
-    array = lax.pad(array, constant_values[i, 0], widths)
-    widths[i] = (0, pad_width[i, 1], 0)
-    array = lax.pad(array, constant_values[i, 1], widths)
-  return array
+  if any(pad_width < 0):
+    raise ValueError("index can't contain negative values")
+
+  if mode == "constant":
+    constant_values = broadcast_to(asarray(constant_values), (nd, 2))
+    constant_values = lax.convert_element_type(constant_values, array.dtype)
+    for i in xrange(nd):
+      widths = [(0, 0, 0)] * nd
+      widths[i] = (pad_width[i, 0], 0, 0)
+      array = lax.pad(array, constant_values[i, 0], widths)
+      widths[i] = (0, pad_width[i, 1], 0)
+      array = lax.pad(array, constant_values[i, 1], widths)
+    return array
+  elif mode in ("symmetric", "reflect", "wrap"):
+    for i in xrange(nd):
+      if array.shape[i] == 0 :
+        if (pad_width[i, 0] > 0 or pad_width[i, 1] > 0):
+          msg = "Cannot apply '{}' padding to empty axis"
+          raise ValueError(msg.format(mode))
+        continue
+
+      n = array.shape[i]
+      rarray = lax.rev(array, dimensions=(i,))
+      offset = 1 if (mode == "reflect" and n > 1) else 0
+      wrap_mode = mode == "wrap"
+
+      def build_padding(padding, forward):
+        xs = []
+        delta = n - offset
+        while padding > delta:
+          padding -= delta
+          p = array if forward else rarray
+          xs.append(lax.slice_in_dim(p, offset, n, axis=i))
+          if not wrap_mode:
+            forward = not forward
+        if padding > 0:
+          x = lax.slice_in_dim(array if forward else rarray, offset,
+                               padding + offset, axis=i)
+          xs.append(x)
+        return xs
+
+      parts = reversed(build_padding(pad_width[i, 0], forward=not wrap_mode))
+      parts = [lax.rev(x, dimensions=(i,)) for x in parts]
+      parts += [array]
+      parts += build_padding(pad_width[i, 1], forward=wrap_mode)
+      array = lax.concatenate(parts, dimension=i)
+    return array
+  else:
+    msg = "Unimplemented padding mode '{}' for np.pad."
+    raise NotImplementedError(msg.format(mode))
+
+def pad(array, pad_width, mode, constant_values=0):
+  return _pad(array, pad_width, mode, constant_values)
 
 
 @_wraps(onp.stack)
