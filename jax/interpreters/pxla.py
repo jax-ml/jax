@@ -74,7 +74,7 @@ def shard_arg(device_ordinals, axis_size, arg):
   else:
     shards = [(_slice(arg, assignments[i]), device_ordinals[i])
               for i in range(len(assignments))]
-    return xla.device_put_many(shards)
+    return [xla.device_put(v, device) for v, device in shards]
 
 def _slice(x, i):
   """Return the ith slice of a JaxType (tuple or array)."""
