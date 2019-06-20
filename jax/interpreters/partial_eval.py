@@ -424,7 +424,7 @@ def instantiate_const_at(trace, instantiate, tracer):
     return pack(map(partial(instantiate_const_at, trace), instantiate, tracer))
   elif t is bool:
     if instantiate:
-      return trace.instantiate_const(tracer)
+      return trace.instantiate_const(trace.full_raise(tracer))
     else:
       return tracer
   else:
