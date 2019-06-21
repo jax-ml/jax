@@ -276,7 +276,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testGammaGrad(self, alpha):
     rng = random.PRNGKey(0)
     alphas = onp.full((100,), alpha)
-    z = random.gamma(rng, alphas, dtype=onp.float32)
+    z = random.gamma(rng, alphas)
     actual_grad = api.grad(lambda x: (random.gamma(rng, x)).sum())(alphas)
 
     eps = 0.01 * alpha / (1.0 + onp.sqrt(alpha))
@@ -285,7 +285,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     pdf = scipy.stats.gamma.pdf(z, alpha)
     expected_grad = -cdf_dot / pdf
 
-    self.assertAllClose(actual_grad, expected_grad, check_dtypes=False, atol=1e-8, rtol=0.0005)
+    self.assertAllClose(actual_grad, expected_grad, check_dtypes=True, rtol=0.0005)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
