@@ -1352,7 +1352,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
 
 @_wraps(onp.asarray)
 def asarray(a, dtype=None, order=None):
-  return array(a, dtype=dtype, order=order)
+  return array(a, dtype=dtype, copy=False, order=order)
 
 
 @_wraps(onp.zeros_like)
