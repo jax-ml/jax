@@ -271,6 +271,23 @@ class LaxRandomTest(jtu.JaxTestCase):
     assert x.shape == (3, 2)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_a={}".format(alpha), "alpha": alpha}
+      for alpha in [1e-4, 1e-3, 1e-2, 1e-1, 1e0, 1e1, 1e2, 1e3, 1e4]))
+  def testGammaGrad(self, alpha):
+    rng = random.PRNGKey(0)
+    alphas = np.full((100,), alpha)
+    z = random.gamma(rng, alphas, dtype=onp.float32)
+    actual_grad = grad(lambda x: np.sum(standard_gamma(rng, x)))(alphas)
+
+    eps = 0.01 * alpha / (1.0 + np.sqrt(alpha))
+    cdf_dot = (scipy.stats.gamma.cdf(z, alpha + eps)
+               - scipy.stats.gamma.cdf(z, alpha - eps)) / (2 * eps)
+    pdf = scipy.stats.gamma.pdf(z, alpha)
+    expected_grad = -cdf_dot / pdf
+
+    self.assertAllClose(actual_grad, expected_grad, check_dtypes=False, atol=1e-8, rtol=0.0005)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
       for dtype in [onp.float32, onp.float64]))
   def testGumbel(self, dtype):
