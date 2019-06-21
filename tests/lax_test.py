@@ -2174,6 +2174,10 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     expected = api.grad(api.grad(f2))(x, x)
     self.assertAllClose(ans, expected, check_dtypes=True)
 
+    ans = api.grad(lambda x: lax.stop_gradient({'foo':x})['foo'])(3.)
+    expected = onp.array(0.0)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
 
 def slicer(x, bdim):
   if bdim is None:
