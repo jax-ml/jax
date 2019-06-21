@@ -606,30 +606,39 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}_rpadwidth={}_rconstantvalues={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), pad_width_rank,
+      {"testcase_name": "_shape={}_mode={}_rpadwidth={}_rconstantvalues={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), mode, pad_width_rank,
           constant_values_rank),
-       "shape": shape, "dtype": dtype, "pad_width_rank": pad_width_rank,
+       "shape": shape, "dtype": dtype, "mode": mode,
+       "pad_width_rank": pad_width_rank,
        "constant_values_rank": constant_values_rank, "rng": jtu.rand_default(),
        "irng": jtu.rand_int(3)}
-      for shape in all_shapes for dtype in all_dtypes
-      for pad_width_rank in range(3)
-      for constant_values_rank in range(3)))
-  def testPad(self, shape, dtype, pad_width_rank, constant_values_rank, rng,
-              irng):
+      for mode, constant_values_rank, shapes in [
+        ('constant', 0, all_shapes),
+        ('constant', 1, all_shapes),
+        ('constant', 2, all_shapes),
+        ('symmetric', None, nonempty_shapes),
+        ('reflect', None, nonempty_shapes),
+        ('wrap', None, nonempty_shapes),
+      ]
+      for shape in shapes for dtype in all_dtypes
+      for pad_width_rank in range(3)))
+  def testPad(self, shape, dtype, mode, pad_width_rank, constant_values_rank,
+              rng, irng):
     pad_width = irng([len(shape), 2][2 - pad_width_rank:], onp.int32)
-    def onp_fun(x, constant_vals):
+    def onp_fun(x, kwargs):
       if pad_width.size == 0:
         return x
-      return onp.pad(x, pad_width, mode='constant',
-                     constant_values=constant_vals)
-    def lnp_fun(x, constant_vals):
-      return lnp.pad(x, pad_width, mode='constant',
-                     constant_values=constant_vals)
+      return onp.pad(x, pad_width, mode=mode, **kwargs)
+    def lnp_fun(x, kwargs):
+      return lnp.pad(x, pad_width, mode=mode, **kwargs)
 
     def args_maker():
-      constant_vals = rng([len(shape), 2][2 - constant_values_rank:], dtype)
-      return rng(shape, dtype), constant_vals
+      kwargs = {}
+      if constant_values_rank:
+        kwargs["constant_values"] = rng(
+          [len(shape), 2][2 - constant_values_rank:], dtype)
+      return rng(shape, dtype), kwargs
 
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
