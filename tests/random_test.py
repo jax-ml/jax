@@ -275,11 +275,11 @@ class LaxRandomTest(jtu.JaxTestCase):
       for alpha in [1e-4, 1e-3, 1e-2, 1e-1, 1e0, 1e1, 1e2, 1e3, 1e4]))
   def testGammaGrad(self, alpha):
     rng = random.PRNGKey(0)
-    alphas = np.full((100,), alpha)
+    alphas = onp.full((100,), alpha)
     z = random.gamma(rng, alphas, dtype=onp.float32)
     actual_grad = grad(lambda x: np.sum(standard_gamma(rng, x)))(alphas)
 
-    eps = 0.01 * alpha / (1.0 + np.sqrt(alpha))
+    eps = 0.01 * alpha / (1.0 + onp.sqrt(alpha))
     cdf_dot = (scipy.stats.gamma.cdf(z, alpha + eps)
                - scipy.stats.gamma.cdf(z, alpha - eps)) / (2 * eps)
     pdf = scipy.stats.gamma.pdf(z, alpha)
