@@ -545,12 +545,12 @@ def _gamma_one(key, alpha):
   squeeze_const = _constant_like(alpha, 0.0331)
   dtype = lax.dtype(alpha)
 
-  key, subkey = split(key)
   # for alpha < 1, we boost alpha to alpha + 1 and get a sample according to
   # Gamma(alpha) ~ Gamma(alpha+1) * Uniform()^(1 / alpha)
   boost = lax.select(lax.ge(alpha, one),
                      one,
-                     lax.pow(uniform(subkey, (), dtype=dtype), lax.div(one, alpha)))
+                     lax.pow(uniform(key, (), dtype=dtype), lax.div(one, alpha)))
+  key, = split(key, 1)
   alpha = lax.select(lax.ge(alpha, one), alpha, lax.add(alpha, one))
 
   d = lax.sub(alpha, one_over_three)
@@ -569,7 +569,6 @@ def _gamma_one(key, alpha):
 
   def _body_fn(kXVU):
     key = kXVU[0]
-    key, x_key, U_key = split(key, 3)
 
     def _next_kxv(kxv):
       x_key = kxv[0]
@@ -578,10 +577,11 @@ def _gamma_one(key, alpha):
       k, = split(x_key, 1)
       return k, x, v
 
-    _, x, v = lax.while_loop(lambda kxv: lax.le(kxv[2], zero), _next_kxv, (x_key, zero, minus_one))
+    key, x, v = lax.while_loop(lambda kxv: lax.le(kxv[2], zero), _next_kxv, (key, zero, minus_one))
     X = lax.mul(x, x)
     V = lax.mul(lax.mul(v, v), v)
-    U = uniform(U_key, (), dtype=dtype)
+    U = uniform(key, (), dtype=dtype)
+    key, = split(key, 1)
     return key, X, V, U
 
   # initial state is chosen such that _cond_fn will return True
