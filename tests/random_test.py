@@ -277,7 +277,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     rng = random.PRNGKey(0)
     alphas = onp.full((100,), alpha)
     z = random.gamma(rng, alphas, dtype=onp.float32)
-    actual_grad = grad(lambda x: np.sum(standard_gamma(rng, x)))(alphas)
+    actual_grad = api.grad(lambda x: (random.gamma(rng, x)).sum())(alphas)
 
     eps = 0.01 * alpha / (1.0 + onp.sqrt(alpha))
     cdf_dot = (scipy.stats.gamma.cdf(z, alpha + eps)

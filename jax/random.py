@@ -696,7 +696,7 @@ def _gamma_grad_one(z, alpha):
 def _gamma_grad(sample, a):
     samples = np.reshape(sample, -1)
     alphas = np.reshape(a, -1)
-    grads = vmap(_standard_gamma_grad_one)(samples, alphas)
+    grads = vmap(_gamma_grad_one)(samples, alphas)
     return grads.reshape(a.shape)
 
 
