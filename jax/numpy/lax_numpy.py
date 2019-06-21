@@ -28,7 +28,7 @@ import opt_einsum
 import six
 from six.moves import builtins, xrange
 
-from jax import jit
+from jax import jit, device_put
 from .. import core
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
 from ..interpreters.xla import DeviceArray
@@ -1322,13 +1322,15 @@ def atleast_3d(*arys):
 
 @_wraps(onp.array)
 def array(object, dtype=None, copy=True, order="K", ndmin=0):
-  del copy  # Unused.
-  if ndmin != 0 or order != "K":
+  if ndmin != 0 or (order is not None and order != "K"):
     raise NotImplementedError("Only implemented for order='K', ndmin=0.")
 
   if isinstance(object, ndarray):
     if dtype and _dtype(object) != dtype:
       return lax.convert_element_type(object, dtype)
+    elif copy:
+      # If a copy was requested, we must copy.
+      return device_put(object)
     else:
       return object
   elif hasattr(object, '__array__'):
@@ -1347,7 +1349,10 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
       return out
   else:
     raise TypeError("Unexpected input type for array: {}".format(type(object)))
-asarray = array
+
+@_wraps(onp.asarray)
+def asarray(a, dtype=None, order=None):
+  return array(a, dtype=dtype, copy=False, order=order)
 
 
 @_wraps(onp.zeros_like)
