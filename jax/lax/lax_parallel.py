@@ -329,40 +329,46 @@ def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers):
   sub_lhs_contract, sub_rhs_contract = lhs_contract, rhs_contract
   sub_lhs_batch, sub_rhs_batch = lhs_batch, rhs_batch
 
-  if xdim is not None and xdim in lhs_batch:
-    # case: split dimensions take part in batching
-    assert ydim is not None and ydim in rhs_batch
-    sub_lhs_batch = adjust_dims(lhs_batch, xdim)
-    sub_rhs_batch = adjust_dims(rhs_batch, ydim)
-  else:
-    # case: split dimensions either take part in contraction or don't exist
+  def sub_dims(xdim, ydim):
+    sub_lhs_contract, sub_rhs_contract = lhs_contract, rhs_contract
+    sub_lhs_batch, sub_rhs_batch = lhs_batch, rhs_batch
     if xdim is not None:
+      sub_lhs_batch = adjust_dims(lhs_batch, xdim)
       sub_lhs_contract = adjust_dims(lhs_contract, xdim)
     if ydim is not None:
+      sub_rhs_batch = adjust_dims(rhs_batch, ydim)
       sub_rhs_contract = adjust_dims(rhs_contract, ydim)
-
-  sub_dimension_numbers = (
+    return (
       (sub_lhs_contract, sub_rhs_contract), (sub_lhs_batch, sub_rhs_batch))
 
-  if xdim in lhs_contract and ydim in rhs_contract:
-    z = lax.dot_general(x, y, sub_dimension_numbers)
-    return psum(z, name), None
-  elif xdim in lhs_contract:
-    if ydim is not None:        # Cannot hide two dimensions, so collect one
-      y = pcollect(y, name)
-    return lax.dot_general(x, y, sub_dimension_numbers), xdim
-  elif ydim in rhs_contract:
-    if xdim is not None:        # Cannot hide two dimensions, so collect one
-      x = pcollect(x, name)
-    return lax.dot_general(x, y, sub_dimension_numbers), ydim
-  elif xdim is not None:
-    if ydim is not None:        # Cannot hide two dimensions, so collect one
-      y = pcollect(y, name)
-    return lax.dot_general(x, y, sub_dimension_numbers), xdim
-  elif ydim is not None:
-    return lax.dot_general(x, y, sub_dimension_numbers), ydim
+  def cases(x, y, xdim, ydim, xcontract, ycontract):
+    if xdim in xcontract:
+      if ydim in ycontract:
+        # case: both operands are split and contracting
+        z = lax.dot_general(x, y, sub_dims(xdim, ydim))
+        return True, (psum(z, name), None)
+      elif ydim is not None:
+        # case: x split and contracting, y split but not contracting
+        new_ydim = ycontract[xcontract.index(xdim)]
+        y = psplit(y, name, new_ydim, ydim)
+        z = lax.dot_general(x, y, sub_dims(xdim, new_ydim))
+        return True, (psum(z, name), None)
+      else:
+        # case: x split and contracting, y not split
+        return False, 'one operand split and contracting, other is not split'
+    else:
+      return False, 'unhandled case'
+
+  ok, out = cases(x, y, xdim, ydim, lhs_contract, rhs_contract)
+  if not ok:
+    ok, out = cases(y, x, ydim, xdim, rhs_contract, lhs_contract)
+  if not ok:
+    raise NotImplementedError(
+        ('papply of dot_general, {}: '
+         'xdim={}, ydim={}, dimension_numbers={}').format(
+             out, xdim, ydim, dimension_numbers))
   else:
-    return lax.dot_general(x, y, sub_dimension_numbers), None
+    return out
 
 
 def _reshape_papply_rule(name, size, vals, axes, new_sizes, dimensions,
