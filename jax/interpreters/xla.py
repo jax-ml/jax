@@ -132,7 +132,7 @@ def device_put(x, device_num=0):
       # TODO(phawkins): remove after the minimum Jaxlib version is raised to
       # 0.1.22
       if hasattr(x.device_buffer, 'copy_to_device'):
-        return DeviceArray(x.shape, x.device_buffer.copy_to_device(device_num))
+        return x.device_buffer.copy_to_device(device_num)
       else:
         return device_put(x.device_buffer.to_py(), device_num)
   elif isinstance(x, DeviceConstant):
