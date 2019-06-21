@@ -129,9 +129,12 @@ def device_put(x, device_num=0):
     if x.device_buffer.device() == device_num:
       return x.device_buffer
     else:
-      # TODO(phawkins): perform a direct device-to-device copy rather than
-      # bouncing via the host.
-      return device_put(x.device_buffer.to_py(), device_num)
+      # TODO(phawkins): remove after the minimum Jaxlib version is raised to
+      # 0.1.22
+      if hasattr(x.device_buffer, 'copy_to_device'):
+        return DeviceArray(x.shape, x.device_buffer.copy_to_device(device_num))
+      else:
+        return device_put(x.device_buffer.to_py(), device_num)
   elif isinstance(x, DeviceConstant):
     return instantiate_device_constant(x, device_num=device_num)
   elif isinstance(x, (DeviceArray, onp.ndarray)):
