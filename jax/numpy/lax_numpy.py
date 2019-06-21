@@ -1185,7 +1185,7 @@ def _pad(array, pad_width, mode, constant_values):
     return array
   elif mode in ("symmetric", "reflect", "wrap"):
     for i in xrange(nd):
-      if array.shape[i] == 0 :
+      if array.shape[i] == 0:
         if (pad_width[i, 0] > 0 or pad_width[i, 1] > 0):
           msg = "Cannot apply '{}' padding to empty axis"
           raise ValueError(msg.format(mode))
