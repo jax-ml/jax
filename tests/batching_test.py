@@ -796,7 +796,7 @@ class BatchingTest(jtu.JaxTestCase):
        "op_axis": op_axis, "idxs_axis": idxs_axis, "shape": shape, "dtype":
        dtype, "idxs": idxs, "dnums": dnums, "slice_sizes": slice_sizes,
        "rng": rng, "rng_idx": rng_idx}
-      for dtype in [onp.float32, onp.int32]
+      for dtype in [onp.float32]
       for op_axis, idxs_axis, shape, idxs, dnums, slice_sizes in [
           (0, 0, (2, 5), onp.array([[[0], [2]], [[1], [3]]]),
            lax.GatherDimensionNumbers(

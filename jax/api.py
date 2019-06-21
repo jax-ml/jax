@@ -823,6 +823,11 @@ def vjp(fun, *primals, **kwargs):
     fun = lu.wrap_init(fun)
   primals_flat, in_trees = unzip2(map(pytree_to_jaxtupletree, primals))
   _check_args(primals_flat)
+  for p in tree_flatten(primals)[0]:
+    if not onp.issubdtype(onp.result_type(p), onp.inexact):
+      msg = ("Primal inputs to reverse-mode differentiation must be of float "
+            "or complex type, got type {}")
+      raise ValueError(msg.format(onp.result_type(p)))
   jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(fun, in_trees)
   if not has_aux:
     out_primal, out_vjp = ad.vjp(jaxtree_fun, primals_flat)
