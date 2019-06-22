@@ -671,6 +671,60 @@ def scatter_add(operand, scatter_indices, updates, dimension_numbers):
       update_consts=consts, dimension_numbers=dimension_numbers,
       updates_shape=updates.shape)
 
+def scatter_min(operand, scatter_indices, updates, dimension_numbers):
+  """Scatter-min operator.
+
+  Wraps `XLA's Scatter operator
+  <https://www.tensorflow.org/xla/operation_semantics#scatter>`_, where
+  the `min` function is used to combine updates and values from `operand`.
+
+  The semantics of scatter are complicated and its API is subject to change.
+
+  Args:
+    operand: an array to which the scatter should be applied
+    scatter_indices: an array that gives the indices in `operand` to which each
+      update in `updates` should be applied.
+    updates: the updates that should be scattered onto `operand`.
+    dimension_numbers: a `lax.ScatterDimensionNumbers` object that describes
+      how dimensions of `operand`, `start_indices`, `updates` and the output
+      relate.
+
+  Returns:
+    An array containing the sum of `operand` and the scattered updates.
+  """
+  jaxpr, consts = _reduction_jaxpr(min, _const(operand, 0))
+  return scatter_min_p.bind(
+      operand, scatter_indices, updates, update_jaxpr=jaxpr,
+      update_consts=consts, dimension_numbers=dimension_numbers,
+      updates_shape=updates.shape)
+
+def scatter_max(operand, scatter_indices, updates, dimension_numbers):
+  """Scatter-max operator.
+
+  Wraps `XLA's Scatter operator
+  <https://www.tensorflow.org/xla/operation_semantics#scatter>`_, where
+  the `max` function is used to combine updates and values from `operand`.
+
+  The semantics of scatter are complicated and its API is subject to change.
+
+  Args:
+    operand: an array to which the scatter should be applied
+    scatter_indices: an array that gives the indices in `operand` to which each
+      update in `updates` should be applied.
+    updates: the updates that should be scattered onto `operand`.
+    dimension_numbers: a `lax.ScatterDimensionNumbers` object that describes
+      how dimensions of `operand`, `start_indices`, `updates` and the output
+      relate.
+
+  Returns:
+    An array containing the sum of `operand` and the scattered updates.
+  """
+  jaxpr, consts = _reduction_jaxpr(max, _const(operand, 0))
+  return scatter_max_p.bind(
+      operand, scatter_indices, updates, update_jaxpr=jaxpr,
+      update_consts=consts, dimension_numbers=dimension_numbers,
+      updates_shape=updates.shape)
+
 def scatter(operand, scatter_indices, updates, dimension_numbers):
   """Scatter-update operator.
 
@@ -2981,6 +3035,20 @@ ad.primitive_jvps[scatter_add_p] = _scatter_add_jvp
 ad.primitive_transposes[scatter_add_p] = _scatter_add_transpose_rule
 batching.primitive_batchers[scatter_add_p] = (
   partial(_scatter_batching_rule, scatter_add))
+
+# TODO(jlebar): Add derivatives.
+scatter_min_p = standard_primitive(
+    _scatter_shape_rule, _scatter_dtype_rule, 'scatter-min',
+    _scatter_translation_rule)
+batching.primitive_batchers[scatter_min_p] = (
+  partial(_scatter_batching_rule, scatter_min))
+
+# TODO(jlebar): Add derivatives.
+scatter_max_p = standard_primitive(
+    _scatter_shape_rule, _scatter_dtype_rule, 'scatter-max',
+    _scatter_translation_rule)
+batching.primitive_batchers[scatter_max_p] = (
+  partial(_scatter_batching_rule, scatter_max))
 
 
 def _scatter_jvp(primals, tangents, update_jaxpr, update_consts,
