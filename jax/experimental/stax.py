@@ -41,6 +41,7 @@ import jax.numpy as np
 
 def relu(x): return np.maximum(x, 0.)
 def softplus(x): return np.logaddexp(x, 0.)
+def sigmoid(x): return 1. / (1. + np.exp(-x))
 
 def logsoftmax(x, axis=-1):
   """Apply log softmax to an array of logits, log-normalizing along an axis."""
