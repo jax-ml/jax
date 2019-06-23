@@ -86,16 +86,17 @@ class BatchTracer(Tracer):
     return remove_batch_dim_from_aval(self.batch_dim, batched_aval)
 
   def unpack(self):
-    t = type(self.batch_dim)
-    if t is tuple:
-      batch_dims = self.batch_dim
-    elif t is int:
-      batch_dims = [self.batch_dim] * len(self.val)
-    elif t is type(None):
+    if self.batch_dim is None:
       return tuple(self.val)
     else:
-      raise TypeError(t)
-    return map(partial(BatchTracer, self.trace), self.val, batch_dims)
+      t = type(self.batch_dim)
+      if t is tuple:
+        dims = list(self.batch_dim)
+      elif t is int:
+        dims = [self.batch_dim] * len(self.val)
+      else:
+        raise TypeError(self.batch_dim)
+      return map(partial(BatchTracer, self.trace), self.val, dims)
 
   def full_lower(self):
     if self.batch_dim is None:
@@ -139,7 +140,7 @@ class BatchTrace(Trace):
     if all(dim is None for dim in dims):
       return map_primitive.bind(f, *vals, **params)
     else:
-      size = reduce(set.union, map(dimsize, dims, vals)).pop()
+      size, = reduce(set.union, map(dimsize, dims, vals))
       is_batched = tuple(map(where_batched, dims))
       vals = map(partial(instantiate_bdim, size, 1), is_batched, dims, vals)
       dims = tuple(map(partial(bools_to_bdims, 0), is_batched))
@@ -153,13 +154,11 @@ class BatchTrace(Trace):
     def todo(x):
       trace = BatchTrace(master, core.cur_sublevel())
       return BatchTracer(trace, x, dim)
-
     return val, todo
 
   def pack(self, tracers):
-    vals = pack([t.val for t in tracers])
-    batch_dim = tuple(t.batch_dim for t in tracers)
-    return BatchTracer(self, vals, batch_dim)
+    vals, dims = unzip2((t.val, t.batch_dim) for t in tracers)
+    return BatchTracer(self, pack(vals), tuple(dims))
 
 
 ### abstract values

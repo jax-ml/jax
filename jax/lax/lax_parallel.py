@@ -27,6 +27,8 @@ from jax.interpreters import pxla
 from jax.util import partial, unzip2, prod
 from jax.lib import xla_bridge
 
+from jax.interpreters.pxla import axis_index
+
 
 ### parallel traceables
 
@@ -111,8 +113,9 @@ def pswapaxes(x, axis_name, axis):
   The mapped axis size must be equal to the size of the unmapped axis; that is,
   we must have ``lax.psum(1, axis_name) == x.shape[axis]``.
 
-  This function is similar to ``psplit`` except the pmapped axis of the input is
-  placed at the position ``axis`` in the output.
+  This function is a special case of ``all_to_all`` where the pmapped axis of
+  the input is placed at the position ``axis`` in the output. That is, it is
+  equivalent to ``all_to_all(x, axis_name, axis, axis)``.
 
   Args:
     x: array with a mapped axis named ``axis_name``.
@@ -126,19 +129,17 @@ def pswapaxes(x, axis_name, axis):
     where ``axis_size`` is the size of the mapped axis named ``axis_name`` in
     the input ``x``.
   """
-  # TODO(mattjj): enable this check when _serial_pmap works with psum(1, ax)
-  # axis_size = psum(1, axis_name)
-  # if axis_size != x.shape[axis]:
-  #   msg = ("pswapaxes requires the size of the mapped axis ``axis_name`` equal "
-  #          "``x.shape[axis]``, but they are {} and {} respectively.")
-  #   raise ValueError(msg.format(axis_size(axis_name), x.shape[axis]))
-  return pswapaxes_p.bind(x, axis_name=axis_name, axis=axis)
+  return all_to_all(x, axis_name, axis, axis)
 
-def psplit(x, axis_name, split_axis, concat_axis):
-  """Unmap the pmapped axis ``axis_name`` and map ``axis`` with the same name.
+def all_to_all(x, axis_name, split_axis, concat_axis):
+  """Materialize the mapped axis and map a different axis.
 
-  This function is similar to ``pswapaxes`` except the pmapped axis of the input
-  is placed as the leading logical axis of the output.
+  In the output, the input mapped axis ``axis_name`` is materialized at the
+  logical axis position ``concat_axis``, and the input unmapped axis at position
+  ``split_axis`` is mapped with the name ``axis_name``.
+
+  The input mapped axis size must be equal to the size of the axis to be mapped;
+  that is, we must have ``lax.psum(1, axis_name) == x.shape[split_axis]``.
 
   Args:
     x: array with a mapped axis named ``axis_name``.
@@ -146,16 +147,22 @@ def psplit(x, axis_name, split_axis, concat_axis):
       ``pmap`` docstring for more details).
     split_axis: int indicating the unmapped axis of ``x`` to map with the name
       ``axis_name``.
-    concat_axis: int indicating the dimension at which to materialize the axis
-      of ``x`` mapped with ``axis_name``.
+    concat_axis: int indicating the position in the output to materialize the
+      mapped axis of the input with the name ``axis_name``.
 
   Returns:
-    An array with shape ``np.insert(np.delete(x.shape, split_axis), concat_axis,
-    axis_size)`` where ``axis_size`` is the size of the mapped axis named
-    ``axis_name`` in the input ``x``.
+    An array with shape given by the expression::
+      np.insert(np.delete(x.shape, split_axis), concat_axis, axis_size)
+
+    where ``axis_size`` is the size of the mapped axis named ``axis_name`` in
+    the input ``x``, i.e. ``axis_size = lax.psum(1, axis_name)``.
   """
-  return psplit_p.bind(x, axis_name=axis_name, concat_axis=concat_axis,
-                       split_axis=split_axis)
+  if psum(1, axis_name) != x.shape[split_axis]:
+    msg = ("all_to_all requires the size of the mapped axis axis_name to equal "
+           "x.shape[split_axis], but they are {} and {} respectively.")
+    raise ValueError(msg.format(psum(1, axis_name), x.shape[split_axis]))
+  return all_to_all_p.bind(x, split_axis=split_axis, concat_axis=concat_axis,
+                           axis_name=axis_name)
 
 def psplit_like(x, y, axis_name):
   """Ensure the named mapped axis of ``x`` aligns with that of ``y``."""
@@ -179,21 +186,25 @@ def _allreduce_serial_pmap_rule(reducer, vals, axes):
   axis, = axes
   return reducer(val, [axis]), None
 
+def _allreduce_split_axis_rule(prim, reducer, vals, which_mapped, axis_name):
+  assert tuple(which_mapped) == (True,)
+  x, = vals
+  return prim.bind(reducer(x, [0]), axis_name=axis_name), False
+
 def _allreduce_translation_rule(prim, c, val, replica_groups):
   dtype = c.GetShape(val).numpy_dtype()
   scalar = xla_bridge.Shape.array_shape(dtype, ())
   computation = xla.primitive_computation(prim, scalar, scalar)
   return c.AllReduce(val, computation, replica_groups=replica_groups)
 
-
 psum_p = standard_pmap_primitive('psum')
 parallel.defreducer(lax.reduce_sum_p, psum_p)
 parallel.serial_pmap_primitive_rules[psum_p] = \
     partial(_allreduce_serial_pmap_rule, lax._reduce_sum)
+pxla.split_axis_rules[psum_p] = \
+    partial(_allreduce_split_axis_rule, psum_p, lax._reduce_sum)
 pxla.parallel_translation_rules[psum_p] = \
     partial(_allreduce_translation_rule, lax.add_p)
-pxla.parallel_translation_rules[psum_p] = \
-    lambda c, val, replica_groups: c.CrossReplicaSum(val, replica_groups)
 pxla.parallel_pure_rules[psum_p] = lambda x, shape: x * prod(shape)
 ad.deflinear(psum_p, lambda t, axis_name: [t])
 
@@ -237,38 +248,30 @@ ad.deflinear(ppermute_p, _ppermute_transpose_rule)
 pxla.parallel_translation_rules[ppermute_p] = _ppermute_translation_rule
 
 
-def _pswapaxes_serial_pmap_rule(vals, axes, axis):
+def _all_to_all_translation_rule(c, x, split_axis, concat_axis, replica_groups):
+  return c.AllToAll(x, split_axis, concat_axis, replica_groups)
+
+def _all_to_all_split_axis_rule(vals, which_mapped, split_axis, concat_axis,
+                                axis_name):
+  assert tuple(which_mapped) == (True,)
   x, = vals
-  axis_in, = axes
-  if x.shape[axis_in] != x.shape[axis]:
-    raise ValueError("pswapaxes between non-square dimensions")
-  perm = list(range(x.ndim))
-  perm[axis_in] = axis
-  perm[axis] = axis_in
-  return lax.transpose(x, perm), axis_in
+  # perform the communication to swap the hardware-mapped axes
+  stacked = all_to_all_p.bind(x, split_axis=split_axis + 1, concat_axis=0,
+                              axis_name=axis_name)
+  # transpose the newly mapped axis to the front, newly unmapped to concat_axis
+  out = _moveaxis(split_axis + 1, 0, stacked)
+  out = _moveaxis(1, concat_axis + 1, out)
+  return out, True
 
-def _pswapaxes_translation_rule(c, xla_x, axis, replica_groups):
-  return c.AllToAll(xla_x, axis, axis, replica_groups)
-
-pswapaxes_p = standard_pmap_primitive('pswapaxes')
-pxla.parallel_translation_rules[pswapaxes_p] = _pswapaxes_translation_rule
-parallel.serial_pmap_primitive_rules[pswapaxes_p] = _pswapaxes_serial_pmap_rule
+def _moveaxis(src, dst, x):
+  perm = [i for i in range(x.ndim) if i != src]
+  perm.insert(dst, src)
+  return lax.transpose(x, perm)
 
 
-def _psplit_serial_pmap_rule(vals, axes, split_axis, concat_axis):
-  x, = vals
-  axis_in, = axes
-  if x.shape[axis_in] != x.shape[split_axis]:
-    raise ValueError(
-        "psplit between non-square dimensions {} and {} of {}".format(
-            axis_in, split_axis, x.shape))
-  perm = list(range(x.ndim))
-  perm[axis_in] = concat_axis
-  perm[concat_axis] = axis_in
-  return lax.transpose(x, perm), split_axis
-
-psplit_p = standard_pmap_primitive('psplit')
-parallel.serial_pmap_primitive_rules[psplit_p] = _psplit_serial_pmap_rule
+all_to_all_p = standard_pmap_primitive('all_to_all')
+pxla.parallel_translation_rules[all_to_all_p] = _all_to_all_translation_rule
+pxla.split_axis_rules[all_to_all_p] = _all_to_all_split_axis_rule
 
 
 def _psplit_like_serial_pmap_rule(vals, axes):

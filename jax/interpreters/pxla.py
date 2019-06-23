@@ -36,7 +36,6 @@ from .partial_eval import trace_to_subjaxpr, merge_pvals, JaxprTrace, PartialVal
 from .batching import dimsize, broadcast
 from . import batching
 from . import partial_eval as pe
-from . import parallel
 from . import xla
 from . import ad
 
@@ -350,7 +349,7 @@ parallel_translation_rules = {}
 # primitive dispatched from Python, rather than being part of a staged-out pmap
 # computation and handled by replicated_comp above:
 #   1. axis_size = psum(1, 'axis_name'),
-#   2. to enable an outermost implicit pmap-like context for multi-host
+#   2. to enable an implicit outermost pmap-like context for multi-host
 #      multi-controller SPMD programs.
 # In each case, we can't rely on any data dependence on a pmap trace; instead we
 # need some dynamic context, basically modeling the axis name environment stack.
@@ -359,56 +358,76 @@ parallel_translation_rules = {}
 # globally-scoped root environment frame and compile and execute a single-op
 # XLA collective.
 
-# TODO(mattjj, skyewm): op-by-op multi-controller via a global (root) frame
-
-DynamicAxisEnvFrame = namedtuple("DynamicAxisEnvFrame", ["name", "size", "trace"])
+class DynamicAxisEnvFrame(object):
+  __slots__ = ["name", "pmap_trace", "hard_size", "soft_trace", "soft_size"]
+  def __init__(self, name, pmap_trace, hard_size):
+    self.name = name
+    self.pmap_trace = pmap_trace
+    self.hard_size = hard_size
+    self.soft_trace = None
+    self.soft_size = None
 
 class DynamicAxisEnv(list):
   def __contains__(self, axis_name):
-    return axis_name in (name for name, _, _ in self)
+    return axis_name in (frame.name for frame in self)
 
   def __getitem__(self, axis_name):
     if axis_name not in self:
       raise NameError("unbound axis name: {}".format(axis_name))
-    for name, size, trace in reversed(self):
-      if name == axis_name:
-        return size, trace
+    for frame in reversed(self):
+      if frame.name == axis_name:
+        return frame
     else:
       assert False
 dynamic_axis_env = DynamicAxisEnv()
 
 @contextmanager
-def extend_dynamic_axis_env(axis_name, axis_size, trace):
-  dynamic_axis_env.append(DynamicAxisEnvFrame(axis_name, axis_size, trace))
+def extend_dynamic_axis_env(axis_name, pmap_trace, hard_size):
+  dynamic_axis_env.append(DynamicAxisEnvFrame(axis_name, pmap_trace, hard_size))
   yield
   dynamic_axis_env.pop()
 
+def unmapped_device_count():
+  mapped = prod(frame.hard_size for frame in dynamic_axis_env)
+  unmapped, ragged = divmod(xb.device_count(), mapped)
+  assert not ragged and unmapped > 0
+  return unmapped
+
 def apply_parallel_primitive(prim, *args, **params):
-  axis_name = params['axis_name']
+  # This is the op-by-op version of applying a collective primitive, like a psum
+  # that doesn't have a data dependence on the argument of a pmap function. In
+  # particular, this code gets hit when we write `axis_size = psum(1, 'i')`. We
+  # look up information in the dynamic axis env.
+  axis_name = params.pop('axis_name')
+  logical_size = lambda frame: frame.hard_size * (frame.soft_size or 1)
   if isinstance(axis_name, (list, tuple)):
-    shape = tuple(dynamic_axis_env[name][0] for name in axis_name)
+    shape = tuple(logical_size(dynamic_axis_env[name]) for name in axis_name)
   else:
-    shape = (dynamic_axis_env[axis_name][0],)
-  return parallel_pure_rules[prim](*args, shape=shape)
+    shape = (logical_size(dynamic_axis_env[axis_name]),)
+  return parallel_pure_rules[prim](*args, shape=shape, **params)
 
 parallel_pure_rules = {}
 
 
 def axis_index(axis_name):
-  axis_size, trace = dynamic_axis_env[axis_name]
-  return axis_index_p.bind(trace.pure(core.unit),
-                           axis_size=axis_size, axis_name=axis_name)
+  frame = dynamic_axis_env[axis_name]
+  dummy_arg = frame.pmap_trace.pure(core.unit)
+  if frame.soft_trace:
+    dummy_arg = frame.soft_trace.pure(dummy_arg)
+  return axis_index_p.bind(dummy_arg, hard_size=frame.hard_size,
+                           soft_size=frame.soft_size, axis_name=axis_name)
 
 def _axis_index_partial_eval(trace, _, **params):
-  # This looks like the standard JaxprTrace.process_primitive rule except that
-  # we don't attempt to lower out of the trace.
+  # This partial_eval rule adds the axis_index primitive into the jaxpr formed
+  # during pmap lowering. It is like the standard JaxprTrace.process_primitive
+  # rule except that we don't attempt to lower out of the trace.
   out_aval = ShapedArray((), onp.uint32)
   eqn = pe.JaxprEqn([], None, axis_index_p, (), False, False, params)
   return pe.JaxprTracer(trace, pe.PartialVal((out_aval, core.unit)), eqn)
 
 axis_index_p = core.Primitive('axis_index')
-xla.translations[axis_index_p] = lambda c, axis_size, axis_name: \
-    c.Rem(c.ReplicaId(), c.Constant(onp.array(axis_size, onp.uint32)))
+xla.translations[axis_index_p] = lambda c, hard_size, soft_size, axis_name: \
+    c.Rem(c.ReplicaId(), c.Constant(onp.array(hard_size, onp.uint32)))
 pe.custom_partial_eval_rules[axis_index_p] = _axis_index_partial_eval
 
 
@@ -566,16 +585,16 @@ def _shard_aval(axis_size, aval):
     assert aval.shape[0] == axis_size
     return ShapedArray(aval.shape[1:], aval.dtype)
   else:
-    raise TypeError(type(aval))
+    raise TypeError(aval)
 
 @lu.memoize
 def parallel_callable(fun, axis_name, axis_size, *avals):
   pvals = [PartialVal((aval, core.unit)) for aval in avals]
-  pval = PartialVal((core.AbstractTuple(()), core.unit))
+  pval = PartialVal((core.AbstractTuple(()), core.unit))  # dummy value
 
   @lu.wrap_init
   def dynamic_fun(dummy, *args):
-    with extend_dynamic_axis_env(axis_name, axis_size, dummy.trace):
+    with extend_dynamic_axis_env(axis_name, dummy.trace, axis_size):
       return fun.call_wrapped(*args)
 
   with core.new_master(JaxprTrace, True) as master:
@@ -623,3 +642,178 @@ ad.primitive_transposes[xla_pmap_p] = partial(ad.map_transpose, xla_pmap_p)
 pe.map_primitives.add(xla_pmap_p)
 # TODO(mattjj): enable pjit inside jit, maybe by merging xla_pmap and xla_call
 # xla.translations[xla_pmap_p] = xla.xla_call_translation_rule
+
+
+### soft_pmap axis split transformation
+
+# To allow pmap to map over logical axes larger than the number of XLA devices
+# available, we use a transformation that effectively simulates having more
+# devices in software. The strategy is to split the mapped axis into two axes,
+# one to be hardware-mapped and the other to be software-mapped. Thus the
+# transformation rewrites the function to be mapped so that it accepts a new
+# leading axis (the software-mapped axis), and so that collectives in the
+# original function correspond to both device-local operations and collective
+# communication operations across hardware devices that implement the original
+# logical semantics.
+
+@lu.transformation
+def split_axis(axis_name, chunk_size, *args):
+  with core.new_master(SplitAxisTrace) as master:
+    trace = SplitAxisTrace(master, core.cur_sublevel())
+    in_tracers = map(partial(SplitAxisTracer, trace, axis_name), args)
+    with add_chunk_to_axis_env(axis_name, trace, chunk_size):
+      ans = yield in_tracers, {}
+    out_tracer = trace.full_raise(ans)
+    out_val, out_axis = out_tracer.val, out_tracer.axis_name
+    del master, out_tracer
+  if out_axis is not_mapped:
+    out_val = batching.broadcast2(chunk_size, 0, out_val)
+  yield out_val
+
+@lu.transformation_with_aux
+def split_axis_subtrace(master, names, *vals):
+  trace = SplitAxisTrace(master, core.cur_sublevel())
+  ans = yield map(partial(SplitAxisTracer, trace), names, vals), {}
+  out_tracer = trace.full_raise(ans)
+  out_val, out_name = out_tracer.val, out_tracer.axis_name
+  yield out_val, out_name
+
+class NotMapped(object): pass
+not_mapped = NotMapped
+
+class SplitAxisTuple(tuple): pass
+
+@contextmanager
+def add_chunk_to_axis_env(axis_name, soft_trace, soft_size):
+  dynamic_axis_env[axis_name].soft_trace = soft_trace
+  dynamic_axis_env[axis_name].soft_size = soft_size
+  yield
+  dynamic_axis_env[axis_name].soft_trace = None
+  dynamic_axis_env[axis_name].soft_size = None
+
+class SplitAxisTracer(core.Tracer):
+  def __init__(self, trace, axis_name, val):
+    self.trace = trace
+    self.axis_name = axis_name
+    self.val = val
+
+  @property
+  def aval(self):
+    aval = batching.get_aval(self.val)
+    if self.axis_name is not_mapped:
+      return aval
+    else:
+      return batching.remove_batch_dim_from_aval(0, aval)
+
+  def unpack(self):
+    if self.name is not_mapped:
+      return tuple(self.val)
+    else:
+      if type(self.name) is SplitAxisTuple:
+        names = list(self.name)
+      else:
+        names = [self.name] * len(self.val)
+      return map(partial(SplitAxisTracer, self.trace), names, self.val)
+
+  def full_lower(self):
+    if self.axis_name is not_mapped:
+      return core.full_lower(self.val)
+    else:
+      return self
+
+class SplitAxisTrace(core.Trace):
+  def pure(self, val):
+    return SplitAxisTracer(self, not_mapped, val)
+
+  def lift(self, val):
+    return SplitAxisTracer(self, not_mapped, val)
+
+  def sublift(self, val):
+    return SplitAxisTracer(self, val.axis_name, val.val)
+
+  def process_primitive(self, primitive, tracers, params):
+    vals_in, names_in = unzip2((t.val, t.axis_name) for t in tracers)
+    if primitive is axis_index_p:
+      dummy, = vals_in
+      hard_idx = primitive.bind(dummy, **params)
+      val_out = hard_idx * params['soft_size'] + onp.arange(params['soft_size'])
+      return SplitAxisTracer(self, params['axis_name'], val_out)
+    elif all(axis_name is not_mapped for axis_name in names_in):
+      return primitive.bind(*vals_in, **params)
+    else:
+      name, = set(n for n in names_in if n is not not_mapped)
+      if type(primitive) is PmapPrimitive:
+        # if it's a pmap collective primitive, do something special
+        if name == params['axis_name']:
+          # if the name matches this tracer's name, apply the split_axis rule
+          try:
+            rule = split_axis_rules[primitive]
+          except KeyError:
+            msg = "split_axis for {} not implemented. Open a feature request!"
+            raise NotImplementedError(msg.format(primitive))
+          which_mapped = [n is not not_mapped for n in names_in]
+          val_out, is_mapped = rule(vals_in, which_mapped, **params)
+          name_out = name if is_mapped else not_mapped
+          return SplitAxisTracer(self, name_out, val_out)
+        else:
+          # if not, bind the primitive without any processing
+          val_out = primitive.bind(*vals_in, **params)
+          return SplitAxisTracer(self, name, val_out)
+      else:
+        # if it's not a pmap collective primitive, act just like batching
+        rule = batching.get_primitive_batcher(primitive)
+        axes_in = [None if n is not_mapped else 0 for n in names_in]
+        val_out, axis_out = rule(vals_in, axes_in, **params)
+        val_out = batching.moveaxis2(axis_out, 0, val_out)
+        return SplitAxisTracer(self, name, val_out)
+
+  def process_call(self, call_primitive, f, tracers, params):
+    if call_primitive in pe.map_primitives:
+      return self.process_map(call_primitive, f, tracers, params)
+    else:
+      vals, names = unzip2((t.val, t.axis_name) for t in tracers)
+      if all(name is not_mapped for name in names):
+        return call_primitive.bind(f, *vals, **params)
+      else:
+        f, name_out = split_axis_subtrace(f, self.master, names)
+        val_out = call_primitive.bind(f, *vals, **params)
+        return SplitAxisTracer(self, name_out(), val_out)
+
+  def process_map(self, map_primitive, f, tracers, params):
+    vals, names = unzip2((t.val, t.axis_name) for t in tracers)
+    if all(name is not_mapped for name in names):
+        return map_primitive.bind(f, *vals, **params)
+    else:
+      # because the map primitive maps over leading axes, we need to transpose
+      # the software-mapped axis on any mapped arguments to be the second axis;
+      # then we call the map primitive and resume the trace under the call
+      vals_transposed = map(partial(transpose_mapped, 0, 1), names, vals)
+      f, name_out = split_axis_subtrace(f, self.master, names)
+      val_out_transposed = map_primitive.bind(f, *vals_transposed, **params)
+      val_out = transpose_mapped(1, 0, name_out(), val_out_transposed)
+      return SplitAxisTracer(self, name_out(), val_out)
+
+  def post_process_call(self, call_primitive, out_tracer, params):
+    val, name = out_tracer.val, out_tracer.axis_name
+    master = self.master
+    def todo(x):
+      trace = SplitAxisTrace(master, core.cur_sublevel())
+      return  SplitAxisTracer(trace, name, x)
+    return  val, todo
+
+  def pack(self, tracers):
+    vals, names = unzip2((t.val, t.axis_name) for t in tracers)
+    return SplitAxisTracer(self, SplitAxisTuple(names), core.pack(vals))
+
+def transpose_mapped(src, dst, name, x):
+  def transpose(name, x):
+    if type(name) is SplitAxisTuple:
+      return core.pack(map(transpose, name, x))
+    elif name is not_mapped:
+      return x
+    else:
+      return batching.moveaxis2(src,  dst, x)
+  return transpose(name, x)
+
+
+split_axis_rules = {}

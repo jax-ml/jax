@@ -167,7 +167,7 @@ def _promote_to_result_dtype(op, *args):
 
 def _result_dtype(op, *args):
   """Compute result dtype of applying op to arguments with given dtypes."""
-  args = (onp.ones((0,) * ndim(arg), _dtype(arg)) for arg in args)
+  args = [onp.ones((0,) * ndim(arg), _dtype(arg)) for arg in args]
   return _dtype(op(*args))
 
 

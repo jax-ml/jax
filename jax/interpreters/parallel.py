@@ -16,6 +16,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from contextlib import contextmanager
 from functools import partial
 import warnings
 
@@ -31,6 +32,7 @@ from ..util import safe_zip, unzip2, unzip3, partialmethod, prod
 from ..lib import xla_bridge as xb
 from . import partial_eval as pe
 from . import batching
+from . import pxla
 
 zip = safe_zip
 
