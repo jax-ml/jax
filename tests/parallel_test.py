@@ -142,13 +142,51 @@ class ParallelizeTest(jtu.JaxTestCase):
 
   def testAdd(self):
     x = onp.arange(10)
-
-    def f(y):
-      return x + y
-
     y = 2 * onp.arange(10)
+    def f(x): return x + y
+    expected = f(x)
+    ans = _parallelize(f)(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testAdd2(self):
+    x = onp.arange(10)
+    y = 2 * onp.arange(10)
+    def f(y): return x + y
     expected = f(y)
     ans = _parallelize(f)(y)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testAdd3(self):
+    x = onp.arange(10)
+    y = 2 * onp.arange(10)
+    def f(x, y):
+      return x + y
+    expected = f(x, y)
+    ans = _parallelize(f)(x, y)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testOuter(self):
+    x = onp.arange(10)
+    y = 2 * onp.arange(10)
+    def f(x): return x[:, None] * y
+    expected = f(x)
+    ans = _parallelize(f)(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testOuter2(self):
+    x = onp.arange(10)
+    y = 2 * onp.arange(10)
+    def f(y): return x[:, None] * y
+    expected = f(y)
+    ans = _parallelize(f)(y)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testOuter3(self):
+    x = onp.arange(10)
+    y = 2 * onp.arange(10)
+    def f(x, y): return x[:, None] * y
+    expected = f(x, y)
+    ans = _parallelize(f)(x, y)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -194,22 +232,22 @@ class ParallelizeTest(jtu.JaxTestCase):
     ans = _parallelize(fun)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  # def testDot(self):
-  #   return SkipTest("test doesn't pass yet")  # TODO(frostig)
+  def testDot(self):
+    return SkipTest("test doesn't pass yet")  # TODO(frostig)
 
-  #   def fun(x, y):
-  #     return lax.dot(x, y)
-  #   xs = [
-  #       onp.reshape(onp.arange(4., dtype=onp.float32), (2, 2)),
-  #       onp.reshape(onp.arange(9., dtype=onp.float32), (3, 3)),
-  #   ]
-  #   in_axes_combos = [(0, 0), (0, 1)] # [(1, 0)]
-  #   for in_axes in in_axes_combos:
-  #     for x in xs:
-  #       expected = fun(x, x)
-  #       pfun, axis_name = _papply(fun)
-  #       ans = soft_pmap(pfun, axis_name)(x, x)
-  #       self.assertAllClose(ans, expected, check_dtypes=False)
+    def fun(x, y):
+      return lax.dot(x, y)
+    xs = [
+        onp.reshape(onp.arange(4., dtype=onp.float32), (2, 2)),
+        onp.reshape(onp.arange(9., dtype=onp.float32), (3, 3)),
+    ]
+    in_axes_combos = [(0, 0), (0, 1)] # [(1, 0)]
+    for in_axes in in_axes_combos:
+      for x in xs:
+        expected = fun(x, x)
+        pfun, axis_name = _papply(fun)
+        ans = soft_pmap(pfun, axis_name)(x, x)
+        self.assertAllClose(ans, expected, check_dtypes=False)
 
 
 if __name__ == '__main__':

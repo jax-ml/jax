@@ -269,6 +269,13 @@ pxla.split_axis_rules[all_to_all_p] = _all_to_all_split_axis_rule
 def _drop(x, dim, axis_name):
   return lax.dynamic_index_in_dim(x, axis_index(axis_name), dim, False)
 
+def _allgather(x, dim, size, axis_name):
+  shape = list(x.shape)
+  shape.insert(dim, size)
+  out = lax.full(shape, lax._const(x, 0))
+  out = lax.dynamic_update_index_in_dim(out, x, axis_index(axis_name), dim)
+  return psum(out, axis_name)
+
 
 def _broadcasting_papply(prim, name, size, vals, axes, **params):
   x, y = vals
@@ -291,8 +298,19 @@ def _broadcasting_papply(prim, name, size, vals, axes, **params):
   elif xdim == ydim:
     return prim.bind(x, y, **params), xdim
   else:
-    x = all_to_all(x, name, ydim - int(xdim <= ydim), xdim)
-    return prim.bind(x, y, **params), ydim
+    x_tosplit = ydim - int(xdim <= ydim)
+    y_tosplit = xdim - int(ydim <= xdim)
+    if y.shape[y_tosplit] == 1:
+      y = _allgather(y, ydim, size, name)
+      y = y.reshape(onp.delete(y.shape, xdim))
+      return prim.bind(x, y, **params), ydim
+    elif x.shape[x_tosplit] == 1:
+      x = _allgather(x, xdim, size, name)
+      x = x.reshape(onp.delete(x.shape, ydim))
+      return prim.bind(x, y, **params), ydim
+    else:
+      x = all_to_all(x, name, x_tosplit, xdim)
+      return prim.bind(x, y, **params), ydim
 
 def _defbroadcasting(prim):
   parallel.papply_primitive_rules[prim] = partial(_broadcasting_papply, prim)
