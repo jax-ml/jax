@@ -2113,19 +2113,28 @@ def take(a, indices, axis=None, out=None, mode=None):
 
 @_wraps(getattr(onp, "take_along_axis", None))
 def take_along_axis(arr, indices, axis):
-  if axis is None and ndim(arr) != 1:
-    return take_along_axis(arr.ravel(), indices.ravel(), 0)
+  if axis is None:
+    if ndim(indices) != 1:
+      msg = "take_along_axis indices must be 1D if axis=None, got shape {}"
+      raise ValueError(msg.format(shape(indices)))
+    return take_along_axis(arr.ravel(), indices, 0)
+  elif ndim(arr) != ndim(indices):
+    msg = "indices and arr must have the same number of dimensions; {} vs. {}"
+    raise ValueError(msg.format(ndim(indices), ndim(arr)))
   elif ndim(arr) == 1:
     return lax.index_take(arr, (indices,), (0,))
   else:
     # TODO(mattjj): if we lower directly to lax.gather here, we might be able to
     # avoid the reshape on the output.
-    all_indices = [lax.broadcasted_iota(_dtype(indices), shape(indices), i)
+    arr_shape = list(shape(arr))
+    arr_shape[axis] = 1
+    out_shape = lax.broadcast_shapes(shape(indices), tuple(arr_shape))
+    all_indices = [lax.broadcasted_iota(_dtype(indices), out_shape, i)
                    for i in range(ndim(arr))]
-    all_indices[axis] = indices
+    all_indices[axis] = broadcast_to(indices, out_shape)
     all_indices = tuple(map(ravel, all_indices))
     out_flat = lax.index_take(arr, all_indices, tuple(range(ndim(arr))))
-    return reshape(out_flat, shape(indices))
+    return reshape(out_flat, out_shape)
 
 
 ### Indexing
