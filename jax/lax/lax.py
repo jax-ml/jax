@@ -2966,6 +2966,7 @@ ad.primitive_transposes[gather_p] = _gather_transpose_rule
 batching.primitive_batchers[gather_p] = _gather_batching_rule
 parallel.papply_primitive_rules[gather_p] = _gather_papply_rule
 
+
 class ScatterDimensionNumbers(collections.namedtuple(
     "ScatterDimensionNumbers",
     ["update_window_dims", "inserted_window_dims",

@@ -458,7 +458,7 @@ def moveaxis2(src, dst, x):
     return _moveaxis2(src, dst, x, get_aval(x))
 
 def _moveaxis2(src, dst, x, aval):
-  if type(aval) is JaxTuple:
+  if type(aval) is AbstractTuple:
     return core.pack(map(partial(_moveaxis2, src, dst), x, aval))
   else:
     perm = [i for i in range(onp.ndim(x)) if i != src]
@@ -480,7 +480,7 @@ def _broadcast2(size, axis, x, aval):
 
 def _promote_aval_rank(n, batched, aval):
   assert isinstance(aval, core.AbstractValue)
-  if isinstance(aval, AbstractTuple):
+  if type(aval) is AbstractTuple:
     t = type(batched)
     if t is tuple:
       return AbstractTuple(map(partial(_promote_aval_rank, n), batched, aval))
