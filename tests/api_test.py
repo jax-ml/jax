@@ -815,6 +815,12 @@ class APITest(jtu.JaxTestCase):
                     if eqn.bound_subjaxprs)
     self.assertEqual(len(subjaxpr.eqns), 1)
 
+  def test_grad_of_int_errors(self):
+    dfn = grad(lambda x: x ** 2)
+    jtu.check_raises(lambda: dfn(3), TypeError,
+                     "Primal inputs to reverse-mode differentiation must be of "
+                     "float or complex type, got type int32")
+
 
 if __name__ == '__main__':
   absltest.main()
