@@ -15,6 +15,9 @@
 Parallelization primitives.
 """
 
+import numpy as onp
+
+from jax import ad_util
 from jax.lax import lax
 from jax.abstract_arrays import ShapedArray
 from jax.interpreters import ad
@@ -131,7 +134,7 @@ def pswapaxes(x, axis_name, axis):
   #   raise ValueError(msg.format(axis_size(axis_name), x.shape[axis]))
   return pswapaxes_p.bind(x, axis_name=axis_name, axis=axis)
 
-def psplit(x, axis_name, axis):
+def psplit(x, axis_name, split_axis, concat_axis):
   """Unmap the pmapped axis ``axis_name`` and map ``axis`` with the same name.
 
   This function is similar to ``pswapaxes`` except the pmapped axis of the input
@@ -141,15 +144,18 @@ def psplit(x, axis_name, axis):
     x: array with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
       ``pmap`` docstring for more details).
-    axis: int indicating the unmapped axis of ``x`` to map with the name
+    split_axis: int indicating the unmapped axis of ``x`` to map with the name
       ``axis_name``.
+    concat_axis: int indicating the dimension at which to materialize the axis
+      of ``x`` mapped with ``axis_name``.
 
   Returns:
-    An array with shape ``(axis_size,) + tuple(np.delete(x.shape, axis))`` where
-    ``axis_size`` is the size of the mapped axis named ``axis_name`` in the
-    input ``x``.
+    An array with shape ``np.insert(np.delete(x.shape, split_axis), concat_axis,
+    axis_size)`` where ``axis_size`` is the size of the mapped axis named
+    ``axis_name`` in the input ``x``.
   """
-  return psplit_p.bind(x, axis_name=axis_name, axis=axis)
+  return psplit_p.bind(x, axis_name=axis_name, concat_axis=concat_axis,
+                       split_axis=split_axis)
 
 def psplit_like(x, y, axis_name):
   """Ensure the named mapped axis of ``x`` aligns with that of ``y``."""
@@ -249,14 +255,17 @@ pxla.parallel_translation_rules[pswapaxes_p] = _pswapaxes_translation_rule
 parallel.serial_pmap_primitive_rules[pswapaxes_p] = _pswapaxes_serial_pmap_rule
 
 
-def _psplit_serial_pmap_rule(vals, axes, axis):
+def _psplit_serial_pmap_rule(vals, axes, split_axis, concat_axis):
   x, = vals
   axis_in, = axes
-  if x.shape[axis_in] != x.shape[axis]:
+  if x.shape[axis_in] != x.shape[split_axis]:
     raise ValueError(
         "psplit between non-square dimensions {} and {} of {}".format(
-            axis_in, axis, x.shape))
-  return x, axis
+            axis_in, split_axis, x.shape))
+  perm = list(range(x.ndim))
+  perm[axis_in] = concat_axis
+  perm[concat_axis] = axis_in
+  return lax.transpose(x, perm), split_axis
 
 psplit_p = standard_pmap_primitive('psplit')
 parallel.serial_pmap_primitive_rules[psplit_p] = _psplit_serial_pmap_rule
@@ -290,7 +299,7 @@ parallel.serial_pmap_primitive_rules[pcollect_p] = _pcollect_serial_pmap_rule
 # primitives, but that currently causes circular dependencies. More refactoring
 # might fix this.
 
-def _dot_papply_rule(name, vals, dims):
+def _dot_papply_rule(name, size, vals, dims):
   x, y = vals
   xdim, ydim = dims
   if xdim is None:
@@ -299,7 +308,7 @@ def _dot_papply_rule(name, vals, dims):
     return lax.dot(x, y), xdim
   elif ydim == 0:
     if xdim != x.ndim:
-      x = psplit(x, name, x.ndim)
+      x = psplit(x, name, x.ndim, xdim)
     x = x[..., None]
     y = y[..., None, :]
     return psum(x * y, name), None
@@ -308,49 +317,62 @@ def _dot_papply_rule(name, vals, dims):
     return lax.dot(x, y), xdim
 
 
-def _dot_general_papply_rule(name, vals, dims, dimension_numbers):
+def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers):
   x, y = vals
   xdim, ydim = dims
 
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
 
-  if len(lhs_batch) > 0 or len(rhs_batch) > 0:
-    raise NotImplementedError
-
   def adjust_dims(dims, thresh):
-    return tuple(i - 1 if i >= thresh else i for i in dims if i != thresh)
+    return tuple(i - 1 if i > thresh else i for i in dims if i != thresh)
 
   sub_lhs_contract, sub_rhs_contract = lhs_contract, rhs_contract
-  if xdim is not None:
-    sub_lhs_contract = adjust_dims(lhs_contract, xdim)
-  if ydim is not None:
-    sub_rhs_contract = adjust_dims(rhs_contract, ydim)
+  sub_lhs_batch, sub_rhs_batch = lhs_batch, rhs_batch
 
-  sub_dimension_numbers = (
-      (sub_lhs_contract, sub_rhs_contract), (lhs_batch, rhs_batch))
+  def sub_dims(xdim, ydim):
+    sub_lhs_contract, sub_rhs_contract = lhs_contract, rhs_contract
+    sub_lhs_batch, sub_rhs_batch = lhs_batch, rhs_batch
+    if xdim is not None:
+      sub_lhs_batch = adjust_dims(lhs_batch, xdim)
+      sub_lhs_contract = adjust_dims(lhs_contract, xdim)
+    if ydim is not None:
+      sub_rhs_batch = adjust_dims(rhs_batch, ydim)
+      sub_rhs_contract = adjust_dims(rhs_contract, ydim)
+    return (
+      (sub_lhs_contract, sub_rhs_contract), (sub_lhs_batch, sub_rhs_batch))
 
-  if xdim in lhs_contract and ydim in rhs_contract:
-    z = lax.dot_general(x, y, sub_dimension_numbers)
-    return psum(z, name), None
-  elif xdim in lhs_contract:
-    if ydim is not None:        # Cannot hide two dimensions, so collect one
-      y = pcollect(y, name)
-    return lax.dot_general(x, y, sub_dimension_numbers), xdim
-  elif ydim in rhs_contract:
-    if xdim is not None:        # Cannot hide two dimensions, so collect one
-      x = pcollect(x, name)
-    return lax.dot_general(x, y, sub_dimension_numbers), ydim
-  elif xdim is not None:
-    if ydim is not None:        # Cannot hide two dimensions, so collect one
-      y = pcollect(y, name)
-    return lax.dot_general(x, y, sub_dimension_numbers), xdim
-  elif ydim is not None:
-    return lax.dot_general(x, y, sub_dimension_numbers), ydim
+  def cases(x, y, xdim, ydim, xcontract, ycontract):
+    if xdim in xcontract:
+      if ydim in ycontract:
+        # case: both operands are split and contracting
+        z = lax.dot_general(x, y, sub_dims(xdim, ydim))
+        return True, (psum(z, name), None)
+      elif ydim is not None:
+        # case: x split and contracting, y split but not contracting
+        new_ydim = ycontract[xcontract.index(xdim)]
+        y = psplit(y, name, new_ydim, ydim)
+        z = lax.dot_general(x, y, sub_dims(xdim, new_ydim))
+        return True, (psum(z, name), None)
+      else:
+        # case: x split and contracting, y not split
+        return False, 'one operand split and contracting, other is not split'
+    else:
+      return False, 'unhandled case'
+
+  ok, out = cases(x, y, xdim, ydim, lhs_contract, rhs_contract)
+  if not ok:
+    ok, out = cases(y, x, ydim, xdim, rhs_contract, lhs_contract)
+  if not ok:
+    raise NotImplementedError(
+        ('papply of dot_general, {}: '
+         'xdim={}, ydim={}, dimension_numbers={}').format(
+             out, xdim, ydim, dimension_numbers))
   else:
-    return lax.dot_general(x, y, sub_dimension_numbers), None
+    return out
 
 
-def _reshape_papply_rule(name, vals, axes, new_sizes, dimensions, old_sizes):
+def _reshape_papply_rule(name, size, vals, axes, new_sizes, dimensions,
+                         old_sizes):
   operand, = vals
   axis, = axes
 
@@ -358,42 +380,33 @@ def _reshape_papply_rule(name, vals, axes, new_sizes, dimensions, old_sizes):
     return filter(lambda x: x != 1, xs)
 
   def find_new_axis(old_axis, old_sizes, new_sizes):
-    if len(filter_ones(new_sizes)) != len(filter_ones(old_sizes)):
-      return None
-    num_before = len(filter_ones(old_sizes[:old_axis]))
-    sz = old_sizes[old_axis]
-    for i, new_sz in enumerate(new_sizes):
-      if num_before == 0:
-        if new_sz == sz:
-          return i
-        elif new_sz != 1:
-          return None
-      elif new_sz != 1:
-        num_before -= 1
+    left = onp.prod(old_sizes[:old_axis])
+    size = old_sizes[old_axis]
+    prod = 1
+    for i, cur_sz in enumerate(new_sizes):
+      if prod == left and cur_sz == size:
+        return i
+      prod = prod * sz
     return None
-
-  err = NotImplementedError(
-      'papply of reshape that would change hidden dimension size')
 
   if dimensions is None:
     new_axis = find_new_axis(axis, old_sizes, new_sizes)
     if new_axis is not None:
-      if (lax.prod(old_sizes[:axis]) != lax.prod(new_sizes[:new_axis]) or
-          lax.prod(old_sizes[axis + 1:]) != lax.prod(new_sizes[new_axis + 1:])):
-        raise err
       new_sizes_ = new_sizes[:new_axis] + new_sizes[new_axis + 1:]
       return lax.reshape(operand, new_sizes_, dimensions=dimensions), new_axis
     else:
-      raise err
+      raise NotImplementedError(
+          'papply of reshape that would change hidden dimension size')
   else:
     raise NotImplementedError('papply of reshape with `dimensions`')
 
 
-def _transpose_papply_rule(name, vals, dims, permutation):
+def _transpose_papply_rule(name, size, vals, dims, permutation):
   x, = vals
   xdim, = dims
   perm = list(permutation)
   if perm[xdim] == xdim:
+    perm = [i - 1 if i > xdim else i for i in perm if i != xdim]
     x = lax.transpose(x, perm)
     out_dim = xdim
   else:
@@ -408,7 +421,7 @@ def _transpose_papply_rule(name, vals, dims, permutation):
   return x, xdim
 
 
-def _select_papply_rule(name, vals, dims):
+def _select_papply_rule(name, size, vals, dims):
   dimset = set([d for d in dims if d is not None])
   if len(dimset) != 1:
     raise NotImplementedError(
@@ -422,8 +435,24 @@ def _select_papply_rule(name, vals, dims):
   return lax.select_p.bind(*vals), like_dim
 
 
+def _add_jaxvals_papply_rule(name, size, vals, dims):
+  x, y = vals
+  xdim, ydim = dims
+  if xdim == ydim:
+    out_dim = xdim
+  elif ydim is None:
+    y = lax.psplit_like(y, x, name)
+    out_dim = xdim
+  else:
+    x = lax.psplit_like(x, y, name)
+    out_dim = ydim
+  return ad_util.add_jaxvals_p.bind(x, y), out_dim
+
+
 parallel.papply_primitive_rules[lax.dot_p] = _dot_papply_rule
 parallel.papply_primitive_rules[lax.dot_general_p] = _dot_general_papply_rule
 parallel.papply_primitive_rules[lax.reshape_p] = _reshape_papply_rule
 parallel.papply_primitive_rules[lax.transpose_p] = _transpose_papply_rule
 parallel.papply_primitive_rules[lax.select_p] = _select_papply_rule
+parallel.papply_primitive_rules[ad_util.add_jaxvals_p] = (
+    _add_jaxvals_papply_rule)

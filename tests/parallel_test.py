@@ -53,7 +53,7 @@ class SerialPmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testPsplit(self):
-    f = lambda x: lax.psplit(x, 'i', 2)
+    f = lambda x: lax.psplit(x, 'i', 2, 0)
     arg = onp.arange(3 * 2 * 3 * 5).reshape(3, 2, 3, 5)
     ans = _serial_pmap(f, axis_name='i', out_axes=2)(arg)
     expected = arg

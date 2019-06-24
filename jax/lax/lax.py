@@ -1767,6 +1767,12 @@ def _convert_element_type_translation_rule(c, operand, new_dtype, old_dtype):
   new_etype = xla_bridge.dtype_to_etype_exact(new_dtype)
   return c.ConvertElementType(operand, new_element_type=new_etype)
 
+def _convert_element_type_papply_rule(name, size, vals, dims, new_dtype,
+                                      **kwargs):
+  operand, = vals
+  dim, = dims
+  return convert_element_type(operand, new_dtype), dim
+
 convert_element_type_p = standard_primitive(
     _convert_element_type_shape_rule, _convert_element_type_dtype_rule,
     'convert_element_type', _convert_element_type_translation_rule)
@@ -1774,6 +1780,7 @@ ad.deflinear(
     convert_element_type_p,
     lambda t, new_dtype, old_dtype: [convert_element_type(t, old_dtype)])
 batching.defvectorized(convert_element_type_p)
+parallel.papply_primitive_rules[convert_element_type_p] = _convert_element_type_papply_rule
 
 
 def _bitcast_convert_type_shape_rule(operand, new_dtype):
@@ -1943,6 +1950,22 @@ def _conv_general_dilated_batch_rule(
       out = _reshape_axis_into(out_spec[1], out_spec[1] + 1, out)
       return out, out_spec[1]
 
+def _conv_general_dilated_papply_rule(
+    name, size, vals, dims, window_strides, padding, lhs_dilation, rhs_dilation,
+    dimension_numbers, **unused_kwargs):
+  lhs, rhs = vals
+  lhs_dim, rhs_dim = dims
+  lhs_spec_batch_dim = dimension_numbers.lhs_spec[0]
+  if rhs_dim is None and lhs_dim == lhs_spec_batch_dim:
+    lhs = reshape(lhs, tuple(onp.insert(lhs.shape, lhs_dim, 1)))
+    out = conv_general_dilated(
+        lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
+        dimension_numbers)
+    return out, lhs_dim
+  else:
+    raise NotImplementedError(
+        "splitting a convolution along anything but input batch dimension")
+
 conv_general_dilated_p = standard_primitive(
     _conv_general_dilated_shape_rule, _conv_general_dilated_dtype_rule,
     'conv_general_dilated', _conv_general_dilated_translation_rule)
@@ -1951,6 +1974,9 @@ ad.defbilinear(conv_general_dilated_p,
                _conv_general_dilated_transpose_rhs)
 batching.primitive_batchers[
     conv_general_dilated_p] = _conv_general_dilated_batch_rule
+parallel.papply_primitive_rules[
+    conv_general_dilated_p] = _conv_general_dilated_papply_rule
+
 
 def _reshape_axis_into(src, dst, x):
   perm = [i for i in range(x.ndim) if i != src]
@@ -2218,11 +2244,25 @@ def _broadcast_in_dim_batch_rule(batched_args, batch_dims, shape,
   new_broadcast_dimensions.insert(bdim, bdim)
   return broadcast_in_dim(operand, new_shape, new_broadcast_dimensions), bdim
 
+def _broadcast_in_dim_papply_rule(name, size, vals, dims, shape,
+                                  broadcast_dimensions):
+  operand, = vals
+  dim, = dims
+  out_dim = broadcast_dimensions[dim]
+  if shape[out_dim] != shape[dim]:
+    raise ValueError(
+        "broadcast_in_dim changes hidden dimension size: {} to {}".format(
+            shape[dim], shape[out_dim]))
+  sub_bdims = tuple(onp.delete(broadcast_dimensions, dim))
+  sub_shape = tuple(onp.delete(shape, out_dim))
+  return broadcast_in_dim(operand, sub_shape, sub_bdims), out_dim
+
 
 broadcast_in_dim_p = standard_primitive(
     _broadcast_in_dim_shape_rule, _input_dtype, 'broadcast_in_dim')
 ad.deflinear(broadcast_in_dim_p, _broadcast_in_dim_transpose_rule)
 batching.primitive_batchers[broadcast_in_dim_p] = _broadcast_in_dim_batch_rule
+parallel.papply_primitive_rules[broadcast_in_dim_p] = _broadcast_in_dim_papply_rule
 
 
 def _clamp_shape_rule(min, operand, max):
@@ -2350,10 +2390,27 @@ def _pad_batch_rule(batched_args, batch_dims, padding_config):
   else:
     raise NotImplementedError  # loop and stack
 
+def _pad_papply_rule(name, size, vals, dims, padding_config):
+  operand, padding_value = vals
+  operand_dim, padding_value_dim = dims
+  assert padding_value_dim is None
+  padding_config = list(padding_config)
+  if padding_config[operand_dim] == (0, 0, 0):
+    padded = pad(
+        operand,
+        padding_value,
+        padding_config[:operand_dim] + padding_config[operand_dim + 1:])
+    return padded, operand_dim
+  else:
+    raise NotImplementedError(
+        'pad changes size of hidden dimension {} with config {}'.format(
+            operand_dim, padding_config))
+
 pad_p = standard_primitive(_pad_shape_rule, _input_dtype, 'pad')
 ad.deflinear(pad_p, _pad_transpose)
 ad.primitive_transposes[pad_p] = _pad_transpose
 batching.primitive_batchers[pad_p] = _pad_batch_rule
+parallel.papply_primitive_rules[pad_p] = _pad_papply_rule
 
 
 def _reshape_shape_rule(operand, new_sizes, dimensions, **unused_kwargs):
@@ -2593,10 +2650,30 @@ def _slice_batching_rule(batched_args, batch_dims, start_indices, limit_indices,
   out = slice(operand, new_start_indices, new_limit_indices, new_strides)
   return out, bdim
 
+def _slice_papply_rule(name, size, vals, dims, start_indices, limit_indices,
+                       strides, **kwargs):
+  operand, = vals
+  dim, = dims
+  start_indices = list(start_indices)
+  limit_indices = list(limit_indices)
+
+  if (start_indices[dim] != 0 or
+      limit_indices[dim] != size or
+      strides is not None and strides[dim] != 1):
+    raise NotImplementedError('slice changes side of hidden dimension')
+
+  out = slice(
+      operand,
+      start_indices[:dim] + start_indices[dim + 1:],
+      limit_indices[:dim] + limit_indices[dim + 1:],
+      strides[:dim] + strides[dim + 1:] if strides is not None else None)
+  return out, dim
+
 slice_p = standard_primitive(_slice_shape_rule, _input_dtype, 'slice',
                              _slice_translation_rule)
 ad.deflinear(slice_p, _slice_transpose_rule)
 batching.primitive_batchers[slice_p] = _slice_batching_rule
+parallel.papply_primitive_rules[slice_p] = _slice_papply_rule
 
 
 def _dynamic_slice_shape_rule(operand, start_indices, slice_sizes,
@@ -2859,9 +2936,27 @@ def _gather_batching_rule(batched_args, batch_dims, dimension_numbers,
     return gather(operand, start_indices, dimension_numbers=dnums,
                   slice_sizes=slice_sizes), 0
 
-def _gather_serial_pmap_rule(vals, axes):
-  val, = vals
-  return val, None
+def _gather_papply_rule(
+    name, size, vals, dims, dimension_numbers, slice_sizes, operand_shape):
+  operand, start_indices = vals
+  operand_dim, start_indices_dim = dims
+  if (operand_dim is None and
+      start_indices_dim is not None and
+      start_indices_dim not in dimension_numbers.offset_dims and
+      dimension_numbers.collapsed_slice_dims == (0,)):
+    offset_dims = tuple(i - 1 if i > start_indices_dim else i
+                        for i in dimension_numbers.offset_dims)
+    dnums = GatherDimensionNumbers(
+        offset_dims=offset_dims,
+        collapsed_slice_dims=dimension_numbers.collapsed_slice_dims,
+        start_index_map=dimension_numbers.start_index_map)
+    out = gather(operand, start_indices, dimension_numbers=dnums,
+                  slice_sizes=slice_sizes)
+    out_dim = start_indices_dim + onp.sum(
+        onp.less_equal(offset_dims, start_indices_dim))
+    return out, out_dim
+  else:
+    raise NotImplementedError
 
 gather_p = standard_primitive(
     _gather_shape_rule, _gather_dtype_rule, 'gather',
@@ -2869,8 +2964,7 @@ gather_p = standard_primitive(
 ad.defjvp(gather_p, _gather_jvp_rule, None)
 ad.primitive_transposes[gather_p] = _gather_transpose_rule
 batching.primitive_batchers[gather_p] = _gather_batching_rule
-parallel.serial_pmap_primitive_rules[gather_p] = _gather_serial_pmap_rule
-
+parallel.papply_primitive_rules[gather_p] = _gather_papply_rule
 
 class ScatterDimensionNumbers(collections.namedtuple(
     "ScatterDimensionNumbers",
