@@ -287,6 +287,9 @@ def _shapes_are_broadcast_compatible(shapes):
       return False
   return True
 
+def _shapes_are_equal_length(shapes):
+  return all(len(shape) == len(shapes[0]) for shape in shapes[1:])
+
 
 class LaxBackedNumpyTests(jtu.JaxTestCase):
   """Tests for LAX-backed Numpy implementation."""
@@ -1410,17 +1413,29 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(lnp_op, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_axis={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), axis),
-       "rng": rng, "shape": shape, "dtype": dtype, "axis": axis}
-      for shape in [(3,), (3, 4), (3, 4, 5)]
-      for axis in itertools.chain(range(len(shape)), [-1], [None])
+      {"testcase_name": "_{}_ishape={}_axis={}".format(
+          jtu.format_shape_dtype_string(x_shape, dtype), i_shape, axis),
+       "rng": rng, "x_shape": x_shape, "i_shape": i_shape, "dtype": dtype,
+       "axis": axis}
+      for x_shape, i_shape in filter(
+        _shapes_are_equal_length,
+        filter(_shapes_are_broadcast_compatible,
+               CombosWithReplacement(nonempty_nonscalar_array_shapes, 2)))
+      for axis in itertools.chain(range(len(x_shape)), [-1], [None])
       for dtype in default_dtypes
       for rng in [jtu.rand_default()]))
-  def testTakeAlongAxis(self, shape, dtype, axis, rng):
+  def testTakeAlongAxis(self, x_shape, i_shape, dtype, axis, rng):
+    i_shape = onp.array(i_shape)
+    if axis is None:
+      i_shape = [onp.prod(i_shape, dtype=onp.int64)]
+    else:
+      # Test the case where the size of the axis doesn't necessarily broadcast.
+      i_shape[axis] *= 3
+      i_shape = list(i_shape)
     def args_maker():
-      x = rng(shape, dtype)
-      i = onp.argsort(x, axis=axis)
+      x = rng(x_shape, dtype)
+      n = onp.prod(x_shape, dtype=onp.int32) if axis is None else x_shape[axis]
+      i = rng(i_shape, onp.int32) % n
       return x, i
 
     lnp_op = lambda x, i: lnp.take_along_axis(x, i, axis=axis)
