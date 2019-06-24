@@ -43,7 +43,6 @@ from ..interpreters import partial_eval as pe
 from ..interpreters import xla
 from ..interpreters import ad
 from ..interpreters import batching
-from ..interpreters import parallel
 from ..util import curry, memoize, safe_zip, unzip2, prod
 from ..tree_util import build_tree, tree_unflatten, tree_map
 from ..lib import xla_bridge
@@ -1430,7 +1429,6 @@ def unop(result_dtype, accepted_dtypes, name):
   dtype_rule = partial(unop_dtype_rule, result_dtype, accepted_dtypes, name)
   prim = standard_primitive(_attrgetter('shape'), dtype_rule, name)
   batching.defvectorized(prim)
-  parallel.defvectorized(prim)
   return prim
 standard_unop = partial(unop, _identity)
 _attrgetter = lambda name: lambda x, **kwargs: getattr(x, name)
@@ -1471,7 +1469,6 @@ def binop(result_dtype, accepted_dtypes, name, translation_rule=None):
   prim = standard_primitive(shape_rule, dtype_rule, name,
                             translation_rule=translation_rule)
   batching.defbroadcasting(prim)
-  parallel.defbroadcasting(prim)
   return prim
 standard_binop = partial(binop, _input_dtype)
 
@@ -3865,7 +3862,6 @@ tie_in_p.def_abstract_eval(lambda x, y: y)
 xla.translations[tie_in_p] = lambda c, x, y: y
 ad.deflinear(tie_in_p, _tie_in_transpose_rule)
 batching.primitive_batchers[tie_in_p] = _tie_in_batch_rule
-parallel.defidentity(tie_in_p, argnum=1)
 
 
 shaped_identity_p = Primitive('shape_id')

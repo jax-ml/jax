@@ -190,7 +190,6 @@ def _allreduce_translation_rule(prim, c, val, replica_groups):
   return c.AllReduce(val, computation, replica_groups=replica_groups)
 
 psum_p = standard_pmap_primitive('psum')
-parallel.defreducer(lax.reduce_sum_p, psum_p)
 pxla.split_axis_rules[psum_p] = \
     partial(_allreduce_split_axis_rule, psum_p, lax._reduce_sum)
 pxla.parallel_translation_rules[psum_p] = \
@@ -200,7 +199,6 @@ ad.deflinear(psum_p, lambda t, axis_name: [t])
 
 
 pmax_p = standard_pmap_primitive('pmax')
-parallel.defreducer(lax.reduce_max_p, pmax_p)
 pxla.parallel_translation_rules[pmax_p] = \
     partial(_allreduce_translation_rule, lax.max_p)
 pxla.split_axis_rules[pmax_p] = \
@@ -208,7 +206,6 @@ pxla.split_axis_rules[pmax_p] = \
 
 
 pmin_p = standard_pmap_primitive('pmin')
-parallel.defreducer(lax.reduce_min_p, pmin_p)
 pxla.parallel_translation_rules[pmin_p] = \
     partial(_allreduce_translation_rule, lax.min_p)
 pxla.split_axis_rules[pmin_p] = \
@@ -267,6 +264,95 @@ pxla.split_axis_rules[all_to_all_p] = _all_to_all_split_axis_rule
 # TODO(skye): it would be nice if we could put these with their corresponding
 # primitives, but that currently causes circular dependencies. More refactoring
 # might fix this.
+
+
+def _drop(x, dim, axis_name):
+  return lax.dynamic_index_in_dim(x, axis_index(axis_name), dim, False)
+
+
+def _broadcasting_papply(prim, name, size, vals, axes, **params):
+  x, y = vals
+  xdim, ydim = axes
+
+  if xdim is None:
+    if x.shape:
+      if x.shape[ydim] == 1:
+        x = x.reshape(onp.delete(x.shape, ydim))
+      else:
+        x = _drop(x, ydim, name)
+    return prim.bind(x, y, **params), ydim
+  elif ydim is None:
+    if y.shape:
+      if y.shape[xdim] == 1:
+        y = y.reshape(onp.delete(y.shape, xdim))
+      else:
+        y = _drop(y, xdim, name)
+    return prim.bind(x, y, **params), xdim
+  elif xdim == ydim:
+    return prim.bind(x, y, **params), xdim
+  else:
+    x = all_to_all(x, name, ydim - int(xdim <= ydim), xdim)
+    return prim.bind(x, y, **params), ydim
+
+def _defbroadcasting(prim):
+  parallel.papply_primitive_rules[prim] = partial(_broadcasting_papply, prim)
+
+
+def _vectorized_papply(prim, name, size, vals, axes, **params):
+  assert all(axes[0] == a for a in axes[1:])
+  return prim.bind(*vals, **params), axes[0]
+
+def _defvectorized(prim):
+  parallel.papply_primitive_rules[prim] = partial(_vectorized_papply, prim)
+
+
+def _reducer_papply(prim, cprim, name, size, vals, papply_axes, axes, **kwargs):
+  operand, = vals
+  papply_axis, = papply_axes
+
+  other_axes = [i for i in axes if i != papply_axis]
+  other_axes = [i - 1 if i > papply_axis else i for i in other_axes]
+
+  if other_axes:
+    if 'input_shape' in kwargs:  # special to the reduce-sum family
+      s = kwargs['input_shape']
+      kwargs['input_shape'] = s[:papply_axis] + s[papply_axis + 1:]
+    result = prim.bind(operand, axes=tuple(other_axes), **kwargs)
+  else:
+    result = operand
+
+  if not axes or papply_axis in axes:
+    return cprim.bind(result, axis_name=name), None
+  else:
+    new_papply_axis = papply_axis - onp.sum(onp.less(other_axes, papply_axis))
+    return result, new_papply_axis
+
+def _defreducer(prim, collective_prim):
+  parallel.papply_primitive_rules[prim] = partial(_reducer_papply, prim, collective_prim)
+
+
+def _identity_papply(prim, argnum, name, vals, axes, **params):
+  return prim.bind(*vals, **params), axes[argnum]
+
+def _defidentity(prim, argnum=0):
+  parallel.papply_primitive_rules[prim] = partial(_identity_papply, prim, argnum)
+
+
+_defvectorized(lax.sin_p)
+_defvectorized(lax.cos_p)
+_defvectorized(lax.neg_p)
+
+_defbroadcasting(lax.add_p)
+_defbroadcasting(lax.sub_p)
+_defbroadcasting(lax.div_p)
+_defbroadcasting(lax.mul_p)
+
+_defidentity(lax.tie_in_p)
+
+_defreducer(lax.reduce_sum_p, psum_p)
+_defreducer(lax.reduce_max_p, pmax_p)
+_defreducer(lax.reduce_min_p, pmin_p)
+
 
 def _dot_papply_rule(name, size, vals, dims):
   x, y = vals
@@ -383,13 +469,8 @@ def _select_papply_rule(name, size, vals, dims):
     raise NotImplementedError(
         'papply of select with operands split along different dimensions')
   dim, = dimset
-
   def drop(x, d):
-    if d is None:
-      return lax.dynamic_index_in_dim(x, axis_index(name), dim, False)
-    else:
-      return x
-
+    return _drop(x, dim, name) if d is None else x
   return lax.select_p.bind(*map(drop, vals, dims)), dim
 
 
