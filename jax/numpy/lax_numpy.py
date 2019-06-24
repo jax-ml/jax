@@ -768,6 +768,20 @@ def where(condition, x=None, y=None):
     return lax.select(condition, *_promote_dtypes(x, y))
 
 
+@_wraps(onp.select)
+def select(condlist, choicelist, default=0):
+  if len(condlist) != len(choicelist):
+    msg = "condlist must have length equal to choicelist ({} vs {})"
+    raise ValueError(msg.format(len(condlist), len(choicelist)))
+  if len(condlist) == 0:
+    raise ValueError("condlist must be non-empty")
+
+  output = default
+  for cond, choice in zip(condlist[::-1], choicelist[::-1]):
+    output = where(cond, choice, output)
+  return output
+
+
 def broadcast_arrays(*args):
   """Like Numpy's broadcast_arrays but doesn't return views."""
   shapes = [shape(arg) for arg in args]
