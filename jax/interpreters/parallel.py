@@ -170,6 +170,7 @@ def broadcasting_papply(prim, name, size, vals, axes, **params):
   x, y = vals
   xdim, ydim = axes
 
+  # TODO vectors! these asserts are wrong
   if xdim is None:
     if x.shape:
       assert x.shape[ydim] == 1

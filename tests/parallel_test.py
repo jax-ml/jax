@@ -128,6 +128,7 @@ class PapplyTest(jtu.JaxTestCase):
 class ParallelizeTest(jtu.JaxTestCase):
 
   def testNormalize(self):
+
     def f(x):
       return x / x.sum(0)
 
@@ -138,6 +139,17 @@ class ParallelizeTest(jtu.JaxTestCase):
 
     jaxpr = make_jaxpr(_parallelize(f))(x)
     self.assertIn('psum', repr(jaxpr))
+
+  def testAdd(self):
+    x = onp.arange(10)
+
+    def f(y):
+      return x + y
+
+    y = 2 * onp.arange(10)
+    expected = f(y)
+    ans = _parallelize(f)(y)
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "testTranspose_shape={}_perm={}"
