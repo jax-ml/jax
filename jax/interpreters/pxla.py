@@ -64,7 +64,7 @@ def shard_arg(device_ordinals, axis_size, arg):
   nrep = len(device_ordinals)
   assignments = assign_shards_to_replicas(nrep, axis_size)
   if (type(arg) in (ShardedDeviceArray, ShardedDeviceTuple)
-      and nrep == len(arg.device_buffers)):
+      and _axis_size(arg) == axis_size and nrep == len(arg.device_buffers)):
     _, ids = onp.unique(assignments, return_index=True)
     get_shard = memoize_unary(lambda i: arg.device_buffers[i].to_py())
     return [buf if buf.device() == device_ordinals[r]
@@ -81,6 +81,14 @@ def _slice(x, i):
     return core.pack(_slice(elt, i) for elt in x)
   else:
     return x[i]
+
+def _axis_size(x):
+  if type(x) is ShardedDeviceArray:
+    return x.shape[0]
+  elif type(x) is ShardedDeviceTuple:
+    return x.axis_size
+  else:
+    raise TypeError(type(x))
 
 
 def sharded_result_handler(axis_size, aval):
@@ -515,17 +523,40 @@ class ShardedDeviceArray(xla.DeviceArray):
   represent distinct logical shards. The correspondence can be computed with
   the assign_shards_to_replicas function.
   """
-  __slots__ = ["device_buffers"]
+  __slots__ = ["device_buffers", "_num_chunks"]
 
   def __init__(self, aval, device_buffers):
     self.device_buffers = device_buffers
     self.shape, self.dtype = aval.shape, aval.dtype
     self.ndim, self.size = len(aval.shape), prod(aval.shape)
+    self._num_chunks = aval.shape[0]
     self._npy_value = None
+
+  def reshape(self, *newshape, **kwargs):
+    order = kwargs.pop("order", "C")
+    if len(kwargs) == 1:
+      invalid_kwarg, = kwargs
+      msg = "'{}' is an invalid keyword argument for this function"
+      raise TypeError(msg.format(invalid_kwarg))  # same as NumPy error
+    elif kwargs:
+      invalid_kwargs = "'{}'".format("'".join(kwargs))
+      msg = "{} are invalid keyword arguments for this function"
+      raise TypeError(msg.format(invalid_kwargs))  # different from NumPy error
+    if len(newshape) == 1 and not isinstance(newshape[0], int):
+      newshape = newshape[0]
+
+    if order == "C":
+      newshape = onp.broadcast_to(0, self.shape).reshape(newshape).shape
+      new = ShardedDeviceArray(ShapedArray(newshape, self.dtype),
+                               self.device_buffers)
+      new._num_chunks = self._num_chunks
+      return new
+    else:
+      return super(ShardedDeviceArray, self).reshape(newshape, order=order)
 
   def _ids(self):
     num_bufs = len(self.device_buffers)
-    assignments = assign_shards_to_replicas(num_bufs, self.shape[0])
+    assignments = assign_shards_to_replicas(num_bufs, self._num_chunks)
     _, ids = onp.unique(assignments, return_index=True)
     return ids
 
@@ -539,17 +570,18 @@ class ShardedDeviceArray(xla.DeviceArray):
     if self._npy_value is None:
       ids = self._ids()
       self.copy_to_host_async()
-      npy_shards = [buf.to_py() for buf in self.device_buffers]
+      npy_shards = [self.device_buffers[i].to_py() for i in ids]
       self._npy_value = onp.stack([npy_shards[i] for i in ids])
-    return self._npy_value
+    return self._npy_value.reshape(self.shape)
 
   def __getitem__(self, idx):
-    if self._npy_value is None and type(idx) is int:
+    if (self._npy_value is None and type(idx) is int
+        and self._num_chunks == self.shape[0]):
       # When we don't have a copy of the data on the host, and we're just trying
       # to extract a simple integer-indexed slice of the logical array, we can
       # avoid transferring from all the devices and just communicate with one.
       ids = self._ids()
-      return self.device_buffers[ids[idx]].to_py()
+      return self.device_buffers[ids[idx]].to_py().reshape(self.shape[1:])
     else:
       return super(ShardedDeviceArray, self).__getitem__(idx)
 
