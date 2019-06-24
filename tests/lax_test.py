@@ -1035,6 +1035,7 @@ class LaxTest(jtu.JaxTestCase):
        "dims": dims, "rng": rng}
       for init_val, op, dtypes in [
           (0, lax.add, default_dtypes),
+          (1, lax.mul, default_dtypes),
           (-onp.inf, lax.max, float_dtypes),
           (onp.iinfo(onp.int32).min, lax.max, [onp.int32]),
           (onp.iinfo(onp.int64).min, lax.max, [onp.int64]),
@@ -1289,6 +1290,64 @@ class LaxTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(arg_shape, dtype), rand_idxs(),
                           rng(update_shape, dtype)]
     fun = partial(lax.scatter_add, dimension_numbers=dnums)
+    self._CompileAndCheck(fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_idxs={}_update={}_dnums={}".format(
+          jtu.format_shape_dtype_string(arg_shape, dtype),
+          idxs, update_shape, dnums),
+       "arg_shape": arg_shape, "dtype": dtype, "idxs": idxs,
+       "update_shape": update_shape, "dnums": dnums, "rng": rng,
+       "rng_idx": rng_idx}
+      for dtype in float_dtypes
+      for arg_shape, idxs, update_shape, dnums in [
+          ((5,), onp.array([[0], [2]]), (2,), lax.ScatterDimensionNumbers(
+            update_window_dims=(), inserted_window_dims=(0,),
+            scatter_dims_to_operand_dims=(0,))),
+          ((10,), onp.array([[0], [0], [0]]), (3, 2), lax.ScatterDimensionNumbers(
+            update_window_dims=(1,), inserted_window_dims=(),
+            scatter_dims_to_operand_dims=(0,))),
+          ((10, 5,), onp.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
+            update_window_dims=(1,), inserted_window_dims=(0,),
+            scatter_dims_to_operand_dims=(0,))),
+      ]
+      for rng_idx in [jtu.rand_int(max(arg_shape))]
+      for rng in [jtu.rand_default()]))
+  def testScatterMin(self, arg_shape, dtype, idxs, update_shape, dnums, rng,
+                     rng_idx):
+    rand_idxs = lambda: rng_idx(idxs.shape, idxs.dtype)
+    args_maker = lambda: [rng(arg_shape, dtype), rand_idxs(),
+                          rng(update_shape, dtype)]
+    fun = partial(lax.scatter_min, dimension_numbers=dnums)
+    self._CompileAndCheck(fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_idxs={}_update={}_dnums={}".format(
+          jtu.format_shape_dtype_string(arg_shape, dtype),
+          idxs, update_shape, dnums),
+       "arg_shape": arg_shape, "dtype": dtype, "idxs": idxs,
+       "update_shape": update_shape, "dnums": dnums, "rng": rng,
+       "rng_idx": rng_idx}
+      for dtype in float_dtypes
+      for arg_shape, idxs, update_shape, dnums in [
+          ((5,), onp.array([[0], [2]]), (2,), lax.ScatterDimensionNumbers(
+            update_window_dims=(), inserted_window_dims=(0,),
+            scatter_dims_to_operand_dims=(0,))),
+          ((10,), onp.array([[0], [0], [0]]), (3, 2), lax.ScatterDimensionNumbers(
+            update_window_dims=(1,), inserted_window_dims=(),
+            scatter_dims_to_operand_dims=(0,))),
+          ((10, 5,), onp.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
+            update_window_dims=(1,), inserted_window_dims=(0,),
+            scatter_dims_to_operand_dims=(0,))),
+      ]
+      for rng_idx in [jtu.rand_int(max(arg_shape))]
+      for rng in [jtu.rand_default()]))
+  def testScatterMax(self, arg_shape, dtype, idxs, update_shape, dnums, rng,
+                     rng_idx):
+    rand_idxs = lambda: rng_idx(idxs.shape, idxs.dtype)
+    args_maker = lambda: [rng(arg_shape, dtype), rand_idxs(),
+                          rng(update_shape, dtype)]
+    fun = partial(lax.scatter_max, dimension_numbers=dnums)
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -1635,14 +1694,15 @@ class LaxAutodiffTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_lhs_shape={}_rhs_shape={}_strides={}_padding={}_lhs_dilation={}_"
-       "rhs_dilation={}_dims={}"
+       "rhs_dilation={}_dims={}_feature_group_count={}"
        .format(jtu.format_shape_dtype_string(lhs_shape, dtype),
                jtu.format_shape_dtype_string(rhs_shape, dtype),
-               strides, padding, lhs_dil, rhs_dil, ",".join(dim_nums)),
+               strides, padding, lhs_dil, rhs_dil, ",".join(dim_nums),
+               feature_group_count),
        "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
        "strides": strides, "padding": padding, "lhs_dil": lhs_dil,
        "rhs_dil": rhs_dil, "rng": rng, "dimension_numbers": dim_nums,
-       "perms": perms}
+       "perms": perms, "feature_group_count": feature_group_count}
       for lhs_shape, rhs_shape, all_strides, all_pads, lhs_dils, rhs_dils in [
           ((b, i, 6, 7),  # lhs_shape
            (j, i, 1, 2),  # rhs_shape
@@ -1651,28 +1711,38 @@ class LaxAutodiffTest(jtu.JaxTestCase):
            [(1, 1), (2, 1)],  # lhs_dils
            [(1, 1), (2, 2)])  # rhs_dils
           for b, i, j in itertools.product([1, 2], repeat=3)]
+      for feature_group_count in [1, 2]
       for strides in all_strides
       for rhs_dil in rhs_dils
       for lhs_dil in lhs_dils
       for dtype in [onp.float32]
       for padding in all_pads
-      for rng in [jtu.rand_default()]
       for dim_nums, perms in [
           (("NCHW", "OIHW", "NCHW"), ([0, 1, 2, 3], [0, 1, 2, 3])),
           (("NHWC", "HWIO", "NHWC"), ([0, 2, 3, 1], [2, 3, 1, 0])),
-          (("NHWC", "OIHW", "NCHW"), ([0, 2, 3, 1], [0, 1, 2, 3]))
-      ]))
+          (("NHWC", "OIHW", "NCHW"), ([0, 2, 3, 1], [0, 1, 2, 3]))]
+      for rng in [jtu.rand_default()]
+  ))
   @jtu.skip_on_devices("tpu")
   def testConvGeneralDilatedGrad(self, lhs_shape, rhs_shape, dtype, strides,
                                  padding, lhs_dil, rhs_dil, dimension_numbers,
-                                 perms, rng):
+                                 perms, feature_group_count, rng):
     tol = 1e-1 if onp.finfo(dtype).bits == 32 else 1e-3
-    lhs_perm, rhs_perm = perms  # permute to compatible shapes
-    lhs = onp.transpose(rng(lhs_shape, dtype), lhs_perm)
-    rhs = onp.transpose(rng(rhs_shape, dtype), rhs_perm)
+
+    # permute shapes to match dim_spec, scale by feature_group_count
+    lhs_perm, rhs_perm = perms
+    lhs_shape = list(onp.take(lhs_shape, lhs_perm))
+    rhs_shape = list(onp.take(rhs_shape, rhs_perm))
+    dim_spec = lax.conv_dimension_numbers(lhs_shape, rhs_shape, dimension_numbers)
+    lhs_shape[dim_spec.lhs_spec[1]] *= feature_group_count
+    rhs_shape[dim_spec.rhs_spec[0]] *= feature_group_count
+
+    lhs = rng(lhs_shape, dtype)
+    rhs = rng(rhs_shape, dtype)
     conv = partial(lax.conv_general_dilated, window_strides=strides,
                    padding=padding, lhs_dilation=lhs_dil, rhs_dilation=rhs_dil,
-                   dimension_numbers=dimension_numbers)
+                   dimension_numbers=dimension_numbers,
+                   feature_group_count=feature_group_count)
     check_grads_bilinear(conv, (lhs, rhs), order=2, modes=["fwd", "rev"],
                          atol=tol, rtol=tol)
 
@@ -1754,20 +1824,29 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     check_grads(broadcast_in_dim, (operand,), 2, ["fwd", "rev"], tol, tol, tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inshape={}_outshape={}".format(
+      {"testcase_name": "_inshape={}_outshape={}_perm={}".format(
           jtu.format_shape_dtype_string(arg_shape, dtype),
-          jtu.format_shape_dtype_string(out_shape, dtype)),
+          jtu.format_shape_dtype_string(out_shape, dtype),
+          permutation),
        "arg_shape": arg_shape, "out_shape": out_shape, "dtype": dtype,
-       "rng": rng}
+       "rng": rng, "permutation": permutation}
       for dtype in float_dtypes
-      for arg_shape, out_shape in [
-          [(3, 4), (12,)], [(2, 1, 4), (8,)], [(2, 2, 4), (2, 8)]
+      for arg_shape, out_shape, permutation in [
+          [(3, 4), (12,), None],
+          [(2, 1, 4), (8,), None],
+          [(2, 2, 4), (2, 8), None],
+          [(3, 4), (12,), (0, 1)],
+          [(3, 4), (12,), (1, 0)],
+          [(2, 1, 4), (8,), (0, 2, 1)],
+          [(2, 1, 4), (8,), (2, 0, 1)],
+          [(2, 2, 4), (2, 8), (0, 2, 1)],
+          [(2, 2, 4), (2, 8), (2, 0, 1)],
       ]
       for rng in [jtu.rand_default()]))
-  def testReshapeGrad(self, arg_shape, out_shape, dtype, rng):
+  def testReshapeGrad(self, arg_shape, out_shape, permutation, dtype, rng):
     tol = 1e-2 if onp.finfo(dtype).bits == 32 else None
     operand = rng(arg_shape, dtype)
-    reshape = lambda x: lax.reshape(x, out_shape)
+    reshape = lambda x: lax.reshape(x, out_shape, permutation)
     check_grads(reshape, (operand,), 2, ["fwd", "rev"], tol, tol, tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -1916,9 +1995,9 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        "dims": dims, "rng": rng}
       for init_val, op, dtypes in [
           (0, lax.add, inexact_dtypes),
-          (1, lax.mul, inexact_dtypes),
           (-onp.inf, lax.max, inexact_dtypes),
           (onp.inf, lax.min, inexact_dtypes),
+          (1, lax.mul, inexact_dtypes),
       ]
       for dtype in dtypes
       for shape, dims in [
@@ -1926,7 +2005,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
           [(3, 4, 5), (0,)],
           [(3, 4, 5), (1, 2)],
           [(3, 4, 5), (0, 2)],
-          [(3, 4, 5), (0, 1, 2)]
+          [(3, 4, 5), (0, 1, 2)],
+          [(3, 1), (1,)],
       ]
       for rng in [jtu.rand_small()]))
   def testReduceGrad(self, op, init_val, shape, dtype, dims, rng):
@@ -2151,6 +2231,93 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     ans = api.grad(api.grad(f))(x)
     expected = api.grad(api.grad(f2))(x, x)
     self.assertAllClose(ans, expected, check_dtypes=True)
+
+    ans = api.grad(lambda x: lax.stop_gradient({'foo':x})['foo'])(3.)
+    expected = onp.array(0.0)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+
+def slicer(x, bdim):
+  if bdim is None:
+    return lambda _: x
+  else:
+    return lambda i: lax.index_in_dim(x, i, bdim, keepdims=False)
+
+class LaxVmapTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_lhs_shape={}_rhs_shape={}_strides={}_padding={}_lhs_dilation={}_"
+       "rhs_dilation={}_dims={}_feature_group_count={}_lhs_bdim={}_rhs_bdim={}"
+       .format(jtu.format_shape_dtype_string(lhs_shape, dtype),
+               jtu.format_shape_dtype_string(rhs_shape, dtype),
+               strides, padding, lhs_dil, rhs_dil, ",".join(dim_nums),
+               feature_group_count, lhs_bdim, rhs_bdim),
+       "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
+       "strides": strides, "padding": padding, "lhs_dil": lhs_dil,
+       "rhs_dil": rhs_dil, "rng": rng, "dimension_numbers": dim_nums,
+       "perms": perms, "lhs_bdim": lhs_bdim, "rhs_bdim": rhs_bdim,
+       "feature_group_count": feature_group_count}
+      for lhs_shape, rhs_shape, all_strides, all_pads, lhs_dils, rhs_dils in [
+          ((b, i, 6, 7),  # lhs_shape
+           (j, i, 1, 2),  # rhs_shape
+           [(1, 1), (1, 2), (2, 1)],  # strides
+           [((0, 0), (0, 0)), ((1, 0), (0, 1)), ((0, -1), (0, 0))],  # pads
+           [(1, 1), (2, 1)],  # lhs_dils
+           [(1, 1), (2, 2)])  # rhs_dils
+          for b, i, j in itertools.product([1, 2], repeat=3)]
+      for feature_group_count in [1, 2]
+      for strides in all_strides
+      for rhs_dil in rhs_dils
+      for lhs_dil in lhs_dils
+      for dtype in [onp.float32]
+      for padding in all_pads
+      for dim_nums, perms in [
+          (("NCHW", "OIHW", "NCHW"), ([0, 1, 2, 3], [0, 1, 2, 3])),
+          (("NHWC", "HWIO", "NHWC"), ([0, 2, 3, 1], [2, 3, 1, 0])),
+          (("NHWC", "OIHW", "NCHW"), ([0, 2, 3, 1], [0, 1, 2, 3]))]
+      for lhs_bdim in itertools.chain([None], range(len(lhs_shape) + 1))
+      for rhs_bdim in itertools.chain([None], range(len(rhs_shape) + 1))
+      if (lhs_bdim, rhs_bdim) != (None, None)
+      for rng in [jtu.rand_default()]
+  ))
+  # TODO(mattjj): some cases fail on CPU with the latest XLA (jaxlib) release
+  # apparently because of an AVX512 issue, and some cases fail on TPU just due
+  # to numerical tolerances
+  @jtu.skip_on_devices("tpu", "cpu")
+  def testConvGeneralDilatedBatching(
+      self, lhs_shape, rhs_shape, dtype, strides, padding, lhs_dil, rhs_dil,
+      dimension_numbers, perms, feature_group_count, lhs_bdim, rhs_bdim, rng):
+    tol = 1e-1 if onp.finfo(dtype).bits == 32 else 1e-3
+    bdim_size = 10
+
+    # permute shapes to match dim_spec, scale by feature_group_count
+    lhs_perm, rhs_perm = perms
+    lhs_shape = list(onp.take(lhs_shape, lhs_perm))
+    rhs_shape = list(onp.take(rhs_shape, rhs_perm))
+    dim_spec = lax.conv_dimension_numbers(lhs_shape, rhs_shape, dimension_numbers)
+    lhs_shape[dim_spec.lhs_spec[1]] *= feature_group_count
+    rhs_shape[dim_spec.rhs_spec[0]] *= feature_group_count
+
+    # add batch dimension
+    if lhs_bdim is not None:
+      lhs_shape.insert(lhs_bdim, bdim_size)
+    if rhs_bdim is not None:
+      rhs_shape.insert(rhs_bdim, bdim_size)
+
+    # create arg values and sliced versions
+    lhs = rng(lhs_shape, dtype)
+    rhs = rng(rhs_shape, dtype)
+    lhs_slice = slicer(lhs, lhs_bdim)
+    rhs_slice = slicer(rhs, rhs_bdim)
+
+    conv = partial(lax.conv_general_dilated, window_strides=strides,
+                   padding=padding, lhs_dilation=lhs_dil, rhs_dilation=rhs_dil,
+                   dimension_numbers=dimension_numbers,
+                   feature_group_count=feature_group_count)
+    ans = api.vmap(conv, (lhs_bdim, rhs_bdim))(lhs, rhs)
+    expected = onp.stack([conv(lhs_slice(i), rhs_slice(i)) for i in range(bdim_size)])
+    self.assertAllClose(ans, expected, True, tol, tol)
 
 
 if __name__ == '__main__':

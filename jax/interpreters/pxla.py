@@ -74,7 +74,7 @@ def shard_arg(device_ordinals, axis_size, arg):
   else:
     shards = [(_slice(arg, assignments[i]), device_ordinals[i])
               for i in range(len(assignments))]
-    return xla.device_put_many(shards)
+    return [xla.device_put(v, device) for v, device in shards]
 
 def _slice(x, i):
   """Return the ith slice of a JaxType (tuple or array)."""
@@ -399,11 +399,17 @@ def axis_index(axis_name):
   return axis_index_p.bind(trace.pure(core.unit),
                            axis_size=axis_size, axis_name=axis_name)
 
+def _axis_index_partial_eval(trace, _, **params):
+  # This looks like the standard JaxprTrace.process_primitive rule except that
+  # we don't attempt to lower out of the trace.
+  out_aval = ShapedArray((), onp.uint32)
+  eqn = pe.JaxprEqn([], None, axis_index_p, (), False, False, params)
+  return pe.JaxprTracer(trace, pe.PartialVal((out_aval, core.unit)), eqn)
+
 axis_index_p = core.Primitive('axis_index')
-axis_index_p.def_abstract_eval(
-    lambda _, axis_size, axis_name: ShapedArray((), onp.uint32))
-xla.translations[axis_index_p] = lambda c, _, axis_size, axis_name: \
+xla.translations[axis_index_p] = lambda c, axis_size, axis_name: \
     c.Rem(c.ReplicaId(), c.Constant(onp.array(axis_size, onp.uint32)))
+pe.custom_partial_eval_rules[axis_index_p] = _axis_index_partial_eval
 
 
 ### lazy device-memory persistence and result handling

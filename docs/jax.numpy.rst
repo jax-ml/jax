@@ -114,6 +114,7 @@ jax.numpy package
     isreal
     issubdtype
     issubsctype
+    ix_
     kaiser
     kron
     lcm
@@ -174,6 +175,7 @@ jax.numpy package
     rot90
     round
     row_stack
+    select
     sign
     sin
     sinc

@@ -23,7 +23,7 @@ import numpy as onp
 
 from .. import core
 from .. import linear_util as lu
-from ..abstract_arrays import ShapedArray, ConcreteArray, is_scalar
+from ..abstract_arrays import ShapedArray, ConcreteArray
 from ..linear_util import thunk, transformation, transformation_with_aux
 from ..util import unzip2, safe_zip, safe_map, toposort, partial
 from ..core import (Trace, Tracer, new_master, Jaxpr, JaxprEqn, Literal,
@@ -49,7 +49,7 @@ def identity(x): return x
 
 class JaxprTrace(Trace):
   def pure(self, val):
-    if is_scalar(val):
+    if type(val) in core.literalable_types and onp.shape(val) == ():
       return JaxprTracer(self, PartialVal((None, val)), Literal(val))
     else:
       return self.new_const(val)
@@ -94,6 +94,9 @@ class JaxprTrace(Trace):
       partial_eval = custom_partial_eval_rules[primitive]
       return partial_eval(self, *tracers, **params)
     else:
+      pvs, consts = unzip2(t.pval for t in tracers)
+      if all(pv is None for pv in pvs):
+        return primitive.bind(*consts, **params)
       tracers = map(self.instantiate_const, tracers)
       avals = [t.aval for t in tracers]
       out_aval = primitive.abstract_eval(*avals, **params)
@@ -260,6 +263,9 @@ class JaxprTracer(Tracer):
       return self
 
   def unpack(self):
+    if type(self.recipe) is JaxprEqn and self.recipe.primitive is core.pack_p:
+      return tuple(self.recipe.invars)
+
     pv, const = self.pval
     if isinstance(pv, (AbstractValue, JaxprTracerTuple)):
       n = len(pv)
@@ -418,7 +424,7 @@ def instantiate_const_at(trace, instantiate, tracer):
     return pack(map(partial(instantiate_const_at, trace), instantiate, tracer))
   elif t is bool:
     if instantiate:
-      return trace.instantiate_const(tracer)
+      return trace.instantiate_const(trace.full_raise(tracer))
     else:
       return tracer
   else:
@@ -451,6 +457,7 @@ def tracers_to_jaxpr(in_tracers, out_tracer):
   eqns = []
   env = {}
   consts = {}
+  const_to_var = defaultdict(newvar)
   destructuring_vars = {}
   for t in sorted_tracers:
     recipe = t.recipe
@@ -461,7 +468,8 @@ def tracers_to_jaxpr(in_tracers, out_tracer):
     elif isinstance(recipe, FreeVar):
       env[var(t)] = recipe.val
     elif isinstance(recipe, ConstVar):
-      consts[var(t)] = recipe.val
+      v = t_to_var[id(t)] = const_to_var[id(recipe.val)]
+      consts[v] = recipe.val
     elif isinstance(recipe, Literal):
       t_to_var[id(t)] = recipe
     elif isinstance(recipe, Destructuring):

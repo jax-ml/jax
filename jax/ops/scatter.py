@@ -52,7 +52,8 @@ def _scatter_update(x, idx, y, scatter_op):
       or a tuple of those indicating the locations of `x` into which to scatter-
       update the values in `y`.
     y: values to be scattered.
-    scatter_op: callable, either lax.scatter or lax.scatter_add.
+    scatter_op: callable, one of lax.scatter, lax.scatter_add, lax.scatter_min,
+      or lax_scatter_max.
 
   Returns:
     An ndarray representing an updated `x` after performing the scatter-update.
@@ -261,6 +262,78 @@ def index_add(x, idx, y):
          [1., 1., 1., 1., 1., 1.]], dtype=float32)
   """
   return _scatter_update(x, idx, y, lax.scatter_add)
+
+def index_min(x, idx, y):
+  """Pure equivalent of :code:`x[idx] = minimum(x[idx], y)`.
+
+  Returns the value of `x` that would result from the
+  NumPy-style :mod:`indexed assignment <numpy.doc.indexing>`::
+    x[idx] = minimum(x[idx], y)
+
+  Note the `index_min` operator is pure; `x` itself is
+  not modified, instead the new value that `x` would have taken is returned.
+
+  Unlike the NumPy code :code:`x[idx] = minimum(x[idx], y)`, if multiple indices
+  refer to the same location the final value will be the overall min. (NumPy
+  would only look at the last update, rather than all of the updates.)
+
+  Args:
+    x: an array with the values to be updated.
+    idx: a Numpy-style index, consisting of `None`, integers, `slice` objects,
+      ellipses, ndarrays with integer dtypes, or a tuple of the above. A
+      convenient syntactic sugar for forming indices is via the
+      :data:`jax.ops.index` object.
+    y: the array of updates. `y` must be broadcastable to the shape of the
+      array that would be returned by `x[idx]`.
+
+  Returns:
+    An array.
+
+  >>> x = jax.numpy.ones((5, 6))
+  >>> jax.ops.index_minimum(x, jax.ops.index[2:4, 3:], 0.)
+  array([[1., 1., 1., 1., 1., 1.],
+         [1., 1., 1., 1., 1., 1.],
+         [1., 1., 1., 0., 0., 0.],
+         [1., 1., 1., 0., 0., 0.],
+         [1., 1., 1., 1., 1., 1.]], dtype=float32)
+  """
+  return _scatter_update(x, idx, y, lax.scatter_min)
+
+def index_max(x, idx, y):
+  """Pure equivalent of :code:`x[idx] = maximum(x[idx], y)`.
+
+  Returns the value of `x` that would result from the
+  NumPy-style :mod:`indexed assignment <numpy.doc.indexing>`::
+    x[idx] = maximum(x[idx], y)
+
+  Note the `index_max` operator is pure; `x` itself is
+  not modified, instead the new value that `x` would have taken is returned.
+
+  Unlike the NumPy code :code:`x[idx] = maximum(x[idx], y)`, if multiple indices
+  refer to the same location the final value will be the overall max. (NumPy
+  would only look at the last update, rather than all of the updates.)
+
+  Args:
+    x: an array with the values to be updated.
+    idx: a Numpy-style index, consisting of `None`, integers, `slice` objects,
+      ellipses, ndarrays with integer dtypes, or a tuple of the above. A
+      convenient syntactic sugar for forming indices is via the
+      :data:`jax.ops.index` object.
+    y: the array of updates. `y` must be broadcastable to the shape of the
+      array that would be returned by `x[idx]`.
+
+  Returns:
+    An array.
+
+  >>> x = jax.numpy.ones((5, 6))
+  >>> jax.ops.index_max(x, jax.ops.index[2:4, 3:], 6.)
+  array([[1., 1., 1., 1., 1., 1.],
+         [1., 1., 1., 1., 1., 1.],
+         [1., 1., 1., 6., 6., 6.],
+         [1., 1., 1., 6., 6., 6.],
+         [1., 1., 1., 1., 1., 1.]], dtype=float32)
+  """
+  return _scatter_update(x, idx, y, lax.scatter_max)
 
 def index_update(x, idx, y):
   """Pure equivalent of :code:`x[idx] = y`.

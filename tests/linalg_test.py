@@ -58,13 +58,18 @@ class NumpyLinalgTest(jtu.JaxTestCase):
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype, "rng": rng}
       for shape in [(1, 1), (4, 4), (2, 5, 5), (200, 200), (1000, 0, 0)]
-      for dtype in float_types()
+      for dtype in float_types() + complex_types()
       for rng in [jtu.rand_default()]))
   def testCholesky(self, shape, dtype, rng):
     def args_maker():
       factor_shape = shape[:-1] + (2 * shape[-1],)
       a = rng(factor_shape, dtype)
       return [onp.matmul(a, np.conj(T(a)))]
+
+    if np.issubdtype(dtype, np.complexfloating) and (
+        len(shape) > 2 or
+        (not FLAGS.jax_test_dut or not FLAGS.jax_test_dut.startswith("cpu"))):
+      self.skipTest("Unimplemented case for complex Cholesky decomposition.")
 
     self._CheckAgainstNumpy(onp.linalg.cholesky, np.linalg.cholesky, args_maker,
                             check_dtypes=True, tol=1e-3)
@@ -115,7 +120,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   # for GPU/TPU.
   @jtu.skip_on_devices("gpu", "tpu")
   def testEig(self, shape, dtype, rng):
-    self.skipTest("Test disabled until Jaxlib 0.1.15 is released") # TODO(phawkins)
     n = shape[-1]
     args_maker = lambda: [rng(shape, dtype)]
 
@@ -140,7 +144,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for rng in [jtu.rand_default()]))
   @jtu.skip_on_devices("gpu", "tpu")
   def testEigBatching(self, shape, dtype, rng):
-    self.skipTest("Test disabled until Jaxlib 0.1.15 is released") # TODO(phawkins)
     shape = (10,) + shape
     args = rng(shape, dtype)
     ws, vs = vmap(np.linalg.eig)(args)
@@ -422,6 +425,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
           ((1, 1), (1, 1)),
           ((4, 4), (4,)),
           ((8, 8), (8, 4)),
+          ((1, 2, 2), (3, 2)),
+          ((2, 1, 3, 3), (2, 4, 3, 4)),
       ]
       for dtype in float_types() + complex_types()
       for rng in [jtu.rand_default()]))
@@ -617,24 +622,24 @@ class ScipyLinalgTest(jtu.JaxTestCase):
        "lower": lower, "transpose_a": transpose_a,
        "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
        "rng": rng}
-      for lower, transpose_a in itertools.product([False, True], repeat=2)
+      for lower in [False, True]
+      for dtype in float_types() + complex_types()
+      for transpose_a in (
+        [0, 1] if onp.issubdtype(dtype, np.floating) else [0, 1, 2])
       for lhs_shape, rhs_shape in [
           ((4, 4), (4,)),
           ((4, 4), (4, 3)),
           ((2, 8, 8), (2, 8, 10)),
       ]
-      for dtype in float_types()
       for rng in [jtu.rand_default()]))
+  @jtu.skip_on_devices("tpu")  # TODO(phawkins): Test fails on TPU.
   def testSolveTriangularGrad(self, lower, transpose_a, lhs_shape,
-                                     rhs_shape, dtype, rng):
-    # TODO(frostig): change ensemble to support a bigger rtol
-    self.skipTest("rtol does not cover all devices and precision modes")
+                              rhs_shape, dtype, rng):
     A = np.tril(rng(lhs_shape, dtype) + 5 * onp.eye(lhs_shape[-1], dtype=dtype))
     A = A if lower else T(A)
     B = rng(rhs_shape, dtype)
-    f = partial(jsp.linalg.solve_triangular, lower=lower,
-                trans=1 if transpose_a else 0)
-    jtu.check_grads(f, (A, B), 2, rtol=1e-3)
+    f = partial(jsp.linalg.solve_triangular, lower=lower, trans=transpose_a)
+    jtu.check_grads(f, (A, B), 2, rtol=2e-2, eps=1e-3)
 
 
 if __name__ == "__main__":

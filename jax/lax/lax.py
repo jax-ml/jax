@@ -45,7 +45,7 @@ from ..interpreters import ad
 from ..interpreters import batching
 from ..interpreters import parallel
 from ..util import curry, memoize, safe_zip, unzip2, prod
-from ..tree_util import build_tree, tree_unflatten
+from ..tree_util import build_tree, tree_unflatten, tree_map
 from ..lib import xla_bridge
 from ..lib.xla_bridge import xla_client
 
@@ -371,7 +371,8 @@ def concatenate(operands, dimension):
                             operand_shapes=tuple(o.shape for o in operands))
 
 def conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation=None,
-                         rhs_dilation=None, dimension_numbers=None):
+                         rhs_dilation=None, dimension_numbers=None,
+                         feature_group_count=1):
   """General n-dimensional convolution operator, with optional dilation.
 
   Wraps XLA's `Conv
@@ -395,6 +396,7 @@ def conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation=None,
     dimension_numbers: either `None`, a `ConvDimensionNumbers` object, or
       a 3-tuple `(lhs_spec, rhs_spec, out_spec)`, where each element is a string
       of length `n+2`.
+    feature_group_count: integer, default 1. See XLA HLO docs.
 
   Returns:
     An array containing the convolution result.
@@ -438,8 +440,9 @@ def conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation=None,
   return conv_general_dilated_p.bind(
       lhs, rhs, window_strides=tuple(window_strides), padding=tuple(padding),
       lhs_dilation=tuple(lhs_dilation), rhs_dilation=tuple(rhs_dilation),
-      dimension_numbers=dimension_numbers, lhs_shape=lhs.shape,
-      rhs_shape=rhs.shape)
+      dimension_numbers=dimension_numbers,
+      feature_group_count=feature_group_count,
+      lhs_shape=lhs.shape, rhs_shape=rhs.shape)
 
 def dot(lhs, rhs):
   """Vector/vector, matrix/vector, and matrix/matrix multiplication.
@@ -549,13 +552,14 @@ def reshape(operand, new_sizes, dimensions=None):
   <https://www.tensorflow.org/xla/operation_semantics#reshape>`_
   operator.
   """
-  same_shape = onp.shape(operand) == tuple(new_sizes)
+  new_sizes = tuple(new_sizes)
+  same_shape = onp.shape(operand) == new_sizes
   same_dims = dimensions is None or tuple(dimensions) == tuple(range(onp.ndim(operand)))
   if onp.shape(operand) and same_shape and same_dims:
     return operand
   else:
     return reshape_p.bind(
-        operand, new_sizes=tuple(new_sizes),
+        operand, new_sizes=new_sizes,
         dimensions=None if dimensions is None else tuple(dimensions),
         old_sizes=onp.shape(operand))
 
@@ -663,6 +667,60 @@ def scatter_add(operand, scatter_indices, updates, dimension_numbers):
   """
   jaxpr, consts = _reduction_jaxpr(add, _const(operand, 0))
   return scatter_add_p.bind(
+      operand, scatter_indices, updates, update_jaxpr=jaxpr,
+      update_consts=consts, dimension_numbers=dimension_numbers,
+      updates_shape=updates.shape)
+
+def scatter_min(operand, scatter_indices, updates, dimension_numbers):
+  """Scatter-min operator.
+
+  Wraps `XLA's Scatter operator
+  <https://www.tensorflow.org/xla/operation_semantics#scatter>`_, where
+  the `min` function is used to combine updates and values from `operand`.
+
+  The semantics of scatter are complicated and its API is subject to change.
+
+  Args:
+    operand: an array to which the scatter should be applied
+    scatter_indices: an array that gives the indices in `operand` to which each
+      update in `updates` should be applied.
+    updates: the updates that should be scattered onto `operand`.
+    dimension_numbers: a `lax.ScatterDimensionNumbers` object that describes
+      how dimensions of `operand`, `start_indices`, `updates` and the output
+      relate.
+
+  Returns:
+    An array containing the sum of `operand` and the scattered updates.
+  """
+  jaxpr, consts = _reduction_jaxpr(min, _const(operand, 0))
+  return scatter_min_p.bind(
+      operand, scatter_indices, updates, update_jaxpr=jaxpr,
+      update_consts=consts, dimension_numbers=dimension_numbers,
+      updates_shape=updates.shape)
+
+def scatter_max(operand, scatter_indices, updates, dimension_numbers):
+  """Scatter-max operator.
+
+  Wraps `XLA's Scatter operator
+  <https://www.tensorflow.org/xla/operation_semantics#scatter>`_, where
+  the `max` function is used to combine updates and values from `operand`.
+
+  The semantics of scatter are complicated and its API is subject to change.
+
+  Args:
+    operand: an array to which the scatter should be applied
+    scatter_indices: an array that gives the indices in `operand` to which each
+      update in `updates` should be applied.
+    updates: the updates that should be scattered onto `operand`.
+    dimension_numbers: a `lax.ScatterDimensionNumbers` object that describes
+      how dimensions of `operand`, `start_indices`, `updates` and the output
+      relate.
+
+  Returns:
+    An array containing the sum of `operand` and the scattered updates.
+  """
+  jaxpr, consts = _reduction_jaxpr(max, _const(operand, 0))
+  return scatter_max_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
       update_consts=consts, dimension_numbers=dimension_numbers,
       updates_shape=updates.shape)
@@ -967,7 +1025,7 @@ def stop_gradient(x):
    >>> jax.grad(jax.grad(lambda x: jax.lax.stop_gradient(x)**2))(3.)
    array(0., dtype=float32)
    """
-  return stop_gradient_p.bind(x)
+  return tree_map(stop_gradient_p.bind, x)
 
 
 def _safe_mul(x, y): return safe_mul_p.bind(x, y)
@@ -1037,7 +1095,7 @@ def _conv_transpose_padding(k, s, padding):
     else:
       pad_a = int(onp.ceil(pad_len / 2))
   elif padding == 'VALID':
-    pad_len = k + s - 2 + max(k - s, 0)
+    pad_len = k + s - 2 + _max(k - s, 0)
     pad_a = k - 1
   else:
     raise ValueError('Padding mode must be `SAME` or `VALID`.')
@@ -1163,7 +1221,7 @@ def index_in_dim(operand, index, axis=0, keepdims=True):
 
 def dynamic_slice_in_dim(operand, start_index, slice_size, axis=0):
   """Convenience wrapper around dynamic_slice applying to one dimension."""
-  start_indices = [onp.array([0])] * operand.ndim
+  start_indices = [onp.array([0], dtype=_dtype(start_index))] * operand.ndim
   slice_sizes = list(operand.shape)
 
   axis = int(axis)
@@ -1600,7 +1658,7 @@ ad.defjvp(sub_p,
 ad.primitive_transposes[sub_p] = _sub_transpose
 
 mul_p = standard_binop([_num, _num], 'mul')
-ad.defbilinear_broadcasting(_brcast, mul_p, mul, mul)  # TODO
+ad.defbilinear_broadcasting(_brcast, mul_p, mul, mul)
 
 
 def _safe_mul_translation_rule(c, x, y):
@@ -1744,8 +1802,29 @@ batching.defvectorized(bitcast_convert_type_p)
 
 def _conv_general_dilated_shape_rule(
     lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
-    dimension_numbers, **unused_kwargs):
+    dimension_numbers, feature_group_count, **unused_kwargs):
   assert type(dimension_numbers) is ConvDimensionNumbers
+  if not feature_group_count > 0:
+    msg = ("conv_general_dilated feature_group_count "
+           "must be a positive integer, got {}.")
+    raise ValueError(msg.format(feature_group_count))
+  lhs_feature_count = lhs.shape[dimension_numbers.lhs_spec[1]]
+  quot, rem = divmod(lhs_feature_count, feature_group_count)
+  if rem:
+    msg = ("conv_general_dilated feature_group_count must divide lhs feature "
+           "dimension size, but {} does not divide {}.")
+    raise ValueError(msg.format(feature_group_count, lhs_feature_count))
+  if quot != rhs.shape[dimension_numbers.rhs_spec[1]]:
+    msg = ("conv_general_dilated lhs feature dimension size divided by "
+           "feature_group_count must equal the rhs input feature dimension "
+           "size, but {} // {} != {}.")
+    raise ValueError(msg.format(lhs_feature_count, feature_group_count,
+                                rhs.shape[dimension_numbers.rhs_spec[1]]))
+  if rhs.shape[dimension_numbers.rhs_spec[0]] % feature_group_count:
+    msg = ("conv_general_dilated rhs output feature dimension size must be a "
+           "multiple of feature_group_count, but {} is not a multiple of {}.")
+    raise ValueError(msg.format(rhs.shape[dimension_numbers.rhs_spec[0]],
+                                feature_group_count))
   lhs_perm, rhs_perm, out_perm = dimension_numbers
   lhs_trans = _dilate_shape(onp.take(lhs.shape, lhs_perm), lhs_dilation)
   rhs_trans = _dilate_shape(onp.take(rhs.shape, rhs_perm), rhs_dilation)
@@ -1758,16 +1837,22 @@ def _conv_general_dilated_dtype_rule(
   return binop_dtype_rule(_input_dtype, [_f32, _f32], 'conv_general_dilated',
                           lhs, rhs)
 
-_conv_transpose = lambda spec: (spec[1], spec[0]) + spec[2:]
+_conv_spec_transpose = lambda spec: (spec[1], spec[0]) + spec[2:]
 _conv_sdims = lambda spec: spec[2:]
 
 def _conv_general_dilated_transpose_lhs(
     g, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
-    dimension_numbers, lhs_shape, rhs_shape):
+    dimension_numbers, feature_group_count,
+    lhs_shape, rhs_shape):
   assert type(dimension_numbers) is ConvDimensionNumbers
   lhs_sdims, rhs_sdims, out_sdims = map(_conv_sdims, dimension_numbers)
   lhs_spec, rhs_spec, out_spec = dimension_numbers
-  t_rhs_spec = _conv_transpose(rhs_spec)
+  t_rhs_spec = _conv_spec_transpose(rhs_spec)
+  if feature_group_count > 1:
+    # in addition to switching the dims in the spec, need to move the feature
+    # group axis into the transposed rhs's output feature dim
+    rhs = _reshape_axis_out_of(rhs_spec[0], feature_group_count, rhs)
+    rhs = _reshape_axis_into(rhs_spec[0], rhs_spec[1], rhs)
   trans_dimension_numbers = ConvDimensionNumbers(out_spec, t_rhs_spec, lhs_spec)
   padding = _conv_general_vjp_lhs_padding(
       onp.take(lhs_shape, lhs_sdims), onp.take(rhs_shape, rhs_sdims),
@@ -1777,14 +1862,20 @@ def _conv_general_dilated_transpose_lhs(
   return conv_general_dilated(
       g, revd_weights, window_strides=lhs_dilation, padding=padding,
       lhs_dilation=window_strides, rhs_dilation=rhs_dilation,
-      dimension_numbers=trans_dimension_numbers)
+      dimension_numbers=trans_dimension_numbers,
+      feature_group_count=feature_group_count)
 
 def _conv_general_dilated_transpose_rhs(
     g, lhs, window_strides, padding, lhs_dilation, rhs_dilation,
-    dimension_numbers, lhs_shape, rhs_shape):
+    dimension_numbers, feature_group_count,
+    lhs_shape, rhs_shape):
   assert type(dimension_numbers) is ConvDimensionNumbers
+
   lhs_sdims, rhs_sdims, out_sdims = map(_conv_sdims, dimension_numbers)
-  lhs_trans, rhs_trans, out_trans = map(_conv_transpose, dimension_numbers)
+  lhs_trans, rhs_trans, out_trans = map(_conv_spec_transpose, dimension_numbers)
+  if feature_group_count > 1:
+    lhs = _reshape_axis_out_of(lhs_trans[0], feature_group_count, lhs)
+    lhs = _reshape_axis_into(lhs_trans[0], lhs_trans[1], lhs)
   trans_dimension_numbers = ConvDimensionNumbers(lhs_trans, out_trans, rhs_trans)
   padding = _conv_general_vjp_rhs_padding(
       onp.take(lhs_shape, lhs_sdims), onp.take(rhs_shape, rhs_sdims),
@@ -1793,72 +1884,71 @@ def _conv_general_dilated_transpose_rhs(
   return conv_general_dilated(
       lhs, g, window_strides=rhs_dilation, padding=padding,
       lhs_dilation=lhs_dilation, rhs_dilation=window_strides,
-      dimension_numbers=trans_dimension_numbers)
+      dimension_numbers=trans_dimension_numbers,
+      feature_group_count=feature_group_count)
 
 def _conv_general_dilated_translation_rule(
     c, lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
-    dimension_numbers, **unused_kwargs):
+    dimension_numbers, feature_group_count, **unused_kwargs):
   assert type(dimension_numbers) is ConvDimensionNumbers
   dimension_numbers = _conv_general_proto(dimension_numbers)
   return c.ConvGeneralDilated(lhs, rhs, window_strides, padding, lhs_dilation,
-                              rhs_dilation, dimension_numbers)
+                              rhs_dilation, dimension_numbers,
+                              feature_group_count)
 
 def _conv_general_dilated_batch_rule(
     batched_args, batch_dims, window_strides, padding,
-    lhs_dilation, rhs_dilation, dimension_numbers, **unused_kwargs):
+    lhs_dilation, rhs_dilation, dimension_numbers,
+    feature_group_count, **unused_kwargs):
   lhs, rhs = batched_args
   lhs_bdim, rhs_bdim = batch_dims
-  lhs_dim, rhs_dim, out_dim = dimension_numbers
+  lhs_spec, rhs_spec, out_spec = dimension_numbers
 
   if lhs_bdim is not None and rhs_bdim is not None:
-    #TODO(#212): use a map construct instead of unrolling.
-    lhs = batching.move_dim_to_front(lhs, lhs_bdim)
-    rhs = batching.move_dim_to_front(rhs, rhs_bdim)
-    outputs = [
-        conv_general_dilated(l, r, window_strides, padding,
-                             lhs_dilation, rhs_dilation, dimension_numbers)
-        for l, r in zip(lhs, rhs)]
-    outputs = [reshape(out, (1,) + out.shape) for out in outputs]
-    outputs = concatenate(outputs, 0)
-    return outputs, 0
+    assert lhs.shape[lhs_bdim] == rhs.shape[rhs_bdim]
+    new_lhs = _reshape_axis_into(lhs_bdim, lhs_spec[1], lhs)
+    new_rhs = _reshape_axis_into(rhs_bdim, rhs_spec[0], rhs)
+    out = conv_general_dilated(new_lhs, new_rhs, window_strides, padding,
+                               lhs_dilation, rhs_dilation, dimension_numbers,
+                               feature_group_count=lhs.shape[lhs_bdim] * feature_group_count)
+    out = _reshape_axis_out_of(out_spec[1], lhs.shape[lhs_bdim], out)
+    return out, out_spec[1]
 
   elif lhs_bdim is not None:
-    lhs = batching.move_dim_to_front(lhs, lhs_bdim)
-    lhs_perm = ((0, lhs_dim[0] + 1) + tuple(range(1, lhs_dim[0] + 1)) +
-                tuple(range(lhs_dim[0] + 2, len(lhs_dim) + 1)))
-    new_lhs_dim = (0,) + tuple(x + 1 if x < lhs_dim[0] else x
-                               for x in lhs_dim[1:])
-    new_out_dim = (0,) + tuple(x + 1 if x < out_dim[0] else x
-                               for x in out_dim[1:])
+    new_lhs = _reshape_axis_into(lhs_bdim, lhs_spec[0], lhs)
+    out = conv_general_dilated(new_lhs, rhs, window_strides, padding,
+                               lhs_dilation, rhs_dilation, dimension_numbers,
+                               feature_group_count)
+    out = _reshape_axis_out_of(out_spec[0], lhs.shape[lhs_bdim], out)
+    return out, out_spec[0]
 
-    batched_size = lhs.shape[0]
-    n_size = lhs.shape[lhs_dim[0] + 1]
-    if lhs_dim[0] != 0:
-      lhs = transpose(lhs, lhs_perm)
-    lhs = reshape(lhs, (batched_size * n_size,) + lhs.shape[2:])
-    outputs = conv_general_dilated(
-        lhs, rhs, window_strides, padding,
-        lhs_dilation, rhs_dilation,
-        ConvDimensionNumbers(new_lhs_dim, dimension_numbers.rhs_spec,
-                             new_out_dim))
-    outputs = reshape(outputs, (batched_size, n_size,) + outputs.shape[1:])
-
-    if out_dim[0] != 0:
-      out_perm = ((0,) + tuple(range(2, out_dim[0] + 2)) + (1,) +
-              tuple(range(out_dim[0] + 2, len(out_dim) + 1)))
-      outputs = transpose(outputs, out_perm)
-
-    return outputs, 0
   elif rhs_bdim is not None:
-    #TODO(#212): use a map construct instead of unrolling.
-    rhs = batching.move_dim_to_front(rhs, rhs_bdim)
-    outputs = [
-        conv_general_dilated(lhs, x, window_strides, padding,
-                                 lhs_dilation, rhs_dilation, dimension_numbers)
-        for x in rhs]
-    outputs = [reshape(out, (1,) + out.shape) for out in outputs]
-    outputs = concatenate(outputs, 0)
-    return outputs, 0
+    if feature_group_count == 1:
+      new_rhs = _reshape_axis_into(rhs_bdim, rhs_spec[0], rhs)
+      out = conv_general_dilated(lhs, new_rhs, window_strides, padding,
+                                lhs_dilation, rhs_dilation, dimension_numbers,
+                                feature_group_count)
+      out = _reshape_axis_out_of(out_spec[1], rhs.shape[rhs_bdim], out)
+      return out, out_spec[1]
+    else:
+      # feature_group needs to be outermost, so we need to factor it out of the
+      # rhs output feature dim, then factor the batch dim into the remaining rhs
+      # output feature dim, then put feature_group back in. we do something
+      # similar on the output. an alternative which would require more FLOPs but
+      # fewer reshapes would be to broadcast lhs.
+      new_rhs = _reshape_axis_out_of(rhs_spec[0] + int(rhs_bdim <= rhs_spec[0]),
+                                     feature_group_count, rhs)
+      new_rhs = _reshape_axis_into(rhs_bdim + int(rhs_spec[0] < rhs_bdim),
+                                   rhs_spec[0] + 1,
+                                   new_rhs)
+      new_rhs = _reshape_axis_into(rhs_spec[0], rhs_spec[0], new_rhs)
+      out = conv_general_dilated(lhs, new_rhs, window_strides, padding,
+                                lhs_dilation, rhs_dilation, dimension_numbers,
+                                feature_group_count)
+      out = _reshape_axis_out_of(out_spec[1], feature_group_count, out)
+      out = _reshape_axis_out_of(out_spec[1] + 1, rhs.shape[rhs_bdim], out)
+      out = _reshape_axis_into(out_spec[1], out_spec[1] + 1, out)
+      return out, out_spec[1]
 
 def _conv_general_dilated_papply_rule(
     name, size, vals, dims, window_strides, padding, lhs_dilation, rhs_dilation,
@@ -1886,6 +1976,21 @@ batching.primitive_batchers[
     conv_general_dilated_p] = _conv_general_dilated_batch_rule
 parallel.papply_primitive_rules[
     conv_general_dilated_p] = _conv_general_dilated_papply_rule
+
+
+def _reshape_axis_into(src, dst, x):
+  perm = [i for i in range(x.ndim) if i != src]
+  perm.insert(dst, src)
+  new_shape = list(onp.delete(x.shape, src))
+  new_shape[dst] *= x.shape[src]
+  return reshape(x, new_shape, perm)
+
+def _reshape_axis_out_of(src, size1, x):
+  shape = list(x.shape)
+  size2, ragged = divmod(shape[src], size1)
+  assert not ragged
+  shape[src:src+1] = [size1, size2]
+  return reshape(x, shape)
 
 
 def _dot_shape_rule(lhs, rhs):
@@ -2330,11 +2435,11 @@ def _reshape_translation_rule(c, operand, new_sizes, dimensions, old_sizes):
   return c.Reshape(operand, new_sizes=new_sizes, dimensions=dimensions)
 
 def _reshape_transpose_rule(t, new_sizes, dimensions, old_sizes):
-  out = reshape(t, old_sizes)
   if dimensions is None:
-    return [out]
+    return [reshape(t, old_sizes)]
   else:
-    return [transpose(out, onp.argsort(dimensions))]
+    return [transpose(reshape(t, onp.take(old_sizes, dimensions)),
+                      onp.argsort(dimensions))]
 
 def _reshape_batch_rule(batched_args, batch_dims, new_sizes, dimensions, **unused):
   operand, = batched_args
@@ -2602,7 +2707,7 @@ def _dynamic_slice_jvp_rule(g, operand, start_indices, slice_sizes,
 def _dynamic_slice_transpose_rule(t, operand, start_indices, slice_sizes,
                                   operand_shape):
   assert operand is None
-  zeros = broadcast(_const(t, 0), operand_shape)
+  zeros = full(operand_shape, 0, dtype=_dtype(t))
   return [dynamic_update_slice(zeros, t, start_indices), ad_util.zero]
 
 def _dynamic_slice_batching_rule(batched_args, batch_dims, slice_sizes,
@@ -3025,6 +3130,20 @@ ad.primitive_transposes[scatter_add_p] = _scatter_add_transpose_rule
 batching.primitive_batchers[scatter_add_p] = (
   partial(_scatter_batching_rule, scatter_add))
 
+# TODO(jlebar): Add derivatives.
+scatter_min_p = standard_primitive(
+    _scatter_shape_rule, _scatter_dtype_rule, 'scatter-min',
+    _scatter_translation_rule)
+batching.primitive_batchers[scatter_min_p] = (
+  partial(_scatter_batching_rule, scatter_min))
+
+# TODO(jlebar): Add derivatives.
+scatter_max_p = standard_primitive(
+    _scatter_shape_rule, _scatter_dtype_rule, 'scatter-max',
+    _scatter_translation_rule)
+batching.primitive_batchers[scatter_max_p] = (
+  partial(_scatter_batching_rule, scatter_max))
+
 
 def _scatter_jvp(primals, tangents, update_jaxpr, update_consts,
                  dimension_numbers, updates_shape):
@@ -3177,8 +3296,6 @@ reduce_sum_p = standard_primitive(_reduce_sum_shape_rule, _input_dtype,
                                   'reduce_sum', _reduce_sum_translation_rule)
 ad.deflinear(reduce_sum_p, _reduce_sum_transpose_rule)
 batching.defreducer(reduce_sum_p)
-
-
 
 
 def _reduce_prod_shape_rule(operand, axes):

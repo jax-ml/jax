@@ -24,7 +24,7 @@ import six
 
 import jax.numpy as np
 from jax import jit, grad, device_get, device_put, jacfwd, jacrev, hessian
-from jax import api
+from jax import api, lax
 from jax.core import Primitive, pack, JaxTuple
 from jax.interpreters import ad
 from jax.interpreters.xla import DeviceArray, DeviceTuple
@@ -773,6 +773,54 @@ class APITest(jtu.JaxTestCase):
     out_shape = api.eval_shape(fun, A, b, x)
 
     self.assertEqual(out_shape, (3, 5))
+
+  def test_detuplification(self):
+    def fun(x):
+      y = pack((x, x))
+      z = pack((y, x))
+      y1, _ = z
+      y2, _ = y1
+      return y2
+
+    assert len(api.make_jaxpr(fun)(1).eqns) == 0
+
+  def test_issue_871(self):
+    T = np.array([[1., 2.], [3., 4.], [5., 6.]])
+    x = np.array([1, 2, 3])
+
+    y, f_jvp = api.linearize(np.sum, x)
+    jtu.check_raises(lambda: f_jvp(T), ValueError,
+                     ("linearized function called on tangent values "
+                      "inconsistent with the original primal values."))
+
+    y, f_jvp = api.linearize(api.jit(np.sum), x)
+    jtu.check_raises(lambda: f_jvp(T), ValueError,
+                     ("linearized function called on tangent values "
+                      "inconsistent with the original primal values."))
+
+  def test_partial_eval_lower(self):
+    # this is a simplified model of a bug that arose when we first used @jit in
+    # a jvp rule. it's in this file because we want to use make_jaxpr.
+    @api.jit
+    def f(a, b, c):
+      a = lax.broadcast(a, (2,))
+      return lax.select(a, b, c)
+
+    a = onp.ones((3, 3), dtype=onp.bool_)
+    b = onp.ones((2, 3, 3))
+    c = onp.ones((2, 3, 3))
+
+    jaxpr = api.make_jaxpr(lambda b, c: f(a, b, c))(b, c)
+    subjaxpr = next(eqn.bound_subjaxprs[0][0] for eqn in jaxpr.eqns
+                    if eqn.bound_subjaxprs)
+    self.assertEqual(len(subjaxpr.eqns), 1)
+
+  def test_grad_of_int_errors(self):
+    dfn = grad(lambda x: x ** 2)
+    jtu.check_raises_regexp(
+      lambda: dfn(3), TypeError,
+      "Primal inputs to reverse-mode differentiation must be of float or "
+      "complex type, got type int..")
 
 
 if __name__ == '__main__':

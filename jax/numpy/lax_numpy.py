@@ -28,7 +28,7 @@ import opt_einsum
 import six
 from six.moves import builtins, xrange
 
-from jax import jit
+from jax import jit, device_put
 from .. import core
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
 from ..interpreters.xla import DeviceArray
@@ -231,6 +231,17 @@ def _wraps(fun):
       return op
   return wrap
 
+# TODO(phawkins): use this helper everywhere.
+def _canonicalize_axis(axis, num_dims):
+  """Canonicalize an axis in (-num_dims, num_dims) to [0, num_dims)."""
+  axis = int(axis)
+  if axis < 0:
+    axis = axis + num_dims
+  if axis < 0 or axis >= num_dims:
+      raise ValueError(
+          "axis {} is out of bounds for array of dimension {}".format(
+              axis, num_dims))
+  return axis
 
 ### implementations of numpy functions in terms of lax
 
@@ -739,7 +750,11 @@ else:
     return out
 
 
+# The `jit` on `where` exists to avoid materializing constants in cases like
+# `np.where(np.zeros(1000), 7, 4)`. In op-by-op mode, we don't want to
+# materialize the broadcast forms of scalar arguments.
 @_wraps(onp.where)
+@jit
 def where(condition, x=None, y=None):
   if x is None or y is None:
     raise ValueError("Must use the three-argument form of where().")
@@ -751,6 +766,20 @@ def where(condition, x=None, y=None):
     return empty
   else:
     return lax.select(condition, *_promote_dtypes(x, y))
+
+
+@_wraps(onp.select)
+def select(condlist, choicelist, default=0):
+  if len(condlist) != len(choicelist):
+    msg = "condlist must have length equal to choicelist ({} vs {})"
+    raise ValueError(msg.format(len(condlist), len(choicelist)))
+  if len(condlist) == 0:
+    raise ValueError("condlist must be non-empty")
+
+  output = default
+  for cond, choice in zip(condlist[::-1], choicelist[::-1]):
+    output = where(cond, choice, output)
+  return output
 
 
 def broadcast_arrays(*args):
@@ -940,9 +969,9 @@ def _reduction_dims(a, axis):
   if axis is None:
     return onp.arange(ndim(a))
   elif isinstance(axis, (onp.ndarray, tuple, list)):
-    return onp.mod(onp.asarray(axis), ndim(a))
+    return tuple(_canonicalize_axis(x, ndim(a)) for x in axis)
   elif isinstance(axis, int):
-    return onp.mod([axis], ndim(a))
+    return (_canonicalize_axis(axis, ndim(a)),)
   else:
     raise TypeError("Unexpected type of axis argument: {}".format(type(axis)))
 
@@ -1150,36 +1179,64 @@ nancumprod = _make_cumulative_reduction(
 
 ### Array-creation functions
 
-# TODO(phawkins): use this helper everywhere.
-def _canonicalize_axis(axis, num_dims):
-  """Canonicalize an axis in (-num_dims, num_dims) to [0, num_dims)."""
-  axis = int(axis)
-  if axis < 0:
-    axis = axis + num_dims
-  if axis < 0 or axis >= num_dims:
-      raise ValueError(
-          "axis {} is out of bounds for array of dimension {}".format(
-              axis, num_dims))
-  return axis
-
-
-@_wraps(onp.pad)
-def pad(array, pad_width, mode, constant_values=0):
-  if mode != "constant":
-    msg = "Only the 'constant' case of np.pad is implemented, got mode={}."
-    raise NotImplementedError(msg.format(mode))
-
+@partial(jit, static_argnums=(1, 2))
+def _pad(array, pad_width, mode, constant_values):
   array = asarray(array)
   nd = ndim(array)
   pad_width = onp.broadcast_to(onp.asarray(pad_width), (nd, 2))
-  constant_values = broadcast_to(asarray(constant_values), (nd, 2))
-  for i in xrange(nd):
-    widths = [(0, 0, 0)] * nd
-    widths[i] = (pad_width[i, 0], 0, 0)
-    array = lax.pad(array, constant_values[i, 0], widths)
-    widths[i] = (0, pad_width[i, 1], 0)
-    array = lax.pad(array, constant_values[i, 1], widths)
-  return array
+  if any(pad_width < 0):
+    raise ValueError("index can't contain negative values")
+
+  if mode == "constant":
+    constant_values = broadcast_to(asarray(constant_values), (nd, 2))
+    constant_values = lax.convert_element_type(constant_values, array.dtype)
+    for i in xrange(nd):
+      widths = [(0, 0, 0)] * nd
+      widths[i] = (pad_width[i, 0], 0, 0)
+      array = lax.pad(array, constant_values[i, 0], widths)
+      widths[i] = (0, pad_width[i, 1], 0)
+      array = lax.pad(array, constant_values[i, 1], widths)
+    return array
+  elif mode in ("symmetric", "reflect", "wrap"):
+    for i in xrange(nd):
+      if array.shape[i] == 0:
+        if (pad_width[i, 0] > 0 or pad_width[i, 1] > 0):
+          msg = "Cannot apply '{}' padding to empty axis"
+          raise ValueError(msg.format(mode))
+        continue
+
+      n = array.shape[i]
+      rarray = lax.rev(array, dimensions=(i,))
+      offset = 1 if (mode == "reflect" and n > 1) else 0
+      wrap_mode = mode == "wrap"
+
+      def build_padding(padding, forward):
+        xs = []
+        delta = n - offset
+        while padding > delta:
+          padding -= delta
+          p = array if forward else rarray
+          xs.append(lax.slice_in_dim(p, offset, n, axis=i))
+          if not wrap_mode:
+            forward = not forward
+        if padding > 0:
+          x = lax.slice_in_dim(array if forward else rarray, offset,
+                               padding + offset, axis=i)
+          xs.append(x)
+        return xs
+
+      parts = reversed(build_padding(pad_width[i, 0], forward=not wrap_mode))
+      parts = [lax.rev(x, dimensions=(i,)) for x in parts]
+      parts += [array]
+      parts += build_padding(pad_width[i, 1], forward=wrap_mode)
+      array = lax.concatenate(parts, dimension=i)
+    return array
+  else:
+    msg = "Unimplemented padding mode '{}' for np.pad."
+    raise NotImplementedError(msg.format(mode))
+
+def pad(array, pad_width, mode, constant_values=0):
+  return _pad(array, pad_width, mode, constant_values)
 
 
 @_wraps(onp.stack)
@@ -1279,13 +1336,15 @@ def atleast_3d(*arys):
 
 @_wraps(onp.array)
 def array(object, dtype=None, copy=True, order="K", ndmin=0):
-  del copy  # Unused.
-  if ndmin != 0 or order != "K":
+  if ndmin != 0 or (order is not None and order != "K"):
     raise NotImplementedError("Only implemented for order='K', ndmin=0.")
 
   if isinstance(object, ndarray):
     if dtype and _dtype(object) != dtype:
       return lax.convert_element_type(object, dtype)
+    elif copy:
+      # If a copy was requested, we must copy.
+      return device_put(object)
     else:
       return object
   elif hasattr(object, '__array__'):
@@ -1304,7 +1363,10 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
       return out
   else:
     raise TypeError("Unexpected input type for array: {}".format(type(object)))
-asarray = array
+
+@_wraps(onp.asarray)
+def asarray(a, dtype=None, order=None):
+  return array(a, dtype=dtype, copy=False, order=order)
 
 
 @_wraps(onp.zeros_like)
@@ -1398,6 +1460,29 @@ logspace = onp.logspace
 geomspace = onp.geomspace
 meshgrid = onp.meshgrid
 
+
+@_wraps(onp.ix_)
+def ix_(*args):
+  n = len(args)
+  output = []
+  for i, a in enumerate(args):
+    a = asarray(a)
+    if len(a.shape) != 1:
+      msg = "Arguments to jax.numpy.ix_ must be 1-dimensional, got shape {}"
+      raise ValueError(msg.format(a.shape))
+    if _dtype(a) == bool_:
+      raise NotImplementedError(
+        "Boolean arguments to jax.numpy.ix_ are not implemented")
+    shape = [1] * n
+    shape[i] = a.shape[0]
+    if a.size == 0:
+      # Numpy uses an integer index type for empty arrays.
+      output.append(lax.full(shape, onp.zeros((), onp.intp)))
+    else:
+      output.append(lax.reshape(a, shape))
+  return tuple(output)
+
+
 @_wraps(onp.repeat)
 def repeat(a, repeats, axis=None):
   if not isscalar(repeats):
@@ -1442,14 +1527,20 @@ def tri(N, M=None, k=0, dtype=None):
 
 @_wraps(onp.tril)
 def tril(m, k=0):
-  mask = tri(*shape(m)[-2:], k=k, dtype=bool)
-  return where(mask, m, zeros_like(m))
+  m_shape = shape(m)
+  if len(m_shape) < 2:
+    raise ValueError("Argument to jax.numpy.tril must be at least 2D")
+  mask = tri(*m_shape[-2:], k=k, dtype=bool)
+  return lax.select(lax.broadcast(mask, m_shape[:-2]), m, zeros_like(m))
 
 
 @_wraps(onp.triu)
 def triu(m, k=0):
-  mask = tri(*shape(m)[-2:], k=k - 1, dtype=bool)
-  return where(mask, zeros_like(m), m)
+  m_shape = shape(m)
+  if len(m_shape) < 2:
+    raise ValueError("Argument to jax.numpy.triu must be at least 2D")
+  mask = tri(*m_shape[-2:], k=k - 1, dtype=bool)
+  return lax.select(lax.broadcast(mask, m_shape[:-2]), zeros_like(m), m)
 
 
 @_wraps(onp.trace)
@@ -2036,19 +2127,28 @@ def take(a, indices, axis=None, out=None, mode=None):
 
 @_wraps(getattr(onp, "take_along_axis", None))
 def take_along_axis(arr, indices, axis):
-  if axis is None and ndim(arr) != 1:
-    return take_along_axis(arr.ravel(), indices.ravel(), 0)
+  if axis is None:
+    if ndim(indices) != 1:
+      msg = "take_along_axis indices must be 1D if axis=None, got shape {}"
+      raise ValueError(msg.format(shape(indices)))
+    return take_along_axis(arr.ravel(), indices, 0)
+  elif ndim(arr) != ndim(indices):
+    msg = "indices and arr must have the same number of dimensions; {} vs. {}"
+    raise ValueError(msg.format(ndim(indices), ndim(arr)))
   elif ndim(arr) == 1:
     return lax.index_take(arr, (indices,), (0,))
   else:
     # TODO(mattjj): if we lower directly to lax.gather here, we might be able to
     # avoid the reshape on the output.
-    all_indices = [lax.broadcasted_iota(_dtype(indices), shape(indices), i)
+    arr_shape = list(shape(arr))
+    arr_shape[axis] = 1
+    out_shape = lax.broadcast_shapes(shape(indices), tuple(arr_shape))
+    all_indices = [lax.broadcasted_iota(_dtype(indices), out_shape, i)
                    for i in range(ndim(arr))]
-    all_indices[axis] = indices
+    all_indices[axis] = broadcast_to(indices, out_shape)
     all_indices = tuple(map(ravel, all_indices))
     out_flat = lax.index_take(arr, all_indices, tuple(range(ndim(arr))))
-    return reshape(out_flat, shape(indices))
+    return reshape(out_flat, out_shape)
 
 
 ### Indexing

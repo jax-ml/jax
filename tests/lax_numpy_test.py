@@ -287,6 +287,9 @@ def _shapes_are_broadcast_compatible(shapes):
       return False
   return True
 
+def _shapes_are_equal_length(shapes):
+  return all(len(shape) == len(shapes[0]) for shape in shapes[1:])
+
 
 class LaxBackedNumpyTests(jtu.JaxTestCase):
   """Tests for LAX-backed Numpy implementation."""
@@ -606,30 +609,39 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}_rpadwidth={}_rconstantvalues={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), pad_width_rank,
+      {"testcase_name": "_shape={}_mode={}_rpadwidth={}_rconstantvalues={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), mode, pad_width_rank,
           constant_values_rank),
-       "shape": shape, "dtype": dtype, "pad_width_rank": pad_width_rank,
+       "shape": shape, "dtype": dtype, "mode": mode,
+       "pad_width_rank": pad_width_rank,
        "constant_values_rank": constant_values_rank, "rng": jtu.rand_default(),
        "irng": jtu.rand_int(3)}
-      for shape in all_shapes for dtype in all_dtypes
-      for pad_width_rank in range(3)
-      for constant_values_rank in range(3)))
-  def testPad(self, shape, dtype, pad_width_rank, constant_values_rank, rng,
-              irng):
+      for mode, constant_values_rank, shapes in [
+        ('constant', 0, all_shapes),
+        ('constant', 1, all_shapes),
+        ('constant', 2, all_shapes),
+        ('symmetric', None, nonempty_shapes),
+        ('reflect', None, nonempty_shapes),
+        ('wrap', None, nonempty_shapes),
+      ]
+      for shape in shapes for dtype in all_dtypes
+      for pad_width_rank in range(3)))
+  def testPad(self, shape, dtype, mode, pad_width_rank, constant_values_rank,
+              rng, irng):
     pad_width = irng([len(shape), 2][2 - pad_width_rank:], onp.int32)
-    def onp_fun(x, constant_vals):
+    def onp_fun(x, kwargs):
       if pad_width.size == 0:
         return x
-      return onp.pad(x, pad_width, mode='constant',
-                     constant_values=constant_vals)
-    def lnp_fun(x, constant_vals):
-      return lnp.pad(x, pad_width, mode='constant',
-                     constant_values=constant_vals)
+      return onp.pad(x, pad_width, mode=mode, **kwargs)
+    def lnp_fun(x, kwargs):
+      return lnp.pad(x, pad_width, mode=mode, **kwargs)
 
     def args_maker():
-      constant_vals = rng([len(shape), 2][2 - constant_values_rank:], dtype)
-      return rng(shape, dtype), constant_vals
+      kwargs = {}
+      if constant_values_rank:
+        kwargs["constant_values"] = rng(
+          [len(shape), 2][2 - constant_values_rank:], dtype)
+      return rng(shape, dtype), kwargs
 
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
@@ -759,7 +771,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "dtype": dtype, "shape": shape, "op": op, "k": k,
        "rng": jtu.rand_default()}
       for dtype in default_dtypes
-      for shape in [shape for shape in all_shapes if len(shape) >= 1]
+      for shape in [shape for shape in all_shapes if len(shape) >= 2]
       for op in ["tril", "triu"]
       for k in list(range(-3, 3))))
   def testTriLU(self, dtype, shape, op, k, rng):
@@ -1401,17 +1413,29 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(lnp_op, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_axis={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), axis),
-       "rng": rng, "shape": shape, "dtype": dtype, "axis": axis}
-      for shape in [(3,), (3, 4), (3, 4, 5)]
-      for axis in itertools.chain(range(len(shape)), [-1], [None])
+      {"testcase_name": "_{}_ishape={}_axis={}".format(
+          jtu.format_shape_dtype_string(x_shape, dtype), i_shape, axis),
+       "rng": rng, "x_shape": x_shape, "i_shape": i_shape, "dtype": dtype,
+       "axis": axis}
+      for x_shape, i_shape in filter(
+        _shapes_are_equal_length,
+        filter(_shapes_are_broadcast_compatible,
+               CombosWithReplacement(nonempty_nonscalar_array_shapes, 2)))
+      for axis in itertools.chain(range(len(x_shape)), [-1], [None])
       for dtype in default_dtypes
       for rng in [jtu.rand_default()]))
-  def testTakeAlongAxis(self, shape, dtype, axis, rng):
+  def testTakeAlongAxis(self, x_shape, i_shape, dtype, axis, rng):
+    i_shape = onp.array(i_shape)
+    if axis is None:
+      i_shape = [onp.prod(i_shape, dtype=onp.int64)]
+    else:
+      # Test the case where the size of the axis doesn't necessarily broadcast.
+      i_shape[axis] *= 3
+      i_shape = list(i_shape)
     def args_maker():
-      x = rng(shape, dtype)
-      i = onp.argsort(x, axis=axis)
+      x = rng(x_shape, dtype)
+      n = onp.prod(x_shape, dtype=onp.int32) if axis is None else x_shape[axis]
+      i = rng(i_shape, onp.int32) % n
       return x, i
 
     lnp_op = lambda x, i: lnp.take_along_axis(x, i, axis=axis)
@@ -1452,6 +1476,45 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp.nan_to_num, lnp.nan_to_num, args_maker,
                             check_dtypes=True)
     self._CompileAndCheck(lnp.nan_to_num, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+        {"testcase_name": jtu.format_test_name_suffix("ix_", shapes, dtypes),
+         "rng": jtu.rand_default(), "shapes": shapes, "dtypes": dtypes}
+        for shapes, dtypes in (
+          ((), ()),
+          (((7,),), (onp.float32,)),
+          (((3,), (4,)), (onp.float32, onp.int32)),
+          (((3,), (0,), (4,)), (onp.int32, onp.float32, onp.int32)),
+        )))
+  def testIx_(self, rng, shapes, dtypes):
+    args_maker = lambda: [rng(shape, dtype)
+                          for shape, dtype in zip(shapes, dtypes)]
+    self._CheckAgainstNumpy(onp.ix_, lnp.ix_, args_maker,
+                            check_dtypes=True)
+    self._CompileAndCheck(lnp.ix_, args_maker, check_dtypes=True)
+
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+        {"testcase_name": jtu.format_test_name_suffix("select", shapes,
+                                                      (onp.bool_,) * n + dtypes),
+         "rng": jtu.rand_default(), "shapes": shapes, "dtypes": dtypes}
+        for n in range(0, 3)
+        for shapes in filter(
+          _shapes_are_broadcast_compatible,
+          CombosWithReplacement(all_shapes, 2 * n + 1))
+        for dtypes in CombosWithReplacement(all_dtypes, n + 1)))
+  def test(self, rng, shapes, dtypes):
+    n = len(dtypes) - 1
+    def args_maker():
+      condlist = [rng(shape, onp.bool_) for shape in shapes[:n]]
+      choicelist = [rng(shape, dtype)
+                    for shape, dtype in zip(shapes[n:-1], dtypes[:n])]
+      default = rng(shapes[-1], dtypes[-1])
+      return condlist, choicelist, default
+    self._CheckAgainstNumpy(onp.select, lnp.select, args_maker,
+                            check_dtypes=True)
+    self._CompileAndCheck(lnp.select, args_maker, check_dtypes=True)
+
 
   def testIssue330(self):
     x = lnp.full((1, 1), lnp.array([1])[0])  # doesn't crash
@@ -1593,6 +1656,22 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       expected = onp_op(x)
       actual = lnp_op(x)
       self.assertAllClose(expected, actual, check_dtypes=True)
+
+  def testIssue883(self):
+    # from https://github.com/google/jax/issues/883
+
+    @partial(api.jit, static_argnums=(1,))
+    def f(x, v):
+      return x
+
+    x = lnp.ones((10, 10))
+    v = lnp.array([1, 2, 3])
+    first_call = f(x, v)
+    second_call = f(x, v)  # doesn't crash
+
+  def testReductionOfOutOfBoundsAxis(self):  # Issue 888
+    x = lnp.ones((3, 4))
+    self.assertRaises(ValueError, lambda: lnp.sum(x, axis=2))
 
 
 if __name__ == "__main__":

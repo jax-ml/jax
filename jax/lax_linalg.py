@@ -19,9 +19,10 @@ from __future__ import print_function
 import numpy as onp
 
 from jax.numpy import lax_numpy as np
+from jax import ad_util
 from jax import core
 from jax import lax
-from jax import ad_util
+from jax import ops
 from jax.interpreters import xla
 from jax.interpreters import ad
 from jax.interpreters import batching
@@ -66,6 +67,7 @@ def svd(x, full_matrices=True, compute_uv=True):
 
 def triangular_solve(a, b, left_side=False, lower=False, transpose_a=False,
                      conjugate_a=False):
+  conjugate_a = conjugate_a and np.issubdtype(lax.dtype(a), np.complexfloating)
   return triangular_solve_p.bind(
       a, b, left_side=left_side, lower=lower, transpose_a=transpose_a,
       conjugate_a=conjugate_a)
@@ -90,9 +92,12 @@ def cholesky_jvp_rule(primals, tangents):
   L = np.tril(cholesky_p.bind(x))
 
   # Forward-mode rule from https://arxiv.org/pdf/1602.07527.pdf
-  phi = lambda X: np.tril(X) / (1 + np.eye(X.shape[-1], dtype=X.dtype))
-  tmp = triangular_solve(L, sigma_dot,
-                         left_side=False, transpose_a=True, lower=True)
+  def phi(X):
+    l = np.tril(X)
+    return l / (np._constant_like(X, 1) + np.eye(X.shape[-1], dtype=X.dtype))
+
+  tmp = triangular_solve(L, sigma_dot, left_side=False, transpose_a=True,
+                         conjugate_a=True, lower=True)
   L_dot = lax.batch_matmul(L, phi(triangular_solve(
       L, tmp, left_side=True, transpose_a=False, lower=True)))
   return L, L_dot
@@ -291,6 +296,7 @@ def triangular_solve_jvp_rule_a(
     g_a, ans, a, b, left_side, lower, transpose_a, conjugate_a):
   g_a = lax.neg(g_a)
   g_a = np.swapaxes(g_a, -1, -2) if transpose_a else g_a
+  g_a = np.conj(g_a) if conjugate_a else g_a
   tmp = triangular_solve(a, g_a, left_side, lower, transpose_a, conjugate_a)
   dot = lax.dot if g_a.ndim == 2 else lax.batch_matmul
   if left_side:
@@ -335,6 +341,9 @@ def triangular_solve_cpu_translation_rule(
   shape = c.GetShape(a)
   dtype = shape.element_type().type
   if len(shape.dimensions()) == 2 and dtype in _cpu_lapack_types:
+    if conjugate_a and not transpose_a:
+      a = c.Conj(a)
+      conjugate_a = False
     return lapack.jax_trsm(
       c, c.Constant(onp.array(1, dtype=dtype)), a, b, left_side, lower,
                     transpose_a, conjugate_a)
@@ -450,23 +459,34 @@ def lu_cpu_translation_rule(c, operand):
 xla.backend_specific_translations['cpu'][lu_p] = lu_cpu_translation_rule
 
 
-def lu_pivots_to_permutation(swaps, k):
-  """Converts the pivots (row swaps) returned by LU to a permutation."""
+def lu_pivots_to_permutation(swaps, m):
+  """Converts the pivots (row swaps) returned by LU to a permutation.
 
-  def body_fn(i, loop_carry):
-    swaps, permutation = loop_carry
-    j = swaps[i]
-    x, y = np.ravel(permutation[i]), np.ravel(permutation[j])
-    permutation = lax.dynamic_update_index_in_dim(permutation, y, i, axis=0)
-    permutation = lax.dynamic_update_index_in_dim(permutation, x, j, axis=0)
-    return swaps, permutation
+  We build a permutation rather than applying `swaps` directly to the rows
+  of a matrix because lax loops aren't differentiable.
 
-  n, = np.shape(swaps)
-  permutation = np.arange(k)
-  _, permutation = lax.fori_loop(
-      onp.array(0, onp.int32), onp.array(n, onp.int32), body_fn, (swaps, permutation))
-  return permutation
+  Args:
+    swaps: an array of shape (..., k) of row swaps to perform
+    m: the size of the output permutation. m should be >= k.
+  Returns:
+    An int32 array of shape (..., m).
+  """
+  assert len(swaps.shape) >= 1
+  batch_dims = swaps.shape[:-1]
+  k = swaps.shape[-1]
 
+  def body_fn(i, permutation):
+    j = swaps[..., i]
+    iotas = np.ix_(*(lax.iota(np.int32, b) for b in batch_dims))
+    x = permutation[..., i]
+    y = permutation[iotas + (j,)]
+    permutation = ops.index_update(permutation, ops.index[..., i], y)
+    return ops.index_update(permutation, ops.index[iotas + (j,)], x)
+
+  permutation = lax.broadcasted_iota(np.int32, batch_dims + (m,),
+                                     len(batch_dims))
+  return lax.fori_loop(
+    onp.array(0, onp.int32), onp.array(k, onp.int32), body_fn, permutation)
 
 
 # QR decomposition

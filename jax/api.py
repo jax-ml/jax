@@ -762,17 +762,35 @@ def linearize(fun, *primals):
   out_primal, out_pval, jaxpr, consts = ad.linearize(jaxtree_fun, *primals_flat)
   out_tree = out_tree()
   out_primal_py = build_tree(out_tree, out_primal)
-  lifted_jvp = partial(lift_linearized, jaxpr, consts, (in_trees, out_tree), out_pval)
+  primal_avals = list(map(core.get_aval, primals_flat))
+  lifted_jvp = partial(lift_linearized, jaxpr, primal_avals, consts,
+                       (in_trees, out_tree), out_pval)
   return out_primal_py, lifted_jvp
 
-def lift_linearized(jaxpr, consts, io_tree, out_pval, *py_args):
-  def fun(*args):
-    primals = pack(args) # doesn't matter what these are-they'll be ignored
-    tangents = pack(args)
+def lift_linearized(jaxpr, primal_avals, consts, io_tree, out_pval, *py_args):
+  def fun(*tangents):
+    tangent_avals = list(map(core.get_aval, tangents))
+    for primal_aval, tangent_aval in zip(primal_avals, tangent_avals):
+      try:
+        core.lattice_join(primal_aval, tangent_aval)
+      except TypeError:
+        msg = ("linearized function called on tangent values inconsistent with "
+               "the original primal values.")
+        raise ValueError(msg)
+    primals = pack(tangents)  # doesn't matter what these are-they'll be ignored
+    tangents = pack(tangents)
     _, ans = eval_jaxpr(jaxpr, consts, (), primals, tangents)
     return pe.merge_pvals(ans, out_pval)
 
   return apply_jaxtree_fun(fun, io_tree, *py_args)
+
+def _check_inexact_input_vjp(x):
+  aval = core.get_aval(x)
+  if not onp.issubdtype(aval.dtype, onp.inexact):
+    msg = ("Primal inputs to reverse-mode differentiation must be of float "
+           "or complex type, got type {}")
+    raise TypeError(msg.format(aval.dtype.name))
+
 
 def vjp(fun, *primals, **kwargs):
   """Compute a (reverse-mode) vector-Jacobian product of `fun`.
@@ -813,6 +831,7 @@ def vjp(fun, *primals, **kwargs):
     fun = lu.wrap_init(fun)
   primals_flat, in_trees = unzip2(map(pytree_to_jaxtupletree, primals))
   _check_args(primals_flat)
+  tree_map(_check_inexact_input_vjp, primals)
   jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(fun, in_trees)
   if not has_aux:
     out_primal, out_vjp = ad.vjp(jaxtree_fun, primals_flat)
@@ -927,7 +946,7 @@ def _wrap_hashably(arg):
   try:
     hash(arg)
   except TypeError:
-    return WrapHashably(arg)
+    return WrapHashably(arg)  # e.g. ndarrays, DeviceArrays
   else:
     return Hashable(arg)
 

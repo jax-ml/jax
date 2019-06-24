@@ -365,6 +365,9 @@ MIXED_ADVANCED_INDEXING_TESTS = [
                                          None,
                                          onp.array([-1, 2]))),
      ]),
+    ("IntArrayWithInt32Type",
+     [IndexSpec(shape=(3, 4), indexer=(Ellipsis, onp.array(1, dtype=onp.int32)))
+     ]),
 ]
 
 class IndexingTest(jtu.JaxTestCase):
@@ -723,6 +726,27 @@ def _update_shape(shape, indexer):
 class UpdateOps(enum.Enum):
   UPDATE = 0
   ADD = 1
+  MIN = 2
+  MAX = 3
+
+  def onp_fn(op, indexer, x, y):
+    x = x.copy()
+    x[indexer] = {
+      UpdateOps.UPDATE: lambda: y,
+      UpdateOps.ADD: lambda: x[indexer] + y,
+      UpdateOps.MIN: lambda: onp.minimum(x[indexer], y),
+      UpdateOps.MAX: lambda: onp.maximum(x[indexer], y),
+    }[op]()
+    return x
+
+  def jax_fn(op, indexer, x, y):
+    return {
+      UpdateOps.UPDATE: ops.index_update,
+      UpdateOps.ADD: ops.index_add,
+      UpdateOps.MIN: ops.index_min,
+      UpdateOps.MAX: ops.index_max,
+    }[op](x, indexer, y)
+
 
 class IndexedUpdateTest(jtu.JaxTestCase):
 
@@ -735,7 +759,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
        "op": op
   } for name, index_specs in STATIC_INDEXING_TESTS
     for shape, indexer in index_specs
-    for op in [UpdateOps.UPDATE, UpdateOps.ADD]
+    for op in UpdateOps
     for dtype in (all_dtypes if op == UpdateOps.UPDATE else default_dtypes)
     for update_shape in _broadcastable_shapes(_update_shape(shape, indexer))
     for update_dtype in ([dtype] if op == UpdateOps.ADD else all_dtypes)
@@ -743,16 +767,8 @@ class IndexedUpdateTest(jtu.JaxTestCase):
   def testStaticIndexing(self, shape, dtype, update_shape, update_dtype,
                          rng, indexer, op):
     args_maker = lambda: [rng(shape, dtype), rng(update_shape, update_dtype)]
-    def onp_fn(x, y):
-      x = x.copy()
-      if op == UpdateOps.UPDATE:
-        x[indexer] = y
-      else:
-        x[indexer] += y
-      return x
-
-    jax_op = ops.index_update if op == UpdateOps.UPDATE else ops.index_add
-    jax_fn = lambda x, y: jax_op(x, indexer, y)
+    onp_fn = lambda x, y: UpdateOps.onp_fn(op, indexer, x, y)
+    jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y)
     self._CheckAgainstNumpy(onp_fn, jax_fn, args_maker, check_dtypes=True)
     self._CompileAndCheck(jax_fn, args_maker, check_dtypes=True)
 
@@ -765,7 +781,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
        "op": op
   } for name, index_specs in ADVANCED_INDEXING_TESTS_NO_REPEATS
     for shape, indexer in index_specs
-    for op in [UpdateOps.UPDATE, UpdateOps.ADD]
+    for op in UpdateOps
     for dtype in (all_dtypes if op == UpdateOps.UPDATE else default_dtypes)
     for update_shape in _broadcastable_shapes(_update_shape(shape, indexer))
     for update_dtype in ([dtype] if op == UpdateOps.ADD else all_dtypes)
@@ -773,16 +789,8 @@ class IndexedUpdateTest(jtu.JaxTestCase):
   def testAdvancedIndexing(self, shape, dtype, update_shape, update_dtype,
                            rng, indexer, op):
     args_maker = lambda: [rng(shape, dtype), rng(update_shape, update_dtype)]
-    def onp_fn(x, y):
-      x = x.copy()
-      if op == UpdateOps.UPDATE:
-        x[indexer] = y
-      else:
-        x[indexer] += y
-      return x
-
-    jax_op = ops.index_update if op == UpdateOps.UPDATE else ops.index_add
-    jax_fn = lambda x, y: jax_op(x, indexer, y)
+    onp_fn = lambda x, y: UpdateOps.onp_fn(op, indexer, x, y)
+    jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y)
     self._CheckAgainstNumpy(onp_fn, jax_fn, args_maker, check_dtypes=True)
     self._CompileAndCheck(jax_fn, args_maker, check_dtypes=True)
 
@@ -795,7 +803,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
        "op": op
   } for name, index_specs in STATIC_INDEXING_TESTS
     for shape, indexer in index_specs
-    for op in [UpdateOps.UPDATE, UpdateOps.ADD]
+    for op in UpdateOps
     for dtype in float_dtypes
     for update_shape in _broadcastable_shapes(_update_shape(shape, indexer))
     for update_dtype in ([dtype] if op == UpdateOps.ADD else float_dtypes)

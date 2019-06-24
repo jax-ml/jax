@@ -485,7 +485,6 @@ class BatchingTest(jtu.JaxTestCase):
                                          (5, 21, 5, 1)))
     self.assertAllClose(per_example, per_example_direct, check_dtypes=True)
 
-
   def testMaxPool(self):
     W = np.array(onp.random.randn(3, 3, 1, 5), dtype=onp.float32)
     X = np.array(onp.random.randn(10, 5, 5, 1), dtype=onp.float32)
@@ -797,7 +796,7 @@ class BatchingTest(jtu.JaxTestCase):
        "op_axis": op_axis, "idxs_axis": idxs_axis, "shape": shape, "dtype":
        dtype, "idxs": idxs, "dnums": dnums, "slice_sizes": slice_sizes,
        "rng": rng, "rng_idx": rng_idx}
-      for dtype in [onp.float32, onp.int32]
+      for dtype in [onp.float32]
       for op_axis, idxs_axis, shape, idxs, dnums, slice_sizes in [
           (0, 0, (2, 5), onp.array([[[0], [2]], [[1], [3]]]),
            lax.GatherDimensionNumbers(

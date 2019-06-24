@@ -32,7 +32,7 @@ from .. import ad_util
 from .. import tree_util
 from .. import linear_util as lu
 from ..abstract_arrays import (ConcreteArray, ShapedArray, make_shaped_array,
-                               array_types, scalar_types)
+                               array_types)
 from ..core import AbstractTuple, JaxTuple, pack, valid_jaxtype, Literal
 from ..util import partial, partialmethod, memoize, concatenate, safe_map, prod
 from ..lib import xla_bridge as xb
@@ -129,9 +129,12 @@ def device_put(x, device_num=0):
     if x.device_buffer.device() == device_num:
       return x.device_buffer
     else:
-      # TODO(phawkins): perform a direct device-to-device copy rather than
-      # bouncing via the host.
-      return device_put(x.device_buffer.to_py(), device_num)
+      # TODO(phawkins): remove after the minimum Jaxlib version is raised to
+      # 0.1.22
+      if hasattr(x.device_buffer, 'copy_to_device'):
+        return x.device_buffer.copy_to_device(device_num)
+      else:
+        return device_put(x.device_buffer.to_py(), device_num)
   elif isinstance(x, DeviceConstant):
     return instantiate_device_constant(x, device_num=device_num)
   elif isinstance(x, (DeviceArray, onp.ndarray)):
@@ -141,53 +144,6 @@ def device_put(x, device_num=0):
     return xb.make_tuple(element_bufs, device_num)
   else:
     raise TypeError(t)
-
-def device_put_many(xs_and_devices):
-  """Place multiple Python values on multiple devices in parallel.
-
-  This is a wrapper around jax.lib.xla_bridge.device_put_many to handle
-  additional Python types. See the docstring for jax.interpreters.xla.device_put
-  for more information.
-
-  Args:
-    xs_and_devices: a sequence of (pyval, device_num) pairs in which  device_num
-      is an int representing the target physical device number and pyval is a
-      tuple-like tree with arraylike leaves (see the device_put docstring).
-
-  Returns:
-    A sequence of buffers representing the inputs placed on the corresponding
-    device numbers.
-  """
-  transfer_indices = []
-  transfers = []
-  outputs = [None] * len(xs_and_devices)
-  for i, (x, device_num) in enumerate(xs_and_devices):
-    x = canonicalize_pyval_dtype(x)
-    t = type(x)
-    if t is DeviceArray or t is DeviceTuple:
-      if x.device_buffer.device() == device_num:
-        outputs[i] = x.device_buffer
-      else:
-        transfer_indices.append(i)
-        # TODO(phawkins): perform a direct device-to-device copy rather than
-        # bouncing via the host.
-        transfers.append((x.device_buffer.to_py(), device_num))
-    elif isinstance(x, DeviceConstant):
-      outputs[i] = instantiate_device_constant(x, device_num=device_num)
-    elif hasattr(t, '__array__'):
-      transfer_indices.append(i)
-      transfers.append((x, device_num))  # handle arraylikes
-    elif t is JaxTuple:
-      # TODO(mattjj,phawkins): improve this to avoid device_put call
-      element_bufs = tuple(map(partial(device_put, device_num=device_num), x))
-      outputs[i] = xb.make_tuple(element_bufs, device_num)
-    else:
-      raise TypeError(t)
-
-  transfer_results = xb.device_put_many(transfers)
-  for i, result in zip(transfer_indices, transfer_results):
-    outputs[i] = result
-  return outputs
 
 
 # When we execute an XLA computation, we get a raw device buffer back and need
@@ -575,7 +531,9 @@ class DeviceArray(DeviceValue):
     else:
       return format(self._value, format_spec)
 
-  __array__ = partialmethod(forward_to_value, onp.asarray)
+  def __array__(self, dtype=None, context=None):
+    return onp.asarray(self._value, dtype=dtype)
+
   __str__ = partialmethod(forward_to_value, str)
   __bool__ = __nonzero__ = partialmethod(forward_to_value, bool)
   __float__ = partialmethod(forward_to_value, float)
@@ -593,13 +551,9 @@ class DeviceArray(DeviceValue):
   def __eq__(self, other): return self._value == other
 
   def __hash__(self):
-    # TODO(mattjj): this is not semantically correct because it is possible
-    # __eq__ is true for values with unequal __hash__ values. However, the
-    # main use case at the moment is memoization for which false negatives are
-    # fine.
-    return id(self)
+    raise TypeError("JAX DeviceArray, like numpy.ndarray, is not hashable.")
 
-scalar_types.add(DeviceArray)
+core.literalable_types.add(DeviceArray)
 
 
 # DeviceValues don't need to be canonicalized because we assume values on the
