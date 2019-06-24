@@ -1478,6 +1478,29 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                             check_dtypes=True)
     self._CompileAndCheck(lnp.ix_, args_maker, check_dtypes=True)
 
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+        {"testcase_name": jtu.format_test_name_suffix("select", shapes,
+                                                      (onp.bool_,) * n + dtypes),
+         "rng": jtu.rand_default(), "shapes": shapes, "dtypes": dtypes}
+        for n in range(0, 3)
+        for shapes in filter(
+          _shapes_are_broadcast_compatible,
+          CombosWithReplacement(all_shapes, 2 * n + 1))
+        for dtypes in CombosWithReplacement(all_dtypes, n + 1)))
+  def test(self, rng, shapes, dtypes):
+    n = len(dtypes) - 1
+    def args_maker():
+      condlist = [rng(shape, onp.bool_) for shape in shapes[:n]]
+      choicelist = [rng(shape, dtype)
+                    for shape, dtype in zip(shapes[n:-1], dtypes[:n])]
+      default = rng(shapes[-1], dtypes[-1])
+      return condlist, choicelist, default
+    self._CheckAgainstNumpy(onp.select, lnp.select, args_maker,
+                            check_dtypes=True)
+    self._CompileAndCheck(lnp.select, args_maker, check_dtypes=True)
+
+
   def testIssue330(self):
     x = lnp.full((1, 1), lnp.array([1])[0])  # doesn't crash
     self.assertEqual(x[0, 0], 1)
