@@ -300,8 +300,11 @@ parallel.serial_pmap_primitive_rules[pcollect_p] = _pcollect_serial_pmap_rule
 # might fix this.
 
 def _dot_papply_rule(name, size, vals, dims):
-  x, y = vals
-  xdim, ydim = dims
+  x, _ = vals
+  dim_nums = [((x.ndim,), (0,)), ((), ())]
+  return _dot_general_papply_rule(name, size, vals, dims, dim_nums)
+
+  return
   if xdim is None:
     return lax.dot(x, y), ydim
   elif ydim is None:
@@ -326,42 +329,90 @@ def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers):
   def adjust_dims(dims, thresh):
     return tuple(i - 1 if i > thresh else i for i in dims if i != thresh)
 
-  sub_lhs_contract, sub_rhs_contract = lhs_contract, rhs_contract
-  sub_lhs_batch, sub_rhs_batch = lhs_batch, rhs_batch
-
-  def sub_dims(xdim, ydim):
-    sub_lhs_contract, sub_rhs_contract = lhs_contract, rhs_contract
-    sub_lhs_batch, sub_rhs_batch = lhs_batch, rhs_batch
+  def sub_dims(xdim, ydim, xcontract, ycontract, xbatch, ybatch):
     if xdim is not None:
-      sub_lhs_batch = adjust_dims(lhs_batch, xdim)
-      sub_lhs_contract = adjust_dims(lhs_contract, xdim)
+      xbatch = adjust_dims(xbatch, xdim)
+      xcontract = adjust_dims(xcontract, xdim)
     if ydim is not None:
-      sub_rhs_batch = adjust_dims(rhs_batch, ydim)
-      sub_rhs_contract = adjust_dims(rhs_contract, ydim)
-    return (
-      (sub_lhs_contract, sub_rhs_contract), (sub_lhs_batch, sub_rhs_batch))
+      ybatch = adjust_dims(ybatch, ydim)
+      ycontract = adjust_dims(ycontract, ydim)
+    return ((xcontract, ycontract), (xbatch, ybatch))
 
-  def cases(x, y, xdim, ydim, xcontract, ycontract):
-    if xdim in xcontract:
-      if ydim in ycontract:
-        # case: both operands are split and contracting
-        z = lax.dot_general(x, y, sub_dims(xdim, ydim))
+  def cases(x, y, xdim, ydim, xc, yc, xb, yb):
+    # Consider three states in which an operand may be
+    #   1: split, contracting
+    #   2: split, not contracting
+    #   3: not split
+    #
+    # We will handle the following cases, marked by corresponding letter
+    # symbols:
+    #
+    #  |1 2 3|y
+    # -+-----+-
+    # 1|a b c
+    # 2|  d e
+    # 3|    f
+    # -+
+    # x
+    #
+    # We only handle cases in the upper right triangle as the symmetric cases
+    # are then handled by the symmetric call to this `cases` function. That is,
+    # we intentionally avoid handling the remaining cases, returning `False`.
+    #
+    # Case f is already covered and we can assume it is excluded at the outset,
+    # since a papply rule is not invoked when no operands are split.
+
+    if xdim in xc:
+      # cases a, b, c
+      if ydim in yc:
+        # case a: both operands are split and contracting
+        z = lax.dot_general(x, y, sub_dims(xdim, ydim, xc, yc, xb, yb))
         return True, (psum(z, name), None)
       elif ydim is not None:
-        # case: x split and contracting, y split but not contracting
-        new_ydim = ycontract[xcontract.index(xdim)]
+        # case b: x split and contracting, y split but not contracting
+        new_ydim = yc[xc.index(xdim)]
         y = psplit(y, name, new_ydim, ydim)
-        z = lax.dot_general(x, y, sub_dims(xdim, new_ydim))
+        z = lax.dot_general(x, y, sub_dims(xdim, new_ydim, xc, yc, xb, yb))
         return True, (psum(z, name), None)
       else:
-        # case: x split and contracting, y not split
+        # case c: x split and contracting, y not split
         return False, 'one operand split and contracting, other is not split'
-    else:
-      return False, 'unhandled case'
+    elif xdim not in xc and ydim not in yc:
+      # cases d, e
+      if ydim is None:
+        # case e: x split but not contracting, y not split
+        z = lax.dot_general(x, y, sub_dims(xdim, None, xc, yc, xb, yb))
+        zdim = xdim - len([d for d in xrange(xdim) if d in xc]) + len(xb)
+        return True, (z, zdim)
+      elif xdim is not None:
+        # case d: both operands are split but not contracting
+        y = pcollect(y, name)
+        z = lax.dot_general(x, y, sub_dims(xdim, None, xc, yc, xb, yb))
+        zdim = xdim - len([d for d in xrange(xdim) if d in xc]) + len(xb)
+        return True, (z, zdim)
+    return False, 'unhandled case'
 
-  ok, out = cases(x, y, xdim, ydim, lhs_contract, rhs_contract)
+  ok, out = cases(
+      x, y, xdim, ydim, lhs_contract, rhs_contract, lhs_batch, rhs_batch)
   if not ok:
-    ok, out = cases(y, x, ydim, xdim, rhs_contract, lhs_contract)
+    ok, out = cases(
+        y, x, ydim, xdim, rhs_contract, lhs_contract, rhs_batch, lhs_batch)
+    if ok:
+      # We swapped the input operands, but dot_general is not symmetrc. Now we
+      # must permute the output dimensions back into the correct order.
+      z, zdim = out
+      nbatch = len(lhs_batch)
+      nc_lhs = (
+          x.ndim - len([d for d in range(x.ndim) if d in lhs_contract]) - nbatch)
+      nc_rhs = (
+          y.ndim - len([d for d in range(y.ndim) if d in rhs_contract]) - nbatch)
+      perm = (
+          list(range(nbatch)) +
+          list(range(nbatch + nc_rhs, nbatch + nc_rhs + nc_lhs)) +
+          list(range(nbatch, nbatch + nc_rhs)))
+      z = lax.transpose(z, perm)
+      zdim = zdim + nc_rhs
+      out = z, zdim
   if not ok:
     raise NotImplementedError(
         ('papply of dot_general, {}: '
