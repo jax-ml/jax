@@ -1270,7 +1270,16 @@ def concatenate(arrays, axis=0):
     raise ValueError("Need at least one array to concatenate.")
   if ndim(arrays[0]) == 0:
     raise ValueError("Zero-dimensional arrays cannot be concatenated.")
-  return lax.concatenate(_promote_dtypes(*arrays), axis % ndim(arrays[0]))
+  axis = _canonicalize_axis(axis, ndim(arrays[0]))
+  arrays = _promote_dtypes(*arrays)
+  # lax.concatenate can be slow to compile for wide concatenations, so form a
+  # tree of concatenations as a workaround especially for op-by-op mode.
+  # (https://github.com/google/jax/issues/653).
+  k = 16
+  while len(arrays) > 1:
+    arrays = [lax.concatenate(arrays[i:i+k], axis)
+              for i in range(0, len(arrays), k)]
+  return arrays[0]
 
 
 @_wraps(onp.vstack)
@@ -1440,20 +1449,15 @@ def identity(n, dtype=None):
 
 
 @_wraps(onp.arange)
-def arange(*args, **kwargs):
-  dtype = kwargs.get("dtype", None)
-  if not args:
-    raise TypeError("Required argument 'start' (pos 1) not found")  # same as numpy error
-
+def arange(start, stop=None, step=None, dtype=None):
   # If called like np.arange(N), we create a lazy lax._IotaConstant.
-  if len(args) == 1 and not kwargs:
-    stop, = args
-    dtype = dtype or _dtype(stop)
+  if stop is None and step is None:
+    dtype = dtype or _dtype(start)
     if onp.issubdtype(dtype, onp.integer):
-      return lax.iota(dtype, stop)  # avoids materializing
+      return lax.iota(dtype, start)  # avoids materializing
 
   # Fall back to instantiating an ndarray in host memory
-  return onp.arange(*args, **kwargs)
+  return onp.arange(start, stop=stop, step=step, dtype=dtype)
 
 linspace = onp.linspace
 logspace = onp.logspace

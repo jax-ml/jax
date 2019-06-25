@@ -1600,6 +1600,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertFalse(type(lnp.arange(77)) == type(onp.arange(77)))
     self.assertTrue(type(lnp.arange(77)) == type(lax.iota(onp.int32, 77)))
 
+    # test that lnp.arange(N, dtype=int32) doesn't instantiate an ndarray
+    self.assertFalse(type(lnp.arange(77, dtype=lnp.int32)) ==
+                    type(onp.arange(77, dtype=onp.int32)))
+    self.assertTrue(type(lnp.arange(77, dtype=lnp.int32)) ==
+                    type(lax.iota(onp.int32, 77)))
+
   def testIssue830(self):
     a = lnp.arange(4, dtype=lnp.complex64)
     self.assertEqual(a.dtype, lnp.complex64)
