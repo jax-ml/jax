@@ -307,7 +307,11 @@ typically requires explicit casting of array arguments, like
 For automatic differentiation with `grad`, JAX has the same restrictions
 as [Autograd](https://github.com/hips/autograd). Specifically, differentiation
 works with indexing (`x = A[i, j, :]`) but not indexed assignment (`A[i, j] =
-x`) or indexed in-place updating (`A[i] += b`). You can use lists, tuples, and
+x`) or indexed in-place updating (`A[i] += b`) (use
+[`jax.ops.index_update`](https://jax.readthedocs.io/en/latest/_autosummary/jax.ops.index_update.html#jax.ops.index_update)
+or
+[`jax.ops.index_add`](https://jax.readthedocs.io/en/latest/_autosummary/jax.ops.index_add.html#jax.ops.index_add)
+instead). You can use lists, tuples, and
 dicts freely: JAX doesn't even see them. Using `np.dot(A, B)` rather than
 `A.dot(B)` is required for automatic differentiation when `A` is a raw ndarray.
 
@@ -337,7 +341,9 @@ debugging but they may only be executed once if they're under a `jit` decorator.
 >
 > **Don’t use**
 >
-> *   Assignment into arrays like `A[0, 0] = x`
+> *   Assignment into arrays like `A[0, 0] = x` (use
+>     [`jax.ops.index_update`](https://jax.readthedocs.io/en/latest/_autosummary/jax.ops.index_add.html#jax.ops.index_update)
+>     instead)
 > *   Implicit casting to arrays like `np.sum([x, y])` (use `np.sum(np.array([x,
 >     y])` instead)
 > *   `A.dot(B)` method syntax for functions of more than one argument (use
