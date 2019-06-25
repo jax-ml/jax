@@ -216,7 +216,7 @@ def _ndtr(x):
                       lax.select(lax.gt(w, dtype(0.)),
                                       dtype(2.) - lax.erfc(z),
                                       lax.erfc(z)))
-  return 0.5 * y
+  return dtype(0.5) * y
 
 
 def ndtri(p):
