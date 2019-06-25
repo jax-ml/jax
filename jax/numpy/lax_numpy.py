@@ -1270,7 +1270,16 @@ def concatenate(arrays, axis=0):
     raise ValueError("Need at least one array to concatenate.")
   if ndim(arrays[0]) == 0:
     raise ValueError("Zero-dimensional arrays cannot be concatenated.")
-  return lax.concatenate(_promote_dtypes(*arrays), axis % ndim(arrays[0]))
+  axis = _canonicalize_axis(axis, ndim(arrays[0]))
+  arrays = _promote_dtypes(*arrays)
+  # lax.concatenate can be slow to compile for wide concatenations, so form a
+  # tree of concatenations as a workaround especially for op-by-op mode.
+  # (https://github.com/google/jax/issues/653).
+  k = 16
+  while len(arrays) > 1:
+    arrays = [lax.concatenate(arrays[i:i+k], axis)
+              for i in range(0, len(arrays), k)]
+  return arrays[0]
 
 
 @_wraps(onp.vstack)
