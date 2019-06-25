@@ -385,7 +385,7 @@ def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers):
       elif ydim is not None:
         # case e: both operands are split but not contracting
         y = pcollect(y, name)
-        z = lax.dot_general(x, y, sub_dims(xdim, None, xc, yc, xb, yb))
+        z = lax.dot_general(x, y, sub_dims(xdim, ydim, xc, yc, xb, yb))
         zdim = xdim + len(xb) - len([d for d in xrange(xdim) if d in xc])
         return True, (z, zdim)
       else:
