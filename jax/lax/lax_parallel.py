@@ -492,7 +492,7 @@ def _reshape_papply_rule(name, size, vals, axes, new_sizes, dimensions,
     for i, cur_sz in enumerate(new_sizes):
       if prod == left and cur_sz == size:
         return i
-      prod = prod * sz
+      prod = prod * cur_sz
     return None
 
   if dimensions is None:
@@ -539,10 +539,117 @@ def _add_jaxvals_papply_rule(name, size, vals, dims):
   return ad_util.add_jaxvals_p.bind(x, y), out_dim
 
 
+def _convert_element_type_papply_rule(
+    name, size, vals, dims, new_dtype, **params):
+  operand, = vals
+  dim, = dims
+  return convert_element_type(operand, new_dtype), dim
+
+
+def _conv_general_dilated_papply_rule(
+    name, size, vals, dims, window_strides, padding, lhs_dilation, rhs_dilation,
+    dimension_numbers, **unused_kwargs):
+  lhs, rhs = vals
+  lhs_dim, rhs_dim = dims
+  lhs_spec_batch_dim = dimension_numbers.lhs_spec[0]
+  if rhs_dim is None and lhs_dim == lhs_spec_batch_dim:
+    lhs = reshape(lhs, tuple(onp.insert(lhs.shape, lhs_dim, 1)))
+    out = conv_general_dilated(
+        lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
+        dimension_numbers)
+    return out, lhs_dim
+  else:
+    raise NotImplementedError(
+        "splitting a convolution along anything but input batch dimension")
+
+
+def _broadcast_in_dim_papply_rule(name, size, vals, dims, shape,
+                                  broadcast_dimensions):
+  operand, = vals
+  dim, = dims
+  out_dim = broadcast_dimensions[dim]
+  if shape[out_dim] != shape[dim]:
+    raise ValueError(
+        "broadcast_in_dim changes hidden dimension size: {} to {}".format(
+            shape[dim], shape[out_dim]))
+  sub_bdims = tuple(onp.delete(broadcast_dimensions, dim))
+  sub_shape = tuple(onp.delete(shape, out_dim))
+  return broadcast_in_dim(operand, sub_shape, sub_bdims), out_dim
+
+
+def _pad_papply_rule(name, size, vals, dims, padding_config):
+  operand, padding_value = vals
+  operand_dim, padding_value_dim = dims
+  assert padding_value_dim is None
+  padding_config = list(padding_config)
+  if padding_config[operand_dim] == (0, 0, 0):
+    padded = pad(
+        operand,
+        padding_value,
+        padding_config[:operand_dim] + padding_config[operand_dim + 1:])
+    return padded, operand_dim
+  else:
+    raise NotImplementedError(
+        'pad changes size of hidden dimension {} with config {}'.format(
+            operand_dim, padding_config))
+
+
+def _slice_papply_rule(name, size, vals, dims, start_indices, limit_indices,
+                       strides, **kwargs):
+  operand, = vals
+  dim, = dims
+  start_indices = list(start_indices)
+  limit_indices = list(limit_indices)
+
+  if (start_indices[dim] != 0 or
+      limit_indices[dim] != size or
+      strides is not None and strides[dim] != 1):
+    raise NotImplementedError('slice changes side of hidden dimension')
+
+  out = slice(
+      operand,
+      start_indices[:dim] + start_indices[dim + 1:],
+      limit_indices[:dim] + limit_indices[dim + 1:],
+      strides[:dim] + strides[dim + 1:] if strides is not None else None)
+  return out, dim
+
+
+def _gather_papply_rule(
+    name, size, vals, dims, dimension_numbers, slice_sizes, operand_shape):
+  operand, start_indices = vals
+  operand_dim, start_indices_dim = dims
+  if (operand_dim is None and
+      start_indices_dim is not None and
+      start_indices_dim not in dimension_numbers.offset_dims and
+      dimension_numbers.collapsed_slice_dims == (0,)):
+    offset_dims = tuple(i - 1 if i > start_indices_dim else i
+                        for i in dimension_numbers.offset_dims)
+    dnums = GatherDimensionNumbers(
+        offset_dims=offset_dims,
+        collapsed_slice_dims=dimension_numbers.collapsed_slice_dims,
+        start_index_map=dimension_numbers.start_index_map)
+    out = gather(operand, start_indices, dimension_numbers=dnums,
+                  slice_sizes=slice_sizes)
+    out_dim = start_indices_dim + onp.sum(
+        onp.less_equal(offset_dims, start_indices_dim))
+    return out, out_dim
+  else:
+    raise NotImplementedError
+
+
 parallel.papply_primitive_rules[lax.dot_p] = _dot_papply_rule
 parallel.papply_primitive_rules[lax.dot_general_p] = _dot_general_papply_rule
 parallel.papply_primitive_rules[lax.reshape_p] = _reshape_papply_rule
 parallel.papply_primitive_rules[lax.transpose_p] = _transpose_papply_rule
 parallel.papply_primitive_rules[lax.select_p] = _select_papply_rule
-parallel.papply_primitive_rules[ad_util.add_jaxvals_p] = (
-    _add_jaxvals_papply_rule)
+parallel.papply_primitive_rules[ad_util.add_jaxvals_p] = \
+    _add_jaxvals_papply_rule
+parallel.papply_primitive_rules[lax.convert_element_type_p] = \
+    _convert_element_type_papply_rule
+parallel.papply_primitive_rules[lax.conv_general_dilated_p] = \
+    _conv_general_dilated_papply_rule
+parallel.papply_primitive_rules[lax.broadcast_in_dim_p] = \
+    _broadcast_in_dim_papply_rule
+parallel.papply_primitive_rules[lax.pad_p] = _pad_papply_rule
+parallel.papply_primitive_rules[lax.slice_p] = _slice_papply_rule
+parallel.papply_primitive_rules[lax.gather_p] = _gather_papply_rule

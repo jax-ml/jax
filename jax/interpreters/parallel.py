@@ -138,3 +138,6 @@ class PapplyTrace(Trace):
     name = tuple(t.name for t in tracers)
     size = tuple(t.axis_size for t in tracers)
     return PapplyTracer(self, name, size, vals, axis)
+
+
+papply_primitive_rules = {}
