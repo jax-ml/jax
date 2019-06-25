@@ -748,7 +748,6 @@ Some stand-out gotchas that might surprise NumPy users:
 4. PRNGs are different and can be awkward, though for [good
    reasons](https://github.com/google/jax/blob/master/design_notes/prng.md), and
    non-reuse (linearity) is not yet checked.
-5. NumPy's nan semantics aren't preserved on some backends
 
 See [the notebook](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb) for much more information.
 
