@@ -63,8 +63,8 @@ def shard_arg(device_ordinals, axis_size, arg):
   """
   nrep = len(device_ordinals)
   assignments = assign_shards_to_replicas(nrep, axis_size)
-  if (type(arg) in (ShardedDeviceArray, ShardedDeviceTuple)
-      and _axis_size(arg) == axis_size and nrep == len(arg.device_buffers)):
+  if (type(arg) in (ShardedDeviceArray, ShardedDeviceTuple) 
+      and nrep == len(arg.device_buffers)):
     _, ids = onp.unique(assignments, return_index=True)
     get_shard = memoize_unary(lambda i: arg.device_buffers[i].to_py())
     return [buf if buf.device() == device_ordinals[r]
@@ -81,14 +81,6 @@ def _slice(x, i):
     return core.pack(_slice(elt, i) for elt in x)
   else:
     return x[i]
-
-def _axis_size(x):
-  if type(x) is ShardedDeviceArray:
-    return x.shape[0]
-  elif type(x) is ShardedDeviceTuple:
-    return x.axis_size
-  else:
-    raise TypeError(type(x))
 
 
 def sharded_result_handler(axis_size, aval):
@@ -570,8 +562,7 @@ class ShardedDeviceArray(xla.DeviceArray):
     if self._npy_value is None:
       ids = self._ids()
       self.copy_to_host_async()
-      npy_shards = [self.device_buffers[i].to_py() for i in ids]
-      self._npy_value = onp.stack([npy_shards[i] for i in ids])
+      self._npy_value = onp.stack([self.device_buffers[i].to_py() for i in ids])
     return self._npy_value.reshape(self.shape)
 
   def __getitem__(self, idx):
