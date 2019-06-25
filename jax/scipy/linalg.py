@@ -179,9 +179,6 @@ def solve_triangular(a, b, trans=0, lower=False, unit_diagonal=False,
   warnings.warn(_EXPERIMENTAL_WARNING)
   del overwrite_b, debug, check_finite
 
-  if unit_diagonal:
-    raise NotImplementedError("unit_diagonal=True is not implemented.")
-
   if trans == 0 or trans == "N":
     transpose_a, conjugate_a = False, False
   elif trans == 1 or trans == "T":
@@ -193,15 +190,14 @@ def solve_triangular(a, b, trans=0, lower=False, unit_diagonal=False,
 
   a, b = np_linalg._promote_arg_dtypes(np.asarray(a), np.asarray(b))
 
-  a = np.tril(a) if lower else np.triu(a)
-
   # lax_linalg.triangular_solve only supports matrix 'b's at the moment.
   b_is_vector = np.ndim(a) == np.ndim(b) + 1
   if b_is_vector:
     b = b[..., None]
   out = lax_linalg.triangular_solve(a, b, left_side=True, lower=lower,
                                     transpose_a=transpose_a,
-                                    conjugate_a=conjugate_a)
+                                    conjugate_a=conjugate_a,
+                                    unit_diagonal=unit_diagonal)
   if b_is_vector:
     return out[..., 0]
   else:

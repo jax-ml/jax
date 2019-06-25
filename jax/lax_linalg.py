@@ -66,11 +66,11 @@ def svd(x, full_matrices=True, compute_uv=True):
     return s
 
 def triangular_solve(a, b, left_side=False, lower=False, transpose_a=False,
-                     conjugate_a=False):
+                     conjugate_a=False, unit_diagonal=False):
   conjugate_a = conjugate_a and np.issubdtype(lax.dtype(a), np.complexfloating)
   return triangular_solve_p.bind(
       a, b, left_side=left_side, lower=lower, transpose_a=transpose_a,
-      conjugate_a=conjugate_a)
+      conjugate_a=conjugate_a, unit_diagonal=unit_diagonal)
 
 
 # utilities
@@ -293,11 +293,14 @@ def triangular_solve_shape_rule(a, b, left_side=False, **unused_kwargs):
   return b.shape
 
 def triangular_solve_jvp_rule_a(
-    g_a, ans, a, b, left_side, lower, transpose_a, conjugate_a):
+    g_a, ans, a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
+  k = 1 if unit_diagonal else 0
+  g_a = np.tril(g_a, k=-k) if lower else np.triu(g_a, k=k)
   g_a = lax.neg(g_a)
   g_a = np.swapaxes(g_a, -1, -2) if transpose_a else g_a
   g_a = np.conj(g_a) if conjugate_a else g_a
-  tmp = triangular_solve(a, g_a, left_side, lower, transpose_a, conjugate_a)
+  tmp = triangular_solve(a, g_a, left_side, lower, transpose_a, conjugate_a,
+                         unit_diagonal)
   dot = lax.dot if g_a.ndim == 2 else lax.batch_matmul
   if left_side:
     return dot(tmp, ans)
@@ -305,18 +308,20 @@ def triangular_solve_jvp_rule_a(
     return dot(ans, tmp)
 
 def triangular_solve_transpose_rule(
-    cotangent, a, b, left_side, lower, transpose_a, conjugate_a):
+    cotangent, a, b, left_side, lower, transpose_a, conjugate_a,
+    unit_diagonal):
   # Triangular solve is linear in its first argument and nonlinear in its second
   # argument, similar to `div`. We need both a JVP rule and a transpose rule
   # for the first argument.
   assert a is not None and b is None
   cotangent_b = triangular_solve(a, cotangent, left_side, lower,
-                                 not transpose_a, conjugate_a)
+                                 not transpose_a, conjugate_a, unit_diagonal)
   return [None, cotangent_b]
 
 
 def triangular_solve_batching_rule(batched_args, batch_dims, left_side,
-                                   lower, transpose_a, conjugate_a):
+                                   lower, transpose_a, conjugate_a,
+                                   unit_diagonal):
   x, y = batched_args
   bx, by = batch_dims
   size = next(t.shape[i] for t, i in zip(batched_args, batch_dims)
@@ -324,7 +329,8 @@ def triangular_solve_batching_rule(batched_args, batch_dims, left_side,
   x = batching.bdim_at_front(x, bx, size, force_broadcast=True)
   y = batching.bdim_at_front(y, by, size, force_broadcast=True)
   return triangular_solve(x, y, left_side=left_side, lower=lower,
-                          transpose_a=transpose_a, conjugate_a=conjugate_a), 0
+                          transpose_a=transpose_a, conjugate_a=conjugate_a,
+                          unit_diagonal=unit_diagonal), 0
 
 triangular_solve_p = standard_primitive(
     triangular_solve_shape_rule, triangular_solve_dtype_rule,
@@ -337,7 +343,7 @@ batching.primitive_batchers[triangular_solve_p] = triangular_solve_batching_rule
 
 
 def triangular_solve_cpu_translation_rule(
-    c, a, b, left_side, lower, transpose_a, conjugate_a):
+    c, a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
   shape = c.GetShape(a)
   dtype = shape.element_type().type
   if len(shape.dimensions()) == 2 and dtype in _cpu_lapack_types:
@@ -346,12 +352,13 @@ def triangular_solve_cpu_translation_rule(
       conjugate_a = False
     return lapack.jax_trsm(
       c, c.Constant(onp.array(1, dtype=dtype)), a, b, left_side, lower,
-                    transpose_a, conjugate_a)
+                    transpose_a, conjugate_a, unit_diagonal)
   else:
     # Fall back to the HLO implementation for batched triangular_solve or
     # unsupported types.
     # TODO(phawkins): support BLAS primitives in batched mode.
-    return c.TriangularSolve(a, b, left_side, lower, transpose_a, conjugate_a)
+    return c.TriangularSolve(a, b, left_side, lower, transpose_a, conjugate_a,
+                             unit_diagonal)
 
 xla.backend_specific_translations['cpu'][triangular_solve_p] = triangular_solve_cpu_translation_rule
 
@@ -420,7 +427,8 @@ def lu_jvp_rule(primals, tangents):
   u = lax.pad(np.triu(lu[..., :k, :]), zero, u_padding) + u_eye
 
 
-  la = triangular_solve(l, x, left_side=True, transpose_a=False, lower=True)
+  la = triangular_solve(l, x, left_side=True, transpose_a=False, lower=True,
+                        unit_diagonal=True)
   lau = triangular_solve(u, la, left_side=False, transpose_a=False,
                          lower=False)
 
