@@ -457,7 +457,6 @@ class DeviceArray(DeviceValue):
     self.shape, self.dtype, self.ndim, self.size = result_shape
     self._npy_value = None
 
-  # TODO make device_buffer a property, make the _npy_value writeable, invalidate
   @property
   def _value(self):
     self._check_if_deleted()
