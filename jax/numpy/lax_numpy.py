@@ -2343,11 +2343,7 @@ def _static_idx(idx, size):
   """Helper function to compute the static slice start/limit/stride values."""
   assert isinstance(idx, slice)
   start, stop, step = idx.indices(size)
-  if step < 0:
-    length = (start - stop - 1) // (-step) + 1 if stop < start else 0
-  else:
-    length = (stop - start - 1) // step + 1 if start < stop else 0
-  if length == 0:
+  if (step < 0 and stop >= start) or (step > 0 and start >= stop):
     return 0, 0, 1, False  # sliced to size zero
 
   if step > 0:
