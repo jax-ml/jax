@@ -614,6 +614,17 @@ class APITest(jtu.JaxTestCase):
     expected = {'hi': 2 * onp.arange(3), 'bye': 2 * onp.ones((3, 2))}
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def test_custom_transforms_jvp_with_closure(self):
+    def f(x):
+      @api.custom_transforms
+      def g(y):
+        return x * y
+      return g(x)
+
+    ans = api.grad(f)(1.)
+    expected = 2.
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def test_custom_gradient(self):
     @api.custom_gradient
     def f(x):
