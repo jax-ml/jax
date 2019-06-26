@@ -268,9 +268,9 @@ class PapplyTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   # Test lax.dot_general on two rank-3 arguments, generating a test method call
-  # with every matching of dimensions, and each matched pair of dimension pair
-  # {batch, contracting, neither}. In combination with that, it also splits the
-  # first dimension of the LHS, that of the RHS, and that of both.
+  # for every matching of dimensions, and each matched pair of dimensions being
+  # {batch, contracting, neither}. In combination with that, split the first
+  # dimension of the LHS, that of the RHS, and that of both.
   @parameterized.named_parameters(
       {"testcase_name": "_dimMatch={}_matchTypes={}_split={}".format(
           matching, coloring, split),
