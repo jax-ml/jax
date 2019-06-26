@@ -983,12 +983,20 @@ class CustomTransformsFunction(object):
     return '<jax.custom_transforms function {fun}>'.format(fun=self.__name__)
 
   def __call__(self, *args, **kwargs):
+    def pv_like(x):
+      aval = x.aval if hasattr(x, 'aval') else xla.abstractify(x)
+      return pe.PartialVal((aval, core.unit))
+    wrapped = lu.wrap_init(self.fun, kwargs)
     jax_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
     jax_kwargs, kwargs_tree = pytree_to_jaxtupletree(kwargs)
-    out_tree = lu.Store()
-    ans = self.prim.bind(jax_kwargs, *jax_args, kwargs_tree=kwargs_tree,
-                         in_trees=in_trees, out_tree=out_tree)
-    return build_tree(out_tree.val, ans)
+    jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun2(
+        wrapped, kwargs_tree, in_trees)
+    pvals_in = map(pv_like, (jax_kwargs,) + jax_args)
+    jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals_in, instantiate=True)
+    ans = self.prim.bind(
+        core.pack(consts), jax_kwargs, *jax_args, kwargs_tree=kwargs_tree,
+        in_trees=in_trees, out_tree=out_tree, jaxpr=jaxpr)
+    return build_tree(out_tree(), ans)
 
 def custom_transforms(fun):
   """Wraps a function so that its transformation behavior can be controlled.
@@ -1030,14 +1038,8 @@ def custom_transforms(fun):
   name = getattr(fun, '__name__', '<unnamed custom_transforms primitive>')
   fun_p = core.Primitive(name)
 
-  def fun_impl(jax_kwargs, *jax_args, **params):
-    args = map(build_tree, params.pop('in_trees'), jax_args)
-    kwargs = build_tree(params.pop('kwargs_tree'), jax_kwargs)
-    pytree_out = fun(*args, **kwargs)
-    out, out_tree = pytree_to_jaxtupletree(pytree_out)
-    params.pop('out_tree').store(out_tree)  # linear_util style side effect
-    assert not params
-    return out
+  def fun_impl(consts, jax_kwargs, *jax_args, **params):
+    return core.eval_jaxpr(params['jaxpr'], consts, (), jax_kwargs, *jax_args)
   fun_p.def_impl(fun_impl)
 
   def fun_jvp(primals, tangents, **params):
@@ -1049,26 +1051,17 @@ def custom_transforms(fun):
     return out, 0
   batching.primitive_batchers[fun_p] = fun_batch
 
-  staged_fun_p = core.Primitive('staged_' + name)
-  def fun_partial_eval(trace, *tracers, **params):
-    tracers = tuple(map(trace.instantiate_const, tracers))
-    avals = [t.aval for t in tracers]
-    pvals_in = [pe.PartialVal((a, core.unit)) for a in avals]
-    jaxpr, pval_out, consts = pe.trace_to_jaxpr(lu.wrap_init(fun_impl, params),
-                                                pvals_in, instantiate=True)
-    consts = trace.new_instantiated_const(core.pack(consts))
-    eqn = pe.JaxprEqn((consts,) + tracers, None, staged_fun_p, (), False, False,
-                      dict(params, jaxpr=jaxpr))
-    return pe.JaxprTracer(trace, pval_out, eqn)
-  pe.custom_partial_eval_rules[fun_p] = fun_partial_eval
+  def fun_abstract_eval(*avals, **params):
+    return pe.abstract_eval_fun(fun_impl, *avals, **params)
+  fun_p.def_abstract_eval(fun_abstract_eval)
 
-  def staged_fun_translation(c, xla_consts, *xla_args, **params):
+  def fun_translation(c, xla_consts, *xla_args, **params):
     consts_shapes = tuple(c.GetShape(xla_consts).tuple_shapes())
     xla_consts = tuple(xla.xla_destructure(c, xla_consts))
     arg_shapes = map(c.GetShape, xla_args)
     built_c = xla.jaxpr_computation(params['jaxpr'], (), consts_shapes, *arg_shapes)
     return c.Call(built_c, xla_consts + xla_args)
-  xla.translations[staged_fun_p] = staged_fun_translation
+  xla.translations[fun_p] = fun_translation
 
   return CustomTransformsFunction(fun, fun_p)
 
@@ -1131,8 +1124,8 @@ def defjvp_all(fun, custom_jvp):
   """
   _check_custom_transforms_type("defjvp_all", fun)
   def custom_transforms_jvp(primals, tangents, **params):
-    jax_kwargs, jax_args = primals[0], primals[1:]
-    _, jax_args_dot = tangents[0], tangents[1:]
+    consts, jax_kwargs, jax_args = primals[0], primals[1], primals[2:]
+    _, _, jax_args_dot = tangents[0], tangents[1], tangents[2:]
     if jax_kwargs:
       msg = ("defjvp_all requires the corresponding custom_transforms function "
              "not to be called with keyword arguments.")
@@ -1147,7 +1140,6 @@ def defjvp_all(fun, custom_jvp):
       msg = ("custom jvp rule returned different tree structures for primals "
              "and tangents, but they must be equal: {} vs {}.")
       raise TypeError(msg.format(out_tree, out_tree2))
-    params['out_tree'].store(out_tree)  # linear_util style side effect
     return out, out_dot
   ad.primitive_jvps[fun.prim] = custom_transforms_jvp
 
@@ -1272,7 +1264,7 @@ def defvjp_all(fun, custom_vjp):
   (4.0, 3.0)
   """
   _check_custom_transforms_type("defvjp_all", fun)
-  def custom_transforms_vjp(jax_kwargs, *jax_args, **params):
+  def custom_transforms_vjp(consts, jax_kwargs, *jax_args, **params):
     if jax_kwargs:
       msg = ("defvjp_all requires the corresponding custom_transforms function "
              "not to be called with keyword arguments.")
@@ -1280,7 +1272,6 @@ def defvjp_all(fun, custom_vjp):
     args = map(build_tree, params['in_trees'], jax_args)
     pytree_out, vjp_pytree = custom_vjp(*args)
     out, out_tree = pytree_to_jaxtupletree(pytree_out)
-    params['out_tree'].store(out_tree)  # linear_util style side effect
     def vjp_pytree_(ct):
       args_cts = tuple(vjp_pytree(ct))
       if len(args_cts) != len(params['in_trees']):
@@ -1288,7 +1279,7 @@ def defvjp_all(fun, custom_vjp):
                "number of positional arguments to the function being "
                "differentiated: expected {}, got {}")
         raise TypeError(msg.format(len(params['in_trees']), len(args_cts)))
-      return ({},) + args_cts
+      return ((), {},) + args_cts
     vjp, _ = pytree_fun_to_jaxtupletree_fun(lu.wrap_init(vjp_pytree_), (out_tree,))
     return out, vjp.call_wrapped
   ad.defvjp_all(fun.prim, custom_transforms_vjp)
