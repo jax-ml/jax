@@ -576,14 +576,16 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_lhs={}_rhs={}_lower={}_transposea={}".format(
+       "_lhs={}_rhs={}_lower={}_transposea={}_unit_diagonal={}".format(
            jtu.format_shape_dtype_string(lhs_shape, dtype),
            jtu.format_shape_dtype_string(rhs_shape, dtype),
-           lower, transpose_a),
+           lower, transpose_a, unit_diagonal),
        "lower": lower, "transpose_a": transpose_a,
-       "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
-       "rng": rng}
-      for lower, transpose_a in itertools.product([False, True], repeat=2)
+       "unit_diagonal": unit_diagonal, "lhs_shape": lhs_shape,
+       "rhs_shape": rhs_shape, "dtype": dtype, "rng": rng}
+      for lower in [False, True]
+      for transpose_a in [False, True]
+      for unit_diagonal in [False, True]
       for lhs_shape, rhs_shape in [
           ((4, 4), (4,)),
           ((4, 4), (4, 3)),
@@ -591,15 +593,20 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       ]
       for dtype in float_types()
       for rng in [jtu.rand_default()]))
-  def testSolveTriangular(self, lower, transpose_a, lhs_shape, rhs_shape, dtype,
-                          rng):
+  def testSolveTriangular(self, lower, transpose_a, unit_diagonal, lhs_shape,
+                          rhs_shape, dtype, rng):
     k = rng(lhs_shape, dtype)
     l = onp.linalg.cholesky(onp.matmul(k, T(k))
                             + lhs_shape[-1] * onp.eye(lhs_shape[-1]))
     l = l.astype(k.dtype)
     b = rng(rhs_shape, dtype)
 
-    a = l if lower else T(l)
+    if unit_diagonal:
+      a = onp.tril(l, -1) + onp.eye(lhs_shape[-1], dtype=dtype)
+    else:
+      a = l
+    a = a if lower else T(a)
+
     inv = onp.linalg.inv(T(a) if transpose_a else a).astype(a.dtype)
     if len(lhs_shape) == len(rhs_shape):
       onp_ans = onp.matmul(inv, b)
@@ -609,20 +616,22 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     # The standard scipy.linalg.solve_triangular doesn't support broadcasting.
     # But it seems like an inevitable extension so we support it.
     ans = jsp.linalg.solve_triangular(
-        l if lower else T(l), b, trans=1 if transpose_a else 0, lower=lower)
+        l if lower else T(l), b, trans=1 if transpose_a else 0, lower=lower,
+        unit_diagonal=unit_diagonal)
 
     self.assertAllClose(onp_ans, ans, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_lhs={}_rhs={}_lower={}_transposea={}".format(
+       "_lhs={}_rhs={}_lower={}_transposea={}_unit_diagonal={}".format(
            jtu.format_shape_dtype_string(lhs_shape, dtype),
            jtu.format_shape_dtype_string(rhs_shape, dtype),
-           lower, transpose_a),
+           lower, transpose_a, unit_diagonal),
        "lower": lower, "transpose_a": transpose_a,
-       "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
-       "rng": rng}
+       "unit_diagonal": unit_diagonal, "lhs_shape": lhs_shape,
+       "rhs_shape": rhs_shape, "dtype": dtype, "rng": rng}
       for lower in [False, True]
+      for unit_diagonal in [False, True]
       for dtype in float_types() + complex_types()
       for transpose_a in (
         [0, 1] if onp.issubdtype(dtype, np.floating) else [0, 1, 2])
@@ -633,12 +642,13 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       ]
       for rng in [jtu.rand_default()]))
   @jtu.skip_on_devices("tpu")  # TODO(phawkins): Test fails on TPU.
-  def testSolveTriangularGrad(self, lower, transpose_a, lhs_shape,
-                              rhs_shape, dtype, rng):
+  def testSolveTriangularGrad(self, lower, transpose_a, unit_diagonal,
+                              lhs_shape, rhs_shape, dtype, rng):
     A = np.tril(rng(lhs_shape, dtype) + 5 * onp.eye(lhs_shape[-1], dtype=dtype))
     A = A if lower else T(A)
     B = rng(rhs_shape, dtype)
-    f = partial(jsp.linalg.solve_triangular, lower=lower, trans=transpose_a)
+    f = partial(jsp.linalg.solve_triangular, lower=lower, trans=transpose_a,
+                unit_diagonal=unit_diagonal)
     jtu.check_grads(f, (A, B), 2, rtol=2e-2, eps=1e-3)
 
 
