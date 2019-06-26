@@ -302,24 +302,20 @@ class PapplyTest(jtu.JaxTestCase):
     else:
       fun = f
 
-    if split != SPLIT_BOTH:
-      expected = fun(x)
-      pfun, axis_name = _papply(fun, x.shape[0])
-      try:
+    try:
+      if split != SPLIT_BOTH:
+        expected = fun(x)
+        pfun, axis_name = _papply(fun, x.shape[0])
         ans = _serial_pmap(pfun, axis_name)(x)
-        ans = self.dedup(ans, expected.ndim)
-        self.assertAllClose(ans, expected, check_dtypes=False)
-      except NotImplementedError as e:
-        return SkipTest(e)
-    else:
-      expected = fun(x, y)
-      pfun, axis_name = _papply(fun, x.shape[0])
-      try:
+      else:
+        expected = fun(x, y)
+        pfun, axis_name = _papply(fun, x.shape[0])
         ans = _serial_pmap(pfun, axis_name)(x, y)
-        ans = self.dedup(ans, expected.ndim)
-        self.assertAllClose(ans, expected, check_dtypes=False)
-      except NotImplementedError as e:
-        return SkipTest(e)
+    except NotImplementedError as e:
+      return SkipTest(e)
+
+    ans = self.dedup(ans, expected.ndim)
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
 
 if __name__ == '__main__':
