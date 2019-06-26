@@ -2341,17 +2341,20 @@ def _canonicalize_tuple_index(arr, idx):
 
 def _static_idx(idx, size):
   """Helper function to compute the static slice start/limit/stride values."""
-  indices = onp.arange(size)[idx]  # get shape statically
-  if not len(indices):  # pylint: disable=g-explicit-length-test
-    return 0, 0, 1, False  # sliced to size zero
-  start, stop_inclusive = indices[0], indices[-1]
-  step = 1 if idx.step is None else idx.step
-  if step > 0:
-    end = _min(stop_inclusive + step, size)
-    return start, end, step, False
+  assert isinstance(idx, slice)
+  start, stop, step = idx.indices(size)
+  if step < 0:
+    length = (start - stop - 1) // (-step) + 1 if stop < start else 0
   else:
-    end = _min(start - step, size)
-    return stop_inclusive, end, -step, True
+    length = (stop - start - 1) // step + 1 if start < stop else 0
+  if length == 0:
+    return 0, 0, 1, False  # sliced to size zero
+
+  if step > 0:
+    return start, stop, step, False
+  else:
+    k  = (start - stop - 1) % (-step)
+    return stop + k + 1, start + 1, -step, True
 
 
 blackman = onp.blackman
