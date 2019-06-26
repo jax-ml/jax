@@ -304,22 +304,6 @@ def _dot_papply_rule(name, size, vals, dims):
   dim_nums = [((x.ndim,), (0,)), ((), ())]
   return _dot_general_papply_rule(name, size, vals, dims, dim_nums)
 
-  return
-  if xdim is None:
-    return lax.dot(x, y), ydim
-  elif ydim is None:
-    return lax.dot(x, y), xdim
-  elif ydim == 0:
-    if xdim != x.ndim:
-      x = psplit(x, name, x.ndim, xdim)
-    x = x[..., None]
-    y = y[..., None, :]
-    return psum(x * y, name), None
-  else:
-    y = pcollect(y, name)
-    return lax.dot(x, y), xdim
-
-
 def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers):
   x, y = vals
   xdim, ydim = dims
