@@ -310,6 +310,12 @@ def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers):
 
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
 
+  if lhs_batch or rhs_batch:
+    raise NotImplementedError(
+        ('papply of dot_general with batch dimensions: '
+         'xdim={}, ydim={}, dimension_numbers={}').format(
+             xdim, ydim, dimension_numbers))
+
   def adjust_dims(dims, thresh):
     return tuple(i - 1 if i > thresh else i for i in dims if i != thresh)
 
@@ -346,8 +352,10 @@ def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers):
       # cases a, b, c
       if ydim in yc:
         # case a: both operands are split and contracting
-        z = lax.dot_general(x, y, sub_dims(xdim, ydim, xc, yc, xb, yb))
-        return True, (psum(z, name), None)
+        # TODO(frostig): Might the following work?
+        # z = lax.dot_general(x, y, sub_dims(xdim, ydim, xc, yc, xb, yb))
+        # return True, (psum(z, name), None)
+        return False, 'both operands split and contracting'
       elif ydim is not None:
         # case b: x split and contracting, y split but not contracting
         new_ydim = yc[xc.index(xdim)]
@@ -369,7 +377,7 @@ def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers):
       elif ydim is not None:
         # case e: both operands are split but not contracting
         y = pcollect(y, name)
-        z = lax.dot_general(x, y, sub_dims(xdim, ydim, xc, yc, xb, yb))
+        z = lax.dot_general(x, y, sub_dims(xdim, None, xc, yc, xb, yb))
         zdim = xdim + len(xb) - len([d for d in xrange(xdim) if d in xc])
         return True, (z, zdim)
       else:
@@ -387,12 +395,14 @@ def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers):
       else:
         # case h: x not split, y split but not contracting
         assert ydim is not None
-        z = lax.dot_general(x, y, sub_dims(None, ydim, xc, yc, xb, yb))
-        zdim = (
-            ydim + len(xb) +                # batch dimensions
-            x.ndim - len(xc) -              # non-contracting x dimensions
-            len([d for d in xrange(ydim) if d in yc]))
-        return True, (z, zdim)
+        # TODO(frostig): Might the following work?
+        # z = lax.dot_general(x, y, sub_dims(None, ydim, xc, yc, xb, yb))
+        # zdim = (
+        #     ydim + len(xb) +                # batch dimensions
+        #     x.ndim - len(xc) -              # non-contracting x dimensions
+        #     len([d for d in xrange(ydim) if d in yc]))
+        # return True, (z, zdim)
+        return False, 'lhs not split, rhs split but not contracting'
 
     assert False, 'unreachable'
 
