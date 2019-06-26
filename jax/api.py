@@ -986,16 +986,14 @@ class CustomTransformsFunction(object):
     def pv_like(x):
       aval = x.aval if hasattr(x, 'aval') else xla.abstractify(x)
       return pe.PartialVal((aval, core.unit))
-    wrapped = lu.wrap_init(self.fun, kwargs)
     jax_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
     jax_kwargs, kwargs_tree = pytree_to_jaxtupletree(kwargs)
     jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun2(
-        wrapped, kwargs_tree, in_trees)
+        lu.wrap_init(self.fun), kwargs_tree, in_trees)
     pvals_in = map(pv_like, (jax_kwargs,) + jax_args)
     jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals_in, instantiate=True)
-    ans = self.prim.bind(
-        core.pack(consts), jax_kwargs, *jax_args, kwargs_tree=kwargs_tree,
-        in_trees=in_trees, out_tree=out_tree, jaxpr=jaxpr)
+    ans = self.prim.bind(core.pack(consts), jax_kwargs, *jax_args,
+                         in_trees=in_trees, jaxpr=jaxpr)
     return build_tree(out_tree(), ans)
 
 def custom_transforms(fun):
@@ -1055,12 +1053,8 @@ def custom_transforms(fun):
     return pe.abstract_eval_fun(fun_impl, *avals, **params)
   fun_p.def_abstract_eval(fun_abstract_eval)
 
-  def fun_translation(c, xla_consts, *xla_args, **params):
-    consts_shapes = tuple(c.GetShape(xla_consts).tuple_shapes())
-    xla_consts = tuple(xla.xla_destructure(c, xla_consts))
-    arg_shapes = map(c.GetShape, xla_args)
-    built_c = xla.jaxpr_computation(params['jaxpr'], (), consts_shapes, *arg_shapes)
-    return c.Call(built_c, xla_consts + xla_args)
+  def fun_translation(c, *xla_args, **params):
+    return xla.lower_fun(fun_impl, c, *xla_args, **params)
   xla.translations[fun_p] = fun_translation
 
   return CustomTransformsFunction(fun, fun_p)
