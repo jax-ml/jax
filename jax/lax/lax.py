@@ -3453,8 +3453,9 @@ def _reduce_window_sum_transpose_rule(cotangent, window_dimensions,
   assert result.shape == input_shape
   return [result]
 
-def _reduce_window_sum_batch_rule(
-    batched_args, bdims, window_dimensions, window_strides, padding, **kwargs):
+def _reduce_window_batch_rule(
+    reduce_window, batched_args, bdims, window_dimensions, window_strides,
+    padding, input_shape=None):
   operand, = batched_args
   bdim, = bdims
 
@@ -3463,16 +3464,17 @@ def _reduce_window_sum_batch_rule(
         window_dimensions[:bdim] + (1,) + window_dimensions[bdim:]
     window_strides = window_strides[:bdim] + (1,) + window_strides[bdim:]
 
-  oprand = _reduce_window_sum(
+  operand = reduce_window(
       operand, window_dimensions, window_strides, padding)
 
-  return oprand, 0
+  return operand, 0
 
 reduce_window_sum_p = standard_primitive(
     _reduce_window_sum_shape_rule, _input_dtype, 'reduce_window_sum',
     _reduce_window_sum_translation_rule)
 ad.deflinear(reduce_window_sum_p, _reduce_window_sum_transpose_rule)
-batching.primitive_batchers[reduce_window_sum_p] = _reduce_window_sum_batch_rule
+batching.primitive_batchers[reduce_window_sum_p] = partial(
+  _reduce_window_batch_rule, _reduce_window_sum)
 
 def _reduce_window_chooser_translation_rule(
     prim, identity, c, operand, window_dimensions, window_strides, padding):
@@ -3514,28 +3516,14 @@ def reduce_window_shape_tuple(operand_shape, window_dimensions, window_strides,
       onp.subtract(operand_padded, window_dimensions), window_strides) + 1
   return tuple(t)
 
-def _reduce_window_max_batch_rule(
-    batched_args, bdims, window_dimensions, window_strides, padding, **kwargs):
-  operand, = batched_args
-  bdim, = bdims
-
-  if bdim is not None:
-    window_dimensions = \
-        window_dimensions[:bdim] + (1,) + window_dimensions[bdim:]
-    window_strides = window_strides[:bdim] + (1,) + window_strides[bdim:]
-
-  operand = _reduce_window_max(
-      operand, window_dimensions, window_strides, padding)
-
-  return operand, 0
-
 _reduce_window_max_translation_rule = partial(
     _reduce_window_chooser_translation_rule, max_p, _get_max_identity)
 reduce_window_max_p = standard_primitive(
     _common_reduce_window_shape_rule, _input_dtype, 'reduce_window_max',
     _reduce_window_max_translation_rule)
 ad.defjvp(reduce_window_max_p, partial(_reduce_window_chooser_jvp_rule, max_p))
-batching.primitive_batchers[reduce_window_max_p] = _reduce_window_max_batch_rule
+batching.primitive_batchers[reduce_window_max_p] = partial(
+  _reduce_window_batch_rule, _reduce_window_max)
 
 _reduce_window_min_translation_rule = partial(
     _reduce_window_chooser_translation_rule, min_p, _get_min_identity)
@@ -3543,6 +3531,11 @@ reduce_window_min_p = standard_primitive(
     _common_reduce_window_shape_rule, _input_dtype, 'reduce_window_min',
     _reduce_window_min_translation_rule)
 ad.defjvp(reduce_window_min_p, partial(_reduce_window_chooser_jvp_rule, min_p))
+
+_reduce_window_min_batch_rule = partial(_reduce_window_batch_rule,
+                                        _reduce_window_min)
+batching.primitive_batchers[reduce_window_min_p] = partial(
+  _reduce_window_batch_rule, _reduce_window_min)
 
 
 def _select_and_scatter_shape_rule(
