@@ -545,12 +545,12 @@ def _gamma_one(key, alpha):
   squeeze_const = _constant_like(alpha, 0.0331)
   dtype = lax.dtype(alpha)
 
+  key, subkey = split(key)
   # for alpha < 1, we boost alpha to alpha + 1 and get a sample according to
   # Gamma(alpha) ~ Gamma(alpha+1) * Uniform()^(1 / alpha)
   boost = lax.select(lax.ge(alpha, one),
                      one,
-                     lax.pow(uniform(key, (), dtype=dtype), lax.div(one, alpha)))
-  key, = split(key, 1)
+                     lax.pow(uniform(subkey, (), dtype=dtype), lax.div(one, alpha)))
   alpha = lax.select(lax.ge(alpha, one), alpha, lax.add(alpha, one))
 
   d = lax.sub(alpha, one_over_three)
@@ -568,20 +568,19 @@ def _gamma_one(key, alpha):
     return cond
 
   def _body_fn(kXVU):
-    key = kXVU[0]
-
     def _next_kxv(kxv):
-      x_key = kxv[0]
-      x = normal(x_key, (), dtype=dtype)
+      key = kxv[0]
+      key, subkey = split(key)
+      x = normal(subkey, (), dtype=dtype)
       v = lax.add(one, lax.mul(x, c))
-      k, = split(x_key, 1)
-      return k, x, v
+      return key, x, v
 
-    key, x, v = lax.while_loop(lambda kxv: lax.le(kxv[2], zero), _next_kxv, (key, zero, minus_one))
+    key = kXVU[0]
+    key, x_key, U_key = split(key, 3)
+    _, x, v = lax.while_loop(lambda kxv: lax.le(kxv[2], zero), _next_kxv, (x_key, zero, minus_one))
     X = lax.mul(x, x)
     V = lax.mul(lax.mul(v, v), v)
-    U = uniform(key, (), dtype=dtype)
-    key, = split(key, 1)
+    U = uniform(U_key, (), dtype=dtype)
     return key, X, V, U
 
   # initial state is chosen such that _cond_fn will return True
@@ -602,7 +601,8 @@ def _gamma_grad_one(z, alpha):
     # Ref 1: Pathwise Derivatives Beyond the Reparameterization Trick, Martin & Fritz
     # Ref 2: Case 4 follows https://github.com/fritzo/notebooks/blob/master/gamma-reparameterized.ipynb
 
-    # TODO: use lax.cond instead of lax.while_loop when available
+    # TODO: use lax.cond instead of lax.while_loop when its batching rule is available
+    # See https://github.com/google/jax/issues/490
     def _case1(zagf):
         z, alpha, _, flag = zagf
 
