@@ -216,7 +216,7 @@ def _ndtr(x):
                       lax.select(lax.gt(w, dtype(0.)),
                                       dtype(2.) - lax.erfc(z),
                                       lax.erfc(z)))
-  return 0.5 * y
+  return dtype(0.5) * y
 
 
 def ndtri(p):
@@ -355,6 +355,7 @@ def _ndtri(p):
   return x_nan_replaced
 
 
+@custom_transforms
 def log_ndtr(x, series_order=3):
   r"""Log Normal distribution function.
 
@@ -488,3 +489,14 @@ def _log_ndtr_asymptotic_series(x, series_order):
 def _double_factorial(n):
   """The double factorial function for small Python integer `n`."""
   return onp.prod(onp.arange(n, 1, -2))
+
+
+_norm_logpdf_constant = onp.log(onp.sqrt(2 * onp.pi))
+
+def _norm_logpdf(x):
+  neg_half = _constant_like(x, -0.5)
+  log_normalizer = _constant_like(x, _norm_logpdf_constant)
+  return lax.sub(lax.mul(neg_half, lax.square(x)), log_normalizer)
+
+defjvp(log_ndtr,
+       lambda g, ans, x: lax.mul(g, lax.exp(lax.sub(_norm_logpdf(x), ans))))
