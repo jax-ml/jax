@@ -505,11 +505,15 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     a = rng(shape, dtype)
     jtu.check_grads(jsp.linalg.lu, (a,), 2, atol=5e-2, rtol=1e-1)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype, "rng": rng}
+      for shape in [(4, 5), (6, 5)]
+      for dtype in [np.float32]
+      for rng in [jtu.rand_default()]))
   @jtu.skip_on_devices("gpu", "tpu")
-  def testLuBatching(self):
-    shape = (4, 5)
-    dtype = np.float32
-    rng = jtu.rand_default()
+  def testLuBatching(self, shape, dtype, rng):
     args = [rng(shape, np.float32) for _ in range(10)]
     expected = list(osp.linalg.lu(x) for x in args)
     ps = onp.stack([out[0] for out in expected])

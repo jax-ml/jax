@@ -866,5 +866,5 @@ scan_p.def_impl(_scan_impl)
 ad.primitive_jvps[scan_p] = _scan_jvp
 ad.primitive_transposes[scan_p] = _scan_transpose
 pe.custom_partial_eval_rules[scan_p] = _scan_partial_eval
-xla.translations[scan_p] = partial(xla.lower_fun, _scan_impl)
+xla.translations[scan_p] = xla.lower_fun(_scan_impl)
 batching.primitive_batchers[scan_p] = _scan_batching_rule
