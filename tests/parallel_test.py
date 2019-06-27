@@ -251,10 +251,10 @@ class PapplyTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": "_axes={}".format(in_axes),
        "in_axes": in_axes}
-      for in_axes in [(0, 0), (0, 1), (1, 0)])
+      for in_axes in [(0, 0), (0, 1), (1, 0), (1, 1)])
   def testDot(self, in_axes):
-    if in_axes == (1, 0):       # TODO(frostig)
-      return SkipTest("testDot with in_axes (1, 0) is known to fail")
+    if in_axes[0] == 1:       # TODO(frostig)
+      return SkipTest("known failure: testDot with in_axes (1, *)")
 
     x = onp.reshape(onp.arange(4., dtype=onp.float32), (2, 2))
 
