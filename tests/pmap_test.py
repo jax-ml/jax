@@ -27,7 +27,8 @@ import jax.numpy as np
 from jax import test_util as jtu
 from jax import core
 from jax import lax
-from jax.api import pmap, jit, vmap, jvp, grad, make_jaxpr, linearize, device_put
+from jax.api import (pmap, soft_pmap, jit, vmap, jvp, grad, make_jaxpr,
+                     linearize, device_put)
 from jax.lib import xla_bridge
 from jax.util import prod
 from jax.interpreters import pxla
@@ -519,7 +520,7 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(expected_bz1, bz1, check_dtypes=False)
     self.assertAllClose(bz2, bz2, check_dtypes=False)
 
-  @jtu.skip_on_devices("cpu", "gpu")
+  @jtu.skip_on_devices("gpu")
   def testPswapaxes(self):
     device_count = xla_bridge.device_count()
     shape = (device_count, 3, device_count, 5)
@@ -527,6 +528,63 @@ class PmapTest(jtu.JaxTestCase):
 
     ans = pmap(lambda x: lax.pswapaxes(x, 'i', 1), axis_name='i')(x)
     expected = onp.swapaxes(x, 0, 2)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testSoftPmapPsum(self):
+    n = 4 * xla_bridge.device_count()
+    def f(x):
+      return x / lax.psum(x, 'i')
+    ans = soft_pmap(f, 'i')(np.ones(n))
+    expected = onp.ones(n) / n
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testSoftPmapAxisIndex(self):
+    n = 4 * xla_bridge.device_count()
+    def f(x):
+      return x * lax.axis_index('i')
+    ans = soft_pmap(f, 'i')(2 * np.ones(n))
+    expected = 2 * onp.arange(n)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testSoftPmapOfJit(self):
+    n = 4 * xla_bridge.device_count()
+    def f(x):
+      return 3 * x
+    ans = soft_pmap(jit(f), 'i')(onp.arange(n))
+    expected = 3 * onp.arange(n)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testSoftPmapNested(self):
+    n = 4 * xla_bridge.device_count()
+
+    @partial(soft_pmap, axis_name='i')
+    @partial(soft_pmap, axis_name='j')
+    def f(x):
+      i_size = lax.psum(1, 'i')
+      return x + lax.axis_index('i') + i_size * lax.axis_index('j')
+
+    ans = f(np.zeros((n, n)))
+    expected = onp.arange(n ** 2).reshape(n, n).T
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testGradOfSoftPmap(self):
+    n = 4 * xla_bridge.device_count()
+
+    @partial(soft_pmap, axis_name='i')
+    def f(x):
+      return x * lax.axis_index('i')
+
+    ans = grad(lambda x: np.sum(f(x)))(np.zeros((n, n)))
+    expected = onp.repeat(onp.arange(n)[:, None], n, axis=1)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @jtu.skip_on_devices("gpu")
+  def testSoftPmapAllToAll(self):
+    n = 4 * xla_bridge.device_count()
+    def f(x):
+      return lax.all_to_all(x, 'i', 0, 0)
+    ans = soft_pmap(f, 'i')(np.arange(n ** 2).reshape(n, n))
+    expected = onp.arange(n ** 2).reshape(n, n).T
     self.assertAllClose(ans, expected, check_dtypes=False)
 
 

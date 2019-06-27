@@ -409,8 +409,8 @@ def trace_to_subjaxpr(master, instantiate, pvals):
   assert all([isinstance(pv, PartialVal) for pv in pvals]), pvals
   trace = JaxprTrace(master, core.cur_sublevel())
   in_tracers = map(trace.new_arg, pvals)
-  out_tracer = yield in_tracers, {}
-  out_tracer = trace.full_raise(out_tracer)
+  ans = yield in_tracers, {}
+  out_tracer = trace.full_raise(ans)
   out_tracer = instantiate_const_at(trace, instantiate, out_tracer)
   out_tracer = trace.full_raise(out_tracer)  # instantiation (unpack) can lower
   jaxpr, consts, env = tracers_to_jaxpr(in_tracers, out_tracer)

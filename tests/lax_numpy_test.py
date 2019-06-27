@@ -1651,7 +1651,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     for x in (onp.nan, -onp.inf, -100., -2. -1., 0., 1., 2., 100., onp.inf,
               onp.finfo(dtype).max, onp.sqrt(onp.finfo(dtype).max),
               onp.sqrt(onp.finfo(dtype).max) * 2.):
-      if onp.isnan(x) and op in ("cosh", "expm1", "exp"):
+      if onp.isnan(x) and op in ("sinh", "cosh", "expm1", "exp"):
         # TODO(b/133842876, b/133842870): these return wrong outputs on CPU for
         # NaN inputs.
         continue
