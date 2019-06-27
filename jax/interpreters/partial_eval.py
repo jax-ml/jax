@@ -390,8 +390,9 @@ def pack_pvals(pvals):
 def abstractify(x):
   return PartialVal((core.concrete_aval(x), unit))
 
-def trace_unwrapped_to_jaxpr(fun, pvals, **kwargs):
-  return trace_to_jaxpr(lu.wrap_init(fun, kwargs), pvals)
+def trace_unwrapped_to_jaxpr(fun, pvals, instantiate, **kwargs):
+  return trace_to_jaxpr(lu.wrap_init(fun, kwargs), pvals,
+                        instantiate=instantiate)
 
 def trace_to_jaxpr(fun, pvals, **kwargs):
   """Traces a function, given abstract inputs, to a jaxpr."""
