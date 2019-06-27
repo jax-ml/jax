@@ -1378,9 +1378,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       ]
       for rng in [jtu.rand_default()]))
   def testRoll(self, shape, dtype, shifts, axis, rng):
-    args_maker = lambda: [rng(shape, dtype)]
-    lnp_op = lambda x: lnp.roll(x, shifts, axis=axis)
-    onp_op = lambda x: onp.roll(x, shifts, axis=axis)
+    args_maker = lambda: [rng(shape, dtype), onp.array(shifts)]
+    lnp_op = partial(lnp.roll, axis=axis)
+    onp_op = partial(onp.roll, axis=axis)
     self._CheckAgainstNumpy(lnp_op, onp_op, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_op, args_maker, check_dtypes=True)
 

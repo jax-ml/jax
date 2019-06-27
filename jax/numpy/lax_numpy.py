@@ -2068,30 +2068,21 @@ def roll(a, shift, axis=None):
     return lax.reshape(roll(ravel(a), shift, axis=0), a_shape)
 
   a_ndim = len(a_shape)
-  if isinstance(shift, tuple):
-    if isinstance(axis, tuple):
-      if len(axis) != len(shift):
-        msg = "Mismatched lengths between shift ({}) and axis ({}) for np.roll."
-        raise ValueError(msg.format(len(shift), len(axis)))
-      axis = tuple(a for a in axis)
-    else:
-      axis = (axis,) * len(shift)
-  elif isinstance(axis, tuple):
-    shift = (shift,) * len(axis)
-  else:
-    shift = (shift,)
-    axis = (axis,)
+  shift = asarray(shift)
+  axis = onp.asarray(axis)
+  b_shape = lax.broadcast_shapes(shift.shape, axis.shape, (1,))
+  if len(b_shape) != 1:
+    msg = "'shift' and 'axis' arguments to roll must be scalars or 1D arrays"
+    raise ValueError(msg)
+  if b_shape[0] > a_ndim:
+    raise ValueError("More shifts/axes than dimensions of input to roll.")
 
-  for offset, i in zip(shift, axis):
+  for x, i in zip(broadcast_to(shift, b_shape),
+                  onp.broadcast_to(axis, b_shape)):
     i = _canonicalize_axis(i, a_ndim)
-    offset = offset % (a_shape[i] or 1)
-    slices = [slice(None)] * a_ndim
-    slices[i] = slice(None, -offset)
-    before = a[tuple(slices)]
-    slices[i] = slice(-offset, None)
-    after = a[tuple(slices)]
-    a = lax.concatenate((after, before), i)
-
+    x = remainder(x, (a_shape[i] or 1))
+    a = lax.concatenate((a, a), i)
+    a = lax.dynamic_slice_in_dim(a, a_shape[i] - x, a_shape[i], axis=i)
   return a
 
 
