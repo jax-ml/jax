@@ -439,7 +439,7 @@ def _lu_python(x):
   if len(batch_dims) > 0:
     batch_size = onp.prod(batch_dims, dtype=onp.int64)
     pivot, lu = api.vmap(_lu_blocked)(lax.reshape(x, (batch_size, m, n)))
-    pivot = lax.reshape(pivot, batch_dims + (m,))
+    pivot = lax.reshape(pivot, batch_dims + (min(m, n),))
     lu = lax.reshape(lu, batch_dims + (m, n))
   else:
     pivot, lu = _lu_blocked(x)
@@ -462,7 +462,7 @@ def _lu_abstract_eval(operand):
     pivot = operand
   return core.AbstractTuple((operand, pivot))
 
-def _lu_jvp_rule(primals, tangents, **params):
+def _lu_jvp_rule(primals, tangents):
   a, = primals
   a_dot, = tangents
   lu, pivots = lu_p.bind(a)
@@ -515,7 +515,7 @@ def _lu_batching_rule(batched_args, batch_dims):
   x = batching.bdim_at_front(x, bd)
   return lu_p.bind(x), 0
 
-def lu_translation_rule(c, operand):
+def _lu_translation_rule(c, operand):
   if xla.xb.get_backend().platform == "cpu":
     shape = c.GetShape(operand)
     batch_dims = shape.dimensions()[:-2]
@@ -533,7 +533,7 @@ def lu_translation_rule(c, operand):
 lu_p = Primitive('lu')
 lu_p.def_impl(_lu_impl)
 lu_p.def_abstract_eval(_lu_abstract_eval)
-xla.translations[lu_p] = lu_translation_rule
+xla.translations[lu_p] = _lu_translation_rule
 ad.primitive_jvps[lu_p] = _lu_jvp_rule
 batching.primitive_batchers[lu_p] = _lu_batching_rule
 
