@@ -984,8 +984,7 @@ class CustomTransformsFunction(object):
 
   def __call__(self, *args, **kwargs):
     def pv_like(x):
-      aval = x.aval if hasattr(x, 'aval') else xla.abstractify(x)
-      return pe.PartialVal((aval, core.unit))
+      return pe.PartialVal((batching.get_aval(x), core.unit))  # Use shaped aval
     jax_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
     jax_kwargs, kwargs_tree = pytree_to_jaxtupletree(kwargs)
     jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun2(
