@@ -1118,7 +1118,13 @@ def defjvp_all(fun, custom_jvp):
   _check_custom_transforms_type("defjvp_all", fun)
   def custom_transforms_jvp(primals, tangents, **params):
     consts, jax_kwargs, jax_args = primals[0], primals[1], primals[2:]
-    _, _, jax_args_dot = tangents[0], tangents[1], tangents[2:]
+    consts_dot, _, jax_args_dot = tangents[0], tangents[1], tangents[2:]
+    if consts_dot is not ad_util.zero:
+      msg = (
+          "Detected differentiation w.r.t. variables from outside the scope of "
+          "{}, but defjvp and defjvp_all only support differentiation w.r.t. "
+          "positional arguments.")
+      raise ValueError(msg.format(str(fun)))
     if jax_kwargs:
       msg = ("defjvp_all requires the corresponding custom_transforms function "
              "not to be called with keyword arguments.")
