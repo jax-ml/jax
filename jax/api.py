@@ -1263,7 +1263,13 @@ def defvjp_all(fun, custom_vjp):
   (4.0, 3.0)
   """
   _check_custom_transforms_type("defvjp_all", fun)
-  def custom_transforms_vjp(consts, jax_kwargs, *jax_args, **params):
+  def custom_transforms_vjp(argnums, consts, jax_kwargs, *jax_args, **params):
+    if 0 in argnums:
+      msg = (
+          "Detected differentiation w.r.t. variables from outside the scope of "
+          "{}, but defvjp and defvjp_all only support differentiation w.r.t. "
+          "positional arguments.")
+      raise ValueError(msg.format(str(fun)))
     if jax_kwargs:
       msg = ("defvjp_all requires the corresponding custom_transforms function "
              "not to be called with keyword arguments.")
@@ -1281,7 +1287,7 @@ def defvjp_all(fun, custom_vjp):
       return ((), {},) + args_cts
     vjp, _ = pytree_fun_to_jaxtupletree_fun(lu.wrap_init(vjp_pytree_), (out_tree,))
     return out, vjp.call_wrapped
-  ad.defvjp_all(fun.prim, custom_transforms_vjp)
+  ad.defvjp_argnums(fun.prim, custom_transforms_vjp)
 
 def defvjp(fun, *vjprules):
   """Define VJP rules for each argument separately.
