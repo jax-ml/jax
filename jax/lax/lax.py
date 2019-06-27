@@ -794,7 +794,8 @@ def reduce(operand, init_value, computation, dimensions):
 
 def _reduction_jaxpr(computation, init_value):
   pval = _abstractify(init_value)
-  jaxpr, _, consts = pe.trace_unwrapped_to_jaxpr(computation, (pval, pval))
+  jaxpr, _, consts = pe.trace_unwrapped_to_jaxpr(computation, (pval, pval),
+                                                 instantiate=False)
   return jaxpr, consts
 
 def _get_monoid_reducer(monoid_op, x):

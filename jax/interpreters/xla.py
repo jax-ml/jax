@@ -296,13 +296,16 @@ def translation_rule(p):
         "XLA translation rule for '{}' not implemented".format(p))
 
 
-def lower_fun(fun, c, *xla_args, **params):
-  xla_shapes = tuple(map(c.GetShape, xla_args))
-  avals = map(aval_from_xla_shape, xla_shapes)
-  pvals = [pe.PartialVal((a, core.unit)) for a in avals]
-  jaxpr, _, consts = pe.trace_unwrapped_to_jaxpr(fun, pvals, **params)
-  built_c = jaxpr_computation(jaxpr, consts, (), *xla_shapes)
-  return c.Call(built_c, xla_args)
+def lower_fun(fun, instantiate=False):
+  def f(c, *xla_args, **params):
+    xla_shapes = tuple(map(c.GetShape, xla_args))
+    avals = map(aval_from_xla_shape, xla_shapes)
+    pvals = [pe.PartialVal((a, core.unit)) for a in avals]
+    jaxpr, _, consts = pe.trace_unwrapped_to_jaxpr(fun, pvals, instantiate,
+                                                   **params)
+    built_c = jaxpr_computation(jaxpr, consts, (), *xla_shapes)
+    return c.Call(built_c, xla_args)
+  return f
 
 
 translations = {}
