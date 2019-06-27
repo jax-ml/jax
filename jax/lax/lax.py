@@ -1504,7 +1504,6 @@ def _brcast_to(x, shape):
     return broadcast(x, shape)
 
 
-_f32 = {onp.float32}
 _float = {onp.floating}
 _complex = {onp.complexfloating}
 _complex_elem_types = {onp.float32, onp.float64}
@@ -1825,8 +1824,8 @@ def _conv_general_dilated_shape_rule(
 def _conv_general_dilated_dtype_rule(
     lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
     dimension_numbers, **unused_kwargs):
-  return binop_dtype_rule(_input_dtype, [_f32, _f32], 'conv_general_dilated',
-                          lhs, rhs)
+  return binop_dtype_rule(_input_dtype, [_float, _float],
+                          'conv_general_dilated', lhs, rhs)
 
 _conv_spec_transpose = lambda spec: (spec[1], spec[0]) + spec[2:]
 _conv_sdims = lambda spec: spec[2:]

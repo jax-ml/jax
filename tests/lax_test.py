@@ -309,7 +309,7 @@ class LaxTest(jtu.JaxTestCase):
       for lhs_shape, rhs_shape in [
           ((b, i, 9, 10), (j, i, 4, 5))
           for b, i, j in itertools.product([2, 3], repeat=3)]
-      for dtype in [onp.float32]
+      for dtype in float_dtypes
       for strides in [(1, 1), (1, 2), (2, 1)]
       for padding in ["VALID", "SAME"]
       for rng in [jtu.rand_small()]))
@@ -331,7 +331,7 @@ class LaxTest(jtu.JaxTestCase):
       for lhs_shape, rhs_shape in [
           ((b, i, 9, 10), (j, i, 4, 5))
           for b, i, j in itertools.product([2, 3], repeat=3)]
-      for dtype in [onp.float32]
+      for dtype in float_dtypes
       for strides in [(1, 1), (1, 2), (2, 1)]
       for padding in ["VALID", "SAME"]
       for rng in [jtu.rand_small()]))
@@ -354,7 +354,8 @@ class LaxTest(jtu.JaxTestCase):
       for lhs_shape, rhs_shape in [
           ((b, i, 9, 10), (j, i, 4, 5))
           for b, i, j in itertools.product([1, 2, 3], repeat=3)]
-      for dtype in [onp.float32] for strides in [(1, 1), (1, 2), (2, 1)]
+      for dtype in float_dtypes
+      for strides in [(1, 1), (1, 2), (2, 1)]
       for padding in [((0, 0), (0, 0)), ((1, 2), (2, 0))]
       for lhs_dilation, rhs_dilation in itertools.product(
           [(1, 1), (1, 2), (2, 2)], repeat=2)
@@ -418,7 +419,7 @@ class LaxTest(jtu.JaxTestCase):
       for lhs_shape, rhs_shape in [
           ((b, i, 9, 10), (j, i, 4, 5))
           for b, i, j in itertools.product([2, 3], repeat=3)]
-      for dtype in [onp.float32] for strides in [(1, 1), (2, 1)]
+      for dtype in float_dtypes for strides in [(1, 1), (2, 1)]
       for padding in [((1, 2), (2, 0))]
       for lhs_dilation, rhs_dilation in itertools.product(
           [(1, 1), (1, 2)], repeat=2)
@@ -494,7 +495,7 @@ class LaxTest(jtu.JaxTestCase):
       for lhs_shape, rhs_shape in [
           ((b, 9, 10, i), (k, k, j, i))  # NB: i,j flipped in RHS for transpose
           for b, i, j, k in itertools.product([2,3],[2,3],[2,3],[3,4,5])]
-      for dtype in [onp.float32]
+      for dtype in float_dtypes
       for strides in [(1, 1), (1, 2), (2, 1), (2, 2), (3, 3)]
       for padding in ["VALID", "SAME"]
       for dspec in [('NHWC', 'HWIO', 'NHWC'),]
@@ -527,7 +528,7 @@ class LaxTest(jtu.JaxTestCase):
       for lhs_shape, rhs_shape in [
           ((b, 9, 10, i), (k, k, i, j))
           for b, i, j, k in itertools.product([2,3],[2,3],[2,3],[3,4,5])]
-      for dtype in [onp.float32]
+      for dtype in float_dtypes
       for strides in [(1, 1), (1, 2), (2, 1), (2, 2), (3, 3)]
       for padding in ["VALID", "SAME"]
       for dspec in [('NHWC', 'HWIO', 'NHWC'),]
@@ -559,7 +560,7 @@ class LaxTest(jtu.JaxTestCase):
       for lhs_shape, rhs_shape in [
           ((b, 10, i), (k, i, j))
           for b, i, j, k in itertools.product([2,3],[2,3],[2,3],[3,4,5])]
-      for dtype in [onp.float32]
+      for dtype in float_dtypes
       for strides in [(1,), (2,), (3,)]
       for padding in ["VALID", "SAME"]
       for dspec in [('NHC', 'HIO', 'NHC'),]
@@ -1646,7 +1647,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
             for b, i, j in itertools.product([2, 3], repeat=3)],
            [((4, 2, 1), (3, 2, 1), [(1,)])])
        for strides in all_strides
-       for dtype in [onp.float32]
+       for dtype in float_dtypes
        for padding in ["VALID", "SAME"]
        for rng in [jtu.rand_small()]))
   @jtu.skip_on_devices("tpu")
@@ -1678,7 +1679,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        for strides in all_strides
        for rhs_dil in rhs_dils
        for lhs_dil in lhs_dils
-       for dtype in [onp.float32]
+       for dtype in float_dtypes
        for padding in all_pads
        for rng in [jtu.rand_small()]))
   @jtu.skip_on_devices("tpu")
@@ -1715,7 +1716,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       for strides in all_strides
       for rhs_dil in rhs_dils
       for lhs_dil in lhs_dils
-      for dtype in [onp.float32]
+      for dtype in float_dtypes
       for padding in all_pads
       for dim_nums, perms in [
           (("NCHW", "OIHW", "NCHW"), ([0, 1, 2, 3], [0, 1, 2, 3])),
