@@ -576,6 +576,20 @@ class APITest(jtu.JaxTestCase):
         "the scope of <jax.custom_transforms function bar>, but defjvp and "
         "defjvp_all only support differentiation w.r.t. positional arguments.")
 
+  def test_defvjp_closure_error(self):
+    def foo(x):
+      @api.custom_transforms
+      def bar(y):
+        return x * y
+
+      api.defvjp(bar, lambda g, ans, y: x * y)
+      return bar(x)
+    jtu.check_raises(
+        lambda: grad(foo)(1.,), ValueError,
+        "Detected differentiation w.r.t. variables from outside "
+        "the scope of <jax.custom_transforms function bar>, but defvjp and "
+        "defvjp_all only support differentiation w.r.t. positional arguments.")
+
   def test_custom_transforms_eval_with_pytrees(self):
     @api.custom_transforms
     def f(x):
