@@ -491,10 +491,12 @@ def _double_factorial(n):
   return onp.prod(onp.arange(n, 1, -2))
 
 
+_norm_logpdf_constant = onp.log(onp.sqrt(2 * onp.pi))
+
 def _norm_logpdf(x):
-  two = _constant_like(x, 2)
-  log_normalizer = lax.log(_constant_like(x, 2 * onp.pi))
-  return lax.div(lax.neg(lax.add(log_normalizer, lax.square(x))), two)
+  neg_half = _constant_like(x, -0.5)
+  log_normalizer = _constant_like(x, _norm_logpdf_constant)
+  return lax.sub(lax.mul(neg_half, lax.square(x)), log_normalizer)
 
 defjvp(log_ndtr,
        lambda g, ans, x: lax.mul(g, lax.exp(lax.sub(_norm_logpdf(x), ans))))
