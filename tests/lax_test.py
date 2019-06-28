@@ -1728,6 +1728,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
           (("NHWC", "OIHW", "NCHW"), ([0, 2, 3, 1], [0, 1, 2, 3]))]
       for rng in [jtu.rand_default()]
   ))
+  @jtu.skip_on_devices("tpu")  # TODO(phawkins): precision problems on TPU.
   def testConvGeneralDilatedGrad(self, lhs_shape, rhs_shape, dtype, strides,
                                  padding, lhs_dil, rhs_dil, dimension_numbers,
                                  perms, feature_group_count, rng):
@@ -2286,8 +2287,9 @@ class LaxVmapTest(jtu.JaxTestCase):
       for rng in [jtu.rand_default()]
   ))
   # TODO(mattjj): some cases fail on CPU with the latest XLA (jaxlib) release
-  # apparently because of an AVX512 issue.
-  @jtu.skip_on_devices("cpu")
+  # apparently because of an AVX512 issue, and some cases fail on TPU just due
+  # to numerical tolerances
+  @jtu.skip_on_devices("cpu", "tpu")
   def testConvGeneralDilatedBatching(
       self, lhs_shape, rhs_shape, dtype, strides, padding, lhs_dil, rhs_dil,
       dimension_numbers, perms, feature_group_count, lhs_bdim, rhs_bdim, rng):

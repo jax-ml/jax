@@ -517,6 +517,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       for shape in [(1, 1), (4, 5), (10, 5), (10, 10)]
       for dtype in float_types + complex_types
       for rng in [jtu.rand_default()]))
+  @jtu.skip_on_devices("tpu")  # TODO(phawkins): precision problems on TPU.
   def testLuGrad(self, shape, dtype, rng):
     _skip_if_unsupported_type(dtype)
     a = rng(shape, dtype)
