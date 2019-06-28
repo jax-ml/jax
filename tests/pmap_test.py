@@ -579,7 +579,7 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   @jtu.skip_on_devices("gpu")
-  def testSoftPmapAllToAll(self):
+  def DISABLED_testSoftPmapAllToAll(self):
     n = 4 * xla_bridge.device_count()
     def f(x):
       return lax.all_to_all(x, 'i', 0, 0)
