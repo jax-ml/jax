@@ -591,8 +591,8 @@ class LaxTest(jtu.JaxTestCase):
        "precision": precision, "rng": rng}
       for lhs_shape in [(3,), (4, 3)] for rhs_shape in [(3,), (3, 6)]
       for dtype in default_dtypes
-      for precision in [None, lax.Precision.HIGH, lax.Precision.HIGHEST,
-                        (lax.Precision.DEFAULT, lax.Precision.HIGH)]
+      for precision in [None, lax.Precision.DEFAULT, lax.Precision.HIGH,
+                        lax.Precision.HIGHEST]
       for rng in [jtu.rand_default()]))
   def testDot(self, lhs_shape, rhs_shape, dtype, precision, rng):
     args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
