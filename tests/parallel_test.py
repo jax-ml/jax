@@ -127,6 +127,15 @@ class PapplyTest(jtu.JaxTestCase):
 
 class ParallelizeTest(jtu.JaxTestCase):
 
+  def dedup(self, arr, expected_rank):
+    if arr.ndim == expected_rank + 1:
+      for i in xrange(arr.shape[0] - 1):
+        self.assertAllClose(arr[i], arr[i + 1], check_dtypes=True)
+      return arr[0]
+    else:
+      assert arr.ndim == expected_rank
+      return arr
+
   def testNormalize(self):
 
     def f(x):
@@ -233,21 +242,67 @@ class ParallelizeTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testDot(self):
-    return SkipTest("test doesn't pass yet")  # TODO(frostig)
+    return SkipTest("known failure")  # TODO(frostig)
+    x = onp.reshape(onp.arange(4., dtype=onp.float32), (2, 2))
 
     def fun(x, y):
       return lax.dot(x, y)
-    xs = [
-        onp.reshape(onp.arange(4., dtype=onp.float32), (2, 2)),
-        onp.reshape(onp.arange(9., dtype=onp.float32), (3, 3)),
+
+    expected = fun(x, x)
+    pfun, axis_name = _papply(fun)
+    ans = soft_pmap(pfun, axis_name)(x, x)
+    ans = self.dedup(ans, expected.ndim)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  # Test lax.dot_general on two rank-3 arguments, generating a test method call
+  # for every matching of dimensions, and each matched pair of dimensions being
+  # {batch, contracting, neither}. In combination with that, split the first
+  # dimension of the LHS, that of the RHS, and that of both.
+  @parameterized.named_parameters(
+      {"testcase_name": "_dimMatch={}_matchTypes={}_split={}".format(
+          matching, coloring, split),
+       "matching": matching, "coloring": coloring, "split": split}
+      for matching in itertools.permutations(range(3))
+      for coloring in itertools.product(range(3), range(3), range(3))
+      for split in range(3))
+  def testDotGeneral(self, matching, coloring, split):
+    BATCH, CONTRACT, _ = range(3)
+    SPLIT_LHS, SPLIT_RHS, SPLIT_BOTH = range(3)
+
+    x = onp.reshape(onp.arange(8.), (2, 2, 2))
+    y = onp.reshape(onp.arange(8.), (2, 2, 2)) + 4.
+
+    cdims = [(i, matching[i]) for i in range(3) if coloring[i] == CONTRACT]
+    bdims = [(i, matching[i]) for i in range(3) if coloring[i] == BATCH]
+    dimension_numbers = [
+        list(zip(*cdims)) or [(), ()],
+        list(zip(*bdims)) or [(), ()]
     ]
-    in_axes_combos = [(0, 0), (0, 1)] # [(1, 0)]
-    for in_axes in in_axes_combos:
-      for x in xs:
-        expected = fun(x, x)
+
+    def f(x, y):
+      return lax.dot_general(x, y, dimension_numbers)
+
+    if split == SPLIT_LHS:
+      fun = lambda x: f(x, y)
+    elif split == SPLIT_RHS:
+      fun = lambda y: f(x, y)
+    else:
+      fun = f
+
+    try:
+      if split != SPLIT_BOTH:
+        expected = fun(x)
         pfun, axis_name = _papply(fun)
-        ans = soft_pmap(pfun, axis_name)(x, x)
-        self.assertAllClose(ans, expected, check_dtypes=False)
+        ans = soft_pmap(pfun, axis_name)(x)
+      else:
+        expected = fun(x, y)
+        pfun, axis_name = _papply(fun)
+        ans = soft_pmap(pfun, axis_name)(x, y)
+    except NotImplementedError as e:
+      return SkipTest(e)
+
+    ans = self.dedup(ans, expected.ndim)
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
 
 if __name__ == '__main__':

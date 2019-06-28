@@ -15,6 +15,13 @@
 Parallelization primitives.
 """
 
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
+import six
+from six.moves import xrange
+
 import numpy as onp
 
 from jax import ad_util
@@ -406,22 +413,9 @@ _defreducer(lax.reduce_min_p, pmin_p)
 
 
 def _dot_papply_rule(name, size, vals, dims, precision):
-  x, y = vals
-  xdim, ydim = dims
-  if xdim is None:
-    return lax.dot(x, y), ydim
-  elif ydim is None:
-    return lax.dot(x, y), xdim
-  elif ydim == 0:
-    if xdim != x.ndim:
-      x = psplit(x, name, x.ndim, xdim)
-    x = x[..., None]
-    y = y[..., None, :]
-    return psum(x * y, name), None
-  else:
-    y = pcollect(y, name)
-    return lax.dot(x, y, precision), xdim
-
+  x, _ = vals
+  dim_nums = [((x.ndim,), (0,)), ((), ())]
+  return _dot_general_papply_rule(name, size, vals, dims, dim_nums, precision)
 
 def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers,
                              precision):
@@ -430,52 +424,121 @@ def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers,
 
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
 
+  if lhs_batch or rhs_batch:
+    raise NotImplementedError(
+        ('papply of dot_general with batch dimensions: '
+         'xdim={}, ydim={}, dimension_numbers={}').format(
+             xdim, ydim, dimension_numbers))
+
   def adjust_dims(dims, thresh):
     return tuple(i - 1 if i > thresh else i for i in dims if i != thresh)
 
-  sub_lhs_contract, sub_rhs_contract = lhs_contract, rhs_contract
-  sub_lhs_batch, sub_rhs_batch = lhs_batch, rhs_batch
-
-  def sub_dims(xdim, ydim):
-    sub_lhs_contract, sub_rhs_contract = lhs_contract, rhs_contract
-    sub_lhs_batch, sub_rhs_batch = lhs_batch, rhs_batch
+  def sub_dims(xdim, ydim, xcontract, ycontract, xbatch, ybatch):
     if xdim is not None:
-      sub_lhs_batch = adjust_dims(lhs_batch, xdim)
-      sub_lhs_contract = adjust_dims(lhs_contract, xdim)
+      xbatch = adjust_dims(xbatch, xdim)
+      xcontract = adjust_dims(xcontract, xdim)
     if ydim is not None:
-      sub_rhs_batch = adjust_dims(rhs_batch, ydim)
-      sub_rhs_contract = adjust_dims(rhs_contract, ydim)
-    return (
-      (sub_lhs_contract, sub_rhs_contract), (sub_lhs_batch, sub_rhs_batch))
+      ybatch = adjust_dims(ybatch, ydim)
+      ycontract = adjust_dims(ycontract, ydim)
+    return ((xcontract, ycontract), (xbatch, ybatch))
 
-  def cases(x, y, xdim, ydim, xcontract, ycontract):
-    if xdim in xcontract:
-      if ydim in ycontract:
-        # case: both operands are split and contracting
-        z = lax.dot_general(x, y, sub_dims(xdim, ydim), precision)
-        return True, (psum(z, name), None)
+  def cases(x, y, xdim, ydim, xc, yc, xb, yb):
+    # Consider three states in which an operand may be
+    #   1: split, contracting
+    #   2: split, not contracting
+    #   3: not split
+    #
+    # We will handle the following cases, marked by corresponding letter
+    # symbols:
+    #
+    #  |1 2 3|y
+    # -+-----+-
+    # 1|a b c
+    # 2|d e f
+    # 3|g h i
+    # -+
+    # x|
+    #
+    # Case i is already covered and we can assume that it is excluded at the
+    # outset, since a papply rule is not invoked when no operands are split.
+
+    if xdim in xc:
+      # cases a, b, c
+      if ydim in yc:
+        # case a: both operands are split and contracting
+        # TODO(frostig): Might the following work?
+        # z = lax.dot_general(
+        #     x, y, sub_dims(xdim, ydim, xc, yc, xb, yb), precision)
+        # return True, (psum(z, name), None)
+        return False, 'both operands split and contracting'
       elif ydim is not None:
-        # case: x split and contracting, y split but not contracting
-        new_ydim = ycontract[xcontract.index(xdim)]
-        y = psplit(y, name, new_ydim, ydim)
-        z = lax.dot_general(x, y, sub_dims(xdim, new_ydim), precision)
-        return True, (psum(z, name), None)
+        # case b: x split and contracting, y split but not contracting
+        # TODO(frostig): Might the following work?
+        # new_ydim = yc[xc.index(xdim)]
+        # y = all_to_all(y, name, new_ydim, ydim)
+        # z = lax.dot_general(
+        #     x, y, sub_dims(xdim, new_ydim, xc, yc, xb, yb), precision)
+        # return True, (psum(z, name), None)
+        return False, 'rhs split but not contracting, lhs split and contracting'
       else:
-        # case: x split and contracting, y not split
+        # case c: x split and contracting, y not split
+        assert ydim is None
         return False, 'one operand split and contracting, other is not split'
+    elif xdim is not None:
+      # cases d, e, f
+      if ydim in yc:
+        # case d: x split but not contracting, y split and contracting
+        # TODO(frostig): Might the following work?
+        # new_xdim = xc[yc.index(ydim)]
+        # x = all_to_all(x, name, new_xdim, xdim)
+        # z = lax.dot_general(
+        #     x, y, sub_dims(new_xdim, ydim, xc, yc, xb, yb), precision)
+        # return True, (psum(z, name), None)
+        return False, 'lhs split but not contracting, rhs split and contracting'
+      elif ydim is not None:
+        # case e: both operands are split but not contracting
+        y = _allgather(y, ydim, size, name)
+        z = lax.dot_general(
+            x, y, sub_dims(xdim, None, xc, yc, xb, yb), precision)
+        zdim = xdim + len(xb) - len([d for d in xrange(xdim) if d in xc])
+        return True, (z, zdim)
+      else:
+        # case f: x split but not contracting, y not split
+        assert ydim is None
+        z = lax.dot_general(
+            x, y, sub_dims(xdim, None, xc, yc, xb, yb), precision)
+        zdim = xdim + len(xb) - len([d for d in xrange(xdim) if d in xc])
+        return True, (z, zdim)
     else:
-      return False, 'unhandled case'
+      # cases g, h
+      assert xdim is None
+      if ydim in yc:
+        # case g: x not split, y split and contracting
+        return False, 'one operand split and contracting, other is not split'
+      else:
+        # case h: x not split, y split but not contracting
+        assert ydim is not None
+        # TODO(frostig): Might the following work?
+        # z = lax.dot_general(
+        #     x, y, sub_dims(None, ydim, xc, yc, xb, yb), precision)
+        # zdim = (
+        #     ydim + len(xb) +                # batch dimensions
+        #     x.ndim - len(xc) -              # non-contracting x dimensions
+        #     len([d for d in xrange(ydim) if d in yc]))
+        # return True, (z, zdim)
+        return False, 'lhs not split, rhs split but not contracting'
 
-  ok, out = cases(x, y, xdim, ydim, lhs_contract, rhs_contract)
-  if not ok:
-    ok, out = cases(y, x, ydim, xdim, rhs_contract, lhs_contract)
-  if not ok:
+    assert False, 'unreachable'
+
+  ok, out = cases(
+      x, y, xdim, ydim, lhs_contract, rhs_contract, lhs_batch, rhs_batch)
+  if ok:
+    return out
+  else:
     raise NotImplementedError(
         ('papply of dot_general, {}: '
          'xdim={}, ydim={}, dimension_numbers={}').format(
              out, xdim, ydim, dimension_numbers))
-  else:
-    return out
 
 
 def _reshape_papply_rule(name, size, vals, axes, new_sizes, dimensions,
