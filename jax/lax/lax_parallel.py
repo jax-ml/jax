@@ -405,7 +405,7 @@ _defreducer(lax.reduce_max_p, pmax_p)
 _defreducer(lax.reduce_min_p, pmin_p)
 
 
-def _dot_papply_rule(name, size, vals, dims):
+def _dot_papply_rule(name, size, vals, dims, precision):
   x, y = vals
   xdim, ydim = dims
   if xdim is None:
@@ -420,10 +420,11 @@ def _dot_papply_rule(name, size, vals, dims):
     return psum(x * y, name), None
   else:
     y = pcollect(y, name)
-    return lax.dot(x, y), xdim
+    return lax.dot(x, y, precision), xdim
 
 
-def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers):
+def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers,
+                             precision):
   x, y = vals
   xdim, ydim = dims
 
@@ -451,13 +452,13 @@ def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers):
     if xdim in xcontract:
       if ydim in ycontract:
         # case: both operands are split and contracting
-        z = lax.dot_general(x, y, sub_dims(xdim, ydim))
+        z = lax.dot_general(x, y, sub_dims(xdim, ydim), precision)
         return True, (psum(z, name), None)
       elif ydim is not None:
         # case: x split and contracting, y split but not contracting
         new_ydim = ycontract[xcontract.index(xdim)]
         y = psplit(y, name, new_ydim, ydim)
-        z = lax.dot_general(x, y, sub_dims(xdim, new_ydim))
+        z = lax.dot_general(x, y, sub_dims(xdim, new_ydim), precision)
         return True, (psum(z, name), None)
       else:
         # case: x split and contracting, y not split
@@ -548,7 +549,7 @@ def _convert_element_type_papply_rule(
 
 def _conv_general_dilated_papply_rule(
     name, size, vals, dims, window_strides, padding, lhs_dilation, rhs_dilation,
-    dimension_numbers, **unused_kwargs):
+    dimension_numbers, precision, **unused_kwargs):
   lhs, rhs = vals
   lhs_dim, rhs_dim = dims
   lhs_spec_batch_dim = dimension_numbers.lhs_spec[0]
@@ -556,7 +557,7 @@ def _conv_general_dilated_papply_rule(
     lhs = reshape(lhs, tuple(onp.insert(lhs.shape, lhs_dim, 1)))
     out = conv_general_dilated(
         lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
-        dimension_numbers)
+        dimension_numbers, precision)
     return out, lhs_dim
   else:
     raise NotImplementedError(

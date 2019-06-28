@@ -428,8 +428,10 @@ def _lu_blocked(a, block_size=32):
         a, ops.index[k:k+b, k+b:],
         triangular_solve(a[k:k+b, k:k+b], a[k:k+b, k+b:],
                          left_side=True, lower=True, unit_diagonal=True))
-      a = ops.index_add(a, ops.index[k+b:, k+b:],
-                        -np.dot(a[k+b:, k:k+b], a[k:k+b, k+b:]))
+      a = ops.index_add(
+        a, ops.index[k+b:, k+b:],
+        -lax.dot(a[k+b:, k:k+b], a[k:k+b, k+b:],
+                 precision=lax.Precision.HIGHEST))
   return pivot, a
 
 def _lu_python(x):
