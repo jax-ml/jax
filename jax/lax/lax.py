@@ -409,7 +409,8 @@ def conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation=None,
       a 3-tuple `(lhs_spec, rhs_spec, out_spec)`, where each element is a string
       of length `n+2`.
     feature_group_count: integer, default 1. See XLA HLO docs.
-    precision: Optional. Either `None`, or a `Precision` enum value.
+    precision: Optional. Either `None`, which means the default precision for
+      the backend, or a `Precision` enum value.
 
   Returns:
     An array containing the convolution result.
@@ -470,7 +471,8 @@ def dot(lhs, rhs, precision=None):
   Args:
     lhs: an array of rank 1 or 2.
     rhs: an array of rank 1 or 2.
-    precision: Optional. Either `None`, or a `Precision` enum value.
+    precision: Optional. Either `None`, which means the default precision for
+      the backend, or a `Precision` enum value.
 
   Returns:
     An array containing the product.
@@ -502,7 +504,8 @@ def dot_general(lhs, rhs, dimension_numbers, precision=None):
     dimension_numbers: a tuple of tuples of the form
       `((lhs_contracting_dims, rhs_contracting_dims),
       (lhs_batch_dims, rhs_batch_dims))`
-    precision: Optional. Either `None`, or a `Precision` enum value.
+    precision: Optional. Either `None`, which means the default precision for
+      the backend, or a `Precision` enum value.
 
   Returns:
     An array containing the result.
@@ -1061,7 +1064,8 @@ def conv(lhs, rhs, window_strides, padding, precision=None):
     window_strides: a sequence of `n` integers, representing the inter-window
       strides.
     padding: either the string `'SAME'`, the string `'VALID'`.
-    precision: Optional. Either `None`, or a `Precision` enum value.
+    precision: Optional. Either `None`, which means the default precision for
+      the backend, or a `Precision` enum value.
 
   Returns:
     An array containing the convolution result.
@@ -1088,7 +1092,8 @@ def conv_with_general_padding(lhs, rhs, window_strides, padding,
     rhs_dilation: `None`, or a sequence of `n` integers, giving the
       dilation factor to apply in each spatial dimension of `rhs`. RHS dilation
       is also known as atrous convolution.
-    precision: Optional. Either `None`, or a `Precision` enum value.
+    precision: Optional. Either `None`, which means the default precision for
+      the backend, or a `Precision` enum value.
 
   Returns:
     An array containing the convolution result.
@@ -1152,7 +1157,8 @@ def conv_transpose(lhs, rhs, strides, padding, dimension_numbers=None,
       to the gradient-derived functions like keras.layers.Conv2DTranspose
       applied to the same kernel. For typical use in neural nets this is completely
       pointless and just makes input/output channel specification confusing.
-    precision: Optional. Either `None`, or a `Precision` enum value.
+    precision: Optional. Either `None`, which means the default precision for
+      the backend, or a `Precision` enum value.
 
   Returns:
     Transposed N-d convolution, with output padding following the conventions of
