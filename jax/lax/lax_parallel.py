@@ -405,12 +405,13 @@ _defreducer(lax.reduce_max_p, pmax_p)
 _defreducer(lax.reduce_min_p, pmin_p)
 
 
-def _dot_papply_rule(name, size, vals, dims):
+def _dot_papply_rule(name, size, vals, dims, precision):
   x, _ = vals
   dim_nums = [((x.ndim,), (0,)), ((), ())]
-  return _dot_general_papply_rule(name, size, vals, dims, dim_nums)
+  return _dot_general_papply_rule(name, size, vals, dims, dim_nums, precision)
 
-def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers):
+def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers,
+                             precision):
   x, y = vals
   xdim, ydim = dims
 
@@ -459,7 +460,8 @@ def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers):
       if ydim in yc:
         # case a: both operands are split and contracting
         # TODO(frostig): Might the following work?
-        # z = lax.dot_general(x, y, sub_dims(xdim, ydim, xc, yc, xb, yb))
+        # z = lax.dot_general(
+        #     x, y, sub_dims(xdim, ydim, xc, yc, xb, yb), precision)
         # return True, (psum(z, name), None)
         return False, 'both operands split and contracting'
       elif ydim is not None:
@@ -467,7 +469,8 @@ def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers):
         # TODO(frostig): Might the following work?
         # new_ydim = yc[xc.index(xdim)]
         # y = all_to_all(y, name, new_ydim, ydim)
-        # z = lax.dot_general(x, y, sub_dims(xdim, new_ydim, xc, yc, xb, yb))
+        # z = lax.dot_general(
+        #     x, y, sub_dims(xdim, new_ydim, xc, yc, xb, yb), precision)
         # return True, (psum(z, name), None)
         return False, 'rhs split but not contracting, lhs split and contracting'
       else:
@@ -481,19 +484,22 @@ def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers):
         # TODO(frostig): Might the following work?
         # new_xdim = xc[yc.index(ydim)]
         # x = all_to_all(x, name, new_xdim, xdim)
-        # z = lax.dot_general(x, y, sub_dims(new_xdim, ydim, xc, yc, xb, yb))
+        # z = lax.dot_general(
+        #     x, y, sub_dims(new_xdim, ydim, xc, yc, xb, yb), precision)
         # return True, (psum(z, name), None)
         return False, 'lhs split but not contracting, rhs split and contracting'
       elif ydim is not None:
         # case e: both operands are split but not contracting
         y = _allgather(y, ydim, size, name)
-        z = lax.dot_general(x, y, sub_dims(xdim, None, xc, yc, xb, yb))
+        z = lax.dot_general(
+            x, y, sub_dims(xdim, None, xc, yc, xb, yb), precision)
         zdim = xdim + len(xb) - len([d for d in xrange(xdim) if d in xc])
         return True, (z, zdim)
       else:
         # case f: x split but not contracting, y not split
         assert ydim is None
-        z = lax.dot_general(x, y, sub_dims(xdim, None, xc, yc, xb, yb))
+        z = lax.dot_general(
+            x, y, sub_dims(xdim, None, xc, yc, xb, yb), precision)
         zdim = xdim + len(xb) - len([d for d in xrange(xdim) if d in xc])
         return True, (z, zdim)
     else:
@@ -506,7 +512,8 @@ def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers):
         # case h: x not split, y split but not contracting
         assert ydim is not None
         # TODO(frostig): Might the following work?
-        # z = lax.dot_general(x, y, sub_dims(None, ydim, xc, yc, xb, yb))
+        # z = lax.dot_general(
+        #     x, y, sub_dims(None, ydim, xc, yc, xb, yb), precision)
         # zdim = (
         #     ydim + len(xb) +                # batch dimensions
         #     x.ndim - len(xc) -              # non-contracting x dimensions
@@ -598,7 +605,7 @@ def _convert_element_type_papply_rule(
 
 def _conv_general_dilated_papply_rule(
     name, size, vals, dims, window_strides, padding, lhs_dilation, rhs_dilation,
-    dimension_numbers, **unused_kwargs):
+    dimension_numbers, precision, **unused_kwargs):
   lhs, rhs = vals
   lhs_dim, rhs_dim = dims
   lhs_spec_batch_dim = dimension_numbers.lhs_spec[0]
@@ -606,7 +613,7 @@ def _conv_general_dilated_papply_rule(
     lhs = reshape(lhs, tuple(onp.insert(lhs.shape, lhs_dim, 1)))
     out = conv_general_dilated(
         lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
-        dimension_numbers)
+        dimension_numbers, precision)
     return out, lhs_dim
   else:
     raise NotImplementedError(
