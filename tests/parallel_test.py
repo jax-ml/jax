@@ -275,8 +275,8 @@ class ParallelizeTest(jtu.JaxTestCase):
     cdims = [(i, matching[i]) for i in range(3) if coloring[i] == CONTRACT]
     bdims = [(i, matching[i]) for i in range(3) if coloring[i] == BATCH]
     dimension_numbers = [
-        zip(*cdims) or [(), ()],
-        zip(*bdims) or [(), ()]
+        list(zip(*cdims)) or [(), ()],
+        list(zip(*bdims)) or [(), ()]
     ]
 
     def f(x, y):
