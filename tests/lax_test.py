@@ -583,17 +583,21 @@ class LaxTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(fun, fun_via_grad, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_lhs_shape={}_rhs_shape={}".format(
+      {"testcase_name": "_lhs_shape={}_rhs_shape={}_precision={}".format(
           jtu.format_shape_dtype_string(lhs_shape, dtype),
-          jtu.format_shape_dtype_string(rhs_shape, dtype)),
+          jtu.format_shape_dtype_string(rhs_shape, dtype),
+          precision),
        "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
-       "rng": rng}
+       "precision": precision, "rng": rng}
       for lhs_shape in [(3,), (4, 3)] for rhs_shape in [(3,), (3, 6)]
       for dtype in default_dtypes
+      for precision in [None, lax.Precision.HIGH, lax.Precision.HIGHEST,
+                        (lax.Precision.DEFAULT, lax.Precision.HIGH)]
       for rng in [jtu.rand_default()]))
-  def testDot(self, lhs_shape, rhs_shape, dtype, rng):
+  def testDot(self, lhs_shape, rhs_shape, dtype, precision, rng):
     args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
-    self._CompileAndCheck(lax.dot, args_maker, check_dtypes=True)
+    self._CompileAndCheck(partial(lax.dot, precision=precision), args_maker,
+                          check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_lhs_shape={}_rhs_shape={}".format(
@@ -1650,11 +1654,11 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        for dtype in float_dtypes
        for padding in ["VALID", "SAME"]
        for rng in [jtu.rand_small()]))
-  @jtu.skip_on_devices("tpu")
   def testConvGrad(self, lhs_shape, rhs_shape, dtype, strides, padding, rng):
     lhs = rng(lhs_shape, dtype)
     rhs = rng(rhs_shape, dtype)
-    conv = partial(lax.conv, window_strides=strides, padding=padding)
+    conv = partial(lax.conv, window_strides=strides, padding=padding,
+                   precision=lax.Precision.HIGHEST)
     check_grads_bilinear(conv, (lhs, rhs), order=2, modes=["fwd", "rev"],
                          atol=1e-2, rtol=1e-2)
 
@@ -1682,13 +1686,13 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        for dtype in float_dtypes
        for padding in all_pads
        for rng in [jtu.rand_small()]))
-  @jtu.skip_on_devices("tpu")
   def testConvWithGeneralPaddingGrad(self, lhs_shape, rhs_shape, dtype, strides,
                                      padding, lhs_dil, rhs_dil, rng):
     lhs = rng(lhs_shape, dtype)
     rhs = rng(rhs_shape, dtype)
     conv = partial(lax.conv_with_general_padding, window_strides=strides,
-                   padding=padding, lhs_dilation=lhs_dil, rhs_dilation=rhs_dil)
+                   padding=padding, lhs_dilation=lhs_dil, rhs_dilation=rhs_dil,
+                   precision=lax.Precision.HIGHEST)
     check_grads_bilinear(conv, (lhs, rhs), order=2, modes=["fwd", "rev"],
                          atol=1e-2, rtol=1e-2)
 
@@ -1724,7 +1728,6 @@ class LaxAutodiffTest(jtu.JaxTestCase):
           (("NHWC", "OIHW", "NCHW"), ([0, 2, 3, 1], [0, 1, 2, 3]))]
       for rng in [jtu.rand_default()]
   ))
-  @jtu.skip_on_devices("tpu")
   def testConvGeneralDilatedGrad(self, lhs_shape, rhs_shape, dtype, strides,
                                  padding, lhs_dil, rhs_dil, dimension_numbers,
                                  perms, feature_group_count, rng):
@@ -1743,7 +1746,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     conv = partial(lax.conv_general_dilated, window_strides=strides,
                    padding=padding, lhs_dilation=lhs_dil, rhs_dilation=rhs_dil,
                    dimension_numbers=dimension_numbers,
-                   feature_group_count=feature_group_count)
+                   feature_group_count=feature_group_count,
+                   precision=lax.Precision.HIGHEST)
     check_grads_bilinear(conv, (lhs, rhs), order=2, modes=["fwd", "rev"],
                          atol=tol, rtol=tol)
 
@@ -1755,13 +1759,12 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        "rng": jtu.rand_default()}
       for lhs_shape in [(2,), (3, 2)] for rhs_shape in [(2,), (2, 4)]
       for dtype in float_dtypes))
-  @jtu.skip_on_flag("jax_xla_backend", "xrt")
-  @jtu.skip_on_devices("tpu")
   def testDotGrad(self, lhs_shape, rhs_shape, dtype, rng):
     tol = 1e-1 if num_float_bits(dtype) == 32 else 1e-3
     lhs = rng(lhs_shape, dtype)
     rhs = rng(rhs_shape, dtype)
-    check_grads_bilinear(lax.dot, (lhs, rhs), order=2, modes=["fwd", "rev"],
+    dot = partial(lax.dot, precision=lax.Precision.HIGHEST)
+    check_grads_bilinear(dot, (lhs, rhs), order=2, modes=["fwd", "rev"],
                          atol=tol, rtol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -1779,13 +1782,13 @@ class LaxAutodiffTest(jtu.JaxTestCase):
           ((3, 3, 2), (3, 2, 4), (([2], [1]), ([0], [0]))),
       ]
       for dtype in float_dtypes))
-  @jtu.skip_on_devices("tpu")
   def testDotGeneralContractAndBatchGrads(self, lhs_shape, rhs_shape, dtype,
                                           dimension_numbers, rng):
     tol = 1e-1 if onp.finfo(dtype).bits == 32 else 1e-2
     lhs = rng(lhs_shape, dtype)
     rhs = rng(rhs_shape, dtype)
-    dot_general = partial(lax.dot_general, dimension_numbers=dimension_numbers)
+    dot_general = partial(lax.dot_general, dimension_numbers=dimension_numbers,
+                          precision=lax.Precision.HIGHEST)
     check_grads_bilinear(dot_general, (lhs, rhs), order=2, modes=["fwd", "rev"],
                          atol=tol, rtol=tol)
 
@@ -2283,9 +2286,8 @@ class LaxVmapTest(jtu.JaxTestCase):
       for rng in [jtu.rand_default()]
   ))
   # TODO(mattjj): some cases fail on CPU with the latest XLA (jaxlib) release
-  # apparently because of an AVX512 issue, and some cases fail on TPU just due
-  # to numerical tolerances
-  @jtu.skip_on_devices("tpu", "cpu")
+  # apparently because of an AVX512 issue.
+  @jtu.skip_on_devices("cpu")
   def testConvGeneralDilatedBatching(
       self, lhs_shape, rhs_shape, dtype, strides, padding, lhs_dil, rhs_dil,
       dimension_numbers, perms, feature_group_count, lhs_bdim, rhs_bdim, rng):
@@ -2315,7 +2317,8 @@ class LaxVmapTest(jtu.JaxTestCase):
     conv = partial(lax.conv_general_dilated, window_strides=strides,
                    padding=padding, lhs_dilation=lhs_dil, rhs_dilation=rhs_dil,
                    dimension_numbers=dimension_numbers,
-                   feature_group_count=feature_group_count)
+                   feature_group_count=feature_group_count,
+                   precision=lax.Precision.HIGHEST)
     ans = api.vmap(conv, (lhs_bdim, rhs_bdim))(lhs, rhs)
     expected = onp.stack([conv(lhs_slice(i), rhs_slice(i)) for i in range(bdim_size)])
     self.assertAllClose(ans, expected, True, tol, tol)

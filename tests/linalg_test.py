@@ -94,8 +94,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for n in [0, 4, 5, 25]  # TODO(mattjj): complex64 unstable on large sizes?
       for dtype in float_types + complex_types
       for rng in [jtu.rand_default()]))
-  # TODO(phawkins): enable when there is an LU implementation for TPU.
-  @jtu.skip_on_devices("tpu")
   def testDet(self, n, dtype, rng):
     _skip_if_unsupported_type(dtype)
     args_maker = lambda: [rng((n, n), dtype)]
@@ -111,7 +109,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for n in [0, 4, 10, 200]
       for dtype in float_types + complex_types
       for rng in [jtu.rand_default()]))
-  @jtu.skip_on_devices("tpu")
   def testSlogdet(self, n, dtype, rng):
     _skip_if_unsupported_type(dtype)
     args_maker = lambda: [rng((n, n), dtype)]
@@ -448,8 +445,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       ]
       for dtype in float_types + complex_types
       for rng in [jtu.rand_default()]))
-  # TODO(phawkins): enable when there is an LU implementation for TPU.
-  @jtu.skip_on_devices("tpu")
   def testSolve(self, lhs_shape, rhs_shape, dtype, rng):
     _skip_if_unsupported_type(dtype)
     args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
@@ -500,7 +495,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
 class ScipyLinalgTest(jtu.JaxTestCase):
 
-  # TODO(phawkins): enable when there is an LU implementation for TPU.
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
@@ -508,7 +502,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       for shape in [(1, 1), (4, 5), (10, 5), (50, 50)]
       for dtype in float_types + complex_types
       for rng in [jtu.rand_default()]))
-  @jtu.skip_on_devices("tpu")
   def testLu(self, shape, dtype, rng):
     _skip_if_unsupported_type(dtype)
     args_maker = lambda: [rng(shape, dtype)]
@@ -524,8 +517,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       for shape in [(1, 1), (4, 5), (10, 5), (10, 10)]
       for dtype in float_types + complex_types
       for rng in [jtu.rand_default()]))
-  # TODO(phawkins): enable when there is an LU implementation for TPU.
-  @jtu.skip_on_devices("tpu")
   def testLuGrad(self, shape, dtype, rng):
     _skip_if_unsupported_type(dtype)
     a = rng(shape, dtype)
@@ -538,7 +529,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       for shape in [(4, 5), (6, 5)]
       for dtype in [np.float32]
       for rng in [jtu.rand_default()]))
-  @jtu.skip_on_devices("tpu")
   def testLuBatching(self, shape, dtype, rng):
     _skip_if_unsupported_type(dtype)
     args = [rng(shape, np.float32) for _ in range(10)]
@@ -552,7 +542,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self.assertAllClose(ls, actual_ls, check_dtypes=True)
     self.assertAllClose(us, actual_us, check_dtypes=True)
 
-  # TODO(phawkins): enable when there is an LU implementation for GPU/TPU.
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),
@@ -560,7 +549,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       for n in [1, 4, 5, 200]
       for dtype in float_types + complex_types
       for rng in [jtu.rand_default()]))
-  @jtu.skip_on_devices("tpu")
   def testLuFactor(self, n, dtype, rng):
     _skip_if_unsupported_type(dtype)
     args_maker = lambda: [rng((n, n), dtype)]
@@ -589,10 +577,11 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       ]
       for dtype in float_types + complex_types
       for rng in [jtu.rand_default()]))
-  # TODO(phawkins): enable when there is an LU implementation for TPU.
-  @jtu.skip_on_devices("tpu")
   def testSolve(self, lhs_shape, rhs_shape, dtype, sym_pos, lower, rng):
     _skip_if_unsupported_type(dtype)
+    if (sym_pos and onp.issubdtype(dtype, onp.complexfloating) and
+       FLAGS.jax_test_dut and FLAGS.jax_test_dut.startswith("tpu")):
+      raise SkipTest("Complex Cholesky decomposition not implemented on TPU")
     osp_fun = lambda lhs, rhs: osp.linalg.solve(lhs, rhs, sym_pos=sym_pos, lower=lower)
     jsp_fun = lambda lhs, rhs: jsp.linalg.solve(lhs, rhs, sym_pos=sym_pos, lower=lower)
 
