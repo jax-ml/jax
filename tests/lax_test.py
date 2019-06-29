@@ -2029,9 +2029,9 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        "op": op, "init_val": init_val, "dtype": dtype, "padding": padding,
        "rng": rng}
       for init_val, op, dtypes, rng in [
-          (0, lax.add, [onp.float32], jtu.rand_small()),
-          (-onp.inf, lax.max, [onp.float32], jtu.rand_default()),
-          (onp.inf, lax.min, [onp.float32], jtu.rand_default()),
+          (0, lax.add, float_dtypes, jtu.rand_small()),
+          (-onp.inf, lax.max, float_dtypes, jtu.rand_default()),
+          (onp.inf, lax.min, float_dtypes, jtu.rand_default()),
       ]
       for dtype in dtypes
       for padding in ["VALID", "SAME"]
@@ -2045,7 +2045,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     # TODO(b/31565929): enable when fixed.
     if FLAGS.jax_test_dut == "tpu" and op is not lax.add:
       all_configs = [((6, 5, 4, 3), (2, 2, 1, 1), (1, 2, 1, 1))]
-      test_gradients = False  # TODO(b/73062247): need variadic reduce-window.
+      test_gradients = True  # TODO(b/73062247): need variadic reduce-window.
     else:
       all_configs = itertools.chain(
           itertools.product(
