@@ -1679,6 +1679,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     x = lnp.ones((3, 4))
     self.assertRaises(ValueError, lambda: lnp.sum(x, axis=2))
 
+  def testIssue956(self):
+    self.assertRaises(TypeError, lambda: lnp.ndarray((1, 1)))
+
 
 if __name__ == "__main__":
   absltest.main()
