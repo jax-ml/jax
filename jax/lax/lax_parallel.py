@@ -172,10 +172,6 @@ def all_to_all(x, axis_name, split_axis, concat_axis):
                            axis_name=axis_name)
 
 
-def pcollect(x, axis_name):
-  return pcollect_p.bind(x, axis_name=axis_name)
-
-
 ### parallel primitives
 
 def standard_pmap_primitive(name):
