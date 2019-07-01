@@ -28,7 +28,7 @@ import opt_einsum
 import six
 from six.moves import builtins, xrange
 
-from jax import jit
+from jax import jit, device_put
 from .. import core
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
 from ..interpreters.xla import DeviceArray
@@ -167,7 +167,7 @@ def _promote_to_result_dtype(op, *args):
 
 def _result_dtype(op, *args):
   """Compute result dtype of applying op to arguments with given dtypes."""
-  args = (onp.ones((0,) * ndim(arg), _dtype(arg)) for arg in args)
+  args = [onp.ones((0,) * ndim(arg), _dtype(arg)) for arg in args]
   return _dtype(op(*args))
 
 
@@ -768,6 +768,20 @@ def where(condition, x=None, y=None):
     return lax.select(condition, *_promote_dtypes(x, y))
 
 
+@_wraps(onp.select)
+def select(condlist, choicelist, default=0):
+  if len(condlist) != len(choicelist):
+    msg = "condlist must have length equal to choicelist ({} vs {})"
+    raise ValueError(msg.format(len(condlist), len(choicelist)))
+  if len(condlist) == 0:
+    raise ValueError("condlist must be non-empty")
+
+  output = default
+  for cond, choice in zip(condlist[::-1], choicelist[::-1]):
+    output = where(cond, choice, output)
+  return output
+
+
 def broadcast_arrays(*args):
   """Like Numpy's broadcast_arrays but doesn't return views."""
   shapes = [shape(arg) for arg in args]
@@ -1185,7 +1199,7 @@ def _pad(array, pad_width, mode, constant_values):
     return array
   elif mode in ("symmetric", "reflect", "wrap"):
     for i in xrange(nd):
-      if array.shape[i] == 0 :
+      if array.shape[i] == 0:
         if (pad_width[i, 0] > 0 or pad_width[i, 1] > 0):
           msg = "Cannot apply '{}' padding to empty axis"
           raise ValueError(msg.format(mode))
@@ -1256,7 +1270,16 @@ def concatenate(arrays, axis=0):
     raise ValueError("Need at least one array to concatenate.")
   if ndim(arrays[0]) == 0:
     raise ValueError("Zero-dimensional arrays cannot be concatenated.")
-  return lax.concatenate(_promote_dtypes(*arrays), axis % ndim(arrays[0]))
+  axis = _canonicalize_axis(axis, ndim(arrays[0]))
+  arrays = _promote_dtypes(*arrays)
+  # lax.concatenate can be slow to compile for wide concatenations, so form a
+  # tree of concatenations as a workaround especially for op-by-op mode.
+  # (https://github.com/google/jax/issues/653).
+  k = 16
+  while len(arrays) > 1:
+    arrays = [lax.concatenate(arrays[i:i+k], axis)
+              for i in range(0, len(arrays), k)]
+  return arrays[0]
 
 
 @_wraps(onp.vstack)
@@ -1322,13 +1345,15 @@ def atleast_3d(*arys):
 
 @_wraps(onp.array)
 def array(object, dtype=None, copy=True, order="K", ndmin=0):
-  del copy  # Unused.
-  if ndmin != 0 or order != "K":
+  if ndmin != 0 or (order is not None and order != "K"):
     raise NotImplementedError("Only implemented for order='K', ndmin=0.")
 
   if isinstance(object, ndarray):
     if dtype and _dtype(object) != dtype:
       return lax.convert_element_type(object, dtype)
+    elif copy:
+      # If a copy was requested, we must copy.
+      return device_put(object)
     else:
       return object
   elif hasattr(object, '__array__'):
@@ -1347,7 +1372,10 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
       return out
   else:
     raise TypeError("Unexpected input type for array: {}".format(type(object)))
-asarray = array
+
+@_wraps(onp.asarray)
+def asarray(a, dtype=None, order=None):
+  return array(a, dtype=dtype, copy=False, order=order)
 
 
 @_wraps(onp.zeros_like)
@@ -1421,20 +1449,15 @@ def identity(n, dtype=None):
 
 
 @_wraps(onp.arange)
-def arange(*args, **kwargs):
-  dtype = kwargs.get("dtype", None)
-  if not args:
-    raise TypeError("Required argument 'start' (pos 1) not found")  # same as numpy error
-
+def arange(start, stop=None, step=None, dtype=None):
   # If called like np.arange(N), we create a lazy lax._IotaConstant.
-  if len(args) == 1 and not kwargs:
-    stop, = args
-    dtype = dtype or _dtype(stop)
+  if stop is None and step is None:
+    dtype = dtype or _dtype(start)
     if onp.issubdtype(dtype, onp.integer):
-      return lax.iota(dtype, stop)  # avoids materializing
+      return lax.iota(dtype, start)  # avoids materializing
 
   # Fall back to instantiating an ndarray in host memory
-  return onp.arange(*args, **kwargs)
+  return onp.arange(start, stop=stop, step=step, dtype=dtype)
 
 linspace = onp.linspace
 logspace = onp.logspace
@@ -2045,30 +2068,21 @@ def roll(a, shift, axis=None):
     return lax.reshape(roll(ravel(a), shift, axis=0), a_shape)
 
   a_ndim = len(a_shape)
-  if isinstance(shift, tuple):
-    if isinstance(axis, tuple):
-      if len(axis) != len(shift):
-        msg = "Mismatched lengths between shift ({}) and axis ({}) for np.roll."
-        raise ValueError(msg.format(len(shift), len(axis)))
-      axis = tuple(a for a in axis)
-    else:
-      axis = (axis,) * len(shift)
-  elif isinstance(axis, tuple):
-    shift = (shift,) * len(axis)
-  else:
-    shift = (shift,)
-    axis = (axis,)
+  shift = asarray(shift)
+  axis = onp.asarray(axis)
+  b_shape = lax.broadcast_shapes(shift.shape, axis.shape, (1,))
+  if len(b_shape) != 1:
+    msg = "'shift' and 'axis' arguments to roll must be scalars or 1D arrays"
+    raise ValueError(msg)
+  if b_shape[0] > a_ndim:
+    raise ValueError("More shifts/axes than dimensions of input to roll.")
 
-  for offset, i in zip(shift, axis):
+  for x, i in zip(broadcast_to(shift, b_shape),
+                  onp.broadcast_to(axis, b_shape)):
     i = _canonicalize_axis(i, a_ndim)
-    offset = offset % (a_shape[i] or 1)
-    slices = [slice(None)] * a_ndim
-    slices[i] = slice(None, -offset)
-    before = a[tuple(slices)]
-    slices[i] = slice(-offset, None)
-    after = a[tuple(slices)]
-    a = lax.concatenate((after, before), i)
-
+    x = remainder(x, (a_shape[i] or 1))
+    a = lax.concatenate((a, a), i)
+    a = lax.dynamic_slice_in_dim(a, a_shape[i] - x, a_shape[i], axis=i)
   return a
 
 
@@ -2108,19 +2122,28 @@ def take(a, indices, axis=None, out=None, mode=None):
 
 @_wraps(getattr(onp, "take_along_axis", None))
 def take_along_axis(arr, indices, axis):
-  if axis is None and ndim(arr) != 1:
-    return take_along_axis(arr.ravel(), indices.ravel(), 0)
+  if axis is None:
+    if ndim(indices) != 1:
+      msg = "take_along_axis indices must be 1D if axis=None, got shape {}"
+      raise ValueError(msg.format(shape(indices)))
+    return take_along_axis(arr.ravel(), indices, 0)
+  elif ndim(arr) != ndim(indices):
+    msg = "indices and arr must have the same number of dimensions; {} vs. {}"
+    raise ValueError(msg.format(ndim(indices), ndim(arr)))
   elif ndim(arr) == 1:
     return lax.index_take(arr, (indices,), (0,))
   else:
     # TODO(mattjj): if we lower directly to lax.gather here, we might be able to
     # avoid the reshape on the output.
-    all_indices = [lax.broadcasted_iota(_dtype(indices), shape(indices), i)
+    arr_shape = list(shape(arr))
+    arr_shape[axis] = 1
+    out_shape = lax.broadcast_shapes(shape(indices), tuple(arr_shape))
+    all_indices = [lax.broadcasted_iota(_dtype(indices), out_shape, i)
                    for i in range(ndim(arr))]
-    all_indices[axis] = indices
+    all_indices[axis] = broadcast_to(indices, out_shape)
     all_indices = tuple(map(ravel, all_indices))
     out_flat = lax.index_take(arr, all_indices, tuple(range(ndim(arr))))
-    return reshape(out_flat, shape(indices))
+    return reshape(out_flat, out_shape)
 
 
 ### Indexing
@@ -2309,17 +2332,16 @@ def _canonicalize_tuple_index(arr, idx):
 
 def _static_idx(idx, size):
   """Helper function to compute the static slice start/limit/stride values."""
-  indices = onp.arange(size)[idx]  # get shape statically
-  if not len(indices):  # pylint: disable=g-explicit-length-test
+  assert isinstance(idx, slice)
+  start, stop, step = idx.indices(size)
+  if (step < 0 and stop >= start) or (step > 0 and start >= stop):
     return 0, 0, 1, False  # sliced to size zero
-  start, stop_inclusive = indices[0], indices[-1]
-  step = 1 if idx.step is None else idx.step
+
   if step > 0:
-    end = _min(stop_inclusive + step, size)
-    return start, end, step, False
+    return start, stop, step, False
   else:
-    end = _min(start - step, size)
-    return stop_inclusive, end, -step, True
+    k  = (start - stop - 1) % (-step)
+    return stop + k + 1, start + 1, -step, True
 
 
 blackman = onp.blackman

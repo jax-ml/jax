@@ -14,4 +14,4 @@
 
 from __future__ import absolute_import
 
-from .scatter import index, index_add, index_update, segment_sum
+from .scatter import index, index_add, index_update, index_min, index_max, segment_sum

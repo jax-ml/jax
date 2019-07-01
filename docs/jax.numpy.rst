@@ -175,6 +175,7 @@ jax.numpy package
     rot90
     round
     row_stack
+    select
     sign
     sin
     sinc

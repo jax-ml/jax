@@ -485,7 +485,10 @@ class BatchingTest(jtu.JaxTestCase):
                                          (5, 21, 5, 1)))
     self.assertAllClose(per_example, per_example_direct, check_dtypes=True)
 
-  def testMaxPool(self):
+  @parameterized.named_parameters(
+    {"testcase_name": "_op={}".format(name), "op": op, "unit": unit}
+    for name, op, unit in [("max", lax.max, -np.inf), ("min", lax.min, np.inf)])
+  def testMinMaxPool(self, op, unit):
     W = np.array(onp.random.randn(3, 3, 1, 5), dtype=onp.float32)
     X = np.array(onp.random.randn(10, 5, 5, 1), dtype=onp.float32)
 
@@ -495,7 +498,7 @@ class BatchingTest(jtu.JaxTestCase):
       y = lax.conv_general_dilated(
           x, params, one, 'SAME', one, one, dimension_numbers)
       y = lax.reduce_window(
-          y, -np.inf, lax.max, (1, 2, 2, 1), (1, 1, 1, 1), 'SAME')
+          y, unit, op, (1, 2, 2, 1), (1, 1, 1, 1), 'SAME')
       return y
     grad_loss = grad(lambda params, x: np.mean(f(params, x) ** 2))
 
@@ -796,7 +799,7 @@ class BatchingTest(jtu.JaxTestCase):
        "op_axis": op_axis, "idxs_axis": idxs_axis, "shape": shape, "dtype":
        dtype, "idxs": idxs, "dnums": dnums, "slice_sizes": slice_sizes,
        "rng": rng, "rng_idx": rng_idx}
-      for dtype in [onp.float32, onp.int32]
+      for dtype in [onp.float32]
       for op_axis, idxs_axis, shape, idxs, dnums, slice_sizes in [
           (0, 0, (2, 5), onp.array([[[0], [2]], [[1], [3]]]),
            lax.GatherDimensionNumbers(

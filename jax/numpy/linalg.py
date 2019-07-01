@@ -120,8 +120,8 @@ def inv(a):
   if np.ndim(a) < 2 or a.shape[-1] != a.shape[-2]:
     raise ValueError("Argument to inv must have shape [..., n, n], got {}."
       .format(np.shape(a)))
-  q, r = qr(a)
-  return lax_linalg.triangular_solve(r, _T(q), lower=False, left_side=True)
+  return solve(
+    a, lax.broadcast(np.eye(a.shape[-1], dtype=lax.dtype(a)), a.shape[:-2]))
 
 
 @_wraps(onp.linalg.norm)
@@ -251,10 +251,8 @@ def solve(a, b):
   iotas = np.ix_(*(lax.iota(np.int32, b) for b in batch_dims + (1,)))
   x = x[iotas[:-1] + (permutation, slice(None))]
 
-  # TODO(phawkins): add unit_diagonal support to triangular_solve, use it here
-  # instead of explicit masking of l.
-  l = np.tril(lu, -1)[..., :, :m] + np.eye(m, m, dtype=dtype)
-  x = lax_linalg.triangular_solve(l, x, left_side=True, lower=True)
+  x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=True,
+                                  unit_diagonal=True)
   x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=False)
 
   return x[..., 0] if a_ndims == b_ndims + 1 else x
