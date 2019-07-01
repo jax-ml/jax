@@ -989,7 +989,26 @@ def make_jaxpr(fun):
 tree_to_pval_tuples = partial(process_pytree, pe.pack_pvals)
 
 
-device_put = jit(lambda x: x)
+
+_traceable_device_put = jit(lambda x: x)
+
+def device_put(x, device_num=0):
+  def _device_put(x):
+    if isinstance(x, core.Tracer):
+      return _traceable_device_put(x)
+
+    try:
+      a = xla.abstractify(x)
+    except TypeError:
+      raise TypeError("Argument '{}' of type {} is not a valid JAX type"
+                      .format(x, type(x)))
+
+    result_shape = xla.xla_shape_to_result_shape(xla.xla_shape(a))
+    handler = xla.device_persistent_result_handler(result_shape)
+    return handler(xla.device_put(x, device_num))
+  return tree_map(_device_put, x)
+
+
 device_get = _jit(lambda x: x, (), device_values=False)
 
 

@@ -179,11 +179,11 @@ class _ResultArray(tuple): pass
 
 def result_handler(result_shape):
   if FLAGS.jax_device_values:
-    return _device_persistent_result_handler(result_shape)
+    return device_persistent_result_handler(result_shape)
   else:
     return _pyval_result_handler(result_shape)
 
-def _device_persistent_result_handler(result_shape):
+def device_persistent_result_handler(result_shape):
   t = type(result_shape)
   if t is _ResultArray:
     return partial(DeviceArray, result_shape)
@@ -416,7 +416,7 @@ class DeviceTuple(DeviceValue):
 
   def __iter__(self):
     bufs = self.device_buffer.destructure()
-    handlers = map(_device_persistent_result_handler, self.result_shapes)
+    handlers = map(device_persistent_result_handler, self.result_shapes)
     elts = [handler(buf) for handler, buf in zip(handlers, bufs)]
     return iter(elts)
 
@@ -632,7 +632,7 @@ def _xla_callable(fun, device_values, *abstract_args):
     compiled, result_shape = _compile_jaxpr(jaxpr, consts, *abstract_args)
     del master, consts, jaxpr, env
   if device_values:
-    handle_result = _device_persistent_result_handler(result_shape)
+    handle_result = device_persistent_result_handler(result_shape)
   else:
     handle_result = _pyval_result_handler(result_shape)
   return partial(_execute_compiled, compiled, pval, handle_result)
