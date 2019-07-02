@@ -147,6 +147,20 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
+  @genNamedParametersNArgs(3, jtu.rand_default())
+  def testLaplaceCdf(self, rng, shapes, dtypes):
+    scipy_fun = osp_stats.laplace.cdf
+    lax_fun = lsp_stats.laplace.cdf
+
+    def args_maker():
+      x, loc, scale = map(rng, shapes, dtypes)
+      # ensure that scale is not too low
+      scale = onp.clip(scale, a_min=0.1, a_max=None)
+      return [x, loc, scale]
+
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
+
   # TODO: currently it ignores the argument "shapes" and only tests dim=4
   @genNamedParametersNArgs(3, jtu.rand_default())
   # TODO(phawkins): enable when there is an LU implementation for GPU/TPU.
