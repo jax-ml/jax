@@ -3616,10 +3616,6 @@ _UINT_DTYPES = {
 def _select_and_gather_add_translation(
     c, tangents, operand, select_prim, window_dimensions, window_strides,
     padding, max_bits=64):
-  # XLA doesn't yet implement ReduceWindow on tuples (Google bug b/73062247), so
-  # we implement a pair-wise ReduceWindow by packing two k-bit values into
-  # 2k-bit unsigned integer using bit tricks. This will only work for <= 32-bit
-  # inputs (since we don't have 128-bit integer types).
   shape = c.GetShape(operand)
   dtype = shape.numpy_dtype()
   etype = shape.xla_element_type()
@@ -3632,6 +3628,9 @@ def _select_and_gather_add_translation(
                                          canonicalize_types=False)
 
   if double_word_reduction:
+  # XLA doesn't yet implement ReduceWindow on tuples (Google bug b/73062247), so
+  # we implement a pair-wise ReduceWindow by packing two k-bit values into
+  # 2k-bit unsigned integer using bit tricks.
     word_dtype = _UINT_DTYPES[nbits]
     double_word_dtype = _UINT_DTYPES[nbits * 2]
     word_type = xla_bridge.dtype_to_etype_exact(word_dtype)
@@ -3656,10 +3655,14 @@ def _select_and_gather_add_translation(
       return c.BitcastConvertType(c.ConvertElementType(t, word_type), etype)
 
   else:
+    # The double-word trick above only works if we have a sufficiently large
+    # type. As an alternative, we can pack two half words into a single word,
+    # at the cost of precision.
+    # TODO(b/73062247): add support for tuple reductions and remove this case.
     warnings.warn("Using reduced precision for gradient of reduce-window "
-                  "min/max operator. This is likely from a second or "
-                  "higher derivative of a max-pooling operation and is to work"
-                  "around a missing XLA support for pair-reductions.")
+                  "min/max operator to work around missing XLA support for "
+                  "pair-reductions. This is likely from a second or "
+                  "higher derivative of a max-pooling operation.")
     r_nbits = nbits // 2
     # Drop/round the bottom mantissa bits.
     nexp = onp.finfo(dtype).nexp
