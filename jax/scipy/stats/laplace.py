@@ -41,8 +41,6 @@ def cdf(x, loc=0, scale=1):
   one = _constant_like(x, 1)
   zero = _constant_like(x, 0)
   diff = lax.div(lax.sub(x, loc), scale)
-  case1 = lax.mul(lax.mul(half, lax.exp(diff)),
-                  lax.convert_element_type(lax.lt(diff, zero), onp.float))
-  case2 = lax.mul(lax.sub(one, lax.mul(half, lax.exp(lax.neg(diff)))),
-                  lax.convert_element_type(lax.ge(diff, zero), onp.float))
-  return lax.add(case1, case2)
+  return lax.select(lax.le(diff, zero),
+                    lax.mul(half, lax.exp(diff)),
+                    lax.sub(one, lax.mul(half, lax.exp(lax.neg(diff)))))
