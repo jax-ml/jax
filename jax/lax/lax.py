@@ -3660,14 +3660,13 @@ def _select_and_gather_add_translation(
                   "min/max operator. This is likely from a second or "
                   "higher derivative of a max-pooling operation and is to work"
                   "around a missing XLA support for pair-reductions.")
-    if etype == xla_client.PrimitiveType.F32:
-      nexp, nmant = 8, 7  # bfloat16 precision.
-    elif etype == xla_client.PrimitiveType.F64:
-      nexp, nmant = onp.finfo(onp.float32).nexp, onp.finfo(onp.float32).nmant
+    r_nbits = nbits // 2
+    # Drop/round the bottom mantissa bits.
+    nexp = onp.finfo(dtype).nexp
+    nmant = r_nbits - nexp - 1
 
     double_word_dtype = word_dtype = _UINT_DTYPES[nbits]
     word_type = xla_bridge.dtype_to_etype_exact(word_dtype)
-    r_nbits = nbits // 2
 
     # Packs two values into a tuple.
     def pack(a, b):
