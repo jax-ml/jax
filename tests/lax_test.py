@@ -2029,7 +2029,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        "op": op, "init_val": init_val, "dtype": dtype, "padding": padding,
        "rng": rng}
       for init_val, op, dtypes, rng in [
-          (0, lax.add, [onp.float32], jtu.rand_small()),
+          (0, lax.add, float_dtypes, jtu.rand_small()),
           (-onp.inf, lax.max, [onp.float32], jtu.rand_default()),
           (onp.inf, lax.min, [onp.float32], jtu.rand_default()),
       ]
@@ -2045,7 +2045,9 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     # TODO(b/31565929): enable when fixed.
     if FLAGS.jax_test_dut == "tpu" and op is not lax.add:
       all_configs = [((6, 5, 4, 3), (2, 2, 1, 1), (1, 2, 1, 1))]
-      test_gradients = False  # TODO(b/73062247): need variadic reduce-window.
+
+      # TODO(b/73062247): need variadic reduce-window for better precision.
+      gradient_order = 1
     else:
       all_configs = itertools.chain(
           itertools.product(
@@ -2058,22 +2060,19 @@ class LaxAutodiffTest(jtu.JaxTestCase):
               [(1, 1, 2, 1), (2, 1, 2, 1)],  # window_dimensions
               [(1, 2, 2, 1), (1, 1, 1, 1)]),  # strides
       )
-      test_gradients = True
+      gradient_order = 3
 
     def fun(operand):
       return lax.reduce_window(operand, init_val, op, dims, strides, padding)
 
-    # pylint: disable=cell-var-from-loop
     for shape, dims, strides in all_configs:
       operand = rng(shape, dtype)
       if op is not lax.add:
         # this test can fail if there are duplicates in operand
         self.assertEqual(onp.unique(operand).size, operand.size,
                          msg="test requires operand elements to be unique.")
-      jtu.check_vjp(fun, partial(api.vjp, fun), (operand,), 1e-2, 1e-2, 1e-2)
-      if test_gradients:
-        check_grads(fun, (operand,), 3, ["fwd", "rev"], 1e-2, 1e-2, 1e-2)
-    # pylint: enable=cell-var-from-loop
+      check_grads(fun, (operand,), gradient_order, ["fwd", "rev"], 1e-2, 1e-2,
+                  1e-2)
 
   # TODO(b/205052657): enable more tests when supported
   @parameterized.named_parameters(jtu.cases_from_list(

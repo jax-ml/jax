@@ -3612,68 +3612,103 @@ _UINT_DTYPES = {
   64: onp.uint64,
 }
 
-def _select_and_gather_add_pair_reducer(dtype, select_prim):
-  bits = onp.finfo(dtype).bits
-  pair_uint_dtype = _UINT_DTYPES[bits * 2]
-  uint_etype = xla_bridge.dtype_to_etype_exact(_UINT_DTYPES[bits])
-  etype = xla_bridge.dtype_to_etype_exact(dtype)
-
-  c = xla_bridge.make_computation_builder("select_and_gather_pair_reducer")
-  x = c.ParameterWithShape(
-    xla_bridge.Shape.array_shape(onp.dtype(pair_uint_dtype), ()))
-  y = c.ParameterWithShape(
-    xla_bridge.Shape.array_shape(onp.dtype(pair_uint_dtype), ()))
-
-  bits_const = c.Constant(pair_uint_dtype(bits), canonicalize_types=False)
-
-  def fst(t):
-    st = c.ConvertElementType(c.ShiftRightLogical(t, bits_const), uint_etype)
-    return c.BitcastConvertType(st, etype)
-  sx = fst(x)
-  sy = fst(y)
-
-  assert select_prim is ge_p or select_prim is le_p
-  which = c.Ge(sx, sy) if select_prim is ge_p else c.Le(sx, sy)
-  c.Select(which, x, y)
-  return c.Build()
 
 def _select_and_gather_add_translation(
     c, tangents, operand, select_prim, window_dimensions, window_strides,
-    padding):
+    padding, max_bits=64):
+  shape = c.GetShape(operand)
+  dtype = shape.numpy_dtype()
+  etype = shape.xla_element_type()
+  nbits = onp.finfo(dtype).bits
+
+  assert nbits <= max_bits
+  double_word_reduction = nbits * 2 <= max_bits
+
+  const = lambda c, dtype, x: c.Constant(onp.array(x, dtype=dtype),
+                                         canonicalize_types=False)
+
+  if double_word_reduction:
   # XLA doesn't yet implement ReduceWindow on tuples (Google bug b/73062247), so
   # we implement a pair-wise ReduceWindow by packing two k-bit values into
-  # 2k-bit unsigned integer using bit tricks. This will only work for <= 32-bit
-  # inputs (since we don't have 128-bit integer types).
-  dtype = c.GetShape(operand).numpy_dtype()
-  bits = onp.finfo(dtype).bits
-  if bits > 32:
-    raise NotImplementedError(
-        "select_and_gather_add is not implemented for type larger than 32 bits")
-  etype = xla_bridge.dtype_to_etype(dtype)
-  uint_etype = xla_bridge.dtype_to_etype(_UINT_DTYPES[bits])
-  pair_uint_dtype = _UINT_DTYPES[bits * 2]
-  pair_uint_etype = xla_bridge.dtype_to_etype_exact(pair_uint_dtype)
+  # 2k-bit unsigned integer using bit tricks.
+    word_dtype = _UINT_DTYPES[nbits]
+    double_word_dtype = _UINT_DTYPES[nbits * 2]
+    word_type = xla_bridge.dtype_to_etype_exact(word_dtype)
+    double_word_type = xla_bridge.dtype_to_etype_exact(double_word_dtype)
 
-  operand = c.BitcastConvertType(operand, uint_etype)
-  tangents = c.BitcastConvertType(tangents, uint_etype)
-  operand = c.ConvertElementType(operand, pair_uint_etype)
-  tangents = c.ConvertElementType(tangents, pair_uint_etype)
-  operand = c.ShiftLeft(
-    operand, c.Constant(pair_uint_dtype(bits), canonicalize_types=False))
+    # Packs two values into a tuple.
+    def pack(a, b):
+      a = c.BitcastConvertType(a, word_type)
+      b = c.BitcastConvertType(b, word_type)
+      a = c.ConvertElementType(a, double_word_type)
+      b = c.ConvertElementType(b, double_word_type)
+      a = c.ShiftLeft(a, const(c, double_word_dtype, nbits))
+      return c.Or(a, b)
+
+    # Unpacks the first element of a tuple.
+    def fst(c, t):
+      st = c.ShiftRightLogical(t, const(c, double_word_dtype, nbits))
+      return c.BitcastConvertType(c.ConvertElementType(st, word_type), etype)
+
+    # Unpacks the second element of a tuple.
+    def snd(t):
+      return c.BitcastConvertType(c.ConvertElementType(t, word_type), etype)
+
+  else:
+    # The double-word trick above only works if we have a sufficiently large
+    # type. As an alternative, we can pack two half words into a single word,
+    # at the cost of precision.
+    # TODO(b/73062247): add support for tuple reductions and remove this case.
+    warnings.warn("Using reduced precision for gradient of reduce-window "
+                  "min/max operator to work around missing XLA support for "
+                  "pair-reductions. This is likely from a second or "
+                  "higher derivative of a max-pooling operation.")
+    r_nbits = nbits // 2
+    # Drop/round the bottom mantissa bits.
+    nexp = onp.finfo(dtype).nexp
+    nmant = r_nbits - nexp - 1
+
+    double_word_dtype = word_dtype = _UINT_DTYPES[nbits]
+    word_type = xla_bridge.dtype_to_etype_exact(word_dtype)
+
+    # Packs two values into a tuple.
+    def pack(a, b):
+      a = c.ReducePrecision(a, exponent_bits=nexp, mantissa_bits=nmant)
+      b = c.ReducePrecision(b, exponent_bits=nexp, mantissa_bits=nmant)
+      a = c.BitcastConvertType(a, word_type)
+      b = c.BitcastConvertType(b, word_type)
+      b = c.ShiftRightLogical(b, const(c, word_dtype, r_nbits))
+      return c.Or(a, b)
+
+    # Unpacks the first element of a tuple.
+    def fst(c, t):
+      st = c.And(t, const(c, word_dtype, ((1 << r_nbits) - 1) << r_nbits))
+      return c.BitcastConvertType(st, etype)
+
+    # Unpacks the second element of a tuple.
+    def snd(t):
+      return c.BitcastConvertType(c.ShiftLeft(t, const(c, word_dtype, r_nbits)),
+                                  etype)
+
+  def reducer():
+    c = xla_bridge.make_computation_builder("select_and_gather_pair_reducer")
+    x = c.ParameterWithShape(
+      xla_bridge.Shape.array_shape(onp.dtype(double_word_dtype), ()))
+    y = c.ParameterWithShape(
+      xla_bridge.Shape.array_shape(onp.dtype(double_word_dtype), ()))
+    assert select_prim is ge_p or select_prim is le_p
+    which = c.Ge if select_prim is ge_p else c.Le
+    c.Select(which(fst(c, x), fst(c, y)), x, y)
+    return c.Build()
+
 
   assert select_prim is ge_p or select_prim is le_p
   init = -onp.inf if select_prim is ge_p else onp.inf
-  init = c.BitcastConvertType(c.Constant(dtype.type(init)), uint_etype)
-  init = c.ConvertElementType(init, pair_uint_etype)
-  init = c.ShiftLeft(
-    init, c.Constant(pair_uint_dtype(bits), canonicalize_types=False))
-
-  xla_computation = _select_and_gather_add_pair_reducer(dtype, select_prim)
-  out = c.ReduceWindow(c.Or(operand, tangents), init,
-                       xla_computation, window_dimensions, window_strides,
+  out = c.ReduceWindow(pack(operand, tangents),
+                       pack(const(c, dtype, init), const(c, dtype, 0)),
+                       reducer(), window_dimensions, window_strides,
                        padding)
-  out = c.ConvertElementType(out, uint_etype)
-  return c.BitcastConvertType(out, etype)
+  return snd(out)
 
 def _select_and_gather_add_jvp(
     primals, tangents, select_prim, window_dimensions, window_strides,
@@ -3706,6 +3741,9 @@ select_and_gather_add_p = standard_primitive(
 ad.primitive_jvps[select_and_gather_add_p] = _select_and_gather_add_jvp
 ad.primitive_transposes[select_and_gather_add_p] = \
     _select_and_gather_add_transpose
+xla.backend_specific_translations['tpu'][select_and_gather_add_p] = partial(
+  _select_and_gather_add_translation,
+  max_bits=32)
 
 
 sort_shape = lambda operand, dimension: operand.shape
