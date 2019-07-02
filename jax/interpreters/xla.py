@@ -179,11 +179,11 @@ class _ResultArray(tuple): pass
 
 def result_handler(result_shape):
   if FLAGS.jax_device_values:
-    return device_persistent_result_handler(result_shape)
+    return _device_persistent_result_handler(result_shape)
   else:
     return _pyval_result_handler(result_shape)
 
-def device_persistent_result_handler(result_shape):
+def _device_persistent_result_handler(result_shape):
   t = type(result_shape)
   if t is _ResultArray:
     return partial(DeviceArray, result_shape)
@@ -416,7 +416,7 @@ class DeviceTuple(DeviceValue):
 
   def __iter__(self):
     bufs = self.device_buffer.destructure()
-    handlers = map(device_persistent_result_handler, self.result_shapes)
+    handlers = map(_device_persistent_result_handler, self.result_shapes)
     elts = [handler(buf) for handler, buf in zip(handlers, bufs)]
     return iter(elts)
 
@@ -632,7 +632,7 @@ def _xla_callable(fun, device_values, *abstract_args):
     compiled, result_shape = _compile_jaxpr(jaxpr, consts, *abstract_args)
     del master, consts, jaxpr, env
   if device_values:
-    handle_result = device_persistent_result_handler(result_shape)
+    handle_result = _device_persistent_result_handler(result_shape)
   else:
     handle_result = _pyval_result_handler(result_shape)
   return partial(_execute_compiled, compiled, pval, handle_result)
@@ -655,3 +655,21 @@ xla_call_p.def_impl(_xla_call_impl)
 
 translations[xla_call_p] = xla_call_translation_rule
 ad.primitive_transposes[xla_call_p] = partial(ad.call_transpose, xla_call_p)
+
+
+def _device_put_impl(x, device_num=0):
+  try:
+    a = abstractify(x)
+  except TypeError:
+    raise TypeError("Argument '{}' of type {} is not a valid JAX type"
+                    .format(x, type(x)))
+
+  result_shape = xla_shape_to_result_shape(xla_shape(a))
+  handler = _device_persistent_result_handler(result_shape)
+  return handler(device_put(x, device_num))
+
+device_put_p = core.Primitive('device_put')
+device_put_p.def_impl(_device_put_impl)
+device_put_p.def_abstract_eval(lambda x, **kwargs: x)
+translations[device_put_p] = lambda c, x, **kwargs: x
+ad.deflinear(device_put_p, lambda cotangent, **kwargs: [cotangent])
