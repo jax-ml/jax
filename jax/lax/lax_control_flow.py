@@ -156,12 +156,22 @@ def while_loop(cond_fun, body_fun, init_val):
   return build_tree(out_tree(), out_flat)
 
 
+def _while_loop_impl(init_val, cond_consts, body_consts, aval_out, cond_jaxpr,
+                     body_jaxpr):
+  cond_fun = partial(core.eval_jaxpr, cond_jaxpr, cond_consts, ())
+  body_fun = partial(core.eval_jaxpr, body_jaxpr, body_consts, ())
+
+  val = init_val
+  while cond_fun(val):
+    val = body_fun(val)
+  return val
+
 def _while_loop_abstract_eval(init_val, cond_consts, body_consts, aval_out,
                               cond_jaxpr, body_jaxpr):
   return _maybe_tracer_tuple_to_abstract_tuple(aval_out)
 
-def _while_loop_translation_rule(c, init_val, cond_consts, body_consts,
-                                 aval_out, cond_jaxpr, body_jaxpr):
+def _while_loop_translation_rule(c, axis_env, init_val, cond_consts,
+                                 body_consts, aval_out, cond_jaxpr, body_jaxpr):
   loop_carry = c.Tuple(init_val, cond_consts, body_consts)
   shape = c.GetShape(loop_carry)
 
@@ -190,9 +200,9 @@ def _while_loop_translation_rule(c, init_val, cond_consts, body_consts,
       + list(body_jaxpr.eqns) +
       [_pack_eqn([body_jaxpr.outvar, cond_var, body_var], outvar)])
 
-  cond_computation = xla.jaxpr_computation(cond_jaxpr_converted, (), (), shape)
-  body_computation = xla.jaxpr_computation(body_jaxpr_converted, (), (), shape)
-  full_ans = c.While(cond_computation, body_computation, loop_carry)
+  cond_c = xla._jaxpr_computation(cond_jaxpr_converted, axis_env, (), (), shape)
+  body_c = xla._jaxpr_computation(body_jaxpr_converted, axis_env, (), (), shape)
+  full_ans = c.While(cond_c, body_c, loop_carry)
   return c.GetTupleElement(full_ans, 0)
 
 def _while_loop_batching_rule(batched_args, batch_dims,
@@ -251,9 +261,9 @@ def _jaxtupletree_select(pred, on_true, on_false):
 
 
 while_p = lax.Primitive('while')
-while_p.def_impl(partial(xla.apply_primitive, while_p))
+while_p.def_impl(_while_loop_impl)
 while_p.def_abstract_eval(_while_loop_abstract_eval)
-xla.translations[while_p] = _while_loop_translation_rule
+xla.initial_style_translations[while_p] = _while_loop_translation_rule
 batching.primitive_batchers[while_p] = _while_loop_batching_rule
 
 
@@ -339,18 +349,28 @@ def _pack_eqn(invars, outvar):
   return core.JaxprEqn(invars, [outvar], core.pack_p, (), False, False, {})
 
 
+def _cond_impl(pred, true_op, true_consts, false_op, false_consts, aval_out,
+               true_jaxpr, false_jaxpr):
+  true_fun = partial(core.eval_jaxpr, true_jaxpr, true_consts, ())
+  false_fun = partial(core.eval_jaxpr, false_jaxpr, false_consts, ())
+
+  if pred:
+    return true_fun(true_op)
+  else:
+    return false_fun(false_op)
+
 def _cond_abstract_eval(pred, true_op, true_consts, false_op, false_consts,
                         aval_out, true_jaxpr, false_jaxpr):
   if not isinstance(pred, ShapedArray) or pred.shape or pred.dtype != onp.bool_:
     msg = "cond pred must be a scalar boolean type, got {}."
     raise TypeError(msg.format(pred))
   if isinstance(pred, ConcreteArray):
-    return true_op if pred else false_op
+    raise NotImplementedError  # TODO(mattjj)
   else:
     return _maybe_tracer_tuple_to_abstract_tuple(aval_out)
 
 
-def _cond_translation_rule(c, pred, true_op, true_consts, false_op,
+def _cond_translation_rule(c, axis_env, pred, true_op, true_consts, false_op,
                            false_consts, aval_out, true_jaxpr, false_jaxpr):
   def make_computation(jaxpr, operand):
     assert len(jaxpr.invars) == 1
@@ -363,7 +383,8 @@ def _cond_translation_rule(c, pred, true_op, true_consts, false_op,
         [_unpack_eqn(arg_var, [jaxpr.invars[0], consts_var]),
         _unpack_eqn(consts_var, jaxpr.constvars)]
         + list(jaxpr.eqns))
-    return xla.jaxpr_computation(jaxpr_converted, (), (), c.GetShape(operand))
+    return xla._jaxpr_computation(jaxpr_converted, axis_env, (), (),
+                                  c.GetShape(operand))
 
   true_arg = c.Tuple(true_op, true_consts)
   true_comp = make_computation(true_jaxpr, true_arg)
@@ -374,9 +395,9 @@ def _cond_translation_rule(c, pred, true_op, true_consts, false_op,
   return c.Conditional(pred, true_arg, true_comp, false_arg, false_comp)
 
 cond_p = lax.Primitive('cond')
-cond_p.def_impl(partial(xla.apply_primitive, cond_p))
+cond_p.def_impl(_cond_impl)
 cond_p.def_abstract_eval(_cond_abstract_eval)
-xla.translations[cond_p] = _cond_translation_rule
+xla.initial_style_translations[cond_p] = _cond_translation_rule
 
 
 def _maybe_tracer_tuple_to_abstract_tuple(tup):
@@ -866,5 +887,5 @@ scan_p.def_impl(_scan_impl)
 ad.primitive_jvps[scan_p] = _scan_jvp
 ad.primitive_transposes[scan_p] = _scan_transpose
 pe.custom_partial_eval_rules[scan_p] = _scan_partial_eval
-xla.translations[scan_p] = xla.lower_fun(_scan_impl)
+xla.initial_style_translations[scan_p] = xla.lower_fun(_scan_impl, initial_style=True)
 batching.primitive_batchers[scan_p] = _scan_batching_rule

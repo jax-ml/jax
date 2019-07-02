@@ -30,8 +30,7 @@ from .. import linear_util as lu
 from ..abstract_arrays import ConcreteArray, ShapedArray, make_shaped_array
 from ..util import partial, unzip2, concatenate, prod, memoize_unary
 from ..lib import xla_bridge as xb
-from .xla import (xla_shape, xla_destructure, translation_rule,
-                  xla_shape_to_result_shape, jaxpr_computation)
+from .xla import xla_shape, xla_destructure, xla_shape_to_result_shape
 from .partial_eval import trace_to_subjaxpr, merge_pvals, JaxprTrace, PartialVal
 from .batching import dimsize, broadcast
 from . import batching
@@ -81,6 +80,52 @@ def _slice(x, i):
     return core.pack(_slice(elt, i) for elt in x)
   else:
     return x[i]
+
+
+def xla_shard(c, sizes, x):
+  def _xla_shard(shape, x):
+    if shape.is_tuple():
+      elts = map(_xla_shard, shape.tuple_shapes(), xla_destructure(c, x))
+      return c.Tuple(*elts)
+    else:
+      return shard_array(shape, x)
+
+  def shard_array(shape, x):
+    dims = list(shape.dimensions())
+    assert dims[0] == sizes[-1]
+    start_indices = _xla_shard_start_indices(c, dims[0], len(dims))
+    return c.Reshape(c.DynamicSlice(x, start_indices, [1] + dims[1:]),
+                     None, dims[1:])
+
+  return _xla_shard(c.GetShape(x), x)
+
+# TODO(b/110096942): more efficient gather
+def xla_unshard(c, replica_groups, x):
+  def _xla_unshard(shape, x):
+    if shape.is_tuple():
+      elts = map(_xla_unshard, shape.tuple_shapes(), xla_destructure(c, x))
+      return c.Tuple(*elts)
+    else:
+      return unshard_array(shape, x)
+
+  def unshard_array(shape, x):
+    axis_size = len(replica_groups[0])
+    dims = list(shape.dimensions())
+    start_indices = _xla_shard_start_indices(c, axis_size, len(dims) + 1)
+    padded = c.Broadcast(c.Constant(onp.array(0, shape.numpy_dtype())),
+                         [axis_size] + dims)
+    padded = c.DynamicUpdateSlice(padded, c.Reshape(x, None, [1] + dims),
+                                  start_indices)
+    return c.CrossReplicaSum(padded, replica_groups)
+
+  return _xla_unshard(c.GetShape(x), x)
+
+
+# TODO(mattjj): plumb more ergonimic form of DynamicSlice / DynamicUpdateSlice
+def _xla_shard_start_indices(c, axis_size, ndim):
+  idx = c.Rem(c.ReplicaId(), c.Constant(onp.array(axis_size, onp.uint32)))
+  zero = onp.zeros(ndim - 1, onp.uint32)
+  return c.Concatenate([c.Reshape(idx, None, [1]), c.Constant(zero)], 0)
 
 
 def sharded_result_handler(axis_size, aval):
@@ -177,177 +222,28 @@ def replica_groups(nrep, mesh_spec, mesh_axes):
       (prod(onp.take(full_spec, mesh_axes)), -1))
   return tuple(map(tuple, groups.T))
 
-def xla_shard(c, sizes, x):
-  """Analog of shard_arg that performs sharding within an XLA computation."""
-
-  def _xla_shard(shape, x):
-    if shape.is_tuple():
-      elts = map(_xla_shard, shape.tuple_shapes(), xla_destructure(c, x))
-      return c.Tuple(*elts)
-    else:
-      return shard_array(shape, x)
-
-  def shard_array(shape, x):
-    dims = list(shape.dimensions())
-    assert dims[0] == sizes[-1]
-    start_indices = _xla_shard_start_indices(c, dims[0], len(dims))
-    return c.Reshape(c.DynamicSlice(x, start_indices, [1] + dims[1:]),
-                     None, dims[1:])
-
-  return _xla_shard(c.GetShape(x), x)
-
-# TODO(mattjj): plumb more ergonimic form of DynamicSlice / DynamicUpdateSlice
-def _xla_shard_start_indices(c, axis_size, ndim):
-  idx = c.Rem(c.ReplicaId(), c.Constant(onp.array(axis_size, onp.uint32)))
-  zero = onp.zeros(ndim - 1, onp.uint32)
-  return c.Concatenate([c.Reshape(idx, None, [1]), c.Constant(zero)], 0)
-
-# TODO(b/110096942): more efficient gather
-def xla_unshard(c, replica_groups, x):
-  """Analog of unshard_output that un-shards within an XLA computation."""
-
-  def _xla_unshard(shape, x):
-    if shape.is_tuple():
-      elts = map(_xla_unshard, shape.tuple_shapes(), xla_destructure(c, x))
-      return c.Tuple(*elts)
-    else:
-      return unshard_array(shape, x)
-
-  def unshard_array(shape, x):
-    axis_size = len(replica_groups[0])
-    dims = list(shape.dimensions())
-    start_indices = _xla_shard_start_indices(c, axis_size, len(dims) + 1)
-    padded = c.Broadcast(c.Constant(onp.array(0, shape.numpy_dtype())),
-                         [axis_size] + dims)
-    padded = c.DynamicUpdateSlice(padded, c.Reshape(x, None, [1] + dims),
-                                  start_indices)
-    return c.CrossReplicaSum(padded, replica_groups)
-
-  return _xla_unshard(c.GetShape(x), x)
-
 
 ### the main pmap machinery lowers SPMD jaxprs to multi-replica XLA computations
 
-class PmapPrimitive(core.Primitive): pass
-
-AxisEnv = namedtuple("AxisEnv", ["nreps", "names", "sizes"])
-
-def axis_read(axis_env, axis_name):
-  return max(i for i, name in enumerate(axis_env.names) if name == axis_name)
-
-def axis_groups(axis_env, name):
-  if isinstance(name, (list, tuple)):
-    mesh_axes = tuple(map(partial(axis_read, axis_env), name))
-  else:
-    mesh_axes = (axis_read(axis_env, name),)
-  return replica_groups(axis_env.nreps, axis_env.sizes, mesh_axes)
-
 def compile_replicated(jaxpr, axis_name, axis_size, consts, *abstract_args):
-  num_replicas = axis_size * jaxpr_replicas(jaxpr)
+  num_replicas = axis_size * xla.jaxpr_replicas(jaxpr)
   if num_replicas > xb.device_count():
-    msg = ("compiling pmap computation that requires {} replicas, but only {} "
-           "XLA devices are available")
+    msg = ("compiling computation that requires {} replicas, but only {} XLA "
+           "devices are available")
     raise ValueError(msg.format(num_replicas, xb.device_count()))
-  axis_env = AxisEnv(num_replicas, [axis_name], [axis_size])
+  axis_env = xla.AxisEnv(num_replicas, [axis_name], [axis_size])
   arg_shapes = list(map(xla_shape, abstract_args))
-  built_c = replicated_comp(jaxpr, axis_env, consts, (), *arg_shapes)
+  built_c = xla._jaxpr_computation(jaxpr, axis_env, consts, (), *arg_shapes)
   result_shape = xla_shape_to_result_shape(built_c.GetReturnValueShape())
   compiled = built_c.Compile(arg_shapes, xb.get_compile_options(num_replicas),
                              backend=xb.get_backend())
   return compiled, num_replicas, result_shape
 
-def jaxpr_replicas(jaxpr):
-  return _max(eqn.params['axis_size'] * jaxpr_replicas(eqn.bound_subjaxprs[0][0])
-              for eqn in jaxpr.eqns if eqn.primitive is xla_pmap_p)
-def _max(itr): return max(list(itr) or [1])
-
-def replicated_comp(jaxpr, ax_env, const_vals, freevar_shapes, *arg_shapes):
-  assert not any(type(invar) in (tuple, list) for invar in jaxpr.invars)
-  c = xb.make_computation_builder("replicated_computation")
-
-  def read(v):
-    if type(v) is core.Literal:
-      return c.Constant(v.val)
-    else:
-      return env[v]
-
-  def write(v, node):
-    assert node is not None
-    env[v] = node
-
-  def axis_env_extend(name, size):
-    return AxisEnv(ax_env.nreps, ax_env.names + [name], ax_env.sizes + [size])
-
-  env = {}
-  write(core.unitvar, c.Tuple())
-  if const_vals:
-    for val in const_vals:
-      if isinstance(val, xla.DeviceArray):
-        val.copy_to_host_async()
-    _map(write, jaxpr.constvars, map(c.Constant, const_vals))
-    _map(write, jaxpr.freevars, map(c.ParameterWithShape, freevar_shapes))
-  else:
-    all_freevars = it.chain(jaxpr.constvars, jaxpr.freevars)
-    _map(write, all_freevars, map(c.ParameterWithShape, freevar_shapes))
-  _map(write, jaxpr.invars, map(c.ParameterWithShape, arg_shapes))
-  xla._prefetch_jaxpr_literals(jaxpr)
-  for eqn in jaxpr.eqns:
-    if not eqn.restructure:
-      in_nodes = list(map(read, eqn.invars))
-    else:
-      in_nodes = [xla.xla_pack(c, map(read, invars)) if type(invars) is tuple
-                  else read(invars) for invars in eqn.invars]
-    if type(eqn.primitive) is PmapPrimitive:
-      name = eqn.params['axis_name']
-      params = {k: eqn.params[k] for k in eqn.params if k != 'axis_name'}
-      try:
-        rule = parallel_translation_rules[eqn.primitive]
-      except KeyError:
-        msg = 'XLA translation rule for parallel primitive {} not implemented.'
-        raise NotImplementedError(msg.format(eqn.primitive.name))
-      ans = rule(c, *in_nodes, replica_groups=axis_groups(ax_env, name), **params)
-    elif eqn.bound_subjaxprs:
-      if eqn.primitive is xla_pmap_p:
-        name, size = eqn.params['axis_name'], eqn.params['axis_size']
-        new_env = axis_env_extend(name, size)
-        in_shards = tuple(map(partial(xla_shard, c, new_env.sizes), in_nodes))
-        (subjaxpr, const_bindings, freevar_bindings), = eqn.bound_subjaxprs
-        subc = replicated_comp(
-            subjaxpr, new_env, (),
-            tuple(map(c.GetShape, map(read, const_bindings + freevar_bindings))),
-            *map(c.GetShape, in_shards))
-        subfun = (subc, tuple(map(read, const_bindings + freevar_bindings)))
-        sharded_result = xla.xla_call_translation_rule(c, subfun, *in_shards)
-        ans = xla_unshard(c, axis_groups(new_env, name), sharded_result)
-      else:
-        subcs = [
-            jaxpr_computation(
-                subjaxpr, (),
-                tuple(map(c.GetShape, map(read, const_bindings + freevar_bindings))),
-                *map(c.GetShape, in_nodes))
-            for subjaxpr, const_bindings, freevar_bindings in eqn.bound_subjaxprs]
-        subfuns = [(subc, tuple(map(read, const_bindings + freevar_bindings)))
-                    for subc, (_, const_bindings, freevar_bindings)
-                    in zip(subcs, eqn.bound_subjaxprs)]
-        ans = translation_rule(eqn.primitive)(c, *(subfuns + in_nodes), **eqn.params)
-    else:
-      ans = translation_rule(eqn.primitive)(c, *in_nodes, **eqn.params)
-
-    out_nodes = xla_destructure(c, ans) if eqn.destructure else [ans]
-    _map(write, eqn.outvars, out_nodes)
-  return c.Build(read(jaxpr.outvar))
-
-def _map(f, *xs):
-  return tuple(map(f, *xs))
-
-parallel_translation_rules = {}
-
 
 ### applying parallel primitives in op-by-op Python dispatch
 
 # There are at least two cases where we might want to evaluate a parallel
-# primitive dispatched from Python, rather than being part of a staged-out pmap
-# computation and handled by replicated_comp above:
+# primitive dispatched from Python, rather than being staged out:
 #   1. axis_size = psum(1, 'axis_name'),
 #   2. to enable an implicit outermost pmap-like context for multi-host
 #      multi-controller SPMD programs.
@@ -654,10 +550,19 @@ xla_pmap_p = core.Primitive('xla_pmap')
 xla_pmap = partial(core.call_bind, xla_pmap_p)
 xla_pmap_p.def_custom_bind(xla_pmap)
 xla_pmap_p.def_impl(xla_pmap_impl)
+
+def _xla_pmap_translation_rule(c, jaxpr, axis_env, env_nodes, in_nodes,
+                               axis_name, axis_size):
+  new_env = xla.extend_axis_env(axis_env, axis_name, axis_size)
+  in_nodes_sharded = list(map(partial(xla_shard, c, new_env.sizes), in_nodes))
+  subc = xla._jaxpr_computation(jaxpr, new_env, (),
+                                tuple(map(c.GetShape, env_nodes)),
+                                *map(c.GetShape, in_nodes_sharded))
+  sharded_result = c.Call(subc, env_nodes + in_nodes_sharded)
+  return xla_unshard(c, xla.axis_groups(new_env, axis_name), sharded_result)
+xla.call_translations[xla_pmap_p] = _xla_pmap_translation_rule
 ad.primitive_transposes[xla_pmap_p] = partial(ad.map_transpose, xla_pmap_p)
 pe.map_primitives.add(xla_pmap_p)
-# TODO(mattjj): enable pjit inside jit, maybe by merging xla_pmap and xla_call
-# xla.translations[xla_pmap_p] = xla.xla_call_translation_rule
 
 
 ### soft_pmap axis split transformation
@@ -758,7 +663,7 @@ class SplitAxisTrace(core.Trace):
       return primitive.bind(*vals_in, **params)
     else:
       name, = set(n for n in names_in if n is not not_mapped)
-      if type(primitive) is PmapPrimitive:
+      if primitive in xla.parallel_translations:
         # if it's a pmap collective primitive, do something special
         if name == params['axis_name']:
           # if the name matches this tracer's name, apply the split_axis rule
