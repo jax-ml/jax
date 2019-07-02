@@ -238,7 +238,7 @@ def defvectorized(prim):
   primitive_batchers[prim] = partial(vectorized_batcher, prim)
 
 def vectorized_batcher(prim, batched_args, batch_dims, **params):
-  assert all(batch_dims[0] == bd for bd in batch_dims[1:])
+  assert all(batch_dims[0] == bd for bd in batch_dims[1:]), batch_dims
   return prim.bind(*batched_args, **params), batch_dims[0]
 
 def defbroadcasting(prim):
@@ -262,7 +262,7 @@ def reducer_batcher(prim, batched_args, batch_dims, axes, **params):
     params = dict(params, input_shape=operand.shape)
   return prim.bind(operand, axes=axes, **params), bdim_out
 
-# set up primitive batches for ad_util primitives
+# sets up primitive batchers for ad_util and xla primitives
 
 def add_batched(batched_args, batch_dims):
   bdx, bdy = batch_dims
@@ -284,6 +284,7 @@ def zeros_like_batched(batched_args, batch_dims):
   return zeros_like_jaxval(val), bdim
 primitive_batchers[zeros_like_p] = zeros_like_batched
 
+defvectorized(xla.device_put_p)
 
 ### util
 
