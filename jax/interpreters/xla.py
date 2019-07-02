@@ -526,13 +526,13 @@ class DeviceArray(DeviceValue):
     if self.ndim == 0:
       raise TypeError("iteration over a 0-d array")  # same as numpy error
     else:
-      return (self[i] for i in xrange(self.shape[0]))
+      return self._value.__iter__()
 
   def __reversed__(self):
     if self.ndim == 0:
       raise TypeError("iteration over a 0-d array")
     else:
-      return (self[i] for i in xrange(self.shape[0] - 1, -1, -1))
+      return reversed(self._value)
 
   def __format__(self, format_spec):
     # Simulates behavior of https://github.com/numpy/numpy/pull/9883
