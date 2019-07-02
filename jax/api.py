@@ -1008,6 +1008,11 @@ def custom_transforms(fun):
   specified manually. The default behavior is retained for any non-overridden
   rules.
 
+  The function ``fun`` must satisfy the same constraints required for jit
+  compilation. In particular the shapes of arrays in the computation of ``fun``
+  may depend on the shapes of ``fun``'s arguments, but not their values.
+  Value dependent Python control flow is also not yet supported.
+
   Args:
     fun: a Python callable. Must be functionally pure. Its arguments and return
       value should be arrays, scalars, or (nested) standard Python containers
