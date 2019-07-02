@@ -1247,6 +1247,7 @@ def _pad(array, pad_width, mode, constant_values):
     msg = "Unimplemented padding mode '{}' for np.pad."
     raise NotImplementedError(msg.format(mode))
 
+@_wraps(onp.pad)
 def pad(array, pad_width, mode, constant_values=0):
   return _pad(array, pad_width, mode, constant_values)
 

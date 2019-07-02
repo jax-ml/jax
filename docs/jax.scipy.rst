@@ -85,6 +85,7 @@ jax.scipy.stats.laplace
 .. autosummary::
   :toctree: _autosummary
 
+   cdf
    logpdf
    pdf
 
