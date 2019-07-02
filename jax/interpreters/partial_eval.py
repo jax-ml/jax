@@ -390,8 +390,9 @@ def pack_pvals(pvals):
 def abstractify(x):
   return PartialVal((core.concrete_aval(x), unit))
 
-def trace_unwrapped_to_jaxpr(fun, pvals, **kwargs):
-  return trace_to_jaxpr(lu.wrap_init(fun, kwargs), pvals)
+def trace_unwrapped_to_jaxpr(fun, pvals, instantiate, **kwargs):
+  return trace_to_jaxpr(lu.wrap_init(fun, kwargs), pvals,
+                        instantiate=instantiate)
 
 def trace_to_jaxpr(fun, pvals, **kwargs):
   """Traces a function, given abstract inputs, to a jaxpr."""
@@ -409,8 +410,8 @@ def trace_to_subjaxpr(master, instantiate, pvals):
   assert all([isinstance(pv, PartialVal) for pv in pvals]), pvals
   trace = JaxprTrace(master, core.cur_sublevel())
   in_tracers = map(trace.new_arg, pvals)
-  out_tracer = yield in_tracers, {}
-  out_tracer = trace.full_raise(out_tracer)
+  ans = yield in_tracers, {}
+  out_tracer = trace.full_raise(ans)
   out_tracer = instantiate_const_at(trace, instantiate, out_tracer)
   out_tracer = trace.full_raise(out_tracer)  # instantiation (unpack) can lower
   jaxpr, consts, env = tracers_to_jaxpr(in_tracers, out_tracer)
@@ -424,7 +425,7 @@ def instantiate_const_at(trace, instantiate, tracer):
     return pack(map(partial(instantiate_const_at, trace), instantiate, tracer))
   elif t is bool:
     if instantiate:
-      return trace.instantiate_const(tracer)
+      return trace.instantiate_const(trace.full_raise(tracer))
     else:
       return tracer
   else:

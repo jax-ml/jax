@@ -17,6 +17,7 @@ from __future__ import division
 from __future__ import print_function
 
 import collections
+import enum
 import itertools
 import operator
 import string
@@ -43,9 +44,8 @@ from ..interpreters import partial_eval as pe
 from ..interpreters import xla
 from ..interpreters import ad
 from ..interpreters import batching
-from ..interpreters import parallel
 from ..util import curry, memoize, safe_zip, unzip2, prod
-from ..tree_util import build_tree, tree_unflatten
+from ..tree_util import build_tree, tree_unflatten, tree_map
 from ..lib import xla_bridge
 from ..lib.xla_bridge import xla_client
 
@@ -370,9 +370,21 @@ def concatenate(operands, dimension):
   return concatenate_p.bind(*operands, dimension=dimension,
                             operand_shapes=tuple(o.shape for o in operands))
 
+# TODO(phawkins): remove once the minimum Jaxlib version is increased to 0.1.22.
+_supports_precision = hasattr(xla_client, "PrecisionConfig")
+
+if _supports_precision:
+  Precision = xla_client.PrecisionConfig.Precision
+else:
+  # Dummy for backward compatibility with older Jaxlib versions.
+  class Precision(enum.Enum):
+    DEFAULT = 0
+    HIGH = 1
+    HIGHEST = 2
+
 def conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation=None,
                          rhs_dilation=None, dimension_numbers=None,
-                         feature_group_count=1):
+                         feature_group_count=1, precision=None):
   """General n-dimensional convolution operator, with optional dilation.
 
   Wraps XLA's `Conv
@@ -397,6 +409,8 @@ def conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation=None,
       a 3-tuple `(lhs_spec, rhs_spec, out_spec)`, where each element is a string
       of length `n+2`.
     feature_group_count: integer, default 1. See XLA HLO docs.
+    precision: Optional. Either `None`, which means the default precision for
+      the backend, or a `Precision` enum value.
 
   Returns:
     An array containing the convolution result.
@@ -442,9 +456,10 @@ def conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation=None,
       lhs_dilation=tuple(lhs_dilation), rhs_dilation=tuple(rhs_dilation),
       dimension_numbers=dimension_numbers,
       feature_group_count=feature_group_count,
-      lhs_shape=lhs.shape, rhs_shape=rhs.shape)
+      lhs_shape=lhs.shape, rhs_shape=rhs.shape,
+      precision=_canonicalize_precision(precision))
 
-def dot(lhs, rhs):
+def dot(lhs, rhs, precision=None):
   """Vector/vector, matrix/vector, and matrix/matrix multiplication.
 
   Wraps XLA's `Dot
@@ -456,6 +471,8 @@ def dot(lhs, rhs):
   Args:
     lhs: an array of rank 1 or 2.
     rhs: an array of rank 1 or 2.
+    precision: Optional. Either `None`, which means the default precision for
+      the backend, or a `Precision` enum value.
 
   Returns:
     An array containing the product.
@@ -472,9 +489,9 @@ def dot(lhs, rhs):
       rhs = broadcast(rhs, (1,))
     return reduce(mul(lhs, rhs), _zero(lhs), add, (len(lhs_shape) - 1,))
 
-  return dot_p.bind(lhs, rhs)
+  return dot_p.bind(lhs, rhs, precision=_canonicalize_precision(precision))
 
-def dot_general(lhs, rhs, dimension_numbers):
+def dot_general(lhs, rhs, dimension_numbers, precision=None):
   """More general contraction operator.
 
   Wraps XLA's `DotGeneral
@@ -487,6 +504,8 @@ def dot_general(lhs, rhs, dimension_numbers):
     dimension_numbers: a tuple of tuples of the form
       `((lhs_contracting_dims, rhs_contracting_dims),
       (lhs_batch_dims, rhs_batch_dims))`
+    precision: Optional. Either `None`, which means the default precision for
+      the backend, or a `Precision` enum value.
 
   Returns:
     An array containing the result.
@@ -520,7 +539,8 @@ def dot_general(lhs, rhs, dimension_numbers):
                   tuple(range(out_ndim, out_ndim + len(lhs_contract_dims))))
 
   return dot_general_p.bind(lhs, rhs,
-                            dimension_numbers=(contract_dims, batch_dims))
+                            dimension_numbers=(contract_dims, batch_dims),
+                            precision=_canonicalize_precision(precision))
 
 def broadcast(operand, sizes):
   """Broadcasts an array, adding new major dimensions.
@@ -671,6 +691,60 @@ def scatter_add(operand, scatter_indices, updates, dimension_numbers):
       update_consts=consts, dimension_numbers=dimension_numbers,
       updates_shape=updates.shape)
 
+def scatter_min(operand, scatter_indices, updates, dimension_numbers):
+  """Scatter-min operator.
+
+  Wraps `XLA's Scatter operator
+  <https://www.tensorflow.org/xla/operation_semantics#scatter>`_, where
+  the `min` function is used to combine updates and values from `operand`.
+
+  The semantics of scatter are complicated and its API is subject to change.
+
+  Args:
+    operand: an array to which the scatter should be applied
+    scatter_indices: an array that gives the indices in `operand` to which each
+      update in `updates` should be applied.
+    updates: the updates that should be scattered onto `operand`.
+    dimension_numbers: a `lax.ScatterDimensionNumbers` object that describes
+      how dimensions of `operand`, `start_indices`, `updates` and the output
+      relate.
+
+  Returns:
+    An array containing the sum of `operand` and the scattered updates.
+  """
+  jaxpr, consts = _reduction_jaxpr(min, _const(operand, 0))
+  return scatter_min_p.bind(
+      operand, scatter_indices, updates, update_jaxpr=jaxpr,
+      update_consts=consts, dimension_numbers=dimension_numbers,
+      updates_shape=updates.shape)
+
+def scatter_max(operand, scatter_indices, updates, dimension_numbers):
+  """Scatter-max operator.
+
+  Wraps `XLA's Scatter operator
+  <https://www.tensorflow.org/xla/operation_semantics#scatter>`_, where
+  the `max` function is used to combine updates and values from `operand`.
+
+  The semantics of scatter are complicated and its API is subject to change.
+
+  Args:
+    operand: an array to which the scatter should be applied
+    scatter_indices: an array that gives the indices in `operand` to which each
+      update in `updates` should be applied.
+    updates: the updates that should be scattered onto `operand`.
+    dimension_numbers: a `lax.ScatterDimensionNumbers` object that describes
+      how dimensions of `operand`, `start_indices`, `updates` and the output
+      relate.
+
+  Returns:
+    An array containing the sum of `operand` and the scattered updates.
+  """
+  jaxpr, consts = _reduction_jaxpr(max, _const(operand, 0))
+  return scatter_max_p.bind(
+      operand, scatter_indices, updates, update_jaxpr=jaxpr,
+      update_consts=consts, dimension_numbers=dimension_numbers,
+      updates_shape=updates.shape)
+
 def scatter(operand, scatter_indices, updates, dimension_numbers):
   """Scatter-update operator.
 
@@ -741,7 +815,8 @@ def reduce(operand, init_value, computation, dimensions):
 
 def _reduction_jaxpr(computation, init_value):
   pval = _abstractify(init_value)
-  jaxpr, _, consts = pe.trace_unwrapped_to_jaxpr(computation, (pval, pval))
+  jaxpr, _, consts = pe.trace_unwrapped_to_jaxpr(computation, (pval, pval),
+                                                 instantiate=False)
   return jaxpr, consts
 
 def _get_monoid_reducer(monoid_op, x):
@@ -971,7 +1046,7 @@ def stop_gradient(x):
    >>> jax.grad(jax.grad(lambda x: jax.lax.stop_gradient(x)**2))(3.)
    array(0., dtype=float32)
    """
-  return stop_gradient_p.bind(x)
+  return tree_map(stop_gradient_p.bind, x)
 
 
 def _safe_mul(x, y): return safe_mul_p.bind(x, y)
@@ -980,7 +1055,7 @@ def _safe_mul(x, y): return safe_mul_p.bind(x, y)
 ### convenience wrappers around traceables
 
 
-def conv(lhs, rhs, window_strides, padding):
+def conv(lhs, rhs, window_strides, padding, precision=None):
   """Convenience wrapper around `conv_general_dilated`.
 
   Args:
@@ -989,15 +1064,18 @@ def conv(lhs, rhs, window_strides, padding):
     window_strides: a sequence of `n` integers, representing the inter-window
       strides.
     padding: either the string `'SAME'`, the string `'VALID'`.
+    precision: Optional. Either `None`, which means the default precision for
+      the backend, or a `Precision` enum value.
 
   Returns:
     An array containing the convolution result.
   """
   pads = padtype_to_pads(lhs.shape[2:], rhs.shape[2:], window_strides, padding)
-  return conv_general_dilated(lhs, rhs, window_strides, padding)
+  return conv_general_dilated(lhs, rhs, window_strides, padding,
+                              precision=precision)
 
 def conv_with_general_padding(lhs, rhs, window_strides, padding,
-                              lhs_dilation, rhs_dilation):
+                              lhs_dilation, rhs_dilation, precision=None):
   """Convenience wrapper around `conv_general_dilated`.
 
   Args:
@@ -1014,13 +1092,15 @@ def conv_with_general_padding(lhs, rhs, window_strides, padding,
     rhs_dilation: `None`, or a sequence of `n` integers, giving the
       dilation factor to apply in each spatial dimension of `rhs`. RHS dilation
       is also known as atrous convolution.
+    precision: Optional. Either `None`, which means the default precision for
+      the backend, or a `Precision` enum value.
 
   Returns:
     An array containing the convolution result.
   """
   return conv_general_dilated(
       lhs, rhs, window_strides, padding, lhs_dilation=lhs_dilation,
-      rhs_dilation=rhs_dilation)
+      rhs_dilation=rhs_dilation, precision=precision)
 
 
 def _conv_transpose_padding(k, s, padding):
@@ -1057,7 +1137,7 @@ def _flip_axes(x, axes):
 
 
 def conv_transpose(lhs, rhs, strides, padding, dimension_numbers=None,
-                   transpose_kernel=False):
+                   transpose_kernel=False, precision=None):
   """Convenience wrapper for calculating the N-d convolution "transpose".
 
   This function directly calculates a fractionally strided conv rather than
@@ -1077,6 +1157,8 @@ def conv_transpose(lhs, rhs, strides, padding, dimension_numbers=None,
       to the gradient-derived functions like keras.layers.Conv2DTranspose
       applied to the same kernel. For typical use in neural nets this is completely
       pointless and just makes input/output channel specification confusing.
+    precision: Optional. Either `None`, which means the default precision for
+      the backend, or a `Precision` enum value.
 
   Returns:
     Transposed N-d convolution, with output padding following the conventions of
@@ -1108,7 +1190,8 @@ def conv_transpose(lhs, rhs, strides, padding, dimension_numbers=None,
     # flip spatial dims and swap input / output channel axes
     rhs = _flip_axes(rhs, onp.array(dn.rhs_spec)[2:])
     rhs = onp.swapaxes(rhs, dn.rhs_spec[0], dn.rhs_spec[1])
-  return conv_general_dilated(lhs, rhs, one, pads, strides, one, dn)
+  return conv_general_dilated(lhs, rhs, one, pads, strides, one, dn,
+                              precision=precision)
 
 
 def full_like(x, fill_value, dtype=None, shape=None):
@@ -1376,7 +1459,6 @@ def unop(result_dtype, accepted_dtypes, name):
   dtype_rule = partial(unop_dtype_rule, result_dtype, accepted_dtypes, name)
   prim = standard_primitive(_attrgetter('shape'), dtype_rule, name)
   batching.defvectorized(prim)
-  parallel.defvectorized(prim)
   return prim
 standard_unop = partial(unop, _identity)
 _attrgetter = lambda name: lambda x, **kwargs: getattr(x, name)
@@ -1417,7 +1499,6 @@ def binop(result_dtype, accepted_dtypes, name, translation_rule=None):
   prim = standard_primitive(shape_rule, dtype_rule, name,
                             translation_rule=translation_rule)
   batching.defbroadcasting(prim)
-  parallel.defbroadcasting(prim)
   return prim
 standard_binop = partial(binop, _input_dtype)
 
@@ -1452,7 +1533,6 @@ def _brcast_to(x, shape):
     return broadcast(x, shape)
 
 
-_f32 = {onp.float32}
 _float = {onp.floating}
 _complex = {onp.complexfloating}
 _complex_elem_types = {onp.float32, onp.float64}
@@ -1773,8 +1853,8 @@ def _conv_general_dilated_shape_rule(
 def _conv_general_dilated_dtype_rule(
     lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
     dimension_numbers, **unused_kwargs):
-  return binop_dtype_rule(_input_dtype, [_f32, _f32], 'conv_general_dilated',
-                          lhs, rhs)
+  return binop_dtype_rule(_input_dtype, [_float, _float],
+                          'conv_general_dilated', lhs, rhs)
 
 _conv_spec_transpose = lambda spec: (spec[1], spec[0]) + spec[2:]
 _conv_sdims = lambda spec: spec[2:]
@@ -1782,7 +1862,7 @@ _conv_sdims = lambda spec: spec[2:]
 def _conv_general_dilated_transpose_lhs(
     g, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
     dimension_numbers, feature_group_count,
-    lhs_shape, rhs_shape):
+    lhs_shape, rhs_shape, precision):
   assert type(dimension_numbers) is ConvDimensionNumbers
   lhs_sdims, rhs_sdims, out_sdims = map(_conv_sdims, dimension_numbers)
   lhs_spec, rhs_spec, out_spec = dimension_numbers
@@ -1802,12 +1882,12 @@ def _conv_general_dilated_transpose_lhs(
       g, revd_weights, window_strides=lhs_dilation, padding=padding,
       lhs_dilation=window_strides, rhs_dilation=rhs_dilation,
       dimension_numbers=trans_dimension_numbers,
-      feature_group_count=feature_group_count)
+      feature_group_count=feature_group_count, precision=precision)
 
 def _conv_general_dilated_transpose_rhs(
     g, lhs, window_strides, padding, lhs_dilation, rhs_dilation,
     dimension_numbers, feature_group_count,
-    lhs_shape, rhs_shape):
+    lhs_shape, rhs_shape, precision):
   assert type(dimension_numbers) is ConvDimensionNumbers
 
   lhs_sdims, rhs_sdims, out_sdims = map(_conv_sdims, dimension_numbers)
@@ -1824,21 +1904,22 @@ def _conv_general_dilated_transpose_rhs(
       lhs, g, window_strides=rhs_dilation, padding=padding,
       lhs_dilation=lhs_dilation, rhs_dilation=window_strides,
       dimension_numbers=trans_dimension_numbers,
-      feature_group_count=feature_group_count)
+      feature_group_count=feature_group_count, precision=precision)
 
 def _conv_general_dilated_translation_rule(
     c, lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
-    dimension_numbers, feature_group_count, **unused_kwargs):
+    dimension_numbers, feature_group_count, precision, **unused_kwargs):
   assert type(dimension_numbers) is ConvDimensionNumbers
   dimension_numbers = _conv_general_proto(dimension_numbers)
+  kwargs = _precision_config_kwargs(precision)
   return c.ConvGeneralDilated(lhs, rhs, window_strides, padding, lhs_dilation,
                               rhs_dilation, dimension_numbers,
-                              feature_group_count)
+                              feature_group_count, **kwargs)
 
 def _conv_general_dilated_batch_rule(
     batched_args, batch_dims, window_strides, padding,
     lhs_dilation, rhs_dilation, dimension_numbers,
-    feature_group_count, **unused_kwargs):
+    feature_group_count, precision, **unused_kwargs):
   lhs, rhs = batched_args
   lhs_bdim, rhs_bdim = batch_dims
   lhs_spec, rhs_spec, out_spec = dimension_numbers
@@ -1847,9 +1928,11 @@ def _conv_general_dilated_batch_rule(
     assert lhs.shape[lhs_bdim] == rhs.shape[rhs_bdim]
     new_lhs = _reshape_axis_into(lhs_bdim, lhs_spec[1], lhs)
     new_rhs = _reshape_axis_into(rhs_bdim, rhs_spec[0], rhs)
-    out = conv_general_dilated(new_lhs, new_rhs, window_strides, padding,
-                               lhs_dilation, rhs_dilation, dimension_numbers,
-                               feature_group_count=lhs.shape[lhs_bdim] * feature_group_count)
+    out = conv_general_dilated(
+      new_lhs, new_rhs, window_strides, padding, lhs_dilation, rhs_dilation,
+      dimension_numbers,
+      feature_group_count=lhs.shape[lhs_bdim] * feature_group_count,
+      precision=precision)
     out = _reshape_axis_out_of(out_spec[1], lhs.shape[lhs_bdim], out)
     return out, out_spec[1]
 
@@ -1857,7 +1940,7 @@ def _conv_general_dilated_batch_rule(
     new_lhs = _reshape_axis_into(lhs_bdim, lhs_spec[0], lhs)
     out = conv_general_dilated(new_lhs, rhs, window_strides, padding,
                                lhs_dilation, rhs_dilation, dimension_numbers,
-                               feature_group_count)
+                               feature_group_count, precision=precision)
     out = _reshape_axis_out_of(out_spec[0], lhs.shape[lhs_bdim], out)
     return out, out_spec[0]
 
@@ -1866,7 +1949,7 @@ def _conv_general_dilated_batch_rule(
       new_rhs = _reshape_axis_into(rhs_bdim, rhs_spec[0], rhs)
       out = conv_general_dilated(lhs, new_rhs, window_strides, padding,
                                 lhs_dilation, rhs_dilation, dimension_numbers,
-                                feature_group_count)
+                                feature_group_count, precision=precision)
       out = _reshape_axis_out_of(out_spec[1], rhs.shape[rhs_bdim], out)
       return out, out_spec[1]
     else:
@@ -1883,7 +1966,7 @@ def _conv_general_dilated_batch_rule(
       new_rhs = _reshape_axis_into(rhs_spec[0], rhs_spec[0], new_rhs)
       out = conv_general_dilated(lhs, new_rhs, window_strides, padding,
                                 lhs_dilation, rhs_dilation, dimension_numbers,
-                                feature_group_count)
+                                feature_group_count, precision=precision)
       out = _reshape_axis_out_of(out_spec[1], feature_group_count, out)
       out = _reshape_axis_out_of(out_spec[1] + 1, rhs.shape[rhs_bdim], out)
       out = _reshape_axis_into(out_spec[1], out_spec[1] + 1, out)
@@ -1895,8 +1978,9 @@ conv_general_dilated_p = standard_primitive(
 ad.defbilinear(conv_general_dilated_p,
                _conv_general_dilated_transpose_lhs,
                _conv_general_dilated_transpose_rhs)
-batching.primitive_batchers[
-    conv_general_dilated_p] = _conv_general_dilated_batch_rule
+batching.primitive_batchers[conv_general_dilated_p] = \
+    _conv_general_dilated_batch_rule
+
 
 def _reshape_axis_into(src, dst, x):
   perm = [i for i in range(x.ndim) if i != src]
@@ -1913,7 +1997,7 @@ def _reshape_axis_out_of(src, size1, x):
   return reshape(x, shape)
 
 
-def _dot_shape_rule(lhs, rhs):
+def _dot_shape_rule(lhs, rhs, precision):
   if lhs.ndim == 0 or rhs.ndim == 0:
     msg = "Dot only supports rank 1 or above, got shapes {} and {}."
     raise TypeError(msg.format(lhs.shape, rhs.shape))
@@ -1939,11 +2023,11 @@ def _dot_shape_rule(lhs, rhs):
     require(lhs.shape[-1] == rhs.shape[-2])
     return lhs.shape[:-1] + rhs.shape[:-2] + rhs.shape[-1:]
 
-def _dot_transpose_lhs(t, rhs):
+def _dot_transpose_lhs(t, rhs, precision):
   if onp.ndim(t) == onp.ndim(rhs) == 2:
-    return dot(t, transpose(rhs, (1, 0)))
+    return dot(t, transpose(rhs, (1, 0)), precision=precision)
   elif onp.ndim(t) == 1 and onp.ndim(rhs) == 2:
-    return dot(rhs, t)
+    return dot(rhs, t, precision=precision)
   elif onp.ndim(t) == onp.ndim(rhs) == 1:
     return _outer(t, rhs)
   elif onp.ndim(t) == 0 or onp.ndim(rhs) == 0:
@@ -1951,11 +2035,11 @@ def _dot_transpose_lhs(t, rhs):
   else:
     raise TypeError
 
-def _dot_transpose_rhs(t, lhs):
+def _dot_transpose_rhs(t, lhs, precision):
   if onp.ndim(lhs) == onp.ndim(t) == 2:
     return dot(transpose(lhs, (1, 0)), t)
   elif onp.ndim(lhs) == 2 and onp.ndim(t) == 1:
-    return dot(t, lhs)
+    return dot(t, lhs, precision=precision)
   elif onp.ndim(t) == onp.ndim(lhs) == 1:
     return _outer(lhs, t)
   elif onp.ndim(t) == 0 or onp.ndim(lhs) == 0:
@@ -1967,7 +2051,7 @@ def _outer(x, y):
   assert onp.ndim(x) == onp.ndim(y) == 1
   return mul(reshape(x, (x.shape[0], 1)), reshape(y, (1, y.shape[0])))
 
-def _dot_batch_rule(batched_args, batch_dims):
+def _dot_batch_rule(batched_args, batch_dims, precision=None):
   lhs, rhs = batched_args
   lbd, rbd = batch_dims
   T = lambda x: transpose(x, onp.arange(onp.ndim(x))[::-1])
@@ -1977,22 +2061,24 @@ def _dot_batch_rule(batched_args, batch_dims):
     if rbd is None:
       assert lbd in (0, 1)
       if lbd == 0:
-        return dot(lhs, rhs), 0
+        return dot(lhs, rhs, precision=precision), 0
       else:
-        return dot(T(rhs), lhs), onp.ndim(rhs) - 1
+        return dot(T(rhs), lhs, precision=precision), onp.ndim(rhs) - 1
 
     if lbd is None:
       assert rbd in (0, 1)
       if rbd == onp.ndim(rhs) - 1:
-        return dot(lhs, rhs), onp.ndim(lhs) - 1
+        return dot(lhs, rhs, precision=precision), onp.ndim(lhs) - 1
       else:
-        return dot(rhs, T(lhs)), 0
+        return dot(rhs, T(lhs), precision=precision), 0
 
     assert lbd is not None and rbd is not None
     assert lhs.ndim == rhs.ndim == 2  # dot only supports rank 1 and above
     lhs = batching.move_dim_to_front(lhs, lbd)
     rhs = batching.move_dim_to_front(rhs, rbd)
-    return dot_general(lhs, rhs, [((1,), (1,)), ((0,), (0,))]), 0
+    out = dot_general(lhs, rhs, [((1,), (1,)), ((0,), (0,))],
+                      precision=precision)
+    return out, 0
 
   if lbd is None:
     assert rbd is not None
@@ -2011,15 +2097,29 @@ def _dot_batch_rule(batched_args, batch_dims):
   rhs_contracting = (onp.arange(1, onp.ndim(rhs))[-2:][0],)
 
   dim_nums = [(lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch)]
-  return dot_general(lhs, rhs, dim_nums), 0
+  return dot_general(lhs, rhs, dim_nums, precision=precision), 0
+
+# TODO(phawkins): pass precision_config directly after the minimum Jaxlib
+# version has been increased to 0.1.22.
+def _precision_config_kwargs(precision):
+  kwargs = {}
+  if precision is not None:
+    config = xla_client.PrecisionConfig()
+    config.operand_precision.extend((precision, precision))
+    kwargs["precision_config"] = config
+  return kwargs
+
+def _dot_translation_rule(c, lhs, rhs, precision):
+  return c.Dot(lhs, rhs, **_precision_config_kwargs(precision))
 
 _dot_dtype_rule = partial(binop_dtype_rule, _input_dtype, [_num, _num], 'dot')
-dot_p = standard_primitive(_dot_shape_rule, _dot_dtype_rule, 'dot')
+dot_p = standard_primitive(_dot_shape_rule, _dot_dtype_rule, 'dot',
+                           _dot_translation_rule)
 ad.defbilinear(dot_p, _dot_transpose_lhs, _dot_transpose_rhs)
 batching.primitive_batchers[dot_p] = _dot_batch_rule
 
 
-def _dot_general_shape_rule(lhs, rhs, dimension_numbers):
+def _dot_general_shape_rule(lhs, rhs, dimension_numbers, precision):
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
   if len(lhs_batch) != len(rhs_batch):
     msg = ("dot_general requires equal numbers of lhs_batch and rhs_batch "
@@ -2058,11 +2158,12 @@ def _dot_general_shape_rule(lhs, rhs, dimension_numbers):
   return batch_shape + lhs_tensored_shape + rhs_tensored_shape
 
 
-def _dot_general_dtype_rule(lhs, rhs, dimension_numbers):
+def _dot_general_dtype_rule(lhs, rhs, dimension_numbers, precision):
   return binop_dtype_rule(_input_dtype, [_num, _num], 'dot_general', lhs, rhs)
 
 
-def _dot_general_transpose_lhs(g, y, dimension_numbers, swap_ans=False):
+def _dot_general_transpose_lhs(g, y, dimension_numbers, precision,
+                               swap_ans=False):
   (x_contract, y_contract), (x_batch, y_batch) = dimension_numbers
   x_ndim = g.ndim - y.ndim + len(x_batch) + 2 * len(x_contract)
   x_kept = remaining(range(x_ndim), x_contract, x_batch)
@@ -2076,13 +2177,15 @@ def _dot_general_transpose_lhs(g, y, dimension_numbers, swap_ans=False):
   out_axes = onp.argsort(list(x_batch) + x_kept + x_contract_sorted_by_y)
   return transpose(dot_general(g, y, dims), tuple(out_axes))
 
-def _dot_general_transpose_rhs(g, x, dimension_numbers):
+def _dot_general_transpose_rhs(g, x, dimension_numbers, precision):
   (x_contract, y_contract), (x_batch, y_batch) = dimension_numbers
   swapped_dimension_numbers = ((y_contract, x_contract), (y_batch, x_batch))
-  return _dot_general_transpose_lhs(g, x, swapped_dimension_numbers, True)
+  return _dot_general_transpose_lhs(g, x, swapped_dimension_numbers,
+                                    precision, swap_ans=True)
 
 
-def _dot_general_batch_rule(batched_args, batch_dims, dimension_numbers):
+def _dot_general_batch_rule(batched_args, batch_dims, dimension_numbers,
+                            precision):
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
   lhs, rhs = batched_args
   lbd, rbd = batch_dims
@@ -2109,12 +2212,17 @@ def _dot_general_batch_rule(batched_args, batch_dims, dimension_numbers):
   rhs_batch = (0,) + tuple(onp.add(1, rhs_batch))
 
   new_dimension_numbers = [(lhs_contract, rhs_contract), (lhs_batch, rhs_batch)]
-  batched_out = dot_general(lhs, rhs, new_dimension_numbers)
+  batched_out = dot_general(lhs, rhs, new_dimension_numbers,
+                            precision=precision)
   return batched_out, 0
 
+def _dot_general_translation_rule(c, lhs, rhs, dimension_numbers, precision):
+  return c.DotGeneral(lhs, rhs, dimension_numbers,
+                      **_precision_config_kwargs(precision))
 
 dot_general_p = standard_primitive(_dot_general_shape_rule,
-                                   _dot_general_dtype_rule, 'dot_general')
+                                   _dot_general_dtype_rule, 'dot_general',
+                                   _dot_general_translation_rule)
 ad.defbilinear(dot_general_p,
                _dot_general_transpose_lhs, _dot_general_transpose_rhs)
 batching.primitive_batchers[dot_general_p] = _dot_general_batch_rule
@@ -2576,7 +2684,7 @@ def _dynamic_slice_jvp_rule(g, operand, start_indices, slice_sizes,
 def _dynamic_slice_transpose_rule(t, operand, start_indices, slice_sizes,
                                   operand_shape):
   assert operand is None
-  zeros = full(operand_shape, 0, dtype=_dtype(t))
+  zeros = full(operand_shape, tie_in(t, _zero(t)))
   return [dynamic_update_slice(zeros, t, start_indices), ad_util.zero]
 
 def _dynamic_slice_batching_rule(batched_args, batch_dims, slice_sizes,
@@ -2744,7 +2852,7 @@ def _gather_transpose_rule(t, operand, start_indices, dimension_numbers,
   assert operand is None
   if t is ad_util.zero:
     return [ad_util.zero, ad_util.zero]
-  zeros = full(operand_shape, 0, dtype=t.dtype)
+  zeros = full(operand_shape, tie_in(t, _zero(t)))
   scatter_dnums = ScatterDimensionNumbers(
     update_window_dims=dimension_numbers.offset_dims,
     inserted_window_dims=dimension_numbers.collapsed_slice_dims,
@@ -2805,17 +2913,12 @@ def _gather_batching_rule(batched_args, batch_dims, dimension_numbers,
     return gather(operand, start_indices, dimension_numbers=dnums,
                   slice_sizes=slice_sizes), 0
 
-def _gather_serial_pmap_rule(vals, axes):
-  val, = vals
-  return val, None
-
 gather_p = standard_primitive(
     _gather_shape_rule, _gather_dtype_rule, 'gather',
     _gather_translation_rule)
 ad.defjvp(gather_p, _gather_jvp_rule, None)
 ad.primitive_transposes[gather_p] = _gather_transpose_rule
 batching.primitive_batchers[gather_p] = _gather_batching_rule
-parallel.serial_pmap_primitive_rules[gather_p] = _gather_serial_pmap_rule
 
 
 class ScatterDimensionNumbers(collections.namedtuple(
@@ -2981,6 +3084,20 @@ ad.primitive_jvps[scatter_add_p] = _scatter_add_jvp
 ad.primitive_transposes[scatter_add_p] = _scatter_add_transpose_rule
 batching.primitive_batchers[scatter_add_p] = (
   partial(_scatter_batching_rule, scatter_add))
+
+# TODO(jlebar): Add derivatives.
+scatter_min_p = standard_primitive(
+    _scatter_shape_rule, _scatter_dtype_rule, 'scatter-min',
+    _scatter_translation_rule)
+batching.primitive_batchers[scatter_min_p] = (
+  partial(_scatter_batching_rule, scatter_min))
+
+# TODO(jlebar): Add derivatives.
+scatter_max_p = standard_primitive(
+    _scatter_shape_rule, _scatter_dtype_rule, 'scatter-max',
+    _scatter_translation_rule)
+batching.primitive_batchers[scatter_max_p] = (
+  partial(_scatter_batching_rule, scatter_max))
 
 
 def _scatter_jvp(primals, tangents, update_jaxpr, update_consts,
@@ -3291,8 +3408,9 @@ def _reduce_window_sum_transpose_rule(cotangent, window_dimensions,
   assert result.shape == input_shape
   return [result]
 
-def _reduce_window_sum_batch_rule(
-    batched_args, bdims, window_dimensions, window_strides, padding, **kwargs):
+def _reduce_window_batch_rule(
+    reduce_window, batched_args, bdims, window_dimensions, window_strides,
+    padding, input_shape=None):
   operand, = batched_args
   bdim, = bdims
 
@@ -3301,16 +3419,17 @@ def _reduce_window_sum_batch_rule(
         window_dimensions[:bdim] + (1,) + window_dimensions[bdim:]
     window_strides = window_strides[:bdim] + (1,) + window_strides[bdim:]
 
-  oprand = _reduce_window_sum(
+  operand = reduce_window(
       operand, window_dimensions, window_strides, padding)
 
-  return oprand, 0
+  return operand, 0
 
 reduce_window_sum_p = standard_primitive(
     _reduce_window_sum_shape_rule, _input_dtype, 'reduce_window_sum',
     _reduce_window_sum_translation_rule)
 ad.deflinear(reduce_window_sum_p, _reduce_window_sum_transpose_rule)
-batching.primitive_batchers[reduce_window_sum_p] = _reduce_window_sum_batch_rule
+batching.primitive_batchers[reduce_window_sum_p] = partial(
+  _reduce_window_batch_rule, _reduce_window_sum)
 
 def _reduce_window_chooser_translation_rule(
     prim, identity, c, operand, window_dimensions, window_strides, padding):
@@ -3352,28 +3471,14 @@ def reduce_window_shape_tuple(operand_shape, window_dimensions, window_strides,
       onp.subtract(operand_padded, window_dimensions), window_strides) + 1
   return tuple(t)
 
-def _reduce_window_max_batch_rule(
-    batched_args, bdims, window_dimensions, window_strides, padding, **kwargs):
-  operand, = batched_args
-  bdim, = bdims
-
-  if bdim is not None:
-    window_dimensions = \
-        window_dimensions[:bdim] + (1,) + window_dimensions[bdim:]
-    window_strides = window_strides[:bdim] + (1,) + window_strides[bdim:]
-
-  operand = _reduce_window_max(
-      operand, window_dimensions, window_strides, padding)
-
-  return operand, 0
-
 _reduce_window_max_translation_rule = partial(
     _reduce_window_chooser_translation_rule, max_p, _get_max_identity)
 reduce_window_max_p = standard_primitive(
     _common_reduce_window_shape_rule, _input_dtype, 'reduce_window_max',
     _reduce_window_max_translation_rule)
 ad.defjvp(reduce_window_max_p, partial(_reduce_window_chooser_jvp_rule, max_p))
-batching.primitive_batchers[reduce_window_max_p] = _reduce_window_max_batch_rule
+batching.primitive_batchers[reduce_window_max_p] = partial(
+  _reduce_window_batch_rule, _reduce_window_max)
 
 _reduce_window_min_translation_rule = partial(
     _reduce_window_chooser_translation_rule, min_p, _get_min_identity)
@@ -3381,6 +3486,11 @@ reduce_window_min_p = standard_primitive(
     _common_reduce_window_shape_rule, _input_dtype, 'reduce_window_min',
     _reduce_window_min_translation_rule)
 ad.defjvp(reduce_window_min_p, partial(_reduce_window_chooser_jvp_rule, min_p))
+
+_reduce_window_min_batch_rule = partial(_reduce_window_batch_rule,
+                                        _reduce_window_min)
+batching.primitive_batchers[reduce_window_min_p] = partial(
+  _reduce_window_batch_rule, _reduce_window_min)
 
 
 def _select_and_scatter_shape_rule(
@@ -3502,68 +3612,103 @@ _UINT_DTYPES = {
   64: onp.uint64,
 }
 
-def _select_and_gather_add_pair_reducer(dtype, select_prim):
-  bits = onp.finfo(dtype).bits
-  pair_uint_dtype = _UINT_DTYPES[bits * 2]
-  uint_etype = xla_bridge.dtype_to_etype_exact(_UINT_DTYPES[bits])
-  etype = xla_bridge.dtype_to_etype_exact(dtype)
-
-  c = xla_bridge.make_computation_builder("select_and_gather_pair_reducer")
-  x = c.ParameterWithShape(
-    xla_bridge.Shape.array_shape(onp.dtype(pair_uint_dtype), ()))
-  y = c.ParameterWithShape(
-    xla_bridge.Shape.array_shape(onp.dtype(pair_uint_dtype), ()))
-
-  bits_const = c.Constant(pair_uint_dtype(bits), canonicalize_types=False)
-
-  def fst(t):
-    st = c.ConvertElementType(c.ShiftRightLogical(t, bits_const), uint_etype)
-    return c.BitcastConvertType(st, etype)
-  sx = fst(x)
-  sy = fst(y)
-
-  assert select_prim is ge_p or select_prim is le_p
-  which = c.Ge(sx, sy) if select_prim is ge_p else c.Le(sx, sy)
-  c.Select(which, x, y)
-  return c.Build()
 
 def _select_and_gather_add_translation(
     c, tangents, operand, select_prim, window_dimensions, window_strides,
-    padding):
+    padding, max_bits=64):
+  shape = c.GetShape(operand)
+  dtype = shape.numpy_dtype()
+  etype = shape.xla_element_type()
+  nbits = onp.finfo(dtype).bits
+
+  assert nbits <= max_bits
+  double_word_reduction = nbits * 2 <= max_bits
+
+  const = lambda c, dtype, x: c.Constant(onp.array(x, dtype=dtype),
+                                         canonicalize_types=False)
+
+  if double_word_reduction:
   # XLA doesn't yet implement ReduceWindow on tuples (Google bug b/73062247), so
   # we implement a pair-wise ReduceWindow by packing two k-bit values into
-  # 2k-bit unsigned integer using bit tricks. This will only work for <= 32-bit
-  # inputs (since we don't have 128-bit integer types).
-  dtype = c.GetShape(operand).numpy_dtype()
-  bits = onp.finfo(dtype).bits
-  if bits > 32:
-    raise NotImplementedError(
-        "select_and_gather_add is not implemented for type larger than 32 bits")
-  etype = xla_bridge.dtype_to_etype(dtype)
-  uint_etype = xla_bridge.dtype_to_etype(_UINT_DTYPES[bits])
-  pair_uint_dtype = _UINT_DTYPES[bits * 2]
-  pair_uint_etype = xla_bridge.dtype_to_etype_exact(pair_uint_dtype)
+  # 2k-bit unsigned integer using bit tricks.
+    word_dtype = _UINT_DTYPES[nbits]
+    double_word_dtype = _UINT_DTYPES[nbits * 2]
+    word_type = xla_bridge.dtype_to_etype_exact(word_dtype)
+    double_word_type = xla_bridge.dtype_to_etype_exact(double_word_dtype)
 
-  operand = c.BitcastConvertType(operand, uint_etype)
-  tangents = c.BitcastConvertType(tangents, uint_etype)
-  operand = c.ConvertElementType(operand, pair_uint_etype)
-  tangents = c.ConvertElementType(tangents, pair_uint_etype)
-  operand = c.ShiftLeft(
-    operand, c.Constant(pair_uint_dtype(bits), canonicalize_types=False))
+    # Packs two values into a tuple.
+    def pack(a, b):
+      a = c.BitcastConvertType(a, word_type)
+      b = c.BitcastConvertType(b, word_type)
+      a = c.ConvertElementType(a, double_word_type)
+      b = c.ConvertElementType(b, double_word_type)
+      a = c.ShiftLeft(a, const(c, double_word_dtype, nbits))
+      return c.Or(a, b)
+
+    # Unpacks the first element of a tuple.
+    def fst(c, t):
+      st = c.ShiftRightLogical(t, const(c, double_word_dtype, nbits))
+      return c.BitcastConvertType(c.ConvertElementType(st, word_type), etype)
+
+    # Unpacks the second element of a tuple.
+    def snd(t):
+      return c.BitcastConvertType(c.ConvertElementType(t, word_type), etype)
+
+  else:
+    # The double-word trick above only works if we have a sufficiently large
+    # type. As an alternative, we can pack two half words into a single word,
+    # at the cost of precision.
+    # TODO(b/73062247): add support for tuple reductions and remove this case.
+    warnings.warn("Using reduced precision for gradient of reduce-window "
+                  "min/max operator to work around missing XLA support for "
+                  "pair-reductions. This is likely from a second or "
+                  "higher derivative of a max-pooling operation.")
+    r_nbits = nbits // 2
+    # Drop/round the bottom mantissa bits.
+    nexp = onp.finfo(dtype).nexp
+    nmant = r_nbits - nexp - 1
+
+    double_word_dtype = word_dtype = _UINT_DTYPES[nbits]
+    word_type = xla_bridge.dtype_to_etype_exact(word_dtype)
+
+    # Packs two values into a tuple.
+    def pack(a, b):
+      a = c.ReducePrecision(a, exponent_bits=nexp, mantissa_bits=nmant)
+      b = c.ReducePrecision(b, exponent_bits=nexp, mantissa_bits=nmant)
+      a = c.BitcastConvertType(a, word_type)
+      b = c.BitcastConvertType(b, word_type)
+      b = c.ShiftRightLogical(b, const(c, word_dtype, r_nbits))
+      return c.Or(a, b)
+
+    # Unpacks the first element of a tuple.
+    def fst(c, t):
+      st = c.And(t, const(c, word_dtype, ((1 << r_nbits) - 1) << r_nbits))
+      return c.BitcastConvertType(st, etype)
+
+    # Unpacks the second element of a tuple.
+    def snd(t):
+      return c.BitcastConvertType(c.ShiftLeft(t, const(c, word_dtype, r_nbits)),
+                                  etype)
+
+  def reducer():
+    c = xla_bridge.make_computation_builder("select_and_gather_pair_reducer")
+    x = c.ParameterWithShape(
+      xla_bridge.Shape.array_shape(onp.dtype(double_word_dtype), ()))
+    y = c.ParameterWithShape(
+      xla_bridge.Shape.array_shape(onp.dtype(double_word_dtype), ()))
+    assert select_prim is ge_p or select_prim is le_p
+    which = c.Ge if select_prim is ge_p else c.Le
+    c.Select(which(fst(c, x), fst(c, y)), x, y)
+    return c.Build()
+
 
   assert select_prim is ge_p or select_prim is le_p
   init = -onp.inf if select_prim is ge_p else onp.inf
-  init = c.BitcastConvertType(c.Constant(dtype.type(init)), uint_etype)
-  init = c.ConvertElementType(init, pair_uint_etype)
-  init = c.ShiftLeft(
-    init, c.Constant(pair_uint_dtype(bits), canonicalize_types=False))
-
-  xla_computation = _select_and_gather_add_pair_reducer(dtype, select_prim)
-  out = c.ReduceWindow(c.Or(operand, tangents), init,
-                       xla_computation, window_dimensions, window_strides,
+  out = c.ReduceWindow(pack(operand, tangents),
+                       pack(const(c, dtype, init), const(c, dtype, 0)),
+                       reducer(), window_dimensions, window_strides,
                        padding)
-  out = c.ConvertElementType(out, uint_etype)
-  return c.BitcastConvertType(out, etype)
+  return snd(out)
 
 def _select_and_gather_add_jvp(
     primals, tangents, select_prim, window_dimensions, window_strides,
@@ -3596,6 +3741,9 @@ select_and_gather_add_p = standard_primitive(
 ad.primitive_jvps[select_and_gather_add_p] = _select_and_gather_add_jvp
 ad.primitive_transposes[select_and_gather_add_p] = \
     _select_and_gather_add_transpose
+xla.backend_specific_translations['tpu'][select_and_gather_add_p] = partial(
+  _select_and_gather_add_translation,
+  max_bits=32)
 
 
 sort_shape = lambda operand, dimension: operand.shape
@@ -3702,7 +3850,6 @@ tie_in_p.def_abstract_eval(lambda x, y: y)
 xla.translations[tie_in_p] = lambda c, x, y: y
 ad.deflinear(tie_in_p, _tie_in_transpose_rule)
 batching.primitive_batchers[tie_in_p] = _tie_in_batch_rule
-parallel.defidentity(tie_in_p, argnum=1)
 
 
 shaped_identity_p = Primitive('shape_id')
@@ -4013,6 +4160,21 @@ def ranges_like(*xs):
 def remaining(original, *removed_lists):
   blacklist = set(itertools.chain(*removed_lists))
   return [i for i in original if i not in blacklist]
+
+
+def _canonicalize_precision(precision):
+  if precision is None:
+    return None
+  if not _supports_precision:
+    warnings.warn("Precision specifications require Jaxlib >= 0.1.22; ignoring "
+                  "precision specification")
+    return None
+  if isinstance(precision, Precision):
+    return precision
+  else:
+    msg = "Precision argument must be None or a lax.Precision value; got {}"
+    raise ValueError(msg.format(precision))
+
 
 # lhs_spec and out_spec are lists containing
 #   [batch dim, feature dim, spatial dims ...]

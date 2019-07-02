@@ -256,8 +256,8 @@ class JVPTrace(Trace):
     primals = [t.primal for t in tracers]
     tangents = [t.tangent for t in tracers]
     nonzero_tangents, in_tree_def = tree_to_jaxtuples(tangents)
-    f, out_tree_def = traceable(jvp_subtrace(f, self.master), in_tree_def)
-    result = call_primitive.bind(f, pack(primals), nonzero_tangents, **params)
+    f_jvp, out_tree_def = traceable(jvp_subtrace(f, self.master), in_tree_def)
+    result = call_primitive.bind(f_jvp, pack(primals), nonzero_tangents, **params)
     primal_out, tangent_out = build_tree(out_tree_def(), result)
     return JVPTracer(self, primal_out, tangent_out)
 
@@ -414,7 +414,7 @@ def defvjp_all(prim, custom_vjp):
     in_aval = raise_to_shaped(get_aval(primal_out))
     ct_pval = pe.PartialVal((in_aval, core.unit))
     vjp_jaxpr, out_pval, residuals = pe.trace_unwrapped_to_jaxpr(
-        lambda ct: pack(vjp_py(ct)), (ct_pval,))
+        lambda ct: pack(vjp_py(ct)), (ct_pval,), instantiate=False)
     out_pv, out_const = out_pval
     tangent_out = fun_lin_p.bind(out_const, pack(residuals), tangents_tracer,
                                  in_aval=in_aval, out_pv=out_pv, vjp_jaxpr=vjp_jaxpr)

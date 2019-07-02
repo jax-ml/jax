@@ -14,7 +14,7 @@
 
 r"""Tool to convert a JAX function to an HLO proto.
 
-This script is mean to be used as part of a genrule that converts a JAX program
+This script is meant to be used as part of a genrule that converts a JAX program
 into an HLO proto.  The HLO proto represents an XLA program, and can be run from
 e.g. a C++ program, without involving any Python.
 
@@ -23,17 +23,20 @@ another perspective, this script lets you make JAX into an ahead-of-time JAX ->
 XLA compiler, although when you run the XLA program, it will still be compiled
 just-in-time.
 
+See tensorflow/compiler/xla/service/hlo_runner.h.
+
 Usage:
 
   $ cat prog.py
   import jax.numpy as np
 
-  def fn(x, y):
-    return np.dot(x, y) / 2
+  def fn(x, y, z):
+    return np.dot(x, y) / z
 
   $ python jax_to_hlo.py \
     --fn prog.fn \
-    --input_shapes '{"x": "f32[8,128]", "y": "f32[128,32]"}' \
+    --input_shapes '[("y": "f32[128,32]"), ("x", "f32[8,128]")]' \
+    --constants '{"z": 3.14159}' \
     --hlo_text_dest /tmp/fn_hlo.txt \
     --hlo_proto_dest /tmp/fn_hlo.pb
 
@@ -41,27 +44,14 @@ Alternatively, you can use this script via a genrule.  This way bazel will
 generate the hlo text/proto as part of compilation, and then e.g. a C++ program
 can depend on this.  See jax_to_hlo macro in build_defs.bzl.
 
-  $ cat your/thing/BUILD
-  load("//jax/tools:build_defs.bzl", "jax_to_hlo")
+The order of elements in input_shapes determines the order of parameters in the
+resulting HLO program.
 
-  py_library(name = "prog", srcs = ["prog.py"])
-
-  jax_to_hlo(
-    src = "//your/thing:prog",
-    fn = "your.thing.prog.fn",  # Fully-qualified module name
-    input_shapes = {
-      "x": "f32[8,128]",
-      "y": "f32[128,32]",
-    }
-  )
-
-This generates two BUILD targets:
-
-  //your/thing:prog_hlo.pb
-  //your/thing:prog_hlo.txt
-
-You can then depend on one of these as a data dependency and invoke it using
-XLA's public C++ APIs (See tensorflow/compiler/xla/service/hlo_runner.h).
+Values of `constants` which are lists are converted to Numpy arrays using
+np.asarray.  In addition, you can specify constants using the flag
+--evaled_constants; values there that are strings are first evaluated using
+ast.literal_eval.  --evaled_constants is primarly useful for genrules; Skylark
+doesn't support floating-point types, so genrules need to deal in strings.
 
 Note that XLA's backwards-compatibility guarantees for saved HLO are currently
 (2019-06-13) best-effort.  It will mostly work, but it will occasionally break,
@@ -79,6 +69,7 @@ from __future__ import print_function
 
 from ast import literal_eval
 import importlib
+import functools
 
 from absl import app
 from absl import flags
@@ -89,19 +80,32 @@ from jaxlib import xla_client
 FLAGS = flags.FLAGS
 
 
-def jax_to_hlo(fn, input_shapes):
+def jax_to_hlo(fn, input_shapes, constants=None):
   """Converts a JAX function to an HLO module.
 
   Args:
     fn: Function to convert.
-    input_shapes: Dict mapping function argument name to xla_client.Shape,
-      indicating the shapes of the args to fn.
+    input_shapes: List of tuples (arg name, xla_client.Shape),
+      indicating the shapes of the arguments to fn.  The order of parameters in
+      the resulting XLA program will match the order in this list.
+    constants: Dict mapping function argument name to a Python value.  Specified
+      arguments these values as compile-time constants.
 
   Returns:
     A tuple (serialized_hlo_proto, hlo_text).
   """
-  args = {}
-  for arg_name, shape in input_shapes.items():
+  if not constants:
+    constants = {}
+
+  overlapping_args = set(arg_name for arg_name, _ in input_shapes) & set(
+      constants.keys())
+  if overlapping_args:
+    raise ValueError(
+        'Arguments appear in both `input_shapes` and `constants`: %s' %
+        ', '.join(sorted(overlapping_args)))
+
+  args = []
+  for arg_name, shape in input_shapes:
     if not shape.is_array():
       raise ValueError('Shape %s is not an array, but currently only arrays '
                        'are supported (i.e., no tuples).' % str(shape))
@@ -118,9 +122,18 @@ def jax_to_hlo(fn, input_shapes):
       raise ValueError('Shape %s has a non-default layout, but only '
                        'the default layout is allowed.' % str(shape))
 
-    args[arg_name] = np.zeros(shape.dimensions(), dtype=shape.numpy_dtype())
+    args.append(np.zeros(shape.dimensions(), dtype=shape.numpy_dtype()))
 
-  comp = jax.api.xla_computation(fn)(**args)
+  # Curry `constants` into the function.
+  fn_curried = functools.partial(fn, **constants)
+
+  # Wrapper that takes in args in the order of `input_shapes` and converts them
+  # to kwargs for calling `fn`.
+  def ordered_wrapper(*args):
+    arg_names = [arg_name for arg_name, _ in input_shapes]
+    return fn_curried(**dict(zip(arg_names, args)))
+
+  comp = jax.api.xla_computation(ordered_wrapper)(*args)
   return (comp.GetSerializedProto(), comp.GetHloText())
 
 
@@ -136,11 +149,27 @@ def main(argv):
   module = importlib.import_module(module_name)
   fn = getattr(module, fn_name)
 
-  input_shapes = {
-    name: xla_client.Shape(shape_str)
-    for name, shape_str in literal_eval(FLAGS.input_shapes).items()
-  }
-  hlo_proto, hlo_text = jax_to_hlo(fn, input_shapes)
+  input_shapes = [(name, xla_client.Shape(shape_str))
+                  for name, shape_str in literal_eval(FLAGS.input_shapes)]
+
+  # Parse --constants and --evaled_constants.
+  constants = {}
+  for k, v in literal_eval(FLAGS.constants).items():
+    if isinstance(v, list):
+      v = np.asarray(v)
+    constants[k] = v
+
+  for k, v in literal_eval(FLAGS.evaled_constants).items():
+    if isinstance(v, str):
+      v = literal_eval(v)
+    if isinstance(v, list):
+      v = np.asarray(v)
+    if k in constants:
+      raise ValueError(
+          'Argument appears in both --constants and --evaled_constants: %s' % k)
+    constants[k] = v
+
+  hlo_proto, hlo_text = jax_to_hlo(fn, input_shapes, constants)
 
   if FLAGS.hlo_proto_dest:
     with open(FLAGS.hlo_proto_dest, 'wb') as f:
@@ -156,6 +185,12 @@ def set_up_flags():
       "Fully-qualified name of function that we're going to convert")
   flags.DEFINE_string('input_shapes', None,
                       'Python dict indicating XLA shapes of params')
+  flags.DEFINE_string('constants', '{}',
+                      'Python dict giving constant values for some params')
+  flags.DEFINE_string('evaled_constants', '{}',
+                      'Python dict giving constant values for some params.  '
+                      'Values in this dict that are of type str are evaluated '
+                      'using ast.literal_eval.')
   flags.DEFINE_string('hlo_proto_dest', None, 'File to write HLO proto')
   flags.DEFINE_string('hlo_text_dest', None, 'File to write HLO text')
   flags.mark_flag_as_required('fn')

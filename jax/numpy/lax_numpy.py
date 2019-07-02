@@ -28,7 +28,7 @@ import opt_einsum
 import six
 from six.moves import builtins, xrange
 
-from jax import jit
+from jax import jit, device_put
 from .. import core
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
 from ..interpreters.xla import DeviceArray
@@ -82,7 +82,10 @@ class _ArrayMeta(type(onp.ndarray)):
 
 # pylint: disable=invalid-name
 class ndarray(six.with_metaclass(_ArrayMeta, onp.ndarray)):
-  pass
+  def __init__(shape, dtype=None, buffer=None, offset=0, strides=None,
+               order=None):
+    raise TypeError("jax.numpy.ndarray() should not be instantiated explicitly."
+                    " Use jax.numpy.array, or jax.numpy.zeros instead.")
 # pylint: enable=invalid-name
 
 
@@ -167,7 +170,7 @@ def _promote_to_result_dtype(op, *args):
 
 def _result_dtype(op, *args):
   """Compute result dtype of applying op to arguments with given dtypes."""
-  args = (onp.ones((0,) * ndim(arg), _dtype(arg)) for arg in args)
+  args = [onp.ones((0,) * ndim(arg), _dtype(arg)) for arg in args]
   return _dtype(op(*args))
 
 
@@ -231,6 +234,17 @@ def _wraps(fun):
       return op
   return wrap
 
+# TODO(phawkins): use this helper everywhere.
+def _canonicalize_axis(axis, num_dims):
+  """Canonicalize an axis in (-num_dims, num_dims) to [0, num_dims)."""
+  axis = int(axis)
+  if axis < 0:
+    axis = axis + num_dims
+  if axis < 0 or axis >= num_dims:
+      raise ValueError(
+          "axis {} is out of bounds for array of dimension {}".format(
+              axis, num_dims))
+  return axis
 
 ### implementations of numpy functions in terms of lax
 
@@ -757,6 +771,20 @@ def where(condition, x=None, y=None):
     return lax.select(condition, *_promote_dtypes(x, y))
 
 
+@_wraps(onp.select)
+def select(condlist, choicelist, default=0):
+  if len(condlist) != len(choicelist):
+    msg = "condlist must have length equal to choicelist ({} vs {})"
+    raise ValueError(msg.format(len(condlist), len(choicelist)))
+  if len(condlist) == 0:
+    raise ValueError("condlist must be non-empty")
+
+  output = default
+  for cond, choice in zip(condlist[::-1], choicelist[::-1]):
+    output = where(cond, choice, output)
+  return output
+
+
 def broadcast_arrays(*args):
   """Like Numpy's broadcast_arrays but doesn't return views."""
   shapes = [shape(arg) for arg in args]
@@ -944,9 +972,9 @@ def _reduction_dims(a, axis):
   if axis is None:
     return onp.arange(ndim(a))
   elif isinstance(axis, (onp.ndarray, tuple, list)):
-    return onp.mod(onp.asarray(axis), ndim(a))
+    return tuple(_canonicalize_axis(x, ndim(a)) for x in axis)
   elif isinstance(axis, int):
-    return onp.mod([axis], ndim(a))
+    return (_canonicalize_axis(axis, ndim(a)),)
   else:
     raise TypeError("Unexpected type of axis argument: {}".format(type(axis)))
 
@@ -1104,8 +1132,12 @@ nanprod = _make_nan_reduction(onp.nanprod, prod, 1, nan_if_all_nan=False)
 
 def _make_cumulative_reduction(onp_reduction, window_reduce, init_val,
                                squash_nan=False):
-  @_wraps(onp_reduction)
-  def cumulative_reduction(a, axis=None, dtype=None):
+  # We want to allow XLA to fuse the pad and reduce-window operators to
+  # avoid materializing the padded output.
+  # Consider removing `jit` once again if reduce-window is generalized to
+  # support arbitrary padding.
+  @partial(jit, static_argnums=(1, 2))
+  def _cumulative_reduction(a, axis, dtype):
     if axis is None or isscalar(a):
       a = ravel(a)
       axis = 0
@@ -1138,6 +1170,11 @@ def _make_cumulative_reduction(onp_reduction, window_reduce, init_val,
     return window_reduce(
        a, window_dims, strides, xla_client.PaddingType.VALID)
 
+  @_wraps(onp_reduction)
+  def cumulative_reduction(a, axis=None, dtype=None):
+    # jit doesn't support kwargs as static_args.
+    return _cumulative_reduction(a, axis, dtype)
+
   return cumulative_reduction
 
 
@@ -1154,36 +1191,65 @@ nancumprod = _make_cumulative_reduction(
 
 ### Array-creation functions
 
-# TODO(phawkins): use this helper everywhere.
-def _canonicalize_axis(axis, num_dims):
-  """Canonicalize an axis in (-num_dims, num_dims) to [0, num_dims)."""
-  axis = int(axis)
-  if axis < 0:
-    axis = axis + num_dims
-  if axis < 0 or axis >= num_dims:
-      raise ValueError(
-          "axis {} is out of bounds for array of dimension {}".format(
-              axis, num_dims))
-  return axis
-
-
-@_wraps(onp.pad)
-def pad(array, pad_width, mode, constant_values=0):
-  if mode != "constant":
-    msg = "Only the 'constant' case of np.pad is implemented, got mode={}."
-    raise NotImplementedError(msg.format(mode))
-
+@partial(jit, static_argnums=(1, 2))
+def _pad(array, pad_width, mode, constant_values):
   array = asarray(array)
   nd = ndim(array)
   pad_width = onp.broadcast_to(onp.asarray(pad_width), (nd, 2))
-  constant_values = broadcast_to(asarray(constant_values), (nd, 2))
-  for i in xrange(nd):
-    widths = [(0, 0, 0)] * nd
-    widths[i] = (pad_width[i, 0], 0, 0)
-    array = lax.pad(array, constant_values[i, 0], widths)
-    widths[i] = (0, pad_width[i, 1], 0)
-    array = lax.pad(array, constant_values[i, 1], widths)
-  return array
+  if any(pad_width < 0):
+    raise ValueError("index can't contain negative values")
+
+  if mode == "constant":
+    constant_values = broadcast_to(asarray(constant_values), (nd, 2))
+    constant_values = lax.convert_element_type(constant_values, array.dtype)
+    for i in xrange(nd):
+      widths = [(0, 0, 0)] * nd
+      widths[i] = (pad_width[i, 0], 0, 0)
+      array = lax.pad(array, constant_values[i, 0], widths)
+      widths[i] = (0, pad_width[i, 1], 0)
+      array = lax.pad(array, constant_values[i, 1], widths)
+    return array
+  elif mode in ("symmetric", "reflect", "wrap"):
+    for i in xrange(nd):
+      if array.shape[i] == 0:
+        if (pad_width[i, 0] > 0 or pad_width[i, 1] > 0):
+          msg = "Cannot apply '{}' padding to empty axis"
+          raise ValueError(msg.format(mode))
+        continue
+
+      n = array.shape[i]
+      rarray = lax.rev(array, dimensions=(i,))
+      offset = 1 if (mode == "reflect" and n > 1) else 0
+      wrap_mode = mode == "wrap"
+
+      def build_padding(padding, forward):
+        xs = []
+        delta = n - offset
+        while padding > delta:
+          padding -= delta
+          p = array if forward else rarray
+          xs.append(lax.slice_in_dim(p, offset, n, axis=i))
+          if not wrap_mode:
+            forward = not forward
+        if padding > 0:
+          x = lax.slice_in_dim(array if forward else rarray, offset,
+                               padding + offset, axis=i)
+          xs.append(x)
+        return xs
+
+      parts = reversed(build_padding(pad_width[i, 0], forward=not wrap_mode))
+      parts = [lax.rev(x, dimensions=(i,)) for x in parts]
+      parts += [array]
+      parts += build_padding(pad_width[i, 1], forward=wrap_mode)
+      array = lax.concatenate(parts, dimension=i)
+    return array
+  else:
+    msg = "Unimplemented padding mode '{}' for np.pad."
+    raise NotImplementedError(msg.format(mode))
+
+@_wraps(onp.pad)
+def pad(array, pad_width, mode, constant_values=0):
+  return _pad(array, pad_width, mode, constant_values)
 
 
 @_wraps(onp.stack)
@@ -1217,7 +1283,16 @@ def concatenate(arrays, axis=0):
     raise ValueError("Need at least one array to concatenate.")
   if ndim(arrays[0]) == 0:
     raise ValueError("Zero-dimensional arrays cannot be concatenated.")
-  return lax.concatenate(_promote_dtypes(*arrays), axis % ndim(arrays[0]))
+  axis = _canonicalize_axis(axis, ndim(arrays[0]))
+  arrays = _promote_dtypes(*arrays)
+  # lax.concatenate can be slow to compile for wide concatenations, so form a
+  # tree of concatenations as a workaround especially for op-by-op mode.
+  # (https://github.com/google/jax/issues/653).
+  k = 16
+  while len(arrays) > 1:
+    arrays = [lax.concatenate(arrays[i:i+k], axis)
+              for i in range(0, len(arrays), k)]
+  return arrays[0]
 
 
 @_wraps(onp.vstack)
@@ -1283,13 +1358,15 @@ def atleast_3d(*arys):
 
 @_wraps(onp.array)
 def array(object, dtype=None, copy=True, order="K", ndmin=0):
-  del copy  # Unused.
-  if ndmin != 0 or order != "K":
+  if ndmin != 0 or (order is not None and order != "K"):
     raise NotImplementedError("Only implemented for order='K', ndmin=0.")
 
   if isinstance(object, ndarray):
     if dtype and _dtype(object) != dtype:
       return lax.convert_element_type(object, dtype)
+    elif copy:
+      # If a copy was requested, we must copy.
+      return device_put(object)
     else:
       return object
   elif hasattr(object, '__array__'):
@@ -1308,7 +1385,10 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
       return out
   else:
     raise TypeError("Unexpected input type for array: {}".format(type(object)))
-asarray = array
+
+@_wraps(onp.asarray)
+def asarray(a, dtype=None, order=None):
+  return array(a, dtype=dtype, copy=False, order=order)
 
 
 @_wraps(onp.zeros_like)
@@ -1382,20 +1462,15 @@ def identity(n, dtype=None):
 
 
 @_wraps(onp.arange)
-def arange(*args, **kwargs):
-  dtype = kwargs.get("dtype", None)
-  if not args:
-    raise TypeError("Required argument 'start' (pos 1) not found")  # same as numpy error
-
+def arange(start, stop=None, step=None, dtype=None):
   # If called like np.arange(N), we create a lazy lax._IotaConstant.
-  if len(args) == 1 and not kwargs:
-    stop, = args
-    dtype = dtype or _dtype(stop)
+  if stop is None and step is None:
+    dtype = dtype or _dtype(start)
     if onp.issubdtype(dtype, onp.integer):
-      return lax.iota(dtype, stop)  # avoids materializing
+      return lax.iota(dtype, start)  # avoids materializing
 
   # Fall back to instantiating an ndarray in host memory
-  return onp.arange(*args, **kwargs)
+  return onp.arange(start, stop=stop, step=step, dtype=dtype)
 
 linspace = onp.linspace
 logspace = onp.logspace
@@ -2006,30 +2081,21 @@ def roll(a, shift, axis=None):
     return lax.reshape(roll(ravel(a), shift, axis=0), a_shape)
 
   a_ndim = len(a_shape)
-  if isinstance(shift, tuple):
-    if isinstance(axis, tuple):
-      if len(axis) != len(shift):
-        msg = "Mismatched lengths between shift ({}) and axis ({}) for np.roll."
-        raise ValueError(msg.format(len(shift), len(axis)))
-      axis = tuple(a for a in axis)
-    else:
-      axis = (axis,) * len(shift)
-  elif isinstance(axis, tuple):
-    shift = (shift,) * len(axis)
-  else:
-    shift = (shift,)
-    axis = (axis,)
+  shift = asarray(shift)
+  axis = onp.asarray(axis)
+  b_shape = lax.broadcast_shapes(shift.shape, axis.shape, (1,))
+  if len(b_shape) != 1:
+    msg = "'shift' and 'axis' arguments to roll must be scalars or 1D arrays"
+    raise ValueError(msg)
+  if b_shape[0] > a_ndim:
+    raise ValueError("More shifts/axes than dimensions of input to roll.")
 
-  for offset, i in zip(shift, axis):
+  for x, i in zip(broadcast_to(shift, b_shape),
+                  onp.broadcast_to(axis, b_shape)):
     i = _canonicalize_axis(i, a_ndim)
-    offset = offset % (a_shape[i] or 1)
-    slices = [slice(None)] * a_ndim
-    slices[i] = slice(None, -offset)
-    before = a[tuple(slices)]
-    slices[i] = slice(-offset, None)
-    after = a[tuple(slices)]
-    a = lax.concatenate((after, before), i)
-
+    x = remainder(x, (a_shape[i] or 1))
+    a = lax.concatenate((a, a), i)
+    a = lax.dynamic_slice_in_dim(a, a_shape[i] - x, a_shape[i], axis=i)
   return a
 
 
@@ -2069,19 +2135,28 @@ def take(a, indices, axis=None, out=None, mode=None):
 
 @_wraps(getattr(onp, "take_along_axis", None))
 def take_along_axis(arr, indices, axis):
-  if axis is None and ndim(arr) != 1:
-    return take_along_axis(arr.ravel(), indices.ravel(), 0)
+  if axis is None:
+    if ndim(indices) != 1:
+      msg = "take_along_axis indices must be 1D if axis=None, got shape {}"
+      raise ValueError(msg.format(shape(indices)))
+    return take_along_axis(arr.ravel(), indices, 0)
+  elif ndim(arr) != ndim(indices):
+    msg = "indices and arr must have the same number of dimensions; {} vs. {}"
+    raise ValueError(msg.format(ndim(indices), ndim(arr)))
   elif ndim(arr) == 1:
     return lax.index_take(arr, (indices,), (0,))
   else:
     # TODO(mattjj): if we lower directly to lax.gather here, we might be able to
     # avoid the reshape on the output.
-    all_indices = [lax.broadcasted_iota(_dtype(indices), shape(indices), i)
+    arr_shape = list(shape(arr))
+    arr_shape[axis] = 1
+    out_shape = lax.broadcast_shapes(shape(indices), tuple(arr_shape))
+    all_indices = [lax.broadcasted_iota(_dtype(indices), out_shape, i)
                    for i in range(ndim(arr))]
-    all_indices[axis] = indices
+    all_indices[axis] = broadcast_to(indices, out_shape)
     all_indices = tuple(map(ravel, all_indices))
     out_flat = lax.index_take(arr, all_indices, tuple(range(ndim(arr))))
-    return reshape(out_flat, shape(indices))
+    return reshape(out_flat, out_shape)
 
 
 ### Indexing
@@ -2270,17 +2345,16 @@ def _canonicalize_tuple_index(arr, idx):
 
 def _static_idx(idx, size):
   """Helper function to compute the static slice start/limit/stride values."""
-  indices = onp.arange(size)[idx]  # get shape statically
-  if not len(indices):  # pylint: disable=g-explicit-length-test
+  assert isinstance(idx, slice)
+  start, stop, step = idx.indices(size)
+  if (step < 0 and stop >= start) or (step > 0 and start >= stop):
     return 0, 0, 1, False  # sliced to size zero
-  start, stop_inclusive = indices[0], indices[-1]
-  step = 1 if idx.step is None else idx.step
+
   if step > 0:
-    end = _min(stop_inclusive + step, size)
-    return start, end, step, False
+    return start, stop, step, False
   else:
-    end = _min(start - step, size)
-    return stop_inclusive, end, -step, True
+    k  = (start - stop - 1) % (-step)
+    return stop + k + 1, start + 1, -step, True
 
 
 blackman = onp.blackman

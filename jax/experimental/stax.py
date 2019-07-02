@@ -41,6 +41,7 @@ import jax.numpy as np
 
 def relu(x): return np.maximum(x, 0.)
 def softplus(x): return np.logaddexp(x, 0.)
+def sigmoid(x): return 1. / (1. + np.exp(-x))
 
 def logsoftmax(x, axis=-1):
   """Apply log softmax to an array of logits, log-normalizing along an axis."""
@@ -184,16 +185,17 @@ def BatchNorm(axis=(0, 1, 2), epsilon=1e-5, center=True, scale=True,
   return init_fun, apply_fun
 
 
-def _elemwise_no_params(fun, **fun_kwargs):
+def elementwise(fun, **fun_kwargs):
+  """Layer that applies a scalar function elementwise on its inputs."""
   init_fun = lambda rng, input_shape: (input_shape, ())
   apply_fun = lambda params, inputs, **kwargs: fun(inputs, **fun_kwargs)
   return init_fun, apply_fun
-Tanh = _elemwise_no_params(np.tanh)
-Relu = _elemwise_no_params(relu)
-Exp = _elemwise_no_params(np.exp)
-LogSoftmax = _elemwise_no_params(logsoftmax, axis=-1)
-Softmax = _elemwise_no_params(softmax, axis=-1)
-Softplus = _elemwise_no_params(softplus)
+Tanh = elementwise(np.tanh)
+Relu = elementwise(relu)
+Exp = elementwise(np.exp)
+LogSoftmax = elementwise(logsoftmax, axis=-1)
+Softmax = elementwise(softmax, axis=-1)
+Softplus = elementwise(softplus)
 
 
 def _pooling_layer(reducer, init_val, rescaler=None):
