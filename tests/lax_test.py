@@ -2030,8 +2030,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        "rng": rng}
       for init_val, op, dtypes, rng in [
           (0, lax.add, float_dtypes, jtu.rand_small()),
-          (-onp.inf, lax.max, float_dtypes, jtu.rand_default()),
-          (onp.inf, lax.min, float_dtypes, jtu.rand_default()),
+          (-onp.inf, lax.max, [onp.float32], jtu.rand_default()),
+          (onp.inf, lax.min, [onp.float32], jtu.rand_default()),
       ]
       for dtype in dtypes
       for padding in ["VALID", "SAME"]
