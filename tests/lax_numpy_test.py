@@ -1378,9 +1378,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       ]
       for rng in [jtu.rand_default()]))
   def testRoll(self, shape, dtype, shifts, axis, rng):
-    args_maker = lambda: [rng(shape, dtype)]
-    lnp_op = lambda x: lnp.roll(x, shifts, axis=axis)
-    onp_op = lambda x: onp.roll(x, shifts, axis=axis)
+    args_maker = lambda: [rng(shape, dtype), onp.array(shifts)]
+    lnp_op = partial(lnp.roll, axis=axis)
+    onp_op = partial(onp.roll, axis=axis)
     self._CheckAgainstNumpy(lnp_op, onp_op, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_op, args_maker, check_dtypes=True)
 
@@ -1651,7 +1651,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     for x in (onp.nan, -onp.inf, -100., -2. -1., 0., 1., 2., 100., onp.inf,
               onp.finfo(dtype).max, onp.sqrt(onp.finfo(dtype).max),
               onp.sqrt(onp.finfo(dtype).max) * 2.):
-      if onp.isnan(x) and op in ("cosh", "expm1", "exp"):
+      if onp.isnan(x) and op in ("sinh", "cosh", "expm1", "exp"):
         # TODO(b/133842876, b/133842870): these return wrong outputs on CPU for
         # NaN inputs.
         continue
@@ -1678,6 +1678,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testReductionOfOutOfBoundsAxis(self):  # Issue 888
     x = lnp.ones((3, 4))
     self.assertRaises(ValueError, lambda: lnp.sum(x, axis=2))
+
+  def testIssue956(self):
+    self.assertRaises(TypeError, lambda: lnp.ndarray((1, 1)))
 
 
 if __name__ == "__main__":

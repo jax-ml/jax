@@ -597,6 +597,10 @@ def pmap(fun, axis_name=None):
   f_pmapped.__name__ = namestr(f_pmapped.__name__, axis_name)
   return f_pmapped
 
+class _TempAxisName(object):
+  def __repr__(self):
+    return '<axis {}>'.format(hex(id(self)))
+
 def _pmap_axis_size(args):
   leaves, _ = tree_flatten(args)
   axis_sizes = reduce(set.union, map(_axis_size, leaves), set())
@@ -624,39 +628,96 @@ def _aval_axis_size(aval):
       raise ValueError("pmap can't map over scalars.")
 
 
-def _serial_pmap(fun, axis_name=None, in_axes=0, out_axes=0):
-  """Vectorizing pseudo-map for single-program multiple-data (SPMD) functions."""
+def soft_pmap(fun, axis_name=None):
   axis_name = _TempAxisName() if axis_name is None else axis_name
 
-  def map_fun(*args, **kwargs):
-    f = lu.wrap_init(fun, kwargs)
-    in_axes_ = in_axes if isinstance(in_axes, (list, tuple)) else (in_axes,) * len(args)
+  @wraps(fun)
+  def f_pmapped(*args):
+    axis_size = _pmap_axis_size(args)
+    chunk_size, leftover = divmod(axis_size, pxla.unmapped_device_count())
+    if chunk_size == 0 and leftover:
+      return pmap(fun, axis_name)(*args)  # can map directly onto hardware
+    elif leftover:
+      raise ValueError
+    num_chunks = axis_size // chunk_size
+
+    f = lu.wrap_init(fun)
     in_flat, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
     jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(f, in_trees)
-    out_flat = parallel.serial_pmap(jaxtree_fun, axis_name, in_flat, in_axes_, out_axes)
-    return build_tree(out_tree(), out_flat)
+    reshaped_args = map(partial(_reshape_split, num_chunks), in_flat)
+    soft_mapped_fun = pxla.split_axis(jaxtree_fun, axis_name, chunk_size)
+    reshaped_out = pxla.xla_pmap(soft_mapped_fun, *reshaped_args,
+                                 axis_name=axis_name, axis_size=num_chunks)
+    return build_tree(out_tree(), _reshape_merge(reshaped_out))
 
-  return map_fun
+  namestr = "soft_pmap({}, axis_name={})".format
+  f_pmapped.__name__ = namestr(f_pmapped.__name__, axis_name)
+  return f_pmapped
 
-class _TempAxisName(object):
-  def __repr__(self):
-    return '<temp axis {}>'.format(hex(id(self)))
+def _reshape_split(num_chunks, arg):
+  def split(aval, arg):
+    t = type(aval)
+    if t is core.AbstractTuple:
+      return core.pack(map(split, aval, arg))
+    elif t is ShapedArray:
+      prefix = (num_chunks, arg.shape[0] // num_chunks)
+      return arg.reshape(prefix + arg.shape[1:])
+    else:
+      raise TypeError(aval)
+
+  return split(batching.get_aval(arg), arg)
+
+def _reshape_merge(ans):
+  def merge(aval, ans):
+    t = type(aval)
+    if t is core.AbstractTuple:
+      return core.pack(map(merge, aval, ans))
+    elif t is ShapedArray:
+      return ans.reshape((-1,) + ans.shape[2:])
+    else:
+      raise TypeError(aval)
+
+  return merge(batching.get_aval(ans), ans)
 
 
-def _papply(fun, axis_size, in_axes=0, out_axes=0):
-  """Apply a function using parallel computation by sharding inputs."""
-  axis_name = parallel.newvar()
+def _papply(fun):
+  # This function is for testing purposes.
+  axis_name = _TempAxisName()
 
   def papply_fun(*args, **kwargs):
+    axis_size = _pmap_axis_size(args)
     f = lu.wrap_init(fun, kwargs)
-    in_axes_ = in_axes if isinstance(in_axes, (list, tuple)) else (in_axes,) * len(args)
     args_flat, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
     jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(f, in_trees)
-    out_flat = parallel.papply(jaxtree_fun, axis_name, args_flat, axis_size,
-                               in_axes_, out_axes)
+    out_flat = parallel.papply(jaxtree_fun, axis_name, args_flat, axis_size)
     return build_tree(out_tree(), out_flat)
 
   return papply_fun, axis_name
+
+
+def _parallelize(fun):
+  axis_name = _TempAxisName()
+
+  def pfun(*args):
+    axis_size = _pmap_axis_size(args)
+    chunk_size, leftover = divmod(axis_size, pxla.unmapped_device_count())
+    if chunk_size == 0 and leftover:
+      return pmap(fun, axis_name)(*args)  # can map directly onto hardware
+    elif leftover:
+      raise ValueError
+    num_chunks = axis_size // chunk_size
+
+    f = lu.wrap_init(fun)
+    args_flat, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
+    args_flat = map(partial(_reshape_split, num_chunks), args_flat)
+    f, out_tree = pytree_fun_to_jaxtupletree_fun(f, in_trees)
+    f, out_axis = parallel.papply_transform(f, axis_name, axis_size)
+    f = pxla.split_axis(f, axis_name, chunk_size)
+    out = pxla.xla_pmap(f, *args_flat, axis_name=axis_name, axis_size=num_chunks)
+    out = parallel.match_axis(0, out_axis(), _reshape_merge(out))
+    return build_tree(out_tree(), out)
+
+  return pfun
 
 
 def jvp(fun, primals, tangents):
@@ -928,7 +989,10 @@ def make_jaxpr(fun):
 tree_to_pval_tuples = partial(process_pytree, pe.pack_pvals)
 
 
-device_put = jit(lambda x: x)
+def device_put(x, device_num=0):
+  return tree_map(lambda y: xla.device_put_p.bind(y, device_num=device_num), x)
+
+
 device_get = _jit(lambda x: x, (), device_values=False)
 
 

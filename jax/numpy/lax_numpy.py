@@ -82,7 +82,10 @@ class _ArrayMeta(type(onp.ndarray)):
 
 # pylint: disable=invalid-name
 class ndarray(six.with_metaclass(_ArrayMeta, onp.ndarray)):
-  pass
+  def __init__(shape, dtype=None, buffer=None, offset=0, strides=None,
+               order=None):
+    raise TypeError("jax.numpy.ndarray() should not be instantiated explicitly."
+                    " Use jax.numpy.array, or jax.numpy.zeros instead.")
 # pylint: enable=invalid-name
 
 
@@ -167,7 +170,7 @@ def _promote_to_result_dtype(op, *args):
 
 def _result_dtype(op, *args):
   """Compute result dtype of applying op to arguments with given dtypes."""
-  args = (onp.ones((0,) * ndim(arg), _dtype(arg)) for arg in args)
+  args = [onp.ones((0,) * ndim(arg), _dtype(arg)) for arg in args]
   return _dtype(op(*args))
 
 
@@ -1129,8 +1132,12 @@ nanprod = _make_nan_reduction(onp.nanprod, prod, 1, nan_if_all_nan=False)
 
 def _make_cumulative_reduction(onp_reduction, window_reduce, init_val,
                                squash_nan=False):
-  @_wraps(onp_reduction)
-  def cumulative_reduction(a, axis=None, dtype=None):
+  # We want to allow XLA to fuse the pad and reduce-window operators to
+  # avoid materializing the padded output.
+  # Consider removing `jit` once again if reduce-window is generalized to
+  # support arbitrary padding.
+  @partial(jit, static_argnums=(1, 2))
+  def _cumulative_reduction(a, axis, dtype):
     if axis is None or isscalar(a):
       a = ravel(a)
       axis = 0
@@ -1162,6 +1169,11 @@ def _make_cumulative_reduction(onp_reduction, window_reduce, init_val,
     window_dims[axis] = a_shape[axis]
     return window_reduce(
        a, window_dims, strides, xla_client.PaddingType.VALID)
+
+  @_wraps(onp_reduction)
+  def cumulative_reduction(a, axis=None, dtype=None):
+    # jit doesn't support kwargs as static_args.
+    return _cumulative_reduction(a, axis, dtype)
 
   return cumulative_reduction
 
@@ -1235,6 +1247,7 @@ def _pad(array, pad_width, mode, constant_values):
     msg = "Unimplemented padding mode '{}' for np.pad."
     raise NotImplementedError(msg.format(mode))
 
+@_wraps(onp.pad)
 def pad(array, pad_width, mode, constant_values=0):
   return _pad(array, pad_width, mode, constant_values)
 
@@ -2068,30 +2081,21 @@ def roll(a, shift, axis=None):
     return lax.reshape(roll(ravel(a), shift, axis=0), a_shape)
 
   a_ndim = len(a_shape)
-  if isinstance(shift, tuple):
-    if isinstance(axis, tuple):
-      if len(axis) != len(shift):
-        msg = "Mismatched lengths between shift ({}) and axis ({}) for np.roll."
-        raise ValueError(msg.format(len(shift), len(axis)))
-      axis = tuple(a for a in axis)
-    else:
-      axis = (axis,) * len(shift)
-  elif isinstance(axis, tuple):
-    shift = (shift,) * len(axis)
-  else:
-    shift = (shift,)
-    axis = (axis,)
+  shift = asarray(shift)
+  axis = onp.asarray(axis)
+  b_shape = lax.broadcast_shapes(shift.shape, axis.shape, (1,))
+  if len(b_shape) != 1:
+    msg = "'shift' and 'axis' arguments to roll must be scalars or 1D arrays"
+    raise ValueError(msg)
+  if b_shape[0] > a_ndim:
+    raise ValueError("More shifts/axes than dimensions of input to roll.")
 
-  for offset, i in zip(shift, axis):
+  for x, i in zip(broadcast_to(shift, b_shape),
+                  onp.broadcast_to(axis, b_shape)):
     i = _canonicalize_axis(i, a_ndim)
-    offset = offset % (a_shape[i] or 1)
-    slices = [slice(None)] * a_ndim
-    slices[i] = slice(None, -offset)
-    before = a[tuple(slices)]
-    slices[i] = slice(-offset, None)
-    after = a[tuple(slices)]
-    a = lax.concatenate((after, before), i)
-
+    x = remainder(x, (a_shape[i] or 1))
+    a = lax.concatenate((a, a), i)
+    a = lax.dynamic_slice_in_dim(a, a_shape[i] - x, a_shape[i], axis=i)
   return a
 
 
@@ -2341,17 +2345,16 @@ def _canonicalize_tuple_index(arr, idx):
 
 def _static_idx(idx, size):
   """Helper function to compute the static slice start/limit/stride values."""
-  indices = onp.arange(size)[idx]  # get shape statically
-  if not len(indices):  # pylint: disable=g-explicit-length-test
+  assert isinstance(idx, slice)
+  start, stop, step = idx.indices(size)
+  if (step < 0 and stop >= start) or (step > 0 and start >= stop):
     return 0, 0, 1, False  # sliced to size zero
-  start, stop_inclusive = indices[0], indices[-1]
-  step = 1 if idx.step is None else idx.step
+
   if step > 0:
-    end = _min(stop_inclusive + step, size)
-    return start, end, step, False
+    return start, stop, step, False
   else:
-    end = _min(start - step, size)
-    return stop_inclusive, end, -step, True
+    k  = (start - stop - 1) % (-step)
+    return stop + k + 1, start + 1, -step, True
 
 
 blackman = onp.blackman

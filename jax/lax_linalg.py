@@ -20,6 +20,8 @@ import numpy as onp
 
 from jax.numpy import lax_numpy as np
 from jax import ad_util
+from jax import api
+from jax import api_util
 from jax import core
 from jax import lax
 from jax import ops
@@ -368,17 +370,94 @@ xla.backend_specific_translations['cpu'][triangular_solve_p] = triangular_solve_
 # Computes a pivoted LU decomposition such that
 # PA = LU
 # In the style of LAPACK, LU are stored in the same matrix.
-# TODO(phawkins): add a mechanism to report errors for singular matrices.
 
-def lu_impl(operand):
+def _lu_unblocked(a):
+  """Unblocked LU decomposition, as a rolled loop."""
+  m, n = a.shape
+  def body(k, state):
+    pivot, perm, a, error = state
+    m_idx = np.arange(m)
+    n_idx = np.arange(n)
+
+    if np.issubdtype(a.dtype, np.complexfloating):
+      t = a[:, k]
+      magnitude = np.abs(np.real(t)) + np.abs(np.imag(t))
+    else:
+      magnitude = np.abs(a[:, k])
+    i = np.argmax(np.where(m_idx >= k, magnitude, -np.inf))
+    pivot = ops.index_update(pivot, ops.index[k], i)
+
+    a = ops.index_update(a, ops.index[[k, i],], a[[i, k],])
+
+    perm = ops.index_update(perm, ops.index[[i, k],], perm[[k, i],])
+
+    # a[k+1:, k] /= a[k, k], adapted for loop-invariant shapes
+    x = a[k, k]
+    error = error | lax.eq(x, np._constant_like(a, 0))
+    a = ops.index_update(a, ops.index[:, k],
+                         np.where(m_idx > k, a[:, k] / x, a[:, k]))
+
+    # a[k+1:, k+1:] -= np.outer(a[k+1:, k], a[k, k+1:])
+    a = a - np.where((m_idx[:, None] > k) & (n_idx > k),
+                     np.outer(a[:, k], a[k, :]), np.array(0, dtype=a.dtype))
+    return pivot, perm, a, error
+
+  pivot = np.zeros((min(m, n),), dtype=np.int32)
+  perm = np.arange(m, dtype=np.int32)
+  error = np.array(False, np.bool_)
+  if m == 0 and n == 0:
+    # If the array is empty, the loop body never executes but tracing it to a
+    # jaxpr fails because the indexing cannot succeed.
+    return (pivot, perm, a, error)
+  return lax.fori_loop(0, min(m, n), body, (pivot, perm, a, error))
+
+
+def _lu_blocked(a, block_size=32):
+  """Blocked LU decomposition, as an unrolled loop."""
+  m, n = a.shape
+  r = min(m, n)
+  pivot = np.zeros((r,), dtype=np.int32)
+  error = np.array(False, np.bool_)
+  for k in range(0, r, block_size):
+    b = min(r - k, block_size)
+    block_pivot, perm, lu_block, block_error = _lu_unblocked(a[k:, k:k+b])
+    error = error | block_error
+    a = ops.index_update(a, ops.index[k:, k:k+b], lu_block)
+
+    a = ops.index_update(a, ops.index[k:, :k], a[perm + k, :k])
+    pivot = ops.index_update(pivot, ops.index[k:k+b], block_pivot + k)
+
+    if k + b < n:
+      a = ops.index_update(a, ops.index[k:, k+b:], a[perm + k, k+b:])
+      a = ops.index_update(
+        a, ops.index[k:k+b, k+b:],
+        triangular_solve(a[k:k+b, k:k+b], a[k:k+b, k+b:],
+                         left_side=True, lower=True, unit_diagonal=True))
+      a = ops.index_add(
+        a, ops.index[k+b:, k+b:],
+        -lax.dot(a[k+b:, k:k+b], a[k:k+b, k+b:],
+                 precision=lax.Precision.HIGHEST))
+  a = np.where(error, lax.full_like(a, np.nan), a)
+  return pivot, a
+
+def _lu_python(x):
+  """Default LU decomposition in Python, where no better version exists."""
+  m, n = x.shape[-2:]
+  batch_dims = x.shape[:-2]
+  if len(batch_dims) > 0:
+    batch_size = onp.prod(batch_dims, dtype=onp.int64)
+    pivot, lu = api.vmap(_lu_blocked)(lax.reshape(x, (batch_size, m, n)))
+    pivot = lax.reshape(pivot, batch_dims + (min(m, n),))
+    lu = lax.reshape(lu, batch_dims + (m, n))
+  else:
+    pivot, lu = _lu_blocked(x)
+  return core.pack((lu, pivot))
+
+def _lu_impl(operand):
   lu, pivot = xla.apply_primitive(lu_p, operand)
   return core.pack((lu, pivot))
 
-def lu_translation_rule(c, operand):
-  raise NotImplementedError(
-    "LU decomposition is only implemented on the CPU backend")
-
-def lu_abstract_eval(operand):
+def _lu_abstract_eval(operand):
   if isinstance(operand, ShapedArray):
     if operand.ndim < 2:
       raise ValueError("Argument to LU decomposition must have ndims >= 2")
@@ -391,7 +470,7 @@ def lu_abstract_eval(operand):
     pivot = operand
   return core.AbstractTuple((operand, pivot))
 
-def lu_jvp_rule(primals, tangents):
+def _lu_jvp_rule(primals, tangents):
   a, = primals
   a_dot, = tangents
   lu, pivots = lu_p.bind(a)
@@ -438,21 +517,13 @@ def lu_jvp_rule(primals, tangents):
   return core.pack((lu, pivots)), ad.TangentTuple((lu_dot, ad_util.zero))
 
 
-def lu_batching_rule(batched_args, batch_dims):
+def _lu_batching_rule(batched_args, batch_dims):
   x, = batched_args
   bd, = batch_dims
   x = batching.bdim_at_front(x, bd)
   return lu_p.bind(x), 0
 
-
-lu_p = Primitive('lu')
-lu_p.def_impl(lu_impl)
-lu_p.def_abstract_eval(lu_abstract_eval)
-xla.translations[lu_p] = lu_translation_rule
-ad.primitive_jvps[lu_p] = lu_jvp_rule
-batching.primitive_batchers[lu_p] = lu_batching_rule
-
-def lu_cpu_translation_rule(c, operand):
+def _lu_cpu_translation_rule(c, operand):
   shape = c.GetShape(operand)
   batch_dims = shape.dimensions()[:-2]
   getrf_out = lapack.jax_getrf(c, operand)
@@ -464,7 +535,14 @@ def lu_cpu_translation_rule(c, operand):
                             _nan_like(c, lu))
   return c.Tuple(lu, pivot)
 
-xla.backend_specific_translations['cpu'][lu_p] = lu_cpu_translation_rule
+
+lu_p = Primitive('lu')
+lu_p.def_impl(_lu_impl)
+lu_p.def_abstract_eval(_lu_abstract_eval)
+xla.translations[lu_p] = xla.lower_fun(_lu_python, instantiate=True)
+ad.primitive_jvps[lu_p] = _lu_jvp_rule
+batching.primitive_batchers[lu_p] = _lu_batching_rule
+xla.backend_specific_translations['cpu'][lu_p] = _lu_cpu_translation_rule
 
 
 def lu_pivots_to_permutation(swaps, m):

@@ -120,8 +120,8 @@ def inv(a):
   if np.ndim(a) < 2 or a.shape[-1] != a.shape[-2]:
     raise ValueError("Argument to inv must have shape [..., n, n], got {}."
       .format(np.shape(a)))
-  q, r = qr(a)
-  return lax_linalg.triangular_solve(r, _T(q), lower=False, left_side=True)
+  return solve(
+    a, lax.broadcast(np.eye(a.shape[-1], dtype=lax.dtype(a)), a.shape[:-2]))
 
 
 @_wraps(onp.linalg.norm)
