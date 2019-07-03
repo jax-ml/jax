@@ -139,12 +139,14 @@ class Primitive(object):
   def bind(self, *args, **kwargs):
     assert skip_checks or all(isinstance(arg, Tracer)
                               or valid_jaxtype(arg) for arg in args), args
-    top_trace = find_top_trace(args)
+    # top_trace = find_top_trace(args)      # data-dependence tracing
+    top_trace = get_top_trace(trace_stack)  # dynamic tracing
     if top_trace is None:
       return self.impl(*args, **kwargs)
 
     tracers = map(top_trace.full_raise, args)
-    out_tracer = top_trace.process_primitive(self, tracers, kwargs)
+    with peel_onion():
+      out_tracer = top_trace.process_primitive(self, tracers, kwargs)
     return full_lower(out_tracer)
 
   def def_impl(self, impl):
@@ -408,6 +410,7 @@ class TraceStack(object):
       return len(self.upward)
 
   def push(self, val, bottom):
+    assert val is not None
     if bottom:
       self.downward.append(val)
     else:
@@ -415,9 +418,9 @@ class TraceStack(object):
 
   def pop(self, bottom):
     if bottom:
-      self.downward.pop()
+      return self.downward.pop()
     else:
-      self.upward.pop()
+      return self.upward.pop()
 
   def __repr__(self):
     return  'Trace stack\n{} ---\n{}'.format(
@@ -426,6 +429,23 @@ class TraceStack(object):
 
 
 trace_stack = TraceStack()
+
+def get_top_trace(trace_stack):
+  if trace_stack.upward:
+    master = trace_stack.upward[-1]
+    trace = master.trace_type(master, cur_sublevel())
+    return trace
+  elif trace_stack.downward:
+    import ipdb; ipdb.set_trace()
+    master, = trace_stack.downward
+    trace = master.trace_type(master, cur_sublevel())
+    return trace
+
+@contextmanager
+def peel_onion():
+  master = trace_stack.pop(False)
+  yield
+  trace_stack.push(master, False)
 
 class Sublevel(int): pass
 substack = [Sublevel(0)]
