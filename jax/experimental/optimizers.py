@@ -275,7 +275,7 @@ def rmsprop(step_size, gamma=0.9, eps=1e-8):
   """
   step_size = make_schedule(step_size)
   def init(x0):
-    avg_sq_grad = np.ones_like(x0)
+    avg_sq_grad = np.zeros_like(x0)
     return x0, avg_sq_grad
   def update(i, g, state):
     x, avg_sq_grad = state
