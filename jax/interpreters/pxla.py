@@ -433,7 +433,18 @@ pe.custom_partial_eval_rules[axis_index_p] = _axis_index_partial_eval
 
 ### lazy device-memory persistence and result handling
 
-class ShardedDeviceTuple(xla.DeviceTuple):
+class ShardedDeviceValue(xla.DeviceValue):
+  def _check_if_deleted(self):
+    if self.device_buffers is None:
+      raise ValueError("ShardedDeviceValue has been deleted.")
+
+  def block_until_ready(self):
+    self._check_if_deleted()
+    for buf in self.device_buffers:
+      buf.block_host_until_ready()
+
+
+class ShardedDeviceTuple(ShardedDeviceValue, xla.DeviceTuple):
   """A ShardedDeviceTuple is a JaxTuple sharded across devices.
 
   The purpose of a ShardedDeviceTuple is to reduce the number of transfers when
@@ -495,7 +506,7 @@ xla.canonicalize_dtype_handlers[ShardedDeviceTuple] = \
     xla.canonicalize_dtype_handlers[xla.DeviceTuple]
 
 
-class ShardedDeviceArray(xla.DeviceArray):
+class ShardedDeviceArray(ShardedDeviceValue, xla.DeviceArray):
   """A ShardedDeviceArray is an ndarray sharded across devices.
 
   The purpose of a ShardedDeviceArray is to reduce the number of transfers when
@@ -533,6 +544,12 @@ class ShardedDeviceArray(xla.DeviceArray):
     if self._npy_value is None:
       for buf in self.device_buffers:
         xla._copy_to_host_async(buf)
+
+  def delete(self):
+    for buf in self.device_buffers:
+      buf.delete()
+    self.device_buffers = None
+    self._npy_value = None
 
   @property
   def _value(self):
