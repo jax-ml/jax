@@ -396,11 +396,11 @@ def add_tangents(x, y):
     return add_jaxvals(x, y)
 
 
-def defvjp_all(prim, custom_vjp):
-  # see https://github.com/google/jax/pull/636
+def defvjp_argnums(prim, custom_vjp):
   name = prim.name
 
   def fun_jvp(xs, ts, **params):
+    params['vjp_argnums'] = tuple(i for i, t in enumerate(ts) if t is not zero)
     ts = map(instantiate_zeros, xs, ts)  # TODO(mattjj): avoid instantiation?
     primal_out, tangent_out = fun_jvp_p.bind(pack(xs), pack(ts), **params)
     return primal_out, tangent_out
@@ -409,7 +409,8 @@ def defvjp_all(prim, custom_vjp):
   fun_jvp_p = core.Primitive('{name}_jvp'.format(name=name))
   def fun_jvp_partial_eval(trace, *tracers, **params):
     primals_tracer, tangents_tracer = tracers
-    primal_out, vjp_py = custom_vjp(*primals_tracer, **params)
+    argnums = params.pop('vjp_argnums')
+    primal_out, vjp_py = custom_vjp(argnums, *primals_tracer, **params)
 
     in_aval = raise_to_shaped(get_aval(primal_out))
     ct_pval = pe.PartialVal((in_aval, core.unit))
@@ -430,6 +431,12 @@ def defvjp_all(prim, custom_vjp):
     out = pe.merge_pvals(ans, pe.PartialVal((out_pv, out_const)))
     return [None, None, out]
   primitive_transposes[fun_lin_p] = fun_lin_transpose
+
+def defvjp_all(prim, custom_vjp):
+  # see https://github.com/google/jax/pull/636
+  def custom_vjp_(argnums, *args, **params):
+    return custom_vjp(*args, **params)
+  defvjp_argnums(prim, custom_vjp_)
 
 def defvjp(prim, *vjps):
   def vjpmaker(*primals):

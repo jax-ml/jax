@@ -562,6 +562,34 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(grad_ans, 3. * 4. + onp.cos(onp.sin(3. * 4)),
                         check_dtypes=False)
 
+  def test_defjvp_closure_error(self):
+    def foo(x):
+      @api.custom_transforms
+      def bar(y):
+        return x * y
+
+      api.defjvp(bar, lambda y_dot, ans, y: x * y)
+      return bar(x)
+    jtu.check_raises(
+        lambda: api.jvp(foo, (1.,), (1.,)), ValueError,
+        "Detected differentiation w.r.t. variables from outside "
+        "the scope of <jax.custom_transforms function bar>, but defjvp and "
+        "defjvp_all only support differentiation w.r.t. positional arguments.")
+
+  def test_defvjp_closure_error(self):
+    def foo(x):
+      @api.custom_transforms
+      def bar(y):
+        return x * y
+
+      api.defvjp(bar, lambda g, ans, y: x * y)
+      return bar(x)
+    jtu.check_raises(
+        lambda: grad(foo)(1.,), ValueError,
+        "Detected differentiation w.r.t. variables from outside "
+        "the scope of <jax.custom_transforms function bar>, but defvjp and "
+        "defvjp_all only support differentiation w.r.t. positional arguments.")
+
   def test_custom_transforms_eval_with_pytrees(self):
     @api.custom_transforms
     def f(x):
@@ -612,6 +640,17 @@ class APITest(jtu.JaxTestCase):
 
     ans = api.vmap(f)((onp.arange(3), onp.ones((3, 2))))
     expected = {'hi': 2 * onp.arange(3), 'bye': 2 * onp.ones((3, 2))}
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_custom_transforms_jvp_with_closure(self):
+    def f(x):
+      @api.custom_transforms
+      def g(y):
+        return x * y
+      return g(x)
+
+    ans = api.grad(f)(1.)
+    expected = 2.
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_custom_gradient(self):
