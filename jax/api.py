@@ -112,7 +112,7 @@ def _jit(fun, static_argnums, device_values=True):
       return fun(*args, **kwargs)
     if isinstance(static_argnums, int):
       # static_argnums is a tuple of ints
-      static_argnums = tuple([static_argnums])
+      static_argnums = (static_argnums,)
     if static_argnums and max(static_argnums) >= len(args):
       msg = ("Jitted function has static_argnums={} but was called with only {}"
              " positional arguments.")
