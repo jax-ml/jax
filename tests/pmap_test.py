@@ -587,6 +587,11 @@ class PmapTest(jtu.JaxTestCase):
     expected = onp.arange(n ** 2).reshape(n, n).T
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testShardedDeviceArrayBlockUntilReady(self):
+    x = onp.arange(xla_bridge.device_count())
+    x = pmap(lambda x: x)(x)
+    x.block_until_ready()   # doesn't crash
+
 
 if __name__ == '__main__':
   absltest.main()
