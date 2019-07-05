@@ -1608,7 +1608,7 @@ real_p = unop(_complex_basetype, _complex, 'real')
 ad.deflinear(real_p, lambda t: [complex(t, onp.zeros((), _dtype(t)))])
 
 imag_p = unop(_complex_basetype, _complex, 'imag')
-ad.deflinear(imag_p, lambda t: [complex(onp.zeros((), _dtype(t)), t)])
+ad.defjvp(imag_p, lambda g, _: real(mul(_const(g, -1j), g)))
 
 _complex_dtype = lambda dtype, *args: (onp.zeros((), dtype) + onp.zeros((), onp.complex64)).dtype
 complex_p = binop(_complex_dtype, [_complex_elem_types, _complex_elem_types],
