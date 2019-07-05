@@ -1613,7 +1613,7 @@ ad.defjvp(imag_p, lambda g, _: real(mul(_const(g, -1j), g)))
 _complex_dtype = lambda dtype, *args: (onp.zeros((), dtype) + onp.zeros((), onp.complex64)).dtype
 complex_p = binop(_complex_dtype, [_complex_elem_types, _complex_elem_types],
                   'complex')
-ad.deflinear(complex_p, lambda t: [real(t), imag(t)])
+ad.deflinear(complex_p, lambda t: [real(t), imag(neg(t))])
 
 conj_p = unop(_complex_dtype, _float | _complex, 'conj')
 

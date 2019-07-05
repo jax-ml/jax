@@ -1525,8 +1525,8 @@ LAX_GRAD_OPS = [
                    dtypes=[onp.complex64]),
     grad_test_spec(lax.imag, nargs=1, order=2, rng=jtu.rand_default(),
                    dtypes=[onp.complex64]),
-    # grad_test_spec(lax.complex, nargs=2, order=2, rng=jtu.rand_default(),
-    #                dtypes=[onp.float32]),  # TODO(mattjj): enable
+    grad_test_spec(lax.complex, nargs=2, order=2, rng=jtu.rand_default(),
+                   dtypes=[onp.float32]),
     grad_test_spec(lax.conj, nargs=1, order=2, rng=jtu.rand_default(),
                    dtypes=[onp.float32, onp.complex64]),
     grad_test_spec(lax.abs, nargs=1, order=2, rng=jtu.rand_positive(),
