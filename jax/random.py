@@ -759,7 +759,8 @@ def gumbel(key, shape=(), dtype=onp.float64):
 @partial(jit, static_argnums=(1, 2))
 def _gumbel(key, shape, dtype):
   _check_shape("gumbel", shape)
-  return -np.log(-np.log(uniform(key, shape, dtype)))
+  return -np.log(-np.log(
+      uniform(key, shape, dtype, minval=onp.finfo(dtype).eps, maxval=1.)))
 
 
 def laplace(key, shape=(), dtype=onp.float64):
@@ -781,7 +782,8 @@ def laplace(key, shape=(), dtype=onp.float64):
 @partial(jit, static_argnums=(1, 2))
 def _laplace(key, shape, dtype):
   _check_shape("laplace", shape)
-  u = uniform(key, shape, dtype, minval=-1., maxval=1.)
+  u = uniform(
+      key, shape, dtype, minval=-1. + np.finfo(dtype).epsneg, maxval=1.)
   return lax.mul(lax.sign(u), lax.log1p(lax.neg(lax.abs(u))))
 
 
