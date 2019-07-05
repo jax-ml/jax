@@ -19,6 +19,6 @@ Module contents
 ---------------
 
 .. automodule:: jax
-    :members: jit, disable_jit, grad, value_and_grad, vmap, pmap, jacfwd, jacrev, hessian, jvp, linearize, vjp, make_jaxpr, eval_shape, custom_transforms, defjvp, defjvp_all, defvjp, defvjp_all, custom_gradient
+    :members: jit, disable_jit, grad, value_and_grad, vmap, pmap, jacfwd, jacrev, hessian, jvp, linearize, vjp, make_jaxpr, eval_shape, custom_transforms, defjvp, defjvp_all, defvjp, defvjp_all, custom_gradient, xla_computation
     :undoc-members:
     :show-inheritance:
