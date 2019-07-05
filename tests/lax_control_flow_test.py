@@ -31,6 +31,7 @@ from jax import core
 from jax import lax
 from jax import test_util as jtu
 from jax.util import unzip2
+from jax.lib import xla_bridge
 import jax.numpy as np  # scan tests use numpy
 
 def scan_reference(f, init, xs):
@@ -806,9 +807,14 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         return final_val
 
     arg = 0.5
-    print(api.jit(api.jacfwd(loop, argnums=(0,)))(arg))
+    api.jit(api.jacfwd(loop, argnums=(0,)))(arg)  # doesn't crash
 
   # TODO(mattjj): add a test for "the David Sussillo bug"
+
+  def testIssue804(self):
+    num_devices = xla_bridge.device_count()
+    f = partial(lax.scan, lambda c, x: (c + lax.psum(x, "i") , c), 0.)
+    api.pmap(f, axis_name="i")(np.ones((num_devices, 4)))  # doesn't crash
 
 
 if __name__ == '__main__':

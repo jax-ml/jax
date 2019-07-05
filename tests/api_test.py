@@ -239,7 +239,7 @@ class APITest(jtu.JaxTestCase):
     foo_p.def_abstract_eval(lambda x: x)
 
     jtu.check_raises(lambda: jit(foo)(1.0), NotImplementedError,
-                     "XLA translation rule for 'foo' not implemented")
+                     "XLA translation rule for primitive 'foo' not found")
 
     foo_p.def_impl(lambda x: x)
     ad.defjvp(foo_p, lambda g, x: foo(g))
@@ -658,8 +658,8 @@ class APITest(jtu.JaxTestCase):
     def f(x):
       return x ** 2, lambda g: (g * x,)
 
-    self.assertEqual(f(3.), 9.)
-    self.assertEqual(api.grad(f)(3.), 3.)
+    self.assertAllClose(f(3.), 9., check_dtypes=False)
+    self.assertAllClose(api.grad(f)(3.), 3., check_dtypes=False)
 
   def test_devicetuple_iteration(self):
     tup = device_put(pack((1, 2)))
@@ -860,6 +860,34 @@ class APITest(jtu.JaxTestCase):
       lambda: dfn(3), TypeError,
       "Primal inputs to reverse-mode differentiation must be of float or "
       "complex type, got type int..")
+
+  def test_xla_computation(self):
+    # these tests basically check the examples in the xla_computation docstring
+
+    def h(x):
+      return np.sin(np.cos(x))
+    c = api.xla_computation(h)(2.)
+    self.assertIn('cosine', c.GetHloText())
+    self.assertIn('sine', c.GetHloText())
+
+    def f(x):
+      return x - lax.psum(x, 'i')
+    axis_env = [('i', 4)]
+    c = api.xla_computation(f, axis_env=axis_env)(2)
+    self.assertIn('all-reduce', c.GetHloText())
+    self.assertIn('replica_groups={{0,1,2,3}}', c.GetHloText())
+
+    def g(x):
+      rowsum = lax.psum(x, 'i')
+      colsum = lax.psum(x, 'j')
+      allsum = lax.psum(x, ('i', 'j'))
+      return rowsum, colsum, allsum
+    axis_env = [('i', 4), ('j', 2)]
+    c = api.xla_computation(g, axis_env=axis_env)(5.)
+    self.assertIn('all-reduce', c.GetHloText())
+    self.assertIn('replica_groups={{0,2,4,6},{1,3,5,7}}', c.GetHloText())
+    self.assertIn('replica_groups={{0,1},{2,3},{4,5},{6,7}}', c.GetHloText())
+    self.assertIn('replica_groups={{0,1,2,3,4,5,6,7}}', c.GetHloText())
 
 
 if __name__ == '__main__':

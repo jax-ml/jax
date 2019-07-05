@@ -592,6 +592,19 @@ class PmapTest(jtu.JaxTestCase):
     x = pmap(lambda x: x)(x)
     x.block_until_ready()   # doesn't crash
 
+  def testJitPmapComposition(self):
+    f = lambda x: x - lax.psum(x, 'i')
+
+    shape = (xla_bridge.device_count(), 4)
+    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+    expected = x - onp.sum(x, 0)
+
+    ans = jit(pmap(f, 'i'))(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = pmap(jit(f), 'i')(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
 
 if __name__ == '__main__':
   absltest.main()

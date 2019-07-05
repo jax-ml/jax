@@ -147,10 +147,10 @@ def disable_jit():
 
   >>> @jax.jit
   >>> def f(x):
-  >>>   y = x *2
-  >>>   print("Value of y is", y)
-  >>>   return y + 3
-  >>>
+  ...   y = x *2
+  ...   print("Value of y is", y)
+  ...   return y + 3
+  ...
   >>> print(f(jax.numpy.array([1, 2, 3])))
   Value of y is Traced<ShapedArray(int32[3]):JaxprTrace(level=-1/1)>
   [5 7 9]
@@ -173,10 +173,89 @@ def disable_jit():
 _jit_is_disabled = False
 
 
-def xla_computation(fun, static_argnums=()):
+def xla_computation(fun, static_argnums=(), axis_env=None):
+  """Creates a function that produces its XLA computation given example args.
+
+  Args:
+    fun: Function from which to form XLA computations.
+    static_argnums: See the ``jax.jit`` docstring.
+    axis_env: Optional, a list of pairs where the first element is an axis name
+      and the second element is a positive integer representing the size of the
+      mapped axis with that name. This parameter is useful when lowering
+      functions that involve parallel communication collectives, and it
+      specifies the axis name/size environment that would be set up by
+      applications of ``jax.pmap``. See the examples below.
+
+  Returns:
+    A wrapped version of ``fun`` that when applied to example arguments returns a
+    built XLA Computation (see xla_client.py), from which representations of the
+    unoptimized XLA HLO computation can be extracted using methods like
+    ``GetHloText``, ``GetSerializedProto``, and ``GetHloDotGraph``.
+
+  For example:
+
+  >>> def f(x): return jax.numpy.sin(jax.numpy.cos(x))
+  >>> c = jax.xla_computation(f)(3.)
+  >>> print(c.GetHloText())
+  HloModule jaxpr_computation__4.5
+  ENTRY jaxpr_computation__4.5 {
+    tuple.1 = () tuple()
+    parameter.2 = f32[] parameter(0)
+    cosine.3 = f32[] cosine(parameter.2)
+    ROOT sine.4 = f32[] sine(cosine.3)
+  }
+
+  Here's an example that involves a parallel collective and axis name:
+
+  >>> def f(x): return x - jax.lax.psum(x, 'i')
+  >>> c = jax.xla_computation(f, axis_env=[('i', 4)])(2)
+  >>> print(c.GetHloText())
+  HloModule jaxpr_computation.9
+  primitive_computation.3 {
+    parameter.4 = s32[] parameter(0)
+    parameter.5 = s32[] parameter(1)
+    ROOT add.6 = s32[] add(parameter.4, parameter.5)
+  }
+  ENTRY jaxpr_computation.9 {
+    tuple.1 = () tuple()
+    parameter.2 = s32[] parameter(0)
+    all-reduce.7 = s32[] all-reduce(parameter.2), replica_groups={{0,1,2,3}}, to_apply=primitive_computation.3
+    ROOT subtract.8 = s32[] subtract(parameter.2, all-reduce.7)
+  }
+
+  Notice the ``replica_groups`` that were generated. Here's an example that
+  genertes more interesting ``replica_groups``:
+
+  >>> def g(x):
+  ...   rowsum = lax.psum(x, 'i')
+  ...   colsum = lax.psum(x, 'j')
+  ...   allsum = lax.psum(x, ('i', 'j'))
+  ...   return rowsum, colsum, allsum
+  ...
+  >>> axis_env = [('i', 4), ('j', 2)]
+  >>> c = xla_computation(g, axis_env=axis_env)(5.)
+  >>> print(c.GetHloText())
+  HloModule jaxpr_computation__1.19
+  [removed uninteresting text here]
+  ENTRY jaxpr_computation__1.19 {
+    tuple.1 = () tuple()
+    parameter.2 = f32[] parameter(0)
+    all-reduce.7 = f32[] all-reduce(parameter.2), replica_groups={{0,2,4,6},{1,3,5,7}}, to_apply=primitive_computation__1.3
+    all-reduce.12 = f32[] all-reduce(parameter.2), replica_groups={{0,1},{2,3},{4,5},{6,7}}, to_apply=primitive_computation__1.8
+    all-reduce.17 = f32[] all-reduce(parameter.2), replica_groups={{0,1,2,3,4,5,6,7}}, to_apply=primitive_computation__1.13
+    ROOT tuple.18 = (f32[], f32[], f32[]) tuple(all-reduce.7, all-reduce.12, all-reduce.17)
+  }
+  """
+
   def pv_like(x):
     aval = xla.abstractify(x)
     return pe.PartialVal((aval, core.unit))
+
+  if axis_env is None:
+    axis_env = xla.AxisEnv(1, [], [])
+  else:
+    nreps = prod(size for name, size in axis_env)
+    axis_env = xla.AxisEnv(nreps, *zip(*axis_env))
 
   @wraps(fun)
   def computation_maker(*args, **kwargs):
@@ -186,13 +265,14 @@ def xla_computation(fun, static_argnums=()):
       jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(wrapped, in_trees)
       pvals = map(pv_like, jax_args)
       jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
-      return xla.build_jaxpr(jaxpr, consts, *map(xla.abstractify, jax_args))
+      return xla.build_jaxpr(jaxpr, axis_env, consts,
+                             *map(xla.abstractify, jax_args))
     else:
       jax_kwargs, kwargs_tree = pytree_to_jaxtupletree(kwargs)
       jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun2(wrapped, kwargs_tree, in_trees)
       pvals = map(pv_like, (jax_kwargs,) + tuple(jax_args))
       jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
-      return xla.build_jaxpr(jaxpr, consts, xla.abstractify(jax_kwargs),
+      return xla.build_jaxpr(jaxpr, axis_env, consts, xla.abstractify(jax_kwargs),
                             *map(xla.abstractify, jax_args))
 
   return computation_maker
@@ -330,8 +410,9 @@ def jacfwd(fun, argnums=0, holomorphic=False):
     `fun` using forward-mode automatic differentiation.
 
   >>> def f(x):
-  >>>   return jax.numpy.asarray(
-  >>>     [x[0], 5*x[2], 4*x[1]**2 - 2*x[2], x[2] * jax.numpy.sin(x[0])])
+  ...   return jax.numpy.asarray(
+  ...     [x[0], 5*x[2], 4*x[1]**2 - 2*x[2], x[2] * jax.numpy.sin(x[0])])
+  ...
   >>> print(jax.jacfwd(f)(np.array([1., 2., 3.])))
   [[ 1.        ,  0.        ,  0.        ],
    [ 0.        ,  0.        ,  5.        ],
@@ -374,8 +455,9 @@ def jacrev(fun, argnums=0, holomorphic=False):
     `fun` using reverse-mode automatic differentiation.
 
   >>> def f(x):
-  >>>   return jax.numpy.asarray(
-  >>>     [x[0], 5*x[2], 4*x[1]**2 - 2*x[2], x[2] * jax.numpy.sin(x[0])])
+  ...   return jax.numpy.asarray(
+  ...     [x[0], 5*x[2], 4*x[1]**2 - 2*x[2], x[2] * jax.numpy.sin(x[0])])
+  ...
   >>> print(jax.jacrev(f)(np.array([1., 2., 3.])))
   [[ 1.        ,  0.        ,  0.        ],
    [ 0.        ,  0.        ,  5.        ],
@@ -881,7 +963,8 @@ def vjp(fun, *primals, **kwargs):
     `primals`.
 
   >>> def f(x, y):
-  >>>   return jax.numpy.sin(x), jax.numpy.cos(y)
+  ...   return jax.numpy.sin(x), jax.numpy.cos(y)
+  ...
   >>> primals, f_vjp = jax.vjp(f, 0.5, 1.0)
   >>> xbar, ybar = f_vjp((-0.7, 0.3))
   >>> print(xbar)
@@ -930,7 +1013,7 @@ def lift_jaxpr(jaxpr, consts, io_tree, pvals, py_args):
   return apply_jaxtree_fun(fun, io_tree, *py_args)
 
 def make_jaxpr(fun):
-  """Adapts `fun` to return its `jaxpr` program representation.
+  """Creates a function that produces its jaxpr given example args.
 
   Args:
     fun: The function whose `jaxpr` is to be computed. Its positional arguments
@@ -938,7 +1021,8 @@ def make_jaxpr(fun):
       (tuple/list/dict) thereof.
 
   Returns:
-    A wrapped version of `fun`, set up to return a `jaxpr`.
+    A wrapped version of `fun` that when applied to example arguments returns a
+    jaxpr representation of `fun` on those arguments.
 
   A `jaxpr` is JAX's intermediate representation for program traces. The `jaxpr`
   language is based on the simply-typed first-order lambda calculus with
