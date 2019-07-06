@@ -2268,11 +2268,10 @@ def _broadcast_in_dim_batch_rule(batched_args, batch_dims, shape,
                                  broadcast_dimensions):
   operand, = batched_args
   bdim, = batch_dims
-  new_shape = list(shape)
-  new_shape.insert(bdim, operand.shape[bdim])
-  new_broadcast_dimensions = [d if d < bdim else d + 1 for d in broadcast_dimensions]
-  new_broadcast_dimensions.insert(bdim, bdim)
-  return broadcast_in_dim(operand, new_shape, new_broadcast_dimensions), bdim
+  new_operand = batching.move_dim_to_front(operand, bdim)
+  new_shape = (operand.shape[bdim],) + shape
+  new_broadcast_dimensions = (0,) + tuple(onp.add(1, broadcast_dimensions))
+  return broadcast_in_dim(new_operand, new_shape, new_broadcast_dimensions), 0
 
 
 broadcast_in_dim_p = standard_primitive(

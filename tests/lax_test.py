@@ -2486,7 +2486,6 @@ class LaxVmapTest(jtu.JaxTestCase):
       for bdims in all_bdims(inshape)
       for rng in [jtu.rand_default()]))
   def testBroadcastInDim(self, inshape, dtype, outshape, dimensions, bdims, rng):
-    raise SkipTest("this test has failures in some cases")  # TODO(mattjj)
     op = lambda x: lax.broadcast_in_dim(x, outshape, dimensions)
     self._CheckBatching(op, 5, bdims, (inshape,), dtype, rng)
 
