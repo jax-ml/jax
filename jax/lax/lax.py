@@ -822,19 +822,20 @@ def _reduction_jaxpr(computation, init_value):
 
 def _get_monoid_reducer(monoid_op, x):
   aval = core.get_aval(x)
+  dtype = _dtype(x)
   if (type(aval) is ConcreteArray) and aval.shape == ():
     if monoid_op is add:
       return aval.val == 0 and _reduce_sum
     if monoid_op is mul:
       return aval.val == 1 and _reduce_prod
+    elif monoid_op is bitwise_or and dtype == onp.bool_:
+      return aval.val == _get_max_identity(dtype) and _reduce_or
+    elif monoid_op is bitwise_and and dtype == onp.bool_:
+      return aval.val == _get_min_identity(dtype) and _reduce_and
     elif monoid_op is max:
-      return aval.val == _get_max_identity(aval.dtype) and _reduce_max
+      return aval.val == _get_max_identity(dtype) and _reduce_max
     elif monoid_op is min:
-      return aval.val == _get_min_identity(aval.dtype) and _reduce_min
-    elif monoid_op is bitwise_or and aval.dtype == onp.bool_:
-      return aval.val == _get_max_identity(aval.dtype) and _reduce_or
-    elif monoid_op is bitwise_and and aval.dtype == onp.bool_:
-      return aval.val == _get_min_identity(aval.dtype) and _reduce_and
+      return aval.val == _get_min_identity(dtype) and _reduce_min
 
 def _get_max_identity(dtype):
   if onp.issubdtype(dtype, onp.inexact):
@@ -2267,11 +2268,10 @@ def _broadcast_in_dim_batch_rule(batched_args, batch_dims, shape,
                                  broadcast_dimensions):
   operand, = batched_args
   bdim, = batch_dims
-  new_shape = list(shape)
-  new_shape.insert(bdim, operand.shape[bdim])
-  new_broadcast_dimensions = [d if d < bdim else d + 1 for d in broadcast_dimensions]
-  new_broadcast_dimensions.insert(bdim, bdim)
-  return broadcast_in_dim(operand, new_shape, new_broadcast_dimensions), bdim
+  new_operand = batching.move_dim_to_front(operand, bdim)
+  new_shape = (operand.shape[bdim],) + shape
+  new_broadcast_dimensions = (0,) + tuple(onp.add(1, broadcast_dimensions))
+  return broadcast_in_dim(new_operand, new_shape, new_broadcast_dimensions), 0
 
 
 broadcast_in_dim_p = standard_primitive(
@@ -2569,8 +2569,7 @@ def _select_batch_rule(batched_args, batch_dims, **unused_kwargs):
   elif onp.ndim(pred) == 0 and ot_bdim is not None and of_bdim is not None:
     if ot_bdim == of_bdim:
       return select(pred, on_true, on_false), ot_bdim
-    else:
-      assert onp.shape(on_true) == onp.shape(on_false)
+    elif onp.shape(on_true) == onp.shape(on_false):
       on_false = batching.moveaxis(size, ot_bdim, of_bdim, on_false)
       return select(pred, on_true, on_false), ot_bdim
 
@@ -3446,7 +3445,7 @@ def _reduce_window_batch_rule(
   operand = reduce_window(
       operand, window_dimensions, window_strides, padding)
 
-  return operand, 0
+  return operand, bdim
 
 reduce_window_sum_p = standard_primitive(
     _reduce_window_sum_shape_rule, _input_dtype, 'reduce_window_sum',
