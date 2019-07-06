@@ -1084,16 +1084,24 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_arg{}".format(i), "arg": arg}
+      {"testcase_name": "_arg{}_ndmin={}".format(i, ndmin),
+       "arg": arg, "ndmin": ndmin}
       for i, arg in enumerate([
           3., [1, 2, 3], [1., 2., 3.],
           [[1, 2], [3, 4], [5, 6]], [[1, 2.], [3, 4], [5, 6]],
           [[3, onp.array(2), 1], onp.arange(3.)],
-      ])))
-  def testArray(self, arg):
+      ])
+      for ndmin in [None, onp.ndim(arg), onp.ndim(arg) + 1, onp.ndim(arg) + 2]))
+  def testArray(self, arg, ndmin):
     args_maker = lambda: [arg]
-    self._CheckAgainstNumpy(onp.array, lnp.array, args_maker, check_dtypes=True)
-    self._CompileAndCheck(lnp.array, args_maker, check_dtypes=True)
+    if ndmin is not None:
+      onp_fun = partial(onp.array, ndmin=ndmin)
+      lnp_fun = partial(lnp.array, ndmin=ndmin)
+    else:
+      onp_fun = onp.array
+      lnp_fun = lnp.array
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
   def testIssue121(self):
     assert not onp.isscalar(lnp.array(3))
@@ -1681,6 +1689,25 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   def testIssue956(self):
     self.assertRaises(TypeError, lambda: lnp.ndarray((1, 1)))
+
+  @parameterized.named_parameters(
+      jtu.cases_from_list(
+        {"testcase_name": "_shape={}_dtype={}_rowvar={}_ddof={}_bias={}".format(
+            shape, dtype, rowvar, ddof, bias),
+         "shape":shape, "dtype":dtype, "rowvar":rowvar, "ddof":ddof,
+         "bias":bias, "rng": rng}
+        for shape in [(5,), (10, 5), (3, 10)]
+        for dtype in all_dtypes
+        for rowvar in [True, False]
+        for bias in [True, False]
+        for ddof in [None, 2, 3]
+        for rng in [jtu.rand_default()]))
+  def testCov(self, shape, dtype, rowvar, ddof, bias, rng):
+    args_maker = self._GetArgsMaker(rng, [shape], [dtype])
+    onp_fun = partial(onp.cov, rowvar=rowvar, ddof=ddof, bias=bias)
+    lnp_fun = partial(lnp.cov, rowvar=rowvar, ddof=ddof, bias=bias)
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
 
 if __name__ == "__main__":
