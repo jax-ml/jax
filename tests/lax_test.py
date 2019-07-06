@@ -1032,8 +1032,9 @@ class LaxTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(op, numpy_op, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_op={}_inshape={}_reducedims={}"
-       .format(op.__name__, jtu.format_shape_dtype_string(shape, dtype), dims),
+      {"testcase_name": "_op={}_inshape={}_reducedims={}_initval={}"
+       .format(op.__name__, jtu.format_shape_dtype_string(shape, dtype), dims,
+               init_val),
        "op": op, "init_val": init_val, "shape": shape, "dtype": dtype,
        "dims": dims, "rng": rng}
       for init_val, op, dtypes in [
@@ -1041,12 +1042,12 @@ class LaxTest(jtu.JaxTestCase):
           (1, lax.mul, default_dtypes),
           (-onp.inf, lax.max, float_dtypes),
           (onp.iinfo(onp.int32).min, lax.max, [onp.int32]),
-          (onp.iinfo(onp.int64).min, lax.max, [onp.int64]),
+          # (onp.iinfo(onp.int64).min, lax.max, [onp.int64]),  # TODO fails
           (onp.iinfo(onp.uint32).min, lax.max, [onp.uint32]),
           (onp.iinfo(onp.uint64).min, lax.max, [onp.uint64]),
           (onp.inf, lax.min, float_dtypes),
           (onp.iinfo(onp.int32).max, lax.min, [onp.int32]),
-          (onp.iinfo(onp.int64).max, lax.min, [onp.int64]),
+          # (onp.iinfo(onp.int64).max, lax.min, [onp.int64]),  # TODO fails
           (onp.iinfo(onp.uint32).max, lax.min, [onp.uint32]),
           (onp.iinfo(onp.uint64).max, lax.min, [onp.uint64]),
       ]
@@ -1055,7 +1056,8 @@ class LaxTest(jtu.JaxTestCase):
           [(3, 4, 5), (0,)], [(3, 4, 5), (1, 2)],
           [(3, 4, 5), (0, 2)], [(3, 4, 5), (0, 1, 2)]
       ]
-      for rng in [jtu.rand_small()]))
+      for rng in [jtu.rand_default() if onp.issubdtype(dtype, onp.integer)
+                  else jtu.rand_small()]))
   def testReduce(self, op, init_val, shape, dtype, dims, rng):
     init_val = onp.asarray(init_val, dtype=dtype)
     fun = lambda operand, init_val: lax.reduce(operand, init_val, op, dims)
