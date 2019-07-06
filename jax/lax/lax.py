@@ -2569,8 +2569,7 @@ def _select_batch_rule(batched_args, batch_dims, **unused_kwargs):
   elif onp.ndim(pred) == 0 and ot_bdim is not None and of_bdim is not None:
     if ot_bdim == of_bdim:
       return select(pred, on_true, on_false), ot_bdim
-    else:
-      assert onp.shape(on_true) == onp.shape(on_false)
+    elif onp.shape(on_true) == onp.shape(on_false):
       on_false = batching.moveaxis(size, ot_bdim, of_bdim, on_false)
       return select(pred, on_true, on_false), ot_bdim
 
