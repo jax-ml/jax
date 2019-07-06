@@ -42,6 +42,7 @@ from ..api_util import (pytree_fun_to_jaxtupletree_fun, pytree_to_jaxtupletree,
                         pytree_fun_to_flatjaxtuple_fun, pytree_to_flatjaxtuple)
 from ..interpreters import partial_eval as pe
 from ..interpreters import xla
+from ..interpreters import pxla
 from ..interpreters import ad
 from ..interpreters import batching
 from ..util import curry, memoize, safe_zip, unzip2, prod
@@ -580,7 +581,7 @@ def reshape(operand, new_sizes, dimensions=None):
   else:
     return reshape_p.bind(
         operand, new_sizes=new_sizes,
-        dimensions=None if dimensions is None else tuple(dimensions),
+        dimensions=None if same_dims else tuple(dimensions),
         old_sizes=onp.shape(operand))
 
 def pad(operand, padding_value, padding_config):
@@ -2410,6 +2411,28 @@ ad.primitive_transposes[pad_p] = _pad_transpose
 batching.primitive_batchers[pad_p] = _pad_batch_rule
 
 
+# We have a nonstandard reshape impl so that we can be lazy about data movement
+# for specific types, particularly ShardedDeviceArrays / ChunkedDeviceArrays
+def _reshape_impl(operand, new_sizes, dimensions, old_sizes):
+  if (type(operand) is pxla.ShardedDeviceArray and dimensions is None
+      and _is_axis_merge(old_sizes, new_sizes)):
+    aval = ShapedArray(new_sizes, operand.dtype)
+    return pxla.ChunkedDeviceArray(old_sizes[0], aval, operand.device_buffers)
+  elif (type(operand) is pxla.ChunkedDeviceArray and dimensions is None
+        and _is_axis_split(old_sizes, new_sizes)
+        and operand.axis_size == new_sizes[0]):
+    aval = ShapedArray(new_sizes, operand.dtype)
+    return pxla.ShardedDeviceArray(aval, operand.device_buffers)
+  else:
+    return xla.apply_primitive(reshape_p, operand, new_sizes=new_sizes,
+                               dimensions=dimensions, old_sizes=old_sizes)
+
+def _is_axis_merge(s1, s2):
+  return s1[2:] == s2[1:] and s1[0] * s1[1] == s2[0]
+
+def _is_axis_split(s1, s2):
+  return _is_axis_merge(s2, s1)
+
 def _reshape_shape_rule(operand, new_sizes, dimensions, **unused_kwargs):
   if not onp.all(onp.greater_equal(new_sizes, 0)):
     msg = 'reshape new_sizes must all be positive, got {}.'
@@ -2449,6 +2472,7 @@ def _reshape_batch_rule(batched_args, batch_dims, new_sizes, dimensions, **unuse
 
 reshape_p = standard_primitive(_reshape_shape_rule, _reshape_dtype_rule,
                                'reshape', _reshape_translation_rule)
+reshape_p.def_impl(_reshape_impl)
 ad.deflinear(reshape_p, _reshape_transpose_rule)
 batching.primitive_batchers[reshape_p] = _reshape_batch_rule
 

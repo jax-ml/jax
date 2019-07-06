@@ -422,17 +422,19 @@ class ShardedDeviceArray(ShardedDeviceValue, xla.DeviceArray):
   represent distinct logical shards. The correspondence can be computed with
   the assign_shards_to_replicas function.
   """
-  __slots__ = ["device_buffers"]
+  __slots__ = ["device_buffers", "axis_size"]
+  _collect = staticmethod(onp.stack)
 
   def __init__(self, aval, device_buffers):
     self.device_buffers = device_buffers
     self.shape, self.dtype = aval.shape, aval.dtype
     self.ndim, self.size = len(aval.shape), prod(aval.shape)
+    self.axis_size = aval.shape[0]
     self._npy_value = None
 
   def _ids(self):
     num_bufs = len(self.device_buffers)
-    assignments = assign_shards_to_replicas(num_bufs, self.shape[0])
+    assignments = assign_shards_to_replicas(num_bufs, self.axis_size)
     _, ids = onp.unique(assignments, return_index=True)
     return ids
 
@@ -452,7 +454,7 @@ class ShardedDeviceArray(ShardedDeviceValue, xla.DeviceArray):
     if self._npy_value is None:
       ids = self._ids()
       self.copy_to_host_async()
-      self._npy_value = onp.stack([self.device_buffers[i].to_py() for i in ids])
+      self._npy_value = self._collect([self.device_buffers[i].to_py() for i in ids])
     return self._npy_value
 
   def __getitem__(self, idx):
@@ -474,6 +476,29 @@ xla.canonicalize_dtype_handlers[ShardedDeviceArray] = \
     xla.canonicalize_dtype_handlers[xla.DeviceArray]
 
 xb.register_constant_handler(ShardedDeviceArray,
+                             xla._device_array_constant_handler)
+
+
+class ChunkedDeviceArray(ShardedDeviceArray):
+  __slots__ = []
+  _collect = staticmethod(onp.concatenate)
+
+  def __init__(self, axis_size, aval, device_buffers):
+    super(ChunkedDeviceArray, self).__init__(aval, device_buffers)
+    self.axis_size = axis_size
+
+  def __getitem__(self, idx):
+    return xla.DeviceArray.__getitem__(self, idx)
+
+core.pytype_aval_mappings[ChunkedDeviceArray] = ConcreteArray
+xla.pytype_aval_mappings[ChunkedDeviceArray] = \
+    xla.pytype_aval_mappings[xla.DeviceArray]
+batching.pytype_aval_mappings[ChunkedDeviceArray] = \
+    batching.pytype_aval_mappings[xla.DeviceArray]
+xla.canonicalize_dtype_handlers[ChunkedDeviceArray] = \
+    xla.canonicalize_dtype_handlers[xla.DeviceArray]
+
+xb.register_constant_handler(ChunkedDeviceArray,
                              xla._device_array_constant_handler)
 
 

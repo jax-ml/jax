@@ -82,7 +82,7 @@ def primitive_computation(prim, *shapes, **params):
     rule = backend_specific_translations[platform].get(prim) or translations[prim]
   except KeyError:
     raise NotImplementedError("XLA translation rule for {} not found".format(prim))
-  rule(c, *xla_args, **params)  # side-effect on c
+  rule(c, *xla_args, **params)  # return val set as a side-effect on c
   try:
     return c.Build()
   except RuntimeError as e:
