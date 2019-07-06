@@ -2625,7 +2625,6 @@ class LaxVmapTest(jtu.JaxTestCase):
       for padding in ["VALID", "SAME"]
       for rng in [jtu.rand_small()]))
   def testReduceWindow(self, op, init_val, dtype, padding, rng):
-    raise SkipTest("this test has failures in some cases")  # TODO(mattjj)
     init_val = onp.asarray(init_val, dtype=dtype)
 
     all_configs = itertools.chain(

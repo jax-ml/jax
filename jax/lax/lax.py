@@ -3445,7 +3445,7 @@ def _reduce_window_batch_rule(
   operand = reduce_window(
       operand, window_dimensions, window_strides, padding)
 
-  return operand, 0
+  return operand, bdim
 
 reduce_window_sum_p = standard_primitive(
     _reduce_window_sum_shape_rule, _input_dtype, 'reduce_window_sum',
