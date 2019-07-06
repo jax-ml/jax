@@ -224,7 +224,7 @@ def xla_computation(fun, static_argnums=(), axis_env=None):
   }
 
   Notice the ``replica_groups`` that were generated. Here's an example that
-  genertes more interesting ``replica_groups``:
+  generates more interesting ``replica_groups``:
 
   >>> def g(x):
   ...   rowsum = lax.psum(x, 'i')
