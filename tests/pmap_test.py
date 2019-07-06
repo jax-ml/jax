@@ -32,6 +32,7 @@ from jax.api import (pmap, soft_pmap, jit, vmap, jvp, grad, make_jaxpr,
 from jax.lib import xla_bridge
 from jax.util import prod
 from jax.interpreters import pxla
+from jax.interpreters import xla
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -577,6 +578,40 @@ class PmapTest(jtu.JaxTestCase):
     ans = grad(lambda x: np.sum(f(x)))(np.zeros((n, n)))
     expected = onp.repeat(onp.arange(n)[:, None], n, axis=1)
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testSoftPmapDevicePersistence(self):
+    device_count = xla_bridge.device_count()
+    shape = (2 * 2 * device_count, 2, 3)
+
+    # check that we can maintain device persistence across calls
+    x = onp.arange(prod(shape)).reshape(shape)
+    x = soft_pmap(lambda x: x)(x)
+    self.assertIsInstance(x, pxla.ChunkedDeviceArray)
+    x._npy_value = onp.float32(onp.nan)  # can't be coerced to ndarray for xfer
+    x = soft_pmap(lambda x: x)(x)  # doesn't crash
+    self.assertIsInstance(x, pxla.ChunkedDeviceArray)
+
+    # check that we don't crash when we can't maintain device persistence
+    x = onp.arange(prod(shape)).reshape(shape)
+    x = soft_pmap(lambda x: x)(x)
+    self.assertIsInstance(x, pxla.ChunkedDeviceArray)
+    y = x.reshape(device_count, -1)
+    self.assertIsInstance(y, xla.DeviceArray)  # should have forced collection
+    soft_pmap(lambda x: x)(y)  # doesn't crash
+    z = x + 2
+    self.assertIsInstance(z, xla.DeviceArray)  # should have forced collection
+    x._npy_value = onp.float32(onp.nan)  # can't be coerced to ndarray for xfer
+    self.assertRaisesRegexp(
+        RuntimeError,
+        '.*does not match host shape or layout of computation parameter 0.*',
+        lambda: x + 2)
+
+    # check that different axis merges aren't a problem
+    x = onp.arange(prod(shape)).reshape(shape)
+    x = soft_pmap(lambda x: x)(x)
+    self.assertIsInstance(x, pxla.ChunkedDeviceArray)
+    x = x.reshape(2 * device_count, 2, 2, 3)  # axis merge of the wrong size
+    self.assertIsInstance(x, xla.DeviceArray)  # should have forced collection
 
   @jtu.skip_on_devices("gpu")
   def DISABLED_testSoftPmapAllToAll(self):

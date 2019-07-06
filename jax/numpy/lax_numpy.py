@@ -644,7 +644,7 @@ def isrealobj(a):
 @_wraps(onp.reshape)
 def reshape(a, newshape, order="C"):
   try:
-    return a.reshape(newshape, order=order)
+    return a.reshape(newshape, order=order)  # forward to method for ndarrays
   except AttributeError:
     return _reshape(a, newshape, order=order)
 
