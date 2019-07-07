@@ -45,7 +45,8 @@ def sigmoid(x): return 1. / (1. + np.exp(-x))
 
 def logsoftmax(x, axis=-1):
   """Apply log softmax to an array of logits, log-normalizing along an axis."""
-  return x - logsumexp(x, axis, keepdims=True)
+  x_minus_max = x - x.max(axis, keepdims=True)
+  return x_minus_max - logsumexp(x_minus_max, axis, keepdims=True)
 
 def softmax(x, axis=-1):
   """Apply softmax to an array of logits, exponentiating and normalizing along an axis."""
