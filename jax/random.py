@@ -477,7 +477,7 @@ def cauchy(key, shape=(), dtype=onp.float64):
 @partial(jit, static_argnums=(1, 2))
 def _cauchy(key, shape, dtype):
   _check_shape("cauchy", shape)
-  u = uniform(key, shape, dtype)
+  u = uniform(key, shape, dtype, minval=onp.finfo(dtype).eps, maxval=1.)
   pi = _constant_like(u, onp.pi)
   return lax.tan(lax.mul(pi, lax.sub(u, _constant_like(u, 0.5))))
 
