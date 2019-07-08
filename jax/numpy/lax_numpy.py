@@ -2468,8 +2468,8 @@ def quantile(a, q, axis=None, out=None, overwrite_input=False,
     raise ValueError("q must be have rank <= 1, got shape {}".format(shape(q)))
 
   a, q = _promote_dtypes(a, q)
-  if not issubdtype(a.dtype, inexact):
-    msg = "q and a arguments to quantile must be of inexact type, got {} and {}"
+  if not issubdtype(a.dtype, floating):
+    msg = "q and a arguments to quantile must be of float type, got {} and {}"
     raise TypeError(msg.format(a.dtype, q.dtype))
 
   a_shape = shape(a)
