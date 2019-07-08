@@ -304,6 +304,16 @@ class ParallelizeTest(jtu.JaxTestCase):
     ans = self.dedup(ans, expected.ndim)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testCall(self):
+    @jit
+    def fun(x):
+      return x
+
+    x = onp.reshape(onp.arange(8., dtype=onp.float32), (2, 2, 2))
+    expected = fun(x)
+    ans = _parallelize(fun)(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
 
 if __name__ == '__main__':
   absltest.main()
