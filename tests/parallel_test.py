@@ -124,6 +124,13 @@ class PapplyTest(jtu.JaxTestCase):
     ans = soft_pmap(pfun, axis_name)(x)
     self.assertAllClose(ans, expected, check_dtypes=True)
 
+  def testMakeJaxprPapplyComposition(self):
+    raise SkipTest(             # TODO(mattjj)
+        "fails because select's papply rule calls an SPMD primitive")
+    x = b = onp.ones(3)
+    pfun, axis_name = _papply(lambda a: np.where(x, a, b))
+    print(make_jaxpr(pfun)(onp.ones(3)))  # doesn't crash
+
 
 class ParallelizeTest(jtu.JaxTestCase):
 
