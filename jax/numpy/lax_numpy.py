@@ -2446,11 +2446,11 @@ def cov(m, y=None, rowvar=True, bias=False, ddof=None, fweights=None,
 def quantile(a, q, axis=None, out=None, overwrite_input=False,
              interpolation="linear", keepdims=False):
   if overwrite_input or out is not None:
-    msg = ("jax.numpy.quantile does not support overwrite_input=True or"
+    msg = ("jax.numpy.quantile does not support overwrite_input=True or "
            "out != None")
     raise ValueError(msg)
   if interpolation != "linear":
-    raise NotImplementedError("interpolation='linear' is implemented")
+    raise NotImplementedError("Only interpolation='linear' is implemented")
 
   a = asarray(a)
   q = asarray(q)
