@@ -1644,6 +1644,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertAllClose(onp.zeros(3,), api.grad(f)(onp.ones(3,)),
                         check_dtypes=True)
 
+  # TODO(phawkins): enable test after Jaxlib 0.1.22 is released.
+  @unittest.skip("Requires Jaxlib >= 0.1.22.")
+  def testIssue777(self):
+    x = lnp.linspace(-200, 0, 4, dtype=onp.float32)
+    f = api.grad(lambda x: lnp.sum(1 / (1 + lnp.exp(-x))))
+    self.assertAllClose(f(x), onp.array([0., 0., 0., 0.25], dtype=onp.float32),
+                        check_dtypes=True)
+
   @parameterized.named_parameters(
       jtu.cases_from_list(
         {"testcase_name": jtu.format_test_name_suffix(op, [()], [dtype]),

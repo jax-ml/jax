@@ -19,7 +19,7 @@ from __future__ import print_function
 import collections
 import functools
 import itertools
-from unittest import SkipTest
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -120,6 +120,13 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
     if test_autodiff:
       jtu.check_grads(lax_op, args, order=1, atol=1e-3, rtol=3e-3, eps=1e-3)
+
+  # TODO(phawkins): enable test after Jaxlib 0.1.22 is released.
+  @unittest.skip("Requires Jaxlib >= 0.1.22.")
+  def testIssue980(self):
+    x = onp.full((4,), -1e20, dtype=onp.float32)
+    self.assertAllClose(onp.zeros((4,), dtype=onp.float32),
+                        lsp_special.expit(x), check_dtypes=True)
 
 
 if __name__ == "__main__":

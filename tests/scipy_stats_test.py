@@ -18,6 +18,7 @@ from __future__ import print_function
 
 import collections
 import itertools
+import unittest
 
 from absl.testing import absltest, parameterized
 
@@ -281,6 +282,15 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
 
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
+
+  # TODO(phawkins): enable test after Jaxlib 0.1.22 is released.
+  @unittest.skip("Requires Jaxlib >= 0.1.22.")
+  def testIssue972(self):
+    self.assertAllClose(
+      onp.ones((4,), onp.float32),
+      lsp_stats.norm.cdf(onp.full((4,), onp.inf, onp.float32)),
+      check_dtypes=False)
+
 
 if __name__ == "__main__":
     absltest.main()
