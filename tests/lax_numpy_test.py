@@ -1501,6 +1501,40 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                             check_dtypes=True)
     self._CompileAndCheck(lnp.ix_, args_maker, check_dtypes=True)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+        {"testcase_name":
+           "_op={}_a_shape={}_q_shape={}_axis={}_keepdims={}".format(
+             op,
+             jtu.format_shape_dtype_string(a_shape, a_dtype),
+             jtu.format_shape_dtype_string(q_shape, q_dtype),
+             axis, keepdims),
+         "a_rng": jtu.rand_default(), "q_rng": q_rng, "op": op,
+         "a_shape": a_shape, "a_dtype": a_dtype,
+         "q_shape": q_shape, "q_dtype": q_dtype, "axis": axis,
+         "keepdims": keepdims}
+        for (op, q_rng) in (
+          ("percentile", jtu.rand_uniform(low=0., high=100.)),
+          ("quantile", jtu.rand_uniform(low=0., high=1.)),
+        )
+        for a_dtype in float_dtypes
+        for a_shape, axis in (
+          ((7,), None),
+          ((47, 7), 0),
+          ((4, 101), 1),
+        )
+        for q_dtype in [onp.float32]
+        for q_shape in scalar_shapes + [(4,)]
+        for keepdims in [False, True]))
+  def testQuantile(self, op, a_rng, q_rng, a_shape, a_dtype, q_shape, q_dtype,
+                   axis, keepdims):
+    args_maker = lambda: [a_rng(a_shape, a_dtype), q_rng(q_shape, q_dtype)]
+    onp_fun = partial(getattr(onp, op), axis=axis, keepdims=keepdims)
+    lnp_fun = partial(getattr(lnp, op), axis=axis, keepdims=keepdims)
+    # TODO(phawkins): we currently set dtype=False because we aren't as
+    # aggressive about promoting to float64. It's not clear we want to mimic
+    # Numpy here.
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
         {"testcase_name": jtu.format_test_name_suffix("select", shapes,

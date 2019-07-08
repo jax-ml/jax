@@ -2442,6 +2442,82 @@ def cov(m, y=None, rowvar=True, bias=False, ddof=None, fweights=None,
   return true_divide(dot(X, X_T.conj()), f).squeeze()
 
 
+@_wraps(onp.quantile)
+def quantile(a, q, axis=None, out=None, overwrite_input=False,
+             interpolation="linear", keepdims=False):
+  if overwrite_input or out is not None:
+    msg = ("jax.numpy.quantile does not support overwrite_input=True or "
+           "out != None")
+    raise ValueError(msg)
+  if interpolation != "linear":
+    raise NotImplementedError("Only interpolation='linear' is implemented")
+
+  a = asarray(a)
+  q = asarray(q)
+
+  if axis is None:
+    a = ravel(a)
+    axis = 0
+  elif isinstance(axis, tuple):
+    raise NotImplementedError("Tuple values for axis are not implemented")
+  else:
+    axis = _canonicalize_axis(axis, ndim(a))
+
+  q_ndim = ndim(q)
+  if q_ndim > 1:
+    raise ValueError("q must be have rank <= 1, got shape {}".format(shape(q)))
+
+  a, q = _promote_dtypes(a, q)
+  if not issubdtype(a.dtype, floating):
+    msg = "q and a arguments to quantile must be of float type, got {} and {}"
+    raise TypeError(msg.format(a.dtype, q.dtype))
+
+  a_shape = shape(a)
+  a = lax.sort(a, dimension=axis)
+
+  n = a_shape[axis]
+  q = lax.mul(q, _constant_like(q, n - 1))
+  low = lax.floor(q)
+  high = lax.add(low, _constant_like(low, 1))
+  high_weight = lax.sub(q, low)
+  low_weight = lax.sub(_constant_like(high_weight, 1), high_weight)
+
+  low = lax.clamp(_constant_like(low, 0), low, _constant_like(low, n - 1))
+  high = lax.clamp(_constant_like(high, 0), high, _constant_like(high, n - 1))
+  low = lax.convert_element_type(low, int64)
+  high = lax.convert_element_type(high, int64)
+
+  slice_sizes = list(a_shape)
+  slice_sizes[axis] = 1
+
+  dnums = lax.GatherDimensionNumbers(
+    offset_dims=tuple(range(
+      q_ndim,
+      len(a_shape) + q_ndim if keepdims else len(a_shape) + q_ndim - 1)),
+    collapsed_slice_dims=() if keepdims else (axis,),
+    start_index_map=(axis,))
+  low = low[..., None]
+  high = high[..., None]
+  low_value = lax.gather(a, low, dimension_numbers=dnums,
+                         slice_sizes=slice_sizes)
+  high_value = lax.gather(a, high, dimension_numbers=dnums,
+                          slice_sizes=slice_sizes)
+  if q_ndim == 1:
+    low_weight = lax.broadcast_in_dim(low_weight, low_value.shape,
+                                      broadcast_dimensions=(0,))
+    high_weight = lax.broadcast_in_dim(high_weight, high_value.shape,
+                                      broadcast_dimensions=(0,))
+  return lax.add(lax.mul(low_value, low_weight),
+                 lax.mul(high_value, high_weight))
+
+
+@_wraps(onp.percentile)
+def percentile(a, q, axis=None, out=None, overwrite_input=False,
+               interpolation="linear", keepdims=False):
+  q = true_divide(asarray(q), float32(100.0))
+  return quantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
+                  interpolation=interpolation, keepdims=keepdims)
+
 ### track unimplemented functions
 
 def _not_implemented(fun):
