@@ -20,6 +20,7 @@ from __future__ import print_function
 
 import numpy as onp
 
+from jax import jit
 from ..abstract_arrays import ShapedArray, ConcreteArray
 from .. import core
 from .. import lax
@@ -263,6 +264,7 @@ def index_add(x, idx, y):
   """
   return _scatter_update(x, idx, y, lax.scatter_add)
 
+@jit
 def index_min(x, idx, y):
   """Pure equivalent of :code:`x[idx] = minimum(x[idx], y)`.
 
@@ -299,6 +301,7 @@ def index_min(x, idx, y):
   """
   return _scatter_update(x, idx, y, lax.scatter_min)
 
+@jit
 def index_max(x, idx, y):
   """Pure equivalent of :code:`x[idx] = maximum(x[idx], y)`.
 
@@ -335,6 +338,7 @@ def index_max(x, idx, y):
   """
   return _scatter_update(x, idx, y, lax.scatter_max)
 
+@jit
 def index_update(x, idx, y):
   """Pure equivalent of :code:`x[idx] = y`.
 

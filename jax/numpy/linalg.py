@@ -20,6 +20,7 @@ from __future__ import print_function
 import numpy as onp
 import warnings
 
+from jax import jit
 from .. import lax
 from .. import lax_linalg
 from .lax_numpy import _not_implemented
@@ -222,6 +223,7 @@ def qr(a, mode="reduced"):
   return q, r
 
 
+@jit
 @_wraps(onp.linalg.solve)
 def solve(a, b):
   a, b = _promote_arg_dtypes(np.asarray(a), np.asarray(b))
