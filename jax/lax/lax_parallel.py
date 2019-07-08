@@ -353,7 +353,7 @@ def _defreducer(prim, collective_prim):
   parallel.papply_primitive_rules[prim] = partial(_reducer_papply, prim, collective_prim)
 
 
-def _identity_papply(prim, argnum, name, vals, axes, **params):
+def _identity_papply(prim, argnum, name, size, vals, axes, **params):
   return prim.bind(*vals, **params), axes[argnum]
 
 def _defidentity(prim, argnum=0):
