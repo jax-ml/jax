@@ -1084,16 +1084,24 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_arg{}".format(i), "arg": arg}
+      {"testcase_name": "_arg{}_ndmin={}".format(i, ndmin),
+       "arg": arg, "ndmin": ndmin}
       for i, arg in enumerate([
           3., [1, 2, 3], [1., 2., 3.],
           [[1, 2], [3, 4], [5, 6]], [[1, 2.], [3, 4], [5, 6]],
           [[3, onp.array(2), 1], onp.arange(3.)],
-      ])))
-  def testArray(self, arg):
+      ])
+      for ndmin in [None, onp.ndim(arg), onp.ndim(arg) + 1, onp.ndim(arg) + 2]))
+  def testArray(self, arg, ndmin):
     args_maker = lambda: [arg]
-    self._CheckAgainstNumpy(onp.array, lnp.array, args_maker, check_dtypes=True)
-    self._CompileAndCheck(lnp.array, args_maker, check_dtypes=True)
+    if ndmin is not None:
+      onp_fun = partial(onp.array, ndmin=ndmin)
+      lnp_fun = partial(lnp.array, ndmin=ndmin)
+    else:
+      onp_fun = onp.array
+      lnp_fun = lnp.array
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
   def testIssue121(self):
     assert not onp.isscalar(lnp.array(3))
@@ -1493,6 +1501,40 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                             check_dtypes=True)
     self._CompileAndCheck(lnp.ix_, args_maker, check_dtypes=True)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+        {"testcase_name":
+           "_op={}_a_shape={}_q_shape={}_axis={}_keepdims={}".format(
+             op,
+             jtu.format_shape_dtype_string(a_shape, a_dtype),
+             jtu.format_shape_dtype_string(q_shape, q_dtype),
+             axis, keepdims),
+         "a_rng": jtu.rand_default(), "q_rng": q_rng, "op": op,
+         "a_shape": a_shape, "a_dtype": a_dtype,
+         "q_shape": q_shape, "q_dtype": q_dtype, "axis": axis,
+         "keepdims": keepdims}
+        for (op, q_rng) in (
+          ("percentile", jtu.rand_uniform(low=0., high=100.)),
+          ("quantile", jtu.rand_uniform(low=0., high=1.)),
+        )
+        for a_dtype in float_dtypes
+        for a_shape, axis in (
+          ((7,), None),
+          ((47, 7), 0),
+          ((4, 101), 1),
+        )
+        for q_dtype in [onp.float32]
+        for q_shape in scalar_shapes + [(4,)]
+        for keepdims in [False, True]))
+  def testQuantile(self, op, a_rng, q_rng, a_shape, a_dtype, q_shape, q_dtype,
+                   axis, keepdims):
+    args_maker = lambda: [a_rng(a_shape, a_dtype), q_rng(q_shape, q_dtype)]
+    onp_fun = partial(getattr(onp, op), axis=axis, keepdims=keepdims)
+    lnp_fun = partial(getattr(lnp, op), axis=axis, keepdims=keepdims)
+    # TODO(phawkins): we currently set dtype=False because we aren't as
+    # aggressive about promoting to float64. It's not clear we want to mimic
+    # Numpy here.
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
         {"testcase_name": jtu.format_test_name_suffix("select", shapes,
@@ -1636,6 +1678,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertAllClose(onp.zeros(3,), api.grad(f)(onp.ones(3,)),
                         check_dtypes=True)
 
+  # TODO(phawkins): enable test after Jaxlib 0.1.22 is released.
+  @unittest.skip("Requires Jaxlib >= 0.1.22.")
+  def testIssue777(self):
+    x = lnp.linspace(-200, 0, 4, dtype=onp.float32)
+    f = api.grad(lambda x: lnp.sum(1 / (1 + lnp.exp(-x))))
+    self.assertAllClose(f(x), onp.array([0., 0., 0., 0.25], dtype=onp.float32),
+                        check_dtypes=True)
+
   @parameterized.named_parameters(
       jtu.cases_from_list(
         {"testcase_name": jtu.format_test_name_suffix(op, [()], [dtype]),
@@ -1681,6 +1731,25 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   def testIssue956(self):
     self.assertRaises(TypeError, lambda: lnp.ndarray((1, 1)))
+
+  @parameterized.named_parameters(
+      jtu.cases_from_list(
+        {"testcase_name": "_shape={}_dtype={}_rowvar={}_ddof={}_bias={}".format(
+            shape, dtype, rowvar, ddof, bias),
+         "shape":shape, "dtype":dtype, "rowvar":rowvar, "ddof":ddof,
+         "bias":bias, "rng": rng}
+        for shape in [(5,), (10, 5), (3, 10)]
+        for dtype in all_dtypes
+        for rowvar in [True, False]
+        for bias in [True, False]
+        for ddof in [None, 2, 3]
+        for rng in [jtu.rand_default()]))
+  def testCov(self, shape, dtype, rowvar, ddof, bias, rng):
+    args_maker = self._GetArgsMaker(rng, [shape], [dtype])
+    onp_fun = partial(onp.cov, rowvar=rowvar, ddof=ddof, bias=bias)
+    lnp_fun = partial(lnp.cov, rowvar=rowvar, ddof=ddof, bias=bias)
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
 
 if __name__ == "__main__":

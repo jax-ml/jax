@@ -106,6 +106,9 @@ def jit(fun, static_argnums=()):
   return _jit(fun, static_argnums)
 
 def _jit(fun, static_argnums, device_values=True):
+  if isinstance(static_argnums, int):
+    static_argnums = (static_argnums,)
+
   @wraps(fun)
   def f_jitted(*args, **kwargs):
     if _jit_is_disabled or config.read('jax_disable_jit'):
@@ -144,10 +147,10 @@ def disable_jit():
 
   >>> @jax.jit
   >>> def f(x):
-  >>>   y = x *2
-  >>>   print("Value of y is", y)
-  >>>   return y + 3
-  >>>
+  ...   y = x *2
+  ...   print("Value of y is", y)
+  ...   return y + 3
+  ...
   >>> print(f(jax.numpy.array([1, 2, 3])))
   Value of y is Traced<ShapedArray(int32[3]):JaxprTrace(level=-1/1)>
   [5 7 9]
@@ -170,10 +173,89 @@ def disable_jit():
 _jit_is_disabled = False
 
 
-def xla_computation(fun, static_argnums=()):
+def xla_computation(fun, static_argnums=(), axis_env=None):
+  """Creates a function that produces its XLA computation given example args.
+
+  Args:
+    fun: Function from which to form XLA computations.
+    static_argnums: See the ``jax.jit`` docstring.
+    axis_env: Optional, a list of pairs where the first element is an axis name
+      and the second element is a positive integer representing the size of the
+      mapped axis with that name. This parameter is useful when lowering
+      functions that involve parallel communication collectives, and it
+      specifies the axis name/size environment that would be set up by
+      applications of ``jax.pmap``. See the examples below.
+
+  Returns:
+    A wrapped version of ``fun`` that when applied to example arguments returns a
+    built XLA Computation (see xla_client.py), from which representations of the
+    unoptimized XLA HLO computation can be extracted using methods like
+    ``GetHloText``, ``GetSerializedProto``, and ``GetHloDotGraph``.
+
+  For example:
+
+  >>> def f(x): return jax.numpy.sin(jax.numpy.cos(x))
+  >>> c = jax.xla_computation(f)(3.)
+  >>> print(c.GetHloText())
+  HloModule jaxpr_computation__4.5
+  ENTRY jaxpr_computation__4.5 {
+    tuple.1 = () tuple()
+    parameter.2 = f32[] parameter(0)
+    cosine.3 = f32[] cosine(parameter.2)
+    ROOT sine.4 = f32[] sine(cosine.3)
+  }
+
+  Here's an example that involves a parallel collective and axis name:
+
+  >>> def f(x): return x - jax.lax.psum(x, 'i')
+  >>> c = jax.xla_computation(f, axis_env=[('i', 4)])(2)
+  >>> print(c.GetHloText())
+  HloModule jaxpr_computation.9
+  primitive_computation.3 {
+    parameter.4 = s32[] parameter(0)
+    parameter.5 = s32[] parameter(1)
+    ROOT add.6 = s32[] add(parameter.4, parameter.5)
+  }
+  ENTRY jaxpr_computation.9 {
+    tuple.1 = () tuple()
+    parameter.2 = s32[] parameter(0)
+    all-reduce.7 = s32[] all-reduce(parameter.2), replica_groups={{0,1,2,3}}, to_apply=primitive_computation.3
+    ROOT subtract.8 = s32[] subtract(parameter.2, all-reduce.7)
+  }
+
+  Notice the ``replica_groups`` that were generated. Here's an example that
+  generates more interesting ``replica_groups``:
+
+  >>> def g(x):
+  ...   rowsum = lax.psum(x, 'i')
+  ...   colsum = lax.psum(x, 'j')
+  ...   allsum = lax.psum(x, ('i', 'j'))
+  ...   return rowsum, colsum, allsum
+  ...
+  >>> axis_env = [('i', 4), ('j', 2)]
+  >>> c = xla_computation(g, axis_env=axis_env)(5.)
+  >>> print(c.GetHloText())
+  HloModule jaxpr_computation__1.19
+  [removed uninteresting text here]
+  ENTRY jaxpr_computation__1.19 {
+    tuple.1 = () tuple()
+    parameter.2 = f32[] parameter(0)
+    all-reduce.7 = f32[] all-reduce(parameter.2), replica_groups={{0,2,4,6},{1,3,5,7}}, to_apply=primitive_computation__1.3
+    all-reduce.12 = f32[] all-reduce(parameter.2), replica_groups={{0,1},{2,3},{4,5},{6,7}}, to_apply=primitive_computation__1.8
+    all-reduce.17 = f32[] all-reduce(parameter.2), replica_groups={{0,1,2,3,4,5,6,7}}, to_apply=primitive_computation__1.13
+    ROOT tuple.18 = (f32[], f32[], f32[]) tuple(all-reduce.7, all-reduce.12, all-reduce.17)
+  }
+  """
+
   def pv_like(x):
     aval = xla.abstractify(x)
     return pe.PartialVal((aval, core.unit))
+
+  if axis_env is None:
+    axis_env = xla.AxisEnv(1, [], [])
+  else:
+    nreps = prod(size for name, size in axis_env)
+    axis_env = xla.AxisEnv(nreps, *zip(*axis_env))
 
   @wraps(fun)
   def computation_maker(*args, **kwargs):
@@ -183,13 +265,14 @@ def xla_computation(fun, static_argnums=()):
       jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(wrapped, in_trees)
       pvals = map(pv_like, jax_args)
       jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
-      return xla.build_jaxpr(jaxpr, consts, *map(xla.abstractify, jax_args))
+      return xla.build_jaxpr(jaxpr, axis_env, consts,
+                             *map(xla.abstractify, jax_args))
     else:
       jax_kwargs, kwargs_tree = pytree_to_jaxtupletree(kwargs)
       jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun2(wrapped, kwargs_tree, in_trees)
       pvals = map(pv_like, (jax_kwargs,) + tuple(jax_args))
       jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
-      return xla.build_jaxpr(jaxpr, consts, xla.abstractify(jax_kwargs),
+      return xla.build_jaxpr(jaxpr, axis_env, consts, xla.abstractify(jax_kwargs),
                             *map(xla.abstractify, jax_args))
 
   return computation_maker
@@ -327,8 +410,9 @@ def jacfwd(fun, argnums=0, holomorphic=False):
     `fun` using forward-mode automatic differentiation.
 
   >>> def f(x):
-  >>>   return jax.numpy.asarray(
-  >>>     [x[0], 5*x[2], 4*x[1]**2 - 2*x[2], x[2] * jax.numpy.sin(x[0])])
+  ...   return jax.numpy.asarray(
+  ...     [x[0], 5*x[2], 4*x[1]**2 - 2*x[2], x[2] * jax.numpy.sin(x[0])])
+  ...
   >>> print(jax.jacfwd(f)(np.array([1., 2., 3.])))
   [[ 1.        ,  0.        ,  0.        ],
    [ 0.        ,  0.        ,  5.        ],
@@ -371,8 +455,9 @@ def jacrev(fun, argnums=0, holomorphic=False):
     `fun` using reverse-mode automatic differentiation.
 
   >>> def f(x):
-  >>>   return jax.numpy.asarray(
-  >>>     [x[0], 5*x[2], 4*x[1]**2 - 2*x[2], x[2] * jax.numpy.sin(x[0])])
+  ...   return jax.numpy.asarray(
+  ...     [x[0], 5*x[2], 4*x[1]**2 - 2*x[2], x[2] * jax.numpy.sin(x[0])])
+  ...
   >>> print(jax.jacrev(f)(np.array([1., 2., 3.])))
   [[ 1.        ,  0.        ,  0.        ],
    [ 0.        ,  0.        ,  5.        ],
@@ -878,7 +963,8 @@ def vjp(fun, *primals, **kwargs):
     `primals`.
 
   >>> def f(x, y):
-  >>>   return jax.numpy.sin(x), jax.numpy.cos(y)
+  ...   return jax.numpy.sin(x), jax.numpy.cos(y)
+  ...
   >>> primals, f_vjp = jax.vjp(f, 0.5, 1.0)
   >>> xbar, ybar = f_vjp((-0.7, 0.3))
   >>> print(xbar)
@@ -927,7 +1013,7 @@ def lift_jaxpr(jaxpr, consts, io_tree, pvals, py_args):
   return apply_jaxtree_fun(fun, io_tree, *py_args)
 
 def make_jaxpr(fun):
-  """Adapts `fun` to return its `jaxpr` program representation.
+  """Creates a function that produces its jaxpr given example args.
 
   Args:
     fun: The function whose `jaxpr` is to be computed. Its positional arguments
@@ -935,7 +1021,8 @@ def make_jaxpr(fun):
       (tuple/list/dict) thereof.
 
   Returns:
-    A wrapped version of `fun`, set up to return a `jaxpr`.
+    A wrapped version of `fun` that when applied to example arguments returns a
+    jaxpr representation of `fun` on those arguments.
 
   A `jaxpr` is JAX's intermediate representation for program traces. The `jaxpr`
   language is based on the simply-typed first-order lambda calculus with
@@ -989,24 +1076,8 @@ def make_jaxpr(fun):
 tree_to_pval_tuples = partial(process_pytree, pe.pack_pvals)
 
 
-
-_traceable_device_put = jit(lambda x: x)
-
 def device_put(x, device_num=0):
-  def _device_put(x):
-    if isinstance(x, core.Tracer):
-      return _traceable_device_put(x)
-
-    try:
-      a = xla.abstractify(x)
-    except TypeError:
-      raise TypeError("Argument '{}' of type {} is not a valid JAX type"
-                      .format(x, type(x)))
-
-    result_shape = xla.xla_shape_to_result_shape(xla.xla_shape(a))
-    handler = xla.device_persistent_result_handler(result_shape)
-    return handler(xla.device_put(x, device_num))
-  return tree_map(_device_put, x)
+  return tree_map(lambda y: xla.device_put_p.bind(y, device_num=device_num), x)
 
 
 device_get = _jit(lambda x: x, (), device_values=False)
@@ -1063,12 +1134,17 @@ class CustomTransformsFunction(object):
     return '<jax.custom_transforms function {fun}>'.format(fun=self.__name__)
 
   def __call__(self, *args, **kwargs):
+    def pv_like(x):
+      return pe.PartialVal((batching.get_aval(x), core.unit))  # Use shaped aval
     jax_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
     jax_kwargs, kwargs_tree = pytree_to_jaxtupletree(kwargs)
-    out_tree = lu.Store()
-    ans = self.prim.bind(jax_kwargs, *jax_args, kwargs_tree=kwargs_tree,
-                         in_trees=in_trees, out_tree=out_tree)
-    return build_tree(out_tree.val, ans)
+    jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun2(
+        lu.wrap_init(self.fun), kwargs_tree, in_trees)
+    pvals_in = map(pv_like, (jax_kwargs,) + jax_args)
+    jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals_in, instantiate=True)
+    ans = self.prim.bind(core.pack(consts), jax_kwargs, *jax_args,
+                         in_trees=in_trees, jaxpr=jaxpr)
+    return build_tree(out_tree(), ans)
 
 def custom_transforms(fun):
   """Wraps a function so that its transformation behavior can be controlled.
@@ -1082,6 +1158,11 @@ def custom_transforms(fun):
   behavior can be overridden, but not all transformation rules need to be
   specified manually. The default behavior is retained for any non-overridden
   rules.
+
+  The function ``fun`` must satisfy the same constraints required for jit
+  compilation. In particular the shapes of arrays in the computation of ``fun``
+  may depend on the shapes of ``fun``'s arguments, but not their values.
+  Value dependent Python control flow is also not yet supported.
 
   Args:
     fun: a Python callable. Must be functionally pure. Its arguments and return
@@ -1110,14 +1191,8 @@ def custom_transforms(fun):
   name = getattr(fun, '__name__', '<unnamed custom_transforms primitive>')
   fun_p = core.Primitive(name)
 
-  def fun_impl(jax_kwargs, *jax_args, **params):
-    args = map(build_tree, params.pop('in_trees'), jax_args)
-    kwargs = build_tree(params.pop('kwargs_tree'), jax_kwargs)
-    pytree_out = fun(*args, **kwargs)
-    out, out_tree = pytree_to_jaxtupletree(pytree_out)
-    params.pop('out_tree').store(out_tree)  # linear_util style side effect
-    assert not params
-    return out
+  def fun_impl(consts, jax_kwargs, *jax_args, **params):
+    return core.eval_jaxpr(params['jaxpr'], consts, (), jax_kwargs, *jax_args)
   fun_p.def_impl(fun_impl)
 
   def fun_jvp(primals, tangents, **params):
@@ -1129,26 +1204,13 @@ def custom_transforms(fun):
     return out, 0
   batching.primitive_batchers[fun_p] = fun_batch
 
-  staged_fun_p = core.Primitive('staged_' + name)
-  def fun_partial_eval(trace, *tracers, **params):
-    tracers = tuple(map(trace.instantiate_const, tracers))
-    avals = [t.aval for t in tracers]
-    pvals_in = [pe.PartialVal((a, core.unit)) for a in avals]
-    jaxpr, pval_out, consts = pe.trace_to_jaxpr(lu.wrap_init(fun_impl, params),
-                                                pvals_in, instantiate=True)
-    consts = trace.new_instantiated_const(core.pack(consts))
-    eqn = pe.JaxprEqn((consts,) + tracers, None, staged_fun_p, (), False, False,
-                      dict(params, jaxpr=jaxpr))
-    return pe.JaxprTracer(trace, pval_out, eqn)
-  pe.custom_partial_eval_rules[fun_p] = fun_partial_eval
+  def fun_abstract_eval(*avals, **params):
+    return pe.abstract_eval_fun(fun_impl, *avals, **params)
+  fun_p.def_abstract_eval(fun_abstract_eval)
 
-  def staged_fun_translation(c, xla_consts, *xla_args, **params):
-    consts_shapes = tuple(c.GetShape(xla_consts).tuple_shapes())
-    xla_consts = tuple(xla.xla_destructure(c, xla_consts))
-    arg_shapes = map(c.GetShape, xla_args)
-    built_c = xla.jaxpr_computation(params['jaxpr'], (), consts_shapes, *arg_shapes)
-    return c.Call(built_c, xla_consts + xla_args)
-  xla.translations[staged_fun_p] = staged_fun_translation
+  def fun_translation(c, *xla_args, **params):
+    return xla.lower_fun(fun_impl, True)(c, *xla_args, **params)
+  xla.translations[fun_p] = fun_translation
 
   return CustomTransformsFunction(fun, fun_p)
 
@@ -1211,8 +1273,14 @@ def defjvp_all(fun, custom_jvp):
   """
   _check_custom_transforms_type("defjvp_all", fun)
   def custom_transforms_jvp(primals, tangents, **params):
-    jax_kwargs, jax_args = primals[0], primals[1:]
-    _, jax_args_dot = tangents[0], tangents[1:]
+    consts, jax_kwargs, jax_args = primals[0], primals[1], primals[2:]
+    consts_dot, _, jax_args_dot = tangents[0], tangents[1], tangents[2:]
+    if consts_dot is not ad_util.zero:
+      msg = (
+          "Detected differentiation w.r.t. variables from outside the scope of "
+          "{}, but defjvp and defjvp_all only support differentiation w.r.t. "
+          "positional arguments.")
+      raise ValueError(msg.format(str(fun)))
     if jax_kwargs:
       msg = ("defjvp_all requires the corresponding custom_transforms function "
              "not to be called with keyword arguments.")
@@ -1227,7 +1295,6 @@ def defjvp_all(fun, custom_jvp):
       msg = ("custom jvp rule returned different tree structures for primals "
              "and tangents, but they must be equal: {} vs {}.")
       raise TypeError(msg.format(out_tree, out_tree2))
-    params['out_tree'].store(out_tree)  # linear_util style side effect
     return out, out_dot
   ad.primitive_jvps[fun.prim] = custom_transforms_jvp
 
@@ -1352,7 +1419,13 @@ def defvjp_all(fun, custom_vjp):
   (4.0, 3.0)
   """
   _check_custom_transforms_type("defvjp_all", fun)
-  def custom_transforms_vjp(jax_kwargs, *jax_args, **params):
+  def custom_transforms_vjp(argnums, consts, jax_kwargs, *jax_args, **params):
+    if 0 in argnums:
+      msg = (
+          "Detected differentiation w.r.t. variables from outside the scope of "
+          "{}, but defvjp and defvjp_all only support differentiation w.r.t. "
+          "positional arguments.")
+      raise ValueError(msg.format(str(fun)))
     if jax_kwargs:
       msg = ("defvjp_all requires the corresponding custom_transforms function "
              "not to be called with keyword arguments.")
@@ -1360,7 +1433,6 @@ def defvjp_all(fun, custom_vjp):
     args = map(build_tree, params['in_trees'], jax_args)
     pytree_out, vjp_pytree = custom_vjp(*args)
     out, out_tree = pytree_to_jaxtupletree(pytree_out)
-    params['out_tree'].store(out_tree)  # linear_util style side effect
     def vjp_pytree_(ct):
       args_cts = tuple(vjp_pytree(ct))
       if len(args_cts) != len(params['in_trees']):
@@ -1368,10 +1440,10 @@ def defvjp_all(fun, custom_vjp):
                "number of positional arguments to the function being "
                "differentiated: expected {}, got {}")
         raise TypeError(msg.format(len(params['in_trees']), len(args_cts)))
-      return ({},) + args_cts
+      return ((), {},) + args_cts
     vjp, _ = pytree_fun_to_jaxtupletree_fun(lu.wrap_init(vjp_pytree_), (out_tree,))
     return out, vjp.call_wrapped
-  ad.defvjp_all(fun.prim, custom_transforms_vjp)
+  ad.defvjp_argnums(fun.prim, custom_transforms_vjp)
 
 def defvjp(fun, *vjprules):
   """Define VJP rules for each argument separately.

@@ -644,7 +644,7 @@ def isrealobj(a):
 @_wraps(onp.reshape)
 def reshape(a, newshape, order="C"):
   try:
-    return a.reshape(newshape, order=order)
+    return a.reshape(newshape, order=order)  # forward to method for ndarrays
   except AttributeError:
     return _reshape(a, newshape, order=order)
 
@@ -1132,8 +1132,12 @@ nanprod = _make_nan_reduction(onp.nanprod, prod, 1, nan_if_all_nan=False)
 
 def _make_cumulative_reduction(onp_reduction, window_reduce, init_val,
                                squash_nan=False):
-  @_wraps(onp_reduction)
-  def cumulative_reduction(a, axis=None, dtype=None):
+  # We want to allow XLA to fuse the pad and reduce-window operators to
+  # avoid materializing the padded output.
+  # Consider removing `jit` once again if reduce-window is generalized to
+  # support arbitrary padding.
+  @partial(jit, static_argnums=(1, 2))
+  def _cumulative_reduction(a, axis, dtype):
     if axis is None or isscalar(a):
       a = ravel(a)
       axis = 0
@@ -1165,6 +1169,11 @@ def _make_cumulative_reduction(onp_reduction, window_reduce, init_val,
     window_dims[axis] = a_shape[axis]
     return window_reduce(
        a, window_dims, strides, xla_client.PaddingType.VALID)
+
+  @_wraps(onp_reduction)
+  def cumulative_reduction(a, axis=None, dtype=None):
+    # jit doesn't support kwargs as static_args.
+    return _cumulative_reduction(a, axis, dtype)
 
   return cumulative_reduction
 
@@ -1238,6 +1247,7 @@ def _pad(array, pad_width, mode, constant_values):
     msg = "Unimplemented padding mode '{}' for np.pad."
     raise NotImplementedError(msg.format(mode))
 
+@_wraps(onp.pad)
 def pad(array, pad_width, mode, constant_values=0):
   return _pad(array, pad_width, mode, constant_values)
 
@@ -1348,33 +1358,35 @@ def atleast_3d(*arys):
 
 @_wraps(onp.array)
 def array(object, dtype=None, copy=True, order="K", ndmin=0):
-  if ndmin != 0 or (order is not None and order != "K"):
-    raise NotImplementedError("Only implemented for order='K', ndmin=0.")
+  if order is not None and order != "K":
+    raise NotImplementedError("Only implemented for order='K'")
 
   if isinstance(object, ndarray):
-    if dtype and _dtype(object) != dtype:
-      return lax.convert_element_type(object, dtype)
+    if dtype and _dtype(object) != xla_bridge.canonicalize_dtype(dtype):
+      out = lax.convert_element_type(object, dtype)
     elif copy:
       # If a copy was requested, we must copy.
-      return device_put(object)
+      out = device_put(object)
     else:
-      return object
+      out = object
   elif hasattr(object, '__array__'):
     # this case is for duck-typed handling of objects that implement `__array__`
-    return array(object.__array__(), dtype)
+    out = array(object.__array__(), dtype and xla_bridge.canonicalize_dtype(dtype))
   elif isinstance(object, (list, tuple)):
     if object:
-      return stack([array(elt, dtype=dtype) for elt in object])
+      out = stack([array(elt, dtype=dtype) for elt in object])
     else:
-      return onp.array([], dtype)
+      out = onp.array([], dtype)
   elif isscalar(object):
     out = lax.reshape(object, ())
-    if dtype and _dtype(out) != dtype:
-      return lax.convert_element_type(out, dtype)
-    else:
-      return out
+    if dtype and _dtype(out) != xla_bridge.canonicalize_dtype(dtype):
+      out = lax.convert_element_type(out, dtype)
   else:
     raise TypeError("Unexpected input type for array: {}".format(type(object)))
+
+  if ndmin > ndim(out):
+    out = lax.reshape(out, (1,) * (ndmin - ndim(out)) + shape(out))
+  return out
 
 @_wraps(onp.asarray)
 def asarray(a, dtype=None, order=None):
@@ -2379,6 +2391,132 @@ def lcm(x1, x2):
   return where(d == 0, lax._const(d, 0),
                lax.div(lax.abs(multiply(x1, x2)), d))
 
+@_wraps(onp.cov)
+def cov(m, y=None, rowvar=True, bias=False, ddof=None, fweights=None,
+        aweights=None):
+  msg = ("jax.numpy.cov not implemented for nontrivial {}. "
+         "Open a feature request at https://github.com/google/jax/issues !")
+  if y is not None: raise NotImplementedError(msg.format('y'))
+  # These next two are actually implemented, just not tested.
+  if fweights is not None: raise NotImplementedError(msg.format('fweights'))
+  if aweights is not None: raise NotImplementedError(msg.format('aweights'))
+
+  if m.ndim > 2:
+    raise ValueError("m has more than 2 dimensions")  # same as numpy error
+  X = array(m, ndmin=2, dtype=result_type(m, onp.float64), copy=False)
+  if not rowvar and X.shape[0] != 1:
+    X = X.T
+  if X.shape[0] == 0:
+    return onp.array([]).reshape(0, 0)
+  if ddof is None:
+    ddof = 1 if bias == 0 else 0
+
+  w = None
+  if fweights is not None:
+    if onp.ndim(fweights) > 1:
+      raise RuntimeError("cannot handle multidimensional fweights")
+    if onp.shape(fweights)[0] != X.shape[1]:
+      raise RuntimeError("incompatible numbers of samples and fweights")
+    w = asarray(fweights)
+  if aweights is not None:
+    if onp.ndim(aweights) > 1:
+      raise RuntimeError("cannot handle multidimensional aweights")
+    if onp.shape(aweights)[0] != X.shape[1]:
+      raise RuntimeError("incompatible numbers of samples and aweights")
+    w = aweights if w is None else w * aweights
+
+  avg, w_sum = average(X, axis=1, weights=w, returned=True)
+  w_sum = w_sum[0]
+
+  if w is None:
+    f = X.shape[1] - ddof
+  elif ddof == 0:
+    f = w_sum
+  elif aweights is None:
+    f = w_sum - ddof
+  else:
+    f = w_sum - ddof * sum(w * aweights) / w_sum
+
+  X = X - avg[:, None]
+  X_T = X.T if w is None else (X * w).T
+  return true_divide(dot(X, X_T.conj()), f).squeeze()
+
+
+@_wraps(onp.quantile)
+def quantile(a, q, axis=None, out=None, overwrite_input=False,
+             interpolation="linear", keepdims=False):
+  if overwrite_input or out is not None:
+    msg = ("jax.numpy.quantile does not support overwrite_input=True or "
+           "out != None")
+    raise ValueError(msg)
+  if interpolation != "linear":
+    raise NotImplementedError("Only interpolation='linear' is implemented")
+
+  a = asarray(a)
+  q = asarray(q)
+
+  if axis is None:
+    a = ravel(a)
+    axis = 0
+  elif isinstance(axis, tuple):
+    raise NotImplementedError("Tuple values for axis are not implemented")
+  else:
+    axis = _canonicalize_axis(axis, ndim(a))
+
+  q_ndim = ndim(q)
+  if q_ndim > 1:
+    raise ValueError("q must be have rank <= 1, got shape {}".format(shape(q)))
+
+  a, q = _promote_dtypes(a, q)
+  if not issubdtype(a.dtype, floating):
+    msg = "q and a arguments to quantile must be of float type, got {} and {}"
+    raise TypeError(msg.format(a.dtype, q.dtype))
+
+  a_shape = shape(a)
+  a = lax.sort(a, dimension=axis)
+
+  n = a_shape[axis]
+  q = lax.mul(q, _constant_like(q, n - 1))
+  low = lax.floor(q)
+  high = lax.add(low, _constant_like(low, 1))
+  high_weight = lax.sub(q, low)
+  low_weight = lax.sub(_constant_like(high_weight, 1), high_weight)
+
+  low = lax.clamp(_constant_like(low, 0), low, _constant_like(low, n - 1))
+  high = lax.clamp(_constant_like(high, 0), high, _constant_like(high, n - 1))
+  low = lax.convert_element_type(low, int64)
+  high = lax.convert_element_type(high, int64)
+
+  slice_sizes = list(a_shape)
+  slice_sizes[axis] = 1
+
+  dnums = lax.GatherDimensionNumbers(
+    offset_dims=tuple(range(
+      q_ndim,
+      len(a_shape) + q_ndim if keepdims else len(a_shape) + q_ndim - 1)),
+    collapsed_slice_dims=() if keepdims else (axis,),
+    start_index_map=(axis,))
+  low = low[..., None]
+  high = high[..., None]
+  low_value = lax.gather(a, low, dimension_numbers=dnums,
+                         slice_sizes=slice_sizes)
+  high_value = lax.gather(a, high, dimension_numbers=dnums,
+                          slice_sizes=slice_sizes)
+  if q_ndim == 1:
+    low_weight = lax.broadcast_in_dim(low_weight, low_value.shape,
+                                      broadcast_dimensions=(0,))
+    high_weight = lax.broadcast_in_dim(high_weight, high_value.shape,
+                                      broadcast_dimensions=(0,))
+  return lax.add(lax.mul(low_value, low_weight),
+                 lax.mul(high_value, high_weight))
+
+
+@_wraps(onp.percentile)
+def percentile(a, q, axis=None, out=None, overwrite_input=False,
+               interpolation="linear", keepdims=False):
+  q = true_divide(asarray(q), float32(100.0))
+  return quantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
+                  interpolation=interpolation, keepdims=keepdims)
 
 ### track unimplemented functions
 

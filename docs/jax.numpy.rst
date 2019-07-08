@@ -56,6 +56,7 @@ jax.numpy package
     cos
     cosh
     count_nonzero
+    cov
     cross
     cumsum
     cumprod
@@ -156,12 +157,14 @@ jax.numpy package
     ones_like
     outer
     pad
+    percentile
     polyval
     power
     positive
     prod
     product
     ptp
+    quantile
     rad2deg
     radians
     ravel

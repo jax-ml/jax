@@ -239,7 +239,7 @@ class APITest(jtu.JaxTestCase):
     foo_p.def_abstract_eval(lambda x: x)
 
     jtu.check_raises(lambda: jit(foo)(1.0), NotImplementedError,
-                     "XLA translation rule for 'foo' not implemented")
+                     "XLA translation rule for primitive 'foo' not found")
 
     foo_p.def_impl(lambda x: x)
     ad.defjvp(foo_p, lambda g, x: foo(g))
@@ -562,6 +562,34 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(grad_ans, 3. * 4. + onp.cos(onp.sin(3. * 4)),
                         check_dtypes=False)
 
+  def test_defjvp_closure_error(self):
+    def foo(x):
+      @api.custom_transforms
+      def bar(y):
+        return x * y
+
+      api.defjvp(bar, lambda y_dot, ans, y: x * y)
+      return bar(x)
+    jtu.check_raises(
+        lambda: api.jvp(foo, (1.,), (1.,)), ValueError,
+        "Detected differentiation w.r.t. variables from outside "
+        "the scope of <jax.custom_transforms function bar>, but defjvp and "
+        "defjvp_all only support differentiation w.r.t. positional arguments.")
+
+  def test_defvjp_closure_error(self):
+    def foo(x):
+      @api.custom_transforms
+      def bar(y):
+        return x * y
+
+      api.defvjp(bar, lambda g, ans, y: x * y)
+      return bar(x)
+    jtu.check_raises(
+        lambda: grad(foo)(1.,), ValueError,
+        "Detected differentiation w.r.t. variables from outside "
+        "the scope of <jax.custom_transforms function bar>, but defvjp and "
+        "defvjp_all only support differentiation w.r.t. positional arguments.")
+
   def test_custom_transforms_eval_with_pytrees(self):
     @api.custom_transforms
     def f(x):
@@ -614,13 +642,24 @@ class APITest(jtu.JaxTestCase):
     expected = {'hi': 2 * onp.arange(3), 'bye': 2 * onp.ones((3, 2))}
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def test_custom_transforms_jvp_with_closure(self):
+    def f(x):
+      @api.custom_transforms
+      def g(y):
+        return x * y
+      return g(x)
+
+    ans = api.grad(f)(1.)
+    expected = 2.
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def test_custom_gradient(self):
     @api.custom_gradient
     def f(x):
       return x ** 2, lambda g: (g * x,)
 
-    self.assertEqual(f(3.), 9.)
-    self.assertEqual(api.grad(f)(3.), 3.)
+    self.assertAllClose(f(3.), 9., check_dtypes=False)
+    self.assertAllClose(api.grad(f)(3.), 3., check_dtypes=False)
 
   def test_devicetuple_iteration(self):
     tup = device_put(pack((1, 2)))
@@ -821,6 +860,34 @@ class APITest(jtu.JaxTestCase):
       lambda: dfn(3), TypeError,
       "Primal inputs to reverse-mode differentiation must be of float or "
       "complex type, got type int..")
+
+  def test_xla_computation(self):
+    # these tests basically check the examples in the xla_computation docstring
+
+    def h(x):
+      return np.sin(np.cos(x))
+    c = api.xla_computation(h)(2.)
+    self.assertIn('cosine', c.GetHloText())
+    self.assertIn('sine', c.GetHloText())
+
+    def f(x):
+      return x - lax.psum(x, 'i')
+    axis_env = [('i', 4)]
+    c = api.xla_computation(f, axis_env=axis_env)(2)
+    self.assertIn('all-reduce', c.GetHloText())
+    self.assertIn('replica_groups={{0,1,2,3}}', c.GetHloText())
+
+    def g(x):
+      rowsum = lax.psum(x, 'i')
+      colsum = lax.psum(x, 'j')
+      allsum = lax.psum(x, ('i', 'j'))
+      return rowsum, colsum, allsum
+    axis_env = [('i', 4), ('j', 2)]
+    c = api.xla_computation(g, axis_env=axis_env)(5.)
+    self.assertIn('all-reduce', c.GetHloText())
+    self.assertIn('replica_groups={{0,2,4,6},{1,3,5,7}}', c.GetHloText())
+    self.assertIn('replica_groups={{0,1},{2,3},{4,5},{6,7}}', c.GetHloText())
+    self.assertIn('replica_groups={{0,1,2,3,4,5,6,7}}', c.GetHloText())
 
 
 if __name__ == '__main__':

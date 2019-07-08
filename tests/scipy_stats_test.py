@@ -18,6 +18,7 @@ from __future__ import print_function
 
 import collections
 import itertools
+import unittest
 
 from absl.testing import absltest, parameterized
 
@@ -147,6 +148,20 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
+  @genNamedParametersNArgs(3, jtu.rand_default())
+  def testLaplaceCdf(self, rng, shapes, dtypes):
+    scipy_fun = osp_stats.laplace.cdf
+    lax_fun = lsp_stats.laplace.cdf
+
+    def args_maker():
+      x, loc, scale = map(rng, shapes, dtypes)
+      # ensure that scale is not too low
+      scale = onp.clip(scale, a_min=0.1, a_max=None)
+      return [x, loc, scale]
+
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
+
   # TODO: currently it ignores the argument "shapes" and only tests dim=4
   @genNamedParametersNArgs(3, jtu.rand_default())
   # TODO(phawkins): enable when there is an LU implementation for GPU/TPU.
@@ -211,6 +226,23 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
 
+  @genNamedParametersNArgs(3, jtu.rand_default())
+  def testNormPpf(self, rng, shapes, dtypes):
+    scipy_fun = osp_stats.norm.ppf
+    lax_fun = lsp_stats.norm.ppf
+
+    def args_maker():
+      q, loc, scale = map(rng, shapes, dtypes)
+      # ensure probability is between 0 and 1:
+      q = onp.clip(onp.abs(q / 3), a_min=None, a_max=1)
+      # clipping to ensure that scale is not too low
+      scale = onp.clip(onp.abs(scale), a_min=0.1, a_max=None)
+      return [q, loc, scale]
+
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
+
+
   @genNamedParametersNArgs(4, jtu.rand_positive())
   def testParetoLogPdf(self, rng, shapes, dtypes):
     scipy_fun = osp_stats.pareto.logpdf
@@ -250,6 +282,15 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
 
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
+
+  # TODO(phawkins): enable test after Jaxlib 0.1.22 is released.
+  @unittest.skip("Requires Jaxlib >= 0.1.22.")
+  def testIssue972(self):
+    self.assertAllClose(
+      onp.ones((4,), onp.float32),
+      lsp_stats.norm.cdf(onp.full((4,), onp.inf, onp.float32)),
+      check_dtypes=False)
+
 
 if __name__ == "__main__":
     absltest.main()

@@ -24,6 +24,7 @@ from six.moves import xrange
 
 import numpy as onp
 
+from jax import core
 from jax import ad_util
 from jax.lax import lax
 from jax.abstract_arrays import ShapedArray
@@ -175,7 +176,7 @@ def all_to_all(x, axis_name, split_axis, concat_axis):
 ### parallel primitives
 
 def standard_pmap_primitive(name):
-  prim = pxla.PmapPrimitive(name)
+  prim = core.Primitive(name)
   prim.def_impl(partial(pxla.apply_parallel_primitive, prim))
   prim.def_abstract_eval(lambda x, *args, **params: x)
   return prim
@@ -195,21 +196,21 @@ def _allreduce_translation_rule(prim, c, val, replica_groups):
 psum_p = standard_pmap_primitive('psum')
 pxla.split_axis_rules[psum_p] = \
     partial(_allreduce_split_axis_rule, psum_p, lax._reduce_sum)
-pxla.parallel_translation_rules[psum_p] = \
+xla.parallel_translations[psum_p] = \
     partial(_allreduce_translation_rule, lax.add_p)
 pxla.parallel_pure_rules[psum_p] = lambda x, shape: x * prod(shape)
 ad.deflinear(psum_p, lambda t, axis_name: [t])
 
 
 pmax_p = standard_pmap_primitive('pmax')
-pxla.parallel_translation_rules[pmax_p] = \
+xla.parallel_translations[pmax_p] = \
     partial(_allreduce_translation_rule, lax.max_p)
 pxla.split_axis_rules[pmax_p] = \
     partial(_allreduce_split_axis_rule, pmax_p, lax._reduce_max)
 
 
 pmin_p = standard_pmap_primitive('pmin')
-pxla.parallel_translation_rules[pmin_p] = \
+xla.parallel_translations[pmin_p] = \
     partial(_allreduce_translation_rule, lax.min_p)
 pxla.split_axis_rules[pmin_p] = \
     partial(_allreduce_split_axis_rule, pmin_p, lax._reduce_min)
@@ -235,7 +236,7 @@ def _ppermute_transpose_rule(t, perm, axis_name):
 
 ppermute_p = standard_pmap_primitive('ppermute')
 ad.deflinear(ppermute_p, _ppermute_transpose_rule)
-pxla.parallel_translation_rules[ppermute_p] = _ppermute_translation_rule
+xla.parallel_translations[ppermute_p] = _ppermute_translation_rule
 
 
 def _all_to_all_translation_rule(c, x, split_axis, concat_axis, replica_groups):
@@ -259,7 +260,7 @@ def _moveaxis(src, dst, x):
   return lax.transpose(x, perm)
 
 all_to_all_p = standard_pmap_primitive('all_to_all')
-pxla.parallel_translation_rules[all_to_all_p] = _all_to_all_translation_rule
+xla.parallel_translations[all_to_all_p] = _all_to_all_translation_rule
 pxla.split_axis_rules[all_to_all_p] = _all_to_all_split_axis_rule
 
 

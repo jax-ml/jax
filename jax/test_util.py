@@ -36,8 +36,6 @@ from .util import partial
 from .tree_util import tree_multimap, tree_all, tree_map, tree_reduce
 from .lib import xla_bridge
 
-# lbr tests placeholder
-
 
 FLAGS = flags.FLAGS
 flags.DEFINE_enum(

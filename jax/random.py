@@ -31,7 +31,7 @@ import numpy as onp
 from . import lax
 from . import numpy as np
 from . import tree_util
-from .api import jit, vmap
+from .api import custom_transforms, defjvp, jit, vmap
 from .numpy.lax_numpy import _constant_like, asarray
 from jax.lib import xla_bridge
 from jax import core
@@ -477,7 +477,7 @@ def cauchy(key, shape=(), dtype=onp.float64):
 @partial(jit, static_argnums=(1, 2))
 def _cauchy(key, shape, dtype):
   _check_shape("cauchy", shape)
-  u = uniform(key, shape, dtype)
+  u = uniform(key, shape, dtype, minval=onp.finfo(dtype).eps, maxval=1.)
   pi = _constant_like(u, onp.pi)
   return lax.tan(lax.mul(pi, lax.sub(u, _constant_like(u, 0.5))))
 
@@ -539,6 +539,7 @@ def _gamma_one(key, alpha):
   # https://en.wikipedia.org/wiki/Gamma_distribution#Generating_gamma-distributed_random_variables
   zero = _constant_like(alpha, 0)
   one = _constant_like(alpha, 1)
+  minus_one = _constant_like(alpha, -1)
   one_over_two = _constant_like(alpha, 0.5)
   one_over_three = _constant_like(alpha, 1. / 3.)
   squeeze_const = _constant_like(alpha, 0.0331)
@@ -564,23 +565,151 @@ def _gamma_one(key, alpha):
                            lax.ge(lax.log(U), lax.add(lax.mul(X, one_over_two),
                                                       lax.mul(d, lax.add(lax.sub(one, V),
                                                                          lax.log(V))))))
-    return lax.bitwise_or(lax.le(V, zero), cond)
+    return cond
 
   def _body_fn(kXVU):
+    def _next_kxv(kxv):
+      key = kxv[0]
+      key, subkey = split(key)
+      x = normal(subkey, (), dtype=dtype)
+      v = lax.add(one, lax.mul(x, c))
+      return key, x, v
+
     key = kXVU[0]
     key, x_key, U_key = split(key, 3)
-    x = normal(x_key, (), dtype=dtype)
-    v = lax.add(one, lax.mul(x, c))
+    _, x, v = lax.while_loop(lambda kxv: lax.le(kxv[2], zero), _next_kxv, (x_key, zero, minus_one))
     X = lax.mul(x, x)
     V = lax.mul(lax.mul(v, v), v)
     U = uniform(U_key, (), dtype=dtype)
     return key, X, V, U
 
   # initial state is chosen such that _cond_fn will return True
-  _, _, V, _ = lax.while_loop(
-      _cond_fn, _body_fn, (key, zero, _constant_like(alpha, -1), zero))
+  _, _, V, _ = lax.while_loop(_cond_fn, _body_fn, (key, zero, one, _constant_like(alpha, 2)))
   z = lax.mul(lax.mul(d, V), boost)
   return lax.select(lax.eq(z, zero), onp.finfo(z.dtype).tiny, z)
+
+
+_bivariate_coef = [[0.16009398, -0.094634816, 0.025146379, -0.0030648348,
+                    1, 0.3266811, 0.10406087, 0.0014179033],
+                   [0.53487893, 0.12980707, 0.06573594, -0.0015649787,
+                    0.16639465, 0.020070098, -0.0035938937, -0.00058392601],
+                   [0.040121005, -0.0065914079, -0.002628604, -0.0013441777,
+                    0.017050642, -0.0021309345, 0.00085092385, -1.5248239e-07]]
+
+
+def _gamma_grad_one(z, alpha):
+    # Ref 1: Pathwise Derivatives Beyond the Reparameterization Trick, Martin & Fritz
+    # Ref 2: Case 4 follows https://github.com/fritzo/notebooks/blob/master/gamma-reparameterized.ipynb
+
+    # TODO: use lax.cond instead of lax.while_loop when its batching rule is available
+    # See https://github.com/google/jax/issues/490
+    def _case1(zagf):
+        z, alpha, _, flag = zagf
+
+        # dz = - dCDF(z; a) / pdf(z; a)
+        # pdf = z^(a-1) * e^(-z) / Gamma(a)
+        # CDF(z; a) = IncompleteGamma(a, z) / Gamma(a)
+        # dCDF(z; a) = (dIncompleteGamma - IncompleteGamma * Digamma(a)) / Gamma(a)
+        #            =: unnormalized_dCDF / Gamma(a)
+        # IncompleteGamma ~ z^a [ 1/a - z/(a+1) + z^2/2!(a+2) - z^3/3!(a+3) + z^4/4!(a+4) - z^5/5!(a+5) ]
+        #                 =: z^a * term1
+        # dIncompleteGamma ~ z^a * log(z) * term1 - z^a [1/a^2 - z/(a+1)^2 + z^2/2!(a+2)^2
+        #                                                - z^3/3!(a+3)^2 + z^4/4!(a+4)^2 - z^5/5!(a+5)^2 ]
+        #                  =: z^a * log(z) * term1 - z^a * term2
+        # unnormalized_dCDF = z^a { [log(z) - Digamma(a)] * term1 - term2 }
+        zi = 1.0
+        update = zi / alpha
+        term1 = update
+        term2 = update / alpha
+        for i in range(1, 6):
+            zi = -zi * z / i
+            update = zi / (alpha + i)
+            term1 = term1 + update
+            term2 = term2 + update / (alpha + i)
+
+        unnormalized_cdf_dot = np.power(z, alpha) * ((np.log(z) - lax.digamma(alpha)) * term1 - term2)
+        unnormalized_pdf = np.power(z, alpha - 1) * np.exp(-z)
+        grad = -unnormalized_cdf_dot / unnormalized_pdf
+
+        return z, alpha, grad, ~flag
+
+    def _cond2(zagf):
+        z, alpha, _, flag = zagf
+        return (~flag) & (alpha > 8.0) & ((z < 0.9 * alpha) | (z > 1.1 * alpha))
+
+    def _case2(zagf):
+        z, alpha, _, flag = zagf
+
+        # Formula 58 of [1]
+        sqrt_8a = np.sqrt(8 * alpha)
+        z_minus_a = z - alpha
+        log_z_div_a = np.log(z / alpha)
+        sign = np.where(z < alpha, 1.0, -1.0)
+        term1 = 4 * (z + alpha) / (sqrt_8a * z_minus_a * z_minus_a)
+        term2 = log_z_div_a * (sqrt_8a / z_minus_a + sign * np.power(z_minus_a - alpha * log_z_div_a, -1.5))
+        term3 = z * (1.0 + 1.0 / (12 * alpha) + 1.0 / (288 * alpha * alpha)) / sqrt_8a
+        grad = (term1 + term2) * term3
+
+        return z, alpha, grad, ~flag
+
+    def _cond3(zagf):
+        z, alpha, _, flag = zagf
+        return (~flag) & (alpha > 8.0) & (z >= 0.9 * alpha) & (z <= 1.1 * alpha)
+
+    def _case3(zagf):
+        z, alpha, _, flag = zagf
+
+        # Formula 59 of [1]
+        z_div_a = np.divide(z, alpha)
+        aa = alpha * alpha
+        term1 = 1440 * alpha + 6 * z_div_a * (53 - 120 * z) - 65 * z_div_a * z_div_a + 3600 * z + 107
+        term2 = 1244160 * alpha * aa
+        term3 = 1 + 24 * alpha + 288 * aa
+        grad = term1 * term3 / term2
+
+        return z, alpha, grad, ~flag
+
+    def _case4(zagf):
+        z, alpha, _, flag = zagf
+
+        # Ref [2]
+        u = np.log(z / alpha)
+        v = np.log(alpha)
+        c = []
+        for i in range(8):
+            c.append(_bivariate_coef[0][i] + u * (_bivariate_coef[1][i] + u * _bivariate_coef[2][i]))
+        p = c[0] + v * (c[1] + v * (c[2] + v * c[3]))
+        q = c[4] + v * (c[5] + v * (c[6] + v * c[7]))
+        grad = np.exp(p / np.maximum(q, 0.01))
+
+        return z, alpha, grad, ~flag
+
+    _, _, grad, flag = lax.while_loop(lambda zagf: (~zagf[3]) & (zagf[0] < 0.8),
+                                      _case1,
+                                      (z, alpha, 0.0, False))
+    _, _, grad, flag = lax.while_loop(_cond2, _case2, (z, alpha, grad, flag))
+    _, _, grad, flag = lax.while_loop(_cond3, _case3, (z, alpha, grad, flag))
+    _, _, grad, flag = lax.while_loop(lambda zagf: ~zagf[3], _case4, (z, alpha, grad, flag))
+    return grad
+
+
+def _gamma_grad(sample, a):
+    samples = np.reshape(sample, -1)
+    alphas = np.reshape(a, -1)
+    grads = vmap(_gamma_grad_one)(samples, alphas)
+    return grads.reshape(a.shape)
+
+
+@custom_transforms
+def _gamma_impl(key, a):
+    alphas = np.reshape(a, -1)
+    keys = split(key, onp.size(alphas))
+    samples = vmap(_gamma_one)(keys, alphas)
+    return np.reshape(samples, np.shape(a))
+
+
+defjvp(_gamma_impl, None,
+       lambda tangent, ans, key, a, **kwargs: tangent * _gamma_grad(ans, a))
 
 
 def gamma(key, a, shape=(), dtype=onp.float64):
@@ -608,10 +737,7 @@ def _gamma(key, a, shape, dtype):
   shape = shape or onp.shape(a)
   if onp.shape(a) != shape:
     a = np.broadcast_to(a, shape)
-  alphas = np.reshape(a, -1)
-  keys = split(key, onp.size(alphas))
-  samples = vmap(_gamma_one)(keys, alphas)
-  return np.reshape(samples, shape)
+  return _gamma_impl(key, a)
 
 
 def gumbel(key, shape=(), dtype=onp.float64):
@@ -633,7 +759,8 @@ def gumbel(key, shape=(), dtype=onp.float64):
 @partial(jit, static_argnums=(1, 2))
 def _gumbel(key, shape, dtype):
   _check_shape("gumbel", shape)
-  return -np.log(-np.log(uniform(key, shape, dtype)))
+  return -np.log(-np.log(
+      uniform(key, shape, dtype, minval=onp.finfo(dtype).eps, maxval=1.)))
 
 
 def laplace(key, shape=(), dtype=onp.float64):
@@ -655,7 +782,8 @@ def laplace(key, shape=(), dtype=onp.float64):
 @partial(jit, static_argnums=(1, 2))
 def _laplace(key, shape, dtype):
   _check_shape("laplace", shape)
-  u = uniform(key, shape, dtype, minval=-1., maxval=1.)
+  u = uniform(
+      key, shape, dtype, minval=-1. + np.finfo(dtype).epsneg, maxval=1.)
   return lax.mul(lax.sign(u), lax.log1p(lax.neg(lax.abs(u))))
 
 
