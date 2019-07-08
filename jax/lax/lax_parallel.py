@@ -644,7 +644,7 @@ def _pad_papply_rule(name, size, vals, dims, padding_config):
   assert padding_value_dim is None
   padding_config = list(padding_config)
   if padding_config[operand_dim] == (0, 0, 0):
-    padded = pad(
+    padded = lax.pad(
         operand,
         padding_value,
         padding_config[:operand_dim] + padding_config[operand_dim + 1:])
@@ -667,7 +667,7 @@ def _slice_papply_rule(name, size, vals, dims, start_indices, limit_indices,
       strides is not None and strides[dim] != 1):
     raise NotImplementedError('slice changes side of hidden dimension')
 
-  out = slice(
+  out = lax.slice(
       operand,
       start_indices[:dim] + start_indices[dim + 1:],
       limit_indices[:dim] + limit_indices[dim + 1:],
@@ -685,12 +685,12 @@ def _gather_papply_rule(
       dimension_numbers.collapsed_slice_dims == (0,)):
     offset_dims = tuple(i - 1 if i > start_indices_dim else i
                         for i in dimension_numbers.offset_dims)
-    dnums = GatherDimensionNumbers(
+    dnums = lax.GatherDimensionNumbers(
         offset_dims=offset_dims,
         collapsed_slice_dims=dimension_numbers.collapsed_slice_dims,
         start_index_map=dimension_numbers.start_index_map)
-    out = gather(operand, start_indices, dimension_numbers=dnums,
-                  slice_sizes=slice_sizes)
+    out = lax.gather(operand, start_indices, dimension_numbers=dnums,
+                     slice_sizes=slice_sizes)
     out_dim = start_indices_dim + onp.sum(
         onp.less_equal(offset_dims, start_indices_dim))
     return out, out_dim
