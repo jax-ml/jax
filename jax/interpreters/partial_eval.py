@@ -116,8 +116,7 @@ class JaxprTrace(Trace):
     out_pv_const, consts = call_primitive.bind(fun, *in_consts, **params)
     out_pv, jaxpr, env = aux()
     const_tracers = map(self.new_instantiated_const, consts)
-    env_tracers = map(self.full_raise, env)
-    bound_subjaxpr = (jaxpr, const_tracers, env_tracers)
+    bound_subjaxpr = (jaxpr, const_tracers, map(self.full_raise, env))
     eqn = JaxprEqn(tracers, None, call_primitive, (bound_subjaxpr,),
                    False, False, params)
     return JaxprTracer(self, PartialVal((out_pv, out_pv_const)), eqn)
@@ -130,12 +129,11 @@ class JaxprTrace(Trace):
     out_pv_reduced, jaxpr, env = aux()
     out_pv = add_axis_to_pv(params['axis_size'], out_pv_reduced)
     const_tracers = map(self.new_instantiated_const, consts)
-    env_tracers = map(self.full_raise, env)
     jaxpr_converted = jaxpr.copy()
     jaxpr_converted.constvars = []
     jaxpr_converted.invars = list(it.chain(jaxpr.constvars, jaxpr.invars))
     invars = tuple(it.chain(const_tracers, tracers))
-    bound_subjaxpr = (jaxpr_converted, (), env)
+    bound_subjaxpr = (jaxpr_converted, (), map(self.full_raise, env))
     eqn = JaxprEqn(invars, None, map_primitive, (bound_subjaxpr,),
                    False, False, params)
     return JaxprTracer(self, PartialVal((out_pv, out_const)), eqn)
@@ -465,6 +463,7 @@ def tracers_to_jaxpr(in_tracers, out_tracer):
     if isinstance(recipe, JaxprEqn):
       eqns.append(eqn_tracer_to_var(var, [var(t)], recipe))
     elif isinstance(recipe, LambdaBinding):
+      assert any(t is in_tracer for in_tracer in in_tracers)
       assert in_tracers, "Lambda binding with no args"
     elif isinstance(recipe, FreeVar):
       env[var(t)] = recipe.val
