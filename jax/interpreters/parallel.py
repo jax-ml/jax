@@ -145,8 +145,14 @@ class PapplyTrace(Trace):
       val_out = call_primitive.bind(f_papply, *vals, **params)
       return PapplyTracer(self, name, size, val_out, axis_out())
 
-  def post_process_call(self, _, out_tracer):
-    raise NotImplementedError  # TODO(mattjj,frostig)
+  def post_process_call(self, call_primitive, out_tracer):
+    t = out_tracer
+    name, val, axis, size = t.name, t.val, t.axis, t.axis_size
+    master = self.master
+    def todo(x):
+      trace = PapplyTrace(master, core.cur_sublevel())
+      return PapplyTracer(trace, name, size, x, axis)
+    return val, todo
 
   def pack(self, tracers):
     vals = core.pack([t.val for t in tracers])
