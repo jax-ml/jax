@@ -142,12 +142,10 @@ def sharded_array_result_handler(aval, replica_results):
   if t is xla.DeviceArray:
     bufs = [r.device_buffer for r in replica_results]
     return ShardedDeviceArray(aval, bufs)
-  elif issubclass(t, (onp.ndarray, xla.DeviceConstant, ShardedDeviceArray)):
+  else:
     assignments = assign_shards_to_replicas(len(replica_results), aval.shape[0])
     _, ids = onp.unique(assignments, return_index=True)
     return onp.stack([replica_results[i] for i in ids])
-  else:
-    raise TypeError(t)
 
 def sharded_tuple_result_handler(axis_size, aval, replica_results):
   t, = set(map(type, replica_results))
@@ -536,17 +534,25 @@ def parallel_callable(fun, axis_name, axis_size, *avals):
 
   with core.new_master(JaxprTrace, True) as master:
     jaxpr, (out_pval, consts, env) = \
-        trace_to_subjaxpr(dynamic_fun, master, True).call_wrapped([pval] + pvals)
+        trace_to_subjaxpr(dynamic_fun, master, False).call_wrapped([pval] + pvals)
     jaxpr.invars = jaxpr.invars[1:]  # ignore dummy
     assert not env
+    del master
+  out_pv, out_const = out_pval
+  if out_pv is None:
+    # When the output doesn't depend on the input we don't need to compile an
+    # XLA computation at all; we handle this as a special case so we can stage
+    # out multi-replica XLA computations regardless of the hardware available.
+    result_handler = sharded_result_handler(axis_size, xla.abstractify(out_const))
+    return lambda *args: result_handler([out_const] * axis_size)
+  else:
     out = compile_replicated(jaxpr, axis_name, axis_size, consts, *avals)
     compiled, nrep, shard_result_shape = out
-    del master, consts, jaxpr, env
-  handle_arg = partial(shard_arg, compiled.DeviceOrdinals(), axis_size)
-  handle_replica_result = xla.result_handler(shard_result_shape)
-  handle_full_result = sharded_result_handler(axis_size, merged_aval(out_pval))
-  return partial(execute_replicated, compiled, out_pval, nrep,
-                 handle_arg, handle_replica_result, handle_full_result)
+    handle_arg = partial(shard_arg, compiled.DeviceOrdinals(), axis_size)
+    handle_replica_result = xla.result_handler(shard_result_shape)
+    handle_full_result = sharded_result_handler(axis_size, merged_aval(out_pval))
+    return partial(execute_replicated, compiled, out_pval, nrep,
+                   handle_arg, handle_replica_result, handle_full_result)
 
 def merged_aval(pval):
   pv, const = pval

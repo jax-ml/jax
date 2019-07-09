@@ -647,17 +647,17 @@ class PmapTest(jtu.JaxTestCase):
     make_jaxpr(f)(x)  # doesn't crash
 
   def testCompositionWithJitTwice(self):
-    raise SkipTest("issue 1000!")  # TODO(mattjj,frostig)
-
     @jit
     def f(x):
       y = 2 * x
+
       @jit
       def g(z):
         return pmap(lambda x: x * y)(z)
+
       return g(x)
 
-    f(onp.arange(1.).reshape((1, 1)))
+    f(onp.arange(1.).reshape((1, 1)))  # doesn't crash
 
 
 if __name__ == '__main__':

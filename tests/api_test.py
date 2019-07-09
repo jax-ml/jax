@@ -889,6 +889,12 @@ class APITest(jtu.JaxTestCase):
     self.assertIn('replica_groups={{0,1},{2,3},{4,5},{6,7}}', c.GetHloText())
     self.assertIn('replica_groups={{0,1,2,3,4,5,6,7}}', c.GetHloText())
 
+  def test_staging_out_multi_replica(self):
+    def f(x):
+      return api.pmap(np.mean)(x)
+    xla_comp = api.xla_computation(f)
+    xla_comp(np.arange(8)).GetHloText()  # doesn't crash
+
 
 if __name__ == '__main__':
   absltest.main()

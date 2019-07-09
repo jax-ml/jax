@@ -251,11 +251,12 @@ def xla_computation(fun, static_argnums=(), axis_env=None):
     aval = xla.abstractify(x)
     return pe.PartialVal((aval, core.unit))
 
-  if axis_env is None:
-    axis_env = xla.AxisEnv(1, [], [])
-  else:
-    nreps = prod(size for name, size in axis_env)
-    axis_env = xla.AxisEnv(nreps, *zip(*axis_env))
+  def make_axis_env(nreps):
+    if axis_env is None:
+      return xla.AxisEnv(nreps, [], [])
+    else:
+      nreps = nreps * prod(size for name, size in axis_env)
+      return xla.AxisEnv(nreps, *zip(*axis_env))
 
   @wraps(fun)
   def computation_maker(*args, **kwargs):
@@ -265,15 +266,17 @@ def xla_computation(fun, static_argnums=(), axis_env=None):
       jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(wrapped, in_trees)
       pvals = map(pv_like, jax_args)
       jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
-      return xla.build_jaxpr(jaxpr, axis_env, consts,
+      axis_env_ = make_axis_env(xla.jaxpr_replicas(jaxpr))
+      return xla.build_jaxpr(jaxpr, axis_env_, consts,
                              *map(xla.abstractify, jax_args))
     else:
       jax_kwargs, kwargs_tree = pytree_to_jaxtupletree(kwargs)
       jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun2(wrapped, kwargs_tree, in_trees)
       pvals = map(pv_like, (jax_kwargs,) + tuple(jax_args))
       jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
-      return xla.build_jaxpr(jaxpr, axis_env, consts, xla.abstractify(jax_kwargs),
-                            *map(xla.abstractify, jax_args))
+      axis_env_ = make_axis_env(xla.jaxpr_replicas(jaxpr))
+      return xla.build_jaxpr(jaxpr, axis_env_, consts, xla.abstractify(jax_kwargs),
+                             *map(xla.abstractify, jax_args))
 
   return computation_maker
 
