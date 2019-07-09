@@ -604,20 +604,20 @@ def _convert_element_type_papply_rule(
     name, size, vals, dims, new_dtype, **params):
   operand, = vals
   dim, = dims
-  return convert_element_type(operand, new_dtype), dim
+  return lax.convert_element_type(operand, new_dtype), dim
 
 
 def _conv_general_dilated_papply_rule(
     name, size, vals, dims, window_strides, padding, lhs_dilation, rhs_dilation,
-    dimension_numbers, precision, **unused_kwargs):
+    dimension_numbers, feature_group_count, precision, **unused_kwargs):
   lhs, rhs = vals
   lhs_dim, rhs_dim = dims
   lhs_spec_batch_dim = dimension_numbers.lhs_spec[0]
   if rhs_dim is None and lhs_dim == lhs_spec_batch_dim:
-    lhs = reshape(lhs, tuple(onp.insert(lhs.shape, lhs_dim, 1)))
-    out = conv_general_dilated(
+    lhs = lax.reshape(lhs, tuple(onp.insert(lhs.shape, lhs_dim, 1)))
+    out = lax.conv_general_dilated(
         lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
-        dimension_numbers, precision)
+        dimension_numbers, feature_group_count, precision)
     return out, lhs_dim
   else:
     raise NotImplementedError(
