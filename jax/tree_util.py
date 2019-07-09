@@ -35,6 +35,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import functools
 from collections import namedtuple
 import itertools as it
 from six.moves import reduce
@@ -253,3 +254,27 @@ def _namedtuple_node(t):
 NamedtupleNode = NodeType('namedtuple',
                           lambda xs: (tuple(xs), type(xs)),
                           lambda t, xs: t(*xs))
+
+
+class Partial(functools.partial):
+  """A version of functools.partial that works in pytrees.
+
+  Use it for partial function evaluation in a way that is compatibile with JAX's
+  transformations, e.g., ``Partial(func, *args, **kwargs)``.
+
+  (You need to explicitly opt-in to this behavior because we didn't want to give
+  functools.partial different semantics than normal function closures.)
+  """
+
+def _partial_to_iterable(partial_):
+  values = partial_.args + tuple(partial_.keywords.values())
+  spec = (partial_.func, len(partial_.args), tuple(partial_.keywords.keys()))
+  return values, spec
+
+def _iterable_to_partial(spec, values):
+  func, args_count, keys = spec
+  args = values[:args_count]
+  keywords = dict(zip(keys, values[args_count:]))
+  return Partial(func, *args, **keywords)
+
+register_pytree_node(Partial, _partial_to_iterable, _iterable_to_partial)
