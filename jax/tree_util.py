@@ -236,6 +236,10 @@ register_pytree_node(tuple, lambda xs: (xs, None), lambda _, xs: tuple(xs))
 register_pytree_node(list, lambda xs: (tuple(xs), None), lambda _, xs: list(xs))
 register_pytree_node(dict, dict_to_iterable, lambda keys, xs: dict(zip(keys, xs)))
 register_pytree_node(type(None), lambda z: ((), None), lambda _, xs: None)
+register_pytree_node(type(Ellipsis), lambda z: ((), None), lambda _, xs: Ellipsis)
+register_pytree_node(slice,
+                     lambda s: ((s.start, s.stop, s.step), None),
+                     lambda _, xs: slice(*xs))
 
 
 # To handle namedtuples, we can't just use the standard table of node_types

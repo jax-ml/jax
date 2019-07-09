@@ -18,6 +18,8 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from functools import partial
+
 import numpy as onp
 
 from jax import jit
@@ -40,6 +42,7 @@ def _is_advanced_int_indexer(idx):
              isinstance(idx, tuple) and all(onp.ndim(elt) == 0 for elt in idx))
   return out and np._is_advanced_int_indexer(idx)
 
+@partial(jit, static_argnums=(1, 3))
 def _scatter_update(x, idx, y, scatter_op):
   """Helper for indexed updates.
 
@@ -264,7 +267,6 @@ def index_add(x, idx, y):
   """
   return _scatter_update(x, idx, y, lax.scatter_add)
 
-@jit
 def index_min(x, idx, y):
   """Pure equivalent of :code:`x[idx] = minimum(x[idx], y)`.
 
@@ -301,7 +303,6 @@ def index_min(x, idx, y):
   """
   return _scatter_update(x, idx, y, lax.scatter_min)
 
-@jit
 def index_max(x, idx, y):
   """Pure equivalent of :code:`x[idx] = maximum(x[idx], y)`.
 
@@ -338,7 +339,6 @@ def index_max(x, idx, y):
   """
   return _scatter_update(x, idx, y, lax.scatter_max)
 
-@jit
 def index_update(x, idx, y):
   """Pure equivalent of :code:`x[idx] = y`.
 
