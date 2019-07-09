@@ -266,15 +266,8 @@ class Partial(functools.partial):
   functools.partial different semantics than normal function closures.)
   """
 
-def _partial_to_iterable(partial_):
-  values = partial_.args + tuple(partial_.keywords.values())
-  spec = (partial_.func, len(partial_.args), tuple(partial_.keywords.keys()))
-  return values, spec
-
-def _iterable_to_partial(spec, values):
-  func, args_count, keys = spec
-  args = values[:args_count]
-  keywords = dict(zip(keys, values[args_count:]))
-  return Partial(func, *args, **keywords)
-
-register_pytree_node(Partial, _partial_to_iterable, _iterable_to_partial)
+register_pytree_node(
+    Partial,
+    lambda partial_: ((partial_.args, partial_.keywords), partial_.func),
+    lambda func, xs: Partial(func, *xs[0], **xs[1]),
+)
