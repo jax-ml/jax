@@ -131,20 +131,6 @@ class PapplyTest(jtu.JaxTestCase):
     pfun, axis_name = _papply(lambda a: np.where(x, a, b))
     make_jaxpr(pfun)(onp.ones(3))  # doesn't crash
 
-  def testCompositionWithJitTwice(self):
-    raise SkipTest("issue 1000!")  # TODO(mattjj,frostig)
-
-    @jit
-    def f(x):
-      y = 2 * x
-      @jit
-      def g(z):
-        h, axis_name =_papply(lambda x: x * y)
-        return soft_pmap(h, axis_name)(z)
-      return g(x)
-
-    f(onp.arange(4.).reshape((2, 2)))
-
 
 class ParallelizeTest(jtu.JaxTestCase):
 

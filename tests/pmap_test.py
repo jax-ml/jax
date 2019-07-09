@@ -646,6 +646,19 @@ class PmapTest(jtu.JaxTestCase):
     x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
     make_jaxpr(f)(x)  # doesn't crash
 
+  def testCompositionWithJitTwice(self):
+    raise SkipTest("issue 1000!")  # TODO(mattjj,frostig)
+
+    @jit
+    def f(x):
+      y = 2 * x
+      @jit
+      def g(z):
+        return pmap(lambda x: x * y)(z)
+      return g(x)
+
+    f(onp.arange(1.).reshape((1, 1)))
+
 
 if __name__ == '__main__':
   absltest.main()
