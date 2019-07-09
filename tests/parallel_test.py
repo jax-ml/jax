@@ -124,6 +124,13 @@ class PapplyTest(jtu.JaxTestCase):
     ans = soft_pmap(pfun, axis_name)(x)
     self.assertAllClose(ans, expected, check_dtypes=True)
 
+  def testMakeJaxprPapplyComposition(self):
+    raise SkipTest(             # TODO(mattjj)
+        "fails because select's papply rule calls an SPMD primitive")
+    x = b = onp.ones(3)
+    pfun, axis_name = _papply(lambda a: np.where(x, a, b))
+    make_jaxpr(pfun)(onp.ones(3))  # doesn't crash
+
 
 class ParallelizeTest(jtu.JaxTestCase):
 
@@ -302,6 +309,16 @@ class ParallelizeTest(jtu.JaxTestCase):
       return SkipTest(e)
 
     ans = self.dedup(ans, expected.ndim)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testCall(self):
+    @jit
+    def fun(x):
+      return x
+
+    x = onp.reshape(onp.arange(8., dtype=onp.float32), (2, 2, 2))
+    expected = fun(x)
+    ans = _parallelize(fun)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
 

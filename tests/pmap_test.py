@@ -625,7 +625,7 @@ class PmapTest(jtu.JaxTestCase):
   def testShardedDeviceArrayBlockUntilReady(self):
     x = onp.arange(xla_bridge.device_count())
     x = pmap(lambda x: x)(x)
-    x.block_until_ready()   # doesn't crash
+    x.block_until_ready()  # doesn't crash
 
   def testJitPmapComposition(self):
     f = lambda x: x - lax.psum(x, 'i')
@@ -639,6 +639,25 @@ class PmapTest(jtu.JaxTestCase):
 
     ans = pmap(jit(f), 'i')(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testMakeJaxprOfOpenSpmd(self):
+    f = lambda x: x - lax.psum(x, 'i')
+    shape = (xla_bridge.device_count(), 4)
+    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+    make_jaxpr(f)(x)  # doesn't crash
+
+  def testCompositionWithJitTwice(self):
+    raise SkipTest("issue 1000!")  # TODO(mattjj,frostig)
+
+    @jit
+    def f(x):
+      y = 2 * x
+      @jit
+      def g(z):
+        return pmap(lambda x: x * y)(z)
+      return g(x)
+
+    f(onp.arange(1.).reshape((1, 1)))
 
 
 if __name__ == '__main__':

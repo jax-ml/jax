@@ -173,10 +173,6 @@ def all_to_all(x, axis_name, split_axis, concat_axis):
                            axis_name=axis_name)
 
 
-def pcollect(x, axis_name):
-  return pcollect_p.bind(x, axis_name=axis_name)
-
-
 ### parallel primitives
 
 def standard_pmap_primitive(name):
@@ -357,7 +353,7 @@ def _defreducer(prim, collective_prim):
   parallel.papply_primitive_rules[prim] = partial(_reducer_papply, prim, collective_prim)
 
 
-def _identity_papply(prim, argnum, name, vals, axes, **params):
+def _identity_papply(prim, argnum, name, size, vals, axes, **params):
   return prim.bind(*vals, **params), axes[argnum]
 
 def _defidentity(prim, argnum=0):
@@ -608,20 +604,20 @@ def _convert_element_type_papply_rule(
     name, size, vals, dims, new_dtype, **params):
   operand, = vals
   dim, = dims
-  return convert_element_type(operand, new_dtype), dim
+  return lax.convert_element_type(operand, new_dtype), dim
 
 
 def _conv_general_dilated_papply_rule(
     name, size, vals, dims, window_strides, padding, lhs_dilation, rhs_dilation,
-    dimension_numbers, precision, **unused_kwargs):
+    dimension_numbers, feature_group_count, precision, **unused_kwargs):
   lhs, rhs = vals
   lhs_dim, rhs_dim = dims
   lhs_spec_batch_dim = dimension_numbers.lhs_spec[0]
   if rhs_dim is None and lhs_dim == lhs_spec_batch_dim:
-    lhs = reshape(lhs, tuple(onp.insert(lhs.shape, lhs_dim, 1)))
-    out = conv_general_dilated(
+    lhs = lax.reshape(lhs, tuple(onp.insert(lhs.shape, lhs_dim, 1)))
+    out = lax.conv_general_dilated(
         lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
-        dimension_numbers, precision)
+        dimension_numbers, feature_group_count, precision)
     return out, lhs_dim
   else:
     raise NotImplementedError(
@@ -648,7 +644,7 @@ def _pad_papply_rule(name, size, vals, dims, padding_config):
   assert padding_value_dim is None
   padding_config = list(padding_config)
   if padding_config[operand_dim] == (0, 0, 0):
-    padded = pad(
+    padded = lax.pad(
         operand,
         padding_value,
         padding_config[:operand_dim] + padding_config[operand_dim + 1:])
@@ -671,7 +667,7 @@ def _slice_papply_rule(name, size, vals, dims, start_indices, limit_indices,
       strides is not None and strides[dim] != 1):
     raise NotImplementedError('slice changes side of hidden dimension')
 
-  out = slice(
+  out = lax.slice(
       operand,
       start_indices[:dim] + start_indices[dim + 1:],
       limit_indices[:dim] + limit_indices[dim + 1:],
@@ -689,12 +685,12 @@ def _gather_papply_rule(
       dimension_numbers.collapsed_slice_dims == (0,)):
     offset_dims = tuple(i - 1 if i > start_indices_dim else i
                         for i in dimension_numbers.offset_dims)
-    dnums = GatherDimensionNumbers(
+    dnums = lax.GatherDimensionNumbers(
         offset_dims=offset_dims,
         collapsed_slice_dims=dimension_numbers.collapsed_slice_dims,
         start_index_map=dimension_numbers.start_index_map)
-    out = gather(operand, start_indices, dimension_numbers=dnums,
-                  slice_sizes=slice_sizes)
+    out = lax.gather(operand, start_indices, dimension_numbers=dnums,
+                     slice_sizes=slice_sizes)
     out_dim = start_indices_dim + onp.sum(
         onp.less_equal(offset_dims, start_indices_dim))
     return out, out_dim

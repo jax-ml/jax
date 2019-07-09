@@ -57,6 +57,14 @@ def papply_transform(name, axis_size, *args):
     del master, out_tracer
   yield out_val, out_axis
 
+@lu.transformation_with_aux
+def papply_subtrace(master, name, axis_size, axes, *vals):
+  trace = PapplyTrace(master, core.cur_sublevel())
+  ans = yield map(partial(PapplyTracer, trace, name, axis_size), vals, axes), {}
+  out_tracer = trace.full_raise(ans)
+  out_val, out_axis = out_tracer.val, out_tracer.axis
+  yield out_val, out_axis
+
 def match_axis(src, dst, x):
   assert type(src) is int
   if src == dst:
@@ -120,17 +128,31 @@ class PapplyTrace(Trace):
     if all(axis is None for axis in axes):
       return primitive.bind(*vals, **params)
     else:
-      name = next(n for n in names if n is not None)
-      size = next(t.axis_size for t in tracers if t.axis_size is not None)
+      name, = {n for n in names if n is not None}
+      size, = {t.axis_size for t in tracers if t.axis_size is not None}
       rule = papply_primitive_rules[primitive]
       val_out, axis_out = rule(name, size, vals, axes, **params)
       return PapplyTracer(self, name, size, val_out, axis_out)
 
   def process_call(self, call_primitive, f, tracers, params):
-    raise NotImplementedError  # TODO(mattjj,frostig)
+    names, vals, axes = unzip3((t.name, t.val, t.axis) for t in tracers)
+    if all(axis is None for axis in axes):
+      return call_primitive.bind(f, *vals, **params)
+    else:
+      name, = {n for n in names if n is not None}
+      size, = {t.axis_size for t in tracers if t.axis_size is not None}
+      f_papply, axis_out = papply_subtrace(f, self.master, name, size, axes)
+      val_out = call_primitive.bind(f_papply, *vals, **params)
+      return PapplyTracer(self, name, size, val_out, axis_out())
 
-  def post_process_call(self, _, out_tracer):
-    raise NotImplementedError  # TODO(mattjj,frostig)
+  def post_process_call(self, call_primitive, out_tracer):
+    t = out_tracer
+    name, val, axis, size = t.name, t.val, t.axis, t.axis_size
+    master = self.master
+    def todo(x):
+      trace = PapplyTrace(master, core.cur_sublevel())
+      return PapplyTracer(trace, name, size, x, axis)
+    return val, todo
 
   def pack(self, tracers):
     vals = core.pack([t.val for t in tracers])
