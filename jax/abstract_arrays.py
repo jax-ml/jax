@@ -172,14 +172,14 @@ def zeros_like_array(x):
   dtype = xla_bridge.canonicalize_dtype(onp.result_type(x))
   return onp.broadcast_to(onp.array(0, dtype), onp.shape(x))
 
-array_types = [onp.ndarray, onp.float64, onp.float32, onp.float16,
+array_types = {onp.ndarray, onp.float64, onp.float32, onp.float16,
                onp.complex64, onp.complex128,
                onp.int64, onp.int32, onp.int16, onp.int8,
                onp.bool_, onp.uint64, onp.uint32, onp.uint16, onp.uint8,
-               onp.longlong, complex, float, int, bool]
+               onp.longlong, complex, float, int, bool}
 
 if six.PY2:
-  array_types.append(long)
+  array_types.add(long)
 
 for t in array_types:
   core.pytype_aval_mappings[t] = ConcreteArray
