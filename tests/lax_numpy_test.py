@@ -1115,6 +1115,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     ans = lnp.array(a)
     assert ans == 3.
 
+  def testMemoryview(self):
+    ans = lnp.array(bytearray(b'\x2a'))
+    self.assertAllClose(
+        ans,
+        onp.array([0x2a], dtype=onp.uint8),
+        check_dtypes=True)
+
   def testAllClose(self):
     rng = onp.random.RandomState(0)
     x = rng.randn(2, 2)

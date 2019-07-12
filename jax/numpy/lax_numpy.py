@@ -1382,6 +1382,13 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
     if dtype and _dtype(out) != xla_bridge.canonicalize_dtype(dtype):
       out = lax.convert_element_type(out, dtype)
   else:
+    try:
+      view = memoryview(object)
+    except TypeError:
+      pass  # `object` does not support the buffer interface.
+    else:
+      return array(onp.asarray(view), dtype, copy)
+
     raise TypeError("Unexpected input type for array: {}".format(type(object)))
 
   if ndmin > ndim(out):
