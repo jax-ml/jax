@@ -1450,7 +1450,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     def args_maker():
       x = rng(x_shape, dtype)
       n = onp.prod(x_shape, dtype=onp.int32) if axis is None else x_shape[axis]
-      i = rng(i_shape, onp.int32) % n
+      i = rng(i_shape, onp.int32) % (2 * n - 1) - (n - 1)
       return x, i
 
     lnp_op = lambda x, i: lnp.take_along_axis(x, i, axis=axis)
