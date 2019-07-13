@@ -548,6 +548,11 @@ class BatchingTest(jtu.JaxTestCase):
     per_example_direct = np.concatenate(per_example_direct, axis=0)
     self.assertAllClose(per_example, per_example_direct, check_dtypes=True)
 
+  def testCumProd(self):
+   x = np.arange(9).reshape(3, 3) + 1
+   y = vmap(lambda x: np.cumprod(x, axis=-1))(x)
+   self.assertAllClose(onp.cumprod(x, axis=1), y, check_dtypes=True)
+
   def testSelect(self):
     pred = onp.array([True, False])
     on_true = onp.array([0, 1])
