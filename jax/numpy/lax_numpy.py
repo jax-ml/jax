@@ -2142,31 +2142,68 @@ def take(a, indices, axis=None, out=None, mode=None):
                     slice_sizes=tuple(slice_sizes))
 
 
-@_wraps(getattr(onp, "take_along_axis", None))
-def take_along_axis(arr, indices, axis):
+@partial(jit, static_argnums=(2,))
+def _take_along_axis(arr, indices, axis):
   if axis is None:
     if ndim(indices) != 1:
       msg = "take_along_axis indices must be 1D if axis=None, got shape {}"
       raise ValueError(msg.format(shape(indices)))
     return take_along_axis(arr.ravel(), indices, 0)
-  elif ndim(arr) != ndim(indices):
+  rank = ndim(arr)
+  if rank != ndim(indices):
     msg = "indices and arr must have the same number of dimensions; {} vs. {}"
     raise ValueError(msg.format(ndim(indices), ndim(arr)))
-  elif ndim(arr) == 1:
-    return lax.index_take(arr, (indices,), (0,))
-  else:
-    # TODO(mattjj): if we lower directly to lax.gather here, we might be able to
-    # avoid the reshape on the output.
-    arr_shape = list(shape(arr))
-    arr_shape[axis] = 1
-    out_shape = lax.broadcast_shapes(shape(indices), tuple(arr_shape))
-    all_indices = [lax.broadcasted_iota(_dtype(indices), out_shape, i)
-                   for i in range(ndim(arr))]
-    all_indices[axis] = broadcast_to(indices, out_shape)
-    all_indices = tuple(map(ravel, all_indices))
-    out_flat = lax.index_take(arr, all_indices, tuple(range(ndim(arr))))
-    return reshape(out_flat, out_shape)
+  axis = _canonicalize_axis(axis, rank)
 
+  arr_shape = list(shape(arr))
+  axis_size = arr_shape[axis]
+  arr_shape[axis] = 1
+  idx_shape = shape(indices)
+  out_shape = lax.broadcast_shapes(idx_shape, tuple(arr_shape))
+
+  index_dims = [i for i, idx in enumerate(idx_shape) if i == axis or idx != 1]
+
+  gather_index_shape = tuple(onp.array(out_shape)[index_dims]) + (1,)
+  gather_indices = []
+  slice_sizes = []
+  offset_dims = []
+  start_index_map = []
+  collapsed_slice_dims = []
+  j = 0
+  for i in range(rank):
+    if i == axis:
+      indices = indices % axis_size
+      gather_indices.append(lax.reshape(indices, gather_index_shape))
+      slice_sizes.append(1)
+      start_index_map.append(i)
+      collapsed_slice_dims.append(i)
+      j += 1
+    elif idx_shape[i] != 1:
+      iota = lax.iota(_dtype(indices), out_shape[i])
+      iota = lax.tie_in(arr, iota)
+      iota = lax.broadcast_in_dim(iota, gather_index_shape, (j,))
+      gather_indices.append(iota)
+      slice_sizes.append(1)
+      start_index_map.append(i)
+      collapsed_slice_dims.append(i)
+      j += 1
+    else:
+      # If idx_shape[i] == 1, we can just take the entirety of the arr's axis
+      # and avoid forming an iota index.
+      offset_dims.append(i)
+      slice_sizes.append(arr_shape[i])
+
+  gather_indices = lax.concatenate(gather_indices, dimension=j)
+  dnums = lax.GatherDimensionNumbers(
+    offset_dims=tuple(offset_dims),
+    collapsed_slice_dims=tuple(collapsed_slice_dims),
+    start_index_map=tuple(start_index_map))
+  return lax.gather(arr, gather_indices, dnums, tuple(slice_sizes))
+
+
+@_wraps(getattr(onp, "take_along_axis", None))
+def take_along_axis(arr, indices, axis):
+  return _take_along_axis(arr, indices, axis)
 
 ### Indexing
 
