@@ -2172,7 +2172,7 @@ def _take_along_axis(arr, indices, axis):
   j = 0
   for i in range(rank):
     if i == axis:
-      indices = indices % axis_size
+      indices = indices % _constant_like(indices, axis_size)
       gather_indices.append(lax.reshape(indices, gather_index_shape))
       slice_sizes.append(1)
       start_index_map.append(i)
