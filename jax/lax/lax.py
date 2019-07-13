@@ -3397,9 +3397,27 @@ def _reduce_window_translation_rule(c, operand, init_value, jaxpr, consts,
   return c.ReduceWindow(operand, init_value, xla_computation, window_dimensions,
                         window_strides, padding)
 
+def _generic_reduce_window_batch_rule(
+    batched_args, batch_dims, jaxpr, consts, window_dimensions, window_strides,
+    padding):
+  operand, init = batched_args
+  bdim, init_bdim = batch_dims
+  if init_bdim is not None:
+    raise NotImplementedError("reduce_window batching is not implemented for "
+                              "initial values")
+
+  def reduce_window(x, window_dimensions, window_strides, padding):
+    return reduce_window_p.bind(
+      x, init, jaxpr=jaxpr, consts=consts, window_dimensions=window_dimensions,
+      window_strides=window_strides, padding=padding)
+  return _reduce_window_batch_rule(reduce_window, (operand,), (bdim,),
+                                   window_dimensions, window_strides, padding)
+
+
 reduce_window_p = standard_primitive(
     _reduce_window_shape_rule, _input_dtype, 'reduce_window',
     _reduce_window_translation_rule)
+batching.primitive_batchers[reduce_window_p] = _generic_reduce_window_batch_rule
 
 
 def _reduce_window_sum_shape_rule(operand, window_dimensions, window_strides,
