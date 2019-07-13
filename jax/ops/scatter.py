@@ -83,14 +83,13 @@ def _scatter_update(x, idx, y, scatter_op):
         idx = [idx]
 
       stacked_idx = np.concatenate(
-          [np.mod(np.reshape(a, (-1, 1)), np._constant_like(a, x.shape[i]))
-          for i, a in enumerate(idx)], axis=1)
+          [np.mod(np.reshape(a, a.shape + (1,)), np._constant_like(a, x.shape[i]))
+          for i, a in enumerate(idx)], axis=-1)
 
       y = np.broadcast_to(y, idx[0].shape + onp.shape(x)[len(idx):])
-      y = lax.reshape(y, (stacked_idx.shape[0],) + onp.shape(x)[len(idx):])
 
       dnums = lax.ScatterDimensionNumbers(
-          update_window_dims=tuple(range(1, y.ndim)),
+          update_window_dims=tuple(range(len(idx[0].shape), y.ndim)),
           inserted_window_dims=tuple(range(len(idx))),
           scatter_dims_to_operand_dims=tuple(range(len(idx))))
       return scatter_op(x, stacked_idx, y, dnums)
