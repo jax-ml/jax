@@ -1224,7 +1224,7 @@ def defjvp_all(fun, custom_jvp):
   """Define a custom JVP rule for a ``custom_transforms`` function.
 
   If ``fun`` represents a function with signature ``a -> b``, then
-  ``custom_jvp`` represents a function with signature ``a -> T a -> (b, T b)``,
+  ``custom_jvp`` represents a function with signature ``(a, T a) -> (b, T b)``,
   where we use ``T x`` to represent a tangent type for the type ``x``.
 
   In more detail, ``custom_jvp`` must take two arguments, both tuples of length
