@@ -2207,160 +2207,288 @@ def take_along_axis(arr, indices, axis):
 
 ### Indexing
 
+def _rewriting_take(arr, idx):
+  # Computes arr[idx].
+  # All supported cases of indexing can be implemented as an XLA gather,
+  # followed by an optional reverse and a reshape.
+  arr = asarray(arr)
+  indexer = _index_to_gather(shape(arr), idx)  # shared with _scatter_update
 
-def _rewriting_take(arr, idx, axis=0):
-  """A function like numpy.take that handles boxes and rewrites to LAX."""
+  y = lax.gather(arr, indexer.gather_indices, indexer.dnums,
+                 indexer.gather_slice_shape)
 
-  # Handle special indexers: (), Ellipsis, slice(None), and None.
-  # TODO(mattjj): don't compare empty tuple identity (though works for CPython)
-  if idx is () or idx is Ellipsis or _is_slice_none(idx):  # pylint: disable=literal-comparison
-    return arr
-  elif idx is None:
-    return expand_dims(arr, 0)
+  # Reverses axes with negative strides.
+  if indexer.reversed_y_dims:
+    y = lax.rev(y, indexer.reversed_y_dims)
 
+  # This adds np.newaxis/None dimensions.
+  return lax.reshape(y, indexer.slice_shape)
 
-  # Handle int index
+_Indexer = collections.namedtuple("_Indexer", [
+  # The expected shape of the slice output.
+  "slice_shape",
+
+  # The slice shape to pass to lax.gather().
+  "gather_slice_shape",
+
+  # The gather indices to use.
+  "gather_indices",
+
+  # A GatherDimensionNumbers object describing the gather to perform.
+  "dnums",
+
+  # Slice dimensions that have negative strides, and so must be reversed after
+  # the gather.
+  "reversed_y_dims",
+
+  # For scatters, we must eliminate any axes created by `newaxis`, which
+  # are the following dimensions, which must be of size 1. For gathers, we
+  # simply reshape to `slice_shape` to introduce the new axes.
+  "newaxis_dims",
+])
+
+def _index_to_gather(x_shape, idx):
+  # Convert list indices to tuples in cases (deprecated by NumPy.)
+  idx = _eliminate_deprecated_list_indexing(idx)
+
+  # Expand any (concrete) boolean indices. We can then use advanced integer
+  # indexing logic to handle them.
+  idx = _expand_bool_indices(idx)
+
+  # Remove ellipses and add trailing slice(None)s.
+  idx = _canonicalize_tuple_index(len(x_shape), idx)
+
+  # Check for advanced indexing:
+  # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#advanced-indexing
+
+  # Do the advanced indexing axes appear contiguously? If not, NumPy semantics
+  # move the advanced axes to the front.
+  advanced_axes_are_contiguous = False
+
+  advanced_indexes = None
+
+  # The positions of the advanced indexing axes in `idx`.
+  idx_advanced_axes = []
+
+  # The positions of the advanced indexes in x's shape.
+  # collapsed, after None axes have been removed. See below.
+  x_advanced_axes = None
+
+  if _is_advanced_int_indexer(idx):
+    idx_no_nones = [(i, d) for i, d in enumerate(idx) if d is not None]
+    advanced_pairs = (
+      (asarray(e), i, j) for j, (i, e) in enumerate(idx_no_nones)
+      if (isinstance(e, collections.Sequence) or isinstance(e, ndarray)))
+    advanced_pairs = ((mod(e, _constant_like(e, x_shape[j])), i, j)
+                      for e, i, j in advanced_pairs)
+    advanced_indexes, idx_advanced_axes, x_advanced_axes = zip(*advanced_pairs)
+    advanced_axes_are_contiguous = onp.all(onp.diff(idx_advanced_axes) == 1)
+
   _int = lambda aval: not aval.shape and onp.issubdtype(aval.dtype, onp.integer)
-  try:
-    abstract_idx = core.get_aval(idx)
-  except TypeError:
-    abstract_idx = None
 
-  if isinstance(abstract_idx, ConcreteArray) and _int(abstract_idx):
-    return lax.index_in_dim(arr, idx, axis, False)
-  elif isinstance(abstract_idx, ShapedArray) and _int(abstract_idx):
-    idx = mod(idx, _constant_like(idx, arr.shape[axis]))
-    return lax.dynamic_index_in_dim(arr, idx, axis, False)
+  x_axis = 0  # Current axis in x.
+  y_axis = 0  # Current axis in y, before collapsing. See below.
+  collapsed_y_axis = 0  # Current axis in y, after collapsing.
 
-  # Handle slice index (only static, otherwise an error is raised)
-  elif isinstance(idx, slice):
-    if not _all(elt is None or type(core.get_aval(elt)) is ConcreteArray
-                for elt in (idx.start, idx.stop, idx.step)):
-      msg = ("Array slice indices must have static start/stop/step to be used "
-             "with Numpy indexing syntax. Try lax.dynamic_slice instead.")
-      raise IndexError(msg)
+  # Scatter dimension numbers.
+  offset_dims = []
+  collapsed_slice_dims = []
+  start_index_map = []
+
+  gather_indices = zeros((0,), dtype=int32)
+
+  # We perform three transformations to y before the scatter op, in order:
+  # First, y is broadcast to slice_shape. In general `y` only need broadcast to
+  # the right shape.
+  slice_shape = []
+
+  # Next, y is squeezed to remove newaxis_dims. This removes np.newaxis/`None`
+  # indices, which the scatter cannot remove itself.
+  newaxis_dims = []
+
+  # Finally, we reverse reversed_y_dims to handle slices with negative strides.
+  reversed_y_dims = []
+
+  gather_slice_shape = []
+
+  for idx_pos, i in enumerate(idx):
+    # Handle the advanced indices here if:
+    # * the advanced indices were not contiguous and we are the start.
+    # * we are at the position of the first advanced index.
+    if (advanced_indexes is not None and
+        (advanced_axes_are_contiguous and idx_pos == idx_advanced_axes[0] or
+         not advanced_axes_are_contiguous and idx_pos == 0)):
+      advanced_indexes = broadcast_arrays(*advanced_indexes)
+      shape = advanced_indexes[0].shape
+      ndim = len(shape)
+      advanced_indexes = [
+        lax.convert_element_type(lax.reshape(a, shape + (1,)), int32)
+        for a in advanced_indexes]
+
+      # Broadcast gather_indices from [..., k] to [..., 1, 1, ..., 1, k].
+      gather_indices = lax.broadcast_in_dim(
+        gather_indices, onp.insert(gather_indices.shape, -1, shape),
+        tuple(range(gather_indices.ndim - 1)) + (gather_indices.ndim + ndim - 1,))
+      gather_indices = concatenate([gather_indices] + advanced_indexes, -1)
+      start_index_map.extend(x_advanced_axes)
+      collapsed_slice_dims.extend(x_advanced_axes)
+      slice_shape.extend(shape)
+      y_axis += ndim
+      collapsed_y_axis += ndim
+
+    # Per-index bookkeeping for advanced indexes.
+    if idx_pos in idx_advanced_axes:
+      x_axis += 1
+      gather_slice_shape.append(1)
+      continue
+
+    try:
+      abstract_i = core.get_aval(i)
+    except TypeError:
+      abstract_i = None
+    # Handle basic int indexes.
+    if (isinstance(abstract_i, ConcreteArray) or
+        isinstance(abstract_i, ShapedArray)) and _int(abstract_i):
+      i = mod(i, _constant_like(i, x_shape[x_axis]))
+      i = lax.convert_element_type(i, int32)
+      i = broadcast_to(i, tuple(gather_indices.shape[:-1]) + (1,))
+      gather_indices = concatenate((gather_indices, i), -1)
+      collapsed_slice_dims.append(x_axis)
+      gather_slice_shape.append(1)
+      start_index_map.append(x_axis)
+      x_axis += 1
+    # Handle np.newaxis (None)
+    elif i is None:
+      slice_shape.append(1)
+      newaxis_dims.append(y_axis)
+      y_axis += 1
+    # Handle slice(None)
+    elif _is_slice_none(i):
+      slice_shape.append(x_shape[x_axis])
+      gather_slice_shape.append(x_shape[x_axis])
+      offset_dims.append(collapsed_y_axis)
+      collapsed_y_axis += 1
+      y_axis += 1
+      x_axis += 1
+    # Handle slice index (only static, otherwise an error is raised)
+    elif isinstance(i, slice):
+      if not _all(elt is None or type(core.get_aval(elt)) is ConcreteArray
+                  for elt in (i.start, i.stop, i.step)):
+        msg = ("Array slice indices must have static start/stop/step to be used "
+               "with Numpy indexing syntax. Try lax.dynamic_slice/"
+               "dynamic_update_slice instead.")
+        raise IndexError(msg)
+      start, limit, stride, needs_rev = _static_idx(i, x_shape[x_axis])
+      if needs_rev:
+        reversed_y_dims.append(collapsed_y_axis)
+      if stride == 1:
+        i = lax.convert_element_type(start, int32)
+        i = broadcast_to(i, tuple(gather_indices.shape[:-1]) + (1,))
+        gather_indices = concatenate((gather_indices, i), -1)
+        slice_shape.append(limit - start)
+        gather_slice_shape.append(limit - start)
+        offset_dims.append(collapsed_y_axis)
+        start_index_map.append(x_axis)
+      else:
+        i = arange(start, limit, stride, dtype=int32)
+        size = i.shape[0]
+        slice_shape.append(size)
+        gather_slice_shape.append(1)
+        gather_indices_shape = tuple(gather_indices.shape[:-1]) + (size,)
+        i = lax.broadcast_in_dim(
+            i, shape=gather_indices_shape + (1,),
+            broadcast_dimensions=(len(gather_indices_shape) - 1,))
+        gather_indices = lax.broadcast_in_dim(
+            gather_indices,
+            shape=gather_indices_shape + (len(start_index_map),),
+            broadcast_dimensions=(
+              tuple(range(len(gather_indices_shape) - 1)) +
+              (len(gather_indices_shape),)))
+        gather_indices = concatenate(
+          (gather_indices, i), len(gather_indices_shape))
+        start_index_map.append(x_axis)
+        collapsed_slice_dims.append(x_axis)
+
+      collapsed_y_axis += 1
+      y_axis += 1
+      x_axis += 1
     else:
-      start, limit, stride, needs_rev = _static_idx(idx, arr.shape[axis])
-      result = lax.slice_in_dim(arr, start, limit, stride, axis=axis)
-      return lax.rev(result, [axis]) if needs_rev else result
+      msg = "Indexing mode not yet supported. Open a feature request!\n{}"
+      raise IndexError(msg.format(idx))
 
-  # Handle non-advanced bool index (only static, otherwise an error is raised)
-  elif (isinstance(abstract_idx, ShapedArray) and onp.issubdtype(abstract_idx.dtype, onp.bool_)
-        or isinstance(idx, list) and _all(not _shape(e) and onp.issubdtype(_dtype(e), onp.bool_)
-                                          for e in idx)):
-    if isinstance(idx, list):
-      idx = array(idx)
-      abstract_idx = core.get_aval(idx)
+  dnums = lax.GatherDimensionNumbers(
+    offset_dims = tuple(offset_dims),
+    collapsed_slice_dims = tuple(sorted(collapsed_slice_dims)),
+    start_index_map = tuple(start_index_map)
+  )
+  return _Indexer(
+    slice_shape=slice_shape,
+    newaxis_dims=tuple(newaxis_dims),
+    gather_slice_shape=gather_slice_shape,
+    reversed_y_dims=reversed_y_dims,
+    dnums=dnums,
+    gather_indices=gather_indices)
 
-    if not type(abstract_idx) is ConcreteArray:
-      msg = ("Array boolean indices must be static (e.g. no dependence on an "
-             "argument to a jit or vmap function).")
-      raise IndexError(msg)
+def _should_unpack_list_index(x):
+  """Helper for _eliminate_deprecated_list_indexing."""
+  return (isinstance(x, ndarray) and onp.ndim(x) != 0
+          or isinstance(x, collections.Sequence)
+          or isinstance(x, slice) or x is Ellipsis or x is None)
+
+def _eliminate_deprecated_list_indexing(idx):
+  # "Basic slicing is initiated if the selection object is a non-array,
+  # non-tuple sequence containing slice objects, [Ellipses, or newaxis
+  # objects]". Detects this case and canonicalizes to a tuple. This case is
+  # deprecated by NumPy and exists for backward compatibility.
+  if not isinstance(idx, tuple):
+    if isinstance(idx, collections.Sequence) and not isinstance(idx, ndarray):
+      if _any(_should_unpack_list_index(i) for i in idx):
+        idx = tuple(idx)
+      else:
+        idx = (idx,)
     else:
-      if idx.ndim > arr.ndim or idx.shape != arr.shape[:idx.ndim]:
-        msg = "Boolean index shape did not match indexed array shape prefix."
+      idx = (idx,)
+  return idx
+
+def _expand_bool_indices(idx):
+  """Converts concrete bool indexes into advanced integer indexes."""
+  out = []
+  for i in idx:
+    try:
+      abstract_i = core.get_aval(i)
+    except TypeError:
+      abstract_i = None
+    if (isinstance(abstract_i, ShapedArray) and onp.issubdtype(abstract_i.dtype, onp.bool_)
+          or isinstance(i, list) and _all(not _shape(e) and onp.issubdtype(_dtype(e), onp.bool_)
+                                          for e in i)):
+      if isinstance(i, list):
+        i = array(i)
+        abstract_i = core.get_aval(i)
+
+      if not type(abstract_i) is ConcreteArray:
+        msg = ("Array boolean indices must be static (e.g. no dependence on an "
+               "argument to a jit or vmap function).")
         raise IndexError(msg)
       else:
-        reshaped_arr = arr.reshape((-1,) + arr.shape[idx.ndim:])
-        int_idx, = onp.where(idx.ravel())
-        return lax.index_take(reshaped_arr, (int_idx,), (0,))
-
-  # Handle non-advanced tuple indices by recursing once
-  elif isinstance(idx, tuple) and _all(onp.ndim(elt) == 0 for elt in idx):
-    canonical_idx = _canonicalize_tuple_index(arr, idx)
-    result, axis = arr, 0
-    # TODO(mattjj): could generate a single HLO here, rather than one for each
-    # elt in canonical idx. For example, x[0, :, 0] generates three HLOs now.
-    for elt in (elt for elt in canonical_idx if elt is not None):
-      result = _rewriting_take(result, elt, axis=axis)
-      axis += isinstance(elt, slice)   # advance axis index if not eliminated
-    unexpanded_shape_itr = iter(result.shape)
-    result_shape = tuple(1 if elt is None else next(unexpanded_shape_itr)
-                         for elt in canonical_idx if isinstance(elt, (type(None), slice)))
-    return lax.reshape(result, result_shape) if result_shape else result
-
-  # Handle advanced indexing (non-tuple sequence, ndarray of dtype int or bool,
-  # or a tuple with at least one sequence object).
-  # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#advanced-indexing
-  # https://gist.github.com/seberg/976373b6a2b7c4188591
-
-  # Handle integer array indexing *without* ellipsis/slices/nones
-  # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#integer-array-indexing
-  if _is_advanced_int_indexer_without_slices(idx):
-    if isinstance(idx, (tuple, list)):
-      if _any(_shape(e) for e in idx):
-        # At least one sequence element in the index list means broadcasting.
-        idx = broadcast_arrays(*idx)
-      else:
-        # The index list is a flat list of integers.
-        idx = [lax.concatenate([lax.reshape(e, (1,)) for e in idx], 0)]
+        out.extend(onp.where(i))
     else:
-      # The indexer is just a single integer array.
-      idx = [idx]
-
-    flat_idx = tuple([mod(ravel(x), _constant_like(x, arr.shape[i]))
-                      for i, x in enumerate(idx)])
-    # TODO(mattjj): if we instead lower directly to lax.gather, we can probably
-    # eliminate the reshape here.
-    out = lax.index_take(arr, flat_idx, tuple(range(len(idx))))
-    return lax.reshape(out, idx[0].shape + _shape(arr)[len(idx):])
-
-  # Handle integer array indexing *with* ellipsis/slices/nones by recursing once
-  # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#combining-advanced-and-basic-indexing
-  elif _is_advanced_int_indexer(idx):
-    canonical_idx = _canonicalize_tuple_index(arr, tuple(idx))
-    idx_noadvanced = [slice(None) if _is_int_arraylike(e) else e
-                      for e in canonical_idx]
-    arr_sliced = _rewriting_take(arr, tuple(idx_noadvanced))
-
-    advanced_pairs = ((e, i) for i, e in enumerate(canonical_idx) if _is_int_arraylike(e))
-    idx_advanced, axes = zip(*advanced_pairs)
-    idx_advanced = broadcast_arrays(*idx_advanced)
-
-    flat_idx = tuple(mod(ravel(x), _constant_like(x, arr_sliced.shape[i]))
-                     for i, x in zip(axes, idx_advanced))
-    # TODO(mattjj): if we instead lower directly to lax.gather, we can probably
-    # eliminate the reshape here.
-    out = lax.index_take(arr_sliced, flat_idx, axes)
-    shape_suffix = tuple(onp.delete(_shape(arr_sliced), axes))
-    out = lax.reshape(out, idx_advanced[0].shape + shape_suffix)
-
-    axes_are_contiguous = onp.all(onp.diff(axes) == 1)
-    if axes_are_contiguous:
-      start = axes[0]
-      naxes = idx_advanced[0].ndim
-      out = moveaxis(out, list(range(naxes)), list(range(start, start + naxes)))
-    return out
-
-  msg = "Indexing mode not yet supported. Open a feature request!\n{}"
-  raise IndexError(msg.format(idx))
-
+      out.append(i)
+  return tuple(out)
 
 def _is_slice_none(idx):
   """Return True if idx is equal to slice(None), False otherwise."""
   if isinstance(idx, slice):
     return idx.start is None and idx.stop is None and idx.step is None
 
-
+# TODO(mattjj): clean up this logic
 def _is_advanced_int_indexer(idx):
   """Returns True if idx should trigger int array indexing, False otherwise."""
   # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#advanced-indexing
-  if isinstance(idx, (tuple, list)) and _any(onp.ndim(elt) != 0 for elt in idx):
-    return _all(e is None or e is Ellipsis or isinstance(e, slice)
-                or _is_int_arraylike(e) for e in idx)
-  else:
-    return _is_int_arraylike(idx)
-
-
-def _is_advanced_int_indexer_without_slices(idx):
-  """Returns True iff idx is an advanced int idx without slice/ellipsis/none."""
-  if _is_advanced_int_indexer(idx):
-    if isinstance(idx, (tuple, list)):
-      return not _any(e is None or e is Ellipsis or isinstance(e, slice)
-                      for e in idx)
-    else:
-      return True
-
+  assert isinstance(idx, tuple)
+  if _all(onp.ndim(elt) == 0 for elt in idx):
+    return False
+  return _all(e is None or e is Ellipsis or isinstance(e, slice)
+              or _is_int_arraylike(e) for e in idx)
 
 def _is_int_arraylike(x):
   """Returns True if x is array-like with integer dtype, False otherwise."""
@@ -2369,22 +2497,22 @@ def _is_int_arraylike(x):
           or isinstance(x, (list, tuple)) and _all(_is_int_arraylike(e) for e in x))
 
 
-def _canonicalize_tuple_index(arr, idx):
+def _canonicalize_tuple_index(arr_ndim, idx):
   """Helper to remove Ellipsis and add in the implicit trailing slice(None)."""
   len_without_none = _sum(1 for e in idx if e is not None and e is not Ellipsis)
-  if len_without_none > arr.ndim:
+  if len_without_none > arr_ndim:
     msg = "Too many indices for array: {} non-None/Ellipsis indices for dim {}."
-    raise IndexError(msg.format(len_without_none, arr.ndim))
+    raise IndexError(msg.format(len_without_none, arr_ndim))
   ellipses = (i for i, elt in enumerate(idx) if elt is Ellipsis)
   ellipsis_index = next(ellipses, None)
   if ellipsis_index is not None:
     if next(ellipses, None) is not None:
       msg = "Multiple ellipses (...) not supported: {}."
       raise IndexError(msg.format(list(map(type, idx))))
-    colons = (slice(None),) * (arr.ndim - len_without_none)
+    colons = (slice(None),) * (arr_ndim - len_without_none)
     idx = idx[:ellipsis_index] + colons + idx[ellipsis_index + 1:]
-  elif len_without_none < arr.ndim:
-    colons = (slice(None),) * (arr.ndim - len_without_none)
+  elif len_without_none < arr_ndim:
+    colons = (slice(None),) * (arr_ndim - len_without_none)
     idx = tuple(idx) + colons
   return idx
 
