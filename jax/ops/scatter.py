@@ -96,11 +96,10 @@ def _scatter_update(x, idx, y, scatter_op):
 
   advanced_indexes = None
 
-  # The positions of the advanced indexing axes in `idx`.
+  # The positions of the advanced indexes in `idx`.
   idx_advanced_axes = []
 
   # The positions of the advanced indexes in x's shape.
-  # collapsed, after None axes have been removed. See below.
   x_advanced_axes = None
 
   if _is_advanced_int_indexer(idx):
