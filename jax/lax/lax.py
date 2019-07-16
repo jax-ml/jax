@@ -563,10 +563,13 @@ def broadcast(operand, sizes):
 def broadcast_in_dim(operand, shape, broadcast_dimensions):
   if operand.ndim == len(shape) and not len(broadcast_dimensions):
     return operand
-  else:
-    return broadcast_in_dim_p.bind(
-        operand, shape=tuple(shape),
-        broadcast_dimensions=tuple(broadcast_dimensions))
+  if any(x < 0 or x >= len(shape) for x in broadcast_dimensions):
+    msg = ("broadcast dimensions must be >= 0 and < ndim(shape), got {} for "
+           "shape {}")
+    raise ValueError(msg.format(broadcast_dimensions, shape))
+  return broadcast_in_dim_p.bind(
+      operand, shape=tuple(shape),
+      broadcast_dimensions=tuple(broadcast_dimensions))
 
 def reshape(operand, new_sizes, dimensions=None):
   """Wraps XLA's `Reshape

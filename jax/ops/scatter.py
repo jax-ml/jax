@@ -18,6 +18,8 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import collections
+
 import numpy as onp
 
 from ..abstract_arrays import ShapedArray, ConcreteArray
@@ -38,6 +40,10 @@ def _is_advanced_int_indexer(idx):
              isinstance(idx, slice) or
              isinstance(idx, tuple) and all(onp.ndim(elt) == 0 for elt in idx))
   return out and np._is_advanced_int_indexer(idx)
+
+def _triggers_unpack(x):
+  return (isinstance(x, np.ndarray) or isinstance(x, collections.Sequence)
+          or isinstance(x, slice) or x is Ellipsis or x is None)
 
 def _scatter_update(x, idx, y, scatter_op):
   """Helper for indexed updates.
@@ -67,51 +73,48 @@ def _scatter_update(x, idx, y, scatter_op):
   y_shape = np.shape(y)
   y = lax.convert_element_type(y, lax.dtype(x))
 
-  # Check if there's advanced indexing going on, and handle differently based on
-  # whether it is or isn't mixed with basic indexing.
-  if _is_advanced_int_indexer(idx):
-    if np._is_advanced_int_indexer_without_slices(idx):
-      if isinstance(idx, (tuple, list)):
-        if any(onp.shape(e) for e in idx):
-          # At least one sequence element in the index list means broadcasting.
-          idx = np.broadcast_arrays(*idx)
-        else:
-          # The index list is a flat list of integers.
-          idx = [lax.concatenate([lax.reshape(e, (1,)) for e in idx], 0)]
-      else:
-        # The indexer is just a single integer array.
-        idx = [idx]
-
-      stacked_idx = np.concatenate(
-          [np.mod(np.reshape(a, (-1, 1)), np._constant_like(a, x.shape[i]))
-          for i, a in enumerate(idx)], axis=1)
-
-      y = np.broadcast_to(y, idx[0].shape + onp.shape(x)[len(idx):])
-      y = lax.reshape(y, (stacked_idx.shape[0],) + onp.shape(x)[len(idx):])
-
-      dnums = lax.ScatterDimensionNumbers(
-          update_window_dims=tuple(range(1, y.ndim)),
-          inserted_window_dims=tuple(range(len(idx))),
-          scatter_dims_to_operand_dims=tuple(range(len(idx))))
-      return scatter_op(x, stacked_idx, y, dnums)
-    elif np._is_advanced_int_indexer(idx):
-      # TODO(mattjj, phawkins): one of us is going to implement this case someday
-      msg = "Unimplemented case for indexed update. Open a feature request!"
-      raise NotImplementedError(msg)
-    else:
-      assert False  # unreachable
-
-  # At this point there's no advanced indexing going on, so we process each
-  # element of the index one at a time to build up a scatter.
+  # "Basic slicing is initiated if the selection object is a non-array,
+  # non-tuple sequence containing slice objects, [Ellipses, or newaxis
+  # objects]". Detects this case and canonicalizes to a tuple.
   if not isinstance(idx, tuple):
-    idx = (idx,)
+    if isinstance(idx, collections.Sequence) and not isinstance(idx, np.ndarray):
+      if any(_triggers_unpack(i) for i in idx):
+        idx = tuple(idx)
+      else:
+        idx = (idx,)
+    else:
+      idx = (idx,)
 
   # Remove ellipses and add trailing slice(None)s.
   idx = np._canonicalize_tuple_index(x, idx)
 
+  # Check for advanced indexing.
+
+  # Do the advanced indexing axes appear contiguously? If not, NumPy semantics
+  # move the advanced axes to the front.
+  advanced_axes_are_contiguous = False
+
+  advanced_indexes = None
+
+  # The positions of the advanced indexes in `idx`.
+  idx_advanced_axes = []
+
+  # The positions of the advanced indexes in x's shape.
+  x_advanced_axes = None
+
+  if _is_advanced_int_indexer(idx):
+    idx_no_nones = [(i, d) for i, d in enumerate(idx) if d is not None]
+    advanced_pairs = (
+      (np.asarray(e), i, j) for j, (i, e) in enumerate(idx_no_nones)
+      if (isinstance(e, collections.Sequence) or isinstance(e, np.ndarray)))
+    advanced_pairs = ((np.mod(e, np._constant_like(e, x_shape[j])), i, j)
+                      for e, i, j in advanced_pairs)
+    advanced_indexes, idx_advanced_axes, x_advanced_axes = zip(*advanced_pairs)
+    advanced_axes_are_contiguous = onp.all(onp.diff(idx_advanced_axes) == 1)
+
   _int = lambda aval: not aval.shape and onp.issubdtype(aval.dtype, onp.integer)
 
-  x_axis = 0
+  x_axis = 0  # Current axis in x.
   y_axis = 0  # Current axis in y, before collapsing. See below.
   collapsed_y_axis = 0  # Current axis in y, after collapsing.
 
@@ -132,7 +135,35 @@ def _scatter_update(x, idx, y, scatter_op):
   # Finally, we reverse reversed_y_dims to handle slices with negative strides.
   reversed_y_dims = []
 
-  for i in idx:
+
+  for idx_pos, i in enumerate(idx):
+    # If the advanced indices are not contiguous they are moved to the front
+    # of the slice. Otherwise, they replace the chunk of advanced indices.
+    if (advanced_indexes is not None and
+        (advanced_axes_are_contiguous and idx_pos == idx_advanced_axes[0] or
+         not advanced_axes_are_contiguous and idx_pos == 0)):
+      advanced_indexes = np.broadcast_arrays(*advanced_indexes)
+      shape = advanced_indexes[0].shape
+      ndim = len(shape)
+      advanced_indexes = [
+        lax.convert_element_type(lax.reshape(a, shape + (1,)), np.int32)
+        for a in advanced_indexes]
+
+      scatter_indices = lax.broadcast_in_dim(
+        scatter_indices, onp.insert(scatter_indices.shape, -1, shape),
+        tuple(range(scatter_indices.ndim - 1)) + (scatter_indices.ndim + ndim - 1,))
+      scatter_indices = np.concatenate([scatter_indices] + advanced_indexes, -1)
+      scatter_dims_to_operand_dims.extend(x_advanced_axes)
+      inserted_window_dims.extend(x_advanced_axes)
+      slice_shape.extend(shape)
+      collapsed_slice_shape.extend(shape)
+      y_axis += ndim
+      collapsed_y_axis += ndim
+
+    if idx_pos in idx_advanced_axes:
+      x_axis += 1
+      continue
+
     try:
       abstract_i = core.get_aval(i)
     except TypeError:
@@ -201,7 +232,7 @@ def _scatter_update(x, idx, y, scatter_op):
 
   dnums = lax.ScatterDimensionNumbers(
     update_window_dims = tuple(update_window_dims),
-    inserted_window_dims = tuple(inserted_window_dims),
+    inserted_window_dims = tuple(sorted(inserted_window_dims)),
     scatter_dims_to_operand_dims = tuple(scatter_dims_to_operand_dims)
   )
   return scatter_op(x, scatter_indices, y, dnums)

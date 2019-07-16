@@ -316,7 +316,7 @@ ADVANCED_INDEXING_TESTS_NO_REPEATS = [
      ]),
 ]
 
-MIXED_ADVANCED_INDEXING_TESTS = [
+MIXED_ADVANCED_INDEXING_TESTS_NO_REPEATS = [
     ("SlicesAndOneIntArrayIndex",
      [IndexSpec(shape=(2, 3), indexer=(onp.array([0, 1]), slice(1, 2))),
      IndexSpec(shape=(2, 3), indexer=(slice(0, 2),
@@ -325,7 +325,7 @@ MIXED_ADVANCED_INDEXING_TESTS = [
                                          onp.array([0, 2]),
                                          slice(None))),
      IndexSpec(shape=(3, 4, 5), indexer=(Ellipsis,
-                                         onp.array([[0, 2], [1, 1]]),
+                                         onp.array([[0, 2], [1, 3]]),
                                          slice(None))),
      ]),
     ("SlicesAndTwoIntArrayIndices",
@@ -346,10 +346,7 @@ MIXED_ADVANCED_INDEXING_TESTS = [
                                          onp.array([-1, 2]))),
      IndexSpec(shape=(3, 4, 5), indexer=(onp.array([0, 2, -2]),
                                          slice(None, None, 2),
-                                         onp.array([-1, 2, -1]))),
-     IndexSpec(shape=(3, 4, 5), indexer=(onp.array([[0, 2], [2, 0]]),
-                                         Ellipsis,
-                                         onp.array([[1, 0], [1, 0]]))),
+                                         onp.array([-1, 2, 1]))),
      ]),
     ("NonesAndIntArrayIndices",
      [IndexSpec(shape=(3, 4, 5), indexer=[onp.array([0, 2]),
@@ -369,6 +366,22 @@ MIXED_ADVANCED_INDEXING_TESTS = [
      [IndexSpec(shape=(3, 4), indexer=(Ellipsis, onp.array(1, dtype=onp.int32)))
      ]),
 ]
+
+MIXED_ADVANCED_INDEXING_TESTS = MIXED_ADVANCED_INDEXING_TESTS_NO_REPEATS + [
+    ("SlicesAndOneIntArrayIndex",
+     [
+     IndexSpec(shape=(3, 4, 5), indexer=(Ellipsis,
+                                         onp.array([[0, 2], [1, 1]]),
+                                         slice(None))),
+     ]),
+    ("SlicesAndTwoIntArrayIndices",
+     [IndexSpec(shape=(3, 4, 5), indexer=(onp.array([0, 2, -2]),
+                                         slice(None, None, 2),
+                                         onp.array([-1, 2, -1]))),
+      IndexSpec(shape=(3, 4, 5), indexer=(onp.array([[0, 2], [2, 0]]),
+                                          Ellipsis,
+                                          onp.array([[1, 0], [1, 0]]))),
+     ]),]
 
 class IndexingTest(jtu.JaxTestCase):
   """Tests for Numpy indexing translation rules."""
@@ -787,6 +800,28 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     for update_dtype in ([dtype] if op == UpdateOps.ADD else all_dtypes)
     for rng in [jtu.rand_default()]))
   def testAdvancedIndexing(self, shape, dtype, update_shape, update_dtype,
+                           rng, indexer, op):
+    args_maker = lambda: [rng(shape, dtype), rng(update_shape, update_dtype)]
+    onp_fn = lambda x, y: UpdateOps.onp_fn(op, indexer, x, y)
+    jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y)
+    self._CheckAgainstNumpy(onp_fn, jax_fn, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jax_fn, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list({
+      "testcase_name": "{}_inshape={}_indexer={}_update={}_op={}".format(
+          name, jtu.format_shape_dtype_string(shape, dtype), indexer,
+          jtu.format_shape_dtype_string(update_shape, update_dtype), op.name),
+       "shape": shape, "dtype": dtype, "rng": rng, "indexer": indexer,
+       "update_shape": update_shape, "update_dtype": update_dtype,
+       "op": op
+  } for name, index_specs in MIXED_ADVANCED_INDEXING_TESTS_NO_REPEATS
+    for shape, indexer in index_specs
+    for op in UpdateOps
+    for dtype in (all_dtypes if op == UpdateOps.UPDATE else default_dtypes)
+    for update_shape in _broadcastable_shapes(_update_shape(shape, indexer))
+    for update_dtype in ([dtype] if op == UpdateOps.ADD else all_dtypes)
+    for rng in [jtu.rand_default()]))
+  def testMixedAdvancedIndexing(self, shape, dtype, update_shape, update_dtype,
                            rng, indexer, op):
     args_maker = lambda: [rng(shape, dtype), rng(update_shape, update_dtype)]
     onp_fn = lambda x, y: UpdateOps.onp_fn(op, indexer, x, y)
