@@ -574,6 +574,10 @@ def vmap(fun, in_axes=0, out_axes=0):
 
   @wraps(fun, docstr=docstr)
   def batched_fun(*args, **kwargs):
+    if kwargs:
+      msg = ("kwargs not yet supported for functions output by vmap. Please "
+             "+1 the issue https://github.com/google/jax/issues/912")
+      raise NotImplementedError(msg)
     f = lu.wrap_init(fun, kwargs) if not isinstance(fun, lu.WrappedFun) else fun
     in_axes_ = in_axes if isinstance(in_axes, (list, tuple)) else (in_axes,) * len(args)
     in_flat, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
