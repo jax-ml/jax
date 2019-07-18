@@ -20,11 +20,15 @@ from jax.abstract_arrays import ShapedArray
 from jax.core import Primitive
 from jax.interpreters import xla
 from ..interpreters import ad
+from ..interpreters import batching
 
 
 def fft(x, fft_type, fft_lengths=None):
   if fft_lengths is None:
     fft_lengths = x.shape
+  elif len(fft_lengths) == 0:
+    # XLA FFT doesn't support 0-rank.
+    return x
   else:
     fft_lengths = tuple(fft_lengths)
   return fft_p.bind(x, fft_type=fft_type, fft_lengths=fft_lengths)
@@ -41,8 +45,15 @@ def fft_translation_rule(c, x, fft_type, fft_lengths):
 def fft_transpose_rule(t, fft_type, fft_lengths):
   return fft(t, fft_type, fft_lengths),
 
+def fft_batching_rule(batched_args, batch_dims, fft_type, fft_lengths):
+  x, = batched_args
+  bd, = batch_dims
+  x = batching.bdim_at_front(x, bd)
+  return fft(x, fft_type, fft_lengths), 0
+
 fft_p = Primitive('fft')
 fft_p.def_impl(fft_impl)
 fft_p.def_abstract_eval(fft_abstract_eval)
 xla.translations[fft_p] = fft_translation_rule
 ad.deflinear(fft_p, fft_transpose_rule)
+batching.primitive_batchers[fft_p] = fft_batching_rule

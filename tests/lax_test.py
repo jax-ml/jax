@@ -2645,6 +2645,21 @@ class LaxVmapTest(jtu.JaxTestCase):
       for bdims in all_bdims(shape):
         self._CheckBatching(fun, 3, bdims, (shape,), dtype, rng)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_bdims={}_fft_ndims={}"
+       .format(shape, bdims, fft_ndims),
+       "shape": shape, "bdims": bdims, "fft_ndims": fft_ndims, "rng": rng}
+      for shape in [(5,), (3, 4, 5), (2, 3, 4, 5)]
+      for bdims in all_bdims(shape)
+      for fft_ndims in range(0, min(3, len(shape)) + 1)
+      for rng in [jtu.rand_default()]))
+  def testFft(self, fft_ndims, shape, bdims, rng):
+    ndims = len(shape)
+    axes = range(ndims - fft_ndims, ndims)
+    fft_lengths = [shape[axis] for axis in axes]
+    op = lambda x: lax.fft(x, xla_bridge.xla_client.FftType.FFT, fft_lengths)
+    self._CheckBatching(op, 5, bdims, [shape], onp.complex64, rng)
+
   # TODO Concatenate
   # TODO Reverse
   # TODO DynamicSlice
