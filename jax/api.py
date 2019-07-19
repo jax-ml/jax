@@ -167,9 +167,11 @@ def disable_jit():
   [5 7 9]
   """
   global _jit_is_disabled
-  _jit_is_disabled, prev_val = True, _jit_is_disabled
-  yield
-  _jit_is_disabled = prev_val
+  try:
+    _jit_is_disabled, prev_val = True, _jit_is_disabled
+    yield
+  finally:
+    _jit_is_disabled = prev_val
 _jit_is_disabled = False
 
 
