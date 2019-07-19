@@ -190,7 +190,7 @@ def fold_in(key, data):
   """
   return _fold_in(key, data)
 
-@partial(jit, static_argnums=(1,))
+@jit
 def _fold_in(key, data):
   key2 = lax.tie_in(key, PRNGKey(data))
   return threefry_2x32(key, key2)
