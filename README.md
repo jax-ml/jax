@@ -342,7 +342,7 @@ debugging but they may only be executed once if they're under a `jit` decorator.
 > **Don’t use**
 >
 > *   Assignment into arrays like `A[0, 0] = x` (use
->     [`jax.ops.index_update`](https://jax.readthedocs.io/en/latest/_autosummary/jax.ops.index_add.html#jax.ops.index_update)
+>     [`jax.ops.index_update`](https://jax.readthedocs.io/en/latest/_autosummary/jax.ops.index_update.html#jax.ops.index_update)
 >     instead)
 > *   Implicit casting to arrays like `np.sum([x, y])` (use `np.sum(np.array([x,
 >     y])` instead)
