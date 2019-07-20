@@ -1534,6 +1534,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for keepdims in [False, True]))
   def testQuantile(self, op, a_rng, q_rng, a_shape, a_dtype, q_shape, q_dtype,
                    axis, keepdims):
+    if op == "quantile" and numpy_version < (1, 15):
+      raise SkipTest("Numpy < 1.15 does not have np.quantile")
     args_maker = lambda: [a_rng(a_shape, a_dtype), q_rng(q_shape, q_dtype)]
     onp_fun = partial(getattr(onp, op), axis=axis, keepdims=keepdims)
     lnp_fun = partial(getattr(lnp, op), axis=axis, keepdims=keepdims)

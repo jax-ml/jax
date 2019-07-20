@@ -2653,6 +2653,7 @@ class LaxVmapTest(jtu.JaxTestCase):
       for bdims in all_bdims(shape)
       for fft_ndims in range(0, min(3, len(shape)) + 1)
       for rng in [jtu.rand_default()]))
+  @jtu.skip_on_devices("tpu")  # TODO(b/137993701): unimplemented cases.
   def testFft(self, fft_ndims, shape, bdims, rng):
     ndims = len(shape)
     axes = range(ndims - fft_ndims, ndims)
