@@ -259,7 +259,7 @@ NamedtupleNode = NodeType('namedtuple',
 class Partial(functools.partial):
   """A version of functools.partial that works in pytrees.
 
-  Use it for partial function evaluation in a way that is compatibile with JAX's
+  Use it for partial function evaluation in a way that is compatible with JAX's
   transformations, e.g., ``Partial(func, *args, **kwargs)``.
 
   (You need to explicitly opt-in to this behavior because we didn't want to give
