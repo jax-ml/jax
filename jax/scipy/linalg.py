@@ -16,12 +16,15 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from functools import partial
 import warnings
 
 import scipy.linalg
 
 from .. import lax
 from .. import lax_linalg
+from ..ad_util import zero
+from ..api import custom_transforms, defjvp_all, defvjp_all, jit
 from ..numpy.lax_numpy import _wraps
 from ..numpy import lax_numpy as np
 from ..numpy import linalg as np_linalg
@@ -166,11 +169,58 @@ def qr(a, overwrite_a=False, lwork=None, mode="full", pivoting=False,
 def solve(a, b, sym_pos=False, lower=False, overwrite_a=False, overwrite_b=False,
           debug=False, check_finite=True):
   del overwrite_a, overwrite_b, debug, check_finite
-  if not sym_pos:
-    return np_linalg.solve(a, b)
 
   a, b = np_linalg._promote_arg_dtypes(np.asarray(a), np.asarray(b))
-  return cho_solve(cho_factor(a, lower=lower), b)
+
+  if sym_pos:
+    if not issubclass(a.dtype.type, np.complexfloating):
+      # TODO: make this work for complex-valued inputs
+      return _solve_sym_pos(a, b, lower)
+    else:
+      return cho_solve(cho_factor(a, lower=lower), b)
+  else:
+    return np_linalg.solve(a, b)
+
+
+def _cho_factor_and_solve(a, b, lower):
+  a, b = np_linalg._promote_arg_dtypes(np.asarray(a), np.asarray(b))
+  factors = cho_factor(a, lower=lower)
+  x = cho_solve(factors, b)
+  return factors, x
+
+
+def _solve_sym_pos(a, b, lower):
+  # More efficient VJPs and JVPs for positive-symmetric matrices.
+
+  @custom_transforms
+  def func(a, b):
+    _, x = _cho_factor_and_solve(a, b, lower)
+    return x
+
+  @partial(defvjp_all, func)
+  def jvp(primals, tangents):
+    a, b = primals
+    grad_a, grad_b = tangents
+    factors, x = _cho_factor_and_solve(a, b, lower)
+    b2 = 0
+    if grad_a is not zero:
+      b2 -= np.dot(grad_a, x)
+    if grad_b is not zero:
+      b2 += grad_b
+    grad_x = cho_solve(factors, b2)
+    return x, grad_x
+
+  @partial(defvjp_all, func)
+  def vjp(a, b):
+    factors, x = _cho_factor_and_solve(a, b, lower)
+    def grad(grad_x):
+      grad_b = cho_solve(factors, grad_x)
+      updim = lambda x: x if x.ndim == 2 else x[..., None]
+      grad_a = -np.dot(updim(grad_b), updim(x).T.conj())
+      return grad_a, grad_b
+    return x, grad
+
+  return func(a, b)
 
 
 @_wraps(scipy.linalg.solve_triangular)

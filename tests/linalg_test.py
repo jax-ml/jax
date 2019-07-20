@@ -604,6 +604,10 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
                             check_dtypes=True, tol=1e-3)
     self._CompileAndCheck(jsp_fun, args_maker, check_dtypes=True)
+    if sym_pos:
+      a, b = args_maker()
+      jtu.check_grads(jsp_fun, (a, b), modes=["fwd", "rev"], order=2)
+
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
