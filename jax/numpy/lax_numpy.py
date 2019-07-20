@@ -2486,7 +2486,7 @@ def cov(m, y=None, rowvar=True, bias=False, ddof=None, fweights=None,
   return true_divide(dot(X, X_T.conj()), f).squeeze()
 
 
-@_wraps(onp.quantile)
+@_wraps(getattr(onp, "quantile", None))
 def quantile(a, q, axis=None, out=None, overwrite_input=False,
              interpolation="linear", keepdims=False):
   if overwrite_input or out is not None:
