@@ -541,7 +541,6 @@ class IndexingTest(jtu.JaxTestCase):
       for dtype in all_dtypes
       for rng in [jtu.rand_default()])
   def testAdvancedIntegerIndexing(self, shape, dtype, rng, indexer):
-    print("indexer", indexer)
     args_maker = lambda: [rng(shape, dtype), indexer]
     fun = lambda x, idx: x[idx]
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)

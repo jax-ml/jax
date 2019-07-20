@@ -58,7 +58,6 @@ def _scatter_update(x, idx, y, scatter_op):
   # Broadcast `y` to the slice output shape.
   y = np.broadcast_to(y, tuple(indexer.slice_shape))
   # Collapse any `None`/`np.newaxis` dimensions.
-  #y = lax.reshape(y, indexer.collapsed_slice_shape)
   y = np.squeeze(y, axis=indexer.newaxis_dims)
   if indexer.reversed_y_dims:
     y = lax.rev(y, indexer.reversed_y_dims)
