@@ -2726,8 +2726,15 @@ for func in get_module_functions(onp):
 def _swap_args(f):
   return lambda x, y: f(y, x)
 
+def _unimplemented_setitem(self, i, x):
+  msg = ("'{}' object does not support item assignment. JAX arrays are "
+         "immutable; perhaps you want jax.ops.index_update or "
+         "jax.ops.index_add instead?")
+  raise TypeError(msg.format(type(self)))
+
 _operators = {
     "getitem": _rewriting_take,
+    "setitem": _unimplemented_setitem,
     "neg": negative,
     "eq": equal,
     "ne": not_equal,
