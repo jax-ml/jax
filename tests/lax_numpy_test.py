@@ -734,11 +734,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "rng": jtu.rand_default(), "lnp_op": getattr(lnp, op),
        "onp_op": getattr(onp, op)}
       for op in ["cumsum", "cumprod"]
-      # TODO(phawkins): replace both type lists with default_dtypes after a
-      # Jaxlib update includes
-      # https://github.com/google/jax/commit/86f5d189cf563b027c3cd00eea38072c003905c8
-      for dtype in [onp.float32, onp.int32]
-      for out_dtype in [onp.float32, onp.int32]
+      for dtype in default_dtypes
+      for out_dtype in default_dtypes
       for shape in all_shapes
       for axis in [None] + list(range(-len(shape), len(shape)))))
   def testCumSumProd(self, axis, shape, dtype, out_dtype, onp_op, lnp_op, rng):
@@ -1689,8 +1686,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertAllClose(onp.zeros(3,), api.grad(f)(onp.ones(3,)),
                         check_dtypes=True)
 
-  # TODO(phawkins): enable test after Jaxlib 0.1.22 is released.
-  @unittest.skip("Requires Jaxlib >= 0.1.22.")
   def testIssue777(self):
     x = lnp.linspace(-200, 0, 4, dtype=onp.float32)
     f = api.grad(lambda x: lnp.sum(1 / (1 + lnp.exp(-x))))

@@ -164,8 +164,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
 
   # TODO: currently it ignores the argument "shapes" and only tests dim=4
   @genNamedParametersNArgs(3, jtu.rand_default())
-  # TODO(phawkins): enable when there is an LU implementation for GPU/TPU.
-  @jtu.skip_on_devices("gpu", "tpu")
   def testMultivariateNormalLogPdf(self, rng, shapes, dtypes):
     scipy_fun = osp_stats.multivariate_normal.logpdf
     lax_fun = lsp_stats.multivariate_normal.logpdf
@@ -283,8 +281,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
-  # TODO(phawkins): enable test after Jaxlib 0.1.22 is released.
-  @unittest.skip("Requires Jaxlib >= 0.1.22.")
   def testIssue972(self):
     self.assertAllClose(
       onp.ones((4,), onp.float32),
