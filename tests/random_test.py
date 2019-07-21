@@ -252,7 +252,6 @@ class LaxRandomTest(jtu.JaxTestCase):
        "a": a, "dtype": onp.dtype(dtype).name}
       for a in [0.1, 1., 10.]
       for dtype in [onp.float32, onp.float64]))
-  @jtu.skip_on_devices("tpu")  # TODO(b/130544008): re-enable when XLA fixed
   def testGamma(self, a, dtype):
     key = random.PRNGKey(0)
     rand = lambda key, a: random.gamma(key, a, (10000,), dtype)
@@ -264,7 +263,6 @@ class LaxRandomTest(jtu.JaxTestCase):
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.gamma(a).cdf)
 
-  @jtu.skip_on_devices("tpu")  # TODO(b/130544008): re-enable when XLA fixed
   def testGammaShape(self):
     key = random.PRNGKey(0)
     x = random.gamma(key, onp.array([0.2, 0.3]), shape=(3, 2))

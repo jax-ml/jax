@@ -50,11 +50,6 @@ def _skip_if_unsupported_type(dtype):
   if (not FLAGS.jax_enable_x64 and
       dtype in (onp.dtype('float64'), onp.dtype('complex128'))):
     raise unittest.SkipTest("--jax_enable_x64 is not set")
-  if FLAGS.jax_test_dut and FLAGS.jax_test_dut.startswith("gpu"):
-    # TODO(b/129698548): enable complex128 tests when XLA/GPU has better
-    # complex128 support.
-    if dtype == onp.dtype('complex128'):
-      raise unittest.SkipTest("XLA/GPU complex128 support is incomplete.")
 
 
 numpy_version = tuple(map(int, onp.version.version.split('.')))

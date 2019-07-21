@@ -2323,10 +2323,8 @@ class LaxVmapTest(jtu.JaxTestCase):
       if (lhs_bdim, rhs_bdim) != (None, None)
       for rng in [jtu.rand_default()]
   ))
-  # TODO(mattjj): some cases fail on CPU with the latest XLA (jaxlib) release
-  # apparently because of an AVX512 issue, and some cases fail on TPU just due
-  # to numerical tolerances
-  @jtu.skip_on_devices("cpu", "tpu")
+  # TODO(mattjj): some cases fail on TPU just due to numerical tolerances
+  @jtu.skip_on_devices("tpu")
   def testConvGeneralDilatedBatching(
       self, lhs_shape, rhs_shape, dtype, strides, padding, lhs_dil, rhs_dil,
       dimension_numbers, perms, feature_group_count, lhs_bdim, rhs_bdim, rng):
