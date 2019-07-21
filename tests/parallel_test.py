@@ -17,6 +17,7 @@ from __future__ import division
 from __future__ import print_function
 
 import itertools
+import unittest
 from unittest import SkipTest
 
 import numpy as onp
@@ -181,6 +182,7 @@ class ParallelizeTest(jtu.JaxTestCase):
     ans = _parallelize(f)(x, y)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @unittest.skip("Missing cases in gather papply rule")
   def testOuter(self):
     x = onp.arange(10)
     y = 2 * onp.arange(10)
@@ -197,6 +199,7 @@ class ParallelizeTest(jtu.JaxTestCase):
     ans = _parallelize(f)(y)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @unittest.skip("Missing cases in gather papply rule")
   def testOuter3(self):
     x = onp.arange(10)
     y = 2 * onp.arange(10)

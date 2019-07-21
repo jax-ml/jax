@@ -22,28 +22,9 @@ import collections
 
 import numpy as onp
 
-from ..abstract_arrays import ShapedArray, ConcreteArray
-from .. import core
 from .. import lax
 from ..numpy import lax_numpy as np
 
-
-# TODO(mattjj): clean up this logic
-def _is_advanced_int_indexer(idx):
-  _int = lambda aval: not aval.shape and onp.issubdtype(aval.dtype, onp.integer)
-  try:
-    abstract_idx = core.get_aval(idx)
-  except TypeError:
-    abstract_idx = None
-  out = not (isinstance(abstract_idx, ConcreteArray) and _int(abstract_idx) or
-             isinstance(abstract_idx, ShapedArray) and _int(abstract_idx) or
-             isinstance(idx, slice) or
-             isinstance(idx, tuple) and all(onp.ndim(elt) == 0 for elt in idx))
-  return out and np._is_advanced_int_indexer(idx)
-
-def _triggers_unpack(x):
-  return (isinstance(x, np.ndarray) or isinstance(x, collections.Sequence)
-          or isinstance(x, slice) or x is Ellipsis or x is None)
 
 def _scatter_update(x, idx, y, scatter_op):
   """Helper for indexed updates.
@@ -64,178 +45,31 @@ def _scatter_update(x, idx, y, scatter_op):
   Returns:
     An ndarray representing an updated `x` after performing the scatter-update.
   """
-  # For more clues on the logic of this implementation, see the code for
-  # jax.numpy._rewriting_take (which has links to NumPy docs).
 
   x = np.asarray(x)
   y = np.asarray(y)
-  x_shape = np.shape(x)
-  y_shape = np.shape(y)
   y = lax.convert_element_type(y, lax.dtype(x))
 
-  # "Basic slicing is initiated if the selection object is a non-array,
-  # non-tuple sequence containing slice objects, [Ellipses, or newaxis
-  # objects]". Detects this case and canonicalizes to a tuple.
-  if not isinstance(idx, tuple):
-    if isinstance(idx, collections.Sequence) and not isinstance(idx, np.ndarray):
-      if any(_triggers_unpack(i) for i in idx):
-        idx = tuple(idx)
-      else:
-        idx = (idx,)
-    else:
-      idx = (idx,)
 
-  # Remove ellipses and add trailing slice(None)s.
-  idx = np._canonicalize_tuple_index(x, idx)
+  # XLA gathers and scatters are very similar in structure; the scatter logic
+  # is more or less a transpose of the gather equivalent.
+  indexer = np._index_to_gather(np.shape(x), idx)
 
-  # Check for advanced indexing.
+  # Broadcast `y` to the slice output shape.
+  y = np.broadcast_to(y, tuple(indexer.slice_shape))
+  # Collapse any `None`/`np.newaxis` dimensions.
+  y = np.squeeze(y, axis=indexer.newaxis_dims)
+  if indexer.reversed_y_dims:
+    y = lax.rev(y, indexer.reversed_y_dims)
 
-  # Do the advanced indexing axes appear contiguously? If not, NumPy semantics
-  # move the advanced axes to the front.
-  advanced_axes_are_contiguous = False
-
-  advanced_indexes = None
-
-  # The positions of the advanced indexes in `idx`.
-  idx_advanced_axes = []
-
-  # The positions of the advanced indexes in x's shape.
-  x_advanced_axes = None
-
-  if _is_advanced_int_indexer(idx):
-    idx_no_nones = [(i, d) for i, d in enumerate(idx) if d is not None]
-    advanced_pairs = (
-      (np.asarray(e), i, j) for j, (i, e) in enumerate(idx_no_nones)
-      if (isinstance(e, collections.Sequence) or isinstance(e, np.ndarray)))
-    advanced_pairs = ((np.mod(e, np._constant_like(e, x_shape[j])), i, j)
-                      for e, i, j in advanced_pairs)
-    advanced_indexes, idx_advanced_axes, x_advanced_axes = zip(*advanced_pairs)
-    advanced_axes_are_contiguous = onp.all(onp.diff(idx_advanced_axes) == 1)
-
-  _int = lambda aval: not aval.shape and onp.issubdtype(aval.dtype, onp.integer)
-
-  x_axis = 0  # Current axis in x.
-  y_axis = 0  # Current axis in y, before collapsing. See below.
-  collapsed_y_axis = 0  # Current axis in y, after collapsing.
-
-  # Scatter dimension numbers.
-  update_window_dims = []
-  inserted_window_dims = []
-  scatter_dims_to_operand_dims = []
-
-  scatter_indices = np.zeros((0,), dtype=np.int32)
-
-  # We perform three transformations to y before the scatter op, in order:
-  # First, y is broadcast to slice_shape. In general `y` only need broadcast to
-  # the right shape.
-  slice_shape = []
-  # Next, y is reshaped to collapsed_slice_shape. This is to handle `None`
-  # indices, which the scatter cannot remove itself.
-  collapsed_slice_shape = []
-  # Finally, we reverse reversed_y_dims to handle slices with negative strides.
-  reversed_y_dims = []
-
-
-  for idx_pos, i in enumerate(idx):
-    # If the advanced indices are not contiguous they are moved to the front
-    # of the slice. Otherwise, they replace the chunk of advanced indices.
-    if (advanced_indexes is not None and
-        (advanced_axes_are_contiguous and idx_pos == idx_advanced_axes[0] or
-         not advanced_axes_are_contiguous and idx_pos == 0)):
-      advanced_indexes = np.broadcast_arrays(*advanced_indexes)
-      shape = advanced_indexes[0].shape
-      ndim = len(shape)
-      advanced_indexes = [
-        lax.convert_element_type(lax.reshape(a, shape + (1,)), np.int32)
-        for a in advanced_indexes]
-
-      scatter_indices = lax.broadcast_in_dim(
-        scatter_indices, onp.insert(scatter_indices.shape, -1, shape),
-        tuple(range(scatter_indices.ndim - 1)) + (scatter_indices.ndim + ndim - 1,))
-      scatter_indices = np.concatenate([scatter_indices] + advanced_indexes, -1)
-      scatter_dims_to_operand_dims.extend(x_advanced_axes)
-      inserted_window_dims.extend(x_advanced_axes)
-      slice_shape.extend(shape)
-      collapsed_slice_shape.extend(shape)
-      y_axis += ndim
-      collapsed_y_axis += ndim
-
-    if idx_pos in idx_advanced_axes:
-      x_axis += 1
-      continue
-
-    try:
-      abstract_i = core.get_aval(i)
-    except TypeError:
-      abstract_i = None
-    if (isinstance(abstract_i, ConcreteArray) or
-        isinstance(abstract_i, ShapedArray)) and _int(abstract_i):
-      i = np.mod(i, np._constant_like(i, x.shape[x_axis]))
-      i = lax.convert_element_type(i, np.int32)
-      i = np.broadcast_to(i, tuple(scatter_indices.shape[:-1]) + (1,))
-      scatter_indices = np.concatenate((scatter_indices, i), -1)
-      inserted_window_dims.append(x_axis)
-      scatter_dims_to_operand_dims.append(x_axis)
-      x_axis += 1
-    elif i is None:
-      slice_shape.append(1)
-      y_axis += 1
-    elif np._is_slice_none(i):
-      slice_shape.append(x_shape[x_axis])
-      collapsed_slice_shape.append(x_shape[x_axis])
-      update_window_dims.append(collapsed_y_axis)
-      collapsed_y_axis += 1
-      y_axis += 1
-      x_axis += 1
-    elif isinstance(i, slice):
-      start, limit, stride, needs_rev = np._static_idx(i, x.shape[x_axis])
-      if needs_rev:
-        reversed_y_dims.append(collapsed_y_axis)
-      if stride == 1:
-        i = lax.convert_element_type(start, np.int32)
-        i = np.broadcast_to(i, tuple(scatter_indices.shape[:-1]) + (1,))
-        scatter_indices = np.concatenate((scatter_indices, i), -1)
-        slice_shape.append(limit - start)
-        collapsed_slice_shape.append(limit - start)
-        update_window_dims.append(collapsed_y_axis)
-        scatter_dims_to_operand_dims.append(x_axis)
-      else:
-        i = np.arange(start, limit, stride, dtype=np.int32)
-        size = i.shape[0]
-        slice_shape.append(size)
-        collapsed_slice_shape.append(size)
-        scatter_indices_shape = tuple(scatter_indices.shape[:-1]) + (size,)
-        i = lax.broadcast_in_dim(
-            i, shape=scatter_indices_shape + (1,),
-            broadcast_dimensions=(len(scatter_indices_shape) - 1,))
-        scatter_indices = lax.broadcast_in_dim(
-            scatter_indices,
-            shape=scatter_indices_shape + (len(scatter_dims_to_operand_dims),),
-            broadcast_dimensions=(
-              tuple(range(len(scatter_indices_shape) - 1)) +
-              (len(scatter_indices_shape),)))
-        scatter_indices = np.concatenate(
-          (scatter_indices, i), len(scatter_indices_shape))
-        scatter_dims_to_operand_dims.append(x_axis)
-        inserted_window_dims.append(x_axis)
-
-      collapsed_y_axis += 1
-      y_axis += 1
-      x_axis += 1
-    else:
-      raise IndexError("Unknown index type ", i)
-
-  y = np.broadcast_to(y, tuple(slice_shape))
-  y = lax.reshape(y, collapsed_slice_shape)
-  if reversed_y_dims:
-    y = lax.rev(y, reversed_y_dims)
-
+  # Transpose the gather dimensions into scatter dimensions (cf.
+  # lax._gather_transpose_rule)
   dnums = lax.ScatterDimensionNumbers(
-    update_window_dims = tuple(update_window_dims),
-    inserted_window_dims = tuple(sorted(inserted_window_dims)),
-    scatter_dims_to_operand_dims = tuple(scatter_dims_to_operand_dims)
+    update_window_dims=indexer.dnums.offset_dims,
+    inserted_window_dims=indexer.dnums.collapsed_slice_dims,
+    scatter_dims_to_operand_dims=indexer.dnums.start_index_map
   )
-  return scatter_op(x, scatter_indices, y, dnums)
+  return scatter_op(x, indexer.gather_indices, y, dnums)
 
 
 class _Indexable(object):
