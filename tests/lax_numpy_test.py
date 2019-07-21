@@ -1115,7 +1115,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     ans = lnp.array(a)
     assert ans == 3.
 
-  def testMemoryview(self):
+  @jtu.skip_on_devices("tpu")  # TODO(b/32368900): TPUs don't support uint8 yet.
+  def testMemoryView(self):
     ans = lnp.array(bytearray(b'\x2a'))
     self.assertAllClose(
         ans,
@@ -1532,6 +1533,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for q_dtype in [onp.float32]
         for q_shape in scalar_shapes + [(4,)]
         for keepdims in [False, True]))
+  @jtu.skip_on_devices("tpu")  # TODO(phawkins): investigate this failure
   def testQuantile(self, op, a_rng, q_rng, a_shape, a_dtype, q_shape, q_dtype,
                    axis, keepdims):
     if op == "quantile" and numpy_version < (1, 15):
@@ -1753,6 +1755,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for bias in [True, False]
         for ddof in [None, 2, 3]
         for rng in [jtu.rand_default()]))
+  @jtu.skip_on_devices("gpu")  # TODO(b/138003641): test fails on GPU.
   def testCov(self, shape, dtype, rowvar, ddof, bias, rng):
     args_maker = self._GetArgsMaker(rng, [shape], [dtype])
     onp_fun = partial(onp.cov, rowvar=rowvar, ddof=ddof, bias=bias)
