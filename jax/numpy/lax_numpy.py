@@ -12,6 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""
+Implements the NumPy API, using the primitives in :mod:`jax.lax`.
+
+NumPy operations are implemented in Python in terms of the primitive operations
+in :mod:`jax.lax`. Since NumPy operations are not primitive and instead are
+implemented in terms of :mod:`jax.lax` operations, we do not need to define
+transformation rules such as gradient or batching rules. Instead,
+transformations for NumPy primitives can be derived from the transformation
+rules for the underlying :code:`lax` primitives.
+"""
+
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
