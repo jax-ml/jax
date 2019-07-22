@@ -28,6 +28,7 @@ import warnings
 from distutils.util import strtobool
 
 from ..config import flags
+from .. import util
 import numpy as onp  # 'onp' rather than 'np' to distinguish from autograd.numpy
 import six
 
@@ -89,14 +90,6 @@ def get_compile_options(num_replicas=None):
     compile_options = compile_options or xla_client.CompileOptions()
     compile_options.num_replicas = num_replicas
   return compile_options
-
-
-def memoize(func):
-  class memodict(dict):
-    def __missing__(self, key):
-      val = self[key] = func(key)
-      return val
-  return memodict().__getitem__
 
 
 def memoize_thunk(func):
@@ -173,12 +166,12 @@ Shape = xla_client.Shape        # pylint: disable=invalid-name
 
 ### utility functions
 
-@memoize
+@util.memoize_unary
 def dtype_to_etype(dtype):
   """Convert from dtype to canonical etype (reading FLAGS.jax_enable_x64)."""
   return xla_client.DTYPE_TO_XLA_ELEMENT_TYPE[canonicalize_dtype(dtype)]
 
-@memoize
+@util.memoize_unary
 def dtype_to_etype_exact(dtype):
   """Convert from dtype to exact etype (ignoring FLAGS.jax_enable_x64)."""
   return xla_client.dtype_to_etype(dtype)
@@ -192,7 +185,7 @@ _dtype_to_32bit_dtype = {
 }
 
 
-@memoize
+@util.memoize_unary
 def canonicalize_dtype(dtype):
   """Convert from a dtype to a canonical dtype based on FLAGS.jax_enable_x64."""
   dtype = onp.dtype(dtype)

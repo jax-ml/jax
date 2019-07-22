@@ -179,6 +179,8 @@ def tree_structure(tree):
 
 
 class PyTreeDef(object):
+  __slots__ = ("node_type", "node_data", "children")
+
   def __init__(self, node_type, node_data, children):
     self.node_type = node_type
     self.node_data = node_data
@@ -209,6 +211,8 @@ class PyTreeDef(object):
 
 
 class PyLeaf(object):
+  __slots__ = ()
+
   def __repr__(self):
     return '*'
 
