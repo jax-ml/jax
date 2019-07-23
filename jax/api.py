@@ -68,6 +68,10 @@ flags.DEFINE_bool("jax_disable_jit",
                   "Disable JIT compilation and just call original Python.")
 
 
+def _check_callable(fun):
+  if not callable(fun):
+    raise TypeError("Expected a callable value, got {}".format(fun))
+
 def jit(fun, static_argnums=()):
   """Sets up `fun` for just-in-time compilation with XLA.
 
@@ -106,6 +110,7 @@ def jit(fun, static_argnums=()):
   return _jit(fun, static_argnums)
 
 def _jit(fun, static_argnums, device_values=True):
+  _check_callable(fun)
   if isinstance(static_argnums, int):
     static_argnums = (static_argnums,)
 
@@ -248,6 +253,7 @@ def xla_computation(fun, static_argnums=(), axis_env=None):
     ROOT tuple.18 = (f32[], f32[], f32[]) tuple(all-reduce.7, all-reduce.12, all-reduce.17)
   }
   """
+  _check_callable(fun)
 
   def pv_like(x):
     aval = xla.abstractify(x)
@@ -361,6 +367,8 @@ def value_and_grad(fun, argnums=0, has_aux=False, holomorphic=False):
             "returns a two-element tuple where the first element is the value "
             "of {fun} and the second element is the gradient, which has the "
             "same shape as the arguments at positions {argnums}.")
+
+  _check_callable(fun)
 
   @wraps(fun, docstr=docstr, argnums=argnums)
   def value_and_grad_f(*args, **kwargs):
@@ -568,6 +576,8 @@ def vmap(fun, in_axes=0, out_axes=0):
   docstr = ("Vectorized version of {fun}. Takes similar arguments as {fun} "
             "but with additional array axes over which {fun} is mapped.")
 
+  _check_callable(fun)
+
   if (not isinstance(in_axes, (list, tuple, type(None), int))
       or not isinstance(out_axes, (list, tuple, type(None), int))):
     msg = ("vmap arguments in_axes and out_axes must each be an integer, None, "
@@ -674,6 +684,7 @@ def pmap(fun, axis_name=None):
   >>> print(doubly_normed.sum((0, 1)))
   1.0
   """
+  _check_callable(fun)
   axis_name = _TempAxisName() if axis_name is None else axis_name
 
   @wraps(fun)
@@ -723,6 +734,7 @@ def _aval_axis_size(aval):
 
 
 def soft_pmap(fun, axis_name=None):
+  _check_callable(fun)
   axis_name = _TempAxisName() if axis_name is None else axis_name
 
   @wraps(fun)
@@ -1066,6 +1078,8 @@ def make_jaxpr(fun):
         (l) = id k
     in l }
   """
+  _check_callable(fun)
+
   def pv_like(x):
     aval = xla.abstractify(x)
     return pe.PartialVal((aval, core.unit))
