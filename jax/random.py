@@ -182,7 +182,7 @@ def fold_in(key, data):
 
   Args:
     key: a PRNGKey (an array with shape (2,) and dtype uint32).
-    data: an integer representing data to be folded in to the key.
+    data: a 32bit integer representing data to be folded in to the key.
 
   Returns:
     A new PRNGKey that is a deterministic function of the inputs and is
