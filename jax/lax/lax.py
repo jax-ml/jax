@@ -2758,7 +2758,6 @@ def _dynamic_update_slice_dtype_rule(operand, update, start_indices,
 def _dynamic_update_slice_jvp(primals, tangents, update_shape):
   operand, update, start_indices = primals
   g_operand, g_update, g_start_indices = tangents
-  assert g_start_indices is ad_util.zero
   val_out = dynamic_update_slice(operand, update, start_indices)
   if g_operand is ad_util.zero and g_update is ad_util.zero:
     tangent_out = ad_util.zero
@@ -3008,7 +3007,6 @@ def _scatter_add_jvp(primals, tangents, update_jaxpr, update_consts,
                      dimension_numbers, updates_shape):
   operand, scatter_indices, updates = primals
   g_operand, g_scatter_indices, g_updates = tangents
-  assert g_scatter_indices is ad_util.zero
   val_out = scatter_add_p.bind(
       operand, scatter_indices, updates, update_jaxpr=update_jaxpr,
       update_consts=update_consts, dimension_numbers=dimension_numbers,
@@ -3131,7 +3129,6 @@ def _scatter_jvp(primals, tangents, update_jaxpr, update_consts,
   operand, scatter_indices, updates = primals
   g_operand, g_scatter_indices, g_updates = tangents
   dnums = dimension_numbers
-  assert g_scatter_indices is ad_util.zero
 
   if g_operand is ad_util.zero and g_updates is ad_util.zero:
     val_out = scatter_p.bind(
