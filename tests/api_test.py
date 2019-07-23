@@ -895,6 +895,9 @@ class APITest(jtu.JaxTestCase):
     xla_comp = api.xla_computation(f)
     xla_comp(np.arange(8)).GetHloText()  # doesn't crash
 
+  def test_jit_of_noncallable(self):
+    jtu.check_raises_regexp(lambda: api.jit(3), TypeError,
+                            "Expected a callable value.*")
 
 if __name__ == '__main__':
   absltest.main()
