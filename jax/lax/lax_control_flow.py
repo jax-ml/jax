@@ -123,6 +123,9 @@ def while_loop(cond_fun, body_fun, init_val):
   Returns:
     The output from the final iteration of body_fun, of type ``a``.
   """
+  if api._jit_is_disabled:
+    return _naive_while_loop(cond_fun, body_fun, init_val)
+
   init_val_flat, in_tree = pytree_to_jaxtupletree(init_val)
   flat_body_fun, out_tree = pytree_fun_to_jaxtupletree_fun(lu.wrap_init(body_fun), (in_tree,))
   flat_cond_fun, _ = pytree_fun_to_jaxtupletree_fun(lu.wrap_init(cond_fun), (in_tree,))
@@ -154,6 +157,13 @@ def while_loop(cond_fun, body_fun, init_val):
       init_val_flat, core.pack(cond_consts), core.pack(body_consts),
       aval_out=carry_aval_out, cond_jaxpr=cond_jaxpr, body_jaxpr=body_jaxpr)
   return build_tree(out_tree(), out_flat)
+
+
+def _naive_while_loop(cond_fun, body_fun, init_val):
+  val = init_val
+  while cond_fun(val):
+    val = body_fun(val)
+  return val
 
 
 def _while_loop_impl(init_val, cond_consts, body_consts, aval_out, cond_jaxpr,
