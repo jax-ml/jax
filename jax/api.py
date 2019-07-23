@@ -68,7 +68,7 @@ flags.DEFINE_bool("jax_disable_jit",
                   "Disable JIT compilation and just call original Python.")
 
 
-def jit(fun, static_argnums=()):
+def jit(fun, static_argnums=(), device_assignment=None):
   """Sets up `fun` for just-in-time compilation with XLA.
 
   Args:
@@ -103,9 +103,9 @@ def jit(fun, static_argnums=()):
   [-0.54485154  0.27744263 -0.29255125 -0.91421586 -0.62452525 -0.2474813
    -0.8574326  -0.7823267   0.7682731   0.59566754]
   """
-  return _jit(fun, static_argnums)
+  return _jit(fun, static_argnums, device_assignment)
 
-def _jit(fun, static_argnums, device_values=True):
+def _jit(fun, static_argnums, device_assignment, device_values=True):
   if isinstance(static_argnums, int):
     static_argnums = (static_argnums,)
 
@@ -123,7 +123,8 @@ def _jit(fun, static_argnums, device_values=True):
     args_flat, in_tree = tree_flatten((dyn_args, kwargs))
     _check_args(args_flat)
     flat_fun, out_tree = flatten_fun_leafout(f, in_tree)
-    out = xla.xla_call(flat_fun, *args_flat, device_values=device_values)
+    out = xla.xla_call(flat_fun, *args_flat, device_values=device_values,
+                       device_assignment=device_assignment)
     return out if out_tree() is leaf else tree_unflatten(out_tree(), out)
 
   jitted_name =  "jit({}, static_argnums={})"
@@ -1089,7 +1090,7 @@ def device_put(x, device_num=0):
   return tree_map(lambda y: xla.device_put_p.bind(y, device_num=device_num), x)
 
 
-device_get = _jit(lambda x: x, (), device_values=False)
+device_get = _jit(lambda x: x, (), None, device_values=False)
 
 
 def _argnums_partial(f, dyn_argnums, args):

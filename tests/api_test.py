@@ -29,6 +29,7 @@ from jax.core import Primitive, pack, JaxTuple
 from jax.interpreters import ad
 from jax.interpreters.xla import DeviceArray, DeviceTuple
 from jax.abstract_arrays import concretization_err_msg
+from jax.lib import xla_bridge as xb
 from jax import test_util as jtu
 
 from jax.config import config
@@ -250,21 +251,21 @@ class APITest(jtu.JaxTestCase):
   def test_device_put_and_get(self):
     x = onp.arange(12.).reshape((3, 4)).astype("float32")
     dx = device_put(x)
-    assert isinstance(dx, DeviceArray)
+    self.assertIsInstance(dx, DeviceArray)
     x2 = device_get(dx)
-    assert isinstance(x2, onp.ndarray)
+    self.assertIsInstance(x2, onp.ndarray)
     assert onp.all(x == x2)
 
     y = [x, (2 * x, 3 * x)]
     dy = device_put(y)
     y2 = device_get(dy)
-    assert isinstance(y2, list)
-    assert isinstance(y2[0], onp.ndarray)
+    self.assertIsInstance(y2, list)
+    self.assertIsInstance(y2[0], onp.ndarray)
     assert onp.all(y2[0] == x)
-    assert isinstance(y2[1], tuple)
-    assert isinstance(y2[1][0], onp.ndarray)
+    self.assertIsInstance(y2[1], tuple)
+    self.assertIsInstance(y2[1][0], onp.ndarray)
     assert onp.all(y2[1][0] == 2 * x)
-    assert isinstance(y2[1][1], onp.ndarray)
+    self.assertIsInstance(y2[1][1], onp.ndarray)
     assert onp.all(y2[1][1] == 3 * x)
 
   @jtu.skip_on_devices("tpu")
@@ -894,6 +895,12 @@ class APITest(jtu.JaxTestCase):
       return api.pmap(np.mean)(x)
     xla_comp = api.xla_computation(f)
     xla_comp(np.arange(8)).GetHloText()  # doesn't crash
+
+  def test_jit_device_assignment(self):
+    device_num = xb.device_count() - 1
+    x = api._jit(lambda x: x, (), device_assignment=(device_num,))(3.)
+    self.assertIsInstance(x, DeviceArray)
+    self.assertEqual(x.device_buffer.device(), device_num)
 
 
 if __name__ == '__main__':
