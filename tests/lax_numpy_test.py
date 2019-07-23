@@ -1758,6 +1758,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
+  def testIssue967(self):
+    self.assertRaises(TypeError, lambda: lnp.zeros(1.5))
 
 if __name__ == "__main__":
   absltest.main()

@@ -72,6 +72,22 @@ def broadcast_shapes(*shapes):
                      .format(tuple(map(tuple, shapes))))
   return tuple(result_shape)
 
+def _canonicalize_shape(shape):
+  """Canonicalizes and checks for errors in a user-provided shape value.
+
+  Args:
+    shape: a Python value that represents a shape.
+
+  Returns:
+    A tuple of integers.
+  """
+  try:
+    return tuple(map(operator.index, shape))
+  except TypeError:
+    pass
+  msg = ("Shapes must be 1D sequences of concrete values of integer type, "
+         "got {}")
+  raise TypeError(msg.format(shape))
 
 def _identity(x): return x
 
@@ -576,7 +592,7 @@ def reshape(operand, new_sizes, dimensions=None):
   <https://www.tensorflow.org/xla/operation_semantics#reshape>`_
   operator.
   """
-  new_sizes = tuple(new_sizes)
+  new_sizes = _canonicalize_shape(new_sizes)
   same_shape = onp.shape(operand) == new_sizes
   same_dims = dimensions is None or tuple(dimensions) == tuple(range(onp.ndim(operand)))
   if onp.shape(operand) and same_shape and same_dims:
@@ -666,7 +682,7 @@ def gather(operand, start_indices, dimension_numbers, slice_sizes):
   """
   return gather_p.bind(
       operand, start_indices, dimension_numbers=dimension_numbers,
-      slice_sizes=tuple(slice_sizes), operand_shape=operand.shape)
+      slice_sizes=_canonicalize_shape(slice_sizes), operand_shape=operand.shape)
 
 def scatter_add(operand, scatter_indices, updates, dimension_numbers):
   """Scatter-add operator.
@@ -980,7 +996,7 @@ def full(shape, fill_value, dtype=None):
       will be cast to `dtype`.
   """
   try:
-    shape = tuple(map(int, shape))
+    shape = _canonicalize_shape(shape)
   except TypeError:
     msg = ("`full` requires shapes to be concrete. If using `jit`, try using "
            "`static_argnums` or applying `jit` to smaller subfunctions instead.")
@@ -1015,7 +1031,7 @@ def broadcasted_iota(dtype, shape, dimension):
   operator.
   """
   dtype = xla_bridge.canonicalize_dtype(dtype)
-  shape = tuple(map(int, shape))
+  shape = _canonicalize_shape(shape)
   dimension = int(dimension)
   return _IotaConstant(dtype, shape, dimension)
 
@@ -1026,7 +1042,7 @@ def broadcasted_eye(dtype, shape, axes):
   if not isinstance(axes, (list, tuple)) or not len(axes) >= 2:
     raise TypeError("make_diagonal `axes` must be a tuple with len at least 2.")
   dtype = xla_bridge.canonicalize_dtype(dtype)
-  shape = tuple(map(int, shape))
+  shape = _canonicalize_shape(shape)
   axes = tuple(map(int, axes))
   return _EyeConstant(shape, axes, dtype)
 
@@ -1212,7 +1228,7 @@ def full_like(x, fill_value, dtype=None, shape=None):
     An ndarray with the same shape as `x` with its entries set equal to
     `fill_value`, similar to the output of np.full.
   """
-  shape = onp.shape(x) if shape is None else shape
+  shape = onp.shape(x) if shape is None else _canonicalize_shape(shape)
   out = full(shape, fill_value, dtype or _dtype(x))
   return tie_in(x, out)
 
