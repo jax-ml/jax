@@ -619,6 +619,7 @@ class DeviceArray(DeviceValue):
   __complex__ = partialmethod(_forward_to_value, complex)
   __hex__ = partialmethod(_forward_to_value, hex)
   __oct__ = partialmethod(_forward_to_value, oct)
+  __index__ = partialmethod(_forward_to_value, op.index)
 
   # pickle saves and loads just like an ndarray
   __reduce__ = partialmethod(_forward_to_value, op.methodcaller("__reduce__"))

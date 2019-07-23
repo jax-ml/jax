@@ -2240,6 +2240,17 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     expected = onp.array(0.0)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testReshapeWithUnusualShapes(self):
+    ans = lax.reshape(onp.ones((3,), onp.float32), (lax.add(1, 2), 1))
+    self.assertAllClose(ans, onp.ones((3, 1), onp.float32), check_dtypes=True)
+
+    jtu.check_raises_regexp(
+      lambda: lax.reshape(onp.ones(3,), (onp.array([3, 1]),)), TypeError,
+      "Shapes must be 1D sequences of concrete values of integer type.*")
+
+    jtu.check_raises_regexp(
+      lambda: lax.reshape(onp.ones(3,), (1.5, 2.0)), TypeError,
+      "Shapes must be 1D sequences of concrete values of integer type.*")
 
 def all_bdims(*shapes):
   bdims = (itertools.chain([None], range(len(shape) + 1)) for shape in shapes)
