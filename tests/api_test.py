@@ -947,6 +947,19 @@ class APITest(jtu.JaxTestCase):
     for x, y in zip(xs, ys):
       self.assertAllClose(x, y, check_dtypes=True)
 
+  @unittest.skipIf(six.PY2, "Test requires Python 3")
+  def test_concurrent_jit(self):
+    @jit
+    def f(x):
+      return x + x - 3.
+
+    xs = [onp.random.randn(i) for i in range(10)]
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+      futures = [executor.submit(partial(f, x)) for x in xs]
+      ys = [f.result() for f in futures]
+    for x, y in zip(xs, ys):
+      self.assertAllClose(x * 2 - 3., y, check_dtypes=True)
+
 
 if __name__ == '__main__':
   absltest.main()
