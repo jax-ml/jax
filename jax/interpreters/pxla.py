@@ -399,6 +399,8 @@ batching.pytype_aval_mappings[ShardedDeviceTuple] = op.attrgetter('aval')
 xla.canonicalize_dtype_handlers[ShardedDeviceTuple] = \
     xla.canonicalize_dtype_handlers[xla.DeviceTuple]
 
+xb.register_constant_handler(ShardedDeviceTuple, xla._device_tuple_constant_handler)
+
 
 class ShardedDeviceArray(ShardedDeviceValue, xla.DeviceArray):
   """A ShardedDeviceArray is an ndarray sharded across devices.
