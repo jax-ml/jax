@@ -90,6 +90,9 @@ def jit(fun, static_argnums=(), device_assignment=None):
       different values for these constants will trigger recompilation. If the
       jitted function is called with fewer positional arguments than indicated
       by `static_argnums` then an error is raised. Defaults to ().
+    device_assignment: Optional, an int specifying the device ordinal for which
+      to compile the function. The default is inherited from XLA's
+      DeviceAssignment logic and is usually to use device 0.
 
   Returns:
     A wrapped version of `fun`, set up for just-in-time compilation.
@@ -111,6 +114,8 @@ def jit(fun, static_argnums=(), device_assignment=None):
 
 def _jit(fun, static_argnums, device_assignment, device_values=True):
   _check_callable(fun)
+  if isinstance(device_assignment, int):
+    device_assignment = (device_assignment,)
   if isinstance(static_argnums, int):
     static_argnums = (static_argnums,)
 

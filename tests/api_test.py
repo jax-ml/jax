@@ -898,7 +898,7 @@ class APITest(jtu.JaxTestCase):
 
   def test_jit_device_assignment(self):
     device_num = xb.device_count() - 1
-    x = api._jit(lambda x: x, (), device_assignment=(device_num,))(3.)
+    x = api.jit(lambda x: x, device_assignment=device_num)(3.)
     self.assertIsInstance(x, DeviceArray)
     self.assertEqual(x.device_buffer.device(), device_num)
 

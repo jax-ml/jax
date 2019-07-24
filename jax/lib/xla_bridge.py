@@ -160,7 +160,7 @@ def get_backend():
 
 
 def device_count():
-  return get_backend().device_count()
+  return int(get_backend().device_count())
 
 
 def device_put(pyval, device_num=0):
