@@ -75,12 +75,33 @@ flags.DEFINE_string(
     'pass "cpu" for CPU or "gpu" for GPU.')
 
 
-def get_compile_options(num_replicas=None):
-  """Returns the compile options to use, as derived from flag values."""
+def get_compile_options(num_replicas=None, device_assignment=None):
+  """Returns the compile options to use, as derived from flag values.
+
+  Args:
+    num_replicas: Optional int indicating the number of replicas for which to
+      compile (default inherited from xla_client.CompileOptions).
+    device_assignment: Optional tuple of integers indicating the assignment of
+      logical replicas to physical devices (default inherited from
+      xla_client.CompileOptions). Must be consistent with `num_replicas`.
+  """
   compile_options = None
   if num_replicas is not None:
     compile_options = compile_options or xla_client.CompileOptions()
     compile_options.num_replicas = num_replicas
+  if device_assignment is not None:
+    # NOTE(mattjj): xla_client.DeviceAssignment.create expects a 2D ndarray
+    # indexed by replica number and computation per replica, respectively, while
+    # here we currently assume only one computation per replica, hence the
+    # second axis is always trivial.
+    if num_replicas is not None and num_replicas != len(device_assignment):
+      msg = "device_assignment does not match num_replicas: {} vs {}."
+      raise ValueError(msg.format(device_assignment, num_replicas))
+    compile_options = compile_options or xla_client.CompileOptions()
+    device_assignment = onp.array(device_assignment)[:, None]
+    device_assignment = xla_client.DeviceAssignment.create(device_assignment)
+    assert num_replicas is None or device_assignment.replica_count() == num_replicas
+    compile_options.device_assignment = device_assignment
   return compile_options
 
 
@@ -139,7 +160,7 @@ def get_backend():
 
 
 def device_count():
-  return get_backend().device_count()
+  return int(get_backend().device_count())
 
 
 def device_put(pyval, device_num=0):
