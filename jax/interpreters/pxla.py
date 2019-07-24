@@ -439,7 +439,7 @@ class ShardedDeviceArray(ShardedDeviceValue, xla.DeviceArray):
   def copy_to_host_async(self):
     if self._npy_value is None:
       for buf in self.device_buffers:
-        xla._copy_to_host_async(buf)
+        buf.copy_to_host_async()
 
   def delete(self):
     for buf in self.device_buffers:

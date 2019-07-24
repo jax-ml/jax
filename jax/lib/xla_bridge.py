@@ -34,7 +34,7 @@ import six
 
 import jaxlib
 
-_minimum_jaxlib_version = (0, 1, 14)
+_minimum_jaxlib_version = (0, 1, 22)
 try:
   from jaxlib import version as jaxlib_version
 except:
@@ -56,14 +56,6 @@ _check_jaxlib_version()
 
 from jaxlib import xla_client
 from jaxlib import xla_data_pb2
-
-# TODO(phawkins): This is a workaround for older jaxlib versions. Remove after a
-# jaxlib release.
-try:
-  from jaxlib import xrt
-except ImportError:
-  xrt = None
-
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_enable_x64',
@@ -130,8 +122,6 @@ def _get_xrt_backend():
   worker = "tpu_worker"
   tf_context = xrt.get_tf_context(FLAGS.jax_backend_target, worker)
   backend = xrt.XrtBackend(tf_context, tf_device_name)
-  #  TODO(phawkins) fix XrtBackend to set the following and remove this line.
-  backend.platform = "TPU"
   return backend
 
 

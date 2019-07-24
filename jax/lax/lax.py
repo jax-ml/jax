@@ -387,17 +387,7 @@ def concatenate(operands, dimension):
   return concatenate_p.bind(*operands, dimension=dimension,
                             operand_shapes=tuple(o.shape for o in operands))
 
-# TODO(phawkins): remove once the minimum Jaxlib version is increased to 0.1.22.
-_supports_precision = hasattr(xla_client, "PrecisionConfig")
-
-if _supports_precision:
-  Precision = xla_client.PrecisionConfig.Precision
-else:
-  # Dummy for backward compatibility with older Jaxlib versions.
-  class Precision(enum.Enum):
-    DEFAULT = 0
-    HIGH = 1
-    HIGHEST = 2
+Precision = xla_client.PrecisionConfig.Precision
 
 def conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation=None,
                          rhs_dilation=None, dimension_numbers=None,
@@ -1932,10 +1922,10 @@ def _conv_general_dilated_translation_rule(
     dimension_numbers, feature_group_count, precision, **unused_kwargs):
   assert type(dimension_numbers) is ConvDimensionNumbers
   dimension_numbers = _conv_general_proto(dimension_numbers)
-  kwargs = _precision_config_kwargs(precision)
   return c.ConvGeneralDilated(lhs, rhs, window_strides, padding, lhs_dilation,
                               rhs_dilation, dimension_numbers,
-                              feature_group_count, **kwargs)
+                              feature_group_count,
+                              precision_config=_precision_config(precision))
 
 def _conv_general_dilated_batch_rule(
     batched_args, batch_dims, window_strides, padding,
@@ -2120,18 +2110,15 @@ def _dot_batch_rule(batched_args, batch_dims, precision=None):
   dim_nums = [(lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch)]
   return dot_general(lhs, rhs, dim_nums, precision=precision), 0
 
-# TODO(phawkins): pass precision_config directly after the minimum Jaxlib
-# version has been increased to 0.1.22.
-def _precision_config_kwargs(precision):
-  kwargs = {}
+def _precision_config(precision):
   if precision is not None:
     config = xla_client.PrecisionConfig()
     config.operand_precision.extend((precision, precision))
-    kwargs["precision_config"] = config
-  return kwargs
+    return config
+  return None
 
 def _dot_translation_rule(c, lhs, rhs, precision):
-  return c.Dot(lhs, rhs, **_precision_config_kwargs(precision))
+  return c.Dot(lhs, rhs, precision_config=_precision_config(precision))
 
 _dot_dtype_rule = partial(binop_dtype_rule, _input_dtype, [_num, _num], 'dot')
 dot_p = standard_primitive(_dot_shape_rule, _dot_dtype_rule, 'dot',
@@ -2239,7 +2226,7 @@ def _dot_general_batch_rule(batched_args, batch_dims, dimension_numbers,
 
 def _dot_general_translation_rule(c, lhs, rhs, dimension_numbers, precision):
   return c.DotGeneral(lhs, rhs, dimension_numbers,
-                      **_precision_config_kwargs(precision))
+                      precision_config=_precision_config(precision))
 
 dot_general_p = standard_primitive(_dot_general_shape_rule,
                                    _dot_general_dtype_rule, 'dot_general',
@@ -4221,10 +4208,6 @@ def remaining(original, *removed_lists):
 
 def _canonicalize_precision(precision):
   if precision is None:
-    return None
-  if not _supports_precision:
-    warnings.warn("Precision specifications require Jaxlib >= 0.1.22; ignoring "
-                  "precision specification")
     return None
   if isinstance(precision, Precision):
     return precision
