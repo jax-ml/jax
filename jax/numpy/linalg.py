@@ -28,7 +28,6 @@ from . import lax_numpy as np
 from ..util import get_module_functions
 from ..lib import xla_bridge
 
-_EXPERIMENTAL_WARNING = "numpy.linalg support is experimental and may cause silent failures or wrong outputs"
 
 _T = lambda x: np.swapaxes(x, -1, -2)
 
@@ -48,14 +47,12 @@ def _promote_arg_dtypes(*args):
 
 @_wraps(onp.linalg.cholesky)
 def cholesky(a):
-  warnings.warn(_EXPERIMENTAL_WARNING)
   a = _promote_arg_dtypes(np.asarray(a))
   return lax_linalg.cholesky(a)
 
 
 @_wraps(onp.linalg.svd)
 def svd(a, full_matrices=True, compute_uv=True):
-  warnings.warn(_EXPERIMENTAL_WARNING)
   a = _promote_arg_dtypes(np.asarray(a))
   return lax_linalg.svd(a, full_matrices, compute_uv)
 
@@ -116,7 +113,6 @@ def eigh(a, UPLO=None, symmetrize_input=True):
 
 @_wraps(onp.linalg.inv)
 def inv(a):
-  warnings.warn(_EXPERIMENTAL_WARNING)
   if np.ndim(a) < 2 or a.shape[-1] != a.shape[-2]:
     raise ValueError("Argument to inv must have shape [..., n, n], got {}."
       .format(np.shape(a)))
@@ -208,7 +204,6 @@ def norm(x, ord=None, axis=None, keepdims=False):
 
 @_wraps(onp.linalg.qr)
 def qr(a, mode="reduced"):
-  warnings.warn(_EXPERIMENTAL_WARNING)
   if mode in ("reduced", "r", "full"):
     full_matrices = False
   elif mode == "complete":
