@@ -718,6 +718,19 @@ class IndexingTest(jtu.JaxTestCase):
     expected = x[[0, 2, 4], [0, 2, 4]]
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testJVPOfGradOfIndexing(self):
+    # Should return a value, even though we didn't pass a symbolic zero as the
+    # index tangent.
+    x = lnp.ones((3, 4), lnp.float32)
+    i = lnp.ones((3,), lnp.int32)
+    f = lambda x, i: lnp.sum(x[i])
+    primals, tangents = api.jvp(api.grad(f), (x, i), (x, onp.zeros_like(i)))
+    expected = onp.broadcast_to(
+      onp.array([0, 3, 0], dtype=onp.float32)[:, None], (3, 4))
+    self.assertAllClose(expected, primals, check_dtypes=True)
+    self.assertAllClose(onp.zeros_like(x), tangents, check_dtypes=True)
+
+
 
 def _broadcastable_shapes(shape):
   """Returns all shapes that broadcast to `shape`."""

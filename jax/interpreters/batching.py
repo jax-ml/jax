@@ -205,7 +205,8 @@ def add_batch_dim_to_aval(bdim, size, aval):
       return ShapedArray(aval.shape, aval.dtype)
     else:
       assert 0 <= bdim <= aval.ndim
-      batched_shape = tuple(onp.insert(aval.shape, bdim, size))
+      batched_shape = tuple(
+        onp.insert(onp.asarray(aval.shape, onp.intp), bdim, size))
       return ShapedArray(batched_shape, aval.dtype)
   else:
     raise TypeError(t)

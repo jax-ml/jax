@@ -20,7 +20,7 @@ before_install:
   - conda update --yes conda
   - conda config --add channels conda-forge
 install:
-  - conda install --yes python=$TRAVIS_PYTHON_VERSION pip six protobuf>=3.6.0 absl-py opt_einsum numpy scipy pytest-xdist
+  - conda install --yes python=$TRAVIS_PYTHON_VERSION pip six protobuf>=3.6.0 absl-py opt_einsum numpy scipy pytest-xdist fastcache
   - pip install jaxlib
   - pip install -v .
 script:

@@ -902,6 +902,10 @@ class APITest(jtu.JaxTestCase):
     self.assertIsInstance(x, DeviceArray)
     self.assertEqual(x.device_buffer.device(), device_num)
 
+  def test_jit_of_noncallable(self):
+    jtu.check_raises_regexp(lambda: api.jit(3), TypeError,
+                            "Expected a callable value.*")
+
 
 if __name__ == '__main__':
   absltest.main()

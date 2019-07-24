@@ -146,12 +146,7 @@ def device_put(x, device_num=0):
     if x.device_buffer.device() == device_num:
       return x.device_buffer
     else:
-      # TODO(phawkins): remove after the minimum Jaxlib version is raised to
-      # 0.1.22
-      if hasattr(x.device_buffer, 'copy_to_device'):
-        return x.device_buffer.copy_to_device(device_num)
-      else:
-        return device_put(x.device_buffer.to_py(), device_num)
+      return x.device_buffer.copy_to_device(device_num)
   elif isinstance(x, DeviceConstant):
     return _instantiate_device_constant(x, device_num=device_num)
   elif isinstance(x, (DeviceArray, onp.ndarray)):
@@ -513,13 +508,6 @@ xb.register_constant_handler(DeviceTuple, _device_tuple_constant_handler)
 # TODO(mattjj): could jit-compile a computation here
 ad_util.jaxval_adders[DeviceTuple] = ad_util.add_jaxtuples
 
-# TODO(phawkins): after Jaxlib 0.1.17 has been released, bump the minimum
-# jaxlib version and change callers of this function to simply call
-# the copy_to_host_async method directly.
-def _copy_to_host_async(buffer):
-  if hasattr(buffer, "copy_to_host_async"):
-    buffer.copy_to_host_async()
-
 
 def _forward_method(attrname, self, fun, *args):
   return fun(getattr(self, attrname), *args)
@@ -553,7 +541,7 @@ class DeviceArray(DeviceValue):
     """Requests a copy of the buffer to the host."""
     self._check_if_deleted()
     if self._npy_value is None:
-      _copy_to_host_async(self.device_buffer)
+      self.device_buffer.copy_to_host_async()
 
   def delete(self):
     """Deletes the device array and any cached copy on the host.
@@ -622,6 +610,7 @@ class DeviceArray(DeviceValue):
   __complex__ = partialmethod(_forward_to_value, complex)
   __hex__ = partialmethod(_forward_to_value, hex)
   __oct__ = partialmethod(_forward_to_value, oct)
+  __index__ = partialmethod(_forward_to_value, op.index)
 
   # pickle saves and loads just like an ndarray
   __reduce__ = partialmethod(_forward_to_value, op.methodcaller("__reduce__"))

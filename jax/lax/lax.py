@@ -72,6 +72,22 @@ def broadcast_shapes(*shapes):
                      .format(tuple(map(tuple, shapes))))
   return tuple(result_shape)
 
+def _canonicalize_shape(shape):
+  """Canonicalizes and checks for errors in a user-provided shape value.
+
+  Args:
+    shape: a Python value that represents a shape.
+
+  Returns:
+    A tuple of integers.
+  """
+  try:
+    return tuple(map(operator.index, shape))
+  except TypeError:
+    pass
+  msg = ("Shapes must be 1D sequences of concrete values of integer type, "
+         "got {}")
+  raise TypeError(msg.format(shape))
 
 def _identity(x): return x
 
@@ -371,17 +387,7 @@ def concatenate(operands, dimension):
   return concatenate_p.bind(*operands, dimension=dimension,
                             operand_shapes=tuple(o.shape for o in operands))
 
-# TODO(phawkins): remove once the minimum Jaxlib version is increased to 0.1.22.
-_supports_precision = hasattr(xla_client, "PrecisionConfig")
-
-if _supports_precision:
-  Precision = xla_client.PrecisionConfig.Precision
-else:
-  # Dummy for backward compatibility with older Jaxlib versions.
-  class Precision(enum.Enum):
-    DEFAULT = 0
-    HIGH = 1
-    HIGHEST = 2
+Precision = xla_client.PrecisionConfig.Precision
 
 def conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation=None,
                          rhs_dilation=None, dimension_numbers=None,
@@ -576,7 +582,7 @@ def reshape(operand, new_sizes, dimensions=None):
   <https://www.tensorflow.org/xla/operation_semantics#reshape>`_
   operator.
   """
-  new_sizes = tuple(new_sizes)
+  new_sizes = _canonicalize_shape(new_sizes)
   same_shape = onp.shape(operand) == new_sizes
   same_dims = dimensions is None or tuple(dimensions) == tuple(range(onp.ndim(operand)))
   if onp.shape(operand) and same_shape and same_dims:
@@ -666,7 +672,7 @@ def gather(operand, start_indices, dimension_numbers, slice_sizes):
   """
   return gather_p.bind(
       operand, start_indices, dimension_numbers=dimension_numbers,
-      slice_sizes=tuple(slice_sizes), operand_shape=operand.shape)
+      slice_sizes=_canonicalize_shape(slice_sizes), operand_shape=operand.shape)
 
 def scatter_add(operand, scatter_indices, updates, dimension_numbers):
   """Scatter-add operator.
@@ -980,7 +986,7 @@ def full(shape, fill_value, dtype=None):
       will be cast to `dtype`.
   """
   try:
-    shape = tuple(map(int, shape))
+    shape = _canonicalize_shape(shape)
   except TypeError:
     msg = ("`full` requires shapes to be concrete. If using `jit`, try using "
            "`static_argnums` or applying `jit` to smaller subfunctions instead.")
@@ -1015,7 +1021,7 @@ def broadcasted_iota(dtype, shape, dimension):
   operator.
   """
   dtype = xla_bridge.canonicalize_dtype(dtype)
-  shape = tuple(map(int, shape))
+  shape = _canonicalize_shape(shape)
   dimension = int(dimension)
   return _IotaConstant(dtype, shape, dimension)
 
@@ -1026,7 +1032,7 @@ def broadcasted_eye(dtype, shape, axes):
   if not isinstance(axes, (list, tuple)) or not len(axes) >= 2:
     raise TypeError("make_diagonal `axes` must be a tuple with len at least 2.")
   dtype = xla_bridge.canonicalize_dtype(dtype)
-  shape = tuple(map(int, shape))
+  shape = _canonicalize_shape(shape)
   axes = tuple(map(int, axes))
   return _EyeConstant(shape, axes, dtype)
 
@@ -1212,7 +1218,7 @@ def full_like(x, fill_value, dtype=None, shape=None):
     An ndarray with the same shape as `x` with its entries set equal to
     `fill_value`, similar to the output of np.full.
   """
-  shape = onp.shape(x) if shape is None else shape
+  shape = onp.shape(x) if shape is None else _canonicalize_shape(shape)
   out = full(shape, fill_value, dtype or _dtype(x))
   return tie_in(x, out)
 
@@ -1916,10 +1922,10 @@ def _conv_general_dilated_translation_rule(
     dimension_numbers, feature_group_count, precision, **unused_kwargs):
   assert type(dimension_numbers) is ConvDimensionNumbers
   dimension_numbers = _conv_general_proto(dimension_numbers)
-  kwargs = _precision_config_kwargs(precision)
   return c.ConvGeneralDilated(lhs, rhs, window_strides, padding, lhs_dilation,
                               rhs_dilation, dimension_numbers,
-                              feature_group_count, **kwargs)
+                              feature_group_count,
+                              precision_config=_precision_config(precision))
 
 def _conv_general_dilated_batch_rule(
     batched_args, batch_dims, window_strides, padding,
@@ -2104,18 +2110,15 @@ def _dot_batch_rule(batched_args, batch_dims, precision=None):
   dim_nums = [(lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch)]
   return dot_general(lhs, rhs, dim_nums, precision=precision), 0
 
-# TODO(phawkins): pass precision_config directly after the minimum Jaxlib
-# version has been increased to 0.1.22.
-def _precision_config_kwargs(precision):
-  kwargs = {}
+def _precision_config(precision):
   if precision is not None:
     config = xla_client.PrecisionConfig()
     config.operand_precision.extend((precision, precision))
-    kwargs["precision_config"] = config
-  return kwargs
+    return config
+  return None
 
 def _dot_translation_rule(c, lhs, rhs, precision):
-  return c.Dot(lhs, rhs, **_precision_config_kwargs(precision))
+  return c.Dot(lhs, rhs, precision_config=_precision_config(precision))
 
 _dot_dtype_rule = partial(binop_dtype_rule, _input_dtype, [_num, _num], 'dot')
 dot_p = standard_primitive(_dot_shape_rule, _dot_dtype_rule, 'dot',
@@ -2223,7 +2226,7 @@ def _dot_general_batch_rule(batched_args, batch_dims, dimension_numbers,
 
 def _dot_general_translation_rule(c, lhs, rhs, dimension_numbers, precision):
   return c.DotGeneral(lhs, rhs, dimension_numbers,
-                      **_precision_config_kwargs(precision))
+                      precision_config=_precision_config(precision))
 
 dot_general_p = standard_primitive(_dot_general_shape_rule,
                                    _dot_general_dtype_rule, 'dot_general',
@@ -2758,7 +2761,6 @@ def _dynamic_update_slice_dtype_rule(operand, update, start_indices,
 def _dynamic_update_slice_jvp(primals, tangents, update_shape):
   operand, update, start_indices = primals
   g_operand, g_update, g_start_indices = tangents
-  assert g_start_indices is ad_util.zero
   val_out = dynamic_update_slice(operand, update, start_indices)
   if g_operand is ad_util.zero and g_update is ad_util.zero:
     tangent_out = ad_util.zero
@@ -3008,7 +3010,6 @@ def _scatter_add_jvp(primals, tangents, update_jaxpr, update_consts,
                      dimension_numbers, updates_shape):
   operand, scatter_indices, updates = primals
   g_operand, g_scatter_indices, g_updates = tangents
-  assert g_scatter_indices is ad_util.zero
   val_out = scatter_add_p.bind(
       operand, scatter_indices, updates, update_jaxpr=update_jaxpr,
       update_consts=update_consts, dimension_numbers=dimension_numbers,
@@ -3131,7 +3132,6 @@ def _scatter_jvp(primals, tangents, update_jaxpr, update_consts,
   operand, scatter_indices, updates = primals
   g_operand, g_scatter_indices, g_updates = tangents
   dnums = dimension_numbers
-  assert g_scatter_indices is ad_util.zero
 
   if g_operand is ad_util.zero and g_updates is ad_util.zero:
     val_out = scatter_p.bind(
@@ -4208,10 +4208,6 @@ def remaining(original, *removed_lists):
 
 def _canonicalize_precision(precision):
   if precision is None:
-    return None
-  if not _supports_precision:
-    warnings.warn("Precision specifications require Jaxlib >= 0.1.22; ignoring "
-                  "precision specification")
     return None
   if isinstance(precision, Precision):
     return precision

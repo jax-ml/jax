@@ -28,12 +28,13 @@ import warnings
 from distutils.util import strtobool
 
 from ..config import flags
+from .. import util
 import numpy as onp  # 'onp' rather than 'np' to distinguish from autograd.numpy
 import six
 
 import jaxlib
 
-_minimum_jaxlib_version = (0, 1, 14)
+_minimum_jaxlib_version = (0, 1, 22)
 try:
   from jaxlib import version as jaxlib_version
 except:
@@ -55,14 +56,6 @@ _check_jaxlib_version()
 
 from jaxlib import xla_client
 from jaxlib import xla_data_pb2
-
-# TODO(phawkins): This is a workaround for older jaxlib versions. Remove after a
-# jaxlib release.
-try:
-  from jaxlib import xrt
-except ImportError:
-  xrt = None
-
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_enable_x64',
@@ -112,14 +105,6 @@ def get_compile_options(num_replicas=None, device_assignment=None):
   return compile_options
 
 
-def memoize(func):
-  class memodict(dict):
-    def __missing__(self, key):
-      val = self[key] = func(key)
-      return val
-  return memodict().__getitem__
-
-
 def memoize_thunk(func):
   cached = []
   return lambda: cached[0] if cached else (cached.append(func()) or cached[0])
@@ -158,8 +143,6 @@ def _get_xrt_backend():
   worker = "tpu_worker"
   tf_context = xrt.get_tf_context(FLAGS.jax_backend_target, worker)
   backend = xrt.XrtBackend(tf_context, tf_device_name)
-  #  TODO(phawkins) fix XrtBackend to set the following and remove this line.
-  backend.platform = "TPU"
   return backend
 
 
@@ -194,12 +177,12 @@ Shape = xla_client.Shape        # pylint: disable=invalid-name
 
 ### utility functions
 
-@memoize
+@util.memoize_unary
 def dtype_to_etype(dtype):
   """Convert from dtype to canonical etype (reading FLAGS.jax_enable_x64)."""
   return xla_client.DTYPE_TO_XLA_ELEMENT_TYPE[canonicalize_dtype(dtype)]
 
-@memoize
+@util.memoize_unary
 def dtype_to_etype_exact(dtype):
   """Convert from dtype to exact etype (ignoring FLAGS.jax_enable_x64)."""
   return xla_client.dtype_to_etype(dtype)
@@ -213,7 +196,7 @@ _dtype_to_32bit_dtype = {
 }
 
 
-@memoize
+@util.memoize_unary
 def canonicalize_dtype(dtype):
   """Convert from a dtype to a canonical dtype based on FLAGS.jax_enable_x64."""
   dtype = onp.dtype(dtype)

@@ -182,7 +182,7 @@ def fold_in(key, data):
 
   Args:
     key: a PRNGKey (an array with shape (2,) and dtype uint32).
-    data: an integer representing data to be folded in to the key.
+    data: a 32bit integer representing data to be folded in to the key.
 
   Returns:
     A new PRNGKey that is a deterministic function of the inputs and is
@@ -190,7 +190,7 @@ def fold_in(key, data):
   """
   return _fold_in(key, data)
 
-@partial(jit, static_argnums=(1,))
+@jit
 def _fold_in(key, data):
   key2 = lax.tie_in(key, PRNGKey(data))
   return threefry_2x32(key, key2)
