@@ -17,6 +17,7 @@ from __future__ import division
 from __future__ import print_function
 
 import collections
+from functools import partial
 
 from absl.testing import absltest
 import numpy as onp
@@ -905,6 +906,26 @@ class APITest(jtu.JaxTestCase):
   def test_jit_of_noncallable(self):
     jtu.check_raises_regexp(lambda: api.jit(3), TypeError,
                             "Expected a callable value.*")
+
+  def test_issue_1062(self):
+    # code from https://github.com/google/jax/issues/1062 @shoyer
+    # this tests, among other things, whether ShardedDeviceTuple constants work
+    device_count = xb.device_count()
+
+    @jit
+    def multi_step(state, count):
+      return lax.fori_loop(0, count, lambda i, s: s, state)
+
+    @jit
+    def multi_step_pmap(state, count=2):
+      @partial(api.pmap, axis_name='x')
+      def pmapped_multi_step(state):
+        return multi_step(state, count)
+
+      return pmapped_multi_step(state)
+
+    u = np.ones((device_count, 100))
+    u_final = multi_step_pmap(u)  # doesn't crash
 
 
 if __name__ == '__main__':

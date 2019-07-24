@@ -668,7 +668,7 @@ def call_bind(primitive, f, *args, **params):
 
 
 def call_impl(f, *args, **params):
-  return f(*args, **params)
+  return f.call_wrapped(*args, **params)
 
 
 call_p = Primitive('call')
