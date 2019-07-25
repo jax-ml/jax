@@ -56,6 +56,7 @@ _check_jaxlib_version()
 
 from jaxlib import xla_client
 from jaxlib import xla_data_pb2
+from jaxlib import xrt
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_enable_x64',
