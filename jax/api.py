@@ -35,6 +35,7 @@ from warnings import warn
 import numpy as onp
 from contextlib import contextmanager
 from distutils.util import strtobool
+import six
 from six.moves import reduce
 
 from . import core
@@ -43,10 +44,11 @@ from . import ad_util
 from .core import pack, eval_jaxpr
 from .api_util import (pytree_fun_to_jaxtupletree_fun, pytree_to_jaxtupletree,
                        pytree_fun_to_flatjaxtuple_fun, apply_jaxtree_fun, wraps,
-                       pytree_fun_to_jaxtupletree_fun2, flatten_fun_leafout)
+                       pytree_fun_to_jaxtupletree_fun2, flatten_fun_leafout,
+                       abstract_tuple_tree_leaves)
 from .tree_util import (process_pytree, node_types, build_tree, PyTreeDef,
                         tree_map, tree_flatten, tree_unflatten, tree_structure,
-                        tree_transpose, leaf)
+                        tree_transpose, leaf, tree_leaves)
 from .util import (unzip2, unzip3, curry, partial, safe_map, safe_zip,
                    WrapHashably, Hashable, prod)
 from .lib.xla_bridge import canonicalize_dtype, device_count
@@ -714,30 +716,19 @@ class _TempAxisName(object):
     return '<axis {}>'.format(hex(id(self)))
 
 def _pmap_axis_size(args):
-  leaves, _ = tree_flatten(args)
-  axis_sizes = reduce(set.union, map(_axis_size, leaves), set())
-  if len(axis_sizes) == 0:
+  try:
+    return next(_axis_size(leaf) for arg in args for leaf in tree_leaves(arg))
+  except StopIteration:
     raise ValueError("pmap requires a leading axis to map over.")
-  if len(axis_sizes) > 1:
-    msg = "pmap requires all leading axes to have equal length, got {}."
-    raise ValueError(msg.format(axis_sizes))
-  return axis_sizes.pop()
 
 def _axis_size(x):
-  if isinstance(x, core.Tracer):
-    aval = x.aval
-  else:
-    aval = xla.abstractify(x)
-  return _aval_axis_size(aval)
-
-def _aval_axis_size(aval):
-  if isinstance(aval, core.AbstractTuple):
-    return reduce(set.union, map(_aval_axis_size, aval), set())
-  else:
-    if aval.shape:
-      return {aval.shape[0]}
-    else:
-      raise ValueError("pmap can't map over scalars.")
+  try:
+    return x.shape[0]
+  except AttributeError:
+    aval = core.get_aval(x)
+    if type(aval) is core.AbstractTuple:
+      return next(leaf.shape[0] for leaf in abstract_tuple_tree_leaves(aval))
+  raise ValueError("could not get axis size of type: {}".format(x))
 
 
 def soft_pmap(fun, axis_name=None):
