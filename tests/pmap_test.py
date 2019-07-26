@@ -659,6 +659,24 @@ class PmapTest(jtu.JaxTestCase):
 
     f(onp.arange(1.).reshape((1, 1)))  # doesn't crash
 
+  def testIssue1065(self):
+    # from https://github.com/google/jax/issues/1065
+    device_count = xla_bridge.device_count()
+
+    def multi_step_pmap(state, count):
+      @partial(pmap, axis_name='x')
+      @jit
+      def exchange_and_multi_step(state):
+        return state
+
+      @jit
+      def time_evolution(state):
+        return lax.fori_loop(0, count, lambda i, s: exchange_and_multi_step(s), state)
+
+      return time_evolution(state)
+
+    multi_step_pmap(np.zeros((device_count,)), count=1)
+
 
 if __name__ == '__main__':
   absltest.main()
