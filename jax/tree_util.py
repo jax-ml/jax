@@ -100,13 +100,11 @@ def tree_multimap(f, tree, *rest):
 
 
 def tree_reduce(f, tree):
-  flat, _ = tree_flatten(tree)
-  return reduce(f, flat)
+  return reduce(f, tree_leaves(tree))
 
 
 def tree_all(tree):
-  flat, _ = tree_flatten(tree)
-  return all(flat)
+  return all(tree_leaves(tree))
 
 
 def process_pytree(process_node, tree):
@@ -125,6 +123,19 @@ def walk_pytree(f_node, f_leaf, tree):
     return f_leaf(tree), leaf
 
 
+def tree_leaves(tree):
+  """Generator that iterates over all leaves of a pytree."""
+  node_type = _get_node_type(tree)
+  if node_type:
+    children, _ = node_type.to_iterable(tree)
+    for child in children:
+      # TODO(mattjj,phawkins): use 'yield from' when PY2 is dropped
+      for leaf in tree_leaves(child):
+        yield leaf
+  else:
+    yield tree
+
+
 def build_tree(treedef, xs):
   if treedef is leaf:
     return xs
@@ -134,7 +145,10 @@ def build_tree(treedef, xs):
     return treedef.node_type.from_iterable(treedef.node_data, children)
 
 
-tree_flatten = partial(walk_pytree, concatenate, lambda x: [x])
+def tree_flatten(tree):
+  itr, treedef = walk_pytree(it.chain.from_iterable, lambda x: (x,), tree)
+  return list(itr), treedef
+
 
 def tree_unflatten(treedef, xs):
   return _tree_unflatten(iter(xs), treedef)

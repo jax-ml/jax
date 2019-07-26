@@ -16,7 +16,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from .core import pack
+from .core import pack, AbstractTuple
 from .tree_util import (build_tree, process_pytree, tree_flatten,
                         tree_unflatten, leaf)
 from .linear_util import transformation_with_aux
@@ -92,3 +92,13 @@ def flatten_fun_leafout(in_tree, *args_flat):
     yield ans, out_tree
   else:
     yield pack(flat_ans), out_tree
+
+
+def abstract_tuple_tree_leaves(aval):
+  if type(aval) is AbstractTuple:
+    for elt in aval:
+      # TODO(mattjj,phawkins): use 'yield from' when PY2 is dropped
+      for a in abstract_tuple_tree_leaves(elt):
+        yield a
+  else:
+    yield aval
