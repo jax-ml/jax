@@ -105,8 +105,12 @@ def jaxpr_as_fun(typed_jaxpr, *args):
   return out
 
 
-JaxprEqn = namedtuple('JaxprEqn', ['invars', 'outvars', 'primitive',
+def new_jaxpr_eqn(*args):
+  return JaxprEqn(object(), *args)
+
+JaxprEqn = namedtuple('JaxprEqn', ['eqn_id', 'invars', 'outvars', 'primitive',
                                    'bound_subjaxprs', 'params'])
+
 class Literal(object):
   __slots__ = ["val", "hash"]
 

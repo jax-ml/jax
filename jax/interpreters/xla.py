@@ -625,7 +625,6 @@ def _xla_callable(fun, device_assignment, *abstract_args):
     axis_env = AxisEnv(jaxpr_replicas(jaxpr), [], [])
     compiled, result_shapes = _compile_jaxpr(jaxpr, device_assignment, axis_env, consts,
                                              *abstract_args)
-    print(jaxpr)
     del master, consts, jaxpr, env
   handle_result = result_handler(result_shape)
   if axis_env.nreps == 1:

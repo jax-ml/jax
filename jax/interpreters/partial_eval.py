@@ -28,7 +28,7 @@ from ..linear_util import thunk, transformation, transformation_with_aux
 from ..util import unzip2, safe_zip, safe_map, toposort, partial
 from ..core import (Trace, Tracer, new_master, Jaxpr, JaxprEqn, Literal,
                     get_aval, AbstractValue, unit, unitvar,
-                    Primitive, call_p, TypedJaxpr)
+                    Primitive, call_p, TypedJaxpr, new_jaxpr_eqn)
 
 map = safe_map
 zip = safe_zip
@@ -98,8 +98,10 @@ class JaxprTrace(Trace):
       tracers = map(self.instantiate_const, tracers)
       avals = [t.aval for t in tracers]
       out_aval = primitive.abstract_eval(*avals, **params)
-      eqn = JaxprEqn(tracers, None, primitive, (), params)
-      return JaxprTracer(self, PartialVal((out_aval, unit)), eqn)
+      out_tracer = JaxprTracer(self, PartialVal((out_aval, unit)), None)
+      # TODO(dougalm): think about whether these ref cycles will leak memory
+      out_tracer.recipe = new_jaxpr_eqn(tracers, [out_tracer], primitive, (), params)
+      return out_tracer
 
   def process_call(self, call_primitive, f, tracers, params):
     if call_primitive in map_primitives:
@@ -112,9 +114,12 @@ class JaxprTrace(Trace):
     out_pv_consts, consts = (stuff[-N:], stuff[:-N])
     const_tracers = map(self.new_instantiated_const, consts)
     bound_subjaxpr = (jaxpr, const_tracers, map(self.full_raise, env))
-    eqn = JaxprEqn(tracers, None, call_primitive, (bound_subjaxpr,), params)
-    return [JaxprTracer(self, PartialVal((out_pv, out_pv_const)), eqn)
-            for out_pv, out_pv_const in zip(out_pvs, out_pv_consts)]
+    out_tracers = [JaxprTracer(self, PartialVal((out_pv, out_pv_const)), None)
+                   for out_pv, out_pv_const in zip(out_pvs, out_pv_consts)]
+    eqn = new_jaxpr_eqn(tracers, out_tracers, call_primitive, (bound_subjaxpr,), params)
+    for t in out_tracers:
+      t.recipe = eqn
+    return out_tracers
 
   def process_map(self, map_primitive, f, tracers, params):
     in_pvs, in_consts = unzip2([t.pval for t in tracers])
@@ -406,12 +411,13 @@ FreeVar = namedtuple('FreeVar', ['val'])
 ConstVar = namedtuple('ConstVar', ['val'])
 LambdaBinding = namedtuple('LambdaBinding', [])
 
-def eqn_tracer_to_var(var, outvars, eqn):
-  invars, _, primitive, bound_subjaxprs, params = eqn
-  invars = map(var, invars)
+def eqn_tracer_to_var(var, eqn):
+  _, in_tracers, out_tracers, primitive, bound_subjaxprs, params = eqn
+  invars  = map(var, in_tracers)
+  outvars = map(var, out_tracers)
   new_bound_subjaxprs = [(j, map(var, c), map(var, f))
                          for j, c, f in bound_subjaxprs]
-  return JaxprEqn(invars, outvars, primitive, new_bound_subjaxprs, params)
+  return new_jaxpr_eqn(invars, outvars, primitive, new_bound_subjaxprs, params)
 
 
 def tracers_to_jaxpr(in_tracers, out_tracers):
@@ -425,10 +431,13 @@ def tracers_to_jaxpr(in_tracers, out_tracers):
   consts = {}
   const_to_var = defaultdict(newvar)
   destructuring_vars = {}
+  processed_eqns = set()
   for t in sorted_tracers:
     recipe = t.recipe
     if isinstance(recipe, JaxprEqn):
-      eqns.append(eqn_tracer_to_var(var, [var(t)], recipe))
+      if recipe.eqn_id not in processed_eqns:
+        eqns.append(eqn_tracer_to_var(var, recipe))
+        processed_eqns.add(recipe.eqn_id)
     elif isinstance(recipe, LambdaBinding):
       assert any(t is in_tracer for in_tracer in in_tracers)
       assert in_tracers, "Lambda binding with no args"
@@ -439,15 +448,6 @@ def tracers_to_jaxpr(in_tracers, out_tracers):
       consts[v] = recipe.val
     elif isinstance(recipe, Literal):
       t_to_var[id(t)] = recipe
-    elif isinstance(recipe, Destructuring):
-      i, eqn, key = recipe
-      if key not in destructuring_vars:
-        outvars = [newvar() for _ in eqn.outvars]
-        eqns.append(eqn_tracer_to_var(var, outvars, eqn))
-        destructuring_vars[key] = outvars
-      else:
-        outvars = destructuring_vars[key]
-      t_to_var[id(t)] = outvars[i]
     elif recipe is unit:
       t_to_var[id(t)] = unitvar
     else:
