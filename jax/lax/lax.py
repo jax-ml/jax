@@ -38,8 +38,6 @@ from ..config import flags
 from ..core import Primitive
 from ..abstract_arrays import (UnshapedArray, ShapedArray, ConcreteArray,
                                array_types, make_shaped_array, raise_to_shaped)
-from ..api_util import (pytree_fun_to_jaxtupletree_fun, pytree_to_jaxtupletree,
-                        pytree_fun_to_flatjaxtuple_fun, pytree_to_flatjaxtuple)
 from ..interpreters import partial_eval as pe
 from ..interpreters import xla
 from ..interpreters import pxla

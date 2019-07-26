@@ -94,9 +94,10 @@ def curry(f):
   """
   return partial(partial, f)
 
-def toposort(end_node):
+def toposort(end_nodes):
+  # TODO: think about repeated objects in end_nodes
   child_counts = {}
-  stack = [end_node]
+  stack = list(end_nodes)
   while stack:
     node = stack.pop()
     if id(node) in child_counts:
@@ -106,7 +107,7 @@ def toposort(end_node):
       stack.extend(node.parents)
 
   sorted_nodes = []
-  childless_nodes = [end_node]
+  childless_nodes = list(end_nodes)
   while childless_nodes:
     node = childless_nodes.pop()
     sorted_nodes.append(node)

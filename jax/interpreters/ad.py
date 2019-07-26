@@ -20,7 +20,7 @@ import itertools as it
 
 from . import partial_eval as pe
 from .. import core as core
-from ..core import JaxTuple, Trace, Tracer, new_master, get_aval, pack, call_p, Primitive, Literal
+from ..core import Trace, Tracer, new_master, get_aval, call_p, Primitive, Literal
 from ..ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_aval,
                        zeros_like_p, zero, Zero)
 from ..abstract_arrays import raise_to_shaped
@@ -483,7 +483,6 @@ def zero_jvp(primitive, primals, tangents, **params):
 
 deflinear(zeros_like_p, lambda t: [zero])
 deflinear(core.identity_p, lambda t: (t,))
-deflinear(core.pack_p, lambda t: list(t) if t is not zero else zero)
 deflinear(add_jaxvals_p, lambda t: (t, t))
 
 
@@ -503,8 +502,6 @@ def instantiate_zeros_at(instantiate, example, tangent):
 def instantiate_zeros(example, tangent):
   if tangent is zero:
     return zeros_like_jaxval(example)
-  elif isinstance(tangent, TangentTuple):
-    return pack(map(instantiate_zeros, example, tangent))
   else:
     return tangent
 
@@ -622,5 +619,3 @@ def jvp_jaxpr(jaxpr, nonzeros, instantiate):
 
 
 primitive_transposes[core.call_p] = partial(call_transpose, call_p)
-
-tree_to_jaxtuples = partial(process_pytree, pack)

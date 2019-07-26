@@ -25,7 +25,7 @@ import numpy as onp
 from six.moves import reduce
 
 from .. import core
-from ..core import Trace, Tracer, new_master, pack, AbstractTuple, JaxTuple
+from ..core import Trace, Tracer, new_master
 from ..abstract_arrays import ShapedArray, make_shaped_array, array_types, raise_to_shaped
 from ..ad_util import add_jaxvals_p, zeros_like_p, zeros_like_jaxval
 from ..linear_util import transformation, transformation_with_aux, wrap_init
@@ -212,12 +212,6 @@ def add_batch_dim_to_aval(bdim, size, aval):
     raise TypeError(t)
 
 pytype_aval_mappings = {}
-
-def shaped_jaxtuple(xs):
-  return AbstractTuple(map(shaped_aval, xs))
-
-pytype_aval_mappings[JaxTuple] = shaped_jaxtuple
-pytype_aval_mappings[xla.DeviceTuple] = xla.pytype_aval_mappings[xla.DeviceTuple]
 
 for t in it.chain(array_types, [xla.DeviceArray]):
   pytype_aval_mappings[t] = make_shaped_array

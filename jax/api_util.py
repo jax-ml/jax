@@ -16,7 +16,6 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from .core import pack, AbstractTuple
 from .tree_util import (build_tree, process_pytree, tree_flatten,
                         tree_unflatten, treedef_is_leaf)
 from .linear_util import transformation_with_aux
@@ -40,59 +39,10 @@ def get_module(fun): return getattr(fun, "__module__", "<unknown module>")
 def get_doc(fun): return getattr(fun, "__doc__", "")
 
 @transformation_with_aux
-def pytree_fun_to_jaxtupletree_fun(args_trees, *args):
-  py_args = map(build_tree, args_trees, args)
-  ans = yield py_args, {}
-  yield pytree_to_jaxtupletree(ans)
-
-@transformation_with_aux
-def pytree_fun_to_jaxtupletree_fun2(kwargs_tree, args_trees, kwargs, *args):
-  py_args = map(build_tree, args_trees, args)
-  py_kwargs = build_tree(kwargs_tree, kwargs)
-  ans = yield py_args, py_kwargs
-  yield pytree_to_jaxtupletree(ans)
-
-def apply_jaxtree_fun(fun, io_tree, *py_args):
-  in_trees_expected, out_tree = io_tree
-  args, in_trees = unzip2(map(pytree_to_jaxtupletree, py_args))
-  for i, (in_tree, expected) in enumerate(zip(in_trees, in_trees_expected)):
-    if in_tree != expected:
-      raise TypeError("Expected {}, got {}".format(expected, in_tree))
-
-  ans = fun(*args)
-  return build_tree(out_tree, ans)
-
-pytree_to_jaxtupletree = partial(process_pytree, pack)
-
-
-@transformation_with_aux
-def pytree_fun_to_flatjaxtuple_fun(in_trees, *args):
-  py_args = map(tree_unflatten, in_trees, args)
-  ans = yield py_args, {}
-  yield pytree_to_flatjaxtuple(ans)
-
-@transformation_with_aux
 def flatten_fun(in_tree, *args_flat):
   py_args, py_kwargs = tree_unflatten(in_tree, args_flat)
   ans = yield py_args, py_kwargs
-  yield pytree_to_flatjaxtuple(ans)
-
-def pytree_to_flatjaxtuple(pytree):
-  flat, out_tree = tree_flatten(pytree)
-  return pack(flat), out_tree
-
-
-@transformation_with_aux
-def flatten_fun_leafout(in_tree, *args_flat):
-  # like flatten_fun but doesn't pack output leaves
-  py_args, py_kwargs = tree_unflatten(in_tree, args_flat)
-  ans = yield py_args, py_kwargs
-  flat_ans, out_tree = tree_flatten(ans)
-  if treedef_is_leaf(out_tree):
-    yield ans, out_tree
-  else:
-    yield pack(flat_ans), out_tree
-
+  yield tree_flatten(ans)
 
 def abstract_tuple_tree_leaves(aval):
   if type(aval) is AbstractTuple:

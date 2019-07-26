@@ -41,11 +41,11 @@ map = safe_map
 # -------------------- jaxprs --------------------
 
 class Jaxpr(object):
-  def __init__(self, constvars, freevars, invars, outvar, eqns):
+  def __init__(self, constvars, freevars, invars, outvars, eqns):
     self.constvars = constvars
     self.freevars = freevars
     self.invars = invars
-    self.outvar = outvar
+    self.outvars = outvars
     self.eqns = eqns
 
   def __str__(self):
@@ -62,7 +62,7 @@ class Jaxpr(object):
 
   def copy(self):
     return Jaxpr(self.constvars[:], self.freevars[:], self.invars[:],
-                 self.outvar, self.eqns[:])
+                 self.outvars, self.eqns[:])
 
 class TypedJaxpr(object):
   def __init__(self, jaxpr, literals, in_avals, out_aval):
@@ -106,8 +106,7 @@ def jaxpr_as_fun(typed_jaxpr, *args):
 
 
 JaxprEqn = namedtuple('JaxprEqn', ['invars', 'outvars', 'primitive',
-                                   'bound_subjaxprs', 'restructure',
-                                   'destructure', 'params'])
+                                   'bound_subjaxprs', 'params'])
 class Literal(object):
   __slots__ = ["val", "hash"]
 
@@ -504,6 +503,9 @@ class Bot(AbstractValue): pass
 
 bot = Bot()
 
+class AbstractUnit(AbstractValue): pass
+
+abstract_unit = AbstractUnit()
 
 def lattice_join(x, y):
   if x is None:
@@ -544,107 +546,15 @@ def get_aval(x):
 pytype_aval_mappings = {}
 
 
-# ------------------- Products -------------------
-
-# We override isinstance(x, JaxTuple) behavior (using a metaclass) because
-# defining __slots__ (for performance) is incompatible with multiple
-# inheritance, and both isinstance(x, JaxTuple) and isinstance(x, DeviceValue)
-# can be true.
-class _TupleMeta(type(tuple)):
-  def __instancecheck__(self, instance):
-    try:
-      return type(get_aval(instance)) is AbstractTuple
-    except TypeError:
-      return False
-
-class JaxTuple(six.with_metaclass(_TupleMeta)):
-  __slots__ = ['xs']
-
-  def __init__(self, xs):
-    self.xs = xs = tuple(xs)
-    if not skip_checks:
-      assert all(map(valid_jaxtype, xs)), xs
-
-  def __iter__(self):
-    return iter(self.xs)
-
-  def __len__(self):
-    return len(self.xs)
-
-  def __repr__(self):
-    if self is unit:
-      return unitvar
-    else:
-      return 'JaxTuple({})'.format(','.join(map(repr, self)))
-
-  def __eq__(self, other):
-    return isinstance(other, JaxTuple) and tuple(self) == tuple(other)
-
-
-class AbstractTuple(AbstractValue, tuple):
-  def __new__(cls, xs=()):
-    if not skip_checks:
-      xs = tuple(xs)
-      assert all(isinstance(x, AbstractValue) for x in xs), xs
-    return tuple.__new__(cls, xs)
-
-  @staticmethod
-  def _iter(tracer):
-    return map(full_lower, tracer.unpack())
-
-  def _len(self, ignored_tracer):
-    return len(self)  # tuples have a known length
-
-  def at_least_vspace(self):
-    return AbstractTuple(x.at_least_vspace() for x in self)
-
-  def join(self, other):
-    return AbstractTuple(map(lattice_join, self, other))
-
-  def __repr__(self):
-    return '({})'.format(','.join(map(repr, self)))
-
-  def _bool(self, ignored_tracer):
-    return bool(self)
-  _nonzero = _bool
-
-  def _eq(self, self_traced, other):
-    return tuple(self_traced) == tuple(other)
-
-
-unit = JaxTuple(())
+class Unit(object): pass
+unit = Unit()
 unitvar = '*'
 
-def tuple_to_jaxtuple(x):
-  if type(x) is tuple:
-    return JaxTuple(map(tuple_to_jaxtuple, x))
-  else:
-    return x
-
-def pack(args):
-  return pack_p.bind(*args)
-
-def concrete_jaxtuple(xs):
-  return AbstractTuple(map(concrete_aval, xs))
-
-pytype_aval_mappings[JaxTuple] = concrete_jaxtuple
+pytype_aval_mappings[Unit] = lambda _: abstract_unit
 
 identity_p = Primitive('id')
 identity_p.def_impl(lambda x: x)
 identity_p.def_custom_bind(lambda x: x)
-
-pack_p = Primitive('pack')
-pack_p.def_impl(lambda *xs: JaxTuple(xs))
-
-@pack_p.def_custom_bind
-def pack_p_bind(*args):
-  top_trace = find_top_trace(args)
-  if top_trace is None:
-    return JaxTuple(args)
-  else:
-    tracers = map(top_trace.full_raise, args)
-    return top_trace.pack(tracers)
-
 
 # ------------------- Call -------------------
 
@@ -734,11 +644,7 @@ def pp_jaxpr(jaxpr):
     return ' '.join(map(str, vs))
 
   def pp_eqn(eqn):
-    if eqn.destructure:
-      lhs = '(' + print_vars(eqn.outvars) + ')'
-    else:
-      lhs = eqn.outvars[0]
-
+    lhs = print_vars(eqn.outvars)
     pp_subexpr = pp('')
     if eqn.bound_subjaxprs:
       for subjaxpr, const_vars, bound_vars in eqn.bound_subjaxprs:
@@ -755,4 +661,4 @@ def pp_jaxpr(jaxpr):
                                               print_vars(jaxpr.invars))) +
           ((pp('let ') >>
             vcat(map(pp_eqn, jaxpr.eqns))) +
-           pp('in {} }}'.format(jaxpr.outvar))).indent(2))
+           pp('in {} }}'.format(jaxpr.outvars))).indent(2))

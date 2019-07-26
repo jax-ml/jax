@@ -84,11 +84,8 @@ def shard_args(device_ordinals, assignments, axis_size, nrep, args):
   return buffers
 
 def _slice(x, i):
-  """Return the ith slice of a JaxType (tuple or array)."""
-  if isinstance(x, core.JaxTuple):
-    return core.pack(_slice(elt, i) for elt in x)
-  else:
-    return x[i]
+  """Return the ith slice of an array."""
+  return x[i]
 
 def xla_shard(c, sizes, x):
   def _xla_shard(shape, x):
@@ -160,12 +157,6 @@ def sharded_tuple_result_handler(axis_size, aval, replica_results):
   if t is xla.DeviceTuple:
     bufs = [r.device_buffer for r in replica_results]
     return ShardedDeviceTuple(axis_size, aval, bufs)
-  elif t is core.JaxTuple:
-    # e.g. pmap(lambda x: core.pack((3, x)))(...)
-    reduced_aval = remove_axis_from_aval(aval)
-    all_results = zip(*replica_results)
-    return core.pack([sharded_result_handler(axis_size, elt_aval)(results)
-                      for elt_aval, results in zip(reduced_aval, all_results)])
   else:
     raise TypeError(t)
 
@@ -353,66 +344,6 @@ class ShardedDeviceValue(xla.DeviceValue):
     self._check_if_deleted()
     for buf in self.device_buffers:
       buf.block_host_until_ready()
-
-
-class ShardedDeviceTuple(ShardedDeviceValue, xla.DeviceTuple):
-  """A ShardedDeviceTuple is a JaxTuple sharded across devices.
-
-  The purpose of a ShardedDeviceTuple is to reduce the number of transfers when
-  executing replicated computations, by allowing results to persist on the
-  devices that produced them. That way dispatching a similarly replicated
-  computation that consumes the same sharded memory layout does not incur any
-  transfers.
-
-  A ShardedDeviceTuple represents one logical JaxTuple value, and simulates the
-  behavior of a JaxTuple so that it can be treated by user code as a JaxTuple;
-  that is, it is only an optimization to reduce transfers.
-
-  The number of device buffers underlying a ShardedDeviceTuple instance is equal
-  to the number of replicas of the computation that produced it. Each buffer
-  represents a shard of the logical tuple value represented by the
-  ShardedDeviceTuple, where a shard of an array is a slice along its leading
-  axis, and a shard of a tuple is a tuple of corresponding shards of its
-  elements. These component buffers reside on distinct devices, but need not
-  represent distinct logical shards.
-  """
-  __slots__ = ["device_buffers", "axis_size", "aval"]
-
-  def __init__(self, axis_size, aval, device_buffers):
-    assert device_buffers
-    self.device_buffers = device_buffers
-    self.axis_size = axis_size
-    self.aval = aval
-
-  # To destructure, we destructure the constituent buffers on each device, then
-  # logically concatenate those shards across devices producing one logically
-  # concatenated result per element. The logical concatenation is performed with
-  # the result handler logic applied to the elements.
-  def __iter__(self):
-    all_bufs = zip(*[buf.destructure() for buf in self.device_buffers])
-    for aval, bufs in zip(self.aval, all_bufs):
-      t = type(aval)
-      if t is core.AbstractTuple:
-        yield ShardedDeviceTuple(self.axis_size, aval, bufs)
-      elif t is ShapedArray:
-        yield ShardedDeviceArray(aval, bufs)
-      else:
-        raise TypeError(t)
-
-  def __len__(self):
-    return len(self.aval)
-
-  def __repr__(self):
-    return 'ShardedDeviceTuple(len={length})'.format(length=len(self))
-
-
-core.pytype_aval_mappings[ShardedDeviceTuple] = core.pytype_aval_mappings[core.JaxTuple]
-xla.pytype_aval_mappings[ShardedDeviceTuple] = op.attrgetter('aval')
-batching.pytype_aval_mappings[ShardedDeviceTuple] = op.attrgetter('aval')
-xla.canonicalize_dtype_handlers[ShardedDeviceTuple] = \
-    xla.canonicalize_dtype_handlers[xla.DeviceTuple]
-
-xb.register_constant_handler(ShardedDeviceTuple, xla._device_tuple_constant_handler)
 
 
 class ShardedDeviceArray(ShardedDeviceValue, xla.DeviceArray):

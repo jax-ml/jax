@@ -20,7 +20,7 @@ The transformations here mostly wrap internal transformations, providing
 convenience flags to control behavior and handling Python containers of
 arguments and outputs. The Python containers handled are pytrees (see
 tree_util.py), which include nested tuples/lists/dicts, where the leaves are
-arrays or JaxTuples.
+arrays.
 """
 
 from __future__ import absolute_import
@@ -43,15 +43,11 @@ from six.moves import reduce
 from . import core
 from . import linear_util as lu
 from . import ad_util
-from .core import pack, eval_jaxpr
-from .api_util import (pytree_fun_to_jaxtupletree_fun, pytree_to_jaxtupletree,
-                       pytree_fun_to_flatjaxtuple_fun, apply_jaxtree_fun, wraps,
-                       pytree_fun_to_jaxtupletree_fun2, flatten_fun_leafout,
-                       abstract_tuple_tree_leaves)
-from .tree_util import (process_pytree, build_tree, tree_map, tree_flatten,
-                        tree_unflatten, tree_structure, tree_transpose,
-                        treedef_tuple, treedef_is_leaf, treedef_children,
-                        tree_leaves)
+from .core import eval_jaxpr
+from .api_util import (wraps, flatten_fun, abstract_tuple_tree_leaves)
+from .tree_util import (process_pytree, node_types, build_tree, PyTreeDef,
+                        tree_map, tree_flatten, tree_unflatten, tree_structure,
+                        tree_transpose, leaf, tree_leaves)
 from .util import (unzip2, unzip3, curry, partial, safe_map, safe_zip,
                    WrapHashably, Hashable, prod)
 from .lib.xla_bridge import canonicalize_dtype, device_count
@@ -146,10 +142,10 @@ def _jit(fun, static_argnums, device_assignment):
     else:
       dyn_args = args
     args_flat, in_tree = tree_flatten((dyn_args, kwargs))
-    flat_fun, out_tree = flatten_fun_leafout(f, in_tree)
-    out = xla.xla_call(flat_fun, *args_flat,
-                       device_assignment=device_assignment)
-    return out if treedef_is_leaf(out_tree()) else tree_unflatten(out_tree(), out)
+    _check_args(args_flat)
+    flat_fun, out_tree = flatten_fun(f, in_tree)
+    out = xla.xla_call(flat_fun, *args_flat, device_assignment=device_assignment)
+    return tree_unflatten(out_tree(), out)
 
   jitted_name =  "jit({}, static_argnums={})"
   f_jitted.__name__ = jitted_name.format(f_jitted.__name__, static_argnums)
@@ -1100,9 +1096,9 @@ def make_jaxpr(fun):
 
   @wraps(fun)
   def jaxpr_maker(*args, **kwargs):
-    wrapped = lu.wrap_init(fun, kwargs)
-    jax_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
-    jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(wrapped, in_trees)
+    wrapped = lu.wrap_init(fun)
+    jax_args, in_tree = tree_flatten((args, kwargs))
+    jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
     pvals = map(pv_like, jax_args)
     jaxpr, _, _ = pe.trace_to_jaxpr(jaxtree_fun, pvals)
     return jaxpr
@@ -1747,10 +1743,7 @@ def eval_shape(fun, *args, **kwargs):
   (2000, 1000)
   """
   def abstractify(x):
-    if type(x) is core.JaxTuple:
-      return core.AbstractTuple(map(abstractify, x))
-    else:
-      return ShapedArray(onp.shape(x), onp.result_type(x))
+    return ShapedArray(onp.shape(x), onp.result_type(x))
 
   jax_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
   jax_kwargs, kwargs_tree = pytree_to_jaxtupletree(kwargs)

@@ -30,15 +30,13 @@ from jax.lax import lax
 from jax.lax import _abstractify
 from jax import linear_util as lu
 from jax.abstract_arrays import ConcreteArray, ShapedArray, UnshapedArray
-from jax.api_util import (
-    pytree_to_flatjaxtuple, pytree_fun_to_flatjaxtuple_fun,
-    pytree_to_jaxtupletree, pytree_fun_to_jaxtupletree_fun)
+from jax.api_util import flatten_fun
 from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax.interpreters import ad
 from jax.util import partial, unzip2, safe_map, safe_zip
-from jax.tree_util import build_tree, tree_unflatten, tree_map
+from jax.tree_util import build_tree, tree_unflatten, tree_map, tree_flatten
 from jax import ad_util
 
 _map = safe_map
@@ -262,7 +260,7 @@ batching.primitive_batchers[while_p] = _while_loop_batching_rule
 
 def cond(pred, true_operand, true_fun, false_operand, false_fun):
   def trace_jaxpr(fun, operand):
-    op_flat, in_tree = pytree_to_flatjaxtuple(operand)
+    op_flat, in_tree = tree_flatten(operand)
     fun_flat, out_tree = pytree_fun_to_flatjaxtuple_fun(lu.wrap_init(fun), (in_tree,))
     jaxpr, pvout, consts = pe.trace_to_jaxpr(fun_flat, (_abstractify(op_flat),))
     return op_flat, jaxpr, consts, pvout, out_tree
