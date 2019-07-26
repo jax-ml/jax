@@ -348,12 +348,19 @@ def _axis_groups(nrep, mesh_spec, mesh_axes):
   return tuple(map(tuple, groups.T))
 
 def jaxpr_replicas(jaxpr):
-  nums = (eqn_replicas(eqn) for eqn in jaxpr.eqns if eqn.bound_subjaxprs)
-  return max(it.chain([1], nums))  # max(itr, default=1)
+  return max(it.chain([1], (eqn_replicas(eqn) for eqn in jaxpr.eqns)))
 
 def eqn_replicas(eqn):
-  (subjaxpr, _, _), = eqn.bound_subjaxprs
-  return eqn.params.get('axis_size', 1) * jaxpr_replicas(subjaxpr)
+  if eqn.bound_subjaxprs:
+    (subjaxpr, _, _), = eqn.bound_subjaxprs
+    return eqn.params.get('axis_size', 1) * jaxpr_replicas(subjaxpr)
+  elif eqn.primitive in initial_style_translations:
+    nums = (jaxpr_replicas(param if type(param) is core.Jaxpr else param.jaxpr)
+            for param in eqn.params.values()
+            if type(param) in (core.Jaxpr, core.TypedJaxpr))
+    return max(it.chain([1], nums))
+  else:
+    return 1
 
 
 def lower_fun(fun, instantiate=False, initial_style=False):
