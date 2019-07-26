@@ -459,11 +459,11 @@ class ShardedDeviceArray(ShardedDeviceValue, xla.DeviceArray):
 
   def __getitem__(self, idx):
     if self._npy_value is None and type(idx) is int:
-      # When we don't have a copy of the data on the host, and we're just trying
-      # to extract a simple integer-indexed slice of the logical array, we can
-      # avoid transferring from all the devices and just communicate with one.
       ids = self._ids()
-      return self.device_buffers[ids[idx]].to_py()
+      device_buffer = self.device_buffers[ids[idx]]
+      result_shape = xla_shape_to_result_shape(device_buffer.shape())
+      handler = xla._device_persistent_result_handler(result_shape)
+      return handler(device_buffer)
     else:
       return super(ShardedDeviceArray, self).__getitem__(idx)
 
