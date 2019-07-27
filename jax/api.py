@@ -928,7 +928,7 @@ def linearize(fun, *primals):
                        (in_tree, out_tree), out_pvals)
   return out_primal_py, lifted_jvp
 
-def lift_linearized(jaxpr, primal_avals, consts, io_tree, out_pval, *py_args):
+def lift_linearized(jaxpr, primal_avals, consts, io_tree, out_pvals, *py_args):
   def fun(*tangents):
     tangent_avals = list(map(core.get_aval, tangents))
     for primal_aval, tangent_aval in zip(primal_avals, tangent_avals):
@@ -939,8 +939,9 @@ def lift_linearized(jaxpr, primal_avals, consts, io_tree, out_pval, *py_args):
                "the original primal values.")
         raise ValueError(msg)
     dummy = tangents
-    _, ans = eval_jaxpr(jaxpr, consts, (), dummy, tangents)
-    return pe.merge_pvals(ans, out_pval)
+    out = eval_jaxpr(jaxpr, consts, (), *(dummy + tangents))
+    tangents_out = out[len(out)//2:]
+    return tuple(map(pe.merge_pvals, tangents_out, out_pvals))
 
   return apply_flat_fun(fun, io_tree, *py_args)
 

@@ -140,6 +140,8 @@ class Literal(object):
 literalable_types = set()
 
 class Primitive(object):
+  multiple_results = False  # override for multi-output primitives
+
   def __init__(self, name):
     self.name = name
 
@@ -197,20 +199,18 @@ def eval_jaxpr(jaxpr, consts, freevar_vals, *args):
   pat_fmap(write, jaxpr.invars, args)
   pat_fmap(write, jaxpr.freevars, freevar_vals)
   for eqn in jaxpr.eqns:
-    if not eqn.restructure:
-      in_vals = map(read, eqn.invars)
-    else:
-      in_vals = [pack(map(read, invars)) if type(invars) is tuple
-                 else read(invars) for invars in eqn.invars]
+    in_vals = map(read, eqn.invars)
     subfuns = [partial(eval_jaxpr, subjaxpr, map(read, const_bindings),
                                              map(read, freevar_bindings))
                for subjaxpr, const_bindings, freevar_bindings
                in eqn.bound_subjaxprs]
     subfuns = map(lu.wrap_init, subfuns)
     ans = eqn.primitive.bind(*(subfuns + in_vals), **eqn.params)
-    outvals = list(ans) if eqn.destructure else [ans]
-    map(write, eqn.outvars, outvals)
-  return read(jaxpr.outvar)
+    if eqn.primitive.multiple_results:
+      map(write, eqn.outvars, ans)
+    else:
+      write(eqn.outvars[0], ans)
+  return tuple(map(read, jaxpr.outvars))
 
 
 def pat_fmap(f, v, *xs):
