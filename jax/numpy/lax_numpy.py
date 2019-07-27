@@ -2924,6 +2924,8 @@ setattr(DeviceArray, "astype", lax.convert_element_type)
 
 # Extra methods that are handy
 setattr(ShapedArray, "broadcast", core.aval_method(lax.broadcast))
+setattr(ShapedArray, "broadcast_in_dim", core.aval_method(lax.broadcast_in_dim))
 setattr(ShapedArray, "split", core.aval_method(split))
 setattr(DeviceArray, "broadcast", lax.broadcast)
+setattr(DeviceArray, "broadcast_in_dim", lax.broadcast_in_dim)
 setattr(DeviceArray, "split", split)

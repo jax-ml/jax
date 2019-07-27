@@ -262,26 +262,6 @@ class PmapTest(jtu.JaxTestCase):
     self.assertEqual((tuple(sorted(groups[0])),),
                      ((0, 1, 2, 3, 4, 5, 6, 7,),))  # order doesn't matter
 
-  def testShardedDeviceTuple(self):
-    f = lambda x: core.pack((x, x))
-    f = pmap(f)
-
-    shape = (xla_bridge.device_count(), 4)
-    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
-
-    # test that we can pass in and out ShardedDeviceTuples (and unpack them)
-    y = f(x)
-    self.assertIsInstance(y, pxla.ShardedDeviceTuple)
-    self.assertIsInstance(y, core.JaxTuple)
-    self.assertAllClose(y, (x, x), check_dtypes=False)
-    z = f(y)
-    self.assertIsInstance(z, pxla.ShardedDeviceTuple)
-    self.assertAllClose(z, (y, y), check_dtypes=True)
-
-    # test that we can pass a ShardedDeviceTuple to a regular jit computation
-    w = jit(lambda x: list(x)[0])(y)
-    self.assertAllClose(w, x, check_dtypes=False)
-
   @jtu.skip_on_devices("cpu", "gpu")
   def testCollectivePermute(self):
     device_count = xla_bridge.device_count()

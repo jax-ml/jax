@@ -331,8 +331,6 @@ else:
   register_pytree_node(tuple, lambda xs: (xs, None), lambda _, xs: tuple(xs))
   register_pytree_node(list, lambda xs: (tuple(xs), None), lambda _, xs: list(xs))
   register_pytree_node(dict, dict_to_iterable, lambda keys, xs: dict(zip(keys, xs)))
-  register_pytree_node(type(None), lambda z: ((), None), lambda _, xs: None)
-
 
   # To handle namedtuples, we can't just use the standard table of node_types
   # because every namedtuple creates its own type and thus would require its own
