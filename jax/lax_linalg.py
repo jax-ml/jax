@@ -312,9 +312,8 @@ def triangular_solve_jvp_rule_a(
 def triangular_solve_transpose_rule(
     cotangent, a, b, left_side, lower, transpose_a, conjugate_a,
     unit_diagonal):
-  # Triangular solve is linear in its first argument and nonlinear in its second
-  # argument, similar to `div`. We need both a JVP rule and a transpose rule
-  # for the first argument.
+  # Triangular solve is nonlinear in its first argument and linear in its second
+  # argument, analogous to `div` but swapped.
   assert a is not None and b is None
   cotangent_b = triangular_solve(a, cotangent, left_side, lower,
                                  not transpose_a, conjugate_a, unit_diagonal)
