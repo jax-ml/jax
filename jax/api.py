@@ -44,7 +44,7 @@ from . import core
 from . import linear_util as lu
 from . import ad_util
 from .core import eval_jaxpr
-from .api_util import (wraps, flatten_fun, abstract_tuple_tree_leaves)
+from .api_util import (wraps, flatten_fun, abstract_tuple_tree_leaves, apply_flat_fun)
 from .tree_util import (process_pytree, node_types, build_tree, PyTreeDef,
                         tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, leaf, tree_leaves)
@@ -283,23 +283,13 @@ def xla_computation(fun, static_argnums=(), axis_env=None):
   @wraps(fun)
   def computation_maker(*args, **kwargs):
     wrapped = lu.wrap_init(fun)
-    jax_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
-    if not kwargs:
-      jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(wrapped, in_trees)
-      pvals = map(pv_like, jax_args)
-      jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
-      axis_env_ = make_axis_env(xla.jaxpr_replicas(jaxpr))
-      return xla.build_jaxpr(jaxpr, axis_env_, consts,
-                             *map(xla.abstractify, jax_args))
-    else:
-      jax_kwargs, kwargs_tree = pytree_to_jaxtupletree(kwargs)
-      jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun2(wrapped, kwargs_tree, in_trees)
-      pvals = map(pv_like, (jax_kwargs,) + tuple(jax_args))
-      jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
-      axis_env_ = make_axis_env(xla.jaxpr_replicas(jaxpr))
-      return xla.build_jaxpr(jaxpr, axis_env_, consts, xla.abstractify(jax_kwargs),
-                             *map(xla.abstractify, jax_args))
-
+    jax_args, in_tree = tree_flatten((args, kwargs))
+    jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
+    pvals = map(pv_like, jax_args)
+    jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
+    axis_env_ = make_axis_env(xla.jaxpr_replicas(jaxpr))
+    return xla.build_jaxpr(jaxpr, axis_env_, consts,
+                           *map(xla.abstractify, jax_args))
   return computation_maker
 
 def grad(fun, argnums=0, has_aux=False, holomorphic=False):
@@ -773,9 +763,7 @@ def soft_pmap(fun, axis_name=None):
 def _reshape_split(num_chunks, arg):
   def split(aval, arg):
     t = type(aval)
-    if t is core.AbstractTuple:
-      return core.pack(map(split, aval, arg))
-    elif t is ShapedArray:
+    if t is ShapedArray:
       prefix = (num_chunks, arg.shape[0] // num_chunks)
       return arg.reshape(prefix + arg.shape[1:])
     else:
@@ -786,9 +774,7 @@ def _reshape_split(num_chunks, arg):
 def _reshape_merge(ans):
   def merge(aval, ans):
     t = type(aval)
-    if t is core.AbstractTuple:
-      return core.pack(map(merge, aval, ans))
-    elif t is ShapedArray:
+    if t is ShapedArray:
       return ans.reshape((-1,) + ans.shape[2:])
     else:
       raise TypeError(aval)
@@ -866,18 +852,16 @@ def jvp(fun, primals, tangents):
   >>> print(v)
   0.19900084
   """
-  def trim_arg(primal, tangent):
-    primal_jtuple, tree_def = pytree_to_jaxtupletree(primal)
-    tangent_jtuple, tree_def_2 = pytree_to_jaxtupletree(tangent)
-    assert tree_def == tree_def_2, (tree_def, tree_def_2)
-    return primal_jtuple, tangent_jtuple, tree_def
-
   if not isinstance(fun, lu.WrappedFun):
     fun = lu.wrap_init(fun)
-  ps_flat, ts_flat, in_trees = unzip3(map(trim_arg, primals, tangents))
-  jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(fun, in_trees)
-  out_primal, out_tangent = ad.jvp(jaxtree_fun).call_wrapped(ps_flat, ts_flat)
-  return (build_tree(out_tree(), out_primal), build_tree(out_tree(), out_tangent))
+
+  ps_flat, tree_def = tree_flatten((primals, {}))
+  ts_flat, tree_def_2 = tree_flatten((tangents, {}))
+  assert tree_def == tree_def_2, (tree_def, tree_def_2)
+  flat_fun, out_tree = flatten_fun(fun, tree_def)
+  out_primals, out_tangents = ad.jvp(flat_fun).call_wrapped(ps_flat, ts_flat)
+  return (tree_unflatten(out_tree(), out_primals),
+          tree_unflatten(out_tree(), out_tangents))
 
 def linearize(fun, *primals):
   """Produce a linear approximation to `fun` using `jvp` and partial evaluation.
@@ -934,14 +918,14 @@ def linearize(fun, *primals):
   -6.676704
   """
   f = lu.wrap_init(fun)
-  primals_flat, in_trees = unzip2(map(pytree_to_jaxtupletree, primals))
-  jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(f, in_trees)
-  out_primal, out_pval, jaxpr, consts = ad.linearize(jaxtree_fun, *primals_flat)
+  primals_flat, in_tree = tree_flatten((primals, {}))
+  jaxtree_fun, out_tree = flatten_fun(f, in_tree)
+  out_primals, out_pvals, jaxpr, consts = ad.linearize(jaxtree_fun, *primals_flat)
   out_tree = out_tree()
-  out_primal_py = build_tree(out_tree, out_primal)
+  out_primal_py = tree_unflatten(out_tree, out_primals)
   primal_avals = list(map(core.get_aval, primals_flat))
   lifted_jvp = partial(lift_linearized, jaxpr, primal_avals, consts,
-                       (in_trees, out_tree), out_pval)
+                       (in_tree, out_tree), out_pvals)
   return out_primal_py, lifted_jvp
 
 def lift_linearized(jaxpr, primal_avals, consts, io_tree, out_pval, *py_args):
@@ -954,12 +938,11 @@ def lift_linearized(jaxpr, primal_avals, consts, io_tree, out_pval, *py_args):
         msg = ("linearized function called on tangent values inconsistent with "
                "the original primal values.")
         raise ValueError(msg)
-    primals = pack(tangents)  # doesn't matter what these are-they'll be ignored
-    tangents = pack(tangents)
-    _, ans = eval_jaxpr(jaxpr, consts, (), primals, tangents)
+    dummy = tangents
+    _, ans = eval_jaxpr(jaxpr, consts, (), dummy, tangents)
     return pe.merge_pvals(ans, out_pval)
 
-  return apply_jaxtree_fun(fun, io_tree, *py_args)
+  return apply_flat_fun(fun, io_tree, *py_args)
 
 def _check_inexact_input_vjp(x):
   aval = core.get_aval(x)
@@ -1007,10 +990,10 @@ def vjp(fun, *primals, **kwargs):
   assert not kwargs
   if not isinstance(fun, lu.WrappedFun):
     fun = lu.wrap_init(fun)
-  primals_flat, in_trees = unzip2(map(pytree_to_jaxtupletree, primals))
+  primals_flat, in_tree = tree_flatten(primals)
   _check_args(primals_flat)
   tree_map(_check_inexact_input_vjp, primals)
-  jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(fun, in_trees)
+  jaxtree_fun, out_tree = flatten_fun(fun, in_tree)
   if not has_aux:
     out_primal, out_vjp = ad.vjp(jaxtree_fun, primals_flat)
   else:
@@ -1018,7 +1001,7 @@ def vjp(fun, *primals, **kwargs):
   out_tree = out_tree()
   if has_aux:
     out_tree, aux_tree = treedef_children(out_tree)
-  out_primal_py = build_tree(out_tree, out_primal)
+  out_primal_py = tree_unflatten(out_tree, out_primal)
   ct_in_trees = [out_tree]
   ct_out_tree = treedef_tuple(in_trees)
   def out_vjp_packed(cotangent_in):
@@ -1027,7 +1010,7 @@ def vjp(fun, *primals, **kwargs):
   if not has_aux:
     return out_primal_py, vjp_py
   else:
-    return out_primal_py, vjp_py, build_tree(aux_tree, aux)
+    return out_primal_py, vjp_py, tree_unflatten(aux_tree, aux)
 
 
 def trace_to_jaxpr(traceable, py_pvals, **kwargs):

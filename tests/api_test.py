@@ -31,9 +31,9 @@ import jax
 import jax.numpy as np
 from jax import jit, grad, device_get, device_put, jacfwd, jacrev, hessian
 from jax import api, lax
-from jax.core import Primitive, pack, JaxTuple
+from jax.core import Primitive
 from jax.interpreters import ad
-from jax.interpreters.xla import DeviceArray, DeviceTuple
+from jax.interpreters.xla import DeviceArray
 from jax.abstract_arrays import concretization_err_msg
 from jax.lib import xla_bridge as xb
 from jax import test_util as jtu

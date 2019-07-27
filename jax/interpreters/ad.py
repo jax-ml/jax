@@ -27,6 +27,8 @@ from ..abstract_arrays import raise_to_shaped
 from ..util import unzip2, unzip3, safe_map, safe_zip, partial
 from ..tree_util import process_pytree, build_tree, register_pytree_node, tree_map
 from ..linear_util import thunk, staged, transformation, transformation_with_aux, wrap_init
+from ..api_util import flatten_fun  # TODO: can we avoid this?
+from ..tree_util import tree_flatten, tree_unflatten
 
 from six.moves import builtins, reduce
 
@@ -58,9 +60,9 @@ def jvp_subtrace(master, primals, tangents):
     if isinstance(x, Tracer):
       assert x.trace.level < trace.level
   ans = yield map(partial(JVPTracer, trace), primals, tangents), {}
-  out_tracer = trace.full_raise(ans)
-  out_primal, out_tangent = out_tracer.primal, out_tracer.tangent
-  yield (out_primal, out_tangent)
+  out_tracers = map(trace.full_raise, ans)
+  yield unzip2([(out_tracer.primal, out_tracer.tangent)
+                for out_tracer in out_tracers])
 
 @transformation_with_aux
 def jvp_subtrace_aux(instantiate, master, primals, tangents):
@@ -75,30 +77,27 @@ def jvp_subtrace_aux(instantiate, master, primals, tangents):
   out_tangent = instantiate_zeros_at(instantiate, out_primal, out_tangent)
   yield (out_primal, out_tangent), aux
 
-
-@transformation
-def pack_output(*args):
-  ans = yield args, {}
-  yield pack(ans)
-
 def linearize(traceable, *primals, **kwargs):
   has_aux = kwargs.pop('has_aux', False)
   if not has_aux:
-    jvpfun = pack_output(jvp(traceable))
+    jvpfun = jvp(traceable)
   else:
+    assert False, "TODO"
     jvpfun, aux = jvp(traceable, has_aux=True)
-    jvpfun = pack_output(jvpfun)
-  tangent_avals = [get_aval(p).at_least_vspace() for p in primals]
-  in_pvals = (pe.PartialVal((None, pack(primals))),
-              pe.PartialVal((core.AbstractTuple(tangent_avals), core.unit)))
-  jaxpr, out_pval, consts = pe.trace_to_jaxpr(jvpfun, in_pvals)
-  pval_primal, pval_tangent = unpair_pval(out_pval)
-  aval_primal, const_primal = pval_primal
-  assert aval_primal is None
+
+  in_pvals = (tuple(pe.PartialVal((None, p)) for p in primals)
+            + tuple(pe.PartialVal((get_aval(p).at_least_vspace(), core.unit))
+                    for p in primals))
+  _, in_tree = tree_flatten(((primals, primals), {}))
+  jvpfun_flat, out_tree = flatten_fun(jvpfun, in_tree)
+  jaxpr, out_pvals, consts = pe.trace_to_jaxpr(jvpfun_flat, in_pvals)
+  pval_primals, pval_tangents = tree_unflatten(out_tree(), out_pvals)
+  aval_primals, const_primals = unzip2(pval_primals)
+  assert all(aval_primal is None for aval_primal in aval_primals)
   if not has_aux:
-    return const_primal, pval_tangent, jaxpr, consts
+    return const_primals, pval_tangents, jaxpr, consts
   else:
-    return const_primal, pval_tangent, jaxpr, consts, aux()
+    return const_primals, pval_tangents, jaxpr, consts, aux()
 
 def vjp(traceable, primals, has_aux=False):
   if not has_aux:

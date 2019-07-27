@@ -44,6 +44,14 @@ def flatten_fun(in_tree, *args_flat):
   ans = yield py_args, py_kwargs
   yield tree_flatten(ans)
 
+def apply_flat_fun(fun, io_tree, *py_args):
+  in_tree_expected, out_tree = io_tree
+  args, in_tree = tree_flatten((py_args, {}))
+  if in_tree != in_tree_expected:
+      raise TypeError("Expected {}, got {}".format(in_tree_expected, in_tree))
+  ans = fun(*args)
+  return tree_unflatten(out_tree, ans)
+
 def abstract_tuple_tree_leaves(aval):
   if type(aval) is AbstractTuple:
     for elt in aval:
