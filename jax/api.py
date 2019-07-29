@@ -1101,7 +1101,16 @@ def device_put(x, device_num=0):
   return tree_map(lambda y: xla.device_put_p.bind(y, device_num=device_num), x)
 
 
-device_get = _jit(lambda x: x, (), None, device_values=False)
+def _device_get(x):
+  if isinstance(x, core.Tracer):
+    return x
+  return x.copy()
+
+def device_get(x):
+  for y in tree_leaves(x):
+    if not isinstance(y, core.Tracer):
+      y.copy_to_host_async()
+  return tree_map(_device_get, x)
 
 
 def _argnums_partial(f, dyn_argnums, args):
