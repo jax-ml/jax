@@ -1778,7 +1778,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     mat = onp.asarray([rng(shape, dtype)])
     onp_fun = partial(onp.corrcoef, rowvar=rowvar, ddof=ddof, bias=bias)
     lnp_fun = partial(lnp.corrcoef, rowvar=rowvar, ddof=ddof, bias=bias)
-    if onp.any(onp.isclose(onp.std(mat), 0.0)):
+    if not onp.any(onp.isclose(onp.std(mat), 0.0)):
       self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
