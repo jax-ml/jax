@@ -2628,7 +2628,7 @@ def cov(m, y=None, rowvar=True, bias=False, ddof=None, fweights=None,
 @_wraps(onp.corrcoef)
 def corrcoef(x, y=None, rowvar=True, bias=None, ddof=None):
   c = cov(x, y, rowvar)
-  if isscalar(c) or (len(c_shape) != 1 and len(c_shape) != 2):
+  if isscalar(c) or (len(shape(c)) != 1 and len(shape(c)) != 2):
       # scalar - this should yield nan for values (nan/nan, inf/inf, 0/0), 1 otherwise
       return divide(c, c)
   d = diag(c)
