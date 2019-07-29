@@ -117,7 +117,7 @@ def walk_pytree(f_node, f_leaf, tree):
     children, node_spec = node_type.to_iterable(tree)
     proc_children, child_specs = unzip2([walk_pytree(f_node, f_leaf, child)
                                          for child in children])
-    tree_def = PyTreeDef(node_type, node_spec, child_specs)
+    tree_def = _PyTreeDef(node_type, node_spec, child_specs)
     return f_node(proc_children), tree_def
   else:
     return f_leaf(tree), leaf
@@ -184,7 +184,7 @@ def _nested_treedef(inner, outer):
     return inner
   else:
     children = map(partial(_nested_treedef, inner), outer.children)
-    return PyTreeDef(outer.node_type, outer.node_data, tuple(children))
+    return _PyTreeDef(outer.node_type, outer.node_data, tuple(children))
 
 
 def tree_structure(tree):
@@ -192,7 +192,7 @@ def tree_structure(tree):
   return spec
 
 
-class PyTreeDef(object):
+class _PyTreeDef(object):
   __slots__ = ("node_type", "node_data", "children")
 
   def __init__(self, node_type, node_data, children):
@@ -224,13 +224,22 @@ class PyTreeDef(object):
     return not self == other
 
 
-class PyLeaf(object):
+class _PyLeaf(object):
   __slots__ = ()
 
   def __repr__(self):
     return '*'
 
-leaf = PyLeaf()
+leaf = _PyLeaf()
+
+def treedef_is_leaf(treedef):
+  return treedef is leaf
+
+def treedef_tuple(treedefs):
+  return _PyTreeDef(node_types[tuple], None, tuple(treedefs))
+
+def treedef_children(treedef):
+  return treedef.children
 
 def dict_to_iterable(xs):
   keys = tuple(sorted(xs.keys()))
