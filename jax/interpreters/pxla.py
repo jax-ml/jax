@@ -723,7 +723,7 @@ class SplitAxisTrace(core.Trace):
         else:
           val_out = batching.moveaxis2(axis_out, 0, val_out)
           return SplitAxisTracer(self, name, val_out)
-        
+  
   def process_call(self, call_primitive, f, tracers, params):
     if call_primitive in pe.map_primitives:
       return self.process_map(call_primitive, f, tracers, params)
