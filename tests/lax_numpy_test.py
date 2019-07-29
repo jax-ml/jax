@@ -1780,6 +1780,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
+<<<<<<< HEAD
+=======
 
+>>>>>>> fd68636f985ca3f285f19e7b8b776596fd08aa68
 if __name__ == "__main__":
   absltest.main()
