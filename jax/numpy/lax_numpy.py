@@ -2627,16 +2627,11 @@ def cov(m, y=None, rowvar=True, bias=False, ddof=None, fweights=None,
 
 @_wraps(onp.corrcoef)
 def corrcoef(x, y=None, rowvar=True, bias=None, ddof=None):
-  msg = ("jax.numpy.cov not implemented for nontrivial {}. "
-         "Open a feature request at https://github.com/google/jax/issues !")
-  if y is not None: raise NotImplementedError(msg.format('y'))
-
   c = cov(x, y, rowvar)
-  try:
-      d = diag(c)
-  except ValueError:
-      # scalar
+  if isscalar(c):
+      # scalar - this should yield nan for values (nan/nan, inf/inf, 0/0), 1 otherwise
       return divide(c, c)
+  d = diag(c)
   stddev = sqrt(real(d))
   c = divide(c, stddev[:,None])
   c = divide(c, stddev[None,:])
