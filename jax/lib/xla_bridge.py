@@ -33,7 +33,6 @@ import numpy as onp  # 'onp' rather than 'np' to distinguish from autograd.numpy
 import six
 
 from jaxlib import xla_client
-from jaxlib import xla_data_pb2
 from jaxlib import xrt
 
 FLAGS = flags.FLAGS

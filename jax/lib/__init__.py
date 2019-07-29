@@ -38,7 +38,6 @@ _check_jaxlib_version()
 
 
 from jaxlib import xla_client
-from jaxlib import xla_data_pb2
 from jaxlib import xrt
 from jaxlib import lapack
 

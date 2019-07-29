@@ -2838,7 +2838,7 @@ class GatherDimensionNumbers(collections.namedtuple(
 
 def _gather_dimensions_proto(indices_shape, dimension_numbers):
   assert type(dimension_numbers) is GatherDimensionNumbers
-  proto = xla_bridge.xla_data_pb2.GatherDimensionNumbers()
+  proto = xla_client.GatherDimensionNumbers()
   proto.offset_dims.extend(dimension_numbers.offset_dims)
   proto.collapsed_slice_dims.extend(dimension_numbers.collapsed_slice_dims)
   proto.start_index_map.extend(dimension_numbers.start_index_map)
@@ -2977,7 +2977,7 @@ class ScatterDimensionNumbers(collections.namedtuple(
 
 def _scatter_dimensions_proto(indices_shape, dimension_numbers):
   assert type(dimension_numbers) is ScatterDimensionNumbers
-  proto = xla_bridge.xla_data_pb2.ScatterDimensionNumbers()
+  proto = xla_client.ScatterDimensionNumbers()
   proto.update_window_dims.extend(dimension_numbers.update_window_dims)
   proto.inserted_window_dims.extend(dimension_numbers.inserted_window_dims)
   proto.scatter_dims_to_operand_dims.extend(
@@ -4305,7 +4305,7 @@ def conv_general_permutations(dimension_numbers):
 def _conv_general_proto(dimension_numbers):
   assert type(dimension_numbers) is ConvDimensionNumbers
   lhs_spec, rhs_spec, out_spec = dimension_numbers
-  proto = xla_bridge.xla_data_pb2.ConvolutionDimensionNumbers()
+  proto = xla_client.ConvolutionDimensionNumbers()
   proto.input_batch_dimension = lhs_spec[0]
   proto.input_feature_dimension = lhs_spec[1]
   proto.output_batch_dimension = out_spec[0]
