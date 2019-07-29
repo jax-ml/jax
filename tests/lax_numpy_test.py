@@ -1768,7 +1768,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
          "shape":shape, "dtype":dtype, "rowvar":rowvar, "ddof":ddof,
          "bias":bias, "rng": rng}
         for shape in [(5,), (10, 5), (3, 10)]
-        for dtype in all_dtypes
+        for dtype in inexact_dtypes
         for rowvar in [True, False]
         for bias in [True, False]
         for ddof in [None, 2, 3]
