@@ -1768,18 +1768,19 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
          "shape":shape, "dtype":dtype, "rowvar":rowvar, "ddof":ddof,
          "bias":bias, "rng": rng}
         for shape in [(5,), (10, 5), (3, 10)]
-        for dtype in inexact_dtypes
+        for dtype in number_dtypes
         for rowvar in [True, False]
         for bias in [True, False]
         for ddof in [None, 2, 3]
         for rng in [jtu.rand_default()]))
   def testCorrCoef(self, shape, dtype, rowvar, ddof, bias, rng):
     args_maker = self._GetArgsMaker(rng, [shape], [dtype])
+    mat = onp.asarray([rng(shape, dtype)])
     onp_fun = partial(onp.corrcoef, rowvar=rowvar, ddof=ddof, bias=bias)
     lnp_fun = partial(lnp.corrcoef, rowvar=rowvar, ddof=ddof, bias=bias)
-    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    if onp.any(onp.isclose(onp.std(mat), 0.0)):
+      self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
-
 
 if __name__ == "__main__":
   absltest.main()
