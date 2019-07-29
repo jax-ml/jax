@@ -2440,7 +2440,6 @@ def cov(m, y=None, rowvar=True, bias=False, ddof=None, fweights=None,
   X_T = X.T if w is None else (X * w).T
   return true_divide(dot(X, X_T.conj()), f).squeeze()
 
-
 @_wraps(onp.corrcoef)
 def corrcoef(x, y=None, rowvar=True, bias=None, ddof=None):
   msg = ("jax.numpy.cov not implemented for nontrivial {}. "
