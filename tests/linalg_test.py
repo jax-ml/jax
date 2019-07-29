@@ -32,8 +32,7 @@ from jax import numpy as np
 from jax import scipy as jsp
 from jax import test_util as jtu
 from jax.lib import xla_bridge
-
-from jaxlib import lapack
+from jax.lib import lapack
 
 from jax.config import config
 config.parse_flags_with_absl()

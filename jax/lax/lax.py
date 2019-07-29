@@ -48,7 +48,7 @@ from ..interpreters import batching
 from ..util import curry, memoize, safe_zip, unzip2, prod
 from ..tree_util import build_tree, tree_unflatten, tree_map
 from ..lib import xla_bridge
-from ..lib.xla_bridge import xla_client
+from ..lib import xla_client
 
 FLAGS = flags.FLAGS
 
