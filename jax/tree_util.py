@@ -45,6 +45,8 @@ from .lib import pytree
 from .util import unzip2, partial, safe_map
 
 
+# TODO(phawkins): use the first case unconditionally when the minimum Jaxlib
+# version has been increased to 0.1.23.
 if pytree:
   def tree_map(f, tree):
     """Map a function over a pytree to produce a new pytree.

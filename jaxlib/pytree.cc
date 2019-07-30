@@ -109,10 +109,10 @@ class PyTreeDef {
  public:
   PyTreeDef() = default;
 
-  // Flattens a PyTreeDef into a list of leaves and a PyTreeDef.
+  // Flattens a Pytree into a list of leaves and a PyTreeDef.
   static std::pair<py::list, std::unique_ptr<PyTreeDef>> Flatten(py::handle x);
 
-  // Unflattens a PyTreeDef given an iterable of leaves and a PyTreeDef.
+  // Returns an unflattened PyTree given an iterable of leaves and a PyTreeDef.
   py::object Unflatten(py::iterable leaves) const;
 
   // Composes two PyTreeDefs, replacing the leaves of this tree with copies of
@@ -175,7 +175,10 @@ class PyTreeDef {
 
     const CustomNodeRegistry::Registration* custom = nullptr;
 
+    // Number of leaf nodes in the subtree rooted at this node.
     int num_leaves = 0;
+
+    // Number of leaf and interior nodes in the subtree rooted at this node.
     int num_nodes = 0;
   };
   template <typename H>
@@ -204,7 +207,11 @@ class PyTreeDef {
 
 template <typename H>
 H AbslHashValue(H h, const PyTreeDef::Node& n) {
-  return H::combine(std::move(h), n.kind, n.arity);
+  h = H::combine(std::move(h), n.kind, n.arity, n.custom);
+  if (n.node_data) {
+    h = H::combine(std::move(h), py::hash(n.node_data));
+  }
+  return h;
 }
 
 template <typename H>
@@ -228,6 +235,8 @@ bool PyTreeDef::operator==(const PyTreeDef& other) const {
     if (a.node_data && a.node_data.not_equal(b.node_data)) {
       return false;
     }
+    // We don't need to test equality of num_leaves and num_nodes since they
+    // are derivable from the other node data.
   }
   return true;
 }
@@ -267,7 +276,7 @@ void PyTreeDef::FlattenHelper(py::handle handle, py::list* leaves,
     node.node_data = std::move(keys);
   } else if ((node.custom = CustomNodeRegistry::Lookup(handle.get_type()))) {
     node.kind = Kind::kCustom;
-    py::tuple out = node.custom->to_iterable(handle);
+    py::tuple out = py::cast<py::tuple>(node.custom->to_iterable(handle));
     if (out.size() != 2) {
       throw std::runtime_error(
           "PyTree custom to_iterable function should return a pair");
