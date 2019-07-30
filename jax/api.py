@@ -1741,3 +1741,50 @@ def eval_shape(fun, *args, **kwargs):
   abstract_args = map(abstractify, (jax_kwargs,) + tuple(jax_args))
   out = pe.abstract_eval_fun(f.call_wrapped, *abstract_args)
   return tree_map(onp.shape, build_tree(out_tree(), out))
+
+
+def custom_implicit_solve(solve, tangent_solve):
+  """Define gradients for a function that performs an implicit solve.
+
+  Args:
+    solve: callable that takes two positional arguments, func and params, and
+      returns a solution such that func(params, solution) = 0. In other words,
+      the following is assumed to be true (but not checked):
+        solution = solve(func, params)
+        error = func(params, solution)
+        assert tree_all(tree_map(partial(np.allclose, 0.0), error)
+    tangent_solve: callable that takes two positional arguments, a linear
+      function ``f`` and (possibly nested) array(s) ``y``, and returns a
+      solution ``x`` such that ``f(x)=y``:
+
+      - For scalar ``y``, use ``lambda f, y: y / f(1.0)``.
+      - For vector ``y``, you could use a linear solve with the Jacobian, if
+        dimensionality of ``y`` is not too large:
+        ``lambda f, y: np.linalg.solve(jacobian(f)(y), y)``.
+
+  Returns:
+    Wrapped version of solve with JVP and VJPs defined with respect to
+    ``params`` via implicit differentaion, rather than differntiating through
+    the solve.
+  """
+  @wraps(solve)
+  def wrapper(func, params):
+
+    @custom_transforms
+    def solve_impl(params):
+      return solve(func, params)
+ 
+    @partial(defjvp_all, solve_impl)
+    def solve_impl_jvp(primals, tangents):
+      # http://www.dolfin-adjoint.org/en/release/documentation/maths/3-gradients.html#the-tangent-linear-approach
+      params, = primals
+      grad_params, = tangents
+      solution = solve_impl(params)
+      _, vjp_func = vjp(partial(func, params), solution)
+      grad_solution = tangent_solve(lambda p: vjp_func(p)[0], grad_params)
+      return solution, grad_solution
+
+    return solve_impl(params)
+  return wrapper
+
+
