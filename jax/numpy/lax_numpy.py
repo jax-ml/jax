@@ -2625,6 +2625,25 @@ def cov(m, y=None, rowvar=True, bias=False, ddof=None, fweights=None,
   return true_divide(dot(X, X_T.conj()), f).squeeze()
 
 
+@_wraps(onp.corrcoef)
+def corrcoef(x, y=None, rowvar=True, bias=None, ddof=None):
+  c = cov(x, y, rowvar)
+  if len(shape(c)) == 0:
+      # scalar - this should yield nan for values (nan/nan, inf/inf, 0/0), 1 otherwise
+      return divide(c, c)
+  d = diag(c)
+  stddev = sqrt(real(d))
+  c = divide(c, stddev[:,None])
+  c = divide(c, stddev[None,:])
+
+  real_part = clip(real(c), -1, 1)
+  if iscomplexobj(c):
+      complex_part = clip(imag(c), -1, 1)
+      c = lax.complex(real_part, complex_part)
+  else:
+      c = real_part
+  return c
+
 @_wraps(getattr(onp, "quantile", None))
 def quantile(a, q, axis=None, out=None, overwrite_input=False,
              interpolation="linear", keepdims=False):
