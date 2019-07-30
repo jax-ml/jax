@@ -12,6 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""
+Implements the NumPy API, using the primitives in :mod:`jax.lax`.
+
+NumPy operations are implemented in Python in terms of the primitive operations
+in :mod:`jax.lax`. Since NumPy operations are not primitive and instead are
+implemented in terms of :mod:`jax.lax` operations, we do not need to define
+transformation rules such as gradient or batching rules. Instead,
+transformations for NumPy primitives can be derived from the transformation
+rules for the underlying :code:`lax` primitives.
+"""
+
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -29,7 +40,7 @@ import opt_einsum
 import six
 from six.moves import builtins, xrange
 
-from jax import jit
+from jax import jit, device_put
 from .. import core
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
 from ..interpreters.xla import DeviceArray
@@ -83,7 +94,10 @@ class _ArrayMeta(type(onp.ndarray)):
 
 # pylint: disable=invalid-name
 class ndarray(six.with_metaclass(_ArrayMeta, onp.ndarray)):
-  pass
+  def __init__(shape, dtype=None, buffer=None, offset=0, strides=None,
+               order=None):
+    raise TypeError("jax.numpy.ndarray() should not be instantiated explicitly."
+                    " Use jax.numpy.array, or jax.numpy.zeros instead.")
 # pylint: enable=invalid-name
 
 
@@ -132,6 +146,10 @@ ComplexWarning = onp.ComplexWarning
 array_str = onp.array_str
 array_repr = onp.array_repr
 
+save = onp.save
+savez = onp.savez
+load = onp.load
+
 ### utility functions
 
 
@@ -143,7 +161,7 @@ def _promote_shapes(*args):
     shapes = [shape(arg) for arg in args]
     nd = len(lax.broadcast_shapes(*shapes))
     return [lax.reshape(arg, (1,) * (nd - len(shp)) + shp)
-            if len(shp) != nd else arg for arg, shp in zip(args, shapes)]
+            if shp and len(shp) != nd else arg for arg, shp in zip(args, shapes)]
 
 def _promote_dtypes(*args):
   """Convenience function to apply Numpy argument dtype promotion."""
@@ -151,16 +169,10 @@ def _promote_dtypes(*args):
   if len(args) < 2:
     return args
   else:
-    from_dtypes = (x if type(x) in _builtin_numeric_types else _dtype(x)
-                   for x in args)
+    from_dtypes = map(_dtype, args)
     to_dtype = xla_bridge.canonicalize_dtype(result_type(*from_dtypes))
     return [lax.convert_element_type(x, to_dtype)
             if _dtype(x) != to_dtype else x for x in args]
-
-if six.PY3:
-  _builtin_numeric_types = (int, float, complex)
-else:
-  _builtin_numeric_types = (int, float, long, complex)
 
 def _promote_to_result_dtype(op, *args):
   """Convenience function to promote args directly to the op's result dtype."""
@@ -170,7 +182,7 @@ def _promote_to_result_dtype(op, *args):
 
 def _result_dtype(op, *args):
   """Compute result dtype of applying op to arguments with given dtypes."""
-  args = (onp.ones((0,) * ndim(arg), _dtype(arg)) for arg in args)
+  args = [onp.ones((0,) * ndim(arg), _dtype(arg)) for arg in args]
   return _dtype(op(*args))
 
 
@@ -234,6 +246,17 @@ def _wraps(fun):
       return op
   return wrap
 
+# TODO(phawkins): use this helper everywhere.
+def _canonicalize_axis(axis, num_dims):
+  """Canonicalize an axis in (-num_dims, num_dims) to [0, num_dims)."""
+  axis = int(axis)
+  if axis < 0:
+    axis = axis + num_dims
+  if axis < 0 or axis >= num_dims:
+      raise ValueError(
+          "axis {} is out of bounds for array of dimension {}".format(
+              axis, num_dims))
+  return axis
 
 ### implementations of numpy functions in terms of lax
 
@@ -277,6 +300,7 @@ tanh = _one_to_one_unop(onp.tanh, lax.tanh, True)
 arcsinh = _one_to_one_unop(onp.arcsinh, lax.asinh, True)
 arccosh = _one_to_one_unop(onp.arccosh, lax.acosh, True)
 arctanh = _one_to_one_unop(onp.arctanh, lax.atanh, True)
+sqrt = _one_to_one_unop(onp.sqrt, lax.sqrt, True)
 
 
 add = _one_to_one_binop(onp.add, lax.add)
@@ -463,12 +487,6 @@ def cbrt(x):
   return lax.sign(x) * power(lax.abs(x), _constant_like(x, 1. / 3.))
 
 
-@_wraps(onp.sqrt)
-def sqrt(x):
-  x, = _promote_to_result_dtype(onp.sqrt, x)
-  return power(x, _constant_like(x, 0.5))
-
-
 @_wraps(onp.square)
 def square(x):
   x, = _promote_to_result_dtype(onp.square, x)
@@ -520,9 +538,9 @@ def sinc(x):
 
 
 @_wraps(onp.transpose)
-def transpose(x, axis=None):
-  axis = onp.arange(ndim(x))[::-1] if axis is None else axis
-  return lax.transpose(x, axis)
+def transpose(x, axes=None):
+  axes = onp.arange(ndim(x))[::-1] if axes is None else axes
+  return lax.transpose(x, axes)
 
 
 @_wraps(onp.rot90)
@@ -638,7 +656,7 @@ def isrealobj(a):
 @_wraps(onp.reshape)
 def reshape(a, newshape, order="C"):
   try:
-    return a.reshape(newshape, order=order)
+    return a.reshape(newshape, order=order)  # forward to method for ndarrays
   except AttributeError:
     return _reshape(a, newshape, order=order)
 
@@ -655,6 +673,20 @@ def _reshape(a, newshape, order="C"):
     raise NotImplementedError("np.reshape order=A is not implemented.")
   else:
     raise ValueError("Unexpected value for 'order' argument: {}.".format(order))
+
+def _reshape_method(a, *newshape, **kwargs):
+  order = kwargs.pop("order", "C")
+  if len(kwargs) == 1:
+    invalid_kwarg, = kwargs
+    msg = "'{}' is an invalid keyword argument for this function"
+    raise TypeError(msg.format(invalid_kwarg))  # same as NumPy error
+  elif kwargs:
+    invalid_kwargs = "'{}'".format("'".join(kwargs))
+    msg = "{} are invalid keyword arguments for this function"
+    raise TypeError(msg.format(invalid_kwargs))  # different from NumPy error
+  if len(newshape) == 1 and not isinstance(newshape[0], int):
+    newshape = newshape[0]
+  return _reshape(a, newshape, order=order)
 
 
 @_wraps(onp.ravel)
@@ -734,7 +766,11 @@ else:
     return out
 
 
+# The `jit` on `where` exists to avoid materializing constants in cases like
+# `np.where(np.zeros(1000), 7, 4)`. In op-by-op mode, we don't want to
+# materialize the broadcast forms of scalar arguments.
 @_wraps(onp.where)
+@jit
 def where(condition, x=None, y=None):
   if x is None or y is None:
     raise ValueError("Must use the three-argument form of where().")
@@ -746,6 +782,20 @@ def where(condition, x=None, y=None):
     return empty
   else:
     return lax.select(condition, *_promote_dtypes(x, y))
+
+
+@_wraps(onp.select)
+def select(condlist, choicelist, default=0):
+  if len(condlist) != len(choicelist):
+    msg = "condlist must have length equal to choicelist ({} vs {})"
+    raise ValueError(msg.format(len(condlist), len(choicelist)))
+  if len(condlist) == 0:
+    raise ValueError("condlist must be non-empty")
+
+  output = default
+  for cond, choice in zip(condlist[::-1], choicelist[::-1]):
+    output = where(cond, choice, output)
+  return output
 
 
 def broadcast_arrays(*args):
@@ -845,10 +895,12 @@ def round(a, decimals=0):
 around = round
 
 
-# Caution: If fast math mode is enabled, the semantics of inf and nan are not
-# preserved by XLA/LLVM, and the behavior of inf/nan values is unpredictable.
-# To disable fast math mode on CPU, set the environment variable
-# XLA_FLAGS=--xla_cpu_enable_fast_math=false.
+@_wraps(onp.fix)
+def fix(x, out=None):
+  if out is not None:
+    raise ValueError("fix does not support the `out` argument.")
+  zero = lax._const(x, 0)
+  return where(lax.ge(x, zero), lax.floor(x), lax.ceil(x))
 
 @_wraps(onp.isfinite)
 def isfinite(x):
@@ -864,17 +916,19 @@ def isfinite(x):
 def isinf(x):
   dtype = _dtype(x)
   if issubdtype(dtype, floating):
-    return lax.eq(lax.abs(x), inf)
+    return lax.eq(lax.abs(x), _constant_like(x, inf))
   elif issubdtype(dtype, complexfloating):
-    return lax.bitwise_or(lax.eq(lax.abs(real(x)), inf),
-                          lax.eq(lax.abs(imag(x)), inf))
+    re = lax.real(x)
+    im = lax.imag(x)
+    return lax.bitwise_or(lax.eq(lax.abs(re), _constant_like(re, inf)),
+                          lax.eq(lax.abs(im), _constant_like(im, inf)))
   else:
     return full_like(x, False, dtype=bool_)
 
 def _isposneginf(infinity, x):
   dtype = _dtype(x)
   if issubdtype(dtype, floating):
-    return lax.eq(x, infinity)
+    return lax.eq(x, _constant_like(x, infinity))
   elif issubdtype(dtype, complexfloating):
     raise ValueError("isposinf/isneginf are not well defined for complex types")
   else:
@@ -891,9 +945,10 @@ def isnan(x):
 @_wraps(onp.nan_to_num)
 def nan_to_num(x, copy=True):
   del copy
-  if iscomplexobj(x):
-    raise ValueError("nan_to_num is not well defined for complex types")
-  info = finfo(xla_bridge.canonicalize_dtype(_dtype(x)))
+  dtype = _dtype(x)
+  if issubdtype(dtype, complexfloating):
+    return lax.complex(nan_to_num(lax.real(x)), nan_to_num(lax.imag(x)))
+  info = finfo(xla_bridge.canonicalize_dtype(dtype))
   x = where(isnan(x), _constant_like(x, 0), x)
   x = where(isposinf(x), _constant_like(x, info.max), x)
   x = where(isneginf(x), _constant_like(x, info.min), x)
@@ -930,9 +985,9 @@ def _reduction_dims(a, axis):
   if axis is None:
     return onp.arange(ndim(a))
   elif isinstance(axis, (onp.ndarray, tuple, list)):
-    return onp.mod(onp.asarray(axis), ndim(a))
+    return tuple(_canonicalize_axis(x, ndim(a)) for x in axis)
   elif isinstance(axis, int):
-    return onp.mod([axis], ndim(a))
+    return (_canonicalize_axis(axis, ndim(a)),)
   else:
     raise TypeError("Unexpected type of axis argument: {}".format(type(axis)))
 
@@ -971,10 +1026,58 @@ def mean(a, axis=None, dtype=None, out=None, keepdims=False):
     else:
       dtype = _dtype(a)
 
-  td = true_divide(
+  return lax.div(
       sum(a, axis, dtype=dtype, keepdims=keepdims),
       lax.convert_element_type(normalizer, dtype))
-  return lax.convert_element_type(td, dtype)
+
+@_wraps(onp.average)
+def average(a, axis=None, weights=None, returned=False):
+    a = asarray(a)
+
+    if weights is None: # Treat all weights as 1
+        avg = mean(a, axis=axis)
+        if axis is None:
+            weights_sum = full((), size(a), dtype=avg.dtype)
+        else:
+            weights_sum = full_like(avg, a.shape[axis], dtype=avg.dtype)
+    else:
+        weights = asarray(weights)
+
+        if issubdtype(a.dtype, integer) or issubdtype(a.dtype, bool_):
+            out_dtype = xla_bridge.canonicalize_dtype(result_type(a.dtype,
+                                                                  weights.dtype,
+                                                                  floating))
+        else:
+            out_dtype = xla_bridge.canonicalize_dtype(result_type(a.dtype, weights.dtype))
+
+        a_shape = shape(a)
+        a_ndim = len(a_shape)
+        weights_shape = shape(weights)
+        axis = None if axis is None else _canonicalize_axis(axis, a_ndim)
+
+        if a_shape != weights_shape:
+            # Make sure the dimensions work out
+            if axis is None:
+                raise ValueError("Axis must be specified when shapes of a and "
+                                 "weights differ.")
+            if len(weights_shape) != 1:
+                raise ValueError("1D weights expected when shapes of a and "
+                                 "weights differ.")
+            if weights_shape[0] != a_shape[axis]:
+                raise ValueError("Length of weights not "
+                                 "compatible with specified axis.")
+
+            weights = broadcast_to(weights, (a_ndim - 1) * (1,) + weights_shape)
+            weights = moveaxis(weights, -1, axis)
+
+        weights_sum = sum(weights, axis=axis, dtype=out_dtype)
+        avg = sum(multiply(a, weights), axis=axis, dtype=out_dtype) / weights_sum
+
+    if returned:
+        if avg.shape != weights_sum.shape:
+            weights_sum = broadcast_to(weights_sum, avg.shape)
+        return avg, weights_sum
+    return avg
 
 
 @_wraps(onp.var)
@@ -1042,8 +1145,12 @@ nanprod = _make_nan_reduction(onp.nanprod, prod, 1, nan_if_all_nan=False)
 
 def _make_cumulative_reduction(onp_reduction, window_reduce, init_val,
                                squash_nan=False):
-  @_wraps(onp_reduction)
-  def cumulative_reduction(a, axis=None, dtype=None):
+  # We want to allow XLA to fuse the pad and reduce-window operators to
+  # avoid materializing the padded output.
+  # Consider removing `jit` once again if reduce-window is generalized to
+  # support arbitrary padding.
+  @partial(jit, static_argnums=(1, 2))
+  def _cumulative_reduction(a, axis, dtype):
     if axis is None or isscalar(a):
       a = ravel(a)
       axis = 0
@@ -1076,6 +1183,11 @@ def _make_cumulative_reduction(onp_reduction, window_reduce, init_val,
     return window_reduce(
        a, window_dims, strides, xla_client.PaddingType.VALID)
 
+  @_wraps(onp_reduction)
+  def cumulative_reduction(a, axis=None, dtype=None):
+    # jit doesn't support kwargs as static_args.
+    return _cumulative_reduction(a, axis, dtype)
+
   return cumulative_reduction
 
 
@@ -1092,35 +1204,65 @@ nancumprod = _make_cumulative_reduction(
 
 ### Array-creation functions
 
-# TODO(phawkins): use this helper everywhere.
-def _canonicalize_axis(axis, num_dims):
-  """Canonicalize an axis in (-num_dims, num_dims) to [0, num_dims)."""
-  axis = int(axis)
-  if axis < 0:
-    axis = axis + num_dims
-  if axis < 0 or axis >= num_dims:
-      raise ValueError(
-          "axis {} is out of bounds for array of dimension {}".format(
-              axis, num_dims))
-  return axis
+@partial(jit, static_argnums=(1, 2))
+def _pad(array, pad_width, mode, constant_values):
+  array = asarray(array)
+  nd = ndim(array)
+  pad_width = onp.broadcast_to(onp.asarray(pad_width), (nd, 2))
+  if any(pad_width < 0):
+    raise ValueError("index can't contain negative values")
 
+  if mode == "constant":
+    constant_values = broadcast_to(asarray(constant_values), (nd, 2))
+    constant_values = lax.convert_element_type(constant_values, array.dtype)
+    for i in xrange(nd):
+      widths = [(0, 0, 0)] * nd
+      widths[i] = (pad_width[i, 0], 0, 0)
+      array = lax.pad(array, constant_values[i, 0], widths)
+      widths[i] = (0, pad_width[i, 1], 0)
+      array = lax.pad(array, constant_values[i, 1], widths)
+    return array
+  elif mode in ("symmetric", "reflect", "wrap"):
+    for i in xrange(nd):
+      if array.shape[i] == 0:
+        if (pad_width[i, 0] > 0 or pad_width[i, 1] > 0):
+          msg = "Cannot apply '{}' padding to empty axis"
+          raise ValueError(msg.format(mode))
+        continue
+
+      n = array.shape[i]
+      rarray = lax.rev(array, dimensions=(i,))
+      offset = 1 if (mode == "reflect" and n > 1) else 0
+      wrap_mode = mode == "wrap"
+
+      def build_padding(padding, forward):
+        xs = []
+        delta = n - offset
+        while padding > delta:
+          padding -= delta
+          p = array if forward else rarray
+          xs.append(lax.slice_in_dim(p, offset, n, axis=i))
+          if not wrap_mode:
+            forward = not forward
+        if padding > 0:
+          x = lax.slice_in_dim(array if forward else rarray, offset,
+                               padding + offset, axis=i)
+          xs.append(x)
+        return xs
+
+      parts = reversed(build_padding(pad_width[i, 0], forward=not wrap_mode))
+      parts = [lax.rev(x, dimensions=(i,)) for x in parts]
+      parts += [array]
+      parts += build_padding(pad_width[i, 1], forward=wrap_mode)
+      array = lax.concatenate(parts, dimension=i)
+    return array
+  else:
+    msg = "Unimplemented padding mode '{}' for np.pad."
+    raise NotImplementedError(msg.format(mode))
 
 @_wraps(onp.pad)
 def pad(array, pad_width, mode, constant_values=0):
-  if mode != "constant":
-    msg = "Only the 'constant' case of np.pad is implemented, got mode={}."
-    raise NotImplementedError(msg.format(mode))
-
-  array = asarray(array)
-  pad_width = onp.broadcast_to(onp.asarray(pad_width), (array.ndim, 2))
-  constant_values = broadcast_to(asarray(constant_values), (array.ndim, 2))
-  for i in xrange(array.ndim):
-    widths = [(0, 0, 0)] * array.ndim
-    widths[i] = (pad_width[i, 0], 0, 0)
-    array = lax.pad(array, constant_values[i, 0], widths)
-    widths[i] = (0, pad_width[i, 1], 0)
-    array = lax.pad(array, constant_values[i, 1], widths)
-  return array
+  return _pad(array, pad_width, mode, constant_values)
 
 
 @_wraps(onp.stack)
@@ -1138,6 +1280,15 @@ def stack(arrays, axis=0):
     new_arrays.append(reshape(a, new_shape))
   return concatenate(new_arrays, axis=axis)
 
+@_wraps(onp.tile)
+def tile(a, reps):
+  if isinstance(reps, int):
+    reps = (reps,)
+  a = reshape(a, (1,) * (len(reps) - ndim(a)) + shape(a))
+  reps = (1,) * (ndim(a) - len(reps)) + reps
+  for i, rep in enumerate(reps):
+    a = concatenate([a] * rep, axis=i)
+  return a
 
 @_wraps(onp.concatenate)
 def concatenate(arrays, axis=0):
@@ -1145,7 +1296,16 @@ def concatenate(arrays, axis=0):
     raise ValueError("Need at least one array to concatenate.")
   if ndim(arrays[0]) == 0:
     raise ValueError("Zero-dimensional arrays cannot be concatenated.")
-  return lax.concatenate(_promote_dtypes(*arrays), axis % ndim(arrays[0]))
+  axis = _canonicalize_axis(axis, ndim(arrays[0]))
+  arrays = _promote_dtypes(*arrays)
+  # lax.concatenate can be slow to compile for wide concatenations, so form a
+  # tree of concatenations as a workaround especially for op-by-op mode.
+  # (https://github.com/google/jax/issues/653).
+  k = 16
+  while len(arrays) > 1:
+    arrays = [lax.concatenate(arrays[i:i+k], axis)
+              for i in range(0, len(arrays), k)]
+  return arrays[0]
 
 
 @_wraps(onp.vstack)
@@ -1182,7 +1342,7 @@ def column_stack(tup):
 def atleast_1d(*arys):
   if len(arys) == 1:
     arr = array(arys[0])
-    return arr if arr.ndim >= 1 else arr.reshape(-1)
+    return arr if ndim(arr) >= 1 else reshape(arr, -1)
   else:
     return [atleast_1d(arr) for arr in arys]
 
@@ -1191,7 +1351,7 @@ def atleast_1d(*arys):
 def atleast_2d(*arys):
   if len(arys) == 1:
     arr = array(arys[0])
-    return arr if arr.ndim >= 2 else arr.reshape((1, -1))
+    return arr if ndim(arr) >= 2 else reshape(arr, (1, -1))
   else:
     return [atleast_2d(arr) for arr in arys]
 
@@ -1201,9 +1361,9 @@ def atleast_3d(*arys):
   if len(arys) == 1:
     arr = array(arys[0])
     if ndim(arr) <= 1:
-      arr = arr.reshape((1, -1, 1))
+      arr = reshape(arr, (1, -1, 1))
     elif ndim(arr) == 2:
-      arr = arr.reshape(shape(arr) + (1,))
+      arr = reshape(arr, shape(arr) + (1,))
     return arr
   else:
     return [atleast_3d(arr) for arr in arys]
@@ -1211,32 +1371,46 @@ def atleast_3d(*arys):
 
 @_wraps(onp.array)
 def array(object, dtype=None, copy=True, order="K", ndmin=0):
-  del copy  # Unused.
-  if ndmin != 0 or order != "K":
-    raise NotImplementedError("Only implemented for order='K', ndmin=0.")
+  if order is not None and order != "K":
+    raise NotImplementedError("Only implemented for order='K'")
 
   if isinstance(object, ndarray):
-    if dtype and _dtype(object) != dtype:
-      return lax.convert_element_type(object, dtype)
+    if dtype and _dtype(object) != xla_bridge.canonicalize_dtype(dtype):
+      out = lax.convert_element_type(object, dtype)
+    elif copy:
+      # If a copy was requested, we must copy.
+      out = device_put(object)
     else:
-      return object
+      out = object
   elif hasattr(object, '__array__'):
     # this case is for duck-typed handling of objects that implement `__array__`
-    return array(object.__array__(), dtype)
+    out = array(object.__array__(), dtype and xla_bridge.canonicalize_dtype(dtype))
   elif isinstance(object, (list, tuple)):
     if object:
-      return stack([array(elt, dtype=dtype) for elt in object])
+      out = stack([array(elt, dtype=dtype) for elt in object])
     else:
-      return onp.array([], dtype)
+      out = onp.array([], dtype)
   elif isscalar(object):
     out = lax.reshape(object, ())
-    if dtype and _dtype(out) != dtype:
-      return lax.convert_element_type(out, dtype)
-    else:
-      return out
+    if dtype and _dtype(out) != xla_bridge.canonicalize_dtype(dtype):
+      out = lax.convert_element_type(out, dtype)
   else:
+    try:
+      view = memoryview(object)
+    except TypeError:
+      pass  # `object` does not support the buffer interface.
+    else:
+      return array(onp.asarray(view), dtype, copy)
+
     raise TypeError("Unexpected input type for array: {}".format(type(object)))
-asarray = array
+
+  if ndmin > ndim(out):
+    out = lax.reshape(out, (1,) * (ndmin - ndim(out)) + shape(out))
+  return out
+
+@_wraps(onp.asarray)
+def asarray(a, dtype=None, order=None):
+  return array(a, dtype=dtype, copy=False, order=order)
 
 
 @_wraps(onp.zeros_like)
@@ -1278,9 +1452,7 @@ def array_equal(a1, a2):
     a1, a2 = asarray(a1), asarray(a2)
   except Exception:
     return False
-  if a1.shape != a2.shape:
-    return False
-  return asarray(a1==a2).all()
+  return shape(a1) == shape(a2) and all(asarray(a1 == a2))
 
 
 # We can't create uninitialized arrays in XLA; use zeros for empty.
@@ -1312,25 +1484,43 @@ def identity(n, dtype=None):
 
 
 @_wraps(onp.arange)
-def arange(*args, **kwargs):
-  dtype = kwargs.pop("dtype", None)
-  if not args:
-    raise TypeError("Required argument 'start' (pos 1) not found")  # same as numpy error
-
+def arange(start, stop=None, step=None, dtype=None):
   # If called like np.arange(N), we create a lazy lax._IotaConstant.
-  if len(args) == 1 and not kwargs:
-    stop, = args
-    dtype = dtype or _dtype(stop)
+  if stop is None and step is None:
+    dtype = dtype or _dtype(start)
     if onp.issubdtype(dtype, onp.integer):
-      return lax.iota(dtype, stop)  # avoids materializing
+      return lax.iota(dtype, start)  # avoids materializing
 
   # Fall back to instantiating an ndarray in host memory
-  return onp.arange(*args, **kwargs)
+  return onp.arange(start, stop=stop, step=step, dtype=dtype)
 
 linspace = onp.linspace
 logspace = onp.logspace
 geomspace = onp.geomspace
 meshgrid = onp.meshgrid
+
+
+@_wraps(onp.ix_)
+def ix_(*args):
+  n = len(args)
+  output = []
+  for i, a in enumerate(args):
+    a = asarray(a)
+    if len(a.shape) != 1:
+      msg = "Arguments to jax.numpy.ix_ must be 1-dimensional, got shape {}"
+      raise ValueError(msg.format(a.shape))
+    if _dtype(a) == bool_:
+      raise NotImplementedError(
+        "Boolean arguments to jax.numpy.ix_ are not implemented")
+    shape = [1] * n
+    shape[i] = a.shape[0]
+    if a.size == 0:
+      # Numpy uses an integer index type for empty arrays.
+      output.append(lax.full(shape, onp.zeros((), onp.intp)))
+    else:
+      output.append(lax.reshape(a, shape))
+  return tuple(output)
+
 
 @_wraps(onp.repeat)
 def repeat(a, repeats, axis=None):
@@ -1376,20 +1566,29 @@ def tri(N, M=None, k=0, dtype=None):
 
 @_wraps(onp.tril)
 def tril(m, k=0):
-  mask = tri(*shape(m)[-2:], k=k, dtype=bool)
-  return where(mask, m, zeros_like(m))
+  m_shape = shape(m)
+  if len(m_shape) < 2:
+    raise ValueError("Argument to jax.numpy.tril must be at least 2D")
+  mask = tri(*m_shape[-2:], k=k, dtype=bool)
+  return lax.select(lax.broadcast(mask, m_shape[:-2]), m, zeros_like(m))
 
 
 @_wraps(onp.triu)
 def triu(m, k=0):
-  mask = tri(*shape(m)[-2:], k=k - 1, dtype=bool)
-  return where(mask, zeros_like(m), m)
+  m_shape = shape(m)
+  if len(m_shape) < 2:
+    raise ValueError("Argument to jax.numpy.triu must be at least 2D")
+  mask = tri(*m_shape[-2:], k=k - 1, dtype=bool)
+  return lax.select(lax.broadcast(mask, m_shape[:-2]), zeros_like(m), m)
 
 
 @_wraps(onp.trace)
 def trace(a, offset=0, axis1=0, axis2=1, dtype=None, out=None):
   if out:
     raise NotImplementedError("The 'out' argument to trace is not supported.")
+
+  axis1 = axis1 % ndim(a)
+  axis2 = axis2 % ndim(a)
 
   a_shape = shape(a)
   if dtype is None:
@@ -1532,11 +1731,16 @@ def tensordot(a, b, axes=2):
     raise TypeError(msg.format(ndim(a), ndim(b)))
 
   if type(axes) is int:
-    a, b = _promote_dtypes(a, b)
-    a_reshape = lax.reshape(a, (_prod(a.shape[:-axes]), _prod(a.shape[-axes:])))
-    b_reshape = lax.reshape(b, (_prod(b.shape[:axes]), _prod(b.shape[axes:])))
-    out_reshape = lax.dot(a_reshape, b_reshape)
-    return lax.reshape(out_reshape, a.shape[:-axes] + b.shape[axes:])
+    if axes == 0:
+      a, b = _promote_dtypes(a, b)
+      return lax.mul(lax.reshape(a, shape(a) + (1,) * ndim(b)),
+                     lax.reshape(b, (1,) * ndim(a) + shape(b)))
+    else:
+      a, b = _promote_dtypes(a, b)
+      a_reshape = lax.reshape(a, (_prod(a.shape[:-axes]), _prod(a.shape[-axes:])))
+      b_reshape = lax.reshape(b, (_prod(b.shape[:axes]), _prod(b.shape[axes:])))
+      out_reshape = lax.dot(a_reshape, b_reshape)
+      return lax.reshape(out_reshape, a.shape[:-axes] + b.shape[axes:])
   elif type(axes) in (list, tuple) and len(axes) == 2:
     ax1, ax2 = axes
     if type(ax1) == type(ax2) == int:
@@ -1804,37 +2008,15 @@ def cross(a, b, axisa=-1, axisb=-1, axisc=-1, axis=None):
 
 @_wraps(onp.kron)
 def kron(a, b):
-  a_shape = shape(a)
-  b_shape = shape(b)
-  a_ndims = len(a_shape)
-  b_ndims = len(b_shape)
-  a = array(a)
-  b = array(b)
-  d = _min(a_ndims, b_ndims)
-  if d == 0:
-    return a * b
-  a_broadcast_dims = list(range(a_ndims - d, a_ndims + d, 2))
-  a_broadcast_shape = onp.ones(a_ndims + d, dtype=onp.int64)
-  a_broadcast_shape[:-2*d] = a_shape[:-d]
-  a_broadcast_shape[a_broadcast_dims] = a_shape[-d:]
-
-  b_broadcast_dims = list(range(b_ndims -d + 1, b_ndims + d + 1, 2))
-  b_broadcast_shape = onp.ones(b_ndims + d, dtype=onp.int64)
-  b_broadcast_shape[:-2*d] = b_shape[:-d]
-  b_broadcast_shape[b_broadcast_dims] = b_shape[-d:]
-
-  if a_ndims > b_ndims:
-    out_shape = onp.array(a_shape, dtype=onp.int64)
-    out_shape[-d:] *= onp.array(b_shape, dtype=onp.int64)
-  else:
-    out_shape = onp.array(b_shape, dtype=onp.int64)
-    out_shape[-d:] *= onp.array(a_shape, dtype=onp.int64)
-
-  a_broadcast = lax.broadcast_in_dim(
-    a, a_broadcast_shape, list(range(a_ndims - d)) + a_broadcast_dims)
-  b_broadcast = lax.broadcast_in_dim(
-    b, b_broadcast_shape, list(range(b_ndims - d)) + b_broadcast_dims)
-  return lax.reshape(a_broadcast * b_broadcast, out_shape)
+  a, b = _promote_dtypes(a, b)
+  if ndim(a) < ndim(b):
+    a = reshape(a, (1,) * (ndim(b) - ndim(a)) + shape(a))
+  elif ndim(b) < ndim(a):
+    b = reshape(b, (1,) * (ndim(a) - ndim(b)) + shape(b))
+  a_reshaped = reshape(a, [i for d in shape(a) for i in (d, 1)])
+  b_reshaped = reshape(b, [i for d in shape(b) for i in (1, d)])
+  out_shape = tuple(onp.multiply(shape(a), shape(b)))
+  return reshape(lax.mul(a_reshaped, b_reshaped), out_shape)
 
 
 @_wraps(onp.vander)
@@ -1921,30 +2103,21 @@ def roll(a, shift, axis=None):
     return lax.reshape(roll(ravel(a), shift, axis=0), a_shape)
 
   a_ndim = len(a_shape)
-  if isinstance(shift, tuple):
-    if isinstance(axis, tuple):
-      if len(axis) != len(shift):
-        msg = "Mismatched lengths between shift ({}) and axis ({}) for np.roll."
-        raise ValueError(msg.format(len(shift), len(axis)))
-      axis = tuple(a for a in axis)
-    else:
-      axis = (axis,) * len(shift)
-  elif isinstance(axis, tuple):
-    shift = (shift,) * len(axis)
-  else:
-    shift = (shift,)
-    axis = (axis,)
+  shift = asarray(shift)
+  axis = onp.asarray(axis)
+  b_shape = lax.broadcast_shapes(shift.shape, axis.shape, (1,))
+  if len(b_shape) != 1:
+    msg = "'shift' and 'axis' arguments to roll must be scalars or 1D arrays"
+    raise ValueError(msg)
+  if b_shape[0] > a_ndim:
+    raise ValueError("More shifts/axes than dimensions of input to roll.")
 
-  for offset, i in zip(shift, axis):
+  for x, i in zip(broadcast_to(shift, b_shape),
+                  onp.broadcast_to(axis, b_shape)):
     i = _canonicalize_axis(i, a_ndim)
-    offset = offset % (a_shape[i] or 1)
-    slices = [slice(None)] * a_ndim
-    slices[i] = slice(None, -offset)
-    before = a[tuple(slices)]
-    slices[i] = slice(-offset, None)
-    after = a[tuple(slices)]
-    a = lax.concatenate((after, before), i)
-
+    x = remainder(x, (a_shape[i] or 1))
+    a = lax.concatenate((a, a), i)
+    a = lax.dynamic_slice_in_dim(a, a_shape[i] - x, a_shape[i], axis=i)
   return a
 
 
@@ -1982,182 +2155,353 @@ def take(a, indices, axis=None, out=None, mode=None):
                     slice_sizes=tuple(slice_sizes))
 
 
+@partial(jit, static_argnums=(2,))
+def _take_along_axis(arr, indices, axis):
+  if axis is None:
+    if ndim(indices) != 1:
+      msg = "take_along_axis indices must be 1D if axis=None, got shape {}"
+      raise ValueError(msg.format(shape(indices)))
+    return take_along_axis(arr.ravel(), indices, 0)
+  rank = ndim(arr)
+  if rank != ndim(indices):
+    msg = "indices and arr must have the same number of dimensions; {} vs. {}"
+    raise ValueError(msg.format(ndim(indices), ndim(arr)))
+  axis = _canonicalize_axis(axis, rank)
+
+  arr_shape = list(shape(arr))
+  axis_size = arr_shape[axis]
+  arr_shape[axis] = 1
+  idx_shape = shape(indices)
+  out_shape = lax.broadcast_shapes(idx_shape, tuple(arr_shape))
+
+  index_dims = [i for i, idx in enumerate(idx_shape) if i == axis or idx != 1]
+
+  gather_index_shape = tuple(onp.array(out_shape)[index_dims]) + (1,)
+  gather_indices = []
+  slice_sizes = []
+  offset_dims = []
+  start_index_map = []
+  collapsed_slice_dims = []
+  j = 0
+  for i in range(rank):
+    if i == axis:
+      indices = indices % _constant_like(indices, axis_size)
+      gather_indices.append(lax.reshape(indices, gather_index_shape))
+      slice_sizes.append(1)
+      start_index_map.append(i)
+      collapsed_slice_dims.append(i)
+      j += 1
+    elif idx_shape[i] != 1:
+      iota = lax.iota(_dtype(indices), out_shape[i])
+      iota = lax.tie_in(arr, iota)
+      iota = lax.broadcast_in_dim(iota, gather_index_shape, (j,))
+      gather_indices.append(iota)
+      slice_sizes.append(1)
+      start_index_map.append(i)
+      collapsed_slice_dims.append(i)
+      j += 1
+    else:
+      # If idx_shape[i] == 1, we can just take the entirety of the arr's axis
+      # and avoid forming an iota index.
+      offset_dims.append(i)
+      slice_sizes.append(arr_shape[i])
+
+  gather_indices = lax.concatenate(gather_indices, dimension=j)
+  dnums = lax.GatherDimensionNumbers(
+    offset_dims=tuple(offset_dims),
+    collapsed_slice_dims=tuple(collapsed_slice_dims),
+    start_index_map=tuple(start_index_map))
+  return lax.gather(arr, gather_indices, dnums, tuple(slice_sizes))
+
+
 @_wraps(getattr(onp, "take_along_axis", None))
 def take_along_axis(arr, indices, axis):
-  if axis is None and ndim(arr) != 1:
-    return take_along_axis(arr.ravel(), indices.ravel(), 0)
-  elif ndim(arr) == 1:
-    return lax.index_take(arr, (indices,), (0,))
-  else:
-    # TODO(mattjj): if we lower directly to lax.gather here, we might be able to
-    # avoid the reshape on the output.
-    all_indices = [lax.broadcasted_iota(_dtype(indices), shape(indices), i)
-                   for i in range(ndim(arr))]
-    all_indices[axis] = indices
-    all_indices = tuple(map(ravel, all_indices))
-    out_flat = lax.index_take(arr, all_indices, tuple(range(ndim(arr))))
-    return reshape(out_flat, shape(indices))
-
+  return _take_along_axis(arr, indices, axis)
 
 ### Indexing
 
+def _rewriting_take(arr, idx):
+  # Computes arr[idx].
+  # All supported cases of indexing can be implemented as an XLA gather,
+  # followed by an optional reverse and a reshape.
+  arr = asarray(arr)
+  indexer = _index_to_gather(shape(arr), idx)  # shared with _scatter_update
 
-def _rewriting_take(arr, idx, axis=0):
-  """A function like numpy.take that handles boxes and rewrites to LAX."""
+  y = lax.gather(arr, indexer.gather_indices, indexer.dnums,
+                 indexer.gather_slice_shape)
 
-  # Handle special indexers: (), Ellipsis, slice(None), and None.
-  # TODO(mattjj): don't compare empty tuple identity (though works for CPython)
-  if idx is () or idx is Ellipsis or _is_slice_none(idx):  # pylint: disable=literal-comparison
-    return arr
-  elif idx is None:
-    return expand_dims(arr, 0)
+  # Reverses axes with negative strides.
+  if indexer.reversed_y_dims:
+    y = lax.rev(y, indexer.reversed_y_dims)
 
+  # This adds np.newaxis/None dimensions.
+  return lax.reshape(y, indexer.slice_shape)
 
-  # Handle int index
+_Indexer = collections.namedtuple("_Indexer", [
+  # The expected shape of the slice output.
+  "slice_shape",
+
+  # The slice shape to pass to lax.gather().
+  "gather_slice_shape",
+
+  # The gather indices to use.
+  "gather_indices",
+
+  # A GatherDimensionNumbers object describing the gather to perform.
+  "dnums",
+
+  # Slice dimensions that have negative strides, and so must be reversed after
+  # the gather.
+  "reversed_y_dims",
+
+  # For scatters, we must eliminate any axes created by `newaxis`, which
+  # are the following dimensions, which must be of size 1. For gathers, we
+  # simply reshape to `slice_shape` to introduce the new axes.
+  "newaxis_dims",
+])
+
+def _index_to_gather(x_shape, idx):
+  # Convert list indices to tuples in cases (deprecated by NumPy.)
+  idx = _eliminate_deprecated_list_indexing(idx)
+
+  # Expand any (concrete) boolean indices. We can then use advanced integer
+  # indexing logic to handle them.
+  idx = _expand_bool_indices(idx)
+
+  # Remove ellipses and add trailing slice(None)s.
+  idx = _canonicalize_tuple_index(len(x_shape), idx)
+
+  # Check for advanced indexing:
+  # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#advanced-indexing
+
+  # Do the advanced indexing axes appear contiguously? If not, NumPy semantics
+  # move the advanced axes to the front.
+  advanced_axes_are_contiguous = False
+
+  advanced_indexes = None
+
+  # The positions of the advanced indexing axes in `idx`.
+  idx_advanced_axes = []
+
+  # The positions of the advanced indexes in x's shape.
+  # collapsed, after None axes have been removed. See below.
+  x_advanced_axes = None
+
+  if _is_advanced_int_indexer(idx):
+    idx_no_nones = [(i, d) for i, d in enumerate(idx) if d is not None]
+    advanced_pairs = (
+      (asarray(e), i, j) for j, (i, e) in enumerate(idx_no_nones)
+      if (isinstance(e, collections.Sequence) or isinstance(e, ndarray)))
+    advanced_pairs = ((mod(e, _constant_like(e, x_shape[j])), i, j)
+                      for e, i, j in advanced_pairs)
+    advanced_indexes, idx_advanced_axes, x_advanced_axes = zip(*advanced_pairs)
+    advanced_axes_are_contiguous = onp.all(onp.diff(idx_advanced_axes) == 1)
+
   _int = lambda aval: not aval.shape and onp.issubdtype(aval.dtype, onp.integer)
-  try:
-    abstract_idx = core.get_aval(idx)
-  except TypeError:
-    abstract_idx = None
 
-  if isinstance(abstract_idx, ConcreteArray) and _int(abstract_idx):
-    return lax.index_in_dim(arr, idx, axis, False)
-  elif isinstance(abstract_idx, ShapedArray) and _int(abstract_idx):
-    idx = mod(idx, _constant_like(idx, arr.shape[axis]))
-    return lax.dynamic_index_in_dim(arr, idx, axis, False)
+  x_axis = 0  # Current axis in x.
+  y_axis = 0  # Current axis in y, before collapsing. See below.
+  collapsed_y_axis = 0  # Current axis in y, after collapsing.
 
-  # Handle slice index (only static, otherwise an error is raised)
-  elif isinstance(idx, slice):
-    if not _all(elt is None or type(core.get_aval(elt)) is ConcreteArray
-                for elt in (idx.start, idx.stop, idx.step)):
-      msg = ("Array slice indices must have static start/stop/step to be used "
-             "with Numpy indexing syntax. Try lax.dynamic_slice instead.")
-      raise IndexError(msg)
+  # Scatter dimension numbers.
+  offset_dims = []
+  collapsed_slice_dims = []
+  start_index_map = []
+
+  gather_indices = zeros((0,), dtype=int32)
+
+  # We perform three transformations to y before the scatter op, in order:
+  # First, y is broadcast to slice_shape. In general `y` only need broadcast to
+  # the right shape.
+  slice_shape = []
+
+  # Next, y is squeezed to remove newaxis_dims. This removes np.newaxis/`None`
+  # indices, which the scatter cannot remove itself.
+  newaxis_dims = []
+
+  # Finally, we reverse reversed_y_dims to handle slices with negative strides.
+  reversed_y_dims = []
+
+  gather_slice_shape = []
+
+  for idx_pos, i in enumerate(idx):
+    # Handle the advanced indices here if:
+    # * the advanced indices were not contiguous and we are the start.
+    # * we are at the position of the first advanced index.
+    if (advanced_indexes is not None and
+        (advanced_axes_are_contiguous and idx_pos == idx_advanced_axes[0] or
+         not advanced_axes_are_contiguous and idx_pos == 0)):
+      advanced_indexes = broadcast_arrays(*advanced_indexes)
+      shape = advanced_indexes[0].shape
+      ndim = len(shape)
+      advanced_indexes = [
+        lax.convert_element_type(lax.reshape(a, shape + (1,)), int32)
+        for a in advanced_indexes]
+
+      # Broadcast gather_indices from [..., k] to [..., 1, 1, ..., 1, k].
+      gather_indices = lax.broadcast_in_dim(
+        gather_indices, onp.insert(gather_indices.shape, -1, shape),
+        tuple(range(gather_indices.ndim - 1)) + (gather_indices.ndim + ndim - 1,))
+      gather_indices = concatenate([gather_indices] + advanced_indexes, -1)
+      start_index_map.extend(x_advanced_axes)
+      collapsed_slice_dims.extend(x_advanced_axes)
+      slice_shape.extend(shape)
+      y_axis += ndim
+      collapsed_y_axis += ndim
+
+    # Per-index bookkeeping for advanced indexes.
+    if idx_pos in idx_advanced_axes:
+      x_axis += 1
+      gather_slice_shape.append(1)
+      continue
+
+    try:
+      abstract_i = core.get_aval(i)
+    except TypeError:
+      abstract_i = None
+    # Handle basic int indexes.
+    if (isinstance(abstract_i, ConcreteArray) or
+        isinstance(abstract_i, ShapedArray)) and _int(abstract_i):
+      i = mod(i, _constant_like(i, x_shape[x_axis]))
+      i = lax.convert_element_type(i, int32)
+      i = broadcast_to(i, tuple(gather_indices.shape[:-1]) + (1,))
+      gather_indices = concatenate((gather_indices, i), -1)
+      collapsed_slice_dims.append(x_axis)
+      gather_slice_shape.append(1)
+      start_index_map.append(x_axis)
+      x_axis += 1
+    # Handle np.newaxis (None)
+    elif i is None:
+      slice_shape.append(1)
+      newaxis_dims.append(y_axis)
+      y_axis += 1
+    # Handle slice(None)
+    elif _is_slice_none(i):
+      slice_shape.append(x_shape[x_axis])
+      gather_slice_shape.append(x_shape[x_axis])
+      offset_dims.append(collapsed_y_axis)
+      collapsed_y_axis += 1
+      y_axis += 1
+      x_axis += 1
+    # Handle slice index (only static, otherwise an error is raised)
+    elif isinstance(i, slice):
+      if not _all(elt is None or type(core.get_aval(elt)) is ConcreteArray
+                  for elt in (i.start, i.stop, i.step)):
+        msg = ("Array slice indices must have static start/stop/step to be used "
+               "with Numpy indexing syntax. Try lax.dynamic_slice/"
+               "dynamic_update_slice instead.")
+        raise IndexError(msg)
+      start, limit, stride, needs_rev = _static_idx(i, x_shape[x_axis])
+      if needs_rev:
+        reversed_y_dims.append(collapsed_y_axis)
+      if stride == 1:
+        i = lax.convert_element_type(start, int32)
+        i = broadcast_to(i, tuple(gather_indices.shape[:-1]) + (1,))
+        gather_indices = concatenate((gather_indices, i), -1)
+        slice_shape.append(limit - start)
+        gather_slice_shape.append(limit - start)
+        offset_dims.append(collapsed_y_axis)
+        start_index_map.append(x_axis)
+      else:
+        i = arange(start, limit, stride, dtype=int32)
+        size = i.shape[0]
+        slice_shape.append(size)
+        gather_slice_shape.append(1)
+        gather_indices_shape = tuple(gather_indices.shape[:-1]) + (size,)
+        i = lax.broadcast_in_dim(
+            i, shape=gather_indices_shape + (1,),
+            broadcast_dimensions=(len(gather_indices_shape) - 1,))
+        gather_indices = lax.broadcast_in_dim(
+            gather_indices,
+            shape=gather_indices_shape + (len(start_index_map),),
+            broadcast_dimensions=(
+              tuple(range(len(gather_indices_shape) - 1)) +
+              (len(gather_indices_shape),)))
+        gather_indices = concatenate(
+          (gather_indices, i), len(gather_indices_shape))
+        start_index_map.append(x_axis)
+        collapsed_slice_dims.append(x_axis)
+
+      collapsed_y_axis += 1
+      y_axis += 1
+      x_axis += 1
     else:
-      start, limit, stride, needs_rev = _static_idx(idx, arr.shape[axis])
-      result = lax.slice_in_dim(arr, start, limit, stride, axis=axis)
-      return lax.rev(result, [axis]) if needs_rev else result
+      msg = "Indexing mode not yet supported. Open a feature request!\n{}"
+      raise IndexError(msg.format(idx))
 
-  # Handle non-advanced bool index (only static, otherwise an error is raised)
-  elif (isinstance(abstract_idx, ShapedArray) and onp.issubdtype(abstract_idx.dtype, onp.bool_)
-        or isinstance(idx, list) and _all(not _shape(e) and onp.issubdtype(_dtype(e), onp.bool_)
-                                          for e in idx)):
-    if isinstance(idx, list):
-      idx = array(idx)
-      abstract_idx = core.get_aval(idx)
+  dnums = lax.GatherDimensionNumbers(
+    offset_dims = tuple(offset_dims),
+    collapsed_slice_dims = tuple(sorted(collapsed_slice_dims)),
+    start_index_map = tuple(start_index_map)
+  )
+  return _Indexer(
+    slice_shape=slice_shape,
+    newaxis_dims=tuple(newaxis_dims),
+    gather_slice_shape=gather_slice_shape,
+    reversed_y_dims=reversed_y_dims,
+    dnums=dnums,
+    gather_indices=gather_indices)
 
-    if not type(abstract_idx) is ConcreteArray:
-      msg = ("Array boolean indices must be static (e.g. no dependence on an "
-             "argument to a jit or vmap function).")
-      raise IndexError(msg)
+def _should_unpack_list_index(x):
+  """Helper for _eliminate_deprecated_list_indexing."""
+  return (isinstance(x, ndarray) and onp.ndim(x) != 0
+          or isinstance(x, collections.Sequence)
+          or isinstance(x, slice) or x is Ellipsis or x is None)
+
+def _eliminate_deprecated_list_indexing(idx):
+  # "Basic slicing is initiated if the selection object is a non-array,
+  # non-tuple sequence containing slice objects, [Ellipses, or newaxis
+  # objects]". Detects this case and canonicalizes to a tuple. This case is
+  # deprecated by NumPy and exists for backward compatibility.
+  if not isinstance(idx, tuple):
+    if isinstance(idx, collections.Sequence) and not isinstance(idx, ndarray):
+      if _any(_should_unpack_list_index(i) for i in idx):
+        idx = tuple(idx)
+      else:
+        idx = (idx,)
     else:
-      if idx.ndim > arr.ndim or idx.shape != arr.shape[:idx.ndim]:
-        msg = "Boolean index shape did not match indexed array shape prefix."
+      idx = (idx,)
+  return idx
+
+def _expand_bool_indices(idx):
+  """Converts concrete bool indexes into advanced integer indexes."""
+  out = []
+  for i in idx:
+    try:
+      abstract_i = core.get_aval(i)
+    except TypeError:
+      abstract_i = None
+    if (isinstance(abstract_i, ShapedArray) and onp.issubdtype(abstract_i.dtype, onp.bool_)
+          or isinstance(i, list) and _all(not _shape(e) and onp.issubdtype(_dtype(e), onp.bool_)
+                                          for e in i)):
+      if isinstance(i, list):
+        i = array(i)
+        abstract_i = core.get_aval(i)
+
+      if not type(abstract_i) is ConcreteArray:
+        msg = ("Array boolean indices must be static (e.g. no dependence on an "
+               "argument to a jit or vmap function).")
         raise IndexError(msg)
       else:
-        idx = onp.asarray(idx)
-        reshaped_arr = arr.reshape((-1,) + arr.shape[idx.ndim:])
-        int_idx, = onp.nonzero(idx.ravel())
-        return lax.index_take(reshaped_arr, (int_idx,), (0,))
-
-  # Handle non-advanced tuple indices by recursing once
-  elif isinstance(idx, tuple) and _all(onp.ndim(elt) == 0 for elt in idx):
-    canonical_idx = _canonicalize_tuple_index(arr, idx)
-    result, axis = arr, 0
-    # TODO(mattjj): could generate a single HLO here, rather than one for each
-    # elt in canonical idx. For example, x[0, :, 0] generates three HLOs now.
-    for elt in (elt for elt in canonical_idx if elt is not None):
-      result = _rewriting_take(result, elt, axis=axis)
-      axis += isinstance(elt, slice)   # advance axis index if not eliminated
-    unexpanded_shape_itr = iter(result.shape)
-    result_shape = tuple(1 if elt is None else next(unexpanded_shape_itr)
-                         for elt in canonical_idx if isinstance(elt, (type(None), slice)))
-    return lax.reshape(result, result_shape) if result_shape else result
-
-  # Handle advanced indexing (non-tuple sequence, ndarray of dtype int or bool,
-  # or a tuple with at least one sequence object).
-  # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#advanced-indexing
-  # https://gist.github.com/seberg/976373b6a2b7c4188591
-
-  # Handle integer array indexing *without* ellipsis/slices/nones
-  # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#integer-array-indexing
-  if _is_advanced_int_indexer_without_slices(idx):
-    if isinstance(idx, (tuple, list)):
-      if _any(_shape(e) for e in idx):
-        # At least one sequence element in the index list means broadcasting.
-        idx = broadcast_arrays(*idx)
-      else:
-        # The index list is a flat list of integers.
-        idx = [lax.concatenate([lax.reshape(e, (1,)) for e in idx], 0)]
+        out.extend(onp.where(i))
     else:
-      # The indexer is just a single integer array.
-      idx = [idx]
-
-    flat_idx = tuple([mod(ravel(x), _constant_like(x, arr.shape[i]))
-                      for i, x in enumerate(idx)])
-    # TODO(mattjj): if we instead lower directly to lax.gather, we can probably
-    # eliminate the reshape here.
-    out = lax.index_take(arr, flat_idx, tuple(range(len(idx))))
-    return lax.reshape(out, idx[0].shape + _shape(arr)[len(idx):])
-
-  # Handle integer array indexing *with* ellipsis/slices/nones by recursing once
-  # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#combining-advanced-and-basic-indexing
-  elif _is_advanced_int_indexer(idx):
-    canonical_idx = _canonicalize_tuple_index(arr, tuple(idx))
-    idx_noadvanced = [slice(None) if _is_int_arraylike(e) else e
-                      for e in canonical_idx]
-    arr_sliced = _rewriting_take(arr, tuple(idx_noadvanced))
-
-    advanced_pairs = ((e, i) for i, e in enumerate(canonical_idx) if _is_int_arraylike(e))
-    idx_advanced, axes = zip(*advanced_pairs)
-    idx_advanced = broadcast_arrays(*idx_advanced)
-
-    flat_idx = tuple(mod(ravel(x), _constant_like(x, arr_sliced.shape[i]))
-                     for i, x in zip(axes, idx_advanced))
-    # TODO(mattjj): if we instead lower directly to lax.gather, we can probably
-    # eliminate the reshape here.
-    out = lax.index_take(arr_sliced, flat_idx, axes)
-    shape_suffix = tuple(onp.delete(_shape(arr_sliced), axes))
-    out = lax.reshape(out, idx_advanced[0].shape + shape_suffix)
-
-    axes_are_contiguous = onp.all(onp.diff(axes) == 1)
-    if axes_are_contiguous:
-      start = axes[0]
-      naxes = idx_advanced[0].ndim
-      out = moveaxis(out, list(range(naxes)), list(range(start, start + naxes)))
-    return out
-
-  msg = "Indexing mode not yet supported. Open a feature request!\n{}"
-  raise IndexError(msg.format(idx))
-
+      out.append(i)
+  return tuple(out)
 
 def _is_slice_none(idx):
   """Return True if idx is equal to slice(None), False otherwise."""
   if isinstance(idx, slice):
     return idx.start is None and idx.stop is None and idx.step is None
 
-
+# TODO(mattjj): clean up this logic
 def _is_advanced_int_indexer(idx):
   """Returns True if idx should trigger int array indexing, False otherwise."""
   # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#advanced-indexing
-  if isinstance(idx, (tuple, list)):
-    # We assume this check comes *after* the check for non-advanced tuple index,
-    # and hence we already know at least one element is a sequence if it's a tuple
-    return _all(e is None or e is Ellipsis or isinstance(e, slice)
-                or _is_int_arraylike(e) for e in idx)
-  else:
-    return _is_int_arraylike(idx)
-
-
-def _is_advanced_int_indexer_without_slices(idx):
-  """Returns True iff idx is an advanced int idx without slice/ellipsis/none."""
-  if _is_advanced_int_indexer(idx):
-    if isinstance(idx, (tuple, list)):
-      return not _any(e is None or e is Ellipsis or isinstance(e, slice)
-                      for e in idx)
-    else:
-      return True
-
+  assert isinstance(idx, tuple)
+  if _all(onp.ndim(elt) == 0 for elt in idx):
+    return False
+  return _all(e is None or e is Ellipsis or isinstance(e, slice)
+              or _is_int_arraylike(e) for e in idx)
 
 def _is_int_arraylike(x):
   """Returns True if x is array-like with integer dtype, False otherwise."""
@@ -2166,39 +2510,38 @@ def _is_int_arraylike(x):
           or isinstance(x, (list, tuple)) and _all(_is_int_arraylike(e) for e in x))
 
 
-def _canonicalize_tuple_index(arr, idx):
+def _canonicalize_tuple_index(arr_ndim, idx):
   """Helper to remove Ellipsis and add in the implicit trailing slice(None)."""
   len_without_none = _sum(1 for e in idx if e is not None and e is not Ellipsis)
-  if len_without_none > arr.ndim:
+  if len_without_none > arr_ndim:
     msg = "Too many indices for array: {} non-None/Ellipsis indices for dim {}."
-    raise IndexError(msg.format(len_without_none, arr.ndim))
+    raise IndexError(msg.format(len_without_none, arr_ndim))
   ellipses = (i for i, elt in enumerate(idx) if elt is Ellipsis)
   ellipsis_index = next(ellipses, None)
   if ellipsis_index is not None:
     if next(ellipses, None) is not None:
       msg = "Multiple ellipses (...) not supported: {}."
       raise IndexError(msg.format(list(map(type, idx))))
-    colons = (slice(None),) * (arr.ndim - len_without_none)
+    colons = (slice(None),) * (arr_ndim - len_without_none)
     idx = idx[:ellipsis_index] + colons + idx[ellipsis_index + 1:]
-  elif len_without_none < arr.ndim:
-    colons = (slice(None),) * (arr.ndim - len_without_none)
+  elif len_without_none < arr_ndim:
+    colons = (slice(None),) * (arr_ndim - len_without_none)
     idx = tuple(idx) + colons
   return idx
 
 
 def _static_idx(idx, size):
   """Helper function to compute the static slice start/limit/stride values."""
-  indices = onp.arange(size)[idx]  # get shape statically
-  if not len(indices):  # pylint: disable=g-explicit-length-test
+  assert isinstance(idx, slice)
+  start, stop, step = idx.indices(size)
+  if (step < 0 and stop >= start) or (step > 0 and start >= stop):
     return 0, 0, 1, False  # sliced to size zero
-  start, stop_inclusive = indices[0], indices[-1]
-  step = 1 if idx.step is None else idx.step
+
   if step > 0:
-    end = _min(stop_inclusive + step, size)
-    return start, end, step, False
+    return start, stop, step, False
   else:
-    end = _min(start - step, size)
-    return stop_inclusive, end, -step, True
+    k  = (start - stop - 1) % (-step)
+    return stop + k + 1, start + 1, -step, True
 
 
 blackman = onp.blackman
@@ -2233,6 +2576,132 @@ def lcm(x1, x2):
   return where(d == 0, lax._const(d, 0),
                lax.div(lax.abs(multiply(x1, x2)), d))
 
+@_wraps(onp.cov)
+def cov(m, y=None, rowvar=True, bias=False, ddof=None, fweights=None,
+        aweights=None):
+  msg = ("jax.numpy.cov not implemented for nontrivial {}. "
+         "Open a feature request at https://github.com/google/jax/issues !")
+  if y is not None: raise NotImplementedError(msg.format('y'))
+  # These next two are actually implemented, just not tested.
+  if fweights is not None: raise NotImplementedError(msg.format('fweights'))
+  if aweights is not None: raise NotImplementedError(msg.format('aweights'))
+
+  if m.ndim > 2:
+    raise ValueError("m has more than 2 dimensions")  # same as numpy error
+  X = array(m, ndmin=2, dtype=result_type(m, onp.float64), copy=False)
+  if not rowvar and X.shape[0] != 1:
+    X = X.T
+  if X.shape[0] == 0:
+    return onp.array([]).reshape(0, 0)
+  if ddof is None:
+    ddof = 1 if bias == 0 else 0
+
+  w = None
+  if fweights is not None:
+    if onp.ndim(fweights) > 1:
+      raise RuntimeError("cannot handle multidimensional fweights")
+    if onp.shape(fweights)[0] != X.shape[1]:
+      raise RuntimeError("incompatible numbers of samples and fweights")
+    w = asarray(fweights)
+  if aweights is not None:
+    if onp.ndim(aweights) > 1:
+      raise RuntimeError("cannot handle multidimensional aweights")
+    if onp.shape(aweights)[0] != X.shape[1]:
+      raise RuntimeError("incompatible numbers of samples and aweights")
+    w = aweights if w is None else w * aweights
+
+  avg, w_sum = average(X, axis=1, weights=w, returned=True)
+  w_sum = w_sum[0]
+
+  if w is None:
+    f = X.shape[1] - ddof
+  elif ddof == 0:
+    f = w_sum
+  elif aweights is None:
+    f = w_sum - ddof
+  else:
+    f = w_sum - ddof * sum(w * aweights) / w_sum
+
+  X = X - avg[:, None]
+  X_T = X.T if w is None else (X * w).T
+  return true_divide(dot(X, X_T.conj()), f).squeeze()
+
+
+@_wraps(getattr(onp, "quantile", None))
+def quantile(a, q, axis=None, out=None, overwrite_input=False,
+             interpolation="linear", keepdims=False):
+  if overwrite_input or out is not None:
+    msg = ("jax.numpy.quantile does not support overwrite_input=True or "
+           "out != None")
+    raise ValueError(msg)
+  if interpolation != "linear":
+    raise NotImplementedError("Only interpolation='linear' is implemented")
+
+  a = asarray(a)
+  q = asarray(q)
+
+  if axis is None:
+    a = ravel(a)
+    axis = 0
+  elif isinstance(axis, tuple):
+    raise NotImplementedError("Tuple values for axis are not implemented")
+  else:
+    axis = _canonicalize_axis(axis, ndim(a))
+
+  q_ndim = ndim(q)
+  if q_ndim > 1:
+    raise ValueError("q must be have rank <= 1, got shape {}".format(shape(q)))
+
+  a, q = _promote_dtypes(a, q)
+  if not issubdtype(a.dtype, floating):
+    msg = "q and a arguments to quantile must be of float type, got {} and {}"
+    raise TypeError(msg.format(a.dtype, q.dtype))
+
+  a_shape = shape(a)
+  a = lax.sort(a, dimension=axis)
+
+  n = a_shape[axis]
+  q = lax.mul(q, _constant_like(q, n - 1))
+  low = lax.floor(q)
+  high = lax.add(low, _constant_like(low, 1))
+  high_weight = lax.sub(q, low)
+  low_weight = lax.sub(_constant_like(high_weight, 1), high_weight)
+
+  low = lax.clamp(_constant_like(low, 0), low, _constant_like(low, n - 1))
+  high = lax.clamp(_constant_like(high, 0), high, _constant_like(high, n - 1))
+  low = lax.convert_element_type(low, int64)
+  high = lax.convert_element_type(high, int64)
+
+  slice_sizes = list(a_shape)
+  slice_sizes[axis] = 1
+
+  dnums = lax.GatherDimensionNumbers(
+    offset_dims=tuple(range(
+      q_ndim,
+      len(a_shape) + q_ndim if keepdims else len(a_shape) + q_ndim - 1)),
+    collapsed_slice_dims=() if keepdims else (axis,),
+    start_index_map=(axis,))
+  low = low[..., None]
+  high = high[..., None]
+  low_value = lax.gather(a, low, dimension_numbers=dnums,
+                         slice_sizes=slice_sizes)
+  high_value = lax.gather(a, high, dimension_numbers=dnums,
+                          slice_sizes=slice_sizes)
+  if q_ndim == 1:
+    low_weight = lax.broadcast_in_dim(low_weight, low_value.shape,
+                                      broadcast_dimensions=(0,))
+    high_weight = lax.broadcast_in_dim(high_weight, high_value.shape,
+                                      broadcast_dimensions=(0,))
+  return lax.add(lax.mul(low_value, low_weight),
+                 lax.mul(high_value, high_weight))
+
+
+@_wraps(onp.percentile)
+def percentile(a, q, axis=None, out=None, overwrite_input=False,
+               interpolation="linear", keepdims=False):
+  q = true_divide(asarray(q), float32(100.0))
+  return quantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
+                  interpolation=interpolation, keepdims=keepdims)
 
 ### track unimplemented functions
 
@@ -2262,8 +2731,15 @@ for func in get_module_functions(onp):
 def _swap_args(f):
   return lambda x, y: f(y, x)
 
+def _unimplemented_setitem(self, i, x):
+  msg = ("'{}' object does not support item assignment. JAX arrays are "
+         "immutable; perhaps you want jax.ops.index_update or "
+         "jax.ops.index_add instead?")
+  raise TypeError(msg.format(type(self)))
+
 _operators = {
     "getitem": _rewriting_take,
+    "setitem": _unimplemented_setitem,
     "neg": negative,
     "eq": equal,
     "ne": not_equal,
@@ -2309,7 +2785,7 @@ _nondiff_methods = ["all", "any", "argmax", "argmin", "argpartition", "argsort",
 _diff_methods = ["clip", "compress", "conj", "conjugate", "cumprod", "cumsum",
                  "diagonal", "dot", "max", "mean", "min", "prod", "ptp",
                  "ravel", "repeat", "sort", "squeeze", "std", "sum",
-                 "swapaxes", "take", "trace", "transpose", "var"]
+                 "swapaxes", "take", "tile", "trace", "transpose", "var"]
 
 
 # Set up operator, method, and property forwarding on Tracer instances containing
@@ -2320,9 +2796,11 @@ for operator_name, function in _operators.items():
 # Forward methods and properties using core.aval_method and core.aval_property:
 for method_name in _nondiff_methods + _diff_methods:
   setattr(ShapedArray, method_name, core.aval_method(globals()[method_name]))
-setattr(ShapedArray, "reshape", core.aval_method(_reshape))
+setattr(ShapedArray, "reshape", core.aval_method(_reshape_method))
 setattr(ShapedArray, "flatten", core.aval_method(ravel))
 setattr(ShapedArray, "T", core.aval_property(transpose))
+setattr(ShapedArray, "real", core.aval_property(real))
+setattr(ShapedArray, "imag", core.aval_property(imag))
 setattr(ShapedArray, "astype", core.aval_method(lax.convert_element_type))
 
 
@@ -2332,9 +2810,11 @@ for operator_name, function in _operators.items():
   setattr(DeviceArray, "__{}__".format(operator_name), function)
 for method_name in _nondiff_methods + _diff_methods:
   setattr(DeviceArray, method_name, globals()[method_name])
-setattr(DeviceArray, "reshape", _reshape)
+setattr(DeviceArray, "reshape", _reshape_method)
 setattr(DeviceArray, "flatten", ravel)
 setattr(DeviceArray, "T", property(transpose))
+setattr(DeviceArray, "real", property(real))
+setattr(DeviceArray, "imag", property(imag))
 setattr(DeviceArray, "astype", lax.convert_element_type)
 
 

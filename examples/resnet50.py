@@ -117,16 +117,16 @@ if __name__ == "__main__":
       onehot_labels = labels == np.arange(num_classes)
       yield images, onehot_labels
 
-  opt_init, opt_update = optimizers.momentum(step_size, mass=0.9)
+  opt_init, opt_update, get_params = optimizers.momentum(step_size, mass=0.9)
   batches = synth_batches()
 
   @jit
   def update(i, opt_state, batch):
-    params = optimizers.get_params(opt_state)
+    params = get_params(opt_state)
     return opt_update(i, grad(loss)(params, batch), opt_state)
 
   opt_state = opt_init(init_params)
   for i in xrange(num_steps):
     opt_state = update(i, opt_state, next(batches))
-  trained_params = optimizers.get_params(opt_state)
+  trained_params = get_params(opt_state)
 

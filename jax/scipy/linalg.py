@@ -27,13 +27,10 @@ from ..numpy import lax_numpy as np
 from ..numpy import linalg as np_linalg
 
 
-_EXPERIMENTAL_WARNING = "scipy.linalg support is experimental and may cause silent failures or wrong outputs"
-
 _T = lambda x: np.swapaxes(x, -1, -2)
 
 @_wraps(scipy.linalg.cholesky)
 def cholesky(a, lower=False, overwrite_a=False, check_finite=True):
-  warnings.warn(_EXPERIMENTAL_WARNING)
   del overwrite_a, check_finite
   a = np_linalg._promote_arg_dtypes(np.asarray(a))
   l = lax_linalg.cholesky(a if lower else np.conj(_T(a)), symmetrize_input=False)
@@ -74,7 +71,6 @@ def cho_solve(c_and_lower, b, overwrite_b=False, check_finite=True):
 @_wraps(scipy.linalg.svd)
 def svd(a, full_matrices=True, compute_uv=True, overwrite_a=False,
         check_finite=True, lapack_driver='gesdd'):
-  warnings.warn(_EXPERIMENTAL_WARNING)
   del overwrite_a, check_finite, lapack_driver
   a = np_linalg._promote_arg_dtypes(np.asarray(a))
   return lax_linalg.svd(a, full_matrices, compute_uv)
@@ -82,7 +78,6 @@ def svd(a, full_matrices=True, compute_uv=True, overwrite_a=False,
 
 @_wraps(scipy.linalg.det)
 def det(a, overwrite_a=False, check_finite=True):
-  warnings.warn(_EXPERIMENTAL_WARNING)
   del overwrite_a, check_finite
   return np_linalg.det(a)
 
@@ -112,7 +107,6 @@ def eigh(a, b=None, lower=True, eigvals_only=False, overwrite_a=False,
 
 @_wraps(scipy.linalg.inv)
 def inv(a, overwrite_a=False, check_finite=True):
-  warnings.warn(_EXPERIMENTAL_WARNING)
   del overwrite_a, check_finite
   return np_linalg.inv(a)
 
@@ -145,7 +139,6 @@ def lu(a, permute_l=False, overwrite_a=False, check_finite=True):
 @_wraps(scipy.linalg.qr)
 def qr(a, overwrite_a=False, lwork=None, mode="full", pivoting=False,
        check_finite=True):
-  warnings.warn(_EXPERIMENTAL_WARNING)
   del overwrite_a, lwork, check_finite
   if pivoting:
     raise NotImplementedError(
@@ -176,11 +169,7 @@ def solve(a, b, sym_pos=False, lower=False, overwrite_a=False, overwrite_b=False
 @_wraps(scipy.linalg.solve_triangular)
 def solve_triangular(a, b, trans=0, lower=False, unit_diagonal=False,
                      overwrite_b=False, debug=None, check_finite=True):
-  warnings.warn(_EXPERIMENTAL_WARNING)
   del overwrite_b, debug, check_finite
-
-  if unit_diagonal:
-    raise NotImplementedError("unit_diagonal=True is not implemented.")
 
   if trans == 0 or trans == "N":
     transpose_a, conjugate_a = False, False
@@ -193,15 +182,14 @@ def solve_triangular(a, b, trans=0, lower=False, unit_diagonal=False,
 
   a, b = np_linalg._promote_arg_dtypes(np.asarray(a), np.asarray(b))
 
-  a = np.tril(a) if lower else np.triu(a)
-
   # lax_linalg.triangular_solve only supports matrix 'b's at the moment.
   b_is_vector = np.ndim(a) == np.ndim(b) + 1
   if b_is_vector:
     b = b[..., None]
   out = lax_linalg.triangular_solve(a, b, left_side=True, lower=lower,
                                     transpose_a=transpose_a,
-                                    conjugate_a=conjugate_a)
+                                    conjugate_a=conjugate_a,
+                                    unit_diagonal=unit_diagonal)
   if b_is_vector:
     return out[..., 0]
   else:

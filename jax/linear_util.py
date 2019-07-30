@@ -69,7 +69,9 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from .util import curry, partial, OrderedDict
+import fastcache
+
+from .util import curry, partial
 
 
 def thunk(f):
@@ -195,18 +197,14 @@ def wrap_init(f, params={}):
 
 
 def memoize(call, max_size=4096):
-  cache = OrderedDict()
+  @fastcache.clru_cache(maxsize=max_size)
+  def memoized_fun_body(f, args):
+    return call(f, *args), f
+
   def memoized_fun(f, *args):
-    key = (f, args)
-    if key in cache:
-      ans, f_prev = cache[key]
-      cache.move_to_end(key)
+    ans, f_prev = memoized_fun_body(f, args)
+    if id(f_prev) != id(f):
       f.populate_stores(f_prev)
-    else:
-      if len(cache) > max_size:
-        cache.popitem(last=False)
-      ans = call(f, *args)
-      cache[key] = (ans, f)
     return ans
 
   return memoized_fun

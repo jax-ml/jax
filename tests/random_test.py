@@ -17,6 +17,7 @@ from __future__ import division
 from __future__ import print_function
 
 from unittest import SkipTest
+import re
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -29,6 +30,7 @@ from jax import api
 from jax import lax
 from jax import random
 from jax import test_util as jtu
+from jax.interpreters import xla
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -187,7 +189,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       for a in [0.2, 5.]
       for b in [0.2, 5.]
       for dtype in [onp.float32, onp.float64]))
-  @jtu.skip_on_devices("tpu")  # TODO(phawkins): re-enable
+  @jtu.skip_on_devices("cpu", "tpu")  # TODO(phawkins): slow compilation times
   def testBeta(self, a, b, dtype):
     key = random.PRNGKey(0)
     rand = lambda key, a, b: random.beta(key, a, b, (10000,), dtype)
@@ -218,7 +220,6 @@ class LaxRandomTest(jtu.JaxTestCase):
        "alpha": alpha, "dtype": onp.dtype(dtype).name}
       for alpha in [[0.2, 1., 5.]]
       for dtype in [onp.float32, onp.float64]))
-  @jtu.skip_on_devices("tpu")  # TODO(phawkins): re-enable
   def testDirichlet(self, alpha, dtype):
     key = random.PRNGKey(0)
     rand = lambda key, alpha: random.dirichlet(key, alpha, (10000,), dtype)
@@ -252,7 +253,6 @@ class LaxRandomTest(jtu.JaxTestCase):
        "a": a, "dtype": onp.dtype(dtype).name}
       for a in [0.1, 1., 10.]
       for dtype in [onp.float32, onp.float64]))
-  @jtu.skip_on_devices("tpu")  # TODO(phawkins): re-enable
   def testGamma(self, a, dtype):
     key = random.PRNGKey(0)
     rand = lambda key, a: random.gamma(key, a, (10000,), dtype)
@@ -264,11 +264,27 @@ class LaxRandomTest(jtu.JaxTestCase):
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.gamma(a).cdf)
 
-  @jtu.skip_on_devices("tpu")  # TODO(phawkins): re-enable
   def testGammaShape(self):
     key = random.PRNGKey(0)
     x = random.gamma(key, onp.array([0.2, 0.3]), shape=(3, 2))
     assert x.shape == (3, 2)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_a={}".format(alpha), "alpha": alpha}
+      for alpha in [1e-4, 1e-3, 1e-2, 1e-1, 1e0, 1e1, 1e2, 1e3, 1e4]))
+  def testGammaGrad(self, alpha):
+    rng = random.PRNGKey(0)
+    alphas = onp.full((100,), alpha)
+    z = random.gamma(rng, alphas)
+    actual_grad = api.grad(lambda x: (random.gamma(rng, x)).sum())(alphas)
+
+    eps = 0.01 * alpha / (1.0 + onp.sqrt(alpha))
+    cdf_dot = (scipy.stats.gamma.cdf(z, alpha + eps)
+               - scipy.stats.gamma.cdf(z, alpha - eps)) / (2 * eps)
+    pdf = scipy.stats.gamma.pdf(z, alpha)
+    expected_grad = -cdf_dot / pdf
+
+    self.assertAllClose(actual_grad, expected_grad, check_dtypes=True, rtol=0.0005)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
@@ -324,7 +340,7 @@ class LaxRandomTest(jtu.JaxTestCase):
        "df": df, "dtype": onp.dtype(dtype).name}
       for df in [0.1, 1., 10.]
       for dtype in [onp.float32, onp.float64]))
-  @jtu.skip_on_devices("tpu")  # TODO(phawkins): re-enable
+  @jtu.skip_on_devices("cpu", "tpu")  # TODO(phawkins): slow compilation times
   def testT(self, df, dtype):
     key = random.PRNGKey(0)
     rand = lambda key, df: random.t(key, df, (10000,), dtype)
@@ -344,6 +360,34 @@ class LaxRandomTest(jtu.JaxTestCase):
     key = random.PRNGKey(0)
     keys = [random.fold_in(key, i) for i in range(10)]
     assert onp.unique(onp.ravel(keys)).shape == (20,)
+
+  def testStaticShapeErrors(self):
+    @api.jit
+    def feature_map(n, d, sigma=1.0, seed=123):
+      key = random.PRNGKey(seed)
+      W = random.normal(key, (d, n)) / sigma
+      w = random.normal(key, (d, )) / sigma
+      b = 2 * np.pi * random.uniform(key, (d, ))
+
+      phi = lambda x, t: np.sqrt(2.0 / d) * np.cos(np.matmul(W, x) + w*t + b)
+      return phi
+
+    self.assertRaisesRegex(ValueError, re.compile(r'.*requires a concrete.*'),
+                           lambda: feature_map(5, 3))
+
+  def testIssue756(self):
+    key = random.PRNGKey(0)
+    w = random.normal(key, ())
+    if FLAGS.jax_enable_x64:
+      self.assertEqual(onp.result_type(w), onp.float64)
+    else:
+      self.assertEqual(onp.result_type(w), onp.float32)
+
+  def testNoOpByOpUnderHash(self):
+    def fail(): assert False
+    apply_primitive, xla.apply_primitive = xla.apply_primitive, fail
+    out = random.threefry_2x32(onp.zeros(2, onp.uint32), onp.arange(10, dtype=onp.uint32))
+    xla.apply_primitive = apply_primitive
 
 
 if __name__ == "__main__":

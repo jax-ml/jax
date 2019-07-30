@@ -16,19 +16,22 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import six
+import collections
+from functools import partial
 
-import numpy as onp
 from absl.testing import absltest
-from jax import test_util as jtu
+import numpy as onp
+import six
 
 import jax.numpy as np
 from jax import jit, grad, device_get, device_put, jacfwd, jacrev, hessian
-from jax import api
-from jax.core import Primitive
-from jax.interpreters.ad import defjvp, defvjp, defvjp2, defvjp_all
-from jax.interpreters.xla import DeviceArray
+from jax import api, lax
+from jax.core import Primitive, pack, JaxTuple
+from jax.interpreters import ad
+from jax.interpreters.xla import DeviceArray, DeviceTuple
 from jax.abstract_arrays import concretization_err_msg
+from jax.lib import xla_bridge as xb
+from jax import test_util as jtu
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -185,9 +188,9 @@ class APITest(jtu.JaxTestCase):
     def f(x, y):
       return np.dot(x, y)
 
-    jtu.check_raises(lambda: grad(f)(onp.zeros(3), onp.zeros(4)),
-                     TypeError,
-                     "Incompatible shapes for dot: got (3,) and (4,).")
+    jtu.check_raises_regexp(
+        lambda: grad(f)(onp.zeros(3), onp.zeros(4)), TypeError,
+        "Incompatible shapes for dot: got \\(3L?,\\) and \\(4L?,\\).")
 
   def test_switch_value_jit(self):
     def f(x):
@@ -238,10 +241,10 @@ class APITest(jtu.JaxTestCase):
     foo_p.def_abstract_eval(lambda x: x)
 
     jtu.check_raises(lambda: jit(foo)(1.0), NotImplementedError,
-                     "XLA translation rule for 'foo' not implemented")
+                     "XLA translation rule for primitive 'foo' not found")
 
     foo_p.def_impl(lambda x: x)
-    defjvp(foo_p, lambda g, x: foo(g))
+    ad.defjvp(foo_p, lambda g, x: foo(g))
 
     jtu.check_raises(lambda: grad(foo)(1.0), NotImplementedError,
                      "Reverse-mode differentiation rule for 'foo' not implemented")
@@ -249,21 +252,21 @@ class APITest(jtu.JaxTestCase):
   def test_device_put_and_get(self):
     x = onp.arange(12.).reshape((3, 4)).astype("float32")
     dx = device_put(x)
-    assert isinstance(dx, DeviceArray)
+    self.assertIsInstance(dx, DeviceArray)
     x2 = device_get(dx)
-    assert isinstance(x2, onp.ndarray)
+    self.assertIsInstance(x2, onp.ndarray)
     assert onp.all(x == x2)
 
     y = [x, (2 * x, 3 * x)]
     dy = device_put(y)
     y2 = device_get(dy)
-    assert isinstance(y2, list)
-    assert isinstance(y2[0], onp.ndarray)
+    self.assertIsInstance(y2, list)
+    self.assertIsInstance(y2[0], onp.ndarray)
     assert onp.all(y2[0] == x)
-    assert isinstance(y2[1], tuple)
-    assert isinstance(y2[1][0], onp.ndarray)
+    self.assertIsInstance(y2[1], tuple)
+    self.assertIsInstance(y2[1][0], onp.ndarray)
     assert onp.all(y2[1][0] == 2 * x)
-    assert isinstance(y2[1][1], onp.ndarray)
+    self.assertIsInstance(y2[1][1], onp.ndarray)
     assert onp.all(y2[1][1] == 3 * x)
 
   @jtu.skip_on_devices("tpu")
@@ -408,8 +411,9 @@ class APITest(jtu.JaxTestCase):
       _, f2_vjp = api.vjp(f2, x)
       self.assertAllClose(f1_vjp(x), f2_vjp(x), check_dtypes=True)
 
-      jaxpr2 = api.make_jaxpr(f2_vjp)(x)
-      assert len(jaxpr2.constvars) == 1
+      # TODO(mattjj): test that constants/literals are set up properly
+      # jaxpr2 = api.make_jaxpr(f2_vjp)(x)
+      # assert len(jaxpr2.constvars) == 1
 
   def test_jarrett_jvps2(self):
     def f1(x, y):
@@ -424,8 +428,9 @@ class APITest(jtu.JaxTestCase):
       _, f2_vjp = api.vjp(f2, x, y)
       self.assertAllClose(f1_vjp(y), f2_vjp(y), check_dtypes=True)
 
-      jaxpr2 = api.make_jaxpr(f2_vjp)(y)
-      assert len(jaxpr2.constvars) == 2
+      # TODO(mattjj): test that constants/literals are set up properly
+      # jaxpr2 = api.make_jaxpr(f2_vjp)(y)
+      # assert len(jaxpr2.constvars) == 2
 
   def test_complex_grad_raises_error(self):
     self.assertRaises(TypeError, lambda: grad(lambda x: np.sin(x))(1 + 2j))
@@ -470,7 +475,7 @@ class APITest(jtu.JaxTestCase):
     foo_p = Primitive('foo')
     def foo(x): return 2. * foo_p.bind(x)
 
-    defvjp_all(foo_p, lambda x: (x**2, lambda g: (4 * g * np.sin(x),)))
+    ad.defvjp_all(foo_p, lambda x: (x**2, lambda g: (4 * g * np.sin(x),)))
     val_ans, grad_ans = api.value_and_grad(foo)(3.)
     self.assertAllClose(val_ans, 2 * 3.**2, check_dtypes=False)
     self.assertAllClose(grad_ans, 4 * 2 * onp.sin(3.), check_dtypes=False)
@@ -479,7 +484,7 @@ class APITest(jtu.JaxTestCase):
     foo_p = Primitive('foo')
     def foo(x): return foo_p.bind(x)
 
-    defvjp_all(foo_p, lambda x: (x**2, lambda g: (12.,)))
+    ad.defvjp_all(foo_p, lambda x: (x**2, lambda g: (12.,)))
     val_ans, grad_ans = api.value_and_grad(foo)(3.)
     self.assertAllClose(val_ans, 9., check_dtypes=False)
     self.assertAllClose(grad_ans, 12., check_dtypes=True)
@@ -488,7 +493,7 @@ class APITest(jtu.JaxTestCase):
     foo_p = Primitive('foo')
     def foo(x): return 2. * foo_p.bind(x)
 
-    defvjp_all(foo_p, lambda x: (x**2, lambda g: (g * x ** 2,)))
+    ad.defvjp_all(foo_p, lambda x: (x**2, lambda g: (g * x ** 2,)))
     ans = api.grad(api.grad(foo))(3.)
     self.assertAllClose(ans, 2 * 2 * 3., check_dtypes=False)
 
@@ -504,7 +509,7 @@ class APITest(jtu.JaxTestCase):
       vjp = lambda g: (g + x + y, g * x * 9.)
       return out, vjp
 
-    defvjp_all(foo_p, vjpfun)
+    ad.defvjp_all(foo_p, vjpfun)
     val_ans, grad_ans = api.value_and_grad(foo)(3., 4.)
     self.assertAllClose(val_ans, 3.**2 + 4.**3, check_dtypes=False)
     self.assertAllClose(grad_ans, 1. + 3. + 4., check_dtypes=False)
@@ -512,12 +517,24 @@ class APITest(jtu.JaxTestCase):
     ans = api.grad(foo, (0, 1))(3., 4.)
     self.assertAllClose(ans, (1. + 3. + 4., 1. * 3. * 9.), check_dtypes=False)
 
+  def test_defvjp_all(self):
+    @api.custom_transforms
+    def foo(x):
+      return np.sin(x)
+
+    api.defvjp_all(foo, lambda x: (np.sin(x), lambda g: (g * x,)))
+    val_ans, grad_ans = api.value_and_grad(foo)(3.)
+    self.assertAllClose(val_ans, onp.sin(3.), check_dtypes=False)
+    self.assertAllClose(grad_ans, 3., check_dtypes=False)
+
+  # TODO(mattjj): add defvjp_all test with pytree arguments
+
   def test_defvjp(self):
     @api.custom_transforms
     def foo(x, y):
       return np.sin(x * y)
 
-    defvjp(foo.primitive, None, lambda g, x, y: g * x * y)
+    api.defvjp(foo, None, lambda g, _, x, y: g * x * y)
     val_ans, grad_ans = api.value_and_grad(foo)(3., 4.)
     self.assertAllClose(val_ans, onp.sin(3. * 4.), check_dtypes=False)
     self.assertAllClose(grad_ans, 0., check_dtypes=False)
@@ -526,16 +543,389 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(ans_0, 0., check_dtypes=False)
     self.assertAllClose(ans_1, 3. * 4., check_dtypes=False)
 
-  def test_defvjp2(self):
+  def test_defvjp_higher_order(self):
+    @api.custom_transforms
+    def foo(x):
+      return np.sin(2. * x)
+
+    api.defvjp(foo, lambda g, _, x: g * np.cos(x))
+    ans = api.grad(api.grad(foo))(2.)
+    expected = api.grad(api.grad(np.sin))(2.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_defvjp_use_ans(self):
     @api.custom_transforms
     def foo(x, y):
       return np.sin(x * y)
 
-    defvjp2(foo.primitive, None, lambda g, ans, x, y: g * x * y + np.cos(ans))
+    api.defvjp(foo, None, lambda g, ans, x, y: g * x * y + np.cos(ans))
     val_ans, grad_ans = api.value_and_grad(foo, 1)(3., 4.)
     self.assertAllClose(val_ans, onp.sin(3. * 4.), check_dtypes=False)
     self.assertAllClose(grad_ans, 3. * 4. + onp.cos(onp.sin(3. * 4)),
                         check_dtypes=False)
+
+  def test_defjvp_closure_error(self):
+    def foo(x):
+      @api.custom_transforms
+      def bar(y):
+        return x * y
+
+      api.defjvp(bar, lambda y_dot, ans, y: x * y)
+      return bar(x)
+    jtu.check_raises(
+        lambda: api.jvp(foo, (1.,), (1.,)), ValueError,
+        "Detected differentiation w.r.t. variables from outside "
+        "the scope of <jax.custom_transforms function bar>, but defjvp and "
+        "defjvp_all only support differentiation w.r.t. positional arguments.")
+
+  def test_defvjp_closure_error(self):
+    def foo(x):
+      @api.custom_transforms
+      def bar(y):
+        return x * y
+
+      api.defvjp(bar, lambda g, ans, y: x * y)
+      return bar(x)
+    jtu.check_raises(
+        lambda: grad(foo)(1.,), ValueError,
+        "Detected differentiation w.r.t. variables from outside "
+        "the scope of <jax.custom_transforms function bar>, but defvjp and "
+        "defvjp_all only support differentiation w.r.t. positional arguments.")
+
+  def test_custom_transforms_eval_with_pytrees(self):
+    @api.custom_transforms
+    def f(x):
+      a, b = x[0], x[1]
+      return {'hi': 2 * a, 'bye': 2 * b}
+
+    ans = f((1, 2))
+    self.assertEqual(ans, {'hi': 2 * 1, 'bye': 2 * 2})
+
+  def test_custom_transforms_jit_with_pytrees(self):
+    @api.custom_transforms
+    def f(x):
+      a, b = x[0], x[1]
+      return {'hi': 2 * a, 'bye': 2 * b}
+
+    ans = jit(f)((1, 2))
+    self.assertEqual(ans, {'hi': 2 * 1, 'bye': 2 * 2})
+
+  def test_custom_transforms_jit_with_pytrees_consts(self):
+    # The purpose of this test is to exercise the custom_transforms default
+    # translation rule in how it deals with constants that are too large to be
+    # treated as literals (at the time of writing).
+    z = onp.arange(10.)
+
+    @api.custom_transforms
+    def f(x):
+      a, b = x[0], x[1]
+      return {'hi': 2 * a, 'bye': z * b}
+
+    ans = jit(f)((1, 2))
+    self.assertAllClose(ans, {'hi': 2 * 1, 'bye': z * 2}, check_dtypes=False)
+
+  def test_custom_transforms_jvp_with_pytrees(self):
+    @api.custom_transforms
+    def f(x):
+      a, b = x[0], x[1]
+      return {'hi': 2 * a, 'bye': 2 * b}
+
+    ans, out_tangent = api.jvp(f, ((1, 2),), ((3, 4),))
+    self.assertEqual(ans, {'hi': 2 * 1, 'bye': 2 * 2})
+    self.assertEqual(out_tangent, {'hi': 2 * 3, 'bye': 2 * 4})
+
+  def test_custom_transforms_vmap_with_pytrees(self):
+    @api.custom_transforms
+    def f(x):
+      a, b = x[0], x[1]
+      return {'hi': 2 * a, 'bye': 2 * b}
+
+    ans = api.vmap(f)((onp.arange(3), onp.ones((3, 2))))
+    expected = {'hi': 2 * onp.arange(3), 'bye': 2 * onp.ones((3, 2))}
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_custom_transforms_jvp_with_closure(self):
+    def f(x):
+      @api.custom_transforms
+      def g(y):
+        return x * y
+      return g(x)
+
+    ans = api.grad(f)(1.)
+    expected = 2.
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_custom_gradient(self):
+    @api.custom_gradient
+    def f(x):
+      return x ** 2, lambda g: (g * x,)
+
+    self.assertAllClose(f(3.), 9., check_dtypes=False)
+    self.assertAllClose(api.grad(f)(3.), 3., check_dtypes=False)
+
+  def test_devicetuple_iteration(self):
+    tup = device_put(pack((1, 2)))
+    self.assertIsInstance(tup, DeviceTuple)
+    self.assertEqual(tuple(tup), (1, 2))
+
+    tup = device_put(pack((1, pack((2, 3)))))
+    self.assertIsInstance(tup, DeviceTuple)
+    self.assertAllClose(tup, (1, (2, 3)), check_dtypes=False)
+
+  def test_devicetuple_isinstance(self):
+    tup = device_put(pack((1, 2)))
+    self.assertIsInstance(tup, DeviceTuple)
+    self.assertIsInstance(tup, JaxTuple)
+
+  def test_devicetuple_repr(self):
+    tup = device_put(pack((1, 2)))
+    self.assertEqual(repr(tup), 'DeviceTuple(len=2)')
+
+  def test_legacy_devicearray_repr(self):
+    dx = device_put(3.)
+    str(dx.item())  # doesn't crash
+
+  def test_devicearray_repr(self):
+    x = device_put(np.zeros(3))
+    self.assertIsInstance(x, DeviceArray)
+    repr(x)  # doesn't crash
+
+    x = device_put(np.ones(3) + 1j * np.ones(3))
+    self.assertIsInstance(x, DeviceArray)
+    repr(x)  # doesn't crash
+
+  def test_devicearray_delete(self):
+    x = device_put(1.)
+    x.delete()
+    jtu.check_raises_regexp(lambda: repr(x), ValueError,
+                            "DeviceValue has been deleted.")
+
+
+  def test_devicearray_block_until_ready(self):
+    x = device_put(1.)
+    x.block_until_ready()
+    # Tests only that block_until_ready() does not produce an error.
+
+  def test_namedtuple_transparency(self):
+    # See https://github.com/google/jax/issues/446
+    Point = collections.namedtuple("Point", ["x", "y"])
+
+    def f(pt):
+      return np.sqrt(pt.x ** 2 + pt.y ** 2)
+
+    pt = Point(1., 2.)
+
+    f(pt)  # doesn't crash
+    g = api.grad(f)(pt)
+    self.assertIsInstance(g, Point)
+
+    f_jit = api.jit(f)
+    self.assertAllClose(f(pt), f_jit(pt), check_dtypes=False)
+
+  def test_namedtuple_subclass_transparency(self):
+    # See https://github.com/google/jax/issues/806
+    Point = collections.namedtuple("Point", ["x", "y"])
+
+    class ZeroPoint(Point):
+      def is_zero(self):
+        return (self.x == 0) and (self.y == 0)
+
+    pt = ZeroPoint(0., 0.)
+
+    def f(pt):
+      return 0. if pt.is_zero() else np.sqrt(pt.x ** 2 + pt.y ** 2)
+
+    f(pt)  # doesn't crash
+    g = api.grad(f)(pt)
+    self.assertIsInstance(pt, ZeroPoint)
+
+  def test_eval_shape(self):
+    def fun(x, y):
+      return np.tanh(np.dot(x, y) + 3.)
+
+    x = np.ones((2, 3))
+    y = np.ones((3, 4))
+    out_shape = api.eval_shape(fun, x, y)
+
+    self.assertEqual(out_shape, (2, 4))
+
+  def test_eval_shape_constants(self):
+    def fun():
+      x = np.ones((2, 3))
+      y = np.ones((3, 4))
+      return np.tanh(np.dot(x, y) + 3.)
+
+    out_shape = api.eval_shape(fun)
+
+    self.assertEqual(out_shape, (2, 4))
+
+  def test_eval_shape_tuple_unpacking(self):
+    def fun(x, y):
+      a, b = x
+      return a + b + y
+
+    x = (np.ones(2), np.ones(2))
+    y = 3.
+    out_shape = api.eval_shape(fun, x, y)
+
+    self.assertEqual(out_shape, (2,))
+
+  def test_eval_shape_tuple_itemgetting(self):
+    def fun(x, y):
+      return x[0] + x[1] + y
+
+    x = (np.ones(2), np.ones(2))
+    y = 3.
+    out_shape = api.eval_shape(fun, x, y)
+
+    self.assertEqual(out_shape, (2,))
+
+  def test_eval_shape_output_dict(self):
+    def fun(x, y):
+      return {'hi': x[0] + x[1] + y}
+
+    x = (np.ones(2), np.ones(2))
+    y = 3.
+    out_shape = api.eval_shape(fun, x, y)
+
+    self.assertEqual(out_shape, {'hi': (2,)})
+
+  def test_eval_shape_shape_error(self):
+    def fun(x, y):
+      return np.tanh(np.dot(x, y) + 3.)
+
+    x = np.ones((3, 3))
+    y = np.ones((4, 4))
+
+    self.assertRaises(TypeError, lambda: api.eval_shape(fun, x, y))
+
+  def test_eval_shape_duck_typing(self):
+    def fun(A, b, x):
+      return np.dot(A, x) + b
+
+    class MyArgArray(object):
+      def __init__(self, shape, dtype):
+        self.shape = shape
+        self.dtype = dtype
+
+    A = MyArgArray((3, 4), np.float32)
+    b = MyArgArray((5,), np.float32)
+    x = MyArgArray((4, 5), np.float32)
+    out_shape = api.eval_shape(fun, A, b, x)
+
+    self.assertEqual(out_shape, (3, 5))
+
+  def test_detuplification(self):
+    def fun(x):
+      y = pack((x, x))
+      z = pack((y, x))
+      y1, _ = z
+      y2, _ = y1
+      return y2
+
+    assert len(api.make_jaxpr(fun)(1).eqns) == 0
+
+  def test_issue_871(self):
+    T = np.array([[1., 2.], [3., 4.], [5., 6.]])
+    x = np.array([1, 2, 3])
+
+    y, f_jvp = api.linearize(np.sum, x)
+    jtu.check_raises(lambda: f_jvp(T), ValueError,
+                     ("linearized function called on tangent values "
+                      "inconsistent with the original primal values."))
+
+    y, f_jvp = api.linearize(api.jit(np.sum), x)
+    jtu.check_raises(lambda: f_jvp(T), ValueError,
+                     ("linearized function called on tangent values "
+                      "inconsistent with the original primal values."))
+
+  def test_partial_eval_lower(self):
+    # this is a simplified model of a bug that arose when we first used @jit in
+    # a jvp rule. it's in this file because we want to use make_jaxpr.
+    @api.jit
+    def f(a, b, c):
+      a = lax.broadcast(a, (2,))
+      return lax.select(a, b, c)
+
+    a = onp.ones((3, 3), dtype=onp.bool_)
+    b = onp.ones((2, 3, 3))
+    c = onp.ones((2, 3, 3))
+
+    jaxpr = api.make_jaxpr(lambda b, c: f(a, b, c))(b, c)
+    subjaxpr = next(eqn.bound_subjaxprs[0][0] for eqn in jaxpr.eqns
+                    if eqn.bound_subjaxprs)
+    self.assertEqual(len(subjaxpr.eqns), 1)
+
+  def test_grad_of_int_errors(self):
+    dfn = grad(lambda x: x ** 2)
+    jtu.check_raises_regexp(
+      lambda: dfn(3), TypeError,
+      "Primal inputs to reverse-mode differentiation must be of float or "
+      "complex type, got type int..")
+
+  def test_xla_computation(self):
+    # these tests basically check the examples in the xla_computation docstring
+
+    def h(x):
+      return np.sin(np.cos(x))
+    c = api.xla_computation(h)(2.)
+    self.assertIn('cosine', c.GetHloText())
+    self.assertIn('sine', c.GetHloText())
+
+    def f(x):
+      return x - lax.psum(x, 'i')
+    axis_env = [('i', 4)]
+    c = api.xla_computation(f, axis_env=axis_env)(2)
+    self.assertIn('all-reduce', c.GetHloText())
+    self.assertIn('replica_groups={{0,1,2,3}}', c.GetHloText())
+
+    def g(x):
+      rowsum = lax.psum(x, 'i')
+      colsum = lax.psum(x, 'j')
+      allsum = lax.psum(x, ('i', 'j'))
+      return rowsum, colsum, allsum
+    axis_env = [('i', 4), ('j', 2)]
+    c = api.xla_computation(g, axis_env=axis_env)(5.)
+    self.assertIn('all-reduce', c.GetHloText())
+    self.assertIn('replica_groups={{0,2,4,6},{1,3,5,7}}', c.GetHloText())
+    self.assertIn('replica_groups={{0,1},{2,3},{4,5},{6,7}}', c.GetHloText())
+    self.assertIn('replica_groups={{0,1,2,3,4,5,6,7}}', c.GetHloText())
+
+  def test_staging_out_multi_replica(self):
+    def f(x):
+      return api.pmap(np.mean)(x)
+    xla_comp = api.xla_computation(f)
+    xla_comp(np.arange(8)).GetHloText()  # doesn't crash
+
+  def test_jit_device_assignment(self):
+    device_num = xb.device_count() - 1
+    x = api.jit(lambda x: x, device_assignment=device_num)(3.)
+    self.assertIsInstance(x, DeviceArray)
+    self.assertEqual(x.device_buffer.device(), device_num)
+
+  def test_jit_of_noncallable(self):
+    jtu.check_raises_regexp(lambda: api.jit(3), TypeError,
+                            "Expected a callable value.*")
+
+  def test_issue_1062(self):
+    # code from https://github.com/google/jax/issues/1062 @shoyer
+    # this tests, among other things, whether ShardedDeviceTuple constants work
+    device_count = xb.device_count()
+
+    @jit
+    def multi_step(state, count):
+      return lax.fori_loop(0, count, lambda i, s: s, state)
+
+    @jit
+    def multi_step_pmap(state, count=2):
+      @partial(api.pmap, axis_name='x')
+      def pmapped_multi_step(state):
+        return multi_step(state, count)
+
+      return pmapped_multi_step(state)
+
+    u = np.ones((device_count, 100))
+    u_final = multi_step_pmap(u)  # doesn't crash
 
 
 if __name__ == '__main__':

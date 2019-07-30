@@ -3,13 +3,19 @@ jax.lax package
 
 .. automodule:: jax.lax
 
-`lax` is a library of primitives that underpins libraries such as `jax.numpy`.
+:mod:`jax.lax` is a library of primitives operations that underpins libraries
+such as :mod:`jax.numpy`. Transformation rules, such as JVP and batching rules,
+are typically defined as transformations on :mod:`jax.lax` primitives.
 
 Many of the primitives are thin wrappers around equivalent XLA operations,
 described by the `XLA operation semantics
-<https://www.tensorflow.org/xla/operation_semantics>`_ documentation.
+<https://www.tensorflow.org/xla/operation_semantics>`_ documentation. In a few
+cases JAX diverges from XLA, usually to ensure that the set of operations is
+closed under the operation of JVP and transpose rules.
 
-Where possible, prefer to use libraries such as `jax.numpy` instead of using `jax.lax` directly.
+Where possible, prefer to use libraries such as :mod:`jax.numpy` instead of
+using :mod:`jax.lax` directly. The :mod:`jax.numpy` API follows NumPy, and is
+therefore more stable and less likely to change than the :mod:`jax.lax` API.
 
 Operators
 ---------
@@ -63,6 +69,7 @@ Operators
     erf_inv
     exp
     expm1
+    fft
     floor
     full
     full_like
@@ -126,6 +133,7 @@ Control flow operators
 
     cond
     fori_loop
+    scan
     while_loop
 
 
@@ -137,9 +145,7 @@ Parallelism support is experimental.
 .. autosummary::
   :toctree: _autosummary
 
-    pcollect
-    pmax
-    psplit
-    psplit_like
     psum
-    pswapaxes
+    pmax
+    pmin
+    ppermute

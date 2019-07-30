@@ -25,11 +25,14 @@ from absl.testing import parameterized
 
 import jax.numpy as np
 from jax import test_util as jtu
+from jax import core
 from jax import lax
-from jax.api import pmap, vmap, jvp, grad, make_jaxpr, linearize, device_put
+from jax.api import (pmap, soft_pmap, jit, vmap, jvp, grad, make_jaxpr,
+                     linearize, device_put)
 from jax.lib import xla_bridge
 from jax.util import prod
 from jax.interpreters import pxla
+from jax.interpreters import xla
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -192,7 +195,7 @@ class PmapTest(jtu.JaxTestCase):
     expected = grad(lambda x: np.sum(baseline_fun(x)))(x)
     self.assertAllClose(ans, expected, check_dtypes=True)
 
-  def testShardedDeviceValues(self):
+  def testShardedDeviceArrays(self):
     f = lambda x: 2 * x
     f = pmap(f, axis_name='i')
 
@@ -201,15 +204,16 @@ class PmapTest(jtu.JaxTestCase):
 
     # test that we can pass in and out ShardedDeviceArrays
     y = f(x)
-    assert type(y) is pxla.ShardedDeviceArray  # pylint: disable=unidiomatic-typecheck
+    self.assertIsInstance(y, np.ndarray)
+    self.assertIsInstance(y, pxla.ShardedDeviceArray)
     self.assertAllClose(y, 2 * x, check_dtypes=False)
     z = f(y)
-    assert type(z) is pxla.ShardedDeviceArray  # pylint: disable=unidiomatic-typecheck
+    self.assertIsInstance(z, pxla.ShardedDeviceArray)
     self.assertAllClose(z, 2 * 2 * x, check_dtypes=False)
 
     # test that we can pass in a regular DeviceArray
     y = f(device_put(x))
-    assert type(y) is pxla.ShardedDeviceArray  # pylint: disable=unidiomatic-typecheck
+    self.assertIsInstance(y, pxla.ShardedDeviceArray)
     self.assertAllClose(y, 2 * x, check_dtypes=False)
 
     # test that we can pass a ShardedDeviceArray to a regular jit computation
@@ -220,6 +224,9 @@ class PmapTest(jtu.JaxTestCase):
     y.device_buffers = y.device_buffers[::-1]
     z = f(y)
     self.assertAllClose(z, 2 * 2 * x[::-1], check_dtypes=False)
+
+    # test that the repr doesn't crash
+    repr(z)
 
   def testPsumMultiple(self):
     f = lambda x: lax.psum(x, ('i', 'j'))
@@ -254,6 +261,421 @@ class PmapTest(jtu.JaxTestCase):
     self.assertEqual(len(groups), 1)
     self.assertEqual((tuple(sorted(groups[0])),),
                      ((0, 1, 2, 3, 4, 5, 6, 7,),))  # order doesn't matter
+
+  def testShardedDeviceTuple(self):
+    f = lambda x: core.pack((x, x))
+    f = pmap(f)
+
+    shape = (xla_bridge.device_count(), 4)
+    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+
+    # test that we can pass in and out ShardedDeviceTuples (and unpack them)
+    y = f(x)
+    self.assertIsInstance(y, pxla.ShardedDeviceTuple)
+    self.assertIsInstance(y, core.JaxTuple)
+    self.assertAllClose(y, (x, x), check_dtypes=False)
+    z = f(y)
+    self.assertIsInstance(z, pxla.ShardedDeviceTuple)
+    self.assertAllClose(z, (y, y), check_dtypes=True)
+
+    # test that we can pass a ShardedDeviceTuple to a regular jit computation
+    w = jit(lambda x: list(x)[0])(y)
+    self.assertAllClose(w, x, check_dtypes=False)
+
+  @jtu.skip_on_devices("cpu", "gpu")
+  def testCollectivePermute(self):
+    device_count = xla_bridge.device_count()
+    rotation = [(i, (i + 1) % device_count) for i in range(device_count)]
+    f = lambda x: lax.ppermute(x, perm=rotation, axis_name='i')
+    f = pmap(f, 'i')
+
+    x = np.arange(4 * device_count).reshape((device_count, 4))
+    ans = f(x)
+    expected = onp.roll(x, shift=1, axis=0)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @jtu.skip_on_devices("cpu", "gpu")
+  def testCollectivePermuteGrad(self):
+    device_count = xla_bridge.device_count()
+    shift_right = [(i, (i + 1)) for i in range(device_count - 1)]
+    f = lambda x: lax.ppermute(x, perm=shift_right, axis_name='i')
+    y = onp.pi + onp.arange(device_count, dtype=onp.float32)
+    g = lambda x: np.sum(y * pmap(f, 'i')(x))
+
+    x = onp.arange(device_count, dtype=onp.float32)
+    ans = grad(g)(x)
+    expected = onp.concatenate([onp.pi + onp.arange(1, device_count), [0]])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @jtu.skip_on_devices("cpu", "gpu")
+  def testCollectivePermuteCyclicGrad(self):
+    device_count = xla_bridge.device_count()
+    shift_right = [(i, (i + 1) % device_count) for i in range(device_count)]
+    f = lambda x: lax.ppermute(x, perm=shift_right, axis_name='i')
+    y = onp.pi + onp.arange(device_count, dtype=onp.float32)
+    g = lambda x: np.sum(y * pmap(f, 'i')(x))
+
+    x = onp.arange(device_count, dtype=onp.float32)
+    ans = grad(g)(x)
+    expected = onp.roll(onp.pi + onp.arange(device_count), 1)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @jtu.skip_on_devices("cpu", "gpu")
+  def testRule30(self):
+    # This is a test of collective_permute implementing a simple halo exchange
+    # to run a rule 30 simulation: https://en.wikipedia.org/wiki/Rule_30
+    # Halo exchange should be useful in spatially-sharded convolutions and in
+    # other simulations.
+    device_count = xla_bridge.device_count()
+
+    def send_right(x, axis_name):
+      left_perm = [(i, (i + 1) % device_count) for i in range(device_count)]
+      return lax.ppermute(x, perm=left_perm, axis_name=axis_name)
+
+    def send_left(x, axis_name):
+      left_perm = [((i + 1) % device_count, i) for i in range(device_count)]
+      return lax.ppermute(x, perm=left_perm, axis_name=axis_name)
+
+    def update_board(board):
+      left = board[:-2]
+      right = board[2:]
+      center = board[1:-1]
+      return lax.bitwise_xor(left, lax.bitwise_or(center, right))
+
+    @partial(pmap, axis_name='i')
+    def step(board_slice):
+      left, right = board_slice[:1], board_slice[-1:]
+      right, left = send_left(left, 'i'), send_right(right, 'i')
+      enlarged_board_slice = np.concatenate([left, board_slice, right])
+      return update_board(enlarged_board_slice)
+
+    board = onp.zeros(40, dtype=bool)
+    board[board.shape[0] // 2] = True
+    reshaped_board = board.reshape((device_count, -1))
+
+    boards = []
+    def print_board(board):
+      boards.append(''.join('*' if x else ' ' for x in board.ravel()))
+
+    print_board(reshaped_board)
+    for _ in range(20):
+      reshaped_board = step(reshaped_board)
+      print_board(reshaped_board)
+
+    ans = '\n'.join(boards)
+    expected = '\n'.join((
+        '                    *                   ',
+        '                   ***                  ',
+        '                  **  *                 ',
+        '                 ** ****                ',
+        '                **  *   *               ',
+        '               ** **** ***              ',
+        '              **  *    *  *             ',
+        '             ** ****  ******            ',
+        '            **  *   ***     *           ',
+        '           ** **** **  *   ***          ',
+        '          **  *    * **** **  *         ',
+        '         ** ****  ** *    * ****        ',
+        '        **  *   ***  **  ** *   *       ',
+        '       ** **** **  *** ***  ** ***      ',
+        '      **  *    * ***   *  ***  *  *     ',
+        '     ** ****  ** *  * *****  *******    ',
+        '    **  *   ***  **** *    ***      *   ',
+        '   ** **** **  ***    **  **  *    ***  ',
+        '  **  *    * ***  *  ** *** ****  **  * ',
+        ' ** ****  ** *  ******  *   *   *** ****',
+        ' *  *   ***  ****     **** *** **   *   ',
+    ))
+
+    print(ans)
+    self.assertEqual(ans, expected)
+
+  @jtu.skip_on_devices("cpu", "gpu")
+  def testReduceMax(self):
+    f = pmap(lambda x: x - lax.pmax(x, 'i'), axis_name='i')
+
+    shape = (xla_bridge.device_count(), 4)
+    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+    expected = x - onp.max(x, 0)
+
+    ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @jtu.skip_on_devices("cpu", "gpu")
+  def testReduceMin(self):
+    f = pmap(lambda x: x - lax.pmin(x, 'i'), axis_name='i')
+
+    shape = (xla_bridge.device_count(), 4)
+    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+    expected = x - onp.min(x, 0)
+
+    ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testDeviceCountError(self):
+    device_count = xla_bridge.device_count()
+
+    f = pmap(lambda x: x)
+    x = np.arange(device_count + 1)
+    self.assertRaisesRegexp(
+        ValueError,
+        ".*requires.*replicas",
+        lambda: f(x))
+
+    f = pmap(lambda x: x)
+    x = onp.ones((device_count + 1, 10))
+    self.assertRaisesRegexp(
+        ValueError,
+        ".*requires.*replicas",
+        lambda: f(x))
+
+    f = pmap(lambda x: pmap(lambda x: x)(x))
+    x = onp.ones((device_count, 2, 10))
+    self.assertRaisesRegexp(
+        ValueError,
+        ".*requires.*replicas",
+        lambda: f(x))
+
+  def testPmapConstant(self):
+    device_count = xla_bridge.device_count()
+    f = pmap(lambda x: 3)
+    x = np.arange(device_count)
+    ans = f(x)
+    expected = onp.repeat(3, device_count)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testCollectiveConstant(self):
+    device_count = xla_bridge.device_count()
+    f = pmap(lambda x: lax.psum(1, 'i'), 'i')
+    x = np.arange(device_count)
+    ans = f(x)
+    expected = onp.repeat(device_count, device_count)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testCollectiveConstantNested(self):
+    device_count = xla_bridge.device_count()
+
+    @partial(pmap, axis_name='i')
+    def f(x):
+      @partial(pmap, axis_name='j')
+      def g(y):
+        a = lax.psum(1, 'i')
+        b = lax.psum(1, 'j')
+        c = lax.psum(1, ('i', 'j'))
+        return a, b, c
+      return g(x)
+
+    shape = (device_count, 1, 4)
+    x = np.arange(prod(shape)).reshape(shape)
+    a, b, c = f(x)
+
+    self.assertEqual(a.shape, shape[:-1])
+    self.assertEqual(b.shape, shape[:-1])
+    self.assertEqual(c.shape, shape[:-1])
+
+    self.assertEqual(a.ravel()[0], device_count)
+    self.assertEqual(b.ravel()[0], 1)
+    self.assertEqual(c.ravel()[0], device_count * 1)
+
+  def testAxisIndex(self):
+    device_count = xla_bridge.device_count()
+    f = pmap(lambda x: x + pxla.axis_index('i'), 'i')
+    x = np.ones(device_count)
+    ans = f(x)
+    expected = 1 + onp.arange(device_count)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testVmapOfPmap(self):
+    device_count = xla_bridge.device_count()
+    f0 = lambda x: x
+    f1 = pmap(f0, axis_name='i')
+    ax = onp.random.randn(2, device_count, 50, 60)
+    bx = vmap(f1)(ax)
+    self.assertAllClose(ax, bx, check_dtypes=False)
+
+  def testVmapOfPmapNonLeadingAxis(self):
+    device_count = xla_bridge.device_count()
+    f0 = lambda x: x
+    f1 = pmap(f0, axis_name='i')
+    ax = onp.random.randn(device_count, 2, 50, 60)
+    bx = vmap(f1, in_axes=2, out_axes=2)(ax)
+    self.assertAllClose(ax, bx, check_dtypes=False)
+
+  def testVmapOfPmapTuple(self):
+    device_count = xla_bridge.device_count()
+    f0 = lambda *x: x
+    f1 = pmap(f0, axis_name='i')
+
+    ax = onp.random.randn(device_count, 2, 50, 60)
+    ay = onp.random.randn(device_count, 30, 2)
+    az1 = onp.random.randn(device_count, 20)
+    az2 = onp.random.randn(2, device_count, 20)
+
+    bx, by, bz = vmap(f1, in_axes=(1, 2, (None, 0)), out_axes=(1, 2, 0))(ax, ay, (az1, az2))
+
+    self.assertAllClose(ax, bx, check_dtypes=False)
+    self.assertAllClose(ay, by, check_dtypes=False)
+
+    bz1, bz2 = bz
+    expected_bz1 = onp.broadcast_to(az1, (2,) + az1.shape)
+    self.assertAllClose(expected_bz1, bz1, check_dtypes=False)
+    self.assertAllClose(bz2, bz2, check_dtypes=False)
+
+  @jtu.skip_on_devices("gpu")
+  def testPswapaxes(self):
+    device_count = xla_bridge.device_count()
+    shape = (device_count, 3, device_count, 5)
+    x = onp.arange(prod(shape)).reshape(shape)
+
+    ans = pmap(lambda x: lax.pswapaxes(x, 'i', 1), axis_name='i')(x)
+    expected = onp.swapaxes(x, 0, 2)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testSoftPmapPsum(self):
+    n = 4 * xla_bridge.device_count()
+    def f(x):
+      return x / lax.psum(x, 'i')
+    ans = soft_pmap(f, 'i')(np.ones(n))
+    expected = onp.ones(n) / n
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testSoftPmapAxisIndex(self):
+    n = 4 * xla_bridge.device_count()
+    def f(x):
+      return x * lax.axis_index('i')
+    ans = soft_pmap(f, 'i')(2 * np.ones(n))
+    expected = 2 * onp.arange(n)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testSoftPmapOfJit(self):
+    n = 4 * xla_bridge.device_count()
+    def f(x):
+      return 3 * x
+    ans = soft_pmap(jit(f), 'i')(onp.arange(n))
+    expected = 3 * onp.arange(n)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testSoftPmapNested(self):
+    n = 4 * xla_bridge.device_count()
+
+    @partial(soft_pmap, axis_name='i')
+    @partial(soft_pmap, axis_name='j')
+    def f(x):
+      i_size = lax.psum(1, 'i')
+      return x + lax.axis_index('i') + i_size * lax.axis_index('j')
+
+    ans = f(np.zeros((n, n)))
+    expected = onp.arange(n ** 2).reshape(n, n).T
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testGradOfSoftPmap(self):
+    n = 4 * xla_bridge.device_count()
+
+    @partial(soft_pmap, axis_name='i')
+    def f(x):
+      return x * lax.axis_index('i')
+
+    ans = grad(lambda x: np.sum(f(x)))(np.zeros((n, n)))
+    expected = onp.repeat(onp.arange(n)[:, None], n, axis=1)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testSoftPmapDevicePersistence(self):
+    device_count = xla_bridge.device_count()
+    shape = (2 * 2 * device_count, 2, 3)
+
+    # check that we can maintain device persistence across calls
+    x = onp.arange(prod(shape)).reshape(shape)
+    x = soft_pmap(lambda x: x)(x)
+    self.assertIsInstance(x, pxla.ChunkedDeviceArray)
+    x._npy_value = onp.float32(onp.nan)  # can't be coerced to ndarray for xfer
+    x = soft_pmap(lambda x: x)(x)  # doesn't crash
+    self.assertIsInstance(x, pxla.ChunkedDeviceArray)
+
+    # check that we don't crash when we can't maintain device persistence
+    x = onp.arange(prod(shape)).reshape(shape)
+    x = soft_pmap(lambda x: x)(x)
+    self.assertIsInstance(x, pxla.ChunkedDeviceArray)
+    y = x.reshape(device_count, -1)
+    self.assertIsInstance(y, xla.DeviceArray)  # should have forced collection
+    soft_pmap(lambda x: x)(y)  # doesn't crash
+    z = x + 2
+    self.assertIsInstance(z, xla.DeviceArray)  # should have forced collection
+    x._npy_value = onp.float32(onp.nan)  # can't be coerced to ndarray for xfer
+    self.assertRaisesRegexp(
+        RuntimeError,
+        '.*does not match host shape or layout of computation parameter 0.*',
+        lambda: x + 2)
+
+    # check that different axis merges aren't a problem
+    x = onp.arange(prod(shape)).reshape(shape)
+    x = soft_pmap(lambda x: x)(x)
+    self.assertIsInstance(x, pxla.ChunkedDeviceArray)
+    x = x.reshape(2 * device_count, 2, 2, 3)  # axis merge of the wrong size
+    self.assertIsInstance(x, xla.DeviceArray)  # should have forced collection
+
+  @jtu.skip_on_devices("gpu")
+  def DISABLED_testSoftPmapAllToAll(self):
+    n = 4 * xla_bridge.device_count()
+    def f(x):
+      return lax.all_to_all(x, 'i', 0, 0)
+    ans = soft_pmap(f, 'i')(np.arange(n ** 2).reshape(n, n))
+    expected = onp.arange(n ** 2).reshape(n, n).T
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testShardedDeviceArrayBlockUntilReady(self):
+    x = onp.arange(xla_bridge.device_count())
+    x = pmap(lambda x: x)(x)
+    x.block_until_ready()  # doesn't crash
+
+  def testJitPmapComposition(self):
+    f = lambda x: x - lax.psum(x, 'i')
+
+    shape = (xla_bridge.device_count(), 4)
+    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+    expected = x - onp.sum(x, 0)
+
+    ans = jit(pmap(f, 'i'))(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = pmap(jit(f), 'i')(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testMakeJaxprOfOpenSpmd(self):
+    f = lambda x: x - lax.psum(x, 'i')
+    shape = (xla_bridge.device_count(), 4)
+    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+    make_jaxpr(f)(x)  # doesn't crash
+
+  def testCompositionWithJitTwice(self):
+    @jit
+    def f(x):
+      y = 2 * x
+
+      @jit
+      def g(z):
+        return pmap(lambda x: x * y)(z)
+
+      return g(x)
+
+    f(onp.arange(1.).reshape((1, 1)))  # doesn't crash
+
+  def testIssue1065(self):
+    # from https://github.com/google/jax/issues/1065
+    device_count = xla_bridge.device_count()
+
+    def multi_step_pmap(state, count):
+      @partial(pmap, axis_name='x')
+      @jit
+      def exchange_and_multi_step(state):
+        return state
+
+      @jit
+      def time_evolution(state):
+        return lax.fori_loop(0, count, lambda i, s: exchange_and_multi_step(s), state)
+
+      return time_evolution(state)
+
+    multi_step_pmap(np.zeros((device_count,)), count=1)
 
 
 if __name__ == '__main__':

@@ -19,19 +19,17 @@ from __future__ import print_function
 import collections
 import functools
 import itertools
-from unittest import SkipTest
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
 
 import numpy as onp
-import scipy.misc as osp_misc
 import scipy.special as osp_special
 import scipy.stats as osp_stats
 
 from jax import api
 from jax import test_util as jtu
-from jax.scipy import misc as lsp_misc
 from jax.scipy import special as lsp_special
 from jax.scipy import stats as lsp_stats
 
@@ -67,8 +65,8 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     # TODO: gammaln has slightly high error.
     op_record("gammaln", 1, float_dtypes, jtu.rand_positive(), False),
     op_record("logit", 1, float_dtypes, jtu.rand_small_positive(), False),
-    op_record("log_ndtr", 1, float_dtypes, jtu.rand_small(), True),
-    op_record("ndtri", 1, float_dtypes, jtu.rand_uniform(0., 1.), True),
+    op_record("log_ndtr", 1, float_dtypes, jtu.rand_default(), True),
+    op_record("ndtri", 1, float_dtypes, jtu.rand_uniform(0.05, 0.95), True),
     op_record("ndtr", 1, float_dtypes, jtu.rand_default(), True),
 ]
 
@@ -114,11 +112,6 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       for dtypes in CombosWithReplacement(rec.dtypes, rec.nargs)))
   def testScipySpecialFun(self, scipy_op, lax_op, rng, shapes, dtypes,
                           test_autodiff):
-    # TODO(mattjj): unskip this test combination when real() on tpu is improved
-    if (FLAGS.jax_test_dut and FLAGS.jax_test_dut.startswith("tpu")
-        and not shapes[0]):
-      raise SkipTest("real() on scalar not supported on tpu")
-
     args_maker = self._GetArgsMaker(rng, shapes, dtypes)
     args = args_maker()
     self.assertAllClose(scipy_op(*args), lax_op(*args), atol=1e-3, rtol=1e-3,
@@ -126,7 +119,12 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self._CompileAndCheck(lax_op, args_maker, check_dtypes=True)
 
     if test_autodiff:
-      jtu.check_grads(lax_op, args, order=1, atol=1e-3, rtol=3e-3)
+      jtu.check_grads(lax_op, args, order=1, atol=1e-3, rtol=3e-3, eps=1e-3)
+
+  def testIssue980(self):
+    x = onp.full((4,), -1e20, dtype=onp.float32)
+    self.assertAllClose(onp.zeros((4,), dtype=onp.float32),
+                        lsp_special.expit(x), check_dtypes=True)
 
 
 if __name__ == "__main__":

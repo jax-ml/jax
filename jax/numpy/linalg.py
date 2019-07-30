@@ -28,7 +28,6 @@ from . import lax_numpy as np
 from ..util import get_module_functions
 from ..lib import xla_bridge
 
-_EXPERIMENTAL_WARNING = "numpy.linalg support is experimental and may cause silent failures or wrong outputs"
 
 _T = lambda x: np.swapaxes(x, -1, -2)
 
@@ -48,14 +47,12 @@ def _promote_arg_dtypes(*args):
 
 @_wraps(onp.linalg.cholesky)
 def cholesky(a):
-  warnings.warn(_EXPERIMENTAL_WARNING)
   a = _promote_arg_dtypes(np.asarray(a))
   return lax_linalg.cholesky(a)
 
 
 @_wraps(onp.linalg.svd)
 def svd(a, full_matrices=True, compute_uv=True):
-  warnings.warn(_EXPERIMENTAL_WARNING)
   a = _promote_arg_dtypes(np.asarray(a))
   return lax_linalg.svd(a, full_matrices, compute_uv)
 
@@ -92,6 +89,13 @@ def det(a):
   return sign * np.exp(logdet)
 
 
+@_wraps(onp.linalg.eig)
+def eig(a):
+  a = _promote_arg_dtypes(np.asarray(a))
+  w, vl, vr = lax_linalg.eig(a)
+  return w, vr
+
+
 @_wraps(onp.linalg.eigh)
 def eigh(a, UPLO=None, symmetrize_input=True):
   if UPLO is None or UPLO == "L":
@@ -109,12 +113,11 @@ def eigh(a, UPLO=None, symmetrize_input=True):
 
 @_wraps(onp.linalg.inv)
 def inv(a):
-  warnings.warn(_EXPERIMENTAL_WARNING)
   if np.ndim(a) < 2 or a.shape[-1] != a.shape[-2]:
     raise ValueError("Argument to inv must have shape [..., n, n], got {}."
       .format(np.shape(a)))
-  q, r = qr(a)
-  return lax_linalg.triangular_solve(r, _T(q), lower=False, left_side=True)
+  return solve(
+    a, lax.broadcast(np.eye(a.shape[-1], dtype=lax.dtype(a)), a.shape[:-2]))
 
 
 @_wraps(onp.linalg.norm)
@@ -201,7 +204,6 @@ def norm(x, ord=None, axis=None, keepdims=False):
 
 @_wraps(onp.linalg.qr)
 def qr(a, mode="reduced"):
-  warnings.warn(_EXPERIMENTAL_WARNING)
   if mode in ("reduced", "r", "full"):
     full_matrices = False
   elif mode == "complete":
@@ -222,30 +224,33 @@ def solve(a, b):
   b_shape = np.shape(b)
   a_ndims = len(a_shape)
   b_ndims = len(b_shape)
-  if not (a_ndims >= 2 and a_shape[-1] == a_shape[-2] and
-          (a_ndims == b_ndims or a_ndims == b_ndims + 1)):
+  if not (a_ndims >= 2 and a_shape[-1] == a_shape[-2] and b_ndims >= 1):
     msg = ("The arguments to solve must have shapes a=[..., m, m] and "
            "b=[..., m, k] or b=[..., m]; got a={} and b={}")
     raise ValueError(msg.format(a_shape, b_shape))
   lu, pivots = lax_linalg.lu(a)
   dtype = lax.dtype(a)
 
-  # TODO(phawkins): add unit_diagonal support to solve_triangular, use it here
-  # instead of explicit masking of l.
   m = a_shape[-1]
-  l = np.tril(lu, -1)[:, :m] + np.eye(m, m, dtype=dtype)
 
-  # TODO(phawkins): triangular_solve only supports matrices on the RHS, so we
-  # add a dummy dimension. Extend it to support vectors and simplify this.
-  x = b if a_ndims == b_ndims else b[..., None]
+  # Numpy treats the RHS as a (batched) vector if the number of dimensions
+  # differ by 1. Otherwise, broadcasting rules apply.
+  x = b[..., None] if a_ndims == b_ndims + 1 else b
+
+  batch_dims = lax.broadcast_shapes(lu.shape[:-2], x.shape[:-2])
+  x = np.broadcast_to(x, batch_dims + x.shape[-2:])
+  lu = np.broadcast_to(lu, batch_dims + lu.shape[-2:])
 
   permutation = lax_linalg.lu_pivots_to_permutation(pivots, m)
-  x = x[..., permutation, :]
+  permutation = np.broadcast_to(permutation, batch_dims + (m,))
+  iotas = np.ix_(*(lax.iota(np.int32, b) for b in batch_dims + (1,)))
+  x = x[iotas[:-1] + (permutation, slice(None))]
 
-  x = lax_linalg.triangular_solve(l, x, left_side=True, lower=True)
+  x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=True,
+                                  unit_diagonal=True)
   x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=False)
 
-  return x[..., 0] if a_ndims != b_ndims else x
+  return x[..., 0] if a_ndims == b_ndims + 1 else x
 
 
 for func in get_module_functions(onp.linalg):

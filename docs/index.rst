@@ -2,14 +2,20 @@ JAX reference documentation
 ===============================
 
 Composable transformations of Python+NumPy programs: differentiate, vectorize,
-JIT to GPU/TPU, and more
+JIT to GPU/TPU, and more.
 
 For an introduction to JAX, start at the
 `JAX GitHub page <https://github.com/google/jax>`_.
 
 .. toctree::
+   :maxdepth: 1
+   :caption: Notes
+
+   async_dispatch
+
+.. toctree::
    :maxdepth: 3
-   :caption: Contents:
+   :caption: Contents
 
    jax
 

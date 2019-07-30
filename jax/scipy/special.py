@@ -20,19 +20,40 @@ import numpy as onp
 import scipy.special as osp_special
 
 from .. import lax
-from ..api import custom_transforms
-from ..interpreters import ad, batching
+from ..api import custom_transforms, defjvp
 from ..numpy import lax_numpy as np
 from ..numpy.lax_numpy import (_wraps, asarray, _reduction_dims, _constant_like,
                                _promote_args_like)
 
 
-# need to create new functions because _wraps sets the __name__ attribute
-gammaln = _wraps(osp_special.gammaln)(lambda x: lax.lgamma(x))
-digamma = _wraps(osp_special.digamma)(lambda x: lax.digamma(x))
-erf = _wraps(osp_special.erf)(lambda x: lax.erf(x))
-erfc = _wraps(osp_special.erfc)(lambda x: lax.erfc(x))
-erfinv = _wraps(osp_special.erfinv)(lambda x: lax.erf_inv(x))
+@_wraps(osp_special.gammaln)
+def gammaln(x):
+  x, = _promote_args_like(osp_special.gammaln, x)
+  return lax.lgamma(x)
+
+
+@_wraps(osp_special.digamma)
+def digamma(x):
+  x, = _promote_args_like(osp_special.digamma, x)
+  return lax.digamma(x)
+
+
+@_wraps(osp_special.erf)
+def erf(x):
+  x, = _promote_args_like(osp_special.erf, x)
+  return lax.erf(x)
+
+
+@_wraps(osp_special.erfc)
+def erfc(x):
+  x, = _promote_args_like(osp_special.erfc, x)
+  return lax.erfc(x)
+
+
+@_wraps(osp_special.erfinv)
+def erfinv(x):
+  x, = _promote_args_like(osp_special.erfinv, x)
+  return lax.erf_inv(x)
 
 
 @_wraps(osp_special.logit)
@@ -40,8 +61,7 @@ erfinv = _wraps(osp_special.erfinv)(lambda x: lax.erf_inv(x))
 def logit(x):
   x = asarray(x)
   return lax.log(lax.div(x, lax.sub(lax._const(x, 1), x)))
-ad.defjvp2(logit.primitive, lambda g, ans, x: g / (x * (1 - x)))
-batching.defvectorized(logit.primitive)
+defjvp(logit, lambda g, ans, x: g / (x * (1 - x)))
 
 
 @_wraps(osp_special.expit)
@@ -50,8 +70,7 @@ def expit(x):
   x = asarray(x)
   one = lax._const(x, 1)
   return lax.div(one, lax.add(one, lax.exp(lax.neg(x))))
-ad.defjvp2(expit.primitive, lambda g, ans, x: g * ans * (1 - ans))
-batching.defvectorized(expit.primitive)
+defjvp(expit, lambda g, ans, x: g * ans * (lax._const(ans, 1) - ans))
 
 
 @_wraps(osp_special.logsumexp)
@@ -197,7 +216,7 @@ def _ndtr(x):
                       lax.select(lax.gt(w, dtype(0.)),
                                       dtype(2.) - lax.erfc(z),
                                       lax.erfc(z)))
-  return 0.5 * y
+  return dtype(0.5) * y
 
 
 def ndtri(p):
@@ -336,6 +355,7 @@ def _ndtri(p):
   return x_nan_replaced
 
 
+@custom_transforms
 def log_ndtr(x, series_order=3):
   r"""Log Normal distribution function.
 
@@ -469,3 +489,14 @@ def _log_ndtr_asymptotic_series(x, series_order):
 def _double_factorial(n):
   """The double factorial function for small Python integer `n`."""
   return onp.prod(onp.arange(n, 1, -2))
+
+
+_norm_logpdf_constant = onp.log(onp.sqrt(2 * onp.pi))
+
+def _norm_logpdf(x):
+  neg_half = _constant_like(x, -0.5)
+  log_normalizer = _constant_like(x, _norm_logpdf_constant)
+  return lax.sub(lax.mul(neg_half, lax.square(x)), log_normalizer)
+
+defjvp(log_ndtr,
+       lambda g, ans, x: lax.mul(g, lax.exp(lax.sub(_norm_logpdf(x), ans))))

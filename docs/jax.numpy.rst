@@ -6,6 +6,29 @@ jax.numpy package
 
 .. automodule:: jax.numpy
 
+Implements the NumPy API, using the primitives in :mod:`jax.lax`.
+
+While JAX tries to follow the NumPy API as closely as possible, sometimes JAX
+cannot follow NumPy exactly.
+
+* Notably, since JAX arrays are immutable, NumPy APIs that mutate arrays
+  in-place cannot be implemented in JAX. However, often JAX is able to provide a
+  alternative API that is purely functional. For example, instead of in-place
+  array updates (:code:`x[i] = y`), JAX provides an alternative pure indexed
+  update function :func:`jax.ops.index_update`.
+
+* NumPy is very aggressive at promoting values to :code:`float64` type. JAX
+  sometimes is less aggressive about type promotion.
+
+A small number of NumPy operations that have data-dependent output shapes are
+incompatible with :func:`jax.jit` compilation. The XLA compiler requires that
+shapes of arrays be known at compile time. While it would be possible to provide
+a JAX implementation of an API such as :func:`numpy.nonzero`, we would be unable
+to JIT-compile it because the shape of its output depends on the contents of the
+input data.
+
+Not every function in NumPy is implemented; contributions are welcome!
+
 .. autosummary::
   :toctree: _autosummary
 
@@ -56,6 +79,7 @@ jax.numpy package
     cos
     cosh
     count_nonzero
+    cov
     cross
     cumsum
     cumprod
@@ -80,6 +104,8 @@ jax.numpy package
     expm1
     eye
     fabs
+    fftn
+    fix
     flip
     fliplr
     flipud
@@ -112,6 +138,7 @@ jax.numpy package
     isreal
     issubdtype
     issubsctype
+    ix_
     kaiser
     kron
     lcm
@@ -153,12 +180,14 @@ jax.numpy package
     ones_like
     outer
     pad
+    percentile
     polyval
     power
     positive
     prod
     product
     ptp
+    quantile
     rad2deg
     radians
     ravel
@@ -172,6 +201,7 @@ jax.numpy package
     rot90
     round
     row_stack
+    select
     sign
     sin
     sinc
@@ -192,6 +222,7 @@ jax.numpy package
     tan
     tanh
     tensordot
+    tile
     trace
     transpose
     tri
@@ -217,6 +248,7 @@ jax.numpy.linalg
 
   cholesky
   det
+  eig
   eigh
   inv
   norm

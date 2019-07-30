@@ -49,6 +49,9 @@ class UnshapedArray(core.AbstractValue):
   def __eq__(self, other):
     return type(self) is type(other) and self.dtype == other.dtype
 
+  def __ne__(self, other):
+    return not self == other
+
   def __hash__(self):
     # can use hash(self.dtype) and rely on the fact that numpy reuses base dtype
     # objects, e.g. `onp.zeros(3).dtype is onp.zeros(4).dtype`, or we can use
@@ -169,16 +172,25 @@ def zeros_like_array(x):
   dtype = xla_bridge.canonicalize_dtype(onp.result_type(x))
   return onp.broadcast_to(onp.array(0, dtype), onp.shape(x))
 
-array_types = [onp.ndarray, onp.float64, onp.float32, onp.float16,
+array_types = {onp.ndarray, onp.float64, onp.float32, onp.float16,
                onp.complex64, onp.complex128,
                onp.int64, onp.int32, onp.int16, onp.int8,
                onp.bool_, onp.uint64, onp.uint32, onp.uint16, onp.uint8,
-               onp.longlong, complex, float, int, bool]
+               onp.longlong, complex, float, int, bool}
+
+if six.PY2:
+  array_types.add(long)
 
 for t in array_types:
   core.pytype_aval_mappings[t] = ConcreteArray
   ad_util.jaxval_zeros_likers[t] = zeros_like_array
 
+
+def zeros_like_shaped_array(aval):
+  assert isinstance(aval, ShapedArray)
+  return onp.zeros(aval.shape, dtype=aval.dtype)
+
+ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
 
 def raise_to_shaped(aval):
   if type(aval) is core.AbstractTuple:
@@ -187,3 +199,5 @@ def raise_to_shaped(aval):
     return ShapedArray(aval.shape, aval.dtype)
   else:
     raise TypeError(type(aval))
+
+core.literalable_types.update(array_types)

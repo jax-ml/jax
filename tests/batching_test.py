@@ -31,6 +31,7 @@ from jax.api import vmap
 from jax.core import unit
 from jax.interpreters import partial_eval as pe
 from jax.util import partial, curry
+import jax.ops
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -281,6 +282,22 @@ class BatchingTest(jtu.JaxTestCase):
     expected = onp.einsum('ni,ni->n', xs, ys)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testDot3(self):
+    R = onp.random.RandomState(0).randn
+    xs = R(5, 8, 10)
+    ys = R(10, 1)
+    ans = vmap(np.dot, in_axes=(1, None))(xs, ys)
+    expected = onp.einsum('inj,jk->nik', xs, ys)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testDot4(self):
+    R = onp.random.RandomState(0).randn
+    xs = R(3, 2)
+    ys = R(3)
+    ans = vmap(np.dot, in_axes=(1, None))(xs, ys)
+    expected = onp.einsum('ij,i->j', xs, ys)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def testPad(self):
     R = onp.random.RandomState(0).randn
 
@@ -367,6 +384,23 @@ class BatchingTest(jtu.JaxTestCase):
     expected = x[idx]
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testDynamicUpdateSlice(self):
+    x = onp.random.randn(10, 3)
+    y = onp.random.randn(10)
+    ans = vmap(lambda x, y, i: lax.dynamic_update_index_in_dim(x, y, i, axis=0),
+               in_axes=(0, 0, None))(x, y, 1)
+    expected = x.copy()
+    expected[:, 1] = y
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    x = onp.random.randn(3)
+    idx = onp.array([0, 1, 2, 1, 0] * 2)
+    ans = vmap(lambda x, y, i: lax.dynamic_update_index_in_dim(x, y, i, axis=0),
+               in_axes=(None, 0, 0))(x, y, idx)
+    expected = onp.broadcast_to(x, (10, 3)).copy()
+    expected[onp.arange(10), idx] = y
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def testRandom(self):
     seeds = vmap(random.PRNGKey)(onp.arange(10))
     ans = vmap(partial(random.normal, shape=(3, 2)))(seeds)
@@ -451,8 +485,10 @@ class BatchingTest(jtu.JaxTestCase):
                                          (5, 21, 5, 1)))
     self.assertAllClose(per_example, per_example_direct, check_dtypes=True)
 
-
-  def testMaxPool(self):
+  @parameterized.named_parameters(
+    {"testcase_name": "_op={}".format(name), "op": op, "unit": unit}
+    for name, op, unit in [("max", lax.max, -np.inf), ("min", lax.min, np.inf)])
+  def testMinMaxPool(self, op, unit):
     W = np.array(onp.random.randn(3, 3, 1, 5), dtype=onp.float32)
     X = np.array(onp.random.randn(10, 5, 5, 1), dtype=onp.float32)
 
@@ -462,7 +498,7 @@ class BatchingTest(jtu.JaxTestCase):
       y = lax.conv_general_dilated(
           x, params, one, 'SAME', one, one, dimension_numbers)
       y = lax.reduce_window(
-          y, -np.inf, lax.max, (1, 2, 2, 1), (1, 1, 1, 1), 'SAME')
+          y, unit, op, (1, 2, 2, 1), (1, 1, 1, 1), 'SAME')
       return y
     grad_loss = grad(lambda params, x: np.mean(f(params, x) ** 2))
 
@@ -511,6 +547,11 @@ class BatchingTest(jtu.JaxTestCase):
           np.reshape(g, (1,) + g.shape)]
     per_example_direct = np.concatenate(per_example_direct, axis=0)
     self.assertAllClose(per_example, per_example_direct, check_dtypes=True)
+
+  def testCumProd(self):
+   x = np.arange(9).reshape(3, 3) + 1
+   y = vmap(lambda x: np.cumprod(x, axis=-1))(x)
+   self.assertAllClose(onp.cumprod(x, axis=1), y, check_dtypes=True)
 
   def testSelect(self):
     pred = onp.array([True, False])
@@ -763,7 +804,7 @@ class BatchingTest(jtu.JaxTestCase):
        "op_axis": op_axis, "idxs_axis": idxs_axis, "shape": shape, "dtype":
        dtype, "idxs": idxs, "dnums": dnums, "slice_sizes": slice_sizes,
        "rng": rng, "rng_idx": rng_idx}
-      for dtype in [onp.float32, onp.int32]
+      for dtype in [onp.float32]
       for op_axis, idxs_axis, shape, idxs, dnums, slice_sizes in [
           (0, 0, (2, 5), onp.array([[[0], [2]], [[1], [3]]]),
            lax.GatherDimensionNumbers(
@@ -872,66 +913,6 @@ class BatchingTest(jtu.JaxTestCase):
 
     H = hessian(f)(R)  # don't crash on UnshapedArray
 
-  def testWhileLoop(self):
-    def fun(x):
-      return lax.while_loop(lambda x: x < 3, lambda x: x + 2, x)
-
-    ans = vmap(fun)(onp.array([0, 1, 2, 3]))
-    expected = onp.array([4, 3, 4, 3])
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-    fun = jit(fun)
-    ans = vmap(fun)(onp.array([0, 1, 2, 3]))
-    expected = onp.array([4, 3, 4, 3])
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-  def testWhileLoopCondConstsBatched(self):
-    def fun(x, y):
-      return lax.while_loop(lambda x: x < y, lambda x: x + 2, x)
-
-    ans = vmap(fun, in_axes=(None, 0))(0, onp.array([2, 3]))
-    expected = onp.array([2, 4])
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-  def testWhileLoopBodyConstsBatched(self):
-    def fun(x, y):
-      return lax.while_loop(lambda x: x < 3, lambda x: x + y, x)
-
-    ans = vmap(fun, in_axes=(None, 0))(0, onp.array([2, 3]))
-    expected = onp.array([4, 3])
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-  def testWhileLoopTuple(self):
-    def cond_fun(loop_carry):
-      x, y = loop_carry
-      return x + y < 5
-
-    def body_fun(loop_carry):
-      x, y = loop_carry
-      x = x + 1
-      return x, y
-
-    def fun(x, y):
-      return lax.while_loop(cond_fun, body_fun, (x, y))
-
-    ans = vmap(fun)(onp.array([0, 0]), onp.array([1, 2]))
-    expected = (onp.array([4, 3]), onp.array([1, 2]))
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-  def testForiLoop(self):
-    def body_fun(i, loop_carry):
-      x, y = loop_carry
-      x = x + 1
-      y = y + 2
-      return x, y
-
-    def fun(x):
-      return lax.fori_loop(0, 10, body_fun, (x, 0))
-
-    ans = vmap(fun)(onp.array([0, 1]))
-    expected = (onp.array([10, 11]), onp.array([20, 20]))
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
   def testIssue489(self):
     def f(key):
       def body_fn(uk):
@@ -944,6 +925,20 @@ class BatchingTest(jtu.JaxTestCase):
       return u
 
     print(vmap(f)(random.split(random.PRNGKey(0), 2)))  # no crash
+
+  def testEmptyTuples(self):
+    # Ensure there is no crash when a vectorized input contains empty tuples.
+    result = vmap(lambda x, _: x + 1)(onp.array([0, 1]), ())
+    self.assertAllClose(result, onp.array([1, 2]), check_dtypes=False)
+    # Ensure there is no crash when a vectorized output contains empty tuples.
+    result, empty_tuple = vmap(lambda x: (x + 1, ()))(onp.array([0, 1]))
+    self.assertAllClose(result, onp.array([1, 2]), check_dtypes=False)
+    self.assertEqual((), empty_tuple)
+
+  def testIndexAddBatchedIndexesOnly(self):
+    f = lambda x, idx, y: jax.ops.index_add(x, jax.ops.index[idx], y)
+    result = vmap(f, (None, 0, None))(onp.zeros((10,)), onp.arange(10,), 1.)
+    self.assertAllClose(result, onp.eye(10), check_dtypes=False)
 
 
 if __name__ == '__main__':

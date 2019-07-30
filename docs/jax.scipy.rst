@@ -39,10 +39,13 @@ jax.scipy.special
    erfinv
    expit
    gammaln
+   log_ndtr
    logit
    logsumexp
    ndtr
    ndtri
+   xlog1py
+   xlogy
 
 
 jax.scipy.stats
@@ -82,6 +85,7 @@ jax.scipy.stats.laplace
 .. autosummary::
   :toctree: _autosummary
 
+   cdf
    logpdf
    pdf
 

@@ -28,11 +28,13 @@ import warnings
 from distutils.util import strtobool
 
 from ..config import flags
+from .. import util
 import numpy as onp  # 'onp' rather than 'np' to distinguish from autograd.numpy
+import six
 
 import jaxlib
 
-_minimum_jaxlib_version = (0, 1, 11)
+_minimum_jaxlib_version = (0, 1, 22)
 try:
   from jaxlib import version as jaxlib_version
 except:
@@ -54,18 +56,11 @@ _check_jaxlib_version()
 
 from jaxlib import xla_client
 from jaxlib import xla_data_pb2
-
-# TODO(phawkins): This is a workaround for older jaxlib versions. Remove after a
-# jaxlib release.
-try:
-  from jaxlib import xrt
-except ImportError:
-  xrt = None
-
+from jaxlib import xrt
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_enable_x64',
-                  strtobool(os.getenv('JAX_ENABLE_X64', "False")),
+                  strtobool(os.getenv('JAX_ENABLE_X64', 'False')),
                   'Enable 64-bit types to be used.')
 flags.DEFINE_string(
     'jax_xla_backend', 'xla',
@@ -74,29 +69,41 @@ flags.DEFINE_string(
     'jax_backend_target', 'local',
     'Either "local" or "rpc:address" to connect to a remote service target.')
 flags.DEFINE_string(
-    'jax_platform_name', '',
-    'Platform name for XLA. The default is to attempt to use a '
-    'GPU if available, but fall back to CPU otherwise. To set '
-    'the platform manually, pass "cpu" for CPU or "gpu" for '
-    'GPU.')
+    'jax_platform_name',
+    os.getenv('JAX_PLATFORM_NAME', ''),
+    'Platform name for XLA. The default is to attempt to use a GPU if '
+    'available, but fall back to CPU otherwise. To set the platform manually, '
+    'pass "cpu" for CPU or "gpu" for GPU.')
 
 
+def get_compile_options(num_replicas=None, device_assignment=None):
+  """Returns the compile options to use, as derived from flag values.
 
-def get_compile_options(num_replicas=None):
-  """Returns the compile options to use, as derived from flag values."""
+  Args:
+    num_replicas: Optional int indicating the number of replicas for which to
+      compile (default inherited from xla_client.CompileOptions).
+    device_assignment: Optional tuple of integers indicating the assignment of
+      logical replicas to physical devices (default inherited from
+      xla_client.CompileOptions). Must be consistent with `num_replicas`.
+  """
   compile_options = None
   if num_replicas is not None:
     compile_options = compile_options or xla_client.CompileOptions()
     compile_options.num_replicas = num_replicas
+  if device_assignment is not None:
+    # NOTE(mattjj): xla_client.DeviceAssignment.create expects a 2D ndarray
+    # indexed by replica number and computation per replica, respectively, while
+    # here we currently assume only one computation per replica, hence the
+    # second axis is always trivial.
+    if num_replicas is not None and num_replicas != len(device_assignment):
+      msg = "device_assignment does not match num_replicas: {} vs {}."
+      raise ValueError(msg.format(device_assignment, num_replicas))
+    compile_options = compile_options or xla_client.CompileOptions()
+    device_assignment = onp.array(device_assignment)[:, None]
+    device_assignment = xla_client.DeviceAssignment.create(device_assignment)
+    assert num_replicas is None or device_assignment.replica_count() == num_replicas
+    compile_options.device_assignment = device_assignment
   return compile_options
-
-
-def memoize(func):
-  class memodict(dict):
-    def __missing__(self, key):
-      val = self[key] = func(key)
-      return val
-  return memodict().__getitem__
 
 
 def memoize_thunk(func):
@@ -122,21 +129,7 @@ def _get_local_backend():
   elif platform == '':
     platform = None
 
-  backend = None
-  if hasattr(xla_client, 'get_local_backend'):
-    backend = xla_client.get_local_backend(platform)
-  else:
-    # This case is for backward compatibility with Jaxlib versions that don't
-    # have xla_client.get_local_backend().
-    platforms = [gpu, cpu] if platform is None else [platform]
-    for p in platforms:
-      try:
-        backend = xla_client.XlaLocalBackend(p)
-        backend.platform = p
-        break
-      except RuntimeError:
-        continue
-
+  backend = xla_client.get_local_backend(platform)
   if backend is None:
     raise RuntimeError("No local XLA backends found.")
 
@@ -151,8 +144,6 @@ def _get_xrt_backend():
   worker = "tpu_worker"
   tf_context = xrt.get_tf_context(FLAGS.jax_backend_target, worker)
   backend = xrt.XrtBackend(tf_context, tf_device_name)
-  #  TODO(phawkins) fix XrtBackend to set the following and remove this line.
-  backend.platform = "TPU"
   return backend
 
 
@@ -170,21 +161,16 @@ def get_backend():
 
 
 def device_count():
-  return get_backend().device_count()
+  return int(get_backend().device_count())
 
 
 def device_put(pyval, device_num=0):
   return xla_client.LocalBuffer.from_pyval(pyval, device_num,
                                            backend=get_backend())
 
-def device_put_many(pyvals_and_devices):
-  # TODO(phawkins): remove the fallback path after dropping dependencies on
-  # Jaxlib older than 0.1.13.
-  if hasattr(xla_client.LocalBuffer, "from_pyvals"):
-    return xla_client.LocalBuffer.from_pyvals(pyvals_and_devices,
-                                              backend=get_backend())
-  else:
-    return [device_put(pyval, device) for (pyval, device) in pyvals_and_devices]
+def make_tuple(bufs, device_num=0):
+  return xla_client.Buffer.make_tuple(bufs, device=device_num,
+                                      backend=get_backend())
 
 
 Shape = xla_client.Shape        # pylint: disable=invalid-name
@@ -192,12 +178,12 @@ Shape = xla_client.Shape        # pylint: disable=invalid-name
 
 ### utility functions
 
-@memoize
+@util.memoize_unary
 def dtype_to_etype(dtype):
   """Convert from dtype to canonical etype (reading FLAGS.jax_enable_x64)."""
   return xla_client.DTYPE_TO_XLA_ELEMENT_TYPE[canonicalize_dtype(dtype)]
 
-@memoize
+@util.memoize_unary
 def dtype_to_etype_exact(dtype):
   """Convert from dtype to exact etype (ignoring FLAGS.jax_enable_x64)."""
   return xla_client.dtype_to_etype(dtype)
@@ -211,7 +197,7 @@ _dtype_to_32bit_dtype = {
 }
 
 
-@memoize
+@util.memoize_unary
 def canonicalize_dtype(dtype):
   """Convert from a dtype to a canonical dtype based on FLAGS.jax_enable_x64."""
   dtype = onp.dtype(dtype)
@@ -310,13 +296,23 @@ class _JaxComputationBuilder(xla_client.ComputationBuilder):
     else:
       raise TypeError("No constant handler for type: {}".format(py_type))
 
-  def AllToAll(self, operand, split_dimension, concat_dimension, replica_groups):
+  # TODO(mattjj): remove when CrossReplicaSum is added to XLA:CPU
+  def CrossReplicaSum(self, operand, replica_groups):
+    """Workaround for CrossReplicaSum not being implemented on some backends."""
+    if len(replica_groups[0]) == 1:
+      return operand
+    else:
+      return super(_JaxComputationBuilder, self).CrossReplicaSum(
+          operand, replica_groups)
+
+  # TODO(mattjj): remove when AllToAll is added to XLA:CPU
+  def AllToAll(self, operand, split_axis, concat_axis, replica_groups):
     """Workaround for AllToAll not being implemented on some backends."""
-    if split_dimension == concat_dimension and len(replica_groups[0]) == 1:
+    if len(replica_groups[0]) == 1:
       return operand
     else:
       return super(_JaxComputationBuilder, self).AllToAll(
-          operand, split_dimension, concat_dimension, replica_groups)
+          operand, split_axis, concat_axis, replica_groups)
 
 
 def make_computation_builder(name):
@@ -368,5 +364,8 @@ def _scalar_constant_handler(c, val, canonicalize_types=True):
 for scalar_type in [onp.int8, onp.int16, onp.int32, onp.int64,
                     onp.uint8, onp.uint16, onp.uint32, onp.uint64,
                     onp.float16, onp.float32, onp.float64, onp.float128,
-                    float, int, bool, onp.bool_]:
+                    float, int, bool, onp.bool_, onp.longlong]:
   register_constant_handler(scalar_type, _scalar_constant_handler)
+
+if six.PY2:
+  register_constant_handler(long, _scalar_constant_handler)

@@ -7,12 +7,8 @@ python:
   - "2.7"
   - "3.6"
 env:
-  global:
-    - JAX_NUM_GENERATED_CASES=100
-    - NUMPY_EXPERIMENTAL_ARRAY_FUNCTION=1
-  matrix:
-    - JAX_ENABLE_X64=0
-    - JAX_ENABLE_X64=1
+  - JAX_ENABLE_X64=0 JAX_NUM_GENERATED_CASES=25 NUMPY_EXPERIMENTAL_ARRAY_FUNCTION=1
+  - JAX_ENABLE_X64=1 JAX_NUM_GENERATED_CASES=25 NUMPY_EXPERIMENTAL_ARRAY_FUNCTION=1
 before_install:
   - if [[ "$TRAVIS_PYTHON_VERSION" == "2.7" ]]; then
       wget https://repo.continuum.io/miniconda/Miniconda2-latest-Linux-x86_64.sh -O miniconda.sh;
@@ -24,8 +20,8 @@ before_install:
   - conda update --yes conda
   - conda config --add channels conda-forge
 install:
-  - conda install --yes python=$TRAVIS_PYTHON_VERSION pip six protobuf>=3.6.0 absl-py opt_einsum numpy scipy pytest-xdist
+  - conda install --yes python=$TRAVIS_PYTHON_VERSION pip six protobuf>=3.6.0 absl-py opt_einsum numpy scipy pytest-xdist fastcache
   - pip install jaxlib
   - pip install -v .
 script:
-  - pytest -n 2 tests examples
+  - pytest -n 1 tests examples -W ignore
