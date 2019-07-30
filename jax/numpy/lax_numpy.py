@@ -2862,8 +2862,12 @@ def __array_function__(self, func, types, args, kwargs):
   if not _all(issubclass(t, _HANDLED_TYPES) for t in types):
     return NotImplemented
 
+  modules = func.__module__.split('.')
+  if modules[0] != 'numpy':
+    return NotImplemented
+
   module = numpy
-  for submodule in func.__module__.split('.')[1:]:
+  for submodule in modules[1:]:
     try:
       module = getattr(module, submodule)
     except AttributeError:
