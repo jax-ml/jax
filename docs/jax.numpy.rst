@@ -76,6 +76,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     concatenate
     conj
     conjugate
+    corrcoef
     cos
     cosh
     count_nonzero
