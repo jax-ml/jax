@@ -46,7 +46,7 @@ from ..interpreters.xla import DeviceArray
 from .. import lax
 from ..util import memoize, partial, get_module_functions, unzip2, prod as _prod
 from ..lib import xla_bridge
-from ..lib.xla_bridge import xla_client
+from ..lib import xla_client
 
 if six.PY3:
   def removechars(s, chars):

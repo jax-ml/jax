@@ -32,30 +32,7 @@ from .. import util
 import numpy as onp  # 'onp' rather than 'np' to distinguish from autograd.numpy
 import six
 
-import jaxlib
-
-_minimum_jaxlib_version = (0, 1, 22)
-try:
-  from jaxlib import version as jaxlib_version
-except:
-  # jaxlib is too old to have version number.
-  msg = 'This version of jax requires jaxlib version >= {}.'
-  raise ImportError(msg.format('.'.join(map(str, _minimum_jaxlib_version))))
-
-
-# Check the jaxlib version before importing anything else from jaxlib.
-def _check_jaxlib_version():
-  version = tuple(int(x) for x in jaxlib_version.__version__.split('.'))
-  if version < _minimum_jaxlib_version:
-    msg = 'jaxlib is version {}, but this version of jax requires version {}.'
-    raise ValueError(msg.format('.'.join(map(str, version)),
-                                '.'.join(map(str, _minimum_jaxlib_version))))
-
-_check_jaxlib_version()
-
-
 from jaxlib import xla_client
-from jaxlib import xla_data_pb2
 from jaxlib import xrt
 
 FLAGS = flags.FLAGS

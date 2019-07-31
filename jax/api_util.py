@@ -18,7 +18,7 @@ from __future__ import print_function
 
 from .core import pack, AbstractTuple
 from .tree_util import (build_tree, process_pytree, tree_flatten,
-                        tree_unflatten, leaf)
+                        tree_unflatten, treedef_is_leaf)
 from .linear_util import transformation_with_aux
 from .util import safe_map, unzip2, partial, curry
 
@@ -88,7 +88,7 @@ def flatten_fun_leafout(in_tree, *args_flat):
   py_args, py_kwargs = tree_unflatten(in_tree, args_flat)
   ans = yield py_args, py_kwargs
   flat_ans, out_tree = tree_flatten(ans)
-  if out_tree is leaf:
+  if treedef_is_leaf(out_tree):
     yield ans, out_tree
   else:
     yield pack(flat_ans), out_tree

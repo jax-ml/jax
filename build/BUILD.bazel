@@ -25,6 +25,7 @@ sh_binary(
         "@org_tensorflow//tensorflow/compiler/xla/python:xla_client",
         "//jaxlib",
         "//jaxlib:lapack.so",
+        "//jaxlib:pytree",
     ],
     deps = ["@bazel_tools//tools/bash/runfiles"],
 )
