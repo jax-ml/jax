@@ -261,9 +261,10 @@ if six.PY2:
   ]
 
 
-# __array_function__ overrides are enabled if using NumPy 1.17+ (not yet
-# released) or if the NUMPY_EXPERIMENTAL_ARRAY_FUNCTION environment is set:
-# https://www.numpy.org/neps/nep-0018-array-function-protocol.html
+# __array_function__ overrides are enabled if using NumPy 1.17+ or if using
+# NumPy 1.16 and the NUMPY_EXPERIMENTAL_ARRAY_FUNCTION environment variable is
+# set: https://www.numpy.org/neps/nep-0018-array-function-protocol.html
+# More reliable than inspecting the environment is to actually try using it.
 class _Dummy(object):
   def __array_function__(self, *args, **kwargs):
     return True
@@ -1681,6 +1682,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                     type(onp.arange(77, dtype=onp.int32)))
     self.assertTrue(type(lnp.arange(77, dtype=lnp.int32)) ==
                     type(lax.iota(onp.int32, 77)))
+
+  def testIssue728(self):
+    assert lnp.allclose(lnp.eye(5000), onp.eye(5000))
+    self.assertEqual(0, onp.sum(lnp.eye(1050) - onp.eye(1050)))
 
   def testArrayUfuncUnary(self):
     lnp_array = lnp.sqrt(onp.array([1, 2]))  # make a DeviceArray object
