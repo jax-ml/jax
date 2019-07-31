@@ -31,6 +31,7 @@ import numpy.random as npr
 from six.moves import xrange
 
 from . import api
+from . import numpy as np
 from .config import flags
 from .util import partial
 from .tree_util import tree_multimap, tree_all, tree_map, tree_reduce
@@ -558,7 +559,9 @@ class JaxTestCase(parameterized.TestCase):
   def _CheckAgainstNumpy(self, numpy_reference_op, lax_op, args_maker,
                          check_dtypes=False, tol=1e-5):
     args = args_maker()
-    numpy_ans = numpy_reference_op(*args)
+    np_args = tuple(onp.array(arg) if isinstance(arg, np.ndarray) else arg
+                    for arg in args)
+    numpy_ans = numpy_reference_op(*np_args)
     lax_ans = lax_op(*args)
     self.assertAllClose(lax_ans, numpy_ans, check_dtypes=check_dtypes,
                         atol=tol, rtol=tol)

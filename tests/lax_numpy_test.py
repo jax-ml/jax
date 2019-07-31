@@ -272,7 +272,7 @@ class _Dummy(object):
 
 try:
   array_function_overrides_enabled = onp.atleast_1d(_Dummy())
-except TypeError:
+except Exception:
   array_function_overrides_enabled = False
 
 
