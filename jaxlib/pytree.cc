@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-// Caution: this code uses exceptions. The exceptions use is local to the
+// Caution: this code uses exceptions. The exception use is local to the
 // binding code and the idiomatic way to emit Python exceptions.
 
 #include <memory>
@@ -31,7 +31,6 @@ limitations under the License.
 #include "include/pybind11/pybind11.h"
 #include "include/pybind11/pytypes.h"
 #include "include/pybind11/stl.h"
-
 
 namespace jax {
 
@@ -91,7 +90,9 @@ class CustomNodeRegistry {
   registration->from_iterable = std::move(from_iterable);
   auto it = registry->registrations_.emplace(type, std::move(registration));
   if (!it.second) {
-    throw std::logic_error("Duplicate custom PyTreeDef type registration.");
+    throw std::invalid_argument(
+        absl::StrFormat("Duplicate custom PyTreeDef type registration for %s.",
+                        py::repr(type)));
   }
 }
 
@@ -104,7 +105,9 @@ class CustomNodeRegistry {
   return it == registry->registrations_.end() ? nullptr : it->second.get();
 }
 
-// A PyTreeDef describes the tree structure of a PyTree.
+// A PyTreeDef describes the tree structure of a PyTree. A PyTree is a tree of
+// Python values, where the interior nodes are tuples, lists, dictionaries, or
+// user-defined containers, and the leaves are other objects.
 class PyTreeDef {
  public:
   PyTreeDef() = default;
@@ -208,9 +211,6 @@ class PyTreeDef {
 template <typename H>
 H AbslHashValue(H h, const PyTreeDef::Node& n) {
   h = H::combine(std::move(h), n.kind, n.arity, n.custom);
-  if (n.node_data) {
-    h = H::combine(std::move(h), py::hash(n.node_data));
-  }
   return h;
 }
 
@@ -318,6 +318,7 @@ void PyTreeDef::FlattenHelper(py::handle handle, py::list* leaves,
 py::object PyTreeDef::Unflatten(py::iterable leaves) const {
   std::vector<py::object> agenda;
   auto it = leaves.begin();
+  int leaf_count = 0;
   for (const Node& node : traversal_) {
     if (agenda.size() < node.arity) {
       throw std::logic_error("Too few elements for TreeDef node.");
@@ -325,10 +326,13 @@ py::object PyTreeDef::Unflatten(py::iterable leaves) const {
     switch (node.kind) {
       case Kind::kLeaf:
         if (it == leaves.end()) {
-          throw std::invalid_argument("Too few leaves for PyTreeDef");
+          throw std::invalid_argument(absl::StrFormat(
+              "Too few leaves for PyTreeDef; expected %d, got %d", num_leaves(),
+              leaf_count));
         }
         agenda.push_back(py::reinterpret_borrow<py::object>(*it));
         ++it;
+        ++leaf_count;
         break;
 
       case Kind::kNone:
@@ -348,7 +352,8 @@ py::object PyTreeDef::Unflatten(py::iterable leaves) const {
     }
   }
   if (it != leaves.end()) {
-    throw std::invalid_argument("Too many leaves for PyTreeDef");
+    throw std::invalid_argument(absl::StrFormat(
+        "Too many leaves for PyTreeDef; expected %d.", num_leaves()));
   }
   if (agenda.size() != 1) {
     throw std::logic_error("PyTreeDef traversal did not yield a singleton.");
@@ -363,7 +368,7 @@ py::object PyTreeDef::Unflatten(py::iterable leaves) const {
   }
   switch (node.kind) {
     case Kind::kLeaf:
-      return std::move(children.front());
+      throw std::logic_error("MakeNode not implemented for leaves.");
 
     case Kind::kNone:
       return py::none();
@@ -533,6 +538,9 @@ std::vector<std::unique_ptr<PyTreeDef>> PyTreeDef::Children() const {
               std::back_inserter(children[i]->traversal_));
     pos -= node.num_nodes;
   }
+  if (pos != 0) {
+    throw std::logic_error("pos != 0 at end of PyTreeDef::Children");
+  }
   return children;
 }
 
@@ -574,7 +582,7 @@ std::string PyTreeDef::ToString() const {
 
     std::string data;
     if (node.node_data) {
-      data = static_cast<std::string>(py::str(node.node_data));
+      data = absl::StrFormat("[%s]", py::str(node.node_data));
     }
 
     agenda.push_back(
