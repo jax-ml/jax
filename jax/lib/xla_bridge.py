@@ -32,8 +32,8 @@ from .. import util
 import numpy as onp  # 'onp' rather than 'np' to distinguish from autograd.numpy
 import six
 
-from jaxlib import xla_client
-from jaxlib import xrt
+from . import xla_client
+from . import xrt
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_enable_x64',
