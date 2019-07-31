@@ -2386,8 +2386,11 @@ def _pad_shape_rule(operand, padding_value, padding_config):
   return tuple(out_shape)
 
 def _pad_transpose(t, operand, padding_value, padding_config):
-  lo, hi, interior = zip(*padding_config)
+  if t is ad_util.zero:
+    return [ad_util.zero if operand is None else None,
+            ad_util.zero if padding_value is None else None]
 
+  lo, hi, interior = zip(*padding_config)
   total = lambda x: _reduce_sum(x, list(range(t.ndim)))
 
   def t_op():
