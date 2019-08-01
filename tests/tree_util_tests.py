@@ -53,6 +53,9 @@ tree_util.register_pytree_node(AnObject, lambda o: ((o.x, o.y), o.z),
                                lambda z, xy: AnObject(xy[0], xy[1], z))
 
 PYTREES = [
+    ("foo",),
+    ((),),
+    (([()]),),
     ((1, 2),),
     (((1, "foo"), ["bar", (3, None, 7)]),),
     ([3],),

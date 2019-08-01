@@ -111,7 +111,7 @@ class PyTreeDef {
   // Flattens a Pytree into a list of leaves and a PyTreeDef.
   static std::pair<py::list, std::unique_ptr<PyTreeDef>> Flatten(py::handle x);
 
-  // Flattens a Pytree up to this PyTree. 'this' must be a tree prefix of
+  // Flattens a Pytree up to this PyTreeDef. 'this' must be a tree prefix of
   // the tree-structure of 'x'. For example, if we flatten a value
   // [(1, (2, 3)), {"foo": 4}] with a treedef [(*, *), *], the result is the
   // list of leaves [1, (2, 3), {"foo": 4}].
@@ -424,7 +424,8 @@ py::list PyTreeDef::FlattenUpTo(py::handle xs) const {
   while (!agenda.empty()) {
     if (it == traversal_.rend()) {
       throw std::invalid_argument(
-          "Tree structures did not match; reached end of tree.");
+          absl::StrFormat("Tree structures did not match: %s vs %s",
+                          py::repr(xs), ToString()));
     }
     const Node& node = *it;
     py::object object = agenda.back();
@@ -554,7 +555,9 @@ py::list PyTreeDef::FlattenUpTo(py::handle xs) const {
     }
   }
   if (it != traversal_.rend() || leaf != -1) {
-    throw std::invalid_argument("Tree structures did not match.");
+    throw std::invalid_argument(
+        absl::StrFormat("Tree structures did not match: %s vs %s",
+                        py::repr(xs), ToString()));
   }
   return leaves;
 }

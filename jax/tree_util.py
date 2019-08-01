@@ -72,9 +72,8 @@ if pytree:
         corresponding leaves of the pytrees.
       tree: a pytree to be mapped over, with each leaf providing the first
         positional argument to `f`.
-      *rest: a tuple of pytrees, the structure of each of which must be a tree
-        suffix of `tree`.
-
+      *rest: a tuple of pytrees, each of which has the same structure as tree or
+        or has tree as a prefix.
     Returns:
       A new pytree with the same structure as `tree` but with the value at each
       leaf given by `f(x, *xs)` where `x` is the value at the corresponding leaf
