@@ -198,6 +198,7 @@ Exp = elementwise(np.exp)
 LogSoftmax = elementwise(logsoftmax, axis=-1)
 Softmax = elementwise(softmax, axis=-1)
 Softplus = elementwise(softplus)
+Sigmoid = elementwise(sigmoid)
 Elu = elementwise(elu)
 LeakyRelu = elementwise(leaky_relu)
 
