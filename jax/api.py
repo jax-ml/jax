@@ -298,7 +298,7 @@ def xla_computation(fun, static_argnums=(), axis_env=None):
 
   return computation_maker
 
-def grad(fun, argnums=0, has_aux=False, holomorphic=False):
+def grad(fun, argnums=0, has_aux=False, holomorphic=False, force_scalar=True):
   """Creates a function which evaluates the gradient of `fun`.
 
   Args:
@@ -313,6 +313,8 @@ def grad(fun, argnums=0, has_aux=False, holomorphic=False):
       differentiated and the second element is auxiliary data. Default False.
     holomorphic: Optional, bool. Indicates whether `fun` is promised to be
       holomorphic. Default False.
+    force_scalar: Optional, bool, Indicates whether it should force that the 
+      output of fun is an scalar or not.
 
   Returns:
     A function with the same arguments as `fun`, that evaluates the gradient of
@@ -329,7 +331,7 @@ def grad(fun, argnums=0, has_aux=False, holomorphic=False):
   0.961043
   """
   value_and_grad_f = value_and_grad(fun, argnums, has_aux=has_aux,
-                                    holomorphic=holomorphic)
+                                    holomorphic=holomorphic, force_scalar=force_scalar)
 
   docstr = ("Gradient of {fun} with respect to positional argument(s) "
             "{argnums}. Takes the same arguments as {fun} but returns the "
@@ -347,7 +349,7 @@ def grad(fun, argnums=0, has_aux=False, holomorphic=False):
 
   return grad_f
 
-def value_and_grad(fun, argnums=0, has_aux=False, holomorphic=False):
+def value_and_grad(fun, argnums=0, has_aux=False, holomorphic=False, force_scalar=True):
   """Creates a function which evaluates both `fun` and the gradient of `fun`.
 
   Args:
@@ -362,6 +364,8 @@ def value_and_grad(fun, argnums=0, has_aux=False, holomorphic=False):
      differentiated and the second element is auxiliary data. Default False.
     holomorphic: Optional, bool. Indicates whether `fun` is promised to be
       holomorphic. Default False.
+    force_scalar: Optional, bool, Indicates whether it should force that the 
+      output of fun is an scalar or not.
 
   Returns:
     A function with the same arguments as `fun` that evaluates both `fun` and
@@ -388,7 +392,8 @@ def value_and_grad(fun, argnums=0, has_aux=False, holomorphic=False):
       ans, vjp_py = vjp(f_partial, *dyn_args)
     else:
       ans, vjp_py, aux = vjp(f_partial, *dyn_args, has_aux=True)
-    _check_scalar(ans)
+    if force_scalar:
+      _check_scalar(ans)
     dtype = onp.result_type(ans)
     if not (holomorphic or onp.issubdtype(dtype, onp.floating)):
       msg = ("Gradient only defined for real-output functions (with dtype that "
