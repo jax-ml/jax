@@ -2720,6 +2720,13 @@ def percentile(a, q, axis=None, out=None, overwrite_input=False,
   return quantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
                   interpolation=interpolation, keepdims=keepdims)
 
+
+@_wraps(onp.median)
+def median(a, axis=None, out=None, overwrite_input=False, keepdims=False):
+    q = 0.5
+    return quantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
+                    keepdims=keepdims)
+
 ### track unimplemented functions
 
 def _not_implemented(fun):

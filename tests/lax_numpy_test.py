@@ -1520,6 +1520,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for (op, q_rng) in (
           ("percentile", jtu.rand_uniform(low=0., high=100.)),
           ("quantile", jtu.rand_uniform(low=0., high=1.)),
+          ("median", jtu.rand_uniform(low=0., high=1.)),
         )
         for a_dtype in float_dtypes
         for a_shape, axis in (
@@ -1535,7 +1536,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                    axis, keepdims):
     if op == "quantile" and numpy_version < (1, 15):
       raise SkipTest("Numpy < 1.15 does not have np.quantile")
-    args_maker = lambda: [a_rng(a_shape, a_dtype), q_rng(q_shape, q_dtype)]
+    if op == "median":
+        args_maker = lambda: [a_rng(a_shape, a_dtype)]
+    else:
+        args_maker = lambda: [a_rng(a_shape, a_dtype), q_rng(q_shape, q_dtype)]
     onp_fun = partial(getattr(onp, op), axis=axis, keepdims=keepdims)
     lnp_fun = partial(getattr(lnp, op), axis=axis, keepdims=keepdims)
     # TODO(phawkins): we currently set dtype=False because we aren't as
