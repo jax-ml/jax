@@ -106,7 +106,7 @@ set_printoptions = onp.set_printoptions
 # behavior when using JIT. This is different from numpy which treats scalars
 # differently (i.e. isintance(1, onp.ndarray) == False).
 _arraylike_types = (onp.ndarray, UnshapedArray, DeviceArray,
-                    bool, int, float, complex)
+                    bool, float, complex) + six.integer_types
 
 class _ArrayMeta(type(onp.ndarray)):
   """Metaclass for overriding ndarray isinstance checks."""
