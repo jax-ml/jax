@@ -184,7 +184,7 @@ class CoreTest(jtu.JaxTestCase):
     try:
       tree_multimap(f, xs, ys_bad)
       assert False
-    except TypeError:
+    except (TypeError, ValueError):
       pass
 
   def test_print_jaxpr_compound(self):
