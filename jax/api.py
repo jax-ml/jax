@@ -1109,8 +1109,10 @@ def _device_get(x):
 
 def device_get(x):
   for y in tree_leaves(x):
-    if not isinstance(y, core.Tracer):
+    try:
       y.copy_to_host_async()
+    except AttributeError:
+      pass
   return tree_map(_device_get, x)
 
 
