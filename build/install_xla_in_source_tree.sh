@@ -53,6 +53,7 @@ fi
 # Copy the XLA dependencies into jax/lib, fixing up some imports to point to the
 # new location.
 cp -f "$(rlocation __main__/jaxlib/lapack.so)" "${TARGET}/jaxlib"
+cp -f "$(rlocation __main__/jaxlib/pytree.so)" "${TARGET}/jaxlib"
 cp -f "$(rlocation __main__/jaxlib/version.py)" "${TARGET}/jaxlib"
 cp -f "$(rlocation org_tensorflow/tensorflow/compiler/xla/python/xla_extension.so)" \
   "${TARGET}/jaxlib"

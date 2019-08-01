@@ -33,7 +33,7 @@ from jax.abstract_arrays import ShapedArray
 from jax.core import Primitive
 from jax.lax import (standard_primitive, standard_unop, binop_dtype_rule,
                      _float, _complex, _input_dtype, _broadcasting_select)
-from jaxlib import lapack
+from jax.lib import lapack
 
 # traceables
 

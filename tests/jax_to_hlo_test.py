@@ -19,7 +19,7 @@ from __future__ import print_function
 from absl.testing import absltest
 import jax.numpy as np
 from jax.tools.jax_to_hlo import jax_to_hlo
-from jaxlib import xla_client
+from jax.lib import xla_client
 
 
 class JaxToHloTest(absltest.TestCase):
