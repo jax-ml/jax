@@ -101,7 +101,12 @@ set_printoptions = onp.set_printoptions
 # array base class). We can override the isinstance behavior directly, without
 # having the complexity of multiple inheritance on those classes, by defining
 # the ndarray class to have a metaclass with special __instancecheck__ behavior.
-_arraylike_types = (onp.ndarray, UnshapedArray, DeviceArray)
+#
+# Note that scalar python types are included to have consistent isinstance
+# behavior when using JIT. This is different from numpy which treats scalars
+# differently (i.e. isintance(1, onp.ndarray) == False).
+_arraylike_types = (onp.ndarray, UnshapedArray, DeviceArray,
+                    bool, int, float, complex)
 
 class _ArrayMeta(type(onp.ndarray)):
   """Metaclass for overriding ndarray isinstance checks."""
