@@ -53,6 +53,9 @@ tree_util.register_pytree_node(AnObject, lambda o: ((o.x, o.y), o.z),
                                lambda z, xy: AnObject(xy[0], xy[1], z))
 
 PYTREES = [
+    ("foo",),
+    ((),),
+    (([()]),),
     ((1, 2),),
     (((1, "foo"), ["bar", (3, None, 7)]),),
     ([3],),
@@ -67,6 +70,15 @@ class TreeTest(jtu.JaxTestCase):
   @parameterized.parameters(*PYTREES)
   def testRoundtrip(self, inputs):
     xs, tree = tree_util.tree_flatten(inputs)
+    actual = tree_util.tree_unflatten(tree, xs)
+    self.assertEqual(actual, inputs)
+
+  @parameterized.parameters(*PYTREES)
+  def testRoundtripWithFlattenUpTo(self, inputs):
+    _, tree = tree_util.tree_flatten(inputs)
+    if not hasattr(tree, "flatten_up_to"):
+      self.skipTest("Test requires Jaxlib >= 0.1.23")
+    xs = tree.flatten_up_to(inputs)
     actual = tree_util.tree_unflatten(tree, xs)
     self.assertEqual(actual, inputs)
 
@@ -95,7 +107,25 @@ class TreeTest(jtu.JaxTestCase):
     _, tree = tree_util.tree_flatten(((1, 2, 3), (4,)))
     _, c0 = tree_util.tree_flatten((0, 0, 0))
     _, c1 = tree_util.tree_flatten((7,))
+    if not callable(tree.children):
+      self.skipTest("Test requires Jaxlib >= 0.1.23")
     self.assertEqual([c0, c1], tree.children())
+
+  def testFlattenUpTo(self):
+    _, tree = tree_util.tree_flatten([(1, 2), None, ATuple(foo=3, bar=7)])
+    if not hasattr(tree, "flatten_up_to"):
+      self.skipTest("Test requires Jaxlib >= 0.1.23")
+    out = tree.flatten_up_to([({
+        "foo": 7
+    }, (3, 4)), None, ATuple(foo=(11, 9), bar=None)])
+    self.assertEqual(out, [{"foo": 7}, (3, 4), (11, 9), None])
+
+  def testTreeMultimap(self):
+    x = ((1, 2), (3, 4, 5))
+    y = (([3], None), ({"foo": "bar"}, 7, [5, 6]))
+    out = tree_util.tree_multimap(lambda *xs: tuple(xs), x, y)
+    self.assertEqual(out, (((1, [3]), (2, None)),
+                           ((3, {"foo": "bar"}), (4, 7), (5, [5, 6]))))
 
 
 if __name__ == "__main__":

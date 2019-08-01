@@ -48,6 +48,7 @@ from .util import unzip2, partial, safe_map
 # TODO(phawkins): use the first case unconditionally when the minimum Jaxlib
 # version has been increased to 0.1.23.
 if pytree:
+
   def tree_map(f, tree):
     """Map a function over a pytree to produce a new pytree.
 
@@ -63,7 +64,6 @@ if pytree:
     leaves, treedef = pytree.flatten(tree)
     return treedef.unflatten(map(f, leaves))
 
-
   def tree_multimap(f, tree, *rest):
     """Map a multi-input function over pytree args to produce a new pytree.
 
@@ -72,20 +72,16 @@ if pytree:
         corresponding leaves of the pytrees.
       tree: a pytree to be mapped over, with each leaf providing the first
         positional argument to `f`.
-      *rest: a tuple of pytrees, each with the same structure as `tree`.
-
+      *rest: a tuple of pytrees, each of which has the same structure as tree or
+        or has tree as a prefix.
     Returns:
       A new pytree with the same structure as `tree` but with the value at each
       leaf given by `f(x, *xs)` where `x` is the value at the corresponding leaf
-      in `tree` and `xs` is the tuple of values at corresponding leaves in `rest`.
+      in `tree` and `xs` is the tuple of values at corresponding nodes in
+      `rest`.
     """
     leaves, treedef = pytree.flatten(tree)
-    all_leaves = [leaves]
-    for r in rest:
-      r_leaves, r_treedef = pytree.flatten(r)
-      if treedef != r_treedef:
-        raise TypeError("Mismatch pytrees: {} != {}".format(treedef, r_treedef))
-      all_leaves.append(r_leaves)
+    all_leaves = [leaves] + [treedef.flatten_up_to(r) for r in rest]
     return treedef.unflatten(f(*xs) for xs in zip(*all_leaves))
 
   def tree_leaves(tree):
