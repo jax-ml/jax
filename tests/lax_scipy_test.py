@@ -68,6 +68,7 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record("log_ndtr", 1, float_dtypes, jtu.rand_default(), True),
     op_record("ndtri", 1, float_dtypes, jtu.rand_uniform(0.05, 0.95), True),
     op_record("ndtr", 1, float_dtypes, jtu.rand_default(), True),
+    op_record("entr", 1, float_dtypes, jtu.rand_default(), True),
 ]
 
 CombosWithReplacement = itertools.combinations_with_replacement
@@ -120,6 +121,24 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
     if test_autodiff:
       jtu.check_grads(lax_op, args, order=1, atol=1e-3, rtol=3e-3, eps=1e-3)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_inshape={}_d={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), d),
+       "rng": jtu.rand_positive(), "shape": shape, "dtype": dtype, "d": d}
+      for shape in all_shapes
+      for dtype in float_dtypes
+      for d in [1, 2, 5]))
+  def testMultigammaln(self, rng, shape, dtype, d):
+    def scipy_fun(a):
+      return osp_special.multigammaln(a, d)
+
+    def lax_fun(a):
+      return lsp_special.multigammaln(a, d)
+
+    args_maker = lambda: [rng(shape, dtype) + (d - 1) / 2.]
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
   def testIssue980(self):
     x = onp.full((4,), -1e20, dtype=onp.float32)
