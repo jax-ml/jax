@@ -1744,10 +1744,30 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       jtu.cases_from_list(
+        {"testcase_name": "_shape={}_dtype={}_axis={}_ddof={}_keepdims={}"
+         .format(shape, dtype, axis, ddof, keepdims),
+         "shape": shape, "dtype": dtype, "out_dtype": out_dtype, "axis": axis,
+         "ddof": ddof, "keepdims": keepdims, "rng": rng}
+        for shape in [(5,), (10, 5)]
+        for dtype in all_dtypes
+        for out_dtype in number_dtypes
+        for axis in [None, 0, -1]
+        for ddof in [0, 1, 2]
+        for keepdims in [False, True]
+        for rng in [jtu.rand_default()]))
+  def testVar(self, shape, dtype, out_dtype, axis, ddof, keepdims, rng):
+    args_maker = self._GetArgsMaker(rng, [shape], [dtype])
+    onp_fun = partial(onp.var, dtype=out_dtype, axis=axis, ddof=ddof, keepdims=keepdims)
+    lnp_fun = partial(lnp.var, dtype=out_dtype, axis=axis, ddof=ddof, keepdims=keepdims)
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(
+      jtu.cases_from_list(
         {"testcase_name": "_shape={}_dtype={}_rowvar={}_ddof={}_bias={}".format(
             shape, dtype, rowvar, ddof, bias),
-         "shape":shape, "dtype":dtype, "rowvar":rowvar, "ddof":ddof,
-         "bias":bias, "rng": rng}
+         "shape": shape, "dtype": dtype, "rowvar": rowvar, "ddof": ddof,
+         "bias": bias, "rng": rng}
         for shape in [(5,), (10, 5), (3, 10)]
         for dtype in all_dtypes
         for rowvar in [True, False]
@@ -1769,8 +1789,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       jtu.cases_from_list(
         {"testcase_name": "_shape={}_dtype={}_rowvar={}_ddof={}_bias={}".format(
             shape, dtype, rowvar, ddof, bias),
-         "shape":shape, "dtype":dtype, "rowvar":rowvar, "ddof":ddof,
-         "bias":bias, "rng": rng}
+         "shape": shape, "dtype": dtype, "rowvar": rowvar, "ddof": ddof,
+         "bias": bias, "rng": rng}
         for shape in [(5,), (10, 5), (3, 10)]
         for dtype in number_dtypes
         for rowvar in [True, False]
