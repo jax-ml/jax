@@ -104,7 +104,7 @@ set_printoptions = onp.set_printoptions
 #
 # Note that scalar python types are included to have consistent isinstance
 # behavior when using JIT. This is different from numpy which treats scalars
-# differently (i.e. isintance(1, onp.ndarray) == False).
+# differently (i.e. isinstance(1, onp.ndarray) == False).
 _arraylike_types = (onp.ndarray, UnshapedArray, DeviceArray,
                     bool, float, complex) + six.integer_types
 
