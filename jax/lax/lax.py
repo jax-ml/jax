@@ -3796,8 +3796,16 @@ def _sort_jvp_rule(g, operand, dimension):
   _, g_out = sort_key_val(operand, g, dimension)
   return g_out
 
+def _sort_batch_rule(batched_args, batch_dims, dimension):
+  operand, = batched_args
+  bdim, = batch_dims
+  dimension = dimension % (operand.ndim - 1)
+  new_dimension = dimension + (bdim <= dimension)
+  return sort(operand, dimension=new_dimension), bdim
+
 sort_p = standard_primitive(sort_shape, _input_dtype, 'sort')
 ad.defjvp(sort_p, _sort_jvp_rule)
+batching.primitive_batchers[sort_p] = _sort_batch_rule
 
 
 def _sort_key_val_abstract_eval(keys, values, dimension):
