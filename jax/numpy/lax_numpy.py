@@ -1259,7 +1259,7 @@ def _pad(array, pad_width, mode, constant_values):
     raise NotImplementedError(msg.format(mode))
 
 @_wraps(onp.pad)
-def pad(array, pad_width, mode, constant_values=0):
+def pad(array, pad_width, mode='constant', constant_values=0):
   return _pad(array, pad_width, mode, constant_values)
 
 
