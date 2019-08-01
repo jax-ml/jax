@@ -131,9 +131,9 @@ class StaxTest(jtu.JaxTestCase):
                         .format(input_shape, nonlinear),
        "input_shape": input_shape, "nonlinear": nonlinear}
       for input_shape in [(2, 3), (2, 3, 4)]
-      for nonlinear in [stax.Relu, stax.Elu, stax.LeakyRelu]))
+      for nonlinear in ["Relu", "Elu", "LeakyRelu"]))
   def testNonlinearShape(self, input_shape, nonlinear):
-    init_fun, apply_fun = nonlinear
+    init_fun, apply_fun = getattr(stax, nonlinear)
     _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)
 
   @parameterized.named_parameters(jtu.cases_from_list(
