@@ -42,6 +42,8 @@ import jax.numpy as np
 def relu(x): return np.maximum(x, 0.)
 def softplus(x): return np.logaddexp(x, 0.)
 def sigmoid(x): return 1. / (1. + np.exp(-x))
+def elu(x): return np.where(x > 0, x, np.exp(x) - 1)
+def leaky_relu(x): return np.where(x >= 0, x, 0.01 * x)
 
 def logsoftmax(x, axis=-1):
   """Apply log softmax to an array of logits, log-normalizing along an axis."""
@@ -196,6 +198,9 @@ Exp = elementwise(np.exp)
 LogSoftmax = elementwise(logsoftmax, axis=-1)
 Softmax = elementwise(softmax, axis=-1)
 Softplus = elementwise(softplus)
+Sigmoid = elementwise(sigmoid)
+Elu = elementwise(elu)
+LeakyRelu = elementwise(leaky_relu)
 
 
 def _pooling_layer(reducer, init_val, rescaler=None):
