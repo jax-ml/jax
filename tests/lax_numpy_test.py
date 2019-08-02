@@ -1745,8 +1745,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       jtu.cases_from_list(
-        {"testcase_name": "_shape={}_dtype={}_axis={}_ddof={}_keepdims={}"
-         .format(shape, dtype, axis, ddof, keepdims),
+        {"testcase_name":
+         "_shape={}_dtype={}_out_dtype={}_axis={}_ddof={}_keepdims={}"
+         .format(shape, dtype, out_dtype, axis, ddof, keepdims),
          "shape": shape, "dtype": dtype, "out_dtype": out_dtype, "axis": axis,
          "ddof": ddof, "keepdims": keepdims, "rng": rng}
         for shape in [(5,), (10, 5)]

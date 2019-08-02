@@ -34,6 +34,7 @@ jax.scipy.special
   :toctree: _autosummary
 
    digamma
+   entr
    erf
    erfc
    erfinv
@@ -42,6 +43,7 @@ jax.scipy.special
    log_ndtr
    logit
    logsumexp
+   multigammaln
    ndtr
    ndtri
    xlog1py
