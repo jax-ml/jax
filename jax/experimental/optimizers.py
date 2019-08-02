@@ -506,5 +506,6 @@ def pack_optimizer_state(marked_pytree):
   sentinels, tree_def = tree_flatten(marked_pytree)
   assert all(isinstance(s, JoinPoint) for s in sentinels)
   subtrees = [s.subtree for s in sentinels]
-  packed_state, subtree_defs = unzip2(map(tree_flatten, subtrees))
+  states_flat, subtree_defs = unzip2(map(tree_flatten, subtrees))
+  packed_state = pack(map(pack, states_flat))
   return OptimizerState(packed_state, tree_def, subtree_defs)

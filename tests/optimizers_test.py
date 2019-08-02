@@ -288,6 +288,13 @@ class OptimizerTests(jtu.JaxTestCase):
     J2 = jacfwd(loss, argnums=(0,))(initial_params)
     self.assertAllClose(J1, J2, check_dtypes=True)
 
+  def testUnpackPackRoundTrip(self):
+    opt_init, _, _ = optimizers.momentum(0.1, mass=0.9)
+    params = [{'w': onp.random.randn(1, 2), 'bias': onp.random.randn(2)}]
+    expected = opt_init(params)
+    ans = optimizers.pack_optimizer_state(
+        optimizers.unpack_optimizer_state(expected))
+    self.assertEqual(ans, expected)
 
 if __name__ == '__main__':
   absltest.main()
