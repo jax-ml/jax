@@ -166,7 +166,7 @@ cdef void blas_ztrsm(void* out, void** data) nogil:
 register_cpu_custom_call_target(b"blas_ztrsm", <void*>(blas_ztrsm))
 
 
-def jax_trsm(c, alpha, a, b, left_side=False, lower=False, trans_a=False,
+def trsm(c, alpha, a, b, left_side=False, lower=False, trans_a=False,
              conj_a=False, diag=False):
   b_shape = c.GetShape(b)
   dtype = b_shape.element_type()
@@ -214,7 +214,7 @@ def jax_trsm(c, alpha, a, b, left_side=False, lower=False, trans_a=False,
           Shape.array_shape(dtype, a_shape.dimensions(), (0, 1)),
           Shape.array_shape(dtype, b_shape.dimensions(), (0, 1)),
       ))
-
+jax_trsm = trsm
 
 # ?getrf: LU decomposition
 
@@ -305,7 +305,7 @@ cdef void lapack_zgetrf(void* out_tuple, void** data) nogil:
 
 register_cpu_custom_call_target(b"lapack_zgetrf", <void*>(lapack_zgetrf))
 
-def jax_getrf(c, a):
+def getrf(c, a):
   assert sizeof(int32_t) == sizeof(int)
 
   a_shape = c.GetShape(a)
@@ -330,7 +330,7 @@ def jax_getrf(c, a):
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
 
-  return c.CustomCall(
+  out = c.CustomCall(
       fn,
       operands=(
         c.ConstantS32Scalar(b),
@@ -358,8 +358,10 @@ def jax_getrf(c, a):
             batch_dims + (m, n),
             (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
       ))
+  return tuple(c.GetTupleElement(out, i) for i in range(3))
 
-
+def jax_getrf(c, a):
+  return c.Tuple(*getrf(c, a))
 
 # ?potrf: Cholesky decomposition
 
@@ -429,7 +431,7 @@ cdef void lapack_zpotrf(void* out_tuple, void** data) nogil:
 
 register_cpu_custom_call_target(b"lapack_zpotrf", <void*>(lapack_zpotrf))
 
-def jax_potrf(c, a, lower=False):
+def potrf(c, a, lower=False):
   assert sizeof(int32_t) == sizeof(int)
 
   a_shape = c.GetShape(a)
@@ -448,7 +450,7 @@ def jax_potrf(c, a, lower=False):
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
 
-  return c.CustomCall(
+  out = c.CustomCall(
       fn,
       operands=(c.ConstantS32Scalar(int(lower)), c.ConstantS32Scalar(n), a),
       shape_with_layout=Shape.tuple_shape((
@@ -460,6 +462,10 @@ def jax_potrf(c, a, lower=False):
           Shape.array_shape(np.dtype(np.int32), (), ()),
           Shape.array_shape(dtype, (n, n), (0, 1)),
       ))
+  return tuple(c.GetTupleElement(out, i) for i in range(2))
+
+def jax_potrf(c, a, lower=False):
+  return c.Tuple(*potrf(c, a, lower))
 
 
 # ?gesdd: Singular value decomposition
@@ -555,7 +561,7 @@ cdef void lapack_dgesdd(void* out_tuple, void** data) nogil:
     ldvt = min(m, n)
 
   # First perform a workspace query to get the optimal lwork
-  # NB: We perform a workspace query with malloc and free for the work array, 
+  # NB: We perform a workspace query with malloc and free for the work array,
   # because it is officially recommended in the LAPACK documentation
   cdef double wkopt = 0
   cdef int lwork = -1
@@ -667,7 +673,7 @@ cdef void lapack_zgesdd(void* out_tuple, void** data) nogil:
 
 register_cpu_custom_call_target(b"lapack_zgesdd", <void*>(lapack_zgesdd))
 
-def jax_gesdd(c, a, full_matrices=True, compute_uv=True):
+def gesdd(c, a, full_matrices=True, compute_uv=True):
   assert sizeof(int32_t) == sizeof(int)
 
   a_shape = c.GetShape(a)
@@ -720,8 +726,11 @@ def jax_gesdd(c, a, full_matrices=True, compute_uv=True):
           Shape.array_shape(np.dtype(np.int32), (), ()),
           Shape.array_shape(dtype, (m, n), (0, 1)),
       ))
-  return c.Tuple(c.GetTupleElement(out, 1), c.GetTupleElement(out, 2),
-                 c.GetTupleElement(out, 3), c.GetTupleElement(out, 4))
+  return (c.GetTupleElement(out, 1), c.GetTupleElement(out, 2),
+          c.GetTupleElement(out, 3), c.GetTupleElement(out, 4))
+
+def jax_gesdd(c, a, full_matrices=True, compute_uv=True):
+  return c.Tuple(*gesdd(c, a, full_matrices, compute_uv))
 
 
 # syevd: Symmetric eigendecomposition
@@ -861,7 +870,7 @@ cdef void lapack_zheevd(void* out_tuple, void** data) nogil:
 
 register_cpu_custom_call_target(b"lapack_zheevd", <void*>(lapack_zheevd))
 
-def jax_syevd(c, a, lower=False):
+def syevd(c, a, lower=False):
   assert sizeof(int32_t) == sizeof(int)
 
   a_shape = c.GetShape(a)
@@ -928,8 +937,11 @@ def jax_syevd(c, a, lower=False):
           Shape.array_shape(np.dtype(np.int32), (), ()),
           Shape.array_shape(dtype, dims, layout),
       ))
-  return c.Tuple(c.GetTupleElement(out, 0), c.GetTupleElement(out, 1),
-                 c.GetTupleElement(out, 2))
+  return (c.GetTupleElement(out, 0), c.GetTupleElement(out, 1),
+          c.GetTupleElement(out, 2))
+
+def jax_syevd(c, a, lower=False):
+  return c.Tuple(*syevd(c, a, lower))
 
 
 # geev: Nonsymmetric eigendecomposition
@@ -1140,7 +1152,7 @@ register_cpu_custom_call_target(b"lapack_zgeev", <void*>(lapack_zgeev))
 
 
 
-def jax_geev(c, a):
+def geev(c, a):
   assert sizeof(int32_t) == sizeof(int)
 
   a_shape = c.GetShape(a)
@@ -1212,11 +1224,12 @@ def jax_geev(c, a):
           Shape.array_shape(dtype, dims, layout),
       ))
   if real:
-    return c.Tuple(
-      c.Complex(c.GetTupleElement(out, 3), c.GetTupleElement(out, 4)),
-      c.GetTupleElement(out, 5), c.GetTupleElement(out, 6),
-      c.GetTupleElement(out, 7))
+    return (c.Complex(c.GetTupleElement(out, 3), c.GetTupleElement(out, 4)),
+            c.GetTupleElement(out, 5), c.GetTupleElement(out, 6),
+            c.GetTupleElement(out, 7))
   else:
-    return c.Tuple(
-      c.GetTupleElement(out, 2), c.GetTupleElement(out, 3),
-      c.GetTupleElement(out, 4), c.GetTupleElement(out, 5))
+    return (c.GetTupleElement(out, 2), c.GetTupleElement(out, 3),
+            c.GetTupleElement(out, 4), c.GetTupleElement(out, 5))
+
+def jax_geev(c, a):
+  return c.Tuple(*geev(c, a))

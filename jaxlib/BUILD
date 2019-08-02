@@ -29,7 +29,10 @@ pyx_library(
 
 py_library(
     name = "jaxlib",
-    srcs = ["version.py"],
+    srcs = [
+      "cusolver.py",
+      "version.py"
+    ],
 )
 
 tf_pybind_extension(
@@ -49,6 +52,32 @@ tf_pybind_extension(
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@pybind11",
+    ],
+)
+
+tf_pybind_extension(
+    name = "cusolver_kernels",
+    srcs = ["cusolver.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+        "-Wno-c++98-c++11-compat",
+    ],
+    features = ["-use_header_modules"],
+    module_name = "cusolver_kernels",
+    deps = [
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/hash",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
+        "@local_config_cuda//cuda:cudart",
+        "@local_config_cuda//cuda:cuda_headers",
+        "@local_config_cuda//cuda:cusolver",
         "@pybind11",
     ],
 )

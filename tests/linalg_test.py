@@ -163,8 +163,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for lower in [False, True]
       for rng in [jtu.rand_default()]))
   # TODO(phawkins): enable when there is an eigendecomposition implementation
-  # for GPU/TPU.
-  @jtu.skip_on_devices("gpu", "tpu")
+  # for TPU.
+  @jtu.skip_on_devices("tpu")
   def testEigh(self, n, dtype, lower, rng):
     _skip_if_unsupported_type(dtype)
     args_maker = lambda: [rng((n, n), dtype)]
@@ -196,8 +196,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for rng in [jtu.rand_default()]
       for lower in [True, False]))
   # TODO(phawkins): enable when there is an eigendecomposition implementation
-  # for GPU/TPU.
-  @jtu.skip_on_devices("gpu", "tpu")
+  # for TPU.
+  @jtu.skip_on_devices("tpu")
   def testEighGrad(self, shape, dtype, rng, lower):
     self.skipTest("Test fails with numeric errors.")
     uplo = "L" if lower else "U"
@@ -224,8 +224,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for lower in [True, False]
       for eps in [1e-4]))
   # TODO(phawkins): enable when there is an eigendecomposition implementation
-  # for GPU/TPU.
-  @jtu.skip_on_devices("gpu", "tpu")
+  # for TPU.
+  @jtu.skip_on_devices("tpu")
   def testEighGradVectorComplex(self, shape, dtype, rng, lower, eps):
     _skip_if_unsupported_type(dtype)
     # Special case to test for complex eigenvector grad correctness.
@@ -263,7 +263,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for shape in [(1, 1), (4, 4), (5, 5)]
       for dtype in float_types + complex_types
       for rng in [jtu.rand_default()]))
-  @jtu.skip_on_devices("gpu", "tpu")
+  @jtu.skip_on_devices("tpu")
   def testEighBatching(self, shape, dtype, rng):
     _skip_if_unsupported_type(dtype)
     shape = (10,) + shape
@@ -318,7 +318,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for full_matrices in [False, True]
       for compute_uv in [False, True]
       for rng in [jtu.rand_default()]))
-  @jtu.skip_on_devices("gpu", "tpu")
+  @jtu.skip_on_devices("tpu")
   def testSVD(self, m, n, dtype, full_matrices, compute_uv, rng):
     _skip_if_unsupported_type(dtype)
     args_maker = lambda: [rng((m, n), dtype)]
@@ -414,7 +414,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     if not full_matrices and m >= n:
         jtu.check_jvp(np.linalg.qr, partial(jvp, np.linalg.qr), (a,))
 
-  @jtu.skip_on_devices("gpu", "tpu")
+  @jtu.skip_on_devices("tpu")
   def testQrBatching(self):
     shape = (10, 4, 5)
     dtype = np.float32
@@ -476,7 +476,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(np.linalg.inv, args_maker, check_dtypes=True)
 
   # Regression test for incorrect type for eigenvalues of a complex matrix.
-  @jtu.skip_on_devices("gpu", "tpu")
+  @jtu.skip_on_devices("tpu")
   def testIssue669(self):
     def test(x):
       val, vec = np.linalg.eigh(x)
@@ -499,9 +499,9 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   def testLu(self, shape, dtype, rng):
     _skip_if_unsupported_type(dtype)
     args_maker = lambda: [rng(shape, dtype)]
-
-    self._CheckAgainstNumpy(jsp.linalg.lu, osp.linalg.lu, args_maker,
-                            check_dtypes=True, tol=1e-3)
+    x, = args_maker()
+    p, l, u = jsp.linalg.lu(x)
+    self.assertAllClose(x, onp.matmul(p, onp.matmul(l, u)), check_dtypes=True)
     self._CompileAndCheck(jsp.linalg.lu, args_maker, check_dtypes=True)
 
   # TODO(phawkins): figure out why this test fails on Travis and reenable.
@@ -555,8 +555,13 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     _skip_if_unsupported_type(dtype)
     args_maker = lambda: [rng((n, n), dtype)]
 
-    self._CheckAgainstNumpy(jsp.linalg.lu_factor, osp.linalg.lu_factor,
-                            args_maker, check_dtypes=True, tol=1e-3)
+    x, = args_maker()
+    lu, piv = jsp.linalg.lu_factor(x)
+    l = onp.tril(lu, -1) + onp.eye(n, dtype=dtype)
+    u = onp.triu(lu)
+    for i in range(n):
+      x[[i, piv[i]],] = x[[piv[i], i],]
+    self.assertAllClose(x, onp.matmul(l, u), check_dtypes=True, rtol=1e-3)
     self._CompileAndCheck(jsp.linalg.lu_factor, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(

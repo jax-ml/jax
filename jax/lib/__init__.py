@@ -47,3 +47,10 @@ try:
   from jaxlib import pytree
 except ImportError:
   pytree = None
+
+# TODO(phawkins): make the import unconditional when the minimum Jaxlib version
+# has been increased to 0.1.23.
+try:
+  from jaxlib import cusolver
+except ImportError:
+  cusolver = None
