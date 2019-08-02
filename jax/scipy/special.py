@@ -99,6 +99,27 @@ def xlog1py(x, y):
   return lax._safe_mul(x, lax.log1p(y))
 
 
+@_wraps(osp_special.entr)
+def entr(x):
+  x, = _promote_args_like(osp_special.entr, x)
+  return lax.select(lax.lt(x, _constant_like(x, 0)),
+                    lax.full_like(x, -onp.inf),
+                    lax.neg(xlogy(x, x)))
+
+
+@_wraps(osp_special.multigammaln)
+def multigammaln(a, d):
+  a, = _promote_args_like(lambda a: osp_special.multigammaln(a, 1), a)
+  d = lax.convert_element_type(d, lax.dtype(a))
+  constant = lax.mul(lax.mul(lax.mul(_constant_like(a, 0.25), d),
+                             lax.sub(d, _constant_like(a, 1))),
+                     lax.log(_constant_like(a, onp.pi)))
+  res = np.sum(gammaln(np.expand_dims(a, axis=-1) -
+                       lax.div(np.arange(d), _constant_like(a, 2))),
+               axis=-1)
+  return res + constant
+
+
 # Normal distributions
 
 # Functions "ndtr" and "ndtri" are derived from calculations made in:
