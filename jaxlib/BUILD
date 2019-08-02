@@ -30,8 +30,8 @@ pyx_library(
 py_library(
     name = "jaxlib",
     srcs = [
-      "cusolver.py",
-      "version.py"
+        "cusolver.py",
+        "version.py"
     ],
 )
 
@@ -75,8 +75,8 @@ tf_pybind_extension(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
-        "@local_config_cuda//cuda:cudart",
         "@local_config_cuda//cuda:cuda_headers",
+        "@local_config_cuda//cuda:cudart",
         "@local_config_cuda//cuda:cusolver",
         "@pybind11",
     ],
