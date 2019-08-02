@@ -162,6 +162,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     max
     maximum
     mean
+    median
     meshgrid
     min
     minimum
@@ -228,7 +229,9 @@ Not every function in NumPy is implemented; contributions are welcome!
     transpose
     tri
     tril
+    tril_indices
     triu
+    triu_indices
     true_divide
     vander
     var
