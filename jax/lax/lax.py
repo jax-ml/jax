@@ -45,6 +45,7 @@ from ..interpreters import xla
 from ..interpreters import pxla
 from ..interpreters import ad
 from ..interpreters import batching
+from ..interpreters import fdb
 from ..util import curry, memoize, safe_zip, unzip2, prod
 from ..tree_util import build_tree, tree_unflatten, tree_map
 from ..lib import xla_bridge
@@ -1589,6 +1590,18 @@ ad.defjvp2(tanh_p, lambda g, ans, x: mul(g, sub(_one(x), mul(ans, ans))))
 
 sin_p = standard_unop(_float | _complex, 'sin')
 ad.defjvp(sin_p, lambda g, x: mul(g, cos(x)))
+def make_derivs_sin(primals, order):
+  x, = primals
+  sin_x = sin(x)
+  def derivs():
+    cos_x = cos(x)
+    yield lambda vs: fdb.product(map(operator.itemgetter(0), vs)) * cos_x
+    yield lambda vs: fdb.product(map(operator.itemgetter(0), vs)) * -sin_x
+    yield lambda vs: fdb.product(map(operator.itemgetter(0), vs)) * -cos_x
+    yield lambda vs: fdb.product(map(operator.itemgetter(0), vs)) * sin_x
+  derivs = list(itertools.islice(itertools.cycle(derivs()), order))
+  return sin_x, derivs
+fdb.jet_rules[sin_p] = make_derivs_sin
 
 cos_p = standard_unop(_float | _complex, 'cos')
 ad.defjvp(cos_p, lambda g, x: neg(mul(g, sin(x))))
@@ -2125,6 +2138,20 @@ dot_p = standard_primitive(_dot_shape_rule, _dot_dtype_rule, 'dot',
                            _dot_translation_rule)
 ad.defbilinear(dot_p, _dot_transpose_lhs, _dot_transpose_rhs)
 batching.primitive_batchers[dot_p] = _dot_batch_rule
+
+def make_derivs_dot(primals, order):
+  a, b = primals
+  def fst(vs):
+    (va, vb), = vs
+    return np.dot(va, b) + np.dot(a, vb)
+  def snd(vs):
+    (v0a, v0b), (v1a, v1b) = vs
+    return np.dot(v0a, v1b) + np.dot(v1a, v0b)
+  def nth(vs):
+    return fdb.zero_term
+  derivs = it.chain([fst, snd], it.repeat(nth))
+  return np.dot(a, b), list(it.islice(derivs, order))
+fdb.jet_rules[dot_p] = make_derivs_dot
 
 
 def _dot_general_shape_rule(lhs, rhs, dimension_numbers, precision):

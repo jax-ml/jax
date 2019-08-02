@@ -60,6 +60,7 @@ from .interpreters import pxla
 from .interpreters import ad
 from .interpreters import batching
 from .interpreters import parallel
+from .interpreters import fdb
 from .config import flags, config
 
 map = safe_map
@@ -824,6 +825,11 @@ def _parallelize(fun):
 
   return pfun
 
+
+def jet(fun, primals, series):
+  f = lu.wrap_init(fun)
+  out_primal, out_terms = fdb.jet(f).call_wrapped(primals, series)
+  return out_primal, out_terms
 
 def jvp(fun, primals, tangents):
   """Computes a (forward-mode) Jacobian-vector product of `fun`.
