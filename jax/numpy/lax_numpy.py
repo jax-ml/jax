@@ -2854,8 +2854,8 @@ setattr(DeviceArray, "astype", lax.convert_element_type)
 
 
 # Override NumPy's public API.
-
-_HANDLED_TYPES = (DeviceArray, core.Tracer, onp.ndarray, numbers.Number)
+_ARRAY_TYPES = DeviceArray, core.Tracer
+_HANDLED_TYPES = _ARRAY_TYPES + (onp.ndarray, numbers.Number)
 
 
 def __array_ufunc__(self, ufunc, method, *inputs, **kwargs):
@@ -2914,12 +2914,14 @@ def __array_function__(self, func, types, args, kwargs):
   if lax_func is None:
     lax_func = _not_implemented(func)
   elif lax_func is func:
+    # Implementations of NumPy functions that work if at least one array
+    # argument is a JAX array.
     if func is onp.iscomplexobj:
       # This matchs NumPy's original implementation
       return issubclass(args[0].dtype.type, onp.complexfloating)
     elif func is onp.result_type:
       return onp.result_type(
-          *[x.dtype if isinstance(x, ndarray) else x for x in args])
+          *[x.dtype if isinstance(x, _ARRAY_TYPES) else x for x in args])
     elif func is onp.shape:
       return args[0].shape
     elif func is onp.ndim:

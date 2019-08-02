@@ -284,10 +284,12 @@ class Tracer(object):
   __slots__ = ['trace']
 
   def __array__(self):
-    # TODO(shoyer): update this error message, once __array_function__ support
-    # can be taken for granted.
-    raise Exception("Tracer can't be used with raw numpy functions. "
-                    "You might have\n  import numpy as np\ninstead of\n  import jax.numpy as np")
+    from .numpy.lax_numpy import numpy_version
+    msg = ("Tracer can't be used with functions that convert their arguments "
+           "into raw NumPy arrays.")
+    if numpy_version < (1, 17):
+      msg += " You might have\n  import numpy as np\ninstead of\n  import jax.numpy as np"
+    raise Exception(msg)
 
   def __init__(self, trace):
     self.trace = trace
