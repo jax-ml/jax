@@ -1083,8 +1083,6 @@ def var(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
   if out is not None:
     raise ValueError("var does not support the `out` argument.")
 
-  if ddof != 0:
-    raise NotImplementedError("Only implemented for ddof=0.")
   if dtype is None:
     if (onp.issubdtype(_dtype(a), onp.bool_) or
         onp.issubdtype(_dtype(a), onp.integer)):
@@ -1092,7 +1090,16 @@ def var(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
   centered = subtract(a, mean(a, axis, dtype=dtype, keepdims=True))
   if iscomplexobj(centered):
     centered = lax.abs(centered)
-  return mean(lax.mul(centered, centered), axis, dtype=dtype, keepdims=keepdims)
+
+  if axis is None:
+    normalizer = size(a)
+  else:
+    normalizer = onp.prod(onp.take(shape(a), axis))
+  normalizer = normalizer - ddof
+
+  return lax.div(
+      sum(lax.mul(centered, centered), axis, dtype=dtype, keepdims=keepdims),
+      lax.convert_element_type(normalizer, dtype))
 
 
 @_wraps(onp.std)
@@ -2719,6 +2726,13 @@ def percentile(a, q, axis=None, out=None, overwrite_input=False,
   q = true_divide(asarray(q), float32(100.0))
   return quantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
                   interpolation=interpolation, keepdims=keepdims)
+
+
+@_wraps(onp.median)
+def median(a, axis=None, out=None, overwrite_input=False, keepdims=False):
+    q = 0.5
+    return quantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
+                    keepdims=keepdims)
 
 ### track unimplemented functions
 
