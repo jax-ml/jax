@@ -75,7 +75,7 @@ from absl import app
 from absl import flags
 import jax.api
 import jax.numpy as np
-from jaxlib import xla_client
+from jax.lib import xla_client
 
 FLAGS = flags.FLAGS
 

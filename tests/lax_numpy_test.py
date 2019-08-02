@@ -606,7 +606,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     onp_fun = lambda x: onp.clip(x, a_min=a_min, a_max=a_max)
     lnp_fun = lambda x: lnp.clip(x, a_min=a_min, a_max=a_max)
     args_maker = lambda: [rng(shape, dtype)]
-    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    # TODO(phawkins): the promotion behavior changed in Numpy 1.17.
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -1522,9 +1523,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
          "rng": jtu.rand_default(), "shapes": shapes, "dtypes": dtypes}
         for shapes, dtypes in (
           ((), ()),
-          (((7,),), (onp.float32,)),
-          (((3,), (4,)), (onp.float32, onp.int32)),
-          (((3,), (0,), (4,)), (onp.int32, onp.float32, onp.int32)),
+          (((7,),), (onp.int32,)),
+          (((3,), (4,)), (onp.int32, onp.int32)),
+          (((3,), (1,), (4,)), (onp.int32, onp.int32, onp.int32)),
         )))
   def testIx_(self, rng, shapes, dtypes):
     args_maker = lambda: [rng(shape, dtype)
@@ -1547,6 +1548,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for (op, q_rng) in (
           ("percentile", jtu.rand_uniform(low=0., high=100.)),
           ("quantile", jtu.rand_uniform(low=0., high=1.)),
+          ("median", jtu.rand_uniform(low=0., high=1.)),
         )
         for a_dtype in float_dtypes
         for a_shape, axis in (
@@ -1562,7 +1564,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                    axis, keepdims):
     if op == "quantile" and numpy_version < (1, 15):
       raise SkipTest("Numpy < 1.15 does not have np.quantile")
-    args_maker = lambda: [a_rng(a_shape, a_dtype), q_rng(q_shape, q_dtype)]
+    if op == "median":
+        args_maker = lambda: [a_rng(a_shape, a_dtype)]
+    else:
+        args_maker = lambda: [a_rng(a_shape, a_dtype), q_rng(q_shape, q_dtype)]
     onp_fun = partial(getattr(onp, op), axis=axis, keepdims=keepdims)
     lnp_fun = partial(getattr(lnp, op), axis=axis, keepdims=keepdims)
     # TODO(phawkins): we currently set dtype=False because we aren't as
@@ -1837,10 +1842,30 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       jtu.cases_from_list(
+        {"testcase_name": "_shape={}_dtype={}_axis={}_ddof={}_keepdims={}"
+         .format(shape, dtype, axis, ddof, keepdims),
+         "shape": shape, "dtype": dtype, "out_dtype": out_dtype, "axis": axis,
+         "ddof": ddof, "keepdims": keepdims, "rng": rng}
+        for shape in [(5,), (10, 5)]
+        for dtype in all_dtypes
+        for out_dtype in number_dtypes
+        for axis in [None, 0, -1]
+        for ddof in [0, 1, 2]
+        for keepdims in [False, True]
+        for rng in [jtu.rand_default()]))
+  def testVar(self, shape, dtype, out_dtype, axis, ddof, keepdims, rng):
+    args_maker = self._GetArgsMaker(rng, [shape], [dtype])
+    onp_fun = partial(onp.var, dtype=out_dtype, axis=axis, ddof=ddof, keepdims=keepdims)
+    lnp_fun = partial(lnp.var, dtype=out_dtype, axis=axis, ddof=ddof, keepdims=keepdims)
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(
+      jtu.cases_from_list(
         {"testcase_name": "_shape={}_dtype={}_rowvar={}_ddof={}_bias={}".format(
             shape, dtype, rowvar, ddof, bias),
-         "shape":shape, "dtype":dtype, "rowvar":rowvar, "ddof":ddof,
-         "bias":bias, "rng": rng}
+         "shape": shape, "dtype": dtype, "rowvar": rowvar, "ddof": ddof,
+         "bias": bias, "rng": rng}
         for shape in [(5,), (10, 5), (3, 10)]
         for dtype in all_dtypes
         for rowvar in [True, False]
@@ -1858,6 +1883,26 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testIssue967(self):
     self.assertRaises(TypeError, lambda: lnp.zeros(1.5))
 
+  @parameterized.named_parameters(
+      jtu.cases_from_list(
+        {"testcase_name": "_shape={}_dtype={}_rowvar={}_ddof={}_bias={}".format(
+            shape, dtype, rowvar, ddof, bias),
+         "shape": shape, "dtype": dtype, "rowvar": rowvar, "ddof": ddof,
+         "bias": bias, "rng": rng}
+        for shape in [(5,), (10, 5), (3, 10)]
+        for dtype in number_dtypes
+        for rowvar in [True, False]
+        for bias in [True, False]
+        for ddof in [None, 2, 3]
+        for rng in [jtu.rand_default()]))
+  def testCorrCoef(self, shape, dtype, rowvar, ddof, bias, rng):
+    args_maker = self._GetArgsMaker(rng, [shape], [dtype])
+    mat = onp.asarray([rng(shape, dtype)])
+    onp_fun = partial(onp.corrcoef, rowvar=rowvar, ddof=ddof, bias=bias)
+    lnp_fun = partial(lnp.corrcoef, rowvar=rowvar, ddof=ddof, bias=bias)
+    if not onp.any(onp.isclose(onp.std(mat), 0.0)):
+      self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
 if __name__ == "__main__":
   absltest.main()

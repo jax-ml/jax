@@ -46,9 +46,10 @@ from .api_util import (pytree_fun_to_jaxtupletree_fun, pytree_to_jaxtupletree,
                        pytree_fun_to_flatjaxtuple_fun, apply_jaxtree_fun, wraps,
                        pytree_fun_to_jaxtupletree_fun2, flatten_fun_leafout,
                        abstract_tuple_tree_leaves)
-from .tree_util import (process_pytree, node_types, build_tree, PyTreeDef,
-                        tree_map, tree_flatten, tree_unflatten, tree_structure,
-                        tree_transpose, leaf, tree_leaves)
+from .tree_util import (process_pytree, build_tree, tree_map, tree_flatten,
+                        tree_unflatten, tree_structure, tree_transpose,
+                        treedef_tuple, treedef_is_leaf, treedef_children,
+                        tree_leaves)
 from .util import (unzip2, unzip3, curry, partial, safe_map, safe_zip,
                    WrapHashably, Hashable, prod)
 from .lib.xla_bridge import canonicalize_dtype, device_count
@@ -138,7 +139,7 @@ def _jit(fun, static_argnums, device_assignment, device_values=True):
     flat_fun, out_tree = flatten_fun_leafout(f, in_tree)
     out = xla.xla_call(flat_fun, *args_flat, device_values=device_values,
                        device_assignment=device_assignment)
-    return out if out_tree() is leaf else tree_unflatten(out_tree(), out)
+    return out if treedef_is_leaf(out_tree()) else tree_unflatten(out_tree(), out)
 
   jitted_name =  "jit({}, static_argnums={})"
   f_jitted.__name__ = jitted_name.format(f_jitted.__name__, static_argnums)
@@ -705,7 +706,7 @@ def pmap(fun, axis_name=None):
     flat_fun, out_tree = flatten_fun_leafout(f, in_tree)
     out = pxla.xla_pmap(flat_fun, *args_flat,
                         axis_name=axis_name, axis_size=axis_size)
-    return out if out_tree() is leaf else tree_unflatten(out_tree(), out)
+    return out if treedef_is_leaf(out_tree()) else tree_unflatten(out_tree(), out)
 
   namestr = "pmap({}, axis_name={})".format
   f_pmapped.__name__ = namestr(f_pmapped.__name__, axis_name)
@@ -1005,10 +1006,10 @@ def vjp(fun, *primals, **kwargs):
     out_primal, out_vjp, aux = ad.vjp(jaxtree_fun, primals_flat, has_aux=True)
   out_tree = out_tree()
   if has_aux:
-    out_tree, aux_tree = out_tree.children
+    out_tree, aux_tree = treedef_children(out_tree)
   out_primal_py = build_tree(out_tree, out_primal)
   ct_in_trees = [out_tree]
-  ct_out_tree = PyTreeDef(node_types[tuple], None, in_trees)
+  ct_out_tree = treedef_tuple(in_trees)
   def out_vjp_packed(cotangent_in):
     return out_vjp(cotangent_in)
   vjp_py = partial(apply_jaxtree_fun, out_vjp_packed, (ct_in_trees, ct_out_tree))
@@ -1101,7 +1102,18 @@ def device_put(x, device_num=0):
   return tree_map(lambda y: xla.device_put_p.bind(y, device_num=device_num), x)
 
 
-device_get = _jit(lambda x: x, (), None, device_values=False)
+def _device_get(x):
+  if isinstance(x, core.Tracer):
+    return x
+  return x.copy()
+
+def device_get(x):
+  for y in tree_leaves(x):
+    try:
+      y.copy_to_host_async()
+    except AttributeError:
+      pass
+  return tree_map(_device_get, x)
 
 
 def _argnums_partial(f, dyn_argnums, args):

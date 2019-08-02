@@ -409,6 +409,21 @@ class BatchingTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
     assert len(onp.unique(onp.asarray(ans))) == 10 * 3 * 2
 
+  def testSort(self):
+    v = onp.arange(12)[::-1].reshape(3, 4)
+
+    sv = vmap(partial(lax.sort, dimension=0), (0,))(v)
+    self.assertAllClose(sv, v[:, ::-1], check_dtypes=True)
+
+    sv = vmap(partial(lax.sort, dimension=-1), (0,))(v)
+    self.assertAllClose(sv, v[:, ::-1], check_dtypes=True)
+
+    sv = vmap(partial(lax.sort, dimension=0), (1,))(v)
+    self.assertAllClose(sv, v[::-1, :].T, check_dtypes=True)
+
+    sv = vmap(partial(lax.sort, dimension=0), (1,), 1)(v)
+    self.assertAllClose(sv, v[::-1, :], check_dtypes=True)
+
   def testSortKeyVal(self):
     k = onp.arange(12)[::-1].reshape(3, 4)
     v = onp.random.RandomState(0).permutation(12).reshape(3, 4)

@@ -47,7 +47,7 @@ from ..interpreters.xla import DeviceArray
 from .. import lax
 from ..util import memoize, partial, get_module_functions, unzip2, prod as _prod
 from ..lib import xla_bridge
-from ..lib.xla_bridge import xla_client
+from ..lib import xla_client
 
 if six.PY3:
   def removechars(s, chars):
@@ -1085,8 +1085,6 @@ def var(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
   if out is not None:
     raise ValueError("var does not support the `out` argument.")
 
-  if ddof != 0:
-    raise NotImplementedError("Only implemented for ddof=0.")
   if dtype is None:
     if (onp.issubdtype(_dtype(a), onp.bool_) or
         onp.issubdtype(_dtype(a), onp.integer)):
@@ -1094,7 +1092,16 @@ def var(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
   centered = subtract(a, mean(a, axis, dtype=dtype, keepdims=True))
   if iscomplexobj(centered):
     centered = lax.abs(centered)
-  return mean(lax.mul(centered, centered), axis, dtype=dtype, keepdims=keepdims)
+
+  if axis is None:
+    normalizer = size(a)
+  else:
+    normalizer = onp.prod(onp.take(shape(a), axis))
+  normalizer = normalizer - ddof
+
+  return lax.div(
+      sum(lax.mul(centered, centered), axis, dtype=dtype, keepdims=keepdims),
+      lax.convert_element_type(normalizer, dtype))
 
 
 @_wraps(onp.std)
@@ -1261,7 +1268,7 @@ def _pad(array, pad_width, mode, constant_values):
     raise NotImplementedError(msg.format(mode))
 
 @_wraps(onp.pad)
-def pad(array, pad_width, mode, constant_values=0):
+def pad(array, pad_width, mode='constant', constant_values=0):
   return _pad(array, pad_width, mode, constant_values)
 
 
@@ -1610,6 +1617,8 @@ def trace(a, offset=0, axis1=0, axis2=1, dtype=None, out=None):
 
 
 diag_indices = onp.diag_indices
+tril_indices = onp.tril_indices
+triu_indices = onp.triu_indices
 
 
 @_wraps(onp.diagonal)
@@ -2627,6 +2636,25 @@ def cov(m, y=None, rowvar=True, bias=False, ddof=None, fweights=None,
   return true_divide(dot(X, X_T.conj()), f).squeeze()
 
 
+@_wraps(onp.corrcoef)
+def corrcoef(x, y=None, rowvar=True, bias=None, ddof=None):
+  c = cov(x, y, rowvar)
+  if len(shape(c)) == 0:
+      # scalar - this should yield nan for values (nan/nan, inf/inf, 0/0), 1 otherwise
+      return divide(c, c)
+  d = diag(c)
+  stddev = sqrt(real(d))
+  c = divide(c, stddev[:,None])
+  c = divide(c, stddev[None,:])
+
+  real_part = clip(real(c), -1, 1)
+  if iscomplexobj(c):
+      complex_part = clip(imag(c), -1, 1)
+      c = lax.complex(real_part, complex_part)
+  else:
+      c = real_part
+  return c
+
 @_wraps(getattr(onp, "quantile", None))
 def quantile(a, q, axis=None, out=None, overwrite_input=False,
              interpolation="linear", keepdims=False):
@@ -2702,6 +2730,13 @@ def percentile(a, q, axis=None, out=None, overwrite_input=False,
   q = true_divide(asarray(q), float32(100.0))
   return quantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
                   interpolation=interpolation, keepdims=keepdims)
+
+
+@_wraps(onp.median)
+def median(a, axis=None, out=None, overwrite_input=False, keepdims=False):
+    q = 0.5
+    return quantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
+                    keepdims=keepdims)
 
 ### track unimplemented functions
 

@@ -48,7 +48,7 @@ from ..interpreters import batching
 from ..util import curry, memoize, safe_zip, unzip2, prod
 from ..tree_util import build_tree, tree_unflatten, tree_map
 from ..lib import xla_bridge
-from ..lib.xla_bridge import xla_client
+from ..lib import xla_client
 
 FLAGS = flags.FLAGS
 
@@ -2386,8 +2386,11 @@ def _pad_shape_rule(operand, padding_value, padding_config):
   return tuple(out_shape)
 
 def _pad_transpose(t, operand, padding_value, padding_config):
-  lo, hi, interior = zip(*padding_config)
+  if t is ad_util.zero:
+    return [ad_util.zero if operand is None else None,
+            ad_util.zero if padding_value is None else None]
 
+  lo, hi, interior = zip(*padding_config)
   total = lambda x: _reduce_sum(x, list(range(t.ndim)))
 
   def t_op():
@@ -2838,7 +2841,7 @@ class GatherDimensionNumbers(collections.namedtuple(
 
 def _gather_dimensions_proto(indices_shape, dimension_numbers):
   assert type(dimension_numbers) is GatherDimensionNumbers
-  proto = xla_bridge.xla_data_pb2.GatherDimensionNumbers()
+  proto = xla_client.GatherDimensionNumbers()
   proto.offset_dims.extend(dimension_numbers.offset_dims)
   proto.collapsed_slice_dims.extend(dimension_numbers.collapsed_slice_dims)
   proto.start_index_map.extend(dimension_numbers.start_index_map)
@@ -2977,7 +2980,7 @@ class ScatterDimensionNumbers(collections.namedtuple(
 
 def _scatter_dimensions_proto(indices_shape, dimension_numbers):
   assert type(dimension_numbers) is ScatterDimensionNumbers
-  proto = xla_bridge.xla_data_pb2.ScatterDimensionNumbers()
+  proto = xla_client.ScatterDimensionNumbers()
   proto.update_window_dims.extend(dimension_numbers.update_window_dims)
   proto.inserted_window_dims.extend(dimension_numbers.inserted_window_dims)
   proto.scatter_dims_to_operand_dims.extend(
@@ -3796,8 +3799,16 @@ def _sort_jvp_rule(g, operand, dimension):
   _, g_out = sort_key_val(operand, g, dimension)
   return g_out
 
+def _sort_batch_rule(batched_args, batch_dims, dimension):
+  operand, = batched_args
+  bdim, = batch_dims
+  dimension = dimension % (operand.ndim - 1)
+  new_dimension = dimension + (bdim <= dimension)
+  return sort(operand, dimension=new_dimension), bdim
+
 sort_p = standard_primitive(sort_shape, _input_dtype, 'sort')
 ad.defjvp(sort_p, _sort_jvp_rule)
+batching.primitive_batchers[sort_p] = _sort_batch_rule
 
 
 def _sort_key_val_abstract_eval(keys, values, dimension):
@@ -4305,7 +4316,7 @@ def conv_general_permutations(dimension_numbers):
 def _conv_general_proto(dimension_numbers):
   assert type(dimension_numbers) is ConvDimensionNumbers
   lhs_spec, rhs_spec, out_spec = dimension_numbers
-  proto = xla_bridge.xla_data_pb2.ConvolutionDimensionNumbers()
+  proto = xla_client.ConvolutionDimensionNumbers()
   proto.input_batch_dimension = lhs_spec[0]
   proto.input_feature_dimension = lhs_spec[1]
   proto.output_batch_dimension = out_spec[0]
