@@ -1615,6 +1615,8 @@ def trace(a, offset=0, axis1=0, axis2=1, dtype=None, out=None):
 
 
 diag_indices = onp.diag_indices
+tril_indices = onp.tril_indices
+triu_indices = onp.triu_indices
 
 
 @_wraps(onp.diagonal)
