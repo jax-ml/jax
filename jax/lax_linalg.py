@@ -16,6 +16,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from functools import partial
 import numpy as onp
 
 from jax.numpy import lax_numpy as np
@@ -34,6 +35,7 @@ from jax.core import Primitive
 from jax.lax import (standard_primitive, standard_unop, binop_dtype_rule,
                      _float, _complex, _input_dtype, _broadcasting_select)
 from jax.lib import lapack
+from jax.lib import cusolver
 
 # traceables
 
@@ -81,6 +83,11 @@ def _T(x): return np.swapaxes(x, -1, -2)
 def _H(x): return np.conj(_T(x))
 def symmetrize(x): return (x + _H(x)) / 2
 
+def _unpack_tuple(f, n):
+  def g(c, *args, **kwargs):
+    t = f(c, *args, **kwargs)
+    return (c.GetTupleElement(t, i) for i in range(n))
+  return g
 
 # primitives
 
@@ -123,13 +130,18 @@ def _nan_like(c, operand):
     nan = c.Constant(onp.array(onp.nan, dtype=dtype))
   return c.Broadcast(nan, shape.dimensions())
 
+# TODO(phawkins): remove if-condition after increasing minimum Jaxlib version to
+# 0.1.23.
+if hasattr(lapack, "potrf"):
+  _cpu_potrf = lapack.potrf
+else:
+  _cpu_potrf = _unpack_tuple(lapack.jax_potrf, 2)
+
 def cholesky_cpu_translation_rule(c, operand):
   shape = c.GetShape(operand)
   dtype = shape.element_type().type
   if len(shape.dimensions()) == 2 and dtype in _cpu_lapack_types:
-    potrf_output = lapack.jax_potrf(c, operand, lower=True)
-    result = c.GetTupleElement(potrf_output, 0)
-    info = c.GetTupleElement(potrf_output, 1)
+    result, info = _cpu_potrf(c, operand, lower=True)
     return c.Select(c.Eq(info, c.ConstantS32Scalar(0)), result,
                     _nan_like(c, result))
   else:
@@ -163,15 +175,18 @@ def eig_abstract_eval(operand):
     w = vl = vr = operand
   return core.AbstractTuple((w, vl, vr))
 
+# TODO(phawkins): remove if-condition after increasing minimum Jaxlib version to
+# 0.1.23.
+if hasattr(lapack, "geev"):
+  _cpu_geev = lapack.geev
+else:
+  _cpu_geev = _unpack_tuple(lapack.jax_geev, 4)
 
 def eig_cpu_translation_rule(c, operand):
   shape = c.GetShape(operand)
   batch_dims = shape.dimensions()[:-2]
-  geev_out = lapack.jax_geev(c, operand)
-  w = c.GetTupleElement(geev_out, 0)
-  vl = c.GetTupleElement(geev_out, 1)
-  vr = c.GetTupleElement(geev_out, 2)
-  ok = c.Eq(c.GetTupleElement(geev_out, 3), c.ConstantS32Scalar(0))
+  w, vl, vr, info = _cpu_geev(c, operand)
+  ok = c.Eq(info, c.ConstantS32Scalar(0))
   w = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1,)), w,
                            _nan_like(c, w))
   vl = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), vl,
@@ -219,13 +234,11 @@ def eigh_abstract_eval(operand, lower):
     v, w = operand, operand
   return core.AbstractTuple((v, w))
 
-def eigh_cpu_translation_rule(c, operand, lower):
+def _eigh_cpu_gpu_translation_rule(syevd_impl, c, operand, lower):
   shape = c.GetShape(operand)
   batch_dims = shape.dimensions()[:-2]
-  syevd_out = lapack.jax_syevd(c, operand, lower=lower)
-  v = c.GetTupleElement(syevd_out, 0)
-  w = c.GetTupleElement(syevd_out, 1)
-  ok = c.Eq(c.GetTupleElement(syevd_out, 2), c.ConstantS32Scalar(0))
+  v, w, info = syevd_impl(c, operand, lower=lower)
+  ok = c.Eq(info, c.ConstantS32Scalar(0))
   v = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), v,
                            _nan_like(c, v))
   w = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1,)), w,
@@ -267,7 +280,22 @@ eigh_p.def_impl(eigh_impl)
 eigh_p.def_abstract_eval(eigh_abstract_eval)
 xla.translations[eigh_p] = eigh_translation_rule
 ad.primitive_jvps[eigh_p] = eigh_jvp_rule
-xla.backend_specific_translations['cpu'][eigh_p] = eigh_cpu_translation_rule
+
+# TODO(phawkins): remove if-condition after increasing minimum Jaxlib version to
+# 0.1.23.
+if hasattr(lapack, "syevd"):
+  _cpu_syevd = lapack.syevd
+else:
+  _cpu_syevd = _unpack_tuple(lapack.jax_syevd, 3)
+
+xla.backend_specific_translations['cpu'][eigh_p] = partial(
+  _eigh_cpu_gpu_translation_rule, _cpu_syevd)
+
+# TODO(phawkins): remove if-condition after increasing minimum Jaxlib version to
+# 0.1.23.
+if cusolver:
+  xla.backend_specific_translations['gpu'][eigh_p] = partial(
+    _eigh_cpu_gpu_translation_rule, cusolver.syevd)
 batching.primitive_batchers[eigh_p] = eigh_batching_rule
 
 
@@ -522,14 +550,13 @@ def _lu_batching_rule(batched_args, batch_dims):
   x = batching.bdim_at_front(x, bd)
   return lu_p.bind(x), 0
 
-def _lu_cpu_translation_rule(c, operand):
+def _lu_cpu_gpu_translation_rule(getrf_impl, c, operand):
   shape = c.GetShape(operand)
   batch_dims = shape.dimensions()[:-2]
-  getrf_out = lapack.jax_getrf(c, operand)
-  lu = c.GetTupleElement(getrf_out, 0)
+  lu, pivot, info = getrf_impl(c, operand)
   # Subtract 1 from the pivot to get 0-based indices.
-  pivot = c.Sub(c.GetTupleElement(getrf_out, 1), c.ConstantS32Scalar(1))
-  ok = c.Eq(c.GetTupleElement(getrf_out, 2), c.ConstantS32Scalar(0))
+  pivot = c.Sub(pivot, c.ConstantS32Scalar(1))
+  ok = c.Eq(info, c.ConstantS32Scalar(0))
   lu = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), lu,
                             _nan_like(c, lu))
   return c.Tuple(lu, pivot)
@@ -541,7 +568,20 @@ lu_p.def_abstract_eval(_lu_abstract_eval)
 xla.translations[lu_p] = xla.lower_fun(_lu_python, instantiate=True)
 ad.primitive_jvps[lu_p] = _lu_jvp_rule
 batching.primitive_batchers[lu_p] = _lu_batching_rule
-xla.backend_specific_translations['cpu'][lu_p] = _lu_cpu_translation_rule
+
+# TODO(phawkins): remove if-condition after increasing minimum Jaxlib version to
+# 0.1.23.
+if hasattr(lapack, "getrf"):
+  _cpu_getrf = lapack.getrf
+else:
+  _cpu_getrf = _unpack_tuple(lapack.jax_getrf, 3)
+
+xla.backend_specific_translations['cpu'][lu_p] = partial(
+  _lu_cpu_gpu_translation_rule, _cpu_getrf)
+
+if cusolver:
+  xla.backend_specific_translations['gpu'][lu_p] = partial(
+    _lu_cpu_gpu_translation_rule, cusolver.getrf)
 
 
 def lu_pivots_to_permutation(swaps, m):
@@ -681,16 +721,13 @@ def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
     dV = dV + np.dot(np.eye(n) - np.dot(V, Vt), np.dot(np.conj(dA).T, U)) / s_dim
   return core.pack((s, U, Vt)), core.pack((ds, dU, dV.T))
 
-def svd_cpu_translation_rule(c, operand, full_matrices, compute_uv):
+def _svd_cpu_gpu_translation_rule(gesvd_impl, c, operand, full_matrices, compute_uv):
   shape = c.GetShape(operand)
   dtype = shape.element_type().type
   if len(shape.dimensions()) == 2 and dtype in _cpu_lapack_types:
-    gesdd_out = lapack.jax_gesdd(c, operand, full_matrices=full_matrices,
-                                 compute_uv=compute_uv)
-    s = c.GetTupleElement(gesdd_out, 0)
-    u = c.GetTupleElement(gesdd_out, 1)
-    vt = c.GetTupleElement(gesdd_out, 2)
-    ok = c.Eq(c.GetTupleElement(gesdd_out, 3), c.ConstantS32Scalar(0))
+    s, u, vt, info = gesvd_impl(c, operand, full_matrices=full_matrices,
+                                compute_uv=compute_uv)
+    ok = c.Eq(info, c.ConstantS32Scalar(0))
     s = _broadcasting_select(c, c.Reshape(ok, None, (1,)), s,
                              _nan_like(c, s))
     u = _broadcasting_select(c, c.Reshape(ok, None, (1, 1)), u,
@@ -711,7 +748,22 @@ def svd_batching_rule(batched_args, batch_dims, full_matrices, compute_uv):
 svd_p = Primitive('svd')
 svd_p.def_impl(svd_impl)
 svd_p.def_abstract_eval(svd_abstract_eval)
-xla.translations[svd_p] = svd_translation_rule
-xla.backend_specific_translations['cpu'][svd_p] = svd_cpu_translation_rule
 ad.primitive_jvps[svd_p] = svd_jvp_rule
 batching.primitive_batchers[svd_p] = svd_batching_rule
+xla.translations[svd_p] = svd_translation_rule
+
+# TODO(phawkins): remove if-condition after increasing minimum Jaxlib version to
+# 0.1.23.
+if hasattr(lapack, "gesdd"):
+  _cpu_gesdd = lapack.gesdd
+else:
+  _cpu_gesdd = _unpack_tuple(lapack.jax_gesdd, 4)
+
+xla.backend_specific_translations['cpu'][svd_p] = partial(
+  _svd_cpu_gpu_translation_rule, _cpu_gesdd)
+
+# TODO(phawkins): remove if-condition after increasing minimum Jaxlib version to
+# 0.1.23.
+if cusolver:
+  xla.backend_specific_translations['gpu'][svd_p] = partial(
+    _svd_cpu_gpu_translation_rule, cusolver.gesvd)
