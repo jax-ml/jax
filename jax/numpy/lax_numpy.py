@@ -1097,9 +1097,9 @@ def var(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
     normalizer = onp.prod(onp.take(shape(a), axis))
   normalizer = normalizer - ddof
 
-  return lax.div(
-      sum(lax.mul(centered, centered), axis, dtype=dtype, keepdims=keepdims),
-      lax.convert_element_type(normalizer, dtype))
+  result = sum(lax.mul(centered, centered), axis,
+               dtype=dtype, keepdims=keepdims)
+  return lax.div(result, lax.convert_element_type(normalizer, _dtype(result)))
 
 
 @_wraps(onp.std)
