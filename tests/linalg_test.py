@@ -562,8 +562,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     for i in range(n):
       x[[i, piv[i]],] = x[[piv[i], i],]
     self.assertAllClose(x, onp.matmul(l, u), check_dtypes=True, rtol=1e-3)
-    # self._CheckAgainstNumpy(jsp.linalg.lu_factor, osp.linalg.lu_factor,
-    #                         args_maker, check_dtypes=True, tol=1e-3)
     self._CompileAndCheck(jsp.linalg.lu_factor, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
