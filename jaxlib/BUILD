@@ -31,7 +31,7 @@ py_library(
     name = "jaxlib",
     srcs = [
         "cusolver.py",
-        "version.py"
+        "version.py",
     ],
 )
 
