@@ -28,6 +28,7 @@ from __future__ import division
 from __future__ import print_function
 
 import collections
+import functools
 import itertools
 import numbers
 import re
@@ -100,13 +101,7 @@ class ndarray(six.with_metaclass(_ArrayMeta, onp.ndarray)):
                     " Use jax.numpy.array, or jax.numpy.zeros instead.")
 # pylint: enable=invalid-name
 
-
 isscalar = onp.isscalar
-iscomplexobj = onp.iscomplexobj
-result_type = onp.result_type
-shape = _shape = onp.shape
-ndim = _ndim = onp.ndim
-size = onp.size
 _dtype = lax.dtype
 
 bool_ = onp.bool_
@@ -143,12 +138,73 @@ issubsctype = onp.issubsctype
 
 ComplexWarning = onp.ComplexWarning
 
-array_str = onp.array_str
-array_repr = onp.array_repr
-
-save = onp.save
-savez = onp.savez
 load = onp.load
+
+
+# These wrappers are necessary to avoid infinite recursion inside JAX's
+# __array_function__ method. The implementations below exactly match NumPy.
+
+@functools.wraps(onp.iscomplexobj)
+def iscomplexobj(x):
+  if isinstance(x, _ARRAY_TYPES):
+    return issubclass(x.dtype.type, onp.complexfloating)
+  return onp.iscomplexobj(x)
+
+@functools.wraps(onp.result_type)
+def result_type(*arrays_and_dtypes):
+  arrays_and_dtypes = tuple(
+      x.dtype if isinstance(x, _ARRAY_TYPES) else x
+      for x in arrays_and_dtypes)
+  return onp.result_type(*arrays_and_dtypes)
+
+@functools.wraps(onp.shape)
+def shape(a):
+  if isinstance(a, _ARRAY_TYPES):
+    return a.shape
+  return onp.shape(a)
+
+@functools.wraps(onp.ndim)
+def ndim(a):
+  if isinstance(a, _ARRAY_TYPES):
+    return a.ndim
+  return onp.ndim(a)
+
+_shape = shape
+_ndim = ndim
+
+@functools.wraps(onp.size)
+def size(a, axis=None):
+  if isinstance(a, _ARRAY_TYPES):
+    if axis is None:
+      return a.size
+    else:
+      return a.shape[axis]
+  return onp.size(a, axis)
+
+@functools.wraps(onp.array_str)
+def array_str(a, max_line_width=None, precision=None, suppress_small=None):
+  return onp.array_str(onp.asarray(a), max_line_width=max_line_width,
+                       precision=precision, suppress_small=suppress_small)
+
+@functools.wraps(onp.array_repr)
+def array_repr(arr, max_line_width=None, precision=None, suppress_small=None):
+  return onp.array_repr(onp.asarray(arr), max_line_width=max_line_width,
+                        precision=precision, suppress_small=suppress_small)
+
+@functools.wraps(onp.save)
+def save(file, arr, allow_pickle=True, fix_imports=True):
+  return onp.save(file, onp.asarray(arr), allow_pickle=allow_pickle,
+                  fix_imports=fix_imports)
+
+def _cast_if_needed(x):
+  return onp.asarray(x) if isinstance(x, _ARRAY_TYPES) else x
+
+@functools.wraps(onp.savez)
+def savez(file, *args, **kwds):
+  args = tuple(map(_cast_if_needed, args))
+  kwds = dict(zip(kwds.keys(), map(_cast_if_needed, kwds.values())))
+  return onp.savez(file, *args, **kwds)
+
 
 ### utility functions
 
@@ -2914,22 +2970,9 @@ def __array_function__(self, func, types, args, kwargs):
   if lax_func is None:
     lax_func = _not_implemented(func)
   elif lax_func is func:
-    # Implementations of NumPy functions that work if at least one array
-    # argument is a JAX array.
-    if func is onp.iscomplexobj:
-      # This matchs NumPy's original implementation
-      return issubclass(args[0].dtype.type, onp.complexfloating)
-    elif func is onp.result_type:
-      return onp.result_type(
-          *[x.dtype if isinstance(x, _ARRAY_TYPES) else x for x in args])
-    elif func is onp.shape:
-      return args[0].shape
-    elif func is onp.ndim:
-      return args[0].ndim
-    elif func is onp.size:
-      return args[0].size
-    else:
-      raise AssertionError('{} needs an override'.format(func))
+    raise AssertionError('{} needs to be defined with a wrapper that does not '
+                         'call the corresponding NumPy function directly on '
+                         'JAX arrays'.format(func))
 
   return lax_func(*args, **kwargs)
 
