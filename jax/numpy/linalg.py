@@ -22,7 +22,7 @@ import warnings
 
 from .. import lax
 from .. import lax_linalg
-from .lax_numpy import _not_implemented
+from .lax_numpy import _NotImplementedByJAX
 from .lax_numpy import _wraps
 from . import lax_numpy as np
 from ..util import get_module_functions
@@ -255,4 +255,4 @@ def solve(a, b):
 
 for func in get_module_functions(onp.linalg):
   if func.__name__ not in globals():
-    globals()[func.__name__] = _not_implemented(func)
+    globals()[func.__name__] = _NotImplementedByJAX(func)

@@ -41,7 +41,7 @@ import opt_einsum
 import six
 from six.moves import builtins, xrange
 
-from jax import jit, device_put
+from jax import jit, device_get, device_put
 from .. import core
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
 from ..interpreters.xla import DeviceArray
@@ -2796,20 +2796,24 @@ def median(a, axis=None, out=None, overwrite_input=False, keepdims=False):
 
 ### track unimplemented functions
 
-def _not_implemented(fun):
-  @_wraps(fun)
-  def wrapped(*args, **kwargs):
-    try:
-      name = "'{}.{}'".format(fun.__module__, fun.__name__)
-    except AttributeError:
-      name = "NumPy function {}".format(fun)
+def _numpy_function_name(fun):
+  try:
+    name = "'{}.{}'".format(fun.__module__, fun.__name__)
+  except AttributeError:
+    name = "NumPy function {}".format(fun)
+  return name
+
+class _NotImplementedByJAX(object):
+  def __init__(self, fun):
+    self._fun = fun
+  def __call__(self, *args, **kwargs):
+    name = _numpy_function_name(fun)
     raise NotImplementedError("{} is not yet implemented by JAX".format(name))
-  return wrapped
 
 # Build a set of all unimplemented NumPy functions.
 for func in get_module_functions(onp):
   if func.__name__ not in globals():
-    globals()[func.__name__] = _not_implemented(func)
+    globals()[func.__name__] = _NotImplementedByJAX(func)
 
 
 ### add method and operator overloads to arraylike classes
@@ -2910,8 +2914,16 @@ setattr(DeviceArray, "astype", lax.convert_element_type)
 
 
 # Override NumPy's public API.
-_ARRAY_TYPES = DeviceArray, core.Tracer
+_ARRAY_TYPES = (DeviceArray, core.Tracer)
 _HANDLED_TYPES = _ARRAY_TYPES + (onp.ndarray, numbers.Number)
+
+def _implement_with_warning(func, args, kwargs, name, stacklevel=2):
+  warnings.warn("{} is not yet implemented by JAX; coercing arguments to "
+                "NumPy arrays. Coerce arrays with onp.asarray() or "
+                "jax.device_get() to explicitly silence this warning."
+                .format(name), stacklevel=stacklevel)
+  args, kwargs = device_get((args, kwargs))
+  return func(*args, **kwargs)
 
 
 def __array_ufunc__(self, ufunc, method, *inputs, **kwargs):
@@ -2920,29 +2932,29 @@ def __array_ufunc__(self, ufunc, method, *inputs, **kwargs):
   if not _all(isinstance(x, _HANDLED_TYPES) for x in inputs):
     return NotImplemented
 
+  ufunc_method = getattr(ufunc, method)
+
+  lax_func = globals().get(ufunc.__name__)
+  if lax_func is None or isinstance(lax_func, _NotImplementedByJAX):
+    return _implement_with_warning(ufunc_method, inputs, kwargs, ufunc)
+
+  if method != '__call__':
+    name = '{!r} method of NumPy universal functions'.format(method)
+    return _implement_with_warning(ufunc_method, inputs, kwargs, name)
+
   # We special case the 'out' argument so we can support in-place arithmetic
   # that assigns to NumPy arrays, e.g., np_array += jax_device_array
   out = kwargs.pop('out', None)
   if out is not None:
-    if _any(isinstance(o, (DeviceArray, core.Tracer)) for o in out):
+    if _any(isinstance(o, _ARRAY_TYPES) for o in out):
       raise TypeError("JAX arrays cannot be modified inplace.")
-    inputs = tuple(map(onp.asarray, inputs))
-    return getattr(ufunc, method)(*inputs, out=out, **kwargs)
-
-  if method != '__call__':
-    raise NotImplementedError(
-        'JAX does not yet support the {!r} method of NumPy universal functions'
-        .format(method))
+    inputs = device_get(inputs)
+    return ufunc_method(*inputs, out=out, **kwargs)
 
   if kwargs:
-    raise NotImplementedError(
-        'JAX does not yet support keyword arguments on NumPy universal '
-        'functions: {}'.format(list(kwargs)))
-
-  lax_func = globals().get(ufunc.__name__)
-  if lax_func is None:
-    lax_func = _not_implemented(func)
-
+    kwargs_str = ', '.join(map(str, kwargs))
+    warnings.warn("{} keyword argument(s) are ignored when called on JAX "
+                  "arrays: {}".format(ufunc, kwargs_str), stacklevel=2)
   return lax_func(*inputs)
 
 
@@ -2967,8 +2979,9 @@ def __array_function__(self, func, types, args, kwargs):
   else:
     lax_func = getattr(module, func.__name__, None)
 
-  if lax_func is None:
-    lax_func = _not_implemented(func)
+  if lax_func is None or isinstance(lax_func, _NotImplementedByJAX):
+    return _implement_with_warning(
+        func, args, kwargs, name=_numpy_function_name(func), stacklevel=4)
   elif lax_func is func:
     raise AssertionError('{} needs to be defined with a wrapper that does not '
                          'call the corresponding NumPy function directly on '

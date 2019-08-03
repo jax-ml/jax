@@ -21,7 +21,7 @@ import numpy as onp
 from .. import lax
 from ..lib.xla_bridge import xla_client, canonicalize_dtype
 from ..util import get_module_functions
-from .lax_numpy import _not_implemented
+from .lax_numpy import _NotImplementedByJAX
 from .lax_numpy import _wraps
 from . import lax_numpy as np
 
@@ -71,4 +71,4 @@ def fftn(a, s=None, axes=None, norm=None):
 
 for func in get_module_functions(onp.fft):
   if func.__name__ not in globals():
-    globals()[func.__name__] = _not_implemented(func)
+    globals()[func.__name__] = _NotImplementedByJAX(func)

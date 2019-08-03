@@ -1701,13 +1701,26 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertEqual(type(onp_on_lnp), type(lnp_on_lnp))
     self.assertAllClose(onp_on_lnp, onp_on_onp, check_dtypes=True)
 
-  def testArrayUfuncErrors(self):
+  def testArrayUfuncWarningsAndErrors(self):
     x = lnp.sqrt(onp.array([1, 2]))  # make a DeviceArray object
-    with self.assertRaises(TypeError):
+
+    with self.assertWarnsRegex(UserWarning, 'not yet implemented by JAX'):
+      y = onp.add.reduce(x)
+    self.assertTrue(onp.isscalar(y))
+    self.assertAllClose(y, onp.add.reduce(onp.asarray(x)), check_dtypes=True)
+
+    with self.assertRaisesRegex(TypeError, "cannot be modified inplace"):
       onp.sin(x, out=x)
-    with self.assertRaises(NotImplementedError):
+
+    with self.assertWarnsRegex(UserWarning, 'not yet implemented by JAX'):
       # JAX is unlikely to ever implement datetime64 ufuncs
-      onp.isnat(x)
+      with self.assertRaises(TypeError):
+        onp.isnat(x)  # x has the wrong dtpe
+
+    with self.assertWarnsRegex(
+        UserWarning, r'keyword argument\(s\) are ignored'):
+      y = onp.add(x, x, dtype=onp.float32)
+    self.assertAllClose(y, x + x, check_dtypes=True)
 
   def testArrayUfuncBinary(self):
     x = lnp.sqrt(onp.array([1, 2]))  # make a DeviceArray object
@@ -1726,11 +1739,20 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertEqual(type(result), type(lnp_expected))
     self.assertAllClose(result, onp_expected, check_dtypes=True)
 
+  def testArrayUfuncUnhandledType(self):
+    class Other(object):
+      def __array_ufunc__(self, *args, **kwargs):
+        return 'success'
+
+    x = lnp.sqrt(onp.array([1, 2]))  # make a DeviceArray object
+    result = onp.add(x, Other())
+    self.assertEqual(result, 'success')
+
   def testArrayFunction(self):
     if not array_function_overrides_enabled:
       self.skipTest('__array_function__ overrides not enabled')
+    onp_array = onp.sqrt(onp.array([1, 2]))
     lnp_array = lnp.sqrt(onp.array([1, 2]))  # make a DeviceArray object
-    onp_array = onp.sqrt(onp.array([1, 2]))  # make a DeviceArray object
 
     onp_on_onp = onp.concatenate([onp_array] * 2)
     onp_on_lnp = onp.concatenate([lnp_array] * 2)
@@ -1754,9 +1776,22 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertEqual(type(onp_on_lnp), type(lnp_on_lnp))
     self.assertAllClose(onp_on_lnp, onp_on_onp, check_dtypes=True)
 
-    with self.assertRaisesRegexp(NotImplementedError, 'repack_fields'):
-      # An arbitrary choice from the long tail of NumPy's API
-      onp.lib.recfunctions.repack_fields(lnp_array)
+  def testArrayFunctionUnimplemented(self):
+    if not array_function_overrides_enabled:
+      self.skipTest('__array_function__ overrides not enabled')
+    lnp_array = lnp.sqrt(onp.arange(4))
+    with self.assertWarnsRegex(UserWarning, 'not yet implemented by JAX'):
+      actual = onp.unique(lnp_array)
+    self.assertAllClose(actual, lnp_array, check_dtypes=False)
+
+  def testArrayFunctionUnhandledType(self):
+    class Other(object):
+      def __array_function__(self, *args, **kwargs):
+        return 'success'
+
+    x = lnp.sqrt(onp.array([1, 2]))  # make a DeviceArray object
+    result = onp.concatenate([x, Other()])
+    self.assertEqual(result, 'success')
 
   def testIssue830(self):
     a = lnp.arange(4, dtype=lnp.complex64)
