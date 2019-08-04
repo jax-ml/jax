@@ -33,7 +33,7 @@ from jax.interpreters import parallel
 from jax.interpreters import xla
 from jax.interpreters import pxla
 from jax.util import partial, unzip2, prod
-from jax.lib import xla_bridge
+from jax.lib import xla_client
 
 from jax.interpreters.pxla import axis_index
 
@@ -189,7 +189,7 @@ def _allreduce_split_axis_rule(prim, reducer, vals, which_mapped, axis_name):
 
 def _allreduce_translation_rule(prim, c, val, replica_groups):
   dtype = c.GetShape(val).numpy_dtype()
-  scalar = xla_bridge.Shape.array_shape(dtype, ())
+  scalar = xla_client.Shape.array_shape(dtype, ())
   computation = xla.primitive_computation(prim, scalar, scalar)
   return c.AllReduce(val, computation, replica_groups=replica_groups)
 

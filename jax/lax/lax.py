@@ -1801,7 +1801,7 @@ def _convert_element_type_dtype_rule(operand, new_dtype, old_dtype):
   return new_dtype
 
 def _convert_element_type_translation_rule(c, operand, new_dtype, old_dtype):
-  new_etype = xla_bridge.dtype_to_etype_exact(new_dtype)
+  new_etype = xla_client.dtype_to_etype(new_dtype)
   return c.ConvertElementType(operand, new_element_type=new_etype)
 
 convert_element_type_p = standard_primitive(
@@ -3265,7 +3265,7 @@ def _reduce_sum_shape_rule(operand, axes, input_shape):
 
 def _reduce_sum_translation_rule(c, operand, axes, input_shape):
   dtype = c.GetShape(operand).numpy_dtype()
-  scalar = xla_bridge.Shape.array_shape(dtype, ())
+  scalar = xla_client.Shape.array_shape(dtype, ())
   return c.Reduce(operand, c.Constant(onp.array(0, dtype)),
                   xla.primitive_computation(add_p, scalar, scalar),
                   axes)
@@ -3287,7 +3287,7 @@ def _reduce_prod_shape_rule(operand, axes):
 
 def _reduce_prod_translation_rule(c, operand, axes):
   dtype = c.GetShape(operand).numpy_dtype()
-  scalar = xla_bridge.Shape.array_shape(dtype, ())
+  scalar = xla_client.Shape.array_shape(dtype, ())
   return c.Reduce(operand, c.Constant(onp.array(1, dtype)),
                   xla.primitive_computation(mul_p, scalar, scalar),
                   axes)
@@ -3333,7 +3333,7 @@ def _reduce_chooser_shape_rule(operand, axes):
 
 def _reduce_chooser_translation_rule(prim, identity, c, operand, axes):
   dtype = c.GetShape(operand).numpy_dtype()
-  scalar = xla_bridge.Shape.array_shape(dtype, ())
+  scalar = xla_client.Shape.array_shape(dtype, ())
   return c.Reduce(operand, c.Constant(identity(dtype)),
                   xla.primitive_computation(prim, scalar, scalar), axes)
 
@@ -3370,7 +3370,7 @@ def _reduce_logical_shape_rule(operand, axes):
   return tuple(onp.delete(operand.shape, axes))
 
 def _reduce_logical_translation_rule(prim, identity, c, operand, axes):
-  scalar = xla_bridge.Shape.array_shape(onp.dtype(onp.bool_), ())
+  scalar = xla_client.Shape.array_shape(onp.dtype(onp.bool_), ())
   return c.Reduce(operand, c.Constant(identity(onp.bool_)),
                   xla.primitive_computation(prim, scalar, scalar), axes)
 
@@ -3434,7 +3434,7 @@ def _reduce_window_sum_shape_rule(operand, window_dimensions, window_strides,
 def _reduce_window_sum_translation_rule(c, operand, window_dimensions,
                                         window_strides, padding, input_shape):
   dtype = c.GetShape(operand).numpy_dtype()
-  scalar = xla_bridge.Shape.array_shape(dtype, ())
+  scalar = xla_client.Shape.array_shape(dtype, ())
   return c.ReduceWindow(operand, c.Constant(onp.array(0, dtype)),
                         xla.primitive_computation(add_p, scalar, scalar),
                         window_dimensions, window_strides, padding)
@@ -3481,7 +3481,7 @@ batching.primitive_batchers[reduce_window_sum_p] = partial(
 def _reduce_window_chooser_translation_rule(
     prim, identity, c, operand, window_dimensions, window_strides, padding):
   dtype = c.GetShape(operand).numpy_dtype()
-  scalar = xla_bridge.Shape.array_shape(dtype, ())
+  scalar = xla_client.Shape.array_shape(dtype, ())
   return c.ReduceWindow(operand, c.Constant(identity(dtype)),
                         xla.primitive_computation(prim, scalar, scalar),
                         window_dimensions, window_strides, padding)
@@ -3572,7 +3572,7 @@ def _select_and_scatter_add_translation(
     c, source, operand, select_prim, window_dimensions, window_strides,
     padding):
   dtype = c.GetShape(operand).numpy_dtype()
-  scalar = xla_bridge.Shape.array_shape(dtype, ())
+  scalar = xla_client.Shape.array_shape(dtype, ())
   select = xla.primitive_computation(select_prim, scalar, scalar)
   scatter = xla.primitive_computation(add_p, scalar, scalar)
   zero = c.Constant(onp.array(0, dtype))
@@ -3680,8 +3680,8 @@ def _select_and_gather_add_translation(
   # 2k-bit unsigned integer using bit tricks.
     word_dtype = _UINT_DTYPES[nbits]
     double_word_dtype = _UINT_DTYPES[nbits * 2]
-    word_type = xla_bridge.dtype_to_etype_exact(word_dtype)
-    double_word_type = xla_bridge.dtype_to_etype_exact(double_word_dtype)
+    word_type = xla_client.dtype_to_etype(word_dtype)
+    double_word_type = xla_client.dtype_to_etype(double_word_dtype)
 
     # Packs two values into a tuple.
     def pack(a, b):
@@ -3716,7 +3716,7 @@ def _select_and_gather_add_translation(
     nmant = r_nbits - nexp - 1
 
     double_word_dtype = word_dtype = _UINT_DTYPES[nbits]
-    word_type = xla_bridge.dtype_to_etype_exact(word_dtype)
+    word_type = xla_client.dtype_to_etype(word_dtype)
 
     # Packs two values into a tuple.
     def pack(a, b):
@@ -3740,9 +3740,9 @@ def _select_and_gather_add_translation(
   def reducer():
     c = xla_bridge.make_computation_builder("select_and_gather_pair_reducer")
     x = c.ParameterWithShape(
-      xla_bridge.Shape.array_shape(onp.dtype(double_word_dtype), ()))
+      xla_client.Shape.array_shape(onp.dtype(double_word_dtype), ()))
     y = c.ParameterWithShape(
-      xla_bridge.Shape.array_shape(onp.dtype(double_word_dtype), ()))
+      xla_client.Shape.array_shape(onp.dtype(double_word_dtype), ()))
     assert select_prim is ge_p or select_prim is le_p
     which = c.Ge if select_prim is ge_p else c.Le
     c.Select(which(fst(c, x), fst(c, y)), x, y)
@@ -4000,7 +4000,7 @@ class _EyeConstant(xla.DeviceConstant):
     if canonicalize_types:
       etype = xla_bridge.dtype_to_etype(diag_const.dtype)
     else:
-      etype = xla_bridge.dtype_to_etype_exact(diag_const.dtype)
+      etype = xla_client.dtype_to_etype(diag_const.dtype)
     etype = xla_bridge.dtype_to_etype(diag_const.dtype)
     iotas = [c.BroadcastedIota(onp.uint32, diag_const.shape, axis)
              for axis in diag_const.axes]
