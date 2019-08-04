@@ -1040,6 +1040,7 @@ class LaxTest(jtu.JaxTestCase):
       for init_val, op, dtypes in [
           (0, lax.add, default_dtypes),
           (1, lax.mul, default_dtypes),
+          (0, lax.max, all_dtypes), # non-monoidal
           (-onp.inf, lax.max, float_dtypes),
           (onp.iinfo(onp.int32).min, lax.max, [onp.int32]),
           # (onp.iinfo(onp.int64).min, lax.max, [onp.int64]),  # TODO fails
@@ -2591,14 +2592,15 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(op, 5, bdims, (shape,), dtype, rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_op={}_inshape={}_reducedims={}_bdims={}"
+      {"testcase_name": "_op={}_inshape={}_reducedims={}_initval={}_bdims={}"
        .format(op.__name__, jtu.format_shape_dtype_string(shape, dtype), dims,
-               bdims),
+               init_val, bdims),
        "op": op, "init_val": init_val, "shape": shape, "dtype": dtype,
        "dims": dims, "bdims": bdims, "rng": rng}
       for init_val, op, dtypes in [
           (0, lax.add, default_dtypes),
           (1, lax.mul, default_dtypes),
+          (0, lax.max, all_dtypes), # non-monoidal
           (-onp.inf, lax.max, float_dtypes),
           (onp.iinfo(onp.int32).min, lax.max, [onp.int32]),
           (onp.iinfo(onp.int64).min, lax.max, [onp.int64]),

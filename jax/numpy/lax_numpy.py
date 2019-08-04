@@ -991,6 +991,8 @@ def _reduction_dims(a, axis):
 
 def _reduction_init_val(a, init_val):
   a_dtype = xla_bridge.canonicalize_dtype(_dtype(a))
+  if a_dtype == 'bool':
+    return onp.array(init_val > 0, dtype=a_dtype)
   try:
     return onp.array(init_val, dtype=a_dtype)
   except OverflowError:

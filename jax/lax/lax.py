@@ -3255,7 +3255,7 @@ def _reduction_computation(c, jaxpr, consts, init_value):
 
 reduce_p = standard_primitive(_reduce_shape_rule, _input_dtype, 'reduce',
                               _reduce_translation_rule)
-# batching.primitive_batchers[reduce_p] = _reduce_batch_rule  # TODO(mattjj): test
+batching.primitive_batchers[reduce_p] = _reduce_batch_rule
 
 
 def _reduce_sum_shape_rule(operand, axes, input_shape):
