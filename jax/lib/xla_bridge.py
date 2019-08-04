@@ -311,4 +311,4 @@ for scalar_type in [onp.int8, onp.int16, onp.int32, onp.int64,
   register_constant_handler(scalar_type, _scalar_constant_handler)
 
 if six.PY2:
-  register_constant_handler(long, _scalar_constant_handler)
+  register_constant_handler(long, _scalar_constant_handler) # noqa: F821
