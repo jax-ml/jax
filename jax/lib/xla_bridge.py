@@ -141,36 +141,19 @@ def device_count():
   return int(get_backend().device_count())
 
 
-def device_put(pyval, device_num=0):
-  return xla_client.LocalBuffer.from_pyval(pyval, device_num,
-                                           backend=get_backend())
-
-def make_tuple(bufs, device_num=0):
-  return xla_client.Buffer.make_tuple(bufs, device=device_num,
-                                      backend=get_backend())
-
-
-Shape = xla_client.Shape        # pylint: disable=invalid-name
-
-
 ### utility functions
 
 @util.memoize_unary
 def dtype_to_etype(dtype):
   """Convert from dtype to canonical etype (reading FLAGS.jax_enable_x64)."""
-  return xla_client.DTYPE_TO_XLA_ELEMENT_TYPE[canonicalize_dtype(dtype)]
-
-@util.memoize_unary
-def dtype_to_etype_exact(dtype):
-  """Convert from dtype to exact etype (ignoring FLAGS.jax_enable_x64)."""
-  return xla_client.dtype_to_etype(dtype)
+  return xla_client.dtype_to_etype(canonicalize_dtype(dtype))
 
 
 _dtype_to_32bit_dtype = {
-    str(onp.dtype('int64')): onp.dtype('int32'),
-    str(onp.dtype('uint64')): onp.dtype('uint32'),
-    str(onp.dtype('float64')): onp.dtype('float32'),
-    str(onp.dtype('complex128')): onp.dtype('complex64'),
+    onp.dtype('int64'): onp.dtype('int32'),
+    onp.dtype('uint64'): onp.dtype('uint32'),
+    onp.dtype('float64'): onp.dtype('float32'),
+    onp.dtype('complex128'): onp.dtype('complex64'),
 }
 
 
@@ -180,26 +163,15 @@ def canonicalize_dtype(dtype):
   dtype = onp.dtype(dtype)
 
   if FLAGS.jax_enable_x64:
-    return str(dtype)
+    return dtype
   else:
-    return str(_dtype_to_32bit_dtype.get(str(dtype), dtype))
+    return _dtype_to_32bit_dtype.get(dtype, dtype)
 
 
 @memoize_thunk
 def supported_numpy_dtypes():
   return {canonicalize_dtype(dtype)
           for dtype in xla_client.XLA_ELEMENT_TYPE_TO_DTYPE.values()}
-
-
-def canonicalize_shape(shape):
-  """Given an xla_client.Shape, return a new instance with canonical dtypes."""
-  if shape.is_tuple():
-    return Shape.tuple_shape(tuple(
-        canonicalize_shape(s) for s in shape.tuple_shapes()))
-  else:
-    return Shape.array_shape(
-        canonicalize_dtype(shape.element_type()),
-        shape.dimensions(), shape.minor_to_major())
 
 
 # TODO(mattjj,frostig): try to remove this function
@@ -223,12 +195,6 @@ def shape_of(value):
     return Shape.tuple_shape(tuple(shape_of(elt) for elt in value))
   else:
     raise TypeError('Unexpected type: {}'.format(type(value)))
-
-
-def infeed_put(replica_id, pyval):
-  pyval = normalize_to_xla_dtypes(pyval)
-  return xla_client.transfer_to_infeed(
-      pyval, replica_number=replica_id)
 
 
 class _JaxComputationBuilder(xla_client.ComputationBuilder):

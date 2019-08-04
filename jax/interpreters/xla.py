@@ -36,6 +36,7 @@ from ..abstract_arrays import (ConcreteArray, ShapedArray, make_shaped_array,
 from ..core import AbstractTuple, JaxTuple, pack, valid_jaxtype, Literal
 from ..util import partial, partialmethod, memoize, concatenate, safe_map, prod
 from ..lib import xla_bridge as xb
+from ..lib import xla_client
 from . import partial_eval as pe
 from . import ad
 
@@ -65,10 +66,10 @@ def _xla_primitive_callable(prim, *abstract_args, **params):
 
 def xla_shape(x):
   try:
-    return xb.Shape.array_shape(x.dtype, x.shape)
+    return xla_client.Shape.array_shape(x.dtype, x.shape)
   except AttributeError:
     if type(x) in (core.AbstractTuple, core.JaxTuple):
-      return xb.Shape.tuple_shape(tuple(map(xla_shape, x)))
+      return xla_client.Shape.tuple_shape(tuple(map(xla_shape, x)))
     else:
       raise TypeError(type(x))
 
@@ -119,7 +120,7 @@ def _check_nans(name, xla_shape, buf):
 def device_put(x, device_num=0):
   """Place a Python value `x` on device number `device_num`.
 
-  This is a wrapper around jax.lib.xla_bridge.device_put to handle
+  This is a wrapper around xla_client.Buffer.from_pyval to handle
   additional Python types, namely
     1. the array-like types DeviceArray (which is already backed by device
     memory, though may be on the wrong device) and its subclass DeviceConstant
@@ -150,10 +151,11 @@ def device_put(x, device_num=0):
   elif isinstance(x, DeviceConstant):
     return _instantiate_device_constant(x, device_num=device_num)
   elif isinstance(x, (DeviceArray, onp.ndarray)):
-    return xb.device_put(x, device_num)  # handle arraylikes
+    return xla_client.Buffer.from_pyval(x, device_num, backend=xb.get_backend())
   elif isinstance(x, JaxTuple):
     element_bufs = tuple(map(partial(device_put, device_num=device_num), x))
-    return xb.make_tuple(element_bufs, device_num)
+    return xla_client.Buffer.make_tuple(element_bufs, device=device_num,
+                                        backend=xb.get_backend())
   else:
     raise TypeError(t)
 
@@ -664,8 +666,8 @@ def _instantiate_device_constant(const, cutoff=1e6, device_num=0):
                                           backend=xb.get_backend())
     return compiled.Execute(())
   else:
-    return xb.device_put(onp.asarray(const), device_num)
-
+    return xla_client.Buffer.from_pyval(onp.asarray(const), device_num,
+                                        backend=xb.get_backend())
 
 def _xla_call_impl(fun, *args, **params):
   device_values = FLAGS.jax_device_values and params.pop('device_values')

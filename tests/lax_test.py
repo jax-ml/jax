@@ -37,6 +37,7 @@ from jax import lax_reference
 from jax.test_util import check_grads
 from jax.interpreters import xla
 from jax.lib import xla_bridge
+from jax.lib import xla_client
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -2667,7 +2668,7 @@ class LaxVmapTest(jtu.JaxTestCase):
     ndims = len(shape)
     axes = range(ndims - fft_ndims, ndims)
     fft_lengths = [shape[axis] for axis in axes]
-    op = lambda x: lax.fft(x, xla_bridge.xla_client.FftType.FFT, fft_lengths)
+    op = lambda x: lax.fft(x, xla_client.FftType.FFT, fft_lengths)
     self._CheckBatching(op, 5, bdims, [shape], onp.complex64, rng)
 
   # TODO Concatenate
