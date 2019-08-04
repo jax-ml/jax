@@ -176,7 +176,7 @@ def remove_axis_from_aval(aval):
   elif isinstance(aval, ShapedArray):
     return ShapedArray(aval.shape[1:], aval.dtype)
   else:
-    raise TypeError(t)
+    raise TypeError(aval)
 
 
 def assign_shards_to_replicas(nrep, size):

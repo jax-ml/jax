@@ -216,7 +216,7 @@ def _compile_jaxpr(jaxpr, device_assignment, axis_env, const_vals, *abstract_arg
   if axis_env.nreps > xb.device_count():
     msg = ("compiling computation that requires {} replicas, but only {} XLA "
            "devices are available")
-    raise ValueErrr(msg.format(axis_env.nreps, xb.device_count()))
+    raise ValueError(msg.format(axis_env.nreps, xb.device_count()))
   arg_shapes = list(map(xla_shape, abstract_args))
   built_c = _jaxpr_computation(jaxpr, axis_env, const_vals, (), *arg_shapes)
   result_shape = xla_shape_to_result_shape(built_c.GetReturnValueShape())

@@ -28,6 +28,7 @@ import scipy.stats
 
 from jax import api
 from jax import lax
+from jax import numpy as np
 from jax import random
 from jax import test_util as jtu
 from jax.interpreters import xla

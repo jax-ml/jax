@@ -137,7 +137,7 @@ class ParallelizeTest(jtu.JaxTestCase):
 
   def dedup(self, arr, expected_rank):
     if arr.ndim == expected_rank + 1:
-      for i in xrange(arr.shape[0] - 1):
+      for i in range(arr.shape[0] - 1):
         self.assertAllClose(arr[i], arr[i + 1], check_dtypes=True)
       return arr[0]
     else:
