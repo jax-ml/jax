@@ -307,7 +307,7 @@ def rmsprop_momentum(step_size, gamma=0.9, eps=1e-8, momentum=0.9):
   Returns:
     An (init_fun, update_fun, get_params) triple.
   """
-  step_size = optimizers.make_schedule(step_size)
+  step_size = make_schedule(step_size)
   def init(x0):
     avg_sq_grad = np.zeros_like(x0)
     mom = np.zeros_like(x0)

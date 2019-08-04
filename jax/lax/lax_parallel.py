@@ -635,7 +635,7 @@ def _broadcast_in_dim_papply_rule(name, size, vals, dims, shape,
             shape[dim], shape[out_dim]))
   sub_bdims = tuple(onp.delete(broadcast_dimensions, dim))
   sub_shape = tuple(onp.delete(shape, out_dim))
-  return broadcast_in_dim(operand, sub_shape, sub_bdims), out_dim
+  return lax.broadcast_in_dim(operand, sub_shape, sub_bdims), out_dim
 
 
 def _pad_papply_rule(name, size, vals, dims, padding_config):
