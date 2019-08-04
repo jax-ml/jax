@@ -436,8 +436,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for shape in rec.shapes for dtype in rec.dtypes
       for axis in range(-len(shape), len(shape))))
   def testArgMinMax(self, onp_op, lnp_op, rng, shape, dtype, axis):
-    if (dtype == onp.complex128 and FLAGS.jax_test_dut and
-        FLAGS.jax_test_dut.startswith("gpu")):
+    if dtype == onp.complex128 and jtu.device_under_test() == "gpu":
       raise unittest.SkipTest("complex128 reductions not supported on GPU")
 
     def onp_fun(array_to_reduce):
@@ -1716,8 +1715,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         # TODO(b/133842876, b/133842870): these return wrong outputs on CPU for
         # NaN inputs.
         continue
-      if (op in ("sin", "cos", "tan", "arctan") and FLAGS.jax_test_dut and
-          FLAGS.jax_test_dut.startswith("tpu")):
+      if (op in ("sin", "cos", "tan", "arctan") and
+          jtu.device_under_test() == "tpu"):
         continue  # TODO(b/132196789, b/134175194): fix and reenable.
       x = dtype(x)
       expected = onp_op(x)

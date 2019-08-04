@@ -70,8 +70,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       return [onp.matmul(a, np.conj(T(a)))]
 
     if np.issubdtype(dtype, np.complexfloating) and (
-        len(shape) > 2 or
-        (not FLAGS.jax_test_dut or not FLAGS.jax_test_dut.startswith("cpu"))):
+        len(shape) > 2 or jtu.device_under_test() != "cpu"):
       self.skipTest("Unimplemented case for complex Cholesky decomposition.")
 
     self._CheckAgainstNumpy(onp.linalg.cholesky, np.linalg.cholesky, args_maker,
@@ -294,7 +293,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testNorm(self, shape, dtype, ord, axis, keepdims, rng):
     _skip_if_unsupported_type(dtype)
     if (ord in ('nuc', 2, -2) and (
-        (not FLAGS.jax_test_dut or not FLAGS.jax_test_dut.startswith("cpu")) or
+        jtu.device_under_test() != "cpu" or
         (isinstance(axis, tuple) and len(axis) == 2))):
       raise unittest.SkipTest("No adequate SVD implementation available")
 
@@ -456,8 +455,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for rng in [jtu.rand_default()]))
   def testInv(self, shape, dtype, rng):
     _skip_if_unsupported_type(dtype)
-    if (FLAGS.jax_test_dut and FLAGS.jax_test_dut.startswith("gpu") and
-        shape == (200, 200)):
+    if jtu.device_under_test() == "gpu" and shape == (200, 200):
       raise unittest.SkipTest("Test is flaky on GPU")
 
     def args_maker():
@@ -587,7 +585,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   def testSolve(self, lhs_shape, rhs_shape, dtype, sym_pos, lower, rng):
     _skip_if_unsupported_type(dtype)
     if (sym_pos and onp.issubdtype(dtype, onp.complexfloating) and
-       FLAGS.jax_test_dut and FLAGS.jax_test_dut.startswith("tpu")):
+        jtu.device_under_test() == "tpu"):
       raise unittest.SkipTest(
         "Complex Cholesky decomposition not implemented on TPU")
     osp_fun = lambda lhs, rhs: osp.linalg.solve(lhs, rhs, sym_pos=sym_pos, lower=lower)

@@ -1580,7 +1580,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
         for dtype in rec.dtypes)
       for rec in LAX_GRAD_OPS))
   def testOpGrad(self, op, rng, shapes, dtype, order, tol):
-    if FLAGS.jax_test_dut and FLAGS.jax_test_dut.startswith("tpu"):
+    if jtu.device_under_test() == "tpu":
       if op is lax.pow:
         raise SkipTest("pow grad imprecise on tpu")
     tol = 1e-1 if num_float_bits(dtype) == 32 else tol
@@ -2016,7 +2016,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       ]
       for rng in [jtu.rand_small()]))
   def testReduceGrad(self, op, init_val, shape, dtype, dims, rng):
-    if "tpu" in FLAGS.jax_test_dut and op is lax.mul:
+    if jtu.device_under_test() == "tpu" and op is lax.mul:
       raise SkipTest("unimplemented case")
     tol = 1e-2 if onp.finfo(dtype).bits == 32 else None
     operand = rng(shape, dtype)
@@ -2044,7 +2044,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     # test method, rather than at the parameterized test level, because it
     # depends on FLAGS for the device under test.
     # TODO(b/31565929): enable when fixed.
-    if FLAGS.jax_test_dut == "tpu" and op is not lax.add:
+    if jtu.device_under_test() == "tpu" and op is not lax.add:
       all_configs = [((6, 5, 4, 3), (2, 2, 1, 1), (1, 2, 1, 1))]
 
       # TODO(b/73062247): need variadic reduce-window for better precision.
