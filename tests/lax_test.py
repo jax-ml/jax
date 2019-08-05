@@ -1388,7 +1388,7 @@ class LaxTest(jtu.JaxTestCase):
   def testLongConstantHandling(self):
     if six.PY3:
       self.skipTest("Test is Python 2 specific")
-    self.assertTrue(api.jit(lambda x: lax.lt(x, long(10)))(long(3)))
+    self.assertTrue(api.jit(lambda x: lax.lt(x, long(10)))(long(3)))  # noqa: F821
 
   def testIssue831(self):
     # Tests the DeviceTuple constant handler

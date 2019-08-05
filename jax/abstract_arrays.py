@@ -179,7 +179,7 @@ array_types = {onp.ndarray, onp.float64, onp.float32, onp.float16,
                onp.longlong, complex, float, int, bool}
 
 if six.PY2:
-  array_types.add(long)
+  array_types.add(long)  # noqa: F821
 
 for t in array_types:
   core.pytype_aval_mappings[t] = ConcreteArray
