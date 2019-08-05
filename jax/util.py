@@ -19,7 +19,6 @@ from __future__ import print_function
 import collections
 import functools
 import itertools as it
-from operator import mul
 import types
 
 import fastcache
@@ -152,7 +151,10 @@ def memoize_unary(func):
 
 
 def prod(xs):
-  return functools.reduce(mul, xs, 1)
+  out = 1
+  for x in xs:
+    out *= x
+  return out
 
 
 class WrapHashably(object):
