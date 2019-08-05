@@ -135,7 +135,6 @@ def _jit(fun, static_argnums, device_assignment, device_values=True):
     dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
     f, dyn_args = _argnums_partial(f, dyn_argnums, args)
     args_flat, in_tree = tree_flatten((dyn_args, kwargs))
-    _check_args(args_flat)
     flat_fun, out_tree = flatten_fun_leafout(f, in_tree)
     out = xla.xla_call(flat_fun, *args_flat, device_values=device_values,
                        device_assignment=device_assignment)
@@ -702,7 +701,6 @@ def pmap(fun, axis_name=None):
     axis_size = _pmap_axis_size(args)
     f = lu.wrap_init(fun)
     args_flat, in_tree = tree_flatten((args, kwargs))
-    _check_args(args_flat)
     flat_fun, out_tree = flatten_fun_leafout(f, in_tree)
     out = pxla.xla_pmap(flat_fun, *args_flat,
                         axis_name=axis_name, axis_size=axis_size)
