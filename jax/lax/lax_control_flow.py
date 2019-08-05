@@ -905,7 +905,7 @@ def map(f, xs):
     def map(f, xs):
       return np.stack([f(x) for x in xs])
 
-  Like ``scan``, ``map`` is implemented in terms of JAX primtivies so many of
+  Like ``scan``, ``map`` is implemented in terms of JAX primitives so many of
   the same advantages over a Python loop apply: ``xs`` may be an arbitrary
   nested pytree type, and the mapped computation is compiled only once.
 
