@@ -133,6 +133,7 @@ Control flow operators
 
     cond
     fori_loop
+    map
     scan
     while_loop
 
