@@ -177,13 +177,15 @@ def check_grads(f, args, order,
 
   _check_grads(f, args, order)
 
+def device_under_test():
+  return FLAGS.jax_test_dut or xla_bridge.get_backend().platform
 
 def skip_on_devices(*disabled_devices):
   """A decorator for test methods to skip the test on certain devices."""
   def skip(test_method):
     @functools.wraps(test_method)
     def test_method_wrapper(self, *args, **kwargs):
-      device = FLAGS.jax_test_dut or xla_bridge.get_backend().platform
+      device = device_under_test()
       if device in disabled_devices:
         test_name = getattr(test_method, '__name__', '[unknown test]')
         raise SkipTest('{} not supported on {}.'
