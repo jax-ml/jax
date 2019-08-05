@@ -816,6 +816,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     f = partial(lax.scan, lambda c, x: (c + lax.psum(x, "i") , c), 0.)
     api.pmap(f, axis_name="i")(np.ones((num_devices, 4)))  # doesn't crash
 
+  def testMap(self):
+    f = lambda x: x ** 2
+    xs = np.arange(10)
+    expected = xs ** 2
+    actual = lax.map(f, xs)
+    self.assertAllClose(actual, expected, check_dtypes=True)
+
 
 if __name__ == '__main__':
   absltest.main()
