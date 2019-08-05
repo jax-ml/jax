@@ -141,10 +141,10 @@ class APITest(jtu.JaxTestCase):
       return x
 
     jtu.check_raises_regexp(lambda: grad(f)("foo"), TypeError,
-                     "Argument 'foo' of type <.*'str'> is not a valid JAX type")
+                     ".* 'foo' of type <.*'str'> is not a valid JAX type")
 
     jtu.check_raises_regexp(lambda: jit(f)("foo"), TypeError,
-                     "Argument 'foo' of type <.*'str'> is not a valid JAX type")
+                     ".* 'foo' of type <.*'str'> is not a valid JAX type")
 
   # TODO(dougalm): enable when we remove 'None' from pytree nodes
   # def test_bad_output(self):

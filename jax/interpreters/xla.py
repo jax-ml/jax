@@ -442,10 +442,11 @@ def _identity(x): return x
 
 
 def abstractify(x):
-  try:
-    return pytype_aval_mappings[type(x)](x)
-  except KeyError:
-    raise TypeError("No abstraction handler for type: {}".format(type(x)))
+  aval_mapping = pytype_aval_mappings.get(type(x))
+  if aval_mapping is None:
+    raise TypeError("Value '{}' of type {} is not a valid JAX type"
+                    .format(x, type(x)))
+  return aval_mapping(x)
 
 pytype_aval_mappings = {}
 
