@@ -1531,7 +1531,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for q_dtype in [onp.float32]
         for q_shape in scalar_shapes + [(4,)]
         for keepdims in [False, True]))
-  @jtu.skip_on_devices("tpu")  # TODO(phawkins): investigate this failure
   def testQuantile(self, op, a_rng, q_rng, a_shape, a_dtype, q_shape, q_dtype,
                    axis, keepdims):
     if op == "quantile" and numpy_version < (1, 15):
