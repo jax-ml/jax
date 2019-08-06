@@ -425,10 +425,13 @@ class ShardedDeviceArray(ShardedDeviceValue, xla.DeviceArray):
   represent distinct logical shards. The correspondence can be computed with
   the assign_shards_to_replicas function.
   """
-  __slots__ = ["device_buffers", "axis_size"]
+  __slots__ = ["device_buffers", "axis_size", "aval"]
   _collect = staticmethod(onp.stack)
 
   def __init__(self, aval, device_buffers):
+    # aval must be a ShapedArray instance, because the aval_mapping rules
+    # return it unmodified.
+    self.aval = aval
     self.device_buffers = device_buffers
     self.shape, self.dtype = aval.shape, aval.dtype
     self.ndim, self.size = len(aval.shape), prod(aval.shape)
@@ -471,10 +474,8 @@ class ShardedDeviceArray(ShardedDeviceValue, xla.DeviceArray):
       return super(ShardedDeviceArray, self).__getitem__(idx)
 
 core.pytype_aval_mappings[ShardedDeviceArray] = ConcreteArray
-xla.pytype_aval_mappings[ShardedDeviceArray] = \
-    xla.pytype_aval_mappings[xla.DeviceArray]
-batching.pytype_aval_mappings[ShardedDeviceArray] = \
-    batching.pytype_aval_mappings[xla.DeviceArray]
+xla.pytype_aval_mappings[ShardedDeviceArray] = lambda x: x.aval
+batching.pytype_aval_mappings[ShardedDeviceArray] = lambda x: x.aval
 xla.canonicalize_dtype_handlers[ShardedDeviceArray] = \
     xla.canonicalize_dtype_handlers[xla.DeviceArray]
 
