@@ -3926,8 +3926,6 @@ class _FilledConstant(xla.DeviceConstant):
     assert type(fill_value) is onp.ndarray
     self.shape = shape
     self.dtype = _dtype(fill_value)
-    self.ndim = len(shape)
-    self.size = prod(shape)
     self._npy_value = None
 
     self.fill_value = fill_value
@@ -3949,8 +3947,6 @@ class _IotaConstant(xla.DeviceConstant):
   def __init__(self, dtype, shape, axis):
     self.shape = shape
     self.dtype = onp.dtype(dtype)
-    self.ndim = len(shape)
-    self.size = prod(shape)
     self._npy_value = None
 
     self.axis = axis
@@ -3978,8 +3974,6 @@ class _EyeConstant(xla.DeviceConstant):
   def __init__(self, shape, axes, dtype):
     self.shape = shape
     self.dtype = onp.dtype(dtype)
-    self.ndim = len(shape)
-    self.size = prod(shape)
     self._npy_value = None
 
     self.axes = axes
