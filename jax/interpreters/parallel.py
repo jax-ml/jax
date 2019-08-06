@@ -27,7 +27,7 @@ from six.moves import reduce
 from .. import core
 from .. import linear_util as lu
 from ..core import Trace, Tracer, Primitive, new_master
-from ..abstract_arrays import ShapedArray, ConcreteArray, make_shaped_array
+from ..abstract_arrays import ShapedArray, ConcreteArray
 from ..util import safe_zip, unzip2, unzip3, partialmethod, prod
 from ..lib import xla_bridge as xb
 from . import partial_eval as pe
