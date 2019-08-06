@@ -51,8 +51,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   def _CheckKolmogorovSmirnovCDF(self, samples, cdf):
     fail_prob = 0.01  # conservative bound on statistical fail prob by Kolmo CDF
-    statistic = scipy.stats.kstest(samples, cdf).statistic
-    self.assertLess(1. - scipy.special.kolmogorov(statistic), fail_prob)
+    self.assertGreater(scipy.stats.kstest(samples, cdf).pvalue, fail_prob)
 
   def _CheckChiSquared(self, samples, pmf):
     alpha = 0.01  # significance level, threshold for p-value
@@ -128,7 +127,6 @@ class LaxRandomTest(jtu.JaxTestCase):
     for samples in [uncompiled_samples, compiled_samples]:
       self.assertTrue(onp.all(lo <= samples))
       self.assertTrue(onp.all(samples < hi))
-      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.randint(lo, hi).cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
