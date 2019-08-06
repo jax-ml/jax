@@ -313,6 +313,20 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.laplace().cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
+      for dtype in [onp.float32, onp.float64]))
+  def testLogistic(self, dtype):
+    key = random.PRNGKey(0)
+    rand = lambda key: random.logistic(key, (10000,), dtype)
+    crand = api.jit(rand)
+
+    uncompiled_samples = rand(key)
+    compiled_samples = crand(key)
+
+    for samples in [uncompiled_samples, compiled_samples]:
+      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.logistic().cdf)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_b={}_{}".format(b, dtype),
        "b": b, "dtype": onp.dtype(dtype).name}
       for b in [0.1, 1., 10.]

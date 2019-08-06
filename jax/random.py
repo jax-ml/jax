@@ -35,6 +35,7 @@ from .api import custom_transforms, defjvp, jit, vmap
 from .numpy.lax_numpy import _constant_like, asarray
 from jax.lib import xla_bridge
 from jax import core
+from jax.scipy.special import logit
 
 
 def PRNGKey(seed):
@@ -785,6 +786,28 @@ def _laplace(key, shape, dtype):
   u = uniform(
       key, shape, dtype, minval=-1. + np.finfo(dtype).epsneg, maxval=1.)
   return lax.mul(lax.sign(u), lax.log1p(lax.neg(lax.abs(u))))
+
+
+def logistic(key, shape=(), dtype=onp.float64):
+  """Sample logistic random values with given shape and float dtype.
+
+  Args:
+    key: a PRNGKey used as the random key.
+    shape: optional, a tuple of nonnegative integers representing the shape
+      (default scalar).
+    dtype: optional, a float dtype for the returned values (default float64 if
+      jax_enable_x64 is true, otherwise float32).
+
+  Returns:
+    A random array with the specified shape and dtype.
+  """
+  dtype = xla_bridge.canonicalize_dtype(dtype)
+  return _logistic(key, shape, dtype)
+
+@partial(jit, static_argnums=(1, 2))
+def _logistic(key, shape, dtype):
+  _check_shape("logistic", shape)
+  return logit(uniform(key, shape, dtype))
 
 
 def pareto(key, b, shape=(), dtype=onp.float64):
