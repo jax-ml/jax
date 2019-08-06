@@ -27,7 +27,7 @@ from six.moves import reduce
 
 from .. import core
 from .. import linear_util as lu
-from ..abstract_arrays import ConcreteArray, ShapedArray, make_shaped_array
+from ..abstract_arrays import ConcreteArray, ShapedArray
 from ..util import partial, unzip2, concatenate, prod, memoize_unary
 from ..lib import xla_bridge as xb
 from .xla import xla_shape, xla_destructure, xla_shape_to_result_shape
@@ -44,7 +44,7 @@ from . import ad
 def identity(x): return x
 
 # TODO(mattjj, phawkins): improve re-distribution not to copy to host
-def shard_arg(device_ordinals, assignments, axis_size, arg):
+def shard_args(device_ordinals, assignments, axis_size, nrep, args):
   """Shard an argument data array arg along its leading axis.
 
   Args:
@@ -52,26 +52,35 @@ def shard_arg(device_ordinals, assignments, axis_size, arg):
       replica index to a physical device number.
     assignments: replica to shard assignment
     axis_size: int, size of the axis to be sharded.
-    arg: a JaxType representing an argument to be sharded along its leading axis
-      (or the leading axis of its leaves in the tuple case) and placed on the
-      devices indicated by `device_ordinals`.
+    args: a sequence of JaxTypes representing arguments to be sharded along
+      their leading axes (or the leading axess of their leaves in the tuple
+      case) and placed on the devices indicated by `device_ordinals`.
+    nrep: number of replicas
 
   Returns:
     A list of device buffers with the same length as `device_ordinals` indexed
     by replica number, so that the nth element is the argument to be passed to
     the nth replica.
   """
-  nrep = len(device_ordinals)
-  if (type(arg) in (ShardedDeviceArray, ShardedDeviceTuple)
-      and nrep == len(arg.device_buffers)):
-    return [
-        buf if buf.device() == device_ordinals[r]
-        else xla.device_put(arg.device_buffers[i].to_py(), device_ordinals[r])
-        for r, (i, buf) in enumerate(zip(assignments, arg.device_buffers))]
-  else:
-    shards = [(_slice(arg, assignments[i]), device_ordinals[i])
-              for i in range(len(assignments))]
-    return [xla.device_put(v, device) for v, device in shards]
+  nargs = len(args)
+  buffers = [[None] * nargs  for _ in range(nrep)]
+  for a, arg in enumerate(args):
+    arg_type = type(arg)
+    if ((arg_type == ShardedDeviceArray or arg_type == ShardedDeviceTuple)
+         and nrep == len(arg.device_buffers)):
+      for r in range(nrep):
+        buf = arg.device_buffers[r]
+        if buf.device() == device_ordinals[r]:
+          buffers[r][a] = buf
+        else:
+          i = assignments[r]
+          buffers[r][a] = xla.device_put(arg.device_buffers[i].to_py(),
+                                         device_ordinals[r])
+    else:
+      for r in range(nrep):
+        v = _slice(arg, assignments[r])
+        buffers[r][a] = xla.device_put(v, device_ordinals[r])
+  return buffers
 
 def _slice(x, i):
   """Return the ith slice of a JaxType (tuple or array)."""
@@ -79,7 +88,6 @@ def _slice(x, i):
     return core.pack(_slice(elt, i) for elt in x)
   else:
     return x[i]
-
 
 def xla_shard(c, sizes, x):
   def _xla_shard(shape, x):
@@ -503,12 +511,9 @@ def xla_pmap_impl(fun, *args, **params):
   axis_name = params.pop('axis_name')
   axis_size = params.pop('axis_size')
   assert not params
-  abstract_args = map(partial(abstractify, axis_size), args)
+  abstract_args = map(xla.abstractify, args)
   compiled_fun = parallel_callable(fun, axis_name, axis_size, *abstract_args)
   return compiled_fun(*args)
-
-def abstractify(axis_size, x):
-  return _shard_aval(axis_size, xla.abstractify(x))
 
 def _shard_aval(axis_size, aval):
   if type(aval) is core.AbstractTuple:
@@ -521,6 +526,7 @@ def _shard_aval(axis_size, aval):
 
 @lu.memoize
 def parallel_callable(fun, axis_name, axis_size, *avals):
+  avals = tuple(_shard_aval(axis_size, a) for a in avals)
   pvals = [PartialVal((aval, core.unit)) for aval in avals]
   pval = PartialVal((core.AbstractTuple(()), core.unit))  # dummy value
 
@@ -547,11 +553,12 @@ def parallel_callable(fun, axis_name, axis_size, *avals):
     compiled, nrep, shard_result_shape = out
     device_ordinals = compiled.DeviceOrdinals()
     assignments = assign_shards_to_replicas(nrep, axis_size)
-    handle_arg = partial(shard_arg, device_ordinals, assignments, axis_size)
+    handle_args = partial(shard_args, device_ordinals, assignments, axis_size,
+                          nrep)
     handle_replica_result = xla.result_handler(shard_result_shape)
     handle_full_result = sharded_result_handler(axis_size, merged_aval(out_pval))
     return partial(execute_replicated, compiled, out_pval, nrep,
-                   handle_arg, handle_replica_result, handle_full_result)
+                   handle_args, handle_replica_result, handle_full_result)
 
 def merged_aval(pval):
   pv, const = pval
@@ -570,7 +577,7 @@ def execute_replicated(compiled, pval, nrep, handle_in,
     msg = ("executing pmap computation that requires {} replicas, but only {} "
            "XLA devices are available")
     raise ValueError(msg.format(nrep, xb.device_count()))
-  input_bufs = zip(*map(handle_in, args)) if args else [[]] * nrep
+  input_bufs = handle_in(args)
   out_bufs = compiled.ExecutePerReplica(list(input_bufs))
   results = [merge_pvals(handle_replica_result(buf), pval) for buf in out_bufs]
   return handle_full_result(results)
