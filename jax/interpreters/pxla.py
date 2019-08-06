@@ -433,8 +433,8 @@ class ShardedDeviceArray(ShardedDeviceValue, xla.DeviceArray):
     # return it unmodified.
     self.aval = aval
     self.device_buffers = device_buffers
-    self.shape, self.dtype = aval.shape, aval.dtype
-    self.ndim, self.size = len(aval.shape), prod(aval.shape)
+    self.shape = aval.shape
+    self.dtype = aval.dtype
     self.axis_size = aval.shape[0]
     self._npy_value = None
 

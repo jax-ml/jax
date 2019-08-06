@@ -183,8 +183,7 @@ def xla_shape_to_result_shape(xla_shape):
     return _ResultTuple((aval, result_shapes))
   else:
     shape, dtype = xla_shape.dimensions(), xla_shape.element_type()
-    ndim, size = len(shape), prod(shape)
-    return _ResultArray((shape, dtype, ndim, size))
+    return _ResultArray((shape, dtype))
 
 class _ResultTuple(tuple): pass
 class _ResultArray(tuple): pass
@@ -527,12 +526,12 @@ class DeviceArray(DeviceValue):
   """A DeviceArray is an ndarray backed by a single device memory buffer."""
   # We don't subclass ndarray because that would open up a host of issues,
   # but lax_numpy.py overrides isinstance behavior and attaches ndarray methods.
-  __slots__ = ["shape", "dtype", "ndim", "size", "_npy_value"]
+  __slots__ = ["shape", "dtype", "_npy_value"]
   __array_priority__ = 100.
 
   def __init__(self, result_shape, device_buffer):
     self.device_buffer = device_buffer
-    self.shape, self.dtype, self.ndim, self.size = result_shape
+    self.shape, self.dtype = result_shape
     self._npy_value = None
 
   @property
@@ -542,6 +541,14 @@ class DeviceArray(DeviceValue):
       self._npy_value = self.device_buffer.to_py()
       self._npy_value.flags.writeable = False
     return self._npy_value
+
+  @property
+  def size(self):
+    return prod(self.shape)
+
+  @property
+  def ndim(self):
+    return len(self.shape)
 
   def copy(self):
     """Returns an ndarray (backed by host memory, not device memory)."""
