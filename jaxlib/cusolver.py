@@ -97,12 +97,18 @@ def syevd(c, a, lower=False):
     b *= d
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
 
-  lwork, opaque = cusolver_kernels.build_syevd_descriptor(
-      np.dtype(dtype), lower, b, n)
+  if n <= 32:
+    kernel = b"cusolver_syevj"
+    lwork, opaque = cusolver_kernels.build_syevj_descriptor(
+        np.dtype(dtype), lower, b, n)
+  else:
+    kernel = b"cusolver_syevd"
+    lwork, opaque = cusolver_kernels.build_syevd_descriptor(
+        np.dtype(dtype), lower, b, n)
   eigvals_type = _real_type(dtype)
 
   out = c.CustomCall(
-      b"cusolver_syevd",
+      kernel,
       operands=(a,),
       shape_with_layout=_Shape.tuple_shape((
           _Shape.array_shape(dtype, dims, layout),
