@@ -474,6 +474,48 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertEqual(fun(4), cfun(4))
     self.assertEqual(cfun(4), (4, 2., 4.))
 
+  def testCondBatched(self):
+    def fun(x, y, z):
+      pred = lax.lt(x, 3)
+      true_fun = lambda y: y
+      false_fun = lambda z: lax.neg(z)
+      return lax.cond(pred, y, true_fun, z, false_fun)
+
+    # these cases stay as cond
+    x = onp.array(2)
+    y = onp.array([1, 2])
+    z = onp.array([3, 4])
+    ans = api.vmap(fun, (None, 0, 0))(x, y, z)
+    expected = onp.array([1, 2])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    x = onp.array(4)
+    ans = api.vmap(fun, (None, 0, 0))(x, y, z)
+    expected = onp.array([-3, -4])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    fun = api.jit(fun)
+    ans = api.vmap(fun, (None, 0, 0))(x, y, z)
+    expected = onp.array([-3, -4])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    z = onp.array(5)
+    ans = api.vmap(fun, (None, 0, None))(x, y, z)
+    expected = onp.array([-5, -5])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+
+    # these cases become select
+    x = onp.array([2, 4])
+    ans = api.vmap(fun, (0, 0, None))(x, y, z)
+    expected = onp.array([1, -5])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    z = onp.array([3, 4])
+    ans = api.vmap(fun)(x, y, z)
+    expected = onp.array([1, -4])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def testIssue514(self):
     # just check this doesn't crash
     lax.cond(True,

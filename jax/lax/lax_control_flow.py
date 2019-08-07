@@ -394,10 +394,48 @@ def _cond_translation_rule(c, axis_env, pred, true_op, true_consts, false_op,
 
   return c.Conditional(pred, true_arg, true_comp, false_arg, false_comp)
 
+
+def _cond_batching_rule(batched_args, batch_dims, aval_out, true_jaxpr,
+                        false_jaxpr):
+  pred, true_op, true_consts, false_op, false_consts = batched_args
+  pred_bd, true_op_bd, true_consts_bd, false_op_bd, false_consts_bd = batch_dims
+
+  # all batch dimensions must have the same size
+  sizes = lax._reduce(set.union, _map(batching.dimsize, batch_dims, batched_args))
+  size = sizes.pop()
+  assert not sizes
+
+  # lax.cond itself has already rewritten true_jaxpr and false_jaxpr
+  # to include joining their results on any abstraction lattice,
+  # including the batching lattice, so nothing needs to happen here.
+
+  def batched_true_fun(batched_true_op):
+    @lu.wrap_init
+    def lifted(true_op, true_consts):
+      return core.eval_jaxpr(true_jaxpr, true_consts, (), true_op)
+    f = batching.batch_transform(lifted, size, (true_op_bd, true_consts_bd), 0)
+    return f.call_wrapped((batched_true_op, true_consts))
+  
+  def batched_false_fun(batched_false_op):
+    @lu.wrap_init
+    def lifted(false_op, false_consts):
+      return core.eval_jaxpr(false_jaxpr, false_consts, (), false_op)
+    f = batching.batch_transform(lifted, size, (false_op_bd, false_consts_bd), 0)
+    return f.call_wrapped((batched_false_op, false_consts))
+
+  if pred_bd is None: # fast path if pred is unbatched
+    return cond(pred, true_op, batched_true_fun, false_op, batched_false_fun), 0
+
+  predicated = _jaxtupletree_select(pred, batched_true_fun(true_op),
+                                    batched_false_fun(false_op))
+  return predicated, 0
+
+
 cond_p = lax.Primitive('cond')
 cond_p.def_impl(_cond_impl)
 cond_p.def_abstract_eval(_cond_abstract_eval)
 xla.initial_style_translations[cond_p] = _cond_translation_rule
+batching.primitive_batchers[cond_p] = _cond_batching_rule
 
 
 def _maybe_tracer_tuple_to_abstract_tuple(tup):
