@@ -14,7 +14,7 @@
 
 # JAX is Autograd and XLA
 
-load("@org_tensorflow//tensorflow/core:platform/default/build_config.bzl", "pyx_library")
+load("@org_tensorflow//tensorflow/core/platform:default/build_config.bzl", "pyx_library")
 load("@org_tensorflow//tensorflow:tensorflow.bzl", "tf_pybind_extension")
 
 licenses(["notice"])  # Apache 2
