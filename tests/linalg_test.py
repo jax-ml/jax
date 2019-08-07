@@ -280,10 +280,12 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for axis, shape in [
         (None, (1,)), (None, (7,)), (None, (5, 8)),
         (0, (9,)), (0, (4, 5)), ((1,), (10, 7, 3)), ((-2,), (4, 8)),
-        (-1, (6, 3)), ((0, 2), (3, 4, 5)), ((2, 0), (7, 8, 9))]
+        (-1, (6, 3)), ((0, 2), (3, 4, 5)), ((2, 0), (7, 8, 9)),
+        (None, (7, 8, 11))]
       for keepdims in [False, True]
       for ord in (
-          [None, 0, 1, 2, 3, -1, -2, -3, np.inf, -np.inf]
+          [None] if axis is None and len(shape) > 2
+          else [None, 0, 1, 2, 3, -1, -2, -3, np.inf, -np.inf]
           if (axis is None and len(shape) == 1) or
              isinstance(axis, int) or
              (isinstance(axis, tuple) and len(axis) == 1)
