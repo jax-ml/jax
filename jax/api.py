@@ -561,8 +561,13 @@ def vmap(fun, in_axes=0, out_axes=0):
 
   Args:
     fun: Function to be mapped over additional axes.
-    in_axes: Specifies which input axes to map over. These may be integers,
-      `None`, or (possibly nested) tuples of integers or `None`.
+    in_axes: Specifies which input axes to map over. Normally this is a tuple with
+       one axes specification for each function argument. An integer is interpreted
+       as a tuple with the same value for all arguments. One argument axes specification
+       can be an integer (0 means first dimension), None (means that the dimension is
+       broadcasted). If the argument is a tuple of values, then the axes specification
+       can be a matching tuple as well.
+
     out_axes: Specifies which output axes to map over. These may be integers,
       `None`, or (possibly nested) tuples of integers or `None`.
 
@@ -576,8 +581,11 @@ def vmap(fun, in_axes=0, out_axes=0):
   product:
 
   >>> vv = lambda x, y: np.vdot(x, y)  #  ([a], [a]) -> []
-  >>> mv = vmap(vv, (0, None), 0)      #  ([a,b], [b]) -> [a]
-  >>> mm = vmap(mv, (None, 1), 1)      #  ([a,b], [b,c]) -> [a,c]
+  >>> mv1 = vmap(vv, (0, 0), 0)        #  ([b,a], [a,b]) -> [b]        (b is the new axis)
+  >>> mv2 = vmap(vv, (0, 1), 0)        #  ([b,a], [b,a]) -> [b]        (b is the new axis)
+  >>> mv3 = vmap(vv, (0, None), 0)     #  ([b,a], [a]) -> [b]          (b is the new axis)
+  >>> mm1 = vmap(mv1, (1, 1), 0)       #  ([b,c,a], [a,c,b]) -> [c,b]  (c is the new axis)
+  >>> mm3 = vmap(mv3, (None, 1), 1)    #  ([b,a], [a,c]) -> [b,c]      (c is the new axis)
 
   (here we use `[a,b]` to indicate an array with shape (a,b))
   """
