@@ -178,6 +178,24 @@ def _split(key, num):
   return lax.reshape(threefry_2x32(key, counts), (num, 2))
 
 
+class PRNGKeySequence(object):
+  """A simple wrapper class for the PRNG split functionality."""
+
+  def __init__(self, key=None):
+    if key is None or not is_prng_key(key):
+      key = PRNGKey(0)
+    self._key = key
+
+  def next_key(self):
+    """Splits the current key into two, returning one and storing the other.
+    
+    Returns:
+      A PRNG key obtained by splitting an internal key.
+    """
+    self._key, subkey = split(self._key)
+    return subkey
+
+
 def fold_in(key, data):
   """Folds in data to a PRNG key to form a new PRNG key.
 
