@@ -79,11 +79,17 @@ def primitive_computation(prim, *shapes, **params):
   c = xb.make_computation_builder("primitive_computation")
   platform = xb.get_backend().platform
   xla_args = map(c.ParameterWithShape, shapes)
-  try:
-    rule = backend_specific_translations[platform].get(prim) or translations[prim]
-  except KeyError:
+  if prim in backend_specific_translations[platform]:
+    rule = backend_specific_translations[platform][prim]
+    rule(c, *xla_args, **params)  # return val set as a side-effect on c
+  elif prim in translations:
+    rule = translations[prim]
+    rule(c, *xla_args, **params)  # return val set as a side-effect on c
+  elif prim in initial_style_translations:
+    rule = initial_style_translations[prim]
+    rule(c, AxisEnv(1, [], []), *xla_args, **params)  # side-effect on c
+  else:
     raise NotImplementedError("XLA translation rule for {} not found".format(prim))
-  rule(c, *xla_args, **params)  # return val set as a side-effect on c
   try:
     return c.Build()
   except RuntimeError as e:

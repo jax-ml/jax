@@ -156,16 +156,6 @@ def while_loop(cond_fun, body_fun, init_val):
   return build_tree(out_tree(), out_flat)
 
 
-def _while_loop_impl(init_val, cond_consts, body_consts, aval_out, cond_jaxpr,
-                     body_jaxpr):
-  cond_fun = partial(core.eval_jaxpr, cond_jaxpr, cond_consts, ())
-  body_fun = partial(core.eval_jaxpr, body_jaxpr, body_consts, ())
-
-  val = init_val
-  while cond_fun(val):
-    val = body_fun(val)
-  return val
-
 def _while_loop_abstract_eval(init_val, cond_consts, body_consts, aval_out,
                               cond_jaxpr, body_jaxpr):
   return _maybe_tracer_tuple_to_abstract_tuple(aval_out)
@@ -261,7 +251,7 @@ def _jaxtupletree_select(pred, on_true, on_false):
 
 
 while_p = lax.Primitive('while')
-while_p.def_impl(_while_loop_impl)
+while_p.def_impl(partial(xla.apply_primitive, while_p))
 while_p.def_abstract_eval(_while_loop_abstract_eval)
 xla.initial_style_translations[while_p] = _while_loop_translation_rule
 batching.primitive_batchers[while_p] = _while_loop_batching_rule
