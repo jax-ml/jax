@@ -33,10 +33,6 @@ py_library(
         "cusolver.py",
         "version.py",
     ],
-    deps = [
-        ":cublas_kernels",
-        ":cusolver_kernels",
-    ]
 )
 
 tf_pybind_extension(
