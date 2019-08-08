@@ -27,7 +27,7 @@ Use the links below to open any of these for interactive exploration in colab.
 [Common_Gotchas_in_JAX]:https://colab.sandbox.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb
 [gufuncs]:https://colab.sandbox.google.com/github/google/jax/blob/master/notebooks/gufuncs.ipynb
 [maml]:https://colab.sandbox.google.com/github/google/jax/blob/master/notebooks/maml.ipynb
-[gmegdd]:https://colab.sandbox.google.com/github/google/jax/blob/master/notebooks/score-matching.ipynb
+[gmegdd]:https://colab.sandbox.google.com/github/google/jax/blob/master/notebooks/score_matching.ipynb
 [vmapped log-probs]:https://colab.sandbox.google.com/github/google/jax/blob/master/notebooks/vmapped%20log-probs.ipynb
 [neural_network_with_tfds_data]:https://colab.sandbox.google.com/github/google/jax/blob/master/notebooks/neural_network_with_tfds_data.ipynb
 [neural_network_and_data_loading]:https://colab.sandbox.google.com/github/google/jax/blob/master/notebooks/neural_network_and_data_loading.ipynb
