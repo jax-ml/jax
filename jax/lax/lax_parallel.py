@@ -107,11 +107,11 @@ def ppermute(x, axis_name, perm):
       ``axis_name``. Any two pairs should not have the same source index or the
       same destination index. For each index of the axis ``axis_name`` that does
       not correspond to a destination index in ``perm``, the corresponding
-      values in ``x`` are filled with zeros of the appropriate type.
+      values in the result are filled with zeros of the appropriate type.
 
   Returns:
-    An array with the same shape as ``x`` representing the result of an
-    all-reduce min along the axis ``axis_name``.
+    An array with the same shape as ``x`` with slices along the axis
+    ``axis_name`` gathered from ``x`` according to the permutation ``perm``.
   """
   return ppermute_p.bind(x, axis_name=axis_name, perm=perm)
 
