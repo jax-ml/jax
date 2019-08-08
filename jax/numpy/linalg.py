@@ -228,6 +228,7 @@ def qr(a, mode="reduced"):
 
 
 @_wraps(onp.linalg.solve)
+@jit
 def solve(a, b):
   a, b = _promote_arg_dtypes(np.asarray(a), np.asarray(b))
   a_shape = np.shape(a)

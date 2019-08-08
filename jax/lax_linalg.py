@@ -29,7 +29,7 @@ from jax import ops
 from jax.interpreters import xla
 from jax.interpreters import ad
 from jax.interpreters import batching
-from jax.util import partial
+from jax.util import partial, prod
 from jax.abstract_arrays import ShapedArray
 from jax.core import Primitive
 from jax.lax import (standard_primitive, standard_unop, binop_dtype_rule,
@@ -371,7 +371,7 @@ ad.primitive_transposes[triangular_solve_p] = triangular_solve_transpose_rule
 batching.primitive_batchers[triangular_solve_p] = triangular_solve_batching_rule
 
 
-def triangular_solve_cpu_translation_rule(
+def _triangular_solve_cpu_translation_rule(
     c, a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
   shape = c.GetShape(a)
   dtype = shape.element_type().type
@@ -389,8 +389,30 @@ def triangular_solve_cpu_translation_rule(
     return c.TriangularSolve(a, b, left_side, lower, transpose_a, conjugate_a,
                              unit_diagonal)
 
-xla.backend_specific_translations['cpu'][triangular_solve_p] = triangular_solve_cpu_translation_rule
+xla.backend_specific_translations['cpu'][triangular_solve_p] = \
+  _triangular_solve_cpu_translation_rule
 
+def _triangular_solve_gpu_translation_rule(
+    c, a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
+  shape = c.GetShape(a)
+  dtype = shape.element_type().type
+  dims = shape.dimensions()
+  m, n = dims[-2:]
+  batch = prod(dims[:-2])
+  if batch > 1 and m <= 32 and n <= 32:
+    if conjugate_a and not transpose_a:
+      a = c.Conj(a)
+      conjugate_a = False
+    return cusolver.trsm(
+      c, a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal)
+  else:
+    # Use the XLA implementation for unbatched triangular_solve.
+    return c.TriangularSolve(a, b, left_side, lower, transpose_a, conjugate_a,
+                             unit_diagonal)
+
+if cusolver:
+  xla.backend_specific_translations['gpu'][triangular_solve_p] = \
+      _triangular_solve_gpu_translation_rule
 
 # LU decomposition
 

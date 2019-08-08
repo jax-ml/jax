@@ -255,13 +255,15 @@ void Getrf(cudaStream_t stream, void** buffers, const char* opaque,
   const GetrfDescriptor& d =
       *UnpackDescriptor<GetrfDescriptor>(opaque, opaque_len);
   auto handle = SolverHandlePool::Borrow(stream);
-  ThrowIfError(cudaMemcpyAsync(buffers[1], buffers[0],
-                               SizeOfType(d.type) * d.batch * d.m * d.n,
-                               cudaMemcpyDeviceToDevice, stream));
+  if (buffers[1] != buffers[0]) {
+    ThrowIfError(cudaMemcpyAsync(buffers[1], buffers[0],
+                                 SizeOfType(d.type) * d.batch * d.m * d.n,
+                                 cudaMemcpyDeviceToDevice, stream));
+  }
 
-  void* workspace = buffers[2];
-  int* ipiv = static_cast<int*>(buffers[3]);
-  int* info = static_cast<int*>(buffers[4]);
+  int* ipiv = static_cast<int*>(buffers[2]);
+  int* info = static_cast<int*>(buffers[3]);
+  void* workspace = buffers[4];
   switch (d.type) {
     case Type::F32: {
       float* a = static_cast<float*>(buffers[1]);

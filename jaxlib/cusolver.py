@@ -16,9 +16,19 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import operator
+
 import numpy as np
+from six.moves import reduce
 
 from jaxlib import xla_client
+
+try:
+  from jaxlib import cublas_kernels
+  for _name, _value in cublas_kernels.registrations().items():
+    xla_client.register_custom_call_target(_name, _value, platform="gpu")
+except ImportError:
+  pass
 
 try:
   from jaxlib import cusolver_kernels
@@ -26,6 +36,7 @@ try:
     xla_client.register_custom_call_target(_name, _value, platform="gpu")
 except ImportError:
   pass
+
 
 _Shape = xla_client.Shape
 
@@ -43,6 +54,50 @@ def _real_type(dtype):
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
 
+_prod = lambda xs: reduce(operator.mul, xs, 1)
+
+def trsm(c, a, b, left_side=False, lower=False, trans_a=False, conj_a=False,
+         diag=False):
+  """Batched triangular solve.
+
+  XLA implements unbatched triangular solve directly, so we need only implement
+  the batched case."""
+  b_shape = c.GetShape(b)
+  dtype = b_shape.element_type()
+  dims = b_shape.dimensions()
+  assert len(dims) >= 2
+  m, n = dims[-2:]
+  batch_dims = tuple(dims[:-2])
+  num_bd = len(batch_dims)
+  batch = _prod(batch_dims)
+  k = m if left_side else n
+
+  a_shape = c.GetShape(a)
+  if (batch_dims + (k, k) != a_shape.dimensions() or
+      a_shape.element_type() != dtype):
+    raise ValueError("Argument mismatch for trsm, got {} and {}".format(
+      a_shape, b_shape))
+
+  if conj_a and not trans_a:
+    raise NotImplementedError("Conjugation without transposition not supported")
+
+  lwork, opaque = cublas_kernels.build_trsm_batched_descriptor(
+    np.dtype(dtype), batch, m, n, left_side, lower, trans_a, conj_a, diag)
+  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
+  out = c.CustomCall(
+      b"cublas_trsm_batched",
+      operands=(a, b),
+      shape_with_layout=_Shape.tuple_shape((
+          _Shape.array_shape(dtype, b_shape.dimensions(), layout),
+          _Shape.array_shape(np.dtype(np.int8), (lwork,), (0,)),
+          _Shape.array_shape(np.dtype(np.int8), (lwork,), (0,)))),
+      operand_shapes_with_layout=(
+          _Shape.array_shape(dtype, a_shape.dimensions(), layout),
+          _Shape.array_shape(dtype, b_shape.dimensions(), layout),
+      ),
+      opaque=opaque)
+  return c.GetTupleElement(out, 0)
+
 
 def getrf(c, a):
   """LU decomposition."""
@@ -53,32 +108,39 @@ def getrf(c, a):
   m, n = dims[-2:]
   batch_dims = tuple(dims[:-2])
   num_bd = len(batch_dims)
-  b = 1
-  for d in batch_dims:
-    b *= d
+  batch = _prod(batch_dims)
 
-  lwork, opaque = cusolver_kernels.build_getrf_descriptor(
-      np.dtype(dtype), b, m, n)
+  if batch > 1 and m == n and m // batch <= 128:
+    lwork, opaque = cublas_kernels.build_getrf_batched_descriptor(
+      np.dtype(dtype), batch, m)
+    workspace = _Shape.array_shape(np.dtype(np.int8), (lwork,), (0,))
+    kernel = b"cublas_getrf_batched"
+  else:
+    lwork, opaque = cusolver_kernels.build_getrf_descriptor(
+        np.dtype(dtype), batch, m, n)
+    workspace = _Shape.array_shape(dtype, (lwork,), (0,))
+    kernel = b"cusolver_getrf"
+
   out = c.CustomCall(
-      b"cusolver_getrf",
+      kernel,
       operands=(a,),
       shape_with_layout=_Shape.tuple_shape((
           _Shape.array_shape(
               dtype, batch_dims + (m, n),
               (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
-          _Shape.array_shape(dtype, (lwork,), (0,)),
           _Shape.array_shape(
               np.dtype(np.int32), batch_dims + (min(m, n),),
               tuple(range(num_bd, -1, -1))),
           _Shape.array_shape(
               np.dtype(np.int32), batch_dims, tuple(range(num_bd - 1, -1, -1))),
+          workspace,
       )),
       operand_shapes_with_layout=(_Shape.array_shape(
           dtype, batch_dims + (m, n),
           (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),),
       opaque=opaque)
-  return (c.GetTupleElement(out, 0), c.GetTupleElement(out, 2),
-          c.GetTupleElement(out, 3))
+  return (c.GetTupleElement(out, 0), c.GetTupleElement(out, 1),
+          c.GetTupleElement(out, 2))
 
 
 def syevd(c, a, lower=False):
@@ -92,19 +154,17 @@ def syevd(c, a, lower=False):
   assert m == n
   batch_dims = tuple(dims[:-2])
   num_bd = len(batch_dims)
-  b = 1
-  for d in batch_dims:
-    b *= d
+  batch = _prod(batch_dims)
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
 
   if n <= 32:
     kernel = b"cusolver_syevj"
     lwork, opaque = cusolver_kernels.build_syevj_descriptor(
-        np.dtype(dtype), lower, b, n)
+        np.dtype(dtype), lower, batch, n)
   else:
     kernel = b"cusolver_syevd"
     lwork, opaque = cusolver_kernels.build_syevd_descriptor(
-        np.dtype(dtype), lower, b, n)
+        np.dtype(dtype), lower, batch, n)
   eigvals_type = _real_type(dtype)
 
   out = c.CustomCall(
