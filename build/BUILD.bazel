@@ -32,6 +32,7 @@ sh_binary(
         "//jaxlib:lapack.so",
         "//jaxlib:pytree",
     ] + if_cuda_is_configured([
+        "//jaxlib:cublas_kernels",
         "//jaxlib:cusolver_kernels",
     ]),
     deps = ["@bazel_tools//tools/bash/runfiles"],
