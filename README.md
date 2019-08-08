@@ -91,7 +91,8 @@ And for a deeper dive into JAX:
 - [Common gotchas and sharp edges](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb)
 - [The Autodiff Cookbook, Part 1: easy and powerful automatic differentiation in JAX](https://colab.research.google.com/github/google/jax/blob/master/notebooks/autodiff_cookbook.ipynb)
 - [Directly using XLA in Python](https://colab.research.google.com/github/google/jax/blob/master/notebooks/XLA_in_Python.ipynb)
-- [MAML Tutorial with JAX](https://colab.research.google.com/github/google/jax/blob/master/notebooks/maml.ipynb).
+- [MAML Tutorial with JAX](https://colab.research.google.com/github/google/jax/blob/master/notebooks/maml.ipynb)
+- [Generative Modeling by Estimating Gradeints of Data Distribution in JAX](https://colab.research.google.com/github/google/jax/blob/master/notebooks/score-matching.ipynb).
 
 ## Installation
 JAX is written in pure Python, but it depends on XLA, which needs to be compiled

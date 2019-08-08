@@ -8,6 +8,8 @@ Use the links below to open any of these for interactive exploration in colab.
 
  - [MAML][maml] - pedagogical demonstration of Model-Agnostic Meta-Learning in JAX.
 
+ - [Score Matching][gmegdd] - demonstration of Generative Modeling by Estimating Gradients of the Data Distribution
+
  - [vmapped log-probabilities][vmapped log-probs] - demonstrates the utility of __vmap__ for Bayesian inference.
 
  - [gufuncs via vmap][gufuncs] - how to implement NumPy-like gufuncs using __vmap__.
@@ -20,10 +22,12 @@ Use the links below to open any of these for interactive exploration in colab.
 
 
 
+
 [quickstart]:https://colab.sandbox.google.com/github/google/jax/blob/master/notebooks/quickstart.ipynb
 [Common_Gotchas_in_JAX]:https://colab.sandbox.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb
 [gufuncs]:https://colab.sandbox.google.com/github/google/jax/blob/master/notebooks/gufuncs.ipynb
 [maml]:https://colab.sandbox.google.com/github/google/jax/blob/master/notebooks/maml.ipynb
+[gmegdd]:https://colab.sandbox.google.com/github/google/jax/blob/master/notebooks/score-matching.ipynb
 [vmapped log-probs]:https://colab.sandbox.google.com/github/google/jax/blob/master/notebooks/vmapped%20log-probs.ipynb
 [neural_network_with_tfds_data]:https://colab.sandbox.google.com/github/google/jax/blob/master/notebooks/neural_network_with_tfds_data.ipynb
 [neural_network_and_data_loading]:https://colab.sandbox.google.com/github/google/jax/blob/master/notebooks/neural_network_and_data_loading.ipynb
