@@ -16,6 +16,10 @@ echo "Python version $PY_VERSION"
 git clone https://github.com/google/jax /build/jax
 cd /build/jax/build
 
+mkdir /build/tmp
+mkdir /build/root
+export TMPDIR=/build/tmp
+
 usage() {
   echo "usage: ${0##*/} [py2|py3] [cuda-included|cuda|nocuda]"
   exit 1
@@ -34,14 +38,14 @@ echo "Python tag $PY_TAG"
 
 case $2 in
   cuda-included)
-    python build.py --enable_cuda
+    python build.py --enable_cuda --bazel_startup_options="--output_user_root=/build/root"
     python include_cuda.py
     ;;
   cuda)
-    python build.py --enable_cuda
+    python build.py --enable_cuda --bazel_startup_options="--output_user_root=/build/root"
     ;;
   nocuda)
-    python build.py
+    python build.py --bazel_startup_options="--output_user_root=/build/root"
     ;;
   *)
     usage

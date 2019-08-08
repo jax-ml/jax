@@ -9,8 +9,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
             libxml2-dev libxmlsec1-dev libffi-dev openjdk-8-jdk curl \
             bash-completion unzip python
 
-RUN wget "https://github.com/bazelbuild/bazel/releases/download/0.24.0/bazel_0.24.0-linux-x86_64.deb" && \
-    dpkg -i bazel_0.24.0-linux-x86_64.deb
+RUN wget "https://github.com/bazelbuild/bazel/releases/download/0.26.1/bazel_0.26.1-linux-x86_64.deb" && \
+    dpkg -i bazel_0.26.1-linux-x86_64.deb
 
 RUN git clone https://github.com/nixos/patchelf /tmp/patchelf
 WORKDIR /tmp/patchelf
