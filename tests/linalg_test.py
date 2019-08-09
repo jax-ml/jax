@@ -477,7 +477,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(np.linalg.inv, args_maker, check_dtypes=True)
 
   # Regression test for incorrect type for eigenvalues of a complex matrix.
-  @jtu.skip_on_devices("tpu")
+  @jtu.skip_on_devices("tpu")  # TODO(phawkins): eigh unimplemented
   def testIssue669(self):
     def test(x):
       val, vec = np.linalg.eigh(x)
@@ -487,6 +487,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     xc = onp.eye(3, dtype=onp.complex)
     self.assertAllClose(xc, grad_test_jc(xc), check_dtypes=True)
 
+  @jtu.skip_on_devices("tpu")  # TODO(phawkins): Google bug b/139202378
   def testIssue1151(self):
     A = np.array(onp.random.randn(100, 3, 3), dtype=np.float32)
     b = np.array(onp.random.randn(100, 3), dtype=np.float32)
