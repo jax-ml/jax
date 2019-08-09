@@ -1,3 +1,4 @@
+# coding=utf-8
 # Copyright 2018 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -1776,12 +1777,20 @@ def custom_implicit_solve(solve, tangent_solve):
  
     @partial(defjvp_all, solve_impl)
     def solve_impl_jvp(primals, tangents):
-      # http://www.dolfin-adjoint.org/en/release/documentation/maths/3-gradients.html#the-tangent-linear-approach
+      # Let F(u, m) = 0, where u = solution, m = params. Then:
+      # d/dx F(u, m) = 0
+      # ∂F/∂u du/dx + ∂F/∂m dm/dx = 0
+      # du/dx = -(∂F/∂u)^{-1} ∂F/∂m dm/dx
+      # For more background, see:
+      # http://www.dolfin-adjoint.org/en/release/documentation/maths/3-gradients.html
       params, = primals
       grad_params, = tangents
       solution = solve_impl(params)
-      _, vjp_func = vjp(partial(func, params), solution)
-      grad_solution = tangent_solve(lambda p: vjp_func(p)[0], grad_params)
+      _, f_jvp = vjp(func, params, solution)
+      grad_solution = tree_map(
+          lambda x: -x,
+          tangent_solve(lambda p: f_jvp(p)[1], f_jvp(grad_params)[0])
+      )
       return solution, grad_solution
 
     return solve_impl(params)

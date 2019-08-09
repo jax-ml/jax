@@ -919,18 +919,18 @@ class APITest(jtu.JaxTestCase):
       return solution
 
     binary_search = api.custom_implicit_solve(_binary_search, scalar_solve)
-    value, grad = api.value_and_grad(binary_search, argnums=1)(
-        lambda x, y: y ** 2 - x, 5.0)
-    self.assertAllClose(value, np.sqrt(5), check_dtypes=False)
-    self.assertAllClose(grad, api.grad(np.sqrt)(5.0), check_dtypes=False)
+    sqrt_cubed = lambda x, y: y ** 2 - x ** 3
+    value, grad = api.value_and_grad(binary_search, argnums=1)(sqrt_cubed, 5.0)
+    self.assertAllClose(value, 5 ** 1.5, check_dtypes=False)
+    self.assertAllClose(grad, api.grad(pow)(5.0, 1.5), check_dtypes=False)
 
     def scalar_solve2(f, y):
       y_1d = y[np.newaxis]
       return np.linalg.solve(api.jacobian(f)(y_1d), y_1d).squeeze()
 
     binary_search = api.custom_implicit_solve(_binary_search, scalar_solve2)
-    grad = api.grad(binary_search, argnums=1)(lambda x, y: y ** 2 - x, 5.0)
-    self.assertAllClose(grad, api.grad(np.sqrt)(5.0), check_dtypes=False)
+    grad = api.grad(binary_search, argnums=1)(sqrt_cubed, 5.0)
+    self.assertAllClose(grad, api.grad(pow)(5.0, 1.5), check_dtypes=False)
 
   def test_jit_device_assignment(self):
     device_num = xb.device_count() - 1
