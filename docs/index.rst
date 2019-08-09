@@ -13,6 +13,7 @@ For an introduction to JAX, start at the
 
    async_dispatch
    gpu_memory_allocation
+   profiling
 
 .. toctree::
    :maxdepth: 3
