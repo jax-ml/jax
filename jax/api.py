@@ -1786,7 +1786,7 @@ def custom_implicit_solve(solve, tangent_solve):
       params, = primals
       grad_params, = tangents
       solution = solve_impl(params)
-      _, f_jvp = vjp(func, params, solution)
+      unchecked_zeros, f_jvp = vjp(func, params, solution)
       grad_solution = tree_map(
           lambda x: -x,
           tangent_solve(lambda p: f_jvp(p)[1], f_jvp(grad_params)[0])
