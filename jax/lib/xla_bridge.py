@@ -123,18 +123,16 @@ register_backend('xla', _get_local_backend)
 register_backend('xrt', _get_xrt_backend)
 
 _backend_lock = threading.Lock()
+
 @util.memoize
 def get_backend():
-  global _backend_lock
-  try:
+  with _backend_lock:
     _backend_lock.acquire()
     backend = _backends.get(FLAGS.jax_xla_backend)
     if backend is None:
       msg = 'Unknown jax_xla_backend value "{}".'
       raise ValueError(msg.format(FLAGS.jax_xla_backend))
     return backend()
-  finally:
-    _backend_lock.release()
 
 
 def device_count():
