@@ -196,15 +196,15 @@ def wrap_init(f, params={}):
   return WrappedFun(f, [], params)
 
 
-def memoize(call, max_size=4096):
+def cache(call, max_size=4096):
   @fastcache.clru_cache(maxsize=max_size)
-  def memoized_fun_body(f, args):
+  def cached_fun_body(f, args):
     return call(f, *args), f
 
-  def memoized_fun(f, *args):
-    ans, f_prev = memoized_fun_body(f, args)
+  def cached_fun(f, *args):
+    ans, f_prev = cached_fun_body(f, args)
     if id(f_prev) != id(f):
       f.populate_stores(f_prev)
     return ans
 
-  return memoized_fun
+  return cached_fun

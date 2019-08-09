@@ -139,15 +139,10 @@ def split_merge(predicate, xs):
   return lhs, rhs, merge
 
 
-def memoize(fun, max_size=4096):
-  return fastcache.clru_cache(maxsize=max_size)(fun)
+def cache(max_size=4096):
+  return fastcache.clru_cache(maxsize=max_size)
 
-def memoize_unary(func):
-  class memodict(dict):
-    def __missing__(self, key):
-      val = self[key] = func(key)
-      return val
-  return memodict().__getitem__
+memoize = fastcache.clru_cache(maxsize=None)
 
 
 def prod(xs):

@@ -34,7 +34,7 @@ from .. import linear_util as lu
 from ..abstract_arrays import (ConcreteArray, ShapedArray, make_shaped_array,
                                array_types)
 from ..core import AbstractTuple, JaxTuple, pack, valid_jaxtype, Literal
-from ..util import partial, partialmethod, memoize, concatenate, safe_map, prod
+from ..util import partial, partialmethod, cache, concatenate, safe_map, prod
 from ..lib import xla_bridge as xb
 from ..lib import xla_client
 from . import partial_eval as pe
@@ -54,7 +54,7 @@ def apply_primitive(prim, *args, **params):
   compiled_fun = _xla_primitive_callable(prim, *abstract_args, **params)
   return compiled_fun(*args)
 
-@memoize
+@cache()
 def _xla_primitive_callable(prim, *abstract_args, **params):
   shapes = tuple(map(xla_shape, abstract_args))
   built_c = primitive_computation(prim, *shapes, **params)
@@ -73,7 +73,7 @@ def xla_shape(x):
     else:
       raise TypeError(type(x))
 
-@memoize
+@cache()
 def primitive_computation(prim, *shapes, **params):
   """Builds an XLA computation for `prim` with argument `shapes`."""
   c = xb.make_computation_builder("primitive_computation")
@@ -695,7 +695,7 @@ def _xla_call_impl(fun, *args, **params):
           "Calling the de-optimized version.")
     return fun.call_wrapped(*args)  # probably won't return
 
-@lu.memoize
+@lu.cache
 def _xla_callable(fun, device_assignment, device_values, *abstract_args):
   pvals = [pe.PartialVal((aval, core.unit)) for aval in abstract_args]
   with core.new_master(pe.JaxprTrace, True) as master:

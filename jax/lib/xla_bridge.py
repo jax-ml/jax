@@ -31,6 +31,7 @@ from ..config import flags
 from .. import util
 import numpy as onp  # 'onp' rather than 'np' to distinguish from autograd.numpy
 import six
+import threading
 
 from . import xla_client
 from . import xrt
@@ -82,12 +83,6 @@ def get_compile_options(num_replicas=None, device_assignment=None):
     compile_options.device_assignment = device_assignment
   return compile_options
 
-
-def memoize_thunk(func):
-  cached = []
-  return lambda: cached[0] if cached else (cached.append(func()) or cached[0])
-
-
 _backends = {}
 
 def register_backend(name, factory):
@@ -127,14 +122,17 @@ def _get_xrt_backend():
 register_backend('xla', _get_local_backend)
 register_backend('xrt', _get_xrt_backend)
 
+_backend_lock = threading.Lock()
 
-@memoize_thunk
+@util.memoize
 def get_backend():
-  backend = _backends.get(FLAGS.jax_xla_backend)
-  if backend is None:
-    msg = 'Unknown jax_xla_backend value "{}".'
-    raise ValueError(msg.format(FLAGS.jax_xla_backend))
-  return backend()
+  with _backend_lock:
+    _backend_lock.acquire()
+    backend = _backends.get(FLAGS.jax_xla_backend)
+    if backend is None:
+      msg = 'Unknown jax_xla_backend value "{}".'
+      raise ValueError(msg.format(FLAGS.jax_xla_backend))
+    return backend()
 
 
 def device_count():
@@ -143,7 +141,7 @@ def device_count():
 
 ### utility functions
 
-@util.memoize_unary
+@util.memoize
 def dtype_to_etype(dtype):
   """Convert from dtype to canonical etype (reading FLAGS.jax_enable_x64)."""
   return xla_client.dtype_to_etype(canonicalize_dtype(dtype))
@@ -157,7 +155,7 @@ _dtype_to_32bit_dtype = {
 }
 
 
-@util.memoize_unary
+@util.memoize
 def canonicalize_dtype(dtype):
   """Convert from a dtype to a canonical dtype based on FLAGS.jax_enable_x64."""
   dtype = onp.dtype(dtype)
@@ -168,7 +166,7 @@ def canonicalize_dtype(dtype):
     return _dtype_to_32bit_dtype.get(dtype, dtype)
 
 
-@memoize_thunk
+@util.memoize
 def supported_numpy_dtypes():
   return {canonicalize_dtype(dtype)
           for dtype in xla_client.XLA_ELEMENT_TYPE_TO_DTYPE.values()}

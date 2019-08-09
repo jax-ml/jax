@@ -18,11 +18,16 @@ from __future__ import print_function
 
 import collections
 from functools import partial
+import unittest
 
 from absl.testing import absltest
 import numpy as onp
 import six
 
+if six.PY3:
+  import concurrent.futures
+
+import jax
 import jax.numpy as np
 from jax import jit, grad, device_get, device_put, jacfwd, jacrev, hessian
 from jax import api, lax
@@ -926,6 +931,21 @@ class APITest(jtu.JaxTestCase):
 
     u = np.ones((device_count, 100))
     u_final = multi_step_pmap(u)  # doesn't crash
+
+  @unittest.skipIf(six.PY2, "Test requires Python 3")
+  def test_concurrent_device_get_and_put(self):
+    def f(x):
+      for _ in range(100):
+        y = jax.device_put(x)
+        x = jax.device_get(y)
+      return x
+
+    xs = [onp.random.randn(i) for i in range(10)]
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+      futures = [executor.submit(partial(f, x)) for x in xs]
+      ys = [f.result() for f in futures]
+    for x, y in zip(xs, ys):
+      self.assertAllClose(x, y, check_dtypes=True)
 
 
 if __name__ == '__main__':
