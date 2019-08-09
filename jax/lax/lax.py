@@ -45,7 +45,7 @@ from ..interpreters import xla
 from ..interpreters import pxla
 from ..interpreters import ad
 from ..interpreters import batching
-from ..util import curry, memoize, safe_zip, unzip2, prod
+from ..util import curry, cache, safe_zip, unzip2, prod
 from ..tree_util import build_tree, tree_unflatten, tree_map
 from ..lib import xla_bridge
 from ..lib import xla_client
@@ -57,7 +57,7 @@ _min = builtins.max
 _reduce = six.moves.reduce
 
 
-@memoize
+@cache()
 def broadcast_shapes(*shapes):
   """Returns the shape that results from NumPy broadcasting of `shapes`."""
   if len(shapes) == 1:

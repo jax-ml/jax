@@ -28,7 +28,7 @@ from six.moves import reduce
 from .. import core
 from .. import linear_util as lu
 from ..abstract_arrays import ConcreteArray, ShapedArray
-from ..util import partial, unzip2, concatenate, prod, memoize_unary
+from ..util import partial, unzip2, concatenate, prod
 from ..lib import xla_bridge as xb
 from .xla import xla_shape, xla_destructure, xla_shape_to_result_shape
 from .partial_eval import trace_to_subjaxpr, merge_pvals, JaxprTrace, PartialVal
@@ -525,7 +525,7 @@ def _shard_aval(axis_size, aval):
   else:
     raise TypeError(aval)
 
-@lu.memoize
+@lu.cache
 def parallel_callable(fun, axis_name, axis_size, *avals):
   avals = tuple(_shard_aval(axis_size, a) for a in avals)
   pvals = [PartialVal((aval, core.unit)) for aval in avals]

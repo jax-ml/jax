@@ -82,12 +82,6 @@ def get_compile_options(num_replicas=None, device_assignment=None):
     compile_options.device_assignment = device_assignment
   return compile_options
 
-
-def memoize_thunk(func):
-  cached = []
-  return lambda: cached[0] if cached else (cached.append(func()) or cached[0])
-
-
 _backends = {}
 
 def register_backend(name, factory):
@@ -128,7 +122,7 @@ register_backend('xla', _get_local_backend)
 register_backend('xrt', _get_xrt_backend)
 
 
-@memoize_thunk
+@util.memoize
 def get_backend():
   backend = _backends.get(FLAGS.jax_xla_backend)
   if backend is None:
@@ -143,7 +137,7 @@ def device_count():
 
 ### utility functions
 
-@util.memoize_unary
+@util.memoize
 def dtype_to_etype(dtype):
   """Convert from dtype to canonical etype (reading FLAGS.jax_enable_x64)."""
   return xla_client.dtype_to_etype(canonicalize_dtype(dtype))
@@ -157,7 +151,7 @@ _dtype_to_32bit_dtype = {
 }
 
 
-@util.memoize_unary
+@util.memoize
 def canonicalize_dtype(dtype):
   """Convert from a dtype to a canonical dtype based on FLAGS.jax_enable_x64."""
   dtype = onp.dtype(dtype)
@@ -168,7 +162,7 @@ def canonicalize_dtype(dtype):
     return _dtype_to_32bit_dtype.get(dtype, dtype)
 
 
-@memoize_thunk
+@util.memoize
 def supported_numpy_dtypes():
   return {canonicalize_dtype(dtype)
           for dtype in xla_client.XLA_ELEMENT_TYPE_TO_DTYPE.values()}

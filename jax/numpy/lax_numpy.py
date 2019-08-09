@@ -44,7 +44,7 @@ from .. import core
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
 from ..interpreters.xla import DeviceArray
 from .. import lax
-from ..util import memoize, partial, get_module_functions, unzip2, prod as _prod
+from ..util import partial, get_module_functions, unzip2, prod as _prod
 from ..lib import xla_bridge
 from ..lib import xla_client
 
