@@ -15,7 +15,7 @@
 # JAX is Autograd and XLA
 
 load("@org_tensorflow//tensorflow/core/platform:default/build_config.bzl", "pyx_library")
-load("@org_tensorflow//tensorflow:tensorflow.bzl", "tf_pybind_extension")
+load("@org_tensorflow//tensorflow:tensorflow.bzl", "pybind_extension")
 
 licenses(["notice"])  # Apache 2
 
@@ -35,7 +35,7 @@ py_library(
     ],
 )
 
-tf_pybind_extension(
+pybind_extension(
     name = "pytree",
     srcs = ["pytree.cc"],
     copts = [
@@ -56,7 +56,7 @@ tf_pybind_extension(
     ],
 )
 
-tf_pybind_extension(
+pybind_extension(
     name = "cublas_kernels",
     srcs = ["cublas.cc"],
     copts = [
@@ -83,7 +83,7 @@ tf_pybind_extension(
     ],
 )
 
-tf_pybind_extension(
+pybind_extension(
     name = "cusolver_kernels",
     srcs = ["cusolver.cc"],
     copts = [
