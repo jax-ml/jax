@@ -20,6 +20,7 @@ from operator import attrgetter
 from contextlib import contextmanager
 from collections import namedtuple, Counter, defaultdict
 from weakref import ref
+import threading
 import types
 
 import six
@@ -425,42 +426,50 @@ class TraceStack(object):
       map('  {}\n'.format, self.downward))
 
 
-trace_stack = TraceStack()
-
 class Sublevel(int): pass
-substack = [Sublevel(0)]
+
+# The global state of the tracer is accessed by a thread-local object.
+# This allows concurrent tracing in separate threads; passing traced objects
+# between threads is forbidden.
+class TraceState(threading.local):
+  def __init__(self):
+    self.trace_stack = TraceStack()
+    self.substack = [Sublevel(0)]
+
+trace_state = TraceState()
+
 
 def cur_sublevel():
-  return substack[-1]
+  return trace_state.substack[-1]
 
 
 @contextmanager
 def new_master(trace_type, bottom=False):
-  level = trace_stack.next_level(bottom)
+  level = trace_state.trace_stack.next_level(bottom)
   master = MasterTrace(level, trace_type)
-  trace_stack.push(master, bottom)
+  trace_state.trace_stack.push(master, bottom)
 
   try:
     yield master
   finally:
-    trace_stack.pop(bottom)
+    trace_state.trace_stack.pop(bottom)
 
   if check_leaks:
     t = ref(master)
     del master
     if t() is not None:
-      print(trace_stack)
+      print(trace_state.trace_stack)
       raise Exception('Leaked trace {}'.format(t()))
 
 
 @contextmanager
 def new_sublevel():
-  sublevel = Sublevel(len(substack))
-  substack.append(sublevel)
+  sublevel = Sublevel(len(trace_state.substack))
+  trace_state.substack.append(sublevel)
   try:
     yield
   finally:
-    substack.pop()
+    trace_state.substack.pop()
 
   if check_leaks:
     t = ref(sublevel)
@@ -655,7 +664,7 @@ def process_env_traces(primitive, level, params_tuple, *args):
 
 def call_bind(primitive, f, *args, **params):
   top_trace = find_top_trace(args)
-  level = trace_stack.next_level(True) if top_trace is None else top_trace.level
+  level = trace_state.trace_stack.next_level(True) if top_trace is None else top_trace.level
   params_tuple = tuple(params.items())
   f, env_trace_todo = process_env_traces(f, primitive, level, params_tuple)
   if top_trace is None:

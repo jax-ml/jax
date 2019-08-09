@@ -20,6 +20,7 @@ from __future__ import division
 from __future__ import print_function
 
 import operator
+import threading
 
 import numpy as onp
 
@@ -750,7 +751,12 @@ def rearrange_binders(f, typed_jaxpr):
   return core.TypedJaxpr(jaxpr, typed_jaxpr.literals, in_avals,
                          typed_jaxpr.out_aval)
 
-_scan_newvar = pe.gensym('_scan')
+# TODO(phawkins, mattjj): use a non-global naming scheme for variables.
+class _ThreadLocalState(threading.local):
+  def __init__(self):
+    self.scan_newvar = pe.gensym('_scan')
+
+_thread_local = _ThreadLocalState()
 
 def _move_stuff_and_add_add(typed_jaxpr):
   # jaxpr_lifted_trans :: res -> (CT c, CT b) -> (CT d, CT c, CT a)
@@ -768,6 +774,7 @@ def _move_stuff_and_add_add(typed_jaxpr):
   # assume the jaxpr isn't restructuring any inputs
   assert not any(type(invar) is tuple for invar in jaxpr.invars)
 
+  _scan_newvar = _thread_local.scan_newvar
   # munge input side
   CTc_in = _scan_newvar()
   CTb_in = _scan_newvar()

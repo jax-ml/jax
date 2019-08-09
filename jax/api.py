@@ -30,6 +30,7 @@ import collections
 import itertools
 import operator as op
 import os
+import threading
 from warnings import warn
 
 import numpy as onp
@@ -74,6 +75,12 @@ flags.DEFINE_bool("jax_disable_jit",
 def _check_callable(fun):
   if not callable(fun):
     raise TypeError("Expected a callable value, got {}".format(fun))
+
+class _ThreadLocalState(threading.local):
+  def __init__(self):
+    self.jit_is_disabled = False
+
+_thread_local_state = _ThreadLocalState()
 
 def jit(fun, static_argnums=(), device_assignment=None):
   """Sets up `fun` for just-in-time compilation with XLA.
@@ -125,7 +132,7 @@ def _jit(fun, static_argnums, device_assignment, device_values=True):
 
   @wraps(fun)
   def f_jitted(*args, **kwargs):
-    if _jit_is_disabled or config.read('jax_disable_jit'):
+    if _thread_local_state.jit_is_disabled or config.read('jax_disable_jit'):
       return fun(*args, **kwargs)
     if static_argnums and max(static_argnums) >= len(args):
       msg = ("Jitted function has static_argnums={} but was called with only {}"
@@ -143,7 +150,6 @@ def _jit(fun, static_argnums, device_assignment, device_values=True):
   jitted_name =  "jit({}, static_argnums={})"
   f_jitted.__name__ = jitted_name.format(f_jitted.__name__, static_argnums)
   return f_jitted
-
 
 @contextmanager
 def disable_jit():
@@ -180,13 +186,12 @@ def disable_jit():
   Value of y is [2 4 6]
   [5 7 9]
   """
-  global _jit_is_disabled
   try:
-    _jit_is_disabled, prev_val = True, _jit_is_disabled
+    prev_val = _thread_local_state.jit_is_disabled
+    _thread_local_state.jit_is_disabled = True
     yield
   finally:
-    _jit_is_disabled = prev_val
-_jit_is_disabled = False
+    _thread_local_state.jit_is_disabled = prev_val
 
 
 def xla_computation(fun, static_argnums=(), axis_env=None):

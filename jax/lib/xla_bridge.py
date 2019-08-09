@@ -127,7 +127,6 @@ _backend_lock = threading.Lock()
 @util.memoize
 def get_backend():
   with _backend_lock:
-    _backend_lock.acquire()
     backend = _backends.get(FLAGS.jax_xla_backend)
     if backend is None:
       msg = 'Unknown jax_xla_backend value "{}".'
