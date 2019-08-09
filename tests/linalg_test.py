@@ -27,6 +27,7 @@ import scipy as osp
 from absl.testing import absltest
 from absl.testing import parameterized
 
+import jax
 from jax import jit, grad, jvp, vmap
 from jax import numpy as np
 from jax import scipy as jsp
@@ -486,6 +487,17 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     xc = onp.eye(3, dtype=onp.complex)
     self.assertAllClose(xc, grad_test_jc(xc), check_dtypes=True)
 
+  def testIssue1151(self):
+    A = np.array(onp.random.randn(100, 3, 3), dtype=np.float32)
+    b = np.array(onp.random.randn(100, 3), dtype=np.float32)
+    x = np.linalg.solve(A, b)
+    self.assertAllClose(vmap(np.dot)(A, x), b, atol=1e-3, rtol=1e-3,
+                        check_dtypes=True)
+    jac0 = jax.jacobian(np.linalg.solve, argnums=0)(A, b)
+    jac1 = jax.jacobian(np.linalg.solve, argnums=1)(A, b)
+    jac0 = jax.jacobian(np.linalg.solve, argnums=0)(A[0], b[0])
+    jac1 = jax.jacobian(np.linalg.solve, argnums=1)(A[0], b[0])
+
 
 class ScipyLinalgTest(jtu.JaxTestCase):
 
@@ -515,14 +527,15 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       {"testcase_name":
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype, "rng": rng}
-      for shape in [(1, 1), (4, 5), (10, 5), (10, 10)]
+      for shape in [(1, 1), (4, 5), (10, 5), (10, 10), (6, 7, 7)]
       for dtype in float_types + complex_types
       for rng in [jtu.rand_default()]))
   @jtu.skip_on_devices("tpu")  # TODO(phawkins): precision problems on TPU.
   def testLuGrad(self, shape, dtype, rng):
     _skip_if_unsupported_type(dtype)
     a = rng(shape, dtype)
-    jtu.check_grads(jsp.linalg.lu, (a,), 2, atol=5e-2, rtol=1e-1)
+    lu = vmap(jsp.linalg.lu) if len(shape) > 2 else jsp.linalg.lu
+    jtu.check_grads(lu, (a,), 2, atol=5e-2, rtol=1e-1)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
