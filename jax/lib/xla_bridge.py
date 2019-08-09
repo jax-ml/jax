@@ -31,6 +31,7 @@ from ..config import flags
 from .. import util
 import numpy as onp  # 'onp' rather than 'np' to distinguish from autograd.numpy
 import six
+import threading
 
 from . import xla_client
 from . import xrt
@@ -121,14 +122,19 @@ def _get_xrt_backend():
 register_backend('xla', _get_local_backend)
 register_backend('xrt', _get_xrt_backend)
 
-
+_backend_lock = threading.Lock()
 @util.memoize
 def get_backend():
-  backend = _backends.get(FLAGS.jax_xla_backend)
-  if backend is None:
-    msg = 'Unknown jax_xla_backend value "{}".'
-    raise ValueError(msg.format(FLAGS.jax_xla_backend))
-  return backend()
+  global _backend_lock
+  try:
+    _backend_lock.acquire()
+    backend = _backends.get(FLAGS.jax_xla_backend)
+    if backend is None:
+      msg = 'Unknown jax_xla_backend value "{}".'
+      raise ValueError(msg.format(FLAGS.jax_xla_backend))
+    return backend()
+  finally:
+    _backend_lock.release()
 
 
 def device_count():
