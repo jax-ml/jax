@@ -922,7 +922,7 @@ class APITest(jtu.JaxTestCase):
     value, grad = api.value_and_grad(binary_search, argnums=1)(
         lambda x, y: y ** 2 - x, 5.0)
     self.assertAllClose(value, np.sqrt(5), check_dtypes=False)
-    self.assertAllClose(grad, 0.5 / np.sqrt(5), check_dtypes=False)
+    self.assertAllClose(grad, api.grad(np.sqrt)(5.0), check_dtypes=False)
 
     def scalar_solve2(f, y):
       y_1d = y[np.newaxis]
@@ -930,7 +930,7 @@ class APITest(jtu.JaxTestCase):
 
     binary_search = api.custom_implicit_solve(_binary_search, scalar_solve2)
     grad = api.grad(binary_search, argnums=1)(lambda x, y: y ** 2 - x, 5.0)
-    self.assertAllClose(grad, 0.5 / np.sqrt(5), check_dtypes=False)
+    self.assertAllClose(grad, api.grad(np.sqrt)(5.0), check_dtypes=False)
 
   def test_jit_device_assignment(self):
     device_num = xb.device_count() - 1
