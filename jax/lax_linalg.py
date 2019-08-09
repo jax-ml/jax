@@ -100,6 +100,9 @@ def cholesky_jvp_rule(primals, tangents):
   sigma_dot, = tangents
   L = np.tril(cholesky_p.bind(x))
 
+  if sigma_dot is ad_util.zero:
+    return L, ad_util.zero
+
   # Forward-mode rule from https://arxiv.org/pdf/1602.07527.pdf
   def phi(X):
     l = np.tril(X)
@@ -256,7 +259,12 @@ def eigh_jvp_rule(primals, tangents, lower):
   # https://people.orie.cornell.edu/aslewis/publications/99-clarke.pdf
   a, = primals
   a_dot, = tangents
+
   v, w = eigh_p.bind(symmetrize(a), lower=lower)
+
+  if a_dot is ad_util.zero:
+    return core.pack((v, w)), ad.TangentTuple(ad_util.zero, ad_util.zero)
+
   # for complex numbers we need eigenvalues to be full dtype of v, a:
   w = w.astype(a.dtype)
   eye_n = np.eye(a.shape[-1], dtype=a.dtype)
@@ -324,6 +332,8 @@ def triangular_solve_shape_rule(a, b, left_side=False, **unused_kwargs):
 
 def triangular_solve_jvp_rule_a(
     g_a, ans, a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
+  if g_a is ad_util.zero:
+    return ad_util.zero
   k = 1 if unit_diagonal else 0
   g_a = np.tril(g_a, k=-k) if lower else np.triu(g_a, k=k)
   g_a = lax.neg(g_a)
@@ -524,13 +534,19 @@ def _lu_jvp_rule(primals, tangents):
   a_dot, = tangents
   lu, pivots = lu_p.bind(a)
 
+  if a_dot is ad_util.zero:
+    return (core.pack((lu, pivots)),
+            ad.TangentTuple((ad_util.zero, ad_util.zero)))
+
   a_shape = np.shape(a)
   m, n = a_shape[-2:]
   dtype = lax.dtype(a)
   k = min(m, n)
 
   permutation = lu_pivots_to_permutation(pivots, m)
-  x = a_dot[..., permutation, :]
+  batch_dims = a_shape[:-2]
+  iotas = np.ix_(*(lax.iota(np.int32, b) for b in batch_dims + (1,)))
+  x = a_dot[iotas[:-1] + (permutation, slice(None))]
 
   # Differentiation of Matrix Functionals Using Triangular Factorization
   # F. R. De Hoog, R. S. Anderssen, and M. A. Lukas
@@ -553,7 +569,6 @@ def _lu_jvp_rule(primals, tangents):
   u_padding = [(0, 0, 0)] * ndims
   u_padding[-2] = (0, n - k, 0)
   u = lax.pad(np.triu(lu[..., :k, :]), zero, u_padding) + u_eye
-
 
   la = triangular_solve(l, x, left_side=True, transpose_a=False, lower=True,
                         unit_diagonal=True)
@@ -663,10 +678,12 @@ def qr_abstract_eval(operand, full_matrices):
 def qr_jvp_rule(primals, tangents, full_matrices):
   # See j-towns.github.io/papers/qr-derivative.pdf for a terse derivation.
   x, = primals
-  if full_matrices or np.shape(x)[-2] < np.shape(x)[-1]:
-    raise NotImplementedError
   dx, = tangents
   q, r = qr_p.bind(x, full_matrices=False)
+  if dx is ad_util.zero:
+    return core.pack((q, r)), ad.TangentTuple(ad_util.zero, ad_util.zero)
+  if full_matrices or np.shape(x)[-2] < np.shape(x)[-1]:
+    raise NotImplementedError
   dx_rinv = triangular_solve(r, dx)  # Right side solve by default
   qt_dx_rinv = np.matmul(_T(q), dx_rinv)
   qt_dx_rinv_lower = np.tril(qt_dx_rinv, -1)
@@ -717,13 +734,18 @@ def svd_abstract_eval(operand, full_matrices, compute_uv):
   return core.AbstractTuple((s, u, vt))
 
 def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
-  if full_matrices:
-    #TODO: implement full matrices case, documented here: https://people.maths.ox.ac.uk/gilesm/files/NA-08-01.pdf
-    raise NotImplementedError("Singular value decomposition JVP not implemented for full matrices")
-
   A, = primals
   dA, = tangents
   s, U, Vt = svd_p.bind(A, full_matrices=False, compute_uv=True)
+
+  if dA is ad_util.zero:
+    return (core.pack((s, U, Vt)),
+            ad.TangentTuple(ad_util.zero, ad_util.zero, ad_util.zero))
+
+  if full_matrices:
+    # TODO: implement full matrices case, documented here: https://people.maths.ox.ac.uk/gilesm/files/NA-08-01.pdf
+    raise NotImplementedError(
+      "Singular value decomposition JVP not implemented for full matrices")
 
   k = s.shape[-1]
   Ut, V = np.conj(U).T, np.conj(Vt).T
