@@ -20,6 +20,7 @@ from collections import namedtuple
 from contextlib import contextmanager
 import itertools as it
 import operator as op
+import threading
 
 import numpy as onp
 import six
@@ -280,15 +281,22 @@ class DynamicAxisEnv(list):
         return frame
     else:
       assert False
-dynamic_axis_env = DynamicAxisEnv()
+
+class _ThreadLocalState(threading.local):
+  def __init__(self):
+    self.dynamic_axis_env = DynamicAxisEnv()
+
+_thread_local_state = _ThreadLocalState()
 
 @contextmanager
 def extend_dynamic_axis_env(axis_name, pmap_trace, hard_size):
+  dynamic_axis_env = _thread_local_state.dynamic_axis_env
   dynamic_axis_env.append(DynamicAxisEnvFrame(axis_name, pmap_trace, hard_size))
   yield
   dynamic_axis_env.pop()
 
 def unmapped_device_count():
+  dynamic_axis_env = _thread_local_state.dynamic_axis_env
   mapped = prod(frame.hard_size for frame in dynamic_axis_env)
   unmapped, ragged = divmod(xb.device_count(), mapped)
   assert not ragged and unmapped > 0
@@ -299,6 +307,7 @@ def apply_parallel_primitive(prim, *args, **params):
   # that doesn't have a data dependence on the argument of a pmap function. In
   # particular, this code gets hit when we write `axis_size = psum(1, 'i')`. We
   # look up information in the dynamic axis env.
+  dynamic_axis_env = _thread_local_state.dynamic_axis_env
   axis_name = params.pop('axis_name')
   logical_size = lambda frame: frame.hard_size * (frame.soft_size or 1)
   if isinstance(axis_name, (list, tuple)):
@@ -311,6 +320,7 @@ parallel_pure_rules = {}
 
 
 def axis_index(axis_name):
+  dynamic_axis_env = _thread_local_state.dynamic_axis_env
   frame = dynamic_axis_env[axis_name]
   dummy_arg = frame.pmap_trace.pure(core.unit)
   if frame.soft_trace:
@@ -644,6 +654,7 @@ class SplitAxisTuple(tuple): pass
 
 @contextmanager
 def add_chunk_to_axis_env(axis_name, soft_trace, soft_size):
+  dynamic_axis_env = _thread_local_state.dynamic_axis_env
   dynamic_axis_env[axis_name].soft_trace = soft_trace
   dynamic_axis_env[axis_name].soft_size = soft_size
   yield
