@@ -276,14 +276,14 @@ def grad_odeint(ofunc, args):
   rev_aug_dynamics = lambda y, t: -aug_dynamics(y, -t)
 
   @jax.jit
-  def _fori_loop_func(i, val):
+  def _fori_body_fun(i, val):
     """fori_loop function for VJP calculation."""
-    scan_yt, scan_t, scan_tarray, scan_gi, vjp_y, vjp_t0, vjp_args, time_vjp_list = val
-    this_yt = scan_yt[i, :]
-    this_t = scan_t[i]
-    this_tarray = scan_tarray[i, :]
-    this_gi = scan_gi[i, :]
-    this_gim1 = scan_gi[i-1, :]
+    rev_yt, rev_t, rev_tarray, rev_gi, vjp_y, vjp_t0, vjp_args, time_vjp_list = val
+    this_yt = rev_yt[i, :]
+    this_t = rev_t[i]
+    this_tarray = rev_tarray[i, :]
+    this_gi = rev_gi[i, :]
+    this_gim1 = rev_gi[i-1, :]
     D = this_yt.shape[0]
     vjp_cur_t = np.dot(flat_func(this_yt, this_t, flat_args), this_gi)
     vjp_t0 = vjp_t0 - vjp_cur_t
@@ -294,28 +294,28 @@ def grad_odeint(ofunc, args):
     vjp_t0 = aug_ans[1][2*D]
     vjp_args = aug_ans[1][2*D+1:]
     time_vjp_list = jax.ops.index_update(time_vjp_list, i, vjp_cur_t)
-    return scan_yt, scan_t, scan_tarray, scan_gi, vjp_y, vjp_t0, vjp_args, time_vjp_list
+    return rev_yt, rev_t, rev_tarray, rev_gi, vjp_y, vjp_t0, vjp_args, time_vjp_list
 
   @jax.jit
-  def vjp_all_scan(g, yt, t):
+  def vjp_all(g, yt, t):
     """Calculate the VJP g * Jac(odeint(ofunc(yt, t, *args), t)."""
-    scan_yt = yt[-1:0:-1, :]
-    scan_t = t[-1:0:-1]
-    scan_tarray = -np.array([t[-1:0:-1], t[-2::-1]]).T
-    scan_gi = g[-1:0:-1, :]
+    rev_yt = yt[-1:0:-1, :]
+    rev_t = t[-1:0:-1]
+    rev_tarray = -np.array([t[-1:0:-1], t[-2::-1]]).T
+    rev_gi = g[-1:0:-1, :]
 
-    vjp_y = scan_gi[-1, :]
+    vjp_y = rev_gi[-1, :]
     vjp_t0 = 0.
     vjp_args = np.zeros_like(flat_args)
     time_vjp_list = np.zeros_like(t)
 
     result = jax.lax.fori_loop(0,
-                               scan_t.shape[0],
-                               _fori_loop_func,
-                               (scan_yt,
-                                scan_t,
-                                scan_tarray,
-                                scan_gi,
+                               rev_t.shape[0],
+                               _fori_body_fun,
+                               (rev_yt,
+                                rev_t,
+                                rev_tarray,
+                                rev_gi,
                                 vjp_y,
                                 vjp_t0,
                                 vjp_args,
@@ -325,7 +325,7 @@ def grad_odeint(ofunc, args):
     vjp_times = np.hstack(time_vjp_list)[::-1]
     return None, result[-4], vjp_times, unravel_args(result[-2])
 
-  return jax.jit(vjp_all_scan)
+  return jax.jit(vjp_all)
 
 
 def test_grad_odeint():
