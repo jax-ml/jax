@@ -41,9 +41,6 @@ from . import partial_eval as pe
 from . import ad
 
 FLAGS = flags.FLAGS
-flags.DEFINE_bool('jax_device_values',
-                  strtobool(os.getenv('JAX_DEVICE_VALUES', "True")),
-                  'Enable device-persistent values.')
 flags.DEFINE_bool('jax_debug_nans',
                   strtobool(os.getenv('JAX_DEBUG_NANS', "False")),
                   'Add nan checks to every operation.')
@@ -195,12 +192,6 @@ class _ResultTuple(tuple): pass
 class _ResultArray(tuple): pass
 
 def result_handler(result_shape):
-  if FLAGS.jax_device_values:
-    return _device_persistent_result_handler(result_shape)
-  else:
-    return _pyval_result_handler(result_shape)
-
-def _device_persistent_result_handler(result_shape):
   t = type(result_shape)
   if t is _ResultArray:
     return partial(DeviceArray, result_shape)
@@ -209,15 +200,6 @@ def _device_persistent_result_handler(result_shape):
   else:
     raise TypeError(t)
 
-def _pyval_result_handler(result_shape):
-  del result_shape
-  def _tuple_to_jaxtuple(v):
-    if isinstance(v, tuple):
-      return JaxTuple(_tuple_to_jaxtuple(t) for t in v)
-    return v
-  def f(buf):
-    return _tuple_to_jaxtuple(buf.to_py())
-  return f
 
 def _compile_jaxpr(jaxpr, device_assignment, axis_env, const_vals, *abstract_args):
   if axis_env.nreps > xb.device_count():
@@ -495,7 +477,7 @@ class DeviceTuple(DeviceValue):
 
   def __iter__(self):
     bufs = self.device_buffer.destructure()
-    handlers = map(_device_persistent_result_handler, self.result_shapes)
+    handlers = map(result_handler, self.result_shapes)
     elts = [handler(buf) for handler, buf in zip(handlers, bufs)]
     return iter(elts)
 
@@ -684,9 +666,8 @@ def _instantiate_device_constant(const, cutoff=1e6, device_num=0):
                                         backend=xb.get_backend())
 
 def _xla_call_impl(fun, *args, **params):
-  device_values = FLAGS.jax_device_values and params.pop('device_values')
   device_assignment = params.pop('device_assignment')
-  compiled_fun = _xla_callable(fun, device_assignment, device_values,
+  compiled_fun = _xla_callable(fun, device_assignment,
                                *map(abstractify, args))
   try:
     return compiled_fun(*args)
@@ -696,7 +677,7 @@ def _xla_call_impl(fun, *args, **params):
     return fun.call_wrapped(*args)  # probably won't return
 
 @lu.cache
-def _xla_callable(fun, device_assignment, device_values, *abstract_args):
+def _xla_callable(fun, device_assignment, *abstract_args):
   pvals = [pe.PartialVal((aval, core.unit)) for aval in abstract_args]
   with core.new_master(pe.JaxprTrace, True) as master:
     jaxpr, (pval, consts, env) = pe.trace_to_subjaxpr(fun, master, False).call_wrapped(pvals)
@@ -705,10 +686,7 @@ def _xla_callable(fun, device_assignment, device_values, *abstract_args):
     compiled, result_shape = _compile_jaxpr(jaxpr, device_assignment, axis_env, consts,
                                             *abstract_args)
     del master, consts, jaxpr, env
-  if device_values:
-    handle_result = _device_persistent_result_handler(result_shape)
-  else:
-    handle_result = _pyval_result_handler(result_shape)
+  handle_result = result_handler(result_shape)
   if axis_env.nreps == 1:
     return partial(_execute_compiled, compiled, pval, handle_result)
   else:
@@ -734,8 +712,8 @@ xla_call_p.def_custom_bind(xla_call)
 xla_call_p.def_impl(_xla_call_impl)
 
 def _xla_call_translation_rule(c, jaxpr, axis_env, env_nodes, in_nodes,
-                               device_values, device_assignment):
-  del device_values, device_assignment  # Unused.
+                               device_assignment):
+  del device_assignment  # Unused.
   subc = _jaxpr_computation(jaxpr, axis_env, (), _map(c.GetShape, env_nodes),
                             *map(c.GetShape, in_nodes))
   return c.Call(subc, env_nodes + in_nodes)
@@ -751,7 +729,7 @@ def _device_put_impl(x, device_num=0):
                     .format(x, type(x)))
 
   result_shape = xla_shape_to_result_shape(xla_shape(a))
-  handler = _device_persistent_result_handler(result_shape)
+  handler = result_handler(result_shape)
   return handler(device_put(x, device_num))
 
 device_put_p = core.Primitive('device_put')
