@@ -31,7 +31,7 @@ from .. import linear_util as lu
 from ..abstract_arrays import ConcreteArray, ShapedArray
 from ..util import partial, unzip2, concatenate, prod
 from ..lib import xla_bridge as xb
-from .xla import xla_shape, xla_destructure, xla_shape_to_result_shape
+from .xla import xla_shape, xla_destructure, aval_from_xla_shape
 from .partial_eval import trace_to_subjaxpr, merge_pvals, JaxprTrace, PartialVal
 from .batching import dimsize, broadcast
 from . import batching
@@ -240,7 +240,7 @@ def compile_replicated(jaxpr, axis_name, axis_size, consts, *abstract_args):
   axis_env = xla.AxisEnv(num_replicas, [axis_name], [axis_size])
   arg_shapes = list(map(xla_shape, abstract_args))
   built_c = xla._jaxpr_computation(jaxpr, axis_env, consts, (), *arg_shapes)
-  result_shape = xla_shape_to_result_shape(built_c.GetReturnValueShape())
+  result_shape = aval_from_xla_shape(built_c.GetReturnValueShape())
   compiled = built_c.Compile(arg_shapes, xb.get_compile_options(num_replicas),
                              backend=xb.get_backend())
   return compiled, num_replicas, result_shape
@@ -435,7 +435,7 @@ class ShardedDeviceArray(ShardedDeviceValue, xla.DeviceArray):
   represent distinct logical shards. The correspondence can be computed with
   the assign_shards_to_replicas function.
   """
-  __slots__ = ["device_buffers", "axis_size", "aval"]
+  __slots__ = ["device_buffers", "axis_size"]
   _collect = staticmethod(onp.stack)
 
   def __init__(self, aval, device_buffers):
@@ -443,8 +443,6 @@ class ShardedDeviceArray(ShardedDeviceValue, xla.DeviceArray):
     # return it unmodified.
     self.aval = aval
     self.device_buffers = device_buffers
-    self.shape = aval.shape
-    self.dtype = aval.dtype
     self.axis_size = aval.shape[0]
     self._npy_value = None
 
@@ -477,7 +475,7 @@ class ShardedDeviceArray(ShardedDeviceValue, xla.DeviceArray):
     if self._npy_value is None and type(idx) is int:
       ids = self._ids()
       device_buffer = self.device_buffers[ids[idx]]
-      result_shape = xla_shape_to_result_shape(device_buffer.shape())
+      result_shape = aval_from_xla_shape(device_buffer.shape())
       handler = xla.result_handler(result_shape)
       return handler(device_buffer)
     else:

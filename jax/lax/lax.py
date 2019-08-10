@@ -3924,8 +3924,7 @@ class _FilledConstant(xla.DeviceConstant):
 
   def __init__(self, fill_value, shape):
     assert type(fill_value) is onp.ndarray
-    self.shape = shape
-    self.dtype = _dtype(fill_value)
+    self.aval = ShapedArray(shape, _dtype(fill_value))
     self._npy_value = None
 
     self.fill_value = fill_value
@@ -3945,8 +3944,7 @@ class _IotaConstant(xla.DeviceConstant):
   __slots__ = ["axis"]
 
   def __init__(self, dtype, shape, axis):
-    self.shape = shape
-    self.dtype = onp.dtype(dtype)
+    self.aval = ShapedArray(shape, onp.dtype(dtype))
     self._npy_value = None
 
     self.axis = axis
@@ -3972,8 +3970,7 @@ class _EyeConstant(xla.DeviceConstant):
   __slots__ = ["axes"]
 
   def __init__(self, shape, axes, dtype):
-    self.shape = shape
-    self.dtype = onp.dtype(dtype)
+    self.aval = ShapedArray(shape, onp.dtype(dtype))
     self._npy_value = None
 
     self.axes = axes
