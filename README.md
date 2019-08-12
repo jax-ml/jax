@@ -684,7 +684,7 @@ that allows them to be traced and transformed again as needed.
 
 The primitive functions that JAX traces are mostly in 1:1 correspondence with
 [XLA HLO](https://www.tensorflow.org/xla/operation_semantics) and are defined
-in [lax.py](https://github.com/google/jax/blob/master/jax/lax.py). This 1:1
+in [lax.py](https://github.com/google/jax/blob/master/jax/lax/lax.py). This 1:1
 correspondence makes most of the translations to XLA essentially trivial, and
 ensures we only have a small set of primitives to cover for other
 transformations like automatic differentiation. The [`jax.numpy`
