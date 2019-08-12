@@ -1744,15 +1744,18 @@ def eval_shape(fun, *args, **kwargs):
   return tree_map(onp.shape, build_tree(out_tree(), out))
 
 
-def custom_implicit_solve(solve, tangent_solve):
+def _custom_implicit_solve(solve, tangent_solve):
   """Define gradients for a function that performs an implicit solve.
+
+  Note: this isn't ready for widespread use yet -- it does not handle closed
+  over values inside solve yet.
 
   Args:
     solve: callable that takes two positional arguments, func and params, and
       returns a solution such that func(params, solution) = 0. In other words,
       the following is assumed to be true (but not checked):
         solution = solve(func, params)
-        error = func(params, solution)
+        error = func(solution, params)
         assert tree_all(tree_map(partial(np.allclose, 0.0), error)
     tangent_solve: callable that takes two positional arguments, a linear
       function ``f`` and (possibly nested) array(s) ``y``, and returns a
@@ -1777,23 +1780,18 @@ def custom_implicit_solve(solve, tangent_solve):
  
     @partial(defjvp_all, solve_impl)
     def solve_impl_jvp(primals, tangents):
-      # Let F(u, m) = 0, where u = solution, m = params. Then:
-      # d/dx F(u, m) = 0
-      # ∂F/∂u du/dx + ∂F/∂m dm/dx = 0
-      # du/dx = -(∂F/∂u)^{-1} ∂F/∂m dm/dx
-      # For more background, see:
-      # http://www.dolfin-adjoint.org/en/release/documentation/maths/3-gradients.html
+      # F(u(m), m) = 0  # system of equations in m
+      # ∂_0 F(u(m), m) ∂ u(m) + ∂_1 F(u(m), m) = 0
+      # ∂ u(m) = - (∂_0 F(u*, m))^{-1} ∂_1 F(u*, m)
       params, = primals
       grad_params, = tangents
       solution = solve_impl(params)
-      unchecked_zeros, f_jvp = vjp(func, params, solution)
+      unchecked_zeros, f_jvp = vjp(func, solution, params)
       grad_solution = tree_map(
           lambda x: -x,
-          tangent_solve(lambda p: f_jvp(p)[1], f_jvp(grad_params)[0])
+          tangent_solve(lambda p: f_jvp(p)[0], f_jvp(grad_params)[1])
       )
       return solution, grad_solution
 
     return solve_impl(params)
   return wrapper
-
-
