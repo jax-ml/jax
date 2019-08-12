@@ -25,6 +25,8 @@ from __future__ import division
 from __future__ import print_function
 
 import functools
+import time
+
 import jax
 from jax.config import config
 from jax.flatten_util import ravel_pytree
@@ -34,26 +36,25 @@ import jax.ops
 import matplotlib.pyplot as plt
 import numpy as onp
 import scipy.integrate as osp_integrate
-import time
 
 config.update('jax_enable_x64', True)
 
 
 # Dopri5 Butcher tableaux
-alpha = [1 / 5, 3 / 10, 4 / 5, 8 / 9, 1., 1.]
-beta = [onp.array([1 / 5]),
-        onp.array([3 / 40, 9 / 40]),
-        onp.array([44 / 45, -56 / 15, 32 / 9]),
-        onp.array([19372 / 6561, -25360 / 2187, 64448 / 6561, -212 / 729]),
-        onp.array([9017 / 3168, -355 / 33, 46732 / 5247, 49 / 176,
-                   -5103 / 18656]),
-        onp.array([35 / 384, 0, 500 / 1113, 125 / 192, -2187 / 6784, 11 / 84]),]
-c_sol = onp.array([35 / 384, 0, 500 / 1113, 125 / 192, -2187 / 6784, 11 / 84,
-                   0])
-c_error = onp.array([35 / 384 - 1951 / 21600, 0, 500 / 1113 - 22642 / 50085,
-                     125 / 192 - 451 / 720, -2187 / 6784 - -12231 / 42400,
-                     11 / 84 - 649 / 6300, -1. / 60.,])
-dps_c_mid = onp.array([
+alpha = np.array([1 / 5, 3 / 10, 4 / 5, 8 / 9, 1., 1., 0])
+beta = np.array(
+    [[1 / 5, 0, 0, 0, 0, 0, 0],
+     [3 / 40, 9 / 40, 0, 0, 0, 0, 0],
+     [44 / 45, -56 / 15, 32 / 9, 0, 0, 0, 0],
+     [19372 / 6561, -25360 / 2187, 64448 / 6561, -212 / 729, 0, 0, 0],
+     [9017 / 3168, -355 / 33, 46732 / 5247, 49 / 176, -5103 / 18656, 0, 0],
+     [35 / 384, 0, 500 / 1113, 125 / 192, -2187 / 6784, 11 / 84, 0]])
+c_sol = np.array([35 / 384, 0, 500 / 1113, 125 / 192, -2187 / 6784, 11 / 84,
+                  0])
+c_error = np.array([35 / 384 - 1951 / 21600, 0, 500 / 1113 - 22642 / 50085,
+                    125 / 192 - 451 / 720, -2187 / 6784 - -12231 / 42400,
+                    11 / 84 - 649 / 6300, -1. / 60.])
+dps_c_mid = np.array([
     6025192743 / 30085553152 / 2, 0, 51252292925 / 65400821598 / 2,
     -2691868925 / 45128329728 / 2, 187940372067 / 1594534317056 / 2,
     -1776094331 / 19743644256 / 2, 11237099 / 235043384 / 2])
@@ -115,22 +116,17 @@ def initial_step_size(fun, t0, y0, order, rtol, atol, f0):
   d1 = np.linalg.norm(f0 / scale)
   order_pow = (1. / (order + 1.))
 
-  h0 = jax.lax.cond(np.any(np.asarray([d0 < 1e-5, d1 < 1e-5])),
-                    1e-6,
-                    lambda x: x,
-                    0.01 * d0 / d1,
-                    lambda x: x)
+  h0 = np.where(np.any(np.asarray([d0 < 1e-5, d1 < 1e-5])),
+                1e-6,
+                0.01 * d0 / d1)
 
   y1 = y0 + h0 * f0
   f1 = fun(y1, t0 + h0)
   d2 = (np.linalg.norm(f1 - f0) / scale) / h0
 
-  h1 = jax.lax.cond(np.all(np.asarray([d0 <= 1e-15, d1 < 1e-15])),
-                    np.maximum(1e-6, h0 * 1e-3),
-                    lambda x: x,
-                    # order is always 4
-                    (0.01 / np.max(d1 + d2))**order_pow,
-                    lambda x: x)
+  h1 = np.where(np.all(np.asarray([d0 <= 1e-15, d1 < 1e-15])),
+                np.maximum(1e-6, h0 * 1e-3),
+                (0.01 / np.max(d1 + d2))**order_pow)
 
   return np.minimum(100. * h0, h1)
 
@@ -155,12 +151,17 @@ def runge_kutta_step(func, y0, f0, t0, dt):
       y1_error: estimated error at t1
       k: list of Runge-Kutta coefficients `k` used for calculating these terms.
   """
-  k = np.array([f0])
-  for alpha_i, beta_i in zip(alpha, beta):
-    ti = t0 + dt * alpha_i
-    yi = y0 + dt * np.dot(k.T, beta_i)
+  def _fori_body_fun(i, val):
+    ti = t0 + dt * alpha[i-1]
+    yi = y0 + dt * np.dot(beta[i-1, :], val)
     ft = func(yi, ti)
-    k = np.append(k, np.array([ft]), axis=0)
+    return jax.ops.index_update(val, jax.ops.index[i, :], ft)
+
+  k = jax.lax.fori_loop(
+      1,
+      7,
+      _fori_body_fun,
+      jax.ops.index_update(np.zeros((7, f0.shape[0])), jax.ops.index[0, :], f0))
 
   y1 = dt * np.dot(c_sol, k) + y0
   y1_error = dt * np.dot(c_error, k)
@@ -184,21 +185,17 @@ def optimal_step_size(last_step,
                       order=5.0):
   """Compute optimal Runge-Kutta stepsize."""
   mean_error_ratio = np.max(mean_error_ratio)
-  dfactor = jax.lax.cond(mean_error_ratio < 1,
-                         1.0,
-                         lambda x: x,
-                         dfactor,
-                         lambda x: x)
+  dfactor = np.where(mean_error_ratio < 1,
+                     1.0,
+                     dfactor)
 
   err_ratio = np.sqrt(mean_error_ratio)
   factor = np.maximum(1.0 / ifactor,
                       np.minimum(err_ratio**(1.0 / order) / safety,
                                  1.0 / dfactor))
-  return jax.lax.cond(mean_error_ratio == 0,
-                      last_step * ifactor,
-                      lambda x: x,
-                      last_step / factor,
-                      lambda x: x)
+  return np.where(mean_error_ratio == 0,
+                  last_step * ifactor,
+                  last_step / factor,)
 
 
 @functools.partial(jax.jit, static_argnums=(0, 1))
@@ -243,11 +240,15 @@ def odeint(ofunc, args, y0, t, rtol=1.4e-8, atol=1.4e-8):
     error_ratios = error_ratio(next_y_error, rtol, atol, cur_y, next_y)
     new_interp_coeff = interp_fit_dopri(cur_y, next_y, k, dt)
     dt = optimal_step_size(dt, error_ratios)
-    return jax.lax.cond(np.all(error_ratios <= 1.),
-                        (next_y, next_f, next_t, dt, cur_t, new_interp_coeff),
-                        lambda x: x,
-                        (cur_y, cur_f, cur_t, dt, last_t, interp_coeff),
-                        lambda x: x)
+
+    new_rav, unravel = ravel_pytree(
+        (next_y, next_f, next_t, dt, cur_t, new_interp_coeff))
+    old_rav, _ = ravel_pytree(
+        (cur_y, cur_f, cur_t, dt, last_t, interp_coeff))
+
+    return unravel(np.where(np.all(error_ratios <= 1.),
+                            new_rav,
+                            old_rav))
 
   func = lambda y, t: ofunc(y, t, *args)
   f0 = func(y0, t[0])
@@ -283,10 +284,10 @@ def grad_odeint(ofunc, args):
   @jax.jit
   def aug_dynamics(augmented_state, t):
     """Original system augmented with vjp_y, vjp_t and vjp_args."""
-    D = int(np.floor_divide(
+    state_len = int(np.floor_divide(
         augmented_state.shape[0] - flat_args.shape[0] - 1, 2))
-    y = augmented_state[:D]
-    adjoint = augmented_state[D:2*D]
+    y = augmented_state[:state_len]
+    adjoint = augmented_state[state_len:2*state_len]
     dy_dt, vjpfun = jax.vjp(flat_func, y, t, flat_args)
     return np.hstack([np.ravel(dy_dt), np.hstack(vjpfun(-adjoint))])
 
@@ -301,15 +302,15 @@ def grad_odeint(ofunc, args):
     this_tarray = rev_tarray[i, :]
     this_gi = rev_gi[i, :]
     this_gim1 = rev_gi[i-1, :]
-    D = this_yt.shape[0]
+    state_len = this_yt.shape[0]
     vjp_cur_t = np.dot(flat_func(this_yt, this_t, flat_args), this_gi)
     vjp_t0 = vjp_t0 - vjp_cur_t
     # Run augmented system backwards to the previous observation.
     aug_y0 = np.hstack((this_yt, vjp_y, vjp_t0, vjp_args))
     aug_ans = odeint(rev_aug_dynamics, (), aug_y0, this_tarray)
-    vjp_y = aug_ans[1][D:2*D] + this_gim1
-    vjp_t0 = aug_ans[1][2*D]
-    vjp_args = aug_ans[1][2*D+1:]
+    vjp_y = aug_ans[1][state_len:2*state_len] + this_gim1
+    vjp_t0 = aug_ans[1][2*state_len]
+    vjp_args = aug_ans[1][2*state_len+1:]
     time_vjp_list = jax.ops.index_update(time_vjp_list, i, vjp_cur_t)
     return rev_yt, rev_t, rev_tarray, rev_gi, vjp_y, vjp_t0, vjp_args, time_vjp_list
 
@@ -430,8 +431,8 @@ def benchmark_odeint(fun, args, y0, tspace):
     start = time.time()
     scipy_result = osp_integrate.odeint(fun, y0, tspace, args)
     end = time.time()
-    print(
-        'scipy odeint elapsed time ({} of {}): {}'.format(k+1, n_trials, end-start))
+    print('scipy odeint elapsed time ({} of {}): {}'.format(
+        k+1, n_trials, end-start))
   for k in range(n_trials):
     start = time.time()
     jax_result = odeint(fun,
@@ -440,8 +441,8 @@ def benchmark_odeint(fun, args, y0, tspace):
                         np.asarray(tspace))
     jax_result.block_until_ready()
     end = time.time()
-    print(
-        'JAX odeint elapsed time ({} of {}): {}'.format(k+1, n_trials, end-start))
+    print('JAX odeint elapsed time ({} of {}): {}'.format(
+        k+1, n_trials, end-start))
   print('norm(scipy result-jax result): {}'.format(
       np.linalg.norm(np.asarray(scipy_result) - jax_result)))
 
