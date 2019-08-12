@@ -123,7 +123,7 @@ def jit(fun, static_argnums=(), device_assignment=None):
   """
   return _jit(fun, static_argnums, device_assignment)
 
-def _jit(fun, static_argnums, device_assignment, device_values=True):
+def _jit(fun, static_argnums, device_assignment):
   _check_callable(fun)
   if isinstance(device_assignment, int):
     device_assignment = (device_assignment,)
@@ -143,7 +143,7 @@ def _jit(fun, static_argnums, device_assignment, device_values=True):
     f, dyn_args = _argnums_partial(f, dyn_argnums, args)
     args_flat, in_tree = tree_flatten((dyn_args, kwargs))
     flat_fun, out_tree = flatten_fun_leafout(f, in_tree)
-    out = xla.xla_call(flat_fun, *args_flat, device_values=device_values,
+    out = xla.xla_call(flat_fun, *args_flat,
                        device_assignment=device_assignment)
     return out if treedef_is_leaf(out_tree()) else tree_unflatten(out_tree(), out)
 

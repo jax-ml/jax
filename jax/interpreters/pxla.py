@@ -478,7 +478,7 @@ class ShardedDeviceArray(ShardedDeviceValue, xla.DeviceArray):
       ids = self._ids()
       device_buffer = self.device_buffers[ids[idx]]
       result_shape = xla_shape_to_result_shape(device_buffer.shape())
-      handler = xla._device_persistent_result_handler(result_shape)
+      handler = xla.result_handler(result_shape)
       return handler(device_buffer)
     else:
       return super(ShardedDeviceArray, self).__getitem__(idx)
