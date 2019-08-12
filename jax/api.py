@@ -581,10 +581,10 @@ def vmap(fun, in_axes=0, out_axes=0):
   product:
 
   >>> vv = lambda x, y: np.vdot(x, y)  #  ([a], [a]) -> []
-  >>> mv1 = vmap(vv, (0, 0), 0)        #  ([b,a], [a,b]) -> [b]        (b is the new axis)
-  >>> mv2 = vmap(vv, (0, 1), 0)        #  ([b,a], [b,a]) -> [b]        (b is the new axis)
+  >>> mv1 = vmap(vv, (0, 0), 0)        #  ([b,a], [b,a]) -> [b]        (b is the new axis)
+  >>> mv2 = vmap(vv, (0, 1), 0)        #  ([b,a], [a,b]) -> [b]        (b is the new axis)
   >>> mv3 = vmap(vv, (0, None), 0)     #  ([b,a], [a]) -> [b]          (b is the new axis)
-  >>> mm1 = vmap(mv1, (1, 1), 0)       #  ([b,c,a], [a,c,b]) -> [c,b]  (c is the new axis)
+  >>> mm2 = vmap(mv2, (1, 1), 0)       #  ([b,c,a], [a,c,b]) -> [c,b]  (c is the new axis)
   >>> mm3 = vmap(mv3, (None, 1), 1)    #  ([b,a], [a,c]) -> [b,c]      (c is the new axis)
 
   (here we use `[a,b]` to indicate an array with shape (a,b))
