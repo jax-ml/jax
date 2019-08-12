@@ -1,3 +1,17 @@
+# Copyright 2018 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """JAX-based Dormand-Prince ODE integration with adaptive stepsize.
 
 Integrate systems of ordinary differential equations (ODEs) using the JAX
@@ -17,8 +31,11 @@ from jax.flatten_util import ravel_pytree
 import jax.lax
 import jax.numpy as np
 import jax.ops
+import matplotlib.pyplot as plt
 import numpy as onp
 import scipy.integrate as osp_integrate
+import time
+
 config.update('jax_enable_x64', True)
 
 
@@ -360,6 +377,82 @@ def test_grad_odeint():
   exact_grad, _ = ravel_pytree(ode_vjp(g, ys, np.array([t0, t1])))
 
   assert np.allclose(numerical_grad, exact_grad)
+
+
+def plot_gradient_field(ax, func, xlimits, ylimits, numticks=30):
+  """Plot the gradient field of `func` on `ax`."""
+  x = np.linspace(*xlimits, num=numticks)
+  y = np.linspace(*ylimits, num=numticks)
+  x_mesh, y_mesh = np.meshgrid(x, y)
+  zs = jax.vmap(func)(y_mesh.ravel(), x_mesh.ravel())
+  z_mesh = zs.reshape(x_mesh.shape)
+  ax.quiver(x_mesh, y_mesh, np.ones(z_mesh.shape), z_mesh)
+  ax.set_xlim(xlimits)
+  ax.set_ylim(ylimits)
+
+
+def plot_demo():
+  """Demo plot of simple ode integration and gradient field."""
+  def f(y, t, arg1, arg2):
+    return y - np.sin(t) - np.cos(t) * arg1 + arg2
+
+  t0 = 0.
+  t1 = 5.0
+  ts = np.linspace(t0, t1, 100)
+  y0 = np.array([1.])
+  fargs = (1.0, 0.0)
+
+  ys = odeint(f, fargs, y0, ts, atol=0.001, rtol=0.001)
+
+  # Set up figure.
+  fig = plt.figure(figsize=(8, 6), facecolor='white')
+  ax = fig.add_subplot(111, frameon=False)
+  f_no_args = lambda y, t: f(y, t, *fargs)
+  plot_gradient_field(ax, f_no_args, xlimits=[t0, t1], ylimits=[-1.1, 1.1])
+  ax.plot(ts, ys, 'g-')
+  ax.set_xlabel('t')
+  ax.set_ylabel('y')
+  plt.show()
+
+
+def pend(y, t, b, c):
+  """Simple pendulum system for odeint testing."""
+  del t
+  theta, omega = y
+  dydt = np.array([omega, -b*omega - c*np.sin(theta)])
+  return dydt
+
+
+def benchmark_odeint(fun, args, y0, tspace):
+  """Time performance of JAX odeint method against scipy.integrate.odeint."""
+  n_trials = 10
+  for k in range(n_trials):
+    start = time.time()
+    scipy_result = osp_integrate.odeint(fun, y0, tspace, args)
+    end = time.time()
+    print(
+        'scipy odeint elapsed time ({} of {}): {}'.format(k+1, n_trials, end-start))
+  for k in range(n_trials):
+    start = time.time()
+    jax_result = odeint(fun,
+                        args,
+                        np.asarray(y0),
+                        np.asarray(tspace))
+    jax_result.block_until_ready()
+    end = time.time()
+    print(
+        'JAX odeint elapsed time ({} of {}): {}'.format(k+1, n_trials, end-start))
+  print('norm(scipy result-jax result): {}'.format(
+      np.linalg.norm(np.asarray(scipy_result) - jax_result)))
+
+  return scipy_result, jax_result
+
+
+def pend_benchmark_odeint():
+  _, _ = benchmark_odeint(pend,
+                          (0.25, 9.8),
+                          (onp.pi - 0.1, 0.0),
+                          onp.linspace(0., 10., 101))
 
 
 if __name__ == '__main__':
