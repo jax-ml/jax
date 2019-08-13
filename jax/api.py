@@ -139,8 +139,11 @@ def _jit(fun, static_argnums, device_assignment):
              " positional arguments.")
       raise TypeError(msg.format(static_argnums, len(args)))
     f = lu.wrap_init(fun)
-    dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
-    f, dyn_args = _argnums_partial(f, dyn_argnums, args)
+    if static_argnums:
+      dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
+      f, dyn_args = _argnums_partial(f, dyn_argnums, args)
+    else:
+      dyn_args = args
     args_flat, in_tree = tree_flatten((dyn_args, kwargs))
     flat_fun, out_tree = flatten_fun_leafout(f, in_tree)
     out = xla.xla_call(flat_fun, *args_flat,
