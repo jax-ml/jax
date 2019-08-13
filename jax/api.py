@@ -711,7 +711,7 @@ def pmap(fun, axis_name=None):
 
   @wraps(fun)
   def f_pmapped(*args, **kwargs):
-    axis_size = _pmap_axis_size(args)
+    axis_size = _pmap_axis_size((args, kwargs))
     f = lu.wrap_init(fun)
     args_flat, in_tree = tree_flatten((args, kwargs))
     flat_fun, out_tree = flatten_fun_leafout(f, in_tree)
