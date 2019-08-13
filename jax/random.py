@@ -123,34 +123,29 @@ def threefry_2x32(keypair, count):
   else:
     x = list(np.split(count.ravel(), 2))
 
-  rotations = onp.uint32([13, 15, 26, 6, 17, 29, 16, 24])
+  rotations = asarray([13, 15, 26, 6, 17, 29, 16, 24], dtype="uint32")
   ks = [key1, key2, key1 ^ key2 ^ onp.uint32(0x1BD11BDA)]
 
   x[0] = x[0] + ks[0]
   x[1] = x[1] + ks[1]
 
-  for r in rotations[:4]:
-    x = apply_round(x, r)
+  x = lax.fori_loop(0, 4, lambda i, x: apply_round(x, rotations[i]), x)
   x[0] = x[0] + ks[1]
   x[1] = x[1] + ks[2] + onp.uint32(1)
 
-  for r in rotations[4:]:
-    x = apply_round(x, r)
+  x = lax.fori_loop(4, 8, lambda i, x: apply_round(x, rotations[i]), x)
   x[0] = x[0] + ks[2]
   x[1] = x[1] + ks[0] + onp.uint32(2)
 
-  for r in rotations[:4]:
-    x = apply_round(x, r)
+  x = lax.fori_loop(0, 4, lambda i, x: apply_round(x, rotations[i]), x)
   x[0] = x[0] + ks[0]
   x[1] = x[1] + ks[1] + onp.uint32(3)
 
-  for r in rotations[4:]:
-    x = apply_round(x, r)
+  x = lax.fori_loop(4, 8, lambda i, x: apply_round(x, rotations[i]), x)
   x[0] = x[0] + ks[1]
   x[1] = x[1] + ks[2] + onp.uint32(4)
 
-  for r in rotations[:4]:
-    x = apply_round(x, r)
+  x = lax.fori_loop(0, 4, lambda i, x: apply_round(x, rotations[i]), x)
   x[0] = x[0] + ks[2]
   x[1] = x[1] + ks[0] + onp.uint32(5)
 
