@@ -1,45 +1,54 @@
 import numpy.random as npr
+from scipy.special import factorial as fact
+from fdm import central_fdm
 
 from jax import jvp, jet
 import jax.numpy as np
 
-npr.seed(1993)
 
-def jvps(f, primals, terms, n):
-  def j_0(f,v):
-    return lambda x: f(x)
-  def j_i(f,v):
-    return lambda x: jvp(f, (x, ), (v, ))[1]
+def fdm_taylor(f, primals, terms, n):
+  def expansion(eps):
+    return f(
+        primals +
+        sum([eps**(i + 1) * terms[i] / fact(i+1) for i in range(len(terms))]))
 
-  funcs = [f]
+  n_derivs = []
   for i in range(n):
-    funcs.append(j_i(funcs[i],terms[i]))
-  return [f(primals) for f in funcs]
+    d = central_fdm(order=(i+2)*2, deriv=i,condition=0)(expansion, 0.)
+    n_derivs.append(d)
+  return n_derivs
+
 
 def test_exp():
   raise NotImplementedError
 
+
 def test_log():
   raise NotImplementedError
 
+
 def test_tanh():
   raise NotImplementedError
+
 
 def test_sin():
   x = 4.0
   vs = (1., 0., 0., 0.)
   y, terms = jet(np.sin, (x, ), [vs])
-  expected = jvps(np.sin, x, vs, 4)
+  expected = jvps(np.sin, x, vs[0], 4)
   assert np.allclose(y, expected[0])
   assert all(map(np.allclose, terms, expected[1:]))
 
-def test_cos():
-  raise NotImplementedError
 
 def test_cos():
   raise NotImplementedError
 
-## Test Combinations? 
+
+def test_cos():
+  raise NotImplementedError
+
+
+## Test Combinations?
 def test_sin_sin():
   x = 4.0
   vs = (1., 0., 0., 0.)
@@ -48,6 +57,7 @@ def test_sin_sin():
   expected = jvps(f, x, vs[0], 4)
   assert np.allclose(y, expected[0])
   assert all(map(np.allclose, terms, expected[1:]))
+
 
 # def test_vector_sin():
 #   D = 10
