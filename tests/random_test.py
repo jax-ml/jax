@@ -398,11 +398,12 @@ class LaxRandomTest(jtu.JaxTestCase):
       self.assertEqual(onp.result_type(w), onp.float32)
 
   def testNoOpByOpUnderHash(self):
-    raise SkipTest()  # TODO(mattjj): re-enable this test
-    def fail(): assert False
+    def fail(*args, **kwargs): assert False
     apply_primitive, xla.apply_primitive = xla.apply_primitive, fail
-    out = random.threefry_2x32(onp.zeros(2, onp.uint32), onp.arange(10, dtype=onp.uint32))
-    xla.apply_primitive = apply_primitive
+    try:
+      out = random.threefry_2x32(onp.zeros(2, onp.uint32), onp.arange(10, dtype=onp.uint32))
+    finally:
+      xla.apply_primitive = apply_primitive
 
 
 if __name__ == "__main__":

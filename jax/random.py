@@ -32,7 +32,7 @@ from . import lax
 from . import numpy as np
 from . import tree_util
 from .api import custom_transforms, defjvp, jit, vmap
-from .numpy.lax_numpy import _constant_like, asarray
+from .numpy.lax_numpy import _constant_like, asarray, stack
 from jax.lib import xla_bridge
 from jax import core
 from jax.scipy.special import logit
@@ -123,18 +123,21 @@ def threefry_2x32(keypair, count):
   else:
     x = list(np.split(count.ravel(), 2))
 
-  rotations = asarray([[13, 15, 26, 6], [17, 29, 16, 24]], dtype="uint32")
-  ks = asarray([key1, key2, key1 ^ key2 ^ onp.uint32(0x1BD11BDA)], dtype="uint32")
-  idxs = asarray([[1, 2], [2, 0], [0, 1], [1, 2], [2, 0]])
+  rotations = onp.array([[13, 15, 26, 6], [17, 29, 16, 24]], dtype=onp.uint32)
+  ks = stack([key1, key2, key1 ^ key2 ^ onp.uint32(0x1BD11BDA)])
+  idxs = onp.array([[1, 2], [2, 0], [0, 1], [1, 2], [2, 0]])
 
   x[0] = x[0] + ks[0]
   x[1] = x[1] + ks[1]
 
+  get = partial(lax.dynamic_index_in_dim, keepdims=False)
+
   def step(i, x):
-    for r in rotations[i % 2]:
+    for r in get(rotations, i % 2):
       x = apply_round(x, r)
-    i0, i1 = idxs[i]
-    return [x[0] + ks[i0], x[1] + ks[i1] + asarray(i + 1, dtype="uint32")]
+    i0, i1 = get(idxs, i)
+    return [x[0] + ks[i0],
+            x[1] + ks[i1] + asarray(i + 1, dtype=onp.uint32)]
   out = np.concatenate(lax.fori_loop(0, 5, step, x))
   assert out.dtype == onp.uint32
   return lax.reshape(out[:-1] if odd_size else out, count.shape)
