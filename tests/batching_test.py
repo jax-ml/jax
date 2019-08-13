@@ -955,6 +955,14 @@ class BatchingTest(jtu.JaxTestCase):
     result = vmap(f, (None, 0, None))(onp.zeros((10,)), onp.arange(10,), 1.)
     self.assertAllClose(result, onp.eye(10), check_dtypes=False)
 
+  def testIssue1170(self):
+    def f(index1, index2):
+      return np.arange(36).reshape(6, 6)[index1, index2]
+    g = jax.jit(jax.pmap(f))
+    ans = g(index1=onp.asarray([1]), index2=onp.asarray([2]))
+    expected = g(onp.asarray([1]), onp.asarray([2]))
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
 
 if __name__ == '__main__':
   absltest.main()
