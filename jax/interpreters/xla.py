@@ -434,7 +434,7 @@ for _t in array_types:
 
 class DeviceValue(object):
   """A DeviceValue represents a value backed by device memory."""
-  __slots__ = ["aval", "device_buffer"]
+  __slots__ = ["aval", "device_buffer", "__weakref__"]
 
   def __init__(self, aval, device_buffer):
     self.aval = aval
