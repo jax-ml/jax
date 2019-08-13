@@ -902,6 +902,41 @@ class APITest(jtu.JaxTestCase):
     xla_comp = api.xla_computation(f)
     xla_comp(np.arange(8)).GetHloText()  # doesn't crash
 
+  def test_custom_implicit_solve(self):
+
+    def scalar_solve(f, y):
+      return y / f(1.0)
+
+    def _binary_search(func, params, low=0.0, high=100.0, tolerance=1e-6):
+      def cond(state):
+        low, high = state
+        return high - low > tolerance
+
+      def body(state):
+        low, high = state
+        midpoint = 0.5 * (low + high)
+        update_upper = func(midpoint, params) > 0
+        low = np.where(update_upper, low, midpoint)
+        high = np.where(update_upper, midpoint, high)
+        return (low, high)
+
+      solution, _ = lax.while_loop(cond, body, (low, high))
+      return solution
+
+    binary_search = api._custom_implicit_solve(_binary_search, scalar_solve)
+    sqrt_cubed = lambda y, x: y ** 2 - x ** 3
+    value, grad = api.value_and_grad(binary_search, argnums=1)(sqrt_cubed, 5.0)
+    self.assertAllClose(value, 5 ** 1.5, check_dtypes=False)
+    self.assertAllClose(grad, api.grad(pow)(5.0, 1.5), check_dtypes=False)
+
+    def scalar_solve2(f, y):
+      y_1d = y[np.newaxis]
+      return np.linalg.solve(api.jacobian(f)(y_1d), y_1d).squeeze()
+
+    binary_search = api._custom_implicit_solve(_binary_search, scalar_solve2)
+    grad = api.grad(binary_search, argnums=1)(sqrt_cubed, 5.0)
+    self.assertAllClose(grad, api.grad(pow)(5.0, 1.5), check_dtypes=False)
+
   def test_jit_device_assignment(self):
     device_num = xb.device_count() - 1
     x = api.jit(lambda x: x, device_assignment=device_num)(3.)
