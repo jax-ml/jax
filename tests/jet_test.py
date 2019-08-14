@@ -30,7 +30,10 @@ def fdm_test_jet(f, primals, series, atol=1e-3):
 
 
 def test_exp():
-  raise NotImplementedError
+  N = 4
+  x = npr.randn()
+  terms_in = npr.randn(N)
+  fdm_test_jet(np.exp, (x, ), (terms_in, ), atol=1e-2)
 
 
 def test_log():
@@ -41,30 +44,40 @@ def test_tanh():
   raise NotImplementedError
 
 
-def test_dot():
-  D = 2
-  N = 4
-  x1 = npr.randn(D)
-  x2 = npr.randn(D)
-  primals = (x1,x2)
-  terms_in = npr.randn(N, D)
-  series_in = (terms_in,terms_in)
-  fdm_test_jet(np.dot,primals,series_in,atol=1e-2)
-
-
 def test_sin():
   N = 4
   x = npr.randn()
   terms_in = npr.randn(N)
-  fdm_test_jet(np.sin, (x,),(terms_in,),atol=1e-2)
+  fdm_test_jet(np.sin, (x, ), (terms_in, ), atol=1e-2)
 
 
 def test_cos():
   N = 4
   x = npr.randn()
   terms_in = npr.randn(N)
-  fdm_test_jet(np.cos, (x,),(terms_in,),atol=1e-2)
+  fdm_test_jet(np.cos, (x, ), (terms_in, ), atol=1e-2)
 
+
+def test_dot():
+  D = 2
+  N = 4
+  x1 = npr.randn(D)
+  x2 = npr.randn(D)
+  primals = (x1, x2)
+  terms_in = npr.randn(N, D)
+  series_in = (terms_in, terms_in)
+  fdm_test_jet(np.dot, primals, series_in, atol=1e-2)
+
+def test_mul():
+  N = 4
+  x1 = npr.randn()
+  x2 = npr.randn()
+  f = lambda a,b: a*b
+  primals = (x1, x2)
+  terms_in = npr.randn(N)
+  series_in = np.array([terms_in, terms_in])
+  fdm_test_jet(f, primals, series_in, atol=1e-2)
+  
 
 ## Test Combinations?
 def test_sin_sin():
@@ -72,7 +85,7 @@ def test_sin_sin():
   x = npr.randn()
   terms_in = npr.randn(N)
   f = lambda x: np.sin(np.sin(x))
-  fdm_test_jet(f, (x,),(terms_in,),atol=1e-2)
+  fdm_test_jet(f, (x, ), (terms_in, ), atol=1e-2)
 
 
 # def test_vector_sin():

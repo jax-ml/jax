@@ -1722,6 +1722,19 @@ ad.primitive_transposes[sub_p] = _sub_transpose
 mul_p = standard_binop([_num, _num], 'mul')
 ad.defbilinear_broadcasting(_brcast, mul_p, mul, mul)
 
+def make_derivs_mul(primals, order):
+  a, b = primals
+  #TODO: Should these be onp? I think kills nested AD
+  fst = lambda vs: onp.sum(onp.array([b,a]) * vs[0],axis=0)
+  snd = lambda vs: onp.sum(dot(onp.array([[0.,1.],[1.,0.]]),onp.array(vs[0])) * onp.array(vs[1]), axis=0)
+  #TODO: Use ZeroTerm
+  nth = lambda vs: onp.zeros_like(a)
+  derivs = itertools.chain([fst,snd], itertools.repeat(nth))
+  return mul(a,b), list(itertools.islice(derivs, order))
+fdb.jet_rules[mul_p] = make_derivs_mul
+
+
+
 
 def _safe_mul_translation_rule(c, x, y):
   dtype = c.GetShape(x).numpy_dtype()
