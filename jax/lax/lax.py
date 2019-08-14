@@ -1605,6 +1605,18 @@ fdb.jet_rules[sin_p] = make_derivs_sin
 
 cos_p = standard_unop(_float | _complex, 'cos')
 ad.defjvp(cos_p, lambda g, x: neg(mul(g, sin(x))))
+def make_derivs_cos(primals, order):
+  x, = primals
+  cos_x = cos(x)
+  def derivs():
+    sin_x = sin(x)
+    yield lambda vs: fdb.product(map(operator.itemgetter(0), vs)) * -sin_x
+    yield lambda vs: fdb.product(map(operator.itemgetter(0), vs)) * -cos_x
+    yield lambda vs: fdb.product(map(operator.itemgetter(0), vs)) * sin_x
+    yield lambda vs: fdb.product(map(operator.itemgetter(0), vs)) * cos_x
+  derivs = list(itertools.islice(itertools.cycle(derivs()), order))
+  return cos_x, derivs
+fdb.jet_rules[cos_p] = make_derivs_cos
 
 atan2_p = standard_binop([_float, _float], 'atan2')
 ad.defjvp(atan2_p,
@@ -2143,14 +2155,16 @@ def make_derivs_dot(primals, order):
   a, b = primals
   def fst(vs):
     (va, vb), = vs
-    return np.dot(va, b) + np.dot(a, vb)
+    return dot(va, b) + dot(a, vb)
   def snd(vs):
     (v0a, v0b), (v1a, v1b) = vs
-    return np.dot(v0a, v1b) + np.dot(v1a, v0b)
+    return dot(v0a, v1b) + dot(v1a, v0b)
   def nth(vs):
-    return fdb.zero_term
-  derivs = it.chain([fst, snd], it.repeat(nth))
-  return np.dot(a, b), list(it.islice(derivs, order))
+    v0a,v0b = vs[0]
+    return onp.zeros_like(dot(v0a,v0b))
+  # return fdb.zero_term #TODO: Fix fdb.zero_term
+  derivs = itertools.chain([fst, snd], itertools.repeat(nth))
+  return dot(a, b), list(itertools.islice(derivs, order))
 fdb.jet_rules[dot_p] = make_derivs_dot
 
 

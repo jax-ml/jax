@@ -6,17 +6,27 @@ from jax import jvp, jet
 import jax.numpy as np
 
 
-def fdm_taylor(f, primals, terms, n):
+def fdm_taylor(f, primals, series):
   def expansion(eps):
-    return f(
-        primals +
-        sum([eps**(i + 1) * terms[i] / fact(i+1) for i in range(len(terms))]))
+    tayterms = [
+        sum([eps**(i + 1) * terms[i] / fact(i + 1) for i in range(len(terms))])
+        for terms in series
+    ]
+    return f(*map(sum, zip(primals, tayterms)))
 
   n_derivs = []
-  for i in range(n):
-    d = central_fdm(order=(i+2)*2, deriv=i,condition=0)(expansion, 0.)
+  N = len(series[0]) + 1
+  for i in range(1, N):
+    d = central_fdm(order=(i + 4), deriv=i, condition=0)(expansion, 0.)
     n_derivs.append(d)
-  return n_derivs
+  return f(*primals), n_derivs
+
+
+def fdm_test_jet(f, primals, series, atol=1e-3):
+  y, terms = jet(f, primals, series)
+  y_fdm, terms_fdm = fdm_taylor(f, primals, series)
+  assert np.allclose(y, y_fdm)
+  assert np.allclose(terms, terms_fdm, atol=atol)
 
 
 def test_exp():
@@ -31,32 +41,38 @@ def test_tanh():
   raise NotImplementedError
 
 
+def test_dot():
+  D = 2
+  N = 4
+  x1 = npr.randn(D)
+  x2 = npr.randn(D)
+  primals = (x1,x2)
+  terms_in = npr.randn(N, D)
+  series_in = (terms_in,terms_in)
+  fdm_test_jet(np.dot,primals,series_in,atol=1e-2)
+
+
 def test_sin():
-  x = 4.0
-  vs = (1., 0., 0., 0.)
-  y, terms = jet(np.sin, (x, ), [vs])
-  expected = jvps(np.sin, x, vs[0], 4)
-  assert np.allclose(y, expected[0])
-  assert all(map(np.allclose, terms, expected[1:]))
+  N = 4
+  x = npr.randn()
+  terms_in = npr.randn(N)
+  fdm_test_jet(np.sin, (x,),(terms_in,),atol=1e-2)
 
 
 def test_cos():
-  raise NotImplementedError
-
-
-def test_cos():
-  raise NotImplementedError
+  N = 4
+  x = npr.randn()
+  terms_in = npr.randn(N)
+  fdm_test_jet(np.cos, (x,),(terms_in,),atol=1e-2)
 
 
 ## Test Combinations?
 def test_sin_sin():
-  x = 4.0
-  vs = (1., 0., 0., 0.)
+  N = 4
+  x = npr.randn()
+  terms_in = npr.randn(N)
   f = lambda x: np.sin(np.sin(x))
-  y, terms = jet(f, (x, ), [vs])
-  expected = jvps(f, x, vs[0], 4)
-  assert np.allclose(y, expected[0])
-  assert all(map(np.allclose, terms, expected[1:]))
+  fdm_test_jet(f, (x,),(terms_in,),atol=1e-2)
 
 
 # def test_vector_sin():
