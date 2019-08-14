@@ -115,7 +115,6 @@ class OptimizerTests(jtu.JaxTestCase):
     step_size = 0.1
     self._CheckOptimizer(optimizers.rmsprop, loss, x0, num_iters, step_size)
 
-  @jtu.skip_on_devices('cpu')  # TODO(mattjj): investigate numerical failure
   def testAdamVector(self):
     def loss(x): return np.dot(x, x)
     x0 = np.ones(2)
