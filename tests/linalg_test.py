@@ -416,7 +416,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     if not full_matrices and m >= n:
         jtu.check_jvp(np.linalg.qr, partial(jvp, np.linalg.qr), (a,))
 
-  @jtu.skip_on_devices("tpu")
   def testQrBatching(self):
     shape = (10, 4, 5)
     dtype = np.float32
@@ -477,7 +476,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(np.linalg.inv, args_maker, check_dtypes=True)
 
   # Regression test for incorrect type for eigenvalues of a complex matrix.
-  @jtu.skip_on_devices("tpu")  # TODO(phawkins): eigh unimplemented
   def testIssue669(self):
     def test(x):
       val, vec = np.linalg.eigh(x)
