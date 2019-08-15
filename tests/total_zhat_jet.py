@@ -3,7 +3,7 @@ from jax import jvp, jet, grad
 
 
 def f(z, t):
-  return 4 * z * t
+  return 4 * z / t
 
 
 # Initial Conditions
@@ -12,7 +12,6 @@ t0, z0 = 2., 0.5
 
 # True solution
 def sol(t):
-  # return z0 * t0 * t * t
   return (z0 / t0**4) * t**4
 
 
