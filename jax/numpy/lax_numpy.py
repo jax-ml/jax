@@ -2169,6 +2169,13 @@ def take(a, indices, axis=None, out=None, mode=None):
                     slice_sizes=tuple(slice_sizes))
 
 
+def _normalize_index(index, axis_size):
+  """Normalizes an index value in the range [-N, N) to the range [0, N)."""
+  return lax.select(
+    lax.lt(index, _constant_like(index, 0)),
+    lax.add(index, _constant_like(index, axis_size)),
+    index)
+
 @partial(jit, static_argnums=(2,))
 def _take_along_axis(arr, indices, axis):
   if axis is None:
@@ -2199,7 +2206,7 @@ def _take_along_axis(arr, indices, axis):
   j = 0
   for i in range(rank):
     if i == axis:
-      indices = indices % _constant_like(indices, axis_size)
+      indices = _normalize_index(indices, axis_size)
       gather_indices.append(lax.reshape(indices, gather_index_shape))
       slice_sizes.append(1)
       start_index_map.append(i)
@@ -2306,7 +2313,7 @@ def _index_to_gather(x_shape, idx):
     advanced_pairs = (
       (asarray(e), i, j) for j, (i, e) in enumerate(idx_no_nones)
       if (isinstance(e, collections.Sequence) or isinstance(e, ndarray)))
-    advanced_pairs = ((mod(e, _constant_like(e, x_shape[j])), i, j)
+    advanced_pairs = ((_normalize_index(e, x_shape[j]), i, j)
                       for e, i, j in advanced_pairs)
     advanced_indexes, idx_advanced_axes, x_advanced_axes = zip(*advanced_pairs)
     advanced_axes_are_contiguous = onp.all(onp.diff(idx_advanced_axes) == 1)
@@ -2376,7 +2383,7 @@ def _index_to_gather(x_shape, idx):
     # Handle basic int indexes.
     if (isinstance(abstract_i, ConcreteArray) or
         isinstance(abstract_i, ShapedArray)) and _int(abstract_i):
-      i = mod(i, _constant_like(i, x_shape[x_axis]))
+      i = _normalize_index(i, x_shape[x_axis])
       i = lax.convert_element_type(i, int32)
       i = broadcast_to(i, tuple(gather_indices.shape[:-1]) + (1,))
       gather_indices = concatenate((gather_indices, i), -1)
