@@ -1297,7 +1297,7 @@ def tile(a, reps):
   if isinstance(reps, int):
     reps = (reps,)
   a = reshape(a, (1,) * (len(reps) - ndim(a)) + shape(a))
-  reps = (1,) * (ndim(a) - len(reps)) + reps
+  reps = (1,) * (ndim(a) - len(reps)) + tuple(reps)
   for i, rep in enumerate(reps):
     a = concatenate([a] * rep, axis=i)
   return a
