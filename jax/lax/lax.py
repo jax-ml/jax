@@ -28,7 +28,7 @@ from six.moves import builtins, xrange
 
 import numpy as onp
 
-from ..util import partial, prod
+from ..util import partial, prod, WrapHashably
 
 from .. import core
 from .. import ad_util
@@ -670,9 +670,17 @@ def gather(operand, start_indices, dimension_numbers, slice_sizes):
   Returns:
     An array containing the gather output.
   """
-  return gather_p.bind(
-      operand, start_indices, dimension_numbers=dimension_numbers,
-      slice_sizes=_canonicalize_shape(slice_sizes), operand_shape=operand.shape)
+  if not isinstance(start_indices, core.Tracer):
+    # Use static slicing when possible so that fastar can infer outputs
+    return gather_static_p.bind(
+        operand, start_indices=WrapHashably(start_indices),
+        dimension_numbers=dimension_numbers,
+        slice_sizes=_canonicalize_shape(slice_sizes),
+        operand_shape=operand.shape)
+  else:
+    return gather_p.bind(
+        operand, start_indices, dimension_numbers=dimension_numbers,
+        slice_sizes=_canonicalize_shape(slice_sizes), operand_shape=operand.shape)
 
 def scatter_add(operand, scatter_indices, updates, dimension_numbers):
   """Scatter-add operator.
@@ -2951,6 +2959,38 @@ ad.defjvp(gather_p, _gather_jvp_rule, None)
 ad.primitive_transposes[gather_p] = _gather_transpose_rule
 batching.primitive_batchers[gather_p] = _gather_batching_rule
 
+def _gather_static_translation_rule(
+        c, operand, start_indices, dimension_numbers, slice_sizes,
+        operand_shape):
+    return _gather_translation_rule(
+        c, operand, c.Constant(start_indices), dimension_numbers, slice_sizes,
+        operand_shape)
+
+def _gather_static_batching_rule(
+        batched_args, batch_dims, start_indices, dimension_numbers, slice_sizes,
+        operand_shape):
+    batched_args = batched_args + (start_indices,)
+    batch_dims = batch_dims + (None,)
+    return _gather_batching_rule(batched_args, batch_dims, dimension_numbers,
+                                 slice_sizes, operand_shape)
+
+def _gather_static_transpose_rule(*args, **kwargs):
+    arr_ct, _ = _gather_transpose_rule(*args, **kwargs)
+    return arr_ct,
+
+def _unwrap_start_indices(rule):
+    def rule_(*args, **params):
+        if isinstance(params['start_indices'], WrapHashably):
+            params['start_indices'] = params['start_indices'].val
+        return rule(*args, **params)
+    return rule_
+gather_static_p = standard_primitive(
+    _unwrap_start_indices(_gather_shape_rule),
+    _unwrap_start_indices(_gather_dtype_rule), 'gather_static',
+    _unwrap_start_indices(_gather_static_translation_rule))
+ad.defjvp(gather_static_p, _unwrap_start_indices(_gather_jvp_rule))
+ad.primitive_transposes[gather_static_p] = _unwrap_start_indices(_gather_static_transpose_rule)
+batching.primitive_batchers[gather_static_p] = _unwrap_start_indices(_gather_static_batching_rule)
 
 class ScatterDimensionNumbers(collections.namedtuple(
     "ScatterDimensionNumbers",
