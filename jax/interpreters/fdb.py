@@ -1,6 +1,7 @@
 from functools import partial
 from collections import Counter
 
+import numpy as onp
 from scipy.special import factorial as fact
 
 from jax import core
@@ -23,6 +24,7 @@ class JetTracer(core.Tracer):
   __slots__ = ["primal", "terms"]
 
   def __init__(self, trace, primal, terms):
+    assert type(terms) in (ZeroSeries, list, tuple)
     self.trace = trace
     self.primal = primal
     self.terms = terms
@@ -52,6 +54,10 @@ class JetTrace(core.Trace):
     primals_in, series_in = unzip2((t.primal, t.terms) for t in tracers)
     order, = {len(terms) for terms in series_in if terms is not zero_series}
     primal_out, derivs = jet_rules[primitive](primals_in, order)
+    series_in = [[zero_term] * order if s is zero_series else s
+                 for s in series_in]
+    series_in = [[onp.zeros_like(x) if t is zero_term else t for t in series]
+                 for x, series in zip(primals_in, series_in)]
     terms_out = prop(derivs, zip(*series_in))
     return JetTracer(self, primal_out, terms_out)
 
@@ -68,11 +74,11 @@ class JetTrace(core.Trace):
     assert False
 
 
-class ZeroSeries(object): pass
-zero_series = ZeroSeries()
-
 class ZeroTerm(object): pass
 zero_term = ZeroTerm()
+
+class ZeroSeries(object): pass
+zero_series = ZeroSeries()
 
 
 jet_rules = {}

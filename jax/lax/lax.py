@@ -1724,16 +1724,17 @@ ad.defbilinear_broadcasting(_brcast, mul_p, mul, mul)
 
 def make_derivs_mul(primals, order):
   a, b = primals
-  #TODO: Should these be onp? I think kills nested AD
-  fst = lambda vs: onp.sum(onp.array([b,a]) * vs[0],axis=0)
-  snd = lambda vs: onp.sum(dot(onp.array([[0.,1.],[1.,0.]]),onp.array(vs[0])) * onp.array(vs[1]), axis=0)
-  #TODO: Use ZeroTerm
-  nth = lambda vs: onp.zeros_like(a)
+  def fst(vs):
+    (va, vb), = vs
+    return va * b + a * vb
+  def snd(vs):
+    (v0a, v0b), (v1a, v1b) = vs
+    return v0a * v1b + v1a * v0b
+  def nth(vs):
+    return onp.zeros_like(a)
   derivs = itertools.chain([fst,snd], itertools.repeat(nth))
-  return mul(a,b), list(itertools.islice(derivs, order))
+  return mul(a, b), list(itertools.islice(derivs, order))
 fdb.jet_rules[mul_p] = make_derivs_mul
-
-
 
 
 def _safe_mul_translation_rule(c, x, y):
@@ -2166,6 +2167,7 @@ batching.primitive_batchers[dot_p] = _dot_batch_rule
 
 def make_derivs_dot(primals, order):
   a, b = primals
+  out = dot(a, b)
   def fst(vs):
     (va, vb), = vs
     return dot(va, b) + dot(a, vb)
@@ -2173,11 +2175,9 @@ def make_derivs_dot(primals, order):
     (v0a, v0b), (v1a, v1b) = vs
     return dot(v0a, v1b) + dot(v1a, v0b)
   def nth(vs):
-    v0a,v0b = vs[0]
-    return onp.zeros_like(dot(v0a,v0b))
-  # return fdb.zero_term #TODO: Fix fdb.zero_term
+    return onp.zero_like(out)
   derivs = itertools.chain([fst, snd], itertools.repeat(nth))
-  return dot(a, b), list(itertools.islice(derivs, order))
+  return out, list(itertools.islice(derivs, order))
 fdb.jet_rules[dot_p] = make_derivs_dot
 
 
@@ -3985,6 +3985,9 @@ class _FilledConstant(xla.DeviceConstant):
     self._npy_value = None
 
     self.fill_value = fill_value
+
+  def __repr__(self):
+    return "Const({})".format(self.fill_value)
 
   @property
   def _value(self):
