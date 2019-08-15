@@ -2702,8 +2702,8 @@ ad.deflinear(slice_p, _slice_transpose_rule)
 batching.primitive_batchers[slice_p] = _slice_batching_rule
 
 
-def _dynamic_slice_shape_rule(operand, *start_indices, slice_sizes=None,
-                              operand_shape=None):
+def _dynamic_slice_shape_rule(operand, *start_indices, **kwargs):
+  slice_sizes = kwargs["slice_sizes"]
   if operand.ndim != len(start_indices):
     msg = ("dynamic_slice start_indices must have length equal to the number "
            "of dimensions of the operand, got indices {} for operand shape {}.")
@@ -2722,8 +2722,8 @@ def _dynamic_slice_shape_rule(operand, *start_indices, slice_sizes=None,
     raise TypeError(msg.format(slice_sizes))
   return tuple(slice_sizes)
 
-def _dynamic_slice_translation_rule(c, operand, *start_indices,
-                                    slice_sizes=None, operand_shape=None):
+def _dynamic_slice_translation_rule(c, operand, *start_indices, **kwargs):
+  slice_sizes = kwargs["slice_sizes"]
   return c.DynamicSlice(operand, start_indices, slice_sizes)
 
 def _dynamic_slice_jvp(primals, tangents, slice_sizes, operand_shape):
@@ -2732,8 +2732,8 @@ def _dynamic_slice_jvp(primals, tangents, slice_sizes, operand_shape):
     tangent_out = dynamic_slice(tangents[0], primals[1:], slice_sizes)
   return dynamic_slice(primals[0], primals[1:], slice_sizes), tangent_out
 
-def _dynamic_slice_transpose_rule(t, operand, *start_indices, slice_sizes=None,
-                                  operand_shape=None):
+def _dynamic_slice_transpose_rule(t, operand, *start_indices, **kwargs):
+  operand_shape = kwargs["operand_shape"]
   assert operand is None
   assert all(s is not None for s in start_indices)
   zeros = full(operand_shape, tie_in(t, _zero(t)))
@@ -2775,8 +2775,7 @@ ad.primitive_transposes[dynamic_slice_p] = _dynamic_slice_transpose_rule
 batching.primitive_batchers[dynamic_slice_p] = _dynamic_slice_batching_rule
 
 
-def _dynamic_update_slice_shape_rule(operand, update, *start_indices,
-                                     update_shape=None):
+def _dynamic_update_slice_shape_rule(operand, update, *start_indices, **kwargs):
   if operand.ndim != update.ndim:
     msg = ("dynamic_update_slice update must have the same rank as operand, "
            "got update shape {} for operand shape {}.")
@@ -2791,8 +2790,7 @@ def _dynamic_update_slice_shape_rule(operand, update, *start_indices,
     raise TypeError(msg.format(update.shape, operand.shape))
   return operand.shape
 
-def _dynamic_update_slice_dtype_rule(operand, update, *start_indices,
-                                     update_shape=None):
+def _dynamic_update_slice_dtype_rule(operand, update, *start_indices, **kwargs):
   _check_same_dtypes("dynamic_update_slice", False, operand.dtype, update.dtype)
   return operand.dtype
 
@@ -2810,7 +2808,8 @@ def _dynamic_update_slice_jvp(primals, tangents, update_shape):
   return val_out, tangent_out
 
 def _dynamic_update_slice_transpose_rule(t, operand, update, *start_indices,
-                                         update_shape=None):
+                                         **kwargs):
+  update_shape = kwargs["update_shape"]
   assert all(x is not None for x in start_indices)
   dus = dynamic_update_slice
   ds = dynamic_slice
@@ -2820,7 +2819,7 @@ def _dynamic_update_slice_transpose_rule(t, operand, update, *start_indices,
   return [operand_t, update_t] + [None] * len(start_indices)
 
 def _dynamic_update_slice_translation_rule(c, operand, update, *start_indices,
-                                           update_shape=None):
+                                           **kwargs):
   return c.DynamicUpdateSlice(operand, update, start_indices)
 
 def _dynamic_update_slice_batching_rule(batched_args, batch_dims, update_shape):
