@@ -1282,10 +1282,8 @@ def dynamic_slice_in_dim(operand, start_index, slice_size, axis=0):
   slice_sizes = list(operand.shape)
 
   axis = int(axis)
-  axis_size = _const(start_index, operand.shape[axis])
-  start_indices[axis] = rem(start_index, axis_size)
+  start_indices[axis] = start_index
   slice_sizes[axis] = int(slice_size)
-
   return dynamic_slice(operand, start_indices, slice_sizes)
 
 
@@ -1301,7 +1299,7 @@ def dynamic_index_in_dim(operand, index, axis=0, keepdims=True):
 def dynamic_update_slice_in_dim(operand, update, start_index, axis):
   axis = int(axis)
   start_indices = [0] * _ndim(operand)
-  start_indices[axis] = start_index % operand.shape[axis]
+  start_indices[axis] = start_index
   return dynamic_update_slice(operand, update, start_indices)
 
 
@@ -4216,12 +4214,16 @@ def _dynamic_slice_indices(operand, start_indices):
                        .format(start_indices.shape))
     start_indices = [reshape(slice(start_indices, [i], [i+1]), ())
                      for i in range(operand.ndim)]
+  else:
+    start_indices = [onp.asarray(i) if isinstance(i, int) else i
+                     for i in start_indices]
   if len(start_indices) != operand.ndim:
     msg = ("Length of slice indices must match number of operand dimensions ({} "
           "vs {})")
     raise ValueError(msg.format(len(start_indices, operand.shape)))
   # map int over operand.shape to raise any dynamic-shape errors
-  return [rem(i, int(d)) for i, d in zip(start_indices, operand.shape)]
+  return [select(lt(i, _const(i, 0)), add(i, _const(i, int(d))), i)
+          for i, d in zip(start_indices, operand.shape)]
 
 
 
