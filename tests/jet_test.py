@@ -1,12 +1,18 @@
 import numpy.random as npr
 from scipy.special import factorial as fact
-from fdm import central_fdm
 
-from jax import jvp, jet
+from jax import jvp, jet, grad
 import jax.numpy as np
 
 
-def fdm_taylor(f, primals, series):
+def repeated(f, n):
+  def rfun(p):
+    return reduce(lambda x, _: f(x), xrange(n), p)
+
+  return rfun
+
+
+def jvp_taylor(f, primals, series):
   def expansion(eps):
     tayterms = [
         sum([eps**(i + 1) * terms[i] / fact(i + 1) for i in range(len(terms))])
@@ -17,23 +23,23 @@ def fdm_taylor(f, primals, series):
   n_derivs = []
   N = len(series[0]) + 1
   for i in range(1, N):
-    d = central_fdm(order=(i + 4), deriv=i, condition=0)(expansion, 0.)
+    d = repeated(grad, i)(expansion)(0.)
     n_derivs.append(d)
   return f(*primals), n_derivs
 
 
-def fdm_test_jet(f, primals, series, atol=1e-3):
+def jvp_test_jet(f, primals, series, atol=1e-5):
   y, terms = jet(f, primals, series)
-  y_fdm, terms_fdm = fdm_taylor(f, primals, series)
-  assert np.allclose(y, y_fdm)
-  assert np.allclose(terms, terms_fdm, atol=atol)
+  y_jvp, terms_jvp = jvp_taylor(f, primals, series)
+  assert np.allclose(y, y_jvp)
+  assert np.allclose(terms, terms_jvp, atol=atol)
 
-
+#XXX
 def test_exp():
   N = 4
   x = npr.randn()
-  terms_in = npr.randn(N)
-  fdm_test_jet(np.exp, (x, ), (terms_in, ), atol=1e-2)
+  terms_in = list(npr.randn(N))
+  jvp_test_jet(np.exp, (x, ), (terms_in, ), atol=1e-2)
 
 
 def test_log():
@@ -47,15 +53,23 @@ def test_tanh():
 def test_sin():
   N = 4
   x = npr.randn()
-  terms_in = npr.randn(N)
-  fdm_test_jet(np.sin, (x, ), (terms_in, ), atol=1e-2)
+  terms_in = list(npr.randn(N))
+  jvp_test_jet(np.sin, (x, ), (terms_in, ))
 
 
 def test_cos():
   N = 4
   x = npr.randn()
-  terms_in = npr.randn(N)
-  fdm_test_jet(np.cos, (x, ), (terms_in, ), atol=1e-2)
+  terms_in = list(npr.randn(N))
+  jvp_test_jet(np.cos, (x, ), (terms_in, ), atol=1e-1)
+
+
+def test_neg():
+  N = 4
+  x = npr.randn()
+  terms_in = list(npr.randn(N))
+  f = lambda x: -x
+  jvp_test_jet(f, (x, ), (terms_in, ), atol=1e-2)
 
 
 def test_dot():
@@ -64,20 +78,21 @@ def test_dot():
   x1 = npr.randn(D)
   x2 = npr.randn(D)
   primals = (x1, x2)
-  terms_in = npr.randn(N, D)
+  terms_in = list(npr.randn(N, D))
   series_in = (terms_in, terms_in)
-  fdm_test_jet(np.dot, primals, series_in, atol=1e-2)
+  jvp_test_jet(np.dot, primals, series_in)
+
 
 def test_mul():
   N = 4
   x1 = npr.randn()
   x2 = npr.randn()
-  f = lambda a,b: a*b
+  f = lambda a, b: a * b
   primals = (x1, x2)
-  terms_in = npr.randn(N)
-  series_in = np.array([terms_in, terms_in])
-  fdm_test_jet(f, primals, series_in, atol=1e-2)
-  
+  terms_in = list(npr.randn(N))
+  series_in = ( terms_in, terms_in )
+  jvp_test_jet(f, primals, series_in)
+
 
 ## Test Combinations?
 def test_sin_sin():
@@ -85,7 +100,28 @@ def test_sin_sin():
   x = npr.randn()
   terms_in = npr.randn(N)
   f = lambda x: np.sin(np.sin(x))
-  fdm_test_jet(f, (x, ), (terms_in, ), atol=1e-2)
+  jvp_test_jet(f, (x, ), (terms_in, ), atol=1e-2)
+
+
+def test_expansion():
+  N = 4
+  x = npr.randn()
+  terms_in = [1., 0., 0., 0.]
+  f = np.sin
+  print jet(f, (x, ), (terms_in, ))
+  return expand(f, (x, ), (terms_in, ))
+  # return jet(f,(x,),(terms_in,))
+
+
+def expand(f, primals, series):
+  def expansion(eps):
+    tayterms = [
+        sum([eps**(i + 1) * terms[i] / fact(i + 1) for i in range(len(terms))])
+        for terms in series
+    ]
+    return f(*map(sum, zip(primals, tayterms)))
+
+  return grad(grad(grad(expansion)))(0.)
 
 
 # def test_vector_sin():
