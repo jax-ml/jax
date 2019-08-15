@@ -633,19 +633,36 @@ def dynamic_slice(operand, start_indices, slice_sizes):
   """Wraps XLA's `DynamicSlice
   <https://www.tensorflow.org/xla/operation_semantics#dynamicslice>`_
   operator.
+
+  Args:
+    operand: an array to slice.
+    start_indices: a list of scalar indices, one per dimension.
+    slice_sizes: the size of the slice. Must be a sequence of non-negative
+      integers with length equal to `ndim(operand)`.
+
+  Returns:
+    An array containing the slice.
   """
   start_indices = _dynamic_slice_indices(operand, start_indices)
   return dynamic_slice_p.bind(
-      operand, start_indices, slice_sizes=tuple(slice_sizes),
+      operand, *start_indices, slice_sizes=tuple(slice_sizes),
       operand_shape=operand.shape)
 
 def dynamic_update_slice(operand, update, start_indices):
   """Wraps XLA's `DynamicUpdateSlice
   <https://www.tensorflow.org/xla/operation_semantics#dynamicupdateslice>`_
   operator.
+
+  Args:
+    operand: an array to slice.
+    update: an array containing the new values to write onto `operand`.
+    start_indices: a list of scalar indices, one per dimension.
+
+  Returns:
+    An array containing the slice.
   """
   start_indices = _dynamic_slice_indices(operand, start_indices)
-  return dynamic_update_slice_p.bind(operand, update, start_indices,
+  return dynamic_update_slice_p.bind(operand, update, *start_indices,
                                      update_shape=update.shape)
 
 def gather(operand, start_indices, dimension_numbers, slice_sizes):
@@ -665,7 +682,7 @@ def gather(operand, start_indices, dimension_numbers, slice_sizes):
     dimension_numbers: a `lax.GatherDimensionNumbers` object that describes
       how dimensions of `operand`, `start_indices` and the output relate.
     slice_sizes: the size of each slice. Must be a sequence of non-negative
-      integers with size equal to `ndim(operand)`.
+      integers with length equal to `ndim(operand)`.
 
   Returns:
     An array containing the gather output.
@@ -2685,8 +2702,8 @@ ad.deflinear(slice_p, _slice_transpose_rule)
 batching.primitive_batchers[slice_p] = _slice_batching_rule
 
 
-def _dynamic_slice_shape_rule(operand, start_indices, slice_sizes,
-                              operand_shape):
+def _dynamic_slice_shape_rule(operand, *start_indices, slice_sizes=None,
+                              operand_shape=None):
   if operand.ndim != len(start_indices):
     msg = ("dynamic_slice start_indices must have length equal to the number "
            "of dimensions of the operand, got indices {} for operand shape {}.")
@@ -2705,19 +2722,31 @@ def _dynamic_slice_shape_rule(operand, start_indices, slice_sizes,
     raise TypeError(msg.format(slice_sizes))
   return tuple(slice_sizes)
 
-def _dynamic_slice_translation_rule(c, operand, start_indices, slice_sizes,
-                                    operand_shape):
+def _dynamic_slice_translation_rule(c, operand, *start_indices,
+                                    slice_sizes=None, operand_shape=None):
   return c.DynamicSlice(operand, start_indices, slice_sizes)
 
-def _dynamic_slice_jvp_rule(g, operand, start_indices, slice_sizes,
-                            operand_shape):
-  return dynamic_slice(g, start_indices, slice_sizes)
+def _dynamic_slice_jvp(primals, tangents, slice_sizes, operand_shape):
+  tangent_out = ad_util.zero
+  if tangents[0] is not ad_util.zero:
+    tangent_out = dynamic_slice(tangents[0], primals[1:], slice_sizes)
+  return dynamic_slice(primals[0], primals[1:], slice_sizes), tangent_out
 
-def _dynamic_slice_transpose_rule(t, operand, start_indices, slice_sizes,
-                                  operand_shape):
+def _dynamic_slice_transpose_rule(t, operand, *start_indices, slice_sizes=None,
+                                  operand_shape=None):
   assert operand is None
   zeros = full(operand_shape, tie_in(t, _zero(t)))
-  return [dynamic_update_slice(zeros, t, start_indices), ad_util.zero]
+  return ([dynamic_update_slice(zeros, t, start_indices)] +
+          [ad_util.zero] * len(start_indices))
+
+def _batch_dynamic_slice_indices(indices, bdims):
+  size = next((x.shape[i] for x, i in zip(indices, bdims)), -1)
+  if size >= 0:
+    return concatenate([reshape(i, [1]) for i in start_indices], 0), None
+  indices = concatenate(
+    [broadcast_to(x, (size, 1), broadcast_dims=(0,)) for x in indices],
+    dimension=1)
+  return indices, 0
 
 def _dynamic_slice_batching_rule(batched_args, batch_dims, slice_sizes,
                                  operand_shape):
@@ -2728,20 +2757,23 @@ def _dynamic_slice_batching_rule(batched_args, batch_dims, slice_sizes,
   dims = tuple(range(len(operand_shape)))
   dnums = GatherDimensionNumbers(offset_dims=dims, collapsed_slice_dims=(),
                                  start_index_map=dims)
-  return _gather_batching_rule(batched_args, batch_dims, dnums, slice_sizes,
-                               operand_shape)
+  index, index_bdim = _batch_dynamic_slice_indices(batched_args[1:],
+                                                   batch_dims[1:])
+  return _gather_batching_rule(
+    [batched_args[0], index], [batch_dims[0], index_bdim], dnums, slice_sizes,
+    operand_shape)
 
 
 dynamic_slice_p = standard_primitive(
     _dynamic_slice_shape_rule, _input_dtype, 'dynamic_slice',
     _dynamic_slice_translation_rule)
-ad.defjvp(dynamic_slice_p, _dynamic_slice_jvp_rule, None)
+ad.primitive_jvps[dynamic_slice_p] = _dynamic_slice_jvp
 ad.primitive_transposes[dynamic_slice_p] = _dynamic_slice_transpose_rule
 batching.primitive_batchers[dynamic_slice_p] = _dynamic_slice_batching_rule
 
 
-def _dynamic_update_slice_shape_rule(operand, update, start_indices,
-                                     update_shape):
+def _dynamic_update_slice_shape_rule(operand, update, *start_indices,
+                                     update_shape=None):
   if operand.ndim != update.ndim:
     msg = ("dynamic_update_slice update must have the same rank as operand, "
            "got update shape {} for operand shape {}.")
@@ -2756,14 +2788,15 @@ def _dynamic_update_slice_shape_rule(operand, update, start_indices,
     raise TypeError(msg.format(update.shape, operand.shape))
   return operand.shape
 
-def _dynamic_update_slice_dtype_rule(operand, update, start_indices,
-                                     update_shape):
+def _dynamic_update_slice_dtype_rule(operand, update, *start_indices,
+                                     update_shape=None):
   _check_same_dtypes("dynamic_update_slice", False, operand.dtype, update.dtype)
   return operand.dtype
 
 def _dynamic_update_slice_jvp(primals, tangents, update_shape):
-  operand, update, start_indices = primals
-  g_operand, g_update, g_start_indices = tangents
+  operand, update = primals[:2]
+  start_indices = primals[2:]
+  g_operand, g_update = tangents[:2]
   val_out = dynamic_update_slice(operand, update, start_indices)
   if g_operand is ad_util.zero and g_update is ad_util.zero:
     tangent_out = ad_util.zero
@@ -2773,18 +2806,18 @@ def _dynamic_update_slice_jvp(primals, tangents, update_shape):
     tangent_out = dynamic_update_slice(g_operand, g_update, start_indices)
   return val_out, tangent_out
 
-def _dynamic_update_slice_transpose_rule(t, operand, update, start_indices,
-                                         update_shape):
-  assert start_indices is not None
+def _dynamic_update_slice_transpose_rule(t, operand, update, *start_indices,
+                                         update_shape=None):
+  assert all(x is not None for x in start_indices)
   dus = dynamic_update_slice
   ds = dynamic_slice
   zeros = _zeros(t, shape=update_shape)
   operand_t = dus(t, zeros, start_indices) if operand is None else None
   update_t = ds(t, start_indices, update_shape) if update is None else None
-  return [operand_t, update_t, None]
+  return [operand_t, update_t] + [None] * len(start_indices)
 
-def _dynamic_update_slice_translation_rule(c, operand, update, start_indices,
-                                           update_shape):
+def _dynamic_update_slice_translation_rule(c, operand, update, *start_indices,
+                                           update_shape=None):
   return c.DynamicUpdateSlice(operand, update, start_indices)
 
 def _dynamic_update_slice_batching_rule(batched_args, batch_dims, update_shape):
@@ -2792,15 +2825,17 @@ def _dynamic_update_slice_batching_rule(batched_args, batch_dims, update_shape):
   # scatter batching rule.
   # TODO(phawkins): consider removing dynamic_update_slice entirely and using
   # scatter always.
-  operand, update, index = batched_args
-  operand_bdims, update_bdims, index_bdims = batch_dims
+  operand, update = batched_args[:2]
+  operand_bdims, update_bdims = batch_dims[:2]
   dims = tuple(range(len(update_shape)))
   dnums = ScatterDimensionNumbers(update_window_dims=dims,
                                   inserted_window_dims=(),
                                   scatter_dims_to_operand_dims=dims)
+  index, index_bdim = _batch_dynamic_slice_indices(batched_args[2:],
+                                                   batch_dims[2:])
   return _scatter_batching_rule(
     scatter,
-    (operand, index, update), (operand_bdims, index_bdims, update_bdims),
+    (operand, index, update), (operand_bdims, index_bdim, update_bdims),
     None, None, dnums, update_shape)
 
 
@@ -4174,11 +4209,19 @@ def _check_shapelike(fun_name, arg_name, obj):
 
 
 def _dynamic_slice_indices(operand, start_indices):
-  if isinstance(start_indices, (tuple, list)):
-    start_indices = concatenate([reshape(i, [1]) for i in start_indices], 0)
+  if not isinstance(start_indices, (tuple, list)):
+    if start_indices.ndim != 1:
+      raise ValueError("Slice indices must be a 1D sequence, got {}"
+                       .format(start_indices.shape))
+    start_indices = [reshape(slice(start_indices, [i], [i+1]), ())
+                     for i in range(operand.ndim)]
+  if len(start_indices) != operand.ndim:
+    msg = ("Length of slice indices must match number of operand dimensions ({} "
+          "vs {})")
+    raise ValueError(msg.format(len(start_indices, operand.shape)))
   # map int over operand.shape to raise any dynamic-shape errors
-  shape = onp.asarray(list(map(int, operand.shape)), start_indices.dtype)
-  return rem(start_indices, shape)
+  return [rem(i, int(d)) for i, d in zip(start_indices, operand.shape)]
+
 
 
 def _const(example, val):
