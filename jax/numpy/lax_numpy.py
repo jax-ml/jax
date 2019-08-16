@@ -1300,7 +1300,7 @@ def tile(a, reps):
   a = reshape(a, (1,) * (len(reps) - ndim(a)) + shape(a))
   reps = (1,) * (ndim(a) - len(reps)) + tuple(reps)
   for i, rep in enumerate(reps):
-    a = concatenate([a] * rep, axis=i)
+    a = concatenate([a] * int(rep), axis=i)
   return a
 
 @_wraps(onp.concatenate)
