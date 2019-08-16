@@ -88,7 +88,7 @@ def glorot_uniform(out_axis=0, in_axis=1, scale=onp.sqrt(2)):
     return random.uniform(rng, shape, minval=-lim, maxval=lim, dtype=np.float32)
   return init
 
-def kalming(out_axis=0, in_axis=1, scale=onp.sqrt(2), param=0.):
+def kalming(out_axis=0, in_axis=1, scale=onp.sqrt(1./2.), param=0.):
   """An initializer function for random Kalming-scaled coefficients."""
   def init(rng, shape):
     fan_in = shape[in_axis]
@@ -99,7 +99,7 @@ def kalming(out_axis=0, in_axis=1, scale=onp.sqrt(2), param=0.):
     return std * random.normal(rng, shape, dtype=np.float32)
   return init
 
-def kalming_uniform(out_axis=0, in_axis=1, scale=onp.sqrt(2), param=0.):
+def kalming_uniform(out_axis=0, in_axis=1, scale=onp.sqrt(1./2.), param=0.):
   """An initializer function for random uniform Kalming-scaled coefficients."""
   def init(rng, shape):
     fan_in = shape[in_axis]
