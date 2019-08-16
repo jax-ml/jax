@@ -815,6 +815,7 @@ def broadcast_arrays(*args):
 def broadcast_to(arr, shape):
   """Like Numpy's broadcast_to but doesn't necessarily return views."""
   arr = arr if isinstance(arr, ndarray) or isscalar(arr) else array(arr)
+  shape = tuple(map(int, shape))
   if _shape(arr) != shape:
     # TODO(mattjj): revise this to call lax.broadcast_in_dim rather than
     # lax.broadcast and lax.transpose
