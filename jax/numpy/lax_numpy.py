@@ -245,7 +245,6 @@ def _wraps(fun):
       return op
   return wrap
 
-# TODO(phawkins): use this helper everywhere.
 def _canonicalize_axis(axis, num_dims):
   """Canonicalize an axis in (-num_dims, num_dims) to [0, num_dims)."""
   axis = int(axis)
@@ -550,7 +549,9 @@ def transpose(x, axes=None):
 @_wraps(onp.rot90)
 def rot90(m, k=1, axes=(0, 1)):
   ax1, ax2 = axes
-  if ax1 % m.ndim == ax2 % m.ndim:
+  ax1 = _canonicalize_axis(ax1, m.ndim)
+  ax2 = _canonicalize_axis(ax2, m.ndim)
+  if ax1 == ax2:
     raise ValueError("Axes must be different")  # same as numpy error
   k = k % 4
   if k == 0:
@@ -568,13 +569,7 @@ def rot90(m, k=1, axes=(0, 1)):
 
 @_wraps(onp.flip)
 def flip(m, axis):
-  # Negative axes wrap around
-  if axis < 0:
-    rank = len(m.shape)
-    assert axis >= -rank, "axis={} is invalid for the {}-dimensional input array".format(axis, rank)
-    return lax.rev(m, [axis % rank])
-  else:
-    return lax.rev(m, [axis])
+  return lax.rev(m, [_canonicalize_axis(axis, len(m.shape))])
 
 
 @_wraps(onp.fliplr)
@@ -707,7 +702,9 @@ def squeeze(a, axis=None):
   if axis is None:
     newshape = [d for d in shape(a) if d != 1]
   else:
-    axis = frozenset(onp.mod(axis, ndim(a)).reshape(-1))
+    if isinstance(axis, int):
+      axis = (axis,)
+    axis = frozenset(_canonicalize_axis(i, ndim(a)) for i in axis)
     newshape = [d for i, d in enumerate(shape(a))
                 if d != 1 or i not in axis]
   return lax.reshape(a, newshape)
@@ -716,7 +713,7 @@ def squeeze(a, axis=None):
 @_wraps(onp.expand_dims)
 def expand_dims(a, axis):
   shape = _shape(a)
-  axis = axis % (ndim(a) + 1)  # pylint: disable=g-no-augmented-assignment
+  axis = _canonicalize_axis(axis, ndim(a) + 1)
   return lax.reshape(a, shape[:axis] + (1,) + shape[axis:])
 
 
@@ -729,8 +726,12 @@ def swapaxes(a, axis1, axis2):
 
 @_wraps(onp.moveaxis)
 def moveaxis(a, source, destination):
-  source = onp.mod(source, ndim(a)).reshape(-1)
-  destination = onp.mod(destination, ndim(a)).reshape(-1)
+  if isinstance(source, int):
+    source = (source,)
+  if isinstance(destination, int):
+    destination = (destination,)
+  source = tuple(_canonicalize_axis(i, ndim(a)) for i in source)
+  destination = tuple(_canonicalize_axis(i, ndim(a)) for i in destination)
   if len(source) != len(destination):
     raise ValueError("Inconsistent number of elements: {} vs {}"
                      .format(len(source), len(destination)))
@@ -1599,8 +1600,8 @@ def trace(a, offset=0, axis1=0, axis2=1, dtype=None, out=None):
   if out:
     raise NotImplementedError("The 'out' argument to trace is not supported.")
 
-  axis1 = axis1 % ndim(a)
-  axis2 = axis2 % ndim(a)
+  axis1 = _canonicalize_axis(axis1, ndim(a))
+  axis2 = _canonicalize_axis(axis2, ndim(a))
 
   a_shape = shape(a)
   if dtype is None:
@@ -1632,8 +1633,8 @@ def diagonal(a, offset=0, axis1=0, axis2=1):
   a_ndims = len(a_shape)
 
   # Move the two dimensions to the end.
-  axis1 %= a_ndims
-  axis2 %= a_ndims
+  axis1 = _canonicalize_axis(axis1, a_ndims)
+  axis2 = _canonicalize_axis(axis2, a_ndims)
   perm = [i for i in range(a_ndims) if i != axis1 and i != axis2]
   perm = perm + [axis1, axis2]
   a = lax.transpose(a, perm)
@@ -2090,7 +2091,7 @@ def sort(a, axis=-1, kind='quicksort', order=None):
   if axis is None:
     return lax.sort(a.ravel(), 0)
   else:
-    return lax.sort(a, axis % ndim(a))
+    return lax.sort(a, _canonicalize_axis(axis, ndim(a)))
 
 
 @_wraps(onp.argsort)
@@ -2103,7 +2104,7 @@ def argsort(a, axis=-1, kind='quicksort', order=None):
   if axis is None:
     return argsort(a.ravel(), 0)
   else:
-    axis = axis % ndim(a)
+    axis = _canonicalize_axis(axis, ndim(a))
     iota = lax.broadcasted_iota(onp.int64, shape(a), axis)
     _, perm = lax.sort_key_val(a, iota, dimension=axis)
     return perm
