@@ -1389,11 +1389,8 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
   if isinstance(object, ndarray):
     if dtype and _dtype(object) != xla_bridge.canonicalize_dtype(dtype):
       out = lax.convert_element_type(object, dtype)
-    elif copy:
-      # If a copy was requested, we must copy.
-      out = device_put(object)
     else:
-      out = object
+      out = device_put(object)
   elif hasattr(object, '__array__'):
     # this case is for duck-typed handling of objects that implement `__array__`
     out = array(object.__array__(), dtype and xla_bridge.canonicalize_dtype(dtype))
@@ -1506,10 +1503,64 @@ def arange(start, stop=None, step=None, dtype=None):
   # Fall back to instantiating an ndarray in host memory
   return onp.arange(start, stop=stop, step=step, dtype=dtype)
 
-linspace = onp.linspace
-logspace = onp.logspace
-geomspace = onp.geomspace
-meshgrid = onp.meshgrid
+def _wrap_numpy_nullary_function(f):
+  """Adapts `f` to return a DeviceArray instead of an onp.ndarray.
+
+  `f` cannot have any non-static array arguments.
+  """
+  @_wraps(f)
+  def wrapper(*args, **kwargs):
+    return asarray(f(*args, **kwargs))
+  return wrapper
+
+def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
+             axis=0):
+  out = onp.linspace(start, stop, num, endpoint, retstep, dtype, axis)
+  if retstep:
+    return asarray(out[0]), out[1]
+  else:
+    return asarray(out)
+
+logspace = _wrap_numpy_nullary_function(onp.logspace)
+geomspace = _wrap_numpy_nullary_function(onp.geomspace)
+
+@_wraps(onp.meshgrid)
+def meshgrid(*args, **kwargs):
+  indexing = kwargs.get("indexing", "xy")
+  sparse = kwargs.get("sparse", False)
+  copy = kwargs.get("copy", True)
+  if not copy:
+    raise ValueError("jax.numpy.meshgrid only supports copy=True")
+
+  args = list(args)
+  if indexing == "xy":
+    if len(args) >= 2:
+      args[0], args[1] = args[1], args[0]
+  elif indexing != "ij":
+    raise ValueError("Valid values for indexing are 'xy' and 'ij', got {}"
+                     .format(indexing))
+
+  shape = []
+  for i, a in enumerate(args):
+    args[i] = a = asarray(a)
+    if len(a.shape) != 1:
+      msg = "Arguments to jax.numpy.meshgrid must be 1D, got shape {}"
+      raise ValueError(msg.format(a.shape))
+    shape.append(1 if sparse else a.shape[0])
+
+  output = []
+  for i, a in enumerate(args):
+    a = asarray(a)
+    s = shape
+    if sparse:
+      s = list(s)
+      s[i] = a.shape[0]
+    output.append(lax.broadcast_in_dim(a, s, (i,)))
+
+  if indexing == "xy" and len(args) >= 2:
+      output[0], output[1] = output[1], output[0]
+
+  return output
 
 
 @_wraps(onp.ix_)
@@ -1621,9 +1672,16 @@ def trace(a, offset=0, axis1=0, axis2=1, dtype=None, out=None):
   return sum(a, axis=(-2, -1), dtype=dtype)
 
 
-diag_indices = onp.diag_indices
-tril_indices = onp.tril_indices
-triu_indices = onp.triu_indices
+def _wrap_indices_function(f):
+  @_wraps(f)
+  def wrapper(*args, **kwargs):
+    return tuple(asarray(x) for x in f(*args, **kwargs))
+  return wrapper
+
+diag_indices = _wrap_indices_function(onp.diag_indices)
+tril_indices = _wrap_indices_function(onp.tril_indices)
+triu_indices = _wrap_indices_function(onp.triu_indices)
+mask_indices = _wrap_indices_function(onp.mask_indices)
 
 
 @_wraps(onp.diagonal)
@@ -2565,11 +2623,12 @@ def _static_idx(idx, size):
     return stop + k + 1, start + 1, -step, True
 
 
-blackman = onp.blackman
-bartlett = onp.bartlett
-hamming = onp.hamming
-hanning = onp.hanning
-kaiser = onp.kaiser  # TODO: lower via lax to allow non-constant beta.
+blackman = _wrap_numpy_nullary_function(onp.blackman)
+bartlett = _wrap_numpy_nullary_function(onp.bartlett)
+hamming = _wrap_numpy_nullary_function(onp.hamming)
+hanning = _wrap_numpy_nullary_function(onp.hanning)
+# TODO: lower `kaiser` via lax to allow non-constant beta values.
+kaiser = _wrap_numpy_nullary_function(onp.kaiser)
 
 
 @_wraps(getattr(onp, "gcd", None))

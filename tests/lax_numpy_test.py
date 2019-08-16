@@ -1806,5 +1806,23 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
+  @parameterized.named_parameters(
+      jtu.cases_from_list(
+        {"testcase_name": "_shapes={}_dtype={}_indexing={}_sparse={}".format(
+            shapes, dtype, indexing, sparse),
+         "shapes": shapes, "dtype": dtype, "indexing": indexing,
+         "sparse": sparse, "rng": rng}
+        for shapes in [(), (5,), (5, 3)]
+        for dtype in number_dtypes
+        for indexing in ['xy', 'ij']
+        for sparse in [True, False]
+        for rng in [jtu.rand_default()]))
+  def testMeshGrid(self, shapes, dtype, indexing, sparse, rng):
+    args_maker = self._GetArgsMaker(rng, [(x,) for x in shapes],
+                                    [dtype] * len(shapes))
+    onp_fun = partial(onp.meshgrid, indexing=indexing, sparse=sparse)
+    lnp_fun = partial(lnp.meshgrid, indexing=indexing, sparse=sparse)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
 if __name__ == "__main__":
   absltest.main()
