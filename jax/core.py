@@ -282,7 +282,7 @@ class Trace(object):
 
 class Tracer(object):
   __array_priority__ = 1000
-  __slots__ = ['trace']
+  __slots__ = ['trace', '__weakref__']
 
   def __array__(self):
     raise Exception("Tracer can't be used with raw numpy functions. "
