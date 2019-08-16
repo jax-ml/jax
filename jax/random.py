@@ -516,7 +516,7 @@ def _exponential(key, shape, dtype):
   _check_shape("exponential", shape)
   u = uniform(key, shape, dtype)
   # taking 1 - u to move the domain of log to (0, 1] instead of [0, 1)
-  return lax.neg(lax.log(lax.sub(_constant_like(u, 1), u)))
+  return lax.neg(lax.log1p(lax.neg(u)))
 
 
 def _gamma_one(key, alpha):
