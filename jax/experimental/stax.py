@@ -78,6 +78,36 @@ def glorot(out_axis=0, in_axis=1, scale=onp.sqrt(2)):
     return std * random.normal(rng, shape, dtype=np.float32)
   return init
 
+def glorot_uniform(out_axis=0, in_axis=1, scale=onp.sqrt(2)):
+  """An initializer function for random uniform Glorot-scaled coefficients."""
+  def init(rng, shape):
+    fan_in, fan_out = shape[in_axis], shape[out_axis]
+    size = onp.prod(onp.delete(shape, [in_axis, out_axis]))
+    lim = scale / np.sqrt((fan_in + fan_out) / 6. * size)
+    lim = lax.convert_element_type(lim, np.float32)
+    return random.uniform(rng, shape, minval=-lim, maxval=lim, dtype=np.float32)
+  return init
+
+def kalming(out_axis=0, in_axis=1, scale=onp.sqrt(2)):
+  """An initializer function for random Kalming-scaled coefficients."""
+  def init(rng, shape):
+    fan_in = shape[in_axis]
+    size = onp.prod(onp.delete(shape, [in_axis, out_axis]))
+    std = scale / np.sqrt((fan_in) / 2. * size)
+    std = lax.convert_element_type(std, np.float32)
+    return std * random.normal(rng, shape, dtype=np.float32)
+  return init
+
+def kalming_uniform(out_axis=0, in_axis=1, scale=onp.sqrt(2)):
+  """An initializer function for random uniform Kalming-scaled coefficients."""
+  def init(rng, shape):
+    fan_in = shape[in_axis]
+    size = onp.prod(onp.delete(shape, [in_axis, out_axis]))
+    lim = scale / np.sqrt((fan_in) / 6. * size)
+    lim = lax.convert_element_type(lim, np.float32)
+    return random.uniform(rng, shape, minval=-lim, maxval=lim, dtype=np.float32)
+  return init
+
 zeros = lambda rng, shape: np.zeros(shape, dtype='float32')
 ones = lambda rng, shape: np.ones(shape, dtype='float32')
 
