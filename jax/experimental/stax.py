@@ -191,7 +191,7 @@ def LSTM(out_dim, W_init = glorot(), b_init = randn()):
     output_gate = sigmoid(np.dot(inputs, out_W) + np.dot(hidden, out_U) + out_b)
     output = np.multiply(output_gate, np.tanh(cell))
     
-    return output, cell
+    return cell, output
   return init_fun, apply_fun
 
 
