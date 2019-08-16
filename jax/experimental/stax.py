@@ -161,8 +161,8 @@ ConvTranspose = functools.partial(GeneralConvTranspose,
 
 def LSTM(out_dim, W_init = glorot(), b_init = randn()):
   def init_fun(rng, input_shape):
-    k1, k2 = random.split(rng)
-    cell, hidden = b_init(k1, (out_dim,)), b_init(k2, (out_dim,)) 
+    k1, _ = random.split(rng)
+    hidden = b_init(k1, (out_dim,)) 
 
     k1, k2, k3 = random.split(k1, num=3)
     forget_W, forget_U, forget_b = W_init(k1, (input_shape[:-1], out_dim)), W_init(k2, (input_shape[:-1], out_dim)), b_init(k3, (out_dim,)) 
@@ -177,21 +177,22 @@ def LSTM(out_dim, W_init = glorot(), b_init = randn()):
     change_W, change_U, change_b = W_init(k1, (input_shape[:-1], out_dim)), W_init(k2, (input_shape[:-1], out_dim)), b_init(k3, (out_dim,)) 
 
     output_shape =  input_shape[:-1] + (out_dim,)
-    return output_shape, ((cell, hidden), (forget_W, forget_U, forget_b), (in_W, in_U, in_b),
+    return output_shape, (hidden, (forget_W, forget_U, forget_b), (in_W, in_U, in_b),
                            (out_W, out_U, out_b), (change_W, change_U, change_b))
-  def apply_fun(params, inputs):
-    (old_cell, hidden), (forget_W, forget_U, forget_b), (in_W, in_U, in_b), (out_W, out_U, out_b), (change_W, change_U, change_b) = params
-    
+  def apply_fun(params, inputs, cell=0):
+    hidden, (forget_W, forget_U, forget_b), (in_W, in_U, in_b), (out_W, out_U, out_b), (change_W, change_U, change_b) = params
+
     input_gate = sigmoid(np.dot(inputs, in_W) + np.dot(hidden, in_U) + in_b)
     change_gate = np.tanh(np.dot(inputs, change_W) + np.dot(hidden, change_U) + change_b)
     forget_gate = sigmoid(np.dot(inputs, forget_W) + np.dot(hidden, forget_U) + forget_b)
     
-    cell = np.multiply(change_gate, input_gate) + np.multiply(old_cell, forget_gate) 
+    cell = np.multiply(change_gate, input_gate) + np.multiply(cell, forget_gate) 
 
     output_gate = sigmoid(np.dot(inputs, out_W) + np.dot(hidden, out_U) + out_b)
     output = np.multiply(output_gate, np.tanh(cell))
     
-    return cell, output
+    return output
+  
   return init_fun, apply_fun
 
 
