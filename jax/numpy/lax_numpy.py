@@ -441,8 +441,7 @@ def power(x1, x2):
 def logaddexp(x1, x2):
   x1, x2 = _promote_shapes(*_promote_to_result_dtype(onp.logaddexp, x1, x2))
   amax = lax.max(x1, x2)
-  return lax.add(amax, lax.log(lax.add(lax.exp(lax.sub(x1, amax)),
-                                       lax.exp(lax.sub(x2, amax)))))
+  return lax.add(amax, lax.log1p(lax.exp(-lax.abs(lax.sub(x1, x2)))))
 
 
 @_wraps(onp.logaddexp2)
