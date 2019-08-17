@@ -383,6 +383,34 @@ def _normal(key, shape, dtype):
   return onp.array(onp.sqrt(2), dtype) * lax.erf_inv(u)
 
 
+def truncated_normal(key, lower, upper, shape=(), dtype=onp.float64):
+  """Sample truncated standard normal random values with given shape and float
+  dtype.
+
+  Args:
+    key: a PRNGKey used as the random key.
+    lower: a lower bound for truncation.
+    upper: an upper bound for truncation.
+    shape: a tuple of nonnegative integers representing the shape.
+    dtype: optional, a float dtype for the returned values (default float64 if
+      jax_enable_x64 is true, otherwise float32).
+
+  Returns:
+    A random array with the specified shape and dtype.
+  """
+  dtype = xla_bridge.canonicalize_dtype(dtype)
+  return _truncated_normal(key, lower, upper, shape, dtype)
+
+@partial(jit, static_argnums=(3, 4))
+def _truncated_normal(key, lower, upper, shape, dtype):
+  _check_shape("truncated_normal", shape)
+  sqrt2 = onp.sqrt(2)
+  a = lax.erf(lower / sqrt2)
+  b = lax.erf(upper / sqrt2)
+  u = uniform(key, shape, dtype)
+  return sqrt2 * lax.erf_inv(a + u * (b - a))
+
+
 def bernoulli(key, p=onp.float32(0.5), shape=()):
   """Sample Bernoulli random values with given shape and mean.
 
