@@ -68,12 +68,19 @@ def randn(stddev=1e-2):
     return std * random.normal(rng, shape, dtype=np.float32)
   return init
 
+def get_fans(shape):
+    receptive_field = np.prod(shape[:-2])
+    fan_in, fan_out = shape[-2], shape[-1]
+    fan_in *= receptive_field
+    fan_out *= receptive_field
+    return fan_in, fan_out
+ 
+
 def glorot(out_axis=0, in_axis=1, scale=onp.sqrt(2)):
   """An initializer function for random Glorot-scaled coefficients."""
   def init(rng, shape):
-    fan_in, fan_out = shape[in_axis], shape[out_axis]
-    size = onp.prod(onp.delete(shape, [in_axis, out_axis]))
-    std = scale / np.sqrt((fan_in + fan_out) / 2. * size)
+    fan_in, fan_out = get_fans(shape)
+    std = scale / np.sqrt((fan_in + fan_out) / 2.)
     std = lax.convert_element_type(std, np.float32)
     return std * random.normal(rng, shape, dtype=np.float32)
   return init
@@ -81,31 +88,28 @@ def glorot(out_axis=0, in_axis=1, scale=onp.sqrt(2)):
 def glorot_uniform(out_axis=0, in_axis=1, scale=onp.sqrt(2)):
   """An initializer function for random uniform Glorot-scaled coefficients."""
   def init(rng, shape):
-    fan_in, fan_out = shape[in_axis], shape[out_axis]
-    size = onp.prod(onp.delete(shape, [in_axis, out_axis]))
-    lim = scale / np.sqrt((fan_in + fan_out) / 6. * size)
+    fan_in, fan_out = get_fans(shape)
+    lim = scale / np.sqrt((fan_in + fan_out) / 6.)
     lim = lax.convert_element_type(lim, np.float32)
     return random.uniform(rng, shape, minval=-lim, maxval=lim, dtype=np.float32)
   return init
 
-def kalming(out_axis=0, in_axis=1, scale=onp.sqrt(1./2.), param=0.):
+def kalming_normal(out_axis=0, in_axis=1, scale=1., param=0.):
   """An initializer function for random Kalming-scaled coefficients."""
   def init(rng, shape):
-    fan_in = shape[in_axis]
-    size = onp.prod(onp.delete(shape, [in_axis, out_axis]))
+    fan_in, _ = get_fans(shape)
     gain = np.sqrt((1. + param ** 2) / 2.)
-    std = gain * scale / np.sqrt((fan_in) / size)
+    std = gain * scale / np.sqrt((fan_in))
     std = lax.convert_element_type(std, np.float32)
     return std * random.normal(rng, shape, dtype=np.float32)
   return init
 
-def kalming_uniform(out_axis=0, in_axis=1, scale=onp.sqrt(1./2.), param=0.):
+def kalming_uniform(out_axis=0, in_axis=1, scale=1., param=0.):
   """An initializer function for random uniform Kalming-scaled coefficients."""
   def init(rng, shape):
-    fan_in = shape[in_axis]
-    size = onp.prod(onp.delete(shape, [in_axis, out_axis]))
+    fan_in, _ = get_fans(shape)
     gain = np.sqrt((1. + param ** 2) / 6.)    
-    lim = gain * scale / np.sqrt((fan_in) / size)
+    lim = gain * scale / np.sqrt((fan_in))
     lim = lax.convert_element_type(lim, np.float32)
     return random.uniform(rng, shape, minval=-lim, maxval=lim, dtype=np.float32)
   return init
