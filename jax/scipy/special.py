@@ -82,7 +82,7 @@ def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
   dimadd = lambda x: lax.reshape(x, shape)
   amax = lax.reduce(a, _constant_like(a, -onp.inf), lax.max, dims)
   amax_singletons = dimadd(amax)
-  out = lax.add(lax.log(lax.reduce(lax.exp(lax.sub(a, amax_singletons)),
+  out = lax.add(lax.log1p(lax.reduce(lax.exp(lax.sub(a, amax_singletons)),
                                    _constant_like(a, 0), lax.add, dims)), amax)
   return dimadd(out) if keepdims else out
 
