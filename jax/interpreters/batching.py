@@ -72,7 +72,7 @@ def batch_subtrace(master, dims, *vals):
 
 
 class BatchTracer(Tracer):
-  __slots__ = ['val', 'batch_dim']
+  __slots__ = ['val', 'batch_dim', '__weakref__']
 
   def __init__(self, trace, val, batch_dim):
     assert core.skip_checks or type(batch_dim) in (int, tuple, type(None))

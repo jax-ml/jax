@@ -306,7 +306,7 @@ class JVPTrace(Trace):
 
 
 class JVPTracer(Tracer):
-  __slots__ = ['primal', 'tangent']
+  __slots__ = ['primal', 'tangent', '__weakref__']
 
   def __init__(self, trace, primal, tangent):
     if not core.skip_checks:
