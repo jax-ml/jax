@@ -123,22 +123,23 @@ def threefry_2x32(keypair, count):
   else:
     x = list(np.split(count.ravel(), 2))
 
-  rotations = onp.array([[13, 15, 26, 6], [17, 29, 16, 24]], dtype=onp.uint32)
-  ks = stack([key1, key2, key1 ^ key2 ^ onp.uint32(0x1BD11BDA)])
-  idxs = onp.array([[1, 2], [2, 0], [0, 1], [1, 2], [2, 0]])
+  rotations = [onp.array([13, 15, 26, 6], dtype=onp.uint32),
+               onp.array([17, 29, 16, 24], dtype=onp.uint32)]
+  ks = [key1, key2, key1 ^ key2 ^ onp.uint32(0x1BD11BDA)]
+
+  def rotate_list(xs):
+    return xs[1:] + [xs[0]]
 
   x[0] = x[0] + ks[0]
   x[1] = x[1] + ks[1]
 
-  get = partial(lax.dynamic_index_in_dim, keepdims=False)
-
-  def step(i, x):
-    for r in get(rotations, i % 2):
+  def step(i, state):
+    x, ks, rotations = state
+    for r in rotations[0]:
       x = apply_round(x, r)
-    i0, i1 = get(idxs, i)
-    return [x[0] + ks[i0],
-            x[1] + ks[i1] + asarray(i + 1, dtype=onp.uint32)]
-  out = np.concatenate(lax.fori_loop(0, 5, step, x))
+    new_x = [x[0] + ks[0], x[1] + ks[1] + asarray(i + 1, dtype=onp.uint32)]
+    return new_x, rotate_list(ks), rotate_list(rotations)
+  out = np.concatenate(lax.fori_loop(0, 5, step, (x, rotate_list(ks), rotations))[0])
   assert out.dtype == onp.uint32
   return lax.reshape(out[:-1] if odd_size else out, count.shape)
 
@@ -515,7 +516,7 @@ def _exponential(key, shape, dtype):
   _check_shape("exponential", shape)
   u = uniform(key, shape, dtype)
   # taking 1 - u to move the domain of log to (0, 1] instead of [0, 1)
-  return lax.neg(lax.log(lax.sub(_constant_like(u, 1), u)))
+  return lax.neg(lax.log1p(lax.neg(u)))
 
 
 def _gamma_one(key, alpha):
