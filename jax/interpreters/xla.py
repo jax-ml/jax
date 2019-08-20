@@ -85,7 +85,7 @@ def primitive_computation(prim, *shapes, **params):
     rule = translations[prim]
     rule(c, *xla_args, **params)  # return val set as a side-effect on c
   elif prim in reduction_translations:
-    rule = translations[prim]
+    rule = reduction_translations[prim]
     rule(c, *xla_args, backend=backend, **params)  # return val set as a side-effect on c
   elif prim in initial_style_translations:
     rule = initial_style_translations[prim]
