@@ -35,7 +35,6 @@ import warnings
 import types
 
 import numpy as onp
-import opt_einsum
 import six
 from six.moves import builtins, xrange
 
@@ -1835,6 +1834,7 @@ def tensordot(a, b, axes=2):
 
 @_wraps(onp.einsum)
 def einsum(*operands, **kwargs):
+  import opt_einsum
   optimize = kwargs.pop('optimize', 'auto')
   optimize = 'greedy' if optimize is True else optimize
   if kwargs:
@@ -1848,6 +1848,7 @@ def einsum(*operands, **kwargs):
 
 @_wraps(onp.einsum_path)
 def einsum_path(subscripts, *operands, **kwargs):
+  import opt_einsum
   optimize = kwargs.pop('optimize', 'greedy')
   # using einsum_call=True here is an internal api for opt_einsum
   return opt_einsum.contract_path(subscripts, *operands, optimize=optimize)
