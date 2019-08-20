@@ -519,7 +519,7 @@ xb.register_constant_handler(ChunkedDeviceArray,
 def xla_pmap_impl(fun, *args, **params):
   axis_name = params.pop('axis_name')
   axis_size = params.pop('axis_size')
-  backend = params.pop('backend')
+  backend = params.pop('backend', None)
   assert not params
   abstract_args = map(xla.abstractify, args)
   compiled_fun = parallel_callable(fun, backend, axis_name, axis_size, *abstract_args)
