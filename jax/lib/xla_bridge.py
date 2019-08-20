@@ -88,8 +88,9 @@ _backends = {}
 def register_backend(name, factory):
   _backends[name] = factory
 
-def _get_local_backend():
-  platform = FLAGS.jax_platform_name
+def _get_local_backend(platform=None):
+  if not platform:
+    platform = FLAGS.jax_platform_name
 
   # Canonicalize platform names.
   cpu = 'cpu'
@@ -110,7 +111,8 @@ def _get_local_backend():
 
   return backend
 
-def _get_xrt_backend():
+def _get_xrt_backend(platform=None):
+  del platform
   # TODO(phawkins): support non-TPU devices.
   tf_device_name = "TPU"
   worker = "tpu_worker"
@@ -125,17 +127,17 @@ register_backend('xrt', _get_xrt_backend)
 _backend_lock = threading.Lock()
 
 @util.memoize
-def get_backend():
+def get_backend(platform=None):
   with _backend_lock:
     backend = _backends.get(FLAGS.jax_xla_backend)
     if backend is None:
       msg = 'Unknown jax_xla_backend value "{}".'
       raise ValueError(msg.format(FLAGS.jax_xla_backend))
-    return backend()
+    return backend(platform)
 
 
-def device_count():
-  return int(get_backend().device_count())
+def device_count(backend=None):
+  return int(get_backend(backend).device_count())
 
 
 ### utility functions

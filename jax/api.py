@@ -83,7 +83,7 @@ class _ThreadLocalState(threading.local):
 
 _thread_local_state = _ThreadLocalState()
 
-def jit(fun, static_argnums=(), device_assignment=None):
+def jit(fun, static_argnums=(), device_assignment=None, backend=None):
   """Sets up `fun` for just-in-time compilation with XLA.
 
   Args:
@@ -122,9 +122,9 @@ def jit(fun, static_argnums=(), device_assignment=None):
   [-0.54485154  0.27744263 -0.29255125 -0.91421586 -0.62452525 -0.2474813
    -0.8574326  -0.7823267   0.7682731   0.59566754]
   """
-  return _jit(fun, static_argnums, device_assignment)
+  return _jit(fun, static_argnums, device_assignment, backend)
 
-def _jit(fun, static_argnums, device_assignment):
+def _jit(fun, static_argnums, device_assignment, backend):
   _check_callable(fun)
   if isinstance(device_assignment, int):
     device_assignment = (device_assignment,)
@@ -148,7 +148,7 @@ def _jit(fun, static_argnums, device_assignment):
     args_flat, in_tree = tree_flatten((dyn_args, kwargs))
     flat_fun, out_tree = flatten_fun_leafout(f, in_tree)
     out = xla.xla_call(flat_fun, *args_flat,
-                       device_assignment=device_assignment)
+                       device_assignment=device_assignment, backend=backend)
     return out if treedef_is_leaf(out_tree()) else tree_unflatten(out_tree(), out)
 
   jitted_name =  "jit({}, static_argnums={})"
@@ -198,7 +198,7 @@ def disable_jit():
     _thread_local_state.jit_is_disabled = prev_val
 
 
-def xla_computation(fun, static_argnums=(), axis_env=None):
+def xla_computation(fun, static_argnums=(), axis_env=None, backend=None):
   """Creates a function that produces its XLA computation given example args.
 
   Args:
@@ -293,7 +293,7 @@ def xla_computation(fun, static_argnums=(), axis_env=None):
       pvals = map(pv_like, jax_args)
       jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
       axis_env_ = make_axis_env(xla.jaxpr_replicas(jaxpr))
-      return xla.build_jaxpr(jaxpr, axis_env_, consts,
+      return xla.build_jaxpr(jaxpr, backend, axis_env_, consts,
                              *map(xla.abstractify, jax_args))
     else:
       jax_kwargs, kwargs_tree = pytree_to_jaxtupletree(kwargs)
@@ -301,7 +301,7 @@ def xla_computation(fun, static_argnums=(), axis_env=None):
       pvals = map(pv_like, (jax_kwargs,) + tuple(jax_args))
       jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
       axis_env_ = make_axis_env(xla.jaxpr_replicas(jaxpr))
-      return xla.build_jaxpr(jaxpr, axis_env_, consts, xla.abstractify(jax_kwargs),
+      return xla.build_jaxpr(jaxpr, backend, axis_env_, consts, xla.abstractify(jax_kwargs),
                              *map(xla.abstractify, jax_args))
 
   return computation_maker
@@ -626,7 +626,7 @@ def vmap(fun, in_axes=0, out_axes=0):
   return batched_fun
 
 
-def pmap(fun, axis_name=None):
+def pmap(fun, axis_name=None, backend=None):
   """Parallel map with support for collectives.
 
   The purpose of ``pmap`` is to express single-program multiple-data (SPMD)
@@ -720,7 +720,7 @@ def pmap(fun, axis_name=None):
     args_flat, in_tree = tree_flatten((args, kwargs))
     flat_fun, out_tree = flatten_fun_leafout(f, in_tree)
     out = pxla.xla_pmap(flat_fun, *args_flat,
-                        axis_name=axis_name, axis_size=axis_size)
+                        axis_name=axis_name, axis_size=axis_size, backend=backend)
     return out if treedef_is_leaf(out_tree()) else tree_unflatten(out_tree(), out)
 
   namestr = "pmap({}, axis_name={})".format
@@ -1113,8 +1113,8 @@ def make_jaxpr(fun):
 tree_to_pval_tuples = partial(process_pytree, pe.pack_pvals)
 
 
-def device_put(x, device_num=0):
-  return tree_map(lambda y: xla.device_put_p.bind(y, device_num=device_num), x)
+def device_put(x, device_num=0, backend=None):
+  return tree_map(lambda y: xla.device_put_p.bind(y, device_num=device_num, backend=backend), x)
 
 
 def _device_get(x):

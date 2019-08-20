@@ -162,7 +162,7 @@ def _while_loop_abstract_eval(init_val, cond_consts, body_consts, aval_out,
   return _maybe_tracer_tuple_to_abstract_tuple(aval_out)
 
 def _while_loop_translation_rule(c, axis_env, init_val, cond_consts,
-                                 body_consts, aval_out, cond_jaxpr, body_jaxpr):
+                                 body_consts, aval_out, cond_jaxpr, body_jaxpr, backend=None):
   loop_carry = c.Tuple(init_val, cond_consts, body_consts)
   shape = c.GetShape(loop_carry)
 
@@ -191,8 +191,8 @@ def _while_loop_translation_rule(c, axis_env, init_val, cond_consts,
       + list(body_jaxpr.eqns) +
       [_pack_eqn([body_jaxpr.outvar, cond_var, body_var], outvar)])
 
-  cond_c = xla._jaxpr_computation(cond_jaxpr_converted, axis_env, (), (), shape)
-  body_c = xla._jaxpr_computation(body_jaxpr_converted, axis_env, (), (), shape)
+  cond_c = xla._jaxpr_computation(cond_jaxpr_converted, backend, axis_env, (), (), shape)
+  body_c = xla._jaxpr_computation(body_jaxpr_converted, backend, axis_env, (), (), shape)
   full_ans = c.While(cond_c, body_c, loop_carry)
   return c.GetTupleElement(full_ans, 0)
 
@@ -362,7 +362,7 @@ def _cond_abstract_eval(pred, true_op, true_consts, false_op, false_consts,
 
 
 def _cond_translation_rule(c, axis_env, pred, true_op, true_consts, false_op,
-                           false_consts, aval_out, true_jaxpr, false_jaxpr):
+                           false_consts, aval_out, true_jaxpr, false_jaxpr, backend=None):
   def make_computation(jaxpr, operand):
     assert len(jaxpr.invars) == 1
     arg_var = pe.Var(0, "arg")
@@ -374,7 +374,7 @@ def _cond_translation_rule(c, axis_env, pred, true_op, true_consts, false_op,
         [_unpack_eqn(arg_var, [jaxpr.invars[0], consts_var]),
         _unpack_eqn(consts_var, jaxpr.constvars)]
         + list(jaxpr.eqns))
-    return xla._jaxpr_computation(jaxpr_converted, axis_env, (), (),
+    return xla._jaxpr_computation(jaxpr_converted, backend, axis_env, (), (),
                                   c.GetShape(operand))
 
   true_arg = c.Tuple(true_op, true_consts)
