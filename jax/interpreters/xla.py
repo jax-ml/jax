@@ -255,6 +255,7 @@ def _jaxpr_computation(jaxpr, backend, axis_env, const_vals, freevar_shapes, *ar
   _map(write, jaxpr.invars, map(c.ParameterWithShape, arg_shapes))
   _prefetch_jaxpr_literals(jaxpr)
   for eqn in jaxpr.eqns:
+    eqn.params.pop('backend', None)
     if not eqn.restructure:
       in_nodes = list(map(read, eqn.invars))
     else:
