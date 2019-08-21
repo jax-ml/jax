@@ -753,16 +753,16 @@ def _axis_size(x):
   raise ValueError("could not get axis size of type: {}".format(x))
 
 
-def soft_pmap(fun, axis_name=None):
+def soft_pmap(fun, axis_name=None, backend=None):
   _check_callable(fun)
   axis_name = _TempAxisName() if axis_name is None else axis_name
 
   @wraps(fun)
   def f_pmapped(*args):
     axis_size = _pmap_axis_size(args)
-    chunk_size, leftover = divmod(axis_size, pxla.unmapped_device_count())
+    chunk_size, leftover = divmod(axis_size, pxla.unmapped_device_count(backend))
     if chunk_size == 0 and leftover:
-      return pmap(fun, axis_name)(*args)  # can map directly onto hardware
+      return pmap(fun, axis_name, backend)(*args)  # can map directly onto hardware
     elif leftover:
       raise ValueError
     num_chunks = axis_size // chunk_size
@@ -773,7 +773,8 @@ def soft_pmap(fun, axis_name=None):
     reshaped_args = map(partial(_reshape_split, num_chunks), in_flat)
     soft_mapped_fun = pxla.split_axis(jaxtree_fun, axis_name, chunk_size)
     reshaped_out = pxla.xla_pmap(soft_mapped_fun, *reshaped_args,
-                                 axis_name=axis_name, axis_size=num_chunks)
+                                 axis_name=axis_name, axis_size=num_chunks,
+                                 backend=backend)
     return build_tree(out_tree(), _reshape_merge(reshaped_out))
 
   namestr = "soft_pmap({}, axis_name={})".format
