@@ -30,7 +30,7 @@ from six.moves import reduce
 
 from jax import lax
 from jax import random
-from jax.scipy.special import logsumexp
+from jax.scipy.special import logsumexp, expit
 import jax.numpy as np
 
 
@@ -41,7 +41,7 @@ import jax.numpy as np
 
 def relu(x): return np.maximum(x, 0.)
 def softplus(x): return np.logaddexp(x, 0.)
-def sigmoid(x): return 1. / (1. + np.exp(-x))
+def sigmoid(x): return expit(x)
 def elu(x): return np.where(x > 0, x, np.expm1(x))
 def leaky_relu(x): return np.where(x >= 0, x, 0.01 * x)
 
