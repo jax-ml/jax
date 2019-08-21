@@ -1516,11 +1516,18 @@ def _wrap_numpy_nullary_function(f):
 
 def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
              axis=0):
-  out = onp.linspace(start, stop, num, endpoint, retstep, dtype, axis)
-  if retstep:
-    return asarray(out[0]), out[1]
-  else:
-    return asarray(out)
+  try:
+    out = onp.linspace(start, stop, num, endpoint, retstep, dtype, axis)
+    if retstep:
+      return asarray(out[0]), out[1]
+    else:
+      return asarray(out)
+  except TypeError:  # Old versions of onp may lack axis arg.
+    out = onp.linspace(start, stop, num, endpoint, retstep, dtype)
+    if retstep:
+      return moveaxis(asarray(out[0]), 0, axis), out[1]
+    else:
+      return moveaxis(asarray(out), 0, axis)
 
 logspace = _wrap_numpy_nullary_function(onp.logspace)
 geomspace = _wrap_numpy_nullary_function(onp.geomspace)
