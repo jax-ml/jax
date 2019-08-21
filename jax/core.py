@@ -172,9 +172,9 @@ def eval_jaxpr(jaxpr, consts, freevar_vals, *args):
 
   env = {}
   write(unitvar, unit)
-  pat_fmap(write, jaxpr.constvars, consts)
-  pat_fmap(write, jaxpr.invars, args)
-  pat_fmap(write, jaxpr.freevars, freevar_vals)
+  map(write, jaxpr.constvars, consts)
+  map(write, jaxpr.invars, args)
+  map(write, jaxpr.freevars, freevar_vals)
   for eqn in jaxpr.eqns:
     in_vals = map(read, eqn.invars)
     subfuns = [partial(eval_jaxpr, subjaxpr, map(read, const_bindings),
@@ -188,16 +188,6 @@ def eval_jaxpr(jaxpr, consts, freevar_vals, *args):
     else:
       write(eqn.outvars[0], ans)
   return map(read, jaxpr.outvars)
-
-
-def pat_fmap(f, v, *xs):
-  if type(v) in (tuple, list):
-    if len(xs) == 1 and xs[0] is None:
-      return tuple(map(partial(pat_fmap, f), v, [None] * len(v)))
-    else:
-      return tuple(map(partial(pat_fmap, f), v, *xs))
-  else:
-    return f(v, *xs)
 
 
 def full_lower(val):
@@ -612,9 +602,9 @@ def check_jaxpr(jaxpr):
   write = partial(write_env, env)
 
   write(unitvar)
-  pat_fmap(write, jaxpr.constvars)
-  pat_fmap(write, jaxpr.freevars)
-  pat_fmap(write, jaxpr.invars)
+  map(write, jaxpr.constvars)
+  map(write, jaxpr.freevars)
+  map(write, jaxpr.invars)
   for eqn in jaxpr.eqns:
     map(read, eqn.invars)
     for subjaxpr, constvars, freevars in eqn.bound_subjaxprs:
