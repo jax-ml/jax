@@ -54,6 +54,12 @@ class Jaxpr(object):
   def __repr__(self):
     return self.__str__()
 
+  def __hash__(self):
+    return hash(self.__str__())
+
+  def __eq__(self, other):
+    return type(other) is type(self) and str(self) == str(other)
+
   def copy(self):
     return Jaxpr(self.constvars[:], self.freevars[:], self.invars[:],
                  self.outvar, self.eqns[:])
