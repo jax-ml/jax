@@ -105,6 +105,8 @@ def jit(fun, static_argnums=(), device_assignment=None, backend=None):
       change. Optional, an int specifying the device ordinal for which to compile the
       function. The default is inherited from XLA's DeviceAssignment logic and is
       usually to use device 0.
+    backend: This is an experimental feature and the API is likely to change.
+      Optional, a string representing the xla backend. 'cpu','gpu', or 'tpu'.
 
   Returns:
     A wrapped version of `fun`, set up for just-in-time compilation.
@@ -210,6 +212,8 @@ def xla_computation(fun, static_argnums=(), axis_env=None, backend=None):
       functions that involve parallel communication collectives, and it
       specifies the axis name/size environment that would be set up by
       applications of ``jax.pmap``. See the examples below.
+    backend: This is an experimental feature and the API is likely to change.
+      Optional, a string representing the xla backend. 'cpu','gpu', or 'tpu'.
 
   Returns:
     A wrapped version of ``fun`` that when applied to example arguments returns a
@@ -649,6 +653,8 @@ def pmap(fun, axis_name=None, backend=None):
     fun: Function to be mapped over argument axes.
     axis_name: Optional, a hashable Python object used to identify the mapped
       axis so that parallel collectives can be applied.
+    backend: This is an experimental feature and the API is likely to change.
+      Optional, a string representing the xla backend. 'cpu','gpu', or 'tpu'.
 
   Returns:
     A parallelized version of ``fun`` with arguments that correspond to those of

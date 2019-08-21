@@ -1445,15 +1445,21 @@ _input_dtype = lambda *args, **_: xla_bridge.canonicalize_dtype(args[0].dtype)
 _fixed_dtype = lambda dtype: lambda *args, **kwargs: xla_bridge.canonicalize_dtype(dtype)
 _complex_basetype = lambda dtype: onp.abs(onp.zeros((), dtype)).dtype
 
-def standard_primitive(shape_rule, dtype_rule, name, translation_rule=None, reduction=False):
+def standard_primitive(shape_rule, dtype_rule, name, translation_rule=None):
   prim = Primitive(name)
   prim.def_impl(partial(xla.apply_primitive, prim))
   prim.def_abstract_eval(partial(standard_abstract_eval, shape_rule, dtype_rule))
-  if reduction:
-    xla.reduction_translations[prim] = translation_rule or partial(standard_translate, name)
-  else:
-    xla.translations[prim] = translation_rule or partial(standard_translate, name)
+  xla.translations[prim] = translation_rule or partial(standard_translate, name)
   return prim
+
+
+def standard_reduction_primitive(shape_rule, dtype_rule, name, translation_rule=None):
+  prim = Primitive(name)
+  prim.def_impl(partial(xla.apply_primitive, prim))
+  prim.def_abstract_eval(partial(standard_abstract_eval, shape_rule, dtype_rule))
+  xla.reduction_translations[prim] = translation_rule or partial(standard_translate, name)
+  return prim
+
 
 def standard_abstract_eval(shape_rule, dtype_rule, *args, **kwargs):
   assert all(isinstance(arg, UnshapedArray) for arg in args), args
@@ -3144,25 +3150,25 @@ def _scatter_batching_rule(
         scatter_dims_to_operand_dims=scatter_dims_to_operand_dims)
     return scatter_op(operand, scatter_indices, updates, dnums), 0
 
-scatter_add_p = standard_primitive(
+scatter_add_p = standard_reduction_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-add',
-    _scatter_translation_rule, reduction=True)
+    _scatter_translation_rule)
 ad.primitive_jvps[scatter_add_p] = _scatter_add_jvp
 ad.primitive_transposes[scatter_add_p] = _scatter_add_transpose_rule
 batching.primitive_batchers[scatter_add_p] = (
   partial(_scatter_batching_rule, scatter_add))
 
 # TODO(jlebar): Add derivatives.
-scatter_min_p = standard_primitive(
+scatter_min_p = standard_reduction_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-min',
-    _scatter_translation_rule, reduction=True)
+    _scatter_translation_rule)
 batching.primitive_batchers[scatter_min_p] = (
   partial(_scatter_batching_rule, scatter_min))
 
 # TODO(jlebar): Add derivatives.
-scatter_max_p = standard_primitive(
+scatter_max_p = standard_reduction_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-max',
-    _scatter_translation_rule, reduction=True)
+    _scatter_translation_rule)
 batching.primitive_batchers[scatter_max_p] = (
   partial(_scatter_batching_rule, scatter_max))
 
@@ -3260,9 +3266,9 @@ def _scatter_jvp(primals, tangents, update_jaxpr, update_consts,
   return val_out, tangent_out
 
 
-scatter_p = standard_primitive(
+scatter_p = standard_reduction_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter',
-    _scatter_translation_rule, reduction=True)
+    _scatter_translation_rule)
 ad.primitive_jvps[scatter_p] = _scatter_jvp
 batching.primitive_batchers[scatter_p] = (
   partial(_scatter_batching_rule, scatter))
@@ -3291,8 +3297,9 @@ def _reduction_computation(c, jaxpr, backend, consts, init_value):
   shape = c.GetShape(init_value)
   return xla.jaxpr_computation(jaxpr, backend, consts, (), shape, shape)
 
-reduce_p = standard_primitive(_reduce_shape_rule, _input_dtype, 'reduce',
-                              _reduce_translation_rule, reduction=True)
+reduce_p = standard_reduction_primitive(
+  _reduce_shape_rule, _input_dtype, 'reduce',
+  _reduce_translation_rule)
 batching.primitive_batchers[reduce_p] = _reduce_batch_rule
 
 
@@ -3458,9 +3465,9 @@ def _generic_reduce_window_batch_rule(
                                    window_dimensions, window_strides, padding)
 
 
-reduce_window_p = standard_primitive(
+reduce_window_p = standard_reduction_primitive(
     _reduce_window_shape_rule, _input_dtype, 'reduce_window',
-    _reduce_window_translation_rule, reduction=True)
+    _reduce_window_translation_rule)
 batching.primitive_batchers[reduce_window_p] = _generic_reduce_window_batch_rule
 
 
@@ -3597,9 +3604,9 @@ def _select_and_scatter_translation(
   return c.SelectAndScatter(operand, select, window_dimensions, window_strides,
                             padding, source, init_value, scatter)
 
-select_and_scatter_p = standard_primitive(
+select_and_scatter_p = standard_reduction_primitive(
     _select_and_scatter_shape_rule, _input_dtype, 'select_and_scatter',
-    _select_and_scatter_translation, reduction=True)
+    _select_and_scatter_translation)
 
 
 def _select_and_scatter_add_shape_rule(

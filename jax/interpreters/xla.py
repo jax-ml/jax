@@ -145,6 +145,7 @@ def device_put(x, device_num=0, backend=None):
       DeviceTuple, and arraylike includes DeviceArray, DeviceConstant, and
       anything that has an '__array__' attr.
     device_num: an int representing the target physical device number.
+    backend: a string representing the xla backend. ('cpu','gpu','tpu')
 
   Returns:
     A buffer representing the input `x` placed on the appropriate device.
@@ -152,10 +153,20 @@ def device_put(x, device_num=0, backend=None):
   x = _canonicalize_pyval_dtype(x)
   t = type(x)
   if t is DeviceArray or t is DeviceTuple:
-    if x.device_buffer.device() == device_num:
-      return x.device_buffer
+    # TODO(levskaya) remove if-condition after increasing minimum Jaxlib version to
+    # 0.1.24.
+    if hasattr(x.device_buffer, 'platform'):
+      backend_match = x.device_buffer.platform() == backend
     else:
-      return x.device_buffer.copy_to_device(device_num)
+      backend_match = True
+    if backend_match:
+      if x.device_buffer.device() == device_num:
+        return x.device_buffer
+      else:
+        return x.device_buffer.copy_to_device(device_num)
+    else:
+      # Buffers from different XLA backends are passed through the host.
+      return xla_client.Buffer.from_pyval(x, device_num, backend=xb.get_backend(backend))
   elif isinstance(x, DeviceConstant):
     return _instantiate_device_constant(x, device_num=device_num, backend=backend)
   elif isinstance(x, (DeviceArray, onp.ndarray)):
@@ -281,7 +292,7 @@ def _jaxpr_computation(jaxpr, backend, axis_env, const_vals, freevar_shapes, *ar
       (subjaxpr, const_bindings, freevar_bindings), = eqn.bound_subjaxprs
       env_nodes = list(map(read, const_bindings + freevar_bindings))
       rule = call_translations[eqn.primitive]
-      ans = rule(c, subjaxpr, backend, axis_env, env_nodes, in_nodes, **eqn.params)
+      ans = rule(c, subjaxpr, axis_env, env_nodes, in_nodes, backend=backend, **eqn.params)
     else:
       msg = "XLA translation rule for primitive '{}' not found"
       raise NotImplementedError(msg.format(eqn.primitive.name))
@@ -718,8 +729,8 @@ xla_call = partial(core.call_bind, xla_call_p)
 xla_call_p.def_custom_bind(xla_call)
 xla_call_p.def_impl(_xla_call_impl)
 
-def _xla_call_translation_rule(c, jaxpr, backend, axis_env, env_nodes, in_nodes,
-                               device_assignment):
+def _xla_call_translation_rule(c, jaxpr, axis_env, env_nodes, in_nodes,
+                               device_assignment=None, backend=None):
   del device_assignment  # Unused.
   subc = _jaxpr_computation(jaxpr, backend, axis_env, (), _map(c.GetShape, env_nodes),
                             *map(c.GetShape, in_nodes))

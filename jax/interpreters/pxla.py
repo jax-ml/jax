@@ -598,8 +598,8 @@ xla_pmap = partial(core.call_bind, xla_pmap_p)
 xla_pmap_p.def_custom_bind(xla_pmap)
 xla_pmap_p.def_impl(xla_pmap_impl)
 
-def _xla_pmap_translation_rule(c, jaxpr, backend, axis_env, env_nodes, in_nodes,
-                               axis_name, axis_size):
+def _xla_pmap_translation_rule(c, jaxpr, axis_env, env_nodes, in_nodes,
+                               axis_name, axis_size, backend=None):
   new_env = xla.extend_axis_env(axis_env, axis_name, axis_size)
   in_nodes_sharded = list(map(partial(xla_shard, c, new_env.sizes), in_nodes))
   subc = xla._jaxpr_computation(jaxpr, backend, new_env, (),
