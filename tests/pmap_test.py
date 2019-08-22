@@ -669,6 +669,7 @@ class PmapTest(jtu.JaxTestCase):
     self.assertIsInstance(y, pxla.ShardedDeviceArray)
 
     z = y[0]  # doesn't crash
+    self.assertAllClose(z, 2 * x[0], check_dtypes=False)
 
 
 if __name__ == '__main__':

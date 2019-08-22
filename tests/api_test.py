@@ -37,6 +37,7 @@ from jax.interpreters.xla import DeviceArray
 from jax.abstract_arrays import concretization_err_msg
 from jax.lib import xla_bridge as xb
 from jax import test_util as jtu
+from jax import tree_util
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -734,7 +735,7 @@ class APITest(jtu.JaxTestCase):
     y = np.ones((3, 4))
     out_shape = api.eval_shape(fun, x, y)
 
-    self.assertEqual(out_shape, (2, 4))
+    self.assertEqual(out_shape.shape, (2, 4))
 
   def test_eval_shape_constants(self):
     def fun():
@@ -744,7 +745,7 @@ class APITest(jtu.JaxTestCase):
 
     out_shape = api.eval_shape(fun)
 
-    self.assertEqual(out_shape, (2, 4))
+    self.assertEqual(out_shape.shape, (2, 4))
 
   def test_eval_shape_tuple_unpacking(self):
     def fun(x, y):
@@ -755,7 +756,7 @@ class APITest(jtu.JaxTestCase):
     y = 3.
     out_shape = api.eval_shape(fun, x, y)
 
-    self.assertEqual(out_shape, (2,))
+    self.assertEqual(out_shape.shape, (2,))
 
   def test_eval_shape_tuple_itemgetting(self):
     def fun(x, y):
@@ -765,7 +766,7 @@ class APITest(jtu.JaxTestCase):
     y = 3.
     out_shape = api.eval_shape(fun, x, y)
 
-    self.assertEqual(out_shape, (2,))
+    self.assertEqual(out_shape.shape, (2,))
 
   def test_eval_shape_output_dict(self):
     def fun(x, y):
@@ -774,6 +775,7 @@ class APITest(jtu.JaxTestCase):
     x = (np.ones(2), np.ones(2))
     y = 3.
     out_shape = api.eval_shape(fun, x, y)
+    out_shape = tree_util.tree_map(onp.shape, out_shape)
 
     self.assertEqual(out_shape, {'hi': (2,)})
 
@@ -800,7 +802,7 @@ class APITest(jtu.JaxTestCase):
     x = MyArgArray((4, 5), np.float32)
     out_shape = api.eval_shape(fun, A, b, x)
 
-    self.assertEqual(out_shape, (3, 5))
+    self.assertEqual(out_shape.shape, (3, 5))
 
   def test_issue_871(self):
     T = np.array([[1., 2.], [3., 4.], [5., 6.]])
