@@ -1660,15 +1660,33 @@ def _make_graphviz(fun):
   return graphviz_maker
 
 
+class ShapeDtypeStruct(object):
+  __slots__ = ["shape", "dtype"]
+  def __init__(self, shape, dtype):
+    self.shape = shape
+    self.dtype = dtype
+
 def eval_shape(fun, *args, **kwargs):
-  """Compute the shape of ``fun(*args, **kwargs)`` without incurring any FLOPs.
+  """Compute the shape/dtype of ``fun(*args, **kwargs)`` without any FLOPs.
 
   This utility function is useful for performing shape inference. Its
   input/output behavior is defined by:
 
     def eval_shape(fun, *args, **kwargs):
       out = fun(*args, **kwargs)
-      return jax.tree_util.tree_map(np.shape, out)
+      return jax.tree_util.tree_map(shape_dtype_struct, out)
+
+    def shape_dtype_struct(x):
+      return ShapeDtypeStruct(x.shape, x.dtype)
+
+    class ShapeDtypeStruct(object):
+      __slots__ = ["shape", "dtype"]
+      def __init__(self, shape, dtype):
+        self.shape = shape
+        self.dtype = dtype
+
+  In particular, the output is a pytree of objects that have ``shape`` and
+  ``dtype`` attributes, but nothing else about them is guaranteed by the API.
 
   But instead of applying ``fun`` directly, which might be expensive, it uses
   JAX's abstract interpretation machinery to evaluate the shapes without doing
@@ -1698,16 +1716,20 @@ def eval_shape(fun, *args, **kwargs):
   ...
   >>> A = MyArgArray((2000, 3000), np.float32)
   >>> x = MyArgArray((3000, 1000), np.float32)
-  >>> out_shape = jax.eval_shape(f, A, x)  # no FLOPs performed
-  >>> print(out_shape)
+  >>> out = jax.eval_shape(f, A, x)  # no FLOPs performed
+  >>> print(out.shape)
   (2000, 1000)
+  >>> print(out.dtype)
+  dtype('float32')
   """
   def abstractify(x):
     return ShapedArray(onp.shape(x), onp.result_type(x))
-  args_flat, in_tree =  tree_flatten((args, kwargs))
+  args_flat, in_tree = tree_flatten((args, kwargs))
   fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
   out = pe.abstract_eval_fun(fun.call_wrapped, *map(abstractify, args_flat))
-  return tree_map(onp.shape, tree_unflatten(out_tree(), out))
+  out = [ShapeDtypeStruct(x.shape, x.dtype) for x in out]
+  return tree_unflatten(out_tree(), out)
+
 
 def _custom_implicit_solve(solve, tangent_solve):
   """Define gradients for a function that performs an implicit solve.

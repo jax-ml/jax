@@ -57,10 +57,10 @@ PYTREES = [
     ((),),
     (([()]),),
     ((1, 2),),
-    (((1, "foo"), ["bar", (3, None, 7)]),),
+    (((1, "foo"), ["bar", (3, (), 7)]),),
     ([3],),
-    ([3, ATuple(foo=(3, ATuple(foo=3, bar=None)), bar={"baz": 34})],),
-    ([AnObject(3, None, [4, "foo"])],),
+    ([3, ATuple(foo=(3, ATuple(foo=3, bar=())), bar={"baz": 34})],),
+    ([AnObject(3, (), [4, "foo"])],),
     ({"a": 1, "b": 2},),
 ]
 
@@ -112,19 +112,19 @@ class TreeTest(jtu.JaxTestCase):
     self.assertEqual([c0, c1], tree.children())
 
   def testFlattenUpTo(self):
-    _, tree = tree_util.tree_flatten([(1, 2), None, ATuple(foo=3, bar=7)])
+    _, tree = tree_util.tree_flatten([(1, 2), (), ATuple(foo=3, bar=7)])
     if not hasattr(tree, "flatten_up_to"):
       self.skipTest("Test requires Jaxlib >= 0.1.23")
     out = tree.flatten_up_to([({
         "foo": 7
-    }, (3, 4)), None, ATuple(foo=(11, 9), bar=None)])
-    self.assertEqual(out, [{"foo": 7}, (3, 4), (11, 9), None])
+    }, (3, 4)), (), ATuple(foo=(11, 9), bar=())])
+    self.assertEqual(out, [{"foo": 7}, (3, 4), (11, 9), ()])
 
   def testTreeMultimap(self):
     x = ((1, 2), (3, 4, 5))
-    y = (([3], None), ({"foo": "bar"}, 7, [5, 6]))
+    y = (([3], ()), ({"foo": "bar"}, 7, [5, 6]))
     out = tree_util.tree_multimap(lambda *xs: tuple(xs), x, y)
-    self.assertEqual(out, (((1, [3]), (2, None)),
+    self.assertEqual(out, (((1, [3]), (2, ())),
                            ((3, {"foo": "bar"}), (4, 7), (5, [5, 6]))))
 
 
