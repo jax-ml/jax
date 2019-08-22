@@ -1057,7 +1057,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       {"testcase_name": "_shape={}_axis={}_weights={}_returned={}".format(
           jtu.format_shape_dtype_string(shape, dtype),
           axis,
-          (None if weights_shape == None else jtu.format_shape_dtype_string(weights_shape, dtype)),
+          (None if weights_shape is None else jtu.format_shape_dtype_string(weights_shape, dtype)),
           returned),
        "rng": jtu.rand_default(), "shape": shape, "dtype": dtype, "axis": axis,
        "weights_shape": weights_shape, "returned": returned}
@@ -1066,13 +1066,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for axis in set(range(-len(shape), len(shape))) | set([None])
       # `weights_shape` is either `None`, same as the averaged axis, or same as
       # that of the input
-      for weights_shape in ([None, shape] if axis is None else [None, (shape[axis],), shape])
+      for weights_shape in ([None, shape] if axis is None
+                            else [None, (shape[axis],), shape])
       for returned in [False, True]))
   def testAverage(self, shape, dtype, axis, weights_shape, returned, rng):
-    onp_fun = lambda x, weights: onp.average(x, axis, weights, returned)
-    lnp_fun = lambda x, weights: lnp.average(x, axis, weights, returned)
-    args_maker = lambda: [rng(shape, dtype),
-                          None if weights_shape is None else rng(weights_shape, dtype)]
+    if weights_shape is None:
+      onp_fun = lambda x: onp.average(x, axis, returned=returned)
+      lnp_fun = lambda x: lnp.average(x, axis, returned=returned)
+      args_maker = lambda: [rng(shape, dtype)]
+    else:
+      onp_fun = lambda x, weights: onp.average(x, axis, weights, returned)
+      lnp_fun = lambda x, weights: lnp.average(x, axis, weights, returned)
+      args_maker = lambda: [rng(shape, dtype), rng(weights_shape, dtype)]
 
     try:
         self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)

@@ -38,8 +38,6 @@ from ..config import flags
 from ..core import Primitive
 from ..abstract_arrays import (UnshapedArray, ShapedArray, ConcreteArray,
                                array_types, make_shaped_array, raise_to_shaped)
-from ..api_util import (pytree_fun_to_jaxtupletree_fun, pytree_to_jaxtupletree,
-                        pytree_fun_to_flatjaxtuple_fun, pytree_to_flatjaxtuple)
 from ..interpreters import partial_eval as pe
 from ..interpreters import xla
 from ..interpreters import pxla
@@ -721,7 +719,7 @@ def scatter_add(operand, scatter_indices, updates, dimension_numbers):
   Returns:
     An array containing the sum of `operand` and the scattered updates.
   """
-  jaxpr, consts = _reduction_jaxpr(add, _const(operand, 0))
+  jaxpr, consts = _reduction_jaxpr(add, _abstractify(_const(operand, 0)))
   return scatter_add_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
       update_consts=consts, dimension_numbers=dimension_numbers,
@@ -748,7 +746,7 @@ def scatter_min(operand, scatter_indices, updates, dimension_numbers):
   Returns:
     An array containing the sum of `operand` and the scattered updates.
   """
-  jaxpr, consts = _reduction_jaxpr(min, _const(operand, 0))
+  jaxpr, consts = _reduction_jaxpr(min, _abstractify(_const(operand, 0)))
   return scatter_min_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
       update_consts=consts, dimension_numbers=dimension_numbers,
@@ -775,7 +773,7 @@ def scatter_max(operand, scatter_indices, updates, dimension_numbers):
   Returns:
     An array containing the sum of `operand` and the scattered updates.
   """
-  jaxpr, consts = _reduction_jaxpr(max, _const(operand, 0))
+  jaxpr, consts = _reduction_jaxpr(max, _abstractify(_const(operand, 0)))
   return scatter_max_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
       update_consts=consts, dimension_numbers=dimension_numbers,
@@ -805,7 +803,7 @@ def scatter(operand, scatter_indices, updates, dimension_numbers):
   Returns:
     An array containing the sum of `operand` and the scattered updates.
   """
-  jaxpr, consts = _reduction_jaxpr(lambda x, y: y, _const(operand, 0))
+  jaxpr, consts = _reduction_jaxpr(lambda x, y: y, _abstractify(_const(operand, 0)))
   return scatter_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
       update_consts=consts, dimension_numbers=dimension_numbers,
@@ -845,14 +843,15 @@ def reduce(operand, init_value, computation, dimensions):
   if monoid_reducer:
     return monoid_reducer(operand, dimensions)
   else:
-    jaxpr, consts = _reduction_jaxpr(computation, init_value)
+    jaxpr, consts = _reduction_jaxpr(computation, _abstractify(init_value))
     return reduce_p.bind(operand, init_value, computation=computation,
                          jaxpr=jaxpr, consts=consts, dimensions=tuple(dimensions))
 
-def _reduction_jaxpr(computation, init_value):
-  pval = _abstractify(init_value)
-  jaxpr, _, consts = pe.trace_unwrapped_to_jaxpr(computation, (pval, pval),
-                                                 instantiate=False)
+@cache()
+def _reduction_jaxpr(computation, aval):
+  pval = pe.PartialVal((aval, core.unit))
+  comp = lu.wrap_init(lambda x, y: (computation(x, y),))
+  jaxpr, _, consts = pe.trace_to_jaxpr(comp, (pval, pval), instantiate=False)
   return jaxpr, consts
 
 def _get_monoid_reducer(monoid_op, x):
@@ -917,7 +916,7 @@ def reduce_window(operand, init_value, computation, window_dimensions,
   if monoid_reducer:
     return monoid_reducer(operand, window_dimensions, window_strides, padding)
   else:
-    jaxpr, consts = _reduction_jaxpr(computation, init_value)
+    jaxpr, consts = _reduction_jaxpr(computation, _abstractify(init_value))
     return reduce_window_p.bind(
         operand, init_value, jaxpr=jaxpr, consts=consts,
         window_dimensions=tuple(window_dimensions),
@@ -941,7 +940,7 @@ def _reduce_window_sum(operand, window_dimensions, window_strides, padding):
 
 def _reduce_window_prod(operand, window_dimensions, window_strides, padding):
   init_value = _const(operand, 1)
-  jaxpr, consts = _reduction_jaxpr(mul, init_value)
+  jaxpr, consts = _reduction_jaxpr(mul, _abstractify(init_value))
   return reduce_window_p.bind(
       operand, init_value, jaxpr=jaxpr, consts=consts,
       window_dimensions=tuple(window_dimensions),
@@ -959,8 +958,8 @@ def _reduce_window_min(operand, window_dimensions, window_strides, padding):
 
 def _select_and_scatter(operand, select, window_dimensions, window_strides,
                         padding, source, init_value, scatter):
-  select_jaxpr, select_consts = _reduction_jaxpr(select)
-  scatter_jaxpr, scatter_consts = _reduction_jaxpr(scatter)
+  select_jaxpr, select_consts = _reduction_jaxpr(select, _abstractify(init_value))
+  scatter_jaxpr, scatter_consts = _reduction_jaxpr(scatter, _abstractify(init_value))
   return select_and_scatter_p.bind(
       operand, source, init_value, select_jaxpr=select_jaxpr,
       select_consts=select_consts, scatter_jaxpr=scatter_jaxpr,
@@ -1652,7 +1651,7 @@ ad.deflinear(complex_p, lambda t: [real(t), imag(neg(t))])
 conj_p = unop(_complex_dtype, _float | _complex, 'conj')
 
 def _conj_transpose_rule(t, x, input_dtype):
-  assert x is None
+  assert x is ad.undefined_primal
   if onp.issubdtype(input_dtype, onp.complexfloating):
     return [conj(t)]
   else:
@@ -1699,7 +1698,7 @@ xor_p = standard_binop([_any, _any], 'xor')
 ad.defjvp_zero(xor_p)
 
 def _add_transpose(t, x, y):
-  # assert x is None and y is None  # computation must be linear, not affine
+  # assert x is ad.undefined_primal and y is ad.undefined_primal  # not affine
   return [t, t]
 
 add_p = standard_binop([_num, _num], 'add')
@@ -1708,7 +1707,7 @@ ad.primitive_transposes[add_p] = _add_transpose
 
 
 def _sub_transpose(t, x, y):
-  assert x is None and y is None  # computation must be linear, not affine
+  assert x is ad.undefined_primal and y is ad.undefined_primal  # not affine
   return [t, neg(t) if t is not ad_util.zero else ad_util.zero]
 
 sub_p = standard_binop([_num, _num], 'sub')
@@ -1736,7 +1735,7 @@ ad.defbilinear_broadcasting(_brcast, safe_mul_p, _safe_mul, _safe_mul)
 
 
 def _div_transpose_rule(cotangent, x, y):
-  assert x is None and y is not None
+  assert x is ad.undefined_primal and y is not ad.undefined_primal
   res = ad_util.zero if cotangent is ad_util.zero else div(cotangent, y)
   return res, None
 div_p = standard_binop([_num, _num], 'div')
@@ -2108,8 +2107,8 @@ def _dot_batch_rule(batched_args, batch_dims, precision=None):
 
     assert lbd is not None and rbd is not None
     assert lhs.ndim == rhs.ndim == 2  # dot only supports rank 1 and above
-    lhs = batching.move_dim_to_front(lhs, lbd)
-    rhs = batching.move_dim_to_front(rhs, rbd)
+    lhs = batching.moveaxis(lhs, lbd, 0)
+    rhs = batching.moveaxis(rhs, rbd, 0)
     out = dot_general(lhs, rhs, [((1,), (1,)), ((0,), (0,))],
                       precision=precision)
     return out, 0
@@ -2118,7 +2117,7 @@ def _dot_batch_rule(batched_args, batch_dims, precision=None):
     assert rbd is not None
     lhs = broadcast(lhs, (rhs.shape[rbd],))
   else:
-    lhs = batching.move_dim_to_front(lhs, lbd)
+    lhs = batching.moveaxis(lhs, lbd, 0)
   lhs_batch = (0,)
   lhs_contracting = (onp.ndim(lhs) - 1,)
 
@@ -2126,7 +2125,7 @@ def _dot_batch_rule(batched_args, batch_dims, precision=None):
     assert lbd is not None
     rhs = broadcast(rhs, (lhs.shape[0],))
   else:
-    rhs = batching.move_dim_to_front(rhs, rbd)
+    rhs = batching.moveaxis(rhs, rbd, 0)
   rhs_batch = (0,)
   rhs_contracting = (onp.arange(1, onp.ndim(rhs))[-2:][0],)
 
@@ -2224,7 +2223,7 @@ def _dot_general_batch_rule(batched_args, batch_dims, dimension_numbers,
 
   if lbd is not None:
     if lbd != 0:
-      lhs = batching.move_dim_to_front(lhs, lbd)
+      lhs = batching.moveaxis(lhs, lbd, 0)
       lbd = 0
   else:
     assert rbd is not None
@@ -2234,7 +2233,7 @@ def _dot_general_batch_rule(batched_args, batch_dims, dimension_numbers,
 
   if rbd is not None:
     if rbd != 0:
-      rhs = batching.move_dim_to_front(rhs, rbd)
+      rhs = batching.moveaxis(rhs, rbd, 0)
       rbd = 0
   else:
     assert lbd is not None
@@ -2297,7 +2296,7 @@ def _broadcast_in_dim_batch_rule(batched_args, batch_dims, shape,
                                  broadcast_dimensions):
   operand, = batched_args
   bdim, = batch_dims
-  new_operand = batching.move_dim_to_front(operand, bdim)
+  new_operand = batching.moveaxis(operand, bdim, 0)
   new_shape = (operand.shape[bdim],) + shape
   new_broadcast_dimensions = (0,) + tuple(onp.add(1, broadcast_dimensions))
   return broadcast_in_dim(new_operand, new_shape, new_broadcast_dimensions), 0
@@ -2371,7 +2370,7 @@ def _concatenate_transpose_rule(t, *operands, **kwargs):
   operand_shapes = kwargs.pop('operand_shapes')
 
   if t is ad_util.zero:
-    return [ad_util.zero if o is None else None for o in operands]
+    return [ad_util.zero if o is ad.undefined_primal else None for o in operands]
   else:
     limit_points = onp.cumsum([shape[dimension] for shape in operand_shapes])
     starts = onp.zeros((len(operands), t.ndim), dtype=int)
@@ -2379,13 +2378,13 @@ def _concatenate_transpose_rule(t, *operands, **kwargs):
     limits = onp.tile(t.shape, (len(operands), 1))
     limits[:, dimension] = limit_points
 
-    return [slice(t, start, limit) if o is None else None
+    return [slice(t, start, limit) if o is ad.undefined_primal else None
             for o, start, limit in zip(operands, starts, limits)]
 
 def _concatenate_batch_rule(batched_args, batch_dims, dimension, operand_shapes):
   size = next(op.shape[bdim] for op, bdim in zip(batched_args, batch_dims)
               if bdim is not None)
-  operands = [batching.move_dim_to_front(op, bdim) if bdim is not None
+  operands = [batching.moveaxis(op, bdim, 0) if bdim is not None
               else broadcast(op, (size,))
               for op, bdim in zip(batched_args, batch_dims)]
   return concatenate(operands, dimension + 1), 0
@@ -2410,8 +2409,8 @@ def _pad_shape_rule(operand, padding_value, padding_config):
 
 def _pad_transpose(t, operand, padding_value, padding_config):
   if t is ad_util.zero:
-    return [ad_util.zero if operand is None else None,
-            ad_util.zero if padding_value is None else None]
+    return [ad_util.zero if operand is ad.undefined_primal else None,
+            ad_util.zero if padding_value is ad.undefined_primal else None]
 
   lo, hi, interior = zip(*padding_config)
   total = lambda x: _reduce_sum(x, list(range(t.ndim)))
@@ -2421,8 +2420,8 @@ def _pad_transpose(t, operand, padding_value, padding_config):
     unpadded = pad(t, onp.array(0., t.dtype), unpad_config)
     return slice(unpadded, onp.zeros_like(lo), unpadded.shape, onp.add(interior, 1))
 
-  t_operand = t_op() if operand is None else None
-  t_padv = sub(total(t), total(t_operand)) if padding_value is None else None
+  t_operand = t_op() if operand is ad.undefined_primal else None
+  t_padv = sub(total(t), total(t_operand)) if padding_value is ad.undefined_primal else None
 
   return [t_operand, t_padv]
 
@@ -2496,7 +2495,7 @@ def _reshape_transpose_rule(t, new_sizes, dimensions, old_sizes):
 def _reshape_batch_rule(batched_args, batch_dims, new_sizes, dimensions, **unused):
   operand, = batched_args
   bdim, = batch_dims
-  operand = batching.move_dim_to_front(operand, bdim)
+  operand = batching.moveaxis(operand, bdim, 0)
   if dimensions is not None:
     raise NotImplementedError  # TODO(mattjj): handle reshape w/ dimensions
     dimensions = (0,) + tuple(onp.add(1, dimensions))
@@ -2572,16 +2571,16 @@ def _select_dtype_rule(pred, on_true, on_false):
   return on_true.dtype
 
 def _select_transpose_rule(t, pred, on_true, on_false):
-  assert pred is not None
+  assert pred is not ad.undefined_primal
   if t is ad_util.zero:
     return [None,
-            ad_util.zero if on_true is None else None,
-            ad_util.zero if on_false is None else None]
+            ad_util.zero if on_true is ad.undefined_primal else None,
+            ad_util.zero if on_false is ad.undefined_primal else None]
   else:
     zeros = full_like(t, 0)
     return [None,
-            select(pred, t, zeros) if on_true is None else None,
-            select(pred, zeros, t) if on_false is None else None]
+            select(pred, t, zeros) if on_true is ad.undefined_primal else None,
+            select(pred, zeros, t) if on_false is ad.undefined_primal else None]
 
 def _select_batch_rule(batched_args, batch_dims, **unused_kwargs):
   pred, on_true, on_false, = batched_args
@@ -2602,17 +2601,22 @@ def _select_batch_rule(batched_args, batch_dims, **unused_kwargs):
     if ot_bdim == of_bdim:
       return select(pred, on_true, on_false), ot_bdim
     elif onp.shape(on_true) == onp.shape(on_false):
-      on_false = batching.moveaxis(size, ot_bdim, of_bdim, on_false)
+      on_false = batching.moveaxis(on_false, of_bdim, ot_bdim)
       return select(pred, on_true, on_false), ot_bdim
 
-  pred = batching.bdim_at_front(pred, pred_bdim, size, force_broadcast=True)
-  on_true = batching.bdim_at_front(on_true, ot_bdim, size, force_broadcast=True)
-  on_false = batching.bdim_at_front(on_false, of_bdim, size, force_broadcast=True)
+  pred = batching.bdim_at_front(pred, pred_bdim, size) if onp.shape(pred) else pred
+  if not onp.shape(on_true) == onp.shape(on_false) == ():
+    on_true = batching.bdim_at_front(on_true, ot_bdim, size)
+    on_false = batching.bdim_at_front(on_false, of_bdim, size)
   assert onp.shape(on_true) == onp.shape(on_false)
   if 0 < onp.ndim(pred) < onp.ndim(on_true):
     # vmapped function had a scalar pred with nonscalar args
     assert onp.ndim(pred) == 1
     pred = broadcast_in_dim(pred, on_true.shape, [0])
+  if onp.ndim(pred) > onp.ndim(on_true):
+    assert onp.ndim(on_true) == 0
+    on_true = broadcast(on_true, pred.shape)
+    on_false = broadcast(on_false, pred.shape)
   return select(pred, on_true, on_false), 0
 
 select_p = standard_primitive(_select_shape_rule, _select_dtype_rule, 'select')
@@ -2740,8 +2744,8 @@ def _dynamic_slice_jvp(primals, tangents, slice_sizes, operand_shape):
 
 def _dynamic_slice_transpose_rule(t, operand, *start_indices, **kwargs):
   operand_shape = kwargs["operand_shape"]
-  assert operand is None
-  assert all(s is not None for s in start_indices)
+  assert operand is ad.undefined_primal
+  assert all(s is not ad.undefined_primal for s in start_indices)
   zeros = full(operand_shape, tie_in(t, _zero(t)))
   return ([dynamic_update_slice(zeros, t, start_indices)] +
           [None] * len(start_indices))
@@ -2816,12 +2820,12 @@ def _dynamic_update_slice_jvp(primals, tangents, update_shape):
 def _dynamic_update_slice_transpose_rule(t, operand, update, *start_indices,
                                          **kwargs):
   update_shape = kwargs["update_shape"]
-  assert all(x is not None for x in start_indices)
+  assert all(x is not ad.undefined_primal for x in start_indices)
   dus = dynamic_update_slice
   ds = dynamic_slice
   zeros = _zeros(t, shape=update_shape)
-  operand_t = dus(t, zeros, start_indices) if operand is None else None
-  update_t = ds(t, start_indices, update_shape) if update is None else None
+  operand_t = dus(t, zeros, start_indices) if operand is ad.undefined_primal else None
+  update_t = ds(t, start_indices, update_shape) if update is ad.undefined_primal else None
   return [operand_t, update_t] + [None] * len(start_indices)
 
 def _dynamic_update_slice_translation_rule(c, operand, update, *start_indices,
@@ -2923,7 +2927,7 @@ def _gather_jvp_rule(g, operand, start_indices, dimension_numbers, slice_sizes,
 
 def _gather_transpose_rule(t, operand, start_indices, dimension_numbers,
                           slice_sizes, operand_shape):
-  assert operand is None
+  assert operand is ad.undefined_primal
   if t is ad_util.zero:
     return [ad_util.zero, ad_util.zero]
   zeros = full(operand_shape, tie_in(t, _zero(t)))
@@ -2939,7 +2943,7 @@ def _gather_batching_rule(batched_args, batch_dims, dimension_numbers,
   operand_bdim, start_indices_bdim = batch_dims
 
   if operand_bdim is not None and start_indices_bdim is None:
-    operand = batching.move_dim_to_front(operand, operand_bdim)
+    operand = batching.moveaxis(operand, operand_bdim, 0)
     slice_sizes = (operand.shape[0],) + slice_sizes
     offset_dims = (0,) + tuple(onp.add(1, dimension_numbers.offset_dims))
     collapsed_slice_dims = tuple(onp.add(1, dimension_numbers.collapsed_slice_dims))
@@ -2952,7 +2956,7 @@ def _gather_batching_rule(batched_args, batch_dims, dimension_numbers,
                   slice_sizes=slice_sizes), 0
 
   elif operand_bdim is None and start_indices_bdim is not None:
-    start_indices = batching.move_dim_to_front(start_indices, start_indices_bdim)
+    start_indices = batching.moveaxis(start_indices, start_indices_bdim, 0)
     offset_dims = tuple(onp.add(1, dimension_numbers.offset_dims))
     dnums = GatherDimensionNumbers(
         offset_dims=offset_dims,
@@ -2963,8 +2967,8 @@ def _gather_batching_rule(batched_args, batch_dims, dimension_numbers,
 
   else:
     # move our batch dimensions to the front to preserve sanity
-    operand = batching.move_dim_to_front(operand, operand_bdim)
-    start_indices = batching.move_dim_to_front(start_indices, start_indices_bdim)
+    operand = batching.moveaxis(operand, operand_bdim, 0)
+    start_indices = batching.moveaxis(start_indices, start_indices_bdim, 0)
 
     # Example: user code had start_indices shape (3, 4, 5), and we have to deal
     # with start_indices shape (7, 3, 4, 5). We transform that to a
@@ -3107,15 +3111,15 @@ def _scatter_add_jvp(primals, tangents, update_jaxpr, update_consts,
 def _scatter_add_transpose_rule(t, operand, scatter_indices, updates,
                                 update_jaxpr, update_consts, dimension_numbers,
                                 updates_shape):
-  assert scatter_indices is not None
+  assert scatter_indices is not ad.undefined_primal
   if t is ad_util.zero:
     return [ad_util.zero, None, ad_util.zero]
 
   operand_t = update_t = None
-  if operand is None:
+  if operand is ad.undefined_primal:
     operand_t = t
 
-  if updates is None:
+  if updates is ad.undefined_primal:
     gather_dnums = GatherDimensionNumbers(
       offset_dims=dimension_numbers.update_window_dims,
       collapsed_slice_dims=dimension_numbers.inserted_window_dims,
@@ -3143,8 +3147,7 @@ def _scatter_batching_rule(
   # it at the front (so that we can scatter into it)
   size = next(x.shape[ax] for x, ax in zip(batched_args, batch_dims)
               if ax is not None)
-  operand = batching.bdim_at_front(operand, operand_bdim, broadcast_size=size,
-                                   force_broadcast=True)
+  operand = batching.bdim_at_front(operand, operand_bdim, size)
   operand_bdim = 0
 
   if scatter_indices_bdim is not None and updates_bdim is None:
@@ -3152,7 +3155,7 @@ def _scatter_batching_rule(
     updates_bdim = 0
 
   if scatter_indices_bdim is None and updates_bdim is not None:
-    updates = batching.move_dim_to_front(updates, updates_bdim)
+    updates = batching.moveaxis(updates, updates_bdim, 0)
     inserted_window_dims = tuple(onp.add(1, dimension_numbers.inserted_window_dims))
     update_window_dims = (0,) + tuple(onp.add(1, dimension_numbers.update_window_dims))
     scatter_dims_to_operand_dims = tuple(onp.add(1, dimension_numbers.scatter_dims_to_operand_dims))
@@ -3163,9 +3166,8 @@ def _scatter_batching_rule(
     return scatter_op(operand, scatter_indices, updates, dnums), 0
   else:
     # see the third case in _gather_batching_rule for comparison and comments
-    scatter_indices = batching.move_dim_to_front(scatter_indices,
-                                                 scatter_indices_bdim)
-    updates = batching.move_dim_to_front(updates, updates_bdim)
+    scatter_indices = batching.moveaxis(scatter_indices, scatter_indices_bdim, 0)
+    updates = batching.moveaxis(updates, updates_bdim, 0)
 
     count_shape = list(scatter_indices.shape)
     count_shape[-1] = 1
@@ -3320,14 +3322,16 @@ def _reduce_batch_rule(batched_args, batch_dims, computation, jaxpr, consts, dim
   if init_value_bdim is None:
     assert operand_bdim is not None
     new_dimensions = [d + bool(d >= operand_bdim) for d in dimensions]
-    new_operand_bdim = operand_bdim - onp.sum(onp.less(dimensions, operand_bdim))
+    new_operand_bdim = operand_bdim - int(onp.sum(onp.less(dimensions, operand_bdim)))
     return reduce(operand, init_value, computation, new_dimensions), new_operand_bdim
   else:
     raise NotImplementedError  # loop and stack
 
 def _reduction_computation(c, jaxpr, consts, init_value):
   shape = c.GetShape(init_value)
-  return xla.jaxpr_computation(jaxpr, consts, (), shape, shape)
+  axis_env = xla.AxisEnv(1, [], [])  # no parallel primitives inside reductions
+  c, (out,) = xla._jaxpr_computation(jaxpr, axis_env, consts, (), shape, shape)
+  return c.Build(out)
 
 reduce_p = standard_primitive(_reduce_shape_rule, _input_dtype, 'reduce',
                               _reduce_translation_rule)
@@ -3675,7 +3679,7 @@ def _select_and_scatter_add_jvp(
 def _select_and_scatter_add_transpose(
     t, source, operand, select_prim, window_dimensions, window_strides,
     padding):
-  assert source is None and operand is not None
+  assert source is ad.undefined_primal and operand is not ad.undefined_primal
   source_t = _select_and_gather_add(t, operand, select_prim, window_dimensions,
                                     window_strides, padding)
   return [source_t, None]
@@ -3686,8 +3690,8 @@ def _select_and_scatter_add_batch_rule(batched_args, batch_dims, **kwargs):
 
   if s_bdims is not None and o_bdims is not None:
     #TODO(#212): use a map construct instead of unrolling.
-    source = batching.move_dim_to_front(source, s_bdims)
-    operand = batching.move_dim_to_front(operand, o_bdims)
+    source = batching.moveaxis(source, s_bdims, 0)
+    operand = batching.moveaxis(operand, o_bdims, 0)
     outputs = [
         _select_and_scatter_add(s, o, **kwargs) for s, o in zip(source, operand)]
     outputs = [reshape(out, (1,) + out.shape) for out in outputs]
@@ -3695,7 +3699,7 @@ def _select_and_scatter_add_batch_rule(batched_args, batch_dims, **kwargs):
     return outputs, 0
   elif s_bdims is not None:
     #TODO(#212): use a map construct instead of unrolling.
-    source = batching.move_dim_to_front(source, s_bdims)
+    source = batching.moveaxis(source, s_bdims, 0)
     outputs = [
         _select_and_scatter_add(s, operand, **kwargs) for s in source]
     outputs = [reshape(out, (1,) + out.shape) for out in outputs]
@@ -3703,7 +3707,7 @@ def _select_and_scatter_add_batch_rule(batched_args, batch_dims, **kwargs):
     return outputs, 0
   elif o_bdims is not None:
     #TODO(#212): use a map construct instead of unrolling.
-    operand = batching.move_dim_to_front(operand, o_bdims)
+    operand = batching.moveaxis(operand, o_bdims, 0)
     outputs = [
         _select_and_scatter_add(source, o, **kwargs) for o in operand]
     outputs = [reshape(out, (1,) + out.shape) for out in outputs]
@@ -3853,7 +3857,7 @@ def _select_and_gather_add_jvp(
 def _select_and_gather_add_transpose(
     t, tangents, operand, select_prim, window_dimensions, window_strides,
     padding):
-  assert tangents is None and operand is not None
+  assert tangents is ad.undefined_primal and operand is not ad.undefined_primal
   result = _select_and_scatter_add(t, operand, select_prim, window_dimensions,
                                    window_strides, padding)
   return [result, None]
@@ -3888,12 +3892,7 @@ batching.primitive_batchers[sort_p] = _sort_batch_rule
 
 
 def _sort_key_val_abstract_eval(keys, values, dimension):
-  return core.AbstractTuple((keys, values))
-
-def _sort_key_val_impl(keys, values, dimension):
-  out = xla.apply_primitive(sort_key_val_p, keys, values, dimension=dimension)
-  sorted_keys, sorted_values = out
-  return core.pack((sorted_keys, sorted_values))
+  return keys, values
 
 def _sort_key_val_jvp(primals, tangents, dimension):
   # NOTE(mattjj): this re-sorts three times, but if we had a variadic
@@ -3918,15 +3917,15 @@ def _sort_key_val_jvp(primals, tangents, dimension):
     values_tangents_out = _sort_jvp_rule(values_tangents, keys, dimension)
 
   tangents_out = keys_tangents_out, values_tangents_out
-  return core.pack(val_out), ad.TangentTuple(tangents_out)
+  return val_out, tangents_out
 
 def _sort_key_val_transpose_rule(t, keys, values, dimension):
   t_keys, t_values = t
   assert t_keys is ad_util.zero
   iota = broadcasted_iota(onp.int32, keys.shape, dimension % keys.ndim)
   _, perm = sort_key_val(keys, iota)
-  keys_result = ad_util.zero if keys is None else None
-  values_result = sort_key_val(perm, t_values)[1] if values is None else None
+  keys_result = ad_util.zero if keys is ad.undefined_primal else None
+  values_result = sort_key_val(perm, t_values)[1] if values is ad.undefined_primal else None
   return [keys_result, values_result]
 
 def _sort_key_val_batch_rule(batched_args, batch_dims, dimension):
@@ -3935,31 +3934,27 @@ def _sort_key_val_batch_rule(batched_args, batch_dims, dimension):
   assert keys_bdim is not None or values_bdim is not None
   if keys_bdim == values_bdim:
     new_dimension = dimension + (keys_bdim <= dimension)
-    out = sort_key_val(keys, values, new_dimension)
-    return core.pack(out), keys_bdim
+    return sort_key_val(keys, values, new_dimension), (keys_bdim, keys_bdim)
   elif keys_bdim is not None and values_bdim is not None:
-    keys_trans = batching.moveaxis(keys.shape[keys_bdim], values_bdim,
-                                   keys_bdim, keys)
+    keys_trans = batching.moveaxis(keys, keys_bdim, values_bdim)
     new_dimension = dimension + (values_bdim <= dimension)
-    out = sort_key_val(keys_trans, values, new_dimension)
-    return core.pack(out), values_bdim
+    return sort_key_val(keys_trans, values, new_dimension), (values_bdim, values_bdim)
   elif keys_bdim is None:
     broadcast_dimensions = onp.delete(onp.arange(values.ndim), values_bdim)
     new_keys = broadcast_in_dim(keys, values.shape, broadcast_dimensions)
     new_dimension = dimension + (values_bdim <= dimension)
-    out = sort_key_val(new_keys, values, new_dimension)
-    return core.pack(out), values_bdim
+    return sort_key_val(new_keys, values, new_dimension), (values_bdim, values_bdim)
   elif values_bdim is None:
     broadcast_dimensions = onp.delete(onp.arange(keys.ndim), keys_bdim)
     new_values = broadcast_in_dim(values, keys.shape, broadcast_dimensions)
     new_dimension = dimension + (keys_bdim <= dimension)
-    out = sort_key_val(keys, new_values, new_dimension)
-    return core.pack(out), keys_bdim
+    return sort_key_val(keys, new_values, new_dimension), (keys_bdim, keys_bdim)
   else:
     raise Exception  # unreachable
 
 sort_key_val_p = Primitive('sort_key_val')
-sort_key_val_p.def_impl(_sort_key_val_impl)
+sort_key_val_p.multiple_results = True
+sort_key_val_p.def_impl(partial(xla.apply_primitive, sort_key_val_p))
 sort_key_val_p.def_abstract_eval(_sort_key_val_abstract_eval)
 xla.translations[sort_key_val_p] = partial(standard_translate, 'sort_key_val')
 ad.primitive_jvps[sort_key_val_p] = _sort_key_val_jvp
@@ -4078,9 +4073,10 @@ class _EyeConstant(xla.DeviceConstant):
 for _t in [_FilledConstant, _IotaConstant, _EyeConstant]:
   xla_bridge.register_constant_handler(_t, _t.constant_handler)
   core.pytype_aval_mappings[_t] = ConcreteArray
-  xla.pytype_aval_mappings[_t] = xla.pytype_aval_mappings[xla.DeviceArray]
+  xla.pytype_aval_mappings[_t] = make_shaped_array
+  xla.device_put_handlers[_t] = xla._instantiate_device_constant
+  pxla.shard_arg_handlers[_t] = pxla._shard_array
   xla.canonicalize_dtype_handlers[_t] = _identity
-  batching.pytype_aval_mappings[_t] = make_shaped_array
   ad_util.jaxval_adders[_t] = add
   ad_util.jaxval_zeros_likers[_t] = zeros_like_array
 
@@ -4107,8 +4103,7 @@ batching.primitive_batchers[stop_gradient_p] = _stop_gradient_batch_rule
 
 ### util
 
-def _ndim(x):
-  return x.ndim
+_ndim = onp.ndim
 
 
 def _dilate_shape(shape, dilation):
@@ -4454,5 +4449,4 @@ def subvals(lst, replace):
 
 
 def _abstractify(x):
-  # used internally for initial-style higher-order primitives
-  return pe.PartialVal((raise_to_shaped(core.get_aval(x)), core.unit))
+  return raise_to_shaped(core.get_aval(x))
