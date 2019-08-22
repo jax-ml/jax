@@ -19,6 +19,7 @@ from __future__ import print_function
 import collections
 from functools import partial
 import unittest
+import warnings
 
 from absl.testing import absltest
 import numpy as onp
@@ -41,6 +42,7 @@ from jax import tree_util
 
 from jax.config import config
 config.parse_flags_with_absl()
+FLAGS = config.FLAGS
 
 class APITest(jtu.JaxTestCase):
 
@@ -974,6 +976,53 @@ class APITest(jtu.JaxTestCase):
       ys = [f.result() for f in futures]
     for x, y in zip(xs, ys):
       self.assertAllClose(x * 2 - 3., y, check_dtypes=True)
+
+  def test_issue_1230(self):
+    if FLAGS.jax_enable_x64:
+      return  # test only applies when x64 is disabled
+
+    def check_warning(warn, nowarn):
+      with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+
+        nowarn()  # get rid of extra startup warning
+
+        prev_len = len(w)
+        nowarn()
+        assert len(w) == prev_len
+
+        warn()
+        assert len(w) > 0
+        msg = str(w[-1].message)
+        expected_prefix = "Explicitly requested dtype "
+        self.assertEqual(expected_prefix, msg[:len(expected_prefix)])
+
+        prev_len = len(w)
+        nowarn()
+        assert len(w) == prev_len
+
+    check_warning(lambda: np.array([1, 2, 3], dtype="float64"),
+                  lambda: np.array([1, 2, 3], dtype="float32"),)
+    check_warning(lambda: np.ones(3, dtype=onp.float64),
+                  lambda: np.ones(3))
+    check_warning(lambda: np.ones_like(3, dtype=onp.int64),
+                  lambda: np.ones_like(3, dtype=onp.int32))
+    check_warning(lambda: np.zeros(3, dtype="int64"),
+                  lambda: np.zeros(3, dtype="int32"))
+    check_warning(lambda: np.zeros_like(3, dtype="float64"),
+                  lambda: np.zeros_like(3, dtype="float32"))
+    check_warning(lambda: np.full((2, 3), 1, dtype="int64"),
+                  lambda: np.full((2, 3), 1))
+    check_warning(lambda: np.ones(3).astype("float64"),
+                  lambda: np.ones(3).astype("float32"))
+    check_warning(lambda: np.eye(3, dtype=onp.float64),
+                  lambda: np.eye(3))
+    check_warning(lambda: np.arange(3, dtype=onp.float64),
+                  lambda: np.arange(3, dtype=onp.float32))
+    check_warning(lambda: np.linspace(0, 3, dtype=onp.float64),
+                  lambda: np.linspace(0, 3, dtype=onp.float32))
+    check_warning(lambda: np.tri(2, dtype="float64"),
+                  lambda: np.tri(2, dtype="float32"))
 
 
 if __name__ == '__main__':
