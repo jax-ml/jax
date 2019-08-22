@@ -53,7 +53,7 @@ from .tree_util import (process_pytree, build_tree, tree_map, tree_flatten,
                         treedef_tuple, treedef_is_leaf, treedef_children,
                         tree_leaves)
 from .util import (unzip2, unzip3, curry, partial, safe_map, safe_zip,
-                   WrapHashably, Hashable, prod)
+                   WrapHashably, prod)
 from .lib.xla_bridge import canonicalize_dtype, device_count
 from .abstract_arrays import ShapedArray
 from .interpreters import partial_eval as pe
@@ -1147,11 +1147,11 @@ def _wrap_hashably(arg):
   except TypeError:
     return WrapHashably(arg)  # e.g. ndarrays, DeviceArrays
   else:
-    return Hashable(arg)
+    return arg
 
 @lu.transformation
 def _argnums_partial_(dyn_argnums, fixed_args, *dyn_args, **kwargs):
-  args = [None if arg is None else arg.val for arg in fixed_args]
+  args = [arg.val if isinstance(arg, WrapHashably) else arg for arg in fixed_args]
   for i, arg in zip(dyn_argnums, dyn_args):
     args[i] = arg
   ans = yield args, kwargs

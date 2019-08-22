@@ -690,7 +690,8 @@ def gather(operand, start_indices, dimension_numbers, slice_sizes):
   if not isinstance(start_indices, core.Tracer):
     # Use static slicing when possible so that fastar can infer outputs
     return gather_static_p.bind(
-        operand, start_indices=WrapHashably(start_indices),
+        operand, start_indices=tuple(onp.ravel(start_indices)),
+        start_indices_shape=start_indices.shape,
         dimension_numbers=dimension_numbers,
         slice_sizes=_canonicalize_shape(slice_sizes),
         operand_shape=operand.shape)
@@ -3014,8 +3015,9 @@ def _gather_static_transpose_rule(*args, **kwargs):
 
 def _unwrap_start_indices(rule):
     def rule_(*args, **params):
-        if isinstance(params['start_indices'], WrapHashably):
-            params['start_indices'] = params['start_indices'].val
+        params['start_indices'] = onp.reshape(
+            onp.array(params['start_indices'], dtype=int),
+            params.pop('start_indices_shape'))
         return rule(*args, **params)
     return rule_
 gather_static_p = standard_primitive(
