@@ -42,7 +42,7 @@ import jax.numpy as np
 def relu(x): return np.maximum(x, 0.)
 def softplus(x): return np.logaddexp(x, 0.)
 def sigmoid(x): return 1. / (1. + np.exp(-x))
-def elu(x): return np.where(x > 0, x, np.exp(x) - 1)
+def elu(x): return np.where(x > 0, x, np.expm1(x))
 def leaky_relu(x): return np.where(x >= 0, x, 0.01 * x)
 
 def logsoftmax(x, axis=-1):
