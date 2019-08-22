@@ -266,7 +266,15 @@ def _jaxpr_computation(jaxpr, backend, axis_env, const_vals, freevar_shapes, *ar
   _map(write, jaxpr.invars, map(c.ParameterWithShape, arg_shapes))
   _prefetch_jaxpr_literals(jaxpr)
   for eqn in jaxpr.eqns:
-    eqn.params.pop('backend', None)
+    # For nested jits, the outer jit sets the backend on all inner jits unless
+    # an inner-jit also has a conflicting explicit backend specification.
+    inner_backend = eqn.params.pop('backend', None)
+    if inner_backend and inner_backend != backend:
+      msg = (
+        "Explicit outer-jit backend specification {} must match"
+        "explicit inner-jit backend specification {}.")
+      raise ValueError(msg.format(backend, inner_backend))
+
     if not eqn.restructure:
       in_nodes = list(map(read, eqn.invars))
     else:
