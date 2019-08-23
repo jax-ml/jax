@@ -45,7 +45,7 @@ from . import ad
 
 def identity(x): return x
 
-def shard_args(device_ordinals, assignments, axis_size, args):
+def shard_args(backend, device_ordinals, assignments, axis_size, args):
   """Shard an argument data array arg along its leading axis.
 
   Args:
@@ -74,18 +74,18 @@ def shard_args(device_ordinals, assignments, axis_size, args):
                            else buf.copy_to_device(device_ordinals[r]))
       else:
         for r, buf in enumerate(arg.device_buffers):
-          buffers[r][a] = xla.device_put(x[assignments[r]], ordinals[r])
+          buffers[r][a] = xla.device_put(x[assignments[r]], ordinals[r], backend=backend)
     else:
-      bufs = shard_arg_handlers[type(arg)](arg, device_ordinals, assignments)
+      bufs = shard_arg_handlers[type(arg)](arg, device_ordinals, assignments, backend=backend)
       for r, buf in enumerate(bufs):
         buffers[r][a] = buf
   return buffers
 shard_arg_handlers = {}
 shard_arg_handlers[core.Unit] = \
-    lambda x, ordinals, _: [xla.device_put(core.unit, d) for d in ordinals]
-def _shard_array(x, ordinals, assignments):
+    lambda x, ordinals, _, backend=None: [xla.device_put(core.unit, d, backend=backend) for d in ordinals]
+def _shard_array(x, ordinals, assignments, backend=None):
   nrep = len(ordinals)
-  return (xla.device_put(x[assignments[r]], ordinals[r]) for r in range(nrep))
+  return (xla.device_put(x[assignments[r]], ordinals[r], backend=backend) for r in range(nrep))
 for _t in it.chain(array_types, [xla.DeviceArray]):
   shard_arg_handlers[_t] = _shard_array
 
@@ -167,9 +167,9 @@ def compile_replicated(jaxpr, backend, axis_name, axis_size, consts, *abstract_a
     raise ValueError(msg.format(num_replicas, xb.device_count(backend)))
   axis_env = xla.AxisEnv(num_replicas, [axis_name], [axis_size])
   arg_shapes = list(map(aval_to_xla_shape, abstract_args))
-  built_c = xla.jaxpr_computation(jaxpr, axis_env, consts, (), *arg_shapes)
+  built_c = xla.jaxpr_computation(jaxpr, backend, axis_env, consts, (), *arg_shapes)
   compiled = built_c.Compile(arg_shapes, xb.get_compile_options(num_replicas),
-                             backend=xb.get_backend())
+                             backend=xb.get_backend(backend))
   return compiled, num_replicas
 
 
@@ -344,8 +344,8 @@ class ShardedDeviceArray(ShardedDeviceValue, xla.DeviceArray):
     if self._npy_value is None and type(idx) is int:
       ids = self._ids()
       device_buffer = self.device_buffers[ids[idx]]
-      result_shape = aval_from_xla_shape(device_buffer.shape())
-      handler = xla.result_handler(result_shape)
+      aval = ShapedArray(self.aval.shape[1:], self.aval.dtype)
+      handler = xla.aval_to_result_handler(aval)
       return handler(device_buffer)
     else:
       return super(ShardedDeviceArray, self).__getitem__(idx)
@@ -401,7 +401,7 @@ def xla_pmap_impl(fun, *args, **params):
   return compiled_fun(*args)
 
 @lu.cache
-def parallel_callable(fun, axis_name, axis_size, *avals):
+def parallel_callable(fun, backend, axis_name, axis_size, *avals):
   avals = tuple(map(partial(shard_aval, axis_size), avals))
   pvals = [PartialVal((aval, core.unit)) for aval in avals]
   pval = PartialVal([core.abstract_unit, core.unit])  # dummy value
@@ -427,12 +427,12 @@ def parallel_callable(fun, axis_name, axis_size, *avals):
     results = [handler(None) for handler in handlers]
     return lambda *_: results
   else:
-    compiled, nrep = compile_replicated(jaxpr, axis_name, axis_size, consts, *avals)
+    compiled, nrep = compile_replicated(jaxpr, backend, axis_name, axis_size, consts, *avals)
     device_ordinals = compiled.DeviceOrdinals()
     assignments = assign_shards_to_replicas(nrep, axis_size)
-    handle_args = partial(shard_args, device_ordinals, assignments, axis_size)
+    handle_args = partial(shard_args, backend, device_ordinals, assignments, axis_size)
     handle_outs = _pvals_to_results_handler(axis_size, nrep, out_pvals)
-    return partial(execute_replicated, compiled, nrep, handle_args, handle_outs)
+    return partial(execute_replicated, compiled, backend, nrep, handle_args, handle_outs)
 
 def _pvals_to_results_handler(size, nrep, out_pvals):
   nouts = len(out_pvals)
@@ -453,11 +453,11 @@ def _pval_to_result_handler(size, nrep, pval):
   else:
     return aval_to_result_handler(size, nrep, pv)
 
-def execute_replicated(compiled, nrep, in_handler, out_handler, *args):
-  if nrep > xb.device_count():
+def execute_replicated(compiled, backend, nrep, in_handler, out_handler, *args):
+  if nrep > xb.device_count(backend):
     msg = ("executing pmap computation that requires {} replicas, but only {} "
            "XLA devices are available")
-    raise ValueError(msg.format(nrep, xb.device_count()))
+    raise ValueError(msg.format(nrep, xb.device_count(backend)))
   input_bufs = in_handler(args)
   out_bufs = compiled.ExecutePerReplica(list(input_bufs))
   return out_handler(out_bufs)
@@ -473,7 +473,7 @@ def _xla_pmap_translation_rule(c, jaxpr, axis_env, env_nodes, in_nodes,
                                axis_name, axis_size, backend=None):
   new_env = xla.extend_axis_env(axis_env, axis_name, axis_size)
   in_nodes_sharded = list(map(partial(_xla_shard, c, new_env.sizes), in_nodes))
-  subc = xla.jaxpr_computation(jaxpr, new_env, (),
+  subc = xla.jaxpr_computation(jaxpr, backend, new_env, (),
                                tuple(map(c.GetShape, env_nodes)),
                                *map(c.GetShape, in_nodes_sharded))
   sharded_result = c.Call(subc, env_nodes + in_nodes_sharded)

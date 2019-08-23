@@ -177,6 +177,7 @@ def _while_loop_abstract_eval(*args, **kwargs):
   return kwargs["body_jaxpr"].out_avals
 
 def _while_loop_translation_rule(c, axis_env, *args, **kwargs):
+  backend = kwargs.pop('backend', None)
   cond_jaxpr, body_jaxpr, cond_nconsts, body_nconsts = split_dict(
       kwargs, ["cond_jaxpr", "body_jaxpr", "cond_nconsts", "body_nconsts"])
   cond_consts, body_consts, init_vals = split_list(args, [cond_nconsts, body_nconsts])
@@ -195,7 +196,7 @@ def _while_loop_translation_rule(c, axis_env, *args, **kwargs):
   cond_carry_elts = [cond_c.GetTupleElement(cond_carry, i) for i in range(len(args))]
   x, _, z = split_list(cond_carry_elts, [cond_nconsts, body_nconsts])
   cond_outs = cond_c.Call(
-      xla.jaxpr_computation(cond_jaxpr.jaxpr, axis_env, cond_jaxpr.literals, (),
+      xla.jaxpr_computation(cond_jaxpr.jaxpr, backend, axis_env, cond_jaxpr.literals, (),
                             *_map(cond_c.GetShape, x + z)), x + z)
   pred = cond_c.GetTupleElement(cond_outs, 0)
   if batched:
@@ -209,12 +210,12 @@ def _while_loop_translation_rule(c, axis_env, *args, **kwargs):
   body_carry_elts = [body_c.GetTupleElement(body_carry, i) for i in range(len(args))]
   x, y, z = split_list(body_carry_elts, [cond_nconsts, body_nconsts])
   body_out = body_c.Call(
-      xla.jaxpr_computation(body_jaxpr.jaxpr, axis_env, body_jaxpr.literals, (),
+      xla.jaxpr_computation(body_jaxpr.jaxpr, backend, axis_env, body_jaxpr.literals, (),
                             *_map(body_c.GetShape, y + z)), y + z)
   new_z = [body_c.GetTupleElement(body_out, i) for i in range(len(init_vals))]
   if batched:
     body_cond_outs = body_c.Call(
-        xla.jaxpr_computation(cond_jaxpr.jaxpr, axis_env, cond_jaxpr.literals, (),
+        xla.jaxpr_computation(cond_jaxpr.jaxpr, backend, axis_env, cond_jaxpr.literals, (),
                               *_map(body_c.GetShape, x + z)), x + z)
     body_pred = body_c.GetTupleElement(body_cond_outs, 0)
     new_z = _map(partial(_pred_bcast_select, body_c, body_pred), new_z, z)
@@ -316,6 +317,7 @@ def _cond_abstract_eval(*args, **kwargs):
   return kwargs["true_jaxpr"].out_avals
 
 def _cond_translation_rule(c, axis_env, pred, *args, **kwargs):
+  backend = kwargs.pop("backend", None)
   true_jaxpr, false_jaxpr, true_nconsts, false_nconsts = split_dict(
       kwargs, ["true_jaxpr", "false_jaxpr", "true_nconsts", "false_nconsts"])
   true_nops = len(true_jaxpr.in_avals) - true_nconsts
@@ -327,7 +329,7 @@ def _cond_translation_rule(c, axis_env, pred, *args, **kwargs):
     c = xb.make_computation_builder(name)
     op = c.ParameterWithShape(op_shape)
     ops = [c.GetTupleElement(op, i) for i in range(len(jaxpr.in_avals))]
-    out = c.Call(xla.jaxpr_computation(jaxpr.jaxpr, axis_env, jaxpr.literals, (),
+    out = c.Call(xla.jaxpr_computation(jaxpr.jaxpr, backend, axis_env, jaxpr.literals, (),
                                        *_map(c.GetShape, ops)), ops)
     return c.Build(out)
 

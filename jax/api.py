@@ -143,7 +143,7 @@ def jit(fun, static_argnums=(), device_assignment=None, backend=None):
     args_flat, in_tree = tree_flatten((dyn_args, kwargs))
     _check_args(args_flat)
     flat_fun, out_tree = flatten_fun(f, in_tree)
-    out = xla.xla_call(flat_fun, *args_flat, device_assignment=device_assignment)
+    out = xla.xla_call(flat_fun, *args_flat, device_assignment=device_assignment, backend=backend)
     return tree_unflatten(out_tree(), out)
 
   jitted_name =  "jit({}, static_argnums={})"
@@ -289,7 +289,7 @@ def xla_computation(fun, static_argnums=(), axis_env=None, backend=None):
     pvals = map(pv_like, jax_args)
     jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
     axis_env_ = make_axis_env(xla.jaxpr_replicas(jaxpr))
-    return xla.build_jaxpr(jaxpr, axis_env_, consts,
+    return xla.build_jaxpr(jaxpr, backend, axis_env_, consts,
                            *map(xla.abstractify, jax_args))
   return computation_maker
 
@@ -724,7 +724,7 @@ def pmap(fun, axis_name=None, backend=None):
     axis_size = _pmap_axis_size(args)
     _check_args(args)
     flat_fun, out_tree = flatten_fun(f, in_tree)
-    out = pxla.xla_pmap(flat_fun, *args, axis_name=axis_name, axis_size=axis_size)
+    out = pxla.xla_pmap(flat_fun, *args, axis_name=axis_name, axis_size=axis_size, backend=backend)
     return tree_unflatten(out_tree(), out)
 
   namestr = "pmap({}, axis_name={})".format
@@ -758,7 +758,7 @@ def soft_pmap(fun, axis_name=None, backend=None):
     _check_args(args_flat)
     flat_fun, out_tree = flatten_fun(f, in_tree)
 
-    chunk_size, leftover = divmod(axis_size, pxla.unmapped_device_count())
+    chunk_size, leftover = divmod(axis_size, pxla.unmapped_device_count(backend))
     if chunk_size == 0 and leftover:
       return pmap(fun, axis_name, backend)(*args)  # can map directly onto hardware
     elif leftover:
@@ -771,7 +771,8 @@ def soft_pmap(fun, axis_name=None, backend=None):
     reshaped_args = [_reshape_split(num_chunks, x) for x in args_flat]
     soft_mapped_fun = pxla.split_axis(flat_fun, axis_name, chunk_size)
     reshaped_outs = pxla.xla_pmap(soft_mapped_fun, *reshaped_args,
-                                  axis_name=axis_name, axis_size=num_chunks)
+                                  axis_name=axis_name, axis_size=num_chunks,
+                                  backend=backend)
     outs = [_reshape_merge(out) for out in reshaped_outs]
     return tree_unflatten(out_tree(), outs)
 
@@ -1666,15 +1667,33 @@ def _make_graphviz(fun):
   return graphviz_maker
 
 
+class ShapeDtypeStruct(object):
+  __slots__ = ["shape", "dtype"]
+  def __init__(self, shape, dtype):
+    self.shape = shape
+    self.dtype = dtype
+
 def eval_shape(fun, *args, **kwargs):
-  """Compute the shape of ``fun(*args, **kwargs)`` without incurring any FLOPs.
+  """Compute the shape/dtype of ``fun(*args, **kwargs)`` without any FLOPs.
 
   This utility function is useful for performing shape inference. Its
   input/output behavior is defined by:
 
     def eval_shape(fun, *args, **kwargs):
       out = fun(*args, **kwargs)
-      return jax.tree_util.tree_map(np.shape, out)
+      return jax.tree_util.tree_map(shape_dtype_struct, out)
+
+    def shape_dtype_struct(x):
+      return ShapeDtypeStruct(x.shape, x.dtype)
+
+    class ShapeDtypeStruct(object):
+      __slots__ = ["shape", "dtype"]
+      def __init__(self, shape, dtype):
+        self.shape = shape
+        self.dtype = dtype
+
+  In particular, the output is a pytree of objects that have ``shape`` and
+  ``dtype`` attributes, but nothing else about them is guaranteed by the API.
 
   But instead of applying ``fun`` directly, which might be expensive, it uses
   JAX's abstract interpretation machinery to evaluate the shapes without doing
@@ -1704,16 +1723,20 @@ def eval_shape(fun, *args, **kwargs):
   ...
   >>> A = MyArgArray((2000, 3000), np.float32)
   >>> x = MyArgArray((3000, 1000), np.float32)
-  >>> out_shape = jax.eval_shape(f, A, x)  # no FLOPs performed
-  >>> print(out_shape)
+  >>> out = jax.eval_shape(f, A, x)  # no FLOPs performed
+  >>> print(out.shape)
   (2000, 1000)
+  >>> print(out.dtype)
+  dtype('float32')
   """
   def abstractify(x):
     return ShapedArray(onp.shape(x), onp.result_type(x))
-  args_flat, in_tree =  tree_flatten((args, kwargs))
+  args_flat, in_tree = tree_flatten((args, kwargs))
   fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
   out = pe.abstract_eval_fun(fun.call_wrapped, *map(abstractify, args_flat))
-  return tree_map(onp.shape, tree_unflatten(out_tree(), out))
+  out = [ShapeDtypeStruct(x.shape, x.dtype) for x in out]
+  return tree_unflatten(out_tree(), out)
+
 
 def _custom_implicit_solve(solve, tangent_solve):
   """Define gradients for a function that performs an implicit solve.

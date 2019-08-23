@@ -3298,12 +3298,11 @@ def _reduce_batch_rule(batched_args, batch_dims, computation, jaxpr, consts, dim
 def _reduction_computation(c, jaxpr, backend, consts, init_value):
   shape = c.GetShape(init_value)
   axis_env = xla.AxisEnv(1, [], [])  # no parallel primitives inside reductions
-  c, (out,) = xla._jaxpr_computation(jaxpr, axis_env, consts, (), shape, shape)
+  c, (out,) = xla._jaxpr_computation(jaxpr, backend, axis_env, consts, (), shape, shape)
   return c.Build(out)
 
-reduce_p = standard_reduction_primitive(
-  _reduce_shape_rule, _input_dtype, 'reduce',
-  _reduce_translation_rule)
+reduce_p = standard_reduction_primitive(_reduce_shape_rule, _input_dtype, 'reduce',
+                                        _reduce_translation_rule)
 batching.primitive_batchers[reduce_p] = _reduce_batch_rule
 
 
