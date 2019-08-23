@@ -448,7 +448,7 @@ translations[ad_util.add_jaxvals_p] = add_jaxvals_translation_rule
 def lower_fun(fun, instantiate=False, initial_style=False):
   """Build a translation rule for a traceable function."""
   def f(c, *args, **params):
-    backend = params.get('backend', None)
+    backend = params.pop('backend', None)
     if initial_style:
       axis_env, xla_args = args[0], args[1:]
     else:
