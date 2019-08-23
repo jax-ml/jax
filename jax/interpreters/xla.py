@@ -44,6 +44,9 @@ FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_debug_nans',
                   strtobool(os.getenv('JAX_DEBUG_NANS', "False")),
                   'Add nan checks to every operation.')
+flags.DEFINE_bool('jax_log_compiles',
+                  strtobool(os.getenv('JAX_LOG_COMPILES', "False")),
+                  'Print a message each time a `jit` computation is compiled.')
 
 def _map(f, *xs): return tuple(map(f, *xs))
 def identity(x): return x
@@ -339,6 +342,8 @@ def _xla_call_impl(fun, *args, **params):
 
 @lu.cache
 def _xla_callable(fun, device_assignment, *abstract_args):
+  if FLAGS.jax_log_compiles:
+    print("Compiling {} for args {}.".format(fun.__name__, abstract_args))
   pvals = [pe.PartialVal((aval, core.unit)) for aval in abstract_args]
   with core.new_master(pe.JaxprTrace, True) as master:
     jaxpr, (pvals, consts, env) = pe.trace_to_subjaxpr(fun, master, False).call_wrapped(pvals)

@@ -314,8 +314,6 @@ class ShardedDeviceArray(ShardedDeviceValue, xla.DeviceArray):
     self._npy_value = None
     if not core.skip_checks:
       assert type(aval) is ShapedArray
-      npy_value = self._value
-      assert npy_value.dtype == aval.dtype and npy_value.shape == aval.shape
 
   def _ids(self):
     num_bufs = len(self.device_buffers)
