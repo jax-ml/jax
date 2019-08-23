@@ -32,7 +32,7 @@ from .. import ad_util
 from .. import tree_util
 from .. import linear_util as lu
 from ..abstract_arrays import (ConcreteArray, ShapedArray, make_shaped_array,
-                               array_types)
+                               array_types, raise_to_shaped)
 from ..core import valid_jaxtype, Literal
 from ..util import partial, partialmethod, cache, safe_map, prod, unzip2
 from ..lib import xla_bridge as xb
@@ -44,6 +44,9 @@ FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_debug_nans',
                   strtobool(os.getenv('JAX_DEBUG_NANS', "False")),
                   'Add nan checks to every operation.')
+flags.DEFINE_bool('jax_log_compiles',
+                  strtobool(os.getenv('JAX_LOG_COMPILES', "False")),
+                  'Print a message each time a `jit` computation is compiled.')
 
 def _map(f, *xs): return tuple(map(f, *xs))
 def identity(x): return x
@@ -70,7 +73,7 @@ def aval_to_result_handler(aval):
     raise TypeError("No xla_result_handler for type: {}".format(type(aval)))
 xla_result_handlers = {}
 xla_result_handlers[core.AbstractUnit] = lambda _: lambda _: core.unit
-def array_result_handler(aval): return partial(DeviceArray, aval)
+def array_result_handler(aval): return partial(DeviceArray, raise_to_shaped(aval))
 xla_result_handlers[ShapedArray] = array_result_handler
 xla_result_handlers[ConcreteArray] = array_result_handler
 
@@ -339,6 +342,8 @@ def _xla_call_impl(fun, *args, **params):
 
 @lu.cache
 def _xla_callable(fun, device_assignment, *abstract_args):
+  if FLAGS.jax_log_compiles:
+    print("Compiling {} for args {}.".format(fun.__name__, abstract_args))
   pvals = [pe.PartialVal((aval, core.unit)) for aval in abstract_args]
   with core.new_master(pe.JaxprTrace, True) as master:
     jaxpr, (pvals, consts, env) = pe.trace_to_subjaxpr(fun, master, False).call_wrapped(pvals)
@@ -483,6 +488,7 @@ class DeviceArray(DeviceValue):
     self.device_buffer = device_buffer
     self._npy_value = None
     if not core.skip_checks:
+      assert type(aval) is ShapedArray
       npy_value = self._value
       assert npy_value.dtype == aval.dtype and npy_value.shape == aval.shape
 

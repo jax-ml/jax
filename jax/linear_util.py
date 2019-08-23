@@ -141,6 +141,10 @@ class WrappedFun(object):
     self.stores = stores
     self.params = params
 
+  @property
+  def __name__(self):
+    return getattr(self.f, '__name__', '<unnamed wrapped function>')
+
   def wrap(self, gen, gen_args, out_store):
     return WrappedFun(self.f, ((gen, gen_args),) + self.transforms,
                       (out_store,) + self.stores, self.params)
