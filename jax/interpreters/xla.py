@@ -346,7 +346,7 @@ def eqn_replicas(eqn):
 
 def _xla_call_impl(fun, *args, **params):
   device_assignment = params['device_assignment']
-  backend = params['backend']
+  backend = params.get('backend', None)
   compiled_fun = _xla_callable(fun, device_assignment, backend,
                                *map(abstractify, args))
   try:
