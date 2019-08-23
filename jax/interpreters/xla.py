@@ -32,7 +32,7 @@ from .. import ad_util
 from .. import tree_util
 from .. import linear_util as lu
 from ..abstract_arrays import (ConcreteArray, ShapedArray, make_shaped_array,
-                               array_types)
+                               array_types, raise_to_shaped)
 from ..core import valid_jaxtype, Literal
 from ..util import partial, partialmethod, cache, safe_map, prod, unzip2
 from ..lib import xla_bridge as xb
@@ -70,7 +70,7 @@ def aval_to_result_handler(aval):
     raise TypeError("No xla_result_handler for type: {}".format(type(aval)))
 xla_result_handlers = {}
 xla_result_handlers[core.AbstractUnit] = lambda _: lambda _: core.unit
-def array_result_handler(aval): return partial(DeviceArray, aval)
+def array_result_handler(aval): return partial(DeviceArray, raise_to_shaped(aval))
 xla_result_handlers[ShapedArray] = array_result_handler
 xla_result_handlers[ConcreteArray] = array_result_handler
 
@@ -483,6 +483,7 @@ class DeviceArray(DeviceValue):
     self.device_buffer = device_buffer
     self._npy_value = None
     if not core.skip_checks:
+      assert type(aval) is ShapedArray
       npy_value = self._value
       assert npy_value.dtype == aval.dtype and npy_value.shape == aval.shape
 
