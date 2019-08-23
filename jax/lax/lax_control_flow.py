@@ -305,8 +305,9 @@ def cond(pred, true_operand, true_fun, false_operand, false_fun):
 def _cond_impl(pred, *args, **kwargs):
   true_jaxpr, false_jaxpr, true_nconsts, false_nconsts = split_dict(
       kwargs, ["true_jaxpr", "false_jaxpr", "true_nconsts", "false_nconsts"])
+  true_nops = len(true_jaxpr.in_avals) - true_nconsts
   true_consts, true_ops, false_consts, false_ops = split_list(
-      args, [true_nconsts, len(true_jaxpr.in_avals), false_nconsts])
+      args, [true_nconsts, true_nops, false_nconsts])
 
   if pred:
     return core.jaxpr_as_fun(true_jaxpr)(*(true_consts + true_ops))
@@ -321,7 +322,6 @@ def _cond_translation_rule(c, axis_env, pred, *args, **kwargs):
   true_jaxpr, false_jaxpr, true_nconsts, false_nconsts = split_dict(
       kwargs, ["true_jaxpr", "false_jaxpr", "true_nconsts", "false_nconsts"])
   true_nops = len(true_jaxpr.in_avals) - true_nconsts
-  false_nops = len(false_jaxpr.in_avals) - false_nconsts
   true_consts, true_ops, false_consts, false_ops = split_list(
       args, [true_nconsts, true_nops, false_nconsts])
 
