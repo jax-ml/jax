@@ -77,7 +77,7 @@ xla_result_handlers[ConcreteArray] = array_result_handler
 def device_put(x, device_num=0, backend=None):
   x = canonicalize_dtype(x)
   try:
-    return device_put_handlers[type(x)](x, device_num, backend)
+    return device_put_handlers[type(x)](x, device_num, backend=backend)
   except KeyError:
     raise TypeError("No device_put handler for type: {}".format(type(x)))
 device_put_handlers = {}
@@ -670,7 +670,7 @@ class DeviceConstant(DeviceArray):
   def constant_handler(c, constant_instance, canonicalize_types=True):
     assert False
 
-def _instantiate_device_constant(const, device_num=0, cutoff=1e6, backend=None):
+def _instantiate_device_constant(const, device_num=0, backend=None, cutoff=1e6):
   # dispatch an XLA Computation to build the constant on the device if it's
   # large, or alternatively build it on the host and transfer it if it's small
   assert isinstance(const, DeviceConstant)
