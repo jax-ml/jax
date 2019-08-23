@@ -31,17 +31,17 @@ def mask_subtrace(master, shape_env, in_vals, shape_exprs):
   out_vals, out_shapes = unzip2((t.val, t.shape_expr) for t in out_tracers)
   yield out_vals, out_shapes
 
-class Shape(object):
+class ShapeExpr(object):
   def __init__(self, *shape):
     assert all(isinstance(s, (int, str)) for s in shape)
     self.shape = tuple(shape)
   def __iter__(self):
     return iter(self.shape)
   def __repr__(self):
-    return 'Shape({})'.format(repr(self.shape))
+    return 'ShapeExpr({})'.format(repr(self.shape))
   __str__ = __repr__
   def __eq__(self, other):
-    return type(other) is Shape and self.shape == other.shape
+    return type(other) is ShapeExpr and self.shape == other.shape
 
 class MaskTracer(Tracer):
   __slots__ = ["val", "shape_expr", "shape_env"]
@@ -70,10 +70,10 @@ class MaskTracer(Tracer):
 
 class MaskTrace(Trace):
   def pure(self, val):
-    return MaskTracer(self, None, val, Shape(*val.shape))
+    return MaskTracer(self, None, val, ShapeExpr(*val.shape))
 
   def lift(self, val):
-    return MaskTracer(self, None, val, Shape(*val.shape))
+    return MaskTracer(self, None, val, ShapeExpr(*val.shape))
 
   def sublift(self, val):
     return MaskTracer(self, val.shape_env, val.val, val.shape_expr)
@@ -101,7 +101,7 @@ def reduce_sum_masking_rule(shape_env, vals, shape_exprs, axes, input_shape):
   masked_val = lax.select(mask, val, lax.zeros_like_array(val))
   out_val = lax.reduce_sum_p.bind(masked_val, axes=axes,
                                   input_shape=masked_val.shape)
-  out_shape = Shape(*(d for i, d in enumerate(in_shape) if i not in axes))
+  out_shape = ShapeExpr(*(d for i, d in enumerate(in_shape) if i not in axes))
   return out_val, out_shape
 
 masking_rules[lax.reduce_sum_p] = reduce_sum_masking_rule
