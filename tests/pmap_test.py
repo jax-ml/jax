@@ -657,6 +657,20 @@ class PmapTest(jtu.JaxTestCase):
 
     multi_step_pmap(np.zeros((device_count,)), count=1)
 
+  def testShardedDeviceArrayGetItem(self):
+    f = lambda x: 2 * x
+    f = pmap(f, axis_name='i')
+
+    shape = (xla_bridge.device_count(), 4)
+    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+
+    y = f(x)
+    self.assertIsInstance(y, np.ndarray)
+    self.assertIsInstance(y, pxla.ShardedDeviceArray)
+
+    z = y[0]  # doesn't crash
+    self.assertAllClose(z, 2 * x[0], check_dtypes=False)
+
 
 if __name__ == '__main__':
   absltest.main()

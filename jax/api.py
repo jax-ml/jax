@@ -620,7 +620,7 @@ def _flatten_axes(treedef, axis_tree):
 
 # TODO(mattjj): remove this when jaxlib is updated past 0.1.25
 def _replace_nones(tuptree):
-  if type(tuptree) is tuple:
+  if type(tuptree) in (list, tuple):
     return tuple(map(_replace_nones, tuptree))
   else:
     return tuptree if tuptree is not None else _none_proxy
