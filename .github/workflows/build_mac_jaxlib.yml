@@ -28,6 +28,6 @@ jobs:
     - uses: actions/setup-python@v1
       with:
         python-version: 3.7
-    - run: python -m pip install --upgrade pyenv
+    - run: brew install pyenv
     - run: brew install pyenv-virtualenv
     - run: build/build_jaxlib_wheels_macos.sh
