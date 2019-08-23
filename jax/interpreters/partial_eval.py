@@ -25,10 +25,10 @@ from .. import core
 from .. import linear_util as lu
 from ..abstract_arrays import ShapedArray, ConcreteArray
 from ..linear_util import thunk, transformation, transformation_with_aux
-from ..util import unzip2, safe_zip, safe_map, toposort, partial
+from ..util import unzip2, safe_zip, safe_map, toposort, partial, split_list
 from ..core import (Trace, Tracer, new_master, Jaxpr, JaxprEqn, Literal,
-                    get_aval, pack, AbstractValue, AbstractTuple, unit, unitvar,
-                    Primitive, call_p, TypedJaxpr)
+                    get_aval, AbstractValue, unit, unitvar, abstract_unit,
+                    Primitive, call_p, TypedJaxpr, new_jaxpr_eqn)
 
 map = safe_map
 zip = safe_zip
@@ -36,15 +36,11 @@ def identity(x): return x
 
 # A partial value (pval) is modeled as a pair (pv, const), as per
 #   type PVal = (PV, Const)
-#   data PV = NonePV | AbstractPV AbstractValue | JaxprTracerTuple [PV]
+#   data PV = NonePV | AbstractPV AbstractValue
 #   type Const = MaybeTraced JaxType
 # where the NonePV arm indicates a known (constant) value, the AbstractPV arm
-# indicates an unknown value, and the JaxprTracerTuple indicates a finer-grained
-# representation that might be a mixture.
-# There are two additional invariants:
-#   1. when the pv is a JaxprTracerTuple, then the const is a JaxTuple of the
-#      same length (or a traced version);
-#   2. when the pv is an AbstractValue, then the const must be unit.
+# indicates an unknown value.
+# Additionally, when the pv is an AbstractValue, then the const must be unit.
 
 
 class JaxprTrace(Trace):
@@ -79,8 +75,6 @@ class JaxprTrace(Trace):
     pv, const = tracer.pval
     if isinstance(pv, AbstractValue):
       return tracer
-    elif isinstance(pv, JaxprTracerTuple):
-      return pack(map(lambda t: self.instantiate_const(self.full_raise(t)), tracer))
     elif pv is None:
       if type(tracer.recipe) is Literal:
         return self.new_instantiated_literal(tracer.recipe.val)
@@ -91,8 +85,7 @@ class JaxprTrace(Trace):
 
   def process_primitive(self, primitive, tracers, params):
     if primitive in custom_partial_eval_rules:
-      partial_eval = custom_partial_eval_rules[primitive]
-      return partial_eval(self, *tracers, **params)
+      return custom_partial_eval_rules[primitive](self, *tracers, **params)
     else:
       pvs, consts = unzip2(t.pval for t in tracers)
       if all(pv is None for pv in pvs):
@@ -100,101 +93,94 @@ class JaxprTrace(Trace):
       tracers = map(self.instantiate_const, tracers)
       avals = [t.aval for t in tracers]
       out_aval = primitive.abstract_eval(*avals, **params)
-      eqn = JaxprEqn(tracers, None, primitive, (), False, False, params)
-      return JaxprTracer(self, PartialVal((out_aval, unit)), eqn)
-
-  def pack(self, tracers):
-    eqn = JaxprEqn(tracers, None, core.pack_p, (), False, False, {})
-    pval = pack_pvals([t.pval for t in tracers])
-    return JaxprTracer(self, pval, eqn)
+      # TODO(dougalm): think about whether these ref cycles will leak memory
+      if primitive.multiple_results:
+        out_tracers = [JaxprTracer(self, PartialVal((aval, unit)), None)
+                       for aval in out_aval]
+        eqn = new_jaxpr_eqn(tracers, out_tracers, primitive, (), params)
+        for t in out_tracers: t.recipe = eqn
+        return out_tracers
+      else:
+        out_tracer = JaxprTracer(self, PartialVal((out_aval, unit)), None)
+        out_tracer.recipe = new_jaxpr_eqn(tracers, [out_tracer], primitive, (), params)
+        return out_tracer
 
   def process_call(self, call_primitive, f, tracers, params):
     if call_primitive in map_primitives:
       return self.process_map(call_primitive, f, tracers, params)
     in_pvs, in_consts = unzip2([t.pval for t in tracers])
     fun, aux = partial_eval(f, self, in_pvs)
-    out_pv_const, consts = call_primitive.bind(fun, *in_consts, **params)
-    out_pv, jaxpr, env = aux()
+    out_flat = call_primitive.bind(fun, *in_consts, **params)
+    out_pvs, jaxpr, env = aux()
+    out_pv_consts, consts = split_list(out_flat, [len(out_flat)-len(jaxpr.constvars)])
     const_tracers = map(self.new_instantiated_const, consts)
     bound_subjaxpr = (jaxpr, const_tracers, map(self.full_raise, env))
-    eqn = JaxprEqn(tracers, None, call_primitive, (bound_subjaxpr,),
-                   False, False, params)
-    return JaxprTracer(self, PartialVal((out_pv, out_pv_const)), eqn)
+    out_tracers = [JaxprTracer(self, PartialVal((out_pv, out_pv_const)), None)
+                   for out_pv, out_pv_const in zip(out_pvs, out_pv_consts)]
+    eqn = new_jaxpr_eqn(tracers, out_tracers, call_primitive, (bound_subjaxpr,), params)
+    for t in out_tracers:
+      t.recipe = eqn
+    return out_tracers
 
   def process_map(self, map_primitive, f, tracers, params):
     in_pvs, in_consts = unzip2([t.pval for t in tracers])
-    reduced_pvs = map(remove_axis_from_pv, in_pvs)
+    reduced_pvs = [None if pv is None else _mapped_aval(pv) for pv in in_pvs]
     fun, aux = partial_eval(f, self, reduced_pvs)
-    out_const, consts = map_primitive.bind(fun, *in_consts, **params)
-    out_pv_reduced, jaxpr, env = aux()
-    out_pv = add_axis_to_pv(params['axis_size'], out_pv_reduced)
+    out_flat = map_primitive.bind(fun, *in_consts, **params)
+    out_pvs_reduced, jaxpr, env = aux()
+    out_pv_consts, consts = split_list(out_flat, [len(out_flat)-len(jaxpr.constvars)])
+    out_pvs = [None if pv is None else _unmapped_aval(params['axis_size'], pv)
+               for pv in out_pvs_reduced]
     const_tracers = map(self.new_instantiated_const, consts)
-    jaxpr_converted = jaxpr.copy()
-    jaxpr_converted.constvars = []
-    jaxpr_converted.invars = list(it.chain(jaxpr.constvars, jaxpr.invars))
-    invars = tuple(it.chain(const_tracers, tracers))
-    bound_subjaxpr = (jaxpr_converted, (), map(self.full_raise, env))
-    eqn = JaxprEqn(invars, None, map_primitive, (bound_subjaxpr,),
-                   False, False, params)
-    return JaxprTracer(self, PartialVal((out_pv, out_const)), eqn)
+    lifted_jaxpr = closure_convert_jaxpr(jaxpr)
+    bound_subjaxpr = (lifted_jaxpr, (), map(self.full_raise, env))
+    out_tracers = [JaxprTracer(self, PartialVal((out_pv, out_pv_const)), None)
+                   for out_pv, out_pv_const in zip(out_pvs, out_pv_consts)]
+    eqn = new_jaxpr_eqn(tuple(it.chain(const_tracers, tracers)),
+                        out_tracers, map_primitive, (bound_subjaxpr,), params)
+    for t in out_tracers:
+      t.recipe = eqn
+    return out_tracers
 
-  def post_process_call(self, call_primitive, out_tracer, params):
-    # TODO(mattjj): post_process_map
-    jaxpr, consts, env = tracers_to_jaxpr([], out_tracer)
-    out_pv, out_pv_const = out_tracer.pval
-    out = pack((out_pv_const, pack(consts)))
+  def post_process_call(self, call_primitive, out_tracers, params):
+    jaxpr, consts, env = tracers_to_jaxpr([], out_tracers)
+    out_pvs, out_pv_consts = unzip2(t.pval for t in out_tracers)
+    out = out_pv_consts + consts
+    del consts, out_pv_consts
     master = self.master
     def todo(x):
-      out_pv_const, consts = x
+      n = len(jaxpr.outvars)
+      out_pv_consts, consts = x[:n], x[n:]
       trace = JaxprTrace(master, core.cur_sublevel())
       const_tracers = map(trace.new_instantiated_const, consts)
       env_tracers = map(trace.full_raise, env)
       bound_subjaxpr = (jaxpr, const_tracers, env_tracers)
-      eqn = JaxprEqn([], None, call_primitive, (bound_subjaxpr,),
-                     False, False, params)
-      return JaxprTracer(trace, PartialVal((out_pv, out_pv_const)), eqn)
-
+      out_tracers = [JaxprTracer(trace, PartialVal((out_pv, out_pv_const)), None)
+                     for out_pv, out_pv_const in zip(out_pvs, out_pv_consts)]
+      eqn = new_jaxpr_eqn([], out_tracers, call_primitive, (bound_subjaxpr,), params)
+      for t in out_tracers:
+        t.recipe = eqn
+      return out_tracers
     return out, todo
 
-map_primitives = set()
-
-
-def remove_axis_from_pv(pv):
-  if pv is None:
-    return pv
-  elif isinstance(pv, AbstractValue):
-    return remove_axis_from_aval(pv)
-  elif type(pv) is JaxprTracerTuple:
-    return JaxprTracerTuple(map(remove_axis_from_pv, pv))
-  else:
-    raise TypeError(type(pv))
-
-def remove_axis_from_aval(aval):
-  if type(aval) is AbstractTuple:
-    return AbstractTuple(map(remove_axis_from_aval, aval))
+def _mapped_aval(aval):
+  if aval is core.abstract_unit:
+    return aval
   elif isinstance(aval, ShapedArray):
     # might be raising abstraction level from Concrete here
     return ShapedArray(aval.shape[1:], aval.dtype)
   else:
-    raise NotImplementedError  # TODO(mattjj)
+    raise TypeError(aval)
 
-def add_axis_to_pv(size, pv):
-  if pv is None:
-    return pv
-  elif isinstance(pv, AbstractValue):
-    return add_axis_to_aval(size, pv)
-  elif type(pv) is JaxprTracerTuple:
-    return JaxprTracerTuple(map(partial(add_axis_to_pv, size), pv))
-  else:
-    raise TypeError(type(pv))
-
-def add_axis_to_aval(size, aval):
-  if type(aval) is AbstractTuple:
-    return AbstractTuple(map(partial(add_axis_to_aval, size), aval))
+def _unmapped_aval(size, aval):
+  if aval is core.abstract_unit:
+    return aval
   elif isinstance(aval, ShapedArray):
     return ShapedArray((size,) + aval.shape, aval.dtype)
   else:
-    raise NotImplementedError  # TODO(mattjj)
+    raise TypeError(aval)
+
+map_primitives = set()
 
 
 def partial_eval(f, trace, pvs):
@@ -205,19 +191,20 @@ def partial_eval(f, trace, pvs):
 @transformation_with_aux
 def partial_eval_wrapper(avals, *consts):
   py_args = (map(PartialVal, zip(avals, consts)),)
-  jaxpr, (out_pval, consts, env) = yield py_args, {}
-  out_pv, out_const = out_pval
-  out = pack((out_const, pack(consts)))
-  yield out, (out_pv, jaxpr, env)
+  jaxpr, (out_pvals, consts, env) = yield py_args, {}
+  out_pvs, out_consts = unzip2(out_pvals)
+  out = tuple(out_consts) + tuple(consts)  # TODO: can consts be traced?
+  yield out, (out_pvs, jaxpr, env)
 
 
 def abstract_eval_fun(fun, *avals, **params):
   pvals_in = [PartialVal((a, unit)) for a in avals]
-  _, pval_out, _ = trace_to_jaxpr(lu.wrap_init(fun, params), pvals_in,
+  _, pvals_out, _ = trace_to_jaxpr(lu.wrap_init(fun, params), pvals_in,
                                   instantiate=True)
-  aval_out, _ = pval_out
-  assert isinstance(aval_out, AbstractValue)  # instantiate=True
-  return aval_out
+  avals_out, _ = unzip2(pvals_out)
+  for aval_out in avals_out:
+    assert isinstance(aval_out, AbstractValue)  # instantiate=True
+  return avals_out
 
 
 class JaxprTracer(Tracer):
@@ -251,7 +238,7 @@ class JaxprTracer(Tracer):
 
   def ispure(self):
     pv, _ = self.pval
-    return pv is None
+    return pv is None  # or pv is core.abstract_unit
 
   def full_lower(self):
     if self.ispure():
@@ -259,28 +246,6 @@ class JaxprTracer(Tracer):
       return core.full_lower(const)
     else:
       return self
-
-  def unpack(self):
-    if type(self.recipe) is JaxprEqn and self.recipe.primitive is core.pack_p:
-      return tuple(self.recipe.invars)
-
-    pv, const = self.pval
-    if isinstance(pv, (AbstractValue, JaxprTracerTuple)):
-      n = len(pv)
-      if isinstance(pv, AbstractValue):
-        const = [unit for _ in range(n)]
-      key = object()
-      eqn = JaxprEqn([self], [None]*n, core.identity_p, (), False, True, {})
-      def child_tracer(i, pval, c):
-        d = Destructuring(i, eqn, key)
-        return JaxprTracer(self.trace, PartialVal((pval, c)), d).full_lower()
-      return map(child_tracer, range(n), pv, const)
-    elif pv is None:
-      return const
-    else:
-      raise TypeError(pv)
-
-class JaxprTracerTuple(tuple): pass
 
 Destructuring = namedtuple('Destructuring', ['i', 'eqn', 'key'])
 
@@ -292,23 +257,16 @@ class PartialVal(tuple):
       assert isinstance(pv, valid_pv_types), xs
       assert isinstance(const, core.Tracer) or core.valid_jaxtype(const), xs
       # invariant checks
-      if type(pv) is JaxprTracerTuple:
-        assert len(pv) == len(const), xs
       if isinstance(pv, AbstractValue):
         assert const == core.unit, xs
     return tuple.__new__(cls, xs)
 
-valid_pv_types = (AbstractValue, JaxprTracerTuple, type(None))
-
-
-abstract_unit = core.AbstractTuple()
+valid_pv_types = (AbstractValue, type(None))
 
 def merge_pvals(val, pval):
   pv, const = pval
   if isinstance(pv, AbstractValue):
     return val
-  elif isinstance(pv, JaxprTracerTuple):
-    return pack(map(merge_pvals, val, zip(pv, const)))
   elif pv is None:
     return const
   else:
@@ -334,26 +292,7 @@ def join_pvals(pval1, pval2):
     aval = core.lattice_join(pv1, pv2)
     return PartialVal((aval, unit))  # neither is known
   else:
-    # the pvals are tuples with some mixtures of known/unknown
-    assert isinstance(pv1, JaxprTracerTuple) or isinstance(pv2, JaxprTracerTuple)
-    def explode(pv, const):
-      if isinstance(pv, AbstractValue):
-        assert const == core.unit
-        const = [core.unit] * len(pv)
-      elif pv is None:
-        pv = [None] * len(const)
-      else:
-        assert isinstance(pv, JaxprTracerTuple)
-      return pv, const
-    pv1, const1 = explode(pv1, const1)
-    pv2, const2 = explode(pv2, const2)
-    pvals1, pvals2 = zip(pv1, const1), zip(pv2, const2)
-    join_pvs, join_consts = unzip2(map(join_pvals, pvals1, pvals2))
-    if all(isinstance(pv, AbstractValue) for pv in join_pvs):
-      assert all(const == core.unit for const in join_consts)
-      return PartialVal((AbstractTuple(join_pvs), core.unit))
-    else:
-      return PartialVal((JaxprTracerTuple(join_pvs), pack(join_consts)))
+    raise TypeError((pval1, pval2))
 
 def as_abstract_val(pv):
   if isinstance(pv, AbstractValue):
@@ -366,42 +305,21 @@ def as_abstract_val(pv):
 def partial_val_aval(pv, const):
   if isinstance(pv, AbstractValue):
     return pv
-  elif isinstance(pv, JaxprTracerTuple):
-    return AbstractTuple(map(partial_val_aval, pv, const))
   elif pv is None:
     return get_aval(const)
   else:
     raise TypeError(pv)
-
-def pack_pvals(pvals):
-  pvs, consts = unzip2(pvals)
-  if all(pv is None for pv in pvs):
-    return PartialVal((None, pack(consts)))
-  elif all(isinstance(pv, AbstractValue) for pv in pvs):
-    pv_out = AbstractTuple(pvs)
-    return PartialVal((pv_out, unit))
-  else:
-    pv_out = JaxprTracerTuple(pvs)
-    return PartialVal((pv_out, pack(consts)))
-
-
-def abstractify(x):
-  return PartialVal((core.concrete_aval(x), unit))
-
-def trace_unwrapped_to_jaxpr(fun, pvals, instantiate, **kwargs):
-  return trace_to_jaxpr(lu.wrap_init(fun, kwargs), pvals,
-                        instantiate=instantiate)
 
 def trace_to_jaxpr(fun, pvals, **kwargs):
   """Traces a function, given abstract inputs, to a jaxpr."""
   instantiate = kwargs.pop('instantiate', False)
   with new_master(JaxprTrace) as master:
     fun = trace_to_subjaxpr(fun, master, instantiate)
-    jaxpr, (out_pval, consts, env) = fun.call_wrapped(pvals)
+    jaxpr, (out_pvals, consts, env) = fun.call_wrapped(pvals)
     assert not env
     del master
 
-  return jaxpr, out_pval, consts
+  return jaxpr, out_pvals, consts
 
 @transformation
 def trace_to_subjaxpr(master, instantiate, pvals):
@@ -409,59 +327,53 @@ def trace_to_subjaxpr(master, instantiate, pvals):
   trace = JaxprTrace(master, core.cur_sublevel())
   in_tracers = map(trace.new_arg, pvals)
   ans = yield in_tracers, {}
-  out_tracer = trace.full_raise(ans)
-  out_tracer = instantiate_const_at(trace, instantiate, out_tracer)
-  out_tracer = trace.full_raise(out_tracer)  # instantiation (unpack) can lower
-  jaxpr, consts, env = tracers_to_jaxpr(in_tracers, out_tracer)
-  out_pval = out_tracer.pval
-  del trace, in_tracers, out_tracer
-  yield jaxpr, (out_pval, consts, env)
+  instantiate = [instantiate] * len(ans) if type(instantiate) is bool else instantiate
+  out_tracers = map(trace.full_raise, map(core.full_lower, ans))
+  out_tracers = map(partial(instantiate_const_at, trace), instantiate, out_tracers)
+  jaxpr, consts, env = tracers_to_jaxpr(in_tracers, out_tracers)
+  out_pvals = [t.pval for t in out_tracers]
+  del trace, in_tracers, out_tracers
+  yield jaxpr, (out_pvals, consts, env)
 
 def instantiate_const_at(trace, instantiate, tracer):
-  t = type(instantiate)
-  if t is tuple:
-    return pack(map(partial(instantiate_const_at, trace), instantiate, tracer))
-  elif t is bool:
-    if instantiate:
-      return trace.instantiate_const(trace.full_raise(tracer))
-    else:
-      return tracer
+  assert type(instantiate) is bool
+  if instantiate:
+    return trace.instantiate_const(trace.full_raise(tracer))
   else:
-    raise TypeError(t)
+    return tracer
 
 
 FreeVar = namedtuple('FreeVar', ['val'])
 ConstVar = namedtuple('ConstVar', ['val'])
 LambdaBinding = namedtuple('LambdaBinding', [])
 
-def eqn_tracer_to_var(var, outvars, eqn):
-  invars, _, primitive, bound_subjaxprs, restructure, destructure, params = eqn
-  if not restructure:
-    invars = map(var, invars)
-  else:
-    invars = [tuple(map(var, v)) if type(v) is tuple else var(v)
-              for v in invars]
+def eqn_tracer_to_var(var, eqn):
+  _, in_tracers, out_tracers, primitive, bound_subjaxprs, params = eqn
+  invars  = map(var, in_tracers)
+  outvars = map(var, out_tracers)
   new_bound_subjaxprs = [(j, map(var, c), map(var, f))
                          for j, c, f in bound_subjaxprs]
-  return JaxprEqn(invars, outvars, primitive,
-                  new_bound_subjaxprs, restructure, destructure, params)
+  return new_jaxpr_eqn(invars, outvars, primitive, new_bound_subjaxprs, params)
 
 
-def tracers_to_jaxpr(in_tracers, out_tracer):
+def tracers_to_jaxpr(in_tracers, out_tracers):
   newvar = gensym('')
   t_to_var = defaultdict(newvar)
   var = lambda t: t_to_var[id(t)]
-  sorted_tracers = toposort(out_tracer)
+  sorted_tracers = toposort(out_tracers)
   invars = map(var, in_tracers)
   eqns = []
   env = {}
   consts = {}
   const_to_var = defaultdict(newvar)
   destructuring_vars = {}
+  processed_eqns = set()
   for t in sorted_tracers:
     recipe = t.recipe
     if isinstance(recipe, JaxprEqn):
-      eqns.append(eqn_tracer_to_var(var, [var(t)], recipe))
+      if recipe.eqn_id not in processed_eqns:
+        eqns.append(eqn_tracer_to_var(var, recipe))
+        processed_eqns.add(recipe.eqn_id)
     elif isinstance(recipe, LambdaBinding):
       assert any(t is in_tracer for in_tracer in in_tracers)
       assert in_tracers, "Lambda binding with no args"
@@ -472,15 +384,6 @@ def tracers_to_jaxpr(in_tracers, out_tracer):
       consts[v] = recipe.val
     elif isinstance(recipe, Literal):
       t_to_var[id(t)] = recipe
-    elif isinstance(recipe, Destructuring):
-      i, eqn, key = recipe
-      if key not in destructuring_vars:
-        outvars = [newvar() for _ in eqn.outvars]
-        eqns.append(eqn_tracer_to_var(var, outvars, eqn))
-        destructuring_vars[key] = outvars
-      else:
-        outvars = destructuring_vars[key]
-      t_to_var[id(t)] = outvars[i]
     elif recipe is unit:
       t_to_var[id(t)] = unitvar
     else:
@@ -488,8 +391,9 @@ def tracers_to_jaxpr(in_tracers, out_tracer):
 
   env_vars, env_vals = unzip2(env.items())
   const_vars, const_vals = unzip2(consts.items())
-  jaxpr = Jaxpr(const_vars, env_vars, invars, var(out_tracer), eqns)
-  core.skip_checks or core.check_jaxpr(jaxpr)
+  jaxpr = Jaxpr(const_vars, env_vars, invars, list(map(var, out_tracers)), eqns)
+  # core.skip_checks or core.check_jaxpr(jaxpr)
+  core.check_jaxpr(jaxpr)
   return jaxpr, const_vals, env_vals
 
 
@@ -514,146 +418,56 @@ class Var(object):
 
 def eqn_parents(eqn):
   subjaxpr_tracers = [it.chain(c, f) for _, c, f in eqn.bound_subjaxprs]
-  if not eqn.restructure:
-    return list(it.chain(eqn.invars,  *subjaxpr_tracers))
-  else:
-    invars = []
-    for v in eqn.invars:
-      if type(v) is tuple:
-        invars.extend(v)
-      else:
-        invars.append(v)
-    return list(it.chain(invars, *subjaxpr_tracers))
+  return list(it.chain(eqn.invars,  *subjaxpr_tracers))
 
-
-def unzip_tracer_tuple(pvals):
-  pvs, consts = unzip2(pvals)
-  return PartialVal((JaxprTracerTuple(pvs), pack(consts)))
-
-def as_pval(aval, is_unknown, val):
-  t = type(is_unknown)
-  if t is tuple:
-    return unzip_tracer_tuple(map(as_pval, aval, is_unknown, val))
-  elif t is bool:
-    if is_unknown:
-      return PartialVal((aval, core.unit))
-    else:
-      return PartialVal((None, val))
-  else:
-    raise TypeError(t)
-
-def as_pval2(aval, is_unknown):
-  t = type(is_unknown)
-  if t is tuple:
-    return unzip_tracer_tuple(map(as_pval2, aval, is_unknown))
-  elif t is bool:
-    if is_unknown:
-      return PartialVal((core.AbstractTuple(()), core.unit))
-    else:
-      return PartialVal((aval, core.unit))
-  else:
-    raise TypeError(t)
-
-def unknown(x):
-  if x is None:
-    return False
-  elif type(x) is JaxprTracerTuple:
-    return tuple(map(unknown, x))
-  elif isinstance(x, core.AbstractValue):
-    return True
-  else:
-    raise TypeError(type(x))
-
-def _closure_convert_jaxpr(jaxpr):
+def closure_convert_jaxpr(jaxpr):
   core.skip_checks or core.check_jaxpr(jaxpr)
-  lifted_jaxpr = jaxpr.copy()
-  lifted_jaxpr.constvars = ()
-  lifted_jaxpr.invars = [tuple(jaxpr.constvars)] + list(jaxpr.invars)
+  lifted_jaxpr = Jaxpr(constvars=(), freevars=jaxpr.freevars,
+                       invars=jaxpr.constvars + jaxpr.invars,
+                       outvars=jaxpr.outvars, eqns=jaxpr.eqns)
   core.skip_checks or core.check_jaxpr(lifted_jaxpr)
   return lifted_jaxpr
 
-def _unpack_eqn(invar, outvars):
-  return core.JaxprEqn([invar], outvars, core.identity_p, (), False, True, {})
-
-def _pack_eqn(invars, outvar):
-  return core.JaxprEqn(invars, [outvar], core.pack_p, (), False, False, {})
-
-
-def partial_eval_jaxpr(jaxpr, second_components, instantiate):
-  # jaxpr :: d -> c -> a -> (c, b)
+def partial_eval_jaxpr(jaxpr, unknowns, instantiate):
   f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
 
   cell = []
-  # we do some final-style output munging to place residuals
-  # fun :: d1 -> c1 -> a1 -> (c1, (b1, res))
   def fun(*vals):
-    pvals = map(as_pval, jaxpr.in_avals, second_components, vals)
-    jaxpr_2, out_pval, consts_2 = trace_to_jaxpr(f, pvals, instantiate=instantiate)
-    out_pv, out_const = out_pval
-    out_pv = (None, None) if out_pv is None else out_pv
-    out_const = (core.unit, core.unit) if out_const is core.unit else out_const
-    out_pv_c, out_pv_b = out_pv
-    out_const_c, out_const_b = out_const
-    cell.append((out_pv_c, out_pv_b, jaxpr_2))
-    return pack((out_const_c, pack((out_const_b, pack(consts_2)))))
+    pvals = [PartialVal((aval, unit)) if uk else PartialVal((None, val))
+             for aval, val, uk in zip(jaxpr.in_avals, vals, unknowns)]
+    jaxpr_2, out_pvals_2, consts_2 = trace_to_jaxpr(f, pvals, instantiate=instantiate)
+    out_pvs_2, out_consts_2 = unzip2(out_pvals_2)
+    cell.append((out_pvs_2, jaxpr_2, len(consts_2)))
+    return out_consts_2 + consts_2
 
-  pvals = map(as_pval2, jaxpr.in_avals, second_components)
-  jaxpr_1, out_pval, consts_1 = trace_to_jaxpr(
-      lu.wrap_init(fun), pvals, instantiate=True)
-  out_pv_c, out_pv_b, jaxpr_2 = cell[0]
+  pvals = [PartialVal((abstract_unit, unit)) if uk else PartialVal((aval, unit))
+           for aval, uk in zip(jaxpr.in_avals, unknowns)]
+  jaxpr_1, out_pvals, consts_1 = trace_to_jaxpr(lu.wrap_init(fun), pvals, instantiate=True)
+  (out_pvs_2, jaxpr_2, num_res), = cell
+  assert len(jaxpr_2.constvars) == num_res
 
-  #               jaxpr_1 :: d1 -> c1 -> a1 -> (c1, (b1, res))
-  #               jaxpr_2 :: res | d2 -> c2 -> a2 -> (c2, b2)
-  #        lifted_jaxpr_2 :: res -> d2 -> c2 -> a2 -> (c2, b2)
-  # doubly_lifted_jaxpr_2 :: d2 -> c2 -> (a2, res) -> (c2, b2)
-  lifted_jaxpr_2 = _closure_convert_jaxpr(jaxpr_2)
-  doubly_lifted_jaxpr_2 = _move_and_pair_arg(lifted_jaxpr_2)
-  sc_out = sc_c_out, sc_b_out = unknown(out_pv_c), unknown(out_pv_b)
+  #   jaxpr :: a -> b
+  # jaxpr_1 :: a1 -> [b1, res]
+  # jaxpr_2 :: res | a2 -> b2
+  # jaxpr_2 :: [a2, res] -> b2
+  jaxpr_2 = closure_convert_jaxpr(jaxpr_2)
+  jaxpr_2.invars = jaxpr_2.invars[num_res:] + jaxpr_2.invars[:num_res]
+  uk_out = [pv is not None for pv in out_pvs_2]
 
-  in_avals_1, in_avals_2 = unzip2(map(_split_avals, second_components,
-                                      jaxpr.in_avals))
-  out_aval_1, out_aval_2 = _split_avals(sc_out, jaxpr.out_aval)
+  in_avals_1, in_avals_2 = unzip2(map(_split_aval, unknowns, jaxpr.in_avals))
+  out_avals_1, out_avals_2 = unzip2(map(_split_aval, uk_out, jaxpr.out_avals))
+  # out_avals_1 and in_avals_2 need the residuals added
+  out_pvs, _ = unzip2(out_pvals)
+  res_avals = out_pvs[len(jaxpr.out_avals):]
+  assert len(res_avals) == num_res
+  out_avals_1 = out_avals_1 + res_avals
+  in_avals_2 = in_avals_2 + res_avals
 
-  # in_avals_1 is already (d1, c1, a1), and out_aval_2 is already (c2, b2), but
-  # we must munge:
-  # 1. form out_aval_1 to include the residuals as (c1, (b1, res))
-  # 2. form in_avals_2 to include the residuals as (d2, c2, (a2, res))
+  typed_jaxpr_1 = TypedJaxpr(jaxpr_1, consts_1, in_avals_1, out_avals_1)
+  typed_jaxpr_2 = TypedJaxpr(jaxpr_2, (), in_avals_2, out_avals_2)
+  return typed_jaxpr_1, typed_jaxpr_2, uk_out
 
-  out_pv, _ = out_pval
-  _, (_, res) = out_pv
-  assert isinstance(res, AbstractValue)
-
-  c1, b1 = out_aval_1
-  lifted_out_aval_1 = AbstractTuple((c1, AbstractTuple((b1, res))))
-
-  d2, c2, a2 = in_avals_2
-  lifted_in_avals_2 = (d2, c2, AbstractTuple((a2, res)))
-
-  typed_jaxpr_1 = TypedJaxpr(jaxpr_1, consts_1, in_avals_1, lifted_out_aval_1)
-  typed_jaxpr_2 = TypedJaxpr(doubly_lifted_jaxpr_2, (), lifted_in_avals_2,
-                             out_aval_2)
-  return typed_jaxpr_1, typed_jaxpr_2, sc_out
-
-def _move_and_pair_arg(jaxpr):
-  moved_jaxpr = jaxpr.copy()
-  res, d, c, a = jaxpr.invars
-  moved_jaxpr.invars = [d, c, (a, res)]
-  core.skip_checks or core.check_jaxpr(moved_jaxpr)
-  return moved_jaxpr
-
-def _split_avals(second_component, aval):
-  t = type(second_component)
-  if t is tuple:
-    assert type(aval) is AbstractTuple
-    avals1, avals2 = unzip2(map(_split_avals, second_component, aval))
-    return AbstractTuple(avals1), AbstractTuple(avals2)
-  elif t is bool:
-    if second_component:
-      return AbstractTuple(()), aval
-    else:
-      return aval, AbstractTuple(())
-  else:
-    raise TypeError(t)
-
+def _split_aval(unknown, aval):
+  return (abstract_unit, aval) if unknown else (aval, abstract_unit)
 
 custom_partial_eval_rules = {}

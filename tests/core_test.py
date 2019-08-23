@@ -76,8 +76,8 @@ def fun_with_nested_calls_2(x):
       q = call(lambda x: y, x)
       q = q + call(lambda: y)
       q = q + call(lambda y: w + y, y)
-      return call(lambda w: call(np.sin, x) * y, 1.0) + q
-      # return call(lambda w: call(error(np.sin), x) * y, 1.0) + q
+      q = call(lambda w: call(np.sin, x) * y, 1.0) + q
+      return q
     p, t = jvp(baz, (x + 1.0,), (y,))
     return t + (x * p)
   return call(bar, x)
@@ -141,37 +141,8 @@ def fwd_deriv(f):
 
   return df
 
-def check_trace_eval(f, pvals, vals, expected_out_pval):
-  jaxpr, consts, out_pval, _ = api.trace_to_jaxpr(f, pvals)
-  assert expected_out_pval == out_pval, (expected_out_pval, out_pval)
-  output_traced = core.eval_jaxpr(jaxpr, consts, (), *vals)
-  output_traced = pe.merge_pvals(output_traced, out_pval)
-  output_eval = f(*vals)
-  assert onp.allclose(output_traced, output_eval), \
-      '\neval:         {}\ntrace + eval: {}'.format(output_eval, output_traced)
-
 
 class CoreTest(jtu.JaxTestCase):
-
-  def test_pack_unpack(self):
-    # TODO(dougalm): figure out what jaxpr-tracing api to expose and re-enable
-    self.skipTest("disabled")
-    y = onp.array(1.0)
-    def foo(x):
-      x1, y1 = core.pack((x, y))
-      assert y1 is y, (y1, y)
-      return x1
-
-    pe.trace_to_jaxpr(foo, (_,))
-
-  def test_tup_add(self):
-    # TODO(mattjj,dougalm): put tup_add somewhere (was in array_type.py)
-    self.skipTest("disabled")
-    y = onp.array(1.0)
-    def foo(x):
-      return np.tup_add(core.pack((x, y)))
-
-    pe.trace_to_jaxpr(foo, (_,))
 
   def test_tree_multimap(self):
     xs = ({'a': 1}, [2, 3])
@@ -186,12 +157,6 @@ class CoreTest(jtu.JaxTestCase):
       assert False
     except (TypeError, ValueError):
       pass
-
-  def test_print_jaxpr_compound(self):
-    # TODO(dougalm): figure out what jaxpr-tracing api to expose and re-enable
-    self.skipTest("disabled")
-    pv = pe.PartialVal((ShapedArray((2, 3), onp.float32), core.unit))
-    print(pe.trace_to_jaxpr(fun_with_call_closure, (pv,))[0])
 
   def test_tree_flatten(self):
     flat, _ = tree_flatten(({'a': 1}, [2, 3], 4))
@@ -216,43 +181,10 @@ class CoreTest(jtu.JaxTestCase):
   def test_jvp_zeros(self):
     def foo(x):
       def bar(y):
-        x1, y1 = core.pack((x, y))
-        return np.sin(x1 * y1)
+        return np.sin(x * y)
       return jvp(bar, (3 * x,), (2 * x,))
 
     jtu.check_eq(jit(foo)(0.5), foo(0.5))
-
-  def test_dynamic_subfun_context(self):
-    def foo(x):
-      def bar(y):
-        return np.multiply(np.sin(x), y)
-      return call(bar, x)
-
-    api.trace_to_jaxpr(foo, (__,))
-
-  def test_nested_grad(self):
-    self.skipTest("disabled")  # TODO: re-enable this test.
-    def foo(x):
-      print(type(x), x)
-      def bar(y):
-        return np.cos(y) * x
-      print(x * x)
-      return call(bar, x*x)
-
-    print(api.trace_to_jaxpr(api.grad(foo), (__,)))
-
-  def test_nested(self):
-    def foo(x):
-      def bar(y):
-        def baz(w):
-          q = call(lambda x: y, x) + call(lambda: y)
-          return call(lambda w: call(np.sin, x) * y, 1.0) + q
-        p, t = jvp(baz, (x + 1.0,), (y,))
-        return t + (x * p)
-
-      return call(bar, x)
-
-    api.trace_to_jaxpr(foo, (__,))
 
   @parameterized.parameters(test_specs)
   def test_jvp_linearized(self, f, args):
@@ -277,17 +209,6 @@ class CoreTest(jtu.JaxTestCase):
         return x + y
       return bar(0.0)
     assert jvp(foo, (1.0,), (2.0,)) == (1.0, 2.0)
-
-  def test_simple_trace(self):
-    def foo(x):
-      return np.sin(x) + np.cos(x)
-    pval = pe.PartialVal((ShapedArray((3, 2), onp.float32), core.unit))
-    check_trace_eval(foo, (pval,), (onp.random.randn(3, 2),), pval)
-
-  def test_nullary_trace(self):
-    def foo():
-      return 1.2
-    check_trace_eval(foo, (), (), (None, 1.2))
 
   def test_simple_jit(self):
     def foo(x):

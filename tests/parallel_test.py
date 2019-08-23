@@ -88,7 +88,7 @@ class PapplyTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=True)
 
   def testLogSoftmax(self):
-    return SkipTest("test doesn't pass yet")  # TODO(frostig)
+    raise SkipTest("test doesn't pass yet")  # TODO(frostig)
 
     def fun(x):
       return x - np.log(np.sum(np.exp(x)))
@@ -113,7 +113,7 @@ class PapplyTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=True)
 
   def testAddBroadcasting(self):
-    return SkipTest("test doesn't pass yet")  # TODO(frostig)
+    raise SkipTest("test doesn't pass yet")  # TODO(frostig)
 
     def fun(x):
       return x + 3
@@ -252,7 +252,7 @@ class ParallelizeTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testDot(self):
-    return SkipTest("known failure")  # TODO(frostig)
+    raise SkipTest("known failure")  # TODO(frostig)
     x = onp.reshape(onp.arange(4., dtype=onp.float32), (2, 2))
 
     def fun(x, y):
@@ -308,8 +308,8 @@ class ParallelizeTest(jtu.JaxTestCase):
         expected = fun(x, y)
         pfun, axis_name = _papply(fun)
         ans = soft_pmap(pfun, axis_name)(x, y)
-    except NotImplementedError as e:
-      return SkipTest(e)
+    except (NotImplementedError, TypeError) as e:
+      raise SkipTest(e)
 
     ans = self.dedup(ans, expected.ndim)
     self.assertAllClose(ans, expected, check_dtypes=False)

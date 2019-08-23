@@ -34,6 +34,7 @@ from jax.abstract_arrays import ShapedArray
 from jax.core import Primitive
 from jax.lax import (standard_primitive, standard_unop, binop_dtype_rule,
                      _float, _complex, _input_dtype, _broadcasting_select)
+from jax.lib import xla_bridge as xb
 from jax.lib import lapack
 from jax.lib import cusolver
 
@@ -117,7 +118,7 @@ def cholesky_jvp_rule(primals, tangents):
 def cholesky_batching_rule(batched_args, batch_dims):
   x, = batched_args
   bd, = batch_dims
-  x = batching.bdim_at_front(x, bd)
+  x = batching.moveaxis(x, bd, 0)
   return cholesky(x), 0
 
 cholesky_p = standard_unop(_float | _complex, 'cholesky')
@@ -172,11 +173,13 @@ def eig_abstract_eval(operand):
 
     batch_dims = operand.shape[:-2]
     n = operand.shape[-1]
-    vl = vr = ShapedArray(batch_dims + (n, n), operand.dtype)
-    w = ShapedArray(batch_dims + (n,), lax.lax._complex_basetype(operand.dtype))
+    dtype = onp.complex64 if onp.finfo(operand.dtype).bits == 32 else onp.complex128
+    dtype = xb.canonicalize_dtype(dtype)
+    vl = vr = ShapedArray(batch_dims + (n, n), dtype)
+    w = ShapedArray(batch_dims + (n,), dtype)
   else:
-    w = vl = vr = operand
-  return core.AbstractTuple((w, vl, vr))
+    raise NotImplementedError
+  return w, vl, vr
 
 # TODO(phawkins): remove if-condition after increasing minimum Jaxlib version to
 # 0.1.23.
@@ -201,10 +204,11 @@ def eig_cpu_translation_rule(c, operand):
 def eig_batching_rule(batched_args, batch_dims):
   x, = batched_args
   bd, = batch_dims
-  x = batching.bdim_at_front(x, bd)
-  return eig_p.bind(x), 0
+  x = batching.moveaxis(x, bd, 0)
+  return eig_p.bind(x), (0, 0, 0)
 
 eig_p = Primitive('eig')
+eig_p.multiple_results = True
 eig_p.def_impl(eig_impl)
 eig_p.def_abstract_eval(eig_abstract_eval)
 xla.translations[eig_p] = eig_translation_rule
@@ -216,7 +220,7 @@ batching.primitive_batchers[eig_p] = eig_batching_rule
 
 def eigh_impl(operand, lower):
   v, w = xla.apply_primitive(eigh_p, operand, lower=lower)
-  return core.pack((v, w))
+  return v, w
 
 def eigh_translation_rule(c, operand, lower):
   raise NotImplementedError(
@@ -235,7 +239,7 @@ def eigh_abstract_eval(operand, lower):
     w = ShapedArray(batch_dims + (n,), lax.lax._complex_basetype(operand.dtype))
   else:
     v, w = operand, operand
-  return core.AbstractTuple((v, w))
+  return v, w
 
 def _eigh_cpu_gpu_translation_rule(syevd_impl, c, operand, lower):
   shape = c.GetShape(operand)
@@ -275,15 +279,16 @@ def eigh_jvp_rule(primals, tangents, lower):
   vdag_adot_v = dot(dot(_H(v), a_dot), v)
   dv = dot(v, np.multiply(Fmat, vdag_adot_v))
   dw = np.diagonal(vdag_adot_v)
-  return core.pack((v, w)), core.pack((dv, dw))
+  return (v, w), (dv, dw)
 
 def eigh_batching_rule(batched_args, batch_dims, lower):
   x, = batched_args
   bd, = batch_dims
-  x = batching.bdim_at_front(x, bd)
-  return eigh_p.bind(x, lower=lower), 0
+  x = batching.moveaxis(x, bd, 0)
+  return eigh_p.bind(x, lower=lower), (0, 0)
 
 eigh_p = Primitive('eigh')
+eigh_p.multiple_results = True
 eigh_p.def_impl(eigh_impl)
 eigh_p.def_abstract_eval(eigh_abstract_eval)
 xla.translations[eigh_p] = eigh_translation_rule
@@ -352,7 +357,7 @@ def triangular_solve_transpose_rule(
     unit_diagonal):
   # Triangular solve is nonlinear in its first argument and linear in its second
   # argument, analogous to `div` but swapped.
-  assert a is not None and b is None
+  assert a is not ad.undefined_primal and b is ad.undefined_primal
   cotangent_b = triangular_solve(a, cotangent, left_side, lower,
                                  not transpose_a, conjugate_a, unit_diagonal)
   return [None, cotangent_b]
@@ -365,8 +370,8 @@ def triangular_solve_batching_rule(batched_args, batch_dims, left_side,
   bx, by = batch_dims
   size = next(t.shape[i] for t, i in zip(batched_args, batch_dims)
               if i is not None)
-  x = batching.bdim_at_front(x, bx, size, force_broadcast=True)
-  y = batching.bdim_at_front(y, by, size, force_broadcast=True)
+  x = batching.bdim_at_front(x, bx, size)
+  y = batching.bdim_at_front(y, by, size)
   return triangular_solve(x, y, left_side=left_side, lower=lower,
                           transpose_a=transpose_a, conjugate_a=conjugate_a,
                           unit_diagonal=unit_diagonal), 0
@@ -510,11 +515,11 @@ def _lu_python(x):
     lu = lax.reshape(lu, batch_dims + (m, n))
   else:
     pivot, lu = _lu_blocked(x)
-  return core.pack((lu, pivot))
+  return lu, pivot
 
 def _lu_impl(operand):
   lu, pivot = xla.apply_primitive(lu_p, operand)
-  return core.pack((lu, pivot))
+  return lu, pivot
 
 def _lu_abstract_eval(operand):
   if isinstance(operand, ShapedArray):
@@ -527,7 +532,7 @@ def _lu_abstract_eval(operand):
     pivot = ShapedArray(batch_dims + (min(m, n),), np.int32)
   else:
     pivot = operand
-  return core.AbstractTuple((operand, pivot))
+  return operand, pivot
 
 def _lu_jvp_rule(primals, tangents):
   a, = primals
@@ -578,14 +583,14 @@ def _lu_jvp_rule(primals, tangents):
   l_dot = np.matmul(l, np.tril(lau, -1))
   u_dot = np.matmul(np.triu(lau), u)
   lu_dot = l_dot + u_dot
-  return core.pack((lu, pivots)), ad.TangentTuple((lu_dot, ad_util.zero))
+  return (lu, pivots), (lu_dot, ad_util.zero)
 
 
 def _lu_batching_rule(batched_args, batch_dims):
   x, = batched_args
   bd, = batch_dims
-  x = batching.bdim_at_front(x, bd)
-  return lu_p.bind(x), 0
+  x = batching.moveaxis(x, bd, 0)
+  return lu_p.bind(x), (0, 0)
 
 def _lu_cpu_gpu_translation_rule(getrf_impl, c, operand):
   shape = c.GetShape(operand)
@@ -600,6 +605,7 @@ def _lu_cpu_gpu_translation_rule(getrf_impl, c, operand):
 
 
 lu_p = Primitive('lu')
+lu_p.multiple_results = True
 lu_p.def_impl(_lu_impl)
 lu_p.def_abstract_eval(_lu_abstract_eval)
 xla.translations[lu_p] = xla.lower_fun(_lu_python, instantiate=True)
@@ -655,7 +661,7 @@ def lu_pivots_to_permutation(swaps, m):
 
 def qr_impl(operand, full_matrices):
   q, r = xla.apply_primitive(qr_p, operand, full_matrices=full_matrices)
-  return core.pack((q, r))
+  return q, r
 
 def qr_translation_rule(c, operand, full_matrices):
   return c.QR(operand, full_matrices=full_matrices)
@@ -673,7 +679,7 @@ def qr_abstract_eval(operand, full_matrices):
   else:
     q = operand
     r = operand
-  return core.AbstractTuple((q, r))
+  return q, r
 
 def qr_jvp_rule(primals, tangents, full_matrices):
   # See j-towns.github.io/papers/qr-derivative.pdf for a terse derivation.
@@ -690,15 +696,16 @@ def qr_jvp_rule(primals, tangents, full_matrices):
   domega = qt_dx_rinv_lower - _T(qt_dx_rinv_lower)  # This is skew-symmetric
   dq = np.matmul(q, domega - qt_dx_rinv) + dx_rinv
   dr = np.matmul(qt_dx_rinv - domega, r)
-  return core.pack((q, r)), core.pack((dq, dr))
+  return (q, r), (dq, dr)
 
 def qr_batching_rule(batched_args, batch_dims, full_matrices):
   x, = batched_args
   bd, = batch_dims
-  x = batching.bdim_at_front(x, bd)
-  return qr_p.bind(x, full_matrices=full_matrices), 0
+  x = batching.moveaxis(x, bd, 0)
+  return qr_p.bind(x, full_matrices=full_matrices), (0, 0)
 
 qr_p = Primitive('qr')
+qr_p.multiple_results = True
 qr_p.def_impl(qr_impl)
 qr_p.def_abstract_eval(qr_abstract_eval)
 xla.translations[qr_p] = qr_translation_rule
@@ -710,7 +717,7 @@ batching.primitive_batchers[qr_p] = qr_batching_rule
 
 def svd_impl(operand, full_matrices, compute_uv):
   s, u, vt = xla.apply_primitive(svd_p, operand, full_matrices=full_matrices, compute_uv=compute_uv)
-  return core.pack((s, u, vt))
+  return s, u, vt
 
 def svd_translation_rule(c, operand, full_matrices, compute_uv):
   raise NotImplementedError(
@@ -724,14 +731,12 @@ def svd_abstract_eval(operand, full_matrices, compute_uv):
     batch_dims = operand.shape[:-2]
     m = operand.shape[-2]
     n = operand.shape[-1]
-    s = ShapedArray(batch_dims + (min(m, n),), operand.dtype)
+    s = ShapedArray(batch_dims + (min(m, n),), lax.lax._complex_basetype(operand.dtype))
     u = ShapedArray(batch_dims + (m, m if full_matrices else min(m, n)), operand.dtype)
     vt = ShapedArray(batch_dims + (n if full_matrices else min(m, n), n), operand.dtype)
   else:
-    s = operand
-    u = operand
-    vt = operand
-  return core.AbstractTuple((s, u, vt))
+    raise NotImplementedError
+  return s, u, vt
 
 def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
   A, = primals
@@ -763,7 +768,7 @@ def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
     dU = dU + np.dot(np.eye(m) - np.dot(U, Ut), np.dot(dA, V)) / s_dim
   if n > m:
     dV = dV + np.dot(np.eye(n) - np.dot(V, Vt), np.dot(np.conj(dA).T, U)) / s_dim
-  return core.pack((s, U, Vt)), core.pack((ds, dU, dV.T))
+  return (s, U, Vt), (ds, dU, dV.T)
 
 def _svd_cpu_gpu_translation_rule(gesvd_impl, c, operand, full_matrices, compute_uv):
   shape = c.GetShape(operand)
@@ -786,10 +791,12 @@ def _svd_cpu_gpu_translation_rule(gesvd_impl, c, operand, full_matrices, compute
 def svd_batching_rule(batched_args, batch_dims, full_matrices, compute_uv):
   x, = batched_args
   bd, = batch_dims
-  x = batching.bdim_at_front(x, bd)
-  return svd_p.bind(x, full_matrices=full_matrices, compute_uv=compute_uv), 0
+  x = batching.moveaxis(x, bd, 0)
+  outs = svd_p.bind(x, full_matrices=full_matrices, compute_uv=compute_uv)
+  return outs, (0, 0, 0)
 
 svd_p = Primitive('svd')
+svd_p.multiple_results = True
 svd_p.def_impl(svd_impl)
 svd_p.def_abstract_eval(svd_abstract_eval)
 ad.primitive_jvps[svd_p] = svd_jvp_rule

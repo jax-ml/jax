@@ -19,6 +19,7 @@ from __future__ import print_function
 import collections
 from functools import partial
 import itertools
+from unittest import SkipTest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -500,11 +501,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       for jit_scan in [False, True]
       for jit_f in [False, True])
   def testScanImpl(self, jit_scan, jit_f):
-    d = np.array([1., 2.])
+    rng = onp.random.RandomState(0)
+
+    d = rng.randn(2)
     def f(c, a):
       assert a.shape == (3,)
       assert c.shape == (4,)
-      b = np.sum(np.sin(a)) + np.sum(np.sin(c)) + np.sum(np.sin(d))
+      b = np.cos(np.sum(np.sin(a)) + np.sum(np.cos(c)) + np.sum(np.tan(d)))
       c = np.sin(c * b)
       assert b.shape == ()
       return c, b
@@ -516,8 +519,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     else:
       scan = lax.scan
 
-    as_ = np.ones((5, 3))
-    c = np.ones(4)
+    as_ = rng.randn(5, 3)
+    c = rng.randn(4)
 
     ans =                scan(f, c, as_)
     expected = scan_reference(f, c, as_)
@@ -529,11 +532,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       for jit_scan in [False, True]
       for jit_f in [False, True])
   def testScanJVP(self, jit_scan, jit_f):
-    d = np.array([1., 2.])
+    rng = onp.random.RandomState(0)
+
+    d = rng.randn(2)
     def f(c, a):
       assert a.shape == (3,)
       assert c.shape == (4,)
-      b = np.sum(np.sin(a)) + np.sum(np.sin(c)) + np.sum(np.sin(d))
+      b = np.cos(np.sum(np.sin(a)) + np.sum(np.cos(c)) + np.sum(np.tan(d)))
       c = np.sin(c * b)
       assert b.shape == ()
       return c, b
@@ -545,12 +550,14 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     else:
       scan = lax.scan
 
-    as_ = np.ones((5, 3))
-    c = np.ones(4)
+    as_ = rng.randn(5, 3)
+    c = rng.randn(4)
 
-    ans = api.jvp(lambda c, as_:                scan(f, c, as_), (c, as_), (c, as_))[1]
-    expected = api.jvp(lambda c, as_: scan_reference(f, c, as_), (c, as_), (c, as_))[1]
+    ans = api.jvp(lambda c, as_:                scan(f, c, as_), (c, as_), (c, as_))
+    expected = api.jvp(lambda c, as_: scan_reference(f, c, as_), (c, as_), (c, as_))
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+    jtu.check_grads(partial(scan, f), (c, as_), order=2, modes=["fwd"])
 
   @parameterized.named_parameters(
       {"testcase_name": "_jit_scan={}_jit_f={}".format(jit_scan, jit_f),
@@ -558,11 +565,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       for jit_scan in [False, True]
       for jit_f in [False, True])
   def testScanLinearize(self, jit_scan, jit_f):
-    d = np.array([1., 2.])
+    rng = onp.random.RandomState(0)
+
+    d = rng.randn(2)
     def f(c, a):
       assert a.shape == (3,)
       assert c.shape == (4,)
-      b = np.sum(np.sin(a)) + np.sum(np.sin(c)) + np.sum(np.sin(d))
+      b = np.cos(np.sum(np.sin(a)) + np.sum(np.cos(c)) + np.sum(np.tan(d)))
       c = np.sin(c * b)
       assert b.shape == ()
       return c, b
@@ -574,8 +583,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     else:
       scan = lax.scan
 
-    as_ = np.ones((5, 3))
-    c = np.ones(4)
+    as_ = rng.randn(5, 3)
+    c = rng.randn(4)
 
     ans = api.linearize(lambda c, as_:                scan(f, c, as_), c, as_)[1](c, as_)
     expected = api.linearize(lambda c, as_: scan_reference(f, c, as_), c, as_)[1](c, as_)
@@ -587,7 +596,9 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       for jit_scan in [False, True]
       for jit_f in [False, True])
   def testScanGrad(self, jit_scan, jit_f):
-    d = np.ones(2)
+    rng = onp.random.RandomState(0)
+
+    d = rng.randn(2)
     def f(c, a):
       assert a.shape == (3,)
       assert c.shape == (4,)
@@ -603,12 +614,15 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     else:
       scan = lax.scan
 
-    as_ = np.ones((5, 3))
-    c = np.ones(4)
+    as_ = rng.randn(5, 3)
+    c = rng.randn(4)
 
     ans = api.grad(lambda c, as_:      list(          scan(f, c, as_))[0].sum())(c, as_)
     expected = api.grad(lambda c, as_: list(scan_reference(f, c, as_))[0].sum())(c, as_)
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+    jtu.check_grads(partial(scan, f), (c, as_), order=2, modes=["rev"],
+                    atol=1e-3, rtol=1e-3)
 
   def testScanRnn(self):
     r = npr.RandomState(0)
@@ -647,11 +661,21 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     # jvp evaluation doesn't crash
     api.jvp(lambda params: loss(params, inputs, targets), (params,), (params,))
 
+    # jvp numerical check passes
+    jtu.check_grads(loss, (params, inputs, targets), order=2, modes=["fwd"])
+
+    # linearize works
+    _, expected = api.jvp(loss, (params, inputs, targets),
+                          (params, inputs, targets))
+    _, linfun = api.linearize(loss, params, inputs, targets)
+    ans = linfun(params, inputs, targets)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
     # gradient evaluation doesn't crash
     api.grad(loss)(params, inputs, targets)
 
     # gradient check passes
-    jtu.check_grads(loss, (params, inputs, targets), order=1)
+    jtu.check_grads(loss, (params, inputs, targets), order=2)
 
     # we can vmap to batch things
     batch_size = 7
@@ -717,7 +741,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     c = 1.
 
     jtu.check_grads(lambda c, as_: lax.scan(f, c, as_), (c, as_),
-                    modes=["fwd", "rev"], order=2)
+                    modes=["rev"], order=2)
 
   @parameterized.named_parameters(
       {"testcase_name": "_jit_scan={}_jit_f={}_in_axes={}".format(
@@ -728,11 +752,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       for in_axes in itertools.product([None, 0, 1], [None, 0, 1, 2])
       if in_axes != (None, None))
   def testScanVmap(self, jit_scan, jit_f, in_axes):
-    d = np.array([1., 2.])
+    rng = onp.random.RandomState(0)
+
+    d = rng.randn(2)
     def f(c, a):
       assert a.shape == (3,)
       assert c.shape == (4,)
-      b = np.sum(np.sin(a)) + np.sum(np.sin(c)) + np.sum(np.sin(d))
+      b = np.cos(np.sum(np.sin(a)) + np.sum(np.cos(c)) + np.sum(np.tan(d)))
       c = np.sin(c * b)
       assert b.shape == ()
       return c, b
@@ -753,9 +779,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     if as_bdim is not None:
       as_shape.insert(as_bdim, 7)
 
-    r = onp.random.RandomState(0)
-    as_ = r.randn(*as_shape)
-    c = r.randn(*c_shape)
+    as_ = rng.randn(*as_shape)
+    c = rng.randn(*c_shape)
 
     ans = api.vmap(lambda c, as_:                scan(f, c, as_), in_axes)(c, as_)
     expected = api.vmap(lambda c, as_: scan_reference(f, c, as_), in_axes)(c, as_)
@@ -822,6 +847,58 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = xs ** 2
     actual = lax.map(f, xs)
     self.assertAllClose(actual, expected, check_dtypes=True)
+
+  def testCaching(self):
+    def cond(x):
+      assert python_should_be_executing
+      return x < 5
+
+    def body(x):
+      assert python_should_be_executing
+      return x + 2
+
+    python_should_be_executing = True
+    lax.while_loop(cond, body, 0)
+
+    python_should_be_executing = False
+    lax.while_loop(cond, body, 0)
+
+  def testCaching2(self):
+    # This second caching test shows a different kind of caching that we haven't
+    # implemented (but could!), namely that Python functions that are distinct
+    # objects but are equivalent functions trigger cache hits. This kind of
+    # caching could be salient when using lambda functions with control flow:
+    #
+    #   lax.while_loop(lambda x: x < 5, lambda x: x + 2, 0)
+    #   lax.while_loop(lambda x: x < 5, lambda x: x + 2, 0)
+    #
+    # To get a cache hit on the second line we'd need to form a jaxpr and
+    # compare them for equality (including the literals on identity). We could
+    # implement that by adding a __hash__/__eq__ to core.Jaxpr and
+    # core.TypedJaxpr (see #1221).
+    raise SkipTest("not implemented")
+
+    def cond(x):
+      assert python_should_be_executing
+      return x < 5
+
+    def body(x):
+      assert python_should_be_executing
+      return x + 2
+
+    python_should_be_executing = True
+    lax.while_loop(cond, body, 0)
+
+    def cond(x):
+      assert python_should_be_executing
+      return x < 5
+
+    def body(x):
+      assert python_should_be_executing
+      return x + 2
+
+    python_should_be_executing = False
+    lax.while_loop(cond, body, 0)
 
 
 if __name__ == '__main__':
