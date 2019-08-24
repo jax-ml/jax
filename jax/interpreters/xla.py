@@ -643,13 +643,7 @@ def _device_array_constant_handler(c, val, canonicalize_types=True):
   return c.Constant(onp.asarray(val), canonicalize_types=canonicalize_types)
 xb.register_constant_handler(DeviceArray, _device_array_constant_handler)
 def _device_put_device_array(x, device_num, backend):
-  # TODO(levskaya) remove if-condition after increasing minimum Jaxlib version to
-  # 0.1.24.  We assume users with older Jaxlib won't use multiple backends.
-  if hasattr(x.device_buffer, 'platform'):
-    backend_match = xb.get_backend(backend).platform == x.device_buffer.platform()
-  else:
-    backend_match = True
-  if backend_match:
+  if xb.get_backend(backend).platform == x.device_buffer.platform():
     if x.device_buffer.device() == device_num:
       return x.device_buffer
     else:
