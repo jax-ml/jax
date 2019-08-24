@@ -952,6 +952,10 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     python_should_be_executing = False
     lax.while_loop(cond, body, 0)
 
+  def testWhileCondConstant(self):
+    out = lax.while_loop(lambda _: False, lambda _: (), ())  # doesn't crash
+    self.assertEqual(out, ())
+
 
 if __name__ == '__main__':
   absltest.main()
