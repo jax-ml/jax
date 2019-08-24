@@ -234,6 +234,19 @@ def jaxpr_computation(jaxpr, backend, axis_env, const_vals, freevar_shapes, *arg
                                     *arg_shapes)
   return c.Build(c.Tuple(*out_nodes))
 
+
+def check_backend_params(params, outer_backend):
+  # For nested jits, the outer jit sets the backend on all inner jits unless
+  # an inner-jit also has a conflicting explicit backend specification.
+  inner_backend = params.get('backend', None)
+  if inner_backend and inner_backend != outer_backend:
+    msg = (
+      "Outer-jit backend specification {} must match"
+      "explicit inner-jit backend specification {}.")
+    raise ValueError(msg.format(outer_backend, inner_backend))
+  return {k: params[k] for k in params if k != 'backend'}
+
+
 def _jaxpr_computation(jaxpr, backend, axis_env, const_vals, freevar_shapes, *arg_shapes):
   c = xb.make_computation_builder("jaxpr_computation")
   platform = xb.get_backend(backend).platform
@@ -259,36 +272,27 @@ def _jaxpr_computation(jaxpr, backend, axis_env, const_vals, freevar_shapes, *ar
     _map(write, all_freevars, map(c.ParameterWithShape, freevar_shapes))
   _map(write, jaxpr.invars, map(c.ParameterWithShape, arg_shapes))
   for eqn in jaxpr.eqns:
-    # For nested jits, the outer jit sets the backend on all inner jits unless
-    # an inner-jit also has a conflicting explicit backend specification.
-    inner_backend = eqn.params.get('backend', None)
-    if inner_backend and inner_backend != backend:
-      msg = (
-        "Explicit outer-jit backend specification {} must match"
-        "explicit inner-jit backend specification {}.")
-      raise ValueError(msg.format(backend, inner_backend))
-
     in_nodes = list(map(read, eqn.invars))
-
     if eqn.primitive in backend_specific_translations[platform]:
       rule = backend_specific_translations[platform][eqn.primitive]
       ans = rule(c, *in_nodes, **eqn.params)
     elif eqn.primitive in translations:
       ans = translations[eqn.primitive](c, *in_nodes, **eqn.params)
     elif eqn.primitive in reduction_translations:
-      new_params = {k: eqn.params[k] for k in eqn.params if k != 'backend'}
+      new_params = check_backend_params(eqn.params, backend)
       ans = reduction_translations[eqn.primitive](c, *in_nodes, backend=backend, **new_params)
     elif eqn.primitive in initial_style_translations:
-      new_params = {k: eqn.params[k] for k in eqn.params if k != 'backend'}
+      new_params = check_backend_params(eqn.params, backend)
       rule = initial_style_translations[eqn.primitive]
       ans = rule(c, axis_env, *in_nodes, backend=backend, **new_params)
     elif eqn.primitive in parallel_translations:
-      replica_groups = axis_groups(axis_env, eqn.params['axis_name'])
-      new_params = {k: eqn.params[k] for k in eqn.params if k not in ('axis_name', 'backend')}
+      new_params = check_backend_params(eqn.params, backend)
+      replica_groups = axis_groups(axis_env, new_params['axis_name'])
+      new_params = {k: new_params[k] for k in new_params if k != 'axis_name'}
       rule = parallel_translations[eqn.primitive]
       ans = rule(c, *in_nodes, replica_groups=replica_groups, backend=backend, **new_params)
     elif eqn.primitive in call_translations:
-      new_params = {k: eqn.params[k] for k in eqn.params if k != 'backend'}
+      new_params = check_backend_params(eqn.params, backend)
       (subjaxpr, const_bindings, freevar_bindings), = eqn.bound_subjaxprs
       env_nodes = list(map(read, const_bindings + freevar_bindings))
       rule = call_translations[eqn.primitive]
