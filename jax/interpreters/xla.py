@@ -147,16 +147,16 @@ def primitive_computation(prim, *xla_shapes, **params):
   xla_args = map(c.ParameterWithShape, xla_shapes)
   if prim in backend_specific_translations[platform]:
     rule = backend_specific_translations[platform][prim]
-    rule(c, *xla_args, **params)  # return val set as a side-effect on c
+    rule(c, *xla_args, **new_params)  # return val set as a side-effect on c
   elif prim in translations:
     rule = translations[prim]
-    rule(c, *xla_args, **params)  # return val set as a side-effect on c
+    rule(c, *xla_args, **new_params)  # return val set as a side-effect on c
   elif prim in reduction_translations:
     rule = reduction_translations[prim]
-    rule(c, *xla_args, backend=backend, **params)  # return val set as a side-effect on c
+    rule(c, *xla_args, backend=backend, **new_params)  # return val set as a side-effect on c
   elif prim in initial_style_translations:
     rule = initial_style_translations[prim]
-    rule(c, AxisEnv(1, [], []), *xla_args,  backend=backend, **params)  # side-effect on c
+    rule(c, AxisEnv(1, [], []), *xla_args,  backend=backend, **new_params)  # side-effect on c
   else:
     raise NotImplementedError("XLA translation rule for {} not found".format(prim))
   try:
