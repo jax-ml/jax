@@ -1475,8 +1475,8 @@ def full_like(a, fill_value, dtype=None):
 def zeros(shape, dtype=None):
   if isinstance(shape, types.GeneratorType):
     raise TypeError("expected sequence object with len >= 0 or a single integer")
-  dtype = onp.dtype("float64") if dtype is None else dtype
   lax._check_user_dtype_supported(dtype, "zeros")
+  dtype = onp.dtype("float64") if dtype is None else dtype
   shape = (shape,) if onp.isscalar(shape) else shape
   return lax.full(shape, 0, dtype)
 

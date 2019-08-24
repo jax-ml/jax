@@ -977,7 +977,8 @@ class APITest(jtu.JaxTestCase):
     for x, y in zip(xs, ys):
       self.assertAllClose(x * 2 - 3., y, check_dtypes=True)
 
-  def test_issue_1230(self):
+  def test_dtype_warning(self):
+    # cf. issue #1230
     if FLAGS.jax_enable_x64:
       return  # test only applies when x64 is disabled
 
