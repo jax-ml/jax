@@ -23,6 +23,7 @@ import itertools
 import operator
 import unittest
 from unittest import SkipTest
+import warnings
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -1828,6 +1829,36 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     onp_fun = partial(onp.meshgrid, indexing=indexing, sparse=sparse)
     lnp_fun = partial(lnp.meshgrid, indexing=indexing, sparse=sparse)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+  def testDisableNumpyRankPromotionBroadcasting(self):
+    try:
+      prev_flag = FLAGS.jax_numpy_rank_promotion
+      FLAGS.jax_numpy_rank_promotion = "allow"
+      lnp.ones(2) + lnp.ones((1, 2))  # works just fine
+    finally:
+      FLAGS.jax_numpy_rank_promotion = prev_flag
+
+    try:
+      prev_flag = FLAGS.jax_numpy_rank_promotion
+      FLAGS.jax_numpy_rank_promotion = "raise"
+      self.assertRaises(ValueError, lambda: lnp.ones(2) + lnp.ones((1, 2)))
+    finally:
+      FLAGS.jax_numpy_rank_promotion = prev_flag
+
+    try:
+      prev_flag = FLAGS.jax_numpy_rank_promotion
+      FLAGS.jax_numpy_rank_promotion = "warn"
+      with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        lnp.ones(2) + lnp.ones((1, 2))
+        assert len(w) > 0
+        msg = str(w[-1].message)
+        self.assertEqual(
+            msg,
+            "following NumPy automatic rank promotion behavior for (2,) (1, 2).")
+    finally:
+      FLAGS.jax_numpy_rank_promotion = prev_flag
+
 
 if __name__ == "__main__":
   absltest.main()

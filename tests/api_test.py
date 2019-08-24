@@ -186,9 +186,15 @@ class APITest(jtu.JaxTestCase):
     def f(x, y):
       return x + y
 
-    jtu.check_raises(lambda: grad(f)(onp.zeros(3), onp.zeros(4)),
-                     ValueError,
-                     "Incompatible shapes for broadcasting: ((3,), (4,))")
+    jtu.check_raises(
+        lambda: f(np.zeros(3), np.zeros(4)),
+        TypeError,
+        "add got incompatible shapes for broadcasting: (3,), (4,).")
+
+    jtu.check_raises(
+        lambda: grad(f)(onp.zeros(3), onp.zeros(4)),
+        TypeError,
+        "add got incompatible shapes for broadcasting: (3,), (4,).")
 
   def test_dot_mismatch(self):
     def f(x, y):
