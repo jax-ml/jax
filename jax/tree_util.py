@@ -28,10 +28,8 @@ new pytree node type, that type in effect becomes transparent to the utility
 functions in this file.
 
 The primary purpose of this module is to enable the interoperability between
-user defined data structures and JAX-primitives (e.g. `jit`). Its secondary
-purpose is to enable writing new primitives that handle pytrees in a way that
-mimics the existing JAX primitives. This is not meant to be a general purpose
-tree-like data structure handling library.
+user defined data structures and JAX transformations (e.g. `jit`). This is not
+meant to be a general purpose tree-like data structure handling library.
 """
 
 from __future__ import absolute_import
