@@ -261,7 +261,7 @@ def _jaxpr_computation(jaxpr, backend, axis_env, const_vals, freevar_shapes, *ar
   for eqn in jaxpr.eqns:
     # For nested jits, the outer jit sets the backend on all inner jits unless
     # an inner-jit also has a conflicting explicit backend specification.
-    inner_backend = eqn.params.pop('backend', None)
+    inner_backend = eqn.params.get('backend', None)
     if inner_backend and inner_backend != backend:
       msg = (
         "Explicit outer-jit backend specification {} must match"
@@ -276,20 +276,23 @@ def _jaxpr_computation(jaxpr, backend, axis_env, const_vals, freevar_shapes, *ar
     elif eqn.primitive in translations:
       ans = translations[eqn.primitive](c, *in_nodes, **eqn.params)
     elif eqn.primitive in reduction_translations:
-      ans = reduction_translations[eqn.primitive](c, *in_nodes, backend=backend, **eqn.params)
+      new_params = {k: eqn.params[k] for k in eqn.params if k != 'backend'}
+      ans = reduction_translations[eqn.primitive](c, *in_nodes, backend=backend, **new_params)
     elif eqn.primitive in initial_style_translations:
+      new_params = {k: eqn.params[k] for k in eqn.params if k != 'backend'}
       rule = initial_style_translations[eqn.primitive]
-      ans = rule(c, axis_env, *in_nodes, backend=backend, **eqn.params)
+      ans = rule(c, axis_env, *in_nodes, backend=backend, **new_params)
     elif eqn.primitive in parallel_translations:
       replica_groups = axis_groups(axis_env, eqn.params['axis_name'])
-      new_params = {k: eqn.params[k] for k in eqn.params if k != 'axis_name'}
+      new_params = {k: eqn.params[k] for k in eqn.params if k not in ('axis_name', 'backend')}
       rule = parallel_translations[eqn.primitive]
       ans = rule(c, *in_nodes, replica_groups=replica_groups, backend=backend, **new_params)
     elif eqn.primitive in call_translations:
+      new_params = {k: eqn.params[k] for k in eqn.params if k != 'backend'}
       (subjaxpr, const_bindings, freevar_bindings), = eqn.bound_subjaxprs
       env_nodes = list(map(read, const_bindings + freevar_bindings))
       rule = call_translations[eqn.primitive]
-      ans = rule(c, subjaxpr, axis_env, env_nodes, in_nodes, backend=backend, **eqn.params)
+      ans = rule(c, subjaxpr, axis_env, env_nodes, in_nodes, backend=backend, **new_params)
     else:
       msg = "XLA translation rule for primitive '{}' not found"
       raise NotImplementedError(msg.format(eqn.primitive.name))
