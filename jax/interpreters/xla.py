@@ -140,7 +140,8 @@ def xla_primitive_callable(prim, *abstract_args, **params):
 
 @cache()
 def primitive_computation(prim, *xla_shapes, **params):
-  backend = params.pop('backend', None)
+  backend = params.get('backend', None)
+  new_params = {k: params[k] for k in params if k != 'backend'}
   c = xb.make_computation_builder("primitive_computation")
   platform = xb.get_backend(backend).platform
   xla_args = map(c.ParameterWithShape, xla_shapes)
@@ -455,7 +456,8 @@ translations[ad_util.add_jaxvals_p] = add_jaxvals_translation_rule
 def lower_fun(fun, instantiate=False, initial_style=False):
   """Build a translation rule for a traceable function."""
   def f(c, *args, **params):
-    backend = params.pop('backend', None)
+    backend = params.get('backend', None)
+    new_params = {k: params[k] for k in params if k != 'backend'}
     if initial_style:
       axis_env, xla_args = args[0], args[1:]
     else:
@@ -464,7 +466,7 @@ def lower_fun(fun, instantiate=False, initial_style=False):
     avals = map(_aval_from_xla_shape, xla_shapes)
     pvals = [pe.PartialVal((a, core.unit)) for a in avals]
     jaxpr, _, consts = pe.trace_to_jaxpr(
-        lu.wrap_init(fun, params), pvals, instantiate=True)
+        lu.wrap_init(fun, new_params), pvals, instantiate=True)
     built_c = jaxpr_computation(jaxpr, backend, axis_env, consts, (), *xla_shapes)
     return c.Call(built_c, xla_args)
   return f
