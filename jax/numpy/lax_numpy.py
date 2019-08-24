@@ -1408,6 +1408,7 @@ def atleast_3d(*arys):
 def array(object, dtype=None, copy=True, order="K", ndmin=0):
   if order is not None and order != "K":
     raise NotImplementedError("Only implemented for order='K'")
+  lax._check_user_dtype_supported(dtype, "array")
 
   if isinstance(object, ndarray):
     if dtype and _dtype(object) != xla_bridge.canonicalize_dtype(dtype):
@@ -1442,38 +1443,49 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
 
 @_wraps(onp.asarray)
 def asarray(a, dtype=None, order=None):
+  lax._check_user_dtype_supported(dtype, "asarray")
   return array(a, dtype=dtype, copy=False, order=order)
 
 
 @_wraps(onp.zeros_like)
 def zeros_like(x, dtype=None):
+  lax._check_user_dtype_supported(dtype, "zeros_like")
   return lax.full_like(x, 0, dtype)
 
 
 @_wraps(onp.ones_like)
 def ones_like(x, dtype=None):
+  lax._check_user_dtype_supported(dtype, "ones_like")
   return lax.full_like(x, 1, dtype)
 
 
 @_wraps(onp.full)
 def full(shape, fill_value, dtype=None):
+  lax._check_user_dtype_supported(dtype, "full")
   return lax.full(shape, fill_value, dtype)
 
 
 @_wraps(onp.full_like)
 def full_like(a, fill_value, dtype=None):
+  lax._check_user_dtype_supported(dtype, "full_like")
   return lax.full_like(a, fill_value, dtype)
 
 
 @_wraps(onp.zeros)
-def zeros(shape, dtype=onp.dtype("float64")):
+def zeros(shape, dtype=None):
   if isinstance(shape, types.GeneratorType):
     raise TypeError("expected sequence object with len >= 0 or a single integer")
+  lax._check_user_dtype_supported(dtype, "zeros")
+  dtype = onp.dtype("float64") if dtype is None else dtype
   shape = (shape,) if onp.isscalar(shape) else shape
   return lax.full(shape, 0, dtype)
 
 @_wraps(onp.ones)
-def ones(shape, dtype=onp.dtype("float64")):
+def ones(shape, dtype=None):
+  if isinstance(shape, types.GeneratorType):
+    raise TypeError("expected sequence object with len >= 0 or a single integer")
+  lax._check_user_dtype_supported(dtype, "ones")
+  dtype = onp.dtype("float64") if dtype is None else dtype
   shape = (shape,) if onp.isscalar(shape) else shape
   return lax.full(shape, 1, dtype)
 
@@ -1493,7 +1505,9 @@ empty = zeros
 
 
 @_wraps(onp.eye)
-def eye(N, M=None, k=None, dtype=onp.dtype("float64")):
+def eye(N, M=None, k=None, dtype=None):
+  lax._check_user_dtype_supported(dtype, "eye")
+  dtype = onp.dtype("float64") if dtype is None else dtype
   M = N if M is None else M
   if N < 0 or M < 0:
     msg = "negative dimensions are not allowed, got {} and {}"
@@ -1512,11 +1526,13 @@ def eye(N, M=None, k=None, dtype=onp.dtype("float64")):
 
 @_wraps(onp.identity)
 def identity(n, dtype=None):
+  lax._check_user_dtype_supported(dtype, "identity")
   return eye(n, dtype=dtype)
 
 
 @_wraps(onp.arange)
 def arange(start, stop=None, step=None, dtype=None):
+  lax._check_user_dtype_supported(dtype, "arange")
   # If called like np.arange(N), we create a lazy lax._IotaConstant.
   if stop is None and step is None:
     dtype = dtype or _dtype(start)
@@ -1538,6 +1554,7 @@ def _wrap_numpy_nullary_function(f):
 
 def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
              axis=0):
+  lax._check_user_dtype_supported(dtype, "linspace")
   try:
     out = onp.linspace(start, stop, num, endpoint, retstep, dtype, axis)
     if retstep:
@@ -1646,6 +1663,7 @@ def repeat(a, repeats, axis=None):
 
 @_wraps(onp.tri)
 def tri(N, M=None, k=0, dtype=None):
+  lax._check_user_dtype_supported(dtype, "tri")
   M = M if M is not None else N
   dtype = dtype or float32
   x = arange(N, dtype=int32)
@@ -1679,6 +1697,7 @@ def triu(m, k=0):
 def trace(a, offset=0, axis1=0, axis2=1, dtype=None, out=None):
   if out:
     raise NotImplementedError("The 'out' argument to trace is not supported.")
+  lax._check_user_dtype_supported(dtype, "trace")
 
   axis1 = _canonicalize_axis(axis1, ndim(a))
   axis2 = _canonicalize_axis(axis2, ndim(a))
@@ -2839,6 +2858,10 @@ def median(a, axis=None, out=None, overwrite_input=False, keepdims=False):
     return quantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
                     keepdims=keepdims)
 
+def _astype(arr, dtype):
+  lax._check_user_dtype_supported(dtype, "astype")
+  return lax.convert_element_type(arr, dtype)
+
 ### track unimplemented functions
 
 def _not_implemented(fun):
@@ -2934,7 +2957,7 @@ setattr(ShapedArray, "flatten", core.aval_method(ravel))
 setattr(ShapedArray, "T", core.aval_property(transpose))
 setattr(ShapedArray, "real", core.aval_property(real))
 setattr(ShapedArray, "imag", core.aval_property(imag))
-setattr(ShapedArray, "astype", core.aval_method(lax.convert_element_type))
+setattr(ShapedArray, "astype", core.aval_method(_astype))
 
 
 # Forward operators, methods, and properties on DeviceArray to lax_numpy
@@ -2948,7 +2971,7 @@ setattr(DeviceArray, "flatten", ravel)
 setattr(DeviceArray, "T", property(transpose))
 setattr(DeviceArray, "real", property(real))
 setattr(DeviceArray, "imag", property(imag))
-setattr(DeviceArray, "astype", lax.convert_element_type)
+setattr(DeviceArray, "astype", _astype)
 
 
 # Extra methods that are handy
