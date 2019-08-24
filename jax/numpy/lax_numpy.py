@@ -27,12 +27,14 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from distutils.util import strtobool
 import collections
 import itertools
+import os
 import re
 import string
-import warnings
 import types
+import warnings
 
 import numpy as onp
 import opt_einsum
@@ -42,11 +44,20 @@ from six.moves import builtins, xrange
 from jax import jit, device_put
 from .. import core
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
+from ..config import flags
 from ..interpreters.xla import DeviceArray
 from .. import lax
 from ..util import partial, get_module_functions, unzip2, prod as _prod
 from ..lib import xla_bridge
 from ..lib import xla_client
+
+FLAGS = flags.FLAGS
+flags.DEFINE_enum(
+    'jax_numpy_rank_promotion', os.getenv('JAX_NUMPY_RANK_PROMOTION', 'allow'),
+    enum_values=['allow', 'warn', 'raise'],
+    help=
+    'Control NumPy-style automatic rank promotion broadcasting '
+    '("allow", "warn", or "raise").')
 
 if six.PY3:
   def removechars(s, chars):
@@ -158,9 +169,20 @@ def _promote_shapes(*args):
     return args
   else:
     shapes = [shape(arg) for arg in args]
-    nd = len(lax.broadcast_shapes(*shapes))
-    return [lax.reshape(arg, (1,) * (nd - len(shp)) + shp)
-            if shp and len(shp) != nd else arg for arg, shp in zip(args, shapes)]
+    ranks = [len(shp) for shp in shapes]
+    if len(set(ranks)) == 1:
+      return args
+    elif FLAGS.jax_numpy_rank_promotion != "raise":
+      if FLAGS.jax_numpy_rank_promotion == "warn":
+        msg = "following NumPy automatic rank promotion behavior for {}."
+        warnings.warn(msg.format(' '.join(map(str, shapes))))
+      nd = len(lax.broadcast_shapes(*shapes))
+      return [lax.reshape(arg, (1,) * (nd - len(shp)) + shp)
+              if shp and len(shp) != nd else arg for arg, shp in zip(args, shapes)]
+    else:
+      msg = ("operands could not be broadcast together with shapes {} "
+             "and with the config option jax_numpy_rank_promotion='raise'.")
+      raise ValueError(msg.format(' '.join(map(str, shapes))))
 
 def _promote_dtypes(*args):
   """Convenience function to apply Numpy argument dtype promotion."""
