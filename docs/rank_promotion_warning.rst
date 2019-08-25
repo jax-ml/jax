@@ -28,7 +28,7 @@ allowed just like regular NumPy. The configuration option is named
 As with most other JAX configuration options, you can set this option in
 several ways. One is by using :code:`jax.config` in your code:
 
-..code-block:: python
+.. code-block:: python
 
   from jax.config import config
   config.update("jax_numpy_rank_promotion", "allow")
