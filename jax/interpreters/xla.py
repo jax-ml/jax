@@ -656,4 +656,5 @@ def _instantiate_device_constant(const, device_num=0, cutoff=1e6):
     compiled = c.Build(xla_const).Compile((), opts, backend=xb.get_backend())
     return compiled.Execute(())
   else:
-    return xc.Buffer.from_pyval(onp.asarray(const), device_num)
+    return xc.Buffer.from_pyval(onp.asarray(const), device_num,
+                                backend=xb.get_backend())
