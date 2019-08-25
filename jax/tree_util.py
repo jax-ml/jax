@@ -14,9 +14,6 @@
 
 """Utilities for working with tree-like container data structures.
 
-The code here is independent of JAX. The only dependence is on jax.util, which
-itself has no JAX-specific code.
-
 This module provides a small set of utility functions for working with tree-like
 data structures, such as nested tuples, lists, and dicts. We call these
 structures pytrees. They are trees in that they are defined recursively (any
@@ -29,6 +26,10 @@ mapped over, rather than treated as leaves) is extensible. There is a single
 module-level registry of types, and class hierarchy is ignored. By registering a
 new pytree node type, that type in effect becomes transparent to the utility
 functions in this file.
+
+The primary purpose of this module is to enable the interoperability between
+user defined data structures and JAX transformations (e.g. `jit`). This is not
+meant to be a general purpose tree-like data structure handling library.
 """
 
 from __future__ import absolute_import

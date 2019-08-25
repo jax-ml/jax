@@ -4418,3 +4418,15 @@ def subvals(lst, replace):
 
 def _abstractify(x):
   return raise_to_shaped(core.get_aval(x))
+
+
+def _check_user_dtype_supported(dtype, fun_name=None):
+  if dtype is not None and onp.dtype(dtype) != xla_bridge.canonicalize_dtype(dtype):
+    msg = ("Explicitly requested dtype {} {} is not available, "
+           "and will be truncated to dtype {}. To enable more dtypes, set the "
+           "jax_enable_x64 configuration option or the JAX_ENABLE_X64 shell "
+           "environment variable. "
+           "See https://github.com/google/jax#current-gotchas for more.")
+    fun_name = "requested in {}".format(fun_name) if fun_name else ""
+    truncated_dtype = xla_bridge.canonicalize_dtype(dtype).name
+    warnings.warn(msg.format(dtype, fun_name , truncated_dtype))
