@@ -53,7 +53,7 @@ from ..lib import xla_client
 
 FLAGS = flags.FLAGS
 flags.DEFINE_enum(
-    'jax_numpy_rank_promotion', os.getenv('JAX_NUMPY_RANK_PROMOTION', 'allow'),
+    'jax_numpy_rank_promotion', os.getenv('JAX_NUMPY_RANK_PROMOTION', 'warn'),
     enum_values=['allow', 'warn', 'raise'],
     help=
     'Control NumPy-style automatic rank promotion broadcasting '
@@ -160,29 +160,39 @@ save = onp.save
 savez = onp.savez
 load = onp.load
 
+
 ### utility functions
 
-
-def _promote_shapes(*args):
+def _promote_shapes(fun_name, *args):
   """Prepend implicit leading singleton dimensions for Numpy broadcasting."""
   if len(args) < 2:
     return args
   else:
     shapes = [shape(arg) for arg in args]
-    ranks = [len(shp) for shp in shapes]
-    if len(set(ranks)) == 1:
+    nonscalar_ranks = [len(shp) for shp in shapes if shp]
+    if not nonscalar_ranks or len(set(nonscalar_ranks)) == 1:
       return args
-    elif FLAGS.jax_numpy_rank_promotion != "raise":
-      if FLAGS.jax_numpy_rank_promotion == "warn":
-        msg = "following NumPy automatic rank promotion behavior for {}."
-        warnings.warn(msg.format(' '.join(map(str, shapes))))
-      nd = len(lax.broadcast_shapes(*shapes))
-      return [lax.reshape(arg, (1,) * (nd - len(shp)) + shp)
-              if shp and len(shp) != nd else arg for arg, shp in zip(args, shapes)]
     else:
-      msg = ("operands could not be broadcast together with shapes {} "
-             "and with the config option jax_numpy_rank_promotion='raise'.")
-      raise ValueError(msg.format(' '.join(map(str, shapes))))
+      if FLAGS.jax_numpy_rank_promotion != "allow":
+        _rank_promotion_warning_or_error(fun_name, shapes)
+      result_rank = len(lax.broadcast_shapes(*shapes))
+      return [lax.reshape(arg, (1,) * (result_rank - len(shp)) + shp)
+              if shp and len(shp) != result_rank else arg
+              for arg, shp in zip(args, shapes)]
+
+def _rank_promotion_warning_or_error(fun_name, shapes):
+  if FLAGS.jax_numpy_rank_promotion == "warn":
+    msg = ("Following NumPy automatic rank promotion for {} on shapes {}. "
+           "Set the jax_numpy_rank_promotion config option to 'allow' to "
+           "disable this warning; for more information, see "
+           "https://jax.readthedocs.io/en/latest/rank_promotion_warning.html.")
+    warnings.warn(msg.format(fun_name, ' '.join(map(str, shapes))))
+  elif FLAGS.jax_numpy_rank_promotion == "raise":
+    msg = ("Operands could not be broadcast together for {} on shapes {} "
+           "and with the config option jax_numpy_rank_promotion='raise'. "
+           "For more information, see "
+           "https://jax.readthedocs.io/en/latest/rank_promotion_warning.html.")
+    raise ValueError(msg.format(fun_name, ' '.join(map(str, shapes))))
 
 def _promote_dtypes(*args):
   """Convenience function to apply Numpy argument dtype promotion."""
@@ -219,13 +229,13 @@ def _check_arraylike(fun_name, *args):
 def _promote_args(fun_name, *args):
   """Convenience function to apply Numpy argument shape and dtype promotion."""
   _check_arraylike(fun_name, *args)
-  return _promote_shapes(*_promote_dtypes(*args))
+  return _promote_shapes(fun_name, *_promote_dtypes(*args))
 
 
 def _promote_args_like(op, *args):
   """Convenience function to apply shape and dtype promotion to result type."""
   _check_arraylike(op.__name__, *args)
-  return _promote_shapes(*_promote_to_result_dtype(op, *args))
+  return _promote_shapes(op.__name__, *_promote_to_result_dtype(op, *args))
 
 
 def _constant_like(x, const):
@@ -376,7 +386,7 @@ logical_xor = _logical_op(onp.logical_xor, lax.bitwise_xor)
 @_wraps(onp.true_divide)
 def true_divide(x1, x2):
   result_dtype = _result_dtype(onp.true_divide, x1, x2)
-  x1, x2 = _promote_shapes(x1, x2)
+  x1, x2 = _promote_shapes("true_divide", x1, x2)
   return lax.div(lax.convert_element_type(x1, result_dtype),
                  lax.convert_element_type(x2, result_dtype))
 
@@ -461,14 +471,16 @@ def power(x1, x2):
 
 @_wraps(onp.logaddexp)
 def logaddexp(x1, x2):
-  x1, x2 = _promote_shapes(*_promote_to_result_dtype(onp.logaddexp, x1, x2))
+  x1, x2 = _promote_shapes("logaddexp",
+                           *_promote_to_result_dtype(onp.logaddexp, x1, x2))
   amax = lax.max(x1, x2)
   return lax.add(amax, lax.log1p(lax.exp(-lax.abs(lax.sub(x1, x2)))))
 
 
 @_wraps(onp.logaddexp2)
 def logaddexp2(x1, x2):
-  x1, x2 = _promote_shapes(*_promote_to_result_dtype(onp.logaddexp2, x1, x2))
+  x1, x2 = _promote_shapes("logaddexp2",
+                           *_promote_to_result_dtype(onp.logaddexp2, x1, x2))
   amax = lax.max(x1, x2)
   return lax.add(amax, log2(lax.add(exp2(lax.sub(x1, amax)),
                                     exp2(lax.sub(x2, amax)))))

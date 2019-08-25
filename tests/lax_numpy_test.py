@@ -1853,9 +1853,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         lnp.ones(2) + lnp.ones((1, 2))
         assert len(w) > 0
         msg = str(w[-1].message)
-        self.assertEqual(
-            msg,
-            "following NumPy automatic rank promotion behavior for (2,) (1, 2).")
+        expected_msg = ("Following NumPy automatic rank promotion for add on "
+                        "shapes (2,) (1, 2).")
+        self.assertEqual(msg[:len(expected_msg)], expected_msg)
+
+        prev_len = len(w)
+        lnp.ones(2) + 3
+        self.assertEqual(len(w), prev_len)  # don't want to warn for scalars
     finally:
       FLAGS.jax_numpy_rank_promotion = prev_flag
 
