@@ -24,6 +24,8 @@ allowed just like regular NumPy. The configuration option is named
 :code:`jax_numpy_rank_promotion` and it can take on string values
 :code:`allow`, :code:`warn`, and :code:`raise`. The default setting is
 :code:`warn`, which raises a warning on the first occurrence of rank promotion.
+The :code:`raise` setting raises an error on rank promotion, and :code:`allow`
+allows rank promotion without warning or error.
 
 As with most other JAX configuration options, you can set this option in
 several ways. One is by using :code:`jax.config` in your code:
