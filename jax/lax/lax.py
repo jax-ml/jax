@@ -1389,7 +1389,8 @@ def _iter(tracer):
     raise TypeError("iteration over a 0-d array")  # same as numpy error
   else:
     n = tracer.shape[0]
-    return (index_in_dim(tracer, i, keepdims=False) for i in xrange(n))
+    # return (index_in_dim(tracer, i, keepdims=False) for i in xrange(n))
+    return iter([index_in_dim(tracer, i, keepdims=False) for i in xrange(n)])
 ShapedArray._iter = staticmethod(_iter)
 
 # Add some ad handlers that use (or could use) lax primitives
