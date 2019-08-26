@@ -1034,8 +1034,31 @@ class APITest(jtu.JaxTestCase):
       return (2 * x, 3 * y), lambda ts: (4 * ts[0], 5 * ts[1])
 
     api.defvjp_all(f, f_vjp, )
-
     api.grad(lambda x, y: f(x, y)[0])(1., 2.)  # doesn't crash
+
+  def test_custom_transforms_vjp_nones(self):
+    # issue rasied by jsnoek@ and jumper@
+    @jax.custom_transforms
+    def solve(a, b):
+      return np.dot(np.linalg.inv(a), b)
+    # print(solve(a, b))
+
+    def solve_vjp(a, b):
+      x = solve(a, b)
+      def vjp(x_tangent):
+        dx = np.dot(solve(a, x_tangent), x.T)
+        out = (dx, b * 0.)
+        return out
+      return x, vjp
+    jax.defvjp_all(solve, solve_vjp)
+    gf = grad(lambda a,b: np.sum(solve(a, b)))
+
+    n = 3
+    a_in = np.linspace(0, 1, n)[:, None]
+    a = np.dot(a_in, a_in.T) + np.eye(n) * 0.1
+    real_x = onp.random.RandomState(0).randn(n)
+    b = np.dot(a + np.eye(a.shape[0]), real_x)
+    print(gf(a, b))  # doesn't crash
 
 
 if __name__ == '__main__':
