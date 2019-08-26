@@ -2729,7 +2729,7 @@ def cov(m, y=None, rowvar=True, bias=False, ddof=None, fweights=None,
 
   if m.ndim > 2:
     raise ValueError("m has more than 2 dimensions")  # same as numpy error
-  X = array(m, ndmin=2, dtype=result_type(m, onp.float64), copy=False)
+  X = array(m, ndmin=2, dtype=xla_bridge.canonicalize_dtype(result_type(m, onp.float64)), copy=False)
   if not rowvar and X.shape[0] != 1:
     X = X.T
   if X.shape[0] == 0:
