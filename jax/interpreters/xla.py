@@ -156,7 +156,7 @@ def primitive_computation(prim, *xla_shapes, **params):
     rule(c, *xla_args, backend=backend, **new_params)  # return val set as a side-effect on c
   elif prim in initial_style_translations:
     rule = initial_style_translations[prim]
-    rule(c, AxisEnv(1, [], []), *xla_args,  backend=backend, **new_params)  # side-effect on c
+    rule(c, AxisEnv(), *xla_args,  backend=backend, **new_params)  # side-effect on c
   else:
     raise NotImplementedError("XLA translation rule for {} not found".format(prim))
   try:
@@ -312,10 +312,15 @@ def xla_destructure(c, ans):
   return [c.GetTupleElement(ans, i) for i in range(num_elements)]
 
 
-AxisEnv = namedtuple("AxisEnv", ["nreps", "names", "sizes"])
+class AxisEnv(object):
+  def __init__(self, nreps=1, names=None, sizes=None, devices=None):
+    self.nreps = nreps
+    self.names = names if names else []
+    self.sizes = sizes if sizes else []
+    self.devices = devices
 
 def extend_axis_env(env, name, size):
-  return AxisEnv(env.nreps, env.names + [name], env.sizes + [size])
+  return AxisEnv(env.nreps, env.names + [name], env.sizes + [size], env.devices)
 
 def axis_read(axis_env, axis_name):
   return max(i for i, name in enumerate(axis_env.names) if name == axis_name)
@@ -461,7 +466,7 @@ def lower_fun(fun, instantiate=False, initial_style=False):
     if initial_style:
       axis_env, xla_args = args[0], args[1:]
     else:
-      axis_env, xla_args = AxisEnv(1, [], []), args
+      axis_env, xla_args = AxisEnv(), args
     xla_shapes = tuple(map(c.GetShape, xla_args))
     avals = map(_aval_from_xla_shape, xla_shapes)
     pvals = [pe.PartialVal((a, core.unit)) for a in avals]
