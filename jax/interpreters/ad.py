@@ -376,6 +376,7 @@ def defvjp_all(prim, custom_vjp):
   def fun_lin_transpose(cts, *args, **kwargs):
     num_res, trans_jaxpr = kwargs['num_res'], kwargs['trans_jaxpr']
     res, _ = split_list(args, [num_res])
+    cts = map(instantiate_zeros_aval, kwargs['out_avals'], cts)
     outs = core.eval_jaxpr(trans_jaxpr, res, (), *cts)
     return [None] * num_res + outs
   primitive_transposes[fun_lin_p] = fun_lin_transpose

@@ -1025,6 +1025,18 @@ class APITest(jtu.JaxTestCase):
     check_warning(lambda: np.tri(2, dtype="float64"),
                   lambda: np.tri(2, dtype="float32"))
 
+  def test_custom_vjp_zeros(self):
+    @api.custom_transforms
+    def f(x, y):
+      return 2 * x, 3 * y
+
+    def f_vjp(x, y):
+      return (2 * x, 3 * y), lambda ts: (4 * ts[0], 5 * ts[1])
+
+    api.defvjp_all(f, f_vjp, )
+
+    api.grad(lambda x, y: f(x, y)[0])(1., 2.)  # doesn't crash
+
 
 if __name__ == '__main__':
   absltest.main()
