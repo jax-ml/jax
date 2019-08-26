@@ -9,7 +9,7 @@
 | [**Quickstart**](#quickstart-colab-in-the-cloud)
 
 JAX is [Autograd](https://github.com/hips/autograd) and
-[XLA](https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/g3doc/overview.md),
+[XLA](https://www.tensorflow.org/xla),
 brought together for high-performance machine learning research.
 
 With its updated version of [Autograd](https://github.com/hips/autograd),
@@ -21,7 +21,7 @@ via [`grad`](#automatic-differentiation-with-grad) as well as forward-mode diffe
 and the two can be composed arbitrarily to any order.
 
 What’s new is that JAX uses
-[XLA](https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/g3doc/overview.md)
+[XLA](https://www.tensorflow.org/xla)
 to compile and run your NumPy programs on GPUs and TPUs. Compilation happens
 under the hood by default, with library calls getting just-in-time compiled and
 executed. But JAX also lets you just-in-time compile your own Python functions
