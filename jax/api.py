@@ -79,7 +79,7 @@ class _ThreadLocalState(threading.local):
 
 _thread_local_state = _ThreadLocalState()
 
-def jit(fun, static_argnums=(), device_assignment=None):
+def jit(fun, static_argnums=(), device_assignment=None, backend=None):
   """Sets up `fun` for just-in-time compilation with XLA.
 
   Args:
@@ -101,6 +101,8 @@ def jit(fun, static_argnums=(), device_assignment=None):
       change. Optional, an int specifying the device ordinal for which to compile the
       function. The default is inherited from XLA's DeviceAssignment logic and is
       usually to use device 0.
+    backend: This is an experimental feature and the API is likely to change.
+      Optional, a string representing the xla backend. 'cpu','gpu', or 'tpu'.
 
   Returns:
     A wrapped version of `fun`, set up for just-in-time compilation.
@@ -141,7 +143,7 @@ def jit(fun, static_argnums=(), device_assignment=None):
     args_flat, in_tree = tree_flatten((dyn_args, kwargs))
     _check_args(args_flat)
     flat_fun, out_tree = flatten_fun(f, in_tree)
-    out = xla.xla_call(flat_fun, *args_flat, device_assignment=device_assignment)
+    out = xla.xla_call(flat_fun, *args_flat, device_assignment=device_assignment, backend=backend)
     return tree_unflatten(out_tree(), out)
 
   jitted_name =  "jit({}, static_argnums={})"
@@ -191,7 +193,7 @@ def disable_jit():
     _thread_local_state.jit_is_disabled = prev_val
 
 
-def xla_computation(fun, static_argnums=(), axis_env=None):
+def xla_computation(fun, static_argnums=(), axis_env=None, backend=None):
   """Creates a function that produces its XLA computation given example args.
 
   Args:
@@ -203,6 +205,8 @@ def xla_computation(fun, static_argnums=(), axis_env=None):
       functions that involve parallel communication collectives, and it
       specifies the axis name/size environment that would be set up by
       applications of ``jax.pmap``. See the examples below.
+    backend: This is an experimental feature and the API is likely to change.
+      Optional, a string representing the xla backend. 'cpu','gpu', or 'tpu'.
 
   Returns:
     A wrapped version of ``fun`` that when applied to example arguments returns a
@@ -285,7 +289,7 @@ def xla_computation(fun, static_argnums=(), axis_env=None):
     pvals = map(pv_like, jax_args)
     jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
     axis_env_ = make_axis_env(xla.jaxpr_replicas(jaxpr))
-    return xla.build_jaxpr(jaxpr, axis_env_, consts,
+    return xla.build_jaxpr(jaxpr, backend, axis_env_, consts,
                            *map(xla.abstractify, jax_args))
   return computation_maker
 
@@ -624,7 +628,7 @@ class _NoneProxy(object): pass
 _none_proxy = _NoneProxy()
 
 
-def pmap(fun, axis_name=None):
+def pmap(fun, axis_name=None, backend=None):
   """Parallel map with support for collectives.
 
   The purpose of ``pmap`` is to express single-program multiple-data (SPMD)
@@ -647,6 +651,8 @@ def pmap(fun, axis_name=None):
     fun: Function to be mapped over argument axes.
     axis_name: Optional, a hashable Python object used to identify the mapped
       axis so that parallel collectives can be applied.
+    backend: This is an experimental feature and the API is likely to change.
+      Optional, a string representing the xla backend. 'cpu','gpu', or 'tpu'.
 
   Returns:
     A parallelized version of ``fun`` with arguments that correspond to those of
@@ -718,7 +724,7 @@ def pmap(fun, axis_name=None):
     axis_size = _pmap_axis_size(args)
     _check_args(args)
     flat_fun, out_tree = flatten_fun(f, in_tree)
-    out = pxla.xla_pmap(flat_fun, *args, axis_name=axis_name, axis_size=axis_size)
+    out = pxla.xla_pmap(flat_fun, *args, axis_name=axis_name, axis_size=axis_size, backend=backend)
     return tree_unflatten(out_tree(), out)
 
   namestr = "pmap({}, axis_name={})".format
@@ -740,7 +746,7 @@ class _TempAxisName(object):
     return '<axis {}>'.format(hex(id(self)))
 
 
-def soft_pmap(fun, axis_name=None):
+def soft_pmap(fun, axis_name=None, backend=None):
   _check_callable(fun)
   axis_name = _TempAxisName() if axis_name is None else axis_name
 
@@ -752,9 +758,9 @@ def soft_pmap(fun, axis_name=None):
     _check_args(args_flat)
     flat_fun, out_tree = flatten_fun(f, in_tree)
 
-    chunk_size, leftover = divmod(axis_size, pxla.unmapped_device_count())
+    chunk_size, leftover = divmod(axis_size, pxla.unmapped_device_count(backend))
     if chunk_size == 0 and leftover:
-      return pmap(fun, axis_name)(*args)  # can map directly onto hardware
+      return pmap(fun, axis_name, backend)(*args)  # can map directly onto hardware
     elif leftover:
       msg = ("soft_pmap mapped axis size must be divisble by the number of "
              "XLA devices (or be less than or equal to that number), but got "
@@ -765,7 +771,8 @@ def soft_pmap(fun, axis_name=None):
     reshaped_args = [_reshape_split(num_chunks, x) for x in args_flat]
     soft_mapped_fun = pxla.split_axis(flat_fun, axis_name, chunk_size)
     reshaped_outs = pxla.xla_pmap(soft_mapped_fun, *reshaped_args,
-                                  axis_name=axis_name, axis_size=num_chunks)
+                                  axis_name=axis_name, axis_size=num_chunks,
+                                  backend=backend)
     outs = [_reshape_merge(out) for out in reshaped_outs]
     return tree_unflatten(out_tree(), outs)
 
@@ -1084,8 +1091,8 @@ def make_jaxpr(fun):
   return jaxpr_maker
 
 
-def device_put(x, device_num=0):
-  return tree_map(lambda y: xla.device_put_p.bind(y, device_num=device_num), x)
+def device_put(x, device_num=0, backend=None):
+  return tree_map(lambda y: xla.device_put_p.bind(y, device_num=device_num, backend=backend), x)
 
 
 # TODO(mattjj): consider revising
