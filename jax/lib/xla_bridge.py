@@ -27,6 +27,8 @@ import os
 import warnings
 from distutils.util import strtobool
 
+from absl import logging
+
 from ..config import flags
 from .. import util
 import numpy as onp  # 'onp' rather than 'np' to distinguish from autograd.numpy
@@ -69,6 +71,8 @@ def get_compile_options(num_replicas=None, device_assignment=None):
     compile_options = compile_options or xla_client.CompileOptions()
     compile_options.num_replicas = num_replicas
   if device_assignment is not None:
+    logging.vlog(2, "get_compile_options: num_replicas=%s device_assignment=%s",
+                 num_replicas, device_assignment)
     # NOTE(mattjj): xla_client.DeviceAssignment.create expects a 2D ndarray
     # indexed by replica number and computation per replica, respectively, while
     # here we currently assume only one computation per replica, hence the
@@ -137,7 +141,59 @@ def get_backend(platform=None):
 
 
 def device_count(backend=None):
+  """Returns the total number of devices.
+
+  On most platforms, this is the same as `local_device_count()`. However, on
+  multi-host platforms, this will return the total number of devices across all
+  hosts.
+
+  Args:
+    backend: This is an experimental feature and the API is likely to change.
+      Optional, a string representing the xla backend. 'cpu','gpu', or 'tpu'.
+
+  Returns:
+    Number of devices.
+  """
   return int(get_backend(backend).device_count())
+
+
+def local_device_count(backend=None):
+  """Returns the number of devices on this host."""
+  return int(get_backend(backend).local_device_count())
+
+
+def devices(backend=None):
+  """Returns a list of all devices.
+
+  Each device is represented by a subclass of Device (e.g. CpuDevice,
+  GpuDevice). The length of the returned list is equal to
+  `device_count()`. Local devices can be identified by comparing
+  `Device.host_id` to `host_id()`.
+
+  Args:
+    backend: This is an experimental feature and the API is likely to change.
+      Optional, a string representing the xla backend. 'cpu','gpu', or 'tpu'.
+
+  Returns:
+    List of Device subclasses.
+  """
+  return get_backend(backend).devices()
+
+
+def host_id(backend=None):
+  """Returns the integer host ID of this host.
+
+  On most platforms, this will always be 0. This will vary on multi-host
+  platforms though.
+
+  Args:
+    backend: This is an experimental feature and the API is likely to change.
+      Optional, a string representing the xla backend. 'cpu','gpu', or 'tpu'.
+
+  Returns:
+    Integer host ID.
+  """
+  return get_backend(backend).host_id()
 
 
 ### utility functions

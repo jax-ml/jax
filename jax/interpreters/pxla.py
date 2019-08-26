@@ -159,17 +159,30 @@ def replica_groups(nrep, mesh_spec, mesh_axes):
 
 ### the main pmap machinery lowers SPMD jaxprs to multi-replica XLA computations
 
-def compile_replicated(jaxpr, backend, axis_name, axis_size, consts, *abstract_args):
-  num_replicas = axis_size * xla.jaxpr_replicas(jaxpr)
-  if num_replicas > xb.device_count(backend):
-    msg = ("compiling computation that requires {} replicas, but only {} XLA "
-           "devices are available")
-    raise ValueError(msg.format(num_replicas, xb.device_count(backend)))
-  axis_env = xla.AxisEnv(num_replicas, [axis_name], [axis_size])
+def compile_replicated(jaxpr, backend, axis_name, axis_size, devices, consts,
+                       *abstract_args):
+  if devices is None:
+    num_replicas = axis_size * xla.jaxpr_replicas(jaxpr)
+    if num_replicas > xb.device_count(backend):
+      msg = ("compiling computation that requires {} replicas, but only {} XLA "
+             "devices are available")
+      raise ValueError(msg.format(num_replicas, xb.device_count(backend)))
+    device_assignment = None
+  else:
+    assert all(d.host_id == xb.host_id() for d in devices)
+    if axis_size != len(devices):
+      raise ValueError("compiling computation that requires %s replicas, "
+                       "but %s devices were specified"
+                       % (axis_size, len(devices)))
+    num_replicas = len(devices)
+    device_assignment = tuple(d.id for d in devices)
+
+  axis_env = xla.AxisEnv(num_replicas, [axis_name], [axis_size], devices)
   arg_shapes = list(map(aval_to_xla_shape, abstract_args))
   built_c = xla.jaxpr_computation(jaxpr, backend, axis_env, consts, (), *arg_shapes)
-  compiled = built_c.Compile(arg_shapes, xb.get_compile_options(num_replicas),
-                             backend=xb.get_backend(backend))
+  compiled = built_c.Compile(
+      arg_shapes, xb.get_compile_options(num_replicas, device_assignment),
+      backend=xb.get_backend(backend))
   return compiled, num_replicas
 
 
@@ -394,14 +407,20 @@ xb.register_constant_handler(ChunkedDeviceArray,
 def xla_pmap_impl(fun, *args, **params):
   axis_name = params.pop('axis_name')
   axis_size = params.pop('axis_size')
+  devices = params.pop('devices')
   backend = params.pop('backend', None)
   assert not params
+
   abstract_args = map(xla.abstractify, args)
-  compiled_fun = parallel_callable(fun, backend, axis_name, axis_size, *abstract_args)
+  compiled_fun = parallel_callable(fun, backend, axis_name, axis_size, devices,
+                                   *abstract_args)
   return compiled_fun(*args)
 
 @lu.cache
-def parallel_callable(fun, backend, axis_name, axis_size, *avals):
+def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
+  if devices is not None and len(devices) == 0:
+    raise ValueError("'devices' argument to pmap must be non-empty, or None.")
+
   avals = tuple(map(partial(shard_aval, axis_size), avals))
   pvals = [PartialVal((aval, core.unit)) for aval in avals]
   pval = PartialVal([core.abstract_unit, core.unit])  # dummy value
@@ -427,7 +446,8 @@ def parallel_callable(fun, backend, axis_name, axis_size, *avals):
     results = [handler(None) for handler in handlers]
     return lambda *_: results
   else:
-    compiled, nrep = compile_replicated(jaxpr, backend, axis_name, axis_size, consts, *avals)
+    compiled, nrep = compile_replicated(jaxpr, backend, axis_name, axis_size,
+                                        devices, consts, *avals)
     device_ordinals = compiled.DeviceOrdinals()
     assignments = assign_shards_to_replicas(nrep, axis_size)
     handle_args = partial(shard_args, backend, device_ordinals, assignments, axis_size)
@@ -470,7 +490,10 @@ xla_pmap_p.def_custom_bind(xla_pmap)
 xla_pmap_p.def_impl(xla_pmap_impl)
 
 def _xla_pmap_translation_rule(c, jaxpr, axis_env, env_nodes, in_nodes,
-                               axis_name, axis_size, backend=None):
+                               axis_name, axis_size, devices, backend=None):
+  if axis_env.devices is not None or (axis_env.names and devices is not None):
+    raise NotImplementedError(
+        "Nested pmaps with devices argument not yet supported.")
   new_env = xla.extend_axis_env(axis_env, axis_name, axis_size)
   in_nodes_sharded = list(map(partial(_xla_shard, c, new_env.sizes), in_nodes))
   subc = xla.jaxpr_computation(jaxpr, backend, new_env, (),

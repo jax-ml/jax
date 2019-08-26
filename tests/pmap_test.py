@@ -672,5 +672,122 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(z, 2 * x[0], check_dtypes=False)
 
 
+class PmapWithDevicesTest(jtu.JaxTestCase):
+
+  def testAllDevices(self):
+    f = pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i',
+             devices=xla_bridge.devices())
+    shape = (xla_bridge.device_count(), 4)
+    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+    expected = x - onp.sum(x, 0)
+    ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
+  def testOneDevice(self):
+    if xla_bridge.device_count() == 1:
+      raise SkipTest("this test requires multiple devices")
+
+    d0 = xla_bridge.devices()[0]
+    d1 = xla_bridge.devices()[1]
+    f = lambda x: np.dot(x, x.T)
+    f0 = pmap(f, devices=[d0])
+    f1 = pmap(f, devices=[d1])
+    x = onp.random.rand(1, 1000, 1000)
+    r0 = f0(x)
+    r1 = f1(x)
+    expected = onp.expand_dims(onp.dot(x.squeeze(), x.squeeze().T), 0)
+    self.assertAllClose(r0, expected, check_dtypes=True)
+    self.assertAllClose(r1, expected, check_dtypes=True)
+
+  def testNoDevicesError(self):
+    f = pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i', devices=[])
+    shape = (xla_bridge.device_count(), 4)
+    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+    with self.assertRaisesRegex(
+        ValueError, "'devices' argument to pmap must be non-empty, or None."):
+      f(x)
+
+  def testBadAxisSizeError(self):
+    if xla_bridge.device_count() == 1:
+      raise SkipTest("this test requires multiple devices")
+
+    f = pmap(lambda x: lax.psum(x, 'i'), axis_name='i',
+             devices=xla_bridge.devices())
+    with self.assertRaisesRegex(
+        ValueError, r"compiling computation that requires 1 replicas, "
+        r"but \d+ devices were specified"):
+      f(np.ones(1))
+
+    with self.assertRaisesRegex(
+        ValueError, r"compiling computation that requires \d+ replicas, "
+        r"but \d+ devices were specified"):
+      f(np.ones(xla_bridge.device_count() + 1))
+
+  def testNestedPmapsError(self):
+    # Devices specified in outer pmap
+    @partial(pmap, axis_name='i', devices=xla_bridge.devices())
+    def foo(x):
+      @partial(pmap, axis_name='j')
+      def bar(y):
+        return lax.psum(y, 'j')
+      return bar(x)
+
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "Nested pmaps with devices argument not yet supported."):
+      foo(np.ones((xla_bridge.device_count(), 1)))
+
+    # Devices specified in inner pmap
+    @partial(pmap, axis_name='i')
+    def foo(x):
+      @partial(pmap, axis_name='j', devices=xla_bridge.devices())
+      def bar(y):
+        return lax.psum(y, 'j')
+      return bar(x)
+
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "Nested pmaps with devices argument not yet supported."):
+      foo(np.ones((xla_bridge.device_count(), 1)))
+
+  def testJitInPmap(self):
+    @partial(pmap, axis_name='i', devices=xla_bridge.devices())
+    def foo(x):
+      @jit
+      def bar(y):
+        return y + 1
+      return lax.psum(bar(x), 'i')
+
+    ndevices = xla_bridge.device_count()
+    ans = foo(np.ones((ndevices, 1)))
+    expected = onp.ones((ndevices, 1)) * ndevices * 2
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
+  def testPmapInJit(self):
+    @jit
+    def foo(x):
+      @partial(pmap, axis_name='i', devices=xla_bridge.devices())
+      def bar(y):
+        return lax.psum(y, 'i')
+      return bar(x)
+
+    ndevices = xla_bridge.device_count()
+    ans = foo(np.ones((ndevices, 1)))
+    expected = onp.ones((ndevices, 1)) * ndevices
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
+  def testGradBasic(self):
+    @partial(pmap, axis_name='i', devices=xla_bridge.devices())
+    def f(x):
+      return np.sin(x)
+
+    shape = (xla_bridge.device_count(), 4)
+    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+
+    ans = grad(lambda x: np.sum(np.sin(x)))(x)
+    expected = grad(lambda x: np.sum(f(x)))(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+
 if __name__ == '__main__':
   absltest.main()

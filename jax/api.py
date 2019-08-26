@@ -50,7 +50,8 @@ from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, tree_leaves, tree_multimap)
 from .util import (unzip2, unzip3, curry, partial, safe_map, safe_zip,
                    WrapHashably, Hashable, prod, split_list)
-from .lib.xla_bridge import canonicalize_dtype, device_count
+from .lib.xla_bridge import (canonicalize_dtype, device_count,
+                             local_device_count, devices, host_id)
 from .abstract_arrays import ShapedArray, raise_to_shaped
 from .interpreters import partial_eval as pe
 from .interpreters import xla
@@ -276,10 +277,11 @@ def xla_computation(fun, static_argnums=(), axis_env=None, backend=None):
 
   def make_axis_env(nreps):
     if axis_env is None:
-      return xla.AxisEnv(nreps, [], [])
+      return xla.AxisEnv(nreps)
     else:
       nreps = nreps * prod(size for name, size in axis_env)
-      return xla.AxisEnv(nreps, *zip(*axis_env))
+      names, sizes = zip(*axis_env)
+      return xla.AxisEnv(nreps, names, sizes)
 
   @wraps(fun)
   def computation_maker(*args, **kwargs):
@@ -628,7 +630,7 @@ class _NoneProxy(object): pass
 _none_proxy = _NoneProxy()
 
 
-def pmap(fun, axis_name=None, backend=None):
+def pmap(fun, axis_name=None, devices=None, backend=None):
   """Parallel map with support for collectives.
 
   The purpose of ``pmap`` is to express single-program multiple-data (SPMD)
@@ -644,13 +646,20 @@ def pmap(fun, axis_name=None, backend=None):
   like all-reduce sum.
 
   The mapped axis size must be less than or equal to the number of XLA devices
-  available. For nested ``pmap`` calls, the product of the mapped axis sizes
-  must be less than or equal to the number of XLA devices.
+  available (unless ``devices`` is specified, see below). For nested ``pmap``
+  calls, the product of the mapped axis sizes must be less than or equal to the
+  number of XLA devices.
 
   Args:
     fun: Function to be mapped over argument axes.
     axis_name: Optional, a hashable Python object used to identify the mapped
       axis so that parallel collectives can be applied.
+    devices: This is an experimental feature and the API is likely to change.
+      Optional, a sequence of Devices to map over. (Available devices can be
+      retrieved via jax.devices()). If specified, the length of the sequence
+      must be equal to the size of the mapped axis. Nested ``pmap``s with
+      ``devices`` specified in either the inner or outer ``pmap`` are not yet
+      supported.
     backend: This is an experimental feature and the API is likely to change.
       Optional, a string representing the xla backend. 'cpu','gpu', or 'tpu'.
 
@@ -713,6 +722,25 @@ def pmap(fun, axis_name=None, backend=None):
   [ 1.  1.  1.  1.]
   >>> print(doubly_normed.sum((0, 1)))
   1.0
+
+  The ``devices`` argument can be used to specify exactly which devices are used
+  to run the parallel computation. For example, the following code defines
+  two parallel computations, one which runs on the first six devices and one on
+  the remaining two:
+
+  >>> from functools import partial
+  >>> @partial(pmap, axis_name='i', devices=jax.devices()[:6])
+  >>> def f1(x):
+  >>>   return x / jax.lax.psum(x, axis_name='i')
+  >>>
+  >>> @partial(pmap, axis_name='i', devices=jax.devices()[-2:])
+  >>> def f2(x):
+  >>>   return jax.lax.psum(x ** 2, axis_name='i')
+  >>>
+  >>> print(f1(np.arange(6.)))
+  [0.         0.06666667 0.13333333 0.2        0.26666667 0.33333333]
+  >>> print(f2(np.array([2., 3.])))
+  [ 13.  13.]
   """
   _check_callable(fun)
   axis_name = _TempAxisName() if axis_name is None else axis_name
@@ -724,7 +752,9 @@ def pmap(fun, axis_name=None, backend=None):
     axis_size = _pmap_axis_size(args)
     _check_args(args)
     flat_fun, out_tree = flatten_fun(f, in_tree)
-    out = pxla.xla_pmap(flat_fun, *args, axis_name=axis_name, axis_size=axis_size, backend=backend)
+    out = pxla.xla_pmap(flat_fun, *args, axis_name=axis_name, axis_size=axis_size,
+                        devices=tuple(devices) if devices is not None else devices,
+                        backend=backend)
     return tree_unflatten(out_tree(), out)
 
   namestr = "pmap({}, axis_name={})".format
@@ -772,7 +802,7 @@ def soft_pmap(fun, axis_name=None, backend=None):
     soft_mapped_fun = pxla.split_axis(flat_fun, axis_name, chunk_size)
     reshaped_outs = pxla.xla_pmap(soft_mapped_fun, *reshaped_args,
                                   axis_name=axis_name, axis_size=num_chunks,
-                                  backend=backend)
+                                  devices=None, backend=backend)
     outs = [_reshape_merge(out) for out in reshaped_outs]
     return tree_unflatten(out_tree(), outs)
 
@@ -830,7 +860,7 @@ def _parallelize(fun):
     f, out_axes = parallel.papply_transform(f, axis_name, axis_size)
     f = pxla.split_axis(f, axis_name, chunk_size)
     outs = pxla.xla_pmap(f, *reshaped_args, axis_name=axis_name,
-                         axis_size=num_chunks)
+                         axis_size=num_chunks, devices=None)
     outs = map(_reshape_merge, outs)
     outs = [batching.matchaxis(axis_size, 0, dst, x)
             for dst, x in zip(out_axes(), outs)]
