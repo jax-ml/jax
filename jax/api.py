@@ -1476,11 +1476,11 @@ def defvjp_all(fun, custom_vjp):
     args = tree_unflatten(params['in_tree'], args_flat)
     out, vjp = custom_vjp(*args)
     out_flat, out_tree = tree_flatten(out)
-    assert out_tree == params['out_tree']
+    assert out_tree == params['out_tree']  # TODO(mattjj): better error message
     def vjp_flat(*cts_flat):
       cts = tree_unflatten(out_tree, cts_flat)
       args_cts_flat, in_tree2 = tree_flatten(vjp(cts))
-      assert in_tree == in_tree2
+      assert in_tree == in_tree2  # TODO(mattjj): better error message
       return [core.unit] * num_consts + list(args_cts_flat)
     return out_flat, vjp_flat
   ad.defvjp_all(fun.prim, custom_transforms_vjp)
