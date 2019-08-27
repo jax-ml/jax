@@ -232,8 +232,10 @@ _thread_local_state = _ThreadLocalState()
 def extend_dynamic_axis_env(axis_name, pmap_trace, hard_size):
   dynamic_axis_env = _thread_local_state.dynamic_axis_env
   dynamic_axis_env.append(DynamicAxisEnvFrame(axis_name, pmap_trace, hard_size))
-  yield
-  dynamic_axis_env.pop()
+  try:
+    yield
+  finally:
+    dynamic_axis_env.pop()
 
 def unmapped_device_count(backend=None):
   dynamic_axis_env = _thread_local_state.dynamic_axis_env
