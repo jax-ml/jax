@@ -142,7 +142,6 @@ def jit(fun, static_argnums=(), device_assignment=None, backend=None):
     else:
       dyn_args = args
     args_flat, in_tree = tree_flatten((dyn_args, kwargs))
-    _check_args(args_flat)
     flat_fun, out_tree = flatten_fun(f, in_tree)
     out = xla.xla_call(flat_fun, *args_flat, device_assignment=device_assignment, backend=backend)
     return tree_unflatten(out_tree(), out)

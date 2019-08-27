@@ -33,39 +33,94 @@ from . import numpy as np
 from . import tree_util
 from .api import custom_transforms, defjvp, jit, vmap
 from .numpy.lax_numpy import _constant_like, asarray, stack
+from jax.interpreters import xla
 from jax.lib import xla_bridge
+from jax.lib import xla_client as xc
 from jax import core
 from jax.scipy.special import logit
 
 
-def PRNGKey(seed):
-  """Create a pseudo-random number generator (PRNG) key given an integer seed.
+def identity(x): return x
 
-  Args:
-    seed: a 64- or 32-bit integer used as the value of the key.
+class MutableCell(object):
+  __slots__ = ["cell"]
+  def __init__(self, val): self.cell = val
+  update = __init__
 
-  Returns:
-    A PRNG key, which is modeled as an array of shape (2,) and dtype uint32. The
-    key is constructed from a 64-bit seed by effectively bit-casting to a pair
-    of uint32 values (or from a 32-bit seed by first padding out with zeros).
-  """
-  if onp.shape(seed):
-    raise TypeError("PRNGKey seed must be a scalar.")
-  convert = lambda k: lax.reshape(lax.convert_element_type(k, onp.uint32), [1])
-  if isinstance(seed, (int, onp.ndarray)):
-    # Special handling of raw integer values, which may have be 64bit even
-    # when jax_enable_x64=False and we don't want to drop the top 32 bits
-    k1 = convert(onp.bitwise_and(onp.right_shift(seed, 32), 0xFFFFFFFF))
-  else:
-    k1 = convert(lax.shift_right_logical(seed, 32))
-  k2 = convert(lax.bitwise_and(seed, 0xFFFFFFFF))
-  return lax.concatenate([k1, k2], 0)
+class PRNGKey(object):
+  __slots__ = ["val", "consumed"]
+
+  def __init__(self, seed):
+    if onp.shape(seed):
+      raise TypeError("PRNGKey seed must be a scalar.")
+    convert = lambda k: lax.reshape(lax.convert_element_type(k, onp.uint32), [1])
+    if isinstance(seed, (int, onp.ndarray)):
+      # Special handling of raw integer values, which may have be 64bit even
+      # when jax_enable_x64=False and we don't want to drop the top 32 bits
+      k1 = convert(onp.bitwise_and(onp.right_shift(seed, 32), 0xFFFFFFFF))
+    else:
+      k1 = convert(lax.shift_right_logical(seed, 32))
+    k2 = convert(lax.bitwise_and(seed, 0xFFFFFFFF))
+    self.val = lax.concatenate([k1, k2], 0)
+    self.consumed = MutableCell(False)
+
+  @property
+  def shape(self):
+    return self.val.shape
+
+  def consume(self):
+    if self.consumed.cell:
+      raise PRNGKeyReuseError
+    self.consumed.update(True)
+
+  @classmethod
+  def from_raw(cls, key, consumed):
+    new = cls.__new__(cls)
+    new.val = key
+    new.consumed = consumed
+    return new
+
+class PRNGKeyReuseError(Exception): pass
+
+class ConcretePRNGKey(core.AbstractValue):
+  def __init__(self, key): self.key = key
+  shape = property(lambda self: self.key.shape)
+  consumed = property(lambda self: self.key.consumed)
+  consume = lambda self: self.key.consume()
+  def _iter(self): return iter(self.key)
+core.pytype_aval_mappings[PRNGKey] = ConcretePRNGKey
+
+class ShapedPRNGKey(core.AbstractValue):
+  __slots__ = ["shape", "consumed"]
+
+  def __init__(self, key):
+    self.shape = key.shape
+    self.consumed = key.consumed
+
+  def consume(self):
+    if self.consumed.cell:
+      raise PRNGKeyReuseError
+    self.consumed.update(True)
+
+def xla_shape_handler(a):
+  return xc.Shape.array_shape(onp.uint32, a.shape)
+
+def xla_result_handler(a):
+  return lambda buf: PRNGKey.from_raw(onp.asarray(buf), a.consumed)
+
+def xla_device_put(key, device_num, backend=None):
+  return xla.device_put(key.val, device_num, backend)
+
+for _t in [ConcretePRNGKey, ShapedPRNGKey]:
+  xla.xla_shape_handlers[_t] = xla_shape_handler
+  xla.xla_result_handlers[_t] = xla_result_handler
+xla.canonicalize_dtype_handlers[PRNGKey] = identity
+xla.pytype_aval_mappings[PRNGKey] = ShapedPRNGKey
+
+
 
 def _is_prng_key(key):
-  try:
-    return key.shape == (2,) and key.dtype == onp.uint32
-  except AttributeError:
-    return False
+  return isinstance(core.get_aval(key), (ConcretePRNGKey, ShapedPRNGKey))
 
 
 ### utilities

@@ -17,6 +17,7 @@ from __future__ import division
 from __future__ import print_function
 
 from collections import namedtuple, defaultdict
+from contextlib import contextmanager
 from distutils.util import strtobool
 import itertools as it
 import operator as op
@@ -360,11 +361,29 @@ def eqn_replicas(eqn):
 
 ### xla_call underlying jit
 
+class EffectRecord(list): pass
+class EffectRecorders(list): pass
+effect_recorders = EffectRecorders()
+
+def register_effect(thunk):
+  if effect_recorders:
+    for s in effect_recorders:
+      s.append(thunk)
+  else:
+    thunk()
+
+@contextmanager
+def monitor_effects():
+  r = EffectRecord()
+  effect_recorders.append(r)
+  yield r
+  effect_recorders.pop()
+
 def _xla_call_impl(fun, *args, **params):
   device_assignment = params['device_assignment']
   backend = params.get('backend', None)
-  compiled_fun = _xla_callable(fun, device_assignment, backend,
-                               *map(abstractify, args))
+  compiled_fun =  _xla_callable(fun, device_assignment, backend,
+                                *map(abstractify, args))
   try:
     return compiled_fun(*args)
   except FloatingPointError:
@@ -378,7 +397,9 @@ def _xla_callable(fun, device_assignment, backend, *abstract_args):
     print("Compiling {} for args {}.".format(fun.__name__, abstract_args))
   pvals = [pe.PartialVal((aval, core.unit)) for aval in abstract_args]
   with core.new_master(pe.JaxprTrace, True) as master:
-    jaxpr, (pvals, consts, env) = pe.trace_to_subjaxpr(fun, master, False).call_wrapped(pvals)
+    with monitor_effects() as effects:
+      jaxpr, (pvals, consts, env) = pe.trace_to_subjaxpr(
+          fun, master, False).call_wrapped(pvals)
     assert not env  # no subtraces here (though cond might eventually need them)
     axis_env = AxisEnv(jaxpr_replicas(jaxpr), [], [])
     compiled = compile_jaxpr(jaxpr, device_assignment, backend, axis_env, consts,
@@ -386,9 +407,10 @@ def _xla_callable(fun, device_assignment, backend, *abstract_args):
     del master, consts, jaxpr, env
   result_handlers = tuple(map(_pval_to_result_handler, pvals))
   if axis_env.nreps == 1:
-    return partial(_execute_compiled, compiled, backend, result_handlers)
+    compiled_fun = partial(_execute_compiled, compiled, backend, result_handlers, effects)
   else:
-    return partial(_execute_replicated, compiled, backend, result_handlers)
+    compiled_fun = partial(_execute_replicated, compiled, backend, result_handlers, effects)
+  return compiled_fun
 
 def _pval_to_result_handler(pval):
   pv, const = pval
@@ -397,17 +419,19 @@ def _pval_to_result_handler(pval):
   else:
     return aval_to_result_handler(pv)
 
-def _execute_compiled(compiled, backend, handlers, *args):
+def _execute_compiled(compiled, backend, handlers, effects, *args):
   device_num, = compiled.DeviceOrdinals()
   input_bufs = [device_put(x, device_num, backend=backend) for x in args]
   out_bufs = compiled.Execute(input_bufs).destructure()
+  for e in effects: e()
   if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_buf)
   return [handler(out_buf) for handler, out_buf in zip(handlers, out_bufs)]
 
-def _execute_replicated(compiled, backend, handlers, *args):
+def _execute_replicated(compiled, backend, handlers, effects, *args):
   input_bufs = [[device_put(x, i, backend=backend) for x in args]
                 for i in compiled.DeviceOrdinals()]
   out_bufs = compiled.ExecutePerReplica(input_bufs)[0].destructure()
+  for e in effects: e()
   if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_buf)
   return [handler(out_buf) for handler, out_buf in zip(handlers, out_bufs)]
 
