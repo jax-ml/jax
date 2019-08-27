@@ -376,8 +376,10 @@ def register_effect(thunk):
 def monitor_effects():
   r = EffectRecord()
   effect_recorders.append(r)
-  yield r
-  effect_recorders.pop()
+  try:
+    yield r
+  finally:
+    effect_recorders.pop()
 
 def _xla_call_impl(fun, *args, **params):
   device_assignment = params['device_assignment']
@@ -405,12 +407,23 @@ def _xla_callable(fun, device_assignment, backend, *abstract_args):
     compiled = compile_jaxpr(jaxpr, device_assignment, backend, axis_env, consts,
                              *abstract_args)
     del master, consts, jaxpr, env
+  input_effects = [_get_effects(aval) for aval in abstract_args]
   result_handlers = tuple(map(_pval_to_result_handler, pvals))
   if axis_env.nreps == 1:
-    compiled_fun = partial(_execute_compiled, compiled, backend, result_handlers, effects)
+    compiled_fun = partial(_execute_compiled, compiled, backend,
+                           result_handlers, effects, input_effects)
   else:
-    compiled_fun = partial(_execute_replicated, compiled, backend, result_handlers, effects)
+    compiled_fun = partial(_execute_replicated, compiled, backend,
+                           result_handlers, effects, input_effects)
   return compiled_fun
+
+def _get_effects(aval):
+  if hasattr(aval, "effects"):
+    effects = aval.effects
+    aval.effects = []
+    return effects
+  else:
+    return []
 
 def _pval_to_result_handler(pval):
   pv, const = pval
@@ -419,19 +432,23 @@ def _pval_to_result_handler(pval):
   else:
     return aval_to_result_handler(pv)
 
-def _execute_compiled(compiled, backend, handlers, effects, *args):
+def _execute_compiled(compiled, backend, handlers, effects, input_effects, *args):
   device_num, = compiled.DeviceOrdinals()
   input_bufs = [device_put(x, device_num, backend=backend) for x in args]
   out_bufs = compiled.Execute(input_bufs).destructure()
   for e in effects: e()
+  for x, es in zip(args, input_effects):
+    for e in es: e(x)
   if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_buf)
   return [handler(out_buf) for handler, out_buf in zip(handlers, out_bufs)]
 
-def _execute_replicated(compiled, backend, handlers, effects, *args):
+def _execute_replicated(compiled, backend, handlers, effects, input_effects, *args):
   input_bufs = [[device_put(x, i, backend=backend) for x in args]
                 for i in compiled.DeviceOrdinals()]
   out_bufs = compiled.ExecutePerReplica(input_bufs)[0].destructure()
   for e in effects: e()
+  for x, es in zip(args, input_effects):
+    for e in es: e(x)
   if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_buf)
   return [handler(out_buf) for handler, out_buf in zip(handlers, out_bufs)]
 
