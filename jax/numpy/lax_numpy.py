@@ -53,7 +53,7 @@ from ..lib import xla_client
 
 FLAGS = flags.FLAGS
 flags.DEFINE_enum(
-    'jax_numpy_rank_promotion', os.getenv('JAX_NUMPY_RANK_PROMOTION', 'warn'),
+    'jax_numpy_rank_promotion', os.getenv('JAX_NUMPY_RANK_PROMOTION', 'allow'),
     enum_values=['allow', 'warn', 'raise'],
     help=
     'Control NumPy-style automatic rank promotion broadcasting '
