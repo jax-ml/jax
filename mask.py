@@ -19,7 +19,7 @@ zip = safe_zip
 
 Var = str
 
-def mask(fun, shape_env, in_vals, shape_exprs):
+def mask_fun(fun, shape_env, in_vals, shape_exprs):
   with core.new_master(MaskTrace) as master:
     fun, out_shapes = mask_subtrace(fun, master, shape_env)
     out_vals = fun.call_wrapped(in_vals, shape_exprs)
@@ -175,7 +175,7 @@ def _make_typed_jaxpr(traceable, in_avals):
 
 ###
 
-def pad(fun, in_shapes, out_shapes):
+def mask(fun, in_shapes, out_shapes):
   in_shapes_flat, in_shapes_tree = tree_flatten(in_shapes)
   out_shapes_flat, out_shapes_tree = tree_flatten(out_shapes)
 
@@ -186,7 +186,7 @@ def pad(fun, in_shapes, out_shapes):
     args_flat, in_tree = tree_flatten(args)
     assert in_tree == in_shapes_tree
     flat_fun, out_tree = flatten_fun_nokwargs(f, in_tree)
-    outs, out_shapes_ = mask(flat_fun, shape_env, args_flat, in_shapes_flat)
+    outs, out_shapes_ = mask_fun(flat_fun, shape_env, args_flat, in_shapes_flat)
     assert out_shapes_flat == out_shapes
     # TODO could check max size is what we expect according to input max sizes
     return tree_unflatten(out_tree(), outs)
@@ -198,14 +198,14 @@ import jax.numpy as np
 from jax import vmap, jit
 
 
-@partial(pad, in_shapes=[Shape('n')], out_shapes=[Shape()])
+@partial(mask, in_shapes=[Shape('n')], out_shapes=[Shape()])
 def padded_sum(x):
   return np.sum(x)  # output shape ()
 print padded_sum([np.arange(5)], dict(n=3))
 print vmap(padded_sum)([np.ones((5, 10))], dict(n=np.arange(5)))
 
 
-@partial(pad, in_shapes=[Shape('n'), Shape('n')], out_shapes=[Shape('n')])
+@partial(mask, in_shapes=[Shape('n'), Shape('n')], out_shapes=[Shape('n')])
 def addvecs(x, y):
   return x + y
 print addvecs([np.arange(5), np.arange(5)], dict(n=3))
@@ -216,7 +216,7 @@ print addvecs([np.arange(5), np.arange(5)], dict(n=3))
 def cumsum_(arr):
   out, _ = lax.scan(lambda c, x: (c + x, ()), 0, arr)
   return out
-@partial(pad, in_shapes=[Shape('n')], out_shapes=[Shape()])
+@partial(mask, in_shapes=[Shape('n')], out_shapes=[Shape()])
 def cumsum(x):
   return cumsum_(x)
 print cumsum([np.array([5, 2, 9, 1, 4])], dict(n=3))
