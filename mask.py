@@ -359,3 +359,10 @@ print(onp.dot(x[:2, :2], y[:2, :2]))
 # - we should probably pass the max size explicitly rather than getting it off
 #   the values, e.g. the iota problem, should think of it as an independent type
 #   argument
+
+
+# next steps:
+#   1. clean up shape expression language (maybe handle reshape/conat)
+#   2. write example colab with two applications:
+#      (a) batching ragged sequences
+#      (b) jit bucketing
