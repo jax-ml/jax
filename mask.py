@@ -362,6 +362,7 @@ print(onp.dot(x[:2, :2], y[:2, :2]))
 
 
 # next steps:
+#   0. generic test setup
 #   1. clean up shape expression language (maybe handle reshape/conat)
 #   2. write example colab with two applications:
 #      (a) batching ragged sequences
