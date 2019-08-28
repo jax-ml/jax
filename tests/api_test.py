@@ -887,7 +887,7 @@ class APITest(jtu.JaxTestCase):
   def test_custom_implicit_solve(self):
 
     def scalar_solve(f, y):
-      return y / f(1.0)
+      return y[0] / f(1.0)[0]
 
     def _binary_search(func, params, low=0.0, high=100.0, tolerance=1e-6):
       def cond(state):
@@ -907,6 +907,9 @@ class APITest(jtu.JaxTestCase):
 
     binary_search = api._custom_implicit_solve(_binary_search, scalar_solve)
     sqrt_cubed = lambda y, x: y ** 2 - x ** 3
+    value = binary_search(sqrt_cubed, 5.0)
+    self.assertAllClose(value, 5 ** 1.5, check_dtypes=False)
+
     value, grad = api.value_and_grad(binary_search, argnums=1)(sqrt_cubed, 5.0)
     self.assertAllClose(value, 5 ** 1.5, check_dtypes=False)
     self.assertAllClose(grad, api.grad(pow)(5.0, 1.5), check_dtypes=False)

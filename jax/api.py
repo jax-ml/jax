@@ -47,7 +47,8 @@ from .core import eval_jaxpr
 from .api_util import (wraps, flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
                        flatten_fun_nokwargs2, apply_flat_fun_nokwargs)
 from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
-                        tree_transpose, tree_leaves, tree_multimap)
+                        tree_transpose, tree_leaves, tree_multimap, treedef_tuple,
+                        treedef_children)
 from .util import (unzip2, unzip3, curry, partial, safe_map, safe_zip,
                    WrapHashably, Hashable, prod, split_list)
 from .lib.xla_bridge import (canonicalize_dtype, device_count,
@@ -1768,6 +1769,13 @@ def eval_shape(fun, *args, **kwargs):
   return tree_unflatten(out_tree(), out)
 
 
+
+from jax.util import safe_map, split_dict
+from jax.tree_util import (tree_flatten, tree_unflatten)
+from jax.lax.lax_control_flow import _abstractify, _initial_style_jaxpr
+
+_map = safe_map
+
 def _custom_implicit_solve(solve, tangent_solve):
   """Define gradients for a function that performs an implicit solve.
 
@@ -1796,26 +1804,64 @@ def _custom_implicit_solve(solve, tangent_solve):
     the solve.
   """
   @wraps(solve)
-  def wrapper(func, params):
+  def wrapped_solve(func, params):
+    params_flat, params_tree = tree_flatten((params,))
+    params_avals = tuple(_map(_abstractify, params_flat))
 
-    @custom_transforms
-    def solve_impl(params):
-      return solve(func, params)
+    def func_from_params_flat(solution, *params_flat):
+      params, = tree_unflatten(params_tree, params_flat)
+      return func(solution, params)
 
-    @partial(defjvp_all, solve_impl)
-    def solve_impl_jvp(primals, tangents):
-      # F(u(m), m) = 0  # system of equations in m
-      # ∂_0 F(u(m), m) ∂ u(m) + ∂_1 F(u(m), m) = 0
-      # ∂ u(m) = - (∂_0 F(u*, m))^{-1} ∂_1 F(u*, m)
-      params, = primals
-      grad_params, = tangents
-      solution = solve_impl(params)
-      unchecked_zeros, f_jvp = vjp(func, solution, params)
-      grad_solution = tree_map(
-          lambda x: -x,
-          tangent_solve(lambda p: f_jvp(p)[0], f_jvp(grad_params)[1])
-      )
-      return solution, grad_solution
+    solve_jaxpr, solve_consts, solution_tree = _initial_style_jaxpr(
+        partial(solve, func_from_params_flat), params_tree, params_avals,
+    )
 
-    return solve_impl(params)
-  return wrapper
+    def func_from_args(*args):
+      params, solution = tree_unflatten(args_tree, args)
+      return func(solution, params)
+
+    _, args_tree = tree_flatten((params_tree, solution_tree,))
+    args_avals = params_avals + tuple(solve_jaxpr.out_avals)
+    func_jaxpr, func_consts, _ = _initial_style_jaxpr(
+        func_from_args, args_tree, args_avals,
+    )
+
+    solution_flat = solve_p.bind(
+        *it.chain(solve_consts, params_flat),
+        solve_jaxpr=solve_jaxpr, func_jaxpr=func_jaxpr,
+        solution_tree=solution_tree)
+    return tree_unflatten(solution_tree, solution_flat)
+
+  def _wrapped_solve_impl(*args, **kwargs):
+    solve_jaxpr = kwargs["solve_jaxpr"]
+    return core.jaxpr_as_fun(solve_jaxpr)(*args)
+
+  def _wrapped_solve_jvp(
+      primals, tangents, solve_jaxpr, func_jaxpr, solution_tree):
+    # F(u(m), m) = 0  # system of equations in m
+    # ∂_0 F(u(m), m) ∂ u(m) + ∂_1 F(u(m), m) = 0
+    # ∂ u(m) = - (∂_0 F(u*, m))^{-1} ∂_1 F(u*, m)
+    solution = core.jaxpr_as_fun(solve_jaxpr)(*primals)
+
+    # TODO: primals vs func_consts?
+    unchecked_zeros, f_jvp = ad.vjp(
+        lu.wrap_init(core.jaxpr_as_fun(func_jaxpr)),
+        primals + tuple(solution),
+    )
+    def calc_grad_wrt_solution(*args):
+      # return tree_unflatten(solution_tree, f_jvp(*args)[-len(solution):])
+      return f_jvp(*args)[-len(solution):]
+
+    grad_func_wrt_params = f_jvp(*tangents)[:-len(solution)]
+    grad_solution, _ = tree_flatten(tree_map(
+        op.neg, tangent_solve(calc_grad_wrt_solution, grad_func_wrt_params),
+    ))
+    return solution, grad_solution
+
+  solve_p = core.Primitive(
+      "custom_implicit_solve<%r, %r>" % (solve, tangent_solve))
+  solve_p.def_impl(_wrapped_solve_impl)
+  ad.primitive_jvps[solve_p] = _wrapped_solve_jvp
+
+  return wrapped_solve
+
