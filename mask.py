@@ -133,13 +133,13 @@ def scan_masking_rule(shape_env, vals, shape_exprs, forward, length, jaxpr,
   const_shapes, init_shapes, xs_shapes = split_list(shape_exprs, [num_consts, num_carry])
   _, y_avals = split_list(jaxpr.out_avals, [num_carry])
   out_shapes = _masked_scan_shape_rule(length, init_shapes, y_avals)
-  masked_jaxpr = _masked_scan_jaxpr(jaxpr, dynamic_length, num_consts, num_carry)
+  masked_jaxpr = _masked_scan_jaxpr(jaxpr, num_consts, num_carry)
   const_linear, init_linear, xs_linear = split_list(linear, [num_consts, num_carry])
   out_vals = lax.scan_p.bind(
-      *it.chain(consts, [0], init, xs),
+      *it.chain([dynamic_length] + consts, [0], init, xs),
       forward=forward, length=max_length, jaxpr=masked_jaxpr,
-      num_consts=num_consts, num_carry=1 + num_carry,
-      linear=const_linear + [False] + init_linear + xs_linear)
+      num_consts=1 + num_consts, num_carry=1 + num_carry,
+      linear=[False] + const_linear + [False] + init_linear + xs_linear)
   return out_vals[1:], out_shapes
 masking_rules[lax.scan_p] = scan_masking_rule
 
@@ -147,26 +147,27 @@ def _masked_scan_shape_rule(length, carry_shapes, y_avals):
   ys_shapes = [ShapeExpr(length, *y_aval.shape) for y_aval in y_avals]
   return carry_shapes + ys_shapes
 
-def _masked_scan_jaxpr(jaxpr, dynamic_length, num_consts, num_carry):
+def _masked_scan_jaxpr(jaxpr, num_consts, num_carry):
   fun = core.jaxpr_as_fun(jaxpr)
 
   @lu.wrap_init
   def masked(*args):
-    consts, i_carry, xs = split_list(args, [num_consts, num_carry + 1])
-    i, carry = i_carry[0], i_carry[1:]
-    out = fun(*(carry + xs))
+    [dynamic_length], consts, [i], carry, xs = split_list(
+        args, [1, num_consts, 1, num_carry])
+    out = fun(*(consts + carry + xs))
     new_carry, ys = split_list(out, [num_carry])
     new_carry = [lax.select(i < dynamic_length, new_c, c)
                  for new_c, c in zip(new_carry, carry)]
     return [i + 1] + new_carry + ys
 
-  i_aval = ShapedArray((), onp.int32)
+  aval = ShapedArray((), onp.int32)
   const_avals, carry_avals, x_avals = split_list(jaxpr.in_avals, [num_consts, num_carry])
-  return _make_typed_jaxpr(masked, const_avals + [i_aval] + carry_avals + x_avals)
+  return _make_typed_jaxpr(masked, [aval] + const_avals + [aval] + carry_avals + x_avals)
 
 def _make_typed_jaxpr(traceable, in_avals):
   pvals = [pe.PartialVal((aval, core.unit)) for aval in in_avals]
   jaxpr, pvals_out, consts = pe.trace_to_jaxpr(traceable, pvals, instantiate=True)
+  assert not consts
   out_avals, _ = unzip2(pvals_out)
   return core.TypedJaxpr(jaxpr, consts, in_avals, out_avals)
 
@@ -215,6 +216,9 @@ def cumsum(x):
 
 print cumsum([np.array([5, 2, 9, 1, 4])], dict(n=3))
 print vmap(cumsum)([np.arange(6).reshape(2, 3)], dict(n=np.array([1, 2])))
+
+# TODO separate shape rules (which get shape_env) from masking rules (which get
+# dereferenced shapes, not shape variables), since they're fused together now
 
 
 # notes!
