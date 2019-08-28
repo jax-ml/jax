@@ -131,17 +131,46 @@ def reduce_sum_masking_rule(padded_vals, logical_shapes, axes, input_shape):
 masking_rules[lax.reduce_sum_p] = reduce_sum_masking_rule
 
 
-def add_shape_rule(shape_exprs):
+def defbinop(prim):
+  shape_rules[prim] = binop_shape_rule
+  masking_rules[prim] = partial(binop_masking_rule, prim)
+
+def binop_shape_rule(shape_exprs):
   x_shape_expr, y_shape_expr = shape_exprs
   if not x_shape_expr == y_shape_expr: raise ShapeError
   return x_shape_expr
-shape_rules[lax.add_p] = add_shape_rule
 
-def add_masking_rule(padded_vals, logical_shapes):
+def binop_masking_rule(prim, padded_vals, logical_shapes):
   del logical_shapes  # Unused.
   padded_x, padded_y = padded_vals
-  return padded_x + padded_y
-masking_rules[lax.add_p] = add_masking_rule
+  return prim.bind(padded_x, padded_y)
+
+defbinop(lax.add_p)
+defbinop(lax.mul_p)
+defbinop(lax.sub_p)
+defbinop(lax.div_p)
+defbinop(lax.pow_p)
+
+
+def defvectorized(prim):
+  shape_rules[prim] = vectorized_shape_rule
+  masking_rules[prim] = partial(vectorized_masking_rule, prim)
+
+def vectorized_shape_rule(shape_exprs):
+  shape_expr, = shape_exprs
+  return shape_expr
+
+def vectorized_masking_rule(prim, padded_vals, logical_shapes):
+  del logical_shapes  # Unused.
+  padded_val, = padded_vals
+  return prim.bind(padded_val)
+
+defvectorized(lax.neg_p)
+defvectorized(lax.sin_p)
+defvectorized(lax.cos_p)
+defvectorized(lax.exp_p)
+defvectorized(lax.log_p)
+defvectorized(lax.tanh_p)
 
 
 def scan_shape_rule(shape_exprs, forward, length, jaxpr, num_consts, num_carry,
@@ -195,6 +224,47 @@ def _make_typed_jaxpr(traceable, in_avals):
   return core.TypedJaxpr(jaxpr, consts, in_avals, out_avals)
 
 
+def dot_shape_rule(shape_exprs, precision):
+  del precision  # Unused.
+  lhs_shape, rhs_shape = shape_exprs
+  lhs_ndim, rhs_ndim = len(lhs_shape), len(rhs_shape)
+
+  # TODO error checks
+  if lhs_ndim == rhs_ndim == 1:
+    if not lhs_shape == rhs_shape: raise ShapeError
+    return Shape()
+  elif lhs_ndim == rhs_ndim == 2:
+    if not lhs_shape[1] == rhs_shape[0]: raise ShapeError
+    return Shape(lhs_shape[0], rhs_shape[1])
+  elif rhs_ndim == 1:
+    if not lhs_shape[1] == rhs_shape[0]: raise ShapeError
+    return Shape(lhs_shape[0])
+  else:
+    if not lhs_shape[0] == rhs_shape[0]: raise ShapeError
+    return Shape(rhs_shape[1])
+shape_rules[lax.dot_p] = dot_shape_rule
+
+def dot_masking_rule(padded_vals, logical_shapes, precision):
+  lhs, rhs = padded_vals
+  lhs_shape, rhs_shape = logical_shapes
+  lhs_ndim, rhs_ndim = len(lhs_shape), len(rhs_shape)
+
+  if lhs_ndim == rhs_ndim == 1:
+    masked_lhs = lax.select(lax.iota(onp.int32, lhs.shape[0]) < lhs_shape[0],
+                            lhs, lax.zeros_like_array(lhs))
+    return lax.dot_p.bind(masked_lhs, rhs, precision=precision)
+  elif lhs_ndim == rhs_ndim == 2:
+    # TODO could avoid select if we check whether contracted axis is masked
+    masked_lhs = lax.select(lax.broadcasted_iota(onp.int32, lhs.shape, 1) < lhs_shape[1],
+                            lhs, lax.zeros_like_array(lhs))
+    return lax.dot_p.bind(masked_lhs, rhs, precision=precision)
+  elif rhs_ndim == 1:
+    raise NotImplementedError
+  else:
+    raise NotImplementedError
+masking_rules[lax.dot_p] = dot_masking_rule
+
+
 ###
 
 def mask(fun, in_shapes, out_shapes):
@@ -237,6 +307,7 @@ from jax import vmap, jit
 @partial(mask, in_shapes=[Shape('n')], out_shapes=[Shape()])
 def padded_sum(x):
   return np.sum(x)  # output shape ()
+
 print(padded_sum([np.arange(5)], dict(n=3)))
 print(vmap(padded_sum)([np.ones((5, 10))], dict(n=np.arange(5))))
 
@@ -253,12 +324,13 @@ else: raise Exception
 def cumsum_(arr):
   out, _ = lax.scan(lambda c, x: (c + x, ()), 0, arr)
   return out
+
 @partial(mask, in_shapes=[Shape('n')], out_shapes=[Shape()])
 def cumsum(x):
   return cumsum_(x)
+
 print(cumsum([np.array([5, 2, 9, 1, 4])], dict(n=3)))
 print(vmap(cumsum)([np.arange(6).reshape(2, 3)], dict(n=np.array([1, 2]))))
-
 
 @jit
 def jit_cumsum(args, shape_env):
@@ -267,6 +339,15 @@ def jit_cumsum(args, shape_env):
 print(jit_cumsum([np.array([5, 2, 9, 1, 4])], dict(n=3)))
 print(jit_cumsum([np.array([5, 2, 9, 1, 4])], dict(n=4)))
 
+
+@partial(mask, in_shapes=[Shape('m', 'k'), Shape('k', 'n')],
+         out_shapes=[Shape('m', 'n')])
+def dot(x, y):
+  return lax.dot(x, y)
+x = onp.arange(6, dtype=onp.float32).reshape((2, 3))
+y = onp.arange(12, dtype=onp.float32).reshape((3, 4))
+print(dot([x, y], dict(m=2, k=2, n=2))[:2, :2])
+print(onp.dot(x[:2, :2], y[:2, :2]))
 
 # notes!
 # - a shape variable is associated with a max size and a dynamic size. we carry
