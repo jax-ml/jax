@@ -1,3 +1,6 @@
+from __future__ import print_function
+
+from collections import defaultdict
 from functools import partial
 import itertools as it
 import operator
@@ -38,8 +41,10 @@ def mask_subtrace(master, shape_env, in_vals, shape_exprs):
 
 class ShapeExpr(object):
   def __init__(self, *shape):
-    assert all(isinstance(s, (int, str)) for s in shape)
+    assert all(isinstance(s, (int, Var)) for s in shape)
     self.shape = tuple(shape)
+  def __len__(self):
+    return len(self.shape)
   def __iter__(self):
     return iter(self.shape)
   def __getitem__(self, idx):
@@ -165,7 +170,6 @@ def scan_masking_rule(padded_vals, logical_shapes, forward, length, jaxpr,
   return out_vals[1:]
 masking_rules[lax.scan_p] = scan_masking_rule
 
-
 def _masked_scan_jaxpr(jaxpr, num_consts, num_carry):
   fun = core.jaxpr_as_fun(jaxpr)
 
@@ -198,17 +202,31 @@ def mask(fun, in_shapes, out_shapes):
   out_shapes_flat, out_shapes_tree = tree_flatten(out_shapes)
 
   def wrapped_fun(args, shape_env):
-    # TODO check max sizes agree (i.e. padded / arg sizes agree) according to
-    # shape vars
     f = lu.wrap_init(fun)
     args_flat, in_tree = tree_flatten(args)
     assert in_tree == in_shapes_tree
+    padded_sizes = _check_shape_agreement(args_flat, in_shapes_flat)
     flat_fun, out_tree = flatten_fun_nokwargs(f, in_tree)
     outs, out_shapes_ = mask_fun(flat_fun, shape_env, args_flat, in_shapes_flat)
     assert out_shapes_flat == out_shapes
-    # TODO could check max size is what we expect according to input max sizes
+    _check_shape_agreement(outs, out_shapes_flat, padded_sizes)
     return tree_unflatten(out_tree(), outs)
   return wrapped_fun
+
+def _check_shape_agreement(padded_args, shape_exprs, shape_values=None):
+  shape_values = shape_values or defaultdict(set)
+  for arg, shexpr in zip(padded_args, shape_exprs):
+    for padded_size, size_expr in zip(arg.shape, shexpr):
+      if type(size_expr) is Var:
+        shape_values[size_expr].add(padded_size)
+      elif type(size_expr) is int:
+        if padded_size != size_expr: raise ShapeError
+      else:
+        raise TypeError(size_expr)
+  for shape_var, sizes in shape_values.items():
+    if len(sizes) != 1:
+      raise ShapeError
+  return shape_values
 
 ###
 
@@ -219,16 +237,17 @@ from jax import vmap, jit
 @partial(mask, in_shapes=[Shape('n')], out_shapes=[Shape()])
 def padded_sum(x):
   return np.sum(x)  # output shape ()
-print padded_sum([np.arange(5)], dict(n=3))
-print vmap(padded_sum)([np.ones((5, 10))], dict(n=np.arange(5)))
+print(padded_sum([np.arange(5)], dict(n=3)))
+print(vmap(padded_sum)([np.ones((5, 10))], dict(n=np.arange(5))))
 
 
 @partial(mask, in_shapes=[Shape('n'), Shape('n')], out_shapes=[Shape('n')])
 def addvecs(x, y):
   return x + y
-print addvecs([np.arange(5), np.arange(5)], dict(n=3))
-# this is an error because padded sizes must agree
-# print addvecs([np.arange(5), np.arange(6)], dict(n=3))
+print(addvecs([np.arange(5), np.arange(5)], dict(n=3)))
+try: addvecs([np.arange(5), np.arange(6)], dict(n=3))
+except ShapeError: print("good error")
+else: raise Exception
 
 
 def cumsum_(arr):
@@ -237,16 +256,16 @@ def cumsum_(arr):
 @partial(mask, in_shapes=[Shape('n')], out_shapes=[Shape()])
 def cumsum(x):
   return cumsum_(x)
-print cumsum([np.array([5, 2, 9, 1, 4])], dict(n=3))
-print vmap(cumsum)([np.arange(6).reshape(2, 3)], dict(n=np.array([1, 2])))
+print(cumsum([np.array([5, 2, 9, 1, 4])], dict(n=3)))
+print(vmap(cumsum)([np.arange(6).reshape(2, 3)], dict(n=np.array([1, 2]))))
 
 
 @jit
 def jit_cumsum(args, shape_env):
-  print "Python!"
+  print("Python!")
   return cumsum(args, shape_env)
-print jit_cumsum([np.array([5, 2, 9, 1, 4])], dict(n=3))
-print jit_cumsum([np.array([5, 2, 9, 1, 4])], dict(n=4))
+print(jit_cumsum([np.array([5, 2, 9, 1, 4])], dict(n=3)))
+print(jit_cumsum([np.array([5, 2, 9, 1, 4])], dict(n=4)))
 
 
 # notes!
@@ -256,9 +275,6 @@ print jit_cumsum([np.array([5, 2, 9, 1, 4])], dict(n=4))
 # - we don't want to do the padding at the start and slicing at the end in the
 #   transformation because we want to be able to vmap it, also want to jit it
 #   - we could have a ragged array data type, or other api options
-# - if we split up shape rules and evaluation rules, then the shape rules should
-#   take the shapes before deref while the eval rules should take the dereffed
-#   ones
 # - we should probably pass the max size explicitly rather than getting it off
 #   the values, e.g. the iota problem, should think of it as an independent type
 #   argument
