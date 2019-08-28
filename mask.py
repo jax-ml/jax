@@ -42,6 +42,8 @@ class ShapeExpr(object):
     self.shape = tuple(shape)
   def __iter__(self):
     return iter(self.shape)
+  def __getitem__(self, idx):
+    return list(self)[idx]
   def __repr__(self):
     return 'ShapeExpr({})'.format(repr(self.shape))
   __str__ = __repr__
@@ -64,8 +66,7 @@ class MaskTracer(Tracer):
   def aval(self):
     # TODO can avoid some blowups, also improve error messages
     if self.shape_env is not None:
-      shape = [self.shape_env[d] if type(d) is Var else d
-              for d in self.shape_expr]
+      shape = eval_shape_expr(self.shape_env, self.shape_expr)
       return ShapedArray(tuple(shape), self.val.dtype)
     else:
       return ShapedArray(self.val.shape, self.val.dtype)
@@ -89,8 +90,9 @@ class MaskTrace(Trace):
   def process_primitive(self, primitive, tracers, params):
     shape_env = next(t.shape_env for t in tracers if t.shape_env is not None)
     vals, shape_exprs = unzip2((t.val, t.shape_expr) for t in tracers)
-    rule = masking_rules[primitive]
-    out, out_shape = rule(shape_env, vals, shape_exprs, **params)
+    out_shape = shape_rules[primitive](shape_exprs, **params)
+    logical_shapes = map(partial(eval_shape_expr, shape_env), shape_exprs)
+    out = masking_rules[primitive](vals, logical_shapes, **params)
     if not primitive.multiple_results:
       return MaskTracer(self, shape_env, out, out_shape)
     else:
@@ -99,54 +101,70 @@ class MaskTrace(Trace):
   def process_call(self, call_primitive, f, tracers, params):
     raise NotImplementedError  # TODO
 
+def eval_shape_expr(shape_env, shape_expr):
+  return tuple(shape_env[d] if type(d) is Var else d for d in shape_expr)
+
 masking_rules = {}
+shape_rules = {}
 
 
-def reduce_sum_masking_rule(shape_env, vals, shape_exprs, axes, input_shape):
-  val, = vals
-  in_shape, = shape_exprs
-  masks = [lax.broadcasted_iota(onp.int32, val.shape, i) < shape_env[d]
-           for i, d in enumerate(in_shape) if type(d) is Var]
+def reduce_sum_shape_rule(shape_exprs, axes, input_shape):
+  del input_shape  # Unused.
+  shape_expr, = shape_exprs
+  return ShapeExpr(*(d for i, d in enumerate(shape_expr) if i not in axes))
+shape_rules[lax.reduce_sum_p] = reduce_sum_shape_rule
+
+def reduce_sum_masking_rule(padded_vals, logical_shapes, axes, input_shape):
+  del input_shape  # Unused.
+  (padded_val,), (logical_shape,) = padded_vals, logical_shapes
+  masks = [lax.broadcasted_iota(onp.int32, padded_val.shape, i) < d
+           for i, d in enumerate(logical_shape)]
   mask = reduce(operator.and_, masks)
-  masked_val = lax.select(mask, val, lax.zeros_like_array(val))
-  out_val = lax.reduce_sum_p.bind(masked_val, axes=axes,
-                                  input_shape=masked_val.shape)
-  out_shape = ShapeExpr(*(d for i, d in enumerate(in_shape) if i not in axes))
-  return out_val, out_shape
+  masked_val = lax.select(mask, padded_val, lax.zeros_like_array(padded_val))
+  return lax.reduce_sum_p.bind(masked_val, axes=axes,
+                               input_shape=padded_val.shape)
 masking_rules[lax.reduce_sum_p] = reduce_sum_masking_rule
 
-def add_masking_rule(shape_env, vals, shape_exprs):
-  x, y = vals
-  x_shape, y_shape = shape_exprs
-  if x_shape == y_shape:
-    return x + y, x_shape
-  else:
-    raise ShapeError
+
+def add_shape_rule(shape_exprs):
+  x_shape_expr, y_shape_expr = shape_exprs
+  if not x_shape_expr == y_shape_expr: raise ShapeError
+  return x_shape_expr
+shape_rules[lax.add_p] = add_shape_rule
+
+def add_masking_rule(padded_vals, logical_shapes):
+  del logical_shapes  # Unused.
+  padded_x, padded_y = padded_vals
+  return padded_x + padded_y
 masking_rules[lax.add_p] = add_masking_rule
 
-def scan_masking_rule(shape_env, vals, shape_exprs, forward, length, jaxpr,
-                      num_consts, num_carry, linear):
-  # TODO specialized for case where only leading extensive dimension is masked
-  # TODO assert xs_shapes[0] after deref are all length
-  dynamic_length = shape_env[length] if type(length) is Var else length
-  consts, init, xs = split_list(vals, [num_consts, num_carry])
-  max_length, = {x.shape[0] for x in xs}
-  const_shapes, init_shapes, xs_shapes = split_list(shape_exprs, [num_consts, num_carry])
+
+def scan_shape_rule(shape_exprs, forward, length, jaxpr, num_consts, num_carry,
+                    linear):
+  const_shexprs, init_shexprs, xs_shexprs = split_list(shape_exprs, [num_consts, num_carry])
+  if (any(any(type(d) is Var for d in shexpr) for shexpr in const_shexprs)
+      or any(any(type(d) is Var for d in shexpr) for shexpr in init_shexprs)
+      or any(any(type(d) is Var for d in shexpr[1:]) for shexpr in xs_shexprs)):
+    raise NotImplementedError
   _, y_avals = split_list(jaxpr.out_avals, [num_carry])
-  out_shapes = _masked_scan_shape_rule(length, init_shapes, y_avals)
+  ys_shapes = [ShapeExpr(length, *y_aval.shape) for y_aval in y_avals]
+  return init_shexprs + ys_shapes
+shape_rules[lax.scan_p] = scan_shape_rule
+
+def scan_masking_rule(padded_vals, logical_shapes, forward, length, jaxpr,
+                      num_consts, num_carry, linear):
   masked_jaxpr = _masked_scan_jaxpr(jaxpr, num_consts, num_carry)
+  consts, init, xs = split_list(padded_vals, [num_consts, num_carry])
+  max_length, = {x.shape[0] for x in xs}
   const_linear, init_linear, xs_linear = split_list(linear, [num_consts, num_carry])
   out_vals = lax.scan_p.bind(
-      *it.chain([dynamic_length] + consts, [0], init, xs),
+      *it.chain([length] + consts, [0], init, xs),
       forward=forward, length=max_length, jaxpr=masked_jaxpr,
       num_consts=1 + num_consts, num_carry=1 + num_carry,
       linear=[False] + const_linear + [False] + init_linear + xs_linear)
-  return out_vals[1:], out_shapes
+  return out_vals[1:]
 masking_rules[lax.scan_p] = scan_masking_rule
 
-def _masked_scan_shape_rule(length, carry_shapes, y_avals):
-  ys_shapes = [ShapeExpr(length, *y_aval.shape) for y_aval in y_avals]
-  return carry_shapes + ys_shapes
 
 def _masked_scan_jaxpr(jaxpr, num_consts, num_carry):
   fun = core.jaxpr_as_fun(jaxpr)
