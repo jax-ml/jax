@@ -165,7 +165,7 @@ def while_loop(cond_fun, body_fun, init_val):
   if cond_jaxpr.out_avals != [ShapedArray((), onp.bool_)]:
     msg = "cond_fun must return a boolean scalar, but got output type(s) {}."
     raise TypeError(msg.format(cond_jaxpr.out_avals))
-  if not treedef_children(in_tree) == [body_tree]:
+  if not list(treedef_children(in_tree)) == [body_tree]:
     msg = "body_fun output pytree structure must match init_val, got {} and {}."
     raise TypeError(msg.format(body_tree, treedef_children(in_tree)[0]))
   outs = while_p.bind(*itertools.chain(cond_consts, body_consts, init_vals),

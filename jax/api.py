@@ -1852,9 +1852,9 @@ def _custom_implicit_solve(solve, tangent_solve):
       # return tree_unflatten(solution_tree, f_jvp(*args)[-len(solution):])
       return f_jvp(*args)[-len(solution):]
 
-    grad_func_wrt_params = f_jvp(*tangents)[:-len(solution)]
+    grad_wrt_params = f_jvp(*tangents)[:-len(solution)]
     grad_solution, _ = tree_flatten(tree_map(
-        op.neg, tangent_solve(calc_grad_wrt_solution, grad_func_wrt_params),
+        op.neg, tangent_solve(calc_grad_wrt_solution, grad_wrt_params),
     ))
     return solution, grad_solution
 
@@ -1864,4 +1864,3 @@ def _custom_implicit_solve(solve, tangent_solve):
   ad.primitive_jvps[solve_p] = _wrapped_solve_jvp
 
   return wrapped_solve
-
