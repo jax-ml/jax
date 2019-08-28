@@ -7,6 +7,7 @@ import numpy as onp
 from jax import core
 from jax.core import Trace, Tracer
 from jax.util import unzip2, prod, safe_map, safe_zip, split_list
+from jax.api_util import tree_flatten, tree_unflatten, flatten_fun_nokwargs
 from jax import linear_util as lu
 from jax.abstract_arrays import ShapedArray
 from jax.interpreters import partial_eval as pe
@@ -175,32 +176,38 @@ def _make_typed_jaxpr(traceable, in_avals):
 ###
 
 def pad(fun, in_shapes, out_shapes):
+  in_shapes_flat, in_shapes_tree = tree_flatten(in_shapes)
+  out_shapes_flat, out_shapes_tree = tree_flatten(out_shapes)
+
   def wrapped_fun(args, shape_env):
     # TODO check max sizes agree (i.e. padded / arg sizes agree) according to
     # shape vars
-    outs, out_shapes_ = mask(lu.wrap_init(fun), shape_env, args, in_shapes)
-    assert tuple(out_shapes_) == tuple(out_shapes)
+    f = lu.wrap_init(fun)
+    args_flat, in_tree = tree_flatten(args)
+    assert in_tree == in_shapes_tree
+    flat_fun, out_tree = flatten_fun_nokwargs(f, in_tree)
+    outs, out_shapes_ = mask(flat_fun, shape_env, args_flat, in_shapes_flat)
+    assert out_shapes_flat == out_shapes
     # TODO could check max size is what we expect according to input max sizes
-    return outs
+    return tree_unflatten(out_tree(), outs)
   return wrapped_fun
 
 ###
 
 import jax.numpy as np
-from jax import vmap
+from jax import vmap, jit
+
 
 @partial(pad, in_shapes=[Shape('n')], out_shapes=[Shape()])
 def padded_sum(x):
-  return np.sum(x),  # output shape ()
-
+  return np.sum(x)  # output shape ()
 print padded_sum([np.arange(5)], dict(n=3))
 print vmap(padded_sum)([np.ones((5, 10))], dict(n=np.arange(5)))
 
 
 @partial(pad, in_shapes=[Shape('n'), Shape('n')], out_shapes=[Shape('n')])
 def addvecs(x, y):
-  return x + y,
-
+  return x + y
 print addvecs([np.arange(5), np.arange(5)], dict(n=3))
 # this is an error because padded sizes must agree
 # print addvecs([np.arange(5), np.arange(6)], dict(n=3))
@@ -209,16 +216,19 @@ print addvecs([np.arange(5), np.arange(5)], dict(n=3))
 def cumsum_(arr):
   out, _ = lax.scan(lambda c, x: (c + x, ()), 0, arr)
   return out
-
 @partial(pad, in_shapes=[Shape('n')], out_shapes=[Shape()])
 def cumsum(x):
-  return cumsum_(x),
-
+  return cumsum_(x)
 print cumsum([np.array([5, 2, 9, 1, 4])], dict(n=3))
 print vmap(cumsum)([np.arange(6).reshape(2, 3)], dict(n=np.array([1, 2])))
 
-# TODO separate shape rules (which get shape_env) from masking rules (which get
-# dereferenced shapes, not shape variables), since they're fused together now
+
+@jit
+def jit_cumsum(args, shape_env):
+  print "Python!"
+  return cumsum(args, shape_env)
+print jit_cumsum([np.array([5, 2, 9, 1, 4])], dict(n=3))
+print jit_cumsum([np.array([5, 2, 9, 1, 4])], dict(n=4))
 
 
 # notes!
