@@ -692,9 +692,13 @@ def _gradient_along_axis(a, axis):
 
 @_wraps(onp.gradient)
 def gradient(a, axis=None):
+  if min(a.shape) < 2:
+    raise ValueError(
+      "Shape of array too small to calculate a numerical gradient")
+
   if axis is None:
-    axis = list(range(a.ndim))
-  elif type(axis) is int:
+    axis = range(a.ndim)
+  elif isinstance(axis, int):
     axis = [axis]
 
   a_grad = stack([_gradient_along_axis(a, ax) for ax in axis], axis=0)
