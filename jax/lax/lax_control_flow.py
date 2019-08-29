@@ -705,7 +705,7 @@ def scan_bind(*args, **kwargs):
   xs_avals = _map(partial(_promote_aval_rank, length), x_avals)
   assert all(_map(typecheck, consts_avals, consts))
   assert all(_map(typecheck, init_avals, init))
-  assert all(_map(typecheck, xs_avals, xs))
+  # assert all(_map(typecheck, xs_avals, xs))
 
   # check that output carry type matches input carry type
   carry_avals, _ = split_list(jaxpr.out_avals, [num_carry])
