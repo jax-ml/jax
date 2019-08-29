@@ -760,3 +760,27 @@ def map(f, xs):
   g = lambda _, x: ((), f(x))
   _, ys = scan(g, (), xs)
   return ys
+
+
+def root(f, initial_guess, solve=solve, tangent_solve=tangent_solve):
+  guess_flat, in_tree = tree_flatten((initial_guess,))
+  guess_avals = tuple(_map(_abstractify, guess_flat))
+  jaxpr, consts, out_tree = _initial_style_jaxpr(f, in_tree, guess_avals)
+  assert out_tree == in_tree
+  out_flat = root_p.bind(*consts, jaxpr=jaxpr, solve=solve,
+                         tangent_solve=tangent_solve)
+  return tree_unflatten(out_tree, out_flat)
+
+def _root_abstract_eval(*args, **kwargs):
+  del kwargs  # Unused.
+  return args
+
+def _root_impl(*args, **kwargs):
+  jaxpr, solve, _ = split_dict(kwargs, ['jaxpr', 'solve', 'tangent_solve'])
+  f = core.jaxpr_as_fun(jaxpr)
+  return solve(f, args)
+
+root_p = core.Primitive('root')
+root_p.multiple_results = True
+root_p.def_impl = _root_impl
+xla.initial_style_translations[scan_p] = xla.lower_fun(_root_impl, initial_style=True)
