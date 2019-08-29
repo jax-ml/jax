@@ -680,6 +680,31 @@ def diff(a, n=1, axis=-1,):
   return a
 
 
+def _gradient_along_axis(a, axis):
+  a_swap = swapaxes(a, 0, axis)
+  a_grad = concatenate((
+    (a_swap[1]  - a_swap[0])[newaxis],
+    (a_swap[2:] - a_swap[:-2]) * 0.5,
+    (a_swap[-1] - a_swap[-2])[newaxis]
+    ), axis=0)
+  return swapaxes(a_grad, 0, axis)
+
+
+@_wraps(onp.gradient)
+def gradient(a, axis=None):
+  if axis is None:
+    axis = list(range(a.ndim))
+  elif type(axis) is int:
+    axis = [axis]
+
+  a_grad = stack([_gradient_along_axis(a, ax) for ax in axis], axis=0)
+
+  if len(axis) == 1:
+    a_grad = a_grad[0]
+
+  return a_grad
+
+
 @_wraps(onp.isrealobj)
 def isrealobj(a):
   return not iscomplexobj(a)
