@@ -4,6 +4,7 @@ from collections import defaultdict, Counter
 from functools import partial
 import itertools as it
 import operator as op
+import string
 
 import numpy as onp
 import six
@@ -46,27 +47,26 @@ def mask_subtrace(master, shape_env, in_vals, shape_exprs):
   yield out_vals, out_shapes
 
 
-## shape expressions are tuples of polynomials with integer coefficients
+### shape expressions
 
-Id = str
+# Shape expressions model tuples of formal polynomials with integer
+# coefficients. Here are the internal data structures we use to represent them.
+#
+#   type ShapeExpr = [Poly]
+#   type Poly = Map Mon Int
+#   type Mon = Map Str Int
 
 class ShapeExpr(tuple):  # type ShapeExpr = [Poly]
   def __str__(self):
     return 'ShapeExpr({})'.format(', '.join(map(str, self)))
-
-def Shape(*args):
-  "Convenience function for parsing a sequence of int literals or string ids."
-  if not all(type(x) in (int, Id) for x in args): raise TypeError
-  return ShapeExpr((Poly({Mon(): x}) if type(x) is int else Poly({Mon({x : 1})})
-                    for x in args))
 
 class Poly(Counter):  # type Poly = Map Mon Int -- monomials to coeffs
   def __mul__(p1, p2):
     new_poly = Poly()
     for (mon1, coeff1), (mon2, coeff2) in it.product(p1.items(), p2.items()):
       mon = Mon(mon1 + mon2)                        # add monomials' id degrees
-      coeff = coeff1 * coeff2                       # multiply coeffs
-      new_poly[mon] = new_poly.get(mon, 0) + coeff  # accumulate
+      coeff = coeff1 * coeff2                       # multiply integer coeffs
+      new_poly[mon] = new_poly.get(mon, 0) + coeff  # accumulate coeffs
     return new_poly
 
   def __add__(p1, p2):
@@ -93,6 +93,53 @@ def eval_poly(env, poly):
 
 class ShapeError(Exception): pass
 
+# To denote some shape expressions (for annotations) we use a small language.
+#
+#   data Shape = Shape [Dim]
+#   data Dim = Id Str
+#            | Lit Int
+#            | Mul Dim Dim
+
+# We'll also make a simple concrete syntax for annotation. The grammar is
+#
+#   shape_spec ::= '(' dims ')'
+#   dims       ::= dim ',' dims | ''
+#   dim        ::= str | int | dim '*' dim
+
+def parse_spec(spec=''):
+  if not spec:
+    return ShapeExpr(())
+  if spec[0] == '(':
+    if spec[-1] != ')': raise SyntaxError
+    spec = spec[1:-1]
+  dims = map(parse_dim, spec.replace(' ', '').strip(',').split(','))
+  return ShapeExpr(dims)
+
+def parse_dim(spec):
+  if '*' in spec:
+    terms = map(parse_dim, spec.split('*'))
+    return reduce(op.mul, terms)
+  elif spec in digits:
+    return parse_lit(spec)
+  elif spec in identifiers:
+    return parse_id(spec)
+  else:
+    raise SyntaxError
+digits = frozenset(string.digits)
+identifiers = frozenset(string.lowercase)
+
+def parse_id(name): return Poly({Mon({name: 1}): 1})
+def parse_lit(val_str): return Poly({Mon(): int(val_str)})
+
+print(parse_spec('(m, n)'))     # ShapeExpr(m, n)
+print(parse_spec('(m * n)'))    # ShapeExpr(m n)
+print(parse_spec('(m * n,)'))   # ShapeExpr(m n)
+print(parse_spec('(3, m)'))     # ShapeExpr(3, m)
+print(parse_spec('(3 * m)'))    # ShapeExpr(3 m)
+print(parse_spec('m'))          # ShapeExpr(m)
+print(parse_spec(''))           # ShapeExpr()
+
+Shape = parse_spec
 
 ### tracer machinery
 
@@ -300,11 +347,31 @@ def dot_masking_rule(padded_vals, logical_shapes, precision):
 masking_rules[lax.dot_p] = dot_masking_rule
 
 
+def reshape_shape_rule(shape_exprs, new_sizes, dimensions, old_sizes):
+  import ipdb; ipdb.set_trace()
+  del old_sizes  # Unused.
+  if dimensions is not None: raise NotImplementedError
+  shape_expr, = shape_exprs
+  if prod(shape_expr) != prod(new_sizes): raise Exception
+  return ShapeExpr(new_sizes)
+shape_rules[lax.reshape_p] = reshape_shape_rule
+
+def reshape_masking_rule(padded_vals, logical_shapes, new_sizes, dimensions,
+                         old_sizes):
+  import ipdb; ipdb.set_trace()
+  del new_sizes, old_sizes  # Unused.
+  if dimensions is not None: raise NotImplementedError
+  padded_operand, = padded_vals
+  new_shape, = logical_shapes
+  return lax.reshape(padded_operand)  # TODO
+masking_rules[lax.reshape_p] = reshape_masking_rule
+
+
 ###
 
-def mask(fun, in_shapes, out_shapes):
+def mask(fun, in_shapes, out_shape):
   in_shapes_flat, in_shapes_tree = tree_flatten(in_shapes)
-  out_shapes_flat, out_shapes_tree = tree_flatten(out_shapes)
+  out_shapes_flat, out_shapes_tree = tree_flatten(out_shape)
 
   def wrapped_fun(args, shape_env):
     f = lu.wrap_init(fun)
@@ -313,7 +380,7 @@ def mask(fun, in_shapes, out_shapes):
     # padded_sizes = _check_shape_agreement(args_flat, in_shapes_flat)  # TODO
     flat_fun, out_tree = flatten_fun_nokwargs(f, in_tree)
     outs, out_shapes_ = mask_fun(flat_fun, shape_env, args_flat, in_shapes_flat)
-    assert out_shapes_flat == out_shapes
+    assert out_shapes_flat == list(out_shapes_)
     # _check_shape_agreement(outs, out_shapes_flat, padded_sizes)
     return tree_unflatten(out_tree(), outs)
   return wrapped_fun
@@ -339,7 +406,7 @@ import jax.numpy as np
 from jax import vmap, jit
 
 
-@partial(mask, in_shapes=[Shape('n')], out_shapes=[Shape()])
+@partial(mask, in_shapes=[Shape('n')], out_shape=Shape())
 def padded_sum(x):
   return np.sum(x)  # output shape ()
 
@@ -347,7 +414,7 @@ print(padded_sum([np.arange(5)], dict(n=3)))
 print(vmap(padded_sum)([np.ones((5, 10))], dict(n=np.arange(5))))
 
 
-@partial(mask, in_shapes=[Shape('n'), Shape('n')], out_shapes=[Shape('n')])
+@partial(mask, in_shapes=[Shape('n'), Shape('n')], out_shape=Shape('n'))
 def addvecs(x, y):
   return x + y
 print(addvecs([np.arange(5), np.arange(5)], dict(n=3)))
@@ -360,7 +427,7 @@ def cumsum_(arr):
   out, _ = lax.scan(lambda c, x: (c + x, ()), 0, arr)
   return out
 
-@partial(mask, in_shapes=[Shape('n')], out_shapes=[Shape()])
+@partial(mask, in_shapes=[Shape('n')], out_shape=Shape())
 def cumsum(x):
   return cumsum_(x)
 
@@ -373,6 +440,11 @@ def jit_cumsum(args, shape_env):
   return cumsum(args, shape_env)
 print(jit_cumsum([np.array([5, 2, 9, 1, 4])], dict(n=3)))
 print(jit_cumsum([np.array([5, 2, 9, 1, 4])], dict(n=4)))
+
+
+@partial(mask, in_shapes=[Shape('(m, n)')], out_shape=Shape('m * n'))
+def flatten(x):
+  pass  # TODO
 
 
 # @partial(mask, in_shapes=[Shape('m', 'k'), Shape('k', 'n')],
