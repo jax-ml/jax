@@ -38,7 +38,6 @@ from jax.interpreters import xla
 from jax.interpreters import ad
 from jax.lib import xla_bridge as xb
 from jax.lib import xla_client
-import jax.numpy as np
 from jax.util import (partial, unzip2, safe_map, safe_zip, split_list,
                       split_dict, cache)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
@@ -331,8 +330,9 @@ def _cond_translation_rule(c, axis_env, pred, *args, **kwargs):
   return c.Conditional(pred, true_op, true_c, false_op, false_c)
 
 def _cond_pred_bcast_select(pred, x, y):
-  pred = np.broadcast_to(np.reshape(pred, np.shape(pred) + (1,) * (np.ndim(x) - np.ndim(pred))), np.shape(x))
-  return lax.select(pred, x, y)
+  promote_pred = lax.reshape(pred, onp.shape(pred) + (1,) * (x.ndim - pred.ndim))
+  bcast_pred = lax.broadcast_in_dim(promote_pred, onp.shape(x), range(x.ndim))
+  return lax.select(bcast_pred, x, y)
 
 def _cond_batching_rule(args, dims, true_jaxpr, false_jaxpr, true_nconsts,
                         false_nconsts):
