@@ -580,7 +580,8 @@ def reshape(operand, new_sizes, dimensions=None):
   <https://www.tensorflow.org/xla/operation_semantics#reshape>`_
   operator.
   """
-  new_sizes = _canonicalize_shape(new_sizes)
+  # new_sizes = _canonicalize_shape(new_sizes)  # TODO
+  new_sizes = tuple(new_sizes)
   same_shape = onp.shape(operand) == new_sizes
   same_dims = dimensions is None or tuple(dimensions) == tuple(range(onp.ndim(operand)))
   if onp.shape(operand) and same_shape and same_dims:
