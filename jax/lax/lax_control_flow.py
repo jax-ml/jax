@@ -330,8 +330,7 @@ def _cond_translation_rule(c, axis_env, pred, *args, **kwargs):
   return c.Conditional(pred, true_op, true_c, false_op, false_c)
 
 def _cond_pred_bcast_select(pred, x, y):
-  promote_pred = lax.reshape(pred, onp.shape(pred) + (1,) * (x.ndim - pred.ndim))
-  bcast_pred = lax.broadcast_in_dim(promote_pred, onp.shape(x), range(x.ndim))
+  bcast_pred = lax.broadcast_in_dim(pred, onp.shape(x), list(range(onp.ndim(pred))))
   return lax.select(bcast_pred, x, y)
 
 def _cond_batching_rule(args, dims, true_jaxpr, false_jaxpr, true_nconsts,
@@ -345,7 +344,7 @@ def _cond_batching_rule(args, dims, true_jaxpr, false_jaxpr, true_nconsts,
   size, = {x.shape[d] for x, d in zip(args, dims) if d is not batching.not_mapped}
   orig_bat = [d is not batching.not_mapped for d in dims]
   (pred_bat,), tconst_bat, t_bat, fconst_bat, f_bat = split_list(
-    orig_bat, [1, true_nconsts, len(true_ops), false_nconsts])
+    orig_bat, [1, true_nconsts, true_nops, false_nconsts])
 
   _, true_out_bat = batching.batch_jaxpr(true_jaxpr, size, tconst_bat + t_bat, False)
   _, false_out_bat = batching.batch_jaxpr(false_jaxpr, size, fconst_bat + f_bat, False)
