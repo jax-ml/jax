@@ -252,7 +252,8 @@ def vectorize(signature):
   
   def decorator(func):
     @functools.wraps(func)
-    def wrapper(*args, axis=None):
+    def wrapper(*args, **kwargs):
+      axis = kwargs.get('axis')  # for python2 compat.
 
       if axis is not None:
         verify_axis_is_supported(input_core_dims, output_core_dims)
