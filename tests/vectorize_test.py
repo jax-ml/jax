@@ -64,7 +64,7 @@ class VectorizeTest(jtu.JaxTestCase):
       ]))
   def test_matmat(self, left_shape, right_shape, result_shape):
     self.assertEqual(matmat(np.zeros(left_shape),
-        np.zeros(right_shape).shape, result_shape))
+                            np.zeros(right_shape)).shape, result_shape)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_leftshape={}_rightshape={}".format(left_shape, right_shape),
@@ -77,7 +77,7 @@ class VectorizeTest(jtu.JaxTestCase):
       ]))
   def test_matvec(self, left_shape, right_shape, result_shape):
     self.assertEqual(matvec(np.zeros(left_shape),
-        np.zeros(right_shape).shape, result_shape))
+                            np.zeros(right_shape)).shape, result_shape)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_leftshape={}_rightshape={}".format(left_shape, right_shape),
@@ -89,7 +89,7 @@ class VectorizeTest(jtu.JaxTestCase):
       ]))
   def test_vecvec(self, left_shape, right_shape, result_shape):
     self.assertEqual(vecvec(np.zeros(left_shape),
-        np.zeros(right_shape).shape, result_shape))
+                            np.zeros(right_shape)).shape, result_shape)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}".format(shape),
@@ -129,22 +129,22 @@ class VectorizeTest(jtu.JaxTestCase):
   def test_stack_plus_minus(self, shape, result_shape):
     self.assertEqual(stack_plus_minus(np.zeros(shape)).shape, result_shape)
 
-  def test_center(self, shape, result_shapes):
+  def test_center(self):
     b, a = center(np.arange(3))
     self.assertEqual(a.shape, (3,))
     self.assertEqual(b.shape, ())
-    self.assertEqual(np.mean(a), b)
+    self.assertAllClose(1.0, b, False)
 
     X = np.arange(12).reshape((3, 4))
     b, a = center(X, axis=1)
     self.assertEqual(a.shape, (3, 4))
     self.assertEqual(b.shape, (3,))
-    self.assertEqual(np.mean(a, axis=1), b)
+    self.assertAllClose(np.mean(X, axis=1), b, True)
     
     b, a = center(X, axis=0)
     self.assertEqual(a.shape, (3, 4))
     self.assertEqual(b.shape, (4,))
-    self.assertEqual(np.mean(a, axis=0), b)
+    self.assertAllClose(np.mean(X, axis=0), b, True)
     
 
 if __name__ == "__main__":
