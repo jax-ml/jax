@@ -195,10 +195,8 @@ def _while_loop_translation_rule(c, axis_env, *args, **kwargs):
   cond_carry = cond_c.ParameterWithShape(c.GetShape(init_carry))
   cond_carry_elts = [cond_c.GetTupleElement(cond_carry, i) for i in range(len(args))]
   x, _, z = split_list(cond_carry_elts, [cond_nconsts, body_nconsts])
-  cond_outs = cond_c.Call(
-      xla.jaxpr_computation(cond_jaxpr.jaxpr, backend, axis_env, cond_jaxpr.literals, (),
-                            *_map(cond_c.GetShape, x + z)), x + z)
-  pred = cond_c.GetTupleElement(cond_outs, 0)
+  pred, = xla.jaxpr_subcomp(cond_c, cond_jaxpr.jaxpr, backend, axis_env,
+                            _map(cond_c.Constant, cond_jaxpr.literals), (), *(x + z))
   if batched:
     scalar = xla_client.Shape.array_shape(onp.dtype(onp.bool_), ())
     or_ = xla.primitive_computation(lax.or_p, scalar, scalar)
@@ -209,18 +207,14 @@ def _while_loop_translation_rule(c, axis_env, *args, **kwargs):
   body_carry = body_c.ParameterWithShape(c.GetShape(init_carry))
   body_carry_elts = [body_c.GetTupleElement(body_carry, i) for i in range(len(args))]
   x, y, z = split_list(body_carry_elts, [cond_nconsts, body_nconsts])
-  body_out = body_c.Call(
-      xla.jaxpr_computation(body_jaxpr.jaxpr, backend, axis_env, body_jaxpr.literals, (),
-                            *_map(body_c.GetShape, y + z)), y + z)
-  new_z = [body_c.GetTupleElement(body_out, i) for i in range(len(init_vals))]
+  new_z = xla.jaxpr_subcomp(body_c, body_jaxpr.jaxpr, backend, axis_env,
+                            _map(body_c.Constant, body_jaxpr.literals), (), *(y + z))
   if batched:
-    body_cond_outs = body_c.Call(
-        xla.jaxpr_computation(cond_jaxpr.jaxpr, backend, axis_env, cond_jaxpr.literals, (),
-                              *_map(body_c.GetShape, x + z)), x + z)
-    body_pred = body_c.GetTupleElement(body_cond_outs, 0)
+    body_pred, = xla.jaxpr_subcomp(body_c, cond_jaxpr.jaxpr, backend, axis_env,
+                                   _map(body_c.Constant, cond_jaxpr.literals), (), *(x + z))
     new_z = _map(partial(_pred_bcast_select, body_c, body_pred), new_z, z)
     assert _map(body_c.GetShape, new_z) == _map(body_c.GetShape, z) # no broadcast
-  new_carry = body_c.Tuple(*(x + y + new_z))
+  new_carry = body_c.Tuple(*itertools.chain(x, y, new_z))
 
   ans = c.While(cond_c.Build(pred), body_c.Build(new_carry), init_carry)
   ans_elts = [c.GetTupleElement(ans, i) for i in range(len(args))]
@@ -317,9 +311,9 @@ def _cond_translation_rule(c, axis_env, pred, *args, **kwargs):
     c = xb.make_computation_builder(name)
     op = c.ParameterWithShape(op_shape)
     ops = [c.GetTupleElement(op, i) for i in range(len(jaxpr.in_avals))]
-    out = c.Call(xla.jaxpr_computation(jaxpr.jaxpr, backend, axis_env, jaxpr.literals, (),
-                                       *_map(c.GetShape, ops)), ops)
-    return c.Build(out)
+    outs = xla.jaxpr_subcomp(c, jaxpr.jaxpr, backend, axis_env,
+                             _map(c.Constant, jaxpr.literals), (), *ops)
+    return c.Build(c.Tuple(*outs))
 
   true_op = c.Tuple(*(true_consts + true_ops))
   true_c = make_computation("true_comp", true_jaxpr, c.GetShape(true_op))

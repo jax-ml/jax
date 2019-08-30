@@ -491,22 +491,21 @@ xla_pmap = partial(core.call_bind, xla_pmap_p)
 xla_pmap_p.def_custom_bind(xla_pmap)
 xla_pmap_p.def_impl(xla_pmap_impl)
 
-def _xla_pmap_translation_rule(c, jaxpr, axis_env, env_nodes, in_nodes,
-                               axis_name, axis_size, devices, backend=None):
+def _pmap_translation_rule(c, jaxpr, axis_env, const_nodes, freevar_nodes,
+                           in_nodes, axis_name, axis_size, devices, backend=None):
+  # We in-line here rather than generating a Call HLO as in the xla_call
+  # translation rule just because the extra tuple stuff is a pain.
   if axis_env.devices is not None or (axis_env.names and devices is not None):
-    raise NotImplementedError(
-        "Nested pmaps with devices argument not yet supported.")
+    raise ValueError("Nested pmaps with explicit devices argument.")
   new_env = xla.extend_axis_env(axis_env, axis_name, axis_size)
   in_nodes_sharded = list(map(partial(_xla_shard, c, new_env.sizes), in_nodes))
-  subc = xla.jaxpr_computation(jaxpr, backend, new_env, (),
-                               tuple(map(c.GetShape, env_nodes)),
-                               *map(c.GetShape, in_nodes_sharded))
-  sharded_result = c.Call(subc, env_nodes + in_nodes_sharded)
-  sharded_results = xla.xla_destructure(c, sharded_result)
-  unsharded_results = [_xla_unshard(c, xla.axis_groups(new_env, axis_name), r)
-                       for r in sharded_results]
-  return c.Tuple(*unsharded_results)
-xla.call_translations[xla_pmap_p] = _xla_pmap_translation_rule
+  sharded_outs = xla.jaxpr_subcomp(c, jaxpr, backend, new_env, const_nodes,
+                                   freevar_nodes, *in_nodes_sharded)
+  outs = [_xla_unshard(c, xla.axis_groups(new_env, axis_name), r)
+          for r in sharded_outs]
+  return c.Tuple(*outs)
+
+xla.call_translations[xla_pmap_p] = _pmap_translation_rule
 ad.primitive_transposes[xla_pmap_p] = partial(ad.map_transpose, xla_pmap_p)
 pe.map_primitives.add(xla_pmap_p)
 
