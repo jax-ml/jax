@@ -35,6 +35,7 @@ from jax.flatten_util import ravel_pytree
 import jax.lax
 import jax.numpy as np
 import jax.ops
+from jax.test_util import check_vjp
 import matplotlib.pyplot as plt
 import numpy as onp
 import scipy.integrate as osp_integrate
@@ -372,6 +373,34 @@ def vjp_odeint(ofunc, y0, t, *args, **kwargs):
   return primals_out, vjp_fun
 
 
+def build_odeint(ofunc, rtol=1.4e-8, atol=1.4e-8):
+  """Return `f(y0, t, args) = odeint(ofunc(y, t, *args), y0, t, args)`.
+
+  Given the function ofunc(y, t, *args), return the jitted function
+  `f(y0, t, args) = odeint(ofunc(y, t, *args), y0, t, args)` with
+  the VJP of `f` defined using `vjp_odeint`, where:
+
+    `y0` is the initial condition of the ODE integration,
+    `t` is the time course of the integration, and
+    `*args` are all other arguments to `ofunc`.
+
+  Args:
+    ofunc: The function to be wrapped into an ODE integration.
+    rtol: relative local error tolerance for solver.
+    atol: absolute local error tolerance for solver.
+
+  Returns:
+    `f(y0, t, args) = odeint(ofunc(y, t, *args), y0, t, args)`
+  """
+  ct_odeint = jax.custom_transforms(
+      lambda y0, t, *args: odeint(ofunc, y0, t, *args, rtol=rtol, atol=atol))
+
+  v = lambda y0, t, *args: vjp_odeint(ofunc, y0, t, *args, rtol=rtol, atol=atol)
+  jax.defvjp_all(ct_odeint, v)
+
+  return jax.jit(ct_odeint)
+
+
 def my_odeint_grad(fun):
   """Calculate the Jacobian of an odeint."""
   @jax.jit
@@ -483,8 +512,7 @@ def swoop(y, t, arg1, arg2):
 
 @jax.jit
 def decay(y, t, arg1, arg2):
-    return -np.sqrt(t) - y + arg1 - np.mean((y + arg2)**2)
-
+  return -np.sqrt(t) - y + arg1 - np.mean((y + arg2)**2)
 
 
 def benchmark_odeint(fun, y0, tspace, *args):
@@ -563,8 +591,8 @@ def test_odeint_vjp():
   c = 9.8
   wrap_args = (y, t, b, c)
   pend_odeint_wrap = lambda y, t, *args: odeint(pend, y, t, *args)
-  pend_vjp_wrap = lambda *wrap_args: vjp_odeint(pend, *wrap_args)
-  jax.test_util.check_vjp(pend_odeint_wrap, pend_vjp_wrap, wrap_args)
+  pend_vjp_wrap = lambda y, t, *args: vjp_odeint(pend, y, t, *args)
+  check_vjp(pend_odeint_wrap, pend_vjp_wrap, wrap_args)
 
   # check swoop()
   y = np.array([0.1])
@@ -573,10 +601,29 @@ def test_odeint_vjp():
   arg2 = 0.2
   wrap_args = (y, t, arg1, arg2)
   swoop_odeint_wrap = lambda y, t, *args: odeint(swoop, y, t, *args)
-  swoop_vjp_wrap = lambda *wrap_args: vjp_odeint(swoop, *wrap_args)
-  jax.test_util.check_vjp(swoop_odeint_wrap, swoop_vjp_wrap, wrap_args)
+  swoop_vjp_wrap = lambda y, t, *args: vjp_odeint(swoop, y, t, *args)
+  check_vjp(swoop_odeint_wrap, swoop_vjp_wrap, wrap_args)
 
   # decay() check_vjp hangs!
+
+
+def test_defvjp_all():
+  """Use build_odeint to check odeint VJP calculations."""
+  n_trials = 5
+  swoop_build = build_odeint(swoop)
+  jacswoop = jax.jit(jax.jacrev(swoop_build))
+  y = np.array([0.1])
+  t = np.linspace(0., 2., 11)
+  arg1 = 0.1
+  arg2 = 0.2
+  wrap_args = (y, t, arg1, arg2)
+  for k in range(n_trials):
+    start = time.time()
+    rslt = jacswoop(*wrap_args)
+    rslt.block_until_ready()
+    end = time.time()
+    print('JAX jacrev elapsed time ({} of {}): {}'.format(
+        k+1, n_trials, end-start))
 
 
 if __name__ == '__main__':
