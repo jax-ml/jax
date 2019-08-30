@@ -38,6 +38,7 @@ from jax.interpreters import xla
 from jax.interpreters import ad
 from jax.lib import xla_bridge as xb
 from jax.lib import xla_client
+import jax.numpy as np
 from jax.util import (partial, unzip2, safe_map, safe_zip, split_list,
                       split_dict, cache)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
@@ -329,6 +330,10 @@ def _cond_translation_rule(c, axis_env, pred, *args, **kwargs):
 
   return c.Conditional(pred, true_op, true_c, false_op, false_c)
 
+def _cond_pred_bcast_select(pred, x, y):
+  pred = np.broadcast_to(np.reshape(pred, np.shape(pred) + (1,) * (np.ndim(x) - np.ndim(pred))), np.shape(x))
+  return lax.select(pred, x, y)
+
 def _cond_batching_rule(args, dims, true_jaxpr, false_jaxpr, true_nconsts,
                         false_nconsts):
   # TODO: maybe avoid moving arg axes to front if we're promoting to select?
@@ -339,7 +344,7 @@ def _cond_batching_rule(args, dims, true_jaxpr, false_jaxpr, true_nconsts,
       args, [1, true_nconsts, true_nops, false_nconsts])
   size, = {x.shape[d] for x, d in zip(args, dims) if d is not batching.not_mapped}
   orig_bat = [d is not batching.not_mapped for d in dims]
-  (pred_bat,), t_bat, tconst_bat, f_bat, fconst_bat = split_list(
+  (pred_bat,), tconst_bat, t_bat, fconst_bat, f_bat = split_list(
     orig_bat, [1, true_nconsts, len(true_ops), false_nconsts])
 
   _, true_out_bat = batching.batch_jaxpr(true_jaxpr, size, tconst_bat + t_bat, False)
@@ -355,8 +360,8 @@ def _cond_batching_rule(args, dims, true_jaxpr, false_jaxpr, true_nconsts,
     true_out = [batching.broadcast(x, size, 0) if not b else x
                 for x, b in zip(true_out, out_bat)]
     false_out = [batching.broadcast(x, size, 0) if not b else x
-                for x, b in zip(false_out, out_bat)]
-    return [lax.select(pred, t, f)
+                 for x, b in zip(false_out, out_bat)]
+    return [_cond_pred_bcast_select(pred, t, f)
             for t, f in zip(true_out, false_out)], [0] * len(true_out)
   else:
     out_dims = [0 if b else batching.not_mapped for b in out_bat]
