@@ -162,9 +162,10 @@ def primitive_computation(prim, *xla_shapes, **params):
   try:
     return c.Build()
   except RuntimeError as e:
-    # try for a better error message by using the abstract_eval checks
-    prim.abstract_eval(*map(_aval_from_xla_shape, shapes), **params)
-    raise e
+    msg = (e.message + "\n"
+           "This is a bug in JAX's shape-checking rules; please report it!\n"
+           "https://github.com/google/jax/issues\n")
+    raise RuntimeError(msg)
 
 def _execute_compiled_primitive(prim, compiled, backend, result_handler, *args):
   device_num, = compiled.DeviceOrdinals()
