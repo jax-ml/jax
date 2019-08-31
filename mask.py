@@ -1,7 +1,7 @@
 from __future__ import print_function
 
 from collections import defaultdict, Counter, namedtuple
-from functools import partial
+from functools import partial, wraps
 import itertools as it
 import operator as op
 import string
@@ -11,7 +11,7 @@ import six
 
 from jax import core
 from jax.core import Trace, Tracer
-from jax.util import unzip2, safe_map, safe_zip, split_list
+from jax.util import unzip2, safe_map, safe_zip, split_list, curry
 from jax.api_util import tree_flatten, tree_unflatten, flatten_fun_nokwargs
 from jax import linear_util as lu
 from jax.abstract_arrays import ShapedArray
@@ -154,12 +154,12 @@ print(Shape('m + n * k'))  # ShapeExpr(m + k n)
 print(Shape('m + 3 * k'))  # ShapeExpr(3 k + n)
 
 
-### tracer machinery
+### automasking tracer machinery
 
 ShapeEnvs = namedtuple("ShapeEnvs", ["logical", "padded"])
 
 class MaskTracer(Tracer):
-  __slots__ = ["val", "shape_expr", "shape_envs", "log_shape_env"]
+  __slots__ = ["val", "shape_expr", "shape_envs"]
 
   def __init__(self, trace, shape_envs, val, shape_expr):
     self.trace = trace
@@ -253,7 +253,7 @@ def defvectorized(prim):
   shape_rules[prim] = vectorized_shape_rule
   masking_rules[prim] = partial(vectorized_masking_rule, prim)
 
-def vectorized_shape_rule(shape_exprs):
+def vectorized_shape_rule(shape_exprs, **unused_params):
   shape_expr, = shape_exprs
   return shape_expr
 
@@ -268,6 +268,7 @@ defvectorized(lax.cos_p)
 defvectorized(lax.exp_p)
 defvectorized(lax.log_p)
 defvectorized(lax.tanh_p)
+defvectorized(lax.convert_element_type_p)
 
 
 def dot_shape_rule(shape_exprs, precision):
@@ -369,6 +370,7 @@ def reshape_shape_rule(shape_exprs, new_sizes, dimensions, old_sizes):
   shape_expr, = shape_exprs
   if prod(shape_expr) != prod(new_sizes): raise ShapeError
   return new_sizes
+shape_rules[lax.reshape_p] = reshape_shape_rule
 
 
 def concat_shape_rule(shape_exprs, dimension, operand_shapes):
@@ -416,6 +418,7 @@ def mask(fun, in_shapes, out_shape):
   return wrapped_fun
 
 def _bind_shapes(shape_exprs, shapes):
+  # TODO this assumes input shape exprs are just binders
   env = {}
   for binders, shape in zip(shape_exprs, shapes):
     for poly, d in zip(binders, shape):
@@ -482,21 +485,95 @@ y = onp.arange(12, dtype=onp.float32).reshape((3, 4))
 print(dot([x, y], dict(m=2, k=2, n=2))[:2, :2])
 print(onp.dot(x[:2, :2], y[:2, :2]))
 
-# notes!
-# - a shape variable is associated with a max size and a dynamic size. we carry
-#   around the dynamic size explicitly in the shape_env attached to every
-#   tracer, while the max size we get off the val
-# - we don't want to do the padding at the start and slicing at the end in the
-#   transformation because we want to be able to vmap it, also want to jit it
-#   - we could have a ragged array data type, or other api options
-# - we should probably pass the max size explicitly rather than getting it off
-#   the values, e.g. the iota problem, should think of it as an independent type
-#   argument
-
 
 # next steps:
-#   0. generic test setup
-#   1. clean up shape expression language (maybe handle reshape/conat)
+#   0. reshape!
+#   1. generic test setup
 #   2. write example colab with two applications:
 #      (a) batching ragged sequences
 #      (b) jit bucketing
+
+
+### definition-time shape checker tracer machinery
+
+class ShapeCheckTracer(Tracer):
+  __slots__ = ["shape_expr", "dtype"]
+
+  def __init__(self, trace, shape_expr):
+    self.trace = trace
+    self.shape_expr = shape_expr
+    self.dtype = None  # TODO dtypes
+
+  @property
+  def aval(self):
+    return ShapedArray(self.shape_expr, self.dtype)
+
+  def full_lower(self):
+    return self
+
+class ShapeCheckTrace(Trace):
+  def pure(self, val):
+    return ShapeCheckTracer(self, Shape(*onp.shape(val)), onp.result_type(val))
+
+  def lift(self, val):
+    return ShapeCheckTracer(self, Shape(*onp.shape(val)), onp.result_type(val))
+
+  def sublift(self, val):
+    return ShapeCheckTracer(self, val.shape_expr, val.dtype)
+
+  def process_primitive(self, primitive, tracers, params):
+    # TODO dtypes
+    shape_exprs, dtypes = unzip2((t.shape_expr, t.dtype) for t in tracers)
+    out_shape_expr = shape_rules[primitive](shape_exprs, **params)
+    return ShapeCheckTracer(self, out_shape_expr)
+
+
+class F32(object):
+  def __getitem__(self, idx):
+    if type(idx) is tuple:
+      return Shape('(' + ','.join(map(str, idx)) + ')')
+    else:
+      return Shape(str(idx))
+f32 = F32()
+
+@curry
+def check(in_shapes, out_shape, fun):
+  with core.new_master(ShapeCheckTrace) as master:
+    out_shape_ = check_subtrace(lu.wrap_init(fun), master).call_wrapped(in_shapes)
+    del master
+  if not out_shape_ == out_shape: raise ShapeError
+  return fun
+
+@lu.transformation
+def check_subtrace(master, in_shapes):
+  trace = ShapeCheckTrace(master, core.cur_sublevel())
+  in_tracers = map(partial(ShapeCheckTracer, trace), in_shapes)
+  out = yield in_tracers, {}
+  yield trace.full_raise(out).shape_expr
+
+
+@check((f32['m', 'n'], f32['n']), f32['m'])
+def matvec(A, b):
+  return np.dot(A, b)
+
+try:
+  @check((f32['m', 'n'], f32['n']), f32['m'])
+  def matvec(A, b):
+    return np.dot(b, A)
+except ShapeError: print("good error")
+else: raise Exception
+
+@check((f32['m', 'n'],), f32['m * n'])
+def flatten(x):
+  return lax.reshape(x, (x.shape[0] * x.shape[1],))
+
+@check((f32['m'], f32['n'], f32['m']), f32['3*m + n'])
+def cat(x, y, z):
+  return lax.concatenate([x, y, x, z], 0)
+
+try:
+  @check((f32['m'], f32['n'], f32['m']), f32['3*m + n'])
+  def cat(x, y, z):
+    return lax.concatenate([x, y, x], 0)
+except ShapeError: print("good error")
+else: raise Exception
