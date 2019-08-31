@@ -90,7 +90,7 @@ def slogdet(a):
 def det(a):
   sign, logdet = slogdet(a)
   return sign * np.exp(logdet)
-defjvp(det, lambda g, ans, x: np.trace(np.dot(g, np.linalg.inv(x)))*ans)
+defjvp(det, lambda g, ans, x: np.trace(np.linalg.solve(x, g))*ans)
 
 
 @_wraps(onp.linalg.eig)
