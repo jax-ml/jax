@@ -102,12 +102,13 @@ class ShapeError(Exception): pass
 #   data Dim = Id Str
 #            | Lit Int
 #            | Mul Dim Dim
+#            | Add Dim Dim
 
 # We'll also make a simple concrete syntax for annotation. The grammar is
 #
 #   shape_spec ::= '(' dims ')'
 #   dims       ::= dim ',' dims | ''
-#   dim        ::= str | int | dim '*' dim
+#   dim        ::= str | int | dim '*' dim | dim '+' dim
 
 def parse_spec(spec=''):
   if not spec:
@@ -119,7 +120,10 @@ def parse_spec(spec=''):
   return ShapeExpr(dims)
 
 def parse_dim(spec):
-  if '*' in spec:
+  if '+' in spec:
+    terms = map(parse_dim, spec.split('+'))
+    return reduce(op.add, terms)
+  elif '*' in spec:
     terms = map(parse_dim, spec.split('*'))
     return reduce(op.mul, terms)
   elif spec in digits:
@@ -137,14 +141,17 @@ def parse_lit(val_str): return Poly({Mon(): int(val_str)})
 Shape = parse_spec  # convenience
 
 # Tests:
-print(Shape('(m, n)'))    # ShapeExpr(m, n)
-print(Shape('(m * n)'))   # ShapeExpr(m n)
-print(Shape('m * n'))     # ShapeExpr(m n)
-print(Shape('(m * n,)'))  # ShapeExpr(m n)
-print(Shape('(3, m)'))    # ShapeExpr(3, m)
-print(Shape('(3 * m)'))   # ShapeExpr(3 m)
-print(Shape('m'))         # ShapeExpr(m)
-print(Shape(''))          # ShapeExpr()
+print(Shape('(m, n)'))     # ShapeExpr(m, n)
+print(Shape('(m * n)'))    # ShapeExpr(m n)
+print(Shape('m * n'))      # ShapeExpr(m n)
+print(Shape('(m * n,)'))   # ShapeExpr(m n)
+print(Shape('(3, m)'))     # ShapeExpr(3, m)
+print(Shape('(3 * m)'))    # ShapeExpr(3 m)
+print(Shape('m'))          # ShapeExpr(m)
+print(Shape(''))           # ShapeExpr()
+print(Shape('m + n'))      # ShapeExpr(m + n)
+print(Shape('m + n * k'))  # ShapeExpr(m + k n)
+print(Shape('m + 3 * k'))  # ShapeExpr(3 k + n)
 
 
 ### tracer machinery
@@ -358,24 +365,35 @@ def _make_typed_jaxpr(traceable, in_avals):
   return core.TypedJaxpr(jaxpr, consts, in_avals, out_avals)
 
 
-# TODO remove this
 def reshape_shape_rule(shape_exprs, new_sizes, dimensions, old_sizes):
   if dimensions is not None: raise NotImplementedError
   shape_expr, = shape_exprs
   if prod(shape_expr) != prod(new_sizes): raise ShapeError
   return new_sizes
 
-def reshape_masking_rule(shape_envs, padded_vals, shape_exprs, new_sizes,
-                         dimensions, old_sizes):
-  if dimensions is not None: raise NotImplementedError
-  new_sizes = ShapeExpr(new_sizes)  # tuplified
-  out_shape = reshape_shape_rule(shape_exprs, new_sizes, dimensions, old_sizes)
-  padded_operand, = padded_vals
-  padded_new_sizes = eval_shape_expr(shape_envs.padded, new_sizes)
-  out = lax.reshape(padded_operand, padded_new_sizes)
-  return out, out_shape
-shape_parameterized_primitive_rules[lax.reshape_p] = reshape_masking_rule
 
+def concat_shape_rule(shape_exprs, dimension, operand_shapes):
+  out_shape = list(shape_exprs[0])
+  out_shape[dimension] = reduce(op.add, [e[dimension] for e in shape_exprs])
+  return ShapeExpr(out_shape)
+shape_rules[lax.concatenate_p] = concat_shape_rule
+
+def concat_masking_rule(padded_vals, logical_shapes, dimension, operand_shapes):
+  del operand_shapes  # Unused.
+  result = lax.concatenate(padded_vals, dimension)  # fragmented
+  offset = 0
+  for padded_val, logical_shape in zip(padded_vals, logical_shapes):
+    result = _memcpy(dimension, logical_shape[dimension], padded_val,
+                     result, offset)
+    offset = offset + logical_shape[dimension]
+  return result
+masking_rules[lax.concatenate_p] = concat_masking_rule
+
+def _memcpy(axis, num, src, dst, offset):
+  def body(i, dst):
+    update = lax.dynamic_index_in_dim(src, i, axis)
+    return lax.dynamic_update_index_in_dim(dst, update, i + offset, axis)
+  return lax.fori_loop(0, num, body, dst)
 
 ###
 
@@ -391,9 +409,10 @@ def mask(fun, in_shapes, out_shape):
     shape_envs = ShapeEnvs(logical_shape_env, padded_shape_env)
     flat_fun, out_tree = flatten_fun_nokwargs(f, in_tree)
     outs, out_shapes_ = mask_fun(flat_fun, shape_envs, args_flat, in_shapes_flat)
-    assert out_shapes_flat == list(out_shapes_)
-    assert all(out.shape == eval_shape_expr(padded_shape_env, expr)
-               for out, expr in zip(outs, out_shapes_flat))
+    if not out_shapes_flat == list(out_shapes_): raise ShapeError
+    if not all(out.shape == eval_shape_expr(padded_shape_env, expr)
+               for out, expr in zip(outs, out_shapes_flat)):
+      raise ShapeError
     return tree_unflatten(out_tree(), outs)
   return wrapped_fun
 
@@ -423,9 +442,9 @@ print(vmap(padded_sum)([np.ones((5, 10))], dict(n=np.arange(5))))
 def addvecs(x, y):
   return x + y
 print(addvecs([np.arange(5), np.arange(5)], dict(n=3)))
-# try: addvecs([np.arange(5), np.arange(6)], dict(n=3))  # TODO
-# except ShapeError: print("good error")
-# else: raise Exception
+try: addvecs([np.arange(5), np.arange(6)], dict(n=3))
+except ShapeError: print("good error")
+else: raise Exception
 
 
 def cumsum_(arr):
@@ -447,11 +466,12 @@ print(jit_cumsum([np.array([5, 2, 9, 1, 4])], dict(n=3)))
 print(jit_cumsum([np.array([5, 2, 9, 1, 4])], dict(n=4)))
 
 
-@partial(mask, in_shapes=[Shape('(m, n)')], out_shape=Shape('m * n'))
-def flatten(x):
-  return lax.reshape(x, (x.shape[0] * x.shape[1],))
-print(flatten([np.arange(12).reshape(3, 4)], dict(m=2, n=3)))
-
+@partial(mask, in_shapes=[Shape('n'), Shape('m'), Shape('n')],
+         out_shape=Shape('m + 2 * n'))
+def cat(x, y, z):
+  return lax.concatenate([x, y, z], 0)
+print(cat([np.array([1, 9]), np.array([2, 9]), np.array([3, 9])],
+          dict(m=1, n=1))[:3])
 
 # @partial(mask, in_shapes=[Shape('m', 'k'), Shape('k', 'n')],
 #          out_shapes=[Shape('m', 'n')])
@@ -473,9 +493,6 @@ print(flatten([np.arange(12).reshape(3, 4)], dict(m=2, n=3)))
 #   the values, e.g. the iota problem, should think of it as an independent type
 #   argument
 
-
-# TODO try to revert to the version without polymorphism in jaxprs, get rid of
-# reshape, make Tracer.aval return an aval with evaluated shapes not shexprs
 
 # next steps:
 #   0. generic test setup
