@@ -163,7 +163,7 @@ def primitive_computation(prim, *xla_shapes, **params):
     return c.Build()
   except RuntimeError as e:
     # try for a better error message by using the abstract_eval checks
-    prim.abstract_eval(*map(aval_from_xla_shape, shapes), **params)
+    prim.abstract_eval(*map(_aval_from_xla_shape, shapes), **params)
     raise e
 
 def _execute_compiled_primitive(prim, compiled, backend, result_handler, *args):
