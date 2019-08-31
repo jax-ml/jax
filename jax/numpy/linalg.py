@@ -86,9 +86,11 @@ def slogdet(a):
 
 
 @_wraps(onp.linalg.det)
+@custom_transforms
 def det(a):
   sign, logdet = slogdet(a)
   return sign * np.exp(logdet)
+defjvp(det, lambda g, ans, x: np.trace(np.dot(g, np.linalg.inv(x)))*ans)
 
 
 @_wraps(onp.linalg.eig)
