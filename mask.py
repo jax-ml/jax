@@ -114,7 +114,7 @@ def parse_spec(spec=''):
   if not spec:
     return ShapeExpr(())
   if spec[0] == '(':
-    if spec[-1] != ')': raise SyntaxError
+    if spec[-1] != ')': raise SyntaxError(spec)
     spec = spec[1:-1]
   dims = map(parse_dim, spec.replace(' ', '').strip(',').split(','))
   return ShapeExpr(dims)
@@ -131,7 +131,7 @@ def parse_dim(spec):
   elif spec in identifiers:
     return parse_id(spec)
   else:
-    raise SyntaxError
+    raise SyntaxError(spec)
 digits = frozenset(string.digits)
 identifiers = frozenset(string.lowercase)
 
@@ -275,19 +275,18 @@ def dot_shape_rule(shape_exprs, precision):
   lhs_shape, rhs_shape = shape_exprs
   lhs_ndim, rhs_ndim = len(lhs_shape), len(rhs_shape)
 
-  assert False  # TODO update w/ new ShapeExpr stuff
   if lhs_ndim == rhs_ndim == 1:
     if not lhs_shape == rhs_shape: raise ShapeError
-    return Shape()
+    return ShapeExpr(())
   elif lhs_ndim == rhs_ndim == 2:
     if not lhs_shape[1] == rhs_shape[0]: raise ShapeError
-    return Shape(lhs_shape[0], rhs_shape[1])
+    return ShapeExpr((lhs_shape[0], rhs_shape[1]))
   elif rhs_ndim == 1:
     if not lhs_shape[1] == rhs_shape[0]: raise ShapeError
-    return Shape(lhs_shape[0])
+    return ShapeExpr((lhs_shape[0],))
   else:
     if not lhs_shape[0] == rhs_shape[0]: raise ShapeError
-    return Shape(rhs_shape[1])
+    return ShapeExpr((rhs_shape[1],))
 shape_rules[lax.dot_p] = dot_shape_rule
 
 def dot_masking_rule(padded_vals, logical_shapes, precision):
@@ -473,14 +472,15 @@ def cat(x, y, z):
 print(cat([np.array([1, 9]), np.array([2, 9]), np.array([3, 9])],
           dict(m=1, n=1))[:3])
 
-# @partial(mask, in_shapes=[Shape('m', 'k'), Shape('k', 'n')],
-#          out_shapes=[Shape('m', 'n')])
-# def dot(x, y):
-#   return lax.dot(x, y)
-# x = onp.arange(6, dtype=onp.float32).reshape((2, 3))
-# y = onp.arange(12, dtype=onp.float32).reshape((3, 4))
-# print(dot([x, y], dict(m=2, k=2, n=2))[:2, :2])
-# print(onp.dot(x[:2, :2], y[:2, :2]))
+
+@partial(mask, in_shapes=[Shape('(m, k)'), Shape(('k, n'))],
+         out_shape=[Shape('(m, n)')])
+def dot(x, y):
+  return lax.dot(x, y)
+x = onp.arange(6, dtype=onp.float32).reshape((2, 3))
+y = onp.arange(12, dtype=onp.float32).reshape((3, 4))
+print(dot([x, y], dict(m=2, k=2, n=2))[:2, :2])
+print(onp.dot(x[:2, :2], y[:2, :2]))
 
 # notes!
 # - a shape variable is associated with a max size and a dynamic size. we carry
