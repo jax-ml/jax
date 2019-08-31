@@ -127,19 +127,54 @@ def threefry_2x32(keypair, count):
                onp.array([17, 29, 16, 24], dtype=onp.uint32)]
   ks = [key1, key2, key1 ^ key2 ^ onp.uint32(0x1BD11BDA)]
 
-  def rotate_list(xs):
-    return xs[1:] + [xs[0]]
+  # TODO(mattjj): see https://github.com/google/jax/issues/1267, as a hopefully
+  # temporary workaround for the facts that (1) XLA:CPU compile time is too slow
+  # with unrolled loops and (2) XLA:GPU execution time is too slow with rolled
+  # loops, we switch on whether the default backend is CPU or GPU. If this kind
+  # of switch ends up sticking around, we should take into account #1211 and put
+  # the switch in the translation rule rather than here in the traceable.
+  use_rolled_loops = xla_bridge.get_backend().platform == "cpu"
 
   x[0] = x[0] + ks[0]
   x[1] = x[1] + ks[1]
 
-  def step(i, state):
-    x, ks, rotations = state
+  if use_rolled_loops:
+    def rotate_list(xs): return xs[1:] + xs[:1]
+    def step(i, state):
+      x, ks, rotations = state
+      for r in rotations[0]:
+        x = apply_round(x, r)
+      new_x = [x[0] + ks[0], x[1] + ks[1] + asarray(i + 1, dtype=onp.uint32)]
+      return new_x, rotate_list(ks), rotate_list(rotations)
+    x, _, _ = lax.fori_loop(0, 5, step, (x, rotate_list(ks), rotations))
+
+  else:
     for r in rotations[0]:
       x = apply_round(x, r)
-    new_x = [x[0] + ks[0], x[1] + ks[1] + asarray(i + 1, dtype=onp.uint32)]
-    return new_x, rotate_list(ks), rotate_list(rotations)
-  out = np.concatenate(lax.fori_loop(0, 5, step, (x, rotate_list(ks), rotations))[0])
+    x[0] = x[0] + ks[1]
+    x[1] = x[1] + ks[2] + onp.uint32(1)
+
+    for r in rotations[1]:
+      x = apply_round(x, r)
+    x[0] = x[0] + ks[2]
+    x[1] = x[1] + ks[0] + onp.uint32(2)
+
+    for r in rotations[0]:
+      x = apply_round(x, r)
+    x[0] = x[0] + ks[0]
+    x[1] = x[1] + ks[1] + onp.uint32(3)
+
+    for r in rotations[1]:
+      x = apply_round(x, r)
+    x[0] = x[0] + ks[1]
+    x[1] = x[1] + ks[2] + onp.uint32(4)
+
+    for r in rotations[0]:
+      x = apply_round(x, r)
+    x[0] = x[0] + ks[2]
+    x[1] = x[1] + ks[0] + onp.uint32(5)
+
+  out = np.concatenate(x)
   assert out.dtype == onp.uint32
   return lax.reshape(out[:-1] if odd_size else out, count.shape)
 

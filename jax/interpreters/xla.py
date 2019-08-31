@@ -142,7 +142,7 @@ def xla_primitive_callable(prim, *abstract_args, **params):
 def primitive_computation(prim, *xla_shapes, **params):
   backend = params.get('backend', None)
   new_params = {k: params[k] for k in params if k != 'backend'}
-  c = xb.make_computation_builder("primitive_computation")
+  c = xb.make_computation_builder("primitive_computation")  # TODO(name)
   platform = xb.get_backend(backend).platform
   xla_args = map(c.ParameterWithShape, xla_shapes)
   if prim in backend_specific_translations[platform]:
@@ -230,28 +230,18 @@ def eqn_literals(eqn):
     if type(v) is core.Literal:
       yield v.val
 
-def jaxpr_computation(jaxpr, backend, axis_env, const_vals, freevar_shapes, *arg_shapes):
-  c, out_nodes = _jaxpr_computation(jaxpr, backend, axis_env, const_vals, freevar_shapes,
-                                    *arg_shapes)
+def jaxpr_computation(jaxpr, backend, axis_env, const_vals, freevar_shapes,
+                      *arg_shapes):
+  c = xb.make_computation_builder("jaxpr_computation")  # TODO(mattjj): name
+  _map(prefetch, it.chain(const_vals, jaxpr_literals(jaxpr)))
+  consts = _map(c.Constant, const_vals)
+  freevars = _map(c.ParameterWithShape, freevar_shapes)
+  args = _map(c.ParameterWithShape, arg_shapes)
+  out_nodes = jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, freevars, *args)
   return c.Build(c.Tuple(*out_nodes))
 
-
-def check_backend_params(params, outer_backend):
-  # For nested jits, the outer jit sets the backend on all inner jits unless
-  # an inner-jit also has a conflicting explicit backend specification.
-  inner_backend = params.get('backend', None)
-  if inner_backend and inner_backend != outer_backend:
-    msg = (
-      "Outer-jit backend specification {} must match"
-      "explicit inner-jit backend specification {}.")
-    raise ValueError(msg.format(outer_backend, inner_backend))
-  return {k: params[k] for k in params if k != 'backend'}
-
-
-def _jaxpr_computation(jaxpr, backend, axis_env, const_vals, freevar_shapes, *arg_shapes):
-  c = xb.make_computation_builder("jaxpr_computation")
+def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, freevars, *args):
   platform = xb.get_backend(backend).platform
-  _map(prefetch, it.chain(jaxpr_literals(jaxpr), const_vals))
 
   def read(v):
     if type(v) is Literal:
@@ -265,13 +255,9 @@ def _jaxpr_computation(jaxpr, backend, axis_env, const_vals, freevar_shapes, *ar
 
   env = {}
   write(core.unitvar, c.Tuple())
-  if const_vals:
-    _map(write, jaxpr.constvars, map(c.Constant, const_vals))
-    _map(write, jaxpr.freevars, map(c.ParameterWithShape, freevar_shapes))
-  else:
-    all_freevars = it.chain(jaxpr.constvars, jaxpr.freevars)
-    _map(write, all_freevars, map(c.ParameterWithShape, freevar_shapes))
-  _map(write, jaxpr.invars, map(c.ParameterWithShape, arg_shapes))
+  _map(write, jaxpr.constvars, consts)
+  _map(write, jaxpr.freevars, freevars)
+  _map(write, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
     in_nodes = list(map(read, eqn.invars))
     if eqn.primitive in backend_specific_translations[platform]:
@@ -295,9 +281,11 @@ def _jaxpr_computation(jaxpr, backend, axis_env, const_vals, freevar_shapes, *ar
     elif eqn.primitive in call_translations:
       new_params = check_backend_params(eqn.params, backend)
       (subjaxpr, const_bindings, freevar_bindings), = eqn.bound_subjaxprs
-      env_nodes = list(map(read, const_bindings + freevar_bindings))
+      const_nodes = _map(read, const_bindings)
+      freevar_nodes = _map(read, freevar_bindings)
       rule = call_translations[eqn.primitive]
-      ans = rule(c, subjaxpr, axis_env, env_nodes, in_nodes, backend=backend, **new_params)
+      ans = rule(c, subjaxpr, axis_env, const_nodes, freevar_nodes, in_nodes,
+                 backend=backend, **new_params)
     else:
       msg = "XLA translation rule for primitive '{}' not found"
       raise NotImplementedError(msg.format(eqn.primitive.name))
@@ -305,11 +293,22 @@ def _jaxpr_computation(jaxpr, backend, axis_env, const_vals, freevar_shapes, *ar
     c.GetShape(ans)  # force xla to do shape error checking
     out_nodes = xla_destructure(c, ans) if eqn.primitive.multiple_results else [ans]
     _map(write, eqn.outvars, out_nodes)
-  return c, _map(read, jaxpr.outvars)
+  return _map(read, jaxpr.outvars)
 
 def xla_destructure(c, ans):
   num_elements = len(c.GetShape(ans).tuple_shapes())
   return [c.GetTupleElement(ans, i) for i in range(num_elements)]
+
+def check_backend_params(params, outer_backend):
+  # For nested calls, the outermost call sets the backend for all inner calls;
+  # it's an error if the inner call has a conflicting explicit backend spec.
+  inner_backend = params.get('backend', None)
+  if inner_backend and inner_backend != outer_backend:
+    msg = (
+      "Outer-jit backend specification {} must match explicit inner-jit "
+      "backend specification {}.")
+    raise ValueError(msg.format(outer_backend, inner_backend))
+  return {k: params[k] for k in params if k != 'backend'}
 
 
 class AxisEnv(object):
@@ -418,12 +417,16 @@ xla_call = partial(core.call_bind, xla_call_p)
 xla_call_p.def_custom_bind(xla_call)
 xla_call_p.def_impl(_xla_call_impl)
 
-def _xla_call_translation_rule(c, jaxpr, axis_env, env_nodes, in_nodes,
-                               device_assignment=None, backend=None):
+def _xla_call_translation_rule(c, jaxpr, axis_env, const_nodes, freevar_nodes,
+                               in_nodes, device_assignment=None, backend=None):
   del device_assignment  # Ignored.
-  subc = jaxpr_computation(jaxpr, backend, axis_env, (), _map(c.GetShape, env_nodes),
-                           *map(c.GetShape, in_nodes))
-  return c.Call(subc, env_nodes + in_nodes)
+  subc = xb.make_computation_builder("jaxpr_subcomputation")  # TODO(mattjj): name
+  consts = [subc.ParameterWithShape(c.GetShape(n)) for n in const_nodes]
+  freevars = [subc.ParameterWithShape(c.GetShape(n)) for n in freevar_nodes]
+  args = [subc.ParameterWithShape(c.GetShape(n)) for n in in_nodes]
+  out_nodes = jaxpr_subcomp(subc, jaxpr, backend, axis_env, consts, freevars, *args)
+  subc = subc.Build(subc.Tuple(*out_nodes))
+  return c.Call(subc, list(const_nodes) + list(freevar_nodes) + list(in_nodes))
 ad.primitive_transposes[xla_call_p] = partial(ad.call_transpose, xla_call_p)
 
 

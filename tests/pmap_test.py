@@ -733,8 +733,8 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
       return bar(x)
 
     with self.assertRaisesRegex(
-        NotImplementedError,
-        "Nested pmaps with devices argument not yet supported."):
+        ValueError,
+        "Nested pmaps with explicit devices argument."):
       foo(np.ones((xla_bridge.device_count(), 1)))
 
     # Devices specified in inner pmap
@@ -746,8 +746,8 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
       return bar(x)
 
     with self.assertRaisesRegex(
-        NotImplementedError,
-        "Nested pmaps with devices argument not yet supported."):
+        ValueError,
+        "Nested pmaps with explicit devices argument."):
       foo(np.ones((xla_bridge.device_count(), 1)))
 
   def testJitInPmap(self):
