@@ -981,6 +981,18 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     key = random.PRNGKey(0)
     api.grad(lambda c: lax.scan(f, (c, key), onp.ones(3))[0][0])(0.)  # doesn't crash
 
+  def testFixedPointImpl(self):
+    def newton_sqrt_iter(a, x): return 0.5 * (x + a / x)
+    def distance(x, y): return np.abs(x - y)
+
+    def sqrt(a, guess=10.):
+      f = lambda x: newton_sqrt_iter(a, x)
+      return lax.fixed_point(f, guess, distance, 1e-4)
+
+    ans = sqrt(2.)
+    expected = onp.sqrt(2.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
 
 if __name__ == '__main__':
   absltest.main()

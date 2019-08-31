@@ -819,3 +819,40 @@ def _memcpy(axis, num, src, dst, offset):
   return fori_loop(0, num, body, dst)
 
 masking.masking_rules[lax.concatenate_p] = _concat_masking_rule
+
+
+def fixed_point(f, initial_guess, distance, tol):
+  guess_flat, in_tree = tree_flatten((initial_guess,))
+  guess_avals = tuple(_map(_abstractify, guess_flat))
+  jaxpr, consts, out_tree = _initial_style_jaxpr(f, in_tree, guess_avals)
+  if not treedef_children(in_tree) == [out_tree]:
+    msg = ("fixed_point function output pytree structure must match "
+           "initial_guess, got {} and {}.")
+    raise TypeError(msg.format(in_tree, out_tree))
+  out_flat = fixed_point_p.bind(*itertools.chain(consts, [tol], guess_flat),
+                                jaxpr=jaxpr, num_consts=len(consts),
+                                dist=distance, tree=out_tree)
+  return tree_unflatten(out_tree, out_flat)
+
+def _fixed_point_impl(*args, **kwargs):
+  jaxpr, num_consts, dist, tree = split_dict(
+      kwargs, ["jaxpr", "num_consts", "dist", "tree"])
+  consts, (tol,), x0 = split_list(args, [num_consts, 1])
+  f = lambda x: core.jaxpr_as_fun(jaxpr)(*(consts + x))
+
+  def cond_fun(state):
+    x, x_prev = state
+    x, x_prev = tree_unflatten(tree, x), tree_unflatten(tree, x_prev)
+    return dist(x, x_prev) > tol
+
+  def body_fun(state):
+    x, x_prev = state
+    return f(x), x
+
+  x, x_prev = f(x0), x0
+  x_star, _ = while_loop(cond_fun, body_fun, (x, x_prev))
+  return x_star
+
+fixed_point_p = core.Primitive("fixed_point")
+fixed_point_p.multiple_results = True
+fixed_point_p.def_impl(_fixed_point_impl)
