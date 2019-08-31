@@ -30,6 +30,7 @@ import numpy.random as npr
 from jax import api
 from jax import core
 from jax import lax
+from jax import random
 from jax import test_util as jtu
 from jax.util import unzip2
 from jax.lib import xla_bridge
@@ -526,6 +527,21 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = onp.array([1, -4])
     self.assertAllClose(ans, expected, check_dtypes=False)
     assert "select" in str(jaxpr)
+
+  def testIssue1263(self):
+    def f(rng, x):
+      cond = random.bernoulli(rng)
+      return lax.cond(cond, x, lambda x: x, np.abs(x) - 1., lambda x: x)
+
+    def body_fn(i, state):
+      rng, x = state
+      key, subkey = random.split(rng)
+      return key, f(subkey, x)
+
+    def g(rng, x):
+      return lax.fori_loop(0, 10, body_fn, (rng, x))
+
+    api.vmap(g)(random.split(random.PRNGKey(0), 3), np.ones((3, 4)))
 
   def testIssue514(self):
     # just check this doesn't crash

@@ -329,6 +329,10 @@ def _cond_translation_rule(c, axis_env, pred, *args, **kwargs):
 
   return c.Conditional(pred, true_op, true_c, false_op, false_c)
 
+def _cond_pred_bcast_select(pred, x, y):
+  bcast_pred = lax.broadcast_in_dim(pred, onp.shape(x), list(range(onp.ndim(pred))))
+  return lax.select(bcast_pred, x, y)
+
 def _cond_batching_rule(args, dims, true_jaxpr, false_jaxpr, true_nconsts,
                         false_nconsts):
   # TODO: maybe avoid moving arg axes to front if we're promoting to select?
@@ -339,8 +343,8 @@ def _cond_batching_rule(args, dims, true_jaxpr, false_jaxpr, true_nconsts,
       args, [1, true_nconsts, true_nops, false_nconsts])
   size, = {x.shape[d] for x, d in zip(args, dims) if d is not batching.not_mapped}
   orig_bat = [d is not batching.not_mapped for d in dims]
-  (pred_bat,), t_bat, tconst_bat, f_bat, fconst_bat = split_list(
-    orig_bat, [1, true_nconsts, len(true_ops), false_nconsts])
+  (pred_bat,), tconst_bat, t_bat, fconst_bat, f_bat = split_list(
+    orig_bat, [1, true_nconsts, true_nops, false_nconsts])
 
   _, true_out_bat = batching.batch_jaxpr(true_jaxpr, size, tconst_bat + t_bat, False)
   _, false_out_bat = batching.batch_jaxpr(false_jaxpr, size, fconst_bat + f_bat, False)
@@ -355,8 +359,8 @@ def _cond_batching_rule(args, dims, true_jaxpr, false_jaxpr, true_nconsts,
     true_out = [batching.broadcast(x, size, 0) if not b else x
                 for x, b in zip(true_out, out_bat)]
     false_out = [batching.broadcast(x, size, 0) if not b else x
-                for x, b in zip(false_out, out_bat)]
-    return [lax.select(pred, t, f)
+                 for x, b in zip(false_out, out_bat)]
+    return [_cond_pred_bcast_select(pred, t, f)
             for t, f in zip(true_out, false_out)], [0] * len(true_out)
   else:
     out_dims = [0 if b else batching.not_mapped for b in out_bat]
