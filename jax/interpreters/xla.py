@@ -39,7 +39,6 @@ from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from . import partial_eval as pe
 from . import ad
-import jaxlib
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_debug_nans',
@@ -252,7 +251,6 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, freevars, *args):
 
   def write(v, node):
     assert node is not None
-    assert type(node) is jaxlib.xla_extension.XlaOp
     env[v] = node
 
   env = {}
