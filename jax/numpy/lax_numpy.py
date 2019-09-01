@@ -41,7 +41,7 @@ import opt_einsum
 import six
 from six.moves import builtins, xrange
 
-from jax import jit, device_put
+from jax import jit, device_put, custom_transforms, defjvp
 from .. import core
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
 from ..config import flags
@@ -327,9 +327,6 @@ arctan = _one_to_one_unop(onp.arctan, lax.atan, True)
 sinh = _one_to_one_unop(onp.sinh, lax.sinh, True)
 cosh = _one_to_one_unop(onp.cosh, lax.cosh, True)
 tanh = _one_to_one_unop(onp.tanh, lax.tanh, True)
-arcsinh = _one_to_one_unop(onp.arcsinh, lax.asinh, True)
-arccosh = _one_to_one_unop(onp.arccosh, lax.acosh, True)
-arctanh = _one_to_one_unop(onp.arctanh, lax.atanh, True)
 sqrt = _one_to_one_unop(onp.sqrt, lax.sqrt, True)
 
 
@@ -571,6 +568,47 @@ def sinc(x):
   pi_x = lax.mul(lax._const(x, pi), x)
   return where(lax.eq(x, lax._const(x, 0)),
                lax._const(x, 1), lax.div(lax.sin(pi_x), pi_x))
+
+
+@_wraps(onp.arcsinh)
+@custom_transforms
+def arcsinh(x):
+  # asinh(x) = log(x + sqrt(x**2 + 1))
+  x, = _promote_to_result_dtype(onp.arcsinh, x)
+  one = lax._const(x, 1)
+  result = lax.log(x + lax.sqrt(x * x + one))
+  if onp.issubdtype(_dtype(result), onp.complexfloating):
+    return result
+  a = abs(x)
+  sqrt_max_value = onp.sqrt(onp.finfo(_dtype(x)).max)
+  log2 = lax._const(a, onp.log(2))
+  return lax.select(a < sqrt_max_value, result, lax.sign(x) * (lax.log(a) + log2))
+defjvp(arcsinh, lambda g, ans, x: g / lax.sqrt(lax._const(x, 1) + square(x)))
+
+
+@_wraps(onp.arccosh)
+def arccosh(x):
+  # acosh(x) = log(x + sqrt((x + 1) * (x - 1))) if x < sqrt_max_value
+  #            log(x) + log(2) otherwise
+  x, = _promote_to_result_dtype(onp.arccosh, x)
+  one = lax._const(x, 1)
+  result = lax.log(x + lax.sqrt((x + one) * (x - one)))
+  if onp.issubdtype(_dtype(result), onp.complexfloating):
+    return result
+  sqrt_max_value = onp.sqrt(onp.finfo(_dtype(x)).max)
+  log2 = lax._const(x, onp.log(2))
+  return lax.select(x < sqrt_max_value, result, lax.log(x) + log2)
+
+
+@_wraps(onp.arctanh)
+def arctanh(x):
+  # atanh(x) = 0.5 * log((1 + x) / (1 - x))
+  x, = _promote_to_result_dtype(onp.arctanh, x)
+  one = lax._const(x, 1)
+  result = lax._const(x, 0.5) * lax.log((one + x) / (one - x))
+  if onp.issubdtype(_dtype(result), onp.complexfloating):
+    return result
+  return lax.select(abs(x) <= 1, result, lax.full_like(x, onp.nan))
 
 
 @_wraps(onp.transpose)
