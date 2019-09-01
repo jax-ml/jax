@@ -1377,41 +1377,6 @@ def cosh(x):
   # This formulation avoids overflow when e^x is inf but e^x/2 is not inf.
   return add(exp(add(log_half, x)), exp(sub(log_half, x)))
 
-def asinh(x):
-  r"""Elementwise arc hyperbolic sine: :math:`\mathrm{asinh}(x)`."""
-  # asinh(x) = log(x + sqrt(x**2 + 1))
-  result = log(add(x, sqrt(add(mul(x, x), _const(x, 1)))))
-  if onp.issubdtype(_dtype(result), onp.complexfloating):
-    return result
-  a = abs(x)
-  sqrt_max_value = onp.sqrt(onp.finfo(_dtype(x)).max)
-  return select(lt(a, _const(a, sqrt_max_value)),
-                result,
-                mul(sign(x), add(log(a), _const(a, onp.log(2.)))))
-
-def acosh(x):
-  r"""Elementwise arc hyperbolic cosine: :math:`\mathrm{acosh}(x)`."""
-  # acosh(x) = log(x + sqrt((x + 1) * (x - 1))) if x < sqrt_max_value
-  #            log(x) + log(2) otherwise
-  sqrt_max_value = onp.sqrt(onp.finfo(_dtype(x)).max)
-  result = log(add(x, mul(sqrt(add(x, _const(x, 1))),
-                          sqrt(sub(x, _const(x, 1))))))
-  if onp.issubdtype(_dtype(result), onp.complexfloating):
-    return result
-  return select(
-    lt(x, _const(x, sqrt_max_value)),
-    result,
-    add(log(x), _const(x, onp.log(2.))))
-
-
-def atanh(x):
-  r"""Elementwise arc hyperbolic tangent: :math:`\mathrm{atanh}(x)`."""
-  # atanh(x) = 0.5 * log((1 + x) / (1 - x))
-  result = mul(_const(x, 0.5), log(div(add(_const(x, 1), x),
-                                       sub(_const(x, 1), x))))
-  if onp.issubdtype(_dtype(result), onp.complexfloating):
-    return result
-  return select(le(abs(x), _one(x)), result, full_like(x, onp.nan))
 
 # Add some methods to ShapedArray that rely on lax primitives
 
