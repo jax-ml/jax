@@ -46,7 +46,7 @@ vectorize in a consistent and general fashion. For example, by default gufuncs
 use the last dimensions of arrays as core dimensions, but you can control that
 explicitly with the ``axis`` or ``axes`` arguments.
 
-From a developer perspective, gufuncs are nice because they simply your work:
+From a developer perspective, gufuncs are nice because they simplify your work:
 you only need to think about the core logic of your function, not how it
 handles arbitrary dimensional input. You can just write that down in a simple,
 declarative way.
