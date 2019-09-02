@@ -1352,7 +1352,7 @@ def pad(array, pad_width, mode='constant', constant_values=0):
 
 @_wraps(onp.stack)
 def stack(arrays, axis=0):
-  if not arrays:
+  if not len(arrays):
     raise ValueError("Need at least one array to stack.")
   shape0 = shape(arrays[0])
   axis = _canonicalize_axis(axis, len(shape0) + 1)
@@ -1377,7 +1377,7 @@ def tile(a, reps):
 
 @_wraps(onp.concatenate)
 def concatenate(arrays, axis=0):
-  if not arrays:
+  if not len(arrays):
     raise ValueError("Need at least one array to concatenate.")
   if ndim(arrays[0]) == 0:
     raise ValueError("Zero-dimensional arrays cannot be concatenated.")
