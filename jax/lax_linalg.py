@@ -134,12 +134,7 @@ def _nan_like(c, operand):
     nan = c.Constant(onp.array(onp.nan, dtype=dtype))
   return c.Broadcast(nan, shape.dimensions())
 
-# TODO(phawkins): remove if-condition after increasing minimum Jaxlib version to
-# 0.1.23.
-if hasattr(lapack, "potrf"):
-  _cpu_potrf = lapack.potrf
-else:
-  _cpu_potrf = _unpack_tuple(lapack.jax_potrf, 2)
+_cpu_potrf = lapack.potrf
 
 def cholesky_cpu_translation_rule(c, operand):
   shape = c.GetShape(operand)
@@ -181,12 +176,7 @@ def eig_abstract_eval(operand):
     raise NotImplementedError
   return w, vl, vr
 
-# TODO(phawkins): remove if-condition after increasing minimum Jaxlib version to
-# 0.1.23.
-if hasattr(lapack, "geev"):
-  _cpu_geev = lapack.geev
-else:
-  _cpu_geev = _unpack_tuple(lapack.jax_geev, 4)
+_cpu_geev = lapack.geev
 
 def eig_cpu_translation_rule(c, operand):
   shape = c.GetShape(operand)
@@ -294,21 +284,13 @@ eigh_p.def_abstract_eval(eigh_abstract_eval)
 xla.translations[eigh_p] = eigh_translation_rule
 ad.primitive_jvps[eigh_p] = eigh_jvp_rule
 
-# TODO(phawkins): remove if-condition after increasing minimum Jaxlib version to
-# 0.1.23.
-if hasattr(lapack, "syevd"):
-  _cpu_syevd = lapack.syevd
-else:
-  _cpu_syevd = _unpack_tuple(lapack.jax_syevd, 3)
+_cpu_syevd = lapack.syevd
 
 xla.backend_specific_translations['cpu'][eigh_p] = partial(
   _eigh_cpu_gpu_translation_rule, _cpu_syevd)
 
-# TODO(phawkins): remove if-condition after increasing minimum Jaxlib version to
-# 0.1.23.
-if cusolver:
-  xla.backend_specific_translations['gpu'][eigh_p] = partial(
-    _eigh_cpu_gpu_translation_rule, cusolver.syevd)
+xla.backend_specific_translations['gpu'][eigh_p] = partial(
+  _eigh_cpu_gpu_translation_rule, cusolver.syevd)
 batching.primitive_batchers[eigh_p] = eigh_batching_rule
 
 
@@ -612,12 +594,7 @@ xla.translations[lu_p] = xla.lower_fun(_lu_python, instantiate=True)
 ad.primitive_jvps[lu_p] = _lu_jvp_rule
 batching.primitive_batchers[lu_p] = _lu_batching_rule
 
-# TODO(phawkins): remove if-condition after increasing minimum Jaxlib version to
-# 0.1.23.
-if hasattr(lapack, "getrf"):
-  _cpu_getrf = lapack.getrf
-else:
-  _cpu_getrf = _unpack_tuple(lapack.jax_getrf, 3)
+_cpu_getrf = lapack.getrf
 
 xla.backend_specific_translations['cpu'][lu_p] = partial(
   _lu_cpu_gpu_translation_rule, _cpu_getrf)
@@ -803,18 +780,10 @@ ad.primitive_jvps[svd_p] = svd_jvp_rule
 batching.primitive_batchers[svd_p] = svd_batching_rule
 xla.translations[svd_p] = svd_translation_rule
 
-# TODO(phawkins): remove if-condition after increasing minimum Jaxlib version to
-# 0.1.23.
-if hasattr(lapack, "gesdd"):
-  _cpu_gesdd = lapack.gesdd
-else:
-  _cpu_gesdd = _unpack_tuple(lapack.jax_gesdd, 4)
+_cpu_gesdd = lapack.gesdd
 
 xla.backend_specific_translations['cpu'][svd_p] = partial(
   _svd_cpu_gpu_translation_rule, _cpu_gesdd)
 
-# TODO(phawkins): remove if-condition after increasing minimum Jaxlib version to
-# 0.1.23.
-if cusolver:
-  xla.backend_specific_translations['gpu'][svd_p] = partial(
-    _svd_cpu_gpu_translation_rule, cusolver.gesvd)
+xla.backend_specific_translations['gpu'][svd_p] = partial(
+  _svd_cpu_gpu_translation_rule, cusolver.gesvd)
