@@ -177,6 +177,12 @@ class OptimizerTests(jtu.JaxTestCase):
     mass = 0.9
     self._CheckFuns(optimizers.momentum, loss, x0, step_sched, mass)
 
+  def testRmspropmomentumVectorPolynomialDecaySchedule(self):
+    def loss(x): return np.dot(x, x)
+    x0 = np.ones(2)
+    step_schedule = optimizers.polynomial_decay(1.0, 50, 0.1)
+    self._CheckFuns(optimizers.rmsprop_momentum, loss, x0, step_schedule)
+
   def testRmspropVectorPiecewiseConstantSchedule(self):
     def loss(x): return np.dot(x, x)
     x0 = np.ones(2)

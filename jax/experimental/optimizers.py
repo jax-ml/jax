@@ -427,6 +427,14 @@ def inverse_time_decay(step_size, decay_steps, decay_rate, staircase=False):
       return step_size / (1 + decay_rate * i / decay_steps)
   return schedule
 
+def polynomial_decay(step_size, decay_steps, final_step_size, power=1.0):
+  def schedule(step_num):
+    step_num = np.minimum(step_num, decay_steps)
+    step_mult = (1 - step_num / decay_steps) ** power
+    return step_mult * (step_size - final_step_size) + final_step_size
+
+  return schedule
+
 def piecewise_constant(boundaries, values):
   boundaries = np.array(boundaries)
   values = np.array(values)
