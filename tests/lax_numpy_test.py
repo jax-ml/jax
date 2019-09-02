@@ -1864,6 +1864,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     finally:
       FLAGS.jax_numpy_rank_promotion = prev_flag
 
+  def testStackArrayArgument(self):
+    # tests https://github.com/google/jax/issues/1271
+    @api.jit
+    def foo(x):
+      return lnp.stack(x)
+    foo(onp.zeros(2))  # doesn't crash
+
+    @api.jit
+    def foo(x):
+      return lnp.concatenate(x)
+    foo(onp.zeros((2, 2)))  # doesn't crash
+
 
 # Most grad tests are at the lax level (see lax_test.py), but we add some here
 # as needed for e.g. particular compound ops of interest.
