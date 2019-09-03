@@ -167,7 +167,7 @@ def disable_jit():
 
   >>> @jax.jit
   >>> def f(x):
-  ...   y = x *2
+  ...   y = x * 2
   ...   print("Value of y is", y)
   ...   return y + 3
   ...
