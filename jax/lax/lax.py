@@ -223,6 +223,14 @@ def pow(x, y):
   r"""Elementwise power: :math:`x^y`."""
   return pow_p.bind(x, y)
 
+def sqrt(x):
+  r"""Elementwise square root: :math:`\sqrt{x}`."""
+  return sqrt_p.bind(x)
+
+def rsqrt(x):
+  r"""Elementwise reciprocal square root:  :math:`1 \over \sqrt{x}."""
+  return rsqrt_p.bind(x)
+
 def bitwise_not(x):
   r"""Elementwise NOT: :math:`\neg x`."""
   return not_p.bind(x)
@@ -1331,16 +1339,8 @@ def batch_matmul(lhs, rhs):
   return dot_general(lhs, rhs, [(lhs_contract, rhs_contract), (batch, batch)])
 
 
-# These trig functions also exist in the XLA client library, but we treat them
+# These functions also exist in the XLA client library, but we treat them
 # as non-primitive to maintain a smaller set of autodiff primitives.
-
-def sqrt(x):
-  r"""Elementwise square root: :math:`\sqrt{x}`."""
-  return sqrt_p.bind(x)
-
-def rsqrt(x):
-  r"""Elementwise reciprocal square root: :math:`1 \over \sqrt{x}`."""
-  return pow(x, _const(x, -0.5))
 
 def square(x):
   r"""Elementwise square: :math:`x^2`."""
@@ -1643,6 +1643,11 @@ _maybe_real = lambda x: real(x) if _iscomplex(x) else x
 
 sqrt_p = standard_unop(_float | _complex, 'sqrt')
 ad.defjvp2(sqrt_p, lambda g, ans, x: _safe_mul(g, div(_const(x, 0.5), ans)))
+
+rsqrt_p = standard_unop(_float | _complex, 'rsqrt')
+ad.defjvp2(rsqrt_p,
+           lambda g, ans, x:
+           _safe_mul(g, mul(_const(x, -0.5), pow(x, _const(x, -1.5)))))
 
 pow_p = standard_binop([_float | _complex, _float | _complex], 'pow')
 
