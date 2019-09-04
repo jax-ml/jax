@@ -27,6 +27,8 @@ from cpython.pycapsule cimport PyCapsule_New
 
 from scipy.linalg.cython_blas cimport strsm, dtrsm, ctrsm, ztrsm
 from scipy.linalg.cython_lapack cimport sgetrf, dgetrf, cgetrf, zgetrf
+from scipy.linalg.cython_lapack cimport sgeqrf, dgeqrf, cgeqrf, zgeqrf
+from scipy.linalg.cython_lapack cimport sorgqr, dorgqr, cungqr, zungqr
 from scipy.linalg.cython_lapack cimport spotrf, dpotrf, cpotrf, zpotrf
 from scipy.linalg.cython_lapack cimport sgesdd, dgesdd, cgesdd, zgesdd
 from scipy.linalg.cython_lapack cimport ssyevd, dsyevd, cheevd, zheevd
@@ -362,6 +364,396 @@ def getrf(c, a):
 
 def jax_getrf(c, a):
   return c.Tuple(*getrf(c, a))
+
+# ?geqrf: QR decomposition
+
+cdef int lapack_sgeqrf_workspace(int m, int n):
+  cdef float work
+  cdef int lwork = -1
+  cdef int info
+  sgeqrf(&m, &n, NULL, &m, NULL, &work, &lwork, &info)
+  return <int>(work) if info == 0 else -1
+
+cdef void lapack_sgeqrf(void* out_tuple, void** data) nogil:
+  cdef int b = (<int32_t*>(data[0]))[0]
+  cdef int m = (<int32_t*>(data[1]))[0]
+  cdef int n = (<int32_t*>(data[2]))[0]
+  cdef int lwork = (<int32_t*>(data[3]))[0]
+  cdef const float* a_in = <float*>(data[4])
+
+  cdef void** out = <void**>(out_tuple)
+  cdef float* a_out = <float*>(out[0])
+  cdef float* tau = <float*>(out[1])
+  cdef int* info = <int*>(out[2])
+  cdef float* work = <float*>(out[3])
+
+  if a_out != a_in:
+    memcpy(a_out, a_in, b * m * n * sizeof(float))
+
+  for i in range(b):
+    sgeqrf(&m, &n, a_out, &m, tau, work, &lwork, info)
+    a_out += m * n
+    tau += min(m, n)
+    info += 1
+
+register_cpu_custom_call_target(b"lapack_sgeqrf", <void*>(lapack_sgeqrf))
+
+cdef int lapack_dgeqrf_workspace(int m, int n):
+  cdef double work
+  cdef int lwork = -1
+  cdef int info
+  dgeqrf(&m, &n, NULL, &m, NULL, &work, &lwork, &info)
+  return <int>(work) if info == 0 else -1
+
+cdef void lapack_dgeqrf(void* out_tuple, void** data) nogil:
+  cdef int b = (<int32_t*>(data[0]))[0]
+  cdef int m = (<int32_t*>(data[1]))[0]
+  cdef int n = (<int32_t*>(data[2]))[0]
+  cdef int lwork = (<int32_t*>(data[3]))[0]
+  cdef const double* a_in = <double*>(data[4])
+
+  cdef void** out = <void**>(out_tuple)
+  cdef double* a_out = <double*>(out[0])
+  cdef double* tau = <double*>(out[1])
+  cdef int* info = <int*>(out[2])
+  cdef double* work = <double*>(out[3])
+
+  if a_out != a_in:
+    memcpy(a_out, a_in, b * m * n * sizeof(double))
+
+  for i in range(b):
+    dgeqrf(&m, &n, a_out, &m, tau, work, &lwork, info)
+    a_out += m * n
+    tau += min(m, n)
+    info += 1
+
+register_cpu_custom_call_target(b"lapack_dgeqrf", <void*>(lapack_dgeqrf))
+
+cdef int lapack_cgeqrf_workspace(int m, int n):
+  cdef float complex work
+  cdef int lwork = -1
+  cdef int info
+  cgeqrf(&m, &n, NULL, &m, NULL, &work, &lwork, &info)
+  return <int>(work.real) if info == 0 else -1
+
+cdef void lapack_cgeqrf(void* out_tuple, void** data) nogil:
+  cdef int b = (<int32_t*>(data[0]))[0]
+  cdef int m = (<int32_t*>(data[1]))[0]
+  cdef int n = (<int32_t*>(data[2]))[0]
+  cdef int lwork = (<int32_t*>(data[3]))[0]
+  cdef const float complex* a_in = <float complex*>(data[4])
+
+  cdef void** out = <void**>(out_tuple)
+  cdef float complex* a_out = <float complex*>(out[0])
+  cdef float complex* tau = <float complex*>(out[1])
+  cdef int* info = <int*>(out[2])
+  cdef float complex* work = <float complex*>(out[3])
+
+  if a_out != a_in:
+    memcpy(a_out, a_in, b * m * n * sizeof(float complex))
+
+  for i in range(b):
+    cgeqrf(&m, &n, a_out, &m, tau, work, &lwork, info)
+    a_out += m * n
+    tau += min(m, n)
+    info += 1
+
+register_cpu_custom_call_target(b"lapack_cgeqrf", <void*>(lapack_cgeqrf))
+
+cdef int lapack_zgeqrf_workspace(int m, int n):
+  cdef double complex work
+  cdef int lwork = -1
+  cdef int info
+  zgeqrf(&m, &n, NULL, &m, NULL, &work, &lwork, &info)
+  return <int>(work.real) if info == 0 else -1
+
+cdef void lapack_zgeqrf(void* out_tuple, void** data) nogil:
+  cdef int b = (<int32_t*>(data[0]))[0]
+  cdef int m = (<int32_t*>(data[1]))[0]
+  cdef int n = (<int32_t*>(data[2]))[0]
+  cdef int lwork = (<int32_t*>(data[3]))[0]
+  cdef const double complex* a_in = <double complex*>(data[4])
+
+  cdef void** out = <void**>(out_tuple)
+  cdef double complex* a_out = <double complex*>(out[0])
+  cdef double complex* tau = <double complex*>(out[1])
+  cdef int* info = <int*>(out[2])
+  cdef double complex* work = <double complex*>(out[3])
+
+  if a_out != a_in:
+    memcpy(a_out, a_in, b * m * n * sizeof(double complex))
+
+  for i in range(b):
+    zgeqrf(&m, &n, a_out, &m, tau, work, &lwork, info)
+    a_out += m * n
+    tau += min(m, n)
+    info += 1
+
+register_cpu_custom_call_target(b"lapack_zgeqrf", <void*>(lapack_zgeqrf))
+
+def geqrf(c, a):
+  assert sizeof(int32_t) == sizeof(int)
+
+  a_shape = c.GetShape(a)
+  dtype = a_shape.element_type()
+  dims = a_shape.dimensions()
+  assert len(dims) >= 2
+  m, n = dims[-2:]
+  batch_dims = tuple(dims[:-2])
+  num_bd = len(batch_dims)
+  b = 1
+  for d in batch_dims:
+    b *= d
+
+  if dtype == np.float32:
+    fn = b"lapack_sgeqrf"
+    lwork = lapack_sgeqrf_workspace(m, n)
+  elif dtype == np.float64:
+    fn = b"lapack_dgeqrf"
+    lwork = lapack_dgeqrf_workspace(m, n)
+  elif dtype == np.complex64:
+    fn = b"lapack_cgeqrf"
+    lwork = lapack_cgeqrf_workspace(m, n)
+  elif dtype == np.complex128:
+    fn = b"lapack_zgeqrf"
+    lwork = lapack_zgeqrf_workspace(m, n)
+  else:
+    raise NotImplementedError("Unsupported dtype {}".format(dtype))
+
+  out = c.CustomCall(
+      fn,
+      operands=(
+        c.ConstantS32Scalar(b),
+        c.ConstantS32Scalar(m),
+        c.ConstantS32Scalar(n),
+        c.ConstantS32Scalar(lwork),
+        a,
+      ),
+      shape_with_layout=Shape.tuple_shape((
+          Shape.array_shape(
+            dtype,
+            batch_dims + (m, n),
+            (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
+          Shape.array_shape(
+            np.dtype(dtype),
+            batch_dims + (min(m, n),),
+            tuple(range(num_bd, -1, -1))),
+          Shape.array_shape(np.dtype(np.int32), batch_dims,
+            tuple(range(num_bd - 1, -1, -1))),
+          Shape.array_shape(np.dtype(dtype), (lwork,), (0,)),
+      )),
+      operand_shapes_with_layout=(
+          Shape.array_shape(np.dtype(np.int32), (), ()),
+          Shape.array_shape(np.dtype(np.int32), (), ()),
+          Shape.array_shape(np.dtype(np.int32), (), ()),
+          Shape.array_shape(np.dtype(np.int32), (), ()),
+          Shape.array_shape(
+            dtype,
+            batch_dims + (m, n),
+            (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
+      ))
+  return tuple(c.GetTupleElement(out, i) for i in range(3))
+
+# ?orgqr: product of elementary Householder reflectors:
+
+cdef int lapack_sorgqr_workspace(int m, int n, int k):
+  cdef float work
+  cdef int lwork = -1
+  cdef int info
+  sorgqr(&m, &n, &k, NULL, &m, NULL, &work, &lwork, &info)
+  return <int>(work) if info == 0 else -1
+
+cdef void lapack_sorgqr(void* out_tuple, void** data) nogil:
+  cdef int b = (<int32_t*>(data[0]))[0]
+  cdef int m = (<int32_t*>(data[1]))[0]
+  cdef int n = (<int32_t*>(data[2]))[0]
+  cdef int k = (<int32_t*>(data[3]))[0]
+  cdef int lwork = (<int32_t*>(data[4]))[0]
+  cdef const float* a_in = <float*>(data[5])
+  cdef float* tau = <float*>(data[6])
+
+  cdef void** out = <void**>(out_tuple)
+  cdef float* a_out = <float*>(out[0])
+  cdef int* info = <int*>(out[1])
+  cdef float* work = <float*>(out[2])
+
+  if a_out != a_in:
+    memcpy(a_out, a_in, b * m * n * sizeof(float))
+
+  for i in range(b):
+    sorgqr(&m, &n, &k, a_out, &m, tau, work, &lwork, info)
+    a_out += m * n
+    tau += k
+    info += 1
+
+register_cpu_custom_call_target(b"lapack_sorgqr", <void*>(lapack_sorgqr))
+
+cdef int lapack_dorgqr_workspace(int m, int n, int k):
+  cdef double work
+  cdef int lwork = -1
+  cdef int info
+  dorgqr(&m, &n, &k, NULL, &m, NULL, &work, &lwork, &info)
+  return <int>(work) if info == 0 else -1
+
+cdef void lapack_dorgqr(void* out_tuple, void** data) nogil:
+  cdef int b = (<int32_t*>(data[0]))[0]
+  cdef int m = (<int32_t*>(data[1]))[0]
+  cdef int n = (<int32_t*>(data[2]))[0]
+  cdef int k = (<int32_t*>(data[3]))[0]
+  cdef int lwork = (<int32_t*>(data[4]))[0]
+  cdef const double* a_in = <double*>(data[5])
+  cdef double* tau = <double*>(data[6])
+
+  cdef void** out = <void**>(out_tuple)
+  cdef double* a_out = <double*>(out[0])
+  cdef int* info = <int*>(out[1])
+  cdef double* work = <double*>(out[2])
+
+  if a_out != a_in:
+    memcpy(a_out, a_in, b * m * n * sizeof(double))
+
+  for i in range(b):
+    dorgqr(&m, &n, &k, a_out, &m, tau, work, &lwork, info)
+    a_out += m * n
+    tau += k
+    info += 1
+
+register_cpu_custom_call_target(b"lapack_dorgqr", <void*>(lapack_dorgqr))
+
+cdef int lapack_cungqr_workspace(int m, int n, int k):
+  cdef float complex work
+  cdef int lwork = -1
+  cdef int info
+  cungqr(&m, &n, &k, NULL, &m, NULL, &work, &lwork, &info)
+  return <int>(work.real) if info == 0 else -1
+
+cdef void lapack_cungqr(void* out_tuple, void** data) nogil:
+  cdef int b = (<int32_t*>(data[0]))[0]
+  cdef int m = (<int32_t*>(data[1]))[0]
+  cdef int n = (<int32_t*>(data[2]))[0]
+  cdef int k = (<int32_t*>(data[3]))[0]
+  cdef int lwork = (<int32_t*>(data[4]))[0]
+  cdef const float complex* a_in = <float complex*>(data[5])
+  cdef float complex* tau = <float complex*>(data[6])
+
+  cdef void** out = <void**>(out_tuple)
+  cdef float complex* a_out = <float complex*>(out[0])
+  cdef int* info = <int*>(out[1])
+  cdef float complex* work = <float complex*>(out[2])
+
+  if a_out != a_in:
+    memcpy(a_out, a_in, b * m * n * sizeof(float complex))
+
+  for i in range(b):
+    cungqr(&m, &n, &k, a_out, &m, tau, work, &lwork, info)
+    a_out += m * n
+    tau += k
+    info += 1
+
+register_cpu_custom_call_target(b"lapack_cungqr", <void*>(lapack_cungqr))
+
+cdef int lapack_zungqr_workspace(int m, int n, int k):
+  cdef double complex work
+  cdef int lwork = -1
+  cdef int info
+  zungqr(&m, &n, &k, NULL, &m, NULL, &work, &lwork, &info)
+  return <int>(work.real) if info == 0 else -1
+
+cdef void lapack_zungqr(void* out_tuple, void** data) nogil:
+  cdef int b = (<int32_t*>(data[0]))[0]
+  cdef int m = (<int32_t*>(data[1]))[0]
+  cdef int n = (<int32_t*>(data[2]))[0]
+  cdef int k = (<int32_t*>(data[3]))[0]
+  cdef int lwork = (<int32_t*>(data[4]))[0]
+  cdef const double complex* a_in = <double complex*>(data[5])
+  cdef double complex* tau = <double complex*>(data[6])
+
+  cdef void** out = <void**>(out_tuple)
+  cdef double complex* a_out = <double complex*>(out[0])
+  cdef int* info = <int*>(out[1])
+  cdef double complex* work = <double complex*>(out[2])
+
+  if a_out != a_in:
+    memcpy(a_out, a_in, b * m * n * sizeof(double complex))
+
+  for i in range(b):
+    zungqr(&m, &n, &k, a_out, &m, tau, work, &lwork, info)
+    a_out += m * n
+    tau += k
+    info += 1
+
+register_cpu_custom_call_target(b"lapack_zungqr", <void*>(lapack_zungqr))
+
+def orgqr(c, a, tau):
+  assert sizeof(int32_t) == sizeof(int)
+
+  a_shape = c.GetShape(a)
+  dtype = a_shape.element_type()
+  dims = a_shape.dimensions()
+  assert len(dims) >= 2
+  m, n = dims[-2:]
+  batch_dims = tuple(dims[:-2])
+  num_bd = len(batch_dims)
+  b = 1
+  for d in batch_dims:
+    b *= d
+
+  tau_dims = c.GetShape(tau).dimensions()
+  assert tau_dims[:-1] == dims[:-2]
+  k = tau_dims[-1]
+
+  if dtype == np.float32:
+    fn = b"lapack_sorgqr"
+    lwork = lapack_sorgqr_workspace(m, n, k)
+  elif dtype == np.float64:
+    fn = b"lapack_dorgqr"
+    lwork = lapack_dorgqr_workspace(m, n, k)
+  elif dtype == np.complex64:
+    fn = b"lapack_cungqr"
+    lwork = lapack_cungqr_workspace(m, n, k)
+  elif dtype == np.complex128:
+    fn = b"lapack_zungqr"
+    lwork = lapack_zungqr_workspace(m, n, k)
+  else:
+    raise NotImplementedError("Unsupported dtype {}".format(dtype))
+
+  out = c.CustomCall(
+      fn,
+      operands=(
+        c.ConstantS32Scalar(b),
+        c.ConstantS32Scalar(m),
+        c.ConstantS32Scalar(n),
+        c.ConstantS32Scalar(k),
+        c.ConstantS32Scalar(lwork),
+        a,
+        tau,
+      ),
+      shape_with_layout=Shape.tuple_shape((
+          Shape.array_shape(
+            dtype,
+            batch_dims + (m, n),
+            (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
+          Shape.array_shape(np.dtype(np.int32), batch_dims,
+            tuple(range(num_bd - 1, -1, -1))),
+          Shape.array_shape(dtype, (lwork,), (0,)),
+      )),
+      operand_shapes_with_layout=(
+          Shape.array_shape(np.dtype(np.int32), (), ()),
+          Shape.array_shape(np.dtype(np.int32), (), ()),
+          Shape.array_shape(np.dtype(np.int32), (), ()),
+          Shape.array_shape(np.dtype(np.int32), (), ()),
+          Shape.array_shape(np.dtype(np.int32), (), ()),
+          Shape.array_shape(
+            dtype,
+            batch_dims + (m, n),
+            (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
+          Shape.array_shape(
+            dtype,
+            batch_dims + (k,),
+            tuple(range(num_bd, -1, -1))),
+      ))
+  return tuple(c.GetTupleElement(out, i) for i in range(2))
+
 
 # ?potrf: Cholesky decomposition
 
