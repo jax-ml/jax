@@ -99,6 +99,12 @@ class Mon(Counter):  # type Mon = Map Id Int -- ids to degrees
     return ' '.join('{}**{}'.format(k, v) if v != 1 else str(k)
                     for k, v in sorted(self.items()))
 
+  def __lt__(self, other):
+    # sort by total degree, then lexicographically on indets
+    self_key = sum(self.values()), tuple(sorted(self))
+    other_key = sum(other.values()), tuple(sorted(other))
+    return self_key < other_key
+
 def eval_shape_expr(env, expr):
   return tuple(eval_dim_expr(env, poly) for poly in expr)
 
@@ -145,7 +151,7 @@ def parse_dim(spec):
   else:
     raise SyntaxError(spec)
 digits = frozenset(string.digits)
-identifiers = frozenset(string.lowercase)
+identifiers = frozenset(string.ascii_lowercase)
 
 def parse_id(name): return Poly({Mon({name: 1}): 1})
 def parse_lit(val_str): return Poly({Mon(): int(val_str)})

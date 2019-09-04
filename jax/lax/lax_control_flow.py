@@ -735,7 +735,7 @@ def _masked_scan_jaxpr(jaxpr, num_consts, num_carry):
                  for new_c, c in zip(new_carry, carry)]
     return [i + 1] + new_carry + ys
 
-  aval = ShapedArray((), onp.int32)
+  aval = ShapedArray((), onp.int64)
   const_avals, carry_avals, x_avals = split_list(jaxpr.in_avals, [num_consts, num_carry])
   return _make_typed_jaxpr(masked, [aval] + const_avals + [aval] + carry_avals + x_avals)
 
@@ -750,8 +750,7 @@ def scan_bind(*args, **kwargs):
   xs_avals = _map(partial(_promote_aval_rank, length), x_avals)
   assert all(_map(typecheck, consts_avals, consts))
   assert all(_map(typecheck, init_avals, init))
-  # assert all(_map(typecheck, xs_avals, xs))
-
+  assert all(_map(typecheck, xs_avals, xs))
   # check that output carry type matches input carry type
   carry_avals, _ = split_list(jaxpr.out_avals, [num_carry])
   assert all(_map(typematch, init_avals, carry_avals))
