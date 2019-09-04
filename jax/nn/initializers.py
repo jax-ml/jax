@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2019 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Common neural network layer initializers, consistent with definitions
+"""
+Common neural network layer initializers, consistent with definitions
 used in Keras and Sonnet.
 """
 
@@ -48,18 +49,20 @@ def _compute_fans(shape, in_axis=-2, out_axis=-1):
 
 def variance_scaling(scale, mode, distribution, in_axis=-2, out_axis=-1):
   def init(key, shape, dtype=np.float32):
-    variance = scale
     fan_in, fan_out = _compute_fans(shape, in_axis, out_axis)
-    if mode == "fan_in": variance /= fan_in
-    elif mode == "fan_out": variance /= fan_out
-    elif mode == "fan_avg": variance /= (fan_in + fan_out) / 2
-    else: raise ValueError("invalid mode for variance scaling initializer")
+    if mode == "fan_in": denominator = fan_in
+    elif mode == "fan_out": denominator = fan_out
+    elif mode == "fan_avg": denominator = (fan_in + fan_out) / 2
+    else:
+      raise ValueError(
+        "invalid mode for variance scaling initializer: {}".format(mode))
+    variance = np.array(scale / denominator, dtype=dtype)
     if distribution == "truncated_normal":
       # constant is stddev of standard normal truncated to (-2, 2)
-      stddev = onp.sqrt(variance) / .87962566103423978
+      stddev = np.sqrt(variance) / np.array(.87962566103423978, dtype)
       return random.truncated_normal(key, -2, 2, shape, dtype) * stddev
     elif distribution == "normal":
-      return random.normal(key, shape, dtype) * onp.sqrt(variance)
+      return random.normal(key, shape, dtype) * np.sqrt(variance)
     elif distribution == "uniform":
       return random.uniform(key, shape, dtype, -1) * onp.sqrt(3 * variance)
     else:

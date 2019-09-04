@@ -32,13 +32,14 @@ from jax import lax
 from jax import random
 import jax.numpy as np
 
-from jax.nn import *
+from jax.nn import (relu, log_softmax, softmax, softplus, sigmoid, elu,
+                    leaky_relu, selu, gelu, normalize)
+from jax.nn.initializers import glorot_normal, normal, ones, zeros
 
 # aliases for backwards compatibility
-glorot = initializers.glorot_normal
-randn = initializers.normal
-zeros = initializers.zeros
-ones = initializers.ones
+glorot = glorot_normal
+randn = normal
+logsoftmax = log_softmax
 
 # Following the convention used in Keras and tf.layers, we use CamelCase for the
 # names of layer constructors, like Conv and Relu, while using snake_case for
@@ -50,7 +51,7 @@ ones = initializers.ones
 #   apply_fun: takes params, inputs, and an rng key and applies the layer.
 
 
-def Dense(out_dim, W_init=initializers.glorot_normal(), b_init=initializers.normal()):
+def Dense(out_dim, W_init=glorot_normal(), b_init=normal()):
   """Layer constructor function for a dense (fully-connected) layer."""
   def init_fun(rng, input_shape):
     output_shape = input_shape[:-1] + (out_dim,)
@@ -65,13 +66,12 @@ def Dense(out_dim, W_init=initializers.glorot_normal(), b_init=initializers.norm
 
 def GeneralConv(dimension_numbers, out_chan, filter_shape,
                 strides=None, padding='VALID', W_init=None,
-                b_init=initializers.normal(1e-6)):
+                b_init=normal(1e-6)):
   """Layer construction function for a general convolution layer."""
   lhs_spec, rhs_spec, out_spec = dimension_numbers
   one = (1,) * len(filter_shape)
   strides = strides or one
-  W_init = W_init or initializers.glorot_normal(rhs_spec.index('I'),
-                                                rhs_spec.index('O'))
+  W_init = W_init or glorot_normal(rhs_spec.index('I'), rhs_spec.index('O'))
   def init_fun(rng, input_shape):
     filter_shape_iter = iter(filter_shape)
     kernel_shape = [out_chan if c == 'O' else
@@ -94,12 +94,12 @@ Conv = functools.partial(GeneralConv, ('NHWC', 'HWIO', 'NHWC'))
 
 def GeneralConvTranspose(dimension_numbers, out_chan, filter_shape,
                          strides=None, padding='VALID', W_init=None,
-                         b_init=initializers.normal(1e-6)):
+                         b_init=normal(1e-6)):
   """Layer construction function for a general transposed-convolution layer."""
   lhs_spec, rhs_spec, out_spec = dimension_numbers
   one = (1,) * len(filter_shape)
   strides = strides or one
-  W_init = W_init or glorot(rhs_spec.index('O'), rhs_spec.index('I'))
+  W_init = W_init or glorot_normal(rhs_spec.index('I'), rhs_spec.index('O'))
   def init_fun(rng, input_shape):
     filter_shape_iter = iter(filter_shape)
     kernel_shape = [out_chan if c == 'O' else
