@@ -32,10 +32,11 @@ from jax.lax import lax
 from jax import linear_util as lu
 from jax.abstract_arrays import ShapedArray, raise_to_shaped
 from jax.api_util import flatten_fun_nokwargs
-from jax.interpreters import batching
+from jax.interpreters import ad
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
-from jax.interpreters import ad
+from jax.interpreters import batching
+from jax.interpreters import masking
 from jax.lib import xla_bridge as xb
 from jax.lib import xla_client
 from jax.util import (partial, unzip2, safe_map, safe_zip, split_list,
@@ -694,6 +695,50 @@ def _scan_batching_rule(args, dims, forward, length, jaxpr, num_consts,
   ys_bdims = [1 if b else batching.not_mapped for b in ys_batched]
   return outs, carry_bdims + ys_bdims
 
+def _scan_polymorphic_shape_rule(shape_exprs, forward, length, jaxpr,
+                                 num_consts, num_carry, linear):
+  const_shexprs, init_shexprs, xs_shexprs = split_list(shape_exprs, [num_consts, num_carry])
+  if (any(any(type(d) is Id for d in shexpr) for shexpr in const_shexprs)
+      or any(any(type(d) is Id for d in shexpr) for shexpr in init_shexprs)
+      or any(any(type(d) is Id for d in shexpr[1:]) for shexpr in xs_shexprs)):
+    raise NotImplementedError
+  _, y_avals = split_list(jaxpr.out_avals, [num_carry])
+  ys_shapes = [ShapeExpr(length, *y_aval.shape) for y_aval in y_avals]
+  return init_shexprs + ys_shapes
+
+def _scan_masking_rule(shape_envs, padded_vals, shape_exprs, forward, length,
+                       jaxpr, num_consts, num_carry, linear):
+  out_shape = _scan_polymorphic_shape_rule(shape_exprs, forward, length, jaxpr,
+                                           num_consts, num_carry, linear)
+  dynamic_length = masking.eval_dim_expr(shape_envs.logical, length)
+  masked_jaxpr = _masked_scan_jaxpr(jaxpr, num_consts, num_carry)
+  consts, init, xs = split_list(padded_vals, [num_consts, num_carry])
+  max_length, = {x.shape[0] for x in xs}
+  const_linear, init_linear, xs_linear = split_list(linear, [num_consts, num_carry])
+  out_vals = scan_p.bind(
+      *itertools.chain([dynamic_length] + consts, [0], init, xs),
+      forward=forward, length=max_length, jaxpr=masked_jaxpr,
+      num_consts=1 + num_consts, num_carry=1 + num_carry,
+      linear=[False] + const_linear + [False] + init_linear + xs_linear)
+  return out_vals[1:], out_shape
+
+def _masked_scan_jaxpr(jaxpr, num_consts, num_carry):
+  fun = core.jaxpr_as_fun(jaxpr)
+
+  @lu.wrap_init
+  def masked(*args):
+    [dynamic_length], consts, [i], carry, xs = split_list(
+        args, [1, num_consts, 1, num_carry])
+    out = fun(*(consts + carry + xs))
+    new_carry, ys = split_list(out, [num_carry])
+    new_carry = [lax.select(i < dynamic_length, new_c, c)
+                 for new_c, c in zip(new_carry, carry)]
+    return [i + 1] + new_carry + ys
+
+  aval = ShapedArray((), onp.int32)
+  const_avals, carry_avals, x_avals = split_list(jaxpr.in_avals, [num_consts, num_carry])
+  return _make_typed_jaxpr(masked, [aval] + const_avals + [aval] + carry_avals + x_avals)
+
 def scan_bind(*args, **kwargs):
   forward, length, num_consts, num_carry, jaxpr, linear = split_dict(
       kwargs, ["forward", "length", "num_consts", "num_carry", "jaxpr", "linear"])
@@ -727,6 +772,7 @@ ad.primitive_transposes[scan_p] = _scan_transpose
 pe.custom_partial_eval_rules[scan_p] = _scan_partial_eval
 xla.initial_style_translations[scan_p] = xla.lower_fun(_scan_impl, initial_style=True)
 batching.primitive_batchers[scan_p] = _scan_batching_rule
+masking.shape_parameterized_primitive_rules[scan_p] = _scan_masking_rule
 
 
 def map(f, xs):
@@ -758,3 +804,22 @@ def map(f, xs):
   g = lambda _, x: ((), f(x))
   _, ys = scan(g, (), xs)
   return ys
+
+
+def _concat_masking_rule(padded_vals, logical_shapes, dimension, operand_shapes):
+  del operand_shapes  # Unused.
+  result = lax.concatenate(padded_vals, dimension)  # fragmented
+  offset = 0
+  for padded_val, logical_shape in zip(padded_vals, logical_shapes):
+    result = _memcpy(dimension, logical_shape[dimension], padded_val,
+                     result, offset)
+    offset = offset + logical_shape[dimension]
+  return result
+
+def _memcpy(axis, num, src, dst, offset):
+  def body(i, dst):
+    update = lax.dynamic_index_in_dim(src, i, axis)
+    return lax.dynamic_update_index_in_dim(dst, update, i + offset, axis)
+  return fori_loop(0, num, body, dst)
+
+masking.masking_rules[lax.concatenate_p] = _concat_masking_rule

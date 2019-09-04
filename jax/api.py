@@ -59,6 +59,8 @@ from .interpreters import pxla
 from .interpreters import ad
 from .interpreters import batching
 from .interpreters import parallel
+from .interpreters import masking
+from .interpreters.masking import Shape, s_, shapecheck
 from .config import flags, config
 
 map = safe_map
@@ -867,6 +869,47 @@ def _parallelize(fun):
     return tree_unflatten(out_tree(), outs)
 
   return pfun
+
+
+def mask(fun, in_shapes, out_shape):
+  in_shapes_flat, in_shapes_tree = tree_flatten(in_shapes)
+  out_shapes_flat, out_shapes_tree = tree_flatten(out_shape)
+
+  def wrapped_fun(args, logical_shape_env):
+    f = lu.wrap_init(fun)
+    args_flat, in_tree = tree_flatten(args)
+    assert in_tree == in_shapes_tree
+    padded_shape_env = _bind_shapes(in_shapes_flat, [x.shape for x in args_flat])
+    shape_envs = masking.ShapeEnvs(logical_shape_env, padded_shape_env)
+    flat_fun, out_tree = flatten_fun_nokwargs(f, in_tree)
+    outs, out_shapes_ = masking.mask_fun(flat_fun, shape_envs, args_flat,
+                                         in_shapes_flat)
+    if not out_shapes_flat == list(out_shapes_):
+      raise TypeError("pytree mismatch")
+    if not all(out.shape == masking.eval_shape_expr(padded_shape_env, expr)
+               for out, expr in zip(outs, out_shapes_flat)):
+      raise masking.ShapeError
+    return tree_unflatten(out_tree(), outs)
+  return wrapped_fun
+
+def _bind_shapes(shape_exprs, shapes):
+  env = {}
+  for binders, shape in zip(shape_exprs, shapes):
+    for poly, d in zip(binders, shape):
+      (binder,), = poly
+      if env.setdefault(binder, d) != d: raise masking.ShapeError
+  return env
+
+
+@curry
+def shapecheck(in_shapes, out_shape, fun):
+  in_shapes_flat, in_tree = tree_flatten(in_shapes)
+  out_shapes_flat, out_tree = tree_flatten(out_shape)
+  flat_fun, out_tree_ = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
+  out_shapes_flat_ = masking.shapecheck(flat_fun, in_shapes_flat)
+  if out_tree != out_tree_(): raise TypeError("pytree mismatch")
+  if out_shapes_flat != out_shapes_flat_: raise masking.ShapeError
+  return fun
 
 
 def jvp(fun, primals, tangents):
