@@ -81,6 +81,9 @@ def _canonicalize_shape(shape):
   Returns:
     A tuple of integers.
   """
+  # TODO(mattjj): this next check is a temporary workaround for masking
+  if type(shape) is ShapeExpr or any(type(d) is masking.Poly for d in shape):
+    return shape
   try:
     return tuple(map(operator.index, shape))
   except TypeError:
@@ -582,7 +585,7 @@ def reshape(operand, new_sizes, dimensions=None):
   <https://www.tensorflow.org/xla/operation_semantics#reshape>`_
   operator.
   """
-  # new_sizes = _canonicalize_shape(new_sizes)  # TODO
+  new_sizes = _canonicalize_shape(new_sizes)  # TODO
   new_sizes = tuple(new_sizes)
   same_shape = onp.shape(operand) == new_sizes
   same_dims = dimensions is None or tuple(dimensions) == tuple(range(onp.ndim(operand)))
