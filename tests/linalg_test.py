@@ -28,6 +28,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 import jax
+import jax.lib
 from jax import jit, grad, jvp, vmap
 from jax import numpy as np
 from jax import scipy as jsp
@@ -365,13 +366,15 @@ class NumpyLinalgTest(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, dtype), full_matrices),
        "shape": shape, "dtype": dtype, "full_matrices": full_matrices,
        "rng": rng}
-      for shape in [(1, 1), (3, 4), (2, 10, 5), (2, 200, 100)]
-      for dtype in float_types
+      for shape in [(1, 1), (3, 3), (3, 4), (2, 10, 5), (2, 200, 100)]
+      for dtype in float_types + complex_types
       for full_matrices in [False, True]
       for rng in [jtu.rand_default()]))
-  @jtu.skip_on_devices("cpu")
   def testQr(self, shape, dtype, full_matrices, rng):
     _skip_if_unsupported_type(dtype)
+    if (onp.issubdtype(dtype, onp.complexfloating) and
+        (jtu.device_under_test() == "tpu" or jax.lib.version <= (0, 1, 27))):
+      raise unittest.SkipTest("No complex QR implementation")
     m, n = shape[-2:]
 
     if full_matrices:
@@ -382,7 +385,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     a = rng(shape, dtype)
     lq, lr = np.linalg.qr(a, mode=mode)
 
-    # onp.linalg.qr doesn't support broadcasting. But it seems like an
+    # onp.linalg.qr doesn't support batch dimensions. But it seems like an
     # inevitable extension so we support it in our version.
     nq = onp.zeros(shape[:-2] + (m, k), dtype)
     nr = onp.zeros(shape[:-2] + (k, n), dtype)
@@ -411,15 +414,21 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     compare_orthogonal(nq[..., :k], lq[..., :k])
 
     # Check that q is close to unitary.
-    self.assertTrue(onp.all(norm(onp.eye(k) - onp.matmul(T(lq), lq)) < 5))
+    self.assertTrue(onp.all(
+        norm(onp.eye(k) -onp.matmul(onp.conj(T(lq)), lq)) < 5))
 
     if not full_matrices and m >= n:
-        jtu.check_jvp(np.linalg.qr, partial(jvp, np.linalg.qr), (a,))
+        jtu.check_jvp(np.linalg.qr, partial(jvp, np.linalg.qr), (a,), atol=1e-3)
 
-  def testQrBatching(self):
-    shape = (10, 4, 5)
-    dtype = np.float32
-    rng = jtu.rand_default()
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}".format(
+          jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype,
+       "rng": rng}
+      for shape in [(10, 4, 5), (5, 3, 3), (7, 6, 4)]
+      for dtype in float_types + complex_types
+      for rng in [jtu.rand_default()]))
+  def testQrBatching(self, shape, dtype, rng):
     args = rng(shape, np.float32)
     qs, rs = vmap(jsp.linalg.qr)(args)
     self.assertTrue(onp.all(onp.linalg.norm(args - onp.matmul(qs, rs)) < 1e-3))

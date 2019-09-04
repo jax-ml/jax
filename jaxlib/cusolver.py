@@ -142,6 +142,85 @@ def getrf(c, a):
   return (c.GetTupleElement(out, 0), c.GetTupleElement(out, 1),
           c.GetTupleElement(out, 2))
 
+def geqrf(c, a):
+  """QR decomposition."""
+  a_shape = c.GetShape(a)
+  dtype = a_shape.element_type()
+  dims = a_shape.dimensions()
+  assert len(dims) >= 2
+  m, n = dims[-2:]
+  batch_dims = tuple(dims[:-2])
+  num_bd = len(batch_dims)
+  batch = _prod(batch_dims)
+
+  lwork, opaque = cusolver_kernels.build_geqrf_descriptor(
+      np.dtype(dtype), batch, m, n)
+  workspace = _Shape.array_shape(dtype, (lwork,), (0,))
+  kernel = b"cusolver_geqrf"
+
+  out = c.CustomCall(
+      kernel,
+      operands=(a,),
+      shape_with_layout=_Shape.tuple_shape((
+          _Shape.array_shape(
+              dtype, batch_dims + (m, n),
+              (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
+          _Shape.array_shape(
+              dtype, batch_dims + (min(m, n),),
+              tuple(range(num_bd, -1, -1))),
+          _Shape.array_shape(
+              np.dtype(np.int32), batch_dims, tuple(range(num_bd - 1, -1, -1))),
+          workspace,
+      )),
+      operand_shapes_with_layout=(_Shape.array_shape(
+          dtype, batch_dims + (m, n),
+          (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),),
+      opaque=opaque)
+  return (c.GetTupleElement(out, 0), c.GetTupleElement(out, 1),
+          c.GetTupleElement(out, 2))
+
+def orgqr(c, a, tau):
+  """Product of elementary Householder reflections."""
+  a_shape = c.GetShape(a)
+  dtype = a_shape.element_type()
+  dims = a_shape.dimensions()
+  assert len(dims) >= 2
+  m, n = dims[-2:]
+  batch_dims = tuple(dims[:-2])
+  num_bd = len(batch_dims)
+  batch = _prod(batch_dims)
+
+  tau_dims = c.GetShape(tau).dimensions()
+  assert tau_dims[:-1] == dims[:-2]
+  k = tau_dims[-1]
+
+  lwork, opaque = cusolver_kernels.build_orgqr_descriptor(
+      np.dtype(dtype), batch, m, n, k)
+  workspace = _Shape.array_shape(dtype, (lwork,), (0,))
+  kernel = b"cusolver_orgqr"
+
+  out = c.CustomCall(
+      kernel,
+      operands=(a, tau),
+      shape_with_layout=_Shape.tuple_shape((
+          _Shape.array_shape(
+              dtype, batch_dims + (m, n),
+              (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
+          _Shape.array_shape(
+              np.dtype(np.int32), batch_dims, tuple(range(num_bd - 1, -1, -1))),
+          workspace,
+      )),
+      operand_shapes_with_layout=(
+          _Shape.array_shape(
+              dtype, batch_dims + (m, n),
+              (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
+          _Shape.array_shape(
+              dtype, batch_dims + (k,),
+              tuple(range(num_bd, -1, -1))),
+          ),
+      opaque=opaque)
+  return (c.GetTupleElement(out, 0), c.GetTupleElement(out, 1))
+
 
 def syevd(c, a, lower=False):
   """Symmetric (Hermitian) eigendecomposition."""

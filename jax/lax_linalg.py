@@ -61,7 +61,7 @@ def lu(x):
 
 def qr(x, full_matrices=True):
   q, r = qr_p.bind(x, full_matrices=full_matrices)
-  return q, r
+  return q, np.triu(r)
 
 def svd(x, full_matrices=True, compute_uv=True):
   s, u, v = svd_p.bind(x, full_matrices=full_matrices, compute_uv=compute_uv)
@@ -134,13 +134,11 @@ def _nan_like(c, operand):
     nan = c.Constant(onp.array(onp.nan, dtype=dtype))
   return c.Broadcast(nan, shape.dimensions())
 
-_cpu_potrf = lapack.potrf
-
 def cholesky_cpu_translation_rule(c, operand):
   shape = c.GetShape(operand)
   dtype = shape.element_type().type
   if len(shape.dimensions()) == 2 and dtype in _cpu_lapack_types:
-    result, info = _cpu_potrf(c, operand, lower=True)
+    result, info = lapack.potrf(c, operand, lower=True)
     return c.Select(c.Eq(info, c.ConstantS32Scalar(0)), result,
                     _nan_like(c, result))
   else:
@@ -407,9 +405,8 @@ def _triangular_solve_gpu_translation_rule(
     return c.TriangularSolve(a, b, left_side, lower, transpose_a, conjugate_a,
                              unit_diagonal)
 
-if cusolver:
-  xla.backend_specific_translations['gpu'][triangular_solve_p] = \
-      _triangular_solve_gpu_translation_rule
+xla.backend_specific_translations['gpu'][triangular_solve_p] = \
+    _triangular_solve_gpu_translation_rule
 
 # LU decomposition
 
@@ -594,14 +591,11 @@ xla.translations[lu_p] = xla.lower_fun(_lu_python, instantiate=True)
 ad.primitive_jvps[lu_p] = _lu_jvp_rule
 batching.primitive_batchers[lu_p] = _lu_batching_rule
 
-_cpu_getrf = lapack.getrf
-
 xla.backend_specific_translations['cpu'][lu_p] = partial(
-  _lu_cpu_gpu_translation_rule, _cpu_getrf)
+  _lu_cpu_gpu_translation_rule, lapack.getrf)
 
-if cusolver:
-  xla.backend_specific_translations['gpu'][lu_p] = partial(
-    _lu_cpu_gpu_translation_rule, cusolver.getrf)
+xla.backend_specific_translations['gpu'][lu_p] = partial(
+  _lu_cpu_gpu_translation_rule, cusolver.getrf)
 
 
 def lu_pivots_to_permutation(swaps, m):
@@ -668,9 +662,9 @@ def qr_jvp_rule(primals, tangents, full_matrices):
   if full_matrices or np.shape(x)[-2] < np.shape(x)[-1]:
     raise NotImplementedError
   dx_rinv = triangular_solve(r, dx)  # Right side solve by default
-  qt_dx_rinv = np.matmul(_T(q), dx_rinv)
+  qt_dx_rinv = np.matmul(_H(q), dx_rinv)
   qt_dx_rinv_lower = np.tril(qt_dx_rinv, -1)
-  domega = qt_dx_rinv_lower - _T(qt_dx_rinv_lower)  # This is skew-symmetric
+  domega = qt_dx_rinv_lower - _H(qt_dx_rinv_lower)  # This is skew-symmetric
   dq = np.matmul(q, domega - qt_dx_rinv) + dx_rinv
   dr = np.matmul(qt_dx_rinv - domega, r)
   return (q, r), (dq, dr)
@@ -681,6 +675,34 @@ def qr_batching_rule(batched_args, batch_dims, full_matrices):
   x = batching.moveaxis(x, bd, 0)
   return qr_p.bind(x, full_matrices=full_matrices), (0, 0)
 
+def _qr_cpu_gpu_translation_rule(geqrf_impl, orgqr_impl, c, operand,
+                                 full_matrices):
+  shape = c.GetShape(operand)
+  dims = shape.dimensions()
+  m, n = dims[-2:]
+  batch_dims = dims[:-2]
+  r, tau, info_geqrf = geqrf_impl(c, operand)
+  if m < n:
+    q = c.Slice(r, [0] * len(dims), list(batch_dims) + [m, m])
+    q, info_orgqr = orgqr_impl(c, q, tau)
+  elif not full_matrices:
+    q, info_orgqr = orgqr_impl(c, r, tau)
+    r = c.Slice(r, [0] * len(dims), list(batch_dims) + [n, n])
+  else:
+    padding_config = [(0, 0, 0)] * len(dims)
+    padding_config[-1] = (0, m - n, 0)
+    q = c.Pad(r, c.Constant(onp.array(0, dtype=shape.element_type())),
+              padding_config)
+    q, info_orgqr = orgqr_impl(c, q, tau)
+
+  ok = c.And(c.Eq(info_geqrf, c.ConstantS32Scalar(0)),
+             c.Eq(info_orgqr, c.ConstantS32Scalar(0)))
+  q = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), q,
+                           _nan_like(c, q))
+  r = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), r,
+                           _nan_like(c, r))
+  return c.Tuple(q, r)
+
 qr_p = Primitive('qr')
 qr_p.multiple_results = True
 qr_p.def_impl(qr_impl)
@@ -688,6 +710,18 @@ qr_p.def_abstract_eval(qr_abstract_eval)
 xla.translations[qr_p] = qr_translation_rule
 ad.primitive_jvps[qr_p] = qr_jvp_rule
 batching.primitive_batchers[qr_p] = qr_batching_rule
+
+# TODO(phawkins): make unconditional after the minimum Jaxlib version is
+# increased past 0.1.28.
+if hasattr(lapack, "geqrf"):
+  xla.backend_specific_translations['cpu'][qr_p] = partial(
+    _qr_cpu_gpu_translation_rule, lapack.geqrf, lapack.orgqr)
+
+# TODO(phawkins): make unconditional after the minimum Jaxlib version is
+# increased past 0.1.28.
+if hasattr(cusolver, "geqrf"):
+  xla.backend_specific_translations['gpu'][qr_p] = partial(
+    _qr_cpu_gpu_translation_rule, cusolver.geqrf, cusolver.orgqr)
 
 
 # Singular value decomposition
@@ -780,10 +814,8 @@ ad.primitive_jvps[svd_p] = svd_jvp_rule
 batching.primitive_batchers[svd_p] = svd_batching_rule
 xla.translations[svd_p] = svd_translation_rule
 
-_cpu_gesdd = lapack.gesdd
-
 xla.backend_specific_translations['cpu'][svd_p] = partial(
-  _svd_cpu_gpu_translation_rule, _cpu_gesdd)
+  _svd_cpu_gpu_translation_rule, lapack.gesdd)
 
 xla.backend_specific_translations['gpu'][svd_p] = partial(
   _svd_cpu_gpu_translation_rule, cusolver.gesvd)

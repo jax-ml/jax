@@ -25,10 +25,10 @@ except:
   msg = 'This version of jax requires jaxlib version >= {}.'
   raise ImportError(msg.format('.'.join(map(str, _minimum_jaxlib_version))))
 
+version = tuple(int(x) for x in jaxlib_version.__version__.split('.'))
 
 # Check the jaxlib version before importing anything else from jaxlib.
 def _check_jaxlib_version():
-  version = tuple(int(x) for x in jaxlib_version.__version__.split('.'))
   if version < _minimum_jaxlib_version:
     msg = 'jaxlib is version {}, but this version of jax requires version {}.'
     raise ValueError(msg.format('.'.join(map(str, version)),
