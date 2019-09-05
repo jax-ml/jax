@@ -660,7 +660,7 @@ def _device_put_device_array(x, device_num, backend):
   # XrtBuffers. Figure out a less risky way to deal with XrtBuffers.
   if (not hasattr(x.device_buffer, "platform") or
       xb.get_backend(backend).platform == x.device_buffer.platform()):
-    if x.device_buffer.device() == device_num:
+    if xb.device_ordinal(x.device_buffer) == device_num:
       return x.device_buffer
     else:
       return x.device_buffer.copy_to_device(device_num)
