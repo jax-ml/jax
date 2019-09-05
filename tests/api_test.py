@@ -699,8 +699,9 @@ class APITest(jtu.JaxTestCase):
 
   def test_devicearray_block_until_ready(self):
     x = device_put(1.)
-    x.block_until_ready()
-    # Tests only that block_until_ready() does not produce an error.
+    y = x.block_until_ready()
+    # Tests mostly that block_until_ready() does not produce an error.
+    self.assertTrue(y is x)
 
   def test_namedtuple_transparency(self):
     # See https://github.com/google/jax/issues/446

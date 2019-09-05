@@ -297,6 +297,7 @@ class ShardedDeviceValue(xla.DeviceValue):
     self._check_if_deleted()
     for buf in self.device_buffers:
       buf.block_host_until_ready()
+    return self
 
 
 class ShardedDeviceArray(ShardedDeviceValue, xla.DeviceArray):
