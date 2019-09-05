@@ -507,9 +507,12 @@ class DeviceValue(object):
     This method is mostly useful for timing microbenchmarks that wish to
     time how long a computation takes, without transferring the result back
     to the host.
+
+    Returns the buffer object (`self`).
     """
     self._check_if_deleted()
     self.device_buffer.block_host_until_ready()
+    return self
 
 def _forward_method(attrname, self, fun, *args):
   return fun(getattr(self, attrname), *args)
