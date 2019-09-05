@@ -27,6 +27,7 @@ from .. import lax_linalg
 from .lax_numpy import _not_implemented
 from .lax_numpy import _wraps
 from . import lax_numpy as np
+from ..api import custom_transforms, defjvp
 from ..util import get_module_functions
 from ..lib import xla_bridge
 
