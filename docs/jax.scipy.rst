@@ -15,8 +15,9 @@ jax.scipy.linalg
    det
    eigh
    inv
-   lu_factor
    lu
+   lu_factor
+   lu_solve
    qr
    solve
    solve_triangular

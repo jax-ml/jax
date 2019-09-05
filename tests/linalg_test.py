@@ -587,6 +587,36 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
+       "_lhs={}_rhs={}_trans={}".format(
+           jtu.format_shape_dtype_string(lhs_shape, dtype),
+           jtu.format_shape_dtype_string(rhs_shape, dtype),
+           trans),
+       "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
+       "trans": trans, "rng": rng}
+      for lhs_shape, rhs_shape in [
+          ((1, 1), (1, 1)),
+          ((4, 4), (4,)),
+          ((8, 8), (8, 4, 2)),
+      ]
+      for trans in [0, 1, 2]
+      for dtype in float_types + complex_types
+      for rng in [jtu.rand_default()]))
+  def testLuSolve(self, lhs_shape, rhs_shape, dtype, trans, rng):
+    _skip_if_unsupported_type(dtype)
+    osp_fun = lambda lu, piv, rhs: osp.linalg.lu_solve((lu, piv), rhs, trans=trans)
+    jsp_fun = lambda lu, piv, rhs: jsp.linalg.lu_solve((lu, piv), rhs, trans=trans)
+
+    def args_maker():
+      a = rng(lhs_shape, dtype)
+      lu, piv = osp.linalg.lu_factor(a)
+      return [lu, piv, rng(rhs_shape, dtype)]
+
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
+                            check_dtypes=True, tol=1e-3)
+    self._CompileAndCheck(jsp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
        "_lhs={}_rhs={}_sym_pos={}_lower={}".format(
            jtu.format_shape_dtype_string(lhs_shape, dtype),
            jtu.format_shape_dtype_string(rhs_shape, dtype),
