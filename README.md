@@ -119,7 +119,7 @@ cloud VM), you can run
 ```bash
 # install jaxlib
 PYTHON_VERSION=cp37  # alternatives: cp27, cp35, cp36, cp37
-CUDA_VERSION=cuda92  # alternatives: cuda90, cuda92, cuda100
+CUDA_VERSION=cuda92  # alternatives: cuda90, cuda92, cuda100, cuda101
 PLATFORM=linux_x86_64  # alternatives: linux_x86_64
 BASE_URL='https://storage.googleapis.com/jax-releases'
 pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.27-$PYTHON_VERSION-none-$PLATFORM.whl
@@ -128,9 +128,10 @@ pip install --upgrade jax  # install jax
 ```
 
 The library package name must correspond to the version of the existing CUDA
-installation you want to use, with `cuda100` for CUDA 10.0, `cuda92` for CUDA
-9.2, and `cuda90` for CUDA 9.0. To find your CUDA and CUDNN versions, you can
-run commands like these, depending on your CUDNN install path:
+installation you want to use, with `cuda101` for CUDA 10.1, `cuda100` for CUDA
+10.0, `cuda92` for CUDA 9.2, and `cuda90` for CUDA 9.0. To find your CUDA and
+CUDNN versions, you can run commands like these, depending on your CUDNN install
+path:
 
 ```bash
 nvcc --version
