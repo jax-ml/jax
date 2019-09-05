@@ -70,7 +70,7 @@ def shard_args(backend, device_ordinals, assignments, axis_size, args):
     if type(arg) is ShardedDeviceArray:
       if nrep == len(arg.device_buffers):
         for r, buf in enumerate(arg.device_buffers):
-          buffers[r][a] = (buf if buf.device() == device_ordinals[r]
+          buffers[r][a] = (buf if xb.device_ordinal(buf) == device_ordinals[r]
                            else buf.copy_to_device(device_ordinals[r]))
       else:
         for r, buf in enumerate(arg.device_buffers):
@@ -371,7 +371,7 @@ class ShardedDeviceArray(ShardedDeviceValue, xla.DeviceArray):
 def _shard_sharded_device_array(x, ordinals, assignments):
   n = len(ordinals)
   if n == len(x.device_buffers):
-    return (b if b.device() == ordinals[r] else b.copy_to_device(ordinals[r])
+    return (b if xb.device_ordinal(b) == ordinals[r] else b.copy_to_device(ordinals[r])
             for r, b in enumerate(x.device_buffers))
   else:
     return (xla.device_put(x[assignments[r]], ordinals[r]) for r in range(n))
