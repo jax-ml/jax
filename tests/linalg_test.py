@@ -326,6 +326,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu")
   def testSVD(self, b, m, n, dtype, full_matrices, compute_uv, rng):
     _skip_if_unsupported_type(dtype)
+    if b != () and jax.lib.version <= (0, 1, 28):
+      raise unittest.SkipTest("Batched SVD requires jaxlib 0.1.29")
     args_maker = lambda: [rng(b + (m, n), dtype)]
 
     # Norm, adjusted for dimension and type.
