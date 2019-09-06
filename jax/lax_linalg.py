@@ -727,7 +727,8 @@ if hasattr(cusolver, "geqrf"):
 # Singular value decomposition
 
 def svd_impl(operand, full_matrices, compute_uv):
-  s, u, vt = xla.apply_primitive(svd_p, operand, full_matrices=full_matrices, compute_uv=compute_uv)
+  s, u, vt = xla.apply_primitive(svd_p, operand, full_matrices=full_matrices,
+                                 compute_uv=compute_uv)
   return s, u, vt
 
 def svd_translation_rule(c, operand, full_matrices, compute_uv):
@@ -755,8 +756,7 @@ def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
   s, U, Vt = svd_p.bind(A, full_matrices=False, compute_uv=True)
 
   if dA is ad_util.zero:
-    return (core.pack((s, U, Vt)),
-            ad.TangentTuple(ad_util.zero, ad_util.zero, ad_util.zero))
+    return ((s, U, Vt), (ad_util.zero, ad_util.zero, ad_util.zero))
 
   if full_matrices:
     # TODO: implement full matrices case, documented here: https://people.maths.ox.ac.uk/gilesm/files/NA-08-01.pdf
@@ -764,40 +764,37 @@ def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
       "Singular value decomposition JVP not implemented for full matrices")
 
   k = s.shape[-1]
-  Ut, V = np.conj(U).T, np.conj(Vt).T
+  Ut, V = _H(U), _H(Vt)
   s_dim = s[..., None, :]
-  dS = np.dot(np.dot(Ut, dA), V)
-  ds = np.real(np.diag(dS))
-  F = 1 / (np.square(s_dim) - np.square(s_dim.T) + np.eye(k)) - np.eye(k)
+  dS = np.matmul(np.matmul(Ut, dA), V)
+  ds = np.real(np.diagonal(dS, 0, -2, -1))
+  F = 1 / (np.square(s_dim) - np.square(_T(s_dim)) + np.eye(k)) - np.eye(k)
   dSS = s_dim * dS
-  SdS = s_dim.T * dS
-  dU = np.dot(U, F * (dSS + dSS.T))
-  dV = np.dot(V, F * (SdS + SdS.T))
+  SdS = _T(s_dim) * dS
+  dU = np.matmul(U, F * (dSS + _T(dSS)))
+  dV = np.matmul(V, F * (SdS + _T(SdS)))
 
   m, n = A.shape[-2], A.shape[-1]
   if m > n:
-    dU = dU + np.dot(np.eye(m) - np.dot(U, Ut), np.dot(dA, V)) / s_dim
+    dU = dU + np.matmul(np.eye(m) - np.matmul(U, Ut), np.matmul(dA, V)) / s_dim
   if n > m:
-    dV = dV + np.dot(np.eye(n) - np.dot(V, Vt), np.dot(np.conj(dA).T, U)) / s_dim
-  return (s, U, Vt), (ds, dU, dV.T)
+    dV = dV + np.matmul(np.eye(n) - np.matmul(V, Vt), np.matmul(_H(dA), U)) / s_dim
+  return (s, U, Vt), (ds, dU, _T(dV))
 
 def _svd_cpu_gpu_translation_rule(gesvd_impl, c, operand, full_matrices, compute_uv):
+
   shape = c.GetShape(operand)
-  dtype = shape.element_type().type
-  if len(shape.dimensions()) == 2 and dtype in _cpu_lapack_types:
-    s, u, vt, info = gesvd_impl(c, operand, full_matrices=full_matrices,
-                                compute_uv=compute_uv)
-    ok = c.Eq(info, c.ConstantS32Scalar(0))
-    s = _broadcasting_select(c, c.Reshape(ok, None, (1,)), s,
-                             _nan_like(c, s))
-    u = _broadcasting_select(c, c.Reshape(ok, None, (1, 1)), u,
-                             _nan_like(c, u))
-    vt = _broadcasting_select(c, c.Reshape(ok, None, (1, 1)), vt,
-                              _nan_like(c, vt))
-    return c.Tuple(s, u, vt)
-  else:
-    raise NotImplementedError(
-        "Only unbatched singular value decomposition is implemented on CPU")
+  batch_dims = shape.dimensions()[:-2]
+  s, u, vt, info = gesvd_impl(c, operand, full_matrices=full_matrices,
+                              compute_uv=compute_uv)
+  ok = c.Eq(info, c.ConstantS32Scalar(0))
+  s = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1,)), s,
+                           _nan_like(c, s))
+  u = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), u,
+                           _nan_like(c, u))
+  vt = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), vt,
+                            _nan_like(c, vt))
+  return c.Tuple(s, u, vt)
 
 def svd_batching_rule(batched_args, batch_dims, full_matrices, compute_uv):
   x, = batched_args

@@ -312,9 +312,11 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_n={}_full_matrices={}_compute_uv={}".format(
-          jtu.format_shape_dtype_string((m, n), dtype), full_matrices, compute_uv),
-       "m": m, "n": n, "dtype": dtype, "full_matrices": full_matrices,
+          jtu.format_shape_dtype_string(b + (m, n), dtype), full_matrices,
+          compute_uv),
+       "b": b, "m": m, "n": n, "dtype": dtype, "full_matrices": full_matrices,
        "compute_uv": compute_uv, "rng": rng}
+      for b in [(), (3,), (2, 3)]
       for m in [2, 7, 29, 53]
       for n in [2, 7, 29, 53]
       for dtype in float_types + complex_types
@@ -322,9 +324,11 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for compute_uv in [False, True]
       for rng in [jtu.rand_default()]))
   @jtu.skip_on_devices("tpu")
-  def testSVD(self, m, n, dtype, full_matrices, compute_uv, rng):
+  def testSVD(self, b, m, n, dtype, full_matrices, compute_uv, rng):
     _skip_if_unsupported_type(dtype)
-    args_maker = lambda: [rng((m, n), dtype)]
+    if b != () and jax.lib.version <= (0, 1, 28):
+      raise unittest.SkipTest("Batched SVD requires jaxlib 0.1.29")
+    args_maker = lambda: [rng(b + (m, n), dtype)]
 
     # Norm, adjusted for dimension and type.
     def norm(x):
@@ -333,24 +337,26 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
     a, = args_maker()
     out = np.linalg.svd(a, full_matrices=full_matrices, compute_uv=compute_uv)
-
     if compute_uv:
       # Check the reconstructed matrices
       if full_matrices:
         k = min(m, n)
         if m < n:
-          self.assertTrue(onp.all(norm(a - onp.matmul(out[1] * out[0], out[2][:k, :])) < 50))
+          self.assertTrue(onp.all(
+              norm(a - onp.matmul(out[1][..., None, :] * out[0], out[2][..., :k, :])) < 50))
         else:
-          self.assertTrue(onp.all(norm(a - onp.matmul(out[1] * out[0][:, :k], out[2])) < 50))
+          self.assertTrue(onp.all(
+              norm(a - onp.matmul(out[1][..., None, :] * out[0][..., :, :k], out[2])) < 350))
       else:
-          self.assertTrue(onp.all(norm(a - onp.matmul(out[1] * out[0], out[2])) < 50))
+        self.assertTrue(onp.all(
+          norm(a - onp.matmul(out[1][..., None, :] * out[0], out[2])) < 300))
 
       # Check the unitary properties of the singular vector matrices.
-      self.assertTrue(onp.all(norm(onp.eye(out[0].shape[1]) - onp.matmul(onp.conj(T(out[0])), out[0])) < 10))
+      self.assertTrue(onp.all(norm(onp.eye(out[0].shape[-1]) - onp.matmul(onp.conj(T(out[0])), out[0])) < 10))
       if m >= n:
-        self.assertTrue(onp.all(norm(onp.eye(out[2].shape[1]) - onp.matmul(onp.conj(T(out[2])), out[2])) < 10))
+        self.assertTrue(onp.all(norm(onp.eye(out[2].shape[-1]) - onp.matmul(onp.conj(T(out[2])), out[2])) < 10))
       else:
-        self.assertTrue(onp.all(norm(onp.eye(out[2].shape[0]) - onp.matmul(out[2], onp.conj(T(out[2])))) < 20))
+        self.assertTrue(onp.all(norm(onp.eye(out[2].shape[-2]) - onp.matmul(out[2], onp.conj(T(out[2])))) < 20))
 
     else:
       self.assertTrue(onp.allclose(onp.linalg.svd(a, compute_uv=False), onp.asarray(out), atol=1e-4, rtol=1e-4))
@@ -359,7 +365,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                           args_maker, check_dtypes=True)
     if not full_matrices:
       svd = partial(np.linalg.svd, full_matrices=False)
-      jtu.check_jvp(svd, partial(jvp, svd), (a,), atol=1e-1 if FLAGS.jax_enable_x64 else jtu.ATOL)
+      jtu.check_jvp(svd, partial(jvp, svd), (a,), rtol=1e-2, atol=1e-1)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_fullmatrices={}".format(

@@ -809,7 +809,7 @@ void Syevj(cudaStream_t stream, void** buffers, const char* opaque,
   }
 }
 
-// Singular value decomposition: gesvd
+// Singular value decomposition using QR algorithm: gesvd
 
 struct GesvdDescriptor {
   Type type;
@@ -857,8 +857,6 @@ std::pair<int, py::bytes> BuildGesvdDescriptor(const py::dtype& dtype, int b,
           PackDescriptor(GesvdDescriptor{type, b, m, n, lwork, jobu, jobvt})};
 }
 
-// TODO(phawkins): in the batched case, we should consider using the batched
-// Jacobi implementation instead.
 void Gesvd(cudaStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len) {
   const GesvdDescriptor& d =
@@ -944,6 +942,198 @@ void Gesvd(cudaStream_t stream, void** buffers, const char* opaque,
   }
 }
 
+// Singular value decomposition using Jacobi algorithm: gesvdj
+
+struct GesvdjDescriptor {
+  Type type;
+  int batch, m, n;
+  int lwork;
+  cusolverEigMode_t jobz;
+};
+
+// Returns the workspace size and a descriptor for a gesvdj operation.
+std::pair<int, py::bytes> BuildGesvdjDescriptor(const py::dtype& dtype,
+                                                int batch, int m, int n,
+                                                bool compute_uv) {
+  Type type = DtypeToType(dtype);
+  auto handle = SolverHandlePool::Borrow();
+  int lwork;
+  cusolverEigMode_t jobz =
+      compute_uv ? CUSOLVER_EIG_MODE_VECTOR : CUSOLVER_EIG_MODE_NOVECTOR;
+  gesvdjInfo_t params;
+  ThrowIfErrorStatus(cusolverDnCreateGesvdjInfo(&params));
+  std::unique_ptr<gesvdjInfo, void (*)(gesvdjInfo*)> params_cleanup(
+      params, [](gesvdjInfo* p) { cusolverDnDestroyGesvdjInfo(p); });
+  if (batch == 1) {
+    switch (type) {
+      case Type::F32:
+        ThrowIfErrorStatus(cusolverDnSgesvdj_bufferSize(
+            handle.get(), jobz, /*econ=*/0, m, n,
+            /*A=*/nullptr, /*lda=*/m, /*S=*/nullptr,
+            /*U=*/nullptr, /*ldu=*/m, /*V=*/nullptr,
+            /*ldv=*/n, &lwork, params));
+        break;
+      case Type::F64:
+        ThrowIfErrorStatus(cusolverDnDgesvdj_bufferSize(
+            handle.get(), jobz, /*econ=*/0, m, n,
+            /*A=*/nullptr, /*lda=*/m, /*S=*/nullptr,
+            /*U=*/nullptr, /*ldu=*/m, /*V=*/nullptr,
+            /*ldv=*/n, &lwork, params));
+        break;
+      case Type::C64:
+        ThrowIfErrorStatus(cusolverDnCgesvdj_bufferSize(
+            handle.get(), jobz, /*econ=*/0, m, n,
+            /*A=*/nullptr, /*lda=*/m, /*S=*/nullptr,
+            /*U=*/nullptr, /*ldu=*/m, /*V=*/nullptr,
+            /*ldv=*/n, &lwork, params));
+        break;
+      case Type::C128:
+        ThrowIfErrorStatus(cusolverDnZgesvdj_bufferSize(
+            handle.get(), jobz, /*econ=*/0, m, n,
+            /*A=*/nullptr, /*lda=*/m, /*S=*/nullptr,
+            /*U=*/nullptr, /*ldu=*/m, /*V=*/nullptr,
+            /*ldv=*/n, &lwork, params));
+        break;
+    }
+  } else {
+    switch (type) {
+      case Type::F32:
+        ThrowIfErrorStatus(cusolverDnSgesvdjBatched_bufferSize(
+            handle.get(), jobz, m, n,
+            /*A=*/nullptr, /*lda=*/m, /*S=*/nullptr,
+            /*U=*/nullptr, /*ldu=*/m, /*V=*/nullptr,
+            /*ldv=*/n, &lwork, params, batch));
+        break;
+      case Type::F64:
+        ThrowIfErrorStatus(cusolverDnDgesvdjBatched_bufferSize(
+            handle.get(), jobz, m, n,
+            /*A=*/nullptr, /*lda=*/m, /*S=*/nullptr,
+            /*U=*/nullptr, /*ldu=*/m, /*V=*/nullptr,
+            /*ldv=*/n, &lwork, params, batch));
+        break;
+      case Type::C64:
+        ThrowIfErrorStatus(cusolverDnCgesvdjBatched_bufferSize(
+            handle.get(), jobz, m, n,
+            /*A=*/nullptr, /*lda=*/m, /*S=*/nullptr,
+            /*U=*/nullptr, /*ldu=*/m, /*V=*/nullptr,
+            /*ldv=*/n, &lwork, params, batch));
+        break;
+      case Type::C128:
+        ThrowIfErrorStatus(cusolverDnZgesvdjBatched_bufferSize(
+            handle.get(), jobz, m, n,
+            /*A=*/nullptr, /*lda=*/m, /*S=*/nullptr,
+            /*U=*/nullptr, /*ldu=*/m, /*V=*/nullptr,
+            /*ldv=*/n, &lwork, params, batch));
+        break;
+    }
+  }
+  return {lwork, PackDescriptor(GesvdjDescriptor{type, b, m, n, lwork, jobz})};
+}
+
+void Gesvdj(cudaStream_t stream, void** buffers, const char* opaque,
+            size_t opaque_len) {
+  const GesvdjDescriptor& d =
+      *UnpackDescriptor<GesvdjDescriptor>(opaque, opaque_len);
+  auto handle = SolverHandlePool::Borrow(stream);
+  ThrowIfError(cudaMemcpyAsync(buffers[1], buffers[0],
+                               SizeOfType(d.type) * d.batch * d.m * d.n,
+                               cudaMemcpyDeviceToDevice, stream));
+  int* info = static_cast<int*>(buffers[5]);
+  void* work = buffers[6];
+  gesvdjInfo_t params;
+  ThrowIfErrorStatus(cusolverDnCreateGesvdjInfo(&params));
+  std::unique_ptr<gesvdjInfo, void (*)(gesvdjInfo*)> params_cleanup(
+      params, [](gesvdjInfo* p) { cusolverDnDestroyGesvdjInfo(p); });
+  if (d.batch == 1) {
+    switch (d.type) {
+      case Type::F32: {
+        float* a = static_cast<float*>(buffers[1]);
+        float* s = static_cast<float*>(buffers[2]);
+        float* u = static_cast<float*>(buffers[3]);
+        float* v = static_cast<float*>(buffers[4]);
+        ThrowIfErrorStatus(cusolverDnSgesvdj(
+            handle.get(), d.jobz, /*econ=*/0, d.m, d.n, a, d.m, s, u, d.m, v,
+            d.n, static_cast<float*>(work), d.lwork, info, params));
+        break;
+      }
+      case Type::F64: {
+        double* a = static_cast<double*>(buffers[1]);
+        double* s = static_cast<double*>(buffers[2]);
+        double* u = static_cast<double*>(buffers[3]);
+        double* v = static_cast<double*>(buffers[4]);
+        ThrowIfErrorStatus(cusolverDnDgesvdj(
+            handle.get(), d.jobz, /*econ=*/0, d.m, d.n, a, d.m, s, u, d.m, v,
+            d.n, static_cast<double*>(work), d.lwork, info, params));
+        break;
+      }
+      case Type::C64: {
+        cuComplex* a = static_cast<cuComplex*>(buffers[1]);
+        float* s = static_cast<float*>(buffers[2]);
+        cuComplex* u = static_cast<cuComplex*>(buffers[3]);
+        cuComplex* v = static_cast<cuComplex*>(buffers[4]);
+        ThrowIfErrorStatus(cusolverDnCgesvdj(
+            handle.get(), d.jobz, /*econ=*/0, d.m, d.n, a, d.m, s, u, d.m, v,
+            d.n, static_cast<cuComplex*>(work), d.lwork, info, params));
+        break;
+      }
+      case Type::C128: {
+        cuDoubleComplex* a = static_cast<cuDoubleComplex*>(buffers[1]);
+        double* s = static_cast<double*>(buffers[2]);
+        cuDoubleComplex* u = static_cast<cuDoubleComplex*>(buffers[3]);
+        cuDoubleComplex* v = static_cast<cuDoubleComplex*>(buffers[4]);
+        ThrowIfErrorStatus(cusolverDnZgesvdj(
+            handle.get(), d.jobz, /*econ=*/0, d.m, d.n, a, d.m, s, u, d.m, v,
+            d.n, static_cast<cuDoubleComplex*>(work), d.lwork, info, params));
+        break;
+      }
+    }
+  } else {
+    switch (d.type) {
+      case Type::F32: {
+        float* a = static_cast<float*>(buffers[1]);
+        float* s = static_cast<float*>(buffers[2]);
+        float* u = static_cast<float*>(buffers[3]);
+        float* v = static_cast<float*>(buffers[4]);
+        ThrowIfErrorStatus(cusolverDnSgesvdjBatched(
+            handle.get(), d.jobz, d.m, d.n, a, d.m, s, u, d.m, v, d.n,
+            static_cast<float*>(work), d.lwork, info, params, d.batch));
+        break;
+      }
+      case Type::F64: {
+        double* a = static_cast<double*>(buffers[1]);
+        double* s = static_cast<double*>(buffers[2]);
+        double* u = static_cast<double*>(buffers[3]);
+        double* v = static_cast<double*>(buffers[4]);
+        ThrowIfErrorStatus(cusolverDnDgesvdjBatched(
+            handle.get(), d.jobz, d.m, d.n, a, d.m, s, u, d.m, v, d.n,
+            static_cast<double*>(work), d.lwork, info, params, d.batch));
+        break;
+      }
+      case Type::C64: {
+        cuComplex* a = static_cast<cuComplex*>(buffers[1]);
+        float* s = static_cast<float*>(buffers[2]);
+        cuComplex* u = static_cast<cuComplex*>(buffers[3]);
+        cuComplex* v = static_cast<cuComplex*>(buffers[4]);
+        ThrowIfErrorStatus(cusolverDnCgesvdjBatched(
+            handle.get(), d.jobz, d.m, d.n, a, d.m, s, u, d.m, v, d.n,
+            static_cast<cuComplex*>(work), d.lwork, info, params, d.batch));
+        break;
+      }
+      case Type::C128: {
+        cuDoubleComplex* a = static_cast<cuDoubleComplex*>(buffers[1]);
+        double* s = static_cast<double*>(buffers[2]);
+        cuDoubleComplex* u = static_cast<cuDoubleComplex*>(buffers[3]);
+        cuDoubleComplex* v = static_cast<cuDoubleComplex*>(buffers[4]);
+        ThrowIfErrorStatus(cusolverDnZgesvdjBatched(
+            handle.get(), d.jobz, d.m, d.n, a, d.m, s, u, d.m, v, d.n,
+            static_cast<cuDoubleComplex*>(work), d.lwork, info, params,
+            d.batch));
+        break;
+      }
+    }
+  }
+}
+
 template <typename T>
 py::capsule EncapsulateFunction(T* fn) {
   return py::capsule(absl::bit_cast<void*>(fn), "xla._CUSTOM_CALL_TARGET");
@@ -957,6 +1147,7 @@ py::dict Registrations() {
   dict["cusolver_syevd"] = EncapsulateFunction(Syevd);
   dict["cusolver_syevj"] = EncapsulateFunction(Syevj);
   dict["cusolver_gesvd"] = EncapsulateFunction(Gesvd);
+  dict["cusolver_gesvdj"] = EncapsulateFunction(Gesvdj);
   return dict;
 }
 
@@ -968,6 +1159,7 @@ PYBIND11_MODULE(cusolver_kernels, m) {
   m.def("build_syevd_descriptor", &BuildSyevdDescriptor);
   m.def("build_syevj_descriptor", &BuildSyevjDescriptor);
   m.def("build_gesvd_descriptor", &BuildGesvdDescriptor);
+  m.def("build_gesvdj_descriptor", &BuildGesvdjDescriptor);
 }
 
 }  // namespace
