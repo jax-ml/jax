@@ -75,3 +75,24 @@ lecun_uniform = partial(variance_scaling, 1.0, "fan_in", "uniform")
 lecun_normal = partial(variance_scaling, 1.0, "fan_in", "truncated_normal")
 kaiming_uniform = he_uniform = partial(variance_scaling, 2.0, "fan_in", "uniform")
 kaiming_normal = he_normal = partial(variance_scaling, 2.0, "fan_in", "truncated_normal")
+
+def orthogonal(scale=1.0, column_axis=-1):
+  """
+  Construct an initializer for uniformly distributed orthogonal matrices.
+  
+  If the shape is not square, the matrices will have orthonormal rows or columns
+  depending on which side is smaller.
+  """
+  def init(key, shape, dtype=np.float32):
+    if len(shape) < 2:
+      raise ValueError("orthogonal initializer requires at least a 2D shape")
+    n_rows, n_cols = onp.prod(shape) / shape[column_axis], shape[column_axis]
+    matrix_shape = (n_cols, n_rows) if n_rows < n_cols else (n_rows, n_cols)
+    A = random.normal(key, matrix_shape, dtype)
+    Q, R = np.linalg.qr(A)
+    Q *= np.sign(np.diag(R)) # needed for a uniform distribution
+    if n_rows < n_cols: Q = Q.T
+    Q = np.reshape(Q, np.delete(shape, column_axis) + (shape[column_axis],))
+    Q = np.moveaxis(Q, -1, column_axis)
+    return stddev * Q
+  return init
