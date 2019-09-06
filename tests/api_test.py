@@ -955,12 +955,11 @@ class APITest(jtu.JaxTestCase):
     grad = api.grad(binary_search, argnums=1)(sqrt_cubed, 5.0)
     self.assertAllClose(grad, api.grad(pow)(5.0, 1.5), check_dtypes=False)
 
-  def test_jit_device_assignment(self):
-    raise unittest.SkipTest("Temporarily disabled while device API is being changed.")
-    device_num = xb.device_count() - 1
-    x = api.jit(lambda x: x, device_assignment=device_num)(3.)
+  def test_jit_device(self):
+    device = xb.devices()[-1]
+    x = api.jit(lambda x: x, device=device)(3.)
     self.assertIsInstance(x, DeviceArray)
-    self.assertEqual(x.device_buffer.device(), device_num)
+    self.assertEqual(x.device_buffer.device(), device)
 
   def test_jit_of_noncallable(self):
     jtu.check_raises_regexp(lambda: api.jit(3), TypeError,
