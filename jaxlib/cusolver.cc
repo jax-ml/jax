@@ -1027,7 +1027,8 @@ std::pair<int, py::bytes> BuildGesvdjDescriptor(const py::dtype& dtype,
         break;
     }
   }
-  return {lwork, PackDescriptor(GesvdjDescriptor{type, b, m, n, lwork, jobz})};
+  return {lwork,
+          PackDescriptor(GesvdjDescriptor{type, batch, m, n, lwork, jobz})};
 }
 
 void Gesvdj(cudaStream_t stream, void** buffers, const char* opaque,
