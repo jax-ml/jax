@@ -94,5 +94,5 @@ def orthogonal(scale=1.0, column_axis=-1):
     if n_rows < n_cols: Q = Q.T
     Q = np.reshape(Q, np.delete(shape, column_axis) + (shape[column_axis],))
     Q = np.moveaxis(Q, -1, column_axis)
-    return stddev * Q
+    return scale * Q
   return init
