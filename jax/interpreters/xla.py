@@ -174,12 +174,12 @@ def _execute_compiled_primitive(prim, compiled, backend, result_handler, *args):
   if FLAGS.jax_debug_nans: check_nans(prim, out_buf)
   return result_handler(out_buf)
 
-def check_nans(prim, buf):
+def check_nans(prim, bufs):
   if prim.multiple_results:
-    shapes = buf.shape().tuple_shapes()
-    _map(partial(_check_nans, prim.name), shapes, buf.destructure())
+    for buf in bufs:
+      _check_nans(prim.name, buf.shape(), buf)
   else:
-    _check_nans(prim.name, buf.shape(), buf)
+    _check_nans(prim.name, bufs.shape(), bufs)
 
 def _check_nans(name, xla_shape, buf):
   if xla_shape.is_tuple():
