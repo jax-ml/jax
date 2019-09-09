@@ -2538,20 +2538,25 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(op, 5, bdims, (inshape,), dtype, rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inshape={}_outshape={}_bdims={}".format(
+      {"testcase_name": "_inshape={}_outshape={}_dims={}_bdims={}".format(
           jtu.format_shape_dtype_string(arg_shape, dtype),
           jtu.format_shape_dtype_string(out_shape, dtype),
-          bdims),
+          dimensions, bdims),
        "arg_shape": arg_shape, "out_shape": out_shape, "dtype": dtype,
-       "bdims": bdims, "rng": rng}
+       "dimensions": dimensions, "bdims": bdims, "rng": rng}
       for dtype in default_dtypes
-      for arg_shape, out_shape in [
-          [(3, 4), (12,)], [(2, 1, 4), (8,)], [(2, 2, 4), (2, 8)]
+      for arg_shape, dimensions, out_shape in [
+          [(3, 4), None, (12,)],
+          [(2, 1, 4), None, (8,)],
+          [(2, 2, 4), None, (2, 8)],
+          [(2, 2, 4), (0, 1, 2), (2, 8)],
+          [(2, 2, 4), (1, 0, 2), (8, 2)],
+          [(2, 2, 4), (2, 1, 0), (4, 2, 2)]
       ]
       for bdims in all_bdims(arg_shape)
       for rng in [jtu.rand_default()]))
-  def testReshape(self, arg_shape, out_shape, dtype, bdims, rng):
-    op = lambda x: lax.reshape(x, out_shape)
+  def testReshape(self, arg_shape, out_shape, dtype, dimensions, bdims, rng):
+    op = lambda x: lax.reshape(x, out_shape, dimensions=dimensions)
     self._CheckBatching(op, 10, bdims, (arg_shape,), dtype, rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(

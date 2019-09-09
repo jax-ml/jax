@@ -2526,7 +2526,6 @@ def _reshape_batch_rule(batched_args, batch_dims, new_sizes, dimensions, **unuse
   bdim, = batch_dims
   operand = batching.moveaxis(operand, bdim, 0)
   if dimensions is not None:
-    raise NotImplementedError  # TODO(mattjj): handle reshape w/ dimensions
     dimensions = (0,) + tuple(onp.add(1, dimensions))
   return reshape(operand, operand.shape[:1] + new_sizes, dimensions), 0
 
