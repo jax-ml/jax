@@ -45,7 +45,6 @@ from ..interpreters import xla
 from ..interpreters import pxla
 from ..interpreters import ad
 from ..interpreters import batching
-from ..interpreters import fdb
 from ..util import curry, memoize, safe_zip, unzip2, prod
 from ..tree_util import build_tree, tree_unflatten, tree_map
 from ..lib import xla_bridge
@@ -1590,33 +1589,9 @@ ad.defjvp2(tanh_p, lambda g, ans, x: mul(g, sub(_one(x), mul(ans, ans))))
 
 sin_p = standard_unop(_float | _complex, 'sin')
 ad.defjvp(sin_p, lambda g, x: mul(g, cos(x)))
-def make_derivs_sin(primals, order):
-  x, = primals
-  sin_x = sin(x)
-  def derivs():
-    cos_x = cos(x)
-    yield lambda vs: fdb.product(map(operator.itemgetter(0), vs)) * cos_x
-    yield lambda vs: fdb.product(map(operator.itemgetter(0), vs)) * -sin_x
-    yield lambda vs: fdb.product(map(operator.itemgetter(0), vs)) * -cos_x
-    yield lambda vs: fdb.product(map(operator.itemgetter(0), vs)) * sin_x
-  derivs = list(itertools.islice(itertools.cycle(derivs()), order))
-  return sin_x, derivs
-fdb.jet_rules[sin_p] = make_derivs_sin
 
 cos_p = standard_unop(_float | _complex, 'cos')
 ad.defjvp(cos_p, lambda g, x: neg(mul(g, sin(x))))
-def make_derivs_cos(primals, order):
-  x, = primals
-  cos_x = cos(x)
-  def derivs():
-    sin_x = sin(x)
-    yield lambda vs: fdb.product(map(operator.itemgetter(0), vs)) * -sin_x
-    yield lambda vs: fdb.product(map(operator.itemgetter(0), vs)) * -cos_x
-    yield lambda vs: fdb.product(map(operator.itemgetter(0), vs)) * sin_x
-    yield lambda vs: fdb.product(map(operator.itemgetter(0), vs)) * cos_x
-  derivs = list(itertools.islice(itertools.cycle(derivs()), order))
-  return cos_x, derivs
-fdb.jet_rules[cos_p] = make_derivs_cos
 
 atan2_p = standard_binop([_float, _float], 'atan2')
 ad.defjvp(atan2_p,
@@ -1721,21 +1696,6 @@ ad.primitive_transposes[sub_p] = _sub_transpose
 
 mul_p = standard_binop([_num, _num], 'mul')
 ad.defbilinear_broadcasting(_brcast, mul_p, mul, mul)
-
-def make_derivs_mul(primals, order):
-  a, b = primals
-  def fst(vs):
-    (va, vb), = vs
-    return va * b + a * vb
-  def snd(vs):
-    (v0a, v0b), (v1a, v1b) = vs
-    return v0a * v1b + v1a * v0b
-  def nth(vs):
-    return onp.zeros_like(a)
-  derivs = itertools.chain([fst,snd], itertools.repeat(nth))
-  return mul(a, b), list(itertools.islice(derivs, order))
-fdb.jet_rules[mul_p] = make_derivs_mul
-
 
 def _safe_mul_translation_rule(c, x, y):
   dtype = c.GetShape(x).numpy_dtype()
@@ -2164,22 +2124,6 @@ dot_p = standard_primitive(_dot_shape_rule, _dot_dtype_rule, 'dot',
                            _dot_translation_rule)
 ad.defbilinear(dot_p, _dot_transpose_lhs, _dot_transpose_rhs)
 batching.primitive_batchers[dot_p] = _dot_batch_rule
-
-def make_derivs_dot(primals, order):
-  a, b = primals
-  out = dot(a, b)
-  def fst(vs):
-    (va, vb), = vs
-    return dot(va, b) + dot(a, vb)
-  def snd(vs):
-    (v0a, v0b), (v1a, v1b) = vs
-    return dot(v0a, v1b) + dot(v1a, v0b)
-  def nth(vs):
-    return onp.zero_like(out)
-  derivs = itertools.chain([fst, snd], itertools.repeat(nth))
-  return out, list(itertools.islice(derivs, order))
-fdb.jet_rules[dot_p] = make_derivs_dot
-
 
 def _dot_general_shape_rule(lhs, rhs, dimension_numbers, precision):
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers

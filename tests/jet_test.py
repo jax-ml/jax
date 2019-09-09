@@ -1,7 +1,8 @@
 import numpy.random as npr
 from scipy.special import factorial as fact
 
-from jax import jvp, jet, grad
+import jax
+from jax import vjp,jvp, jet, grad
 import jax.numpy as np
 
 
@@ -23,7 +24,7 @@ def jvp_taylor(f, primals, series):
   n_derivs = []
   N = len(series[0]) + 1
   for i in range(1, N):
-    d = repeated(grad, i)(expansion)(0.)
+    d = repeated(jax.jacobian, i)(expansion)(0.)
     n_derivs.append(d)
   return f(*primals), n_derivs
 
@@ -178,6 +179,8 @@ def test_sol():
 
   # By Newton doubling
   x0 = z_eval_true
+
+  # first pass
   s = 0
   j = 2**(s + 1) - 1
   (y0h, [y1h]) = jet(g, (x0, ), ((0., ), ))
@@ -187,6 +190,7 @@ def test_sol():
   x1 = 1./1 * (y0h)
   x2 = 1./2 * (y1h + A0(x1))
 
+  #second pass
   s=1
   j = 2**(s + 1) - 1
   (y0h, [y1h, y2h, y3h, y4h, y5h,y6h]) = jet(g,(x0,),((x1,x2 * fact(2),0.,0.,0.,0.),))
@@ -196,17 +200,210 @@ def test_sol():
   A1 = lambda v: jvp(lambda x0 : jet(g,(x0,),((x1,),)),(x0,),((v,)))[1][1][0]
   #dy2/dx0*v
   A2 = lambda v: jvp(lambda x0 : jet(g,(x0,),((x1,x2),)),(x0,),((v,)))[1][1][1]
-  #dy3/dx0*v
-  A3 = lambda v: jvp(lambda x0 : jet(g,(x0,),((x1,x2,x3),)),(x0,),((v,)))[1][1][2]
 
   x3 = 1./3 * (y2h/fact(2))
   x4 = 1./4 * (y3h/fact(3) + A0(x3))
   x5 = 1./5 * (y4h/fact(4) + A1(x3) + A0(x4))
   x6 = 1./6 * (y5h/fact(5) + A2(x3) + A1(x4) + A0(x5))
 
-  # Fails due to onp
-  x7 = 1./7 * (y6h/fact(6) + A3(x3) + A2(x4) + A1(x5) + A0(x6)) 
+  ## Newton doubling with vjp of jet?
+  x0 = z_eval_true
 
+  # first pass
+  s=0
+  j=2**(s+1)-1
+
+  f_jet = lambda x0: jet(g, (x0,), ((0.,),))
+  yhs, f_vjp = vjp(f_jet, *(x0,))
+
+  x1 = 1./1 * yhs[0]
+  x2 = 1./2 * (yhs[1][0] + f_vjp((x1,[0.]))[0])
+
+  # second pass
+  s=1
+  j=2**(s+1)-1
+  
+  yhs = jet(g, (x0,), ((x1,x2*fact(2),0.,0.,0.),))
+
+  f_jet = lambda x0: jet(g, (x0,), ((x1,x2*fact(2)),))
+  yhs_wasted, f_vjp = vjp(f_jet, *(x0,))
+
+  x3 = 1./3 * (yhs[1][1]/fact(2))
+  x4 = 1./4 * (yhs[1][2]/fact(3) + f_vjp((x3,[0.,0.]))[0])
+  x5 = 1./5 * (yhs[1][3]/fact(4) + f_vjp((x4,[x3,0.]))[0])
+  x6 = 1./6 * (yhs[1][4]/fact(5) + f_vjp((x5,[x4,x3/fact(2)]))[0])
+
+
+
+
+  want0 = A0(x3)
+  want1 = A1(x3)+ A0(x4)
+  want2 = A2(x3)+A1(x4)+A0(x5)
+
+  ysh, f_vjp = vjp(lambda x0,x1,x2: jet(g,(x0,),((x1,x2*fact(2)),)),x0,x1,x2)
+
+  f_vjp((x3,[0.,0.]))
+  f_vjp((x4, [x3,0.]))
+  f_vjp((x5, [x4,x3/fact(2)]))
+
+
+  maybe2 = lambda v2: jvp(lambda x0: jet(g, (x0,), ((x1, x2),)), (x0,), ((v2,)))
+
+  ysh0, fys0 = jax.linearize(lambda x0: jet(g,(x0,),((x1,x2*fact(2)),)),x0)
+  ysh1, fys1 = jax.linearize(lambda x0: jet(g,(x0,),((x1,x2*fact(2)),)),x0)
+
+
+  lambda v: jvp(lambda x0 : jet(g,(x0,),((x1,x2),)),(x0,),((v,)))[1][1][1]
+
+
+  A0_0 = lambda v: jvp(lambda x0 : jet(g,(x0,),((x1,x2*fact(2),),)),(x0,),((v,)))[1][0]
+  A0_1 = lambda v: jvp(lambda x1 : jet(g,(x0,),((x1,x2*fact(2),),)),(x1,),((v,)))[1][1][0]
+  A0_2 = lambda v: jvp(lambda x2 : jet(g,(x0,),((x1,x2*fact(2),),)),(x2,),((v,)))[1][1][1]
+
+#
+#
+# ysh, f_vjp = vjp(lambda x0,x1,x2: jet(g,(x0,),((x1,x2*fact(2)),)),x0,x1,x2)
+
+def test_sol2():
+  from scipy.integrate import odeint
+
+  ## IVP with known solution
+  def f(z, t):
+    return g(z)
+
+  def g(z):
+    z0 = np.dot(np.array([1.,0.,0.]),z)
+    z1 = np.dot(np.array([0.,1.,0.]),z)
+    t = np.dot(np.array([0.,0.,1.]),z)
+    ans = np.zeros(3)
+    return np.array([np.sin(2.*t),np.cos(2.*t),1.])
+  g(x0)
+
+  
+  # Initial  Conditions
+  t0, z0 = 2., (0.,0.)
+
+  # Closed-form solution
+  def true_sol(t):
+    return np.array([ 
+        z0[0] + 0.5*np.cos(2.*t0) - 0.5*np.cos(2.*t)*np.cos(2.*t0) + 0.5*np.sin(2.*t) * np.sin(2.*t0),
+        0.5*(2.*z0[1] + np.sqrt(1. - np.cos(2.*t0)**2) + np.cos(2.*t0)*np.sin(2.*t) + np.cos(2.*t)*np.sin(2.*t0)),
+        t0 +t
+        ])
+
+
+  # Evaluate at t_eval
+  t_eval = 3.
+  z_eval_true = true_sol(t_eval)
+
+  # Use numerical integrator to test true solution
+  z_eval_odeint = odeint(f, (z0[0],z0[1],t0), [t0, t_eval+ t0])[1]
+  assert np.allclose(np.array(z_eval_true), z_eval_odeint)
+
+  true_ds = jvp_taylor(true_sol, (t_eval, ), ((1., 0., 0., 0., 0.,0.,0.), ))
+
+  ## Newton doubling with vjp of jet?
+  x0 = np.array(z_eval_true)
+
+  # first pass
+  s=0
+  j=2**(s+1)-1
+
+  f_jet = lambda x0: jet(g, (x0,), ((0.*x0,),))
+  yhs, f_vjp = vjp(f_jet, *(x0,))
+
+  x1 = 1./1 * yhs[0]
+  x2 = 1./2 * (yhs[1][0] + f_vjp((x1,[0.]))[0])
+
+  # second pass
+  s=1
+  j=2**(s+1)-1
+  
+  yhs = jet(g, (x0,), ((x1,x2*fact(2),0.,0.,0.),))
+
+  f_jet = lambda x0: jet(g, (x0,), ((x1,x2*fact(2)),))
+  yhs_wasted, f_vjp = vjp(f_jet, *(x0,))
+
+  x3 = 1./3 * (yhs[1][1]/fact(2))
+  x4 = 1./4 * (yhs[1][2]/fact(3) + f_vjp((x3,[0.,0.]))[0])
+  x5 = 1./5 * (yhs[1][3]/fact(4) + f_vjp((x4,[x3,0.]))[0])
+  x6 = 1./6 * (yhs[1][4]/fact(5) + f_vjp((x5,[x4,x3/fact(2)]))[0])
+
+
+
+def test_sol2_tup():
+  from scipy.integrate import odeint
+
+  ## IVP with known solution
+  def f_tup(z, t):
+    return g_tup(*z)
+
+  def g_tup(z0,z1,zt):
+    return (np.sin(2.*zt), np.cos(2.*zt),1.)
+
+  
+  # Initial  Conditions
+  t0, z0 = 2., (0.,0.)
+
+  # Closed-form solution
+  def true_sol(t):
+    return np.array([ 
+        z0[0] + 0.5*np.cos(2.*t0) - 0.5*np.cos(2.*t)*np.cos(2.*t0) + 0.5*np.sin(2.*t) * np.sin(2.*t0),
+        0.5*(2.*z0[1] + np.sqrt(1. - np.cos(2.*t0)**2) + np.cos(2.*t0)*np.sin(2.*t) + np.cos(2.*t)*np.sin(2.*t0)),
+        t0 +t
+        ])
+
+
+  # Evaluate at t_eval
+  t_eval = 3.
+  z_eval_true = true_sol(t_eval)
+
+  # Use numerical integrator to test true solution
+  z_eval_odeint = odeint(f_tup, (z0[0],z0[1],t0), [t0, t_eval+ t0])[1]
+  assert np.allclose(np.array(z_eval_true), z_eval_odeint)
+
+  true_ds = jvp_taylor(true_sol, (t_eval, ), ((1., 0., 0., 0., 0.,0.,0.), ))
+
+  ## Newton doubling with vjp of jet?
+  x0 = np.array(z_eval_true)
+
+  # first pass
+  s=0
+  j=2**(s+1)-1
+
+  f_jet = lambda x00,x01,x02: jet(g_tup, (x00,x01,x02), ((0.,),(0.,),(0.,),))
+  yhs, f_vjp = vjp(f_jet, *x0)
+
+  x1 = 1./1 * yhs[0]
+  x2 = 1./2 * (yhs[1][0] + f_vjp((x1,[0.]))[0])
+
+  # second pass
+  s=1
+  j=2**(s+1)-1
+  
+  yhs = jet(g, (x0,), ((x1,x2*fact(2),0.,0.,0.),))
+
+  f_jet = lambda x0: jet(g, (x0,), ((x1,x2*fact(2)),))
+  yhs_wasted, f_vjp = vjp(f_jet, *(x0,))
+
+  x3 = 1./3 * (yhs[1][1]/fact(2))
+  x4 = 1./4 * (yhs[1][2]/fact(3) + f_vjp((x3,[0.,0.]))[0])
+  x5 = 1./5 * (yhs[1][3]/fact(4) + f_vjp((x4,[x3,0.]))[0])
+  x6 = 1./6 * (yhs[1][4]/fact(5) + f_vjp((x5,[x4,x3/fact(2)]))[0])
+
+
+def test_jvp_vjp_sum_relationship():
+  def F(x,y):
+    return np.sin(np.sin(x**2) * np.cos(y**3))
+
+  primals = (2.,3.)
+  tangents_in = (0.1,0.2)
+  tangents_out = 0.5
+
+  fwd = jvp(F,primals,tangents_in)[1] * tangents_out
+  rev = np.sum(np.array(vjp(F,*primals)[1](tangents_out)) * np.array([tangents_in]))
+
+  assert fwd == rev
 
 
 # def test_vector_sin():

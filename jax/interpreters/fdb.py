@@ -5,6 +5,7 @@ import numpy as onp
 from scipy.special import factorial as fact
 
 from jax import core
+from ..core import pack
 from jax.util import unzip2, prod
 import jax.linear_util as lu
 
@@ -62,7 +63,10 @@ class JetTrace(core.Trace):
     return JetTracer(self, primal_out, terms_out)
 
   def pack(self, tracers):
-    assert False
+    primals = pack(t.primal for t in tracers)
+    terms = pack(t.terms for t in tracers)
+    import pdb; pdb.set_trace()
+    return JetTracer(self, primals, terms)
 
   def process_call(self, call_primitive, f, tracers, params):
     assert False
@@ -124,6 +128,13 @@ def partitions(k):
 def sym(sigma):
   denom = prod(fact(count) for _, count in Counter(sigma).items())
   return fact(sum(sigma)) / prod(map(fact, sigma)) / denom
+
+def tensor_coefficients(derivs,k):
+  return lambda terms: sum(derivs[len(sigma)-1]([terms[i-1] for i in sigma]) * sym(sigma)
+              for sigma in partitions(k))
+
+def prop_new(derivs, terms):
+  return [tensor_coefficients(derivs,k) for k in range(1, len(terms) + 1)]
 
 def prop(derivs, terms):
   return [sum(derivs[len(sigma)-1]([terms[i-1] for i in sigma]) * sym(sigma)

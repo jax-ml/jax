@@ -19,3 +19,4 @@ from jax.version import __version__
 from jax.api import *
 from jax import random
 import jax.numpy as np  # side-effecting import sets up operator overloads
+import jax.lax.jetlax
