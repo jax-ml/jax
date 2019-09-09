@@ -30,7 +30,6 @@ import functools
 import time
 
 import jax
-from jax.config import config
 from jax.flatten_util import ravel_pytree
 import jax.lax
 import jax.numpy as np
@@ -39,8 +38,6 @@ from jax.test_util import check_vjp
 import matplotlib.pyplot as plt
 import numpy as onp
 import scipy.integrate as osp_integrate
-
-config.update('jax_enable_x64', True)
 
 
 # Dopri5 Butcher tableaux
