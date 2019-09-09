@@ -19,6 +19,7 @@ from __future__ import print_function
 import collections
 from functools import partial
 import unittest
+import warnings
 
 from absl.testing import absltest
 import numpy as onp
@@ -41,6 +42,7 @@ from jax import tree_util
 
 from jax.config import config
 config.parse_flags_with_absl()
+FLAGS = config.FLAGS
 
 class APITest(jtu.JaxTestCase):
 
@@ -186,9 +188,15 @@ class APITest(jtu.JaxTestCase):
     def f(x, y):
       return x + y
 
-    jtu.check_raises(lambda: grad(f)(onp.zeros(3), onp.zeros(4)),
-                     ValueError,
-                     "Incompatible shapes for broadcasting: ((3,), (4,))")
+    jtu.check_raises(
+        lambda: f(np.zeros(3), np.zeros(4)),
+        TypeError,
+        "add got incompatible shapes for broadcasting: (3,), (4,).")
+
+    jtu.check_raises(
+        lambda: grad(f)(onp.zeros(3), onp.zeros(4)),
+        TypeError,
+        "add got incompatible shapes for broadcasting: (3,), (4,).")
 
   def test_dot_mismatch(self):
     def f(x, y):
@@ -691,8 +699,9 @@ class APITest(jtu.JaxTestCase):
 
   def test_devicearray_block_until_ready(self):
     x = device_put(1.)
-    x.block_until_ready()
-    # Tests only that block_until_ready() does not produce an error.
+    y = x.block_until_ready()
+    # Tests mostly that block_until_ready() does not produce an error.
+    self.assertTrue(y is x)
 
   def test_namedtuple_transparency(self):
     # See https://github.com/google/jax/issues/446
@@ -912,6 +921,7 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(grad, api.grad(pow)(5.0, 1.5), check_dtypes=False)
 
   def test_jit_device_assignment(self):
+    raise unittest.SkipTest("Temporarily disabled while device API is being changed.")
     device_num = xb.device_count() - 1
     x = api.jit(lambda x: x, device_assignment=device_num)(3.)
     self.assertIsInstance(x, DeviceArray)
@@ -968,6 +978,89 @@ class APITest(jtu.JaxTestCase):
       ys = [f.result() for f in futures]
     for x, y in zip(xs, ys):
       self.assertAllClose(x * 2 - 3., y, check_dtypes=True)
+
+  def test_dtype_warning(self):
+    # cf. issue #1230
+    if FLAGS.jax_enable_x64:
+      return  # test only applies when x64 is disabled
+
+    def check_warning(warn, nowarn):
+      with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+
+        nowarn()  # get rid of extra startup warning
+
+        prev_len = len(w)
+        nowarn()
+        assert len(w) == prev_len
+
+        warn()
+        assert len(w) > 0
+        msg = str(w[-1].message)
+        expected_prefix = "Explicitly requested dtype "
+        self.assertEqual(expected_prefix, msg[:len(expected_prefix)])
+
+        prev_len = len(w)
+        nowarn()
+        assert len(w) == prev_len
+
+    check_warning(lambda: np.array([1, 2, 3], dtype="float64"),
+                  lambda: np.array([1, 2, 3], dtype="float32"),)
+    check_warning(lambda: np.ones(3, dtype=onp.float64),
+                  lambda: np.ones(3))
+    check_warning(lambda: np.ones_like(3, dtype=onp.int64),
+                  lambda: np.ones_like(3, dtype=onp.int32))
+    check_warning(lambda: np.zeros(3, dtype="int64"),
+                  lambda: np.zeros(3, dtype="int32"))
+    check_warning(lambda: np.zeros_like(3, dtype="float64"),
+                  lambda: np.zeros_like(3, dtype="float32"))
+    check_warning(lambda: np.full((2, 3), 1, dtype="int64"),
+                  lambda: np.full((2, 3), 1))
+    check_warning(lambda: np.ones(3).astype("float64"),
+                  lambda: np.ones(3).astype("float32"))
+    check_warning(lambda: np.eye(3, dtype=onp.float64),
+                  lambda: np.eye(3))
+    check_warning(lambda: np.arange(3, dtype=onp.float64),
+                  lambda: np.arange(3, dtype=onp.float32))
+    check_warning(lambda: np.linspace(0, 3, dtype=onp.float64),
+                  lambda: np.linspace(0, 3, dtype=onp.float32))
+    check_warning(lambda: np.tri(2, dtype="float64"),
+                  lambda: np.tri(2, dtype="float32"))
+
+  def test_custom_vjp_zeros(self):
+    @api.custom_transforms
+    def f(x, y):
+      return 2 * x, 3 * y
+
+    def f_vjp(x, y):
+      return (2 * x, 3 * y), lambda ts: (4 * ts[0], 5 * ts[1])
+
+    api.defvjp_all(f, f_vjp, )
+    api.grad(lambda x, y: f(x, y)[0])(1., 2.)  # doesn't crash
+
+  def test_custom_transforms_vjp_nones(self):
+    # issue rasied by jsnoek@ and jumper@
+    @jax.custom_transforms
+    def solve(a, b):
+      return np.dot(np.linalg.inv(a), b)
+    # print(solve(a, b))
+
+    def solve_vjp(a, b):
+      x = solve(a, b)
+      def vjp(x_tangent):
+        dx = np.dot(solve(a, x_tangent), x.T)
+        out = (dx, b * 0.)
+        return out
+      return x, vjp
+    jax.defvjp_all(solve, solve_vjp)
+    gf = grad(lambda a,b: np.sum(solve(a, b)))
+
+    n = 3
+    a_in = np.linspace(0, 1, n)[:, None]
+    a = np.dot(a_in, a_in.T) + np.eye(n) * 0.1
+    real_x = onp.random.RandomState(0).randn(n)
+    b = np.dot(a + np.eye(a.shape[0]), real_x)
+    print(gf(a, b))  # doesn't crash
 
 
 if __name__ == '__main__':

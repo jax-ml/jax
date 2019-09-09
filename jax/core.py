@@ -482,6 +482,7 @@ bot = Bot()
 
 class AbstractUnit(AbstractValue):
   def join(self, other): return self
+  def _eq(self, self_traced, other): return get_aval(other) is self
 
 abstract_unit = AbstractUnit()
 

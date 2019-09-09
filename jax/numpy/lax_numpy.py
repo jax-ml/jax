@@ -27,26 +27,37 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from distutils.util import strtobool
 import collections
 import itertools
+import os
 import re
 import string
-import warnings
 import types
+import warnings
 
 import numpy as onp
 import opt_einsum
 import six
 from six.moves import builtins, xrange
 
-from jax import jit, device_put
+from jax import jit, device_put, custom_transforms, defjvp
 from .. import core
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
+from ..config import flags
 from ..interpreters.xla import DeviceArray
 from .. import lax
 from ..util import partial, get_module_functions, unzip2, prod as _prod
 from ..lib import xla_bridge
 from ..lib import xla_client
+
+FLAGS = flags.FLAGS
+flags.DEFINE_enum(
+    'jax_numpy_rank_promotion', os.getenv('JAX_NUMPY_RANK_PROMOTION', 'allow'),
+    enum_values=['allow', 'warn', 'raise'],
+    help=
+    'Control NumPy-style automatic rank promotion broadcasting '
+    '("allow", "warn", or "raise").')
 
 if six.PY3:
   def removechars(s, chars):
@@ -149,18 +160,39 @@ save = onp.save
 savez = onp.savez
 load = onp.load
 
+
 ### utility functions
 
-
-def _promote_shapes(*args):
+def _promote_shapes(fun_name, *args):
   """Prepend implicit leading singleton dimensions for Numpy broadcasting."""
   if len(args) < 2:
     return args
   else:
     shapes = [shape(arg) for arg in args]
-    nd = len(lax.broadcast_shapes(*shapes))
-    return [lax.reshape(arg, (1,) * (nd - len(shp)) + shp)
-            if shp and len(shp) != nd else arg for arg, shp in zip(args, shapes)]
+    nonscalar_ranks = [len(shp) for shp in shapes if shp]
+    if not nonscalar_ranks or len(set(nonscalar_ranks)) == 1:
+      return args
+    else:
+      if FLAGS.jax_numpy_rank_promotion != "allow":
+        _rank_promotion_warning_or_error(fun_name, shapes)
+      result_rank = len(lax.broadcast_shapes(*shapes))
+      return [lax.reshape(arg, (1,) * (result_rank - len(shp)) + shp)
+              if shp and len(shp) != result_rank else arg
+              for arg, shp in zip(args, shapes)]
+
+def _rank_promotion_warning_or_error(fun_name, shapes):
+  if FLAGS.jax_numpy_rank_promotion == "warn":
+    msg = ("Following NumPy automatic rank promotion for {} on shapes {}. "
+           "Set the jax_numpy_rank_promotion config option to 'allow' to "
+           "disable this warning; for more information, see "
+           "https://jax.readthedocs.io/en/latest/rank_promotion_warning.html.")
+    warnings.warn(msg.format(fun_name, ' '.join(map(str, shapes))))
+  elif FLAGS.jax_numpy_rank_promotion == "raise":
+    msg = ("Operands could not be broadcast together for {} on shapes {} "
+           "and with the config option jax_numpy_rank_promotion='raise'. "
+           "For more information, see "
+           "https://jax.readthedocs.io/en/latest/rank_promotion_warning.html.")
+    raise ValueError(msg.format(fun_name, ' '.join(map(str, shapes))))
 
 def _promote_dtypes(*args):
   """Convenience function to apply Numpy argument dtype promotion."""
@@ -197,13 +229,13 @@ def _check_arraylike(fun_name, *args):
 def _promote_args(fun_name, *args):
   """Convenience function to apply Numpy argument shape and dtype promotion."""
   _check_arraylike(fun_name, *args)
-  return _promote_shapes(*_promote_dtypes(*args))
+  return _promote_shapes(fun_name, *_promote_dtypes(*args))
 
 
 def _promote_args_like(op, *args):
   """Convenience function to apply shape and dtype promotion to result type."""
   _check_arraylike(op.__name__, *args)
-  return _promote_shapes(*_promote_to_result_dtype(op, *args))
+  return _promote_shapes(op.__name__, *_promote_to_result_dtype(op, *args))
 
 
 def _constant_like(x, const):
@@ -295,9 +327,6 @@ arctan = _one_to_one_unop(onp.arctan, lax.atan, True)
 sinh = _one_to_one_unop(onp.sinh, lax.sinh, True)
 cosh = _one_to_one_unop(onp.cosh, lax.cosh, True)
 tanh = _one_to_one_unop(onp.tanh, lax.tanh, True)
-arcsinh = _one_to_one_unop(onp.arcsinh, lax.asinh, True)
-arccosh = _one_to_one_unop(onp.arccosh, lax.acosh, True)
-arctanh = _one_to_one_unop(onp.arctanh, lax.atanh, True)
 sqrt = _one_to_one_unop(onp.sqrt, lax.sqrt, True)
 
 
@@ -354,7 +383,7 @@ logical_xor = _logical_op(onp.logical_xor, lax.bitwise_xor)
 @_wraps(onp.true_divide)
 def true_divide(x1, x2):
   result_dtype = _result_dtype(onp.true_divide, x1, x2)
-  x1, x2 = _promote_shapes(x1, x2)
+  x1, x2 = _promote_shapes("true_divide", x1, x2)
   return lax.div(lax.convert_element_type(x1, result_dtype),
                  lax.convert_element_type(x2, result_dtype))
 
@@ -439,14 +468,16 @@ def power(x1, x2):
 
 @_wraps(onp.logaddexp)
 def logaddexp(x1, x2):
-  x1, x2 = _promote_shapes(*_promote_to_result_dtype(onp.logaddexp, x1, x2))
+  x1, x2 = _promote_shapes("logaddexp",
+                           *_promote_to_result_dtype(onp.logaddexp, x1, x2))
   amax = lax.max(x1, x2)
   return lax.add(amax, lax.log1p(lax.exp(-lax.abs(lax.sub(x1, x2)))))
 
 
 @_wraps(onp.logaddexp2)
 def logaddexp2(x1, x2):
-  x1, x2 = _promote_shapes(*_promote_to_result_dtype(onp.logaddexp2, x1, x2))
+  x1, x2 = _promote_shapes("logaddexp2",
+                           *_promote_to_result_dtype(onp.logaddexp2, x1, x2))
   amax = lax.max(x1, x2)
   return lax.add(amax, log2(lax.add(exp2(lax.sub(x1, amax)),
                                     exp2(lax.sub(x2, amax)))))
@@ -537,6 +568,47 @@ def sinc(x):
   pi_x = lax.mul(lax._const(x, pi), x)
   return where(lax.eq(x, lax._const(x, 0)),
                lax._const(x, 1), lax.div(lax.sin(pi_x), pi_x))
+
+
+@_wraps(onp.arcsinh)
+@custom_transforms
+def arcsinh(x):
+  # asinh(x) = log(x + sqrt(x**2 + 1))
+  x, = _promote_to_result_dtype(onp.arcsinh, x)
+  one = lax._const(x, 1)
+  result = lax.log(x + lax.sqrt(x * x + one))
+  if onp.issubdtype(_dtype(result), onp.complexfloating):
+    return result
+  a = abs(x)
+  sqrt_max_value = onp.sqrt(onp.finfo(_dtype(x)).max)
+  log2 = lax._const(a, onp.log(2))
+  return lax.select(a < sqrt_max_value, result, lax.sign(x) * (lax.log(a) + log2))
+defjvp(arcsinh, lambda g, ans, x: g / lax.sqrt(lax._const(x, 1) + square(x)))
+
+
+@_wraps(onp.arccosh)
+def arccosh(x):
+  # acosh(x) = log(x + sqrt((x + 1) * (x - 1))) if x < sqrt_max_value
+  #            log(x) + log(2) otherwise
+  x, = _promote_to_result_dtype(onp.arccosh, x)
+  one = lax._const(x, 1)
+  result = lax.log(x + lax.sqrt((x + one) * (x - one)))
+  if onp.issubdtype(_dtype(result), onp.complexfloating):
+    return result
+  sqrt_max_value = onp.sqrt(onp.finfo(_dtype(x)).max)
+  log2 = lax._const(x, onp.log(2))
+  return lax.select(x < sqrt_max_value, result, lax.log(x) + log2)
+
+
+@_wraps(onp.arctanh)
+def arctanh(x):
+  # atanh(x) = 0.5 * log((1 + x) / (1 - x))
+  x, = _promote_to_result_dtype(onp.arctanh, x)
+  one = lax._const(x, 1)
+  result = lax._const(x, 0.5) * lax.log((one + x) / (one - x))
+  if onp.issubdtype(_dtype(result), onp.complexfloating):
+    return result
+  return lax.select(abs(x) <= 1, result, lax.full_like(x, onp.nan))
 
 
 @_wraps(onp.transpose)
@@ -1280,7 +1352,7 @@ def pad(array, pad_width, mode='constant', constant_values=0):
 
 @_wraps(onp.stack)
 def stack(arrays, axis=0):
-  if not arrays:
+  if not len(arrays):
     raise ValueError("Need at least one array to stack.")
   shape0 = shape(arrays[0])
   axis = _canonicalize_axis(axis, len(shape0) + 1)
@@ -1305,7 +1377,7 @@ def tile(a, reps):
 
 @_wraps(onp.concatenate)
 def concatenate(arrays, axis=0):
-  if not arrays:
+  if not len(arrays):
     raise ValueError("Need at least one array to concatenate.")
   if ndim(arrays[0]) == 0:
     raise ValueError("Zero-dimensional arrays cannot be concatenated.")
@@ -1386,6 +1458,7 @@ def atleast_3d(*arys):
 def array(object, dtype=None, copy=True, order="K", ndmin=0):
   if order is not None and order != "K":
     raise NotImplementedError("Only implemented for order='K'")
+  lax._check_user_dtype_supported(dtype, "array")
 
   if isinstance(object, ndarray):
     if dtype and _dtype(object) != xla_bridge.canonicalize_dtype(dtype):
@@ -1420,38 +1493,49 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
 
 @_wraps(onp.asarray)
 def asarray(a, dtype=None, order=None):
+  lax._check_user_dtype_supported(dtype, "asarray")
   return array(a, dtype=dtype, copy=False, order=order)
 
 
 @_wraps(onp.zeros_like)
 def zeros_like(x, dtype=None):
+  lax._check_user_dtype_supported(dtype, "zeros_like")
   return lax.full_like(x, 0, dtype)
 
 
 @_wraps(onp.ones_like)
 def ones_like(x, dtype=None):
+  lax._check_user_dtype_supported(dtype, "ones_like")
   return lax.full_like(x, 1, dtype)
 
 
 @_wraps(onp.full)
 def full(shape, fill_value, dtype=None):
+  lax._check_user_dtype_supported(dtype, "full")
   return lax.full(shape, fill_value, dtype)
 
 
 @_wraps(onp.full_like)
 def full_like(a, fill_value, dtype=None):
+  lax._check_user_dtype_supported(dtype, "full_like")
   return lax.full_like(a, fill_value, dtype)
 
 
 @_wraps(onp.zeros)
-def zeros(shape, dtype=onp.dtype("float64")):
+def zeros(shape, dtype=None):
   if isinstance(shape, types.GeneratorType):
     raise TypeError("expected sequence object with len >= 0 or a single integer")
+  lax._check_user_dtype_supported(dtype, "zeros")
+  dtype = onp.dtype("float64") if dtype is None else dtype
   shape = (shape,) if onp.isscalar(shape) else shape
   return lax.full(shape, 0, dtype)
 
 @_wraps(onp.ones)
-def ones(shape, dtype=onp.dtype("float64")):
+def ones(shape, dtype=None):
+  if isinstance(shape, types.GeneratorType):
+    raise TypeError("expected sequence object with len >= 0 or a single integer")
+  lax._check_user_dtype_supported(dtype, "ones")
+  dtype = onp.dtype("float64") if dtype is None else dtype
   shape = (shape,) if onp.isscalar(shape) else shape
   return lax.full(shape, 1, dtype)
 
@@ -1471,7 +1555,9 @@ empty = zeros
 
 
 @_wraps(onp.eye)
-def eye(N, M=None, k=None, dtype=onp.dtype("float64")):
+def eye(N, M=None, k=None, dtype=None):
+  lax._check_user_dtype_supported(dtype, "eye")
+  dtype = onp.dtype("float64") if dtype is None else dtype
   M = N if M is None else M
   if N < 0 or M < 0:
     msg = "negative dimensions are not allowed, got {} and {}"
@@ -1490,11 +1576,13 @@ def eye(N, M=None, k=None, dtype=onp.dtype("float64")):
 
 @_wraps(onp.identity)
 def identity(n, dtype=None):
+  lax._check_user_dtype_supported(dtype, "identity")
   return eye(n, dtype=dtype)
 
 
 @_wraps(onp.arange)
 def arange(start, stop=None, step=None, dtype=None):
+  lax._check_user_dtype_supported(dtype, "arange")
   # If called like np.arange(N), we create a lazy lax._IotaConstant.
   if stop is None and step is None:
     dtype = dtype or _dtype(start)
@@ -1516,6 +1604,7 @@ def _wrap_numpy_nullary_function(f):
 
 def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
              axis=0):
+  lax._check_user_dtype_supported(dtype, "linspace")
   try:
     out = onp.linspace(start, stop, num, endpoint, retstep, dtype, axis)
     if retstep:
@@ -1624,6 +1713,7 @@ def repeat(a, repeats, axis=None):
 
 @_wraps(onp.tri)
 def tri(N, M=None, k=0, dtype=None):
+  lax._check_user_dtype_supported(dtype, "tri")
   M = M if M is not None else N
   dtype = dtype or float32
   x = arange(N, dtype=int32)
@@ -1657,6 +1747,7 @@ def triu(m, k=0):
 def trace(a, offset=0, axis1=0, axis2=1, dtype=None, out=None):
   if out:
     raise NotImplementedError("The 'out' argument to trace is not supported.")
+  lax._check_user_dtype_supported(dtype, "trace")
 
   axis1 = _canonicalize_axis(axis1, ndim(a))
   axis2 = _canonicalize_axis(axis2, ndim(a))
@@ -2676,7 +2767,7 @@ def cov(m, y=None, rowvar=True, bias=False, ddof=None, fweights=None,
 
   if m.ndim > 2:
     raise ValueError("m has more than 2 dimensions")  # same as numpy error
-  X = array(m, ndmin=2, dtype=result_type(m, onp.float64), copy=False)
+  X = array(m, ndmin=2, dtype=xla_bridge.canonicalize_dtype(result_type(m, onp.float64)), copy=False)
   if not rowvar and X.shape[0] != 1:
     X = X.T
   if X.shape[0] == 0:
@@ -2817,6 +2908,10 @@ def median(a, axis=None, out=None, overwrite_input=False, keepdims=False):
     return quantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
                     keepdims=keepdims)
 
+def _astype(arr, dtype):
+  lax._check_user_dtype_supported(dtype, "astype")
+  return lax.convert_element_type(arr, dtype)
+
 ### track unimplemented functions
 
 def _not_implemented(fun):
@@ -2912,7 +3007,7 @@ setattr(ShapedArray, "flatten", core.aval_method(ravel))
 setattr(ShapedArray, "T", core.aval_property(transpose))
 setattr(ShapedArray, "real", core.aval_property(real))
 setattr(ShapedArray, "imag", core.aval_property(imag))
-setattr(ShapedArray, "astype", core.aval_method(lax.convert_element_type))
+setattr(ShapedArray, "astype", core.aval_method(_astype))
 
 
 # Forward operators, methods, and properties on DeviceArray to lax_numpy
@@ -2926,7 +3021,7 @@ setattr(DeviceArray, "flatten", ravel)
 setattr(DeviceArray, "T", property(transpose))
 setattr(DeviceArray, "real", property(real))
 setattr(DeviceArray, "imag", property(imag))
-setattr(DeviceArray, "astype", lax.convert_element_type)
+setattr(DeviceArray, "astype", _astype)
 
 
 # Extra methods that are handy

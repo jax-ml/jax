@@ -159,6 +159,7 @@ class PyTreeDef {
  private:
   enum class Kind {
     kLeaf,        // An opaque leaf node
+    kNone,        // None.
     kTuple,       // A tuple
     kNamedTuple,  // A collections.namedtuple
     kList,        // A list
@@ -247,7 +248,9 @@ void PyTreeDef::FlattenHelper(py::handle handle, py::list* leaves,
   Node node;
   int start_num_nodes = tree->traversal_.size();
   int start_num_leaves = leaves->size();
-  if (PyTuple_CheckExact(handle.ptr())) {
+  if (py::isinstance<py::none>(handle)) {
+    node.kind = Kind::kNone;
+  } else if (PyTuple_CheckExact(handle.ptr())) {
     py::tuple tuple = py::reinterpret_borrow<py::tuple>(handle);
     node.kind = Kind::kTuple;
     node.arity = tuple.size();
@@ -334,6 +337,7 @@ py::object PyTreeDef::Unflatten(py::iterable leaves) const {
         ++leaf_count;
         break;
 
+      case Kind::kNone:
       case Kind::kTuple:
       case Kind::kNamedTuple:
       case Kind::kList:
@@ -367,6 +371,9 @@ py::object PyTreeDef::Unflatten(py::iterable leaves) const {
   switch (node.kind) {
     case Kind::kLeaf:
       throw std::logic_error("MakeNode not implemented for leaves.");
+
+    case Kind::kNone:
+      return py::none();
 
     case Kind::kTuple:
     case Kind::kNamedTuple: {
@@ -432,6 +439,9 @@ py::list PyTreeDef::FlattenUpTo(py::handle xs) const {
         }
         leaves[leaf] = py::reinterpret_borrow<py::object>(object);
         --leaf;
+        break;
+
+      case Kind::kNone:
         break;
 
       case Kind::kTuple: {
@@ -570,6 +580,7 @@ py::object PyTreeDef::Walk(const py::function& f_node, py::handle f_leaf,
         break;
       }
 
+      case Kind::kNone:
       case Kind::kTuple:
       case Kind::kNamedTuple:
       case Kind::kList:
@@ -694,6 +705,9 @@ std::string PyTreeDef::ToString() const {
       case Kind::kLeaf:
         agenda.push_back("*");
         continue;
+      case Kind::kNone:
+        kind = "None";
+        break;
       case Kind::kNamedTuple:
         kind = "namedtuple";
         break;

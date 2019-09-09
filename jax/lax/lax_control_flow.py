@@ -32,10 +32,11 @@ from jax.lax import lax
 from jax import linear_util as lu
 from jax.abstract_arrays import ShapedArray, raise_to_shaped
 from jax.api_util import flatten_fun_nokwargs
-from jax.interpreters import batching
+from jax.interpreters import ad
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
-from jax.interpreters import ad
+from jax.interpreters import batching
+from jax.interpreters import masking
 from jax.lib import xla_bridge as xb
 from jax.lib import xla_client
 from jax.util import (partial, unzip2, safe_map, safe_zip, split_list,
@@ -54,7 +55,7 @@ def _initial_style_jaxpr(fun, in_tree, in_avals):
   in_pvals = [pe.PartialVal((aval, core.unit)) for aval in in_avals]
   fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
   jaxpr, out_pvals, consts = pe.trace_to_jaxpr(fun, in_pvals, instantiate=True)
-  out_avals, _ = unzip2(out_pvals)
+  out_avals = _map(raise_to_shaped, unzip2(out_pvals)[0])
   const_avals = tuple(raise_to_shaped(core.get_aval(c)) for c in consts)
   typed_jaxpr = core.TypedJaxpr(pe.closure_convert_jaxpr(jaxpr),
                                 (), const_avals + in_avals, out_avals)
@@ -164,7 +165,7 @@ def while_loop(cond_fun, body_fun, init_val):
     raise TypeError(msg.format(cond_tree))
   if cond_jaxpr.out_avals != [ShapedArray((), onp.bool_)]:
     msg = "cond_fun must return a boolean scalar, but got output type(s) {}."
-    raise TypeError(msg.format(coud_jaxpr.out_avals))
+    raise TypeError(msg.format(cond_jaxpr.out_avals))
   if not treedef_children(in_tree) == [body_tree]:
     msg = "body_fun output pytree structure must match init_val, got {} and {}."
     raise TypeError(msg.format(body_tree, treedef_children(in_tree)[0]))
@@ -177,6 +178,7 @@ def _while_loop_abstract_eval(*args, **kwargs):
   return kwargs["body_jaxpr"].out_avals
 
 def _while_loop_translation_rule(c, axis_env, *args, **kwargs):
+  backend = kwargs.pop('backend', None)
   cond_jaxpr, body_jaxpr, cond_nconsts, body_nconsts = split_dict(
       kwargs, ["cond_jaxpr", "body_jaxpr", "cond_nconsts", "body_nconsts"])
   cond_consts, body_consts, init_vals = split_list(args, [cond_nconsts, body_nconsts])
@@ -194,10 +196,8 @@ def _while_loop_translation_rule(c, axis_env, *args, **kwargs):
   cond_carry = cond_c.ParameterWithShape(c.GetShape(init_carry))
   cond_carry_elts = [cond_c.GetTupleElement(cond_carry, i) for i in range(len(args))]
   x, _, z = split_list(cond_carry_elts, [cond_nconsts, body_nconsts])
-  cond_outs = cond_c.Call(
-      xla.jaxpr_computation(cond_jaxpr.jaxpr, axis_env, cond_jaxpr.literals, (),
-                            *_map(cond_c.GetShape, x + z)), x + z)
-  pred = cond_c.GetTupleElement(cond_outs, 0)
+  pred, = xla.jaxpr_subcomp(cond_c, cond_jaxpr.jaxpr, backend, axis_env,
+                            _map(cond_c.Constant, cond_jaxpr.literals), (), *(x + z))
   if batched:
     scalar = xla_client.Shape.array_shape(onp.dtype(onp.bool_), ())
     or_ = xla.primitive_computation(lax.or_p, scalar, scalar)
@@ -208,18 +208,14 @@ def _while_loop_translation_rule(c, axis_env, *args, **kwargs):
   body_carry = body_c.ParameterWithShape(c.GetShape(init_carry))
   body_carry_elts = [body_c.GetTupleElement(body_carry, i) for i in range(len(args))]
   x, y, z = split_list(body_carry_elts, [cond_nconsts, body_nconsts])
-  body_out = body_c.Call(
-      xla.jaxpr_computation(body_jaxpr.jaxpr, axis_env, body_jaxpr.literals, (),
-                            *_map(body_c.GetShape, y + z)), y + z)
-  new_z = [body_c.GetTupleElement(body_out, i) for i in range(len(init_vals))]
+  new_z = xla.jaxpr_subcomp(body_c, body_jaxpr.jaxpr, backend, axis_env,
+                            _map(body_c.Constant, body_jaxpr.literals), (), *(y + z))
   if batched:
-    body_cond_outs = body_c.Call(
-        xla.jaxpr_computation(cond_jaxpr.jaxpr, axis_env, cond_jaxpr.literals, (),
-                              *_map(body_c.GetShape, x + z)), x + z)
-    body_pred = body_c.GetTupleElement(body_cond_outs, 0)
+    body_pred, = xla.jaxpr_subcomp(body_c, cond_jaxpr.jaxpr, backend, axis_env,
+                                   _map(body_c.Constant, cond_jaxpr.literals), (), *(x + z))
     new_z = _map(partial(_pred_bcast_select, body_c, body_pred), new_z, z)
     assert _map(body_c.GetShape, new_z) == _map(body_c.GetShape, z) # no broadcast
-  new_carry = body_c.Tuple(*(x + y + new_z))
+  new_carry = body_c.Tuple(*itertools.chain(x, y, new_z))
 
   ans = c.While(cond_c.Build(pred), body_c.Build(new_carry), init_carry)
   ans_elts = [c.GetTupleElement(ans, i) for i in range(len(args))]
@@ -301,25 +297,14 @@ def cond(pred, true_operand, true_fun, false_operand, false_fun):
       true_nconsts=len(true_consts), false_nconsts=len(false_consts))
   return tree_unflatten(out_tree, out)
 
-def _cond_impl(pred, *args, **kwargs):
-  true_jaxpr, false_jaxpr, true_nconsts, false_nconsts = split_dict(
-      kwargs, ["true_jaxpr", "false_jaxpr", "true_nconsts", "false_nconsts"])
-  true_consts, true_ops, false_consts, false_ops = split_list(
-      args, [true_nconsts, len(true_jaxpr.in_avals), false_nconsts])
-
-  if pred:
-    return core.jaxpr_as_fun(true_jaxpr)(*(true_consts + true_ops))
-  else:
-    return core.jaxpr_as_fun(false_jaxpr)(*(false_consts + false_ops))
-
 def _cond_abstract_eval(*args, **kwargs):
   return kwargs["true_jaxpr"].out_avals
 
 def _cond_translation_rule(c, axis_env, pred, *args, **kwargs):
+  backend = kwargs.pop("backend", None)
   true_jaxpr, false_jaxpr, true_nconsts, false_nconsts = split_dict(
       kwargs, ["true_jaxpr", "false_jaxpr", "true_nconsts", "false_nconsts"])
   true_nops = len(true_jaxpr.in_avals) - true_nconsts
-  false_nops = len(false_jaxpr.in_avals) - false_nconsts
   true_consts, true_ops, false_consts, false_ops = split_list(
       args, [true_nconsts, true_nops, false_nconsts])
 
@@ -327,9 +312,9 @@ def _cond_translation_rule(c, axis_env, pred, *args, **kwargs):
     c = xb.make_computation_builder(name)
     op = c.ParameterWithShape(op_shape)
     ops = [c.GetTupleElement(op, i) for i in range(len(jaxpr.in_avals))]
-    out = c.Call(xla.jaxpr_computation(jaxpr.jaxpr, axis_env, jaxpr.literals, (),
-                                       *_map(c.GetShape, ops)), ops)
-    return c.Build(out)
+    outs = xla.jaxpr_subcomp(c, jaxpr.jaxpr, backend, axis_env,
+                             _map(c.Constant, jaxpr.literals), (), *ops)
+    return c.Build(c.Tuple(*outs))
 
   true_op = c.Tuple(*(true_consts + true_ops))
   true_c = make_computation("true_comp", true_jaxpr, c.GetShape(true_op))
@@ -339,10 +324,51 @@ def _cond_translation_rule(c, axis_env, pred, *args, **kwargs):
 
   return c.Conditional(pred, true_op, true_c, false_op, false_c)
 
+def _cond_pred_bcast_select(pred, x, y):
+  bcast_pred = lax.broadcast_in_dim(pred, onp.shape(x), list(range(onp.ndim(pred))))
+  return lax.select(bcast_pred, x, y)
+
+def _cond_batching_rule(args, dims, true_jaxpr, false_jaxpr, true_nconsts,
+                        false_nconsts):
+  # TODO: maybe avoid moving arg axes to front if we're promoting to select?
+  args = [batching.moveaxis(x, d, 0) if d is not batching.not_mapped and d != 0
+          else x for x, d in zip(args, dims)]
+  true_nops = len(true_jaxpr.in_avals) - true_nconsts
+  (pred,), true_consts, true_ops, false_consts, false_ops = split_list(
+      args, [1, true_nconsts, true_nops, false_nconsts])
+  size, = {x.shape[d] for x, d in zip(args, dims) if d is not batching.not_mapped}
+  orig_bat = [d is not batching.not_mapped for d in dims]
+  (pred_bat,), tconst_bat, t_bat, fconst_bat, f_bat = split_list(
+    orig_bat, [1, true_nconsts, true_nops, false_nconsts])
+
+  _, true_out_bat = batching.batch_jaxpr(true_jaxpr, size, tconst_bat + t_bat, False)
+  _, false_out_bat = batching.batch_jaxpr(false_jaxpr, size, fconst_bat + f_bat, False)
+  out_bat = [a or b for a, b in zip(true_out_bat, false_out_bat)]
+
+  true_jaxpr_batched, _ = batching.batch_jaxpr(true_jaxpr, size, tconst_bat + t_bat, out_bat)
+  false_jaxpr_batched, _ = batching.batch_jaxpr(false_jaxpr, size, fconst_bat + f_bat, out_bat)
+
+  if pred_bat:
+    true_out = core.jaxpr_as_fun(true_jaxpr_batched)(*(true_consts + true_ops))
+    false_out = core.jaxpr_as_fun(false_jaxpr_batched)(*(false_consts + false_ops))
+    true_out = [batching.broadcast(x, size, 0) if not b else x
+                for x, b in zip(true_out, out_bat)]
+    false_out = [batching.broadcast(x, size, 0) if not b else x
+                 for x, b in zip(false_out, out_bat)]
+    return [_cond_pred_bcast_select(pred, t, f)
+            for t, f in zip(true_out, false_out)], [0] * len(true_out)
+  else:
+    out_dims = [0 if b else batching.not_mapped for b in out_bat]
+    return cond_p.bind(
+      *itertools.chain([pred], true_consts, true_ops, false_consts, false_ops),
+      true_jaxpr=true_jaxpr_batched, false_jaxpr=false_jaxpr_batched,
+      true_nconsts=len(true_consts), false_nconsts=len(false_consts)), out_dims
+
 cond_p = lax.Primitive('cond')
 cond_p.multiple_results = True
-cond_p.def_impl(_cond_impl)
+cond_p.def_impl(partial(xla.apply_primitive, cond_p))
 cond_p.def_abstract_eval(_cond_abstract_eval)
+batching.primitive_batchers[cond_p] = _cond_batching_rule
 xla.initial_style_translations[cond_p] = _cond_translation_rule
 
 
@@ -669,6 +695,50 @@ def _scan_batching_rule(args, dims, forward, length, jaxpr, num_consts,
   ys_bdims = [1 if b else batching.not_mapped for b in ys_batched]
   return outs, carry_bdims + ys_bdims
 
+def _scan_polymorphic_shape_rule(shape_exprs, forward, length, jaxpr,
+                                 num_consts, num_carry, linear):
+  const_shexprs, init_shexprs, xs_shexprs = split_list(shape_exprs, [num_consts, num_carry])
+  if (any(any(type(d) is Id for d in shexpr) for shexpr in const_shexprs)
+      or any(any(type(d) is Id for d in shexpr) for shexpr in init_shexprs)
+      or any(any(type(d) is Id for d in shexpr[1:]) for shexpr in xs_shexprs)):
+    raise NotImplementedError
+  _, y_avals = split_list(jaxpr.out_avals, [num_carry])
+  ys_shapes = [ShapeExpr(length, *y_aval.shape) for y_aval in y_avals]
+  return init_shexprs + ys_shapes
+
+def _scan_masking_rule(shape_envs, padded_vals, shape_exprs, forward, length,
+                       jaxpr, num_consts, num_carry, linear):
+  out_shape = _scan_polymorphic_shape_rule(shape_exprs, forward, length, jaxpr,
+                                           num_consts, num_carry, linear)
+  dynamic_length = masking.eval_dim_expr(shape_envs.logical, length)
+  masked_jaxpr = _masked_scan_jaxpr(jaxpr, num_consts, num_carry)
+  consts, init, xs = split_list(padded_vals, [num_consts, num_carry])
+  max_length, = {x.shape[0] for x in xs}
+  const_linear, init_linear, xs_linear = split_list(linear, [num_consts, num_carry])
+  out_vals = scan_p.bind(
+      *itertools.chain([dynamic_length] + consts, [0], init, xs),
+      forward=forward, length=max_length, jaxpr=masked_jaxpr,
+      num_consts=1 + num_consts, num_carry=1 + num_carry,
+      linear=[False] + const_linear + [False] + init_linear + xs_linear)
+  return out_vals[1:], out_shape
+
+def _masked_scan_jaxpr(jaxpr, num_consts, num_carry):
+  fun = core.jaxpr_as_fun(jaxpr)
+
+  @lu.wrap_init
+  def masked(*args):
+    [dynamic_length], consts, [i], carry, xs = split_list(
+        args, [1, num_consts, 1, num_carry])
+    out = fun(*(consts + carry + xs))
+    new_carry, ys = split_list(out, [num_carry])
+    new_carry = [lax.select(i < dynamic_length, new_c, c)
+                 for new_c, c in zip(new_carry, carry)]
+    return [i + 1] + new_carry + ys
+
+  aval = ShapedArray((), onp.int64)
+  const_avals, carry_avals, x_avals = split_list(jaxpr.in_avals, [num_consts, num_carry])
+  return _make_typed_jaxpr(masked, [aval] + const_avals + [aval] + carry_avals + x_avals)
+
 def scan_bind(*args, **kwargs):
   forward, length, num_consts, num_carry, jaxpr, linear = split_dict(
       kwargs, ["forward", "length", "num_consts", "num_carry", "jaxpr", "linear"])
@@ -681,7 +751,6 @@ def scan_bind(*args, **kwargs):
   assert all(_map(typecheck, consts_avals, consts))
   assert all(_map(typecheck, init_avals, init))
   assert all(_map(typecheck, xs_avals, xs))
-
   # check that output carry type matches input carry type
   carry_avals, _ = split_list(jaxpr.out_avals, [num_carry])
   assert all(_map(typematch, init_avals, carry_avals))
@@ -702,6 +771,7 @@ ad.primitive_transposes[scan_p] = _scan_transpose
 pe.custom_partial_eval_rules[scan_p] = _scan_partial_eval
 xla.initial_style_translations[scan_p] = xla.lower_fun(_scan_impl, initial_style=True)
 batching.primitive_batchers[scan_p] = _scan_batching_rule
+masking.shape_parameterized_primitive_rules[scan_p] = _scan_masking_rule
 
 
 def map(f, xs):
@@ -733,3 +803,22 @@ def map(f, xs):
   g = lambda _, x: ((), f(x))
   _, ys = scan(g, (), xs)
   return ys
+
+
+def _concat_masking_rule(padded_vals, logical_shapes, dimension, operand_shapes):
+  del operand_shapes  # Unused.
+  result = lax.concatenate(padded_vals, dimension)  # fragmented
+  offset = 0
+  for padded_val, logical_shape in zip(padded_vals, logical_shapes):
+    result = _memcpy(dimension, logical_shape[dimension], padded_val,
+                     result, offset)
+    offset = offset + logical_shape[dimension]
+  return result
+
+def _memcpy(axis, num, src, dst, offset):
+  def body(i, dst):
+    update = lax.dynamic_index_in_dim(src, i, axis)
+    return lax.dynamic_update_index_in_dim(dst, update, i + offset, axis)
+  return fori_loop(0, num, body, dst)
+
+masking.masking_rules[lax.concatenate_p] = _concat_masking_rule

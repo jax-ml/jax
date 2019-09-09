@@ -61,7 +61,7 @@ def lu(x):
 
 def qr(x, full_matrices=True):
   q, r = qr_p.bind(x, full_matrices=full_matrices)
-  return q, r
+  return q, np.triu(r)
 
 def svd(x, full_matrices=True, compute_uv=True):
   s, u, v = svd_p.bind(x, full_matrices=full_matrices, compute_uv=compute_uv)
@@ -134,18 +134,11 @@ def _nan_like(c, operand):
     nan = c.Constant(onp.array(onp.nan, dtype=dtype))
   return c.Broadcast(nan, shape.dimensions())
 
-# TODO(phawkins): remove if-condition after increasing minimum Jaxlib version to
-# 0.1.23.
-if hasattr(lapack, "potrf"):
-  _cpu_potrf = lapack.potrf
-else:
-  _cpu_potrf = _unpack_tuple(lapack.jax_potrf, 2)
-
 def cholesky_cpu_translation_rule(c, operand):
   shape = c.GetShape(operand)
   dtype = shape.element_type().type
   if len(shape.dimensions()) == 2 and dtype in _cpu_lapack_types:
-    result, info = _cpu_potrf(c, operand, lower=True)
+    result, info = lapack.potrf(c, operand, lower=True)
     return c.Select(c.Eq(info, c.ConstantS32Scalar(0)), result,
                     _nan_like(c, result))
   else:
@@ -181,12 +174,7 @@ def eig_abstract_eval(operand):
     raise NotImplementedError
   return w, vl, vr
 
-# TODO(phawkins): remove if-condition after increasing minimum Jaxlib version to
-# 0.1.23.
-if hasattr(lapack, "geev"):
-  _cpu_geev = lapack.geev
-else:
-  _cpu_geev = _unpack_tuple(lapack.jax_geev, 4)
+_cpu_geev = lapack.geev
 
 def eig_cpu_translation_rule(c, operand):
   shape = c.GetShape(operand)
@@ -294,21 +282,13 @@ eigh_p.def_abstract_eval(eigh_abstract_eval)
 xla.translations[eigh_p] = eigh_translation_rule
 ad.primitive_jvps[eigh_p] = eigh_jvp_rule
 
-# TODO(phawkins): remove if-condition after increasing minimum Jaxlib version to
-# 0.1.23.
-if hasattr(lapack, "syevd"):
-  _cpu_syevd = lapack.syevd
-else:
-  _cpu_syevd = _unpack_tuple(lapack.jax_syevd, 3)
+_cpu_syevd = lapack.syevd
 
 xla.backend_specific_translations['cpu'][eigh_p] = partial(
   _eigh_cpu_gpu_translation_rule, _cpu_syevd)
 
-# TODO(phawkins): remove if-condition after increasing minimum Jaxlib version to
-# 0.1.23.
-if cusolver:
-  xla.backend_specific_translations['gpu'][eigh_p] = partial(
-    _eigh_cpu_gpu_translation_rule, cusolver.syevd)
+xla.backend_specific_translations['gpu'][eigh_p] = partial(
+  _eigh_cpu_gpu_translation_rule, cusolver.syevd)
 batching.primitive_batchers[eigh_p] = eigh_batching_rule
 
 
@@ -425,9 +405,8 @@ def _triangular_solve_gpu_translation_rule(
     return c.TriangularSolve(a, b, left_side, lower, transpose_a, conjugate_a,
                              unit_diagonal)
 
-if cusolver:
-  xla.backend_specific_translations['gpu'][triangular_solve_p] = \
-      _triangular_solve_gpu_translation_rule
+xla.backend_specific_translations['gpu'][triangular_solve_p] = \
+    _triangular_solve_gpu_translation_rule
 
 # LU decomposition
 
@@ -612,19 +591,11 @@ xla.translations[lu_p] = xla.lower_fun(_lu_python, instantiate=True)
 ad.primitive_jvps[lu_p] = _lu_jvp_rule
 batching.primitive_batchers[lu_p] = _lu_batching_rule
 
-# TODO(phawkins): remove if-condition after increasing minimum Jaxlib version to
-# 0.1.23.
-if hasattr(lapack, "getrf"):
-  _cpu_getrf = lapack.getrf
-else:
-  _cpu_getrf = _unpack_tuple(lapack.jax_getrf, 3)
-
 xla.backend_specific_translations['cpu'][lu_p] = partial(
-  _lu_cpu_gpu_translation_rule, _cpu_getrf)
+  _lu_cpu_gpu_translation_rule, lapack.getrf)
 
-if cusolver:
-  xla.backend_specific_translations['gpu'][lu_p] = partial(
-    _lu_cpu_gpu_translation_rule, cusolver.getrf)
+xla.backend_specific_translations['gpu'][lu_p] = partial(
+  _lu_cpu_gpu_translation_rule, cusolver.getrf)
 
 
 def lu_pivots_to_permutation(swaps, m):
@@ -691,9 +662,9 @@ def qr_jvp_rule(primals, tangents, full_matrices):
   if full_matrices or np.shape(x)[-2] < np.shape(x)[-1]:
     raise NotImplementedError
   dx_rinv = triangular_solve(r, dx)  # Right side solve by default
-  qt_dx_rinv = np.matmul(_T(q), dx_rinv)
+  qt_dx_rinv = np.matmul(_H(q), dx_rinv)
   qt_dx_rinv_lower = np.tril(qt_dx_rinv, -1)
-  domega = qt_dx_rinv_lower - _T(qt_dx_rinv_lower)  # This is skew-symmetric
+  domega = qt_dx_rinv_lower - _H(qt_dx_rinv_lower)  # This is skew-symmetric
   dq = np.matmul(q, domega - qt_dx_rinv) + dx_rinv
   dr = np.matmul(qt_dx_rinv - domega, r)
   return (q, r), (dq, dr)
@@ -704,6 +675,34 @@ def qr_batching_rule(batched_args, batch_dims, full_matrices):
   x = batching.moveaxis(x, bd, 0)
   return qr_p.bind(x, full_matrices=full_matrices), (0, 0)
 
+def _qr_cpu_gpu_translation_rule(geqrf_impl, orgqr_impl, c, operand,
+                                 full_matrices):
+  shape = c.GetShape(operand)
+  dims = shape.dimensions()
+  m, n = dims[-2:]
+  batch_dims = dims[:-2]
+  r, tau, info_geqrf = geqrf_impl(c, operand)
+  if m < n:
+    q = c.Slice(r, [0] * len(dims), list(batch_dims) + [m, m])
+    q, info_orgqr = orgqr_impl(c, q, tau)
+  elif not full_matrices:
+    q, info_orgqr = orgqr_impl(c, r, tau)
+    r = c.Slice(r, [0] * len(dims), list(batch_dims) + [n, n])
+  else:
+    padding_config = [(0, 0, 0)] * len(dims)
+    padding_config[-1] = (0, m - n, 0)
+    q = c.Pad(r, c.Constant(onp.array(0, dtype=shape.element_type())),
+              padding_config)
+    q, info_orgqr = orgqr_impl(c, q, tau)
+
+  ok = c.And(c.Eq(info_geqrf, c.ConstantS32Scalar(0)),
+             c.Eq(info_orgqr, c.ConstantS32Scalar(0)))
+  q = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), q,
+                           _nan_like(c, q))
+  r = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), r,
+                           _nan_like(c, r))
+  return c.Tuple(q, r)
+
 qr_p = Primitive('qr')
 qr_p.multiple_results = True
 qr_p.def_impl(qr_impl)
@@ -712,11 +711,24 @@ xla.translations[qr_p] = qr_translation_rule
 ad.primitive_jvps[qr_p] = qr_jvp_rule
 batching.primitive_batchers[qr_p] = qr_batching_rule
 
+# TODO(phawkins): make unconditional after the minimum Jaxlib version is
+# increased past 0.1.28.
+if hasattr(lapack, "geqrf"):
+  xla.backend_specific_translations['cpu'][qr_p] = partial(
+    _qr_cpu_gpu_translation_rule, lapack.geqrf, lapack.orgqr)
+
+# TODO(phawkins): make unconditional after the minimum Jaxlib version is
+# increased past 0.1.28.
+if hasattr(cusolver, "geqrf"):
+  xla.backend_specific_translations['gpu'][qr_p] = partial(
+    _qr_cpu_gpu_translation_rule, cusolver.geqrf, cusolver.orgqr)
+
 
 # Singular value decomposition
 
 def svd_impl(operand, full_matrices, compute_uv):
-  s, u, vt = xla.apply_primitive(svd_p, operand, full_matrices=full_matrices, compute_uv=compute_uv)
+  s, u, vt = xla.apply_primitive(svd_p, operand, full_matrices=full_matrices,
+                                 compute_uv=compute_uv)
   return s, u, vt
 
 def svd_translation_rule(c, operand, full_matrices, compute_uv):
@@ -744,8 +756,7 @@ def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
   s, U, Vt = svd_p.bind(A, full_matrices=False, compute_uv=True)
 
   if dA is ad_util.zero:
-    return (core.pack((s, U, Vt)),
-            ad.TangentTuple(ad_util.zero, ad_util.zero, ad_util.zero))
+    return ((s, U, Vt), (ad_util.zero, ad_util.zero, ad_util.zero))
 
   if full_matrices:
     # TODO: implement full matrices case, documented here: https://people.maths.ox.ac.uk/gilesm/files/NA-08-01.pdf
@@ -753,40 +764,37 @@ def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
       "Singular value decomposition JVP not implemented for full matrices")
 
   k = s.shape[-1]
-  Ut, V = np.conj(U).T, np.conj(Vt).T
+  Ut, V = _H(U), _H(Vt)
   s_dim = s[..., None, :]
-  dS = np.dot(np.dot(Ut, dA), V)
-  ds = np.real(np.diag(dS))
-  F = 1 / (np.square(s_dim) - np.square(s_dim.T) + np.eye(k)) - np.eye(k)
+  dS = np.matmul(np.matmul(Ut, dA), V)
+  ds = np.real(np.diagonal(dS, 0, -2, -1))
+  F = 1 / (np.square(s_dim) - np.square(_T(s_dim)) + np.eye(k)) - np.eye(k)
   dSS = s_dim * dS
-  SdS = s_dim.T * dS
-  dU = np.dot(U, F * (dSS + dSS.T))
-  dV = np.dot(V, F * (SdS + SdS.T))
+  SdS = _T(s_dim) * dS
+  dU = np.matmul(U, F * (dSS + _T(dSS)))
+  dV = np.matmul(V, F * (SdS + _T(SdS)))
 
   m, n = A.shape[-2], A.shape[-1]
   if m > n:
-    dU = dU + np.dot(np.eye(m) - np.dot(U, Ut), np.dot(dA, V)) / s_dim
+    dU = dU + np.matmul(np.eye(m) - np.matmul(U, Ut), np.matmul(dA, V)) / s_dim
   if n > m:
-    dV = dV + np.dot(np.eye(n) - np.dot(V, Vt), np.dot(np.conj(dA).T, U)) / s_dim
-  return (s, U, Vt), (ds, dU, dV.T)
+    dV = dV + np.matmul(np.eye(n) - np.matmul(V, Vt), np.matmul(_H(dA), U)) / s_dim
+  return (s, U, Vt), (ds, dU, _T(dV))
 
 def _svd_cpu_gpu_translation_rule(gesvd_impl, c, operand, full_matrices, compute_uv):
+
   shape = c.GetShape(operand)
-  dtype = shape.element_type().type
-  if len(shape.dimensions()) == 2 and dtype in _cpu_lapack_types:
-    s, u, vt, info = gesvd_impl(c, operand, full_matrices=full_matrices,
-                                compute_uv=compute_uv)
-    ok = c.Eq(info, c.ConstantS32Scalar(0))
-    s = _broadcasting_select(c, c.Reshape(ok, None, (1,)), s,
-                             _nan_like(c, s))
-    u = _broadcasting_select(c, c.Reshape(ok, None, (1, 1)), u,
-                             _nan_like(c, u))
-    vt = _broadcasting_select(c, c.Reshape(ok, None, (1, 1)), vt,
-                              _nan_like(c, vt))
-    return c.Tuple(s, u, vt)
-  else:
-    raise NotImplementedError(
-        "Only unbatched singular value decomposition is implemented on CPU")
+  batch_dims = shape.dimensions()[:-2]
+  s, u, vt, info = gesvd_impl(c, operand, full_matrices=full_matrices,
+                              compute_uv=compute_uv)
+  ok = c.Eq(info, c.ConstantS32Scalar(0))
+  s = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1,)), s,
+                           _nan_like(c, s))
+  u = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), u,
+                           _nan_like(c, u))
+  vt = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), vt,
+                            _nan_like(c, vt))
+  return c.Tuple(s, u, vt)
 
 def svd_batching_rule(batched_args, batch_dims, full_matrices, compute_uv):
   x, = batched_args
@@ -803,18 +811,8 @@ ad.primitive_jvps[svd_p] = svd_jvp_rule
 batching.primitive_batchers[svd_p] = svd_batching_rule
 xla.translations[svd_p] = svd_translation_rule
 
-# TODO(phawkins): remove if-condition after increasing minimum Jaxlib version to
-# 0.1.23.
-if hasattr(lapack, "gesdd"):
-  _cpu_gesdd = lapack.gesdd
-else:
-  _cpu_gesdd = _unpack_tuple(lapack.jax_gesdd, 4)
-
 xla.backend_specific_translations['cpu'][svd_p] = partial(
-  _svd_cpu_gpu_translation_rule, _cpu_gesdd)
+  _svd_cpu_gpu_translation_rule, lapack.gesdd)
 
-# TODO(phawkins): remove if-condition after increasing minimum Jaxlib version to
-# 0.1.23.
-if cusolver:
-  xla.backend_specific_translations['gpu'][svd_p] = partial(
-    _svd_cpu_gpu_translation_rule, cusolver.gesvd)
+xla.backend_specific_translations['gpu'][svd_p] = partial(
+  _svd_cpu_gpu_translation_rule, cusolver.gesvd)

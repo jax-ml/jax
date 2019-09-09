@@ -50,7 +50,8 @@ from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, tree_leaves, tree_multimap)
 from .util import (unzip2, unzip3, curry, partial, safe_map, safe_zip,
                    WrapHashably, prod, split_list)
-from .lib.xla_bridge import canonicalize_dtype, device_count
+from .lib.xla_bridge import (canonicalize_dtype, device_count,
+                             local_device_count, devices, host_id)
 from .abstract_arrays import ShapedArray, raise_to_shaped
 from .interpreters import partial_eval as pe
 from .interpreters import xla
@@ -58,6 +59,8 @@ from .interpreters import pxla
 from .interpreters import ad
 from .interpreters import batching
 from .interpreters import parallel
+from .interpreters import masking
+from .interpreters.masking import Shape, s_, shapecheck
 from .config import flags, config
 
 map = safe_map
@@ -79,7 +82,7 @@ class _ThreadLocalState(threading.local):
 
 _thread_local_state = _ThreadLocalState()
 
-def jit(fun, static_argnums=(), device_assignment=None):
+def jit(fun, static_argnums=(), device_assignment=None, backend=None):
   """Sets up `fun` for just-in-time compilation with XLA.
 
   Args:
@@ -101,6 +104,8 @@ def jit(fun, static_argnums=(), device_assignment=None):
       change. Optional, an int specifying the device ordinal for which to compile the
       function. The default is inherited from XLA's DeviceAssignment logic and is
       usually to use device 0.
+    backend: This is an experimental feature and the API is likely to change.
+      Optional, a string representing the xla backend. 'cpu','gpu', or 'tpu'.
 
   Returns:
     A wrapped version of `fun`, set up for just-in-time compilation.
@@ -141,7 +146,7 @@ def jit(fun, static_argnums=(), device_assignment=None):
     args_flat, in_tree = tree_flatten((dyn_args, kwargs))
     _check_args(args_flat)
     flat_fun, out_tree = flatten_fun(f, in_tree)
-    out = xla.xla_call(flat_fun, *args_flat, device_assignment=device_assignment)
+    out = xla.xla_call(flat_fun, *args_flat, device_assignment=device_assignment, backend=backend)
     return tree_unflatten(out_tree(), out)
 
   jitted_name =  "jit({}, static_argnums={})"
@@ -164,7 +169,7 @@ def disable_jit():
 
   >>> @jax.jit
   >>> def f(x):
-  ...   y = x *2
+  ...   y = x * 2
   ...   print("Value of y is", y)
   ...   return y + 3
   ...
@@ -191,7 +196,7 @@ def disable_jit():
     _thread_local_state.jit_is_disabled = prev_val
 
 
-def xla_computation(fun, static_argnums=(), axis_env=None):
+def xla_computation(fun, static_argnums=(), axis_env=None, backend=None):
   """Creates a function that produces its XLA computation given example args.
 
   Args:
@@ -203,6 +208,8 @@ def xla_computation(fun, static_argnums=(), axis_env=None):
       functions that involve parallel communication collectives, and it
       specifies the axis name/size environment that would be set up by
       applications of ``jax.pmap``. See the examples below.
+    backend: This is an experimental feature and the API is likely to change.
+      Optional, a string representing the xla backend. 'cpu','gpu', or 'tpu'.
 
   Returns:
     A wrapped version of ``fun`` that when applied to example arguments returns a
@@ -272,10 +279,11 @@ def xla_computation(fun, static_argnums=(), axis_env=None):
 
   def make_axis_env(nreps):
     if axis_env is None:
-      return xla.AxisEnv(nreps, [], [])
+      return xla.AxisEnv(nreps)
     else:
       nreps = nreps * prod(size for name, size in axis_env)
-      return xla.AxisEnv(nreps, *zip(*axis_env))
+      names, sizes = zip(*axis_env)
+      return xla.AxisEnv(nreps, names, sizes)
 
   @wraps(fun)
   def computation_maker(*args, **kwargs):
@@ -285,7 +293,7 @@ def xla_computation(fun, static_argnums=(), axis_env=None):
     pvals = map(pv_like, jax_args)
     jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
     axis_env_ = make_axis_env(xla.jaxpr_replicas(jaxpr))
-    return xla.build_jaxpr(jaxpr, axis_env_, consts,
+    return xla.build_jaxpr(jaxpr, backend, axis_env_, consts,
                            *map(xla.abstractify, jax_args))
   return computation_maker
 
@@ -624,7 +632,7 @@ class _NoneProxy(object): pass
 _none_proxy = _NoneProxy()
 
 
-def pmap(fun, axis_name=None):
+def pmap(fun, axis_name=None, devices=None, backend=None):
   """Parallel map with support for collectives.
 
   The purpose of ``pmap`` is to express single-program multiple-data (SPMD)
@@ -640,13 +648,22 @@ def pmap(fun, axis_name=None):
   like all-reduce sum.
 
   The mapped axis size must be less than or equal to the number of XLA devices
-  available. For nested ``pmap`` calls, the product of the mapped axis sizes
-  must be less than or equal to the number of XLA devices.
+  available (unless ``devices`` is specified, see below). For nested ``pmap``
+  calls, the product of the mapped axis sizes must be less than or equal to the
+  number of XLA devices.
 
   Args:
     fun: Function to be mapped over argument axes.
     axis_name: Optional, a hashable Python object used to identify the mapped
       axis so that parallel collectives can be applied.
+    devices: This is an experimental feature and the API is likely to change.
+      Optional, a sequence of Devices to map over. (Available devices can be
+      retrieved via jax.devices()). If specified, the length of the sequence
+      must be equal to the size of the mapped axis. Nested ``pmap``s with
+      ``devices`` specified in either the inner or outer ``pmap`` are not yet
+      supported.
+    backend: This is an experimental feature and the API is likely to change.
+      Optional, a string representing the xla backend. 'cpu','gpu', or 'tpu'.
 
   Returns:
     A parallelized version of ``fun`` with arguments that correspond to those of
@@ -707,6 +724,25 @@ def pmap(fun, axis_name=None):
   [ 1.  1.  1.  1.]
   >>> print(doubly_normed.sum((0, 1)))
   1.0
+
+  The ``devices`` argument can be used to specify exactly which devices are used
+  to run the parallel computation. For example, the following code defines
+  two parallel computations, one which runs on the first six devices and one on
+  the remaining two:
+
+  >>> from functools import partial
+  >>> @partial(pmap, axis_name='i', devices=jax.devices()[:6])
+  >>> def f1(x):
+  >>>   return x / jax.lax.psum(x, axis_name='i')
+  >>>
+  >>> @partial(pmap, axis_name='i', devices=jax.devices()[-2:])
+  >>> def f2(x):
+  >>>   return jax.lax.psum(x ** 2, axis_name='i')
+  >>>
+  >>> print(f1(np.arange(6.)))
+  [0.         0.06666667 0.13333333 0.2        0.26666667 0.33333333]
+  >>> print(f2(np.array([2., 3.])))
+  [ 13.  13.]
   """
   _check_callable(fun)
   axis_name = _TempAxisName() if axis_name is None else axis_name
@@ -718,7 +754,9 @@ def pmap(fun, axis_name=None):
     axis_size = _pmap_axis_size(args)
     _check_args(args)
     flat_fun, out_tree = flatten_fun(f, in_tree)
-    out = pxla.xla_pmap(flat_fun, *args, axis_name=axis_name, axis_size=axis_size)
+    out = pxla.xla_pmap(flat_fun, *args, axis_name=axis_name, axis_size=axis_size,
+                        devices=tuple(devices) if devices is not None else devices,
+                        backend=backend)
     return tree_unflatten(out_tree(), out)
 
   namestr = "pmap({}, axis_name={})".format
@@ -740,7 +778,7 @@ class _TempAxisName(object):
     return '<axis {}>'.format(hex(id(self)))
 
 
-def soft_pmap(fun, axis_name=None):
+def soft_pmap(fun, axis_name=None, backend=None):
   _check_callable(fun)
   axis_name = _TempAxisName() if axis_name is None else axis_name
 
@@ -752,9 +790,9 @@ def soft_pmap(fun, axis_name=None):
     _check_args(args_flat)
     flat_fun, out_tree = flatten_fun(f, in_tree)
 
-    chunk_size, leftover = divmod(axis_size, pxla.unmapped_device_count())
+    chunk_size, leftover = divmod(axis_size, pxla.unmapped_device_count(backend))
     if chunk_size == 0 and leftover:
-      return pmap(fun, axis_name)(*args)  # can map directly onto hardware
+      return pmap(fun, axis_name, backend)(*args)  # can map directly onto hardware
     elif leftover:
       msg = ("soft_pmap mapped axis size must be divisble by the number of "
              "XLA devices (or be less than or equal to that number), but got "
@@ -765,7 +803,8 @@ def soft_pmap(fun, axis_name=None):
     reshaped_args = [_reshape_split(num_chunks, x) for x in args_flat]
     soft_mapped_fun = pxla.split_axis(flat_fun, axis_name, chunk_size)
     reshaped_outs = pxla.xla_pmap(soft_mapped_fun, *reshaped_args,
-                                  axis_name=axis_name, axis_size=num_chunks)
+                                  axis_name=axis_name, axis_size=num_chunks,
+                                  devices=None, backend=backend)
     outs = [_reshape_merge(out) for out in reshaped_outs]
     return tree_unflatten(out_tree(), outs)
 
@@ -823,13 +862,54 @@ def _parallelize(fun):
     f, out_axes = parallel.papply_transform(f, axis_name, axis_size)
     f = pxla.split_axis(f, axis_name, chunk_size)
     outs = pxla.xla_pmap(f, *reshaped_args, axis_name=axis_name,
-                         axis_size=num_chunks)
+                         axis_size=num_chunks, devices=None)
     outs = map(_reshape_merge, outs)
     outs = [batching.matchaxis(axis_size, 0, dst, x)
             for dst, x in zip(out_axes(), outs)]
     return tree_unflatten(out_tree(), outs)
 
   return pfun
+
+
+def mask(fun, in_shapes, out_shape):
+  in_shapes_flat, in_shapes_tree = tree_flatten(in_shapes)
+  out_shapes_flat, out_shapes_tree = tree_flatten(out_shape)
+
+  def wrapped_fun(args, logical_shape_env):
+    f = lu.wrap_init(fun)
+    args_flat, in_tree = tree_flatten(args)
+    assert in_tree == in_shapes_tree
+    padded_shape_env = _bind_shapes(in_shapes_flat, [x.shape for x in args_flat])
+    shape_envs = masking.ShapeEnvs(logical_shape_env, padded_shape_env)
+    flat_fun, out_tree = flatten_fun_nokwargs(f, in_tree)
+    outs, out_shapes_ = masking.mask_fun(flat_fun, shape_envs, args_flat,
+                                         in_shapes_flat)
+    if not out_shapes_flat == list(out_shapes_):
+      raise TypeError("pytree mismatch")
+    if not all(out.shape == masking.eval_shape_expr(padded_shape_env, expr)
+               for out, expr in zip(outs, out_shapes_flat)):
+      raise masking.ShapeError
+    return tree_unflatten(out_tree(), outs)
+  return wrapped_fun
+
+def _bind_shapes(shape_exprs, shapes):
+  env = {}
+  for binders, shape in zip(shape_exprs, shapes):
+    for poly, d in zip(binders, shape):
+      (binder,), = poly
+      if env.setdefault(binder, d) != d: raise masking.ShapeError
+  return env
+
+
+@curry
+def shapecheck(in_shapes, out_shape, fun):
+  in_shapes_flat, in_tree = tree_flatten(in_shapes)
+  out_shapes_flat, out_tree = tree_flatten(out_shape)
+  flat_fun, out_tree_ = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
+  out_shapes_flat_ = masking.shapecheck(flat_fun, in_shapes_flat)
+  if out_tree != out_tree_(): raise TypeError("pytree mismatch")
+  if out_shapes_flat != out_shapes_flat_: raise masking.ShapeError
+  return fun
 
 
 def jvp(fun, primals, tangents):
@@ -1084,8 +1164,8 @@ def make_jaxpr(fun):
   return jaxpr_maker
 
 
-def device_put(x, device_num=0):
-  return tree_map(lambda y: xla.device_put_p.bind(y, device_num=device_num), x)
+def device_put(x, device_num=0, backend=None):
+  return tree_map(lambda y: xla.device_put_p.bind(y, device_num=device_num, backend=backend), x)
 
 
 # TODO(mattjj): consider revising
@@ -1439,12 +1519,12 @@ def defvjp_all(fun, custom_vjp):
     args = tree_unflatten(params['in_tree'], args_flat)
     out, vjp = custom_vjp(*args)
     out_flat, out_tree = tree_flatten(out)
-    assert out_tree == params['out_tree']
+    assert out_tree == params['out_tree']  # TODO(mattjj): better error message
     def vjp_flat(*cts_flat):
       cts = tree_unflatten(out_tree, cts_flat)
       args_cts_flat, in_tree2 = tree_flatten(vjp(cts))
-      assert in_tree == in_tree2
-      return [None] * num_consts + list(args_cts_flat)
+      assert in_tree == in_tree2  # TODO(mattjj): better error message
+      return [core.unit] * num_consts + list(args_cts_flat)
     return out_flat, vjp_flat
   ad.defvjp_all(fun.prim, custom_transforms_vjp)
 

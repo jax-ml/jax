@@ -37,6 +37,9 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 
+# These are 'manual' tests for batching (vmap). The more exhaustive, more
+# systematic tests are in lax_test.py's LaxVmapTest class.
+
 class BatchingTest(jtu.JaxTestCase):
 
   def testConstantFunction(self):

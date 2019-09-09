@@ -9,7 +9,7 @@
 | [**Quickstart**](#quickstart-colab-in-the-cloud)
 
 JAX is [Autograd](https://github.com/hips/autograd) and
-[XLA](https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/g3doc/overview.md),
+[XLA](https://www.tensorflow.org/xla),
 brought together for high-performance machine learning research.
 
 With its updated version of [Autograd](https://github.com/hips/autograd),
@@ -21,7 +21,7 @@ via [`grad`](#automatic-differentiation-with-grad) as well as forward-mode diffe
 and the two can be composed arbitrarily to any order.
 
 What’s new is that JAX uses
-[XLA](https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/g3doc/overview.md)
+[XLA](https://www.tensorflow.org/xla)
 to compile and run your NumPy programs on GPUs and TPUs. Compilation happens
 under the hood by default, with library calls getting just-in-time compiled and
 executed. But JAX also lets you just-in-time compile your own Python functions
@@ -92,7 +92,7 @@ And for a deeper dive into JAX:
 - [The Autodiff Cookbook, Part 1: easy and powerful automatic differentiation in JAX](https://colab.research.google.com/github/google/jax/blob/master/notebooks/autodiff_cookbook.ipynb)
 - [Directly using XLA in Python](https://colab.research.google.com/github/google/jax/blob/master/notebooks/XLA_in_Python.ipynb)
 - [MAML Tutorial with JAX](https://colab.research.google.com/github/google/jax/blob/master/notebooks/maml.ipynb)
-- [Generative Modeling by Estimating Gradeints of Data Distribution in JAX](https://colab.research.google.com/github/google/jax/blob/master/notebooks/score-matching.ipynb).
+- [Generative Modeling by Estimating Gradeints of Data Distribution in JAX](https://colab.research.google.com/github/google/jax/blob/master/notebooks/score_matching.ipynb).
 
 ## Installation
 JAX is written in pure Python, but it depends on XLA, which needs to be compiled
@@ -119,18 +119,19 @@ cloud VM), you can run
 ```bash
 # install jaxlib
 PYTHON_VERSION=cp37  # alternatives: cp27, cp35, cp36, cp37
-CUDA_VERSION=cuda92  # alternatives: cuda90, cuda92, cuda100
+CUDA_VERSION=cuda92  # alternatives: cuda90, cuda92, cuda100, cuda101
 PLATFORM=linux_x86_64  # alternatives: linux_x86_64
 BASE_URL='https://storage.googleapis.com/jax-releases'
-pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.23-$PYTHON_VERSION-none-$PLATFORM.whl
+pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.28-$PYTHON_VERSION-none-$PLATFORM.whl
 
 pip install --upgrade jax  # install jax
 ```
 
 The library package name must correspond to the version of the existing CUDA
-installation you want to use, with `cuda100` for CUDA 10.0, `cuda92` for CUDA
-9.2, and `cuda90` for CUDA 9.0. To find your CUDA and CUDNN versions, you can
-run commands like these, depending on your CUDNN install path:
+installation you want to use, with `cuda101` for CUDA 10.1, `cuda100` for CUDA
+10.0, `cuda92` for CUDA 9.2, and `cuda90` for CUDA 9.0. To find your CUDA and
+CUDNN versions, you can run commands like these, depending on your CUDNN install
+path:
 
 ```bash
 nvcc --version

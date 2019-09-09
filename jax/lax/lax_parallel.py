@@ -187,10 +187,10 @@ def _allreduce_split_axis_rule(prim, reducer, vals, which_mapped, axis_name):
   x, = vals
   return prim.bind(reducer(x, [0]), axis_name=axis_name), False
 
-def _allreduce_translation_rule(prim, c, val, replica_groups):
+def _allreduce_translation_rule(prim, c, val, replica_groups, backend=None):
   dtype = c.GetShape(val).numpy_dtype()
   scalar = xla_client.Shape.array_shape(dtype, ())
-  computation = xla.primitive_computation(prim, scalar, scalar)
+  computation = xla.primitive_computation(prim, scalar, scalar, backend=backend)
   return c.AllReduce(val, computation, replica_groups=replica_groups)
 
 psum_p = standard_pmap_primitive('psum')
@@ -216,7 +216,8 @@ pxla.split_axis_rules[pmin_p] = \
     partial(_allreduce_split_axis_rule, pmin_p, lax._reduce_min)
 
 
-def _ppermute_translation_rule(c, x, replica_groups, perm):
+def _ppermute_translation_rule(c, x, replica_groups, perm, backend=None):
+  del backend
   group_size = len(replica_groups[0])
   srcs, dsts = unzip2((src % group_size, dst % group_size) for src, dst in perm)
   if not (len(srcs) == len(set(srcs)) and len(dsts) == len(set(dsts))):
@@ -239,7 +240,8 @@ ad.deflinear(ppermute_p, _ppermute_transpose_rule)
 xla.parallel_translations[ppermute_p] = _ppermute_translation_rule
 
 
-def _all_to_all_translation_rule(c, x, split_axis, concat_axis, replica_groups):
+def _all_to_all_translation_rule(c, x, split_axis, concat_axis, replica_groups, backend=None):
+  del backend
   return c.AllToAll(x, split_axis, concat_axis, replica_groups)
 
 def _all_to_all_split_axis_rule(vals, which_mapped, split_axis, concat_axis,

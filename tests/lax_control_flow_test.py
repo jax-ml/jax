@@ -30,6 +30,7 @@ import numpy.random as npr
 from jax import api
 from jax import core
 from jax import lax
+from jax import random
 from jax import test_util as jtu
 from jax.util import unzip2
 from jax.lib import xla_bridge
@@ -475,6 +476,73 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertEqual(fun(4), cfun(4))
     self.assertEqual(cfun(4), (4, 2., 4.))
 
+  def testCondBatched(self):
+    def fun(x, y, z):
+      pred = lax.lt(x, 3)
+      true_fun = lambda y: y
+      false_fun = lambda z: lax.neg(z)
+      return lax.cond(pred, y, true_fun, z, false_fun)
+
+    # these cases stay as cond
+    x = onp.array(2)
+    y = onp.array([1, 2])
+    z = onp.array([3, 4])
+    ans = api.vmap(fun, (None, 0, 0))(x, y, z)
+    jaxpr = api.make_jaxpr(api.vmap(fun, (None, 0, 0)))(x, y, z)
+    expected = onp.array([1, 2])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+    assert "select" not in str(jaxpr)
+
+    x = onp.array(4)
+    ans = api.vmap(fun, (None, 0, 0))(x, y, z)
+    jaxpr = api.make_jaxpr(api.vmap(fun, (None, 0, 0)))(x, y, z)
+    expected = onp.array([-3, -4])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+    assert "select" not in str(jaxpr)
+
+    fun = api.jit(fun)
+    ans = api.vmap(fun, (None, 0, 0))(x, y, z)
+    expected = onp.array([-3, -4])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    z = onp.array(5)
+    ans = api.vmap(fun, (None, 0, None))(x, y, z)
+    jaxpr = api.make_jaxpr(api.vmap(fun, (None, 0, None)))(x, y, z)
+    expected = onp.array([-5, -5])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+    assert "select" not in str(jaxpr)
+
+
+    # these cases become select
+    x = onp.array([2, 4])
+    ans = api.vmap(fun, (0, 0, None))(x, y, z)
+    jaxpr = api.make_jaxpr(api.vmap(fun, (0, 0, None)))(x, y, z)
+    expected = onp.array([1, -5])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+    assert "select" in str(jaxpr)
+
+    z = onp.array([3, 4])
+    ans = api.vmap(fun)(x, y, z)
+    jaxpr = api.make_jaxpr(api.vmap(fun))(x, y, z)
+    expected = onp.array([1, -4])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+    assert "select" in str(jaxpr)
+
+  def testIssue1263(self):
+    def f(rng, x):
+      cond = random.bernoulli(rng)
+      return lax.cond(cond, x, lambda x: x, np.abs(x) - 1., lambda x: x)
+
+    def body_fn(i, state):
+      rng, x = state
+      key, subkey = random.split(rng)
+      return key, f(subkey, x)
+
+    def g(rng, x):
+      return lax.fori_loop(0, 10, body_fn, (rng, x))
+
+    api.vmap(g)(random.split(random.PRNGKey(0), 3), np.ones((3, 4)))
+
   def testIssue514(self):
     # just check this doesn't crash
     lax.cond(True,
@@ -899,6 +967,10 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     python_should_be_executing = False
     lax.while_loop(cond, body, 0)
+
+  def testWhileCondConstant(self):
+    out = lax.while_loop(lambda _: False, lambda _: (), ())  # doesn't crash
+    self.assertEqual(out, ())
 
 
 if __name__ == '__main__':
