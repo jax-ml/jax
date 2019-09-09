@@ -32,6 +32,7 @@ py_library(
             "ops/*.py",
             "scipy/*.py",
             "scipy/stats/*.py",
+            "nn/*.py",
         ],
         exclude = [
             "*_test.py",

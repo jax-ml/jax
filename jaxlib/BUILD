@@ -14,8 +14,8 @@
 
 # JAX is Autograd and XLA
 
-load("@org_tensorflow//tensorflow/core:platform/default/build_config.bzl", "pyx_library")
-load("@org_tensorflow//tensorflow:tensorflow.bzl", "tf_pybind_extension")
+load("@org_tensorflow//tensorflow/core/platform:default/build_config.bzl", "pyx_library")
+load("@org_tensorflow//tensorflow:tensorflow.bzl", "pybind_extension")
 
 licenses(["notice"])  # Apache 2
 
@@ -35,7 +35,7 @@ py_library(
     ],
 )
 
-tf_pybind_extension(
+pybind_extension(
     name = "pytree",
     srcs = ["pytree.cc"],
     copts = [
@@ -56,7 +56,34 @@ tf_pybind_extension(
     ],
 )
 
-tf_pybind_extension(
+pybind_extension(
+    name = "cublas_kernels",
+    srcs = ["cublas.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+        "-Wno-c++98-c++11-compat",
+    ],
+    features = ["-use_header_modules"],
+    module_name = "cublas_kernels",
+    deps = [
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/hash",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
+        "@local_config_cuda//cuda:cublas",
+        "@local_config_cuda//cuda:cublas_headers",
+        "@local_config_cuda//cuda:cuda_headers",
+        "@local_config_cuda//cuda:cudart",
+        "@pybind11",
+    ],
+)
+
+pybind_extension(
     name = "cusolver_kernels",
     srcs = ["cusolver.cc"],
     copts = [

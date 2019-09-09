@@ -15,7 +15,7 @@
 # JAX is Autograd and XLA
 
 load(
-    "@org_tensorflow//tensorflow/core:platform/default/cuda_build_defs.bzl",
+    "@org_tensorflow//tensorflow/core/platform:default/cuda_build_defs.bzl",
     "if_cuda_is_configured",
 )
 
@@ -32,6 +32,7 @@ sh_binary(
         "//jaxlib:lapack.so",
         "//jaxlib:pytree",
     ] + if_cuda_is_configured([
+        "//jaxlib:cublas_kernels",
         "//jaxlib:cusolver_kernels",
     ]),
     deps = ["@bazel_tools//tools/bash/runfiles"],

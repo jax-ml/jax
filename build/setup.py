@@ -16,6 +16,9 @@ from setuptools import setup
 from glob import glob
 import os
 
+global __version__
+__version__ = None
+
 with open('jaxlib/version.py') as f:
   exec(f.read(), globals())
 

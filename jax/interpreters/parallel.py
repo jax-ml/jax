@@ -16,7 +16,6 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from contextlib import contextmanager
 from functools import partial
 import warnings
 
@@ -27,13 +26,14 @@ from six.moves import reduce
 from .. import core
 from .. import linear_util as lu
 from ..core import Trace, Tracer, Primitive, new_master
-from ..abstract_arrays import ShapedArray, ConcreteArray, make_shaped_array
-from ..util import safe_zip, unzip2, unzip3, partialmethod, prod
+from ..abstract_arrays import ShapedArray, ConcreteArray, raise_to_shaped
+from ..util import safe_map, safe_zip, unzip2, unzip3, partialmethod, prod
 from ..lib import xla_bridge as xb
 from . import partial_eval as pe
 from . import batching
 from . import pxla
 
+map = safe_map
 zip = safe_zip
 
 def identity(x): return x
@@ -51,44 +51,23 @@ def papply_transform(name, axis_size, *args):
   with new_master(PapplyTrace) as master:
     trace = PapplyTrace(master, core.cur_sublevel())
     in_tracers = map(partial(PapplyTracer, trace, name, axis_size, axis=0), args)
-    ans = yield in_tracers, {}
-    out_tracer = trace.full_raise(ans)
-    out_val, out_axis = out_tracer.val, out_tracer.axis
-    del master, out_tracer
-  yield out_val, out_axis
+    outs = yield in_tracers, {}
+    out_tracers = map(trace.full_raise, outs)
+    out_vals, out_axes = unzip2((t.val, t.axis) for t in out_tracers)
+    del master, out_tracers
+  yield out_vals, out_axes
 
 @lu.transformation_with_aux
 def papply_subtrace(master, name, axis_size, axes, *vals):
   trace = PapplyTrace(master, core.cur_sublevel())
-  ans = yield map(partial(PapplyTracer, trace, name, axis_size), vals, axes), {}
-  out_tracer = trace.full_raise(ans)
-  out_val, out_axis = out_tracer.val, out_tracer.axis
-  yield out_val, out_axis
+  outs = yield map(partial(PapplyTracer, trace, name, axis_size), vals, axes), {}
+  out_tracers = map(trace.full_raise, outs)
+  out_vals, out_axes = unzip2((t.val, t.axis) for t in out_tracers)
+  yield out_vals, out_axes
 
-def match_axis(src, dst, x):
-  assert type(src) is int
-  if src == dst:
-    return x
-  else:
-    return _match_axis(src, dst, x, core.get_aval(x))
-
-def _match_axis(src, dst, x, aval):
-  if type(aval) is core.AbstractTuple:
-    if type(dst) is tuple:
-      return core.pack(map(partial(_match_axis, src), dst, x, aval))
-    else:
-      return core.pack(map(partial(_match_axis, src, dst), x, aval))
-  elif isinstance(aval, ShapedArray):
-    if type(dst) is int:
-      perm = [i for i in range(x.ndim) if i != src]
-      perm.insert(dst, src)
-      return x.transpose(perm)
-    elif dst is None:
-      return x[src]
-    else:
-      raise TypeError(dst)
-  else:
-    raise TypeError(aval)
+# TODO(mattjj); use a special sentinel type rather than None
+NotSharded = type(None)
+not_sharded = None
 
 class PapplyTracer(Tracer):
   def __init__(self, trace, name, axis_size, val, axis):
@@ -100,32 +79,39 @@ class PapplyTracer(Tracer):
 
   @property
   def aval(self):
-    batched_aval = batching.get_aval(self.val)
-    return batching.add_batch_dim_to_aval(
-        self.axis, self.axis_size, batched_aval)
-
-  def unpack(self):
-    raise NotImplementedError  # TODO(mattjj,frostig)
+    aval = raise_to_shaped(core.get_aval(self.val))
+    if self.axis is not_sharded:
+      return aval
+    else:
+      if aval is core.abstract_unit:
+        return aval
+      elif type(aval) is ShapedArray:
+        assert 0 <= self.axis < aval.ndim + 1
+        new_shape = list(aval.shape)
+        new_shape.insert(self.axis, self.axis_size)
+        return ShapedArray(tuple(new_shape), aval.dtype)
+      else:
+        raise TypeError(aval)
 
   def full_lower(self):
-    if self.axis is None:
+    if self.axis is not_sharded:
       return core.full_lower(self.val)
     else:
       return self
 
 class PapplyTrace(Trace):
   def pure(self, val):
-    return PapplyTracer(self, None, None, val, None)
+    return PapplyTracer(self, None, None, val, not_sharded)
 
   def lift(self, val):
-    return PapplyTracer(self, None, None, val, None)
+    return PapplyTracer(self, None, None, val, not_sharded)
 
   def sublift(self, val):
     return PapplyTracer(self, val.name, val.axis_size, val.val, val.axis)
 
   def process_primitive(self, primitive, tracers, params):
     names, vals, axes = unzip3((t.name, t.val, t.axis) for t in tracers)
-    if all(axis is None for axis in axes):
+    if all(axis is not_sharded for axis in axes):
       return primitive.bind(*vals, **params)
     else:
       name, = {n for n in names if n is not None}
@@ -135,15 +121,18 @@ class PapplyTrace(Trace):
       return PapplyTracer(self, name, size, val_out, axis_out)
 
   def process_call(self, call_primitive, f, tracers, params):
+    if call_primitive in pe.map_primitives:
+      return self.process_map(call_primitive, f, tracers, params)
     names, vals, axes = unzip3((t.name, t.val, t.axis) for t in tracers)
-    if all(axis is None for axis in axes):
+    if all(axis is not_sharded for axis in axes):
       return call_primitive.bind(f, *vals, **params)
     else:
       name, = {n for n in names if n is not None}
       size, = {t.axis_size for t in tracers if t.axis_size is not None}
-      f_papply, axis_out = papply_subtrace(f, self.master, name, size, axes)
-      val_out = call_primitive.bind(f_papply, *vals, **params)
-      return PapplyTracer(self, name, size, val_out, axis_out())
+      f_papply, axes_out = papply_subtrace(f, self.master, name, size, axes)
+      vals_out = call_primitive.bind(f_papply, *vals, **params)
+      return [PapplyTracer(self, name, size, x, a)
+              for x, a in zip(vals_out, axes_out())]
 
   def post_process_call(self, call_primitive, out_tracer):
     t = out_tracer
@@ -154,12 +143,8 @@ class PapplyTrace(Trace):
       return PapplyTracer(trace, name, size, x, axis)
     return val, todo
 
-  def pack(self, tracers):
-    vals = core.pack([t.val for t in tracers])
-    axis = tuple(t.axis for t in tracers)
-    name = tuple(t.name for t in tracers)
-    size = tuple(t.axis_size for t in tracers)
-    return PapplyTracer(self, name, size, vals, axis)
+  def process_map(self, map_primitive, f, tracers, params):
+    raise NotImplementedError  # TODO(mattjj,frostig)
 
 
 papply_primitive_rules = {}

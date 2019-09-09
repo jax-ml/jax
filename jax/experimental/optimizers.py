@@ -307,7 +307,7 @@ def rmsprop_momentum(step_size, gamma=0.9, eps=1e-8, momentum=0.9):
   Returns:
     An (init_fun, update_fun, get_params) triple.
   """
-  step_size = optimizers.make_schedule(step_size)
+  step_size = make_schedule(step_size)
   def init(x0):
     avg_sq_grad = np.zeros_like(x0)
     mom = np.zeros_like(x0)
@@ -427,6 +427,14 @@ def inverse_time_decay(step_size, decay_steps, decay_rate, staircase=False):
       return step_size / (1 + decay_rate * i / decay_steps)
   return schedule
 
+def polynomial_decay(step_size, decay_steps, final_step_size, power=1.0):
+  def schedule(step_num):
+    step_num = np.minimum(step_num, decay_steps)
+    step_mult = (1 - step_num / decay_steps) ** power
+    return step_mult * (step_size - final_step_size) + final_step_size
+
+  return schedule
+
 def piecewise_constant(boundaries, values):
   boundaries = np.array(boundaries)
   values = np.array(values)
@@ -506,5 +514,6 @@ def pack_optimizer_state(marked_pytree):
   sentinels, tree_def = tree_flatten(marked_pytree)
   assert all(isinstance(s, JoinPoint) for s in sentinels)
   subtrees = [s.subtree for s in sentinels]
-  packed_state, subtree_defs = unzip2(map(tree_flatten, subtrees))
+  states_flat, subtree_defs = unzip2(map(tree_flatten, subtrees))
+  packed_state = pack(map(pack, states_flat))
   return OptimizerState(packed_state, tree_def, subtree_defs)

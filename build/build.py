@@ -285,6 +285,14 @@ def main():
       "--cudnn_path",
       default=None,
       help="Path to CUDNN libraries.")
+  parser.add_argument(
+      "--bazel_startup_options",
+      action="append", default=[],
+      help="Additional startup options to pass to bazel.")
+  parser.add_argument(
+      "--bazel_options",
+      action="append", default=[],
+      help="Additional options to pass to bazel.")
   args = parser.parse_args()
 
   print(BANNER)
@@ -316,7 +324,7 @@ def main():
       cudnn_install_path=cudnn_install_path)
 
   print("\nBuilding XLA and installing it in the jaxlib source tree...")
-  config_args = []
+  config_args = args.bazel_options
   if args.enable_march_native:
     config_args += ["--config=opt"]
   if args.enable_mkl_dnn:
@@ -324,8 +332,8 @@ def main():
   if args.enable_cuda:
     config_args += ["--config=cuda"]
   shell(
-    [bazel_path, "run", "--verbose_failures=true"] +
-    config_args +
+    [bazel_path] + args.bazel_startup_options +
+    ["run", "--verbose_failures=true"] + config_args +
     [":install_xla_in_source_tree", os.getcwd()])
   shell([bazel_path, "shutdown"])
 

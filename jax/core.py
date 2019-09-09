@@ -20,12 +20,13 @@ from operator import attrgetter
 from contextlib import contextmanager
 from collections import namedtuple, Counter, defaultdict
 from weakref import ref
+import threading
 import types
 
 import six
 
 from . import linear_util as lu
-from .util import unzip2, safe_zip, safe_map, partial, curry, WrapHashably
+from .util import safe_zip, safe_map, partial, curry
 from .pprint_util import pp, vcat, hcat, pp_kv_pairs
 
 # TODO(dougalm): the trace cache breaks the leak detector. Consisder solving.
@@ -40,67 +41,50 @@ map = safe_map
 # -------------------- jaxprs --------------------
 
 class Jaxpr(object):
-  def __init__(self, constvars, freevars, invars, outvar, eqns):
-    self.constvars = constvars
-    self.freevars = freevars
-    self.invars = invars
-    self.outvar = outvar
-    self.eqns = eqns
+  def __init__(self, constvars, freevars, invars, outvars, eqns):
+    self.constvars = list(constvars)
+    self.freevars = list(freevars)
+    self.invars = list(invars)
+    self.outvars = list(outvars)
+    self.eqns = list(eqns)
 
   def __str__(self):
     return str(pp_jaxpr(self))
-
-  def __repr__(self):
-    return self.__str__()
-
-  def copy(self):
-    return Jaxpr(self.constvars[:], self.freevars[:], self.invars[:],
-                 self.outvar, self.eqns[:])
+  __repr__ = __str__
 
 class TypedJaxpr(object):
-  def __init__(self, jaxpr, literals, in_avals, out_aval):
+  def __init__(self, jaxpr, literals, in_avals, out_avals):
     assert type(jaxpr) is Jaxpr
     assert len(literals) == len(jaxpr.constvars)
     assert len(in_avals) == len(jaxpr.invars)
+    assert all(isinstance(aval, AbstractValue) for aval in in_avals)
+    assert all(isinstance(aval, AbstractValue) for aval in out_avals)
     assert not jaxpr.freevars
 
     self.jaxpr = jaxpr
-    self.literals = literals
-    self.in_avals = in_avals
-    self.out_aval = out_aval
+    self.literals = list(literals)
+    self.in_avals = list(in_avals)
+    self.out_avals = list(out_avals)
 
   def __iter__(self):
-    return iter((self.jaxpr, self.literals, self.in_avals, self.out_aval))
+    return iter((self.jaxpr, self.literals, self.in_avals, self.out_avals))
 
   def __str__(self):
     # TODO(mattjj): improve this with type annotations?
     return str(pp_jaxpr(self.jaxpr))
-
-  def __repr__(self):
-    return self.__str__()
-
+  __repr__ = __str__
 
 @curry
 def jaxpr_as_fun(typed_jaxpr, *args):
-  invars = typed_jaxpr.jaxpr.invars
-  if not skip_checks:
-    for arg, in_aval, varname in zip(args, typed_jaxpr.in_avals, invars):
-      arg_aval = get_aval(arg)
-      if lattice_join(arg_aval, in_aval) != in_aval:
-        msg = "input type mismatch for arg {}: arg {} for parameter {}."
-        raise TypeError(msg.format(varname, arg_aval, in_aval))
-  out = eval_jaxpr(typed_jaxpr.jaxpr, typed_jaxpr.literals, (), *args)
-  if not skip_checks:
-    out_aval = get_aval(out)
-    if lattice_join(out_aval, typed_jaxpr.out_aval) != typed_jaxpr.out_aval:
-      msg = "output type mismatch: output value {} for output type {}."
-      raise TypeError(msg.format(out_aval, typed_jaxpr.out_aval))
-  return out
+  return eval_jaxpr(typed_jaxpr.jaxpr, typed_jaxpr.literals, (), *args)
 
 
-JaxprEqn = namedtuple('JaxprEqn', ['invars', 'outvars', 'primitive',
-                                   'bound_subjaxprs', 'restructure',
-                                   'destructure', 'params'])
+def new_jaxpr_eqn(*args):
+  return JaxprEqn(object(), *args)
+
+JaxprEqn = namedtuple('JaxprEqn', ['eqn_id', 'invars', 'outvars', 'primitive',
+                                   'bound_subjaxprs', 'params'])
+
 class Literal(object):
   __slots__ = ["val", "hash"]
 
@@ -130,6 +114,8 @@ class Literal(object):
 literalable_types = set()
 
 class Primitive(object):
+  multiple_results = False  # override for multi-output primitives
+
   def __init__(self, name):
     self.name = name
 
@@ -145,7 +131,10 @@ class Primitive(object):
 
     tracers = map(top_trace.full_raise, args)
     out_tracer = top_trace.process_primitive(self, tracers, kwargs)
-    return full_lower(out_tracer)
+    if self.multiple_results:
+      return map(full_lower, out_tracer)
+    else:
+      return full_lower(out_tracer)
 
   def def_impl(self, impl):
     self.impl = impl
@@ -183,34 +172,22 @@ def eval_jaxpr(jaxpr, consts, freevar_vals, *args):
 
   env = {}
   write(unitvar, unit)
-  pat_fmap(write, jaxpr.constvars, consts)
-  pat_fmap(write, jaxpr.invars, args)
-  pat_fmap(write, jaxpr.freevars, freevar_vals)
+  map(write, jaxpr.constvars, consts)
+  map(write, jaxpr.invars, args)
+  map(write, jaxpr.freevars, freevar_vals)
   for eqn in jaxpr.eqns:
-    if not eqn.restructure:
-      in_vals = map(read, eqn.invars)
-    else:
-      in_vals = [pack(map(read, invars)) if type(invars) is tuple
-                 else read(invars) for invars in eqn.invars]
+    in_vals = map(read, eqn.invars)
     subfuns = [partial(eval_jaxpr, subjaxpr, map(read, const_bindings),
                                              map(read, freevar_bindings))
                for subjaxpr, const_bindings, freevar_bindings
                in eqn.bound_subjaxprs]
     subfuns = map(lu.wrap_init, subfuns)
     ans = eqn.primitive.bind(*(subfuns + in_vals), **eqn.params)
-    outvals = list(ans) if eqn.destructure else [ans]
-    map(write, eqn.outvars, outvals)
-  return read(jaxpr.outvar)
-
-
-def pat_fmap(f, v, *xs):
-  if type(v) in (tuple, list):
-    if len(xs) == 1 and xs[0] is None:
-      return tuple(map(partial(pat_fmap, f), v, [None] * len(v)))
+    if eqn.primitive.multiple_results:
+      map(write, eqn.outvars, ans)
     else:
-      return tuple(map(partial(pat_fmap, f), v, *xs))
-  else:
-    return f(v, *xs)
+      write(eqn.outvars[0], ans)
+  return map(read, jaxpr.outvars)
 
 
 def full_lower(val):
@@ -281,7 +258,7 @@ class Trace(object):
 
 class Tracer(object):
   __array_priority__ = 1000
-  __slots__ = ['trace']
+  __slots__ = ['trace', '__weakref__']
 
   def __array__(self):
     raise Exception("Tracer can't be used with raw numpy functions. "
@@ -425,42 +402,50 @@ class TraceStack(object):
       map('  {}\n'.format, self.downward))
 
 
-trace_stack = TraceStack()
-
 class Sublevel(int): pass
-substack = [Sublevel(0)]
+
+# The global state of the tracer is accessed by a thread-local object.
+# This allows concurrent tracing in separate threads; passing traced objects
+# between threads is forbidden.
+class TraceState(threading.local):
+  def __init__(self):
+    self.trace_stack = TraceStack()
+    self.substack = [Sublevel(0)]
+
+trace_state = TraceState()
+
 
 def cur_sublevel():
-  return substack[-1]
+  return trace_state.substack[-1]
 
 
 @contextmanager
 def new_master(trace_type, bottom=False):
-  level = trace_stack.next_level(bottom)
+  level = trace_state.trace_stack.next_level(bottom)
   master = MasterTrace(level, trace_type)
-  trace_stack.push(master, bottom)
+  trace_state.trace_stack.push(master, bottom)
 
   try:
     yield master
   finally:
-    trace_stack.pop(bottom)
+    trace_state.trace_stack.pop(bottom)
 
   if check_leaks:
     t = ref(master)
     del master
     if t() is not None:
-      print(trace_stack)
+      print(trace_state.trace_stack)
       raise Exception('Leaked trace {}'.format(t()))
 
 
 @contextmanager
 def new_sublevel():
-  sublevel = Sublevel(len(substack))
-  substack.append(sublevel)
+  sublevel = Sublevel(len(trace_state.substack))
+  trace_state.substack.append(sublevel)
   try:
     yield
   finally:
-    substack.pop()
+    trace_state.substack.pop()
 
   if check_leaks:
     t = ref(sublevel)
@@ -489,6 +474,11 @@ class Bot(AbstractValue): pass
 
 bot = Bot()
 
+class AbstractUnit(AbstractValue):
+  def join(self, other): return self
+  def _eq(self, self_traced, other): return get_aval(other) is self
+
+abstract_unit = AbstractUnit()
 
 def lattice_join(x, y):
   if x is None:
@@ -529,142 +519,58 @@ def get_aval(x):
 pytype_aval_mappings = {}
 
 
-# ------------------- Products -------------------
+class Unit(object):
+  def __repr__(self): return '*'
+unit = Unit()
+literalable_types.add(Unit)
 
-# We override isinstance(x, JaxTuple) behavior (using a metaclass) because
-# defining __slots__ (for performance) is incompatible with multiple
-# inheritance, and both isinstance(x, JaxTuple) and isinstance(x, DeviceValue)
-# can be true.
-class _TupleMeta(type(tuple)):
-  def __instancecheck__(self, instance):
-    try:
-      return type(get_aval(instance)) is AbstractTuple
-    except TypeError:
-      return False
+class UnitVar(object):
+  def __repr__(self): return '*'
+unitvar = UnitVar()
 
-class JaxTuple(six.with_metaclass(_TupleMeta)):
-  __slots__ = ['xs']
-
-  def __init__(self, xs):
-    self.xs = xs = tuple(xs)
-    if not skip_checks:
-      assert all(map(valid_jaxtype, xs)), xs
-
-  def __iter__(self):
-    return iter(self.xs)
-
-  def __len__(self):
-    return len(self.xs)
-
-  def __repr__(self):
-    if self is unit:
-      return unitvar
-    else:
-      return 'JaxTuple({})'.format(','.join(map(repr, self)))
-
-  def __eq__(self, other):
-    return isinstance(other, JaxTuple) and tuple(self) == tuple(other)
-
-
-class AbstractTuple(AbstractValue, tuple):
-  def __new__(cls, xs=()):
-    if not skip_checks:
-      xs = tuple(xs)
-      assert all(isinstance(x, AbstractValue) for x in xs), xs
-    return tuple.__new__(cls, xs)
-
-  @staticmethod
-  def _iter(tracer):
-    return map(full_lower, tracer.unpack())
-
-  def _len(self, ignored_tracer):
-    return len(self)  # tuples have a known length
-
-  def at_least_vspace(self):
-    return AbstractTuple(x.at_least_vspace() for x in self)
-
-  def join(self, other):
-    return AbstractTuple(map(lattice_join, self, other))
-
-  def __repr__(self):
-    return '({})'.format(','.join(map(repr, self)))
-
-  def _bool(self, ignored_tracer):
-    return bool(self)
-  _nonzero = _bool
-
-  def _eq(self, self_traced, other):
-    return tuple(self_traced) == tuple(other)
-
-
-unit = JaxTuple(())
-unitvar = '*'
-
-def tuple_to_jaxtuple(x):
-  if type(x) is tuple:
-    return JaxTuple(map(tuple_to_jaxtuple, x))
-  else:
-    return x
-
-def pack(args):
-  return pack_p.bind(*args)
-
-def concrete_jaxtuple(xs):
-  return AbstractTuple(map(concrete_aval, xs))
-
-pytype_aval_mappings[JaxTuple] = concrete_jaxtuple
+pytype_aval_mappings[Unit] = lambda _: abstract_unit
 
 identity_p = Primitive('id')
 identity_p.def_impl(lambda x: x)
 identity_p.def_custom_bind(lambda x: x)
 
-pack_p = Primitive('pack')
-pack_p.def_impl(lambda *xs: JaxTuple(xs))
-
-@pack_p.def_custom_bind
-def pack_p_bind(*args):
-  top_trace = find_top_trace(args)
-  if top_trace is None:
-    return JaxTuple(args)
-  else:
-    tracers = map(top_trace.full_raise, args)
-    return top_trace.pack(tracers)
-
-
 # ------------------- Call -------------------
 
 
-def apply_todos(todos, x):
+def apply_todos(todos, outs):
   while todos:
-    x = full_lower(todos.pop()(x))
-    assert skip_checks or isinstance(x, Tracer) or valid_jaxtype(x), x
-  return x
+    outs = map(full_lower, todos.pop()(outs))
+  return outs
 
 @lu.transformation_with_aux
 def process_env_traces(primitive, level, params_tuple, *args):
-  ans = yield args, {}
+  outs = yield args, {}
+  params = dict(params_tuple)
   todo = []
-  while isinstance(ans, Tracer) and ans.trace.level > level:
-    t = ans.trace
-    sublevel = cur_sublevel()
-    trace = type(t)(t.master, sublevel)
-    ans = trace.full_raise(ans)
-    ans, cur_todo = ans.trace.post_process_call(primitive, ans, dict(params_tuple))
+  while True:
+    tracers = [x for x in outs if isinstance(x, Tracer) and x.trace.level > level]
+    if tracers:
+      ans = max(tracers, key=lambda x: x.trace.level)
+    else:
+      break
+    trace = type(ans.trace)(ans.trace.master, cur_sublevel())
+    outs = map(trace.full_raise, outs)
+    outs, cur_todo = trace.post_process_call(primitive, outs, params)
     todo.append(cur_todo)
-  yield ans, todo
+  yield outs, todo
 
 def call_bind(primitive, f, *args, **params):
   top_trace = find_top_trace(args)
-  level = trace_stack.next_level(True) if top_trace is None else top_trace.level
+  level = trace_state.trace_stack.next_level(True) if top_trace is None else top_trace.level
   params_tuple = tuple(params.items())
   f, env_trace_todo = process_env_traces(f, primitive, level, params_tuple)
   if top_trace is None:
     with new_sublevel():
-      ans = primitive.impl(f, *args, **params)
+      outs = primitive.impl(f, *args, **params)
   else:
     tracers = map(top_trace.full_raise, args)
-    ans = full_lower(top_trace.process_call(primitive, f, tracers, params))
-  return apply_todos(env_trace_todo(), ans)
+    outs = map(full_lower, top_trace.process_call(primitive, f, tracers, params))
+  return apply_todos(env_trace_todo(), outs)
 
 
 def call_impl(f, *args, **params):
@@ -697,21 +603,17 @@ def check_jaxpr(jaxpr):
   write = partial(write_env, env)
 
   write(unitvar)
-  pat_fmap(write, jaxpr.constvars)
-  pat_fmap(write, jaxpr.freevars)
-  pat_fmap(write, jaxpr.invars)
+  map(write, jaxpr.constvars)
+  map(write, jaxpr.freevars)
+  map(write, jaxpr.invars)
   for eqn in jaxpr.eqns:
-    if not eqn.restructure:
-      map(read, eqn.invars)
-    else:
-      [map(read, invar) if type(invar) is tuple else read(invar)
-       for invar in eqn.invars]
+    map(read, eqn.invars)
     for subjaxpr, constvars, freevars in eqn.bound_subjaxprs:
       map(read, freevars)
       map(read, constvars)
       check_jaxpr(subjaxpr)
     map(write, eqn.outvars)
-  read(jaxpr.outvar)
+  map(read, jaxpr.outvars)
 
 
 def pp_jaxpr(jaxpr):
@@ -719,11 +621,7 @@ def pp_jaxpr(jaxpr):
     return ' '.join(map(str, vs))
 
   def pp_eqn(eqn):
-    if eqn.destructure:
-      lhs = '(' + print_vars(eqn.outvars) + ')'
-    else:
-      lhs = eqn.outvars[0]
-
+    lhs = print_vars(eqn.outvars)
     pp_subexpr = pp('')
     if eqn.bound_subjaxprs:
       for subjaxpr, const_vars, bound_vars in eqn.bound_subjaxprs:
@@ -740,4 +638,4 @@ def pp_jaxpr(jaxpr):
                                               print_vars(jaxpr.invars))) +
           ((pp('let ') >>
             vcat(map(pp_eqn, jaxpr.eqns))) +
-           pp('in {} }}'.format(jaxpr.outvar))).indent(2))
+           pp('in {} }}'.format(jaxpr.outvars))).indent(2))

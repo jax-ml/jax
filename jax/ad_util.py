@@ -16,20 +16,14 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from .core import JaxTuple, lattice_join, Primitive, AbstractTuple
+from .core import lattice_join, Primitive, Unit, unit, AbstractUnit, abstract_unit
 from .tree_util import register_pytree_node
 from .util import safe_map
 
 map = safe_map
 
 jaxval_adders = {}
-
-def add_jaxtuples(xs, ys):
-  assert len(xs) == len(ys)
-  return JaxTuple(map(add_impl, xs, ys))
-
-jaxval_adders[JaxTuple] = add_jaxtuples
-
+jaxval_adders[Unit] = lambda _, __: unit
 
 def add_jaxvals(x, y):
   return add_jaxvals_p.bind(x, y)
@@ -49,17 +43,12 @@ def zeros_like_impl_jaxtuple(xs):
   return JaxTuple(map(zeros_like_impl, xs))
 
 jaxval_zeros_likers = {}
-jaxval_zeros_likers[JaxTuple] = zeros_like_impl_jaxtuple
-
 
 def zeros_like_aval(aval):
   return aval_zeros_likers[type(aval)](aval)
+
 aval_zeros_likers = {}
-
-def zeros_like_abstract_tuple(tup):
-  return JaxTuple(map(zeros_like_aval, tup))
-aval_zeros_likers[AbstractTuple] = zeros_like_abstract_tuple
-
+aval_zeros_likers[AbstractUnit] = lambda _: unit
 
 def zeros_like_jaxval(val):
   return zeros_like_p.bind(val)
@@ -71,7 +60,6 @@ def zeros_like_impl(example):
   return jaxval_zeros_likers[type(example)](example)
 
 zeros_like_p.def_abstract_eval(lambda x: x)
-
 
 class Zero(object):
   def __repr__(self):

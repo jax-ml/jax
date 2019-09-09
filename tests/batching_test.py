@@ -26,7 +26,7 @@ from jax.abstract_arrays import ShapedArray
 from jax import lax
 from jax import lax_linalg
 from jax import random
-from jax.api import jit, grad, jvp, vjp, trace_to_jaxpr, jacfwd, jacrev, hessian
+from jax.api import jit, grad, jvp, vjp, make_jaxpr, jacfwd, jacrev, hessian
 from jax.api import vmap
 from jax.core import unit
 from jax.interpreters import partial_eval as pe
@@ -36,6 +36,9 @@ import jax.ops
 from jax.config import config
 config.parse_flags_with_absl()
 
+
+# These are 'manual' tests for batching (vmap). The more exhaustive, more
+# systematic tests are in lax_test.py's LaxVmapTest class.
 
 class BatchingTest(jtu.JaxTestCase):
 
@@ -56,16 +59,7 @@ class BatchingTest(jtu.JaxTestCase):
     expected = onp.dot(A, B)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    # this is a crude check that we only call a single dot
-    def pv_like(x):
-      aval = ShapedArray(onp.shape(x), onp.result_type(x))
-      return pe.PartialVal((aval, unit))
-
-    def make_jaxpr(fun, example_args):
-      jaxpr, _, _, _ = trace_to_jaxpr(fun, map(pv_like, example_args))
-      return jaxpr
-
-    jaxpr = make_jaxpr(matmat, (A, B))
+    jaxpr = make_jaxpr(matmat)(A, B)
     self.assertEqual(len(jaxpr.eqns), 1)
 
   def testPerExampleGradients(self):
@@ -954,6 +948,14 @@ class BatchingTest(jtu.JaxTestCase):
     f = lambda x, idx, y: jax.ops.index_add(x, jax.ops.index[idx], y)
     result = vmap(f, (None, 0, None))(onp.zeros((10,)), onp.arange(10,), 1.)
     self.assertAllClose(result, onp.eye(10), check_dtypes=False)
+
+  def testIssue1170(self):
+    def f(index1, index2):
+      return np.arange(36).reshape(6, 6)[index1, index2]
+    g = jax.jit(jax.pmap(f))
+    ans = g(index1=onp.asarray([1]), index2=onp.asarray([2]))
+    expected = g(onp.asarray([1]), onp.asarray([2]))
+    self.assertAllClose(ans, expected, check_dtypes=True)
 
 
 if __name__ == '__main__':

@@ -57,8 +57,6 @@ acos = onp.arccos
 atan = onp.arctan
 sinh = onp.sinh
 cosh = onp.cosh
-asinh = onp.arcsinh
-acosh = onp.arccosh
 
 lgamma = scipy.special.gammaln
 digamma = scipy.special.digamma
