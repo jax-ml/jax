@@ -174,12 +174,12 @@ def _execute_compiled_primitive(prim, compiled, backend, result_handler, *args):
   if FLAGS.jax_debug_nans: check_nans(prim, out_buf)
   return result_handler(out_buf)
 
-def check_nans(prim, buf):
+def check_nans(prim, bufs):
   if prim.multiple_results:
-    shapes = buf.shape().tuple_shapes()
-    _map(partial(_check_nans, prim.name), shapes, buf.destructure())
+    for buf in bufs:
+      _check_nans(prim.name, buf.shape(), buf)
   else:
-    _check_nans(prim.name, buf.shape(), buf)
+    _check_nans(prim.name, bufs.shape(), bufs)
 
 def _check_nans(name, xla_shape, buf):
   if xla_shape.is_tuple():
@@ -197,7 +197,7 @@ def compile_jaxpr(jaxpr, device_assignment, backend, axis_env, const_vals, *abst
   if axis_env.nreps > xb.device_count(backend):
     msg = ("compiling computation that requires {} replicas, but only {} XLA "
            "devices are available")
-    raise ValueErrr(msg.format(axis_env.nreps, xb.device_count(backend)))
+    raise ValueError(msg.format(axis_env.nreps, xb.device_count(backend)))
   arg_shapes = tuple(map(aval_to_xla_shape, abstract_args))
   built_c = jaxpr_computation(jaxpr, backend, axis_env, const_vals, (), *arg_shapes)
   compile_opts = xb.get_compile_options(num_replicas=axis_env.nreps,
@@ -401,14 +401,14 @@ def _execute_compiled(compiled, backend, handlers, *args):
   device_num, = compiled.DeviceOrdinals()
   input_bufs = [device_put(x, device_num, backend=backend) for x in args]
   out_bufs = compiled.Execute(input_bufs).destructure()
-  if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_buf)
+  if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_bufs)
   return [handler(out_buf) for handler, out_buf in zip(handlers, out_bufs)]
 
 def _execute_replicated(compiled, backend, handlers, *args):
   input_bufs = [[device_put(x, i, backend=backend) for x in args]
                 for i in compiled.DeviceOrdinals()]
   out_bufs = compiled.ExecutePerReplica(input_bufs)[0].destructure()
-  if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_buf)
+  if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_bufs)
   return [handler(out_buf) for handler, out_buf in zip(handlers, out_bufs)]
 
 
