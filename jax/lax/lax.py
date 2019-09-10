@@ -2236,35 +2236,45 @@ def _dot_general_transpose_rhs(g, x, dimension_numbers, precision):
 
 def _dot_general_batch_rule(batched_args, batch_dims, dimension_numbers,
                             precision):
+  # there are three kinds of dimensions in a dot_general:
+  # - contraction dimensions appear in lhs and rhs but not the result
+  # - batch dimensions appear in lhs, rhs, and result
+  # - tensor product dimensions appear in the result and one of lhs or rhs
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
   lhs, rhs = batched_args
   lbd, rbd = batch_dims
   assert lbd is not None or rbd is not None
-
-  if lbd is not None:
+  if lbd is not None and rbd is not None:
+    # adding a batch dimension
     if lbd != 0:
       lhs = batching.moveaxis(lhs, lbd, 0)
-      lbd = 0
-  else:
-    assert rbd is not None
-    lhs = broadcast(lhs, (rhs.shape[rbd],))
-  lhs_contract = tuple(onp.add(1, lhs_contract))
-  lhs_batch = (0,) + tuple(onp.add(1, lhs_batch))
-
-  if rbd is not None:
     if rbd != 0:
       rhs = batching.moveaxis(rhs, rbd, 0)
-      rbd = 0
+    lhs_batch = (0,) + tuple(onp.add(1, lhs_batch))
+    rhs_batch = (0,) + tuple(onp.add(1, rhs_batch))
+    lhs_contract = tuple(onp.add(1, lhs_contract))
+    rhs_contract = tuple(onp.add(1, rhs_contract))
+    result_batch_dim = 0
   else:
-    assert lbd is not None
-    rhs = broadcast(rhs, (lhs.shape[lbd],))
-  rhs_contract = tuple(onp.add(1, rhs_contract))
-  rhs_batch = (0,) + tuple(onp.add(1, rhs_batch))
-
+    # adding a tensor product dimension
+    if lbd is not None:
+      # make sure it's the last lhs dimension to avoid changing batch dims
+      if lbd != lhs.ndim - 1:
+        lhs = batching.moveaxis(lhs, lbd, lhs.ndim - 1)
+      # lhs tensor product dims in result come after batch dims
+      result_batch_dim = lhs.ndim - len(lhs_contract) - 1
+    else:
+      # make sure it's the last rhs dimension to avoid changing batch dims
+      if rbd != rhs.ndim - 1:
+        rhs = batching.moveaxis(rhs, rbd, rhs.ndim - 1)
+      # rhs tensor product dims in result come after batch dims + lhs tensor
+      # product dims
+      result_batch_dim = (lhs.ndim - len(lhs_contract) - len(lhs_batch) +
+                          rhs.ndim - len(rhs_contract) - 1)
   new_dimension_numbers = [(lhs_contract, rhs_contract), (lhs_batch, rhs_batch)]
   batched_out = dot_general(lhs, rhs, new_dimension_numbers,
                             precision=precision)
-  return batched_out, 0
+  return batched_out, result_batch_dim
 
 def _dot_general_translation_rule(c, lhs, rhs, dimension_numbers, precision):
   return c.DotGeneral(lhs, rhs, dimension_numbers,
