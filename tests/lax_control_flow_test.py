@@ -972,6 +972,15 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     out = lax.while_loop(lambda _: False, lambda _: (), ())  # doesn't crash
     self.assertEqual(out, ())
 
+  def testIssue1316(self):
+    def f(carry, _):
+      c, key = carry
+      key, _ = random.split(key)
+      return (c, key), ()
+
+    key = random.PRNGKey(0)
+    api.grad(lambda c: lax.scan(f, (c, key), onp.ones(3))[0][0])(0.)  # doesn't crash
+
 
 if __name__ == '__main__':
   absltest.main()
