@@ -274,15 +274,19 @@ def _axis_index_partial_eval(trace, _, **params):
   # This partial_eval rule adds the axis_index primitive into the jaxpr formed
   # during pmap lowering. It is like the standard JaxprTrace.process_primitive
   # rule except that we don't attempt to lower out of the trace.
-  out_aval = ShapedArray((), onp.uint32)
+  out_aval = ShapedArray((), onp.int32)
   out_tracer = pe.JaxprTracer(trace, pe.PartialVal((out_aval, core.unit)), None)
   eqn = core.new_jaxpr_eqn([], [out_tracer], axis_index_p, (), params)
   out_tracer.recipe = eqn
   return out_tracer
 
+def _axis_index_translation_rule(c, hard_size, soft_size, axis_name):
+  unsigned_index = c.Rem(c.ReplicaId(),
+                         c.Constant(onp.array(hard_size, onp.uint32)))
+  return c.ConvertElementType(unsigned_index, xb.dtype_to_etype(onp.int32))
+
 axis_index_p = core.Primitive('axis_index')
-xla.translations[axis_index_p] = lambda c, hard_size, soft_size, axis_name: \
-    c.Rem(c.ReplicaId(), c.Constant(onp.array(hard_size, onp.uint32)))
+xla.translations[axis_index_p] = _axis_index_translation_rule
 pe.custom_partial_eval_rules[axis_index_p] = _axis_index_partial_eval
 
 
