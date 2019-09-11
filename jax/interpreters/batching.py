@@ -139,10 +139,11 @@ class BatchTrace(Trace):
       is_batched = tuple(d is not not_mapped for d in dims)
       vals = [moveaxis(x, d, 1) if d is not not_mapped and d != 1 else x
               for x, d in zip(vals, dims)]
-      dims = tuple(not_mapped if d is not_mapped else 1 for d in dims)
+      dims = tuple(not_mapped if d is not_mapped else 0 for d in dims)
       f, dims_out = batch_subtrace(f, self.master, dims)
       vals_out = map_primitive.bind(f, *vals, **params)
-      return [BatchTracer(self, v, d) for v, d in zip(vals_out, dims_out())]
+      dims_out = tuple(d + 1 if d is not not_mapped else d for d in dims_out())
+      return [BatchTracer(self, v, d) for v, d in zip(vals_out, dims_out)]
 
   def post_process_call(self, call_primitive, out_tracers, params):
     vals, dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
