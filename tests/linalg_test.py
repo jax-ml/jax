@@ -99,18 +99,26 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),
-       "n": n, "dtype": dtype, "rng": rng}
-      for n in [0, 4, 10, 200]
+       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype, "rng": rng}
+      for shape in [(0, 0), (1, 1), (3, 3), (4, 4), (10, 10), (200, 200),
+                    (2, 2, 2), (2, 3, 3), (3, 2, 2)]
       for dtype in float_types + complex_types
       for rng in [jtu.rand_default()]))
-  def testSlogdet(self, n, dtype, rng):
+  def testSlogdet(self, shape, dtype, rng):
     _skip_if_unsupported_type(dtype)
-    args_maker = lambda: [rng((n, n), dtype)]
+    args_maker = lambda: [rng(shape, dtype)]
 
     self._CheckAgainstNumpy(onp.linalg.slogdet, np.linalg.slogdet, args_maker,
                             check_dtypes=True, tol=1e-3)
     self._CompileAndCheck(np.linalg.slogdet, args_maker, check_dtypes=True)
+
+  def testIssue1213(self):
+    for n in range(5):
+      mat = np.array([onp.diag(onp.ones([5], dtype=onp.float32))*(-.01)] * 2)
+      args_maker = lambda: [mat]
+      self._CheckAgainstNumpy(onp.linalg.slogdet, np.linalg.slogdet, args_maker,
+                              check_dtypes=True, tol=1e-3)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}".format(
