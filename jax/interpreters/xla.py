@@ -162,7 +162,7 @@ def primitive_computation(prim, *xla_shapes, **params):
   try:
     return c.Build()
   except RuntimeError as e:
-    msg = (e.message + "\n"
+    msg = (" ".join(map(str, e.args)) + "\n"
            "This is a bug in JAX's shape-checking rules; please report it!\n"
            "https://github.com/google/jax/issues\n")
     raise RuntimeError(msg)
