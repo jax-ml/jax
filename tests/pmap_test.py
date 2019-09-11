@@ -488,7 +488,8 @@ class PmapTest(jtu.JaxTestCase):
       keys = np.broadcast_to(keys, (N_DEVICES,) + keys.shape)
       return g(keys)
 
-    s(keys)
+    ans = s(keys)  # doesn't crash
+    self.assertEqual(ans.shape, (13, N_DEVICES))
 
   def testVmapOfPmapNonLeadingAxis(self):
     device_count = xla_bridge.device_count()
