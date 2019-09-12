@@ -1,14 +1,29 @@
+from functools import partial
 from lax import *
 import jax.numpy as np
 from ..interpreters import fdb
+from ..interpreters import xla
 
-def make_derivs_neg(primals,order):
-  ans = neg(*primals)
+
+def deflinear(prim):
+  fdb.jet_rules[prim] = partial(linear_jet, prim)
+
+def linear_jet(prim, primals, order, **params):
+  ans = prim.bind(*primals, **params)
+  def fst(vs):
+    vs, = vs
+    return prim.bind(*vs, **params)
   def nth(vs):
-    return vs[0]
-  derivs = itertools.chain(itertools.repeat(nth))
-  return ans, list(itertools.islice(derivs,order))
-fdb.jet_rules[neg_p] = make_derivs_neg
+    return np.zeros_like(ans)
+  derivs = itertools.chain([fst], itertools.repeat(nth))
+  return ans, list(itertools.islice(derivs, order))
+
+deflinear(neg_p)
+deflinear(slice_p)
+deflinear(xla.device_put_p)
+deflinear(reshape_p)
+deflinear(concatenate_p)  # TODO
+
 
 def make_derivs_sin(primals, order):
   x, = primals

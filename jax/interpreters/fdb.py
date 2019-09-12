@@ -54,7 +54,7 @@ class JetTrace(core.Trace):
   def process_primitive(self, primitive, tracers, params):
     primals_in, series_in = unzip2((t.primal, t.terms) for t in tracers)
     order, = {len(terms) for terms in series_in if terms is not zero_series}
-    primal_out, derivs = jet_rules[primitive](primals_in, order)
+    primal_out, derivs = jet_rules[primitive](primals_in, order, **params)
     series_in = [[zero_term] * order if s is zero_series else s
                  for s in series_in]
     series_in = [[onp.zeros_like(x) if t is zero_term else t for t in series]
