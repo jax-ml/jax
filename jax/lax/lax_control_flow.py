@@ -42,7 +42,7 @@ from jax.lib import xla_client
 from jax.util import (partial, unzip2, safe_map, safe_zip, split_list,
                       split_dict, cache)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
-                           treedef_children)
+                           treedef_children, treedef_tuple, tree_map)
 from jax import ad_util
 
 _map = safe_map
@@ -824,25 +824,106 @@ def _memcpy(axis, num, src, dst, offset):
 masking.masking_rules[lax.concatenate_p] = _concat_masking_rule
 
 
-def root(f, initial_guess, solve=solve, tangent_solve=tangent_solve):
+def root(f, initial_guess, solve, tangent_solve):
+  """Differentiably solve for the roots of a function.
+
+  Args:
+    f: function for which to find a root. Should return a tree of arrays with
+      the same structure as its input argument.
+    initial_guess: initial guess for a zero of f.
+    solve: callable that takes two positional arguments, f and initial_guess,
+      and returns a solution with the same structure as initial_guess such
+      that func(solution) = 0. In other words, the following is assumed to be
+      true (but not checked):
+        solution = solve(f, initial_guess)
+        error = f(solution)
+        assert all(error == 0)
+    tangent_solve: callable that takes two positional arguments, a linear
+      function ``f`` and a tree of array(s) ``y`` with the same structure as
+      initial_guess, and returns a solution ``x`` such that ``f(x)=y``:
+
+      - For scalar ``y``, use ``lambda f, y: y / f(1.0)``.
+      - For vector ``y``, you could use a linear solve with the Jacobian, if
+        dimensionality of ``y`` is not too large:
+        ``lambda f, y: np.linalg.solve(jacobian(f)(y), y)``.
+
+  Returns:
+    The result of calling solve(f, initial_guess) with gradients defined via
+    implicit differentiation assuming f(solve(f, initial_guess)) = 0.
+  """
   guess_flat, in_tree = tree_flatten((initial_guess,))
   guess_avals = tuple(_map(_abstractify, guess_flat))
   jaxpr, consts, out_tree = _initial_style_jaxpr(f, in_tree, guess_avals)
-  assert out_tree == in_tree
-  out_flat = root_p.bind(*consts, jaxpr=jaxpr, solve=solve,
-                         tangent_solve=tangent_solve)
+  assert treedef_tuple([out_tree]) == in_tree
+  out_flat = root_p.bind(*itertools.chain(consts, guess_flat),
+                         tree=out_tree, num_consts=len(consts),
+                         jaxpr=jaxpr, solve=solve, tangent_solve=tangent_solve)
   return tree_unflatten(out_tree, out_flat)
 
+
 def _root_abstract_eval(*args, **kwargs):
-  del kwargs  # Unused.
-  return args
+  return args[kwargs['num_consts']:]
+
+
+def _solve_flat(solve, f_jaxpr, consts, guess_flat, tree):
+
+  def f(x):
+    x_flat, treedef = tree_flatten(x)
+    assert treedef == tree
+    error_flat = core.jaxpr_as_fun(f_jaxpr)(*itertools.chain(consts, x_flat))
+    return tree_unflatten(tree, error_flat)
+
+  initial_guess = tree_unflatten(tree, guess_flat)
+  out = solve(f, initial_guess)
+  out_flat, out_tree = tree_flatten(out)
+  assert out_tree == tree
+  return out_flat
+
 
 def _root_impl(*args, **kwargs):
-  jaxpr, solve, _ = split_dict(kwargs, ['jaxpr', 'solve', 'tangent_solve'])
-  f = core.jaxpr_as_fun(jaxpr)
-  return solve(f, args)
+  tree, num_consts, jaxpr, solve, _ = split_dict(
+      kwargs, ['tree', 'num_consts', 'jaxpr', 'solve', 'tangent_solve'])
+
+  consts = args[:num_consts]
+  guess = args[num_consts:]
+  return _solve_flat(solve, jaxpr, consts, guess, tree)
+
+
+def _root_jvp(
+    primals, tangents, tree, num_consts, jaxpr, solve, tangent_solve):
+  # F(u(m), m) = 0  # system of equations in m
+  # ∂_0 F(u(m), m) ∂ u(m) + ∂_1 F(u(m), m) = 0
+  # ∂ u(m) = - (∂_0 F(u*, m))^{-1} ∂_1 F(u*, m)
+
+  consts = primals[:num_consts]
+  guess = primals[num_consts:]
+  solution = _solve_flat(solve, jaxpr, consts, guess, tree)
+
+  unchecked_zeros, f_jvp = ad.vjp(
+      lu.wrap_init(core.jaxpr_as_fun(jaxpr)), consts + tuple(solution)
+  )
+
+  def calc_grad_wrt_solution(x):
+    x_flat, treedef = tree_flatten(x)
+    assert treedef == tree
+    y_flat = f_jvp(*x_flat)[num_consts:]
+    return tree_unflatten(tree, y_flat)
+
+  grad_wrt_params = tree_unflatten(
+      tree, f_jvp(*tangents[:num_consts])[:num_consts])
+  grad_solution, grad_tree = tree_flatten(tree_map(
+      operator.neg, tangent_solve(calc_grad_wrt_solution, grad_wrt_params),
+  ))
+  assert grad_tree == tree
+  return solution, grad_solution
+
+def _root_batch(args, dims, **params):
+  return batching.batch_fun(lu.wrap_init(_root_impl, params), args, dims)
+
 
 root_p = core.Primitive('root')
 root_p.multiple_results = True
-root_p.def_impl = _root_impl
-xla.initial_style_translations[scan_p] = xla.lower_fun(_root_impl, initial_style=True)
+root_p.def_impl(_root_impl)
+ad.primitive_jvps[root_p] = _root_jvp
+xla.initial_style_translations[root_p] = xla.lower_fun(_root_impl, initial_style=True)
+batching.primitive_batchers[root_p] = _root_batch

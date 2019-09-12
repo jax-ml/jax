@@ -981,6 +981,50 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     key = random.PRNGKey(0)
     api.grad(lambda c: lax.scan(f, (c, key), onp.ones(3))[0][0])(0.)  # doesn't crash
 
+  def test_root(self):
+
+    def scalar_solve(f, y):
+      return y / f(1.0)
+
+    def binary_search(func, x0, low=0.0, high=100.0, tolerance=1e-6):
+      del x0  # unused
+
+      def cond(state):
+        low, high = state
+        return high - low > tolerance
+
+      def body(state):
+        low, high = state
+        midpoint = 0.5 * (low + high)
+        update_upper = func(midpoint) > 0
+        low = np.where(update_upper, low, midpoint)
+        high = np.where(update_upper, midpoint, high)
+        return (low, high)
+
+      solution, _ = lax.while_loop(cond, body, (low, high))
+      return solution
+
+    def sqrt_cubed(x, tangent_solve=scalar_solve):
+      f = lambda y: y ** 2 - x ** 3
+      return lax.root(f, 0.0, binary_search, tangent_solve)
+
+    value, grad = api.value_and_grad(sqrt_cubed)(5.0)
+    self.assertAllClose(value, 5 ** 1.5, check_dtypes=False)
+    self.assertAllClose(grad, api.grad(pow)(5.0, 1.5), check_dtypes=False)
+
+    inputs = np.array([4.0, 5.0])
+    results = api.vmap(sqrt_cubed)(inputs)
+    self.assertAllClose(results, inputs ** 1.5, check_dtypes=False)
+
+    def nd_solve(f, y):
+      g = lambda z: f(z.reshape(y.shape)).ravel()
+      jacobian = api.jacobian(g)(y.ravel())
+      return np.linalg.solve(jacobian, y.ravel()).reshape(y.shape)
+
+    sqrt_cubed_alt = partial(sqrt_cubed, tangent_solve=nd_solve)
+    value, grad = api.value_and_grad(sqrt_cubed_alt)(5.0)
+    self.assertAllClose(grad, api.grad(pow)(5.0, 1.5), check_dtypes=False)
+
 
 if __name__ == '__main__':
   absltest.main()
