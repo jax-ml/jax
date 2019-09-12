@@ -845,10 +845,11 @@ def root(f, initial_guess, solve, tangent_solve):
         error = f(solution)
         assert all(error == 0)
 
-    tangent_solve: function to solve the tangent system. Should takes two
-      positional arguments, a linear function ``g`` and a tree of array(s)
-      ``y`` with the same structure as initial_guess, and returns a solution
-      ``x`` such that ``g(x)=y``:
+    tangent_solve: function to solve the tangent system. Should take two
+      positional arguments, a linear function ``g`` (the function ``f``
+      linearized at its root) and a tree of array(s) ``y`` with the same
+      structure as initial_guess, and return a solution ``x`` such that
+      ``g(x)=y``:
 
       - For scalar ``y``, use ``lambda g, y: y / g(1.0)``.
       - For vector ``y``, you could use a linear solve with the Jacobian, if
