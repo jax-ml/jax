@@ -17,13 +17,14 @@ from __future__ import division
 from __future__ import print_function
 
 from functools import partial
+from unittest import SkipTest
 
 import numpy as onp
 from absl.testing import absltest
 from absl.testing import parameterized
 
 from jax import test_util as jtu
-from jax.interpreters.masking import ShapeError
+from jax.interpreters.masking import ShapeError, shape_as_value
 from jax import mask, vmap, jit, Shape, shapecheck, s_
 from jax import lax
 import jax.numpy as np
@@ -181,6 +182,25 @@ class MaskingTest(jtu.JaxTestCase):
     ans = dot([x, y], dict(m=2, k=2, n=2))
     expected = onp.dot(x[:2, :2], y[:2, :2])
     self.assertAllClose(ans[:2, :2], expected, check_dtypes=False)
+
+  def test_mean(self):
+    @partial(mask, in_shapes=[Shape('n')], out_shape=Shape())
+    def padded_sum(x):
+      return np.sum(x) / shape_as_value(x.shape)[0]
+
+    ans = padded_sum([np.array([3, 1, 4, 1, 5])], dict(n=3))
+    expected = 8 / 3
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_arange(self):
+    raise SkipTest("not yet implemented")
+    @partial(mask, in_shapes=[Shape('n')], out_shape=Shape('n'))
+    def padded_add(x):
+      return x + lax.iota(x.shape[0])
+
+    ans = padded_add([np.array([3, 1, 4, 1, 5])], dict(n=3))
+    expected = onp.array([3, 2, 6])
+    self.assertAllClose(ans[:3], expected, check_dtypes=False)
 
 
 if __name__ == '__main__':

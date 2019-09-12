@@ -872,22 +872,25 @@ def _parallelize(fun):
 
 
 def mask(fun, in_shapes, out_shape):
-  in_shapes_flat, in_shapes_tree = tree_flatten(in_shapes)
-  out_shapes_flat, out_shapes_tree = tree_flatten(out_shape)
+  in_shapes, in_shapes_tree = tree_flatten(in_shapes)
+  out_shapes, out_shapes_tree = tree_flatten(out_shape)
 
-  def wrapped_fun(args, logical_shape_env):
+  unique_ids, in_shapes = masking.rename_ids(in_shapes)
+  out_shapes = masking.remap_ids(unique_ids, out_shapes)
+
+  def wrapped_fun(args, logical_env):
+    logical_env = {unique_ids[name] : val for name, val in logical_env.items()}
     f = lu.wrap_init(fun)
     args_flat, in_tree = tree_flatten(args)
     assert in_tree == in_shapes_tree
-    padded_shape_env = _bind_shapes(in_shapes_flat, [x.shape for x in args_flat])
-    shape_envs = masking.ShapeEnvs(logical_shape_env, padded_shape_env)
+    padded_env = _bind_shapes(in_shapes, [x.shape for x in args_flat])
     flat_fun, out_tree = flatten_fun_nokwargs(f, in_tree)
-    outs, out_shapes_ = masking.mask_fun(flat_fun, shape_envs, args_flat,
-                                         in_shapes_flat)
-    if not out_shapes_flat == list(out_shapes_):
+    outs, out_shapes_ = masking.mask_fun(
+        flat_fun, logical_env, padded_env, args_flat, in_shapes)
+    if not out_shapes == list(out_shapes_):
       raise TypeError("pytree mismatch")
-    if not all(out.shape == masking.eval_shape_expr(padded_shape_env, expr)
-               for out, expr in zip(outs, out_shapes_flat)):
+    if not all(out.shape == masking.eval_shape_expr(padded_env, expr)
+               for out, expr in zip(outs, out_shapes)):
       raise masking.ShapeError
     return tree_unflatten(out_tree(), outs)
   return wrapped_fun

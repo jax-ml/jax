@@ -14,6 +14,7 @@
 
 from __future__ import print_function
 
+from contextlib import contextmanager
 from collections import defaultdict, Counter, namedtuple
 from functools import partial, wraps
 import itertools as it
@@ -41,22 +42,52 @@ def prod(xs):
 
 ### main transformation functions
 
-def mask_fun(fun, shape_envs, in_vals, shape_exprs):
+ShapeEnvs = namedtuple("ShapeEnvs", ["logical", "padded"])
+shape_envs = ShapeEnvs({}, {})
+
+@contextmanager
+def extend_shape_envs(logical_env, padded_env):
+  global shape_envs
+  new_logical = dict(it.chain(shape_envs.logical.items(), logical_env.items()))
+  new_padded = dict(it.chain(shape_envs.padded.items(), padded_env.items()))
+  shape_envs, prev = ShapeEnvs(new_logical, new_padded), shape_envs
+  yield
+  shape_envs = prev
+
+def shape_as_value(expr):
+  return eval_shape_expr(shape_envs.logical, expr)
+
+def padded_shape_as_value(expr):
+  return eval_shape_expr(shape_envs.padded, expr)
+
+
+def mask_fun(fun, logical_env, padded_env, in_vals, shape_exprs):
   with core.new_master(MaskTrace) as master:
-    fun, out_shapes = mask_subtrace(fun, master, shape_envs)
-    out_vals = fun.call_wrapped(in_vals, shape_exprs)
+    fun, out_shapes = mask_subtrace(fun, master)
+    with extend_shape_envs(logical_env, padded_env):
+      out_vals = fun.call_wrapped(in_vals, shape_exprs)
     del master
   return out_vals, out_shapes()
 
 @lu.transformation_with_aux
-def mask_subtrace(master, shape_envs, in_vals, shape_exprs):
+def mask_subtrace(master, in_vals, shape_exprs):
   trace = MaskTrace(master, core.cur_sublevel())
-  in_tracers = map(partial(MaskTracer, trace, shape_envs),
-                   in_vals, shape_exprs)
+  in_tracers = map(partial(MaskTracer, trace), in_vals, shape_exprs)
   outs = yield in_tracers, {}
   out_tracers = map(trace.full_raise, outs)
   out_vals, out_shapes = unzip2((t.val, t.shape_expr) for t in out_tracers)
   yield out_vals, out_shapes
+
+
+def rename_ids(shapes):
+  names = defaultdict(object)
+  return names, remap_ids(names, shapes)
+
+def remap_ids(names, shapes):
+  return [ShapeExpr(Poly({Mon({names[id] : deg for id, deg in mon.items()})
+                          : coeff for mon, coeff in poly.items()})
+                    for poly in shape_expr)
+          for shape_expr in shapes]
 
 
 ### shape expressions
@@ -174,14 +205,11 @@ s_ = S_()
 
 ### automasking tracer machinery
 
-ShapeEnvs = namedtuple("ShapeEnvs", ["logical", "padded"])
-
 class MaskTracer(Tracer):
-  __slots__ = ["val", "shape_expr", "shape_envs"]
+  __slots__ = ["val", "shape_expr"]
 
-  def __init__(self, trace, shape_envs, val, shape_expr):
+  def __init__(self, trace, val, shape_expr):
     self.trace = trace
-    self.shape_envs = shape_envs
     self.val = val
     self.shape_expr = shape_expr
 
@@ -197,16 +225,15 @@ class MaskTracer(Tracer):
 
 class MaskTrace(Trace):
   def pure(self, val):
-    return MaskTracer(self, None, val, ShapeExpr(*onp.shape(val)))
+    return MaskTracer(self, val, ShapeExpr(*onp.shape(val)))
 
   def lift(self, val):
-    return MaskTracer(self, None, val, ShapeExpr(*onp.shape(val)))
+    return MaskTracer(self, val, ShapeExpr(*onp.shape(val)))
 
   def sublift(self, val):
-    return MaskTracer(self, val.shape_envs, val.val, val.shape_expr)
+    return MaskTracer(self, val.val, val.shape_expr)
 
   def process_primitive(self, primitive, tracers, params):
-    shape_envs = next(t.shape_envs for t in tracers if t.shape_envs is not None)
     vals, shape_exprs = unzip2((t.val, t.shape_expr) for t in tracers)
     if primitive in shape_parameterized_primitive_rules:
       rule = shape_parameterized_primitive_rules[primitive]
@@ -216,9 +243,9 @@ class MaskTrace(Trace):
       logical_shapes = map(partial(eval_shape_expr, shape_envs.logical), shape_exprs)
       out = masking_rules[primitive](vals, logical_shapes, **params)
     if not primitive.multiple_results:
-      return MaskTracer(self, shape_envs, out, out_shape)
+      return MaskTracer(self, out, out_shape)
     else:
-      return map(partial(MaskTracer, self, shape_envs), out, out_shape)
+      return map(partial(MaskTracer, self), out, out_shape)
 
   def process_call(self, call_primitive, f, tracers, params):
     raise NotImplementedError  # TODO mask-of-jit
