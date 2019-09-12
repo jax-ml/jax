@@ -831,21 +831,22 @@ def root(f, initial_guess, solve, tangent_solve):
     f: function for which to find a root. Should return a tree of arrays with
       the same structure as its input argument.
     initial_guess: initial guess for a zero of f.
-    solve: callable that takes two positional arguments, f and initial_guess,
-      and returns a solution with the same structure as initial_guess such
-      that func(solution) = 0. In other words, the following is assumed to be
-      true (but not checked):
+    solve: function to solve for the roots of f. Should take two positional
+      arguments, f and initial_guess, and return a solution with the same
+      structure as initial_guess such that func(solution) = 0. In other words,
+      the following is assumed to be true (but not checked):
         solution = solve(f, initial_guess)
         error = f(solution)
         assert all(error == 0)
-    tangent_solve: callable that takes two positional arguments, a linear
-      function ``f`` and a tree of array(s) ``y`` with the same structure as
-      initial_guess, and returns a solution ``x`` such that ``f(x)=y``:
+    tangent_solve: function to solve the tangent system. Should takes two
+      positional arguments, a linear function ``g`` and a tree of array(s)
+      ``y`` with the same structure as initial_guess, and returns a solution
+      ``x`` such that ``g(x)=y``:
 
-      - For scalar ``y``, use ``lambda f, y: y / f(1.0)``.
+      - For scalar ``y``, use ``lambda g, y: y / g(1.0)``.
       - For vector ``y``, you could use a linear solve with the Jacobian, if
         dimensionality of ``y`` is not too large:
-        ``lambda f, y: np.linalg.solve(jacobian(f)(y), y)``.
+        ``lambda g, y: np.linalg.solve(jacobian(g)(y), y)``.
 
   Returns:
     The result of calling solve(f, initial_guess) with gradients defined via
