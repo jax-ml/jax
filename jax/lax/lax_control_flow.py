@@ -32,7 +32,7 @@ from jax import core
 from jax.lax import lax
 from jax import linear_util as lu
 from jax.abstract_arrays import ShapedArray, raise_to_shaped
-from jax.api_util import flatten_fun_nokwargs
+from jax.api_util import flatten_fun_nokwargs, apply_flat_fun_nokwargs
 from jax.interpreters import ad
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
@@ -43,7 +43,7 @@ from jax.lib import xla_client
 from jax.util import (partial, unzip2, safe_map, safe_zip, split_list,
                       split_dict, cache)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
-                           treedef_children, treedef_tuple, tree_map)
+                           treedef_children, tree_map)
 from jax import ad_util
 
 _map = safe_map
@@ -860,10 +860,15 @@ def root(f, initial_guess, solve, tangent_solve):
     The result of calling solve(f, initial_guess) with gradients defined via
     implicit differentiation assuming ``f(solve(f, initial_guess)) == 0``.
   """
-  guess_flat, in_tree = tree_flatten((initial_guess,))
+  guess_flat, in_args_tree = tree_flatten((initial_guess,))
   guess_avals = tuple(_map(_abstractify, guess_flat))
-  jaxpr, consts, out_tree = _initial_style_jaxpr(f, in_tree, guess_avals)
-  assert treedef_tuple([out_tree]) == in_tree
+  jaxpr, consts, out_tree = _initial_style_jaxpr(f, in_args_tree, guess_avals)
+  in_tree, = treedef_children(in_args_tree)
+  if in_tree != out_tree:
+    raise TypeError(
+        "f output pytree structure must match initial_guess, got {} and {}."
+        .format(out_tree, in_tree)
+    )
   out_flat = root_p.bind(*itertools.chain(consts, guess_flat),
                          tree=out_tree, num_consts=len(consts),
                          jaxpr=jaxpr, solve=solve, tangent_solve=tangent_solve)
@@ -875,17 +880,20 @@ def _root_abstract_eval(*args, **kwargs):
 
 
 def _solve_flat(solve, f_jaxpr, consts, guess_flat, tree):
-
-  def f(x):
-    x_flat, treedef = tree_flatten(x)
-    assert treedef == tree
-    error_flat = core.jaxpr_as_fun(f_jaxpr)(*itertools.chain(consts, x_flat))
-    return tree_unflatten(tree, error_flat)
-
+  f = partial(
+      apply_flat_fun_nokwargs,
+      partial(core.jaxpr_as_fun(f_jaxpr), *consts),
+      (tree, tree),
+  )
   initial_guess = tree_unflatten(tree, guess_flat)
   out = solve(f, initial_guess)
+
   out_flat, out_tree = tree_flatten(out)
-  assert out_tree == tree
+  if out_tree != tree:
+    raise TypeError(
+        "solve output pytree structure must match initial_guess, got {} and {}"
+        .format(out_tree, tree))
+
   return out_flat
 
 
@@ -900,30 +908,32 @@ def _root_impl(*args, **kwargs):
 
 def _root_jvp(
     primals, tangents, tree, num_consts, jaxpr, solve, tangent_solve):
-  # F(u(m), m) = 0  # system of equations in m
-  # ∂_0 F(u(m), m) ∂ u(m) + ∂_1 F(u(m), m) = 0
-  # ∂ u(m) = - (∂_0 F(u*, m))^{-1} ∂_1 F(u*, m)
-
   consts = primals[:num_consts]
   guess = primals[num_consts:]
   solution = _solve_flat(solve, jaxpr, consts, guess, tree)
 
+  # F(u(m), m) = 0  # system of equations in m
+  # ∂_0 F(u(m), m) ∂ u(m) + ∂_1 F(u(m), m) = 0
+  # ∂ u(m) = - (∂_0 F(u*, m))^{-1} ∂_1 F(u*, m)
   unchecked_zeros, f_jvp = ad.vjp(
       lu.wrap_init(core.jaxpr_as_fun(jaxpr)), consts + tuple(solution)
   )
-
-  def calc_grad_wrt_solution(x):
-    x_flat, treedef = tree_flatten(x)
-    assert treedef == tree
-    y_flat = f_jvp(*x_flat)[num_consts:]
-    return tree_unflatten(tree, y_flat)
-
-  grad_wrt_params = tree_unflatten(
+  calc_grad_f_wrt_solution = partial(
+      apply_flat_fun_nokwargs,
+      lambda *xs: f_jvp(*xs)[num_consts:],
+      (tree, tree),
+  )
+  grad_f_wrt_params = tree_unflatten(
       tree, f_jvp(*tangents[:num_consts])[:num_consts])
-  grad_solution, grad_tree = tree_flatten(tree_map(
-      operator.neg, tangent_solve(calc_grad_wrt_solution, grad_wrt_params),
-  ))
-  assert grad_tree == tree
+  negative_grad = tangent_solve(calc_grad_f_wrt_solution, grad_f_wrt_params)
+
+  negative_grad_flat, out_tree = tree_flatten(negative_grad)
+  if out_tree != tree:
+    raise TypeError(
+        "tangent_solve output pytree structure must match initial_guess, "
+        "got {} and {}".format(out_tree, tree))
+
+  grad_solution = _map(operator.neg, negative_grad_flat)
   return solution, grad_solution
 
 def _root_batch(args, dims, **params):
