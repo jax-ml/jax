@@ -1012,6 +1012,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(value, 5 ** 1.5, check_dtypes=False)
     self.assertAllClose(grad, api.grad(pow)(5.0, 1.5), check_dtypes=False)
 
+    jtu.check_grads(sqrt_cubed, (5.0,), order=2)
+
     inputs = np.array([4.0, 5.0])
     results = api.vmap(sqrt_cubed)(inputs)
     self.assertAllClose(results, inputs ** 1.5, check_dtypes=False)

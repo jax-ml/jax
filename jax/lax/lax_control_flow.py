@@ -879,13 +879,16 @@ def _root_abstract_eval(*args, **kwargs):
   return args[kwargs['num_consts']:]
 
 
-def _solve_flat(solve, f_jaxpr, consts, guess_flat, tree):
+def _root_impl(*args, **kwargs):
+  tree, num_consts, jaxpr, solve, _ = split_dict(
+      kwargs, ['tree', 'num_consts', 'jaxpr', 'solve', 'tangent_solve'])
+
   f = partial(
       apply_flat_fun_nokwargs,
-      partial(core.jaxpr_as_fun(f_jaxpr), *consts),
+      partial(core.jaxpr_as_fun(jaxpr), *args[:num_consts]),
       (tree, tree),
   )
-  initial_guess = tree_unflatten(tree, guess_flat)
+  initial_guess = tree_unflatten(tree, args[num_consts:])
   out = solve(f, initial_guess)
 
   out_flat, out_tree = tree_flatten(out)
@@ -897,35 +900,26 @@ def _solve_flat(solve, f_jaxpr, consts, guess_flat, tree):
   return out_flat
 
 
-def _root_impl(*args, **kwargs):
-  tree, num_consts, jaxpr, solve, _ = split_dict(
-      kwargs, ['tree', 'num_consts', 'jaxpr', 'solve', 'tangent_solve'])
-
-  consts = args[:num_consts]
-  guess = args[num_consts:]
-  return _solve_flat(solve, jaxpr, consts, guess, tree)
-
-
 def _root_jvp(
     primals, tangents, tree, num_consts, jaxpr, solve, tangent_solve):
-  consts = primals[:num_consts]
-  guess = primals[num_consts:]
-  solution = _solve_flat(solve, jaxpr, consts, guess, tree)
+  solution = root_p.bind(*primals, tree=tree, num_consts=num_consts,
+                         jaxpr=jaxpr, solve=solve, tangent_solve=tangent_solve)
 
   # F(u(m), m) = 0  # system of equations in m
   # ∂_0 F(u(m), m) ∂ u(m) + ∂_1 F(u(m), m) = 0
   # ∂ u(m) = - (∂_0 F(u*, m))^{-1} ∂_1 F(u*, m)
   unchecked_zeros, f_jvp = ad.vjp(
-      lu.wrap_init(core.jaxpr_as_fun(jaxpr)), consts + tuple(solution)
+      lu.wrap_init(core.jaxpr_as_fun(jaxpr)),
+      primals[:num_consts] + tuple(solution)
   )
-  calc_grad_f_wrt_solution = partial(
+  f_linearized = partial(
       apply_flat_fun_nokwargs,
       lambda *xs: f_jvp(*xs)[num_consts:],
       (tree, tree),
   )
-  grad_f_wrt_params = tree_unflatten(
+  params_jvp = tree_unflatten(
       tree, f_jvp(*tangents[:num_consts])[:num_consts])
-  negative_grad = tangent_solve(calc_grad_f_wrt_solution, grad_f_wrt_params)
+  negative_grad = tangent_solve(f_linearized, params_jvp)
 
   negative_grad_flat, out_tree = tree_flatten(negative_grad)
   if out_tree != tree:
