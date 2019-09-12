@@ -5,7 +5,7 @@ import numpy as onp
 from scipy.special import factorial as fact
 
 from jax import core
-from ..core import pack
+# from ..core import pack
 from jax.util import unzip2, prod
 import jax.linear_util as lu
 
@@ -62,11 +62,11 @@ class JetTrace(core.Trace):
     terms_out = prop(derivs, zip(*series_in))
     return JetTracer(self, primal_out, terms_out)
 
-  def pack(self, tracers):
-    primals = pack(t.primal for t in tracers)
-    terms = pack(t.terms for t in tracers)
-    import pdb; pdb.set_trace()
-    return JetTracer(self, primals, terms)
+  # def pack(self, tracers):
+  #   primals = pack(t.primal for t in tracers)
+  #   terms = pack(t.terms for t in tracers)
+  #   import pdb; pdb.set_trace()
+  #   return JetTracer(self, primals, terms)
 
   def process_call(self, call_primitive, f, tracers, params):
     assert False

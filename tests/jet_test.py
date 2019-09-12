@@ -272,13 +272,14 @@ def test_sol2():
     return g(z)
 
   def g(z):
+    z0, z1, t = z
+    return np.array([np.sin(2.*t),np.cos(2.*t),1.])
+
+  def g_sad(z):
     z0 = np.dot(np.array([1.,0.,0.]),z)
     z1 = np.dot(np.array([0.,1.,0.]),z)
     t = np.dot(np.array([0.,0.,1.]),z)
-    ans = np.zeros(3)
     return np.array([np.sin(2.*t),np.cos(2.*t),1.])
-  g(x0)
-
   
   # Initial  Conditions
   t0, z0 = 2., (0.,0.)
