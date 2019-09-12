@@ -825,19 +825,25 @@ masking.masking_rules[lax.concatenate_p] = _concat_masking_rule
 
 
 def root(f, initial_guess, solve, tangent_solve):
-  """Differentiably solve for the roots of a function.
+  """Differentiably solve for a roots of a function.
+
+  This is a low-level routine, mostly intended for internal use in JAX.
+  Gradients of root() are defined with respect to closed-over variables from
+  the provided function f.
 
   Args:
-    f: function for which to find a root. Should return a tree of arrays with
-      the same structure as its input argument.
+    f: function for which to find a root. Should accept a single argument,
+      return a tree of arrays with the same structure as its input.
     initial_guess: initial guess for a zero of f.
     solve: function to solve for the roots of f. Should take two positional
       arguments, f and initial_guess, and return a solution with the same
       structure as initial_guess such that func(solution) = 0. In other words,
-      the following is assumed to be true (but not checked):
+      the following is assumed to be true (but not checked)::
+
         solution = solve(f, initial_guess)
         error = f(solution)
         assert all(error == 0)
+
     tangent_solve: function to solve the tangent system. Should takes two
       positional arguments, a linear function ``g`` and a tree of array(s)
       ``y`` with the same structure as initial_guess, and returns a solution
@@ -850,7 +856,7 @@ def root(f, initial_guess, solve, tangent_solve):
 
   Returns:
     The result of calling solve(f, initial_guess) with gradients defined via
-    implicit differentiation assuming f(solve(f, initial_guess)) = 0.
+    implicit differentiation assuming ``f(solve(f, initial_guess)) == 0``.
   """
   guess_flat, in_tree = tree_flatten((initial_guess,))
   guess_avals = tuple(_map(_abstractify, guess_flat))
