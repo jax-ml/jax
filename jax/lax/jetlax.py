@@ -69,6 +69,16 @@ def make_derivs_sqrt(primals,order,**params):
   return out, [fst,snd,thd,fth,fith]
 fdb.jet_rules[sqrt_p] = make_derivs_sqrt
 
+def make_derivs_exp(primals,order,**params):
+  x, = primals
+  out = np.exp(x)
+  #TODO: make generator dependent on order...
+  def nth(vs):
+    return fdb.product(map(operator.itemgetter(0), vs)) * out
+  derivs = itertools.chain(itertools.repeat(nth))
+  return out, list(itertools.islice(derivs,order))
+fdb.jet_rules[exp_p] = make_derivs_exp
+
 def make_derivs_mul(primals, order):
   a, b = primals
   def fst(vs):
