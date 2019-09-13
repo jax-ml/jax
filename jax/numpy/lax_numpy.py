@@ -2461,15 +2461,26 @@ def _split_index_for_jit(idx):
   dynamic = [None] * len(leaves)
   static = [None] * len(leaves)
   for i, x in enumerate(leaves):
-    if isinstance(x, slice) or x is Ellipsis:
+    if x is Ellipsis:
       static[i] = x
+    elif isinstance(x, slice):
+      # slice objects aren't hashable.
+      static[i] = (x.start, x.stop, x.step)
     else:
       dynamic[i] = x
   return treedef, tuple(static), dynamic
 
 def _merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx):
   """Recombines indices that were split by _split_index_for_jit."""
-  return treedef.unflatten([s or d for (s, d) in zip(static_idx, dynamic_idx)])
+  idx = []
+  for s, d in zip(static_idx, dynamic_idx):
+    if d is not None:
+      idx.append(d)
+    elif isinstance(s, tuple):
+      idx.append(slice(s[0], s[1], s[2]))
+    else:
+      idx.append(s)
+  return treedef.unflatten(idx)
 
 def _int(aval):
   return not aval.shape and onp.issubdtype(aval.dtype, onp.integer)
