@@ -3031,3 +3031,10 @@ setattr(ShapedArray, "split", core.aval_method(split))
 setattr(DeviceArray, "broadcast", lax.broadcast)
 setattr(DeviceArray, "broadcast_in_dim", lax.broadcast_in_dim)
 setattr(DeviceArray, "split", split)
+
+@jit
+def _unstack(x):
+  if x.ndim == 0:
+    raise ValueError("Argument to _unstack must be non-scalar")
+  return [lax.index_in_dim(x, i, keepdims=False) for i in range(x.shape[0])]
+setattr(DeviceArray, "_unstack", _unstack)

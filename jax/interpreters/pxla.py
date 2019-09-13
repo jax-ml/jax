@@ -86,8 +86,15 @@ shard_arg_handlers[core.Unit] = \
 def _shard_array(x, ordinals, assignments, backend=None):
   nrep = len(ordinals)
   return (xla.device_put(x[assignments[r]], ordinals[r], backend=backend) for r in range(nrep))
-for _t in it.chain(array_types, [xla.DeviceArray]):
+for _t in array_types:
   shard_arg_handlers[_t] = _shard_array
+
+def _shard_device_array(x, ordinals, assignments, backend=None):
+  nrep = len(ordinals)
+  xs = x._unstack()
+  return (xla.device_put(xs[assignments[r]], ordinals[r], backend=backend)
+          for r in range(nrep))
+shard_arg_handlers[xla.DeviceArray] = _shard_device_array
 
 def shard_aval(size, aval):
   try:
