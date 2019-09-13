@@ -222,8 +222,23 @@ class MaskingTest(jtu.JaxTestCase):
     expected = np.array([3, 5])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def test_nesting(self):
+    raise SkipTest("not yet implemented")
+
+    @partial(mask, in_shapes=['n'], out_shape='')
+    def padded_sum(x):
+      return np.sum(x)
+
+    @partial(mask, in_shapes=['n'], out_shape='')
+    def padded_sum2(x):
+      return padded_sum([x], dict(n=2))
+
+    ans = padded_sum2([np.array([3, 1, 4, 1])], dict(n=1))
+    import ipdb; ipdb.set_trace()
+
   def test_arange(self):
     raise SkipTest("not yet implemented")
+
     @partial(mask, in_shapes=['n'], out_shape='n')
     def padded_add(x):
       return x + lax.iota(x.shape[0])

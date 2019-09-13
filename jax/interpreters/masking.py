@@ -55,10 +55,16 @@ def extend_shape_envs(logical_env, padded_env):
   shape_envs = prev
 
 def shape_as_value(expr):
-  return eval_shape_expr(shape_envs.logical, expr)
+  if type(expr) is ShapeExpr:
+    return eval_shape_expr(shape_envs.logical, expr)
+  else:
+    return expr
 
 def padded_shape_as_value(expr):
-  return eval_shape_expr(shape_envs.padded, expr)
+  if type(expr) is ShapeExpr:
+    return eval_shape_expr(shape_envs.padded, expr)
+  else:
+    return expr
 
 
 def mask_fun(fun, logical_env, padded_env, in_vals, shape_exprs):
@@ -130,7 +136,10 @@ class Mon(Counter):  # type Mon = Map Id Int -- ids to degrees
     return sum(self.values())
 
 def concrete_shape(shape):
-  return ShapeExpr((Poly({Mon(): int(d)}) for d in shape))
+  if type(shape) is ShapeExpr:
+    return shape
+  else:
+    return ShapeExpr((Poly({Mon(): d}) for d in shape))
 
 def eval_shape_expr(env, expr):
   return tuple(eval_dim_expr(env, poly) for poly in expr)
