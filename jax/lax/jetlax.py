@@ -51,6 +51,24 @@ def make_derivs_cos(primals, order):
   return cos_x, derivs
 fdb.jet_rules[cos_p] = make_derivs_cos
 
+def make_derivs_sqrt(primals,order,**params):
+  x, = primals
+  out = np.sqrt(x)
+  #TODO: make generator dependent on order...
+  def fst(vs):
+    return fdb.product(map(operator.itemgetter(0), vs)) * 1./(2*x**(1./2))
+  def snd(vs):
+    return fdb.product(map(operator.itemgetter(0), vs)) * - 1./(4*x**(3./2))
+  def thd(vs):
+    return fdb.product(map(operator.itemgetter(0), vs)) * 3./(8*x**(5./2))
+  def fth(vs):
+    return fdb.product(map(operator.itemgetter(0), vs)) * - 15./(16*x**(7./2))
+  def fith(vs):
+    return fdb.product(map(operator.itemgetter(0), vs)) * 105./(32*x**(9./2))
+
+  return out, [fst,snd,thd,fth,fith]
+fdb.jet_rules[sqrt_p] = make_derivs_sqrt
+
 def make_derivs_mul(primals, order):
   a, b = primals
   def fst(vs):
@@ -65,7 +83,7 @@ def make_derivs_mul(primals, order):
   return mul(a, b), list(itertools.islice(derivs, order))
 fdb.jet_rules[mul_p] = make_derivs_mul
 
-def make_derivs_dot(primals, order):
+def make_derivs_dot(primals, order, **params):
   a, b = primals
   out = dot(a, b)
   def fst(vs):
@@ -79,6 +97,7 @@ def make_derivs_dot(primals, order):
   derivs = itertools.chain([fst, snd], itertools.repeat(nth))
   return out, list(itertools.islice(derivs, order))
 fdb.jet_rules[dot_p] = make_derivs_dot
+
 
 
 # from scipy.integrate import odeint as odeint_impl
