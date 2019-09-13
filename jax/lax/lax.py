@@ -3355,7 +3355,7 @@ def _masking_defreducer(prim, identity_like):
 
 def _reducer_polymorphic_shape_rule(shape_exprs, axes, **unused_params):
   shape_expr, = shape_exprs
-  return ShapeExpr(*(d for i, d in enumerate(shape_expr) if i not in axes))
+  return ShapeExpr([d for i, d in enumerate(shape_expr) if i not in axes])
 
 def _reducer_masking_rule(prim, identity_like, padded_vals, logical_shapes,
                           axes, input_shape):
