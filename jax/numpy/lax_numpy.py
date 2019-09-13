@@ -48,6 +48,7 @@ from ..config import flags
 from ..interpreters.xla import DeviceArray
 from .. import lax
 from ..util import partial, get_module_functions, unzip2, prod as _prod
+from ..lib import pytree
 from ..lib import xla_bridge
 from ..lib import xla_client
 
@@ -2403,6 +2404,12 @@ def _rewriting_take(arr, idx):
   # All supported cases of indexing can be implemented as an XLA gather,
   # followed by an optional reverse and a reshape.
   arr = asarray(arr)
+  treedef, static_idx, dynamic_idx = _split_index_for_jit(idx)
+  return _gather(arr, treedef, static_idx, dynamic_idx)
+
+@partial(jit, static_argnums=(1, 2))
+def _gather(arr, treedef, static_idx, dynamic_idx):
+  idx = _merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
   indexer = _index_to_gather(shape(arr), idx)  # shared with _scatter_update
 
   y = lax.gather(arr, indexer.gather_indices, indexer.dnums,
@@ -2438,7 +2445,11 @@ _Indexer = collections.namedtuple("_Indexer", [
   "newaxis_dims",
 ])
 
-def _index_to_gather(x_shape, idx):
+def _split_index_for_jit(idx):
+  """Splits indices into necessarily-static and dynamic parts.
+
+  Used to pass indices into `jit`-ted function.
+  """
   # Convert list indices to tuples in cases (deprecated by NumPy.)
   idx = _eliminate_deprecated_list_indexing(idx)
 
@@ -2446,6 +2457,24 @@ def _index_to_gather(x_shape, idx):
   # indexing logic to handle them.
   idx = _expand_bool_indices(idx)
 
+  leaves, treedef = pytree.flatten(idx)
+  dynamic = [None] * len(leaves)
+  static = [None] * len(leaves)
+  for i, x in enumerate(leaves):
+    if isinstance(x, slice) or x is Ellipsis:
+      static[i] = x
+    else:
+      dynamic[i] = x
+  return treedef, tuple(static), dynamic
+
+def _merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx):
+  """Recombines indices that were split by _split_index_for_jit."""
+  return treedef.unflatten([s or d for (s, d) in zip(static_idx, dynamic_idx)])
+
+def _int(aval):
+  return not aval.shape and onp.issubdtype(aval.dtype, onp.integer)
+
+def _index_to_gather(x_shape, idx):
   # Remove ellipses and add trailing slice(None)s.
   idx = _canonicalize_tuple_index(len(x_shape), idx)
 
@@ -2474,8 +2503,6 @@ def _index_to_gather(x_shape, idx):
                       for e, i, j in advanced_pairs)
     advanced_indexes, idx_advanced_axes, x_advanced_axes = zip(*advanced_pairs)
     advanced_axes_are_contiguous = onp.all(onp.diff(idx_advanced_axes) == 1)
-
-  _int = lambda aval: not aval.shape and onp.issubdtype(aval.dtype, onp.integer)
 
   x_axis = 0  # Current axis in x.
   y_axis = 0  # Current axis in y, before collapsing. See below.
