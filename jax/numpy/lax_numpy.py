@@ -1735,21 +1735,21 @@ def repeat(a, repeats, axis=None):
       repeats_raveled.shape, n
     ))
 
-  # construct the total elements after repeat along the axis
+  # total elements after repeat along the axis
   total = sum(repeats_raveled)
 
-  # construct return array
   new_shape = a_shape.copy()
   new_shape[axis] = total
 
-  ret = ravel(onp.zeros(new_shape, a.dtype)) # use numpy array for in place update
-  # first we flatten the original array
+  ret = ravel(zeros(new_shape, a.dtype))
   a_flattened = ravel(a)
+
   # size of each chunk to copy
   chunk = 1
   for i in range(axis+1, ndim(a)):
     chunk *= a_shape[i]
-  # then we copy `chunk` until axis
+
+  # copy `chunk` until axis
   n_outer = 1
   for i in range(0, axis):
     n_outer *= a_shape[i]
@@ -1760,12 +1760,11 @@ def repeat(a, repeats, axis=None):
       tmp = repeats_raveled[j]
       for k in range(0, tmp):
         # copy `chunk` data
-        ret[new_data_ptr:new_data_ptr+chunk] = a_flattened[old_data_ptr:old_data_ptr+chunk]
+        ret = lax.dynamic_update_slice(ret, lax.dynamic_slice(a_flattened, [old_data_ptr], [chunk]), [new_data_ptr])
         new_data_ptr += chunk
       old_data_ptr += chunk
 
-  # then we reshape back to jax array
-  return reshape(array(ret), new_shape)
+  return reshape(ret, new_shape)
 
 @_wraps(onp.tri)
 def tri(N, M=None, k=0, dtype=None):
