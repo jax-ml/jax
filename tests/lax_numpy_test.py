@@ -731,29 +731,28 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   def testIssue1233(self):
     '''
-    Following numpy test suite at https://github.com/numpy/numpy/blob/master/numpy/core/tests/test_multiarray.py `testRepeat`
+    Following numpy test suite from `test_repeat` at https://github.com/numpy/numpy/blob/master/numpy/core/tests/test_multiarray.py
     '''
     tol = 1e-5
 
-    m = [1,2,3,4,5,6]
-    args_maker = lambda: [lnp.array(m)]
+    m = lnp.array([1,2,3,4,5,6])
+    args_maker = lambda: [m]
 
     for repeats in [2, [1,3,2,1,1,2], [2], lnp.array([1,3,2,1,1,2]), lnp.array([2])]:
-      lax_ans = lnp.repeat(lnp.array(m), repeats)
-      numpy_ans = onp.repeat(onp.array(m), repeats)
+      lax_ans = lnp.repeat(m, repeats)
+      numpy_ans = onp.repeat(m, repeats)
 
       self.assertAllClose(lax_ans, numpy_ans, check_dtypes=True, rtol=tol, atol=tol)
 
       lnp_fun = lambda arg: lnp.repeat(arg, repeats = repeats)
       self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
-    m_rect_lax = lnp.array(m).reshape((2,3))
-    m_rect_numpy = onp.array(m).reshape((2,3))
-    args_maker = lambda: [m_rect_lax]
+    m_rect = m.reshape((2,3))
+    args_maker = lambda: [m_rect]
 
     for repeats in [2, [2,1], [2], lnp.array([2,1]), lnp.array([2])]:
-      lax_ans = lnp.repeat(m_rect_lax, repeats, axis=0)
-      numpy_ans = onp.repeat(m_rect_numpy, repeats, axis=0)
+      lax_ans = lnp.repeat(m_rect, repeats, axis=0)
+      numpy_ans = onp.repeat(m_rect, repeats, axis=0)
 
       lnp_fun = lambda arg: lnp.repeat(arg, repeats=repeats, axis=0)
 
@@ -761,8 +760,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
     for repeats in [2, [1,3,2], [2], lnp.array([1,3,2]), lnp.array([2])]:
-      lax_ans = lnp.repeat(m_rect_lax, repeats, axis=1)
-      numpy_ans = onp.repeat(m_rect_numpy, repeats, axis=1)
+      lax_ans = lnp.repeat(m_rect, repeats, axis=1)
+      numpy_ans = onp.repeat(m_rect, repeats, axis=1)
 
       lnp_fun = lambda arg: lnp.repeat(arg, repeats=repeats, axis=1)
 
