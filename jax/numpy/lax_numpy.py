@@ -1738,7 +1738,7 @@ def repeat(a, repeats, axis=None):
   # total elements after repeat along the axis
   total = sum(repeats_raveled)
 
-  new_shape = a_shape.copy()
+  new_shape = a_shape[:]
   new_shape[axis] = total
 
   ret = ravel(zeros(new_shape, a.dtype))
