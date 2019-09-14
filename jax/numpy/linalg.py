@@ -60,7 +60,14 @@ def svd(a, full_matrices=True, compute_uv=True):
   return lax_linalg.svd(a, full_matrices, compute_uv)
 
 
+def _jvp_slogdet(g, ans, x):
+  jvp_sign = np.zeros(x.shape[:-2])
+  jvp_logdet = np.trace(np.linalg.solve(x, g), axis1=-1, axis2=-2)
+  return jvp_sign, jvp_logdet
+
+
 @_wraps(onp.linalg.slogdet)
+@custom_transforms
 def slogdet(a):
   a = _promote_arg_dtypes(np.asarray(a))
   dtype = lax.dtype(a)
@@ -84,18 +91,13 @@ def slogdet(a):
       is_zero, np.array(-np.inf, dtype=dtype),
       np.sum(np.log(np.abs(diag)), axis=-1))
   return sign, np.real(logdet)
-
-
-def _jvp_det(g, ans, x):
-  return np.trace(np.linalg.solve(x, g), axis1=-1, axis2=-2)*ans
+defjvp(slogdet, _jvp_slogdet)
 
 
 @_wraps(onp.linalg.det)
-@custom_transforms
 def det(a):
   sign, logdet = slogdet(a)
   return sign * np.exp(logdet)
-defjvp(det, _jvp_det)
 
 
 @_wraps(onp.linalg.eig)
