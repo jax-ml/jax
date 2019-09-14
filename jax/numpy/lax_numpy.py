@@ -1682,11 +1682,11 @@ def ix_(*args):
   return tuple(output)
 
 
-@_wraps(onp.repeat)
-def repeat(a, repeats, axis=None):
+
+def _repeat_scalar(a, repeats, axis=None):
   if not isscalar(repeats):
     raise NotImplementedError(
-        "np.repeat implementation only supports scalar repeats")
+        "_repeat_scalar implementation only supports scalar repeats")
   if axis is None or isscalar(a):
     a = ravel(a)
     axis = 0
@@ -1710,6 +1710,62 @@ def repeat(a, repeats, axis=None):
       lax.broadcast_in_dim(a, broadcast_shape, broadcast_dims),
       a_shape)
 
+@_wraps(onp.repeat)
+def repeat(a, repeats, axis=None):
+  '''
+  :param repeats: int or array of ints
+  largely same logic as `PyArray_Repeat` in https://github.com/numpy/numpy/blob/master/numpy/core/src/multiarray/item_selection.c
+  '''
+  # use the faster `_repeat_scalar` when possible
+  if isscalar(repeats):
+    return _repeat_scalar(a, repeats, axis)
+  repeats_raveled = ravel(repeats)
+  if size(repeats_raveled) == 1:
+    return _repeat_scalar(a, list(repeats_raveled)[0], axis)
+
+  if axis is None or isscalar(a):
+    a = ravel(a)
+    axis = 0
+
+  # repeats must match the dimension along the requested axis
+  a_shape = list(a.shape)
+  n = a_shape[axis]
+  if size(repeats_raveled) != n:
+    raise ValueError("repeats shape {} does not match the dimension on axis {}".format(
+      repeats_raveled.shape, n
+    ))
+
+  # construct the total elements after repeat along the axis
+  total = sum(repeats_raveled)
+
+  # construct return array
+  new_shape = a_shape.copy()
+  new_shape[axis] = total
+
+  ret = ravel(onp.zeros(new_shape, a.dtype)) # use numpy array for in place update
+  # first we flatten the original array
+  a_flattened = ravel(a)
+  # size of each chunk to copy
+  chunk = 1
+  for i in range(axis+1, ndim(a)):
+    chunk *= a_shape[i]
+  # then we copy `chunk` until axis
+  n_outer = 1
+  for i in range(0, axis):
+    n_outer *= a_shape[i]
+  old_data_ptr = 0
+  new_data_ptr = 0
+  for i in range(0, n_outer):
+    for j in range(0, n):
+      tmp = repeats_raveled[j]
+      for k in range(0, tmp):
+        # copy `chunk` data
+        ret[new_data_ptr:new_data_ptr+chunk] = a_flattened[old_data_ptr:old_data_ptr+chunk]
+        new_data_ptr += chunk
+      old_data_ptr += chunk
+
+  # then we reshape back to jax array
+  return reshape(array(ret), new_shape)
 
 @_wraps(onp.tri)
 def tri(N, M=None, k=0, dtype=None):

@@ -729,6 +729,37 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
+  def testIssue1233(self):
+    '''
+    Following numpy test suite at https://github.com/numpy/numpy/blob/master/numpy/core/tests/test_multiarray.py `testRepeat`
+    '''
+    tol = 1e-5
+
+    m = [1,2,3,4,5,6]
+
+    for repeats in [2, [1,3,2,1,1,2], [2], lnp.array([1,3,2,1,1,2]), lnp.array([2])]:
+      lax_ans = lnp.repeat(lnp.array(m), repeats)
+      numpy_ans = onp.repeat(onp.array(m), repeats)
+
+      self.assertAllClose(lax_ans, numpy_ans, check_dtypes=True, rtol=tol, atol=tol)
+
+    m_rect_lax = lnp.array(m).reshape((2,3))
+    m_rect_numpy = onp.array(m).reshape((2,3))
+
+    for repeats in [2, [2,1], [2], lnp.array([2,1]), lnp.array([2])]:
+      lax_ans = lnp.repeat(m_rect_lax, repeats, axis=0)
+      numpy_ans = onp.repeat(m_rect_numpy, repeats, axis=0)
+
+      self.assertAllClose(lax_ans, numpy_ans, check_dtypes=True, rtol=tol, atol=tol)
+
+    for repeats in [2, [1,3,2], [2], lnp.array([1,3,2]), lnp.array([2])]:
+      lax_ans = lnp.repeat(m_rect_lax, repeats, axis=1)
+      numpy_ans = onp.repeat(m_rect_numpy, repeats, axis=1)
+
+      self.assertAllClose(lax_ans, numpy_ans, check_dtypes=True, rtol=tol, atol=tol)
+
+    # TODO: test jit compile using self._CompileAndCheck
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "op={}_shape=[{}]_axis={}_out_dtype={}".format(
           op, jtu.format_shape_dtype_string(shape, dtype), axis, out_dtype),
