@@ -86,12 +86,16 @@ def slogdet(a):
   return sign, np.real(logdet)
 
 
+def _jvp_det(g, ans, x):
+  return np.trace(np.linalg.solve(x, g), axis1=-1, axis2=-2)*ans
+
+
 @_wraps(onp.linalg.det)
 @custom_transforms
 def det(a):
   sign, logdet = slogdet(a)
   return sign * np.exp(logdet)
-defjvp(det, lambda g, ans, x: np.trace(np.linalg.solve(x, g))*ans)
+defjvp(det, _jvp_det)
 
 
 @_wraps(onp.linalg.eig)
