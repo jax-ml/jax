@@ -9,7 +9,7 @@
 | [**Quickstart**](#quickstart-colab-in-the-cloud)
 
 JAX is [Autograd](https://github.com/hips/autograd) and
-[XLA](https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/g3doc/overview.md),
+[XLA](https://www.tensorflow.org/xla),
 brought together for high-performance machine learning research.
 
 With its updated version of [Autograd](https://github.com/hips/autograd),
@@ -21,7 +21,7 @@ via [`grad`](#automatic-differentiation-with-grad) as well as forward-mode diffe
 and the two can be composed arbitrarily to any order.
 
 What’s new is that JAX uses
-[XLA](https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/g3doc/overview.md)
+[XLA](https://www.tensorflow.org/xla)
 to compile and run your NumPy programs on GPUs and TPUs. Compilation happens
 under the hood by default, with library calls getting just-in-time compiled and
 executed. But JAX also lets you just-in-time compile your own Python functions
@@ -91,60 +91,19 @@ And for a deeper dive into JAX:
 - [Common gotchas and sharp edges](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb)
 - [The Autodiff Cookbook, Part 1: easy and powerful automatic differentiation in JAX](https://colab.research.google.com/github/google/jax/blob/master/notebooks/autodiff_cookbook.ipynb)
 - [Directly using XLA in Python](https://colab.research.google.com/github/google/jax/blob/master/notebooks/XLA_in_Python.ipynb)
-- [MAML Tutorial with JAX](https://colab.research.google.com/github/google/jax/blob/master/notebooks/maml.ipynb).
+- [MAML Tutorial with JAX](https://colab.research.google.com/github/google/jax/blob/master/notebooks/maml.ipynb)
+- [Generative Modeling by Estimating Gradeints of Data Distribution in JAX](https://colab.research.google.com/github/google/jax/blob/master/notebooks/score_matching.ipynb).
 
 ## Installation
 JAX is written in pure Python, but it depends on XLA, which needs to be compiled
-and installed as the `jaxlib` package. Use the following instructions to build
-JAX from source or install a binary package with pip.
+and installed as the `jaxlib` package. Use the following instructions to
+install a binary package with `pip`, or to build JAX from source.
 
 We support installing or building `jaxlib` on Linux and macOS platforms, but not
 Windows. We're not currently working on Windows support, but contributions are
 welcome (see [#438](https://github.com/google/jax/issues/438)).
 
-### Building JAX from source
-First, obtain the JAX source code, and make sure `scipy` is installed.
-
-```bash
-git clone https://github.com/google/jax
-cd jax
-pip install scipy
-```
-
-If you are building on a Mac, make sure XCode and the XCode command line tools
-are installed.
-
-To build XLA with CUDA support, you can run
-
-```bash
-python build/build.py --enable_cuda
-pip install -e build  # install jaxlib (includes XLA)
-pip install -e .      # install jax (pure Python)
-```
-
-See `python build/build.py --help` for configuration options, including ways to
-specify the paths to CUDA and CUDNN, which you must have installed. The build
-also depends on NumPy, and a compiler toolchain corresponding to that of
-Ubuntu 16.04 or newer.
-
-To build XLA without CUDA GPU support (CPU only), drop the `--enable_cuda`:
-
-```bash
-python build/build.py
-pip install -e build  # install jaxlib (includes XLA)
-pip install -e .      # install jax
-```
-
-To upgrade to the latest version from GitHub, just run `git pull` from the JAX
-repository root, and rebuild by running `build.py` if necessary. You shouldn't have
-to reinstall because `pip install -e` sets up symbolic links from site-packages
-into the repository.
-
 ### pip installation
-
-Installing XLA with prebuilt binaries via `pip` is still experimental,
-especially with GPU support. Let us know on [the issue
-tracker](https://github.com/google/jax/issues) if you run into any errors.
 
 To install a CPU-only version, which might be useful for doing local
 development on a laptop, you can run
@@ -159,19 +118,20 @@ cloud VM), you can run
 
 ```bash
 # install jaxlib
-PYTHON_VERSION=cp27  # alternatives: cp27, cp35, cp36, cp37
-CUDA_VERSION=cuda92  # alternatives: cuda90, cuda92, cuda100
+PYTHON_VERSION=cp37  # alternatives: cp27, cp35, cp36, cp37
+CUDA_VERSION=cuda92  # alternatives: cuda90, cuda92, cuda100, cuda101
 PLATFORM=linux_x86_64  # alternatives: linux_x86_64
-BASE_URL='https://storage.googleapis.com/jax-wheels'
-pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.21-$PYTHON_VERSION-none-$PLATFORM.whl
+BASE_URL='https://storage.googleapis.com/jax-releases'
+pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.28-$PYTHON_VERSION-none-$PLATFORM.whl
 
 pip install --upgrade jax  # install jax
 ```
 
 The library package name must correspond to the version of the existing CUDA
-installation you want to use, with `cuda100` for CUDA 10.0, `cuda92` for CUDA
-9.2, and `cuda90` for CUDA 9.0. To find your CUDA and CUDNN versions, you can
-run commands like these, depending on your CUDNN install path:
+installation you want to use, with `cuda101` for CUDA 10.1, `cuda100` for CUDA
+10.0, `cuda92` for CUDA 9.2, and `cuda90` for CUDA 9.0. To find your CUDA and
+CUDNN versions, you can run commands like these, depending on your CUDNN install
+path:
 
 ```bash
 nvcc --version
@@ -179,8 +139,64 @@ grep CUDNN_MAJOR -A 2 /usr/local/cuda/include/cudnn.h  # might need different pa
 ```
 
 The Python version must match your Python interpreter. There are prebuilt wheels
-for Python 2.7, 3.6, and 3.7; for anything else, you must build from source.
+for Python 2.7, 3.5, 3.6, and 3.7; for anything else, you must build from
+source.
 
+Please let us know on [the issue tracker](https://github.com/google/jax/issues)
+if you run into any errors or problems with the prebuilt wheels.
+
+### Building JAX from source
+
+First, obtain the JAX source code.
+
+```bash
+git clone https://github.com/google/jax
+cd jax
+```
+
+You must also install some prerequisites:
+* a C++ compiler (g++ or clang)
+* Numpy
+* Scipy
+* Cython
+
+On Ubuntu 18.04 or Debian you can install the necessary prerequisites with:
+```
+sudo apt-get install g++ python python3-dev python3-numpy python3-scipy cython3
+```
+If you are building on a Mac, make sure XCode and the XCode command line tools
+are installed.
+
+You can also install the necessary Python dependencies using `pip`:
+```
+pip install numpy scipy cython
+```
+
+To build `jaxlib` with CUDA support, you can run
+
+```bash
+python build/build.py --enable_cuda
+pip install -e build  # installs jaxlib (includes XLA)
+pip install -e .      # installs jax (pure Python)
+```
+
+See `python build/build.py --help` for configuration options, including ways to
+specify the paths to CUDA and CUDNN, which you must have installed. The build
+also depends on NumPy, and a compiler toolchain corresponding to that of
+Ubuntu 16.04 or newer.
+
+To build `jaxlib` without CUDA GPU support (CPU only), drop the `--enable_cuda`:
+
+```bash
+python build/build.py
+pip install -e build  # installs jaxlib (includes XLA)
+pip install -e .      # installs jax
+```
+
+To upgrade to the latest version from GitHub, just run `git pull` from the JAX
+repository root, and rebuild by running `build.py` if necessary. You shouldn't have
+to reinstall because `pip install -e` sets up symbolic links from site-packages
+into the repository.
 
 ## Running the tests
 
@@ -683,7 +699,7 @@ that allows them to be traced and transformed again as needed.
 
 The primitive functions that JAX traces are mostly in 1:1 correspondence with
 [XLA HLO](https://www.tensorflow.org/xla/operation_semantics) and are defined
-in [lax.py](https://github.com/google/jax/blob/master/jax/lax.py). This 1:1
+in [lax.py](https://github.com/google/jax/blob/master/jax/lax/lax.py). This 1:1
 correspondence makes most of the translations to XLA essentially trivial, and
 ensures we only have a small set of primitives to cover for other
 transformations like automatic differentiation. The [`jax.numpy`
@@ -738,7 +754,7 @@ Some stand-out gotchas that might surprise NumPy users:
 1. JAX enforces single-precision (32-bit, e.g. `float32`) values by default, and
    to enable double-precision (64-bit, e.g. `float64`) one needs to set the
    `jax_enable_x64` variable **at startup** (or set the environment variable
-   `JAX_ENABLE_x64=True`, see [the Gotchas Notebook](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb#scrollTo=YTktlwTTMgFl))
+   `JAX_ENABLE_X64=True`, see [the Gotchas Notebook](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb#scrollTo=YTktlwTTMgFl))
 2. Some of NumPy's dtype promotion semantics involving a mix of Python scalars
    and NumPy types aren't preserved, namely `np.add(1, np.array([2],
    np.float32)).dtype` is `float64` rather than `float32`.

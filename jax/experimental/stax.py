@@ -30,59 +30,20 @@ from six.moves import reduce
 
 from jax import lax
 from jax import random
-from jax.scipy.special import logsumexp
 import jax.numpy as np
 
+from jax.nn import (relu, log_softmax, softmax, softplus, sigmoid, elu,
+                    leaky_relu, selu, gelu, normalize)
+from jax.nn.initializers import glorot_normal, normal, ones, zeros
+
+# aliases for backwards compatibility
+glorot = glorot_normal
+randn = normal
+logsoftmax = log_softmax
 
 # Following the convention used in Keras and tf.layers, we use CamelCase for the
 # names of layer constructors, like Conv and Relu, while using snake_case for
 # other functions, like lax.conv and relu.
-
-
-def relu(x): return np.maximum(x, 0.)
-def softplus(x): return np.logaddexp(x, 0.)
-def sigmoid(x): return 1. / (1. + np.exp(-x))
-def elu(x): return np.where(x > 0, x, np.exp(x) - 1)
-def leaky_relu(x): return np.where(x >= 0, x, 0.01 * x)
-
-def logsoftmax(x, axis=-1):
-  """Apply log softmax to an array of logits, log-normalizing along an axis."""
-  return x - logsumexp(x, axis, keepdims=True)
-
-def softmax(x, axis=-1):
-  """Apply softmax to an array of logits, exponentiating and normalizing along an axis."""
-  unnormalized = np.exp(x - x.max(axis, keepdims=True))
-  return unnormalized / unnormalized.sum(axis, keepdims=True)
-
-def fastvar(x, axis, keepdims):
-  """A fast but less numerically-stable variance calculation than np.var."""
-  return np.mean(x**2, axis, keepdims=keepdims) - np.mean(x, axis, keepdims=keepdims)**2
-
-
-# Initializers
-
-def randn(stddev=1e-2):
-  """An initializer function for random normal coefficients."""
-  def init(rng, shape):
-    std = lax.convert_element_type(stddev, np.float32)
-    return std * random.normal(rng, shape, dtype=np.float32)
-  return init
-
-def glorot(out_axis=0, in_axis=1, scale=onp.sqrt(2)):
-  """An initializer function for random Glorot-scaled coefficients."""
-  def init(rng, shape):
-    fan_in, fan_out = shape[in_axis], shape[out_axis]
-    size = onp.prod(onp.delete(shape, [in_axis, out_axis]))
-    std = scale / np.sqrt((fan_in + fan_out) / 2. * size)
-    std = lax.convert_element_type(std, np.float32)
-    return std * random.normal(rng, shape, dtype=np.float32)
-  return init
-
-zeros = lambda rng, shape: np.zeros(shape, dtype='float32')
-ones = lambda rng, shape: np.ones(shape, dtype='float32')
-
-
-# Layers
 
 # Each layer constructor function returns an (init_fun, apply_fun) pair, where
 #   init_fun: takes an rng key and an input shape and returns an
@@ -90,7 +51,7 @@ ones = lambda rng, shape: np.ones(shape, dtype='float32')
 #   apply_fun: takes params, inputs, and an rng key and applies the layer.
 
 
-def Dense(out_dim, W_init=glorot(), b_init=randn()):
+def Dense(out_dim, W_init=glorot_normal(), b_init=normal()):
   """Layer constructor function for a dense (fully-connected) layer."""
   def init_fun(rng, input_shape):
     output_shape = input_shape[:-1] + (out_dim,)
@@ -104,12 +65,13 @@ def Dense(out_dim, W_init=glorot(), b_init=randn()):
 
 
 def GeneralConv(dimension_numbers, out_chan, filter_shape,
-                strides=None, padding='VALID', W_init=None, b_init=randn(1e-6)):
+                strides=None, padding='VALID', W_init=None,
+                b_init=normal(1e-6)):
   """Layer construction function for a general convolution layer."""
   lhs_spec, rhs_spec, out_spec = dimension_numbers
   one = (1,) * len(filter_shape)
   strides = strides or one
-  W_init = W_init or glorot(rhs_spec.index('O'), rhs_spec.index('I'))
+  W_init = W_init or glorot_normal(rhs_spec.index('I'), rhs_spec.index('O'))
   def init_fun(rng, input_shape):
     filter_shape_iter = iter(filter_shape)
     kernel_shape = [out_chan if c == 'O' else
@@ -132,12 +94,12 @@ Conv = functools.partial(GeneralConv, ('NHWC', 'HWIO', 'NHWC'))
 
 def GeneralConvTranspose(dimension_numbers, out_chan, filter_shape,
                          strides=None, padding='VALID', W_init=None,
-                         b_init=randn(1e-6)):
+                         b_init=normal(1e-6)):
   """Layer construction function for a general transposed-convolution layer."""
   lhs_spec, rhs_spec, out_spec = dimension_numbers
   one = (1,) * len(filter_shape)
   strides = strides or one
-  W_init = W_init or glorot(rhs_spec.index('O'), rhs_spec.index('I'))
+  W_init = W_init or glorot_normal(rhs_spec.index('I'), rhs_spec.index('O'))
   def init_fun(rng, input_shape):
     filter_shape_iter = iter(filter_shape)
     kernel_shape = [out_chan if c == 'O' else
@@ -178,8 +140,7 @@ def BatchNorm(axis=(0, 1, 2), epsilon=1e-5, center=True, scale=True,
     ed = tuple(None if i in axis else slice(None) for i in range(np.ndim(x)))
     beta = beta[ed]
     gamma = gamma[ed]
-    mean, var = np.mean(x, axis, keepdims=True), fastvar(x, axis, keepdims=True)
-    z = (x - mean) / np.sqrt(var + epsilon)
+    z = normalize(x, axis, epsilon=epsilon)
     if center and scale: return gamma * z + beta
     if center: return z + beta
     if scale: return gamma * z
@@ -195,12 +156,14 @@ def elementwise(fun, **fun_kwargs):
 Tanh = elementwise(np.tanh)
 Relu = elementwise(relu)
 Exp = elementwise(np.exp)
-LogSoftmax = elementwise(logsoftmax, axis=-1)
+LogSoftmax = elementwise(log_softmax, axis=-1)
 Softmax = elementwise(softmax, axis=-1)
 Softplus = elementwise(softplus)
 Sigmoid = elementwise(sigmoid)
 Elu = elementwise(elu)
 LeakyRelu = elementwise(leaky_relu)
+Selu = elementwise(selu)
+Gelu = elementwise(gelu)
 
 
 def _pooling_layer(reducer, init_val, rescaler=None):

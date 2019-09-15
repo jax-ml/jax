@@ -25,10 +25,10 @@ DeviceArray([[258.01971436, 249.64862061, 257.13372803, ...,
 
 When an operation such as :code:`np.dot(x, x)` is executed, JAX does not wait
 for the operation to complete before returning control to the Python program.
-Instead, JAX returns a :class:`DeviceArray` value, which is a future, i.e., a
-value that will be produced in the future on an accelerator device but isn't
-necessarily available immediately. We can inspect the shape or type of a
-:class:`DeviceArray` without waiting for the computation that produced it to
+Instead, JAX returns a :class:`~jax.DeviceArray` value, which is a future,
+i.e., a value that will be produced in the future on an accelerator device but
+isn't necessarily available immediately. We can inspect the shape or type of a
+:class:`~jax.DeviceArray` without waiting for the computation that produced it to
 complete, and we can even pass it to another JAX computation, as we do with the
 addition operation here. Only if we actually inspect the value of the array from
 the host, for example by printing it or by converting it into a plain old
@@ -66,8 +66,9 @@ However it turns out that asynchronous dispatch is misleading us and we are not
 timing the execution of the matrix multiplication, only the time to dispatch
 the work. To measure the true cost of the operation we must either read the
 value on the host (e.g., convert it to a plain old host-side numpy array), or
-use the :func:`block_until_ready` method on a :class:`DeviceArray` value to wait
-for the computation that produced it to complete.
+use the :meth:`~jaxDeviceArray.block_until_ready` method on a
+:class:`DeviceArray` value to wait for the computation that produced it to
+complete.
 
 >>> %time onp.asarray(np.dot(x, x))
 CPU times: user 61.1 ms, sys: 0 ns, total: 61.1 ms

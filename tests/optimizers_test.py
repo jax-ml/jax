@@ -115,7 +115,6 @@ class OptimizerTests(jtu.JaxTestCase):
     step_size = 0.1
     self._CheckOptimizer(optimizers.rmsprop, loss, x0, num_iters, step_size)
 
-  @jtu.skip_on_devices('cpu')  # TODO(mattjj): investigate numerical failure
   def testAdamVector(self):
     def loss(x): return np.dot(x, x)
     x0 = np.ones(2)
@@ -177,6 +176,12 @@ class OptimizerTests(jtu.JaxTestCase):
     step_sched = optimizers.inverse_time_decay(0.1, 3, 2., staircase=True)
     mass = 0.9
     self._CheckFuns(optimizers.momentum, loss, x0, step_sched, mass)
+
+  def testRmspropmomentumVectorPolynomialDecaySchedule(self):
+    def loss(x): return np.dot(x, x)
+    x0 = np.ones(2)
+    step_schedule = optimizers.polynomial_decay(1.0, 50, 0.1)
+    self._CheckFuns(optimizers.rmsprop_momentum, loss, x0, step_schedule)
 
   def testRmspropVectorPiecewiseConstantSchedule(self):
     def loss(x): return np.dot(x, x)
@@ -288,6 +293,13 @@ class OptimizerTests(jtu.JaxTestCase):
     J2 = jacfwd(loss, argnums=(0,))(initial_params)
     self.assertAllClose(J1, J2, check_dtypes=True)
 
+  def testUnpackPackRoundTrip(self):
+    opt_init, _, _ = optimizers.momentum(0.1, mass=0.9)
+    params = [{'w': onp.random.randn(1, 2), 'bias': onp.random.randn(2)}]
+    expected = opt_init(params)
+    ans = optimizers.pack_optimizer_state(
+        optimizers.unpack_optimizer_state(expected))
+    self.assertEqual(ans, expected)
 
 if __name__ == '__main__':
   absltest.main()

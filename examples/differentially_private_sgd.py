@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-r"""JAX efficiently trains a differentially private conv net on MNIST.
+"""JAX efficiently trains a differentially private conv net on MNIST.
 
 This script contains a JAX implementation of Differentially Private Stochastic
 Gradient Descent (https://arxiv.org/abs/1607.00133). DPSGD requires clipping

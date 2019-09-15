@@ -12,7 +12,10 @@ For an introduction to JAX, start at the
    :caption: Notes
 
    async_dispatch
+   concurrency
    gpu_memory_allocation
+   profiling
+   rank_promotion_warning
 
 .. toctree::
    :maxdepth: 3

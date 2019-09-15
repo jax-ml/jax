@@ -33,7 +33,7 @@ def logpdf(x, a, b, loc=0, scale=1):
   shape_term = lax.sub(gammaln(lax.add(a, b)), shape_term_tmp)
   y = lax.div(lax.sub(x, loc), scale)
   log_linear_term = lax.add(lax.mul(lax.sub(a, one), lax.log(y)),
-                            lax.mul(lax.sub(b, one), lax.log(lax.sub(one, y))))
+                            lax.mul(lax.sub(b, one), lax.log1p(lax.neg(y))))
   log_probs = lax.sub(lax.add(shape_term, log_linear_term), lax.log(scale))
   return where(logical_or(lax.gt(x, lax.add(loc, scale)),
                           lax.lt(x, loc)), -inf, log_probs)

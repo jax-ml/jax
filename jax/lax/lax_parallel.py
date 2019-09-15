@@ -33,7 +33,7 @@ from jax.interpreters import parallel
 from jax.interpreters import xla
 from jax.interpreters import pxla
 from jax.util import partial, unzip2, prod
-from jax.lib import xla_bridge
+from jax.lib import xla_client
 
 from jax.interpreters.pxla import axis_index
 
@@ -107,11 +107,11 @@ def ppermute(x, axis_name, perm):
       ``axis_name``. Any two pairs should not have the same source index or the
       same destination index. For each index of the axis ``axis_name`` that does
       not correspond to a destination index in ``perm``, the corresponding
-      values in ``x`` are filled with zeros of the appropriate type.
+      values in the result are filled with zeros of the appropriate type.
 
   Returns:
-    An array with the same shape as ``x`` representing the result of an
-    all-reduce min along the axis ``axis_name``.
+    An array with the same shape as ``x`` with slices along the axis
+    ``axis_name`` gathered from ``x`` according to the permutation ``perm``.
   """
   return ppermute_p.bind(x, axis_name=axis_name, perm=perm)
 
@@ -187,10 +187,10 @@ def _allreduce_split_axis_rule(prim, reducer, vals, which_mapped, axis_name):
   x, = vals
   return prim.bind(reducer(x, [0]), axis_name=axis_name), False
 
-def _allreduce_translation_rule(prim, c, val, replica_groups):
+def _allreduce_translation_rule(prim, c, val, replica_groups, backend=None):
   dtype = c.GetShape(val).numpy_dtype()
-  scalar = xla_bridge.Shape.array_shape(dtype, ())
-  computation = xla.primitive_computation(prim, scalar, scalar)
+  scalar = xla_client.Shape.array_shape(dtype, ())
+  computation = xla.primitive_computation(prim, scalar, scalar, backend=backend)
   return c.AllReduce(val, computation, replica_groups=replica_groups)
 
 psum_p = standard_pmap_primitive('psum')
@@ -216,7 +216,8 @@ pxla.split_axis_rules[pmin_p] = \
     partial(_allreduce_split_axis_rule, pmin_p, lax._reduce_min)
 
 
-def _ppermute_translation_rule(c, x, replica_groups, perm):
+def _ppermute_translation_rule(c, x, replica_groups, perm, backend=None):
+  del backend
   group_size = len(replica_groups[0])
   srcs, dsts = unzip2((src % group_size, dst % group_size) for src, dst in perm)
   if not (len(srcs) == len(set(srcs)) and len(dsts) == len(set(dsts))):
@@ -239,7 +240,8 @@ ad.deflinear(ppermute_p, _ppermute_transpose_rule)
 xla.parallel_translations[ppermute_p] = _ppermute_translation_rule
 
 
-def _all_to_all_translation_rule(c, x, split_axis, concat_axis, replica_groups):
+def _all_to_all_translation_rule(c, x, split_axis, concat_axis, replica_groups, backend=None):
+  del backend
   return c.AllToAll(x, split_axis, concat_axis, replica_groups)
 
 def _all_to_all_split_axis_rule(vals, which_mapped, split_axis, concat_axis,
@@ -635,7 +637,7 @@ def _broadcast_in_dim_papply_rule(name, size, vals, dims, shape,
             shape[dim], shape[out_dim]))
   sub_bdims = tuple(onp.delete(broadcast_dimensions, dim))
   sub_shape = tuple(onp.delete(shape, out_dim))
-  return broadcast_in_dim(operand, sub_shape, sub_bdims), out_dim
+  return lax.broadcast_in_dim(operand, sub_shape, sub_bdims), out_dim
 
 
 def _pad_papply_rule(name, size, vals, dims, padding_config):

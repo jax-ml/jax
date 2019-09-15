@@ -30,7 +30,7 @@ def logpdf(x, loc=0, scale=1):
   pi = _constant_like(x, onp.pi)
   scaled_x = lax.div(lax.sub(x, loc), scale)
   normalize_term = lax.log(lax.mul(pi, scale))
-  return lax.neg(lax.add(normalize_term, lax.log(one + lax.mul(scaled_x, scaled_x))))
+  return lax.neg(lax.add(normalize_term, lax.log1p(lax.mul(scaled_x, scaled_x))))
 
 @_wraps(osp_stats.cauchy.pdf)
 def pdf(x, loc=0, scale=1):

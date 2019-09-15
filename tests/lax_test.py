@@ -37,6 +37,7 @@ from jax import lax_reference
 from jax.test_util import check_grads
 from jax.interpreters import xla
 from jax.lib import xla_bridge
+from jax.lib import xla_client
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -97,8 +98,6 @@ LAX_OPS = [
     op_record(lax.atan, 1, float_dtypes, jtu.rand_small()),
     op_record(lax.sinh, 1, float_dtypes + complex_dtypes, jtu.rand_default()),
     op_record(lax.cosh, 1, float_dtypes + complex_dtypes, jtu.rand_default()),
-    op_record(lax.asinh, 1, float_dtypes + complex_dtypes, jtu.rand_positive()),
-    op_record(lax.acosh, 1, float_dtypes + complex_dtypes, jtu.rand_positive()),
 
     op_record(lax.lgamma, 1, float_dtypes, jtu.rand_positive()),
     op_record(lax.digamma, 1, float_dtypes, jtu.rand_positive()),
@@ -1040,6 +1039,7 @@ class LaxTest(jtu.JaxTestCase):
       for init_val, op, dtypes in [
           (0, lax.add, default_dtypes),
           (1, lax.mul, default_dtypes),
+          (0, lax.max, all_dtypes), # non-monoidal
           (-onp.inf, lax.max, float_dtypes),
           (onp.iinfo(onp.int32).min, lax.max, [onp.int32]),
           # (onp.iinfo(onp.int64).min, lax.max, [onp.int64]),  # TODO fails
@@ -1387,7 +1387,7 @@ class LaxTest(jtu.JaxTestCase):
   def testLongConstantHandling(self):
     if six.PY3:
       self.skipTest("Test is Python 2 specific")
-    self.assertTrue(api.jit(lambda x: lax.lt(x, long(10)))(long(3)))
+    self.assertTrue(api.jit(lambda x: lax.lt(x, long(10)))(long(3)))  # noqa: F821
 
   def testIssue831(self):
     # Tests the DeviceTuple constant handler
@@ -1396,6 +1396,18 @@ class LaxTest(jtu.JaxTestCase):
       return api.jit(lax.fori_loop, static_argnums=(2,))( 0, 10, g, x)
 
     api.jit(f)(1.)  # doesn't crash
+
+  def testReshapeWithUnusualShapes(self):
+    ans = lax.reshape(onp.ones((3,), onp.float32), (lax.add(1, 2), 1))
+    self.assertAllClose(ans, onp.ones((3, 1), onp.float32), check_dtypes=True)
+
+    jtu.check_raises_regexp(
+      lambda: lax.reshape(onp.ones(3,), (onp.array([3, 1]),)), TypeError,
+      "Shapes must be 1D sequences of concrete values of integer type.*")
+
+    jtu.check_raises_regexp(
+      lambda: lax.reshape(onp.ones(3,), (1.5, 2.0)), TypeError,
+      "Shapes must be 1D sequences of concrete values of integer type.*")
 
 
 class DeviceConstantTest(jtu.JaxTestCase):
@@ -1489,8 +1501,6 @@ LAX_GRAD_OPS = [
                    dtypes=[onp.float64]),
     grad_test_spec(lax.round, nargs=1, order=2, rng=jtu.rand_default(),
                    dtypes=[onp.float64]),
-    # grad_test_spec(lax.rem, nargs=2, order=2, rng=jtu.rand_default(),
-    #                dtypes=[onp.float64]),  # TODO(mattjj): enable
 
     grad_test_spec(lax.exp, nargs=1, order=2, rng=jtu.rand_small(),
                    dtypes=[onp.float64, onp.complex64]),
@@ -1500,12 +1510,22 @@ LAX_GRAD_OPS = [
                    dtypes=[onp.float64, onp.complex64]),
     grad_test_spec(lax.log1p, nargs=1, order=2, rng=jtu.rand_positive(),
                    dtypes=[onp.float64, onp.complex64]),
+    grad_test_spec(lax.sinh, nargs=1, order=2, rng=jtu.rand_default(),
+                   dtypes=[onp.float64, onp.complex64], tol=1e-5),
+    grad_test_spec(lax.cosh, nargs=1, order=2, rng=jtu.rand_default(),
+                   dtypes=[onp.float64, onp.complex64], tol=1e-5),
     grad_test_spec(lax.tanh, nargs=1, order=2, rng=jtu.rand_default(),
                    dtypes=[onp.float64, onp.complex64], tol=1e-5),
     grad_test_spec(lax.sin, nargs=1, order=2, rng=jtu.rand_default(),
                    dtypes=[onp.float64, onp.complex64]),
     grad_test_spec(lax.cos, nargs=1, order=2, rng=jtu.rand_default(),
                    dtypes=[onp.float64, onp.complex64]),
+    grad_test_spec(lax.tan, nargs=1, order=2, rng=jtu.rand_uniform(-1.3, 1.3),
+                   dtypes=[onp.float64, onp.complex64], tol=1e-3),
+    grad_test_spec(lax.asin, nargs=1, order=2, rng=jtu.rand_uniform(-1., 1.),
+                   dtypes=[onp.float64], tol=1e-3),
+    grad_test_spec(lax.acos, nargs=1, order=2, rng=jtu.rand_uniform(-1., 1.),
+                   dtypes=[onp.float64], tol=1e-3),
     # TODO(proteneer): atan2 input is already a representation of a
     # complex number. Need to think harder about what this even means
     # if each input itself is a complex number.
@@ -1554,6 +1574,23 @@ LAX_GRAD_OPS = [
     #                dtypes=[onp.float64], name="MinSomeEqual"),
 ]
 
+GradSpecialValuesTestSpec = collections.namedtuple(
+    "GradSpecialValuesTestSpec", ["op", "values"])
+
+LAX_GRAD_SPECIAL_VALUE_TESTS = [
+    GradSpecialValuesTestSpec(lax.sinh, [0.]),
+    GradSpecialValuesTestSpec(lax.cosh, [0.]),
+    GradSpecialValuesTestSpec(lax.tanh, [0., 1000.]),
+    GradSpecialValuesTestSpec(lax.sin, [0., onp.pi, onp.pi/2., onp.pi/4.]),
+    GradSpecialValuesTestSpec(lax.cos, [0., onp.pi, onp.pi/2., onp.pi/4.]),
+    GradSpecialValuesTestSpec(lax.tan, [0.]),
+    GradSpecialValuesTestSpec(lax.asin, [0.]),
+    GradSpecialValuesTestSpec(lax.acos, [0.]),
+    GradSpecialValuesTestSpec(lax.atan, [0., 1000.]),
+    GradSpecialValuesTestSpec(lax.erf, [0., 10.]),
+    GradSpecialValuesTestSpec(lax.erfc, [0., 10.]),
+]
+
 
 def check_grads_bilinear(f, args, order,
                          modes=["fwd", "rev"], atol=None, rtol=None):
@@ -1579,12 +1616,20 @@ class LaxAutodiffTest(jtu.JaxTestCase):
         for dtype in rec.dtypes)
       for rec in LAX_GRAD_OPS))
   def testOpGrad(self, op, rng, shapes, dtype, order, tol):
-    if FLAGS.jax_test_dut and FLAGS.jax_test_dut.startswith("tpu"):
-      if op is lax.pow:
-        raise SkipTest("pow grad imprecise on tpu")
+    if jtu.device_under_test() == "tpu" and op is lax.pow:
+      raise SkipTest("pow grad imprecise on tpu")
     tol = 1e-1 if num_float_bits(dtype) == 32 else tol
     args = tuple(rng(shape, dtype) for shape in shapes)
     check_grads(op, args, order, ["fwd", "rev"], tol, tol)
+
+  @parameterized.named_parameters(itertools.chain.from_iterable(
+      jtu.cases_from_list(
+          {"testcase_name": "_{}_{}".format(rec.op.__name__, special_value),
+           "op": rec.op, "special_value": special_value}
+          for special_value in rec.values)
+      for rec in LAX_GRAD_SPECIAL_VALUE_TESTS))
+  def testOpGradSpecialValue(self, op, special_value):
+    check_grads(op, (special_value,), 2, ["fwd", "rev"])
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_from_dtype={}_to_dtype={}".format(
@@ -2015,7 +2060,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       ]
       for rng in [jtu.rand_small()]))
   def testReduceGrad(self, op, init_val, shape, dtype, dims, rng):
-    if "tpu" in FLAGS.jax_test_dut and op is lax.mul:
+    if jtu.device_under_test() == "tpu" and op is lax.mul:
       raise SkipTest("unimplemented case")
     tol = 1e-2 if onp.finfo(dtype).bits == 32 else None
     operand = rng(shape, dtype)
@@ -2043,7 +2088,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     # test method, rather than at the parameterized test level, because it
     # depends on FLAGS for the device under test.
     # TODO(b/31565929): enable when fixed.
-    if FLAGS.jax_test_dut == "tpu" and op is not lax.add:
+    if jtu.device_under_test() == "tpu" and op is not lax.add:
       all_configs = [((6, 5, 4, 3), (2, 2, 1, 1), (1, 2, 1, 1))]
 
       # TODO(b/73062247): need variadic reduce-window for better precision.
@@ -2240,17 +2285,22 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     expected = onp.array(0.0)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  def testReshapeWithUnusualShapes(self):
-    ans = lax.reshape(onp.ones((3,), onp.float32), (lax.add(1, 2), 1))
-    self.assertAllClose(ans, onp.ones((3, 1), onp.float32), check_dtypes=True)
+  # TODO(mattjj): make this a more systematic test
+  def testRemainder(self):
+    rng = onp.random.RandomState(0)
+    x = rng.uniform(-0.9, 9, size=(3, 4))
+    y = rng.uniform(0.7, 1.9, size=(3, 1))
+    assert not set(onp.unique(x)) & set(onp.unique(y))
+    tol = 1e-1 if num_float_bits(onp.float64) == 32 else 1e-3
+    check_grads(lax.rem, (x, y), 2, ["fwd", "rev"], tol, tol)
 
-    jtu.check_raises_regexp(
-      lambda: lax.reshape(onp.ones(3,), (onp.array([3, 1]),)), TypeError,
-      "Shapes must be 1D sequences of concrete values of integer type.*")
+    rng = onp.random.RandomState(0)
+    x = rng.uniform(-0.9, 9, size=(1, 4))
+    y = rng.uniform(0.7, 1.9, size=(3, 4))
+    assert not set(onp.unique(x)) & set(onp.unique(y))
+    tol = 1e-1 if num_float_bits(onp.float64) == 32 else 1e-3
+    check_grads(lax.rem, (x, y), 2, ["fwd", "rev"], tol, tol)
 
-    jtu.check_raises_regexp(
-      lambda: lax.reshape(onp.ones(3,), (1.5, 2.0)), TypeError,
-      "Shapes must be 1D sequences of concrete values of integer type.*")
 
 def all_bdims(*shapes):
   bdims = (itertools.chain([None], range(len(shape) + 1)) for shape in shapes)
@@ -2502,20 +2552,25 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(op, 5, bdims, (inshape,), dtype, rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inshape={}_outshape={}_bdims={}".format(
+      {"testcase_name": "_inshape={}_outshape={}_dims={}_bdims={}".format(
           jtu.format_shape_dtype_string(arg_shape, dtype),
           jtu.format_shape_dtype_string(out_shape, dtype),
-          bdims),
+          dimensions, bdims),
        "arg_shape": arg_shape, "out_shape": out_shape, "dtype": dtype,
-       "bdims": bdims, "rng": rng}
+       "dimensions": dimensions, "bdims": bdims, "rng": rng}
       for dtype in default_dtypes
-      for arg_shape, out_shape in [
-          [(3, 4), (12,)], [(2, 1, 4), (8,)], [(2, 2, 4), (2, 8)]
+      for arg_shape, dimensions, out_shape in [
+          [(3, 4), None, (12,)],
+          [(2, 1, 4), None, (8,)],
+          [(2, 2, 4), None, (2, 8)],
+          [(2, 2, 4), (0, 1, 2), (2, 8)],
+          [(2, 2, 4), (1, 0, 2), (8, 2)],
+          [(2, 2, 4), (2, 1, 0), (4, 2, 2)]
       ]
       for bdims in all_bdims(arg_shape)
       for rng in [jtu.rand_default()]))
-  def testReshape(self, arg_shape, out_shape, dtype, bdims, rng):
-    op = lambda x: lax.reshape(x, out_shape)
+  def testReshape(self, arg_shape, out_shape, dtype, dimensions, bdims, rng):
+    op = lambda x: lax.reshape(x, out_shape, dimensions=dimensions)
     self._CheckBatching(op, 10, bdims, (arg_shape,), dtype, rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -2591,14 +2646,15 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(op, 5, bdims, (shape,), dtype, rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_op={}_inshape={}_reducedims={}_bdims={}"
+      {"testcase_name": "_op={}_inshape={}_reducedims={}_initval={}_bdims={}"
        .format(op.__name__, jtu.format_shape_dtype_string(shape, dtype), dims,
-               bdims),
+               init_val, bdims),
        "op": op, "init_val": init_val, "shape": shape, "dtype": dtype,
        "dims": dims, "bdims": bdims, "rng": rng}
       for init_val, op, dtypes in [
           (0, lax.add, default_dtypes),
           (1, lax.mul, default_dtypes),
+          (0, lax.max, all_dtypes), # non-monoidal
           (-onp.inf, lax.max, float_dtypes),
           (onp.iinfo(onp.int32).min, lax.max, [onp.int32]),
           (onp.iinfo(onp.int64).min, lax.max, [onp.int64]),
@@ -2667,7 +2723,7 @@ class LaxVmapTest(jtu.JaxTestCase):
     ndims = len(shape)
     axes = range(ndims - fft_ndims, ndims)
     fft_lengths = [shape[axis] for axis in axes]
-    op = lambda x: lax.fft(x, xla_bridge.xla_client.FftType.FFT, fft_lengths)
+    op = lambda x: lax.fft(x, xla_client.FftType.FFT, fft_lengths)
     self._CheckBatching(op, 5, bdims, [shape], onp.complex64, rng)
 
   # TODO Concatenate

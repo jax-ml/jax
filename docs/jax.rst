@@ -1,3 +1,5 @@
+.. currentmodule:: jax
+
 jax package
 ===========
 
@@ -11,6 +13,7 @@ Subpackages
     jax.scipy
     jax.experimental
     jax.lax
+    jax.nn
     jax.ops
     jax.random
     jax.tree_util
@@ -18,33 +21,38 @@ Subpackages
 Just-in-time compilation (:code:`jit`)
 --------------------------------------
 
-.. automodule:: jax
-    :members: jit, disable_jit, xla_computation, make_jaxpr, eval_shape
-    :undoc-members:
-    :show-inheritance:
+.. autofunction:: jit
+.. autofunction:: disable_jit
+.. autofunction:: xla_computation
+.. autofunction:: make_jaxpr
+.. autofunction:: eval_shape
 
 Automatic differentiation
 -------------------------
 
-.. automodule:: jax
-    :members: grad, value_and_grad, jacfwd, jacrev, hessian, jvp, linearize, vjp, custom_transforms, defjvp, defjvp_all, defvjp, defvjp_all, custom_gradient
-    :undoc-members:
-    :show-inheritance:
+.. autofunction:: grad
+.. autofunction:: value_and_grad
+.. autofunction:: jacfwd
+.. autofunction:: jacrev
+.. autofunction:: hessian
+.. autofunction:: jvp
+.. autofunction:: linearize
+.. autofunction:: vjp
+.. autofunction:: custom_transforms
+.. autofunction:: defjvp
+.. autofunction:: defjvp_all
+.. autofunction:: defvjp
+.. autofunction:: defvjp_all
+.. autofunction:: custom_gradient
 
 
 Vectorization (:code:`vmap`)
 ----------------------------
 
-.. automodule:: jax
-    :members: vmap
-    :undoc-members:
-    :show-inheritance:
+.. autofunction:: vmap
 
 
 Parallelization (:code:`pmap`)
-----------------------------
+------------------------------
 
-.. automodule:: jax
-    :members: pmap
-    :undoc-members:
-    :show-inheritance:
+.. autofunction:: pmap

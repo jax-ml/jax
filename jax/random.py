@@ -32,9 +32,10 @@ from . import lax
 from . import numpy as np
 from . import tree_util
 from .api import custom_transforms, defjvp, jit, vmap
-from .numpy.lax_numpy import _constant_like, asarray
+from .numpy.lax_numpy import _constant_like, asarray, stack
 from jax.lib import xla_bridge
 from jax import core
+from jax.scipy.special import logit
 
 
 def PRNGKey(seed):
@@ -122,36 +123,56 @@ def threefry_2x32(keypair, count):
   else:
     x = list(np.split(count.ravel(), 2))
 
-  rotations = onp.uint32([13, 15, 26, 6, 17, 29, 16, 24])
+  rotations = [onp.array([13, 15, 26, 6], dtype=onp.uint32),
+               onp.array([17, 29, 16, 24], dtype=onp.uint32)]
   ks = [key1, key2, key1 ^ key2 ^ onp.uint32(0x1BD11BDA)]
+
+  # TODO(mattjj): see https://github.com/google/jax/issues/1267, as a hopefully
+  # temporary workaround for the facts that (1) XLA:CPU compile time is too slow
+  # with unrolled loops and (2) XLA:GPU execution time is too slow with rolled
+  # loops, we switch on whether the default backend is CPU or GPU. If this kind
+  # of switch ends up sticking around, we should take into account #1211 and put
+  # the switch in the translation rule rather than here in the traceable.
+  use_rolled_loops = xla_bridge.get_backend().platform == "cpu"
 
   x[0] = x[0] + ks[0]
   x[1] = x[1] + ks[1]
 
-  for r in rotations[:4]:
-    x = apply_round(x, r)
-  x[0] = x[0] + ks[1]
-  x[1] = x[1] + ks[2] + onp.uint32(1)
+  if use_rolled_loops:
+    def rotate_list(xs): return xs[1:] + xs[:1]
+    def step(i, state):
+      x, ks, rotations = state
+      for r in rotations[0]:
+        x = apply_round(x, r)
+      new_x = [x[0] + ks[0], x[1] + ks[1] + asarray(i + 1, dtype=onp.uint32)]
+      return new_x, rotate_list(ks), rotate_list(rotations)
+    x, _, _ = lax.fori_loop(0, 5, step, (x, rotate_list(ks), rotations))
 
-  for r in rotations[4:]:
-    x = apply_round(x, r)
-  x[0] = x[0] + ks[2]
-  x[1] = x[1] + ks[0] + onp.uint32(2)
+  else:
+    for r in rotations[0]:
+      x = apply_round(x, r)
+    x[0] = x[0] + ks[1]
+    x[1] = x[1] + ks[2] + onp.uint32(1)
 
-  for r in rotations[:4]:
-    x = apply_round(x, r)
-  x[0] = x[0] + ks[0]
-  x[1] = x[1] + ks[1] + onp.uint32(3)
+    for r in rotations[1]:
+      x = apply_round(x, r)
+    x[0] = x[0] + ks[2]
+    x[1] = x[1] + ks[0] + onp.uint32(2)
 
-  for r in rotations[4:]:
-    x = apply_round(x, r)
-  x[0] = x[0] + ks[1]
-  x[1] = x[1] + ks[2] + onp.uint32(4)
+    for r in rotations[0]:
+      x = apply_round(x, r)
+    x[0] = x[0] + ks[0]
+    x[1] = x[1] + ks[1] + onp.uint32(3)
 
-  for r in rotations[:4]:
-    x = apply_round(x, r)
-  x[0] = x[0] + ks[2]
-  x[1] = x[1] + ks[0] + onp.uint32(5)
+    for r in rotations[1]:
+      x = apply_round(x, r)
+    x[0] = x[0] + ks[1]
+    x[1] = x[1] + ks[2] + onp.uint32(4)
+
+    for r in rotations[0]:
+      x = apply_round(x, r)
+    x[0] = x[0] + ks[2]
+    x[1] = x[1] + ks[0] + onp.uint32(5)
 
   out = np.concatenate(x)
   assert out.dtype == onp.uint32
@@ -397,6 +418,33 @@ def _normal(key, shape, dtype):
   return onp.array(onp.sqrt(2), dtype) * lax.erf_inv(u)
 
 
+def truncated_normal(key, lower, upper, shape=(), dtype=onp.float64):
+  """Sample truncated standard normal random values with given shape and dtype.
+
+  Args:
+    key: a PRNGKey used as the random key.
+    lower: a floating-point lower bound for truncation.
+    upper: a floating-point upper bound for truncation.
+    shape: a tuple of nonnegative integers representing the shape.
+    dtype: optional, a float dtype for the returned values (default float64 if
+      jax_enable_x64 is true, otherwise float32).
+
+  Returns:
+    A random array with the specified shape and dtype.
+  """
+  dtype = xla_bridge.canonicalize_dtype(dtype)
+  return _truncated_normal(key, lower, upper, shape, dtype)
+
+@partial(jit, static_argnums=(3, 4))
+def _truncated_normal(key, lower, upper, shape, dtype):
+  _check_shape("truncated_normal", shape)
+  sqrt2 = onp.array(onp.sqrt(2), dtype)
+  a = lax.erf(lax.convert_element_type(lower, dtype) / sqrt2)
+  b = lax.erf(lax.convert_element_type(upper, dtype) / sqrt2)
+  u = uniform(key, shape, dtype)
+  return sqrt2 * lax.erf_inv(a + u * (b - a))
+
+
 def bernoulli(key, p=onp.float32(0.5), shape=()):
   """Sample Bernoulli random values with given shape and mean.
 
@@ -530,7 +578,7 @@ def _exponential(key, shape, dtype):
   _check_shape("exponential", shape)
   u = uniform(key, shape, dtype)
   # taking 1 - u to move the domain of log to (0, 1] instead of [0, 1)
-  return lax.neg(lax.log(lax.sub(_constant_like(u, 1), u)))
+  return lax.neg(lax.log1p(lax.neg(u)))
 
 
 def _gamma_one(key, alpha):
@@ -785,6 +833,28 @@ def _laplace(key, shape, dtype):
   u = uniform(
       key, shape, dtype, minval=-1. + np.finfo(dtype).epsneg, maxval=1.)
   return lax.mul(lax.sign(u), lax.log1p(lax.neg(lax.abs(u))))
+
+
+def logistic(key, shape=(), dtype=onp.float64):
+  """Sample logistic random values with given shape and float dtype.
+
+  Args:
+    key: a PRNGKey used as the random key.
+    shape: optional, a tuple of nonnegative integers representing the shape
+      (default scalar).
+    dtype: optional, a float dtype for the returned values (default float64 if
+      jax_enable_x64 is true, otherwise float32).
+
+  Returns:
+    A random array with the specified shape and dtype.
+  """
+  dtype = xla_bridge.canonicalize_dtype(dtype)
+  return _logistic(key, shape, dtype)
+
+@partial(jit, static_argnums=(1, 2))
+def _logistic(key, shape, dtype):
+  _check_shape("logistic", shape)
+  return logit(uniform(key, shape, dtype))
 
 
 def pareto(key, b, shape=(), dtype=onp.float64):

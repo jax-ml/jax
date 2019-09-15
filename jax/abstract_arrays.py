@@ -179,7 +179,7 @@ array_types = {onp.ndarray, onp.float64, onp.float32, onp.float16,
                onp.longlong, complex, float, int, bool}
 
 if six.PY2:
-  array_types.add(long)
+  array_types.add(long)  # noqa: F821
 
 for t in array_types:
   core.pytype_aval_mappings[t] = ConcreteArray
@@ -193,10 +193,10 @@ def zeros_like_shaped_array(aval):
 ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
 
 def raise_to_shaped(aval):
-  if type(aval) is core.AbstractTuple:
-    return core.AbstractTuple(map(raise_to_shaped, aval))
-  elif isinstance(aval, ShapedArray):
+  if isinstance(aval, ShapedArray):
     return ShapedArray(aval.shape, aval.dtype)
+  elif aval is core.abstract_unit:
+    return core.abstract_unit
   else:
     raise TypeError(type(aval))
 

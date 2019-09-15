@@ -17,7 +17,7 @@
 
 import jaxlib
 
-_minimum_jaxlib_version = (0, 1, 22)
+_minimum_jaxlib_version = (0, 1, 26)
 try:
   from jaxlib import version as jaxlib_version
 except:
@@ -25,10 +25,10 @@ except:
   msg = 'This version of jax requires jaxlib version >= {}.'
   raise ImportError(msg.format('.'.join(map(str, _minimum_jaxlib_version))))
 
+version = tuple(int(x) for x in jaxlib_version.__version__.split('.'))
 
 # Check the jaxlib version before importing anything else from jaxlib.
 def _check_jaxlib_version():
-  version = tuple(int(x) for x in jaxlib_version.__version__.split('.'))
   if version < _minimum_jaxlib_version:
     msg = 'jaxlib is version {}, but this version of jax requires version {}.'
     raise ValueError(msg.format('.'.join(map(str, version)),
@@ -41,9 +41,5 @@ from jaxlib import xla_client
 from jaxlib import xrt
 from jaxlib import lapack
 
-# TODO(phawkins): make the import unconditional when the minimum Jaxlib version
-# has been increased to 0.1.23.
-try:
-  from jaxlib import pytree
-except ImportError:
-  pytree = None
+from jaxlib import pytree
+from jaxlib import cusolver

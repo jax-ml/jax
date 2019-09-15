@@ -23,6 +23,7 @@ import itertools
 import operator
 import unittest
 from unittest import SkipTest
+import warnings
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -37,6 +38,7 @@ from jax import lax
 from jax import numpy as lnp
 from jax import test_util as jtu
 from jax.numpy.lax_numpy import numpy_version
+from jax.test_util import check_grads
 from jax.lib import xla_bridge
 
 from jax.config import config
@@ -453,8 +455,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for shape in rec.shapes for dtype in rec.dtypes
       for axis in range(-len(shape), len(shape))))
   def testArgMinMax(self, onp_op, lnp_op, rng, shape, dtype, axis):
-    if (dtype == onp.complex128 and FLAGS.jax_test_dut and
-        FLAGS.jax_test_dut.startswith("gpu")):
+    if dtype == onp.complex128 and jtu.device_under_test() == "gpu":
       raise unittest.SkipTest("complex128 reductions not supported on GPU")
 
     def onp_fun(array_to_reduce):
@@ -1075,7 +1076,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       {"testcase_name": "_shape={}_axis={}_weights={}_returned={}".format(
           jtu.format_shape_dtype_string(shape, dtype),
           axis,
-          (None if weights_shape == None else jtu.format_shape_dtype_string(weights_shape, dtype)),
+          (None if weights_shape is None else jtu.format_shape_dtype_string(weights_shape, dtype)),
           returned),
        "rng": jtu.rand_default(), "shape": shape, "dtype": dtype, "axis": axis,
        "weights_shape": weights_shape, "returned": returned}
@@ -1084,13 +1085,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for axis in set(range(-len(shape), len(shape))) | set([None])
       # `weights_shape` is either `None`, same as the averaged axis, or same as
       # that of the input
-      for weights_shape in ([None, shape] if axis is None else [None, (shape[axis],), shape])
+      for weights_shape in ([None, shape] if axis is None
+                            else [None, (shape[axis],), shape])
       for returned in [False, True]))
   def testAverage(self, shape, dtype, axis, weights_shape, returned, rng):
-    onp_fun = lambda x, weights: onp.average(x, axis, weights, returned)
-    lnp_fun = lambda x, weights: lnp.average(x, axis, weights, returned)
-    args_maker = lambda: [rng(shape, dtype),
-                          None if weights_shape is None else rng(weights_shape, dtype)]
+    if weights_shape is None:
+      onp_fun = lambda x: onp.average(x, axis, returned=returned)
+      lnp_fun = lambda x: lnp.average(x, axis, returned=returned)
+      args_maker = lambda: [rng(shape, dtype)]
+    else:
+      onp_fun = lambda x, weights: onp.average(x, axis, weights, returned)
+      lnp_fun = lambda x, weights: lnp.average(x, axis, weights, returned)
+      args_maker = lambda: [rng(shape, dtype), rng(weights_shape, dtype)]
 
     try:
         self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
@@ -1559,7 +1565,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for q_dtype in [onp.float32]
         for q_shape in scalar_shapes + [(4,)]
         for keepdims in [False, True]))
-  @jtu.skip_on_devices("tpu")  # TODO(phawkins): investigate this failure
   def testQuantile(self, op, a_rng, q_rng, a_shape, a_dtype, q_shape, q_dtype,
                    axis, keepdims):
     if op == "quantile" and numpy_version < (1, 15):
@@ -1848,8 +1853,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         # TODO(b/133842876, b/133842870): these return wrong outputs on CPU for
         # NaN inputs.
         continue
-      if (op in ("sin", "cos", "tan", "arctan") and FLAGS.jax_test_dut and
-          FLAGS.jax_test_dut.startswith("tpu")):
+      if (op in ("sin", "cos", "tan", "arctan") and
+          jtu.device_under_test() == "tpu"):
         continue  # TODO(b/132196789, b/134175194): fix and reenable.
       x = dtype(x)
       expected = onp_op(x)
@@ -1877,8 +1882,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       jtu.cases_from_list(
-        {"testcase_name": "_shape={}_dtype={}_axis={}_ddof={}_keepdims={}"
-         .format(shape, dtype, axis, ddof, keepdims),
+        {"testcase_name":
+         "_shape={}_dtype={}_out_dtype={}_axis={}_ddof={}_keepdims={}"
+         .format(shape, dtype, out_dtype, axis, ddof, keepdims),
          "shape": shape, "dtype": dtype, "out_dtype": out_dtype, "axis": axis,
          "ddof": ddof, "keepdims": keepdims, "rng": rng}
         for shape in [(5,), (10, 5)]
@@ -1938,6 +1944,124 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     if not onp.any(onp.isclose(onp.std(mat), 0.0)):
       self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(
+      jtu.cases_from_list(
+        {"testcase_name": "_shapes={}_dtype={}_indexing={}_sparse={}".format(
+            shapes, dtype, indexing, sparse),
+         "shapes": shapes, "dtype": dtype, "indexing": indexing,
+         "sparse": sparse, "rng": rng}
+        for shapes in [(), (5,), (5, 3)]
+        for dtype in number_dtypes
+        for indexing in ['xy', 'ij']
+        for sparse in [True, False]
+        for rng in [jtu.rand_default()]))
+  def testMeshGrid(self, shapes, dtype, indexing, sparse, rng):
+    args_maker = self._GetArgsMaker(rng, [(x,) for x in shapes],
+                                    [dtype] * len(shapes))
+    onp_fun = partial(onp.meshgrid, indexing=indexing, sparse=sparse)
+    lnp_fun = partial(lnp.meshgrid, indexing=indexing, sparse=sparse)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+  def testDisableNumpyRankPromotionBroadcasting(self):
+    try:
+      prev_flag = FLAGS.jax_numpy_rank_promotion
+      FLAGS.jax_numpy_rank_promotion = "allow"
+      lnp.ones(2) + lnp.ones((1, 2))  # works just fine
+    finally:
+      FLAGS.jax_numpy_rank_promotion = prev_flag
+
+    try:
+      prev_flag = FLAGS.jax_numpy_rank_promotion
+      FLAGS.jax_numpy_rank_promotion = "raise"
+      self.assertRaises(ValueError, lambda: lnp.ones(2) + lnp.ones((1, 2)))
+    finally:
+      FLAGS.jax_numpy_rank_promotion = prev_flag
+
+    try:
+      prev_flag = FLAGS.jax_numpy_rank_promotion
+      FLAGS.jax_numpy_rank_promotion = "warn"
+      with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        lnp.ones(2) + lnp.ones((1, 2))
+        assert len(w) > 0
+        msg = str(w[-1].message)
+        expected_msg = ("Following NumPy automatic rank promotion for add on "
+                        "shapes (2,) (1, 2).")
+        self.assertEqual(msg[:len(expected_msg)], expected_msg)
+
+        prev_len = len(w)
+        lnp.ones(2) + 3
+        self.assertEqual(len(w), prev_len)  # don't want to warn for scalars
+    finally:
+      FLAGS.jax_numpy_rank_promotion = prev_flag
+
+  def testStackArrayArgument(self):
+    # tests https://github.com/google/jax/issues/1271
+    @api.jit
+    def foo(x):
+      return lnp.stack(x)
+    foo(onp.zeros(2))  # doesn't crash
+
+    @api.jit
+    def foo(x):
+      return lnp.concatenate(x)
+    foo(onp.zeros((2, 2)))  # doesn't crash
+
+
+# Most grad tests are at the lax level (see lax_test.py), but we add some here
+# as needed for e.g. particular compound ops of interest.
+
+GradTestSpec = collections.namedtuple(
+    "GradTestSpec", ["op", "nargs", "order", "rng", "dtypes", "name", "tol"])
+def grad_test_spec(op, nargs, order, rng, dtypes, name=None, tol=None):
+  return GradTestSpec(op, nargs, order, rng, dtypes, name or op.__name__, tol)
+
+GRAD_TEST_RECORDS = [
+    grad_test_spec(lnp.arcsinh, nargs=1, order=2, rng=jtu.rand_positive(),
+                   dtypes=[onp.float64, onp.complex64], tol=1e-4),
+    grad_test_spec(lnp.arccosh, nargs=1, order=2, rng=jtu.rand_positive(),
+                   dtypes=[onp.float64, onp.complex64], tol=1e-4),
+    grad_test_spec(lnp.arctanh, nargs=1, order=2, rng=jtu.rand_uniform(-0.9, 0.9),
+                   dtypes=[onp.float64, onp.complex64], tol=1e-4),
+]
+
+GradSpecialValuesTestSpec = collections.namedtuple(
+    "GradSpecialValuesTestSpec", ["op", "values"])
+
+GRAD_SPECIAL_VALUE_TEST_RECORDS = [
+    GradSpecialValuesTestSpec(lnp.arcsinh, [0., 1000.]),
+    GradSpecialValuesTestSpec(lnp.arccosh, [1000.]),
+    GradSpecialValuesTestSpec(lnp.arctanh, [0.]),
+]
+
+def num_float_bits(dtype):
+  return onp.finfo(xla_bridge.canonicalize_dtype(dtype)).bits
+
+class NumpyGradTests(jtu.JaxTestCase):
+  @parameterized.named_parameters(itertools.chain.from_iterable(
+      jtu.cases_from_list(
+        {"testcase_name": jtu.format_test_name_suffix(
+            rec.name, shapes, itertools.repeat(dtype)),
+         "op": rec.op, "rng": rec.rng, "shapes": shapes, "dtype": dtype,
+         "order": rec.order, "tol": rec.tol}
+        for shapes in CombosWithReplacement(nonempty_shapes, rec.nargs)
+        for dtype in rec.dtypes)
+      for rec in GRAD_TEST_RECORDS))
+  def testOpGrad(self, op, rng, shapes, dtype, order, tol):
+    tol = 1e-1 if num_float_bits(dtype) == 32 else tol
+    args = tuple(rng(shape, dtype) for shape in shapes)
+    check_grads(op, args, order, ["fwd", "rev"], tol, tol)
+
+  @parameterized.named_parameters(itertools.chain.from_iterable(
+      jtu.cases_from_list(
+          {"testcase_name": "_{}_{}".format(rec.op.__name__, special_value),
+           "op": rec.op, "special_value": special_value}
+          for special_value in rec.values)
+      for rec in GRAD_SPECIAL_VALUE_TEST_RECORDS))
+  def testOpGradSpecialValue(self, op, special_value):
+    check_grads(op, (special_value,), 2, ["fwd", "rev"])
+
 
 if __name__ == "__main__":
   absltest.main()

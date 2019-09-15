@@ -15,8 +15,9 @@ jax.scipy.linalg
    det
    eigh
    inv
-   lu_factor
    lu
+   lu_factor
+   lu_solve
    qr
    solve
    solve_triangular
@@ -34,6 +35,7 @@ jax.scipy.special
   :toctree: _autosummary
 
    digamma
+   entr
    erf
    erfc
    erfinv
@@ -42,6 +44,7 @@ jax.scipy.special
    log_ndtr
    logit
    logsumexp
+   multigammaln
    ndtr
    ndtri
    xlog1py

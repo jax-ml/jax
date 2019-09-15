@@ -1,21 +1,5 @@
-ARG CUDA_VERSION=9.2
-FROM nvidia/cuda:$CUDA_VERSION-cudnn7-devel-ubuntu16.04
+FROM gcr.io/tensorflow-testing/nosla-cuda10.0-cudnn7-ubuntu16.04-manylinux2010
 LABEL maintainer "Matt Johnson <mattjj@google.com>"
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-            dh-autoreconf git curl \
-            build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev \
-            libsqlite3-dev wget llvm libncurses5-dev xz-utils tk-dev \
-            libxml2-dev libxmlsec1-dev libffi-dev openjdk-8-jdk curl \
-            bash-completion unzip python
-
-RUN wget "https://github.com/bazelbuild/bazel/releases/download/0.24.0/bazel_0.24.0-linux-x86_64.deb" && \
-    dpkg -i bazel_0.24.0-linux-x86_64.deb
-
-RUN git clone https://github.com/nixos/patchelf /tmp/patchelf
-WORKDIR /tmp/patchelf
-RUN bash bootstrap.sh && ./configure && make && make install && rm -r /tmp/patchelf
-
 
 WORKDIR /
 RUN git clone https://github.com/pyenv/pyenv.git /pyenv
@@ -30,6 +14,24 @@ RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 2.7.15 && pip in
 RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.5.6 && pip install numpy==1.15.4 scipy cython setuptools wheel
 RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.6.8 && pip install numpy==1.15.4 scipy cython setuptools wheel
 RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.7.2 && pip install numpy==1.15.4 scipy cython setuptools wheel
+
+# Change the CUDA version if it doesn't match the installed version.
+ARG JAX_CUDA_VERSION=10.0
+RUN /bin/bash -c 'if [[ ! "$CUDA_VERSION" =~ ^$JAX_CUDA_VERSION.*$ ]]; then \
+  apt-get update && \
+  apt-get remove -y --allow-change-held-packages cuda-license-10-0 libcudnn7 libnccl2 && \
+  apt-get install -y --no-install-recommends \
+      cuda-nvml-dev-$JAX_CUDA_VERSION \
+      cuda-command-line-tools-$JAX_CUDA_VERSION \
+      cuda-libraries-dev-$JAX_CUDA_VERSION \
+      cuda-minimal-build-$JAX_CUDA_VERSION \
+      libnccl2=$NCCL_VERSION-1+cuda$JAX_CUDA_VERSION \
+      libnccl-dev=$NCCL_VERSION-1+cuda$JAX_CUDA_VERSION \
+      libcudnn7=$CUDNN_VERSION-1+cuda$JAX_CUDA_VERSION \
+      libcudnn7-dev=$CUDNN_VERSION-1+cuda$JAX_CUDA_VERSION && \
+  rm -f /usr/local/cuda && \
+  ln -s /usr/local/cuda-$JAX_CUDA_VERSION /usr/local/cuda; \
+  fi'
 
 
 WORKDIR /

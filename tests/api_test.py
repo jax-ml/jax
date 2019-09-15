@@ -18,23 +18,31 @@ from __future__ import print_function
 
 import collections
 from functools import partial
+import unittest
+import warnings
 
 from absl.testing import absltest
 import numpy as onp
 import six
 
+if six.PY3:
+  import concurrent.futures
+
+import jax
 import jax.numpy as np
-from jax import jit, grad, device_get, device_put, jacfwd, jacrev, hessian
+from jax import jit, grad, device_put, jacfwd, jacrev, hessian
 from jax import api, lax
-from jax.core import Primitive, pack, JaxTuple
+from jax.core import Primitive
 from jax.interpreters import ad
-from jax.interpreters.xla import DeviceArray, DeviceTuple
+from jax.interpreters.xla import DeviceArray
 from jax.abstract_arrays import concretization_err_msg
 from jax.lib import xla_bridge as xb
 from jax import test_util as jtu
+from jax import tree_util
 
 from jax.config import config
 config.parse_flags_with_absl()
+FLAGS = config.FLAGS
 
 class APITest(jtu.JaxTestCase):
 
@@ -141,10 +149,10 @@ class APITest(jtu.JaxTestCase):
       return x
 
     jtu.check_raises_regexp(lambda: grad(f)("foo"), TypeError,
-                     "Argument 'foo' of type <.*'str'> is not a valid JAX type")
+                     ".* 'foo' of type <.*'str'> is not a valid JAX type")
 
     jtu.check_raises_regexp(lambda: jit(f)("foo"), TypeError,
-                     "Argument 'foo' of type <.*'str'> is not a valid JAX type")
+                     ".* 'foo' of type <.*'str'> is not a valid JAX type")
 
   # TODO(dougalm): enable when we remove 'None' from pytree nodes
   # def test_bad_output(self):
@@ -180,9 +188,15 @@ class APITest(jtu.JaxTestCase):
     def f(x, y):
       return x + y
 
-    jtu.check_raises(lambda: grad(f)(onp.zeros(3), onp.zeros(4)),
-                     ValueError,
-                     "Incompatible shapes for broadcasting: ((3,), (4,))")
+    jtu.check_raises(
+        lambda: f(np.zeros(3), np.zeros(4)),
+        TypeError,
+        "add got incompatible shapes for broadcasting: (3,), (4,).")
+
+    jtu.check_raises(
+        lambda: grad(f)(onp.zeros(3), onp.zeros(4)),
+        TypeError,
+        "add got incompatible shapes for broadcasting: (3,), (4,).")
 
   def test_dot_mismatch(self):
     def f(x, y):
@@ -251,15 +265,15 @@ class APITest(jtu.JaxTestCase):
 
   def test_device_put_and_get(self):
     x = onp.arange(12.).reshape((3, 4)).astype("float32")
-    dx = device_put(x)
+    dx = api.device_put(x)
     self.assertIsInstance(dx, DeviceArray)
-    x2 = device_get(dx)
+    x2 = api.device_get(dx)
     self.assertIsInstance(x2, onp.ndarray)
     assert onp.all(x == x2)
 
     y = [x, (2 * x, 3 * x)]
-    dy = device_put(y)
-    y2 = device_get(dy)
+    dy = api.device_put(y)
+    y2 = api.device_get(dy)
     self.assertIsInstance(y2, list)
     self.assertIsInstance(y2[0], onp.ndarray)
     assert onp.all(y2[0] == x)
@@ -564,33 +578,34 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(grad_ans, 3. * 4. + onp.cos(onp.sin(3. * 4)),
                         check_dtypes=False)
 
-  def test_defjvp_closure_error(self):
-    def foo(x):
-      @api.custom_transforms
-      def bar(y):
-        return x * y
+  # TODO
+  # def test_defjvp_closure_error(self):
+  #   def foo(x):
+  #     @api.custom_transforms
+  #     def bar(y):
+  #       return x * y
 
-      api.defjvp(bar, lambda y_dot, ans, y: x * y)
-      return bar(x)
-    jtu.check_raises(
-        lambda: api.jvp(foo, (1.,), (1.,)), ValueError,
-        "Detected differentiation w.r.t. variables from outside "
-        "the scope of <jax.custom_transforms function bar>, but defjvp and "
-        "defjvp_all only support differentiation w.r.t. positional arguments.")
+  #     api.defjvp(bar, lambda y_dot, ans, y: x * y)
+  #     return bar(x)
+  #   jtu.check_raises(
+  #       lambda: api.jvp(foo, (1.,), (1.,)), ValueError,
+  #       "Detected differentiation with respect to closed-over values with "
+  #       "custom JVP rule, which isn't supported.")
 
-  def test_defvjp_closure_error(self):
-    def foo(x):
-      @api.custom_transforms
-      def bar(y):
-        return x * y
+  # TODO
+  # def test_defvjp_closure_error(self):
+  #   def foo(x):
+  #     @api.custom_transforms
+  #     def bar(y):
+  #       return x * y
 
-      api.defvjp(bar, lambda g, ans, y: x * y)
-      return bar(x)
-    jtu.check_raises(
-        lambda: grad(foo)(1.,), ValueError,
-        "Detected differentiation w.r.t. variables from outside "
-        "the scope of <jax.custom_transforms function bar>, but defvjp and "
-        "defvjp_all only support differentiation w.r.t. positional arguments.")
+  #     api.defvjp(bar, lambda g, ans, y: x * y)
+  #     return bar(x)
+  #   jtu.check_raises(
+  #       lambda: grad(foo)(1.,), ValueError,
+  #       "Detected differentiation w.r.t. variables from outside "
+  #       "the scope of <jax.custom_transforms function bar>, but defvjp and "
+  #       "defvjp_all only support differentiation w.r.t. positional arguments.")
 
   def test_custom_transforms_eval_with_pytrees(self):
     @api.custom_transforms
@@ -663,24 +678,6 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(f(3.), 9., check_dtypes=False)
     self.assertAllClose(api.grad(f)(3.), 3., check_dtypes=False)
 
-  def test_devicetuple_iteration(self):
-    tup = device_put(pack((1, 2)))
-    self.assertIsInstance(tup, DeviceTuple)
-    self.assertEqual(tuple(tup), (1, 2))
-
-    tup = device_put(pack((1, pack((2, 3)))))
-    self.assertIsInstance(tup, DeviceTuple)
-    self.assertAllClose(tup, (1, (2, 3)), check_dtypes=False)
-
-  def test_devicetuple_isinstance(self):
-    tup = device_put(pack((1, 2)))
-    self.assertIsInstance(tup, DeviceTuple)
-    self.assertIsInstance(tup, JaxTuple)
-
-  def test_devicetuple_repr(self):
-    tup = device_put(pack((1, 2)))
-    self.assertEqual(repr(tup), 'DeviceTuple(len=2)')
-
   def test_legacy_devicearray_repr(self):
     dx = device_put(3.)
     str(dx.item())  # doesn't crash
@@ -700,11 +697,11 @@ class APITest(jtu.JaxTestCase):
     jtu.check_raises_regexp(lambda: repr(x), ValueError,
                             "DeviceValue has been deleted.")
 
-
   def test_devicearray_block_until_ready(self):
     x = device_put(1.)
-    x.block_until_ready()
-    # Tests only that block_until_ready() does not produce an error.
+    y = x.block_until_ready()
+    # Tests mostly that block_until_ready() does not produce an error.
+    self.assertTrue(y is x)
 
   def test_namedtuple_transparency(self):
     # See https://github.com/google/jax/issues/446
@@ -747,7 +744,7 @@ class APITest(jtu.JaxTestCase):
     y = np.ones((3, 4))
     out_shape = api.eval_shape(fun, x, y)
 
-    self.assertEqual(out_shape, (2, 4))
+    self.assertEqual(out_shape.shape, (2, 4))
 
   def test_eval_shape_constants(self):
     def fun():
@@ -757,7 +754,7 @@ class APITest(jtu.JaxTestCase):
 
     out_shape = api.eval_shape(fun)
 
-    self.assertEqual(out_shape, (2, 4))
+    self.assertEqual(out_shape.shape, (2, 4))
 
   def test_eval_shape_tuple_unpacking(self):
     def fun(x, y):
@@ -768,7 +765,7 @@ class APITest(jtu.JaxTestCase):
     y = 3.
     out_shape = api.eval_shape(fun, x, y)
 
-    self.assertEqual(out_shape, (2,))
+    self.assertEqual(out_shape.shape, (2,))
 
   def test_eval_shape_tuple_itemgetting(self):
     def fun(x, y):
@@ -778,7 +775,7 @@ class APITest(jtu.JaxTestCase):
     y = 3.
     out_shape = api.eval_shape(fun, x, y)
 
-    self.assertEqual(out_shape, (2,))
+    self.assertEqual(out_shape.shape, (2,))
 
   def test_eval_shape_output_dict(self):
     def fun(x, y):
@@ -787,6 +784,7 @@ class APITest(jtu.JaxTestCase):
     x = (np.ones(2), np.ones(2))
     y = 3.
     out_shape = api.eval_shape(fun, x, y)
+    out_shape = tree_util.tree_map(onp.shape, out_shape)
 
     self.assertEqual(out_shape, {'hi': (2,)})
 
@@ -813,17 +811,7 @@ class APITest(jtu.JaxTestCase):
     x = MyArgArray((4, 5), np.float32)
     out_shape = api.eval_shape(fun, A, b, x)
 
-    self.assertEqual(out_shape, (3, 5))
-
-  def test_detuplification(self):
-    def fun(x):
-      y = pack((x, x))
-      z = pack((y, x))
-      y1, _ = z
-      y2, _ = y1
-      return y2
-
-    assert len(api.make_jaxpr(fun)(1).eqns) == 0
+    self.assertEqual(out_shape.shape, (3, 5))
 
   def test_issue_871(self):
     T = np.array([[1., 2.], [3., 4.], [5., 6.]])
@@ -897,7 +885,43 @@ class APITest(jtu.JaxTestCase):
     xla_comp = api.xla_computation(f)
     xla_comp(np.arange(8)).GetHloText()  # doesn't crash
 
+  def test_custom_implicit_solve(self):
+
+    def scalar_solve(f, y):
+      return y / f(1.0)
+
+    def _binary_search(func, params, low=0.0, high=100.0, tolerance=1e-6):
+      def cond(state):
+        low, high = state
+        return high - low > tolerance
+
+      def body(state):
+        low, high = state
+        midpoint = 0.5 * (low + high)
+        update_upper = func(midpoint, params) > 0
+        low = np.where(update_upper, low, midpoint)
+        high = np.where(update_upper, midpoint, high)
+        return (low, high)
+
+      solution, _ = lax.while_loop(cond, body, (low, high))
+      return solution
+
+    binary_search = api._custom_implicit_solve(_binary_search, scalar_solve)
+    sqrt_cubed = lambda y, x: y ** 2 - x ** 3
+    value, grad = api.value_and_grad(binary_search, argnums=1)(sqrt_cubed, 5.0)
+    self.assertAllClose(value, 5 ** 1.5, check_dtypes=False)
+    self.assertAllClose(grad, api.grad(pow)(5.0, 1.5), check_dtypes=False)
+
+    def scalar_solve2(f, y):
+      y_1d = y[np.newaxis]
+      return np.linalg.solve(api.jacobian(f)(y_1d), y_1d).squeeze()
+
+    binary_search = api._custom_implicit_solve(_binary_search, scalar_solve2)
+    grad = api.grad(binary_search, argnums=1)(sqrt_cubed, 5.0)
+    self.assertAllClose(grad, api.grad(pow)(5.0, 1.5), check_dtypes=False)
+
   def test_jit_device_assignment(self):
+    raise unittest.SkipTest("Temporarily disabled while device API is being changed.")
     device_num = xb.device_count() - 1
     x = api.jit(lambda x: x, device_assignment=device_num)(3.)
     self.assertIsInstance(x, DeviceArray)
@@ -926,6 +950,117 @@ class APITest(jtu.JaxTestCase):
 
     u = np.ones((device_count, 100))
     u_final = multi_step_pmap(u)  # doesn't crash
+
+  @unittest.skipIf(six.PY2, "Test requires Python 3")
+  def test_concurrent_device_get_and_put(self):
+    def f(x):
+      for _ in range(100):
+        y = jax.device_put(x)
+        x = jax.device_get(y)
+      return x
+
+    xs = [onp.random.randn(i) for i in range(10)]
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+      futures = [executor.submit(partial(f, x)) for x in xs]
+      ys = [f.result() for f in futures]
+    for x, y in zip(xs, ys):
+      self.assertAllClose(x, y, check_dtypes=True)
+
+  @unittest.skipIf(six.PY2, "Test requires Python 3")
+  def test_concurrent_jit(self):
+    @jit
+    def f(x):
+      return x + x - 3.
+
+    xs = [onp.random.randn(i) for i in range(10)]
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+      futures = [executor.submit(partial(f, x)) for x in xs]
+      ys = [f.result() for f in futures]
+    for x, y in zip(xs, ys):
+      self.assertAllClose(x * 2 - 3., y, check_dtypes=True)
+
+  def test_dtype_warning(self):
+    # cf. issue #1230
+    if FLAGS.jax_enable_x64:
+      return  # test only applies when x64 is disabled
+
+    def check_warning(warn, nowarn):
+      with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+
+        nowarn()  # get rid of extra startup warning
+
+        prev_len = len(w)
+        nowarn()
+        assert len(w) == prev_len
+
+        warn()
+        assert len(w) > 0
+        msg = str(w[-1].message)
+        expected_prefix = "Explicitly requested dtype "
+        self.assertEqual(expected_prefix, msg[:len(expected_prefix)])
+
+        prev_len = len(w)
+        nowarn()
+        assert len(w) == prev_len
+
+    check_warning(lambda: np.array([1, 2, 3], dtype="float64"),
+                  lambda: np.array([1, 2, 3], dtype="float32"),)
+    check_warning(lambda: np.ones(3, dtype=onp.float64),
+                  lambda: np.ones(3))
+    check_warning(lambda: np.ones_like(3, dtype=onp.int64),
+                  lambda: np.ones_like(3, dtype=onp.int32))
+    check_warning(lambda: np.zeros(3, dtype="int64"),
+                  lambda: np.zeros(3, dtype="int32"))
+    check_warning(lambda: np.zeros_like(3, dtype="float64"),
+                  lambda: np.zeros_like(3, dtype="float32"))
+    check_warning(lambda: np.full((2, 3), 1, dtype="int64"),
+                  lambda: np.full((2, 3), 1))
+    check_warning(lambda: np.ones(3).astype("float64"),
+                  lambda: np.ones(3).astype("float32"))
+    check_warning(lambda: np.eye(3, dtype=onp.float64),
+                  lambda: np.eye(3))
+    check_warning(lambda: np.arange(3, dtype=onp.float64),
+                  lambda: np.arange(3, dtype=onp.float32))
+    check_warning(lambda: np.linspace(0, 3, dtype=onp.float64),
+                  lambda: np.linspace(0, 3, dtype=onp.float32))
+    check_warning(lambda: np.tri(2, dtype="float64"),
+                  lambda: np.tri(2, dtype="float32"))
+
+  def test_custom_vjp_zeros(self):
+    @api.custom_transforms
+    def f(x, y):
+      return 2 * x, 3 * y
+
+    def f_vjp(x, y):
+      return (2 * x, 3 * y), lambda ts: (4 * ts[0], 5 * ts[1])
+
+    api.defvjp_all(f, f_vjp, )
+    api.grad(lambda x, y: f(x, y)[0])(1., 2.)  # doesn't crash
+
+  def test_custom_transforms_vjp_nones(self):
+    # issue rasied by jsnoek@ and jumper@
+    @jax.custom_transforms
+    def solve(a, b):
+      return np.dot(np.linalg.inv(a), b)
+    # print(solve(a, b))
+
+    def solve_vjp(a, b):
+      x = solve(a, b)
+      def vjp(x_tangent):
+        dx = np.dot(solve(a, x_tangent), x.T)
+        out = (dx, b * 0.)
+        return out
+      return x, vjp
+    jax.defvjp_all(solve, solve_vjp)
+    gf = grad(lambda a,b: np.sum(solve(a, b)))
+
+    n = 3
+    a_in = np.linspace(0, 1, n)[:, None]
+    a = np.dot(a_in, a_in.T) + np.eye(n) * 0.1
+    real_x = onp.random.RandomState(0).randn(n)
+    b = np.dot(a + np.eye(a.shape[0]), real_x)
+    print(gf(a, b))  # doesn't crash
 
 
 if __name__ == '__main__':
