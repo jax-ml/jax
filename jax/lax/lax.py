@@ -1725,7 +1725,7 @@ ad.primitive_transposes[div_p] = _div_transpose_rule
 rem_p = standard_binop([_num, _num], 'rem')
 ad.defjvp(rem_p,
           lambda g, x, y: _brcast(g, y),
-          lambda g, x, y: mul(neg(g), floor(div(x, y))))
+          lambda g, x, y: mul(_brcast(neg(g), x), floor(div(x, y))))
 
 
 def _broadcasting_select(c, which, x, y):
