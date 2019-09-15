@@ -3355,17 +3355,18 @@ def _masking_defreducer(prim, identity_like):
 
 def _reducer_polymorphic_shape_rule(shape_exprs, axes, **unused_params):
   shape_expr, = shape_exprs
-  return ShapeExpr(*(d for i, d in enumerate(shape_expr) if i not in axes))
+  return ShapeExpr([d for i, d in enumerate(shape_expr) if i not in axes])
 
 def _reducer_masking_rule(prim, identity_like, padded_vals, logical_shapes,
                           axes, input_shape):
   del input_shape  # Unused.
   (padded_val,), (logical_shape,) = padded_vals, logical_shapes
-  masks = [broadcasted_iota(onp.int32, padded_val.shape, i) < d
+  padded_shape = masking.padded_shape_as_value(padded_val.shape)
+  masks = [broadcasted_iota(onp.int32, padded_shape, i) < d
            for i, d in enumerate(logical_shape) if i in axes]
   mask = _reduce(operator.and_, masks)
   masked_val = select(mask, padded_val, identity_like(padded_val))
-  return prim.bind(masked_val, axes=axes, input_shape=padded_val.shape)
+  return prim.bind(masked_val, axes=axes, input_shape=padded_shape)
 
 reduce_p = standard_reduction_primitive(_reduce_shape_rule, _input_dtype, 'reduce',
                                         _reduce_translation_rule)
@@ -4010,7 +4011,8 @@ tie_in_p.def_abstract_eval(lambda x, y: y)
 xla.translations[tie_in_p] = lambda c, x, y: y
 ad.deflinear(tie_in_p, _tie_in_transpose_rule)
 batching.primitive_batchers[tie_in_p] = _tie_in_batch_rule
-
+masking.shape_rules[tie_in_p] = lambda shape_exprs: shape_exprs[1]
+masking.masking_rules[tie_in_p] = lambda vals, logical_shapes: vals[1]
 
 shaped_identity_p = Primitive('shape_id')
 shaped_identity_p.def_impl(lambda x, shape: x)

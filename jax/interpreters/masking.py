@@ -14,6 +14,7 @@
 
 from __future__ import print_function
 
+from contextlib import contextmanager
 from collections import defaultdict, Counter, namedtuple
 from functools import partial, wraps
 import itertools as it
@@ -41,18 +42,44 @@ def prod(xs):
 
 ### main transformation functions
 
-def mask_fun(fun, shape_envs, in_vals, shape_exprs):
+ShapeEnvs = namedtuple("ShapeEnvs", ["logical", "padded"])
+shape_envs = ShapeEnvs({}, {})  # TODO(mattjj): make this a stack for efficiency
+
+@contextmanager
+def extend_shape_envs(logical_env, padded_env):
+  global shape_envs
+  new_logical = dict(it.chain(shape_envs.logical.items(), logical_env.items()))
+  new_padded = dict(it.chain(shape_envs.padded.items(), padded_env.items()))
+  shape_envs, prev = ShapeEnvs(new_logical, new_padded), shape_envs
+  yield
+  shape_envs = prev
+
+def shape_as_value(expr):
+  if type(expr) is ShapeExpr:
+    return eval_shape_expr(shape_envs.logical, expr)
+  else:
+    return expr
+
+def padded_shape_as_value(expr):
+  if type(expr) is ShapeExpr:
+    return eval_shape_expr(shape_envs.padded, expr)
+  else:
+    return expr
+
+
+def mask_fun(fun, logical_env, padded_env, in_vals, shape_exprs):
   with core.new_master(MaskTrace) as master:
-    fun, out_shapes = mask_subtrace(fun, master, shape_envs)
-    out_vals = fun.call_wrapped(in_vals, shape_exprs)
+    fun, out_shapes = mask_subtrace(fun, master)
+    with extend_shape_envs(logical_env, padded_env):
+      out_vals = fun.call_wrapped(in_vals, shape_exprs)
     del master
   return out_vals, out_shapes()
 
 @lu.transformation_with_aux
-def mask_subtrace(master, shape_envs, in_vals, shape_exprs):
+def mask_subtrace(master, in_vals, shape_exprs):
   trace = MaskTrace(master, core.cur_sublevel())
-  in_tracers = map(partial(MaskTracer, trace, shape_envs),
-                   in_vals, shape_exprs)
+  in_tracers = [MaskTracer(trace, x, s).full_lower()
+                for x, s in zip(in_vals, shape_exprs)]
   outs = yield in_tracers, {}
   out_tracers = map(trace.full_raise, outs)
   out_vals, out_shapes = unzip2((t.val, t.shape_expr) for t in out_tracers)
@@ -101,9 +128,18 @@ class Mon(Counter):  # type Mon = Map Id Int -- ids to degrees
 
   def __lt__(self, other):
     # sort by total degree, then lexicographically on indets
-    self_key = sum(self.values()), tuple(sorted(self))
-    other_key = sum(other.values()), tuple(sorted(other))
+    self_key = self.degree(), tuple(sorted(self))
+    other_key = other.degree(), tuple(sorted(other))
     return self_key < other_key
+
+  def degree(self):
+    return sum(self.values())
+
+def concrete_shape(shape):
+  if type(shape) is ShapeExpr:
+    return shape
+  else:
+    return ShapeExpr((Poly({Mon(): d}) for d in shape))
 
 def eval_shape_expr(env, expr):
   return tuple(eval_dim_expr(env, poly) for poly in expr)
@@ -112,30 +148,49 @@ def eval_dim_expr(env, poly):
   return sum(coeff * prod([env[id] ** deg for id, deg in mon.items()])
              for mon, coeff in poly.items())
 
+def is_constant(poly):
+  try:
+    ([], _), = poly.items()
+    return True
+  except (ValueError, TypeError):
+    return False
+
 class ShapeError(Exception): pass
 
 # To denote some shape expressions (for annotations) we use a small language.
 #
-#   data Shape = Shape [Dim]
+#   data ShapeSpec = ShapeSpec [Dim]
 #   data Dim = Id Str
 #            | Lit Int
 #            | Mul Dim Dim
 #            | Add Dim Dim
-
+#            | MonomorphicDim
+#
 # We'll also make a simple concrete syntax for annotation. The grammar is
 #
 #   shape_spec ::= '(' dims ')'
 #   dims       ::= dim ',' dims | ''
-#   dim        ::= str | int | dim '*' dim | dim '+' dim
+#   dim        ::= str | int | dim '*' dim | dim '+' dim | '_'
+#
+# ShapeSpecs encode ShapeExprs but can have some monomorphic dims inside them,
+# which must be replaced with concrete shapes when known.
+
+class ShapeSpec(list):
+  def __str__(self):
+    return 'ShapeSpec({})'.format(', '.join(map(str, self)))
+
+def finalize_spec(spec, shape):
+  return ShapeExpr(parse_lit(d) if e is monomorphic_dim else e
+                   for e, d in zip(spec, shape))
 
 def parse_spec(spec=''):
   if not spec:
-    return ShapeExpr(())
+    return ShapeSpec(())
   if spec[0] == '(':
     if spec[-1] != ')': raise SyntaxError(spec)
     spec = spec[1:-1]
   dims = map(parse_dim, spec.replace(' ', '').strip(',').split(','))
-  return ShapeExpr(dims)
+  return ShapeSpec(dims)
 
 def parse_dim(spec):
   if '+' in spec:
@@ -148,6 +203,8 @@ def parse_dim(spec):
     return parse_lit(spec)
   elif spec in identifiers:
     return parse_id(spec)
+  elif spec == '_':
+    return monomorphic_dim
   else:
     raise SyntaxError(spec)
 digits = frozenset(string.digits)
@@ -156,12 +213,14 @@ identifiers = frozenset(string.ascii_lowercase)
 def parse_id(name): return Poly({Mon({name: 1}): 1})
 def parse_lit(val_str): return Poly({Mon(): int(val_str)})
 
+class MonomorphicDim(object):
+  def __str__(self): return '_'
+monomorphic_dim = MonomorphicDim()
+
 
 # Two convenient ways to provide shape annotations:
-#   1. Shape('(m, n)')
+#   1. '(m, n)'
 #   2. s_['m', 'n']
-
-Shape = parse_spec
 
 class S_(object):
   def __getitem__(self, idx):
@@ -174,14 +233,11 @@ s_ = S_()
 
 ### automasking tracer machinery
 
-ShapeEnvs = namedtuple("ShapeEnvs", ["logical", "padded"])
-
 class MaskTracer(Tracer):
-  __slots__ = ["val", "shape_expr", "shape_envs"]
+  __slots__ = ["val", "shape_expr"]
 
-  def __init__(self, trace, shape_envs, val, shape_expr):
+  def __init__(self, trace, val, shape_expr):
     self.trace = trace
-    self.shape_envs = shape_envs
     self.val = val
     self.shape_expr = shape_expr
 
@@ -189,24 +245,26 @@ class MaskTracer(Tracer):
   def aval(self):
     return ShapedArray(self.shape_expr, self.val.dtype)
 
+  def is_pure(self):
+    return all(is_constant(poly) for poly in self.shape_expr)
+
   def full_lower(self):
-    if all(type(s) is int for s in self.shape_expr):
+    if self.is_pure():
       return core.full_lower(self.val)
     else:
       return self
 
 class MaskTrace(Trace):
   def pure(self, val):
-    return MaskTracer(self, None, val, ShapeExpr(*onp.shape(val)))
+    return MaskTracer(self, val, concrete_shape(onp.shape(val)))
 
   def lift(self, val):
-    return MaskTracer(self, None, val, ShapeExpr(*onp.shape(val)))
+    return MaskTracer(self, val, concrete_shape(onp.shape(val)))
 
   def sublift(self, val):
-    return MaskTracer(self, val.shape_envs, val.val, val.shape_expr)
+    return MaskTracer(self, val.val, val.shape_expr)
 
   def process_primitive(self, primitive, tracers, params):
-    shape_envs = next(t.shape_envs for t in tracers if t.shape_envs is not None)
     vals, shape_exprs = unzip2((t.val, t.shape_expr) for t in tracers)
     if primitive in shape_parameterized_primitive_rules:
       rule = shape_parameterized_primitive_rules[primitive]
@@ -216,9 +274,9 @@ class MaskTrace(Trace):
       logical_shapes = map(partial(eval_shape_expr, shape_envs.logical), shape_exprs)
       out = masking_rules[primitive](vals, logical_shapes, **params)
     if not primitive.multiple_results:
-      return MaskTracer(self, shape_envs, out, out_shape)
+      return MaskTracer(self, out, out_shape)
     else:
-      return map(partial(MaskTracer, self, shape_envs), out, out_shape)
+      return map(partial(MaskTracer, self), out, out_shape)
 
   def process_call(self, call_primitive, f, tracers, params):
     raise NotImplementedError  # TODO mask-of-jit
@@ -273,6 +331,7 @@ def check_subtrace(master, in_shapes):
   yield [t.shape_expr for t in out_tracers]
 
 
+# TODO(mattjj): add dtypes?
 class ShapeCheckTracer(Tracer):
   __slots__ = ["shape_expr"]
 
@@ -289,10 +348,10 @@ class ShapeCheckTracer(Tracer):
 
 class ShapeCheckTrace(Trace):
   def pure(self, val):
-    return ShapeCheckTracer(self, Shape(*onp.shape(val)), onp.result_type(val))
+    return ShapeCheckTracer(self, concrete_shape(onp.shape(val)))
 
   def lift(self, val):
-    return ShapeCheckTracer(self, Shape(*onp.shape(val)), onp.result_type(val))
+    return ShapeCheckTracer(self, concrete_shape(onp.shape(val)))
 
   def sublift(self, val):
     return ShapeCheckTracer(self, val.shape_expr)
