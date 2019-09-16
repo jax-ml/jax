@@ -2407,7 +2407,9 @@ def _rewriting_take(arr, idx):
   treedef, static_idx, dynamic_idx = _split_index_for_jit(idx)
   return _gather(arr, treedef, static_idx, dynamic_idx)
 
-@partial(jit, static_argnums=(1, 2))
+# TODO(phawkins): re-enable jit after fixing excessive recompilation for
+# slice indexes (e.g., slice(0, 5, None), slice(10, 15, None), etc.).
+# @partial(jit, static_argnums=(1, 2))
 def _gather(arr, treedef, static_idx, dynamic_idx):
   idx = _merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
   indexer = _index_to_gather(shape(arr), idx)  # shared with _scatter_update

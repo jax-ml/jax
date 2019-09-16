@@ -57,7 +57,9 @@ def _scatter_update(x, idx, y, scatter_op):
   return _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx)
 
 
-@partial(jit, static_argnums=(2, 3, 4))
+# TODO(phawkins): re-enable jit after fixing excessive recompilation for
+# slice indexes (e.g., slice(0, 5, None), slice(10, 15, None), etc.).
+# @partial(jit, static_argnums=(2, 3, 4))
 def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx):
   y = lax.convert_element_type(y, lax.dtype(x))
 
