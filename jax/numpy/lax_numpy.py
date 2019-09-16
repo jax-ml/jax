@@ -43,7 +43,7 @@ import opt_einsum
 import six
 from six.moves import builtins, xrange
 
-from jax import jit, device_get, device_put
+from jax import jit, device_get, device_put, custom_transforms, defjvp
 from .. import core
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
 from ..config import flags
@@ -3130,13 +3130,16 @@ setattr(DeviceArray, "astype", _astype)
 _ARRAY_TYPES = (DeviceArray, core.Tracer)
 _HANDLED_TYPES = _ARRAY_TYPES + (onp.ndarray, numbers.Number)
 
+def _implement_via_coercion(func, args, kwargs):
+  args, kwargs = device_get((args, kwargs))
+  return func(*args, **kwargs)
+
 def _implement_with_warning(func, args, kwargs, name, stacklevel=2):
   warnings.warn("{} is not yet implemented by JAX; coercing arguments to "
                 "NumPy arrays. Coerce arrays with onp.asarray() or "
                 "jax.device_get() to explicitly silence this warning."
                 .format(name), stacklevel=stacklevel)
-  args, kwargs = device_get((args, kwargs))
-  return func(*args, **kwargs)
+  return _implement_via_coercion(func, args, kwargs)
 
 
 def __array_ufunc__(self, ufunc, method, *inputs, **kwargs):

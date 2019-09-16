@@ -180,9 +180,8 @@ class APITest(jtu.JaxTestCase):
       return onp.array(x)
 
     jtu.check_raises(lambda: grad(f)(onp.zeros(3)), Exception,
-                     "Tracer can't be used with raw numpy functions. "
-                     "You might have\n  import numpy as np\ninstead of\n"
-                     "  import jax.numpy as np")
+                     "Tracer can't be used with functions that convert their "
+                     "arguments into raw NumPy arrays.")
 
   def test_binop_mismatch(self):
     def f(x, y):

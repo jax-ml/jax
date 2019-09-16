@@ -1698,8 +1698,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertEqual(0, onp.sum(lnp.eye(1050) - onp.eye(1050)))
 
   def testArrayUfuncUnary(self):
-    lnp_array = lnp.sqrt(onp.array([1, 2]))  # make a DeviceArray object
-    onp_array = onp.sqrt(onp.array([1, 2]))  # make a DeviceArray object
+    lnp_array = lnp.array([1, 2])
+    onp_array = onp.array([1, 2])
     lnp_on_lnp = lnp.sin(lnp_array)
     onp_on_lnp = onp.sin(lnp_array)
     onp_on_onp = onp.sin(onp_array)
@@ -1707,7 +1707,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertAllClose(onp_on_lnp, onp_on_onp, check_dtypes=True)
 
   def testArrayUfuncWarningsAndErrors(self):
-    x = lnp.sqrt(onp.array([1, 2]))  # make a DeviceArray object
+    x = lnp.array([1, 2])
 
     with self.assertWarnsRegex(UserWarning, 'not yet implemented by JAX'):
       y = onp.add.reduce(x)
@@ -1728,7 +1728,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertAllClose(y, x + x, check_dtypes=True)
 
   def testArrayUfuncBinary(self):
-    x = lnp.sqrt(onp.array([1, 2]))  # make a DeviceArray object
+    x = lnp.array([1, 2])
     lnp_expected = lnp.array(x) + 3
     onp_expected = onp.array(x) + 3
 
@@ -1749,15 +1749,15 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       def __array_ufunc__(self, *args, **kwargs):
         return 'success'
 
-    x = lnp.sqrt(onp.array([1, 2]))  # make a DeviceArray object
+    x = lnp.array([1, 2])
     result = onp.add(x, Other())
     self.assertEqual(result, 'success')
 
   def testArrayFunction(self):
     if not array_function_overrides_enabled:
       self.skipTest('__array_function__ overrides not enabled')
-    onp_array = onp.sqrt(onp.array([1, 2]))
-    lnp_array = lnp.sqrt(onp.array([1, 2]))  # make a DeviceArray object
+    onp_array = onp.array([1, 2])
+    lnp_array = lnp.array([1, 2])
 
     onp_on_onp = onp.concatenate([onp_array] * 2)
     onp_on_lnp = onp.concatenate([lnp_array] * 2)
@@ -1772,8 +1772,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testArrayFunctionSubModule(self):
     if not array_function_overrides_enabled:
       self.skipTest('__array_function__ overrides not enabled')
-    onp_array = onp.sqrt(onp.array([[1, 2], [2, 1]]))
-    lnp_array = lnp.sqrt(onp.array([[1, 2], [2, 1]]))
+    onp_array = onp.array([[1, 2], [2, 1]])
+    lnp_array = lnp.array([[1, 2], [2, 1]])
 
     onp_on_onp = onp.linalg.inv(onp_array)
     onp_on_lnp = onp.linalg.inv(lnp_array)
@@ -1794,7 +1794,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       def __array_function__(self, *args, **kwargs):
         return 'success'
 
-    x = lnp.sqrt(onp.array([1, 2]))  # make a DeviceArray object
+    x = lnp.array([1, 2])
     result = onp.concatenate([x, Other()])
     self.assertEqual(result, 'success')
 
