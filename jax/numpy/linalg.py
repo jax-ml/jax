@@ -81,10 +81,10 @@ def slogdet(a):
   is_zero = np.any(diag == np.array(0, dtype=dtype), axis=-1)
   parity = np.count_nonzero(pivot != np.arange(a_shape[-1]), axis=-1)
   if np.iscomplexobj(a):
-    sign = np.prod(diag / np.abs(diag))
+    sign = np.prod(diag / np.abs(diag), axis=-1)
   else:
     sign = np.array(1, dtype=dtype)
-    parity = parity + np.count_nonzero(diag < 0)
+    parity = parity + np.count_nonzero(diag < 0, axis=-1)
   sign = np.where(is_zero,
                   np.array(0, dtype=dtype),
                   sign * np.array(-2 * (parity % 2) + 1, dtype=dtype))

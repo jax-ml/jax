@@ -27,6 +27,7 @@ import jax.numpy as np
 from jax import test_util as jtu
 from jax import core
 from jax import lax
+from jax import random
 from jax.api import (pmap, soft_pmap, jit, vmap, jvp, grad, make_jaxpr,
                      linearize, device_put)
 from jax.lib import xla_bridge
@@ -473,6 +474,23 @@ class PmapTest(jtu.JaxTestCase):
     bx = vmap(f1)(ax)
     self.assertAllClose(ax, bx, check_dtypes=False)
 
+  def testVmapOfPmap2(self):
+    N_DEVICES = xla_bridge.device_count()
+    keys = random.split(random.PRNGKey(1), 13)  # [13, 2]
+
+    @pmap
+    def g(key):
+      params = random.normal(key, ())
+      return 0.
+
+    @vmap
+    def s(keys):
+      keys = np.broadcast_to(keys, (N_DEVICES,) + keys.shape)
+      return g(keys)
+
+    ans = s(keys)  # doesn't crash
+    self.assertEqual(ans.shape, (13, N_DEVICES))
+
   def testVmapOfPmapNonLeadingAxis(self):
     device_count = xla_bridge.device_count()
     f0 = lambda x: x
@@ -733,8 +751,8 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
       return bar(x)
 
     with self.assertRaisesRegex(
-        NotImplementedError,
-        "Nested pmaps with devices argument not yet supported."):
+        ValueError,
+        "Nested pmaps with explicit devices argument."):
       foo(np.ones((xla_bridge.device_count(), 1)))
 
     # Devices specified in inner pmap
@@ -746,8 +764,8 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
       return bar(x)
 
     with self.assertRaisesRegex(
-        NotImplementedError,
-        "Nested pmaps with devices argument not yet supported."):
+        ValueError,
+        "Nested pmaps with explicit devices argument."):
       foo(np.ones((xla_bridge.device_count(), 1)))
 
   def testJitInPmap(self):

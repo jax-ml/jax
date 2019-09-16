@@ -26,11 +26,8 @@ Operators
     abs
     add
     acos
-    acosh
     asin
-    asinh
     atan
-    atanh
     atan2
     batch_matmul
     bitcast_convert_type

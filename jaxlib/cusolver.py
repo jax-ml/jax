@@ -142,6 +142,85 @@ def getrf(c, a):
   return (c.GetTupleElement(out, 0), c.GetTupleElement(out, 1),
           c.GetTupleElement(out, 2))
 
+def geqrf(c, a):
+  """QR decomposition."""
+  a_shape = c.GetShape(a)
+  dtype = a_shape.element_type()
+  dims = a_shape.dimensions()
+  assert len(dims) >= 2
+  m, n = dims[-2:]
+  batch_dims = tuple(dims[:-2])
+  num_bd = len(batch_dims)
+  batch = _prod(batch_dims)
+
+  lwork, opaque = cusolver_kernels.build_geqrf_descriptor(
+      np.dtype(dtype), batch, m, n)
+  workspace = _Shape.array_shape(dtype, (lwork,), (0,))
+  kernel = b"cusolver_geqrf"
+
+  out = c.CustomCall(
+      kernel,
+      operands=(a,),
+      shape_with_layout=_Shape.tuple_shape((
+          _Shape.array_shape(
+              dtype, batch_dims + (m, n),
+              (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
+          _Shape.array_shape(
+              dtype, batch_dims + (min(m, n),),
+              tuple(range(num_bd, -1, -1))),
+          _Shape.array_shape(
+              np.dtype(np.int32), batch_dims, tuple(range(num_bd - 1, -1, -1))),
+          workspace,
+      )),
+      operand_shapes_with_layout=(_Shape.array_shape(
+          dtype, batch_dims + (m, n),
+          (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),),
+      opaque=opaque)
+  return (c.GetTupleElement(out, 0), c.GetTupleElement(out, 1),
+          c.GetTupleElement(out, 2))
+
+def orgqr(c, a, tau):
+  """Product of elementary Householder reflections."""
+  a_shape = c.GetShape(a)
+  dtype = a_shape.element_type()
+  dims = a_shape.dimensions()
+  assert len(dims) >= 2
+  m, n = dims[-2:]
+  batch_dims = tuple(dims[:-2])
+  num_bd = len(batch_dims)
+  batch = _prod(batch_dims)
+
+  tau_dims = c.GetShape(tau).dimensions()
+  assert tau_dims[:-1] == dims[:-2]
+  k = tau_dims[-1]
+
+  lwork, opaque = cusolver_kernels.build_orgqr_descriptor(
+      np.dtype(dtype), batch, m, n, k)
+  workspace = _Shape.array_shape(dtype, (lwork,), (0,))
+  kernel = b"cusolver_orgqr"
+
+  out = c.CustomCall(
+      kernel,
+      operands=(a, tau),
+      shape_with_layout=_Shape.tuple_shape((
+          _Shape.array_shape(
+              dtype, batch_dims + (m, n),
+              (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
+          _Shape.array_shape(
+              np.dtype(np.int32), batch_dims, tuple(range(num_bd - 1, -1, -1))),
+          workspace,
+      )),
+      operand_shapes_with_layout=(
+          _Shape.array_shape(
+              dtype, batch_dims + (m, n),
+              (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
+          _Shape.array_shape(
+              dtype, batch_dims + (k,),
+              tuple(range(num_bd, -1, -1))),
+          ),
+      opaque=opaque)
+  return (c.GetTupleElement(out, 0), c.GetTupleElement(out, 1))
+
 
 def syevd(c, a, lower=False):
   """Symmetric (Hermitian) eigendecomposition."""
@@ -192,27 +271,64 @@ def gesvd(c, a, full_matrices=True, compute_uv=True):
   """Singular value decomposition."""
 
   a_shape = c.GetShape(a)
+  dims = a_shape.dimensions()
   dtype = a_shape.element_type()
-  b = 1
-  m, n = a_shape.dimensions()
-  singular_vals_dtype = _real_type(dtype)
+  assert len(dims) >= 2
+  m, n = dims[-2:]
+  batch_dims = tuple(dims[:-2])
+  num_bd = len(batch_dims)
+  b = _prod(batch_dims)
+  singular_vals_dtype = np.dtype(_real_type(dtype))
 
-  if m < n:
+  if m < 32 and n < 32:
+    lwork, opaque = cusolver_kernels.build_gesvdj_descriptor(
+        np.dtype(dtype), b, m, n, compute_uv)
+    scalar_layout = tuple(range(num_bd - 1, -1, -1))
+    vector_layout = (num_bd,) + scalar_layout
+    matrix_layout = (num_bd, num_bd + 1) + scalar_layout
+    out = c.CustomCall(
+        b"cusolver_gesvdj",
+        operands=(a,),
+        shape_with_layout=_Shape.tuple_shape((
+            _Shape.array_shape(dtype, batch_dims + (m, n), matrix_layout),
+            _Shape.array_shape(singular_vals_dtype, batch_dims + (min(m, n),),
+                               vector_layout),
+            _Shape.array_shape(dtype, batch_dims + (m, m), matrix_layout),
+            _Shape.array_shape(dtype, batch_dims + (n, n), matrix_layout),
+            _Shape.array_shape(np.dtype(np.int32), batch_dims, scalar_layout),
+            _Shape.array_shape(dtype, (lwork,), (0,)),
+        )),
+        operand_shapes_with_layout=(
+            _Shape.array_shape(dtype, batch_dims + (m, n), matrix_layout),
+        ),
+        opaque=opaque)
+    s = c.GetTupleElement(out, 1)
+    u = c.GetTupleElement(out, 2)
+    v = c.GetTupleElement(out, 3)
+    info = c.GetTupleElement(out, 4)
+    vt = c.Transpose(v, tuple(range(num_bd)) + (num_bd + 1, num_bd))
+    if np.issubdtype(dtype, np.complexfloating):
+      vt = c.Conj(vt)
+  elif m < n:
     lwork, opaque = cusolver_kernels.build_gesvd_descriptor(
         np.dtype(dtype), b, n, m, compute_uv, full_matrices)
+    scalar_layout = tuple(range(num_bd - 1, -1, -1))
+    vector_layout = (num_bd,) + scalar_layout
+    matrix_layout = (num_bd + 1, num_bd) + scalar_layout
     out = c.CustomCall(
         b"cusolver_gesvd",
         operands=(a,),
         shape_with_layout=_Shape.tuple_shape((
-            _Shape.array_shape(dtype, (m, n), (1, 0)),
-            _Shape.array_shape(np.dtype(singular_vals_dtype), (min(m, n),), (0,)),
-            _Shape.array_shape(dtype, (n, n), (1, 0)),
-            _Shape.array_shape(dtype, (m, m), (1, 0)),
-            _Shape.array_shape(np.dtype(np.int32), (), ()),
+            _Shape.array_shape(dtype, batch_dims + (m, n), matrix_layout),
+            _Shape.array_shape(singular_vals_dtype, batch_dims + (min(m, n),),
+                               vector_layout),
+            _Shape.array_shape(dtype, batch_dims + (n, n), matrix_layout),
+            _Shape.array_shape(dtype, batch_dims + (m, m), matrix_layout),
+            _Shape.array_shape(np.dtype(np.int32), batch_dims, scalar_layout),
             _Shape.array_shape(dtype, (lwork,), (0,)),
         )),
         operand_shapes_with_layout=(
-            _Shape.array_shape(dtype, (m, n), (1, 0)),
+            _Shape.array_shape(dtype, batch_dims + (m, n), matrix_layout),
         ),
         opaque=opaque)
     s = c.GetTupleElement(out, 1)
@@ -223,19 +339,23 @@ def gesvd(c, a, full_matrices=True, compute_uv=True):
     lwork, opaque = cusolver_kernels.build_gesvd_descriptor(
         np.dtype(dtype), b, m, n, compute_uv, full_matrices)
 
+    scalar_layout = tuple(range(num_bd - 1, -1, -1))
+    vector_layout = (num_bd,) + scalar_layout
+    matrix_layout = (num_bd, num_bd + 1) + scalar_layout
     out = c.CustomCall(
         b"cusolver_gesvd",
         operands=(a,),
         shape_with_layout=_Shape.tuple_shape((
-            _Shape.array_shape(dtype, (m, n), (0, 1)),
-            _Shape.array_shape(np.dtype(singular_vals_dtype), (min(m, n),), (0,)),
-            _Shape.array_shape(dtype, (m, m), (0, 1)),
-            _Shape.array_shape(dtype, (n, n), (0, 1)),
-            _Shape.array_shape(np.dtype(np.int32), (), ()),
+            _Shape.array_shape(dtype, batch_dims + (m, n), matrix_layout),
+            _Shape.array_shape(singular_vals_dtype, batch_dims + (min(m, n),),
+                               vector_layout),
+            _Shape.array_shape(dtype, batch_dims + (m, m), matrix_layout),
+            _Shape.array_shape(dtype, batch_dims + (n, n), matrix_layout),
+            _Shape.array_shape(np.dtype(np.int32), batch_dims, scalar_layout),
             _Shape.array_shape(dtype, (lwork,), (0,)),
         )),
         operand_shapes_with_layout=(
-            _Shape.array_shape(dtype, (m, n), (0, 1)),
+            _Shape.array_shape(dtype, batch_dims + (m, n), matrix_layout),
         ),
         opaque=opaque)
     s = c.GetTupleElement(out, 1)
@@ -243,6 +363,6 @@ def gesvd(c, a, full_matrices=True, compute_uv=True):
     vt = c.GetTupleElement(out, 3)
     info = c.GetTupleElement(out, 4)
   if not full_matrices:
-    u = c.Slice(u, (0, 0), (m, min(m, n)))
-    vt = c.Slice(vt, (0, 0), (min(m, n), n))
+    u = c.Slice(u, (0,) * len(dims), batch_dims + (m, min(m, n)))
+    vt = c.Slice(vt, (0,) * len(dims), batch_dims + (min(m, n), n))
   return s, u, vt, info

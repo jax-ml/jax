@@ -36,6 +36,7 @@ from jax import api
 from jax import lax
 from jax import numpy as lnp
 from jax import test_util as jtu
+from jax.test_util import check_grads
 from jax.lib import xla_bridge
 
 from jax.config import config
@@ -1862,6 +1863,72 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         self.assertEqual(len(w), prev_len)  # don't want to warn for scalars
     finally:
       FLAGS.jax_numpy_rank_promotion = prev_flag
+
+  def testStackArrayArgument(self):
+    # tests https://github.com/google/jax/issues/1271
+    @api.jit
+    def foo(x):
+      return lnp.stack(x)
+    foo(onp.zeros(2))  # doesn't crash
+
+    @api.jit
+    def foo(x):
+      return lnp.concatenate(x)
+    foo(onp.zeros((2, 2)))  # doesn't crash
+
+
+# Most grad tests are at the lax level (see lax_test.py), but we add some here
+# as needed for e.g. particular compound ops of interest.
+
+GradTestSpec = collections.namedtuple(
+    "GradTestSpec", ["op", "nargs", "order", "rng", "dtypes", "name", "tol"])
+def grad_test_spec(op, nargs, order, rng, dtypes, name=None, tol=None):
+  return GradTestSpec(op, nargs, order, rng, dtypes, name or op.__name__, tol)
+
+GRAD_TEST_RECORDS = [
+    grad_test_spec(lnp.arcsinh, nargs=1, order=2, rng=jtu.rand_positive(),
+                   dtypes=[onp.float64, onp.complex64], tol=1e-4),
+    grad_test_spec(lnp.arccosh, nargs=1, order=2, rng=jtu.rand_positive(),
+                   dtypes=[onp.float64, onp.complex64], tol=1e-4),
+    grad_test_spec(lnp.arctanh, nargs=1, order=2, rng=jtu.rand_uniform(-0.9, 0.9),
+                   dtypes=[onp.float64, onp.complex64], tol=1e-4),
+]
+
+GradSpecialValuesTestSpec = collections.namedtuple(
+    "GradSpecialValuesTestSpec", ["op", "values"])
+
+GRAD_SPECIAL_VALUE_TEST_RECORDS = [
+    GradSpecialValuesTestSpec(lnp.arcsinh, [0., 1000.]),
+    GradSpecialValuesTestSpec(lnp.arccosh, [1000.]),
+    GradSpecialValuesTestSpec(lnp.arctanh, [0.]),
+]
+
+def num_float_bits(dtype):
+  return onp.finfo(xla_bridge.canonicalize_dtype(dtype)).bits
+
+class NumpyGradTests(jtu.JaxTestCase):
+  @parameterized.named_parameters(itertools.chain.from_iterable(
+      jtu.cases_from_list(
+        {"testcase_name": jtu.format_test_name_suffix(
+            rec.name, shapes, itertools.repeat(dtype)),
+         "op": rec.op, "rng": rec.rng, "shapes": shapes, "dtype": dtype,
+         "order": rec.order, "tol": rec.tol}
+        for shapes in CombosWithReplacement(nonempty_shapes, rec.nargs)
+        for dtype in rec.dtypes)
+      for rec in GRAD_TEST_RECORDS))
+  def testOpGrad(self, op, rng, shapes, dtype, order, tol):
+    tol = 1e-1 if num_float_bits(dtype) == 32 else tol
+    args = tuple(rng(shape, dtype) for shape in shapes)
+    check_grads(op, args, order, ["fwd", "rev"], tol, tol)
+
+  @parameterized.named_parameters(itertools.chain.from_iterable(
+      jtu.cases_from_list(
+          {"testcase_name": "_{}_{}".format(rec.op.__name__, special_value),
+           "op": rec.op, "special_value": special_value}
+          for special_value in rec.values)
+      for rec in GRAD_SPECIAL_VALUE_TEST_RECORDS))
+  def testOpGradSpecialValue(self, op, special_value):
+    check_grads(op, (special_value,), 2, ["fwd", "rev"])
 
 
 if __name__ == "__main__":

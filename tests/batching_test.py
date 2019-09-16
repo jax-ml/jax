@@ -37,6 +37,9 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 
+# These are 'manual' tests for batching (vmap). The more exhaustive, more
+# systematic tests are in lax_test.py's LaxVmapTest class.
+
 class BatchingTest(jtu.JaxTestCase):
 
   def testConstantFunction(self):
@@ -288,6 +291,11 @@ class BatchingTest(jtu.JaxTestCase):
     ans = vmap(np.dot, in_axes=(1, None))(xs, ys)
     expected = onp.einsum('ij,i->j', xs, ys)
     self.assertAllClose(ans, expected, check_dtypes=False)
+  
+  def testDot5(self):
+    f = vmap(partial(np.einsum, 'ij,j->i'), (None, 0))
+    jaxpr = make_jaxpr(f)(np.zeros((1000, 1000)), np.zeros((1000, 1000)))
+    assert "broadcast" not in str(jaxpr)
 
   def testPad(self):
     R = onp.random.RandomState(0).randn

@@ -61,7 +61,9 @@ def jvp_subtrace(master, primals, tangents):
   for x in list(primals) + list(tangents):
     if isinstance(x, Tracer):
       assert x.trace.level < trace.level
-  ans = yield map(partial(JVPTracer, trace), primals, tangents), {}
+  in_tracers = [JVPTracer(trace, x, t) if t is not zero else x
+                for x, t in zip(primals, tangents)]
+  ans = yield in_tracers, {}
   out_tracers = map(trace.full_raise, ans)
   yield unzip2([(out_tracer.primal, out_tracer.tangent)
                 for out_tracer in out_tracers])

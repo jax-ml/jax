@@ -41,13 +41,14 @@ import opt_einsum
 import six
 from six.moves import builtins, xrange
 
-from jax import jit, device_put
+from jax import jit, device_put, custom_transforms, defjvp
 from .. import core
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
 from ..config import flags
 from ..interpreters.xla import DeviceArray
 from .. import lax
 from ..util import partial, get_module_functions, unzip2, prod as _prod
+from ..lib import pytree
 from ..lib import xla_bridge
 from ..lib import xla_client
 
@@ -327,9 +328,6 @@ arctan = _one_to_one_unop(onp.arctan, lax.atan, True)
 sinh = _one_to_one_unop(onp.sinh, lax.sinh, True)
 cosh = _one_to_one_unop(onp.cosh, lax.cosh, True)
 tanh = _one_to_one_unop(onp.tanh, lax.tanh, True)
-arcsinh = _one_to_one_unop(onp.arcsinh, lax.asinh, True)
-arccosh = _one_to_one_unop(onp.arccosh, lax.acosh, True)
-arctanh = _one_to_one_unop(onp.arctanh, lax.atanh, True)
 sqrt = _one_to_one_unop(onp.sqrt, lax.sqrt, True)
 
 
@@ -571,6 +569,47 @@ def sinc(x):
   pi_x = lax.mul(lax._const(x, pi), x)
   return where(lax.eq(x, lax._const(x, 0)),
                lax._const(x, 1), lax.div(lax.sin(pi_x), pi_x))
+
+
+@_wraps(onp.arcsinh)
+@custom_transforms
+def arcsinh(x):
+  # asinh(x) = log(x + sqrt(x**2 + 1))
+  x, = _promote_to_result_dtype(onp.arcsinh, x)
+  one = lax._const(x, 1)
+  result = lax.log(x + lax.sqrt(x * x + one))
+  if onp.issubdtype(_dtype(result), onp.complexfloating):
+    return result
+  a = abs(x)
+  sqrt_max_value = onp.sqrt(onp.finfo(_dtype(x)).max)
+  log2 = lax._const(a, onp.log(2))
+  return lax.select(a < sqrt_max_value, result, lax.sign(x) * (lax.log(a) + log2))
+defjvp(arcsinh, lambda g, ans, x: g / lax.sqrt(lax._const(x, 1) + square(x)))
+
+
+@_wraps(onp.arccosh)
+def arccosh(x):
+  # acosh(x) = log(x + sqrt((x + 1) * (x - 1))) if x < sqrt_max_value
+  #            log(x) + log(2) otherwise
+  x, = _promote_to_result_dtype(onp.arccosh, x)
+  one = lax._const(x, 1)
+  result = lax.log(x + lax.sqrt((x + one) * (x - one)))
+  if onp.issubdtype(_dtype(result), onp.complexfloating):
+    return result
+  sqrt_max_value = onp.sqrt(onp.finfo(_dtype(x)).max)
+  log2 = lax._const(x, onp.log(2))
+  return lax.select(x < sqrt_max_value, result, lax.log(x) + log2)
+
+
+@_wraps(onp.arctanh)
+def arctanh(x):
+  # atanh(x) = 0.5 * log((1 + x) / (1 - x))
+  x, = _promote_to_result_dtype(onp.arctanh, x)
+  one = lax._const(x, 1)
+  result = lax._const(x, 0.5) * lax.log((one + x) / (one - x))
+  if onp.issubdtype(_dtype(result), onp.complexfloating):
+    return result
+  return lax.select(abs(x) <= 1, result, lax.full_like(x, onp.nan))
 
 
 @_wraps(onp.transpose)
@@ -1314,7 +1353,7 @@ def pad(array, pad_width, mode='constant', constant_values=0):
 
 @_wraps(onp.stack)
 def stack(arrays, axis=0):
-  if not arrays:
+  if not len(arrays):
     raise ValueError("Need at least one array to stack.")
   shape0 = shape(arrays[0])
   axis = _canonicalize_axis(axis, len(shape0) + 1)
@@ -1339,7 +1378,7 @@ def tile(a, reps):
 
 @_wraps(onp.concatenate)
 def concatenate(arrays, axis=0):
-  if not arrays:
+  if not len(arrays):
     raise ValueError("Need at least one array to concatenate.")
   if ndim(arrays[0]) == 0:
     raise ValueError("Zero-dimensional arrays cannot be concatenated.")
@@ -2365,6 +2404,12 @@ def _rewriting_take(arr, idx):
   # All supported cases of indexing can be implemented as an XLA gather,
   # followed by an optional reverse and a reshape.
   arr = asarray(arr)
+  treedef, static_idx, dynamic_idx = _split_index_for_jit(idx)
+  return _gather(arr, treedef, static_idx, dynamic_idx)
+
+@partial(jit, static_argnums=(1, 2))
+def _gather(arr, treedef, static_idx, dynamic_idx):
+  idx = _merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
   indexer = _index_to_gather(shape(arr), idx)  # shared with _scatter_update
 
   y = lax.gather(arr, indexer.gather_indices, indexer.dnums,
@@ -2400,7 +2445,11 @@ _Indexer = collections.namedtuple("_Indexer", [
   "newaxis_dims",
 ])
 
-def _index_to_gather(x_shape, idx):
+def _split_index_for_jit(idx):
+  """Splits indices into necessarily-static and dynamic parts.
+
+  Used to pass indices into `jit`-ted function.
+  """
   # Convert list indices to tuples in cases (deprecated by NumPy.)
   idx = _eliminate_deprecated_list_indexing(idx)
 
@@ -2408,6 +2457,35 @@ def _index_to_gather(x_shape, idx):
   # indexing logic to handle them.
   idx = _expand_bool_indices(idx)
 
+  leaves, treedef = pytree.flatten(idx)
+  dynamic = [None] * len(leaves)
+  static = [None] * len(leaves)
+  for i, x in enumerate(leaves):
+    if x is Ellipsis:
+      static[i] = x
+    elif isinstance(x, slice):
+      # slice objects aren't hashable.
+      static[i] = (x.start, x.stop, x.step)
+    else:
+      dynamic[i] = x
+  return treedef, tuple(static), dynamic
+
+def _merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx):
+  """Recombines indices that were split by _split_index_for_jit."""
+  idx = []
+  for s, d in zip(static_idx, dynamic_idx):
+    if d is not None:
+      idx.append(d)
+    elif isinstance(s, tuple):
+      idx.append(slice(s[0], s[1], s[2]))
+    else:
+      idx.append(s)
+  return treedef.unflatten(idx)
+
+def _int(aval):
+  return not aval.shape and onp.issubdtype(aval.dtype, onp.integer)
+
+def _index_to_gather(x_shape, idx):
   # Remove ellipses and add trailing slice(None)s.
   idx = _canonicalize_tuple_index(len(x_shape), idx)
 
@@ -2436,8 +2514,6 @@ def _index_to_gather(x_shape, idx):
                       for e, i, j in advanced_pairs)
     advanced_indexes, idx_advanced_axes, x_advanced_axes = zip(*advanced_pairs)
     advanced_axes_are_contiguous = onp.all(onp.diff(idx_advanced_axes) == 1)
-
-  _int = lambda aval: not aval.shape and onp.issubdtype(aval.dtype, onp.integer)
 
   x_axis = 0  # Current axis in x.
   y_axis = 0  # Current axis in y, before collapsing. See below.
@@ -2993,3 +3069,10 @@ setattr(ShapedArray, "split", core.aval_method(split))
 setattr(DeviceArray, "broadcast", lax.broadcast)
 setattr(DeviceArray, "broadcast_in_dim", lax.broadcast_in_dim)
 setattr(DeviceArray, "split", split)
+
+@jit
+def _unstack(x):
+  if x.ndim == 0:
+    raise ValueError("Argument to _unstack must be non-scalar")
+  return [lax.index_in_dim(x, i, keepdims=False) for i in range(x.shape[0])]
+setattr(DeviceArray, "_unstack", _unstack)

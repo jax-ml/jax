@@ -13,6 +13,7 @@ Subpackages
     jax.scipy
     jax.experimental
     jax.lax
+    jax.nn
     jax.ops
     jax.random
     jax.tree_util

@@ -70,7 +70,7 @@ def shard_args(backend, device_ordinals, assignments, axis_size, args):
     if type(arg) is ShardedDeviceArray:
       if nrep == len(arg.device_buffers):
         for r, buf in enumerate(arg.device_buffers):
-          buffers[r][a] = (buf if buf.device() == device_ordinals[r]
+          buffers[r][a] = (buf if xb.device_ordinal(buf) == device_ordinals[r]
                            else buf.copy_to_device(device_ordinals[r]))
       else:
         for r, buf in enumerate(arg.device_buffers):
@@ -86,8 +86,15 @@ shard_arg_handlers[core.Unit] = \
 def _shard_array(x, ordinals, assignments, backend=None):
   nrep = len(ordinals)
   return (xla.device_put(x[assignments[r]], ordinals[r], backend=backend) for r in range(nrep))
-for _t in it.chain(array_types, [xla.DeviceArray]):
+for _t in array_types:
   shard_arg_handlers[_t] = _shard_array
+
+def _shard_device_array(x, ordinals, assignments, backend=None):
+  nrep = len(ordinals)
+  xs = x._unstack()
+  return (xla.device_put(xs[assignments[r]], ordinals[r], backend=backend)
+          for r in range(nrep))
+shard_arg_handlers[xla.DeviceArray] = _shard_device_array
 
 def shard_aval(size, aval):
   try:
@@ -274,15 +281,19 @@ def _axis_index_partial_eval(trace, _, **params):
   # This partial_eval rule adds the axis_index primitive into the jaxpr formed
   # during pmap lowering. It is like the standard JaxprTrace.process_primitive
   # rule except that we don't attempt to lower out of the trace.
-  out_aval = ShapedArray((), onp.uint32)
+  out_aval = ShapedArray((), onp.int32)
   out_tracer = pe.JaxprTracer(trace, pe.PartialVal((out_aval, core.unit)), None)
   eqn = core.new_jaxpr_eqn([], [out_tracer], axis_index_p, (), params)
   out_tracer.recipe = eqn
   return out_tracer
 
+def _axis_index_translation_rule(c, hard_size, soft_size, axis_name):
+  unsigned_index = c.Rem(c.ReplicaId(),
+                         c.Constant(onp.array(hard_size, onp.uint32)))
+  return c.ConvertElementType(unsigned_index, xb.dtype_to_etype(onp.int32))
+
 axis_index_p = core.Primitive('axis_index')
-xla.translations[axis_index_p] = lambda c, hard_size, soft_size, axis_name: \
-    c.Rem(c.ReplicaId(), c.Constant(onp.array(hard_size, onp.uint32)))
+xla.translations[axis_index_p] = _axis_index_translation_rule
 pe.custom_partial_eval_rules[axis_index_p] = _axis_index_partial_eval
 
 
@@ -297,6 +308,7 @@ class ShardedDeviceValue(xla.DeviceValue):
     self._check_if_deleted()
     for buf in self.device_buffers:
       buf.block_host_until_ready()
+    return self
 
 
 class ShardedDeviceArray(ShardedDeviceValue, xla.DeviceArray):
@@ -370,7 +382,7 @@ class ShardedDeviceArray(ShardedDeviceValue, xla.DeviceArray):
 def _shard_sharded_device_array(x, ordinals, assignments):
   n = len(ordinals)
   if n == len(x.device_buffers):
-    return (b if b.device() == ordinals[r] else b.copy_to_device(ordinals[r])
+    return (b if xb.device_ordinal(b) == ordinals[r] else b.copy_to_device(ordinals[r])
             for r, b in enumerate(x.device_buffers))
   else:
     return (xla.device_put(x[assignments[r]], ordinals[r]) for r in range(n))
@@ -491,22 +503,21 @@ xla_pmap = partial(core.call_bind, xla_pmap_p)
 xla_pmap_p.def_custom_bind(xla_pmap)
 xla_pmap_p.def_impl(xla_pmap_impl)
 
-def _xla_pmap_translation_rule(c, jaxpr, axis_env, env_nodes, in_nodes,
-                               axis_name, axis_size, devices, backend=None):
+def _pmap_translation_rule(c, jaxpr, axis_env, const_nodes, freevar_nodes,
+                           in_nodes, axis_name, axis_size, devices, backend=None):
+  # We in-line here rather than generating a Call HLO as in the xla_call
+  # translation rule just because the extra tuple stuff is a pain.
   if axis_env.devices is not None or (axis_env.names and devices is not None):
-    raise NotImplementedError(
-        "Nested pmaps with devices argument not yet supported.")
+    raise ValueError("Nested pmaps with explicit devices argument.")
   new_env = xla.extend_axis_env(axis_env, axis_name, axis_size)
   in_nodes_sharded = list(map(partial(_xla_shard, c, new_env.sizes), in_nodes))
-  subc = xla.jaxpr_computation(jaxpr, backend, new_env, (),
-                               tuple(map(c.GetShape, env_nodes)),
-                               *map(c.GetShape, in_nodes_sharded))
-  sharded_result = c.Call(subc, env_nodes + in_nodes_sharded)
-  sharded_results = xla.xla_destructure(c, sharded_result)
-  unsharded_results = [_xla_unshard(c, xla.axis_groups(new_env, axis_name), r)
-                       for r in sharded_results]
-  return c.Tuple(*unsharded_results)
-xla.call_translations[xla_pmap_p] = _xla_pmap_translation_rule
+  sharded_outs = xla.jaxpr_subcomp(c, jaxpr, backend, new_env, const_nodes,
+                                   freevar_nodes, *in_nodes_sharded)
+  outs = [_xla_unshard(c, xla.axis_groups(new_env, axis_name), r)
+          for r in sharded_outs]
+  return c.Tuple(*outs)
+
+xla.call_translations[xla_pmap_p] = _pmap_translation_rule
 ad.primitive_transposes[xla_pmap_p] = partial(ad.map_transpose, xla_pmap_p)
 pe.map_primitives.add(xla_pmap_p)
 

@@ -316,6 +316,224 @@ void Getrf(cudaStream_t stream, void** buffers, const char* opaque,
   }
 }
 
+// geqrf: QR decomposition
+
+struct GeqrfDescriptor {
+  Type type;
+  int batch, m, n, lwork;
+};
+
+// Returns the workspace size and a descriptor for a geqrf operation.
+std::pair<int, py::bytes> BuildGeqrfDescriptor(const py::dtype& dtype, int b,
+                                               int m, int n) {
+  Type type = DtypeToType(dtype);
+  auto handle = SolverHandlePool::Borrow();
+  int lwork;
+  switch (type) {
+    case Type::F32:
+      ThrowIfErrorStatus(cusolverDnSgeqrf_bufferSize(handle.get(), m, n,
+                                                     /*A=*/nullptr,
+                                                     /*lda=*/m, &lwork));
+      break;
+    case Type::F64:
+      ThrowIfErrorStatus(cusolverDnDgeqrf_bufferSize(handle.get(), m, n,
+                                                     /*A=*/nullptr,
+                                                     /*lda=*/m, &lwork));
+      break;
+    case Type::C64:
+      ThrowIfErrorStatus(cusolverDnCgeqrf_bufferSize(handle.get(), m, n,
+                                                     /*A=*/nullptr,
+                                                     /*lda=*/m, &lwork));
+      break;
+    case Type::C128:
+      ThrowIfErrorStatus(cusolverDnZgeqrf_bufferSize(handle.get(), m, n,
+                                                     /*A=*/nullptr,
+                                                     /*lda=*/m, &lwork));
+      break;
+  }
+  return {lwork, PackDescriptor(GeqrfDescriptor{type, b, m, n, lwork})};
+}
+
+void Geqrf(cudaStream_t stream, void** buffers, const char* opaque,
+           size_t opaque_len) {
+  const GeqrfDescriptor& d =
+      *UnpackDescriptor<GeqrfDescriptor>(opaque, opaque_len);
+  auto handle = SolverHandlePool::Borrow(stream);
+  if (buffers[1] != buffers[0]) {
+    ThrowIfError(cudaMemcpyAsync(buffers[1], buffers[0],
+                                 SizeOfType(d.type) * d.batch * d.m * d.n,
+                                 cudaMemcpyDeviceToDevice, stream));
+  }
+
+  int* info = static_cast<int*>(buffers[3]);
+  void* workspace = buffers[4];
+  switch (d.type) {
+    case Type::F32: {
+      float* a = static_cast<float*>(buffers[1]);
+      float* tau = static_cast<float*>(buffers[2]);
+      for (int i = 0; i < d.batch; ++i) {
+        ThrowIfErrorStatus(cusolverDnSgeqrf(handle.get(), d.m, d.n, a, d.m, tau,
+                                            static_cast<float*>(workspace),
+                                            d.lwork, info));
+        a += d.m * d.n;
+        tau += std::min(d.m, d.n);
+        ++info;
+      }
+      break;
+    }
+    case Type::F64: {
+      double* a = static_cast<double*>(buffers[1]);
+      double* tau = static_cast<double*>(buffers[2]);
+      for (int i = 0; i < d.batch; ++i) {
+        ThrowIfErrorStatus(cusolverDnDgeqrf(handle.get(), d.m, d.n, a, d.m, tau,
+                                            static_cast<double*>(workspace),
+                                            d.lwork, info));
+        a += d.m * d.n;
+        tau += std::min(d.m, d.n);
+        ++info;
+      }
+      break;
+    }
+    case Type::C64: {
+      cuComplex* a = static_cast<cuComplex*>(buffers[1]);
+      cuComplex* tau = static_cast<cuComplex*>(buffers[2]);
+      for (int i = 0; i < d.batch; ++i) {
+        ThrowIfErrorStatus(cusolverDnCgeqrf(handle.get(), d.m, d.n, a, d.m, tau,
+                                            static_cast<cuComplex*>(workspace),
+                                            d.lwork, info));
+        a += d.m * d.n;
+        tau += std::min(d.m, d.n);
+        ++info;
+      }
+      break;
+    }
+    case Type::C128: {
+      cuDoubleComplex* a = static_cast<cuDoubleComplex*>(buffers[1]);
+      cuDoubleComplex* tau = static_cast<cuDoubleComplex*>(buffers[2]);
+      for (int i = 0; i < d.batch; ++i) {
+        ThrowIfErrorStatus(cusolverDnZgeqrf(
+            handle.get(), d.m, d.n, a, d.m, tau,
+            static_cast<cuDoubleComplex*>(workspace), d.lwork, info));
+        a += d.m * d.n;
+        tau += std::min(d.m, d.n);
+        ++info;
+      }
+      break;
+    }
+  }
+}
+
+// orgqr/ungqr: apply elementary Householder transformations
+
+struct OrgqrDescriptor {
+  Type type;
+  int batch, m, n, k, lwork;
+};
+
+// Returns the workspace size and a descriptor for a geqrf operation.
+std::pair<int, py::bytes> BuildOrgqrDescriptor(const py::dtype& dtype, int b,
+                                               int m, int n, int k) {
+  Type type = DtypeToType(dtype);
+  auto handle = SolverHandlePool::Borrow();
+  int lwork;
+  switch (type) {
+    case Type::F32:
+      ThrowIfErrorStatus(cusolverDnSorgqr_bufferSize(handle.get(), m, n, k,
+                                                     /*A=*/nullptr,
+                                                     /*lda=*/m, /*tau=*/nullptr,
+                                                     &lwork));
+      break;
+    case Type::F64:
+      ThrowIfErrorStatus(cusolverDnDorgqr_bufferSize(handle.get(), m, n, k,
+                                                     /*A=*/nullptr,
+                                                     /*lda=*/m, /*tau=*/nullptr,
+                                                     &lwork));
+      break;
+    case Type::C64:
+      ThrowIfErrorStatus(cusolverDnCungqr_bufferSize(handle.get(), m, n, k,
+                                                     /*A=*/nullptr,
+                                                     /*lda=*/m, /*tau=*/nullptr,
+                                                     &lwork));
+      break;
+    case Type::C128:
+      ThrowIfErrorStatus(cusolverDnZungqr_bufferSize(handle.get(), m, n, k,
+                                                     /*A=*/nullptr,
+                                                     /*lda=*/m, /*tau=*/nullptr,
+                                                     &lwork));
+      break;
+  }
+  return {lwork, PackDescriptor(OrgqrDescriptor{type, b, m, n, k, lwork})};
+}
+
+void Orgqr(cudaStream_t stream, void** buffers, const char* opaque,
+           size_t opaque_len) {
+  const OrgqrDescriptor& d =
+      *UnpackDescriptor<OrgqrDescriptor>(opaque, opaque_len);
+  auto handle = SolverHandlePool::Borrow(stream);
+  if (buffers[2] != buffers[0]) {
+    ThrowIfError(cudaMemcpyAsync(buffers[2], buffers[0],
+                                 SizeOfType(d.type) * d.batch * d.m * d.n,
+                                 cudaMemcpyDeviceToDevice, stream));
+  }
+
+  int* info = static_cast<int*>(buffers[3]);
+  void* workspace = buffers[4];
+  switch (d.type) {
+    case Type::F32: {
+      float* a = static_cast<float*>(buffers[2]);
+      float* tau = static_cast<float*>(buffers[1]);
+      for (int i = 0; i < d.batch; ++i) {
+        ThrowIfErrorStatus(cusolverDnSorgqr(handle.get(), d.m, d.n, d.k, a, d.m,
+                                            tau, static_cast<float*>(workspace),
+                                            d.lwork, info));
+        a += d.m * d.n;
+        tau += d.k;
+        ++info;
+      }
+      break;
+    }
+    case Type::F64: {
+      double* a = static_cast<double*>(buffers[2]);
+      double* tau = static_cast<double*>(buffers[1]);
+      for (int i = 0; i < d.batch; ++i) {
+        ThrowIfErrorStatus(
+            cusolverDnDorgqr(handle.get(), d.m, d.n, d.k, a, d.m, tau,
+                             static_cast<double*>(workspace), d.lwork, info));
+        a += d.m * d.n;
+        tau += d.k;
+        ++info;
+      }
+      break;
+    }
+    case Type::C64: {
+      cuComplex* a = static_cast<cuComplex*>(buffers[2]);
+      cuComplex* tau = static_cast<cuComplex*>(buffers[1]);
+      for (int i = 0; i < d.batch; ++i) {
+        ThrowIfErrorStatus(cusolverDnCungqr(
+            handle.get(), d.m, d.n, d.k, a, d.m, tau,
+            static_cast<cuComplex*>(workspace), d.lwork, info));
+        a += d.m * d.n;
+        tau += d.k;
+        ++info;
+      }
+      break;
+    }
+    case Type::C128: {
+      cuDoubleComplex* a = static_cast<cuDoubleComplex*>(buffers[2]);
+      cuDoubleComplex* tau = static_cast<cuDoubleComplex*>(buffers[1]);
+      for (int i = 0; i < d.batch; ++i) {
+        ThrowIfErrorStatus(cusolverDnZungqr(
+            handle.get(), d.m, d.n, d.k, a, d.m, tau,
+            static_cast<cuDoubleComplex*>(workspace), d.lwork, info));
+        a += d.m * d.n;
+        tau += d.k;
+        ++info;
+      }
+      break;
+    }
+  }
+}
+
 // Symmetric (Hermitian) eigendecomposition, QR algorithm: syevd/heevd
 
 struct SyevdDescriptor {
@@ -591,7 +809,7 @@ void Syevj(cudaStream_t stream, void** buffers, const char* opaque,
   }
 }
 
-// Singular value decomposition: gesvd
+// Singular value decomposition using QR algorithm: gesvd
 
 struct GesvdDescriptor {
   Type type;
@@ -639,8 +857,6 @@ std::pair<int, py::bytes> BuildGesvdDescriptor(const py::dtype& dtype, int b,
           PackDescriptor(GesvdDescriptor{type, b, m, n, lwork, jobu, jobvt})};
 }
 
-// TODO(phawkins): in the batched case, we should consider using the batched
-// Jacobi implementation instead.
 void Gesvd(cudaStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len) {
   const GesvdDescriptor& d =
@@ -726,6 +942,199 @@ void Gesvd(cudaStream_t stream, void** buffers, const char* opaque,
   }
 }
 
+// Singular value decomposition using Jacobi algorithm: gesvdj
+
+struct GesvdjDescriptor {
+  Type type;
+  int batch, m, n;
+  int lwork;
+  cusolverEigMode_t jobz;
+};
+
+// Returns the workspace size and a descriptor for a gesvdj operation.
+std::pair<int, py::bytes> BuildGesvdjDescriptor(const py::dtype& dtype,
+                                                int batch, int m, int n,
+                                                bool compute_uv) {
+  Type type = DtypeToType(dtype);
+  auto handle = SolverHandlePool::Borrow();
+  int lwork;
+  cusolverEigMode_t jobz =
+      compute_uv ? CUSOLVER_EIG_MODE_VECTOR : CUSOLVER_EIG_MODE_NOVECTOR;
+  gesvdjInfo_t params;
+  ThrowIfErrorStatus(cusolverDnCreateGesvdjInfo(&params));
+  std::unique_ptr<gesvdjInfo, void (*)(gesvdjInfo*)> params_cleanup(
+      params, [](gesvdjInfo* p) { cusolverDnDestroyGesvdjInfo(p); });
+  if (batch == 1) {
+    switch (type) {
+      case Type::F32:
+        ThrowIfErrorStatus(cusolverDnSgesvdj_bufferSize(
+            handle.get(), jobz, /*econ=*/0, m, n,
+            /*A=*/nullptr, /*lda=*/m, /*S=*/nullptr,
+            /*U=*/nullptr, /*ldu=*/m, /*V=*/nullptr,
+            /*ldv=*/n, &lwork, params));
+        break;
+      case Type::F64:
+        ThrowIfErrorStatus(cusolverDnDgesvdj_bufferSize(
+            handle.get(), jobz, /*econ=*/0, m, n,
+            /*A=*/nullptr, /*lda=*/m, /*S=*/nullptr,
+            /*U=*/nullptr, /*ldu=*/m, /*V=*/nullptr,
+            /*ldv=*/n, &lwork, params));
+        break;
+      case Type::C64:
+        ThrowIfErrorStatus(cusolverDnCgesvdj_bufferSize(
+            handle.get(), jobz, /*econ=*/0, m, n,
+            /*A=*/nullptr, /*lda=*/m, /*S=*/nullptr,
+            /*U=*/nullptr, /*ldu=*/m, /*V=*/nullptr,
+            /*ldv=*/n, &lwork, params));
+        break;
+      case Type::C128:
+        ThrowIfErrorStatus(cusolverDnZgesvdj_bufferSize(
+            handle.get(), jobz, /*econ=*/0, m, n,
+            /*A=*/nullptr, /*lda=*/m, /*S=*/nullptr,
+            /*U=*/nullptr, /*ldu=*/m, /*V=*/nullptr,
+            /*ldv=*/n, &lwork, params));
+        break;
+    }
+  } else {
+    switch (type) {
+      case Type::F32:
+        ThrowIfErrorStatus(cusolverDnSgesvdjBatched_bufferSize(
+            handle.get(), jobz, m, n,
+            /*A=*/nullptr, /*lda=*/m, /*S=*/nullptr,
+            /*U=*/nullptr, /*ldu=*/m, /*V=*/nullptr,
+            /*ldv=*/n, &lwork, params, batch));
+        break;
+      case Type::F64:
+        ThrowIfErrorStatus(cusolverDnDgesvdjBatched_bufferSize(
+            handle.get(), jobz, m, n,
+            /*A=*/nullptr, /*lda=*/m, /*S=*/nullptr,
+            /*U=*/nullptr, /*ldu=*/m, /*V=*/nullptr,
+            /*ldv=*/n, &lwork, params, batch));
+        break;
+      case Type::C64:
+        ThrowIfErrorStatus(cusolverDnCgesvdjBatched_bufferSize(
+            handle.get(), jobz, m, n,
+            /*A=*/nullptr, /*lda=*/m, /*S=*/nullptr,
+            /*U=*/nullptr, /*ldu=*/m, /*V=*/nullptr,
+            /*ldv=*/n, &lwork, params, batch));
+        break;
+      case Type::C128:
+        ThrowIfErrorStatus(cusolverDnZgesvdjBatched_bufferSize(
+            handle.get(), jobz, m, n,
+            /*A=*/nullptr, /*lda=*/m, /*S=*/nullptr,
+            /*U=*/nullptr, /*ldu=*/m, /*V=*/nullptr,
+            /*ldv=*/n, &lwork, params, batch));
+        break;
+    }
+  }
+  return {lwork,
+          PackDescriptor(GesvdjDescriptor{type, batch, m, n, lwork, jobz})};
+}
+
+void Gesvdj(cudaStream_t stream, void** buffers, const char* opaque,
+            size_t opaque_len) {
+  const GesvdjDescriptor& d =
+      *UnpackDescriptor<GesvdjDescriptor>(opaque, opaque_len);
+  auto handle = SolverHandlePool::Borrow(stream);
+  ThrowIfError(cudaMemcpyAsync(buffers[1], buffers[0],
+                               SizeOfType(d.type) * d.batch * d.m * d.n,
+                               cudaMemcpyDeviceToDevice, stream));
+  int* info = static_cast<int*>(buffers[5]);
+  void* work = buffers[6];
+  gesvdjInfo_t params;
+  ThrowIfErrorStatus(cusolverDnCreateGesvdjInfo(&params));
+  std::unique_ptr<gesvdjInfo, void (*)(gesvdjInfo*)> params_cleanup(
+      params, [](gesvdjInfo* p) { cusolverDnDestroyGesvdjInfo(p); });
+  if (d.batch == 1) {
+    switch (d.type) {
+      case Type::F32: {
+        float* a = static_cast<float*>(buffers[1]);
+        float* s = static_cast<float*>(buffers[2]);
+        float* u = static_cast<float*>(buffers[3]);
+        float* v = static_cast<float*>(buffers[4]);
+        ThrowIfErrorStatus(cusolverDnSgesvdj(
+            handle.get(), d.jobz, /*econ=*/0, d.m, d.n, a, d.m, s, u, d.m, v,
+            d.n, static_cast<float*>(work), d.lwork, info, params));
+        break;
+      }
+      case Type::F64: {
+        double* a = static_cast<double*>(buffers[1]);
+        double* s = static_cast<double*>(buffers[2]);
+        double* u = static_cast<double*>(buffers[3]);
+        double* v = static_cast<double*>(buffers[4]);
+        ThrowIfErrorStatus(cusolverDnDgesvdj(
+            handle.get(), d.jobz, /*econ=*/0, d.m, d.n, a, d.m, s, u, d.m, v,
+            d.n, static_cast<double*>(work), d.lwork, info, params));
+        break;
+      }
+      case Type::C64: {
+        cuComplex* a = static_cast<cuComplex*>(buffers[1]);
+        float* s = static_cast<float*>(buffers[2]);
+        cuComplex* u = static_cast<cuComplex*>(buffers[3]);
+        cuComplex* v = static_cast<cuComplex*>(buffers[4]);
+        ThrowIfErrorStatus(cusolverDnCgesvdj(
+            handle.get(), d.jobz, /*econ=*/0, d.m, d.n, a, d.m, s, u, d.m, v,
+            d.n, static_cast<cuComplex*>(work), d.lwork, info, params));
+        break;
+      }
+      case Type::C128: {
+        cuDoubleComplex* a = static_cast<cuDoubleComplex*>(buffers[1]);
+        double* s = static_cast<double*>(buffers[2]);
+        cuDoubleComplex* u = static_cast<cuDoubleComplex*>(buffers[3]);
+        cuDoubleComplex* v = static_cast<cuDoubleComplex*>(buffers[4]);
+        ThrowIfErrorStatus(cusolverDnZgesvdj(
+            handle.get(), d.jobz, /*econ=*/0, d.m, d.n, a, d.m, s, u, d.m, v,
+            d.n, static_cast<cuDoubleComplex*>(work), d.lwork, info, params));
+        break;
+      }
+    }
+  } else {
+    switch (d.type) {
+      case Type::F32: {
+        float* a = static_cast<float*>(buffers[1]);
+        float* s = static_cast<float*>(buffers[2]);
+        float* u = static_cast<float*>(buffers[3]);
+        float* v = static_cast<float*>(buffers[4]);
+        ThrowIfErrorStatus(cusolverDnSgesvdjBatched(
+            handle.get(), d.jobz, d.m, d.n, a, d.m, s, u, d.m, v, d.n,
+            static_cast<float*>(work), d.lwork, info, params, d.batch));
+        break;
+      }
+      case Type::F64: {
+        double* a = static_cast<double*>(buffers[1]);
+        double* s = static_cast<double*>(buffers[2]);
+        double* u = static_cast<double*>(buffers[3]);
+        double* v = static_cast<double*>(buffers[4]);
+        ThrowIfErrorStatus(cusolverDnDgesvdjBatched(
+            handle.get(), d.jobz, d.m, d.n, a, d.m, s, u, d.m, v, d.n,
+            static_cast<double*>(work), d.lwork, info, params, d.batch));
+        break;
+      }
+      case Type::C64: {
+        cuComplex* a = static_cast<cuComplex*>(buffers[1]);
+        float* s = static_cast<float*>(buffers[2]);
+        cuComplex* u = static_cast<cuComplex*>(buffers[3]);
+        cuComplex* v = static_cast<cuComplex*>(buffers[4]);
+        ThrowIfErrorStatus(cusolverDnCgesvdjBatched(
+            handle.get(), d.jobz, d.m, d.n, a, d.m, s, u, d.m, v, d.n,
+            static_cast<cuComplex*>(work), d.lwork, info, params, d.batch));
+        break;
+      }
+      case Type::C128: {
+        cuDoubleComplex* a = static_cast<cuDoubleComplex*>(buffers[1]);
+        double* s = static_cast<double*>(buffers[2]);
+        cuDoubleComplex* u = static_cast<cuDoubleComplex*>(buffers[3]);
+        cuDoubleComplex* v = static_cast<cuDoubleComplex*>(buffers[4]);
+        ThrowIfErrorStatus(cusolverDnZgesvdjBatched(
+            handle.get(), d.jobz, d.m, d.n, a, d.m, s, u, d.m, v, d.n,
+            static_cast<cuDoubleComplex*>(work), d.lwork, info, params,
+            d.batch));
+        break;
+      }
+    }
+  }
+}
+
 template <typename T>
 py::capsule EncapsulateFunction(T* fn) {
   return py::capsule(absl::bit_cast<void*>(fn), "xla._CUSTOM_CALL_TARGET");
@@ -734,18 +1143,24 @@ py::capsule EncapsulateFunction(T* fn) {
 py::dict Registrations() {
   py::dict dict;
   dict["cusolver_getrf"] = EncapsulateFunction(Getrf);
+  dict["cusolver_geqrf"] = EncapsulateFunction(Geqrf);
+  dict["cusolver_orgqr"] = EncapsulateFunction(Orgqr);
   dict["cusolver_syevd"] = EncapsulateFunction(Syevd);
   dict["cusolver_syevj"] = EncapsulateFunction(Syevj);
   dict["cusolver_gesvd"] = EncapsulateFunction(Gesvd);
+  dict["cusolver_gesvdj"] = EncapsulateFunction(Gesvdj);
   return dict;
 }
 
 PYBIND11_MODULE(cusolver_kernels, m) {
   m.def("registrations", &Registrations);
   m.def("build_getrf_descriptor", &BuildGetrfDescriptor);
+  m.def("build_geqrf_descriptor", &BuildGeqrfDescriptor);
+  m.def("build_orgqr_descriptor", &BuildOrgqrDescriptor);
   m.def("build_syevd_descriptor", &BuildSyevdDescriptor);
   m.def("build_syevj_descriptor", &BuildSyevjDescriptor);
   m.def("build_gesvd_descriptor", &BuildGesvdDescriptor);
+  m.def("build_gesvdj_descriptor", &BuildGesvdjDescriptor);
 }
 
 }  // namespace
