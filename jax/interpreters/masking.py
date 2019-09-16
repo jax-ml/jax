@@ -157,6 +157,8 @@ def is_constant(poly):
 
 class ShapeError(Exception): pass
 
+class ShapeSyntaxError(Exception): pass
+
 # To denote some shape expressions (for annotations) we use a small language.
 #
 #   data ShapeSpec = ShapeSpec [Dim]
@@ -187,7 +189,7 @@ def parse_spec(spec=''):
   if not spec:
     return ShapeSpec(())
   if spec[0] == '(':
-    if spec[-1] != ')': raise SyntaxError(spec)
+    if spec[-1] != ')': raise ShapeSyntaxError(spec)
     spec = spec[1:-1]
   dims = map(parse_dim, spec.replace(' ', '').strip(',').split(','))
   return ShapeSpec(dims)
@@ -206,7 +208,7 @@ def parse_dim(spec):
   elif spec == '_':
     return monomorphic_dim
   else:
-    raise SyntaxError(spec)
+    raise ShapeSyntaxError(spec)
 digits = frozenset(string.digits)
 identifiers = frozenset(string.ascii_lowercase)
 
