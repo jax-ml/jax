@@ -3349,15 +3349,15 @@ def _reduction_computation(c, jaxpr, backend, consts, init_value):
   out, = xla.jaxpr_subcomp(subc, jaxpr, backend, axis_env, consts, (), *args)
   return subc.Build(out)
 
-def _masking_defreducer(prim, identity_like):
+def _masking_defreducer(prim, identity):
   masking.shape_rules[prim] = _reducer_polymorphic_shape_rule
-  masking.masking_rules[prim] = partial(_reducer_masking_rule, prim, identity_like)
+  masking.masking_rules[prim] = partial(_reducer_masking_rule, prim, identity)
 
 def _reducer_polymorphic_shape_rule(shape_exprs, axes, **unused_params):
   shape_expr, = shape_exprs
   return ShapeExpr([d for i, d in enumerate(shape_expr) if i not in axes])
 
-def _reducer_masking_rule(prim, identity_like, padded_vals, logical_shapes,
+def _reducer_masking_rule(prim, identity, padded_vals, logical_shapes,
                           axes, input_shape):
   del input_shape  # Unused.
   (padded_val,), (logical_shape,) = padded_vals, logical_shapes
@@ -3365,7 +3365,7 @@ def _reducer_masking_rule(prim, identity_like, padded_vals, logical_shapes,
   masks = [broadcasted_iota(onp.int32, padded_shape, i) < d
            for i, d in enumerate(logical_shape) if i in axes]
   mask = _reduce(operator.and_, masks)
-  masked_val = select(mask, padded_val, identity_like(padded_val))
+  masked_val = select(mask, padded_val, identity(padded_shape, padded_val.dtype))
   return prim.bind(masked_val, axes=axes, input_shape=padded_shape)
 
 reduce_p = standard_reduction_primitive(_reduce_shape_rule, _input_dtype, 'reduce',
@@ -3395,7 +3395,8 @@ reduce_sum_p = standard_primitive(_reduce_sum_shape_rule, _input_dtype,
                                   'reduce_sum', _reduce_sum_translation_rule)
 ad.deflinear(reduce_sum_p, _reduce_sum_transpose_rule)
 batching.defreducer(reduce_sum_p)
-_masking_defreducer(reduce_sum_p, zeros_like_array)
+_masking_defreducer(reduce_sum_p,
+                    lambda shape, dtype: onp.broadcast_to(onp.array(0, dtype), shape))
 
 
 def _reduce_prod_shape_rule(operand, axes):
@@ -4262,6 +4263,9 @@ def conv_transpose_shape_tuple(lhs_shape, rhs_shape, window_strides, padding,
 
 def _check_shapelike(fun_name, arg_name, obj):
   """Check that `obj` is a shape-like value (e.g. tuple of nonnegative ints)."""
+  if (type(obj) is masking.ShapeExpr
+      or type(obj) is tuple and any(type(d) is masking.Poly for d in obj)):
+    return obj
   if not isinstance(obj, (tuple, list, onp.ndarray)):
     msg = "{} {} must be of type tuple/list/ndarray, got {}."
     raise TypeError(msg.format(fun_name, arg_name, type(obj)))

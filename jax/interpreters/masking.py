@@ -98,6 +98,11 @@ def mask_subtrace(master, in_vals, shape_exprs):
 class ShapeExpr(tuple):  # type ShapeExpr = [Poly]
   def __str__(self):
     return 'ShapeExpr({})'.format(', '.join(map(str, self)))
+  def __getitem__(self, idx):
+    if type(idx) is int:
+      return super(ShapeExpr, self).__getitem__(idx)
+    else:
+      return ShapeExpr(super(ShapeExpr, self).__getitem__(idx))
 
 class Poly(Counter):  # type Poly = Map Mon Int -- monomials to coeffs
   def __mul__(p1, p2):
@@ -145,8 +150,25 @@ def eval_shape_expr(env, expr):
   return tuple(eval_dim_expr(env, poly) for poly in expr)
 
 def eval_dim_expr(env, poly):
-  return sum(coeff * prod([env[id] ** deg for id, deg in mon.items()])
-             for mon, coeff in poly.items())
+  terms = [mul(coeff, prod([pow(env[id], deg) for id, deg in mon.items()]))
+           for mon, coeff in poly.items()]
+  return sum(terms) if len(terms) > 1 else terms[0]
+
+def pow(x, deg):
+  try:
+    deg = int(deg)
+  except:
+    return x ** deg
+  else:
+    return 1 if deg == 0 else x if deg == 1 else x ** deg
+
+def mul(coeff, mon):
+  try:
+    coeff = int(coeff)
+  except:
+    return coeff * mon
+  else:
+    return  0 if coeff == 0 else mon if coeff == 1 else coeff * mon
 
 def is_constant(poly):
   try:
@@ -162,7 +184,7 @@ class ShapeSyntaxError(Exception): pass
 # To denote some shape expressions (for annotations) we use a small language.
 #
 #   data ShapeSpec = ShapeSpec [Dim]
-#   data Dim = Id Str
+#   data Dim = Id PyObj
 #            | Lit Int
 #            | Mul Dim Dim
 #            | Add Dim Dim
@@ -295,10 +317,10 @@ def vectorized_shape_rule(shape_exprs, **unused_params):
   shape_expr, = shape_exprs
   return shape_expr
 
-def vectorized_masking_rule(prim, padded_vals, logical_shapes):
+def vectorized_masking_rule(prim, padded_vals, logical_shapes, **params):
   del logical_shapes  # Unused.
   padded_val, = padded_vals
-  return prim.bind(padded_val)
+  return prim.bind(padded_val, **params)
 
 
 def defbinop(prim):
@@ -307,8 +329,14 @@ def defbinop(prim):
 
 def binop_shape_rule(shape_exprs):
   x_shape_expr, y_shape_expr = shape_exprs
-  if not x_shape_expr == y_shape_expr: raise ShapeError
-  return x_shape_expr
+  if x_shape_expr == y_shape_expr:
+    return x_shape_expr
+  elif not x_shape_expr:
+    return y_shape_expr
+  elif not y_shape_expr:
+    return x_shape_expr
+  else:
+    raise ShapeError
 
 def binop_masking_rule(prim, padded_vals, logical_shapes):
   del logical_shapes  # Unused.

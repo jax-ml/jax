@@ -25,7 +25,7 @@ from absl.testing import parameterized
 
 from jax import test_util as jtu
 from jax.interpreters.masking import ShapeError, shape_as_value, parse_spec
-from jax import mask, vmap, jit, shapecheck
+from jax import mask, vmap, jit, grad, shapecheck
 from jax import lax
 import jax.numpy as np
 
@@ -222,6 +222,87 @@ class MaskingTest(jtu.JaxTestCase):
     expected = np.array([3, 5])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def test_rnn(self):
+    n = 3
+
+    @partial(mask, in_shapes=['(_, _)', '(t, _)'], out_shape='_')
+    def rnn(W, xs):
+      def step(h, x):
+        new_h = np.dot(W, h) + np.dot(W, x)
+        return new_h, ()
+      predicted, _ = lax.scan(step, np.zeros(n), xs)
+      return predicted
+
+    rng = onp.random.RandomState(0)
+    W = onp.eye(n)
+    xs = rng.randn(10, n)
+    ans = rnn([W, xs], dict(t=4))
+    expected = xs[:4].sum(0)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_rnn_grad(self):
+    n = 3
+
+    @partial(mask, in_shapes=['(_, _)', '(t, _)', '_'], out_shape='')
+    def rnn(W, xs, target):
+      def step(h, x):
+        new_h = np.tanh(np.dot(W, h) + np.dot(W, x))
+        return new_h, ()
+      predicted, _ = lax.scan(step, np.zeros(n), xs)
+      return np.sum((predicted - target)**2)
+
+    rng = onp.random.RandomState(0)
+    W = rng.randn(n, n)
+    xs = rng.randn(10, n)
+    y = rng.randn(n)
+
+    ans = grad(lambda W: rnn([W, xs, y], dict(t=4)))(W)
+
+    def rnn_reference(W, xs, target):
+      h = np.zeros(n)
+      for x in xs:
+        h = np.tanh(np.dot(W, h) + np.dot(W, x))
+      predicted = h
+      return np.sum((predicted - target)**2)
+
+    expected = grad(lambda W: rnn_reference(W, xs[:4], y))(W)
+
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_ragged_batched_rnn(self):
+    n = 3
+
+    @partial(mask, in_shapes=('(_, _)', '(t, _)', '_'), out_shape='')
+    def rnn(W, xs, target):
+      def step(h, x):
+        new_h = np.tanh(np.dot(W, h) + np.dot(W, x))
+        return new_h, ()
+      predicted, _ = lax.scan(step, np.zeros(n), xs)
+      return np.sum((predicted - target)**2)
+
+    rng = onp.random.RandomState(0)
+    W = rng.randn(n, n)
+    seqs = rng.randn(3, 10, n)
+    ts = np.array([2, 5, 4])
+    ys = rng.randn(3, n)
+
+    ans = grad(lambda W: vmap(rnn, ((None, 0, 0), 0))((W, seqs, ys), dict(t=ts)).sum())(W)
+
+    def rnn_reference(W, seqs, targets):
+      total_loss = 0
+      for xs, target in zip(seqs, targets):
+        h = np.zeros(n)
+        for x in xs:
+          h = np.tanh(np.dot(W, h) + np.dot(W, x))
+        predicted = h
+        total_loss = total_loss + np.sum((predicted - target)**2)
+      return total_loss
+
+    seqs_ = [xs[:t] for xs, t in zip(seqs, ts)]
+    expected = grad(lambda W: rnn_reference(W, seqs_, ys).sum())(W)
+
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def test_nesting(self):
     raise SkipTest("not yet implemented")
 
@@ -229,12 +310,19 @@ class MaskingTest(jtu.JaxTestCase):
     def padded_sum(x):
       return np.sum(x)
 
-    @partial(mask, in_shapes=['n'], out_shape='')
-    def padded_sum2(x):
-      return padded_sum([x], dict(n=2))
+    batched_sum = vmap(padded_sum)
 
-    ans = padded_sum2([np.array([3, 1, 4, 1])], dict(n=1))
-    import ipdb; ipdb.set_trace()
+    @partial(mask, in_shapes=['(m, _)', 'm'], out_shape='')
+    def fun(x, ns):
+      return batched_sum([x], dict(n=ns)).sum()
+
+    x = np.array([[3, 1, 4, 1],
+                  [5, 9, 2, 6],
+                  [5, 3, 5, 8]])
+    ns = np.array([2, 3, 2])
+    ans = fun([x, ns], dict(m=2))
+    expected = 3+1 + 5+9+2
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_arange(self):
     raise SkipTest("not yet implemented")
