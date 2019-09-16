@@ -277,6 +277,7 @@ try:
   array_function_overrides_enabled = onp.atleast_1d(_Dummy())
 except Exception:
   array_function_overrides_enabled = False
+array_function_overrides_enabled &= FLAGS.jax_enable_numpy_overrides
 
 
 CombosWithReplacement = itertools.combinations_with_replacement
@@ -1698,6 +1699,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertEqual(0, onp.sum(lnp.eye(1050) - onp.eye(1050)))
 
   def testArrayUfuncUnary(self):
+    if not FLAGS.jax_enable_numpy_overrides:
+      self.skipTest('requires numpy overrides')
+
     lnp_array = lnp.array([1, 2])
     onp_array = onp.array([1, 2])
     lnp_on_lnp = lnp.sin(lnp_array)
@@ -1707,6 +1711,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertAllClose(onp_on_lnp, onp_on_onp, check_dtypes=True)
 
   def testArrayUfuncWarningsAndErrors(self):
+    if not FLAGS.jax_enable_numpy_overrides:
+      self.skipTest('requires numpy overrides')
+
     x = lnp.array([1, 2])
 
     with self.assertWarnsRegex(UserWarning, 'not yet implemented by JAX'):
@@ -1728,6 +1735,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertAllClose(y, x + x, check_dtypes=True)
 
   def testArrayUfuncBinary(self):
+    if not FLAGS.jax_enable_numpy_overrides:
+      self.skipTest('requires numpy overrides')
+
     x = lnp.array([1, 2])
     lnp_expected = lnp.array(x) + 3
     onp_expected = onp.array(x) + 3
@@ -1745,6 +1755,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertAllClose(result, onp_expected, check_dtypes=True)
 
   def testArrayUfuncUnhandledType(self):
+    if not FLAGS.jax_enable_numpy_overrides:
+      self.skipTest('requires numpy overrides')
+
     class Other(object):
       def __array_ufunc__(self, *args, **kwargs):
         return 'success'
@@ -1756,6 +1769,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testArrayFunction(self):
     if not array_function_overrides_enabled:
       self.skipTest('__array_function__ overrides not enabled')
+
     onp_array = onp.array([1, 2])
     lnp_array = lnp.array([1, 2])
 
@@ -1769,9 +1783,26 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertEqual(type(onp_on_mixed), type(lnp_on_lnp))
     self.assertAllClose(onp_on_mixed, onp_on_onp, check_dtypes=True)
 
+  def testArrayFunctionNotEnabled(self):
+    if array_function_overrides_enabled:
+      self.skipTest('__array_function__ overrides enabled')
+
+    onp_array = onp.array([1, 2])
+    lnp_array = lnp.array([1, 2])
+
+    onp_on_onp = onp.concatenate([onp_array] * 2)
+    onp_on_lnp = onp.concatenate([lnp_array] * 2)
+    self.assertEqual(type(onp_on_lnp), type(onp_on_onp))
+    self.assertAllClose(onp_on_lnp, onp_on_onp, check_dtypes=True)
+
+    onp_on_mixed = onp.concatenate([onp_array, lnp_array])
+    self.assertEqual(type(onp_on_mixed), type(onp_on_onp))
+    self.assertAllClose(onp_on_mixed, onp_on_onp, check_dtypes=True)
+
   def testArrayFunctionSubModule(self):
     if not array_function_overrides_enabled:
       self.skipTest('__array_function__ overrides not enabled')
+
     onp_array = onp.array([[1, 2], [2, 1]])
     lnp_array = lnp.array([[1, 2], [2, 1]])
 
@@ -1784,12 +1815,16 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testArrayFunctionUnimplemented(self):
     if not array_function_overrides_enabled:
       self.skipTest('__array_function__ overrides not enabled')
+
     lnp_array = lnp.sqrt(onp.arange(4))
     with self.assertWarnsRegex(UserWarning, 'not yet implemented by JAX'):
       actual = onp.unique(lnp_array)
     self.assertAllClose(actual, lnp_array, check_dtypes=False)
 
   def testArrayFunctionUnhandledType(self):
+    if not array_function_overrides_enabled:
+      self.skipTest('__array_function__ overrides not enabled')
+
     class Other(object):
       def __array_function__(self, *args, **kwargs):
         return 'success'

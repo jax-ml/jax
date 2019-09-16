@@ -49,6 +49,7 @@ from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
 from ..config import flags
 from ..interpreters.xla import DeviceArray
 from .. import lax
+from ..tree_util import tree_map
 from ..util import partial, get_module_functions, unzip2, prod as _prod
 from ..lib import pytree
 from ..lib import xla_bridge
@@ -61,6 +62,14 @@ flags.DEFINE_enum(
     help=
     'Control NumPy-style automatic rank promotion broadcasting '
     '("allow", "warn", or "raise").')
+flags.DEFINE_bool(
+    'jax_enable_numpy_overrides',
+    strtobool(os.getenv('JAX_ENABLE_NUMPY_OVERRIDES', 'False')),
+    help=
+    "If true, enable overrides of NumPy functions on JAX arrays, e.g., "
+    "np.sum(jax_array) should return a JAX array rather than a NumPy array. "
+    "Also requires NumPy 1.17, or NumPy 1.16 with the environment variable "
+    "NUMPY_EXPERIMENTAL_ARRAY_FUNCTION=1.")
 
 if six.PY3:
   def removechars(s, chars):
@@ -114,7 +123,9 @@ class ndarray(six.with_metaclass(_ArrayMeta, onp.ndarray)):
 # pylint: enable=invalid-name
 
 isscalar = onp.isscalar
-_dtype = lax.dtype
+result_type = _dtype = lax.dtype
+_shape = shape = lax.shape
+_ndim = ndim = lax.ndim
 
 bool_ = onp.bool_
 uint8 = onp.uint8
@@ -161,28 +172,6 @@ def iscomplexobj(x):
   if isinstance(x, _ARRAY_TYPES):
     return issubclass(x.dtype.type, onp.complexfloating)
   return onp.iscomplexobj(x)
-
-@functools.wraps(onp.result_type)
-def result_type(*arrays_and_dtypes):
-  arrays_and_dtypes = tuple(
-      x.dtype if isinstance(x, _ARRAY_TYPES) else x
-      for x in arrays_and_dtypes)
-  return onp.result_type(*arrays_and_dtypes)
-
-@functools.wraps(onp.shape)
-def shape(a):
-  if isinstance(a, _ARRAY_TYPES):
-    return a.shape
-  return onp.shape(a)
-
-@functools.wraps(onp.ndim)
-def ndim(a):
-  if isinstance(a, _ARRAY_TYPES):
-    return a.ndim
-  return onp.ndim(a)
-
-_shape = shape
-_ndim = ndim
 
 @functools.wraps(onp.size)
 def size(a, axis=None):
@@ -257,7 +246,7 @@ def _promote_dtypes(*args):
   if len(args) < 2:
     return args
   else:
-    from_dtypes = map(_dtype, args)
+    from_dtypes = tuple(map(_dtype, args))
     to_dtype = xla_bridge.canonicalize_dtype(result_type(*from_dtypes))
     return [lax.convert_element_type(x, to_dtype)
             if _dtype(x) != to_dtype else x for x in args]
@@ -910,7 +899,7 @@ def where(condition, x=None, y=None):
   if not onp.issubdtype(_dtype(condition), onp.bool_):
     condition = lax.ne(condition, zeros_like(condition))
   condition, x, y = broadcast_arrays(condition, x, y)
-  if not onp.size(x):
+  if not size(x):
     empty, _ = _promote_dtypes(x, y)
     return empty
   else:
@@ -967,7 +956,7 @@ def broadcast_to(arr, shape):
 def split(ary, indices_or_sections, axis=0):
   dummy_val = onp.broadcast_to(0, ary.shape)  # zero strides
   subarrays = onp.split(dummy_val, indices_or_sections, axis)  # shapes
-  split_indices = onp.cumsum([0] + [onp.shape(sub)[axis] for sub in subarrays])
+  split_indices = onp.cumsum([0] + [shape(sub)[axis] for sub in subarrays])
   starts, ends = [0] * ndim(ary), shape(ary)
   _subval = lambda x, i, v: lax.subvals(x, [(i, v)])
   return [lax.slice(ary, _subval(starts, axis, start), _subval(ends, axis, end))
@@ -2717,7 +2706,7 @@ def _index_to_gather(x_shape, idx):
 
 def _should_unpack_list_index(x):
   """Helper for _eliminate_deprecated_list_indexing."""
-  return (isinstance(x, ndarray) and onp.ndim(x) != 0
+  return (isinstance(x, ndarray) and ndim(x) != 0
           or isinstance(x, collections.Sequence)
           or isinstance(x, slice) or x is Ellipsis or x is None)
 
@@ -2771,7 +2760,7 @@ def _is_advanced_int_indexer(idx):
   """Returns True if idx should trigger int array indexing, False otherwise."""
   # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#advanced-indexing
   assert isinstance(idx, tuple)
-  if _all(onp.ndim(elt) == 0 for elt in idx):
+  if _all(ndim(elt) == 0 for elt in idx):
     return False
   return _all(e is None or e is Ellipsis or isinstance(e, slice)
               or _is_int_arraylike(e) for e in idx)
@@ -2872,15 +2861,15 @@ def cov(m, y=None, rowvar=True, bias=False, ddof=None, fweights=None,
 
   w = None
   if fweights is not None:
-    if onp.ndim(fweights) > 1:
+    if ndim(fweights) > 1:
       raise RuntimeError("cannot handle multidimensional fweights")
-    if onp.shape(fweights)[0] != X.shape[1]:
+    if shape(fweights)[0] != X.shape[1]:
       raise RuntimeError("incompatible numbers of samples and fweights")
     w = asarray(fweights)
   if aweights is not None:
-    if onp.ndim(aweights) > 1:
+    if ndim(aweights) > 1:
       raise RuntimeError("cannot handle multidimensional aweights")
-    if onp.shape(aweights)[0] != X.shape[1]:
+    if shape(aweights)[0] != X.shape[1]:
       raise RuntimeError("incompatible numbers of samples and aweights")
     w = aweights if w is None else w * aweights
 
@@ -3131,14 +3120,17 @@ _ARRAY_TYPES = (DeviceArray, core.Tracer)
 _HANDLED_TYPES = _ARRAY_TYPES + (onp.ndarray, numbers.Number)
 
 def _implement_via_coercion(func, args, kwargs):
-  args, kwargs = device_get((args, kwargs))
+  args, kwargs = tree_map(onp.asarray, device_get((args, kwargs)))
   return func(*args, **kwargs)
 
-def _implement_with_warning(func, args, kwargs, name, stacklevel=2):
+def _coercion_warning(name, stacklevel=3):
   warnings.warn("{} is not yet implemented by JAX; coercing arguments to "
                 "NumPy arrays. Coerce arrays with onp.asarray() or "
                 "jax.device_get() to explicitly silence this warning."
                 .format(name), stacklevel=stacklevel)
+
+def _implement_with_warning(func, args, kwargs, name, stacklevel=3):
+  _coercion_warning(name, stacklevel)
   return _implement_via_coercion(func, args, kwargs)
 
 
@@ -3152,11 +3144,15 @@ def __array_ufunc__(self, ufunc, method, *inputs, **kwargs):
 
   lax_func = globals().get(ufunc.__name__)
   if lax_func is None or isinstance(lax_func, _NotImplementedByJAX):
-    return _implement_with_warning(ufunc_method, inputs, kwargs, ufunc)
+    if FLAGS.jax_enable_numpy_overrides:
+      _coercion_warning(ufunc)
+    return _implement_via_coercion(ufunc_method, inputs, kwargs)
 
   if method != '__call__':
-    name = '{!r} method of NumPy universal functions'.format(method)
-    return _implement_with_warning(ufunc_method, inputs, kwargs, name)
+    if FLAGS.jax_enable_numpy_overrides:
+      name = '{!r} method of NumPy universal functions'.format(method)
+      _coercion_warning(name)
+    return _implement_via_coercion(ufunc_method, inputs, kwargs)
 
   # We special case the 'out' argument so we can support in-place arithmetic
   # that assigns to NumPy arrays, e.g., np_array += jax_device_array
@@ -3177,6 +3173,9 @@ def __array_ufunc__(self, ufunc, method, *inputs, **kwargs):
 def __array_function__(self, func, types, args, kwargs):
   """Override other NumPy functions, per NEP-18."""
   from .. import numpy
+
+  if not FLAGS.jax_enable_numpy_overrides:
+    return _implement_via_coercion(func, args, kwargs)
 
   if not _all(issubclass(t, _HANDLED_TYPES) for t in types):
     return NotImplemented

@@ -1172,7 +1172,12 @@ def device_put(x, device_num=0, backend=None):
 def _device_get(x):
   if isinstance(x, core.Tracer):
     return x
-  return x.copy()
+  try:
+    copy = x.copy
+  except AttributeError:
+    return x
+  else:
+    return copy()
 
 def device_get(x):
   for y in tree_leaves(x):
