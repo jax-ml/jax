@@ -68,6 +68,7 @@ def _jvp_slogdet(g, ans, x):
 
 @_wraps(onp.linalg.slogdet)
 @custom_transforms
+@jit
 def slogdet(a):
   a = _promote_arg_dtypes(np.asarray(a))
   dtype = lax.dtype(a)
