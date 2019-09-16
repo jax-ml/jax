@@ -97,6 +97,10 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                             check_dtypes=True, tol=1e-3)
     self._CompileAndCheck(np.linalg.det, args_maker, check_dtypes=True)
 
+  def testDetOfSingularMatrix(self):
+    x = np.array([[-1., 3./2], [2./3, -1.]], dtype=onp.float32)
+    self.assertAllClose(onp.float32(0), jsp.linalg.det(x), check_dtypes=True)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
@@ -538,12 +542,10 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self.assertAllClose(x, onp.matmul(p, onp.matmul(l, u)), check_dtypes=True)
     self._CompileAndCheck(jsp.linalg.lu, args_maker, check_dtypes=True)
 
-  # TODO(phawkins): figure out why this test fails on Travis and reenable.
-  @unittest.skip("Test fails on travis")
-  def testLuOfSingularMatrixReturnsNans(self):
-    xs = np.array([[-1., 3./2], [2./3, -1.]])
-    lu, _ = jsp.linalg.lu_factor(xs)
-    self.assertTrue(onp.all(onp.isnan(lu)))
+  def testLuOfSingularMatrix(self):
+    x = np.array([[-1., 3./2], [2./3, -1.]], dtype=onp.float32)
+    p, l, u = jsp.linalg.lu(x)
+    self.assertAllClose(x, onp.matmul(p, onp.matmul(l, u)), check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
