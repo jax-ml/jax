@@ -116,6 +116,18 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp.linalg.slogdet, np.linalg.slogdet, args_maker,
                             check_dtypes=True, tol=1e-3)
     self._CompileAndCheck(np.linalg.slogdet, args_maker, check_dtypes=True)
+    
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype, "rng": rng}
+      for shape in [(1, 1), (4, 4), (5, 5), (50, 50), (2, 7, 7)]
+      for dtype in float_types + complex_types
+      for rng in [jtu.rand_default()]))
+  def testSlogdetGrad(self, shape, dtype, rng):
+    _skip_if_unsupported_type(dtype)
+    a = rng(shape, dtype)
+    jtu.check_grads(np.linalg.slogdet, (a,), 2)
 
   def testIssue1213(self):
     for n in range(5):
