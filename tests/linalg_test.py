@@ -122,7 +122,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype, "rng": rng}
       for shape in [(1, 1), (4, 4), (5, 5), (50, 50), (2, 7, 7)]
-      for dtype in float_types + complex_types
+      for dtype in float_types
       for rng in [jtu.rand_default()]))
   def testSlogdetGrad(self, shape, dtype, rng):
     _skip_if_unsupported_type(dtype)
