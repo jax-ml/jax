@@ -60,6 +60,7 @@ def svd(a, full_matrices=True, compute_uv=True):
   return lax_linalg.svd(a, full_matrices, compute_uv)
 
 
+# TODO(pfau): make this work for complex types
 def _jvp_slogdet(g, ans, x):
   jvp_sign = np.zeros(x.shape[:-2])
   jvp_logdet = np.trace(solve(x, g), axis1=-1, axis2=-2)
