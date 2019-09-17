@@ -440,8 +440,9 @@ def scan(f, init, xs):
     raise ValueError(msg.format([x.shape[0] for x in xs_flat]))
 
   carry_avals = tuple(_map(_abstractify, init_flat))
-  xs_avals = _map(_abstractify, xs_flat)
-  x_avals = tuple(ShapedArray(aval.shape[1:], aval.dtype) for aval in xs_avals)
+  x_shapes = [masking.padded_shape_as_value(x.shape[1:]) for x in xs_flat]
+  x_dtypes = [x.dtype for x in xs_flat]
+  x_avals = tuple(_map(ShapedArray, x_shapes, x_dtypes))
   jaxpr, consts, out_tree = _initial_style_jaxpr(f, in_tree, carry_avals + x_avals)
   carry_avals_out, y_avals = split_list(jaxpr.out_avals, [num_carry])
   if tuple(carry_avals_out) != carry_avals:
@@ -698,10 +699,6 @@ def _scan_batching_rule(args, dims, forward, length, jaxpr, num_consts,
 def _scan_polymorphic_shape_rule(shape_exprs, forward, length, jaxpr,
                                  num_consts, num_carry, linear):
   const_shexprs, init_shexprs, xs_shexprs = split_list(shape_exprs, [num_consts, num_carry])
-  if (any(any(type(d) is Id for d in shexpr) for shexpr in const_shexprs)
-      or any(any(type(d) is Id for d in shexpr) for shexpr in init_shexprs)
-      or any(any(type(d) is Id for d in shexpr[1:]) for shexpr in xs_shexprs)):
-    raise NotImplementedError
   _, y_avals = split_list(jaxpr.out_avals, [num_carry])
   ys_shapes = [ShapeExpr(length, *y_aval.shape) for y_aval in y_avals]
   return init_shexprs + ys_shapes
@@ -750,7 +747,7 @@ def scan_bind(*args, **kwargs):
   xs_avals = _map(partial(_promote_aval_rank, length), x_avals)
   assert all(_map(typecheck, consts_avals, consts))
   assert all(_map(typecheck, init_avals, init))
-  assert all(_map(typecheck, xs_avals, xs))
+  # assert all(_map(typecheck, xs_avals, xs))
   # check that output carry type matches input carry type
   carry_avals, _ = split_list(jaxpr.out_avals, [num_carry])
   assert all(_map(typematch, init_avals, carry_avals))
