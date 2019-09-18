@@ -2232,8 +2232,9 @@ def argmin(a, axis=None):
 def _argminmax(op, a, axis):
   shape = [1] * a.ndim
   shape[axis] = a.shape[axis]
-  idxs = onp.arange(a.shape[axis]).reshape(shape)
+  idxs = lax.tie_in(a, arange(a.shape[axis])).reshape(shape)
   maxval = onp.iinfo(xla_bridge.canonicalize_dtype(idxs.dtype)).max
+  maxval = lax.tie_in(a, maxval)
   mask_idxs = where(lax._eq_meet(a, op(a, axis, keepdims=True)), idxs, maxval)
   return min(mask_idxs, axis)
 
