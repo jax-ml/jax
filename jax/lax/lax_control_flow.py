@@ -277,6 +277,16 @@ batching.primitive_batchers[while_p] = _while_loop_batching_rule
 ### cond
 
 def cond(pred, true_operand, true_fun, false_operand, false_fun):
+  """Conditionally apply ``true_fun`` or ``false_fun``.
+
+  Has equivalent semantics to this Python implementation::
+
+    def cond(pred, true_operand, true_fun, false_operand, false_fun):
+      if pred:
+        return true_fun(true_operand)
+      else:
+        return false_fun(false_operand)
+  """
   true_ops, true_tree = tree_flatten((true_operand,))
   true_avals = tuple(_map(_abstractify, true_ops))
   true_jaxpr, true_consts, out_tree = _initial_style_jaxpr(true_fun, true_tree, true_avals)
