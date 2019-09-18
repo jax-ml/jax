@@ -398,65 +398,6 @@ def build_odeint(ofunc, rtol=1.4e-8, atol=1.4e-8):
   return jax.jit(ct_odeint)
 
 
-def my_odeint_grad(fun):
-  """Calculate the Jacobian of an odeint."""
-  @jax.jit
-  def _gradfun(*args, **kwargs):
-    ys, pullback = vjp_odeint(fun, *args, **kwargs)
-    my_grad = pullback(np.ones_like(ys))
-    return my_grad
-  return _gradfun
-
-
-def my_odeint_jacrev(fun):
-  """Calculate the Jacobian of an odeint."""
-  @jax.jit
-  def _jacfun(*args, **kwargs):
-    ys, pullback = vjp_odeint(fun, *args, **kwargs)
-    my_jac = jax.vmap(pullback)(jax.api._std_basis(ys))
-    my_jac = jax.api.tree_map(
-        functools.partial(jax.api._unravel_array_into_pytree, ys, 0), my_jac)
-    my_jac = jax.api.tree_transpose(
-        jax.api.tree_structure(args), jax.api.tree_structure(ys), my_jac)
-    return my_jac
-  return _jacfun
-
-
-def nd(f, x, eps=0.0001):
-  flat_x, unravel = ravel_pytree(x)
-  dim = len(flat_x)
-  g = onp.zeros_like(flat_x)
-  for i in range(dim):
-    d = onp.zeros_like(flat_x)
-    d[i] = eps
-    g[i] = (f(unravel(flat_x + d)) - f(unravel(flat_x - d))) / (2.0 * eps)
-  return g
-
-
-def test_grad_vjp_odeint():
-  """Compare numerical and exact differentiation of a simple odeint."""
-
-  def f(y, t, arg1, arg2):
-    return -np.sqrt(t) - y + arg1 - np.mean((y + arg2)**2)
-
-  def onearg_odeint(args):
-    return np.sum(
-        odeint(f, *args, atol=1e-8, rtol=1e-8))
-
-  dim = 10
-  t0 = 0.1
-  t1 = 0.2
-  y0 = np.linspace(0.1, 0.9, dim)
-  arg1 = 0.1
-  arg2 = 0.2
-  wrap_args = (y0, np.array([t0, t1]), arg1, arg2)
-
-  numerical_grad = nd(onearg_odeint, wrap_args)
-  exact_grad, _ = ravel_pytree(my_odeint_grad(f)(*wrap_args))
-
-  assert np.allclose(numerical_grad, exact_grad)
-
-
 def plot_gradient_field(ax, func, xlimits, ylimits, numticks=30):
   """Plot the gradient field of `func` on `ax`."""
   x = np.linspace(*xlimits, num=numticks)
@@ -493,25 +434,6 @@ def plot_demo():
   plt.show()
 
 
-@jax.jit
-def pend(y, t, arg1, arg2):
-  """Simple pendulum system for odeint testing."""
-  del t
-  theta, omega = y
-  dydt = np.array([omega, -arg1*omega - arg2*np.sin(theta)])
-  return dydt
-
-
-@jax.jit
-def swoop(y, t, arg1, arg2):
-  return np.array(y - np.sin(t) - np.cos(t) * arg1 + arg2)
-
-
-@jax.jit
-def decay(y, t, arg1, arg2):
-  return -np.sqrt(t) - y + arg1 - np.mean((y + arg2)**2)
-
-
 def benchmark_odeint(fun, y0, tspace, *args):
   """Time performance of JAX odeint method against scipy.integrate.odeint."""
   n_trials = 5
@@ -542,88 +464,14 @@ def pend_benchmark_odeint():
                           9.8)
 
 
-def test_odeint_grad():
-  """Test the gradient behavior of various ODE integrations."""
-  def _test_odeint_grad(func, *args):
-    def onearg_odeint(fargs):
-      return np.sum(odeint(func, *fargs))
-
-    numerical_grad = nd(onearg_odeint, args)
-    exact_grad, _ = ravel_pytree(my_odeint_grad(func)(*args))
-    assert np.allclose(numerical_grad, exact_grad)
-
-  ts = np.array((0.1, 0.2))
-  y0 = np.linspace(0.1, 0.9, 10)
-  big_y0 = np.linspace(1.1, 10.9, 10)
-
-  # check pend()
-  for cond in (
-      (np.array((onp.pi - 0.1, 0.0)), ts, 0.25, 0.98),
-      (np.array((onp.pi * 0.1, 0.0)), ts, 0.1, 0.4),
-      ):
-    _test_odeint_grad(pend, *cond)
-
-  # check swoop
-  for cond in (
-      (y0, ts, 0.1, 0.2),
-      (big_y0, ts, 0.1, 0.3),
-      ):
-    _test_odeint_grad(swoop, *cond)
-
-  # check decay
-  for cond in (
-      (y0, ts, 0.1, 0.2),
-      (big_y0, ts, 0.1, 0.3),
-      ):
-    _test_odeint_grad(decay, *cond)
-
-
-def test_odeint_vjp():
-  """Use check_vjp to check odeint VJP calculations."""
-
-  # check pend()
-  y = np.array([np.pi - 0.1, 0.0])
-  t = np.linspace(0., 10., 11)
-  b = 0.25
-  c = 9.8
-  wrap_args = (y, t, b, c)
-  pend_odeint_wrap = lambda y, t, *args: odeint(pend, y, t, *args)
-  pend_vjp_wrap = lambda y, t, *args: vjp_odeint(pend, y, t, *args)
-  check_vjp(pend_odeint_wrap, pend_vjp_wrap, wrap_args)
-
-  # check swoop()
-  y = np.array([0.1])
-  t = np.linspace(0., 10., 11)
-  arg1 = 0.1
-  arg2 = 0.2
-  wrap_args = (y, t, arg1, arg2)
-  swoop_odeint_wrap = lambda y, t, *args: odeint(swoop, y, t, *args)
-  swoop_vjp_wrap = lambda y, t, *args: vjp_odeint(swoop, y, t, *args)
-  check_vjp(swoop_odeint_wrap, swoop_vjp_wrap, wrap_args)
-
-  # decay() check_vjp hangs!
-
-
-def test_defvjp_all():
-  """Use build_odeint to check odeint VJP calculations."""
-  n_trials = 5
-  swoop_build = build_odeint(swoop)
-  jacswoop = jax.jit(jax.jacrev(swoop_build))
-  y = np.array([0.1])
-  t = np.linspace(0., 2., 11)
-  arg1 = 0.1
-  arg2 = 0.2
-  wrap_args = (y, t, arg1, arg2)
-  for k in range(n_trials):
-    start = time.time()
-    rslt = jacswoop(*wrap_args)
-    rslt.block_until_ready()
-    end = time.time()
-    print('JAX jacrev elapsed time ({} of {}): {}'.format(
-        k+1, n_trials, end-start))
+@jax.jit
+def pend(y, t, arg1, arg2):
+  """Simple pendulum system for odeint testing."""
+  del t
+  theta, omega = y
+  dydt = np.array([omega, -arg1*omega - arg2*np.sin(theta)])
+  return dydt
 
 
 if __name__ == '__main__':
-
-  test_odeint_grad()
-  test_odeint_vjp()
+  pend_benchmark_odeint()
