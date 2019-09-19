@@ -16,6 +16,8 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from . import core
+from .abstract_arrays import abstractify
 from .tree_util import (build_tree, process_pytree, tree_flatten,
                         tree_unflatten, treedef_is_leaf)
 from .linear_util import transformation_with_aux
@@ -73,3 +75,21 @@ def flatten_fun_nokwargs2(in_tree, *args_flat):
   ans_flat, ans_tree = tree_flatten(ans)
   aux_flat, aux_tree = tree_flatten(aux)
   yield (ans_flat, aux_flat), (ans_tree, aux_tree)
+
+def check_callable(fun):
+  if not callable(fun):
+    raise TypeError("Expected a callable value, got {}".format(fun))
+
+def check_args(args):
+  for arg in args:
+    if not (isinstance(arg, core.Tracer) or _valid_jaxtype(arg)):
+      raise TypeError("Argument '{}' of type {} is not a valid JAX type"
+                      .format(arg, type(arg)))
+
+def _valid_jaxtype(arg):
+  try:
+    abstractify(arg)  # faster than core.get_aval
+  except TypeError:
+    return False
+  else:
+    return True

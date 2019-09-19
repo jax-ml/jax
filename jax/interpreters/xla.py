@@ -32,7 +32,7 @@ from .. import ad_util
 from .. import tree_util
 from .. import linear_util as lu
 from ..abstract_arrays import (ConcreteArray, ShapedArray, make_shaped_array,
-                               array_types, raise_to_shaped)
+                               array_types, raise_to_shaped, abstractify)
 from ..core import valid_jaxtype, Literal
 from ..util import partial, partialmethod, cache, safe_map, prod, unzip2
 from ..lib import xla_bridge as xb
@@ -103,17 +103,6 @@ def _canonicalize_ndarray_dtype(x):
   return onp.asarray(x, xb.canonicalize_dtype(onp.result_type(x)))
 for _t in array_types:
   canonicalize_dtype_handlers[_t] = _canonicalize_ndarray_dtype
-
-def abstractify(x):
-  try:
-    return pytype_aval_mappings[type(x)](x)
-  except KeyError:
-    raise TypeError("No abstraction handler for type: {}".format(type(x)))
-pytype_aval_mappings = {}
-pytype_aval_mappings[core.Unit] = lambda _: core.abstract_unit
-for _t in array_types:
-  pytype_aval_mappings[_t] = make_shaped_array
-
 
 ### op-by-op execution
 

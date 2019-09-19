@@ -30,6 +30,8 @@ from .. import core
 from .. import linear_util as lu
 from ..abstract_arrays import (ConcreteArray, ShapedArray, array_types,
                                raise_to_shaped)
+from ..api_util import check_args, check_callable, flatten_fun, wraps
+from ..tree_util import tree_flatten, tree_unflatten
 from ..util import partial, unzip2, concatenate, prod
 from ..lib import xla_bridge as xb
 from .xla import aval_to_xla_shape, xla_destructure
@@ -40,6 +42,40 @@ from . import partial_eval as pe
 from . import xla
 from . import ad
 
+def pmap(fun, axis_name=None, devices=None, backend=None):
+  """Implementation of pmap in api.py"""
+  check_callable(fun)
+  axis_name = _TempAxisName() if axis_name is None else axis_name
+
+  @wraps(fun)
+  def f_pmapped(*args, **kwargs):
+    f = lu.wrap_init(fun)
+    args, in_tree = tree_flatten((args, kwargs))
+    axis_size = _pmap_axis_size(args)
+    check_args(args)
+    flat_fun, out_tree = flatten_fun(f, in_tree)
+    out = xla_pmap(flat_fun, *args, axis_name=axis_name, axis_size=axis_size,
+                   devices=tuple(devices) if devices is not None else devices,
+                   backend=backend)
+    return tree_unflatten(out_tree(), out)
+
+  namestr = "pmap({}, axis_name={})".format
+  f_pmapped.__name__ = namestr(f_pmapped.__name__, axis_name)
+  return f_pmapped
+
+def _pmap_axis_size(xs):
+  for x in xs:
+    try:
+      return x.shape[0]
+    except AttributeError:
+      pass
+  else:
+    msg = "pmap got value with no leading axis to map over: {}."
+    raise ValueError(msg.format([x for x in xs if not hasattr(x, 'shape')]))
+
+class _TempAxisName(object):
+  def __repr__(self):
+    return '<axis {}>'.format(hex(id(self)))
 
 ### util
 

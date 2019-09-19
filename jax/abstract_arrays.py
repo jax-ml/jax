@@ -201,3 +201,13 @@ def raise_to_shaped(aval):
     raise TypeError(type(aval))
 
 core.literalable_types.update(array_types)
+
+def abstractify(x):
+  try:
+    return pytype_aval_mappings[type(x)](x)
+  except KeyError:
+    raise TypeError("No abstraction handler for type: {}".format(type(x)))
+pytype_aval_mappings = {}
+pytype_aval_mappings[core.Unit] = lambda _: core.abstract_unit
+for _t in array_types:
+  pytype_aval_mappings[_t] = make_shaped_array

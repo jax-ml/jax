@@ -45,14 +45,15 @@ from . import linear_util as lu
 from . import ad_util
 from .core import eval_jaxpr
 from .api_util import (wraps, flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
-                       flatten_fun_nokwargs2, apply_flat_fun_nokwargs)
+                       flatten_fun_nokwargs2, apply_flat_fun_nokwargs,
+                       check_callable, check_args)
 from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, tree_leaves, tree_multimap)
 from .util import (unzip2, unzip3, curry, partial, safe_map, safe_zip,
                    WrapHashably, Hashable, prod, split_list)
 from .lib.xla_bridge import (canonicalize_dtype, device_count,
                              local_device_count, devices, host_id)
-from .abstract_arrays import ShapedArray, raise_to_shaped
+from .abstract_arrays import ShapedArray, raise_to_shaped, abstractify
 from .interpreters import partial_eval as pe
 from .interpreters import xla
 from .interpreters import pxla
@@ -71,10 +72,6 @@ flags.DEFINE_bool("jax_disable_jit",
                   strtobool(os.getenv("JAX_DISABLE_JIT", "False")),
                   "Disable JIT compilation and just call original Python.")
 
-
-def _check_callable(fun):
-  if not callable(fun):
-    raise TypeError("Expected a callable value, got {}".format(fun))
 
 class _ThreadLocalState(threading.local):
   def __init__(self):
@@ -123,7 +120,7 @@ def jit(fun, static_argnums=(), device_assignment=None, backend=None):
   [-0.54485154  0.27744263 -0.29255125 -0.91421586 -0.62452525 -0.2474813
    -0.8574326  -0.7823267   0.7682731   0.59566754]
   """
-  _check_callable(fun)
+  check_callable(fun)
   if isinstance(device_assignment, int):
     device_assignment = (device_assignment,)
   if isinstance(static_argnums, int):
@@ -144,7 +141,7 @@ def jit(fun, static_argnums=(), device_assignment=None, backend=None):
     else:
       dyn_args = args
     args_flat, in_tree = tree_flatten((dyn_args, kwargs))
-    _check_args(args_flat)
+    check_args(args_flat)
     flat_fun, out_tree = flatten_fun(f, in_tree)
     out = xla.xla_call(flat_fun, *args_flat, device_assignment=device_assignment, backend=backend)
     return tree_unflatten(out_tree(), out)
@@ -271,10 +268,10 @@ def xla_computation(fun, static_argnums=(), axis_env=None, backend=None):
     ROOT tuple.18 = (f32[], f32[], f32[]) tuple(all-reduce.7, all-reduce.12, all-reduce.17)
   }
   """
-  _check_callable(fun)
+  check_callable(fun)
 
   def pv_like(x):
-    aval = xla.abstractify(x)
+    aval = abstractify(x)
     return pe.PartialVal((aval, core.unit))
 
   def make_axis_env(nreps):
@@ -294,7 +291,7 @@ def xla_computation(fun, static_argnums=(), axis_env=None, backend=None):
     jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
     axis_env_ = make_axis_env(xla.jaxpr_replicas(jaxpr))
     return xla.build_jaxpr(jaxpr, backend, axis_env_, consts,
-                           *map(xla.abstractify, jax_args))
+                           *map(abstractify, jax_args))
   return computation_maker
 
 def grad(fun, argnums=0, has_aux=False, holomorphic=False):
@@ -378,7 +375,7 @@ def value_and_grad(fun, argnums=0, has_aux=False, holomorphic=False):
             "of {fun} and the second element is the gradient, which has the "
             "same shape as the arguments at positions {argnums}.")
 
-  _check_callable(fun)
+  check_callable(fun)
 
   @wraps(fun, docstr=docstr, argnums=argnums)
   def value_and_grad_f(*args, **kwargs):
@@ -595,7 +592,7 @@ def vmap(fun, in_axes=0, out_axes=0):
   docstr = ("Vectorized version of {fun}. Takes similar arguments as {fun} "
             "but with additional array axes over which {fun} is mapped.")
 
-  _check_callable(fun)
+  check_callable(fun)
   if (not isinstance(in_axes, (list, tuple, type(None), int))
       or not isinstance(out_axes, (list, tuple, type(None), int))):
     msg = ("vmap arguments in_axes and out_axes must each be an integer, None, "
@@ -744,50 +741,18 @@ def pmap(fun, axis_name=None, devices=None, backend=None):
   >>> print(f2(np.array([2., 3.])))
   [ 13.  13.]
   """
-  _check_callable(fun)
-  axis_name = _TempAxisName() if axis_name is None else axis_name
-
-  @wraps(fun)
-  def f_pmapped(*args, **kwargs):
-    f = lu.wrap_init(fun)
-    args, in_tree = tree_flatten((args, kwargs))
-    axis_size = _pmap_axis_size(args)
-    _check_args(args)
-    flat_fun, out_tree = flatten_fun(f, in_tree)
-    out = pxla.xla_pmap(flat_fun, *args, axis_name=axis_name, axis_size=axis_size,
-                        devices=tuple(devices) if devices is not None else devices,
-                        backend=backend)
-    return tree_unflatten(out_tree(), out)
-
-  namestr = "pmap({}, axis_name={})".format
-  f_pmapped.__name__ = namestr(f_pmapped.__name__, axis_name)
-  return f_pmapped
-
-def _pmap_axis_size(xs):
-  for x in xs:
-    try:
-      return x.shape[0]
-    except AttributeError:
-      pass
-  else:
-    msg = "pmap got value with no leading axis to map over: {}."
-    raise ValueError(msg.format([x for x in xs if not hasattr(x, 'shape')]))
-
-class _TempAxisName(object):
-  def __repr__(self):
-    return '<axis {}>'.format(hex(id(self)))
-
+  return pxla.pmap(fun, axis_name, devices, backend)
 
 def soft_pmap(fun, axis_name=None, backend=None):
-  _check_callable(fun)
-  axis_name = _TempAxisName() if axis_name is None else axis_name
+  check_callable(fun)
+  axis_name = pxla._TempAxisName() if axis_name is None else axis_name
 
   @wraps(fun)
   def f_pmapped(*args, **kwargs):
     f = lu.wrap_init(fun)
     args_flat, in_tree = tree_flatten((args, kwargs))
-    axis_size = _pmap_axis_size(args_flat)
-    _check_args(args_flat)
+    axis_size = pxla._pmap_axis_size(args_flat)
+    check_args(args_flat)
     flat_fun, out_tree = flatten_fun(f, in_tree)
 
     chunk_size, leftover = divmod(axis_size, pxla.unmapped_device_count(backend))
@@ -829,13 +794,13 @@ def _reshape_merge(x):
 
 def _papply(fun):
   # This function is for testing purposes.
-  axis_name = _TempAxisName()
+  axis_name = pxla._TempAxisName()
 
   def papply_fun(*args, **kwargs):
     f = lu.wrap_init(fun)
     args_flat, in_tree = tree_flatten((args, kwargs))
     flat_fun, out_tree = flatten_fun(f, in_tree)
-    axis_size = _pmap_axis_size(args_flat)
+    axis_size = pxla._pmap_axis_size(args_flat)
     out_flat = parallel.papply(flat_fun, axis_name, args_flat, axis_size)
     return tree_unflatten(out_tree(), out_flat)
 
@@ -843,13 +808,13 @@ def _papply(fun):
 
 
 def _parallelize(fun):
-  axis_name = _TempAxisName()
+  axis_name = pxla._TempAxisName()
 
   def pfun(*args):
     f = lu.wrap_init(fun)
     args_flat, in_tree = tree_flatten(args)
     f, out_tree = flatten_fun_nokwargs(f, in_tree)
-    axis_size = _pmap_axis_size(args_flat)
+    axis_size = pxla._pmap_axis_size(args_flat)
 
     chunk_size, leftover = divmod(axis_size, pxla.unmapped_device_count())
     if chunk_size == 0 and leftover:
@@ -1108,7 +1073,7 @@ def vjp(fun, *primals, **kwargs):
   if not isinstance(fun, lu.WrappedFun):
     fun = lu.wrap_init(fun)
   primals_flat, in_tree = tree_flatten(primals)
-  _check_args(primals_flat)
+  check_args(primals_flat)
   tree_map(_check_inexact_input_vjp, primals)
   if not has_aux:
     flat_fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
@@ -1171,10 +1136,10 @@ def make_jaxpr(fun):
         (l) = id k
     in l }
   """
-  _check_callable(fun)
+  check_callable(fun)
 
   def pv_like(x):
-    aval = xla.abstractify(x)
+    aval = abstractify(x)
     return pe.PartialVal((aval, core.unit))
 
   @wraps(fun)
@@ -1234,21 +1199,6 @@ def _argnums_partial_(dyn_argnums, fixed_args, *dyn_args, **kwargs):
     args[i] = arg
   ans = yield args, kwargs
   yield ans
-
-def _check_args(args):
-  for arg in args:
-    if not (isinstance(arg, core.Tracer) or _valid_jaxtype(arg)):
-      raise TypeError("Argument '{}' of type {} is not a valid JAX type"
-                      .format(arg, type(arg)))
-
-def _valid_jaxtype(arg):
-  try:
-    xla.abstractify(arg)  # faster than core.get_aval
-  except TypeError:
-    return False
-  else:
-    return True
-
 
 class CustomTransformsFunction(object):
   def __init__(self, fun, prim):
@@ -1721,7 +1671,7 @@ def _make_graphviz(fun):
   # TODO(mattjj): handle subjaxprs
 
   def pv_like(x):
-    aval = xla.abstractify(x)
+    aval = abstractify(x)
     return pe.PartialVal((aval, core.unit))
 
   id_names = ("id{}".format(i) for i in it.count())
