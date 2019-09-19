@@ -134,7 +134,7 @@ def xla_primitive_callable(prim, *abstract_args, **params):
     handle_result = aval_to_result_handler(aval_out)
   xla_shapes = tuple(map(aval_to_xla_shape, abstract_args))
   built_c = primitive_computation(prim, *xla_shapes, **params)
-  compiled = built_c.Compile(xla_shapes, xb.get_compile_options(),
+  compiled = built_c.Compile(compile_options=xb.get_compile_options(),
                              backend=xb.get_backend(backend))
   return partial(_execute_compiled_primitive, prim, compiled, backend, handle_result)
 
@@ -190,24 +190,26 @@ def _check_nans(name, xla_shape, buf):
         msg = "invalid value (nan) encountered in {}"
         raise FloatingPointError(msg.format(name))
 
-
 ### compiling jaxprs
 
-def compile_jaxpr(jaxpr, device, backend, axis_env, const_vals, *abstract_args):
+def compile_jaxpr(jaxpr, device, backend, axis_env, const_vals, tuple_args,
+                  *abstract_args):
   if axis_env.nreps > xb.device_count(backend):
     msg = ("compiling computation that requires {} replicas, but only {} XLA "
            "devices are available")
     raise ValueError(msg.format(axis_env.nreps, xb.device_count(backend)))
   arg_shapes = tuple(map(aval_to_xla_shape, abstract_args))
-  built_c = jaxpr_computation(jaxpr, backend, axis_env, const_vals, (), *arg_shapes)
+  built_c = jaxpr_computation(jaxpr, backend, axis_env, const_vals, (), arg_shapes,
+                              tuple_args=tuple_args)
   device_assignment = (device.id,) if device else None
   compile_opts = xb.get_compile_options(num_replicas=axis_env.nreps,
                                         device_assignment=device_assignment)
-  return built_c.Compile(arg_shapes, compile_opts, backend=xb.get_backend(backend))
+  return built_c.Compile(compile_options=compile_opts,
+                         backend=xb.get_backend(backend))
 
 def build_jaxpr(jaxpr, backend, axis_env, const_vals, *abstract_args):
   arg_shapes = map(aval_to_xla_shape, abstract_args)
-  return jaxpr_computation(jaxpr, backend, axis_env, const_vals, (), *arg_shapes)
+  return jaxpr_computation(jaxpr, backend, axis_env, const_vals, (), arg_shapes)
 
 def prefetch(x):
   if isinstance(x, DeviceArray):
@@ -233,12 +235,19 @@ def eqn_literals(eqn):
       yield v.val
 
 def jaxpr_computation(jaxpr, backend, axis_env, const_vals, freevar_shapes,
-                      *arg_shapes):
+                      arg_shapes, tuple_args=False):
   c = xb.make_computation_builder("jaxpr_computation")  # TODO(mattjj): name
   _map(prefetch, it.chain(const_vals, jaxpr_literals(jaxpr)))
   consts = _map(c.Constant, const_vals)
-  freevars = _map(c.ParameterWithShape, freevar_shapes)
-  args = _map(c.ParameterWithShape, arg_shapes)
+  if tuple_args:
+    tuple_shape = xc.Shape.tuple_shape(list(freevar_shapes) + list(arg_shapes))
+    tuple_arg = c.ParameterWithShape(tuple_shape)
+    nfreevars, nargs = len(freevar_shapes), len(arg_shapes)
+    freevars = [c.GetTupleElement(tuple_arg, i) for i in range(nfreevars)]
+    args = [c.GetTupleElement(tuple_arg, i + nfreevars) for i in range(nargs)]
+  else:
+    freevars = _map(c.ParameterWithShape, freevar_shapes)
+    args = _map(c.ParameterWithShape, arg_shapes)
   out_nodes = jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, freevars, *args)
   return c.Build(c.Tuple(*out_nodes))
 
@@ -377,18 +386,20 @@ def _xla_callable(fun, device, backend, *abstract_args):
   if FLAGS.jax_log_compiles:
     print("Compiling {} for args {}.".format(fun.__name__, abstract_args))
   pvals = [pe.PartialVal((aval, core.unit)) for aval in abstract_args]
+  # Condense many arguments into single tuple argument to avoid a TPU issue.
+  tuple_args = len(abstract_args) > 100
   with core.new_master(pe.JaxprTrace, True) as master:
     jaxpr, (pvals, consts, env) = pe.trace_to_subjaxpr(fun, master, False).call_wrapped(pvals)
     assert not env  # no subtraces here (though cond might eventually need them)
     axis_env = AxisEnv(jaxpr_replicas(jaxpr), [], [])
     compiled = compile_jaxpr(jaxpr, device, backend, axis_env, consts,
-                             *abstract_args)
+                             tuple_args, *abstract_args)
     del master, consts, jaxpr, env
   result_handlers = tuple(map(_pval_to_result_handler, pvals))
   if axis_env.nreps == 1:
-    return partial(_execute_compiled, compiled, backend, result_handlers)
+    return partial(_execute_compiled, compiled, backend, result_handlers, tuple_args)
   else:
-    return partial(_execute_replicated, compiled, backend, result_handlers)
+    return partial(_execute_replicated, compiled, backend, result_handlers, tuple_args)
 
 def _pval_to_result_handler(pval):
   pv, const = pval
@@ -397,19 +408,27 @@ def _pval_to_result_handler(pval):
   else:
     return aval_to_result_handler(pv)
 
-def _execute_compiled(compiled, backend, handlers, *args):
+def _execute_compiled(compiled, backend, handlers, tuple_args, *args):
   device_num, = compiled.DeviceOrdinals()
   input_bufs = [device_put(x, device_num, backend=backend) for x in args]
+  if tuple_args:
+    input_bufs = [make_tuple(input_bufs, device_num, backend)]
   out_bufs = compiled.Execute(input_bufs).destructure()
   if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_bufs)
   return [handler(out_buf) for handler, out_buf in zip(handlers, out_bufs)]
 
-def _execute_replicated(compiled, backend, handlers, *args):
-  input_bufs = [[device_put(x, i, backend=backend) for x in args]
-                for i in compiled.DeviceOrdinals()]
+def _execute_replicated(compiled, backend, handlers, tuple_args, *args):
+  input_bufs = [[device_put(x, device_num, backend=backend) for x in args]
+                for device_num in compiled.DeviceOrdinals()]
+  if tuple_args:
+    input_bufs = [[make_tuple(bufs, device_num)] for bufs, device_num in
+                  zip(input_bufs, compiled.DeviceOrdinals())]
   out_bufs = compiled.ExecutePerReplica(input_bufs)[0].destructure()
   if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_bufs)
   return [handler(out_buf) for handler, out_buf in zip(handlers, out_bufs)]
+
+def make_tuple(bufs, device_num, backend):
+  return xb.get_backend(backend).make_tuple(bufs, device_num)
 
 
 xla_call_p = core.Primitive('xla_call')
@@ -476,7 +495,7 @@ def lower_fun(fun, instantiate=False, initial_style=False):
     pvals = [pe.PartialVal((a, core.unit)) for a in avals]
     jaxpr, _, consts = pe.trace_to_jaxpr(
         lu.wrap_init(fun, new_params), pvals, instantiate=True)
-    built_c = jaxpr_computation(jaxpr, backend, axis_env, consts, (), *xla_shapes)
+    built_c = jaxpr_computation(jaxpr, backend, axis_env, consts, (), xla_shapes)
     return c.Call(built_c, xla_args)
   return f
 

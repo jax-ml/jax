@@ -45,7 +45,7 @@ from . import ad
 
 def identity(x): return x
 
-def shard_args(backend, device_ordinals, assignments, axis_size, args):
+def shard_args(backend, device_ordinals, assignments, axis_size, tuple_args, args):
   """Shard an argument data array arg along its leading axis.
 
   Args:
@@ -79,7 +79,13 @@ def shard_args(backend, device_ordinals, assignments, axis_size, args):
       bufs = shard_arg_handlers[type(arg)](arg, device_ordinals, assignments, backend=backend)
       for r, buf in enumerate(bufs):
         buffers[r][a] = buf
+
+  if tuple_args:
+    buffers = [[xla.make_tuple(bufs, device_ordinals[r], backend)]
+               for r, bufs in enumerate(buffers)]
+
   return buffers
+
 shard_arg_handlers = {}
 shard_arg_handlers[core.Unit] = \
     lambda x, ordinals, _, backend=None: [xla.device_put(core.unit, d, backend=backend) for d in ordinals]
@@ -167,7 +173,7 @@ def replica_groups(nrep, mesh_spec, mesh_axes):
 ### the main pmap machinery lowers SPMD jaxprs to multi-replica XLA computations
 
 def compile_replicated(jaxpr, backend, axis_name, axis_size, devices, consts,
-                       *abstract_args):
+                       tuple_args, *abstract_args):
   if devices is None:
     num_replicas = axis_size * xla.jaxpr_replicas(jaxpr)
     if num_replicas > xb.device_count(backend):
@@ -186,9 +192,10 @@ def compile_replicated(jaxpr, backend, axis_name, axis_size, devices, consts,
 
   axis_env = xla.AxisEnv(num_replicas, [axis_name], [axis_size], devices)
   arg_shapes = list(map(aval_to_xla_shape, abstract_args))
-  built_c = xla.jaxpr_computation(jaxpr, backend, axis_env, consts, (), *arg_shapes)
+  built_c = xla.jaxpr_computation(jaxpr, backend, axis_env, consts, (), arg_shapes,
+                                  tuple_args=tuple_args)
   compiled = built_c.Compile(
-      arg_shapes, xb.get_compile_options(num_replicas, device_assignment),
+      compile_options=xb.get_compile_options(num_replicas, device_assignment),
       backend=xb.get_backend(backend))
   return compiled, num_replicas
 
@@ -460,11 +467,14 @@ def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
     results = [handler(None) for handler in handlers]
     return lambda *_: results
   else:
+    # Condense many arguments into single tuple argument to avoid a TPU issue.
+    tuple_args = len(avals) > 100
     compiled, nrep = compile_replicated(jaxpr, backend, axis_name, axis_size,
-                                        devices, consts, *avals)
+                                        devices, consts, tuple_args, *avals)
     device_ordinals = compiled.DeviceOrdinals()
     assignments = assign_shards_to_replicas(nrep, axis_size)
-    handle_args = partial(shard_args, backend, device_ordinals, assignments, axis_size)
+    handle_args = partial(shard_args, backend, device_ordinals, assignments,
+                          axis_size, tuple_args)
     handle_outs = _pvals_to_results_handler(axis_size, nrep, out_pvals)
     return partial(execute_replicated, compiled, backend, nrep, handle_args, handle_outs)
 

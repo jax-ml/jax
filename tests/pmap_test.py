@@ -715,6 +715,17 @@ class PmapTest(jtu.JaxTestCase):
     expected = onp.linalg.matrix_power(a, 5).dot(b)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testManyArgs(self):
+    @pmap
+    def f(args_list):
+      return sum(args_list)
+
+    vals = list(range(500))
+    ndevices = xla_bridge.device_count()
+    self.assertAllClose(f(np.array([vals] * ndevices)),
+                        np.array([sum(vals)] * ndevices),
+                        check_dtypes=True)
+
 
 class PmapWithDevicesTest(jtu.JaxTestCase):
 
