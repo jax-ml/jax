@@ -197,6 +197,10 @@ def host_id(backend=None):
   return get_backend(backend).host_id()
 
 
+def host_count():
+  return len(set(d.host_id for d in devices()))
+
+
 ### utility functions
 
 @util.memoize

@@ -22,6 +22,7 @@ import itertools as it
 import operator as op
 import threading
 
+from absl import logging
 import numpy as onp
 import six
 from six.moves import reduce
@@ -172,32 +173,37 @@ def replica_groups(nrep, mesh_spec, mesh_axes):
 
 ### the main pmap machinery lowers SPMD jaxprs to multi-replica XLA computations
 
-def compile_replicated(jaxpr, backend, axis_name, axis_size, devices, consts,
-                       tuple_args, *abstract_args):
+def compile_replicated(jaxpr, backend, axis_name, axis_size, global_axis_size,
+                       devices, consts, tuple_args, *abstract_args):
+  jaxpr_replicas = xla.jaxpr_replicas(jaxpr)
+  num_local_replicas = axis_size * jaxpr_replicas
+  num_replicas = global_axis_size * jaxpr_replicas
+  logging.vlog(
+      1, "compile_replicated: axis_size=%d global_axis_size=%d jaxpr_replicas=%d"
+      % (axis_size, global_axis_size, jaxpr_replicas))
+
   if devices is None:
-    num_replicas = axis_size * xla.jaxpr_replicas(jaxpr)
     if num_replicas > xb.device_count(backend):
       msg = ("compiling computation that requires {} replicas, but only {} XLA "
              "devices are available")
       raise ValueError(msg.format(num_replicas, xb.device_count(backend)))
     device_assignment = None
   else:
-    assert all(d.host_id == xb.host_id() for d in devices)
-    if axis_size != len(devices):
+    assert any(d.host_id == xb.host_id() for d in devices)
+    if num_replicas != len(devices):
       raise ValueError("compiling computation that requires %s replicas, "
                        "but %s devices were specified"
-                       % (axis_size, len(devices)))
-    num_replicas = len(devices)
+                       % (num_replicas, len(devices)))
     device_assignment = tuple(d.id for d in devices)
 
-  axis_env = xla.AxisEnv(num_replicas, [axis_name], [axis_size], devices)
+  axis_env = xla.AxisEnv(num_replicas, [axis_name], [global_axis_size], devices)
   arg_shapes = list(map(aval_to_xla_shape, abstract_args))
   built_c = xla.jaxpr_computation(jaxpr, backend, axis_env, consts, (), arg_shapes,
                                   tuple_args=tuple_args)
   compiled = built_c.Compile(
       compile_options=xb.get_compile_options(num_replicas, device_assignment),
       backend=xb.get_backend(backend))
-  return compiled, num_replicas
+  return compiled, num_local_replicas
 
 
 ### applying parallel primitives in op-by-op Python dispatch
@@ -446,9 +452,24 @@ def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
   pvals = [PartialVal((aval, core.unit)) for aval in avals]
   pval = PartialVal([core.abstract_unit, core.unit])  # dummy value
 
+  if devices:
+    global_axis_size = len(devices)
+  elif xb.host_count() > 1:
+    # TODO(skye): relax this constraint or provide functionality for
+    # automatically passing appropriate `devices`.
+    if axis_size != xb.local_device_count():
+      raise ValueError(
+          "On multi-host platforms, the input to pmapped functions must have "
+          "leading axis size equal to the number of local devices if no "
+          "`devices` argument is specified. Got axis_size=%d, "
+          "num_local_devices=%d" % (axis_size, xb.local_device_count()))
+    global_axis_size = xb.device_count()
+  else:
+    global_axis_size = axis_size
+
   @lu.wrap_init
   def dynamic_fun(dummy, *args):
-    with extend_dynamic_axis_env(axis_name, dummy.trace, axis_size):
+    with extend_dynamic_axis_env(axis_name, dummy.trace, global_axis_size):
       return fun.call_wrapped(*args)
 
   with core.new_master(JaxprTrace, True) as master:
@@ -470,7 +491,8 @@ def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
     # Condense many arguments into single tuple argument to avoid a TPU issue.
     tuple_args = len(avals) > 100
     compiled, nrep = compile_replicated(jaxpr, backend, axis_name, axis_size,
-                                        devices, consts, tuple_args, *avals)
+                                        global_axis_size, devices, consts,
+                                        tuple_args, *avals)
     device_ordinals = compiled.DeviceOrdinals()
     assignments = assign_shards_to_replicas(nrep, axis_size)
     handle_args = partial(shard_args, backend, device_ordinals, assignments,
@@ -520,7 +542,7 @@ def _pmap_translation_rule(c, jaxpr, axis_env, const_nodes, freevar_nodes,
   if axis_env.devices is not None or (axis_env.names and devices is not None):
     raise ValueError("Nested pmaps with explicit devices argument.")
   new_env = xla.extend_axis_env(axis_env, axis_name, axis_size)
-  in_nodes_sharded = list(map(partial(_xla_shard, c, new_env.sizes), in_nodes))
+  in_nodes_sharded = list(map(partial(_xla_shard, c), in_nodes))
   sharded_outs = xla.jaxpr_subcomp(c, jaxpr, backend, new_env, const_nodes,
                                    freevar_nodes, *in_nodes_sharded)
   outs = [_xla_unshard(c, xla.axis_groups(new_env, axis_name), r)
@@ -531,14 +553,13 @@ xla.call_translations[xla_pmap_p] = _pmap_translation_rule
 ad.primitive_transposes[xla_pmap_p] = partial(ad.map_transpose, xla_pmap_p)
 pe.map_primitives.add(xla_pmap_p)
 
-def _xla_shard(c, sizes, x):
+def _xla_shard(c, x):
   xla_shape = c.GetShape(x)
   if xla_shape.is_tuple():
     assert not xla_shape.tuple_shapes()
     return x
   else:
     dims = list(xla_shape.dimensions())
-    assert dims[0] == sizes[-1]
     start_indices = _xla_shard_start_indices(c, dims[0], len(dims))
     return c.Reshape(c.DynamicSlice(x, start_indices, [1] + dims[1:]),
                     None, dims[1:])
