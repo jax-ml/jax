@@ -16,10 +16,12 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import contextlib
 import functools
 import re
 import itertools as it
 import os
+import sys
 from unittest import SkipTest
 
 from absl.testing import absltest
@@ -567,3 +569,21 @@ class JaxTestCase(parameterized.TestCase):
     lax_ans = lax_op(*args)
     self.assertAllClose(lax_ans, numpy_ans, check_dtypes=check_dtypes,
                         atol=tol, rtol=tol)
+
+  if sys.version_info.major < 3:
+    @contextlib.contextmanager
+    def assertWarnsRegex(self, expected_warning, expected_regex):
+      """Minimal backport of Python 3's assertWarnsRegex.
+
+      Only works as a context manager.
+      """
+      with warnings.catch_warnings(record=True) as warnings_list:
+        warnings.simplefilter("always")
+        yield
+        if not any(
+            issubclass(warning.category, expected_warning) and
+            re.match(expected_regex, str(warning.message))
+            for warning in warnings_list
+        ):
+          self.fail("{} with message {!r} not found in triggered warnings: {}"
+                    .format(expected_warning, expected_regex, warnings))

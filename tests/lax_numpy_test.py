@@ -1331,7 +1331,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       ('_lax_on_lax', lnp, lnp),
   )
   def testInplaceArithmetic(self, inplace_mod, other_mod):
-    x = inplace_mod.zeros(3)
+    x = inplace_mod.zeros(3, dtype=onp.intp)
     x += other_mod.arange(3)
     self.assertAllClose(x, onp.arange(3), check_dtypes=True)
 
