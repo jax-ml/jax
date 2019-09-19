@@ -116,6 +116,13 @@ class APITest(jtu.JaxTestCase):
 
     f(1, 2, z=onp.zeros(3))  # doesn't crash
 
+  def test_jit_many_args(self):
+    @jit
+    def f(args_list):
+      return sum(args_list)
+
+    self.assertEqual(f(list(range(500))), sum(range(500)))
+
   def test_grad_of_jit(self):
     side = []
 
