@@ -2745,7 +2745,7 @@ def _expand_bool_indices(idx):
                "argument to a jit or vmap function).")
         raise IndexError(msg)
       else:
-        out.extend(onp.where(onp.asarrray(i)))
+        out.extend(onp.where(onp.asarray(i)))
     else:
       out.append(i)
   return tuple(out)
