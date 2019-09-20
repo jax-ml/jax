@@ -689,6 +689,27 @@ class PmapTest(jtu.JaxTestCase):
     z = y[0]  # doesn't crash
     self.assertAllClose(z, 2 * x[0], check_dtypes=False)
 
+  def testPostProcessMap(self):
+    # test came from https://github.com/google/jax/issues/1369
+    nrep = xla_bridge.device_count()
+
+    def pmvm(a, b):
+      a = a.reshape((nrep, -1, a.shape[1]))
+      func = pmap(lambda z: np.dot(z, b))
+      return func(a).reshape(b.shape)
+
+    rng = onp.random.RandomState(0)
+    a = rng.randn(80, 80)
+    b = rng.randn(80)
+
+    iters = np.arange(5)
+    def body(carry, i):
+      return pmvm(a, carry), i
+    ans, _ = lax.scan(body, b, iters)
+
+    expected = onp.linalg.matrix_power(a, 5).dot(b)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
 
 class PmapWithDevicesTest(jtu.JaxTestCase):
 
