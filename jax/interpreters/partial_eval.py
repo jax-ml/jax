@@ -143,6 +143,8 @@ class JaxprTrace(Trace):
     return out_tracers
 
   def post_process_call(self, call_primitive, out_tracers, params):
+    if call_primitive in map_primitives:
+      return self.post_process_map(call_primitive, out_tracers, params)
     jaxpr, consts, env = tracers_to_jaxpr([], out_tracers)
     out_pvs, out_pv_consts = unzip2(t.pval for t in out_tracers)
     out = out_pv_consts + consts
@@ -158,6 +160,31 @@ class JaxprTrace(Trace):
       out_tracers = [JaxprTracer(trace, PartialVal((out_pv, out_pv_const)), None)
                      for out_pv, out_pv_const in zip(out_pvs, out_pv_consts)]
       eqn = new_jaxpr_eqn([], out_tracers, call_primitive, (bound_subjaxpr,), params)
+      for t in out_tracers:
+        t.recipe = eqn
+      return out_tracers
+    return out, todo
+
+  def post_process_map(self, map_primitive, out_tracers, params):
+    jaxpr, consts, env = tracers_to_jaxpr([], out_tracers)
+    out_pvs_reduced, out_pv_consts = unzip2(t.pval for t in out_tracers)
+    out_pvs = [None if pv is None else _unmapped_aval(params['axis_size'], pv)
+               for pv in out_pvs_reduced]
+    out = out_pv_consts + consts
+    del consts, out_pv_consts
+    master = self.master
+    def todo(x):
+      n = len(jaxpr.outvars)
+      out_pv_consts, consts = x[:n], x[n:]
+      trace = JaxprTrace(master, core.cur_sublevel())
+      const_tracers = map(trace.new_instantiated_const, consts)
+      env_tracers = map(trace.full_raise, env)
+      lifted_jaxpr = closure_convert_jaxpr(jaxpr)
+      bound_subjaxpr = (lifted_jaxpr, (), env_tracers)
+      out_tracers = [JaxprTracer(trace, PartialVal((out_pv, out_pv_const)), None)
+                     for out_pv, out_pv_const in zip(out_pvs, out_pv_consts)]
+      eqn = new_jaxpr_eqn(const_tracers, out_tracers, map_primitive,
+                          (bound_subjaxpr,), params)
       for t in out_tracers:
         t.recipe = eqn
       return out_tracers
