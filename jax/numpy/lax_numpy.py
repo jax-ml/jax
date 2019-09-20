@@ -1714,12 +1714,11 @@ def _repeat_scalar(a, repeats, axis=None):
 def repeat(a, repeats, axis=None):
   '''
   :param repeats: int or array of ints
-  largely same logic as `PyArray_Repeat` in https://github.com/numpy/numpy/blob/master/numpy/core/src/multiarray/item_selection.c
   '''
-  # use the faster `_repeat_scalar` when possible
+  # use `_repeat_scalar` when possible
   if isscalar(repeats):
     return _repeat_scalar(a, repeats, axis)
-  repeats_raveled = ravel(repeats)
+  repeats_raveled = ravel(array(repeats)) # make sure it's jax's array type
   if size(repeats_raveled) == 1:
     return _repeat_scalar(a, list(repeats_raveled)[0], axis)
 
@@ -1735,34 +1734,29 @@ def repeat(a, repeats, axis=None):
       repeats_raveled.shape, n
     ))
 
-  # total elements after repeat along the axis
+  # calculating the new shape
   total = sum(repeats_raveled)
 
   new_shape = a_shape[:]
   new_shape[axis] = total
 
-  ret = ravel(zeros(new_shape, a.dtype))
   a_flattened = ravel(a)
 
-  # size of each chunk to copy
-  chunk = 1
-  for i in range(axis+1, ndim(a)):
-    chunk *= a_shape[i]
+  '''
+  main algorithm:
+  first break down raveled input array into list of chunks; each chunk is the unit of repeat
+  then tile the repeats to have same length as the list of chunks
+  finally repeat each unit x number of times according to the tiled repeat list
+  '''
+  chunks = product(a_shape[:axis+1]).item()
+  a_splitted = split(a_flattened, chunks)
+  repeats_tiled = tile(repeats_raveled, chunks // len(repeats_raveled))
 
-  # copy `chunk` until axis
-  n_outer = 1
-  for i in range(0, axis):
-    n_outer *= a_shape[i]
-  old_data_ptr = 0
-  new_data_ptr = 0
-  for i in range(0, n_outer):
-    for j in range(0, n):
-      tmp = repeats_raveled[j]
-      for k in range(0, tmp):
-        # copy `chunk` data
-        ret = lax.dynamic_update_slice(ret, lax.dynamic_slice(a_flattened, [old_data_ptr], [chunk]), [new_data_ptr])
-        new_data_ptr += chunk
-      old_data_ptr += chunk
+  ret = array([], dtype=a.dtype)
+  for i, repeat in enumerate(repeats_tiled):
+    if not isinstance(repeat, int):
+      repeat = repeat.item()
+    ret = concatenate((ret, tile(a_splitted[i], repeat)))
 
   return reshape(ret, new_shape)
 
