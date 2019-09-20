@@ -38,9 +38,10 @@ def identity(x): return x
 #   type PVal = (PV, Const)
 #   data PV = Known | Unknown AbstractValue
 #   type Const = MaybeTraced JaxType
-# where the Known arm indicates a known (constant) value (represented by a None
-# payload, and the Unknown arm indicates an unknown value.
-# Additionally, when the pv is an AbstractValue, then the const must be unit.
+# where the Known arm, represented by a None, indicates a known (constant) value
+# and the Unknown arm, represented by an AbstractValue instance, indicates an
+# unknown value.
+# When the pv is an AbstractValue, then the const must be unit.
 
 
 class JaxprTrace(Trace):
