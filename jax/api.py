@@ -859,9 +859,9 @@ def _reshape_merge(x):
     return x.reshape((-1,) + x.shape[2:])
 
 
-def _papply(fun):
+def _papply(fun, axis_name=None):
   # This function is for testing purposes.
-  axis_name = _TempAxisName()
+  if axis_name is None: axis_name = _TempAxisName()
 
   def papply_fun(*args, **kwargs):
     f = lu.wrap_init(fun)

@@ -1007,6 +1007,12 @@ def sort_key_val(keys, values, dimension=-1):
 def tie_in(x, y):
   return tie_in_p.bind(x, y)
 
+def tag(x, name):
+  return tag_p.bind(x, name=name)
+
+def sample(x):
+  return sample_p.bind(x)
+
 def shaped_identity(x):
   return shaped_identity_p.bind(x, shape=x.shape)
 
@@ -4024,6 +4030,24 @@ ad.deflinear(tie_in_p, _tie_in_transpose_rule)
 batching.primitive_batchers[tie_in_p] = _tie_in_batch_rule
 masking.shape_rules[tie_in_p] = lambda shape_exprs: shape_exprs[1]
 masking.masking_rules[tie_in_p] = lambda vals, logical_shapes: vals[1]
+
+tag_p = Primitive('tag')
+tag_p.def_impl(lambda x, name: x)
+tag_p.def_abstract_eval(lambda x, name: x)
+xla.translations[tag_p] = lambda c, x, name: x
+ad.deflinear(tag_p, lambda t, name: [tag(t, name)])
+batching.primitive_batchers[tag_p] = \
+    lambda a, d, name: (tag(a[0]), d[0])
+
+
+sample_p = Primitive('sample')
+sample_p.def_impl(lambda x: x)
+sample_p.def_abstract_eval(lambda x: x)
+xla.translations[sample_p] = lambda c, x: x
+ad.deflinear(sample_p, lambda t: [sample(t)])
+batching.primitive_batchers[sample_p] = \
+    lambda a, d: (sample(a[0]), d[0])
+
 
 shaped_identity_p = Primitive('shape_id')
 shaped_identity_p.def_impl(lambda x, shape: x)

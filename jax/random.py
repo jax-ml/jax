@@ -32,14 +32,9 @@ from . import lax
 from . import numpy as np
 from . import tree_util
 from .api import custom_transforms, defjvp, jit, vmap
-from .api_util import wraps
-from .util import safe_map
 from .numpy.lax_numpy import _constant_like, asarray, stack
 from jax.lib import xla_bridge
-from jax import core
 from jax.scipy.special import logit
-
-map = safe_map
 
 def PRNGKey(seed):
   """Create a pseudo-random number generator (PRNG) key given an integer seed.
@@ -69,47 +64,6 @@ def _is_prng_key(key):
     return key.shape == (2,) and key.dtype == onp.uint32
   except AttributeError:
     return False
-
-
-class SemiTransparentFunction(object):
-  def __init__(self, fun, prim):
-    self.fun = fun
-    self.prim = prim
-    self.overrides = set()
-    wraps(fun)(self)
-
-  def __repr__(self):
-    return '<jax.custom_transforms function {fun}>'.format(fun=self.__name__)
-
-  def __call__(self, *args, **kwargs):
-    out = self.prim.bind(*args, **kwargs)
-    return out[0]
-    
-
-def semi_transparent_primitive(fun):
-  """kinda similar to custom_transforms"""
-  name = getattr(fun, '__name__', '<unnamed semi-transparent primitive>')
-  fun_p = core.Primitive(name)
-  fun_p.multiple_results = True
-  f = SemiTransparentFunction(fun, fun_p)
-
-  def impl(*args, **kwargs):
-    return [fun(*args, **kwargs)]
-
-  def bind(*args, **kwargs):
-    top_trace = core.find_top_trace(args)
-    if top_trace is None or top_trace.__class__ not in f.overrides:
-      return impl(*args, **kwargs)
-    tracers = map(top_trace.full_raise, args)
-    out_tracers = top_trace.process_primitive(fun_p, tracers, kwargs)
-    return map(core.full_lower, out_tracers)
-  fun_p.def_custom_bind(bind)
-
-  def abstract_eval(*avals, **kwargs):
-    return abstract_eval_fun(impl, *avals, **kwargs)
-  fun_p.def_abstract_eval(abstract_eval)
-
-  return f
 
 
 ### utilities
@@ -253,16 +207,11 @@ def fold_in(key, data):
     A new PRNGKey that is a deterministic function of the inputs and is
     statistically safe for producing a stream of new pseudo-random values.
   """
-  return _fold_in(key, data=data)
-
-@semi_transparent_primitive
-def _fold_in(key, data):
-  if not isinstance(data, int): # TODO do better
-    data = hash(data)
-  return __fold_in(key, data)
+  int_data = data if isinstance(data, int) else hash(data)
+  return lax.tag(_fold_in(key, int_data), data)
 
 @jit
-def __fold_in(key, data):
+def _fold_in(key, data):
   key2 = lax.tie_in(key, PRNGKey(data))
   return threefry_2x32(key, key2)
 
@@ -312,14 +261,10 @@ def uniform(key, shape=(), dtype=onp.float64, minval=0., maxval=1.):
     A random array with the specified shape and dtype.
   """
   dtype = xla_bridge.canonicalize_dtype(dtype)
-  return _uniform(key, minval, maxval, shape=shape, dtype=dtype)
-
-@semi_transparent_primitive
-def _uniform(key, minval, maxval, shape, dtype):
-  return __uniform(key, shape, dtype, minval, maxval)
+  return _uniform(key, shape, dtype, minval, maxval)
 
 @partial(jit, static_argnums=(1, 2))
-def __uniform(key, shape, dtype, minval, maxval):
+def _uniform(key, shape, dtype, minval, maxval):
   _check_shape("uniform", shape)
   if not onp.issubdtype(dtype, onp.floating):
     raise TypeError("uniform only accepts floating point dtypes.")
@@ -461,14 +406,10 @@ def normal(key, shape=(), dtype=onp.float64):
     A random array with the specified shape and dtype.
   """
   dtype = xla_bridge.canonicalize_dtype(dtype)
-  return _normal(key, shape=shape, dtype=dtype)
-
-@semi_transparent_primitive
-def _normal(key, shape, dtype):
-  return __normal(key, shape, dtype)
+  return _normal(key, shape, dtype)
 
 @partial(jit, static_argnums=(1, 2))
-def __normal(key, shape, dtype):
+def _normal(key, shape, dtype):
   _check_shape("normal", shape)
   lo = onp.nextafter(onp.array(-1., dtype), 0., dtype=dtype)
   hi = onp.array(1., dtype)

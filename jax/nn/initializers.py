@@ -28,8 +28,11 @@ from jax import lax
 from jax import random
 import jax.numpy as np
 
-def zeros(key, shape, dtype=np.float32): return np.zeros(shape, dtype)
-def ones(key, shape, dtype=np.float32): return np.ones(shape, dtype)
+def zeros(key, shape, dtype=np.float32):
+  return lax.tie_in(key, np.zeros(shape, dtype))
+
+def ones(key, shape, dtype=np.float32):
+  return lax.tie_in(key, np.ones(shape, dtype))
 
 def uniform(scale=1e-2):
   def init(key, shape, dtype=np.float32):

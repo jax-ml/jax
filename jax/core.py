@@ -145,6 +145,7 @@ class Primitive(object):
     return '{}'.format(self.name)
 
   def bind(self, *args, **kwargs):
+    """Dispatch the primitive in the top trace's interpreter."""
     assert skip_checks or all(isinstance(arg, Tracer)
                               or valid_jaxtype(arg) for arg in args), args
     top_trace = find_top_trace(args)
@@ -213,6 +214,7 @@ def eval_jaxpr(jaxpr, consts, freevar_vals, *args):
 
 
 def full_lower(val):
+  """Drop any unneeded Tracer wrappers (e.g. batch tracers with no batch)."""
   if isinstance(val, Tracer):
     return val.full_lower()
   else:
@@ -226,7 +228,7 @@ def find_top_trace(xs):
  except ValueError:
    return None
  else:
-   return type(top_trace)(top_trace.master, cur_sublevel())
+   return top_trace.with_sublevel(cur_sublevel())
 
 
 # -------------------- tracing --------------------
@@ -237,6 +239,9 @@ class Trace(object):
     self.master = master
     self.level = master.level
     self.sublevel = sublevel
+
+  def with_sublevel(self, sublevel):
+    return type(self)(self.master, sublevel)
 
   def full_raise(self, val):
     if not isinstance(val, Tracer):
