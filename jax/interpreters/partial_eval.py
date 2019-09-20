@@ -36,19 +36,17 @@ def identity(x): return x
 
 # A partial value (pval) is modeled as a pair (pv, const), as per
 #   type PVal = (PV, Const)
-#   data PV = NonePV | AbstractPV AbstractValue
+#   data PV = Known | Unknown AbstractValue
 #   type Const = MaybeTraced JaxType
-# where the NonePV arm indicates a known (constant) value, the AbstractPV arm
-# indicates an unknown value.
-# Additionally, when the pv is an AbstractValue, then the const must be unit.
+# where the Known arm, represented by a None, indicates a known (constant) value
+# and the Unknown arm, represented by an AbstractValue instance, indicates an
+# unknown value.
+# When the pv is an AbstractValue, then the const must be unit.
 
 
 class JaxprTrace(Trace):
   def pure(self, val):
-    if type(val) in core.literalable_types and onp.shape(val) == ():
-      return JaxprTracer(self, PartialVal((None, val)), Literal(val))
-    else:
-      return self.new_const(val)
+    return self.new_const(val)
 
   def lift(self, val):
     return self.new_const(val)
@@ -76,8 +74,8 @@ class JaxprTrace(Trace):
     if isinstance(pv, AbstractValue):
       return tracer
     elif pv is None:
-      if type(tracer.recipe) is Literal:
-        return self.new_instantiated_literal(tracer.recipe.val)
+      if type(const) in core.literalable_types and onp.shape(const) == ():
+        return self.new_instantiated_literal(const)
       else:
         return self.new_instantiated_const(const)
     else:
@@ -419,8 +417,7 @@ def tracers_to_jaxpr(in_tracers, out_tracers):
   env_vars, env_vals = unzip2(env.items())
   const_vars, const_vals = unzip2(consts.items())
   jaxpr = Jaxpr(const_vars, env_vars, invars, list(map(var, out_tracers)), eqns)
-  # core.skip_checks or core.check_jaxpr(jaxpr)
-  core.check_jaxpr(jaxpr)
+  core.skip_checks or core.check_jaxpr(jaxpr)
   return jaxpr, const_vals, env_vals
 
 
