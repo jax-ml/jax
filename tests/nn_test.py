@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2019 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -35,4 +35,4 @@ class NNTest(jtu.JaxTestCase):
     check_grads(nn.softplus, (1e-8,), 4)
   def testSoftplusValue(self):
     val = nn.softplus(89.)
-    self.assertEqual(val, 89.)
+    self.assertAllClose(val, 89.)
