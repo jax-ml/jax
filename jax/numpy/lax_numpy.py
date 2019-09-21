@@ -1228,8 +1228,6 @@ nanmax = _make_nan_reduction(onp.nanmax, max, -inf, nan_if_all_nan=True)
 nansum = _make_nan_reduction(onp.nansum, sum, 0, nan_if_all_nan=False)
 nanprod = _make_nan_reduction(onp.nanprod, prod, 1, nan_if_all_nan=False)
 
-<<<<<<< HEAD
-=======
 @_wraps(onp.nanmean)
 def nanmean(a, axis=None, dtype=None, out=None, keepdims=False):
   if out is not None:
@@ -1247,7 +1245,6 @@ def nanmean(a, axis=None, dtype=None, out=None, keepdims=False):
       dtype = lax._dtype(a)
   td = true_divide(nansum(a, axis, dtype=dtype, keepdims=keepdims), normalizer)
   return lax.convert_element_type(td, dtype)
->>>>>>> 7c6f468... Simplify nanmean with logical not
 
 def _make_cumulative_reduction(onp_reduction, window_reduce, init_val,
                                squash_nan=False):
