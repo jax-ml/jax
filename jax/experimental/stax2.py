@@ -29,6 +29,8 @@ from jax.util import curry, partial, unzip2
 # doesn't work yet because PRNGKey isn't a real type:
 # random.PRNGKey.__getitem__ = random.fold_in
 
+distributions = set([lax.sample_p])
+
 class KeyTrace(core.Trace):
 
   def __init__(self, master, sublevel, storing, tree=None):
@@ -40,10 +42,10 @@ class KeyTrace(core.Trace):
     return type(self)(self.master, sublevel, self.storing, self.tree)
 
   def pure(self, val):
-    return KeyTracer(self, val, no_data_dependence)
+    return KeyTracer(self, val, None)
 
   def lift(self, val):
-    raise NotImplementedError
+    return KeyTracer(self, val, None)
 
   def sublift(self, val):
     return KeyTracer(self, val.val, val.path)
@@ -64,28 +66,21 @@ class KeyTrace(core.Trace):
 
   def process_primitive(self, primitive, tracers, params):
     if primitive is lax.tag_p:
-      val, path = tracers[0].val, tracers[0].path
-      return KeyTracer(self, val, path + (params['name'],))
+      tracer, = tracers
+      return KeyTracer(self, tracer.val, tracer.path + (params['name'],))
+    elif primitive in distributions:
+      tracer, = tracers
+      val = self.maybe_set(tracer.path, tracer.val)
+      return KeyTracer(self, val, tracer.path)
     else:
-      # tracers are either:
-      # (1) "candidate samples" with data dependence only on the key
-      # (2) constants with no data dependence on an argument
-      # (3) values with data dependence on at least one non-key argument
-      # if an operation mixes one or more of (1) with (3), or mixes (1)s with
-      # different paths, then the (1)s are stored in the tree as actual samples
-      path_set = set(tracer.path for tracer in tracers)
-      data_dependent_path_set = path_set - set([no_data_dependence])
-      if len(data_dependent_path_set) > 1:
-        out_path = other_data_dependence
-        args = [self.maybe_set(tracer.path, tracer.val)
-                if isinstance(tracer.path, tuple) else tracer.val
-                for tracer in tracers]
+      # pick the shortest path!
+      paths = [tracer.path for tracer in tracers if tracer.path is not None]
+      if len(paths) > 0:
+        # TODO more-well-defined tiebreaking
+        out_path = min(paths, key=lambda path: len(path))
       else:
-        if len(data_dependent_path_set) == 1:
-          out_path = data_dependent_path_set.pop()
-        else:
-          out_path = no_data_dependence
-        args = [tracer.val for tracer in tracers]
+        out_path = None
+      args = [tracer.val for tracer in tracers]
       out = primitive.bind(*args, **params)
       if primitive.multiple_results:
         return [KeyTracer(self, val, out_path) for val in out]
@@ -121,12 +116,12 @@ def unzip(f, *args):
   fun = lu.wrap_init(f)
   def init(key):
     vals = (key,) + args
-    paths = ((),) + (other_data_dependence,) * len(args)
+    paths = ((),) + (None,) * len(args)
     _, _, tree = key_fun(fun, vals, paths, True, dict())
     return tree
   def apply(tree, *args):
     vals = (random.PRNGKey(0),) + args
-    paths = ((),) + (other_data_dependence,) * len(args)
+    paths = ((),) + (None,) * len(args)
     out_vals, _, _ = key_fun(fun, vals, paths, False, tree)
     return out_vals
   return init, apply
@@ -139,14 +134,6 @@ def key_subtrace(parent, in_paths, *in_vals):
   out_tracers = map(trace.full_raise, outs)
   out_vals, out_paths = unzip2((t.val, t.path) for t in out_tracers)
   yield out_vals, out_paths
-
-class NoDataDependence(object): pass
-no_data_dependence = NoDataDependence()
-
-class OtherDataDependence(object): pass
-other_data_dependence = OtherDataDependence()
-
-abstract_key = xla.abstractify(random.PRNGKey(0))
 
 class KeyTracer(core.Tracer):
   __slots__ = ['trace', 'val', 'path']
@@ -190,7 +177,7 @@ class KeyTracer(core.Tracer):
 
 def e(key, x):
   k = random.fold_in(key, "x")
-  return random.uniform(k, (3,)) + x
+  return lax.sample(random.uniform(k, (3,))) + x
 
 x = np.ones(3)
 key = random.PRNGKey(0)
@@ -206,13 +193,13 @@ print(apply_fun(param_tree, x))
 # f :: Key -> a -> b
 def f(key, x):
   k1 = random.fold_in(key, 1)
-  W = random.uniform(random.fold_in(k1, "W"), (3, 4))
-  b = random.uniform(random.fold_in(k1, "b"), (4,))
+  W = lax.sample(random.uniform(random.fold_in(k1, "W"), (3, 4)))
+  b = lax.sample(random.uniform(random.fold_in(k1, "b"), (4,)))
   x = np.dot(x, W) + b
 
   k2 = random.fold_in(key, 2)
-  W = random.uniform(random.fold_in(k2, "W"), (4, 2))
-  b = random.uniform(random.fold_in(k2, "b"), (2,))
+  W = lax.sample(random.uniform(random.fold_in(k2, "W"), (4, 2)))
+  b = lax.sample(random.uniform(random.fold_in(k2, "b"), (2,)))
   x = np.dot(x, W) + b
 
   return x
@@ -225,6 +212,9 @@ print("Ex 1")
 print(param_tree)
 print(apply_fun(param_tree, x))
 print(jax.make_jaxpr(partial(apply_fun, param_tree))(x))
+
+from jax import nn
+from jax.nn import initializers
 
 # ### Example 2: writing point-free combinator libraries
 
@@ -241,8 +231,8 @@ def Serial(layers, key, x):
 @curry
 def Dense(num_features_out, key, x):
   num_features_in, = x.shape
-  W = random.normal(random.fold_in(key, "W"), (num_features_out, num_features_in))
-  b = random.normal(random.fold_in(key, "b"), (num_features_out,))
+  W = initializers.normal()(random.fold_in(key, "W"), (num_features_out, num_features_in))
+  b = initializers.normal()(random.fold_in(key, "b"), (num_features_out,))
   return np.dot(W, x) + b
 
 f = Serial([Dense(4), Dense(2)])
@@ -296,17 +286,58 @@ print(jax.make_jaxpr(partial(apply_fun, param_tree))(x))
 from jax import nn
 from jax.nn import initializers
 
-def batch_norm(key, x):
-  scale = initializers.ones(random.fold_in(key, 'scale'), x.shape)
-  offset = initializers.zeros(random.fold_in(key, 'offset'), x.shape)
-  normalize, _ = jax.api._papply(partial(nn.normalize, axis=0), 'batch')
-  return normalize(x) * scale + offset
+# def batch_norm(key, x):
+#   scale = initializers.ones(random.fold_in(key, 'scale'), x.shape)
+#   offset = initializers.zeros(random.fold_in(key, 'offset'), x.shape)
+#   normalize, _ = jax.api._papply(partial(nn.normalize, axis=0), 'batch')
+#   return normalize(x) * scale + offset
 
-def model(key, x):
-  return jax.soft_pmap(partial(batch_norm, key), 'batch')(x)
+# def model(key, x):
+#   return jax.soft_pmap(partial(batch_norm, key), 'batch')(x)
+
+# x = random.normal(random.PRNGKey(0), (4, 3))
+# init_fun, apply_fun = unzip(model, x)
+# param_tree = init_fun(random.PRNGKey(0))
+# print(param_tree)
+# print(apply_fun(param_tree, x))
+# print(jax.make_jaxpr(partial(apply_fun, param_tree))(x))
+
+def batch_norm(key, x, momentum=0.99):
+  scale = initializers.ones(random.fold_in(key, 'scale'), x.shape[1:])
+  offset = initializers.zeros(random.fold_in(key, 'offset'), x.shape[1:])
+  running_mean = initializers.zeros(random.fold_in(key, 'running_mean'), x.shape[1:])
+  running_variance = initializers.ones(random.fold_in(key, 'running_variance'), x.shape[1:])
+  mean = lax.tag(np.mean(x, axis=0, keepdims=True), "mean")
+  variance = lax.tag(np.mean(x**2, axis=0, keepdims=True) - mean**2, "variance")
+  running_mean = lax.sample(running_mean * momentum + mean * (1 - momentum))
+  running_variance = lax.sample(running_variance * momentum + variance * (1 - momentum))
+  return nn.normalize(x, axis=0, mean=mean, variance=variance) * scale + offset
+
+def batch_norm_init(key):
+  return {'scale': ones(key), 'offset': zeros(key)}
+
+def batch_norm_init_state(key):
+  return {'running_mean': zeros(key), 'running_variance': ones(key)}
+
+def batch_norm_apply(params, state, x):
+  scale = params['scale']
+  offset = params['offset']
+  mean = mean(x)
+  variance = variance(x)
+  info = {'mean': mean, 'variance': variance}
+  if isinstance(x, jax.interpreters.ad.JVPTracer):
+    return nn.normalize(x, mean, variance) * scale + offset, info
+  return nn.normalize(x, state['running_mean'], state['running_variance']) * scale + offset, info
+
+def batch_norm_update_state(state, info):
+  running_mean = state['running_mean']
+  running_variance = state['running_variance']
+  running_mean = 0.99 * running_mean + info['mean']
+  running_variance = 0.99 * running_variance + info['variance']
+  return {'running_mean': running_mean, 'running_variance': running_variance}
 
 x = random.normal(random.PRNGKey(0), (4, 3))
-init_fun, apply_fun = unzip(model, x)
+init_fun, apply_fun = unzip(batch_norm, x)
 param_tree = init_fun(random.PRNGKey(0))
 print(param_tree)
 print(apply_fun(param_tree, x))
