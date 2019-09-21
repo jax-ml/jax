@@ -109,6 +109,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                     (2, 2, 2), (2, 3, 3), (3, 2, 2)]
       for dtype in float_types + complex_types
       for rng in [jtu.rand_default()]))
+  @jtu.skip_on_devices("tpu")
   def testSlogdet(self, shape, dtype, rng):
     _skip_if_unsupported_type(dtype)
     args_maker = lambda: [rng(shape, dtype)]
@@ -116,14 +117,15 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp.linalg.slogdet, np.linalg.slogdet, args_maker,
                             check_dtypes=True, tol=1e-3)
     self._CompileAndCheck(np.linalg.slogdet, args_maker, check_dtypes=True)
-    
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype, "rng": rng}
-      for shape in [(1, 1), (4, 4), (5, 5), (25, 25), (2, 7, 7)]
+      for shape in [(1, 1), (4, 4), (5, 5), (2, 7, 7)]
       for dtype in float_types
       for rng in [jtu.rand_default()]))
+  @jtu.skip_on_devices("tpu")
   def testSlogdetGrad(self, shape, dtype, rng):
     _skip_if_unsupported_type(dtype)
     a = rng(shape, dtype)
