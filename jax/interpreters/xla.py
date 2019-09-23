@@ -681,8 +681,7 @@ def _device_put_impl(x, device_num=0, backend=None):
 
 device_put_p = core.Primitive('device_put')
 device_put_p.def_impl(_device_put_impl)
-device_put_p.def_abstract_eval(lambda x, **kwargs: x)
-translations[device_put_p] = lambda c, x, **kwargs: x
+pe.custom_partial_eval_rules[device_put_p] = lambda trace, x, **params: x
 ad.deflinear(device_put_p, lambda cotangent, **kwargs: [cotangent])
 
 
