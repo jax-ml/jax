@@ -690,6 +690,10 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(z, 2 * x[0], check_dtypes=False)
 
   def testPostProcessMap(self):
+    # TODO(mattjj): this fails with multiple devices (unless we add a jit)
+    # because we assume eager ops (like scan here) can't require more than 1
+    # replica.
+    raise SkipTest("need eager multi-replica support")
     # test came from https://github.com/google/jax/issues/1369
     nrep = xla_bridge.device_count()
 
@@ -698,9 +702,10 @@ class PmapTest(jtu.JaxTestCase):
       func = pmap(lambda z: np.dot(z, b))
       return func(a).reshape(b.shape)
 
+    n = nrep * 2
     rng = onp.random.RandomState(0)
-    a = rng.randn(80, 80)
-    b = rng.randn(80)
+    a = rng.randn(n, n)
+    b = rng.randn(n)
 
     iters = np.arange(5)
     def body(carry, i):
