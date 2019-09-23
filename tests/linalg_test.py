@@ -126,8 +126,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for rng in [jtu.rand_default()]))
   def testSlogdetGrad(self, shape, dtype, rng):
     _skip_if_unsupported_type(dtype)
-    a = rng(shape, dtype)
-    jtu.check_grads(np.linalg.slogdet, (a,), 2, atol=1e-1, rtol=1e-1)
+    a = 1.6 * rng(shape, dtype) / np.sqrt(float(shape[-1]))
+    jtu.check_grads(np.linalg.slogdet, (a,), 2, atol=1e-2, rtol=1e-2)
 
   def testIssue1213(self):
     for n in range(5):
