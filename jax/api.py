@@ -448,7 +448,7 @@ def jacfwd(fun, argnums=0, holomorphic=False):
     f_partial, dyn_args = _argnums_partial(f, argnums, args)
     holomorphic or tree_map(_check_real_input_jacfwd, dyn_args)
     pushfwd = partial(jvp, f_partial, dyn_args)
-    y, jac = vmap(pushfwd, out_axes=(None, -1))(_std_basis(dyn_args))
+    y, jac = vmap(pushfwd, out_axes=(None, batching.last))(_std_basis(dyn_args))
     example_args = dyn_args[0] if isinstance(argnums, int) else dyn_args
     return tree_map(partial(_unravel_array_into_pytree, example_args, -1), jac)
 
@@ -617,12 +617,10 @@ def _flatten_axes(treedef, axis_tree):
   dummy = tree_unflatten(treedef, [object()] * treedef.num_leaves)
   axes = []
   add_leaves = lambda i, x: axes.extend([i] * len(tree_flatten(x)[0]))
-  # TODO(mattjj): remove _replace_nones / list comp after jaxlib 0.1.25
   tree_multimap(add_leaves, _replace_nones(axis_tree), dummy)
   axes = [None if a is _none_proxy else a for a in axes]
   return axes
 
-# TODO(mattjj): remove this when jaxlib is updated past 0.1.25
 def _replace_nones(tuptree):
   if type(tuptree) in (list, tuple):
     return tuple(map(_replace_nones, tuptree))
