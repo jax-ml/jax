@@ -538,6 +538,20 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     jac0 = jax.jacobian(np.linalg.solve, argnums=0)(A[0], b[0])
     jac1 = jax.jacobian(np.linalg.solve, argnums=1)(A[0], b[0])
 
+  def testIssue1383(self):
+    seed = jax.random.PRNGKey(0)
+    tmp = jax.random.uniform(seed, (2,2))
+    a = np.dot(tmp, tmp.T)
+
+    def f(inp):
+      val, vec = np.linalg.eigh(inp)
+      return np.dot(np.dot(vec, inp), vec.T)
+
+    grad_func = jax.jacfwd(f)
+    hess_func = jax.jacfwd(grad_func)
+    cube_func = jax.jacfwd(hess_func)
+    self.assertFalse(onp.any(onp.isnan(cube_func(a))))
+
 
 class ScipyLinalgTest(jtu.JaxTestCase):
 

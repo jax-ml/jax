@@ -1720,7 +1720,7 @@ def _div_transpose_rule(cotangent, x, y):
 div_p = standard_binop([_num, _num], 'div')
 ad.defjvp(div_p,
           lambda g, x, y: div(_brcast(g, y), y),
-          lambda g, x, y: div(mul(neg(_brcast(g, x)), x), pow(y, _two(y))))
+          lambda g, x, y: div(mul(neg(_brcast(g, x)), x), square(y)))
 ad.primitive_transposes[div_p] = _div_transpose_rule
 
 rem_p = standard_binop([_num, _num], 'rem')
