@@ -351,6 +351,10 @@ def rand_some_inf():
   rng = npr.RandomState(1)
   base_rand = rand_default()
 
+  """
+  TODO: Complex numbers are not correctly tested
+  If blocks should be switched in order, and relevant tests should be fixed
+  """
   def rand(shape, dtype):
     """The random sampler function."""
     if not onp.issubdtype(dtype, onp.floating):
@@ -403,15 +407,19 @@ def rand_some_inf_and_nan():
   rng = npr.RandomState(1)
   base_rand = rand_default()
 
+  """
+  TODO: Complex numbers are not correctly tested
+  If blocks should be switched in order, and relevant tests should be fixed
+  """
   def rand(shape, dtype):
     """The random sampler function."""
-    if onp.issubdtype(dtype, onp.complexfloating):
-      base_dtype = onp.real(onp.array(0, dtype=dtype)).dtype
-      return rand(shape, base_dtype) + 1j * rand(shape, base_dtype)
-
     if not onp.issubdtype(dtype, onp.floating):
       # only float types have inf
       return base_rand(shape, dtype)
+
+    if onp.issubdtype(dtype, onp.complexfloating):
+      base_dtype = onp.real(onp.array(0, dtype=dtype)).dtype
+      return rand(shape, base_dtype) + 1j * rand(shape, base_dtype)
 
     dims = _dims_of_shape(shape)
     posinf_flips = rng.rand(*dims) < 0.1

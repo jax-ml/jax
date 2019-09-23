@@ -1240,7 +1240,7 @@ def nanmean(a, axis=None, dtype=None, out=None, keepdims=False):
   nan_mask = logical_not(isnan(a))
   normalizer = sum(nan_mask, axis=axis, dtype=int32, keepdims=keepdims)
   normalizer = lax.convert_element_type(normalizer, dtype)
-  td = lax.divide(nansum(a, axis, dtype=dtype, keepdims=keepdims), normalizer)
+  td = lax.div(nansum(a, axis, dtype=dtype, keepdims=keepdims), normalizer)
   return td
 
 def _make_cumulative_reduction(onp_reduction, window_reduce, init_val,
