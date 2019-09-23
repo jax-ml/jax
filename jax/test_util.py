@@ -373,6 +373,31 @@ def rand_some_inf():
 
   return rand
 
+def rand_some_nan():
+  """Return a random sampler that produces nans in floating types."""
+  rng = npr.RandomState(1)
+  base_rand = rand_default()
+
+  def rand(shape, dtype):
+    """The random sampler function."""
+    if not onp.issubdtype(dtype, onp.floating):
+      # only float types have inf
+      return base_rand(shape, dtype)
+
+    if onp.issubdtype(dtype, onp.complexfloating):
+      base_dtype = onp.real(onp.array(0, dtype=dtype)).dtype
+      return rand(shape, base_dtype) + 1j * rand(shape, base_dtype)
+
+    dims = _dims_of_shape(shape)
+    nan_flips = rng.rand(*dims) < 0.1
+
+    vals = base_rand(shape, dtype)
+    vals = onp.where(nan_flips, onp.nan, vals)
+
+    return _cast_to_shape(onp.asarray(vals, dtype=dtype), shape, dtype)
+
+  return rand
+
 def rand_some_inf_and_nan():
   """Return a random sampler that produces infinities in floating types."""
   rng = npr.RandomState(1)
