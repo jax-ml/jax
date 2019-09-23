@@ -380,13 +380,13 @@ def rand_some_nan():
 
   def rand(shape, dtype):
     """The random sampler function."""
-    if not onp.issubdtype(dtype, onp.floating):
-      # only float types have inf
-      return base_rand(shape, dtype)
-
     if onp.issubdtype(dtype, onp.complexfloating):
       base_dtype = onp.real(onp.array(0, dtype=dtype)).dtype
       return rand(shape, base_dtype) + 1j * rand(shape, base_dtype)
+
+    if not onp.issubdtype(dtype, onp.floating):
+      # only float types have inf
+      return base_rand(shape, dtype)
 
     dims = _dims_of_shape(shape)
     nan_flips = rng.rand(*dims) < 0.1
@@ -405,13 +405,13 @@ def rand_some_inf_and_nan():
 
   def rand(shape, dtype):
     """The random sampler function."""
-    if not onp.issubdtype(dtype, onp.floating):
-      # only float types have inf
-      return base_rand(shape, dtype)
-
     if onp.issubdtype(dtype, onp.complexfloating):
       base_dtype = onp.real(onp.array(0, dtype=dtype)).dtype
       return rand(shape, base_dtype) + 1j * rand(shape, base_dtype)
+
+    if not onp.issubdtype(dtype, onp.floating):
+      # only float types have inf
+      return base_rand(shape, dtype)
 
     dims = _dims_of_shape(shape)
     posinf_flips = rng.rand(*dims) < 0.1

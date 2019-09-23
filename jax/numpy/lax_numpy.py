@@ -1235,15 +1235,13 @@ def nanmean(a, axis=None, dtype=None, out=None, keepdims=False):
   if (onp.issubdtype(lax._dtype(a), onp.bool_) or
       onp.issubdtype(lax._dtype(a), onp.integer)):
     return mean(a, axis, dtype, out, keepdims)
-  # Check and Count all non-NaN values
+  if dtype is None:
+    dtype = lax._dtype(a)
   nan_mask = logical_not(isnan(a))
   normalizer = sum(nan_mask, axis=axis, dtype=int32, keepdims=keepdims)
   normalizer = lax.convert_element_type(normalizer, dtype)
-  if dtype is None:
-    dtype = lax._dtype(a)
-  #Perform mean calculation
-  td = true_divide(nansum(a, axis, dtype=dtype, keepdims=keepdims), normalizer)
-  return lax.convert_element_type(td, dtype)
+  td = lax.divide(nansum(a, axis, dtype=dtype, keepdims=keepdims), normalizer)
+  return td
 
 def _make_cumulative_reduction(onp_reduction, window_reduce, init_val,
                                squash_nan=False):
