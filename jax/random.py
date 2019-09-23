@@ -418,6 +418,15 @@ def _normal(key, shape, dtype):
   return onp.array(onp.sqrt(2), dtype) * lax.erf_inv(u)
 
 
+def multivariate_normal(key, shape=(), dtype=onp.float64, mean=0.0, cov=1.0):
+    return _multivariate_normal(key, shape, dtype) * cov + mean
+
+@partial(jit, static_argnums=(1, 2))
+def _multivariate_normal(key, shape, dtype, mean, cov):
+  _check_shape("multivariate_normal", shape)
+  return normal(key, shape, dtype) * cov + mean
+
+
 def truncated_normal(key, lower, upper, shape=(), dtype=onp.float64):
   """Sample truncated standard normal random values with given shape and dtype.
 
