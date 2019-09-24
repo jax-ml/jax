@@ -139,10 +139,11 @@ class BatchTrace(Trace):
       is_batched = tuple(d is not not_mapped for d in dims)
       vals = [moveaxis(x, d, 1) if d is not not_mapped and d != 1 else x
               for x, d in zip(vals, dims)]
-      dims = tuple(not_mapped if d is not_mapped else 1 for d in dims)
+      dims = tuple(not_mapped if d is not_mapped else 0 for d in dims)
       f, dims_out = batch_subtrace(f, self.master, dims)
       vals_out = map_primitive.bind(f, *vals, **params)
-      return [BatchTracer(self, v, d) for v, d in zip(vals_out, dims_out())]
+      dims_out = tuple(d + 1 if d is not not_mapped else d for d in dims_out())
+      return [BatchTracer(self, v, d) for v, d in zip(vals_out, dims_out)]
 
   def post_process_call(self, call_primitive, out_tracers, params):
     vals, dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
@@ -240,9 +241,14 @@ defvectorized(xla.device_put_p)
 # almost works, except for broadcast, for which raw numpy.ndarrays don't have a
 # method. To handle that case, the `broadcast` function uses a try/except.
 
+class _Last(object): pass
+last = _Last()
+
 def broadcast(x, sz, axis):
   if core.get_aval(x) is core.abstract_unit:
     return core.unit
+  if axis is last:
+    axis = onp.ndim(x)
   shape = list(onp.shape(x))
   shape.insert(axis, sz)
   if isinstance(x, onp.ndarray) or onp.isscalar(x):
@@ -266,6 +272,8 @@ def matchaxis(sz, src, dst, x):
     return x
   elif type(src) == type(dst) == int:
     return moveaxis(x, src, dst)
+  elif type(src) == int and dst is last:
+    return moveaxis(x, src, -1)
   elif src is not_mapped and dst is not not_mapped:
     return broadcast(x, sz, dst)
   else:

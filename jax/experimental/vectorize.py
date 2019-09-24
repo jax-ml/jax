@@ -11,9 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Extending JAX's vmap to work like NumPY's gufuncs.
+"""Extending JAX's vmap to work like NumPy's gufuncs.
 
-From the `example notebook <https://nbviewer.jupyter.org/github/google/jax/blob/master/notebooks/gufuncs.ipynb>`_ by `Stephan Hoyer <https://github.com/shoyer>`_.
+By `Stephan Hoyer <https://github.com/shoyer>`_
 
 What is a gufunc?
 =================

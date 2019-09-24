@@ -27,6 +27,7 @@ import jax.numpy as np
 from jax import test_util as jtu
 from jax import core
 from jax import lax
+from jax import random
 from jax.api import (pmap, soft_pmap, jit, vmap, jvp, grad, make_jaxpr,
                      linearize, device_put)
 from jax.lib import xla_bridge
@@ -473,6 +474,23 @@ class PmapTest(jtu.JaxTestCase):
     bx = vmap(f1)(ax)
     self.assertAllClose(ax, bx, check_dtypes=False)
 
+  def testVmapOfPmap2(self):
+    N_DEVICES = xla_bridge.device_count()
+    keys = random.split(random.PRNGKey(1), 13)  # [13, 2]
+
+    @pmap
+    def g(key):
+      params = random.normal(key, ())
+      return 0.
+
+    @vmap
+    def s(keys):
+      keys = np.broadcast_to(keys, (N_DEVICES,) + keys.shape)
+      return g(keys)
+
+    ans = s(keys)  # doesn't crash
+    self.assertEqual(ans.shape, (13, N_DEVICES))
+
   def testVmapOfPmapNonLeadingAxis(self):
     device_count = xla_bridge.device_count()
     f0 = lambda x: x
@@ -670,6 +688,32 @@ class PmapTest(jtu.JaxTestCase):
 
     z = y[0]  # doesn't crash
     self.assertAllClose(z, 2 * x[0], check_dtypes=False)
+
+  def testPostProcessMap(self):
+    # TODO(mattjj): this fails with multiple devices (unless we add a jit)
+    # because we assume eager ops (like scan here) can't require more than 1
+    # replica.
+    raise SkipTest("need eager multi-replica support")
+    # test came from https://github.com/google/jax/issues/1369
+    nrep = xla_bridge.device_count()
+
+    def pmvm(a, b):
+      a = a.reshape((nrep, -1, a.shape[1]))
+      func = pmap(lambda z: np.dot(z, b))
+      return func(a).reshape(b.shape)
+
+    n = nrep * 2
+    rng = onp.random.RandomState(0)
+    a = rng.randn(n, n)
+    b = rng.randn(n)
+
+    iters = np.arange(5)
+    def body(carry, i):
+      return pmvm(a, carry), i
+    ans, _ = lax.scan(body, b, iters)
+
+    expected = onp.linalg.matrix_power(a, 5).dot(b)
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
 
 class PmapWithDevicesTest(jtu.JaxTestCase):

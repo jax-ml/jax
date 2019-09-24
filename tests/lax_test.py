@@ -1501,8 +1501,6 @@ LAX_GRAD_OPS = [
                    dtypes=[onp.float64]),
     grad_test_spec(lax.round, nargs=1, order=2, rng=jtu.rand_default(),
                    dtypes=[onp.float64]),
-    # grad_test_spec(lax.rem, nargs=2, order=2, rng=jtu.rand_default(),
-    #                dtypes=[onp.float64]),  # TODO(mattjj): enable
 
     grad_test_spec(lax.exp, nargs=1, order=2, rng=jtu.rand_small(),
                    dtypes=[onp.float64, onp.complex64]),
@@ -2286,6 +2284,22 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     ans = api.grad(lambda x: lax.stop_gradient({'foo':x})['foo'])(3.)
     expected = onp.array(0.0)
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+  # TODO(mattjj): make this a more systematic test
+  def testRemainder(self):
+    rng = onp.random.RandomState(0)
+    x = rng.uniform(-0.9, 9, size=(3, 4))
+    y = rng.uniform(0.7, 1.9, size=(3, 1))
+    assert not set(onp.unique(x)) & set(onp.unique(y))
+    tol = 1e-1 if num_float_bits(onp.float64) == 32 else 1e-3
+    check_grads(lax.rem, (x, y), 2, ["fwd", "rev"], tol, tol)
+
+    rng = onp.random.RandomState(0)
+    x = rng.uniform(-0.9, 9, size=(1, 4))
+    y = rng.uniform(0.7, 1.9, size=(3, 4))
+    assert not set(onp.unique(x)) & set(onp.unique(y))
+    tol = 1e-1 if num_float_bits(onp.float64) == 32 else 1e-3
+    check_grads(lax.rem, (x, y), 2, ["fwd", "rev"], tol, tol)
 
 
 def all_bdims(*shapes):

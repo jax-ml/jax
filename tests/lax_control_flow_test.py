@@ -972,6 +972,26 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     out = lax.while_loop(lambda _: False, lambda _: (), ())  # doesn't crash
     self.assertEqual(out, ())
 
+  def testIssue1316(self):
+    def f(carry, _):
+      c, key = carry
+      key, _ = random.split(key)
+      return (c, key), ()
+
+    key = random.PRNGKey(0)
+    api.grad(lambda c: lax.scan(f, (c, key), onp.ones(3))[0][0])(0.)  # doesn't crash
+
+  def testIssue1361(self):
+    @api.jit
+    def jit_run_scan(x):
+      def fun(carry, _):
+        x, _ = carry
+        return (2 * x, 0.), None
+      (x, _), _ = lax.scan(fun, (x, 0.), np.arange(3))
+      return x
+
+    api.grad(lambda x: jit_run_scan(x))(0.)  # doesn't crash
+
 
 if __name__ == '__main__':
   absltest.main()
