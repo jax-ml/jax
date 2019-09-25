@@ -39,12 +39,12 @@ from jax.interpreters import batching
 from jax.interpreters import masking
 from jax.lib import xla_bridge as xb
 from jax.lib import xla_client
-from ..numpy.lax_numpy import array
 from jax.util import (partial, unzip2, safe_map, safe_zip, split_list,
                       split_dict, cache)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
                            treedef_children)
 from jax import ad_util
+import jax.numpy
 
 _map = safe_map
 zip = safe_zip
@@ -288,7 +288,7 @@ def cond(pred, true_operand, true_fun, false_operand, false_fun):
       else:
         return false_fun(false_operand)
   """
-  pred_dtype = array(pred).dtype
+  pred_dtype = jax.numpy.array(pred).dtype
   if pred_dtype.kind != 'b':
     if pred_dtype.kind in 'iuf':
       pred = pred != 0
