@@ -981,7 +981,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     key = random.PRNGKey(0)
     api.grad(lambda c: lax.scan(f, (c, key), onp.ones(3))[0][0])(0.)  # doesn't crash
 
-  def test_root(self):
+  def test_root_scalar(self):
 
     def scalar_solve(f, y):
       return y / f(1.0)
@@ -1018,14 +1018,24 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     results = api.vmap(sqrt_cubed)(inputs)
     self.assertAllClose(results, inputs ** 1.5, check_dtypes=False)
 
-    def nd_solve(f, y):
-      g = lambda z: f(z.reshape(y.shape)).ravel()
-      jacobian = api.jacobian(g)(y.ravel())
-      return np.linalg.solve(jacobian, y.ravel()).reshape(y.shape)
+  def test_root_vector(self):
 
-    sqrt_cubed_alt = partial(sqrt_cubed, tangent_solve=nd_solve)
-    value, grad = api.value_and_grad(sqrt_cubed_alt)(5.0)
-    self.assertAllClose(grad, api.grad(pow)(5.0, 1.5), check_dtypes=False)
+    def oracle(func, x0):
+      del func  # unused
+      return x0
+
+    def vector_solve(f, y):
+      return np.linalg.solve(api.jacobian(f)(y), y)
+
+    def linear_solve(a, b):
+      f = lambda y: np.dot(a, y) - b
+      x0 = np.linalg.solve(a, b)
+      return lax.root(f, x0, oracle, vector_solve)
+
+    rng = onp.random.RandomState(0)
+    a = rng.randn(2, 2)
+    b = rng.randn(2)
+    jtu.check_grads(linear_solve, (a, b), order=2, rtol=1e-3)
 
   def test_root_errors(self):
     with self.assertRaisesRegexp(TypeError, "f output pytree"):
