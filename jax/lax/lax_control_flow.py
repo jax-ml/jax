@@ -940,6 +940,7 @@ def _root_batch(args, dims, **params):
 root_p = core.Primitive('root')
 root_p.multiple_results = True
 root_p.def_impl(_root_impl)
+root_p.def_abstract_eval(_root_abstract_eval)
 ad.primitive_jvps[root_p] = _root_jvp
 xla.initial_style_translations[root_p] = xla.lower_fun(_root_impl, initial_style=True)
 batching.primitive_batchers[root_p] = _root_batch

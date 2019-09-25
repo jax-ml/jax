@@ -1018,6 +1018,9 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     results = api.vmap(sqrt_cubed)(inputs)
     self.assertAllClose(results, inputs ** 1.5, check_dtypes=False)
 
+    results = api.jit(sqrt_cubed)(5.0)
+    self.assertAllClose(results, 5.0 ** 1.5, check_dtypes=False)
+
   def test_root_vector(self):
 
     def oracle(func, x0):
@@ -1035,7 +1038,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     rng = onp.random.RandomState(0)
     a = rng.randn(2, 2)
     b = rng.randn(2)
-    jtu.check_grads(linear_solve, (a, b), order=2, rtol=1e-3)
+    jtu.check_grads(linear_solve, (a, b), order=2)
 
   def test_root_errors(self):
     with self.assertRaisesRegexp(TypeError, "f output pytree"):
