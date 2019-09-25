@@ -516,6 +516,8 @@ class JaxTestCase(parameterized.TestCase):
       x = onp.asarray(x)
       y = onp.asarray(y)
       self.assertArraysAllClose(x, y, check_dtypes, atol=atol, rtol=rtol)
+    elif x == y:
+        return
     else:
       raise TypeError((type(x), type(y)))
 

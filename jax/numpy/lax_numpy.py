@@ -48,6 +48,7 @@ from ..config import flags
 from ..interpreters.xla import DeviceArray
 from .. import lax
 from ..util import partial, get_module_functions, unzip2, prod as _prod
+from ..lib import pytree
 from ..lib import xla_bridge
 from ..lib import xla_client
 
@@ -1682,11 +1683,11 @@ def ix_(*args):
   return tuple(output)
 
 
-@_wraps(onp.repeat)
-def repeat(a, repeats, axis=None):
+
+def _repeat_scalar(a, repeats, axis=None):
   if not isscalar(repeats):
     raise NotImplementedError(
-        "np.repeat implementation only supports scalar repeats")
+        "_repeat_scalar implementation only supports scalar repeats")
   if axis is None or isscalar(a):
     a = ravel(a)
     axis = 0
@@ -1710,6 +1711,55 @@ def repeat(a, repeats, axis=None):
       lax.broadcast_in_dim(a, broadcast_shape, broadcast_dims),
       a_shape)
 
+@_wraps(onp.repeat)
+def repeat(a, repeats, axis=None):
+  '''
+  :param repeats: int or array of ints
+  '''
+  # use `_repeat_scalar` when possible
+  if isscalar(repeats):
+    return _repeat_scalar(a, repeats, axis)
+  repeats_raveled = ravel(array(repeats)) # make sure it's jax's array type
+  if size(repeats_raveled) == 1:
+    return _repeat_scalar(a, list(repeats_raveled)[0], axis)
+
+  if axis is None or isscalar(a):
+    a = ravel(a)
+    axis = 0
+
+  # repeats must match the dimension along the requested axis
+  a_shape = list(a.shape)
+  n = a_shape[axis]
+  if size(repeats_raveled) != n:
+    raise ValueError("repeats shape {} does not match the dimension on axis {}".format(
+      repeats_raveled.shape, n
+    ))
+
+  # calculating the new shape
+  total = sum(repeats_raveled)
+
+  new_shape = a_shape[:]
+  new_shape[axis] = total
+
+  a_flattened = ravel(a)
+
+  '''
+  main algorithm:
+  first break down raveled input array into list of chunks; each chunk is the unit of repeat
+  then tile the repeats to have same length as the list of chunks
+  finally repeat each unit x number of times according to the tiled repeat list
+  '''
+  chunks = product(a_shape[:axis+1]).item()
+  a_splitted = split(a_flattened, chunks)
+  repeats_tiled = tile(repeats_raveled, chunks // len(repeats_raveled))
+
+  ret = array([], dtype=a.dtype)
+  for i, repeat in enumerate(repeats_tiled):
+    if not isinstance(repeat, int):
+      repeat = repeat.item()
+    ret = concatenate((ret, tile(a_splitted[i], repeat)))
+
+  return reshape(ret, new_shape)
 
 @_wraps(onp.tri)
 def tri(N, M=None, k=0, dtype=None):
@@ -2231,8 +2281,9 @@ def argmin(a, axis=None):
 def _argminmax(op, a, axis):
   shape = [1] * a.ndim
   shape[axis] = a.shape[axis]
-  idxs = onp.arange(a.shape[axis]).reshape(shape)
+  idxs = lax.tie_in(a, arange(a.shape[axis])).reshape(shape)
   maxval = onp.iinfo(xla_bridge.canonicalize_dtype(idxs.dtype)).max
+  maxval = lax.tie_in(a, maxval)
   mask_idxs = where(lax._eq_meet(a, op(a, axis, keepdims=True)), idxs, maxval)
   return min(mask_idxs, axis)
 
@@ -2403,6 +2454,14 @@ def _rewriting_take(arr, idx):
   # All supported cases of indexing can be implemented as an XLA gather,
   # followed by an optional reverse and a reshape.
   arr = asarray(arr)
+  treedef, static_idx, dynamic_idx = _split_index_for_jit(idx)
+  return _gather(arr, treedef, static_idx, dynamic_idx)
+
+# TODO(phawkins): re-enable jit after fixing excessive recompilation for
+# slice indexes (e.g., slice(0, 5, None), slice(10, 15, None), etc.).
+# @partial(jit, static_argnums=(1, 2))
+def _gather(arr, treedef, static_idx, dynamic_idx):
+  idx = _merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
   indexer = _index_to_gather(shape(arr), idx)  # shared with _scatter_update
 
   y = lax.gather(arr, indexer.gather_indices, indexer.dnums,
@@ -2438,7 +2497,11 @@ _Indexer = collections.namedtuple("_Indexer", [
   "newaxis_dims",
 ])
 
-def _index_to_gather(x_shape, idx):
+def _split_index_for_jit(idx):
+  """Splits indices into necessarily-static and dynamic parts.
+
+  Used to pass indices into `jit`-ted function.
+  """
   # Convert list indices to tuples in cases (deprecated by NumPy.)
   idx = _eliminate_deprecated_list_indexing(idx)
 
@@ -2446,6 +2509,35 @@ def _index_to_gather(x_shape, idx):
   # indexing logic to handle them.
   idx = _expand_bool_indices(idx)
 
+  leaves, treedef = pytree.flatten(idx)
+  dynamic = [None] * len(leaves)
+  static = [None] * len(leaves)
+  for i, x in enumerate(leaves):
+    if x is Ellipsis:
+      static[i] = x
+    elif isinstance(x, slice):
+      # slice objects aren't hashable.
+      static[i] = (x.start, x.stop, x.step)
+    else:
+      dynamic[i] = x
+  return treedef, tuple(static), dynamic
+
+def _merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx):
+  """Recombines indices that were split by _split_index_for_jit."""
+  idx = []
+  for s, d in zip(static_idx, dynamic_idx):
+    if d is not None:
+      idx.append(d)
+    elif isinstance(s, tuple):
+      idx.append(slice(s[0], s[1], s[2]))
+    else:
+      idx.append(s)
+  return treedef.unflatten(idx)
+
+def _int(aval):
+  return not aval.shape and onp.issubdtype(aval.dtype, onp.integer)
+
+def _index_to_gather(x_shape, idx):
   # Remove ellipses and add trailing slice(None)s.
   idx = _canonicalize_tuple_index(len(x_shape), idx)
 
@@ -2474,8 +2566,6 @@ def _index_to_gather(x_shape, idx):
                       for e, i, j in advanced_pairs)
     advanced_indexes, idx_advanced_axes, x_advanced_axes = zip(*advanced_pairs)
     advanced_axes_are_contiguous = onp.all(onp.diff(idx_advanced_axes) == 1)
-
-  _int = lambda aval: not aval.shape and onp.issubdtype(aval.dtype, onp.integer)
 
   x_axis = 0  # Current axis in x.
   y_axis = 0  # Current axis in y, before collapsing. See below.
@@ -3031,3 +3121,10 @@ setattr(ShapedArray, "split", core.aval_method(split))
 setattr(DeviceArray, "broadcast", lax.broadcast)
 setattr(DeviceArray, "broadcast_in_dim", lax.broadcast_in_dim)
 setattr(DeviceArray, "split", split)
+
+@jit
+def _unstack(x):
+  if x.ndim == 0:
+    raise ValueError("Argument to _unstack must be non-scalar")
+  return [lax.index_in_dim(x, i, keepdims=False) for i in range(x.shape[0])]
+setattr(DeviceArray, "_unstack", _unstack)

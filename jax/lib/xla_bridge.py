@@ -368,11 +368,3 @@ for scalar_type in [onp.int8, onp.int16, onp.int32, onp.int64,
 
 if six.PY2:
   register_constant_handler(long, _scalar_constant_handler) # noqa: F821
-
-
-# TODO(skye): use buf.device_ordinal() directly once min jaxlib version is >= 0.1.28
-def device_ordinal(buf):
-  if version >= (0, 1, 28):
-    return buf.device_ordinal()
-  else:
-    return buf.device()

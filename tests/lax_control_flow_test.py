@@ -981,6 +981,17 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     key = random.PRNGKey(0)
     api.grad(lambda c: lax.scan(f, (c, key), onp.ones(3))[0][0])(0.)  # doesn't crash
 
+  def testIssue1361(self):
+    @api.jit
+    def jit_run_scan(x):
+      def fun(carry, _):
+        x, _ = carry
+        return (2 * x, 0.), None
+      (x, _), _ = lax.scan(fun, (x, 0.), np.arange(3))
+      return x
+
+    api.grad(lambda x: jit_run_scan(x))(0.)  # doesn't crash
+
   def test_root_scalar(self):
 
     def scalar_solve(f, y):

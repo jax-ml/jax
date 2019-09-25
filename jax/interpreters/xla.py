@@ -193,13 +193,14 @@ def _check_nans(name, xla_shape, buf):
 
 ### compiling jaxprs
 
-def compile_jaxpr(jaxpr, device_assignment, backend, axis_env, const_vals, *abstract_args):
+def compile_jaxpr(jaxpr, device, backend, axis_env, const_vals, *abstract_args):
   if axis_env.nreps > xb.device_count(backend):
     msg = ("compiling computation that requires {} replicas, but only {} XLA "
            "devices are available")
     raise ValueError(msg.format(axis_env.nreps, xb.device_count(backend)))
   arg_shapes = tuple(map(aval_to_xla_shape, abstract_args))
   built_c = jaxpr_computation(jaxpr, backend, axis_env, const_vals, (), *arg_shapes)
+  device_assignment = (device.id,) if device else None
   compile_opts = xb.get_compile_options(num_replicas=axis_env.nreps,
                                         device_assignment=device_assignment)
   return built_c.Compile(arg_shapes, compile_opts, backend=xb.get_backend(backend))
@@ -361,10 +362,9 @@ def eqn_replicas(eqn):
 ### xla_call underlying jit
 
 def _xla_call_impl(fun, *args, **params):
-  device_assignment = params['device_assignment']
+  device = params['device']
   backend = params.get('backend', None)
-  compiled_fun = _xla_callable(fun, device_assignment, backend,
-                               *map(abstractify, args))
+  compiled_fun = _xla_callable(fun, device, backend, *map(abstractify, args))
   try:
     return compiled_fun(*args)
   except FloatingPointError:
@@ -373,7 +373,7 @@ def _xla_call_impl(fun, *args, **params):
     return fun.call_wrapped(*args)  # probably won't return
 
 @lu.cache
-def _xla_callable(fun, device_assignment, backend, *abstract_args):
+def _xla_callable(fun, device, backend, *abstract_args):
   if FLAGS.jax_log_compiles:
     print("Compiling {} for args {}.".format(fun.__name__, abstract_args))
   pvals = [pe.PartialVal((aval, core.unit)) for aval in abstract_args]
@@ -381,7 +381,7 @@ def _xla_callable(fun, device_assignment, backend, *abstract_args):
     jaxpr, (pvals, consts, env) = pe.trace_to_subjaxpr(fun, master, False).call_wrapped(pvals)
     assert not env  # no subtraces here (though cond might eventually need them)
     axis_env = AxisEnv(jaxpr_replicas(jaxpr), [], [])
-    compiled = compile_jaxpr(jaxpr, device_assignment, backend, axis_env, consts,
+    compiled = compile_jaxpr(jaxpr, device, backend, axis_env, consts,
                              *abstract_args)
     del master, consts, jaxpr, env
   result_handlers = tuple(map(_pval_to_result_handler, pvals))
@@ -419,8 +419,8 @@ xla_call_p.def_custom_bind(xla_call)
 xla_call_p.def_impl(_xla_call_impl)
 
 def _xla_call_translation_rule(c, jaxpr, axis_env, const_nodes, freevar_nodes,
-                               in_nodes, device_assignment=None, backend=None):
-  del device_assignment  # Ignored.
+                               in_nodes, device=None, backend=None):
+  del device  # Ignored.
   subc = xb.make_computation_builder("jaxpr_subcomputation")  # TODO(mattjj): name
   consts = [subc.ParameterWithShape(c.GetShape(n)) for n in const_nodes]
   freevars = [subc.ParameterWithShape(c.GetShape(n)) for n in freevar_nodes]
@@ -660,7 +660,7 @@ def _device_put_device_array(x, device_num, backend):
   # XrtBuffers. Figure out a less risky way to deal with XrtBuffers.
   if (not hasattr(x.device_buffer, "platform") or
       xb.get_backend(backend).platform == x.device_buffer.platform()):
-    if xb.device_ordinal(x.device_buffer) == device_num:
+    if x.device_buffer.device_ordinal() == device_num:
       return x.device_buffer
     else:
       return x.device_buffer.copy_to_device(device_num)
@@ -681,8 +681,7 @@ def _device_put_impl(x, device_num=0, backend=None):
 
 device_put_p = core.Primitive('device_put')
 device_put_p.def_impl(_device_put_impl)
-device_put_p.def_abstract_eval(lambda x, **kwargs: x)
-translations[device_put_p] = lambda c, x, **kwargs: x
+pe.custom_partial_eval_rules[device_put_p] = lambda trace, x, **params: x
 ad.deflinear(device_put_p, lambda cotangent, **kwargs: [cotangent])
 
 

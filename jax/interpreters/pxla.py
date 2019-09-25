@@ -70,7 +70,7 @@ def shard_args(backend, device_ordinals, assignments, axis_size, args):
     if type(arg) is ShardedDeviceArray:
       if nrep == len(arg.device_buffers):
         for r, buf in enumerate(arg.device_buffers):
-          buffers[r][a] = (buf if xb.device_ordinal(buf) == device_ordinals[r]
+          buffers[r][a] = (buf if buf.device_ordinal() == device_ordinals[r]
                            else buf.copy_to_device(device_ordinals[r]))
       else:
         for r, buf in enumerate(arg.device_buffers):
@@ -86,8 +86,15 @@ shard_arg_handlers[core.Unit] = \
 def _shard_array(x, ordinals, assignments, backend=None):
   nrep = len(ordinals)
   return (xla.device_put(x[assignments[r]], ordinals[r], backend=backend) for r in range(nrep))
-for _t in it.chain(array_types, [xla.DeviceArray]):
+for _t in array_types:
   shard_arg_handlers[_t] = _shard_array
+
+def _shard_device_array(x, ordinals, assignments, backend=None):
+  nrep = len(ordinals)
+  xs = x._unstack()
+  return (xla.device_put(xs[assignments[r]], ordinals[r], backend=backend)
+          for r in range(nrep))
+shard_arg_handlers[xla.DeviceArray] = _shard_device_array
 
 def shard_aval(size, aval):
   try:
@@ -274,15 +281,19 @@ def _axis_index_partial_eval(trace, _, **params):
   # This partial_eval rule adds the axis_index primitive into the jaxpr formed
   # during pmap lowering. It is like the standard JaxprTrace.process_primitive
   # rule except that we don't attempt to lower out of the trace.
-  out_aval = ShapedArray((), onp.uint32)
+  out_aval = ShapedArray((), onp.int32)
   out_tracer = pe.JaxprTracer(trace, pe.PartialVal((out_aval, core.unit)), None)
   eqn = core.new_jaxpr_eqn([], [out_tracer], axis_index_p, (), params)
   out_tracer.recipe = eqn
   return out_tracer
 
+def _axis_index_translation_rule(c, hard_size, soft_size, axis_name):
+  unsigned_index = c.Rem(c.ReplicaId(),
+                         c.Constant(onp.array(hard_size, onp.uint32)))
+  return c.ConvertElementType(unsigned_index, xb.dtype_to_etype(onp.int32))
+
 axis_index_p = core.Primitive('axis_index')
-xla.translations[axis_index_p] = lambda c, hard_size, soft_size, axis_name: \
-    c.Rem(c.ReplicaId(), c.Constant(onp.array(hard_size, onp.uint32)))
+xla.translations[axis_index_p] = _axis_index_translation_rule
 pe.custom_partial_eval_rules[axis_index_p] = _axis_index_partial_eval
 
 
@@ -371,7 +382,7 @@ class ShardedDeviceArray(ShardedDeviceValue, xla.DeviceArray):
 def _shard_sharded_device_array(x, ordinals, assignments):
   n = len(ordinals)
   if n == len(x.device_buffers):
-    return (b if xb.device_ordinal(b) == ordinals[r] else b.copy_to_device(ordinals[r])
+    return (b if b.device_ordinal() == ordinals[r] else b.copy_to_device(ordinals[r])
             for r, b in enumerate(x.device_buffers))
   else:
     return (xla.device_put(x[assignments[r]], ordinals[r]) for r in range(n))
