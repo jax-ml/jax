@@ -65,3 +65,10 @@ py_library(
     srcs = ["experimental/lapax.py"],
     deps = [":jax"],
 )
+
+py_library(
+    name = "ode",
+    srcs = ["experimental/ode.py"],
+    deps = [":jax"],
+)
+
