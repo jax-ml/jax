@@ -832,22 +832,26 @@ def _memcpy(axis, num, src, dst, offset):
 masking.masking_rules[lax.concatenate_p] = _concat_masking_rule
 
 
-def root(f, solution, tangent_solve):
+def root(f, initial_guess, solve, tangent_solve):
   """Differentiably solve for a roots of a function.
 
   This is a low-level routine, mostly intended for internal use in JAX.
   Gradients of root() are defined with respect to closed-over variables from
   the provided function f.
 
-  The gradient is defined under the assumption that every element of
-  ``f(solution)`` is near zero, but this isn't checked.
-
   Args:
-    f: differentiable function for which ``solution`` is a root, i.e.,
-      every element in ``f(solution)`` is zero. Should accept a single
-      argument of (possibly nested) arrays, and return arrays with the same
-      structure and shapes.
-    solution: root of ``f``, i.e., ``all(f(solution) == 0)``.
+    f: function for which to find a root. Should accept a single argument,
+      return a tree of arrays with the same structure as its input.
+    initial_guess: initial guess for a zero of f.
+    solve: function to solve for the roots of f. Should take two positional
+      arguments, f and initial_guess, and return a solution with the same
+      structure as initial_guess such that func(solution) = 0. In other words,
+      the following is assumed to be true (but not checked)::
+
+        solution = solve(f, initial_guess)
+        error = f(solution)
+        assert all(error == 0)
+
     tangent_solve: function to solve the tangent system. Should take two
       positional arguments, a linear function ``g`` (the function ``f``
       linearized at its root) and a tree of array(s) ``y`` with the same
@@ -860,21 +864,21 @@ def root(f, solution, tangent_solve):
         ``lambda g, y: np.linalg.solve(jacobian(g)(y), y)``.
 
   Returns:
-    The ``solution`` with gradients defined via implicit differentiation ``f``
-    assuming ``f(solution) == 0``.
+    The result of calling solve(f, initial_guess) with gradients defined via
+    implicit differentiation assuming ``f(solve(f, initial_guess)) == 0``.
   """
-  solution_flat, in_args_tree = tree_flatten((solution,))
-  solution_avals = tuple(_map(_abstractify, solution_flat))
-  jaxpr, consts, out_tree = _initial_style_jaxpr(f, in_args_tree, solution_avals)
+  guess_flat, in_args_tree = tree_flatten((initial_guess,))
+  guess_avals = tuple(_map(_abstractify, guess_flat))
+  jaxpr, consts, out_tree = _initial_style_jaxpr(f, in_args_tree, guess_avals)
   in_tree, = treedef_children(in_args_tree)
   if in_tree != out_tree:
     raise TypeError(
-        "f() output pytree structure must match solution, got {} and {}."
+        "f output pytree structure must match initial_guess, got {} and {}."
         .format(out_tree, in_tree)
     )
-  out_flat = root_p.bind(*itertools.chain(consts, solution_flat),
+  out_flat = root_p.bind(*itertools.chain(consts, guess_flat),
                          tree=out_tree, num_consts=len(consts),
-                         jaxpr=jaxpr, tangent_solve=tangent_solve)
+                         jaxpr=jaxpr, solve=solve, tangent_solve=tangent_solve)
   return tree_unflatten(out_tree, out_flat)
 
 
@@ -883,42 +887,58 @@ def _root_abstract_eval(*args, **kwargs):
 
 
 def _root_impl(*args, **kwargs):
-  return args[kwargs['num_consts']:]
+  tree, num_consts, jaxpr, solve, _ = split_dict(
+      kwargs, ['tree', 'num_consts', 'jaxpr', 'solve', 'tangent_solve'])
+
+  f = partial(
+      apply_flat_fun_nokwargs,
+      partial(core.jaxpr_as_fun(jaxpr), *args[:num_consts]),
+      (tree, tree),
+  )
+  initial_guess = tree_unflatten(tree, args[num_consts:])
+  out = solve(f, initial_guess)
+
+  out_flat, out_tree = tree_flatten(out)
+  if out_tree != tree:
+    raise TypeError(
+        "solve output pytree structure must match initial_guess, got {} and {}"
+        .format(out_tree, tree))
+
+  return out_flat
 
 
 def _root_jvp(
-    primals, tangents, tree, num_consts, jaxpr, tangent_solve):
-  params = primals[:num_consts]
-  solution = primals[num_consts:]
-
-  params_dot = tangents[:num_consts]
-  # solution_dot is ignored; it's what we're redefining here
+    primals, tangents, tree, num_consts, jaxpr, solve, tangent_solve):
+  solution = root_p.bind(*primals, tree=tree, num_consts=num_consts,
+                         jaxpr=jaxpr, solve=solve, tangent_solve=tangent_solve)
 
   # F(u(m), m) = 0  # system of equations in m
   # ∂_0 F(u(m), m) ∂ u(m) + ∂_1 F(u(m), m) = 0
   # ∂ u(m) = - (∂_0 F(u*, m))^{-1} ∂_1 F(u*, m)
   unchecked_zeros, f_jvp = api.linearize(
-      core.jaxpr_as_fun(jaxpr), *(params + solution)
+      core.jaxpr_as_fun(jaxpr),
+      *itertools.chain(primals[:num_consts], solution)
   )
 
-  params_zeros = tuple(_map(ad_util.zeros_like_jaxval, params))
-  f_linearized_at_solution = partial(
+  params_zeros = _map(ad_util.zeros_like_jaxval, primals[:num_consts])
+  f_linearized = partial(
       apply_flat_fun_nokwargs,
-      lambda *xs: f_jvp(*(params_zeros + xs)),
+      lambda *xs: f_jvp(*itertools.chain(params_zeros, xs)),
       (tree, tree),
   )
-  solution_zeros = tuple(_map(ad_util.zeros_like_jaxval, solution))
-  rhs = tree_unflatten(tree, f_jvp(*(params_dot + solution_zeros)))
-  negative_solution_dot = tangent_solve(f_linearized_at_solution, rhs)
+  solution_zeros = _map(ad_util.zeros_like_jaxval, primals[num_consts:])
+  params_jvp_flat = f_jvp(*itertools.chain(tangents[:num_consts], solution_zeros))
+  params_jvp = tree_unflatten(tree, params_jvp_flat)
+  negative_grad = tangent_solve(f_linearized, params_jvp)
 
-  negative_solution_dot_flat, out_tree = tree_flatten(negative_solution_dot)
+  negative_grad_flat, out_tree = tree_flatten(negative_grad)
   if out_tree != tree:
     raise TypeError(
-        "tangent_solve() output pytree structure must match solution, "
+        "tangent_solve output pytree structure must match initial_guess, "
         "got {} and {}".format(out_tree, tree))
 
-  solution_dot = _map(operator.neg, negative_solution_dot_flat)
-  return solution, solution_dot
+  grad_solution = _map(operator.neg, negative_grad_flat)
+  return solution, grad_solution
 
 def _root_batch(args, dims, **params):
   return batching.batch_fun(lu.wrap_init(_root_impl, params), args, dims)
