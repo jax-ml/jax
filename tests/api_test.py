@@ -920,10 +920,9 @@ class APITest(jtu.JaxTestCase):
     xla_comp = api.xla_computation(f)
     xla_comp(np.arange(8)).GetHloText()  # doesn't crash
 
-  def test_jit_device_assignment(self):
-    raise unittest.SkipTest("Temporarily disabled while device API is being changed.")
-    device_num = xb.device_count() - 1
-    x = api.jit(lambda x: x, device_assignment=device_num)(3.)
+  def test_jit_device(self):
+    device = xb.devices()[-1]
+    x = api.jit(lambda x: x, device=device)(3.)
     self.assertIsInstance(x, DeviceArray)
     self.assertEqual(x.device_buffer.device(), device)
 
