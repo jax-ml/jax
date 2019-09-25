@@ -440,6 +440,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     self.assertEqual(fun(2.5), cfun_float(2.5))
     self.assertEqual(cfun_float(2.5), 2.5)
+    self.assertEqual(fun(2.), cfun_float(2.))
+    self.assertEqual(cfun_float(2.), 3.)
     
     
   def testNestedCond(self):
