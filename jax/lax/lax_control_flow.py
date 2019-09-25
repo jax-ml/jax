@@ -909,25 +909,29 @@ def _root_impl(*args, **kwargs):
 
 def _root_jvp(
     primals, tangents, tree, num_consts, jaxpr, solve, tangent_solve):
-  solution = root_p.bind(*primals, tree=tree, num_consts=num_consts,
-                         jaxpr=jaxpr, solve=solve, tangent_solve=tangent_solve)
+  params = primals[:num_consts]
+  solution = tuple(
+      root_p.bind(*primals, tree=tree, num_consts=num_consts,
+                  jaxpr=jaxpr, solve=solve, tangent_solve=tangent_solve)
+  )
+
+  params_dot = tangents[:num_consts]
 
   # F(u(m), m) = 0  # system of equations in m
   # ∂_0 F(u(m), m) ∂ u(m) + ∂_1 F(u(m), m) = 0
   # ∂ u(m) = - (∂_0 F(u*, m))^{-1} ∂_1 F(u*, m)
   unchecked_zeros, f_jvp = api.linearize(
-      core.jaxpr_as_fun(jaxpr),
-      *itertools.chain(primals[:num_consts], solution)
+      core.jaxpr_as_fun(jaxpr), *(params +  solution)
   )
 
-  params_zeros = _map(ad_util.zeros_like_jaxval, primals[:num_consts])
+  params_zeros = tuple(_map(ad_util.zeros_like_jaxval, params))
   f_linearized = partial(
       apply_flat_fun_nokwargs,
-      lambda *xs: f_jvp(*itertools.chain(params_zeros, xs)),
+      lambda *xs: f_jvp(*(params_zeros + xs)),
       (tree, tree),
   )
-  solution_zeros = _map(ad_util.zeros_like_jaxval, primals[num_consts:])
-  params_jvp_flat = f_jvp(*itertools.chain(tangents[:num_consts], solution_zeros))
+  solution_zeros = tuple(_map(ad_util.zeros_like_jaxval, solution))
+  params_jvp_flat = f_jvp(*(params_dot + solution_zeros))
   params_jvp = tree_unflatten(tree, params_jvp_flat)
   negative_grad = tangent_solve(f_linearized, params_jvp)
 
@@ -937,8 +941,8 @@ def _root_jvp(
         "tangent_solve output pytree structure must match initial_guess, "
         "got {} and {}".format(out_tree, tree))
 
-  grad_solution = _map(operator.neg, negative_grad_flat)
-  return solution, grad_solution
+  solution_dot = _map(operator.neg, negative_grad_flat)
+  return solution, solution_dot
 
 def _root_batch(args, dims, **params):
   return batching.batch_fun(lu.wrap_init(_root_impl, params), args, dims)
