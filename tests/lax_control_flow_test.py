@@ -416,6 +416,32 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertEqual(fun(4), cfun(4))
     self.assertEqual(fun(4), (8, 16))
 
+  def testIssue1379(self):
+    # integer predicates should be treated as boolean by testing whether they are zero
+    def fun(x):
+      if x % 2:
+        return x
+      else:
+        return x + 1
+
+    @api.jit
+    def cfun(x):
+      return lax.cond(lax.rem(x, 2), x, lambda x: x, x, lambda x: lax.add(x, 1))
+    
+    self.assertEqual(fun(2), cfun(2))
+    self.assertEqual(cfun(2), 3)
+    self.assertEqual(fun(3), cfun(3))
+    self.assertEqual(cfun(3), 3)
+
+    # test float predicates
+    @api.jit
+    def cfun_float(x):
+      return lax.cond(lax.rem(x, 2.), x, lambda x: x, x, lambda x: lax.add(x, 1.))
+
+    self.assertEqual(fun(2.5), cfun_float(2.5))
+    self.assertEqual(cfun_float(2.5), 2.5)
+    
+    
   def testNestedCond(self):
     def fun(x):
       if x < 2:
