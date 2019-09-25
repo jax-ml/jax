@@ -1052,16 +1052,16 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     jtu.check_grads(linear_solve, (a, b), order=2)
 
   def test_root_errors(self):
-    with self.assertRaisesRegexp(TypeError, "f output pytree"):
+    with self.assertRaisesRegex(TypeError, "f output pytree"):
       lax.root(lambda x: (x, x), 0.0, lambda f, x: x, lambda f, x: x)
-    with self.assertRaisesRegexp(TypeError, "solve output pytree"):
+    with self.assertRaisesRegex(TypeError, "solve output pytree"):
       lax.root(lambda x: x, 0.0, lambda f, x: (x, x), lambda f, x: x)
 
     def dummy_root_usage(x):
       f = lambda y: x - y
       return lax.root(f, 0.0, lambda f, x: x, lambda f, x: (x, x))
 
-    with self.assertRaisesRegexp(TypeError, "tangent_solve output pytree"):
+    with self.assertRaisesRegex(TypeError, "tangent_solve output pytree"):
       api.jvp(dummy_root_usage, (0.0,), (0.0,))
 
 

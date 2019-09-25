@@ -72,9 +72,6 @@ def svd(x, full_matrices=True, compute_uv=True):
 
 def triangular_solve(a, b, left_side=False, lower=False, transpose_a=False,
                      conjugate_a=False, unit_diagonal=False):
-  # TODO(shoyer): remove this hack!
-  if b is ad_util.zero:
-    return b
   conjugate_a = conjugate_a and np.issubdtype(lax.dtype(a), np.complexfloating)
   return triangular_solve_p.bind(
       a, b, left_side=left_side, lower=lower, transpose_a=transpose_a,
