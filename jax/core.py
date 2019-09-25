@@ -26,6 +26,7 @@ import types
 import six
 
 from . import linear_util as lu
+from .config import flags
 from .util import safe_zip, safe_map, partial, curry
 from .pprint_util import pp, vcat, hcat, pp_kv_pairs
 
@@ -264,7 +265,7 @@ class Tracer(object):
     from .numpy.lax_numpy import numpy_version
     msg = ("Tracer can't be used with functions that convert their arguments "
            "into raw NumPy arrays.")
-    if numpy_version < (1, 17) or not FLAGS.jax_enable_numpy_overrides:
+    if numpy_version < (1, 17) or not flags.FLAGS.jax_enable_numpy_overrides:
       msg += " You might have\n  import numpy as np\ninstead of\n  import jax.numpy as np"
     raise Exception(msg)
 
