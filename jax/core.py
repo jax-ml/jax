@@ -264,7 +264,7 @@ class Tracer(object):
     from .numpy.lax_numpy import numpy_version
     msg = ("Tracer can't be used with functions that convert their arguments "
            "into raw NumPy arrays.")
-    if numpy_version < (1, 17):
+    if numpy_version < (1, 17) or not FLAGS.jax_enable_numpy_overrides:
       msg += " You might have\n  import numpy as np\ninstead of\n  import jax.numpy as np"
     raise Exception(msg)
 

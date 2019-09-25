@@ -3170,11 +3170,24 @@ def __array_ufunc__(self, ufunc, method, *inputs, **kwargs):
   return lax_func(*inputs)
 
 
+# These NumPy functions don't need coercion on JAX arrays. We can always use
+# our JAX implementations.
+_COERCION_BLACKLIST = frozenset([
+    onp.result_type,
+    onp.ndim,
+    onp.shape,
+    onp.iscomplexobj,
+    onp.size,
+    onp.transpose,
+    onp.moveaxis,
+])
+
+
 def __array_function__(self, func, types, args, kwargs):
   """Override other NumPy functions, per NEP-18."""
   from .. import numpy
 
-  if not FLAGS.jax_enable_numpy_overrides:
+  if not FLAGS.jax_enable_numpy_overrides and func not in _COERCION_BLACKLIST:
     return _implement_via_coercion(func, args, kwargs)
 
   if not _all(issubclass(t, _HANDLED_TYPES) for t in types):
