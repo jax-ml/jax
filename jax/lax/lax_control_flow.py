@@ -921,7 +921,7 @@ def _root_jvp(
   # ∂_0 F(u(m), m) ∂ u(m) + ∂_1 F(u(m), m) = 0
   # ∂ u(m) = - (∂_0 F(u*, m))^{-1} ∂_1 F(u*, m)
   unchecked_zeros, f_jvp = api.linearize(
-      core.jaxpr_as_fun(jaxpr), *(params +  solution)
+      core.jaxpr_as_fun(jaxpr), *(params + solution)
   )
 
   params_zeros = tuple(_map(ad_util.zeros_like_jaxval, params))
