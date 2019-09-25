@@ -873,7 +873,7 @@ def root(f, initial_guess, solve, tangent_solve):
   in_tree, = treedef_children(in_args_tree)
   if in_tree != out_tree:
     raise TypeError(
-        "f output pytree structure must match initial_guess, got {} and {}."
+        "f() output pytree structure must match initial_guess, got {} and {}."
         .format(out_tree, in_tree)
     )
   out_flat = root_p.bind(*itertools.chain(consts, guess_flat),
@@ -901,7 +901,7 @@ def _root_impl(*args, **kwargs):
   out_flat, out_tree = tree_flatten(out)
   if out_tree != tree:
     raise TypeError(
-        "solve output pytree structure must match initial_guess, got {} and {}"
+        "solve() output pytree structure must match initial_guess, got {} and {}"
         .format(out_tree, tree))
 
   return out_flat
@@ -940,7 +940,7 @@ def _root_jvp(
   solution_dot_flat, out_tree = tree_flatten(solution_dot)
   if out_tree != tree:
     raise TypeError(
-        "tangent_solve output pytree structure must match initial_guess, "
+        "tangent_solve() output pytree structure must match initial_guess, "
         "got {} and {}".format(out_tree, tree))
 
   return solution, solution_dot_flat
