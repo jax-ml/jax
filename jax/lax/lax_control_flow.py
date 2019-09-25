@@ -908,17 +908,20 @@ def _root_jvp(
   # F(u(m), m) = 0  # system of equations in m
   # ∂_0 F(u(m), m) ∂ u(m) + ∂_1 F(u(m), m) = 0
   # ∂ u(m) = - (∂_0 F(u*, m))^{-1} ∂_1 F(u*, m)
-  unchecked_zeros, f_jvp = ad.vjp(
-      lu.wrap_init(core.jaxpr_as_fun(jaxpr)),
-      primals[:num_consts] + tuple(solution)
+  unchecked_zeros, f_jvp = api.linearize(
+      core.jaxpr_as_fun(jaxpr),
+      *itertools.chain(primals[:num_consts], solution)
   )
+
+  params_zeros = _map(ad_util.zeros_like_jaxval, primals[:num_consts])
   f_linearized = partial(
       apply_flat_fun_nokwargs,
-      lambda *xs: f_jvp(*xs)[num_consts:],
+      lambda *xs: f_jvp(*itertools.chain(params_zeros, xs)),
       (tree, tree),
   )
-  params_jvp = tree_unflatten(
-      tree, f_jvp(*tangents[:num_consts])[:num_consts])
+  solution_zeros = _map(ad_util.zeros_like_jaxval, primals[num_consts:])
+  params_jvp_flat = f_jvp(*itertools.chain(tangents[:num_consts], solution_zeros))
+  params_jvp = tree_unflatten(tree, params_jvp_flat)
   negative_grad = tangent_solve(f_linearized, params_jvp)
 
   negative_grad_flat, out_tree = tree_flatten(negative_grad)
