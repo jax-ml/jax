@@ -928,9 +928,7 @@ def _root_jvp(
   solution_zeros = tuple(_map(ad_util.zeros_like_jaxval, solution))
 
   f_linearized_at_solution = partial(
-      apply_flat_fun_nokwargs,
-      lambda *xs: f_jvp(*(params_zeros + xs)),
-      (tree, tree),
+      apply_flat_fun_nokwargs, partial(f_jvp, *params_zeros), (tree, tree),
   )
   rhs = tree_unflatten(tree, f_jvp(*(params_dot + solution_zeros)))
   solution_dot = tree_map(
