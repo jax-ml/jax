@@ -925,24 +925,25 @@ def _root_jvp(
   )
 
   params_zeros = tuple(_map(ad_util.zeros_like_jaxval, params))
-  f_linearized = partial(
+  solution_zeros = tuple(_map(ad_util.zeros_like_jaxval, solution))
+
+  f_linearized_at_solution = partial(
       apply_flat_fun_nokwargs,
       lambda *xs: f_jvp(*(params_zeros + xs)),
       (tree, tree),
   )
-  solution_zeros = tuple(_map(ad_util.zeros_like_jaxval, solution))
-  params_jvp_flat = f_jvp(*(params_dot + solution_zeros))
-  params_jvp = tree_unflatten(tree, params_jvp_flat)
-  negative_grad = tangent_solve(f_linearized, params_jvp)
+  rhs = tree_unflatten(tree, f_jvp(*(params_dot + solution_zeros)))
+  solution_dot = tree_map(
+      operator.neg, tangent_solve(f_linearized_at_solution, rhs)
+  )
 
-  negative_grad_flat, out_tree = tree_flatten(negative_grad)
+  solution_dot_flat, out_tree = tree_flatten(solution_dot)
   if out_tree != tree:
     raise TypeError(
         "tangent_solve output pytree structure must match initial_guess, "
         "got {} and {}".format(out_tree, tree))
 
-  solution_dot = _map(operator.neg, negative_grad_flat)
-  return solution, solution_dot
+  return solution, solution_dot_flat
 
 def _root_batch(args, dims, **params):
   return batching.batch_fun(lu.wrap_init(_root_impl, params), args, dims)
