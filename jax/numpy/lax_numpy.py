@@ -1228,6 +1228,20 @@ nanmax = _make_nan_reduction(onp.nanmax, max, -inf, nan_if_all_nan=True)
 nansum = _make_nan_reduction(onp.nansum, sum, 0, nan_if_all_nan=False)
 nanprod = _make_nan_reduction(onp.nanprod, prod, 1, nan_if_all_nan=False)
 
+@_wraps(onp.nanmean)
+def nanmean(a, axis=None, dtype=None, out=None, keepdims=False):
+  if out is not None:
+    raise ValueError("nanmean does not support the `out` argument.")
+  if (onp.issubdtype(lax._dtype(a), onp.bool_) or
+      onp.issubdtype(lax._dtype(a), onp.integer)):
+    return mean(a, axis, dtype, out, keepdims)
+  if dtype is None:
+    dtype = lax._dtype(a)
+  nan_mask = logical_not(isnan(a))
+  normalizer = sum(nan_mask, axis=axis, dtype=int32, keepdims=keepdims)
+  normalizer = lax.convert_element_type(normalizer, dtype)
+  td = lax.div(nansum(a, axis, dtype=dtype, keepdims=keepdims), normalizer)
+  return td
 
 def _make_cumulative_reduction(onp_reduction, window_reduce, init_val,
                                squash_nan=False):
