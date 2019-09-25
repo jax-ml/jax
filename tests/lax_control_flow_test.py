@@ -418,16 +418,22 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   def testIssue1379(self):
 
-    @api.jit
-    def cfun(pred):
+    def fun(pred):
       return lax.cond(pred, pred, lambda x: (True, x), pred, lambda x: (False, x))
     
-    self.assertEqual(cfun(0), (False,0))
-    self.assertEqual(cfun(0.), (False,0.))
-    self.assertEqual(cfun(1), (True,1))
-    self.assertEqual(cfun(1.), (True,1.))
+    @api.jit
+    def cfun(pred):
+      return fun(pred)
+    
+    self.assertEqual(fun(0), cfun(0), (False,0))
+    self.assertEqual(fun(0.), cfun(0.), (False,0.))
+    self.assertEqual(fun(1), cfun(1), (True,1))
+    self.assertEqual(fun(1.), cfun(1.), (True,1.))
 
-    self.assertRaises(TypeError, cfun, "abc")
+    # test that proper errors are raised for wrong types
+    for pred in ["abc", [], [1,2]]:
+      for f in [fun, cfun]:
+        self.assertRaises(TypeError, f, pred)
     
   def testNestedCond(self):
     def fun(x):
