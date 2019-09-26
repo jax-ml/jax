@@ -1066,6 +1066,41 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         TypeError, re.escape("tangent_solve() output pytree")):
       api.jvp(dummy_root_usage, (0.0,), (0.0,))
 
+  def test_linear_solve(self):
+
+    def solve(matvec, b):
+      return np.linalg.solve(api.jacobian(matvec)(b), b)
+
+    def linear_solve(a, b):
+      return lax.linear_solve(partial(np.dot, a), b, solve)
+
+    rng = onp.random.RandomState(0)
+    a = rng.randn(2, 2)
+    b = rng.randn(2)
+    jtu.check_grads(linear_solve, (a, b), order=2)
+
+  def test_linear_solve_iterative(self):
+
+    def richardson_iteration(matvec, b, omega=0.5, tolerance=1e-6):
+      # Equivalent to vanilla gradient descent:
+      # https://en.wikipedia.org/wiki/Modified_Richardson_iteration
+      def cond(x):
+        return np.linalg.norm(matvec(x) - b) > tolerance
+      def body(x):
+        return x + omega * (b - matvec(x))
+      return lax.while_loop(cond, body, np.zeros_like(b))
+
+    def matrix_free_solve(matvec, b):
+      return lax.linear_solve(matvec, b, richardson_iteration, matrix_free_solve)
+
+    def linear_solve(a, b):
+      return matrix_free_solve(partial(np.dot, a), b)
+
+    rng = onp.random.RandomState(0)
+    a = rng.randn(2, 2)
+    b = rng.randn(2)
+    jtu.check_grads(linear_solve, (a, b), order=2)
+
 
 if __name__ == '__main__':
   absltest.main()

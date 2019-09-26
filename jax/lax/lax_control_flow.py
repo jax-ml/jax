@@ -943,9 +943,6 @@ def _root_jvp(
 
   return solution, solution_dot_flat
 
-def _root_batch(args, dims, **params):
-  return batching.batch_fun(lu.wrap_init(_root_impl, params), args, dims)
-
 
 root_p = core.Primitive('root')
 root_p.multiple_results = True
@@ -953,10 +950,10 @@ root_p.def_impl(_root_impl)
 root_p.def_abstract_eval(_root_abstract_eval)
 ad.primitive_jvps[root_p] = _root_jvp
 xla.initial_style_translations[root_p] = xla.lower_fun(_root_impl, initial_style=True)
-batching.primitive_batchers[root_p] = _root_batch
+batching.deftraced(root_p)
 
 
-def solve_linear_map(a, b, solve, tangent_solve):
+def linear_solve(a, b, solve, tangent_solve=None, cotangent_solve=None):
   """Differentiably solve the linear map a(x)=b for x.
 
   Required invariant:
@@ -964,6 +961,11 @@ def solve_linear_map(a, b, solve, tangent_solve):
       error = a(x) - b
       assert all(error == 0)
   """
+  if tangent_solve is None:
+    tangent_solve = solve
+  if cotangent_solve is None:
+    cotangent_solve = tangent_solve
+
   b_flat, in_args_tree = tree_flatten((b,))
   b_avals = tuple(_map(_abstractify, b_flat))
   jaxpr, consts, out_tree = _initial_style_jaxpr(a, in_args_tree, b_avals)
@@ -973,203 +975,111 @@ def solve_linear_map(a, b, solve, tangent_solve):
         "a() output pytree structure must match b, got {} and {}."
         .format(out_tree, in_tree)
     )
-  out_flat = solve_linear_map_p.bind(
+  out_flat = linear_solve_p.bind(
       *itertools.chain(consts, b_flat), tree=out_tree, num_consts=len(consts),
-      jaxpr=jaxpr, solve=solve, tangent_solve=tangent_solve)
+      jaxpr=jaxpr, solve=solve, tangent_solve=tangent_solve,
+      cotangent_solve=cotangent_solve)
   return tree_unflatten(out_tree, out_flat)
 
 
-def _solve_linear_mapt_eval(*args, **kwargs):
+def _linear_solve_abstract_eval(*args, **kwargs):
   return args[kwargs['num_consts']:]
 
 
-def _solve_linear_map_impl(*args, **kwargs):
-  tree, num_consts, jaxpr, solve, _ = split_dict(
-      kwargs, ['tree', 'num_consts', 'jaxpr', 'solve', 'tangent_solve'])
+def _linear_solve_impl(*args, **kwargs):
+  tree, num_consts, jaxpr, solve, _, _ = split_dict(
+      kwargs,
+      ['tree', 'num_consts', 'jaxpr', 'solve', 'tangent_solve', 'cotangent_solve'],
+  )
 
-  f = partial(
+  a = partial(
       apply_flat_fun_nokwargs,
       partial(core.jaxpr_as_fun(jaxpr), *args[:num_consts]),
       (tree, tree),
   )
-  initial_guess = tree_unflatten(tree, args[num_consts:])
-  out = solve(f, initial_guess)
+  b = tree_unflatten(tree, args[num_consts:])
+  out = solve(a, b)
 
   out_flat, out_tree = tree_flatten(out)
   if out_tree != tree:
     raise TypeError(
-        "solve output pytree structure must match initial_guess, got {} and {}"
+        "solve() output pytree structure must match b, got {} and {}"
         .format(out_tree, tree))
 
   return out_flat
 
+def _linear_solve_jvp(primals, tangents, tree, num_consts, jaxpr, solve,
+                      tangent_solve, cotangent_solve):
+  # A x - b = 0
+  # ∂A x + A ∂x - ∂b = 0
+  # ∂x = A^{-1} (∂b - ∂A x)
 
+  x = tuple(
+      linear_solve_p.bind(
+          *primals, tree=tree, num_consts=num_consts,
+          jaxpr=jaxpr, solve=solve, tangent_solve=tangent_solve,
+          cotangent_solve=cotangent_solve)
+  )
+  x_zeros = tuple(_map(ad_util.zeros_like_jaxval, x))
 
-@partial(defjvp_all, solve_impl)
-def solve_impl_jvp(primals, tangents):
-  # http://www.dolfin-adjoint.org/en/release/documentation/maths/3-gradients.html#the-tangent-linear-approach
-  A, b = primals
-  grad_A, grad_b = tangents
-  x = solve(A, b)
-  if grad_A is ad_util.zero:
-    b2 = grad_b
-  elif grad_b is ad_util.zero:
-    b2 = tree_map(lambda x: -x, grad_A(x))
-  else:
-    b2 = tree_multimap(lambda x, y: -x + y, grad_A(x), grad_b)
-  grad_x = tangent_solve(grad_A, b)
-  return x, grad_x
+  params = primals[:num_consts]
 
-def solve_impl_transpose_rule(cotangent, a, b):
-  assert A is not None and b is None
-  _, f_jvp = linearize(Partial(A), A)
-  cotangent_b = cotangent_solve(
-      f_jvp, cotangent, matvec=matvec, solve_impl=solve_impl)
-  return [None, tree_map(lambda x: -x, cotangent_b)]
+  params_dot = tangents[:num_consts]
+  b_dot = tangents[num_consts:]
 
+  _, a_dot_x = ad.jvp(lu.wrap_init(core.jaxpr_as_fun(jaxpr))).call_wrapped(
+      params + x, params_dot + x_zeros)
 
-ad.primitive_transposes[solve_impl.prim] = custom_transforms_jvp
+  rhs = tree_unflatten(tree, [c - d for c, d in zip(b_dot, a_dot_x)])
 
-def custom_linear_solve(solve, tangent_solve=None, cotangent_solve=None):
-  """Define gradients for a function that performs a matrix-free linear solve.
-  """
-  if tangent_solve is None:
-    tangent_solve = solve
-  if cotangent_solve is None:
-    cotangent_solve = tangent_solve
+  a = partial(
+      apply_flat_fun_nokwargs,
+      partial(core.jaxpr_as_fun(jaxpr), *params),
+      (tree, tree),
+  )
+  x_dot = tangent_solve(a, rhs)
 
-  def linear_solve(A, b):
-    if isinstance(A, np.ndarray):
-      A = Partial(np.dot, A)
-    elif not isinstance(A, Partial):
-      if isinstance(A, callable):
-        A = Partial(A)
-      else:
-        raise TypeError('argument A must be an ndarray or callable')
+  x_dot_flat, out_tree = tree_flatten(x_dot)
+  if out_tree != tree:
+    raise TypeError(
+        "tangent_solve() output pytree structure must match b, got {} and {}"
+        .format(out_tree, tree))
 
-    @custom_transforms
-    def solve_impl(A, b):
-        return solve(A, b)
- 
-    @partial(defjvp_all, solve_impl)
-    def solve_impl_jvp(primals, tangents):
-        # http://www.dolfin-adjoint.org/en/release/documentation/maths/3-gradients.html#the-tangent-linear-approach
-        A, b = primals
-        grad_A, grad_b = tangents
-        x = solve(A, b)
-        if grad_A is ad_util.zero:
-          b2 = grad_b
-        elif grad_b is ad_util.zero:
-          b2 = tree_map(lambda x: -x, grad_A(x))
-        else:
-          b2 = tree_multimap(lambda x, y: -x + y, grad_A(x), grad_b)
-        grad_x = tangent_solve(grad_A, b)
-        return x, grad_x
+  return x, x_dot_flat
 
-    def solve_impl_transpose_rule(cotangent, A, b):
-      assert A is not None and b is None
-      _, f_jvp = linearize(Partial(A), A)
-      cotangent_b = cotangent_solve(
-          f_jvp, cotangent, matvec=matvec, solve_impl=solve_impl)
-      return [None, tree_map(lambda x: -x, cotangent_b)]
+def _linear_solve_transpose_rule(cotangent, *primals, **kwargs):
+  tree, num_consts, jaxpr, _, _, cotangent_solve = split_dict(
+      kwargs,
+      ['tree', 'num_consts', 'jaxpr', 'solve', 'tangent_solve', 'cotangent_solve'],
+  )
+  assert all((arg is ad.undefined_primal) ^ (i < num_consts)
+             for i, arg in enumerate(primals))
+  # TODO(shoyer): use transpose instead of using vjp? We know that a() is
+  # linear.
+  # NOTE: we are evaluating jaxpr at arbitrary primal values (which is OK
+  # because it's a linear map)
+  _, vjp = ad.vjp(
+      lu.wrap_init(core.jaxpr_as_fun(jaxpr)),
+      primals[:num_consts] + tuple(cotangent),
+  )
+  a_transpose = partial(
+      apply_flat_fun_nokwargs, lambda *xs: vjp(*xs)[num_consts:], (tree, tree),
+  )
+  cotangent_b = cotangent_solve(a_transpose, tree_unflatten(tree, cotangent))
+  cotangent_b_flat, out_tree = tree_flatten(cotangent_b)
+  if out_tree != tree:
+    raise TypeError(
+        "cotangent_solve() output pytree structure must match b, got {} and {}"
+        .format(out_tree, tree))
 
-    ad.primitive_transposes[solve_impl.prim] = custom_transforms_jvp
-    return solve_impl(A, b)
-  return linear_solve
+  return [None] * num_consts + cotangent_b_flat
 
-  # def _linear_solve_impl(a_params, b, matvec, solve_impl):
-  #   return solve_impl(partial(matvec, a_params), b)
-
-  # def _linear_solve_jvp_rule(primals, tangents, matvec, solve_impl):
-  #   a_params, b = primals
-  #   a_params_dot, b_dot = tangents
-  #   x = linear_solve_p.bind(a_params, b, matvec=matvec, solve_impl=solve_impl)
-  #   if a_params_dot is ad_util.zero:
-  #     b2 = b_dot
-  #   elif b_dot is ad_util.zero:
-  #     b2 = -matvec(a_params_dot, x)
-  #   else:
-  #     b2 = -matvec(a_params_dot, x) + b_dot
-  #   x_dot = linear_solve_p.bind(
-  #       a_params, b2, matvec=matvec, solve_impl=solve_impl)
-  #   return x, x_dot
-
-  # def _linear_solve_transpose(cotangent, a_params, b, matvec, solve_impl):
-  #   assert a_params is not None and b is None
-  #   # DONOTSUBMIT: must transpose a
-  #   cotangent_b = linear_solve_p.bind(
-  #       a_params, cotangent, matvec=matvec, solve_impl=solve_impl)
-  #   return [None, cotangent_b]
-
-  # linear_solve_p = Primitive('linear_solve')
-  # linear_solve_p.def_impl(_linear_solve_impl)
-  # linear_solve_p.def_abstract_eval(lambda a, b, **kwargs: b)
-  # ad.primitive_jvps[linear_solve_p] = _linear_solve_jvp_rule
-  # ad.primitive_transposes[linear_solve_p] = _linear_solve_transpose
-
-
-# def implicit_solve(func, params, solve_impl):
-#   # func(params, solution) = 0
-#   return linear_solve_p.bind(params, func=func, solve_impl=solve_impl)
-
-# def _implicit_solve_impl(params, func, solve_impl):
-#   return solve_impl(func, params)
-
-# def _implicit_solve_jvp_rule(primals, tangents, matvec, solve_impl):
-#   params, = primals
-#   params_dot, = tangents
-#   solution = solve_impl(func, params)
-#   _, vjp_func = vjp(partial(func, params), solution)
-#   return solution, linear_solve(lambda p: vjp_func(p)[0], -params_dot)
-
-
-# linear_solve_p = Primitive('linear_solve')
-# linear_solve_p.def_impl(_linear_solve_impl)
-# linear_solve_p.def_abstract_eval(lambda a, b, **kwargs: b)
-# ad.primitive_jvps[linear_solve_p] = _linear_solve_jvp_rule
-# ad.primitive_transposes[linear_solve_p] = _linear_solve_transpose
-
-
-  # def custom_solve(A, b, **kwargs):
-  #   if isinstance(a, np.ndarray):
-  #     A = Partial(np.dot, A)
-  #   elif isinstance(a, callable) and not isinstance(a, partial):
-  #     A = Partial(A)
-
-  #   # # TODO(shoyer): handle multiple and/or nested arguments
-  #   # (a_params,) = a.args
-  #   # assert not a.keywords
-  #   # matvec = a.func
-  #   # return linear_solve_p.bind(a_params, b, matvec=matvec, solve_impl=solve_impl)
-
-  # def _linear_solve_impl(a_params, b, matvec, solve_impl):
-  #   return solve_impl(partial(matvec, a_params), b)
-
-  # def _linear_solve_jvp_rule(primals, tangents, matvec, solve_impl):
-  #   a_params, b = primals
-  #   a_params_dot, b_dot = tangents
-  #   x = linear_solve_p.bind(a_params, b, matvec=matvec, solve_impl=solve_impl)
-  #   if a_params_dot is ad_util.zero:
-  #     b2 = b_dot
-  #   elif b_dot is ad_util.zero:
-  #     b2 = -matvec(a_params_dot, x)
-  #   else:
-  #     b2 = -matvec(a_params_dot, x) + b_dot
-  #   x_dot = linear_solve_p.bind(
-  #       a_params, b2, matvec=matvec, solve_impl=solve_impl)
-  #   return x, x_dot
-
-  # def _linear_solve_transpose(cotangent, a_params, b, matvec, solve_impl):
-  #   assert a_params is not None and b is None
-  #   # DONOTSUBMIT: must transpose a
-  #   cotangent_b = linear_solve_p.bind(
-  #       a_params, cotangent, matvec=matvec, solve_impl=solve_impl)
-  #   return [None, cotangent_b]
-
-  # linear_solve_p = Primitive('linear_solve')
-  # linear_solve_p.def_impl(_linear_solve_impl)
-  # linear_solve_p.def_abstract_eval(lambda a, b, **kwargs: b)
-  # ad.primitive_jvps[linear_solve_p] = _linear_solve_jvp_rule
-  # ad.primitive_transposes[linear_solve_p] = _linear_solve_transpose
-
-
+linear_solve_p = core.Primitive('linear_solve')
+linear_solve_p.multiple_results = True
+linear_solve_p.def_impl(_linear_solve_impl)
+linear_solve_p.def_abstract_eval(_linear_solve_abstract_eval)
+ad.primitive_jvps[linear_solve_p] = _linear_solve_jvp
+xla.initial_style_translations[linear_solve_p] = xla.lower_fun(
+    _linear_solve_impl, initial_style=True)
+ad.primitive_transposes[linear_solve_p] = _linear_solve_transpose_rule
+batching.deftraced(linear_solve_p)
