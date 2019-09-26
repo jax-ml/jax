@@ -14,7 +14,7 @@
 
 # JAX is Autograd and XLA
 
-licenses(["notice"])  # Apache 2
+licenses(["notice"])
 
 package(default_visibility = ["//visibility:public"])
 
