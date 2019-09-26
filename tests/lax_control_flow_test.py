@@ -310,7 +310,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertEqual(count(3), 3)
     self.assertEqual(count(4), 6)
     for args_maker in [lambda: [2], lambda: [3], lambda: [4]]:
-        self._CompileAndCheck(count, args_maker, True)
+      self._CompileAndCheck(count, args_maker, True)
 
   def testForiLoopClosure(self):
     def count(num):

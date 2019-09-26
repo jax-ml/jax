@@ -622,9 +622,8 @@ def lu_pivots_to_permutation(swaps, m):
 
   permutation = lax.broadcasted_iota(np.int32, batch_dims + (m,),
                                      len(batch_dims))
-  result, _ = lax.fori_loop(
-    onp.array(0, onp.int32), onp.array(k, onp.int32), _lu_pivots_body_fn,
-      (permutation, swaps))
+  result, _ = lax.fori_loop(onp.array(0, onp.int32), onp.array(k, onp.int32),
+                            _lu_pivots_body_fn, (permutation, swaps))
   return result
 
 
