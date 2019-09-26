@@ -82,7 +82,8 @@ def _canonicalize_shape(shape):
     A tuple of integers.
   """
   # TODO(mattjj): this next check is a temporary workaround for masking
-  if type(shape) is ShapeExpr or any(type(d) is masking.Poly for d in shape):
+  if (type(shape) is ShapeExpr
+      or type(shape) is tuple and any(type(d) is masking.Poly for d in shape)):
     return shape
   try:
     return tuple(map(operator.index, shape))
@@ -1719,13 +1720,13 @@ def _div_transpose_rule(cotangent, x, y):
 div_p = standard_binop([_num, _num], 'div')
 ad.defjvp(div_p,
           lambda g, x, y: div(_brcast(g, y), y),
-          lambda g, x, y: div(mul(neg(_brcast(g, x)), x), pow(y, _two(y))))
+          lambda g, x, y: div(mul(neg(_brcast(g, x)), x), square(y)))
 ad.primitive_transposes[div_p] = _div_transpose_rule
 
 rem_p = standard_binop([_num, _num], 'rem')
 ad.defjvp(rem_p,
           lambda g, x, y: _brcast(g, y),
-          lambda g, x, y: mul(neg(g), floor(div(x, y))))
+          lambda g, x, y: mul(_brcast(neg(g), x), floor(div(x, y))))
 
 
 def _broadcasting_select(c, which, x, y):
@@ -3349,23 +3350,24 @@ def _reduction_computation(c, jaxpr, backend, consts, init_value):
   out, = xla.jaxpr_subcomp(subc, jaxpr, backend, axis_env, consts, (), *args)
   return subc.Build(out)
 
-def _masking_defreducer(prim, identity_like):
+def _masking_defreducer(prim, identity):
   masking.shape_rules[prim] = _reducer_polymorphic_shape_rule
-  masking.masking_rules[prim] = partial(_reducer_masking_rule, prim, identity_like)
+  masking.masking_rules[prim] = partial(_reducer_masking_rule, prim, identity)
 
 def _reducer_polymorphic_shape_rule(shape_exprs, axes, **unused_params):
   shape_expr, = shape_exprs
-  return ShapeExpr(*(d for i, d in enumerate(shape_expr) if i not in axes))
+  return ShapeExpr([d for i, d in enumerate(shape_expr) if i not in axes])
 
-def _reducer_masking_rule(prim, identity_like, padded_vals, logical_shapes,
+def _reducer_masking_rule(prim, identity, padded_vals, logical_shapes,
                           axes, input_shape):
   del input_shape  # Unused.
   (padded_val,), (logical_shape,) = padded_vals, logical_shapes
-  masks = [broadcasted_iota(onp.int32, padded_val.shape, i) < d
+  padded_shape = masking.padded_shape_as_value(padded_val.shape)
+  masks = [broadcasted_iota(onp.int32, padded_shape, i) < d
            for i, d in enumerate(logical_shape) if i in axes]
   mask = _reduce(operator.and_, masks)
-  masked_val = select(mask, padded_val, identity_like(padded_val))
-  return prim.bind(masked_val, axes=axes, input_shape=padded_val.shape)
+  masked_val = select(mask, padded_val, identity(padded_shape, padded_val.dtype))
+  return prim.bind(masked_val, axes=axes, input_shape=padded_shape)
 
 reduce_p = standard_reduction_primitive(_reduce_shape_rule, _input_dtype, 'reduce',
                                         _reduce_translation_rule)
@@ -3394,7 +3396,8 @@ reduce_sum_p = standard_primitive(_reduce_sum_shape_rule, _input_dtype,
                                   'reduce_sum', _reduce_sum_translation_rule)
 ad.deflinear(reduce_sum_p, _reduce_sum_transpose_rule)
 batching.defreducer(reduce_sum_p)
-_masking_defreducer(reduce_sum_p, zeros_like_array)
+_masking_defreducer(reduce_sum_p,
+                    lambda shape, dtype: onp.broadcast_to(onp.array(0, dtype), shape))
 
 
 def _reduce_prod_shape_rule(operand, axes):
@@ -4010,7 +4013,8 @@ tie_in_p.def_abstract_eval(lambda x, y: y)
 xla.translations[tie_in_p] = lambda c, x, y: y
 ad.deflinear(tie_in_p, _tie_in_transpose_rule)
 batching.primitive_batchers[tie_in_p] = _tie_in_batch_rule
-
+masking.shape_rules[tie_in_p] = lambda shape_exprs: shape_exprs[1]
+masking.masking_rules[tie_in_p] = lambda vals, logical_shapes: vals[1]
 
 shaped_identity_p = Primitive('shape_id')
 shaped_identity_p.def_impl(lambda x, shape: x)
@@ -4260,6 +4264,9 @@ def conv_transpose_shape_tuple(lhs_shape, rhs_shape, window_strides, padding,
 
 def _check_shapelike(fun_name, arg_name, obj):
   """Check that `obj` is a shape-like value (e.g. tuple of nonnegative ints)."""
+  if (type(obj) is masking.ShapeExpr
+      or type(obj) is tuple and any(type(d) is masking.Poly for d in obj)):
+    return obj
   if not isinstance(obj, (tuple, list, onp.ndarray)):
     msg = "{} {} must be of type tuple/list/ndarray, got {}."
     raise TypeError(msg.format(fun_name, arg_name, type(obj)))

@@ -357,6 +357,41 @@ class APITest(jtu.JaxTestCase):
                 (onp.array([0., 0.]), onp.array([0., 2.])))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @jtu.skip_on_devices("tpu")
+  def test_issue1372(self):
+    def quad(x):
+      return np.dot(x, x)
+
+    def f(x, u):
+      return quad(x) + quad(u)
+
+    x, u = np.ones(5), np.ones(2)
+
+    rev = jacrev
+    fwd = jacfwd
+
+    # Diagonal entries
+    self.assertEqual(rev(rev(f, 0), 0)(x, u).shape, (5, 5))
+    self.assertEqual(rev(fwd(f, 0), 0)(x, u).shape, (5, 5))
+    self.assertEqual(fwd(rev(f, 0), 0)(x, u).shape, (5, 5))
+    self.assertEqual(fwd(fwd(f, 0), 0)(x, u).shape, (5, 5))
+    self.assertEqual(rev(rev(f, 1), 1)(x, u).shape, (2, 2))
+    self.assertEqual(rev(fwd(f, 1), 1)(x, u).shape, (2, 2))
+    self.assertEqual(fwd(rev(f, 1), 1)(x, u).shape, (2, 2))
+    self.assertEqual(fwd(fwd(f, 1), 1)(x, u).shape, (2, 2))
+
+    # Off-diagonal entries by reverse-mode on the outside
+    self.assertEqual(rev(rev(f, 1), 0)(x, u).shape, (2, 5))
+    self.assertEqual(rev(fwd(f, 1), 0)(x, u).shape, (2, 5))
+    self.assertEqual(rev(rev(f, 0), 1)(x, u).shape, (5, 2))
+    self.assertEqual(rev(fwd(f, 0), 1)(x, u).shape, (5, 2))
+
+    # Off-diagonal entries by forward-mode on the outside
+    self.assertEqual(fwd(rev(f, 1), 0)(x, u).shape, (2, 5))
+    self.assertEqual(fwd(fwd(f, 1), 0)(x, u).shape, (2, 5))
+    self.assertEqual(fwd(rev(f, 0), 1)(x, u).shape, (5, 2))
+    self.assertEqual(fwd(fwd(f, 0), 1)(x, u).shape, (5, 2))
+
   def test_disable_jit(self):
     effects = []
 
@@ -885,12 +920,11 @@ class APITest(jtu.JaxTestCase):
     xla_comp = api.xla_computation(f)
     xla_comp(np.arange(8)).GetHloText()  # doesn't crash
 
-  def test_jit_device_assignment(self):
-    raise unittest.SkipTest("Temporarily disabled while device API is being changed.")
-    device_num = xb.device_count() - 1
-    x = api.jit(lambda x: x, device_assignment=device_num)(3.)
+  def test_jit_device(self):
+    device = xb.devices()[-1]
+    x = api.jit(lambda x: x, device=device)(3.)
     self.assertIsInstance(x, DeviceArray)
-    self.assertEqual(x.device_buffer.device(), device_num)
+    self.assertEqual(x.device_buffer.device(), device)
 
   def test_jit_of_noncallable(self):
     jtu.check_raises_regexp(lambda: api.jit(3), TypeError,

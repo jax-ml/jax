@@ -17,14 +17,15 @@ from __future__ import division
 from __future__ import print_function
 
 from functools import partial
+from unittest import SkipTest
 
 import numpy as onp
 from absl.testing import absltest
 from absl.testing import parameterized
 
 from jax import test_util as jtu
-from jax.interpreters.masking import ShapeError
-from jax import mask, vmap, jit, Shape, shapecheck, s_
+from jax.interpreters.masking import ShapeError, shape_as_value, parse_spec
+from jax import mask, vmap, jit, grad, shapecheck
 from jax import lax
 import jax.numpy as np
 
@@ -37,48 +38,53 @@ config.parse_flags_with_absl()
 
 class MaskingTest(jtu.JaxTestCase):
 
-  def test_shape_parsing(self):
-    self.assertEqual(str(Shape('(m, n)')),    'ShapeExpr(m, n)')
-    self.assertEqual(str(Shape('(m * n)')),   'ShapeExpr(m n)')
-    self.assertEqual(str(Shape('m * n')),     'ShapeExpr(m n)')
-    self.assertEqual(str(Shape('(m * n,)')),  'ShapeExpr(m n)')
-    self.assertEqual(str(Shape('(3, m)')),    'ShapeExpr(3, m)')
-    self.assertEqual(str(Shape('(3 * m)')),   'ShapeExpr(3 m)')
-    self.assertEqual(str(Shape('m')),         'ShapeExpr(m)')
-    self.assertEqual(str(Shape('')),          'ShapeExpr()')
-    self.assertEqual(str(Shape('m + n')),     'ShapeExpr(m + n)')
-    self.assertEqual(str(Shape('m + n * k')), 'ShapeExpr(m + k n)')
-    self.assertEqual(str(Shape('m + 3 * k')), 'ShapeExpr(3 k + m)')
+  @parameterized.parameters([
+      ['(m, n)', 'ShapeSpec(m, n)'],
+      ['(m * n)', 'ShapeSpec(m n)'],
+      ['m * n', 'ShapeSpec(m n)'],
+      ['(m * n,)', 'ShapeSpec(m n)'],
+      ['(3, m)', 'ShapeSpec(3, m)'],
+      ['(3 * m)', 'ShapeSpec(3 m)'],
+      ['m', 'ShapeSpec(m)'],
+      ['', 'ShapeSpec()'],
+      ['m + n', 'ShapeSpec(m + n)'],
+      ['m + n * k', 'ShapeSpec(m + k n)'],
+      ['m + 3 * k', 'ShapeSpec(3 k + m)'],
+      ['', 'ShapeSpec()'],
+      ['_', 'ShapeSpec(_)'],
+  ])
+  def test_shape_parsing(self, spec, ans):
+    self.assertEqual(str(parse_spec(spec)), ans)
 
   def test_dot_shape_checking(self):
-    @shapecheck((s_['m', 'n'], s_['n']), s_['m'])
+    @shapecheck(['(m, n)', 'n'], 'm')
     def matvec(A, b):
       return np.dot(A, b)
 
     def thunk():
-      @shapecheck((s_['m', 'n'], s_['n']), s_['m'])
+      @shapecheck(['(m, n)', 'n'], 'm')
       def matvec(A, b):
         return np.dot(b, A)
     self.assertRaisesRegex(ShapeError, "", thunk)
 
   def test_flatten_shape_checking(self):
-    @shapecheck((s_['m', 'n'],), s_['m * n'])
+    @shapecheck(['(m, n)'], 'm * n')
     def flatten(x):
       return lax.reshape(x, (x.shape[0] * x.shape[1],))
 
   def test_concatenate_shape_checking(self):
-    @shapecheck((s_['m'], s_['n'], s_['m']), s_['3*m + n'])
+    @shapecheck(['m', 'n', 'm'], '3*m + n')
     def cat(x, y, z):
       return lax.concatenate([x, y, x, z], 0)
 
     def thunk():
-      @shapecheck((s_['m'], s_['n'], s_['m']), s_['3*m + n'])
+      @shapecheck(['m', 'n', 'm'], '3*m + n')
       def cat(x, y, z):
         return lax.concatenate([x, y, x], 0)
     self.assertRaisesRegex(ShapeError, "", thunk)
 
   def test_sum(self):
-    @partial(mask, in_shapes=[Shape('n')], out_shape=Shape())
+    @partial(mask, in_shapes=['n'], out_shape='')
     def padded_sum(x):
       return np.sum(x)
 
@@ -91,7 +97,7 @@ class MaskingTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_sum_vmap(self):
-    @partial(mask, in_shapes=[Shape('n')], out_shape=Shape())
+    @partial(mask, in_shapes=['n'], out_shape='')
     def padded_sum(x):
       return np.sum(x)
 
@@ -100,7 +106,7 @@ class MaskingTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_add(self):
-    @partial(mask, in_shapes=[Shape('n'), Shape('n')], out_shape=Shape('n'))
+    @partial(mask, in_shapes=['n', 'n'], out_shape='n')
     def addvecs(x, y):
       return x + y
 
@@ -114,7 +120,7 @@ class MaskingTest(jtu.JaxTestCase):
     self.assertRaisesRegex(ShapeError, "", thunk)
 
   def test_scan(self):
-    @partial(mask, in_shapes=[Shape('n')], out_shape=Shape())
+    @partial(mask, in_shapes=['n'], out_shape='')
     def cumsum(arr):
       out, _ = lax.scan(lambda c, x: (c + x, ()), 0, arr)
       return out
@@ -124,7 +130,7 @@ class MaskingTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_scan_vmap(self):
-    @partial(mask, in_shapes=[Shape('n')], out_shape=Shape())
+    @partial(mask, in_shapes=['n'], out_shape='')
     def cumsum(arr):
       out, _ = lax.scan(lambda c, x: (c + x, ()), 0, arr)
       return out
@@ -134,7 +140,7 @@ class MaskingTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_scan_jit(self):
-    @partial(mask, in_shapes=[Shape('n')], out_shape=Shape())
+    @partial(mask, in_shapes=['n'], out_shape='')
     def cumsum(arr):
       out, _ = lax.scan(lambda c, x: (c + x, ()), 0, arr)
       return out
@@ -160,8 +166,7 @@ class MaskingTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_concatenate(self):
-    @partial(mask, in_shapes=[Shape('n'), Shape('m'), Shape('n')],
-            out_shape=Shape('m + 2 * n'))
+    @partial(mask, in_shapes=['n', 'm', 'n'], out_shape='m + 2 * n')
     def cat(x, y, z):
       return lax.concatenate([x, y, z], 0)
 
@@ -171,8 +176,7 @@ class MaskingTest(jtu.JaxTestCase):
     self.assertAllClose(ans[:4], expected, check_dtypes=False)
 
   def test_dot(self):
-    @partial(mask, in_shapes=[Shape('(m, k)'), Shape(('k, n'))],
-            out_shape=[Shape('(m, n)')])
+    @partial(mask, in_shapes=['(m, k)', '(k, n)'], out_shape='(m, n)')
     def dot(x, y):
       return lax.dot(x, y)
 
@@ -181,6 +185,155 @@ class MaskingTest(jtu.JaxTestCase):
     ans = dot([x, y], dict(m=2, k=2, n=2))
     expected = onp.dot(x[:2, :2], y[:2, :2])
     self.assertAllClose(ans[:2, :2], expected, check_dtypes=False)
+
+  def test_mean(self):
+    @partial(mask, in_shapes=['n'], out_shape='')
+    def padded_sum(x):
+      return np.sum(x) / shape_as_value(x.shape)[0]
+
+    ans = padded_sum([np.array([3, 1, 4, 1, 5])], dict(n=3))
+    expected = 8 / 3
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_monomorphic(self):
+    @partial(mask, in_shapes=['(_, n)'], out_shape='')
+    def padded_sum(x):
+      return np.sum(x)
+
+    ans = padded_sum([np.array([[3, 4], [5, 6]])], dict(n=1))
+    expected = 8
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_monomorphic2(self):
+    @partial(mask, in_shapes=['(_, n)'], out_shape='n')
+    def padded_sum(x):
+      return np.sum(x, axis=0)
+
+    ans = padded_sum([np.array([[3, 4], [5, 6]])], dict(n=2))
+    expected = np.array([8, 10])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_monomorphic3(self):
+    @partial(mask, in_shapes=['(_, n)'], out_shape='_')
+    def padded_sum(x):
+      return np.sum(x, axis=1)
+
+    ans = padded_sum([np.array([[3, 4], [5, 6]])], dict(n=1))
+    expected = np.array([3, 5])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_rnn(self):
+    n = 3
+
+    @partial(mask, in_shapes=['(_, _)', '(t, _)'], out_shape='_')
+    def rnn(W, xs):
+      def step(h, x):
+        new_h = np.dot(W, h) + np.dot(W, x)
+        return new_h, ()
+      predicted, _ = lax.scan(step, np.zeros(n), xs)
+      return predicted
+
+    rng = onp.random.RandomState(0)
+    W = onp.eye(n)
+    xs = rng.randn(10, n)
+    ans = rnn([W, xs], dict(t=4))
+    expected = xs[:4].sum(0)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_rnn_grad(self):
+    n = 3
+
+    @partial(mask, in_shapes=['(_, _)', '(t, _)', '_'], out_shape='')
+    def rnn(W, xs, target):
+      def step(h, x):
+        new_h = np.tanh(np.dot(W, h) + np.dot(W, x))
+        return new_h, ()
+      predicted, _ = lax.scan(step, np.zeros(n), xs)
+      return np.sum((predicted - target)**2)
+
+    rng = onp.random.RandomState(0)
+    W = rng.randn(n, n)
+    xs = rng.randn(10, n)
+    y = rng.randn(n)
+
+    ans = grad(lambda W: rnn([W, xs, y], dict(t=4)))(W)
+
+    def rnn_reference(W, xs, target):
+      h = np.zeros(n)
+      for x in xs:
+        h = np.tanh(np.dot(W, h) + np.dot(W, x))
+      predicted = h
+      return np.sum((predicted - target)**2)
+
+    expected = grad(lambda W: rnn_reference(W, xs[:4], y))(W)
+
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_ragged_batched_rnn(self):
+    n = 3
+
+    @partial(mask, in_shapes=('(_, _)', '(t, _)', '_'), out_shape='')
+    def rnn(W, xs, target):
+      def step(h, x):
+        new_h = np.tanh(np.dot(W, h) + np.dot(W, x))
+        return new_h, ()
+      predicted, _ = lax.scan(step, np.zeros(n), xs)
+      return np.sum((predicted - target)**2)
+
+    rng = onp.random.RandomState(0)
+    W = rng.randn(n, n)
+    seqs = rng.randn(3, 10, n)
+    ts = np.array([2, 5, 4])
+    ys = rng.randn(3, n)
+
+    ans = grad(lambda W: vmap(rnn, ((None, 0, 0), 0))((W, seqs, ys), dict(t=ts)).sum())(W)
+
+    def rnn_reference(W, seqs, targets):
+      total_loss = 0
+      for xs, target in zip(seqs, targets):
+        h = np.zeros(n)
+        for x in xs:
+          h = np.tanh(np.dot(W, h) + np.dot(W, x))
+        predicted = h
+        total_loss = total_loss + np.sum((predicted - target)**2)
+      return total_loss
+
+    seqs_ = [xs[:t] for xs, t in zip(seqs, ts)]
+    expected = grad(lambda W: rnn_reference(W, seqs_, ys).sum())(W)
+
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_nesting(self):
+    raise SkipTest("not yet implemented")
+
+    @partial(mask, in_shapes=['n'], out_shape='')
+    def padded_sum(x):
+      return np.sum(x)
+
+    batched_sum = vmap(padded_sum)
+
+    @partial(mask, in_shapes=['(m, _)', 'm'], out_shape='')
+    def fun(x, ns):
+      return batched_sum([x], dict(n=ns)).sum()
+
+    x = np.array([[3, 1, 4, 1],
+                  [5, 9, 2, 6],
+                  [5, 3, 5, 8]])
+    ns = np.array([2, 3, 2])
+    ans = fun([x, ns], dict(m=2))
+    expected = 3+1 + 5+9+2
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_arange(self):
+    raise SkipTest("not yet implemented")
+
+    @partial(mask, in_shapes=['n'], out_shape='n')
+    def padded_add(x):
+      return x + lax.iota(x.shape[0])
+
+    ans = padded_add([np.array([3, 1, 4, 1, 5])], dict(n=3))
+    expected = onp.array([3, 2, 6])
+    self.assertAllClose(ans[:3], expected, check_dtypes=False)
 
 
 if __name__ == '__main__':

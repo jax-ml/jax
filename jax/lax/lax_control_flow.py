@@ -278,6 +278,16 @@ batching.primitive_batchers[while_p] = _while_loop_batching_rule
 ### cond
 
 def cond(pred, true_operand, true_fun, false_operand, false_fun):
+  """Conditionally apply ``true_fun`` or ``false_fun``.
+
+  Has equivalent semantics to this Python implementation::
+
+    def cond(pred, true_operand, true_fun, false_operand, false_fun):
+      if pred:
+        return true_fun(true_operand)
+      else:
+        return false_fun(false_operand)
+  """
   true_ops, true_tree = tree_flatten((true_operand,))
   true_avals = tuple(_map(_abstractify, true_ops))
   true_jaxpr, true_consts, out_tree = _initial_style_jaxpr(true_fun, true_tree, true_avals)
@@ -441,8 +451,9 @@ def scan(f, init, xs):
     raise ValueError(msg.format([x.shape[0] for x in xs_flat]))
 
   carry_avals = tuple(_map(_abstractify, init_flat))
-  xs_avals = _map(_abstractify, xs_flat)
-  x_avals = tuple(ShapedArray(aval.shape[1:], aval.dtype) for aval in xs_avals)
+  x_shapes = [masking.padded_shape_as_value(x.shape[1:]) for x in xs_flat]
+  x_dtypes = [x.dtype for x in xs_flat]
+  x_avals = tuple(_map(ShapedArray, x_shapes, x_dtypes))
   jaxpr, consts, out_tree = _initial_style_jaxpr(f, in_tree, carry_avals + x_avals)
   carry_avals_out, y_avals = split_list(jaxpr.out_avals, [num_carry])
   if tuple(carry_avals_out) != carry_avals:
@@ -699,10 +710,6 @@ def _scan_batching_rule(args, dims, forward, length, jaxpr, num_consts,
 def _scan_polymorphic_shape_rule(shape_exprs, forward, length, jaxpr,
                                  num_consts, num_carry, linear):
   const_shexprs, init_shexprs, xs_shexprs = split_list(shape_exprs, [num_consts, num_carry])
-  if (any(any(type(d) is Id for d in shexpr) for shexpr in const_shexprs)
-      or any(any(type(d) is Id for d in shexpr) for shexpr in init_shexprs)
-      or any(any(type(d) is Id for d in shexpr[1:]) for shexpr in xs_shexprs)):
-    raise NotImplementedError
   _, y_avals = split_list(jaxpr.out_avals, [num_carry])
   ys_shapes = [ShapeExpr(length, *y_aval.shape) for y_aval in y_avals]
   return init_shexprs + ys_shapes
@@ -751,7 +758,7 @@ def scan_bind(*args, **kwargs):
   xs_avals = _map(partial(_promote_aval_rank, length), x_avals)
   assert all(_map(typecheck, consts_avals, consts))
   assert all(_map(typecheck, init_avals, init))
-  assert all(_map(typecheck, xs_avals, xs))
+  # assert all(_map(typecheck, xs_avals, xs))
   # check that output carry type matches input carry type
   carry_avals, _ = split_list(jaxpr.out_avals, [num_carry])
   assert all(_map(typematch, init_avals, carry_avals))
@@ -866,7 +873,7 @@ def root(f, initial_guess, solve, tangent_solve):
   in_tree, = treedef_children(in_args_tree)
   if in_tree != out_tree:
     raise TypeError(
-        "f output pytree structure must match initial_guess, got {} and {}."
+        "f() output pytree structure must match initial_guess, got {} and {}."
         .format(out_tree, in_tree)
     )
   out_flat = root_p.bind(*itertools.chain(consts, guess_flat),
@@ -894,7 +901,7 @@ def _root_impl(*args, **kwargs):
   out_flat, out_tree = tree_flatten(out)
   if out_tree != tree:
     raise TypeError(
-        "solve output pytree structure must match initial_guess, got {} and {}"
+        "solve() output pytree structure must match initial_guess, got {} and {}"
         .format(out_tree, tree))
 
   return out_flat
@@ -902,33 +909,39 @@ def _root_impl(*args, **kwargs):
 
 def _root_jvp(
     primals, tangents, tree, num_consts, jaxpr, solve, tangent_solve):
-  solution = root_p.bind(*primals, tree=tree, num_consts=num_consts,
-                         jaxpr=jaxpr, solve=solve, tangent_solve=tangent_solve)
+  params = primals[:num_consts]
+  solution = tuple(
+      root_p.bind(*primals, tree=tree, num_consts=num_consts,
+                  jaxpr=jaxpr, solve=solve, tangent_solve=tangent_solve)
+  )
+
+  params_dot = tangents[:num_consts]
 
   # F(u(m), m) = 0  # system of equations in m
   # ∂_0 F(u(m), m) ∂ u(m) + ∂_1 F(u(m), m) = 0
   # ∂ u(m) = - (∂_0 F(u*, m))^{-1} ∂_1 F(u*, m)
-  unchecked_zeros, f_jvp = ad.vjp(
-      lu.wrap_init(core.jaxpr_as_fun(jaxpr)),
-      primals[:num_consts] + tuple(solution)
+  unchecked_zeros, f_jvp = api.linearize(
+      core.jaxpr_as_fun(jaxpr), *(params + solution)
   )
-  f_linearized = partial(
-      apply_flat_fun_nokwargs,
-      lambda *xs: f_jvp(*xs)[num_consts:],
-      (tree, tree),
-  )
-  params_jvp = tree_unflatten(
-      tree, f_jvp(*tangents[:num_consts])[:num_consts])
-  negative_grad = tangent_solve(f_linearized, params_jvp)
 
-  negative_grad_flat, out_tree = tree_flatten(negative_grad)
+  params_zeros = tuple(_map(ad_util.zeros_like_jaxval, params))
+  solution_zeros = tuple(_map(ad_util.zeros_like_jaxval, solution))
+
+  f_linearized_at_solution = partial(
+      apply_flat_fun_nokwargs, partial(f_jvp, *params_zeros), (tree, tree),
+  )
+  rhs = tree_unflatten(tree, f_jvp(*(params_dot + solution_zeros)))
+  solution_dot = tree_map(
+      operator.neg, tangent_solve(f_linearized_at_solution, rhs)
+  )
+
+  solution_dot_flat, out_tree = tree_flatten(solution_dot)
   if out_tree != tree:
     raise TypeError(
-        "tangent_solve output pytree structure must match initial_guess, "
+        "tangent_solve() output pytree structure must match initial_guess, "
         "got {} and {}".format(out_tree, tree))
 
-  grad_solution = _map(operator.neg, negative_grad_flat)
-  return solution, grad_solution
+  return solution, solution_dot_flat
 
 def _root_batch(args, dims, **params):
   return batching.batch_fun(lu.wrap_init(_root_impl, params), args, dims)
@@ -937,6 +950,7 @@ def _root_batch(args, dims, **params):
 root_p = core.Primitive('root')
 root_p.multiple_results = True
 root_p.def_impl(_root_impl)
+root_p.def_abstract_eval(_root_abstract_eval)
 ad.primitive_jvps[root_p] = _root_jvp
 xla.initial_style_translations[root_p] = xla.lower_fun(_root_impl, initial_style=True)
 batching.primitive_batchers[root_p] = _root_batch

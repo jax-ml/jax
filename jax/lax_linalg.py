@@ -212,7 +212,7 @@ def eigh_impl(operand, lower):
 
 def eigh_translation_rule(c, operand, lower):
   raise NotImplementedError(
-    "Symmetric eigendecomposition is only implemented on the CPU backend")
+    "Symmetric eigendecomposition is only implemented on the CPU and GPU backends")
 
 def eigh_abstract_eval(operand, lower):
   if isinstance(operand, ShapedArray):
@@ -418,7 +418,7 @@ def _lu_unblocked(a):
   """Unblocked LU decomposition, as a rolled loop."""
   m, n = a.shape
   def body(k, state):
-    pivot, perm, a, error = state
+    pivot, perm, a = state
     m_idx = np.arange(m)
     n_idx = np.arange(n)
 
@@ -436,23 +436,21 @@ def _lu_unblocked(a):
 
     # a[k+1:, k] /= a[k, k], adapted for loop-invariant shapes
     x = a[k, k]
-    error = error | lax.eq(x, np._constant_like(a, 0))
     a = ops.index_update(a, ops.index[:, k],
                          np.where(m_idx > k, a[:, k] / x, a[:, k]))
 
     # a[k+1:, k+1:] -= np.outer(a[k+1:, k], a[k, k+1:])
     a = a - np.where((m_idx[:, None] > k) & (n_idx > k),
                      np.outer(a[:, k], a[k, :]), np.array(0, dtype=a.dtype))
-    return pivot, perm, a, error
+    return pivot, perm, a
 
   pivot = np.zeros((min(m, n),), dtype=np.int32)
   perm = np.arange(m, dtype=np.int32)
-  error = np.array(False, np.bool_)
   if m == 0 and n == 0:
     # If the array is empty, the loop body never executes but tracing it to a
     # jaxpr fails because the indexing cannot succeed.
-    return (pivot, perm, a, error)
-  return lax.fori_loop(0, min(m, n), body, (pivot, perm, a, error))
+    return (pivot, perm, a)
+  return lax.fori_loop(0, min(m, n), body, (pivot, perm, a))
 
 
 def _lu_blocked(a, block_size=32):
@@ -460,11 +458,9 @@ def _lu_blocked(a, block_size=32):
   m, n = a.shape
   r = min(m, n)
   pivot = np.zeros((r,), dtype=np.int32)
-  error = np.array(False, np.bool_)
   for k in range(0, r, block_size):
     b = min(r - k, block_size)
-    block_pivot, perm, lu_block, block_error = _lu_unblocked(a[k:, k:k+b])
-    error = error | block_error
+    block_pivot, perm, lu_block = _lu_unblocked(a[k:, k:k+b])
     a = ops.index_update(a, ops.index[k:, k:k+b], lu_block)
 
     a = ops.index_update(a, ops.index[k:, :k], a[perm + k, :k])
@@ -480,7 +476,6 @@ def _lu_blocked(a, block_size=32):
         a, ops.index[k+b:, k+b:],
         -lax.dot(a[k+b:, k:k+b], a[k:k+b, k+b:],
                  precision=lax.Precision.HIGHEST))
-  a = np.where(error, lax.full_like(a, np.nan), a)
   return pivot, a
 
 def _lu_python(x):
@@ -577,7 +572,7 @@ def _lu_cpu_gpu_translation_rule(getrf_impl, c, operand):
   lu, pivot, info = getrf_impl(c, operand)
   # Subtract 1 from the pivot to get 0-based indices.
   pivot = c.Sub(pivot, c.ConstantS32Scalar(1))
-  ok = c.Eq(info, c.ConstantS32Scalar(0))
+  ok = c.Ge(info, c.ConstantS32Scalar(0))
   lu = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), lu,
                             _nan_like(c, lu))
   return c.Tuple(lu, pivot)
