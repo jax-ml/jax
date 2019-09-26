@@ -587,4 +587,4 @@ class JaxTestCase(parameterized.TestCase):
             for warning in warnings_list
         ):
           self.fail("{} with message {!r} not found in triggered warnings: {}"
-                    .format(expected_warning, expected_regex, warnings))
+                    .format(expected_warning, expected_regex, warnings_list))

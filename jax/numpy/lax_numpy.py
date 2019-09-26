@@ -3177,6 +3177,7 @@ _COERCION_BLACKLIST = frozenset([
     onp.ndim,
     onp.shape,
     onp.iscomplexobj,
+    onp.reshape,
     onp.size,
     onp.transpose,
     onp.moveaxis,
