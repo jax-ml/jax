@@ -2833,23 +2833,24 @@ hanning = _wrap_numpy_nullary_function(onp.hanning)
 # TODO: lower `kaiser` via lax to allow non-constant beta values.
 kaiser = _wrap_numpy_nullary_function(onp.kaiser)
 
+def _gcd_cond_fn(xs):
+  x1, x2 = xs
+  return any(x2 != 0)
+
+def _gcd_body_fn(xs):
+  x1, x2 = xs
+  x1, x2 = (where(x2 != 0, x2, x1),
+            where(x2 != 0, lax.rem(x1, x2), lax._const(x2, 0)))
+  return (where(x1 < x2, x2, x1), where(x1 < x2, x1, x2))
 
 @_wraps(getattr(onp, "gcd", None))
 def gcd(x1, x2):
   if (not issubdtype(_dtype(x1), integer) or
       not issubdtype(_dtype(x2), integer)):
     raise ValueError("Arguments to gcd must be integers.")
-  def cond_fn(xs):
-    x1, x2 = xs
-    return any(x2 != 0)
-  def body_fn(xs):
-    x1, x2 = xs
-    x1, x2 = (where(x2 != 0, x2, x1),
-              where(x2 != 0, lax.rem(x1, x2), lax._const(x2, 0)))
-    return (where(x1 < x2, x2, x1), where(x1 < x2, x1, x2))
   x1, x2 = _promote_dtypes(lax.abs(x1), lax.abs(x2))
   x1, x2 = broadcast_arrays(x1, x2)
-  gcd, _ = lax.while_loop(cond_fn, body_fn, (x1, x2))
+  gcd, _ = lax.while_loop(_gcd_cond_fn, _gcd_body_fn, (x1, x2))
   return gcd
 
 

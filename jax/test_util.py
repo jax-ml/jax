@@ -35,6 +35,7 @@ from .config import flags
 from .util import partial
 from .tree_util import tree_multimap, tree_all, tree_map, tree_reduce
 from .lib import xla_bridge
+from .interpreters import xla
 
 
 FLAGS = flags.FLAGS
@@ -565,6 +566,13 @@ class JaxTestCase(parameterized.TestCase):
 
     python_should_be_executing = True
     python_ans = fun(*args)
+
+    cache_misses = xla.xla_primitive_callable.cache_info().misses
+    python_ans = fun(*args)
+    self.assertEqual(
+        cache_misses, xla.xla_primitive_callable.cache_info().misses,
+        "Compilation detected during second call of {} in op-by-op "
+        "mode.".format(fun))
 
     cfun = api.jit(wrapped_fun)
     python_should_be_executing = True

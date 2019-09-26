@@ -300,19 +300,17 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testForiLoopBasic(self):
+    def body_fun(i, tot):
+      return lax.add(tot, i)
+
     def count(num):
-      def body_fun(i, tot):
-        return lax.add(tot, i)
       return lax.fori_loop(0, num, body_fun, 0)
 
-    cfun = api.jit(count)
-
     self.assertEqual(count(2), 1)
-    self.assertEqual(count(2), cfun(2))
     self.assertEqual(count(3), 3)
-    self.assertEqual(count(3), cfun(3))
     self.assertEqual(count(4), 6)
-    self.assertEqual(count(4), cfun(4))
+    for args_maker in [lambda: [2], lambda: [3], lambda: [4]]:
+      self._CompileAndCheck(count, args_maker, True)
 
   def testForiLoopClosure(self):
     def count(num):
