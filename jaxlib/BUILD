@@ -17,7 +17,7 @@
 load("@org_tensorflow//tensorflow/core/platform:default/build_config.bzl", "pyx_library")
 load("@org_tensorflow//tensorflow:tensorflow.bzl", "pybind_extension")
 
-licenses(["notice"])  # Apache 2
+licenses(["notice"])
 
 package(default_visibility = ["//visibility:public"])
 
