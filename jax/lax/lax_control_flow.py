@@ -79,6 +79,20 @@ class FixedPointError(Exception): pass
 
 ### fori_loop and while_loop
 
+@cache()
+def _make_fori_cond(upper):
+  def while_cond_fun(loop_carry):
+    i, _ = loop_carry
+    return lax.lt(i, upper)
+  return while_cond_fun
+
+@cache()
+def _make_fori_body(body_fun):
+  def while_body_fun(loop_carry):
+    i, x = loop_carry
+    return lax.add(i, lax._const(i, 1)), body_fun(i, x)
+  return while_body_fun
+
 def fori_loop(lower, upper, body_fun, init_val):
   """Loop from ``lower`` to ``upper`` by reduction to ``while_loop``.
 
@@ -108,15 +122,8 @@ def fori_loop(lower, upper, body_fun, init_val):
   Returns:
     Loop value from the final iteration, of type ``a``.
   """
-  def while_cond_fun(loop_carry):
-    i, _ = loop_carry
-    return lax.lt(i, upper)
-
-  def while_body_fun(loop_carry):
-    i, x = loop_carry
-    return lax.add(i, lax._const(i, 1)), body_fun(i, x)
-
-  _, result = while_loop(while_cond_fun, while_body_fun, (lower, init_val))
+  _, result = while_loop(_make_fori_cond(int(upper)),
+                         _make_fori_body(body_fun), (lower, init_val))
   return result
 
 
