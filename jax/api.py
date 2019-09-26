@@ -82,7 +82,7 @@ class _ThreadLocalState(threading.local):
 
 _thread_local_state = _ThreadLocalState()
 
-def jit(fun, static_argnums=(), device_assignment=None, backend=None):
+def jit(fun, static_argnums=(), device=None, backend=None):
   """Sets up `fun` for just-in-time compilation with XLA.
 
   Args:
@@ -100,10 +100,10 @@ def jit(fun, static_argnums=(), device_assignment=None, backend=None):
       different values for these constants will trigger recompilation. If the
       jitted function is called with fewer positional arguments than indicated
       by `static_argnums` then an error is raised. Defaults to ().
-    device_assignment: This is an experimental feature and the API is likely to
-      change. Optional, an int specifying the device ordinal for which to compile the
-      function. The default is inherited from XLA's DeviceAssignment logic and is
-      usually to use device 0.
+    device: This is an experimental feature and the API is likely to change.
+      Optional, the Device the jitted function will run on. (Available devices
+      can be retrieved via ``jax.devices()``.) The default is inherited from
+      XLA's DeviceAssignment logic and is usually to use ``jax.devices()[0]``.
     backend: This is an experimental feature and the API is likely to change.
       Optional, a string representing the xla backend. 'cpu','gpu', or 'tpu'.
 
@@ -124,8 +124,6 @@ def jit(fun, static_argnums=(), device_assignment=None, backend=None):
    -0.8574326  -0.7823267   0.7682731   0.59566754]
   """
   _check_callable(fun)
-  if isinstance(device_assignment, int):
-    device_assignment = (device_assignment,)
   if isinstance(static_argnums, int):
     static_argnums = (static_argnums,)
 
@@ -146,7 +144,7 @@ def jit(fun, static_argnums=(), device_assignment=None, backend=None):
     args_flat, in_tree = tree_flatten((dyn_args, kwargs))
     _check_args(args_flat)
     flat_fun, out_tree = flatten_fun(f, in_tree)
-    out = xla.xla_call(flat_fun, *args_flat, device_assignment=device_assignment, backend=backend)
+    out = xla.xla_call(flat_fun, *args_flat, device=device, backend=backend)
     return tree_unflatten(out_tree(), out)
 
   jitted_name =  "jit({}, static_argnums={})"

@@ -538,6 +538,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     jac0 = jax.jacobian(np.linalg.solve, argnums=0)(A[0], b[0])
     jac1 = jax.jacobian(np.linalg.solve, argnums=1)(A[0], b[0])
 
+  @jtu.skip_on_devices("tpu")  # TODO(phawkins): No eigh implementation on TPU.
   def testIssue1383(self):
     seed = jax.random.PRNGKey(0)
     tmp = jax.random.uniform(seed, (2,2))

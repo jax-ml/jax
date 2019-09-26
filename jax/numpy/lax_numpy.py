@@ -1228,6 +1228,20 @@ nanmax = _make_nan_reduction(onp.nanmax, max, -inf, nan_if_all_nan=True)
 nansum = _make_nan_reduction(onp.nansum, sum, 0, nan_if_all_nan=False)
 nanprod = _make_nan_reduction(onp.nanprod, prod, 1, nan_if_all_nan=False)
 
+@_wraps(onp.nanmean)
+def nanmean(a, axis=None, dtype=None, out=None, keepdims=False):
+  if out is not None:
+    raise ValueError("nanmean does not support the `out` argument.")
+  if (onp.issubdtype(lax._dtype(a), onp.bool_) or
+      onp.issubdtype(lax._dtype(a), onp.integer)):
+    return mean(a, axis, dtype, out, keepdims)
+  if dtype is None:
+    dtype = lax._dtype(a)
+  nan_mask = logical_not(isnan(a))
+  normalizer = sum(nan_mask, axis=axis, dtype=int32, keepdims=keepdims)
+  normalizer = lax.convert_element_type(normalizer, dtype)
+  td = lax.div(nansum(a, axis, dtype=dtype, keepdims=keepdims), normalizer)
+  return td
 
 def _make_cumulative_reduction(onp_reduction, window_reduce, init_val,
                                squash_nan=False):
@@ -2819,23 +2833,24 @@ hanning = _wrap_numpy_nullary_function(onp.hanning)
 # TODO: lower `kaiser` via lax to allow non-constant beta values.
 kaiser = _wrap_numpy_nullary_function(onp.kaiser)
 
+def _gcd_cond_fn(xs):
+  x1, x2 = xs
+  return any(x2 != 0)
+
+def _gcd_body_fn(xs):
+  x1, x2 = xs
+  x1, x2 = (where(x2 != 0, x2, x1),
+            where(x2 != 0, lax.rem(x1, x2), lax._const(x2, 0)))
+  return (where(x1 < x2, x2, x1), where(x1 < x2, x1, x2))
 
 @_wraps(getattr(onp, "gcd", None))
 def gcd(x1, x2):
   if (not issubdtype(_dtype(x1), integer) or
       not issubdtype(_dtype(x2), integer)):
     raise ValueError("Arguments to gcd must be integers.")
-  def cond_fn(xs):
-    x1, x2 = xs
-    return any(x2 != 0)
-  def body_fn(xs):
-    x1, x2 = xs
-    x1, x2 = (where(x2 != 0, x2, x1),
-              where(x2 != 0, lax.rem(x1, x2), lax._const(x2, 0)))
-    return (where(x1 < x2, x2, x1), where(x1 < x2, x1, x2))
   x1, x2 = _promote_dtypes(lax.abs(x1), lax.abs(x2))
   x1, x2 = broadcast_arrays(x1, x2)
-  gcd, _ = lax.while_loop(cond_fn, body_fn, (x1, x2))
+  gcd, _ = lax.while_loop(_gcd_cond_fn, _gcd_body_fn, (x1, x2))
   return gcd
 
 
