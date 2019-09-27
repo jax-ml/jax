@@ -290,7 +290,21 @@ def cond(pred, true_operand, true_fun, false_operand, false_fun):
         return true_fun(true_operand)
       else:
         return false_fun(false_operand)
+
+  Pred has to be a scalar type, collection types (list, tuple) are not supported
+
   """
+
+  if len(onp.shape(pred)) != 0:
+    raise TypeError("Pred must be a scalar, got {} of shape {}".format(pred, onp.shape(pred)))
+
+  pred_dtype = onp.result_type(pred)
+  if pred_dtype.kind != 'b':
+    if pred_dtype.kind in 'iuf':
+      pred = pred != 0
+    else:
+      msg = ("Pred type must be either boolean or number, got {}")
+      raise TypeError(msg.format(pred_dtype))
   true_ops, true_tree = tree_flatten((true_operand,))
   true_avals = tuple(_map(_abstractify, true_ops))
   true_jaxpr, true_consts, out_tree = _initial_style_jaxpr(true_fun, true_tree, true_avals)
