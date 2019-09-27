@@ -181,6 +181,13 @@ def devices(backend=None):
   return get_backend(backend).devices()
 
 
+def local_devices(host_id=None, backend=None):
+  """Returns a list of devices local to a given host (this host by default)."""
+  if host_id is None:
+    host_id = get_backend(backend).host_id()
+  return [d for d in devices(backend) if d.host_id == host_id]
+
+
 def host_id(backend=None):
   """Returns the integer host ID of this host.
 
@@ -197,8 +204,13 @@ def host_id(backend=None):
   return get_backend(backend).host_id()
 
 
-def host_count():
-  return len(set(d.host_id for d in devices()))
+def host_ids(backend=None):
+  """Returns a list of all host IDs."""
+  return list(set(d.host_id for d in devices(backend)))
+
+
+def host_count(backend=None):
+  return len(host_ids(backend))
 
 
 ### utility functions
