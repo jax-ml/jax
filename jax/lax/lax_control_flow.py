@@ -935,9 +935,15 @@ def _root_jvp(
 
   params_dot = tangents[:num_consts]
 
-  # F(u(m), m) = 0  # system of equations in m
-  # ∂_0 F(u(m), m) ∂ u(m) + ∂_1 F(u(m), m) = 0
-  # ∂ u(m) = - (∂_0 F(u*, m))^{-1} ∂_1 F(u*, m)
+  # F(m, u) = 0      # system of equations in u, parameterized by m
+  #                  # solution is u*(m) defined in a neighborhood
+  # F(m, u*(m)) = 0  # satisfied in a neighborhood
+  #
+  # ∂_0 F(m, u*(m)) + ∂_1 F(m, u*(m)) ∂ u*(m) = 0       # implied by line above
+  # ∂ u*(m) = - (∂_1 F(m, u*(m)))^{-1} ∂_0 F(m, u*(m))  # rearrange
+  #
+  # ∂ u*(m)[v] = - (∂_1 F(m, u*(m)))^{-1} [∂_0 F(m, u*(m))[v]]  # jvp
+
   unchecked_zeros, f_jvp = api.linearize(
       core.jaxpr_as_fun(jaxpr), *(params + solution)
   )
