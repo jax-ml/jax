@@ -39,7 +39,6 @@ from jax.interpreters import batching
 from jax.interpreters import masking
 from jax.lib import xla_bridge as xb
 from jax.lib import xla_client
-from ..numpy import lax_numpy
 from jax.util import (partial, unzip2, safe_map, safe_zip, split_list,
                       split_dict, cache)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
@@ -291,12 +290,11 @@ def cond(pred, true_operand, true_fun, false_operand, false_fun):
   Pred has to be a scalar type, collection types (list, tuple) are not supported
 
   """
-  pred_array = lax_numpy.array(pred)
 
-  if len(pred_array.shape) != 0:
-    raise TypeError("Pred must be a scalar, got {} of shape {}".format(pred, pred_array.shape))
+  if len(onp.shape(pred)) != 0:
+    raise TypeError("Pred must be a scalar, got {} of shape {}".format(pred, onp.shape(pred)))
 
-  pred_dtype = pred_array.dtype
+  pred_dtype = onp.result_type(pred)
   if pred_dtype.kind != 'b':
     if pred_dtype.kind in 'iuf':
       pred = pred != 0
