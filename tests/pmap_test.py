@@ -769,13 +769,15 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     f = pmap(lambda x: lax.psum(x, 'i'), axis_name='i',
              devices=xla_bridge.devices())
     with self.assertRaisesRegex(
-        ValueError, r"compiling computation that requires 1 replicas, "
-        r"but \d+ devices were specified"):
+        ValueError, r"Leading axis size of input to pmapped function must "
+        r"equal the number of local devices passed to pmap. Got axis_size=1, "
+        r"num_local_devices=\d."):
       f(np.ones(1))
 
     with self.assertRaisesRegex(
-        ValueError, r"compiling computation that requires \d+ replicas, "
-        r"but \d+ devices were specified"):
+        ValueError, r"Leading axis size of input to pmapped function must "
+        r"equal the number of local devices passed to pmap. Got axis_size=\d, "
+        r"num_local_devices=\d."):
       f(np.ones(xla_bridge.device_count() + 1))
 
   def testNestedPmapsError(self):

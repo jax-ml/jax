@@ -190,6 +190,15 @@ def compile_replicated(jaxpr, backend, axis_name, axis_size, global_axis_size,
     device_assignment = None
   else:
     assert any(d.host_id == xb.host_id() for d in devices)
+    local_devices = [d for d in devices if d.host_id == xb.host_id()]
+    assert len(local_devices) > 0
+    if num_local_replicas != len(local_devices):
+      local_devices_str = ", ".join(map(str, local_devices))
+      raise ValueError(
+          "Leading axis size of input to pmapped function must equal the "
+          "number of local devices passed to pmap. Got axis_size=%d, "
+          "num_local_devices=%d.\n(Local devices passed to pmap: %s)"
+          % (axis_size, len(local_devices), local_devices_str))
     if num_replicas != len(devices):
       raise ValueError("compiling computation that requires %s replicas, "
                        "but %s devices were specified"
