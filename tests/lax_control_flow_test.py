@@ -19,6 +19,7 @@ from __future__ import print_function
 import collections
 from functools import partial
 import itertools
+import re
 from unittest import SkipTest
 
 from absl.testing import absltest
@@ -1008,6 +1009,79 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return x
 
     api.grad(lambda x: jit_run_scan(x))(0.)  # doesn't crash
+
+  def test_root_scalar(self):
+
+    def scalar_solve(f, y):
+      return y / f(1.0)
+
+    def binary_search(func, x0, low=0.0, high=100.0, tolerance=1e-6):
+      del x0  # unused
+
+      def cond(state):
+        low, high = state
+        return high - low > tolerance
+
+      def body(state):
+        low, high = state
+        midpoint = 0.5 * (low + high)
+        update_upper = func(midpoint) > 0
+        low = np.where(update_upper, low, midpoint)
+        high = np.where(update_upper, midpoint, high)
+        return (low, high)
+
+      solution, _ = lax.while_loop(cond, body, (low, high))
+      return solution
+
+    def sqrt_cubed(x, tangent_solve=scalar_solve):
+      f = lambda y: y ** 2 - x ** 3
+      return lax.root(f, 0.0, binary_search, tangent_solve)
+
+    value, grad = api.value_and_grad(sqrt_cubed)(5.0)
+    self.assertAllClose(value, 5 ** 1.5, check_dtypes=False)
+    self.assertAllClose(grad, api.grad(pow)(5.0, 1.5), check_dtypes=False)
+
+    jtu.check_grads(sqrt_cubed, (5.0,), order=2, rtol=1e-3)
+
+    inputs = np.array([4.0, 5.0])
+    results = api.vmap(sqrt_cubed)(inputs)
+    self.assertAllClose(results, inputs ** 1.5, check_dtypes=False)
+
+    results = api.jit(sqrt_cubed)(5.0)
+    self.assertAllClose(results, 5.0 ** 1.5, check_dtypes=False)
+
+  def test_root_vector(self):
+
+    def oracle(func, x0):
+      del func  # unused
+      return x0
+
+    def vector_solve(f, y):
+      return np.linalg.solve(api.jacobian(f)(y), y)
+
+    def linear_solve(a, b):
+      f = lambda y: np.dot(a, y) - b
+      x0 = np.linalg.solve(a, b)
+      return lax.root(f, x0, oracle, vector_solve)
+
+    rng = onp.random.RandomState(0)
+    a = rng.randn(2, 2)
+    b = rng.randn(2)
+    jtu.check_grads(linear_solve, (a, b), order=2)
+
+  def test_root_errors(self):
+    with self.assertRaisesRegex(TypeError, re.escape("f() output pytree")):
+      lax.root(lambda x: (x, x), 0.0, lambda f, x: x, lambda f, x: x)
+    with self.assertRaisesRegex(TypeError, re.escape("solve() output pytree")):
+      lax.root(lambda x: x, 0.0, lambda f, x: (x, x), lambda f, x: x)
+
+    def dummy_root_usage(x):
+      f = lambda y: x - y
+      return lax.root(f, 0.0, lambda f, x: x, lambda f, x: (x, x))
+
+    with self.assertRaisesRegex(
+        TypeError, re.escape("tangent_solve() output pytree")):
+      api.jvp(dummy_root_usage, (0.0,), (0.0,))
 
 
 if __name__ == '__main__':
