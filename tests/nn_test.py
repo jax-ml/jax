@@ -35,4 +35,4 @@ class NNTest(jtu.JaxTestCase):
     check_grads(nn.softplus, (1e-8,), 4)
   def testSoftplusValue(self):
     val = nn.softplus(89.)
-    self.assertAllClose(val, 89.)
+    self.assertAllClose(val, 89., check_dtypes=False)
