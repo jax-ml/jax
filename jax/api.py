@@ -195,7 +195,8 @@ def disable_jit():
     _thread_local_state.jit_is_disabled = prev_val
 
 
-def xla_computation(fun, static_argnums=(), axis_env=None, backend=None):
+def xla_computation(fun, static_argnums=(), axis_env=None, backend=None,
+                    tuple_args=False):
   """Creates a function that produces its XLA computation given example args.
 
   Args:
@@ -209,6 +210,9 @@ def xla_computation(fun, static_argnums=(), axis_env=None, backend=None):
       applications of ``jax.pmap``. See the examples below.
     backend: This is an experimental feature and the API is likely to change.
       Optional, a string representing the xla backend. 'cpu','gpu', or 'tpu'.
+    tuple_args: Optional, defaults to False. If True, the resulting XLA
+      computation will have a single tuple argument that is unpacked into the
+      specified function arguments.
 
   Returns:
     A wrapped version of ``fun`` that when applied to example arguments returns a
@@ -292,7 +296,7 @@ def xla_computation(fun, static_argnums=(), axis_env=None, backend=None):
     pvals = map(pv_like, jax_args)
     jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
     axis_env_ = make_axis_env(xla.jaxpr_replicas(jaxpr))
-    return xla.build_jaxpr(jaxpr, backend, axis_env_, consts,
+    return xla.build_jaxpr(jaxpr, backend, axis_env_, consts, tuple_args,
                            *map(xla.abstractify, jax_args))
   return computation_maker
 
