@@ -850,6 +850,29 @@ def _memcpy(axis, num, src, dst, offset):
 masking.masking_rules[lax.concatenate_p] = _concat_masking_rule
 
 
+def _flatten_high_level_func(
+    fun, tree, error_template="Expected {}, got {}",
+):
+  """Flatten a higher level function ``f`` of the form ``f(g, x)``.
+
+  ``x``, ``g(x)`` and ``f(g, x)`` all must have the same pytree structure.
+  """
+  def flat_fun(flat_fun2, *args_flat):
+    args = tree_unflatten(tree, args_flat)
+    fun2 = partial(apply_flat_fun_nokwargs, flat_fun2, (tree, tree))
+    out = fun(fun2, args)
+    out_flat, out_tree = tree_flatten(out)
+    if out_tree != tree:
+      raise TypeError(error_template.format(tree, out_tree))
+    return out_flat
+  return flat_fun
+
+
+def _root_tree_error_template(func_name):
+  return (func_name + "() output pytree structure must match initial_guess, "
+          + "got {} and {}.")
+
+
 def root(f, initial_guess, solve, tangent_solve):
   """Differentiably solve for a roots of a function.
 
@@ -888,15 +911,20 @@ def root(f, initial_guess, solve, tangent_solve):
   guess_flat, in_args_tree = tree_flatten((initial_guess,))
   guess_avals = tuple(_map(_abstractify, guess_flat))
   jaxpr, consts, out_tree = _initial_style_jaxpr(f, in_args_tree, guess_avals)
+
   in_tree, = treedef_children(in_args_tree)
   if in_tree != out_tree:
-    raise TypeError(
-        "f() output pytree structure must match initial_guess, got {} and {}."
-        .format(out_tree, in_tree)
-    )
+    raise TypeError(_root_tree_error_template("f").format(out_tree, in_tree))
+
+  solve_flat = _flatten_high_level_func(
+      solve, in_tree, _root_tree_error_template("solve"))
+  tangent_solve_flat = _flatten_high_level_func(
+      tangent_solve, in_tree, _root_tree_error_template("tangent_solve"))
+
   out_flat = root_p.bind(*itertools.chain(consts, guess_flat),
-                         tree=out_tree, num_consts=len(consts),
-                         jaxpr=jaxpr, solve=solve, tangent_solve=tangent_solve)
+                         tree=in_tree, num_consts=len(consts),
+                         jaxpr=jaxpr, solve=solve_flat,
+                         tangent_solve=tangent_solve_flat)
   return tree_unflatten(out_tree, out_flat)
 
 
@@ -908,30 +936,15 @@ def _root_impl(*args, **kwargs):
   tree, num_consts, jaxpr, solve, _ = split_dict(
       kwargs, ['tree', 'num_consts', 'jaxpr', 'solve', 'tangent_solve'])
 
-  f = partial(
-      apply_flat_fun_nokwargs,
-      partial(core.jaxpr_as_fun(jaxpr), *args[:num_consts]),
-      (tree, tree),
-  )
-  initial_guess = tree_unflatten(tree, args[num_consts:])
-  out = solve(f, initial_guess)
-
-  out_flat, out_tree = tree_flatten(out)
-  if out_tree != tree:
-    raise TypeError(
-        "solve() output pytree structure must match initial_guess, got {} and {}"
-        .format(out_tree, tree))
-
-  return out_flat
+  f = partial(core.jaxpr_as_fun(jaxpr), *args[:num_consts])
+  return solve(f, *args[num_consts:])
 
 
 def _root_jvp(
     primals, tangents, tree, num_consts, jaxpr, solve, tangent_solve):
   params = primals[:num_consts]
-  solution = tuple(
-      root_p.bind(*primals, tree=tree, num_consts=num_consts,
-                  jaxpr=jaxpr, solve=solve, tangent_solve=tangent_solve)
-  )
+  solution = root_p.bind(*primals, tree=tree, num_consts=num_consts,
+                         jaxpr=jaxpr, solve=solve, tangent_solve=tangent_solve)
 
   params_dot = tangents[:num_consts]
 
@@ -945,27 +958,17 @@ def _root_jvp(
   # ∂ u*(m)[v] = - (∂_1 F(m, u*(m)))^{-1} [∂_0 F(m, u*(m))[v]]  # jvp
 
   unchecked_zeros, f_jvp = api.linearize(
-      core.jaxpr_as_fun(jaxpr), *(params + solution)
+      core.jaxpr_as_fun(jaxpr), *(params + tuple(solution))
   )
 
   params_zeros = tuple(_map(ad_util.zeros_like_jaxval, params))
   solution_zeros = tuple(_map(ad_util.zeros_like_jaxval, solution))
 
-  f_linearized_at_solution = partial(
-      apply_flat_fun_nokwargs, partial(f_jvp, *params_zeros), (tree, tree),
+  rhs = f_jvp(*(params_dot + solution_zeros))
+  solution_dot = _map(
+      operator.neg, tangent_solve(partial(f_jvp, *params_zeros), *rhs)
   )
-  rhs = tree_unflatten(tree, f_jvp(*(params_dot + solution_zeros)))
-  solution_dot = tree_map(
-      operator.neg, tangent_solve(f_linearized_at_solution, rhs)
-  )
-
-  solution_dot_flat, out_tree = tree_flatten(solution_dot)
-  if out_tree != tree:
-    raise TypeError(
-        "tangent_solve() output pytree structure must match initial_guess, "
-        "got {} and {}".format(out_tree, tree))
-
-  return solution, solution_dot_flat
+  return solution, solution_dot
 
 def _root_batch(args, dims, **params):
   return batching.batch_fun(lu.wrap_init(_root_impl, params), args, dims)
