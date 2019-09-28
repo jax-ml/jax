@@ -189,6 +189,9 @@ JAX_REDUCER_RECORDS = [
     op_record("sum", 1, number_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("var", 1, number_dtypes, nonempty_shapes, jtu.rand_default(), []),
     op_record("std", 1, inexact_dtypes, nonempty_shapes, jtu.rand_default(), []),
+    op_record("nanmean", 1, inexact_dtypes, nonempty_shapes, jtu.rand_some_nan(), []),
+    op_record("nanprod", 1, inexact_dtypes, all_shapes, jtu.rand_some_nan(), []),
+    op_record("nansum", 1, number_dtypes, all_shapes, jtu.rand_some_nan(), []),
 ]
 
 JAX_REDUCER_NO_DTYPE_RECORDS = [

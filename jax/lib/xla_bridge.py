@@ -181,6 +181,13 @@ def devices(backend=None):
   return get_backend(backend).devices()
 
 
+def local_devices(host_id=None, backend=None):
+  """Returns a list of devices local to a given host (this host by default)."""
+  if host_id is None:
+    host_id = get_backend(backend).host_id()
+  return [d for d in devices(backend) if d.host_id == host_id]
+
+
 def host_id(backend=None):
   """Returns the integer host ID of this host.
 
@@ -195,6 +202,15 @@ def host_id(backend=None):
     Integer host ID.
   """
   return get_backend(backend).host_id()
+
+
+def host_ids(backend=None):
+  """Returns a list of all host IDs."""
+  return list(set(d.host_id for d in devices(backend)))
+
+
+def host_count(backend=None):
+  return len(host_ids(backend))
 
 
 ### utility functions
@@ -240,19 +256,6 @@ def normalize_to_xla_dtypes(val):
   raise TypeError('Can\'t convert to XLA: {}'.format(val))
 
 
-# TODO(mattjj,frostig): try to remove this function
-def shape_of(value):
-  """Given a Python or XLA value, return its canonicalized XLA Shape."""
-  if hasattr(value, 'shape') and hasattr(value, 'dtype'):
-    return Shape.array_shape(canonicalize_dtype(value.dtype), value.shape)
-  elif onp.isscalar(value):
-    return shape_of(onp.asarray(value))
-  elif isinstance(value, (tuple, list)):
-    return Shape.tuple_shape(tuple(shape_of(elt) for elt in value))
-  else:
-    raise TypeError('Unexpected type: {}'.format(type(value)))
-
-
 class _JaxComputationBuilder(xla_client.ComputationBuilder):
   """Base class implementing all of JaxComputationBuilder.
 
@@ -266,10 +269,6 @@ class _JaxComputationBuilder(xla_client.ComputationBuilder):
   def Build(self, *args, **kwargs):
     return super(_JaxComputationBuilder, self).Build(
         *args, **kwargs)
-
-  def Parameter(self, value, name=None, parameter_num=None):
-    return super(_JaxComputationBuilder, self).ParameterWithShape(
-        shape_of(value), name=name, parameter_num=parameter_num)
 
   def NumpyArrayConstant(self, value, canonicalize_types=True):
     if canonicalize_types:

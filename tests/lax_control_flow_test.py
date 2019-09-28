@@ -301,19 +301,17 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testForiLoopBasic(self):
+    def body_fun(i, tot):
+      return lax.add(tot, i)
+
     def count(num):
-      def body_fun(i, tot):
-        return lax.add(tot, i)
       return lax.fori_loop(0, num, body_fun, 0)
 
-    cfun = api.jit(count)
-
     self.assertEqual(count(2), 1)
-    self.assertEqual(count(2), cfun(2))
     self.assertEqual(count(3), 3)
-    self.assertEqual(count(3), cfun(3))
     self.assertEqual(count(4), 6)
-    self.assertEqual(count(4), cfun(4))
+    for args_maker in [lambda: [2], lambda: [3], lambda: [4]]:
+      self._CompileAndCheck(count, args_maker, True)
 
   def testForiLoopClosure(self):
     def count(num):
@@ -417,6 +415,25 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertEqual(fun(4), cfun(4))
     self.assertEqual(fun(4), (8, 16))
 
+  def testIssue1379(self):
+
+    def fun(pred):
+      return lax.cond(pred, pred, lambda x: (True, x), pred, lambda x: (False, x))
+    
+    @api.jit
+    def cfun(pred):
+      return fun(pred)
+    
+    self.assertEqual(fun(0), cfun(0), (False,0))
+    self.assertEqual(fun(0.), cfun(0.), (False,0.))
+    self.assertEqual(fun(1), cfun(1), (True,1))
+    self.assertEqual(fun(1.), cfun(1.), (True,1.))
+
+    # test that proper errors are raised for wrong types
+    for pred in ["abc", [], [1,2]]:
+      for f in [fun, cfun]:
+        self.assertRaises(TypeError, f, pred)
+    
   def testNestedCond(self):
     def fun(x):
       if x < 2:

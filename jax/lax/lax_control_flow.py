@@ -80,6 +80,17 @@ class FixedPointError(Exception): pass
 
 ### fori_loop and while_loop
 
+def _fori_cond_fun(loop_carry):
+  i, upper, _ = loop_carry
+  return lax.lt(i, upper)
+
+@cache()
+def _fori_body_fun(body_fun):
+  def while_body_fun(loop_carry):
+    i, upper, x = loop_carry
+    return lax.add(i, lax._const(i, 1)), upper, body_fun(i, x)
+  return while_body_fun
+
 def fori_loop(lower, upper, body_fun, init_val):
   """Loop from ``lower`` to ``upper`` by reduction to ``while_loop``.
 
@@ -109,15 +120,8 @@ def fori_loop(lower, upper, body_fun, init_val):
   Returns:
     Loop value from the final iteration, of type ``a``.
   """
-  def while_cond_fun(loop_carry):
-    i, _ = loop_carry
-    return lax.lt(i, upper)
-
-  def while_body_fun(loop_carry):
-    i, x = loop_carry
-    return lax.add(i, lax._const(i, 1)), body_fun(i, x)
-
-  _, result = while_loop(while_cond_fun, while_body_fun, (lower, init_val))
+  _, _, result = while_loop(_fori_cond_fun, _fori_body_fun(body_fun),
+                            (lower, upper, init_val))
   return result
 
 
@@ -287,7 +291,21 @@ def cond(pred, true_operand, true_fun, false_operand, false_fun):
         return true_fun(true_operand)
       else:
         return false_fun(false_operand)
+
+  Pred has to be a scalar type, collection types (list, tuple) are not supported
+
   """
+
+  if len(onp.shape(pred)) != 0:
+    raise TypeError("Pred must be a scalar, got {} of shape {}".format(pred, onp.shape(pred)))
+
+  pred_dtype = onp.result_type(pred)
+  if pred_dtype.kind != 'b':
+    if pred_dtype.kind in 'iuf':
+      pred = pred != 0
+    else:
+      msg = ("Pred type must be either boolean or number, got {}")
+      raise TypeError(msg.format(pred_dtype))
   true_ops, true_tree = tree_flatten((true_operand,))
   true_avals = tuple(_map(_abstractify, true_ops))
   true_jaxpr, true_consts, out_tree = _initial_style_jaxpr(true_fun, true_tree, true_avals)
@@ -917,9 +935,15 @@ def _root_jvp(
 
   params_dot = tangents[:num_consts]
 
-  # F(u(m), m) = 0  # system of equations in m
-  # ∂_0 F(u(m), m) ∂ u(m) + ∂_1 F(u(m), m) = 0
-  # ∂ u(m) = - (∂_0 F(u*, m))^{-1} ∂_1 F(u*, m)
+  # F(m, u) = 0      # system of equations in u, parameterized by m
+  #                  # solution is u*(m) defined in a neighborhood
+  # F(m, u*(m)) = 0  # satisfied in a neighborhood
+  #
+  # ∂_0 F(m, u*(m)) + ∂_1 F(m, u*(m)) ∂ u*(m) = 0       # implied by line above
+  # ∂ u*(m) = - (∂_1 F(m, u*(m)))^{-1} ∂_0 F(m, u*(m))  # rearrange
+  #
+  # ∂ u*(m)[v] = - (∂_1 F(m, u*(m)))^{-1} [∂_0 F(m, u*(m))[v]]  # jvp
+
   unchecked_zeros, f_jvp = api.linearize(
       core.jaxpr_as_fun(jaxpr), *(params + solution)
   )
