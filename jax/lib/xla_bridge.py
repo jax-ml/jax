@@ -256,19 +256,6 @@ def normalize_to_xla_dtypes(val):
   raise TypeError('Can\'t convert to XLA: {}'.format(val))
 
 
-# TODO(mattjj,frostig): try to remove this function
-def shape_of(value):
-  """Given a Python or XLA value, return its canonicalized XLA Shape."""
-  if hasattr(value, 'shape') and hasattr(value, 'dtype'):
-    return Shape.array_shape(canonicalize_dtype(value.dtype), value.shape)
-  elif onp.isscalar(value):
-    return shape_of(onp.asarray(value))
-  elif isinstance(value, (tuple, list)):
-    return Shape.tuple_shape(tuple(shape_of(elt) for elt in value))
-  else:
-    raise TypeError('Unexpected type: {}'.format(type(value)))
-
-
 class _JaxComputationBuilder(xla_client.ComputationBuilder):
   """Base class implementing all of JaxComputationBuilder.
 
@@ -282,10 +269,6 @@ class _JaxComputationBuilder(xla_client.ComputationBuilder):
   def Build(self, *args, **kwargs):
     return super(_JaxComputationBuilder, self).Build(
         *args, **kwargs)
-
-  def Parameter(self, value, name=None, parameter_num=None):
-    return super(_JaxComputationBuilder, self).ParameterWithShape(
-        shape_of(value), name=name, parameter_num=parameter_num)
 
   def NumpyArrayConstant(self, value, canonicalize_types=True):
     if canonicalize_types:
