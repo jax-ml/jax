@@ -921,6 +921,19 @@ class APITest(jtu.JaxTestCase):
     self.assertIn('replica_groups={{0,1},{2,3},{4,5},{6,7}}', c.GetHloText())
     self.assertIn('replica_groups={{0,1,2,3,4,5,6,7}}', c.GetHloText())
 
+  def test_xla_computation_args(self):
+    def foo(x, y, z):
+      return x + y + z
+
+    c = api.xla_computation(foo)(1., 2., 3.)
+    self.assertEqual(len(c.GetProgramShape().parameter_shapes()), 3)
+
+    c = api.xla_computation(foo, tuple_args=True)(1., 2., 3.)
+    param_shapes = c.GetProgramShape().parameter_shapes()
+    self.assertEqual(len(param_shapes), 1)
+    self.assertEqual(param_shapes[0].xla_element_type(),
+                     xb.xla_client.PrimitiveType.TUPLE)
+
   def test_staging_out_multi_replica(self):
     def f(x):
       return api.pmap(np.mean)(x)
