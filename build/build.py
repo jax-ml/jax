@@ -190,6 +190,9 @@ build:cuda --define=using_cuda=true --define=using_cuda_nvcc=true
 
 build --spawn_strategy=standalone
 build --strategy=Genrule=standalone
+
+build --cxxopt=-std=c++14
+build --host_cxxopt=-std=c++14
 """
 
 
