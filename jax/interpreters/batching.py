@@ -26,6 +26,7 @@ import six
 from six.moves import reduce
 
 from .. import core
+from .. import linear_util as lu
 from ..core import Trace, Tracer, new_master
 from ..abstract_arrays import ShapedArray, make_shaped_array, array_types, raise_to_shaped
 from ..ad_util import add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_p
@@ -175,7 +176,7 @@ def vectorized_batcher(prim, batched_args, batch_dims, **params):
 def deftraced(prim):
   def batcher(args, dims, **params):
     return batch_fun(lu.wrap_init(prim.impl, params), args, dims)
-  return batcher
+  primitive_batchers[prim] = batcher
 
 def defbroadcasting(prim):
   primitive_batchers[prim] = partial(broadcast_batcher, prim)
