@@ -1098,7 +1098,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   def test_linear_solve_iterative(self):
 
-    def richardson_iteration(matvec, b, omega=0.5, tolerance=1e-6):
+    def richardson_iteration(matvec, b, omega=0.1, tolerance=1e-4):
       # Equivalent to vanilla gradient descent:
       # https://en.wikipedia.org/wiki/Modified_Richardson_iteration
       def cond(x):
@@ -1110,13 +1110,17 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def matrix_free_solve(matvec, b):
       return lax.linear_solve(matvec, b, richardson_iteration, matrix_free_solve)
 
-    def linear_solve(a, b):
-      return matrix_free_solve(partial(np.dot, a), b)
+    def build_and_solve(a, b):
+      # intentionally non-linear in a and b
+      return matrix_free_solve(partial(np.dot, np.exp(a)), np.cos(b))
 
     rng = onp.random.RandomState(0)
     a = rng.randn(2, 2)
     b = rng.randn(2)
-    jtu.check_grads(linear_solve, (a, b), order=2)
+    expected = np.linalg.solve(np.exp(a), np.cos(b))
+    actual = build_and_solve(a, b)
+    self.assertAllClose(expected, actual, check_dtypes=True)
+    jtu.check_grads(build_and_solve, (a, b), order=2)
 
 
 if __name__ == '__main__':
