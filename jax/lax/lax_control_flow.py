@@ -20,6 +20,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import collections
 import itertools
 import operator
 import threading
@@ -977,7 +978,10 @@ xla.initial_style_translations[root_p] = xla.lower_fun(_root_impl, initial_style
 batching.deftraced(root_p)
 
 
-def linear_solve(matvec, b, solve, tangent_solve=None, cotangent_solve=None):
+_Solvers = collections.namedtuple('_Solvers', 'forward tangent cotangent')
+
+def linear_solve(matvec, b, forward_solve, tangent_solve=None,
+                 cotangent_solve=None, symmetric=True):
   """Differentiably solve the linear map matvec(x)=b for x.
 
   Required invariant:
@@ -986,7 +990,7 @@ def linear_solve(matvec, b, solve, tangent_solve=None, cotangent_solve=None):
       assert all(error == 0)
   """
   if tangent_solve is None:
-    tangent_solve = solve
+    tangent_solve = forward_solve
   if cotangent_solve is None:
     cotangent_solve = tangent_solve
 
@@ -1000,17 +1004,18 @@ def linear_solve(matvec, b, solve, tangent_solve=None, cotangent_solve=None):
         _tree_error_template("matvec", "b").format(out_tree, in_tree)
     )
 
-  solve_flat = _flatten_high_level_func(
-      solve, in_tree, _tree_error_template("solve", "b"))
-  tangent_solve_flat = _flatten_high_level_func(
-      tangent_solve, in_tree, _tree_error_template("tangent_solve", "b"))
-  cotangent_solve_flat = _flatten_high_level_func(
-      tangent_solve, in_tree, _tree_error_template("cotangent_solve", "b"))
+  solve = _Solvers(
+      _flatten_high_level_func(
+          forward_solve, in_tree, _tree_error_template("forward_solve", "b")),
+      _flatten_high_level_func(
+          tangent_solve, in_tree, _tree_error_template("tangent_solve", "b")),
+      _flatten_high_level_func(
+          cotangent_solve, in_tree, _tree_error_template("cotangent_solve", "b")),
+  )
 
   out_flat = linear_solve_p.bind(
-      *itertools.chain(consts, b_flat), num_consts=len(consts),
-      jaxpr=jaxpr, solve=solve_flat, tangent_solve=tangent_solve_flat,
-      cotangent_solve=cotangent_solve_flat)
+      *itertools.chain(consts, b_flat), num_consts=len(consts), jaxpr=jaxpr,
+      solve=solve, symmetric=symmetric)
   return tree_unflatten(out_tree, out_flat)
 
 
@@ -1019,12 +1024,11 @@ def _linear_solve_abstract_eval(*args, **kwargs):
 
 
 def _linear_solve_impl(*args, **kwargs):
-  num_consts, jaxpr, solve, _, _ = split_dict(
-      kwargs, ['num_consts', 'jaxpr', 'solve', 'tangent_solve', 'cotangent_solve'],
-  )
+  num_consts, jaxpr, solve, _ = split_dict(
+      kwargs, ['num_consts', 'jaxpr', 'solve', 'symmetric'])
   params, b = split_list(args, [num_consts])
   matvec = partial(core.jaxpr_as_fun(jaxpr), *params)
-  return solve(matvec, *b)
+  return solve.forward(matvec, *b)
 
 
 def _tangent_linear_map(func, params, params_dot, *x):
@@ -1039,16 +1043,14 @@ def _tangent_linear_map(func, params, params_dot, *x):
   return out_tangent
 
 
-def _linear_solve_jvp(primals, tangents, num_consts, jaxpr, solve,
-                      tangent_solve, cotangent_solve):
+def _linear_solve_jvp(primals, tangents, num_consts, jaxpr, solve, symmetric):
   # A x - b = 0
   # ∂A x + A ∂x - ∂b = 0
   # ∂x = A^{-1} (∂b - ∂A x)
 
   x = linear_solve_p.bind(
-      *primals, num_consts=num_consts,
-      jaxpr=jaxpr, solve=solve, tangent_solve=tangent_solve,
-      cotangent_solve=cotangent_solve)
+      *primals, num_consts=num_consts, jaxpr=jaxpr, solve=solve,
+      symmetric=symmetric)
 
   params, _ = split_list(primals, [num_consts])
   params_dot, b_dot = split_list(tangents, [num_consts])
@@ -1064,7 +1066,7 @@ def _linear_solve_jvp(primals, tangents, num_consts, jaxpr, solve,
     rhs = [-u for u in matvec_dot(*x)]
   else:
     rhs = b_dot
-  x_dot = tangent_solve(matvec, *rhs)
+  x_dot = solve.tangent(matvec, *rhs)
   return x, x_dot
 
 
@@ -1078,14 +1080,16 @@ def _transpose_function(linear_fun, xs):
 
 
 def _linear_solve_transpose_rule(cotangent, *primals, **kwargs):
-  num_consts, jaxpr, _, _, cotangent_solve = split_dict(
-      kwargs, ['num_consts', 'jaxpr', 'solve', 'tangent_solve', 'cotangent_solve'],
-  )
+  num_consts, jaxpr, solve, symmetric = split_dict(
+      kwargs, ['num_consts', 'jaxpr', 'solve', 'symmetric'])
   params, b = split_list(primals, [num_consts])
   assert b == [ad.undefined_primal] * len(b)
-  vecmat = _transpose_function(
-      partial(core.jaxpr_as_fun(jaxpr), *params), cotangent)
-  cotangent_b = cotangent_solve(vecmat, *cotangent)
+  if symmetric:
+    vecmat = partial(core.jaxpr_as_fun(jaxpr), *params)
+  else:
+    vecmat = _transpose_function(
+        partial(core.jaxpr_as_fun(jaxpr), *params), cotangent)
+  cotangent_b = solve.cotangent(vecmat, *cotangent)
   return [None] * num_consts + cotangent_b
 
 
