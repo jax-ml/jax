@@ -28,7 +28,7 @@ from jax import jarrett
 # activations
 
 def relu(x): return np.maximum(x, 0)
-def softplus(x): return np.log1p(np.exp(x))
+def softplus(x): return np.logaddexp(x, 0)
 def soft_sign(x): return x / (np.abs(x) + 1)
 def sigmoid(x): return expit(x)
 def swish(x): return x * sigmoid(x)
