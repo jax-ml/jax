@@ -922,8 +922,7 @@ def root(f, initial_guess, solve, tangent_solve):
       tangent_solve, in_tree, _root_tree_error_template("tangent_solve"))
 
   out_flat = root_p.bind(*itertools.chain(consts, guess_flat),
-                         tree=in_tree, num_consts=len(consts),
-                         jaxpr=jaxpr, solve=solve_flat,
+                         num_consts=len(consts), jaxpr=jaxpr, solve=solve_flat,
                          tangent_solve=tangent_solve_flat)
   return tree_unflatten(out_tree, out_flat)
 
@@ -933,19 +932,17 @@ def _root_abstract_eval(*args, **kwargs):
 
 
 def _root_impl(*args, **kwargs):
-  tree, num_consts, jaxpr, solve, _ = split_dict(
-      kwargs, ['tree', 'num_consts', 'jaxpr', 'solve', 'tangent_solve'])
+  num_consts, jaxpr, solve, _ = split_dict(
+      kwargs, ['num_consts', 'jaxpr', 'solve', 'tangent_solve'])
+  params, initial_guess = split_list(args, [num_consts])
+  f = partial(core.jaxpr_as_fun(jaxpr), *params)
+  return solve(f, *initial_guess)
 
-  f = partial(core.jaxpr_as_fun(jaxpr), *args[:num_consts])
-  return solve(f, *args[num_consts:])
 
-
-def _root_jvp(
-    primals, tangents, tree, num_consts, jaxpr, solve, tangent_solve):
+def _root_jvp(primals, tangents, num_consts, jaxpr, solve, tangent_solve):
   params = primals[:num_consts]
-  solution = root_p.bind(*primals, tree=tree, num_consts=num_consts,
-                         jaxpr=jaxpr, solve=solve, tangent_solve=tangent_solve)
-
+  solution = tuple(root_p.bind(*primals, num_consts=num_consts, jaxpr=jaxpr,
+                               solve=solve, tangent_solve=tangent_solve))
   params_dot = tangents[:num_consts]
 
   # F(m, u) = 0      # system of equations in u, parameterized by m
@@ -957,18 +954,17 @@ def _root_jvp(
   #
   # ∂ u*(m)[v] = - (∂_1 F(m, u*(m)))^{-1} [∂_0 F(m, u*(m))[v]]  # jvp
 
-  unchecked_zeros, f_jvp = api.linearize(
-      core.jaxpr_as_fun(jaxpr), *(params + tuple(solution))
-  )
+  f = core.jaxpr_as_fun(jaxpr)
+  f_fixed_params = lambda *solution: f(*(params + solution))
+  f_fixed_solution = lambda *params: f(*(params + solution))
 
-  params_zeros = tuple(_map(ad_util.zeros_like_jaxval, params))
-  solution_zeros = tuple(_map(ad_util.zeros_like_jaxval, solution))
+  _, rhs = ad.jvp(lu.wrap_init(f_fixed_solution)).call_wrapped(params, params_dot)
+  # TDDO(shoyer): use the lower-level ad.linearize here?
+  _, f_jvp_wrt_solution = api.linearize(f_fixed_params, *solution)
+  solution_dot = [-x for x in tangent_solve(f_jvp_wrt_solution, *rhs)]
 
-  rhs = f_jvp(*(params_dot + solution_zeros))
-  solution_dot = _map(
-      operator.neg, tangent_solve(partial(f_jvp, *params_zeros), *rhs)
-  )
   return solution, solution_dot
+
 
 def _root_batch(args, dims, **params):
   return batching.batch_fun(lu.wrap_init(_root_impl, params), args, dims)
