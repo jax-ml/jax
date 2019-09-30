@@ -14,7 +14,7 @@ Use the links below to open any of these for interactive exploration in colab.
 
  - [XLA in Python][XLA_in_Python] - interactive exploration of the XLA compiler and computation model in python.
 
-Some additional notebooks were recently moved into JAX's [online documentation](https://jax.readthedocs.io/en/latest/).
+Some additional notebooks (quickstart, auto-diff cookbook and commona gotchas) were recently moved into JAX's [online documentation](https://jax.readthedocs.io/en/latest/).
 
 
 [maml]:https://colab.sandbox.google.com/github/google/jax/blob/master/notebooks/maml.ipynb
