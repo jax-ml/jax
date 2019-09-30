@@ -167,7 +167,7 @@ load = onp.load
 
 @functools.wraps(onp.ndim)
 def ndim(x):
-  if isinstance(x, _ARRAY_TYPES):
+  if isinstance(x, _JAX_ARRAY_TYPES):
     return x.ndim
   return onp.ndim(x)
 
@@ -175,7 +175,7 @@ _ndim = ndim
 
 @functools.wraps(onp.shape)
 def shape(x):
-  if isinstance(x, _ARRAY_TYPES):
+  if isinstance(x, _JAX_ARRAY_TYPES):
     return x.shape
   return onp.shape(x)
 
@@ -183,19 +183,19 @@ _shape = shape
 
 @functools.wraps(onp.result_type)
 def result_type(*arrays_and_dtypes):
-  arrays_and_dtypes = [x.dtype if isinstance(x, _ARRAY_TYPES)
+  arrays_and_dtypes = [x.dtype if isinstance(x, _JAX_ARRAY_TYPES)
                        else x for x in arrays_and_dtypes]
   return onp.result_type(*arrays_and_dtypes)
 
 @functools.wraps(onp.iscomplexobj)
 def iscomplexobj(x):
-  if isinstance(x, _ARRAY_TYPES):
+  if isinstance(x, _JAX_ARRAY_TYPES):
     return issubclass(x.dtype.type, onp.complexfloating)
   return onp.iscomplexobj(x)
 
 @functools.wraps(onp.size)
 def size(a, axis=None):
-  if isinstance(a, _ARRAY_TYPES):
+  if isinstance(a, _JAX_ARRAY_TYPES):
     if axis is None:
       return a.size
     else:
@@ -218,7 +218,7 @@ def save(file, arr, allow_pickle=True, fix_imports=True):
                   fix_imports=fix_imports)
 
 def _cast_if_needed(x):
-  return onp.asarray(x) if isinstance(x, _ARRAY_TYPES) else x
+  return onp.asarray(x) if isinstance(x, _JAX_ARRAY_TYPES) else x
 
 @functools.wraps(onp.savez)
 def savez(file, *args, **kwds):
@@ -3203,8 +3203,8 @@ setattr(DeviceArray, "astype", _astype)
 
 
 # Override NumPy's public API.
-_ARRAY_TYPES = (DeviceArray, core.Tracer)
-_HANDLED_TYPES = _ARRAY_TYPES + (onp.ndarray, numbers.Number)
+_JAX_ARRAY_TYPES = (DeviceArray, core.Tracer)
+_HANDLED_TYPES = _JAX_ARRAY_TYPES + (onp.ndarray, numbers.Number)
 
 def _implement_via_coercion(func, args, kwargs):
   args, kwargs = tree_map(onp.asarray, device_get((args, kwargs)))
@@ -3245,7 +3245,7 @@ def __array_ufunc__(self, ufunc, method, *inputs, **kwargs):
   # that assigns to NumPy arrays, e.g., np_array += jax_device_array
   out = kwargs.pop('out', None)
   if out is not None:
-    if _any(isinstance(o, _ARRAY_TYPES) for o in out):
+    if _any(isinstance(o, _JAX_ARRAY_TYPES) for o in out):
       raise TypeError("JAX arrays cannot be modified inplace.")
     inputs = device_get(inputs)
     return ufunc_method(*inputs, out=out, **kwargs)
@@ -3308,6 +3308,9 @@ def __array_function__(self, func, types, args, kwargs):
 
 setattr(DeviceArray, '__array_ufunc__', __array_ufunc__)
 setattr(DeviceArray, '__array_function__', __array_function__)
+
+setattr(ShapedArray, '__array_ufunc__', __array_ufunc__)
+setattr(ShapedArray, '__array_function__', __array_function__)
 
 
 # Extra methods that are handy

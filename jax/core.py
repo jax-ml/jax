@@ -334,11 +334,11 @@ class Tracer(object):
   # so these need to be defined here rather than on UnshapedArray.
   def __array_ufunc__(self, *args, **kwargs):
     from .numpy.lax_numpy import __array_ufunc__
-    return __array_ufunc__(self, *args, **kwargs)
+    return self.aval.__array_ufunc__(*args, **kwargs)
 
   def __array_function__(self, *args, **kwargs):
     from .numpy.lax_numpy import __array_function__
-    return __array_function__(self, *args, **kwargs)
+    return self.aval.__array_function__(*args, **kwargs)
 
   def __setitem__(self, idx, val):
     raise TypeError("JAX 'Tracer' objects do not support item assignment")
