@@ -583,7 +583,7 @@ class JaxTestCase(parameterized.TestCase):
         yield
         if not any(
             issubclass(warning.category, expected_warning) and
-            re.match(expected_regex, str(warning.message))
+            re.search(expected_regex, str(warning.message.message))
             for warning in warnings_list
         ):
           self.fail("{} with message {!r} not found in triggered warnings: {}"
