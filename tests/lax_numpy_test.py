@@ -1727,10 +1727,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertTrue(type(lnp.arange(77, dtype=lnp.int32)) ==
                     type(lax.iota(onp.int32, 77)))
 
-  def testIssue728(self):
-    assert lnp.allclose(lnp.eye(5000), onp.eye(5000))
-    self.assertEqual(0, onp.sum(lnp.eye(1050) - onp.eye(1050)))
-
   def testArrayUfuncUnary(self):
     if not FLAGS.jax_enable_numpy_overrides:
       self.skipTest('requires numpy overrides')
