@@ -689,6 +689,43 @@ class PmapTest(jtu.JaxTestCase):
     z = y[0]  # doesn't crash
     self.assertAllClose(z, 2 * x[0], check_dtypes=False)
 
+  def testPostProcessMap(self):
+    # TODO(mattjj): this fails with multiple devices (unless we add a jit)
+    # because we assume eager ops (like scan here) can't require more than 1
+    # replica.
+    raise SkipTest("need eager multi-replica support")
+    # test came from https://github.com/google/jax/issues/1369
+    nrep = xla_bridge.device_count()
+
+    def pmvm(a, b):
+      a = a.reshape((nrep, -1, a.shape[1]))
+      func = pmap(lambda z: np.dot(z, b))
+      return func(a).reshape(b.shape)
+
+    n = nrep * 2
+    rng = onp.random.RandomState(0)
+    a = rng.randn(n, n)
+    b = rng.randn(n)
+
+    iters = np.arange(5)
+    def body(carry, i):
+      return pmvm(a, carry), i
+    ans, _ = lax.scan(body, b, iters)
+
+    expected = onp.linalg.matrix_power(a, 5).dot(b)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testManyArgs(self):
+    @pmap
+    def f(args_list):
+      return sum(args_list)
+
+    vals = list(range(500))
+    ndevices = xla_bridge.device_count()
+    self.assertAllClose(f(np.array([vals] * ndevices)),
+                        np.array([sum(vals)] * ndevices),
+                        check_dtypes=True)
+
 
 class PmapWithDevicesTest(jtu.JaxTestCase):
 
@@ -732,13 +769,15 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     f = pmap(lambda x: lax.psum(x, 'i'), axis_name='i',
              devices=xla_bridge.devices())
     with self.assertRaisesRegex(
-        ValueError, r"compiling computation that requires 1 replicas, "
-        r"but \d+ devices were specified"):
+        ValueError, r"Leading axis size of input to pmapped function must "
+        r"equal the number of local devices passed to pmap. Got axis_size=1, "
+        r"num_local_devices=\d."):
       f(np.ones(1))
 
     with self.assertRaisesRegex(
-        ValueError, r"compiling computation that requires \d+ replicas, "
-        r"but \d+ devices were specified"):
+        ValueError, r"Leading axis size of input to pmapped function must "
+        r"equal the number of local devices passed to pmap. Got axis_size=\d, "
+        r"num_local_devices=\d."):
       f(np.ones(xla_bridge.device_count() + 1))
 
   def testNestedPmapsError(self):

@@ -1274,6 +1274,20 @@ nanmax = _make_nan_reduction(onp.nanmax, max, -inf, nan_if_all_nan=True)
 nansum = _make_nan_reduction(onp.nansum, sum, 0, nan_if_all_nan=False)
 nanprod = _make_nan_reduction(onp.nanprod, prod, 1, nan_if_all_nan=False)
 
+@_wraps(onp.nanmean)
+def nanmean(a, axis=None, dtype=None, out=None, keepdims=False):
+  if out is not None:
+    raise ValueError("nanmean does not support the `out` argument.")
+  if (onp.issubdtype(_dtype(a), onp.bool_) or
+      onp.issubdtype(_dtype(a), onp.integer)):
+    return mean(a, axis, dtype, out, keepdims)
+  if dtype is None:
+    dtype = _dtype(a)
+  nan_mask = logical_not(isnan(a))
+  normalizer = sum(nan_mask, axis=axis, dtype=int32, keepdims=keepdims)
+  normalizer = lax.convert_element_type(normalizer, dtype)
+  td = lax.div(nansum(a, axis, dtype=dtype, keepdims=keepdims), normalizer)
+  return td
 
 def _make_cumulative_reduction(onp_reduction, window_reduce, init_val,
                                squash_nan=False):
@@ -1729,11 +1743,11 @@ def ix_(*args):
   return tuple(output)
 
 
-@_wraps(onp.repeat)
-def repeat(a, repeats, axis=None):
+
+def _repeat_scalar(a, repeats, axis=None):
   if not isscalar(repeats):
     raise NotImplementedError(
-        "np.repeat implementation only supports scalar repeats")
+        "_repeat_scalar implementation only supports scalar repeats")
   if axis is None or isscalar(a):
     a = ravel(a)
     axis = 0
@@ -1757,6 +1771,55 @@ def repeat(a, repeats, axis=None):
       lax.broadcast_in_dim(a, broadcast_shape, broadcast_dims),
       a_shape)
 
+@_wraps(onp.repeat)
+def repeat(a, repeats, axis=None):
+  '''
+  :param repeats: int or array of ints
+  '''
+  # use `_repeat_scalar` when possible
+  if isscalar(repeats):
+    return _repeat_scalar(a, repeats, axis)
+  repeats_raveled = ravel(array(repeats)) # make sure it's jax's array type
+  if size(repeats_raveled) == 1:
+    return _repeat_scalar(a, list(repeats_raveled)[0], axis)
+
+  if axis is None or isscalar(a):
+    a = ravel(a)
+    axis = 0
+
+  # repeats must match the dimension along the requested axis
+  a_shape = list(a.shape)
+  n = a_shape[axis]
+  if size(repeats_raveled) != n:
+    raise ValueError("repeats shape {} does not match the dimension on axis {}".format(
+      repeats_raveled.shape, n
+    ))
+
+  # calculating the new shape
+  total = sum(repeats_raveled)
+
+  new_shape = a_shape[:]
+  new_shape[axis] = total
+
+  a_flattened = ravel(a)
+
+  '''
+  main algorithm:
+  first break down raveled input array into list of chunks; each chunk is the unit of repeat
+  then tile the repeats to have same length as the list of chunks
+  finally repeat each unit x number of times according to the tiled repeat list
+  '''
+  chunks = product(a_shape[:axis+1]).item()
+  a_splitted = split(a_flattened, chunks)
+  repeats_tiled = tile(repeats_raveled, chunks // len(repeats_raveled))
+
+  ret = array([], dtype=a.dtype)
+  for i, repeat in enumerate(repeats_tiled):
+    if not isinstance(repeat, int):
+      repeat = repeat.item()
+    ret = concatenate((ret, tile(a_splitted[i], repeat)))
+
+  return reshape(ret, new_shape)
 
 @_wraps(onp.tri)
 def tri(N, M=None, k=0, dtype=None):
@@ -2278,8 +2341,9 @@ def argmin(a, axis=None):
 def _argminmax(op, a, axis):
   shape = [1] * a.ndim
   shape[axis] = a.shape[axis]
-  idxs = onp.arange(a.shape[axis]).reshape(shape)
+  idxs = lax.tie_in(a, arange(a.shape[axis])).reshape(shape)
   maxval = onp.iinfo(xla_bridge.canonicalize_dtype(idxs.dtype)).max
+  maxval = lax.tie_in(a, maxval)
   mask_idxs = where(lax._eq_meet(a, op(a, axis, keepdims=True)), idxs, maxval)
   return min(mask_idxs, axis)
 
@@ -2453,7 +2517,9 @@ def _rewriting_take(arr, idx):
   treedef, static_idx, dynamic_idx = _split_index_for_jit(idx)
   return _gather(arr, treedef, static_idx, dynamic_idx)
 
-@partial(jit, static_argnums=(1, 2))
+# TODO(phawkins): re-enable jit after fixing excessive recompilation for
+# slice indexes (e.g., slice(0, 5, None), slice(10, 15, None), etc.).
+# @partial(jit, static_argnums=(1, 2))
 def _gather(arr, treedef, static_idx, dynamic_idx):
   idx = _merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
   indexer = _index_to_gather(shape(arr), idx)  # shared with _scatter_update
@@ -2813,23 +2879,24 @@ hanning = _wrap_numpy_nullary_function(onp.hanning)
 # TODO: lower `kaiser` via lax to allow non-constant beta values.
 kaiser = _wrap_numpy_nullary_function(onp.kaiser)
 
+def _gcd_cond_fn(xs):
+  x1, x2 = xs
+  return any(x2 != 0)
+
+def _gcd_body_fn(xs):
+  x1, x2 = xs
+  x1, x2 = (where(x2 != 0, x2, x1),
+            where(x2 != 0, lax.rem(x1, x2), lax._const(x2, 0)))
+  return (where(x1 < x2, x2, x1), where(x1 < x2, x1, x2))
 
 @_wraps(getattr(onp, "gcd", None))
 def gcd(x1, x2):
   if (not issubdtype(_dtype(x1), integer) or
       not issubdtype(_dtype(x2), integer)):
     raise ValueError("Arguments to gcd must be integers.")
-  def cond_fn(xs):
-    x1, x2 = xs
-    return any(x2 != 0)
-  def body_fn(xs):
-    x1, x2 = xs
-    x1, x2 = (where(x2 != 0, x2, x1),
-              where(x2 != 0, lax.rem(x1, x2), lax._const(x2, 0)))
-    return (where(x1 < x2, x2, x1), where(x1 < x2, x1, x2))
   x1, x2 = _promote_dtypes(lax.abs(x1), lax.abs(x2))
   x1, x2 = broadcast_arrays(x1, x2)
-  gcd, _ = lax.while_loop(cond_fn, body_fn, (x1, x2))
+  gcd, _ = lax.while_loop(_gcd_cond_fn, _gcd_body_fn, (x1, x2))
   return gcd
 
 

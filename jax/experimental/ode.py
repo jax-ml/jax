@@ -18,6 +18,8 @@ Integrate systems of ordinary differential equations (ODEs) using the JAX
 autograd/diff library and the Dormand-Prince method for adaptive integration
 stepsize calculation. Provides improved integration accuracy over fixed
 stepsize integration methods.
+
+Adjoint algorithm based on Appendix C of https://arxiv.org/pdf/1806.07366.pdf
 """
 
 from __future__ import absolute_import
@@ -28,16 +30,14 @@ import functools
 import time
 
 import jax
-from jax.config import config
 from jax.flatten_util import ravel_pytree
 import jax.lax
 import jax.numpy as np
 import jax.ops
+from jax.test_util import check_vjp
 import matplotlib.pyplot as plt
 import numpy as onp
 import scipy.integrate as osp_integrate
-
-config.update('jax_enable_x64', True)
 
 
 # Dopri5 Butcher tableaux
@@ -124,7 +124,7 @@ def initial_step_size(fun, t0, y0, order, rtol, atol, f0):
   f1 = fun(y1, t0 + h0)
   d2 = (np.linalg.norm(f1 - f0) / scale) / h0
 
-  h1 = np.where(np.all(np.asarray([d0 <= 1e-15, d1 < 1e-15])),
+  h1 = np.where(np.all(np.asarray([d1 <= 1e-15, d2 < 1e-15])),
                 np.maximum(1e-6, h0 * 1e-3),
                 (0.01 / np.max(d1 + d2))**order_pow)
 
@@ -198,28 +198,33 @@ def optimal_step_size(last_step,
                   last_step / factor,)
 
 
-@functools.partial(jax.jit, static_argnums=(0, 1))
-def odeint(ofunc, args, y0, t, rtol=1.4e-8, atol=1.4e-8):
+@functools.partial(jax.jit, static_argnums=(0,))
+def odeint(ofunc, y0, t, *args, **kwargs):
   """Adaptive stepsize (Dormand-Prince) Runge-Kutta odeint implementation.
 
   Args:
     ofunc: Function to evaluate `yt = ofunc(y, t, *args)` that
       returns the time derivative of `y`.
-    args: Additional arguments to `ofunc`.
     y0: initial value for the state.
     t: Timespan for `ofunc` evaluation like `np.linspace(0., 10., 101)`.
-    rtol: Relative local error tolerance for solver.
-    atol: Absolute local error tolerance for solver.
+    *args: Additional arguments to `ofunc` beyond y0 and t.
+    **kwargs: Two relevant keyword arguments:
+      'rtol': Relative local error tolerance for solver.
+      'atol': Absolute local error tolerance for solver.
+
   Returns:
     Integrated system values at each timepoint.
   """
+  rtol = kwargs.get('rtol', 1.4e-8)
+  atol = kwargs.get('atol', 1.4e-8)
+
   @functools.partial(jax.jit, static_argnums=(0,))
-  def _fori_body_fun(func, i, val, rtol=1.4e-8, atol=1.4e-8):
+  def _fori_body_fun(func, i, val):
     """Internal fori_loop body to interpolate an integral at each timestep."""
     t, cur_y, cur_f, cur_t, dt, last_t, interp_coeff, solution = val
     cur_y, cur_f, cur_t, dt, last_t, interp_coeff = jax.lax.while_loop(
         lambda x: x[2] < t[i],
-        functools.partial(_while_body_fun, func, rtol=rtol, atol=atol),
+        functools.partial(_while_body_fun, func),
         (cur_y, cur_f, cur_t, dt, last_t, interp_coeff))
 
     relative_output_time = (t[i] - last_t) / (cur_t - last_t)
@@ -231,7 +236,7 @@ def odeint(ofunc, args, y0, t, rtol=1.4e-8, atol=1.4e-8):
                                  out_x))
 
   @functools.partial(jax.jit, static_argnums=(0,))
-  def _while_body_fun(func, x, atol=atol, rtol=rtol):
+  def _while_body_fun(func, x):
     """Internal while_loop body to determine interpolation coefficients."""
     cur_y, cur_f, cur_t, dt, last_t, interp_coeff = x
     next_t = cur_t + dt
@@ -265,24 +270,33 @@ def odeint(ofunc, args, y0, t, rtol=1.4e-8, atol=1.4e-8):
                                 y0)))[-1]
 
 
-def grad_odeint(ofunc, args):
-  """Return a function that calculates `vjp(odeint(func(y, t, args))`.
+def vjp_odeint(ofunc, y0, t, *args, **kwargs):
+  """Return a function that calculates `vjp(odeint(func(y, t, *args))`.
 
   Args:
     ofunc: Function `ydot = ofunc(y, t, *args)` to compute the time
       derivative of `y`.
-    args: Additional arguments to `ofunc`.
+    y0: initial value for the state.
+    t: Timespan for `ofunc` evaluation like `np.linspace(0., 10., 101)`.
+    *args: Additional arguments to `ofunc` beyond y0 and t.
+    **kwargs: Two relevant keyword arguments:
+      'rtol': Relative local error tolerance for solver.
+      'atol': Absolute local error tolerance for solver.
 
   Returns:
-    VJP function `vjp = vjp_all(g, yt, t)` where `yt = ofunc(y, t, *args)`
+    VJP function `vjp = vjp_all(g)` where `yt = ofunc(y, t, *args)`
     and g is used for VJP calculation. To evaluate the gradient w/ the VJP,
-    supply `g = np.ones_like(yt)`.
+    supply `g = np.ones_like(yt)`. To evaluate the reverse Jacobian do a vmap
+    over the standard basis of yt.
   """
+  rtol = kwargs.get('rtol', 1.4e-8)
+  atol = kwargs.get('atol', 1.4e-8)
+
   flat_args, unravel_args = ravel_pytree(args)
   flat_func = lambda y, t, flat_args: ofunc(y, t, *unravel_args(flat_args))
 
   @jax.jit
-  def aug_dynamics(augmented_state, t):
+  def aug_dynamics(augmented_state, t, flat_args):
     """Original system augmented with vjp_y, vjp_t and vjp_args."""
     state_len = int(np.floor_divide(
         augmented_state.shape[0] - flat_args.shape[0] - 1, 2))
@@ -291,7 +305,7 @@ def grad_odeint(ofunc, args):
     dy_dt, vjpfun = jax.vjp(flat_func, y, t, flat_args)
     return np.hstack([np.ravel(dy_dt), np.hstack(vjpfun(-adjoint))])
 
-  rev_aug_dynamics = lambda y, t: -aug_dynamics(y, -t)
+  rev_aug_dynamics = lambda y, t, flat_args: -aug_dynamics(y, -t, flat_args)
 
   @jax.jit
   def _fori_body_fun(i, val):
@@ -301,13 +315,19 @@ def grad_odeint(ofunc, args):
     this_t = rev_t[i]
     this_tarray = rev_tarray[i, :]
     this_gi = rev_gi[i, :]
-    this_gim1 = rev_gi[i-1, :]
+    # this is g[i-1, :] when g has been reversed
+    this_gim1 = rev_gi[i+1, :]
     state_len = this_yt.shape[0]
     vjp_cur_t = np.dot(flat_func(this_yt, this_t, flat_args), this_gi)
     vjp_t0 = vjp_t0 - vjp_cur_t
     # Run augmented system backwards to the previous observation.
     aug_y0 = np.hstack((this_yt, vjp_y, vjp_t0, vjp_args))
-    aug_ans = odeint(rev_aug_dynamics, (), aug_y0, this_tarray)
+    aug_ans = odeint(rev_aug_dynamics,
+                     aug_y0,
+                     this_tarray,
+                     flat_args,
+                     rtol=rtol,
+                     atol=atol)
     vjp_y = aug_ans[1][state_len:2*state_len] + this_gim1
     vjp_t0 = aug_ans[1][2*state_len]
     vjp_args = aug_ans[1][2*state_len+1:]
@@ -316,19 +336,19 @@ def grad_odeint(ofunc, args):
 
   @jax.jit
   def vjp_all(g, yt, t):
-    """Calculate the VJP g * Jac(odeint(ofunc(yt, t, *args), t)."""
-    rev_yt = yt[-1:0:-1, :]
-    rev_t = t[-1:0:-1]
+    """Calculate the VJP g * Jac(odeint(ofunc, y0, t, *args))."""
+    rev_yt = yt[-1::-1, :]
+    rev_t = t[-1::-1]
     rev_tarray = -np.array([t[-1:0:-1], t[-2::-1]]).T
-    rev_gi = g[-1:0:-1, :]
+    rev_gi = g[-1::-1, :]
 
-    vjp_y = rev_gi[-1, :]
+    vjp_y = g[-1, :]
     vjp_t0 = 0.
     vjp_args = np.zeros_like(flat_args)
     time_vjp_list = np.zeros_like(t)
 
     result = jax.lax.fori_loop(0,
-                               rev_t.shape[0],
+                               rev_t.shape[0]-1,
                                _fori_body_fun,
                                (rev_yt,
                                 rev_t,
@@ -341,41 +361,98 @@ def grad_odeint(ofunc, args):
 
     time_vjp_list = jax.ops.index_update(result[-1], -1, result[-3])
     vjp_times = np.hstack(time_vjp_list)[::-1]
-    return None, result[-4], vjp_times, unravel_args(result[-2])
 
-  return jax.jit(vjp_all)
+    return tuple([result[-4], vjp_times] + list(result[-2]))
+
+  primals_out = odeint(flat_func, y0, t, flat_args)
+  vjp_fun = lambda g: vjp_all(g, primals_out, t)
+
+  return primals_out, vjp_fun
 
 
-def test_grad_odeint():
+def build_odeint(ofunc, rtol=1.4e-8, atol=1.4e-8):
+  """Return `f(y0, t, args) = odeint(ofunc(y, t, *args), y0, t, args)`.
+
+  Given the function ofunc(y, t, *args), return the jitted function
+  `f(y0, t, args) = odeint(ofunc(y, t, *args), y0, t, args)` with
+  the VJP of `f` defined using `vjp_odeint`, where:
+
+    `y0` is the initial condition of the ODE integration,
+    `t` is the time course of the integration, and
+    `*args` are all other arguments to `ofunc`.
+
+  Args:
+    ofunc: The function to be wrapped into an ODE integration.
+    rtol: relative local error tolerance for solver.
+    atol: absolute local error tolerance for solver.
+
+  Returns:
+    `f(y0, t, args) = odeint(ofunc(y, t, *args), y0, t, args)`
+  """
+  ct_odeint = jax.custom_transforms(
+      lambda y0, t, *args: odeint(ofunc, y0, t, *args, rtol=rtol, atol=atol))
+
+  v = lambda y0, t, *args: vjp_odeint(ofunc, y0, t, *args, rtol=rtol, atol=atol)
+  jax.defvjp_all(ct_odeint, v)
+
+  return jax.jit(ct_odeint)
+
+
+def my_odeint_grad(fun):
+  """Calculate the Jacobian of an odeint."""
+  @jax.jit
+  def _gradfun(*args, **kwargs):
+    ys, pullback = vjp_odeint(fun, *args, **kwargs)
+    my_grad = pullback(np.ones_like(ys))
+    return my_grad
+  return _gradfun
+
+
+def my_odeint_jacrev(fun):
+  """Calculate the Jacobian of an odeint."""
+  @jax.jit
+  def _jacfun(*args, **kwargs):
+    ys, pullback = vjp_odeint(fun, *args, **kwargs)
+    my_jac = jax.vmap(pullback)(jax.api._std_basis(ys))
+    my_jac = jax.api.tree_map(
+        functools.partial(jax.api._unravel_array_into_pytree, ys, 0), my_jac)
+    my_jac = jax.api.tree_transpose(
+        jax.api.tree_structure(args), jax.api.tree_structure(ys), my_jac)
+    return my_jac
+  return _jacfun
+
+
+def nd(f, x, eps=0.0001):
+  flat_x, unravel = ravel_pytree(x)
+  dim = len(flat_x)
+  g = onp.zeros_like(flat_x)
+  for i in range(dim):
+    d = onp.zeros_like(flat_x)
+    d[i] = eps
+    g[i] = (f(unravel(flat_x + d)) - f(unravel(flat_x - d))) / (2.0 * eps)
+  return g
+
+
+def test_grad_vjp_odeint():
   """Compare numerical and exact differentiation of a simple odeint."""
-  def nd(f, x, eps=0.0001):
-    flat_x, unravel = ravel_pytree(x)
-    dim = len(flat_x)
-    g = onp.zeros_like(flat_x)
-    for i in range(dim):
-      d = onp.zeros_like(flat_x)
-      d[i] = eps
-      g[i] = (f(unravel(flat_x + d)) - f(unravel(flat_x - d))) / (2.0 * eps)
-    return g
 
   def f(y, t, arg1, arg2):
     return -np.sqrt(t) - y + arg1 - np.mean((y + arg2)**2)
 
   def onearg_odeint(args):
     return np.sum(
-        odeint(f, args[2], args[0], args[1], atol=1e-8, rtol=1e-8))
+        odeint(f, *args, atol=1e-8, rtol=1e-8))
 
   dim = 10
   t0 = 0.1
   t1 = 0.2
   y0 = np.linspace(0.1, 0.9, dim)
-  fargs = (0.1, 0.2)
+  arg1 = 0.1
+  arg2 = 0.2
+  wrap_args = (y0, np.array([t0, t1]), arg1, arg2)
 
-  numerical_grad = nd(onearg_odeint, (y0, np.array([t0, t1]), fargs))
-  ys = odeint(f, fargs, y0, np.array([t0, t1]), atol=1e-8, rtol=1e-8)
-  ode_vjp = grad_odeint(f, fargs)
-  g = np.ones_like(ys)
-  exact_grad, _ = ravel_pytree(ode_vjp(g, ys, np.array([t0, t1])))
+  numerical_grad = nd(onearg_odeint, wrap_args)
+  exact_grad, _ = ravel_pytree(my_odeint_grad(f)(*wrap_args))
 
   assert np.allclose(numerical_grad, exact_grad)
 
@@ -403,7 +480,7 @@ def plot_demo():
   y0 = np.array([1.])
   fargs = (1.0, 0.0)
 
-  ys = odeint(f, fargs, y0, ts, atol=0.001, rtol=0.001)
+  ys = odeint(f, y0, ts, *fargs, atol=0.001, rtol=0.001)
 
   # Set up figure.
   fig = plt.figure(figsize=(8, 6), facecolor='white')
@@ -416,17 +493,28 @@ def plot_demo():
   plt.show()
 
 
-def pend(y, t, b, c):
+@jax.jit
+def pend(y, t, arg1, arg2):
   """Simple pendulum system for odeint testing."""
   del t
   theta, omega = y
-  dydt = np.array([omega, -b*omega - c*np.sin(theta)])
+  dydt = np.array([omega, -arg1*omega - arg2*np.sin(theta)])
   return dydt
 
 
-def benchmark_odeint(fun, args, y0, tspace):
+@jax.jit
+def swoop(y, t, arg1, arg2):
+  return np.array(y - np.sin(t) - np.cos(t) * arg1 + arg2)
+
+
+@jax.jit
+def decay(y, t, arg1, arg2):
+  return -np.sqrt(t) - y + arg1 - np.mean((y + arg2)**2)
+
+
+def benchmark_odeint(fun, y0, tspace, *args):
   """Time performance of JAX odeint method against scipy.integrate.odeint."""
-  n_trials = 10
+  n_trials = 5
   for k in range(n_trials):
     start = time.time()
     scipy_result = osp_integrate.odeint(fun, y0, tspace, args)
@@ -435,10 +523,7 @@ def benchmark_odeint(fun, args, y0, tspace):
         k+1, n_trials, end-start))
   for k in range(n_trials):
     start = time.time()
-    jax_result = odeint(fun,
-                        args,
-                        np.asarray(y0),
-                        np.asarray(tspace))
+    jax_result = odeint(fun, np.array(y0), np.array(tspace), *args)
     jax_result.block_until_ready()
     end = time.time()
     print('JAX odeint elapsed time ({} of {}): {}'.format(
@@ -451,12 +536,94 @@ def benchmark_odeint(fun, args, y0, tspace):
 
 def pend_benchmark_odeint():
   _, _ = benchmark_odeint(pend,
-                          (0.25, 9.8),
                           (onp.pi - 0.1, 0.0),
-                          onp.linspace(0., 10., 101))
+                          onp.linspace(0., 10., 101),
+                          0.25,
+                          9.8)
+
+
+def test_odeint_grad():
+  """Test the gradient behavior of various ODE integrations."""
+  def _test_odeint_grad(func, *args):
+    def onearg_odeint(fargs):
+      return np.sum(odeint(func, *fargs))
+
+    numerical_grad = nd(onearg_odeint, args)
+    exact_grad, _ = ravel_pytree(my_odeint_grad(func)(*args))
+    assert np.allclose(numerical_grad, exact_grad)
+
+  ts = np.array((0.1, 0.2))
+  y0 = np.linspace(0.1, 0.9, 10)
+  big_y0 = np.linspace(1.1, 10.9, 10)
+
+  # check pend()
+  for cond in (
+      (np.array((onp.pi - 0.1, 0.0)), ts, 0.25, 0.98),
+      (np.array((onp.pi * 0.1, 0.0)), ts, 0.1, 0.4),
+      ):
+    _test_odeint_grad(pend, *cond)
+
+  # check swoop
+  for cond in (
+      (y0, ts, 0.1, 0.2),
+      (big_y0, ts, 0.1, 0.3),
+      ):
+    _test_odeint_grad(swoop, *cond)
+
+  # check decay
+  for cond in (
+      (y0, ts, 0.1, 0.2),
+      (big_y0, ts, 0.1, 0.3),
+      ):
+    _test_odeint_grad(decay, *cond)
+
+
+def test_odeint_vjp():
+  """Use check_vjp to check odeint VJP calculations."""
+
+  # check pend()
+  y = np.array([np.pi - 0.1, 0.0])
+  t = np.linspace(0., 10., 11)
+  b = 0.25
+  c = 9.8
+  wrap_args = (y, t, b, c)
+  pend_odeint_wrap = lambda y, t, *args: odeint(pend, y, t, *args)
+  pend_vjp_wrap = lambda y, t, *args: vjp_odeint(pend, y, t, *args)
+  check_vjp(pend_odeint_wrap, pend_vjp_wrap, wrap_args)
+
+  # check swoop()
+  y = np.array([0.1])
+  t = np.linspace(0., 10., 11)
+  arg1 = 0.1
+  arg2 = 0.2
+  wrap_args = (y, t, arg1, arg2)
+  swoop_odeint_wrap = lambda y, t, *args: odeint(swoop, y, t, *args)
+  swoop_vjp_wrap = lambda y, t, *args: vjp_odeint(swoop, y, t, *args)
+  check_vjp(swoop_odeint_wrap, swoop_vjp_wrap, wrap_args)
+
+  # decay() check_vjp hangs!
+
+
+def test_defvjp_all():
+  """Use build_odeint to check odeint VJP calculations."""
+  n_trials = 5
+  swoop_build = build_odeint(swoop)
+  jacswoop = jax.jit(jax.jacrev(swoop_build))
+  y = np.array([0.1])
+  t = np.linspace(0., 2., 11)
+  arg1 = 0.1
+  arg2 = 0.2
+  wrap_args = (y, t, arg1, arg2)
+  for k in range(n_trials):
+    start = time.time()
+    rslt = jacswoop(*wrap_args)
+    rslt.block_until_ready()
+    end = time.time()
+    print('JAX jacrev elapsed time ({} of {}): {}'.format(
+        k+1, n_trials, end-start))
 
 
 if __name__ == '__main__':
 
-  test_grad_odeint()
-
+  test_odeint_grad()
+  test_odeint_vjp()

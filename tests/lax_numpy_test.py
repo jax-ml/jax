@@ -191,6 +191,9 @@ JAX_REDUCER_RECORDS = [
     op_record("sum", 1, number_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("var", 1, number_dtypes, nonempty_shapes, jtu.rand_default(), []),
     op_record("std", 1, inexact_dtypes, nonempty_shapes, jtu.rand_default(), []),
+    op_record("nanmean", 1, inexact_dtypes, nonempty_shapes, jtu.rand_some_nan(), []),
+    op_record("nanprod", 1, inexact_dtypes, all_shapes, jtu.rand_some_nan(), []),
+    op_record("nansum", 1, number_dtypes, all_shapes, jtu.rand_some_nan(), []),
 ]
 
 JAX_REDUCER_NO_DTYPE_RECORDS = [
@@ -746,6 +749,36 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+  def testIssue1233(self):
+    '''
+    Following numpy test suite from `test_repeat` at https://github.com/numpy/numpy/blob/master/numpy/core/tests/test_multiarray.py
+    '''
+    tol = 1e-5
+    
+    def test_single(m, args_maker, repeats, axis):
+      lax_ans = lnp.repeat(m, repeats, axis)
+      numpy_ans = onp.repeat(m, repeats, axis)
+
+      self.assertAllClose(lax_ans, numpy_ans, check_dtypes=True, rtol=tol, atol=tol)
+
+      lnp_fun = lambda arg: lnp.repeat(arg, repeats = repeats, axis=axis)
+      self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+    m = lnp.array([1,2,3,4,5,6])
+    args_maker = lambda: [m]
+
+    for repeats in [2, [1,3,2,1,1,2], [2], lnp.array([1,3,2,1,1,2]), lnp.array([2])]:
+      test_single(m, args_maker, repeats, None)
+
+    m_rect = m.reshape((2,3))
+    args_maker = lambda: [m_rect]
+
+    for repeats in [2, [2,1], [2], lnp.array([2,1]), lnp.array([2])]:
+      test_single(m_rect, args_maker, repeats, axis=0)
+
+    for repeats in [2, [1,3,2], [2], lnp.array([1,3,2]), lnp.array([2])]:
+      test_single(m_rect, args_maker, repeats, axis=1)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "op={}_shape=[{}]_axis={}_out_dtype={}".format(

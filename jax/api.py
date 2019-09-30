@@ -51,7 +51,8 @@ from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
 from .util import (unzip2, unzip3, curry, partial, safe_map, safe_zip,
                    WrapHashably, Hashable, prod, split_list)
 from .lib.xla_bridge import (canonicalize_dtype, device_count,
-                             local_device_count, devices, host_id)
+                             local_device_count, devices, local_devices,
+                             host_id, host_ids, host_count)
 from .abstract_arrays import ShapedArray, raise_to_shaped
 from .interpreters import partial_eval as pe
 from .interpreters import xla
@@ -60,7 +61,7 @@ from .interpreters import ad
 from .interpreters import batching
 from .interpreters import parallel
 from .interpreters import masking
-from .interpreters.masking import Shape, s_, shapecheck
+from .interpreters.masking import shapecheck
 from .config import flags, config
 
 map = safe_map
@@ -82,7 +83,7 @@ class _ThreadLocalState(threading.local):
 
 _thread_local_state = _ThreadLocalState()
 
-def jit(fun, static_argnums=(), device_assignment=None, backend=None):
+def jit(fun, static_argnums=(), device=None, backend=None):
   """Sets up `fun` for just-in-time compilation with XLA.
 
   Args:
@@ -100,10 +101,10 @@ def jit(fun, static_argnums=(), device_assignment=None, backend=None):
       different values for these constants will trigger recompilation. If the
       jitted function is called with fewer positional arguments than indicated
       by `static_argnums` then an error is raised. Defaults to ().
-    device_assignment: This is an experimental feature and the API is likely to
-      change. Optional, an int specifying the device ordinal for which to compile the
-      function. The default is inherited from XLA's DeviceAssignment logic and is
-      usually to use device 0.
+    device: This is an experimental feature and the API is likely to change.
+      Optional, the Device the jitted function will run on. (Available devices
+      can be retrieved via ``jax.devices()``.) The default is inherited from
+      XLA's DeviceAssignment logic and is usually to use ``jax.devices()[0]``.
     backend: This is an experimental feature and the API is likely to change.
       Optional, a string representing the xla backend. 'cpu','gpu', or 'tpu'.
 
@@ -124,8 +125,6 @@ def jit(fun, static_argnums=(), device_assignment=None, backend=None):
    -0.8574326  -0.7823267   0.7682731   0.59566754]
   """
   _check_callable(fun)
-  if isinstance(device_assignment, int):
-    device_assignment = (device_assignment,)
   if isinstance(static_argnums, int):
     static_argnums = (static_argnums,)
 
@@ -146,7 +145,7 @@ def jit(fun, static_argnums=(), device_assignment=None, backend=None):
     args_flat, in_tree = tree_flatten((dyn_args, kwargs))
     _check_args(args_flat)
     flat_fun, out_tree = flatten_fun(f, in_tree)
-    out = xla.xla_call(flat_fun, *args_flat, device_assignment=device_assignment, backend=backend)
+    out = xla.xla_call(flat_fun, *args_flat, device=device, backend=backend)
     return tree_unflatten(out_tree(), out)
 
   jitted_name =  "jit({}, static_argnums={})"
@@ -448,7 +447,7 @@ def jacfwd(fun, argnums=0, holomorphic=False):
     f_partial, dyn_args = _argnums_partial(f, argnums, args)
     holomorphic or tree_map(_check_real_input_jacfwd, dyn_args)
     pushfwd = partial(jvp, f_partial, dyn_args)
-    y, jac = vmap(pushfwd, out_axes=(None, -1))(_std_basis(dyn_args))
+    y, jac = vmap(pushfwd, out_axes=(None, batching.last))(_std_basis(dyn_args))
     example_args = dyn_args[0] if isinstance(argnums, int) else dyn_args
     return tree_map(partial(_unravel_array_into_pytree, example_args, -1), jac)
 
@@ -617,12 +616,10 @@ def _flatten_axes(treedef, axis_tree):
   dummy = tree_unflatten(treedef, [object()] * treedef.num_leaves)
   axes = []
   add_leaves = lambda i, x: axes.extend([i] * len(tree_flatten(x)[0]))
-  # TODO(mattjj): remove _replace_nones / list comp after jaxlib 0.1.25
   tree_multimap(add_leaves, _replace_nones(axis_tree), dummy)
   axes = [None if a is _none_proxy else a for a in axes]
   return axes
 
-# TODO(mattjj): remove this when jaxlib is updated past 0.1.25
 def _replace_nones(tuptree):
   if type(tuptree) in (list, tuple):
     return tuple(map(_replace_nones, tuptree))
@@ -647,10 +644,23 @@ def pmap(fun, axis_name=None, devices=None, backend=None):
   pure maps, ``pmap`` enables the use of parallel SPMD collective operations,
   like all-reduce sum.
 
-  The mapped axis size must be less than or equal to the number of XLA devices
-  available (unless ``devices`` is specified, see below). For nested ``pmap``
-  calls, the product of the mapped axis sizes must be less than or equal to the
-  number of XLA devices.
+  The mapped axis size must be less than or equal to the number of local XLA
+  devices available, as returned by ``jax.local_device_count()`` (unless
+  ``devices`` is specified, see below). For nested ``pmap`` calls, the product
+  of the mapped axis sizes must be less than or equal to the number of XLA
+  devices.  TODO(skye): support < # local devices on multi-host platforms
+
+  **Multi-host platforms:** On multi-host platforms such as TPU pods, ``pmap``
+  is designed to be used in SPMD Python programs, where every host is running
+  the same Python code such that all hosts run the same pmapped function in the
+  same order. Each host should still call the pmapped function with mapped axis
+  size equal to the number of *local* devices (unless ``devices`` is specified,
+  see below), and an array of the same leading axis size will be returned as
+  usual. However, any collective operations in ``fun`` will be computed over
+  *all* participating devices, including those on other hosts, via
+  device-to-device communication.  Conceptually, this can be thought of as
+  running a pmap over a single array sharded across hosts, where each host
+  "sees" only its local shard of the input and output.
 
   Args:
     fun: Function to be mapped over argument axes.
@@ -658,12 +668,12 @@ def pmap(fun, axis_name=None, devices=None, backend=None):
       axis so that parallel collectives can be applied.
     devices: This is an experimental feature and the API is likely to change.
       Optional, a sequence of Devices to map over. (Available devices can be
-      retrieved via jax.devices()). If specified, the length of the sequence
-      must be equal to the size of the mapped axis. Nested ``pmap``s with
-      ``devices`` specified in either the inner or outer ``pmap`` are not yet
-      supported.
+      retrieved via jax.devices()). If specified, the size of the mapped axis
+      must be equal to the number of local devices in the sequence. Nested
+      ``pmap`` s with ``devices`` specified in either the inner or outer ``pmap``
+      are not yet supported.
     backend: This is an experimental feature and the API is likely to change.
-      Optional, a string representing the xla backend. 'cpu','gpu', or 'tpu'.
+      Optional, a string representing the xla backend. 'cpu', 'gpu', or 'tpu'.
 
   Returns:
     A parallelized version of ``fun`` with arguments that correspond to those of
@@ -725,10 +735,28 @@ def pmap(fun, axis_name=None, devices=None, backend=None):
   >>> print(doubly_normed.sum((0, 1)))
   1.0
 
+  On multi-host platforms, collective operations operate over all devices,
+  including those those on other hosts. For example, assuming the following code
+  runs on two hosts with 4 XLA devices each:
+
+  >>> f = lambda x: x + jax.lax.psum(x, axis_name='i')
+  >>> data = np.arange(4) if jax.host_id() == 0 else np.arange(4,8)
+  >>> out = pmap(f, axis_name='i')(data)
+  >>> print(out)
+  [28 29 30 31] # on host 0
+  [32 33 34 35] # on host 1
+
+  Each host passes in a different length-4 array, corresponding to its 4 local
+  devices, and the psum operates over all 8 values. Conceptually, the two
+  length-4 arrays can be thought of as sharded length-16 array (in this example
+  equivalent to np.arange(8)) that is mapped over, with the length-8 mapped axis
+  given name 'i'. The pmap call on each host then returns the corresponding
+  length-4 output shard.
+
   The ``devices`` argument can be used to specify exactly which devices are used
-  to run the parallel computation. For example, the following code defines
-  two parallel computations, one which runs on the first six devices and one on
-  the remaining two:
+  to run the parallel computation. For example, again assuming a single host
+  with 8 devices, the following code defines two parallel computations, one
+  which runs on the first six devices and one on the remaining two:
 
   >>> from functools import partial
   >>> @partial(pmap, axis_name='i', devices=jax.devices()[:6])
@@ -872,44 +900,70 @@ def _parallelize(fun):
 
 
 def mask(fun, in_shapes, out_shape):
-  in_shapes_flat, in_shapes_tree = tree_flatten(in_shapes)
-  out_shapes_flat, out_shapes_tree = tree_flatten(out_shape)
+  in_specs, in_shapes_tree = tree_flatten(in_shapes)
+  out_specs, out_shapes_tree = tree_flatten(out_shape)
 
-  def wrapped_fun(args, logical_shape_env):
-    f = lu.wrap_init(fun)
+  in_specs = map(masking.parse_spec, in_specs)
+  out_specs = map(masking.parse_spec, out_specs)
+
+  unique_ids = collections.defaultdict(object)
+  in_specs  = map(partial(_remap_ids, unique_ids), in_specs)
+  out_specs = map(partial(_remap_ids, unique_ids), out_specs)
+
+  def wrapped_fun(args, logical_env):
     args_flat, in_tree = tree_flatten(args)
-    assert in_tree == in_shapes_tree
-    padded_shape_env = _bind_shapes(in_shapes_flat, [x.shape for x in args_flat])
-    shape_envs = masking.ShapeEnvs(logical_shape_env, padded_shape_env)
+    if in_tree != in_shapes_tree: raise TypeError("pytree mismatch")
+    logical_env = {unique_ids[name] : val for name, val in logical_env.items()}
+    in_shapes = map(masking.finalize_spec, in_specs, map(onp.shape, args_flat))
+    padded_env = _bind_shapes(in_shapes, [x.shape for x in args_flat])
+    f = lu.wrap_init(fun)
     flat_fun, out_tree = flatten_fun_nokwargs(f, in_tree)
-    outs, out_shapes_ = masking.mask_fun(flat_fun, shape_envs, args_flat,
-                                         in_shapes_flat)
-    if not out_shapes_flat == list(out_shapes_):
-      raise TypeError("pytree mismatch")
-    if not all(out.shape == masking.eval_shape_expr(padded_shape_env, expr)
-               for out, expr in zip(outs, out_shapes_flat)):
+    outs, out_shapes_ = masking.mask_fun(
+        flat_fun, logical_env, padded_env, args_flat, in_shapes)
+    if not out_tree() == out_shapes_tree: raise TypeError("pytree mismatch")
+    out_shapes = map(masking.finalize_spec, out_specs, map(onp.shape, outs))
+    if not out_shapes == list(out_shapes_):
+      raise masking.ShapeError
+    if not all(onp.shape(out) == masking.eval_shape_expr(padded_env, expr)
+               for out, expr in zip(outs, out_shapes)):
       raise masking.ShapeError
     return tree_unflatten(out_tree(), outs)
   return wrapped_fun
 
+def _remap_ids(names, shape_spec):
+  ShapeSpec, Poly, Mon = masking.ShapeSpec, masking.Poly, masking.Mon
+  mdim = masking.monomorphic_dim
+  return ShapeSpec(Poly({Mon({names[id] : deg for id, deg in mon.items()})
+                          : coeff for mon, coeff in poly.items()})
+                   if poly is not mdim else mdim for poly in shape_spec)
+
 def _bind_shapes(shape_exprs, shapes):
   env = {}
-  for binders, shape in zip(shape_exprs, shapes):
-    for poly, d in zip(binders, shape):
-      (binder,), = poly
-      if env.setdefault(binder, d) != d: raise masking.ShapeError
+  for shape_expr, shape in zip(shape_exprs, shapes):
+    for poly, d in zip(shape_expr, shape):
+      if masking.is_constant(poly):
+        continue
+      else:
+        (binder,), = poly  # TODO generalize to handle striding
+        if env.setdefault(binder, d) != d: raise masking.ShapeError
   return env
 
 
 @curry
 def shapecheck(in_shapes, out_shape, fun):
-  in_shapes_flat, in_tree = tree_flatten(in_shapes)
-  out_shapes_flat, out_tree = tree_flatten(out_shape)
+  in_shapes, in_tree = tree_flatten(in_shapes)
+  in_shapes = map(masking.parse_spec, in_shapes)
+  out_shapes, out_tree = tree_flatten(out_shape)
+  out_shapes = map(masking.parse_spec, out_shapes)
   flat_fun, out_tree_ = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
-  out_shapes_flat_ = masking.shapecheck(flat_fun, in_shapes_flat)
+  out_shapes_ = masking.shapecheck(flat_fun, in_shapes)
   if out_tree != out_tree_(): raise TypeError("pytree mismatch")
-  if out_shapes_flat != out_shapes_flat_: raise masking.ShapeError
+  if not all(map(_shape_spec_consistent, out_shapes, out_shapes_)):
+    raise masking.ShapeError
   return fun
+
+def _shape_spec_consistent(spec, expr):
+  return all(a == b for a, b in zip(spec, expr) if a is not masking.monomorphic_dim)
 
 
 def jvp(fun, primals, tangents):
@@ -1814,56 +1868,3 @@ def eval_shape(fun, *args, **kwargs):
   out = pe.abstract_eval_fun(fun.call_wrapped, *map(abstractify, args_flat))
   out = [ShapeDtypeStruct(x.shape, x.dtype) for x in out]
   return tree_unflatten(out_tree(), out)
-
-
-def _custom_implicit_solve(solve, tangent_solve):
-  """Define gradients for a function that performs an implicit solve.
-
-  Note: this isn't ready for widespread use yet -- it does not handle closed
-  over values inside solve yet.
-
-  Args:
-    solve: callable that takes two positional arguments, func and params, and
-      returns a solution such that func(params, solution) = 0. In other words,
-      the following is assumed to be true (but not checked):
-        solution = solve(func, params)
-        error = func(solution, params)
-        assert tree_all(tree_map(partial(np.allclose, 0.0), error)
-    tangent_solve: callable that takes two positional arguments, a linear
-      function ``f`` and (possibly nested) array(s) ``y``, and returns a
-      solution ``x`` such that ``f(x)=y``:
-
-      - For scalar ``y``, use ``lambda f, y: y / f(1.0)``.
-      - For vector ``y``, you could use a linear solve with the Jacobian, if
-        dimensionality of ``y`` is not too large:
-        ``lambda f, y: np.linalg.solve(jacobian(f)(y), y)``.
-
-  Returns:
-    Wrapped version of solve with JVP and VJPs defined with respect to
-    ``params`` via implicit differentaion, rather than differntiating through
-    the solve.
-  """
-  @wraps(solve)
-  def wrapper(func, params):
-
-    @custom_transforms
-    def solve_impl(params):
-      return solve(func, params)
-
-    @partial(defjvp_all, solve_impl)
-    def solve_impl_jvp(primals, tangents):
-      # F(u(m), m) = 0  # system of equations in m
-      # ∂_0 F(u(m), m) ∂ u(m) + ∂_1 F(u(m), m) = 0
-      # ∂ u(m) = - (∂_0 F(u*, m))^{-1} ∂_1 F(u*, m)
-      params, = primals
-      grad_params, = tangents
-      solution = solve_impl(params)
-      unchecked_zeros, f_jvp = vjp(func, solution, params)
-      grad_solution = tree_map(
-          lambda x: -x,
-          tangent_solve(lambda p: f_jvp(p)[0], f_jvp(grad_params)[1])
-      )
-      return solution, grad_solution
-
-    return solve_impl(params)
-  return wrapper

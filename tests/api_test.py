@@ -116,6 +116,13 @@ class APITest(jtu.JaxTestCase):
 
     f(1, 2, z=onp.zeros(3))  # doesn't crash
 
+  def test_jit_many_args(self):
+    @jit
+    def f(args_list):
+      return sum(args_list)
+
+    self.assertEqual(f(list(range(500))), sum(range(500)))
+
   def test_grad_of_jit(self):
     side = []
 
@@ -355,6 +362,41 @@ class APITest(jtu.JaxTestCase):
     expected = ((onp.array([2., 0.]), onp.array([0., 0.])),
                 (onp.array([0., 0.]), onp.array([0., 2.])))
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @jtu.skip_on_devices("tpu")
+  def test_issue1372(self):
+    def quad(x):
+      return np.dot(x, x)
+
+    def f(x, u):
+      return quad(x) + quad(u)
+
+    x, u = np.ones(5), np.ones(2)
+
+    rev = jacrev
+    fwd = jacfwd
+
+    # Diagonal entries
+    self.assertEqual(rev(rev(f, 0), 0)(x, u).shape, (5, 5))
+    self.assertEqual(rev(fwd(f, 0), 0)(x, u).shape, (5, 5))
+    self.assertEqual(fwd(rev(f, 0), 0)(x, u).shape, (5, 5))
+    self.assertEqual(fwd(fwd(f, 0), 0)(x, u).shape, (5, 5))
+    self.assertEqual(rev(rev(f, 1), 1)(x, u).shape, (2, 2))
+    self.assertEqual(rev(fwd(f, 1), 1)(x, u).shape, (2, 2))
+    self.assertEqual(fwd(rev(f, 1), 1)(x, u).shape, (2, 2))
+    self.assertEqual(fwd(fwd(f, 1), 1)(x, u).shape, (2, 2))
+
+    # Off-diagonal entries by reverse-mode on the outside
+    self.assertEqual(rev(rev(f, 1), 0)(x, u).shape, (2, 5))
+    self.assertEqual(rev(fwd(f, 1), 0)(x, u).shape, (2, 5))
+    self.assertEqual(rev(rev(f, 0), 1)(x, u).shape, (5, 2))
+    self.assertEqual(rev(fwd(f, 0), 1)(x, u).shape, (5, 2))
+
+    # Off-diagonal entries by forward-mode on the outside
+    self.assertEqual(fwd(rev(f, 1), 0)(x, u).shape, (2, 5))
+    self.assertEqual(fwd(fwd(f, 1), 0)(x, u).shape, (2, 5))
+    self.assertEqual(fwd(rev(f, 0), 1)(x, u).shape, (5, 2))
+    self.assertEqual(fwd(fwd(f, 0), 1)(x, u).shape, (5, 2))
 
   def test_disable_jit(self):
     effects = []
@@ -884,47 +926,11 @@ class APITest(jtu.JaxTestCase):
     xla_comp = api.xla_computation(f)
     xla_comp(np.arange(8)).GetHloText()  # doesn't crash
 
-  def test_custom_implicit_solve(self):
-
-    def scalar_solve(f, y):
-      return y / f(1.0)
-
-    def _binary_search(func, params, low=0.0, high=100.0, tolerance=1e-6):
-      def cond(state):
-        low, high = state
-        return high - low > tolerance
-
-      def body(state):
-        low, high = state
-        midpoint = 0.5 * (low + high)
-        update_upper = func(midpoint, params) > 0
-        low = np.where(update_upper, low, midpoint)
-        high = np.where(update_upper, midpoint, high)
-        return (low, high)
-
-      solution, _ = lax.while_loop(cond, body, (low, high))
-      return solution
-
-    binary_search = api._custom_implicit_solve(_binary_search, scalar_solve)
-    sqrt_cubed = lambda y, x: y ** 2 - x ** 3
-    value, grad = api.value_and_grad(binary_search, argnums=1)(sqrt_cubed, 5.0)
-    self.assertAllClose(value, 5 ** 1.5, check_dtypes=False)
-    self.assertAllClose(grad, api.grad(pow)(5.0, 1.5), check_dtypes=False)
-
-    def scalar_solve2(f, y):
-      y_1d = y[np.newaxis]
-      return np.linalg.solve(api.jacobian(f)(y_1d), y_1d).squeeze()
-
-    binary_search = api._custom_implicit_solve(_binary_search, scalar_solve2)
-    grad = api.grad(binary_search, argnums=1)(sqrt_cubed, 5.0)
-    self.assertAllClose(grad, api.grad(pow)(5.0, 1.5), check_dtypes=False)
-
-  def test_jit_device_assignment(self):
-    raise unittest.SkipTest("Temporarily disabled while device API is being changed.")
-    device_num = xb.device_count() - 1
-    x = api.jit(lambda x: x, device_assignment=device_num)(3.)
+  def test_jit_device(self):
+    device = xb.devices()[-1]
+    x = api.jit(lambda x: x, device=device)(3.)
     self.assertIsInstance(x, DeviceArray)
-    self.assertEqual(x.device_buffer.device(), device_num)
+    self.assertEqual(x.device_buffer.device(), device)
 
   def test_jit_of_noncallable(self):
     jtu.check_raises_regexp(lambda: api.jit(3), TypeError,

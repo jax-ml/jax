@@ -97,6 +97,10 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                             check_dtypes=True, tol=1e-3)
     self._CompileAndCheck(np.linalg.det, args_maker, check_dtypes=True)
 
+  def testDetOfSingularMatrix(self):
+    x = np.array([[-1., 3./2], [2./3, -1.]], dtype=onp.float32)
+    self.assertAllClose(onp.float32(0), jsp.linalg.det(x), check_dtypes=True)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
@@ -105,6 +109,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                     (2, 2, 2), (2, 3, 3), (3, 2, 2)]
       for dtype in float_types + complex_types
       for rng in [jtu.rand_default()]))
+  @jtu.skip_on_devices("tpu")
   def testSlogdet(self, shape, dtype, rng):
     _skip_if_unsupported_type(dtype)
     args_maker = lambda: [rng(shape, dtype)]
@@ -112,6 +117,19 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp.linalg.slogdet, np.linalg.slogdet, args_maker,
                             check_dtypes=True, tol=1e-3)
     self._CompileAndCheck(np.linalg.slogdet, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype, "rng": rng}
+      for shape in [(1, 1), (4, 4), (5, 5), (2, 7, 7)]
+      for dtype in float_types
+      for rng in [jtu.rand_default()]))
+  @jtu.skip_on_devices("tpu")
+  def testSlogdetGrad(self, shape, dtype, rng):
+    _skip_if_unsupported_type(dtype)
+    a = rng(shape, dtype)
+    jtu.check_grads(np.linalg.slogdet, (a,), 2, atol=1e-1, rtol=1e-1)
 
   def testIssue1213(self):
     for n in range(5):
@@ -520,6 +538,21 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     jac0 = jax.jacobian(np.linalg.solve, argnums=0)(A[0], b[0])
     jac1 = jax.jacobian(np.linalg.solve, argnums=1)(A[0], b[0])
 
+  @jtu.skip_on_devices("tpu")  # TODO(phawkins): No eigh implementation on TPU.
+  def testIssue1383(self):
+    seed = jax.random.PRNGKey(0)
+    tmp = jax.random.uniform(seed, (2,2))
+    a = np.dot(tmp, tmp.T)
+
+    def f(inp):
+      val, vec = np.linalg.eigh(inp)
+      return np.dot(np.dot(vec, inp), vec.T)
+
+    grad_func = jax.jacfwd(f)
+    hess_func = jax.jacfwd(grad_func)
+    cube_func = jax.jacfwd(hess_func)
+    self.assertFalse(onp.any(onp.isnan(cube_func(a))))
+
 
 class ScipyLinalgTest(jtu.JaxTestCase):
 
@@ -538,12 +571,10 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self.assertAllClose(x, onp.matmul(p, onp.matmul(l, u)), check_dtypes=True)
     self._CompileAndCheck(jsp.linalg.lu, args_maker, check_dtypes=True)
 
-  # TODO(phawkins): figure out why this test fails on Travis and reenable.
-  @unittest.skip("Test fails on travis")
-  def testLuOfSingularMatrixReturnsNans(self):
-    xs = np.array([[-1., 3./2], [2./3, -1.]])
-    lu, _ = jsp.linalg.lu_factor(xs)
-    self.assertTrue(onp.all(onp.isnan(lu)))
+  def testLuOfSingularMatrix(self):
+    x = np.array([[-1., 3./2], [2./3, -1.]], dtype=onp.float32)
+    p, l, u = jsp.linalg.lu(x)
+    self.assertAllClose(x, onp.matmul(p, onp.matmul(l, u)), check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":

@@ -39,6 +39,7 @@ from .config import flags
 from .util import partial
 from .tree_util import tree_multimap, tree_all, tree_map, tree_reduce
 from .lib import xla_bridge
+from .interpreters import xla
 
 
 FLAGS = flags.FLAGS
@@ -248,7 +249,7 @@ def _cast_to_shape(value, shape, dtype):
   """Casts `value` to the correct Python type for `shape` and `dtype`."""
   if shape is NUMPY_SCALAR_SHAPE:
     # explicitly cast to NumPy scalar in case `value` is a Python scalar.
-    return dtype(value)
+    return onp.dtype(dtype).type(value)
   elif shape is PYTHON_SCALAR_SHAPE:
     # explicitly cast to Python scalar via https://stackoverflow.com/a/11389998
     return onp.asarray(value).item()
@@ -359,6 +360,10 @@ def rand_some_inf():
   rng = npr.RandomState(1)
   base_rand = rand_default()
 
+  """
+  TODO: Complex numbers are not correctly tested
+  If blocks should be switched in order, and relevant tests should be fixed
+  """
   def rand(shape, dtype):
     """The random sampler function."""
     if not onp.issubdtype(dtype, onp.floating):
@@ -381,11 +386,40 @@ def rand_some_inf():
 
   return rand
 
+def rand_some_nan():
+  """Return a random sampler that produces nans in floating types."""
+  rng = npr.RandomState(1)
+  base_rand = rand_default()
+
+  def rand(shape, dtype):
+    """The random sampler function."""
+    if onp.issubdtype(dtype, onp.complexfloating):
+      base_dtype = onp.real(onp.array(0, dtype=dtype)).dtype
+      return rand(shape, base_dtype) + 1j * rand(shape, base_dtype)
+
+    if not onp.issubdtype(dtype, onp.floating):
+      # only float types have inf
+      return base_rand(shape, dtype)
+
+    dims = _dims_of_shape(shape)
+    nan_flips = rng.rand(*dims) < 0.1
+
+    vals = base_rand(shape, dtype)
+    vals = onp.where(nan_flips, onp.nan, vals)
+
+    return _cast_to_shape(onp.asarray(vals, dtype=dtype), shape, dtype)
+
+  return rand
+
 def rand_some_inf_and_nan():
   """Return a random sampler that produces infinities in floating types."""
   rng = npr.RandomState(1)
   base_rand = rand_default()
 
+  """
+  TODO: Complex numbers are not correctly tested
+  If blocks should be switched in order, and relevant tests should be fixed
+  """
   def rand(shape, dtype):
     """The random sampler function."""
     if not onp.issubdtype(dtype, onp.floating):
@@ -526,6 +560,8 @@ class JaxTestCase(parameterized.TestCase):
       x = onp.asarray(x)
       y = onp.asarray(y)
       self.assertArraysAllClose(x, y, check_dtypes, atol=atol, rtol=rtol)
+    elif x == y:
+        return
     else:
       raise TypeError((type(x), type(y)))
 
@@ -540,6 +576,13 @@ class JaxTestCase(parameterized.TestCase):
 
     python_should_be_executing = True
     python_ans = fun(*args)
+
+    cache_misses = xla.xla_primitive_callable.cache_info().misses
+    python_ans = fun(*args)
+    self.assertEqual(
+        cache_misses, xla.xla_primitive_callable.cache_info().misses,
+        "Compilation detected during second call of {} in op-by-op "
+        "mode.".format(fun))
 
     cfun = api.jit(wrapped_fun)
     python_should_be_executing = True
