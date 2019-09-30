@@ -123,9 +123,7 @@ class ndarray(six.with_metaclass(_ArrayMeta, onp.ndarray)):
 # pylint: enable=invalid-name
 
 isscalar = onp.isscalar
-result_type = _dtype = lax.dtype
-_shape = shape = lax.shape
-_ndim = ndim = lax.ndim
+_dtype = lax.dtype
 
 bool_ = onp.bool_
 uint8 = onp.uint8
@@ -166,6 +164,24 @@ load = onp.load
 
 # These wrappers are necessary to avoid infinite recursion inside JAX's
 # __array_function__ method. The implementations below exactly match NumPy.
+
+@functools.wraps(onp.ndim)
+def ndim(x):
+  if isinstance(x, _ARRAY_TYPES):
+    return x.ndim
+  return onp.ndim(x)
+
+@functools.wraps(onp.shape)
+def shape(x):
+  if isinstance(x, _ARRAY_TYPES):
+    return x.shape
+  return onp.shape(x)
+
+@functools.wraps(onp.result_type)
+def result_type(*arrays_and_dtypes):
+  return onp.result_type(
+      x.dtype is isinstance(x, _ARRAY_TYPES) else x for x in arrays_and_dtypes
+  )
 
 @functools.wraps(onp.iscomplexobj)
 def iscomplexobj(x):
@@ -246,7 +262,7 @@ def _promote_dtypes(*args):
   if len(args) < 2:
     return args
   else:
-    from_dtypes = tuple(map(_dtype, args))
+    from_dtypes = map(_dtype, args)
     to_dtype = xla_bridge.canonicalize_dtype(result_type(*from_dtypes))
     return [lax.convert_element_type(x, to_dtype)
             if _dtype(x) != to_dtype else x for x in args]
@@ -899,7 +915,7 @@ def where(condition, x=None, y=None):
   if not onp.issubdtype(_dtype(condition), onp.bool_):
     condition = lax.ne(condition, zeros_like(condition))
   condition, x, y = broadcast_arrays(condition, x, y)
-  if not size(x):
+  if not onp.size(x):
     empty, _ = _promote_dtypes(x, y)
     return empty
   else:
@@ -956,7 +972,7 @@ def broadcast_to(arr, shape):
 def split(ary, indices_or_sections, axis=0):
   dummy_val = onp.broadcast_to(0, ary.shape)  # zero strides
   subarrays = onp.split(dummy_val, indices_or_sections, axis)  # shapes
-  split_indices = onp.cumsum([0] + [shape(sub)[axis] for sub in subarrays])
+  split_indices = onp.cumsum([0] + [onp.shape(sub)[axis] for sub in subarrays])
   starts, ends = [0] * ndim(ary), shape(ary)
   _subval = lambda x, i, v: lax.subvals(x, [(i, v)])
   return [lax.slice(ary, _subval(starts, axis, start), _subval(ends, axis, end))
@@ -2772,7 +2788,7 @@ def _index_to_gather(x_shape, idx):
 
 def _should_unpack_list_index(x):
   """Helper for _eliminate_deprecated_list_indexing."""
-  return (isinstance(x, ndarray) and ndim(x) != 0
+  return (isinstance(x, ndarray) and onp.ndim(x) != 0
           or isinstance(x, collections.Sequence)
           or isinstance(x, slice) or x is Ellipsis or x is None)
 
@@ -2826,7 +2842,7 @@ def _is_advanced_int_indexer(idx):
   """Returns True if idx should trigger int array indexing, False otherwise."""
   # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#advanced-indexing
   assert isinstance(idx, tuple)
-  if _all(ndim(elt) == 0 for elt in idx):
+  if _all(onp.ndim(elt) == 0 for elt in idx):
     return False
   return _all(e is None or e is Ellipsis or isinstance(e, slice)
               or _is_int_arraylike(e) for e in idx)
@@ -2928,15 +2944,15 @@ def cov(m, y=None, rowvar=True, bias=False, ddof=None, fweights=None,
 
   w = None
   if fweights is not None:
-    if ndim(fweights) > 1:
+    if onp.ndim(fweights) > 1:
       raise RuntimeError("cannot handle multidimensional fweights")
-    if shape(fweights)[0] != X.shape[1]:
+    if onp.shape(fweights)[0] != X.shape[1]:
       raise RuntimeError("incompatible numbers of samples and fweights")
     w = asarray(fweights)
   if aweights is not None:
-    if ndim(aweights) > 1:
+    if onp.ndim(aweights) > 1:
       raise RuntimeError("cannot handle multidimensional aweights")
-    if shape(aweights)[0] != X.shape[1]:
+    if onp.shape(aweights)[0] != X.shape[1]:
       raise RuntimeError("incompatible numbers of samples and aweights")
     w = aweights if w is None else w * aweights
 
