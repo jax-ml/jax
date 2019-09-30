@@ -3203,7 +3203,7 @@ setattr(DeviceArray, "astype", _astype)
 
 
 # Override NumPy's public API.
-_JAX_ARRAY_TYPES = (DeviceArray, core.Tracer)
+_JAX_ARRAY_TYPES = (DeviceArray, ShapedArray, core.Tracer)
 _HANDLED_TYPES = _JAX_ARRAY_TYPES + (onp.ndarray, numbers.Number)
 
 def _implement_via_coercion(func, args, kwargs):

@@ -1799,6 +1799,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     result = onp.add(x, Other())
     self.assertEqual(result, 'success')
 
+  def testArrayUfuncTracer(self):
+
+    if not FLAGS.jax_enable_numpy_overrides:
+      self.skipTest('requires numpy overrides')
+
+    actual = jax.jit(onp.sin)(1.0)
+    self.assertAllClose(actual, onp.sin(1.0), check_dtypes=False)
+
   def testArrayFunction(self):
     if not array_function_overrides_enabled:
       self.skipTest('__array_function__ overrides not enabled')
