@@ -171,17 +171,21 @@ def ndim(x):
     return x.ndim
   return onp.ndim(x)
 
+_ndim = ndim
+
 @functools.wraps(onp.shape)
 def shape(x):
   if isinstance(x, _ARRAY_TYPES):
     return x.shape
   return onp.shape(x)
 
+_shape = shape
+
 @functools.wraps(onp.result_type)
 def result_type(*arrays_and_dtypes):
-  return onp.result_type(
-      x.dtype is isinstance(x, _ARRAY_TYPES) else x for x in arrays_and_dtypes
-  )
+  arrays_and_dtypes = [x.dtype if isinstance(x, _ARRAY_TYPES)
+                       else x for x in arrays_and_dtypes]
+  return onp.result_type(*arrays_and_dtypes)
 
 @functools.wraps(onp.iscomplexobj)
 def iscomplexobj(x):
