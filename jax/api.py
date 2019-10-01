@@ -51,7 +51,8 @@ from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
 from .util import (unzip2, unzip3, curry, partial, safe_map, safe_zip,
                    WrapHashably, prod, split_list)
 from .lib.xla_bridge import (canonicalize_dtype, device_count,
-                             local_device_count, devices, host_id)
+                             local_device_count, devices, local_devices,
+                             host_id, host_ids, host_count)
 from .abstract_arrays import ShapedArray, raise_to_shaped
 from .interpreters import partial_eval as pe
 from .interpreters import xla
@@ -194,7 +195,8 @@ def disable_jit():
     _thread_local_state.jit_is_disabled = prev_val
 
 
-def xla_computation(fun, static_argnums=(), axis_env=None, backend=None):
+def xla_computation(fun, static_argnums=(), axis_env=None, backend=None,
+                    tuple_args=False):
   """Creates a function that produces its XLA computation given example args.
 
   Args:
@@ -208,6 +210,9 @@ def xla_computation(fun, static_argnums=(), axis_env=None, backend=None):
       applications of ``jax.pmap``. See the examples below.
     backend: This is an experimental feature and the API is likely to change.
       Optional, a string representing the xla backend. 'cpu','gpu', or 'tpu'.
+    tuple_args: Optional, defaults to False. If True, the resulting XLA
+      computation will have a single tuple argument that is unpacked into the
+      specified function arguments.
 
   Returns:
     A wrapped version of ``fun`` that when applied to example arguments returns a
@@ -291,7 +296,7 @@ def xla_computation(fun, static_argnums=(), axis_env=None, backend=None):
     pvals = map(pv_like, jax_args)
     jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
     axis_env_ = make_axis_env(xla.jaxpr_replicas(jaxpr))
-    return xla.build_jaxpr(jaxpr, backend, axis_env_, consts,
+    return xla.build_jaxpr(jaxpr, backend, axis_env_, consts, tuple_args,
                            *map(xla.abstractify, jax_args))
   return computation_maker
 
@@ -643,10 +648,23 @@ def pmap(fun, axis_name=None, devices=None, backend=None):
   pure maps, ``pmap`` enables the use of parallel SPMD collective operations,
   like all-reduce sum.
 
-  The mapped axis size must be less than or equal to the number of XLA devices
-  available (unless ``devices`` is specified, see below). For nested ``pmap``
-  calls, the product of the mapped axis sizes must be less than or equal to the
-  number of XLA devices.
+  The mapped axis size must be less than or equal to the number of local XLA
+  devices available, as returned by ``jax.local_device_count()`` (unless
+  ``devices`` is specified, see below). For nested ``pmap`` calls, the product
+  of the mapped axis sizes must be less than or equal to the number of XLA
+  devices.  TODO(skye): support < # local devices on multi-host platforms
+
+  **Multi-host platforms:** On multi-host platforms such as TPU pods, ``pmap``
+  is designed to be used in SPMD Python programs, where every host is running
+  the same Python code such that all hosts run the same pmapped function in the
+  same order. Each host should still call the pmapped function with mapped axis
+  size equal to the number of *local* devices (unless ``devices`` is specified,
+  see below), and an array of the same leading axis size will be returned as
+  usual. However, any collective operations in ``fun`` will be computed over
+  *all* participating devices, including those on other hosts, via
+  device-to-device communication.  Conceptually, this can be thought of as
+  running a pmap over a single array sharded across hosts, where each host
+  "sees" only its local shard of the input and output.
 
   Args:
     fun: Function to be mapped over argument axes.
@@ -654,12 +672,12 @@ def pmap(fun, axis_name=None, devices=None, backend=None):
       axis so that parallel collectives can be applied.
     devices: This is an experimental feature and the API is likely to change.
       Optional, a sequence of Devices to map over. (Available devices can be
-      retrieved via jax.devices()). If specified, the length of the sequence
-      must be equal to the size of the mapped axis. Nested ``pmap``s with
-      ``devices`` specified in either the inner or outer ``pmap`` are not yet
-      supported.
+      retrieved via jax.devices()). If specified, the size of the mapped axis
+      must be equal to the number of local devices in the sequence. Nested
+      ``pmap`` s with ``devices`` specified in either the inner or outer ``pmap``
+      are not yet supported.
     backend: This is an experimental feature and the API is likely to change.
-      Optional, a string representing the xla backend. 'cpu','gpu', or 'tpu'.
+      Optional, a string representing the xla backend. 'cpu', 'gpu', or 'tpu'.
 
   Returns:
     A parallelized version of ``fun`` with arguments that correspond to those of
@@ -721,10 +739,28 @@ def pmap(fun, axis_name=None, devices=None, backend=None):
   >>> print(doubly_normed.sum((0, 1)))
   1.0
 
+  On multi-host platforms, collective operations operate over all devices,
+  including those those on other hosts. For example, assuming the following code
+  runs on two hosts with 4 XLA devices each:
+
+  >>> f = lambda x: x + jax.lax.psum(x, axis_name='i')
+  >>> data = np.arange(4) if jax.host_id() == 0 else np.arange(4,8)
+  >>> out = pmap(f, axis_name='i')(data)
+  >>> print(out)
+  [28 29 30 31] # on host 0
+  [32 33 34 35] # on host 1
+
+  Each host passes in a different length-4 array, corresponding to its 4 local
+  devices, and the psum operates over all 8 values. Conceptually, the two
+  length-4 arrays can be thought of as sharded length-16 array (in this example
+  equivalent to np.arange(8)) that is mapped over, with the length-8 mapped axis
+  given name 'i'. The pmap call on each host then returns the corresponding
+  length-4 output shard.
+
   The ``devices`` argument can be used to specify exactly which devices are used
-  to run the parallel computation. For example, the following code defines
-  two parallel computations, one which runs on the first six devices and one on
-  the remaining two:
+  to run the parallel computation. For example, again assuming a single host
+  with 8 devices, the following code defines two parallel computations, one
+  which runs on the first six devices and one on the remaining two:
 
   >>> from functools import partial
   >>> @partial(pmap, axis_name='i', devices=jax.devices()[:6])
@@ -1831,56 +1867,3 @@ def eval_shape(fun, *args, **kwargs):
   out = pe.abstract_eval_fun(fun.call_wrapped, *map(abstractify, args_flat))
   out = [ShapeDtypeStruct(x.shape, x.dtype) for x in out]
   return tree_unflatten(out_tree(), out)
-
-
-def _custom_implicit_solve(solve, tangent_solve):
-  """Define gradients for a function that performs an implicit solve.
-
-  Note: this isn't ready for widespread use yet -- it does not handle closed
-  over values inside solve yet.
-
-  Args:
-    solve: callable that takes two positional arguments, func and params, and
-      returns a solution such that func(params, solution) = 0. In other words,
-      the following is assumed to be true (but not checked):
-        solution = solve(func, params)
-        error = func(solution, params)
-        assert tree_all(tree_map(partial(np.allclose, 0.0), error)
-    tangent_solve: callable that takes two positional arguments, a linear
-      function ``f`` and (possibly nested) array(s) ``y``, and returns a
-      solution ``x`` such that ``f(x)=y``:
-
-      - For scalar ``y``, use ``lambda f, y: y / f(1.0)``.
-      - For vector ``y``, you could use a linear solve with the Jacobian, if
-        dimensionality of ``y`` is not too large:
-        ``lambda f, y: np.linalg.solve(jacobian(f)(y), y)``.
-
-  Returns:
-    Wrapped version of solve with JVP and VJPs defined with respect to
-    ``params`` via implicit differentaion, rather than differntiating through
-    the solve.
-  """
-  @wraps(solve)
-  def wrapper(func, params):
-
-    @custom_transforms
-    def solve_impl(params):
-      return solve(func, params)
-
-    @partial(defjvp_all, solve_impl)
-    def solve_impl_jvp(primals, tangents):
-      # F(u(m), m) = 0  # system of equations in m
-      # ∂_0 F(u(m), m) ∂ u(m) + ∂_1 F(u(m), m) = 0
-      # ∂ u(m) = - (∂_0 F(u*, m))^{-1} ∂_1 F(u*, m)
-      params, = primals
-      grad_params, = tangents
-      solution = solve_impl(params)
-      unchecked_zeros, f_jvp = vjp(func, solution, params)
-      grad_solution = tree_map(
-          lambda x: -x,
-          tangent_solve(lambda p: f_jvp(p)[0], f_jvp(grad_params)[1])
-      )
-      return solution, grad_solution
-
-    return solve_impl(params)
-  return wrapper

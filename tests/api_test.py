@@ -116,6 +116,13 @@ class APITest(jtu.JaxTestCase):
 
     f(1, 2, z=onp.zeros(3))  # doesn't crash
 
+  def test_jit_many_args(self):
+    @jit
+    def f(args_list):
+      return sum(args_list)
+
+    self.assertEqual(f(list(range(500))), sum(range(500)))
+
   def test_grad_of_jit(self):
     side = []
 
@@ -914,46 +921,24 @@ class APITest(jtu.JaxTestCase):
     self.assertIn('replica_groups={{0,1},{2,3},{4,5},{6,7}}', c.GetHloText())
     self.assertIn('replica_groups={{0,1,2,3,4,5,6,7}}', c.GetHloText())
 
+  def test_xla_computation_args(self):
+    def foo(x, y, z):
+      return x + y + z
+
+    c = api.xla_computation(foo)(1., 2., 3.)
+    self.assertEqual(len(c.GetProgramShape().parameter_shapes()), 3)
+
+    c = api.xla_computation(foo, tuple_args=True)(1., 2., 3.)
+    param_shapes = c.GetProgramShape().parameter_shapes()
+    self.assertEqual(len(param_shapes), 1)
+    self.assertEqual(param_shapes[0].xla_element_type(),
+                     xb.xla_client.PrimitiveType.TUPLE)
+
   def test_staging_out_multi_replica(self):
     def f(x):
       return api.pmap(np.mean)(x)
     xla_comp = api.xla_computation(f)
     xla_comp(np.arange(8)).GetHloText()  # doesn't crash
-
-  def test_custom_implicit_solve(self):
-
-    def scalar_solve(f, y):
-      return y / f(1.0)
-
-    def _binary_search(func, params, low=0.0, high=100.0, tolerance=1e-6):
-      def cond(state):
-        low, high = state
-        return high - low > tolerance
-
-      def body(state):
-        low, high = state
-        midpoint = 0.5 * (low + high)
-        update_upper = func(midpoint, params) > 0
-        low = np.where(update_upper, low, midpoint)
-        high = np.where(update_upper, midpoint, high)
-        return (low, high)
-
-      solution, _ = lax.while_loop(cond, body, (low, high))
-      return solution
-
-    binary_search = api._custom_implicit_solve(_binary_search, scalar_solve)
-    sqrt_cubed = lambda y, x: y ** 2 - x ** 3
-    value, grad = api.value_and_grad(binary_search, argnums=1)(sqrt_cubed, 5.0)
-    self.assertAllClose(value, 5 ** 1.5, check_dtypes=False)
-    self.assertAllClose(grad, api.grad(pow)(5.0, 1.5), check_dtypes=False)
-
-    def scalar_solve2(f, y):
-      y_1d = y[np.newaxis]
-      return np.linalg.solve(api.jacobian(f)(y_1d), y_1d).squeeze()
-
-    binary_search = api._custom_implicit_solve(_binary_search, scalar_solve2)
-    grad = api.grad(binary_search, argnums=1)(sqrt_cubed, 5.0)
-    self.assertAllClose(grad, api.grad(pow)(5.0, 1.5), check_dtypes=False)
 
   def test_jit_device(self):
     device = xb.devices()[-1]

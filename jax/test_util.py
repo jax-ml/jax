@@ -241,7 +241,7 @@ def _cast_to_shape(value, shape, dtype):
   """Casts `value` to the correct Python type for `shape` and `dtype`."""
   if shape is NUMPY_SCALAR_SHAPE:
     # explicitly cast to NumPy scalar in case `value` is a Python scalar.
-    return dtype(value)
+    return onp.dtype(dtype).type(value)
   elif shape is PYTHON_SCALAR_SHAPE:
     # explicitly cast to Python scalar via https://stackoverflow.com/a/11389998
     return onp.asarray(value).item()

@@ -1232,11 +1232,11 @@ nanprod = _make_nan_reduction(onp.nanprod, prod, 1, nan_if_all_nan=False)
 def nanmean(a, axis=None, dtype=None, out=None, keepdims=False):
   if out is not None:
     raise ValueError("nanmean does not support the `out` argument.")
-  if (onp.issubdtype(lax._dtype(a), onp.bool_) or
-      onp.issubdtype(lax._dtype(a), onp.integer)):
+  if (onp.issubdtype(_dtype(a), onp.bool_) or
+      onp.issubdtype(_dtype(a), onp.integer)):
     return mean(a, axis, dtype, out, keepdims)
   if dtype is None:
-    dtype = lax._dtype(a)
+    dtype = _dtype(a)
   nan_mask = logical_not(isnan(a))
   normalizer = sum(nan_mask, axis=axis, dtype=int32, keepdims=keepdims)
   normalizer = lax.convert_element_type(normalizer, dtype)
