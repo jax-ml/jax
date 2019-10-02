@@ -368,12 +368,12 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_mean={}_cov={}_{}".format(mean, cov, dtype),
-          "mean": mean, "cov": cov, "dtype": dtype}
+        "mean": mean, "cov": cov, "dtype": dtype}
       for mean in [0, 5, np.asarray([1, 2, 3])]
       for cov in [.1, 5, np.asarray([4, 5, 6]),
-          np.asarray([[4.60, 2.86, 2.33],
-          [2.86, 3.04, 1.74],
-          [2.33, 1.74, 1.83]])]
+        np.asarray([[4.60, 2.86, 2.33],
+        [2.86, 3.04, 1.74],
+        [2.33, 1.74, 1.83]])]
       for dtype in [onp.float32, onp.float64]))
   def testMultivariateNormal(self, mean, cov, dtype):
     key = random.PRNGKey(0)
@@ -388,9 +388,9 @@ class LaxRandomTest(jtu.JaxTestCase):
     else:
       rescale = lambda x: x / np.sqrt(cov)
     for samples in [uncompiled_samples, compiled_samples]:
-        self._CheckKolmogorovSmirnovCDF(
-                rescale(samples - mean).reshape(-1),
-                scipy.stats.norm().cdf)
+      self._CheckKolmogorovSmirnovCDF(
+          rescale(samples - mean).reshape(-1),
+          scipy.stats.norm().cdf)
 
   def testIssue222(self):
     x = random.randint(random.PRNGKey(10003), (), 0, 0)

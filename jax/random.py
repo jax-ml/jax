@@ -449,8 +449,6 @@ def _multivariate_normal(key, mean, cov, shape, dtype):
   else:
     if hasattr(mean, "shape") and mean.ndim > 0:
       shape = shape + mean.shape[:1]
-    else:
-      shape = shape
     normal_samples = normal(key, shape, dtype)
     samples = np.sqrt(cov) * normal_samples
   return samples + mean
