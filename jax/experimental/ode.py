@@ -122,9 +122,9 @@ def initial_step_size(fun, t0, y0, order, rtol, atol, f0):
 
   y1 = y0 + h0 * f0
   f1 = fun(y1, t0 + h0)
-  d2 = (np.linalg.norm(f1 - f0) / scale) / h0
+  d2 = np.linalg.norm((f1 - f0) / scale) / h0
 
-  h1 = np.where(np.all(np.asarray([d1 <= 1e-15, d2 < 1e-15])),
+  h1 = np.where(np.all(np.asarray([d1 <= 1e-15, d2 <= 1e-15])),
                 np.maximum(1e-6, h0 * 1e-3),
                 (0.01 / np.max(d1 + d2))**order_pow)
 
