@@ -260,6 +260,22 @@ def Dropout(rate, mode='train'):
   return init_fun, apply_fun
 
 
+def ResBlock(*layers, fan_in=FanInSum, tail=Relu):
+  """Split input, feed it through one or more layers in parallel,
+  recombine them with a fan-in, apply a trailing layer (i.e. an activation)
+
+  Args:
+    *layers: a sequence of layers, each an (init_fun, apply_fun) pair.
+    fan_in, optional: a fan-in to recombine the outputs of each layer
+    tail, optional: a final layer to apply after recombination
+
+  Returns:
+    A new layer, meaning an (init_fun, apply_fun) pair, representing the
+    parallel composition of the given sequence of layers fed into fan_in and then tail.
+  """
+  return serial(FanOut(len(layers)), parallel(*layers), fan_in, tail)
+
+
 # Composing layers via combinators
 
 

@@ -30,9 +30,9 @@ from jax.config import config
 from jax import jit, grad, random
 from jax.experimental import optimizers
 from jax.experimental import stax
-from jax.experimental.stax import (AvgPool, BatchNorm, Conv, Dense, FanInSum,
-                                   FanOut, Flatten, GeneralConv, Identity,
-                                   MaxPool, Relu, LogSoftmax)
+from jax.experimental.stax import (AvgPool, BatchNorm, Conv, Dense,
+                                   Flatten, GeneralConv, Identity,
+                                   MaxPool, Relu, ResBlock, LogSoftmax)
 
 
 # ResNet blocks compose other layers
@@ -45,7 +45,7 @@ def ConvBlock(kernel_size, filters, strides=(2, 2)):
       Conv(filters2, (ks, ks), padding='SAME'), BatchNorm(), Relu,
       Conv(filters3, (1, 1)), BatchNorm())
   Shortcut = stax.serial(Conv(filters3, (1, 1), strides), BatchNorm())
-  return stax.serial(FanOut(2), stax.parallel(Main, Shortcut), FanInSum, Relu)
+  return ResBlock(Main, Shortcut)
 
 
 def IdentityBlock(kernel_size, filters):
@@ -58,7 +58,7 @@ def IdentityBlock(kernel_size, filters):
         Conv(filters2, (ks, ks), padding='SAME'), BatchNorm(), Relu,
         Conv(input_shape[3], (1, 1)), BatchNorm())
   Main = stax.shape_dependent(make_main)
-  return stax.serial(FanOut(2), stax.parallel(Main, Identity), FanInSum, Relu)
+  return ResBlock(Main, Identity)
 
 
 # ResNet architectures compose layers and ResNet blocks
