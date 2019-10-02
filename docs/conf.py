@@ -102,8 +102,7 @@ napolean_use_rtype = False
 # -- Options for nbsphinx -----------------------------------------------------
 
 # Execute notebooks before conversion: 'always', 'never', 'auto' (default)
-# TODO(shoyer): switch to executing notebooks as part of the doc build process.
-nbsphinx_execute = 'never'
+nbsphinx_execute = 'always'
 
 # Use this kernel instead of the one stored in the notebook metadata:
 #nbsphinx_kernel_name = 'python3'
