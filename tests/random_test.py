@@ -384,7 +384,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     compiled_samples = crand(key, mean, cov)
     if hasattr(cov, "shape") and cov.ndim == 2:
       inv_scale = scipy.linalg.lapack.dtrtri(onp.linalg.cholesky(cov), lower=True)[0]
-      rescale = lambda x: x.dot(inv_scale)
+      rescale = lambda x: onp.tensordot(x, inv_scale, axes=(-1, 1))
     else:
       rescale = lambda x: x / np.sqrt(cov)
     for samples in [uncompiled_samples, compiled_samples]:
