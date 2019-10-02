@@ -443,7 +443,7 @@ def _multivariate_normal(key, mean, cov, shape, dtype):
       shape = shape + cov.shape[:1]
       normal_samples = normal(key, shape, dtype)
       if cov.ndim == 2:
-        samples = np.tensordot(normal_samples, cholesky(cov), axes=(-1, 0))
+        samples = np.tensordot(normal_samples, cholesky(cov), axes=1)
       else:
         samples = normal_samples * np.sqrt(cov)
   else:
