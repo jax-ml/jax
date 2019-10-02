@@ -32,21 +32,18 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 class DebugNaNsTest(jtu.JaxTestCase):
-  def testSingleResultPrimitive(self):
-    cfg = config.read("jax_debug_nans")
+  def setUp(self):
+    self.cfg = config.read("jax_debug_nans")
     config.update("jax_debug_nans", True)
+  def tearDown(self):
+    config.update("jax_debug_nans", self.cfg)
+
+  def testSingleResultPrimitive(self):
     A = np.array([[1., 2.], [2., 3.]])
     B = np.tanh(A)
-    config.update("jax_debug_nans", cfg)
   def testMultipleResultPrimitive(self):
-    cfg = config.read("jax_debug_nans")
-    config.update("jax_debug_nans", True)
     A = np.array([[1., 2.], [2., 3.]])
     D, V = np.linalg.eig(A)
-    config.update("jax_debug_nans", cfg)
   def testJitComputation(self):
-    cfg = config.read("jax_debug_nans")
-    config.update("jax_debug_nans", True)
     A = np.array([[1., 2.], [2., 3.]])
     B = jax.jit(np.tanh)(A)
-    config.update("jax_debug_nans", cfg)
