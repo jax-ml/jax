@@ -225,6 +225,16 @@ file directly to see more detailed information about the cases being run:
 python tests/lax_numpy_test.py --num_generated_cases=5
 ```
 
+To test the Colab notebooks, you should install the following additional packages:
+```
+pip install jupyter matplotlib
+```
+
+and then run
+```
+python -m unittest tests/notebooks_test.py
+```
+
 ## Reference documentation
 
 For details about the JAX API, see the
