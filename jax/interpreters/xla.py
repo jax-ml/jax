@@ -176,7 +176,7 @@ def _execute_compiled_primitive(prim, compiled, backend, result_handler, *args):
 
 def check_nans(prim, bufs):
   if prim.multiple_results:
-    for buf in bufs:
+    for buf in bufs.destructure():
       _check_nans(prim.name, buf.shape(), buf)
   else:
     _check_nans(prim.name, bufs.shape(), bufs)
