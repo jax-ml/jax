@@ -1060,12 +1060,12 @@ def _linear_solve_jvp(primals, tangents, num_consts, jaxpr, solve, symmetric):
       _tangent_linear_map, core.jaxpr_as_fun(jaxpr), params, params_dot
   )
 
-  if params_dot is not ad_util.zero and b_dot is not ad_util.zero:
-    rhs = [u - v for u, v in zip(b_dot, matvec_dot(*x))]
-  elif params_dot is not ad_util.zero:
+  if all(tangent is ad_util.zero for tangent in params_dot):
+    rhs = b_dot
+  elif all(tangent is ad_util.zero for tangent in b_dot):
     rhs = [-u for u in matvec_dot(*x)]
   else:
-    rhs = b_dot
+    rhs = [u - v for u, v in zip(b_dot, matvec_dot(*x))]
   x_dot = solve.tangent(matvec, *rhs)
   return x, x_dot
 

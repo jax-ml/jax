@@ -1062,8 +1062,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
   def test_linear_solve(self, symmetric):
 
     def forward_solve(matvec, b):
-      b = lax.stop_gradient(b)
-      return np.linalg.solve(api.jacobian(matvec)(b), b)
+      return lax.stop_gradient(np.linalg.solve(api.jacobian(matvec)(b), b))
 
     def matrix_free_solve(matvec, b):
       return lax.linear_solve(matvec, b, forward_solve, matrix_free_solve,
@@ -1078,6 +1077,23 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       a = a + a.T
     b = rng.randn(3)
     jtu.check_grads(linear_solve, (a, b), order=2)
+
+  def test_linear_solve_zeros(self):
+
+    def forward_solve(matvec, b):
+      return lax.stop_gradient(np.linalg.solve(api.jacobian(matvec)(b), b))
+
+    def matrix_free_solve(matvec, b):
+      return lax.linear_solve(matvec, b, forward_solve, matrix_free_solve)
+
+    def linear_solve(a, b):
+      return matrix_free_solve(partial(np.dot, a), b)
+
+    rng = onp.random.RandomState(0)
+    a = rng.randn(3, 3)
+    b = rng.randn(3)
+    jtu.check_grads(lambda x: linear_solve(x, b), (a,), order=2)
+    jtu.check_grads(lambda x: linear_solve(a, x), (b,), order=2)
 
   def test_linear_solve_iterative(self):
 
