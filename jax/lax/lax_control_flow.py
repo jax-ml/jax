@@ -978,10 +978,10 @@ xla.initial_style_translations[root_p] = xla.lower_fun(_root_impl, initial_style
 batching.deftraced(root_p)
 
 
-_Solvers = collections.namedtuple('_Solvers', 'forward tangent cotangent')
+_Solves = collections.namedtuple('_Solves', 'forward tangent cotangent')
 
 def linear_solve(matvec, b, forward_solve, tangent_solve=None,
-                 cotangent_solve=None, symmetric=True):
+                 cotangent_solve=None, symmetric=False):
   """Differentiably solve the linear map matvec(x)=b for x.
 
   Required invariant:
@@ -1004,7 +1004,7 @@ def linear_solve(matvec, b, forward_solve, tangent_solve=None,
         _tree_error_template("matvec", "b").format(out_tree, in_tree)
     )
 
-  solve = _Solvers(
+  solve = _Solves(
       _flatten_high_level_func(
           forward_solve, in_tree, _tree_error_template("forward_solve", "b")),
       _flatten_high_level_func(

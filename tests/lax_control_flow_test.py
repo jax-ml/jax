@@ -901,37 +901,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   # TODO(mattjj, dougalm): fix this test when skip_checks is False
   def testIssue757(self):
-    # code from https://github.com/google/jax/issues/757
-    def fn(a):
-        return np.cos(a)
+    # code from https://github.com/google/jax/issues/7
 
-    def loop(val):
-        iterations = 10
-        def apply_carry(x, i):
-            return api.grad(fn, argnums=(0,))(x)[0], i
-
-        final_val, _ = lax.scan(
-            apply_carry,
-            val,
-            np.arange(iterations)
-        )
-        return final_val
-
-    arg = 0.5
-    api.jit(api.jacfwd(loop, argnums=(0,)))(arg)  # doesn't crash
-
-  # TODO(mattjj): add a test for "the David Sussillo bug"
-
-  def testIssue804(self):
-    num_devices = xla_bridge.device_count()
-    f = partial(lax.scan, lambda c, x: (c + lax.psum(x, "i") , c), 0.)
-    api.pmap(f, axis_name="i")(np.ones((num_devices, 4)))  # doesn't crash
-
-  def testMap(self):
-    f = lambda x: x ** 2
-    xs = np.arange(10)
-    expected = xs ** 2
-    actual = lax.map(f, xs)
     self.assertAllClose(actual, expected, check_dtypes=True)
 
   def testCaching(self):
@@ -1083,22 +1054,34 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         TypeError, re.escape("tangent_solve() output pytree")):
       api.jvp(dummy_root_usage, (0.0,), (0.0,))
 
-  def test_linear_solve(self):
 
-    def solve(matvec, b):
+  @parameterized.named_parameters(
+      {"testcase_name": "nonsymmetric", "symmetric": False},
+      {"testcase_name": "symmetric", "symmetric": True},
+  )
+  def test_linear_solve(self, symmetric):
+
+    def forward_solve(matvec, b):
+      b = lax.stop_gradient(b)
       return np.linalg.solve(api.jacobian(matvec)(b), b)
 
+    def matrix_free_solve(matvec, b):
+      return lax.linear_solve(matvec, b, forward_solve, matrix_free_solve,
+                              symmetric=symmetric)
+
     def linear_solve(a, b):
-      return lax.linear_solve(partial(np.dot, a), b, solve)
+      return matrix_free_solve(partial(np.dot, a), b)
 
     rng = onp.random.RandomState(0)
-    a = rng.randn(2, 2)
-    b = rng.randn(2)
+    a = rng.randn(3, 3)
+    if symmetric:
+      a = a + a.T
+    b = rng.randn(3)
     jtu.check_grads(linear_solve, (a, b), order=2)
 
   def test_linear_solve_iterative(self):
 
-    def richardson_iteration(matvec, b, omega=0.1, tolerance=1e-4):
+    def richardson_iteration(matvec, b, omega=0.1, tolerance=1e-6):
       # Equivalent to vanilla gradient descent:
       # https://en.wikipedia.org/wiki/Modified_Richardson_iteration
       def cond(x):
@@ -1119,8 +1102,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     b = rng.randn(2)
     expected = np.linalg.solve(np.exp(a), np.cos(b))
     actual = build_and_solve(a, b)
-    self.assertAllClose(expected, actual, check_dtypes=True)
-    jtu.check_grads(build_and_solve, (a, b), order=2)
+    self.assertAllClose(expected, actual, atol=1e-5, check_dtypes=True)
+    jtu.check_grads(build_and_solve, (a, b), atol=1e-5, order=2)
 
 
 if __name__ == '__main__':
