@@ -40,14 +40,19 @@ class DebugNaNsTest(jtu.JaxTestCase):
   def tearDown(self):
     config.update("jax_debug_nans", self.cfg)
 
-  def testSingleResultPrimitive(self):
+  def testSingleResultPrimitiveNoNaN(self):
     A = np.array([[1., 2.], [2., 3.]])
     B = np.tanh(A)
 
-  def testMultipleResultPrimitive(self):
+  def testMultipleResultPrimitiveNoNaN(self):
     A = np.array([[1., 2.], [2., 3.]])
     D, V = np.linalg.eig(A)
 
-  def testJitComputation(self):
+  def testJitComputationNoNaN(self):
     A = np.array([[1., 2.], [2., 3.]])
     B = jax.jit(np.tanh)(A)
+
+  def testSingleResultPrimitiveNaN(self):
+    A = np.array(0.)
+    with self.assertRaises(FloatingPointError):
+      B = 0. / A
