@@ -3,6 +3,7 @@ from lax import *
 import jax.numpy as np
 from ..interpreters import fdb
 from ..interpreters import xla
+from scipy.special import factorial as fact
 
 
 def deflinear(prim):
@@ -51,22 +52,21 @@ def make_derivs_cos(primals, order):
   return cos_x, derivs
 fdb.jet_rules[cos_p] = make_derivs_cos
 
-def make_derivs_sqrt(primals,order,**params):
+def make_derivs_sqrt(primals, order, **params):
   x, = primals
   out = np.sqrt(x)
-  #TODO: make generator dependent on order...
-  def fst(vs):
-    return fdb.product(map(operator.itemgetter(0), vs)) * 1./(2*x**(1./2))
-  def snd(vs):
-    return fdb.product(map(operator.itemgetter(0), vs)) * - 1./(4*x**(3./2))
-  def thd(vs):
-    return fdb.product(map(operator.itemgetter(0), vs)) * 3./(8*x**(5./2))
-  def fth(vs):
-    return fdb.product(map(operator.itemgetter(0), vs)) * - 15./(16*x**(7./2))
-  def fith(vs):
-    return fdb.product(map(operator.itemgetter(0), vs)) * 105./(32*x**(9./2))
 
-  return out, [fst,snd,thd,fth,fith]
+  def derivs(n):
+    if (n - 1) % 2 == 0:
+      sign = 1.
+    else:
+      sign = -1.
+    fact_term = fact(2 * (n - 1)) / float(fact(n - 1))
+    x_power = (1. - 2. * n) / 2.
+    coeff = sign * fact_term * 4 ** x_power
+    return lambda vs: fdb.product(map(operator.itemgetter(0), vs)) * coeff * (x ** x_power)
+
+  return out, [derivs(n) for n in range(1, order + 1)]
 fdb.jet_rules[sqrt_p] = make_derivs_sqrt
 
 def make_derivs_exp(primals,order,**params):
