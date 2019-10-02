@@ -1669,7 +1669,7 @@ def _pow_jvp_lhs(g, x, y):
   return _safe_mul(_brcast(g, y), jac)
 
 def _pow_jvp_rhs(g, x, y):
-  return mul(_brcast(g, x), mul(log(_replace_zero(x)), pow(x, y)))
+  return _safe_mul(_brcast(g, x), mul(log(_replace_zero(x)), pow(x, y)))
 
 ad.defjvp(pow_p, _pow_jvp_lhs, _pow_jvp_rhs)
 _replace_zero = lambda x: select(eq(x, _const(x, 0)), _ones(x), x)
