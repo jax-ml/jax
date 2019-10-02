@@ -54,7 +54,11 @@ def test_log():
 
 
 def test_tanh():
-  raise NotImplementedError
+  N = 5
+  x = npr.randn()**2
+  terms_in = list(npr.randn(N))
+  jvp_test_jet(np.tanh, (x, ), (terms_in, ), atol=1e-1)
+
 
 
 def test_sin():
@@ -76,9 +80,6 @@ def test_sqrt():
   N = 5
   x = npr.randn()**2
   terms_in = list(npr.randn(N))
-  print terms_in
-  print jet(np.sqrt, (x, ), (terms_in, ))
-  print jvp_taylor(np.sqrt, (x, ), (terms_in, ))
   jvp_test_jet(np.sqrt, (x, ), (terms_in, ), atol=1e-1)
 
 def test_exp():

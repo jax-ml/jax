@@ -4,6 +4,7 @@ import jax.numpy as np
 from ..interpreters import fdb
 from ..interpreters import xla
 from scipy.special import factorial as fact
+from scipy.special import binom
 
 
 def deflinear(prim):
@@ -68,6 +69,45 @@ def make_derivs_sqrt(primals, order, **params):
 
   return out, [derivs(n) for n in range(1, order + 1)]
 fdb.jet_rules[sqrt_p] = make_derivs_sqrt
+
+# modified from https://github.com/sympy/sympy/blob/master/sympy/functions/combinatorial/numbers.py
+# the original uses a decorator to automatically memoize
+def _stirling2(n, k):
+  if n == k == 0:
+    return 1
+  if 0 in (n, k):
+    return 0
+  n1 = n - 1
+
+  # some special values
+  if k == n1:
+    return binom(n, 2)
+  elif k == 2:
+    return 2 ** n1 - 1
+
+  # general recurrence
+  return k * _stirling2(n1, k) + _stirling2(n1, k - 1)
+
+# based on Eqn 2.4 of https://arxiv.org/pdf/0903.0117.pdf
+def make_derivs_tanh(primals, order, **params):
+  x, = primals
+  out = np.tanh(x)
+
+  def derivs(n):
+    if n % 2 == 0:
+      sign = 1.
+    else:
+      sign = -1.
+    coeff = sign * (out + 1) * (2 ** n)
+    def term(m, k):
+      return (fact(k) * _stirling2(m, k) * (out - 1) ** k) / (2 ** k)
+    sum_terms = 0.
+    for i in range(n + 1):
+      sum_terms += term(n, i)
+    return lambda vs: fdb.product(map(operator.itemgetter(0), vs)) * coeff * sum_terms
+
+  return out, [derivs(n) for n in range(1, order + 1)]
+fdb.jet_rules[tanh_p] = make_derivs_tanh
 
 def make_derivs_exp(primals,order,**params):
   x, = primals
