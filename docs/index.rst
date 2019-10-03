@@ -32,6 +32,12 @@ For an introduction to JAX, start at the
    rank_promotion_warning
 
 .. toctree::
+   :maxdepth: 2
+   :caption: Developer documentation
+
+   developer
+
+.. toctree::
    :maxdepth: 3
    :caption: API documentation
 
