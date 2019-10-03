@@ -171,7 +171,8 @@ def _execute_compiled_primitive(prim, compiled, backend, result_handler, *args):
   device_num, = compiled.DeviceOrdinals()
   input_bufs = [device_put(x, device_num, backend=backend) for x in args]
   out_buf = compiled.Execute(input_bufs)
-  if FLAGS.jax_debug_nans: check_nans(prim, out_buf)
+  if FLAGS.jax_debug_nans:
+    check_nans(prim, out_buf.destructure() if prim.multiple_results else out_buf)
   return result_handler(out_buf)
 
 def check_nans(prim, bufs):
@@ -207,9 +208,10 @@ def compile_jaxpr(jaxpr, device, backend, axis_env, const_vals, tuple_args,
   return built_c.Compile(compile_options=compile_opts,
                          backend=xb.get_backend(backend))
 
-def build_jaxpr(jaxpr, backend, axis_env, const_vals, *abstract_args):
+def build_jaxpr(jaxpr, backend, axis_env, const_vals, tuple_args, *abstract_args):
   arg_shapes = map(aval_to_xla_shape, abstract_args)
-  return jaxpr_computation(jaxpr, backend, axis_env, const_vals, (), arg_shapes)
+  return jaxpr_computation(jaxpr, backend, axis_env, const_vals, (), arg_shapes,
+                           tuple_args=tuple_args)
 
 def prefetch(x):
   if isinstance(x, DeviceArray):
@@ -240,7 +242,8 @@ def jaxpr_computation(jaxpr, backend, axis_env, const_vals, freevar_shapes,
   _map(prefetch, it.chain(const_vals, jaxpr_literals(jaxpr)))
   consts = _map(c.Constant, const_vals)
   if tuple_args:
-    tuple_shape = xc.Shape.tuple_shape(list(freevar_shapes) + list(arg_shapes))
+    freevar_shapes, arg_shapes = list(freevar_shapes), list(arg_shapes)
+    tuple_shape = xc.Shape.tuple_shape(freevar_shapes + arg_shapes)
     tuple_arg = c.ParameterWithShape(tuple_shape)
     nfreevars, nargs = len(freevar_shapes), len(arg_shapes)
     freevars = [c.GetTupleElement(tuple_arg, i) for i in range(nfreevars)]

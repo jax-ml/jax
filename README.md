@@ -84,13 +84,13 @@ open](https://github.com/google/jax) by a growing number of
 
 ## Quickstart: Colab in the Cloud
 Jump right in using a notebook in your browser, connected to a Google Cloud GPU. Here are some starter notebooks:
-- [The basics: NumPy on accelerators, `grad` for differentiation, `jit` for compilation, and `vmap` for vectorization](https://colab.research.google.com/github/google/jax/blob/master/notebooks/quickstart.ipynb)
+- [The basics: NumPy on accelerators, `grad` for differentiation, `jit` for compilation, and `vmap` for vectorization](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/quickstart.ipynb)
 - [Training a Simple Neural Network, with PyTorch Data Loading](https://colab.research.google.com/github/google/jax/blob/master/notebooks/neural_network_and_data_loading.ipynb)
 - [Training a Simple Neural Network, with TensorFlow Dataset Data Loading](https://colab.research.google.com/github/google/jax/blob/master/notebooks/neural_network_with_tfds_data.ipynb)
 
 And for a deeper dive into JAX:
-- [Common gotchas and sharp edges](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb)
-- [The Autodiff Cookbook, Part 1: easy and powerful automatic differentiation in JAX](https://colab.research.google.com/github/google/jax/blob/master/notebooks/autodiff_cookbook.ipynb)
+- [Common gotchas and sharp edges](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/Common_Gotchas_in_JAX.ipynb)
+- [The Autodiff Cookbook, Part 1: easy and powerful automatic differentiation in JAX](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/autodiff_cookbook.ipynb)
 - [Directly using XLA in Python](https://colab.research.google.com/github/google/jax/blob/master/notebooks/XLA_in_Python.ipynb)
 - [MAML Tutorial with JAX](https://colab.research.google.com/github/google/jax/blob/master/notebooks/maml.ipynb)
 - [Generative Modeling by Estimating Gradeints of Data Distribution in JAX](https://colab.research.google.com/github/google/jax/blob/master/notebooks/score_matching.ipynb).
@@ -123,7 +123,7 @@ PYTHON_VERSION=cp37  # alternatives: cp27, cp35, cp36, cp37
 CUDA_VERSION=cuda92  # alternatives: cuda90, cuda92, cuda100, cuda101
 PLATFORM=linux_x86_64  # alternatives: linux_x86_64
 BASE_URL='https://storage.googleapis.com/jax-releases'
-pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.28-$PYTHON_VERSION-none-$PLATFORM.whl
+pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.30-$PYTHON_VERSION-none-$PLATFORM.whl
 
 pip install --upgrade jax  # install jax
 ```
@@ -224,6 +224,9 @@ file directly to see more detailed information about the cases being run:
 ```bash
 python tests/lax_numpy_test.py --num_generated_cases=5
 ```
+
+The Colab notebooks are tested for errors as part of the documentation build.
+See [docs/README.md](docs/README.md) for instructions.
 
 ## Reference documentation
 

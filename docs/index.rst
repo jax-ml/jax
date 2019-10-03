@@ -9,6 +9,14 @@ For an introduction to JAX, start at the
 
 .. toctree::
    :maxdepth: 1
+   :caption: Tutorials
+
+   notebooks/quickstart
+   notebooks/autodiff_cookbook
+   notebooks/Common_Gotchas_in_JAX
+
+.. toctree::
+   :maxdepth: 1
    :caption: Notes
 
    async_dispatch
@@ -19,7 +27,7 @@ For an introduction to JAX, start at the
 
 .. toctree::
    :maxdepth: 3
-   :caption: Contents
+   :caption: API documentation
 
    jax
 

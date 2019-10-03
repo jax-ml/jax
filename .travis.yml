@@ -23,5 +23,11 @@ install:
   - conda install --yes python=$TRAVIS_PYTHON_VERSION pip six protobuf>=3.6.0 absl-py opt_einsum numpy scipy pytest-xdist fastcache
   - pip install jaxlib
   - pip install -v .
+  # The following are needed to test the Colab notebooks and the documentation building
+  - conda install --yes -c conda-forge pandoc ipykernel
+  - conda install --yes sphinx sphinx_rtd_theme nbsphinx jupyter_client matplotlib
 script:
   - pytest -n 1 tests examples -W ignore
+  - if [[ "$TRAVIS_PYTHON_VERSION" > "3" ]]; then
+      sphinx-build -M html docs build;
+    fi
