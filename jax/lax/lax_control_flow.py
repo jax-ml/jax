@@ -850,17 +850,26 @@ def _memcpy(axis, num, src, dst, offset):
 masking.masking_rules[lax.concatenate_p] = _concat_masking_rule
 
 
-def _flatten_high_level_func(
-    fun, tree, error_template="Expected {}, got {}",
+def _flatten_higher_order_func(
+    f, tree, error_template="Expected {}, got {}",
 ):
-  """Flatten a higher level function ``f`` of the form ``f(g, x)``.
+  """Flatten a higher order function ``f`` of the form ``f(g, x)``.
 
-  ``x``, ``g(x)`` and ``f(g, x)`` all must have the same pytree structure.
+  ``f`` must have the type signature:
+
+  .. code-block:: haskell
+
+    f :: (a -> a) -> a -> a
+
+  ```a`` many be any arbitrary fixed pytree structure. The returned function has
+  the same structure as ``f``, except every appearence of ``a`` is replaced by a
+  flat sequence of arrays in the style used internally by JAX primitives
+  (variadic ``*args`` arguments in function calls, lists in return values).
   """
-  def flat_fun(flat_fun2, *args_flat):
+  def flat_fun(flat_g, *args_flat):
     args = tree_unflatten(tree, args_flat)
-    fun2 = partial(apply_flat_fun_nokwargs, flat_fun2, (tree, tree))
-    out = fun(fun2, args)
+    g = partial(apply_flat_fun_nokwargs, flat_g, (tree, tree))
+    out = f(g, args)
     out_flat, out_tree = tree_flatten(out)
     if out_tree != tree:
       raise TypeError(error_template.format(tree, out_tree))
@@ -916,9 +925,9 @@ def root(f, initial_guess, solve, tangent_solve):
   if in_tree != out_tree:
     raise TypeError(_root_tree_error_template("f").format(out_tree, in_tree))
 
-  solve_flat = _flatten_high_level_func(
+  solve_flat = _flatten_higher_order_func(
       solve, in_tree, _root_tree_error_template("solve"))
-  tangent_solve_flat = _flatten_high_level_func(
+  tangent_solve_flat = _flatten_higher_order_func(
       tangent_solve, in_tree, _root_tree_error_template("tangent_solve"))
 
   out_flat = root_p.bind(*itertools.chain(consts, guess_flat),
@@ -959,7 +968,6 @@ def _root_jvp(primals, tangents, num_consts, jaxpr, solve, tangent_solve):
   f_fixed_solution = lambda *params: f(*(params + solution))
 
   _, rhs = ad.jvp(lu.wrap_init(f_fixed_solution)).call_wrapped(params, params_dot)
-  # TDDO(shoyer): use the lower-level ad.linearize here?
   _, f_jvp_wrt_solution = api.linearize(f_fixed_params, *solution)
   solution_dot = [-x for x in tangent_solve(f_jvp_wrt_solution, *rhs)]
 
