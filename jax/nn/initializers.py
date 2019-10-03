@@ -86,13 +86,13 @@ def orthogonal(scale=1.0, column_axis=-1):
   def init(key, shape, dtype=np.float32):
     if len(shape) < 2:
       raise ValueError("orthogonal initializer requires at least a 2D shape")
-    n_rows, n_cols = onp.prod(shape) / shape[column_axis], shape[column_axis]
+    n_rows, n_cols = onp.prod(shape) // shape[column_axis], shape[column_axis]
     matrix_shape = (n_cols, n_rows) if n_rows < n_cols else (n_rows, n_cols)
     A = random.normal(key, matrix_shape, dtype)
     Q, R = np.linalg.qr(A)
     Q *= np.sign(np.diag(R)) # needed for a uniform distribution
     if n_rows < n_cols: Q = Q.T
-    Q = np.reshape(Q, np.delete(shape, column_axis) + (shape[column_axis],))
+    Q = np.reshape(Q, onp.delete(shape, column_axis) + (shape[column_axis],))
     Q = np.moveaxis(Q, -1, column_axis)
     return scale * Q
   return init
