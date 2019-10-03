@@ -1065,8 +1065,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return lax.stop_gradient(np.linalg.solve(api.jacobian(matvec)(b), b))
 
     def matrix_free_solve(matvec, b):
-      return lax.linear_solve(matvec, b, forward_solve, matrix_free_solve,
-                              symmetric=symmetric)
+      return lax.linear_solve(matvec, b, forward_solve, symmetric=symmetric)
 
     def linear_solve(a, b):
       return matrix_free_solve(partial(np.dot, a), b)
@@ -1084,7 +1083,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return lax.stop_gradient(np.linalg.solve(api.jacobian(matvec)(b), b))
 
     def matrix_free_solve(matvec, b):
-      return lax.linear_solve(matvec, b, forward_solve, matrix_free_solve)
+      return lax.linear_solve(matvec, b, forward_solve)
 
     def linear_solve(a, b):
       return matrix_free_solve(partial(np.dot, a), b)
@@ -1107,7 +1106,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return lax.while_loop(cond, body, np.zeros_like(b))
 
     def matrix_free_solve(matvec, b):
-      return lax.linear_solve(matvec, b, richardson_iteration, matrix_free_solve)
+      return lax.linear_solve(matvec, b, richardson_iteration)
 
     def build_and_solve(a, b):
       # intentionally non-linear in a and b
