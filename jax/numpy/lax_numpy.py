@@ -272,6 +272,22 @@ def _wraps(fun):
         "{summary}\n\nLAX-backend implementation of :func:`{fun}`. "
         "Original docstring below.\n\n{body}".format(
           summary=summary, fun=fun.__name__, body=body))
+
+      begin_idx = docstr.find("Parameters")
+      begin_idx += docstr[begin_idx:].find("--\n") + 2
+      end_idx = docstr.find("Returns")
+
+      parameters = docstr[begin_idx:end_idx]
+      param_list = parameters.replace('\n    ', '@@').split('\n')
+
+      for idx, p in enumerate(param_list):
+        param, *_ = p.split(' : ')
+        if param not in op.__code__.co_varnames:
+          param_list[idx] = ''
+      param_list = [param for param in param_list if param != '']
+      parameters = '\n'.join(param_list).replace('@@', '\n    ')
+      docstr = docstr[:begin_idx + 1] + parameters + docstr[end_idx - 2:]
+
       op.__name__ = fun.__name__
       op.__doc__ = docstr
     finally:
