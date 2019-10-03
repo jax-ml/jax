@@ -225,6 +225,9 @@ file directly to see more detailed information about the cases being run:
 python tests/lax_numpy_test.py --num_generated_cases=5
 ```
 
+The Colab notebooks are tested for errors as part of the documentation build.
+See [docs/README.md](docs/README.md) for instructions.
+
 ## Reference documentation
 
 For details about the JAX API, see the
