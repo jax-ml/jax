@@ -13,6 +13,11 @@ For an introduction to JAX, start at the
 
    notebooks/quickstart
    notebooks/autodiff_cookbook
+
+.. toctree::
+   :maxdepth: 1
+   :caption: Advanced Tutorials
+
    notebooks/Common_Gotchas_in_JAX
    notebooks/How_JAX_primitives_work
 
