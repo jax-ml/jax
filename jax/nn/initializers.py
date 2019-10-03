@@ -69,8 +69,8 @@ def variance_scaling(scale, mode, distribution, in_axis=-2, out_axis=-1):
       raise ValueError("invalid distribution for variance scaling initializer")
   return init
 
-glorot_uniform = partial(variance_scaling, 1.0, "fan_avg", "uniform")
-glorot_normal = partial(variance_scaling, 1.0, "fan_avg", "truncated_normal")
+xavier_uniform = glorot_uniform = partial(variance_scaling, 1.0, "fan_avg", "uniform")
+xavier_normal = glorot_normal = partial(variance_scaling, 1.0, "fan_avg", "truncated_normal")
 lecun_uniform = partial(variance_scaling, 1.0, "fan_in", "uniform")
 lecun_normal = partial(variance_scaling, 1.0, "fan_in", "truncated_normal")
 kaiming_uniform = he_uniform = partial(variance_scaling, 2.0, "fan_in", "uniform")
