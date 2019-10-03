@@ -901,8 +901,37 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   # TODO(mattjj, dougalm): fix this test when skip_checks is False
   def testIssue757(self):
-    # code from https://github.com/google/jax/issues/7
+    # code from https://github.com/google/jax/issues/757
+    def fn(a):
+        return np.cos(a)
 
+    def loop(val):
+        iterations = 10
+        def apply_carry(x, i):
+            return api.grad(fn, argnums=(0,))(x)[0], i
+
+        final_val, _ = lax.scan(
+            apply_carry,
+            val,
+            np.arange(iterations)
+        )
+        return final_val
+
+    arg = 0.5
+    api.jit(api.jacfwd(loop, argnums=(0,)))(arg)  # doesn't crash
+
+  # TODO(mattjj): add a test for "the David Sussillo bug"
+
+  def testIssue804(self):
+    num_devices = xla_bridge.device_count()
+    f = partial(lax.scan, lambda c, x: (c + lax.psum(x, "i") , c), 0.)
+    api.pmap(f, axis_name="i")(np.ones((num_devices, 4)))  # doesn't crash
+
+  def testMap(self):
+    f = lambda x: x ** 2
+    xs = np.arange(10)
+    expected = xs ** 2
+    actual = lax.map(f, xs)
     self.assertAllClose(actual, expected, check_dtypes=True)
 
   def testCaching(self):
