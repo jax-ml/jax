@@ -1090,11 +1090,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
   )
   def test_linear_solve(self, symmetric):
 
-    def forward_solve(matvec, b):
+    def explicit_jacobian_solve(matvec, b):
       return lax.stop_gradient(np.linalg.solve(api.jacobian(matvec)(b), b))
 
     def matrix_free_solve(matvec, b):
-      return lax.linear_solve(matvec, b, forward_solve, symmetric=symmetric)
+      return lax.linear_solve(
+          matvec, b, explicit_jacobian_solve, symmetric=symmetric)
 
     def linear_solve(a, b):
       return matrix_free_solve(partial(np.dot, a), b)
@@ -1108,11 +1109,11 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   def test_linear_solve_zeros(self):
 
-    def forward_solve(matvec, b):
+    def explicit_jacobian_solve(matvec, b):
       return lax.stop_gradient(np.linalg.solve(api.jacobian(matvec)(b), b))
 
     def matrix_free_solve(matvec, b):
-      return lax.linear_solve(matvec, b, forward_solve)
+      return lax.linear_solve(matvec, b, explicit_jacobian_solve)
 
     def linear_solve(a, b):
       return matrix_free_solve(partial(np.dot, a), b)
