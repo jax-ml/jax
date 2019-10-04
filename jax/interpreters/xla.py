@@ -142,7 +142,12 @@ def xla_primitive_callable(prim, *abstract_args, **params):
 def primitive_computation(prim, *xla_shapes, **params):
   backend = params.get('backend', None)
   new_params = {k: params[k] for k in params if k != 'backend'}
-  c = xb.make_computation_builder("primitive_computation")  # TODO(name)
+  c = xb.make_computation_builder("primitive_computation_{}".format(prim.name))
+  c.SetOpMetadata(xc.CurrentSourceInfoMetadata(
+      op_type=prim.name,
+      op_name=prim.name,
+      skip_frames=6
+  ))
   platform = xb.get_backend(backend).platform
   xla_args = map(c.ParameterWithShape, xla_shapes)
   if prim in backend_specific_translations[platform]:
@@ -159,6 +164,7 @@ def primitive_computation(prim, *xla_shapes, **params):
     rule(c, AxisEnv(), *xla_args,  backend=backend, **new_params)  # side-effect on c
   else:
     raise NotImplementedError("XLA translation rule for {} not found".format(prim))
+  c.ClearOpMetadata()
   try:
     return c.Build()
   except RuntimeError as e:
@@ -273,6 +279,11 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, freevars, *args):
   _map(write, jaxpr.freevars, freevars)
   _map(write, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
+    c.SetOpMetadata(xc.CurrentSourceInfoMetadata(
+      op_type=eqn.primitive.name,
+      op_name=str(eqn),
+      skip_frames=10
+    ))
     in_nodes = list(map(read, eqn.invars))
     if eqn.primitive in backend_specific_translations[platform]:
       rule = backend_specific_translations[platform][eqn.primitive]
@@ -306,6 +317,7 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, freevars, *args):
 
     c.GetShape(ans)  # force xla to do shape error checking
     out_nodes = xla_destructure(c, ans) if eqn.primitive.multiple_results else [ans]
+    c.ClearOpMetadata()
     _map(write, eqn.outvars, out_nodes)
   return _map(read, jaxpr.outvars)
 
