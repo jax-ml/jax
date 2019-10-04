@@ -1112,7 +1112,7 @@ def _unzip_primals(f, *primals):
       nondifferentiable.append(primal)
       primal_info.append((1, len(nondifferentiable) - 1))
   f = _zip_primals(f, nondifferentiable, primal_info)
-  return f, differentiable, nondifferentiable, primal_info
+  return f, differentiable, primal_info
 
 @lu.transformation
 def _zip_primals(nondifferentiable, primal_info, *differentiable):
@@ -1166,13 +1166,13 @@ def vjp(fun, *primals, **kwargs):
   _check_args(primals_flat)
   if not has_aux:
     flat_fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
-    flat_fun, primals_flat, nonprimals_flat, info = _unzip_primals(flat_fun, *primals_flat)
+    flat_fun, primals_flat, primals_info = _unzip_primals(flat_fun, *primals_flat)
     primals_flat, primals_tree = tree_flatten(primals_flat)
     out_primal, out_vjp = ad.vjp(flat_fun, primals_flat)
     out_tree = out_tree()
   else:
     flat_fun, out_aux_trees = flatten_fun_nokwargs2(fun, in_tree)
-    flat_fun, primals_flat, nonprimals_flat, info = _unzip_primals(flat_fun, *primals_flat)
+    flat_fun, primals_flat, primals_info = _unzip_primals(flat_fun, *primals_flat)
     primals_flat, primals_tree = tree_flatten(primals_flat)
     out_primal, out_vjp, aux = ad.vjp(flat_fun, primals_flat, has_aux=True)
     out_tree, aux_tree = out_aux_trees()
@@ -1180,10 +1180,11 @@ def vjp(fun, *primals, **kwargs):
   vjp_py = partial(apply_flat_fun_nokwargs, out_vjp, (out_tree, primals_tree))
   def out_vjp_zipped(cotangent_in):
     cotangents_out = vjp_py(cotangent_in)
-    nested_out = (cotangents_out, (None,) * len(nonprimals_flat))
     result = [
-            nested_out[i1][i2]
-            for i1, i2 in info
+            cotangents_out[i2]
+            if i1 == 0
+            else None
+            for i1, i2 in primals_info
     ]
     return tree_unflatten(in_tree, result)
   if not has_aux:
