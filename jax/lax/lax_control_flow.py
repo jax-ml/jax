@@ -920,7 +920,8 @@ def root(f, initial_guess, solve, tangent_solve):
   """
   guess_flat, in_args_tree = tree_flatten((initial_guess,))
   guess_avals = tuple(_map(_abstractify, guess_flat))
-  jaxpr, consts, out_tree = _initial_style_jaxpr(f, in_args_tree, guess_avals)
+  f_jaxpr, f_consts, out_tree = _initial_style_jaxpr(
+      f, in_args_tree, guess_avals)
 
   in_tree, = treedef_children(in_args_tree)
   if in_tree != out_tree:
@@ -928,13 +929,31 @@ def root(f, initial_guess, solve, tangent_solve):
         _tree_error_template("f", "initial_guess").format(out_tree, in_tree)
     )
 
-  solve_flat = _flatten_higher_order_func(
-      solve, in_tree, _tree_error_template("solve", "initial_guess"))
+  f_without_gradients = partial(
+      apply_flat_fun_nokwargs,
+      partial(core.jaxpr_as_fun(f), *lax.stop_gradient(f_consts)),
+      (tree, tree))
+  solve_jaxpr, solve_consts, solution_tree = _initial_style_jaxpr(
+      partial(solve, f_without_gradients), in_args_tree, guess_avals)
+
+  if in_tree != solution_tree:
+    raise TypeError(
+        _tree_error_template("solve", "initial_guess").format(out_tree, in_tree)
+    )
+
+  _, f_jvp = api.linearize(f, *solution)
+  ts_jaxpr, ts_consts, ts_tree = _initial_style_jaxpr(
+      partial(tangent_solve, f_without_gradients), in_args_tree, guess_avals)
+
+
+  # solve_flat = _flatten_higher_order_func(
+  #     solve, in_tree, _tree_error_template("solve", "initial_guess"))
   tangent_solve_flat = _flatten_higher_order_func(
       tangent_solve, in_tree, _tree_error_template("tangent_solve", "initial_guess"))
 
-  out_flat = root_p.bind(*itertools.chain(consts, guess_flat),
-                         num_consts=len(consts), jaxpr=jaxpr, solve=solve_flat,
+  out_flat = root_p.bind(*itertools.chain(consts, guess_flat, solve_consts),
+                         num_consts=len(consts), num_solution=len(guess_flat),
+                         jaxpr=jaxpr, solve_jaxpr=solve_jaxpr,
                          tangent_solve=tangent_solve_flat)
   return tree_unflatten(out_tree, out_flat)
 
@@ -944,17 +963,19 @@ def _root_abstract_eval(*args, **kwargs):
 
 
 def _root_impl(*args, **kwargs):
-  num_consts, jaxpr, solve, _ = split_dict(
-      kwargs, ['num_consts', 'jaxpr', 'solve', 'tangent_solve'])
-  params, initial_guess = split_list(args, [num_consts])
-  f = partial(core.jaxpr_as_fun(jaxpr), *params)
-  return solve(f, *initial_guess)
+  num_consts, num_solution, jaxpr, solve_jaxpr, _ = split_dict(
+      kwargs, ['num_consts', 'num_solution', 'jaxpr', 'solve_jaxpr', 'tangent_solve'])
+  _, initial_guess, solve_consts = split_list(args, [num_consts, num_solution])
+  return core.jaxpr_as_fun(solve_jaxpr)(*(solve_consts + initial_guess))
+  # f = partial(core.jaxpr_as_fun(jaxpr), *params)
+  # return solve(f, *initial_guess)
 
 
-def _root_jvp(primals, tangents, num_consts, jaxpr, solve, tangent_solve):
+def _root_jvp(primals, tangents, num_consts, num_solution, jaxpr, solve_jaxpr, tangent_solve):
   params = primals[:num_consts]
-  solution = tuple(root_p.bind(*primals, num_consts=num_consts, jaxpr=jaxpr,
-                               solve=solve, tangent_solve=tangent_solve))
+  solution = tuple(root_p.bind(
+      *primals, num_consts=num_consts, num_solution=num_solution,
+      jaxpr=jaxpr, solve_jaxpr=solve_jaxpr, tangent_solve=tangent_solve))
   params_dot = tangents[:num_consts]
 
   # F(m, u) = 0      # system of equations in u, parameterized by m
@@ -984,6 +1005,106 @@ root_p.def_abstract_eval(_root_abstract_eval)
 ad.primitive_jvps[root_p] = _root_jvp
 xla.initial_style_translations[root_p] = xla.lower_fun(_root_impl, initial_style=True)
 batching.deftraced(root_p)
+
+
+def stop_gradient_fun(f):
+  def wrapper(*args, **kwargs):
+    args_flat, in_args_tree = tree_flatten(args)
+    args_avals = tuple(_map(_abstractify, args_flat))
+    jaxpr, consts, out_tree = _initial_style_jaxpr(f, in_args_tree, args_avals)
+    out = core.jaxpr_as_fun(jaxpr)(
+        *itertools.chain(lax.stop_gradient(consts), args_flat))
+    return tree_unflatten(out_tree, out)
+  return wrapper
+
+
+def define_implicit_gradient(f, x, tangent_solve):
+  x_flat, in_args_tree = tree_flatten((x,))
+  x_avals = tuple(_map(_abstractify, x_flat))
+  f_jaxpr, f_consts, out_tree = _initial_style_jaxpr(
+      f, in_args_tree, x_avals)
+
+  in_tree, = treedef_children(in_args_tree)
+  if in_tree != out_tree:
+    raise TypeError(
+        _tree_error_template("f", "x").format(out_tree, in_tree)
+    )
+
+  unchecked_zeros, f_jvp = api.linearize(f, x)
+  ts_jaxpr, ts_consts, out_tree = _initial_style_jaxpr(
+      partial(tangent_solve, f_jvp), in_args_tree, x_avals)
+  # ts_flat = partial(core.jaxpr_as_fun(ts_jaxpr), *ts_consts)
+
+  if in_tree != out_tree:
+    raise TypeError(
+        _tree_error_template("tangent_solve", "x").format(out_tree, in_tree)
+    )
+
+  ts_flat = _flatten_higher_order_func(tangent_solve, out_tree)
+
+  out_flat = define_implicit_gradient_p.bind(
+      *itertools.chain(x_flat, f_consts, ts_consts),
+      num_x=len(x_flat), num_f_consts=len(f_consts), f_jaxpr=f_jaxpr,
+      ts_jaxpr=ts_jaxpr, tangent_solve=ts_flat)
+  return tree_unflatten(out_tree, out_flat)
+
+
+def _define_implicit_gradient_impl(*args, **kwargs):
+  return args[:kwargs['num_x']]
+
+
+def _define_implicit_gradient_jvp(
+    primals, tangents, num_x, num_f_consts, f_jaxpr, ts_jaxpr, tangent_solve):
+
+  x, f_consts, ts_consts = split_list(primals, [num_x, num_f_consts])
+  _, f_consts_dot, _ = split_list(tangents, [num_x, num_f_consts])
+
+  x = define_implicit_gradient_p.bind(
+      *primals, num_x=num_x, num_f_consts=num_f_consts, f_jaxpr=f_jaxpr,
+      ts_jaxpr=ts_jaxpr, tangent_solve=tangent_solve)
+
+  # F(m, u) = 0      # system of equations in u, parameterized by m
+  #                  # solution is u*(m) defined in a neighborhood
+  # F(m, u*(m)) = 0  # satisfied in a neighborhood
+  #
+  # ∂_0 F(m, u*(m)) + ∂_1 F(m, u*(m)) ∂ u*(m) = 0       # implied by line above
+  # ∂ u*(m) = - (∂_1 F(m, u*(m)))^{-1} ∂_0 F(m, u*(m))  # rearrange
+  #
+  # ∂ u*(m)[v] = - (∂_1 F(m, u*(m)))^{-1} [∂_0 F(m, u*(m))[v]]  # jvp
+
+  f = core.jaxpr_as_fun(f_jaxpr)
+  f_fixed_params = lambda *x: f(*itertools.chain(f_consts, x))
+  f_fixed_solution = lambda *f_consts: f(*itertools.chain(f_consts, x))
+
+  _, rhs = ad.jvp(lu.wrap_init(f_fixed_solution)).call_wrapped(f_consts, f_consts_dot)
+  _, f_jvp_wrt_solution = api.linearize(f_fixed_params, *x)
+  x_dot = [-x for x in tangent_solve(f_jvp_wrt_solution, *rhs)]
+  return x, x_dot
+
+  f = core.jaxpr_as_fun(f_jaxpr)
+  f_at_x = lambda *params: f(*(params + tuple(x)))
+  _, rhs = ad.jvp(lu.wrap_init(f_at_x)).call_wrapped(f_consts, f_consts_dot)
+  x_dot = [-x for x in tangent_solve(*rhs)]
+
+  return x, x_dot
+
+
+  f = core.jaxpr_as_fun(f_jaxpr)
+  tangent_solve = partial(core.jaxpr_as_fun(ts_jaxpr), *ts_consts)
+  f_at_x = lambda *params: f(*(params + tuple(x)))
+  _, rhs = ad.jvp(lu.wrap_init(f_at_x)).call_wrapped(f_consts, f_consts_dot)
+  x_dot = [-x for x in tangent_solve(*rhs)]
+
+  return x, x_dot
+
+
+define_implicit_gradient_p = core.Primitive('define_implicit_gradient')
+define_implicit_gradient_p.multiple_results = True
+define_implicit_gradient_p.def_impl(_define_implicit_gradient_impl)
+define_implicit_gradient_p.def_abstract_eval(_define_implicit_gradient_impl)
+ad.primitive_jvps[define_implicit_gradient_p] = _define_implicit_gradient_jvp
+xla.initial_style_translations[define_implicit_gradient_p] = xla.lower_fun(
+    _define_implicit_gradient_impl, initial_style=True)
 
 
 def linear_solve(matvec, b, solve, transpose_solve=None, symmetric=False):

@@ -1010,13 +1010,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     api.grad(lambda x: jit_run_scan(x))(0.)  # doesn't crash
 
-  def test_root_scalar(self):
+  def test_define_implicit_gradient_scalar(self):
 
     def scalar_solve(f, y):
       return y / f(1.0)
 
-    def binary_search(func, x0, low=0.0, high=100.0, tolerance=1e-6):
-      del x0  # unused
+    def binary_search(func, low=0.0, high=100.0, tolerance=1e-6):
 
       def cond(state):
         low, high = state
@@ -1035,53 +1034,65 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     def sqrt_cubed(x, tangent_solve=scalar_solve):
       f = lambda y: y ** 2 - x ** 3
-      return lax.root(f, 0.0, binary_search, tangent_solve)
+      # f_no_grad = lambda y: y ** 2 - lax.stop_gradient(x) ** 3
+      # y = binary_search(f_no_grad)
+      y = binary_search(lax.stop_gradient_fun(f))
+      return lax.define_implicit_gradient(f, y, tangent_solve)
 
     value, grad = api.value_and_grad(sqrt_cubed)(5.0)
     self.assertAllClose(value, 5 ** 1.5, check_dtypes=False)
     self.assertAllClose(grad, api.grad(pow)(5.0, 1.5), check_dtypes=False)
 
+    jtu.check_grads(sqrt_cubed, (5.0,), order=1, modes=['fwd'], rtol=1e-3)
+    jtu.check_grads(sqrt_cubed, (5.0,), order=2, modes=['fwd'], rtol=1e-3)
     jtu.check_grads(sqrt_cubed, (5.0,), order=2, rtol=1e-3)
-
-    inputs = np.array([4.0, 5.0])
-    results = api.vmap(sqrt_cubed)(inputs)
-    self.assertAllClose(results, inputs ** 1.5, check_dtypes=False)
 
     results = api.jit(sqrt_cubed)(5.0)
     self.assertAllClose(results, 5.0 ** 1.5, check_dtypes=False)
 
-  def test_root_vector(self):
+    def sqrt_cubed2(x):
+      def tangent_solve(f, y):
+        return y / f(1.0) + 0 * x  # just to make things interesting
 
-    def oracle(func, x0):
-      del func  # unused
-      return x0
+      f = lambda y: y ** 2 - x ** 3
+      y = binary_search(lax.stop_gradient_fun(f))
+      return lax.define_implicit_gradient(f, y, tangent_solve)
+
+    results = api.jit(sqrt_cubed2)(5.0)
+    self.assertAllClose(results, 5.0 ** 1.5, check_dtypes=False)
+
+    value, grad = api.jit(api.value_and_grad(sqrt_cubed))(5.0)
+    self.assertAllClose(value, 5 ** 1.5, check_dtypes=False)
+    self.assertAllClose(grad, api.grad(pow)(5.0, 1.5), check_dtypes=False)
+
+  def test_define_implicit_gradient_vector(self):
 
     def vector_solve(f, y):
       return np.linalg.solve(api.jacobian(f)(y), y)
 
     def linear_solve(a, b):
       f = lambda y: np.dot(a, y) - b
-      x0 = np.linalg.solve(a, b)
-      return lax.root(f, x0, oracle, vector_solve)
+      x = np.linalg.solve(a, b)
+      return lax.define_implicit_gradient(f, x, vector_solve)
 
     rng = onp.random.RandomState(0)
     a = rng.randn(2, 2)
     b = rng.randn(2)
     jtu.check_grads(linear_solve, (a, b), order=2)
 
-  def test_root_errors(self):
-    with self.assertRaisesRegex(TypeError, re.escape("f() output pytree")):
-      lax.root(lambda x: (x, x), 0.0, lambda f, x: x, lambda f, x: x)
-    with self.assertRaisesRegex(TypeError, re.escape("solve() output pytree")):
-      lax.root(lambda x: x, 0.0, lambda f, x: (x, x), lambda f, x: x)
+  # def test_root_errors(self):
+  #   with self.assertRaisesRegex(TypeError, re.escape("f() output pytree")):
+  #     lax.root(lambda x: (x, x), 0.0, lambda f, x: x, lambda f, x: x)
+  #   with self.assertRaisesRegex(TypeError, re.escape("solve() output pytree")):
+  #     lax.root(lambda x: x, 0.0, lambda f, x: (x, x), lambda f, x: x)
 
-    def dummy_root_usage(x):
-      f = lambda y: x - y
-      return lax.root(f, 0.0, lambda f, x: x, lambda f, x: (x, x))
+  #   def dummy_root_usage(x):
+  #     f = lambda y: x - y
+  #     return lax.root(f, 0.0, lambda f, x: x, lambda f, x: (x, x))
 
-    with self.assertRaisesRegex(
-        TypeError, re.escape("tangent_solve() output pytree")):
-      api.jvp(dummy_root_usage, (0.0,), (0.0,))
+  #   with self.assertRaisesRegex(
+  #       TypeError, re.escape("tangent_solve() output pytree")):
+  #     api.jvp(dummy_root_usage, (0.0,), (0.0,))
 
 
   @parameterized.named_parameters(
