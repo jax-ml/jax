@@ -17,6 +17,9 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import collections
+import itertools
+
 from absl.testing import absltest
 from absl.testing import parameterized
 
@@ -30,9 +33,50 @@ from jax import random
 from jax.config import config
 config.parse_flags_with_absl()
 
-class NNTest(jtu.JaxTestCase):
+class NNFunctionsTest(jtu.JaxTestCase):
+
   def testSoftplusGrad(self):
     check_grads(nn.softplus, (1e-8,), 4)
+
   def testSoftplusValue(self):
     val = nn.softplus(89.)
     self.assertAllClose(val, 89., check_dtypes=False)
+
+InitializerRecord = collections.namedtuple(
+  "InitializerRecord",
+  ["name", "initializer", "shapes"])
+
+ALL_SHAPES = [(2,), (2, 2), (2, 3), (3, 2), (2, 3, 4), (4, 3, 2), (2, 3, 4, 5)]
+
+def initializer_record(name, initializer, min_dims=2, max_dims=4):
+  shapes = [shape for shape in ALL_SHAPES
+            if min_dims <= len(shape) <= max_dims]
+  
+  return InitializerRecord(name, initializer, shapes)
+
+INITIALIZER_RECS = [
+    initializer_record("uniform", nn.initializers.uniform(), 1),
+    initializer_record("normal", nn.initializers.normal(), 1),
+    initializer_record("he_normal", nn.initializers.he_normal()),
+    initializer_record("he_uniform", nn.initializers.he_uniform()),
+    initializer_record("glorot_normal", nn.initializers.glorot_normal()),
+    initializer_record("glorot_uniform", nn.initializers.glorot_uniform()),
+    initializer_record("lecun_normal", nn.initializers.lecun_normal()),
+    initializer_record("lecun_uniform", nn.initializers.lecun_uniform()),
+    initializer_record("orthogonal", nn.initializers.orthogonal(), 2, 2)
+]
+
+class NNInitializersTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_{}_{}".format(
+           rec.name,
+           jtu.format_shape_dtype_string(shape, dtype)),
+       "initializer": rec.initializer, "rng": random.PRNGKey(0),
+       "shape": shape, "dtype": dtype}
+      for rec in INITIALIZER_RECS
+      for shape in rec.shapes
+      for dtype in [onp.float32, onp.float64]))
+  def testInitializer(self, initializer, rng, shape, dtype):
+    val = initializer(rng, shape, dtype)
