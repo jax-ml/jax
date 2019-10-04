@@ -1100,6 +1100,29 @@ def _check_inexact_input_vjp(x):
            "or complex type, got type {}")
     raise TypeError(msg.format(aval.dtype.name))
 
+def _unzip_primals(f, *primals):
+  differentiable, nondifferentiable = [], []
+  primal_info = []
+  for primal in primals:
+    aval = core.get_aval(primal)
+    if onp.issubdtype(aval.dtype, onp.inexact):
+      differentiable.append(primal)
+      primal_info.append((0, len(differentiable) - 1))
+    else:
+      nondifferentiable.append(primal)
+      primal_info.append((1, len(nondifferentiable) - 1))
+  f = _zip_primals(f, nondifferentiable, primal_info)
+  return f, differentiable, nondifferentiable, primal_info
+
+@lu.transformation
+def _zip_primals(nondifferentiable, primal_info, differentiable):
+  nested_args = (differentiable, nondifferentiable)
+  args = [
+          nested_args[i1][i2]
+          for i1, i2 in primal_info
+  ]
+  out = yield args, {}
+  yield out
 
 def vjp(fun, *primals, **kwargs):
   """Compute a (reverse-mode) vector-Jacobian product of `fun`.
@@ -1141,21 +1164,31 @@ def vjp(fun, *primals, **kwargs):
     fun = lu.wrap_init(fun)
   primals_flat, in_tree = tree_flatten(primals)
   _check_args(primals_flat)
-  tree_map(_check_inexact_input_vjp, primals)
   if not has_aux:
     flat_fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
+    flat_fun, primals_flat, nonprimals_flat, info = unzip_primals(flat_fun, *primals_flat)
     out_primal, out_vjp = ad.vjp(flat_fun, primals_flat)
     out_tree = out_tree()
   else:
     flat_fun, out_aux_trees = flatten_fun_nokwargs2(fun, in_tree)
+    flat_fun, primals_flat, nonprimals_flat, info = unzip_primals(flat_fun, *primals_flat)
+    primals_flat, primals_tree = tree_flatten(primals_flat)
     out_primal, out_vjp, aux = ad.vjp(flat_fun, primals_flat, has_aux=True)
     out_tree, aux_tree = out_aux_trees()
   out_primal_py = tree_unflatten(out_tree, out_primal)
-  vjp_py = partial(apply_flat_fun_nokwargs, out_vjp, (out_tree, in_tree))
+  vjp_py = partial(apply_flat_fun_nokwargs, out_vjp, (out_tree, primals_tree))
+  def out_vjp_zipped(cotangent_in):
+    cotangents_out = vjp_py(cotangent_in)
+    nested_out = (cotangents_out, (None,) * len(nonprimals_flat))
+    result = [
+            nested_out[i1][i2]
+            for i1, i2 in info
+    ]
+    return jax.tree_unflatten(in_tree, result)
   if not has_aux:
-    return out_primal_py, vjp_py
+    return out_primal_py, out_vjp_zipped
   else:
-    return out_primal_py, vjp_py, tree_unflatten(aux_tree, aux)
+    return out_primal_py, out_vjp_zipped, tree_unflatten(aux_tree, aux)
 
 
 def make_jaxpr(fun):
