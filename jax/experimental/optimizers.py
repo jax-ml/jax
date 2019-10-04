@@ -282,7 +282,7 @@ def rmsprop(step_size, gamma=0.9, eps=1e-8):
   def update(i, g, state):
     x, avg_sq_grad = state
     avg_sq_grad = avg_sq_grad * gamma + g**2 * (1. - gamma)
-    x = x - step_size(i) * g / (np.sqrt(avg_sq_grad) + eps)
+    x = x - step_size(i) * g / np.sqrt(avg_sq_grad + eps)
     return x, avg_sq_grad
   def get_params(state):
     x, _ = state
