@@ -3,6 +3,7 @@
 # be loaded. Extensions are loading into the active Python interpreter and may
 # run arbitrary code
 extension-pkg-whitelist=numpy
+indent-string="  "
 
 [MESSAGES CONTROL]
 
@@ -18,6 +19,8 @@ extension-pkg-whitelist=numpy
 disable=missing-docstring,
         too-many-locals,
         invalid-name,
+        redefined-outer-name,
+        redefined-builtin,
         protected-name,
         no-else-return,
         fixme,
