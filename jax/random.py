@@ -429,7 +429,7 @@ def _multivariate_normal(key, mean, cov, shape, dtype):
 
   Args:
     key: a PRNGKey used as the random key.
-    mean: optional, a scalar or array of mean values along each diminsion
+    mean: optional, a scalar or array of mean values along each dimension
     cov: optional, a scalar (isotropic), vector (diagonal covariance matrix), or full covariance matrix
     shape: optional, a tuple of nonnegative integers representing the shape.
 
