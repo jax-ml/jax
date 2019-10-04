@@ -143,10 +143,12 @@ def primitive_computation(prim, *xla_shapes, **params):
   backend = params.get('backend', None)
   new_params = {k: params[k] for k in params if k != 'backend'}
   c = xb.make_computation_builder("primitive_computation_{}".format(prim.name))
-  c.SetOpMetadata(xc.CurrentSourceInfoMetadata(
+  c.SetOpMetadata(xc.OpMetadata(
       op_type=prim.name,
-      op_name=prim.name,
-      skip_frames=6
+      op_name=str(core.new_jaxpr_eqn(
+          [chr(ord('a') + i) for i in range(len(xla_shapes))],
+          [chr(ord('a') + len(xla_shapes))],
+          prim, (), params))
   ))
   platform = xb.get_backend(backend).platform
   xla_args = map(c.ParameterWithShape, xla_shapes)
@@ -279,10 +281,9 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, freevars, *args):
   _map(write, jaxpr.freevars, freevars)
   _map(write, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
-    c.SetOpMetadata(xc.CurrentSourceInfoMetadata(
+    c.SetOpMetadata(xc.OpMetadata(
       op_type=eqn.primitive.name,
-      op_name=str(eqn),
-      skip_frames=10
+      op_name=str(eqn)
     ))
     in_nodes = list(map(read, eqn.invars))
     if eqn.primitive in backend_specific_translations[platform]:

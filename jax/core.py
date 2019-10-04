@@ -85,7 +85,7 @@ def new_jaxpr_eqn(*args):
 JaxprEqn = namedtuple('JaxprEqn', ['eqn_id', 'invars', 'outvars', 'primitive',
                                    'bound_subjaxprs', 'params'])
 
-JaxprEqn.__repr__ = JaxprEqn.__str__ = lambda eqn: str(pp_eqn(eqn))
+JaxprEqn.__repr__ = JaxprEqn.__str__ = lambda eqn: str(pp_eqn(eqn))[:-1]
 
 class Literal(object):
   __slots__ = ["val", "hash"]
@@ -635,7 +635,6 @@ def pp_eqn(eqn):
           >> pp(' ') >> pp(pp_vars(eqn.invars))) + pp_subexpr
 
 def pp_jaxpr(jaxpr):
-
   return (pp('{{ lambda {} ; {} ; {}.'.format(pp_vars(jaxpr.constvars),
                                               pp_vars(jaxpr.freevars),
                                               pp_vars(jaxpr.invars))) +
