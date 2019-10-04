@@ -1115,7 +1115,7 @@ def _unzip_primals(f, *primals):
   return f, differentiable, nondifferentiable, primal_info
 
 @lu.transformation
-def _zip_primals(nondifferentiable, primal_info, differentiable):
+def _zip_primals(nondifferentiable, primal_info, *differentiable):
   nested_args = (differentiable, nondifferentiable)
   args = [
           nested_args[i1][i2]
@@ -1166,12 +1166,13 @@ def vjp(fun, *primals, **kwargs):
   _check_args(primals_flat)
   if not has_aux:
     flat_fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
-    flat_fun, primals_flat, nonprimals_flat, info = unzip_primals(flat_fun, *primals_flat)
+    flat_fun, primals_flat, nonprimals_flat, info = _unzip_primals(flat_fun, *primals_flat)
+    primals_flat, primals_tree = tree_flatten(primals_flat)
     out_primal, out_vjp = ad.vjp(flat_fun, primals_flat)
     out_tree = out_tree()
   else:
     flat_fun, out_aux_trees = flatten_fun_nokwargs2(fun, in_tree)
-    flat_fun, primals_flat, nonprimals_flat, info = unzip_primals(flat_fun, *primals_flat)
+    flat_fun, primals_flat, nonprimals_flat, info = _unzip_primals(flat_fun, *primals_flat)
     primals_flat, primals_tree = tree_flatten(primals_flat)
     out_primal, out_vjp, aux = ad.vjp(flat_fun, primals_flat, has_aux=True)
     out_tree, aux_tree = out_aux_trees()
@@ -1184,7 +1185,7 @@ def vjp(fun, *primals, **kwargs):
             nested_out[i1][i2]
             for i1, i2 in info
     ]
-    return jax.tree_unflatten(in_tree, result)
+    return tree_unflatten(in_tree, result)
   if not has_aux:
     return out_primal_py, out_vjp_zipped
   else:

@@ -886,12 +886,9 @@ class APITest(jtu.JaxTestCase):
                     if eqn.bound_subjaxprs)
     self.assertEqual(len(subjaxpr.eqns), 1)
 
-  def test_grad_of_int_errors(self):
-    dfn = grad(lambda x: x ** 2)
-    jtu.check_raises_regexp(
-      lambda: dfn(3), TypeError,
-      "Primal inputs to reverse-mode differentiation must be of float or "
-      "complex type, got type int..")
+  def test_grad_of_int_returns_none(self):
+    dfn = grad(lambda x: x ** 2 + 0.0)
+    self.assertIsNone(dfn(3))
 
   def test_xla_computation(self):
     # these tests basically check the examples in the xla_computation docstring
