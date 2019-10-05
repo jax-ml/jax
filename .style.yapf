@@ -1,0 +1,6 @@
+[style]
+based_on_style = chromium
+split_before_logical_operator = true
+join_multiple_lines = true
+column_limit = 100
+split_before_named_assigns = false
