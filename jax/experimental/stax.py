@@ -121,9 +121,14 @@ Conv1DTranspose = functools.partial(GeneralConvTranspose, ('NHC', 'HIO', 'NHC'))
 ConvTranspose = functools.partial(GeneralConvTranspose,
                                   ('NHWC', 'HWIO', 'NHWC'))
 
+def get_stats_axis(i, d):
+  if i in axis:
+    return 1
+  else:
+    return d
 
 def BatchNorm(axis=(0, 1, 2), epsilon=1e-5, center=True, scale=True,
-              beta_init=zeros, gamma_init=ones):
+              beta_init=zeros, gamma_init=ones, momentum=0.999):
   """Layer construction function for a batch normalization layer."""
   _beta_init = lambda rng, shape: beta_init(rng, shape) if center else ()
   _gamma_init = lambda rng, shape: gamma_init(rng, shape) if scale else ()
@@ -132,15 +137,33 @@ def BatchNorm(axis=(0, 1, 2), epsilon=1e-5, center=True, scale=True,
     shape = tuple(d for i, d in enumerate(input_shape) if i not in axis)
     k1, k2 = random.split(rng)
     beta, gamma = _beta_init(k1, shape), _gamma_init(k2, shape)
-    return input_shape, (beta, gamma)
-  def apply_fun(params, x, **kwargs):
-    beta, gamma = params
+    stats_shape = tuple(get_stats_axis(i, d) for i, d in enumerate(input_shape))
+    num_batches = 0
+    running_mean = np.zeros(stats_shape, dtype=np.float32)
+    running_var = np.ones(stats_shape, dtype=np.float32)
+    return input_shape, (beta, gamma, running_mean, running_var, num_batches)
+  def apply_fun(params, x, mode='train', **kwargs):
+    beta, gamma, running_mean, running_var, num_batches = params
     # TODO(phawkins): np.expand_dims should accept an axis tuple.
     # (https://github.com/numpy/numpy/issues/12290)
     ed = tuple(None if i in axis else slice(None) for i in range(np.ndim(x)))
     beta = beta[ed]
     gamma = gamma[ed]
-    z = normalize(x, axis, epsilon=epsilon)
+
+    if mode == 'train':
+      mean = np.mean(x, axis, keepdims=True)
+      # Fast but less numerically-stable variance calculation than np.var.
+      m1 = np.mean(x**2, axis, keepdims=True)
+      var = m1 - mean**2
+      num_batches = num_batches + 1
+      def average(factor, new, old):
+        return (factor * old + (1 - factor) * new).astype(old.dtype)
+      running_mean = average(momentum, mean, running_mean)
+      running_var = average(momentum, var, running_var)
+    else:
+      mean = running_mean
+      var = running_var
+    z = (x - mean.astype(x.dtype)) / np.sqrt(var + np.epsilon).astype(x.dtype)
     if center and scale: return gamma * z + beta
     if center: return z + beta
     if scale: return gamma * z
