@@ -42,4 +42,4 @@ def logpdf(x, alpha):
 
 @np._wraps(osp_stats.dirichlet.pdf)
 def pdf(x, alpha):
-  return lax.exp(logpdf(x, alpha))
+    return lax.exp(logpdf(x, alpha))

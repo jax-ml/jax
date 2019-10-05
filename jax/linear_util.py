@@ -75,57 +75,65 @@ from .util import curry, partial
 
 
 def thunk(f):
-  store = Store()
-  def f_memoized():
-    if not store:
-      # TODO(dougalm): save/restore relevant environment state too
-      store.store(f())
-    return store.val
+    store = Store()
 
-  return f_memoized
+    def f_memoized():
+        if not store:
+            # TODO(dougalm): save/restore relevant environment state too
+            store.store(f())
+        return store.val
 
-class StoreException(Exception): pass
+    return f_memoized
 
 
-class EmptyStoreValue(object): pass
+class StoreException(Exception):
+    pass
+
+
+class EmptyStoreValue(object):
+    pass
+
+
 _EMPTY_STORE_VALUE = EmptyStoreValue()
 
+
 class Store(object):
-  __slots__ = ("_val",)
+    __slots__ = ("_val",)
 
-  def __init__(self):
-    self._val = _EMPTY_STORE_VALUE
+    def __init__(self):
+        self._val = _EMPTY_STORE_VALUE
 
-  def store(self, val):
-    assert self._val is _EMPTY_STORE_VALUE, "Store occupied"
-    self._val = val
+    def store(self, val):
+        assert self._val is _EMPTY_STORE_VALUE, "Store occupied"
+        self._val = val
 
-  @property
-  def val(self):
-    if not self:
-      raise StoreException("Store empty")
-    return self._val
+    @property
+    def val(self):
+        if not self:
+            raise StoreException("Store empty")
+        return self._val
 
-  def __nonzero__(self):
-    return self._val is not _EMPTY_STORE_VALUE
+    def __nonzero__(self):
+        return self._val is not _EMPTY_STORE_VALUE
 
-  __bool__ = __nonzero__
+    __bool__ = __nonzero__
 
 
 @curry
 def staged(f, *init_args):
-  store = Store()
-  def f_partial(*rest):
-    ans, aux = f(*(init_args + rest))
-    store.store(aux)
-    return ans
+    store = Store()
 
-  f_partial.__name__ = f.__name__ + "_staged"
-  return f_partial, thunk(lambda: store.val)
+    def f_partial(*rest):
+        ans, aux = f(*(init_args + rest))
+        store.store(aux)
+        return ans
+
+    f_partial.__name__ = f.__name__ + "_staged"
+    return f_partial, thunk(lambda: store.val)
 
 
 class WrappedFun(object):
-  """Represents a function `f` to which `transforms` are to be applied.
+    """Represents a function `f` to which `transforms` are to be applied.
 
   Arguments:
     f: the function to be transformed.
@@ -133,90 +141,109 @@ class WrappedFun(object):
       transformations to apply to `f.`
     params: extra parameters to pass as keyword arguments to `f`.
   """
-  __slots__ = ("f", "transforms", "stores", "params")
 
-  def __init__(self, f, transforms, stores, params):
-    self.f = f
-    self.transforms = transforms
-    self.stores = stores
-    self.params = params
+    __slots__ = ("f", "transforms", "stores", "params")
 
-  @property
-  def __name__(self):
-    return getattr(self.f, '__name__', '<unnamed wrapped function>')
+    def __init__(self, f, transforms, stores, params):
+        self.f = f
+        self.transforms = transforms
+        self.stores = stores
+        self.params = params
 
-  def wrap(self, gen, gen_args, out_store):
-    return WrappedFun(self.f, ((gen, gen_args),) + self.transforms,
-                      (out_store,) + self.stores, self.params)
+    @property
+    def __name__(self):
+        return getattr(self.f, "__name__", "<unnamed wrapped function>")
 
-  def populate_stores(self, other):
-    for self_store, other_store in zip(self.stores, other.stores):
-      if self_store is not None:
-        self_store.store(other_store.val)
+    def wrap(self, gen, gen_args, out_store):
+        return WrappedFun(
+            self.f,
+            ((gen, gen_args),) + self.transforms,
+            (out_store,) + self.stores,
+            self.params,
+        )
 
-  def call_wrapped(self, *args, **kwargs):
-    stack = []
-    for (gen, gen_args), out_store in zip(self.transforms, self.stores):
-      gen = gen(*(gen_args + tuple(args)), **kwargs)
-      args, kwargs = next(gen)
-      stack.append((gen, out_store))
+    def populate_stores(self, other):
+        for self_store, other_store in zip(self.stores, other.stores):
+            if self_store is not None:
+                self_store.store(other_store.val)
 
-    del gen
-    ans = self.f(*args, **dict(self.params, **kwargs))
-    del args
-    while stack:
-      gen, out_store = stack.pop()
-      ans = gen.send(ans)
-      if out_store is not None:
-        ans, side = ans
-        out_store.store(side)
+    def call_wrapped(self, *args, **kwargs):
+        stack = []
+        for (gen, gen_args), out_store in zip(self.transforms, self.stores):
+            gen = gen(*(gen_args + tuple(args)), **kwargs)
+            args, kwargs = next(gen)
+            stack.append((gen, out_store))
 
-    return ans
+        del gen
+        ans = self.f(*args, **dict(self.params, **kwargs))
+        del args
+        while stack:
+            gen, out_store = stack.pop()
+            ans = gen.send(ans)
+            if out_store is not None:
+                ans, side = ans
+                out_store.store(side)
 
-  def __repr__(self):
-    def transform_to_str(x):
-      i, (gen, args) = x
-      return "{}   : {}   {}".format(i, fun_name(gen), fun_name(args))
-    transformation_stack = map(transform_to_str, enumerate(self.transforms))
-    return "Wrapped function:\n" + '\n'.join(transformation_stack) + '\nCore: ' + fun_name(self.f) + '\n'
+        return ans
 
-  def __hash__(self):
-    return hash((self.f, self.transforms, self.params))
+    def __repr__(self):
+        def transform_to_str(x):
+            i, (gen, args) = x
+            return "{}   : {}   {}".format(i, fun_name(gen), fun_name(args))
 
-  def __eq__(self, other):
-    return (self.f == other.f and self.transforms == other.transforms and
-            self.params == other.params)
+        transformation_stack = map(transform_to_str, enumerate(self.transforms))
+        return (
+            "Wrapped function:\n"
+            + "\n".join(transformation_stack)
+            + "\nCore: "
+            + fun_name(self.f)
+            + "\n"
+        )
+
+    def __hash__(self):
+        return hash((self.f, self.transforms, self.params))
+
+    def __eq__(self, other):
+        return (
+            self.f == other.f
+            and self.transforms == other.transforms
+            and self.params == other.params
+        )
+
 
 @curry
 def transformation(gen, fun, *transformation_args):
-  return fun.wrap(gen, transformation_args, None)
+    return fun.wrap(gen, transformation_args, None)
+
 
 @curry
 def transformation_with_aux(gen, fun, *transformation_args):
-  out_store = Store()
-  out_thunk = lambda: out_store.val
-  return fun.wrap(gen, transformation_args, out_store), out_thunk
+    out_store = Store()
+    out_thunk = lambda: out_store.val
+    return fun.wrap(gen, transformation_args, out_store), out_thunk
+
 
 def fun_name(f):
-  try:
-    return f.__name__
-  except:
-    return str(f)
+    try:
+        return f.__name__
+    except:
+        return str(f)
+
 
 def wrap_init(f, params={}):
-  """Wraps function `f` as a `WrappedFun`, suitable for transformation."""
-  return WrappedFun(f, (), (), tuple(sorted(params.items())))
+    """Wraps function `f` as a `WrappedFun`, suitable for transformation."""
+    return WrappedFun(f, (), (), tuple(sorted(params.items())))
 
 
 def cache(call, max_size=4096):
-  @fastcache.clru_cache(maxsize=max_size)
-  def cached_fun_body(f, args):
-    return call(f, *args), f
+    @fastcache.clru_cache(maxsize=max_size)
+    def cached_fun_body(f, args):
+        return call(f, *args), f
 
-  def cached_fun(f, *args):
-    ans, f_prev = cached_fun_body(f, args)
-    if id(f_prev) != id(f):
-      f.populate_stores(f_prev)
-    return ans
+    def cached_fun(f, *args):
+        ans, f_prev = cached_fun_body(f, args)
+        if id(f_prev) != id(f):
+            f.populate_stores(f_prev)
+        return ans
 
-  return cached_fun
+    return cached_fun

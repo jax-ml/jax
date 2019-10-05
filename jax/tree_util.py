@@ -47,7 +47,7 @@ from .util import unzip2, partial, safe_map
 
 
 def tree_map(f, tree):
-  """Map a function over a pytree to produce a new pytree.
+    """Map a function over a pytree to produce a new pytree.
 
   Args:
     f: function to be applied at each leaf.
@@ -58,11 +58,12 @@ def tree_map(f, tree):
     leaf given by `f(x)` where `x` is the value at the corresponding leaf in
     `tree`.
   """
-  leaves, treedef = pytree.flatten(tree)
-  return treedef.unflatten(map(f, leaves))
+    leaves, treedef = pytree.flatten(tree)
+    return treedef.unflatten(map(f, leaves))
+
 
 def tree_multimap(f, tree, *rest):
-  """Map a multi-input function over pytree args to produce a new pytree.
+    """Map a multi-input function over pytree args to produce a new pytree.
 
   Args:
     f: function that takes `1 + len(rest)` arguments, to be applied at the
@@ -77,66 +78,76 @@ def tree_multimap(f, tree, *rest):
     in `tree` and `xs` is the tuple of values at corresponding nodes in
     `rest`.
   """
-  leaves, treedef = pytree.flatten(tree)
-  all_leaves = [leaves] + [treedef.flatten_up_to(r) for r in rest]
-  return treedef.unflatten(f(*xs) for xs in zip(*all_leaves))
+    leaves, treedef = pytree.flatten(tree)
+    all_leaves = [leaves] + [treedef.flatten_up_to(r) for r in rest]
+    return treedef.unflatten(f(*xs) for xs in zip(*all_leaves))
+
 
 def tree_leaves(tree):
-  return pytree.flatten(tree)[0]
+    return pytree.flatten(tree)[0]
+
 
 def process_pytree(process_node, tree):
-  leaves, treedef = pytree.flatten(tree)
-  return treedef.walk(process_node, None, leaves), treedef
+    leaves, treedef = pytree.flatten(tree)
+    return treedef.walk(process_node, None, leaves), treedef
+
 
 tree_flatten = pytree.flatten
 
+
 def build_tree(treedef, xs):
-  return treedef.from_iterable_tree(xs)
+    return treedef.from_iterable_tree(xs)
+
 
 def treedef_is_leaf(treedef):
-  return treedef.num_nodes == 1
+    return treedef.num_nodes == 1
+
 
 def tree_unflatten(treedef, xs):
-  return treedef.unflatten(xs)
+    return treedef.unflatten(xs)
+
 
 def tree_transpose(outer_treedef, inner_treedef, pytree_to_transpose):
-  flat, treedef = tree_flatten(pytree_to_transpose)
-  expected_treedef = outer_treedef.compose(inner_treedef)
-  if treedef != expected_treedef:
-    raise TypeError("Mismatch\n{}\n != \n{}".format(treedef, expected_treedef))
+    flat, treedef = tree_flatten(pytree_to_transpose)
+    expected_treedef = outer_treedef.compose(inner_treedef)
+    if treedef != expected_treedef:
+        raise TypeError("Mismatch\n{}\n != \n{}".format(treedef, expected_treedef))
 
-  inner_size = inner_treedef.num_leaves
-  outer_size = outer_treedef.num_leaves
-  flat = iter(flat)
-  lol = [[next(flat) for _ in range(inner_size)] for __ in range(outer_size)]
-  transposed_lol = zip(*lol)
-  subtrees = map(partial(tree_unflatten, outer_treedef), transposed_lol)
-  return tree_unflatten(inner_treedef, subtrees)
+    inner_size = inner_treedef.num_leaves
+    outer_size = outer_treedef.num_leaves
+    flat = iter(flat)
+    lol = [[next(flat) for _ in range(inner_size)] for __ in range(outer_size)]
+    transposed_lol = zip(*lol)
+    subtrees = map(partial(tree_unflatten, outer_treedef), transposed_lol)
+    return tree_unflatten(inner_treedef, subtrees)
+
 
 def tree_structure(tree):
-  _, treedef = pytree.flatten(tree)
-  return treedef
+    _, treedef = pytree.flatten(tree)
+    return treedef
+
 
 def treedef_tuple(trees):
-  return pytree.tuple(list(trees))
+    return pytree.tuple(list(trees))
+
 
 def treedef_children(treedef):
     return treedef.children()
 
+
 register_pytree_node = pytree.register_node
 
 
-
 def tree_reduce(f, tree):
-  return reduce(f, tree_leaves(tree))
+    return reduce(f, tree_leaves(tree))
 
 
 def tree_all(tree):
-  return all(tree_leaves(tree))
+    return all(tree_leaves(tree))
 
 
 class Partial(functools.partial):
-  """A version of functools.partial that works in pytrees.
+    """A version of functools.partial that works in pytrees.
 
   Use it for partial function evaluation in a way that is compatible with JAX's
   transformations, e.g., ``Partial(func, *args, **kwargs)``.
@@ -144,6 +155,7 @@ class Partial(functools.partial):
   (You need to explicitly opt-in to this behavior because we didn't want to give
   functools.partial different semantics than normal function closures.)
   """
+
 
 register_pytree_node(
     Partial,

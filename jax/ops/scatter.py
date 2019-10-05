@@ -29,7 +29,7 @@ from ..numpy import lax_numpy as np
 
 
 def _scatter_update(x, idx, y, scatter_op):
-  """Helper for indexed updates.
+    """Helper for indexed updates.
 
   Computes the value of x that would result from computing::
     x[idx] op= y
@@ -48,43 +48,43 @@ def _scatter_update(x, idx, y, scatter_op):
     An ndarray representing an updated `x` after performing the scatter-update.
   """
 
-  x = np.asarray(x)
-  y = np.asarray(y)
+    x = np.asarray(x)
+    y = np.asarray(y)
 
-  # XLA gathers and scatters are very similar in structure; the scatter logic
-  # is more or less a transpose of the gather equivalent.
-  treedef, static_idx, dynamic_idx = np._split_index_for_jit(idx)
-  return _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx)
+    # XLA gathers and scatters are very similar in structure; the scatter logic
+    # is more or less a transpose of the gather equivalent.
+    treedef, static_idx, dynamic_idx = np._split_index_for_jit(idx)
+    return _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx)
 
 
 # TODO(phawkins): re-enable jit after fixing excessive recompilation for
 # slice indexes (e.g., slice(0, 5, None), slice(10, 15, None), etc.).
 # @partial(jit, static_argnums=(2, 3, 4))
 def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx):
-  y = lax.convert_element_type(y, lax.dtype(x))
+    y = lax.convert_element_type(y, lax.dtype(x))
 
-  idx = np._merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
-  indexer = np._index_to_gather(np.shape(x), idx)
+    idx = np._merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
+    indexer = np._index_to_gather(np.shape(x), idx)
 
-  # Broadcast `y` to the slice output shape.
-  y = np.broadcast_to(y, tuple(indexer.slice_shape))
-  # Collapse any `None`/`np.newaxis` dimensions.
-  y = np.squeeze(y, axis=indexer.newaxis_dims)
-  if indexer.reversed_y_dims:
-    y = lax.rev(y, indexer.reversed_y_dims)
+    # Broadcast `y` to the slice output shape.
+    y = np.broadcast_to(y, tuple(indexer.slice_shape))
+    # Collapse any `None`/`np.newaxis` dimensions.
+    y = np.squeeze(y, axis=indexer.newaxis_dims)
+    if indexer.reversed_y_dims:
+        y = lax.rev(y, indexer.reversed_y_dims)
 
-  # Transpose the gather dimensions into scatter dimensions (cf.
-  # lax._gather_transpose_rule)
-  dnums = lax.ScatterDimensionNumbers(
-    update_window_dims=indexer.dnums.offset_dims,
-    inserted_window_dims=indexer.dnums.collapsed_slice_dims,
-    scatter_dims_to_operand_dims=indexer.dnums.start_index_map
-  )
-  return scatter_op(x, indexer.gather_indices, y, dnums)
+    # Transpose the gather dimensions into scatter dimensions (cf.
+    # lax._gather_transpose_rule)
+    dnums = lax.ScatterDimensionNumbers(
+        update_window_dims=indexer.dnums.offset_dims,
+        inserted_window_dims=indexer.dnums.collapsed_slice_dims,
+        scatter_dims_to_operand_dims=indexer.dnums.start_index_map,
+    )
+    return scatter_op(x, indexer.gather_indices, y, dnums)
 
 
 class _Indexable(object):
-  """Helper object for building indexes for indexed update functions.
+    """Helper object for building indexes for indexed update functions.
 
   This is a singleton object that overrides the :code:`__getitem__` method
   to return the index it is passed.
@@ -92,17 +92,19 @@ class _Indexable(object):
   >>> jax.ops.index[1:2, 3, None, ..., ::2]
   (slice(1, 2, None), 3, None, Ellipsis, slice(None, None, 2))
   """
-  __slots__ = ()
 
-  def __getitem__(self, index):
-    return index
+    __slots__ = ()
+
+    def __getitem__(self, index):
+        return index
+
 
 #: Index object singleton
 index = _Indexable()
 
 
 def index_add(x, idx, y):
-  """Pure equivalent of :code:`x[idx] += y`.
+    """Pure equivalent of :code:`x[idx] += y`.
 
   Returns the value of `x` that would result from the
   NumPy-style :mod:`indexed assignment <numpy.doc.indexing>`::
@@ -137,10 +139,11 @@ def index_add(x, idx, y):
          [1., 1., 1., 7., 7., 7.],
          [1., 1., 1., 1., 1., 1.]], dtype=float32)
   """
-  return _scatter_update(x, idx, y, lax.scatter_add)
+    return _scatter_update(x, idx, y, lax.scatter_add)
+
 
 def index_min(x, idx, y):
-  """Pure equivalent of :code:`x[idx] = minimum(x[idx], y)`.
+    """Pure equivalent of :code:`x[idx] = minimum(x[idx], y)`.
 
   Returns the value of `x` that would result from the
   NumPy-style :mod:`indexed assignment <numpy.doc.indexing>`::
@@ -173,10 +176,11 @@ def index_min(x, idx, y):
          [1., 1., 1., 0., 0., 0.],
          [1., 1., 1., 1., 1., 1.]], dtype=float32)
   """
-  return _scatter_update(x, idx, y, lax.scatter_min)
+    return _scatter_update(x, idx, y, lax.scatter_min)
+
 
 def index_max(x, idx, y):
-  """Pure equivalent of :code:`x[idx] = maximum(x[idx], y)`.
+    """Pure equivalent of :code:`x[idx] = maximum(x[idx], y)`.
 
   Returns the value of `x` that would result from the
   NumPy-style :mod:`indexed assignment <numpy.doc.indexing>`::
@@ -209,10 +213,11 @@ def index_max(x, idx, y):
          [1., 1., 1., 6., 6., 6.],
          [1., 1., 1., 1., 1., 1.]], dtype=float32)
   """
-  return _scatter_update(x, idx, y, lax.scatter_max)
+    return _scatter_update(x, idx, y, lax.scatter_max)
+
 
 def index_update(x, idx, y):
-  """Pure equivalent of :code:`x[idx] = y`.
+    """Pure equivalent of :code:`x[idx] = y`.
 
   Returns the value of `x` that would result from the
   NumPy-style :mod:`indexed assignment <numpy.doc.indexing>`::
@@ -246,10 +251,11 @@ def index_update(x, idx, y):
          [1., 1., 1., 1., 1., 1.],
          [1., 1., 1., 6., 6., 6.]], dtype=float32)
   """
-  return _scatter_update(x, idx, y, lax.scatter)
+    return _scatter_update(x, idx, y, lax.scatter)
+
 
 def segment_sum(data, segment_ids, num_segments=None):
-  """Computes the sum within segments of an array.
+    """Computes the sum within segments of an array.
 
   Similar to TensorFlow's segment_sum:
   https://www.tensorflow.org/api_docs/python/tf/math/segment_sum
@@ -269,10 +275,10 @@ def segment_sum(data, segment_ids, num_segments=None):
     An array with shape :code:`(num_segments,) + data.shape[1:]` representing the
     segment sums.
   """
-  if num_segments is None:
-    num_segments = np.max(np.mod(segment_ids, data.shape[0])) + 1
-  num_segments = int(num_segments)
+    if num_segments is None:
+        num_segments = np.max(np.mod(segment_ids, data.shape[0])) + 1
+    num_segments = int(num_segments)
 
-  out = np.zeros((num_segments,) + data.shape[1:], dtype=data.dtype)
-  segment_ids = np.mod(segment_ids, num_segments)
-  return index_add(out, segment_ids, data)
+    out = np.zeros((num_segments,) + data.shape[1:], dtype=data.dtype)
+    segment_ids = np.mod(segment_ids, num_segments)
+    return index_add(out, segment_ids, data)

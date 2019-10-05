@@ -40,8 +40,9 @@ from jax.interpreters.pxla import axis_index
 
 ### parallel traceables
 
+
 def psum(x, axis_name):
-  """Compute an all-reduce sum on ``x`` over the pmapped axis ``axis_name``.
+    """Compute an all-reduce sum on ``x`` over the pmapped axis ``axis_name``.
 
   Args:
     x: array with a mapped axis named ``axis_name``.
@@ -62,10 +63,11 @@ def psum(x, axis_name):
   >>> print(y)
   [ 0.          0.16666667  0.33333334  0.5       ]
   """
-  return psum_p.bind(x, axis_name=axis_name)
+    return psum_p.bind(x, axis_name=axis_name)
+
 
 def pmax(x, axis_name):
-  """Compute an all-reduce max on ``x`` over the pmapped axis ``axis_name``.
+    """Compute an all-reduce max on ``x`` over the pmapped axis ``axis_name``.
 
   Args:
     x: array with a mapped axis named ``axis_name``.
@@ -76,10 +78,11 @@ def pmax(x, axis_name):
     An array with the same shape as ``x`` representing the result of an
     all-reduce max along the axis ``axis_name``.
   """
-  return pmax_p.bind(x, axis_name=axis_name)
+    return pmax_p.bind(x, axis_name=axis_name)
+
 
 def pmin(x, axis_name):
-  """Compute an all-reduce min on ``x`` over the pmapped axis ``axis_name``.
+    """Compute an all-reduce min on ``x`` over the pmapped axis ``axis_name``.
 
   Args:
     x: array with a mapped axis named ``axis_name``.
@@ -90,10 +93,11 @@ def pmin(x, axis_name):
     An array with the same shape as ``x`` representing the result of an
     all-reduce min along the axis ``axis_name``.
   """
-  return pmin_p.bind(x, axis_name=axis_name)
+    return pmin_p.bind(x, axis_name=axis_name)
+
 
 def ppermute(x, axis_name, perm):
-  """Perform a collective permutation according to the permutation ``perm``.
+    """Perform a collective permutation according to the permutation ``perm``.
 
   This function is an analog of the CollectivePermute XLA HLO.
 
@@ -113,10 +117,11 @@ def ppermute(x, axis_name, perm):
     An array with the same shape as ``x`` with slices along the axis
     ``axis_name`` gathered from ``x`` according to the permutation ``perm``.
   """
-  return ppermute_p.bind(x, axis_name=axis_name, perm=perm)
+    return ppermute_p.bind(x, axis_name=axis_name, perm=perm)
+
 
 def pswapaxes(x, axis_name, axis):
-  """Swap the pmapped axis ``axis_name`` with the unmapped axis ``axis``.
+    """Swap the pmapped axis ``axis_name`` with the unmapped axis ``axis``.
 
   The mapped axis size must be equal to the size of the unmapped axis; that is,
   we must have ``lax.psum(1, axis_name) == x.shape[axis]``.
@@ -137,10 +142,11 @@ def pswapaxes(x, axis_name, axis):
     where ``axis_size`` is the size of the mapped axis named ``axis_name`` in
     the input ``x``.
   """
-  return all_to_all(x, axis_name, axis, axis)
+    return all_to_all(x, axis_name, axis, axis)
+
 
 def all_to_all(x, axis_name, split_axis, concat_axis):
-  """Materialize the mapped axis and map a different axis.
+    """Materialize the mapped axis and map a different axis.
 
   In the output, the input mapped axis ``axis_name`` is materialized at the
   logical axis position ``concat_axis``, and the input unmapped axis at position
@@ -165,103 +171,116 @@ def all_to_all(x, axis_name, split_axis, concat_axis):
     where ``axis_size`` is the size of the mapped axis named ``axis_name`` in
     the input ``x``, i.e. ``axis_size = lax.psum(1, axis_name)``.
   """
-  if psum(1, axis_name) != x.shape[split_axis]:
-    msg = ("all_to_all requires the size of the mapped axis axis_name to equal "
-          "x.shape[split_axis], but they are {} and {} respectively.")
-    raise ValueError(msg.format(psum(1, axis_name), x.shape[split_axis]))
-  return all_to_all_p.bind(x, split_axis=split_axis, concat_axis=concat_axis,
-                           axis_name=axis_name)
+    if psum(1, axis_name) != x.shape[split_axis]:
+        msg = (
+            "all_to_all requires the size of the mapped axis axis_name to equal "
+            "x.shape[split_axis], but they are {} and {} respectively."
+        )
+        raise ValueError(msg.format(psum(1, axis_name), x.shape[split_axis]))
+    return all_to_all_p.bind(
+        x, split_axis=split_axis, concat_axis=concat_axis, axis_name=axis_name
+    )
 
 
 ### parallel primitives
 
+
 def standard_pmap_primitive(name):
-  prim = core.Primitive(name)
-  prim.def_impl(partial(pxla.apply_parallel_primitive, prim))
-  prim.def_abstract_eval(lambda x, *args, **params: x)
-  return prim
+    prim = core.Primitive(name)
+    prim.def_impl(partial(pxla.apply_parallel_primitive, prim))
+    prim.def_abstract_eval(lambda x, *args, **params: x)
+    return prim
 
 
 def _allreduce_split_axis_rule(prim, reducer, vals, which_mapped, axis_name):
-  assert tuple(which_mapped) == (True,)
-  x, = vals
-  return prim.bind(reducer(x, [0]), axis_name=axis_name), False
+    assert tuple(which_mapped) == (True,)
+    x, = vals
+    return prim.bind(reducer(x, [0]), axis_name=axis_name), False
+
 
 def _allreduce_translation_rule(prim, c, val, replica_groups, backend=None):
-  dtype = c.GetShape(val).numpy_dtype()
-  scalar = xla_client.Shape.array_shape(dtype, ())
-  computation = xla.primitive_computation(prim, scalar, scalar, backend=backend)
-  return c.AllReduce(val, computation, replica_groups=replica_groups)
+    dtype = c.GetShape(val).numpy_dtype()
+    scalar = xla_client.Shape.array_shape(dtype, ())
+    computation = xla.primitive_computation(prim, scalar, scalar, backend=backend)
+    return c.AllReduce(val, computation, replica_groups=replica_groups)
 
-psum_p = standard_pmap_primitive('psum')
-pxla.split_axis_rules[psum_p] = \
-    partial(_allreduce_split_axis_rule, psum_p, lax._reduce_sum)
-xla.parallel_translations[psum_p] = \
-    partial(_allreduce_translation_rule, lax.add_p)
+
+psum_p = standard_pmap_primitive("psum")
+pxla.split_axis_rules[psum_p] = partial(
+    _allreduce_split_axis_rule, psum_p, lax._reduce_sum
+)
+xla.parallel_translations[psum_p] = partial(_allreduce_translation_rule, lax.add_p)
 pxla.parallel_pure_rules[psum_p] = lambda x, shape: x * prod(shape)
 ad.deflinear(psum_p, lambda t, axis_name: [t])
 
 
-pmax_p = standard_pmap_primitive('pmax')
-xla.parallel_translations[pmax_p] = \
-    partial(_allreduce_translation_rule, lax.max_p)
-pxla.split_axis_rules[pmax_p] = \
-    partial(_allreduce_split_axis_rule, pmax_p, lax._reduce_max)
+pmax_p = standard_pmap_primitive("pmax")
+xla.parallel_translations[pmax_p] = partial(_allreduce_translation_rule, lax.max_p)
+pxla.split_axis_rules[pmax_p] = partial(
+    _allreduce_split_axis_rule, pmax_p, lax._reduce_max
+)
 
 
-pmin_p = standard_pmap_primitive('pmin')
-xla.parallel_translations[pmin_p] = \
-    partial(_allreduce_translation_rule, lax.min_p)
-pxla.split_axis_rules[pmin_p] = \
-    partial(_allreduce_split_axis_rule, pmin_p, lax._reduce_min)
+pmin_p = standard_pmap_primitive("pmin")
+xla.parallel_translations[pmin_p] = partial(_allreduce_translation_rule, lax.min_p)
+pxla.split_axis_rules[pmin_p] = partial(
+    _allreduce_split_axis_rule, pmin_p, lax._reduce_min
+)
 
 
 def _ppermute_translation_rule(c, x, replica_groups, perm, backend=None):
-  del backend
-  group_size = len(replica_groups[0])
-  srcs, dsts = unzip2((src % group_size, dst % group_size) for src, dst in perm)
-  if not (len(srcs) == len(set(srcs)) and len(dsts) == len(set(dsts))):
-    msg = "ppermute sources and destinations must be unique, got {}."
-    raise ValueError(msg.format(perm))
+    del backend
+    group_size = len(replica_groups[0])
+    srcs, dsts = unzip2((src % group_size, dst % group_size) for src, dst in perm)
+    if not (len(srcs) == len(set(srcs)) and len(dsts) == len(set(dsts))):
+        msg = "ppermute sources and destinations must be unique, got {}."
+        raise ValueError(msg.format(perm))
 
-  full_perm = []
-  for grp in replica_groups:
-    grp = list(sorted(grp))
-    full_perm.extend((grp[src], grp[dst]) for src, dst in perm)
-  return c.CollectivePermute(x, full_perm)
+    full_perm = []
+    for grp in replica_groups:
+        grp = list(sorted(grp))
+        full_perm.extend((grp[src], grp[dst]) for src, dst in perm)
+    return c.CollectivePermute(x, full_perm)
+
 
 def _ppermute_transpose_rule(t, perm, axis_name):
-  srcs, dsts = unzip2(perm)
-  inverse_perm = list(zip(dsts, srcs))
-  return [ppermute(t, axis_name=axis_name, perm=inverse_perm)]
+    srcs, dsts = unzip2(perm)
+    inverse_perm = list(zip(dsts, srcs))
+    return [ppermute(t, axis_name=axis_name, perm=inverse_perm)]
 
-ppermute_p = standard_pmap_primitive('ppermute')
+
+ppermute_p = standard_pmap_primitive("ppermute")
 ad.deflinear(ppermute_p, _ppermute_transpose_rule)
 xla.parallel_translations[ppermute_p] = _ppermute_translation_rule
 
 
-def _all_to_all_translation_rule(c, x, split_axis, concat_axis, replica_groups, backend=None):
-  del backend
-  return c.AllToAll(x, split_axis, concat_axis, replica_groups)
+def _all_to_all_translation_rule(
+    c, x, split_axis, concat_axis, replica_groups, backend=None
+):
+    del backend
+    return c.AllToAll(x, split_axis, concat_axis, replica_groups)
 
-def _all_to_all_split_axis_rule(vals, which_mapped, split_axis, concat_axis,
-                                axis_name):
-  assert tuple(which_mapped) == (True,)
-  x, = vals
-  # perform the communication to swap the hardware-mapped axes
-  stacked = all_to_all_p.bind(x, split_axis=split_axis + 1, concat_axis=0,
-                              axis_name=axis_name)
-  # transpose the newly mapped axis to the front, newly unmapped to concat_axis
-  out = _moveaxis(split_axis + 1, 0, stacked)
-  out = _moveaxis(1, concat_axis + 1, out)
-  return out, True
+
+def _all_to_all_split_axis_rule(vals, which_mapped, split_axis, concat_axis, axis_name):
+    assert tuple(which_mapped) == (True,)
+    x, = vals
+    # perform the communication to swap the hardware-mapped axes
+    stacked = all_to_all_p.bind(
+        x, split_axis=split_axis + 1, concat_axis=0, axis_name=axis_name
+    )
+    # transpose the newly mapped axis to the front, newly unmapped to concat_axis
+    out = _moveaxis(split_axis + 1, 0, stacked)
+    out = _moveaxis(1, concat_axis + 1, out)
+    return out, True
+
 
 def _moveaxis(src, dst, x):
-  perm = [i for i in range(x.ndim) if i != src]
-  perm.insert(dst, src)
-  return lax.transpose(x, perm)
+    perm = [i for i in range(x.ndim) if i != src]
+    perm.insert(dst, src)
+    return lax.transpose(x, perm)
 
-all_to_all_p = standard_pmap_primitive('all_to_all')
+
+all_to_all_p = standard_pmap_primitive("all_to_all")
 xla.parallel_translations[all_to_all_p] = _all_to_all_translation_rule
 pxla.split_axis_rules[all_to_all_p] = _all_to_all_split_axis_rule
 
@@ -273,93 +292,100 @@ pxla.split_axis_rules[all_to_all_p] = _all_to_all_split_axis_rule
 
 
 def _drop(x, dim, axis_name):
-  return lax.dynamic_index_in_dim(x, axis_index(axis_name), dim, False)
+    return lax.dynamic_index_in_dim(x, axis_index(axis_name), dim, False)
+
 
 def _allgather(x, dim, size, axis_name):
-  shape = list(x.shape)
-  shape.insert(dim, size)
-  out = lax.full(shape, lax._const(x, 0))
-  out = lax.dynamic_update_index_in_dim(out, x, axis_index(axis_name), dim)
-  return psum(out, axis_name)
+    shape = list(x.shape)
+    shape.insert(dim, size)
+    out = lax.full(shape, lax._const(x, 0))
+    out = lax.dynamic_update_index_in_dim(out, x, axis_index(axis_name), dim)
+    return psum(out, axis_name)
 
 
 def _broadcasting_papply(prim, name, size, vals, axes, **params):
-  x, y = vals
-  xdim, ydim = axes
+    x, y = vals
+    xdim, ydim = axes
 
-  if xdim is None:
-    if x.shape:
-      if x.shape[ydim] == 1:
-        x = x.reshape(onp.delete(x.shape, ydim))
-      else:
-        x = _drop(x, ydim, name)
-    return prim.bind(x, y, **params), ydim
-  elif ydim is None:
-    if y.shape:
-      if y.shape[xdim] == 1:
-        y = y.reshape(onp.delete(y.shape, xdim))
-      else:
-        y = _drop(y, xdim, name)
-    return prim.bind(x, y, **params), xdim
-  elif xdim == ydim:
-    return prim.bind(x, y, **params), xdim
-  else:
-    x_tosplit = ydim - int(xdim <= ydim)
-    y_tosplit = xdim - int(ydim <= xdim)
-    if y.shape[y_tosplit] == 1:
-      y = _allgather(y, ydim, size, name)
-      y = y.reshape(onp.delete(y.shape, xdim))
-      return prim.bind(x, y, **params), ydim
-    elif x.shape[x_tosplit] == 1:
-      x = _allgather(x, xdim, size, name)
-      x = x.reshape(onp.delete(x.shape, ydim))
-      return prim.bind(x, y, **params), ydim
+    if xdim is None:
+        if x.shape:
+            if x.shape[ydim] == 1:
+                x = x.reshape(onp.delete(x.shape, ydim))
+            else:
+                x = _drop(x, ydim, name)
+        return prim.bind(x, y, **params), ydim
+    elif ydim is None:
+        if y.shape:
+            if y.shape[xdim] == 1:
+                y = y.reshape(onp.delete(y.shape, xdim))
+            else:
+                y = _drop(y, xdim, name)
+        return prim.bind(x, y, **params), xdim
+    elif xdim == ydim:
+        return prim.bind(x, y, **params), xdim
     else:
-      x = all_to_all(x, name, x_tosplit, xdim)
-      return prim.bind(x, y, **params), ydim
+        x_tosplit = ydim - int(xdim <= ydim)
+        y_tosplit = xdim - int(ydim <= xdim)
+        if y.shape[y_tosplit] == 1:
+            y = _allgather(y, ydim, size, name)
+            y = y.reshape(onp.delete(y.shape, xdim))
+            return prim.bind(x, y, **params), ydim
+        elif x.shape[x_tosplit] == 1:
+            x = _allgather(x, xdim, size, name)
+            x = x.reshape(onp.delete(x.shape, ydim))
+            return prim.bind(x, y, **params), ydim
+        else:
+            x = all_to_all(x, name, x_tosplit, xdim)
+            return prim.bind(x, y, **params), ydim
+
 
 def _defbroadcasting(prim):
-  parallel.papply_primitive_rules[prim] = partial(_broadcasting_papply, prim)
+    parallel.papply_primitive_rules[prim] = partial(_broadcasting_papply, prim)
 
 
 def _vectorized_papply(prim, name, size, vals, axes, **params):
-  assert all(axes[0] == a for a in axes[1:])
-  return prim.bind(*vals, **params), axes[0]
+    assert all(axes[0] == a for a in axes[1:])
+    return prim.bind(*vals, **params), axes[0]
+
 
 def _defvectorized(prim):
-  parallel.papply_primitive_rules[prim] = partial(_vectorized_papply, prim)
+    parallel.papply_primitive_rules[prim] = partial(_vectorized_papply, prim)
 
 
 def _reducer_papply(prim, cprim, name, size, vals, papply_axes, axes, **kwargs):
-  operand, = vals
-  papply_axis, = papply_axes
+    operand, = vals
+    papply_axis, = papply_axes
 
-  other_axes = [i for i in axes if i != papply_axis]
-  other_axes = [i - 1 if i > papply_axis else i for i in other_axes]
+    other_axes = [i for i in axes if i != papply_axis]
+    other_axes = [i - 1 if i > papply_axis else i for i in other_axes]
 
-  if other_axes:
-    if 'input_shape' in kwargs:  # special to the reduce-sum family
-      s = kwargs['input_shape']
-      kwargs['input_shape'] = s[:papply_axis] + s[papply_axis + 1:]
-    result = prim.bind(operand, axes=tuple(other_axes), **kwargs)
-  else:
-    result = operand
+    if other_axes:
+        if "input_shape" in kwargs:  # special to the reduce-sum family
+            s = kwargs["input_shape"]
+            kwargs["input_shape"] = s[:papply_axis] + s[papply_axis + 1 :]
+        result = prim.bind(operand, axes=tuple(other_axes), **kwargs)
+    else:
+        result = operand
 
-  if not axes or papply_axis in axes:
-    return cprim.bind(result, axis_name=name), None
-  else:
-    new_papply_axis = papply_axis - onp.sum(onp.less(other_axes, papply_axis))
-    return result, new_papply_axis
+    if not axes or papply_axis in axes:
+        return cprim.bind(result, axis_name=name), None
+    else:
+        new_papply_axis = papply_axis - onp.sum(onp.less(other_axes, papply_axis))
+        return result, new_papply_axis
+
 
 def _defreducer(prim, collective_prim):
-  parallel.papply_primitive_rules[prim] = partial(_reducer_papply, prim, collective_prim)
+    parallel.papply_primitive_rules[prim] = partial(
+        _reducer_papply, prim, collective_prim
+    )
 
 
 def _identity_papply(prim, argnum, name, size, vals, axes, **params):
-  return prim.bind(*vals, **params), axes[argnum]
+    return prim.bind(*vals, **params), axes[argnum]
+
 
 def _defidentity(prim, argnum=0):
-  parallel.papply_primitive_rules[prim] = partial(_identity_papply, prim, argnum)
+    parallel.papply_primitive_rules[prim] = partial(_identity_papply, prim, argnum)
 
 
 _defvectorized(lax.neg_p)
@@ -412,292 +438,334 @@ _defreducer(lax.reduce_min_p, pmin_p)
 
 
 def _dot_papply_rule(name, size, vals, dims, precision):
-  x, _ = vals
-  dim_nums = [((x.ndim,), (0,)), ((), ())]
-  return _dot_general_papply_rule(name, size, vals, dims, dim_nums, precision)
+    x, _ = vals
+    dim_nums = [((x.ndim,), (0,)), ((), ())]
+    return _dot_general_papply_rule(name, size, vals, dims, dim_nums, precision)
 
-def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers,
-                             precision):
-  x, y = vals
-  xdim, ydim = dims
 
-  (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
+def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers, precision):
+    x, y = vals
+    xdim, ydim = dims
 
-  if lhs_batch or rhs_batch:
-    raise NotImplementedError(
-        ('papply of dot_general with batch dimensions: '
-         'xdim={}, ydim={}, dimension_numbers={}').format(
-             xdim, ydim, dimension_numbers))
+    (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
 
-  def adjust_dims(dims, thresh):
-    return tuple(i - 1 if i > thresh else i for i in dims if i != thresh)
+    if lhs_batch or rhs_batch:
+        raise NotImplementedError(
+            (
+                "papply of dot_general with batch dimensions: "
+                "xdim={}, ydim={}, dimension_numbers={}"
+            ).format(xdim, ydim, dimension_numbers)
+        )
 
-  def sub_dims(xdim, ydim, xcontract, ycontract, xbatch, ybatch):
-    if xdim is not None:
-      xbatch = adjust_dims(xbatch, xdim)
-      xcontract = adjust_dims(xcontract, xdim)
-    if ydim is not None:
-      ybatch = adjust_dims(ybatch, ydim)
-      ycontract = adjust_dims(ycontract, ydim)
-    return ((xcontract, ycontract), (xbatch, ybatch))
+    def adjust_dims(dims, thresh):
+        return tuple(i - 1 if i > thresh else i for i in dims if i != thresh)
 
-  def cases(x, y, xdim, ydim, xc, yc, xb, yb):
-    # Consider three states in which an operand may be
-    #   1: split, contracting
-    #   2: split, not contracting
-    #   3: not split
-    #
-    # We will handle the following cases, marked by corresponding letter
-    # symbols:
-    #
-    #  |1 2 3|y
-    # -+-----+-
-    # 1|a b c
-    # 2|d e f
-    # 3|g h i
-    # -+
-    # x|
-    #
-    # Case i is already covered and we can assume that it is excluded at the
-    # outset, since a papply rule is not invoked when no operands are split.
+    def sub_dims(xdim, ydim, xcontract, ycontract, xbatch, ybatch):
+        if xdim is not None:
+            xbatch = adjust_dims(xbatch, xdim)
+            xcontract = adjust_dims(xcontract, xdim)
+        if ydim is not None:
+            ybatch = adjust_dims(ybatch, ydim)
+            ycontract = adjust_dims(ycontract, ydim)
+        return ((xcontract, ycontract), (xbatch, ybatch))
 
-    if xdim in xc:
-      # cases a, b, c
-      if ydim in yc:
-        # case a: both operands are split and contracting
-        # TODO(frostig): Might the following work?
-        # z = lax.dot_general(
-        #     x, y, sub_dims(xdim, ydim, xc, yc, xb, yb), precision)
-        # return True, (psum(z, name), None)
-        return False, 'both operands split and contracting'
-      elif ydim is not None:
-        # case b: x split and contracting, y split but not contracting
-        # TODO(frostig): Might the following work?
-        # new_ydim = yc[xc.index(xdim)]
-        # y = all_to_all(y, name, new_ydim, ydim)
-        # z = lax.dot_general(
-        #     x, y, sub_dims(xdim, new_ydim, xc, yc, xb, yb), precision)
-        # return True, (psum(z, name), None)
-        return False, 'rhs split but not contracting, lhs split and contracting'
-      else:
-        # case c: x split and contracting, y not split
-        assert ydim is None
-        return False, 'one operand split and contracting, other is not split'
-    elif xdim is not None:
-      # cases d, e, f
-      if ydim in yc:
-        # case d: x split but not contracting, y split and contracting
-        # TODO(frostig): Might the following work?
-        # new_xdim = xc[yc.index(ydim)]
-        # x = all_to_all(x, name, new_xdim, xdim)
-        # z = lax.dot_general(
-        #     x, y, sub_dims(new_xdim, ydim, xc, yc, xb, yb), precision)
-        # return True, (psum(z, name), None)
-        return False, 'lhs split but not contracting, rhs split and contracting'
-      elif ydim is not None:
-        # case e: both operands are split but not contracting
-        y = _allgather(y, ydim, size, name)
-        z = lax.dot_general(
-            x, y, sub_dims(xdim, None, xc, yc, xb, yb), precision)
-        zdim = xdim + len(xb) - len([d for d in xrange(xdim) if d in xc])
-        return True, (z, zdim)
-      else:
-        # case f: x split but not contracting, y not split
-        assert ydim is None
-        z = lax.dot_general(
-            x, y, sub_dims(xdim, None, xc, yc, xb, yb), precision)
-        zdim = xdim + len(xb) - len([d for d in xrange(xdim) if d in xc])
-        return True, (z, zdim)
+    def cases(x, y, xdim, ydim, xc, yc, xb, yb):
+        # Consider three states in which an operand may be
+        #   1: split, contracting
+        #   2: split, not contracting
+        #   3: not split
+        #
+        # We will handle the following cases, marked by corresponding letter
+        # symbols:
+        #
+        #  |1 2 3|y
+        # -+-----+-
+        # 1|a b c
+        # 2|d e f
+        # 3|g h i
+        # -+
+        # x|
+        #
+        # Case i is already covered and we can assume that it is excluded at the
+        # outset, since a papply rule is not invoked when no operands are split.
+
+        if xdim in xc:
+            # cases a, b, c
+            if ydim in yc:
+                # case a: both operands are split and contracting
+                # TODO(frostig): Might the following work?
+                # z = lax.dot_general(
+                #     x, y, sub_dims(xdim, ydim, xc, yc, xb, yb), precision)
+                # return True, (psum(z, name), None)
+                return False, "both operands split and contracting"
+            elif ydim is not None:
+                # case b: x split and contracting, y split but not contracting
+                # TODO(frostig): Might the following work?
+                # new_ydim = yc[xc.index(xdim)]
+                # y = all_to_all(y, name, new_ydim, ydim)
+                # z = lax.dot_general(
+                #     x, y, sub_dims(xdim, new_ydim, xc, yc, xb, yb), precision)
+                # return True, (psum(z, name), None)
+                return False, "rhs split but not contracting, lhs split and contracting"
+            else:
+                # case c: x split and contracting, y not split
+                assert ydim is None
+                return False, "one operand split and contracting, other is not split"
+        elif xdim is not None:
+            # cases d, e, f
+            if ydim in yc:
+                # case d: x split but not contracting, y split and contracting
+                # TODO(frostig): Might the following work?
+                # new_xdim = xc[yc.index(ydim)]
+                # x = all_to_all(x, name, new_xdim, xdim)
+                # z = lax.dot_general(
+                #     x, y, sub_dims(new_xdim, ydim, xc, yc, xb, yb), precision)
+                # return True, (psum(z, name), None)
+                return False, "lhs split but not contracting, rhs split and contracting"
+            elif ydim is not None:
+                # case e: both operands are split but not contracting
+                y = _allgather(y, ydim, size, name)
+                z = lax.dot_general(
+                    x, y, sub_dims(xdim, None, xc, yc, xb, yb), precision
+                )
+                zdim = xdim + len(xb) - len([d for d in xrange(xdim) if d in xc])
+                return True, (z, zdim)
+            else:
+                # case f: x split but not contracting, y not split
+                assert ydim is None
+                z = lax.dot_general(
+                    x, y, sub_dims(xdim, None, xc, yc, xb, yb), precision
+                )
+                zdim = xdim + len(xb) - len([d for d in xrange(xdim) if d in xc])
+                return True, (z, zdim)
+        else:
+            # cases g, h
+            assert xdim is None
+            if ydim in yc:
+                # case g: x not split, y split and contracting
+                return False, "one operand split and contracting, other is not split"
+            else:
+                # case h: x not split, y split but not contracting
+                assert ydim is not None
+                # TODO(frostig): Might the following work?
+                # z = lax.dot_general(
+                #     x, y, sub_dims(None, ydim, xc, yc, xb, yb), precision)
+                # zdim = (
+                #     ydim + len(xb) +                # batch dimensions
+                #     x.ndim - len(xc) -              # non-contracting x dimensions
+                #     len([d for d in xrange(ydim) if d in yc]))
+                # return True, (z, zdim)
+                return False, "lhs not split, rhs split but not contracting"
+
+        assert False, "unreachable"
+
+    ok, out = cases(x, y, xdim, ydim, lhs_contract, rhs_contract, lhs_batch, rhs_batch)
+    if ok:
+        return out
     else:
-      # cases g, h
-      assert xdim is None
-      if ydim in yc:
-        # case g: x not split, y split and contracting
-        return False, 'one operand split and contracting, other is not split'
-      else:
-        # case h: x not split, y split but not contracting
-        assert ydim is not None
-        # TODO(frostig): Might the following work?
-        # z = lax.dot_general(
-        #     x, y, sub_dims(None, ydim, xc, yc, xb, yb), precision)
-        # zdim = (
-        #     ydim + len(xb) +                # batch dimensions
-        #     x.ndim - len(xc) -              # non-contracting x dimensions
-        #     len([d for d in xrange(ydim) if d in yc]))
-        # return True, (z, zdim)
-        return False, 'lhs not split, rhs split but not contracting'
-
-    assert False, 'unreachable'
-
-  ok, out = cases(
-      x, y, xdim, ydim, lhs_contract, rhs_contract, lhs_batch, rhs_batch)
-  if ok:
-    return out
-  else:
-    raise NotImplementedError(
-        ('papply of dot_general, {}: '
-         'xdim={}, ydim={}, dimension_numbers={}').format(
-             out, xdim, ydim, dimension_numbers))
+        raise NotImplementedError(
+            (
+                "papply of dot_general, {}: " "xdim={}, ydim={}, dimension_numbers={}"
+            ).format(out, xdim, ydim, dimension_numbers)
+        )
 
 
-def _reshape_papply_rule(name, size, vals, axes, new_sizes, dimensions,
-                         old_sizes):
-  operand, = vals
-  axis, = axes
+def _reshape_papply_rule(name, size, vals, axes, new_sizes, dimensions, old_sizes):
+    operand, = vals
+    axis, = axes
 
-  def filter_ones(xs):
-    return filter(lambda x: x != 1, xs)
+    def filter_ones(xs):
+        return filter(lambda x: x != 1, xs)
 
-  def find_new_axis(old_axis, old_sizes, new_sizes):
-    left = onp.prod(old_sizes[:old_axis])
-    size = old_sizes[old_axis]
-    prod = 1
-    for i, cur_sz in enumerate(new_sizes):
-      if prod == left and cur_sz == size:
-        return i
-      prod = prod * cur_sz
-    return None
+    def find_new_axis(old_axis, old_sizes, new_sizes):
+        left = onp.prod(old_sizes[:old_axis])
+        size = old_sizes[old_axis]
+        prod = 1
+        for i, cur_sz in enumerate(new_sizes):
+            if prod == left and cur_sz == size:
+                return i
+            prod = prod * cur_sz
+        return None
 
-  if dimensions is None:
-    new_axis = find_new_axis(axis, old_sizes, new_sizes)
-    if new_axis is not None:
-      new_sizes_ = new_sizes[:new_axis] + new_sizes[new_axis + 1:]
-      return lax.reshape(operand, new_sizes_, dimensions=dimensions), new_axis
+    if dimensions is None:
+        new_axis = find_new_axis(axis, old_sizes, new_sizes)
+        if new_axis is not None:
+            new_sizes_ = new_sizes[:new_axis] + new_sizes[new_axis + 1 :]
+            return lax.reshape(operand, new_sizes_, dimensions=dimensions), new_axis
+        else:
+            raise NotImplementedError(
+                "papply of reshape that would change hidden dimension size"
+            )
     else:
-      raise NotImplementedError(
-          'papply of reshape that would change hidden dimension size')
-  else:
-    raise NotImplementedError('papply of reshape with `dimensions`')
+        raise NotImplementedError("papply of reshape with `dimensions`")
 
 
 def _transpose_papply_rule(name, size, vals, dims, permutation):
-  x, = vals
-  xdim, = dims
-  local_perm = [i if i < xdim else i - 1 for i in permutation if i != xdim]
-  return lax.transpose(x, local_perm), permutation.index(xdim)
+    x, = vals
+    xdim, = dims
+    local_perm = [i if i < xdim else i - 1 for i in permutation if i != xdim]
+    return lax.transpose(x, local_perm), permutation.index(xdim)
 
 
 def _select_papply_rule(name, size, vals, dims):
-  dimset = {d for d in dims if d is not None}
-  if len(dimset) != 1:
-    raise NotImplementedError(
-        'papply of select with operands split along different dimensions')
-  dim, = dimset
-  def drop(x, d):
-    return _drop(x, dim, name) if d is None else x
-  return lax.select_p.bind(*map(drop, vals, dims)), dim
+    dimset = {d for d in dims if d is not None}
+    if len(dimset) != 1:
+        raise NotImplementedError(
+            "papply of select with operands split along different dimensions"
+        )
+    dim, = dimset
+
+    def drop(x, d):
+        return _drop(x, dim, name) if d is None else x
+
+    return lax.select_p.bind(*map(drop, vals, dims)), dim
 
 
 def _add_jaxvals_papply_rule(name, size, vals, dims):
-  x, y = vals
-  xdim, ydim = dims
-  if xdim == ydim:
-    out_dim = xdim
-  elif ydim is None:
-    y = lax.psplit_like(y, x, name)
-    out_dim = xdim
-  else:
-    x = lax.psplit_like(x, y, name)
-    out_dim = ydim
-  return ad_util.add_jaxvals_p.bind(x, y), out_dim
+    x, y = vals
+    xdim, ydim = dims
+    if xdim == ydim:
+        out_dim = xdim
+    elif ydim is None:
+        y = lax.psplit_like(y, x, name)
+        out_dim = xdim
+    else:
+        x = lax.psplit_like(x, y, name)
+        out_dim = ydim
+    return ad_util.add_jaxvals_p.bind(x, y), out_dim
 
 
-def _convert_element_type_papply_rule(
-    name, size, vals, dims, new_dtype, **params):
-  operand, = vals
-  dim, = dims
-  return lax.convert_element_type(operand, new_dtype), dim
+def _convert_element_type_papply_rule(name, size, vals, dims, new_dtype, **params):
+    operand, = vals
+    dim, = dims
+    return lax.convert_element_type(operand, new_dtype), dim
 
 
 def _conv_general_dilated_papply_rule(
-    name, size, vals, dims, window_strides, padding, lhs_dilation, rhs_dilation,
-    dimension_numbers, feature_group_count, precision, **unused_kwargs):
-  lhs, rhs = vals
-  lhs_dim, rhs_dim = dims
-  lhs_spec_batch_dim = dimension_numbers.lhs_spec[0]
-  if rhs_dim is None and lhs_dim == lhs_spec_batch_dim:
-    lhs = lax.reshape(lhs, tuple(onp.insert(lhs.shape, lhs_dim, 1)))
-    out = lax.conv_general_dilated(
-        lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
-        dimension_numbers, feature_group_count, precision)
-    return out, lhs_dim
-  else:
-    raise NotImplementedError(
-        "splitting a convolution along anything but input batch dimension")
+    name,
+    size,
+    vals,
+    dims,
+    window_strides,
+    padding,
+    lhs_dilation,
+    rhs_dilation,
+    dimension_numbers,
+    feature_group_count,
+    precision,
+    **unused_kwargs
+):
+    lhs, rhs = vals
+    lhs_dim, rhs_dim = dims
+    lhs_spec_batch_dim = dimension_numbers.lhs_spec[0]
+    if rhs_dim is None and lhs_dim == lhs_spec_batch_dim:
+        lhs = lax.reshape(lhs, tuple(onp.insert(lhs.shape, lhs_dim, 1)))
+        out = lax.conv_general_dilated(
+            lhs,
+            rhs,
+            window_strides,
+            padding,
+            lhs_dilation,
+            rhs_dilation,
+            dimension_numbers,
+            feature_group_count,
+            precision,
+        )
+        return out, lhs_dim
+    else:
+        raise NotImplementedError(
+            "splitting a convolution along anything but input batch dimension"
+        )
 
 
-def _broadcast_in_dim_papply_rule(name, size, vals, dims, shape,
-                                  broadcast_dimensions):
-  operand, = vals
-  dim, = dims
-  out_dim = broadcast_dimensions[dim]
-  if shape[out_dim] != shape[dim]:
-    raise ValueError(
-        "broadcast_in_dim changes hidden dimension size: {} to {}".format(
-            shape[dim], shape[out_dim]))
-  sub_bdims = tuple(onp.delete(broadcast_dimensions, dim))
-  sub_shape = tuple(onp.delete(shape, out_dim))
-  return lax.broadcast_in_dim(operand, sub_shape, sub_bdims), out_dim
+def _broadcast_in_dim_papply_rule(name, size, vals, dims, shape, broadcast_dimensions):
+    operand, = vals
+    dim, = dims
+    out_dim = broadcast_dimensions[dim]
+    if shape[out_dim] != shape[dim]:
+        raise ValueError(
+            "broadcast_in_dim changes hidden dimension size: {} to {}".format(
+                shape[dim], shape[out_dim]
+            )
+        )
+    sub_bdims = tuple(onp.delete(broadcast_dimensions, dim))
+    sub_shape = tuple(onp.delete(shape, out_dim))
+    return lax.broadcast_in_dim(operand, sub_shape, sub_bdims), out_dim
 
 
 def _pad_papply_rule(name, size, vals, dims, padding_config):
-  operand, padding_value = vals
-  operand_dim, padding_value_dim = dims
-  assert padding_value_dim is None
-  padding_config = list(padding_config)
-  if padding_config[operand_dim] == (0, 0, 0):
-    padded = lax.pad(
+    operand, padding_value = vals
+    operand_dim, padding_value_dim = dims
+    assert padding_value_dim is None
+    padding_config = list(padding_config)
+    if padding_config[operand_dim] == (0, 0, 0):
+        padded = lax.pad(
+            operand,
+            padding_value,
+            padding_config[:operand_dim] + padding_config[operand_dim + 1 :],
+        )
+        return padded, operand_dim
+    else:
+        raise NotImplementedError(
+            "pad changes size of hidden dimension {} with config {}".format(
+                operand_dim, padding_config
+            )
+        )
+
+
+def _slice_papply_rule(
+    name, size, vals, dims, start_indices, limit_indices, strides, **kwargs
+):
+    operand, = vals
+    dim, = dims
+    start_indices = list(start_indices)
+    limit_indices = list(limit_indices)
+
+    if (
+        start_indices[dim] != 0
+        or limit_indices[dim] != size
+        or strides is not None
+        and strides[dim] != 1
+    ):
+        raise NotImplementedError("slice changes side of hidden dimension")
+
+    out = lax.slice(
         operand,
-        padding_value,
-        padding_config[:operand_dim] + padding_config[operand_dim + 1:])
-    return padded, operand_dim
-  else:
-    raise NotImplementedError(
-        'pad changes size of hidden dimension {} with config {}'.format(
-            operand_dim, padding_config))
-
-
-def _slice_papply_rule(name, size, vals, dims, start_indices, limit_indices,
-                       strides, **kwargs):
-  operand, = vals
-  dim, = dims
-  start_indices = list(start_indices)
-  limit_indices = list(limit_indices)
-
-  if (start_indices[dim] != 0 or
-      limit_indices[dim] != size or
-      strides is not None and strides[dim] != 1):
-    raise NotImplementedError('slice changes side of hidden dimension')
-
-  out = lax.slice(
-      operand,
-      start_indices[:dim] + start_indices[dim + 1:],
-      limit_indices[:dim] + limit_indices[dim + 1:],
-      strides[:dim] + strides[dim + 1:] if strides is not None else None)
-  return out, dim
+        start_indices[:dim] + start_indices[dim + 1 :],
+        limit_indices[:dim] + limit_indices[dim + 1 :],
+        strides[:dim] + strides[dim + 1 :] if strides is not None else None,
+    )
+    return out, dim
 
 
 def _gather_papply_rule(
-    name, size, vals, dims, dimension_numbers, slice_sizes, operand_shape):
-  operand, start_indices = vals
-  operand_dim, start_indices_dim = dims
-  if (operand_dim is None and
-      start_indices_dim is not None and
-      start_indices_dim not in dimension_numbers.offset_dims and
-      dimension_numbers.collapsed_slice_dims == (0,)):
-    offset_dims = tuple(i - 1 if i > start_indices_dim else i
-                        for i in dimension_numbers.offset_dims)
-    dnums = lax.GatherDimensionNumbers(
-        offset_dims=offset_dims,
-        collapsed_slice_dims=dimension_numbers.collapsed_slice_dims,
-        start_index_map=dimension_numbers.start_index_map)
-    out = lax.gather(operand, start_indices, dimension_numbers=dnums,
-                     slice_sizes=slice_sizes)
-    out_dim = start_indices_dim + onp.sum(
-        onp.less_equal(offset_dims, start_indices_dim))
-    return out, out_dim
-  else:
-    raise NotImplementedError
+    name, size, vals, dims, dimension_numbers, slice_sizes, operand_shape
+):
+    operand, start_indices = vals
+    operand_dim, start_indices_dim = dims
+    if (
+        operand_dim is None
+        and start_indices_dim is not None
+        and start_indices_dim not in dimension_numbers.offset_dims
+        and dimension_numbers.collapsed_slice_dims == (0,)
+    ):
+        offset_dims = tuple(
+            i - 1 if i > start_indices_dim else i for i in dimension_numbers.offset_dims
+        )
+        dnums = lax.GatherDimensionNumbers(
+            offset_dims=offset_dims,
+            collapsed_slice_dims=dimension_numbers.collapsed_slice_dims,
+            start_index_map=dimension_numbers.start_index_map,
+        )
+        out = lax.gather(
+            operand, start_indices, dimension_numbers=dnums, slice_sizes=slice_sizes
+        )
+        out_dim = start_indices_dim + onp.sum(
+            onp.less_equal(offset_dims, start_indices_dim)
+        )
+        return out, out_dim
+    else:
+        raise NotImplementedError
 
 
 parallel.papply_primitive_rules[lax.dot_p] = _dot_papply_rule
@@ -705,14 +773,14 @@ parallel.papply_primitive_rules[lax.dot_general_p] = _dot_general_papply_rule
 parallel.papply_primitive_rules[lax.reshape_p] = _reshape_papply_rule
 parallel.papply_primitive_rules[lax.transpose_p] = _transpose_papply_rule
 parallel.papply_primitive_rules[lax.select_p] = _select_papply_rule
-parallel.papply_primitive_rules[ad_util.add_jaxvals_p] = \
-    _add_jaxvals_papply_rule
-parallel.papply_primitive_rules[lax.convert_element_type_p] = \
-    _convert_element_type_papply_rule
-parallel.papply_primitive_rules[lax.conv_general_dilated_p] = \
-    _conv_general_dilated_papply_rule
-parallel.papply_primitive_rules[lax.broadcast_in_dim_p] = \
-    _broadcast_in_dim_papply_rule
+parallel.papply_primitive_rules[ad_util.add_jaxvals_p] = _add_jaxvals_papply_rule
+parallel.papply_primitive_rules[
+    lax.convert_element_type_p
+] = _convert_element_type_papply_rule
+parallel.papply_primitive_rules[
+    lax.conv_general_dilated_p
+] = _conv_general_dilated_papply_rule
+parallel.papply_primitive_rules[lax.broadcast_in_dim_p] = _broadcast_in_dim_papply_rule
 parallel.papply_primitive_rules[lax.pad_p] = _pad_papply_rule
 parallel.papply_primitive_rules[lax.slice_p] = _slice_papply_rule
 parallel.papply_primitive_rules[lax.gather_p] = _gather_papply_rule

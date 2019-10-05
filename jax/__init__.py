@@ -13,7 +13,8 @@
 # limitations under the License.
 
 import os
-os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '1')
+
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "1")
 
 from jax.version import __version__
 from jax.api import *

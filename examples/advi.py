@@ -33,18 +33,22 @@ import jax.scipy.stats.norm as norm
 
 # ========= Functions to define the evidence lower bound. =========
 
+
 def diag_gaussian_sample(rng, mean, log_std):
     # Take a single sample from a diagonal multivariate Gaussian.
     return mean + np.exp(log_std) * random.normal(rng, mean.shape)
+
 
 def diag_gaussian_logpdf(x, mean, log_std):
     # Evaluate a single point on a diagonal multivariate Gaussian.
     return np.sum(vmap(norm.logpdf)(x, mean, np.exp(log_std)))
 
+
 def elbo(logprob, rng, mean, log_std):
     # Single-sample Monte Carlo estimate of the variational lower bound.
     sample = diag_gaussian_sample(rng, mean, log_std)
     return logprob(sample) - diag_gaussian_logpdf(sample, mean, log_std)
+
 
 def batch_elbo(logprob, rng, params, num_samples):
     # Average over a batch of random samples.
@@ -54,6 +58,7 @@ def batch_elbo(logprob, rng, params, num_samples):
 
 
 # ========= Helper function for plotting. =========
+
 
 @partial(jit, static_argnums=(0, 1, 2, 4))
 def mesh_eval(func, x_limits, y_limits, params, num_ticks=101):
@@ -68,9 +73,11 @@ def mesh_eval(func, x_limits, y_limits, params, num_ticks=101):
 
 # ========= Define an intractable unnormalized density =========
 
+
 def funnel_log_density(params):
-    return norm.logpdf(params[0], 0, np.exp(params[1])) + \
-           norm.logpdf(params[1], 0, 1.35)
+    return norm.logpdf(params[0], 0, np.exp(params[1])) + norm.logpdf(
+        params[1], 0, 1.35
+    )
 
 
 if __name__ == "__main__":
@@ -82,7 +89,7 @@ if __name__ == "__main__":
         return -batch_elbo(funnel_log_density, rng, params, num_samples)
 
     # Set up figure.
-    fig = plt.figure(figsize=(8,8), facecolor='white')
+    fig = plt.figure(figsize=(8, 8), facecolor="white")
     ax = fig.add_subplot(111, frameon=False)
     plt.ion()
     plt.show(block=False)
@@ -96,9 +103,9 @@ if __name__ == "__main__":
 
         plt.cla()
         X, Y, Z = mesh_eval(target_dist, x_limits, y_limits, 1)
-        ax.contour(X, Y, Z, cmap='summer')
+        ax.contour(X, Y, Z, cmap="summer")
         X, Y, Z = mesh_eval(approx_dist, x_limits, y_limits, params)
-        ax.contour(X, Y, Z, cmap='winter')
+        ax.contour(X, Y, Z, cmap="winter")
         ax.set_xlim(x_limits)
         ax.set_ylim(y_limits)
         ax.set_yticks([])
@@ -109,16 +116,15 @@ if __name__ == "__main__":
         # so that we can show exactly the same samples.
         rngs = random.split(random.PRNGKey(t), num_samples)
         samples = vmap(diag_gaussian_sample, in_axes=(0, None, None))(rngs, *params)
-        ax.plot(samples[:, 0], samples[:, 1], 'b.')
+        ax.plot(samples[:, 0], samples[:, 1], "b.")
 
         plt.draw()
-        plt.pause(1.0/60.0)
-
+        plt.pause(1.0 / 60.0)
 
     # Set up optimizer.
     D = 2
     init_mean = np.zeros(D)
-    init_std  = np.zeros(D)
+    init_std = np.zeros(D)
     init_params = (init_mean, init_std)
     opt_init, opt_update, get_params = optimizers.momentum(step_size=0.1, mass=0.9)
     opt_state = opt_init(init_params)
@@ -128,7 +134,6 @@ if __name__ == "__main__":
         params = get_params(opt_state)
         gradient = grad(objective)(params, i)
         return opt_update(i, gradient, opt_state)
-
 
     # Main loop.
     print("Optimizing variational parameters...")

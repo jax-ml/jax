@@ -25,13 +25,14 @@ from ...numpy.lax_numpy import _promote_args_like, _constant_like, _wraps
 
 @_wraps(osp_stats.cauchy.logpdf)
 def logpdf(x, loc=0, scale=1):
-  x, loc, scale = _promote_args_like(osp_stats.cauchy.logpdf, x, loc, scale)
-  one = _constant_like(x, 1)
-  pi = _constant_like(x, onp.pi)
-  scaled_x = lax.div(lax.sub(x, loc), scale)
-  normalize_term = lax.log(lax.mul(pi, scale))
-  return lax.neg(lax.add(normalize_term, lax.log1p(lax.mul(scaled_x, scaled_x))))
+    x, loc, scale = _promote_args_like(osp_stats.cauchy.logpdf, x, loc, scale)
+    one = _constant_like(x, 1)
+    pi = _constant_like(x, onp.pi)
+    scaled_x = lax.div(lax.sub(x, loc), scale)
+    normalize_term = lax.log(lax.mul(pi, scale))
+    return lax.neg(lax.add(normalize_term, lax.log1p(lax.mul(scaled_x, scaled_x))))
+
 
 @_wraps(osp_stats.cauchy.pdf)
 def pdf(x, loc=0, scale=1):
-  return lax.exp(logpdf(x, loc, scale))
+    return lax.exp(logpdf(x, loc, scale))

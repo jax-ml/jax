@@ -29,30 +29,31 @@ from jax import numpy as np
 from jax import random
 
 from jax.config import config
+
 config.parse_flags_with_absl()
 
+
 class DebugNaNsTest(jtu.JaxTestCase):
+    def setUp(self):
+        self.cfg = config.read("jax_debug_nans")
+        config.update("jax_debug_nans", True)
 
-  def setUp(self):
-    self.cfg = config.read("jax_debug_nans")
-    config.update("jax_debug_nans", True)
+    def tearDown(self):
+        config.update("jax_debug_nans", self.cfg)
 
-  def tearDown(self):
-    config.update("jax_debug_nans", self.cfg)
+    def testSingleResultPrimitiveNoNaN(self):
+        A = np.array([[1.0, 2.0], [2.0, 3.0]])
+        B = np.tanh(A)
 
-  def testSingleResultPrimitiveNoNaN(self):
-    A = np.array([[1., 2.], [2., 3.]])
-    B = np.tanh(A)
+    def testMultipleResultPrimitiveNoNaN(self):
+        A = np.array([[1.0, 2.0], [2.0, 3.0]])
+        D, V = np.linalg.eig(A)
 
-  def testMultipleResultPrimitiveNoNaN(self):
-    A = np.array([[1., 2.], [2., 3.]])
-    D, V = np.linalg.eig(A)
+    def testJitComputationNoNaN(self):
+        A = np.array([[1.0, 2.0], [2.0, 3.0]])
+        B = jax.jit(np.tanh)(A)
 
-  def testJitComputationNoNaN(self):
-    A = np.array([[1., 2.], [2., 3.]])
-    B = jax.jit(np.tanh)(A)
-
-  def testSingleResultPrimitiveNaN(self):
-    A = np.array(0.)
-    with self.assertRaises(FloatingPointError):
-      B = 0. / A
+    def testSingleResultPrimitiveNaN(self):
+        A = np.array(0.0)
+        with self.assertRaises(FloatingPointError):
+            B = 0.0 / A

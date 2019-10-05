@@ -31,75 +31,87 @@ import jax.numpy as np
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from examples import kernel_lsq
 from examples import resnet50
+
 sys.path.pop()
 
 from jax.config import config
+
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
 
 def _CheckShapeAgreement(test_case, init_fun, apply_fun, input_shape):
-  jax_rng = random.PRNGKey(0)
-  result_shape, params = init_fun(jax_rng, input_shape)
-  rng = onp.random.RandomState(0)
-  result = apply_fun(params, rng.randn(*input_shape).astype(dtype="float32"))
-  test_case.assertEqual(result.shape, result_shape)
+    jax_rng = random.PRNGKey(0)
+    result_shape, params = init_fun(jax_rng, input_shape)
+    rng = onp.random.RandomState(0)
+    result = apply_fun(params, rng.randn(*input_shape).astype(dtype="float32"))
+    test_case.assertEqual(result.shape, result_shape)
 
 
 class ExamplesTest(jtu.JaxTestCase):
+    @parameterized.named_parameters(
+        {
+            "testcase_name": "_input_shape={}".format(input_shape),
+            "input_shape": input_shape,
+        }
+        for input_shape in [(2, 20, 25, 2)]
+    )
+    @jtu.skip_on_flag("jax_enable_x64", True)
+    def testIdentityBlockShape(self, input_shape):
+        init_fun, apply_fun = resnet50.IdentityBlock(2, (4, 3))
+        _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)
 
-  @parameterized.named_parameters(
-      {"testcase_name": "_input_shape={}".format(input_shape),
-       "input_shape": input_shape}
-      for input_shape in [(2, 20, 25, 2)])
-  @jtu.skip_on_flag('jax_enable_x64', True)
-  def testIdentityBlockShape(self, input_shape):
-    init_fun, apply_fun = resnet50.IdentityBlock(2, (4, 3))
-    _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)
+    @parameterized.named_parameters(
+        {
+            "testcase_name": "_input_shape={}".format(input_shape),
+            "input_shape": input_shape,
+        }
+        for input_shape in [(2, 20, 25, 3)]
+    )
+    @jtu.skip_on_flag("jax_enable_x64", True)
+    def testConvBlockShape(self, input_shape):
+        init_fun, apply_fun = resnet50.ConvBlock(3, (2, 3, 4))
+        _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)
 
-  @parameterized.named_parameters(
-      {"testcase_name": "_input_shape={}".format(input_shape),
-       "input_shape": input_shape}
-      for input_shape in [(2, 20, 25, 3)])
-  @jtu.skip_on_flag('jax_enable_x64', True)
-  def testConvBlockShape(self, input_shape):
-    init_fun, apply_fun = resnet50.ConvBlock(3, (2, 3, 4))
-    _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)
+    @parameterized.named_parameters(
+        {
+            "testcase_name": "_num_classes={}_input_shape={}".format(
+                num_classes, input_shape
+            ),
+            "num_classes": num_classes,
+            "input_shape": input_shape,
+        }
+        for num_classes in [5, 10]
+        for input_shape in [(224, 224, 3, 2)]
+    )
+    @jtu.skip_on_flag("jax_enable_x64", True)
+    def testResNet50Shape(self, num_classes, input_shape):
+        init_fun, apply_fun = resnet50.ResNet50(num_classes)
+        _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)
 
-  @parameterized.named_parameters(
-      {"testcase_name": "_num_classes={}_input_shape={}"
-                        .format(num_classes, input_shape),
-       "num_classes": num_classes, "input_shape": input_shape}
-      for num_classes in [5, 10]
-      for input_shape in [(224, 224, 3, 2)])
-  @jtu.skip_on_flag('jax_enable_x64', True)
-  def testResNet50Shape(self, num_classes, input_shape):
-    init_fun, apply_fun = resnet50.ResNet50(num_classes)
-    _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)
+    def testKernelRegressionGram(self):
+        n, d = 100, 20
+        rng = onp.random.RandomState(0)
+        truth = rng.randn(d)
+        xs = rng.randn(n, d)
+        ys = np.dot(xs, truth)
+        kernel = lambda x, y: np.dot(x, y)
+        self.assertAllClose(
+            kernel_lsq.gram(kernel, xs), np.dot(xs, xs.T), check_dtypes=False
+        )
 
-  def testKernelRegressionGram(self):
-    n, d = 100, 20
-    rng = onp.random.RandomState(0)
-    truth = rng.randn(d)
-    xs = rng.randn(n, d)
-    ys = np.dot(xs, truth)
-    kernel = lambda x, y: np.dot(x, y)
-    self.assertAllClose(kernel_lsq.gram(kernel, xs), np.dot(xs, xs.T),
-                        check_dtypes=False)
-
-  def testKernelRegressionTrainAndPredict(self):
-    # TODO(frostig): reenable this test.
-    self.skipTest("Test is broken")
-    n, d = 100, 20
-    rng = onp.random.RandomState(0)
-    truth = rng.randn(d)
-    xs = rng.randn(n, d)
-    ys = np.dot(xs, truth)
-    kernel = lambda x, y: np.dot(x, y)
-    predict = kernel_lsq.train(kernel, xs, ys)
-    self.assertAllClose(predict(xs), ys, atol=1e-3, rtol=1e-3,
-                        check_dtypes=False)
+    def testKernelRegressionTrainAndPredict(self):
+        # TODO(frostig): reenable this test.
+        self.skipTest("Test is broken")
+        n, d = 100, 20
+        rng = onp.random.RandomState(0)
+        truth = rng.randn(d)
+        xs = rng.randn(n, d)
+        ys = np.dot(xs, truth)
+        kernel = lambda x, y: np.dot(x, y)
+        predict = kernel_lsq.train(kernel, xs, ys)
+        self.assertAllClose(predict(xs), ys, atol=1e-3, rtol=1e-3, check_dtypes=False)
 
 
 if __name__ == "__main__":
-  absltest.main()
+    absltest.main()

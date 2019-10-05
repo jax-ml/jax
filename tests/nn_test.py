@@ -28,11 +28,14 @@ from jax import nn
 from jax import random
 
 from jax.config import config
+
 config.parse_flags_with_absl()
 
+
 class NNTest(jtu.JaxTestCase):
-  def testSoftplusGrad(self):
-    check_grads(nn.softplus, (1e-8,), 4)
-  def testSoftplusValue(self):
-    val = nn.softplus(89.)
-    self.assertAllClose(val, 89., check_dtypes=False)
+    def testSoftplusGrad(self):
+        check_grads(nn.softplus, (1e-8,), 4)
+
+    def testSoftplusValue(self):
+        val = nn.softplus(89.0)
+        self.assertAllClose(val, 89.0, check_dtypes=False)
