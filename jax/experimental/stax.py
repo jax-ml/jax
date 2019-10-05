@@ -164,9 +164,8 @@ def BatchNorm(axis=(0, 1, 2), epsilon=1e-5, center=True, scale=True,
       mean = running_mean
       var = running_var
     z = (x - mean.astype(x.dtype)) / np.sqrt(var + np.epsilon).astype(x.dtype)
-    if center and scale: return gamma * z + beta
-    if center: return z + beta
-    if scale: return gamma * z
+    if scale: z = gamma * z
+    if center: z = z + beta
     return z
   return init_fun, apply_fun
 
