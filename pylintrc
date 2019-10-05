@@ -1,9 +1,10 @@
 [MASTER]
+
 # A comma-separated list of package or module names from where C extensions may
 # be loaded. Extensions are loading into the active Python interpreter and may
 # run arbitrary code
 extension-pkg-whitelist=numpy
-indent-string="  "
+
 
 [MESSAGES CONTROL]
 
@@ -36,3 +37,10 @@ disable=missing-docstring,
 # multiple time (only on the command line, not in the configuration file where
 # it should appear only once). See also the "--disable" option for examples.
 enable=c-extension-no-member
+
+
+[FORMAT]
+
+# String used as indentation unit. This is usually "    " (4 spaces) or "\t" (1
+# tab).
+indent-string="  "
