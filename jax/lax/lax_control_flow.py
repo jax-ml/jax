@@ -481,7 +481,9 @@ def scan(f, init, xs):
                     forward=True, length=length, jaxpr=jaxpr,
                     num_consts=len(consts), num_carry=num_carry,
                     linear=(False,) * (len(consts) + len(in_flat)))
-  return tree_unflatten(out_tree, out)
+  carry_out, y_out = split_list(out, [num_carry])
+  y_out = _map(partial(_maybe_expand_time, length), y_avals, y_out)
+  return tree_unflatten(out_tree, carry_out + y_out)
 
 def _scan_impl(*args, **kwargs):
   forward, length, num_consts, num_carry, jaxpr, linear = split_dict(
@@ -522,9 +524,17 @@ def _scan_impl(*args, **kwargs):
   ys_init = _map(partial(_empty_array, length), y_avals)
   nonconst_outs = fori_loop(0, length, body_fun, init + ys_init)
   carry_out, nonconst_ys = split_list(nonconst_outs, [num_carry])
-  ys_out = [n if c is core.unit else c[None, ...]
+  ys_out = [n if c is core.unit else c
             for c, n in zip(const_ys, nonconst_ys)]
   return carry_out + ys_out
+
+def _maybe_expand_time(aval, x, length):
+  if aval is core.abstract_unit:
+    return core.unit
+  elif x.ndim == aval.ndim:
+    return lax.broadcast(x, [length])
+  else:
+    return x
 
 def _index_array(i, aval, x):
   if aval is core.abstract_unit:
@@ -622,7 +632,8 @@ def _scan_partial_eval(trace, *tracers, **kwargs):
                  for uk, t in zip(unknowns, tracers)]
 
   carry_avals, y_avals = split_list(jaxpr.out_avals, [num_carry])
-  ys_avals = _map(partial(_promote_aval_rank, length), y_avals)
+  ys_avals = [aval1 if aval2 is core.abstract_unit else aval2
+              for aval1, aval2 in zip(jaxpr_1.out_avals[:num_carry + num_ys], jaxpr_2.out_avals)]
   out_avals = carry_avals + ys_avals
   out_pvs = [aval if uk else None for aval, uk in zip(out_avals, out_uk)]
 
@@ -633,13 +644,32 @@ def _scan_partial_eval(trace, *tracers, **kwargs):
   out_carry, ys, residuals = split_list(out_flat, [num_carry, num_ys])
   out_consts = out_carry + ys
   residual_tracers = _map(trace.new_instantiated_const, residuals)
+
+  _, j1_ys_avals, j1_res_avals = split_list(jaxpr_1.out_avals, [num_carry, num_ys])
+  ys_isconst = [True if aval is not core.abstract_unit and t.ndim == aval.ndim else False
+                for t, aval in zip(new_tracers[num_consts:], j1_ys_avals)]
+  res_isconst = [True if aval is not core.abstract_unit and t.ndim == aval.ndim else False
+                 for t, aval in zip(residual_tracers, j1_res_avals)]
+  const_tracers = new_tracers[:num_consts] + \
+      [t for t, const in zip(new_tracers[num_consts:], ys_isconst) if const] + \
+      [t for t, const in zip(residual_tracers, res_isconst) if const]
+  nonconst_tracers = [t for t, const in zip(new_tracers[num_consts:], ys_isconst) if not const] + \
+                     [t for t, const in zip(residual_tracers, res_isconst) if not const]
+  jaxpr_2.in_avals = jaxpr2.in_avals[:num_consts] + \
+      [aval for aval, const in zip(jaxpr_2.in_avals[num_consts:], ys_isconst + res_isconst) if const] + \
+      [aval for aval, const in zip(jaxpr_2.in_avals[num_consts:], ys_isconst + res_isconst) if not const)]
+  jaxpr_2.jaxpr.invars = jaxpr_2.jaxpr.invars[:num_consts] + \
+      [v for v, const in zip(jaxpr_2.jaxpr.invars[num_consts:], ys_isconst + res_isconst) if const] + \
+      [v for v, const in zip(jaxpr_2.jaxpr.invars[num_consts:], ys_isconst + res_isconst) if not const)]
+
+  const_linear_2 = [lin or not uk for uk, lin, const in zip(unknowns + [True] * len(residual_tracers), linear + [False] * len(residual_tracers), [True] * num_consts + ys_isconst + res_isconst) if const]
+
   out_tracers = [pe.JaxprTracer(trace, pe.PartialVal((pv, const)), None)
                  for pv, const in zip(out_pvs, out_consts)]
-  linear_2 = ([lin or not uk for uk, lin in zip(unknowns, linear)]
-              + [False] * len(residual_tracers))
-  eqn = pe.new_jaxpr_eqn(new_tracers + residual_tracers, out_tracers, scan_p,
+  linear_2 = linear_2 + [False] * len(residual_tracers)
+  eqn = pe.new_jaxpr_eqn(const_tracers + nonconst_tracers, out_tracers, scan_p,
                          (), dict(forward=forward, length=length, jaxpr=jaxpr_2,
-                                  num_consts=num_consts, num_carry=num_carry,
+                                  num_consts=len(const_tracers), num_carry=num_carry,
                                   linear=linear_2))
   for t in out_tracers: t.recipe = eqn
   return out_tracers
