@@ -31,12 +31,14 @@ def safe_zip(*args):
     assert len(arg) == n, 'length mismatch: {}'.format(list(map(len, args)))
   return list(zip(*args))
 
+
 def safe_map(f, *args):
   args = list(map(list, args))
   n = len(args[0])
   for arg in args[1:]:
     assert len(arg) == n, 'length mismatch: {}'.format(list(map(len, args)))
   return list(map(f, *args))
+
 
 def unzip2(xys):
   xs = []
@@ -45,6 +47,7 @@ def unzip2(xys):
     xs.append(x)
     ys.append(y)
   return tuple(xs), tuple(ys)
+
 
 def unzip3(xyzs):
   xs = []
@@ -56,6 +59,7 @@ def unzip3(xyzs):
     zs.append(z)
   return tuple(xs), tuple(ys), tuple(zs)
 
+
 def split_list(args, ns):
   assert type(ns) is list
   args = list(args)
@@ -66,14 +70,17 @@ def split_list(args, ns):
   lists.append(args)
   return lists
 
+
 def split_dict(dct, names):
   dct = dict(dct)
   lst = [dct.pop(name) for name in names]
   assert not dct
   return lst
 
+
 def concatenate(xs):
   return list(it.chain.from_iterable(xs))
+
 
 def partial(fun, *args, **kwargs):
   wrapped = functools.partial(fun, *args, **kwargs)
@@ -81,13 +88,14 @@ def partial(fun, *args, **kwargs):
   wrapped._bound_args = args
   return wrapped
 
+
 class partialmethod(functools.partial):
   def __get__(self, instance, owner):
     if instance is None:
       return self
     else:
-      return partial(self.func, instance,
-                     *(self.args or ()), **(self.keywords or {}))
+      return partial(self.func, instance, *(self.args or ()), **(self.keywords or {}))
+
 
 def curry(f):
   """Curries arguments of f, returning a function on any remaining arguments.
@@ -104,6 +112,7 @@ def curry(f):
   26
   """
   return partial(partial, f)
+
 
 def toposort(end_nodes):
   if not end_nodes: return []
@@ -135,16 +144,19 @@ def toposort(end_nodes):
   check_toposort(sorted_nodes[::-1])
   return sorted_nodes[::-1]
 
+
 def check_toposort(nodes):
   visited = set()
   for node in nodes:
     assert all(id(parent) in visited for parent in node.parents)
     visited.add(id(node))
 
+
 def split_merge(predicate, xs):
   sides = list(map(predicate, xs))
   lhs = [x for x, s in zip(xs, sides) if s]
   rhs = [x for x, s in zip(xs, sides) if not s]
+
   def merge(new_lhs, new_rhs):
     out = []
     for s in sides:
@@ -160,16 +172,20 @@ def split_merge(predicate, xs):
 
   return lhs, rhs, merge
 
+
 def cache(max_size=4096):
   return fastcache.clru_cache(maxsize=max_size)
 
+
 memoize = fastcache.clru_cache(maxsize=None)
+
 
 def prod(xs):
   out = 1
   for x in xs:
     out *= x
   return out
+
 
 class WrapHashably(object):
   __slots__ = ["val"]
@@ -183,6 +199,7 @@ class WrapHashably(object):
   def __eq__(self, other):
     return self.val is other.val
 
+
 class Hashable(object):
   __slots__ = ["val"]
 
@@ -195,6 +212,7 @@ class Hashable(object):
   def __eq__(self, other):
     return self.val == other.val
 
+
 def get_module_functions(module):
   """Finds functions in module.
   Args:
@@ -205,7 +223,6 @@ def get_module_functions(module):
   module_fns = set()
   for key in dir(module):
     attr = getattr(module, key)
-    if isinstance(
-        attr, (types.BuiltinFunctionType, types.FunctionType, onp.ufunc)):
+    if isinstance(attr, (types.BuiltinFunctionType, types.FunctionType, onp.ufunc)):
       module_fns.add(attr)
   return module_fns

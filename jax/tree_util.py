@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """Utilities for working with tree-like container data structures.
 
 This module provides a small set of utility functions for working with tree-like
@@ -61,6 +60,7 @@ def tree_map(f, tree):
   leaves, treedef = pytree.flatten(tree)
   return treedef.unflatten(map(f, leaves))
 
+
 def tree_multimap(f, tree, *rest):
   """Map a multi-input function over pytree args to produce a new pytree.
 
@@ -81,23 +81,30 @@ def tree_multimap(f, tree, *rest):
   all_leaves = [leaves] + [treedef.flatten_up_to(r) for r in rest]
   return treedef.unflatten(f(*xs) for xs in zip(*all_leaves))
 
+
 def tree_leaves(tree):
   return pytree.flatten(tree)[0]
+
 
 def process_pytree(process_node, tree):
   leaves, treedef = pytree.flatten(tree)
   return treedef.walk(process_node, None, leaves), treedef
 
+
 tree_flatten = pytree.flatten
+
 
 def build_tree(treedef, xs):
   return treedef.from_iterable_tree(xs)
 
+
 def treedef_is_leaf(treedef):
   return treedef.num_nodes == 1
 
+
 def tree_unflatten(treedef, xs):
   return treedef.unflatten(xs)
+
 
 def tree_transpose(outer_treedef, inner_treedef, pytree_to_transpose):
   flat, treedef = tree_flatten(pytree_to_transpose)
@@ -113,18 +120,21 @@ def tree_transpose(outer_treedef, inner_treedef, pytree_to_transpose):
   subtrees = map(partial(tree_unflatten, outer_treedef), transposed_lol)
   return tree_unflatten(inner_treedef, subtrees)
 
+
 def tree_structure(tree):
   _, treedef = pytree.flatten(tree)
   return treedef
 
+
 def treedef_tuple(trees):
   return pytree.tuple(list(trees))
 
+
 def treedef_children(treedef):
-    return treedef.children()
+  return treedef.children()
+
 
 register_pytree_node = pytree.register_node
-
 
 
 def tree_reduce(f, tree):
@@ -144,6 +154,7 @@ class Partial(functools.partial):
   (You need to explicitly opt-in to this behavior because we didn't want to give
   functools.partial different semantics than normal function closures.)
   """
+
 
 register_pytree_node(
     Partial,

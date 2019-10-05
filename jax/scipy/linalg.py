@@ -27,8 +27,8 @@ from ..numpy.lax_numpy import _wraps
 from ..numpy import lax_numpy as np
 from ..numpy import linalg as np_linalg
 
-
 _T = lambda x: np.swapaxes(x, -1, -2)
+
 
 @_wraps(scipy.linalg.cholesky)
 def cholesky(a, lower=False, overwrite_a=False, check_finite=True):
@@ -62,16 +62,16 @@ def cho_solve(c_and_lower, b, overwrite_b=False, check_finite=True):
   # TODO(phawkins): triangular_solve only supports matrices on the RHS, so we
   # add a dummy dimension. Extend it to support vectors and simplify this.
   b = b if c_ndims == b_ndims else b[..., None]
-  b = lax_linalg.triangular_solve(c, b, left_side=True, lower=lower,
-                                  transpose_a=not lower, conjugate_a=not lower)
-  b = lax_linalg.triangular_solve(c, b, left_side=True, lower=lower,
-                                  transpose_a=lower, conjugate_a=lower)
+  b = lax_linalg.triangular_solve(c, b, left_side=True, lower=lower, transpose_a=not lower,
+                                  conjugate_a=not lower)
+  b = lax_linalg.triangular_solve(c, b, left_side=True, lower=lower, transpose_a=lower,
+                                  conjugate_a=lower)
   return b[..., 0] if c_ndims != b_ndims else b
 
 
 @_wraps(scipy.linalg.svd)
-def svd(a, full_matrices=True, compute_uv=True, overwrite_a=False,
-        check_finite=True, lapack_driver='gesdd'):
+def svd(a, full_matrices=True, compute_uv=True, overwrite_a=False, check_finite=True,
+        lapack_driver='gesdd'):
   del overwrite_a, check_finite, lapack_driver
   a = np_linalg._promote_arg_dtypes(np.asarray(a))
   return lax_linalg.svd(a, full_matrices, compute_uv)
@@ -84,17 +84,15 @@ def det(a, overwrite_a=False, check_finite=True):
 
 
 @_wraps(scipy.linalg.eigh)
-def eigh(a, b=None, lower=True, eigvals_only=False, overwrite_a=False,
-         overwrite_b=False, turbo=True, eigvals=None, type=1,
-         check_finite=True):
+def eigh(a, b=None, lower=True, eigvals_only=False, overwrite_a=False, overwrite_b=False,
+         turbo=True, eigvals=None, type=1, check_finite=True):
   del overwrite_a, overwrite_b, turbo, check_finite
   if b is not None:
     raise NotImplementedError("Only the b=None case of eigh is implemented")
   if type != 1:
     raise NotImplementedError("Only the type=1 case of eigh is implemented.")
   if eigvals is not None:
-    raise NotImplementedError(
-        "Only the eigvals=None case of eigh is implemented.")
+    raise NotImplementedError("Only the eigvals=None case of eigh is implemented.")
 
   a = np_linalg._promote_arg_dtypes(np.asarray(a))
   v, w = lax_linalg.eigh(a, lower=lower)
@@ -103,7 +101,6 @@ def eigh(a, b=None, lower=True, eigvals_only=False, overwrite_a=False,
     return w
   else:
     return w, v
-
 
 
 @_wraps(scipy.linalg.inv)
@@ -118,46 +115,44 @@ def lu_factor(a, overwrite_a=False, check_finite=True):
   a = np_linalg._promote_arg_dtypes(np.asarray(a))
   return lax_linalg.lu(a)
 
+
 @partial(jit, static_argnums=(3,))
 def _lu_solve(lu, pivots, b, trans):
   lu_shape = np.shape(lu)
   b_shape = np.shape(b)
   if len(lu_shape) != 2 or lu_shape[0] != lu_shape[1]:
-    raise ValueError("LU decomposition must be a square matrix, got shape {}"
-                     .format(lu_shape))
+    raise ValueError("LU decomposition must be a square matrix, got shape {}".format(lu_shape))
   if len(b_shape) < 1:
-    raise ValueError("b matrix must have rank >= 1, got shape {}"
-                     .format(b_shape))
+    raise ValueError("b matrix must have rank >= 1, got shape {}".format(b_shape))
 
   if b_shape[0] != lu_shape[0]:
     raise ValueError("Dimension of LU decomposition matrix (shape {}) must "
-                     "match leading axis of b array (shape {})"
-                     .format(lu_shape, b_shape))
+                     "match leading axis of b array (shape {})".format(lu_shape, b_shape))
   m = lu_shape[0]
   permutation = lax_linalg.lu_pivots_to_permutation(np.array(pivots), m)
   x = np.reshape(b, (m, -1))
   if trans == 0:
     x = x[permutation, :]
-    x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=True,
-                                    unit_diagonal=True)
+    x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=True, unit_diagonal=True)
     x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=False)
   elif trans == 1 or trans == 2:
     conj = trans == 2
-    x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=False,
-                                    transpose_a=True, conjugate_a=conj)
-    x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=True,
-                                    unit_diagonal=True, transpose_a=True,
+    x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=False, transpose_a=True,
                                     conjugate_a=conj)
+    x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=True, unit_diagonal=True,
+                                    transpose_a=True, conjugate_a=conj)
     x = x[np.argsort(permutation), :]
   else:
     raise ValueError("'trans' value must be 0, 1, or 2, got {}".format(trans))
   return lax.reshape(x, b_shape)
+
 
 @_wraps(scipy.linalg.lu_solve)
 def lu_solve(lu_and_piv, b, trans=0, overwrite_b=False, check_finite=True):
   del overwrite_b, check_finite
   lu, pivots = lu_and_piv
   return _lu_solve(lu, pivots, b, trans)
+
 
 @_wraps(scipy.linalg.lu)
 def lu(a, permute_l=False, overwrite_a=False, check_finite=True):
@@ -178,12 +173,10 @@ def lu(a, permute_l=False, overwrite_a=False, check_finite=True):
 
 
 @_wraps(scipy.linalg.qr)
-def qr(a, overwrite_a=False, lwork=None, mode="full", pivoting=False,
-       check_finite=True):
+def qr(a, overwrite_a=False, lwork=None, mode="full", pivoting=False, check_finite=True):
   del overwrite_a, lwork, check_finite
   if pivoting:
-    raise NotImplementedError(
-        "The pivoting=True case of qr is not implemented.")
+    raise NotImplementedError("The pivoting=True case of qr is not implemented.")
   if mode in ("full", "r"):
     full_matrices = True
   elif mode == "economic":
@@ -196,9 +189,10 @@ def qr(a, overwrite_a=False, lwork=None, mode="full", pivoting=False,
     return r
   return q, r
 
+
 @_wraps(scipy.linalg.solve)
-def solve(a, b, sym_pos=False, lower=False, overwrite_a=False, overwrite_b=False,
-          debug=False, check_finite=True):
+def solve(a, b, sym_pos=False, lower=False, overwrite_a=False, overwrite_b=False, debug=False,
+          check_finite=True):
   del overwrite_a, overwrite_b, debug, check_finite
   if not sym_pos:
     return np_linalg.solve(a, b)
@@ -208,8 +202,8 @@ def solve(a, b, sym_pos=False, lower=False, overwrite_a=False, overwrite_b=False
 
 
 @_wraps(scipy.linalg.solve_triangular)
-def solve_triangular(a, b, trans=0, lower=False, unit_diagonal=False,
-                     overwrite_b=False, debug=None, check_finite=True):
+def solve_triangular(a, b, trans=0, lower=False, unit_diagonal=False, overwrite_b=False, debug=None,
+                     check_finite=True):
   del overwrite_b, debug, check_finite
 
   if trans == 0 or trans == "N":
@@ -227,10 +221,8 @@ def solve_triangular(a, b, trans=0, lower=False, unit_diagonal=False,
   b_is_vector = np.ndim(a) == np.ndim(b) + 1
   if b_is_vector:
     b = b[..., None]
-  out = lax_linalg.triangular_solve(a, b, left_side=True, lower=lower,
-                                    transpose_a=transpose_a,
-                                    conjugate_a=conjugate_a,
-                                    unit_diagonal=unit_diagonal)
+  out = lax_linalg.triangular_solve(a, b, left_side=True, lower=lower, transpose_a=transpose_a,
+                                    conjugate_a=conjugate_a, unit_diagonal=unit_diagonal)
   if b_is_vector:
     return out[..., 0]
   else:

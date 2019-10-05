@@ -32,10 +32,11 @@ def logpdf(x, df, loc=0, scale=1):
   df_plus_one_over_two = lax.add(df_over_two, _constant_like(x, 0.5))
   normalize_term_const = lax.mul(lax.mul(scale, scale), _constant_like(x, onp.pi))
   normalize_term_tmp = lax.div(lax.log(lax.mul(normalize_term_const, df)), two)
-  normalize_term = lax.sub(lax.add(lax.lgamma(df_over_two), normalize_term_tmp),
-                           lax.lgamma(df_plus_one_over_two))
+  normalize_term = lax.sub(
+      lax.add(lax.lgamma(df_over_two), normalize_term_tmp), lax.lgamma(df_plus_one_over_two))
   quadratic = lax.div(lax.mul(scaled_x, scaled_x), df)
   return lax.neg(lax.add(normalize_term, lax.mul(df_plus_one_over_two, lax.log1p(quadratic))))
+
 
 @_wraps(osp_stats.t.pdf)
 def pdf(x, df, loc=0, scale=1):

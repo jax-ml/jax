@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """JAX pseudo-random number generators (PRNGs).
 
 The JAX PRNG system is based on "Parallel random numbers: as easy as 1, 2, 3"
@@ -61,6 +60,7 @@ def PRNGKey(seed):
   k2 = convert(lax.bitwise_and(seed, 0xFFFFFFFF))
   return lax.concatenate([k1, k2], 0)
 
+
 def _is_prng_key(key):
   try:
     return key.shape == (2,) and key.dtype == onp.uint32
@@ -80,6 +80,7 @@ def _make_rotate_left(dtype):
     if lax.dtype(d) != lax.dtype(x):
       d = lax.convert_element_type(d, x.dtype)
     return lax.shift_left(x, d) | lax.shift_right_logical(x, nbits - d)
+
   return _rotate_left
 
 
@@ -123,8 +124,10 @@ def threefry_2x32(keypair, count):
   else:
     x = list(np.split(count.ravel(), 2))
 
-  rotations = [onp.array([13, 15, 26, 6], dtype=onp.uint32),
-               onp.array([17, 29, 16, 24], dtype=onp.uint32)]
+  rotations = [
+      onp.array([13, 15, 26, 6], dtype=onp.uint32),
+      onp.array([17, 29, 16, 24], dtype=onp.uint32)
+  ]
   ks = [key1, key2, key1 ^ key2 ^ onp.uint32(0x1BD11BDA)]
 
   # TODO(mattjj): see https://github.com/google/jax/issues/1267, as a hopefully
@@ -139,13 +142,17 @@ def threefry_2x32(keypair, count):
   x[1] = x[1] + ks[1]
 
   if use_rolled_loops:
-    def rotate_list(xs): return xs[1:] + xs[:1]
+
+    def rotate_list(xs):
+      return xs[1:] + xs[:1]
+
     def step(i, state):
       x, ks, rotations = state
       for r in rotations[0]:
         x = apply_round(x, r)
       new_x = [x[0] + ks[0], x[1] + ks[1] + asarray(i + 1, dtype=onp.uint32)]
       return new_x, rotate_list(ks), rotate_list(rotations)
+
     x, _, _ = lax.fori_loop(0, 5, step, (x, rotate_list(ks), rotations))
 
   else:
@@ -192,6 +199,7 @@ def split(key, num=2):
   """
   return _split(key, num)
 
+
 @partial(jit, static_argnums=(1,))
 def _split(key, num):
   counts = lax.tie_in(key, lax.iota(onp.uint32, num * 2))
@@ -210,6 +218,7 @@ def fold_in(key, data):
     statistically safe for producing a stream of new pseudo-random values.
   """
   return _fold_in(key, data)
+
 
 @jit
 def _fold_in(key, data):
@@ -264,6 +273,7 @@ def uniform(key, shape=(), dtype=onp.float64, minval=0., maxval=1.):
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _uniform(key, shape, dtype, minval, maxval)
 
+
 @partial(jit, static_argnums=(1, 2))
 def _uniform(key, shape, dtype, minval, maxval):
   _check_shape("uniform", shape)
@@ -288,9 +298,7 @@ def _uniform(key, shape, dtype, minval, maxval):
       lax.shift_right_logical(bits, onp.array(nbits - nmant, lax.dtype(bits))),
       onp.array(1., dtype).view(onp.uint32 if nbits == 32 else onp.uint64))
   floats = lax.bitcast_convert_type(float_bits, dtype) - onp.array(1., dtype)
-  return lax.max(
-      minval,
-      lax.reshape(floats * (maxval - minval) + minval, shape))
+  return lax.max(minval, lax.reshape(floats * (maxval - minval) + minval, shape))
 
 
 def randint(key, shape, minval, maxval, dtype=onp.int64):
@@ -311,6 +319,7 @@ def randint(key, shape, minval, maxval, dtype=onp.int64):
   """
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _randint(key, shape, minval, maxval, dtype)
+
 
 @partial(jit, static_argnums=(1, 4))
 def _randint(key, shape, minval, maxval, dtype):
@@ -347,8 +356,8 @@ def _randint(key, shape, minval, maxval, dtype):
   if nbits == 64:
     multiplier = lax.rem(lax.mul(multiplier, multiplier), span)
 
-  random_offset = lax.add(lax.mul(lax.rem(higher_bits, span), multiplier),
-                          lax.rem(lower_bits, span))
+  random_offset = lax.add(
+      lax.mul(lax.rem(higher_bits, span), multiplier), lax.rem(lower_bits, span))
   random_offset = lax.rem(random_offset, span)
   return lax.add(minval, lax.convert_element_type(random_offset, dtype))
 
@@ -365,6 +374,7 @@ def shuffle(key, x, axis=0):
     A shuffled version of x.
   """
   return _shuffle(key, x, axis)
+
 
 @partial(jit, static_argnums=(2,))
 def _shuffle(key, x, axis):
@@ -409,6 +419,7 @@ def normal(key, shape=(), dtype=onp.float64):
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _normal(key, shape, dtype)
 
+
 @partial(jit, static_argnums=(1, 2))
 def _normal(key, shape, dtype):
   _check_shape("normal", shape)
@@ -434,6 +445,7 @@ def truncated_normal(key, lower, upper, shape=(), dtype=onp.float64):
   """
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _truncated_normal(key, lower, upper, shape, dtype)
+
 
 @partial(jit, static_argnums=(3, 4))
 def _truncated_normal(key, lower, upper, shape, dtype):
@@ -467,6 +479,7 @@ def bernoulli(key, p=onp.float32(0.5), shape=()):
   p = lax.convert_element_type(p, dtype)
   return _bernoulli(key, p, shape)
 
+
 @partial(jit, static_argnums=(2,))
 def _bernoulli(key, p, shape):
   _check_shape("bernoulli", shape)
@@ -496,6 +509,7 @@ def beta(key, a, b, shape=(), dtype=onp.float64):
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _beta(key, a, b, shape, dtype)
 
+
 @partial(jit, static_argnums=(3, 4))
 def _beta(key, a, b, shape, dtype):
   _check_shape("beta", shape)
@@ -524,6 +538,7 @@ def cauchy(key, shape=(), dtype=onp.float64):
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _cauchy(key, shape, dtype)
 
+
 @partial(jit, static_argnums=(1, 2))
 def _cauchy(key, shape, dtype):
   _check_shape("cauchy", shape)
@@ -550,6 +565,7 @@ def dirichlet(key, alpha, shape=(), dtype=onp.float64):
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _dirichlet(key, alpha, shape, dtype)
 
+
 @partial(jit, static_argnums=(2, 3))
 def _dirichlet(key, alpha, shape, dtype):
   _check_shape("dirichlet", shape)
@@ -575,6 +591,7 @@ def exponential(key, shape=(), dtype=onp.float64):
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _exponential(key, shape, dtype)
 
+
 @partial(jit, static_argnums=(1, 2))
 def _exponential(key, shape, dtype):
   _check_shape("exponential", shape)
@@ -598,9 +615,8 @@ def _gamma_one(key, alpha):
   key, subkey = split(key)
   # for alpha < 1, we boost alpha to alpha + 1 and get a sample according to
   # Gamma(alpha) ~ Gamma(alpha+1) * Uniform()^(1 / alpha)
-  boost = lax.select(lax.ge(alpha, one),
-                     one,
-                     lax.pow(uniform(subkey, (), dtype=dtype), lax.div(one, alpha)))
+  boost = lax.select(
+      lax.ge(alpha, one), one, lax.pow(uniform(subkey, (), dtype=dtype), lax.div(one, alpha)))
   alpha = lax.select(lax.ge(alpha, one), alpha, lax.add(alpha, one))
 
   d = lax.sub(alpha, one_over_three)
@@ -611,10 +627,11 @@ def _gamma_one(key, alpha):
     # TODO: use lax.cond when its batching rule is supported
     # The reason is to avoid evaluating second condition which involves log+log
     # if the first condition is satisfied
-    cond = lax.bitwise_and(lax.ge(U, lax.sub(one, lax.mul(squeeze_const, lax.mul(X, X)))),
-                           lax.ge(lax.log(U), lax.add(lax.mul(X, one_over_two),
-                                                      lax.mul(d, lax.add(lax.sub(one, V),
-                                                                         lax.log(V))))))
+    cond = lax.bitwise_and(
+        lax.ge(U, lax.sub(one, lax.mul(squeeze_const, lax.mul(X, X)))),
+        lax.ge(
+            lax.log(U),
+            lax.add(lax.mul(X, one_over_two), lax.mul(d, lax.add(lax.sub(one, V), lax.log(V))))))
     return cond
 
   def _body_fn(kXVU):
@@ -639,127 +656,131 @@ def _gamma_one(key, alpha):
   return lax.select(lax.eq(z, zero), onp.finfo(z.dtype).tiny, z)
 
 
-_bivariate_coef = [[0.16009398, -0.094634816, 0.025146379, -0.0030648348,
-                    1, 0.3266811, 0.10406087, 0.0014179033],
-                   [0.53487893, 0.12980707, 0.06573594, -0.0015649787,
-                    0.16639465, 0.020070098, -0.0035938937, -0.00058392601],
-                   [0.040121005, -0.0065914079, -0.002628604, -0.0013441777,
-                    0.017050642, -0.0021309345, 0.00085092385, -1.5248239e-07]]
+_bivariate_coef = [[
+    0.16009398, -0.094634816, 0.025146379, -0.0030648348, 1, 0.3266811, 0.10406087, 0.0014179033
+],
+                   [
+                       0.53487893, 0.12980707, 0.06573594, -0.0015649787, 0.16639465, 0.020070098,
+                       -0.0035938937, -0.00058392601
+                   ],
+                   [
+                       0.040121005, -0.0065914079, -0.002628604, -0.0013441777, 0.017050642,
+                       -0.0021309345, 0.00085092385, -1.5248239e-07
+                   ]]
 
 
 def _gamma_grad_one(z, alpha):
-    # Ref 1: Pathwise Derivatives Beyond the Reparameterization Trick, Martin & Fritz
-    # Ref 2: Case 4 follows https://github.com/fritzo/notebooks/blob/master/gamma-reparameterized.ipynb
+  # Ref 1: Pathwise Derivatives Beyond the Reparameterization Trick, Martin & Fritz
+  # Ref 2: Case 4 follows https://github.com/fritzo/notebooks/blob/master/gamma-reparameterized.ipynb
 
-    # TODO: use lax.cond instead of lax.while_loop when its batching rule is available
-    # See https://github.com/google/jax/issues/490
-    def _case1(zagf):
-        z, alpha, _, flag = zagf
+  # TODO: use lax.cond instead of lax.while_loop when its batching rule is available
+  # See https://github.com/google/jax/issues/490
+  def _case1(zagf):
+    z, alpha, _, flag = zagf
 
-        # dz = - dCDF(z; a) / pdf(z; a)
-        # pdf = z^(a-1) * e^(-z) / Gamma(a)
-        # CDF(z; a) = IncompleteGamma(a, z) / Gamma(a)
-        # dCDF(z; a) = (dIncompleteGamma - IncompleteGamma * Digamma(a)) / Gamma(a)
-        #            =: unnormalized_dCDF / Gamma(a)
-        # IncompleteGamma ~ z^a [ 1/a - z/(a+1) + z^2/2!(a+2) - z^3/3!(a+3) + z^4/4!(a+4) - z^5/5!(a+5) ]
-        #                 =: z^a * term1
-        # dIncompleteGamma ~ z^a * log(z) * term1 - z^a [1/a^2 - z/(a+1)^2 + z^2/2!(a+2)^2
-        #                                                - z^3/3!(a+3)^2 + z^4/4!(a+4)^2 - z^5/5!(a+5)^2 ]
-        #                  =: z^a * log(z) * term1 - z^a * term2
-        # unnormalized_dCDF = z^a { [log(z) - Digamma(a)] * term1 - term2 }
-        zi = 1.0
-        update = zi / alpha
-        term1 = update
-        term2 = update / alpha
-        for i in range(1, 6):
-            zi = -zi * z / i
-            update = zi / (alpha + i)
-            term1 = term1 + update
-            term2 = term2 + update / (alpha + i)
+    # dz = - dCDF(z; a) / pdf(z; a)
+    # pdf = z^(a-1) * e^(-z) / Gamma(a)
+    # CDF(z; a) = IncompleteGamma(a, z) / Gamma(a)
+    # dCDF(z; a) = (dIncompleteGamma - IncompleteGamma * Digamma(a)) / Gamma(a)
+    #            =: unnormalized_dCDF / Gamma(a)
+    # IncompleteGamma ~ z^a [ 1/a - z/(a+1) + z^2/2!(a+2) - z^3/3!(a+3) + z^4/4!(a+4) - z^5/5!(a+5) ]
+    #                 =: z^a * term1
+    # dIncompleteGamma ~ z^a * log(z) * term1 - z^a [1/a^2 - z/(a+1)^2 + z^2/2!(a+2)^2
+    #                                                - z^3/3!(a+3)^2 + z^4/4!(a+4)^2 - z^5/5!(a+5)^2 ]
+    #                  =: z^a * log(z) * term1 - z^a * term2
+    # unnormalized_dCDF = z^a { [log(z) - Digamma(a)] * term1 - term2 }
+    zi = 1.0
+    update = zi / alpha
+    term1 = update
+    term2 = update / alpha
+    for i in range(1, 6):
+      zi = -zi * z / i
+      update = zi / (alpha + i)
+      term1 = term1 + update
+      term2 = term2 + update / (alpha + i)
 
-        unnormalized_cdf_dot = np.power(z, alpha) * ((np.log(z) - lax.digamma(alpha)) * term1 - term2)
-        unnormalized_pdf = np.power(z, alpha - 1) * np.exp(-z)
-        grad = -unnormalized_cdf_dot / unnormalized_pdf
+    unnormalized_cdf_dot = np.power(z, alpha) * ((np.log(z) - lax.digamma(alpha)) * term1 - term2)
+    unnormalized_pdf = np.power(z, alpha - 1) * np.exp(-z)
+    grad = -unnormalized_cdf_dot / unnormalized_pdf
 
-        return z, alpha, grad, ~flag
+    return z, alpha, grad, ~flag
 
-    def _cond2(zagf):
-        z, alpha, _, flag = zagf
-        return (~flag) & (alpha > 8.0) & ((z < 0.9 * alpha) | (z > 1.1 * alpha))
+  def _cond2(zagf):
+    z, alpha, _, flag = zagf
+    return (~flag) & (alpha > 8.0) & ((z < 0.9 * alpha) | (z > 1.1 * alpha))
 
-    def _case2(zagf):
-        z, alpha, _, flag = zagf
+  def _case2(zagf):
+    z, alpha, _, flag = zagf
 
-        # Formula 58 of [1]
-        sqrt_8a = np.sqrt(8 * alpha)
-        z_minus_a = z - alpha
-        log_z_div_a = np.log(z / alpha)
-        sign = np.where(z < alpha, 1.0, -1.0)
-        term1 = 4 * (z + alpha) / (sqrt_8a * z_minus_a * z_minus_a)
-        term2 = log_z_div_a * (sqrt_8a / z_minus_a + sign * np.power(z_minus_a - alpha * log_z_div_a, -1.5))
-        term3 = z * (1.0 + 1.0 / (12 * alpha) + 1.0 / (288 * alpha * alpha)) / sqrt_8a
-        grad = (term1 + term2) * term3
+    # Formula 58 of [1]
+    sqrt_8a = np.sqrt(8 * alpha)
+    z_minus_a = z - alpha
+    log_z_div_a = np.log(z / alpha)
+    sign = np.where(z < alpha, 1.0, -1.0)
+    term1 = 4 * (z + alpha) / (sqrt_8a * z_minus_a * z_minus_a)
+    term2 = log_z_div_a * (
+        sqrt_8a / z_minus_a + sign * np.power(z_minus_a - alpha * log_z_div_a, -1.5))
+    term3 = z * (1.0 + 1.0 / (12 * alpha) + 1.0 / (288 * alpha * alpha)) / sqrt_8a
+    grad = (term1 + term2) * term3
 
-        return z, alpha, grad, ~flag
+    return z, alpha, grad, ~flag
 
-    def _cond3(zagf):
-        z, alpha, _, flag = zagf
-        return (~flag) & (alpha > 8.0) & (z >= 0.9 * alpha) & (z <= 1.1 * alpha)
+  def _cond3(zagf):
+    z, alpha, _, flag = zagf
+    return (~flag) & (alpha > 8.0) & (z >= 0.9 * alpha) & (z <= 1.1 * alpha)
 
-    def _case3(zagf):
-        z, alpha, _, flag = zagf
+  def _case3(zagf):
+    z, alpha, _, flag = zagf
 
-        # Formula 59 of [1]
-        z_div_a = np.divide(z, alpha)
-        aa = alpha * alpha
-        term1 = 1440 * alpha + 6 * z_div_a * (53 - 120 * z) - 65 * z_div_a * z_div_a + 3600 * z + 107
-        term2 = 1244160 * alpha * aa
-        term3 = 1 + 24 * alpha + 288 * aa
-        grad = term1 * term3 / term2
+    # Formula 59 of [1]
+    z_div_a = np.divide(z, alpha)
+    aa = alpha * alpha
+    term1 = 1440 * alpha + 6 * z_div_a * (53 - 120 * z) - 65 * z_div_a * z_div_a + 3600 * z + 107
+    term2 = 1244160 * alpha * aa
+    term3 = 1 + 24 * alpha + 288 * aa
+    grad = term1 * term3 / term2
 
-        return z, alpha, grad, ~flag
+    return z, alpha, grad, ~flag
 
-    def _case4(zagf):
-        z, alpha, _, flag = zagf
+  def _case4(zagf):
+    z, alpha, _, flag = zagf
 
-        # Ref [2]
-        u = np.log(z / alpha)
-        v = np.log(alpha)
-        c = []
-        for i in range(8):
-            c.append(_bivariate_coef[0][i] + u * (_bivariate_coef[1][i] + u * _bivariate_coef[2][i]))
-        p = c[0] + v * (c[1] + v * (c[2] + v * c[3]))
-        q = c[4] + v * (c[5] + v * (c[6] + v * c[7]))
-        grad = np.exp(p / np.maximum(q, 0.01))
+    # Ref [2]
+    u = np.log(z / alpha)
+    v = np.log(alpha)
+    c = []
+    for i in range(8):
+      c.append(_bivariate_coef[0][i] + u * (_bivariate_coef[1][i] + u * _bivariate_coef[2][i]))
+    p = c[0] + v * (c[1] + v * (c[2] + v * c[3]))
+    q = c[4] + v * (c[5] + v * (c[6] + v * c[7]))
+    grad = np.exp(p / np.maximum(q, 0.01))
 
-        return z, alpha, grad, ~flag
+    return z, alpha, grad, ~flag
 
-    _, _, grad, flag = lax.while_loop(lambda zagf: (~zagf[3]) & (zagf[0] < 0.8),
-                                      _case1,
-                                      (z, alpha, 0.0, False))
-    _, _, grad, flag = lax.while_loop(_cond2, _case2, (z, alpha, grad, flag))
-    _, _, grad, flag = lax.while_loop(_cond3, _case3, (z, alpha, grad, flag))
-    _, _, grad, flag = lax.while_loop(lambda zagf: ~zagf[3], _case4, (z, alpha, grad, flag))
-    return grad
+  _, _, grad, flag = lax.while_loop(lambda zagf: (~zagf[3]) & (zagf[0] < 0.8), _case1,
+                                    (z, alpha, 0.0, False))
+  _, _, grad, flag = lax.while_loop(_cond2, _case2, (z, alpha, grad, flag))
+  _, _, grad, flag = lax.while_loop(_cond3, _case3, (z, alpha, grad, flag))
+  _, _, grad, flag = lax.while_loop(lambda zagf: ~zagf[3], _case4, (z, alpha, grad, flag))
+  return grad
 
 
 def _gamma_grad(sample, a):
-    samples = np.reshape(sample, -1)
-    alphas = np.reshape(a, -1)
-    grads = vmap(_gamma_grad_one)(samples, alphas)
-    return grads.reshape(a.shape)
+  samples = np.reshape(sample, -1)
+  alphas = np.reshape(a, -1)
+  grads = vmap(_gamma_grad_one)(samples, alphas)
+  return grads.reshape(a.shape)
 
 
 @custom_transforms
 def _gamma_impl(key, a):
-    alphas = np.reshape(a, -1)
-    keys = split(key, onp.size(alphas))
-    samples = vmap(_gamma_one)(keys, alphas)
-    return np.reshape(samples, np.shape(a))
+  alphas = np.reshape(a, -1)
+  keys = split(key, onp.size(alphas))
+  samples = vmap(_gamma_one)(keys, alphas)
+  return np.reshape(samples, np.shape(a))
 
 
-defjvp(_gamma_impl, None,
-       lambda tangent, ans, key, a, **kwargs: tangent * _gamma_grad(ans, a))
+defjvp(_gamma_impl, None, lambda tangent, ans, key, a, **kwargs: tangent * _gamma_grad(ans, a))
 
 
 def gamma(key, a, shape=(), dtype=onp.float64):
@@ -779,6 +800,7 @@ def gamma(key, a, shape=(), dtype=onp.float64):
   """
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _gamma(key, a, shape, dtype)
+
 
 @partial(jit, static_argnums=(2, 3))
 def _gamma(key, a, shape, dtype):
@@ -806,11 +828,11 @@ def gumbel(key, shape=(), dtype=onp.float64):
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _gumbel(key, shape, dtype)
 
+
 @partial(jit, static_argnums=(1, 2))
 def _gumbel(key, shape, dtype):
   _check_shape("gumbel", shape)
-  return -np.log(-np.log(
-      uniform(key, shape, dtype, minval=onp.finfo(dtype).eps, maxval=1.)))
+  return -np.log(-np.log(uniform(key, shape, dtype, minval=onp.finfo(dtype).eps, maxval=1.)))
 
 
 def laplace(key, shape=(), dtype=onp.float64):
@@ -829,11 +851,11 @@ def laplace(key, shape=(), dtype=onp.float64):
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _laplace(key, shape, dtype)
 
+
 @partial(jit, static_argnums=(1, 2))
 def _laplace(key, shape, dtype):
   _check_shape("laplace", shape)
-  u = uniform(
-      key, shape, dtype, minval=-1. + np.finfo(dtype).epsneg, maxval=1.)
+  u = uniform(key, shape, dtype, minval=-1. + np.finfo(dtype).epsneg, maxval=1.)
   return lax.mul(lax.sign(u), lax.log1p(lax.neg(lax.abs(u))))
 
 
@@ -852,6 +874,7 @@ def logistic(key, shape=(), dtype=onp.float64):
   """
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _logistic(key, shape, dtype)
+
 
 @partial(jit, static_argnums=(1, 2))
 def _logistic(key, shape, dtype):
@@ -876,6 +899,7 @@ def pareto(key, b, shape=(), dtype=onp.float64):
   """
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _pareto(key, b, shape, dtype)
+
 
 @partial(jit, static_argnums=(2, 3))
 def _pareto(key, b, shape, dtype):
@@ -905,6 +929,7 @@ def t(key, df, shape=(), dtype=onp.float64):
   """
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _t(key, df, shape, dtype)
+
 
 @partial(jit, static_argnums=(2, 3))
 def _t(key, df, shape, dtype):

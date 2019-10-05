@@ -21,7 +21,7 @@ import six
 
 from . import core
 from . import ad_util
-from . util import prod
+from .util import prod
 from .lib import xla_bridge
 
 
@@ -33,9 +33,11 @@ def concretization_err_msg(fun):
          "applying `jit` to smaller subfunctions instead.")
   return msg.format(fname)
 
+
 def concretization_function_error(fun):
   def error(self, *args):
     raise TypeError(concretization_err_msg(fun))
+
   return error
 
 
@@ -62,13 +64,13 @@ class UnshapedArray(core.AbstractValue):
     return '{}({})'.format(self.__class__.__name__, self.str_short())
 
   _bool = _nonzero = concretization_function_error(bool)
-  _float   = concretization_function_error(float)
-  _int     = concretization_function_error(int)
+  _float = concretization_function_error(float)
+  _int = concretization_function_error(int)
   if six.PY2:
-    _long    = concretization_function_error(long)  # noqa: F821
+    _long = concretization_function_error(long)  # noqa: F821
   _complex = concretization_function_error(complex)
-  _hex     = concretization_function_error(hex)
-  _oct     = concretization_function_error(oct)
+  _hex = concretization_function_error(hex)
+  _oct = concretization_function_error(oct)
 
   def at_least_vspace(self):
     return self
@@ -95,8 +97,7 @@ class ShapedArray(UnshapedArray):
   size = property(lambda self: prod(self.shape))
 
   def __eq__(self, other):
-    return (type(self) is type(other)
-            and self.dtype == other.dtype and self.shape == other.shape)
+    return (type(self) is type(other) and self.dtype == other.dtype and self.shape == other.shape)
 
   def __hash__(self):
     # can use hash(self.dtype) and rely on the fact that numpy reuses base dtype
@@ -141,8 +142,8 @@ class ConcreteArray(ShapedArray):
     assert self.dtype != onp.dtype('O')
 
   def __eq__(self, other):
-    return (type(self) is type(other) and self.dtype == other.dtype
-            and self.shape == other.shape and onp.all(self.val == other.val))
+    return (type(self) is type(other) and self.dtype == other.dtype and self.shape == other.shape
+            and onp.all(self.val == other.val))
 
   def __hash__(self):
     return id(self.val)
@@ -168,15 +169,17 @@ def make_shaped_array(x):
   dtype = xla_bridge.canonicalize_dtype(onp.result_type(x))
   return ShapedArray(onp.shape(x), dtype)
 
+
 def zeros_like_array(x):
   dtype = xla_bridge.canonicalize_dtype(onp.result_type(x))
   return onp.broadcast_to(onp.array(0, dtype), onp.shape(x))
 
-array_types = {onp.ndarray, onp.float64, onp.float32, onp.float16,
-               onp.complex64, onp.complex128,
-               onp.int64, onp.int32, onp.int16, onp.int8,
-               onp.bool_, onp.uint64, onp.uint32, onp.uint16, onp.uint8,
-               onp.longlong, complex, float, int, bool}
+
+array_types = {
+    onp.ndarray, onp.float64, onp.float32, onp.float16, onp.complex64, onp.complex128, onp.int64,
+    onp.int32, onp.int16, onp.int8, onp.bool_, onp.uint64, onp.uint32, onp.uint16, onp.uint8,
+    onp.longlong, complex, float, int, bool
+}
 
 if six.PY2:
   array_types.add(long)  # noqa: F821
@@ -190,7 +193,9 @@ def zeros_like_shaped_array(aval):
   assert isinstance(aval, ShapedArray)
   return onp.zeros(aval.shape, dtype=aval.dtype)
 
+
 ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
+
 
 def raise_to_shaped(aval):
   if isinstance(aval, ShapedArray):
@@ -199,5 +204,6 @@ def raise_to_shaped(aval):
     return core.abstract_unit
   else:
     raise TypeError(type(aval))
+
 
 core.literalable_types.update(array_types)

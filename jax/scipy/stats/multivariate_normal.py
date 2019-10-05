@@ -36,16 +36,16 @@ def logpdf(x, mean, cov):
   two = _constant_like(x, 2)
   dim = _constant_like(x, mean.shape[0])
   det_sig = det(cov).astype(cov.dtype)
-  log_normalizer = lax.log(lax.mul(lax.pow(_constant_like(x, 2 * onp.pi), dim),
-    det_sig))
+  log_normalizer = lax.log(lax.mul(lax.pow(_constant_like(x, 2 * onp.pi), dim), det_sig))
   x_shape = x.shape[:-1]
   if x_shape:
     x_2d = x.reshape((-1, mean.shape[0]))
-    quadratic = einsum("ij,jk,ik->i", subtract(x_2d, mean), inv(cov), 
-      subtract(x_2d, mean)).reshape(x_shape).astype(cov.dtype)
+    quadratic = einsum("ij,jk,ik->i", subtract(x_2d, mean), inv(cov),
+                       subtract(x_2d, mean)).reshape(x_shape).astype(cov.dtype)
   else:
     quadratic = dot(dot(subtract(x, mean), inv(cov)), subtract(x, mean).T).astype(cov.dtype)
   return lax.div(lax.neg(lax.add(log_normalizer, quadratic)), two)
+
 
 @_wraps(osp_stats.multivariate_normal.pdf)
 def pdf(x, mean, cov):

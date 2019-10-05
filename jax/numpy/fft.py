@@ -33,6 +33,7 @@ def _promote_to_complex(arg):
     dtype = onp.complex64
   return lax.convert_element_type(arg, dtype)
 
+
 @_wraps(onp.fft.fftn)
 def fftn(a, s=None, axes=None, norm=None):
   # TODO(skye): implement padding/cropping based on 's'.
@@ -56,18 +57,17 @@ def fftn(a, s=None, axes=None, norm=None):
     return a
 
   if len(axes) != len(set(axes)):
-    raise ValueError(
-        "jax.np.fftn does not support repeated axes. Got axes %s." % axes)
+    raise ValueError("jax.np.fftn does not support repeated axes. Got axes %s." % axes)
 
   if any(axis in range(a.ndim - 3) for axis in axes):
-    raise ValueError(
-        "jax.np.fftn only supports 1D, 2D, and 3D FFTs over the innermost axes."
-        " Got axes %s with input rank %s." % (orig_axes, a.ndim))
+    raise ValueError("jax.np.fftn only supports 1D, 2D, and 3D FFTs over the innermost axes."
+                     " Got axes %s with input rank %s." % (orig_axes, a.ndim))
 
   if s is None:
     s = [a.shape[axis] for axis in axes]
   a = _promote_to_complex(a)
   return lax.fft(a, xla_client.FftType.FFT, s)
+
 
 for func in get_module_functions(onp.fft):
   if func.__name__ not in globals():

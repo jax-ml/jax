@@ -31,7 +31,6 @@ from ..api import custom_transforms, defjvp
 from ..util import get_module_functions
 from ..lib import xla_bridge
 
-
 _T = lambda x: np.swapaxes(x, -1, -2)
 
 
@@ -39,6 +38,7 @@ def _promote_arg_dtypes(*args):
   """Promotes `args` to a common inexact type."""
   def _to_inexact_type(type):
     return type if np.issubdtype(type, np.inexact) else np.float64
+
   inexact_types = [_to_inexact_type(np._dtype(arg)) for arg in args]
   dtype = xla_bridge.canonicalize_dtype(np.result_type(*inexact_types))
   args = [lax.convert_element_type(arg, dtype) for arg in args]
@@ -86,13 +86,12 @@ def slogdet(a):
   else:
     sign = np.array(1, dtype=dtype)
     parity = parity + np.count_nonzero(diag < 0, axis=-1)
-  sign = np.where(is_zero,
-                  np.array(0, dtype=dtype),
+  sign = np.where(is_zero, np.array(0, dtype=dtype),
                   sign * np.array(-2 * (parity % 2) + 1, dtype=dtype))
-  logdet = np.where(
-      is_zero, np.array(-np.inf, dtype=dtype),
-      np.sum(np.log(np.abs(diag)), axis=-1))
+  logdet = np.where(is_zero, np.array(-np.inf, dtype=dtype), np.sum(np.log(np.abs(diag)), axis=-1))
   return sign, np.real(logdet)
+
+
 defjvp(slogdet, _jvp_slogdet)
 
 
@@ -127,10 +126,8 @@ def eigh(a, UPLO=None, symmetrize_input=True):
 @_wraps(onp.linalg.inv)
 def inv(a):
   if np.ndim(a) < 2 or a.shape[-1] != a.shape[-2]:
-    raise ValueError("Argument to inv must have shape [..., n, n], got {}."
-      .format(np.shape(a)))
-  return solve(
-    a, lax.broadcast(np.eye(a.shape[-1], dtype=lax.dtype(a)), a.shape[:-2]))
+    raise ValueError("Argument to inv must have shape [..., n, n], got {}.".format(np.shape(a)))
+  return solve(a, lax.broadcast(np.eye(a.shape[-1], dtype=lax.dtype(a)), a.shape[:-2]))
 
 
 @partial(jit, static_argnums=(1, 2, 3))
@@ -153,15 +150,13 @@ def _norm(x, ord, axis, keepdims):
   num_axes = len(axis)
   if num_axes == 1:
     if ord is None or ord == 2:
-      return np.sqrt(np.sum(np.real(x * np.conj(x)), axis=axis,
-                            keepdims=keepdims))
+      return np.sqrt(np.sum(np.real(x * np.conj(x)), axis=axis, keepdims=keepdims))
     elif ord == np.inf:
       return np.amax(np.abs(x), axis=axis, keepdims=keepdims)
     elif ord == -np.inf:
       return np.amin(np.abs(x), axis=axis, keepdims=keepdims)
     elif ord == 0:
-      return np.sum(x != 0, dtype=np.finfo(lax.dtype(x)).dtype,
-                    axis=axis, keepdims=keepdims)
+      return np.sum(x != 0, dtype=np.finfo(lax.dtype(x)).dtype, axis=axis, keepdims=keepdims)
     elif ord == 1:
       # Numpy has a special case for ord == 1 as an optimization. We don't
       # really need the optimization (XLA could do it for us), but the Numpy
@@ -169,34 +164,32 @@ def _norm(x, ord, axis, keepdims):
       # special case too.
       return np.sum(np.abs(x), axis=axis, keepdims=keepdims)
     else:
-      return np.power(np.sum(np.abs(x) ** ord, axis=axis, keepdims=keepdims),
-                      1. / ord)
+      return np.power(np.sum(np.abs(x)**ord, axis=axis, keepdims=keepdims), 1. / ord)
 
   elif num_axes == 2:
     row_axis, col_axis = axis
     if ord is None or ord in ('f', 'fro'):
-      return np.sqrt(np.sum(np.real(x * np.conj(x)), axis=axis,
-                            keepdims=keepdims))
+      return np.sqrt(np.sum(np.real(x * np.conj(x)), axis=axis, keepdims=keepdims))
     elif ord == 1:
       if not keepdims and col_axis > row_axis:
         col_axis -= 1
-      return np.amax(np.sum(np.abs(x), axis=row_axis, keepdims=keepdims),
-                     axis=col_axis, keepdims=keepdims)
+      return np.amax(
+          np.sum(np.abs(x), axis=row_axis, keepdims=keepdims), axis=col_axis, keepdims=keepdims)
     elif ord == -1:
       if not keepdims and col_axis > row_axis:
         col_axis -= 1
-      return np.amin(np.sum(np.abs(x), axis=row_axis, keepdims=keepdims),
-                     axis=col_axis, keepdims=keepdims)
+      return np.amin(
+          np.sum(np.abs(x), axis=row_axis, keepdims=keepdims), axis=col_axis, keepdims=keepdims)
     elif ord == np.inf:
       if not keepdims and row_axis > col_axis:
         row_axis -= 1
-      return np.amax(np.sum(np.abs(x), axis=col_axis, keepdims=keepdims),
-                     axis=row_axis, keepdims=keepdims)
+      return np.amax(
+          np.sum(np.abs(x), axis=col_axis, keepdims=keepdims), axis=row_axis, keepdims=keepdims)
     elif ord == -np.inf:
       if not keepdims and row_axis > col_axis:
         row_axis -= 1
-      return np.amin(np.sum(np.abs(x), axis=col_axis, keepdims=keepdims),
-                     axis=row_axis, keepdims=keepdims)
+      return np.amin(
+          np.sum(np.abs(x), axis=col_axis, keepdims=keepdims), axis=row_axis, keepdims=keepdims)
     elif ord in ('nuc', 2, -2):
       x = np.moveaxis(x, axis, (-2, -1))
       if ord == 2:
@@ -215,8 +208,8 @@ def _norm(x, ord, axis, keepdims):
     else:
       raise ValueError("Invalid order '{}' for matrix norm.".format(ord))
   else:
-    raise ValueError(
-        "Invalid axis values ({}) for np.linalg.norm.".format(axis))
+    raise ValueError("Invalid axis values ({}) for np.linalg.norm.".format(axis))
+
 
 @_wraps(onp.linalg.norm)
 def norm(x, ord=None, axis=None, keepdims=False):
@@ -268,8 +261,7 @@ def solve(a, b):
   iotas = np.ix_(*(lax.iota(np.int32, b) for b in batch_dims + (1,)))
   x = x[iotas[:-1] + (permutation, slice(None))]
 
-  x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=True,
-                                  unit_diagonal=True)
+  x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=True, unit_diagonal=True)
   x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=False)
 
   return x[..., 0] if a_ndims == b_ndims + 1 else x

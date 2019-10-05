@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """A basic variational autoencoder (VAE) on binarized MNIST using Numpy and JAX.
 
 This file uses the stax network definition library and the optimizers
@@ -40,13 +39,16 @@ def gaussian_kl(mu, sigmasq):
   """KL divergence from a diagonal Gaussian to the standard Gaussian."""
   return -0.5 * np.sum(1. + np.log(sigmasq) - mu**2. - sigmasq)
 
+
 def gaussian_sample(rng, mu, sigmasq):
   """Sample a diagonal Gaussian."""
   return mu + np.sqrt(sigmasq) * random.normal(rng, mu.shape)
 
+
 def bernoulli_logpdf(logits, x):
   """Bernoulli log pdf of data x given logits."""
   return -np.sum(np.logaddexp(0., np.where(x, -1., 1.) * logits))
+
 
 def elbo(rng, params, images):
   """Monte Carlo estimate of the negative evidence lower bound."""
@@ -54,6 +56,7 @@ def elbo(rng, params, images):
   mu_z, sigmasq_z = encode(enc_params, images)
   logits_x = decode(dec_params, gaussian_sample(rng, mu_z, sigmasq_z))
   return bernoulli_logpdf(logits_x, images) - gaussian_kl(mu_z, sigmasq_z)
+
 
 def image_sample(rng, params, nrow, ncol):
   """Sample images from the generative model."""
@@ -63,26 +66,29 @@ def image_sample(rng, params, nrow, ncol):
   sampled_images = random.bernoulli(img_rng, np.logaddexp(0., logits))
   return image_grid(nrow, ncol, sampled_images, (28, 28))
 
+
 def image_grid(nrow, ncol, imagevecs, imshape):
   """Reshape a stack of image vectors into an image grid for plotting."""
   images = iter(imagevecs.reshape((-1,) + imshape))
-  return np.vstack([np.hstack([next(images).T for _ in range(ncol)][::-1])
-                    for _ in range(nrow)]).T
+  return np.vstack([np.hstack([next(images).T for _ in range(ncol)][::-1]) for _ in range(nrow)]).T
 
 
 encoder_init, encode = stax.serial(
-    Dense(512), Relu,
-    Dense(512), Relu,
+    Dense(512),
+    Relu,
+    Dense(512),
+    Relu,
     FanOut(2),
     stax.parallel(Dense(10), stax.serial(Dense(10), Softplus)),
 )
 
 decoder_init, decode = stax.serial(
-    Dense(512), Relu,
-    Dense(512), Relu,
+    Dense(512),
+    Relu,
+    Dense(512),
+    Relu,
     Dense(28 * 28),
 )
-
 
 if __name__ == "__main__":
   step_size = 0.001
@@ -117,6 +123,7 @@ if __name__ == "__main__":
       loss = lambda params: -elbo(elbo_rng, params, batch) / batch_size
       g = grad(loss)(get_params(opt_state))
       return opt_update(i, g, opt_state)
+
     return lax.fori_loop(0, num_batches, body_fun, opt_state)
 
   @jit

@@ -61,8 +61,8 @@ def train(kernel, xs, ys, regularization=0.01):
   n = xs.shape[0]
 
   def objective(v):
-    risk = .5 * np.sum((np.dot(gram_mat, v) - ys) ** 2.0)
-    reg = regularization * np.sum(v ** 2.0)
+    risk = .5 * np.sum((np.dot(gram_mat, v) - ys)**2.0)
+    reg = regularization * np.sum(v**2.0)
     return risk + reg
 
   v = minimize(objective, np.zeros(n))
@@ -87,12 +87,12 @@ if __name__ == "__main__":
 
   predict = train(linear_kernel, xs, ys)
 
-  print('MSE:', np.sum((predict(xs) - ys) ** 2.))
+  print('MSE:', np.sum((predict(xs) - ys)**2.))
 
   def gram_jaxpr(kernel):
     return make_jaxpr(partial(gram, kernel))(xs)
 
-  rbf_kernel = lambda x, y: np.exp(-np.sum((x - y) ** 2))
+  rbf_kernel = lambda x, y: np.exp(-np.sum((x - y)**2))
 
   print()
   print('jaxpr of gram(linear_kernel):')

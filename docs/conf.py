@@ -30,7 +30,6 @@ import os
 import sys
 sys.path.insert(0, os.path.abspath('..'))
 
-
 # -- Project information -----------------------------------------------------
 
 project = 'JAX'
@@ -41,7 +40,6 @@ author = 'The JAX authors'
 version = ''
 # The full version, including alpha/beta/rc tags
 release = ''
-
 
 # -- General configuration ---------------------------------------------------
 
@@ -95,7 +93,6 @@ exclude_patterns = []
 # The name of the Pygments (syntax highlighting) style to use.
 pygments_style = None
 
-
 autosummary_generate = True
 napolean_use_rtype = False
 
@@ -112,7 +109,6 @@ nbsphinx_execute = 'always'
 
 # If True, the build process is continued even if an exception occurs:
 #nbsphinx_allow_errors = True
-
 
 # Controls when a cell will time out (defaults to 30; use -1 for no timeout):
 #nbsphinx_timeout = 60
@@ -206,12 +202,10 @@ html_static_path = ['_static']
 #
 # html_sidebars = {}
 
-
 # -- Options for HTMLHelp output ---------------------------------------------
 
 # Output file base name for HTML help builder.
 htmlhelp_basename = 'JAXdoc'
-
 
 # -- Options for LaTeX output ------------------------------------------------
 
@@ -237,20 +231,14 @@ latex_elements = {
 # (source start file, target name, title,
 #  author, documentclass [howto, manual, or own class]).
 latex_documents = [
-    (master_doc, 'JAX.tex', 'JAX Documentation',
-     'The JAX authors', 'manual'),
+    (master_doc, 'JAX.tex', 'JAX Documentation', 'The JAX authors', 'manual'),
 ]
-
 
 # -- Options for manual page output ------------------------------------------
 
 # One entry per manual page. List of tuples
 # (source start file, name, description, authors, manual section).
-man_pages = [
-    (master_doc, 'jax', 'JAX Documentation',
-     [author], 1)
-]
-
+man_pages = [(master_doc, 'jax', 'JAX Documentation', [author], 1)]
 
 # -- Options for Texinfo output ----------------------------------------------
 
@@ -258,11 +246,9 @@ man_pages = [
 # (source start file, target name, title, author,
 #  dir menu entry, description, category)
 texinfo_documents = [
-    (master_doc, 'JAX', 'JAX Documentation',
-     author, 'JAX', 'One line description of project.',
+    (master_doc, 'JAX', 'JAX Documentation', author, 'JAX', 'One line description of project.',
      'Miscellaneous'),
 ]
-
 
 # -- Options for Epub output -------------------------------------------------
 
@@ -280,6 +266,5 @@ epub_title = project
 
 # A list of files that should not be packed into the epub file.
 epub_exclude_files = ['search.html']
-
 
 # -- Extension configuration -------------------------------------------------

@@ -48,10 +48,12 @@ ArrayType = namedtuple('ArrayType', ['shape', 'dtype'])
 Var = namedtuple('Var', ['name', 'vartype'])
 Fun = namedtuple('Fun', ['in_vars', 'out_vars', 'eqns'])
 
+
 def gen_fun_and_types(size):
   in_types = [gen_array_type(size) for _ in range(gen_nonneg_int(size))]
   fun, _ = gen_function(size, in_types)
   return fun
+
 
 def gen_function(size, in_types):
   eqns = []
@@ -83,9 +85,11 @@ def gen_function(size, in_types):
   out_vars = gen_subset(cur_vars)
   return Fun(in_vars, out_vars, eqns), [v.vartype for v in out_vars]
 
+
 def eval_fun(fun, *args):
   def read(v):
     return env[v]
+
   def write(v, x):
     env[v] = x
 
@@ -97,62 +101,73 @@ def eval_fun(fun, *args):
 
   return map(read, fun.out_vars)
 
+
 def maybe_jit(f, num_args):
   static_argnums = thin(range(num_args), 0.5)
   return jit(f, static_argnums=static_argnums)
 
+
 counter = it.count()
+
+
 def fresh_var(ty):
   return Var(next(counter), ty)
 
+
 def gen_array_type(size):
   # TODO(dougalm): randomize this
-  return ArrayType((2,2), np.float32)
+  return ArrayType((2, 2), np.float32)
+
 
 def gen_array_val(array_type):
   # TODO(dougalm): different sizes and dtypes
   return npr.randn(*array_type.shape)
 
+
 def gen_neg(size, t):
   return (lambda x: -x), t
+
 
 def gen_trig(size, t):
   op = choice([np.sin, np.cos])
   return op, t
 
+
 def gen_binop(size, t1, t2):
   unifier, t_out = gen_broadcasting_unifier(t1, t2)
-  binop = choice([lambda x, y: x + y,
-                  lambda x, y: x * y])
+  binop = choice([lambda x, y: x + y, lambda x, y: x * y])
+
   def unify_and_binop(x, y):
     x_, y_ = unifier(x, y)
     return binop(x_, y_)
 
   return unify_and_binop, t_out
 
+
 def thin(xs, p):
   return [x for x in xs if npr.rand() > p]
 
+
 def gen_broadcasting_unifier(t1, t2):
   assert t1.shape == t2.shape
-  return lambda x, y: (x,y), t1
+  return lambda x, y: (x, y), t1
   # TODO: generate slices and paddings to match shapes
+
 
 def wrap_singleton(f):
   return lambda *xs: (f(*xs),)
 
-unary_primitive_generators = [
-  (3, gen_trig),
-  (1, gen_neg) ]
 
-binary_primitive_generators = [
-  (1, gen_binop)]
+unary_primitive_generators = [(3, gen_trig), (1, gen_neg)]
 
-primitive_generators = { 1: unary_primitive_generators,
-                         2: binary_primitive_generators }
+binary_primitive_generators = [(1, gen_binop)]
+
+primitive_generators = {1: unary_primitive_generators, 2: binary_primitive_generators}
+
 
 def gen_nonneg_int(size):
   return npr.randint(size)
+
 
 def choice(xs, weights=None):
   # npr.choice isn't actually RS -> [a] -> a
@@ -167,12 +182,15 @@ def choice(xs, weights=None):
     i = npr.choice(range(n), p=weights)
   return xs[i]
 
+
 def weighted_choice(weighted_choices):
   weights, choices = unzip2(weighted_choices)
   return choice(choices, weights)
 
+
 def gen_sized_subset(xs, size):
   return [choice(xs) for _ in range(size)]
+
 
 def gen_subset(xs):
   if not xs:
@@ -180,19 +198,22 @@ def gen_subset(xs):
 
   return gen_sized_subset(xs, npr.randint(len(xs) + 1))
 
+
 def gen_vals(vs):
   return [gen_array_val(v.vartype) for v in vs]
+
 
 def inner_prod(xs, ys):
   xys = zip(xs, ys)
   assert all(x.shape == y.shape for x, y in xys)
   return sum(np.sum(x * y) for x, y in xys)
 
+
 def jvp_fd(fun, args, tangents):
   EPS = 1e-4
+
   def eval_eps(eps):
-    return fun(*[x if t is None else x + eps * t
-                 for x, t in zip(args, tangents)])
+    return fun(*[x if t is None else x + eps * t for x, t in zip(args, tangents)])
 
   ys_neg = eval_eps(-EPS)
   ys_pos = eval_eps(EPS)
@@ -200,9 +221,11 @@ def jvp_fd(fun, args, tangents):
   deriv = [(y_pos - y_neg) / (2 * EPS) for y_neg, y_pos in zip(ys_neg, ys_pos)]
   return ys, deriv
 
+
 def check_all_close(xs, ys, tol=1e-3):
   for x, y in zip(xs, ys):
     check_close(x, y, tol)
+
 
 def check_close(x, y, tol=1e-3):
   assert np.shape(x) == np.shape(y)
@@ -211,8 +234,10 @@ def check_close(x, y, tol=1e-3):
   assert np.allclose(x, y, rtol=tol, atol=tol), \
      "Value mismatch:\n{}\n  vs\n{}\n".format(x, y)
 
+
 def partial_argnums(f, args, dyn_argnums):
   fixed_args = [None if i in dyn_argnums else arg for i, arg in enumerate(args)]
+
   def f_(*dyn_args):
     args = fixed_args[:]
     for i, arg in zip(dyn_argnums, dyn_args):
@@ -225,7 +250,6 @@ def partial_argnums(f, args, dyn_argnums):
 
 class GeneratedFunTest(jtu.JaxTestCase):
   """Tests of transformations on randomly generated functions."""
-
   @parameterized.named_parameters(jtu.cases_from_gens(gen_fun_and_types))
   def testJitIsIdentity(self, fun):
     vals = gen_vals(fun.in_vars)

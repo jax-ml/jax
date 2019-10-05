@@ -43,21 +43,26 @@ def _get_fftn_test_axes(shape):
 
 
 class FftTest(jtu.JaxTestCase):
-
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}_axes={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), axes),
-       "axes": axes, "shape": shape, "dtype": dtype, "rng": rng}
-      for rng in [jtu.rand_default()]
-      for dtype in all_dtypes
-      for shape in [(10,), (10, 10), (2, 3, 4), (2, 3, 4, 5)]
-      for axes in _get_fftn_test_axes(shape)))
+  @parameterized.named_parameters(
+      jtu.cases_from_list({
+          "testcase_name":
+              "_shape={}_axes={}".format(jtu.format_shape_dtype_string(shape, dtype), axes),
+          "axes":
+              axes,
+          "shape":
+              shape,
+          "dtype":
+              dtype,
+          "rng":
+              rng
+      } for rng in [jtu.rand_default()] for dtype in all_dtypes
+                          for shape in [(10,), (10, 10), (2, 3, 4), (2, 3, 4, 5)]
+                          for axes in _get_fftn_test_axes(shape)))
   def testFftn(self, shape, dtype, axes, rng):
     args_maker = lambda: (rng(shape, dtype),)
     np_fn = lambda a: np.fft.fftn(a, axes=axes)
     onp_fn = lambda a: onp.fft.fftn(a, axes=axes)
-    self._CheckAgainstNumpy(onp_fn, np_fn, args_maker, check_dtypes=True,
-                            tol=1e-4)
+    self._CheckAgainstNumpy(onp_fn, np_fn, args_maker, check_dtypes=True, tol=1e-4)
     self._CompileAndCheck(np_fn, args_maker, check_dtypes=True)
     # Test gradient for differentiable types.
     if dtype in inexact_dtypes:
@@ -69,21 +74,17 @@ class FftTest(jtu.JaxTestCase):
   def testFftnErrors(self):
     rng = jtu.rand_default()
     self.assertRaisesRegexp(
-        ValueError,
-        "jax.np.fftn only supports 1D, 2D, and 3D FFTs over the innermost axes. "
+        ValueError, "jax.np.fftn only supports 1D, 2D, and 3D FFTs over the innermost axes. "
         "Got axes None with input rank 4.",
         lambda: np.fft.fftn(rng([2, 3, 4, 5], dtype=onp.float64), axes=None))
     self.assertRaisesRegexp(
-        ValueError,
-        "jax.np.fftn only supports 1D, 2D, and 3D FFTs over the innermost axes. "
+        ValueError, "jax.np.fftn only supports 1D, 2D, and 3D FFTs over the innermost axes. "
         "Got axes \[0\] with input rank 4.",
         lambda: np.fft.fftn(rng([2, 3, 4, 5], dtype=onp.float64), axes=[0]))
-    self.assertRaisesRegexp(
-        ValueError,
-        "jax.np.fftn does not support repeated axes. Got axes \[1, 1\].",
-        lambda: np.fft.fftn(rng([2, 3], dtype=onp.float64), axes=[1, 1]))
-    self.assertRaises(
-        IndexError, lambda: np.fft.fftn(rng([2, 3], dtype=onp.float64), axes=[2]))
+    self.assertRaisesRegexp(ValueError,
+                            "jax.np.fftn does not support repeated axes. Got axes \[1, 1\].",
+                            lambda: np.fft.fftn(rng([2, 3], dtype=onp.float64), axes=[1, 1]))
+    self.assertRaises(IndexError, lambda: np.fft.fftn(rng([2, 3], dtype=onp.float64), axes=[2]))
 
 
 if __name__ == "__main__":

@@ -21,13 +21,11 @@ from six.moves import reduce
 
 class PrettyPrint(object):
   """Crude Hughes-inspired pretty printer."""
-
   def __init__(self, lines):
     self.lines = lines
 
   def indent(self, indent):
-    return PrettyPrint([(indent + orig_indent, s)
-                        for orig_indent, s in self.lines])
+    return PrettyPrint([(indent + orig_indent, s) for orig_indent, s in self.lines])
 
   def __add__(self, rhs):
     return PrettyPrint(self.lines + rhs.lines)
@@ -39,9 +37,7 @@ class PrettyPrint(object):
     indent, s = self.lines[-1]
     indented_block = rhs.indent(indent + len(s))
     common_line = s + ' ' * rhs.lines[0][0] + rhs.lines[0][1]
-    return PrettyPrint(self.lines[:-1]
-                       + [(indent, common_line)]
-                       + indented_block.lines[1:])
+    return PrettyPrint(self.lines[:-1] + [(indent, common_line)] + indented_block.lines[1:])
 
   def __str__(self):
     return '\n'.join(' ' * indent + s for indent, s in self.lines) + '\n'

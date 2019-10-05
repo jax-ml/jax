@@ -37,8 +37,8 @@ skip_checks = True  # not __debug__  # google doesn't use -O
 zip = safe_zip
 map = safe_map
 
-
 # -------------------- jaxprs --------------------
+
 
 class Jaxpr(object):
   def __init__(self, constvars, freevars, invars, outvars, eqns):
@@ -50,7 +50,9 @@ class Jaxpr(object):
 
   def __str__(self):
     return str(pp_jaxpr(self))
+
   __repr__ = __str__
+
 
 class TypedJaxpr(object):
   def __init__(self, jaxpr, literals, in_avals, out_avals):
@@ -72,7 +74,9 @@ class TypedJaxpr(object):
   def __str__(self):
     # TODO(mattjj): improve this with type annotations?
     return str(pp_jaxpr(self.jaxpr))
+
   __repr__ = __str__
+
 
 @curry
 def jaxpr_as_fun(typed_jaxpr, *args):
@@ -82,10 +86,12 @@ def jaxpr_as_fun(typed_jaxpr, *args):
 def new_jaxpr_eqn(*args):
   return JaxprEqn(object(), *args)
 
-JaxprEqn = namedtuple('JaxprEqn', ['eqn_id', 'invars', 'outvars', 'primitive',
-                                   'bound_subjaxprs', 'params'])
+
+JaxprEqn = namedtuple('JaxprEqn',
+                      ['eqn_id', 'invars', 'outvars', 'primitive', 'bound_subjaxprs', 'params'])
 
 JaxprEqn.__repr__ = JaxprEqn.__str__ = lambda eqn: str(pp_eqn(eqn))[:-1]
+
 
 class Literal(object):
   __slots__ = ["val", "hash"]
@@ -113,7 +119,9 @@ class Literal(object):
     else:
       return '{}'.format(self.val)
 
+
 literalable_types = set()
+
 
 class Primitive(object):
   multiple_results = False  # override for multi-output primitives
@@ -125,8 +133,7 @@ class Primitive(object):
     return '{}'.format(self.name)
 
   def bind(self, *args, **kwargs):
-    assert skip_checks or all(isinstance(arg, Tracer)
-                              or valid_jaxtype(arg) for arg in args), args
+    assert skip_checks or all(isinstance(arg, Tracer) or valid_jaxtype(arg) for arg in args), args
     top_trace = find_top_trace(args)
     if top_trace is None:
       return self.impl(*args, **kwargs)
@@ -151,12 +158,10 @@ class Primitive(object):
     return bind
 
   def impl(self, *args, **kwargs):
-    raise NotImplementedError("Evaluation rule for '{}' not implemented"
-                              .format(self.name))
+    raise NotImplementedError("Evaluation rule for '{}' not implemented".format(self.name))
 
   def abstract_eval(self, *args, **kwargs):
-    raise NotImplementedError("Abstract evaluation for '{}' not implemented"
-                              .format(self.name))
+    raise NotImplementedError("Abstract evaluation for '{}' not implemented".format(self.name))
 
 
 # -------------------- lifting --------------------
@@ -179,10 +184,10 @@ def eval_jaxpr(jaxpr, consts, freevar_vals, *args):
   map(write, jaxpr.freevars, freevar_vals)
   for eqn in jaxpr.eqns:
     in_vals = map(read, eqn.invars)
-    subfuns = [partial(eval_jaxpr, subjaxpr, map(read, const_bindings),
-                                             map(read, freevar_bindings))
-               for subjaxpr, const_bindings, freevar_bindings
-               in eqn.bound_subjaxprs]
+    subfuns = [
+        partial(eval_jaxpr, subjaxpr, map(read, const_bindings), map(read, freevar_bindings))
+        for subjaxpr, const_bindings, freevar_bindings in eqn.bound_subjaxprs
+    ]
     subfuns = map(lu.wrap_init, subfuns)
     ans = eqn.primitive.bind(*(subfuns + in_vals), **eqn.params)
     if eqn.primitive.multiple_results:
@@ -200,13 +205,12 @@ def full_lower(val):
 
 
 def find_top_trace(xs):
- try:
-   top_trace = max((x.trace for x in xs if isinstance(x, Tracer)),
-                   key=attrgetter('level'))
- except ValueError:
-   return None
- else:
-   return type(top_trace)(top_trace.master, cur_sublevel())
+  try:
+    top_trace = max((x.trace for x in xs if isinstance(x, Tracer)), key=attrgetter('level'))
+  except ValueError:
+    return None
+  else:
+    return type(top_trace)(top_trace.master, cur_sublevel())
 
 
 # -------------------- tracing --------------------
@@ -229,12 +233,10 @@ class Trace(object):
       elif val.trace.sublevel < sublevel:
         return self.sublift(val)
       else:
-        raise Exception("Can't lift sublevels {} to {}"
-                        .format(val.trace.sublevel, sublevel))
+        raise Exception("Can't lift sublevels {} to {}".format(val.trace.sublevel, sublevel))
     elif val.trace.level < level:
       if val.trace.sublevel > sublevel:
-        raise Exception("Incompatible sublevel: {}, {}"
-                        .format(val.trace, (level, sublevel)))
+        raise Exception("Incompatible sublevel: {}, {}".format(val.trace, (level, sublevel)))
       return self.lift(val)
     elif val.trace.level > level:
       raise Exception("Can't lift {} to {}".format(val, self))
@@ -242,7 +244,6 @@ class Trace(object):
       raise Exception("Different traces at same level: {}, {}".format(val, self))
     else:
       raise Exception("Can't lift {} to {}".format(val, self))
-
 
   def pure(self, val):
     assert False
@@ -254,8 +255,7 @@ class Trace(object):
     assert False
 
   def __repr__(self):
-    return '{}(level={}/{})'.format(
-        self.__class__.__name__, self.level, self.sublevel)
+    return '{}(level={}/{})'.format(self.__class__.__name__, self.level, self.sublevel)
 
 
 class Tracer(object):
@@ -279,52 +279,143 @@ class Tracer(object):
   def aval(self):
     assert False
 
-  def __neg__(self): return self.aval._neg(self)
-  def __eq__(self, other): return self.aval._eq(self, other)
-  def __ne__(self, other): return self.aval._ne(self, other)
-  def __lt__(self, other): return self.aval._lt(self, other)
-  def __le__(self, other): return self.aval._le(self, other)
-  def __gt__(self, other): return self.aval._gt(self, other)
-  def __ge__(self, other): return self.aval._ge(self, other)
-  def __abs__(self): return self.aval._abs(self)
-  def __add__(self, other): return self.aval._add(self, other)
-  def __radd__(self, other): return self.aval._radd(self, other)
-  def __sub__(self, other): return self.aval._sub(self, other)
-  def __rsub__(self, other): return self.aval._rsub(self, other)
-  def __mul__(self, other): return self.aval._mul(self, other)
-  def __rmul__(self, other): return self.aval._rmul(self, other)
-  def __div__(self, other): return self.aval._div(self, other)
-  def __rdiv__(self, other): return self.aval._rdiv(self, other)
-  def __truediv__(self, other): return self.aval._truediv(self, other)
-  def __rtruediv__(self, other): return self.aval._rtruediv(self, other)
-  def __floordiv__(self, other): return self.aval._floordiv(self, other)
-  def __rfloordiv__(self, other): return self.aval._rfloordiv(self, other)
-  def __divmod__(self, other): return self.aval._divmod(self, other)
-  def __rdivmod__(self, other): return self.aval._rdivmod(self, other)
-  def __mod__(self, other): return self.aval._mod(self, other)
-  def __rmod__(self, other): return self.aval._rmod(self, other)
-  def __pow__(self, other): return self.aval._pow(self, other)
-  def __rpow__(self, other): return self.aval._rpow(self, other)
-  def __matmul__(self, other): return self.aval._matmul(self, other)
-  def __rmatmul__(self, other): return self.aval._rmatmul(self, other)
-  def __and__(self, other): return self.aval._and(self, other)
-  def __rand__(self, other): return self.aval._rand(self, other)
-  def __or__(self, other): return self.aval._or(self, other)
-  def __ror__(self, other): return self.aval._ror(self, other)
-  def __xor__(self, other): return self.aval._xor(self, other)
-  def __rxor__(self, other): return self.aval._rxor(self, other)
-  def __invert__(self): return self.aval._invert(self)
-  def __lshift__(self, other): return self.aval._lshift(self, other)
-  def __rshift__(self, other): return self.aval._rshift(self, other)
-  def __getitem__(self, idx): return self.aval._getitem(self, idx)
-  def __nonzero__(self): return self.aval._nonzero(self)
-  def __bool__(self): return self.aval._bool(self)
-  def __float__(self): return self.aval._float(self)
-  def __int__(self): return self.aval._int(self)
-  def __long__(self): return self.aval._long(self)
-  def __complex__(self): return self.aval._complex(self)
-  def __hex__(self): return self.aval._hex(self)
-  def __oct__(self): return self.aval._oct(self)
+  def __neg__(self):
+    return self.aval._neg(self)
+
+  def __eq__(self, other):
+    return self.aval._eq(self, other)
+
+  def __ne__(self, other):
+    return self.aval._ne(self, other)
+
+  def __lt__(self, other):
+    return self.aval._lt(self, other)
+
+  def __le__(self, other):
+    return self.aval._le(self, other)
+
+  def __gt__(self, other):
+    return self.aval._gt(self, other)
+
+  def __ge__(self, other):
+    return self.aval._ge(self, other)
+
+  def __abs__(self):
+    return self.aval._abs(self)
+
+  def __add__(self, other):
+    return self.aval._add(self, other)
+
+  def __radd__(self, other):
+    return self.aval._radd(self, other)
+
+  def __sub__(self, other):
+    return self.aval._sub(self, other)
+
+  def __rsub__(self, other):
+    return self.aval._rsub(self, other)
+
+  def __mul__(self, other):
+    return self.aval._mul(self, other)
+
+  def __rmul__(self, other):
+    return self.aval._rmul(self, other)
+
+  def __div__(self, other):
+    return self.aval._div(self, other)
+
+  def __rdiv__(self, other):
+    return self.aval._rdiv(self, other)
+
+  def __truediv__(self, other):
+    return self.aval._truediv(self, other)
+
+  def __rtruediv__(self, other):
+    return self.aval._rtruediv(self, other)
+
+  def __floordiv__(self, other):
+    return self.aval._floordiv(self, other)
+
+  def __rfloordiv__(self, other):
+    return self.aval._rfloordiv(self, other)
+
+  def __divmod__(self, other):
+    return self.aval._divmod(self, other)
+
+  def __rdivmod__(self, other):
+    return self.aval._rdivmod(self, other)
+
+  def __mod__(self, other):
+    return self.aval._mod(self, other)
+
+  def __rmod__(self, other):
+    return self.aval._rmod(self, other)
+
+  def __pow__(self, other):
+    return self.aval._pow(self, other)
+
+  def __rpow__(self, other):
+    return self.aval._rpow(self, other)
+
+  def __matmul__(self, other):
+    return self.aval._matmul(self, other)
+
+  def __rmatmul__(self, other):
+    return self.aval._rmatmul(self, other)
+
+  def __and__(self, other):
+    return self.aval._and(self, other)
+
+  def __rand__(self, other):
+    return self.aval._rand(self, other)
+
+  def __or__(self, other):
+    return self.aval._or(self, other)
+
+  def __ror__(self, other):
+    return self.aval._ror(self, other)
+
+  def __xor__(self, other):
+    return self.aval._xor(self, other)
+
+  def __rxor__(self, other):
+    return self.aval._rxor(self, other)
+
+  def __invert__(self):
+    return self.aval._invert(self)
+
+  def __lshift__(self, other):
+    return self.aval._lshift(self, other)
+
+  def __rshift__(self, other):
+    return self.aval._rshift(self, other)
+
+  def __getitem__(self, idx):
+    return self.aval._getitem(self, idx)
+
+  def __nonzero__(self):
+    return self.aval._nonzero(self)
+
+  def __bool__(self):
+    return self.aval._bool(self)
+
+  def __float__(self):
+    return self.aval._float(self)
+
+  def __int__(self):
+    return self.aval._int(self)
+
+  def __long__(self):
+    return self.aval._long(self)
+
+  def __complex__(self):
+    return self.aval._complex(self)
+
+  def __hex__(self):
+    return self.aval._hex(self)
+
+  def __oct__(self):
+    return self.aval._oct(self)
 
   def __setitem__(self, idx, val):
     raise TypeError("JAX 'Tracer' objects do not support item assignment")
@@ -336,8 +427,7 @@ class Tracer(object):
     try:
       attr = getattr(self.aval, name)
     except KeyError:
-      raise AttributeError(
-          "{} has no attribute {}".format(self.__class__.__name__, name))
+      raise AttributeError("{} has no attribute {}".format(self.__class__.__name__, name))
     else:
       t = type(attr)
       if t is aval_property:
@@ -382,7 +472,7 @@ class TraceStack(object):
 
   def next_level(self, bottom):
     if bottom:
-      return - (len(self.downward) + 1)
+      return -(len(self.downward) + 1)
     else:
       return len(self.upward)
 
@@ -399,12 +489,13 @@ class TraceStack(object):
       self.upward.pop()
 
   def __repr__(self):
-    return  'Trace stack\n{} ---\n{}'.format(
-      map('  {}\n'.format, self.upward[::-1]),
-      map('  {}\n'.format, self.downward))
+    return 'Trace stack\n{} ---\n{}'.format(
+        map('  {}\n'.format, self.upward[::-1]), map('  {}\n'.format, self.downward))
 
 
-class Sublevel(int): pass
+class Sublevel(int):
+  pass
+
 
 # The global state of the tracer is accessed by a thread-local object.
 # This allows concurrent tracing in separate threads; passing traced objects
@@ -413,6 +504,7 @@ class TraceState(threading.local):
   def __init__(self):
     self.trace_stack = TraceStack()
     self.substack = [Sublevel(0)]
+
 
 trace_state = TraceState()
 
@@ -455,6 +547,7 @@ def new_sublevel():
     if t() is not None:
       raise Exception('Leaked sublevel {}'.format(t()))
 
+
 # -------------------- abstract values --------------------
 
 
@@ -472,15 +565,23 @@ class AbstractValue(object):
       return self.__class__.__name__
 
 
-class Bot(AbstractValue): pass
+class Bot(AbstractValue):
+  pass
+
 
 bot = Bot()
 
+
 class AbstractUnit(AbstractValue):
-  def join(self, other): return self
-  def _eq(self, self_traced, other): return get_aval(other) is self
+  def join(self, other):
+    return self
+
+  def _eq(self, self_traced, other):
+    return get_aval(other) is self
+
 
 abstract_unit = AbstractUnit()
+
 
 def lattice_join(x, y):
   if x is None:
@@ -522,12 +623,19 @@ pytype_aval_mappings = {}
 
 
 class Unit(object):
-  def __repr__(self): return '*'
+  def __repr__(self):
+    return '*'
+
+
 unit = Unit()
 literalable_types.add(Unit)
 
+
 class UnitVar(object):
-  def __repr__(self): return '*'
+  def __repr__(self):
+    return '*'
+
+
 unitvar = UnitVar()
 
 pytype_aval_mappings[Unit] = lambda _: abstract_unit
@@ -543,6 +651,7 @@ def apply_todos(todos, outs):
   while todos:
     outs = map(full_lower, todos.pop()(outs))
   return outs
+
 
 @lu.transformation_with_aux
 def process_env_traces(primitive, level, params_tuple, *args):
@@ -560,6 +669,7 @@ def process_env_traces(primitive, level, params_tuple, *args):
     outs, cur_todo = trace.post_process_call(primitive, outs, params)
     todo.append(cur_todo)
   yield outs, todo
+
 
 def call_bind(primitive, f, *args, **params):
   top_trace = find_top_trace(args)
@@ -584,8 +694,8 @@ call = partial(call_bind, call_p)
 call_p.def_custom_bind(call)
 call_p.def_impl(call_impl)
 
-
 # ------------------- Jaxpr printed representation -------------------
+
 
 def check_jaxpr(jaxpr):
   def context():
@@ -619,7 +729,8 @@ def check_jaxpr(jaxpr):
 
 
 def pp_vars(vs):
-    return ' '.join(map(str, vs))
+  return ' '.join(map(str, vs))
+
 
 def pp_eqn(eqn):
   lhs = pp_vars(eqn.outvars)
@@ -627,17 +738,14 @@ def pp_eqn(eqn):
   if eqn.bound_subjaxprs:
     for subjaxpr, const_vars, bound_vars in eqn.bound_subjaxprs:
       pp_subexpr = pp_subexpr + (
-          pp_jaxpr(subjaxpr).indent(2)
-          >> pp(' [ {} ; {} ]'.format(pp_vars(const_vars),
-                                      pp_vars(bound_vars))))
-  return (pp('{} = '.format(lhs)) >>
-          pp(eqn.primitive.name) >> pp_kv_pairs(eqn.params.items())
-          >> pp(' ') >> pp(pp_vars(eqn.invars))) + pp_subexpr
+          pp_jaxpr(subjaxpr).indent(2) >> pp(' [ {} ; {} ]'.format(
+              pp_vars(const_vars), pp_vars(bound_vars))))
+  return (pp('{} = '.format(lhs)) >> pp(eqn.primitive.name) >> pp_kv_pairs(eqn.params.items()) >>
+          pp(' ') >> pp(pp_vars(eqn.invars))) + pp_subexpr
+
 
 def pp_jaxpr(jaxpr):
-  return (pp('{{ lambda {} ; {} ; {}.'.format(pp_vars(jaxpr.constvars),
-                                              pp_vars(jaxpr.freevars),
-                                              pp_vars(jaxpr.invars))) +
-          ((pp('let ') >>
-            vcat(map(pp_eqn, jaxpr.eqns))) +
+  return (pp('{{ lambda {} ; {} ; {}.'.format(
+      pp_vars(jaxpr.constvars), pp_vars(jaxpr.freevars), pp_vars(jaxpr.invars))) +
+          ((pp('let ') >> vcat(map(pp_eqn, jaxpr.eqns))) +
            pp('in {} }}'.format(jaxpr.outvars))).indent(2))

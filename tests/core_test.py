@@ -41,17 +41,22 @@ config.parse_flags_with_absl()
 _ = pe.PartialVal((UnshapedArray(onp.float32), core.unit))
 __ = pe.PartialVal((ShapedArray((), onp.float32), core.unit))
 
+
 def call(f, *args):
   return jit(f)(*args)
+
 
 def simple_fun(x, y):
   return np.sin(x * y)
 
+
 def simple_fun_fanout(x, y):
   return np.sin(x * y) * x
 
+
 def fun_with_call(x):
   return call(np.sin, x)
+
 
 def fun_with_nested_calls(x):
   def f(y):
@@ -65,10 +70,13 @@ def fun_with_nested_calls(x):
 
   return call(f, x)
 
+
 def error(*args):
   def f(*args):
     assert False
+
   return f
+
 
 def fun_with_nested_calls_2(x):
   def bar(y):
@@ -78,9 +86,12 @@ def fun_with_nested_calls_2(x):
       q = q + call(lambda y: w + y, y)
       q = call(lambda w: call(np.sin, x) * y, 1.0) + q
       return q
+
     p, t = jvp(baz, (x + 1.0,), (y,))
     return t + (x * p)
+
   return call(bar, x)
+
 
 def fun_call_jitted(x):
   @jit
@@ -89,14 +100,17 @@ def fun_call_jitted(x):
 
   return call(g, x)
 
+
 def fun_with_two_calls(x):
   return call(np.sin, x) + call(np.cos, x)
+
 
 def fun_with_call_closure(x):
   def foo(y, z):
     return (x * x) * np.sin(y) * z
 
   return call(foo, x, np.cos(x)) + x
+
 
 def product_io_fun(x, y):
   xa = x['a']
@@ -110,8 +124,10 @@ TestSpec = namedtuple('TestSpec', ['fun', 'args'])
 test_specs_base = [
     TestSpec(simple_fun, (R(3, 2), R(3, 2))),
     TestSpec(simple_fun_fanout, (R(3, 2), R(3, 2))),
-    TestSpec(product_io_fun, ({'a': R(2, 2), 'b': R(2, 2)},
-                              (R(2, 2), (R(2, 2), R(2, 2))))),
+    TestSpec(product_io_fun, ({
+        'a': R(2, 2),
+        'b': R(2, 2)
+    }, (R(2, 2), (R(2, 2), R(2, 2))))),
     TestSpec(fun_with_call, (R(3, 2),)),
     TestSpec(fun_with_two_calls, (R(3, 2),)),
     TestSpec(fun_with_call_closure, (R(3, 2),)),
@@ -121,9 +137,11 @@ test_specs_base = [
     TestSpec(fun_with_nested_calls_2, (R(1, 2),)),
 ]
 
+
 def jvp_unlinearized(f, primals, tangents):
   out, jvp = linearize(f, *primals)
   return out, jvp(*tangents)
+
 
 test_specs = []
 for ts in test_specs_base:
@@ -131,8 +149,7 @@ for ts in test_specs_base:
   test_specs.append(TestSpec(partial(jvp, ts.fun), (ts.args, ts.args)))
   test_specs.append(TestSpec(jit(ts.fun), ts.args))
   test_specs.append(TestSpec(jit(jit(ts.fun)), ts.args))
-  test_specs.append(TestSpec(partial(jvp_unlinearized, ts.fun),
-                             (ts.args, ts.args)))
+  test_specs.append(TestSpec(partial(jvp_unlinearized, ts.fun), (ts.args, ts.args)))
 
 
 def fwd_deriv(f):
@@ -143,7 +160,6 @@ def fwd_deriv(f):
 
 
 class CoreTest(jtu.JaxTestCase):
-
   def test_tree_multimap(self):
     xs = ({'a': 1}, [2, 3])
     ys = ({'a': 10}, [20, 30])
@@ -182,6 +198,7 @@ class CoreTest(jtu.JaxTestCase):
     def foo(x):
       def bar(y):
         return np.sin(x * y)
+
       return jvp(bar, (3 * x,), (2 * x,))
 
     jtu.check_eq(jit(foo)(0.5), foo(0.5))
@@ -198,7 +215,9 @@ class CoreTest(jtu.JaxTestCase):
     def foo(x):
       def bar(y):
         return np.multiply(x, y)
+
       return jvp(bar, (3.0,), (1.0,))[1]
+
     ans = jvp(foo, (1.0,), (2.0,))
     assert ans == (1.0, 2.0), ans
 
@@ -207,7 +226,9 @@ class CoreTest(jtu.JaxTestCase):
       @jit
       def bar(y):
         return x + y
+
       return bar(0.0)
+
     assert jvp(foo, (1.0,), (2.0,)) == (1.0, 2.0)
 
   def test_simple_jit(self):

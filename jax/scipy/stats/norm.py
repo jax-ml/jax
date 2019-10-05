@@ -24,6 +24,7 @@ from ... import numpy as np
 from ...numpy.lax_numpy import _promote_args_like, _constant_like, _wraps
 from .. import special
 
+
 @_wraps(osp_stats.norm.logpdf)
 def logpdf(x, loc=0, scale=1):
   x, loc, scale = _promote_args_like(osp_stats.norm.logpdf, x, loc, scale)

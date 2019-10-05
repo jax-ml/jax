@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """Interface and utility functions to XLA.
 
 This module wraps the XLA client(s) and builders to standardize their interfaces
@@ -40,18 +39,14 @@ from . import xla_client
 from . import xrt
 
 FLAGS = flags.FLAGS
-flags.DEFINE_bool('jax_enable_x64',
-                  strtobool(os.getenv('JAX_ENABLE_X64', 'False')),
+flags.DEFINE_bool('jax_enable_x64', strtobool(os.getenv('JAX_ENABLE_X64', 'False')),
                   'Enable 64-bit types to be used.')
+flags.DEFINE_string('jax_xla_backend', 'xla',
+                    'Either "xla" for the XLA service directly, or "xrt" for an XRT backend.')
+flags.DEFINE_string('jax_backend_target', 'local',
+                    'Either "local" or "rpc:address" to connect to a remote service target.')
 flags.DEFINE_string(
-    'jax_xla_backend', 'xla',
-    'Either "xla" for the XLA service directly, or "xrt" for an XRT backend.')
-flags.DEFINE_string(
-    'jax_backend_target', 'local',
-    'Either "local" or "rpc:address" to connect to a remote service target.')
-flags.DEFINE_string(
-    'jax_platform_name',
-    os.getenv('JAX_PLATFORM_NAME', ''),
+    'jax_platform_name', os.getenv('JAX_PLATFORM_NAME', ''),
     'Platform name for XLA. The default is to attempt to use a GPU if '
     'available, but fall back to CPU otherwise. To set the platform manually, '
     'pass "cpu" for CPU or "gpu" for GPU.')
@@ -72,8 +67,8 @@ def get_compile_options(num_replicas=None, device_assignment=None):
     compile_options = compile_options or xla_client.CompileOptions()
     compile_options.num_replicas = num_replicas
   if device_assignment is not None:
-    logging.vlog(2, "get_compile_options: num_replicas=%s device_assignment=%s",
-                 num_replicas, device_assignment)
+    logging.vlog(2, "get_compile_options: num_replicas=%s device_assignment=%s", num_replicas,
+                 device_assignment)
     # NOTE(mattjj): xla_client.DeviceAssignment.create expects a 2D ndarray
     # indexed by replica number and computation per replica, respectively, while
     # here we currently assume only one computation per replica, hence the
@@ -88,10 +83,13 @@ def get_compile_options(num_replicas=None, device_assignment=None):
     compile_options.device_assignment = device_assignment
   return compile_options
 
+
 _backends = {}
+
 
 def register_backend(name, factory):
   _backends[name] = factory
+
 
 def _get_local_backend(platform=None):
   if not platform:
@@ -116,6 +114,7 @@ def _get_local_backend(platform=None):
 
   return backend
 
+
 def _get_xrt_backend(platform=None):
   del platform
   # TODO(phawkins): support non-TPU devices.
@@ -130,6 +129,7 @@ register_backend('xla', _get_local_backend)
 register_backend('xrt', _get_xrt_backend)
 
 _backend_lock = threading.Lock()
+
 
 @util.memoize
 def get_backend(platform=None):
@@ -215,6 +215,7 @@ def host_count(backend=None):
 
 ### utility functions
 
+
 @util.memoize
 def dtype_to_etype(dtype):
   """Convert from dtype to canonical etype (reading FLAGS.jax_enable_x64)."""
@@ -242,8 +243,7 @@ def canonicalize_dtype(dtype):
 
 @util.memoize
 def supported_numpy_dtypes():
-  return {canonicalize_dtype(dtype)
-          for dtype in xla_client.XLA_ELEMENT_TYPE_TO_DTYPE.values()}
+  return {canonicalize_dtype(dtype) for dtype in xla_client.XLA_ELEMENT_TYPE_TO_DTYPE.values()}
 
 
 # TODO(mattjj,frostig): try to remove this function
@@ -267,8 +267,7 @@ class _JaxComputationBuilder(xla_client.ComputationBuilder):
   # pylint: disable=invalid-name
 
   def Build(self, *args, **kwargs):
-    return super(_JaxComputationBuilder, self).Build(
-        *args, **kwargs)
+    return super(_JaxComputationBuilder, self).Build(*args, **kwargs)
 
   def NumpyArrayConstant(self, value, canonicalize_types=True):
     if canonicalize_types:
@@ -300,8 +299,7 @@ class _JaxComputationBuilder(xla_client.ComputationBuilder):
     if len(replica_groups[0]) == 1:
       return operand
     else:
-      return super(_JaxComputationBuilder, self).CrossReplicaSum(
-          operand, replica_groups)
+      return super(_JaxComputationBuilder, self).CrossReplicaSum(operand, replica_groups)
 
   # TODO(mattjj): remove when AllToAll is added to XLA:CPU
   def AllToAll(self, operand, split_axis, concat_axis, replica_groups):
@@ -309,8 +307,8 @@ class _JaxComputationBuilder(xla_client.ComputationBuilder):
     if len(replica_groups[0]) == 1:
       return operand
     else:
-      return super(_JaxComputationBuilder, self).AllToAll(
-          operand, split_axis, concat_axis, replica_groups)
+      return super(_JaxComputationBuilder, self).AllToAll(operand, split_axis, concat_axis,
+                                                          replica_groups)
 
 
 def make_computation_builder(name):
@@ -319,6 +317,8 @@ def make_computation_builder(name):
 
 def register_constant_handler(type_, handler_fun):
   _constant_handlers[type_] = handler_fun
+
+
 _constant_handlers = {}
 
 
@@ -344,8 +344,8 @@ def _ndarray_constant_handler(c, val, canonicalize_types=True):
   if onp.any(onp.equal(0, val.strides)) and val.size > 0:
     zero_stride_axes, = onp.where(onp.equal(0, val.strides))
     other_axes, = onp.where(onp.not_equal(0, val.strides))
-    collapsed_val = val[tuple(0 if ax in zero_stride_axes else slice(None)
-                              for ax in range(val.ndim))]
+    collapsed_val = val[tuple(
+        0 if ax in zero_stride_axes else slice(None) for ax in range(val.ndim))]
     xla_val = c.Broadcast(
         c.NumpyArrayConstant(collapsed_val, canonicalize_types),
         onp.take(val.shape, zero_stride_axes))
@@ -353,17 +353,20 @@ def _ndarray_constant_handler(c, val, canonicalize_types=True):
     return c.Transpose(xla_val, permutation)
   else:
     return c.NumpyArrayConstant(val, canonicalize_types)
+
+
 register_constant_handler(onp.ndarray, _ndarray_constant_handler)
 
 
 def _scalar_constant_handler(c, val, canonicalize_types=True):
   return c.NumpyArrayConstant(val, canonicalize_types)
 
-for scalar_type in [onp.int8, onp.int16, onp.int32, onp.int64,
-                    onp.uint8, onp.uint16, onp.uint32, onp.uint64,
-                    onp.float16, onp.float32, onp.float64, onp.float128,
-                    float, int, bool, onp.bool_, onp.longlong]:
+
+for scalar_type in [
+    onp.int8, onp.int16, onp.int32, onp.int64, onp.uint8, onp.uint16, onp.uint32, onp.uint64,
+    onp.float16, onp.float32, onp.float64, onp.float128, float, int, bool, onp.bool_, onp.longlong
+]:
   register_constant_handler(scalar_type, _scalar_constant_handler)
 
 if six.PY2:
-  register_constant_handler(long, _scalar_constant_handler) # noqa: F821
+  register_constant_handler(long, _scalar_constant_handler)  # noqa: F821

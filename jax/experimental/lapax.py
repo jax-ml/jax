@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """A linear algebra library for use with JAX."""
 
 from __future__ import absolute_import
@@ -22,14 +21,12 @@ import numpy as onp
 
 import jax.lax as lax
 
-
 # Based on work by phawkins@
 # The Cholesky routine is Algorithm 1 from
 # Haidar, Azzam, et al. "High-performance Cholesky factorization for GPU-only
 # execution." Proceedings of General Purpose GPUs. ACM, 2017.
 
 # TODO(mattjj): implement MAGMA-style algorithms from bartvm@
-
 
 ### Linalg functions
 
@@ -60,9 +57,8 @@ def _cholesky(a):
 
 def solve_triangular(a, b, left_side, lower, trans_a, block_size=1):
   """An unrolled triangular solve."""
-  return _solve_triangular_right(LapaxMatrix(a, block_size),
-                                 LapaxMatrix(b, block_size),
-                                 left_side, lower, trans_a).ndarray
+  return _solve_triangular_right(
+      LapaxMatrix(a, block_size), LapaxMatrix(b, block_size), left_side, lower, trans_a).ndarray
 
 
 def _solve_triangular_right(a, b, left_side, lower, trans_a):
@@ -87,15 +83,15 @@ def _solve_triangular_right(a, b, left_side, lower, trans_a):
       for i in range(n):
         out[:, i] = solve(a[i, i], b[:, i])
         if i < n - 1:
-          a_row = a[i+1:, i].T if lower else a[i, i+1:]
-          b[:, i+1:] -= out[:, i] * a_row
+          a_row = a[i + 1:, i].T if lower else a[i, i + 1:]
+          b[:, i + 1:] -= out[:, i] * a_row
   else:
     if left_side:
       for i in range(n):
         out[i, :] = solve(a[i, i], b[i, :])
         if i < n - 1:
-          a_col = a[i+1:, i] if lower else a[i, i+1:].T
-          b[i+1:, :] -= a_col * out[i, :]
+          a_col = a[i + 1:, i] if lower else a[i, i + 1:].T
+          b[i + 1:, :] -= a_col * out[i, :]
     else:
       for i in reversed(range(n)):
         out[:, i:] = solve(a[i, i], b[:, i])
@@ -117,9 +113,9 @@ def _solve_triangular_left(a, b, left_side, lower, trans_a):
   if lower == trans_a:
     if left_side:
       out[-1, :] = b[-1, :] / a[-1, -1]
-      for i in reversed(range(n-1)):
-        a_row = a[i+1:, i].T if lower else a[i, i+1:]
-        out[i, :] = (b[i, :] - a_row * out[i+1:, :]) / a[i, i]
+      for i in reversed(range(n - 1)):
+        a_row = a[i + 1:, i].T if lower else a[i, i + 1:]
+        out[i, :] = (b[i, :] - a_row * out[i + 1:, :]) / a[i, i]
     else:
       out[:, 0] = b[:, 0] / a[0, 0]
       for i in range(1, n):
@@ -133,9 +129,9 @@ def _solve_triangular_left(a, b, left_side, lower, trans_a):
         out[i, :] = (b[i, :] - a_row * out[:i, :]) / a[i, i]
     else:
       out[:, -1] = b[:, -1] / a[-1, -1]
-      for i in reversed(range(n-1)):
-        a_col = a[i+1:, i] if lower else a[i, i+1:].T
-        out[:, i] = (b[:, i] - out[:, i+1:] * a_col) / a[i, i]
+      for i in reversed(range(n - 1)):
+        a_col = a[i + 1:, i] if lower else a[i, i + 1:].T
+        out[:, i] = (b[:, i] - out[:, i + 1:] * a_col) / a[i, i]
 
   return out
 
@@ -168,8 +164,8 @@ class LapaxMatrix(object):
   def __init__(self, ndarray, block_size=1):
     self.ndarray = ndarray
     self.bs = block_size
-    self.shape = tuple(onp.floor_divide(ndarray.shape, block_size)
-                       + (onp.mod(ndarray.shape, block_size) > 0))
+    self.shape = tuple(
+        onp.floor_divide(ndarray.shape, block_size) + (onp.mod(ndarray.shape, block_size) > 0))
 
   def __getitem__(self, idx):
     return LapaxMatrix(_matrix_take(self.ndarray, idx, self.bs), block_size=1)

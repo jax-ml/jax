@@ -36,15 +36,19 @@ from . import pxla
 map = safe_map
 zip = safe_zip
 
-def identity(x): return x
+
+def identity(x):
+  return x
 
 
 ### papply
+
 
 def papply(fun, name, in_vals, axis_size):
   # this function is for testing purposes, so we drop the out_axis
   fun, _ = papply_transform(fun, name, axis_size)
   return fun.call_wrapped(*in_vals)
+
 
 @lu.transformation_with_aux
 def papply_transform(name, axis_size, *args):
@@ -57,6 +61,7 @@ def papply_transform(name, axis_size, *args):
     del master, out_tracers
   yield out_vals, out_axes
 
+
 @lu.transformation_with_aux
 def papply_subtrace(master, name, axis_size, axes, *vals):
   trace = PapplyTrace(master, core.cur_sublevel())
@@ -65,9 +70,11 @@ def papply_subtrace(master, name, axis_size, axes, *vals):
   out_vals, out_axes = unzip2((t.val, t.axis) for t in out_tracers)
   yield out_vals, out_axes
 
+
 # TODO(mattjj); use a special sentinel type rather than None
 NotSharded = type(None)
 not_sharded = None
+
 
 class PapplyTracer(Tracer):
   def __init__(self, trace, name, axis_size, val, axis):
@@ -98,6 +105,7 @@ class PapplyTracer(Tracer):
       return core.full_lower(self.val)
     else:
       return self
+
 
 class PapplyTrace(Trace):
   def pure(self, val):
@@ -131,16 +139,17 @@ class PapplyTrace(Trace):
       size, = {t.axis_size for t in tracers if t.axis_size is not None}
       f_papply, axes_out = papply_subtrace(f, self.master, name, size, axes)
       vals_out = call_primitive.bind(f_papply, *vals, **params)
-      return [PapplyTracer(self, name, size, x, a)
-              for x, a in zip(vals_out, axes_out())]
+      return [PapplyTracer(self, name, size, x, a) for x, a in zip(vals_out, axes_out())]
 
   def post_process_call(self, call_primitive, out_tracer):
     t = out_tracer
     name, val, axis, size = t.name, t.val, t.axis, t.axis_size
     master = self.master
+
     def todo(x):
       trace = PapplyTrace(master, core.cur_sublevel())
       return PapplyTracer(trace, name, size, x, axis)
+
     return val, todo
 
   def process_map(self, map_primitive, f, tracers, params):

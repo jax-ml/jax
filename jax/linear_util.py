@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """
 Utilities for defining linear functions composed with transformations.
 
@@ -76,6 +75,7 @@ from .util import curry, partial
 
 def thunk(f):
   store = Store()
+
   def f_memoized():
     if not store:
       # TODO(dougalm): save/restore relevant environment state too
@@ -84,11 +84,17 @@ def thunk(f):
 
   return f_memoized
 
-class StoreException(Exception): pass
+
+class StoreException(Exception):
+  pass
 
 
-class EmptyStoreValue(object): pass
+class EmptyStoreValue(object):
+  pass
+
+
 _EMPTY_STORE_VALUE = EmptyStoreValue()
+
 
 class Store(object):
   __slots__ = ("_val",)
@@ -115,6 +121,7 @@ class Store(object):
 @curry
 def staged(f, *init_args):
   store = Store()
+
   def f_partial(*rest):
     ans, aux = f(*(init_args + rest))
     store.store(aux)
@@ -146,8 +153,8 @@ class WrappedFun(object):
     return getattr(self.f, '__name__', '<unnamed wrapped function>')
 
   def wrap(self, gen, gen_args, out_store):
-    return WrappedFun(self.f, ((gen, gen_args),) + self.transforms,
-                      (out_store,) + self.stores, self.params)
+    return WrappedFun(self.f, ((gen, gen_args),) + self.transforms, (out_store,) + self.stores,
+                      self.params)
 
   def populate_stores(self, other):
     for self_store, other_store in zip(self.stores, other.stores):
@@ -177,19 +184,23 @@ class WrappedFun(object):
     def transform_to_str(x):
       i, (gen, args) = x
       return "{}   : {}   {}".format(i, fun_name(gen), fun_name(args))
+
     transformation_stack = map(transform_to_str, enumerate(self.transforms))
-    return "Wrapped function:\n" + '\n'.join(transformation_stack) + '\nCore: ' + fun_name(self.f) + '\n'
+    return "Wrapped function:\n" + '\n'.join(transformation_stack) + '\nCore: ' + fun_name(
+        self.f) + '\n'
 
   def __hash__(self):
     return hash((self.f, self.transforms, self.params))
 
   def __eq__(self, other):
-    return (self.f == other.f and self.transforms == other.transforms and
-            self.params == other.params)
+    return (self.f == other.f and self.transforms == other.transforms
+            and self.params == other.params)
+
 
 @curry
 def transformation(gen, fun, *transformation_args):
   return fun.wrap(gen, transformation_args, None)
+
 
 @curry
 def transformation_with_aux(gen, fun, *transformation_args):
@@ -197,11 +208,13 @@ def transformation_with_aux(gen, fun, *transformation_args):
   out_thunk = lambda: out_store.val
   return fun.wrap(gen, transformation_args, out_store), out_thunk
 
+
 def fun_name(f):
   try:
     return f.__name__
   except:
     return str(f)
+
 
 def wrap_init(f, params={}):
   """Wraps function `f` as a `WrappedFun`, suitable for transformation."""

@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """Tests for the LAPAX linear algebra module."""
 from __future__ import absolute_import
 from __future__ import division
@@ -30,12 +29,12 @@ from jax.experimental import lapax
 from jax.config import config
 config.parse_flags_with_absl()
 
-# Primitive 
+# Primitive
 
 float_types = [onp.float32, onp.float64]
 
-class LapaxTest(jtu.JaxTestCase):
 
+class LapaxTest(jtu.JaxTestCase):
   def testSolveLowerTriangularVec(self):
     npr = onp.random.RandomState(1)
     lhs = onp.tril(npr.randn(3, 3))
@@ -50,8 +49,8 @@ class LapaxTest(jtu.JaxTestCase):
       self.assertArraysAllClose(a1, a2, check_dtypes=True)
       self.assertArraysAllClose(a2, a3, check_dtypes=True)
 
-    solve_triangular = lambda a, b: lapax.solve_triangular(
-        a, b, left_side=True, lower=True, trans_a=False)
+    solve_triangular = lambda a, b: lapax.solve_triangular(a, b, left_side=True, lower=True,
+                                                           trans_a=False)
 
     fun = jit(solve_triangular)
     check(fun, lhs, rhs)
@@ -71,8 +70,8 @@ class LapaxTest(jtu.JaxTestCase):
       self.assertArraysAllClose(a1, a2, check_dtypes=True)
       self.assertArraysAllClose(a2, a3, check_dtypes=True)
 
-    solve_triangular = lambda a, b: lapax.solve_triangular(
-        a, b, left_side=True, lower=True, trans_a=False)
+    solve_triangular = lambda a, b: lapax.solve_triangular(a, b, left_side=True, lower=True,
+                                                           trans_a=False)
 
     fun = jit(solve_triangular)
     check(fun, lhs, rhs)
@@ -92,8 +91,8 @@ class LapaxTest(jtu.JaxTestCase):
       self.assertArraysAllClose(a1, a2, check_dtypes=True)
       self.assertArraysAllClose(a2, a3, check_dtypes=True)
 
-    solve_triangular = lambda a, b: lapax.solve_triangular(
-        a, b, left_side=True, lower=True, trans_a=False)
+    solve_triangular = lambda a, b: lapax.solve_triangular(a, b, left_side=True, lower=True,
+                                                           trans_a=False)
 
     fun = jit(solve_triangular)
     check(fun, lhs, rhs)
@@ -135,28 +134,35 @@ class LapaxTest(jtu.JaxTestCase):
     check(fun, arr)
     check(fun, arr2)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name":
-       "_lhs={}_rhs={}_lower={}_leftside={}_transposea={}".format(
-           jtu.format_shape_dtype_string(lhs_shape, dtype),
-           jtu.format_shape_dtype_string(rhs_shape, dtype),
-           lower, left, transpose_a),
-       "lower": lower, "left_side": left, "transpose_a": transpose_a,
-       "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
-       "rng": rng}
-      for lower, left, transpose_a in itertools.product([False, True], repeat=3)
-      for lhs_shape, rhs_shape in [
-          ((2, 4, 4), (2, 4, 6) if left else (2, 6, 4)),
-      ]
-      for dtype in float_types
-      for rng in [jtu.rand_default()]))
-  def testSolveTriangular(self, lower, left_side, transpose_a, lhs_shape,
-                          rhs_shape, dtype, rng):
+  @parameterized.named_parameters(
+      jtu.cases_from_list({
+          "testcase_name":
+              "_lhs={}_rhs={}_lower={}_leftside={}_transposea={}".format(
+                  jtu.format_shape_dtype_string(lhs_shape, dtype),
+                  jtu.format_shape_dtype_string(rhs_shape, dtype), lower, left, transpose_a),
+          "lower":
+              lower,
+          "left_side":
+              left,
+          "transpose_a":
+              transpose_a,
+          "lhs_shape":
+              lhs_shape,
+          "rhs_shape":
+              rhs_shape,
+          "dtype":
+              dtype,
+          "rng":
+              rng
+      } for lower, left, transpose_a in itertools.product([False, True], repeat=3)
+                          for lhs_shape, rhs_shape in [
+                              ((2, 4, 4), (2, 4, 6) if left else (2, 6, 4)),
+                          ] for dtype in float_types for rng in [jtu.rand_default()]))
+  def testSolveTriangular(self, lower, left_side, transpose_a, lhs_shape, rhs_shape, dtype, rng):
     # pylint: disable=invalid-name
     T = lambda X: onp.swapaxes(X, -1, -2)
     K = rng(lhs_shape, dtype)
-    L = onp.linalg.cholesky(onp.matmul(K, T(K))
-                            + lhs_shape[-1] * onp.eye(lhs_shape[-1]))
+    L = onp.linalg.cholesky(onp.matmul(K, T(K)) + lhs_shape[-1] * onp.eye(lhs_shape[-1]))
     L = L.astype(K.dtype)
     B = rng(rhs_shape, dtype)
 
@@ -164,34 +170,41 @@ class LapaxTest(jtu.JaxTestCase):
     inv = onp.linalg.inv(T(A) if transpose_a else A)
     np_ans = onp.matmul(inv, B) if left_side else onp.matmul(B, inv)
 
-    lapax_ans = lapax.solve_triangular(
-        L if lower else T(L), B, left_side, lower, transpose_a)
+    lapax_ans = lapax.solve_triangular(L if lower else T(L), B, left_side, lower, transpose_a)
 
     self.assertAllClose(np_ans, lapax_ans, check_dtypes=False)
     # pylint: enable=invalid-name
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name":
-       "_lhs={}_rhs={}_lower={}_leftside={}_transposea={}".format(
-           jtu.format_shape_dtype_string(lhs_shape, dtype),
-           jtu.format_shape_dtype_string(rhs_shape, dtype),
-           lower, left, transpose_a),
-       "lower": lower, "left_side": left, "transpose_a": transpose_a,
-       "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
-       "rng": rng}
-      for lower, left, transpose_a in itertools.product([False, True], repeat=3)
-      for lhs_shape, rhs_shape in [
-          ((2, 8, 8), (2, 8, 10) if left else (2, 10, 8)),
-      ]
-      for dtype in float_types
-      for rng in [jtu.rand_default()]))
-  def testSolveTriangularBlocked(self, lower, left_side, transpose_a, lhs_shape,
-                                 rhs_shape, dtype, rng):
+  @parameterized.named_parameters(
+      jtu.cases_from_list({
+          "testcase_name":
+              "_lhs={}_rhs={}_lower={}_leftside={}_transposea={}".format(
+                  jtu.format_shape_dtype_string(lhs_shape, dtype),
+                  jtu.format_shape_dtype_string(rhs_shape, dtype), lower, left, transpose_a),
+          "lower":
+              lower,
+          "left_side":
+              left,
+          "transpose_a":
+              transpose_a,
+          "lhs_shape":
+              lhs_shape,
+          "rhs_shape":
+              rhs_shape,
+          "dtype":
+              dtype,
+          "rng":
+              rng
+      } for lower, left, transpose_a in itertools.product([False, True], repeat=3)
+                          for lhs_shape, rhs_shape in [
+                              ((2, 8, 8), (2, 8, 10) if left else (2, 10, 8)),
+                          ] for dtype in float_types for rng in [jtu.rand_default()]))
+  def testSolveTriangularBlocked(self, lower, left_side, transpose_a, lhs_shape, rhs_shape, dtype,
+                                 rng):
     # pylint: disable=invalid-name
     T = lambda X: onp.swapaxes(X, -1, -2)
     K = rng(lhs_shape, dtype)
-    L = onp.linalg.cholesky(onp.matmul(K, T(K))
-                            + lhs_shape[-1] * onp.eye(lhs_shape[-1]))
+    L = onp.linalg.cholesky(onp.matmul(K, T(K)) + lhs_shape[-1] * onp.eye(lhs_shape[-1]))
     L = L.astype(K.dtype)
     B = rng(rhs_shape, dtype)
 
@@ -200,8 +213,7 @@ class LapaxTest(jtu.JaxTestCase):
     np_ans = onp.matmul(inv, B) if left_side else onp.matmul(B, inv)
 
     lapax_ans = lapax.solve_triangular(
-        L if lower else T(L), B, left_side, lower, transpose_a,
-        block_size=3)
+        L if lower else T(L), B, left_side, lower, transpose_a, block_size=3)
 
     self.assertAllClose(np_ans, lapax_ans, check_dtypes=False)
     # pylint: enable=invalid-name

@@ -75,11 +75,9 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx):
 
   # Transpose the gather dimensions into scatter dimensions (cf.
   # lax._gather_transpose_rule)
-  dnums = lax.ScatterDimensionNumbers(
-    update_window_dims=indexer.dnums.offset_dims,
-    inserted_window_dims=indexer.dnums.collapsed_slice_dims,
-    scatter_dims_to_operand_dims=indexer.dnums.start_index_map
-  )
+  dnums = lax.ScatterDimensionNumbers(update_window_dims=indexer.dnums.offset_dims,
+                                      inserted_window_dims=indexer.dnums.collapsed_slice_dims,
+                                      scatter_dims_to_operand_dims=indexer.dnums.start_index_map)
   return scatter_op(x, indexer.gather_indices, y, dnums)
 
 
@@ -96,6 +94,7 @@ class _Indexable(object):
 
   def __getitem__(self, index):
     return index
+
 
 #: Index object singleton
 index = _Indexable()
@@ -139,6 +138,7 @@ def index_add(x, idx, y):
   """
   return _scatter_update(x, idx, y, lax.scatter_add)
 
+
 def index_min(x, idx, y):
   """Pure equivalent of :code:`x[idx] = minimum(x[idx], y)`.
 
@@ -174,6 +174,7 @@ def index_min(x, idx, y):
          [1., 1., 1., 1., 1., 1.]], dtype=float32)
   """
   return _scatter_update(x, idx, y, lax.scatter_min)
+
 
 def index_max(x, idx, y):
   """Pure equivalent of :code:`x[idx] = maximum(x[idx], y)`.
@@ -211,6 +212,7 @@ def index_max(x, idx, y):
   """
   return _scatter_update(x, idx, y, lax.scatter_max)
 
+
 def index_update(x, idx, y):
   """Pure equivalent of :code:`x[idx] = y`.
 
@@ -247,6 +249,7 @@ def index_update(x, idx, y):
          [1., 1., 1., 6., 6., 6.]], dtype=float32)
   """
   return _scatter_update(x, idx, y, lax.scatter)
+
 
 def segment_sum(data, segment_ids, num_segments=None):
   """Computes the sum within segments of an array.

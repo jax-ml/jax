@@ -22,8 +22,7 @@ import scipy.special as osp_special
 from .. import lax
 from ..api import custom_transforms, defjvp
 from ..numpy import lax_numpy as np
-from ..numpy.lax_numpy import (_wraps, asarray, _reduction_dims, _constant_like,
-                               _promote_args_like)
+from ..numpy.lax_numpy import (_wraps, asarray, _reduction_dims, _constant_like, _promote_args_like)
 
 
 @_wraps(osp_special.gammaln)
@@ -61,6 +60,8 @@ def erfinv(x):
 def logit(x):
   x = asarray(x)
   return lax.log(lax.div(x, lax.sub(lax._const(x, 1), x)))
+
+
 defjvp(logit, lambda g, ans, x: g / (x * (1 - x)))
 
 
@@ -70,6 +71,8 @@ def expit(x):
   x = asarray(x)
   one = lax._const(x, 1)
   return lax.div(one, lax.add(one, lax.exp(lax.neg(x))))
+
+
 defjvp(expit, lambda g, ans, x: g * ans * (lax._const(ans, 1) - ans))
 
 
@@ -82,8 +85,10 @@ def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
   dimadd = lambda x: lax.reshape(x, shape)
   amax = lax.reduce(a, _constant_like(a, -onp.inf), lax.max, dims)
   amax_singletons = dimadd(amax)
-  out = lax.add(lax.log(lax.reduce(lax.exp(lax.sub(a, amax_singletons)),
-                                   _constant_like(a, 0), lax.add, dims)), amax)
+  out = lax.add(
+      lax.log(
+          lax.reduce(lax.exp(lax.sub(a, amax_singletons)), _constant_like(a, 0), lax.add, dims)),
+      amax)
   return dimadd(out) if keepdims else out
 
 
@@ -102,21 +107,19 @@ def xlog1py(x, y):
 @_wraps(osp_special.entr)
 def entr(x):
   x, = _promote_args_like(osp_special.entr, x)
-  return lax.select(lax.lt(x, _constant_like(x, 0)),
-                    lax.full_like(x, -onp.inf),
-                    lax.neg(xlogy(x, x)))
+  return lax.select(
+      lax.lt(x, _constant_like(x, 0)), lax.full_like(x, -onp.inf), lax.neg(xlogy(x, x)))
 
 
 @_wraps(osp_special.multigammaln)
 def multigammaln(a, d):
   a, = _promote_args_like(lambda a: osp_special.multigammaln(a, 1), a)
   d = lax.convert_element_type(d, lax.dtype(a))
-  constant = lax.mul(lax.mul(lax.mul(_constant_like(a, 0.25), d),
-                             lax.sub(d, _constant_like(a, 1))),
-                     lax.log(_constant_like(a, onp.pi)))
-  res = np.sum(gammaln(np.expand_dims(a, axis=-1) -
-                       lax.div(np.arange(d), _constant_like(a, 2))),
-               axis=-1)
+  constant = lax.mul(
+      lax.mul(lax.mul(_constant_like(a, 0.25), d), lax.sub(d, _constant_like(a, 1))),
+      lax.log(_constant_like(a, onp.pi)))
+  res = np.sum(
+      gammaln(np.expand_dims(a, axis=-1) - lax.div(np.arange(d), _constant_like(a, 2))), axis=-1)
   return res + constant
 
 
@@ -220,9 +223,7 @@ def ndtr(x):
   x = np.asarray(x)
   dtype = lax.dtype(x)
   if dtype not in (np.float32, np.float64):
-    raise TypeError(
-        "x.dtype={} is not supported, see docstring for supported types."
-        .format(dtype))
+    raise TypeError("x.dtype={} is not supported, see docstring for supported types.".format(dtype))
   return _ndtr(x)
 
 
@@ -232,11 +233,11 @@ def _ndtr(x):
   half_sqrt_2 = dtype(0.5) * onp.sqrt(2., dtype=dtype)
   w = x * half_sqrt_2
   z = lax.abs(w)
-  y = lax.select(lax.lt(z, half_sqrt_2),
-                      dtype(1.) + lax.erf(w),
-                      lax.select(lax.gt(w, dtype(0.)),
-                                      dtype(2.) - lax.erfc(z),
-                                      lax.erfc(z)))
+  y = lax.select(
+      lax.lt(z, half_sqrt_2),
+      dtype(1.) + lax.erf(w),
+      lax.select(lax.gt(w, dtype(0.)),
+                 dtype(2.) - lax.erfc(z), lax.erfc(z)))
   return dtype(0.5) * y
 
 
@@ -261,9 +262,7 @@ def ndtri(p):
   x = np.asarray(p)
   dtype = lax.dtype(p)
   if dtype not in (np.float32, np.float64):
-    raise TypeError(
-        "x.dtype={} is not supported, see docstring for supported types."
-        .format(dtype))
+    raise TypeError("x.dtype={} is not supported, see docstring for supported types.".format(dtype))
   return _ndtri(p)
 
 
@@ -273,56 +272,41 @@ def _ndtri(p):
   # Constants used in piece-wise rational approximations. Taken from the cephes
   # library:
   # https://root.cern.ch/doc/v608/SpecFuncCephesInv_8cxx_source.html
-  p0 = list(reversed([-5.99633501014107895267E1,
-                      9.80010754185999661536E1,
-                      -5.66762857469070293439E1,
-                      1.39312609387279679503E1,
-                      -1.23916583867381258016E0]))
-  q0 = list(reversed([1.0,
-                      1.95448858338141759834E0,
-                      4.67627912898881538453E0,
-                      8.63602421390890590575E1,
-                      -2.25462687854119370527E2,
-                      2.00260212380060660359E2,
-                      -8.20372256168333339912E1,
-                      1.59056225126211695515E1,
-                      -1.18331621121330003142E0]))
-  p1 = list(reversed([4.05544892305962419923E0,
-                      3.15251094599893866154E1,
-                      5.71628192246421288162E1,
-                      4.40805073893200834700E1,
-                      1.46849561928858024014E1,
-                      2.18663306850790267539E0,
-                      -1.40256079171354495875E-1,
-                      -3.50424626827848203418E-2,
-                      -8.57456785154685413611E-4]))
-  q1 = list(reversed([1.0,
-                      1.57799883256466749731E1,
-                      4.53907635128879210584E1,
-                      4.13172038254672030440E1,
-                      1.50425385692907503408E1,
-                      2.50464946208309415979E0,
-                      -1.42182922854787788574E-1,
-                      -3.80806407691578277194E-2,
-                      -9.33259480895457427372E-4]))
-  p2 = list(reversed([3.23774891776946035970E0,
-                      6.91522889068984211695E0,
-                      3.93881025292474443415E0,
-                      1.33303460815807542389E0,
-                      2.01485389549179081538E-1,
-                      1.23716634817820021358E-2,
-                      3.01581553508235416007E-4,
-                      2.65806974686737550832E-6,
-                      6.23974539184983293730E-9]))
-  q2 = list(reversed([1.0,
-                      6.02427039364742014255E0,
-                      3.67983563856160859403E0,
-                      1.37702099489081330271E0,
-                      2.16236993594496635890E-1,
-                      1.34204006088543189037E-2,
-                      3.28014464682127739104E-4,
-                      2.89247864745380683936E-6,
-                      6.79019408009981274425E-9]))
+  p0 = list(
+      reversed([
+          -5.99633501014107895267E1, 9.80010754185999661536E1, -5.66762857469070293439E1,
+          1.39312609387279679503E1, -1.23916583867381258016E0
+      ]))
+  q0 = list(
+      reversed([
+          1.0, 1.95448858338141759834E0, 4.67627912898881538453E0, 8.63602421390890590575E1,
+          -2.25462687854119370527E2, 2.00260212380060660359E2, -8.20372256168333339912E1,
+          1.59056225126211695515E1, -1.18331621121330003142E0
+      ]))
+  p1 = list(
+      reversed([
+          4.05544892305962419923E0, 3.15251094599893866154E1, 5.71628192246421288162E1,
+          4.40805073893200834700E1, 1.46849561928858024014E1, 2.18663306850790267539E0,
+          -1.40256079171354495875E-1, -3.50424626827848203418E-2, -8.57456785154685413611E-4
+      ]))
+  q1 = list(
+      reversed([
+          1.0, 1.57799883256466749731E1, 4.53907635128879210584E1, 4.13172038254672030440E1,
+          1.50425385692907503408E1, 2.50464946208309415979E0, -1.42182922854787788574E-1,
+          -3.80806407691578277194E-2, -9.33259480895457427372E-4
+      ]))
+  p2 = list(
+      reversed([
+          3.23774891776946035970E0, 6.91522889068984211695E0, 3.93881025292474443415E0,
+          1.33303460815807542389E0, 2.01485389549179081538E-1, 1.23716634817820021358E-2,
+          3.01581553508235416007E-4, 2.65806974686737550832E-6, 6.23974539184983293730E-9
+      ]))
+  q2 = list(
+      reversed([
+          1.0, 6.02427039364742014255E0, 3.67983563856160859403E0, 1.37702099489081330271E0,
+          2.16236993594496635890E-1, 1.34204006088543189037E-2, 3.28014464682127739104E-4,
+          2.89247864745380683936E-6, 6.79019408009981274425E-9
+      ]))
 
   dtype = lax.dtype(p).type
   shape = np.shape(p)
@@ -334,21 +318,17 @@ def _ndtri(p):
       return np.zeros_like(var)
     return coeffs[0] + _create_polynomial(var, coeffs[1:]) * var
 
-
   maybe_complement_p = np.where(p > dtype(-onp.expm1(-2.)), dtype(1.) - p, p)
   # Write in an arbitrary value in place of 0 for p since 0 will cause NaNs
   # later on. The result from the computation when p == 0 is not used so any
   # number that doesn't result in NaNs is fine.
-  sanitized_mcp = np.where(
-      maybe_complement_p <= dtype(0.),
-      np.full(shape, dtype(0.5)),
-      maybe_complement_p)
+  sanitized_mcp = np.where(maybe_complement_p <= dtype(0.), np.full(shape, dtype(0.5)),
+                           maybe_complement_p)
 
   # Compute x for p > exp(-2): x/sqrt(2pi) = w + w**3 P0(w**2)/Q0(w**2).
   w = sanitized_mcp - dtype(0.5)
   ww = lax.square(w)
-  x_for_big_p = w + w * ww * (_create_polynomial(ww, p0)
-                              / _create_polynomial(ww, q0))
+  x_for_big_p = w + w * ww * (_create_polynomial(ww, p0) / _create_polynomial(ww, q0))
   x_for_big_p *= -dtype(onp.sqrt(2. * onp.pi))
 
   # Compute x for p <= exp(-2): x = z - log(z)/z - (1/z) P(1/z) / Q(1/z),
@@ -357,22 +337,18 @@ def _ndtri(p):
   z = lax.sqrt(dtype(-2.) * lax.log(sanitized_mcp))
   first_term = z - lax.log(z) / z
   second_term_small_p = (
-      _create_polynomial(dtype(1.) / z, p2) /
-      _create_polynomial(dtype(1.) / z, q2) / z)
+      _create_polynomial(dtype(1.) / z, p2) / _create_polynomial(dtype(1.) / z, q2) / z)
   second_term_otherwise = (
-      _create_polynomial(dtype(1.) / z, p1) /
-      _create_polynomial(dtype(1.) / z, q1) / z)
+      _create_polynomial(dtype(1.) / z, p1) / _create_polynomial(dtype(1.) / z, q1) / z)
   x_for_small_p = first_term - second_term_small_p
   x_otherwise = first_term - second_term_otherwise
 
-  x = np.where(sanitized_mcp > dtype(onp.exp(-2.)),
-                      x_for_big_p,
-                      np.where(z >= dtype(8.0), x_for_small_p, x_otherwise))
+  x = np.where(sanitized_mcp > dtype(onp.exp(-2.)), x_for_big_p,
+               np.where(z >= dtype(8.0), x_for_small_p, x_otherwise))
 
   x = np.where(p > dtype(1. - onp.exp(-2.)), x, -x)
   infinity = np.full(shape, dtype(onp.inf))
-  x_nan_replaced = np.where(
-      p <= dtype(0.0), -infinity, np.where(p >= dtype(1.0), infinity, x))
+  x_nan_replaced = np.where(p <= dtype(0.0), -infinity, np.where(p >= dtype(1.0), infinity, x))
   return x_nan_replaced
 
 
@@ -473,10 +449,9 @@ def log_ndtr(x, series_order=3):
   return np.where(
       lax.gt(x, upper_segment),
       -_ndtr(-x),  # log(1-x) ~= -x, x << 1
-      np.where(lax.gt(x, lower_segment),
-                      lax.log(_ndtr(lax.max(x, lower_segment))),
-                      _log_ndtr_lower(lax.min(x, lower_segment),
-                                      series_order)))
+      np.where(
+          lax.gt(x, lower_segment), lax.log(_ndtr(lax.max(x, lower_segment))),
+          _log_ndtr_lower(lax.min(x, lower_segment), series_order)))
 
 
 def _log_ndtr_lower(x, series_order):
@@ -514,10 +489,11 @@ def _double_factorial(n):
 
 _norm_logpdf_constant = onp.log(onp.sqrt(2 * onp.pi))
 
+
 def _norm_logpdf(x):
   neg_half = _constant_like(x, -0.5)
   log_normalizer = _constant_like(x, _norm_logpdf_constant)
   return lax.sub(lax.mul(neg_half, lax.square(x)), log_normalizer)
 
-defjvp(log_ndtr,
-       lambda g, ans, x: lax.mul(g, lax.exp(lax.sub(_norm_logpdf(x), ans))))
+
+defjvp(log_ndtr, lambda g, ans, x: lax.mul(g, lax.exp(lax.sub(_norm_logpdf(x), ans))))

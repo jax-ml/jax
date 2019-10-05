@@ -31,8 +31,8 @@ def logpmf(k, p, loc=0):
   one = np._constant_like(k, 1)
   x = lax.sub(k, loc)
   log_probs = xlogy(x, p) + xlog1py(lax.sub(one, x), -p)
-  return np.where(np.logical_or(lax.lt(x, zero), lax.gt(x, one)),
-                  -np.inf, log_probs)
+  return np.where(np.logical_or(lax.lt(x, zero), lax.gt(x, one)), -np.inf, log_probs)
+
 
 @np._wraps(osp_stats.bernoulli.pmf)
 def pmf(k, p, loc=0):

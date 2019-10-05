@@ -32,6 +32,7 @@ def logpdf(x, b, loc=0, scale=1):
   log_probs = lax.neg(lax.add(normalize_term, lax.mul(lax.add(b, one), lax.log(scaled_x))))
   return where(lax.lt(x, lax.add(loc, scale)), -inf, log_probs)
 
+
 @_wraps(osp_stats.pareto.pdf)
 def pdf(x, b, loc=0, scale=1):
   return lax.exp(logpdf(x, b, loc, scale))

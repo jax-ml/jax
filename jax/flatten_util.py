@@ -32,6 +32,7 @@ def ravel_pytree(pytree):
   unravel_pytree = lambda flat: tree_unflatten(treedef, unravel_list(flat))
   return flat, unravel_pytree
 
+
 def ravel_list(*lst):
   return np.concatenate([np.ravel(elt) for elt in lst]) if lst else np.array([])
 

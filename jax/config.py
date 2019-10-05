@@ -67,10 +67,12 @@ class Config(object):
 
     self.use_absl = True
     self.absl_flags = absl_flags
-    absl_defs = { bool: absl_flags.DEFINE_bool,
-                  int:  absl_flags.DEFINE_integer,
-                  str:  absl_flags.DEFINE_string,
-                  'enum': absl_flags.DEFINE_enum }
+    absl_defs = {
+        bool: absl_flags.DEFINE_bool,
+        int: absl_flags.DEFINE_integer,
+        str: absl_flags.DEFINE_string,
+        'enum': absl_flags.DEFINE_enum
+    }
 
     for name, val in self.values.items():
       flag_type, meta_args, meta_kwargs = self.meta[name]
