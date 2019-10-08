@@ -94,6 +94,7 @@ And for a deeper dive into JAX:
 - [Directly using XLA in Python](https://colab.research.google.com/github/google/jax/blob/master/notebooks/XLA_in_Python.ipynb)
 - [MAML Tutorial with JAX](https://colab.research.google.com/github/google/jax/blob/master/notebooks/maml.ipynb)
 - [Generative Modeling by Estimating Gradients of Data Distribution in JAX](https://colab.research.google.com/github/google/jax/blob/master/notebooks/score_matching.ipynb).
+[How JAX primitives work](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/How_JAX_primitives_work.ipynb)
 
 ## Installation
 JAX is written in pure Python, but it depends on XLA, which needs to be compiled
