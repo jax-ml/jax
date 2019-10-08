@@ -35,6 +35,7 @@ from jax.core import Primitive
 from jax.lax import (standard_primitive, standard_unop, binop_dtype_rule,
                      _float, _complex, _input_dtype, _broadcasting_select)
 from jax.lib import xla_bridge as xb
+from jax.lib import xla_client
 from jax.lib import lapack
 from jax.lib import cusolver
 
@@ -211,8 +212,14 @@ def eigh_impl(operand, lower):
   return v, w
 
 def eigh_translation_rule(c, operand, lower):
-  raise NotImplementedError(
-    "Symmetric eigendecomposition is only implemented on the CPU and GPU backends")
+  shape = c.GetShape(operand)
+  dims = shape.dimensions()
+  if dims[-1] == 0:
+    return c.Tuple(operand, c.Reshape(operand, None, dims[:-1]))
+  if not lower:
+    n = len(dims)
+    operand = c.Transpose(operand, list(range(n - 2)) + [n - 1, n - 2])
+  return c.Eigh(operand)
 
 def eigh_abstract_eval(operand, lower):
   if isinstance(operand, ShapedArray):
@@ -281,6 +288,7 @@ eigh_p.def_impl(eigh_impl)
 eigh_p.def_abstract_eval(eigh_abstract_eval)
 xla.translations[eigh_p] = eigh_translation_rule
 ad.primitive_jvps[eigh_p] = eigh_jvp_rule
+batching.primitive_batchers[eigh_p] = eigh_batching_rule
 
 _cpu_syevd = lapack.syevd
 
@@ -289,7 +297,7 @@ xla.backend_specific_translations['cpu'][eigh_p] = partial(
 
 xla.backend_specific_translations['gpu'][eigh_p] = partial(
   _eigh_cpu_gpu_translation_rule, cusolver.syevd)
-batching.primitive_batchers[eigh_p] = eigh_batching_rule
+
 
 
 
