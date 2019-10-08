@@ -387,7 +387,7 @@ def eqn_tracer_to_var(var, eqn):
   return new_jaxpr_eqn(invars, outvars, primitive, new_bound_subjaxprs, params)
 
 def tracers_to_jaxpr(in_tracers, out_tracers):
-  newvar = gensym('')
+  newvar = core.gensym('')
   t_to_var = defaultdict(newvar)
   var = lambda t: t_to_var[id(t)]
   sorted_tracers = toposort(out_tracers)
@@ -425,24 +425,6 @@ def tracers_to_jaxpr(in_tracers, out_tracers):
   core.skip_checks or core.check_jaxpr(jaxpr)
   return jaxpr, const_vals, env_vals
 
-def gensym(suffix):
-  counter = it.count()
-  return lambda: Var(next(counter), suffix)
-
-class Var(object):
-  def __init__(self, count, suffix):
-    self.count = count
-    self.suffix = suffix
-
-  def __repr__(self):
-    rem = self.count
-    s = ''
-    while True:
-      rem, i = rem // 26, rem % 26
-      s = chr(97 + i % 26) + s
-      if not rem:
-        break
-    return s + self.suffix
 
 def eqn_parents(eqn):
   subjaxpr_tracers = [it.chain(c, f) for _, c, f in eqn.bound_subjaxprs]

@@ -19,6 +19,7 @@ from __future__ import print_function
 from operator import attrgetter
 from contextlib import contextmanager
 from collections import namedtuple, Counter, defaultdict
+import itertools as it
 from weakref import ref
 import threading
 import types
@@ -85,6 +86,25 @@ JaxprEqn = namedtuple('JaxprEqn',
                       ['eqn_id', 'invars', 'outvars', 'primitive', 'bound_subjaxprs', 'params'])
 
 JaxprEqn.__repr__ = JaxprEqn.__str__ = lambda eqn: str(pp_eqn(eqn))[:-1]
+
+class Var(object):
+  def __init__(self, count, suffix):
+    self.count = count
+    self.suffix = suffix
+
+  def __repr__(self):
+    rem = self.count
+    s = ''
+    while True:
+      rem, i = rem // 26, rem % 26
+      s = chr(97 + i % 26) + s
+      if not rem:
+        break
+    return s + self.suffix
+
+def gensym(suffix):
+  counter = it.count()
+  return lambda: Var(next(counter), suffix)
 
 class Literal(object):
   __slots__ = ["val", "hash"]

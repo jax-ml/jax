@@ -94,6 +94,7 @@ And for a deeper dive into JAX:
 - [Directly using XLA in Python](https://colab.research.google.com/github/google/jax/blob/master/notebooks/XLA_in_Python.ipynb)
 - [MAML Tutorial with JAX](https://colab.research.google.com/github/google/jax/blob/master/notebooks/maml.ipynb)
 - [Generative Modeling by Estimating Gradients of Data Distribution in JAX](https://colab.research.google.com/github/google/jax/blob/master/notebooks/score_matching.ipynb).
+[How JAX primitives work](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/How_JAX_primitives_work.ipynb)
 
 ## Installation
 JAX is written in pure Python, but it depends on XLA, which needs to be compiled
@@ -340,10 +341,10 @@ Because `jit` aims to specialize Python functions only on shapes and dtypes
 during tracing, rather than on concrete values, Python control flow that depends
 on concrete values won’t be able to execute and will instead raise an error. If
 you want compiled control flow, use structured control flow primitives like
-lax.cond and lax.while_loop. Some indexing features, like slice-based indexing
-`A[i:i+5]` for argument-dependent `i`, or boolean-based indexing `A[bool_ind]`
-for argument-dependent `bool_ind`, produce abstract values of unknown shape and
-are thus unsupported in `jit` functions.
+`lax.cond` and `lax.while_loop`. Some indexing features, like slice-based
+indexing, e.g. `A[i:i+5]` for argument-dependent `i`, or boolean-based indexing,
+e.g. `A[bool_ind]` for argument-dependent `bool_ind`, produce abstract values of
+unknown shape and are thus unsupported in `jit` functions.
 
 In general, JAX is intended to be used with a functional style of Python
 programming. Functions passed to transformations like `grad` and `jit` are
