@@ -17,7 +17,7 @@
 
 import jaxlib
 
-_minimum_jaxlib_version = (0, 1, 28)
+_minimum_jaxlib_version = (0, 1, 31)
 try:
   from jaxlib import version as jaxlib_version
 except:
