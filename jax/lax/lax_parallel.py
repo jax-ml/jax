@@ -411,11 +411,6 @@ _defreducer(lax.reduce_max_p, pmax_p)
 _defreducer(lax.reduce_min_p, pmin_p)
 
 
-def _dot_papply_rule(name, size, vals, dims, precision):
-  x, _ = vals
-  dim_nums = [((x.ndim,), (0,)), ((), ())]
-  return _dot_general_papply_rule(name, size, vals, dims, dim_nums, precision)
-
 def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers,
                              precision):
   x, y = vals
@@ -700,7 +695,6 @@ def _gather_papply_rule(
     raise NotImplementedError
 
 
-parallel.papply_primitive_rules[lax.dot_p] = _dot_papply_rule
 parallel.papply_primitive_rules[lax.dot_general_p] = _dot_general_papply_rule
 parallel.papply_primitive_rules[lax.reshape_p] = _reshape_papply_rule
 parallel.papply_primitive_rules[lax.transpose_p] = _transpose_papply_rule
