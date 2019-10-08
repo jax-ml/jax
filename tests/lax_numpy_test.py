@@ -70,13 +70,9 @@ all_dtypes = number_dtypes + bool_dtypes
 OpRecord = collections.namedtuple(
     "OpRecord",
     ["name", "nargs", "dtypes", "shapes", "rng", "diff_modes", "test_name", "check_dtypes"])
-
-
 def op_record(name, nargs, dtypes, shapes, rng, diff_modes, test_name=None, check_dtypes=True):
   test_name = test_name or name
   return OpRecord(name, nargs, dtypes, shapes, rng, diff_modes, test_name, check_dtypes)
-
-
 JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("abs", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("add", 2, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
@@ -261,8 +257,6 @@ if six.PY2:
   ]
 
 CombosWithReplacement = itertools.combinations_with_replacement
-
-
 def _dtypes_are_compatible_for_bitwise_ops(args):
   if len(args) <= 1:
     return True
@@ -275,8 +269,6 @@ def _dtypes_are_compatible_for_bitwise_ops(args):
   # numpy actually implements.
   return (is_signed(x) == is_signed(y) or (width(x) == 32 and width(y) == 32)
           or (width(x) == 32 and width(y) == 64 and is_signed(y)))
-
-
 def _shapes_are_broadcast_compatible(shapes):
   accumulator = onp.zeros([])
   for shape in shapes:
@@ -285,12 +277,8 @@ def _shapes_are_broadcast_compatible(shapes):
     except ValueError:
       return False
   return True
-
-
 def _shapes_are_equal_length(shapes):
   return all(len(shape) == len(shapes[0]) for shape in shapes[1:])
-
-
 class LaxBackedNumpyTests(jtu.JaxTestCase):
   """Tests for LAX-backed Numpy implementation."""
   def _GetArgsMaker(self, rng, shapes, dtypes):
@@ -2274,19 +2262,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       return lnp.concatenate(x)
 
     foo(onp.zeros((2, 2)))  # doesn't crash
-
-
 # Most grad tests are at the lax level (see lax_test.py), but we add some here
 # as needed for e.g. particular compound ops of interest.
 
 GradTestSpec = collections.namedtuple("GradTestSpec",
                                       ["op", "nargs", "order", "rng", "dtypes", "name", "tol"])
-
-
 def grad_test_spec(op, nargs, order, rng, dtypes, name=None, tol=None):
   return GradTestSpec(op, nargs, order, rng, dtypes, name or op.__name__, tol)
-
-
 GRAD_TEST_RECORDS = [
     grad_test_spec(lnp.arcsinh, nargs=1, order=2, rng=jtu.rand_positive(),
                    dtypes=[onp.float64, onp.complex64], tol=1e-4),
@@ -2303,12 +2285,8 @@ GRAD_SPECIAL_VALUE_TEST_RECORDS = [
     GradSpecialValuesTestSpec(lnp.arccosh, [1000.]),
     GradSpecialValuesTestSpec(lnp.arctanh, [0.]),
 ]
-
-
 def num_float_bits(dtype):
   return onp.finfo(xla_bridge.canonicalize_dtype(dtype)).bits
-
-
 class NumpyGradTests(jtu.JaxTestCase):
   @parameterized.named_parameters(
       itertools.chain.from_iterable(
@@ -2345,7 +2323,5 @@ class NumpyGradTests(jtu.JaxTestCase):
           } for special_value in rec.values) for rec in GRAD_SPECIAL_VALUE_TEST_RECORDS))
   def testOpGradSpecialValue(self, op, special_value):
     check_grads(op, (special_value,), 2, ["fwd", "rev"])
-
-
 if __name__ == "__main__":
   absltest.main()

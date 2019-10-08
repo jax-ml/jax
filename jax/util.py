@@ -23,23 +23,17 @@ import types
 
 import fastcache
 import numpy as onp
-
-
 def safe_zip(*args):
   n = len(args[0])
   for arg in args[1:]:
     assert len(arg) == n, 'length mismatch: {}'.format(list(map(len, args)))
   return list(zip(*args))
-
-
 def safe_map(f, *args):
   args = list(map(list, args))
   n = len(args[0])
   for arg in args[1:]:
     assert len(arg) == n, 'length mismatch: {}'.format(list(map(len, args)))
   return list(map(f, *args))
-
-
 def unzip2(xys):
   xs = []
   ys = []
@@ -47,8 +41,6 @@ def unzip2(xys):
     xs.append(x)
     ys.append(y)
   return tuple(xs), tuple(ys)
-
-
 def unzip3(xyzs):
   xs = []
   ys = []
@@ -58,8 +50,6 @@ def unzip3(xyzs):
     ys.append(y)
     zs.append(z)
   return tuple(xs), tuple(ys), tuple(zs)
-
-
 def split_list(args, ns):
   assert type(ns) is list
   args = list(args)
@@ -69,34 +59,24 @@ def split_list(args, ns):
     args = args[n:]
   lists.append(args)
   return lists
-
-
 def split_dict(dct, names):
   dct = dict(dct)
   lst = [dct.pop(name) for name in names]
   assert not dct
   return lst
-
-
 def concatenate(xs):
   return list(it.chain.from_iterable(xs))
-
-
 def partial(fun, *args, **kwargs):
   wrapped = functools.partial(fun, *args, **kwargs)
   functools.update_wrapper(wrapped, fun)
   wrapped._bound_args = args
   return wrapped
-
-
 class partialmethod(functools.partial):
   def __get__(self, instance, owner):
     if instance is None:
       return self
     else:
       return partial(self.func, instance, *(self.args or ()), **(self.keywords or {}))
-
-
 def curry(f):
   """Curries arguments of f, returning a function on any remaining arguments.
 
@@ -112,8 +92,6 @@ def curry(f):
   26
   """
   return partial(partial, f)
-
-
 def toposort(end_nodes):
   if not end_nodes: return []
 
@@ -143,15 +121,11 @@ def toposort(end_nodes):
 
   check_toposort(sorted_nodes[::-1])
   return sorted_nodes[::-1]
-
-
 def check_toposort(nodes):
   visited = set()
   for node in nodes:
     assert all(id(parent) in visited for parent in node.parents)
     visited.add(id(node))
-
-
 def split_merge(predicate, xs):
   sides = list(map(predicate, xs))
   lhs = [x for x, s in zip(xs, sides) if s]
@@ -171,22 +145,14 @@ def split_merge(predicate, xs):
     return out
 
   return lhs, rhs, merge
-
-
 def cache(max_size=4096):
   return fastcache.clru_cache(maxsize=max_size)
-
-
 memoize = fastcache.clru_cache(maxsize=None)
-
-
 def prod(xs):
   out = 1
   for x in xs:
     out *= x
   return out
-
-
 class WrapHashably(object):
   __slots__ = ["val"]
 
@@ -198,8 +164,6 @@ class WrapHashably(object):
 
   def __eq__(self, other):
     return self.val is other.val
-
-
 class Hashable(object):
   __slots__ = ["val"]
 
@@ -211,8 +175,6 @@ class Hashable(object):
 
   def __eq__(self, other):
     return self.val == other.val
-
-
 def get_module_functions(module):
   """Finds functions in module.
   Args:

@@ -23,8 +23,6 @@ from . import core
 from . import ad_util
 from .util import prod
 from .lib import xla_bridge
-
-
 def concretization_err_msg(fun):
   fname = getattr(fun, "__name__", fun)
   msg = ("Abstract value passed to `{}`, which requires a concrete value. "
@@ -32,15 +30,11 @@ def concretization_err_msg(fun):
          "of abstraction. If using `jit`, try using `static_argnums` or "
          "applying `jit` to smaller subfunctions instead.")
   return msg.format(fname)
-
-
 def concretization_function_error(fun):
   def error(self, *args):
     raise TypeError(concretization_err_msg(fun))
 
   return error
-
-
 class UnshapedArray(core.AbstractValue):
   __slots__ = ['dtype']
   array_abstraction_level = 3
@@ -83,8 +77,6 @@ class UnshapedArray(core.AbstractValue):
 
   def str_short(self):
     return self.dtype.name
-
-
 class ShapedArray(UnshapedArray):
   __slots__ = ['shape']
   array_abstraction_level = 2
@@ -128,8 +120,6 @@ class ShapedArray(UnshapedArray):
 
   def _len(self, ignored_tracer):
     return len(self)
-
-
 class ConcreteArray(ShapedArray):
   __slots__ = ['val']
   array_abstraction_level = 0
@@ -163,18 +153,12 @@ class ConcreteArray(ShapedArray):
 
   def str_short(self):
     return str(self.val)
-
-
 def make_shaped_array(x):
   dtype = xla_bridge.canonicalize_dtype(onp.result_type(x))
   return ShapedArray(onp.shape(x), dtype)
-
-
 def zeros_like_array(x):
   dtype = xla_bridge.canonicalize_dtype(onp.result_type(x))
   return onp.broadcast_to(onp.array(0, dtype), onp.shape(x))
-
-
 array_types = {
     onp.ndarray, onp.float64, onp.float32, onp.float16, onp.complex64, onp.complex128, onp.int64,
     onp.int32, onp.int16, onp.int8, onp.bool_, onp.uint64, onp.uint32, onp.uint16, onp.uint8,
@@ -187,16 +171,10 @@ if six.PY2:
 for t in array_types:
   core.pytype_aval_mappings[t] = ConcreteArray
   ad_util.jaxval_zeros_likers[t] = zeros_like_array
-
-
 def zeros_like_shaped_array(aval):
   assert isinstance(aval, ShapedArray)
   return onp.zeros(aval.shape, dtype=aval.dtype)
-
-
 ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
-
-
 def raise_to_shaped(aval):
   if isinstance(aval, ShapedArray):
     return ShapedArray(aval.shape, aval.dtype)
@@ -204,6 +182,4 @@ def raise_to_shaped(aval):
     return core.abstract_unit
   else:
     raise TypeError(type(aval))
-
-
 core.literalable_types.update(array_types)

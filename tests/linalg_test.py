@@ -43,17 +43,11 @@ T = lambda x: onp.swapaxes(x, -1, -2)
 
 float_types = [onp.float32, onp.float64]
 complex_types = [onp.complex64, onp.complex128]
-
-
 def _skip_if_unsupported_type(dtype):
   dtype = onp.dtype(dtype)
   if (not FLAGS.jax_enable_x64 and dtype in (onp.dtype('float64'), onp.dtype('complex128'))):
     raise unittest.SkipTest("--jax_enable_x64 is not set")
-
-
 numpy_version = tuple(map(int, onp.version.version.split('.')))
-
-
 class NumpyLinalgTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       jtu.cases_from_list({
@@ -605,8 +599,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     hess_func = jax.jacfwd(grad_func)
     cube_func = jax.jacfwd(hess_func)
     self.assertFalse(onp.any(onp.isnan(cube_func(a))))
-
-
 class ScipyLinalgTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       jtu.cases_from_list({
@@ -860,7 +852,5 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     f = partial(jsp.linalg.solve_triangular, lower=lower, trans=transpose_a,
                 unit_diagonal=unit_diagonal)
     jtu.check_grads(f, (A, B), 2, rtol=2e-2, eps=1e-3)
-
-
 if __name__ == "__main__":
   absltest.main()

@@ -21,8 +21,6 @@ import scipy.stats as osp_stats
 
 from ... import lax
 from ...numpy.lax_numpy import _promote_args_like, _constant_like, _wraps, inf, where
-
-
 @_wraps(osp_stats.pareto.logpdf)
 def logpdf(x, b, loc=0, scale=1):
   x, b, loc, scale = _promote_args_like(osp_stats.pareto.logpdf, x, b, loc, scale)
@@ -31,8 +29,6 @@ def logpdf(x, b, loc=0, scale=1):
   normalize_term = lax.log(lax.div(scale, b))
   log_probs = lax.neg(lax.add(normalize_term, lax.mul(lax.add(b, one), lax.log(scaled_x))))
   return where(lax.lt(x, lax.add(loc, scale)), -inf, log_probs)
-
-
 @_wraps(osp_stats.pareto.pdf)
 def pdf(x, b, loc=0, scale=1):
   return lax.exp(logpdf(x, b, loc, scale))

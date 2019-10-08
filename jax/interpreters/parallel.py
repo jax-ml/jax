@@ -35,21 +35,13 @@ from . import pxla
 
 map = safe_map
 zip = safe_zip
-
-
 def identity(x):
   return x
-
-
 ### papply
-
-
 def papply(fun, name, in_vals, axis_size):
   # this function is for testing purposes, so we drop the out_axis
   fun, _ = papply_transform(fun, name, axis_size)
   return fun.call_wrapped(*in_vals)
-
-
 @lu.transformation_with_aux
 def papply_transform(name, axis_size, *args):
   with new_master(PapplyTrace) as master:
@@ -60,8 +52,6 @@ def papply_transform(name, axis_size, *args):
     out_vals, out_axes = unzip2((t.val, t.axis) for t in out_tracers)
     del master, out_tracers
   yield out_vals, out_axes
-
-
 @lu.transformation_with_aux
 def papply_subtrace(master, name, axis_size, axes, *vals):
   trace = PapplyTrace(master, core.cur_sublevel())
@@ -69,13 +59,9 @@ def papply_subtrace(master, name, axis_size, axes, *vals):
   out_tracers = map(trace.full_raise, outs)
   out_vals, out_axes = unzip2((t.val, t.axis) for t in out_tracers)
   yield out_vals, out_axes
-
-
 # TODO(mattjj); use a special sentinel type rather than None
 NotSharded = type(None)
 not_sharded = None
-
-
 class PapplyTracer(Tracer):
   def __init__(self, trace, name, axis_size, val, axis):
     self.trace = trace
@@ -105,8 +91,6 @@ class PapplyTracer(Tracer):
       return core.full_lower(self.val)
     else:
       return self
-
-
 class PapplyTrace(Trace):
   def pure(self, val):
     return PapplyTracer(self, None, None, val, not_sharded)
@@ -154,6 +138,4 @@ class PapplyTrace(Trace):
 
   def process_map(self, map_primitive, f, tracers, params):
     raise NotImplementedError  # TODO(mattjj,frostig)
-
-
 papply_primitive_rules = {}

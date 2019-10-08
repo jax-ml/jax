@@ -33,8 +33,6 @@ from jax.experimental.stax import (AvgPool, BatchNorm, Conv, Dense, FanInSum, Fa
                                    GeneralConv, Identity, MaxPool, Relu, LogSoftmax)
 
 # ResNet blocks compose other layers
-
-
 def ConvBlock(kernel_size, filters, strides=(2, 2)):
   ks = kernel_size
   filters1, filters2, filters3 = filters
@@ -43,8 +41,6 @@ def ConvBlock(kernel_size, filters, strides=(2, 2)):
       BatchNorm(), Relu, Conv(filters3, (1, 1)), BatchNorm())
   Shortcut = stax.serial(Conv(filters3, (1, 1), strides), BatchNorm())
   return stax.serial(FanOut(2), stax.parallel(Main, Shortcut), FanInSum, Relu)
-
-
 def IdentityBlock(kernel_size, filters):
   ks = kernel_size
   filters1, filters2 = filters
@@ -57,11 +53,7 @@ def IdentityBlock(kernel_size, filters):
 
   Main = stax.shape_dependent(make_main)
   return stax.serial(FanOut(2), stax.parallel(Main, Identity), FanInSum, Relu)
-
-
 # ResNet architectures compose layers and ResNet blocks
-
-
 def ResNet50(num_classes):
   return stax.serial(
       GeneralConv(('HWCN', 'OIHW', 'NHWC'), 64, (7, 7), (2, 2), 'SAME'), BatchNorm(), Relu,
@@ -72,8 +64,6 @@ def ResNet50(num_classes):
       IdentityBlock(3, [256, 256]), IdentityBlock(3, [256, 256]), IdentityBlock(3, [256, 256]),
       ConvBlock(3, [512, 512, 2048]), IdentityBlock(3, [512, 512]), IdentityBlock(3, [512, 512]),
       AvgPool((7, 7)), Flatten, Dense(num_classes), LogSoftmax)
-
-
 if __name__ == "__main__":
   rng_key = random.PRNGKey(0)
 

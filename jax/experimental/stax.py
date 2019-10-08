@@ -48,8 +48,6 @@ logsoftmax = log_softmax
 #   init_fun: takes an rng key and an input shape and returns an
 #     (output_shape, params) pair,
 #   apply_fun: takes params, inputs, and an rng key and applies the layer.
-
-
 def Dense(out_dim, W_init=glorot_normal(), b_init=normal()):
   """Layer constructor function for a dense (fully-connected) layer."""
   def init_fun(rng, input_shape):
@@ -63,8 +61,6 @@ def Dense(out_dim, W_init=glorot_normal(), b_init=normal()):
     return np.dot(inputs, W) + b
 
   return init_fun, apply_fun
-
-
 def GeneralConv(dimension_numbers, out_chan, filter_shape, strides=None, padding='VALID',
                 W_init=None, b_init=normal(1e-6)):
   """Layer construction function for a general convolution layer."""
@@ -93,11 +89,7 @@ def GeneralConv(dimension_numbers, out_chan, filter_shape, strides=None, padding
     return lax.conv_general_dilated(inputs, W, strides, padding, one, one, dimension_numbers) + b
 
   return init_fun, apply_fun
-
-
 Conv = functools.partial(GeneralConv, ('NHWC', 'HWIO', 'NHWC'))
-
-
 def GeneralConvTranspose(dimension_numbers, out_chan, filter_shape, strides=None, padding='VALID',
                          W_init=None, b_init=normal(1e-6)):
   """Layer construction function for a general transposed-convolution layer."""
@@ -126,12 +118,8 @@ def GeneralConvTranspose(dimension_numbers, out_chan, filter_shape, strides=None
     return lax.conv_transpose(inputs, W, strides, padding, dimension_numbers) + b
 
   return init_fun, apply_fun
-
-
 Conv1DTranspose = functools.partial(GeneralConvTranspose, ('NHC', 'HIO', 'NHC'))
 ConvTranspose = functools.partial(GeneralConvTranspose, ('NHWC', 'HWIO', 'NHWC'))
-
-
 def BatchNorm(
     axis=(0, 1, 2), epsilon=1e-5, center=True, scale=True, beta_init=zeros, gamma_init=ones):
   """Layer construction function for a batch normalization layer."""
@@ -159,15 +147,11 @@ def BatchNorm(
     return z
 
   return init_fun, apply_fun
-
-
 def elementwise(fun, **fun_kwargs):
   """Layer that applies a scalar function elementwise on its inputs."""
   init_fun = lambda rng, input_shape: (input_shape, ())
   apply_fun = lambda params, inputs, **kwargs: fun(inputs, **fun_kwargs)
   return init_fun, apply_fun
-
-
 Tanh = elementwise(np.tanh)
 Relu = elementwise(relu)
 Exp = elementwise(np.exp)
@@ -179,8 +163,6 @@ Elu = elementwise(elu)
 LeakyRelu = elementwise(leaky_relu)
 Selu = elementwise(selu)
 Gelu = elementwise(gelu)
-
-
 def _pooling_layer(reducer, init_val, rescaler=None):
   def PoolingLayer(window_shape, strides=None, padding='VALID'):
     """Layer construction function for a pooling layer."""
@@ -200,12 +182,8 @@ def _pooling_layer(reducer, init_val, rescaler=None):
     return init_fun, apply_fun
 
   return PoolingLayer
-
-
 MaxPool = _pooling_layer(lax.max, -np.inf)
 SumPool = _pooling_layer(lax.add, 0.)
-
-
 def _normalize_by_window_size(dims, strides, padding):
   def rescale(outputs, inputs):
     one = np.ones(inputs.shape[1:-1], dtype=inputs.dtype)
@@ -213,11 +191,7 @@ def _normalize_by_window_size(dims, strides, padding):
     return outputs / window_sizes[..., np.newaxis]
 
   return rescale
-
-
 AvgPool = _pooling_layer(lax.add, 0., _normalize_by_window_size)
-
-
 def Flatten():
   """Layer construction function for flattening all but the leading dim."""
   def init_fun(rng, input_shape):
@@ -228,38 +202,24 @@ def Flatten():
     return np.reshape(inputs, (inputs.shape[0], -1))
 
   return init_fun, apply_fun
-
-
 Flatten = Flatten()
-
-
 def Identity():
   """Layer construction function for an identity layer."""
   init_fun = lambda rng, input_shape: (input_shape, ())
   apply_fun = lambda params, inputs, **kwargs: inputs
   return init_fun, apply_fun
-
-
 Identity = Identity()
-
-
 def FanOut(num):
   """Layer construction function for a fan-out layer."""
   init_fun = lambda rng, input_shape: ([input_shape] * num, ())
   apply_fun = lambda params, inputs, **kwargs: [inputs] * num
   return init_fun, apply_fun
-
-
 def FanInSum():
   """Layer construction function for a fan-in sum layer."""
   init_fun = lambda rng, input_shape: (input_shape[0], ())
   apply_fun = lambda params, inputs, **kwargs: sum(inputs)
   return init_fun, apply_fun
-
-
 FanInSum = FanInSum()
-
-
 def FanInConcat(axis=-1):
   """Layer construction function for a fan-in concatenation layer."""
   def init_fun(rng, input_shape):
@@ -272,8 +232,6 @@ def FanInConcat(axis=-1):
     return np.concatenate(inputs, axis)
 
   return init_fun, apply_fun
-
-
 def Dropout(rate, mode='train'):
   """Layer construction function for a dropout layer with given rate."""
   def init_fun(rng, input_shape):
@@ -294,11 +252,7 @@ def Dropout(rate, mode='train'):
       return inputs
 
   return init_fun, apply_fun
-
-
 # Composing layers via combinators
-
-
 def serial(*layers):
   """Combinator for composing layers in serial.
 
@@ -328,8 +282,6 @@ def serial(*layers):
     return inputs
 
   return init_fun, apply_fun
-
-
 def parallel(*layers):
   """Combinator for composing layers in parallel.
 
@@ -358,8 +310,6 @@ def parallel(*layers):
     return [f(p, x, rng=r, **kwargs) for f, p, x, r in zip(apply_funs, params, inputs, rngs)]
 
   return init_fun, apply_fun
-
-
 def shape_dependent(make_layer):
   """Combinator to delay layer constructor pair until input shapes are known.
 

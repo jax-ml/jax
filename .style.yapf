@@ -5,3 +5,4 @@ join_multiple_lines = true
 column_limit = 100
 split_before_named_assigns = false
 blank_line_before_nested_class_or_def = false
+blank_lines_around_top_level_definition = 0

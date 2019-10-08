@@ -36,8 +36,6 @@ from jax.interpreters import xla
 
 from jax.config import config
 config.parse_flags_with_absl()
-
-
 class PmapTest(jtu.JaxTestCase):
   def _getMeshShape(self, device_mesh_shape):
     device_count = xla_bridge.device_count()
@@ -742,8 +740,6 @@ class PmapTest(jtu.JaxTestCase):
     ndevices = xla_bridge.device_count()
     self.assertAllClose(
         f(np.array([vals] * ndevices)), np.array([sum(vals)] * ndevices), check_dtypes=True)
-
-
 class PmapWithDevicesTest(jtu.JaxTestCase):
   def testAllDevices(self):
     f = pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i', devices=xla_bridge.devices())
@@ -858,7 +854,5 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     ans = grad(lambda x: np.sum(np.sin(x)))(x)
     expected = grad(lambda x: np.sum(f(x)))(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
-
-
 if __name__ == '__main__':
   absltest.main()

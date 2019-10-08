@@ -66,16 +66,10 @@ erf_inv = scipy.special.erfi
 
 real = onp.real
 imag = onp.imag
-
-
 def conj(x):
   return onp.asarray(onp.conj(x), dtype=onp.complex64)
-
-
 def complex(x, y):
   return onp.asarray(x + 1j * y, dtype=onp.complex64)
-
-
 abs = onp.absolute
 pow = onp.power
 
@@ -87,8 +81,6 @@ bitwise_xor = onp.bitwise_xor
 add = onp.add
 sub = onp.subtract
 mul = onp.multiply
-
-
 def div(lhs, rhs):
   if onp.issubdtype(onp.result_type(lhs), onp.integer):
     quotient = onp.floor_divide(lhs, rhs)
@@ -96,12 +88,8 @@ def div(lhs, rhs):
     return onp.where(select, quotient + 1, quotient)
   else:
     return onp.divide(lhs, rhs)
-
-
 def rem(lhs, rhs):
   return onp.sign(lhs) * onp.remainder(onp.abs(lhs), onp.abs(rhs))
-
-
 max = onp.maximum
 min = onp.minimum
 
@@ -115,33 +103,19 @@ ge = onp.greater_equal
 gt = onp.greater
 le = onp.less_equal
 lt = onp.less
-
-
 def convert_element_type(operand, dtype):
   return onp.asarray(operand, dtype=dtype)
-
-
 def bitcast_convert_type(operand, dtype):
   return onp.asarray(operand).view(dtype)
-
-
 def clamp(min, operand, max):
   return onp.clip(operand, onp.clip(min, None, max), max)
-
-
 def concatenate(operands, dimension):
   return onp.concatenate(operands, axis=dimension)
-
-
 def conv(lhs, rhs, window_strides, padding):
   pads = padtype_to_pads(lhs.shape[2:], rhs.shape[2:], window_strides, padding)
   return _conv(lhs, rhs, window_strides, pads)
-
-
 def conv_with_general_padding(lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation):
   return _conv(_dilate(lhs, lhs_dilation), _dilate(rhs, rhs_dilation), window_strides, padding)
-
-
 def conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
                          dimension_numbers):
   lhs_perm, rhs_perm, out_perm = _conv_general_permutations(dimension_numbers)
@@ -154,11 +128,7 @@ def conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation, rhs_di
   out = conv_with_general_padding(trans_lhs, trans_rhs, window_strides, padding, lhs_dilation,
                                   rhs_dilation)
   return transpose(out, onp.argsort(out_perm))
-
-
 dot = onp.dot
-
-
 def dot_general(lhs, rhs, dimension_numbers):
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
   new_id = itertools.count()
@@ -186,26 +156,16 @@ def dot_general(lhs, rhs, dimension_numbers):
   not_none = lambda x: x is not None
   out_axis_ids = filter(not_none, batch_ids + lhs_out_axis_ids + rhs_out_axis_ids)
   return onp.einsum(lhs, lhs_axis_ids, rhs, rhs_axis_ids, out_axis_ids)
-
-
 def broadcast(operand, sizes):
   return onp.broadcast_to(operand, sizes + onp.shape(operand))
-
-
 def broadcast_in_dim(operand, shape, broadcast_dimensions):
   inshape = tuple(1 if i not in broadcast_dimensions else d for i, d in enumerate(shape))
   return onp.broadcast_to(onp.reshape(operand, inshape), shape)
-
-
 sum = onp.sum
-
-
 def reshape(operand, new_sizes, dimensions=None):
   if dimensions is None:
     dimensions = range(len(onp.shape(operand)))
   return onp.reshape(onp.transpose(operand, dimensions), new_sizes)
-
-
 def pad(operand, padding_value, padding_config):
   lo, hi, interior = zip(*padding_config)
   outshape = onp.add(
@@ -218,48 +178,32 @@ def pad(operand, padding_value, padding_config):
   rhs_slices = tuple(_slice(l if l < 0 else 0, -h if h < 0 else None) for l, h in zip(lo, hi))
   out[lhs_slices] = operand[rhs_slices]
   return out
-
-
 def rev(operand, dimensions):
   dimensions = frozenset(dimensions)
   indexer = (
       _slice(None, None, -1) if d in dimensions else _slice(None) for d in range(onp.ndim(operand)))
   return operand[tuple(indexer)]
-
-
 select = onp.where
-
-
 def slice(operand, start_indices, limit_indices, strides=None):  # pylint: disable=redefined-builtin
   if strides is None:
     strides = onp.ones(len(start_indices)).astype(int)
   slices = tuple(_map(_slice, start_indices, limit_indices, strides))
   return operand[slices]
-
-
 def dynamic_slice(operand, start_indices, slice_sizes):
   out = onp.zeros(slice_sizes, dtype=operand.dtype)
   idx = tuple(_slice(start, start + size) for start, size in zip(start_indices, slice_sizes))
   section = operand[idx]
   out[tuple(_slice(None, stop) for stop in section.shape)] = section
   return out
-
-
 def dynamic_update_slice(operand, update, start_indices):
   slices = tuple(_map(_slice, start_indices, onp.add(start_indices, update.shape)))
   updated_operand = onp.copy(operand)
   updated_operand[slices] = update
   return updated_operand
-
-
 transpose = onp.transpose
-
-
 def reduce(operand, init_value, computation, dimensions):  # pylint: disable=redefined-builtin
   reducer = _make_reducer(computation, init_value)
   return reducer(operand, tuple(dimensions)).astype(onp.asarray(operand).dtype)
-
-
 def reduce_window(operand, init_value, computation, window_dimensions, window_strides, padding):
   op, dims, strides = operand, window_dimensions, window_strides
   pads = padtype_to_pads(op.shape, dims, strides, padding)
@@ -268,29 +212,19 @@ def reduce_window(operand, init_value, computation, window_dimensions, window_st
   view = view.reshape(view.shape[1:1 + len(dims)] + (-1,))
   reducer = _make_reducer(computation, init_value)
   return reducer(view, axis=-1)
-
-
 # TODO(mattjj): select_and_scatter
 
 sort = onp.sort
-
-
 def sort_key_val(keys, values, dimension=-1):
   idxs = list(onp.ix_(*[onp.arange(d) for d in keys.shape]))
   idxs[dimension] = onp.argsort(keys, axis=dimension)
   return keys[idxs], values[idxs]
-
-
 # TODO untake
 
 ### conv util
-
-
 def _conv(lhs, rhs, window_strides, pads):
   view, view_axes, rhs_axes, out_axes = _conv_view(lhs, rhs.shape, window_strides, pads, 0.)
   return opt_einsum.contract(view, view_axes, rhs, rhs_axes, out_axes, use_blas=True)
-
-
 def padtype_to_pads(in_shape, filter_shape, window_strides, padding):
   if padding.upper() == 'SAME':
     out_shape = onp.ceil(onp.true_divide(in_shape, window_strides)).astype(int)
@@ -301,8 +235,6 @@ def padtype_to_pads(in_shape, filter_shape, window_strides, padding):
     return [(pad_size // 2, pad_size - pad_size // 2) for pad_size in pad_sizes]
   else:
     return [(0, 0)] * len(in_shape)
-
-
 def _conv_view(lhs, rhs_shape, window_strides, pads, pad_value):
   """Compute the view (and its axes) of a convolution or window reduction."""
   if (_min(lhs.ndim, len(rhs_shape)) < 2 or lhs.ndim != len(rhs_shape)
@@ -332,8 +264,6 @@ def _conv_view(lhs, rhs_shape, window_strides, pads, pad_value):
   out_axes = [0, view.ndim] + list(range(1, dim + 1))
 
   return view, view_axes, rhs_axes, out_axes
-
-
 def _pad(arr, pads, pad_value):
   out = onp.pad(arr, onp.maximum(0, pads), mode='constant',
                 constant_values=pad_value).astype(arr.dtype)
@@ -341,8 +271,6 @@ def _pad(arr, pads, pad_value):
       _slice(abs(lo) if lo < 0 else 0, hi % dim if hi < 0 else None)
       for (lo, hi), dim in zip(pads, onp.shape(arr)))
   return out[slices]
-
-
 def _dilate(operand, factors):
   # this logic is like lax.pad, but with two leading dimensions, no edge
   # padding, and factors are at least 1 (interior padding is at least 0)
@@ -352,8 +280,6 @@ def _dilate(operand, factors):
   lhs_slices = tuple(_slice(None, None, step) for step in factors)
   out[(_slice(None),) * 2 + lhs_slices] = operand
   return out
-
-
 def _conv_general_permutations(dimension_numbers):
   lhs_spec, rhs_spec, out_spec = dimension_numbers
   rhs_perm = ((rhs_spec.index('O'), rhs_spec.index('I')) +
@@ -365,11 +291,7 @@ def _conv_general_permutations(dimension_numbers):
       sorted((i for i, c in enumerate(out_spec) if c not in {'N', 'C'}),
              key=lambda i: rhs_spec.index(out_spec[i]))))
   return lhs_perm, rhs_perm, out_perm
-
-
 ### reduce util
-
-
 def _make_reducer(py_binop, init_val):
   """Make a reducer function given a Python binop and an initial value."""
   # It's tempting to use onp.ufunc.reduce (even with a ufunc generated by
@@ -382,20 +304,12 @@ def _make_reducer(py_binop, init_val):
     if init_val == monoid_identity(onp.result_type(init_val)):
       return reducer
   return _reducer_from_pyfunc(py_binop, init_val)
-
-
 def _get_max_identity(dt):
   return -onp.inf if onp.issubdtype(dt, onp.floating) else onp.iinfo(dt).min
-
-
 def _get_min_identity(dt):
   return onp.inf if onp.issubdtype(dt, onp.floating) else onp.iinfo(dt).max
-
-
 def _identity_getter(op):
   return lambda dtype: onp.asarray(op.identity, dtype=dtype)
-
-
 MonoidRecord = collections.namedtuple('MonoidRecord', ['reducer', 'identity'])
 _monoids = {
     'max': MonoidRecord(onp.maximum.reduce, _get_max_identity),
@@ -406,8 +320,6 @@ _monoids = {
     'logical_and': MonoidRecord(onp.logical_and.reduce, _identity_getter(onp.logical_and)),
     'logical_or': MonoidRecord(onp.logical_or.reduce, _identity_getter(onp.logical_or)),
 }
-
-
 def _reducer_from_pyfunc(py_binop, init_val):
   def reducer(operand, axis=0):
     axis = range(onp.ndim(operand)) if axis is None else axis

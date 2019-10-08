@@ -38,8 +38,6 @@ config.parse_flags_with_absl()
 
 # These are 'manual' tests for batching (vmap). The more exhaustive, more
 # systematic tests are in lax_test.py's LaxVmapTest class.
-
-
 class BatchingTest(jtu.JaxTestCase):
   def testConstantFunction(self):
     ans = vmap(lambda x: 3)(onp.ones(4))
@@ -1011,7 +1009,5 @@ class BatchingTest(jtu.JaxTestCase):
     ans = g(index1=onp.asarray([1]), index2=onp.asarray([2]))
     expected = g(onp.asarray([1]), onp.asarray([2]))
     self.assertAllClose(ans, expected, check_dtypes=True)
-
-
 if __name__ == '__main__':
   absltest.main()

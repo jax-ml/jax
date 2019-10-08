@@ -36,8 +36,6 @@ from jax.interpreters import xla
 from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
-
-
 class LaxRandomTest(jtu.JaxTestCase):
   def _CheckCollisions(self, samples, nbits):
     fail_prob = 0.01  # conservative bound on statistical fail prob by Chebyshev
@@ -431,7 +429,5 @@ class LaxRandomTest(jtu.JaxTestCase):
       out = random.threefry_2x32(onp.zeros(2, onp.uint32), onp.arange(10, dtype=onp.uint32))
     finally:
       xla.apply_primitive = apply_primitive
-
-
 if __name__ == "__main__":
   absltest.main()

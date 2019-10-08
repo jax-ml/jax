@@ -33,8 +33,6 @@ from jax.util import prod
 
 from jax.config import config
 config.parse_flags_with_absl()
-
-
 class PapplyTest(jtu.JaxTestCase):
   def testIdentity(self):
     pfun, axis_name = _papply(lambda x: x)
@@ -127,8 +125,6 @@ class PapplyTest(jtu.JaxTestCase):
     x = b = onp.ones(3)
     pfun, axis_name = _papply(lambda a: np.where(x, a, b))
     make_jaxpr(pfun)(onp.ones(3))  # doesn't crash
-
-
 class ParallelizeTest(jtu.JaxTestCase):
   def dedup(self, arr, expected_rank):
     if arr.ndim == expected_rank + 1:
@@ -324,7 +320,5 @@ class ParallelizeTest(jtu.JaxTestCase):
     expected = fun(x)
     ans = _parallelize(fun)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
-
-
 if __name__ == '__main__':
   absltest.main()

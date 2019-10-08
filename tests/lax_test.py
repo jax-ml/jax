@@ -42,12 +42,8 @@ from jax.lib import xla_client
 from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
-
-
 def num_float_bits(dtype):
   return onp.finfo(xla_bridge.canonicalize_dtype(dtype)).bits
-
-
 ### lax tests
 
 # For standard unops and binops, we can generate a large number of tests on
@@ -64,12 +60,8 @@ all_dtypes = float_dtypes + complex_dtypes + int_dtypes + bool_dtypes
 compatible_shapes = [[(3,)], [(3, 4), (3, 1), (1, 4)], [(2, 3, 4), (2, 1, 4)]]
 
 OpRecord = collections.namedtuple("OpRecord", ["op", "nargs", "dtypes", "rng", "tol"])
-
-
 def op_record(op, nargs, dtypes, rng, tol=1e-5):
   return OpRecord(op, nargs, dtypes, rng, tol)
-
-
 LAX_OPS = [
     op_record(lax.neg, 1, default_dtypes + complex_dtypes, jtu.rand_small()),
     op_record(lax.sign, 1, default_dtypes, jtu.rand_small()),
@@ -126,8 +118,6 @@ LAX_OPS = [
 ]
 
 CombosWithReplacement = itertools.combinations_with_replacement
-
-
 class LaxTest(jtu.JaxTestCase):
   """Numerical tests for LAX operations."""
   @parameterized.named_parameters(
@@ -1761,8 +1751,6 @@ class LaxTest(jtu.JaxTestCase):
 
     jtu.check_raises_regexp(lambda: lax.reshape(onp.ones(3,), (1.5, 2.0)), TypeError,
                             "Shapes must be 1D sequences of concrete values of integer type.*")
-
-
 class DeviceConstantTest(jtu.JaxTestCase):
   def _CheckDeviceConstant(self, make_const, expected):
     # check casting to ndarray works
@@ -1853,16 +1841,10 @@ class DeviceConstantTest(jtu.JaxTestCase):
     expected = onp.asarray(make_const())
 
     self._CheckDeviceConstant(make_const, expected)
-
-
 GradTestSpec = collections.namedtuple("GradTestSpec",
                                       ["op", "nargs", "order", "rng", "dtypes", "name", "tol"])
-
-
 def grad_test_spec(op, nargs, order, rng, dtypes, name=None, tol=None):
   return GradTestSpec(op, nargs, order, rng, dtypes, name or op.__name__, tol)
-
-
 LAX_GRAD_OPS = [
     grad_test_spec(lax.neg, nargs=1, order=2, rng=jtu.rand_default(),
                    dtypes=[onp.float64, onp.complex64]),
@@ -1943,16 +1925,12 @@ LAX_GRAD_SPECIAL_VALUE_TESTS = [
     GradSpecialValuesTestSpec(lax.erf, [0., 10.]),
     GradSpecialValuesTestSpec(lax.erfc, [0., 10.]),
 ]
-
-
 def check_grads_bilinear(f, args, order, modes=["fwd", "rev"], atol=None, rtol=None):
   # Can use large eps to make up for numerical inaccuracies since the op is
   # bilinear (relying on the fact that we only check one arg at a time)
   lhs, rhs = args
   check_grads(lambda lhs: f(lhs, rhs), (lhs,), order, modes=modes, atol=atol, rtol=rtol, eps=1.)
   check_grads(lambda rhs: f(lhs, rhs), (rhs,), order, modes=modes, atol=atol, rtol=rtol, eps=1.)
-
-
 class LaxAutodiffTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       itertools.chain.from_iterable(
@@ -2841,32 +2819,22 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     assert not set(onp.unique(x)) & set(onp.unique(y))
     tol = 1e-1 if num_float_bits(onp.float64) == 32 else 1e-3
     check_grads(lax.rem, (x, y), 2, ["fwd", "rev"], tol, tol)
-
-
 def all_bdims(*shapes):
   bdims = (itertools.chain([None], range(len(shape) + 1)) for shape in shapes)
   return (t for t in itertools.product(*bdims) if not all(e is None for e in t))
-
-
 def add_bdim(bdim_size, bdim, shape):
   shape = list(shape)
   if bdim is not None:
     shape.insert(bdim, bdim_size)
   return tuple(shape)
-
-
 def slicer(x, bdim):
   if bdim is None:
     return lambda _: x
   else:
     return lambda i: lax.index_in_dim(x, i, bdim, keepdims=False)
-
-
 def args_slicer(args, bdims):
   slicers = list(map(slicer, args, bdims))
   return lambda i: [sl(i) for sl in slicers]
-
-
 class LaxVmapTest(jtu.JaxTestCase):
   def _CheckBatching(self, op, bdim_size, bdims, shapes, dtype, rng, rtol=None, atol=None):
     batched_shapes = map(partial(add_bdim, bdim_size), bdims, shapes)
@@ -3416,7 +3384,5 @@ class LaxVmapTest(jtu.JaxTestCase):
   # TODO Collapse
   # TODO ScatterAdd
   # TODO Scatter
-
-
 if __name__ == '__main__':
   absltest.main()

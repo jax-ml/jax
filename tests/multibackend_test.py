@@ -34,8 +34,6 @@ from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 npr.seed(0)
-
-
 class MultiBackendTest(jtu.JaxTestCase):
   """Tests jit targeting to different backends."""
   @parameterized.named_parameters(
@@ -136,7 +134,5 @@ class MultiBackendTest(jtu.JaxTestCase):
     w = np.sin(z)
     self.assertEqual(z.device_buffer.platform(), backend)
     self.assertEqual(w.device_buffer.platform(), jtu.device_under_test())
-
-
 if __name__ == "__main__":
   absltest.main()

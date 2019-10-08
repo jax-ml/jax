@@ -35,8 +35,6 @@ from .numpy.lax_numpy import _constant_like, asarray, stack
 from jax.lib import xla_bridge
 from jax import core
 from jax.scipy.special import logit
-
-
 def PRNGKey(seed):
   """Create a pseudo-random number generator (PRNG) key given an integer seed.
 
@@ -59,18 +57,12 @@ def PRNGKey(seed):
     k1 = convert(lax.shift_right_logical(seed, 32))
   k2 = convert(lax.bitwise_and(seed, 0xFFFFFFFF))
   return lax.concatenate([k1, k2], 0)
-
-
 def _is_prng_key(key):
   try:
     return key.shape == (2,) and key.dtype == onp.uint32
   except AttributeError:
     return False
-
-
 ### utilities
-
-
 def _make_rotate_left(dtype):
   if not onp.issubdtype(dtype, onp.integer):
     raise TypeError("_rotate_left only accepts integer dtypes.")
@@ -82,16 +74,10 @@ def _make_rotate_left(dtype):
     return lax.shift_left(x, d) | lax.shift_right_logical(x, nbits - d)
 
   return _rotate_left
-
-
 def _bit_stats(bits):
   """This is a debugging function to compute the statistics of bit fields."""
   return onp.array([list(map(int, onp.binary_repr(x, 64))) for x in bits]).mean(0)
-
-
 ### hash function and split
-
-
 @jit
 def threefry_2x32(keypair, count):
   """Apply the Threefry 2x32 hash.
@@ -184,8 +170,6 @@ def threefry_2x32(keypair, count):
   out = np.concatenate(x)
   assert out.dtype == onp.uint32
   return lax.reshape(out[:-1] if odd_size else out, count.shape)
-
-
 def split(key, num=2):
   """Splits a PRNG key into `num` new keys by adding a leading axis.
 
@@ -198,14 +182,10 @@ def split(key, num=2):
     An array with shape (num, 2) and dtype uint32 representing `num` new keys.
   """
   return _split(key, num)
-
-
 @partial(jit, static_argnums=(1,))
 def _split(key, num):
   counts = lax.tie_in(key, lax.iota(onp.uint32, num * 2))
   return lax.reshape(threefry_2x32(key, counts), (num, 2))
-
-
 def fold_in(key, data):
   """Folds in data to a PRNG key to form a new PRNG key.
 
@@ -218,14 +198,10 @@ def fold_in(key, data):
     statistically safe for producing a stream of new pseudo-random values.
   """
   return _fold_in(key, data)
-
-
 @jit
 def _fold_in(key, data):
   key2 = lax.tie_in(key, PRNGKey(data))
   return threefry_2x32(key, key2)
-
-
 def _random_bits(key, bit_width, shape):
   """Sample uniform random bits of given width and shape using PRNG key."""
   if not _is_prng_key(key):
@@ -243,19 +219,13 @@ def _random_bits(key, bit_width, shape):
     bits = [lax.convert_element_type(x, onp.uint64) for x in np.split(bits, 2)]
     bits = lax.shift_left(bits[0], onp.uint64(32)) | bits[1]
   return lax.reshape(bits, shape)
-
-
 ### random samplers
-
-
 def _check_shape(name, shape):
   try:
     shape = tuple(map(int, shape))
   except TypeError:
     msg = "{} requires a concrete tuple of integers as shape argument, got {}."
     raise ValueError(msg.format(name, shape))
-
-
 def uniform(key, shape=(), dtype=onp.float64, minval=0., maxval=1.):
   """Sample uniform random values in [minval, maxval) with given shape/dtype.
 
@@ -272,8 +242,6 @@ def uniform(key, shape=(), dtype=onp.float64, minval=0., maxval=1.):
   """
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _uniform(key, shape, dtype, minval, maxval)
-
-
 @partial(jit, static_argnums=(1, 2))
 def _uniform(key, shape, dtype, minval, maxval):
   _check_shape("uniform", shape)
@@ -299,8 +267,6 @@ def _uniform(key, shape, dtype, minval, maxval):
       onp.array(1., dtype).view(onp.uint32 if nbits == 32 else onp.uint64))
   floats = lax.bitcast_convert_type(float_bits, dtype) - onp.array(1., dtype)
   return lax.max(minval, lax.reshape(floats * (maxval - minval) + minval, shape))
-
-
 def randint(key, shape, minval, maxval, dtype=onp.int64):
   """Sample uniform random values in [minval, maxval) with given shape/dtype.
 
@@ -319,8 +285,6 @@ def randint(key, shape, minval, maxval, dtype=onp.int64):
   """
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _randint(key, shape, minval, maxval, dtype)
-
-
 @partial(jit, static_argnums=(1, 4))
 def _randint(key, shape, minval, maxval, dtype):
   _check_shape("randint", shape)
@@ -360,8 +324,6 @@ def _randint(key, shape, minval, maxval, dtype):
       lax.mul(lax.rem(higher_bits, span), multiplier), lax.rem(lower_bits, span))
   random_offset = lax.rem(random_offset, span)
   return lax.add(minval, lax.convert_element_type(random_offset, dtype))
-
-
 def shuffle(key, x, axis=0):
   """Shuffle the elements of an array uniformly at random along an axis.
 
@@ -374,8 +336,6 @@ def shuffle(key, x, axis=0):
     A shuffled version of x.
   """
   return _shuffle(key, x, axis)
-
-
 @partial(jit, static_argnums=(2,))
 def _shuffle(key, x, axis):
   # On parallel architectures, Fisher-Yates is more expensive than doing
@@ -402,8 +362,6 @@ def _shuffle(key, x, axis):
     _, x = lax.sort_key_val(sort_keys, x, axis)
 
   return x
-
-
 def normal(key, shape=(), dtype=onp.float64):
   """Sample standard normal random values with given shape and float dtype.
 
@@ -418,8 +376,6 @@ def normal(key, shape=(), dtype=onp.float64):
   """
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _normal(key, shape, dtype)
-
-
 @partial(jit, static_argnums=(1, 2))
 def _normal(key, shape, dtype):
   _check_shape("normal", shape)
@@ -427,8 +383,6 @@ def _normal(key, shape, dtype):
   hi = onp.array(1., dtype)
   u = uniform(key, shape, dtype, lo, hi)
   return onp.array(onp.sqrt(2), dtype) * lax.erf_inv(u)
-
-
 def truncated_normal(key, lower, upper, shape=(), dtype=onp.float64):
   """Sample truncated standard normal random values with given shape and dtype.
 
@@ -445,8 +399,6 @@ def truncated_normal(key, lower, upper, shape=(), dtype=onp.float64):
   """
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _truncated_normal(key, lower, upper, shape, dtype)
-
-
 @partial(jit, static_argnums=(3, 4))
 def _truncated_normal(key, lower, upper, shape, dtype):
   _check_shape("truncated_normal", shape)
@@ -457,8 +409,6 @@ def _truncated_normal(key, lower, upper, shape, dtype):
     raise TypeError("truncated_normal only accepts floating point dtypes.")
   u = uniform(key, shape, dtype, minval=onp.finfo(dtype).tiny)
   return sqrt2 * lax.erf_inv(a + u * (b - a))
-
-
 def bernoulli(key, p=onp.float32(0.5), shape=()):
   """Sample Bernoulli random values with given shape and mean.
 
@@ -478,8 +428,6 @@ def bernoulli(key, p=onp.float32(0.5), shape=()):
     raise TypeError(msg.format(dtype))
   p = lax.convert_element_type(p, dtype)
   return _bernoulli(key, p, shape)
-
-
 @partial(jit, static_argnums=(2,))
 def _bernoulli(key, p, shape):
   _check_shape("bernoulli", shape)
@@ -487,8 +435,6 @@ def _bernoulli(key, p, shape):
   if onp.shape(p) != shape:
     p = np.broadcast_to(p, shape)
   return lax.lt(uniform(key, shape, lax.dtype(p)), p)
-
-
 def beta(key, a, b, shape=(), dtype=onp.float64):
   """Sample Bernoulli random values with given shape and mean.
 
@@ -508,8 +454,6 @@ def beta(key, a, b, shape=(), dtype=onp.float64):
   """
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _beta(key, a, b, shape, dtype)
-
-
 @partial(jit, static_argnums=(3, 4))
 def _beta(key, a, b, shape, dtype):
   _check_shape("beta", shape)
@@ -520,8 +464,6 @@ def _beta(key, a, b, shape, dtype):
   gamma_a = gamma(key_a, a, shape, dtype)
   gamma_b = gamma(key_b, b, shape, dtype)
   return gamma_a / (gamma_a + gamma_b)
-
-
 def cauchy(key, shape=(), dtype=onp.float64):
   """Sample Cauchy random values with given shape and float dtype.
 
@@ -537,16 +479,12 @@ def cauchy(key, shape=(), dtype=onp.float64):
   """
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _cauchy(key, shape, dtype)
-
-
 @partial(jit, static_argnums=(1, 2))
 def _cauchy(key, shape, dtype):
   _check_shape("cauchy", shape)
   u = uniform(key, shape, dtype, minval=onp.finfo(dtype).eps, maxval=1.)
   pi = _constant_like(u, onp.pi)
   return lax.tan(lax.mul(pi, lax.sub(u, _constant_like(u, 0.5))))
-
-
 def dirichlet(key, alpha, shape=(), dtype=onp.float64):
   """Sample Cauchy random values with given shape and float dtype.
 
@@ -564,8 +502,6 @@ def dirichlet(key, alpha, shape=(), dtype=onp.float64):
   """
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _dirichlet(key, alpha, shape, dtype)
-
-
 @partial(jit, static_argnums=(2, 3))
 def _dirichlet(key, alpha, shape, dtype):
   _check_shape("dirichlet", shape)
@@ -573,8 +509,6 @@ def _dirichlet(key, alpha, shape, dtype):
   shape = shape or alpha.shape[:-1]
   gamma_samples = gamma(key, alpha, shape + alpha.shape[-1:], dtype)
   return gamma_samples / np.sum(gamma_samples, axis=-1, keepdims=True)
-
-
 def exponential(key, shape=(), dtype=onp.float64):
   """Sample Exponential random values with given shape and float dtype.
 
@@ -590,16 +524,12 @@ def exponential(key, shape=(), dtype=onp.float64):
   """
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _exponential(key, shape, dtype)
-
-
 @partial(jit, static_argnums=(1, 2))
 def _exponential(key, shape, dtype):
   _check_shape("exponential", shape)
   u = uniform(key, shape, dtype)
   # taking 1 - u to move the domain of log to (0, 1] instead of [0, 1)
   return lax.neg(lax.log1p(lax.neg(u)))
-
-
 def _gamma_one(key, alpha):
   # Ref: A simple method for generating gamma variables, George Marsaglia and Wai Wan Tsang
   # The algorithm can also be founded in:
@@ -654,8 +584,6 @@ def _gamma_one(key, alpha):
   _, _, V, _ = lax.while_loop(_cond_fn, _body_fn, (key, zero, one, _constant_like(alpha, 2)))
   z = lax.mul(lax.mul(d, V), boost)
   return lax.select(lax.eq(z, zero), onp.finfo(z.dtype).tiny, z)
-
-
 _bivariate_coef = [[
     0.16009398, -0.094634816, 0.025146379, -0.0030648348, 1, 0.3266811, 0.10406087, 0.0014179033
 ],
@@ -667,8 +595,6 @@ _bivariate_coef = [[
                        0.040121005, -0.0065914079, -0.002628604, -0.0013441777, 0.017050642,
                        -0.0021309345, 0.00085092385, -1.5248239e-07
                    ]]
-
-
 def _gamma_grad_one(z, alpha):
   # Ref 1: Pathwise Derivatives Beyond the Reparameterization Trick, Martin & Fritz
   # Ref 2: Case 4 follows https://github.com/fritzo/notebooks/blob/master/gamma-reparameterized.ipynb
@@ -763,26 +689,18 @@ def _gamma_grad_one(z, alpha):
   _, _, grad, flag = lax.while_loop(_cond3, _case3, (z, alpha, grad, flag))
   _, _, grad, flag = lax.while_loop(lambda zagf: ~zagf[3], _case4, (z, alpha, grad, flag))
   return grad
-
-
 def _gamma_grad(sample, a):
   samples = np.reshape(sample, -1)
   alphas = np.reshape(a, -1)
   grads = vmap(_gamma_grad_one)(samples, alphas)
   return grads.reshape(a.shape)
-
-
 @custom_transforms
 def _gamma_impl(key, a):
   alphas = np.reshape(a, -1)
   keys = split(key, onp.size(alphas))
   samples = vmap(_gamma_one)(keys, alphas)
   return np.reshape(samples, np.shape(a))
-
-
 defjvp(_gamma_impl, None, lambda tangent, ans, key, a, **kwargs: tangent * _gamma_grad(ans, a))
-
-
 def gamma(key, a, shape=(), dtype=onp.float64):
   """Sample Gamma random values with given shape and float dtype.
 
@@ -800,8 +718,6 @@ def gamma(key, a, shape=(), dtype=onp.float64):
   """
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _gamma(key, a, shape, dtype)
-
-
 @partial(jit, static_argnums=(2, 3))
 def _gamma(key, a, shape, dtype):
   _check_shape("gamma", shape)
@@ -810,8 +726,6 @@ def _gamma(key, a, shape, dtype):
   if onp.shape(a) != shape:
     a = np.broadcast_to(a, shape)
   return _gamma_impl(key, a)
-
-
 def gumbel(key, shape=(), dtype=onp.float64):
   """Sample Gumbel random values with given shape and float dtype.
 
@@ -827,14 +741,10 @@ def gumbel(key, shape=(), dtype=onp.float64):
   """
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _gumbel(key, shape, dtype)
-
-
 @partial(jit, static_argnums=(1, 2))
 def _gumbel(key, shape, dtype):
   _check_shape("gumbel", shape)
   return -np.log(-np.log(uniform(key, shape, dtype, minval=onp.finfo(dtype).eps, maxval=1.)))
-
-
 def laplace(key, shape=(), dtype=onp.float64):
   """Sample Laplace random values with given shape and float dtype.
 
@@ -850,15 +760,11 @@ def laplace(key, shape=(), dtype=onp.float64):
   """
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _laplace(key, shape, dtype)
-
-
 @partial(jit, static_argnums=(1, 2))
 def _laplace(key, shape, dtype):
   _check_shape("laplace", shape)
   u = uniform(key, shape, dtype, minval=-1. + np.finfo(dtype).epsneg, maxval=1.)
   return lax.mul(lax.sign(u), lax.log1p(lax.neg(lax.abs(u))))
-
-
 def logistic(key, shape=(), dtype=onp.float64):
   """Sample logistic random values with given shape and float dtype.
 
@@ -874,14 +780,10 @@ def logistic(key, shape=(), dtype=onp.float64):
   """
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _logistic(key, shape, dtype)
-
-
 @partial(jit, static_argnums=(1, 2))
 def _logistic(key, shape, dtype):
   _check_shape("logistic", shape)
   return logit(uniform(key, shape, dtype))
-
-
 def pareto(key, b, shape=(), dtype=onp.float64):
   """Sample Pareto random values with given shape and float dtype.
 
@@ -899,8 +801,6 @@ def pareto(key, b, shape=(), dtype=onp.float64):
   """
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _pareto(key, b, shape, dtype)
-
-
 @partial(jit, static_argnums=(2, 3))
 def _pareto(key, b, shape, dtype):
   _check_shape("pareto", shape)
@@ -910,8 +810,6 @@ def _pareto(key, b, shape, dtype):
     b = np.broadcast_to(b, shape)
   e = exponential(key, shape, dtype)
   return lax.exp(lax.div(e, b))
-
-
 def t(key, df, shape=(), dtype=onp.float64):
   """Sample Student's t random values with given shape and float dtype.
 
@@ -929,8 +827,6 @@ def t(key, df, shape=(), dtype=onp.float64):
   """
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _t(key, df, shape, dtype)
-
-
 @partial(jit, static_argnums=(2, 3))
 def _t(key, df, shape, dtype):
   _check_shape("t", shape)

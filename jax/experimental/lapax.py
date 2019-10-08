@@ -29,13 +29,9 @@ import jax.lax as lax
 # TODO(mattjj): implement MAGMA-style algorithms from bartvm@
 
 ### Linalg functions
-
-
 def cholesky(a, block_size=1):
   """An unrolled left-looking Cholesky."""
   return _cholesky(LapaxMatrix(a, block_size)).ndarray
-
-
 def _cholesky(a):
   """An unrolled left-looking Cholesky on a (possibly blocked) LapaxMatrix."""
   n = a.shape[-1]
@@ -53,14 +49,10 @@ def _cholesky(a):
     if i < n - 1:
       out[i:, i] = solve(out[i, i], a[i:, i])
   return out
-
-
 def solve_triangular(a, b, left_side, lower, trans_a, block_size=1):
   """An unrolled triangular solve."""
   return _solve_triangular_right(
       LapaxMatrix(a, block_size), LapaxMatrix(b, block_size), left_side, lower, trans_a).ndarray
-
-
 def _solve_triangular_right(a, b, left_side, lower, trans_a):
   """An unrolled right-looking triangular solve on (blocked) LapaxMatrices."""
   n = a.shape[-1]
@@ -100,8 +92,6 @@ def _solve_triangular_right(a, b, left_side, lower, trans_a):
           b[:, :i] -= out[:, i] * a_row
 
   return out
-
-
 def _solve_triangular_left(a, b, left_side, lower, trans_a):
   """An unrolled left-looking triangular solve on *unblocked* LapaxMatrices."""
   assert a.bs == b.bs == 1
@@ -134,29 +124,17 @@ def _solve_triangular_left(a, b, left_side, lower, trans_a):
         out[:, i] = (b[:, i] - out[:, i + 1:] * a_col) / a[i, i]
 
   return out
-
-
 ### Convenient internally-used matrix model
-
-
 def full_like(x, val):
   return LapaxMatrix(lax.full_like(x.ndarray, val), x.bs)
-
-
 def sqrt(x):
   return LapaxMatrix(lax.pow(x.ndarray, lax.full_like(x.ndarray, 0.5)), x.bs)
-
-
 def _matrix_transpose(ndarray):
   dims = tuple(range(ndarray.ndim))
   dims = dims[:-2] + (dims[-1], dims[-2])
   return lax.transpose(ndarray, dims)
-
-
 def _make_infix_op(fun):
   return lambda *args: LapaxMatrix(fun(*(a.ndarray for a in args)), args[0].bs)
-
-
 class LapaxMatrix(object):
   """A matrix model using LAX functions and tweaked index rules from Numpy."""
   __slots__ = ["ndarray", "bs", "shape"]
@@ -182,11 +160,7 @@ class LapaxMatrix(object):
   __div__ = _make_infix_op(lax.div)
   __truediv__ = _make_infix_op(lax.div)
   T = property(_make_infix_op(_matrix_transpose))
-
-
 # Utility functions for block access of ndarrays
-
-
 def _canonical_idx(shape, idx_elt, axis, block_size=1):
   """Canonicalize the indexer `idx_elt` to a slice."""
   k = block_size
@@ -207,8 +181,6 @@ def _canonical_idx(shape, idx_elt, axis, block_size=1):
   else:
     end = min(k * (start - step), shape[axis])
     return slice(k * stop_inclusive, end, -step), True
-
-
 def _matrix_put(ndarray, idx, val, block_size=1):
   """Similar to numpy.put using LAX operations."""
   idx_i, idx_j = idx
@@ -222,8 +194,6 @@ def _matrix_put(ndarray, idx, val, block_size=1):
 
   start_indices = [0] * (ndarray.ndim - 2) + [sli.start, slj.start]
   return lax.dynamic_update_slice(ndarray, val, start_indices)
-
-
 def _matrix_take(ndarray, idx, block_size=1):
   """Similar to numpy.take using LAX operations."""
   idx_i, idx_j = idx

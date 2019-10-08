@@ -31,8 +31,6 @@ from jax import random
 
 from jax.config import config
 config.parse_flags_with_absl()
-
-
 class NNFunctionsTest(jtu.JaxTestCase):
   def testSoftplusGrad(self):
     check_grads(nn.softplus, (1e-8,), 4)
@@ -40,19 +38,13 @@ class NNFunctionsTest(jtu.JaxTestCase):
   def testSoftplusValue(self):
     val = nn.softplus(89.)
     self.assertAllClose(val, 89., check_dtypes=False)
-
-
 InitializerRecord = collections.namedtuple("InitializerRecord", ["name", "initializer", "shapes"])
 
 ALL_SHAPES = [(2,), (2, 2), (2, 3), (3, 2), (2, 3, 4), (4, 3, 2), (2, 3, 4, 5)]
-
-
 def initializer_record(name, initializer, min_dims=2, max_dims=4):
   shapes = [shape for shape in ALL_SHAPES if min_dims <= len(shape) <= max_dims]
 
   return InitializerRecord(name, initializer, shapes)
-
-
 INITIALIZER_RECS = [
     initializer_record("uniform", nn.initializers.uniform(), 1),
     initializer_record("normal", nn.initializers.normal(), 1),
@@ -64,8 +56,6 @@ INITIALIZER_RECS = [
     initializer_record("lecun_uniform", nn.initializers.lecun_uniform()),
     initializer_record("orthogonal", nn.initializers.orthogonal(), 2, 2)
 ]
-
-
 class NNInitializersTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       jtu.cases_from_list({

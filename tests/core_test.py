@@ -40,24 +40,14 @@ config.parse_flags_with_absl()
 
 _ = pe.PartialVal((UnshapedArray(onp.float32), core.unit))
 __ = pe.PartialVal((ShapedArray((), onp.float32), core.unit))
-
-
 def call(f, *args):
   return jit(f)(*args)
-
-
 def simple_fun(x, y):
   return np.sin(x * y)
-
-
 def simple_fun_fanout(x, y):
   return np.sin(x * y) * x
-
-
 def fun_with_call(x):
   return call(np.sin, x)
-
-
 def fun_with_nested_calls(x):
   def f(y):
     y2 = np.sin(y) + 1.0 + (2.0 * x)
@@ -69,15 +59,11 @@ def fun_with_nested_calls(x):
     return call(g, y)
 
   return call(f, x)
-
-
 def error(*args):
   def f(*args):
     assert False
 
   return f
-
-
 def fun_with_nested_calls_2(x):
   def bar(y):
     def baz(w):
@@ -91,34 +77,24 @@ def fun_with_nested_calls_2(x):
     return t + (x * p)
 
   return call(bar, x)
-
-
 def fun_call_jitted(x):
   @jit
   def g(z):
     return x * z
 
   return call(g, x)
-
-
 def fun_with_two_calls(x):
   return call(np.sin, x) + call(np.cos, x)
-
-
 def fun_with_call_closure(x):
   def foo(y, z):
     return (x * x) * np.sin(y) * z
 
   return call(foo, x, np.cos(x)) + x
-
-
 def product_io_fun(x, y):
   xa = x['a']
   xb = x['b']
   y1, (y2, y3) = y
   return np.sin(xa + y2), [xb, (y1, y3)]
-
-
 R = onp.random.randn
 TestSpec = namedtuple('TestSpec', ['fun', 'args'])
 test_specs_base = [
@@ -136,13 +112,9 @@ test_specs_base = [
     TestSpec(fun_with_nested_calls, (R(3, 2),)),
     TestSpec(fun_with_nested_calls_2, (R(1, 2),)),
 ]
-
-
 def jvp_unlinearized(f, primals, tangents):
   out, jvp = linearize(f, *primals)
   return out, jvp(*tangents)
-
-
 test_specs = []
 for ts in test_specs_base:
   test_specs.append(ts)
@@ -150,15 +122,11 @@ for ts in test_specs_base:
   test_specs.append(TestSpec(jit(ts.fun), ts.args))
   test_specs.append(TestSpec(jit(jit(ts.fun)), ts.args))
   test_specs.append(TestSpec(partial(jvp_unlinearized, ts.fun), (ts.args, ts.args)))
-
-
 def fwd_deriv(f):
   def df(x):
     return jvp(f, (x,), (1.0,))[1]
 
   return df
-
-
 class CoreTest(jtu.JaxTestCase):
   def test_tree_multimap(self):
     xs = ({'a': 1}, [2, 3])
@@ -275,7 +243,5 @@ class CoreTest(jtu.JaxTestCase):
     assert d_sin(0.0) == 1.0
     assert d2_sin(0.0) == 0.0
     assert d3_sin(0.0) == -1.0
-
-
 if __name__ == '__main__':
   absltest.main()

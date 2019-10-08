@@ -50,8 +50,6 @@ flags.DEFINE_string(
     'Platform name for XLA. The default is to attempt to use a GPU if '
     'available, but fall back to CPU otherwise. To set the platform manually, '
     'pass "cpu" for CPU or "gpu" for GPU.')
-
-
 def get_compile_options(num_replicas=None, device_assignment=None):
   """Returns the compile options to use, as derived from flag values.
 
@@ -82,15 +80,9 @@ def get_compile_options(num_replicas=None, device_assignment=None):
     assert num_replicas is None or device_assignment.replica_count() == num_replicas
     compile_options.device_assignment = device_assignment
   return compile_options
-
-
 _backends = {}
-
-
 def register_backend(name, factory):
   _backends[name] = factory
-
-
 def _get_local_backend(platform=None):
   if not platform:
     platform = FLAGS.jax_platform_name
@@ -113,8 +105,6 @@ def _get_local_backend(platform=None):
     warnings.warn('No GPU/TPU found, falling back to CPU.')
 
   return backend
-
-
 def _get_xrt_backend(platform=None):
   del platform
   # TODO(phawkins): support non-TPU devices.
@@ -123,14 +113,10 @@ def _get_xrt_backend(platform=None):
   tf_context = xrt.get_tf_context(FLAGS.jax_backend_target, worker)
   backend = xrt.XrtBackend(tf_context, tf_device_name)
   return backend
-
-
 register_backend('xla', _get_local_backend)
 register_backend('xrt', _get_xrt_backend)
 
 _backend_lock = threading.Lock()
-
-
 @util.memoize
 def get_backend(platform=None):
   with _backend_lock:
@@ -139,8 +125,6 @@ def get_backend(platform=None):
       msg = 'Unknown jax_xla_backend value "{}".'
       raise ValueError(msg.format(FLAGS.jax_xla_backend))
     return backend(platform)
-
-
 def device_count(backend=None):
   """Returns the total number of devices.
 
@@ -156,13 +140,9 @@ def device_count(backend=None):
     Number of devices.
   """
   return int(get_backend(backend).device_count())
-
-
 def local_device_count(backend=None):
   """Returns the number of devices on this host."""
   return int(get_backend(backend).local_device_count())
-
-
 def devices(backend=None):
   """Returns a list of all devices.
 
@@ -179,15 +159,11 @@ def devices(backend=None):
     List of Device subclasses.
   """
   return get_backend(backend).devices()
-
-
 def local_devices(host_id=None, backend=None):
   """Returns a list of devices local to a given host (this host by default)."""
   if host_id is None:
     host_id = get_backend(backend).host_id()
   return [d for d in devices(backend) if d.host_id == host_id]
-
-
 def host_id(backend=None):
   """Returns the integer host ID of this host.
 
@@ -202,34 +178,22 @@ def host_id(backend=None):
     Integer host ID.
   """
   return get_backend(backend).host_id()
-
-
 def host_ids(backend=None):
   """Returns a list of all host IDs."""
   return list(set(d.host_id for d in devices(backend)))
-
-
 def host_count(backend=None):
   return len(host_ids(backend))
-
-
 ### utility functions
-
-
 @util.memoize
 def dtype_to_etype(dtype):
   """Convert from dtype to canonical etype (reading FLAGS.jax_enable_x64)."""
   return xla_client.dtype_to_etype(canonicalize_dtype(dtype))
-
-
 _dtype_to_32bit_dtype = {
     onp.dtype('int64'): onp.dtype('int32'),
     onp.dtype('uint64'): onp.dtype('uint32'),
     onp.dtype('float64'): onp.dtype('float32'),
     onp.dtype('complex128'): onp.dtype('complex64'),
 }
-
-
 @util.memoize
 def canonicalize_dtype(dtype):
   """Convert from a dtype to a canonical dtype based on FLAGS.jax_enable_x64."""
@@ -239,13 +203,9 @@ def canonicalize_dtype(dtype):
     return dtype
   else:
     return _dtype_to_32bit_dtype.get(dtype, dtype)
-
-
 @util.memoize
 def supported_numpy_dtypes():
   return {canonicalize_dtype(dtype) for dtype in xla_client.XLA_ELEMENT_TYPE_TO_DTYPE.values()}
-
-
 # TODO(mattjj,frostig): try to remove this function
 def normalize_to_xla_dtypes(val):
   """Normalize dtypes in a value."""
@@ -254,8 +214,6 @@ def normalize_to_xla_dtypes(val):
   elif isinstance(val, (tuple, list)):
     return tuple(normalize_to_xla_dtypes(x) for x in val)
   raise TypeError('Can\'t convert to XLA: {}'.format(val))
-
-
 class _JaxComputationBuilder(xla_client.ComputationBuilder):
   """Base class implementing all of JaxComputationBuilder.
 
@@ -309,19 +267,11 @@ class _JaxComputationBuilder(xla_client.ComputationBuilder):
     else:
       return super(_JaxComputationBuilder, self).AllToAll(operand, split_axis, concat_axis,
                                                           replica_groups)
-
-
 def make_computation_builder(name):
   return _JaxComputationBuilder(name)
-
-
 def register_constant_handler(type_, handler_fun):
   _constant_handlers[type_] = handler_fun
-
-
 _constant_handlers = {}
-
-
 def _ndarray_constant_handler(c, val, canonicalize_types=True):
   """Constant handler for ndarray literals, handling zero-size strides.
 
@@ -353,15 +303,9 @@ def _ndarray_constant_handler(c, val, canonicalize_types=True):
     return c.Transpose(xla_val, permutation)
   else:
     return c.NumpyArrayConstant(val, canonicalize_types)
-
-
 register_constant_handler(onp.ndarray, _ndarray_constant_handler)
-
-
 def _scalar_constant_handler(c, val, canonicalize_types=True):
   return c.NumpyArrayConstant(val, canonicalize_types)
-
-
 for scalar_type in [
     onp.int8, onp.int16, onp.int32, onp.int64, onp.uint8, onp.uint16, onp.uint32, onp.uint64,
     onp.float16, onp.float32, onp.float64, onp.float128, float, int, bool, onp.bool_, onp.longlong

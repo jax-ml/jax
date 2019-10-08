@@ -34,19 +34,13 @@ from . import partial_eval as pe
 map = safe_map
 zip = safe_zip
 reduce = six.moves.reduce
-
-
 def prod(xs):
   xs = list(xs)
   return reduce(op.mul, xs) if xs else 1
-
-
 ### main transformation functions
 
 ShapeEnvs = namedtuple("ShapeEnvs", ["logical", "padded"])
 shape_envs = ShapeEnvs({}, {})  # TODO(mattjj): make this a stack for efficiency
-
-
 @contextmanager
 def extend_shape_envs(logical_env, padded_env):
   global shape_envs
@@ -55,8 +49,6 @@ def extend_shape_envs(logical_env, padded_env):
   shape_envs, prev = ShapeEnvs(new_logical, new_padded), shape_envs
   yield
   shape_envs = prev
-
-
 def shape_as_value(expr):
   if type(expr) is ShapeExpr:
     return eval_shape_expr(shape_envs.logical, expr)
@@ -64,8 +56,6 @@ def shape_as_value(expr):
     return tuple(eval_dim_expr(shape_envs.logical, d) if type(d) is Poly else d for d in expr)
   else:
     return expr
-
-
 def padded_shape_as_value(expr):
   if type(expr) is ShapeExpr:
     return eval_shape_expr(shape_envs.padded, expr)
@@ -73,8 +63,6 @@ def padded_shape_as_value(expr):
     return tuple(eval_dim_expr(shape_envs.padded, d) if type(d) is Poly else d for d in expr)
   else:
     return expr
-
-
 def mask_fun(fun, logical_env, padded_env, in_vals, shape_exprs):
   with core.new_master(MaskTrace) as master:
     fun, out_shapes = mask_subtrace(fun, master)
@@ -82,8 +70,6 @@ def mask_fun(fun, logical_env, padded_env, in_vals, shape_exprs):
       out_vals = fun.call_wrapped(in_vals, shape_exprs)
     del master
   return out_vals, out_shapes()
-
-
 @lu.transformation_with_aux
 def mask_subtrace(master, in_vals, shape_exprs):
   trace = MaskTrace(master, core.cur_sublevel())
@@ -92,8 +78,6 @@ def mask_subtrace(master, in_vals, shape_exprs):
   out_tracers = map(trace.full_raise, outs)
   out_vals, out_shapes = unzip2((t.val, t.shape_expr) for t in out_tracers)
   yield out_vals, out_shapes
-
-
 ### shape expressions
 
 # Shape expressions model tuples of formal polynomials with integer
@@ -102,8 +86,6 @@ def mask_subtrace(master, in_vals, shape_exprs):
 #   type ShapeExpr = [Poly]
 #   type Poly = Map Mon Int
 #   type Mon = Map Str Int
-
-
 class ShapeExpr(tuple):  # type ShapeExpr = [Poly]
   def __str__(self):
     return 'ShapeExpr({})'.format(', '.join(map(str, self)))
@@ -113,8 +95,6 @@ class ShapeExpr(tuple):  # type ShapeExpr = [Poly]
       return super(ShapeExpr, self).__getitem__(idx)
     else:
       return ShapeExpr(super(ShapeExpr, self).__getitem__(idx))
-
-
 class Poly(Counter):  # type Poly = Map Mon Int -- monomials to coeffs
   def __mul__(p1, p2):
     new_poly = Poly()
@@ -133,8 +113,6 @@ class Poly(Counter):  # type Poly = Map Mon Int -- monomials to coeffs
   def __str__(self):
     return ' + '.join(
         '{} {}'.format(v, k) if v != 1 else str(k) for k, v in sorted(self.items())).strip()
-
-
 class Mon(Counter):  # type Mon = Map Id Int -- ids to degrees
   def __hash__(self):
     return hash(tuple(self.items()))
@@ -150,19 +128,13 @@ class Mon(Counter):  # type Mon = Map Id Int -- ids to degrees
 
   def degree(self):
     return sum(self.values())
-
-
 def concrete_shape(shape):
   if type(shape) is ShapeExpr:
     return shape
   else:
     return ShapeExpr((Poly({Mon(): d}) for d in shape))
-
-
 def eval_shape_expr(env, expr):
   return tuple(eval_dim_expr(env, poly) for poly in expr)
-
-
 def eval_dim_expr(env, poly):
   terms = [
       mul(coeff, prod([pow(env[id], deg)
@@ -170,8 +142,6 @@ def eval_dim_expr(env, poly):
       for mon, coeff in poly.items()
   ]
   return sum(terms) if len(terms) > 1 else terms[0]
-
-
 def pow(x, deg):
   try:
     deg = int(deg)
@@ -179,8 +149,6 @@ def pow(x, deg):
     return x**deg
   else:
     return 1 if deg == 0 else x if deg == 1 else x**deg
-
-
 def mul(coeff, mon):
   try:
     coeff = int(coeff)
@@ -188,24 +156,16 @@ def mul(coeff, mon):
     return coeff * mon
   else:
     return 0 if coeff == 0 else mon if coeff == 1 else coeff * mon
-
-
 def is_constant(poly):
   try:
     ([], _), = poly.items()
     return True
   except (ValueError, TypeError):
     return False
-
-
 class ShapeError(Exception):
   pass
-
-
 class ShapeSyntaxError(Exception):
   pass
-
-
 # To denote some shape expressions (for annotations) we use a small language.
 #
 #   data ShapeSpec = ShapeSpec [Dim]
@@ -223,17 +183,11 @@ class ShapeSyntaxError(Exception):
 #
 # ShapeSpecs encode ShapeExprs but can have some monomorphic dims inside them,
 # which must be replaced with concrete shapes when known.
-
-
 class ShapeSpec(list):
   def __str__(self):
     return 'ShapeSpec({})'.format(', '.join(map(str, self)))
-
-
 def finalize_spec(spec, shape):
   return ShapeExpr(parse_lit(d) if e is monomorphic_dim else e for e, d in zip(spec, shape))
-
-
 def parse_spec(spec=''):
   if not spec:
     return ShapeSpec(())
@@ -242,8 +196,6 @@ def parse_spec(spec=''):
     spec = spec[1:-1]
   dims = map(parse_dim, spec.replace(' ', '').strip(',').split(','))
   return ShapeSpec(dims)
-
-
 def parse_dim(spec):
   if '+' in spec:
     terms = map(parse_dim, spec.split('+'))
@@ -259,45 +211,29 @@ def parse_dim(spec):
     return monomorphic_dim
   else:
     raise ShapeSyntaxError(spec)
-
-
 digits = frozenset(string.digits)
 identifiers = frozenset(string.ascii_lowercase)
-
-
 def parse_id(name):
   return Poly({Mon({name: 1}): 1})
-
-
 def parse_lit(val_str):
   return Poly({Mon(): int(val_str)})
-
-
 class MonomorphicDim(object):
   def __str__(self):
     return '_'
-
-
 monomorphic_dim = MonomorphicDim()
 
 # Two convenient ways to provide shape annotations:
 #   1. '(m, n)'
 #   2. s_['m', 'n']
-
-
 class S_(object):
   def __getitem__(self, idx):
     if type(idx) is tuple:
       return parse_spec('(' + ','.join(map(str, idx)) + ')')
     else:
       return parse_spec(str(idx))
-
-
 s_ = S_()
 
 ### automasking tracer machinery
-
-
 class MaskTracer(Tracer):
   __slots__ = ["val", "shape_expr"]
 
@@ -318,8 +254,6 @@ class MaskTracer(Tracer):
       return core.full_lower(self.val)
     else:
       return self
-
-
 class MaskTrace(Trace):
   def pure(self, val):
     return MaskTracer(self, val, concrete_shape(onp.shape(val)))
@@ -346,34 +280,22 @@ class MaskTrace(Trace):
 
   def process_call(self, call_primitive, f, tracers, params):
     raise NotImplementedError  # TODO mask-of-jit
-
-
 shape_parameterized_primitive_rules = {}
 masking_rules = {}
 shape_rules = {}
-
-
 def defvectorized(prim):
   shape_rules[prim] = vectorized_shape_rule
   masking_rules[prim] = partial(vectorized_masking_rule, prim)
-
-
 def vectorized_shape_rule(shape_exprs, **unused_params):
   shape_expr, = shape_exprs
   return shape_expr
-
-
 def vectorized_masking_rule(prim, padded_vals, logical_shapes, **params):
   del logical_shapes  # Unused.
   padded_val, = padded_vals
   return prim.bind(padded_val, **params)
-
-
 def defbinop(prim):
   shape_rules[prim] = binop_shape_rule
   masking_rules[prim] = partial(binop_masking_rule, prim)
-
-
 def binop_shape_rule(shape_exprs):
   x_shape_expr, y_shape_expr = shape_exprs
   if x_shape_expr == y_shape_expr:
@@ -384,24 +306,16 @@ def binop_shape_rule(shape_exprs):
     return x_shape_expr
   else:
     raise ShapeError
-
-
 def binop_masking_rule(prim, padded_vals, logical_shapes):
   del logical_shapes  # Unused.
   padded_x, padded_y = padded_vals
   return prim.bind(padded_x, padded_y)
-
-
 ### definition-time (import-time) shape checker tracer machinery
-
-
 def shapecheck(fun, in_shapes):
   with core.new_master(ShapeCheckTrace) as master:
     out_shapes = check_subtrace(fun, master).call_wrapped(in_shapes)
     del master
   return out_shapes
-
-
 @lu.transformation
 def check_subtrace(master, in_shapes):
   trace = ShapeCheckTrace(master, core.cur_sublevel())
@@ -409,8 +323,6 @@ def check_subtrace(master, in_shapes):
   outs = yield in_tracers, {}
   out_tracers = map(trace.full_raise, outs)
   yield [t.shape_expr for t in out_tracers]
-
-
 # TODO(mattjj): add dtypes?
 class ShapeCheckTracer(Tracer):
   __slots__ = ["shape_expr"]
@@ -425,8 +337,6 @@ class ShapeCheckTracer(Tracer):
 
   def full_lower(self):
     return self
-
-
 class ShapeCheckTrace(Trace):
   def pure(self, val):
     return ShapeCheckTracer(self, concrete_shape(onp.shape(val)))

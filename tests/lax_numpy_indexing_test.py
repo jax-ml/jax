@@ -48,8 +48,6 @@ default_dtypes = float_dtypes + int_dtypes
 all_dtypes = float_dtypes + int_dtypes + bool_types
 
 IndexSpec = collections.namedtuple("IndexTest", ["shape", "indexer"])
-
-
 def check_grads(f, args, order, atol=None, rtol=None, eps=None):
   # TODO(mattjj,dougalm): add higher-order check
   default_tol = 1e-6 if FLAGS.jax_enable_x64 else 1e-2
@@ -58,8 +56,6 @@ def check_grads(f, args, order, atol=None, rtol=None, eps=None):
   eps = eps or default_tol
   jtu.check_jvp(f, partial(api.jvp, f), args, atol, rtol, eps)
   jtu.check_vjp(f, partial(api.vjp, f), args, atol, rtol, eps)
-
-
 STATIC_INDEXING_TESTS = [
     ("OneIntIndex", [
         IndexSpec(shape=(3,), indexer=1),
@@ -348,8 +344,6 @@ MIXED_ADVANCED_INDEXING_TESTS = MIXED_ADVANCED_INDEXING_TESTS_NO_REPEATS + [
                                                 ]), Ellipsis, onp.array([[1, 0], [1, 0]]))),
     ]),
 ]
-
-
 class IndexingTest(jtu.JaxTestCase):
   """Tests for Numpy indexing translation rules."""
   @parameterized.named_parameters(
@@ -728,8 +722,6 @@ class IndexingTest(jtu.JaxTestCase):
     expected = onp.broadcast_to(onp.array([0, 3, 0], dtype=onp.float32)[:, None], (3, 4))
     self.assertAllClose(expected, primals, check_dtypes=True)
     self.assertAllClose(onp.zeros_like(x), tangents, check_dtypes=True)
-
-
 def _broadcastable_shapes(shape):
   """Returns all shapes that broadcast to `shape`."""
   def f(rshape):
@@ -743,12 +735,8 @@ def _broadcastable_shapes(shape):
 
   for x in f(list(reversed(shape))):
     yield list(reversed(x))
-
-
 def _update_shape(shape, indexer):
   return onp.zeros(shape)[indexer].shape
-
-
 class UpdateOps(enum.Enum):
   UPDATE = 0
   ADD = 1
@@ -772,8 +760,6 @@ class UpdateOps(enum.Enum):
         UpdateOps.MIN: ops.index_min,
         UpdateOps.MAX: ops.index_max,
     }[op](x, indexer, y)
-
-
 class IndexedUpdateTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       jtu.cases_from_list({
@@ -931,7 +917,5 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     ans = ops.segment_sum(data, segment_ids)
     expected = onp.array([13, 2, 7, 4])
     self.assertAllClose(ans, expected, check_dtypes=False)
-
-
 if __name__ == "__main__":
   absltest.main()

@@ -36,8 +36,6 @@ from jax import test_util as jtu
 from jax.util import unzip2
 from jax.lib import xla_bridge
 import jax.numpy as np  # scan tests use numpy
-
-
 def scan_reference(f, init, xs):
   carry = init
   ys = []
@@ -46,8 +44,6 @@ def scan_reference(f, init, xs):
     ys.append(lax.reshape(y, (1,) + onp.shape(y)))
   ys = lax.concatenate(ys, 0)
   return carry, ys
-
-
 class LaxControlFlowTest(jtu.JaxTestCase):
   def testWhileWithTuple(self):
     limit = 10
@@ -1059,7 +1055,5 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(TypeError, re.escape("tangent_solve() output pytree")):
       api.jvp(dummy_root_usage, (0.0,), (0.0,))
-
-
 if __name__ == '__main__':
   absltest.main()

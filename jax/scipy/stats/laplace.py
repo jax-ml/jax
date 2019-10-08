@@ -21,21 +21,15 @@ import scipy.stats as osp_stats
 
 from ... import lax
 from ...numpy.lax_numpy import _promote_args_like, _constant_like, _wraps
-
-
 @_wraps(osp_stats.laplace.logpdf)
 def logpdf(x, loc=0, scale=1):
   x, loc, scale = _promote_args_like(osp_stats.laplace.logpdf, x, loc, scale)
   two = _constant_like(x, 2)
   linear_term = lax.div(lax.abs(lax.sub(x, loc)), scale)
   return lax.neg(lax.add(linear_term, lax.log(lax.mul(two, scale))))
-
-
 @_wraps(osp_stats.laplace.pdf)
 def pdf(x, loc=0, scale=1):
   return lax.exp(logpdf(x, loc, scale))
-
-
 @_wraps(osp_stats.laplace.cdf)
 def cdf(x, loc=0, scale=1):
   x, loc, scale = _promote_args_like(osp_stats.laplace.cdf, x, loc, scale)

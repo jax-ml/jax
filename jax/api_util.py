@@ -21,8 +21,6 @@ from .linear_util import transformation_with_aux
 from .util import safe_map, unzip2, partial, curry
 
 map = safe_map
-
-
 @curry
 def wraps(wrapped, fun, namestr="{fun}", docstr="{doc}", **kwargs):
   try:
@@ -32,27 +30,17 @@ def wraps(wrapped, fun, namestr="{fun}", docstr="{doc}", **kwargs):
     fun.__wrapped__ = wrapped
   finally:
     return fun
-
-
 def get_name(fun):
   return getattr(fun, "__name__", "<unnamed function>")
-
-
 def get_module(fun):
   return getattr(fun, "__module__", "<unknown module>")
-
-
 def get_doc(fun):
   return getattr(fun, "__doc__", "")
-
-
 @transformation_with_aux
 def flatten_fun(in_tree, *args_flat):
   py_args, py_kwargs = tree_unflatten(in_tree, args_flat)
   ans = yield py_args, py_kwargs
   yield tree_flatten(ans)
-
-
 def apply_flat_fun(fun, io_tree, *py_args):
   in_tree_expected, out_tree = io_tree
   args, in_tree = tree_flatten((py_args, {}))
@@ -60,15 +48,11 @@ def apply_flat_fun(fun, io_tree, *py_args):
     raise TypeError("Expected {}, got {}".format(in_tree_expected, in_tree))
   ans = fun(*args)
   return tree_unflatten(out_tree, ans)
-
-
 @transformation_with_aux
 def flatten_fun_nokwargs(in_tree, *args_flat):
   py_args = tree_unflatten(in_tree, args_flat)
   ans = yield py_args, {}
   yield tree_flatten(ans)
-
-
 def apply_flat_fun_nokwargs(fun, io_tree, py_args):
   in_tree_expected, out_tree = io_tree
   args, in_tree = tree_flatten(py_args)
@@ -76,8 +60,6 @@ def apply_flat_fun_nokwargs(fun, io_tree, py_args):
     raise TypeError("Expected {}, got {}".format(in_tree_expected, in_tree))
   ans = fun(*args)
   return tree_unflatten(out_tree, ans)
-
-
 @transformation_with_aux
 def flatten_fun_nokwargs2(in_tree, *args_flat):
   py_args = tree_unflatten(in_tree, args_flat)

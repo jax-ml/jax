@@ -32,8 +32,6 @@ config.parse_flags_with_absl()
 # Primitive
 
 float_types = [onp.float32, onp.float64]
-
-
 class LapaxTest(jtu.JaxTestCase):
   def testSolveLowerTriangularVec(self):
     npr = onp.random.RandomState(1)
@@ -217,7 +215,5 @@ class LapaxTest(jtu.JaxTestCase):
 
     self.assertAllClose(np_ans, lapax_ans, check_dtypes=False)
     # pylint: enable=invalid-name
-
-
 if __name__ == "__main__":
   absltest.main()

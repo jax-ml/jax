@@ -26,8 +26,6 @@ import jax.numpy as np
 from jax.config import config
 from jax.experimental import optimizers
 from jax import grad, jit, make_jaxpr, vmap
-
-
 def gram(kernel, xs):
   '''Compute a Gram matrix from a kernel and an array of data points.
 
@@ -39,8 +37,6 @@ def gram(kernel, xs):
     A 2d array `a` such that `a[i, j] = kernel(xs[i], xs[j])`.
   '''
   return vmap(lambda x: vmap(lambda y: kernel(x, y))(xs))(xs)
-
-
 def minimize(f, x, num_steps=10000, step_size=0.000001, mass=0.9):
   opt_init, opt_update, get_params = optimizers.momentum(step_size, mass)
 
@@ -53,8 +49,6 @@ def minimize(f, x, num_steps=10000, step_size=0.000001, mass=0.9):
   for i in xrange(num_steps):
     opt_state = update(i, opt_state)
   return get_params(opt_state)
-
-
 def train(kernel, xs, ys, regularization=0.01):
   gram_ = jit(partial(gram, kernel))
   gram_mat = gram_(xs)
@@ -72,8 +66,6 @@ def train(kernel, xs, ys, regularization=0.01):
     return np.sum(v * prods)
 
   return jit(vmap(predict))
-
-
 if __name__ == "__main__":
   n = 100
   d = 20

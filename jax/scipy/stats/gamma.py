@@ -22,8 +22,6 @@ import scipy.stats as osp_stats
 from ... import lax
 from ...numpy.lax_numpy import (_promote_args_like, _constant_like, _wraps, where, inf)
 from ..special import gammaln
-
-
 @_wraps(osp_stats.gamma.logpdf)
 def logpdf(x, a, loc=0, scale=1):
   x, a, loc, scale = _promote_args_like(osp_stats.gamma.logpdf, x, a, loc, scale)
@@ -33,8 +31,6 @@ def logpdf(x, a, loc=0, scale=1):
   shape_terms = lax.add(gammaln(a), lax.log(scale))
   log_probs = lax.sub(log_linear_term, shape_terms)
   return where(lax.lt(x, loc), -inf, log_probs)
-
-
 @_wraps(osp_stats.gamma.pdf)
 def pdf(x, a, loc=0, scale=1):
   return lax.exp(logpdf(x, a, loc, scale))

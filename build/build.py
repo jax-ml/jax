@@ -44,21 +44,13 @@ if hasattr(shutil, "which"):
 else:
   from distutils.spawn import find_executable as which
 # pylint: enable=g-import-not-at-top
-
-
 def shell(cmd):
   output = subprocess.check_output(cmd)
   return output.decode("UTF-8").strip()
-
-
 # Python
-
-
 def get_python_bin_path(python_bin_path_flag):
   """Returns the path to the Python interpreter to use."""
   return python_bin_path_flag or sys.executable
-
-
 # Bazel
 
 BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/0.24.1/"
@@ -71,8 +63,6 @@ bazel_packages = {
         BazelPackage(file="bazel-0.24.1-darwin-x86_64",
                      sha256="cf763752550050d117e03659aaa6ccd6f97da1f983a6029300a497fdaeaaec46"),
 }
-
-
 def download_and_verify_bazel():
   """Downloads a bazel binary from Github, verifying its SHA256 hash."""
   package = bazel_packages.get(platform.system())
@@ -116,8 +106,6 @@ def download_and_verify_bazel():
     os.chmod(package.file, st.st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
   return "./" + package.file
-
-
 def get_bazel_path(bazel_path_flag):
   """Returns the path to a Bazel binary, downloading Bazel if not found."""
   if bazel_path_flag:
@@ -133,8 +121,6 @@ def get_bazel_path(bazel_path_flag):
 
   print("Cannot find or download bazel. Please install bazel.")
   sys.exit(-1)
-
-
 def check_bazel_version(bazel_path, min_version, max_version):
   """Checks Bazel's version is in the range [`min_version`, `max_version`)."""
   version_output = shell([bazel_path, "--bazelrc=/dev/null", "version"])
@@ -155,8 +141,6 @@ def check_bazel_version(bazel_path, min_version, max_version):
       print("Please downgrade your bazel revision to build JAX (>= {} and < {}"
             " required, found {})".format(min_version, max_version, version))
       sys.exit(0)
-
-
 BAZELRC_TEMPLATE = """
 build --action_env PYTHON_BIN_PATH="{python_bin_path}"
 build --python_path="{python_bin_path}"
@@ -188,8 +172,6 @@ build --strategy=Genrule=standalone
 build --cxxopt=-std=c++14
 build --host_cxxopt=-std=c++14
 """
-
-
 def write_bazelrc(cuda_toolkit_path=None, cudnn_install_path=None, **kwargs):
   f = open("../.bazelrc", "w")
   f.write(BAZELRC_TEMPLATE.format(**kwargs))
@@ -200,8 +182,6 @@ def write_bazelrc(cuda_toolkit_path=None, cudnn_install_path=None, **kwargs):
     f.write("build --action_env CUDNN_INSTALL_PATH=\"{cudnn_install_path}\"\n".format(
         cudnn_install_path=cudnn_install_path))
   f.close()
-
-
 BANNER = r"""
      _   _  __  __
     | | / \ \ \/ /
@@ -219,8 +199,6 @@ or
     python3 build.py
 to download and build JAX's XLA (jaxlib) dependency.
 """
-
-
 def _parse_string_as_bool(s):
   """Parses a string as a boolean argument."""
   lower = s.lower()
@@ -230,16 +208,12 @@ def _parse_string_as_bool(s):
     return False
   else:
     raise ValueError("Expected either 'true' or 'false'; got {}".format(s))
-
-
 def add_boolean_argument(parser, name, default=False, help_str=None):
   """Creates a boolean flag."""
   group = parser.add_mutually_exclusive_group()
   group.add_argument("--" + name, nargs="?", default=default, const=True,
                      type=_parse_string_as_bool, help=help_str)
   group.add_argument("--no" + name, dest=name, action="store_false")
-
-
 def main():
   parser = argparse.ArgumentParser(description="Builds libjax from source.", epilog=EPILOG)
   parser.add_argument(
@@ -302,7 +276,5 @@ def main():
   shell([bazel_path] + args.bazel_startup_options + ["run", "--verbose_failures=true"] +
         config_args + [":install_xla_in_source_tree", os.getcwd()])
   shell([bazel_path, "shutdown"])
-
-
 if __name__ == "__main__":
   main()

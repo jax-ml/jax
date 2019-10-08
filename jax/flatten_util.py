@@ -24,19 +24,13 @@ import jax.numpy as np
 from jax.api import vjp
 
 zip = safe_zip
-
-
 def ravel_pytree(pytree):
   leaves, treedef = tree_flatten(pytree)
   flat, unravel_list = vjp(ravel_list, *leaves)
   unravel_pytree = lambda flat: tree_unflatten(treedef, unravel_list(flat))
   return flat, unravel_pytree
-
-
 def ravel_list(*lst):
   return np.concatenate([np.ravel(elt) for elt in lst]) if lst else np.array([])
-
-
 @transformation_with_aux
 def ravel_fun(unravel_inputs, flat_in, **kwargs):
   pytree_args = unravel_inputs(flat_in)

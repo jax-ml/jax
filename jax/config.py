@@ -13,8 +13,6 @@
 # limitations under the License.
 
 import sys
-
-
 class Config(object):
   def __init__(self):
     self.values = {}
@@ -92,16 +90,12 @@ class Config(object):
       absl.flags.FLAGS(sys.argv, known_only=True)
       self.complete_absl_config(absl.flags)
       already_configured_with_absl = True
-
-
 class NameSpace(object):
   def __init__(self, getter):
     self._getter = getter
 
   def __getattr__(self, name):
     return self._getter(name)
-
-
 config = Config()
 flags = config
 already_configured_with_absl = False

@@ -20,8 +20,6 @@ from absl.testing import absltest
 import jax.numpy as np
 from jax.tools.jax_to_hlo import jax_to_hlo
 from jax.lib import xla_client
-
-
 class JaxToHloTest(absltest.TestCase):
   def test_convert_axpy(self):
     def axpy(a, x, y):
@@ -67,7 +65,5 @@ class JaxToHloTest(absltest.TestCase):
     # by Python/JAX to a/b = 30864.
     self.assertIn('constant(30864)', hlo_text)
     self.assertNotIn('123456', hlo_text)
-
-
 if __name__ == '__main__':
   absltest.main()

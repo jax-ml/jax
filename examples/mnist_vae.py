@@ -33,31 +33,21 @@ from jax.experimental import optimizers
 from jax.experimental import stax
 from jax.experimental.stax import Dense, FanOut, Relu, Softplus
 from examples import datasets
-
-
 def gaussian_kl(mu, sigmasq):
   """KL divergence from a diagonal Gaussian to the standard Gaussian."""
   return -0.5 * np.sum(1. + np.log(sigmasq) - mu**2. - sigmasq)
-
-
 def gaussian_sample(rng, mu, sigmasq):
   """Sample a diagonal Gaussian."""
   return mu + np.sqrt(sigmasq) * random.normal(rng, mu.shape)
-
-
 def bernoulli_logpdf(logits, x):
   """Bernoulli log pdf of data x given logits."""
   return -np.sum(np.logaddexp(0., np.where(x, -1., 1.) * logits))
-
-
 def elbo(rng, params, images):
   """Monte Carlo estimate of the negative evidence lower bound."""
   enc_params, dec_params = params
   mu_z, sigmasq_z = encode(enc_params, images)
   logits_x = decode(dec_params, gaussian_sample(rng, mu_z, sigmasq_z))
   return bernoulli_logpdf(logits_x, images) - gaussian_kl(mu_z, sigmasq_z)
-
-
 def image_sample(rng, params, nrow, ncol):
   """Sample images from the generative model."""
   _, dec_params = params
@@ -65,14 +55,10 @@ def image_sample(rng, params, nrow, ncol):
   logits = decode(dec_params, random.normal(code_rng, (nrow * ncol, 10)))
   sampled_images = random.bernoulli(img_rng, np.logaddexp(0., logits))
   return image_grid(nrow, ncol, sampled_images, (28, 28))
-
-
 def image_grid(nrow, ncol, imagevecs, imshape):
   """Reshape a stack of image vectors into an image grid for plotting."""
   images = iter(imagevecs.reshape((-1,) + imshape))
   return np.vstack([np.hstack([next(images).T for _ in range(ncol)][::-1]) for _ in range(nrow)]).T
-
-
 encoder_init, encode = stax.serial(
     Dense(512),
     Relu,

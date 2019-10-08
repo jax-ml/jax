@@ -27,8 +27,6 @@ from jax.experimental import stax
 
 from jax.config import config
 config.parse_flags_with_absl()
-
-
 def random_inputs(rng, input_shape):
   if type(input_shape) is tuple:
     return rng.randn(*input_shape).astype(onp.float32)
@@ -36,8 +34,6 @@ def random_inputs(rng, input_shape):
     return [random_inputs(rng, shape) for shape in input_shape]
   else:
     raise TypeError(type(input_shape))
-
-
 def _CheckShapeAgreement(test_case, init_fun, apply_fun, input_shape):
   rng_key = random.PRNGKey(0)
   rng_key, init_key = random.split(rng_key)
@@ -45,8 +41,6 @@ def _CheckShapeAgreement(test_case, init_fun, apply_fun, input_shape):
   inputs = random_inputs(onp.random.RandomState(0), input_shape)
   result = apply_fun(params, inputs, rng=rng_key)
   test_case.assertEqual(result.shape, result_shape)
-
-
 class StaxTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       jtu.cases_from_list({
@@ -274,7 +268,5 @@ class StaxTest(jtu.JaxTestCase):
     self.assertEqual(beta.shape, (5,))
     self.assertEqual(gamma.shape, (5,))
     self.assertEqual(out_shape, out.shape)
-
-
 if __name__ == "__main__":
   absltest.main()

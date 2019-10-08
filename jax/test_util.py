@@ -49,8 +49,6 @@ ATOL = 1e-4
 RTOL = 1e-4
 
 _dtype = lambda x: getattr(x, 'dtype', None) or onp.asarray(x).dtype
-
-
 def is_sequence(x):
   try:
     iter(x)
@@ -58,8 +56,6 @@ def is_sequence(x):
     return False
   else:
     return True
-
-
 def numpy_eq(x, y):
   testing_tpu = FLAGS.jax_test_dut and FLAGS.jax_test_dut.startswith("tpu")
   testing_x32 = not FLAGS.jax_enable_x64
@@ -67,8 +63,6 @@ def numpy_eq(x, y):
     return onp.allclose(x, y, 1e-3, 1e-3, equal_nan=testing_tpu)
   else:
     return onp.allclose(x, y)
-
-
 def numpy_close(a, b, atol=ATOL, rtol=RTOL, equal_nan=False):
   testing_tpu = FLAGS.jax_test_dut and FLAGS.jax_test_dut.startswith("tpu")
   testing_x32 = not FLAGS.jax_enable_x64
@@ -78,32 +72,20 @@ def numpy_close(a, b, atol=ATOL, rtol=RTOL, equal_nan=False):
   assert a.shape == b.shape
   return onp.allclose(a, b, atol=atol * a.size, rtol=rtol * b.size, equal_nan=equal_nan
                       or testing_tpu)
-
-
 def check_eq(xs, ys):
   assert tree_all(tree_multimap(numpy_eq, xs, ys)), \
       '\n{} != \n{}'.format(xs, ys)
-
-
 def check_close(xs, ys, atol=ATOL, rtol=RTOL):
   close = partial(numpy_close, atol=atol, rtol=rtol)
   assert tree_all(tree_multimap(close, xs, ys)), '\n{} != \n{}'.format(xs, ys)
-
-
 def inner_prod(xs, ys):
   contract = lambda x, y: onp.real(onp.vdot(x, y))
   return tree_reduce(onp.add, tree_multimap(contract, xs, ys))
-
-
 add = partial(tree_multimap, onp.add)
 sub = partial(tree_multimap, onp.subtract)
 conj = partial(tree_map, onp.conj)
-
-
 def scalar_mul(xs, a):
   return tree_map(lambda x: onp.multiply(x, a, dtype=_dtype(x)), xs)
-
-
 def rand_like(rng, x):
   shape = onp.shape(x)
   dtype = _dtype(x)
@@ -112,15 +94,11 @@ def rand_like(rng, x):
     return randn() + dtype.type(1.0j) * randn()
   else:
     return randn()
-
-
 def numerical_jvp(f, primals, tangents, eps=EPS):
   delta = scalar_mul(tangents, eps)
   f_pos = f(*add(primals, delta))
   f_neg = f(*sub(primals, delta))
   return scalar_mul(sub(f_pos, f_neg), 0.5 / eps)
-
-
 def check_jvp(f, f_jvp, args, atol=ATOL, rtol=RTOL, eps=EPS):
   rng = onp.random.RandomState(0)
   tangent = tree_map(partial(rand_like, rng), args)
@@ -129,8 +107,6 @@ def check_jvp(f, f_jvp, args, atol=ATOL, rtol=RTOL, eps=EPS):
   t_out_expected = numerical_jvp(f, args, tangent, eps=eps)
   check_eq(v_out, v_out_expected)
   check_close(t_out, t_out_expected, atol=atol, rtol=rtol)
-
-
 def check_vjp(f, f_vjp, args, atol=ATOL, rtol=RTOL, eps=EPS):
   _rand_like = partial(rand_like, onp.random.RandomState(0))
   v_out, vjpfun = f_vjp(*args)
@@ -143,8 +119,6 @@ def check_vjp(f, f_vjp, args, atol=ATOL, rtol=RTOL, eps=EPS):
   ip = inner_prod(tangent, cotangent_out)
   ip_expected = inner_prod(tangent_out, cotangent)
   check_close(ip, ip_expected, atol=atol, rtol=rtol)
-
-
 def check_grads(f, args, order, modes=["fwd", "rev"], atol=None, rtol=None, eps=None):
   args = tuple(args)
   default_tol = 1e-6 if FLAGS.jax_enable_x64 else 1e-2
@@ -172,12 +146,8 @@ def check_grads(f, args, order, modes=["fwd", "rev"], atol=None, rtol=None, eps=
         _check_grads(f_vjp, args, order - 1)
 
   _check_grads(f, args, order)
-
-
 def device_under_test():
   return FLAGS.jax_test_dut or xla_bridge.get_backend().platform
-
-
 def skip_on_devices(*disabled_devices):
   """A decorator for test methods to skip the test on certain devices."""
   def skip(test_method):
@@ -192,8 +162,6 @@ def skip_on_devices(*disabled_devices):
     return test_method_wrapper
 
   return skip
-
-
 def skip_on_flag(flag_name, skip_value):
   """A decorator for test methods to skip the test when flags are set."""
   def skip(test_method):  # pylint: disable=missing-docstring
@@ -209,33 +177,21 @@ def skip_on_flag(flag_name, skip_value):
     return test_method_wrapper
 
   return skip
-
-
 def format_test_name_suffix(opname, shapes, dtypes):
   arg_descriptions = (
       format_shape_dtype_string(shape, dtype) for shape, dtype in zip(shapes, dtypes))
   return '{}_{}'.format(opname.capitalize(), '_'.join(arg_descriptions))
-
-
 # We use special symbols, represented as singleton objects, to distinguish
 # between NumPy scalars, Python scalars, and 0-D arrays.
 class ScalarShape(object):
   def __len__(self):
     return 0
-
-
 class _NumpyScalar(ScalarShape):
   pass
-
-
 class _PythonScalar(ScalarShape):
   pass
-
-
 NUMPY_SCALAR_SHAPE = _NumpyScalar()
 PYTHON_SCALAR_SHAPE = _PythonScalar()
-
-
 def _dims_of_shape(shape):
   """Converts `shape` to a tuple of dimensions."""
   if type(shape) in (list, tuple):
@@ -244,8 +200,6 @@ def _dims_of_shape(shape):
     return ()
   else:
     raise TypeError(type(shape))
-
-
 def _cast_to_shape(value, shape, dtype):
   """Casts `value` to the correct Python type for `shape` and `dtype`."""
   if shape is NUMPY_SCALAR_SHAPE:
@@ -259,12 +213,8 @@ def _cast_to_shape(value, shape, dtype):
     return value
   else:
     raise TypeError(type(shape))
-
-
 def dtype_str(dtype):
   return onp.dtype(dtype).name
-
-
 def format_shape_dtype_string(shape, dtype):
   if shape is NUMPY_SCALAR_SHAPE:
     return dtype_str(dtype)
@@ -277,8 +227,6 @@ def format_shape_dtype_string(shape, dtype):
     return '{}[{},]'.format(dtype_str(dtype), shape)
   else:
     raise TypeError(type(shape))
-
-
 def _rand_dtype(rand, shape, dtype, scale=1., post=lambda x: x):
   """Produce random values given shape, dtype, scale, and post-processor.
 
@@ -301,48 +249,32 @@ def _rand_dtype(rand, shape, dtype, scale=1., post=lambda x: x):
   else:
     vals = r()
   return _cast_to_shape(onp.asarray(post(vals), dtype), shape, dtype)
-
-
 def rand_default():
   randn = npr.RandomState(0).randn
   return partial(_rand_dtype, randn, scale=3)
-
-
 def rand_nonzero():
   post = lambda x: onp.where(x == 0, 1, x)
   randn = npr.RandomState(0).randn
   return partial(_rand_dtype, randn, scale=3, post=post)
-
-
 def rand_positive():
   post = lambda x: x + 1
   rand = npr.RandomState(0).rand
   return partial(_rand_dtype, rand, scale=2, post=post)
-
-
 def rand_small():
   randn = npr.RandomState(0).randn
   return partial(_rand_dtype, randn, scale=1e-3)
-
-
 def rand_not_small():
   post = lambda x: x + onp.where(x > 0, 10., -10.)
   randn = npr.RandomState(0).randn
   return partial(_rand_dtype, randn, scale=3., post=post)
-
-
 def rand_small_positive():
   rand = npr.RandomState(0).rand
   return partial(_rand_dtype, rand, scale=2e-5)
-
-
 def rand_uniform(low=0.0, high=1.0):
   assert low < high
   rand = npr.RandomState(0).rand
   post = lambda x: x * (high - low) + low
   return partial(_rand_dtype, rand, post=post)
-
-
 def rand_some_equal():
   randn = npr.RandomState(0).randn
   rng = npr.RandomState(0)
@@ -355,8 +287,6 @@ def rand_some_equal():
     return onp.where(flips, x_ravel[0], x)
 
   return partial(_rand_dtype, randn, scale=100., post=post)
-
-
 def rand_some_inf():
   """Return a random sampler that produces infinities in floating types."""
   rng = npr.RandomState(1)
@@ -386,8 +316,6 @@ def rand_some_inf():
     return _cast_to_shape(onp.asarray(vals, dtype=dtype), shape, dtype)
 
   return rand
-
-
 def rand_some_nan():
   """Return a random sampler that produces nans in floating types."""
   rng = npr.RandomState(1)
@@ -412,8 +340,6 @@ def rand_some_nan():
     return _cast_to_shape(onp.asarray(vals, dtype=dtype), shape, dtype)
 
   return rand
-
-
 def rand_some_inf_and_nan():
   """Return a random sampler that produces infinities in floating types."""
   rng = npr.RandomState(1)
@@ -445,8 +371,6 @@ def rand_some_inf_and_nan():
     return _cast_to_shape(onp.asarray(vals, dtype=dtype), shape, dtype)
 
   return rand
-
-
 # TODO(mattjj): doesn't handle complex types
 def rand_some_zero():
   """Return a random sampler that produces some zeros."""
@@ -464,8 +388,6 @@ def rand_some_zero():
     return _cast_to_shape(onp.asarray(vals, dtype=dtype), shape, dtype)
 
   return rand
-
-
 def rand_int(low, high=None):
   randint = npr.RandomState(0).randint
 
@@ -473,8 +395,6 @@ def rand_int(low, high=None):
     return randint(low, high=high, size=shape, dtype=dtype)
 
   return fn
-
-
 def rand_bool():
   rng = npr.RandomState(0)
 
@@ -482,40 +402,30 @@ def rand_bool():
     return _cast_to_shape(rng.rand(*_dims_of_shape(shape)) < 0.5, shape, dtype)
 
   return generator
-
-
 def check_raises(thunk, err_type, msg):
   try:
     thunk()
     assert False
   except err_type as e:
     assert str(e).startswith(msg), "\n{}\n\n{}\n".format(e, msg)
-
-
 def check_raises_regexp(thunk, err_type, pattern):
   try:
     thunk()
     assert False
   except err_type as e:
     assert re.match(pattern, str(e)), "{}\n\n{}\n".format(e, pattern)
-
-
 def cases_from_list(xs):
   rng = npr.RandomState(42)
   xs = list(xs)
   k = min(len(xs), FLAGS.num_generated_cases)
   indices = rng.choice(onp.arange(len(xs)), k, replace=False)
   return [xs[i] for i in indices]
-
-
 def cases_from_gens(*gens):
   sizes = [1, 3, 10]
   cases_per_size = int(FLAGS.num_generated_cases / len(sizes)) + 1
   for size in sizes:
     for i in xrange(cases_per_size):
       yield ('_{}_{}'.format(size, i),) + tuple(gen(size) for gen in gens)
-
-
 class JaxTestCase(parameterized.TestCase):
   """Base class for JAX tests including numerical checks and boilerplate."""
   def assertArraysAllClose(self, x, y, check_dtypes, atol=None, rtol=None):

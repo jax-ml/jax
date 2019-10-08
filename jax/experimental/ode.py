@@ -54,15 +54,11 @@ dps_c_mid = np.array([
     6025192743 / 30085553152 / 2, 0, 51252292925 / 65400821598 / 2, -2691868925 / 45128329728 / 2,
     187940372067 / 1594534317056 / 2, -1776094331 / 19743644256 / 2, 11237099 / 235043384 / 2
 ])
-
-
 @jax.jit
 def interp_fit_dopri(y0, y1, k, dt):
   # Fit a polynomial to the results of a Runge-Kutta step.
   y_mid = y0 + dt * np.dot(dps_c_mid, k)
   return np.array(fit_4th_order_polynomial(y0, y1, y_mid, k[0], k[-1], dt))
-
-
 @jax.jit
 def fit_4th_order_polynomial(y0, y1, y_mid, dy0, dy1, dt):
   """Fit fourth order polynomial over function interval.
@@ -85,8 +81,6 @@ def fit_4th_order_polynomial(y0, y1, y_mid, dy0, dy1, dt):
   d = dt * dy0
   e = y0
   return a, b, c, d, e
-
-
 @functools.partial(jax.jit, static_argnums=(0,))
 def initial_step_size(fun, t0, y0, order, rtol, atol, f0):
   """Empirically choose initial step size.
@@ -123,8 +117,6 @@ def initial_step_size(fun, t0, y0, order, rtol, atol, f0):
       (0.01 / np.max(d1 + d2))**order_pow)
 
   return np.minimum(100. * h0, h1)
-
-
 @functools.partial(jax.jit, static_argnums=(0,))
 def runge_kutta_step(func, y0, f0, t0, dt):
   """Take an arbitrary Runge-Kutta step and estimate error.
@@ -158,15 +150,11 @@ def runge_kutta_step(func, y0, f0, t0, dt):
   y1_error = dt * np.dot(c_error, k)
   f1 = k[-1]
   return y1, f1, y1_error, k
-
-
 @jax.jit
 def error_ratio(error_estimate, rtol, atol, y0, y1):
   err_tol = atol + rtol * np.maximum(np.abs(y0), np.abs(y1))
   err_ratio = error_estimate / err_tol
   return np.mean(err_ratio**2)
-
-
 @jax.jit
 def optimal_step_size(last_step, mean_error_ratio, safety=0.9, ifactor=10.0, dfactor=0.2,
                       order=5.0):
@@ -181,8 +169,6 @@ def optimal_step_size(last_step, mean_error_ratio, safety=0.9, ifactor=10.0, dfa
       last_step * ifactor,
       last_step / factor,
   )
-
-
 @functools.partial(jax.jit, static_argnums=(0,))
 def odeint(ofunc, y0, t, *args, **kwargs):
   """Adaptive stepsize (Dormand-Prince) Runge-Kutta odeint implementation.
@@ -241,8 +227,6 @@ def odeint(ofunc, y0, t, *args, **kwargs):
       1, t.shape[0], functools.partial(_fori_body_fun, func),
       (t, y0, f0, t[0], dt, t[0], interp_coeff,
        jax.ops.index_update(np.zeros((t.shape[0], y0.shape[0])), jax.ops.index[0, :], y0)))[-1]
-
-
 def vjp_odeint(ofunc, y0, t, *args, **kwargs):
   """Return a function that calculates `vjp(odeint(func(y, t, *args))`.
 
@@ -327,8 +311,6 @@ def vjp_odeint(ofunc, y0, t, *args, **kwargs):
   vjp_fun = lambda g: vjp_all(g, primals_out, t)
 
   return primals_out, vjp_fun
-
-
 def build_odeint(ofunc, rtol=1.4e-8, atol=1.4e-8):
   """Return `f(y0, t, args) = odeint(ofunc(y, t, *args), y0, t, args)`.
 
@@ -355,8 +337,6 @@ def build_odeint(ofunc, rtol=1.4e-8, atol=1.4e-8):
   jax.defvjp_all(ct_odeint, v)
 
   return jax.jit(ct_odeint)
-
-
 def my_odeint_grad(fun):
   """Calculate the Jacobian of an odeint."""
   @jax.jit
@@ -366,8 +346,6 @@ def my_odeint_grad(fun):
     return my_grad
 
   return _gradfun
-
-
 def my_odeint_jacrev(fun):
   """Calculate the Jacobian of an odeint."""
   @jax.jit
@@ -380,8 +358,6 @@ def my_odeint_jacrev(fun):
     return my_jac
 
   return _jacfun
-
-
 def nd(f, x, eps=0.0001):
   flat_x, unravel = ravel_pytree(x)
   dim = len(flat_x)
@@ -391,8 +367,6 @@ def nd(f, x, eps=0.0001):
     d[i] = eps
     g[i] = (f(unravel(flat_x + d)) - f(unravel(flat_x - d))) / (2.0 * eps)
   return g
-
-
 def test_grad_vjp_odeint():
   """Compare numerical and exact differentiation of a simple odeint."""
   def f(y, t, arg1, arg2):
@@ -413,8 +387,6 @@ def test_grad_vjp_odeint():
   exact_grad, _ = ravel_pytree(my_odeint_grad(f)(*wrap_args))
 
   assert np.allclose(numerical_grad, exact_grad)
-
-
 def plot_gradient_field(ax, func, xlimits, ylimits, numticks=30):
   """Plot the gradient field of `func` on `ax`."""
   x = np.linspace(*xlimits, num=numticks)
@@ -425,8 +397,6 @@ def plot_gradient_field(ax, func, xlimits, ylimits, numticks=30):
   ax.quiver(x_mesh, y_mesh, np.ones(z_mesh.shape), z_mesh)
   ax.set_xlim(xlimits)
   ax.set_ylim(ylimits)
-
-
 def plot_demo():
   """Demo plot of simple ode integration and gradient field."""
   def f(y, t, arg1, arg2):
@@ -449,8 +419,6 @@ def plot_demo():
   ax.set_xlabel('t')
   ax.set_ylabel('y')
   plt.show()
-
-
 @jax.jit
 def pend(y, t, arg1, arg2):
   """Simple pendulum system for odeint testing."""
@@ -458,18 +426,12 @@ def pend(y, t, arg1, arg2):
   theta, omega = y
   dydt = np.array([omega, -arg1 * omega - arg2 * np.sin(theta)])
   return dydt
-
-
 @jax.jit
 def swoop(y, t, arg1, arg2):
   return np.array(y - np.sin(t) - np.cos(t) * arg1 + arg2)
-
-
 @jax.jit
 def decay(y, t, arg1, arg2):
   return -np.sqrt(t) - y + arg1 - np.mean((y + arg2)**2)
-
-
 def benchmark_odeint(fun, y0, tspace, *args):
   """Time performance of JAX odeint method against scipy.integrate.odeint."""
   n_trials = 5
@@ -488,12 +450,8 @@ def benchmark_odeint(fun, y0, tspace, *args):
       np.linalg.norm(np.asarray(scipy_result) - jax_result)))
 
   return scipy_result, jax_result
-
-
 def pend_benchmark_odeint():
   _, _ = benchmark_odeint(pend, (onp.pi - 0.1, 0.0), onp.linspace(0., 10., 101), 0.25, 9.8)
-
-
 def test_odeint_grad():
   """Test the gradient behavior of various ODE integrations."""
   def _test_odeint_grad(func, *args):
@@ -528,8 +486,6 @@ def test_odeint_grad():
       (big_y0, ts, 0.1, 0.3),
   ):
     _test_odeint_grad(decay, *cond)
-
-
 def test_odeint_vjp():
   """Use check_vjp to check odeint VJP calculations."""
 
@@ -554,8 +510,6 @@ def test_odeint_vjp():
   check_vjp(swoop_odeint_wrap, swoop_vjp_wrap, wrap_args)
 
   # decay() check_vjp hangs!
-
-
 def test_defvjp_all():
   """Use build_odeint to check odeint VJP calculations."""
   n_trials = 5
@@ -572,8 +526,6 @@ def test_defvjp_all():
     rslt.block_until_ready()
     end = time.time()
     print('JAX jacrev elapsed time ({} of {}): {}'.format(k + 1, n_trials, end - start))
-
-
 if __name__ == '__main__':
 
   test_odeint_grad()

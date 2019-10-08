@@ -39,81 +39,53 @@ from jax.lib import lapack
 from jax.lib import cusolver
 
 # traceables
-
-
 def cholesky(x, symmetrize_input=True):
   if symmetrize_input:
     x = symmetrize(x)
   return np.tril(cholesky_p.bind(x))
-
-
 def eig(x):
   w, vl, vr = eig_p.bind(x)
   return w, vl, vr
-
-
 def eigh(x, lower=True, symmetrize_input=True):
   if symmetrize_input:
     x = symmetrize(x)
   v, w = eigh_p.bind(x, lower=lower)
   return v, w
-
-
 def lu(x):
   lu, pivots = lu_p.bind(x)
   return lu, pivots
-
-
 def qr(x, full_matrices=True):
   q, r = qr_p.bind(x, full_matrices=full_matrices)
   return q, np.triu(r)
-
-
 def svd(x, full_matrices=True, compute_uv=True):
   s, u, v = svd_p.bind(x, full_matrices=full_matrices, compute_uv=compute_uv)
   if compute_uv:
     return u, s, v
   else:
     return s
-
-
 def triangular_solve(a, b, left_side=False, lower=False, transpose_a=False, conjugate_a=False,
                      unit_diagonal=False):
   conjugate_a = conjugate_a and np.issubdtype(lax.dtype(a), np.complexfloating)
   return triangular_solve_p.bind(a, b, left_side=left_side, lower=lower, transpose_a=transpose_a,
                                  conjugate_a=conjugate_a, unit_diagonal=unit_diagonal)
-
-
 # utilities
-
-
 def _T(x):
   return np.swapaxes(x, -1, -2)
-
-
 def _H(x):
   return np.conj(_T(x))
-
-
 def symmetrize(x):
   return (x + _H(x)) / 2
-
-
 def _unpack_tuple(f, n):
   def g(c, *args, **kwargs):
     t = f(c, *args, **kwargs)
     return (c.GetTupleElement(t, i) for i in range(n))
 
   return g
-
-
 # primitives
 
 _cpu_lapack_types = {np.float32, np.float64, np.complex64, np.complex128}
 
 # Cholesky decomposition
-
-
 def cholesky_jvp_rule(primals, tangents):
   x, = primals
   sigma_dot, = tangents
@@ -132,20 +104,14 @@ def cholesky_jvp_rule(primals, tangents):
   L_dot = lax.batch_matmul(
       L, phi(triangular_solve(L, tmp, left_side=True, transpose_a=False, lower=True)))
   return L, L_dot
-
-
 def cholesky_batching_rule(batched_args, batch_dims):
   x, = batched_args
   bd, = batch_dims
   x = batching.moveaxis(x, bd, 0)
   return cholesky(x), 0
-
-
 cholesky_p = standard_unop(_float | _complex, 'cholesky')
 ad.primitive_jvps[cholesky_p] = cholesky_jvp_rule
 batching.primitive_batchers[cholesky_p] = cholesky_batching_rule
-
-
 def _nan_like(c, operand):
   shape = c.GetShape(operand)
   dtype = shape.element_type()
@@ -154,8 +120,6 @@ def _nan_like(c, operand):
   else:
     nan = c.Constant(onp.array(onp.nan, dtype=dtype))
   return c.Broadcast(nan, shape.dimensions())
-
-
 def cholesky_cpu_translation_rule(c, operand):
   shape = c.GetShape(operand)
   dtype = shape.element_type().type
@@ -167,22 +131,14 @@ def cholesky_cpu_translation_rule(c, operand):
     # unsupported types.
     # TODO(phawkins): support LAPACK primitives in batched mode.
     return c.Cholesky(operand)
-
-
 xla.backend_specific_translations['cpu'][cholesky_p] = cholesky_cpu_translation_rule
 
 # Asymmetric eigendecomposition
-
-
 def eig_impl(operand):
   return xla.apply_primitive(eig_p, operand)
-
-
 def eig_translation_rule(c, operand):
   raise NotImplementedError(
       "Nonsymmetric eigendecomposition is only implemented on the CPU backend")
-
-
 def eig_abstract_eval(operand):
   if isinstance(operand, ShapedArray):
     if operand.ndim < 2 or operand.shape[-2] != operand.shape[-1]:
@@ -198,11 +154,7 @@ def eig_abstract_eval(operand):
   else:
     raise NotImplementedError
   return w, vl, vr
-
-
 _cpu_geev = lapack.geev
-
-
 def eig_cpu_translation_rule(c, operand):
   shape = c.GetShape(operand)
   batch_dims = shape.dimensions()[:-2]
@@ -212,15 +164,11 @@ def eig_cpu_translation_rule(c, operand):
   vl = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), vl, _nan_like(c, vl))
   vr = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), vr, _nan_like(c, vr))
   return c.Tuple(w, vl, vr)
-
-
 def eig_batching_rule(batched_args, batch_dims):
   x, = batched_args
   bd, = batch_dims
   x = batching.moveaxis(x, bd, 0)
   return eig_p.bind(x), (0, 0, 0)
-
-
 eig_p = Primitive('eig')
 eig_p.multiple_results = True
 eig_p.def_impl(eig_impl)
@@ -230,18 +178,12 @@ xla.backend_specific_translations['cpu'][eig_p] = eig_cpu_translation_rule
 batching.primitive_batchers[eig_p] = eig_batching_rule
 
 # Symmetric/Hermitian eigendecomposition
-
-
 def eigh_impl(operand, lower):
   v, w = xla.apply_primitive(eigh_p, operand, lower=lower)
   return v, w
-
-
 def eigh_translation_rule(c, operand, lower):
   raise NotImplementedError(
       "Symmetric eigendecomposition is only implemented on the CPU and GPU backends")
-
-
 def eigh_abstract_eval(operand, lower):
   if isinstance(operand, ShapedArray):
     if operand.ndim < 2 or operand.shape[-2] != operand.shape[-1]:
@@ -255,8 +197,6 @@ def eigh_abstract_eval(operand, lower):
   else:
     v, w = operand, operand
   return v, w
-
-
 def _eigh_cpu_gpu_translation_rule(syevd_impl, c, operand, lower):
   shape = c.GetShape(operand)
   batch_dims = shape.dimensions()[:-2]
@@ -265,8 +205,6 @@ def _eigh_cpu_gpu_translation_rule(syevd_impl, c, operand, lower):
   v = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), v, _nan_like(c, v))
   w = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1,)), w, _nan_like(c, w))
   return c.Tuple(v, w)
-
-
 def eigh_jvp_rule(primals, tangents, lower):
   # Derivative for eigh in the simplest case of distinct eigenvalues.
   # This is classic nondegenerate perurbation theory, but also see
@@ -295,15 +233,11 @@ def eigh_jvp_rule(primals, tangents, lower):
   dv = dot(v, np.multiply(Fmat, vdag_adot_v))
   dw = np.diagonal(vdag_adot_v)
   return (v, w), (dv, dw)
-
-
 def eigh_batching_rule(batched_args, batch_dims, lower):
   x, = batched_args
   bd, = batch_dims
   x = batching.moveaxis(x, bd, 0)
   return eigh_p.bind(x, lower=lower), (0, 0)
-
-
 eigh_p = Primitive('eigh')
 eigh_p.multiple_results = True
 eigh_p.def_impl(eigh_impl)
@@ -322,8 +256,6 @@ batching.primitive_batchers[eigh_p] = eigh_batching_rule
 
 triangular_solve_dtype_rule = partial(binop_dtype_rule, _input_dtype,
                                       (_float | _complex, _float | _complex), 'triangular_solve')
-
-
 def triangular_solve_shape_rule(a, b, left_side=False, **unused_kwargs):
   if a.ndim < 2:
     msg = "triangular_solve requires a.ndim to be at least 2, got {}."
@@ -341,8 +273,6 @@ def triangular_solve_shape_rule(a, b, left_side=False, **unused_kwargs):
     msg = "Incompatible shapes for arguments to triangular_solve: {} and {}."
     raise TypeError(msg.format(a.shape, b.shape))
   return b.shape
-
-
 def triangular_solve_jvp_rule_a(g_a, ans, a, b, left_side, lower, transpose_a, conjugate_a,
                                 unit_diagonal):
   if g_a is ad_util.zero:
@@ -358,8 +288,6 @@ def triangular_solve_jvp_rule_a(g_a, ans, a, b, left_side, lower, transpose_a, c
     return dot(tmp, ans)
   else:
     return dot(ans, tmp)
-
-
 def triangular_solve_transpose_rule(cotangent, a, b, left_side, lower, transpose_a, conjugate_a,
                                     unit_diagonal):
   # Triangular solve is nonlinear in its first argument and linear in its second
@@ -368,8 +296,6 @@ def triangular_solve_transpose_rule(cotangent, a, b, left_side, lower, transpose
   cotangent_b = triangular_solve(a, cotangent, left_side, lower, not transpose_a, conjugate_a,
                                  unit_diagonal)
   return [None, cotangent_b]
-
-
 def triangular_solve_batching_rule(batched_args, batch_dims, left_side, lower, transpose_a,
                                    conjugate_a, unit_diagonal):
   x, y = batched_args
@@ -379,16 +305,12 @@ def triangular_solve_batching_rule(batched_args, batch_dims, left_side, lower, t
   y = batching.bdim_at_front(y, by, size)
   return triangular_solve(x, y, left_side=left_side, lower=lower, transpose_a=transpose_a,
                           conjugate_a=conjugate_a, unit_diagonal=unit_diagonal), 0
-
-
 triangular_solve_p = standard_primitive(triangular_solve_shape_rule, triangular_solve_dtype_rule,
                                         'triangular_solve')
 ad.defjvp2(triangular_solve_p, triangular_solve_jvp_rule_a,
            lambda g_b, _, a, b, **kws: triangular_solve(a, g_b, **kws))
 ad.primitive_transposes[triangular_solve_p] = triangular_solve_transpose_rule
 batching.primitive_batchers[triangular_solve_p] = triangular_solve_batching_rule
-
-
 def _triangular_solve_cpu_translation_rule(c, a, b, left_side, lower, transpose_a, conjugate_a,
                                            unit_diagonal):
   shape = c.GetShape(a)
@@ -407,8 +329,6 @@ def _triangular_solve_cpu_translation_rule(c, a, b, left_side, lower, transpose_
 
 xla.backend_specific_translations['cpu'][triangular_solve_p] = \
   _triangular_solve_cpu_translation_rule
-
-
 def _triangular_solve_gpu_translation_rule(c, a, b, left_side, lower, transpose_a, conjugate_a,
                                            unit_diagonal):
   shape = c.GetShape(a)
@@ -433,8 +353,6 @@ xla.backend_specific_translations['gpu'][triangular_solve_p] = \
 # Computes a pivoted LU decomposition such that
 # PA = LU
 # In the style of LAPACK, LU are stored in the same matrix.
-
-
 def _lu_unblocked(a):
   """Unblocked LU decomposition, as a rolled loop."""
   m, n = a.shape
@@ -472,8 +390,6 @@ def _lu_unblocked(a):
     # jaxpr fails because the indexing cannot succeed.
     return (pivot, perm, a)
   return lax.fori_loop(0, min(m, n), body, (pivot, perm, a))
-
-
 def _lu_blocked(a, block_size=32):
   """Blocked LU decomposition, as an unrolled loop."""
   m, n = a.shape
@@ -497,8 +413,6 @@ def _lu_blocked(a, block_size=32):
           a, ops.index[k + b:, k + b:],
           -lax.dot(a[k + b:, k:k + b], a[k:k + b, k + b:], precision=lax.Precision.HIGHEST))
   return pivot, a
-
-
 def _lu_python(x):
   """Default LU decomposition in Python, where no better version exists."""
   m, n = x.shape[-2:]
@@ -511,13 +425,9 @@ def _lu_python(x):
   else:
     pivot, lu = _lu_blocked(x)
   return lu, pivot
-
-
 def _lu_impl(operand):
   lu, pivot = xla.apply_primitive(lu_p, operand)
   return lu, pivot
-
-
 def _lu_abstract_eval(operand):
   if isinstance(operand, ShapedArray):
     if operand.ndim < 2:
@@ -530,8 +440,6 @@ def _lu_abstract_eval(operand):
   else:
     pivot = operand
   return operand, pivot
-
-
 def _lu_jvp_rule(primals, tangents):
   a, = primals
   a_dot, = tangents
@@ -578,15 +486,11 @@ def _lu_jvp_rule(primals, tangents):
   u_dot = np.matmul(np.triu(lau), u)
   lu_dot = l_dot + u_dot
   return (lu, pivots), (lu_dot, ad_util.zero)
-
-
 def _lu_batching_rule(batched_args, batch_dims):
   x, = batched_args
   bd, = batch_dims
   x = batching.moveaxis(x, bd, 0)
   return lu_p.bind(x), (0, 0)
-
-
 def _lu_cpu_gpu_translation_rule(getrf_impl, c, operand):
   shape = c.GetShape(operand)
   batch_dims = shape.dimensions()[:-2]
@@ -596,8 +500,6 @@ def _lu_cpu_gpu_translation_rule(getrf_impl, c, operand):
   ok = c.Ge(info, c.ConstantS32Scalar(0))
   lu = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), lu, _nan_like(c, lu))
   return c.Tuple(lu, pivot)
-
-
 lu_p = Primitive('lu')
 lu_p.multiple_results = True
 lu_p.def_impl(_lu_impl)
@@ -610,8 +512,6 @@ xla.backend_specific_translations['cpu'][lu_p] = partial(_lu_cpu_gpu_translation
 
 xla.backend_specific_translations['gpu'][lu_p] = partial(_lu_cpu_gpu_translation_rule,
                                                          cusolver.getrf)
-
-
 # Define this outside lu_pivots_to_permutation to ensure fori_loop cache hits
 def _lu_pivots_body_fn(i, permutation_and_swaps):
   permutation, swaps = permutation_and_swaps
@@ -622,8 +522,6 @@ def _lu_pivots_body_fn(i, permutation_and_swaps):
   y = permutation[iotas + (j,)]
   permutation = ops.index_update(permutation, ops.index[..., i], y)
   return ops.index_update(permutation, ops.index[iotas + (j,)], x), swaps
-
-
 def lu_pivots_to_permutation(swaps, m):
   """Converts the pivots (row swaps) returned by LU to a permutation.
 
@@ -644,20 +542,12 @@ def lu_pivots_to_permutation(swaps, m):
   result, _ = lax.fori_loop(
       onp.array(0, onp.int32), onp.array(k, onp.int32), _lu_pivots_body_fn, (permutation, swaps))
   return result
-
-
 # QR decomposition
-
-
 def qr_impl(operand, full_matrices):
   q, r = xla.apply_primitive(qr_p, operand, full_matrices=full_matrices)
   return q, r
-
-
 def qr_translation_rule(c, operand, full_matrices):
   return c.QR(operand, full_matrices=full_matrices)
-
-
 def qr_abstract_eval(operand, full_matrices):
   if isinstance(operand, ShapedArray):
     if operand.ndim < 2:
@@ -672,8 +562,6 @@ def qr_abstract_eval(operand, full_matrices):
     q = operand
     r = operand
   return q, r
-
-
 def qr_jvp_rule(primals, tangents, full_matrices):
   # See j-towns.github.io/papers/qr-derivative.pdf for a terse derivation.
   x, = primals
@@ -690,15 +578,11 @@ def qr_jvp_rule(primals, tangents, full_matrices):
   dq = np.matmul(q, domega - qt_dx_rinv) + dx_rinv
   dr = np.matmul(qt_dx_rinv - domega, r)
   return (q, r), (dq, dr)
-
-
 def qr_batching_rule(batched_args, batch_dims, full_matrices):
   x, = batched_args
   bd, = batch_dims
   x = batching.moveaxis(x, bd, 0)
   return qr_p.bind(x, full_matrices=full_matrices), (0, 0)
-
-
 def _qr_cpu_gpu_translation_rule(geqrf_impl, orgqr_impl, c, operand, full_matrices):
   shape = c.GetShape(operand)
   dims = shape.dimensions()
@@ -721,8 +605,6 @@ def _qr_cpu_gpu_translation_rule(geqrf_impl, orgqr_impl, c, operand, full_matric
   q = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), q, _nan_like(c, q))
   r = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), r, _nan_like(c, r))
   return c.Tuple(q, r)
-
-
 qr_p = Primitive('qr')
 qr_p.multiple_results = True
 qr_p.def_impl(qr_impl)
@@ -744,17 +626,11 @@ if hasattr(cusolver, "geqrf"):
                                                            cusolver.geqrf, cusolver.orgqr)
 
 # Singular value decomposition
-
-
 def svd_impl(operand, full_matrices, compute_uv):
   s, u, vt = xla.apply_primitive(svd_p, operand, full_matrices=full_matrices, compute_uv=compute_uv)
   return s, u, vt
-
-
 def svd_translation_rule(c, operand, full_matrices, compute_uv):
   raise NotImplementedError("Singular value decomposition is only implemented on the CPU backend")
-
-
 def svd_abstract_eval(operand, full_matrices, compute_uv):
   if isinstance(operand, ShapedArray):
     if operand.ndim < 2:
@@ -769,8 +645,6 @@ def svd_abstract_eval(operand, full_matrices, compute_uv):
   else:
     raise NotImplementedError
   return s, u, vt
-
-
 def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
   A, = primals
   dA, = tangents
@@ -800,8 +674,6 @@ def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
   if n > m:
     dV = dV + np.matmul(np.eye(n) - np.matmul(V, Vt), np.matmul(_H(dA), U)) / s_dim
   return (s, U, Vt), (ds, dU, _T(dV))
-
-
 def _svd_cpu_gpu_translation_rule(gesvd_impl, c, operand, full_matrices, compute_uv):
 
   shape = c.GetShape(operand)
@@ -812,16 +684,12 @@ def _svd_cpu_gpu_translation_rule(gesvd_impl, c, operand, full_matrices, compute
   u = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), u, _nan_like(c, u))
   vt = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), vt, _nan_like(c, vt))
   return c.Tuple(s, u, vt)
-
-
 def svd_batching_rule(batched_args, batch_dims, full_matrices, compute_uv):
   x, = batched_args
   bd, = batch_dims
   x = batching.moveaxis(x, bd, 0)
   outs = svd_p.bind(x, full_matrices=full_matrices, compute_uv=compute_uv)
   return outs, (0, 0, 0)
-
-
 svd_p = Primitive('svd')
 svd_p.multiple_results = True
 svd_p.def_impl(svd_impl)

@@ -26,37 +26,25 @@ import numpy as onp
 from jax import lax
 from jax import random
 import jax.numpy as np
-
-
 def zeros(key, shape, dtype=np.float32):
   return np.zeros(shape, dtype)
-
-
 def ones(key, shape, dtype=np.float32):
   return np.ones(shape, dtype)
-
-
 def uniform(scale=1e-2):
   def init(key, shape, dtype=np.float32):
     return random.uniform(key, shape, dtype) * scale
 
   return init
-
-
 def normal(stddev=1e-2):
   def init(key, shape, dtype=np.float32):
     return random.normal(key, shape, dtype) * stddev
 
   return init
-
-
 def _compute_fans(shape, in_axis=-2, out_axis=-1):
   receptive_field_size = onp.prod(shape) / shape[in_axis] / shape[out_axis]
   fan_in = shape[in_axis] * receptive_field_size
   fan_out = shape[out_axis] * receptive_field_size
   return fan_in, fan_out
-
-
 def variance_scaling(scale, mode, distribution, in_axis=-2, out_axis=-1):
   def init(key, shape, dtype=np.float32):
     fan_in, fan_out = _compute_fans(shape, in_axis, out_axis)
@@ -78,16 +66,12 @@ def variance_scaling(scale, mode, distribution, in_axis=-2, out_axis=-1):
       raise ValueError("invalid distribution for variance scaling initializer")
 
   return init
-
-
 xavier_uniform = glorot_uniform = partial(variance_scaling, 1.0, "fan_avg", "uniform")
 xavier_normal = glorot_normal = partial(variance_scaling, 1.0, "fan_avg", "truncated_normal")
 lecun_uniform = partial(variance_scaling, 1.0, "fan_in", "uniform")
 lecun_normal = partial(variance_scaling, 1.0, "fan_in", "truncated_normal")
 kaiming_uniform = he_uniform = partial(variance_scaling, 2.0, "fan_in", "uniform")
 kaiming_normal = he_normal = partial(variance_scaling, 2.0, "fan_in", "truncated_normal")
-
-
 def orthogonal(scale=1.0, column_axis=-1):
   """
   Construct an initializer for uniformly distributed orthogonal matrices.

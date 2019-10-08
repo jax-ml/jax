@@ -31,12 +31,8 @@ from ..core import (Trace, Tracer, new_master, Jaxpr, JaxprEqn, Literal, get_ava
 
 map = safe_map
 zip = safe_zip
-
-
 def identity(x):
   return x
-
-
 # A partial value (pval) is modeled as a pair (pv, const), as per
 #   type PVal = (PV, Const)
 #   data PV = Known | Unknown AbstractValue
@@ -45,8 +41,6 @@ def identity(x):
 # and the Unknown arm, represented by an AbstractValue instance, indicates an
 # unknown value.
 # When the pv is an AbstractValue, then the const must be unit.
-
-
 class JaxprTrace(Trace):
   def pure(self, val):
     return self.new_const(val)
@@ -204,8 +198,6 @@ class JaxprTrace(Trace):
       return out_tracers
 
     return out, todo
-
-
 def _mapped_aval(aval):
   if aval is core.abstract_unit:
     return aval
@@ -214,8 +206,6 @@ def _mapped_aval(aval):
     return ShapedArray(aval.shape[1:], aval.dtype)
   else:
     raise TypeError(aval)
-
-
 def _unmapped_aval(size, aval):
   if aval is core.abstract_unit:
     return aval
@@ -223,16 +213,10 @@ def _unmapped_aval(size, aval):
     return ShapedArray((size,) + aval.shape, aval.dtype)
   else:
     raise TypeError(aval)
-
-
 map_primitives = set()
-
-
 def partial_eval(f, trace, pvs):
   f = trace_to_subjaxpr(f, trace.master, False)
   return partial_eval_wrapper(f, tuple(pvs))
-
-
 @transformation_with_aux
 def partial_eval_wrapper(avals, *consts):
   py_args = (map(PartialVal, zip(avals, consts)),)
@@ -240,8 +224,6 @@ def partial_eval_wrapper(avals, *consts):
   out_pvs, out_consts = unzip2(out_pvals)
   out = tuple(out_consts) + tuple(consts)  # TODO: can consts be traced?
   yield out, (out_pvs, jaxpr, env)
-
-
 def abstract_eval_fun(fun, *avals, **params):
   pvals_in = [PartialVal((a, unit)) for a in avals]
   _, pvals_out, _ = trace_to_jaxpr(lu.wrap_init(fun, params), pvals_in, instantiate=True)
@@ -249,8 +231,6 @@ def abstract_eval_fun(fun, *avals, **params):
   for aval_out in avals_out:
     assert isinstance(aval_out, AbstractValue)  # instantiate=True
   return avals_out
-
-
 class JaxprTracer(Tracer):
   __slots__ = ['pval', 'recipe']
 
@@ -290,11 +270,7 @@ class JaxprTracer(Tracer):
       return core.full_lower(const)
     else:
       return self
-
-
 Destructuring = namedtuple('Destructuring', ['i', 'eqn', 'key'])
-
-
 class PartialVal(tuple):
   def __new__(cls, xs):
     pv, const = xs
@@ -306,11 +282,7 @@ class PartialVal(tuple):
       if isinstance(pv, AbstractValue):
         assert const == core.unit, xs
     return tuple.__new__(cls, xs)
-
-
 valid_pv_types = (AbstractValue, type(None))
-
-
 def merge_pvals(val, pval):
   pv, const = pval
   if isinstance(pv, AbstractValue):
@@ -319,8 +291,6 @@ def merge_pvals(val, pval):
     return const
   else:
     raise TypeError(pv)
-
-
 def join_pvals(pval1, pval2):
   pv1, const1 = pval1
   pv2, const2 = pval2
@@ -342,8 +312,6 @@ def join_pvals(pval1, pval2):
     return PartialVal((aval, unit))  # neither is known
   else:
     raise TypeError((pval1, pval2))
-
-
 def as_abstract_val(pv):
   if isinstance(pv, AbstractValue):
     return pv
@@ -351,8 +319,6 @@ def as_abstract_val(pv):
     return AbstractTuple(map(as_abstract_val, pv))
   elif pv is None:
     raise TypeError("{} is not abstract".format(pv))
-
-
 def partial_val_aval(pv, const):
   if isinstance(pv, AbstractValue):
     return pv
@@ -360,8 +326,6 @@ def partial_val_aval(pv, const):
     return get_aval(const)
   else:
     raise TypeError(pv)
-
-
 def trace_to_jaxpr(fun, pvals, **kwargs):
   """Traces a function, given abstract inputs, to a jaxpr."""
   instantiate = kwargs.pop('instantiate', False)
@@ -372,8 +336,6 @@ def trace_to_jaxpr(fun, pvals, **kwargs):
     del master
 
   return jaxpr, out_pvals, consts
-
-
 @transformation
 def trace_to_subjaxpr(master, instantiate, pvals):
   assert all([isinstance(pv, PartialVal) for pv in pvals]), pvals
@@ -387,29 +349,21 @@ def trace_to_subjaxpr(master, instantiate, pvals):
   out_pvals = [t.pval for t in out_tracers]
   del trace, in_tracers, out_tracers
   yield jaxpr, (out_pvals, consts, env)
-
-
 def instantiate_const_at(trace, instantiate, tracer):
   assert type(instantiate) is bool
   if instantiate:
     return trace.instantiate_const(trace.full_raise(tracer))
   else:
     return tracer
-
-
 FreeVar = namedtuple('FreeVar', ['val'])
 ConstVar = namedtuple('ConstVar', ['val'])
 LambdaBinding = namedtuple('LambdaBinding', [])
-
-
 def eqn_tracer_to_var(var, eqn):
   _, in_tracers, out_tracers, primitive, bound_subjaxprs, params = eqn
   invars = map(var, in_tracers)
   outvars = map(var, out_tracers)
   new_bound_subjaxprs = [(j, map(var, c), map(var, f)) for j, c, f in bound_subjaxprs]
   return new_jaxpr_eqn(invars, outvars, primitive, new_bound_subjaxprs, params)
-
-
 def tracers_to_jaxpr(in_tracers, out_tracers):
   newvar = gensym('')
   t_to_var = defaultdict(newvar)
@@ -448,13 +402,9 @@ def tracers_to_jaxpr(in_tracers, out_tracers):
   jaxpr = Jaxpr(const_vars, env_vars, invars, list(map(var, out_tracers)), eqns)
   core.skip_checks or core.check_jaxpr(jaxpr)
   return jaxpr, const_vals, env_vals
-
-
 def gensym(suffix):
   counter = it.count()
   return lambda: Var(next(counter), suffix)
-
-
 class Var(object):
   def __init__(self, count, suffix):
     self.count = count
@@ -469,21 +419,15 @@ class Var(object):
       if not rem:
         break
     return s + self.suffix
-
-
 def eqn_parents(eqn):
   subjaxpr_tracers = [it.chain(c, f) for _, c, f in eqn.bound_subjaxprs]
   return list(it.chain(eqn.invars, *subjaxpr_tracers))
-
-
 def closure_convert_jaxpr(jaxpr):
   core.skip_checks or core.check_jaxpr(jaxpr)
   lifted_jaxpr = Jaxpr(constvars=(), freevars=jaxpr.freevars, invars=jaxpr.constvars + jaxpr.invars,
                        outvars=jaxpr.outvars, eqns=jaxpr.eqns)
   core.skip_checks or core.check_jaxpr(lifted_jaxpr)
   return lifted_jaxpr
-
-
 def partial_eval_jaxpr(jaxpr, unknowns, instantiate):
   f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
 
@@ -527,10 +471,6 @@ def partial_eval_jaxpr(jaxpr, unknowns, instantiate):
   typed_jaxpr_1 = TypedJaxpr(jaxpr_1, consts_1, in_avals_1, out_avals_1)
   typed_jaxpr_2 = TypedJaxpr(jaxpr_2, (), in_avals_2, out_avals_2)
   return typed_jaxpr_1, typed_jaxpr_2, uk_out
-
-
 def _split_aval(unknown, aval):
   return (abstract_unit, aval) if unknown else (aval, abstract_unit)
-
-
 custom_partial_eval_rules = {}
