@@ -103,11 +103,13 @@ class _ArrayMeta(type(onp.ndarray)):
     except AttributeError:
       return isinstance(instance, _arraylike_types)
 
+# pylint: disable=invalid-name
 class ndarray(six.with_metaclass(_ArrayMeta, onp.ndarray)):
   def __init__(shape, dtype=None, buffer=None, offset=0, strides=None,
                order=None):
     raise TypeError("jax.numpy.ndarray() should not be instantiated explicitly."
                     " Use jax.numpy.array, or jax.numpy.zeros instead.")
+# pylint: enable=invalid-name
 
 
 isscalar = onp.isscalar
