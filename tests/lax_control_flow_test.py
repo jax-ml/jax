@@ -72,6 +72,17 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertEqual(cloop(2), limit - 2)
     self.assertEqual(cloop(3), limit - 3)
 
+  def testWhileWithManyArgs(self):
+    nargs = 256
+
+    def loop_cond(state):
+      return lax.lt(state[0], 2)
+
+    def loop_body(state):
+      return tuple(lax.add(s, 1) for s in state)
+
+    _ = lax.while_loop(loop_cond, loop_body, (0,) * nargs)
+
   def testNestedWhile(self):
 
     def outer_loop(num):  # pylint: disable=missing-docstring
