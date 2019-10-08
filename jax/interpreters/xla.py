@@ -143,11 +143,12 @@ def primitive_computation(prim, *xla_shapes, **params):
   backend = params.get('backend', None)
   new_params = {k: params[k] for k in params if k != 'backend'}
   c = xb.make_computation_builder("primitive_computation_{}".format(prim.name))
+  newvar = core.gensym('')
   c.SetOpMetadata(xc.OpMetadata(
       op_type=prim.name,
       op_name=str(core.new_jaxpr_eqn(
-          [chr(ord('a') + i) for i in range(len(xla_shapes))],
-          [chr(ord('a') + len(xla_shapes))],
+          [newvar() for i in range(len(xla_shapes))],
+          [newvar()],
           prim, (), params))
   ))
   platform = xb.get_backend(backend).platform
