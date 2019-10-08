@@ -50,6 +50,7 @@ class Jaxpr(object):
     return str(pp_jaxpr(self))
 
   __repr__ = __str__
+
 class TypedJaxpr(object):
   def __init__(self, jaxpr, literals, in_avals, out_avals):
     assert type(jaxpr) is Jaxpr
@@ -72,15 +73,19 @@ class TypedJaxpr(object):
     return str(pp_jaxpr(self.jaxpr))
 
   __repr__ = __str__
+
 @curry
 def jaxpr_as_fun(typed_jaxpr, *args):
   return eval_jaxpr(typed_jaxpr.jaxpr, typed_jaxpr.literals, (), *args)
+
 def new_jaxpr_eqn(*args):
   return JaxprEqn(object(), *args)
+
 JaxprEqn = namedtuple('JaxprEqn',
                       ['eqn_id', 'invars', 'outvars', 'primitive', 'bound_subjaxprs', 'params'])
 
 JaxprEqn.__repr__ = JaxprEqn.__str__ = lambda eqn: str(pp_eqn(eqn))[:-1]
+
 class Literal(object):
   __slots__ = ["val", "hash"]
 
@@ -106,7 +111,9 @@ class Literal(object):
       return 'Literal(val={}, hashable={})'.format(self.val, self.hashable)
     else:
       return '{}'.format(self.val)
+
 literalable_types = set()
+
 class Primitive(object):
   multiple_results = False  # override for multi-output primitives
 
@@ -146,6 +153,7 @@ class Primitive(object):
 
   def abstract_eval(self, *args, **kwargs):
     raise NotImplementedError("Abstract evaluation for '{}' not implemented".format(self.name))
+
 # -------------------- lifting --------------------
 def eval_jaxpr(jaxpr, consts, freevar_vals, *args):
   def read(v):
@@ -175,11 +183,13 @@ def eval_jaxpr(jaxpr, consts, freevar_vals, *args):
     else:
       write(eqn.outvars[0], ans)
   return map(read, jaxpr.outvars)
+
 def full_lower(val):
   if isinstance(val, Tracer):
     return val.full_lower()
   else:
     return val
+
 def find_top_trace(xs):
   try:
     top_trace = max((x.trace for x in xs if isinstance(x, Tracer)), key=attrgetter('level'))
@@ -187,6 +197,7 @@ def find_top_trace(xs):
     return None
   else:
     return type(top_trace)(top_trace.master, cur_sublevel())
+
 # -------------------- tracing --------------------
 class Trace(object):
   def __init__(self, master, sublevel):
@@ -228,6 +239,7 @@ class Trace(object):
 
   def __repr__(self):
     return '{}(level={}/{})'.format(self.__class__.__name__, self.level, self.sublevel)
+
 class Tracer(object):
   __array_priority__ = 1000
   __slots__ = ['trace', '__weakref__']
@@ -412,10 +424,12 @@ class Tracer(object):
 
   def __repr__(self):
     return 'Traced<{}>with<{}>'.format(self.aval, self.trace)
+
 # these can be used to set up forwarding of properties and instance methods from
 # Tracer instances to the underlying avals
 aval_property = namedtuple("aval_property", ["fget"])
 aval_method = namedtuple("aval_method", ["fun"])
+
 class MasterTrace(object):
   def __init__(self, level, trace_type):
     self.level = level
@@ -429,6 +443,7 @@ class MasterTrace(object):
 
   def __eq__(self, other):
     return self.level == other.level and self.trace_type == other.trace_type
+
 class TraceStack(object):
   def __init__(self):
     self.upward = []
@@ -455,8 +470,10 @@ class TraceStack(object):
   def __repr__(self):
     return 'Trace stack\n{} ---\n{}'.format(
         map('  {}\n'.format, self.upward[::-1]), map('  {}\n'.format, self.downward))
+
 class Sublevel(int):
   pass
+
 # The global state of the tracer is accessed by a thread-local object.
 # This allows concurrent tracing in separate threads; passing traced objects
 # between threads is forbidden.
@@ -464,9 +481,12 @@ class TraceState(threading.local):
   def __init__(self):
     self.trace_stack = TraceStack()
     self.substack = [Sublevel(0)]
+
 trace_state = TraceState()
+
 def cur_sublevel():
   return trace_state.substack[-1]
+
 @contextmanager
 def new_master(trace_type, bottom=False):
   level = trace_state.trace_stack.next_level(bottom)
@@ -484,6 +504,7 @@ def new_master(trace_type, bottom=False):
     if t() is not None:
       print(trace_state.trace_stack)
       raise Exception('Leaked trace {}'.format(t()))
+
 @contextmanager
 def new_sublevel():
   sublevel = Sublevel(len(trace_state.substack))
@@ -498,6 +519,7 @@ def new_sublevel():
     del sublevel
     if t() is not None:
       raise Exception('Leaked sublevel {}'.format(t()))
+
 # -------------------- abstract values --------------------
 class AbstractValue(object):
   __slots__ = []
@@ -511,16 +533,21 @@ class AbstractValue(object):
       return '{}({})'.format(self.__class__.__name__, ','.join(kv_pairs))
     except AttributeError:
       return self.__class__.__name__
+
 class Bot(AbstractValue):
   pass
+
 bot = Bot()
+
 class AbstractUnit(AbstractValue):
   def join(self, other):
     return self
 
   def _eq(self, self_traced, other):
     return get_aval(other) is self
+
 abstract_unit = AbstractUnit()
+
 def lattice_join(x, y):
   if x is None:
     return y
@@ -532,6 +559,7 @@ def lattice_join(x, y):
     return x.join(y)
   else:
     raise TypeError((x, y))
+
 def valid_jaxtype(x):
   try:
     concrete_aval(x)
@@ -539,25 +567,32 @@ def valid_jaxtype(x):
     return False
   else:
     return True
+
 def concrete_aval(x):
   try:
     return pytype_aval_mappings[type(x)](x)
   except KeyError:
     raise TypeError("{} is not a valid Jax type".format(type(x)))
+
 def get_aval(x):
   if isinstance(x, Tracer):
     return x.aval
   else:
     return concrete_aval(x)
+
 pytype_aval_mappings = {}
+
 class Unit(object):
   def __repr__(self):
     return '*'
+
 unit = Unit()
 literalable_types.add(Unit)
+
 class UnitVar(object):
   def __repr__(self):
     return '*'
+
 unitvar = UnitVar()
 
 pytype_aval_mappings[Unit] = lambda _: abstract_unit
@@ -571,6 +606,7 @@ def apply_todos(todos, outs):
   while todos:
     outs = map(full_lower, todos.pop()(outs))
   return outs
+
 @lu.transformation_with_aux
 def process_env_traces(primitive, level, params_tuple, *args):
   outs = yield args, {}
@@ -587,6 +623,7 @@ def process_env_traces(primitive, level, params_tuple, *args):
     outs, cur_todo = trace.post_process_call(primitive, outs, params)
     todo.append(cur_todo)
   yield outs, todo
+
 def call_bind(primitive, f, *args, **params):
   top_trace = find_top_trace(args)
   level = trace_state.trace_stack.next_level(True) if top_trace is None else top_trace.level
@@ -599,8 +636,10 @@ def call_bind(primitive, f, *args, **params):
     tracers = map(top_trace.full_raise, args)
     outs = map(full_lower, top_trace.process_call(primitive, f, tracers, params))
   return apply_todos(env_trace_todo(), outs)
+
 def call_impl(f, *args, **params):
   return f.call_wrapped(*args, **params)
+
 call_p = Primitive('call')
 call = partial(call_bind, call_p)
 call_p.def_custom_bind(call)
@@ -636,8 +675,10 @@ def check_jaxpr(jaxpr):
       check_jaxpr(subjaxpr)
     map(write, eqn.outvars)
   map(read, jaxpr.outvars)
+
 def pp_vars(vs):
   return ' '.join(map(str, vs))
+
 def pp_eqn(eqn):
   lhs = pp_vars(eqn.outvars)
   pp_subexpr = pp('')
@@ -648,6 +689,7 @@ def pp_eqn(eqn):
               pp_vars(const_vars), pp_vars(bound_vars))))
   return (pp('{} = '.format(lhs)) >> pp(eqn.primitive.name) >> pp_kv_pairs(eqn.params.items()) >>
           pp(' ') >> pp(pp_vars(eqn.invars))) + pp_subexpr
+
 def pp_jaxpr(jaxpr):
   return (pp('{{ lambda {} ; {} ; {}.'.format(
       pp_vars(jaxpr.constvars), pp_vars(jaxpr.freevars), pp_vars(jaxpr.invars))) +

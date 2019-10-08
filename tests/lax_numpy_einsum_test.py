@@ -28,8 +28,10 @@ import jax.test_util as jtu
 
 from jax.config import config
 config.parse_flags_with_absl()
+
 def rng():
   return onp.random.RandomState(0)
+
 class EinsumTest(jtu.JaxTestCase):
   def _check(self, s, *ops):
     a = onp.einsum(s, *ops)
@@ -310,5 +312,6 @@ class EinsumTest(jtu.JaxTestCase):
 
     path = np.einsum_path('ntk,kd,dc->nc', S, W, V, optimize='optimal')[0]
     self.assertAllClose(L, np.einsum('ntk,kd,dc->nc', S, W, V, optimize=path), check_dtypes=False)
+
 if __name__ == '__main__':
   absltest.main()

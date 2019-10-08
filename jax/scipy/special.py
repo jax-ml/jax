@@ -23,39 +23,49 @@ from .. import lax
 from ..api import custom_transforms, defjvp
 from ..numpy import lax_numpy as np
 from ..numpy.lax_numpy import (_wraps, asarray, _reduction_dims, _constant_like, _promote_args_like)
+
 @_wraps(osp_special.gammaln)
 def gammaln(x):
   x, = _promote_args_like(osp_special.gammaln, x)
   return lax.lgamma(x)
+
 @_wraps(osp_special.digamma)
 def digamma(x):
   x, = _promote_args_like(osp_special.digamma, x)
   return lax.digamma(x)
+
 @_wraps(osp_special.erf)
 def erf(x):
   x, = _promote_args_like(osp_special.erf, x)
   return lax.erf(x)
+
 @_wraps(osp_special.erfc)
 def erfc(x):
   x, = _promote_args_like(osp_special.erfc, x)
   return lax.erfc(x)
+
 @_wraps(osp_special.erfinv)
 def erfinv(x):
   x, = _promote_args_like(osp_special.erfinv, x)
   return lax.erf_inv(x)
+
 @_wraps(osp_special.logit)
 @custom_transforms
 def logit(x):
   x = asarray(x)
   return lax.log(lax.div(x, lax.sub(lax._const(x, 1), x)))
+
 defjvp(logit, lambda g, ans, x: g / (x * (1 - x)))
+
 @_wraps(osp_special.expit)
 @custom_transforms
 def expit(x):
   x = asarray(x)
   one = lax._const(x, 1)
   return lax.div(one, lax.add(one, lax.exp(lax.neg(x))))
+
 defjvp(expit, lambda g, ans, x: g * ans * (lax._const(ans, 1) - ans))
+
 @_wraps(osp_special.logsumexp)
 def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
   if b is not None or return_sign:
@@ -70,19 +80,23 @@ def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
           lax.reduce(lax.exp(lax.sub(a, amax_singletons)), _constant_like(a, 0), lax.add, dims)),
       amax)
   return dimadd(out) if keepdims else out
+
 @_wraps(osp_special.xlogy)
 def xlogy(x, y):
   x, y = _promote_args_like(osp_special.xlogy, x, y)
   return lax._safe_mul(x, lax.log(y))
+
 @_wraps(osp_special.xlog1py)
 def xlog1py(x, y):
   x, y = _promote_args_like(osp_special.xlog1py, x, y)
   return lax._safe_mul(x, lax.log1p(y))
+
 @_wraps(osp_special.entr)
 def entr(x):
   x, = _promote_args_like(osp_special.entr, x)
   return lax.select(
       lax.lt(x, _constant_like(x, 0)), lax.full_like(x, -onp.inf), lax.neg(xlogy(x, x)))
+
 @_wraps(osp_special.multigammaln)
 def multigammaln(a, d):
   a, = _promote_args_like(lambda a: osp_special.multigammaln(a, 1), a)
@@ -93,6 +107,7 @@ def multigammaln(a, d):
   res = np.sum(
       gammaln(np.expand_dims(a, axis=-1) - lax.div(np.arange(d), _constant_like(a, 2))), axis=-1)
   return res + constant
+
 # Normal distributions
 
 # Functions "ndtr" and "ndtri" are derived from calculations made in:
@@ -165,6 +180,7 @@ _LOGNDTR_FLOAT32_LOWER = onp.array(-10, onp.float32)
 # conservative, meaning we use the approximation earlier than needed.
 _LOGNDTR_FLOAT64_UPPER = onp.array(8, onp.float64)
 _LOGNDTR_FLOAT32_UPPER = onp.array(5, onp.float32)
+
 def ndtr(x):
   r"""Normal distribution function.
 
@@ -193,6 +209,7 @@ def ndtr(x):
   if dtype not in (np.float32, np.float64):
     raise TypeError("x.dtype={} is not supported, see docstring for supported types.".format(dtype))
   return _ndtr(x)
+
 def _ndtr(x):
   """Implements ndtr core logic."""
   dtype = lax.dtype(x).type
@@ -205,6 +222,7 @@ def _ndtr(x):
       lax.select(lax.gt(w, dtype(0.)),
                  dtype(2.) - lax.erfc(z), lax.erfc(z)))
   return dtype(0.5) * y
+
 def ndtri(p):
   r"""The inverse of the CDF of the Normal distribution function.
 
@@ -228,6 +246,7 @@ def ndtri(p):
   if dtype not in (np.float32, np.float64):
     raise TypeError("x.dtype={} is not supported, see docstring for supported types.".format(dtype))
   return _ndtri(p)
+
 def _ndtri(p):
   """Implements ndtri core logic."""
 
@@ -312,6 +331,7 @@ def _ndtri(p):
   infinity = np.full(shape, dtype(onp.inf))
   x_nan_replaced = np.where(p <= dtype(0.0), -infinity, np.where(p >= dtype(1.0), infinity, x))
   return x_nan_replaced
+
 @custom_transforms
 def log_ndtr(x, series_order=3):
   r"""Log Normal distribution function.
@@ -412,6 +432,7 @@ def log_ndtr(x, series_order=3):
       np.where(
           lax.gt(x, lower_segment), lax.log(_ndtr(lax.max(x, lower_segment))),
           _log_ndtr_lower(lax.min(x, lower_segment), series_order)))
+
 def _log_ndtr_lower(x, series_order):
   """Asymptotic expansion version of `Log[cdf(x)]`, appropriate for `x<<-1`."""
   dtype = lax.dtype(x).type
@@ -419,6 +440,7 @@ def _log_ndtr_lower(x, series_order):
   # Log of the term multiplying (1 + sum)
   log_scale = -dtype(0.5) * x_2 - lax.log(-x) - dtype(0.5 * onp.log(2. * onp.pi))
   return log_scale + lax.log(_log_ndtr_asymptotic_series(x, series_order))
+
 def _log_ndtr_asymptotic_series(x, series_order):
   """Calculates the asymptotic series used in log_ndtr."""
   dtype = lax.dtype(x).type
@@ -436,12 +458,16 @@ def _log_ndtr_asymptotic_series(x, series_order):
       even_sum += y
     x_2n *= x_2
   return dtype(1.) + even_sum - odd_sum
+
 def _double_factorial(n):
   """The double factorial function for small Python integer `n`."""
   return onp.prod(onp.arange(n, 1, -2))
+
 _norm_logpdf_constant = onp.log(onp.sqrt(2 * onp.pi))
+
 def _norm_logpdf(x):
   neg_half = _constant_like(x, -0.5)
   log_normalizer = _constant_like(x, _norm_logpdf_constant)
   return lax.sub(lax.mul(neg_half, lax.square(x)), log_normalizer)
+
 defjvp(log_ndtr, lambda g, ans, x: lax.mul(g, lax.exp(lax.sub(_norm_logpdf(x), ans))))

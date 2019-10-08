@@ -77,6 +77,7 @@ import jax.numpy as np
 from jax.lib import xla_client
 
 FLAGS = flags.FLAGS
+
 def jax_to_hlo(fn, input_shapes, constants=None):
   """Converts a JAX function to an HLO module.
 
@@ -128,6 +129,7 @@ def jax_to_hlo(fn, input_shapes, constants=None):
 
   comp = jax.api.xla_computation(ordered_wrapper)(*args)
   return (comp.GetSerializedProto(), comp.GetHloText())
+
 def main(argv):
   if len(argv) != 1:
     raise app.UsageError('No positional arguments are accepted.')
@@ -168,6 +170,7 @@ def main(argv):
   if FLAGS.hlo_text_dest:
     with open(FLAGS.hlo_text_dest, 'w') as f:
       f.write(hlo_text)
+
 def set_up_flags():
   flags.DEFINE_string('fn', None, "Fully-qualified name of function that we're going to convert")
   flags.DEFINE_string('input_shapes', None, 'Python dict indicating XLA shapes of params')
@@ -180,6 +183,7 @@ def set_up_flags():
   flags.DEFINE_string('hlo_text_dest', None, 'File to write HLO text')
   flags.mark_flag_as_required('fn')
   flags.mark_flag_as_required('input_shapes')
+
 if __name__ == '__main__':
   set_up_flags()
   app.run(main)

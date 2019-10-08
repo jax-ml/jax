@@ -22,6 +22,7 @@ import scipy.stats as osp_stats
 from ... import lax
 from ...numpy import lax_numpy as np
 from ..special import xlogy, xlog1py
+
 @np._wraps(osp_stats.bernoulli.logpmf)
 def logpmf(k, p, loc=0):
   k, p, loc = np._promote_args_like(osp_stats.bernoulli.logpmf, k, p, loc)
@@ -30,6 +31,7 @@ def logpmf(k, p, loc=0):
   x = lax.sub(k, loc)
   log_probs = xlogy(x, p) + xlog1py(lax.sub(one, x), -p)
   return np.where(np.logical_or(lax.lt(x, zero), lax.gt(x, one)), -np.inf, log_probs)
+
 @np._wraps(osp_stats.bernoulli.pmf)
 def pmf(k, p, loc=0):
   return np.exp(pmf(k, p, loc))

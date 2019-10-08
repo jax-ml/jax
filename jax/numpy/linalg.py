@@ -32,6 +32,7 @@ from ..util import get_module_functions
 from ..lib import xla_bridge
 
 _T = lambda x: np.swapaxes(x, -1, -2)
+
 def _promote_arg_dtypes(*args):
   """Promotes `args` to a common inexact type."""
   def _to_inexact_type(type):
@@ -44,19 +45,23 @@ def _promote_arg_dtypes(*args):
     return args[0]
   else:
     return args
+
 @_wraps(onp.linalg.cholesky)
 def cholesky(a):
   a = _promote_arg_dtypes(np.asarray(a))
   return lax_linalg.cholesky(a)
+
 @_wraps(onp.linalg.svd)
 def svd(a, full_matrices=True, compute_uv=True):
   a = _promote_arg_dtypes(np.asarray(a))
   return lax_linalg.svd(a, full_matrices, compute_uv)
+
 # TODO(pfau): make this work for complex types
 def _jvp_slogdet(g, ans, x):
   jvp_sign = np.zeros(x.shape[:-2])
   jvp_logdet = np.trace(solve(x, g), axis1=-1, axis2=-2)
   return jvp_sign, jvp_logdet
+
 @_wraps(onp.linalg.slogdet)
 @custom_transforms
 @jit
@@ -80,16 +85,20 @@ def slogdet(a):
                   sign * np.array(-2 * (parity % 2) + 1, dtype=dtype))
   logdet = np.where(is_zero, np.array(-np.inf, dtype=dtype), np.sum(np.log(np.abs(diag)), axis=-1))
   return sign, np.real(logdet)
+
 defjvp(slogdet, _jvp_slogdet)
+
 @_wraps(onp.linalg.det)
 def det(a):
   sign, logdet = slogdet(a)
   return sign * np.exp(logdet)
+
 @_wraps(onp.linalg.eig)
 def eig(a):
   a = _promote_arg_dtypes(np.asarray(a))
   w, vl, vr = lax_linalg.eig(a)
   return w, vr
+
 @_wraps(onp.linalg.eigh)
 def eigh(a, UPLO=None, symmetrize_input=True):
   if UPLO is None or UPLO == "L":
@@ -103,11 +112,13 @@ def eigh(a, UPLO=None, symmetrize_input=True):
   a = _promote_arg_dtypes(np.asarray(a))
   v, w = lax_linalg.eigh(a, lower=lower, symmetrize_input=symmetrize_input)
   return w, v
+
 @_wraps(onp.linalg.inv)
 def inv(a):
   if np.ndim(a) < 2 or a.shape[-1] != a.shape[-2]:
     raise ValueError("Argument to inv must have shape [..., n, n], got {}.".format(np.shape(a)))
   return solve(a, lax.broadcast(np.eye(a.shape[-1], dtype=lax.dtype(a)), a.shape[:-2]))
+
 @partial(jit, static_argnums=(1, 2, 3))
 def _norm(x, ord, axis, keepdims):
   x = _promote_arg_dtypes(np.asarray(x))
@@ -187,9 +198,11 @@ def _norm(x, ord, axis, keepdims):
       raise ValueError("Invalid order '{}' for matrix norm.".format(ord))
   else:
     raise ValueError("Invalid axis values ({}) for np.linalg.norm.".format(axis))
+
 @_wraps(onp.linalg.norm)
 def norm(x, ord=None, axis=None, keepdims=False):
   return _norm(x, ord, axis, keepdims)
+
 @_wraps(onp.linalg.qr)
 def qr(a, mode="reduced"):
   if mode in ("reduced", "r", "full"):
@@ -203,6 +216,7 @@ def qr(a, mode="reduced"):
   if mode == "r":
     return r
   return q, r
+
 @_wraps(onp.linalg.solve)
 @jit
 def solve(a, b):
@@ -237,6 +251,7 @@ def solve(a, b):
   x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=False)
 
   return x[..., 0] if a_ndims == b_ndims + 1 else x
+
 for func in get_module_functions(onp.linalg):
   if func.__name__ not in globals():
     globals()[func.__name__] = _not_implemented(func)

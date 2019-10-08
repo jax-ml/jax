@@ -27,6 +27,7 @@ from six.moves.urllib.request import urlretrieve
 import numpy as np
 
 _DATA = "/tmp/jax_example_data/"
+
 def _download(url, filename):
   """Download a url to a file in the JAX data temp directory."""
   if not path.exists(_DATA):
@@ -35,12 +36,15 @@ def _download(url, filename):
   if not path.isfile(out_file):
     urlretrieve(url, out_file)
     print("downloaded {} to {}".format(url, _DATA))
+
 def _partial_flatten(x):
   """Flatten all but the first dimension of an ndarray."""
   return np.reshape(x, (x.shape[0], -1))
+
 def _one_hot(x, k, dtype=np.float32):
   """Create a one-hot encoding of x of size k."""
   return np.array(x[:, None] == np.arange(k), dtype)
+
 def mnist_raw():
   """Download and parse the raw MNIST dataset."""
   # CVDF mirror of http://yann.lecun.com/exdb/mnist/
@@ -68,6 +72,7 @@ def mnist_raw():
   test_labels = parse_labels(path.join(_DATA, "t10k-labels-idx1-ubyte.gz"))
 
   return train_images, train_labels, test_images, test_labels
+
 def mnist(permute_train=False):
   """Download, parse and process MNIST data to unit scale and one-hot labels."""
   train_images, train_labels, test_images, test_labels = mnist_raw()

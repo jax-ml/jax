@@ -29,9 +29,11 @@ from jax.config import config
 from jax.scipy.special import logsumexp
 import jax.numpy as np
 from examples import datasets
+
 def init_random_params(scale, layer_sizes, rng=npr.RandomState(0)):
   return [(scale * rng.randn(m, n), scale * rng.randn(n))
           for m, n, in zip(layer_sizes[:-1], layer_sizes[1:])]
+
 def predict(params, inputs):
   activations = inputs
   for w, b in params[:-1]:
@@ -41,15 +43,18 @@ def predict(params, inputs):
   final_w, final_b = params[-1]
   logits = np.dot(activations, final_w) + final_b
   return logits - logsumexp(logits, axis=1, keepdims=True)
+
 def loss(params, batch):
   inputs, targets = batch
   preds = predict(params, inputs)
   return -np.mean(preds * targets)
+
 def accuracy(params, batch):
   inputs, targets = batch
   target_class = np.argmax(targets, axis=1)
   predicted_class = np.argmax(predict(params, inputs), axis=1)
   return np.mean(predicted_class == target_class)
+
 if __name__ == "__main__":
   layer_sizes = [784, 1024, 1024, 10]
   param_scale = 0.1

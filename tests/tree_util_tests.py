@@ -23,9 +23,12 @@ from absl.testing import parameterized
 
 from jax import test_util as jtu
 from jax import tree_util
+
 def _dummy_func(*args, **kwargs):
   return
+
 ATuple = collections.namedtuple("ATuple", ("foo", "bar"))
+
 class AnObject(object):
   def __init__(self, x, y, z):
     self.x = x
@@ -40,6 +43,7 @@ class AnObject(object):
 
   def __repr__(self):
     return "AnObject({},{},{})".format(self.x, self.y, self.z)
+
 tree_util.register_pytree_node(AnObject, lambda o: ((o.x, o.y), o.z),
                                lambda z, xy: AnObject(xy[0], xy[1], z))
 
@@ -57,6 +61,7 @@ PYTREES = [
         "b": 2
     },),
 ]
+
 class TreeTest(jtu.JaxTestCase):
   @parameterized.parameters(*PYTREES)
   def testRoundtrip(self, inputs):
@@ -114,5 +119,6 @@ class TreeTest(jtu.JaxTestCase):
     y = (([3], None), ({"foo": "bar"}, 7, [5, 6]))
     out = tree_util.tree_multimap(lambda *xs: tuple(xs), x, y)
     self.assertEqual(out, (((1, [3]), (2, None)), ((3, {"foo": "bar"}), (4, 7), (5, [5, 6]))))
+
 if __name__ == "__main__":
   absltest.main()

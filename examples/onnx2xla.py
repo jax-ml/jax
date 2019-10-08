@@ -29,8 +29,10 @@ from six.moves.urllib.request import urlopen
 import jax.numpy as np
 from jax import jit, grad
 from jax import lax
+
 def _asarray(proto):
   return numpy_helper.to_array(proto).reshape(tuple(proto.dims))
+
 attr_types = dict(onnx_pb2.AttributeProto.AttributeType.items())
 attribute_handlers = {
     attr_types['FLOAT']: lambda a: a.f,
@@ -42,6 +44,7 @@ attribute_handlers = {
     attr_types['STRINGS']: lambda a: a.strings,
     attr_types['TENSORS']: lambda a: [_asarray(x) for x in a.tensors],
 }
+
 def onnx_maxpool(x, kernel_shape, pads=None, strides=None):
   """Numpy-backed implementation of ONNX MaxPool op."""
   prefix = (1,) * (x.ndim - len(kernel_shape))
@@ -49,6 +52,7 @@ def onnx_maxpool(x, kernel_shape, pads=None, strides=None):
   pads = tuple(pads) if pads else [0] * len(kernel_shape)
   strides = (prefix + tuple(strides)) if strides else [1] * len(kernel_shape)
   return [lax.reduce_window(x, -np.inf, lax.max, dims, strides, 'VALID')]
+
 def onnx_conv(x, w, b=0, group=1, kernel_shape=None, pads=None, strides=None, dilations=None,
               auto_pad=None):
   """Numpy-backed implementation of ONNX Conv op."""
@@ -63,6 +67,7 @@ def onnx_conv(x, w, b=0, group=1, kernel_shape=None, pads=None, strides=None, di
   lhs_dilation = [1] * (w.ndim - 2)
   rhs_dilation = dilations or [1] * (w.ndim - 2)
   return [lax.conv_with_general_padding(x, w, strides, pads, lhs_dilation, rhs_dilation) + b]
+
 def onnx_add(a, b, axis=None, broadcast=True):
   """Numpy-backed implementation of ONNX Add op."""
   if broadcast:
@@ -72,6 +77,7 @@ def onnx_add(a, b, axis=None, broadcast=True):
     b_shape[axis:axis + b.ndim] = b.shape
     b = np.reshape(b, b_shape)
   return [a + b]
+
 onnx_ops = {
     'Add': onnx_add,
     'Constant': lambda value: [value],
@@ -81,6 +87,7 @@ onnx_ops = {
     'Relu': lambda x: [np.maximum(x, 0)],
     'Reshape': lambda x, shape: [np.reshape(x, shape)],
 }
+
 def interpret_onnx(graph, *args):
   vals = dict({n.name: a for n, a in zip(graph.input, args)},
               **{n.name: _asarray(n) for n in graph.initializer})
@@ -91,6 +98,7 @@ def interpret_onnx(graph, *args):
     for name, output in zip(node.output, outputs):
       vals[name] = output
   return [vals[n.name] for n in graph.output]
+
 if __name__ == "__main__":
   # It seems that there are several ONNX proto versions (you had one job!) but
   # this implementation works with at least this one mnist example file.

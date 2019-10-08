@@ -48,9 +48,11 @@ numeric_dtypes = float_dtypes + complex_dtypes + int_dtypes
 
 OpRecord = collections.namedtuple("OpRecord",
                                   ["name", "nargs", "dtypes", "rng", "test_autodiff", "test_name"])
+
 def op_record(name, nargs, dtypes, rng, test_grad, test_name=None):
   test_name = test_name or name
   return OpRecord(name, nargs, dtypes, rng, test_grad, test_name)
+
 JAX_SPECIAL_FUNCTION_RECORDS = [
     # TODO: digamma has no JVP implemented.
     op_record("digamma", 1, float_dtypes, jtu.rand_positive(), False),
@@ -69,6 +71,7 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
 ]
 
 CombosWithReplacement = itertools.combinations_with_replacement
+
 class LaxBackedScipyTests(jtu.JaxTestCase):
   """Tests for LAX-backed Scipy implementation."""
   def _GetArgsMaker(self, rng, shapes, dtypes):
@@ -152,5 +155,6 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   def testIssue980(self):
     x = onp.full((4,), -1e20, dtype=onp.float32)
     self.assertAllClose(onp.zeros((4,), dtype=onp.float32), lsp_special.expit(x), check_dtypes=True)
+
 if __name__ == "__main__":
   absltest.main()

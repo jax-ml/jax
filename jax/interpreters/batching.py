@@ -35,16 +35,19 @@ from . import xla
 from . import partial_eval as pe
 
 map = safe_map
+
 def batch(fun, in_vals, in_dims, out_dim_dests):
   out_vals, out_dims = batch_fun(fun, in_vals, in_dims)
   size, = {x.shape[d] for x, d in zip(in_vals, in_dims) if d is not not_mapped}
   return map(partial(matchaxis, size), out_dims, out_dim_dests(), out_vals)
+
 def batch_fun(fun, in_vals, in_dims):
   with new_master(BatchTrace) as master:
     fun, out_dims = batch_subtrace(fun, master, in_dims)
     out_vals = fun.call_wrapped(*in_vals)
     del master
   return out_vals, out_dims()
+
 @transformation_with_aux
 def batch_subtrace(master, in_dims, *in_vals):
   trace = BatchTrace(master, core.cur_sublevel())
@@ -53,11 +56,13 @@ def batch_subtrace(master, in_dims, *in_vals):
   out_tracers = map(trace.full_raise, outs)
   out_vals, out_dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
   yield out_vals, out_dims
+
 ### tracer
 
 # TODO(mattjj): use a special sentinel type rather than None
 NotMapped = type(None)
 not_mapped = None
+
 class BatchTracer(Tracer):
   __slots__ = ['val', 'batch_dim']
 
@@ -87,6 +92,7 @@ class BatchTracer(Tracer):
       return core.full_lower(self.val)
     else:
       return self
+
 class BatchTrace(Trace):
   def pure(self, val):
     return BatchTracer(self, val, not_mapped)
@@ -147,21 +153,27 @@ class BatchTrace(Trace):
       return map(partial(BatchTracer, trace), x, dims)
 
     return vals, todo
+
 ### primitives
 
 primitive_batchers = {}
+
 def get_primitive_batcher(p):
   try:
     return primitive_batchers[p]
   except KeyError:
     raise NotImplementedError("Batching rule for '{}' not implemented".format(p))
+
 def defvectorized(prim):
   primitive_batchers[prim] = partial(vectorized_batcher, prim)
+
 def vectorized_batcher(prim, batched_args, batch_dims, **params):
   assert all(batch_dims[0] == bd for bd in batch_dims[1:]), batch_dims
   return prim.bind(*batched_args, **params), batch_dims[0]
+
 def defbroadcasting(prim):
   primitive_batchers[prim] = partial(broadcast_batcher, prim)
+
 def broadcast_batcher(prim, args, dims, **params):
   shapes = {(x.shape, d) for x, d in zip(args, dims) if onp.ndim(x)}
   if len(shapes) == 1:
@@ -174,13 +186,16 @@ def broadcast_batcher(prim, args, dims, **params):
     ndim = max(onp.ndim(x) for x in args)  # special-case scalar broadcasting
     args = [_handle_scalar_broadcasting(ndim, x, d) for x, d in zip(args, dims)]
     return prim.bind(*args, **params), 0
+
 def _handle_scalar_broadcasting(nd, x, d):
   if d is not_mapped or nd == onp.ndim(x):
     return x
   else:
     return x.reshape(x.shape + (1,) * (nd - onp.ndim(x)))
+
 def defreducer(prim):
   primitive_batchers[prim] = partial(reducer_batcher, prim)
+
 def reducer_batcher(prim, batched_args, batch_dims, axes, **params):
   operand, = batched_args
   bdim, = batch_dims
@@ -189,6 +204,7 @@ def reducer_batcher(prim, batched_args, batch_dims, axes, **params):
   if 'input_shape' in params:
     params = dict(params, input_shape=operand.shape)
   return prim.bind(operand, axes=axes, **params), bdim_out
+
 # sets up primitive batchers for ad_util and xla primitives
 def add_batched(batched_args, batch_dims):
   bdx, bdy = batch_dims
@@ -204,11 +220,14 @@ def add_batched(batched_args, batch_dims):
   else:
     x = moveaxis(x, bdx, bdy)
     return add_jaxvals(x, y), bdy
+
 primitive_batchers[add_jaxvals_p] = add_batched
+
 def zeros_like_batched(batched_args, batch_dims):
   val, = batched_args
   bdim, = batch_dims
   return zeros_like_jaxval(val), bdim
+
 primitive_batchers[zeros_like_p] = zeros_like_batched
 
 defvectorized(xla.device_put_p)
@@ -223,7 +242,9 @@ defvectorized(xla.device_put_p)
 # method. To handle that case, the `broadcast` function uses a try/except.
 class _Last(object):
   pass
+
 last = _Last()
+
 def broadcast(x, sz, axis):
   if core.get_aval(x) is core.abstract_unit:
     return core.unit
@@ -236,6 +257,7 @@ def broadcast(x, sz, axis):
   else:
     broadcast_dims = tuple(onp.delete(onp.arange(len(shape)), axis))
     return x.broadcast_in_dim(shape, broadcast_dims)
+
 def moveaxis(x, src, dst):
   if core.get_aval(x) is core.abstract_unit:
     return core.unit
@@ -243,6 +265,7 @@ def moveaxis(x, src, dst):
   perm = [i for i in range(onp.ndim(x)) if i != src]
   perm.insert(dst, src)
   return x.transpose(perm)
+
 def matchaxis(sz, src, dst, x):
   if core.get_aval(x) is core.abstract_unit:
     return core.unit
@@ -256,6 +279,7 @@ def matchaxis(sz, src, dst, x):
     return broadcast(x, sz, dst)
   else:
     raise ValueError((src, dst))
+
 def bdim_at_front(x, bdim, size):
   if core.get_aval(x) is core.abstract_unit:
     return core.unit
@@ -263,11 +287,13 @@ def bdim_at_front(x, bdim, size):
     return broadcast(x, size, 0)
   else:
     return moveaxis(x, bdim, 0)
+
 def _promote_aval_rank(sz, aval):
   if aval is core.abstract_unit:
     return core.abstract_unit
   else:
     return ShapedArray((sz,) + aval.shape, aval.dtype)
+
 def batch_jaxpr(jaxpr, size, batched, instantiate):
   f = wrap_init(core.jaxpr_as_fun(jaxpr))
   f, batched_out = batched_traceable(f, size, batched, instantiate)
@@ -277,6 +303,7 @@ def batch_jaxpr(jaxpr, size, batched, instantiate):
   avals_out, _ = unzip2(pvals_out)
   jaxpr_out = core.TypedJaxpr(jaxpr_out, consts_out, avals_in, avals_out)
   return jaxpr_out, batched_out()
+
 @transformation_with_aux
 def batched_traceable(size, batched, instantiate, *vals):
   in_dims = [0 if b else None for b in batched]

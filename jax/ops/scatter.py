@@ -26,6 +26,7 @@ import numpy as onp
 from .. import lax
 from ..api import jit
 from ..numpy import lax_numpy as np
+
 def _scatter_update(x, idx, y, scatter_op):
   """Helper for indexed updates.
 
@@ -53,6 +54,7 @@ def _scatter_update(x, idx, y, scatter_op):
   # is more or less a transpose of the gather equivalent.
   treedef, static_idx, dynamic_idx = np._split_index_for_jit(idx)
   return _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx)
+
 # TODO(phawkins): re-enable jit after fixing excessive recompilation for
 # slice indexes (e.g., slice(0, 5, None), slice(10, 15, None), etc.).
 # @partial(jit, static_argnums=(2, 3, 4))
@@ -75,6 +77,7 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx):
                                       inserted_window_dims=indexer.dnums.collapsed_slice_dims,
                                       scatter_dims_to_operand_dims=indexer.dnums.start_index_map)
   return scatter_op(x, indexer.gather_indices, y, dnums)
+
 class _Indexable(object):
   """Helper object for building indexes for indexed update functions.
 
@@ -88,8 +91,10 @@ class _Indexable(object):
 
   def __getitem__(self, index):
     return index
+
 #: Index object singleton
 index = _Indexable()
+
 def index_add(x, idx, y):
   """Pure equivalent of :code:`x[idx] += y`.
 
@@ -127,6 +132,7 @@ def index_add(x, idx, y):
          [1., 1., 1., 1., 1., 1.]], dtype=float32)
   """
   return _scatter_update(x, idx, y, lax.scatter_add)
+
 def index_min(x, idx, y):
   """Pure equivalent of :code:`x[idx] = minimum(x[idx], y)`.
 
@@ -162,6 +168,7 @@ def index_min(x, idx, y):
          [1., 1., 1., 1., 1., 1.]], dtype=float32)
   """
   return _scatter_update(x, idx, y, lax.scatter_min)
+
 def index_max(x, idx, y):
   """Pure equivalent of :code:`x[idx] = maximum(x[idx], y)`.
 
@@ -197,6 +204,7 @@ def index_max(x, idx, y):
          [1., 1., 1., 1., 1., 1.]], dtype=float32)
   """
   return _scatter_update(x, idx, y, lax.scatter_max)
+
 def index_update(x, idx, y):
   """Pure equivalent of :code:`x[idx] = y`.
 
@@ -233,6 +241,7 @@ def index_update(x, idx, y):
          [1., 1., 1., 6., 6., 6.]], dtype=float32)
   """
   return _scatter_update(x, idx, y, lax.scatter)
+
 def segment_sum(data, segment_ids, num_segments=None):
   """Computes the sum within segments of an array.
 

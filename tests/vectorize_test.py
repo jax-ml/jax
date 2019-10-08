@@ -33,18 +33,23 @@ matmat = vectorize('(n,m),(m,k)->(n,k)')(np.dot)
 matvec = vectorize('(n,m),(m)->(n)')(np.dot)
 vecmat = vectorize('(m),(m,k)->(k)')(np.dot)
 vecvec = vectorize('(m),(m)->()')(np.dot)
+
 @vectorize('(n)->()')
 def magnitude(x):
   return np.dot(x, x)
+
 mean = vectorize('(n)->()')(np.mean)
+
 @vectorize('()->(n)')
 def stack_plus_minus(x):
   return np.stack([x, -x])
+
 @vectorize('(n)->(),(n)')
 def center(array):
   bias = np.mean(array)
   debiased = array - bias
   return bias, debiased
+
 class VectorizeTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       jtu.cases_from_list({
@@ -160,5 +165,6 @@ class VectorizeTest(jtu.JaxTestCase):
     self.assertEqual(a.shape, (3, 4))
     self.assertEqual(b.shape, (4,))
     self.assertAllClose(np.mean(X, axis=0), b, True)
+
 if __name__ == "__main__":
   absltest.main()

@@ -38,6 +38,7 @@ except ImportError:
   pass
 
 _Shape = xla_client.Shape
+
 def _real_type(dtype):
   """Returns the real equivalent of 'dtype'."""
   if dtype == np.float32:
@@ -50,7 +51,9 @@ def _real_type(dtype):
     return np.float64
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
+
 _prod = lambda xs: reduce(operator.mul, xs, 1)
+
 def trsm(c, a, b, left_side=False, lower=False, trans_a=False, conj_a=False, diag=False):
   """Batched triangular solve.
 
@@ -85,6 +88,7 @@ def trsm(c, a, b, left_side=False, lower=False, trans_a=False, conj_a=False, dia
                _Shape.array_shape(dtype, b_shape.dimensions(), layout),
            ), opaque=opaque)
   return c.GetTupleElement(out, 0)
+
 def getrf(c, a):
   """LU decomposition."""
   a_shape = c.GetShape(a)
@@ -117,6 +121,7 @@ def getrf(c, a):
           dtype, batch_dims + (m, n), (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),),
       opaque=opaque)
   return (c.GetTupleElement(out, 0), c.GetTupleElement(out, 1), c.GetTupleElement(out, 2))
+
 def geqrf(c, a):
   """QR decomposition."""
   a_shape = c.GetShape(a)
@@ -143,6 +148,7 @@ def geqrf(c, a):
           dtype, batch_dims + (m, n), (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),),
       opaque=opaque)
   return (c.GetTupleElement(out, 0), c.GetTupleElement(out, 1), c.GetTupleElement(out, 2))
+
 def orgqr(c, a, tau):
   """Product of elementary Householder reflections."""
   a_shape = c.GetShape(a)
@@ -174,6 +180,7 @@ def orgqr(c, a, tau):
           _Shape.array_shape(dtype, batch_dims + (k,), tuple(range(num_bd, -1, -1))),
       ), opaque=opaque)
   return (c.GetTupleElement(out, 0), c.GetTupleElement(out, 1))
+
 def syevd(c, a, lower=False):
   """Symmetric (Hermitian) eigendecomposition."""
 
@@ -206,6 +213,7 @@ def syevd(c, a, lower=False):
                                           -1))), _Shape.array_shape(dtype, (lwork,), (0,)))),
       operand_shapes_with_layout=(_Shape.array_shape(dtype, dims, layout),), opaque=opaque)
   return (c.GetTupleElement(out, 0), c.GetTupleElement(out, 1), c.GetTupleElement(out, 2))
+
 def gesvd(c, a, full_matrices=True, compute_uv=True):
   """Singular value decomposition."""
 

@@ -33,18 +33,22 @@ import jax.scipy.stats.norm as norm
 def diag_gaussian_sample(rng, mean, log_std):
   # Take a single sample from a diagonal multivariate Gaussian.
   return mean + np.exp(log_std) * random.normal(rng, mean.shape)
+
 def diag_gaussian_logpdf(x, mean, log_std):
   # Evaluate a single point on a diagonal multivariate Gaussian.
   return np.sum(vmap(norm.logpdf)(x, mean, np.exp(log_std)))
+
 def elbo(logprob, rng, mean, log_std):
   # Single-sample Monte Carlo estimate of the variational lower bound.
   sample = diag_gaussian_sample(rng, mean, log_std)
   return logprob(sample) - diag_gaussian_logpdf(sample, mean, log_std)
+
 def batch_elbo(logprob, rng, params, num_samples):
   # Average over a batch of random samples.
   rngs = random.split(rng, num_samples)
   vectorized_elbo = vmap(partial(elbo, logprob), in_axes=(0, None, None))
   return np.mean(vectorized_elbo(rngs, *params))
+
 # ========= Helper function for plotting. =========
 @partial(jit, static_argnums=(0, 1, 2, 4))
 def mesh_eval(func, x_limits, y_limits, params, num_ticks=101):
@@ -55,10 +59,12 @@ def mesh_eval(func, x_limits, y_limits, params, num_ticks=101):
   xy_vec = np.stack([X.ravel(), Y.ravel()]).T
   zs = vmap(func, in_axes=(0, None))(xy_vec, params)
   return X, Y, zs.reshape(X.shape)
+
 # ========= Define an intractable unnormalized density =========
 def funnel_log_density(params):
   return norm.logpdf(params[0], 0, np.exp(params[1])) + \
          norm.logpdf(params[1], 0, 1.35)
+
 if __name__ == "__main__":
   num_samples = 40
 

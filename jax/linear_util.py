@@ -71,6 +71,7 @@ from __future__ import print_function
 import fastcache
 
 from .util import curry, partial
+
 def thunk(f):
   store = Store()
 
@@ -81,11 +82,15 @@ def thunk(f):
     return store.val
 
   return f_memoized
+
 class StoreException(Exception):
   pass
+
 class EmptyStoreValue(object):
   pass
+
 _EMPTY_STORE_VALUE = EmptyStoreValue()
+
 class Store(object):
   __slots__ = ("_val",)
 
@@ -106,6 +111,7 @@ class Store(object):
     return self._val is not _EMPTY_STORE_VALUE
 
   __bool__ = __nonzero__
+
 @curry
 def staged(f, *init_args):
   store = Store()
@@ -117,6 +123,7 @@ def staged(f, *init_args):
 
   f_partial.__name__ = f.__name__ + "_staged"
   return f_partial, thunk(lambda: store.val)
+
 class WrappedFun(object):
   """Represents a function `f` to which `transforms` are to be applied.
 
@@ -181,22 +188,27 @@ class WrappedFun(object):
   def __eq__(self, other):
     return (self.f == other.f and self.transforms == other.transforms
             and self.params == other.params)
+
 @curry
 def transformation(gen, fun, *transformation_args):
   return fun.wrap(gen, transformation_args, None)
+
 @curry
 def transformation_with_aux(gen, fun, *transformation_args):
   out_store = Store()
   out_thunk = lambda: out_store.val
   return fun.wrap(gen, transformation_args, out_store), out_thunk
+
 def fun_name(f):
   try:
     return f.__name__
   except:
     return str(f)
+
 def wrap_init(f, params={}):
   """Wraps function `f` as a `WrappedFun`, suitable for transformation."""
   return WrappedFun(f, (), (), tuple(sorted(params.items())))
+
 def cache(call, max_size=4096):
   @fastcache.clru_cache(maxsize=max_size)
   def cached_fun_body(f, args):

@@ -61,6 +61,7 @@ def psum(x, axis_name):
   [ 0.          0.16666667  0.33333334  0.5       ]
   """
   return psum_p.bind(x, axis_name=axis_name)
+
 def pmax(x, axis_name):
   """Compute an all-reduce max on ``x`` over the pmapped axis ``axis_name``.
 
@@ -74,6 +75,7 @@ def pmax(x, axis_name):
     all-reduce max along the axis ``axis_name``.
   """
   return pmax_p.bind(x, axis_name=axis_name)
+
 def pmin(x, axis_name):
   """Compute an all-reduce min on ``x`` over the pmapped axis ``axis_name``.
 
@@ -87,6 +89,7 @@ def pmin(x, axis_name):
     all-reduce min along the axis ``axis_name``.
   """
   return pmin_p.bind(x, axis_name=axis_name)
+
 def ppermute(x, axis_name, perm):
   """Perform a collective permutation according to the permutation ``perm``.
 
@@ -109,6 +112,7 @@ def ppermute(x, axis_name, perm):
     ``axis_name`` gathered from ``x`` according to the permutation ``perm``.
   """
   return ppermute_p.bind(x, axis_name=axis_name, perm=perm)
+
 def pswapaxes(x, axis_name, axis):
   """Swap the pmapped axis ``axis_name`` with the unmapped axis ``axis``.
 
@@ -132,6 +136,7 @@ def pswapaxes(x, axis_name, axis):
     the input ``x``.
   """
   return all_to_all(x, axis_name, axis, axis)
+
 def all_to_all(x, axis_name, split_axis, concat_axis):
   """Materialize the mapped axis and map a different axis.
 
@@ -163,21 +168,25 @@ def all_to_all(x, axis_name, split_axis, concat_axis):
            "x.shape[split_axis], but they are {} and {} respectively.")
     raise ValueError(msg.format(psum(1, axis_name), x.shape[split_axis]))
   return all_to_all_p.bind(x, split_axis=split_axis, concat_axis=concat_axis, axis_name=axis_name)
+
 ### parallel primitives
 def standard_pmap_primitive(name):
   prim = core.Primitive(name)
   prim.def_impl(partial(pxla.apply_parallel_primitive, prim))
   prim.def_abstract_eval(lambda x, *args, **params: x)
   return prim
+
 def _allreduce_split_axis_rule(prim, reducer, vals, which_mapped, axis_name):
   assert tuple(which_mapped) == (True,)
   x, = vals
   return prim.bind(reducer(x, [0]), axis_name=axis_name), False
+
 def _allreduce_translation_rule(prim, c, val, replica_groups, backend=None):
   dtype = c.GetShape(val).numpy_dtype()
   scalar = xla_client.Shape.array_shape(dtype, ())
   computation = xla.primitive_computation(prim, scalar, scalar, backend=backend)
   return c.AllReduce(val, computation, replica_groups=replica_groups)
+
 psum_p = standard_pmap_primitive('psum')
 pxla.split_axis_rules[psum_p] = \
     partial(_allreduce_split_axis_rule, psum_p, lax._reduce_sum)
@@ -197,6 +206,7 @@ xla.parallel_translations[pmin_p] = \
     partial(_allreduce_translation_rule, lax.min_p)
 pxla.split_axis_rules[pmin_p] = \
     partial(_allreduce_split_axis_rule, pmin_p, lax._reduce_min)
+
 def _ppermute_translation_rule(c, x, replica_groups, perm, backend=None):
   del backend
   group_size = len(replica_groups[0])
@@ -210,16 +220,20 @@ def _ppermute_translation_rule(c, x, replica_groups, perm, backend=None):
     grp = list(sorted(grp))
     full_perm.extend((grp[src], grp[dst]) for src, dst in perm)
   return c.CollectivePermute(x, full_perm)
+
 def _ppermute_transpose_rule(t, perm, axis_name):
   srcs, dsts = unzip2(perm)
   inverse_perm = list(zip(dsts, srcs))
   return [ppermute(t, axis_name=axis_name, perm=inverse_perm)]
+
 ppermute_p = standard_pmap_primitive('ppermute')
 ad.deflinear(ppermute_p, _ppermute_transpose_rule)
 xla.parallel_translations[ppermute_p] = _ppermute_translation_rule
+
 def _all_to_all_translation_rule(c, x, split_axis, concat_axis, replica_groups, backend=None):
   del backend
   return c.AllToAll(x, split_axis, concat_axis, replica_groups)
+
 def _all_to_all_split_axis_rule(vals, which_mapped, split_axis, concat_axis, axis_name):
   assert tuple(which_mapped) == (True,)
   x, = vals
@@ -229,10 +243,12 @@ def _all_to_all_split_axis_rule(vals, which_mapped, split_axis, concat_axis, axi
   out = _moveaxis(split_axis + 1, 0, stacked)
   out = _moveaxis(1, concat_axis + 1, out)
   return out, True
+
 def _moveaxis(src, dst, x):
   perm = [i for i in range(x.ndim) if i != src]
   perm.insert(dst, src)
   return lax.transpose(x, perm)
+
 all_to_all_p = standard_pmap_primitive('all_to_all')
 xla.parallel_translations[all_to_all_p] = _all_to_all_translation_rule
 pxla.split_axis_rules[all_to_all_p] = _all_to_all_split_axis_rule
@@ -243,12 +259,14 @@ pxla.split_axis_rules[all_to_all_p] = _all_to_all_split_axis_rule
 # might fix this.
 def _drop(x, dim, axis_name):
   return lax.dynamic_index_in_dim(x, axis_index(axis_name), dim, False)
+
 def _allgather(x, dim, size, axis_name):
   shape = list(x.shape)
   shape.insert(dim, size)
   out = lax.full(shape, lax._const(x, 0))
   out = lax.dynamic_update_index_in_dim(out, x, axis_index(axis_name), dim)
   return psum(out, axis_name)
+
 def _broadcasting_papply(prim, name, size, vals, axes, **params):
   x, y = vals
   xdim, ydim = axes
@@ -283,13 +301,17 @@ def _broadcasting_papply(prim, name, size, vals, axes, **params):
     else:
       x = all_to_all(x, name, x_tosplit, xdim)
       return prim.bind(x, y, **params), ydim
+
 def _defbroadcasting(prim):
   parallel.papply_primitive_rules[prim] = partial(_broadcasting_papply, prim)
+
 def _vectorized_papply(prim, name, size, vals, axes, **params):
   assert all(axes[0] == a for a in axes[1:])
   return prim.bind(*vals, **params), axes[0]
+
 def _defvectorized(prim):
   parallel.papply_primitive_rules[prim] = partial(_vectorized_papply, prim)
+
 def _reducer_papply(prim, cprim, name, size, vals, papply_axes, axes, **kwargs):
   operand, = vals
   papply_axis, = papply_axes
@@ -310,12 +332,16 @@ def _reducer_papply(prim, cprim, name, size, vals, papply_axes, axes, **kwargs):
   else:
     new_papply_axis = papply_axis - onp.sum(onp.less(other_axes, papply_axis))
     return result, new_papply_axis
+
 def _defreducer(prim, collective_prim):
   parallel.papply_primitive_rules[prim] = partial(_reducer_papply, prim, collective_prim)
+
 def _identity_papply(prim, argnum, name, size, vals, axes, **params):
   return prim.bind(*vals, **params), axes[argnum]
+
 def _defidentity(prim, argnum=0):
   parallel.papply_primitive_rules[prim] = partial(_identity_papply, prim, argnum)
+
 _defvectorized(lax.neg_p)
 _defvectorized(lax.sign_p)
 _defvectorized(lax.floor_p)
@@ -363,10 +389,12 @@ _defidentity(lax.tie_in_p)
 _defreducer(lax.reduce_sum_p, psum_p)
 _defreducer(lax.reduce_max_p, pmax_p)
 _defreducer(lax.reduce_min_p, pmin_p)
+
 def _dot_papply_rule(name, size, vals, dims, precision):
   x, _ = vals
   dim_nums = [((x.ndim,), (0,)), ((), ())]
   return _dot_general_papply_rule(name, size, vals, dims, dim_nums, precision)
+
 def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers, precision):
   x, y = vals
   xdim, ydim = dims
@@ -483,6 +511,7 @@ def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers, precisio
     raise NotImplementedError(
         ('papply of dot_general, {}: '
          'xdim={}, ydim={}, dimension_numbers={}').format(out, xdim, ydim, dimension_numbers))
+
 def _reshape_papply_rule(name, size, vals, axes, new_sizes, dimensions, old_sizes):
   operand, = vals
   axis, = axes
@@ -509,11 +538,13 @@ def _reshape_papply_rule(name, size, vals, axes, new_sizes, dimensions, old_size
       raise NotImplementedError('papply of reshape that would change hidden dimension size')
   else:
     raise NotImplementedError('papply of reshape with `dimensions`')
+
 def _transpose_papply_rule(name, size, vals, dims, permutation):
   x, = vals
   xdim, = dims
   local_perm = [i if i < xdim else i - 1 for i in permutation if i != xdim]
   return lax.transpose(x, local_perm), permutation.index(xdim)
+
 def _select_papply_rule(name, size, vals, dims):
   dimset = {d for d in dims if d is not None}
   if len(dimset) != 1:
@@ -524,6 +555,7 @@ def _select_papply_rule(name, size, vals, dims):
     return _drop(x, dim, name) if d is None else x
 
   return lax.select_p.bind(*map(drop, vals, dims)), dim
+
 def _add_jaxvals_papply_rule(name, size, vals, dims):
   x, y = vals
   xdim, ydim = dims
@@ -536,10 +568,12 @@ def _add_jaxvals_papply_rule(name, size, vals, dims):
     x = lax.psplit_like(x, y, name)
     out_dim = ydim
   return ad_util.add_jaxvals_p.bind(x, y), out_dim
+
 def _convert_element_type_papply_rule(name, size, vals, dims, new_dtype, **params):
   operand, = vals
   dim, = dims
   return lax.convert_element_type(operand, new_dtype), dim
+
 def _conv_general_dilated_papply_rule(name, size, vals, dims, window_strides, padding, lhs_dilation,
                                       rhs_dilation, dimension_numbers, feature_group_count,
                                       precision, **unused_kwargs):
@@ -553,6 +587,7 @@ def _conv_general_dilated_papply_rule(name, size, vals, dims, window_strides, pa
     return out, lhs_dim
   else:
     raise NotImplementedError("splitting a convolution along anything but input batch dimension")
+
 def _broadcast_in_dim_papply_rule(name, size, vals, dims, shape, broadcast_dimensions):
   operand, = vals
   dim, = dims
@@ -563,6 +598,7 @@ def _broadcast_in_dim_papply_rule(name, size, vals, dims, shape, broadcast_dimen
   sub_bdims = tuple(onp.delete(broadcast_dimensions, dim))
   sub_shape = tuple(onp.delete(shape, out_dim))
   return lax.broadcast_in_dim(operand, sub_shape, sub_bdims), out_dim
+
 def _pad_papply_rule(name, size, vals, dims, padding_config):
   operand, padding_value = vals
   operand_dim, padding_value_dim = dims
@@ -575,6 +611,7 @@ def _pad_papply_rule(name, size, vals, dims, padding_config):
   else:
     raise NotImplementedError('pad changes size of hidden dimension {} with config {}'.format(
         operand_dim, padding_config))
+
 def _slice_papply_rule(name, size, vals, dims, start_indices, limit_indices, strides, **kwargs):
   operand, = vals
   dim, = dims
@@ -589,6 +626,7 @@ def _slice_papply_rule(name, size, vals, dims, start_indices, limit_indices, str
                   limit_indices[:dim] + limit_indices[dim + 1:],
                   strides[:dim] + strides[dim + 1:] if strides is not None else None)
   return out, dim
+
 def _gather_papply_rule(name, size, vals, dims, dimension_numbers, slice_sizes, operand_shape):
   operand, start_indices = vals
   operand_dim, start_indices_dim = dims
@@ -605,6 +643,7 @@ def _gather_papply_rule(name, size, vals, dims, dimension_numbers, slice_sizes, 
     return out, out_dim
   else:
     raise NotImplementedError
+
 parallel.papply_primitive_rules[lax.dot_p] = _dot_papply_rule
 parallel.papply_primitive_rules[lax.dot_general_p] = _dot_general_papply_rule
 parallel.papply_primitive_rules[lax.reshape_p] = _reshape_papply_rule

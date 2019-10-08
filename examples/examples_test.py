@@ -36,12 +36,14 @@ sys.path.pop()
 from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
+
 def _CheckShapeAgreement(test_case, init_fun, apply_fun, input_shape):
   jax_rng = random.PRNGKey(0)
   result_shape, params = init_fun(jax_rng, input_shape)
   rng = onp.random.RandomState(0)
   result = apply_fun(params, rng.randn(*input_shape).astype(dtype="float32"))
   test_case.assertEqual(result.shape, result_shape)
+
 class ExamplesTest(jtu.JaxTestCase):
   @parameterized.named_parameters({
       "testcase_name": "_input_shape={}".format(input_shape),
@@ -91,5 +93,6 @@ class ExamplesTest(jtu.JaxTestCase):
     kernel = lambda x, y: np.dot(x, y)
     predict = kernel_lsq.train(kernel, xs, ys)
     self.assertAllClose(predict(xs), ys, atol=1e-3, rtol=1e-3, check_dtypes=False)
+
 if __name__ == "__main__":
   absltest.main()

@@ -43,6 +43,7 @@ from . import ad
 ### util
 def identity(x):
   return x
+
 def shard_args(backend, device_ordinals, assignments, axis_size, tuple_args, args):
   """Shard an argument data array arg along its leading axis.
 
@@ -84,42 +85,56 @@ def shard_args(backend, device_ordinals, assignments, axis_size, tuple_args, arg
               ]
 
   return buffers
+
 shard_arg_handlers = {}
 shard_arg_handlers[core.Unit] = \
     lambda x, ordinals, _, backend=None: [xla.device_put(core.unit, d, backend=backend) for d in ordinals]
+
 def _shard_array(x, ordinals, assignments, backend=None):
   nrep = len(ordinals)
   return (xla.device_put(x[assignments[r]], ordinals[r], backend=backend) for r in range(nrep))
+
 for _t in array_types:
   shard_arg_handlers[_t] = _shard_array
+
 def _shard_device_array(x, ordinals, assignments, backend=None):
   nrep = len(ordinals)
   xs = x._unstack()
   return (xla.device_put(xs[assignments[r]], ordinals[r], backend=backend) for r in range(nrep))
+
 shard_arg_handlers[xla.DeviceArray] = _shard_device_array
+
 def shard_aval(size, aval):
   try:
     return shard_aval_handlers[type(aval)](size, aval)
   except KeyError:
     raise TypeError("No shard_aval handler for type: {}".format(type(aval)))
+
 shard_aval_handlers = {}
 shard_aval_handlers[core.AbstractUnit] = lambda size, x: x
+
 def _shard_abstract_array(size, x):
   assert x.shape[0] == size
   return ShapedArray(x.shape[1:], x.dtype)
+
 shard_aval_handlers[ShapedArray] = _shard_abstract_array
+
 def aval_to_result_handler(size, nrep, aval):
   try:
     return pxla_result_handlers[type(aval)](size, nrep, aval)
   except KeyError:
     raise TypeError("No pxla_result_handler for type: {}".format(type(aval)))
+
 pxla_result_handlers = {}
 pxla_result_handlers[core.AbstractUnit] = lambda *_: lambda _: core.unit
+
 def array_result_handler(size, nrep, aval):
   full_aval = ShapedArray((size,) + aval.shape, aval.dtype)
   return partial(ShardedDeviceArray, full_aval)
+
 pxla_result_handlers[ShapedArray] = array_result_handler
 pxla_result_handlers[ConcreteArray] = array_result_handler
+
 def assign_shards_to_replicas(nrep, size):
   """Produce a mapping from replica id to shard index.
 
@@ -135,6 +150,7 @@ def assign_shards_to_replicas(nrep, size):
   assert not ragged
   indices = onp.tile(onp.arange(size)[:, None], (1, groupsize))
   return tuple(indices.ravel())
+
 def replica_groups(nrep, mesh_spec, mesh_axes):
   """Compute XLA replica groups from a replica count and device mesh data.
 
@@ -159,6 +175,7 @@ def replica_groups(nrep, mesh_spec, mesh_axes):
       onp.moveaxis(iota, mesh_axes, onp.arange(len(mesh_axes))),
       (prod(onp.take(full_spec, mesh_axes)), -1))
   return tuple(map(tuple, groups.T))
+
 ### the main pmap machinery lowers SPMD jaxprs to multi-replica XLA computations
 def compile_replicated(jaxpr, backend, axis_name, axis_size, global_axis_size, devices, consts,
                        tuple_args, *abstract_args):
@@ -198,6 +215,7 @@ def compile_replicated(jaxpr, backend, axis_name, axis_size, global_axis_size, d
       compile_options=xb.get_compile_options(num_replicas, device_assignment),
       backend=xb.get_backend(backend))
   return compiled, num_local_replicas
+
 ### applying parallel primitives in op-by-op Python dispatch
 
 # There are at least two cases where we might want to evaluate a parallel
@@ -220,6 +238,7 @@ class DynamicAxisEnvFrame(object):
     self.hard_size = hard_size
     self.soft_trace = None
     self.soft_size = None
+
 class DynamicAxisEnv(list):
   def __contains__(self, axis_name):
     return axis_name in (frame.name for frame in self)
@@ -232,10 +251,13 @@ class DynamicAxisEnv(list):
         return frame
     else:
       assert False
+
 class _ThreadLocalState(threading.local):
   def __init__(self):
     self.dynamic_axis_env = DynamicAxisEnv()
+
 _thread_local_state = _ThreadLocalState()
+
 @contextmanager
 def extend_dynamic_axis_env(axis_name, pmap_trace, hard_size):
   dynamic_axis_env = _thread_local_state.dynamic_axis_env
@@ -244,12 +266,14 @@ def extend_dynamic_axis_env(axis_name, pmap_trace, hard_size):
     yield
   finally:
     dynamic_axis_env.pop()
+
 def unmapped_device_count(backend=None):
   dynamic_axis_env = _thread_local_state.dynamic_axis_env
   mapped = prod(frame.hard_size for frame in dynamic_axis_env)
   unmapped, ragged = divmod(xb.device_count(backend), mapped)
   assert not ragged and unmapped > 0
   return unmapped
+
 def apply_parallel_primitive(prim, *args, **params):
   # This is the op-by-op version of applying a collective primitive, like a psum
   # that doesn't have a data dependence on the argument of a pmap function. In
@@ -263,7 +287,9 @@ def apply_parallel_primitive(prim, *args, **params):
   else:
     shape = (logical_size(dynamic_axis_env[axis_name]),)
   return parallel_pure_rules[prim](*args, shape=shape, **params)
+
 parallel_pure_rules = {}
+
 def axis_index(axis_name):
   dynamic_axis_env = _thread_local_state.dynamic_axis_env
   frame = dynamic_axis_env[axis_name]
@@ -272,6 +298,7 @@ def axis_index(axis_name):
     dummy_arg = frame.soft_trace.pure(dummy_arg)
   return axis_index_p.bind(dummy_arg, hard_size=frame.hard_size, soft_size=frame.soft_size,
                            axis_name=axis_name)
+
 def _axis_index_partial_eval(trace, _, **params):
   # This partial_eval rule adds the axis_index primitive into the jaxpr formed
   # during pmap lowering. It is like the standard JaxprTrace.process_primitive
@@ -281,9 +308,11 @@ def _axis_index_partial_eval(trace, _, **params):
   eqn = core.new_jaxpr_eqn([], [out_tracer], axis_index_p, (), params)
   out_tracer.recipe = eqn
   return out_tracer
+
 def _axis_index_translation_rule(c, hard_size, soft_size, axis_name):
   unsigned_index = c.Rem(c.ReplicaId(), c.Constant(onp.array(hard_size, onp.uint32)))
   return c.ConvertElementType(unsigned_index, xb.dtype_to_etype(onp.int32))
+
 axis_index_p = core.Primitive('axis_index')
 xla.translations[axis_index_p] = _axis_index_translation_rule
 pe.custom_partial_eval_rules[axis_index_p] = _axis_index_partial_eval
@@ -299,6 +328,7 @@ class ShardedDeviceValue(xla.DeviceValue):
     for buf in self.device_buffers:
       buf.block_host_until_ready()
     return self
+
 class ShardedDeviceArray(ShardedDeviceValue, xla.DeviceArray):
   """A ShardedDeviceArray is an ndarray sharded across devices.
 
@@ -364,6 +394,7 @@ class ShardedDeviceArray(ShardedDeviceValue, xla.DeviceArray):
       return handler(device_buffer)
     else:
       return super(ShardedDeviceArray, self).__getitem__(idx)
+
 # This handler code is effectively dead because we in-lined it in shard_args for
 # performance reasons.
 def _shard_sharded_device_array(x, ordinals, assignments):
@@ -373,6 +404,7 @@ def _shard_sharded_device_array(x, ordinals, assignments):
             for r, b in enumerate(x.device_buffers))
   else:
     return (xla.device_put(x[assignments[r]], ordinals[r]) for r in range(n))
+
 shard_arg_handlers[ShardedDeviceArray] = _shard_sharded_device_array
 
 core.pytype_aval_mappings[ShardedDeviceArray] = ConcreteArray
@@ -380,6 +412,7 @@ xla.device_put_handlers[ShardedDeviceArray] = xla._device_put_array
 xla.pytype_aval_mappings[ShardedDeviceArray] = lambda x: x.aval
 xla.canonicalize_dtype_handlers[ShardedDeviceArray] = identity
 xb.register_constant_handler(ShardedDeviceArray, xla._device_array_constant_handler)
+
 class ChunkedDeviceArray(ShardedDeviceArray):
   __slots__ = []
   _collect = staticmethod(onp.concatenate)
@@ -390,6 +423,7 @@ class ChunkedDeviceArray(ShardedDeviceArray):
 
   def __getitem__(self, idx):
     return xla.DeviceArray.__getitem__(self, idx)
+
 shard_arg_handlers[ChunkedDeviceArray] = _shard_array
 
 core.pytype_aval_mappings[ChunkedDeviceArray] = ConcreteArray
@@ -409,6 +443,7 @@ def xla_pmap_impl(fun, *args, **params):
   abstract_args = map(xla.abstractify, args)
   compiled_fun = parallel_callable(fun, backend, axis_name, axis_size, devices, *abstract_args)
   return compiled_fun(*args)
+
 @lu.cache
 def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
   if devices is not None and len(devices) == 0:
@@ -462,6 +497,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
     handle_args = partial(shard_args, backend, device_ordinals, assignments, axis_size, tuple_args)
     handle_outs = _pvals_to_results_handler(axis_size, nrep, out_pvals)
     return partial(execute_replicated, compiled, backend, nrep, handle_args, handle_outs)
+
 def _pvals_to_results_handler(size, nrep, out_pvals):
   nouts = len(out_pvals)
   handlers = [_pval_to_result_handler(size, nrep, pval) for pval in out_pvals]
@@ -474,6 +510,7 @@ def _pvals_to_results_handler(size, nrep, out_pvals):
     return [h(bufs) for h, bufs in zip(handlers, buffers)]
 
   return handler
+
 def _pval_to_result_handler(size, nrep, pval):
   pv, const = pval
   if pv is None:
@@ -481,6 +518,7 @@ def _pval_to_result_handler(size, nrep, pval):
     return lambda _: bcast_const
   else:
     return aval_to_result_handler(size, nrep, pv)
+
 def execute_replicated(compiled, backend, nrep, in_handler, out_handler, *args):
   if nrep > xb.device_count(backend):
     msg = ("executing pmap computation that requires {} replicas, but only {} "
@@ -489,11 +527,13 @@ def execute_replicated(compiled, backend, nrep, in_handler, out_handler, *args):
   input_bufs = in_handler(args)
   out_bufs = compiled.ExecutePerReplica(list(input_bufs))
   return out_handler(out_bufs)
+
 xla_pmap_p = core.Primitive('xla_pmap')
 xla_pmap_p.multiple_results = True
 xla_pmap = partial(core.call_bind, xla_pmap_p)
 xla_pmap_p.def_custom_bind(xla_pmap)
 xla_pmap_p.def_impl(xla_pmap_impl)
+
 def _pmap_translation_rule(c, jaxpr, axis_env, const_nodes, freevar_nodes, in_nodes, axis_name,
                            axis_size, devices, backend=None):
   # We in-line here rather than generating a Call HLO as in the xla_call
@@ -506,9 +546,11 @@ def _pmap_translation_rule(c, jaxpr, axis_env, const_nodes, freevar_nodes, in_no
                                    *in_nodes_sharded)
   outs = [_xla_unshard(c, xla.axis_groups(new_env, axis_name), r) for r in sharded_outs]
   return c.Tuple(*outs)
+
 xla.call_translations[xla_pmap_p] = _pmap_translation_rule
 ad.primitive_transposes[xla_pmap_p] = partial(ad.map_transpose, xla_pmap_p)
 pe.map_primitives.add(xla_pmap_p)
+
 def _xla_shard(c, x):
   xla_shape = c.GetShape(x)
   if xla_shape.is_tuple():
@@ -518,6 +560,7 @@ def _xla_shard(c, x):
     dims = list(xla_shape.dimensions())
     start_indices = _xla_shard_start_indices(c, dims[0], len(dims))
     return c.Reshape(c.DynamicSlice(x, start_indices, [1] + dims[1:]), None, dims[1:])
+
 # TODO(b/110096942): more efficient gather
 def _xla_unshard(c, replica_groups, x):
   xla_shape = c.GetShape(x)
@@ -531,11 +574,13 @@ def _xla_unshard(c, replica_groups, x):
     padded = c.Broadcast(c.Constant(onp.array(0, xla_shape.numpy_dtype())), [axis_size] + dims)
     padded = c.DynamicUpdateSlice(padded, c.Reshape(x, None, [1] + dims), start_indices)
     return c.CrossReplicaSum(padded, replica_groups)
+
 # TODO(mattjj): use more ergonimic form of DynamicUpdateSlice instead!
 def _xla_shard_start_indices(c, axis_size, ndim):
   idx = c.Rem(c.ReplicaId(), c.Constant(onp.array(axis_size, onp.uint32)))
   zero = onp.zeros(ndim - 1, onp.uint32)
   return c.Concatenate([c.Reshape(idx, None, [1]), c.Constant(zero)], 0)
+
 ### soft_pmap axis split transformation
 
 # To allow pmap to map over logical axes larger than the number of XLA devices
@@ -561,6 +606,7 @@ def split_axis(axis_name, chunk_size, *args):
       broadcast(x, chunk_size, 0) if d is not_mapped else x for x, d in zip(out_vals, out_names)
   ]
   yield out_vals
+
 @lu.transformation_with_aux
 def split_axis_subtrace(master, names, *vals):
   trace = SplitAxisTrace(master, core.cur_sublevel())
@@ -568,6 +614,7 @@ def split_axis_subtrace(master, names, *vals):
   out_tracers = list(map(trace.full_raise, outs))
   out_vals, out_names = unzip2((t.val, t.axis_name) for t in out_tracers)
   yield out_vals, out_names
+
 @contextmanager
 def add_chunk_to_axis_env(axis_name, soft_trace, soft_size):
   dynamic_axis_env = _thread_local_state.dynamic_axis_env
@@ -576,6 +623,7 @@ def add_chunk_to_axis_env(axis_name, soft_trace, soft_size):
   yield
   dynamic_axis_env[axis_name].soft_trace = None
   dynamic_axis_env[axis_name].soft_size = None
+
 class SplitAxisTracer(core.Tracer):
   def __init__(self, trace, axis_name, val):
     self.trace = trace
@@ -595,6 +643,7 @@ class SplitAxisTracer(core.Tracer):
       return core.full_lower(self.val)
     else:
       return self
+
 class SplitAxisTrace(core.Trace):
   def pure(self, val):
     return SplitAxisTracer(self, not_mapped, val)
@@ -691,4 +740,5 @@ class SplitAxisTrace(core.Trace):
       return SplitAxisTracer(trace, name, x)
 
     return val, todo
+
 split_axis_rules = {}

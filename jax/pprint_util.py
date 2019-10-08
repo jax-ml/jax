@@ -17,6 +17,7 @@ from __future__ import division
 from __future__ import print_function
 
 from six.moves import reduce
+
 class PrettyPrint(object):
   """Crude Hughes-inspired pretty printer."""
   def __init__(self, lines):
@@ -39,20 +40,25 @@ class PrettyPrint(object):
 
   def __str__(self):
     return '\n'.join(' ' * indent + s for indent, s in self.lines) + '\n'
+
 def pp(s):
   return PrettyPrint([(0, line) for line in str(s).splitlines()])
+
 def hcat(ps):
   return reduce(lambda x, y: x >> y, ps)
+
 def vcat(ps):
   if not ps:
     return pp('')
   else:
     return reduce(lambda x, y: x + y, ps)
+
 def pp_kv_pairs(kv_pairs):
   if kv_pairs:
     kv_pairs = vcat([pp('{}='.format(k)) >> pp(v) for k, v in kv_pairs])
     return pp('[ ') >> kv_pairs >> pp(' ]')
   else:
     return pp('')
+
 def print_list(xs):
   return ' '.join(map(str, xs))

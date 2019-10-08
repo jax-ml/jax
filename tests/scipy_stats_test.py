@@ -38,6 +38,7 @@ all_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4)]
 float_dtypes = [onp.float32, onp.float64]
 
 CombosWithReplacement = itertools.combinations_with_replacement
+
 def genNamedParametersNArgs(n, rng):
   return parameterized.named_parameters(
       jtu.cases_from_list({
@@ -48,6 +49,7 @@ def genNamedParametersNArgs(n, rng):
       }
                           for shapes in CombosWithReplacement(all_shapes, n)
                           for dtypes in CombosWithReplacement(float_dtypes, n)))
+
 class LaxBackedScipyStatsTests(jtu.JaxTestCase):
   """Tests for LAX-backed scipy.stats implementations"""
   @genNamedParametersNArgs(3, jtu.rand_default())
@@ -274,5 +276,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self.assertAllClose(
         onp.ones((4,), onp.float32), lsp_stats.norm.cdf(onp.full((4,), onp.inf, onp.float32)),
         check_dtypes=False)
+
 if __name__ == "__main__":
   absltest.main()

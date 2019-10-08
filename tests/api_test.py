@@ -43,6 +43,7 @@ from jax import tree_util
 from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
+
 class APITest(jtu.JaxTestCase):
   def test_grad_argnums(self):
     def f(x, y, z, flag=False):
@@ -1082,5 +1083,6 @@ class APITest(jtu.JaxTestCase):
     real_x = onp.random.RandomState(0).randn(n)
     b = np.dot(a + np.eye(a.shape[0]), real_x)
     print(gf(a, b))  # doesn't crash
+
 if __name__ == '__main__':
   absltest.main()

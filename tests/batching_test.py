@@ -1009,5 +1009,6 @@ class BatchingTest(jtu.JaxTestCase):
     ans = g(index1=onp.asarray([1]), index2=onp.asarray([2]))
     expected = g(onp.asarray([1]), onp.asarray([2]))
     self.assertAllClose(ans, expected, check_dtypes=True)
+
 if __name__ == '__main__':
   absltest.main()

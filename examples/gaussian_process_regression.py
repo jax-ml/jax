@@ -30,6 +30,7 @@ import jax.scipy as scipy
 import matplotlib.pyplot as plt
 
 FLAGS = flags.FLAGS
+
 def main(unused_argv):
 
   numpts = 7
@@ -127,6 +128,7 @@ def main(unused_argv):
   plt.plot(x, y, "k.")
   plt.plot(xtest, mu)
   plt.fill_between(xtest.flatten(), mu.flatten() - std * 2, mu.flatten() + std * 2)
+
 if __name__ == "__main__":
   config.config_with_absl()
   app.run(main)

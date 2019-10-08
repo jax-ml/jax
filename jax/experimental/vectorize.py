@@ -104,6 +104,7 @@ _CORE_DIMENSION_LIST = '(?:{0:}(?:,{0:})*)?'.format(_DIMENSION_NAME)
 _ARGUMENT = r'\({}\)'.format(_CORE_DIMENSION_LIST)
 _ARGUMENT_LIST = '{0:}(?:,{0:})*'.format(_ARGUMENT)
 _SIGNATURE = '^{0:}->{0:}$'.format(_ARGUMENT_LIST)
+
 def _parse_gufunc_signature(signature):
   """Parse string signatures for a generalized universal function.
 
@@ -121,6 +122,7 @@ def _parse_gufunc_signature(signature):
   return tuple([tuple(re.findall(_DIMENSION_NAME, arg))
                 for arg in re.findall(_ARGUMENT, arg_list)]
                for arg_list in signature.split('->'))
+
 def _update_dim_sizes(dim_sizes, arg, core_dims):
   """Incrementally check and update core dimension sizes for a single argument.
 
@@ -148,6 +150,7 @@ def _update_dim_sizes(dim_sizes, arg, core_dims):
                          (dim, size, dim_sizes[dim]))
     else:
       dim_sizes[dim] = size
+
 def _parse_input_dimensions(args, input_core_dims):
   """Parse broadcast and core dimensions for vectorize with a signature.
 
@@ -172,6 +175,7 @@ def _parse_input_dimensions(args, input_core_dims):
     broadcast_args.append(dummy_array)
   broadcast_shape = np.lib.stride_tricks._broadcast_shape(*broadcast_args)
   return broadcast_shape, dim_sizes
+
 def _calculate_shapes(broadcast_shape, dim_sizes, list_of_core_dims):
   """Helper for calculating broadcast shapes with core dimensions."""
   return [
@@ -179,6 +183,7 @@ def _calculate_shapes(broadcast_shape, dim_sizes, list_of_core_dims):
                               for dim in core_dims)
       for core_dims in list_of_core_dims
   ]
+
 # adapted from np.vectorize (again authored by shoyer@)
 def broadcast_with_core_dims(args, input_core_dims, output_core_dims):
   if len(args) != len(input_core_dims):
@@ -189,6 +194,7 @@ def broadcast_with_core_dims(args, input_core_dims, output_core_dims):
   input_shapes = _calculate_shapes(broadcast_shape, dim_sizes, input_core_dims)
   args = [jnp.broadcast_to(arg, shape) for arg, shape in zip(args, input_shapes)]
   return args
+
 def verify_axis_is_supported(input_core_dims, output_core_dims):
   all_core_dims = set()
   for input_or_output_core_dims in [input_core_dims, output_core_dims]:
@@ -196,10 +202,12 @@ def verify_axis_is_supported(input_core_dims, output_core_dims):
       all_core_dims.update(core_dims)
   if len(core_dims) > 1:
     raise ValueError('only one gufuncs with one core dim support axis')
+
 def reorder_inputs(args, axis, input_core_dims):
   return tuple(
       jnp.moveaxis(arg, axis, -1) if core_dims else arg
       for arg, core_dims in zip(args, input_core_dims))
+
 def reorder_outputs(result, axis, output_core_dims):
   if not isinstance(result, tuple):
     result = (result,)
@@ -209,7 +217,9 @@ def reorder_outputs(result, axis, output_core_dims):
   if len(result) == 1:
     (result,) = result
   return result
+
 import functools
+
 def vectorize(signature):
   """Vectorize a function using JAX.
 

@@ -95,6 +95,7 @@ OptimizerState = namedtuple("OptimizerState", ["packed_state", "tree_def", "subt
 register_pytree_node(OptimizerState, lambda xs: ((xs.packed_state,),
                                                  (xs.tree_def, xs.subtree_defs)),
                      lambda data, xs: OptimizerState(xs[0], data[0], data[1]))
+
 def optimizer(opt_maker):
   """Decorator to make an optimizer defined for arrays generalize to containers.
 
@@ -169,6 +170,7 @@ def optimizer(opt_maker):
     return tree_init, tree_update, tree_get_params
 
   return tree_opt_maker
+
 ### optimizers
 @optimizer
 def sgd(step_size):
@@ -193,6 +195,7 @@ def sgd(step_size):
     return x
 
   return init, update, get_params
+
 @optimizer
 def momentum(step_size, mass):
   """Construct optimizer triple for SGD with Nesterov momentum.
@@ -221,6 +224,7 @@ def momentum(step_size, mass):
     return x
 
   return init, update, get_params
+
 @optimizer
 def adagrad(step_size, momentum=0.9):
   """Construct optimizer triple for Adagrad.
@@ -256,6 +260,7 @@ def adagrad(step_size, momentum=0.9):
     return x
 
   return init, update, get_params
+
 @optimizer
 def rmsprop(step_size, gamma=0.9, eps=1e-8):
   """Construct optimizer triple for RMSProp.
@@ -286,6 +291,7 @@ def rmsprop(step_size, gamma=0.9, eps=1e-8):
     return x
 
   return init, update, get_params
+
 @optimizer
 def rmsprop_momentum(step_size, gamma=0.9, eps=1e-8, momentum=0.9):
   """Construct optimizer triple for RMSProp with momentum.
@@ -322,6 +328,7 @@ def rmsprop_momentum(step_size, gamma=0.9, eps=1e-8, momentum=0.9):
     return x
 
   return init, update, get_params
+
 @optimizer
 def adam(step_size, b1=0.9, b2=0.999, eps=1e-8):
   """Construct optimizer triple for Adam.
@@ -360,6 +367,7 @@ def adam(step_size, b1=0.9, b2=0.999, eps=1e-8):
     return x
 
   return init, update, get_params
+
 @optimizer
 def sm3(step_size, momentum=0.9):
   """Construct optimizer triple for SM3.
@@ -405,17 +413,20 @@ def sm3(step_size, momentum=0.9):
     return x
 
   return init, update, get_params
+
 ### learning rate schedules
 def constant(step_size):
   def schedule(i):
     return step_size
 
   return schedule
+
 def exponential_decay(step_size, decay_steps, decay_rate):
   def schedule(i):
     return step_size * decay_rate**(i / decay_steps)
 
   return schedule
+
 def inverse_time_decay(step_size, decay_steps, decay_rate, staircase=False):
   if staircase:
 
@@ -427,6 +438,7 @@ def inverse_time_decay(step_size, decay_steps, decay_rate, staircase=False):
       return step_size / (1 + decay_rate * i / decay_steps)
 
   return schedule
+
 def polynomial_decay(step_size, decay_steps, final_step_size, power=1.0):
   def schedule(step_num):
     step_num = np.minimum(step_num, decay_steps)
@@ -434,6 +446,7 @@ def polynomial_decay(step_size, decay_steps, final_step_size, power=1.0):
     return step_mult * (step_size - final_step_size) + final_step_size
 
   return schedule
+
 def piecewise_constant(boundaries, values):
   boundaries = np.array(boundaries)
   values = np.array(values)
@@ -446,6 +459,7 @@ def piecewise_constant(boundaries, values):
     return values[np.sum(i > boundaries)]
 
   return schedule
+
 def make_schedule(scalar_or_schedule):
   if callable(scalar_or_schedule):
     return scalar_or_schedule
@@ -453,16 +467,19 @@ def make_schedule(scalar_or_schedule):
     return constant(scalar_or_schedule)
   else:
     raise TypeError(type(scalar_or_schedule))
+
 ### utilities
 def l2_norm(tree):
   """Compute the l2 norm of a pytree of arrays. Useful for weight decay."""
   leaves, _ = tree_flatten(tree)
   return np.sqrt(sum(np.vdot(x, x) for x in leaves))
+
 def clip_grads(grad_tree, max_norm):
   """Clip gradients stored as a pytree of arrays to maximum norm `max_norm`."""
   norm = l2_norm(grad_tree)
   normalize = lambda g: np.where(norm < max_norm, g, g * (max_norm / norm))
   return tree_map(normalize, grad_tree)
+
 ### serialization utilities
 class JoinPoint(object):
   """Marks the boundary between two joined (nested) pytrees."""
@@ -472,6 +489,7 @@ class JoinPoint(object):
   # Since pytrees are containers of numpy arrays, look iterable.
   def __iter__(self):
     yield self.subtree
+
 def unpack_optimizer_state(opt_state):
   """Converts an OptimizerState to a marked pytree.
 
@@ -488,6 +506,7 @@ def unpack_optimizer_state(opt_state):
   subtrees = map(tree_unflatten, subtree_defs, packed_state)
   sentinels = [JoinPoint(subtree) for subtree in subtrees]
   return tree_util.tree_unflatten(tree_def, sentinels)
+
 def pack_optimizer_state(marked_pytree):
   """Converts a marked pytree to an OptimizerState.
 

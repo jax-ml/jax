@@ -23,6 +23,7 @@ from ... import lax
 from ...numpy.lax_numpy import _promote_args_like, _constant_like, _wraps
 from ...numpy.lax_numpy import dot, subtract, einsum
 from ...numpy.linalg import det, inv
+
 @_wraps(osp_stats.multivariate_normal.logpdf)
 def logpdf(x, mean, cov):
   # TODO(mattjj): osp_stats.multivariate_normal.logpdf doesn't like being fed
@@ -43,6 +44,7 @@ def logpdf(x, mean, cov):
   else:
     quadratic = dot(dot(subtract(x, mean), inv(cov)), subtract(x, mean).T).astype(cov.dtype)
   return lax.div(lax.neg(lax.add(log_normalizer, quadratic)), two)
+
 @_wraps(osp_stats.multivariate_normal.pdf)
 def pdf(x, mean, cov):
   return lax.exp(logpdf(x, mean, cov))

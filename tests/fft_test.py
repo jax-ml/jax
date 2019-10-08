@@ -30,6 +30,7 @@ inexact_dtypes = float_dtypes + complex_dtypes
 int_dtypes = [onp.int32, onp.int64]
 bool_dtypes = [onp.bool_]
 all_dtypes = float_dtypes + complex_dtypes + int_dtypes + bool_dtypes
+
 def _get_fftn_test_axes(shape):
   axes = [[]]
   ndims = len(shape)
@@ -38,6 +39,7 @@ def _get_fftn_test_axes(shape):
   for naxes in range(1, min(ndims, 3) + 1):
     axes.append(range(ndims - naxes, ndims))
   return axes
+
 class FftTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       jtu.cases_from_list({
@@ -81,5 +83,6 @@ class FftTest(jtu.JaxTestCase):
                             "jax.np.fftn does not support repeated axes. Got axes \[1, 1\].",
                             lambda: np.fft.fftn(rng([2, 3], dtype=onp.float64), axes=[1, 1]))
     self.assertRaises(IndexError, lambda: np.fft.fftn(rng([2, 3], dtype=onp.float64), axes=[2]))
+
 if __name__ == "__main__":
   absltest.main()

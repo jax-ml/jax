@@ -22,9 +22,11 @@ import scipy.stats as osp_stats
 from ... import lax
 from ...numpy import lax_numpy as np
 from ..special import gammaln, xlogy
+
 def _is_simplex(x):
   x_sum = np.sum(x, axis=-1)
   return np.all(x > 0, axis=-1) & (x_sum <= 1) & (x_sum > 1 - 1e-6)
+
 @np._wraps(osp_stats.dirichlet.logpdf)
 def logpdf(x, alpha):
   args = (onp.ones((0,), lax.dtype(x)), onp.ones((1,), lax.dtype(alpha)))
@@ -34,6 +36,7 @@ def logpdf(x, alpha):
   normalize_term = np.sum(gammaln(alpha), axis=-1) - gammaln(np.sum(alpha, axis=-1))
   log_probs = lax.sub(np.sum(xlogy(lax.sub(alpha, one), x), axis=-1), normalize_term)
   return np.where(_is_simplex(x), log_probs, -np.inf)
+
 @np._wraps(osp_stats.dirichlet.pdf)
 def pdf(x, alpha):
   return lax.exp(logpdf(x, alpha))

@@ -31,6 +31,7 @@ from jax.interpreters import xla
 
 from jax.config import config
 config.parse_flags_with_absl()
+
 class OptimizerTests(jtu.JaxTestCase):
   def _CheckOptimizer(self, optimizer, loss, x0, num_steps, *args, **kwargs):
     self._CheckFuns(optimizer, loss, x0, *args)
@@ -325,5 +326,6 @@ class OptimizerTests(jtu.JaxTestCase):
     expected = opt_init(params)
     ans = optimizers.pack_optimizer_state(optimizers.unpack_optimizer_state(expected))
     self.assertEqual(ans, expected)
+
 if __name__ == '__main__':
   absltest.main()

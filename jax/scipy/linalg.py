@@ -28,15 +28,18 @@ from ..numpy import lax_numpy as np
 from ..numpy import linalg as np_linalg
 
 _T = lambda x: np.swapaxes(x, -1, -2)
+
 @_wraps(scipy.linalg.cholesky)
 def cholesky(a, lower=False, overwrite_a=False, check_finite=True):
   del overwrite_a, check_finite
   a = np_linalg._promote_arg_dtypes(np.asarray(a))
   l = lax_linalg.cholesky(a if lower else np.conj(_T(a)), symmetrize_input=False)
   return l if lower else np.conj(_T(l))
+
 @_wraps(scipy.linalg.cho_factor)
 def cho_factor(a, lower=False, overwrite_a=False, check_finite=True):
   return (cholesky(a, lower=lower), lower)
+
 @_wraps(scipy.linalg.cho_solve)
 def cho_solve(c_and_lower, b, overwrite_b=False, check_finite=True):
   del overwrite_b, check_finite
@@ -61,16 +64,19 @@ def cho_solve(c_and_lower, b, overwrite_b=False, check_finite=True):
   b = lax_linalg.triangular_solve(c, b, left_side=True, lower=lower, transpose_a=lower,
                                   conjugate_a=lower)
   return b[..., 0] if c_ndims != b_ndims else b
+
 @_wraps(scipy.linalg.svd)
 def svd(a, full_matrices=True, compute_uv=True, overwrite_a=False, check_finite=True,
         lapack_driver='gesdd'):
   del overwrite_a, check_finite, lapack_driver
   a = np_linalg._promote_arg_dtypes(np.asarray(a))
   return lax_linalg.svd(a, full_matrices, compute_uv)
+
 @_wraps(scipy.linalg.det)
 def det(a, overwrite_a=False, check_finite=True):
   del overwrite_a, check_finite
   return np_linalg.det(a)
+
 @_wraps(scipy.linalg.eigh)
 def eigh(a, b=None, lower=True, eigvals_only=False, overwrite_a=False, overwrite_b=False,
          turbo=True, eigvals=None, type=1, check_finite=True):
@@ -89,15 +95,18 @@ def eigh(a, b=None, lower=True, eigvals_only=False, overwrite_a=False, overwrite
     return w
   else:
     return w, v
+
 @_wraps(scipy.linalg.inv)
 def inv(a, overwrite_a=False, check_finite=True):
   del overwrite_a, check_finite
   return np_linalg.inv(a)
+
 @_wraps(scipy.linalg.lu_factor)
 def lu_factor(a, overwrite_a=False, check_finite=True):
   del overwrite_a, check_finite
   a = np_linalg._promote_arg_dtypes(np.asarray(a))
   return lax_linalg.lu(a)
+
 @partial(jit, static_argnums=(3,))
 def _lu_solve(lu, pivots, b, trans):
   lu_shape = np.shape(lu)
@@ -127,11 +136,13 @@ def _lu_solve(lu, pivots, b, trans):
   else:
     raise ValueError("'trans' value must be 0, 1, or 2, got {}".format(trans))
   return lax.reshape(x, b_shape)
+
 @_wraps(scipy.linalg.lu_solve)
 def lu_solve(lu_and_piv, b, trans=0, overwrite_b=False, check_finite=True):
   del overwrite_b, check_finite
   lu, pivots = lu_and_piv
   return _lu_solve(lu, pivots, b, trans)
+
 @_wraps(scipy.linalg.lu)
 def lu(a, permute_l=False, overwrite_a=False, check_finite=True):
   del overwrite_a, check_finite
@@ -148,6 +159,7 @@ def lu(a, permute_l=False, overwrite_a=False, check_finite=True):
     return np.matmul(p, l), u
   else:
     return p, l, u
+
 @_wraps(scipy.linalg.qr)
 def qr(a, overwrite_a=False, lwork=None, mode="full", pivoting=False, check_finite=True):
   del overwrite_a, lwork, check_finite
@@ -164,6 +176,7 @@ def qr(a, overwrite_a=False, lwork=None, mode="full", pivoting=False, check_fini
   if mode == "r":
     return r
   return q, r
+
 @_wraps(scipy.linalg.solve)
 def solve(a, b, sym_pos=False, lower=False, overwrite_a=False, overwrite_b=False, debug=False,
           check_finite=True):
@@ -173,6 +186,7 @@ def solve(a, b, sym_pos=False, lower=False, overwrite_a=False, overwrite_b=False
 
   a, b = np_linalg._promote_arg_dtypes(np.asarray(a), np.asarray(b))
   return cho_solve(cho_factor(a, lower=lower), b)
+
 @_wraps(scipy.linalg.solve_triangular)
 def solve_triangular(a, b, trans=0, lower=False, unit_diagonal=False, overwrite_b=False, debug=None,
                      check_finite=True):
@@ -199,9 +213,11 @@ def solve_triangular(a, b, trans=0, lower=False, unit_diagonal=False, overwrite_
     return out[..., 0]
   else:
     return out
+
 @_wraps(scipy.linalg.tril)
 def tril(m, k=0):
   return np.tril(m, k)
+
 @_wraps(scipy.linalg.triu)
 def triu(m, k=0):
   return np.triu(m, k)

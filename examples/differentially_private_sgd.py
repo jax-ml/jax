@@ -116,16 +116,19 @@ init_random_params, predict = stax.serial(
     stax.Relu,
     stax.Dense(10),
 )
+
 def loss(params, batch):
   inputs, targets = batch
   logits = predict(params, inputs)
   logits = stax.logsoftmax(logits)  # log normalize
   return -np.mean(np.sum(logits * targets, 1))  # cross entropy loss
+
 def accuracy(params, batch):
   inputs, targets = batch
   target_class = np.argmax(targets, axis=1)
   predicted_class = np.argmax(predict(params, inputs), axis=1)
   return np.mean(predicted_class == target_class)
+
 def private_grad(params, batch, rng, l2_norm_clip, noise_multiplier, batch_size):
   """Return differentially private gradients for params, evaluated on batch."""
   def _clipped_grad(params, single_example_batch):
@@ -149,9 +152,11 @@ def private_grad(params, batch, rng, l2_norm_clip, noise_multiplier, batch_size)
   normalized_noised_aggregated_clipped_grads = (
       tree_map(normalize_, noised_aggregated_clipped_grads))
   return normalized_noised_aggregated_clipped_grads
+
 def shape_as_image(images, labels, dummy_dim=False):
   target_shape = (-1, 1, 28, 28, 1) if dummy_dim else (-1, 28, 28, 1)
   return np.reshape(images, target_shape), labels
+
 def compute_epsilon(steps, num_examples=60000, target_delta=1e-5):
   if num_examples * target_delta > 1.:
     warnings.warn('Your delta might be too high.')
@@ -160,6 +165,7 @@ def compute_epsilon(steps, num_examples=60000, target_delta=1e-5):
   rdp_const = compute_rdp(q, FLAGS.noise_multiplier, steps, orders)
   eps, _, _ = get_privacy_spent(orders, rdp_const, target_delta=target_delta)
   return eps
+
 def main(_):
 
   if FLAGS.microbatches:
@@ -232,5 +238,6 @@ def main(_):
       print('For delta={:.0e}, the current epsilon is: {:.2f}'.format(delta, eps))
     else:
       print('Trained with vanilla non-private SGD optimizer')
+
 if __name__ == '__main__':
   app.run(main)

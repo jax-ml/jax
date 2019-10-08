@@ -29,6 +29,7 @@ from jax import random
 
 from jax.config import config
 config.parse_flags_with_absl()
+
 class DebugNaNsTest(jtu.JaxTestCase):
   def setUp(self):
     self.cfg = config.read("jax_debug_nans")
