@@ -2268,14 +2268,25 @@ def _dot_general_batch_rule(batched_args, batch_dims, dimension_numbers,
   else:
     # adding a tensor product dimension
     if lbd is not None:
-      # make sure it's the last lhs dimension to avoid changing batch dims
-      if lbd != lhs.ndim - 1:
+      if lhs_batch == () or lbd > onp.max(lhs_batch):
+        # can avoid transposes
+        bump_lhs_contract = onp.greater_equal(lhs_contract, lbd)
+        lhs_contract = tuple(onp.add(lhs_contract, bump_lhs_contract))
+        result_batch_dim = lbd - len(lhs_contract) + sum(bump_lhs_contract)
+      else:
+        # move the new dimension to the end of lhs to avoid changing batch dims
         lhs = batching.moveaxis(lhs, lbd, lhs.ndim - 1)
       # lhs tensor product dims in result come after batch dims
       result_batch_dim = lhs.ndim - len(lhs_contract) - 1
     else:
-      # make sure it's the last rhs dimension to avoid changing batch dims
-      if rbd != rhs.ndim - 1:
+      if rhs_batch == () or rbd > onp.max(rhs_batch):
+        # can avoid transposes
+        bump_rhs_contract = onp.greater_equal(rhs_contract, rbd)
+        rhs_contract = tuple(onp.add(rhs_contract, bump_rhs_contract))
+        result_batch_dim = (rbd + (lhs.ndim - len(lhs_contract) - len(lhs_batch))
+                                - (len(rhs_contract) - sum(bump_rhs_contract)))
+      else:
+        # move the new dimension to the end of rhs to avoid changing batch dims
         rhs = batching.moveaxis(rhs, rbd, rhs.ndim - 1)
       # rhs tensor product dims in result come after batch dims + lhs tensor
       # product dims
@@ -2284,7 +2295,7 @@ def _dot_general_batch_rule(batched_args, batch_dims, dimension_numbers,
   new_dimension_numbers = [(lhs_contract, rhs_contract), (lhs_batch, rhs_batch)]
   batched_out = dot_general(lhs, rhs, new_dimension_numbers,
                             precision=precision)
-  return batched_out, result_batch_dim
+  return batched_out, int(result_batch_dim)
 
 def _dot_general_translation_rule(c, lhs, rhs, dimension_numbers, precision):
   return c.DotGeneral(lhs, rhs, dimension_numbers,
