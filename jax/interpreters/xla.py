@@ -248,9 +248,14 @@ def eqn_literals(eqn):
       yield v.val
 
 def _parameter_or_create_token(c, shape):
-  # Token values cannot be passed as parameters to top-level computations.
-  # Instead, we manufacture a fresh token as an argument. However, tokens make
-  # sense and are allowed as arguments to inner computations.
+  # XLA does not allow token values to be passed as parameters to top-level
+  # computations, but in JAX that's a reasonable and expected thing to do.
+  # It should not matter where you put `jit` or if you omit it entirely.
+  # When calling into an "outermost" computation, we pass JAX Token objects by
+  # calling CreateToken() to make an XLA token that stands in for the JAX token.
+  # The manufactured tokens correspond one-to-one with parameters.
+  # Similarly when returning a token to JAX, we ignore what XLA gives us and
+  # manufacture a Token object.
   if shape.xla_element_type() == xc.PrimitiveType.TOKEN:
     return c.CreateToken()
   else:
