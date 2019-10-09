@@ -148,15 +148,18 @@ Please let us know on [the issue tracker](https://github.com/google/jax/issues)
 if you run into any errors or problems with the prebuilt wheels.
 
 ### Building JAX from source
+See [Building JAX from source](https://jax.readthedocs.io/en/latest/developer.html#building-from-source).
 
-
-The Colab notebooks are tested for errors as part of the documentation build.
-See [docs/README.md](docs/README.md) for instructions.
 
 ## Reference documentation
 
 For details about the JAX API, see the
 [reference documentation](https://jax.readthedocs.io/).
+
+## Developer documentation
+
+For getting started as a JAX developer, see the
+[developer documentation](https://jax.readthedocs.io/en/latest/developer.html).
 
 ## A brief tour
 
