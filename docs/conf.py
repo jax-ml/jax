@@ -102,7 +102,7 @@ napolean_use_rtype = False
 # -- Options for nbsphinx -----------------------------------------------------
 
 # Execute notebooks before conversion: 'always', 'never', 'auto' (default)
-nbsphinx_execute = 'never'
+nbsphinx_execute = 'always'
 
 # Use this kernel instead of the one stored in the notebook metadata:
 #nbsphinx_kernel_name = 'python3'
