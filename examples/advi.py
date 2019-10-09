@@ -53,7 +53,7 @@ def batch_elbo(logprob, rng, params, num_samples):
 
 # ========= Helper function for plotting. =========
 
-@partial(jit, static_argnums=(0, 1, 2, 4))
+@partial(jit, static_argnums=(0, 1, 2))
 def mesh_eval(func, x_limits, y_limits, params, num_ticks=101):
     # Evaluate func on a 2D grid defined by x_limits and y_limits.
     x = np.linspace(*x_limits, num=num_ticks)
