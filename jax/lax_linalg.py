@@ -332,16 +332,21 @@ def triangular_solve_jvp_rule_a(
     return triangular_solve(a, rhs, left_side, lower, transpose_a, conjugate_a,
                             unit_diagonal)
 
+  # triangular_solve is about the same cost as matrix multplication (~n^2 FLOPs
+  # for matrix/vector inputs). Order these operations in whichever order is
+  # cheaper.
   if left_side:
-    # Note: triangular_solve is about the same cost as matrix multplication
-    # (~n^2 FLOPs for matrix/vector inputs). Order these operations in
-    # whichever order is cheaper.
+    assert g_a.shape[-2:] == a.shape[-2:] == (m, m) and ans.shape[-2:] == (m, n)
     if m > n:
       return a_inverse(dot(g_a, ans))  # A^{-1} (∂A X)
     else:
       return dot(a_inverse(g_a), ans)  # (A^{-1} ∂A) X
   else:
-    return dot(ans, a_inverse(g_a))
+    assert g_a.shape[-2:] == a.shape[-2:] == (n, n) and ans.shape[-2:] == (m, n)
+    if m < n:
+      return a_inverse(dot(ans, g_a))  # (X ∂A) A^{-1}
+    else:
+      return dot(ans, a_inverse(g_a))  # X (∂A A^{-1})
 
 def triangular_solve_transpose_rule(
     cotangent, a, b, left_side, lower, transpose_a, conjugate_a,
