@@ -112,16 +112,18 @@ def key_fun(fun, in_vals, in_paths, storing, in_tree):
     del master
   return out_vals, out_paths(), trace.tree
 
-def unzip(f, *args):
+def unzip(f, *args, key_arg=0):
+  abstract_args = map(xla.abstractify, args) # consider using Concrete
+  del args
   fun = lu.wrap_init(f)
   def init(key):
-    vals = (key,) + args
-    paths = ((),) + (None,) * len(args)
+    vals = abstract_args[:key_arg] + (key,) + abstract_args[key_arg + 1:]
+    paths = (None,) * key_arg + ((),) + (None,) * (len(args) - key_arg - 1)
     _, _, tree = key_fun(fun, vals, paths, True, dict())
     return tree
   def apply(tree, *args):
-    vals = (random.PRNGKey(0),) + args
-    paths = ((),) + (None,) * len(args)
+    vals = args[:key_arg] + (abstract_args[key_arg],) + args[key_arg + 1:]
+    paths = (None,) * key_arg + ((),) + (None,) * (len(args) - key_arg - 1)
     out_vals, _, _ = key_fun(fun, vals, paths, False, tree)
     return out_vals
   return init, apply
@@ -302,43 +304,99 @@ from jax.nn import initializers
 # print(apply_fun(param_tree, x))
 # print(jax.make_jaxpr(partial(apply_fun, param_tree))(x))
 
-def batch_norm(key, x, momentum=0.99):
-  scale = initializers.ones(random.fold_in(key, 'scale'), x.shape[1:])
-  offset = initializers.zeros(random.fold_in(key, 'offset'), x.shape[1:])
-  running_mean = initializers.zeros(random.fold_in(key, 'running_mean'), x.shape[1:])
-  running_variance = initializers.ones(random.fold_in(key, 'running_variance'), x.shape[1:])
-  mean = lax.tag(np.mean(x, axis=0, keepdims=True), "mean")
-  variance = lax.tag(np.mean(x**2, axis=0, keepdims=True) - mean**2, "variance")
-  running_mean = lax.sample(running_mean * momentum + mean * (1 - momentum))
-  running_variance = lax.sample(running_variance * momentum + variance * (1 - momentum))
+
+
+
+
+
+# def adam(step_size, b1, b2, epsilon):
+#   def one_step(key, x, g, i):
+#     m = yield(tag(np.zeros_like(x), "first moment", key))
+#     v = yield(tag(np.zeros_like(x), "second moment", key))
+#     m = yield(tag((1 - b1) * g + b1 * m), "first moment", key2)
+#     v = yield(tag((1 - b2) * (g ** 2) + b2 * v), "second moment", key2)
+#     mhat = m / (1 - b1 ** (i + 1))
+#     vhat = v / (1 - b2 ** (i + 1))
+#     x = x - step_size * mhat / (np.sqrt(vhat) + epsilon)
+#     return x
+
+# def adam(step_size, b1, b2, epsilon):
+#   def one_step(key, x, g, i):
+#     m = yield(tag(np.zeros_like(x), "first moment", key))
+#     v = yield(tag(np.zeros_like(x), "second moment", key))
+#     m = yield(tag((1 - b1) * g + b1 * m), "first moment", key2)
+#     v = yield(tag((1 - b2) * (g ** 2) + b2 * v), "second moment", key2)
+#     mhat = m / (1 - b1 ** (i + 1))
+#     vhat = v / (1 - b2 ** (i + 1))
+#     x = x - step_size * mhat / (np.sqrt(vhat) + epsilon)
+#     return x
+
+def adam(step_size, b1, b2, epsilon):
+  def one_step(key, x, g, i):
+    m = initializers.zeros(random.fold_in(key, "first moment"), x.shape)
+    v = initializers.zeros(random.fold_in(key, "second moment"), x.shape)
+    m = (1 - b1) * g + b1 * m
+    v = (1 - b2) * (g ** 2) + b2 * v
+    mhat = m / (1 - b1 ** (i + 1))
+    vhat = v / (1 - b2 ** (i + 1))
+    x = x - step_size * mhat / (np.sqrt(vhat) + epsilon)
+    return x, {'first moment': m, 'second moment': v}
+
+# separate passes for "get" and "put"
+# currently every sample point is both
+
+def batch_norm(init_key, metrics_key, x, momentum=0.99):
+  scale = initializers.ones(random.fold_in(key, "scale"), x.shape[1:])
+  offset = initializers.zeros(random.fold_in(key, "offset"), x.shape[1:])
+  mean = lax.sample(lax.tag(np.mean(lax.tie_in(x, metrics_key), axis=0, keepdims=True), "mean"))
+  variance = lax.sample(lax.tag(np.mean(lax.tie_in(x, metrics_key)**2, axis=0, keepdims=True) - mean**2, "variance"))
   return nn.normalize(x, axis=0, mean=mean, variance=variance) * scale + offset
-
-def batch_norm_init(key):
-  return {'scale': ones(key), 'offset': zeros(key)}
-
-def batch_norm_init_state(key):
-  return {'running_mean': zeros(key), 'running_variance': ones(key)}
-
-def batch_norm_apply(params, state, x):
-  scale = params['scale']
-  offset = params['offset']
-  mean = mean(x)
-  variance = variance(x)
-  info = {'mean': mean, 'variance': variance}
-  if isinstance(x, jax.interpreters.ad.JVPTracer):
-    return nn.normalize(x, mean, variance) * scale + offset, info
-  return nn.normalize(x, state['running_mean'], state['running_variance']) * scale + offset, info
-
-def batch_norm_update_state(state, info):
-  running_mean = state['running_mean']
-  running_variance = state['running_variance']
-  running_mean = 0.99 * running_mean + info['mean']
-  running_variance = 0.99 * running_variance + info['variance']
-  return {'running_mean': running_mean, 'running_variance': running_variance}
 
 x = random.normal(random.PRNGKey(0), (4, 3))
 init_fun, apply_fun = unzip(batch_norm, x)
 param_tree = init_fun(random.PRNGKey(0))
 print(param_tree)
-print(apply_fun(param_tree, x))
+print(apply_fun(param_tree, 0, x))
 print(jax.make_jaxpr(partial(apply_fun, param_tree))(x))
+compute_stats, continuation = unzip(apply_fun, param_tree, 0, x)
+stats = compute_stats(param_tree, x)
+print(jax.make_jaxpr(partial(apply_fun, param_tree))(x))
+
+  # TODO now
+  # running_mean = lax.sample(running_mean * momentum + mean * (1 - momentum))
+  # running_variance = lax.sample(running_variance * momentum + variance * (1 - momentum))
+
+# def batch_norm(key, x, momentum=0.99):
+#   scale = initializers.ones(random.fold_in(key, 'scale'), x.shape[1:])
+#   offset = initializers.zeros(random.fold_in(key, 'offset'), x.shape[1:])
+#   running_mean = initializers.zeros(random.fold_in(key, 'running_mean'), x.shape[1:])
+#   running_variance = initializers.ones(random.fold_in(key, 'running_variance'), x.shape[1:])
+#   mean = lax.tag(np.mean(x, axis=0, keepdims=True), "mean")
+#   variance = lax.tag(np.mean(x**2, axis=0, keepdims=True) - mean**2, "variance")
+#   running_mean = lax.sample(running_mean * momentum + mean * (1 - momentum))
+#   running_variance = lax.sample(running_variance * momentum + variance * (1 - momentum))
+#   return nn.normalize(x, axis=0, mean=mean, variance=variance) * scale + offset
+
+# def batch_norm_init(key):
+#   return {'scale': ones(key), 'offset': zeros(key)}
+
+# def batch_norm_init_state(key):
+#   return {'running_mean': zeros(key), 'running_variance': ones(key)}
+
+# def batch_norm_apply(params, state, x):
+#   scale = params['scale']
+#   offset = params['offset']
+#   mean = mean(x)
+#   variance = variance(x)
+#   info = {'mean': mean, 'variance': variance}
+#   if isinstance(x, jax.interpreters.ad.JVPTracer):
+#     return nn.normalize(x, mean, variance) * scale + offset, info
+#   return nn.normalize(x, state['running_mean'], state['running_variance']) * scale + offset, info
+
+# def batch_norm_update_state(state, info):
+#   running_mean = state['running_mean']
+#   running_variance = state['running_variance']
+#   running_mean = 0.99 * running_mean + info['mean']
+#   running_variance = 0.99 * running_variance + info['variance']
+#   return {'running_mean': running_mean, 'running_variance': running_variance}
+
