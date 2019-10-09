@@ -30,6 +30,17 @@ config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
 
+def one_step_lqr(dim, T):
+  Q = np.stack(T * (np.eye(dim),))
+  q = np.zeros((T, dim))
+  R = np.zeros((T, dim, dim))
+  r = np.zeros((T, dim))
+  M = np.zeros((T, dim, dim))
+  A = np.stack(T * (np.eye(dim),))
+  B = np.stack(T * (np.eye(dim),))
+  return control.LqrSpec(Q, q, R, r, M, A, B)
+
+
 class ControlBenchmarkTest(jtu.JaxTestCase):
 
   def testTrajectoryCyclicIntegerCounter(self):
@@ -89,6 +100,27 @@ class ControlBenchmarkTest(jtu.JaxTestCase):
     X = control.trajectory(dynamics, U, np.eye(num_states, dtype=np.int32)[0])
     expected = np.vstack((np.eye(num_states),) * 3)
     self.assertAllClose(X, expected, check_dtypes=True)
+
+
+  def testLqrSolve(self):
+    dim, T = 2, 10
+    p = one_step_lqr(dim, T)
+    K, k = control.lqr_solve(p)
+    K_ = -np.stack(T * (np.eye(dim),))
+    self.assertAllClose(K, K_, check_dtypes=True)
+    self.assertAllClose(k, np.zeros((T, dim)), check_dtypes=True)
+
+
+  def testLqrPredict(self):
+    randn = onp.random.RandomState(0).randn
+    dim, T = 2, 10
+    p = one_step_lqr(dim, T)
+    x0 = randn(dim)
+    X, U = control.lqr_predict(p, x0)
+    self.assertAllClose(X[0], x0, check_dtypes=True)
+    self.assertAllClose(U[0], -x0, check_dtypes=True)
+    self.assertAllClose(X[1:], np.zeros((T, 2)), check_dtypes=True)
+    self.assertAllClose(U[1:], np.zeros((T - 1, 2)), check_dtypes=True)
 
 
 if __name__ == '__main__':
