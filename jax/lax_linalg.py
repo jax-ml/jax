@@ -1,3 +1,4 @@
+# coding=utf-8
 # Copyright 2018 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -332,13 +333,13 @@ def triangular_solve_jvp_rule_a(
                             unit_diagonal)
 
   if left_side:
-    # triangular_solve is about the same cost as matrix multplication (~n^2
-    # FLOPs for matrix/vector inputs). So order these operations in whichever
-    # order is cheaper.
+    # Note: triangular_solve is about the same cost as matrix multplication
+    # (~n^2 FLOPs for matrix/vector inputs). Order these operations in
+    # whichever order is cheaper.
     if m > n:
-      return a_inverse(dot(g_a, ans))
+      return a_inverse(dot(g_a, ans))  # A^{-1} (∂A X)
     else:
-      return dot(a_inverse(g_a), ans)
+      return dot(a_inverse(g_a), ans)  # (A^{-1} ∂A) X
   else:
     return dot(ans, a_inverse(g_a))
 
