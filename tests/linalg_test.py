@@ -221,7 +221,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
        "_shape={}_lower={}".format(jtu.format_shape_dtype_string(shape, dtype),
                                    lower),
        "shape": shape, "dtype": dtype, "rng": rng, "lower":lower}
-      for shape in [(1, 1), (4, 4), (5, 5), (50, 50)]
+      for shape in [(1, 1), (4, 4), (5, 5), (50, 50), (2, 10, 10)]
       for dtype in float_types + complex_types
       for rng in [jtu.rand_default()]
       for lower in [True, False]))
@@ -229,8 +229,9 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self.skipTest("Test fails with numeric errors.")
     uplo = "L" if lower else "U"
     a = rng(shape, dtype)
-    a = (a + onp.conj(a.T)) / 2
-    a = onp.tril(a) if lower else onp.triu(a)
+    a = (a + onp.conj(T(a))) / 2
+    ones = onp.ones((a.shape[-1], a.shape[-1]), dtype=dtype)
+    a *= onp.tril(ones) if lower else onp.triu(ones)
     # Gradient checks will fail without symmetrization as the eigh jvp rule
     # is only correct for tangents in the symmetric subspace, whereas the
     # checker checks against unconstrained (co)tangents.

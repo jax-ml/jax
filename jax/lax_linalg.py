@@ -268,12 +268,12 @@ def eigh_jvp_rule(primals, tangents, lower):
   w = w.astype(a.dtype)
   eye_n = np.eye(a.shape[-1], dtype=a.dtype)
   # carefully build reciprocal delta-eigenvalue matrix, avoiding NaNs.
-  Fmat = np.reciprocal(eye_n + w - w[..., np.newaxis]) - eye_n
+  Fmat = np.reciprocal(eye_n + w[..., np.newaxis, :] - w[..., np.newaxis]) - eye_n
   # eigh impl doesn't support batch dims, but future-proof the grad.
   dot = lax.dot if a.ndim == 2 else lax.batch_matmul
   vdag_adot_v = dot(dot(_H(v), a_dot), v)
   dv = dot(v, np.multiply(Fmat, vdag_adot_v))
-  dw = np.diagonal(vdag_adot_v)
+  dw = np.diagonal(vdag_adot_v, axis1=-2, axis2=-1)
   return (v, w), (dv, dw)
 
 def eigh_batching_rule(batched_args, batch_dims, lower):
