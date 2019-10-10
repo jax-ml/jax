@@ -1056,7 +1056,7 @@ def linear_solve(matvec, b, solve, transpose_solve=None, symmetric=False):
     if symmetric:
       transpose_solve = solve
     else:
-      raise TypeError('transpose_solve must be provided unless symmetric=True')
+      raise TypeError('transpose_solve required unless symmetric=True')
 
   b_flat, in_args_tree = tree_flatten((b,))
   b_avals = tuple(_map(_abstractify, b_flat))

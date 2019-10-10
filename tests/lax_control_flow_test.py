@@ -1096,7 +1096,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     def matrix_free_solve(matvec, b):
       return lax.linear_solve(
-          matvec, b, explicit_jacobian_solve, symmetric=symmetric)
+          matvec, b, explicit_jacobian_solve, explicit_jacobian_solve,
+          symmetric=symmetric)
 
     def linear_solve(a, b):
       return matrix_free_solve(partial(np.dot, a), b)
