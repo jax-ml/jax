@@ -1171,16 +1171,16 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     a = rng.randn(2, 2)
     b = rng.randn(2)
 
-    expected = np.linalg.solve(a @ a.T, b)
-    actual = positive_definive_solve(a @ a.T, b)
+    expected = np.linalg.solve(np.dot(a, a.T), b)
+    actual = positive_definive_solve(np.dot(a, a.T), b)
     self.assertAllClose(expected, actual, check_dtypes=True)
 
-    actual = api.jit(positive_definive_solve)(a @ a.T, b)
+    actual = api.jit(positive_definive_solve)(np.dot(a, a.T), b)
     self.assertAllClose(expected, actual, check_dtypes=True)
 
     # numerical gradients are only well defined if ``a`` is guaranteed to be
     # positive definite.
-    jtu.check_grads(lambda x, y: positive_definive_solve(x @ x.T, y),
+    jtu.check_grads(lambda x, y: positive_definive_solve(np.dot(x, x.T), y),
                     (a, b), order=2)
 
   def test_linear_solve_errors(self):
