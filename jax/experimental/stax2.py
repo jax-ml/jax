@@ -112,14 +112,14 @@ def key_fun(fun, in_vals, in_paths, storing, in_tree):
     del master
   return out_vals, out_paths(), trace.tree
 
-def unzip(f, *args, key_arg=0):
+def unzip(f, *args, key_arg=0, ):
   abstract_args = map(xla.abstractify, args) # consider using Concrete
   del args
   fun = lu.wrap_init(f)
   def init(key):
     vals = abstract_args[:key_arg] + (key,) + abstract_args[key_arg + 1:]
     paths = (None,) * key_arg + ((),) + (None,) * (len(args) - key_arg - 1)
-    _, _, tree = key_fun(fun, vals, paths, True, dict())
+    out_vals, _, tree = key_fun(fun, vals, paths, True, dict())
     return tree
   def apply(tree, *args):
     vals = args[:key_arg] + (abstract_args[key_arg],) + args[key_arg + 1:]
@@ -127,6 +127,21 @@ def unzip(f, *args, key_arg=0):
     out_vals, _, _ = key_fun(fun, vals, paths, False, tree)
     return out_vals
   return init, apply
+
+def metrics(f, key_arg=0):
+  fun = lu.wrap_init(f)
+  def metrics_fn(*args):
+    paths = (None,) * key_arg + ((),) + (None,) * (len(args) - key_arg - 1)
+    out_vals, _, tree = key_fun(fun, vals, paths, True, dict())
+    return out_vals, tree
+  return metrics_fn
+
+# some differences:
+# - metrics should run on unabstracted inputs
+# - init should fail on data-dependence on abstracted inputs? well, 
+#   not exactly abstracted inputs but ones that aren't provided as
+#   inputs to the init fn.
+# - 
 
 @lu.transformation_with_aux
 def key_subtrace(parent, in_paths, *in_vals):
