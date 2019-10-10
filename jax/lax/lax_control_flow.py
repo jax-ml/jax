@@ -1031,12 +1031,32 @@ def linear_solve(matvec, b, solve, transpose_solve=None, symmetric=False):
   """Differentiably solve the linear map matvec(x)=b for x.
 
   Required invariant:
-      x = solve(matvec, b)
-      error = matvec(x) - b
-      assert all(error == 0)
+      x = solve(matvec, b)  # solve the linear equation
+      assert matvec(x) == b  # not checked
+
+  Args:
+    matvec: linear function to invert. Must be differentiable.
+    b: constant right handle side of the equation. May be any nested structure
+      of arrays.
+    solve: higher level function that solves for solution to the linear
+      equation, i.e., ``matvec(solve(matvec, x)) == x`` for all ``x`` of the
+      same form as ``b``. This function need not be differenatiable.
+    transpose_solve: higher level function for solving the transpose linear
+      equation, i.e., ``vecmat(transpose_solve(vecmat, x)) == x``, where
+      ``vecmat`` is the transpose of the linear map ``matvec`` (computed
+      automatically with autodiff). Required unless ``symmetric=True``.
+    symmetric: bool indicating if it is safe to assume the linear map
+      corresponds to a symmetric matrix, i.e., ``matvec == vecmat``.
+
+  Returns:
+    Result of ``solve(matvec, b)``, with gradients defined assuming that the
+    solution ``x`` satisfies the linear equation ``matvec(x) == b``.
   """
   if transpose_solve is None:
-    transpose_solve = solve
+    if symmetric:
+      transpose_solve = solve
+    else:
+      raise TypeError('transpose_solve must be provided unless symmetric=True')
 
   b_flat, in_args_tree = tree_flatten((b,))
   b_avals = tuple(_map(_abstractify, b_flat))
