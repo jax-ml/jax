@@ -1221,19 +1221,19 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def explicit_jacobian_solve(matvec, b):
       return lax.stop_gradient(np.linalg.solve(api.jacobian(matvec)(b), b))
 
-    def linear_solve(a, b):
+    def loss(a, b):
       matvec = partial(np.dot, a)
-      return lax.custom_linear_solve(matvec, b, explicit_jacobian_solve)
+      x = lax.custom_linear_solve(matvec, b, explicit_jacobian_solve)
+      return np.sum(x)
 
     rng = onp.random.RandomState(0)
     a = rng.randn(2, 2)
     b = rng.randn(2)
 
-    jtu.check_grads(linear_solve, (a, b), atol=1e-5, order=2, modes=['fwd'])
+    jtu.check_grads(loss, (a, b), atol=1e-5, order=2, modes=['fwd'])
 
     with self.assertRaisesRegexp(TypeError, "transpose_solve required"):
-      lax.custom_linear_solve(lambda x: x, 1.0, solve)
-
+      api.grad(loss)(a, b)
 
   def test_custom_linear_solve_errors(self):
 
