@@ -26,7 +26,6 @@ import six
 from six.moves import reduce
 
 from .. import core
-from .. import linear_util as lu
 from ..core import Trace, Tracer, new_master
 from ..abstract_arrays import ShapedArray, make_shaped_array, array_types, raise_to_shaped
 from ..ad_util import add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_p
