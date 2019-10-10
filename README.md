@@ -148,91 +148,18 @@ Please let us know on [the issue tracker](https://github.com/google/jax/issues)
 if you run into any errors or problems with the prebuilt wheels.
 
 ### Building JAX from source
+See [Building JAX from source](https://jax.readthedocs.io/en/latest/developer.html#building-from-source).
 
-First, obtain the JAX source code.
-
-```bash
-git clone https://github.com/google/jax
-cd jax
-```
-
-You must also install some prerequisites:
-* a C++ compiler (g++ or clang)
-* Numpy
-* Scipy
-* Cython
-
-On Ubuntu 18.04 or Debian you can install the necessary prerequisites with:
-```
-sudo apt-get install g++ python python3-dev python3-numpy python3-scipy cython3
-```
-If you are building on a Mac, make sure XCode and the XCode command line tools
-are installed.
-
-You can also install the necessary Python dependencies using `pip`:
-```
-pip install numpy scipy cython
-```
-
-To build `jaxlib` with CUDA support, you can run
-
-```bash
-python build/build.py --enable_cuda
-pip install -e build  # installs jaxlib (includes XLA)
-pip install -e .      # installs jax (pure Python)
-```
-
-See `python build/build.py --help` for configuration options, including ways to
-specify the paths to CUDA and CUDNN, which you must have installed. The build
-also depends on NumPy, and a compiler toolchain corresponding to that of
-Ubuntu 16.04 or newer.
-
-To build `jaxlib` without CUDA GPU support (CPU only), drop the `--enable_cuda`:
-
-```bash
-python build/build.py
-pip install -e build  # installs jaxlib (includes XLA)
-pip install -e .      # installs jax
-```
-
-To upgrade to the latest version from GitHub, just run `git pull` from the JAX
-repository root, and rebuild by running `build.py` if necessary. You shouldn't have
-to reinstall because `pip install -e` sets up symbolic links from site-packages
-into the repository.
-
-## Running the tests
-
-To run all the JAX tests, we recommend using `pytest-xdist`, which can run tests in
-parallel. First, install `pytest-xdist` by running `pip install pytest-xdist`.
-Then, from the repository root directory run
-
-```bash
-pytest -n auto tests
-```
-
-JAX generates test cases combinatorially, and you can control the number of
-cases that are generated and checked for each test (default 10):
-
-```bash
-JAX_NUM_GENERATED_CASES=100 pytest -n auto tests
-```
-
-You can run a more specific set of tests using
-[`pytest`](https://docs.pytest.org/en/latest/usage.html#specifying-tests-selecting-tests)'s
-built-in selection mechanisms, or alternatively you can run a specific test
-file directly to see more detailed information about the cases being run:
-
-```bash
-python tests/lax_numpy_test.py --num_generated_cases=5
-```
-
-The Colab notebooks are tested for errors as part of the documentation build.
-See [docs/README.md](docs/README.md) for instructions.
 
 ## Reference documentation
 
 For details about the JAX API, see the
 [reference documentation](https://jax.readthedocs.io/).
+
+## Developer documentation
+
+For getting started as a JAX developer, see the
+[developer documentation](https://jax.readthedocs.io/en/latest/developer.html).
 
 ## A brief tour
 
