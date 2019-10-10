@@ -1178,7 +1178,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     actual = api.jit(positive_definive_solve)(a @ a.T, b)
     self.assertAllClose(expected, actual, check_dtypes=True)
 
-    # numerical gradietns are only well defined if A is guaranteed to be
+    # numerical gradients are only well defined if ``a`` is guaranteed to be
     # positive definite.
     jtu.check_grads(lambda x, y: positive_definive_solve(x @ x.T, y),
                     (a, b), order=2)
