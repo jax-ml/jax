@@ -36,6 +36,7 @@ from jax import test_util as jtu
 from jax.util import unzip2
 from jax.lib import xla_bridge
 import jax.numpy as np  # scan tests use numpy
+import jax.scipy as jsp
 
 def scan_reference(f, init, xs):
   carry = init
@@ -1083,7 +1084,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         TypeError, re.escape("tangent_solve() output pytree")):
       api.jvp(dummy_root_usage, (0.0,), (0.0,))
 
-
   @parameterized.named_parameters(
       {"testcase_name": "nonsymmetric", "symmetric": False},
       {"testcase_name": "symmetric", "symmetric": True},
@@ -1106,6 +1106,15 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       a = a + a.T
     b = rng.randn(3)
     jtu.check_grads(linear_solve, (a, b), order=2)
+
+    expected = np.linalg.solve(a, b)
+    actual = api.jit(linear_solve)(a, b)
+    self.assertAllClose(expected, actual, check_dtypes=True)
+
+    c = rng.randn(3, 2)
+    expected = np.linalg.solve(a, c)
+    actual = api.vmap(linear_solve, (None, 1), 1)(a, c)
+    self.assertAllClose(expected, actual, check_dtypes=True)
 
   def test_linear_solve_zeros(self):
 
@@ -1133,7 +1142,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         return np.linalg.norm(matvec(x) - b) > tolerance
       def body(x):
         return x + omega * (b - matvec(x))
-      return lax.while_loop(cond, body, np.zeros_like(b))
+      return lax.while_loop(cond, body, b)
 
     def matrix_free_solve(matvec, b):
       return lax.linear_solve(matvec, b, richardson_iteration)
@@ -1149,6 +1158,46 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     actual = build_and_solve(a, b)
     self.assertAllClose(expected, actual, atol=1e-5, check_dtypes=True)
     jtu.check_grads(build_and_solve, (a, b), atol=1e-5, order=2)
+
+  def test_linear_solve_cholesky(self):
+
+    def positive_definive_solve(a, b):
+      factors = jsp.linalg.cho_factor(a)
+      def solve(matvec, x):
+        return jsp.linalg.cho_solve(factors, x)
+      return lax.linear_solve(partial(np.dot, a), b, solve, symmetric=True)
+
+    rng = onp.random.RandomState(0)
+    a = rng.randn(2, 2)
+    b = rng.randn(2)
+
+    expected = np.linalg.solve(a @ a.T, b)
+    actual = positive_definive_solve(a @ a.T, b)
+    self.assertAllClose(expected, actual, check_dtypes=True)
+
+    actual = api.jit(positive_definive_solve)(a @ a.T, b)
+    self.assertAllClose(expected, actual, check_dtypes=True)
+
+    # numerical gradietns are only well defined if A is guaranteed to be
+    # positive definite.
+    jtu.check_grads(lambda x, y: positive_definive_solve(x @ x.T, y),
+                    (a, b), order=2)
+
+  def test_linear_solve_errors(self):
+    with self.assertRaisesRegex(TypeError, re.escape("matvec() output pytree")):
+      lax.linear_solve(lambda x: [x], 1.0, lambda f, x: x)
+    with self.assertRaisesRegex(TypeError, re.escape("solve() output pytree")):
+      lax.linear_solve(lambda x: x, 1.0, lambda f, x: [x])
+    with self.assertRaisesRegex(
+        TypeError, re.escape("transpose_solve() output pytree")):
+      lax.linear_solve(lambda x: x, 1.0, lambda f, x: x, lambda f, x: [x])
+    with self.assertRaisesRegex(ValueError, re.escape("solve() output shapes")):
+      lax.linear_solve(lambda x: x, 1.0, lambda f, x: np.ones(2))
+
+    def dummy_solve(a):
+      return lax.linear_solve(lambda x: a * np.ones(2), 1.0, lambda f, x: x)
+    with self.assertRaisesRegex(ValueError, re.escape("matvec() output shapes")):
+      api.jvp(dummy_solve, (1.0,), (1.0,))
 
 
 if __name__ == '__main__':
