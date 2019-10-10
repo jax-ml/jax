@@ -1051,7 +1051,9 @@ def custom_linear_solve(
     transpose_solve: higher level function for solving the transpose linear
       equation, i.e., ``vecmat(transpose_solve(vecmat, x)) == x``, where
       ``vecmat`` is the transpose of the linear map ``matvec`` (computed
-      automatically with autodiff). Required unless ``symmetric=True``.
+      automatically with autodiff). Required for backwards mode automatic
+      differentiation, unless ``symmetric=True``, in which case ``solve``
+      provides the default value.
     symmetric: bool indicating if it is safe to assume the linear map
       corresponds to a symmetric matrix, i.e., ``matvec == vecmat``.
 
@@ -1059,11 +1061,8 @@ def custom_linear_solve(
     Result of ``solve(matvec, b)``, with gradients defined assuming that the
     solution ``x`` satisfies the linear equation ``matvec(x) == b``.
   """
-  if transpose_solve is None:
-    if symmetric:
-      transpose_solve = solve
-    else:
-      raise TypeError('transpose_solve required unless symmetric=True')
+  if transpose_solve is None and symmetric:
+    transpose_solve = solve
 
   b_flat, in_args_tree = tree_flatten((b,))
   b_avals = tuple(_map(_abstractify, b_flat))
@@ -1077,28 +1076,32 @@ def custom_linear_solve(
       partial(solve, matvec), in_args_tree, b_avals)
   _check_tree("solve", "b", out_tree, tree)
 
-  if symmetric:
-    vecmat = matvec
-    vecmat_jaxpr = matvec_jaxpr
-    vecmat_consts = matvec_consts
+  if transpose_solve is None:
+    vecmat_jaxpr = tr_solve_jaxpr = None
+    vecmat_consts = tr_solve_consts = []
   else:
-    vecmat = _transpose_function(matvec, b)
-    vecmat_jaxpr, vecmat_consts, out_tree = _initial_style_jaxpr(
-        vecmat, in_args_tree, b_avals)
-    assert out_tree == tree
+    if symmetric:
+      vecmat = matvec
+      vecmat_jaxpr = matvec_jaxpr
+      vecmat_consts = matvec_consts
+    else:
+      vecmat = _transpose_function(matvec, b)
+      vecmat_jaxpr, vecmat_consts, out_tree = _initial_style_jaxpr(
+          vecmat, in_args_tree, b_avals)
+      assert out_tree == tree
 
-  tr_solve_jaxpr, tr_solve_consts, out_tree = _initial_style_jaxpr(
-      partial(transpose_solve, vecmat), in_args_tree, b_avals)
-  _check_tree("transpose_solve", "b", out_tree, tree)
+    tr_solve_jaxpr, tr_solve_consts, out_tree = _initial_style_jaxpr(
+        partial(transpose_solve, vecmat), in_args_tree, b_avals)
+    _check_tree("transpose_solve", "b", out_tree, tree)
 
   all_consts = [matvec_consts, vecmat_consts, solve_consts, tr_solve_consts]
   const_lengths = _LinearSolveTuple(*_map(len, all_consts))
   jaxprs = _LinearSolveTuple(
       matvec_jaxpr, vecmat_jaxpr, solve_jaxpr, tr_solve_jaxpr)
 
-  out_flat = custom_linear_solve_p.bind(*(_flatten(all_consts) + b_flat),
-                                 const_lengths=const_lengths, jaxprs=jaxprs,
-                                 tree=tree)
+  out_flat = custom_linear_solve_p.bind(
+      *(_flatten(all_consts) + b_flat),
+      const_lengths=const_lengths, jaxprs=jaxprs, tree=tree)
   return tree_unflatten(tree, out_flat)
 
 
@@ -1156,6 +1159,11 @@ def _custom_linear_solve_jvp(primals, tangents, const_lengths, jaxprs, tree):
 def _custom_linear_solve_transpose_rule(cotangent, *primals, **kwargs):
   const_lengths, jaxprs, tree = split_dict(
       kwargs, ['const_lengths', 'jaxprs', 'tree'])
+
+  if jaxprs.transpose_solve is None:
+    raise TypeError('transpose_solve required for backwards mode automatic '
+                    'differentiation of custom_linear_solve')
+
   params, b = _split_linear_solve_args(primals, const_lengths)
   assert b == [ad.undefined_primal] * len(b)
   cotangent_b = custom_linear_solve_p.bind(

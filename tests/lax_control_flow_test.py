@@ -1126,7 +1126,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     def matrix_free_solve(matvec, b):
       return lax.custom_linear_solve(matvec, b, explicit_jacobian_solve,
-                              explicit_jacobian_solve)
+                                     explicit_jacobian_solve)
 
     def linear_solve(a, b):
       return matrix_free_solve(partial(np.dot, a), b)
@@ -1150,7 +1150,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     def matrix_free_solve(matvec, b):
       return lax.custom_linear_solve(matvec, b, richardson_iteration,
-                              richardson_iteration)
+                                     richardson_iteration)
 
     def build_and_solve(a, b):
       # intentionally non-linear in a and b
@@ -1216,12 +1216,28 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     jtu.check_grads(linear_solve, (a, b), order=2)
 
-  def test_custom_linear_solve_errors(self):
+  def test_custom_linear_solve_without_transpose_solve(self):
 
-    solve = lambda f, x: x
+    def explicit_jacobian_solve(matvec, b):
+      return lax.stop_gradient(np.linalg.solve(api.jacobian(matvec)(b), b))
+
+    def linear_solve(a, b):
+      matvec = partial(np.dot, a)
+      return lax.custom_linear_solve(matvec, b, explicit_jacobian_solve)
+
+    rng = onp.random.RandomState(0)
+    a = rng.randn(2, 2)
+    b = rng.randn(2)
+
+    jtu.check_grads(linear_solve, (a, b), atol=1e-5, order=2, modes=['fwd'])
 
     with self.assertRaisesRegexp(TypeError, "transpose_solve required"):
       lax.custom_linear_solve(lambda x: x, 1.0, solve)
+
+
+  def test_custom_linear_solve_errors(self):
+
+    solve = lambda f, x: x
 
     with self.assertRaisesRegex(TypeError, re.escape("matvec() output pytree")):
       lax.custom_linear_solve(lambda x: [x], 1.0, solve, solve)
