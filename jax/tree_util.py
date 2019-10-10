@@ -37,13 +37,12 @@ from __future__ import division
 from __future__ import print_function
 
 import functools
-from collections import namedtuple
-import itertools as it
+import collections
 from six.moves import reduce
 
 from .lib import pytree
 
-from .util import unzip2, partial, safe_map
+from .util import partial, safe_zip
 
 
 def tree_map(f, tree):
@@ -121,7 +120,7 @@ def treedef_tuple(trees):
   return pytree.tuple(list(trees))
 
 def treedef_children(treedef):
-    return treedef.children()
+  return treedef.children()
 
 register_pytree_node = pytree.register_node
 
@@ -133,6 +132,11 @@ def tree_reduce(f, tree):
 
 def tree_all(tree):
   return all(tree_leaves(tree))
+
+register_pytree_node(
+  collections.OrderedDict,
+  lambda x: (list(x.values()), list(x.keys())),
+  lambda keys, values: collections.OrderedDict(safe_zip(keys, values)))
 
 
 class Partial(functools.partial):
