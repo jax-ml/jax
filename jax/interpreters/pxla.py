@@ -111,7 +111,9 @@ def shard_aval(size, aval):
 shard_aval_handlers = {}
 shard_aval_handlers[core.AbstractUnit] = lambda size, x: x
 def _shard_abstract_array(size, x):
-  assert x.shape[0] == size
+  if x.shape[0] != size:
+    raise ValueError("Axis size {} does not match leading dimension of "
+                     "shape {}".format(size, x.shape))
   return ShapedArray(x.shape[1:], x.dtype)
 shard_aval_handlers[ShapedArray] = _shard_abstract_array
 

@@ -80,6 +80,13 @@ class PmapTest(jtu.JaxTestCase):
     expected = sum_and_broadcast(sum_and_broadcast(x, 0), 1)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testMismatchedAxisSizes(self):
+    n = xla_bridge.device_count()
+    f = pmap(lambda x, y: x + y)
+    jtu.check_raises_regexp(
+        lambda: f(onp.random.randn(n), onp.random.randn(n - 1)), ValueError,
+        "Axis size .* does not match leading dimension of shape .*")
+
   @parameterized.named_parameters(
       {"testcase_name": "_mesh={}".format(device_mesh_shape),
        "device_mesh_shape": device_mesh_shape}
