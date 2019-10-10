@@ -400,6 +400,7 @@ def concatenate(operands, dimension):
                             operand_shapes=tuple(o.shape for o in operands))
 
 Precision = xla_client.PrecisionConfig.Precision
+Precision.__str__ = lambda precision: precision.name
 
 def conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation=None,
                          rhs_dilation=None, dimension_numbers=None,
