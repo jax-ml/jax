@@ -37,7 +37,8 @@ from .. import linear_util as lu
 from ..config import flags
 from ..core import Primitive
 from ..abstract_arrays import (UnshapedArray, ShapedArray, ConcreteArray,
-                               array_types, make_shaped_array, raise_to_shaped)
+                               AbstractToken, array_types, make_shaped_array,
+                               raise_to_shaped, abstract_token)
 from ..interpreters import partial_eval as pe
 from ..interpreters import xla
 from ..interpreters import pxla
@@ -47,6 +48,7 @@ from ..interpreters import masking
 from ..interpreters.masking import ShapeExpr, ShapeError
 from ..util import curry, cache, safe_zip, unzip2, prod
 from ..tree_util import build_tree, tree_unflatten, tree_map
+from ..lib import pytree
 from ..lib import xla_bridge
 from ..lib import xla_client
 
@@ -3710,9 +3712,9 @@ def _select_and_gather_add_translation(
                                          canonicalize_types=False)
 
   if double_word_reduction:
-  # XLA doesn't yet implement ReduceWindow on tuples (Google bug b/73062247), so
-  # we implement a pair-wise ReduceWindow by packing two k-bit values into
-  # 2k-bit unsigned integer using bit tricks.
+    # XLA doesn't yet implement ReduceWindow on tuples (Google bug b/73062247), so
+    # we implement a pair-wise ReduceWindow by packing two k-bit values into
+    # 2k-bit unsigned integer using bit tricks.
     word_dtype = _UINT_DTYPES[nbits]
     double_word_dtype = _UINT_DTYPES[nbits * 2]
     word_type = xla_client.dtype_to_etype(word_dtype)
@@ -4056,6 +4058,98 @@ xla.translations[stop_gradient_p] = lambda c, x: x
 ad.primitive_jvps[stop_gradient_p] = _stop_gradient_jvp_rule
 batching.primitive_batchers[stop_gradient_p] = _stop_gradient_batch_rule
 
+def create_token(x):
+  """Creates an XLA token value with no preconditions for sequencing effects.
+
+  Experimental.
+
+  Args:
+    x: a dummy argument used to tie the CreateToken operator into a trace. The
+       value of `x` is ignored.
+  """
+  # x is a dummy argument used to tie the operator into a trace.
+  return create_token_p.bind(x)
+
+create_token_p = Primitive("create_token")
+create_token_p.def_impl(partial(xla.apply_primitive, create_token_p))
+create_token_p.def_abstract_eval(lambda _: abstract_token)
+xla.translations[create_token_p] = lambda c, _: c.CreateToken()
+
+def after_all(*operands):
+  """Merges one or more XLA token values. Experimental.
+
+  Wraps the XLA AfterAll operator."""
+  return after_all_p.bind(*operands)
+
+def _after_all_abstract_eval(*operands):
+  if any(x is not abstract_token for x in operands):
+    raise TypeError("Arguments to after_all must be tokens")
+  return abstract_token
+
+
+def _after_all_translation_rule(c, *operands):
+  return c.AfterAll(operands)
+
+after_all_p = Primitive("after_all")
+after_all_p.def_impl(partial(xla.apply_primitive, after_all_p))
+after_all_p.def_abstract_eval(_after_all_abstract_eval)
+xla.translations[after_all_p] = _after_all_translation_rule
+
+
+def infeed(token, shape=None):
+  """Consumes an infeed value of `shape` from the host. Experimental.
+
+  `token` is used to sequence infeed and outfeed effects.
+  """
+  flat_shapes, treedef = pytree.flatten(shape)
+  for shape in flat_shapes:
+    if not isinstance(shape, ShapedArray):
+      raise TypeError("shapes argument to infeed must be a pytree of "
+                      "ShapedArray values, got {}".format(shapes))
+  xs_and_token = infeed_p.bind(token, shapes=tuple(flat_shapes))
+  return (treedef.unflatten(xs_and_token[:-1]), xs_and_token[-1])
+
+def _infeed_abstract_eval(token, shapes=None):
+  if token is not abstract_token:
+    raise TypeError("First argument to infeed must be a token")
+  return shapes + (abstract_token,)
+
+
+def _infeed_translation_rule(c, token, shapes=None):
+  shape = tuple(map(xla.aval_to_xla_shape, shapes))
+  xs_and_token = c.Infeed(xla_client.Shape.tuple_shape(shape), token)
+  xs = c.GetTupleElement(xs_and_token, 0)
+  token = c.GetTupleElement(xs_and_token, 1)
+  outs = [c.GetTupleElement(xs, i) for i in range(len(shapes))] + [token]
+  return c.Tuple(*outs)
+
+infeed_p = Primitive("infeed")
+infeed_p.multiple_results = True
+infeed_p.def_impl(partial(xla.apply_primitive, infeed_p))
+infeed_p.def_abstract_eval(_infeed_abstract_eval)
+xla.translations[infeed_p] = _infeed_translation_rule
+
+def outfeed(token, xs):
+  """Outfeeds value `xs` to the host. Experimental.
+
+  `token` is used to sequence infeed and outfeed effects.
+  """
+  flat_xs, _ = pytree.flatten(xs)
+  return outfeed_p.bind(token, *flat_xs)
+
+def _outfeed_abstract_eval(token, *xs):
+  if token is not abstract_token:
+    raise TypeError("First argument to outfeed must be a token")
+  return abstract_token
+
+
+def _outfeed_translation_rule(c, token, *xs):
+  return c.Outfeed(c.Tuple(*xs), token)
+
+outfeed_p = Primitive("outfeed")
+outfeed_p.def_impl(partial(xla.apply_primitive, outfeed_p))
+outfeed_p.def_abstract_eval(_outfeed_abstract_eval)
+xla.translations[outfeed_p] = _outfeed_translation_rule
 
 ### util
 

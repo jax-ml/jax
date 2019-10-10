@@ -31,8 +31,9 @@ from .. import core
 from .. import ad_util
 from .. import tree_util
 from .. import linear_util as lu
-from ..abstract_arrays import (ConcreteArray, ShapedArray, make_shaped_array,
-                               array_types, raise_to_shaped)
+from ..abstract_arrays import (ConcreteArray, ShapedArray, AbstractToken,
+                               make_shaped_array, array_types, raise_to_shaped,
+                               abstract_token)
 from ..core import valid_jaxtype, Literal
 from ..util import partial, partialmethod, cache, safe_map, prod, unzip2
 from ..lib import xla_bridge as xb
@@ -152,7 +153,7 @@ def primitive_computation(prim, *xla_shapes, **params):
           prim, (), params))
   ))
   platform = xb.get_backend(backend).platform
-  xla_args = map(c.ParameterWithShape, xla_shapes)
+  xla_args = (_parameter_or_create_token(c, shape) for shape in xla_shapes)
   if prim in backend_specific_translations[platform]:
     rule = backend_specific_translations[platform][prim]
     rule(c, *xla_args, **new_params)  # return val set as a side-effect on c
@@ -178,7 +179,8 @@ def primitive_computation(prim, *xla_shapes, **params):
 
 def _execute_compiled_primitive(prim, compiled, backend, result_handler, *args):
   device_num, = compiled.DeviceOrdinals()
-  input_bufs = [device_put(x, device_num, backend=backend) for x in args]
+  input_bufs = [device_put(x, device_num, backend=backend) for x in args
+                if x is not token]
   out_buf = compiled.Execute(input_bufs)
   if FLAGS.jax_debug_nans:
     check_nans(prim, out_buf.destructure() if prim.multiple_results else out_buf)
@@ -202,7 +204,7 @@ def _check_nans(name, xla_shape, buf):
 
 ### compiling jaxprs
 
-def compile_jaxpr(jaxpr, device, backend, axis_env, const_vals, tuple_args,
+def _compile_jaxpr(jaxpr, device, backend, axis_env, const_vals, tuple_args,
                   *abstract_args):
   if axis_env.nreps > xb.device_count(backend):
     msg = ("compiling computation that requires {} replicas, but only {} XLA "
@@ -210,7 +212,7 @@ def compile_jaxpr(jaxpr, device, backend, axis_env, const_vals, tuple_args,
     raise ValueError(msg.format(axis_env.nreps, xb.device_count(backend)))
   arg_shapes = tuple(map(aval_to_xla_shape, abstract_args))
   built_c = jaxpr_computation(jaxpr, backend, axis_env, const_vals, (), arg_shapes,
-                              tuple_args=tuple_args)
+                              tuple_args=tuple_args, inner=False)
   device_assignment = (device.id,) if device else None
   compile_opts = xb.get_compile_options(num_replicas=axis_env.nreps,
                                         device_assignment=device_assignment)
@@ -220,7 +222,7 @@ def compile_jaxpr(jaxpr, device, backend, axis_env, const_vals, tuple_args,
 def build_jaxpr(jaxpr, backend, axis_env, const_vals, tuple_args, *abstract_args):
   arg_shapes = map(aval_to_xla_shape, abstract_args)
   return jaxpr_computation(jaxpr, backend, axis_env, const_vals, (), arg_shapes,
-                           tuple_args=tuple_args)
+                           tuple_args=tuple_args, inner=False)
 
 def prefetch(x):
   if isinstance(x, DeviceArray):
@@ -245,21 +247,42 @@ def eqn_literals(eqn):
     if type(v) is core.Literal:
       yield v.val
 
+def _parameter_or_create_token(c, shape):
+  # XLA does not allow token values to be passed as parameters to top-level
+  # computations, but in JAX that's a reasonable and expected thing to do.
+  # It should not matter where you put `jit` or if you omit it entirely.
+  # When calling into an "outermost" computation, we pass JAX Token objects by
+  # calling CreateToken() to make an XLA token that stands in for the JAX token.
+  # The manufactured tokens correspond one-to-one with parameters.
+  # Similarly when returning a token to JAX, we ignore what XLA gives us and
+  # manufacture a Token object.
+  if shape.xla_element_type() == xc.PrimitiveType.TOKEN:
+    return c.CreateToken()
+  else:
+    return c.ParameterWithShape(shape)
+
 def jaxpr_computation(jaxpr, backend, axis_env, const_vals, freevar_shapes,
-                      arg_shapes, tuple_args=False):
+                      arg_shapes, tuple_args=False, inner=False):
+  # If inner is True, tokens can be passed as parameters; if inner is False,
+  # token parameters become CreateToken instructions.
   c = xb.make_computation_builder("jaxpr_computation")  # TODO(mattjj): name
   _map(prefetch, it.chain(const_vals, jaxpr_literals(jaxpr)))
   consts = _map(c.Constant, const_vals)
   if tuple_args:
-    freevar_shapes, arg_shapes = list(freevar_shapes), list(arg_shapes)
-    tuple_shape = xc.Shape.tuple_shape(freevar_shapes + arg_shapes)
+    freevar_shapes = list(freevar_shapes)
+    arg_shapes = list(arg_shapes)
+    tuple_shape = xc.Shape.tuple_shape(
+      [s for s in it.chain(freevar_shapes, arg_shapes)
+       if s.xla_element_type() != xc.PrimitiveType.TOKEN])
     tuple_arg = c.ParameterWithShape(tuple_shape)
     nfreevars, nargs = len(freevar_shapes), len(arg_shapes)
     freevars = [c.GetTupleElement(tuple_arg, i) for i in range(nfreevars)]
     args = [c.GetTupleElement(tuple_arg, i + nfreevars) for i in range(nargs)]
   else:
-    freevars = _map(c.ParameterWithShape, freevar_shapes)
-    args = _map(c.ParameterWithShape, arg_shapes)
+    make_parameter = (c.ParameterWithShape if inner
+                      else partial(_parameter_or_create_token, c))
+    freevars = _map(make_parameter, freevar_shapes)
+    args = _map(make_parameter, arg_shapes)
   out_nodes = jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, freevars, *args)
   return c.Build(c.Tuple(*out_nodes))
 
@@ -409,8 +432,8 @@ def _xla_callable(fun, device, backend, *abstract_args):
     jaxpr, (pvals, consts, env) = pe.trace_to_subjaxpr(fun, master, False).call_wrapped(pvals)
     assert not env  # no subtraces here (though cond might eventually need them)
     axis_env = AxisEnv(jaxpr_replicas(jaxpr), [], [])
-    compiled = compile_jaxpr(jaxpr, device, backend, axis_env, consts,
-                             tuple_args, *abstract_args)
+    compiled = _compile_jaxpr(jaxpr, device, backend, axis_env, consts,
+                              tuple_args, *abstract_args)
     del master, consts, jaxpr, env
   result_handlers = tuple(map(_pval_to_result_handler, pvals))
   if axis_env.nreps == 1:
@@ -427,7 +450,8 @@ def _pval_to_result_handler(pval):
 
 def _execute_compiled(compiled, backend, handlers, tuple_args, *args):
   device_num, = compiled.DeviceOrdinals()
-  input_bufs = [device_put(x, device_num, backend=backend) for x in args]
+  input_bufs = [device_put(x, device_num, backend=backend) for x in args
+                if x is not token]
   if tuple_args:
     input_bufs = [make_tuple(input_bufs, device_num, backend)]
   out_bufs = compiled.Execute(input_bufs).destructure()
@@ -435,8 +459,9 @@ def _execute_compiled(compiled, backend, handlers, tuple_args, *args):
   return [handler(out_buf) for handler, out_buf in zip(handlers, out_bufs)]
 
 def _execute_replicated(compiled, backend, handlers, tuple_args, *args):
-  input_bufs = [[device_put(x, device_num, backend=backend) for x in args]
-                for device_num in compiled.DeviceOrdinals()]
+  input_bufs = [
+    [device_put(x, device_num, backend=backend) for x in args if x is not token]
+    for device_num in compiled.DeviceOrdinals()]
   if tuple_args:
     input_bufs = [[make_tuple(bufs, device_num)] for bufs, device_num in
                   zip(input_bufs, compiled.DeviceOrdinals())]
@@ -512,7 +537,8 @@ def lower_fun(fun, instantiate=False, initial_style=False):
     pvals = [pe.PartialVal((a, core.unit)) for a in avals]
     jaxpr, _, consts = pe.trace_to_jaxpr(
         lu.wrap_init(fun, new_params), pvals, instantiate=True)
-    built_c = jaxpr_computation(jaxpr, backend, axis_env, consts, (), xla_shapes)
+    built_c = jaxpr_computation(jaxpr, backend, axis_env, consts, (),
+                                xla_shapes, inner=True)
     return c.Call(built_c, xla_args)
   return f
 
@@ -524,6 +550,15 @@ def _aval_from_xla_shape(xla_shape):
 
 
 ### device-persistent data
+
+class Token(object): pass
+token = Token()
+
+pytype_aval_mappings[Token] = lambda _: abstract_token
+xla_shape_handlers[AbstractToken] = lambda _: xc.Shape.token_shape()
+xla_result_handlers[AbstractToken] = lambda _: lambda _: token
+canonicalize_dtype_handlers[Token] = lambda x: x
+
 
 class DeviceValue(object):
   """A DeviceValue represents a value backed by device memory."""

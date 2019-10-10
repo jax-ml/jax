@@ -208,7 +208,7 @@ def compile_replicated(jaxpr, backend, axis_name, axis_size, global_axis_size,
   axis_env = xla.AxisEnv(num_replicas, [axis_name], [global_axis_size], devices)
   arg_shapes = list(map(aval_to_xla_shape, abstract_args))
   built_c = xla.jaxpr_computation(jaxpr, backend, axis_env, consts, (), arg_shapes,
-                                  tuple_args=tuple_args)
+                                  tuple_args=tuple_args, inner=False)
   compiled = built_c.Compile(
       compile_options=xb.get_compile_options(num_replicas, device_assignment),
       backend=xb.get_backend(backend))
