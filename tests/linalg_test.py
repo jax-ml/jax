@@ -30,6 +30,7 @@ from absl.testing import parameterized
 import jax
 import jax.lib
 from jax import jit, grad, jvp, vmap
+from jax import lax_linalg
 from jax import numpy as np
 from jax import scipy as jsp
 from jax import test_util as jtu
@@ -752,33 +753,40 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_lhs={}_rhs={}_lower={}_transposea={}_unit_diagonal={}".format(
-           jtu.format_shape_dtype_string(lhs_shape, dtype),
-           jtu.format_shape_dtype_string(rhs_shape, dtype),
-           lower, transpose_a, unit_diagonal),
-       "lower": lower, "transpose_a": transpose_a,
-       "unit_diagonal": unit_diagonal, "lhs_shape": lhs_shape,
-       "rhs_shape": rhs_shape, "dtype": dtype, "rng": rng}
+       "_A={}_B={}_lower={}_transposea={}_conja={}_unitdiag={}_leftside={}".format(
+           jtu.format_shape_dtype_string(a_shape, dtype),
+           jtu.format_shape_dtype_string(b_shape, dtype),
+           lower, transpose_a, conjugate_a, unit_diagonal, left_side),
+       "lower": lower, "transpose_a": transpose_a, "conjugate_a": conjugate_a,
+       "unit_diagonal": unit_diagonal, "left_side": left_side,
+       "a_shape": a_shape, "b_shape": b_shape, "dtype": dtype, "rng": rng}
       for lower in [False, True]
       for unit_diagonal in [False, True]
       for dtype in float_types + complex_types
-      for transpose_a in (
-        [0, 1] if onp.issubdtype(dtype, np.floating) else [0, 1, 2])
-      for lhs_shape, rhs_shape in [
-          ((4, 4), (4,)),
-          ((4, 4), (4, 3)),
-          ((2, 8, 8), (2, 8, 10)),
+      for transpose_a in [False, True]
+      for conjugate_a in (
+          [False] if onp.issubdtype(dtype, np.floating) else [False, True])
+      for left_side, a_shape, b_shape in [
+          (False, (4, 4), (1, 4,)),
+          (False, (3, 3), (4, 3)),
+          (True, (4, 4), (4, 1)),
+          (True, (4, 4), (4, 3)),
+          (True, (2, 8, 8), (2, 8, 10)),
       ]
       for rng in [jtu.rand_default()]))
   @jtu.skip_on_devices("tpu")  # TODO(phawkins): Test fails on TPU.
-  def testSolveTriangularGrad(self, lower, transpose_a, unit_diagonal,
-                              lhs_shape, rhs_shape, dtype, rng):
+  def testTriangularSolveGrad(
+      self, lower, transpose_a, conjugate_a, unit_diagonal, left_side, a_shape,
+      b_shape, dtype, rng):
     _skip_if_unsupported_type(dtype)
-    A = np.tril(rng(lhs_shape, dtype) + 5 * onp.eye(lhs_shape[-1], dtype=dtype))
+    # Test lax_linalg.triangular_solve instead of scipy.linalg.solve_triangular
+    # because it exposes more options.
+    A = np.tril(rng(a_shape, dtype) + 5 * onp.eye(a_shape[-1], dtype=dtype))
     A = A if lower else T(A)
-    B = rng(rhs_shape, dtype)
-    f = partial(jsp.linalg.solve_triangular, lower=lower, trans=transpose_a,
-                unit_diagonal=unit_diagonal)
+    B = rng(b_shape, dtype)
+    f = partial(lax_linalg.triangular_solve, lower=lower,
+                transpose_a=transpose_a, conjugate_a=conjugate_a,
+                unit_diagonal=unit_diagonal, left_side=left_side)
     jtu.check_grads(f, (A, B), 2, rtol=2e-2, eps=1e-3)
 
 

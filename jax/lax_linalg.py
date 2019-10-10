@@ -1,3 +1,4 @@
+# coding=utf-8
 # Copyright 2018 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -327,18 +328,33 @@ def triangular_solve_jvp_rule_a(
     g_a, ans, a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
   if g_a is ad_util.zero:
     return ad_util.zero
+  m, n = b.shape[-2:]
   k = 1 if unit_diagonal else 0
   g_a = np.tril(g_a, k=-k) if lower else np.triu(g_a, k=k)
   g_a = lax.neg(g_a)
   g_a = np.swapaxes(g_a, -1, -2) if transpose_a else g_a
   g_a = np.conj(g_a) if conjugate_a else g_a
-  tmp = triangular_solve(a, g_a, left_side, lower, transpose_a, conjugate_a,
-                         unit_diagonal)
   dot = lax.dot if g_a.ndim == 2 else lax.batch_matmul
+
+  def a_inverse(rhs):
+    return triangular_solve(a, rhs, left_side, lower, transpose_a, conjugate_a,
+                            unit_diagonal)
+
+  # triangular_solve is about the same cost as matrix multplication (~n^2 FLOPs
+  # for matrix/vector inputs). Order these operations in whichever order is
+  # cheaper.
   if left_side:
-    return dot(tmp, ans)
+    assert g_a.shape[-2:] == a.shape[-2:] == (m, m) and ans.shape[-2:] == (m, n)
+    if m > n:
+      return a_inverse(dot(g_a, ans))  # A^{-1} (∂A X)
+    else:
+      return dot(a_inverse(g_a), ans)  # (A^{-1} ∂A) X
   else:
-    return dot(ans, tmp)
+    assert g_a.shape[-2:] == a.shape[-2:] == (n, n) and ans.shape[-2:] == (m, n)
+    if m < n:
+      return a_inverse(dot(ans, g_a))  # (X ∂A) A^{-1}
+    else:
+      return dot(ans, a_inverse(g_a))  # X (∂A A^{-1})
 
 def triangular_solve_transpose_rule(
     cotangent, a, b, left_side, lower, transpose_a, conjugate_a,
