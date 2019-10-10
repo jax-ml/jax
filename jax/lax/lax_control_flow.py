@@ -982,7 +982,7 @@ root_p.def_impl(_root_impl)
 root_p.def_abstract_eval(_root_abstract_eval)
 ad.primitive_jvps[root_p] = _root_jvp
 xla.initial_style_translations[root_p] = xla.lower_fun(_root_impl, initial_style=True)
-batching.deftraced(root_p)
+# TODO(shoyer): write batching rule
 
 
 class _LinearSolveTuple(collections.namedtuple(
@@ -1166,4 +1166,4 @@ ad.primitive_jvps[linear_solve_p] = _linear_solve_jvp
 xla.initial_style_translations[linear_solve_p] = xla.lower_fun(
     _linear_solve_impl, initial_style=True)
 ad.primitive_transposes[linear_solve_p] = _linear_solve_transpose_rule
-batching.deftraced(linear_solve_p)
+# TODO(shoyer): write batching rule
