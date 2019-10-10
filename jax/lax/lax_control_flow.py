@@ -1027,8 +1027,15 @@ def _check_shapes(func_name, expected_name, actual, expected, tree):
                              tree_unflatten(tree, expected_shapes)))
 
 
-def linear_solve(matvec, b, solve, transpose_solve=None, symmetric=False):
-  """Differentiably solve the linear map matvec(x)=b for x.
+def custom_linear_solve(
+    matvec, b, solve, transpose_solve=None, symmetric=False):
+  """Perform a matrix-free linear solve with implicitly defined gradients.
+
+  This function allows for overriding or defining gradients for a linear
+  solve directly via implicit differentiation at the solution, rather than by
+  differenting *through* the solve operation. This can sometimes be much faster
+  or more numerically stable, or differentiating through the solve operation
+  may not even be implemented (e.g., if ``solve`` using ``lax.while_loop``).
 
   Required invariant:
       x = solve(matvec, b)  # solve the linear equation
@@ -1089,17 +1096,17 @@ def linear_solve(matvec, b, solve, transpose_solve=None, symmetric=False):
   jaxprs = _LinearSolveTuple(
       matvec_jaxpr, vecmat_jaxpr, solve_jaxpr, tr_solve_jaxpr)
 
-  out_flat = linear_solve_p.bind(*(_flatten(all_consts) + b_flat),
+  out_flat = custom_linear_solve_p.bind(*(_flatten(all_consts) + b_flat),
                                  const_lengths=const_lengths, jaxprs=jaxprs,
                                  tree=tree)
   return tree_unflatten(tree, out_flat)
 
 
-def _linear_solve_abstract_eval(*args, **kwargs):
+def _custom_linear_solve_abstract_eval(*args, **kwargs):
   return args[sum(kwargs['const_lengths']):]
 
 
-def _linear_solve_impl(*args, **kwargs):
+def _custom_linear_solve_impl(*args, **kwargs):
   const_lengths, jaxprs, tree = split_dict(
       kwargs, ['const_lengths', 'jaxprs', 'tree'])
   params, b = _split_linear_solve_args(args, const_lengths)
@@ -1121,13 +1128,13 @@ def _tangent_linear_map(func, params, params_dot, *x):
   return out_tangent
 
 
-def _linear_solve_jvp(primals, tangents, const_lengths, jaxprs, tree):
+def _custom_linear_solve_jvp(primals, tangents, const_lengths, jaxprs, tree):
   # A x - b = 0
   # ∂A x + A ∂x - ∂b = 0
   # ∂x = A^{-1} (∂b - ∂A x)
 
   kwargs = dict(const_lengths=const_lengths, jaxprs=jaxprs, tree=tree)
-  x = linear_solve_p.bind(*primals, **kwargs)
+  x = custom_linear_solve_p.bind(*primals, **kwargs)
 
   params, _ = _split_linear_solve_args(primals, const_lengths)
   params_dot, b_dot = _split_linear_solve_args(tangents, const_lengths)
@@ -1141,29 +1148,29 @@ def _linear_solve_jvp(primals, tangents, const_lengths, jaxprs, tree):
     _check_shapes("matvec", "b", matvec_tangents, x, tree)
     rhs = _map(ad.add_tangents, b_dot, _map(operator.neg, matvec_tangents))
 
-  x_dot = linear_solve_p.bind(*(_flatten(params) + rhs), **kwargs)
+  x_dot = custom_linear_solve_p.bind(*(_flatten(params) + rhs), **kwargs)
 
   return x, x_dot
 
 
-def _linear_solve_transpose_rule(cotangent, *primals, **kwargs):
+def _custom_linear_solve_transpose_rule(cotangent, *primals, **kwargs):
   const_lengths, jaxprs, tree = split_dict(
       kwargs, ['const_lengths', 'jaxprs', 'tree'])
   params, b = _split_linear_solve_args(primals, const_lengths)
   assert b == [ad.undefined_primal] * len(b)
-  cotangent_b = linear_solve_p.bind(
+  cotangent_b = custom_linear_solve_p.bind(
       *(_flatten(params.transpose()) + cotangent),
       const_lengths=const_lengths.transpose(), jaxprs=jaxprs.transpose(),
       tree=tree)
   return [None] * sum(const_lengths) + cotangent_b
 
 
-linear_solve_p = core.Primitive('linear_solve')
-linear_solve_p.multiple_results = True
-linear_solve_p.def_impl(_linear_solve_impl)
-linear_solve_p.def_abstract_eval(_linear_solve_abstract_eval)
-ad.primitive_jvps[linear_solve_p] = _linear_solve_jvp
-xla.initial_style_translations[linear_solve_p] = xla.lower_fun(
-    _linear_solve_impl, initial_style=True)
-ad.primitive_transposes[linear_solve_p] = _linear_solve_transpose_rule
+custom_linear_solve_p = core.Primitive('custom_linear_solve')
+custom_linear_solve_p.multiple_results = True
+custom_linear_solve_p.def_impl(_custom_linear_solve_impl)
+custom_linear_solve_p.def_abstract_eval(_custom_linear_solve_abstract_eval)
+ad.primitive_jvps[custom_linear_solve_p] = _custom_linear_solve_jvp
+xla.initial_style_translations[custom_linear_solve_p] = xla.lower_fun(
+    _custom_linear_solve_impl, initial_style=True)
+ad.primitive_transposes[custom_linear_solve_p] = _custom_linear_solve_transpose_rule
 # TODO(shoyer): write batching rule

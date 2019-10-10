@@ -1089,13 +1089,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       {"testcase_name": "nonsymmetric", "symmetric": False},
       {"testcase_name": "symmetric", "symmetric": True},
   )
-  def test_linear_solve(self, symmetric):
+  def test_custom_linear_solve(self, symmetric):
 
     def explicit_jacobian_solve(matvec, b):
       return lax.stop_gradient(np.linalg.solve(api.jacobian(matvec)(b), b))
 
     def matrix_free_solve(matvec, b):
-      return lax.linear_solve(
+      return lax.custom_linear_solve(
           matvec, b, explicit_jacobian_solve, explicit_jacobian_solve,
           symmetric=symmetric)
 
@@ -1119,13 +1119,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     # actual = api.vmap(linear_solve, (None, 1), 1)(a, c)
     # self.assertAllClose(expected, actual, check_dtypes=True)
 
-  def test_linear_solve_zeros(self):
+  def test_custom_linear_solve_zeros(self):
 
     def explicit_jacobian_solve(matvec, b):
       return lax.stop_gradient(np.linalg.solve(api.jacobian(matvec)(b), b))
 
     def matrix_free_solve(matvec, b):
-      return lax.linear_solve(matvec, b, explicit_jacobian_solve,
+      return lax.custom_linear_solve(matvec, b, explicit_jacobian_solve,
                               explicit_jacobian_solve)
 
     def linear_solve(a, b):
@@ -1137,7 +1137,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     jtu.check_grads(lambda x: linear_solve(x, b), (a,), order=2)
     jtu.check_grads(lambda x: linear_solve(a, x), (b,), order=2)
 
-  def test_linear_solve_iterative(self):
+  def test_custom_linear_solve_iterative(self):
 
     def richardson_iteration(matvec, b, omega=0.1, tolerance=1e-6):
       # Equivalent to vanilla gradient descent:
@@ -1149,7 +1149,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return lax.while_loop(cond, body, b)
 
     def matrix_free_solve(matvec, b):
-      return lax.linear_solve(matvec, b, richardson_iteration,
+      return lax.custom_linear_solve(matvec, b, richardson_iteration,
                               richardson_iteration)
 
     def build_and_solve(a, b):
@@ -1169,13 +1169,14 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     # b2 = rng.randn(1, 2, 2)
     # jtu.check_grads(api.vmap(build_and_solve), (a2, b2), atol=1e-5, order=2)
 
-  def test_linear_solve_cholesky(self):
+  def test_custom_linear_solve_cholesky(self):
 
     def positive_definive_solve(a, b):
       factors = jsp.linalg.cho_factor(a)
       def solve(matvec, x):
         return jsp.linalg.cho_solve(factors, x)
-      return lax.linear_solve(partial(np.dot, a), b, solve, symmetric=True)
+      return lax.custom_linear_solve(
+          partial(np.dot, a), b, solve, symmetric=True)
 
     rng = onp.random.RandomState(0)
     a = rng.randn(2, 2)
@@ -1193,7 +1194,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     jtu.check_grads(lambda x, y: positive_definive_solve(np.dot(x, x.T), y),
                     (a, b), order=2)
 
-  def test_linear_solve_lu(self):
+  def test_custom_linear_solve_lu(self):
 
     def linear_solve(a, b):
       a_factors = jsp.linalg.lu_factor(a)
@@ -1202,7 +1203,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         return jsp.linalg.lu_solve(a_factors, x)
       def transpose_solve(vecmat, x):
         return jsp.linalg.lu_solve(at_factors, x)
-      return lax.linear_solve(partial(np.dot, a), b, solve, transpose_solve)
+      return lax.custom_linear_solve(
+          partial(np.dot, a), b, solve, transpose_solve)
 
     rng = onp.random.RandomState(0)
     a = rng.randn(3, 3)
@@ -1214,26 +1216,27 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     jtu.check_grads(linear_solve, (a, b), order=2)
 
-  def test_linear_solve_errors(self):
+  def test_custom_linear_solve_errors(self):
 
     solve = lambda f, x: x
 
     with self.assertRaisesRegexp(TypeError, "transpose_solve required"):
-      lax.linear_solve(lambda x: x, 1.0, solve)
+      lax.custom_linear_solve(lambda x: x, 1.0, solve)
 
     with self.assertRaisesRegex(TypeError, re.escape("matvec() output pytree")):
-      lax.linear_solve(lambda x: [x], 1.0, solve, solve)
+      lax.custom_linear_solve(lambda x: [x], 1.0, solve, solve)
     with self.assertRaisesRegex(TypeError, re.escape("solve() output pytree")):
-      lax.linear_solve(lambda x: x, 1.0, lambda f, x: [x], solve)
+      lax.custom_linear_solve(lambda x: x, 1.0, lambda f, x: [x], solve)
     with self.assertRaisesRegex(
         TypeError, re.escape("transpose_solve() output pytree")):
-      lax.linear_solve(lambda x: x, 1.0, solve, lambda f, x: [x])
+      lax.custom_linear_solve(lambda x: x, 1.0, solve, lambda f, x: [x])
 
     with self.assertRaisesRegex(ValueError, re.escape("solve() output shapes")):
-      lax.linear_solve(lambda x: x, 1.0, lambda f, x: np.ones(2), solve)
+      lax.custom_linear_solve(lambda x: x, 1.0, lambda f, x: np.ones(2), solve)
 
     def bad_matvec_usage(a):
-      return lax.linear_solve(lambda x: a * np.ones(2), 1.0, solve, solve)
+      return lax.custom_linear_solve(
+          lambda x: a * np.ones(2), 1.0, solve, solve)
     with self.assertRaisesRegex(ValueError, re.escape("matvec() output shapes")):
       api.jvp(bad_matvec_usage, (1.0,), (1.0,))
 
