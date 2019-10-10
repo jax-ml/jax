@@ -1812,6 +1812,11 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     dot = partial(lax.dot, precision=lax.Precision.HIGHEST)
     check_grads_bilinear(dot, (lhs, rhs), order=2, modes=["fwd", "rev"],
                          atol=tol, rtol=tol)
+    # check that precision config is preserved
+    result, pullback = api.vjp(dot, lhs, rhs)
+    gresult = lax.zeros_like_array(result)
+    s = str(api.make_jaxpr(pullback)(gresult))
+    assert "precision=HIGHEST" in s
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -1837,6 +1842,11 @@ class LaxAutodiffTest(jtu.JaxTestCase):
                           precision=lax.Precision.HIGHEST)
     check_grads_bilinear(dot_general, (lhs, rhs), order=2, modes=["fwd", "rev"],
                          atol=tol, rtol=tol)
+    # check that precision config is preserved
+    result, pullback = api.vjp(dot_general, lhs, rhs)
+    gresult = lax.zeros_like_array(result)
+    s = str(api.make_jaxpr(pullback)(gresult))
+    assert "precision=HIGHEST" in s
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_dtype={}_broadcast_sizes={}".format(

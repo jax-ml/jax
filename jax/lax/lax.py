@@ -400,6 +400,7 @@ def concatenate(operands, dimension):
                             operand_shapes=tuple(o.shape for o in operands))
 
 Precision = xla_client.PrecisionConfig.Precision
+Precision.__str__ = lambda precision: precision.name
 
 def conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation=None,
                          rhs_dilation=None, dimension_numbers=None,
@@ -2088,7 +2089,8 @@ def _dot_general_transpose_lhs(g, y, dimension_numbers, precision,
   dims = ((ans_y, y_kept), (ans_batch, y_batch))
   x_contract_sorted_by_y = list(onp.take(x_contract, onp.argsort(y_contract)))
   out_axes = onp.argsort(list(x_batch) + x_kept + x_contract_sorted_by_y)
-  return transpose(dot_general(g, y, dims), tuple(out_axes))
+  return transpose(dot_general(g, y, dims, precision=precision),
+                   tuple(out_axes))
 
 def _dot_general_transpose_rhs(g, x, dimension_numbers, precision):
   (x_contract, y_contract), (x_batch, y_batch) = dimension_numbers
