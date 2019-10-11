@@ -78,17 +78,19 @@ def array_result_handler(aval): return partial(DeviceArray, raise_to_shaped(aval
 xla_result_handlers[ShapedArray] = array_result_handler
 xla_result_handlers[ConcreteArray] = array_result_handler
 
-def device_put(x, device_num=0, backend=None):
+def device_put(x, device=None, backend=None):
   x = canonicalize_dtype(x)
   try:
-    return device_put_handlers[type(x)](x, device_num, backend=backend)
+    return device_put_handlers[type(x)](x, device, backend=backend)
   except KeyError:
     raise TypeError("No device_put handler for type: {}".format(type(x)))
+
 device_put_handlers = {}
 device_put_handlers[core.Unit] = \
-    lambda _, n, backend=None: xc.Buffer.from_pyval((), n, backend=xb.get_backend(backend))
-def _device_put_array(x, n, backend=None):
-  return xc.Buffer.from_pyval(x, n, backend=xb.get_backend(backend))
+    lambda _, device, backend=None: xc.Buffer.from_pyval(
+        (), device, backend=xb.get_backend(backend))
+def _device_put_array(x, device, backend=None):
+  return xc.Buffer.from_pyval(x, device, backend=xb.get_backend(backend))
 for _t in array_types:
   device_put_handlers[_t] = _device_put_array
 
@@ -178,8 +180,8 @@ def primitive_computation(prim, *xla_shapes, **params):
     raise RuntimeError(msg)
 
 def _execute_compiled_primitive(prim, compiled, backend, result_handler, *args):
-  device_num, = compiled.DeviceOrdinals()
-  input_bufs = [device_put(x, device_num, backend=backend) for x in args
+  device, = compiled.local_devices()
+  input_bufs = [device_put(x, device, backend=backend) for x in args
                 if x is not token]
   out_buf = compiled.Execute(input_bufs)
   if FLAGS.jax_debug_nans:
@@ -449,28 +451,28 @@ def _pval_to_result_handler(pval):
     return aval_to_result_handler(pv)
 
 def _execute_compiled(compiled, backend, handlers, tuple_args, *args):
-  device_num, = compiled.DeviceOrdinals()
-  input_bufs = [device_put(x, device_num, backend=backend) for x in args
+  device, = compiled.local_devices()
+  input_bufs = [device_put(x, device, backend=backend) for x in args
                 if x is not token]
   if tuple_args:
-    input_bufs = [make_tuple(input_bufs, device_num, backend)]
+    input_bufs = [make_tuple(input_bufs, device, backend)]
   out_bufs = compiled.Execute(input_bufs).destructure()
   if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_bufs)
   return [handler(out_buf) for handler, out_buf in zip(handlers, out_bufs)]
 
 def _execute_replicated(compiled, backend, handlers, tuple_args, *args):
   input_bufs = [
-    [device_put(x, device_num, backend=backend) for x in args if x is not token]
-    for device_num in compiled.DeviceOrdinals()]
+      [device_put(x, device, backend=backend) for x in args if x is not token]
+      for device in compiled.local_devices()]
   if tuple_args:
-    input_bufs = [[make_tuple(bufs, device_num)] for bufs, device_num in
-                  zip(input_bufs, compiled.DeviceOrdinals())]
+    input_bufs = [[make_tuple(bufs, device)] for bufs, device in
+                  zip(input_bufs, compiled.local_devices())]
   out_bufs = compiled.ExecutePerReplica(input_bufs)[0].destructure()
   if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_bufs)
   return [handler(out_buf) for handler, out_buf in zip(handlers, out_bufs)]
 
-def make_tuple(bufs, device_num, backend):
-  return xb.get_backend(backend).make_tuple(bufs, device_num)
+def make_tuple(bufs, device, backend):
+  return xb.get_backend(backend).make_tuple(bufs, device)
 
 
 xla_call_p = core.Primitive('xla_call')
@@ -726,29 +728,29 @@ def _device_array_constant_handler(c, val, canonicalize_types=True):
   return c.Constant(onp.asarray(val), canonicalize_types=canonicalize_types)
 xb.register_constant_handler(DeviceArray, _device_array_constant_handler)
 
-def _device_put_device_array(x, device_num, backend):
+def _device_put_device_array(x, device, backend):
   # TODO(skye): we're assuming the DeviceBuffers without "platform" are
   # XrtBuffers. Figure out a less risky way to deal with XrtBuffers.
   if (not hasattr(x.device_buffer, "platform") or
       xb.get_backend(backend).platform == x.device_buffer.platform()):
-    if x.device_buffer.device_ordinal() == device_num:
+    if device is None or x.device_buffer.device() == device:
       return x.device_buffer
     else:
-      return x.device_buffer.copy_to_device(device_num)
+      return x.device_buffer.copy_to_device(device)
   else:
    # Buffers from different XLA backends are passed through the host.
-   return xc.Buffer.from_pyval(x, device_num, backend=xb.get_backend(backend))
+   return xc.Buffer.from_pyval(x, device, backend=xb.get_backend(backend))
 device_put_handlers[DeviceArray] = _device_put_device_array
 
 
-def _device_put_impl(x, device_num=0, backend=None):
+def _device_put_impl(x, device=None, backend=None):
   try:
     a = abstractify(x)
   except TypeError:
     raise TypeError("Argument '{}' of type {} is not a valid JAX type"
                     .format(x, type(x)))
   handler = aval_to_result_handler(a)
-  return handler(device_put(x, device_num, backend=backend))
+  return handler(device_put(x, device, backend=backend))
 
 device_put_p = core.Primitive('device_put')
 device_put_p.def_impl(_device_put_impl)
@@ -765,16 +767,17 @@ class DeviceConstant(DeviceArray):
   def constant_handler(c, constant_instance, canonicalize_types=True):
     assert False
 
-def _instantiate_device_constant(const, device_num=0, backend=None, cutoff=1e6):
+def _instantiate_device_constant(const, device=None, backend=None, cutoff=1e6):
   # dispatch an XLA Computation to build the constant on the device if it's
   # large, or alternatively build it on the host and transfer it if it's small
   assert isinstance(const, DeviceConstant)
-  if const.size > cutoff and device_num == 0:
+  if const.size > cutoff:
     c = xb.make_computation_builder("constant_instantiating_computation")
     xla_const = const.constant_handler(c, const)
-    opts = xb.get_compile_options(device_assignment=(device_num,))
+    device_assignment = (device.id,) if device else None
+    opts = xb.get_compile_options(device_assignment=device_assignment)
     compiled = c.Build(xla_const).Compile((), opts, backend=xb.get_backend(backend))
     return compiled.Execute(())
   else:
-    return xc.Buffer.from_pyval(onp.asarray(const), device_num,
+    return xc.Buffer.from_pyval(onp.asarray(const), device,
                                 backend=xb.get_backend(backend))

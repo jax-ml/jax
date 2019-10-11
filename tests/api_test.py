@@ -290,6 +290,18 @@ class APITest(jtu.JaxTestCase):
     self.assertIsInstance(y2[1][1], onp.ndarray)
     assert onp.all(y2[1][1] == 3 * x)
 
+  def test_device_put_across_devices(self):
+    if xb.device_count() == 1:
+      raise unittest.SkipTest("this test requires multiple devices")
+    d1, d2 = xb.local_devices()[:2]
+    x = api.device_put(onp.array([1,2,3]), device=d1)
+    self.assertEqual(x.device_buffer.device(), d1)
+    y = api.device_put(x, device=d2)
+    self.assertEqual(y.device_buffer.device(), d2)
+    # Make sure these don't crash
+    api.device_put(x)
+    api.device_put(y)
+
   @jtu.skip_on_devices("tpu")
   def test_jacobian(self):
     R = onp.random.RandomState(0).randn
