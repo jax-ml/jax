@@ -1808,7 +1808,7 @@ def eval_shape(fun, *args, **kwargs):
   """Compute the shape/dtype of ``fun(*args, **kwargs)`` without any FLOPs.
 
   This utility function is useful for performing shape inference. Its
-  input/output behavior is defined by:
+  input/output behavior is defined by::
 
     def eval_shape(fun, *args, **kwargs):
       out = fun(*args, **kwargs)
