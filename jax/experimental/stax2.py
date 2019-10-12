@@ -360,11 +360,13 @@ def adam(step_size, b1, b2, epsilon):
 # separate passes for "get" and "put"
 # currently every sample point is both
 
-def batch_norm(init_key, metrics_key, x, momentum=0.99):
+def batch_norm(key, x, momentum=0.99):
   scale = initializers.ones(random.fold_in(key, "scale"), x.shape[1:])
   offset = initializers.zeros(random.fold_in(key, "offset"), x.shape[1:])
-  mean = lax.sample(lax.tag(np.mean(lax.tie_in(x, metrics_key), axis=0, keepdims=True), "mean"))
-  variance = lax.sample(lax.tag(np.mean(lax.tie_in(x, metrics_key)**2, axis=0, keepdims=True) - mean**2, "variance"))
+  mean = lax.metric(np.mean(x, axis=0, keepdims=True),
+                    lax.tag(key, "mean"),
+                    accumulate=lambda old, new: )
+  variance = lax.metric(np.mean(x**2 - mean**2, axis=0, keepdims=True), lax.tag(key, "variance"))
   return nn.normalize(x, axis=0, mean=mean, variance=variance) * scale + offset
 
 x = random.normal(random.PRNGKey(0), (4, 3))
