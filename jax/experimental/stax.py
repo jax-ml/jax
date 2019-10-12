@@ -34,7 +34,7 @@ import jax.numpy as np
 
 from jax.nn import (relu, log_softmax, softmax, softplus, sigmoid, elu,
                     leaky_relu, selu, gelu, normalize)
-from jax.nn.initializers import glorot_normal, normal, ones, zeros
+from jax.nn.initializers import kaiming_uniform, glorot_normal, normal, ones, zeros
 
 # aliases for backwards compatibility
 glorot = glorot_normal
@@ -90,6 +90,32 @@ def GeneralConv(dimension_numbers, out_chan, filter_shape,
                                     dimension_numbers) + b
   return init_fun, apply_fun
 Conv = functools.partial(GeneralConv, ('NHWC', 'HWIO', 'NHWC'))
+
+def DepthwiseConv2D(out_chan, filter_shape,
+                    strides=None, padding="VALID",
+                    W_init=None, b_init=normal(1e-6)):
+    one = (1,) * len(filter_shape)
+    strides = strides or one
+    W_init = W_init or kaiming_uniform()
+
+    def init_fun(rng, input_shape):
+        kernel_shape = (filter_shape[0], filter_shape[1], 1,
+                        out_chan * input_shape[3])
+        output_shape = lax.conv_general_shape_tuple(
+            input_shape, kernel_shape, strides, padding,
+            ("NHWC", "HWIO", "NHWC")
+        )
+        bias_shape = (out_chan * input_shape[3], )
+        k1, k2 = random.split(rng)
+        W, b = W_init(k1, kernel_shape), b_init(k2, bias_shape)
+        return output_shape, (W, b)
+
+    def apply_fun(params, inputs, **kwargs):
+        W, b = params
+        return lax.conv_general_dilated(inputs, W, strides, padding, one, one,
+                                        ("NHWC", "HWIO", "NHWC"), feature_group_count=W.shape[2]) + b
+
+    return init_fun, apply_fun
 
 
 def GeneralConvTranspose(dimension_numbers, out_chan, filter_shape,
