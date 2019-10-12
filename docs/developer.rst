@@ -94,17 +94,34 @@ The Colab notebooks are tested for errors as part of the documentation build.
 Update documentation
 ====================
 
-To rebuild the documentation,
-install the ``sphinx`` and ``sphinx_rtd_theme`` pip
-packages and then run at the top-level:
+To rebuild the documentation, install several packages:
 
 .. code-block:: shell
 
-  sphinx-build -M html docs docs/build
+  pip install -r docs/requirements.txt
 
+You must also install ``pandoc`` in order to regenerate the notebooks.
+See `Install Pandoc <https://pandoc.org/installing.html>`_. On Mac, I had success with
+the miniconda installer, then ``conda install -c conda-forge pandoc``.
+If you do not want to install ``pandoc`` then you should regenerate the documentation
+without the notebooks.
+
+You run at top-level one of the following commands:
+
+.. code-block:: shell
+
+  sphinx-build -b html docs docs/build/html  # with the notebooks
+  sphinx-build -b html -D nbsphinx_execute=never docs docs/build/html  # without the notebooks
 
 You can then see the generated documentation in
 ``docs/build/html/index.html``.
+
+Update notebooks
+----------------
+
+Open the notebook with http://colab.research.google.com, update it, ``Run all cells`` then
+``Download ipynb``. You may want to test that it executes properly, using ``sphinx-build`` as
+explained above.
 
 Documentation building on readthedocs.io
 ----------------------------------------
@@ -115,7 +132,7 @@ The documentation building is controlled for the entire project by the
 `readthedocs JAX settings <https://readthedocs.org/dashboard/jax>`_. The current settings
 trigger a documentation build as soon as code is pushed to the GitHub ``master`` branch.
 For each code version, the building process is driven by the 
-:file:`.readthedocs.yml` and the ``docs/conf.py`` configuration files.
+``.readthedocs.yml`` and the ``docs/conf.py`` configuration files.
 
 For each automated documentation build you can see the 
 `documentation build logs <https://readthedocs.org/projects/jax/builds/>`_.
