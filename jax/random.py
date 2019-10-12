@@ -429,7 +429,7 @@ def _multivariate_normal(key, mean, cov, shape, dtype):
 
   Args:
     key: a PRNGKey used as the random key.
-    mean: optional, a scalar or array of mean values along each diminsion
+    mean: optional, a scalar or array of mean values along each dimension
     cov: optional, a scalar (isotropic), vector (diagonal covariance matrix), or full covariance matrix
     shape: optional, a tuple of nonnegative integers representing the shape.
 
@@ -437,8 +437,7 @@ def _multivariate_normal(key, mean, cov, shape, dtype):
     A random array with latent dimension of (max(asarray(mean).ndim, asarray(cov).ndim)),)
   """
   _check_shape("multivariate_normal", shape)
-  if hasattr(mean, "shape"):
-      if mean.ndim > 1:
+  if hasattr(mean, "shape") and mean.ndim > 1:
         raise ValueError("Mean cannot have more than 1 dimension.")
   if hasattr(cov, "shape") and cov.ndim > 0:
       if cov.ndim > 2:
