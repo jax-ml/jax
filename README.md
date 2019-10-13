@@ -37,7 +37,7 @@ are instances of such transformations. Another is [`vmap`](#auto-vectorization-w
 for automatic vectorization, with more to come.
 
 This is a research project, not an official Google product. Expect bugs and
-[sharp edges](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb).
+[sharp edges](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/Common_Gotchas_in_JAX.ipynb).
 Please help by trying it out, [reporting
 bugs](https://github.com/google/jax/issues), and letting us know what you
 think!
@@ -232,7 +232,7 @@ print("Trained loss: {:0.2f}".format(loss(weights, inputs, targets)))
 ```
 
 To see more, check out the [quickstart
-notebook](https://colab.research.google.com/github/google/jax/blob/master/notebooks/quickstart.ipynb),
+notebook](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/quickstart.ipynb),
 a [simple MNIST classifier
 example](https://github.com/google/jax/blob/master/examples/mnist_classifier.py)
 and the rest of the [JAX
@@ -680,13 +680,13 @@ code to compile and end-to-end optimize much bigger functions.
 ## Current gotchas
 
 For a survey of current gotchas, with examples and explanations, we highly
-recommend reading the [Gotchas Notebook](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb).
+recommend reading the [Gotchas Notebook](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/Common_Gotchas_in_JAX.ipynb).
 
 Some stand-out gotchas that might surprise NumPy users:
 1. JAX enforces single-precision (32-bit, e.g. `float32`) values by default, and
    to enable double-precision (64-bit, e.g. `float64`) one needs to set the
    `jax_enable_x64` variable **at startup** (or set the environment variable
-   `JAX_ENABLE_X64=True`, see [the Gotchas Notebook](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb#scrollTo=YTktlwTTMgFl))
+   `JAX_ENABLE_X64=True`, see [the Gotchas Notebook](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/Common_Gotchas_in_JAX.ipynb#scrollTo=YTktlwTTMgFl))
 2. Some of NumPy's dtype promotion semantics involving a mix of Python scalars
    and NumPy types aren't preserved, namely `np.add(1, np.array([2],
    np.float32)).dtype` is `float64` rather than `float32`.
@@ -697,7 +697,7 @@ Some stand-out gotchas that might surprise NumPy users:
    reasons](https://github.com/google/jax/blob/master/design_notes/prng.md), and
    non-reuse (linearity) is not yet checked.
 
-See [the notebook](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb) for much more information.
+See [the notebook](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/Common_Gotchas_in_JAX.ipynb) for much more information.
 
 ## Citing JAX
 
