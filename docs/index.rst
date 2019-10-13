@@ -22,7 +22,6 @@ For an introduction to JAX, start at the
    notebooks/Common_Gotchas_in_JAX
    notebooks/XLA_in_Python
    notebooks/How_JAX_primitives_work
-   .. The next one is a slow notebook that we do not execute
    Training a Simple Neural Network, with Tensorflow Datasets Data Loading <https://github.com/google/jax/blob/master/notebooks/neural_network_with_tfds_data.ipynb>
    notebooks/maml
    notebooks/score_matching
