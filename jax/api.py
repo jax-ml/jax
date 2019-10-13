@@ -1158,13 +1158,15 @@ def vjp(fun, *primals, **kwargs):
     return out_primal_py, vjp_py, tree_unflatten(aux_tree, aux)
 
 
-def make_jaxpr(fun):
+def make_jaxpr(fun, return_consts=False):
   """Creates a function that produces its jaxpr given example args.
 
   Args:
     fun: The function whose `jaxpr` is to be computed. Its positional arguments
       and return value should be arrays, scalars, or standard Python containers
       (tuple/list/dict) thereof.
+    return_consts: Whether to additionally return a tuple containing the values
+      of the jaxpr's constant bindings.
 
   Returns:
     A wrapped version of `fun` that when applied to example arguments returns a
@@ -1215,11 +1217,55 @@ def make_jaxpr(fun):
     jax_args, in_tree = tree_flatten((args, kwargs))
     jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
     pvals = map(pv_like, jax_args)
-    jaxpr, _, _ = pe.trace_to_jaxpr(jaxtree_fun, pvals)
-    return jaxpr
+    jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
+    if return_consts:
+      return jaxpr, consts
+    else:
+      return jaxpr
 
   jaxpr_maker.__name__ = "make_jaxpr({})".format(jaxpr_maker.__name__)
   return jaxpr_maker
+
+
+def debug_jaxpr(fun):
+  @wraps(fun)
+  def jaxpr_debugger(*args, **kwargs):
+    jaxpr, consts = make_jaxpr(fun, True)(*args, **kwargs)
+    flat_args, _ = tree_flatten((args, kwargs))
+
+    def read(v):
+      if type(v) is core.Literal:
+        return v.val
+      else:
+        return env[v]
+
+    def write(v, val):
+      env[v] = val
+
+    env = {}
+    write(core.unitvar, core.unit)
+    map(write, jaxpr.constvars, consts)
+    map(write, jaxpr.invars, flat_args)
+    map(write, jaxpr.freevars, ())
+    for var in jaxpr.invars: print(var, '=', read(var))
+    for var in jaxpr.constvars: print(var, '=', read(var))
+    for eqn in jaxpr.eqns:
+      in_vals = map(read, eqn.invars)
+      subfuns = [partial(eval_jaxpr, subjaxpr, map(read, const_bindings),
+                                              map(read, freevar_bindings))
+                for subjaxpr, const_bindings, freevar_bindings
+                in eqn.bound_subjaxprs]
+      subfuns = map(lu.wrap_init, subfuns)
+      ans = eqn.primitive.bind(*(subfuns + in_vals), **eqn.params)
+      if eqn.primitive.multiple_results:
+        map(write, eqn.outvars, ans)
+        print(str(eqn) + " = " + " ".join(str(a) for a in ans))
+      else:
+        write(eqn.outvars[0], ans)
+        print(str(eqn) + " = " + str(ans))
+    print("-----")
+    # return map(read, jaxpr.outvars)
+  return jaxpr_debugger
 
 
 def device_put(x, device_num=0, backend=None):

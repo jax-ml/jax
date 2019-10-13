@@ -1713,7 +1713,7 @@ ad.defjvp(sub_p,
 ad.primitive_transposes[sub_p] = _sub_transpose
 
 mul_p = standard_binop([_num, _num], 'mul')
-ad.defbilinear_broadcasting(_brcast, mul_p, mul, mul)
+ad.defbilinear_broadcasting(_brcast, mul_p, _safe_mul, _safe_mul)
 
 
 def _safe_mul_translation_rule(c, x, y):

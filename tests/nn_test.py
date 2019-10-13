@@ -25,6 +25,7 @@ from absl.testing import parameterized
 
 import numpy as onp
 
+from jax import api
 from jax import test_util as jtu
 from jax.test_util import check_grads
 from jax import nn
@@ -41,6 +42,10 @@ class NNFunctionsTest(jtu.JaxTestCase):
   def testSoftplusValue(self):
     val = nn.softplus(89.)
     self.assertAllClose(val, 89., check_dtypes=False)
+
+  def testEluGrad(self):
+    _ = api.grad(nn.elu)(1e10)
+    check_grads(nn.elu, (1e10,), 2)
 
 InitializerRecord = collections.namedtuple(
   "InitializerRecord",

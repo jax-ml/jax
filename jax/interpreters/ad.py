@@ -139,6 +139,7 @@ def unpair_pval(pval):
     return (aval_1, const_1), (aval_2, const_2)
 
 def backward_pass(jaxpr, consts, freevar_vals, args, cotangents_in):
+  print(jaxpr)
   def write_cotangent(v, ct):
     # assert v not in primal_env
     if ct is not None:
