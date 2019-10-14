@@ -29,6 +29,10 @@ from __future__ import print_function
 
 from distutils.util import strtobool
 import collections
+try:
+  from collections.abc import Sequence
+except ImportError:  # python 2
+  from collections import Sequence
 import itertools
 import os
 import re
@@ -2573,7 +2577,7 @@ def _index_to_gather(x_shape, idx):
     idx_no_nones = [(i, d) for i, d in enumerate(idx) if d is not None]
     advanced_pairs = (
       (asarray(e), i, j) for j, (i, e) in enumerate(idx_no_nones)
-      if (isinstance(e, collections.Sequence) or isinstance(e, ndarray)))
+      if (isinstance(e, Sequence) or isinstance(e, ndarray)))
     advanced_pairs = ((_normalize_index(e, x_shape[j]), i, j)
                       for e, i, j in advanced_pairs)
     advanced_indexes, idx_advanced_axes, x_advanced_axes = zip(*advanced_pairs)
@@ -2725,7 +2729,7 @@ def _index_to_gather(x_shape, idx):
 def _should_unpack_list_index(x):
   """Helper for _eliminate_deprecated_list_indexing."""
   return (isinstance(x, ndarray) and onp.ndim(x) != 0
-          or isinstance(x, collections.Sequence)
+          or isinstance(x, Sequence)
           or isinstance(x, slice) or x is Ellipsis or x is None)
 
 def _eliminate_deprecated_list_indexing(idx):
@@ -2734,7 +2738,7 @@ def _eliminate_deprecated_list_indexing(idx):
   # objects]". Detects this case and canonicalizes to a tuple. This case is
   # deprecated by NumPy and exists for backward compatibility.
   if not isinstance(idx, tuple):
-    if isinstance(idx, collections.Sequence) and not isinstance(idx, ndarray):
+    if isinstance(idx, Sequence) and not isinstance(idx, ndarray):
       if _any(_should_unpack_list_index(i) for i in idx):
         idx = tuple(idx)
       else:
