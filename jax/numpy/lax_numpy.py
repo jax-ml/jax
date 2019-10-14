@@ -28,6 +28,7 @@ from __future__ import division
 from __future__ import print_function
 
 from distutils.util import strtobool
+import collections
 try:
   from collections.abc import Sequence
 except ImportError:  # python 2
