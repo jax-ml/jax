@@ -1707,6 +1707,47 @@ def custom_gradient(fun):
 
 
 def jarrett(fun):
+  """Wraps `fun` for efficiently accumulating elementwise jacobian.
+
+  Described in "Dynamic Automatic Differentiation of GPU Broadcast Kernels".
+
+  Args:
+    fun: Function to be wrapped. Its arguments should be arrays, scalars, 
+      or standard Python containers and it should return a scalar.
+
+  Returns:
+    A function with the same arguments and returns as `fun`.
+
+  For example:
+
+  >>> def f(x):
+  ...   return jax.numpy.sin(jax.numpy.sin(jax.numpy.sin(x)))
+  ...
+  >>> f2 = jax.jarrett(f)
+  >>> (_, f_vjp), (_, f2_vjp) = jax.vjp(f, 3.), jax.vjp(f2, 3.)
+  >>> print f_vjp(1.), f2_vjp(1.)
+  (array(-0.9704719, dtype=float32),), (array(-0.9704719, dtype=float32),)
+  >>> print make_jaxpr(f_vjp)(1.)
+  { lambda e i g ;  ; a.
+    let b = pack * a
+        (c d) = id b
+        f = mul d e
+        h = mul f g
+        j = mul h i
+        k = pack j
+        (l) = id k
+        m = pack l
+    in m }
+  >>> print make_jaxpr(f2_vjp)(1.)
+  { lambda e ;  ; a.
+    let b = pack * a
+        (c d) = id b
+        f = mul d e
+        g = pack f
+        (h) = id g
+        i = pack h
+    in i }
+  """
   new_fun = custom_transforms(fun)
 
   def elementwise_jvp(primals, tangents):
