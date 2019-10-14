@@ -107,6 +107,7 @@ def curry(f):
 
 def toposort(end_nodes):
   if not end_nodes: return []
+  end_nodes = _remove_duplicates(end_nodes)
 
   child_counts = {}
   stack = list(end_nodes)
@@ -140,6 +141,15 @@ def check_toposort(nodes):
   for node in nodes:
     assert all(id(parent) in visited for parent in node.parents)
     visited.add(id(node))
+
+def _remove_duplicates(node_list):
+  seen = set()
+  out = []
+  for n in node_list:
+    if id(n) not in seen:
+      seen.add(id(n))
+      out.append(n)
+  return out
 
 def split_merge(predicate, xs):
   sides = list(map(predicate, xs))
