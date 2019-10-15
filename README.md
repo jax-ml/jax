@@ -116,9 +116,7 @@ pip install --upgrade jax jaxlib  # CPU-only version
 ```
 
 On Linux, it is often necessary to first update `pip` to a version that supports
-`manylinux2010` wheels. If you don't do this, `pip` may pick up an old version
-of `jaxlib` and you may see an error when you try to use Jax along the lines of:
-`ValueError: jaxlib is version 0.1.23, but this version of jax requires version ...`
+`manylinux2010` wheels.
 
 If you want to install JAX with both CPU and GPU support, using existing CUDA
 and CUDNN7 installations on your machine (for example, preinstalled on your
