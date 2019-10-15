@@ -36,6 +36,7 @@ from .numpy.lax_numpy import _constant_like, asarray, stack
 from jax.lib import xla_bridge
 from jax import core
 from jax.scipy.special import logit
+from jax.scipy.linalg import cholesky
 
 
 def PRNGKey(seed):
@@ -416,6 +417,43 @@ def _normal(key, shape, dtype):
   hi = onp.array(1., dtype)
   u = uniform(key, shape, dtype, lo, hi)
   return onp.array(onp.sqrt(2), dtype) * lax.erf_inv(u)
+
+
+def multivariate_normal(key, mean=0.0, cov=1.0, shape=(), dtype=onp.float64):
+  dtype = xla_bridge.canonicalize_dtype(dtype)
+  return _multivariate_normal(key, mean, cov, shape, dtype)
+
+@partial(jit, static_argnums=(3, 4))
+def _multivariate_normal(key, mean, cov, shape, dtype):
+  """Sample multivariate normal random values with given shape, mean, and covariance.
+
+  Args:
+    key: a PRNGKey used as the random key.
+    mean: optional, a scalar or array of mean values along each dimension
+    cov: optional, a scalar (isotropic), vector (diagonal covariance matrix), or full covariance matrix
+    shape: optional, a tuple of nonnegative integers representing the shape.
+
+  Returns:
+    A random array with latent dimension of (max(asarray(mean).ndim, asarray(cov).ndim)),)
+  """
+  _check_shape("multivariate_normal", shape)
+  if hasattr(mean, "shape") and mean.ndim > 1:
+      raise ValueError("Mean cannot have more than 1 dimension.")
+  if hasattr(cov, "shape") and cov.ndim > 0:
+      if cov.ndim > 2:
+        raise ValueError("Covariance matrix cannot have more than 2 dimensions.")
+      shape = shape + cov.shape[:1]
+      normal_samples = normal(key, shape, dtype)
+      if cov.ndim == 2:
+        samples = np.tensordot(normal_samples, cholesky(cov), axes=1)
+      else:
+        samples = normal_samples * np.sqrt(cov)
+  else:
+    if hasattr(mean, "shape") and mean.ndim > 0:
+      shape = shape + mean.shape[:1]
+    normal_samples = normal(key, shape, dtype)
+    samples = np.sqrt(cov) * normal_samples
+  return samples + mean
 
 
 def truncated_normal(key, lower, upper, shape=(), dtype=onp.float64):
