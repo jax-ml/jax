@@ -22,8 +22,12 @@ before_install:
     fi
   - bash miniconda.sh -b -p $HOME/miniconda
   - export PATH="$HOME/miniconda/bin:$PATH"
-  - conda update --yes conda
+  - conda config --set always_yes yes --set changeps1 no --set show_channel_urls yes
+  - conda config --set channel_priority strict
+  - conda config --set add_pip_as_python_dependency yes
+  - conda config --remove channels defaults
   - conda config --add channels conda-forge
+  - conda update -q conda
 install:
   - conda install --yes python=$TRAVIS_PYTHON_VERSION pip six protobuf>=3.6.0 absl-py opt_einsum numpy scipy pytest-xdist fastcache
   - pip install jaxlib
