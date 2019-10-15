@@ -111,8 +111,12 @@ To install a CPU-only version, which might be useful for doing local
 development on a laptop, you can run
 
 ```bash
+pip install --upgrade pip
 pip install --upgrade jax jaxlib  # CPU-only version
 ```
+
+On Linux, it is often necessary to first update `pip` to a version that supports
+`manylinux2010` wheels.
 
 If you want to install JAX with both CPU and GPU support, using existing CUDA
 and CUDNN7 installations on your machine (for example, preinstalled on your
