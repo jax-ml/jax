@@ -66,6 +66,17 @@ class PmapTest(jtu.JaxTestCase):
     ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testComplexPsum(self):
+    f = pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i')
+
+    shape = (xla_bridge.device_count(), 4 * 2)
+    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape).view(onp.complex64)
+    expected = x - onp.sum(x, 0)
+
+    ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+
   def testNestedBasic(self):
     f = lambda x: lax.psum(lax.psum(x, 'i'), 'j')
     f = pmap(pmap(f, 'i'), 'j')
