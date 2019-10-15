@@ -652,7 +652,7 @@ def pmap(fun, axis_name=None, devices=None, backend=None):
   devices available, as returned by ``jax.local_device_count()`` (unless
   ``devices`` is specified, see below). For nested ``pmap`` calls, the product
   of the mapped axis sizes must be less than or equal to the number of XLA
-  devices.  TODO(skye): support < # local devices on multi-host platforms
+  devices.
 
   **Multi-host platforms:** On multi-host platforms such as TPU pods, ``pmap``
   is designed to be used in SPMD Python programs, where every host is running
@@ -667,7 +667,9 @@ def pmap(fun, axis_name=None, devices=None, backend=None):
   "sees" only its local shard of the input and output.
 
   Args:
-    fun: Function to be mapped over argument axes.
+    fun: Function to be mapped over argument axes. Its arguments and return
+      value should be arrays, scalars, or (nested) standard Python containers
+      (tuple/list/dict) thereof.
     axis_name: Optional, a hashable Python object used to identify the mapped
       axis so that parallel collectives can be applied.
     devices: This is an experimental feature and the API is likely to change.
