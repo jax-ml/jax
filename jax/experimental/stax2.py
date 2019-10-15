@@ -7,7 +7,7 @@ import jax
 import jax.numpy as np
 from jax import core, lax, random, linear_util as lu
 from jax.interpreters import xla
-from jax.util import curry, partial, unzip2
+from jax.util import curry, partial, unzip2, safe_map as map
 
 # The idea here is to have the user supply a function that describes both
 # initialization and application of a network, and to "unzip" that function into
@@ -51,18 +51,7 @@ class KeyTrace(core.Trace):
     return KeyTracer(self, val.val, val.path)
 
   def maybe_set(self, path, val):
-    if len(path) == 0:
-      raise ValueError("cannot store samples without key path")
-    subtree = self.tree
-    for path_element in path[:-1]:
-      if path_element not in subtree:
-        assert self.storing, "key path {} not in provided tree".format(path)
-        subtree[path_element] = dict()
-      subtree = subtree[path_element]
-    if self.storing:
-      subtree[path[-1]] = val
-    assert path[-1] in subtree, "key path {} not in provided tree".format(path)
-    return subtree[path[-1]]
+    return maybe_set_tree(self.tree, path, val, self.storing)
 
   def process_primitive(self, primitive, tracers, params):
     if primitive is lax.tag_p:
@@ -113,8 +102,9 @@ def key_fun(fun, in_vals, in_paths, storing, in_tree):
   return out_vals, out_paths(), trace.tree
 
 def unzip(f, *args, key_arg=0, ):
-  abstract_args = map(xla.abstractify, args) # consider using Concrete
-  del args
+  # abstract_args = tuple(map(xla.abstractify, args)) # consider using Concrete
+  # del args
+  abstract_args = args
   fun = lu.wrap_init(f)
   def init(key):
     vals = abstract_args[:key_arg] + (key,) + abstract_args[key_arg + 1:]
@@ -122,19 +112,56 @@ def unzip(f, *args, key_arg=0, ):
     out_vals, _, tree = key_fun(fun, vals, paths, True, dict())
     return tree
   def apply(tree, *args):
-    vals = args[:key_arg] + (abstract_args[key_arg],) + args[key_arg + 1:]
-    paths = (None,) * key_arg + ((),) + (None,) * (len(args) - key_arg - 1)
+    vals = args[:key_arg] + (abstract_args[key_arg],) + args[key_arg:]
+    paths = (None,) * key_arg + ((),) + (None,) * (len(abstract_args) - key_arg - 1)
     out_vals, _, _ = key_fun(fun, vals, paths, False, tree)
     return out_vals
   return init, apply
 
-def metrics(f, key_arg=0):
+def iterpaths(tree, prefix=()):
+  for key, val in tree.items():
+    path = prefix + (key,)
+    if isinstance(val, dict):
+      yield from iterpaths(val, path)
+    else:
+      yield path, val
+
+def maybe_set_tree(tree, path, val, storing):
+    if len(path) == 0:
+      raise ValueError("cannot store samples without key path")
+    subtree = tree
+    for path_element in path[:-1]:
+      if path_element not in subtree:
+        assert storing, "key path {} not in provided tree".format(path)
+        subtree[path_element] = dict()
+      subtree = subtree[path_element]
+    if storing:
+      subtree[path[-1]] = val
+    assert path[-1] in subtree, "key path {} not in provided tree".format(path)
+    return subtree[path[-1]]
+
+def astree(paths_and_values):
+  tree = dict()
+  for path, val in paths_and_values:
+    maybe_set_tree(tree, path, val, True)
+  return tree
+
+def collect(f, key_arg=0, path_filter=lambda path: True):
   fun = lu.wrap_init(f)
-  def metrics_fn(*args):
+  def collect_fn(*args):
     paths = (None,) * key_arg + ((),) + (None,) * (len(args) - key_arg - 1)
-    out_vals, _, tree = key_fun(fun, vals, paths, True, dict())
+    out_vals, _, tree = key_fun(fun, args, paths, True, dict())
+    tree = astree((path, val) for path, val in iterpaths(tree) if path_filter(path))
     return out_vals, tree
-  return metrics_fn
+  return collect_fn
+
+def inject(f, key_arg=0):
+  fun = lu.wrap_init(f)
+  def inject_fn(tree, *args):
+    paths = (None,) * key_arg + ((),) + (None,) * (len(args) - key_arg - 1)
+    out_vals, _, _, = key_fun(fun, args, paths, False, tree)
+    return out_vals
+  return inject_fn
 
 # some differences:
 # - metrics should run on unabstracted inputs
@@ -199,7 +226,7 @@ def e(key, x):
 x = np.ones(3)
 key = random.PRNGKey(0)
 
-init_fun, apply_fun = unzip(e, x)
+init_fun, apply_fun = unzip(e, key, x)
 param_tree = init_fun(key)
 print("Ex 0")
 print(param_tree)
@@ -222,9 +249,10 @@ def f(key, x):
   return x
 
 x = np.ones(3)
+key = random.PRNGKey(0)
 
-init_fun, apply_fun = unzip(f, x)
-param_tree = init_fun(random.PRNGKey(0))
+init_fun, apply_fun = unzip(f, key, x)
+param_tree = init_fun(key)
 print("Ex 1")
 print(param_tree)
 print(apply_fun(param_tree, x))
@@ -247,16 +275,18 @@ def Serial(layers, key, x):
 
 @curry
 def Dense(num_features_out, key, x):
-  num_features_in, = x.shape
-  W = initializers.normal()(random.fold_in(key, "W"), (num_features_out, num_features_in))
+  num_features_in = x.shape[-1] # num_features_in, = x.shape
+  W = initializers.normal()(random.fold_in(key, "W"), (num_features_in, num_features_out))
   b = initializers.normal()(random.fold_in(key, "b"), (num_features_out,))
-  return np.dot(W, x) + b
+  return np.dot(x, W) + b
 
 f = Serial([Dense(4), Dense(2)])
 
 x = np.ones(3)
-init_fun, apply_fun = unzip(f, x)
-param_tree = init_fun(random.PRNGKey(0))
+key = random.PRNGKey(0)
+
+init_fun, apply_fun = unzip(f, key, x)
+param_tree = init_fun(key)
 print("Ex 2")
 print(param_tree)
 print(apply_fun(param_tree, x))
@@ -286,8 +316,9 @@ def f(key, x):
   return net(x)
 
 x = np.ones(3)
-init_fun, apply_fun = unzip(f, x)
-param_tree = init_fun(random.PRNGKey(0))
+key = random.PRNGKey(0)
+init_fun, apply_fun = unzip(f, key, x)
+param_tree = init_fun(key)
 print("Ex 3")
 print(param_tree)
 print(apply_fun(param_tree, x))
@@ -355,29 +386,46 @@ def adam(step_size, b1, b2, epsilon):
     mhat = m / (1 - b1 ** (i + 1))
     vhat = v / (1 - b2 ** (i + 1))
     x = x - step_size * mhat / (np.sqrt(vhat) + epsilon)
-    return x, {'first moment': m, 'second moment': v}
+    return x, {"first moment": m, "second moment": v}
 
 # separate passes for "get" and "put"
 # currently every sample point is both
 
-def batch_norm(key, x, momentum=0.99):
+@curry
+def BatchNorm(key, x, momentum=0.99):
   scale = initializers.ones(random.fold_in(key, "scale"), x.shape[1:])
   offset = initializers.zeros(random.fold_in(key, "offset"), x.shape[1:])
-  mean = lax.metric(np.mean(x, axis=0, keepdims=True),
-                    lax.tag(key, "mean"),
-                    accumulate=lambda old, new: )
-  variance = lax.metric(np.mean(x**2 - mean**2, axis=0, keepdims=True), lax.tag(key, "variance"))
+  mean = lax.sample(lax.tag(lax.tie_in(np.mean(x, axis=0, keepdims=True), key), "mean"))
+  variance = lax.sample(lax.tag(lax.tie_in(np.mean(x**2 - mean**2, axis=0, keepdims=True), key), "mean"))
   return nn.normalize(x, axis=0, mean=mean, variance=variance) * scale + offset
 
+def model(key, x):
+  x = Dense(2, random.fold_in(key, "dense"))(x)
+  x = BatchNorm(random.fold_in(key, "norm"))(x)
+  return x
+
 x = random.normal(random.PRNGKey(0), (4, 3))
-init_fun, apply_fun = unzip(batch_norm, x)
-param_tree = init_fun(random.PRNGKey(0))
+key = random.PRNGKey(0)
+model_with_stats = collect(model, path_filter=lambda path: "norm" in path)
+init_fun = collect(model_with_stats)
+apply_with_stats = inject(model_with_stats)
+param_tree = init_fun(key, x)
 print(param_tree)
-print(apply_fun(param_tree, 0, x))
-print(jax.make_jaxpr(partial(apply_fun, param_tree))(x))
-compute_stats, continuation = unzip(apply_fun, param_tree, 0, x)
-stats = compute_stats(param_tree, x)
-print(jax.make_jaxpr(partial(apply_fun, param_tree))(x))
+y, stats_tree = apply_with_stats(param_tree, key, x)
+print(y)
+print(stats_tree)
+stats_tree["norm"]["variance"] = stats_tree["norm"]["variance"] / 10
+infer_y = apply_with_stats(join_trees(param_tree, stats_tree), key, x)
+print(infer_y)
+
+# init_fun, apply_fun = unzip(batch_norm, x)
+# param_tree = init_fun(random.PRNGKey(0))
+# print(param_tree)
+# print(apply_fun(param_tree, 0, x))
+# print(jax.make_jaxpr(partial(apply_fun, param_tree))(x))
+# compute_stats, continuation = unzip(apply_fun, param_tree, 0, x)
+# stats = compute_stats(param_tree, x)
+# print(jax.make_jaxpr(partial(apply_fun, param_tree))(x))
 
   # TODO now
   # running_mean = lax.sample(running_mean * momentum + mean * (1 - momentum))
