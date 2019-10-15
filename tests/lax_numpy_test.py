@@ -31,11 +31,14 @@ import six
 
 import numpy as onp
 
+import jax
 import jax.ops
 from jax import api
 from jax import lax
+from jax import linear_util
 from jax import numpy as lnp
 from jax import test_util as jtu
+from jax.interpreters import partial_eval
 from jax.test_util import check_grads
 from jax.lib import xla_bridge
 
@@ -1908,6 +1911,25 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     def foo(x):
       return lnp.concatenate(x)
     foo(onp.zeros((2, 2)))  # doesn't crash
+
+  def testReluGradientConstants(self):
+    # This is a regression test that verifies that constants associated with the
+    # gradient of np.maximum (from lax._balanced_eq) aren't hoisted into the
+    # outermost jaxpr. This was producing some large materialized constants for
+    # every relu activation in a model.
+    def body(i, xy):
+      x, y = xy
+      y = y + jax.grad(lambda z: lnp.sum(lnp.maximum(z, 0.)))(x)
+      return x, y
+
+    f = lambda y: lax.fori_loop(0, 5, body, (y, y))
+    wrapped = linear_util.wrap_init(f)
+    pv = partial_eval.PartialVal(
+      (jax.ShapedArray((3, 4), onp.float32), jax.core.unit))
+    _, _, consts = partial_eval.trace_to_jaxpr(wrapped, [pv])
+    self.assertFalse(
+      any(onp.array_equal(x, onp.full((3, 4), 2., dtype=onp.float32))
+          for x in consts))
 
 
 # Most grad tests are at the lax level (see lax_test.py), but we add some here
