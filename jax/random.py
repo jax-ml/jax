@@ -438,7 +438,7 @@ def _multivariate_normal(key, mean, cov, shape, dtype):
   """
   _check_shape("multivariate_normal", shape)
   if hasattr(mean, "shape") and mean.ndim > 1:
-        raise ValueError("Mean cannot have more than 1 dimension.")
+      raise ValueError("Mean cannot have more than 1 dimension.")
   if hasattr(cov, "shape") and cov.ndim > 0:
       if cov.ndim > 2:
         raise ValueError("Covariance matrix cannot have more than 2 dimensions.")

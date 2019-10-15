@@ -381,9 +381,9 @@ class LaxRandomTest(jtu.JaxTestCase):
     rand = lambda key, mean, cov: random.multivariate_normal(key, mean, cov, (1000,), dtype)
     crand = api.jit(rand)
     if hasattr(cov, "shape") and cov.ndim > 2 or hasattr(mean, "shape") and mean.ndim > 1:
-        self.assertRaises(ValueError, lambda: rand(key, mean, cov))
-        self.assertRaises(ValueError, lambda: crand(key, mean, cov))
-        return
+      self.assertRaises(ValueError, lambda: rand(key, mean, cov))
+      self.assertRaises(ValueError, lambda: crand(key, mean, cov))
+      return
 
     uncompiled_samples = rand(key, mean, cov)
     compiled_samples = crand(key, mean, cov)
