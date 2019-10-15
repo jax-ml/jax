@@ -1262,8 +1262,8 @@ def full_like(x, fill_value, dtype=None, shape=None):
     `fill_value`, similar to the output of np.full.
   """
   shape = onp.shape(x) if shape is None else _canonicalize_shape(shape)
-  out = full(shape, fill_value, dtype or _dtype(x))
-  return tie_in(x, out)
+  fill_value = tie_in(x, fill_value)
+  return full(shape, fill_value, dtype or _dtype(x))
 
 
 def collapse(operand, start_dimension, stop_dimension):
