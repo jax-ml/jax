@@ -45,7 +45,7 @@ import opt_einsum
 import six
 from six.moves import builtins, xrange
 
-from jax import jit, device_put, custom_transforms, defjvp
+from jax import jit, device_put, custom_transforms, defjvp, ops
 from .. import core
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
 from ..config import flags
@@ -543,6 +543,28 @@ def rad2deg(x):
 
 degrees = rad2deg
 radians = deg2rad
+
+
+@_wraps(onp.unwrap)
+def unwrap(x, discont=pi, axis=-1):
+  p = asarray(x)
+  p = _promote_to_result_dtype(onp.unwrap, p)
+  pi_x = lax._const(p, pi)
+  discont = lax._const(p, discont)
+  zero = lax._const(p, 0)
+
+  nd = p.ndim
+  dd = diff(p, axis=axis)
+
+  slice1 = [slice(None, None)] * nd
+  slice1[axis] = slice(1, None)
+  indices = ops.index[slice1]
+
+  ddmod = mod(dd + pi_x, lax._const(p, 2 * pi)) - pi_x
+  ph_correct = lax.sub(where((ddmod == -pi_x) & (dd > zero), pi_x, ddmod), dd)
+  ph_correct = where(lax.abs(dd) < discont, zero, ph_correct).cumsum(axis)
+
+  return ops.index_add(p, indices, ph_correct)
 
 
 @_wraps(onp.heaviside)
