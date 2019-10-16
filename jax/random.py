@@ -419,41 +419,37 @@ def _normal(key, shape, dtype):
   return onp.array(onp.sqrt(2), dtype) * lax.erf_inv(u)
 
 
-def multivariate_normal(key, mean=0.0, cov=1.0, shape=(), dtype=onp.float64):
-  dtype = xla_bridge.canonicalize_dtype(dtype)
-  return _multivariate_normal(key, mean, cov, shape, dtype)
+def multivariate_normal(key, mean, cov, dtype=onp.float64):
+  if onp.ndim(mean) != 1:
+    msg = "multivariate_normal requires mean.ndim == 1, got mean.ndim == {}"
+    raise ValueError(msg.format(onp.ndim(mean)))
+  n, = onp.shape(mean)
+  if onp.shape(cov) != (n, n):
+    msg = ("multivariate_normal requires cov.shape == (n, n) == ({n}, {n}) for "
+           "mean.shape == (n,) == ({n},), but got cov.shape == {shape}.")
+    raise ValueError(msg.format(n=n, shape=onp.shape(cov)))
 
-@partial(jit, static_argnums=(3, 4))
-def _multivariate_normal(key, mean, cov, shape, dtype):
-  """Sample multivariate normal random values with given shape, mean, and covariance.
+  dtype = xla_bridge.canonicalize_dtype(dtype)
+  return _multivariate_normal(key, mean, cov, dtype)
+
+@partial(jit, static_argnums=(3,))
+def _multivariate_normal(key, mean, cov, dtype):
+  """Sample multivariate normal random values with given mean and covariance.
 
   Args:
     key: a PRNGKey used as the random key.
-    mean: optional, a scalar or array of mean values along each dimension
-    cov: optional, a scalar (isotropic), vector (diagonal covariance matrix), or full covariance matrix
-    shape: optional, a tuple of nonnegative integers representing the shape.
+    mean: a mean vector of shape (n,).
+    cov: a positive definite covariance matrix of shape (n, n).
+    dtype: optional, a float dtype for the returned values (default float64 if
+      jax_enable_x64 is true, otherwise float32).
 
   Returns:
-    A random array with latent dimension of (max(asarray(mean).ndim, asarray(cov).ndim)),)
+    A random vector of shape (n,) and the specified dtype.
   """
-  _check_shape("multivariate_normal", shape)
-  if hasattr(mean, "shape") and mean.ndim > 1:
-      raise ValueError("Mean cannot have more than 1 dimension.")
-  if hasattr(cov, "shape") and cov.ndim > 0:
-      if cov.ndim > 2:
-        raise ValueError("Covariance matrix cannot have more than 2 dimensions.")
-      shape = shape + cov.shape[:1]
-      normal_samples = normal(key, shape, dtype)
-      if cov.ndim == 2:
-        samples = np.tensordot(normal_samples, cholesky(cov), axes=1)
-      else:
-        samples = normal_samples * np.sqrt(cov)
-  else:
-    if hasattr(mean, "shape") and mean.ndim > 0:
-      shape = shape + mean.shape[:1]
-    normal_samples = normal(key, shape, dtype)
-    samples = np.sqrt(cov) * normal_samples
-  return samples + mean
+  n, = mean.shape
+  chol_factor = cholesky(cov)
+  normal_samples = normal(key, (n,), dtype)
+  return lax.dot(chol_factor, normal_samples) + mean
 
 
 def truncated_normal(key, lower, upper, shape=(), dtype=onp.float64):
