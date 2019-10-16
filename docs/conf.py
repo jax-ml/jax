@@ -92,6 +92,7 @@ language = None
 exclude_patterns = [
     # Slow notebook: long time to load tf.ds
     'notebooks/neural_network_with_tfds_data.ipynb',
+    'notebooks/Neural_Network_and_Data_Loading.ipynb'
 ]
 
 # The name of the Pygments (syntax highlighting) style to use.
