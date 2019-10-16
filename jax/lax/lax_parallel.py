@@ -193,11 +193,20 @@ def _allreduce_translation_rule(prim, c, val, replica_groups, backend=None):
   computation = xla.primitive_computation(prim, scalar, scalar, backend=backend)
   return c.AllReduce(val, computation, replica_groups=replica_groups)
 
+# psum translation rule has special handling for complex dtypes
+def _psum_translation_rule(c, val, replica_groups, backend=None):
+  psum = partial(_allreduce_translation_rule, lax.add_p, c,
+                 replica_groups=replica_groups, backend=backend)
+  dtype = c.GetShape(val).numpy_dtype()
+  if onp.issubdtype(dtype, onp.complexfloating):
+    return c.Complex(psum(c.Real(val)), psum(c.Imag(val)))
+  else:
+    return psum(val)
+
 psum_p = standard_pmap_primitive('psum')
 pxla.split_axis_rules[psum_p] = \
     partial(_allreduce_split_axis_rule, psum_p, lax._reduce_sum)
-xla.parallel_translations[psum_p] = \
-    partial(_allreduce_translation_rule, lax.add_p)
+xla.parallel_translations[psum_p] = _psum_translation_rule
 pxla.parallel_pure_rules[psum_p] = lambda x, shape: x * prod(shape)
 ad.deflinear(psum_p, lambda t, axis_name: [t])
 
