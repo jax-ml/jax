@@ -85,16 +85,17 @@ open](https://github.com/google/jax) by a growing number of
 ## Quickstart: Colab in the Cloud
 Jump right in using a notebook in your browser, connected to a Google Cloud GPU. Here are some starter notebooks:
 - [The basics: NumPy on accelerators, `grad` for differentiation, `jit` for compilation, and `vmap` for vectorization](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/quickstart.ipynb)
-- [Training a Simple Neural Network, with PyTorch Data Loading](https://colab.research.google.com/github/google/jax/blob/master/notebooks/neural_network_and_data_loading.ipynb)
-- [Training a Simple Neural Network, with TensorFlow Dataset Data Loading](https://colab.research.google.com/github/google/jax/blob/master/notebooks/neural_network_with_tfds_data.ipynb)
+- [Training a Simple Neural Network, with PyTorch Data Loading](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/Neural_Network_and_Data_Loading.ipynb)
+- [Training a Simple Neural Network, with TensorFlow Dataset Data Loading](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/neural_network_with_tfds_data.ipynb)
 
 And for a deeper dive into JAX:
 - [Common gotchas and sharp edges](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/Common_Gotchas_in_JAX.ipynb)
 - [The Autodiff Cookbook, Part 1: easy and powerful automatic differentiation in JAX](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/autodiff_cookbook.ipynb)
-- [Directly using XLA in Python](https://colab.research.google.com/github/google/jax/blob/master/notebooks/XLA_in_Python.ipynb)
-- [MAML Tutorial with JAX](https://colab.research.google.com/github/google/jax/blob/master/notebooks/maml.ipynb)
-- [Generative Modeling by Estimating Gradients of Data Distribution in JAX](https://colab.research.google.com/github/google/jax/blob/master/notebooks/score_matching.ipynb).
-[How JAX primitives work](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/How_JAX_primitives_work.ipynb)
+- [Directly using XLA in Python](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/XLA_in_Python.ipynb)
+- [How JAX primitives work](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/How_JAX_primitives_work.ipynb)
+- [MAML Tutorial with JAX](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/maml.ipynb)
+- [Generative Modeling by Estimating Gradients of Data Distribution in JAX](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/score_matching.ipynb).
+
 
 ## Installation
 JAX is written in pure Python, but it depends on XLA, which needs to be compiled
