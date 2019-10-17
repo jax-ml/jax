@@ -2411,6 +2411,7 @@ def _take_along_axis(arr, indices, axis):
   if rank != ndim(indices):
     msg = "indices and arr must have the same number of dimensions; {} vs. {}"
     raise ValueError(msg.format(ndim(indices), ndim(arr)))
+  arr, indices = broadcast_arrays(arr, indices)
   axis = _canonicalize_axis(axis, rank)
 
   arr_shape = list(shape(arr))

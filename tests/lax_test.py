@@ -2216,19 +2216,6 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     x = rng(shape, dtype)
     check_grads(gather, (x,), 2, ["fwd", "rev"], 1e-2, 1e-2, 1.)
 
-  def testGatherGradIssue1521(self):
-    gather_indices = onp.array([[[0, 0]],
-                                [[1, 1]]], onp.int32)
-    dnums = lax.GatherDimensionNumbers(offset_dims=(),
-                                       collapsed_slice_dims=(0, 1),
-                                       start_index_map=(0, 1))
-    slice_sizes = (1, 1)
-
-    def f(x):
-      return lax.gather(x, gather_indices, dnums, tuple(slice_sizes))
-    x = onp.array([[0., 1.]])
-    check_grads(f, (x,), 1, ["rev"])
-
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_idxs={}_update={}_dnums={}".format(
           jtu.format_shape_dtype_string(arg_shape, dtype),
