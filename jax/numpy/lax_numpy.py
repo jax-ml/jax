@@ -889,23 +889,20 @@ def broadcast_arrays(*args):
 def broadcast_to(arr, shape):
   """Like Numpy's broadcast_to but doesn't necessarily return views."""
   arr = arr if isinstance(arr, ndarray) or isscalar(arr) else array(arr)
-  shape = tuple(map(int, shape))
-  if _shape(arr) != shape:
-    # TODO(mattjj): revise this to call lax.broadcast_in_dim rather than
-    # lax.broadcast and lax.transpose
-    lax.broadcast_shapes(shape, _shape(arr))  # error checking
-    nlead = len(shape) - len(_shape(arr))
-    diff, = onp.where(onp.not_equal(shape[nlead:], _shape(arr)))
-
+  shape = tuple(map(int, shape))  # check that shape is concrete
+  arr_shape = _shape(arr)
+  if arr_shape == shape:
+    return arr
+  else:
+    nlead = len(shape) - len(arr_shape)
+    compatible = onp.equal(arr_shape, shape[nlead:]) | onp.equal(arr_shape, 1)
+    if nlead < 0 or not onp.all(compatible):
+      msg = "Incompatible shapes for broadcasting: {} and requested shape {}"
+      raise ValueError(msg.format(arr_shape, shape))
+    diff, = onp.where(onp.not_equal(shape[nlead:], arr_shape))
     new_dims = tuple(range(nlead)) + tuple(nlead + diff)
     kept_dims = tuple(onp.delete(onp.arange(len(shape)), new_dims))
-    perm = onp.argsort(new_dims + kept_dims)
-
-    broadcast_dims = onp.take(shape, new_dims)
-    squeezed_array = squeeze(arr, diff)
-    return lax.transpose(lax.broadcast(squeezed_array, broadcast_dims), perm)
-  else:
-    return arr
+    return lax.broadcast_in_dim(squeeze(arr, diff), shape, kept_dims)
 
 
 @_wraps(onp.split)
