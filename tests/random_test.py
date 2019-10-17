@@ -218,7 +218,9 @@ class LaxRandomTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_alpha={}_{}".format(alpha, dtype),
        "alpha": alpha, "dtype": onp.dtype(dtype).name}
-      for alpha in [[0.2, 1., 5.]]
+      for alpha in [
+          onp.array([0.2, 1., 5.]),
+      ]
       for dtype in [onp.float32, onp.float64]))
   def testDirichlet(self, alpha, dtype):
     key = random.PRNGKey(0)
@@ -275,8 +277,8 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testGammaGrad(self, alpha):
     rng = random.PRNGKey(0)
     alphas = onp.full((100,), alpha)
-    z = random.gamma(rng, alphas)
-    actual_grad = api.grad(lambda x: (random.gamma(rng, x)).sum())(alphas)
+    z = random.gamma(rng, alphas, shape=(100,))
+    actual_grad = api.grad(lambda x: random.gamma(rng, x, shape=(100,)).sum())(alphas)
 
     eps = 0.01 * alpha / (1.0 + onp.sqrt(alpha))
     cdf_dot = (scipy.stats.gamma.cdf(z, alpha + eps)
