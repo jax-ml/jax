@@ -1230,7 +1230,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     f(arr)
 
-
   def testNonArrayErrorMessage(self):
     x = [1., 2.]
     y = onp.array([3., 4.])
@@ -1931,6 +1930,27 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       any(onp.array_equal(x, onp.full((3, 4), 2., dtype=onp.float32))
           for x in consts))
 
+  @parameterized.named_parameters(
+      {"testcase_name": "_from={}_to={}".format(from_shape, to_shape),
+       "rng": rng, "from_shape": from_shape, "to_shape": to_shape}
+      for from_shape, to_shape in [
+          [(1, 3), (4, 3)],
+          [(3,), (2, 1, 3)],
+          [(3,), (3, 3)],
+          [(1,), (3,)],
+      ]
+      for rng in [jtu.rand_default()])
+  def testBroadcastTo(self, from_shape, to_shape, rng):
+    args_maker = self._GetArgsMaker(rng, [from_shape], [onp.float32])
+    onp_op = lambda x: onp.broadcast_to(x, to_shape)
+    lnp_op = lambda x: lnp.broadcast_to(x, to_shape)
+    self._CheckAgainstNumpy(onp_op, lnp_op, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_op, args_maker, check_dtypes=True)
+
+  def testBroadcastToIssue1522(self):
+    self.assertRaisesRegex(
+        ValueError, "Incompatible shapes for broadcasting: .*",
+        lambda: lnp.broadcast_to(onp.ones((2, 3)), (1, 3)))
 
 # Most grad tests are at the lax level (see lax_test.py), but we add some here
 # as needed for e.g. particular compound ops of interest.
