@@ -70,7 +70,6 @@ open](https://github.com/google/jax) by a growing number of
 ### Contents
 * [Quickstart: Colab in the Cloud](#quickstart-colab-in-the-cloud)
 * [Installation](#installation)
-* [Running the tests](#running-the-tests)
 * [Reference documentation](#reference-documentation)
 * [A brief tour](#a-brief-tour)
 * [What's supported](#whats-supported)
