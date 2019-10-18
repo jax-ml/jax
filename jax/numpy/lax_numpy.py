@@ -2402,7 +2402,7 @@ def _take_along_axis(arr, indices, axis):
   if axis is None:
     if ndim(indices) != 1:
       msg = "take_along_axis indices must be 1D if axis=None, got shape {}"
-      raise ValueError(msg.format(shape(indices)))
+      raise ValueError(msg.format(indices.shape))
     return take_along_axis(arr.ravel(), indices, 0)
   rank = ndim(arr)
   if rank != ndim(indices):
@@ -2410,11 +2410,19 @@ def _take_along_axis(arr, indices, axis):
     raise ValueError(msg.format(ndim(indices), ndim(arr)))
   axis = _canonicalize_axis(axis, rank)
 
-  arr_shape = list(shape(arr))
-  axis_size = arr_shape[axis]
-  arr_shape[axis] = 1
-  idx_shape = shape(indices)
-  out_shape = lax.broadcast_shapes(idx_shape, tuple(arr_shape))
+  def replace(tup, val):
+    lst = list(tup)
+    lst[axis] = val
+    return tuple(lst)
+
+  bcast_shape = lax.broadcast_shapes(replace(arr.shape, 1), replace(indices.shape, 1))
+  indices = broadcast_to(indices, replace(bcast_shape, indices.shape[axis]))
+  arr     = broadcast_to(arr,     replace(bcast_shape, arr.shape[axis]))
+
+  axis_size = arr.shape[axis]
+  arr_shape = replace(arr.shape, 1)
+  idx_shape = indices.shape
+  out_shape = lax.broadcast_shapes(idx_shape, arr_shape)
 
   index_dims = [i for i, idx in enumerate(idx_shape) if i == axis or idx != 1]
 

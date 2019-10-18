@@ -2005,6 +2005,16 @@ class NumpyGradTests(jtu.JaxTestCase):
   def testOpGradSpecialValue(self, op, special_value):
     check_grads(op, (special_value,), 2, ["fwd", "rev"])
 
+  def testTakeAlongAxisIssue1521(self):
+    # https://github.com/google/jax/issues/1521
+    idx = lnp.repeat(lnp.arange(3), 10).reshape((30, 1))
+
+    def f(x):
+      y = x * lnp.arange(3.).reshape((1, 3))
+      return lnp.take_along_axis(y, idx, -1).sum()
+
+    check_grads(f, (1.,), order=1)
+
 
 if __name__ == "__main__":
   absltest.main()
