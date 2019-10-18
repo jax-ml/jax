@@ -101,7 +101,7 @@ if __name__ == "__main__":
   def loss(params, batch):
     inputs, targets = batch
     logits = predict_fun(params, inputs)
-    return np.sum(logits * targets)
+    return -np.sum(logits * targets)
 
   def accuracy(params, batch):
     inputs, targets = batch
