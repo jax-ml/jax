@@ -16,14 +16,16 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from absl.testing import absltest
-from benchmarks import control
+from functools import partial
 
+from absl.testing import absltest
 import numpy as onp
 
 from jax import lax
 from jax import test_util as jtu
 import jax.numpy as np
+
+from benchmarks import control
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -39,6 +41,33 @@ def one_step_lqr(dim, T):
   A = np.stack(T * (np.eye(dim),))
   B = np.stack(T * (np.eye(dim),))
   return control.LqrSpec(Q, q, R, r, M, A, B)
+
+
+def control_from_lqr(lqr):
+  T, dim, _ = lqr.Q.shape
+  dot = np.dot
+
+  def cost(t, x, u):
+    return (
+        dot(dot(lqr.Q[t], x), x) + dot(lqr.q[t], x) +
+        dot(dot(lqr.R[t], u), u) + dot(lqr.r[t], u) +
+        dot(dot(lqr.M[t], u), x))
+
+  def dynamics(t, x, u):
+    return dot(lqr.A[t], x) + dot(lqr.B[t], u)
+
+  return control.ControlSpec(cost, dynamics, T, dim, dim)
+
+
+def one_step_control(dim, T):
+
+  def cost(t, x, u):
+    return np.dot(x, x)
+
+  def dynamics(t, x, u):
+    return x + u
+
+  return control.ControlSpec(cost, dynamics, T, dim, dim)
 
 
 class ControlBenchmarkTest(jtu.JaxTestCase):
@@ -71,6 +100,7 @@ class ControlBenchmarkTest(jtu.JaxTestCase):
       return np.minimum(hi, np.maximum(lo, x))
 
     def dynamics(t, x, u):
+      # computes `(x + u) if t > T else 0`
       return (x + u) * clip(t - T, 0, 1)
 
     U = np.ones((2 * T, 1))
@@ -121,6 +151,50 @@ class ControlBenchmarkTest(jtu.JaxTestCase):
     self.assertAllClose(U[0], -x0, check_dtypes=True)
     self.assertAllClose(X[1:], np.zeros((T, 2)), check_dtypes=True)
     self.assertAllClose(U[1:], np.zeros((T - 1, 2)), check_dtypes=True)
+
+
+  def testIlqrWithLqrProblem(self):
+    randn = onp.random.RandomState(0).randn
+    dim, T, num_iters = 2, 10, 3
+    lqr = one_step_lqr(dim, T)
+    p = control_from_lqr(lqr)
+    x0 = randn(dim)
+    X, U = control.ilqr(p, num_iters, x0, np.zeros((T, dim)))
+    self.assertAllClose(X[0], x0, check_dtypes=True)
+    self.assertAllClose(U[0], -x0, check_dtypes=True)
+    self.assertAllClose(X[1:], np.zeros((T, 2)), check_dtypes=True)
+    self.assertAllClose(U[1:], np.zeros((T - 1, 2)), check_dtypes=True)
+
+
+  def testIlqrWithLqrProblemSpecifiedGenerally(self):
+    randn = onp.random.RandomState(0).randn
+    dim, T, num_iters = 2, 10, 3
+    p = one_step_control(dim, T)
+    x0 = randn(dim)
+    X, U = control.ilqr(p, num_iters, x0, np.zeros((T, dim)))
+    self.assertAllClose(X[0], x0, check_dtypes=True)
+    self.assertAllClose(U[0], -x0, check_dtypes=True)
+    self.assertAllClose(X[1:], np.zeros((T, 2)), check_dtypes=True)
+    self.assertAllClose(U[1:], np.zeros((T - 1, 2)), check_dtypes=True)
+
+
+  def testIlqrWithNonlinearProblem(self):
+    def cost(t, x, u):
+      return (x[0] ** 2. + 1e-3 * u[0] ** 2.) / (t + 1.)
+
+    def dynamics(t, x, u):
+      return (x ** 2. - u ** 2.) / (t + 1.)
+
+    T, num_iters, d = 10, 7, 1
+    p = control.ControlSpec(cost, dynamics, T, d, d)
+
+    x0 = np.array([0.2])
+    X, U = control.ilqr(p, num_iters, x0, 1e-5 * np.ones((T, d)))
+    assert_close = partial(self.assertAllClose, atol=1e-2, check_dtypes=True)
+    assert_close(X[0], x0)
+    assert_close(U[0] ** 2., x0 ** 2.)
+    assert_close(X[1:], np.zeros((T, d)))
+    assert_close(U[1:], np.zeros((T - 1, d)))
 
 
 if __name__ == '__main__':
