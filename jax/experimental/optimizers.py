@@ -200,8 +200,8 @@ def sgd(step_size):
   return init, update, get_params
 
 @optimizer
-def momentum(step_size, mass):
-  """Construct optimizer triple for SGD with Nesterov momentum.
+def momentum(step_size, mass, nesterov=False):
+  """Construct optimizer triple for SGD with (optionally) Nesterov momentum.
 
   Args:
     step_size: positive scalar, or a callable representing a step size schedule
@@ -216,8 +216,9 @@ def momentum(step_size, mass):
     return x0, v0
   def update(i, g, state):
     x, velocity = state
-    velocity = mass * velocity - (1. - mass) * g
-    x = x + step_size(i) * velocity
+    velocity = mass * velocity + g
+    d = mass * velocity + g if nesterov else velocity
+    x = x - step_size(i) * d
     return x, velocity
   def get_params(state):
     x, _ = state
