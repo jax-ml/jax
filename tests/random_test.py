@@ -277,8 +277,8 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testGammaGrad(self, alpha):
     rng = random.PRNGKey(0)
     alphas = onp.full((100,), alpha)
-    z = random.gamma(rng, alphas, shape=(100,))
-    actual_grad = api.grad(lambda x: random.gamma(rng, x, shape=(100,)).sum())(alphas)
+    z = random.gamma(rng, alphas)
+    actual_grad = api.grad(lambda x: random.gamma(rng, x).sum())(alphas)
 
     eps = 0.01 * alpha / (1.0 + onp.sqrt(alpha))
     cdf_dot = (scipy.stats.gamma.cdf(z, alpha + eps)
@@ -379,21 +379,22 @@ class LaxRandomTest(jtu.JaxTestCase):
     cov_factor = r.randn(dim, dim)
     cov = onp.dot(cov_factor, cov_factor.T) + dim * onp.eye(dim)
 
-    keys = random.split(random.PRNGKey(0), 1000)
-    rand = api.vmap(partial(random.multivariate_normal, mean=mean, cov=cov))
+    key = random.PRNGKey(0)
+    rand = partial(random.multivariate_normal, mean=mean, cov=cov,
+                   shape=(10000,))
     crand = api.jit(rand)
 
-    uncompiled_samples = rand(keys)
-    compiled_samples = crand(keys)
+    uncompiled_samples = onp.asarray(rand(key), onp.float64)
+    compiled_samples = onp.asarray(crand(key), onp.float64)
 
-    # This is a quick-and-dirty multivariate normality check that tests that a
-    # uniform mixture of the marginals along the covariance matrix's
-    # eigenvectors follow a standard normal distribution.
-    # TODO(mattjj); check for correlations, maybe use a more sophisticated test.
     inv_scale = scipy.linalg.lapack.dtrtri(onp.linalg.cholesky(cov), lower=True)[0]
     for samples in [uncompiled_samples, compiled_samples]:
       centered = samples - mean
       whitened = onp.einsum('nj,ij->ni', centered, inv_scale)
+
+      # This is a quick-and-dirty multivariate normality check that tests that a
+      # uniform mixture of the marginals along the covariance matrix's
+      # eigenvectors follow a standard normal distribution.
       self._CheckKolmogorovSmirnovCDF(whitened.ravel(), scipy.stats.norm().cdf)
 
   def testIssue222(self):

@@ -428,24 +428,26 @@ def _normal(key, shape, dtype):
   return onp.array(onp.sqrt(2), dtype) * lax.erf_inv(u)
 
 
-def multivariate_normal(key, mean, cov, shape=(), dtype=onp.float64):
+def multivariate_normal(key, mean, cov, shape=None, dtype=onp.float64):
   """Sample multivariate normal random values with given mean and covariance.
 
   Args:
     key: a PRNGKey used as the random key.
     mean: a mean vector of shape ``(..., n)``.
     cov: a positive definite covariance matrix of shape ``(..., n, n)``. The
-      shape prefix ``...`` must be broadcast-compatible with that of ``mean``.
+      batch shape ``...`` must be broadcast-compatible with that of ``mean``.
     shape: optional, a tuple of nonnegative integers specifying the result
       batch shape; that is, the prefix of the result shape excluding the last
-      element of value ``n``. Must be broadcast-compatible with
-      ``mean.shape[:-1]`` and ``cov.shape[:-2]``. Default ().
+      axis. Must be broadcast-compatible with ``mean.shape[:-1]`` and
+      ``cov.shape[:-2]``. The default (None) produces a result batch shape by
+      broadcasting together the batch shapes of ``mean`` and ``cov``.
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
 
   Returns:
     A random array with the specified dtype and shape given by
-    ``shape + (mean.shape[-1],)``.
+    ``shape + mean.shape[-1:]`` if ``shape`` is not None, or else
+    ``broadcast_shapes(mean.shape[:-1], cov.shape[:-2]) + mean.shape[-1:]``.
   """
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _multivariate_normal(key, mean, cov, shape, dtype)
@@ -464,35 +466,46 @@ def _multivariate_normal(key, mean, cov, shape, dtype):
            "but got cov.shape == {shape}.")
     raise ValueError(msg.format(n=n, shape=onp.shape(cov)))
 
-  _check_shape("normal", shape, mean.shape[:-1], mean.shape[:-2])
+  if shape is None:
+    shape = lax.broadcast_shapes(mean.shape[:-1], cov.shape[:-2])
+  else:
+    _check_shape("normal", shape, mean.shape[:-1], mean.shape[:-2])
+
   chol_factor = cholesky(cov)
   normal_samples = normal(key, shape + mean.shape[-1:], dtype)
   return mean + np.tensordot(normal_samples, chol_factor, [-1, 1])
 
 
-def truncated_normal(key, lower, upper, shape=(), dtype=onp.float64):
+def truncated_normal(key, lower, upper, shape=None, dtype=onp.float64):
   """Sample truncated standard normal random values with given shape and dtype.
 
   Args:
     key: a PRNGKey used as the random key.
-    lower: a float or array of lower bound for truncation. Must be
-      broadcast-compatible with `upper`.
-    upper: a floating-point upper bound for truncation. Must be
-      broadcast-compatible with `lower`.
+    lower: a float or array of floats representing the lower bound for
+      truncation. Must be broadcast-compatible with ``upper``.
+    upper: a float or array of floats representing the  upper bound for
+      truncation. Must be broadcast-compatible with ``lower``.
     shape: optional, a tuple of nonnegative integers specifying the result
-      shape. Must be broadcast-compatible with `lower` and `upper`. Default ().
+      shape. Must be broadcast-compatible with ``lower`` and ``upper``. The
+      default (None) produces a result shape by broadcasting ``lower`` and
+      ``upper``.
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
 
   Returns:
-    A random array with the specified shape and dtype.
+    A random array with the specified dtype and shape given by ``shape`` if
+    ``shape`` is not None, or else by broadcasting ``lower`` and ``upper``.
   """
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _truncated_normal(key, lower, upper, shape, dtype)
 
 @partial(jit, static_argnums=(3, 4))
 def _truncated_normal(key, lower, upper, shape, dtype):
-  _check_shape("truncated_normal", shape, lower.shape, upper.shape)
+  if shape is None:
+    shape = lax.broadcast_shapes(lower.shape, upper.shape)
+  else:
+    _check_shape("truncated_normal", shape, lower.shape, upper.shape)
+
   sqrt2 = onp.array(onp.sqrt(2), dtype)
   a = lax.erf(lax.convert_element_type(lower, dtype) / sqrt2)
   b = lax.erf(lax.convert_element_type(upper, dtype) / sqrt2)
@@ -502,18 +515,20 @@ def _truncated_normal(key, lower, upper, shape, dtype):
   return sqrt2 * lax.erf_inv(a + u * (b - a))
 
 
-def bernoulli(key, p=onp.float32(0.5), shape=()):
+def bernoulli(key, p=onp.float32(0.5), shape=None):
   """Sample Bernoulli random values with given shape and mean.
 
   Args:
     key: a PRNGKey used as the random key.
     p: optional, a float or array of floats for the mean of the random
       variables. Must be broadcast-compatible with ``shape``. Default 0.5.
-    shape: optional, a tuple of nonnegative integers representing the shape.
-      Default ().
+    shape: optional, a tuple of nonnegative integers representing the result
+      shape. Must be broadcast-compatible with ``p.shape``. The default (None)
+      produces a result shape equal to ``p.shape``.
 
   Returns:
-    A random array with the specified shape and boolean dtype.
+    A random array with boolean dtype and shape given by ``shape`` if ``shape``
+    is not None, or else ``p.shape``.
   """
   dtype = xla_bridge.canonicalize_dtype(lax.dtype(p))
   if not onp.issubdtype(dtype, onp.floating):
@@ -524,11 +539,15 @@ def bernoulli(key, p=onp.float32(0.5), shape=()):
 
 @partial(jit, static_argnums=(2,))
 def _bernoulli(key, p, shape):
-  _check_shape("bernoulli", shape, p.shape)
+  if shape is None:
+    shape = p.shape
+  else:
+    _check_shape("bernoulli", shape, p.shape)
+
   return uniform(key, shape, lax.dtype(p)) < p
 
 
-def beta(key, a, b, shape=(), dtype=onp.float64):
+def beta(key, a, b, shape=None, dtype=onp.float64):
   """Sample Bernoulli random values with given shape and mean.
 
   Args:
@@ -538,19 +557,25 @@ def beta(key, a, b, shape=(), dtype=onp.float64):
     b: a float or array of floats broadcast-compatible with ``shape``
       representing the second parameter "beta".
     shape: optional, a tuple of nonnegative integers specifying the result
-      shape. Must be broadcast-compatible with ``a`` and ``b``. Default ().
+      shape. Must be broadcast-compatible with ``a`` and ``b``. The default
+      (None) produces a result shape by broadcasting ``a`` and ``b``.
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
 
   Returns:
-    A random array with the specified shape and dtype.
+    A random array with the specified dtype and shape given by ``shape`` if
+    ``shape`` is not None, or else by broadcasting ``a`` and ``b``.
   """
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _beta(key, a, b, shape, dtype)
 
 @partial(jit, static_argnums=(3, 4))
 def _beta(key, a, b, shape, dtype):
-  _check_shape("beta", shape, a.shape, b.shape)
+  if shape is None:
+    shape = lax.broadcast_shapes(a.shape, b.shape)
+  else:
+    _check_shape("beta", shape, a.shape, b.shape)
+
   a = lax.convert_element_type(a, dtype)
   b = lax.convert_element_type(b, dtype)
   key_a, key_b = split(key)
@@ -583,7 +608,7 @@ def _cauchy(key, shape, dtype):
   return lax.tan(lax.mul(pi, lax.sub(u, _constant_like(u, 0.5))))
 
 
-def dirichlet(key, alpha, shape=(), dtype=onp.float64):
+def dirichlet(key, alpha, shape=None, dtype=onp.float64):
   """Sample Cauchy random values with given shape and float dtype.
 
   Args:
@@ -593,13 +618,15 @@ def dirichlet(key, alpha, shape=(), dtype=onp.float64):
     shape: optional, a tuple of nonnegative integers specifying the result
       batch shape; that is, the prefix of the result shape excluding the last
       element of value ``n``. Must be broadcast-compatible with
-      ``alpha.shape[:-1]``.
+      ``alpha.shape[:-1]``. The default (None) produces a result shape equal to
+      ``alpha.shape``.
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
 
   Returns:
     A random array with the specified dtype and shape given by
-    ``shape + (alpha.shape[-1],)``.
+    ``shape + (alpha.shape[-1],)`` if ``shape`` is not None, or else
+    ``alpha.shape``.
   """
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _dirichlet(key, alpha, shape, dtype)
@@ -610,7 +637,11 @@ def _dirichlet(key, alpha, shape, dtype):
     msg = "dirichlet requires alpha.ndim >= 1, got alpha.ndim == {}"
     raise ValueError(msg.format(onp.ndim(alpha)))
 
-  _check_shape("dirichlet", shape, alpha.shape[:-1])
+  if shape is None:
+    shape = alpha.shape[:-1]
+  else:
+    _check_shape("dirichlet", shape, alpha.shape[:-1])
+
   alpha = lax.convert_element_type(alpha, dtype)
   gamma_samples = gamma(key, alpha, shape + alpha.shape[-1:], dtype)
   return gamma_samples / np.sum(gamma_samples, axis=-1, keepdims=True)
@@ -813,7 +844,7 @@ def _gamma_impl(key, a):
 defjvp(_gamma_impl, None,
        lambda tangent, ans, key, a, **kwargs: tangent * _gamma_grad(ans, a))
 
-def gamma(key, a, shape=(), dtype=onp.float64):
+def gamma(key, a, shape=None, dtype=onp.float64):
   """Sample Gamma random values with given shape and float dtype.
 
   Args:
@@ -821,19 +852,25 @@ def gamma(key, a, shape=(), dtype=onp.float64):
     a: a float or array of floats broadcast-compatible with ``shape``
       representing the parameter of the distribution.
     shape: optional, a tuple of nonnegative integers specifying the result
-      shape. Must be broadcast-compatible with ``a``. Default ().
+      shape. Must be broadcast-compatible with ``a``. The default (None)
+      produces a result shape equal to ``a.shape``.
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
 
   Returns:
-    A random array with the specified shape and dtype.
+    A random array with the specified dtype and with shape given by ``shape`` if
+    ``shape`` is not None, or else by ``a.shape``.
   """
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _gamma(key, a, shape, dtype)
 
 @partial(jit, static_argnums=(2, 3))
 def _gamma(key, a, shape, dtype):
-  _check_shape("gamma", shape, a.shape)
+  if shape is None:
+    shape = a.shape
+  else:
+    _check_shape("gamma", shape, a.shape)
+
   a = lax.convert_element_type(a, dtype)
   if onp.shape(a) != shape:
     a = np.broadcast_to(a, shape)
@@ -909,7 +946,7 @@ def _logistic(key, shape, dtype):
   return logit(uniform(key, shape, dtype))
 
 
-def pareto(key, b, shape=(), dtype=onp.float64):
+def pareto(key, b, shape=None, dtype=onp.float64):
   """Sample Pareto random values with given shape and float dtype.
 
   Args:
@@ -917,19 +954,25 @@ def pareto(key, b, shape=(), dtype=onp.float64):
     a: a float or array of floats broadcast-compatible with ``shape``
       representing the parameter of the distribution.
     shape: optional, a tuple of nonnegative integers specifying the result
-      shape. Must be broadcast-compatible with ``b``. Default ().
+      shape. Must be broadcast-compatible with ``b``. The default (None)
+      produces a result shape equal to ``b.shape``.
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
 
   Returns:
-    A random array with the specified shape and dtype.
+    A random array with the specified dtype and with shape given by ``shape`` if
+    ``shape`` is not None, or else by ``b.shape``.
   """
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _pareto(key, b, shape, dtype)
 
 @partial(jit, static_argnums=(2, 3))
 def _pareto(key, b, shape, dtype):
-  _check_shape("pareto", shape)
+  if shape is None:
+    shape = b.shape
+  else:
+    _check_shape("pareto", shape)
+
   b = lax.convert_element_type(b, dtype)
   e = exponential(key, shape, dtype)
   return lax.exp(e / b)
@@ -943,19 +986,25 @@ def t(key, df, shape=(), dtype=onp.float64):
     df: a float or array of floats broadcast-compatible with ``shape``
       representing the parameter of the distribution.
     shape: optional, a tuple of nonnegative integers specifying the result
-      shape. Must be broadcast-compatible with ``df``. Default ().
+      shape. Must be broadcast-compatible with ``df``. The default (None)
+      produces a result shape equal to ``df.shape``.
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
 
   Returns:
-    A random array with the specified shape and dtype.
+    A random array with the specified dtype and with shape given by ``shape`` if
+    ``shape`` is not None, or else by ``df.shape``.
   """
   dtype = xla_bridge.canonicalize_dtype(dtype)
   return _t(key, df, shape, dtype)
 
 @partial(jit, static_argnums=(2, 3))
 def _t(key, df, shape, dtype):
-  _check_shape("t", shape, df.shape)
+  if shape is None:
+    shape = df.shape
+  else:
+    _check_shape("t", shape, df.shape)
+
   df = lax.convert_element_type(df, dtype)
   key_n, key_g = split(key)
   n = normal(key_n, shape, dtype)
