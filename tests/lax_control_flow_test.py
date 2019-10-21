@@ -36,6 +36,7 @@ from jax import test_util as jtu
 from jax.util import unzip2
 from jax.lib import xla_bridge
 import jax.numpy as np  # scan tests use numpy
+import jax.scipy as jsp
 
 def scan_reference(f, init, xs):
   carry = init
@@ -1054,9 +1055,10 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     jtu.check_grads(sqrt_cubed, (5.0,), order=2, rtol=1e-3)
 
-    inputs = np.array([4.0, 5.0])
-    results = api.vmap(sqrt_cubed)(inputs)
-    self.assertAllClose(results, inputs ** 1.5, check_dtypes=False)
+    # TODO(shoyer): reenable when batching works
+    # inputs = np.array([4.0, 5.0])
+    # results = api.vmap(sqrt_cubed)(inputs)
+    # self.assertAllClose(results, inputs ** 1.5, check_dtypes=False)
 
     results = api.jit(sqrt_cubed)(5.0)
     self.assertAllClose(results, 5.0 ** 1.5, check_dtypes=False)
@@ -1093,6 +1095,177 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         TypeError, re.escape("tangent_solve() output pytree")):
       api.jvp(dummy_root_usage, (0.0,), (0.0,))
+
+  @parameterized.named_parameters(
+      {"testcase_name": "nonsymmetric", "symmetric": False},
+      {"testcase_name": "symmetric", "symmetric": True},
+  )
+  def test_custom_linear_solve(self, symmetric):
+
+    def explicit_jacobian_solve(matvec, b):
+      return lax.stop_gradient(np.linalg.solve(api.jacobian(matvec)(b), b))
+
+    def matrix_free_solve(matvec, b):
+      return lax.custom_linear_solve(
+          matvec, b, explicit_jacobian_solve, explicit_jacobian_solve,
+          symmetric=symmetric)
+
+    def linear_solve(a, b):
+      return matrix_free_solve(partial(np.dot, a), b)
+
+    rng = onp.random.RandomState(0)
+    a = rng.randn(3, 3)
+    if symmetric:
+      a = a + a.T
+    b = rng.randn(3)
+    jtu.check_grads(linear_solve, (a, b), order=2)
+
+    expected = np.linalg.solve(a, b)
+    actual = api.jit(linear_solve)(a, b)
+    self.assertAllClose(expected, actual, check_dtypes=True)
+
+    # TODO(shoyer): reenable when batching works
+    # c = rng.randn(3, 2)
+    # expected = np.linalg.solve(a, c)
+    # actual = api.vmap(linear_solve, (None, 1), 1)(a, c)
+    # self.assertAllClose(expected, actual, check_dtypes=True)
+
+  def test_custom_linear_solve_zeros(self):
+
+    def explicit_jacobian_solve(matvec, b):
+      return lax.stop_gradient(np.linalg.solve(api.jacobian(matvec)(b), b))
+
+    def matrix_free_solve(matvec, b):
+      return lax.custom_linear_solve(matvec, b, explicit_jacobian_solve,
+                                     explicit_jacobian_solve)
+
+    def linear_solve(a, b):
+      return matrix_free_solve(partial(np.dot, a), b)
+
+    rng = onp.random.RandomState(0)
+    a = rng.randn(3, 3)
+    b = rng.randn(3)
+    jtu.check_grads(lambda x: linear_solve(x, b), (a,), order=2)
+    jtu.check_grads(lambda x: linear_solve(a, x), (b,), order=2)
+
+  def test_custom_linear_solve_iterative(self):
+
+    def richardson_iteration(matvec, b, omega=0.1, tolerance=1e-6):
+      # Equivalent to vanilla gradient descent:
+      # https://en.wikipedia.org/wiki/Modified_Richardson_iteration
+      def cond(x):
+        return np.linalg.norm(matvec(x) - b) > tolerance
+      def body(x):
+        return x + omega * (b - matvec(x))
+      return lax.while_loop(cond, body, b)
+
+    def matrix_free_solve(matvec, b):
+      return lax.custom_linear_solve(matvec, b, richardson_iteration,
+                                     richardson_iteration)
+
+    def build_and_solve(a, b):
+      # intentionally non-linear in a and b
+      return matrix_free_solve(partial(np.dot, np.exp(a)), np.cos(b))
+
+    rng = onp.random.RandomState(0)
+    a = rng.randn(2, 2)
+    b = rng.randn(2)
+    expected = np.linalg.solve(np.exp(a), np.cos(b))
+    actual = build_and_solve(a, b)
+    self.assertAllClose(expected, actual, atol=1e-5, check_dtypes=True)
+    jtu.check_grads(build_and_solve, (a, b), atol=1e-5, order=2)
+
+    # TODO(shoyer): reenable when batching works
+    # a2 = rng.randn(1, 2, 2)
+    # b2 = rng.randn(1, 2, 2)
+    # jtu.check_grads(api.vmap(build_and_solve), (a2, b2), atol=1e-5, order=2)
+
+  def test_custom_linear_solve_cholesky(self):
+
+    def positive_definive_solve(a, b):
+      factors = jsp.linalg.cho_factor(a)
+      def solve(matvec, x):
+        return jsp.linalg.cho_solve(factors, x)
+      return lax.custom_linear_solve(
+          partial(np.dot, a), b, solve, symmetric=True)
+
+    rng = onp.random.RandomState(0)
+    a = rng.randn(2, 2)
+    b = rng.randn(2)
+
+    expected = np.linalg.solve(np.dot(a, a.T), b)
+    actual = positive_definive_solve(np.dot(a, a.T), b)
+    self.assertAllClose(expected, actual, check_dtypes=True)
+
+    actual = api.jit(positive_definive_solve)(np.dot(a, a.T), b)
+    self.assertAllClose(expected, actual, check_dtypes=True)
+
+    # numerical gradients are only well defined if ``a`` is guaranteed to be
+    # positive definite.
+    jtu.check_grads(lambda x, y: positive_definive_solve(np.dot(x, x.T), y),
+                    (a, b), order=2)
+
+  def test_custom_linear_solve_lu(self):
+
+    def linear_solve(a, b):
+      a_factors = jsp.linalg.lu_factor(a)
+      at_factors = jsp.linalg.lu_factor(a.T)
+      def solve(matvec, x):
+        return jsp.linalg.lu_solve(a_factors, x)
+      def transpose_solve(vecmat, x):
+        return jsp.linalg.lu_solve(at_factors, x)
+      return lax.custom_linear_solve(
+          partial(np.dot, a), b, solve, transpose_solve)
+
+    rng = onp.random.RandomState(0)
+    a = rng.randn(3, 3)
+    b = rng.randn(3)
+
+    expected = np.linalg.solve(a, b)
+    actual = linear_solve(a, b)
+    self.assertAllClose(expected, actual, check_dtypes=True)
+
+    jtu.check_grads(linear_solve, (a, b), order=2)
+
+  def test_custom_linear_solve_without_transpose_solve(self):
+
+    def explicit_jacobian_solve(matvec, b):
+      return lax.stop_gradient(np.linalg.solve(api.jacobian(matvec)(b), b))
+
+    def loss(a, b):
+      matvec = partial(np.dot, a)
+      x = lax.custom_linear_solve(matvec, b, explicit_jacobian_solve)
+      return np.sum(x)
+
+    rng = onp.random.RandomState(0)
+    a = rng.randn(2, 2)
+    b = rng.randn(2)
+
+    jtu.check_grads(loss, (a, b), atol=1e-5, order=2, modes=['fwd'])
+
+    with self.assertRaisesRegexp(TypeError, "transpose_solve required"):
+      api.grad(loss)(a, b)
+
+  def test_custom_linear_solve_errors(self):
+
+    solve = lambda f, x: x
+
+    with self.assertRaisesRegex(TypeError, re.escape("matvec() output pytree")):
+      lax.custom_linear_solve(lambda x: [x], 1.0, solve, solve)
+    with self.assertRaisesRegex(TypeError, re.escape("solve() output pytree")):
+      lax.custom_linear_solve(lambda x: x, 1.0, lambda f, x: [x], solve)
+    with self.assertRaisesRegex(
+        TypeError, re.escape("transpose_solve() output pytree")):
+      lax.custom_linear_solve(lambda x: x, 1.0, solve, lambda f, x: [x])
+
+    with self.assertRaisesRegex(ValueError, re.escape("solve() output shapes")):
+      lax.custom_linear_solve(lambda x: x, 1.0, lambda f, x: np.ones(2), solve)
+
+    def bad_matvec_usage(a):
+      return lax.custom_linear_solve(
+          lambda x: a * np.ones(2), 1.0, solve, solve)
+    with self.assertRaisesRegex(ValueError, re.escape("matvec() output shapes")):
+      api.jvp(bad_matvec_usage, (1.0,), (1.0,))
 
 
 if __name__ == '__main__':
