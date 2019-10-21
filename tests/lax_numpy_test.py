@@ -31,11 +31,14 @@ import six
 
 import numpy as onp
 
+import jax
 import jax.ops
 from jax import api
 from jax import lax
+from jax import linear_util
 from jax import numpy as lnp
 from jax import test_util as jtu
+from jax.interpreters import partial_eval
 from jax.test_util import check_grads
 from jax.lib import xla_bridge
 
@@ -1227,7 +1230,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     f(arr)
 
-
   def testNonArrayErrorMessage(self):
     x = [1., 2.]
     y = onp.array([3., 4.])
@@ -1909,6 +1911,46 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       return lnp.concatenate(x)
     foo(onp.zeros((2, 2)))  # doesn't crash
 
+  def testReluGradientConstants(self):
+    # This is a regression test that verifies that constants associated with the
+    # gradient of np.maximum (from lax._balanced_eq) aren't hoisted into the
+    # outermost jaxpr. This was producing some large materialized constants for
+    # every relu activation in a model.
+    def body(i, xy):
+      x, y = xy
+      y = y + jax.grad(lambda z: lnp.sum(lnp.maximum(z, 0.)))(x)
+      return x, y
+
+    f = lambda y: lax.fori_loop(0, 5, body, (y, y))
+    wrapped = linear_util.wrap_init(f)
+    pv = partial_eval.PartialVal(
+      (jax.ShapedArray((3, 4), onp.float32), jax.core.unit))
+    _, _, consts = partial_eval.trace_to_jaxpr(wrapped, [pv])
+    self.assertFalse(
+      any(onp.array_equal(x, onp.full((3, 4), 2., dtype=onp.float32))
+          for x in consts))
+
+  @parameterized.named_parameters(
+      {"testcase_name": "_from={}_to={}".format(from_shape, to_shape),
+       "rng": rng, "from_shape": from_shape, "to_shape": to_shape}
+      for from_shape, to_shape in [
+          [(1, 3), (4, 3)],
+          [(3,), (2, 1, 3)],
+          [(3,), (3, 3)],
+          [(1,), (3,)],
+      ]
+      for rng in [jtu.rand_default()])
+  def testBroadcastTo(self, from_shape, to_shape, rng):
+    args_maker = self._GetArgsMaker(rng, [from_shape], [onp.float32])
+    onp_op = lambda x: onp.broadcast_to(x, to_shape)
+    lnp_op = lambda x: lnp.broadcast_to(x, to_shape)
+    self._CheckAgainstNumpy(onp_op, lnp_op, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_op, args_maker, check_dtypes=True)
+
+  def testBroadcastToIssue1522(self):
+    self.assertRaisesRegex(
+        ValueError, "Incompatible shapes for broadcasting: .*",
+        lambda: lnp.broadcast_to(onp.ones((2, 3)), (1, 3)))
 
 # Most grad tests are at the lax level (see lax_test.py), but we add some here
 # as needed for e.g. particular compound ops of interest.
@@ -1962,6 +2004,16 @@ class NumpyGradTests(jtu.JaxTestCase):
       for rec in GRAD_SPECIAL_VALUE_TEST_RECORDS))
   def testOpGradSpecialValue(self, op, special_value):
     check_grads(op, (special_value,), 2, ["fwd", "rev"])
+
+  def testTakeAlongAxisIssue1521(self):
+    # https://github.com/google/jax/issues/1521
+    idx = lnp.repeat(lnp.arange(3), 10).reshape((30, 1))
+
+    def f(x):
+      y = x * lnp.arange(3.).reshape((1, 3))
+      return lnp.take_along_axis(y, idx, -1).sum()
+
+    check_grads(f, (1.,), order=1)
 
 
 if __name__ == "__main__":

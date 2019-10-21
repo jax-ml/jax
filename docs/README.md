@@ -1,15 +1,2 @@
-To rebuild the documentation, install the following Python packages:
-```
-pip install sphinx sphinx_rtd_theme nbsphinx fastcache ipykernel
-```
-
-Install also `pandoc`:
-```
-sudo apt-get install pandoc
-```
-
-and then run:
-
-```
-sphinx-build -M html . build
-```
+To rebuild the documentation, 
+see [Update Documentation](https://jax.readthedocs.io/en/latest/developer.html#update-documentation).

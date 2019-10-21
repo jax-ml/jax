@@ -164,6 +164,11 @@ class ConcreteArray(ShapedArray):
     return str(self.val)
 
 
+class AbstractToken(core.AbstractValue): pass
+
+abstract_token = AbstractToken()
+
+
 def make_shaped_array(x):
   dtype = xla_bridge.canonicalize_dtype(onp.result_type(x))
   return ShapedArray(onp.shape(x), dtype)
@@ -197,6 +202,8 @@ def raise_to_shaped(aval):
     return ShapedArray(aval.shape, aval.dtype)
   elif aval is core.abstract_unit:
     return core.abstract_unit
+  elif aval is abstract_token:
+    return abstract_token
   else:
     raise TypeError(type(aval))
 

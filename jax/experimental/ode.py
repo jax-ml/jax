@@ -35,34 +35,17 @@ import jax.lax
 import jax.numpy as np
 import jax.ops
 from jax.test_util import check_vjp
-import matplotlib.pyplot as plt
 import numpy as onp
 import scipy.integrate as osp_integrate
-
-
-# Dopri5 Butcher tableaux
-alpha = np.array([1 / 5, 3 / 10, 4 / 5, 8 / 9, 1., 1., 0])
-beta = np.array(
-    [[1 / 5, 0, 0, 0, 0, 0, 0],
-     [3 / 40, 9 / 40, 0, 0, 0, 0, 0],
-     [44 / 45, -56 / 15, 32 / 9, 0, 0, 0, 0],
-     [19372 / 6561, -25360 / 2187, 64448 / 6561, -212 / 729, 0, 0, 0],
-     [9017 / 3168, -355 / 33, 46732 / 5247, 49 / 176, -5103 / 18656, 0, 0],
-     [35 / 384, 0, 500 / 1113, 125 / 192, -2187 / 6784, 11 / 84, 0]])
-c_sol = np.array([35 / 384, 0, 500 / 1113, 125 / 192, -2187 / 6784, 11 / 84,
-                  0])
-c_error = np.array([35 / 384 - 1951 / 21600, 0, 500 / 1113 - 22642 / 50085,
-                    125 / 192 - 451 / 720, -2187 / 6784 - -12231 / 42400,
-                    11 / 84 - 649 / 6300, -1. / 60.])
-dps_c_mid = np.array([
-    6025192743 / 30085553152 / 2, 0, 51252292925 / 65400821598 / 2,
-    -2691868925 / 45128329728 / 2, 187940372067 / 1594534317056 / 2,
-    -1776094331 / 19743644256 / 2, 11237099 / 235043384 / 2])
 
 
 @jax.jit
 def interp_fit_dopri(y0, y1, k, dt):
   # Fit a polynomial to the results of a Runge-Kutta step.
+  dps_c_mid = np.array([
+      6025192743 / 30085553152 / 2, 0, 51252292925 / 65400821598 / 2,
+      -2691868925 / 45128329728 / 2, 187940372067 / 1594534317056 / 2,
+      -1776094331 / 19743644256 / 2, 11237099 / 235043384 / 2])
   y_mid = y0 + dt * np.dot(dps_c_mid, k)
   return np.array(fit_4th_order_polynomial(y0, y1, y_mid, k[0], k[-1], dt))
 
@@ -122,9 +105,9 @@ def initial_step_size(fun, t0, y0, order, rtol, atol, f0):
 
   y1 = y0 + h0 * f0
   f1 = fun(y1, t0 + h0)
-  d2 = (np.linalg.norm(f1 - f0) / scale) / h0
+  d2 = np.linalg.norm((f1 - f0) / scale) / h0
 
-  h1 = np.where(np.all(np.asarray([d1 <= 1e-15, d2 < 1e-15])),
+  h1 = np.where(np.all(np.asarray([d1 <= 1e-15, d2 <= 1e-15])),
                 np.maximum(1e-6, h0 * 1e-3),
                 (0.01 / np.max(d1 + d2))**order_pow)
 
@@ -151,6 +134,21 @@ def runge_kutta_step(func, y0, f0, t0, dt):
       y1_error: estimated error at t1
       k: list of Runge-Kutta coefficients `k` used for calculating these terms.
   """
+  # Dopri5 Butcher tableaux
+  alpha = np.array([1 / 5, 3 / 10, 4 / 5, 8 / 9, 1., 1., 0])
+  beta = np.array(
+      [[1 / 5, 0, 0, 0, 0, 0, 0],
+       [3 / 40, 9 / 40, 0, 0, 0, 0, 0],
+       [44 / 45, -56 / 15, 32 / 9, 0, 0, 0, 0],
+       [19372 / 6561, -25360 / 2187, 64448 / 6561, -212 / 729, 0, 0, 0],
+       [9017 / 3168, -355 / 33, 46732 / 5247, 49 / 176, -5103 / 18656, 0, 0],
+       [35 / 384, 0, 500 / 1113, 125 / 192, -2187 / 6784, 11 / 84, 0]])
+  c_sol = np.array([35 / 384, 0, 500 / 1113, 125 / 192, -2187 / 6784, 11 / 84,
+                    0])
+  c_error = np.array([35 / 384 - 1951 / 21600, 0, 500 / 1113 - 22642 / 50085,
+                      125 / 192 - 451 / 720, -2187 / 6784 - -12231 / 42400,
+                      11 / 84 - 649 / 6300, -1. / 60.])
+
   def _fori_body_fun(i, val):
     ti = t0 + dt * alpha[i-1]
     yi = y0 + dt * np.dot(beta[i-1, :], val)
@@ -467,30 +465,6 @@ def plot_gradient_field(ax, func, xlimits, ylimits, numticks=30):
   ax.quiver(x_mesh, y_mesh, np.ones(z_mesh.shape), z_mesh)
   ax.set_xlim(xlimits)
   ax.set_ylim(ylimits)
-
-
-def plot_demo():
-  """Demo plot of simple ode integration and gradient field."""
-  def f(y, t, arg1, arg2):
-    return y - np.sin(t) - np.cos(t) * arg1 + arg2
-
-  t0 = 0.
-  t1 = 5.0
-  ts = np.linspace(t0, t1, 100)
-  y0 = np.array([1.])
-  fargs = (1.0, 0.0)
-
-  ys = odeint(f, y0, ts, *fargs, atol=0.001, rtol=0.001)
-
-  # Set up figure.
-  fig = plt.figure(figsize=(8, 6), facecolor='white')
-  ax = fig.add_subplot(111, frameon=False)
-  f_no_args = lambda y, t: f(y, t, *fargs)
-  plot_gradient_field(ax, f_no_args, xlimits=[t0, t1], ylimits=[-1.1, 1.1])
-  ax.plot(ts, ys, 'g-')
-  ax.set_xlabel('t')
-  ax.set_ylabel('y')
-  plt.show()
 
 
 @jax.jit

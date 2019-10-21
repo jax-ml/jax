@@ -46,24 +46,24 @@ from . import ad
 
 def identity(x): return x
 
-def shard_args(backend, device_ordinals, assignments, axis_size, tuple_args, args):
+def shard_args(backend, devices, assignments, axis_size, tuple_args, args):
   """Shard an argument data array arg along its leading axis.
 
   Args:
-    device_ordinals: list of integers of length num_replicas mapping a logical
-      replica index to a physical device number.
+    devices: list of Devices of length num_replicas mapping a logical replica
+      index to a physical device.
     assignments: replica to shard assignment.
     axis_size: int, size of the axis to be sharded.
     args: a sequence of JaxTypes representing arguments to be sharded along
       their leading axes (or the leading axess of their leaves in the tuple
-      case) and placed on the devices indicated by `device_ordinals`.
+      case) and placed on `devices`.
 
   Returns:
-    A list of device buffers with the same length as `device_ordinals` indexed
-    by replica number, so that the nth element is the argument to be passed to
-    the nth replica.
+    A list of device buffers with the same length as `devices` indexed by
+    replica number, so that the nth element is the argument to be passed to the
+    nth replica.
   """
-  nargs, nrep = len(args), len(device_ordinals)
+  nargs, nrep = len(args), len(devices)
   buffers = [[None] * nargs for _ in range(nrep)]
   for a, arg in enumerate(args):
     # The shard_arg_handlers allow an extensible set of types to be sharded, but
@@ -71,35 +71,36 @@ def shard_args(backend, device_ordinals, assignments, axis_size, tuple_args, arg
     if type(arg) is ShardedDeviceArray:
       if nrep == len(arg.device_buffers):
         for r, buf in enumerate(arg.device_buffers):
-          buffers[r][a] = (buf if buf.device_ordinal() == device_ordinals[r]
-                           else buf.copy_to_device(device_ordinals[r]))
+          buffers[r][a] = (buf if buf.device() == devices[r]
+                           else buf.copy_to_device(devices[r]))
       else:
         for r, buf in enumerate(arg.device_buffers):
-          buffers[r][a] = xla.device_put(x[assignments[r]], ordinals[r], backend=backend)
+          buffers[r][a] = xla.device_put(x[assignments[r]], devices[r], backend=backend)
     else:
-      bufs = shard_arg_handlers[type(arg)](arg, device_ordinals, assignments, backend=backend)
+      bufs = shard_arg_handlers[type(arg)](arg, devices, assignments, backend=backend)
       for r, buf in enumerate(bufs):
         buffers[r][a] = buf
 
   if tuple_args:
-    buffers = [[xla.make_tuple(bufs, device_ordinals[r], backend)]
+    buffers = [[xla.make_tuple(bufs, devices[r], backend)]
                for r, bufs in enumerate(buffers)]
 
   return buffers
 
 shard_arg_handlers = {}
 shard_arg_handlers[core.Unit] = \
-    lambda x, ordinals, _, backend=None: [xla.device_put(core.unit, d, backend=backend) for d in ordinals]
-def _shard_array(x, ordinals, assignments, backend=None):
-  nrep = len(ordinals)
-  return (xla.device_put(x[assignments[r]], ordinals[r], backend=backend) for r in range(nrep))
+    lambda x, devices, _, backend=None: [
+        xla.device_put(core.unit, d, backend=backend) for d in devices]
+def _shard_array(x, devices, assignments, backend=None):
+  nrep = len(devices)
+  return (xla.device_put(x[assignments[r]], devices[r], backend=backend) for r in range(nrep))
 for _t in array_types:
   shard_arg_handlers[_t] = _shard_array
 
-def _shard_device_array(x, ordinals, assignments, backend=None):
-  nrep = len(ordinals)
+def _shard_device_array(x, devices, assignments, backend=None):
+  nrep = len(devices)
   xs = x._unstack()
-  return (xla.device_put(xs[assignments[r]], ordinals[r], backend=backend)
+  return (xla.device_put(xs[assignments[r]], devices[r], backend=backend)
           for r in range(nrep))
 shard_arg_handlers[xla.DeviceArray] = _shard_device_array
 
@@ -111,7 +112,9 @@ def shard_aval(size, aval):
 shard_aval_handlers = {}
 shard_aval_handlers[core.AbstractUnit] = lambda size, x: x
 def _shard_abstract_array(size, x):
-  assert x.shape[0] == size
+  if x.shape[0] != size:
+    raise ValueError("Axis size {} does not match leading dimension of "
+                     "shape {}".format(size, x.shape))
   return ShapedArray(x.shape[1:], x.dtype)
 shard_aval_handlers[ShapedArray] = _shard_abstract_array
 
@@ -208,7 +211,7 @@ def compile_replicated(jaxpr, backend, axis_name, axis_size, global_axis_size,
   axis_env = xla.AxisEnv(num_replicas, [axis_name], [global_axis_size], devices)
   arg_shapes = list(map(aval_to_xla_shape, abstract_args))
   built_c = xla.jaxpr_computation(jaxpr, backend, axis_env, consts, (), arg_shapes,
-                                  tuple_args=tuple_args)
+                                  tuple_args=tuple_args, inner=False)
   compiled = built_c.Compile(
       compile_options=xb.get_compile_options(num_replicas, device_assignment),
       backend=xb.get_backend(backend))
@@ -401,13 +404,13 @@ class ShardedDeviceArray(ShardedDeviceValue, xla.DeviceArray):
 
 # This handler code is effectively dead because we in-lined it in shard_args for
 # performance reasons.
-def _shard_sharded_device_array(x, ordinals, assignments):
-  n = len(ordinals)
+def _shard_sharded_device_array(x, devices, assignments):
+  n = len(devices)
   if n == len(x.device_buffers):
-    return (b if b.device_ordinal() == ordinals[r] else b.copy_to_device(ordinals[r])
+    return (b if b.device() == devices[r] else b.copy_to_device(devices[r])
             for r, b in enumerate(x.device_buffers))
   else:
-    return (xla.device_put(x[assignments[r]], ordinals[r]) for r in range(n))
+    return (xla.device_put(x[assignments[r]], devices[r]) for r in range(n))
 shard_arg_handlers[ShardedDeviceArray] = _shard_sharded_device_array
 
 core.pytype_aval_mappings[ShardedDeviceArray] = ConcreteArray
@@ -502,9 +505,9 @@ def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
     compiled, nrep = compile_replicated(jaxpr, backend, axis_name, axis_size,
                                         global_axis_size, devices, consts,
                                         tuple_args, *avals)
-    device_ordinals = compiled.DeviceOrdinals()
+    local_devices = compiled.local_devices()
     assignments = assign_shards_to_replicas(nrep, axis_size)
-    handle_args = partial(shard_args, backend, device_ordinals, assignments,
+    handle_args = partial(shard_args, backend, local_devices, assignments,
                           axis_size, tuple_args)
     handle_outs = _pvals_to_results_handler(axis_size, nrep, out_pvals)
     return partial(execute_replicated, compiled, backend, nrep, handle_args, handle_outs)

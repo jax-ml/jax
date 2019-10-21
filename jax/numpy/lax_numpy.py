@@ -29,6 +29,10 @@ from __future__ import print_function
 
 from distutils.util import strtobool
 import collections
+try:
+  from collections.abc import Sequence
+except ImportError:  # python 2
+  from collections import Sequence
 import itertools
 import os
 import re
@@ -103,13 +107,11 @@ class _ArrayMeta(type(onp.ndarray)):
     except AttributeError:
       return isinstance(instance, _arraylike_types)
 
-# pylint: disable=invalid-name
 class ndarray(six.with_metaclass(_ArrayMeta, onp.ndarray)):
   def __init__(shape, dtype=None, buffer=None, offset=0, strides=None,
                order=None):
     raise TypeError("jax.numpy.ndarray() should not be instantiated explicitly."
                     " Use jax.numpy.array, or jax.numpy.zeros instead.")
-# pylint: enable=invalid-name
 
 
 isscalar = onp.isscalar
@@ -887,23 +889,20 @@ def broadcast_arrays(*args):
 def broadcast_to(arr, shape):
   """Like Numpy's broadcast_to but doesn't necessarily return views."""
   arr = arr if isinstance(arr, ndarray) or isscalar(arr) else array(arr)
-  shape = tuple(map(int, shape))
-  if _shape(arr) != shape:
-    # TODO(mattjj): revise this to call lax.broadcast_in_dim rather than
-    # lax.broadcast and lax.transpose
-    lax.broadcast_shapes(shape, _shape(arr))  # error checking
-    nlead = len(shape) - len(_shape(arr))
-    diff, = onp.where(onp.not_equal(shape[nlead:], _shape(arr)))
-
+  shape = tuple(map(int, shape))  # check that shape is concrete
+  arr_shape = _shape(arr)
+  if arr_shape == shape:
+    return arr
+  else:
+    nlead = len(shape) - len(arr_shape)
+    compatible = onp.equal(arr_shape, shape[nlead:]) | onp.equal(arr_shape, 1)
+    if nlead < 0 or not onp.all(compatible):
+      msg = "Incompatible shapes for broadcasting: {} and requested shape {}"
+      raise ValueError(msg.format(arr_shape, shape))
+    diff, = onp.where(onp.not_equal(shape[nlead:], arr_shape))
     new_dims = tuple(range(nlead)) + tuple(nlead + diff)
     kept_dims = tuple(onp.delete(onp.arange(len(shape)), new_dims))
-    perm = onp.argsort(new_dims + kept_dims)
-
-    broadcast_dims = onp.take(shape, new_dims)
-    squeezed_array = squeeze(arr, diff)
-    return lax.transpose(lax.broadcast(squeezed_array, broadcast_dims), perm)
-  else:
-    return arr
+    return lax.broadcast_in_dim(squeeze(arr, diff), shape, kept_dims)
 
 
 @_wraps(onp.split)
@@ -2403,7 +2402,7 @@ def _take_along_axis(arr, indices, axis):
   if axis is None:
     if ndim(indices) != 1:
       msg = "take_along_axis indices must be 1D if axis=None, got shape {}"
-      raise ValueError(msg.format(shape(indices)))
+      raise ValueError(msg.format(indices.shape))
     return take_along_axis(arr.ravel(), indices, 0)
   rank = ndim(arr)
   if rank != ndim(indices):
@@ -2411,11 +2410,19 @@ def _take_along_axis(arr, indices, axis):
     raise ValueError(msg.format(ndim(indices), ndim(arr)))
   axis = _canonicalize_axis(axis, rank)
 
-  arr_shape = list(shape(arr))
-  axis_size = arr_shape[axis]
-  arr_shape[axis] = 1
-  idx_shape = shape(indices)
-  out_shape = lax.broadcast_shapes(idx_shape, tuple(arr_shape))
+  def replace(tup, val):
+    lst = list(tup)
+    lst[axis] = val
+    return tuple(lst)
+
+  bcast_shape = lax.broadcast_shapes(replace(arr.shape, 1), replace(indices.shape, 1))
+  indices = broadcast_to(indices, replace(bcast_shape, indices.shape[axis]))
+  arr     = broadcast_to(arr,     replace(bcast_shape, arr.shape[axis]))
+
+  axis_size = arr.shape[axis]
+  arr_shape = replace(arr.shape, 1)
+  idx_shape = indices.shape
+  out_shape = lax.broadcast_shapes(idx_shape, arr_shape)
 
   index_dims = [i for i, idx in enumerate(idx_shape) if i == axis or idx != 1]
 
@@ -2575,7 +2582,7 @@ def _index_to_gather(x_shape, idx):
     idx_no_nones = [(i, d) for i, d in enumerate(idx) if d is not None]
     advanced_pairs = (
       (asarray(e), i, j) for j, (i, e) in enumerate(idx_no_nones)
-      if (isinstance(e, collections.Sequence) or isinstance(e, ndarray)))
+      if (isinstance(e, Sequence) or isinstance(e, ndarray)))
     advanced_pairs = ((_normalize_index(e, x_shape[j]), i, j)
                       for e, i, j in advanced_pairs)
     advanced_indexes, idx_advanced_axes, x_advanced_axes = zip(*advanced_pairs)
@@ -2727,7 +2734,7 @@ def _index_to_gather(x_shape, idx):
 def _should_unpack_list_index(x):
   """Helper for _eliminate_deprecated_list_indexing."""
   return (isinstance(x, ndarray) and onp.ndim(x) != 0
-          or isinstance(x, collections.Sequence)
+          or isinstance(x, Sequence)
           or isinstance(x, slice) or x is Ellipsis or x is None)
 
 def _eliminate_deprecated_list_indexing(idx):
@@ -2736,7 +2743,7 @@ def _eliminate_deprecated_list_indexing(idx):
   # objects]". Detects this case and canonicalizes to a tuple. This case is
   # deprecated by NumPy and exists for backward compatibility.
   if not isinstance(idx, tuple):
-    if isinstance(idx, collections.Sequence) and not isinstance(idx, ndarray):
+    if isinstance(idx, Sequence) and not isinstance(idx, ndarray):
       if _any(_should_unpack_list_index(i) for i in idx):
         idx = tuple(idx)
       else:

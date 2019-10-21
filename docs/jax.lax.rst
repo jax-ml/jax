@@ -143,7 +143,9 @@ Parallelism support is experimental.
 .. autosummary::
   :toctree: _autosummary
 
+    all_to_all
     psum
     pmax
     pmin
     ppermute
+    pswapaxes

@@ -62,6 +62,7 @@ PYTREES = [
     ([3, ATuple(foo=(3, ATuple(foo=3, bar=None)), bar={"baz": 34})],),
     ([AnObject(3, None, [4, "foo"])],),
     ({"a": 1, "b": 2},),
+    (collections.OrderedDict([("foo", 34), ("baz", 101), ("something", -42)]),)
 ]
 
 

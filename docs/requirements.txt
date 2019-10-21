@@ -1,3 +1,11 @@
+sphinx
+sphinx_rtd_theme
 jaxlib
 ipykernel
 nbsphinx
+# The next packages are for notebooks
+matplotlib
+sklearn
+# Must install jax itself for notebook execution to work
+.
+

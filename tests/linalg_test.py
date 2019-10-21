@@ -30,6 +30,7 @@ from absl.testing import parameterized
 import jax
 import jax.lib
 from jax import jit, grad, jvp, vmap
+from jax import lax_linalg
 from jax import numpy as np
 from jax import scipy as jsp
 from jax import test_util as jtu
@@ -189,11 +190,14 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for dtype in float_types + complex_types
       for lower in [False, True]
       for rng in [jtu.rand_default()]))
-  # TODO(phawkins): enable when there is an eigendecomposition implementation
-  # for TPU.
-  @jtu.skip_on_devices("tpu")
   def testEigh(self, n, dtype, lower, rng):
     _skip_if_unsupported_type(dtype)
+    tol = 30
+    if jtu.device_under_test() == "tpu":
+      if onp.issubdtype(dtype, onp.complexfloating):
+        raise unittest.SkipTest("No complex eigh on TPU")
+      # TODO(phawkins): this tolerance is unpleasantly high.
+      tol = 1500
     args_maker = lambda: [rng((n, n), dtype)]
 
     uplo = "L" if lower else "U"
@@ -208,7 +212,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     w, v = np.linalg.eigh(onp.tril(a) if lower else onp.triu(a),
                           UPLO=uplo, symmetrize_input=False)
     self.assertTrue(norm(onp.eye(n) - onp.matmul(onp.conj(T(v)), v)) < 5)
-    self.assertTrue(norm(onp.matmul(a, v) - w * v) < 30)
+    self.assertTrue(norm(onp.matmul(a, v) - w * v) < tol)
 
     self._CompileAndCheck(partial(np.linalg.eigh, UPLO=uplo), args_maker,
                           check_dtypes=True, rtol=1e-3)
@@ -218,19 +222,17 @@ class NumpyLinalgTest(jtu.JaxTestCase):
        "_shape={}_lower={}".format(jtu.format_shape_dtype_string(shape, dtype),
                                    lower),
        "shape": shape, "dtype": dtype, "rng": rng, "lower":lower}
-      for shape in [(1, 1), (4, 4), (5, 5), (50, 50)]
+      for shape in [(1, 1), (4, 4), (5, 5), (50, 50), (2, 10, 10)]
       for dtype in float_types + complex_types
       for rng in [jtu.rand_default()]
       for lower in [True, False]))
-  # TODO(phawkins): enable when there is an eigendecomposition implementation
-  # for TPU.
-  @jtu.skip_on_devices("tpu")
   def testEighGrad(self, shape, dtype, rng, lower):
     self.skipTest("Test fails with numeric errors.")
     uplo = "L" if lower else "U"
     a = rng(shape, dtype)
-    a = (a + onp.conj(a.T)) / 2
-    a = onp.tril(a) if lower else onp.triu(a)
+    a = (a + onp.conj(T(a))) / 2
+    ones = onp.ones((a.shape[-1], a.shape[-1]), dtype=dtype)
+    a *= onp.tril(ones) if lower else onp.triu(ones)
     # Gradient checks will fail without symmetrization as the eigh jvp rule
     # is only correct for tangents in the symmetric subspace, whereas the
     # checker checks against unconstrained (co)tangents.
@@ -250,8 +252,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for rng in [jtu.rand_default()]
       for lower in [True, False]
       for eps in [1e-4]))
-  # TODO(phawkins): enable when there is an eigendecomposition implementation
-  # for TPU.
+  # TODO(phawkins): enable when there is a complex eigendecomposition
+  # implementation for TPU.
   @jtu.skip_on_devices("tpu")
   def testEighGradVectorComplex(self, shape, dtype, rng, lower, eps):
     _skip_if_unsupported_type(dtype)
@@ -290,9 +292,11 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for shape in [(1, 1), (4, 4), (5, 5)]
       for dtype in float_types + complex_types
       for rng in [jtu.rand_default()]))
-  @jtu.skip_on_devices("tpu")
   def testEighBatching(self, shape, dtype, rng):
     _skip_if_unsupported_type(dtype)
+    if (jtu.device_under_test() == "tpu" and
+        onp.issubdtype(dtype, onp.complexfloating)):
+      raise unittest.SkipTest("No complex eigh on TPU")
     shape = (10,) + shape
     args = rng(shape, dtype)
     args = (args + onp.conj(T(args))) / 2
@@ -517,7 +521,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(np.linalg.inv, args_maker, check_dtypes=True)
 
   # Regression test for incorrect type for eigenvalues of a complex matrix.
-  @jtu.skip_on_devices("tpu")  # TODO(phawkins): No eigh implementation on TPU.
+  @jtu.skip_on_devices("tpu")  # TODO(phawkins): No complex eigh implementation on TPU.
   def testIssue669(self):
     def test(x):
       val, vec = np.linalg.eigh(x)
@@ -538,7 +542,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     jac0 = jax.jacobian(np.linalg.solve, argnums=0)(A[0], b[0])
     jac1 = jax.jacobian(np.linalg.solve, argnums=1)(A[0], b[0])
 
-  @jtu.skip_on_devices("tpu")  # TODO(phawkins): No eigh implementation on TPU.
   def testIssue1383(self):
     seed = jax.random.PRNGKey(0)
     tmp = jax.random.uniform(seed, (2,2))
@@ -750,33 +753,40 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_lhs={}_rhs={}_lower={}_transposea={}_unit_diagonal={}".format(
-           jtu.format_shape_dtype_string(lhs_shape, dtype),
-           jtu.format_shape_dtype_string(rhs_shape, dtype),
-           lower, transpose_a, unit_diagonal),
-       "lower": lower, "transpose_a": transpose_a,
-       "unit_diagonal": unit_diagonal, "lhs_shape": lhs_shape,
-       "rhs_shape": rhs_shape, "dtype": dtype, "rng": rng}
+       "_A={}_B={}_lower={}_transposea={}_conja={}_unitdiag={}_leftside={}".format(
+           jtu.format_shape_dtype_string(a_shape, dtype),
+           jtu.format_shape_dtype_string(b_shape, dtype),
+           lower, transpose_a, conjugate_a, unit_diagonal, left_side),
+       "lower": lower, "transpose_a": transpose_a, "conjugate_a": conjugate_a,
+       "unit_diagonal": unit_diagonal, "left_side": left_side,
+       "a_shape": a_shape, "b_shape": b_shape, "dtype": dtype, "rng": rng}
       for lower in [False, True]
       for unit_diagonal in [False, True]
       for dtype in float_types + complex_types
-      for transpose_a in (
-        [0, 1] if onp.issubdtype(dtype, np.floating) else [0, 1, 2])
-      for lhs_shape, rhs_shape in [
-          ((4, 4), (4,)),
-          ((4, 4), (4, 3)),
-          ((2, 8, 8), (2, 8, 10)),
+      for transpose_a in [False, True]
+      for conjugate_a in (
+          [False] if onp.issubdtype(dtype, np.floating) else [False, True])
+      for left_side, a_shape, b_shape in [
+          (False, (4, 4), (1, 4,)),
+          (False, (3, 3), (4, 3)),
+          (True, (4, 4), (4, 1)),
+          (True, (4, 4), (4, 3)),
+          (True, (2, 8, 8), (2, 8, 10)),
       ]
       for rng in [jtu.rand_default()]))
   @jtu.skip_on_devices("tpu")  # TODO(phawkins): Test fails on TPU.
-  def testSolveTriangularGrad(self, lower, transpose_a, unit_diagonal,
-                              lhs_shape, rhs_shape, dtype, rng):
+  def testTriangularSolveGrad(
+      self, lower, transpose_a, conjugate_a, unit_diagonal, left_side, a_shape,
+      b_shape, dtype, rng):
     _skip_if_unsupported_type(dtype)
-    A = np.tril(rng(lhs_shape, dtype) + 5 * onp.eye(lhs_shape[-1], dtype=dtype))
+    # Test lax_linalg.triangular_solve instead of scipy.linalg.solve_triangular
+    # because it exposes more options.
+    A = np.tril(rng(a_shape, dtype) + 5 * onp.eye(a_shape[-1], dtype=dtype))
     A = A if lower else T(A)
-    B = rng(rhs_shape, dtype)
-    f = partial(jsp.linalg.solve_triangular, lower=lower, trans=transpose_a,
-                unit_diagonal=unit_diagonal)
+    B = rng(b_shape, dtype)
+    f = partial(lax_linalg.triangular_solve, lower=lower,
+                transpose_a=transpose_a, conjugate_a=conjugate_a,
+                unit_diagonal=unit_diagonal, left_side=left_side)
     jtu.check_grads(f, (A, B), 2, rtol=2e-2, eps=1e-3)
 
 
