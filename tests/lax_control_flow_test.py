@@ -1124,6 +1124,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     actual = api.jit(linear_solve)(a, b)
     self.assertAllClose(expected, actual, check_dtypes=True)
 
+    jtu.check_grads(api.jit(linear_solve), (a, b), order=2)
+
     # TODO(shoyer): reenable when batching works
     # c = rng.randn(3, 2)
     # expected = np.linalg.solve(a, c)
@@ -1174,6 +1176,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     actual = build_and_solve(a, b)
     self.assertAllClose(expected, actual, atol=1e-5, check_dtypes=True)
     jtu.check_grads(build_and_solve, (a, b), atol=1e-5, order=2)
+    jtu.check_grads(api.jit(build_and_solve), (a, b), atol=1e-5, order=2)
 
     # TODO(shoyer): reenable when batching works
     # a2 = rng.randn(1, 2, 2)
@@ -1226,6 +1229,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(expected, actual, check_dtypes=True)
 
     jtu.check_grads(linear_solve, (a, b), order=2)
+    jtu.check_grads(api.jit(linear_solve), (a, b), order=2)
 
   def test_custom_linear_solve_without_transpose_solve(self):
 
