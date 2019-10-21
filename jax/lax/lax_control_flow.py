@@ -936,7 +936,8 @@ def root(f, initial_guess, solve, tangent_solve):
   _check_tree("f", "initial_guess", out_tree, in_tree)
 
   solve_jaxpr, solve_consts, solution_tree = _initial_style_jaxpr(
-      stop_gradient_fun(partial(solve, f)), in_args_tree, guess_avals)
+      partial(solve, stop_gradient_fun(f)),
+      in_args_tree, guess_avals)
   _check_tree("solve", "initial_guess", solution_tree, in_tree)
 
   def linearize_and_solve(x, b):
@@ -944,7 +945,7 @@ def root(f, initial_guess, solve, tangent_solve):
     return tangent_solve(f_jvp, b)
 
   l_and_s_jaxpr, l_and_s_consts, out_tree = _initial_style_jaxpr(
-      linearize_and_solve, treedef_tuple((in_tree,) * 2), x_avals * 2)
+      linearize_and_solve, treedef_tuple((in_tree,) * 2), guess_avals * 2)
   _check_tree("tangent_solve", "x", out_tree, in_tree)
 
   all_consts = [f_consts, solve_consts, l_and_s_consts]
@@ -963,7 +964,7 @@ def _root_abstract_eval(*args, **kwargs):
 
 def _root_impl(*args, **kwargs):
   const_lengths, jaxprs = split_dict(kwargs, ['const_lengths', 'jaxprs'])
-  params, initial_guess = _split_linear_solve_args(args, const_lengths)
+  params, initial_guess = _split_root_args(args, const_lengths)
   solution = core.jaxpr_as_fun(jaxprs.solve)(*(params.solve + initial_guess))
   # TODO(shoyer): check shapes?
   # _check_shapes('solve', 'initial_guess', solution, initial_guess, tree)
@@ -971,11 +972,11 @@ def _root_impl(*args, **kwargs):
 
 
 def _root_jvp(primals, tangents, const_lengths, jaxprs):
-  params, _ = _split_linear_solve_args(primals, const_lengths)
+  params, _ = _split_root_args(primals, const_lengths)
   solution = tuple(root_p.bind(
       *primals, const_lengths=const_lengths, jaxprs=jaxprs))
 
-  params_dot, _ = _split_linear_solve_args(tangents, const_lengths)
+  params_dot, _ = _split_root_args(tangents, const_lengths)
 
   # F(m, u) = 0      # system of equations in u, parameterized by m
   #                  # solution is u*(m) defined in a neighborhood
@@ -986,9 +987,9 @@ def _root_jvp(primals, tangents, const_lengths, jaxprs):
   #
   # ∂ u*(m)[v] = - (∂_1 F(m, u*(m)))^{-1} [∂_0 F(m, u*(m))[v]]  # jvp
 
-  f = core.jaxpr_as_fun(f_jaxpr)
+  f = core.jaxpr_as_fun(jaxprs.f)
   linearize_and_solve = partial(
-      core.jaxpr_as_fun(l_and_s_jaxpr), *params.l_and_s)
+      core.jaxpr_as_fun(jaxprs.l_and_s), *params.l_and_s)
   f_at_solution = lambda *params: f(*itertools.chain(params, solution))
   _, rhs = ad.jvp(lu.wrap_init(f_at_solution)).call_wrapped(
       params.f, params_dot.f)
@@ -1009,10 +1010,11 @@ xla.initial_style_translations[root_p] = xla.lower_fun(_root_impl, initial_style
 
 def stop_gradient_fun(f):
   """Create a version of f() that stops all gradients."""
-  def wrapper(*args):
-    args_flat, in_args_tree = tree_flatten(args)
+  def wrapper(*args, **kwargs):
+    args_flat, in_args_tree = tree_flatten((args, kwargs))
     args_avals = tuple(_map(_abstractify, args_flat))
-    jaxpr, consts, out_tree = _initial_style_jaxpr(f, in_args_tree, args_avals)
+    g = lambda a, b: f(*a, **b)
+    jaxpr, consts, out_tree = _initial_style_jaxpr(g, in_args_tree, args_avals)
     out = core.jaxpr_as_fun(jaxpr)(*lax.stop_gradient(consts + tuple(args_flat)))
     return tree_unflatten(out_tree, out)
   return wrapper
