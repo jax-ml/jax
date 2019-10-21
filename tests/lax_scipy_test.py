@@ -70,8 +70,6 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record("ndtr", 1, float_dtypes, jtu.rand_default(), True),
     # TODO(phawkins): gradient of entr yields NaNs.
     op_record("entr", 1, float_dtypes, jtu.rand_default(), False),
-    op_record("i0e", 1, float_dtypes, jtu.rand_default(), True),
-    op_record("i1e", 1, float_dtypes, jtu.rand_default(), True),
 ]
 
 CombosWithReplacement = itertools.combinations_with_replacement
