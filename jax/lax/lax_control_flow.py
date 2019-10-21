@@ -44,7 +44,7 @@ from jax.lib import xla_client
 from jax.util import (partial, unzip2, safe_map, safe_zip, split_list,
                       split_dict, cache)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
-                           treedef_children, tree_map)
+                           treedef_children, treedef_tuple, tree_map)
 from jax import ad_util
 
 _map = safe_map
@@ -939,11 +939,10 @@ def root(f, initial_guess, solve, tangent_solve):
   ts_jaxpr, ts_consts, ts_tree = _initial_style_jaxpr(
       partial(tangent_solve, f_without_gradients), in_args_tree, guess_avals)
 
-
   # solve_flat = _flatten_higher_order_func(
   #     solve, in_tree, _tree_error_template("solve", "initial_guess"))
   tangent_solve_flat = _flatten_higher_order_func(
-      tangent_solve, in_tree, _tree_error_template("tangent_solve", "initial_guess"))
+      tangent_solve, in_tree, "tangent_solve", "initial_guess")
 
   out_flat = root_p.bind(*itertools.chain(consts, guess_flat, solve_consts),
                          num_consts=len(consts), num_solution=len(guess_flat),
@@ -1002,44 +1001,38 @@ xla.initial_style_translations[root_p] = xla.lower_fun(_root_impl, initial_style
 
 
 def stop_gradient_fun(f):
-  def wrapper(*args, **kwargs):
+  """Create a version of f() that stops all gradients."""
+  def wrapper(*args):
     args_flat, in_args_tree = tree_flatten(args)
     args_avals = tuple(_map(_abstractify, args_flat))
     jaxpr, consts, out_tree = _initial_style_jaxpr(f, in_args_tree, args_avals)
-    out = core.jaxpr_as_fun(jaxpr)(
-        *itertools.chain(lax.stop_gradient(consts), args_flat))
+    out = core.jaxpr_as_fun(jaxpr)(*lax.stop_gradient(consts + tuple(args_flat)))
     return tree_unflatten(out_tree, out)
   return wrapper
 
 
 def define_implicit_gradient(f, x, tangent_solve):
+  """Define gradients of x at f(x)=0 using the implicit function theorem."""
   x_flat, in_args_tree = tree_flatten((x,))
   x_avals = tuple(_map(_abstractify, x_flat))
   f_jaxpr, f_consts, out_tree = _initial_style_jaxpr(
       f, in_args_tree, x_avals)
 
   in_tree, = treedef_children(in_args_tree)
-  if in_tree != out_tree:
-    raise TypeError(
-        _tree_error_template("f", "x").format(out_tree, in_tree)
-    )
+  _check_tree("f", "x", out_tree, in_tree)
 
-  unchecked_zeros, f_jvp = api.linearize(f, x)
-  ts_jaxpr, ts_consts, out_tree = _initial_style_jaxpr(
-      partial(tangent_solve, f_jvp), in_args_tree, x_avals)
-  # ts_flat = partial(core.jaxpr_as_fun(ts_jaxpr), *ts_consts)
+  def linearize_and_solve(x, b):
+    unchecked_zeros, f_jvp = api.linearize(f, x)
+    return tangent_solve(f_jvp, b)
 
-  if in_tree != out_tree:
-    raise TypeError(
-        _tree_error_template("tangent_solve", "x").format(out_tree, in_tree)
-    )
-
-  ts_flat = _flatten_higher_order_func(tangent_solve, out_tree)
+  l_and_s_jaxpr, l_and_s_consts, out_tree = _initial_style_jaxpr(
+      linearize_and_solve, treedef_tuple((in_tree,) * 2), x_avals * 2)
+  _check_tree("tangent_solve", "x", out_tree, in_tree)
 
   out_flat = define_implicit_gradient_p.bind(
-      *itertools.chain(x_flat, f_consts, ts_consts),
+      *itertools.chain(x_flat, f_consts, l_and_s_consts),
       num_x=len(x_flat), num_f_consts=len(f_consts), f_jaxpr=f_jaxpr,
-      ts_jaxpr=ts_jaxpr, tangent_solve=ts_flat)
+      l_and_s_jaxpr=l_and_s_jaxpr)
   return tree_unflatten(out_tree, out_flat)
 
 
@@ -1048,14 +1041,14 @@ def _define_implicit_gradient_impl(*args, **kwargs):
 
 
 def _define_implicit_gradient_jvp(
-    primals, tangents, num_x, num_f_consts, f_jaxpr, ts_jaxpr, tangent_solve):
+    primals, tangents, num_x, num_f_consts, f_jaxpr, l_and_s_jaxpr):
 
-  x, f_consts, ts_consts = split_list(primals, [num_x, num_f_consts])
+  x, f_consts, l_and_s_consts = split_list(primals, [num_x, num_f_consts])
   _, f_consts_dot, _ = split_list(tangents, [num_x, num_f_consts])
 
   x = define_implicit_gradient_p.bind(
       *primals, num_x=num_x, num_f_consts=num_f_consts, f_jaxpr=f_jaxpr,
-      ts_jaxpr=ts_jaxpr, tangent_solve=tangent_solve)
+      l_and_s_jaxpr=l_and_s_jaxpr)
 
   # F(m, u) = 0      # system of equations in u, parameterized by m
   #                  # solution is u*(m) defined in a neighborhood
@@ -1067,27 +1060,11 @@ def _define_implicit_gradient_jvp(
   # ∂ u*(m)[v] = - (∂_1 F(m, u*(m)))^{-1} [∂_0 F(m, u*(m))[v]]  # jvp
 
   f = core.jaxpr_as_fun(f_jaxpr)
-  f_fixed_params = lambda *x: f(*itertools.chain(f_consts, x))
-  f_fixed_solution = lambda *f_consts: f(*itertools.chain(f_consts, x))
-
-  _, rhs = ad.jvp(lu.wrap_init(f_fixed_solution)).call_wrapped(f_consts, f_consts_dot)
-  _, f_jvp_wrt_solution = api.linearize(f_fixed_params, *x)
-  x_dot = [-x for x in tangent_solve(f_jvp_wrt_solution, *rhs)]
-  return x, x_dot
-
-  f = core.jaxpr_as_fun(f_jaxpr)
-  f_at_x = lambda *params: f(*(params + tuple(x)))
+  linearize_and_solve = partial(
+      core.jaxpr_as_fun(l_and_s_jaxpr), *l_and_s_consts)
+  f_at_x = lambda *params: f(*itertools.chain(params, x))
   _, rhs = ad.jvp(lu.wrap_init(f_at_x)).call_wrapped(f_consts, f_consts_dot)
-  x_dot = [-x for x in tangent_solve(*rhs)]
-
-  return x, x_dot
-
-
-  f = core.jaxpr_as_fun(f_jaxpr)
-  tangent_solve = partial(core.jaxpr_as_fun(ts_jaxpr), *ts_consts)
-  f_at_x = lambda *params: f(*(params + tuple(x)))
-  _, rhs = ad.jvp(lu.wrap_init(f_at_x)).call_wrapped(f_consts, f_consts_dot)
-  x_dot = [-x for x in tangent_solve(*rhs)]
+  x_dot = _map(operator.neg, linearize_and_solve(*itertools.chain(x, rhs)))
 
   return x, x_dot
 
@@ -1259,6 +1236,9 @@ def _custom_linear_solve_jvp(primals, tangents, const_lengths, jaxprs, tree):
   params, _ = _split_linear_solve_args(primals, const_lengths)
   params_dot, b_dot = _split_linear_solve_args(tangents, const_lengths)
 
+  if all(p is ad_util.zero for p in params_dot.matvec + b_dot):
+    return x, [ad_util.zero] * len(x)
+
   if all(p is ad_util.zero for p in params_dot.matvec):
     # no need to evaluate matvec_tangents
     rhs = b_dot
@@ -1280,6 +1260,10 @@ def _custom_linear_solve_transpose_rule(cotangent, *primals, **kwargs):
   if jaxprs.transpose_solve is None:
     raise TypeError('transpose_solve required for backwards mode automatic '
                     'differentiation of custom_linear_solve')
+
+  if all(p is ad_util.zero for p in cotangent):
+    # This shouldn't happen, but it does.
+    return [None] * sum(const_lengths) + cotangent
 
   params, b = _split_linear_solve_args(primals, const_lengths)
   assert b == [ad.undefined_primal] * len(b)
