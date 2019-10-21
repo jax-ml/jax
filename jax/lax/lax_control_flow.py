@@ -884,6 +884,14 @@ def _check_tree(func_name, expected_name, actual_tree, expected_tree):
         .format(func_name, expected_name, actual_tree, expected_tree))
 
 
+_RootTuple = collections.namedtuple('_RootTuple', 'f, solve, l_and_s')
+
+
+def _split_root_args(args, const_lengths):
+  params_list = split_list(args, list(const_lengths))
+  return _RootTuple(*params_list[:-1]), params_list[-1]
+
+
 def root(f, initial_guess, solve, tangent_solve):
   """Differentiably solve for a roots of a function.
 
@@ -927,49 +935,47 @@ def root(f, initial_guess, solve, tangent_solve):
   in_tree, = treedef_children(in_args_tree)
   _check_tree("f", "initial_guess", out_tree, in_tree)
 
-  f_without_gradients = partial(
-      apply_flat_fun_nokwargs,
-      partial(core.jaxpr_as_fun(f), *lax.stop_gradient(f_consts)),
-      (tree, tree))
   solve_jaxpr, solve_consts, solution_tree = _initial_style_jaxpr(
-      partial(solve, f_without_gradients), in_args_tree, guess_avals)
+      stop_gradient_fun(partial(solve, f)), in_args_tree, guess_avals)
   _check_tree("solve", "initial_guess", solution_tree, in_tree)
 
-  _, f_jvp = api.linearize(f, *solution)
-  ts_jaxpr, ts_consts, ts_tree = _initial_style_jaxpr(
-      partial(tangent_solve, f_without_gradients), in_args_tree, guess_avals)
+  def linearize_and_solve(x, b):
+    unchecked_zeros, f_jvp = api.linearize(f, x)
+    return tangent_solve(f_jvp, b)
 
-  # solve_flat = _flatten_higher_order_func(
-  #     solve, in_tree, _tree_error_template("solve", "initial_guess"))
-  tangent_solve_flat = _flatten_higher_order_func(
-      tangent_solve, in_tree, "tangent_solve", "initial_guess")
+  l_and_s_jaxpr, l_and_s_consts, out_tree = _initial_style_jaxpr(
+      linearize_and_solve, treedef_tuple((in_tree,) * 2), x_avals * 2)
+  _check_tree("tangent_solve", "x", out_tree, in_tree)
 
-  out_flat = root_p.bind(*itertools.chain(consts, guess_flat, solve_consts),
-                         num_consts=len(consts), num_solution=len(guess_flat),
-                         jaxpr=jaxpr, solve_jaxpr=solve_jaxpr,
-                         tangent_solve=tangent_solve_flat)
+  all_consts = [f_consts, solve_consts, l_and_s_consts]
+  const_lengths = _RootTuple(*_map(len, all_consts))
+  jaxprs = _RootTuple(f_jaxpr, solve_jaxpr, l_and_s_jaxpr)
+
+  out_flat = root_p.bind(
+      *(_flatten(all_consts) + guess_flat),
+      const_lengths=const_lengths, jaxprs=jaxprs)
   return tree_unflatten(out_tree, out_flat)
 
 
 def _root_abstract_eval(*args, **kwargs):
-  return args[kwargs['num_consts']:]
+  return args[sum(kwargs['const_lengths']):]
 
 
 def _root_impl(*args, **kwargs):
-  num_consts, num_solution, jaxpr, solve_jaxpr, _ = split_dict(
-      kwargs, ['num_consts', 'num_solution', 'jaxpr', 'solve_jaxpr', 'tangent_solve'])
-  _, initial_guess, solve_consts = split_list(args, [num_consts, num_solution])
-  return core.jaxpr_as_fun(solve_jaxpr)(*(solve_consts + initial_guess))
-  # f = partial(core.jaxpr_as_fun(jaxpr), *params)
-  # return solve(f, *initial_guess)
+  const_lengths, jaxprs = split_dict(kwargs, ['const_lengths', 'jaxprs'])
+  params, initial_guess = _split_linear_solve_args(args, const_lengths)
+  solution = core.jaxpr_as_fun(jaxprs.solve)(*(params.solve + initial_guess))
+  # TODO(shoyer): check shapes?
+  # _check_shapes('solve', 'initial_guess', solution, initial_guess, tree)
+  return solution
 
 
-def _root_jvp(primals, tangents, num_consts, num_solution, jaxpr, solve_jaxpr, tangent_solve):
-  params = primals[:num_consts]
+def _root_jvp(primals, tangents, const_lengths, jaxprs):
+  params, _ = _split_linear_solve_args(primals, const_lengths)
   solution = tuple(root_p.bind(
-      *primals, num_consts=num_consts, num_solution=num_solution,
-      jaxpr=jaxpr, solve_jaxpr=solve_jaxpr, tangent_solve=tangent_solve))
-  params_dot = tangents[:num_consts]
+      *primals, const_lengths=const_lengths, jaxprs=jaxprs))
+
+  params_dot, _ = _split_linear_solve_args(tangents, const_lengths)
 
   # F(m, u) = 0      # system of equations in u, parameterized by m
   #                  # solution is u*(m) defined in a neighborhood
@@ -980,13 +986,14 @@ def _root_jvp(primals, tangents, num_consts, num_solution, jaxpr, solve_jaxpr, t
   #
   # ∂ u*(m)[v] = - (∂_1 F(m, u*(m)))^{-1} [∂_0 F(m, u*(m))[v]]  # jvp
 
-  f = core.jaxpr_as_fun(jaxpr)
-  f_fixed_params = lambda *solution: f(*(params + solution))
-  f_fixed_solution = lambda *params: f(*(params + solution))
-
-  _, rhs = ad.jvp(lu.wrap_init(f_fixed_solution)).call_wrapped(params, params_dot)
-  _, f_jvp_wrt_solution = api.linearize(f_fixed_params, *solution)
-  solution_dot = [-x for x in tangent_solve(f_jvp_wrt_solution, *rhs)]
+  f = core.jaxpr_as_fun(f_jaxpr)
+  linearize_and_solve = partial(
+      core.jaxpr_as_fun(l_and_s_jaxpr), *params.l_and_s)
+  f_at_solution = lambda *params: f(*itertools.chain(params, solution))
+  _, rhs = ad.jvp(lu.wrap_init(f_at_solution)).call_wrapped(
+      params.f, params_dot.f)
+  solution_dot = _map(
+      operator.neg, linearize_and_solve(*itertools.chain(solution, rhs)))
 
   return solution, solution_dot
 
