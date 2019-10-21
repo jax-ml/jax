@@ -599,7 +599,7 @@ def broadcast(operand, sizes):
   return broadcast_p.bind(operand, sizes=tuple(sizes))
 
 def broadcast_in_dim(operand, shape, broadcast_dimensions):
-  if operand.ndim == len(shape) and not len(broadcast_dimensions):
+  if onp.ndim(operand) == len(shape) and not len(broadcast_dimensions):
     return operand
   if any(x < 0 or x >= len(shape) for x in broadcast_dimensions):
     msg = ("broadcast dimensions must be >= 0 and < ndim(shape), got {} for "

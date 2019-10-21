@@ -1952,6 +1952,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         ValueError, "Incompatible shapes for broadcasting: .*",
         lambda: lnp.broadcast_to(onp.ones((2, 3)), (1, 3)))
 
+  def testBroadcastToIntIssue1548(self):
+    self.assertAllClose(lnp.broadcast_to(1, (3, 2)), onp.ones((3, 2)),
+                        check_dtypes=False)
+
 # Most grad tests are at the lax level (see lax_test.py), but we add some here
 # as needed for e.g. particular compound ops of interest.
 
