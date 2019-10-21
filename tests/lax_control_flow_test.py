@@ -1227,6 +1227,9 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     jtu.check_grads(linear_solve, (a, b), order=2)
 
+    # regression test for https://github.com/google/jax/issues/1536
+    jtu.check_grads(api.jit(linear_solve), (a, b), order=2)
+
   def test_custom_linear_solve_without_transpose_solve(self):
 
     def explicit_jacobian_solve(matvec, b):
