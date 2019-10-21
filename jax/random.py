@@ -208,7 +208,7 @@ def fold_in(key, data):
     statistically safe for producing a stream of new pseudo-random values.
   """
   int_data = data if isinstance(data, int) else hash(data)
-  return lax.tag(_fold_in(key, int_data), data)
+  return lax.push_tag(_fold_in(key, int_data), data)
 
 @jit
 def _fold_in(key, data):

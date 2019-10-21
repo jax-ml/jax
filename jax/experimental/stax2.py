@@ -1,13 +1,15 @@
 from __future__ import print_function
 
 import numpy as onp
-import operator as op
+import itertools as it
 
 import jax
 import jax.numpy as np
 from jax import core, lax, random, linear_util as lu
 from jax.interpreters import xla
 from jax.util import curry, partial, unzip2, safe_map as map
+from jax.api_util import flatten_fun
+from jax.tree_util import tree_map, tree_flatten, tree_unflatten
 
 # The idea here is to have the user supply a function that describes both
 # initialization and application of a network, and to "unzip" that function into
@@ -33,13 +35,14 @@ distributions = set([lax.sample_p])
 
 class KeyTrace(core.Trace):
 
-  def __init__(self, master, sublevel, storing, tree=None):
+  def __init__(self, master, sublevel, storing, tree=None, path_filter=lambda path: True):
     super(KeyTrace, self).__init__(master, sublevel)
     self.tree = dict() if tree is None else tree
     self.storing = storing
+    self.path_filter = path_filter
 
   def with_sublevel(self, sublevel):
-    return type(self)(self.master, sublevel, self.storing, self.tree)
+    return type(self)(self.master, sublevel, self.storing, self.tree, self.path_filter)
 
   def pure(self, val):
     return KeyTracer(self, val, None)
@@ -51,30 +54,32 @@ class KeyTrace(core.Trace):
     return KeyTracer(self, val.val, val.path)
 
   def maybe_set(self, path, val):
-    return maybe_set_tree(self.tree, path, val, self.storing)
+    if self.path_filter(path):
+      return maybe_set_tree(self.tree, path, val, self.storing)
+    else:
+      return val
 
   def process_primitive(self, primitive, tracers, params):
-    if primitive is lax.tag_p:
-      tracer, = tracers
-      return KeyTracer(self, tracer.val, tracer.path + (params['name'],))
-    elif primitive in distributions:
-      tracer, = tracers
-      val = self.maybe_set(tracer.path, tracer.val)
-      return KeyTracer(self, val, tracer.path)
+    # pick the shortest path!
+    paths = [tracer.path for tracer in tracers if tracer.path is not None]
+    if len(paths) > 0:
+      # TODO more-well-defined tiebreaking
+      out_path = min(paths, key=lambda path: len(path))
     else:
-      # pick the shortest path!
-      paths = [tracer.path for tracer in tracers if tracer.path is not None]
-      if len(paths) > 0:
-        # TODO more-well-defined tiebreaking
-        out_path = min(paths, key=lambda path: len(path))
-      else:
-        out_path = None
-      args = [tracer.val for tracer in tracers]
-      out = primitive.bind(*args, **params)
-      if primitive.multiple_results:
-        return [KeyTracer(self, val, out_path) for val in out]
-      else:
-        return KeyTracer(self, out, out_path)
+      out_path = None
+    args = [tracer.val for tracer in tracers]
+    out = primitive.bind(*args, **params)
+    if primitive is lax.push_tag_p:
+      out_path = out_path + (params["name"],)
+    elif primitive is lax.tie_in_p:
+      out_path = paths[0]
+    elif primitive in distributions:
+      assert not primitive.multiple_results
+      out = self.maybe_set(out_path, out)
+    if primitive.multiple_results:
+      return [KeyTracer(self, val, out_path) for val in out]
+    else:
+      return KeyTracer(self, out, out_path)
 
   def process_call(self, call_primitive, f, tracers, params):
 
@@ -92,92 +97,6 @@ class KeyTrace(core.Trace):
 
   def post_process_call(self, call_primitive, out_tracers, params):
     raise NotImplementedError
-
-def key_fun(fun, in_vals, in_paths, storing, in_tree):
-  with core.new_master(KeyTrace) as master:
-    trace = KeyTrace(master, core.cur_sublevel(), storing, in_tree)
-    fun, out_paths = key_subtrace(fun, trace, in_paths)
-    out_vals = fun.call_wrapped(*in_vals)
-    del master
-  return out_vals, out_paths(), trace.tree
-
-def unzip(f, *args, key_arg=0, ):
-  # abstract_args = tuple(map(xla.abstractify, args)) # consider using Concrete
-  # del args
-  abstract_args = args
-  fun = lu.wrap_init(f)
-  def init(key):
-    vals = abstract_args[:key_arg] + (key,) + abstract_args[key_arg + 1:]
-    paths = (None,) * key_arg + ((),) + (None,) * (len(args) - key_arg - 1)
-    out_vals, _, tree = key_fun(fun, vals, paths, True, dict())
-    return tree
-  def apply(tree, *args):
-    vals = args[:key_arg] + (abstract_args[key_arg],) + args[key_arg:]
-    paths = (None,) * key_arg + ((),) + (None,) * (len(abstract_args) - key_arg - 1)
-    out_vals, _, _ = key_fun(fun, vals, paths, False, tree)
-    return out_vals
-  return init, apply
-
-def iterpaths(tree, prefix=()):
-  for key, val in tree.items():
-    path = prefix + (key,)
-    if isinstance(val, dict):
-      yield from iterpaths(val, path)
-    else:
-      yield path, val
-
-def maybe_set_tree(tree, path, val, storing):
-    if len(path) == 0:
-      raise ValueError("cannot store samples without key path")
-    subtree = tree
-    for path_element in path[:-1]:
-      if path_element not in subtree:
-        assert storing, "key path {} not in provided tree".format(path)
-        subtree[path_element] = dict()
-      subtree = subtree[path_element]
-    if storing:
-      subtree[path[-1]] = val
-    assert path[-1] in subtree, "key path {} not in provided tree".format(path)
-    return subtree[path[-1]]
-
-def astree(paths_and_values):
-  tree = dict()
-  for path, val in paths_and_values:
-    maybe_set_tree(tree, path, val, True)
-  return tree
-
-def collect(f, key_arg=0, path_filter=lambda path: True):
-  fun = lu.wrap_init(f)
-  def collect_fn(*args):
-    paths = (None,) * key_arg + ((),) + (None,) * (len(args) - key_arg - 1)
-    out_vals, _, tree = key_fun(fun, args, paths, True, dict())
-    tree = astree((path, val) for path, val in iterpaths(tree) if path_filter(path))
-    return out_vals, tree
-  return collect_fn
-
-def inject(f, key_arg=0):
-  fun = lu.wrap_init(f)
-  def inject_fn(tree, *args):
-    paths = (None,) * key_arg + ((),) + (None,) * (len(args) - key_arg - 1)
-    out_vals, _, _, = key_fun(fun, args, paths, False, tree)
-    return out_vals
-  return inject_fn
-
-# some differences:
-# - metrics should run on unabstracted inputs
-# - init should fail on data-dependence on abstracted inputs? well, 
-#   not exactly abstracted inputs but ones that aren't provided as
-#   inputs to the init fn.
-# - 
-
-@lu.transformation_with_aux
-def key_subtrace(parent, in_paths, *in_vals):
-  trace = parent.with_sublevel(core.cur_sublevel())
-  in_tracers = map(partial(KeyTracer, trace), in_vals, in_paths)
-  outs = yield in_tracers, {}
-  out_tracers = map(trace.full_raise, outs)
-  out_vals, out_paths = unzip2((t.val, t.path) for t in out_tracers)
-  yield out_vals, out_paths
 
 class KeyTracer(core.Tracer):
   __slots__ = ['trace', 'val', 'path']
@@ -199,6 +118,115 @@ class KeyTracer(core.Tracer):
       return self.val
     else:
       return self
+
+@lu.transformation_with_aux
+def key_subtrace(parent, in_paths, *in_vals):
+  trace = parent.with_sublevel(core.cur_sublevel())
+  in_tracers = map(partial(KeyTracer, trace), in_vals, in_paths)
+  outs = yield in_tracers, {}
+  assert isinstance(outs, (tuple, list))
+  out_tracers = map(trace.full_raise, outs)
+  out_vals, out_paths = unzip2((t.val, t.path) for t in out_tracers)
+  yield out_vals, out_paths
+
+def key_fun(fun, in_vals, in_paths, storing, in_tree, path_filter=lambda path: True):
+  with core.new_master(KeyTrace) as master:
+    trace = KeyTrace(master, core.cur_sublevel(), storing, in_tree, path_filter)
+    fun, out_paths = key_subtrace(fun, trace, in_paths)
+    out_vals = fun.call_wrapped(*in_vals)
+    del master
+  return out_vals, out_paths(), trace.tree
+
+def unzip(f, *args, key_arg=0, **kwargs):
+  # abstract_args = tuple(map(xla.abstractify, args)) # consider using Concrete
+  # del args
+  flat_args1, in_tree1 = tree_flatten((args, kwargs))
+  def init(key):
+    flat_fun, _ = flatten_fun(lu.wrap_init(f), in_tree1)
+    vals = flat_args1[:key_arg] + [key] + flat_args1[key_arg + 1:]
+    paths = (None,) * key_arg + ((),) + (None,) * (len(flat_args1) - key_arg - 1)
+    _, _, tree = key_fun(flat_fun, vals, paths, True, dict())
+    return tree
+  def apply(tree, *args, **kwargs):
+    flat_fun, out_tree = flatten_fun(lu.wrap_init(f), in_tree1)
+    flat_args2, in_tree2 = tree_flatten((args, kwargs))
+    # cannot assert in_tree1 == in_tree2
+    # currently relying on order of args being preserved by flattening
+    vals = flat_args2[:key_arg] + [flat_args1[key_arg]] + flat_args2[key_arg:]
+    paths = (None,) * key_arg + ((),) + (None,) * (len(flat_args1) - key_arg - 1)
+    out_vals, _, _ = key_fun(flat_fun, vals, paths, False, tree)
+    return tree_unflatten(out_tree(), out_vals)
+  return init, apply
+
+def iterpaths(tree, prefix=()):
+  for key, val in tree.items():
+    path = prefix + (key,)
+    if isinstance(val, dict):
+      yield from iterpaths(val, path)
+    else:
+      yield path, val
+
+def maybe_set_tree(tree, path, val, storing):
+  #print(tree, path, val, storing)
+  if len(path) == 0:
+    raise ValueError("cannot store samples without key path")
+  subtree = tree
+  for path_element in path[:-1]:
+    if path_element not in subtree:
+      if storing:
+        subtree[path_element] = dict()
+      else:
+        return val
+    subtree = subtree[path_element]
+  if storing:
+    # maybe when checks are enabled?
+    # if path[-1] in subtree:
+    #   assert subtree[path[-1]] == val, "found different samples for key path {}".format(path)
+    subtree[path[-1]] = val
+  if path[-1] in subtree:
+    return subtree[path[-1]]
+  else:
+    return val
+
+def as_tree(paths_and_values):
+  tree = dict()
+  for path, val in paths_and_values:
+    maybe_set_tree(tree, path, val, True)
+  return tree
+
+def join_trees(tree1, tree2):
+  return as_tree(it.chain(iterpaths(tree1), iterpaths(tree2)))
+
+def collect(f, key_arg=0, path_filter=lambda path: True, return_value=True):
+  fun = lu.wrap_init(f)
+  def collect_fn(*args, **kwargs):
+    flat_args, in_tree = tree_flatten((args, kwargs))
+    flat_fun, out_tree = flatten_fun(fun, in_tree)
+    paths = (None,) * key_arg + ((),) + (None,) * (len(flat_args) - key_arg - 1)
+    out_flat, _, tree = key_fun(flat_fun, flat_args, paths, True, dict())
+    tree = as_tree((path, val) for path, val in iterpaths(tree) if path_filter(path))
+    if return_value:
+      return tree_unflatten(out_tree(), out_flat), tree
+    else:
+      return tree
+  return collect_fn
+
+def inject(f, key_arg=0):
+  fun = lu.wrap_init(f)
+  def inject_fn(tree, *args, **kwargs):
+    flat_args, in_tree = tree_flatten((args, kwargs))
+    flat_fun, out_tree = flatten_fun(fun, in_tree)
+    paths = (None,) * key_arg + ((),) + (None,) * (len(flat_args) - key_arg - 1)
+    out_vals, _, _, = key_fun(flat_fun, flat_args, paths, False, tree)
+    return tree_unflatten(out_tree(), out_vals)
+  return inject_fn
+
+# some differences:
+# - metrics should run on unabstracted inputs
+# - init should fail on data-dependence on abstracted inputs? well, 
+#   not exactly abstracted inputs but ones that aren't provided as
+#   inputs to the init fn.
+# - 
 
 # def unzip(f, *args):
 #   def init(key):
@@ -309,7 +337,7 @@ def Serial2(layers, x):
     x = layer(x)
   return x
 
-def f(key, x):
+def g(key, x):
   layer_1 = Dense(2, random.fold_in(key, 0))
   layer_2 = Dense(x.shape[0], random.fold_in(key, 1))
   net = Serial2([layer_1, layer_2, layer_1])
@@ -317,7 +345,7 @@ def f(key, x):
 
 x = np.ones(3)
 key = random.PRNGKey(0)
-init_fun, apply_fun = unzip(f, key, x)
+init_fun, apply_fun = unzip(g, key, x)
 param_tree = init_fun(key)
 print("Ex 3")
 print(param_tree)
@@ -378,45 +406,64 @@ from jax.nn import initializers
 #     return x
 
 def adam(step_size, b1, b2, epsilon):
-  def one_step(key, x, g, i):
-    m = initializers.zeros(random.fold_in(key, "first moment"), x.shape)
-    v = initializers.zeros(random.fold_in(key, "second moment"), x.shape)
+  def one_step(scope, x, g, i):
+    m = lax.tag(np.zeros_like(x), scope, "first moment")
+    v = lax.tag(np.zeros_like(x), scope, "second moment")
     m = (1 - b1) * g + b1 * m
     v = (1 - b2) * (g ** 2) + b2 * v
     mhat = m / (1 - b1 ** (i + 1))
     vhat = v / (1 - b2 ** (i + 1))
     x = x - step_size * mhat / (np.sqrt(vhat) + epsilon)
     return x, {"first moment": m, "second moment": v}
+  return one_step
+
+def momentum(step_size, mass):
+  def one_step(scope, x, g, i):
+    velocity = lax.tag(np.zeros_like(x), scope, "velocity")
+    velocity = mass * velocity - step_size * g
+    x = x + velocity
+    return x, {"velocity": velocity}
+  return one_step
 
 # separate passes for "get" and "put"
 # currently every sample point is both
 
+from jax.random import fold_in
+
 @curry
-def BatchNorm(key, x, momentum=0.99):
-  scale = initializers.ones(random.fold_in(key, "scale"), x.shape[1:])
-  offset = initializers.zeros(random.fold_in(key, "offset"), x.shape[1:])
-  mean = lax.sample(lax.tag(lax.tie_in(np.mean(x, axis=0, keepdims=True), key), "mean"))
-  variance = lax.sample(lax.tag(lax.tie_in(np.mean(x**2 - mean**2, axis=0, keepdims=True), key), "mean"))
-  return nn.normalize(x, axis=0, mean=mean, variance=variance) * scale + offset
+def BatchNorm(key, x):
+  scale = initializers.ones(fold_in(key, "scale"), x.shape[1:])
+  offset = initializers.zeros(fold_in(key, "offset"), x.shape[1:])
+  stats_scope = fold_in(key, "stats")
+  mean = lax.tag(np.mean(x, 0, keepdims=True), stats_scope, "mean")
+  variance = lax.tag(np.mean(x**2 - mean**2, 0, keepdims=True), stats_scope, "variance")
+  return nn.normalize(x, 0, mean, variance) * scale + offset
 
 def model(key, x):
-  x = Dense(2, random.fold_in(key, "dense"))(x)
-  x = BatchNorm(random.fold_in(key, "norm"))(x)
+  x = Dense(2, fold_in(key, "dense"))(x)
+  x = BatchNorm(fold_in(key, "norm"))(x)
   return x
 
 x = random.normal(random.PRNGKey(0), (4, 3))
 key = random.PRNGKey(0)
-model_with_stats = collect(model, path_filter=lambda path: "norm" in path)
-init_fun = collect(model_with_stats)
+# it's important to remove the sample primitives when the path matches
+# and not when it doesn't...
+# actually no, it's important to never remove the sample primitives.
+# two reasons: if the primitive is an actual distribution, you can't remove it
+# and also, while init maybe doesn't want to see it, inject does!
+model_with_stats = collect(model, path_filter=lambda path: "stats" in path)
+init_fun = collect(model_with_stats, return_value=False,
+                   path_filter=lambda path: "stats" not in path)
+apply_fun = inject(model)
 apply_with_stats = inject(model_with_stats)
 param_tree = init_fun(key, x)
-print(param_tree)
+print("param_tree", param_tree)
 y, stats_tree = apply_with_stats(param_tree, key, x)
-print(y)
-print(stats_tree)
-stats_tree["norm"]["variance"] = stats_tree["norm"]["variance"] / 10
-infer_y = apply_with_stats(join_trees(param_tree, stats_tree), key, x)
-print(infer_y)
+print("y", y)
+print("stats_tree", stats_tree)
+stats_tree["norm"]["stats"]["variance"] = stats_tree["norm"]["stats"]["variance"] / 10
+infer_y = apply_fun(join_trees(param_tree, stats_tree), key, x)
+print("infer_y", infer_y)
 
 # init_fun, apply_fun = unzip(batch_norm, x)
 # param_tree = init_fun(random.PRNGKey(0))
