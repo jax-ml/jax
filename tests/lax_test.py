@@ -103,7 +103,9 @@ LAX_OPS = [
     op_record("digamma", 1, float_dtypes, jtu.rand_positive()),
     op_record("erf", 1, float_dtypes, jtu.rand_small()),
     op_record("erfc", 1, float_dtypes, jtu.rand_small()),
-    op_record("erf_inv", 1, float_dtypes, jtu.rand_small(), tol=1e-2),
+    op_record("erf_inv", 1, float_dtypes, jtu.rand_small()),
+    op_record("bessel_i0e", 1, float_dtypes, jtu.rand_small()),
+    op_record("bessel_i1e", 1, float_dtypes, jtu.rand_small()),
 
     op_record("real", 1, complex_dtypes, jtu.rand_default()),
     op_record("imag", 1, complex_dtypes, jtu.rand_default()),
@@ -1542,6 +1544,10 @@ LAX_GRAD_OPS = [
                    dtypes=[onp.float64]),
     # grad_test_spec(lax.lgamma, nargs=1, order=2, rng=jtu.rand_small(),
     #                dtypes=[onp.float64]),  # TODO(mattjj): enable
+    grad_test_spec(lax.bessel_i0e, nargs=1, order=2, rng=jtu.rand_default(),
+                   dtypes=[onp.float64]),
+    grad_test_spec(lax.bessel_i1e, nargs=1, order=2, rng=jtu.rand_default(),
+                   dtypes=[onp.float64]),
 
     grad_test_spec(lax.real, nargs=1, order=2, rng=jtu.rand_default(),
                    dtypes=[onp.complex64]),
