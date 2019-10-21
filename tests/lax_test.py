@@ -71,67 +71,67 @@ def op_record(op, nargs, dtypes, rng, tol=1e-5):
   return OpRecord(op, nargs, dtypes, rng, tol)
 
 LAX_OPS = [
-    op_record(lax.neg, 1, default_dtypes + complex_dtypes, jtu.rand_small()),
-    op_record(lax.sign, 1, default_dtypes, jtu.rand_small()),
-    op_record(lax.floor, 1, float_dtypes, jtu.rand_small()),
-    op_record(lax.ceil, 1, float_dtypes, jtu.rand_small()),
-    op_record(lax.round, 1, float_dtypes, jtu.rand_default()),
+    op_record("neg", 1, default_dtypes + complex_dtypes, jtu.rand_small()),
+    op_record("sign", 1, default_dtypes, jtu.rand_small()),
+    op_record("floor", 1, float_dtypes, jtu.rand_small()),
+    op_record("ceil", 1, float_dtypes, jtu.rand_small()),
+    op_record("round", 1, float_dtypes, jtu.rand_default()),
 
-    op_record(lax.is_finite, 1, float_dtypes, jtu.rand_small()),
+    op_record("is_finite", 1, float_dtypes, jtu.rand_small()),
 
-    op_record(lax.exp, 1, float_dtypes + complex_dtypes, jtu.rand_small()),
-    op_record(lax.expm1, 1, float_dtypes + complex_dtypes, jtu.rand_small()),
-    op_record(lax.log, 1, float_dtypes + complex_dtypes, jtu.rand_positive()),
-    op_record(lax.log1p, 1, float_dtypes + complex_dtypes, jtu.rand_positive()),
-    op_record(lax.tanh, 1, float_dtypes + complex_dtypes, jtu.rand_small()),
-    op_record(lax.sin, 1, float_dtypes + complex_dtypes, jtu.rand_default()),
-    op_record(lax.cos, 1, float_dtypes + complex_dtypes, jtu.rand_default()),
-    op_record(lax.atan2, 2, float_dtypes, jtu.rand_default()),
+    op_record("exp", 1, float_dtypes + complex_dtypes, jtu.rand_small()),
+    op_record("expm1", 1, float_dtypes + complex_dtypes, jtu.rand_small()),
+    op_record("log", 1, float_dtypes + complex_dtypes, jtu.rand_positive()),
+    op_record("log1p", 1, float_dtypes + complex_dtypes, jtu.rand_positive()),
+    op_record("tanh", 1, float_dtypes + complex_dtypes, jtu.rand_small()),
+    op_record("sin", 1, float_dtypes + complex_dtypes, jtu.rand_default()),
+    op_record("cos", 1, float_dtypes + complex_dtypes, jtu.rand_default()),
+    op_record("atan2", 2, float_dtypes, jtu.rand_default()),
 
-    op_record(lax.sqrt, 1, float_dtypes + complex_dtypes, jtu.rand_positive()),
-    op_record(lax.rsqrt, 1, float_dtypes + complex_dtypes, jtu.rand_positive()),
-    op_record(lax.square, 1, float_dtypes + complex_dtypes, jtu.rand_default()),
-    op_record(lax.reciprocal, 1, float_dtypes + complex_dtypes, jtu.rand_positive()),
-    op_record(lax.tan, 1, float_dtypes, jtu.rand_default()),
-    op_record(lax.asin, 1, float_dtypes, jtu.rand_small()),
-    op_record(lax.acos, 1, float_dtypes, jtu.rand_small()),
-    op_record(lax.atan, 1, float_dtypes, jtu.rand_small()),
-    op_record(lax.sinh, 1, float_dtypes + complex_dtypes, jtu.rand_default()),
-    op_record(lax.cosh, 1, float_dtypes + complex_dtypes, jtu.rand_default()),
+    op_record("sqrt", 1, float_dtypes + complex_dtypes, jtu.rand_positive()),
+    op_record("rsqrt", 1, float_dtypes + complex_dtypes, jtu.rand_positive()),
+    op_record("square", 1, float_dtypes + complex_dtypes, jtu.rand_default()),
+    op_record("reciprocal", 1, float_dtypes + complex_dtypes, jtu.rand_positive()),
+    op_record("tan", 1, float_dtypes, jtu.rand_default()),
+    op_record("asin", 1, float_dtypes, jtu.rand_small()),
+    op_record("acos", 1, float_dtypes, jtu.rand_small()),
+    op_record("atan", 1, float_dtypes, jtu.rand_small()),
+    op_record("sinh", 1, float_dtypes + complex_dtypes, jtu.rand_default()),
+    op_record("cosh", 1, float_dtypes + complex_dtypes, jtu.rand_default()),
 
-    op_record(lax.lgamma, 1, float_dtypes, jtu.rand_positive()),
-    op_record(lax.digamma, 1, float_dtypes, jtu.rand_positive()),
-    op_record(lax.erf, 1, float_dtypes, jtu.rand_small()),
-    op_record(lax.erfc, 1, float_dtypes, jtu.rand_small()),
-    op_record(lax.erf_inv, 1, float_dtypes, jtu.rand_small(), tol=1e-2),
+    op_record("lgamma", 1, float_dtypes, jtu.rand_positive()),
+    op_record("digamma", 1, float_dtypes, jtu.rand_positive()),
+    op_record("erf", 1, float_dtypes, jtu.rand_small()),
+    op_record("erfc", 1, float_dtypes, jtu.rand_small()),
+    op_record("erf_inv", 1, float_dtypes, jtu.rand_small(), tol=1e-2),
 
-    op_record(lax.real, 1, complex_dtypes, jtu.rand_default()),
-    op_record(lax.imag, 1, complex_dtypes, jtu.rand_default()),
-    op_record(lax.complex, 2, [onp.float32], jtu.rand_default()),
-    op_record(lax.conj, 1, [onp.float32] + complex_dtypes, jtu.rand_default()),
-    op_record(lax.abs, 1, default_dtypes + complex_dtypes, jtu.rand_default()),
-    op_record(lax.pow, 2, float_dtypes + complex_dtypes, jtu.rand_positive()),
+    op_record("real", 1, complex_dtypes, jtu.rand_default()),
+    op_record("imag", 1, complex_dtypes, jtu.rand_default()),
+    op_record("complex", 2, [onp.float32], jtu.rand_default()),
+    op_record("conj", 1, [onp.float32] + complex_dtypes, jtu.rand_default()),
+    op_record("abs", 1, default_dtypes + complex_dtypes, jtu.rand_default()),
+    op_record("pow", 2, float_dtypes + complex_dtypes, jtu.rand_positive()),
 
-    op_record(lax.bitwise_and, 2, bool_dtypes, jtu.rand_small()),
-    op_record(lax.bitwise_not, 1, bool_dtypes, jtu.rand_small()),
-    op_record(lax.bitwise_or, 2, bool_dtypes, jtu.rand_small()),
-    op_record(lax.bitwise_xor, 2, bool_dtypes, jtu.rand_small()),
+    op_record("bitwise_and", 2, bool_dtypes, jtu.rand_small()),
+    op_record("bitwise_not", 1, bool_dtypes, jtu.rand_small()),
+    op_record("bitwise_or", 2, bool_dtypes, jtu.rand_small()),
+    op_record("bitwise_xor", 2, bool_dtypes, jtu.rand_small()),
 
-    op_record(lax.add, 2, default_dtypes + complex_dtypes, jtu.rand_small()),
-    op_record(lax.sub, 2, default_dtypes + complex_dtypes, jtu.rand_small()),
-    op_record(lax.mul, 2, default_dtypes + complex_dtypes, jtu.rand_small()),
-    op_record(lax.div, 2, default_dtypes + complex_dtypes, jtu.rand_nonzero()),
-    op_record(lax.rem, 2, default_dtypes, jtu.rand_nonzero()),
+    op_record("add", 2, default_dtypes + complex_dtypes, jtu.rand_small()),
+    op_record("sub", 2, default_dtypes + complex_dtypes, jtu.rand_small()),
+    op_record("mul", 2, default_dtypes + complex_dtypes, jtu.rand_small()),
+    op_record("div", 2, default_dtypes + complex_dtypes, jtu.rand_nonzero()),
+    op_record("rem", 2, default_dtypes, jtu.rand_nonzero()),
 
-    op_record(lax.max, 2, all_dtypes, jtu.rand_small()),
-    op_record(lax.min, 2, all_dtypes, jtu.rand_small()),
+    op_record("max", 2, all_dtypes, jtu.rand_small()),
+    op_record("min", 2, all_dtypes, jtu.rand_small()),
 
-    op_record(lax.eq, 2, all_dtypes, jtu.rand_some_equal()),
-    op_record(lax.ne, 2, all_dtypes, jtu.rand_small()),
-    op_record(lax.ge, 2, default_dtypes, jtu.rand_small()),
-    op_record(lax.gt, 2, default_dtypes, jtu.rand_small()),
-    op_record(lax.le, 2, default_dtypes, jtu.rand_small()),
-    op_record(lax.lt, 2, default_dtypes, jtu.rand_small()),
+    op_record("eq", 2, all_dtypes, jtu.rand_some_equal()),
+    op_record("ne", 2, all_dtypes, jtu.rand_small()),
+    op_record("ge", 2, default_dtypes, jtu.rand_small()),
+    op_record("gt", 2, default_dtypes, jtu.rand_small()),
+    op_record("le", 2, default_dtypes, jtu.rand_small()),
+    op_record("lt", 2, default_dtypes, jtu.rand_small()),
 ]
 
 CombosWithReplacement = itertools.combinations_with_replacement
@@ -143,29 +143,31 @@ class LaxTest(jtu.JaxTestCase):
   @parameterized.named_parameters(itertools.chain.from_iterable(
       jtu.cases_from_list(
         {"testcase_name": jtu.format_test_name_suffix(
-            rec.op.__name__, shapes, itertools.repeat(dtype)),
-         "op": rec.op, "rng": rec.rng, "shapes": shapes, "dtype": dtype}
+            rec.op, shapes, itertools.repeat(dtype)),
+         "op_name": rec.op, "rng": rec.rng, "shapes": shapes, "dtype": dtype}
         for shape_group in compatible_shapes
         for shapes in CombosWithReplacement(shape_group, rec.nargs)
         for dtype in rec.dtypes)
       for rec in LAX_OPS))
-  def testOp(self, op, rng, shapes, dtype):
+  def testOp(self, op_name, rng, shapes, dtype):
     args_maker = lambda: [rng(shape, dtype) for shape in shapes]
+    op = getattr(lax, op_name)
     self._CompileAndCheck(op, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
       jtu.cases_from_list(
         {"testcase_name": jtu.format_test_name_suffix(
-            rec.op.__name__, shapes, itertools.repeat(dtype)),
-         "op": rec.op, "rng": rec.rng, "shapes": shapes, "dtype": dtype,
+            rec.op, shapes, itertools.repeat(dtype)),
+         "op_name": rec.op, "rng": rec.rng, "shapes": shapes, "dtype": dtype,
          "tol": rec.tol}
         for shape_group in compatible_shapes
         for shapes in CombosWithReplacement(shape_group, rec.nargs)
         for dtype in rec.dtypes)
       for rec in LAX_OPS))
-  def testOpAgainstNumpy(self, op, rng, shapes, dtype, tol):
+  def testOpAgainstNumpy(self, op_name, rng, shapes, dtype, tol):
     args_maker = lambda: [rng(shape, dtype) for shape in shapes]
-    numpy_op = getattr(lax_reference, op.__name__)
+    op = getattr(lax, op_name)
+    numpy_op = getattr(lax_reference, op_name)
     self._CheckAgainstNumpy(op, numpy_op, args_maker, tol=tol)
 
   # TODO test shift_left, shift_right_arithmetic, shift_right_logical
@@ -2346,16 +2348,17 @@ class LaxVmapTest(jtu.JaxTestCase):
   @parameterized.named_parameters(itertools.chain.from_iterable(
       jtu.cases_from_list(
         {"testcase_name": "{}_bdims={}".format(
-            jtu.format_test_name_suffix(rec.op.__name__, shapes,
+            jtu.format_test_name_suffix(rec.op, shapes,
                                         itertools.repeat(dtype)), bdims),
-         "op": rec.op, "rng": rec.rng, "shapes": shapes, "dtype": dtype,
+         "op_name": rec.op, "rng": rec.rng, "shapes": shapes, "dtype": dtype,
          "bdims": bdims}
         for shape_group in compatible_shapes
         for shapes in CombosWithReplacement(shape_group, rec.nargs)
         for bdims in all_bdims(*shapes)
         for dtype in rec.dtypes)
       for rec in LAX_OPS))
-  def testOp(self, op, rng, shapes, dtype, bdims):
+  def testOp(self, op_name, rng, shapes, dtype, bdims):
+    op = getattr(lax, op_name)
     self._CheckBatching(op, 10, bdims, shapes, dtype, rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
