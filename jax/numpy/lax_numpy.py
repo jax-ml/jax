@@ -831,7 +831,7 @@ def isclose(a, b, rtol=1e-05, atol=1e-08):
   else:
     return lax.eq(a, b)
 
-numpy_version = tuple(map(int, onp.version.version.split('.')))
+numpy_version = tuple(map(int, onp.version.version.split('.')[:2]))
 if numpy_version < (1, 14):
   # see discussion at https://github.com/numpy/numpy/pull/9720
   def _maybe_numpy_1_13_isclose_behavior(a, out):

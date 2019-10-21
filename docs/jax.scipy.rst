@@ -41,6 +41,8 @@ jax.scipy.special
    erfinv
    expit
    gammaln
+   i0e
+   i1e
    log_ndtr
    logit
    logsumexp

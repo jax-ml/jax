@@ -371,7 +371,6 @@ class LaxRandomTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}D_{}".format(dim, onp.dtype(dtype).name),
        "dim": dim, "dtype": dtype}
-      for dim in [1, 3, 5]
       for dtype in [onp.float32, onp.float64]))
   def testMultivariateNormal(self, dim, dtype):
     r = onp.random.RandomState(dim)

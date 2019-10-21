@@ -180,6 +180,18 @@ def digamma(x):
   r"""Elementwise digamma: :math:`\psi(x)`."""
   return digamma_p.bind(x)
 
+def bessel_i0e(x):
+  r"""Exponentially scaled modified Bessel function of order 0:
+  :math:`\mathrm{i0e}(x) = e^{-\mathrm{abs}(x)} \mathrm{i0}(x)`
+  """
+  return bessel_i0e_p.bind(x)
+
+def bessel_i1e(x):
+  r"""Exponentially scaled modified Bessel function of order 1:
+  :math:`\mathrm{i1e}(x) = e^{-\mathrm{abs}(x)} \mathrm{i1}(x)`
+  """
+  return bessel_i1e_p.bind(x)
+
 def erf(x):
   r"""Elementwise error function: :math:`\mathrm{erf}(x)`."""
   return erf_p.bind(x)
@@ -1363,15 +1375,18 @@ def reciprocal(x):
   r"""Elementwise reciprocal: :math:`1 \over x`."""
   return div(_const(x, 1), x)
 
+@api.jit
 def tan(x):
   r"""Elementwise tangent: :math:`\mathrm{tan}(x)`."""
   return div(sin(x), cos(x))
 
+@api.jit
 def asin(x):
   r"""Elementwise arc sine: :math:`\mathrm{asin}(x)`."""
   return mul(_const(x, 2),
              atan2(x, add(_const(x, 1), sqrt(sub(_const(x, 1), square(x))))))
 
+@api.jit
 def acos(x):
   r"""Elementwise arc cosine: :math:`\mathrm{acos}(x)`."""
   return select(
@@ -1384,12 +1399,14 @@ def atan(x):
   r"""Elementwise arc tangent: :math:`\mathrm{atan}(x)`."""
   return atan2(x, _const(x, 1))
 
+@api.jit
 def sinh(x):
   r"""Elementwise hyperbolic sine: :math:`\mathrm{sinh}(x)`."""
   log_half = _const(x, onp.log(0.5))
   # This formulation avoids overflow when e^x is inf but e^x/2 is not inf.
   return sub(exp(add(log_half, x)), exp(sub(log_half, x)))
 
+@api.jit
 def cosh(x):
   r"""Elementwise hyperbolic cosine: :math:`\mathrm{cosh}(x)`."""
   log_half = _const(x, onp.log(0.5))
@@ -1610,6 +1627,19 @@ lgamma_p = standard_unop(_float, 'lgamma')
 ad.defjvp(lgamma_p, lambda g, x: mul(g, digamma(x)))
 
 digamma_p = standard_unop(_float, 'digamma')
+
+bessel_i0e_p = standard_unop(_float, 'bessel_i0e')
+ad.defjvp2(bessel_i0e_p, lambda g, y, x: g * (bessel_i1e(x) - sign(x) * y))
+
+bessel_i1e_p = standard_unop(_float, 'bessel_i1e')
+def _bessel_i1e_jvp(g, y, x):
+  eps = onp.finfo(_dtype(x)).eps
+  x_is_not_tiny = abs(x) > eps
+  safe_x = select(x_is_not_tiny, x, full_like(x, eps))
+  dy_dx = bessel_i0e(safe_x) - y * (sign(safe_x) + reciprocal(safe_x))
+  dy_dx = select(x_is_not_tiny, dy_dx, full_like(x, 0.5))
+  return g * dy_dx
+ad.defjvp2(bessel_i1e_p, _bessel_i1e_jvp)
 
 erf_p = standard_unop(_float, 'erf')
 ad.defjvp(erf_p, lambda g, x: mul(_const(x, 2. / onp.sqrt(onp.pi)),
