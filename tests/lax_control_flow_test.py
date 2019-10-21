@@ -828,6 +828,29 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         'scan got value with no leading axis to scan over.*',
         lambda: lax.scan(plus_one, p0, list(range(5))))
 
+  def testScanTypeErrors(self):
+    """Test typing error messages for scan."""
+    a = np.arange(5)
+    # Body output not a tuple
+    with self.assertRaisesRegex(TypeError, 'scan body output must be a pair'):
+      lax.scan(lambda c, x: 0, 0, a)
+    # Carry input and output are tuples with different structure
+    with  self.assertRaisesRegex(TypeError,
+                                 'scan carry output type must match carry input type'):
+      lax.scan(lambda c, x: ((0, 0, 0), x), (1, (2, 3)), a)
+    with self.assertRaisesRegex(TypeError, 'scan carry output type must match carry input type'):
+      lax.scan(lambda c, x: (0, x), None, a)
+    with self.assertRaisesRegex(TypeError, 'scan carry output type must match carry input type'):
+      lax.scan(lambda c, x: (0, x), 1.0, a)
+    with self.assertRaisesRegex(TypeError, 'scan carry output type must match carry input type'):
+      lax.scan(lambda c, x: (0, x), (1, 2), np.arange(5))
+
+    # Carry input and output are tuples with different structure
+    self.assertRaisesRegex(TypeError,
+                           'scan carry output type must match carry input type',
+                           lambda: lax.scan(lambda c, x: ((0, 0, 0), x), (1, (2, 3)), a))
+
+
   def testScanHigherOrderDifferentiation(self):
     d = 0.75
     def f(c, a):
