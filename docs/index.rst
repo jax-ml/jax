@@ -25,7 +25,7 @@ For an introduction to JAX, start at the
    notebooks/How_JAX_primitives_work
    Training a Simple Neural Network, with Tensorflow Datasets Data Loading <https://github.com/google/jax/blob/master/docs/notebooks/neural_network_with_tfds_data.ipynb>
    notebooks/maml
-   Generative Modeling by Estimating Gradients of Data Distribution <https://github.com/google/jax/blob/master/docs/notebooks/score_matching.ipynb>
+   notebooks/score_matching
    notebooks/vmapped_log_probs
 
 .. toctree::
