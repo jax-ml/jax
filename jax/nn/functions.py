@@ -35,7 +35,8 @@ def swish(x): return x * sigmoid(x)
 def log_sigmoid(x): return -softplus(-x)
 
 def elu(x, alpha=1.0):
-  return np.where(x > 0, x, alpha * np.expm1(x))
+  safe_x = np.where(x > 0, 0., x)
+  return np.where(x > 0, x, alpha * np.expm1(safe_x))
 
 def leaky_relu(x, negative_slope=1e-2):
   return np.where(x >= 0, x, negative_slope * x)
