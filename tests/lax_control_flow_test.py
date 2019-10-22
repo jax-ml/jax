@@ -1128,7 +1128,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     b = rng.randn(2)
     jtu.check_grads(linear_solve, (a, b), order=2)
 
-  def test_root_scalar(self):
+  def test_custom_root_scalar(self):
 
     def scalar_solve(f, y):
       return y / f(1.0)
@@ -1153,7 +1153,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     def sqrt_cubed(x, tangent_solve=scalar_solve):
       f = lambda y: y ** 2 - x ** 3
-      return lax.root(f, 0.0, binary_search, tangent_solve)
+      return lax.custom_root(f, 0.0, binary_search, tangent_solve)
 
     value, grad = api.value_and_grad(sqrt_cubed)(5.0)
     self.assertAllClose(value, 5 ** 1.5, check_dtypes=False)
@@ -1169,7 +1169,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     results = api.jit(sqrt_cubed)(5.0)
     self.assertAllClose(results, 5.0 ** 1.5, check_dtypes=False)
 
-  def test_root_vector_with_closure(self):
+  def test_custom_root_vector_with_closure(self):
 
     def vector_solve(f, y):
       return np.linalg.solve(api.jacobian(f)(y), y)
@@ -1179,22 +1179,22 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       x0 = np.zeros_like(b)
       solution = np.linalg.solve(a, b)
       oracle = lambda func, x0: solution
-      return lax.root(f, x0, oracle, vector_solve)
+      return lax.custom_root(f, x0, oracle, vector_solve)
 
     rng = onp.random.RandomState(0)
     a = rng.randn(2, 2)
     b = rng.randn(2)
     jtu.check_grads(linear_solve, (a, b), order=2)
 
-  def test_root_errors(self):
+  def test_custom_root_errors(self):
     with self.assertRaisesRegex(TypeError, re.escape("f() output pytree")):
-      lax.root(lambda x: (x, x), 0.0, lambda f, x: x, lambda f, x: x)
+      lax.custom_root(lambda x: (x, x), 0.0, lambda f, x: x, lambda f, x: x)
     with self.assertRaisesRegex(TypeError, re.escape("solve() output pytree")):
-      lax.root(lambda x: x, 0.0, lambda f, x: (x, x), lambda f, x: x)
+      lax.custom_root(lambda x: x, 0.0, lambda f, x: (x, x), lambda f, x: x)
 
     def dummy_root_usage(x):
       f = lambda y: x - y
-      return lax.root(f, 0.0, lambda f, x: x, lambda f, x: (x, x))
+      return lax.custom_root(f, 0.0, lambda f, x: x, lambda f, x: (x, x))
 
     with self.assertRaisesRegex(
         TypeError, re.escape("tangent_solve() output pytree")):
