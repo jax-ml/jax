@@ -133,7 +133,10 @@ def check_jvp(f, f_jvp, args, atol=ATOL, rtol=RTOL, eps=EPS):
   v_out, t_out = f_jvp(args, tangent)
   v_out_expected = f(*args)
   t_out_expected = numerical_jvp(f, args, tangent, eps=eps)
-  check_eq(v_out, v_out_expected)
+  # In principle we should expect exact equality of v_out and v_out_expected,
+  # but due to nondeterminism especially on GPU (e.g., due to convolution
+  # autotuning) we only require "close".
+  check_close(v_out, v_out_expected, atol=atol, rtol=rtol)
   check_close(t_out, t_out_expected, atol=atol, rtol=rtol)
 
 
@@ -141,7 +144,7 @@ def check_vjp(f, f_vjp, args, atol=ATOL, rtol=RTOL, eps=EPS):
   _rand_like = partial(rand_like, onp.random.RandomState(0))
   v_out, vjpfun = f_vjp(*args)
   v_out_expected = f(*args)
-  check_eq(v_out, v_out_expected)
+  check_close(v_out, v_out_expected, atol=atol, rtol=rtol)
   tangent = tree_map(_rand_like, args)
   tangent_out = numerical_jvp(f, args, tangent, eps=eps)
   cotangent = tree_map(_rand_like, v_out)

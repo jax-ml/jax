@@ -108,10 +108,11 @@ LAX_OPS = [
               {onp.float64: 1e-8}),
     op_record("log", 1, float_dtypes + complex_dtypes, jtu.rand_positive()),
     op_record("log1p", 1, float_dtypes + complex_dtypes, jtu.rand_positive()),
-    # TODO(b/142975473): on CPU, expm1 for complex128 is only accurate to
+    # TODO(b/142975473): on CPU, tanh for complex128 is only accurate to
     # ~float32 precision.
+    # TODO(b/143135720): on GPU, tanh has only ~float32 precision.
     op_record("tanh", 1, float_dtypes + complex_dtypes, jtu.rand_small(),
-              {onp.complex128: 1e-7}),
+              {onp.float64: 1e-9, onp.complex128: 1e-7}),
     op_record("sin", 1, float_dtypes + complex_dtypes, jtu.rand_default()),
     op_record("cos", 1, float_dtypes + complex_dtypes, jtu.rand_default()),
     op_record("atan2", 2, float_dtypes, jtu.rand_default()),
@@ -1844,7 +1845,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
   def testConvGeneralDilatedGrad(self, lhs_shape, rhs_shape, dtype, strides,
                                  padding, lhs_dil, rhs_dil, dimension_numbers,
                                  perms, feature_group_count, rng):
-    tol = gradient_tolerance(dtype, {onp.float16: 1e-1, onp.float32: 1e-4})
+    tol = gradient_tolerance(dtype, {onp.float16: 5e-1, onp.float32: 1e-4})
 
     # permute shapes to match dim_spec, scale by feature_group_count
     lhs_perm, rhs_perm = perms
@@ -1873,7 +1874,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       for lhs_shape in [(2,), (3, 2)] for rhs_shape in [(2,), (2, 4)]
       for dtype in float_dtypes))
   def testDotGrad(self, lhs_shape, rhs_shape, dtype, rng):
-    tol = gradient_tolerance(dtype, {onp.float16: 1e-1})
+    tol = gradient_tolerance(dtype, {onp.float16: 1e-1, onp.float32: 1e-4})
     lhs = rng(lhs_shape, dtype)
     rhs = rng(rhs_shape, dtype)
     dot = partial(lax.dot, precision=lax.Precision.HIGHEST)
@@ -2125,8 +2126,9 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        "dims": dims, "rng": rng}
       for init_val, op, dtypes in [
           (0, lax.add, inexact_dtypes),
-          (-onp.inf, lax.max, inexact_dtypes),
-          (onp.inf, lax.min, inexact_dtypes),
+          # Precision problems for float16 tests.
+          (-onp.inf, lax.max, [t for t in inexact_dtypes if t != onp.float16]),
+          (onp.inf, lax.min, [t for t in inexact_dtypes if t != onp.float16]),
           # The mul test overflows the range of a float16.
           (1, lax.mul, [t for t in inexact_dtypes if t != onp.float16]),
       ]
@@ -2148,7 +2150,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     operand = rng(shape, dtype)
     init_val = onp.asarray(init_val, dtype=dtype)
     reduce = lambda operand: lax.reduce(operand, init_val, op, dims)
-    eps = 1e-2 if onp.finfo(dtype).bits <= 32 else None
+    eps = (1.0 if onp.finfo(dtype).bits == 16 and op is lax.add else
+           1e-2 if onp.finfo(dtype).bits == 32 else None)
     check_grads(reduce, (operand,), 1, ["fwd", "rev"], tol, tol, eps)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -2216,10 +2219,10 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       for axis in [len(shape) - 1]
       for rng in [jtu.rand_default()]))
   def testSortGrad(self, shape, dtype, axis, rng):
-    tol = gradient_tolerance(dtype)
+    tol = gradient_tolerance(dtype, {onp.float32: 1e-3})
     operand = rng(shape, dtype)
     sort = lambda x: lax.sort(x, axis)
-    check_grads(sort, (operand,), 2, ["fwd", "rev"], tol, tol, eps=1.)
+    check_grads(sort, (operand,), 2, ["fwd", "rev"], tol, tol, eps=1e-2)
 
   # TODO(b/205052657): enable more tests when supported
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -2434,7 +2437,8 @@ class LaxVmapTest(jtu.JaxTestCase):
       for rec in LAX_OPS))
   def testOp(self, op_name, rng, shapes, dtype, bdims):
     op = getattr(lax, op_name)
-    self._CheckBatching(op, 10, bdims, shapes, dtype, rng)
+    tol = tolerance(dtype)
+    self._CheckBatching(op, 10, bdims, shapes, dtype, rng, tol, tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -2558,7 +2562,7 @@ class LaxVmapTest(jtu.JaxTestCase):
       for rng in [jtu.rand_default()]))
   def testDot(self, lhs_shape, rhs_shape, dtype, bdims, rng):
     self._CheckBatching(lax.dot, 5, bdims, (lhs_shape, rhs_shape), dtype, rng,
-                        rtol=tolerance(dtype, {onp.float16: 2e-2}))
+                        rtol=tolerance(dtype, {onp.float16: 5e-2}))
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":

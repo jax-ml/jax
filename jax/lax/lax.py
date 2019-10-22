@@ -1402,16 +1402,22 @@ def atan(x):
 @api.jit
 def sinh(x):
   r"""Elementwise hyperbolic sine: :math:`\mathrm{sinh}(x)`."""
+  dtype = _dtype(x)
+  x = convert_element_type(x, onp.float32) if dtype == onp.float16 else x
   log_half = _const(x, onp.log(0.5))
   # This formulation avoids overflow when e^x is inf but e^x/2 is not inf.
-  return sub(exp(add(log_half, x)), exp(sub(log_half, x)))
+  out = sub(exp(add(log_half, x)), exp(sub(log_half, x)))
+  return convert_element_type(out, dtype) if dtype == onp.float16 else out
 
 @api.jit
 def cosh(x):
   r"""Elementwise hyperbolic cosine: :math:`\mathrm{cosh}(x)`."""
+  dtype = _dtype(x)
+  x = convert_element_type(x, onp.float32) if dtype == onp.float16 else x
   log_half = _const(x, onp.log(0.5))
   # This formulation avoids overflow when e^x is inf but e^x/2 is not inf.
-  return add(exp(add(log_half, x)), exp(sub(log_half, x)))
+  out = add(exp(add(log_half, x)), exp(sub(log_half, x)))
+  return convert_element_type(out, dtype) if dtype == onp.float16 else out
 
 
 # Add some methods to ShapedArray that rely on lax primitives
