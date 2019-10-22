@@ -92,9 +92,8 @@ language = None
 exclude_patterns = [
     # Slow notebook: long time to load tf.ds
     'notebooks/neural_network_with_tfds_data.ipynb',
+    # Slow notebook
     'notebooks/Neural_Network_and_Data_Loading.ipynb',
-    # Next one needs sklearn, which is not available at Travis.
-    'notebooks/score_matching.ipynb'
 ]
 
 # The name of the Pygments (syntax highlighting) style to use.

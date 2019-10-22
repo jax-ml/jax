@@ -36,6 +36,7 @@ install:
   - if [[ "$JAX_ONLY_DOCUMENTATION" != "" ]]; then
       conda install --yes -c conda-forge pandoc ipykernel;
       conda install --yes sphinx sphinx_rtd_theme nbsphinx jupyter_client matplotlib;
+      pip install sklearn;
     fi
 script:
   - if [[ "$JAX_ONLY_DOCUMENTATION" == "" ]]; then
