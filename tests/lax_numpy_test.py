@@ -138,7 +138,7 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
     # ~float32 precision.
     # TODO(b/143135720): on GPU, tanh has only ~float32 precision.
     op_record("tanh", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"],
-              tolerance={onp.float64: 1e-9, onp.complex128: 1e-7}),
+              tolerance={onp.float64: 1e-7, onp.complex128: 1e-7}),
     op_record("arcsin", 1, float_dtypes, all_shapes, jtu.rand_small(), ["rev"]),
     op_record("arccos", 1, float_dtypes, all_shapes, jtu.rand_small(), ["rev"]),
     op_record("arctan", 1, float_dtypes, all_shapes, jtu.rand_small(), ["rev"]),
@@ -458,7 +458,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     onp_fun = lambda x: onp_op(x, axis, dtype=out_dtype, keepdims=keepdims)
     lnp_fun = lambda x: lnp_op(x, axis, dtype=out_dtype, keepdims=keepdims)
     args_maker = lambda: [rng(shape, dtype)]
-    tol_spec = {onp.float64: 1e-6, onp.complex128: 1e-6}
+    tol_spec = {onp.float16: 1e-2, onp.float64: 1e-6, onp.complex128: 1e-6}
     tol = tolerance(dtype, tol_spec)
     tol = max(tol, tolerance(out_dtype, tol_spec)) if out_dtype else tol
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True,
@@ -1205,7 +1205,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       lnp_fun = lambda x, weights: lnp.average(x, axis, weights, returned)
       args_maker = lambda: [rng(shape, dtype), rng(weights_shape, dtype)]
 
-    tol = tolerance(dtype, {onp.float16: 1e-1, onp.float32: 1e-3})
+    tol = tolerance(dtype, {onp.float16: 1e-1, onp.float32: 1e-3,
+                            onp.float64: 1e-10, onp.complex64: 1e-3,
+                            onp.complex128: 1e-10})
     try:
         self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True,
                                 tol=tol)
@@ -1855,7 +1857,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       x = dtype(x)
       expected = onp_op(x)
       actual = lnp_op(x)
-      tol = tolerance(dtype, {onp.float32: 1e-3, onp.float64: 1e-8})
+      tol = tolerance(dtype, {onp.float32: 1e-3, onp.float64: 1e-7})
       self.assertAllClose(expected, actual, check_dtypes=True, atol=tol,
                           rtol=tol)
 
