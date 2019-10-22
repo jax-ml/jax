@@ -188,7 +188,7 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("logaddexp2", 2, float_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("polyval", 2, number_dtypes, nonempty_nonscalar_array_shapes,
               jtu.rand_default(), [], check_dtypes=False,
-              tolerance={onp.float16: 1e-2}),
+              tolerance={onp.float16: 1e-2, onp.float64: 1e-12}),
     op_record("positive", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("power", 2, number_dtypes, all_shapes, jtu.rand_positive(), ["rev"]),
     op_record("rad2deg", 1, float_dtypes, all_shapes, jtu.rand_default(), []),
@@ -454,7 +454,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     lnp_fun = lambda x: lnp_op(x, axis, dtype=out_dtype, keepdims=keepdims)
     args_maker = lambda: [rng(shape, dtype)]
     tol_spec = {onp.float64: 1e-6, onp.complex128: 1e-6}
-    tol = max(tolerance(dtype, tol_spec), tolerance(out_dtype, tol_spec))
+    tol = tolerance(dtype, tol_spec)
+    tol = max(tol, tolerance(out_dtype, tol_spec)) if out_dtype else tol
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True,
                             tol=tol)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True, atol=tol,
