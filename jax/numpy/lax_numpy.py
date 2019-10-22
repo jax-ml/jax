@@ -575,9 +575,12 @@ def sinc(x):
 
 @_wraps(onp.arcsinh)
 @custom_transforms
+@jit
 def arcsinh(x):
   # asinh(x) = log(x + sqrt(x**2 + 1))
   x, = _promote_to_result_dtype(onp.arcsinh, x)
+  dtype = _dtype(x)
+  x = lax.convert_element_type(x, onp.float32) if dtype == onp.float16 else x
   one = lax._const(x, 1)
   result = lax.log(x + lax.sqrt(x * x + one))
   if onp.issubdtype(_dtype(result), onp.complexfloating):
@@ -585,22 +588,30 @@ def arcsinh(x):
   a = abs(x)
   sqrt_max_value = onp.sqrt(onp.finfo(_dtype(x)).max)
   log2 = lax._const(a, onp.log(2))
-  return lax.select(a < sqrt_max_value, result, lax.sign(x) * (lax.log(a) + log2))
+  out = lax.select(a < sqrt_max_value, result, lax.sign(x) * (lax.log(a) + log2))
+  out = lax.convert_element_type(out, dtype) if dtype == onp.float16 else out
+  return out
+
 defjvp(arcsinh, lambda g, ans, x: g / lax.sqrt(lax._const(x, 1) + square(x)))
 
 
 @_wraps(onp.arccosh)
+@jit
 def arccosh(x):
   # acosh(x) = log(x + sqrt((x + 1) * (x - 1))) if x < sqrt_max_value
   #            log(x) + log(2) otherwise
   x, = _promote_to_result_dtype(onp.arccosh, x)
+  dtype = _dtype(x)
+  x = lax.convert_element_type(x, onp.float32) if dtype == onp.float16 else x
   one = lax._const(x, 1)
   result = lax.log(x + lax.sqrt((x + one) * (x - one)))
   if onp.issubdtype(_dtype(result), onp.complexfloating):
     return result
   sqrt_max_value = onp.sqrt(onp.finfo(_dtype(x)).max)
   log2 = lax._const(x, onp.log(2))
-  return lax.select(x < sqrt_max_value, result, lax.log(x) + log2)
+  out = lax.select(x < sqrt_max_value, result, lax.log(x) + log2)
+  out = lax.convert_element_type(out, dtype) if dtype == onp.float16 else out
+  return out
 
 
 @_wraps(onp.arctanh)
@@ -947,6 +958,18 @@ def _dtype_info(dtype):
     return onp.iinfo(dtype)
   return onp.finfo(dtype)
 
+def _round_to_nearest_even(x):
+  half = lax._const(x, 0.5)
+  one = lax._const(x, 1)
+  round_val = lax.floor(x)
+  fraction = x - round_val
+  nearest_even_int = lax.sub(
+    round_val, lax.mul(lax._const(x, 2), lax.floor(lax.mul(half, x))))
+  is_odd = lax.eq(nearest_even_int, one)
+  return lax.select(
+    lax.bitwise_or(lax.gt(fraction, half),
+                   lax.bitwise_and(lax.eq(fraction, half), is_odd)),
+    lax.add(round_val, one), round_val)
 
 @_wraps(onp.round)
 def round(a, decimals=0):
@@ -959,10 +982,16 @@ def round(a, decimals=0):
 
   def _round_float(x):
     if decimals == 0:
-      return lax.round(x)
+      return _round_to_nearest_even(x)
 
+    # TODO(phawkins): the strategy of rescaling the value isn't necessarily a
+    # good one since we may be left with an incorrectly rounded value at the
+    # end due to precision problems. As a workaround for float16, convert to
+    # float32,
+    x = lax.convert_element_type(x, onp.float32) if dtype == onp.float16 else x
     factor = _constant_like(x, 10 ** decimals)
-    return lax.div(lax.round(lax.mul(x, factor)), factor)
+    out = lax.div(_round_to_nearest_even(lax.mul(x, factor)), factor)
+    return lax.convert_element_type(out, dtype) if dtype == onp.float16 else out
 
   if issubdtype(dtype, complexfloating):
     return lax.complex(_round_float(lax.real(a)), _round_float(lax.imag(a)))
