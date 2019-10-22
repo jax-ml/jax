@@ -108,7 +108,8 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("equal", 2, all_dtypes, all_shapes, jtu.rand_some_equal(), []),
     op_record("exp", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("fabs", 1, float_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
-    op_record("float_power", 2, inexact_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
+    op_record("float_power", 2, inexact_dtypes, all_shapes, jtu.rand_default(), ["rev"],
+              tolerance={onp.float64: 1e-12}),
     op_record("floor", 1, float_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("greater", 2, number_dtypes, all_shapes, jtu.rand_some_equal(), []),
     op_record("greater_equal", 2, number_dtypes, all_shapes, jtu.rand_some_equal(), []),
@@ -133,7 +134,11 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
               ["rev"]),
     op_record("sinh", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("cosh", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
-    op_record("tanh", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
+    # TODO(b/142975473): on CPU, tanh for complex128 is only accurate to
+    # ~float32 precision.
+    # TODO(b/143135720): on GPU, tanh has only ~float32 precision.
+    op_record("tanh", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"],
+              tolerance={onp.float64: 1e-9, onp.complex128: 1e-7}),
     op_record("arcsin", 1, float_dtypes, all_shapes, jtu.rand_small(), ["rev"]),
     op_record("arccos", 1, float_dtypes, all_shapes, jtu.rand_small(), ["rev"]),
     op_record("arctan", 1, float_dtypes, all_shapes, jtu.rand_small(), ["rev"]),
@@ -604,7 +609,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for lhs_dtype, rhs_dtype in CombosWithReplacement(number_dtypes, 2)))
   def testMatmul(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype, rng):
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
-    tol_spec = {onp.float16: 1e-2}
+    tol_spec = {onp.float16: 1e-2, onp.float32: 1e-3, onp.float64: 1e-12}
     tol = max(tolerance(lhs_dtype, tol_spec), tolerance(rhs_dtype, tol_spec))
     self._CheckAgainstNumpy(onp.matmul, lnp.matmul, args_maker,
                             check_dtypes=True, tol=tol)
@@ -1200,7 +1205,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       lnp_fun = lambda x, weights: lnp.average(x, axis, weights, returned)
       args_maker = lambda: [rng(shape, dtype), rng(weights_shape, dtype)]
 
-    tol = tolerance(dtype, {onp.float32: 1e-3})
+    tol = tolerance(dtype, {onp.float16: 1e-1, onp.float32: 1e-3})
     try:
         self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True,
                                 tol=tol)
@@ -1850,7 +1855,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       x = dtype(x)
       expected = onp_op(x)
       actual = lnp_op(x)
-      tol = tolerance(dtype, {onp.float32: 1e-3, onp.float64: 1e-12})
+      tol = tolerance(dtype, {onp.float32: 1e-3, onp.float64: 1e-8})
       self.assertAllClose(expected, actual, check_dtypes=True, atol=tol,
                           rtol=tol)
 
