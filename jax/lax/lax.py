@@ -1664,7 +1664,7 @@ complex_p = binop(_complex_dtype, [_complex_elem_types, _complex_elem_types],
                   'complex')
 ad.deflinear(complex_p, lambda t: [real(t), imag(neg(t))])
 
-conj_p = unop(_complex_dtype, _float | _complex, 'conj')
+conj_p = unop(_complex_dtype, _complex_elem_types | _complex, 'conj')
 
 def _conj_transpose_rule(t, x, input_dtype):
   assert x is ad.undefined_primal

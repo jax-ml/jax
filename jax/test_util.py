@@ -181,6 +181,16 @@ def check_grads(f, args, order,
 def device_under_test():
   return FLAGS.jax_test_dut or xla_bridge.get_backend().platform
 
+def supported_dtypes():
+  if device_under_test() == "tpu":
+    return {onp.bool_, onp.int32, onp.int64, onp.uint32, onp.uint64,
+            onp.float32, onp.complex64}
+  else:
+    return {onp.bool_, onp.int8, onp.int16, onp.int32, onp.int64,
+            onp.uint8, onp.uint16, onp.uint32, onp.uint64,
+            onp.float16, onp.float32, onp.float64, onp.complex64,
+            onp.complex128}
+
 def skip_on_devices(*disabled_devices):
   """A decorator for test methods to skip the test on certain devices."""
   def skip(test_method):
