@@ -708,7 +708,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     if jit_f:
       f = api.jit(f)
     if jit_scan:
-      scan = api.jit(lax.scan, (0,))
+      scan = api.jit(lax.scan, static_argnums=(0,))
     else:
       scan = lax.scan
 
@@ -823,7 +823,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def plus_one(p, iter_idx):
       return Point(p.x+1, p.y+1), iter_idx
 
-    self.assertRaisesRegexp(
+    self.assertRaisesRegex(
         ValueError,
         'scan got value with no leading axis to scan over.*',
         lambda: lax.scan(plus_one, p0, list(range(5))))
@@ -844,11 +844,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       lax.scan(lambda c, x: (0, x), 1.0, a)
     with self.assertRaisesRegex(TypeError, 'scan carry output type must match carry input type'):
       lax.scan(lambda c, x: (0, x), (1, 2), np.arange(5))
-
-    # Carry input and output are tuples with different structure
-    self.assertRaisesRegex(TypeError,
-                           'scan carry output type must match carry input type',
-                           lambda: lax.scan(lambda c, x: ((0, 0, 0), x), (1, (2, 3)), a))
 
 
   def testScanHigherOrderDifferentiation(self):

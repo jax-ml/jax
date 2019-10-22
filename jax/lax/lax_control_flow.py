@@ -460,7 +460,7 @@ def scan(f, init, xs):
   """
   init_flat, init_tree = tree_flatten(init)
   xs_flat, _ = tree_flatten(xs)
-  num_carry = len(init_flat[0])
+  num_carry = len(init_flat)
   in_flat, in_tree = tree_flatten((init, xs))
   try:
     length, = {x.shape[0] for x in xs_flat}
