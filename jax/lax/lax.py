@@ -18,6 +18,7 @@ from __future__ import print_function
 
 import collections
 import enum
+import functools
 import itertools
 import operator
 import string
@@ -1399,25 +1400,32 @@ def atan(x):
   r"""Elementwise arc tangent: :math:`\mathrm{atan}(x)`."""
   return atan2(x, _const(x, 1))
 
-@api.jit
-def sinh(x):
-  r"""Elementwise hyperbolic sine: :math:`\mathrm{sinh}(x)`."""
-  dtype = _dtype(x)
-  x = convert_element_type(x, onp.float32) if dtype == onp.float16 else x
-  log_half = _const(x, onp.log(0.5))
-  # This formulation avoids overflow when e^x is inf but e^x/2 is not inf.
-  out = sub(exp(add(log_half, x)), exp(sub(log_half, x)))
-  return convert_element_type(out, dtype) if dtype == onp.float16 else out
+def _upcast_fp16_for_computation(f):
+  @functools.wraps(f)
+  def f_wrapped(x):
+    dtype = _dtype(x)
+    if dtype == onp.float16:
+      return convert_element_type(
+        f(convert_element_type(x, onp.float32)), dtype)
+    return f(x)
+
+  return f_wrapped
 
 @api.jit
-def cosh(x):
-  r"""Elementwise hyperbolic cosine: :math:`\mathrm{cosh}(x)`."""
-  dtype = _dtype(x)
-  x = convert_element_type(x, onp.float32) if dtype == onp.float16 else x
+@_upcast_fp16_for_computation
+def sinh(x):
+  r"""Elementwise hyperbolic sine: :math:`\mathrm{sinh}(x)`."""
   log_half = _const(x, onp.log(0.5))
   # This formulation avoids overflow when e^x is inf but e^x/2 is not inf.
-  out = add(exp(add(log_half, x)), exp(sub(log_half, x)))
-  return convert_element_type(out, dtype) if dtype == onp.float16 else out
+  return sub(exp(add(log_half, x)), exp(sub(log_half, x)))
+
+@api.jit
+@_upcast_fp16_for_computation
+def cosh(x):
+  r"""Elementwise hyperbolic cosine: :math:`\mathrm{cosh}(x)`."""
+  log_half = _const(x, onp.log(0.5))
+  # This formulation avoids overflow when e^x is inf but e^x/2 is not inf.
+  return add(exp(add(log_half, x)), exp(sub(log_half, x)))
 
 
 # Add some methods to ShapedArray that rely on lax primitives

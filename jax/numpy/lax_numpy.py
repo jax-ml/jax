@@ -576,11 +576,10 @@ def sinc(x):
 @_wraps(onp.arcsinh)
 @custom_transforms
 @jit
+@lax._upcast_fp16_for_computation
 def arcsinh(x):
   # asinh(x) = log(x + sqrt(x**2 + 1))
   x, = _promote_to_result_dtype(onp.arcsinh, x)
-  dtype = _dtype(x)
-  x = lax.convert_element_type(x, onp.float32) if dtype == onp.float16 else x
   one = lax._const(x, 1)
   result = lax.log(x + lax.sqrt(x * x + one))
   if onp.issubdtype(_dtype(result), onp.complexfloating):
@@ -588,30 +587,25 @@ def arcsinh(x):
   a = abs(x)
   sqrt_max_value = onp.sqrt(onp.finfo(_dtype(x)).max)
   log2 = lax._const(a, onp.log(2))
-  out = lax.select(a < sqrt_max_value, result, lax.sign(x) * (lax.log(a) + log2))
-  out = lax.convert_element_type(out, dtype) if dtype == onp.float16 else out
-  return out
+  return lax.select(a < sqrt_max_value, result, lax.sign(x) * (lax.log(a) + log2))
 
 defjvp(arcsinh, lambda g, ans, x: g / lax.sqrt(lax._const(x, 1) + square(x)))
 
 
 @_wraps(onp.arccosh)
 @jit
+@lax._upcast_fp16_for_computation
 def arccosh(x):
   # acosh(x) = log(x + sqrt((x + 1) * (x - 1))) if x < sqrt_max_value
   #            log(x) + log(2) otherwise
   x, = _promote_to_result_dtype(onp.arccosh, x)
-  dtype = _dtype(x)
-  x = lax.convert_element_type(x, onp.float32) if dtype == onp.float16 else x
   one = lax._const(x, 1)
   result = lax.log(x + lax.sqrt((x + one) * (x - one)))
   if onp.issubdtype(_dtype(result), onp.complexfloating):
     return result
   sqrt_max_value = onp.sqrt(onp.finfo(_dtype(x)).max)
   log2 = lax._const(x, onp.log(2))
-  out = lax.select(x < sqrt_max_value, result, lax.log(x) + log2)
-  out = lax.convert_element_type(out, dtype) if dtype == onp.float16 else out
-  return out
+  return lax.select(x < sqrt_max_value, result, lax.log(x) + log2)
 
 
 @_wraps(onp.arctanh)
