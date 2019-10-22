@@ -29,6 +29,7 @@ from jax import test_util as jtu
 from jax.test_util import check_grads
 from jax import nn
 from jax import random
+import jax
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -41,6 +42,13 @@ class NNFunctionsTest(jtu.JaxTestCase):
   def testSoftplusValue(self):
     val = nn.softplus(89.)
     self.assertAllClose(val, 89., check_dtypes=False)
+
+  def testEluGrad(self):
+    check_grads(nn.elu, (1e4,), 4, eps=1.)
+
+  def testEluValue(self):
+    val = nn.elu(1e4)
+    self.assertAllClose(val, 1e4, check_dtypes=False)
 
 InitializerRecord = collections.namedtuple(
   "InitializerRecord",
@@ -80,3 +88,6 @@ class NNInitializersTest(jtu.JaxTestCase):
       for dtype in [onp.float32, onp.float64]))
   def testInitializer(self, initializer, rng, shape, dtype):
     val = initializer(rng, shape, dtype)
+
+if __name__ == "__main__":
+  absltest.main()
