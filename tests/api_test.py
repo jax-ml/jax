@@ -257,7 +257,7 @@ class APITest(jtu.JaxTestCase):
                      "Abstract evaluation for 'foo' not implemented")
 
     jtu.check_raises(lambda: grad(foo)(1.0), NotImplementedError,
-                     "Forward-mode differentiation rule for 'foo' not implemented")
+                     "Evaluation rule for 'foo' not implemented")
 
     foo_p.def_abstract_eval(lambda x: x)
 
@@ -265,6 +265,10 @@ class APITest(jtu.JaxTestCase):
                      "XLA translation rule for primitive 'foo' not found")
 
     foo_p.def_impl(lambda x: x)
+
+    jtu.check_raises(lambda: grad(foo)(1.0), NotImplementedError,
+                     "Forward-mode differentiation rule for 'foo' not implemented")
+
     ad.defjvp(foo_p, lambda g, x: foo(g))
 
     jtu.check_raises(lambda: grad(foo)(1.0), NotImplementedError,

@@ -1046,9 +1046,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     def sqrt_cubed(x, tangent_solve=scalar_solve):
       f = lambda y: y ** 2 - x ** 3
-      # f_no_grad = lambda y: y ** 2 - lax.stop_gradient(x) ** 3
-      # y = binary_search(f_no_grad)
-      y = binary_search(lax.stop_gradient_fun(f))
+      y = binary_search(f)
       return lax.define_implicit_gradient(f, y, tangent_solve)
 
     value, grad = api.value_and_grad(sqrt_cubed)(5.0)
@@ -1072,7 +1070,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         return y / f(1.0) + 0 * x  # just to make things interesting
 
       f = lambda y: y ** 2 - x ** 3
-      y = binary_search(lax.stop_gradient_fun(f))
+      y = binary_search(f)
       return lax.define_implicit_gradient(f, y, tangent_solve)
 
     results = api.jit(sqrt_cubed2)(5.0)
@@ -1099,7 +1097,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
             matvec, b, linear_solve, transpose_solve)
 
       f = lambda x: np.dot(a, x) - b
-      x = lax.stop_gradient_fun(np.linalg.solve)(a, b)
+      x = np.linalg.solve(a, b)
       return lax.define_implicit_gradient(f, x, tangent_solve)
 
     rng = onp.random.RandomState(0)

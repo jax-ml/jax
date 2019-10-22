@@ -95,6 +95,7 @@ def linearize(traceable, *primals, **kwargs):
   jvpfun_flat, out_tree = flatten_fun(jvpfun, in_tree)
   jaxpr, out_pvals, consts = pe.trace_to_jaxpr(jvpfun_flat, in_pvals)
   pval_primals, pval_tangents = tree_unflatten(out_tree(), out_pvals)
+  raise_on_undefined_tangents(pval_tangents)
   aval_primals, const_primals = unzip2(pval_primals)
   assert all(aval_primal is None for aval_primal in aval_primals)
   if not has_aux:
@@ -204,6 +205,12 @@ register_pytree_node(UndefinedTangent,
                      lambda z: ((), z),
                      lambda z, xs: z)
 
+def raise_on_undefined_tangents(args):
+  for t in args:
+    if isinstance(t, UndefinedTangent):
+      raise t.error
+
+
 def get_primitive_transpose(p):
   try:
     return primitive_transposes[p]
@@ -227,18 +234,19 @@ class JVPTrace(Trace):
     try:
       jvp = primitive_jvps[primitive]
     except KeyError:
-      error = NotImplementedError(
-          "Forward-mode differentiation rule for '{}' not implemented"
-          .format(primitive))
+      try:
+        raise NotImplementedError(
+            "Forward-mode differentiation rule for '{}' not implemented"
+            .format(primitive))
+      except NotImplementedError as error:
+        # We need to actually raise an exception to capture a traceback
+        tangent_out = UndefinedTangent(error)
       primal_out = primitive.bind(*primals_in, **params)
-      tangent_out = UndefinedTangent(error)
       if primitive.multiple_results:
         tangent_out = [tangent_out] * len(primal_out)
     else:
-      undefined_tangents = [
-          t for t in tangents_in if isinstance(t, UndefinedTangent)]
-      if undefined_tangents:
-        raise undefined_tangents[0].error
+      if not primitive.allow_undefined_tangents:
+        raise_on_undefined_tangents(tangents_in)
       primal_out, tangent_out = jvp(primals_in, tangents_in, **params)
     if primitive.multiple_results:
       return [JVPTracer(self, x, t) for x, t in zip(primal_out, tangent_out)]
