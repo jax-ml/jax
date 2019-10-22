@@ -354,8 +354,11 @@ def triangular_solve_transpose_rule(
   # Triangular solve is nonlinear in its first argument and linear in its second
   # argument, analogous to `div` but swapped.
   assert a is not ad.undefined_primal and b is ad.undefined_primal
-  cotangent_b = triangular_solve(a, cotangent, left_side, lower,
-                                 not transpose_a, conjugate_a, unit_diagonal)
+  if cotangent is ad_util.zero:
+    cotangent_b = ad_util.zero
+  else:
+    cotangent_b = triangular_solve(a, cotangent, left_side, lower,
+                                   not transpose_a, conjugate_a, unit_diagonal)
   return [None, cotangent_b]
 
 
