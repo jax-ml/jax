@@ -1055,10 +1055,7 @@ def _define_implicit_gradient_jvp(
 
   x, f_consts, l_and_s_consts = split_list(primals, [num_x, num_f_consts])
   _, f_consts_dot, _ = split_list(tangents, [num_x, num_f_consts])
-
-  for t in f_consts_dot:
-    if isinstance(t, ad.UndefinedTangent):
-      raise t.error
+  ad.raise_on_undefined_tangents(f_consts_dot)
 
   x = define_implicit_gradient_p.bind(
       *primals, num_x=num_x, num_f_consts=num_f_consts, f_jaxpr=f_jaxpr,
