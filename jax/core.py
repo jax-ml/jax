@@ -137,6 +137,7 @@ literalable_types = set()
 
 class Primitive(object):
   multiple_results = False  # override for multi-output primitives
+  allow_undefined_tangents = False  # override for higher-order primitives
 
   def __init__(self, name):
     self.name = name

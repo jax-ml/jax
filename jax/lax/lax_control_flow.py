@@ -1081,6 +1081,7 @@ def _define_implicit_gradient_jvp(
 
 define_implicit_gradient_p = core.Primitive('define_implicit_gradient')
 define_implicit_gradient_p.multiple_results = True
+define_implicit_gradient_p.allow_undefined_tangents = True
 define_implicit_gradient_p.def_impl(_define_implicit_gradient_impl)
 define_implicit_gradient_p.def_abstract_eval(_define_implicit_gradient_impl)
 ad.primitive_jvps[define_implicit_gradient_p] = _define_implicit_gradient_jvp

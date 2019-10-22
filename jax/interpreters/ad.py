@@ -193,6 +193,17 @@ register_pytree_node(UndefinedPrimal,
                      lambda z: ((), None),
                      lambda *_: undefined_primal)
 
+
+class UndefinedTangent(object):
+  def __init__(self, error):
+    self.error = error
+  def __repr__(self):
+    return '_'
+
+register_pytree_node(UndefinedTangent,
+                     lambda z: ((), z),
+                     lambda z, xs: z)
+
 def get_primitive_transpose(p):
   try:
     return primitive_transposes[p]
@@ -216,10 +227,19 @@ class JVPTrace(Trace):
     try:
       jvp = primitive_jvps[primitive]
     except KeyError:
-      raise NotImplementedError(
+      error = NotImplementedError(
           "Forward-mode differentiation rule for '{}' not implemented"
           .format(primitive))
-    primal_out, tangent_out = jvp(primals_in, tangents_in, **params)
+      primal_out = primitive.bind(*primals_in, **params)
+      tangent_out = UndefinedTangent(error)
+      if primitive.multiple_results:
+        tangent_out = [tangent_out] * len(primal_out)
+    else:
+      undefined_tangents = [
+          t for t in tangents_in if isinstance(t, UndefinedTangent)]
+      if undefined_tangents:
+        raise undefined_tangents[0].error
+      primal_out, tangent_out = jvp(primals_in, tangents_in, **params)
     if primitive.multiple_results:
       return [JVPTracer(self, x, t) for x, t in zip(primal_out, tangent_out)]
     else:
