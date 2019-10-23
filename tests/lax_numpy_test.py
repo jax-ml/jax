@@ -461,7 +461,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     onp_fun = lambda x: onp_op(x, axis, dtype=out_dtype, keepdims=keepdims)
     lnp_fun = lambda x: lnp_op(x, axis, dtype=out_dtype, keepdims=keepdims)
     args_maker = lambda: [rng(shape, dtype)]
-    tol_spec = {onp.float16: 1e-2, onp.float64: 1e-6, onp.complex128: 1e-6}
+    tol_spec = {onp.float16: 1e-2, onp.float32: 1e-3, onp.complex64: 1e-3,
+                onp.float64: 1e-5, onp.complex128: 1e-5}
     tol = tolerance(dtype, tol_spec)
     tol = max(tol, tolerance(out_dtype, tol_spec)) if out_dtype else tol
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True,
