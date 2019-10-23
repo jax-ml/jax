@@ -35,6 +35,7 @@ from jax import api, lax
 from jax.core import Primitive
 from jax.interpreters import ad
 from jax.interpreters.xla import DeviceArray
+from jax.interpreters.pxla import ShardedDeviceArray
 from jax.abstract_arrays import concretization_err_msg
 from jax.lib import xla_bridge as xb
 from jax import test_util as jtu
@@ -1092,6 +1093,19 @@ class APITest(jtu.JaxTestCase):
     real_x = onp.random.RandomState(0).randn(n)
     b = np.dot(a + np.eye(a.shape[0]), real_x)
     print(gf(a, b))  # doesn't crash
+
+  def test_device_put_replicated(self):
+    x = onp.array([3, 1, 4, 1])
+    y = api.device_put_replicated(x)
+    expected_shape = (xb.device_count(), 4)
+    self.assertEqual(y.shape, (xb.device_count(), 4))
+    self.assertAllClose(y, onp.broadcast_to(x, expected_shape),
+                        check_dtypes=False)
+
+    self.assertIsInstance(y, ShardedDeviceArray)
+    bufs = y.device_buffers
+    expected_ids = list(range(xb.device_count()))
+    self.assertEqual([b.device().id for b in bufs], expected_ids)
 
 
 if __name__ == '__main__':
