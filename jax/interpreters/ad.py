@@ -95,7 +95,6 @@ def linearize(traceable, *primals, **kwargs):
   jvpfun_flat, out_tree = flatten_fun(jvpfun, in_tree)
   jaxpr, out_pvals, consts = pe.trace_to_jaxpr(jvpfun_flat, in_pvals)
   pval_primals, pval_tangents = tree_unflatten(out_tree(), out_pvals)
-  raise_on_undefined_tangents(pval_tangents)
   aval_primals, const_primals = unzip2(pval_primals)
   assert all(aval_primal is None for aval_primal in aval_primals)
   if not has_aux:
@@ -205,10 +204,10 @@ register_pytree_node(UndefinedTangent,
                      lambda z: ((), z),
                      lambda z, xs: z)
 
-def raise_on_undefined_tangents(args):
-  for t in args:
-    if isinstance(t, UndefinedTangent):
-      raise t.error
+def raise_on_undefined_tangents(tangents):
+  for tangent in tangents:
+    if isinstance(tangent, UndefinedTangent):
+      raise tangent.error
 
 
 def get_primitive_transpose(p):
@@ -235,11 +234,12 @@ class JVPTrace(Trace):
       jvp = primitive_jvps[primitive]
     except KeyError:
       try:
+        # Raise an exception now to capture the current traceback, even though
+        # it won't be reraised unless the tangent is used.
         raise NotImplementedError(
             "Forward-mode differentiation rule for '{}' not implemented"
             .format(primitive))
       except NotImplementedError as error:
-        # We need to actually raise an exception to capture a traceback
         tangent_out = UndefinedTangent(error)
       primal_out = primitive.bind(*primals_in, **params)
       if primitive.multiple_results:
@@ -461,12 +461,16 @@ deflinear(add_jaxvals_p, lambda t: (t, t))
 def instantiate_zeros(example, tangent):
   if tangent is zero:
     return zeros_like_jaxval(example)
+  elif isinstance(tangent, UndefinedTangent):
+    raise tangent.error
   else:
     return tangent
 
 def instantiate_zeros_aval(aval, tangent):
   if tangent is zero:
     return zeros_like_aval(aval)
+  elif isinstance(tangent, UndefinedTangent):
+    raise tangent.error
   else:
     return tangent
 

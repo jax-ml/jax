@@ -30,7 +30,7 @@ if six.PY3:
 
 import jax
 import jax.numpy as np
-from jax import jit, grad, device_put, jacfwd, jacrev, hessian
+from jax import jit, jvp, grad, device_put, jacfwd, jacrev, hessian
 from jax import api, lax
 from jax.core import Primitive
 from jax.interpreters import ad
@@ -256,6 +256,9 @@ class APITest(jtu.JaxTestCase):
     jtu.check_raises(lambda: jit(foo)(1.0), NotImplementedError,
                      "Abstract evaluation for 'foo' not implemented")
 
+    jtu.check_raises(lambda: jvp(foo, (1.0,), (1.0,)), NotImplementedError,
+                     "Evaluation rule for 'foo' not implemented")
+
     jtu.check_raises(lambda: grad(foo)(1.0), NotImplementedError,
                      "Evaluation rule for 'foo' not implemented")
 
@@ -265,6 +268,9 @@ class APITest(jtu.JaxTestCase):
                      "XLA translation rule for primitive 'foo' not found")
 
     foo_p.def_impl(lambda x: x)
+
+    jtu.check_raises(lambda: jvp(foo, (1.0,), (1.0,)), NotImplementedError,
+                     "Forward-mode differentiation rule for 'foo' not implemented")
 
     jtu.check_raises(lambda: grad(foo)(1.0), NotImplementedError,
                      "Forward-mode differentiation rule for 'foo' not implemented")
