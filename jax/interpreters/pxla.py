@@ -526,6 +526,7 @@ def _pvals_to_results_handler(size, nrep, out_pvals):
 def _pval_to_result_handler(size, nrep, pval):
   pv, const = pval
   if pv is None:
+    # TODO make a ShardedDeviceArray here?
     bcast_const = core.unit if const is core.unit else broadcast(const, size, 0)
     return lambda _: bcast_const
   else:
@@ -574,7 +575,7 @@ def _xla_shard(c, x):
     dims = list(xla_shape.dimensions())
     start_indices = _xla_shard_start_indices(c, dims[0], len(dims))
     return c.Reshape(c.DynamicSlice(x, start_indices, [1] + dims[1:]),
-                    None, dims[1:])
+                     None, dims[1:])
 
 # TODO(b/110096942): more efficient gather
 def _xla_unshard(c, replica_groups, x):
@@ -597,6 +598,29 @@ def _xla_shard_start_indices(c, axis_size, ndim):
   idx = c.Rem(c.ReplicaId(), c.Constant(onp.array(axis_size, onp.uint32)))
   zero = onp.zeros(ndim - 1, onp.uint32)
   return c.Concatenate([c.Reshape(idx, None, [1]), c.Constant(zero)], 0)
+
+
+def _device_put_rep_impl(x, devices):
+  # TODO handle unit
+  sharded_aval = xla.abstractify(x)
+  aval = ShapedArray((len(devices),) + sharded_aval.shape, sharded_aval.dtype)
+  bufs = [xla.device_put(x, device) for device in devices]
+  return ShardedDeviceArray(aval, bufs)
+
+def _device_put_rep_abstract_eval(x, devices):
+  # TODO handle unit
+  if type(x) is ShapedArray:
+    return ShapedArray((len(devices),) + x.shape, x.dtype)
+  else:
+    raise NotImplementedError
+
+device_put_rep_p = core.Primitive('device_put_replicated')
+device_put_rep_p.def_impl(_device_put_rep_impl)
+device_put_rep_p.def_abstract_eval(_device_put_rep_abstract_eval)
+ad.deflinear(device_put_rep_p, lambda t, **_: [t.sum(axis=0)])
+xla.translations[device_put_rep_p] = \
+    lambda c, x, devices: c.Broadcast(x, len(devices))
+# TODO batching rule
 
 
 ### soft_pmap axis split transformation

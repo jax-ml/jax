@@ -1227,6 +1227,9 @@ def make_jaxpr(fun):
 def device_put(x, device=None, backend=None):
   return tree_map(lambda y: xla.device_put_p.bind(y, device=device, backend=backend), x)
 
+def device_put_replicated(x, devices):
+  return tree_map(lambda y: pxla.device_put_rep_p.bind(y, devices=devices), x)
+
 
 # TODO(mattjj): consider revising
 def _device_get(x):
