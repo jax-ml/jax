@@ -832,17 +832,22 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     """Test typing error messages for scan."""
     a = np.arange(5)
     # Body output not a tuple
-    with self.assertRaisesRegex(TypeError, 'scan body output must be a pair'):
+    with self.assertRaisesRegex(TypeError,
+        re.escape("scan body output must be a pair, got ShapedArray(int32[]).")):
       lax.scan(lambda c, x: 0, 0, a)
-    # Carry input and output are tuples with different structure
     with  self.assertRaisesRegex(TypeError,
-                                 'scan carry output type must match carry input type'):
+        re.escape("scan carry output and input must have same type structure, "
+                  "got PyTreeDef(tuple, [*,*,*]) and PyTreeDef(tuple, [*,PyTreeDef(tuple, [*,*])])")):
       lax.scan(lambda c, x: ((0, 0, 0), x), (1, (2, 3)), a)
-    with self.assertRaisesRegex(TypeError, 'scan carry output type must match carry input type'):
+    with self.assertRaisesRegex(TypeError,
+        re.escape("scan carry output and input must have same type structure, got * and PyTreeDef(None, []).")):
       lax.scan(lambda c, x: (0, x), None, a)
-    with self.assertRaisesRegex(TypeError, 'scan carry output type must match carry input type'):
+    with self.assertRaisesRegex(TypeError,
+        re.escape("scan carry output and input must have identical types, "
+                  "got ShapedArray(int32[]) and ShapedArray(float32[]).")):
       lax.scan(lambda c, x: (0, x), 1.0, a)
-    with self.assertRaisesRegex(TypeError, 'scan carry output type must match carry input type'):
+    with self.assertRaisesRegex(TypeError,
+        re.escape("scan carry output and input must have same type structure, got * and PyTreeDef(tuple, [*,*]).")):
       lax.scan(lambda c, x: (0, x), (1, 2), np.arange(5))
 
 

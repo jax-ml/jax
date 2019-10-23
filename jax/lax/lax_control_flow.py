@@ -460,7 +460,6 @@ def scan(f, init, xs):
   """
   init_flat, init_tree = tree_flatten(init)
   xs_flat, _ = tree_flatten(xs)
-  num_carry = len(init_flat)
   in_flat, in_tree = tree_flatten((init, xs))
   try:
     length, = {x.shape[0] for x in xs_flat}
@@ -477,18 +476,18 @@ def scan(f, init, xs):
   x_avals = tuple(_map(ShapedArray, x_shapes, x_dtypes))
   jaxpr, consts, out_tree = _initial_style_jaxpr(f, in_tree, carry_avals + x_avals)
 
-  out_tree_avals = tree_unflatten(out_tree, jaxpr.out_avals)
-  init_tree_avals = tree_unflatten(init_tree, carry_avals)
-  if not isinstance(out_tree_avals, tuple) or len(out_tree_avals) != 2:
+  out_tree_children = out_tree.children()
+  if len(out_tree_children) != 2:
     msg = "scan body output must be a pair, got {}."
-    raise TypeError(msg.format(out_tree_avals))
-  if out_tree_avals[0] != init_tree_avals:
-    msg = "scan carry output type must match carry input type, got {} and {}."
-    raise TypeError(msg.format(out_tree_avals[0], init_tree_avals))
+    raise TypeError(msg.format(tree_unflatten(out_tree, jaxpr.out_avals)))
+  _check_tree_and_avals("scan carry output and input",
+                        # Extract the subtree and avals for the first element of the return tuple
+                        out_tree_children[0], jaxpr.out_avals[:out_tree_children[0].num_leaves],
+                        init_tree, carry_avals)
 
   out = scan_p.bind(*itertools.chain(consts, in_flat),
                     forward=True, length=length, jaxpr=jaxpr,
-                    num_consts=len(consts), num_carry=num_carry,
+                    num_consts=len(consts), num_carry=len(init_flat),
                     linear=(False,) * (len(consts) + len(in_flat)))
   return tree_unflatten(out_tree, out)
 
@@ -891,6 +890,22 @@ def _check_tree(func_name, expected_name, actual_tree, expected_tree):
         "{}() output pytree structure must match {}, got {} and {}."
         .format(func_name, expected_name, actual_tree, expected_tree))
 
+
+def _check_tree_and_avals(what, tree1, avals1, tree2, avals2):
+  """Raises TypeError if (tree1, avals1) does not match (tree2, avals2).
+
+  Corresponding `tree` and `avals` must match in the sense that the number of leaves in
+  `tree` must be equal to the length of `avals`.
+  `what` will be prepended to details of the mismatch in TypeError.
+  """
+  if tree1 != tree2:
+    msg = ("{} must have same type structure, got {} and {}.")
+    raise TypeError(msg.format(what, tree1, tree2))
+  if not all(safe_map(typematch, avals1, avals2)):
+    msg = ("{} must have identical types, "
+           "got {} and {}.")
+    raise TypeError(msg.format(what, tree_unflatten(tree1, avals1),
+                               tree_unflatten(tree2, avals2)))
 
 
 def root(f, initial_guess, solve, tangent_solve):
