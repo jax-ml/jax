@@ -828,6 +828,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         'scan got value with no leading axis to scan over.*',
         lambda: lax.scan(plus_one, p0, list(range(5))))
 
+  @jtu.skip_on_flag('jax_enable_x64', True)  # With float64 error messages are different; hard to check precisely
   def testScanTypeErrors(self):
     """Test typing error messages for scan."""
     a = np.arange(5)
@@ -1266,7 +1267,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     jtu.check_grads(loss, (a, b), atol=1e-5, order=2, modes=['fwd'])
 
-    with self.assertRaisesRegexp(TypeError, "transpose_solve required"):
+    with self.assertRaisesRegex(TypeError, "transpose_solve required"):
       api.grad(loss)(a, b)
 
   def test_custom_linear_solve_errors(self):
