@@ -1104,8 +1104,7 @@ class APITest(jtu.JaxTestCase):
 
     self.assertIsInstance(y, ShardedDeviceArray)
     bufs = y.device_buffers
-    expected_ids = list(range(xb.device_count()))
-    self.assertEqual([b.device().id for b in bufs], expected_ids)
+    self.assertEqual(len({b.device().id for b in bufs}), xb.device_count())
 
 
 if __name__ == '__main__':
