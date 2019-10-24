@@ -708,7 +708,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     if jit_f:
       f = api.jit(f)
     if jit_scan:
-      scan = api.jit(lax.scan, (0,))
+      scan = api.jit(lax.scan, static_argnums=(0,))
     else:
       scan = lax.scan
 
@@ -823,10 +823,34 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def plus_one(p, iter_idx):
       return Point(p.x+1, p.y+1), iter_idx
 
-    self.assertRaisesRegexp(
+    self.assertRaisesRegex(
         ValueError,
         'scan got value with no leading axis to scan over.*',
         lambda: lax.scan(plus_one, p0, list(range(5))))
+
+  @jtu.skip_on_flag('jax_enable_x64', True)  # With float64 error messages are different; hard to check precisely
+  def testScanTypeErrors(self):
+    """Test typing error messages for scan."""
+    a = np.arange(5)
+    # Body output not a tuple
+    with self.assertRaisesRegex(TypeError,
+        re.escape("scan body output must be a pair, got ShapedArray(int32[]).")):
+      lax.scan(lambda c, x: 0, 0, a)
+    with  self.assertRaisesRegex(TypeError,
+        re.escape("scan carry output and input must have same type structure, "
+                  "got PyTreeDef(tuple, [*,*,*]) and PyTreeDef(tuple, [*,PyTreeDef(tuple, [*,*])])")):
+      lax.scan(lambda c, x: ((0, 0, 0), x), (1, (2, 3)), a)
+    with self.assertRaisesRegex(TypeError,
+        re.escape("scan carry output and input must have same type structure, got * and PyTreeDef(None, []).")):
+      lax.scan(lambda c, x: (0, x), None, a)
+    with self.assertRaisesRegex(TypeError,
+        re.escape("scan carry output and input must have identical types, "
+                  "got ShapedArray(int32[]) and ShapedArray(float32[]).")):
+      lax.scan(lambda c, x: (0, x), 1.0, a)
+    with self.assertRaisesRegex(TypeError,
+        re.escape("scan carry output and input must have same type structure, got * and PyTreeDef(tuple, [*,*]).")):
+      lax.scan(lambda c, x: (0, x), (1, 2), np.arange(5))
+
 
   def testScanHigherOrderDifferentiation(self):
     d = 0.75
@@ -1246,7 +1270,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     jtu.check_grads(loss, (a, b), atol=1e-5, order=2, modes=['fwd'])
 
-    with self.assertRaisesRegexp(TypeError, "transpose_solve required"):
+    with self.assertRaisesRegex(TypeError, "transpose_solve required"):
       api.grad(loss)(a, b)
 
   def test_custom_linear_solve_errors(self):

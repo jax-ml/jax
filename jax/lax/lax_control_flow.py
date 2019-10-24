@@ -447,7 +447,8 @@ def scan(f, init, xs):
       the loop carry and the second represents a slice of the output.
     init: an initial loop carry value of type ``c``, which can be a scalar,
       array, or any pytree (nested Python tuple/list/dict) thereof, representing
-      the initial loop carry value.
+      the initial loop carry value. This value must have the same structure as
+      the first element of the pair returned by ``f``.
     xs: the value of type ``[a]`` over which to scan along the leading axis,
       where ``[a]`` can be an array or any pytree (nested Python
       tuple/list/dict) thereof with consistent leading axis sizes.
@@ -457,9 +458,9 @@ def scan(f, init, xs):
     loop carry value and the second element represents the stacked outputs of
     the second output of ``f`` when scanned over the leading axis of the inputs.
   """
-  num_carry = len(tree_flatten(init)[0])
+  init_flat, init_tree = tree_flatten(init)
+  xs_flat, _ = tree_flatten(xs)
   in_flat, in_tree = tree_flatten((init, xs))
-  init_flat, xs_flat = in_flat[:num_carry], in_flat[num_carry:]
   try:
     length, = {x.shape[0] for x in xs_flat}
   except AttributeError:
@@ -474,13 +475,19 @@ def scan(f, init, xs):
   x_dtypes = [x.dtype for x in xs_flat]
   x_avals = tuple(_map(ShapedArray, x_shapes, x_dtypes))
   jaxpr, consts, out_tree = _initial_style_jaxpr(f, in_tree, carry_avals + x_avals)
-  carry_avals_out, y_avals = split_list(jaxpr.out_avals, [num_carry])
-  if tuple(carry_avals_out) != carry_avals:
-    msg = "scan carry output type must match carry input type, got {} and {}."
-    raise TypeError(msg.format(tuple(carry_avals_out), carry_avals))
+
+  out_tree_children = out_tree.children()
+  if len(out_tree_children) != 2:
+    msg = "scan body output must be a pair, got {}."
+    raise TypeError(msg.format(tree_unflatten(out_tree, jaxpr.out_avals)))
+  _check_tree_and_avals("scan carry output and input",
+                        # Extract the subtree and avals for the first element of the return tuple
+                        out_tree_children[0], jaxpr.out_avals[:out_tree_children[0].num_leaves],
+                        init_tree, carry_avals)
+
   out = scan_p.bind(*itertools.chain(consts, in_flat),
                     forward=True, length=length, jaxpr=jaxpr,
-                    num_consts=len(consts), num_carry=num_carry,
+                    num_consts=len(consts), num_carry=len(init_flat),
                     linear=(False,) * (len(consts) + len(in_flat)))
   return tree_unflatten(out_tree, out)
 
@@ -883,6 +890,22 @@ def _check_tree(func_name, expected_name, actual_tree, expected_tree):
         "{}() output pytree structure must match {}, got {} and {}."
         .format(func_name, expected_name, actual_tree, expected_tree))
 
+
+def _check_tree_and_avals(what, tree1, avals1, tree2, avals2):
+  """Raises TypeError if (tree1, avals1) does not match (tree2, avals2).
+
+  Corresponding `tree` and `avals` must match in the sense that the number of leaves in
+  `tree` must be equal to the length of `avals`.
+  `what` will be prepended to details of the mismatch in TypeError.
+  """
+  if tree1 != tree2:
+    msg = ("{} must have same type structure, got {} and {}.")
+    raise TypeError(msg.format(what, tree1, tree2))
+  if not all(safe_map(typematch, avals1, avals2)):
+    msg = ("{} must have identical types, "
+           "got {} and {}.")
+    raise TypeError(msg.format(what, tree_unflatten(tree1, avals1),
+                               tree_unflatten(tree2, avals2)))
 
 
 def root(f, initial_guess, solve, tangent_solve):
