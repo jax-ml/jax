@@ -199,7 +199,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
     self.assertTrue(onp.all(perm1 == perm2))
     self.assertTrue(onp.all(perm1.dtype == perm2.dtype))
-    self.assertFalse(onp.all(perm1 == x))  # seems unlikely!
+    self.assertFalse(onp.all(perm1 == onp.arange(100)))  # seems unlikely!
     self.assertTrue(onp.all(onp.sort(perm1) == onp.arange(100)))
 
   @parameterized.named_parameters(jtu.cases_from_list(
