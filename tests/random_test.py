@@ -170,6 +170,39 @@ class LaxRandomTest(jtu.JaxTestCase):
     self.assertTrue(onp.all(onp.sort(perm1) == x))
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
+      for dtype in [onp.float32, onp.float64, onp.int32, onp.int64]))
+  def testPermutationArray(self, dtype):
+    key = random.PRNGKey(0)
+    x = onp.arange(100).astype(dtype)
+    rand = lambda key: random.permutation(key, x)
+    crand = api.jit(rand)
+
+    perm1 = rand(key)
+    perm2 = crand(key)
+
+    self.assertTrue(onp.all(perm1 == perm2))
+    self.assertTrue(onp.all(perm1.dtype == perm2.dtype))
+    self.assertFalse(onp.all(perm1 == x))  # seems unlikely!
+    self.assertTrue(onp.all(onp.sort(perm1) == x))
+    self.assertArraysAllClose(x, onp.arange(100).astype(dtype),
+                              check_dtypes=True)
+
+  def testPermutationInteger(self):
+    key = random.PRNGKey(0)
+    x = 100
+    rand = lambda key: random.permutation(key, x)
+    crand = api.jit(rand)
+
+    perm1 = rand(key)
+    perm2 = crand(key)
+
+    self.assertTrue(onp.all(perm1 == perm2))
+    self.assertTrue(onp.all(perm1.dtype == perm2.dtype))
+    self.assertFalse(onp.all(perm1 == x))  # seems unlikely!
+    self.assertTrue(onp.all(onp.sort(perm1) == onp.arange(100)))
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_p={}_{}".format(p, dtype),
        "p": p, "dtype": onp.dtype(dtype).name}
       for p in [0.1, 0.5, 0.9]
