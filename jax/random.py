@@ -445,7 +445,7 @@ def permutation(key, x):
     A shuffled version of x or array range
   """
   if isinstance(x, (int, onp.integer)):
-    arr = onp.arange(x)
+    arr = _shuffle(key, onp.arange(x), 0)
   else:
     arr = _shuffle(key, x, 0)
   return arr
