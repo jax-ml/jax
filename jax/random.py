@@ -435,14 +435,14 @@ def shuffle(key: np.ndarray, x: np.ndarray, axis: int = 0) -> np.ndarray:
 
 
 def permutation(key, x):
-  """Shuffle the elements of an array uniformly at random along an axis.
+  """Permute the elements of an array along its first axis or return a permuted range
 
   Args:n
     key: a PRNGKey used as the random key.
-    x: the array to be shuffled.
+    x: the array or integer range to be shuffled.
 
   Returns:
-    A shuffled version of x.
+    A shuffled version of x or array range
   """
   if isinstance(x, (int, onp.integer)):
     arr = onp.arange(x)
