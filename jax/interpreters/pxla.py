@@ -600,15 +600,18 @@ def _xla_shard_start_indices(c, axis_size, ndim):
   return c.Concatenate([c.Reshape(idx, None, [1]), c.Constant(zero)], 0)
 
 
-def _device_put_rep_impl(x, devices):
-  # TODO handle unit
+def _device_put_rep_impl(x, devices, backend=None):
   sharded_aval = xla.abstractify(x)
-  aval = ShapedArray((len(devices),) + sharded_aval.shape, sharded_aval.dtype)
-  bufs = [xla.device_put(x, device) for device in devices]
+  if sharded_aval is core.abstract_unit:
+    aval = core.abstract_unit
+  else:
+    aval = ShapedArray((len(devices),) + sharded_aval.shape, sharded_aval.dtype)
+  bufs = [xla.device_put(x, device, backend=backend) for device in devices]
   return ShardedDeviceArray(aval, bufs)
 
 def _device_put_rep_abstract_eval(x, devices):
-  # TODO handle unit
+  if x is core.abstract_unit:
+    return x
   if type(x) is ShapedArray:
     return ShapedArray((len(devices),) + x.shape, x.dtype)
   else:
