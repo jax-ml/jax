@@ -433,6 +433,24 @@ def shuffle(key: np.ndarray, x: np.ndarray, axis: int = 0) -> np.ndarray:
   """
   return _shuffle(key, x, axis)
 
+
+def permutation(key, x):
+  """Shuffle the elements of an array uniformly at random along an axis.
+
+  Args:n
+    key: a PRNGKey used as the random key.
+    x: the array to be shuffled.
+
+  Returns:
+    A shuffled version of x.
+  """
+  if isinstance(x, (int, onp.integer)):
+    arr = onp.arange(x)
+  else:
+    arr = _shuffle(key, x, 0)
+  return arr
+
+
 @partial(jit, static_argnums=(2,))
 def _shuffle(key, x, axis):
   # On parallel architectures, Fisher-Yates is more expensive than doing
