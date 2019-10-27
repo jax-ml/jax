@@ -44,7 +44,7 @@ from jax.lib import xla_client
 from jax.util import (partial, unzip2, safe_map, safe_zip, split_list,
                       split_dict, cache)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
-                           treedef_children, treedef_tuple, tree_map)
+                           treedef_children, treedef_tuple)
 from jax import ad_util
 
 _map = safe_map
@@ -858,6 +858,18 @@ def _check_tree(func_name, expected_name, actual_tree, expected_tree):
         .format(func_name, expected_name, actual_tree, expected_tree))
 
 
+def _stop_gradient_fun(f):
+  """Create a version of f() that stops all gradients."""
+  def wrapper(*args, **kwargs):
+    args_flat, in_args_tree = tree_flatten((args, kwargs))
+    args_avals = tuple(_map(_abstractify, args_flat))
+    g = lambda a, b: f(*a, **b)
+    jaxpr, consts, out_tree = _initial_style_jaxpr(g, in_args_tree, args_avals)
+    out = core.jaxpr_as_fun(jaxpr)(*lax.stop_gradient(consts + tuple(args_flat)))
+    return tree_unflatten(out_tree, out)
+  return wrapper
+
+
 _RootTuple = collections.namedtuple('_RootTuple', 'f, solve, l_and_s')
 
 
@@ -871,7 +883,7 @@ def custom_root(f, initial_guess, solve, tangent_solve):
 
   This is a low-level routine, mostly intended for internal use in JAX.
   Gradients of custom_root() are defined with respect to closed-over variables
-  from the provided function f.
+  from the provided function f via the implicit function theorem.
 
   Args:
     f: function for which to find a root. Should accept a single argument,
@@ -910,8 +922,7 @@ def custom_root(f, initial_guess, solve, tangent_solve):
   _check_tree("f", "initial_guess", out_tree, in_tree)
 
   solve_jaxpr, solve_consts, solution_tree = _initial_style_jaxpr(
-      partial(solve, stop_gradient_fun(f)),
-      in_args_tree, guess_avals)
+      partial(solve, _stop_gradient_fun(f)), in_args_tree, guess_avals)
   _check_tree("solve", "initial_guess", solution_tree, in_tree)
 
   def linearize_and_solve(x, b):
@@ -979,18 +990,6 @@ ad.primitive_jvps[root_p] = _root_jvp
 xla.initial_style_translations[root_p] = xla.lower_fun(
     _root_impl, initial_style=True)
 # TODO(shoyer): write batching rule
-
-
-def stop_gradient_fun(f):
-  """Create a version of f() that stops all gradients."""
-  def wrapper(*args, **kwargs):
-    args_flat, in_args_tree = tree_flatten((args, kwargs))
-    args_avals = tuple(_map(_abstractify, args_flat))
-    g = lambda a, b: f(*a, **b)
-    jaxpr, consts, out_tree = _initial_style_jaxpr(g, in_args_tree, args_avals)
-    out = core.jaxpr_as_fun(jaxpr)(*lax.stop_gradient(consts + tuple(args_flat)))
-    return tree_unflatten(out_tree, out)
-  return wrapper
 
 
 class _LinearSolveTuple(collections.namedtuple(
