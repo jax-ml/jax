@@ -46,14 +46,15 @@ from . import ad
 
 def identity(x): return x
 
-def shard_args(backend, devices, assignments, axis_size, tuple_args, args):
+def shard_args(backend, devices, assignments, tuple_args, args):
   """Shard an argument data array arg along its leading axis.
 
   Args:
+    backend: xla device backend to use, one of 'cpu','gpu','tpu'.
     devices: list of Devices of length num_replicas mapping a logical replica
       index to a physical device.
     assignments: replica to shard assignment.
-    axis_size: int, size of the axis to be sharded.
+    tuple_args: bool: whether to wrap device buffers into tuples.
     args: a sequence of JaxTypes representing arguments to be sharded along
       their leading axes (or the leading axess of their leaves in the tuple
       case) and placed on `devices`.
@@ -75,7 +76,7 @@ def shard_args(backend, devices, assignments, axis_size, tuple_args, args):
                            else buf.copy_to_device(devices[r]))
       else:
         for r, buf in enumerate(arg.device_buffers):
-          buffers[r][a] = xla.device_put(x[assignments[r]], devices[r], backend=backend)
+          buffers[r][a] = xla.device_put(buf[assignments[r]], devices[r], backend=backend)
     else:
       bufs = shard_arg_handlers[type(arg)](arg, devices, assignments, backend=backend)
       for r, buf in enumerate(bufs):
@@ -141,7 +142,7 @@ def assign_shards_to_replicas(nrep, size):
 
   Returns:
     A tuple of integers of length nrep in which the elements take on values from
-    0 to size-1. Replica n is assgined shard data_array[assignments[n]].
+    0 to size-1. Replica n is assigned shard data_array[assignments[n]].
   """
   groupsize, ragged = divmod(nrep, size)
   assert not ragged
@@ -496,7 +497,14 @@ def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
     # XLA computation at all; we handle this as a special case so we can stage
     # out multi-replica XLA computations regardless of the hardware available.
     # The 'None' values here are just dummies we know will be ignored.
-    handlers = [_pval_to_result_handler(axis_size, None, pval) for pval in out_pvals]
+    if devices:
+      local_devices = [d for d in devices if d.host_id == xb.host_id()]
+    else:
+      local_devices = xb.local_devices(backend=backend)
+    assigned_devices = local_devices[:axis_size]
+    handlers = (
+      [_pval_to_result_handler(axis_size, None, pval, assigned_devices, backend)
+       for pval in out_pvals])
     results = [handler(None) for handler in handlers]
     return lambda *_: results
   else:
@@ -508,13 +516,17 @@ def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
     local_devices = compiled.local_devices()
     assignments = assign_shards_to_replicas(nrep, axis_size)
     handle_args = partial(shard_args, backend, local_devices, assignments,
-                          axis_size, tuple_args)
-    handle_outs = _pvals_to_results_handler(axis_size, nrep, out_pvals)
-    return partial(execute_replicated, compiled, backend, nrep, handle_args, handle_outs)
+                          tuple_args)
+    assigned_devices = [local_devices[a] for a in assignments]
+    handle_outs = _pvals_to_results_handler(axis_size, nrep, out_pvals,
+                                            assigned_devices, backend)
+    return partial(execute_replicated, compiled, backend, nrep, handle_args,
+                   handle_outs)
 
-def _pvals_to_results_handler(size, nrep, out_pvals):
+def _pvals_to_results_handler(size, nrep, out_pvals, devices, backend):
   nouts = len(out_pvals)
-  handlers = [_pval_to_result_handler(size, nrep, pval) for pval in out_pvals]
+  handlers = [_pval_to_result_handler(size, nrep, pval, devices, backend)
+              for pval in out_pvals]
   def handler(out_bufs):
     buffers = [[None] * nrep for _ in range(nouts)]
     for r, tuple_buf in enumerate(out_bufs):
@@ -523,11 +535,13 @@ def _pvals_to_results_handler(size, nrep, out_pvals):
     return [h(bufs) for h, bufs in zip(handlers, buffers)]
   return handler
 
-def _pval_to_result_handler(size, nrep, pval):
+def _pval_to_result_handler(size, nrep, pval, devices, backend):
   pv, const = pval
   if pv is None:
-    # TODO make a ShardedDeviceArray here?
-    bcast_const = core.unit if const is core.unit else broadcast(const, size, 0)
+    if const is core.unit:
+      bcast_const = core.unit
+    else:
+      bcast_const = _device_put_rep_impl(const, devices, backend)
     return lambda _: bcast_const
   else:
     return aval_to_result_handler(size, nrep, pv)
@@ -593,7 +607,7 @@ def _xla_unshard(c, replica_groups, x):
                                   start_indices)
     return c.CrossReplicaSum(padded, replica_groups)
 
-# TODO(mattjj): use more ergonimic form of DynamicUpdateSlice instead!
+# TODO(mattjj): use more ergonomic form of DynamicUpdateSlice instead!
 def _xla_shard_start_indices(c, axis_size, ndim):
   idx = c.Rem(c.ReplicaId(), c.Constant(onp.array(axis_size, onp.uint32)))
   zero = onp.zeros(ndim - 1, onp.uint32)
@@ -606,10 +620,10 @@ def _device_put_rep_impl(x, devices, backend=None):
     aval = core.abstract_unit
   else:
     aval = ShapedArray((len(devices),) + sharded_aval.shape, sharded_aval.dtype)
-  bufs = [xla.device_put(x, device, backend=backend) for device in devices]
+  bufs = [xla.device_put(x, device, backend) for device in devices]
   return ShardedDeviceArray(aval, bufs)
 
-def _device_put_rep_abstract_eval(x, devices):
+def _device_put_rep_abstract_eval(x, devices, backend):
   if x is core.abstract_unit:
     return x
   if type(x) is ShapedArray:
@@ -617,13 +631,19 @@ def _device_put_rep_abstract_eval(x, devices):
   else:
     raise NotImplementedError
 
+def _device_put_rep_batch_rule(batched_args, batch_dims, devices, backend):
+  operand, = batched_args
+  bdim, = batch_dims
+  new_bdim = None if bdim is None else bdim + 1
+  return device_put_rep_p.bind(operand, devices, backend), new_bdim
+
 device_put_rep_p = core.Primitive('device_put_replicated')
 device_put_rep_p.def_impl(_device_put_rep_impl)
 device_put_rep_p.def_abstract_eval(_device_put_rep_abstract_eval)
 ad.deflinear(device_put_rep_p, lambda t, **_: [t.sum(axis=0)])
 xla.translations[device_put_rep_p] = \
     lambda c, x, devices: c.Broadcast(x, len(devices))
-# TODO batching rule
+batching.primitive_batchers[device_put_rep_p] = _device_put_rep_batch_rule
 
 
 ### soft_pmap axis split transformation

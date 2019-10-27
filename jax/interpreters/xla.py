@@ -763,6 +763,7 @@ ad.deflinear(device_put_p, lambda cotangent, **kwargs: [cotangent])
 
 class DeviceConstant(DeviceArray):
   def copy_to_host_async(self): pass
+  def delete(self): pass
 
   @staticmethod
   def constant_handler(c, constant_instance, canonicalize_types=True):
