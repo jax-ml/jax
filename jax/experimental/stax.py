@@ -260,7 +260,7 @@ def Dropout(rate, mode='train'):
   return init_fun, apply_fun
 
 
-def ResBlock(*layers, fan_in=FanInSum, tail=Identity):
+def ResBlock(*layers, **kwargs):
   """Split input, feed it through one or more layers in parallel,
   recombine them with a fan-in, apply a trailing layer (i.e. an activation)
 
@@ -273,6 +273,13 @@ def ResBlock(*layers, fan_in=FanInSum, tail=Identity):
     A new layer, meaning an (init_fun, apply_fun) pair, representing the
     parallel composition of the given sequence of layers fed into fan_in and then tail.
   """
+  # TODO(aeftimia): change signature to
+  # def ResBlock(*layers, fan_in=FanInSum, tail=Identity):
+  # when Python 2 support expires
+  default_args = {'fan_in': FanInSum, 'tail': Identity}
+  default_args.update(kwargs)
+  fan_in = default_args['fan_in']
+  tail = default_args['tail']
   return serial(FanOut(len(layers)), parallel(*layers), fan_in, tail)
 
 
