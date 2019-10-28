@@ -1087,7 +1087,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     results = api.jit(sqrt_cubed)(5.0)
     self.assertAllClose(results, 5.0 ** 1.5, check_dtypes=False)
 
-  def test_custom_root_vector_with_closure(self):
+  def test_custom_root_vector_with_solve_closure(self):
 
     def vector_solve(f, y):
       return np.linalg.solve(api.jacobian(f)(y), y)
@@ -1103,6 +1103,27 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     a = rng.randn(2, 2)
     b = rng.randn(2)
     jtu.check_grads(linear_solve, (a, b), order=2)
+
+  def test_custom_root_with_custom_linear_solve(self):
+
+    def linear_solve(a, b):
+      f = lambda x: np.dot(a, x) - b
+      factors = jsp.linalg.cho_factor(a)
+      cho_solve = lambda f, b: jsp.linalg.cho_solve(factors, b)
+      def pos_def_solve(g, b):
+        return lax.custom_linear_solve(g, b, cho_solve, symmetric=True)
+      return lax.custom_root(f, b, cho_solve, pos_def_solve)
+
+    rng = onp.random.RandomState(0)
+    a = rng.randn(2, 2)
+    b = rng.randn(2)
+
+    actual = linear_solve(np.dot(a, a.T), b)
+    expected = np.linalg.solve(np.dot(a, a.T), b)
+    self.assertAllClose(expected, actual, check_dtypes=True)
+
+    jtu.check_grads(lambda x, y: linear_solve(np.dot(x, x.T), y),
+                    (a, b), order=2)
 
   def test_custom_root_errors(self):
     with self.assertRaisesRegex(TypeError, re.escape("f() output pytree")):
@@ -1204,7 +1225,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   def test_custom_linear_solve_cholesky(self):
 
-    def positive_definive_solve(a, b):
+    def positive_definite_solve(a, b):
       factors = jsp.linalg.cho_factor(a)
       def solve(matvec, x):
         return jsp.linalg.cho_solve(factors, x)
@@ -1223,7 +1244,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(expected, actual, check_dtypes=True)
 
     # numerical gradients are only well defined if ``a`` is guaranteed to be
-    # positive definite.
+    # positive definite, even when perturbed.
     jtu.check_grads(lambda x, y: positive_definive_solve(np.dot(x, x.T), y),
                     (a, b), order=2)
 

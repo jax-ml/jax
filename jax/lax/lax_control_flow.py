@@ -907,7 +907,8 @@ def custom_root(f, initial_guess, solve, tangent_solve):
 
   This is a low-level routine, mostly intended for internal use in JAX.
   Gradients of custom_root() are defined with respect to closed-over variables
-  from the provided function f via the implicit function theorem.
+  from the provided function ``f`` via the implicit function theorem:
+  https://en.wikipedia.org/wiki/Implicit_function_theorem
 
   Args:
     f: function for which to find a root. Should accept a single argument,
