@@ -45,7 +45,7 @@ def ConvBlock(kernel_size, filters, strides=(2, 2)):
       Conv(filters2, (ks, ks), padding='SAME'), BatchNorm(), Relu,
       Conv(filters3, (1, 1)), BatchNorm())
   Shortcut = stax.serial(Conv(filters3, (1, 1), strides), BatchNorm())
-  return ResBlock(Main, Shortcut)
+  return ResBlock(Main, Shortcut, tail=Relu)
 
 
 def IdentityBlock(kernel_size, filters):
@@ -58,7 +58,7 @@ def IdentityBlock(kernel_size, filters):
         Conv(filters2, (ks, ks), padding='SAME'), BatchNorm(), Relu,
         Conv(input_shape[3], (1, 1)), BatchNorm())
   Main = stax.shape_dependent(make_main)
-  return ResBlock(Main, Identity)
+  return ResBlock(Main, Identity, tail=Relu)
 
 
 # ResNet architectures compose layers and ResNet blocks

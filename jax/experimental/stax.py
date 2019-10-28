@@ -260,7 +260,7 @@ def Dropout(rate, mode='train'):
   return init_fun, apply_fun
 
 
-def ResBlock(*layers, fan_in=FanInSum, tail=Relu):
+def ResBlock(*layers, fan_in=FanInSum, tail=Identity):
   """Split input, feed it through one or more layers in parallel,
   recombine them with a fan-in, apply a trailing layer (i.e. an activation)
 
