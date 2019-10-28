@@ -1093,6 +1093,12 @@ class APITest(jtu.JaxTestCase):
     b = np.dot(a + np.eye(a.shape[0]), real_x)
     print(gf(a, b))  # doesn't crash
 
+  def test_vmap_in_axes_tree_prefix_error(self):
+    # https://github.com/google/jax/issues/795
+    jtu.check_raises_regexp(
+        lambda: api.vmap(lambda x: x, in_axes=(0, 0))(np.ones(3)),
+        ValueError, "axes specification must be a tree prefix")
+
 
 if __name__ == '__main__':
   absltest.main()
