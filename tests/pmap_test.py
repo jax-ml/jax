@@ -550,6 +550,31 @@ class PmapTest(jtu.JaxTestCase):
     expected = onp.swapaxes(x, 0, 2)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @jtu.skip_on_devices("cpu", "gpu")
+  def testAlltoAllSimple(self):
+    device_count = xla_bridge.device_count()
+    shape = (device_count, device_count, device_count)
+    x = onp.arange(prod(shape)).reshape(shape)
+    for d in (0, 1):
+      ans = pmap(lambda x: lax.all_to_all(x, 'i', d, d), axis_name='i')(x)
+      expected = onp.swapaxes(x, 0, d + 1)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @jtu.skip_on_devices("cpu", "gpu")
+  def testAlltoAllComplex(self):
+    device_count = xla_bridge.device_count()
+    shape = (device_count, device_count, device_count)
+    x = onp.arange(prod(shape)).reshape(shape)
+    list_T = lambda x: [[x[i][j] for i in range(len(x))]
+                        for j in range(len(x[0]))]
+    for p, q in [(0, 0), (1, 1), (0, 1), (1, 0)]:
+      ans = pmap(lambda z: lax.all_to_all(z, 'i', p, q), axis_name='i')(x)
+      tmp = list_T(list(map(lambda z: onp.split(z, device_count, p + 1),
+                            onp.split(x, device_count, 0))))
+      expected = np.concatenate(list(map(
+          lambda z: np.concatenate(z, q + 1), tmp)), 0)
+      self.assertAllClose(ans, expected, check_dtypes=False)
+
   def testSoftPmapPsum(self):
     n = 4 * xla_bridge.device_count()
     def f(x):

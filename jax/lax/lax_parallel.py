@@ -140,35 +140,42 @@ def pswapaxes(x, axis_name, axis):
   return all_to_all(x, axis_name, axis, axis)
 
 def all_to_all(x, axis_name, split_axis, concat_axis):
-  """Materialize the mapped axis and map a different axis.
+  """Perform all to all along axis_name dimension on split_axis and concat_axis.
 
-  In the output, the input mapped axis ``axis_name`` is materialized at the
-  logical axis position ``concat_axis``, and the input unmapped axis at position
-  ``split_axis`` is mapped with the name ``axis_name``.
+  The input is split evenly along ``split_axis`` into ``axis_size`` chunks,
+  where ``axis_size`` is the size of the mapped axis named ``axis_name`` in
+  input ``x``, the chunks are broadcast along the mapped axis ``axis_name`` and
+  concatenated along the ``concat_axis`` dimension.
 
-  The input mapped axis size must be equal to the size of the axis to be mapped;
-  that is, we must have ``lax.psum(1, axis_name) == x.shape[split_axis]``.
+  The input mapped axis size must evenly divide the axis to be split and
+  broadcast; that is, we must have `` x.shape[split_axis] %
+  lax.psum(1, axis_name) == 0``.
 
   Args:
     x: array with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
       ``pmap`` docstring for more details).
-    split_axis: int indicating the unmapped axis of ``x`` to map with the name
-      ``axis_name``.
-    concat_axis: int indicating the position in the output to materialize the
-      mapped axis of the input with the name ``axis_name``.
+    split_axis: int indicating the unmapped axis of ``x`` to split and broadcast
+      along the mapped axis ``axis_name``.
+    concat_axis: int indicating the position in the output to concatenate the
+      broadcast chunks in the resultant array.
 
   Returns:
-    An array with shape given by the expression::
-      np.insert(np.delete(x.shape, split_axis), concat_axis, axis_size)
+    An array with shape new_shape defined by the equations::
+      new_shape[axis] = x.shape[axis] for axis not in {split_axis, concat_axis}
+      new_shape[split_axis] = x.shape[split_axis] // axis_size
+      new_shape[concat_axis] = x.shape[split_axis] * axis_size
 
     where ``axis_size`` is the size of the mapped axis named ``axis_name`` in
     the input ``x``, i.e. ``axis_size = lax.psum(1, axis_name)``.
   """
-  if psum(1, axis_name) != x.shape[split_axis]:
-    msg = ("all_to_all requires the size of the mapped axis axis_name to equal "
-          "x.shape[split_axis], but they are {} and {} respectively.")
-    raise ValueError(msg.format(psum(1, axis_name), x.shape[split_axis]))
+  axis_size = psum(1, axis_name)
+  if x.shape[split_axis] % axis_size:
+    msg = ('all_to_all requires the size of the mapped axis axis_name to '
+           'divide x.shape[split_axis] evenly, but {} does not evenly '
+           'divide {}.')
+    raise ValueError(msg.format(axis_size, x.shape[split_axis]))
+
   return all_to_all_p.bind(x, split_axis=split_axis, concat_axis=concat_axis,
                            axis_name=axis_name)
 
@@ -249,10 +256,19 @@ ad.deflinear(ppermute_p, _ppermute_transpose_rule)
 xla.parallel_translations[ppermute_p] = _ppermute_translation_rule
 
 
-def _all_to_all_translation_rule(c, x, split_axis, concat_axis, replica_groups, backend=None):
+def _all_to_all_abstract_eval(x, split_axis, concat_axis, axis_name):
+  axis_size = psum(1, axis_name)
+  newshape = list(x.shape)
+  newshape[split_axis] //= axis_size
+  newshape[concat_axis] *= axis_size
+  return ShapedArray(tuple(newshape), x.dtype)
+
+def _all_to_all_translation_rule(c, x, split_axis, concat_axis,
+                                 replica_groups, backend=None):
   del backend
   return c.AllToAll(x, split_axis, concat_axis, replica_groups)
 
+# TODO(levskaya): verify soft_pmap rule for all_to_all general case:
 def _all_to_all_split_axis_rule(vals, which_mapped, split_axis, concat_axis,
                                 axis_name):
   assert tuple(which_mapped) == (True,)
@@ -270,7 +286,9 @@ def _moveaxis(src, dst, x):
   perm.insert(dst, src)
   return lax.transpose(x, perm)
 
-all_to_all_p = standard_pmap_primitive('all_to_all')
+all_to_all_p = core.Primitive('all_to_all')
+all_to_all_p.def_impl(partial(pxla.apply_parallel_primitive, all_to_all_p))
+all_to_all_p.def_abstract_eval(_all_to_all_abstract_eval)
 xla.parallel_translations[all_to_all_p] = _all_to_all_translation_rule
 pxla.split_axis_rules[all_to_all_p] = _all_to_all_split_axis_rule
 
