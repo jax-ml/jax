@@ -1099,6 +1099,13 @@ class APITest(jtu.JaxTestCase):
         lambda: api.vmap(lambda x: x, in_axes=(0, 0))(np.ones(3)),
         ValueError, "axes specification must be a tree prefix")
 
+  def test_vmap_objects_issue_183(self):
+    # https://github.com/google/jax/issues/183
+    fun = lambda f, x: f(x)
+    vfun = api.vmap(fun, (None, 0))
+    ans = vfun(lambda x: x + 1, np.arange(3))
+    self.assertAllClose(ans, onp.arange(1, 4), check_dtypes=False)
+
 
 if __name__ == '__main__':
   absltest.main()
