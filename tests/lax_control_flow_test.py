@@ -1104,6 +1104,10 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     b = rng.randn(2)
     jtu.check_grads(linear_solve, (a, b), order=2)
 
+    actual = api.jit(linear_solve)(a, b)
+    expected = np.linalg.solve(a, b)
+    self.assertAllClose(expected, actual, check_dtypes=True)
+
   def test_custom_root_with_custom_linear_solve(self):
 
     def linear_solve(a, b):
@@ -1119,6 +1123,10 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     b = rng.randn(2)
 
     actual = linear_solve(np.dot(a, a.T), b)
+    expected = np.linalg.solve(np.dot(a, a.T), b)
+    self.assertAllClose(expected, actual, check_dtypes=True)
+
+    actual = api.jit(linear_solve)(np.dot(a, a.T), b)
     expected = np.linalg.solve(np.dot(a, a.T), b)
     self.assertAllClose(expected, actual, check_dtypes=True)
 
