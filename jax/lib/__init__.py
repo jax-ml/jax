@@ -45,7 +45,6 @@ _check_jaxlib_version()
 
 
 from jaxlib import xla_client
-from jaxlib import xrt
 from jaxlib import lapack
 
 from jaxlib import pytree
