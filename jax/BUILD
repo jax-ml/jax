@@ -65,3 +65,9 @@ py_library(
     srcs = ["experimental/ode.py"],
     deps = [":jax"],
 )
+
+py_library(
+    name = "vectorize",
+    srcs = ["experimental/vectorize.py"],
+    deps = [":jax"],
+)

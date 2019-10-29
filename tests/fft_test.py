@@ -16,6 +16,8 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import unittest
+
 import numpy as onp
 
 from absl.testing import absltest
@@ -23,6 +25,10 @@ from absl.testing import parameterized
 
 from jax import numpy as np
 from jax import test_util as jtu
+
+from jax.config import config
+config.parse_flags_with_absl()
+
 
 float_dtypes = [onp.float32, onp.float64]
 complex_dtypes = [onp.complex64, onp.complex128]
