@@ -1046,6 +1046,20 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     api.grad(lambda x: jit_run_scan(x))(0.)  # doesn't crash
 
+  def testIssue810(self):
+    def loss(A):
+      def step(x, i):
+        return A @ x, None
+      init_x = np.zeros(A.shape[-1:])
+      last_x, _ = lax.scan(step, init_x, np.arange(10))
+      return np.sum(last_x)
+
+    A = np.zeros((3, 3))
+    # The second DUS was unnecessarily replicating A across time.
+    # We check XLA because _scan_impl is "underneath" the jaxpr language.
+    s = str(api.xla_computation(api.grad(loss))(A).GetHloText())
+    assert s.count("dynamic-update-slice(") < 2
+
   def test_root_scalar(self):
 
     def scalar_solve(f, y):

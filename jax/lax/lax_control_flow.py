@@ -497,19 +497,42 @@ def _scan_impl(*args, **kwargs):
 
   consts, init, xs = split_list(args, [num_consts, num_carry])
   _, _, x_avals = split_list(jaxpr.in_avals, [num_consts, num_carry])
-  _, y_avals = split_list(jaxpr.out_avals, [num_carry])
+
+  # Some inputs to a scanned function are constant across time.
+  # Outputs that depend only on these constant inputs are also
+  # constant across time! As an optimization, we use partial_eval
+  # to identify these outputs and compute them outside the scan.
+  # This avoids slow and unnecessary slice updates inside the loop
+  # and may allow XLA to optimize out their time-axis broadcast.
+
+  uk_in = [False] * num_consts + [True] * (len(jaxpr.in_avals) - num_consts)
+  instantiate = [True] * num_carry + [False] * (len(jaxpr.out_avals) - num_carry)
+  const_jaxpr, step_jaxpr, uk_out = pe.partial_eval_jaxpr(jaxpr, uk_in, instantiate)
+
+  out_avals = [aval if uk else core.abstract_unit
+               for aval, uk in zip(jaxpr.out_avals, uk_out)]
+  _, y_avals = split_list(out_avals, [num_carry])
+
+  const_outs = core.jaxpr_as_fun(const_jaxpr)(
+      *(consts + [core.unit] * (len(jaxpr.in_avals) - num_consts)))
+  _, const_ys, residuals = split_list(
+      const_outs, [num_carry, len(jaxpr.out_avals) - num_carry])
 
   def body_fun(i, vals):
     i = i if forward else length - i - 1
     carry, ys = split_list(vals, [num_carry])
     x = _map(partial(_index_array, i), x_avals, xs)
-    out_flat = core.jaxpr_as_fun(jaxpr)(*(consts + carry + x))
+    out_flat = core.jaxpr_as_fun(step_jaxpr)(*(consts + carry + x + residuals))
     carry_out, y_updates = split_list(out_flat, [num_carry])
     ys_out = _map(partial(_update_array, i), y_avals, ys, y_updates)
     return carry_out + ys_out
 
   ys_init = _map(partial(_empty_array, length), y_avals)
-  return fori_loop(0, length, body_fun, init + ys_init)
+  nonconst_outs = fori_loop(0, length, body_fun, init + ys_init)
+  carry_out, nonconst_ys = split_list(nonconst_outs, [num_carry])
+  ys_out = [n if c is core.unit else c[None, ...]
+            for c, n in zip(const_ys, nonconst_ys)]
+  return carry_out + ys_out
 
 def _index_array(i, aval, x):
   if aval is core.abstract_unit:
@@ -586,7 +609,7 @@ def _scan_partial_eval(trace, *tracers, **kwargs):
   num_xs = len(jaxpr.in_avals) - num_carry - num_consts
   num_ys = len(jaxpr.out_avals) - num_carry
 
-  unknowns = original_unknowns = [t.pval[0] is not None for t in tracers]
+  unknowns = [t.pval[0] is not None for t in tracers]
   const_uk, init_uk, xs_uk = split_list(unknowns, [num_consts, num_carry])
 
   carry_uk = init_uk
