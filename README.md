@@ -37,7 +37,7 @@ are instances of such transformations. Another is [`vmap`](#auto-vectorization-w
 for automatic vectorization, with more to come.
 
 This is a research project, not an official Google product. Expect bugs and
-[sharp edges](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/Common_Gotchas_in_JAX.ipynb).
+[sharp edges](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html).
 Please help by trying it out, [reporting
 bugs](https://github.com/google/jax/issues), and letting us know what you
 think!
@@ -83,17 +83,17 @@ open](https://github.com/google/jax) by a growing number of
 
 ## Quickstart: Colab in the Cloud
 Jump right in using a notebook in your browser, connected to a Google Cloud GPU. Here are some starter notebooks:
-- [The basics: NumPy on accelerators, `grad` for differentiation, `jit` for compilation, and `vmap` for vectorization](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/quickstart.ipynb)
+- [The basics: NumPy on accelerators, `grad` for differentiation, `jit` for compilation, and `vmap` for vectorization](https://jax.readthedocs.io/en/latest/notebooks/quickstart.html)
 - [Training a Simple Neural Network, with PyTorch Data Loading](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/Neural_Network_and_Data_Loading.ipynb)
 - [Training a Simple Neural Network, with TensorFlow Dataset Data Loading](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/neural_network_with_tfds_data.ipynb)
 
 And for a deeper dive into JAX:
-- [Common gotchas and sharp edges](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/Common_Gotchas_in_JAX.ipynb)
-- [The Autodiff Cookbook, Part 1: easy and powerful automatic differentiation in JAX](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/autodiff_cookbook.ipynb)
-- [Directly using XLA in Python](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/XLA_in_Python.ipynb)
-- [How JAX primitives work](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/How_JAX_primitives_work.ipynb)
-- [MAML Tutorial with JAX](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/maml.ipynb)
-- [Generative Modeling by Estimating Gradients of Data Distribution in JAX](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/score_matching.ipynb).
+- [Common gotchas and sharp edges](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html)
+- [The Autodiff Cookbook, Part 1: easy and powerful automatic differentiation in JAX](https://jax.readthedocs.io/en/latest/notebooks/autodiff_cookbook.html)
+- [Directly using XLA in Python](https://jax.readthedocs.io/en/latest/notebooks/XLA_in_Python.html)
+- [How JAX primitives work](https://jax.readthedocs.io/en/latest/notebooks/How_JAX_primitives_work.html)
+- [MAML Tutorial with JAX](https://jax.readthedocs.io/en/latest/notebooks/maml.html)
+- [Generative Modeling by Estimating Gradients of Data Distribution in JAX](https://jax.readthedocs.io/en/latest/notebooks/score_matching.html).
 
 
 ## Installation
@@ -239,7 +239,7 @@ print("Trained loss: {:0.2f}".format(loss(weights, inputs, targets)))
 ```
 
 To see more, check out the [quickstart
-notebook](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/quickstart.ipynb),
+notebook](https://jax.readthedocs.io/en/latest/notebooks/quickstart.html),
 a [simple MNIST classifier
 example](https://github.com/google/jax/blob/master/examples/mnist_classifier.py)
 and the rest of the [JAX
@@ -687,13 +687,13 @@ code to compile and end-to-end optimize much bigger functions.
 ## Current gotchas
 
 For a survey of current gotchas, with examples and explanations, we highly
-recommend reading the [Gotchas Notebook](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/Common_Gotchas_in_JAX.ipynb).
+recommend reading the [Gotchas Notebook](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html).
 
 Some stand-out gotchas that might surprise NumPy users:
 1. JAX enforces single-precision (32-bit, e.g. `float32`) values by default, and
    to enable double-precision (64-bit, e.g. `float64`) one needs to set the
    `jax_enable_x64` variable **at startup** (or set the environment variable
-   `JAX_ENABLE_X64=True`, see [the Gotchas Notebook](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/Common_Gotchas_in_JAX.ipynb#scrollTo=YTktlwTTMgFl))
+   `JAX_ENABLE_X64=True`, see [the Gotchas Notebook](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#scrollTo=Double-(64bit)-precision))
 2. Some of NumPy's dtype promotion semantics involving a mix of Python scalars
    and NumPy types aren't preserved, namely `np.add(1, np.array([2],
    np.float32)).dtype` is `float64` rather than `float32`.
@@ -704,7 +704,7 @@ Some stand-out gotchas that might surprise NumPy users:
    reasons](https://github.com/google/jax/blob/master/design_notes/prng.md), and
    non-reuse (linearity) is not yet checked.
 
-See [the notebook](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/Common_Gotchas_in_JAX.ipynb) for much more information.
+See [the notebook](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html) for much more information.
 
 ## Citing JAX
 
