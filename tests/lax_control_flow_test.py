@@ -1061,7 +1061,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     api.grad(lambda x: jit_run_scan(x))(0.)  # doesn't crash
 
-  def test_root_scalar(self):
+  def test_custom_root_scalar(self):
 
     # TODO(shoyer): Figure out why this fails and re-enable it, if possible. My
     # best guess is that TPUs use less stable numerics for pow().
@@ -1091,7 +1091,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     def sqrt_cubed(x, tangent_solve=scalar_solve):
       f = lambda y: y ** 2 - x ** 3
-      return lax.root(f, 0.0, binary_search, tangent_solve)
+      return lax.custom_root(f, 0.0, binary_search, tangent_solve)
 
     value, grad = api.value_and_grad(sqrt_cubed)(5.0)
     self.assertAllClose(value, 5 ** 1.5, check_dtypes=False)
@@ -1106,33 +1106,61 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     results = api.jit(sqrt_cubed)(5.0)
     self.assertAllClose(results, 5.0 ** 1.5, check_dtypes=False)
 
-  def test_root_vector(self):
-    def oracle(func, x0):
-      del func  # unused
-      return x0
+  def test_custom_root_vector_with_solve_closure(self):
 
     def vector_solve(f, y):
       return np.linalg.solve(api.jacobian(f)(y), y)
 
     def linear_solve(a, b):
       f = lambda y: high_precision_dot(a, y) - b
-      x0 = np.linalg.solve(a, b)
-      return lax.root(f, x0, oracle, vector_solve)
+      x0 = np.zeros_like(b)
+      solution = np.linalg.solve(a, b)
+      oracle = lambda func, x0: solution
+      return lax.custom_root(f, x0, oracle, vector_solve)
 
     rng = onp.random.RandomState(0)
     a = rng.randn(2, 2)
     b = rng.randn(2)
     jtu.check_grads(linear_solve, (a, b), order=2)
 
-  def test_root_errors(self):
+    actual = api.jit(linear_solve)(a, b)
+    expected = np.linalg.solve(a, b)
+    self.assertAllClose(expected, actual, check_dtypes=True)
+
+  def test_custom_root_with_custom_linear_solve(self):
+
+    def linear_solve(a, b):
+      f = lambda x: np.dot(a, x) - b
+      factors = jsp.linalg.cho_factor(a)
+      cho_solve = lambda f, b: jsp.linalg.cho_solve(factors, b)
+      def pos_def_solve(g, b):
+        return lax.custom_linear_solve(g, b, cho_solve, symmetric=True)
+      return lax.custom_root(f, b, cho_solve, pos_def_solve)
+
+    rng = onp.random.RandomState(0)
+    a = rng.randn(2, 2)
+    b = rng.randn(2)
+
+    actual = linear_solve(np.dot(a, a.T), b)
+    expected = np.linalg.solve(np.dot(a, a.T), b)
+    self.assertAllClose(expected, actual, check_dtypes=True)
+
+    actual = api.jit(linear_solve)(np.dot(a, a.T), b)
+    expected = np.linalg.solve(np.dot(a, a.T), b)
+    self.assertAllClose(expected, actual, check_dtypes=True)
+
+    jtu.check_grads(lambda x, y: linear_solve(np.dot(x, x.T), y),
+                    (a, b), order=2)
+
+  def test_custom_root_errors(self):
     with self.assertRaisesRegex(TypeError, re.escape("f() output pytree")):
-      lax.root(lambda x: (x, x), 0.0, lambda f, x: x, lambda f, x: x)
+      lax.custom_root(lambda x: (x, x), 0.0, lambda f, x: x, lambda f, x: x)
     with self.assertRaisesRegex(TypeError, re.escape("solve() output pytree")):
-      lax.root(lambda x: x, 0.0, lambda f, x: (x, x), lambda f, x: x)
+      lax.custom_root(lambda x: x, 0.0, lambda f, x: (x, x), lambda f, x: x)
 
     def dummy_root_usage(x):
       f = lambda y: x - y
-      return lax.root(f, 0.0, lambda f, x: x, lambda f, x: (x, x))
+      return lax.custom_root(f, 0.0, lambda f, x: x, lambda f, x: (x, x))
 
     with self.assertRaisesRegex(
         TypeError, re.escape("tangent_solve() output pytree")):
@@ -1224,7 +1252,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   def test_custom_linear_solve_cholesky(self):
 
-    def positive_definive_solve(a, b):
+    def positive_definite_solve(a, b):
       factors = jsp.linalg.cho_factor(a)
       def solve(matvec, x):
         return jsp.linalg.cho_solve(factors, x)
@@ -1236,16 +1264,16 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     b = rng.randn(2)
 
     expected = np.linalg.solve(high_precision_dot(a, a.T), b)
-    actual = positive_definive_solve(high_precision_dot(a, a.T), b)
+    actual = positive_definite_solve(high_precision_dot(a, a.T), b)
     self.assertAllClose(expected, actual, check_dtypes=True)
 
-    actual = api.jit(positive_definive_solve)(high_precision_dot(a, a.T), b)
+    actual = api.jit(positive_definite_solve)(high_precision_dot(a, a.T), b)
     self.assertAllClose(expected, actual, check_dtypes=True)
 
     # numerical gradients are only well defined if ``a`` is guaranteed to be
     # positive definite.
     jtu.check_grads(
-        lambda x, y: positive_definive_solve(high_precision_dot(x, x.T), y),
+        lambda x, y: positive_definite_solve(high_precision_dot(x, x.T), y),
         (a, b), order=2)
 
   def test_custom_linear_solve_lu(self):

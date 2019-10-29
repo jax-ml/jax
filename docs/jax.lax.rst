@@ -117,7 +117,6 @@ Operators
     sort_key_val
     sqrt
     square
-    stop_gradient
     sub
     tan
     tie_in
@@ -136,6 +135,15 @@ Control flow operators
     scan
     while_loop
 
+Custom gradient operators
+-------------------------
+
+.. autosummary::
+  :toctree: _autosummary
+
+    stop_gradient
+    custom_linear_solve
+    custom_root
 
 Parallel operators
 ------------------
