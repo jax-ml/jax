@@ -92,7 +92,7 @@ def orthogonal(scale=1.0, column_axis=-1):
     Q, R = np.linalg.qr(A)
     Q *= np.sign(np.diag(R)) # needed for a uniform distribution
     if n_rows < n_cols: Q = Q.T
-    Q = np.reshape(Q, onp.delete(shape, column_axis) + (shape[column_axis],))
+    Q = np.reshape(Q, tuple(onp.delete(shape, column_axis)) + (shape[column_axis],))
     Q = np.moveaxis(Q, -1, column_axis)
     return scale * Q
   return init
