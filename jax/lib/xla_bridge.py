@@ -37,7 +37,6 @@ import threading
 
 from . import version
 from . import xla_client
-from . import xrt
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_enable_x64',
@@ -45,7 +44,7 @@ flags.DEFINE_bool('jax_enable_x64',
                   'Enable 64-bit types to be used.')
 flags.DEFINE_string(
     'jax_xla_backend', 'xla',
-    'Either "xla" for the XLA service directly, or "xrt" for an XRT backend.')
+    'Default is "xla" for the XLA service directly.')
 flags.DEFINE_string(
     'jax_backend_target', 'local',
     'Either "local" or "rpc:address" to connect to a remote service target.')
@@ -116,18 +115,8 @@ def _get_local_backend(platform=None):
 
   return backend
 
-def _get_xrt_backend(platform=None):
-  del platform
-  # TODO(phawkins): support non-TPU devices.
-  tf_device_name = "TPU"
-  worker = "tpu_worker"
-  tf_context = xrt.get_tf_context(FLAGS.jax_backend_target, worker)
-  backend = xrt.XrtBackend(tf_context, tf_device_name)
-  return backend
-
 
 register_backend('xla', _get_local_backend)
-register_backend('xrt', _get_xrt_backend)
 
 _backend_lock = threading.Lock()
 
