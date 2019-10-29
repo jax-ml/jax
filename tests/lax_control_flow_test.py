@@ -771,8 +771,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     api.jvp(lambda params: loss(params, inputs, targets), (params,), (params,))
 
     # jvp numerical check passes
-    jtu.check_grads(loss, (params, inputs, targets), order=2, modes=["fwd"],
-                    rtol=1e-3)
+    jtu.check_grads(loss, (params, inputs, targets), order=2, modes=["fwd"])
 
     # linearize works
     _, expected = api.jvp(loss, (params, inputs, targets),
@@ -785,7 +784,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     api.grad(loss)(params, inputs, targets)
 
     # gradient check passes
-    jtu.check_grads(loss, (params, inputs, targets), order=2)
+    jtu.check_grads(loss, (params, inputs, targets), order=2, rtol=1e-2)
 
     # we can vmap to batch things
     batch_size = 7
