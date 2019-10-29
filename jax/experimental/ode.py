@@ -209,21 +209,23 @@ def odeint(ofunc, y0, t, *args, **kwargs):
     **kwargs: Two relevant keyword arguments:
       'rtol': Relative local error tolerance for solver.
       'atol': Absolute local error tolerance for solver.
+      'mxstep': Maximum number of steps to take for each timepoint.
 
   Returns:
     Integrated system values at each timepoint.
   """
   rtol = kwargs.get('rtol', 1.4e-8)
   atol = kwargs.get('atol', 1.4e-8)
+  mxstep = kwargs.get('mxstep', np.inf)
 
   @functools.partial(jax.jit, static_argnums=(0,))
   def _fori_body_fun(func, i, val):
     """Internal fori_loop body to interpolate an integral at each timestep."""
     t, cur_y, cur_f, cur_t, dt, last_t, interp_coeff, solution = val
-    cur_y, cur_f, cur_t, dt, last_t, interp_coeff = jax.lax.while_loop(
-        lambda x: x[2] < t[i],
+    cur_y, cur_f, cur_t, dt, last_t, interp_coeff, _ = jax.lax.while_loop(
+        lambda x: (x[2] < t[i]) & (x[-1] < mxstep),
         functools.partial(_while_body_fun, func),
-        (cur_y, cur_f, cur_t, dt, last_t, interp_coeff))
+        (cur_y, cur_f, cur_t, dt, last_t, interp_coeff, 0.))
 
     relative_output_time = (t[i] - last_t) / (cur_t - last_t)
     out_x = np.polyval(interp_coeff, relative_output_time)
@@ -236,7 +238,7 @@ def odeint(ofunc, y0, t, *args, **kwargs):
   @functools.partial(jax.jit, static_argnums=(0,))
   def _while_body_fun(func, x):
     """Internal while_loop body to determine interpolation coefficients."""
-    cur_y, cur_f, cur_t, dt, last_t, interp_coeff = x
+    cur_y, cur_f, cur_t, dt, last_t, interp_coeff, j = x
     next_t = cur_t + dt
     next_y, next_f, next_y_error, k = runge_kutta_step(
         func, cur_y, cur_f, cur_t, dt)
@@ -244,10 +246,11 @@ def odeint(ofunc, y0, t, *args, **kwargs):
     new_interp_coeff = interp_fit_dopri(cur_y, next_y, k, dt)
     dt = optimal_step_size(dt, error_ratios)
 
+    next_j = j + 1
     new_rav, unravel = ravel_pytree(
-        (next_y, next_f, next_t, dt, cur_t, new_interp_coeff))
+        (next_y, next_f, next_t, dt, cur_t, new_interp_coeff, next_j))
     old_rav, _ = ravel_pytree(
-        (cur_y, cur_f, cur_t, dt, last_t, interp_coeff))
+        (cur_y, cur_f, cur_t, dt, last_t, interp_coeff, next_j))
 
     return unravel(np.where(np.all(error_ratios <= 1.),
                             new_rav,
@@ -280,6 +283,7 @@ def vjp_odeint(ofunc, y0, t, *args, **kwargs):
     **kwargs: Two relevant keyword arguments:
       'rtol': Relative local error tolerance for solver.
       'atol': Absolute local error tolerance for solver.
+      'mxstep': Maximum number of steps to take for each timepoint.
 
   Returns:
     VJP function `vjp = vjp_all(g)` where `yt = ofunc(y, t, *args)`
@@ -289,6 +293,7 @@ def vjp_odeint(ofunc, y0, t, *args, **kwargs):
   """
   rtol = kwargs.get('rtol', 1.4e-8)
   atol = kwargs.get('atol', 1.4e-8)
+  mxstep = kwargs.get('mxstep', np.inf)
 
   flat_args, unravel_args = ravel_pytree(args)
   flat_func = lambda y, t, flat_args: ofunc(y, t, *unravel_args(flat_args))
@@ -325,7 +330,8 @@ def vjp_odeint(ofunc, y0, t, *args, **kwargs):
                      this_tarray,
                      flat_args,
                      rtol=rtol,
-                     atol=atol)
+                     atol=atol,
+                     mxstep=mxstep)
     vjp_y = aug_ans[1][state_len:2*state_len] + this_gim1
     vjp_t0 = aug_ans[1][2*state_len]
     vjp_args = aug_ans[1][2*state_len+1:]
@@ -362,13 +368,13 @@ def vjp_odeint(ofunc, y0, t, *args, **kwargs):
 
     return tuple([result[-4], vjp_times] + list(result[-2]))
 
-  primals_out = odeint(flat_func, y0, t, flat_args)
+  primals_out = odeint(flat_func, y0, t, flat_args, rtol=rtol, atol=atol, mxstep=mxstep)
   vjp_fun = lambda g: vjp_all(g, primals_out, t)
 
   return primals_out, vjp_fun
 
 
-def build_odeint(ofunc, rtol=1.4e-8, atol=1.4e-8):
+def build_odeint(ofunc, rtol=1.4e-8, atol=1.4e-8, mxstep=onp.inf):
   """Return `f(y0, t, args) = odeint(ofunc(y, t, *args), y0, t, args)`.
 
   Given the function ofunc(y, t, *args), return the jitted function
@@ -383,14 +389,15 @@ def build_odeint(ofunc, rtol=1.4e-8, atol=1.4e-8):
     ofunc: The function to be wrapped into an ODE integration.
     rtol: relative local error tolerance for solver.
     atol: absolute local error tolerance for solver.
+    mxstep: Maximum number of steps to take for each timepoint.
 
   Returns:
     `f(y0, t, args) = odeint(ofunc(y, t, *args), y0, t, args)`
   """
   ct_odeint = jax.custom_transforms(
-      lambda y0, t, *args: odeint(ofunc, y0, t, *args, rtol=rtol, atol=atol))
+      lambda y0, t, *args: odeint(ofunc, y0, t, *args, rtol=rtol, atol=atol, mxstep=mxstep))
 
-  v = lambda y0, t, *args: vjp_odeint(ofunc, y0, t, *args, rtol=rtol, atol=atol)
+  v = lambda y0, t, *args: vjp_odeint(ofunc, y0, t, *args, rtol=rtol, atol=atol, mxstep=mxstep)
   jax.defvjp_all(ct_odeint, v)
 
   return jax.jit(ct_odeint)
