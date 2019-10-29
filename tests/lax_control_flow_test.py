@@ -52,6 +52,10 @@ def scan_reference(f, init, xs):
   return carry, ys
 
 
+def high_precision_dot(a, b):
+  return lax.dot(a, b, precision=lax.Precision.HIGHEST)
+
+
 class LaxControlFlowTest(jtu.JaxTestCase):
 
   def testWhileWithTuple(self):
@@ -771,8 +775,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     api.jvp(lambda params: loss(params, inputs, targets), (params,), (params,))
 
     # jvp numerical check passes
-    jtu.check_grads(loss, (params, inputs, targets), order=2, modes=["fwd"],
-                    rtol=1e-3)
+    jtu.check_grads(loss, (params, inputs, targets), order=2, modes=["fwd"])
 
     # linearize works
     _, expected = api.jvp(loss, (params, inputs, targets),
@@ -785,7 +788,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     api.grad(loss)(params, inputs, targets)
 
     # gradient check passes
-    jtu.check_grads(loss, (params, inputs, targets), order=2)
+    jtu.check_grads(loss, (params, inputs, targets), order=2, rtol=1e-2)
 
     # we can vmap to batch things
     batch_size = 7
@@ -1059,7 +1062,9 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     api.grad(lambda x: jit_run_scan(x))(0.)  # doesn't crash
 
   def test_custom_root_scalar(self):
-    # TODO(shoyer): test fails on TPU
+
+    # TODO(shoyer): Figure out why this fails and re-enable it, if possible. My
+    # best guess is that TPUs use less stable numerics for pow().
     if jtu.device_under_test() == "tpu":
       raise SkipTest("Test fails on TPU")
 
@@ -1091,7 +1096,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     value, grad = api.value_and_grad(sqrt_cubed)(5.0)
     self.assertAllClose(value, 5 ** 1.5, check_dtypes=False)
     self.assertAllClose(grad, api.grad(pow)(5.0, 1.5), check_dtypes=False)
-
     jtu.check_grads(sqrt_cubed, (5.0,), order=2, rtol=1e-3)
 
     # TODO(shoyer): reenable when batching works
@@ -1103,15 +1107,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(results, 5.0 ** 1.5, check_dtypes=False)
 
   def test_custom_root_vector_with_solve_closure(self):
-    # TODO(shoyer): test fails on TPU
-    if jtu.device_under_test() == "tpu":
-      raise SkipTest("Test fails on TPU")
 
     def vector_solve(f, y):
       return np.linalg.solve(api.jacobian(f)(y), y)
 
     def linear_solve(a, b):
-      f = lambda y: np.dot(a, y) - b
+      f = lambda y: high_precision_dot(a, y) - b
       x0 = np.zeros_like(b)
       solution = np.linalg.solve(a, b)
       oracle = lambda func, x0: solution
@@ -1170,9 +1171,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       {"testcase_name": "symmetric", "symmetric": True},
   )
   def test_custom_linear_solve(self, symmetric):
-    # TODO(shoyer): test fails on TPU
-    if jtu.device_under_test() == "tpu":
-      raise SkipTest("Test fails on TPU")
 
     def explicit_jacobian_solve(matvec, b):
       return lax.stop_gradient(np.linalg.solve(api.jacobian(matvec)(b), b))
@@ -1183,7 +1181,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
           symmetric=symmetric)
 
     def linear_solve(a, b):
-      return matrix_free_solve(partial(np.dot, a), b)
+      return matrix_free_solve(partial(high_precision_dot, a), b)
 
     rng = onp.random.RandomState(0)
     a = rng.randn(3, 3)
@@ -1203,10 +1201,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     # self.assertAllClose(expected, actual, check_dtypes=True)
 
   def test_custom_linear_solve_zeros(self):
-    # TODO(shoyer): test fails on TPU
-    if jtu.device_under_test() == "tpu":
-      raise SkipTest("Test fails on TPU")
-
     def explicit_jacobian_solve(matvec, b):
       return lax.stop_gradient(np.linalg.solve(api.jacobian(matvec)(b), b))
 
@@ -1215,7 +1209,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
                                      explicit_jacobian_solve)
 
     def linear_solve(a, b):
-      return matrix_free_solve(partial(np.dot, a), b)
+      return matrix_free_solve(partial(high_precision_dot, a), b)
 
     rng = onp.random.RandomState(0)
     a = rng.randn(3, 3)
@@ -1240,7 +1234,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     def build_and_solve(a, b):
       # intentionally non-linear in a and b
-      return matrix_free_solve(partial(np.dot, np.exp(a)), np.cos(b))
+      matvec = partial(high_precision_dot, np.exp(a))
+      return matrix_free_solve(matvec, np.cos(b))
 
     rng = onp.random.RandomState(0)
     a = rng.randn(2, 2)
@@ -1256,35 +1251,34 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     # jtu.check_grads(api.vmap(build_and_solve), (a2, b2), atol=1e-5, order=2)
 
   def test_custom_linear_solve_cholesky(self):
-    # TODO(shoyer): test fails on TPU
-    if jtu.device_under_test() == "tpu":
-      raise SkipTest("Test fails on TPU")
 
     def positive_definite_solve(a, b):
       factors = jsp.linalg.cho_factor(a)
       def solve(matvec, x):
         return jsp.linalg.cho_solve(factors, x)
-      return lax.custom_linear_solve(
-          partial(np.dot, a), b, solve, symmetric=True)
+      matvec = partial(high_precision_dot, a)
+      return lax.custom_linear_solve(matvec, b, solve, symmetric=True)
 
     rng = onp.random.RandomState(0)
     a = rng.randn(2, 2)
     b = rng.randn(2)
 
-    expected = np.linalg.solve(np.dot(a, a.T), b)
-    actual = positive_definite_solve(np.dot(a, a.T), b)
+    expected = np.linalg.solve(high_precision_dot(a, a.T), b)
+    actual = positive_definite_solve(high_precision_dot(a, a.T), b)
     self.assertAllClose(expected, actual, check_dtypes=True)
 
-    actual = api.jit(positive_definite_solve)(np.dot(a, a.T), b)
+    actual = api.jit(positive_definite_solve)(high_precision_dot(a, a.T), b)
     self.assertAllClose(expected, actual, check_dtypes=True)
 
     # numerical gradients are only well defined if ``a`` is guaranteed to be
-    # positive definite, even when perturbed.
-    jtu.check_grads(lambda x, y: positive_definite_solve(np.dot(x, x.T), y),
-                    (a, b), order=2)
+    # positive definite.
+    jtu.check_grads(
+        lambda x, y: positive_definite_solve(high_precision_dot(x, x.T), y),
+        (a, b), order=2)
 
   def test_custom_linear_solve_lu(self):
-    # TODO(shoyer): test fails on TPU
+
+    # TODO(b/143528110): re-enable when underlying XLA TPU issue is fixed
     if jtu.device_under_test() == "tpu":
       raise SkipTest("Test fails on TPU")
 
@@ -1296,7 +1290,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       def transpose_solve(vecmat, x):
         return jsp.linalg.lu_solve(at_factors, x)
       return lax.custom_linear_solve(
-          partial(np.dot, a), b, solve, transpose_solve)
+          partial(high_precision_dot, a), b, solve, transpose_solve)
 
     rng = onp.random.RandomState(0)
     a = rng.randn(3, 3)
@@ -1312,15 +1306,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     jtu.check_grads(api.jit(linear_solve), (a, b), order=2)
 
   def test_custom_linear_solve_without_transpose_solve(self):
-    # TODO(shoyer): test fails on TPU
-    if jtu.device_under_test() == "tpu":
-      raise SkipTest("Test fails on TPU")
 
     def explicit_jacobian_solve(matvec, b):
       return lax.stop_gradient(np.linalg.solve(api.jacobian(matvec)(b), b))
 
     def loss(a, b):
-      matvec = partial(np.dot, a)
+      matvec = partial(high_precision_dot, a)
       x = lax.custom_linear_solve(matvec, b, explicit_jacobian_solve)
       return np.sum(x)
 
