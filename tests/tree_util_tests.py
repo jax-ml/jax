@@ -31,6 +31,8 @@ def _dummy_func(*args, **kwargs):
 
 ATuple = collections.namedtuple("ATuple", ("foo", "bar"))
 
+class ANamedTupleSubclass(ATuple):
+  pass
 
 class AnObject(object):
 
@@ -62,6 +64,8 @@ PYTREES = [
     ([3, ATuple(foo=(3, ATuple(foo=3, bar=None)), bar={"baz": 34})],),
     ([AnObject(3, None, [4, "foo"])],),
     ({"a": 1, "b": 2},),
+    (collections.OrderedDict([("foo", 34), ("baz", 101), ("something", -42)]),),
+    (ANamedTupleSubclass(foo="hello", bar=3.5),),
 ]
 
 

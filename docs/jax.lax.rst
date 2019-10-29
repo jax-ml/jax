@@ -30,6 +30,8 @@ Operators
     atan
     atan2
     batch_matmul
+    bessel_i0e
+    bessel_i1e
     bitcast_convert_type
     bitwise_not
     bitwise_and
@@ -143,7 +145,9 @@ Parallelism support is experimental.
 .. autosummary::
   :toctree: _autosummary
 
+    all_to_all
     psum
     pmax
     pmin
     ppermute
+    pswapaxes

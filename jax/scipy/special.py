@@ -521,3 +521,11 @@ def _norm_logpdf(x):
 
 defjvp(log_ndtr,
        lambda g, ans, x: lax.mul(g, lax.exp(lax.sub(_norm_logpdf(x), ans))))
+
+@_wraps(osp_special.i0e)
+def i0e(x):
+  return lax.bessel_i0e(x)
+
+@_wraps(osp_special.i1e)
+def i1e(x):
+  return lax.bessel_i1e(x)

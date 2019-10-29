@@ -18,6 +18,7 @@ from __future__ import print_function
 
 import collections
 import enum
+import functools
 import itertools
 import operator
 import string
@@ -37,7 +38,8 @@ from .. import linear_util as lu
 from ..config import flags
 from ..core import Primitive
 from ..abstract_arrays import (UnshapedArray, ShapedArray, ConcreteArray,
-                               array_types, make_shaped_array, raise_to_shaped)
+                               AbstractToken, array_types, make_shaped_array,
+                               raise_to_shaped, abstract_token)
 from ..interpreters import partial_eval as pe
 from ..interpreters import xla
 from ..interpreters import pxla
@@ -47,6 +49,7 @@ from ..interpreters import masking
 from ..interpreters.masking import ShapeExpr, ShapeError
 from ..util import curry, cache, safe_zip, unzip2, prod
 from ..tree_util import build_tree, tree_unflatten, tree_map
+from ..lib import pytree
 from ..lib import xla_bridge
 from ..lib import xla_client
 
@@ -177,6 +180,18 @@ def lgamma(x):
 def digamma(x):
   r"""Elementwise digamma: :math:`\psi(x)`."""
   return digamma_p.bind(x)
+
+def bessel_i0e(x):
+  r"""Exponentially scaled modified Bessel function of order 0:
+  :math:`\mathrm{i0e}(x) = e^{-\mathrm{abs}(x)} \mathrm{i0}(x)`
+  """
+  return bessel_i0e_p.bind(x)
+
+def bessel_i1e(x):
+  r"""Exponentially scaled modified Bessel function of order 1:
+  :math:`\mathrm{i1e}(x) = e^{-\mathrm{abs}(x)} \mathrm{i1}(x)`
+  """
+  return bessel_i1e_p.bind(x)
 
 def erf(x):
   r"""Elementwise error function: :math:`\mathrm{erf}(x)`."""
@@ -400,6 +415,7 @@ def concatenate(operands, dimension):
                             operand_shapes=tuple(o.shape for o in operands))
 
 Precision = xla_client.PrecisionConfig.Precision
+Precision.__str__ = lambda precision: precision.name
 
 def conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation=None,
                          rhs_dilation=None, dimension_numbers=None,
@@ -508,7 +524,12 @@ def dot(lhs, rhs, precision=None):
       rhs = broadcast(rhs, (1,))
     return reduce(mul(lhs, rhs), _zero(lhs), add, (len(lhs_shape) - 1,))
 
-  return dot_p.bind(lhs, rhs, precision=_canonicalize_precision(precision))
+  if 1 <= lhs.ndim <= 2 and 1 <= rhs.ndim <= 2 and lhs.shape[-1] == rhs.shape[0]:
+    return dot_general(lhs, rhs, (((lhs.ndim - 1,), (0,)), ((), ())),
+                       precision=precision)
+  else:
+    raise TypeError("Incompatible shapes for dot: got {} and {}.".format(
+        lhs.shape, rhs.shape))
 
 def dot_general(lhs, rhs, dimension_numbers, precision=None):
   """More general contraction operator.
@@ -579,7 +600,7 @@ def broadcast(operand, sizes):
   return broadcast_p.bind(operand, sizes=tuple(sizes))
 
 def broadcast_in_dim(operand, shape, broadcast_dimensions):
-  if operand.ndim == len(shape) and not len(broadcast_dimensions):
+  if onp.ndim(operand) == len(shape) and not len(broadcast_dimensions):
     return operand
   if any(x < 0 or x >= len(shape) for x in broadcast_dimensions):
     msg = ("broadcast dimensions must be >= 0 and < ndim(shape), got {} for "
@@ -1254,8 +1275,8 @@ def full_like(x, fill_value, dtype=None, shape=None):
     `fill_value`, similar to the output of np.full.
   """
   shape = onp.shape(x) if shape is None else _canonicalize_shape(shape)
-  out = full(shape, fill_value, dtype or _dtype(x))
-  return tie_in(x, out)
+  fill_value = tie_in(x, fill_value)
+  return full(shape, fill_value, dtype or _dtype(x))
 
 
 def collapse(operand, start_dimension, stop_dimension):
@@ -1355,15 +1376,18 @@ def reciprocal(x):
   r"""Elementwise reciprocal: :math:`1 \over x`."""
   return div(_const(x, 1), x)
 
+@api.jit
 def tan(x):
   r"""Elementwise tangent: :math:`\mathrm{tan}(x)`."""
   return div(sin(x), cos(x))
 
+@api.jit
 def asin(x):
   r"""Elementwise arc sine: :math:`\mathrm{asin}(x)`."""
   return mul(_const(x, 2),
              atan2(x, add(_const(x, 1), sqrt(sub(_const(x, 1), square(x))))))
 
+@api.jit
 def acos(x):
   r"""Elementwise arc cosine: :math:`\mathrm{acos}(x)`."""
   return select(
@@ -1376,12 +1400,27 @@ def atan(x):
   r"""Elementwise arc tangent: :math:`\mathrm{atan}(x)`."""
   return atan2(x, _const(x, 1))
 
+def _upcast_fp16_for_computation(f):
+  @functools.wraps(f)
+  def f_wrapped(x):
+    dtype = _dtype(x)
+    if dtype == onp.float16:
+      return convert_element_type(
+        f(convert_element_type(x, onp.float32)), dtype)
+    return f(x)
+
+  return f_wrapped
+
+@api.jit
+@_upcast_fp16_for_computation
 def sinh(x):
   r"""Elementwise hyperbolic sine: :math:`\mathrm{sinh}(x)`."""
   log_half = _const(x, onp.log(0.5))
   # This formulation avoids overflow when e^x is inf but e^x/2 is not inf.
   return sub(exp(add(log_half, x)), exp(sub(log_half, x)))
 
+@api.jit
+@_upcast_fp16_for_computation
 def cosh(x):
   r"""Elementwise hyperbolic cosine: :math:`\mathrm{cosh}(x)`."""
   log_half = _const(x, onp.log(0.5))
@@ -1603,6 +1642,19 @@ ad.defjvp(lgamma_p, lambda g, x: mul(g, digamma(x)))
 
 digamma_p = standard_unop(_float, 'digamma')
 
+bessel_i0e_p = standard_unop(_float, 'bessel_i0e')
+ad.defjvp2(bessel_i0e_p, lambda g, y, x: g * (bessel_i1e(x) - sign(x) * y))
+
+bessel_i1e_p = standard_unop(_float, 'bessel_i1e')
+def _bessel_i1e_jvp(g, y, x):
+  eps = onp.finfo(_dtype(x)).eps
+  x_is_not_tiny = abs(x) > eps
+  safe_x = select(x_is_not_tiny, x, full_like(x, eps))
+  dy_dx = bessel_i0e(safe_x) - y * (sign(safe_x) + reciprocal(safe_x))
+  dy_dx = select(x_is_not_tiny, dy_dx, full_like(x, 0.5))
+  return g * dy_dx
+ad.defjvp2(bessel_i1e_p, _bessel_i1e_jvp)
+
 erf_p = standard_unop(_float, 'erf')
 ad.defjvp(erf_p, lambda g, x: mul(_const(x, 2. / onp.sqrt(onp.pi)),
                                   mul(g, exp(neg(square(x))))))
@@ -1626,7 +1678,7 @@ complex_p = binop(_complex_dtype, [_complex_elem_types, _complex_elem_types],
                   'complex')
 ad.deflinear(complex_p, lambda t: [real(t), imag(neg(t))])
 
-conj_p = unop(_complex_dtype, _float | _complex, 'conj')
+conj_p = unop(_complex_dtype, _complex_elem_types | _complex, 'conj')
 
 def _conj_transpose_rule(t, x, input_dtype):
   assert x is ad.undefined_primal
@@ -1661,17 +1713,17 @@ ad.defjvp2(rsqrt_p,
 
 pow_p = standard_binop([_float | _complex, _float | _complex], 'pow')
 
-def _pow_jvp_lhs(g, x, y):
+def _pow_jvp_lhs(g, ans, x, y):
   # we call _safe_mul here so that we get the behavior 0*inf = 0, since when a
   # coefficient in `g` is zero we want to keep it at zero, not produce a nan.
   # see https://github.com/google/jax/pull/383
   jac = mul(y, pow(x, select(eq(y, _zeros(y)), _ones(y), sub(y, _ones(y)))))
   return _safe_mul(_brcast(g, y), jac)
 
-def _pow_jvp_rhs(g, x, y):
-  return mul(_brcast(g, x), mul(log(_replace_zero(x)), pow(x, y)))
+def _pow_jvp_rhs(g, ans, x, y):
+  return mul(_brcast(g, x), mul(log(_replace_zero(x)), ans))
 
-ad.defjvp(pow_p, _pow_jvp_lhs, _pow_jvp_rhs)
+ad.defjvp2(pow_p, _pow_jvp_lhs, _pow_jvp_rhs)
 _replace_zero = lambda x: select(eq(x, _const(x, 0)), _ones(x), x)
 
 not_p = standard_unop(_int | _bool, 'not')
@@ -2019,164 +2071,12 @@ def _reshape_axis_out_of(src, size1, x):
   shape[src:src+1] = [size1, size2]
   return reshape(x, shape)
 
-
-def _dot_shape_rule(lhs, rhs, precision):
-  if lhs.ndim == 0 or rhs.ndim == 0:
-    msg = "Dot only supports rank 1 or above, got shapes {} and {}."
-    raise TypeError(msg.format(lhs.shape, rhs.shape))
-  if lhs.ndim > 2 or rhs.ndim > 2:
-    msg = "Dot only supports rank 2 or less, got shapes {} and {}."
-    raise TypeError(msg.format(lhs.shape, rhs.shape))
-
-  def require(shape_cond):
-    if not shape_cond:
-      msg = "Incompatible shapes for dot: got {} and {}."
-      raise TypeError(msg.format(lhs.shape, rhs.shape))
-
-  if lhs.ndim == rhs.ndim == 1:
-    require(lhs.shape == rhs.shape)
-    return ()
-  elif lhs.ndim == rhs.ndim == 2:
-    require(lhs.shape[1] == rhs.shape[0])
-    return (lhs.shape[0], rhs.shape[1])
-  elif rhs.ndim == 1:
-    require(lhs.shape[-1] == rhs.shape[0])
-    return lhs.shape[:-1]
-  else:
-    require(lhs.shape[-1] == rhs.shape[-2])
-    return lhs.shape[:-1] + rhs.shape[:-2] + rhs.shape[-1:]
-
-def _dot_transpose_lhs(t, rhs, precision):
-  if onp.ndim(t) == onp.ndim(rhs) == 2:
-    return dot(t, transpose(rhs, (1, 0)), precision=precision)
-  elif onp.ndim(t) == 1 and onp.ndim(rhs) == 2:
-    return dot(rhs, t, precision=precision)
-  elif onp.ndim(t) == onp.ndim(rhs) == 1:
-    return _outer(t, rhs)
-  elif onp.ndim(t) == 0 or onp.ndim(rhs) == 0:
-    return mul(t, rhs)
-  else:
-    raise TypeError
-
-def _dot_transpose_rhs(t, lhs, precision):
-  if onp.ndim(lhs) == onp.ndim(t) == 2:
-    return dot(transpose(lhs, (1, 0)), t)
-  elif onp.ndim(lhs) == 2 and onp.ndim(t) == 1:
-    return dot(t, lhs, precision=precision)
-  elif onp.ndim(t) == onp.ndim(lhs) == 1:
-    return _outer(lhs, t)
-  elif onp.ndim(t) == 0 or onp.ndim(lhs) == 0:
-    return mul(t, lhs)
-  else:
-    raise TypeError
-
-def _outer(x, y):
-  assert onp.ndim(x) == onp.ndim(y) == 1
-  return mul(reshape(x, (x.shape[0], 1)), reshape(y, (1, y.shape[0])))
-
-def _dot_batch_rule(batched_args, batch_dims, precision=None):
-  lhs, rhs = batched_args
-  lbd, rbd = batch_dims
-  T = lambda x: transpose(x, onp.arange(onp.ndim(x))[::-1])
-
-  # in some cases, we can call dot instead of dot_general
-  if max(onp.ndim(lhs), onp.ndim(rhs)) <= 2:
-    if rbd is None:
-      assert lbd in (0, 1)
-      if lbd == 0:
-        return dot(lhs, rhs, precision=precision), 0
-      else:
-        return dot(T(rhs), lhs, precision=precision), onp.ndim(rhs) - 1
-
-    if lbd is None:
-      assert rbd in (0, 1)
-      if rbd == onp.ndim(rhs) - 1:
-        return dot(lhs, rhs, precision=precision), onp.ndim(lhs) - 1
-      else:
-        return dot(rhs, T(lhs), precision=precision), 0
-
-    assert lbd is not None and rbd is not None
-    assert lhs.ndim == rhs.ndim == 2  # dot only supports rank 1 and above
-    lhs = batching.moveaxis(lhs, lbd, 0)
-    rhs = batching.moveaxis(rhs, rbd, 0)
-    out = dot_general(lhs, rhs, [((1,), (1,)), ((0,), (0,))],
-                      precision=precision)
-    return out, 0
-
-  if lbd is None:
-    assert rbd is not None
-    lhs = broadcast(lhs, (rhs.shape[rbd],))
-  else:
-    lhs = batching.moveaxis(lhs, lbd, 0)
-  lhs_batch = (0,)
-  lhs_contracting = (onp.ndim(lhs) - 1,)
-
-  if rbd is None:
-    assert lbd is not None
-    rhs = broadcast(rhs, (lhs.shape[0],))
-  else:
-    rhs = batching.moveaxis(rhs, rbd, 0)
-  rhs_batch = (0,)
-  rhs_contracting = (onp.arange(1, onp.ndim(rhs))[-2:][0],)
-
-  dim_nums = [(lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch)]
-  return dot_general(lhs, rhs, dim_nums, precision=precision), 0
-
 def _precision_config(precision):
   if precision is not None:
     config = xla_client.PrecisionConfig()
     config.operand_precision.extend((precision, precision))
     return config
   return None
-
-def _dot_translation_rule(c, lhs, rhs, precision):
-  return c.Dot(lhs, rhs, precision_config=_precision_config(precision))
-
-def _dot_polymorphic_shape_rule(shape_exprs, precision):
-  del precision  # Unused.
-  lhs_shape, rhs_shape = shape_exprs
-  lhs_ndim, rhs_ndim = len(lhs_shape), len(rhs_shape)
-
-  if lhs_ndim == rhs_ndim == 1:
-    if not lhs_shape == rhs_shape: raise ShapeError
-    return ShapeExpr(())
-  elif lhs_ndim == rhs_ndim == 2:
-    if not lhs_shape[1] == rhs_shape[0]: raise ShapeError
-    return ShapeExpr((lhs_shape[0], rhs_shape[1]))
-  elif rhs_ndim == 1:
-    if not lhs_shape[1] == rhs_shape[0]: raise ShapeError
-    return ShapeExpr((lhs_shape[0],))
-  else:
-    if not lhs_shape[0] == rhs_shape[0]: raise ShapeError
-    return ShapeExpr((rhs_shape[1],))
-
-def _dot_masking_rule(padded_vals, logical_shapes, precision):
-  lhs, rhs = padded_vals
-  lhs_shape, rhs_shape = logical_shapes
-  lhs_ndim, rhs_ndim = len(lhs_shape), len(rhs_shape)
-
-  if lhs_ndim == rhs_ndim == 1:
-    masked_lhs = select(iota(onp.int32, lhs.shape[0]) < lhs_shape[0],
-                        lhs, zeros_like_array(lhs))
-    return dot_p.bind(masked_lhs, rhs, precision=precision)
-  elif lhs_ndim == rhs_ndim == 2:
-    # TODO could avoid select if we check whether contracted axis is masked
-    masked_lhs = select(broadcasted_iota(onp.int32, lhs.shape, 1) < lhs_shape[1],
-                        lhs, zeros_like_array(lhs))
-    return dot_p.bind(masked_lhs, rhs, precision=precision)
-  elif rhs_ndim == 1:
-    raise NotImplementedError
-  else:
-    raise NotImplementedError
-
-
-_dot_dtype_rule = partial(binop_dtype_rule, _input_dtype, [_num, _num], 'dot')
-dot_p = standard_primitive(_dot_shape_rule, _dot_dtype_rule, 'dot',
-                           _dot_translation_rule)
-ad.defbilinear(dot_p, _dot_transpose_lhs, _dot_transpose_rhs)
-batching.primitive_batchers[dot_p] = _dot_batch_rule
-masking.shape_rules[dot_p] = _dot_polymorphic_shape_rule
-masking.masking_rules[dot_p] = _dot_masking_rule
 
 
 def _dot_general_shape_rule(lhs, rhs, dimension_numbers, precision):
@@ -2235,7 +2135,8 @@ def _dot_general_transpose_lhs(g, y, dimension_numbers, precision,
   dims = ((ans_y, y_kept), (ans_batch, y_batch))
   x_contract_sorted_by_y = list(onp.take(x_contract, onp.argsort(y_contract)))
   out_axes = onp.argsort(list(x_batch) + x_kept + x_contract_sorted_by_y)
-  return transpose(dot_general(g, y, dims), tuple(out_axes))
+  return transpose(dot_general(g, y, dims, precision=precision),
+                   tuple(out_axes))
 
 def _dot_general_transpose_rhs(g, x, dimension_numbers, precision):
   (x_contract, y_contract), (x_batch, y_batch) = dimension_numbers
@@ -2268,27 +2169,79 @@ def _dot_general_batch_rule(batched_args, batch_dims, dimension_numbers,
   else:
     # adding a tensor product dimension
     if lbd is not None:
-      # make sure it's the last lhs dimension to avoid changing batch dims
-      if lbd != lhs.ndim - 1:
+      if lhs_batch == () or lbd > onp.max(lhs_batch):
+        # can avoid transposes
+        bump_lhs_contract = onp.greater_equal(lhs_contract, lbd)
+        lhs_contract = tuple(onp.add(lhs_contract, bump_lhs_contract))
+        result_batch_dim = lbd - len(lhs_contract) + sum(bump_lhs_contract)
+      else:
+        # move the new dimension to the end of lhs to avoid changing batch dims
         lhs = batching.moveaxis(lhs, lbd, lhs.ndim - 1)
-      # lhs tensor product dims in result come after batch dims
-      result_batch_dim = lhs.ndim - len(lhs_contract) - 1
+        # lhs tensor product dims in result come after batch dims
+        result_batch_dim = lhs.ndim - len(lhs_contract) - 1
     else:
-      # make sure it's the last rhs dimension to avoid changing batch dims
-      if rbd != rhs.ndim - 1:
+      if rhs_batch == () or rbd > onp.max(rhs_batch):
+        # can avoid transposes
+        bump_rhs_contract = onp.greater_equal(rhs_contract, rbd)
+        rhs_contract = tuple(onp.add(rhs_contract, bump_rhs_contract))
+        result_batch_dim = (rbd + (lhs.ndim - len(lhs_contract) - len(lhs_batch))
+                                - (len(rhs_contract) - sum(bump_rhs_contract)))
+      else:
+        # move the new dimension to the end of rhs to avoid changing batch dims
         rhs = batching.moveaxis(rhs, rbd, rhs.ndim - 1)
-      # rhs tensor product dims in result come after batch dims + lhs tensor
-      # product dims
-      result_batch_dim = (lhs.ndim - len(lhs_contract) - len(lhs_batch) +
-                          rhs.ndim - len(rhs_contract) - 1)
+        # rhs tensor product dims in result come after batch dims + lhs tensor
+        # product dims
+        result_batch_dim = (lhs.ndim - len(lhs_contract) - len(lhs_batch) +
+                            rhs.ndim - len(rhs_contract) - 1)
   new_dimension_numbers = [(lhs_contract, rhs_contract), (lhs_batch, rhs_batch)]
   batched_out = dot_general(lhs, rhs, new_dimension_numbers,
                             precision=precision)
-  return batched_out, result_batch_dim
+  return batched_out, int(result_batch_dim)
 
 def _dot_general_translation_rule(c, lhs, rhs, dimension_numbers, precision):
   return c.DotGeneral(lhs, rhs, dimension_numbers,
                       precision_config=_precision_config(precision))
+
+def _dot_general_polymorphic_shape_rule(shape_exprs, dimension_numbers,
+                                        precision):
+  del precision  # Unused.
+  lhs_shape, rhs_shape = shape_exprs
+  lhs_ndim, rhs_ndim = len(lhs_shape), len(rhs_shape)
+  (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
+
+  lhs_batch_shape = [lhs_shape[d] for d in lhs_batch]
+  rhs_batch_shape = [rhs_shape[d] for d in rhs_batch]
+  if lhs_batch_shape != rhs_batch_shape: raise ShapeError
+
+  lhs_contract_shape = [lhs_shape[d] for d in lhs_contract]
+  rhs_contract_shape = [rhs_shape[d] for d in rhs_contract]
+  if lhs_contract_shape != rhs_contract_shape: raise ShapeError
+
+  lhs_tensorprod_shape = [lhs_shape[d] for d in range(lhs_ndim)
+                          if d not in lhs_batch and d not in lhs_contract]
+  rhs_tensorprod_shape = [rhs_shape[d] for d in range(rhs_ndim)
+                          if d not in rhs_batch and d not in rhs_contract]
+  return ShapeExpr(
+      lhs_batch_shape + lhs_tensorprod_shape + rhs_tensorprod_shape)
+
+def _dot_general_masking_rule(padded_vals, logical_shapes, dimension_numbers,
+                              precision):
+  lhs, rhs = padded_vals
+  lhs_shape, rhs_shape = logical_shapes
+  lhs_ndim, rhs_ndim = len(lhs_shape), len(rhs_shape)
+  (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
+
+  # we need only mask the lhs contraction dimensions
+  if len(lhs_contract) == 0:
+    return dot_general(lhs, rhs, dimension_numbers, precision=precision)
+  else:
+    masks = [broadcasted_iota(onp.int32, lhs.shape, d) < lhs_shape[d]
+            for d in lhs_contract]
+    mask_intersection = masks[0]
+    for mask in masks[1:]:
+      mask_intersection &= mask
+    masked_lhs = select(mask_intersection, lhs, zeros_like_array(lhs))
+    return dot_general(masked_lhs, rhs, dimension_numbers, precision=precision)
 
 dot_general_p = standard_primitive(_dot_general_shape_rule,
                                    _dot_general_dtype_rule, 'dot_general',
@@ -2296,6 +2249,8 @@ dot_general_p = standard_primitive(_dot_general_shape_rule,
 ad.defbilinear(dot_general_p,
                _dot_general_transpose_lhs, _dot_general_transpose_rhs)
 batching.primitive_batchers[dot_general_p] = _dot_general_batch_rule
+masking.shape_rules[dot_general_p] = _dot_general_polymorphic_shape_rule
+masking.masking_rules[dot_general_p] = _dot_general_masking_rule
 
 
 def _broadcast_shape_rule(operand, sizes):
@@ -3801,9 +3756,9 @@ def _select_and_gather_add_translation(
                                          canonicalize_types=False)
 
   if double_word_reduction:
-  # XLA doesn't yet implement ReduceWindow on tuples (Google bug b/73062247), so
-  # we implement a pair-wise ReduceWindow by packing two k-bit values into
-  # 2k-bit unsigned integer using bit tricks.
+    # XLA doesn't yet implement ReduceWindow on tuples (Google bug b/73062247), so
+    # we implement a pair-wise ReduceWindow by packing two k-bit values into
+    # 2k-bit unsigned integer using bit tricks.
     word_dtype = _UINT_DTYPES[nbits]
     double_word_dtype = _UINT_DTYPES[nbits * 2]
     word_type = xla_client.dtype_to_etype(word_dtype)
@@ -4147,6 +4102,98 @@ xla.translations[stop_gradient_p] = lambda c, x: x
 ad.primitive_jvps[stop_gradient_p] = _stop_gradient_jvp_rule
 batching.primitive_batchers[stop_gradient_p] = _stop_gradient_batch_rule
 
+def create_token(x):
+  """Creates an XLA token value with no preconditions for sequencing effects.
+
+  Experimental.
+
+  Args:
+    x: a dummy argument used to tie the CreateToken operator into a trace. The
+       value of `x` is ignored.
+  """
+  # x is a dummy argument used to tie the operator into a trace.
+  return create_token_p.bind(x)
+
+create_token_p = Primitive("create_token")
+create_token_p.def_impl(partial(xla.apply_primitive, create_token_p))
+create_token_p.def_abstract_eval(lambda _: abstract_token)
+xla.translations[create_token_p] = lambda c, _: c.CreateToken()
+
+def after_all(*operands):
+  """Merges one or more XLA token values. Experimental.
+
+  Wraps the XLA AfterAll operator."""
+  return after_all_p.bind(*operands)
+
+def _after_all_abstract_eval(*operands):
+  if any(x is not abstract_token for x in operands):
+    raise TypeError("Arguments to after_all must be tokens")
+  return abstract_token
+
+
+def _after_all_translation_rule(c, *operands):
+  return c.AfterAll(operands)
+
+after_all_p = Primitive("after_all")
+after_all_p.def_impl(partial(xla.apply_primitive, after_all_p))
+after_all_p.def_abstract_eval(_after_all_abstract_eval)
+xla.translations[after_all_p] = _after_all_translation_rule
+
+
+def infeed(token, shape=None):
+  """Consumes an infeed value of `shape` from the host. Experimental.
+
+  `token` is used to sequence infeed and outfeed effects.
+  """
+  flat_shapes, treedef = pytree.flatten(shape)
+  for shape in flat_shapes:
+    if not isinstance(shape, ShapedArray):
+      raise TypeError("shapes argument to infeed must be a pytree of "
+                      "ShapedArray values, got {}".format(shapes))
+  xs_and_token = infeed_p.bind(token, shapes=tuple(flat_shapes))
+  return (treedef.unflatten(xs_and_token[:-1]), xs_and_token[-1])
+
+def _infeed_abstract_eval(token, shapes=None):
+  if token is not abstract_token:
+    raise TypeError("First argument to infeed must be a token")
+  return shapes + (abstract_token,)
+
+
+def _infeed_translation_rule(c, token, shapes=None):
+  shape = tuple(map(xla.aval_to_xla_shape, shapes))
+  xs_and_token = c.Infeed(xla_client.Shape.tuple_shape(shape), token)
+  xs = c.GetTupleElement(xs_and_token, 0)
+  token = c.GetTupleElement(xs_and_token, 1)
+  outs = [c.GetTupleElement(xs, i) for i in range(len(shapes))] + [token]
+  return c.Tuple(*outs)
+
+infeed_p = Primitive("infeed")
+infeed_p.multiple_results = True
+infeed_p.def_impl(partial(xla.apply_primitive, infeed_p))
+infeed_p.def_abstract_eval(_infeed_abstract_eval)
+xla.translations[infeed_p] = _infeed_translation_rule
+
+def outfeed(token, xs):
+  """Outfeeds value `xs` to the host. Experimental.
+
+  `token` is used to sequence infeed and outfeed effects.
+  """
+  flat_xs, _ = pytree.flatten(xs)
+  return outfeed_p.bind(token, *flat_xs)
+
+def _outfeed_abstract_eval(token, *xs):
+  if token is not abstract_token:
+    raise TypeError("First argument to outfeed must be a token")
+  return abstract_token
+
+
+def _outfeed_translation_rule(c, token, *xs):
+  return c.Outfeed(c.Tuple(*xs), token)
+
+outfeed_p = Primitive("outfeed")
+outfeed_p.def_impl(partial(xla.apply_primitive, outfeed_p))
+outfeed_p.def_abstract_eval(_outfeed_abstract_eval)
+xla.translations[outfeed_p] = _outfeed_translation_rule
 
 ### util
 

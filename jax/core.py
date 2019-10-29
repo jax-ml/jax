@@ -19,6 +19,7 @@ from __future__ import print_function
 from operator import attrgetter
 from contextlib import contextmanager
 from collections import namedtuple, Counter, defaultdict
+import itertools as it
 from weakref import ref
 import threading
 import types
@@ -84,6 +85,27 @@ def new_jaxpr_eqn(*args):
 
 JaxprEqn = namedtuple('JaxprEqn', ['eqn_id', 'invars', 'outvars', 'primitive',
                                    'bound_subjaxprs', 'params'])
+
+JaxprEqn.__repr__ = JaxprEqn.__str__ = lambda eqn: str(pp_eqn(eqn))[:-1]
+
+class Var(object):
+  def __init__(self, count, suffix):
+    self.count = count
+    self.suffix = suffix
+
+  def __repr__(self):
+    rem = self.count
+    s = ''
+    while True:
+      rem, i = rem // 26, rem % 26
+      s = chr(97 + i % 26) + s
+      if not rem:
+        break
+    return s + self.suffix
+
+def gensym(suffix):
+  counter = it.count()
+  return lambda: Var(next(counter), suffix)
 
 class Literal(object):
   __slots__ = ["val", "hash"]
@@ -616,26 +638,26 @@ def check_jaxpr(jaxpr):
   map(read, jaxpr.outvars)
 
 
-def pp_jaxpr(jaxpr):
-  def print_vars(vs):
+def pp_vars(vs):
     return ' '.join(map(str, vs))
 
-  def pp_eqn(eqn):
-    lhs = print_vars(eqn.outvars)
-    pp_subexpr = pp('')
-    if eqn.bound_subjaxprs:
-      for subjaxpr, const_vars, bound_vars in eqn.bound_subjaxprs:
-        pp_subexpr = pp_subexpr + (
-            pp_jaxpr(subjaxpr).indent(2)
-            >> pp(' [ {} ; {} ]'.format(print_vars(const_vars),
-                                        print_vars(bound_vars))))
-    return (pp('{} = '.format(lhs)) >>
-            pp(eqn.primitive.name) >> pp_kv_pairs(eqn.params.items())
-            >> pp(' ') >> pp(print_vars(eqn.invars))) + pp_subexpr
+def pp_eqn(eqn):
+  lhs = pp_vars(eqn.outvars)
+  pp_subexpr = pp('')
+  if eqn.bound_subjaxprs:
+    for subjaxpr, const_vars, bound_vars in eqn.bound_subjaxprs:
+      pp_subexpr = pp_subexpr + (
+          pp_jaxpr(subjaxpr).indent(2)
+          >> pp(' [ {} ; {} ]'.format(pp_vars(const_vars),
+                                      pp_vars(bound_vars))))
+  return (pp('{} = '.format(lhs)) >>
+          pp(eqn.primitive.name) >> pp_kv_pairs(eqn.params.items())
+          >> pp(' ') >> pp(pp_vars(eqn.invars))) + pp_subexpr
 
-  return (pp('{{ lambda {} ; {} ; {}.'.format(print_vars(jaxpr.constvars),
-                                              print_vars(jaxpr.freevars),
-                                              print_vars(jaxpr.invars))) +
+def pp_jaxpr(jaxpr):
+  return (pp('{{ lambda {} ; {} ; {}.'.format(pp_vars(jaxpr.constvars),
+                                              pp_vars(jaxpr.freevars),
+                                              pp_vars(jaxpr.invars))) +
           ((pp('let ') >>
             vcat(map(pp_eqn, jaxpr.eqns))) +
            pp('in {} }}'.format(jaxpr.outvars))).indent(2))

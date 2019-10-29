@@ -35,7 +35,8 @@ def swish(x): return x * sigmoid(x)
 def log_sigmoid(x): return -softplus(-x)
 
 def elu(x, alpha=1.0):
-  return np.where(x > 0, x, alpha * np.expm1(x))
+  safe_x = np.where(x > 0, 0., x)
+  return np.where(x > 0, x, alpha * np.expm1(safe_x))
 
 def leaky_relu(x, negative_slope=1e-2):
   return np.where(x >= 0, x, negative_slope * x)
@@ -51,12 +52,16 @@ def selu(x):
   """Scaled exponential linear unit activation"""
   alpha = 1.6732632423543772848170429916717
   scale = 1.0507009873554804934193349852946
-  return scale * leaky_relu(x, alpha)
+  return scale * elu(x, alpha)
 
-@jarrett
 def gelu(x):
-  """Gaussian error linear unit activation"""
-  return x * (lax.erf(x / np.sqrt(2)) + 1) / 2
+  """GELU activation function.
+
+  We explicitly use the approximation rather than the exact formulation for
+  speed. See: https://arxiv.org/abs/1606.08415 Section 2.
+  """
+  cdf = 0.5 * (1.0 + np.tanh((np.sqrt(2 / np.pi) * (x + 0.044715 * x**3))))
+  return x * cdf
 
 def glu(x, axis=-1):
   """Gated linear unit activation"""
