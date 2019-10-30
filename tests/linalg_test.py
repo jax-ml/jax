@@ -243,9 +243,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for shape in [(4, 4), (5, 5), (50, 50)]
       for dtype in float_types + complex_types
       for rng in [jtu.rand_default()]))
-  # TODO: enable when there is an eigendecomposition implementation
-  # for GPU/TPU.
-  @jtu.skip_on_devices("gpu", "tpu")
   def testEigvalsh(self, shape, dtype, rng):
     _skip_if_unsupported_type(dtype)
     n = shape[-1]
