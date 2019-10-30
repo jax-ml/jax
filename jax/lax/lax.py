@@ -354,7 +354,7 @@ def convert_element_type(operand, new_dtype):
     if (onp.issubdtype(old_dtype, onp.complexfloating) and
         not onp.issubdtype(new_dtype, onp.complexfloating)):
       msg = "Casting complex values to real discards the imaginary part"
-      warnings.warn(msg, onp.ComplexWarning)
+      warnings.warn(msg, onp.ComplexWarning, stacklevel=2)
       operand = real(operand)
       old_dtype = _dtype(operand)
     return convert_element_type_p.bind(
