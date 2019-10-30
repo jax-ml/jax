@@ -846,7 +846,7 @@ def pmap(fun, axis_name=None, devices=None, backend=None):
   [ 13.  13.]
   """
   _check_callable(fun)
-  axis_name = _TempAxisName() if axis_name is None else axis_name
+  axis_name = _TempAxisName(fun) if axis_name is None else axis_name
 
   @wraps(fun)
   def f_pmapped(*args, **kwargs):
@@ -875,13 +875,19 @@ def _pmap_axis_size(xs):
     raise ValueError(msg.format([x for x in xs if not hasattr(x, 'shape')]))
 
 class _TempAxisName(object):
+  def __init__(self, obj):
+    self.obj = obj
   def __repr__(self):
-    return '<axis {}>'.format(hex(id(self)))
+    return '<axis {}>'.format(hex(id(self.obj)))
+  def __hash__(self):
+    return hash(self.obj)
+  def __eq__(self, other):
+    return self.obj is other.obj
 
 
 def soft_pmap(fun, axis_name=None, backend=None):
   _check_callable(fun)
-  axis_name = _TempAxisName() if axis_name is None else axis_name
+  axis_name = _TempAxisName(fun) if axis_name is None else axis_name
 
   @wraps(fun)
   def f_pmapped(*args, **kwargs):
@@ -930,7 +936,7 @@ def _reshape_merge(x):
 
 def _papply(fun):
   # This function is for testing purposes.
-  axis_name = _TempAxisName()
+  axis_name = _TempAxisName(fun)
 
   def papply_fun(*args, **kwargs):
     f = lu.wrap_init(fun)
@@ -944,7 +950,7 @@ def _papply(fun):
 
 
 def _parallelize(fun):
-  axis_name = _TempAxisName()
+  axis_name = _TempAxisName(fun)
 
   def pfun(*args):
     f = lu.wrap_init(fun)

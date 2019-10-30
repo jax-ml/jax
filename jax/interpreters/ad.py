@@ -26,7 +26,7 @@ from ..ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like
 from ..abstract_arrays import raise_to_shaped
 from ..util import unzip2, unzip3, safe_map, safe_zip, partial, split_list
 from ..tree_util import build_tree, register_pytree_node, tree_map
-from ..linear_util import thunk, staged, transformation, transformation_with_aux, wrap_init
+from ..linear_util import thunk, transformation, transformation_with_aux, wrap_init
 from ..api_util import flatten_fun, flatten_fun_nokwargs
 from ..tree_util import tree_flatten, tree_unflatten
 

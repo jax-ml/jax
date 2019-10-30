@@ -20,6 +20,7 @@ import collections
 from functools import partial
 import unittest
 import warnings
+import weakref
 
 from absl.testing import absltest
 import numpy as onp
@@ -1180,6 +1181,48 @@ class APITest(jtu.JaxTestCase):
     vfoo = api.vmap(
         foo, in_axes=((0, collections.OrderedDict([('a', 1), ('b', 2)])),))
     self.assertEqual(vfoo(tree).shape, (6, 2, 5))
+
+  def test_jit_reference_dropping(self):
+    x = onp.ones(10)
+    f = (lambda x: lambda: x)(x)  # reference to x in f's closure
+    g = jit(f)
+    x = weakref.ref(x)      # no more strong ref to x in this scope
+    assert x() is not None  # x is still around
+    f()                     # f runs
+    g()                     # g runs
+    g()                     # g runs a second time
+    del f                   # delete the raw callable
+    assert x() is not None  # x is still around
+    g()                     # g still runs
+    del g                   # no more references to x
+    assert x() is None      # x is gone
+
+  def test_jit_global_cache(self):
+    def f(x):
+      assert python_should_be_executing
+      return x
+
+    python_should_be_executing = True
+    api.jit(f)(2)
+    python_should_be_executing = False
+    api.jit(f)(3)
+
+  def test_pmap_global_cache(self):
+    def f(x):
+      assert python_should_be_executing
+      return x
+
+    x = onp.ones(1)
+
+    python_should_be_executing = True
+    api.pmap(f)(x)
+    python_should_be_executing = False
+    api.pmap(f)(x)
+
+    python_should_be_executing = True
+    api.pmap(f, 'i')(x)
+    python_should_be_executing = False
+    api.pmap(f, 'i')(x)
 
 
 if __name__ == '__main__':
