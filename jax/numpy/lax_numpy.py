@@ -247,10 +247,45 @@ def _promote_args_like(op, *args):
 def _constant_like(x, const):
   return onp.array(const, dtype=_dtype(x))
 
+
+def update_numpydoc(docstr, fun, op):
+  '''Transforms the numpy docstring to remove references of
+     parameters that are supported by the numpy version but not the JAX version'''
+
+  #Some numpy functions have an extra tab at the beginning of each line,
+  #If this function is one of those we remove this extra tab from all the lines
+  if docstr[:4] == '    ':
+    lines = docstr.split('\n')
+    for idx, line in enumerate(lines):
+      lines[idx] = line.replace('    ', '', 1)
+    docstr = '\n'.join(lines)
+
+  begin_idx = docstr.find("Parameters")
+  begin_idx = docstr.find("--\n", begin_idx) + 2
+  end_idx = docstr.find("Returns", begin_idx)
+
+  parameters = docstr[begin_idx:end_idx]
+  param_list = parameters.replace('\n    ', '@@').split('\n')
+  for idx, p in enumerate(param_list):
+    param = p[:p.find(' : ')].split(", ")[0]
+    if param not in op.__code__.co_varnames:
+      param_list[idx] = ''
+  param_list = [param for param in param_list if param != '']
+  parameters = '\n'.join(param_list).replace('@@', '\n    ')
+  return docstr[:begin_idx + 1] + parameters + docstr[end_idx - 2:]
+
 _numpy_signature_re = re.compile(r'^([\w., ]+=)?\s*[\w\.]+\(.*\)$')
 
-def _wraps(fun):
-  """Like functools.wraps but works with numpy.ufuncs."""
+def _wraps(fun, update_doc=True):
+  """Like functools.wraps but works with numpy.ufuncs.
+     It is important that when wrapping numpy functions the parameters names 
+     in the original function and in the JAX version are the same
+    Parameters:
+      fun: The function being wrapped
+      update_doc: whether to transform the numpy docstring to remove references of
+      parameters that are supported by the numpy version but not the JAX version. 
+      If False, include the numpy docstring verbatim.
+  """
   def wrap(op):
     try:
       # Numpy doc comments have the form:
@@ -273,10 +308,14 @@ def _wraps(fun):
           summary = sections[i].strip()
           break
       body = "\n\n".join(signatures + sections[i + 1:])
+      if update_doc:
+        body = update_numpydoc(body, fun, op)
       docstr = (
         "{summary}\n\nLAX-backend implementation of :func:`{fun}`. "
         "Original docstring below.\n\n{body}".format(
           summary=summary, fun=fun.__name__, body=body))
+
+
       op.__name__ = fun.__name__
       op.__doc__ = docstr
     finally:
@@ -306,9 +345,9 @@ def _one_to_one_unop(numpy_fn, lax_fn, promote_like=False):
 
 def _one_to_one_binop(numpy_fn, lax_fn, promote_like=False):
   if promote_like:
-    fn = lambda x, y: lax_fn(*_promote_args_like(numpy_fn, x, y))
+    fn = lambda x1, x2: lax_fn(*_promote_args_like(numpy_fn, x1, x2))
   else:
-    fn = lambda x, y: lax_fn(*_promote_args(numpy_fn.__name__, x, y))
+    fn = lambda x1, x2: lax_fn(*_promote_args(numpy_fn.__name__, x1, x2))
   return _wraps(numpy_fn)(fn)
 
 absolute = abs = _one_to_one_unop(onp.absolute, lax.abs)
@@ -353,16 +392,16 @@ float_power = _one_to_one_binop(onp.float_power, lax.pow, True)
 
 
 def _comparison_op(numpy_fn, lax_fn):
-  def fn(x, y):
-    x, y =  _promote_args(numpy_fn.__name__, x, y)
+  def fn(x1, x2):
+    x1, x2 =  _promote_args(numpy_fn.__name__, x1, x2)
     # Comparison on complex types are defined as a lexicographic ordering on
     # the (real, imag) pair.
-    if issubdtype(_dtype(x), complexfloating):
-      rx = lax.real(x)
-      ry = lax.real(y)
-      return lax.select(lax.eq(rx, ry), lax_fn(lax.imag(x), lax.imag(y)),
+    if issubdtype(_dtype(x1), complexfloating):
+      rx = lax.real(x1)
+      ry = lax.real(x2)
+      return lax.select(lax.eq(rx, ry), lax_fn(lax.imag(x1), lax.imag(x2)),
                         lax_fn(rx, ry))
-    return lax_fn(x, y)
+    return lax_fn(x1, x2)
   return _wraps(numpy_fn)(fn)
 
 greater_equal = _comparison_op(onp.greater_equal, lax.ge)
@@ -372,7 +411,7 @@ less = _comparison_op(onp.less, lax.lt)
 
 
 def _logical_op(np_op, bitwise_op):
-  @_wraps(np_op)
+  @_wraps(np_op, update_doc=False)
   def op(*args):
     zero = lambda x: lax.full_like(x, shape=(), fill_value=0)
     args = (x if issubdtype(_dtype(x), onp.bool_) else lax.ne(x, zero(x))
@@ -517,7 +556,7 @@ def remainder(x1, x2):
       lax.ne(lax.lt(trunc_mod, zero), lax.lt(x2, zero)), trunc_mod_not_zero)
   return lax.select(do_plus, lax.add(trunc_mod, x2), trunc_mod)
 mod = remainder
-fmod = _wraps(onp.fmod)(lambda x, y: lax.rem(x, y))
+fmod = _wraps(onp.fmod)(lambda x1, x2: lax.rem(x1, x2))
 
 
 @_wraps(onp.cbrt)
@@ -549,17 +588,17 @@ radians = deg2rad
 
 
 @_wraps(onp.heaviside)
-def heaviside(x, y):
-  x, y = _promote_to_result_dtype(onp.heaviside, x, y)
-  zero = lax._const(x, 0)
-  return where(lax.lt(x, zero), zero,
-               where(lax.gt(x, zero), lax._const(x, 1), y))
+def heaviside(x1, x2):
+  x1, x2 = _promote_to_result_dtype(onp.heaviside, x1, x2)
+  zero = lax._const(x1, 0)
+  return where(lax.lt(x1, zero), zero,
+               where(lax.gt(x1, zero), lax._const(x1, 1), x2))
 
 
 @_wraps(onp.hypot)
-def hypot(x, y):
-  x, y = _promote_to_result_dtype(onp.hypot, x, y)
-  return lax.sqrt(x*x + y*y)
+def hypot(x1, x2):
+  x1, x2 = _promote_to_result_dtype(onp.hypot, x1, x2)
+  return lax.sqrt(x1*x1 + x2*x2)
 
 
 @_wraps(onp.reciprocal)
@@ -568,7 +607,7 @@ def reciprocal(x):
   return lax.div(lax._const(x, 1), x)
 
 
-@_wraps(onp.sinc)
+@_wraps(onp.sinc, update_doc=False)
 def sinc(x):
   x, = _promote_to_result_dtype(onp.sinc, x)
   pi_x = lax.mul(lax._const(x, pi), x)
@@ -623,9 +662,9 @@ def arctanh(x):
 
 
 @_wraps(onp.transpose)
-def transpose(x, axes=None):
-  axes = onp.arange(ndim(x))[::-1] if axes is None else axes
-  return lax.transpose(x, axes)
+def transpose(a, axes=None):
+  axes = onp.arange(ndim(a))[::-1] if axes is None else axes
+  return lax.transpose(a, axes)
 
 
 @_wraps(onp.rot90)
@@ -671,13 +710,13 @@ conj = conjugate
 
 
 @_wraps(onp.imag)
-def imag(x):
-  return lax.imag(x) if iscomplexobj(x) else zeros_like(x)
+def imag(val):
+  return lax.imag(val) if iscomplexobj(val) else zeros_like(val)
 
 
 @_wraps(onp.real)
-def real(x):
-  return lax.real(x) if iscomplexobj(x) else x
+def real(val):
+  return lax.real(val) if iscomplexobj(val) else val
 
 
 @_wraps(onp.iscomplex)
@@ -691,12 +730,12 @@ def isreal(x):
   return lax.eq(i, lax._const(i, 0))
 
 @_wraps(onp.angle)
-def angle(x):
-  re = real(x)
-  im = imag(x)
+def angle(z):
+  re = real(z)
+  im = imag(z)
   dtype = _dtype(re)
   if not issubdtype(dtype, inexact) or (
-      issubdtype(_dtype(x), floating) and ndim(x) == 0):
+      issubdtype(_dtype(z), floating) and ndim(z) == 0):
     dtype = xla_bridge.canonicalize_dtype(float64)
     re = lax.convert_element_type(re, dtype)
     im = lax.convert_element_type(im, dtype)
@@ -730,8 +769,8 @@ def diff(a, n=1, axis=-1,):
 
 
 @_wraps(onp.isrealobj)
-def isrealobj(a):
-  return not iscomplexobj(a)
+def isrealobj(x):
+  return not iscomplexobj(x)
 
 
 @_wraps(onp.reshape)
@@ -855,7 +894,7 @@ else:
 # The `jit` on `where` exists to avoid materializing constants in cases like
 # `np.where(np.zeros(1000), 7, 4)`. In op-by-op mode, we don't want to
 # materialize the broadcast forms of scalar arguments.
-@_wraps(onp.where)
+@_wraps(onp.where, update_doc=False)
 @jit
 def where(condition, x=None, y=None):
   if x is None or y is None:
@@ -924,7 +963,7 @@ def split(ary, indices_or_sections, axis=0):
           for start, end in zip(split_indices[:-1], split_indices[1:])]
 
 def _split_on_axis(onp_fun, axis):
-  @_wraps(onp_fun)
+  @_wraps(onp_fun, update_doc=False)
   def f(ary, indices_or_sections):
     return split(ary, indices_or_sections, axis=axis)
   return f
@@ -968,7 +1007,7 @@ def _round_to_nearest_even(x):
                    lax.bitwise_and(lax.eq(fraction, half), is_odd)),
     lax.add(round_val, one), round_val)
 
-@_wraps(onp.round)
+@_wraps(onp.round, update_doc=False)
 def round(a, decimals=0):
   dtype = _dtype(a)
   if issubdtype(dtype, integer):
@@ -1463,7 +1502,7 @@ def column_stack(tup):
   return concatenate(arrays, 1)
 
 
-@_wraps(onp.atleast_1d)
+@_wraps(onp.atleast_1d, update_doc=False)
 def atleast_1d(*arys):
   if len(arys) == 1:
     arr = array(arys[0])
@@ -1472,7 +1511,7 @@ def atleast_1d(*arys):
     return [atleast_1d(arr) for arr in arys]
 
 
-@_wraps(onp.atleast_2d)
+@_wraps(onp.atleast_2d, update_doc=False)
 def atleast_2d(*arys):
   if len(arys) == 1:
     arr = array(arys[0])
@@ -1481,7 +1520,7 @@ def atleast_2d(*arys):
     return [atleast_2d(arr) for arr in arys]
 
 
-@_wraps(onp.atleast_3d)
+@_wraps(onp.atleast_3d, update_doc=False)
 def atleast_3d(*arys):
   if len(arys) == 1:
     arr = array(arys[0])
@@ -1637,7 +1676,7 @@ def _wrap_numpy_nullary_function(f):
 
   `f` cannot have any non-static array arguments.
   """
-  @_wraps(f)
+  @_wraps(f, update_doc=False)
   def wrapper(*args, **kwargs):
     return asarray(f(*args, **kwargs))
   return wrapper
@@ -1823,7 +1862,7 @@ def tril(m, k=0):
   return lax.select(lax.broadcast(mask, m_shape[:-2]), m, zeros_like(m))
 
 
-@_wraps(onp.triu)
+@_wraps(onp.triu, update_doc=False)
 def triu(m, k=0):
   m_shape = shape(m)
   if len(m_shape) < 2:
@@ -1861,7 +1900,7 @@ def trace(a, offset=0, axis1=0, axis2=1, dtype=None, out=None):
 
 
 def _wrap_indices_function(f):
-  @_wraps(f)
+  @_wraps(f, update_doc=False)
   def wrapper(*args, **kwargs):
     return tuple(asarray(x) for x in f(*args, **kwargs))
   return wrapper
@@ -2490,7 +2529,7 @@ def _take_along_axis(arr, indices, axis):
   return lax.gather(arr, gather_indices, dnums, tuple(slice_sizes))
 
 
-@_wraps(getattr(onp, "take_along_axis", None))
+@_wraps(getattr(onp, "take_along_axis", None), update_doc=False)
 def take_along_axis(arr, indices, axis):
   return _take_along_axis(arr, indices, axis)
 

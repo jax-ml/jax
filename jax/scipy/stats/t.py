@@ -23,7 +23,7 @@ from ... import lax
 from ...numpy.lax_numpy import _promote_args_like, _constant_like, _wraps
 
 
-@_wraps(osp_stats.t.logpdf)
+@_wraps(osp_stats.t.logpdf, update_doc=False)
 def logpdf(x, df, loc=0, scale=1):
   x, df, loc, scale = _promote_args_like(osp_stats.t.logpdf, x, df, loc, scale)
   two = _constant_like(x, 2)
@@ -37,6 +37,6 @@ def logpdf(x, df, loc=0, scale=1):
   quadratic = lax.div(lax.mul(scaled_x, scaled_x), df)
   return lax.neg(lax.add(normalize_term, lax.mul(df_plus_one_over_two, lax.log1p(quadratic))))
 
-@_wraps(osp_stats.t.pdf)
+@_wraps(osp_stats.t.pdf, update_doc=False)
 def pdf(x, df, loc=0, scale=1):
   return lax.exp(logpdf(x, df, loc, scale))

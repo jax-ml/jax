@@ -23,7 +23,7 @@ from ... import lax
 from ...numpy.lax_numpy import _promote_args_like, _wraps, where, inf
 
 
-@_wraps(osp_stats.expon.logpdf)
+@_wraps(osp_stats.expon.logpdf, update_doc=False)
 def logpdf(x, loc=0, scale=1):
   x, loc, scale = _promote_args_like(osp_stats.expon.logpdf, x, loc, scale)
   log_scale = lax.log(scale)
@@ -31,6 +31,6 @@ def logpdf(x, loc=0, scale=1):
   log_probs = lax.neg(lax.add(linear_term, log_scale))
   return where(lax.lt(x, loc), -inf, log_probs)
 
-@_wraps(osp_stats.expon.pdf)
+@_wraps(osp_stats.expon.pdf, update_doc=False)
 def pdf(x, loc=0, scale=1):
   return lax.exp(logpdf(x, loc, scale))
