@@ -194,7 +194,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     _skip_if_unsupported_type(dtype)
     tol = 30
     if jtu.device_under_test() == "tpu":
-      if onp.issubdtype(dtype, onp.complexfloating):
+      if np.issubdtype(dtype, onp.complexfloating):
         raise unittest.SkipTest("No complex eigh on TPU")
       # TODO(phawkins): this tolerance is unpleasantly high.
       tol = 1500
@@ -295,7 +295,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testEighBatching(self, shape, dtype, rng):
     _skip_if_unsupported_type(dtype)
     if (jtu.device_under_test() == "tpu" and
-        onp.issubdtype(dtype, onp.complexfloating)):
+        np.issubdtype(dtype, onp.complexfloating)):
       raise unittest.SkipTest("No complex eigh on TPU")
     shape = (10,) + shape
     args = rng(shape, dtype)
@@ -408,7 +408,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for rng in [jtu.rand_default()]))
   def testQr(self, shape, dtype, full_matrices, rng):
     _skip_if_unsupported_type(dtype)
-    if (onp.issubdtype(dtype, onp.complexfloating) and
+    if (np.issubdtype(dtype, onp.complexfloating) and
         (jtu.device_under_test() == "tpu" or jax.lib.version <= (0, 1, 27))):
       raise unittest.SkipTest("No complex QR implementation")
     m, n = shape[-2:]
@@ -685,7 +685,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       for rng in [jtu.rand_default()]))
   def testSolve(self, lhs_shape, rhs_shape, dtype, sym_pos, lower, rng):
     _skip_if_unsupported_type(dtype)
-    if (sym_pos and onp.issubdtype(dtype, onp.complexfloating) and
+    if (sym_pos and np.issubdtype(dtype, onp.complexfloating) and
         jtu.device_under_test() == "tpu"):
       raise unittest.SkipTest(
         "Complex Cholesky decomposition not implemented on TPU")
@@ -765,7 +765,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       for dtype in float_types + complex_types
       for transpose_a in [False, True]
       for conjugate_a in (
-          [False] if onp.issubdtype(dtype, np.floating) else [False, True])
+          [False] if np.issubdtype(dtype, np.floating) else [False, True])
       for left_side, a_shape, b_shape in [
           (False, (4, 4), (1, 4,)),
           (False, (3, 3), (4, 3)),

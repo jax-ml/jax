@@ -127,7 +127,7 @@ batching.primitive_batchers[cholesky_p] = cholesky_batching_rule
 def _nan_like(c, operand):
   shape = c.GetShape(operand)
   dtype = shape.element_type()
-  if onp.issubdtype(dtype, onp.complexfloating):
+  if np.issubdtype(dtype, onp.complexfloating):
     nan = c.Constant(onp.array(onp.nan * (1. + 1j), dtype=dtype))
   else:
     nan = c.Constant(onp.array(onp.nan, dtype=dtype))

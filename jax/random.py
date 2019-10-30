@@ -73,7 +73,7 @@ def _is_prng_key(key):
 
 
 def _make_rotate_left(dtype):
-  if not onp.issubdtype(dtype, onp.integer):
+  if not np.issubdtype(dtype, onp.integer):
     raise TypeError("_rotate_left only accepts integer dtypes.")
   nbits = onp.array(onp.iinfo(dtype).bits, dtype)
 
@@ -276,7 +276,7 @@ def uniform(key, shape=(), dtype=onp.float64, minval=0., maxval=1.):
 @partial(jit, static_argnums=(1, 2))
 def _uniform(key, shape, dtype, minval, maxval):
   _check_shape("uniform", shape)
-  if not onp.issubdtype(dtype, onp.floating):
+  if not np.issubdtype(dtype, onp.floating):
     raise TypeError("uniform only accepts floating point dtypes.")
 
   minval = lax.convert_element_type(minval, dtype)
@@ -324,7 +324,7 @@ def randint(key, shape, minval, maxval, dtype=onp.int64):
 @partial(jit, static_argnums=(1, 4))
 def _randint(key, shape, minval, maxval, dtype):
   _check_shape("randint", shape, minval.shape, maxval.shape)
-  if not onp.issubdtype(dtype, onp.integer):
+  if not np.issubdtype(dtype, onp.integer):
     raise TypeError("randint only accepts integer dtypes.")
 
   minval = lax.convert_element_type(minval, dtype)
@@ -509,7 +509,7 @@ def _truncated_normal(key, lower, upper, shape, dtype):
   sqrt2 = onp.array(onp.sqrt(2), dtype)
   a = lax.erf(lax.convert_element_type(lower, dtype) / sqrt2)
   b = lax.erf(lax.convert_element_type(upper, dtype) / sqrt2)
-  if not onp.issubdtype(dtype, onp.floating):
+  if not np.issubdtype(dtype, onp.floating):
     raise TypeError("truncated_normal only accepts floating point dtypes.")
   u = uniform(key, shape, dtype, minval=onp.finfo(dtype).tiny)
   return sqrt2 * lax.erf_inv(a + u * (b - a))
@@ -531,7 +531,7 @@ def bernoulli(key, p=onp.float32(0.5), shape=None):
     is not None, or else ``p.shape``.
   """
   dtype = xla_bridge.canonicalize_dtype(lax.dtype(p))
-  if not onp.issubdtype(dtype, onp.floating):
+  if not np.issubdtype(dtype, onp.floating):
     msg = "bernoulli probability `p` must have a floating dtype, got {}."
     raise TypeError(msg.format(dtype))
   p = lax.convert_element_type(p, dtype)

@@ -64,7 +64,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
       for dtype in [onp.float32, onp.float64]))
   def testNumpyAndXLAAgreeOnFloatEndianness(self, dtype):
-    if not FLAGS.jax_enable_x64 and onp.issubdtype(dtype, onp.float64):
+    if not FLAGS.jax_enable_x64 and np.issubdtype(dtype, onp.float64):
       raise SkipTest("can't test float64 agreement")
 
     bits_dtype = onp.uint32 if onp.finfo(dtype).bits == 32 else onp.uint64

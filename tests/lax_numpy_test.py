@@ -315,7 +315,7 @@ CombosWithReplacement = itertools.combinations_with_replacement
 def _dtypes_are_compatible_for_bitwise_ops(args):
   if len(args) <= 1:
     return True
-  is_signed = lambda dtype: onp.issubdtype(dtype, onp.signedinteger)
+  is_signed = lambda dtype: lnp.issubdtype(dtype, onp.signedinteger)
   width = lambda dtype: onp.iinfo(dtype).bits
   x, y = args
   if width(x) > width(y):
@@ -696,7 +696,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for shape in all_shapes for dtype in number_dtypes
       for decimals in [0, 1, -2]))
   def testRoundStaticDecimals(self, shape, dtype, decimals, rng):
-    if onp.issubdtype(dtype, onp.integer) and decimals < 0:
+    if lnp.issubdtype(dtype, onp.integer) and decimals < 0:
       self.skipTest("Integer rounding with decimals < 0 not implemented")
     onp_fun = lambda x: onp.round(x, decimals=decimals)
     lnp_fun = lambda x: lnp.round(x, decimals=decimals)
@@ -1850,8 +1850,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     lnp_op = getattr(lnp, op)
     dtype = onp.dtype(xla_bridge.canonicalize_dtype(dtype)).type
     for x in (onp.nan, -onp.inf, -100., -2. -1., 0., 1., 2., 100., onp.inf,
-              onp.finfo(dtype).max, onp.sqrt(onp.finfo(dtype).max),
-              onp.sqrt(onp.finfo(dtype).max) * 2.):
+              lnp.finfo(dtype).max, onp.sqrt(lnp.finfo(dtype).max),
+              onp.sqrt(lnp.finfo(dtype).max) * 2.):
       if onp.isnan(x) and op in ("sinh", "cosh", "expm1", "exp"):
         # TODO(b/133842876, b/133842870): these return wrong outputs on CPU for
         # NaN inputs.
@@ -2088,7 +2088,7 @@ GRAD_SPECIAL_VALUE_TEST_RECORDS = [
 ]
 
 def num_float_bits(dtype):
-  return onp.finfo(xla_bridge.canonicalize_dtype(dtype)).bits
+  return lnp.finfo(xla_bridge.canonicalize_dtype(dtype)).bits
 
 class NumpyGradTests(jtu.JaxTestCase):
   @parameterized.named_parameters(itertools.chain.from_iterable(
