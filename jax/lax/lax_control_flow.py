@@ -35,6 +35,7 @@ from jax import linear_util as lu
 from jax.abstract_arrays import ShapedArray, raise_to_shaped
 from jax.api_util import flatten_fun_nokwargs, apply_flat_fun_nokwargs
 from jax.interpreters import ad
+from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax.interpreters import batching
@@ -1131,23 +1132,76 @@ def custom_linear_solve(
   jaxprs = _LinearSolveTuple(
       matvec_jaxpr, vecmat_jaxpr, solve_jaxpr, tr_solve_jaxpr)
 
-  out_flat = linear_solve_p.bind(
-      *(_flatten(all_consts) + b_flat),
-      const_lengths=const_lengths, jaxprs=jaxprs, tree=tree)
+  args = _flatten(all_consts) + b_flat
+  out_flat = _bind(linear_solve_p)(
+      *args, const_lengths=const_lengths, jaxprs=jaxprs, tree=tree)
   return tree_unflatten(tree, out_flat)
 
 
-def _linear_solve_abstract_eval(*args, **kwargs):
-  return args[sum(kwargs['const_lengths']):]
+def _bind(primitive):
+  """primitive.bind without either in_batch_axes or out_batch_axes."""
+  def f(*args, **kwargs):
+    in_batch_axes = [()] * len(args)
+    avals = _map(core.get_aval, args)
+    avals_out = pe.abstract_eval_fun(
+        primitive.impl.unbatched_fun, *avals, **kwargs)
+    out_batch_axes = [()] * len(avals_out)
+    return primitive.bind(*args, **kwargs, in_batch_axes=in_batch_axes,
+                          out_batch_axes=out_batch_axes)
+  return f
 
 
+def _maybe_vmap(fun, in_axes, out_axes):
+  flat_axes, _ = tree_flatten(in_axes)
+  if any(axis is not None for axis in flat_axes):
+    return api.vmap(fun, in_axes, out_axes)
+  else:
+    return fun
+
+
+def decrement_batch_axis(batch_axes):
+  axes = tuple(axes[0] if axes else None for axes in batch_axes)
+  new_batch_axes = [axes[1:] for axes in batch_axes]
+  return axes, new_batch_axes
+
+
+def returns_list(fun):
+  def wrapper(*args, **kwargs):
+    return list(fun(*args, **kwargs))
+  return wrapper
+
+
+class _BatchedImpl(object):
+  def __init__(self, unbatched_fun):
+    self.unbatched_fun = unbatched_fun
+  def __call__(self, *args, **kwargs):
+    in_batch_axes = kwargs.pop('in_batch_axes')
+    out_batch_axes = kwargs.pop('out_batch_axes')
+    in_axes, new_in_batch_axes = decrement_batch_axis(in_batch_axes)
+    out_axes, new_out_batch_axes = decrement_batch_axis(out_batch_axes)
+    if any(new_in_batch_axes):
+      fun_without_batch = partial(self,
+                                  in_batch_axes=new_in_batch_axes,
+                                  out_batch_axes=new_out_batch_axes,
+                                  **kwargs)
+    else:
+      fun_without_batch = partial(self.unbatched_fun, **kwargs)
+    # TODO(shoyer): try to use _maybe_vmap instead here
+    if any(axis is not None for axis in in_axes):
+      return batching.batch(lu.wrap_init(fun_without_batch), args, in_axes,
+                            lambda: out_axes)
+    else:
+      return list(fun_without_batch(*args))
+
+
+@_BatchedImpl
 def _custom_linear_solve_impl(*args, **kwargs):
   const_lengths, jaxprs, tree = split_dict(
       kwargs, ['const_lengths', 'jaxprs', 'tree'])
   params, b = _split_linear_solve_args(args, const_lengths)
   x = core.jaxpr_as_fun(jaxprs.solve)(*(params.solve + b))
   _check_shapes('solve', 'b', x, b, tree)
-  return x
+  return list(x)
 
 
 def _tangent_linear_map(func, params, params_dot, *x):
@@ -1163,13 +1217,47 @@ def _tangent_linear_map(func, params, params_dot, *x):
   return out_tangent
 
 
+def _batch_jvp(unbatched_jvp):
+  def wrapper(primals, tangents, **kwargs):
+    in_batch_axes = kwargs.pop('in_batch_axes')
+    out_batch_axes = kwargs.pop('out_batch_axes')
+    in_axes, new_in_batch_axes = decrement_batch_axis(in_batch_axes)
+    out_axes, new_out_batch_axes = decrement_batch_axis(out_batch_axes)
+    if any(new_in_batch_axes):
+      fun_without_batch = partial(wrapper,
+                                  in_batch_axes=new_in_batch_axes,
+                                  out_batch_axes=new_out_batch_axes,
+                                  **kwargs)
+    else:
+      fun_without_batch = partial(unbatched_jvp, **kwargs)
+
+    num_args = len(primals)
+    num_outputs = len(out_axes)
+
+    def flat_fun(*args):
+      x, dx = split_list(args, [num_args])
+      y, dy = fun_without_batch(x, dx)
+      return y + dy
+
+    if any(axis is not None for axis in in_axes):
+      result = batching.batch(lu.wrap_init(flat_fun), primals + tangents,
+                              in_axes * 2, lambda: out_axes * 2)
+      y, dy = split_list(result, [num_outputs])
+      return y, dy
+    else:
+      return fun_without_batch(primals, tangents)
+
+  return wrapper
+
+
+@_batch_jvp
 def _custom_linear_solve_jvp(primals, tangents, const_lengths, jaxprs, tree):
   # A x - b = 0
   # ∂A x + A ∂x - ∂b = 0
   # ∂x = A^{-1} (∂b - ∂A x)
 
   kwargs = dict(const_lengths=const_lengths, jaxprs=jaxprs, tree=tree)
-  x = linear_solve_p.bind(*primals, **kwargs)
+  x = _bind(linear_solve_p)(*primals, **kwargs)
 
   params, _ = _split_linear_solve_args(primals, const_lengths)
   params_dot, b_dot = _split_linear_solve_args(tangents, const_lengths)
@@ -1183,11 +1271,61 @@ def _custom_linear_solve_jvp(primals, tangents, const_lengths, jaxprs, tree):
     _check_shapes("matvec", "b", matvec_tangents, x, tree)
     rhs = _map(ad.add_tangents, b_dot, _map(operator.neg, matvec_tangents))
 
-  x_dot = linear_solve_p.bind(*(_flatten(params) + rhs), **kwargs)
+  x_dot = _bind(linear_solve_p)(*(_flatten(params) + rhs), **kwargs)
 
-  return x, x_dot
+  return list(x), list(x_dot)
 
 
+def _batch_transpose_rule(unbatched_transpose):
+  def wrapper(cotangent, *primals, **kwargs):
+    in_batch_axes = kwargs.pop('in_batch_axes')
+    out_batch_axes = kwargs.pop('out_batch_axes')
+    in_axes, new_in_batch_axes = decrement_batch_axis(in_batch_axes)
+    out_axes, new_out_batch_axes = decrement_batch_axis(out_batch_axes)
+
+    if any(new_in_batch_axes):
+      fun_without_batch = partial(wrapper,
+                                  in_batch_axes=new_in_batch_axes,
+                                  out_batch_axes=new_out_batch_axes,
+                                  **kwargs)
+    else:
+      fun_without_batch = partial(unbatched_transpose, **kwargs)
+
+    num_outputs = len(out_axes)
+
+    undefined_positions = [
+        i for i, x in enumerate(primals) if x is ad.undefined_primal]
+
+    def flat_fun(*args):
+      cotangent, primals = split_list(args, [num_outputs])
+      primals = list(primals)
+      for i in undefined_positions:
+        primals.insert(i, ad.undefined_primal)
+      output = fun_without_batch(cotangent, *primals)
+      non_nulls = [out for out in output if out is not None]
+      return non_nulls
+
+    if any(axis is not None for axis in in_axes):
+      args = cotangent + [p for p in primals if p is not ad.undefined_primal]
+      primal_axes = [a for a, p in zip(in_axes, primals)
+                     if p is not ad.undefined_primal]
+      non_primal_axes = [a for a, p in zip(in_axes, primals)
+                         if p is ad.undefined_primal]
+      result = batching.batch(lu.wrap_init(flat_fun), args,
+                              list(out_axes) + primal_axes,
+                              lambda: non_primal_axes)
+      result = list(result)
+      for i, p in enumerate(primals):
+        if p is not ad.undefined_primal:
+          result.insert(i, None)
+      return result
+    else:
+      return fun_without_batch(cotangent, *primals)
+
+  return wrapper
+
+
+@_batch_transpose_rule
 def _linear_solve_transpose_rule(cotangent, *primals, **kwargs):
   const_lengths, jaxprs, tree = split_dict(
       kwargs, ['const_lengths', 'jaxprs', 'tree'])
@@ -1198,7 +1336,7 @@ def _linear_solve_transpose_rule(cotangent, *primals, **kwargs):
 
   params, b = _split_linear_solve_args(primals, const_lengths)
   assert b == [ad.undefined_primal] * len(b)
-  cotangent_b = linear_solve_p.bind(
+  cotangent_b = _bind(linear_solve_p)(
       *(_flatten(params.transpose()) + cotangent),
       const_lengths=const_lengths.transpose(), jaxprs=jaxprs.transpose(),
       tree=tree)
@@ -1208,9 +1346,43 @@ def _linear_solve_transpose_rule(cotangent, *primals, **kwargs):
 linear_solve_p = core.Primitive('custom_linear_solve')
 linear_solve_p.multiple_results = True
 linear_solve_p.def_impl(_custom_linear_solve_impl)
-linear_solve_p.def_abstract_eval(_linear_solve_abstract_eval)
 ad.primitive_jvps[linear_solve_p] = _custom_linear_solve_jvp
-xla.initial_style_translations[linear_solve_p] = xla.lower_fun(
-    _custom_linear_solve_impl, initial_style=True)
 ad.primitive_transposes[linear_solve_p] = _linear_solve_transpose_rule
-# TODO(shoyer): write batching rule
+
+
+def def_xla_rule(primitive):
+  xla.initial_style_translations[primitive] = xla.lower_fun(
+      primitive.impl, initial_style=True)
+
+def_xla_rule(linear_solve_p)
+
+
+def def_batching_rule(primitive):
+  def batched(args, dims, **kwargs):
+
+    in_batch_axes = kwargs.pop('in_batch_axes')
+    out_batch_axes = kwargs.pop('out_batch_axes')
+
+    # TODO(shoyer): avoid actual evaluation here
+    _, out_dims = batching.batch_fun(
+        lu.wrap_init(primitive.impl.unbatched_fun, kwargs),
+        lax.stop_gradient(args), dims)
+
+    new_in_batch_axes = [cur_batch if dim is None else (dim,) + cur_batch
+                         for dim, cur_batch in zip(dims, in_batch_axes)]
+    new_out_batch_axes = [cur_batch if dim is None else (dim,) + cur_batch
+                          for dim, cur_batch in zip(out_dims, out_batch_axes)]
+    kwargs.update(in_batch_axes=new_in_batch_axes,
+                  out_batch_axes=new_out_batch_axes)
+    return primitive.bind(*args, **kwargs), out_dims
+  batching.primitive_batchers[primitive] = batched
+
+def_batching_rule(linear_solve_p)
+
+
+def def_impl(primitive):
+  def fun_abstract_eval(*avals, **params):
+    return pe.abstract_eval_fun(primitive.impl, *avals, **params)
+  primitive.def_abstract_eval(fun_abstract_eval)
+
+def_impl(linear_solve_p)

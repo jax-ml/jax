@@ -1194,11 +1194,10 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     actual = api.jit(linear_solve)(a, b)
     self.assertAllClose(expected, actual, check_dtypes=True)
 
-    # TODO(shoyer): reenable when batching works
-    # c = rng.randn(3, 2)
-    # expected = np.linalg.solve(a, c)
-    # actual = api.vmap(linear_solve, (None, 1), 1)(a, c)
-    # self.assertAllClose(expected, actual, check_dtypes=True)
+    c = rng.randn(3, 2)
+    expected = np.linalg.solve(a, c)
+    actual = api.vmap(linear_solve, (None, 1), 1)(a, c)
+    self.assertAllClose(expected, actual, check_dtypes=True)
 
   def test_custom_linear_solve_zeros(self):
     def explicit_jacobian_solve(matvec, b):
@@ -1245,10 +1244,9 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(expected, actual, atol=1e-5, check_dtypes=True)
     jtu.check_grads(build_and_solve, (a, b), atol=1e-5, order=2)
 
-    # TODO(shoyer): reenable when batching works
-    # a2 = rng.randn(1, 2, 2)
-    # b2 = rng.randn(1, 2, 2)
-    # jtu.check_grads(api.vmap(build_and_solve), (a2, b2), atol=1e-5, order=2)
+    a2 = rng.randn(1, 2, 2)
+    b2 = rng.randn(1, 2, 2)
+    jtu.check_grads(api.vmap(build_and_solve), (a2, b2), atol=1e-3, order=2)
 
   def test_custom_linear_solve_cholesky(self):
 
