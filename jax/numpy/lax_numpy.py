@@ -524,9 +524,8 @@ def logaddexp2(x1, x2):
   x1, x2 = _promote_shapes("logaddexp2",
                            *_promote_to_result_dtype(onp.logaddexp2, x1, x2))
   amax = lax.max(x1, x2)
-  return lax.add(amax, log2(lax.add(exp2(lax.sub(x1, amax)),
-                                    exp2(lax.sub(x2, amax)))))
-
+  return lax.add(amax, lax.div(lax.log1p(exp2(-lax.abs(lax.sub(x1, x2)))),
+                               _constant_like(x1, onp.log(2))))
 
 @_wraps(onp.log2)
 def log2(x):
