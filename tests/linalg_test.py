@@ -167,6 +167,25 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                           check_dtypes=True, rtol=1e-3)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}".format(
+           jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype, "rng": rng}
+      for shape in [(4, 4), (5, 5), (50, 50)]
+      for dtype in float_types + complex_types
+      for rng in [jtu.rand_default()]))
+  # TODO: enable when there is an eigendecomposition implementation
+  # for GPU/TPU.
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testEigvals(self, shape, dtype, rng):
+    _skip_if_unsupported_type(dtype)
+    n = shape[-1]
+    args_maker = lambda: [rng(shape, dtype)]
+    a, = args_maker()
+    w1, _ = np.linalg.eig(a)
+    w2 = np.linalg.eigvals(a)
+    self.assertAllClose(w1, w2, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype, "rng": rng}
@@ -216,6 +235,26 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
     self._CompileAndCheck(partial(np.linalg.eigh, UPLO=uplo), args_maker,
                           check_dtypes=True, rtol=1e-3)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}".format(
+           jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype, "rng": rng}
+      for shape in [(4, 4), (5, 5), (50, 50)]
+      for dtype in float_types + complex_types
+      for rng in [jtu.rand_default()]))
+  # TODO: enable when there is an eigendecomposition implementation
+  # for GPU/TPU.
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testEigvalsh(self, shape, dtype, rng):
+    _skip_if_unsupported_type(dtype)
+    n = shape[-1]
+    def args_maker():
+      a = rng((n, n), dtype)
+      a = (a + onp.conj(a.T)) / 2
+      return [a]
+    self._CheckAgainstNumpy(onp.linalg.eigvalsh, np.linalg.eigvalsh, args_maker,
+                            check_dtypes=True, tol=1e-3)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
