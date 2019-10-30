@@ -160,6 +160,8 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("conjugate", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("deg2rad", 1, float_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("divide", 2, number_dtypes, all_shapes, jtu.rand_nonzero(), ["rev"]),
+    op_record("divmod", 2, int_dtypes + float_dtypes, all_shapes,
+              jtu.rand_nonzero(), []),
     op_record("exp2", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"],
               tolerance={onp.float16: 1e-2}),
     # TODO(b/142975473): on CPU, expm1 for float64 is only accurate to ~float32
