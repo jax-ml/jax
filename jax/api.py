@@ -679,8 +679,12 @@ def vmap(fun, in_axes=0, out_axes=0):
 
   return batched_fun
 
-# TODO(mattjj,phawkins): improve this implementation
 def _flatten_axes(treedef, axis_tree):
+  # given an axis spec tree axis_tree (a pytree with integers and Nones at the
+  # leaves, i.e. the Nones are to be considered leaves) that is a tree prefix of
+  # the given treedef, build a complete axis spec tree with the same structure
+  # and return the flattened result
+  # TODO(mattjj,phawkins): improve this implementation
   proxy = object()
   dummy = tree_unflatten(treedef, [object()] * treedef.num_leaves)
   axes = []
