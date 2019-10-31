@@ -369,20 +369,22 @@ class BatchingTest(jtu.JaxTestCase):
 
   def testDynamicSlice(self):
     # test dynamic_slice via numpy indexing syntax
-    x = onp.arange(30).reshape((10, 3))
+    # see https://github.com/google/jax/issues/1613 for an explanation of why we
+    # need to use np rather than onp to create x and idx
+    x = np.arange(30).reshape((10, 3))
 
     ans = vmap(lambda x, i: x[i], in_axes=(0, None))(x, 1)
     expected = x[:, 1]
     self.assertAllClose(ans, expected, check_dtypes=False)
 
 
-    idx = onp.array([0, 1, 2, 1, 0] * 2)
+    idx = np.array([0, 1, 2, 1, 0] * 2)
     ans = vmap(lambda x, i: x[i], in_axes=(0, 0))(x, idx)
     expected = x[onp.arange(10), idx]
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    x = onp.arange(3)
-    idx = onp.array([0, 1, 2, 1, 0] * 2)
+    x = np.arange(3)
+    idx = np.array([0, 1, 2, 1, 0] * 2)
     ans = vmap(lambda x, i: x[i], in_axes=(None, 0))(x, idx)
     expected = x[idx]
     self.assertAllClose(ans, expected, check_dtypes=False)

@@ -1093,6 +1093,94 @@ class APITest(jtu.JaxTestCase):
     b = np.dot(a + np.eye(a.shape[0]), real_x)
     print(gf(a, b))  # doesn't crash
 
+  def test_vmap_in_axes_tree_prefix_error(self):
+    # https://github.com/google/jax/issues/795
+    jtu.check_raises_regexp(
+        lambda: api.vmap(lambda x: x, in_axes=(0, 0))(np.ones(3)),
+        ValueError,
+        "axes specification must be a tree prefix of the corresponding "
+        r"value, got specification \(0, 0\) for value "
+        r"PyTreeDef\(tuple, \[\*\]\)."
+    )
+
+  def test_vmap_unbatched_object_passthrough_issue_183(self):
+    # https://github.com/google/jax/issues/183
+    fun = lambda f, x: f(x)
+    vfun = api.vmap(fun, (None, 0))
+    ans = vfun(lambda x: x + 1, np.arange(3))
+    self.assertAllClose(ans, onp.arange(1, 4), check_dtypes=False)
+
+  def test_vmap_mismatched_axis_sizes_error_message_issue_705(self):
+    # https://github.com/google/jax/issues/705
+    def h(a, b):
+      return np.sum(a) + np.sum(b)
+
+    X = onp.random.randn(10, 4)
+    U = onp.random.randn(10, 2)
+
+    self.assertRaisesRegex(
+        ValueError,
+        "vmap got inconsistent sizes for array axes to be mapped:\n"
+        r"arg 0 has shape \(10, 4\) and axis 0 is to be mapped" "\n"
+        r"arg 1 has shape \(10, 2\) and axis 1 is to be mapped" "\n"
+        "so\n"
+        "arg 0 has an axis to be mapped of size 10\n"
+        "arg 1 has an axis to be mapped of size 2",
+        lambda: api.vmap(h, in_axes=(0, 1))(X, U))
+
+    self.assertRaisesRegex(
+        ValueError,
+        "vmap got inconsistent sizes for array axes to be mapped:\n"
+        r"arg 0 has shape \(10, 4\) and axis 0 is to be mapped" "\n"
+        r"arg 1 has shape \(10, 2\) and axis 1 is to be mapped" "\n"
+        r"arg 2 has shape \(10, 4\) and axis 0 is to be mapped" "\n"
+        "so\n"
+        "args 0, 2 have axes to be mapped of size 10\n"
+        "arg 1 has an axis to be mapped of size 2",
+        lambda: api.vmap(lambda x, y, z: None, in_axes=(0, 1, 0))(X, U, X))
+
+    self.assertRaisesRegex(
+        ValueError,
+        "vmap got inconsistent sizes for array axes to be mapped:\n"
+        "the tree of axis sizes is:\n"
+        r"\(10, \[2, 2\]\)",
+        lambda: api.vmap(h, in_axes=(0, 1))(X, [U, U]))
+
+  def test_vmap_structured_in_axes(self):
+
+    A, B, C, D = 2, 3, 4, 5
+    K = 6  # batch size
+    x = onp.ones((K, A, B))  # batch axis in different locations
+    y = onp.ones((B, K, C))
+    z = onp.ones((C, D, K))
+
+    def foo(tree_arg):
+      x, (y, z) = tree_arg
+      return np.dot(x, np.dot(y, z))
+
+    tree = (x, (y, z))
+    vfoo = api.vmap(foo, in_axes=((0, (1, 2)),))
+    self.assertEqual(vfoo(tree).shape, (6, 2, 5))
+
+    Point = collections.namedtuple("Point", ["x", "y"])
+    tree = (x, Point(y, z))
+    vfoo = api.vmap(foo, in_axes=((0, Point(1, 2)),))
+    self.assertEqual(vfoo(tree).shape, (6, 2, 5))
+
+    def foo(tree_arg):
+      x, dct = tree_arg
+      y, z = dct['a'], dct['b']
+      return np.dot(x, np.dot(y, z))
+
+    tree = (x, {'a':y, 'b':z})
+    vfoo = api.vmap(foo, in_axes=((0, {'a':1, 'b':2}),))
+    self.assertEqual(vfoo(tree).shape, (6, 2, 5))
+
+    tree = (x, collections.OrderedDict([('a', y), ('b', z)]))
+    vfoo = api.vmap(
+        foo, in_axes=((0, collections.OrderedDict([('a', 1), ('b', 2)])),))
+    self.assertEqual(vfoo(tree).shape, (6, 2, 5))
+
 
 if __name__ == '__main__':
   absltest.main()

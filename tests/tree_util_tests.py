@@ -103,7 +103,7 @@ class TreeTest(jtu.JaxTestCase):
 
   @parameterized.parameters(*PYTREES)
   def testRoundtripViaBuild(self, inputs):
-    xs, tree = tree_util.process_pytree(tuple, inputs)
+    xs, tree = tree_util._process_pytree(tuple, inputs)
     actual = tree_util.build_tree(tree, xs)
     self.assertEqual(actual, inputs)
 
