@@ -572,12 +572,11 @@ def vmap(fun, in_axes=0, out_axes=0):
       length equal to the number of positional arguments to ``fun``. An integer
       or None indicates which array axis to map over for all arguments (with
       None indicating not to map any axis), and a tuple indicates which axis to
-      map for each corresponding positional argument. More generally, if the
-      positinal arguments to ``fun`` are container types, the corresponding
-      element of ``in_axes`` can itself be a matching container, so that
-      distinct array axes can be mapped for different container elements. The
-      constraint is that ``in_axes`` must be a container tree prefix of the
-      positional argument tuple passed to ``fun``.
+      map for each corresponding positional argument. If the positinal arguments
+      to ``fun`` are container types, the corresponding element of ``in_axes``
+      can itself be a matching container, so that distinct array axes can be
+      mapped for different container elements. ``in_axes`` must be a container
+      tree prefix of the positional argument tuple passed to ``fun``.
     out_axes: A nonnegative integer, None, or (nested) standard Python container
       (tuple/list/dict) thereof indicating where the mapped axis should appear
       in the output.
@@ -623,19 +622,8 @@ def vmap(fun, in_axes=0, out_axes=0):
   >>> z = np.ones((C, D, K))
   >>> tree = (x, (y, z))
   >>> vfoo = vmap(foo, in_axes=((0, (1, 2)),))
-  >>> print(vfoo(tree))
-  [[[12. 12. 12. 12. 12.]
-    [12. 12. 12. 12. 12.]]
-   [[12. 12. 12. 12. 12.]
-    [12. 12. 12. 12. 12.]]
-   [[12. 12. 12. 12. 12.]
-    [12. 12. 12. 12. 12.]]
-   [[12. 12. 12. 12. 12.]
-    [12. 12. 12. 12. 12.]]
-   [[12. 12. 12. 12. 12.]
-    [12. 12. 12. 12. 12.]]
-   [[12. 12. 12. 12. 12.]
-    [12. 12. 12. 12. 12.]]]
+  >>> print(vfoo(tree)).shape
+  (6, 2, 5)
   """
   docstr = ("Vectorized version of {fun}. Takes similar arguments as {fun} "
             "but with additional array axes over which {fun} is mapped.")
@@ -648,8 +636,9 @@ def vmap(fun, in_axes=0, out_axes=0):
     raise TypeError(msg.format(type(in_axes), type(out_axes)))
 
   def _check_axis_sizes(tree, vals, dims):
+    mapped_axis_sizes = {x.shape[d] for x, d in zip(vals, dims) if d is not None}
     try:
-      sizes, = {x.shape[d] for x, d in zip(vals, dims) if d is not None}
+      sizes, = mapped_axis_sizes
     except ValueError:
       msg = "vmap got inconsistent sizes for array axes to be mapped:\n{}"
       # we switch the error message based on whether args is a tuple of arrays,

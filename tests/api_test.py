@@ -1099,14 +1099,14 @@ class APITest(jtu.JaxTestCase):
         lambda: api.vmap(lambda x: x, in_axes=(0, 0))(np.ones(3)),
         ValueError, "axes specification must be a tree prefix")
 
-  def test_vmap_objects_issue_183(self):
+  def test_vmap_unbatched_object_passthrough_issue_183(self):
     # https://github.com/google/jax/issues/183
     fun = lambda f, x: f(x)
     vfun = api.vmap(fun, (None, 0))
     ans = vfun(lambda x: x + 1, np.arange(3))
     self.assertAllClose(ans, onp.arange(1, 4), check_dtypes=False)
 
-  def test_vmap_error_message_issue_705(self):
+  def test_vmap_mismatched_axis_sizes_error_message_issue_705(self):
     # https://github.com/google/jax/issues/705
     def h(a, b):
       return np.sum(a) + np.sum(b)
@@ -1126,7 +1126,8 @@ class APITest(jtu.JaxTestCase):
     self.assertRaisesRegex(
         ValueError,
         "vmap got inconsistent sizes for array axes to be mapped:\n"
-        "the tree of axis sizes is:\n",
+        "the tree of axis sizes is:\n"
+        "\(10, \[2, 2\]\)",
         lambda: api.vmap(h, in_axes=(0, 1))(X, [U, U]))
 
 
