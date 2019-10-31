@@ -47,7 +47,8 @@ from .core import eval_jaxpr
 from .api_util import (wraps, flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
                        flatten_fun_nokwargs2, apply_flat_fun_nokwargs)
 from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
-                        tree_transpose, tree_leaves, tree_multimap)
+                        tree_transpose, tree_leaves, tree_multimap,
+                        _replace_nones)
 from .util import (unzip2, unzip3, curry, partial, safe_map, safe_zip,
                    WrapHashably, Hashable, prod, split_list)
 from .lib.xla_bridge import (canonicalize_dtype, device_count,
@@ -678,26 +679,21 @@ def vmap(fun, in_axes=0, out_axes=0):
 
   return batched_fun
 
+# TODO(mattjj,phawkins): improve this implementation
 def _flatten_axes(treedef, axis_tree):
+  proxy = object()
   dummy = tree_unflatten(treedef, [object()] * treedef.num_leaves)
   axes = []
   add_leaves = lambda i, x: axes.extend([i] * len(tree_flatten(x)[0]))
   try:
-    tree_multimap(add_leaves, _replace_nones(axis_tree), dummy)
+    tree_multimap(add_leaves, _replace_nones(proxy, axis_tree), dummy)
   except ValueError:
     msg = ("axes specification must be a tree prefix of the corresponding "
            "value, got specification {} for value {}.")
     raise ValueError(msg.format(axis_tree, treedef))
-  axes = [None if a is _none_proxy else a for a in axes]
+  axes = [None if a is proxy else a for a in axes]
+  assert len(axes) == treedef.num_leaves
   return axes
-
-def _replace_nones(tuptree):
-  if type(tuptree) in (list, tuple):
-    return tuple(map(_replace_nones, tuptree))
-  else:
-    return tuptree if tuptree is not None else _none_proxy
-class _NoneProxy(object): pass
-_none_proxy = _NoneProxy()
 
 
 def pmap(fun, axis_name=None, devices=None, backend=None):

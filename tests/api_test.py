@@ -1146,6 +1146,41 @@ class APITest(jtu.JaxTestCase):
         r"\(10, \[2, 2\]\)",
         lambda: api.vmap(h, in_axes=(0, 1))(X, [U, U]))
 
+  def test_vmap_structured_in_axes(self):
+
+    A, B, C, D = 2, 3, 4, 5
+    K = 6  # batch size
+    x = onp.ones((K, A, B))  # batch axis in different locations
+    y = onp.ones((B, K, C))
+    z = onp.ones((C, D, K))
+
+    def foo(tree_arg):
+      x, (y, z) = tree_arg
+      return np.dot(x, np.dot(y, z))
+
+    tree = (x, (y, z))
+    vfoo = api.vmap(foo, in_axes=((0, (1, 2)),))
+    self.assertEqual(vfoo(tree).shape, (6, 2, 5))
+
+    Point = collections.namedtuple("Point", ["x", "y"])
+    tree = (x, Point(y, z))
+    vfoo = api.vmap(foo, in_axes=((0, Point(1, 2)),))
+    self.assertEqual(vfoo(tree).shape, (6, 2, 5))
+
+    def foo(tree_arg):
+      x, dct = tree_arg
+      y, z = dct['a'], dct['b']
+      return np.dot(x, np.dot(y, z))
+
+    tree = (x, {'a':y, 'b':z})
+    vfoo = api.vmap(foo, in_axes=((0, {'a':1, 'b':2}),))
+    self.assertEqual(vfoo(tree).shape, (6, 2, 5))
+
+    tree = (x, collections.OrderedDict([('a', y), ('b', z)]))
+    vfoo = api.vmap(
+        foo, in_axes=((0, collections.OrderedDict([('a', 1), ('b', 2)])),))
+    self.assertEqual(vfoo(tree).shape, (6, 2, 5))
+
 
 if __name__ == '__main__':
   absltest.main()
