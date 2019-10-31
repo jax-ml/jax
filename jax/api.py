@@ -647,12 +647,43 @@ def vmap(fun, in_axes=0, out_axes=0):
            "or a (nested) tuple of those types, got {} and {} respectively.")
     raise TypeError(msg.format(type(in_axes), type(out_axes)))
 
+  def _check_axis_sizes(tree, vals, dims):
+    try:
+      sizes, = {x.shape[d] for x, d in zip(vals, dims) if d is not None}
+    except ValueError:
+      msg = "vmap got inconsistent sizes for array axes to be mapped:\n{}"
+      # we switch the error message based on whether args is a tuple of arrays,
+      # in which case we can produce an error message based on argument indices,
+      # or if it has nested containers.
+      # TODO(mattjj,phawkins): add a way to inspect pytree kind more directly
+      if tree == tree_flatten((core.unit,) * tree.num_leaves)[1]:
+        lines1 = ["arg {} has shape {} and axis {} is to be mapped"
+                  .format(i, x.shape, d) for i, (x, d) in enumerate(zip(vals, dims))]
+        sizes = collections.defaultdict(list)
+        for i, (x, d) in enumerate(zip(vals, dims)):
+          if d is not None:
+            sizes[x.shape[d]].append(i)
+        lines2 = ["{} {} {} {} to be mapped of size {}".format(
+                   "args" if len(idxs) > 1 else "arg",
+                   ", ".join(map(str, idxs)),
+                   "have" if len(idxs) > 1 else "has",
+                   "axes" if len(idxs) > 1 else "an axis",
+                   size)
+                  for size, idxs in sizes.items()]
+        raise ValueError(msg.format("\n".join(lines1 + ["so"] + lines2)))
+      else:
+        sizes = [x.shape[d] if d is not None else None for x, d in zip(vals, dims)]
+        sizes = tree_unflatten(tree, sizes)
+        raise ValueError(msg.format("the tree of axis sizes is:\n{}".format(sizes)))
+
   @wraps(fun, docstr=docstr)
   def batched_fun(*args):
     args_flat, in_tree  = tree_flatten(args)
     f = lu.wrap_init(fun)
     flat_fun, out_tree = flatten_fun_nokwargs(f, in_tree)
-    out_flat = batching.batch(flat_fun, args_flat, _flatten_axes(in_tree, in_axes),
+    in_axes_flat = _flatten_axes(in_tree, in_axes)
+    _check_axis_sizes(in_tree, args_flat, in_axes_flat)
+    out_flat = batching.batch(flat_fun, args_flat, in_axes_flat,
                               lambda: _flatten_axes(out_tree(), out_axes))
     return tree_unflatten(out_tree(), out_flat)
 

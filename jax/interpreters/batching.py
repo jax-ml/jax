@@ -38,8 +38,8 @@ map = safe_map
 
 
 def batch(fun, in_vals, in_dims, out_dim_dests):
-  out_vals, out_dims = batch_fun(fun, in_vals, in_dims)
   size, = {x.shape[d] for x, d in zip(in_vals, in_dims) if d is not not_mapped}
+  out_vals, out_dims = batch_fun(fun, in_vals, in_dims)
   return map(partial(matchaxis, size), out_dims, out_dim_dests(), out_vals)
 
 def batch_fun(fun, in_vals, in_dims):
@@ -163,8 +163,8 @@ def get_primitive_batcher(p):
   try:
     return primitive_batchers[p]
   except KeyError:
-    raise NotImplementedError(
-        "Batching rule for '{}' not implemented".format(p))
+    msg = "Batching rule for '{}' not implemented"
+    raise NotImplementedError(msg.format(p))
 
 def defvectorized(prim):
   primitive_batchers[prim] = partial(vectorized_batcher, prim)

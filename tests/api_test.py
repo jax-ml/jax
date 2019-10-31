@@ -1106,6 +1106,29 @@ class APITest(jtu.JaxTestCase):
     ans = vfun(lambda x: x + 1, np.arange(3))
     self.assertAllClose(ans, onp.arange(1, 4), check_dtypes=False)
 
+  def test_vmap_error_message_issue_705(self):
+    # https://github.com/google/jax/issues/705
+    def h(a, b):
+      return np.sum(a) + np.sum(b)
+
+    X = onp.random.randn(10, 4)
+    U = onp.random.randn(10, 2)
+    self.assertRaisesRegex(
+        ValueError,
+        "vmap got inconsistent sizes for array axes to be mapped:\n"
+        "arg 0 has shape \(10, 4\) and axis 0 is to be mapped\n"
+        "arg 1 has shape \(10, 2\) and axis 1 is to be mapped\n"
+        "so\n"
+        "arg 0 has an axis to be mapped of size 10\n"
+        "arg 1 has an axis to be mapped of size 2",
+        lambda: api.vmap(h, in_axes=(0, 1))(X, U))
+
+    self.assertRaisesRegex(
+        ValueError,
+        "vmap got inconsistent sizes for array axes to be mapped:\n"
+        "the tree of axis sizes is:\n",
+        lambda: api.vmap(h, in_axes=(0, 1))(X, [U, U]))
+
 
 if __name__ == '__main__':
   absltest.main()
