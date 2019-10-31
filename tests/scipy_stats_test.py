@@ -57,8 +57,10 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     lax_fun = lsp_stats.poisson.logpmf
 
     def args_maker():
-      k, mu, loc = map(rng, shapes, dtypes)
+      k, log_mu, loc = map(rng, shapes, dtypes)
       k = onp.floor(k)
+      # clipping to ensure that rate parameter is strictly positive
+      mu = onp.clip(onp.abs(mu), a_min=0.1, a_max=None)
       loc = onp.floor(loc)
       return [k, mu, loc]
 
