@@ -1116,8 +1116,8 @@ class APITest(jtu.JaxTestCase):
     self.assertRaisesRegex(
         ValueError,
         "vmap got inconsistent sizes for array axes to be mapped:\n"
-        "arg 0 has shape \(10, 4\) and axis 0 is to be mapped\n"
-        "arg 1 has shape \(10, 2\) and axis 1 is to be mapped\n"
+        r"arg 0 has shape \(10, 4\) and axis 0 is to be mapped" "\n"
+        r"arg 1 has shape \(10, 2\) and axis 1 is to be mapped" "\n"
         "so\n"
         "arg 0 has an axis to be mapped of size 10\n"
         "arg 1 has an axis to be mapped of size 2",
@@ -1127,7 +1127,7 @@ class APITest(jtu.JaxTestCase):
         ValueError,
         "vmap got inconsistent sizes for array axes to be mapped:\n"
         "the tree of axis sizes is:\n"
-        "\(10, \[2, 2\]\)",
+        r"\(10, \[2, 2\]\)",
         lambda: api.vmap(h, in_axes=(0, 1))(X, [U, U]))
 
 
