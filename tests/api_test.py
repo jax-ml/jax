@@ -1097,7 +1097,11 @@ class APITest(jtu.JaxTestCase):
     # https://github.com/google/jax/issues/795
     jtu.check_raises_regexp(
         lambda: api.vmap(lambda x: x, in_axes=(0, 0))(np.ones(3)),
-        ValueError, "axes specification must be a tree prefix")
+        ValueError,
+        "axes specification must be a tree prefix of the corresponding "
+        r"value, got specification \(0, 0\) for value "
+        r"PyTreeDef\(tuple, \[\*\]\)."
+    )
 
   def test_vmap_unbatched_object_passthrough_issue_183(self):
     # https://github.com/google/jax/issues/183
