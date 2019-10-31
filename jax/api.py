@@ -572,11 +572,11 @@ def vmap(fun, in_axes=0, out_axes=0):
       length equal to the number of positional arguments to ``fun``. An integer
       or None indicates which array axis to map over for all arguments (with
       None indicating not to map any axis), and a tuple indicates which axis to
-      map for each corresponding positional argument. If the positinal arguments
-      to ``fun`` are container types, the corresponding element of ``in_axes``
-      can itself be a matching container, so that distinct array axes can be
-      mapped for different container elements. ``in_axes`` must be a container
-      tree prefix of the positional argument tuple passed to ``fun``.
+      map for each corresponding positional argument. If the positional
+      arguments to ``fun`` are container types, the corresponding element of
+      ``in_axes`` can itself be a matching container, so that distinct array
+      axes can be mapped for different container elements. ``in_axes`` must be a
+      container tree prefix of the positional argument tuple passed to ``fun``.
     out_axes: A nonnegative integer, None, or (nested) standard Python container
       (tuple/list/dict) thereof indicating where the mapped axis should appear
       in the output.
