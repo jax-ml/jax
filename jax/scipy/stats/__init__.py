@@ -14,6 +14,7 @@
 
 from __future__ import absolute_import
 from . import bernoulli
+from . import poisson
 from . import beta
 from . import cauchy
 from . import dirichlet
