@@ -197,15 +197,16 @@ def wrap_init(f, params={}):
 
 
 def cache(call):
-  caches = weakref.WeakKeyDictionary()
-  def memoized_fun(f, *args):
-    cache = caches.setdefault(f.f, {})
-    key = (f.transforms, f.params, args)
-    if key in cache:
-      ans, stores = cache[key]
-      f.populate_stores(stores)
+  fun_caches = weakref.WeakKeyDictionary()
+  def memoized_fun(fun, *args):
+    cache = fun_caches.setdefault(fun.f, {})
+    key = (fun.transforms, fun.params, args)
+    result = cache.get(key, None)
+    if result is not None:
+      ans, stores = result
+      fun.populate_stores(stores)
     else:
-      ans = call(f, *args)
-      cache[key] = (ans, f.stores)
+      ans = call(fun, *args)
+      cache[key] = (ans, fun.stores)
     return ans
   return memoized_fun
