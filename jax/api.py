@@ -573,7 +573,7 @@ def vmap(fun, in_axes=0, out_axes=0):
       or None indicates which array axis to map over for all arguments (with
       None indicating not to map any axis), and a tuple indicates which axis to
       map for each corresponding positional argument. More generally, if the
-      positinal arguments to ``fun`` are container types, the corresponding
+      positional arguments to ``fun`` are container types, the corresponding
       element of ``in_axes`` can itself be a matching container, so that
       distinct array axes can be mapped for different container elements. The
       constraint is that ``in_axes`` must be a container tree prefix of the
