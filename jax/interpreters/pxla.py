@@ -497,14 +497,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
     # XLA computation at all; we handle this as a special case so we can stage
     # out multi-replica XLA computations regardless of the hardware available.
     # The 'None' values here are just dummies we know will be ignored.
-    if devices:
-      local_devices = [d for d in devices if d.host_id == xb.host_id()]
-    else:
-      local_devices = xb.local_devices(backend=backend)
-    assigned_devices = local_devices[:axis_size]
-    handlers = (
-      [_pval_to_result_handler(axis_size, None, pval, assigned_devices, backend)
-       for pval in out_pvals])
+    handlers = [_pval_to_result_handler(axis_size, None, pval) for pval in out_pvals]
     results = [handler(None) for handler in handlers]
     return lambda *_: results
   else:
@@ -517,16 +510,12 @@ def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
     assignments = assign_shards_to_replicas(nrep, axis_size)
     handle_args = partial(shard_args, backend, local_devices, assignments,
                           tuple_args)
-    assigned_devices = [local_devices[a] for a in assignments]
-    handle_outs = _pvals_to_results_handler(axis_size, nrep, out_pvals,
-                                            assigned_devices, backend)
-    return partial(execute_replicated, compiled, backend, nrep, handle_args,
-                   handle_outs)
+    handle_outs = _pvals_to_results_handler(axis_size, nrep, out_pvals)
+    return partial(execute_replicated, compiled, backend, nrep, handle_args, handle_outs)
 
-def _pvals_to_results_handler(size, nrep, out_pvals, devices, backend):
+def _pvals_to_results_handler(size, nrep, out_pvals):
   nouts = len(out_pvals)
-  handlers = [_pval_to_result_handler(size, nrep, pval, devices, backend)
-              for pval in out_pvals]
+  handlers = [_pval_to_result_handler(size, nrep, pval) for pval in out_pvals]
   def handler(out_bufs):
     buffers = [[None] * nrep for _ in range(nouts)]
     for r, tuple_buf in enumerate(out_bufs):
@@ -535,13 +524,11 @@ def _pvals_to_results_handler(size, nrep, out_pvals, devices, backend):
     return [h(bufs) for h, bufs in zip(handlers, buffers)]
   return handler
 
-def _pval_to_result_handler(size, nrep, pval, devices, backend):
+def _pval_to_result_handler(size, nrep, pval):
   pv, const = pval
   if pv is None:
-    if const is core.unit:
-      bcast_const = core.unit
-    else:
-      bcast_const = _device_put_rep_impl(const, devices, backend)
+    # TODO make a ShardedDeviceArray here?
+    bcast_const = core.unit if const is core.unit else broadcast(const, size, 0)
     return lambda _: bcast_const
   else:
     return aval_to_result_handler(size, nrep, pv)
