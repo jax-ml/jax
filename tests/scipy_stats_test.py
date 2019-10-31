@@ -52,6 +52,21 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
   """Tests for LAX-backed scipy.stats implementations"""
 
   @genNamedParametersNArgs(3, jtu.rand_default())
+  def testPoissonLogPmf(self, rng, shapes, dtypes):
+    scipy_fun = osp_stats.poisson.logpmf
+    lax_fun = lsp_stats.poisson.logpmf
+
+    def args_maker():
+      k, mu, loc = map(rng, shapes, dtypes)
+      k = onp.floor(k)
+      loc = onp.floor(loc)
+      return [k, mu, loc]
+
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True,
+                            tol=1e-4)
+    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
+
+  @genNamedParametersNArgs(3, jtu.rand_default())
   def testBernoulliLogPmf(self, rng, shapes, dtypes):
     scipy_fun = osp_stats.bernoulli.logpmf
     lax_fun = lsp_stats.bernoulli.logpmf
