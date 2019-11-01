@@ -1132,9 +1132,9 @@ def custom_linear_solve(
   jaxprs = _LinearSolveTuple(
       matvec_jaxpr, vecmat_jaxpr, solve_jaxpr, tr_solve_jaxpr)
 
-  args = _flatten(all_consts) + b_flat
   out_flat = _bind(linear_solve_p)(
-      *args, const_lengths=const_lengths, jaxprs=jaxprs, tree=tree)
+      *(_flatten(all_consts) + b_flat),
+      const_lengths=const_lengths, jaxprs=jaxprs, tree=tree)
   return tree_unflatten(tree, out_flat)
 
 
@@ -1165,12 +1165,6 @@ def decrement_batch_axis(batch_axes):
   return axes, new_batch_axes
 
 
-def returns_list(fun):
-  def wrapper(*args, **kwargs):
-    return list(fun(*args, **kwargs))
-  return wrapper
-
-
 class _BatchedImpl(object):
   def __init__(self, unbatched_fun):
     self.unbatched_fun = unbatched_fun
@@ -1187,11 +1181,12 @@ class _BatchedImpl(object):
     else:
       fun_without_batch = partial(self.unbatched_fun, **kwargs)
     # TODO(shoyer): try to use _maybe_vmap instead here
+    # return _maybe_vmap(fun_without_batch, in_axes, out_axes)(*args)
     if any(axis is not None for axis in in_axes):
       return batching.batch(lu.wrap_init(fun_without_batch), args, in_axes,
                             lambda: out_axes)
     else:
-      return list(fun_without_batch(*args))
+      return fun_without_batch(*args)
 
 
 @_BatchedImpl
@@ -1201,7 +1196,7 @@ def _custom_linear_solve_impl(*args, **kwargs):
   params, b = _split_linear_solve_args(args, const_lengths)
   x = core.jaxpr_as_fun(jaxprs.solve)(*(params.solve + b))
   _check_shapes('solve', 'b', x, b, tree)
-  return list(x)
+  return x
 
 
 def _tangent_linear_map(func, params, params_dot, *x):
@@ -1273,7 +1268,7 @@ def _custom_linear_solve_jvp(primals, tangents, const_lengths, jaxprs, tree):
 
   x_dot = _bind(linear_solve_p)(*(_flatten(params) + rhs), **kwargs)
 
-  return list(x), list(x_dot)
+  return x, x_dot
 
 
 def _batch_transpose_rule(unbatched_transpose):

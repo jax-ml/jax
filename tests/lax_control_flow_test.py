@@ -1199,6 +1199,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     actual = api.vmap(linear_solve, (None, 1), 1)(a, c)
     self.assertAllClose(expected, actual, check_dtypes=True)
 
+    actual = api.jit(api.vmap(linear_solve, (None, 1), 1))(a, c)
+    self.assertAllClose(expected, actual, check_dtypes=True)
+
+    actual = api.vmap(api.jit(linear_solve), (None, 1), 1)(a, c)
+    self.assertAllClose(expected, actual, check_dtypes=True)
+
   def test_custom_linear_solve_zeros(self):
     def explicit_jacobian_solve(matvec, b):
       return lax.stop_gradient(np.linalg.solve(api.jacobian(matvec)(b), b))
