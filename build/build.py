@@ -60,19 +60,19 @@ def get_python_bin_path(python_bin_path_flag):
 
 # Bazel
 
-BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/0.24.1/"
+BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/0.29.1/"
 BazelPackage = collections.namedtuple("BazelPackage", ["file", "sha256"])
 bazel_packages = {
     "Linux":
         BazelPackage(
-            file="bazel-0.24.1-linux-x86_64",
+            file="bazel-0.29.1-linux-x86_64",
             sha256=
-            "e18e2877e18a447eb5d94f5efbec375366d82af6443c6a83a93c62657a7b1c32"),
+            "da3031d811f42f6208d24a87984b5b07e1c75afede184cad86eb02bef6c3b9b0"),
     "Darwin":
         BazelPackage(
-            file="bazel-0.24.1-darwin-x86_64",
+            file="bazel-0.29.1-darwin-x86_64",
             sha256=
-            "cf763752550050d117e03659aaa6ccd6f97da1f983a6029300a497fdaeaaec46"),
+            "34daae4caafbdb0952415ed6f97f47f03df84df9af146e9eb910ba65c073efdd"),
 }
 
 
@@ -164,9 +164,9 @@ def check_bazel_version(bazel_path, min_version, max_version):
 
 
 BAZELRC_TEMPLATE = """
-build --action_env PYTHON_BIN_PATH="{python_bin_path}"
+build --repo_env PYTHON_BIN_PATH="{python_bin_path}"
 build --python_path="{python_bin_path}"
-build --action_env TF_NEED_CUDA="{tf_need_cuda}"
+build --repo_env TF_NEED_CUDA="{tf_need_cuda}"
 build --distinct_host_configuration=false
 build --copt=-Wno-sign-compare
 build -c opt
