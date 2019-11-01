@@ -106,7 +106,6 @@ Not every function in NumPy is implemented; contributions are welcome!
     expm1
     eye
     fabs
-    fftn
     fix
     flip
     fliplr
@@ -245,6 +244,17 @@ Not every function in NumPy is implemented; contributions are welcome!
     where
     zeros
     zeros_like
+
+jax.numpy.fft
+-------------
+
+.. automodule:: jax.numpy.fft
+
+.. autosummary::
+  :toctree: _autosummary
+
+  fftn
+  ifftn
 
 jax.numpy.linalg
 ----------------
