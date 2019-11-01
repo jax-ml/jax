@@ -222,7 +222,7 @@ def _compile_jaxpr(jaxpr, device, backend, axis_env, const_vals, tuple_args,
                          backend=xb.get_backend(backend))
 
 def build_jaxpr(jaxpr, backend, axis_env, const_vals, tuple_args, *abstract_args):
-  arg_shapes = map(aval_to_xla_shape, abstract_args)
+  arg_shapes = _map(aval_to_xla_shape, abstract_args)
   return jaxpr_computation(jaxpr, backend, axis_env, const_vals, (), arg_shapes,
                            tuple_args=tuple_args, inner=False)
 
@@ -271,12 +271,9 @@ def jaxpr_computation(jaxpr, backend, axis_env, const_vals, freevar_shapes,
   _map(prefetch, it.chain(const_vals, jaxpr_literals(jaxpr)))
   consts = _map(c.Constant, const_vals)
   if tuple_args:
-    freevar_shapes = list(freevar_shapes)
-    arg_shapes = list(arg_shapes)
-    tuple_shape = xc.Shape.tuple_shape(
-      [s for s in it.chain(freevar_shapes, arg_shapes)
-       if s.xla_element_type() != xc.PrimitiveType.TOKEN])
-    tuple_arg = c.ParameterWithShape(tuple_shape)
+    non_tokens = [s for s in it.chain(freevar_shapes, arg_shapes)
+                  if s.xla_element_type() != xc.PrimitiveType.TOKEN]
+    tuple_arg = c.ParameterWithShape(xc.Shape.tuple_shape(non_tokens))
     nfreevars, nargs = len(freevar_shapes), len(arg_shapes)
     freevars = [c.GetTupleElement(tuple_arg, i) for i in range(nfreevars)]
     args = [c.GetTupleElement(tuple_arg, i + nfreevars) for i in range(nargs)]
