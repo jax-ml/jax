@@ -1067,9 +1067,10 @@ def custom_linear_solve(
   solve directly via implicit differentiation at the solution, rather than by
   differenting *through* the solve operation. This can sometimes be much faster
   or more numerically stable, or differentiating through the solve operation
-  may not even be implemented (e.g., if ``solve`` using ``lax.while_loop``).
+  may not even be implemented (e.g., if ``solve`` uses ``lax.while_loop``).
 
-  Required invariant:
+  Required invariant::
+
       x = solve(matvec, b)  # solve the linear equation
       assert matvec(x) == b  # not checked
 
@@ -1078,14 +1079,13 @@ def custom_linear_solve(
     b: constant right handle side of the equation. May be any nested structure
       of arrays.
     solve: higher level function that solves for solution to the linear
-      equation, i.e., ``matvec(solve(matvec, x)) == x`` for all ``x`` of the
-      same form as ``b``. This function need not be differenatiable.
+      equation, i.e., ``solve(matvec, x)) == x`` for all ``x`` of the same form
+      as ``b``. This function need not be differenatiable.
     transpose_solve: higher level function for solving the transpose linear
-      equation, i.e., ``vecmat(transpose_solve(vecmat, x)) == x``, where
-      ``vecmat`` is the transpose of the linear map ``matvec`` (computed
-      automatically with autodiff). Required for backwards mode automatic
-      differentiation, unless ``symmetric=True``, in which case ``solve``
-      provides the default value.
+      equation, i.e., ``transpose_solve(vecmat, x) == x``, where ``vecmat`` is
+      the transpose of the linear map ``matvec`` (computed automatically with
+      autodiff). Required for backwards mode automatic differentiation, unless
+      ``symmetric=True``, in which case ``solve`` provides the default value.
     symmetric: bool indicating if it is safe to assume the linear map
       corresponds to a symmetric matrix, i.e., ``matvec == vecmat``.
 
