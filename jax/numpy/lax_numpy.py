@@ -2548,9 +2548,11 @@ def _rewriting_take(arr, idx):
 def _gather(arr, treedef, static_idx, dynamic_idx):
   idx = _merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
   indexer = _index_to_gather(shape(arr), idx)  # shared with _scatter_update
+  y = arr
 
-  y = lax.gather(arr, indexer.gather_indices, indexer.dnums,
-                 indexer.gather_slice_shape)
+  if indexer.gather_indices.size:
+    y = lax.gather(y, indexer.gather_indices, indexer.dnums,
+                   indexer.gather_slice_shape)
 
   # Reverses axes with negative strides.
   if indexer.reversed_y_dims:

@@ -42,7 +42,7 @@ from six.moves import reduce
 
 from .lib import pytree
 
-from .util import partial, safe_zip
+from .util import partial, safe_zip, unzip2
 
 
 def tree_map(f, tree):
@@ -83,7 +83,8 @@ def tree_multimap(f, tree, *rest):
 def tree_leaves(tree):
   return pytree.flatten(tree)[0]
 
-def process_pytree(process_node, tree):
+# TODO(mattjj,phawkins): consider removing this function
+def _process_pytree(process_node, tree):
   leaves, treedef = pytree.flatten(tree)
   return treedef.walk(process_node, None, leaves), treedef
 
@@ -122,8 +123,37 @@ def treedef_tuple(trees):
 def treedef_children(treedef):
   return treedef.children()
 
-register_pytree_node = pytree.register_node
+def register_pytree_node(type_, to_iterable, from_iterable):
+  pytree.register_node(type_, to_iterable, from_iterable)
+  _registry[type_] = _RegistryEntry(to_iterable, from_iterable)
 
+# TODO(mattjj): remove the Python-side registry when the C++-side registry is
+# sufficiently queryable that we can express _replace_nones. That may mean once
+# we have a flatten_one function.
+_RegistryEntry = collections.namedtuple("RegistryEntry", ["to_iter", "from_iter"])
+_registry = {
+    tuple: _RegistryEntry(lambda xs: (xs, None), lambda _, xs: tuple(xs)),
+    list: _RegistryEntry(lambda xs: (xs, None), lambda _, xs: list(xs)),
+    dict: _RegistryEntry(lambda xs: unzip2(sorted(xs.items()))[::-1],
+                         lambda keys, xs: dict(zip(keys, xs))),
+    type(None): _RegistryEntry(lambda z: ((), None), lambda _, xs: None),
+}
+def _replace_nones(sentinel, tree):
+  if tree is None:
+    return sentinel
+  else:
+    handler = _registry.get(type(tree))
+    if handler:
+      children, metadata = handler.to_iter(tree)
+      proc_children = [_replace_nones(sentinel, child) for child in children]
+      return handler.from_iter(metadata, proc_children)
+    elif isinstance(tree, tuple) and hasattr(tree, '_fields'):
+      # handle namedtuple as a special case, based on heuristic
+      children = iter(tree)
+      proc_children = [_replace_nones(sentinel, child) for child in children]
+      return type(tree)(*proc_children)
+    else:
+      return tree
 
 
 def tree_reduce(f, tree):

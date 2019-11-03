@@ -16,8 +16,8 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from .tree_util import (build_tree, process_pytree, tree_flatten,
-                        tree_unflatten, treedef_is_leaf)
+from .tree_util import (build_tree, tree_flatten, tree_unflatten,
+                        treedef_is_leaf)
 from .linear_util import transformation_with_aux
 from .util import safe_map, unzip2, partial, curry
 
