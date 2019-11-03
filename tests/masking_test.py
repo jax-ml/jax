@@ -32,12 +32,10 @@ import jax.numpy as np
 from jax.config import config
 config.parse_flags_with_absl()
 
-
 # These are 'manual' tests for masking and shape checking. The more exhaustive,
 # more systematic tests should live in lax_test.py.
 
 class MaskingTest(jtu.JaxTestCase):
-
   @parameterized.parameters([
       ['(m, n)', 'ShapeSpec(m, n)'],
       ['(m * n)', 'ShapeSpec(m n)'],
@@ -65,6 +63,7 @@ class MaskingTest(jtu.JaxTestCase):
       @shapecheck(['(m, n)', 'n'], 'm')
       def matvec(A, b):
         return lax.dot_general(A, b, [((0,), (0,)), ((), ())])
+
     self.assertRaisesRegex(ShapeError, "", thunk)
 
   def test_flatten_shape_checking(self):
@@ -81,6 +80,7 @@ class MaskingTest(jtu.JaxTestCase):
       @shapecheck(['m', 'n', 'm'], '3*m + n')
       def cat(x, y, z):
         return lax.concatenate([x, y, x], 0)
+
     self.assertRaisesRegex(ShapeError, "", thunk)
 
   def test_sum(self):
@@ -170,8 +170,7 @@ class MaskingTest(jtu.JaxTestCase):
     def cat(x, y, z):
       return lax.concatenate([x, y, z], 0)
 
-    ans = cat([np.array([1, 9]), np.array([2, 4, 9]), np.array([3, 9])],
-              dict(n=1, m=2))
+    ans = cat([np.array([1, 9]), np.array([2, 4, 9]), np.array([3, 9])], dict(n=1, m=2))
     expected = onp.array([1, 2, 4, 3])
     self.assertAllClose(ans[:4], expected, check_dtypes=False)
 
@@ -230,6 +229,7 @@ class MaskingTest(jtu.JaxTestCase):
       def step(h, x):
         new_h = np.dot(W, h) + np.dot(W, x)
         return new_h, ()
+
       predicted, _ = lax.scan(step, np.zeros(n), xs)
       return predicted
 
@@ -248,6 +248,7 @@ class MaskingTest(jtu.JaxTestCase):
       def step(h, x):
         new_h = np.tanh(np.dot(W, h) + np.dot(W, x))
         return new_h, ()
+
       predicted, _ = lax.scan(step, np.zeros(n), xs)
       return np.sum((predicted - target)**2)
 
@@ -277,6 +278,7 @@ class MaskingTest(jtu.JaxTestCase):
       def step(h, x):
         new_h = np.tanh(np.dot(W, h) + np.dot(W, x))
         return new_h, ()
+
       predicted, _ = lax.scan(step, np.zeros(n), xs)
       return np.sum((predicted - target)**2)
 
@@ -316,12 +318,10 @@ class MaskingTest(jtu.JaxTestCase):
     def fun(x, ns):
       return batched_sum([x], dict(n=ns)).sum()
 
-    x = np.array([[3, 1, 4, 1],
-                  [5, 9, 2, 6],
-                  [5, 3, 5, 8]])
+    x = np.array([[3, 1, 4, 1], [5, 9, 2, 6], [5, 3, 5, 8]])
     ns = np.array([2, 3, 2])
     ans = fun([x, ns], dict(m=2))
-    expected = 3+1 + 5+9+2
+    expected = 3 + 1 + 5 + 9 + 2
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_arange(self):
@@ -334,7 +334,6 @@ class MaskingTest(jtu.JaxTestCase):
     ans = padded_add([np.array([3, 1, 4, 1, 5])], dict(n=3))
     expected = onp.array([3, 2, 6])
     self.assertAllClose(ans[:3], expected, check_dtypes=False)
-
 
 if __name__ == '__main__':
   absltest.main()

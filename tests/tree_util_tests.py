@@ -24,10 +24,8 @@ from absl.testing import parameterized
 from jax import test_util as jtu
 from jax import tree_util
 
-
 def _dummy_func(*args, **kwargs):
   return
-
 
 ATuple = collections.namedtuple("ATuple", ("foo", "bar"))
 
@@ -35,7 +33,6 @@ class ANamedTupleSubclass(ATuple):
   pass
 
 class AnObject(object):
-
   def __init__(self, x, y, z):
     self.x = x
     self.y = y
@@ -50,7 +47,6 @@ class AnObject(object):
   def __repr__(self):
     return "AnObject({},{},{})".format(self.x, self.y, self.z)
 
-
 tree_util.register_pytree_node(AnObject, lambda o: ((o.x, o.y), o.z),
                                lambda z, xy: AnObject(xy[0], xy[1], z))
 
@@ -63,14 +59,15 @@ PYTREES = [
     ([3],),
     ([3, ATuple(foo=(3, ATuple(foo=3, bar=None)), bar={"baz": 34})],),
     ([AnObject(3, None, [4, "foo"])],),
-    ({"a": 1, "b": 2},),
+    ({
+        "a": 1,
+        "b": 2
+    },),
     (collections.OrderedDict([("foo", 34), ("baz", 101), ("something", -42)]),),
     (ANamedTupleSubclass(foo="hello", bar=3.5),),
 ]
 
-
 class TreeTest(jtu.JaxTestCase):
-
   @parameterized.parameters(*PYTREES)
   def testRoundtrip(self, inputs):
     xs, tree = tree_util.tree_flatten(inputs)
@@ -119,18 +116,14 @@ class TreeTest(jtu.JaxTestCase):
     _, tree = tree_util.tree_flatten([(1, 2), None, ATuple(foo=3, bar=7)])
     if not hasattr(tree, "flatten_up_to"):
       self.skipTest("Test requires Jaxlib >= 0.1.23")
-    out = tree.flatten_up_to([({
-        "foo": 7
-    }, (3, 4)), None, ATuple(foo=(11, 9), bar=None)])
+    out = tree.flatten_up_to([({"foo": 7}, (3, 4)), None, ATuple(foo=(11, 9), bar=None)])
     self.assertEqual(out, [{"foo": 7}, (3, 4), (11, 9), None])
 
   def testTreeMultimap(self):
     x = ((1, 2), (3, 4, 5))
     y = (([3], None), ({"foo": "bar"}, 7, [5, 6]))
     out = tree_util.tree_multimap(lambda *xs: tuple(xs), x, y)
-    self.assertEqual(out, (((1, [3]), (2, None)),
-                           ((3, {"foo": "bar"}), (4, 7), (5, [5, 6]))))
-
+    self.assertEqual(out, (((1, [3]), (2, None)), ((3, {"foo": "bar"}), (4, 7), (5, [5, 6]))))
 
 if __name__ == "__main__":
   absltest.main()

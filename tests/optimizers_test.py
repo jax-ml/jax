@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """Tests for the optimizers module."""
 from __future__ import absolute_import
 from __future__ import division
@@ -33,9 +32,7 @@ from jax.interpreters import xla
 from jax.config import config
 config.parse_flags_with_absl()
 
-
 class OptimizerTests(jtu.JaxTestCase):
-
   def _CheckOptimizer(self, optimizer, loss, x0, num_steps, *args, **kwargs):
     self._CheckFuns(optimizer, loss, x0, *args)
     self._CheckRun(optimizer, loss, x0, num_steps, *args, **kwargs)
@@ -45,8 +42,7 @@ class OptimizerTests(jtu.JaxTestCase):
     opt_state = init_fun(x0)
     self.assertAllClose(x0, get_params(opt_state), check_dtypes=True)
     opt_state2 = update_fun(0, grad(loss)(x0), opt_state)  # doesn't crash
-    self.assertEqual(tree_util.tree_structure(opt_state),
-                     tree_util.tree_structure(opt_state2))
+    self.assertEqual(tree_util.tree_structure(opt_state), tree_util.tree_structure(opt_state2))
 
   @jtu.skip_on_devices('gpu')
   def _CheckRun(self, optimizer, loss, x0, num_steps, *args, **kwargs):
@@ -70,14 +66,18 @@ class OptimizerTests(jtu.JaxTestCase):
     self.assertLess(loss(xstar), 1e-2)
 
   def testSgdScalar(self):
-    def loss(x): return x**2
+    def loss(x):
+      return x**2
+
     x0 = 1.
     num_iters = 100
     step_size = 0.1
     self._CheckOptimizer(optimizers.sgd, loss, x0, num_iters, step_size)
 
   def testSgdVector(self):
-    def loss(x): return np.dot(x, x)
+    def loss(x):
+      return np.dot(x, x)
+
     x0 = np.ones(2)
     num_iters = 100
     step_size = 0.1
@@ -87,13 +87,16 @@ class OptimizerTests(jtu.JaxTestCase):
     def loss(xyz):
       x, (y, z) = xyz
       return sum(np.dot(a, a) for a in [x, y, z])
+
     x0 = (np.ones(2), (np.ones(2), np.ones(2)))
     num_iters = 100
     step_size = 0.1
     self._CheckOptimizer(optimizers.sgd, loss, x0, num_iters, step_size)
 
   def testMomentumVector(self):
-    def loss(x): return np.dot(x, x)
+    def loss(x):
+      return np.dot(x, x)
+
     x0 = np.ones(2)
     num_iters = 100
     step_size = 0.1
@@ -101,7 +104,9 @@ class OptimizerTests(jtu.JaxTestCase):
     self._CheckOptimizer(optimizers.momentum, loss, x0, num_iters, step_size, mass)
 
   def testMomentumDict(self):
-    def loss(dct): return np.dot(dct['x'], dct['x'])
+    def loss(dct):
+      return np.dot(dct['x'], dct['x'])
+
     x0 = {'x': np.ones(2)}
     num_iters = 100
     step_size = 0.1
@@ -109,21 +114,27 @@ class OptimizerTests(jtu.JaxTestCase):
     self._CheckOptimizer(optimizers.momentum, loss, x0, num_iters, step_size, mass)
 
   def testRmspropVector(self):
-    def loss(x): return np.dot(x, x)
+    def loss(x):
+      return np.dot(x, x)
+
     x0 = np.ones(2)
     num_iters = 100
     step_size = 0.1
     self._CheckOptimizer(optimizers.rmsprop, loss, x0, num_iters, step_size)
 
   def testAdamVector(self):
-    def loss(x): return np.dot(x, x)
+    def loss(x):
+      return np.dot(x, x)
+
     x0 = np.ones(2)
     num_iters = 100
     step_size = 0.1
     self._CheckOptimizer(optimizers.adam, loss, x0, num_iters, step_size)
 
   def testSgdClosure(self):
-    def loss(y, x): return y**2 * x**2
+    def loss(y, x):
+      return y**2 * x**2
+
     x0 = 1.
     y = 1.
     num_iters = 20
@@ -132,7 +143,6 @@ class OptimizerTests(jtu.JaxTestCase):
     self._CheckRun(optimizers.sgd, partial_loss, x0, num_iters, step_size)
 
   def testAdagrad(self):
-
     def loss(xs):
       x1, x2 = xs
       return np.sum(x1**2) + np.sum(x2**2)
@@ -145,7 +155,7 @@ class OptimizerTests(jtu.JaxTestCase):
   def testSM3(self):
     def loss(xs):
       x1, x2 = xs
-      return np.sum(x1 ** 2) + np.sum(x2 ** 2)
+      return np.sum(x1**2) + np.sum(x2**2)
 
     num_iters = 100
     step_size = 0.1
@@ -153,44 +163,58 @@ class OptimizerTests(jtu.JaxTestCase):
     self._CheckOptimizer(optimizers.sm3, loss, x0, num_iters, step_size)
 
   def testSgdVectorExponentialDecaySchedule(self):
-    def loss(x): return np.dot(x, x)
+    def loss(x):
+      return np.dot(x, x)
+
     x0 = np.ones(2)
     step_schedule = optimizers.exponential_decay(0.1, 3, 2.)
     self._CheckFuns(optimizers.sgd, loss, x0, step_schedule)
 
   def testSgdVectorInverseTimeDecaySchedule(self):
-    def loss(x): return np.dot(x, x)
+    def loss(x):
+      return np.dot(x, x)
+
     x0 = np.ones(2)
     step_schedule = optimizers.inverse_time_decay(0.1, 3, 2.)
     self._CheckFuns(optimizers.sgd, loss, x0, step_schedule)
 
   def testAdamVectorInverseTimeDecaySchedule(self):
-    def loss(x): return np.dot(x, x)
+    def loss(x):
+      return np.dot(x, x)
+
     x0 = np.ones(2)
     step_schedule = optimizers.inverse_time_decay(0.1, 3, 2.)
     self._CheckFuns(optimizers.adam, loss, x0, step_schedule)
 
   def testMomentumVectorInverseTimeDecayStaircaseSchedule(self):
-    def loss(x): return np.dot(x, x)
+    def loss(x):
+      return np.dot(x, x)
+
     x0 = np.ones(2)
     step_sched = optimizers.inverse_time_decay(0.1, 3, 2., staircase=True)
     mass = 0.9
     self._CheckFuns(optimizers.momentum, loss, x0, step_sched, mass)
 
   def testRmspropmomentumVectorPolynomialDecaySchedule(self):
-    def loss(x): return np.dot(x, x)
+    def loss(x):
+      return np.dot(x, x)
+
     x0 = np.ones(2)
     step_schedule = optimizers.polynomial_decay(1.0, 50, 0.1)
     self._CheckFuns(optimizers.rmsprop_momentum, loss, x0, step_schedule)
 
   def testRmspropVectorPiecewiseConstantSchedule(self):
-    def loss(x): return np.dot(x, x)
+    def loss(x):
+      return np.dot(x, x)
+
     x0 = np.ones(2)
     step_schedule = optimizers.piecewise_constant([25, 75], [1.0, 0.5, 0.1])
     self._CheckFuns(optimizers.rmsprop, loss, x0, step_schedule)
 
   def testTracedStepSize(self):
-    def loss(x): return np.dot(x, x)
+    def loss(x):
+      return np.dot(x, x)
+
     x0 = np.ones(2)
     step_size = 0.1
 
@@ -221,11 +245,14 @@ class OptimizerTests(jtu.JaxTestCase):
     def opt_maker():
       def init_fun(x0):
         return {'x': x0}
+
       def update_fun(i, g, opt_state):
         x = opt_state['x']
         return {'x': x - 0.1 * g, 'v': g}  # bug!
+
       def get_params(opt_state):
         return opt_state['x']
+
       return init_fun, update_fun, get_params
 
     init_fun, update_fun, get_params = opt_maker()
@@ -235,7 +262,7 @@ class OptimizerTests(jtu.JaxTestCase):
   def testUtilityNorm(self):
     x0 = (np.ones(2), (np.ones(3), np.ones(4)))
     norm = optimizers.l2_norm(x0)
-    expected = onp.sqrt(onp.sum(onp.ones(2+3+4)**2))
+    expected = onp.sqrt(onp.sum(onp.ones(2 + 3 + 4)**2))
     self.assertAllClose(norm, expected, check_dtypes=False)
 
   def testUtilityClipGrads(self):
@@ -272,7 +299,7 @@ class OptimizerTests(jtu.JaxTestCase):
         i, x = carry
         g = grad_fn(get_params(x))[0]
         new_state = opt_update(i, g, x)
-        new_carry = (i+1, new_state)
+        new_carry = (i + 1, new_state)
         return new_carry, _
 
       carry_final, _ = lax.scan(apply_carry, (0, opt_state), np.zeros((75, 0)))
@@ -297,8 +324,7 @@ class OptimizerTests(jtu.JaxTestCase):
     opt_init, _, _ = optimizers.momentum(0.1, mass=0.9)
     params = [{'w': onp.random.randn(1, 2), 'bias': onp.random.randn(2)}]
     expected = opt_init(params)
-    ans = optimizers.pack_optimizer_state(
-        optimizers.unpack_optimizer_state(expected))
+    ans = optimizers.pack_optimizer_state(optimizers.unpack_optimizer_state(expected))
     self.assertEqual(ans, expected)
 
 if __name__ == '__main__':

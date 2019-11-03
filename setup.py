@@ -28,8 +28,7 @@ setup(
     author_email='jax-dev@google.com',
     packages=find_packages(exclude=["examples"]),
     install_requires=[
-        'numpy>=1.12', 'six', 'protobuf>=3.6.0', 'absl-py', 'opt_einsum',
-        'fastcache'
+        'numpy>=1.12', 'six', 'protobuf>=3.6.0', 'absl-py', 'opt_einsum', 'fastcache'
     ],
     url='https://github.com/google/jax',
     license='Apache-2.0',

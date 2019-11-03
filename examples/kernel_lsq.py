@@ -27,7 +27,6 @@ from jax.config import config
 from jax.experimental import optimizers
 from jax import grad, jit, make_jaxpr, vmap
 
-
 def gram(kernel, xs):
   '''Compute a Gram matrix from a kernel and an array of data points.
 
@@ -39,7 +38,6 @@ def gram(kernel, xs):
     A 2d array `a` such that `a[i, j] = kernel(xs[i], xs[j])`.
   '''
   return vmap(lambda x: vmap(lambda y: kernel(x, y))(xs))(xs)
-
 
 def minimize(f, x, num_steps=10000, step_size=0.000001, mass=0.9):
   opt_init, opt_update, get_params = optimizers.momentum(step_size, mass)
@@ -54,15 +52,14 @@ def minimize(f, x, num_steps=10000, step_size=0.000001, mass=0.9):
     opt_state = update(i, opt_state)
   return get_params(opt_state)
 
-
 def train(kernel, xs, ys, regularization=0.01):
   gram_ = jit(partial(gram, kernel))
   gram_mat = gram_(xs)
   n = xs.shape[0]
 
   def objective(v):
-    risk = .5 * np.sum((np.dot(gram_mat, v) - ys) ** 2.0)
-    reg = regularization * np.sum(v ** 2.0)
+    risk = .5 * np.sum((np.dot(gram_mat, v) - ys)**2.0)
+    reg = regularization * np.sum(v**2.0)
     return risk + reg
 
   v = minimize(objective, np.zeros(n))
@@ -72,7 +69,6 @@ def train(kernel, xs, ys, regularization=0.01):
     return np.sum(v * prods)
 
   return jit(vmap(predict))
-
 
 if __name__ == "__main__":
   n = 100
@@ -87,12 +83,12 @@ if __name__ == "__main__":
 
   predict = train(linear_kernel, xs, ys)
 
-  print('MSE:', np.sum((predict(xs) - ys) ** 2.))
+  print('MSE:', np.sum((predict(xs) - ys)**2.))
 
   def gram_jaxpr(kernel):
     return make_jaxpr(partial(gram, kernel))(xs)
 
-  rbf_kernel = lambda x, y: np.exp(-np.sum((x - y) ** 2))
+  rbf_kernel = lambda x, y: np.exp(-np.sum((x - y)**2))
 
   print()
   print('jaxpr of gram(linear_kernel):')

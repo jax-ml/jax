@@ -16,13 +16,11 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from .tree_util import (build_tree, tree_flatten, tree_unflatten,
-                        treedef_is_leaf)
+from .tree_util import (build_tree, tree_flatten, tree_unflatten, treedef_is_leaf)
 from .linear_util import transformation_with_aux
 from .util import safe_map, unzip2, partial, curry
 
 map = safe_map
-
 
 @curry
 def wraps(wrapped, fun, namestr="{fun}", docstr="{doc}", **kwargs):
@@ -34,9 +32,14 @@ def wraps(wrapped, fun, namestr="{fun}", docstr="{doc}", **kwargs):
   finally:
     return fun
 
-def get_name(fun): return getattr(fun, "__name__", "<unnamed function>")
-def get_module(fun): return getattr(fun, "__module__", "<unknown module>")
-def get_doc(fun): return getattr(fun, "__doc__", "")
+def get_name(fun):
+  return getattr(fun, "__name__", "<unnamed function>")
+
+def get_module(fun):
+  return getattr(fun, "__module__", "<unknown module>")
+
+def get_doc(fun):
+  return getattr(fun, "__doc__", "")
 
 @transformation_with_aux
 def flatten_fun(in_tree, *args_flat):
@@ -48,7 +51,7 @@ def apply_flat_fun(fun, io_tree, *py_args):
   in_tree_expected, out_tree = io_tree
   args, in_tree = tree_flatten((py_args, {}))
   if in_tree != in_tree_expected:
-      raise TypeError("Expected {}, got {}".format(in_tree_expected, in_tree))
+    raise TypeError("Expected {}, got {}".format(in_tree_expected, in_tree))
   ans = fun(*args)
   return tree_unflatten(out_tree, ans)
 
@@ -62,7 +65,7 @@ def apply_flat_fun_nokwargs(fun, io_tree, py_args):
   in_tree_expected, out_tree = io_tree
   args, in_tree = tree_flatten(py_args)
   if in_tree != in_tree_expected:
-      raise TypeError("Expected {}, got {}".format(in_tree_expected, in_tree))
+    raise TypeError("Expected {}, got {}".format(in_tree_expected, in_tree))
   ans = fun(*args)
   return tree_unflatten(out_tree, ans)
 

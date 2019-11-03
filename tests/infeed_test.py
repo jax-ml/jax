@@ -30,19 +30,17 @@ config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
 class InfeedTest(jax.test_util.JaxTestCase):
-
   def testInfeed(self):
     @jax.jit
     def f(x):
       token = lax.create_token(x)
-      (y,), token = lax.infeed(
-          token, shape=(jax.ShapedArray((3, 4), np.float32),))
-      (z,), _ = lax.infeed(
-          token, shape=(jax.ShapedArray((3, 1, 1), np.float32),))
+      (y,), token = lax.infeed(token, shape=(jax.ShapedArray((3, 4), np.float32),))
+      (z,), _ = lax.infeed(token, shape=(jax.ShapedArray((3, 1, 1), np.float32),))
       return x + y + z
 
     x = onp.float32(1.5)
-    y = onp.reshape(onp.arange(12, dtype=onp.float32), (3, 4)) # onp.random.randn(3, 4).astype(onp.float32)
+    y = onp.reshape(onp.arange(12, dtype=onp.float32),
+                    (3, 4))  # onp.random.randn(3, 4).astype(onp.float32)
     z = onp.random.randn(3, 1, 1).astype(onp.float32)
     xla_client.transfer_to_infeed((y,))
     xla_client.transfer_to_infeed((z,))
@@ -52,8 +50,7 @@ class InfeedTest(jax.test_util.JaxTestCase):
     @jax.jit
     def f(x):
       token = lax.create_token(x)
-      y, token = lax.infeed(
-          token, shape=jax.ShapedArray((3, 4), np.float32))
+      y, token = lax.infeed(token, shape=jax.ShapedArray((3, 4), np.float32))
       token = lax.outfeed(token, y + onp.float32(1))
       return lax.tie_in(token, x - 1)
 
@@ -68,8 +65,7 @@ class InfeedTest(jax.test_util.JaxTestCase):
 
   def testInfeedThenOutfeedInALoop(self):
     def doubler(_, token):
-      y, token = lax.infeed(
-          token, shape=jax.ShapedArray((3, 4), np.float32))
+      y, token = lax.infeed(token, shape=jax.ShapedArray((3, 4), np.float32))
       return lax.outfeed(token, y * onp.float32(2))
 
     @jax.jit
@@ -87,7 +83,6 @@ class InfeedTest(jax.test_util.JaxTestCase):
       y, = xla_client.transfer_from_outfeed(xla_client.shape_from_pyval((x,)))
       self.assertAllClose(y, x * onp.float32(2), check_dtypes=True)
     execution.join()
-
 
 if __name__ == '__main__':
   absltest.main()

@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """Tests for --debug_nans."""
 from __future__ import absolute_import
 from __future__ import division
@@ -32,7 +31,6 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 class DebugNaNsTest(jtu.JaxTestCase):
-
   def setUp(self):
     self.cfg = config.read("jax_debug_nans")
     config.update("jax_debug_nans", True)

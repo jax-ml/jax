@@ -24,7 +24,6 @@ import types
 import fastcache
 import numpy as onp
 
-
 def safe_zip(*args):
   n = len(args[0])
   for arg in args[1:]:
@@ -86,8 +85,7 @@ class partialmethod(functools.partial):
     if instance is None:
       return self
     else:
-      return partial(self.func, instance,
-                     *(self.args or ()), **(self.keywords or {}))
+      return partial(self.func, instance, *(self.args or ()), **(self.keywords or {}))
 
 def curry(f):
   """Curries arguments of f, returning a function on any remaining arguments.
@@ -155,6 +153,7 @@ def split_merge(predicate, xs):
   sides = list(map(predicate, xs))
   lhs = [x for x, s in zip(xs, sides) if s]
   rhs = [x for x, s in zip(xs, sides) if not s]
+
   def merge(new_lhs, new_rhs):
     out = []
     for s in sides:
@@ -215,7 +214,6 @@ def get_module_functions(module):
   module_fns = set()
   for key in dir(module):
     attr = getattr(module, key)
-    if isinstance(
-        attr, (types.BuiltinFunctionType, types.FunctionType, onp.ufunc)):
+    if isinstance(attr, (types.BuiltinFunctionType, types.FunctionType, onp.ufunc)):
       module_fns.add(attr)
   return module_fns

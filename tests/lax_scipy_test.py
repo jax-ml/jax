@@ -46,10 +46,8 @@ bool_dtypes = [onp.bool_]
 default_dtypes = float_dtypes + int_dtypes
 numeric_dtypes = float_dtypes + complex_dtypes + int_dtypes
 
-
-OpRecord = collections.namedtuple("OpRecord", ["name", "nargs", "dtypes", "rng",
-                                               "test_autodiff", "test_name"])
-
+OpRecord = collections.namedtuple("OpRecord",
+                                  ["name", "nargs", "dtypes", "rng", "test_autodiff", "test_name"])
 
 def op_record(name, nargs, dtypes, rng, test_grad, test_name=None):
   test_name = test_name or name
@@ -74,21 +72,22 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
 
 CombosWithReplacement = itertools.combinations_with_replacement
 
-
 class LaxBackedScipyTests(jtu.JaxTestCase):
   """Tests for LAX-backed Scipy implementation."""
-
   def _GetArgsMaker(self, rng, shapes, dtypes):
     return lambda: [rng(shape, dtype) for shape, dtype in zip(shapes, dtypes)]
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inshape={}_axis={}_keepdims={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), axis, keepdims),
-       "rng": jtu.rand_default(), "shape": shape, "dtype": dtype,
-       "axis": axis, "keepdims": keepdims}
-      for shape in all_shapes for dtype in float_dtypes
-      for axis in range(-len(shape), len(shape))
-      for keepdims in [False, True]))
+  @parameterized.named_parameters(
+      jtu.cases_from_list({
+          "testcase_name": "_inshape={}_axis={}_keepdims={}".format(
+              jtu.format_shape_dtype_string(shape, dtype), axis, keepdims),
+          "rng": jtu.rand_default(),
+          "shape": shape,
+          "dtype": dtype,
+          "axis": axis,
+          "keepdims": keepdims
+      } for shape in all_shapes for dtype in float_dtypes
+                          for axis in range(-len(shape), len(shape)) for keepdims in [False, True]))
   @jtu.skip_on_flag("jax_xla_backend", "xrt")
   def testLogSumExp(self, rng, shape, dtype, axis, keepdims):
     # TODO(mattjj): test autodiff
@@ -102,35 +101,38 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(itertools.chain.from_iterable(
-    jtu.cases_from_list(
-        {"testcase_name": jtu.format_test_name_suffix(
-            rec.test_name, shapes, dtypes),
-         "rng": rec.rng, "shapes": shapes, "dtypes": dtypes,
-         "test_autodiff": rec.test_autodiff,
-         "scipy_op": getattr(osp_special, rec.name),
-         "lax_op": getattr(lsp_special, rec.name)}
-        for shapes in CombosWithReplacement(all_shapes, rec.nargs)
-        for dtypes in CombosWithReplacement(rec.dtypes, rec.nargs))
-      for rec in JAX_SPECIAL_FUNCTION_RECORDS))
-  def testScipySpecialFun(self, scipy_op, lax_op, rng, shapes, dtypes,
-                          test_autodiff):
+  @parameterized.named_parameters(
+      itertools.chain.from_iterable(
+          jtu.cases_from_list({
+              "testcase_name": jtu.format_test_name_suffix(rec.test_name, shapes, dtypes),
+              "rng": rec.rng,
+              "shapes": shapes,
+              "dtypes": dtypes,
+              "test_autodiff": rec.test_autodiff,
+              "scipy_op": getattr(osp_special, rec.name),
+              "lax_op": getattr(lsp_special, rec.name)
+          }
+                              for shapes in CombosWithReplacement(all_shapes, rec.nargs)
+                              for dtypes in CombosWithReplacement(rec.dtypes, rec.nargs))
+          for rec in JAX_SPECIAL_FUNCTION_RECORDS))
+  def testScipySpecialFun(self, scipy_op, lax_op, rng, shapes, dtypes, test_autodiff):
     args_maker = self._GetArgsMaker(rng, shapes, dtypes)
     args = args_maker()
-    self.assertAllClose(scipy_op(*args), lax_op(*args), atol=1e-3, rtol=1e-3,
-                        check_dtypes=False)
+    self.assertAllClose(scipy_op(*args), lax_op(*args), atol=1e-3, rtol=1e-3, check_dtypes=False)
     self._CompileAndCheck(lax_op, args_maker, check_dtypes=True)
 
     if test_autodiff:
       jtu.check_grads(lax_op, args, order=1, atol=1e-3, rtol=3e-3, eps=1e-3)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inshape={}_d={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), d),
-       "rng": jtu.rand_positive(), "shape": shape, "dtype": dtype, "d": d}
-      for shape in all_shapes
-      for dtype in float_dtypes
-      for d in [1, 2, 5]))
+  @parameterized.named_parameters(
+      jtu.cases_from_list({
+          "testcase_name": "_inshape={}_d={}".format(
+              jtu.format_shape_dtype_string(shape, dtype), d),
+          "rng": jtu.rand_positive(),
+          "shape": shape,
+          "dtype": dtype,
+          "d": d
+      } for shape in all_shapes for dtype in float_dtypes for d in [1, 2, 5]))
   def testMultigammaln(self, rng, shape, dtype, d):
     def scipy_fun(a):
       return osp_special.multigammaln(a, d)
@@ -144,9 +146,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
   def testIssue980(self):
     x = onp.full((4,), -1e20, dtype=onp.float32)
-    self.assertAllClose(onp.zeros((4,), dtype=onp.float32),
-                        lsp_special.expit(x), check_dtypes=True)
-
+    self.assertAllClose(onp.zeros((4,), dtype=onp.float32), lsp_special.expit(x), check_dtypes=True)
 
 if __name__ == "__main__":
   absltest.main()

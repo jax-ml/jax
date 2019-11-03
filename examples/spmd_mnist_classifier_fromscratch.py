@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """An MNIST example with single-program multiple-data (SPMD) data parallelism.
 
 The aim here is to illustrate how to use JAX's `pmap` to express and execute
@@ -39,7 +38,6 @@ from jax import lax
 import jax.numpy as np
 from examples import datasets
 
-
 def init_random_params(scale, layer_sizes, rng=npr.RandomState(0)):
   return [(scale * rng.randn(m, n), scale * rng.randn(n))
           for m, n, in zip(layer_sizes[:-1], layer_sizes[1:])]
@@ -66,7 +64,6 @@ def accuracy(params, batch):
   predicted_class = np.argmax(predict(params, inputs), axis=1)
   return np.mean(predicted_class == target_class)
 
-
 if __name__ == "__main__":
   layer_sizes = [784, 1024, 1024, 10]
   param_scale = 0.1
@@ -82,6 +79,7 @@ if __name__ == "__main__":
   # For this manual SPMD example, we get the number of devices (e.g. GPUs or
   # TPU cores) that we're using, and use it to reshape data minibatches.
   num_devices = xla_bridge.device_count()
+
   def data_stream():
     rng = npr.RandomState(0)
     while True:
@@ -99,6 +97,7 @@ if __name__ == "__main__":
         images = images.reshape(shape_prefix + images.shape[1:])
         labels = labels.reshape(shape_prefix + labels.shape[1:])
         yield images, labels
+
   batches = data_stream()
 
   @partial(pmap, axis_name='batch')
@@ -107,8 +106,7 @@ if __name__ == "__main__":
     # We compute the total gradients, summing across the device-mapped axis,
     # using the `lax.psum` SPMD primitive, which does a fast all-reduce-sum.
     grads = [(lax.psum(dw, 'batch'), lax.psum(db, 'batch')) for dw, db in grads]
-    return [(w - step_size * dw, b - step_size * db)
-            for (w, b), (dw, db) in zip(params, grads)]
+    return [(w - step_size * dw, b - step_size * db) for (w, b), (dw, db) in zip(params, grads)]
 
   # We replicate the parameters so that the constituent arrays have a leading
   # dimension of size equal to the number of devices we're pmapping over.

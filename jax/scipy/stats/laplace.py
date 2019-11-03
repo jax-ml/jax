@@ -22,7 +22,6 @@ import scipy.stats as osp_stats
 from ... import lax
 from ...numpy.lax_numpy import _promote_args_like, _constant_like, _wraps
 
-
 @_wraps(osp_stats.laplace.logpdf, update_doc=False)
 def logpdf(x, loc=0, scale=1):
   x, loc, scale = _promote_args_like(osp_stats.laplace.logpdf, x, loc, scale)
@@ -41,6 +40,6 @@ def cdf(x, loc=0, scale=1):
   one = _constant_like(x, 1)
   zero = _constant_like(x, 0)
   diff = lax.div(lax.sub(x, loc), scale)
-  return lax.select(lax.le(diff, zero),
-                    lax.mul(half, lax.exp(diff)),
-                    lax.sub(one, lax.mul(half, lax.exp(lax.neg(diff)))))
+  return lax.select(
+      lax.le(diff, zero), lax.mul(half, lax.exp(diff)),
+      lax.sub(one, lax.mul(half, lax.exp(lax.neg(diff)))))

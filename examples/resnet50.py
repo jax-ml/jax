@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """A mock-up showing a ResNet50 network with training on synthetic data.
 
 This file uses the stax neural network definition library and the optimizers
@@ -30,10 +29,8 @@ from jax.config import config
 from jax import jit, grad, random
 from jax.experimental import optimizers
 from jax.experimental import stax
-from jax.experimental.stax import (AvgPool, BatchNorm, Conv, Dense, FanInSum,
-                                   FanOut, Flatten, GeneralConv, Identity,
-                                   MaxPool, Relu, LogSoftmax)
-
+from jax.experimental.stax import (AvgPool, BatchNorm, Conv, Dense, FanInSum, FanOut, Flatten,
+                                   GeneralConv, Identity, MaxPool, Relu, LogSoftmax)
 
 # ResNet blocks compose other layers
 
@@ -41,50 +38,36 @@ def ConvBlock(kernel_size, filters, strides=(2, 2)):
   ks = kernel_size
   filters1, filters2, filters3 = filters
   Main = stax.serial(
-      Conv(filters1, (1, 1), strides), BatchNorm(), Relu,
-      Conv(filters2, (ks, ks), padding='SAME'), BatchNorm(), Relu,
-      Conv(filters3, (1, 1)), BatchNorm())
+      Conv(filters1, (1, 1), strides), BatchNorm(), Relu, Conv(filters2, (ks, ks), padding='SAME'),
+      BatchNorm(), Relu, Conv(filters3, (1, 1)), BatchNorm())
   Shortcut = stax.serial(Conv(filters3, (1, 1), strides), BatchNorm())
   return stax.serial(FanOut(2), stax.parallel(Main, Shortcut), FanInSum, Relu)
-
 
 def IdentityBlock(kernel_size, filters):
   ks = kernel_size
   filters1, filters2 = filters
+
   def make_main(input_shape):
     # the number of output channels depends on the number of input channels
     return stax.serial(
-        Conv(filters1, (1, 1)), BatchNorm(), Relu,
-        Conv(filters2, (ks, ks), padding='SAME'), BatchNorm(), Relu,
-        Conv(input_shape[3], (1, 1)), BatchNorm())
+        Conv(filters1, (1, 1)), BatchNorm(), Relu, Conv(filters2, (ks, ks), padding='SAME'),
+        BatchNorm(), Relu, Conv(input_shape[3], (1, 1)), BatchNorm())
+
   Main = stax.shape_dependent(make_main)
   return stax.serial(FanOut(2), stax.parallel(Main, Identity), FanInSum, Relu)
-
 
 # ResNet architectures compose layers and ResNet blocks
 
 def ResNet50(num_classes):
   return stax.serial(
-      GeneralConv(('HWCN', 'OIHW', 'NHWC'), 64, (7, 7), (2, 2), 'SAME'),
-      BatchNorm(), Relu, MaxPool((3, 3), strides=(2, 2)),
-      ConvBlock(3, [64, 64, 256], strides=(1, 1)),
-      IdentityBlock(3, [64, 64]),
-      IdentityBlock(3, [64, 64]),
-      ConvBlock(3, [128, 128, 512]),
-      IdentityBlock(3, [128, 128]),
-      IdentityBlock(3, [128, 128]),
-      IdentityBlock(3, [128, 128]),
-      ConvBlock(3, [256, 256, 1024]),
-      IdentityBlock(3, [256, 256]),
-      IdentityBlock(3, [256, 256]),
-      IdentityBlock(3, [256, 256]),
-      IdentityBlock(3, [256, 256]),
-      IdentityBlock(3, [256, 256]),
-      ConvBlock(3, [512, 512, 2048]),
-      IdentityBlock(3, [512, 512]),
-      IdentityBlock(3, [512, 512]),
+      GeneralConv(('HWCN', 'OIHW', 'NHWC'), 64, (7, 7), (2, 2), 'SAME'), BatchNorm(), Relu,
+      MaxPool((3, 3), strides=(2, 2)), ConvBlock(3, [64, 64, 256], strides=(1, 1)),
+      IdentityBlock(3, [64, 64]), IdentityBlock(3, [64, 64]), ConvBlock(3, [128, 128, 512]),
+      IdentityBlock(3, [128, 128]), IdentityBlock(3, [128, 128]), IdentityBlock(3, [128, 128]),
+      ConvBlock(3, [256, 256, 1024]), IdentityBlock(3, [256, 256]), IdentityBlock(3, [256, 256]),
+      IdentityBlock(3, [256, 256]), IdentityBlock(3, [256, 256]), IdentityBlock(3, [256, 256]),
+      ConvBlock(3, [512, 512, 2048]), IdentityBlock(3, [512, 512]), IdentityBlock(3, [512, 512]),
       AvgPool((7, 7)), Flatten, Dense(num_classes), LogSoftmax)
-
 
 if __name__ == "__main__":
   rng_key = random.PRNGKey(0)
@@ -129,4 +112,3 @@ if __name__ == "__main__":
   for i in xrange(num_steps):
     opt_state = update(i, opt_state, next(batches))
   trained_params = get_params(opt_state)
-

@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """JAX efficiently trains a differentially private conv net on MNIST.
 
 This script contains a JAX implementation of Differentially Private Stochastic
@@ -93,21 +92,17 @@ from privacy.analysis.rdp_accountant import get_privacy_spent
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_boolean(
-    'dpsgd', True, 'If True, train with DP-SGD. If False, '
-    'train with vanilla SGD.')
+flags.DEFINE_boolean('dpsgd', True, 'If True, train with DP-SGD. If False, '
+                     'train with vanilla SGD.')
 flags.DEFINE_float('learning_rate', .15, 'Learning rate for training')
-flags.DEFINE_float('noise_multiplier', 1.1,
-                   'Ratio of the standard deviation to the clipping norm')
+flags.DEFINE_float('noise_multiplier', 1.1, 'Ratio of the standard deviation to the clipping norm')
 flags.DEFINE_float('l2_norm_clip', 1.0, 'Clipping norm')
 flags.DEFINE_integer('batch_size', 256, 'Batch size')
 flags.DEFINE_integer('epochs', 60, 'Number of epochs')
 flags.DEFINE_integer('seed', 0, 'Seed for jax PRNG')
-flags.DEFINE_integer(
-    'microbatches', None, 'Number of microbatches '
-    '(must evenly divide batch_size)')
+flags.DEFINE_integer('microbatches', None, 'Number of microbatches '
+                     '(must evenly divide batch_size)')
 flags.DEFINE_string('model_dir', None, 'Model directory')
-
 
 init_random_params, predict = stax.serial(
     stax.Conv(16, (8, 8), padding='SAME', strides=(2, 2)),
@@ -122,13 +117,11 @@ init_random_params, predict = stax.serial(
     stax.Dense(10),
 )
 
-
 def loss(params, batch):
   inputs, targets = batch
   logits = predict(params, inputs)
   logits = stax.logsoftmax(logits)  # log normalize
   return -np.mean(np.sum(logits * targets, axis=1))  # cross entropy loss
-
 
 def accuracy(params, batch):
   inputs, targets = batch
@@ -136,18 +129,14 @@ def accuracy(params, batch):
   predicted_class = np.argmax(predict(params, inputs), axis=1)
   return np.mean(predicted_class == target_class)
 
-
-def private_grad(params, batch, rng, l2_norm_clip, noise_multiplier,
-                 batch_size):
+def private_grad(params, batch, rng, l2_norm_clip, noise_multiplier, batch_size):
   """Return differentially private gradients for params, evaluated on batch."""
-
   def _clipped_grad(params, single_example_batch):
     """Evaluate gradient for a single-example batch and clip its grad norm."""
     grads = grad(loss)(params, single_example_batch)
 
     nonempty_grads, tree_def = tree_util.tree_flatten(grads)
-    total_grad_norm = np.linalg.norm(
-        [np.linalg.norm(neg.ravel()) for neg in nonempty_grads])
+    total_grad_norm = np.linalg.norm([np.linalg.norm(neg.ravel()) for neg in nonempty_grads])
     divisor = stop_gradient(np.amax((total_grad_norm / l2_norm_clip, 1.)))
     normalized_nonempty_grads = [g / divisor for g in nonempty_grads]
     return tree_util.tree_unflatten(tree_def, normalized_nonempty_grads)
@@ -161,15 +150,12 @@ def private_grad(params, batch, rng, l2_norm_clip, noise_multiplier,
   aggregated_clipped_grads = tree_map(sum_, px_clipped_grad_fn(batch))
   noised_aggregated_clipped_grads = tree_map(noise_, aggregated_clipped_grads)
   normalized_noised_aggregated_clipped_grads = (
-      tree_map(normalize_, noised_aggregated_clipped_grads)
-  )
+      tree_map(normalize_, noised_aggregated_clipped_grads))
   return normalized_noised_aggregated_clipped_grads
-
 
 def shape_as_image(images, labels, dummy_dim=False):
   target_shape = (-1, 1, 28, 28, 1) if dummy_dim else (-1, 28, 28, 1)
   return np.reshape(images, target_shape), labels
-
 
 def compute_epsilon(steps, num_examples=60000, target_delta=1e-5):
   if num_examples * target_delta > 1.:
@@ -180,13 +166,10 @@ def compute_epsilon(steps, num_examples=60000, target_delta=1e-5):
   eps, _, _ = get_privacy_spent(orders, rdp_const, target_delta=target_delta)
   return eps
 
-
 def main(_):
 
   if FLAGS.microbatches:
-    raise NotImplementedError(
-        'Microbatches < batch size not currently supported'
-    )
+    raise NotImplementedError('Microbatches < batch size not currently supported')
 
   train_images, train_labels, test_images, test_labels = datasets.mnist()
   num_train = train_images.shape[0]
@@ -217,8 +200,8 @@ def main(_):
     rng = random.fold_in(rng, i)  # get new key for new random numbers
     return opt_update(
         i,
-        private_grad(params, batch, rng, FLAGS.l2_norm_clip,
-                     FLAGS.noise_multiplier, FLAGS.batch_size), opt_state)
+        private_grad(params, batch, rng, FLAGS.l2_norm_clip, FLAGS.noise_multiplier,
+                     FLAGS.batch_size), opt_state)
 
   _, init_params = init_random_params(key, (-1, 28, 28, 1))
   opt_state = opt_init(init_params)
@@ -236,8 +219,7 @@ def main(_):
                 key, next(itercount), opt_state,
                 shape_as_image(*next(batches), dummy_dim=True))
       else:
-        opt_state = update(
-            key, next(itercount), opt_state, shape_as_image(*next(batches)))
+        opt_state = update(key, next(itercount), opt_state, shape_as_image(*next(batches)))
     # pylint: enable=no-value-for-parameter
     epoch_time = time.time() - start_time
     print('Epoch {} in {:0.2f} sec'.format(epoch, epoch_time))
@@ -246,19 +228,16 @@ def main(_):
     params = get_params(opt_state)
     test_acc = accuracy(params, shape_as_image(test_images, test_labels))
     test_loss = loss(params, shape_as_image(test_images, test_labels))
-    print('Test set loss, accuracy (%): ({:.2f}, {:.2f})'.format(
-        test_loss, 100 * test_acc))
+    print('Test set loss, accuracy (%): ({:.2f}, {:.2f})'.format(test_loss, 100 * test_acc))
 
     # determine privacy loss so far
     if FLAGS.dpsgd:
       delta = 1e-5
       num_examples = 60000
       eps = compute_epsilon(epoch * steps_per_epoch, num_examples, delta)
-      print(
-          'For delta={:.0e}, the current epsilon is: {:.2f}'.format(delta, eps))
+      print('For delta={:.0e}, the current epsilon is: {:.2f}'.format(delta, eps))
     else:
       print('Trained with vanilla non-private SGD optimizer')
-
 
 if __name__ == '__main__':
   app.run(main)

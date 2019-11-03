@@ -22,7 +22,6 @@ import scipy.stats as osp_stats
 from ... import lax
 from ...numpy.lax_numpy import _promote_args_like, _constant_like, _wraps
 
-
 @_wraps(osp_stats.cauchy.logpdf, update_doc=False)
 def logpdf(x, loc=0, scale=1):
   x, loc, scale = _promote_args_like(osp_stats.cauchy.logpdf, x, loc, scale)

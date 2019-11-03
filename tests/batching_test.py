@@ -36,12 +36,10 @@ import jax.ops
 from jax.config import config
 config.parse_flags_with_absl()
 
-
 # These are 'manual' tests for batching (vmap). The more exhaustive, more
 # systematic tests are in lax_test.py's LaxVmapTest class.
 
 class BatchingTest(jtu.JaxTestCase):
-
   def testConstantFunction(self):
     ans = vmap(lambda x: 3)(onp.ones(4))
     expected = 3 * onp.ones(4)
@@ -78,8 +76,7 @@ class BatchingTest(jtu.JaxTestCase):
     layer_sizes = [3, 2, 4]
 
     R = onp.random.RandomState(0).randn
-    params = [(R(m, n), R(m))
-              for m, n in zip(layer_sizes[1:], layer_sizes[:-1])]
+    params = [(R(m, n), R(m)) for m, n in zip(layer_sizes[1:], layer_sizes[:-1])]
 
     input_vec = R(3)
     target_vec = R(4)
@@ -131,8 +128,7 @@ class BatchingTest(jtu.JaxTestCase):
     g = jit(vmap(f))
     self.assertAllClose(g(onp.ones(2)), 2 * onp.ones(2), check_dtypes=False)
     self.assertEqual(len(side), 1)
-    self.assertAllClose(g(2 * onp.ones(2)), 4 * onp.ones(2),
-                        check_dtypes=False)
+    self.assertAllClose(g(2 * onp.ones(2)), 4 * onp.ones(2), check_dtypes=False)
     self.assertEqual(len(side), 1)
 
   def testSliceLax(self):
@@ -205,7 +201,7 @@ class BatchingTest(jtu.JaxTestCase):
     x = R(10, 5)
     W = R(5, 5)
 
-    fun = lambda W, x: np.sum(np.maximum(np.dot(x, W), 0.0) ** 2)
+    fun = lambda W, x: np.sum(np.maximum(np.dot(x, W), 0.0)**2)
 
     ans = vmap(partial(grad(fun), W))(x)
 
@@ -213,8 +209,7 @@ class BatchingTest(jtu.JaxTestCase):
     for i in range(10):
       x_ex = x[i:i + 1]
 
-      expected_ans = 2.0 * np.dot(
-          np.maximum(np.dot(W_t, np.transpose(x_ex)), 0.0), x_ex)
+      expected_ans = 2.0 * np.dot(np.maximum(np.dot(W_t, np.transpose(x_ex)), 0.0), x_ex)
       expected_ans = np.transpose(expected_ans)
 
       self.assertAllClose(ans[i], expected_ans, check_dtypes=False)
@@ -295,7 +290,7 @@ class BatchingTest(jtu.JaxTestCase):
     ans = vmap(np.dot, in_axes=(1, None))(xs, ys)
     expected = onp.einsum('ij,i->j', xs, ys)
     self.assertAllClose(ans, expected, check_dtypes=False)
-  
+
   def testDot5(self):
     f = vmap(partial(np.einsum, 'ij,j->i'), (None, 0))
     jaxpr = make_jaxpr(f)(np.zeros((1000, 1000)), np.zeros((1000, 1000)))
@@ -310,7 +305,6 @@ class BatchingTest(jtu.JaxTestCase):
     expected_ans = np.stack(list(map(fun, x)))
     self.assertAllClose(ans, expected_ans, check_dtypes=False)
 
-
     fun = lambda x: lax.pad(x, onp.float32(0), [(1, 2, 1), (0, 1, 0)])
     x = R(5, 10, 3).astype(onp.float32)
     ans = vmap(fun)(x)
@@ -323,15 +317,13 @@ class BatchingTest(jtu.JaxTestCase):
     fun = lambda *args: lax.concatenate(args, dimension=0)
     x, y, z = R(10, 2, 3), R(1, 10, 3), R(4, 3)
     ans = vmap(fun, in_axes=(0, 1, None))(x, y, z)
-    expected_ans = onp.concatenate([x, onp.swapaxes(y, 0, 1),
-                                    onp.broadcast_to(z, (10, 4, 3))], 1)
+    expected_ans = onp.concatenate([x, onp.swapaxes(y, 0, 1), onp.broadcast_to(z, (10, 4, 3))], 1)
     self.assertAllClose(ans, expected_ans, check_dtypes=False)
 
     fun = lambda *args: lax.concatenate(args, dimension=1)
     x, y, z = R(10, 2, 1), R(2, 3), R(2, 4, 10)
     ans = vmap(fun, in_axes=(0, None, 2))(x, y, z)
-    expected_ans = onp.concatenate([x, onp.broadcast_to(y, (10, 2, 3)),
-                                    onp.moveaxis(z, 2, 0)], 2)
+    expected_ans = onp.concatenate([x, onp.broadcast_to(y, (10, 2, 3)), onp.moveaxis(z, 2, 0)], 2)
     self.assertAllClose(ans, expected_ans, check_dtypes=False)
 
   def testJacobianIssue54(self):
@@ -360,11 +352,8 @@ class BatchingTest(jtu.JaxTestCase):
     x = onp.array([-1., -0.5, 0., 0.5, 1.0])
 
     ans = hessian(lambda x: fun(x, 0.0))(x)
-    expected = onp.array([[0., 0., 0., 0., 0.],
-                          [0., 0., 0., 0., 0.],
-                          [0., 0.,0.5, 0., 0.],
-                          [0., 0., 0., 2., 0.],
-                          [0., 0., 0., 0., 2.]])
+    expected = onp.array([[0., 0., 0., 0., 0.], [0., 0., 0., 0., 0.], [0., 0., 0.5, 0., 0.],
+                          [0., 0., 0., 2., 0.], [0., 0., 0., 0., 2.]])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testDynamicSlice(self):
@@ -376,7 +365,6 @@ class BatchingTest(jtu.JaxTestCase):
     ans = vmap(lambda x, i: x[i], in_axes=(0, None))(x, 1)
     expected = x[:, 1]
     self.assertAllClose(ans, expected, check_dtypes=False)
-
 
     idx = np.array([0, 1, 2, 1, 0] * 2)
     ans = vmap(lambda x, i: x[i], in_axes=(0, 0))(x, idx)
@@ -409,8 +397,7 @@ class BatchingTest(jtu.JaxTestCase):
   def testRandom(self):
     seeds = vmap(random.PRNGKey)(onp.arange(10))
     ans = vmap(partial(random.normal, shape=(3, 2)))(seeds)
-    expected = onp.stack([random.normal(random.PRNGKey(seed), (3, 2))
-                          for seed in onp.arange(10)])
+    expected = onp.stack([random.normal(random.PRNGKey(seed), (3, 2)) for seed in onp.arange(10)])
     self.assertAllClose(ans, expected, check_dtypes=False)
     assert len(onp.unique(ans)) == 10 * 3 * 2
 
@@ -450,14 +437,12 @@ class BatchingTest(jtu.JaxTestCase):
     self.assertAllClose(sv, v[:, ::-1], check_dtypes=True)
 
     sk, sv = vmap(partial(lax.sort_key_val, dimension=0), (None, 0))(k[0], v)
-    self.assertAllClose(sk, onp.broadcast_to(k[0, ::-1], (3, 4)),
-                        check_dtypes=True)
+    self.assertAllClose(sk, onp.broadcast_to(k[0, ::-1], (3, 4)), check_dtypes=True)
     self.assertAllClose(sv, v[:, ::-1], check_dtypes=True)
 
     sk, sv = vmap(partial(lax.sort_key_val, dimension=0), (1, None))(k.T, v[0])
     self.assertAllClose(sk, k[:, ::-1], check_dtypes=True)
-    self.assertAllClose(sv, onp.broadcast_to(v[0, ::-1], (3, 4)),
-                        check_dtypes=True)
+    self.assertAllClose(sv, onp.broadcast_to(v[0, ::-1], (3, 4)), check_dtypes=True)
 
   def testConvGeneralDilated(self):
     W = np.array(onp.random.randn(3, 3, 1, 5), dtype=onp.float32)
@@ -466,10 +451,10 @@ class BatchingTest(jtu.JaxTestCase):
     def f(params, x):
       one = (1, 1)
       dimension_numbers = ('NHWC', 'HWIO', 'NHWC')
-      y = lax.conv_general_dilated(
-          x, params, one, 'SAME', one, one, dimension_numbers)
+      y = lax.conv_general_dilated(x, params, one, 'SAME', one, one, dimension_numbers)
       return y
-    grad_loss = grad(lambda params, x: np.mean(f(params, x) ** 2))
+
+    grad_loss = grad(lambda params, x: np.mean(f(params, x)**2))
 
     # Test forward prop.
     per_example = vmap(partial(f, W))(np.reshape(X, (10, 1, 5, 5, 1)))
@@ -482,8 +467,7 @@ class BatchingTest(jtu.JaxTestCase):
     per_example_direct = []
     for i in range(10):
       g = grad_loss(W, np.reshape(X[i], (1, 5, 5, 1)))
-      per_example_direct += [
-          np.reshape(g, (1,) + g.shape)]
+      per_example_direct += [np.reshape(g, (1,) + g.shape)]
     per_example_direct = np.concatenate(per_example_direct, axis=0)
     self.assertAllClose(per_example, per_example_direct, check_dtypes=True)
 
@@ -494,20 +478,19 @@ class BatchingTest(jtu.JaxTestCase):
     def f(params, x):
       one = (1, 1)
       dimension_numbers = ('HNWC', 'HWIO', 'HWNC')
-      y = lax.conv_general_dilated(
-          x, params, one, 'SAME', one, one, dimension_numbers)
+      y = lax.conv_general_dilated(x, params, one, 'SAME', one, one, dimension_numbers)
       return y
 
     per_example = vmap(partial(f, W))(x)
-    per_example = np.reshape(np.transpose(per_example, (1, 2, 0, 3, 4)),
-                             (5, 5, 21, 4))
-    per_example_direct = f(W, np.reshape(np.transpose(x, (1, 0, 2, 3, 4)),
-                                         (5, 21, 5, 1)))
+    per_example = np.reshape(np.transpose(per_example, (1, 2, 0, 3, 4)), (5, 5, 21, 4))
+    per_example_direct = f(W, np.reshape(np.transpose(x, (1, 0, 2, 3, 4)), (5, 21, 5, 1)))
     self.assertAllClose(per_example, per_example_direct, check_dtypes=True)
 
-  @parameterized.named_parameters(
-    {"testcase_name": "_op={}".format(name), "op": op, "unit": unit}
-    for name, op, unit in [("max", lax.max, -np.inf), ("min", lax.min, np.inf)])
+  @parameterized.named_parameters({
+      "testcase_name": "_op={}".format(name),
+      "op": op,
+      "unit": unit
+  } for name, op, unit in [("max", lax.max, -np.inf), ("min", lax.min, np.inf)])
   def testMinMaxPool(self, op, unit):
     W = np.array(onp.random.randn(3, 3, 1, 5), dtype=onp.float32)
     X = np.array(onp.random.randn(10, 5, 5, 1), dtype=onp.float32)
@@ -515,12 +498,11 @@ class BatchingTest(jtu.JaxTestCase):
     def f(params, x):
       one = (1, 1)
       dimension_numbers = ('NHWC', 'HWIO', 'NHWC')
-      y = lax.conv_general_dilated(
-          x, params, one, 'SAME', one, one, dimension_numbers)
-      y = lax.reduce_window(
-          y, unit, op, (1, 2, 2, 1), (1, 1, 1, 1), 'SAME')
+      y = lax.conv_general_dilated(x, params, one, 'SAME', one, one, dimension_numbers)
+      y = lax.reduce_window(y, unit, op, (1, 2, 2, 1), (1, 1, 1, 1), 'SAME')
       return y
-    grad_loss = grad(lambda params, x: np.mean(f(params, x) ** 2))
+
+    grad_loss = grad(lambda params, x: np.mean(f(params, x)**2))
 
     # Test forward prop.
     per_example = vmap(partial(f, W))(np.reshape(X, (10, 1, 5, 5, 1)))
@@ -533,8 +515,7 @@ class BatchingTest(jtu.JaxTestCase):
     per_example_direct = []
     for i in range(10):
       g = grad_loss(W, np.reshape(X[i], (1, 5, 5, 1)))
-      per_example_direct += [
-          np.reshape(g, (1,) + g.shape)]
+      per_example_direct += [np.reshape(g, (1,) + g.shape)]
     per_example_direct = np.concatenate(per_example_direct, axis=0)
     self.assertAllClose(per_example, per_example_direct, check_dtypes=True)
 
@@ -545,12 +526,11 @@ class BatchingTest(jtu.JaxTestCase):
     def f(params, x):
       one = (1, 1)
       dimension_numbers = ('NHWC', 'HWIO', 'NHWC')
-      y = lax.conv_general_dilated(
-          x, params, one, 'SAME', one, one, dimension_numbers)
-      y = lax.reduce_window(
-          y, 0.0, lax.add, (1, 2, 2, 1), (1, 1, 1, 1), 'SAME')
+      y = lax.conv_general_dilated(x, params, one, 'SAME', one, one, dimension_numbers)
+      y = lax.reduce_window(y, 0.0, lax.add, (1, 2, 2, 1), (1, 1, 1, 1), 'SAME')
       return y
-    grad_loss = grad(lambda params, x: np.mean(f(params, x) ** 2))
+
+    grad_loss = grad(lambda params, x: np.mean(f(params, x)**2))
 
     # Test forward prop.
     per_example = vmap(partial(f, W))(np.reshape(X, (10, 1, 5, 5, 1)))
@@ -563,15 +543,14 @@ class BatchingTest(jtu.JaxTestCase):
     per_example_direct = []
     for i in range(10):
       g = grad_loss(W, np.reshape(X[i], (1, 5, 5, 1)))
-      per_example_direct += [
-          np.reshape(g, (1,) + g.shape)]
+      per_example_direct += [np.reshape(g, (1,) + g.shape)]
     per_example_direct = np.concatenate(per_example_direct, axis=0)
     self.assertAllClose(per_example, per_example_direct, check_dtypes=True)
 
   def testCumProd(self):
-   x = np.arange(9).reshape(3, 3) + 1
-   y = vmap(lambda x: np.cumprod(x, axis=-1))(x)
-   self.assertAllClose(onp.cumprod(x, axis=1), y, check_dtypes=True)
+    x = np.arange(9).reshape(3, 3) + 1
+    y = vmap(lambda x: np.cumprod(x, axis=-1))(x)
+    self.assertAllClose(onp.cumprod(x, axis=1), y, check_dtypes=True)
 
   def testSelect(self):
     pred = onp.array([True, False])
@@ -585,8 +564,7 @@ class BatchingTest(jtu.JaxTestCase):
     on_true = onp.array([0, 1])
     on_false = onp.array([2, 3])
     ans = vmap(lax.select, (0, None, None))(pred, on_true, on_false)
-    expected = onp.array([[2, 3],
-                          [0, 1]])
+    expected = onp.array([[2, 3], [0, 1]])
     self.assertAllClose(ans, expected, check_dtypes=True)
 
     pred = True
@@ -632,247 +610,261 @@ class BatchingTest(jtu.JaxTestCase):
     b = onp.random.RandomState(0).randn(5, 4, 10).astype(onp.float32)
 
     ans = vmap(lax_linalg.triangular_solve, in_axes=(1, 2))(a, b)
-    expected = onp.stack(
-      [lax_linalg.triangular_solve(a[:, i], b[..., i]) for i in range(10)])
+    expected = onp.stack([lax_linalg.triangular_solve(a[:, i], b[..., i]) for i in range(10)])
     self.assertAllClose(ans, expected, check_dtypes=True)
 
     ans = vmap(lax_linalg.triangular_solve, in_axes=(None, 2))(a[:, 0], b)
-    expected = onp.stack(
-      [lax_linalg.triangular_solve(a[:, 0], b[..., i]) for i in range(10)])
+    expected = onp.stack([lax_linalg.triangular_solve(a[:, 0], b[..., i]) for i in range(10)])
     self.assertAllClose(ans, expected, check_dtypes=True)
 
     ans = vmap(lax_linalg.triangular_solve, in_axes=(1, None))(a, b[..., 0])
-    expected = onp.stack(
-      [lax_linalg.triangular_solve(a[:, i], b[..., 0]) for i in range(10)])
+    expected = onp.stack([lax_linalg.triangular_solve(a[:, i], b[..., 0]) for i in range(10)])
     self.assertAllClose(ans, expected, check_dtypes=True)
 
-  @parameterized.named_parameters(
-      {"testcase_name": "_shape={}_axis={}_idxs={}_dnums={}_slice_sizes={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), axis, idxs, dnums,
-          slice_sizes),
-       "axis": axis, "shape": shape, "dtype": dtype, "idxs": idxs, "dnums": dnums,
-       "slice_sizes": slice_sizes, "rng": rng, "rng_idx": rng_idx}
-      for dtype in [onp.float32, onp.int32]
-      for axis, shape, idxs, dnums, slice_sizes in [
-          (0, (3, 5), onp.array([[0], [2]]), lax.GatherDimensionNumbers(
-            offset_dims=(), collapsed_slice_dims=(0,), start_index_map=(0,)),
-            (1,)),
-          (1, (10, 3), onp.array([[0], [0], [0]]), lax.GatherDimensionNumbers(
-            offset_dims=(1,), collapsed_slice_dims=(), start_index_map=(0,)),
-            (2,)),
-          (1, (10, 3, 5), onp.array([[0], [2], [1]]), lax.GatherDimensionNumbers(
-            offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0,)),
-            (1, 3)),
-          (2, (10, 5, 3), onp.array([[0, 2], [1, 0]]),
-           lax.GatherDimensionNumbers(
-             offset_dims=(1,), collapsed_slice_dims=(0,),
-             start_index_map=(0, 1)),
-            (1, 3)),
-      ]
-      for rng_idx in [jtu.rand_int(max(shape))]
-      for rng in [jtu.rand_default()])
-  def testGatherBatchedOperand(self, axis, shape, dtype, idxs, dnums,
-                               slice_sizes, rng, rng_idx):
+  @parameterized.named_parameters({
+      "testcase_name": "_shape={}_axis={}_idxs={}_dnums={}_slice_sizes={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), axis, idxs, dnums, slice_sizes),
+      "axis": axis,
+      "shape": shape,
+      "dtype": dtype,
+      "idxs": idxs,
+      "dnums": dnums,
+      "slice_sizes": slice_sizes,
+      "rng": rng,
+      "rng_idx": rng_idx
+  } for dtype in [onp.float32, onp.int32] for axis, shape, idxs, dnums, slice_sizes in [
+      (0, (3, 5), onp.array([[0], [2]]),
+       lax.GatherDimensionNumbers(offset_dims=(), collapsed_slice_dims=(0,), start_index_map=(0,)),
+       (1,)),
+      (1, (10, 3), onp.array([[0], [0], [0]]),
+       lax.GatherDimensionNumbers(offset_dims=(1,), collapsed_slice_dims=(), start_index_map=(0,)),
+       (2,)),
+      (1, (10, 3, 5), onp.array([[0], [2], [1]]),
+       lax.GatherDimensionNumbers(
+           offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0,)), (1, 3)),
+      (2, (10, 5, 3), onp.array([[0, 2], [1, 0]]),
+       lax.GatherDimensionNumbers(
+           offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1)), (1, 3)),
+  ] for rng_idx in [jtu.rand_int(max(shape))] for rng in [jtu.rand_default()])
+  def testGatherBatchedOperand(self, axis, shape, dtype, idxs, dnums, slice_sizes, rng, rng_idx):
     fun = partial(lax.gather, dimension_numbers=dnums, slice_sizes=slice_sizes)
     operand = rng(shape, dtype)
     ans = vmap(fun, (axis, None))(operand, idxs)
-    expected = onp.stack([fun(operand[(slice(None),) * axis + (i,)], idxs)
-                          for i in range(operand.shape[axis])])
+    expected = onp.stack(
+        [fun(operand[(slice(None),) * axis + (i,)], idxs) for i in range(operand.shape[axis])])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @parameterized.named_parameters(
-      {"testcase_name": "_shape={}_axis={}_idxs={}_dnums={}_slice_sizes={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), axis, idxs, dnums,
-          slice_sizes),
-       "axis": axis, "shape": shape, "dtype": dtype, "idxs": idxs, "dnums": dnums,
-       "slice_sizes": slice_sizes, "rng": rng, "rng_idx": rng_idx}
-      for dtype in [onp.float32, onp.float64]
-      for axis, shape, idxs, dnums, slice_sizes in [
-          (0, (3, 5), onp.array([[0], [2]]), lax.GatherDimensionNumbers(
-            offset_dims=(), collapsed_slice_dims=(0,), start_index_map=(0,)),
-            (1,)),
-          (1, (10, 3), onp.array([[0], [0], [0]]), lax.GatherDimensionNumbers(
-            offset_dims=(1,), collapsed_slice_dims=(), start_index_map=(0,)),
-            (2,)),
-          (1, (10, 3, 5), onp.array([[0], [2], [1]]), lax.GatherDimensionNumbers(
-            offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0,)),
-            (1, 3)),
-          (2, (10, 5, 3), onp.array([[0, 2], [1, 0]]),
-           lax.GatherDimensionNumbers(
-             offset_dims=(1,), collapsed_slice_dims=(0,),
-             start_index_map=(0, 1)),
-            (1, 3)),      ]
-      for rng_idx in [jtu.rand_int(max(shape))]
-      for rng in [jtu.rand_default()])
-  def testGatherGradBatchedOperand(self, axis, shape, dtype, idxs, dnums,
-                                   slice_sizes, rng, rng_idx):
+  @parameterized.named_parameters({
+      "testcase_name": "_shape={}_axis={}_idxs={}_dnums={}_slice_sizes={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), axis, idxs, dnums, slice_sizes),
+      "axis": axis,
+      "shape": shape,
+      "dtype": dtype,
+      "idxs": idxs,
+      "dnums": dnums,
+      "slice_sizes": slice_sizes,
+      "rng": rng,
+      "rng_idx": rng_idx
+  } for dtype in [onp.float32, onp.float64] for axis, shape, idxs, dnums, slice_sizes in [
+      (0, (3, 5), onp.array([[0], [2]]),
+       lax.GatherDimensionNumbers(offset_dims=(), collapsed_slice_dims=(0,), start_index_map=(0,)),
+       (1,)),
+      (1, (10, 3), onp.array([[0], [0], [0]]),
+       lax.GatherDimensionNumbers(offset_dims=(1,), collapsed_slice_dims=(), start_index_map=(0,)),
+       (2,)),
+      (1, (10, 3, 5), onp.array([[0], [2], [1]]),
+       lax.GatherDimensionNumbers(
+           offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0,)), (1, 3)),
+      (2, (10, 5, 3), onp.array([[0, 2], [1, 0]]),
+       lax.GatherDimensionNumbers(
+           offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1)), (1, 3)),
+  ] for rng_idx in [jtu.rand_int(max(shape))] for rng in [jtu.rand_default()])
+  def testGatherGradBatchedOperand(self, axis, shape, dtype, idxs, dnums, slice_sizes, rng,
+                                   rng_idx):
     fun = partial(lax.gather, dimension_numbers=dnums, slice_sizes=slice_sizes)
     gfun = grad(lambda x, idx: np.sum(np.sin(fun(x, idx))))
     operand = rng(shape, dtype)
     ans = vmap(gfun, (axis, None))(operand, idxs)
-    expected = onp.stack([gfun(operand[(slice(None),) * axis + (i,)], idxs)
-                          for i in range(operand.shape[axis])])
+    expected = onp.stack(
+        [gfun(operand[(slice(None),) * axis + (i,)], idxs) for i in range(operand.shape[axis])])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @parameterized.named_parameters(
-      {"testcase_name": "_shape={}_axis={}_idxs={}_dnums={}_slice_sizes={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), axis, idxs, dnums,
-          slice_sizes),
-       "axis": axis, "shape": shape, "dtype": dtype, "idxs": idxs, "dnums": dnums,
-       "slice_sizes": slice_sizes, "rng": rng, "rng_idx": rng_idx}
-      for dtype in [onp.float32, onp.int32]
-      for axis, shape, idxs, dnums, slice_sizes in [
-          (0, (5,), onp.array([[[0], [2]], [[1], [3]]]), lax.GatherDimensionNumbers(
-              offset_dims=(), collapsed_slice_dims=(0,), start_index_map=(0,)), (1,)),
-          (1, (10,), onp.array([[0, 0, 0], [0, 2, 1]]).T[..., None],
-           lax.GatherDimensionNumbers(
-               offset_dims=(1,), collapsed_slice_dims=(), start_index_map=(0,)), (2,)),
-          (1, (10, 5), onp.array([[0, 2, 1], [0, 3, 3]]).T[..., None],
-           lax.GatherDimensionNumbers(
-               offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0,)), (1, 3)),
-          (0, (10, 5), onp.array([[[0, 1], [2, 0]],
-                                  [[1, 0], [2, 3]]]), lax.GatherDimensionNumbers(
-            offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1)), (1, 3)),
-      ]
-      for rng_idx in [jtu.rand_int(max(shape))]
-      for rng in [jtu.rand_default()])
-  def testGatherBatchedIndices(self, axis, shape, dtype, idxs, dnums,
-                               slice_sizes, rng, rng_idx):
+  @parameterized.named_parameters({
+      "testcase_name": "_shape={}_axis={}_idxs={}_dnums={}_slice_sizes={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), axis, idxs, dnums, slice_sizes),
+      "axis": axis,
+      "shape": shape,
+      "dtype": dtype,
+      "idxs": idxs,
+      "dnums": dnums,
+      "slice_sizes": slice_sizes,
+      "rng": rng,
+      "rng_idx": rng_idx
+  } for dtype in [onp.float32, onp.int32] for axis, shape, idxs, dnums, slice_sizes in [
+      (0, (5,), onp.array([[[0], [2]], [[1], [3]]]),
+       lax.GatherDimensionNumbers(offset_dims=(), collapsed_slice_dims=(0,), start_index_map=(0,)),
+       (1,)),
+      (1, (10,), onp.array([[0, 0, 0], [0, 2, 1]]).T[..., None],
+       lax.GatherDimensionNumbers(offset_dims=(1,), collapsed_slice_dims=(), start_index_map=(0,)),
+       (2,)),
+      (1, (10, 5), onp.array([[0, 2, 1], [0, 3, 3]]).T[..., None],
+       lax.GatherDimensionNumbers(
+           offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0,)), (1, 3)),
+      (0, (10, 5), onp.array([[[0, 1], [2, 0]], [[1, 0], [2, 3]]]),
+       lax.GatherDimensionNumbers(
+           offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1)), (1, 3)),
+  ] for rng_idx in [jtu.rand_int(max(shape))] for rng in [jtu.rand_default()])
+  def testGatherBatchedIndices(self, axis, shape, dtype, idxs, dnums, slice_sizes, rng, rng_idx):
     fun = partial(lax.gather, dimension_numbers=dnums, slice_sizes=slice_sizes)
     operand = rng(shape, dtype)
     ans = vmap(fun, (None, axis))(operand, idxs)
-    expected = onp.stack([fun(operand, idxs[(slice(None),) * axis + (i,)])
-                          for i in range(idxs.shape[axis])])
+    expected = onp.stack(
+        [fun(operand, idxs[(slice(None),) * axis + (i,)]) for i in range(idxs.shape[axis])])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @parameterized.named_parameters(
-      {"testcase_name": "_shape={}_axis={}_idxs={}_dnums={}_slice_sizes={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), axis, idxs, dnums,
-          slice_sizes),
-       "axis": axis, "shape": shape, "dtype": dtype, "idxs": idxs, "dnums": dnums,
-       "slice_sizes": slice_sizes, "rng": rng, "rng_idx": rng_idx}
-      for dtype in [onp.float32, onp.float64]
-      for axis, shape, idxs, dnums, slice_sizes in [
-          (0, (5,), onp.array([[[0], [2]], [[1], [3]]]), lax.GatherDimensionNumbers(
-              offset_dims=(), collapsed_slice_dims=(0,), start_index_map=(0,)), (1,)),
-          (1, (10,), onp.array([[0, 0, 0], [0, 2, 1]]).T[..., None],
-           lax.GatherDimensionNumbers(
-               offset_dims=(1,), collapsed_slice_dims=(), start_index_map=(0,)), (2,)),
-          (1, (10, 5), onp.array([[0, 2, 1], [0, 3, 3]]).T[..., None],
-           lax.GatherDimensionNumbers(
-               offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0,)), (1, 3)),
-          (0, (10, 5), onp.array([[[0, 1], [2, 0]],
-                                  [[1, 0], [2, 3]]]), lax.GatherDimensionNumbers(
-            offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1)), (1, 3)),
-      ]
-      for rng_idx in [jtu.rand_int(max(shape))]
-      for rng in [jtu.rand_default()])
-  def testGatherGradBatchedIndices(self, axis, shape, dtype, idxs, dnums,
-                                   slice_sizes, rng, rng_idx):
+  @parameterized.named_parameters({
+      "testcase_name": "_shape={}_axis={}_idxs={}_dnums={}_slice_sizes={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), axis, idxs, dnums, slice_sizes),
+      "axis": axis,
+      "shape": shape,
+      "dtype": dtype,
+      "idxs": idxs,
+      "dnums": dnums,
+      "slice_sizes": slice_sizes,
+      "rng": rng,
+      "rng_idx": rng_idx
+  } for dtype in [onp.float32, onp.float64] for axis, shape, idxs, dnums, slice_sizes in [
+      (0, (5,), onp.array([[[0], [2]], [[1], [3]]]),
+       lax.GatherDimensionNumbers(offset_dims=(), collapsed_slice_dims=(0,), start_index_map=(0,)),
+       (1,)),
+      (1, (10,), onp.array([[0, 0, 0], [0, 2, 1]]).T[..., None],
+       lax.GatherDimensionNumbers(offset_dims=(1,), collapsed_slice_dims=(), start_index_map=(0,)),
+       (2,)),
+      (1, (10, 5), onp.array([[0, 2, 1], [0, 3, 3]]).T[..., None],
+       lax.GatherDimensionNumbers(
+           offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0,)), (1, 3)),
+      (0, (10, 5), onp.array([[[0, 1], [2, 0]], [[1, 0], [2, 3]]]),
+       lax.GatherDimensionNumbers(
+           offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1)), (1, 3)),
+  ] for rng_idx in [jtu.rand_int(max(shape))] for rng in [jtu.rand_default()])
+  def testGatherGradBatchedIndices(self, axis, shape, dtype, idxs, dnums, slice_sizes, rng,
+                                   rng_idx):
     fun = partial(lax.gather, dimension_numbers=dnums, slice_sizes=slice_sizes)
     gfun = grad(lambda x, idx: np.sum(np.sin(fun(x, idx))))
     operand = rng(shape, dtype)
     ans = vmap(gfun, (None, axis))(operand, idxs)
-    expected = onp.stack([gfun(operand, idxs[(slice(None),) * axis + (i,)])
-                          for i in range(idxs.shape[axis])])
+    expected = onp.stack(
+        [gfun(operand, idxs[(slice(None),) * axis + (i,)]) for i in range(idxs.shape[axis])])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   @parameterized.named_parameters(
-      {"testcase_name": "_shape={}_op_axis={}_idxs_axis={}_idxs={}_dnums={}_slice_sizes={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), op_axis, idxs_axis, idxs,
-          dnums, slice_sizes),
-       "op_axis": op_axis, "idxs_axis": idxs_axis, "shape": shape, "dtype":
-       dtype, "idxs": idxs, "dnums": dnums, "slice_sizes": slice_sizes,
-       "rng": rng, "rng_idx": rng_idx}
-      for dtype in [onp.float32, onp.int32]
+      {
+          "testcase_name":
+              "_shape={}_op_axis={}_idxs_axis={}_idxs={}_dnums={}_slice_sizes={}".format(
+                  jtu.format_shape_dtype_string(shape, dtype), op_axis, idxs_axis, idxs, dnums,
+                  slice_sizes),
+          "op_axis": op_axis,
+          "idxs_axis": idxs_axis,
+          "shape": shape,
+          "dtype": dtype,
+          "idxs": idxs,
+          "dnums": dnums,
+          "slice_sizes": slice_sizes,
+          "rng": rng,
+          "rng_idx": rng_idx
+      } for dtype in [onp.float32, onp.int32]
       for op_axis, idxs_axis, shape, idxs, dnums, slice_sizes in [
           (0, 0, (2, 5), onp.array([[[0], [2]], [[1], [3]]]),
-           lax.GatherDimensionNumbers(
-             offset_dims=(), collapsed_slice_dims=(0,), start_index_map=(0,)),
-           (1,)),
+           lax.GatherDimensionNumbers(offset_dims=(), collapsed_slice_dims=(0,), start_index_map=(
+               0,)), (1,)),
           (1, 1, (10, 2), onp.array([[0, 0, 0], [0, 2, 1]]).T[..., None],
            lax.GatherDimensionNumbers(
-             offset_dims=(1,), collapsed_slice_dims=(), start_index_map=(0,)),
-           (2,)),
-          (0, 1, (2, 10, 5,), onp.array([[[0, 2, 1], [0, 3, 3]]]).T,
+               offset_dims=(1,), collapsed_slice_dims=(), start_index_map=(0,)), (2,)),
+          (0, 1, (
+              2,
+              10,
+              5,
+          ), onp.array([[[0, 2, 1], [0, 3, 3]]]).T,
            lax.GatherDimensionNumbers(
-             offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0,)),
-           (1, 3)),
-          (2, 0, (10, 5, 2), onp.array([[[0, 2], [1, 0]],
-                                        [[1, 0], [2, 0]]]),
-          lax.GatherDimensionNumbers(
-            offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1)),
-           (1, 3)),
-      ]
-      for rng_idx in [jtu.rand_int(max(shape))]
-      for rng in [jtu.rand_default()])
-  def testGatherBatchedBoth(self, op_axis, idxs_axis, shape, dtype, idxs, dnums,
-                            slice_sizes, rng, rng_idx):
+               offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0,)), (1, 3)),
+          (2, 0, (10, 5, 2), onp.array([[[0, 2], [1, 0]], [[1, 0], [2, 0]]]),
+           lax.GatherDimensionNumbers(
+               offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1)), (1, 3)),
+      ] for rng_idx in [jtu.rand_int(max(shape))] for rng in [jtu.rand_default()])
+  def testGatherBatchedBoth(self, op_axis, idxs_axis, shape, dtype, idxs, dnums, slice_sizes, rng,
+                            rng_idx):
     fun = partial(lax.gather, dimension_numbers=dnums, slice_sizes=slice_sizes)
     operand = rng(shape, dtype)
     assert operand.shape[op_axis] == idxs.shape[idxs_axis]
     ans = vmap(fun, (op_axis, idxs_axis))(operand, idxs)
-    expected = onp.stack([fun(operand[(slice(None),) * op_axis + (i,)],
-                              idxs[(slice(None),) * idxs_axis + (i,)])
-                          for i in range(idxs.shape[idxs_axis])])
+    expected = onp.stack([
+        fun(operand[(slice(None),) * op_axis + (i,)], idxs[(slice(None),) * idxs_axis + (i,)])
+        for i in range(idxs.shape[idxs_axis])
+    ])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @parameterized.named_parameters(
-      {"testcase_name": "_shape={}_op_axis={}_idxs_axis={}_idxs={}_dnums={}_slice_sizes={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), op_axis, idxs_axis, idxs,
-          dnums, slice_sizes),
-       "op_axis": op_axis, "idxs_axis": idxs_axis, "shape": shape, "dtype":
-       dtype, "idxs": idxs, "dnums": dnums, "slice_sizes": slice_sizes,
-       "rng": rng, "rng_idx": rng_idx}
-      for dtype in [onp.float32]
-      for op_axis, idxs_axis, shape, idxs, dnums, slice_sizes in [
-          (0, 0, (2, 5), onp.array([[[0], [2]], [[1], [3]]]),
-           lax.GatherDimensionNumbers(
-             offset_dims=(), collapsed_slice_dims=(0,), start_index_map=(0,)),
-           (1,)),
-          (1, 1, (10, 2), onp.array([[0, 0, 0], [0, 2, 1]]).T[..., None],
-           lax.GatherDimensionNumbers(
-             offset_dims=(1,), collapsed_slice_dims=(), start_index_map=(0,)),
-           (2,)),
-          (0, 1, (2, 10, 5,), onp.array([[[0, 2, 1], [0, 3, 3]]]).T,
-           lax.GatherDimensionNumbers(
-             offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0,)),
-           (1, 3)),
-          (2, 0, (10, 5, 2), onp.array([[[0, 2], [1, 0]],
-                                        [[1, 0], [2, 0]]]),
-          lax.GatherDimensionNumbers(
-            offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1)),
-           (1, 3)),
-      ]
-      for rng_idx in [jtu.rand_int(max(shape))]
-      for rng in [jtu.rand_default()])
-  def testGatherGradBatchedBoth(self, op_axis, idxs_axis, shape, dtype, idxs, dnums,
-                            slice_sizes, rng, rng_idx):
+  @parameterized.named_parameters({
+      "testcase_name": "_shape={}_op_axis={}_idxs_axis={}_idxs={}_dnums={}_slice_sizes={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), op_axis, idxs_axis, idxs, dnums,
+          slice_sizes),
+      "op_axis": op_axis,
+      "idxs_axis": idxs_axis,
+      "shape": shape,
+      "dtype": dtype,
+      "idxs": idxs,
+      "dnums": dnums,
+      "slice_sizes": slice_sizes,
+      "rng": rng,
+      "rng_idx": rng_idx
+  } for dtype in [onp.float32] for op_axis, idxs_axis, shape, idxs, dnums, slice_sizes in [
+      (0, 0, (2, 5), onp.array([[[0], [2]], [[1], [3]]]),
+       lax.GatherDimensionNumbers(offset_dims=(), collapsed_slice_dims=(0,), start_index_map=(0,)),
+       (1,)),
+      (1, 1, (10, 2), onp.array([[0, 0, 0], [0, 2, 1]]).T[..., None],
+       lax.GatherDimensionNumbers(offset_dims=(1,), collapsed_slice_dims=(), start_index_map=(0,)),
+       (2,)),
+      (0, 1, (
+          2,
+          10,
+          5,
+      ), onp.array([[[0, 2, 1], [0, 3, 3]]]).T,
+       lax.GatherDimensionNumbers(
+           offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0,)), (1, 3)),
+      (2, 0, (10, 5, 2), onp.array([[[0, 2], [1, 0]], [[1, 0], [2, 0]]]),
+       lax.GatherDimensionNumbers(
+           offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1)), (1, 3)),
+  ] for rng_idx in [jtu.rand_int(max(shape))] for rng in [jtu.rand_default()])
+  def testGatherGradBatchedBoth(self, op_axis, idxs_axis, shape, dtype, idxs, dnums, slice_sizes,
+                                rng, rng_idx):
     fun = partial(lax.gather, dimension_numbers=dnums, slice_sizes=slice_sizes)
     gfun = grad(lambda x, idx: np.sum(np.sin(fun(x, idx))))
     operand = rng(shape, dtype)
     assert operand.shape[op_axis] == idxs.shape[idxs_axis]
     ans = vmap(gfun, (op_axis, idxs_axis))(operand, idxs)
-    expected = onp.stack([gfun(operand[(slice(None),) * op_axis + (i,)],
-                              idxs[(slice(None),) * idxs_axis + (i,)])
-                          for i in range(idxs.shape[idxs_axis])])
+    expected = onp.stack([
+        gfun(operand[(slice(None),) * op_axis + (i,)], idxs[(slice(None),) * idxs_axis + (i,)])
+        for i in range(idxs.shape[idxs_axis])
+    ])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testNumpyIndexing1(self):
     a = np.arange(2 * 3 * 4).reshape((2, 3, 4))
-    ind = onp.array([[0, 1],
-                    [2, 0]])
+    ind = onp.array([[0, 1], [2, 0]])
+
     def f(a, ind):
       return a[:, ind]
+
     expected = onp.stack([f(a, ind[i, :]) for i in range(ind.shape[0])])
     ans = vmap(f, (None, 0))(a, ind)
     assert onp.all(ans == expected)
 
   def testNumpyIndexing2(self):
     a = np.arange(2 * 3 * 4).reshape((2, 3, 4))
+
     def f(a):
       inds = np.array([0, 2])
       return a[:, inds]
+
     ans = vmap(f)(a)
     expected = onp.stack([f(a[:, i, :]) for i in range(a.shape[1])], axis=1)
     assert onp.all(ans == expected)
@@ -908,6 +900,7 @@ class BatchingTest(jtu.JaxTestCase):
       scaled_mat = scale * psd_mat
       chol = np.linalg.cholesky(scaled_mat)
       return -0.5 * np.sum((np.einsum('ij,j->i', chol, vec))**2)
+
     vmapped_f = vmap(f)
     vmapped_f_grad = grad(lambda x: np.sum(vmapped_f(x)))
 
@@ -924,12 +917,12 @@ class BatchingTest(jtu.JaxTestCase):
       dR = R[:, np.newaxis, :] - R[np.newaxis, :, :]
       zero = np.zeros_like(dR)
       dR = dR - np.where(np.abs(dR) < 0.5, zero, 0.5 * np.sign(dR))
-      return np.sum(dR ** 2, axis=2)
+      return np.sum(dR**2, axis=2)
 
     @jit
     def f(R):
       dr = dist_sq(R)
-      return np.sum(R ** 2)
+      return np.sum(R**2)
 
     H = hessian(f)(R)  # don't crash on UnshapedArray
 
@@ -963,11 +956,11 @@ class BatchingTest(jtu.JaxTestCase):
   def testIssue1170(self):
     def f(index1, index2):
       return np.arange(36).reshape(6, 6)[index1, index2]
+
     g = jax.jit(jax.pmap(f))
     ans = g(index1=onp.asarray([1]), index2=onp.asarray([2]))
     expected = g(onp.asarray([1]), onp.asarray([2]))
     self.assertAllClose(ans, expected, check_dtypes=True)
-
 
 if __name__ == '__main__':
   absltest.main()
