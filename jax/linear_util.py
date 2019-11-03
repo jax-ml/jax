@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """
 Utilities for defining linear functions composed with transformations.
 
@@ -73,9 +72,9 @@ import weakref
 
 from .util import curry, partial
 
-
 def thunk(f):
   store = Store()
+
   def f_memoized():
     if not store:
       # TODO(dougalm): save/restore relevant environment state too
@@ -84,10 +83,12 @@ def thunk(f):
 
   return f_memoized
 
-class StoreException(Exception): pass
+class StoreException(Exception):
+  pass
 
+class EmptyStoreValue(object):
+  pass
 
-class EmptyStoreValue(object): pass
 _EMPTY_STORE_VALUE = EmptyStoreValue()
 
 class Store(object):
@@ -111,7 +112,6 @@ class Store(object):
 
   __bool__ = __nonzero__
 
-
 class WrappedFun(object):
   """Represents a function `f` to which `transforms` are to be applied.
 
@@ -134,8 +134,8 @@ class WrappedFun(object):
     return getattr(self.f, '__name__', '<unnamed wrapped function>')
 
   def wrap(self, gen, gen_args, out_store):
-    return WrappedFun(self.f, ((gen, gen_args),) + self.transforms,
-                      (out_store,) + self.stores, self.params)
+    return WrappedFun(self.f, ((gen, gen_args),) + self.transforms, (out_store,) + self.stores,
+                      self.params)
 
   def populate_stores(self, stores):
     for self_store, other_store in zip(self.stores, stores):
@@ -165,15 +165,17 @@ class WrappedFun(object):
     def transform_to_str(x):
       i, (gen, args) = x
       return "{}   : {}   {}".format(i, fun_name(gen), fun_name(args))
+
     transformation_stack = map(transform_to_str, enumerate(self.transforms))
-    return "Wrapped function:\n" + '\n'.join(transformation_stack) + '\nCore: ' + fun_name(self.f) + '\n'
+    return "Wrapped function:\n" + '\n'.join(transformation_stack) + '\nCore: ' + fun_name(
+        self.f) + '\n'
 
   def __hash__(self):
     return hash((self.f, self.transforms, self.params))
 
   def __eq__(self, other):
-    return (self.f == other.f and self.transforms == other.transforms and
-            self.params == other.params)
+    return (self.f == other.f and self.transforms == other.transforms
+            and self.params == other.params)
 
 @curry
 def transformation(gen, fun, *transformation_args):
@@ -195,9 +197,9 @@ def wrap_init(f, params={}):
   """Wraps function `f` as a `WrappedFun`, suitable for transformation."""
   return WrappedFun(f, (), (), tuple(sorted(params.items())))
 
-
 def cache(call):
   fun_caches = weakref.WeakKeyDictionary()
+
   def memoized_fun(fun, *args):
     cache = fun_caches.setdefault(fun.f, {})
     key = (fun.transforms, fun.params, args)
@@ -209,4 +211,5 @@ def cache(call):
       ans = call(fun, *args)
       cache[key] = (ans, fun.stores)
     return ans
+
   return memoized_fun

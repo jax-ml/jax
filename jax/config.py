@@ -14,7 +14,6 @@
 
 import sys
 
-
 class Config(object):
   def __init__(self):
     self.values = {}
@@ -67,10 +66,12 @@ class Config(object):
 
     self.use_absl = True
     self.absl_flags = absl_flags
-    absl_defs = { bool: absl_flags.DEFINE_bool,
-                  int:  absl_flags.DEFINE_integer,
-                  str:  absl_flags.DEFINE_string,
-                  'enum': absl_flags.DEFINE_enum }
+    absl_defs = {
+        bool: absl_flags.DEFINE_bool,
+        int: absl_flags.DEFINE_integer,
+        str: absl_flags.DEFINE_string,
+        'enum': absl_flags.DEFINE_enum
+    }
 
     for name, val in self.values.items():
       flag_type, meta_args, meta_kwargs = self.meta[name]
@@ -91,14 +92,12 @@ class Config(object):
       self.complete_absl_config(absl.flags)
       already_configured_with_absl = True
 
-
 class NameSpace(object):
   def __init__(self, getter):
     self._getter = getter
 
   def __getattr__(self, name):
     return self._getter(name)
-
 
 config = Config()
 flags = config

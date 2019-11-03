@@ -33,8 +33,8 @@ from jax.interpreters import batching
 from jax.util import partial, prod
 from jax.abstract_arrays import ShapedArray
 from jax.core import Primitive
-from jax.lax import (standard_primitive, standard_unop, binop_dtype_rule,
-                     _float, _complex, _input_dtype, _broadcasting_select)
+from jax.lax import (standard_primitive, standard_unop, binop_dtype_rule, _float, _complex,
+                     _input_dtype, _broadcasting_select)
 from jax.lib import xla_bridge as xb
 from jax.lib import xla_client
 from jax.lib import lapack
@@ -72,24 +72,28 @@ def svd(x, full_matrices=True, compute_uv=True):
   else:
     return s
 
-def triangular_solve(a, b, left_side=False, lower=False, transpose_a=False,
-                     conjugate_a=False, unit_diagonal=False):
+def triangular_solve(a, b, left_side=False, lower=False, transpose_a=False, conjugate_a=False,
+                     unit_diagonal=False):
   conjugate_a = conjugate_a and np.issubdtype(lax.dtype(a), np.complexfloating)
-  return triangular_solve_p.bind(
-      a, b, left_side=left_side, lower=lower, transpose_a=transpose_a,
-      conjugate_a=conjugate_a, unit_diagonal=unit_diagonal)
-
+  return triangular_solve_p.bind(a, b, left_side=left_side, lower=lower, transpose_a=transpose_a,
+                                 conjugate_a=conjugate_a, unit_diagonal=unit_diagonal)
 
 # utilities
 
-def _T(x): return np.swapaxes(x, -1, -2)
-def _H(x): return np.conj(_T(x))
-def symmetrize(x): return (x + _H(x)) / 2
+def _T(x):
+  return np.swapaxes(x, -1, -2)
+
+def _H(x):
+  return np.conj(_T(x))
+
+def symmetrize(x):
+  return (x + _H(x)) / 2
 
 def _unpack_tuple(f, n):
   def g(c, *args, **kwargs):
     t = f(c, *args, **kwargs)
     return (c.GetTupleElement(t, i) for i in range(n))
+
   return g
 
 # primitives
@@ -108,10 +112,10 @@ def cholesky_jvp_rule(primals, tangents):
     l = np.tril(X)
     return l / (np._constant_like(X, 1) + np.eye(X.shape[-1], dtype=X.dtype))
 
-  tmp = triangular_solve(L, sigma_dot, left_side=False, transpose_a=True,
-                         conjugate_a=True, lower=True)
-  L_dot = lax.batch_matmul(L, phi(triangular_solve(
-      L, tmp, left_side=True, transpose_a=False, lower=True)))
+  tmp = triangular_solve(L, sigma_dot, left_side=False, transpose_a=True, conjugate_a=True,
+                         lower=True)
+  L_dot = lax.batch_matmul(
+      L, phi(triangular_solve(L, tmp, left_side=True, transpose_a=False, lower=True)))
   return L, L_dot
 
 def cholesky_batching_rule(batched_args, batch_dims):
@@ -138,8 +142,7 @@ def cholesky_cpu_translation_rule(c, operand):
   dtype = shape.element_type().type
   if len(shape.dimensions()) == 2 and dtype in _cpu_lapack_types:
     result, info = lapack.potrf(c, operand, lower=True)
-    return c.Select(c.Eq(info, c.ConstantS32Scalar(0)), result,
-                    _nan_like(c, result))
+    return c.Select(c.Eq(info, c.ConstantS32Scalar(0)), result, _nan_like(c, result))
   else:
     # Fall back to the HLO implementation for batched Cholesky decomposition or
     # unsupported types.
@@ -155,7 +158,7 @@ def eig_impl(operand):
 
 def eig_translation_rule(c, operand):
   raise NotImplementedError(
-    "Nonsymmetric eigendecomposition is only implemented on the CPU backend")
+      "Nonsymmetric eigendecomposition is only implemented on the CPU backend")
 
 def eig_abstract_eval(operand):
   if isinstance(operand, ShapedArray):
@@ -180,12 +183,9 @@ def eig_cpu_translation_rule(c, operand):
   batch_dims = shape.dimensions()[:-2]
   w, vl, vr, info = _cpu_geev(c, operand)
   ok = c.Eq(info, c.ConstantS32Scalar(0))
-  w = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1,)), w,
-                           _nan_like(c, w))
-  vl = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), vl,
-                            _nan_like(c, vl))
-  vr = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), vr,
-                            _nan_like(c, vr))
+  w = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1,)), w, _nan_like(c, w))
+  vl = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), vl, _nan_like(c, vl))
+  vr = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), vr, _nan_like(c, vr))
   return c.Tuple(w, vl, vr)
 
 def eig_batching_rule(batched_args, batch_dims):
@@ -201,7 +201,6 @@ eig_p.def_abstract_eval(eig_abstract_eval)
 xla.translations[eig_p] = eig_translation_rule
 xla.backend_specific_translations['cpu'][eig_p] = eig_cpu_translation_rule
 batching.primitive_batchers[eig_p] = eig_batching_rule
-
 
 # Symmetric/Hermitian eigendecomposition
 
@@ -222,9 +221,8 @@ def eigh_translation_rule(c, operand, lower):
 def eigh_abstract_eval(operand, lower):
   if isinstance(operand, ShapedArray):
     if operand.ndim < 2 or operand.shape[-2] != operand.shape[-1]:
-      raise ValueError(
-        "Argument to symmetric eigendecomposition must have shape [..., n, n],"
-        "got shape {}".format(operand.shape))
+      raise ValueError("Argument to symmetric eigendecomposition must have shape [..., n, n],"
+                       "got shape {}".format(operand.shape))
 
     batch_dims = operand.shape[:-2]
     n = operand.shape[-1]
@@ -239,10 +237,8 @@ def _eigh_cpu_gpu_translation_rule(syevd_impl, c, operand, lower):
   batch_dims = shape.dimensions()[:-2]
   v, w, info = syevd_impl(c, operand, lower=lower)
   ok = c.Eq(info, c.ConstantS32Scalar(0))
-  v = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), v,
-                           _nan_like(c, v))
-  w = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1,)), w,
-                           _nan_like(c, w))
+  v = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), v, _nan_like(c, v))
+  w = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1,)), w, _nan_like(c, w))
   return c.Tuple(v, w)
 
 def eigh_jvp_rule(primals, tangents, lower):
@@ -287,18 +283,14 @@ batching.primitive_batchers[eigh_p] = eigh_batching_rule
 
 _cpu_syevd = lapack.syevd
 
-xla.backend_specific_translations['cpu'][eigh_p] = partial(
-  _eigh_cpu_gpu_translation_rule, _cpu_syevd)
+xla.backend_specific_translations['cpu'][eigh_p] = partial(_eigh_cpu_gpu_translation_rule,
+                                                           _cpu_syevd)
 
-xla.backend_specific_translations['gpu'][eigh_p] = partial(
-  _eigh_cpu_gpu_translation_rule, cusolver.syevd)
+xla.backend_specific_translations['gpu'][eigh_p] = partial(_eigh_cpu_gpu_translation_rule,
+                                                           cusolver.syevd)
 
-
-
-
-triangular_solve_dtype_rule = partial(
-    binop_dtype_rule, _input_dtype, (_float | _complex, _float | _complex),
-    'triangular_solve')
+triangular_solve_dtype_rule = partial(binop_dtype_rule, _input_dtype,
+                                      (_float | _complex, _float | _complex), 'triangular_solve')
 
 def triangular_solve_shape_rule(a, b, left_side=False, **unused_kwargs):
   if a.ndim < 2:
@@ -318,8 +310,8 @@ def triangular_solve_shape_rule(a, b, left_side=False, **unused_kwargs):
     raise TypeError(msg.format(a.shape, b.shape))
   return b.shape
 
-def triangular_solve_jvp_rule_a(
-    g_a, ans, a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
+def triangular_solve_jvp_rule_a(g_a, ans, a, b, left_side, lower, transpose_a, conjugate_a,
+                                unit_diagonal):
   m, n = b.shape[-2:]
   k = 1 if unit_diagonal else 0
   g_a = np.tril(g_a, k=-k) if lower else np.triu(g_a, k=k)
@@ -329,8 +321,7 @@ def triangular_solve_jvp_rule_a(
   dot = lax.dot if g_a.ndim == 2 else lax.batch_matmul
 
   def a_inverse(rhs):
-    return triangular_solve(a, rhs, left_side, lower, transpose_a, conjugate_a,
-                            unit_diagonal)
+    return triangular_solve(a, rhs, left_side, lower, transpose_a, conjugate_a, unit_diagonal)
 
   # triangular_solve is about the same cost as matrix multplication (~n^2 FLOPs
   # for matrix/vector inputs). Order these operations in whichever order is
@@ -348,66 +339,56 @@ def triangular_solve_jvp_rule_a(
     else:
       return dot(ans, a_inverse(g_a))  # X (∂A A^{-1})
 
-def triangular_solve_transpose_rule(
-    cotangent, a, b, left_side, lower, transpose_a, conjugate_a,
-    unit_diagonal):
+def triangular_solve_transpose_rule(cotangent, a, b, left_side, lower, transpose_a, conjugate_a,
+                                    unit_diagonal):
   # Triangular solve is nonlinear in its first argument and linear in its second
   # argument, analogous to `div` but swapped.
   assert a is not ad.undefined_primal and b is ad.undefined_primal
   if cotangent is ad_util.zero:
     cotangent_b = ad_util.zero
   else:
-    cotangent_b = triangular_solve(a, cotangent, left_side, lower,
-                                   not transpose_a, conjugate_a, unit_diagonal)
+    cotangent_b = triangular_solve(a, cotangent, left_side, lower, not transpose_a, conjugate_a,
+                                   unit_diagonal)
   return [None, cotangent_b]
 
-
-def triangular_solve_batching_rule(batched_args, batch_dims, left_side,
-                                   lower, transpose_a, conjugate_a,
-                                   unit_diagonal):
+def triangular_solve_batching_rule(batched_args, batch_dims, left_side, lower, transpose_a,
+                                   conjugate_a, unit_diagonal):
   x, y = batched_args
   bx, by = batch_dims
-  size = next(t.shape[i] for t, i in zip(batched_args, batch_dims)
-              if i is not None)
+  size = next(t.shape[i] for t, i in zip(batched_args, batch_dims) if i is not None)
   x = batching.bdim_at_front(x, bx, size)
   y = batching.bdim_at_front(y, by, size)
-  return triangular_solve(x, y, left_side=left_side, lower=lower,
-                          transpose_a=transpose_a, conjugate_a=conjugate_a,
-                          unit_diagonal=unit_diagonal), 0
+  return triangular_solve(x, y, left_side=left_side, lower=lower, transpose_a=transpose_a,
+                          conjugate_a=conjugate_a, unit_diagonal=unit_diagonal), 0
 
-triangular_solve_p = standard_primitive(
-    triangular_solve_shape_rule, triangular_solve_dtype_rule,
-    'triangular_solve')
-ad.defjvp2(triangular_solve_p,
-           triangular_solve_jvp_rule_a,
+triangular_solve_p = standard_primitive(triangular_solve_shape_rule, triangular_solve_dtype_rule,
+                                        'triangular_solve')
+ad.defjvp2(triangular_solve_p, triangular_solve_jvp_rule_a,
            lambda g_b, _, a, b, **kws: triangular_solve(a, g_b, **kws))
 ad.primitive_transposes[triangular_solve_p] = triangular_solve_transpose_rule
 batching.primitive_batchers[triangular_solve_p] = triangular_solve_batching_rule
 
-
-def _triangular_solve_cpu_translation_rule(
-    c, a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
+def _triangular_solve_cpu_translation_rule(c, a, b, left_side, lower, transpose_a, conjugate_a,
+                                           unit_diagonal):
   shape = c.GetShape(a)
   dtype = shape.element_type().type
   if len(shape.dimensions()) == 2 and dtype in _cpu_lapack_types:
     if conjugate_a and not transpose_a:
       a = c.Conj(a)
       conjugate_a = False
-    return lapack.jax_trsm(
-      c, c.Constant(onp.array(1, dtype=dtype)), a, b, left_side, lower,
-                    transpose_a, conjugate_a, unit_diagonal)
+    return lapack.jax_trsm(c, c.Constant(onp.array(1, dtype=dtype)), a, b, left_side, lower,
+                           transpose_a, conjugate_a, unit_diagonal)
   else:
     # Fall back to the HLO implementation for batched triangular_solve or
     # unsupported types.
     # TODO(phawkins): support BLAS primitives in batched mode.
-    return c.TriangularSolve(a, b, left_side, lower, transpose_a, conjugate_a,
-                             unit_diagonal)
+    return c.TriangularSolve(a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal)
 
 xla.backend_specific_translations['cpu'][triangular_solve_p] = \
   _triangular_solve_cpu_translation_rule
 
-def _triangular_solve_gpu_translation_rule(
-    c, a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
+def _triangular_solve_gpu_translation_rule(c, a, b, left_side, lower, transpose_a, conjugate_a,
+                                           unit_diagonal):
   shape = c.GetShape(a)
   dtype = shape.element_type().type
   dims = shape.dimensions()
@@ -417,12 +398,10 @@ def _triangular_solve_gpu_translation_rule(
     if conjugate_a and not transpose_a:
       a = c.Conj(a)
       conjugate_a = False
-    return cusolver.trsm(
-      c, a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal)
+    return cusolver.trsm(c, a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal)
   else:
     # Use the XLA implementation for unbatched triangular_solve.
-    return c.TriangularSolve(a, b, left_side, lower, transpose_a, conjugate_a,
-                             unit_diagonal)
+    return c.TriangularSolve(a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal)
 
 xla.backend_specific_translations['gpu'][triangular_solve_p] = \
     _triangular_solve_gpu_translation_rule
@@ -436,6 +415,7 @@ xla.backend_specific_translations['gpu'][triangular_solve_p] = \
 def _lu_unblocked(a):
   """Unblocked LU decomposition, as a rolled loop."""
   m, n = a.shape
+
   def body(k, state):
     pivot, perm, a = state
     m_idx = np.arange(m)
@@ -455,12 +435,11 @@ def _lu_unblocked(a):
 
     # a[k+1:, k] /= a[k, k], adapted for loop-invariant shapes
     x = a[k, k]
-    a = ops.index_update(a, ops.index[:, k],
-                         np.where(m_idx > k, a[:, k] / x, a[:, k]))
+    a = ops.index_update(a, ops.index[:, k], np.where(m_idx > k, a[:, k] / x, a[:, k]))
 
     # a[k+1:, k+1:] -= np.outer(a[k+1:, k], a[k, k+1:])
-    a = a - np.where((m_idx[:, None] > k) & (n_idx > k),
-                     np.outer(a[:, k], a[k, :]), np.array(0, dtype=a.dtype))
+    a = a - np.where(
+        (m_idx[:, None] > k) & (n_idx > k), np.outer(a[:, k], a[k, :]), np.array(0, dtype=a.dtype))
     return pivot, perm, a
 
   pivot = np.zeros((min(m, n),), dtype=np.int32)
@@ -471,7 +450,6 @@ def _lu_unblocked(a):
     return (pivot, perm, a)
   return lax.fori_loop(0, min(m, n), body, (pivot, perm, a))
 
-
 def _lu_blocked(a, block_size=32):
   """Blocked LU decomposition, as an unrolled loop."""
   m, n = a.shape
@@ -479,22 +457,21 @@ def _lu_blocked(a, block_size=32):
   pivot = np.zeros((r,), dtype=np.int32)
   for k in range(0, r, block_size):
     b = min(r - k, block_size)
-    block_pivot, perm, lu_block = _lu_unblocked(a[k:, k:k+b])
-    a = ops.index_update(a, ops.index[k:, k:k+b], lu_block)
+    block_pivot, perm, lu_block = _lu_unblocked(a[k:, k:k + b])
+    a = ops.index_update(a, ops.index[k:, k:k + b], lu_block)
 
     a = ops.index_update(a, ops.index[k:, :k], a[perm + k, :k])
-    pivot = ops.index_update(pivot, ops.index[k:k+b], block_pivot + k)
+    pivot = ops.index_update(pivot, ops.index[k:k + b], block_pivot + k)
 
     if k + b < n:
-      a = ops.index_update(a, ops.index[k:, k+b:], a[perm + k, k+b:])
+      a = ops.index_update(a, ops.index[k:, k + b:], a[perm + k, k + b:])
       a = ops.index_update(
-        a, ops.index[k:k+b, k+b:],
-        triangular_solve(a[k:k+b, k:k+b], a[k:k+b, k+b:],
-                         left_side=True, lower=True, unit_diagonal=True))
+          a, ops.index[k:k + b, k + b:],
+          triangular_solve(a[k:k + b, k:k + b], a[k:k + b, k + b:], left_side=True, lower=True,
+                           unit_diagonal=True))
       a = ops.index_add(
-        a, ops.index[k+b:, k+b:],
-        -lax.dot(a[k+b:, k:k+b], a[k:k+b, k+b:],
-                 precision=lax.Precision.HIGHEST))
+          a, ops.index[k + b:, k + b:],
+          -lax.dot(a[k + b:, k:k + b], a[k:k + b, k + b:], precision=lax.Precision.HIGHEST))
   return pivot, a
 
 def _lu_python(x):
@@ -558,22 +535,18 @@ def _lu_jvp_rule(primals, tangents):
   l = lax.pad(np.tril(lu[..., :, :k], -1), zero, l_padding)
   l = l + np.eye(m, m, dtype=dtype)
 
-  u_eye = lax.pad(np.eye(n - k, n - k, dtype=dtype), zero,
-                  ((k, 0, 0), (k, 0, 0)))
+  u_eye = lax.pad(np.eye(n - k, n - k, dtype=dtype), zero, ((k, 0, 0), (k, 0, 0)))
   u_padding = [(0, 0, 0)] * ndims
   u_padding[-2] = (0, n - k, 0)
   u = lax.pad(np.triu(lu[..., :k, :]), zero, u_padding) + u_eye
 
-  la = triangular_solve(l, x, left_side=True, transpose_a=False, lower=True,
-                        unit_diagonal=True)
-  lau = triangular_solve(u, la, left_side=False, transpose_a=False,
-                         lower=False)
+  la = triangular_solve(l, x, left_side=True, transpose_a=False, lower=True, unit_diagonal=True)
+  lau = triangular_solve(u, la, left_side=False, transpose_a=False, lower=False)
 
   l_dot = np.matmul(l, np.tril(lau, -1))
   u_dot = np.matmul(np.triu(lau), u)
   lu_dot = l_dot + u_dot
   return (lu, pivots), (lu_dot, ad_util.zero)
-
 
 def _lu_batching_rule(batched_args, batch_dims):
   x, = batched_args
@@ -588,10 +561,8 @@ def _lu_cpu_gpu_translation_rule(getrf_impl, c, operand):
   # Subtract 1 from the pivot to get 0-based indices.
   pivot = c.Sub(pivot, c.ConstantS32Scalar(1))
   ok = c.Ge(info, c.ConstantS32Scalar(0))
-  lu = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), lu,
-                            _nan_like(c, lu))
+  lu = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), lu, _nan_like(c, lu))
   return c.Tuple(lu, pivot)
-
 
 lu_p = Primitive('lu')
 lu_p.multiple_results = True
@@ -601,12 +572,10 @@ xla.translations[lu_p] = xla.lower_fun(_lu_python, instantiate=True)
 ad.primitive_jvps[lu_p] = _lu_jvp_rule
 batching.primitive_batchers[lu_p] = _lu_batching_rule
 
-xla.backend_specific_translations['cpu'][lu_p] = partial(
-  _lu_cpu_gpu_translation_rule, lapack.getrf)
+xla.backend_specific_translations['cpu'][lu_p] = partial(_lu_cpu_gpu_translation_rule, lapack.getrf)
 
-xla.backend_specific_translations['gpu'][lu_p] = partial(
-  _lu_cpu_gpu_translation_rule, cusolver.getrf)
-
+xla.backend_specific_translations['gpu'][lu_p] = partial(_lu_cpu_gpu_translation_rule,
+                                                         cusolver.getrf)
 
 # Define this outside lu_pivots_to_permutation to ensure fori_loop cache hits
 def _lu_pivots_body_fn(i, permutation_and_swaps):
@@ -635,12 +604,10 @@ def lu_pivots_to_permutation(swaps, m):
   batch_dims = swaps.shape[:-1]
   k = swaps.shape[-1]
 
-  permutation = lax.broadcasted_iota(np.int32, batch_dims + (m,),
-                                     len(batch_dims))
-  result, _ = lax.fori_loop(onp.array(0, onp.int32), onp.array(k, onp.int32),
-                            _lu_pivots_body_fn, (permutation, swaps))
+  permutation = lax.broadcasted_iota(np.int32, batch_dims + (m,), len(batch_dims))
+  result, _ = lax.fori_loop(
+      onp.array(0, onp.int32), onp.array(k, onp.int32), _lu_pivots_body_fn, (permutation, swaps))
   return result
-
 
 # QR decomposition
 
@@ -687,8 +654,7 @@ def qr_batching_rule(batched_args, batch_dims, full_matrices):
   x = batching.moveaxis(x, bd, 0)
   return qr_p.bind(x, full_matrices=full_matrices), (0, 0)
 
-def _qr_cpu_gpu_translation_rule(geqrf_impl, orgqr_impl, c, operand,
-                                 full_matrices):
+def _qr_cpu_gpu_translation_rule(geqrf_impl, orgqr_impl, c, operand, full_matrices):
   shape = c.GetShape(operand)
   dims = shape.dimensions()
   m, n = dims[-2:]
@@ -703,16 +669,12 @@ def _qr_cpu_gpu_translation_rule(geqrf_impl, orgqr_impl, c, operand,
   else:
     padding_config = [(0, 0, 0)] * len(dims)
     padding_config[-1] = (0, m - n, 0)
-    q = c.Pad(r, c.Constant(onp.array(0, dtype=shape.element_type())),
-              padding_config)
+    q = c.Pad(r, c.Constant(onp.array(0, dtype=shape.element_type())), padding_config)
     q, info_orgqr = orgqr_impl(c, q, tau)
 
-  ok = c.And(c.Eq(info_geqrf, c.ConstantS32Scalar(0)),
-             c.Eq(info_orgqr, c.ConstantS32Scalar(0)))
-  q = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), q,
-                           _nan_like(c, q))
-  r = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), r,
-                           _nan_like(c, r))
+  ok = c.And(c.Eq(info_geqrf, c.ConstantS32Scalar(0)), c.Eq(info_orgqr, c.ConstantS32Scalar(0)))
+  q = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), q, _nan_like(c, q))
+  r = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), r, _nan_like(c, r))
   return c.Tuple(q, r)
 
 qr_p = Primitive('qr')
@@ -726,26 +688,23 @@ batching.primitive_batchers[qr_p] = qr_batching_rule
 # TODO(phawkins): make unconditional after the minimum Jaxlib version is
 # increased past 0.1.28.
 if hasattr(lapack, "geqrf"):
-  xla.backend_specific_translations['cpu'][qr_p] = partial(
-    _qr_cpu_gpu_translation_rule, lapack.geqrf, lapack.orgqr)
+  xla.backend_specific_translations['cpu'][qr_p] = partial(_qr_cpu_gpu_translation_rule,
+                                                           lapack.geqrf, lapack.orgqr)
 
 # TODO(phawkins): make unconditional after the minimum Jaxlib version is
 # increased past 0.1.28.
 if hasattr(cusolver, "geqrf"):
-  xla.backend_specific_translations['gpu'][qr_p] = partial(
-    _qr_cpu_gpu_translation_rule, cusolver.geqrf, cusolver.orgqr)
-
+  xla.backend_specific_translations['gpu'][qr_p] = partial(_qr_cpu_gpu_translation_rule,
+                                                           cusolver.geqrf, cusolver.orgqr)
 
 # Singular value decomposition
 
 def svd_impl(operand, full_matrices, compute_uv):
-  s, u, vt = xla.apply_primitive(svd_p, operand, full_matrices=full_matrices,
-                                 compute_uv=compute_uv)
+  s, u, vt = xla.apply_primitive(svd_p, operand, full_matrices=full_matrices, compute_uv=compute_uv)
   return s, u, vt
 
 def svd_translation_rule(c, operand, full_matrices, compute_uv):
-  raise NotImplementedError(
-    "Singular value decomposition is only implemented on the CPU backend")
+  raise NotImplementedError("Singular value decomposition is only implemented on the CPU backend")
 
 def svd_abstract_eval(operand, full_matrices, compute_uv):
   if isinstance(operand, ShapedArray):
@@ -769,8 +728,7 @@ def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
 
   if full_matrices:
     # TODO: implement full matrices case, documented here: https://people.maths.ox.ac.uk/gilesm/files/NA-08-01.pdf
-    raise NotImplementedError(
-      "Singular value decomposition JVP not implemented for full matrices")
+    raise NotImplementedError("Singular value decomposition JVP not implemented for full matrices")
 
   k = s.shape[-1]
   Ut, V = _H(U), _H(Vt)
@@ -794,15 +752,11 @@ def _svd_cpu_gpu_translation_rule(gesvd_impl, c, operand, full_matrices, compute
 
   shape = c.GetShape(operand)
   batch_dims = shape.dimensions()[:-2]
-  s, u, vt, info = gesvd_impl(c, operand, full_matrices=full_matrices,
-                              compute_uv=compute_uv)
+  s, u, vt, info = gesvd_impl(c, operand, full_matrices=full_matrices, compute_uv=compute_uv)
   ok = c.Eq(info, c.ConstantS32Scalar(0))
-  s = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1,)), s,
-                           _nan_like(c, s))
-  u = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), u,
-                           _nan_like(c, u))
-  vt = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), vt,
-                            _nan_like(c, vt))
+  s = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1,)), s, _nan_like(c, s))
+  u = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), u, _nan_like(c, u))
+  vt = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), vt, _nan_like(c, vt))
   return c.Tuple(s, u, vt)
 
 def svd_batching_rule(batched_args, batch_dims, full_matrices, compute_uv):
@@ -820,8 +774,8 @@ ad.primitive_jvps[svd_p] = svd_jvp_rule
 batching.primitive_batchers[svd_p] = svd_batching_rule
 xla.translations[svd_p] = svd_translation_rule
 
-xla.backend_specific_translations['cpu'][svd_p] = partial(
-  _svd_cpu_gpu_translation_rule, lapack.gesdd)
+xla.backend_specific_translations['cpu'][svd_p] = partial(_svd_cpu_gpu_translation_rule,
+                                                          lapack.gesdd)
 
-xla.backend_specific_translations['gpu'][svd_p] = partial(
-  _svd_cpu_gpu_translation_rule, cusolver.gesvd)
+xla.backend_specific_translations['gpu'][svd_p] = partial(_svd_cpu_gpu_translation_rule,
+                                                          cusolver.gesvd)

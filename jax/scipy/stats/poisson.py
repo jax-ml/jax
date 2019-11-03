@@ -22,7 +22,6 @@ from ... import lax
 from ...numpy import lax_numpy as np
 from ..special import xlogy, gammaln
 
-
 @np._wraps(osp_stats.poisson.logpmf, update_doc=False)
 def logpmf(k, mu, loc=0):
   k, mu, loc = np._promote_args_like(osp_stats.poisson.logpmf, k, mu, loc)

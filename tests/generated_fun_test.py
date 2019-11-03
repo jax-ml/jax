@@ -86,6 +86,7 @@ def gen_function(size, in_types):
 def eval_fun(fun, *args):
   def read(v):
     return env[v]
+
   def write(v, x):
     env[v] = x
 
@@ -102,12 +103,13 @@ def maybe_jit(f, num_args):
   return jit(f, static_argnums=static_argnums)
 
 counter = it.count()
+
 def fresh_var(ty):
   return Var(next(counter), ty)
 
 def gen_array_type(size):
   # TODO(dougalm): randomize this
-  return ArrayType((2,2), np.float32)
+  return ArrayType((2, 2), np.float32)
 
 def gen_array_val(array_type):
   # TODO(dougalm): different sizes and dtypes
@@ -122,8 +124,8 @@ def gen_trig(size, t):
 
 def gen_binop(size, t1, t2):
   unifier, t_out = gen_broadcasting_unifier(t1, t2)
-  binop = choice([lambda x, y: x + y,
-                  lambda x, y: x * y])
+  binop = choice([lambda x, y: x + y, lambda x, y: x * y])
+
   def unify_and_binop(x, y):
     x_, y_ = unifier(x, y)
     return binop(x_, y_)
@@ -135,21 +137,17 @@ def thin(xs, p):
 
 def gen_broadcasting_unifier(t1, t2):
   assert t1.shape == t2.shape
-  return lambda x, y: (x,y), t1
+  return lambda x, y: (x, y), t1
   # TODO: generate slices and paddings to match shapes
 
 def wrap_singleton(f):
   return lambda *xs: (f(*xs),)
 
-unary_primitive_generators = [
-  (3, gen_trig),
-  (1, gen_neg) ]
+unary_primitive_generators = [(3, gen_trig), (1, gen_neg)]
 
-binary_primitive_generators = [
-  (1, gen_binop)]
+binary_primitive_generators = [(1, gen_binop)]
 
-primitive_generators = { 1: unary_primitive_generators,
-                         2: binary_primitive_generators }
+primitive_generators = {1: unary_primitive_generators, 2: binary_primitive_generators}
 
 def gen_nonneg_int(size):
   return npr.randint(size)
@@ -190,9 +188,9 @@ def inner_prod(xs, ys):
 
 def jvp_fd(fun, args, tangents):
   EPS = 1e-4
+
   def eval_eps(eps):
-    return fun(*[x if t is None else x + eps * t
-                 for x, t in zip(args, tangents)])
+    return fun(*[x if t is None else x + eps * t for x, t in zip(args, tangents)])
 
   ys_neg = eval_eps(-EPS)
   ys_pos = eval_eps(EPS)
@@ -213,6 +211,7 @@ def check_close(x, y, tol=1e-3):
 
 def partial_argnums(f, args, dyn_argnums):
   fixed_args = [None if i in dyn_argnums else arg for i, arg in enumerate(args)]
+
   def f_(*dyn_args):
     args = fixed_args[:]
     for i, arg in zip(dyn_argnums, dyn_args):
@@ -222,10 +221,8 @@ def partial_argnums(f, args, dyn_argnums):
   dyn_args = [args[i] for i in dyn_argnums]
   return f_, dyn_args
 
-
 class GeneratedFunTest(jtu.JaxTestCase):
   """Tests of transformations on randomly generated functions."""
-
   @parameterized.named_parameters(jtu.cases_from_gens(gen_fun_and_types))
   def testJitIsIdentity(self, fun):
     vals = gen_vals(fun.in_vars)
@@ -268,7 +265,6 @@ class GeneratedFunTest(jtu.JaxTestCase):
     inner_prod_fd = inner_prod(out_tangents, in_cotangents)
     inner_prod_ad = inner_prod(in_tangents, out_cotangents)
     check_close(inner_prod_fd, inner_prod_ad)
-
 
 if __name__ == "__main__":
   absltest.main()

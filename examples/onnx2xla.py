@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """An ONNX to XLA compiler by JAX-tracing a Numpy-backed ONNX interpreter."""
 from __future__ import absolute_import
 from __future__ import division
@@ -31,10 +30,8 @@ import jax.numpy as np
 from jax import jit, grad
 from jax import lax
 
-
 def _asarray(proto):
   return numpy_helper.to_array(proto).reshape(tuple(proto.dims))
-
 
 attr_types = dict(onnx_pb2.AttributeProto.AttributeType.items())
 attribute_handlers = {
@@ -48,7 +45,6 @@ attribute_handlers = {
     attr_types['TENSORS']: lambda a: [_asarray(x) for x in a.tensors],
 }
 
-
 def onnx_maxpool(x, kernel_shape, pads=None, strides=None):
   """Numpy-backed implementation of ONNX MaxPool op."""
   prefix = (1,) * (x.ndim - len(kernel_shape))
@@ -57,9 +53,8 @@ def onnx_maxpool(x, kernel_shape, pads=None, strides=None):
   strides = (prefix + tuple(strides)) if strides else [1] * len(kernel_shape)
   return [lax.reduce_window(x, -np.inf, lax.max, dims, strides, 'VALID')]
 
-
-def onnx_conv(x, w, b=0, group=1, kernel_shape=None, pads=None, strides=None,
-              dilations=None, auto_pad=None):
+def onnx_conv(x, w, b=0, group=1, kernel_shape=None, pads=None, strides=None, dilations=None,
+              auto_pad=None):
   """Numpy-backed implementation of ONNX Conv op."""
   assert group == 1
   kernel_shape = kernel_shape or w.shape
@@ -71,9 +66,7 @@ def onnx_conv(x, w, b=0, group=1, kernel_shape=None, pads=None, strides=None,
     pads = pads or [0] * (w.ndim - 2)
   lhs_dilation = [1] * (w.ndim - 2)
   rhs_dilation = dilations or [1] * (w.ndim - 2)
-  return [lax.conv_with_general_padding(x, w, strides, pads,
-                                        lhs_dilation, rhs_dilation) + b]
-
+  return [lax.conv_with_general_padding(x, w, strides, pads, lhs_dilation, rhs_dilation) + b]
 
 def onnx_add(a, b, axis=None, broadcast=True):
   """Numpy-backed implementation of ONNX Add op."""
@@ -85,7 +78,6 @@ def onnx_add(a, b, axis=None, broadcast=True):
     b = np.reshape(b, b_shape)
   return [a + b]
 
-
 onnx_ops = {
     'Add': onnx_add,
     'Constant': lambda value: [value],
@@ -95,7 +87,6 @@ onnx_ops = {
     'Relu': lambda x: [np.maximum(x, 0)],
     'Reshape': lambda x, shape: [np.reshape(x, shape)],
 }
-
 
 def interpret_onnx(graph, *args):
   vals = dict({n.name: a for n, a in zip(graph.input, args)},
@@ -107,7 +98,6 @@ def interpret_onnx(graph, *args):
     for name, output in zip(node.output, outputs):
       vals[name] = output
   return [vals[n.name] for n in graph.output]
-
 
 if __name__ == "__main__":
   # It seems that there are several ONNX proto versions (you had one job!) but
@@ -136,4 +126,3 @@ if __name__ == "__main__":
   fun = lambda inputs: np.sum(compiled_predict(inputs))
   print("a derivative with respect to inputs:")
   print(grad(fun)(np.ones((1, 1, 28, 28)))[..., :3, :3])
-

@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """Shared neural network activations and other functions."""
 
 from __future__ import absolute_import
@@ -27,12 +26,23 @@ from jax import jarrett
 
 # activations
 
-def relu(x): return np.maximum(x, 0)
-def softplus(x): return np.logaddexp(x, 0)
-def soft_sign(x): return x / (np.abs(x) + 1)
-def sigmoid(x): return expit(x)
-def swish(x): return x * sigmoid(x)
-def log_sigmoid(x): return -softplus(-x)
+def relu(x):
+  return np.maximum(x, 0)
+
+def softplus(x):
+  return np.logaddexp(x, 0)
+
+def soft_sign(x):
+  return x / (np.abs(x) + 1)
+
+def sigmoid(x):
+  return expit(x)
+
+def swish(x):
+  return x * sigmoid(x)
+
+def log_sigmoid(x):
+  return -softplus(-x)
 
 def elu(x, alpha=1.0):
   safe_x = np.where(x > 0, 0., x)

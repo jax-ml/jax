@@ -22,7 +22,6 @@ from jax.interpreters import xla
 from ..interpreters import ad
 from ..interpreters import batching
 
-
 def fft(x, fft_type, fft_lengths=None):
   if fft_lengths is None:
     fft_lengths = x.shape

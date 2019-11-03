@@ -41,7 +41,6 @@ FLAGS = config.FLAGS
 # makes the test name formatting unwieldy.
 # pylint: disable=bad-continuation
 
-
 float_dtypes = [onp.float32, onp.float64]
 int_dtypes = [onp.int32, onp.int64]
 bool_types = [onp.bool_]
@@ -49,7 +48,6 @@ default_dtypes = float_dtypes + int_dtypes
 all_dtypes = float_dtypes + int_dtypes + bool_types
 
 IndexSpec = collections.namedtuple("IndexTest", ["shape", "indexer"])
-
 
 def check_grads(f, args, order, atol=None, rtol=None, eps=None):
   # TODO(mattjj,dougalm): add higher-order check
@@ -59,7 +57,6 @@ def check_grads(f, args, order, atol=None, rtol=None, eps=None):
   eps = eps or default_tol
   jtu.check_jvp(f, partial(api.jvp, f), args, atol, rtol, eps)
   jtu.check_vjp(f, partial(api.vjp, f), args, atol, rtol, eps)
-
 
 STATIC_INDEXING_TESTS = [
     ("OneIntIndex", [
@@ -85,15 +82,17 @@ STATIC_INDEXING_TESTS = [
         IndexSpec(shape=(10, 8), indexer=slice(None, 3)),
         IndexSpec(shape=(10, 8), indexer=slice(-3, None)),
     ]),
-    ("OneSliceIndexNegativeStride", [
-        IndexSpec(shape=(10,), indexer=slice(3, 1, -1)),
-        IndexSpec(shape=(10,), indexer=slice(1, 8, -1)),  # empty result
-        IndexSpec(shape=(10,), indexer=slice(None, 1, -2)),
-        IndexSpec(shape=(10,), indexer=slice(None, None, -1)),
-        IndexSpec(shape=(10, 8), indexer=slice(3, 1, -1)),
-        IndexSpec(shape=(10, 8), indexer=slice(0, 8, -1)),  # empty result
-        IndexSpec(shape=(10, 8), indexer=slice(None, None, -1)),
-    ]),
+    (
+        "OneSliceIndexNegativeStride",
+        [
+            IndexSpec(shape=(10,), indexer=slice(3, 1, -1)),
+            IndexSpec(shape=(10,), indexer=slice(1, 8, -1)),  # empty result
+            IndexSpec(shape=(10,), indexer=slice(None, 1, -2)),
+            IndexSpec(shape=(10,), indexer=slice(None, None, -1)),
+            IndexSpec(shape=(10, 8), indexer=slice(3, 1, -1)),
+            IndexSpec(shape=(10, 8), indexer=slice(0, 8, -1)),  # empty result
+            IndexSpec(shape=(10, 8), indexer=slice(None, None, -1)),
+        ]),
     ("OneSliceIndexNonUnitStride", [
         IndexSpec(shape=(10,), indexer=slice(0, 8, 2)),
         IndexSpec(shape=(10,), indexer=slice(0, 8, 3)),
@@ -108,8 +107,7 @@ STATIC_INDEXING_TESTS = [
     ("TwoSliceIndices", [
         IndexSpec(shape=(10, 8), indexer=(slice(1, 3), slice(0, 2))),
         IndexSpec(shape=(10, 8), indexer=(slice(1, None), slice(None, 2))),
-        IndexSpec(
-            shape=(10, 8), indexer=(slice(None, None, -1), slice(None, 2))),
+        IndexSpec(shape=(10, 8), indexer=(slice(None, None, -1), slice(None, 2))),
         IndexSpec(shape=(10, 8, 3), indexer=(slice(1, 3), slice(0, 2))),
         IndexSpec(shape=(10, 8, 3), indexer=(slice(1, 3), slice(0, None))),
         IndexSpec(shape=(10, 8, 3), indexer=(slice(1, None), slice(0, 2))),
@@ -217,198 +215,164 @@ STATIC_INDEXING_GRAD_TESTS = [
 ]
 
 ADVANCED_INDEXING_TESTS = [
-    ("One1DIntArrayIndex",
-     [IndexSpec(shape=(3,), indexer=onp.array([0, 1])),
-     IndexSpec(shape=(3, 3), indexer=onp.array([1, 2, 1])),
-     IndexSpec(shape=(3, 4, 5), indexer=onp.array([0, 2, 0, 1])),
-     IndexSpec(shape=(3,), indexer=onp.array([-1, 1])),
-     IndexSpec(shape=(3,), indexer=onp.array([-2, -1])),
-     ]),
-    ("One2DIntArrayIndex",
-     [IndexSpec(shape=(3,), indexer=onp.array([[0, 0]])),
-     IndexSpec(shape=(3, 3), indexer=onp.array([[1, 2, 1],
-                                                [0, 1, -1]])),
-     IndexSpec(shape=(3, 4, 5), indexer=onp.array([[0, 2, 0, 1],
-                                                   [-1, -2, 1, 0]])),
-     ]),
-    ("Two1DIntArrayIndicesNoBroadcasting",
-     [IndexSpec(shape=(3, 3), indexer=[onp.array([0, 1]),
-                                       onp.array([1, 2])]),
-     IndexSpec(shape=(3, 4, 5), indexer=[onp.array([0, 2, 0, 1]),
-                                         onp.array([-1, 0, -1, 2])]),
-     ]),
-    ("Two1DIntArrayIndicesWithBroadcasting",
-     [IndexSpec(shape=(3, 3), indexer=[onp.array([[0, 1]]),
-                                       onp.array([1, 2])]),
-     IndexSpec(shape=(3, 4, 5), indexer=[onp.array([[0, 2, 0, 1]]),
-                                         onp.array([-1, 0, -1, 2])]),
-     ]),
-    ("ListOfPythonInts",
-     [IndexSpec(shape=(3,), indexer=[0, 1, 0]),
-     IndexSpec(shape=(3, 4, 5), indexer=[0, -1]),
-     ]),
-    ("ListOfListsOfPythonInts",
-     [IndexSpec(shape=(3, 4, 5), indexer=[[0, 1]]),
-     IndexSpec(shape=(3, 4, 5), indexer=[[[0], [-1]], [[2, 3, 0, 3]]]),
-     ]),
-    ("TupleOfListsOfPythonInts",
-     [IndexSpec(shape=(3, 4, 5), indexer=([0, 1])),
-     IndexSpec(shape=(3, 4, 5), indexer=([[0], [-1]], [[2, 3, 0, 3]])),
-     ]),
-    ("ListOfPythonIntsAndIntArrays",
-     [IndexSpec(shape=(3, 4, 5), indexer=[0, onp.array([0, 1])]),
-     IndexSpec(shape=(3, 4, 5), indexer=[0, 1,
-                                         onp.array([[2, 3, 0, 3]])]),
-     ]),
-    ("ListOfListsOfPythonIntsAndIntArrays",
-     [IndexSpec(shape=(3, 4, 5), indexer=[[0, 1], onp.array([0])]),
-     IndexSpec(shape=(3, 4, 5), indexer=[[[0], [-1]],
-                                         onp.array([[2, 3, 0, 3]])]),
-     ]),
+    ("One1DIntArrayIndex", [
+        IndexSpec(shape=(3,), indexer=onp.array([0, 1])),
+        IndexSpec(shape=(3, 3), indexer=onp.array([1, 2, 1])),
+        IndexSpec(shape=(3, 4, 5), indexer=onp.array([0, 2, 0, 1])),
+        IndexSpec(shape=(3,), indexer=onp.array([-1, 1])),
+        IndexSpec(shape=(3,), indexer=onp.array([-2, -1])),
+    ]),
+    ("One2DIntArrayIndex", [
+        IndexSpec(shape=(3,), indexer=onp.array([[0, 0]])),
+        IndexSpec(shape=(3, 3), indexer=onp.array([[1, 2, 1], [0, 1, -1]])),
+        IndexSpec(shape=(3, 4, 5), indexer=onp.array([[0, 2, 0, 1], [-1, -2, 1, 0]])),
+    ]),
+    ("Two1DIntArrayIndicesNoBroadcasting", [
+        IndexSpec(shape=(3, 3), indexer=[onp.array([0, 1]), onp.array([1, 2])]),
+        IndexSpec(shape=(3, 4, 5), indexer=[onp.array([0, 2, 0, 1]),
+                                            onp.array([-1, 0, -1, 2])]),
+    ]),
+    ("Two1DIntArrayIndicesWithBroadcasting", [
+        IndexSpec(shape=(3, 3), indexer=[onp.array([[0, 1]]),
+                                         onp.array([1, 2])]),
+        IndexSpec(shape=(3, 4, 5), indexer=[onp.array([[0, 2, 0, 1]]),
+                                            onp.array([-1, 0, -1, 2])]),
+    ]),
+    ("ListOfPythonInts", [
+        IndexSpec(shape=(3,), indexer=[0, 1, 0]),
+        IndexSpec(shape=(3, 4, 5), indexer=[0, -1]),
+    ]),
+    ("ListOfListsOfPythonInts", [
+        IndexSpec(shape=(3, 4, 5), indexer=[[0, 1]]),
+        IndexSpec(shape=(3, 4, 5), indexer=[[[0], [-1]], [[2, 3, 0, 3]]]),
+    ]),
+    ("TupleOfListsOfPythonInts", [
+        IndexSpec(shape=(3, 4, 5), indexer=([0, 1])),
+        IndexSpec(shape=(3, 4, 5), indexer=([[0], [-1]], [[2, 3, 0, 3]])),
+    ]),
+    ("ListOfPythonIntsAndIntArrays", [
+        IndexSpec(shape=(3, 4, 5), indexer=[0, onp.array([0, 1])]),
+        IndexSpec(shape=(3, 4, 5), indexer=[0, 1, onp.array([[2, 3, 0, 3]])]),
+    ]),
+    ("ListOfListsOfPythonIntsAndIntArrays", [
+        IndexSpec(shape=(3, 4, 5), indexer=[[0, 1], onp.array([0])]),
+        IndexSpec(shape=(3, 4, 5), indexer=[[[0], [-1]], onp.array([[2, 3, 0, 3]])]),
+    ]),
 ]
 
 ADVANCED_INDEXING_TESTS_NO_REPEATS = [
-    ("One1DIntArrayIndex",
-     [IndexSpec(shape=(3,), indexer=onp.array([0, 1])),
-      IndexSpec(shape=(3, 3), indexer=onp.array([1, 2, 0])),
-      IndexSpec(shape=(3, 4, 5), indexer=onp.array([0, 2, 1])),
-      IndexSpec(shape=(3,), indexer=onp.array([-1, 1])),
-      IndexSpec(shape=(3,), indexer=onp.array([-2, -1])),
-     ]),
-    ("One2DIntArrayIndex",
-     [IndexSpec(shape=(3,), indexer=onp.array([[0, 1]])),
-      IndexSpec(shape=(6, 6), indexer=onp.array([[1, 2, 0],
-                                                 [3, 4, -1]])),
-     ]),
-    ("Two1DIntArrayIndicesNoBroadcasting",
-     [IndexSpec(shape=(3, 3), indexer=[onp.array([0, 1]),
-                                       onp.array([1, 2])]),
-      IndexSpec(shape=(4, 5, 6), indexer=[onp.array([0, 2, 1, 3]),
-                                          onp.array([-1, 0, -2, 1])]),
-     ]),
-    ("Two1DIntArrayIndicesWithBroadcasting",
-     [IndexSpec(shape=(3, 3), indexer=[onp.array([[0, 1]]),
-                                       onp.array([1, 2])]),
-      IndexSpec(shape=(4, 5, 6), indexer=[onp.array([[0, 2, -1, 1]]),
-                                          onp.array([-1, 0, -2, 2])]),
-     ]),
-    ("ListOfPythonInts",
-     [IndexSpec(shape=(3,), indexer=[0, 2, 1]),
-      IndexSpec(shape=(3, 4, 5), indexer=[0, -1]),
-     ]),
-    ("ListOfListsOfPythonInts",
-     [IndexSpec(shape=(3, 4, 5), indexer=[[0, 1]]),
-      IndexSpec(shape=(3, 4, 5), indexer=[[[0], [-1]], [[2, 3, 0]]]),
-     ]),
-    ("TupleOfListsOfPythonInts",
-     [IndexSpec(shape=(3, 4, 5), indexer=([0, 1])),
-      IndexSpec(shape=(3, 4, 5), indexer=([[0], [-1]], [[2, 3, 0]])),
-     ]),
-    ("ListOfPythonIntsAndIntArrays",
-     [IndexSpec(shape=(3, 4, 5), indexer=[0, onp.array([0, 1])]),
-      IndexSpec(shape=(3, 4, 5), indexer=[0, 1,
-                                          onp.array([[2, 3, 0]])]),
-     ]),
-    ("ListOfListsOfPythonIntsAndIntArrays",
-     [IndexSpec(shape=(3, 4, 5), indexer=[[0, 1], onp.array([0])]),
-      IndexSpec(shape=(3, 4, 5), indexer=[[[0], [-1]],
-                                          onp.array([[2, 3, 0]])]),
-     ]),
+    ("One1DIntArrayIndex", [
+        IndexSpec(shape=(3,), indexer=onp.array([0, 1])),
+        IndexSpec(shape=(3, 3), indexer=onp.array([1, 2, 0])),
+        IndexSpec(shape=(3, 4, 5), indexer=onp.array([0, 2, 1])),
+        IndexSpec(shape=(3,), indexer=onp.array([-1, 1])),
+        IndexSpec(shape=(3,), indexer=onp.array([-2, -1])),
+    ]),
+    ("One2DIntArrayIndex", [
+        IndexSpec(shape=(3,), indexer=onp.array([[0, 1]])),
+        IndexSpec(shape=(6, 6), indexer=onp.array([[1, 2, 0], [3, 4, -1]])),
+    ]),
+    ("Two1DIntArrayIndicesNoBroadcasting", [
+        IndexSpec(shape=(3, 3), indexer=[onp.array([0, 1]), onp.array([1, 2])]),
+        IndexSpec(shape=(4, 5, 6), indexer=[onp.array([0, 2, 1, 3]),
+                                            onp.array([-1, 0, -2, 1])]),
+    ]),
+    ("Two1DIntArrayIndicesWithBroadcasting", [
+        IndexSpec(shape=(3, 3), indexer=[onp.array([[0, 1]]),
+                                         onp.array([1, 2])]),
+        IndexSpec(shape=(4, 5, 6), indexer=[onp.array([[0, 2, -1, 1]]),
+                                            onp.array([-1, 0, -2, 2])]),
+    ]),
+    ("ListOfPythonInts", [
+        IndexSpec(shape=(3,), indexer=[0, 2, 1]),
+        IndexSpec(shape=(3, 4, 5), indexer=[0, -1]),
+    ]),
+    ("ListOfListsOfPythonInts", [
+        IndexSpec(shape=(3, 4, 5), indexer=[[0, 1]]),
+        IndexSpec(shape=(3, 4, 5), indexer=[[[0], [-1]], [[2, 3, 0]]]),
+    ]),
+    ("TupleOfListsOfPythonInts", [
+        IndexSpec(shape=(3, 4, 5), indexer=([0, 1])),
+        IndexSpec(shape=(3, 4, 5), indexer=([[0], [-1]], [[2, 3, 0]])),
+    ]),
+    ("ListOfPythonIntsAndIntArrays", [
+        IndexSpec(shape=(3, 4, 5), indexer=[0, onp.array([0, 1])]),
+        IndexSpec(shape=(3, 4, 5), indexer=[0, 1, onp.array([[2, 3, 0]])]),
+    ]),
+    ("ListOfListsOfPythonIntsAndIntArrays", [
+        IndexSpec(shape=(3, 4, 5), indexer=[[0, 1], onp.array([0])]),
+        IndexSpec(shape=(3, 4, 5), indexer=[[[0], [-1]], onp.array([[2, 3, 0]])]),
+    ]),
 ]
 
 MIXED_ADVANCED_INDEXING_TESTS_NO_REPEATS = [
-    ("SlicesAndOneIntArrayIndex",
-     [IndexSpec(shape=(2, 3), indexer=(onp.array([0, 1]), slice(1, 2))),
-     IndexSpec(shape=(2, 3), indexer=(slice(0, 2),
-                                      onp.array([0, 2]))),
-     IndexSpec(shape=(3, 4, 5), indexer=(Ellipsis,
-                                         onp.array([0, 2]),
-                                         slice(None))),
-     IndexSpec(shape=(3, 4, 5), indexer=(Ellipsis,
-                                         onp.array([[0, 2], [1, 3]]),
-                                         slice(None))),
-     ]),
-    ("SlicesAndTwoIntArrayIndices",
-     [IndexSpec(shape=(3, 4, 5), indexer=(Ellipsis,
-                                          onp.array([0, 2]),
-                                          onp.array([-1, 2]))),
-     IndexSpec(shape=(3, 4, 5), indexer=(onp.array([0, 2]),
-                                         Ellipsis,
-                                         onp.array([-1, 2]))),
-     IndexSpec(shape=(3, 4, 5), indexer=(onp.array([0, 2]),
-                                         onp.array([-1, 2]),
-                                         Ellipsis)),
-     IndexSpec(shape=(3, 4, 5), indexer=(onp.array([0, 2]),
-                                         onp.array([-1, 2]),
-                                         slice(1, 3))),
-     IndexSpec(shape=(3, 4, 5), indexer=(onp.array([0, 2]),
-                                         slice(1, 3),
-                                         onp.array([-1, 2]))),
-     IndexSpec(shape=(3, 4, 5), indexer=(onp.array([0, 2, -2]),
-                                         slice(None, None, 2),
-                                         onp.array([-1, 2, 1]))),
-     ]),
-    ("NonesAndIntArrayIndices",
-     [IndexSpec(shape=(3, 4, 5), indexer=[onp.array([0, 2]),
-                                          None,
-                                          onp.array([-1, 2])]),
-     IndexSpec(shape=(3, 4, 5), indexer=(onp.array([0, 2]),
-                                         None,
-                                         None,
-                                         onp.array([-1, 2]))),
-     IndexSpec(shape=(3, 4, 5), indexer=(Ellipsis,
-                                         onp.array([0, 2]),
-                                         None,
-                                         None,
-                                         onp.array([-1, 2]))),
-     ]),
+    ("SlicesAndOneIntArrayIndex", [
+        IndexSpec(shape=(2, 3), indexer=(onp.array([0, 1]), slice(1, 2))),
+        IndexSpec(shape=(2, 3), indexer=(slice(0, 2), onp.array([0, 2]))),
+        IndexSpec(shape=(3, 4, 5), indexer=(Ellipsis, onp.array([0, 2]), slice(None))),
+        IndexSpec(shape=(3, 4, 5), indexer=(Ellipsis, onp.array([[0, 2], [1, 3]]), slice(None))),
+    ]),
+    ("SlicesAndTwoIntArrayIndices", [
+        IndexSpec(shape=(3, 4, 5), indexer=(Ellipsis, onp.array([0, 2]), onp.array([-1, 2]))),
+        IndexSpec(shape=(3, 4, 5), indexer=(onp.array([0, 2]), Ellipsis, onp.array([-1, 2]))),
+        IndexSpec(shape=(3, 4, 5), indexer=(onp.array([0, 2]), onp.array([-1, 2]), Ellipsis)),
+        IndexSpec(shape=(3, 4, 5), indexer=(onp.array([0, 2]), onp.array([-1, 2]), slice(1, 3))),
+        IndexSpec(shape=(3, 4, 5), indexer=(onp.array([0, 2]), slice(1, 3), onp.array([-1, 2]))),
+        IndexSpec(
+            shape=(3, 4, 5), indexer=(onp.array([0, 2, -2]), slice(None, None,
+                                                                   2), onp.array([-1, 2, 1]))),
+    ]),
+    ("NonesAndIntArrayIndices", [
+        IndexSpec(shape=(3, 4, 5), indexer=[onp.array([0, 2]), None,
+                                            onp.array([-1, 2])]),
+        IndexSpec(shape=(3, 4, 5), indexer=(onp.array([0, 2]), None, None, onp.array([-1, 2]))),
+        IndexSpec(
+            shape=(3, 4, 5), indexer=(Ellipsis, onp.array([0, 2]), None, None, onp.array([-1, 2]))),
+    ]),
     ("IntArrayWithInt32Type",
-     [IndexSpec(shape=(3, 4), indexer=(Ellipsis, onp.array(1, dtype=onp.int32)))
-     ]),
+     [IndexSpec(shape=(3, 4), indexer=(Ellipsis, onp.array(1, dtype=onp.int32)))]),
 ]
 
 MIXED_ADVANCED_INDEXING_TESTS = MIXED_ADVANCED_INDEXING_TESTS_NO_REPEATS + [
-    ("SlicesAndOneIntArrayIndex",
-     [
-     IndexSpec(shape=(3, 4, 5), indexer=(Ellipsis,
-                                         onp.array([[0, 2], [1, 1]]),
-                                         slice(None))),
-     ]),
-    ("SlicesAndTwoIntArrayIndices",
-     [IndexSpec(shape=(3, 4, 5), indexer=(onp.array([0, 2, -2]),
-                                         slice(None, None, 2),
-                                         onp.array([-1, 2, -1]))),
-      IndexSpec(shape=(3, 4, 5), indexer=(onp.array([[0, 2], [2, 0]]),
-                                          Ellipsis,
-                                          onp.array([[1, 0], [1, 0]]))),
-     ]),]
+    ("SlicesAndOneIntArrayIndex", [
+        IndexSpec(shape=(3, 4, 5), indexer=(Ellipsis, onp.array([[0, 2], [1, 1]]), slice(None))),
+    ]),
+    ("SlicesAndTwoIntArrayIndices", [
+        IndexSpec(
+            shape=(3, 4, 5), indexer=(onp.array([0, 2, -2]), slice(None, None,
+                                                                   2), onp.array([-1, 2, -1]))),
+        IndexSpec(
+            shape=(3, 4, 5), indexer=(onp.array([[0, 2], [2, 0]
+                                                ]), Ellipsis, onp.array([[1, 0], [1, 0]]))),
+    ]),
+]
 
 class IndexingTest(jtu.JaxTestCase):
   """Tests for Numpy indexing translation rules."""
-
-  @parameterized.named_parameters(jtu.cases_from_list({
-      "testcase_name": "{}_inshape={}_indexer={}".format(
-          name, jtu.format_shape_dtype_string( shape, dtype), indexer),
-       "shape": shape, "dtype": dtype, "rng": rng, "indexer": indexer
-  } for name, index_specs in STATIC_INDEXING_TESTS
-    for shape, indexer in index_specs
-    for dtype in all_dtypes
-    for rng in [jtu.rand_default()]))
+  @parameterized.named_parameters(
+      jtu.cases_from_list({
+          "testcase_name": "{}_inshape={}_indexer={}".format(
+              name, jtu.format_shape_dtype_string(shape, dtype), indexer),
+          "shape": shape,
+          "dtype": dtype,
+          "rng": rng,
+          "indexer": indexer
+      } for name, index_specs in STATIC_INDEXING_TESTS for shape, indexer in index_specs
+                          for dtype in all_dtypes for rng in [jtu.rand_default()]))
   def testStaticIndexing(self, shape, dtype, rng, indexer):
     args_maker = lambda: [rng(shape, dtype)]
     fun = lambda x: x[indexer]
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters({
-      "testcase_name":
-          "{}_inshape={}_indexer={}".format(name,
-                                            jtu.format_shape_dtype_string(
-                                                shape, dtype), indexer),
-      "shape": shape, "dtype": dtype, "rng": rng, "indexer": indexer
-  } for name, index_specs in STATIC_INDEXING_GRAD_TESTS
-    for shape, indexer in index_specs
-    for dtype in float_dtypes
-    for rng in [jtu.rand_default()])
+      "testcase_name": "{}_inshape={}_indexer={}".format(
+          name, jtu.format_shape_dtype_string(shape, dtype), indexer),
+      "shape": shape,
+      "dtype": dtype,
+      "rng": rng,
+      "indexer": indexer
+  } for name, index_specs in STATIC_INDEXING_GRAD_TESTS for shape, indexer in index_specs
+                                  for dtype in float_dtypes for rng in [jtu.rand_default()])
   def testStaticIndexingGrads(self, shape, dtype, rng, indexer):
     tol = 1e-2 if onp.finfo(dtype).bits == 32 else None
     arg = rng(shape, dtype)
@@ -431,30 +395,31 @@ class IndexingTest(jtu.JaxTestCase):
     else:
       return idx, lambda x: x
 
-  @parameterized.named_parameters(
-      {"testcase_name": "{}_inshape={}_indexer={}"
-       .format(name, jtu.format_shape_dtype_string(shape, dtype), indexer),
-       "shape": shape, "dtype": dtype, "rng": rng, "indexer": indexer}
-      for name, index_specs in [
-          ("OneSliceIndex",
-           [IndexSpec(shape=(5,), indexer=slice(1, 3)),
-            IndexSpec(shape=(5, 4), indexer=slice(1, 3))]),
-          ("TwoSliceIndices",
-           [IndexSpec(shape=(5, 4), indexer=(slice(1, 3), slice(0, 2))),
-            IndexSpec(shape=(5, 4, 3), indexer=(slice(1, 3), slice(0, 2)))]),
-          ("NonUnitStrides", [
-              IndexSpec(shape=(3,), indexer=slice(None, None, -1)),
-              IndexSpec(shape=(3, 3), indexer=slice(0, 3, -2)),
-              IndexSpec(shape=(3, 4, 5), indexer=slice(0, 4, 2))
-          ]),
-          ("OnlyStartOrStopDynamic", [
-              IndexSpec(shape=(5, 4), indexer=(slice(None, 3), slice(0, 2))),
-              IndexSpec(shape=(5, 4, 3), indexer=(slice(1, 3), slice(0, None)))
-          ]),
-      ]
-      for shape, indexer in index_specs
-      for dtype in all_dtypes
-      for rng in [jtu.rand_default()])
+  @parameterized.named_parameters({
+      "testcase_name": "{}_inshape={}_indexer={}".format(
+          name, jtu.format_shape_dtype_string(shape, dtype), indexer),
+      "shape": shape,
+      "dtype": dtype,
+      "rng": rng,
+      "indexer": indexer
+  } for name, index_specs in [
+      ("OneSliceIndex",
+       [IndexSpec(shape=(5,), indexer=slice(1, 3)),
+        IndexSpec(shape=(5, 4), indexer=slice(1, 3))]),
+      ("TwoSliceIndices", [
+          IndexSpec(shape=(5, 4), indexer=(slice(1, 3), slice(0, 2))),
+          IndexSpec(shape=(5, 4, 3), indexer=(slice(1, 3), slice(0, 2)))
+      ]),
+      ("NonUnitStrides", [
+          IndexSpec(shape=(3,), indexer=slice(None, None, -1)),
+          IndexSpec(shape=(3, 3), indexer=slice(0, 3, -2)),
+          IndexSpec(shape=(3, 4, 5), indexer=slice(0, 4, 2))
+      ]),
+      ("OnlyStartOrStopDynamic", [
+          IndexSpec(shape=(5, 4), indexer=(slice(None, 3), slice(0, 2))),
+          IndexSpec(shape=(5, 4, 3), indexer=(slice(1, 3), slice(0, None)))
+      ]),
+  ] for shape, indexer in index_specs for dtype in all_dtypes for rng in [jtu.rand_default()])
   def testDynamicIndexingWithSlicesErrors(self, shape, dtype, rng, indexer):
     unpacked_indexer, pack_indexer = self._ReplaceSlicesWithTuples(indexer)
 
@@ -466,27 +431,28 @@ class IndexingTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype), unpacked_indexer]
     self.assertRaises(IndexError, lambda: fun(*args_maker()))
 
-  @parameterized.named_parameters(
-      {"testcase_name": "{}_inshape={}_indexer={}"
-       .format(name, jtu.format_shape_dtype_string(shape, dtype), indexer),
-       "shape": shape, "dtype": dtype, "rng": rng, "indexer": indexer}
-      for name, index_specs in [
-          ("OneIntIndex",
-           [IndexSpec(shape=(3,), indexer=1),
-            IndexSpec(shape=(3, 3), indexer=0),
-            IndexSpec(shape=(3, 4, 5), indexer=2),
-            IndexSpec(shape=(3,), indexer=-1),
-            IndexSpec(shape=(3,), indexer=-2)]),
-          ("TwoIntIndices",
-           [IndexSpec(shape=(3, 3), indexer=(2, 1)),
-            IndexSpec(shape=(3, 4, 5), indexer=(1, 2)),
-            IndexSpec(shape=(3, 4, 5), indexer=(-1, 2))]),
-          ("ThreeIntIndices",
-           [IndexSpec((3, 4, 5), indexer=(1, 2, 3))]),
-      ]
-      for shape, indexer in index_specs
-      for dtype in all_dtypes
-      for rng in [jtu.rand_default()])
+  @parameterized.named_parameters({
+      "testcase_name": "{}_inshape={}_indexer={}".format(
+          name, jtu.format_shape_dtype_string(shape, dtype), indexer),
+      "shape": shape,
+      "dtype": dtype,
+      "rng": rng,
+      "indexer": indexer
+  } for name, index_specs in [
+      ("OneIntIndex", [
+          IndexSpec(shape=(3,), indexer=1),
+          IndexSpec(shape=(3, 3), indexer=0),
+          IndexSpec(shape=(3, 4, 5), indexer=2),
+          IndexSpec(shape=(3,), indexer=-1),
+          IndexSpec(shape=(3,), indexer=-2)
+      ]),
+      ("TwoIntIndices", [
+          IndexSpec(shape=(3, 3), indexer=(2, 1)),
+          IndexSpec(shape=(3, 4, 5), indexer=(1, 2)),
+          IndexSpec(shape=(3, 4, 5), indexer=(-1, 2))
+      ]),
+      ("ThreeIntIndices", [IndexSpec((3, 4, 5), indexer=(1, 2, 3))]),
+  ] for shape, indexer in index_specs for dtype in all_dtypes for rng in [jtu.rand_default()])
   def testDynamicIndexingWithIntegers(self, shape, dtype, rng, indexer):
     unpacked_indexer, pack_indexer = self._ReplaceSlicesWithTuples(indexer)
 
@@ -497,29 +463,28 @@ class IndexingTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype), unpacked_indexer]
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(
-      {"testcase_name": "{}_inshape={}_indexer={}"
-       .format(name, jtu.format_shape_dtype_string(shape, dtype), indexer),
-       "shape": shape, "dtype": dtype, "rng": rng, "indexer": indexer}
-      for name, index_specs in [
-          ("OneIntIndex",
-           [IndexSpec(shape=(3,), indexer=1),
-            IndexSpec(shape=(3, 3), indexer=0),
-            IndexSpec(shape=(3, 4, 5), indexer=2),
-            IndexSpec(shape=(3,), indexer=-1),
-            IndexSpec(shape=(3,), indexer=-2),
-            ]),
-          ("TwoIntIndices",
-           [IndexSpec(shape=(3, 3), indexer=(2, 1)),
-            IndexSpec(shape=(3, 4, 5), indexer=(1, 2)),
-            IndexSpec(shape=(3, 4, 5), indexer=(-1, 2)),
-            ]),
-          ("ThreeIntIndices",
-           [IndexSpec((3, 4, 5), indexer=(1, 2, 3))]),
-      ]
-      for shape, indexer in index_specs
-      for dtype in float_dtypes
-      for rng in [jtu.rand_default()])
+  @parameterized.named_parameters({
+      "testcase_name": "{}_inshape={}_indexer={}".format(
+          name, jtu.format_shape_dtype_string(shape, dtype), indexer),
+      "shape": shape,
+      "dtype": dtype,
+      "rng": rng,
+      "indexer": indexer
+  } for name, index_specs in [
+      ("OneIntIndex", [
+          IndexSpec(shape=(3,), indexer=1),
+          IndexSpec(shape=(3, 3), indexer=0),
+          IndexSpec(shape=(3, 4, 5), indexer=2),
+          IndexSpec(shape=(3,), indexer=-1),
+          IndexSpec(shape=(3,), indexer=-2),
+      ]),
+      ("TwoIntIndices", [
+          IndexSpec(shape=(3, 3), indexer=(2, 1)),
+          IndexSpec(shape=(3, 4, 5), indexer=(1, 2)),
+          IndexSpec(shape=(3, 4, 5), indexer=(-1, 2)),
+      ]),
+      ("ThreeIntIndices", [IndexSpec((3, 4, 5), indexer=(1, 2, 3))]),
+  ] for shape, indexer in index_specs for dtype in float_dtypes for rng in [jtu.rand_default()])
   def testDynamicIndexingWithIntegersGrads(self, shape, dtype, rng, indexer):
     tol = 1e-2 if onp.finfo(dtype).bits == 32 else None
     unpacked_indexer, pack_indexer = self._ReplaceSlicesWithTuples(indexer)
@@ -532,91 +497,87 @@ class IndexingTest(jtu.JaxTestCase):
     arr = rng(shape, dtype)
     check_grads(partial(fun, unpacked_indexer), (arr,), 2, tol, tol, tol)
 
-  @parameterized.named_parameters(
-      {"testcase_name": "{}_inshape={}_indexer={}"
-       .format(name, jtu.format_shape_dtype_string(shape, dtype), indexer),
-       "shape": shape, "dtype": dtype, "rng": rng, "indexer": indexer}
-      for name, index_specs in ADVANCED_INDEXING_TESTS
-      for shape, indexer in index_specs
-      for dtype in all_dtypes
-      for rng in [jtu.rand_default()])
+  @parameterized.named_parameters({
+      "testcase_name": "{}_inshape={}_indexer={}".format(
+          name, jtu.format_shape_dtype_string(shape, dtype), indexer),
+      "shape": shape,
+      "dtype": dtype,
+      "rng": rng,
+      "indexer": indexer
+  } for name, index_specs in ADVANCED_INDEXING_TESTS for shape, indexer in index_specs
+                                  for dtype in all_dtypes for rng in [jtu.rand_default()])
   def testAdvancedIntegerIndexing(self, shape, dtype, rng, indexer):
     args_maker = lambda: [rng(shape, dtype), indexer]
     fun = lambda x, idx: x[idx]
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(
-      {"testcase_name": "{}_inshape={}_indexer={}"
-       .format(name, jtu.format_shape_dtype_string(shape, dtype), indexer),
-       "shape": shape, "dtype": dtype, "rng": rng, "indexer": indexer}
-      for name, index_specs in [
-          ("One1DIntArrayIndex",
-           [IndexSpec(shape=(3,), indexer=onp.array([0, 1])),
-            IndexSpec(shape=(3, 3), indexer=onp.array([1, 2, 1])),
-            IndexSpec(shape=(3, 4, 5), indexer=onp.array([0, 2, 0, 1])),
-            IndexSpec(shape=(3,), indexer=onp.array([-1, 1])),
-            IndexSpec(shape=(3,), indexer=onp.array([-2, -1])),
-            ]),
-          ("One2DIntArrayIndex",
-           [IndexSpec(shape=(3,), indexer=onp.array([[0, 0]])),
-            IndexSpec(shape=(3, 3), indexer=onp.array([[1, 2, 1],
-                                                       [0, 1, -1]])),
-            IndexSpec(shape=(3, 4, 5), indexer=onp.array([[0, 2, 0, 1],
-                                                          [-1, -2, 1, 0]])),
-            ]),
-          ("Two1DIntArrayIndicesNoBroadcasting",
-           [IndexSpec(shape=(3, 3), indexer=[onp.array([0, 1]),
-                                             onp.array([1, 2])]),
-            IndexSpec(shape=(3, 4, 5), indexer=[onp.array([0, 2, 0, 1]),
-                                                onp.array([-1, 0, -1, 2])]),
-            ]),
-          ("Two1DIntArrayIndicesWithBroadcasting",
-           [IndexSpec(shape=(3, 3), indexer=[onp.array([[0, 1]]),
-                                             onp.array([1, 2])]),
-            IndexSpec(shape=(3, 4, 5), indexer=[onp.array([[0, 2, 0, 1]]),
-                                                onp.array([-1, 0, -1, 2])]),
-            ]),
-          ("ListOfPythonInts",
-           [IndexSpec(shape=(3,), indexer=[0, 1, 0]),
-            IndexSpec(shape=(3, 4, 5), indexer=[0, -1]),
-            ]),
-          ("ListOfListsOfPythonInts",
-           [IndexSpec(shape=(3, 4, 5), indexer=[[0, 1]]),
-            IndexSpec(shape=(3, 4, 5), indexer=[[[0], [-1]], [[2, 3, 0, 3]]]),
-            ]),
-          ("ListOfPythonIntsAndIntArrays",
-           [IndexSpec(shape=(3, 4, 5), indexer=[0, onp.array([0, 1])]),
-            IndexSpec(shape=(3, 4, 5), indexer=[0, 1,
-                                                onp.array([[2, 3, 0, 3]])]),
-            ]),
-          ("ListOfListsOfPythonIntsAndIntArrays",
-           [IndexSpec(shape=(3, 4, 5), indexer=[[0, 1], onp.array([0])]),
-            IndexSpec(shape=(3, 4, 5), indexer=[[[0], [-1]],
-                                                onp.array([[2, 3, 0, 3]])]),
-            ]),
-      ]
-      for shape, indexer in index_specs
-      for dtype in float_dtypes
-      for rng in [jtu.rand_default()])
+  @parameterized.named_parameters({
+      "testcase_name": "{}_inshape={}_indexer={}".format(
+          name, jtu.format_shape_dtype_string(shape, dtype), indexer),
+      "shape": shape,
+      "dtype": dtype,
+      "rng": rng,
+      "indexer": indexer
+  } for name, index_specs in [
+      ("One1DIntArrayIndex", [
+          IndexSpec(shape=(3,), indexer=onp.array([0, 1])),
+          IndexSpec(shape=(3, 3), indexer=onp.array([1, 2, 1])),
+          IndexSpec(shape=(3, 4, 5), indexer=onp.array([0, 2, 0, 1])),
+          IndexSpec(shape=(3,), indexer=onp.array([-1, 1])),
+          IndexSpec(shape=(3,), indexer=onp.array([-2, -1])),
+      ]),
+      ("One2DIntArrayIndex", [
+          IndexSpec(shape=(3,), indexer=onp.array([[0, 0]])),
+          IndexSpec(shape=(3, 3), indexer=onp.array([[1, 2, 1], [0, 1, -1]])),
+          IndexSpec(shape=(3, 4, 5), indexer=onp.array([[0, 2, 0, 1], [-1, -2, 1, 0]])),
+      ]),
+      ("Two1DIntArrayIndicesNoBroadcasting", [
+          IndexSpec(shape=(3, 3), indexer=[onp.array([0, 1]), onp.array([1, 2])]),
+          IndexSpec(shape=(3, 4, 5), indexer=[onp.array([0, 2, 0, 1]),
+                                              onp.array([-1, 0, -1, 2])]),
+      ]),
+      ("Two1DIntArrayIndicesWithBroadcasting", [
+          IndexSpec(shape=(3,
+                           3), indexer=[onp.array([[0, 1]]), onp.array([1, 2])]),
+          IndexSpec(
+              shape=(3, 4, 5), indexer=[onp.array([[0, 2, 0, 1]]),
+                                        onp.array([-1, 0, -1, 2])]),
+      ]),
+      ("ListOfPythonInts", [
+          IndexSpec(shape=(3,), indexer=[0, 1, 0]),
+          IndexSpec(shape=(3, 4, 5), indexer=[0, -1]),
+      ]),
+      ("ListOfListsOfPythonInts", [
+          IndexSpec(shape=(3, 4, 5), indexer=[[0, 1]]),
+          IndexSpec(shape=(3, 4, 5), indexer=[[[0], [-1]], [[2, 3, 0, 3]]]),
+      ]),
+      ("ListOfPythonIntsAndIntArrays", [
+          IndexSpec(shape=(3, 4, 5), indexer=[0, onp.array([0, 1])]),
+          IndexSpec(shape=(3, 4, 5), indexer=[0, 1, onp.array([[2, 3, 0, 3]])]),
+      ]),
+      ("ListOfListsOfPythonIntsAndIntArrays", [
+          IndexSpec(shape=(3, 4, 5), indexer=[[0, 1], onp.array([0])]),
+          IndexSpec(shape=(3, 4, 5), indexer=[[[0], [-1]], onp.array([[2, 3, 0, 3]])]),
+      ]),
+  ] for shape, indexer in index_specs for dtype in float_dtypes for rng in [jtu.rand_default()])
   def testAdvancedIntegerIndexingGrads(self, shape, dtype, rng, indexer):
     tol = 1e-2 if onp.finfo(dtype).bits == 32 else None
     arg = rng(shape, dtype)
     fun = lambda x: x[indexer]**2
     check_grads(fun, (arg,), 2, tol, tol, tol)
 
-  @parameterized.named_parameters(
-      {"testcase_name": "{}_inshape={}_indexer={}"
-       .format(name, jtu.format_shape_dtype_string(shape, dtype), indexer),
-       "shape": shape, "dtype": dtype, "rng": rng, "indexer": indexer}
-      for name, index_specs in MIXED_ADVANCED_INDEXING_TESTS
-      for shape, indexer in index_specs
-      for dtype in all_dtypes
-      for rng in [jtu.rand_default()])
+  @parameterized.named_parameters({
+      "testcase_name": "{}_inshape={}_indexer={}".format(
+          name, jtu.format_shape_dtype_string(shape, dtype), indexer),
+      "shape": shape,
+      "dtype": dtype,
+      "rng": rng,
+      "indexer": indexer
+  } for name, index_specs in MIXED_ADVANCED_INDEXING_TESTS for shape, indexer in index_specs
+                                  for dtype in all_dtypes for rng in [jtu.rand_default()])
   def testMixedAdvancedIntegerIndexing(self, shape, dtype, rng, indexer):
-    indexer_with_dummies = [e if isinstance(e, onp.ndarray) else ()
-                            for e in indexer]
-    substitutes = [(i, e) for i, e in enumerate(indexer)
-                   if not isinstance(e, onp.ndarray)]
+    indexer_with_dummies = [e if isinstance(e, onp.ndarray) else () for e in indexer]
+    substitutes = [(i, e) for i, e in enumerate(indexer) if not isinstance(e, onp.ndarray)]
     args_maker = lambda: [rng(shape, dtype), indexer_with_dummies]
 
     def fun(x, indexer_with_dummies):
@@ -654,7 +615,6 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertAllClose(a1, a2, check_dtypes=True)
 
   def testUnpacking(self):
-
     def foo(x):
       a, b, c = x
       return a + b + c
@@ -695,10 +655,7 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testBooleanIndexingArray2D(self):
-    idx = onp.array([[True, False],
-                     [False, True],
-                     [False, False],
-                     [True, True]])
+    idx = onp.array([[True, False], [False, True], [False, False], [True, True]])
     x = onp.arange(8).reshape(4, 2)
     ans = api.device_put(x)[idx]
     expected = x[idx]
@@ -725,8 +682,7 @@ class IndexingTest(jtu.JaxTestCase):
     i = lnp.ones((3,), lnp.int32)
     f = lambda x, i: lnp.sum(x[i])
     primals, tangents = api.jvp(api.grad(f), (x, i), (x, onp.zeros_like(i)))
-    expected = onp.broadcast_to(
-      onp.array([0, 3, 0], dtype=onp.float32)[:, None], (3, 4))
+    expected = onp.broadcast_to(onp.array([0, 3, 0], dtype=onp.float32)[:, None], (3, 4))
     self.assertAllClose(expected, primals, check_dtypes=True)
     self.assertAllClose(onp.zeros_like(x), tangents, check_dtypes=True)
 
@@ -735,7 +691,6 @@ class IndexingTest(jtu.JaxTestCase):
     jaxpr = api.make_jaxpr(lambda x: x[:, None])(onp.arange(4))
     self.assertEqual(len(jaxpr.eqns), 1)
     self.assertNotIn('gather', str(jaxpr))
-
 
 def _broadcastable_shapes(shape):
   """Returns all shapes that broadcast to `shape`."""
@@ -747,12 +702,12 @@ def _broadcastable_shapes(shape):
       if rshape[0] != 1:
         for s in f(rshape[1:]):
           yield [1] + s
+
   for x in f(list(reversed(shape))):
     yield list(reversed(x))
 
 def _update_shape(shape, indexer):
   return onp.zeros(shape)[indexer].shape
-
 
 class UpdateOps(enum.Enum):
   UPDATE = 0
@@ -763,107 +718,116 @@ class UpdateOps(enum.Enum):
   def onp_fn(op, indexer, x, y):
     x = x.copy()
     x[indexer] = {
-      UpdateOps.UPDATE: lambda: y,
-      UpdateOps.ADD: lambda: x[indexer] + y,
-      UpdateOps.MIN: lambda: onp.minimum(x[indexer], y),
-      UpdateOps.MAX: lambda: onp.maximum(x[indexer], y),
+        UpdateOps.UPDATE: lambda: y,
+        UpdateOps.ADD: lambda: x[indexer] + y,
+        UpdateOps.MIN: lambda: onp.minimum(x[indexer], y),
+        UpdateOps.MAX: lambda: onp.maximum(x[indexer], y),
     }[op]()
     return x
 
   def jax_fn(op, indexer, x, y):
     return {
-      UpdateOps.UPDATE: ops.index_update,
-      UpdateOps.ADD: ops.index_add,
-      UpdateOps.MIN: ops.index_min,
-      UpdateOps.MAX: ops.index_max,
+        UpdateOps.UPDATE: ops.index_update,
+        UpdateOps.ADD: ops.index_add,
+        UpdateOps.MIN: ops.index_min,
+        UpdateOps.MAX: ops.index_max,
     }[op](x, indexer, y)
 
-
 class IndexedUpdateTest(jtu.JaxTestCase):
-
-  @parameterized.named_parameters(jtu.cases_from_list({
-      "testcase_name": "{}_inshape={}_indexer={}_update={}_op={}".format(
-          name, jtu.format_shape_dtype_string(shape, dtype), indexer,
-          jtu.format_shape_dtype_string(update_shape, update_dtype), op.name),
-       "shape": shape, "dtype": dtype, "rng": rng, "indexer": indexer,
-       "update_shape": update_shape, "update_dtype": update_dtype,
-       "op": op
-  } for name, index_specs in STATIC_INDEXING_TESTS
-    for shape, indexer in index_specs
-    for op in UpdateOps
-    for dtype in (all_dtypes if op == UpdateOps.UPDATE else default_dtypes)
-    for update_shape in _broadcastable_shapes(_update_shape(shape, indexer))
-    for update_dtype in ([dtype] if op == UpdateOps.ADD else all_dtypes)
-    for rng in [jtu.rand_default()]))
-  def testStaticIndexing(self, shape, dtype, update_shape, update_dtype,
-                         rng, indexer, op):
+  @parameterized.named_parameters(
+      jtu.cases_from_list({
+          "testcase_name": "{}_inshape={}_indexer={}_update={}_op={}".format(
+              name, jtu.format_shape_dtype_string(shape, dtype), indexer,
+              jtu.format_shape_dtype_string(update_shape, update_dtype), op.name),
+          "shape": shape,
+          "dtype": dtype,
+          "rng": rng,
+          "indexer": indexer,
+          "update_shape": update_shape,
+          "update_dtype": update_dtype,
+          "op": op
+      } for name, index_specs in STATIC_INDEXING_TESTS for shape, indexer in index_specs
+                          for op in UpdateOps
+                          for dtype in (all_dtypes if op == UpdateOps.UPDATE else default_dtypes)
+                          for update_shape in _broadcastable_shapes(_update_shape(shape, indexer))
+                          for update_dtype in ([dtype] if op == UpdateOps.ADD else all_dtypes)
+                          for rng in [jtu.rand_default()]))
+  def testStaticIndexing(self, shape, dtype, update_shape, update_dtype, rng, indexer, op):
     args_maker = lambda: [rng(shape, dtype), rng(update_shape, update_dtype)]
     onp_fn = lambda x, y: UpdateOps.onp_fn(op, indexer, x, y)
     jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y)
     self._CheckAgainstNumpy(onp_fn, jax_fn, args_maker, check_dtypes=True)
     self._CompileAndCheck(jax_fn, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(jtu.cases_from_list({
-      "testcase_name": "{}_inshape={}_indexer={}_update={}_op={}".format(
-          name, jtu.format_shape_dtype_string(shape, dtype), indexer,
-          jtu.format_shape_dtype_string(update_shape, update_dtype), op.name),
-       "shape": shape, "dtype": dtype, "rng": rng, "indexer": indexer,
-       "update_shape": update_shape, "update_dtype": update_dtype,
-       "op": op
-  } for name, index_specs in ADVANCED_INDEXING_TESTS_NO_REPEATS
-    for shape, indexer in index_specs
-    for op in UpdateOps
-    for dtype in (all_dtypes if op == UpdateOps.UPDATE else default_dtypes)
-    for update_shape in _broadcastable_shapes(_update_shape(shape, indexer))
-    for update_dtype in ([dtype] if op == UpdateOps.ADD else all_dtypes)
-    for rng in [jtu.rand_default()]))
-  def testAdvancedIndexing(self, shape, dtype, update_shape, update_dtype,
-                           rng, indexer, op):
+  @parameterized.named_parameters(
+      jtu.cases_from_list({
+          "testcase_name": "{}_inshape={}_indexer={}_update={}_op={}".format(
+              name, jtu.format_shape_dtype_string(shape, dtype), indexer,
+              jtu.format_shape_dtype_string(update_shape, update_dtype), op.name),
+          "shape": shape,
+          "dtype": dtype,
+          "rng": rng,
+          "indexer": indexer,
+          "update_shape": update_shape,
+          "update_dtype": update_dtype,
+          "op": op
+      } for name, index_specs in ADVANCED_INDEXING_TESTS_NO_REPEATS
+                          for shape, indexer in index_specs for op in UpdateOps
+                          for dtype in (all_dtypes if op == UpdateOps.UPDATE else default_dtypes)
+                          for update_shape in _broadcastable_shapes(_update_shape(shape, indexer))
+                          for update_dtype in ([dtype] if op == UpdateOps.ADD else all_dtypes)
+                          for rng in [jtu.rand_default()]))
+  def testAdvancedIndexing(self, shape, dtype, update_shape, update_dtype, rng, indexer, op):
     args_maker = lambda: [rng(shape, dtype), rng(update_shape, update_dtype)]
     onp_fn = lambda x, y: UpdateOps.onp_fn(op, indexer, x, y)
     jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y)
     self._CheckAgainstNumpy(onp_fn, jax_fn, args_maker, check_dtypes=True)
     self._CompileAndCheck(jax_fn, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(jtu.cases_from_list({
-      "testcase_name": "{}_inshape={}_indexer={}_update={}_op={}".format(
-          name, jtu.format_shape_dtype_string(shape, dtype), indexer,
-          jtu.format_shape_dtype_string(update_shape, update_dtype), op.name),
-       "shape": shape, "dtype": dtype, "rng": rng, "indexer": indexer,
-       "update_shape": update_shape, "update_dtype": update_dtype,
-       "op": op
-  } for name, index_specs in MIXED_ADVANCED_INDEXING_TESTS_NO_REPEATS
-    for shape, indexer in index_specs
-    for op in UpdateOps
-    for dtype in (all_dtypes if op == UpdateOps.UPDATE else default_dtypes)
-    for update_shape in _broadcastable_shapes(_update_shape(shape, indexer))
-    for update_dtype in ([dtype] if op == UpdateOps.ADD else all_dtypes)
-    for rng in [jtu.rand_default()]))
-  def testMixedAdvancedIndexing(self, shape, dtype, update_shape, update_dtype,
-                           rng, indexer, op):
+  @parameterized.named_parameters(
+      jtu.cases_from_list({
+          "testcase_name": "{}_inshape={}_indexer={}_update={}_op={}".format(
+              name, jtu.format_shape_dtype_string(shape, dtype), indexer,
+              jtu.format_shape_dtype_string(update_shape, update_dtype), op.name),
+          "shape": shape,
+          "dtype": dtype,
+          "rng": rng,
+          "indexer": indexer,
+          "update_shape": update_shape,
+          "update_dtype": update_dtype,
+          "op": op
+      } for name, index_specs in MIXED_ADVANCED_INDEXING_TESTS_NO_REPEATS
+                          for shape, indexer in index_specs for op in UpdateOps
+                          for dtype in (all_dtypes if op == UpdateOps.UPDATE else default_dtypes)
+                          for update_shape in _broadcastable_shapes(_update_shape(shape, indexer))
+                          for update_dtype in ([dtype] if op == UpdateOps.ADD else all_dtypes)
+                          for rng in [jtu.rand_default()]))
+  def testMixedAdvancedIndexing(self, shape, dtype, update_shape, update_dtype, rng, indexer, op):
     args_maker = lambda: [rng(shape, dtype), rng(update_shape, update_dtype)]
     onp_fn = lambda x, y: UpdateOps.onp_fn(op, indexer, x, y)
     jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y)
     self._CheckAgainstNumpy(onp_fn, jax_fn, args_maker, check_dtypes=True)
     self._CompileAndCheck(jax_fn, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(jtu.cases_from_list({
-      "testcase_name": "{}_inshape={}_indexer={}_update={}_op={}".format(
-          name, jtu.format_shape_dtype_string(shape, dtype), indexer,
-          jtu.format_shape_dtype_string(update_shape, update_dtype), op.name),
-       "shape": shape, "dtype": dtype, "rng": rng, "indexer": indexer,
-       "update_shape": update_shape, "update_dtype": update_dtype,
-       "op": op
-  } for name, index_specs in STATIC_INDEXING_TESTS
-    for shape, indexer in index_specs
-    for op in UpdateOps
-    for dtype in float_dtypes
-    for update_shape in _broadcastable_shapes(_update_shape(shape, indexer))
-    for update_dtype in ([dtype] if op == UpdateOps.ADD else float_dtypes)
-    for rng in [jtu.rand_default()]))
+  @parameterized.named_parameters(
+      jtu.cases_from_list({
+          "testcase_name": "{}_inshape={}_indexer={}_update={}_op={}".format(
+              name, jtu.format_shape_dtype_string(shape, dtype), indexer,
+              jtu.format_shape_dtype_string(update_shape, update_dtype), op.name),
+          "shape": shape,
+          "dtype": dtype,
+          "rng": rng,
+          "indexer": indexer,
+          "update_shape": update_shape,
+          "update_dtype": update_dtype,
+          "op": op
+      } for name, index_specs in STATIC_INDEXING_TESTS for shape, indexer in index_specs
+                          for op in UpdateOps for dtype in float_dtypes
+                          for update_shape in _broadcastable_shapes(_update_shape(shape, indexer))
+                          for update_dtype in ([dtype] if op == UpdateOps.ADD else float_dtypes)
+                          for rng in [jtu.rand_default()]))
   @jtu.skip_on_devices("tpu")  # TODO(mattjj,phawkins): tpu issues
-  def testStaticIndexingGrads(self, shape, dtype, update_shape, update_dtype,
-                              rng, indexer, op):
+  def testStaticIndexingGrads(self, shape, dtype, update_shape, update_dtype, rng, indexer, op):
     jax_op = ops.index_update if op == UpdateOps.UPDATE else ops.index_add
     jax_fn = lambda x, y: jax_op(x, indexer, y)
     x = rng(shape, dtype)
@@ -894,7 +858,6 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     ans = ops.segment_sum(data, segment_ids)
     expected = onp.array([13, 2, 7, 4])
     self.assertAllClose(ans, expected, check_dtypes=False)
-
 
 if __name__ == "__main__":
   absltest.main()

@@ -21,20 +21,16 @@ import jax.numpy as np
 from jax.tools.jax_to_hlo import jax_to_hlo
 from jax.lib import xla_client
 
-
 class JaxToHloTest(absltest.TestCase):
-
   def test_convert_axpy(self):
-
     def axpy(a, x, y):
-      return a * x + y[:,np.newaxis]
+      return a * x + y[:, np.newaxis]
 
-    hlo_proto, hlo_text = jax_to_hlo(
-        axpy, [
-            ('y', xla_client.Shape('f32[128]')),
-            ('a', xla_client.Shape('f32[]')),
-            ('x', xla_client.Shape('f32[128,2]')),
-        ])
+    hlo_proto, hlo_text = jax_to_hlo(axpy, [
+        ('y', xla_client.Shape('f32[128]')),
+        ('a', xla_client.Shape('f32[]')),
+        ('x', xla_client.Shape('f32[128,2]')),
+    ])
 
     # Check that hlo_text contains a broadcast, add, and multiply.
     self.assertIn('broadcast', hlo_text)
@@ -55,25 +51,21 @@ class JaxToHloTest(absltest.TestCase):
     assert hlo_proto
 
   def test_convert_with_constants(self):
-
     def fn(a, b, x, y):
       return a / b * x + y
 
     _, hlo_text = jax_to_hlo(
-      fn,
-      input_shapes=[
-        ('x', xla_client.Shape('f32[128]')),
-        ('y', xla_client.Shape('f32[128]')),
-      ],
-      constants={
-        'a': 123456,
-        'b': 4,
-      })
+        fn, input_shapes=[
+            ('x', xla_client.Shape('f32[128]')),
+            ('y', xla_client.Shape('f32[128]')),
+        ], constants={
+            'a': 123456,
+            'b': 4,
+        })
     # Because we passed `a` and `b` as constants, they get constant-folded away
     # by Python/JAX to a/b = 30864.
     self.assertIn('constant(30864)', hlo_text)
     self.assertNotIn('123456', hlo_text)
-
 
 if __name__ == '__main__':
   absltest.main()

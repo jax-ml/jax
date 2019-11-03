@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """A basic MNIST example using Numpy and JAX.
 
 The primary aim here is simplicity and minimal dependencies.
@@ -30,7 +29,6 @@ from jax.config import config
 from jax.scipy.special import logsumexp
 import jax.numpy as np
 from examples import datasets
-
 
 def init_random_params(scale, layer_sizes, rng=npr.RandomState(0)):
   return [(scale * rng.randn(m, n), scale * rng.randn(n))
@@ -57,7 +55,6 @@ def accuracy(params, batch):
   predicted_class = np.argmax(predict(params, inputs), axis=1)
   return np.mean(predicted_class == target_class)
 
-
 if __name__ == "__main__":
   layer_sizes = [784, 1024, 1024, 10]
   param_scale = 0.1
@@ -77,13 +74,13 @@ if __name__ == "__main__":
       for i in range(num_batches):
         batch_idx = perm[i * batch_size:(i + 1) * batch_size]
         yield train_images[batch_idx], train_labels[batch_idx]
+
   batches = data_stream()
 
   @jit
   def update(params, batch):
     grads = grad(loss)(params, batch)
-    return [(w - step_size * dw, b - step_size * db)
-            for (w, b), (dw, db) in zip(params, grads)]
+    return [(w - step_size * dw, b - step_size * db) for (w, b), (dw, db) in zip(params, grads)]
 
   params = init_random_params(param_scale, layer_sizes)
   for epoch in range(num_epochs):

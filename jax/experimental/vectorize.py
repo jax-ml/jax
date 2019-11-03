@@ -105,9 +105,8 @@ _ARGUMENT = r'\({}\)'.format(_CORE_DIMENSION_LIST)
 _ARGUMENT_LIST = '{0:}(?:,{0:})*'.format(_ARGUMENT)
 _SIGNATURE = '^{0:}->{0:}$'.format(_ARGUMENT_LIST)
 
-
 def _parse_gufunc_signature(signature):
-    """Parse string signatures for a generalized universal function.
+  """Parse string signatures for a generalized universal function.
 
     Args:
       signature : string
@@ -118,17 +117,14 @@ def _parse_gufunc_signature(signature):
       Tuple of input and output core dimensions parsed from the signature, each
       of the form List[Tuple[str, ...]].
     """
-    if not re.match(_SIGNATURE, signature):
-        raise ValueError(
-            'not a valid gufunc signature: {}'.format(signature))
-    return tuple([tuple(re.findall(_DIMENSION_NAME, arg))
-                  for arg in re.findall(_ARGUMENT, arg_list)]
-                 for arg_list in signature.split('->'))
-
-
+  if not re.match(_SIGNATURE, signature):
+    raise ValueError('not a valid gufunc signature: {}'.format(signature))
+  return tuple([tuple(re.findall(_DIMENSION_NAME, arg))
+                for arg in re.findall(_ARGUMENT, arg_list)]
+               for arg_list in signature.split('->'))
 
 def _update_dim_sizes(dim_sizes, arg, core_dims):
-    """Incrementally check and update core dimension sizes for a single argument.
+  """Incrementally check and update core dimension sizes for a single argument.
 
     Args:
       dim_sizes : Dict[str, int]
@@ -138,29 +134,25 @@ def _update_dim_sizes(dim_sizes, arg, core_dims):
       core_dims : Tuple[str, ...]
 	  Core dimensions for this argument.
     """
-    if not core_dims:
-        return
+  if not core_dims:
+    return
 
-    num_core_dims = len(core_dims)
-    if arg.ndim < num_core_dims:
-        raise ValueError(
-            '%d-dimensional argument does not have enough '
-            'dimensions for all core dimensions %r'
-            % (arg.ndim, core_dims))
+  num_core_dims = len(core_dims)
+  if arg.ndim < num_core_dims:
+    raise ValueError('%d-dimensional argument does not have enough '
+                     'dimensions for all core dimensions %r' % (arg.ndim, core_dims))
 
-    core_shape = arg.shape[-num_core_dims:]
-    for dim, size in zip(core_dims, core_shape):
-        if dim in dim_sizes:
-            if size != dim_sizes[dim]:
-                raise ValueError(
-                    'inconsistent size for core dimension %r: %r vs %r'
-                    % (dim, size, dim_sizes[dim]))
-        else:
-            dim_sizes[dim] = size
-
+  core_shape = arg.shape[-num_core_dims:]
+  for dim, size in zip(core_dims, core_shape):
+    if dim in dim_sizes:
+      if size != dim_sizes[dim]:
+        raise ValueError('inconsistent size for core dimension %r: %r vs %r' %
+                         (dim, size, dim_sizes[dim]))
+    else:
+      dim_sizes[dim] = size
 
 def _parse_input_dimensions(args, input_core_dims):
-    """Parse broadcast and core dimensions for vectorize with a signature.
+  """Parse broadcast and core dimensions for vectorize with a signature.
 
     Args:
       args : Tuple[ndarray, ...]
@@ -174,36 +166,33 @@ def _parse_input_dimensions(args, input_core_dims):
       dim_sizes : Dict[str, int]
 	  Common sizes for named core dimensions.
     """
-    broadcast_args = []
-    dim_sizes = {}
-    for arg, core_dims in zip(args, input_core_dims):
-        _update_dim_sizes(dim_sizes, arg, core_dims)
-        ndim = arg.ndim - len(core_dims)
-        dummy_array = np.lib.stride_tricks.as_strided(0, arg.shape[:ndim])
-        broadcast_args.append(dummy_array)
-    broadcast_shape = np.lib.stride_tricks._broadcast_shape(*broadcast_args)
-    return broadcast_shape, dim_sizes
-
+  broadcast_args = []
+  dim_sizes = {}
+  for arg, core_dims in zip(args, input_core_dims):
+    _update_dim_sizes(dim_sizes, arg, core_dims)
+    ndim = arg.ndim - len(core_dims)
+    dummy_array = np.lib.stride_tricks.as_strided(0, arg.shape[:ndim])
+    broadcast_args.append(dummy_array)
+  broadcast_shape = np.lib.stride_tricks._broadcast_shape(*broadcast_args)
+  return broadcast_shape, dim_sizes
 
 def _calculate_shapes(broadcast_shape, dim_sizes, list_of_core_dims):
-    """Helper for calculating broadcast shapes with core dimensions."""
-    return [broadcast_shape + tuple(dim_sizes[dim] for dim in core_dims)
-            for core_dims in list_of_core_dims]
+  """Helper for calculating broadcast shapes with core dimensions."""
+  return [
+      broadcast_shape + tuple(dim_sizes[dim]
+                              for dim in core_dims)
+      for core_dims in list_of_core_dims
+  ]
 
-  
 # adapted from np.vectorize (again authored by shoyer@)
 def broadcast_with_core_dims(args, input_core_dims, output_core_dims):
   if len(args) != len(input_core_dims):
     raise TypeError('wrong number of positional arguments: '
-                    'expected %r, got %r'
-                    % (len(input_core_dims), len(args)))
+                    'expected %r, got %r' % (len(input_core_dims), len(args)))
 
-  broadcast_shape, dim_sizes = _parse_input_dimensions(
-      args, input_core_dims)
-  input_shapes = _calculate_shapes(broadcast_shape, dim_sizes,
-                                   input_core_dims)
-  args = [jnp.broadcast_to(arg, shape)
-          for arg, shape in zip(args, input_shapes)]
+  broadcast_shape, dim_sizes = _parse_input_dimensions(args, input_core_dims)
+  input_shapes = _calculate_shapes(broadcast_shape, dim_sizes, input_core_dims)
+  args = [jnp.broadcast_to(arg, shape) for arg, shape in zip(args, input_shapes)]
   return args
 
 def verify_axis_is_supported(input_core_dims, output_core_dims):
@@ -214,23 +203,22 @@ def verify_axis_is_supported(input_core_dims, output_core_dims):
   if len(core_dims) > 1:
     raise ValueError('only one gufuncs with one core dim support axis')
 
-
 def reorder_inputs(args, axis, input_core_dims):
-  return tuple(jnp.moveaxis(arg, axis, -1) if core_dims else arg
-               for arg, core_dims in zip(args, input_core_dims))
-
+  return tuple(
+      jnp.moveaxis(arg, axis, -1) if core_dims else arg
+      for arg, core_dims in zip(args, input_core_dims))
 
 def reorder_outputs(result, axis, output_core_dims):
   if not isinstance(result, tuple):
     result = (result,)
-  result = tuple(jnp.moveaxis(res, -1, axis) if core_dims else res
-                 for res, core_dims in zip(result, output_core_dims))
+  result = tuple(
+      jnp.moveaxis(res, -1, axis) if core_dims else res
+      for res, core_dims in zip(result, output_core_dims))
   if len(result) == 1:
     (result,) = result
   return result
 
 import functools
-
 
 def vectorize(signature):
   """Vectorize a function using JAX.
@@ -249,7 +237,7 @@ def vectorize(signature):
 	which axis should be treated as the core one.
   """
   input_core_dims, output_core_dims = _parse_gufunc_signature(signature)
-  
+
   def decorator(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
@@ -259,8 +247,7 @@ def vectorize(signature):
         verify_axis_is_supported(input_core_dims, output_core_dims)
         args = reorder_inputs(args, axis, input_core_dims)
 
-      broadcast_args = broadcast_with_core_dims(
-          args, input_core_dims, output_core_dims)
+      broadcast_args = broadcast_with_core_dims(args, input_core_dims, output_core_dims)
       num_batch_dims = len(broadcast_args[0].shape) - len(input_core_dims[0])
 
       vectorized_func = func
@@ -272,5 +259,7 @@ def vectorize(signature):
         result = reorder_outputs(result, axis, output_core_dims)
 
       return result
+
     return wrapper
+
   return decorator

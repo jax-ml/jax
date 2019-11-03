@@ -36,7 +36,6 @@ from . import partial_eval as pe
 
 map = safe_map
 
-
 def batch(fun, in_vals, in_dims, out_dim_dests):
   size, = {x.shape[d] for x, d in zip(in_vals, in_dims) if d is not not_mapped}
   out_vals, out_dims = batch_fun(fun, in_vals, in_dims)
@@ -52,13 +51,14 @@ def batch_fun(fun, in_vals, in_dims):
 @transformation_with_aux
 def batch_subtrace(master, in_dims, *in_vals):
   trace = BatchTrace(master, core.cur_sublevel())
-  in_tracers = [BatchTracer(trace, val, dim) if dim is not None else val
-                for val, dim in zip(in_vals, in_dims)]
+  in_tracers = [
+      BatchTracer(trace, val, dim) if dim is not None else val
+      for val, dim in zip(in_vals, in_dims)
+  ]
   outs = yield in_tracers, {}
   out_tracers = map(trace.full_raise, outs)
   out_vals, out_dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
   yield out_vals, out_dims
-
 
 ### tracer
 
@@ -138,8 +138,9 @@ class BatchTrace(Trace):
     else:
       size, = {x.shape[d] for x, d in zip(vals, dims) if d is not not_mapped}
       is_batched = tuple(d is not not_mapped for d in dims)
-      vals = [moveaxis(x, d, 1) if d is not not_mapped and d != 1 else x
-              for x, d in zip(vals, dims)]
+      vals = [
+          moveaxis(x, d, 1) if d is not not_mapped and d != 1 else x for x, d in zip(vals, dims)
+      ]
       dims = tuple(not_mapped if d is not_mapped else 0 for d in dims)
       f, dims_out = batch_subtrace(f, self.master, dims)
       vals_out = map_primitive.bind(f, *vals, **params)
@@ -149,11 +150,12 @@ class BatchTrace(Trace):
   def post_process_call(self, call_primitive, out_tracers, params):
     vals, dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
     master = self.master
+
     def todo(x):
       trace = BatchTrace(master, core.cur_sublevel())
       return map(partial(BatchTracer, trace), x, dims)
-    return vals, todo
 
+    return vals, todo
 
 ### primitives
 
@@ -223,12 +225,14 @@ def add_batched(batched_args, batch_dims):
   else:
     x = moveaxis(x, bdx, bdy)
     return add_jaxvals(x, y), bdy
+
 primitive_batchers[add_jaxvals_p] = add_batched
 
 def zeros_like_batched(batched_args, batch_dims):
   val, = batched_args
   bdim, = batch_dims
   return zeros_like_jaxval(val), bdim
+
 primitive_batchers[zeros_like_p] = zeros_like_batched
 
 defvectorized(xla.device_put_p)
@@ -242,7 +246,9 @@ defvectorized(xla.device_put_p)
 # almost works, except for broadcast, for which raw numpy.ndarrays don't have a
 # method. To handle that case, the `broadcast` function uses a try/except.
 
-class _Last(object): pass
+class _Last(object):
+  pass
+
 last = _Last()
 
 def broadcast(x, sz, axis):
@@ -288,7 +294,6 @@ def bdim_at_front(x, bdim, size):
   else:
     return moveaxis(x, bdim, 0)
 
-
 def _promote_aval_rank(sz, aval):
   if aval is core.abstract_unit:
     return core.abstract_unit
@@ -298,8 +303,7 @@ def _promote_aval_rank(sz, aval):
 def batch_jaxpr(jaxpr, size, batched, instantiate):
   f = wrap_init(core.jaxpr_as_fun(jaxpr))
   f, batched_out = batched_traceable(f, size, batched, instantiate)
-  avals_in = [_promote_aval_rank(size, a) if b else a
-              for a, b in zip(jaxpr.in_avals, batched)]
+  avals_in = [_promote_aval_rank(size, a) if b else a for a, b in zip(jaxpr.in_avals, batched)]
   in_pvals = [pe.PartialVal((aval, core.unit)) for aval in avals_in]
   jaxpr_out, pvals_out, consts_out = pe.trace_to_jaxpr(f, in_pvals, instantiate=True)
   avals_out, _ = unzip2(pvals_out)
@@ -317,9 +321,10 @@ def batched_traceable(size, batched, instantiate, *vals):
     del master, out_tracers
   if type(instantiate) is bool:
     instantiate = [instantiate] * len(out_vals)
-  out_vals = [moveaxis(x, d, 0) if d is not not_mapped and d != 0
-              else broadcast(x, size, 0) if d is not_mapped and inst else x
-              for x, d, inst in zip(out_vals, out_dims, instantiate)]
-  out_batched = [d is not not_mapped or inst
-                 for d, inst in zip(out_dims, instantiate)]
+  out_vals = [
+      moveaxis(x, d, 0) if d is not not_mapped and d != 0 else
+      broadcast(x, size, 0) if d is not_mapped and inst else x
+      for x, d, inst in zip(out_vals, out_dims, instantiate)
+  ]
+  out_batched = [d is not not_mapped or inst for d, inst in zip(out_dims, instantiate)]
   yield out_vals, out_batched

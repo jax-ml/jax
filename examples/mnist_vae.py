@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """A basic variational autoencoder (VAE) on binarized MNIST using Numpy and JAX.
 
 This file uses the stax network definition library and the optimizers
@@ -34,7 +33,6 @@ from jax.experimental import optimizers
 from jax.experimental import stax
 from jax.experimental.stax import Dense, FanOut, Relu, Softplus
 from examples import datasets
-
 
 def gaussian_kl(mu, sigmasq):
   """KL divergence from a diagonal Gaussian to the standard Gaussian."""
@@ -66,23 +64,24 @@ def image_sample(rng, params, nrow, ncol):
 def image_grid(nrow, ncol, imagevecs, imshape):
   """Reshape a stack of image vectors into an image grid for plotting."""
   images = iter(imagevecs.reshape((-1,) + imshape))
-  return np.vstack([np.hstack([next(images).T for _ in range(ncol)][::-1])
-                    for _ in range(nrow)]).T
-
+  return np.vstack([np.hstack([next(images).T for _ in range(ncol)][::-1]) for _ in range(nrow)]).T
 
 encoder_init, encode = stax.serial(
-    Dense(512), Relu,
-    Dense(512), Relu,
+    Dense(512),
+    Relu,
+    Dense(512),
+    Relu,
     FanOut(2),
     stax.parallel(Dense(10), stax.serial(Dense(10), Softplus)),
 )
 
 decoder_init, decode = stax.serial(
-    Dense(512), Relu,
-    Dense(512), Relu,
+    Dense(512),
+    Relu,
+    Dense(512),
+    Relu,
     Dense(28 * 28),
 )
-
 
 if __name__ == "__main__":
   step_size = 0.001
@@ -117,6 +116,7 @@ if __name__ == "__main__":
       loss = lambda params: -elbo(elbo_rng, params, batch) / batch_size
       g = grad(loss)(get_params(opt_state))
       return opt_update(i, g, opt_state)
+
     return lax.fori_loop(0, num_batches, body_fun, opt_state)
 
   @jit

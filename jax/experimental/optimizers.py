@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """Optimizers for use with JAX.
 
 This module contains some convenient optimizer definitions, specifically
@@ -79,12 +78,10 @@ from six.moves import reduce
 import jax.numpy as np
 from jax.util import partial, safe_zip, safe_map, unzip2
 from jax import tree_util
-from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
-                           register_pytree_node)
+from jax.tree_util import (tree_map, tree_flatten, tree_unflatten, register_pytree_node)
 
 map = safe_map
 zip = safe_zip
-
 
 # The implementation here basically works by flattening pytrees. There are two
 # levels of pytrees to think about: the pytree of params, which we can think of
@@ -94,12 +91,10 @@ zip = safe_zip
 # lists (with no further nesting).
 
 pack = tuple
-OptimizerState = namedtuple("OptimizerState",
-                            ["packed_state", "tree_def", "subtree_defs"])
-register_pytree_node(
-    OptimizerState,
-    lambda xs: ((xs.packed_state,), (xs.tree_def, xs.subtree_defs)),
-    lambda data, xs: OptimizerState(xs[0], data[0], data[1]))
+OptimizerState = namedtuple("OptimizerState", ["packed_state", "tree_def", "subtree_defs"])
+register_pytree_node(OptimizerState, lambda xs: ((xs.packed_state,),
+                                                 (xs.tree_def, xs.subtree_defs)),
+                     lambda data, xs: OptimizerState(xs[0], data[0], data[1]))
 
 def optimizer(opt_maker):
   """Decorator to make an optimizer defined for arrays generalize to containers.
@@ -133,7 +128,6 @@ def optimizer(opt_maker):
     to ``ParameterPytree (OptStatePytree ndarray)``, but may store the state
     instead as e.g. a partially-flattened data structure for performance.
   """
-
   @functools.wraps(opt_maker)
   def tree_opt_maker(*args, **kwargs):
     init, update, get_params = opt_maker(*args, **kwargs)
@@ -174,8 +168,8 @@ def optimizer(opt_maker):
       return tree_unflatten(tree, params)
 
     return tree_init, tree_update, tree_get_params
-  return tree_opt_maker
 
+  return tree_opt_maker
 
 ### optimizers
 
@@ -191,12 +185,16 @@ def sgd(step_size):
     An (init_fun, update_fun, get_params) triple.
   """
   step_size = make_schedule(step_size)
+
   def init(x0):
     return x0
+
   def update(i, g, x):
     return x - step_size(i) * g
+
   def get_params(x):
     return x
+
   return init, update, get_params
 
 @optimizer
@@ -212,19 +210,22 @@ def momentum(step_size, mass):
     An (init_fun, update_fun, get_params) triple.
   """
   step_size = make_schedule(step_size)
+
   def init(x0):
     v0 = np.zeros_like(x0)
     return x0, v0
+
   def update(i, g, state):
     x, velocity = state
     velocity = mass * velocity + g
     x = x - step_size(i) * velocity
     return x, velocity
+
   def get_params(state):
     x, _ = state
     return x
-  return init, update, get_params
 
+  return init, update, get_params
 
 @optimizer
 def nesterov(step_size, mass):
@@ -239,19 +240,22 @@ def nesterov(step_size, mass):
     An (init_fun, update_fun, get_params) triple.
   """
   step_size = make_schedule(step_size)
+
   def init(x0):
     v0 = np.zeros_like(x0)
     return x0, v0
+
   def update(i, g, state):
     x, velocity = state
     velocity = mass * velocity + g
     x = x - step_size(i) * (mass * velocity + g)
     return x, velocity
+
   def get_params(state):
     x, _ = state
     return x
-  return init, update, get_params
 
+  return init, update, get_params
 
 @optimizer
 def adagrad(step_size, momentum=0.9):
@@ -289,7 +293,6 @@ def adagrad(step_size, momentum=0.9):
 
   return init, update, get_params
 
-
 @optimizer
 def rmsprop(step_size, gamma=0.9, eps=1e-8):
   """Construct optimizer triple for RMSProp.
@@ -304,19 +307,22 @@ def rmsprop(step_size, gamma=0.9, eps=1e-8):
     An (init_fun, update_fun, get_params) triple.
   """
   step_size = make_schedule(step_size)
+
   def init(x0):
     avg_sq_grad = np.zeros_like(x0)
     return x0, avg_sq_grad
+
   def update(i, g, state):
     x, avg_sq_grad = state
     avg_sq_grad = avg_sq_grad * gamma + g**2 * (1. - gamma)
     x = x - step_size(i) * g / np.sqrt(avg_sq_grad + eps)
     return x, avg_sq_grad
+
   def get_params(state):
     x, _ = state
     return x
-  return init, update, get_params
 
+  return init, update, get_params
 
 @optimizer
 def rmsprop_momentum(step_size, gamma=0.9, eps=1e-8, momentum=0.9):
@@ -336,21 +342,24 @@ def rmsprop_momentum(step_size, gamma=0.9, eps=1e-8, momentum=0.9):
     An (init_fun, update_fun, get_params) triple.
   """
   step_size = make_schedule(step_size)
+
   def init(x0):
     avg_sq_grad = np.zeros_like(x0)
     mom = np.zeros_like(x0)
     return x0, avg_sq_grad, mom
+
   def update(i, g, state):
     x, avg_sq_grad, mom = state
     avg_sq_grad = avg_sq_grad * gamma + g**2 * (1. - gamma)
     mom = momentum * mom + step_size(i) * g / np.sqrt(avg_sq_grad + eps)
     x = x - mom
     return x, avg_sq_grad, mom
+
   def get_params(state):
     x, _, _ = state
     return x
-  return init, update, get_params
 
+  return init, update, get_params
 
 @optimizer
 def adam(step_size, b1=0.9, b2=0.999, eps=1e-8):
@@ -370,21 +379,25 @@ def adam(step_size, b1=0.9, b2=0.999, eps=1e-8):
     An (init_fun, update_fun, get_params) triple.
   """
   step_size = make_schedule(step_size)
+
   def init(x0):
     m0 = np.zeros_like(x0)
     v0 = np.zeros_like(x0)
     return x0, m0, v0
+
   def update(i, g, state):
     x, m, v = state
     m = (1 - b1) * g + b1 * m  # First  moment estimate.
-    v = (1 - b2) * (g ** 2) + b2 * v  # Second moment estimate.
-    mhat = m / (1 - b1 ** (i + 1))  # Bias correction.
-    vhat = v / (1 - b2 ** (i + 1))
+    v = (1 - b2) * (g**2) + b2 * v  # Second moment estimate.
+    mhat = m / (1 - b1**(i + 1))  # Bias correction.
+    vhat = v / (1 - b2**(i + 1))
     x = x - step_size(i) * mhat / (np.sqrt(vhat) + eps)
     return x, m, v
+
   def get_params(state):
     x, m, v = state
     return x
+
   return init, update, get_params
 
 @optimizer
@@ -406,7 +419,7 @@ def sm3(step_size, momentum=0.9):
 
   def splice(seq, i, x):
     lst = list(seq)
-    lst[i:i+1] = x
+    lst[i:i + 1] = x
     return lst
 
   def broadcast_into(ndim, x, axis):
@@ -420,7 +433,7 @@ def sm3(step_size, momentum=0.9):
   def update(i, g, state):
     x, m, vs = state
     vs = [broadcast_into(g.ndim, v, i) for i, v in enumerate(vs)]
-    accum = reduce(np.minimum, vs) + g ** 2
+    accum = reduce(np.minimum, vs) + g**2
     accum_inv_sqrt = np.where(accum > 0, 1. / np.sqrt(accum), 0)
     m = (1. - momentum) * (g * accum_inv_sqrt) + momentum * m
     x = x - step_size(i) * m
@@ -433,32 +446,36 @@ def sm3(step_size, momentum=0.9):
 
   return init, update, get_params
 
-
 ### learning rate schedules
 
 def constant(step_size):
   def schedule(i):
     return step_size
+
   return schedule
 
 def exponential_decay(step_size, decay_steps, decay_rate):
   def schedule(i):
-    return step_size * decay_rate ** (i / decay_steps)
+    return step_size * decay_rate**(i / decay_steps)
+
   return schedule
 
 def inverse_time_decay(step_size, decay_steps, decay_rate, staircase=False):
   if staircase:
+
     def schedule(i):
       return step_size / (1 + decay_rate * np.floor(i / decay_steps))
   else:
+
     def schedule(i):
       return step_size / (1 + decay_rate * i / decay_steps)
+
   return schedule
 
 def polynomial_decay(step_size, decay_steps, final_step_size, power=1.0):
   def schedule(step_num):
     step_num = np.minimum(step_num, decay_steps)
-    step_mult = (1 - step_num / decay_steps) ** power
+    step_mult = (1 - step_num / decay_steps)**power
     return step_mult * (step_size - final_step_size) + final_step_size
 
   return schedule
@@ -473,6 +490,7 @@ def piecewise_constant(boundaries, values):
 
   def schedule(i):
     return values[np.sum(i > boundaries)]
+
   return schedule
 
 def make_schedule(scalar_or_schedule):
@@ -482,7 +500,6 @@ def make_schedule(scalar_or_schedule):
     return constant(scalar_or_schedule)
   else:
     raise TypeError(type(scalar_or_schedule))
-
 
 ### utilities
 
@@ -496,7 +513,6 @@ def clip_grads(grad_tree, max_norm):
   norm = l2_norm(grad_tree)
   normalize = lambda g: np.where(norm < max_norm, g, g * (max_norm / norm))
   return tree_map(normalize, grad_tree)
-
 
 ### serialization utilities
 

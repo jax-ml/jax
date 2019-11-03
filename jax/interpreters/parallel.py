@@ -36,8 +36,8 @@ from . import pxla
 map = safe_map
 zip = safe_zip
 
-def identity(x): return x
-
+def identity(x):
+  return x
 
 ### papply
 
@@ -131,20 +131,20 @@ class PapplyTrace(Trace):
       size, = {t.axis_size for t in tracers if t.axis_size is not None}
       f_papply, axes_out = papply_subtrace(f, self.master, name, size, axes)
       vals_out = call_primitive.bind(f_papply, *vals, **params)
-      return [PapplyTracer(self, name, size, x, a)
-              for x, a in zip(vals_out, axes_out())]
+      return [PapplyTracer(self, name, size, x, a) for x, a in zip(vals_out, axes_out())]
 
   def post_process_call(self, call_primitive, out_tracer):
     t = out_tracer
     name, val, axis, size = t.name, t.val, t.axis, t.axis_size
     master = self.master
+
     def todo(x):
       trace = PapplyTrace(master, core.cur_sublevel())
       return PapplyTracer(trace, name, size, x, axis)
+
     return val, todo
 
   def process_map(self, map_primitive, f, tracers, params):
     raise NotImplementedError  # TODO(mattjj,frostig)
-
 
 papply_primitive_rules = {}

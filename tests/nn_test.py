@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """Tests for nn module."""
 from __future__ import absolute_import
 from __future__ import division
@@ -35,7 +34,6 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 class NNFunctionsTest(jtu.JaxTestCase):
-
   def testSoftplusGrad(self):
     check_grads(nn.softplus, (1e-8,), 4)
 
@@ -50,15 +48,12 @@ class NNFunctionsTest(jtu.JaxTestCase):
     val = nn.elu(1e4)
     self.assertAllClose(val, 1e4, check_dtypes=False)
 
-InitializerRecord = collections.namedtuple(
-  "InitializerRecord",
-  ["name", "initializer", "shapes"])
+InitializerRecord = collections.namedtuple("InitializerRecord", ["name", "initializer", "shapes"])
 
 ALL_SHAPES = [(2,), (2, 2), (2, 3), (3, 2), (2, 3, 4), (4, 3, 2), (2, 3, 4, 5)]
 
 def initializer_record(name, initializer, min_dims=2, max_dims=4):
-  shapes = [shape for shape in ALL_SHAPES
-            if min_dims <= len(shape) <= max_dims]
+  shapes = [shape for shape in ALL_SHAPES if min_dims <= len(shape) <= max_dims]
   return InitializerRecord(name, initializer, shapes)
 
 INITIALIZER_RECS = [
@@ -74,17 +69,14 @@ INITIALIZER_RECS = [
 ]
 
 class NNInitializersTest(jtu.JaxTestCase):
-
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name":
-       "_{}_{}".format(
-           rec.name,
-           jtu.format_shape_dtype_string(shape, dtype)),
-       "initializer": rec.initializer,
-       "shape": shape, "dtype": dtype}
-      for rec in INITIALIZER_RECS
-      for shape in rec.shapes
-      for dtype in [onp.float32, onp.float64]))
+  @parameterized.named_parameters(
+      jtu.cases_from_list({
+          "testcase_name": "_{}_{}".format(rec.name, jtu.format_shape_dtype_string(shape, dtype)),
+          "initializer": rec.initializer,
+          "shape": shape,
+          "dtype": dtype
+      } for rec in INITIALIZER_RECS for shape in rec.shapes
+                          for dtype in [onp.float32, onp.float64]))
   def testInitializer(self, initializer, shape, dtype):
     rng = random.PRNGKey(0)
     val = initializer(rng, shape, dtype)

@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 r"""Tool to convert a JAX function to an HLO proto.
 
 This script is meant to be used as part of a genrule that converts a JAX program
@@ -79,7 +78,6 @@ from jax.lib import xla_client
 
 FLAGS = flags.FLAGS
 
-
 def jax_to_hlo(fn, input_shapes, constants=None):
   """Converts a JAX function to an HLO module.
 
@@ -97,12 +95,10 @@ def jax_to_hlo(fn, input_shapes, constants=None):
   if not constants:
     constants = {}
 
-  overlapping_args = set(arg_name for arg_name, _ in input_shapes) & set(
-      constants.keys())
+  overlapping_args = set(arg_name for arg_name, _ in input_shapes) & set(constants.keys())
   if overlapping_args:
-    raise ValueError(
-        'Arguments appear in both `input_shapes` and `constants`: %s' %
-        ', '.join(sorted(overlapping_args)))
+    raise ValueError('Arguments appear in both `input_shapes` and `constants`: %s' %
+                     ', '.join(sorted(overlapping_args)))
 
   args = []
   for arg_name, shape in input_shapes:
@@ -115,10 +111,8 @@ def jax_to_hlo(fn, input_shapes, constants=None):
     # TODO(jlebar): This could be simpler if the Shape class exposed its layout,
     # or if Shape exposed a function to unconditionally use the default layout.
     shape_with_default_layout = xla_client.Shape.array_shape(
-        shape.xla_element_type(),
-        shape.dimensions()).with_major_to_minor_layout_if_absent()
-    if (shape.with_major_to_minor_layout_if_absent() !=
-        shape_with_default_layout):
+        shape.xla_element_type(), shape.dimensions()).with_major_to_minor_layout_if_absent()
+    if (shape.with_major_to_minor_layout_if_absent() != shape_with_default_layout):
       raise ValueError('Shape %s has a non-default layout, but only '
                        'the default layout is allowed.' % str(shape))
 
@@ -136,21 +130,20 @@ def jax_to_hlo(fn, input_shapes, constants=None):
   comp = jax.api.xla_computation(ordered_wrapper)(*args)
   return (comp.GetSerializedProto(), comp.GetHloText())
 
-
 def main(argv):
   if len(argv) != 1:
     raise app.UsageError('No positional arguments are accepted.')
 
   if not FLAGS.hlo_proto_dest and not FLAGS.hlo_text_dest:
-    raise app.Error('At least one of --hlo_proto_dest and '
-                    '--hlo_text_dest is required.')
+    raise app.Error('At least one of --hlo_proto_dest and ' '--hlo_text_dest is required.')
 
   module_name, fn_name = FLAGS.fn.rsplit('.', 1)
   module = importlib.import_module(module_name)
   fn = getattr(module, fn_name)
 
-  input_shapes = [(name, xla_client.Shape(shape_str))
-                  for name, shape_str in literal_eval(FLAGS.input_shapes)]
+  input_shapes = [
+      (name, xla_client.Shape(shape_str)) for name, shape_str in literal_eval(FLAGS.input_shapes)
+  ]
 
   # Parse --constants and --evaled_constants.
   constants = {}
@@ -165,8 +158,7 @@ def main(argv):
     if isinstance(v, list):
       v = np.asarray(v)
     if k in constants:
-      raise ValueError(
-          'Argument appears in both --constants and --evaled_constants: %s' % k)
+      raise ValueError('Argument appears in both --constants and --evaled_constants: %s' % k)
     constants[k] = v
 
   hlo_proto, hlo_text = jax_to_hlo(fn, input_shapes, constants)
@@ -180,22 +172,17 @@ def main(argv):
       f.write(hlo_text)
 
 def set_up_flags():
+  flags.DEFINE_string('fn', None, "Fully-qualified name of function that we're going to convert")
+  flags.DEFINE_string('input_shapes', None, 'Python dict indicating XLA shapes of params')
+  flags.DEFINE_string('constants', '{}', 'Python dict giving constant values for some params')
   flags.DEFINE_string(
-      'fn', None,
-      "Fully-qualified name of function that we're going to convert")
-  flags.DEFINE_string('input_shapes', None,
-                      'Python dict indicating XLA shapes of params')
-  flags.DEFINE_string('constants', '{}',
-                      'Python dict giving constant values for some params')
-  flags.DEFINE_string('evaled_constants', '{}',
-                      'Python dict giving constant values for some params.  '
-                      'Values in this dict that are of type str are evaluated '
-                      'using ast.literal_eval.')
+      'evaled_constants', '{}', 'Python dict giving constant values for some params.  '
+      'Values in this dict that are of type str are evaluated '
+      'using ast.literal_eval.')
   flags.DEFINE_string('hlo_proto_dest', None, 'File to write HLO proto')
   flags.DEFINE_string('hlo_text_dest', None, 'File to write HLO text')
   flags.mark_flag_as_required('fn')
   flags.mark_flag_as_required('input_shapes')
-
 
 if __name__ == '__main__':
   set_up_flags()

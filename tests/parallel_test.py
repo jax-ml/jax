@@ -34,9 +34,7 @@ from jax.util import prod
 from jax.config import config
 config.parse_flags_with_absl()
 
-
 class PapplyTest(jtu.JaxTestCase):
-
   def testIdentity(self):
     pfun, axis_name = _papply(lambda x: x)
     ans = pfun(onp.arange(3))
@@ -53,8 +51,7 @@ class PapplyTest(jtu.JaxTestCase):
     pfun, axis_name = _papply(lambda x: np.sum(x, axis=0))
 
     jaxpr = make_jaxpr(pfun)(onp.ones(3))
-    expected_jaxpr = make_jaxpr(
-        lambda x: lax.psum(x, axis_name))(onp.zeros((5, 3)))
+    expected_jaxpr = make_jaxpr(lambda x: lax.psum(x, axis_name))(onp.zeros((5, 3)))
     assert repr(jaxpr) == repr(expected_jaxpr)
 
     arg = onp.arange(15.).reshape((5, 3))
@@ -66,8 +63,7 @@ class PapplyTest(jtu.JaxTestCase):
     pfun, axis_name = _papply(lambda x: np.max(x, axis=0))
 
     jaxpr = make_jaxpr(pfun)(onp.ones(3))
-    expected_jaxpr = make_jaxpr(
-        lambda x: lax.pmax(x, axis_name))(onp.zeros((5, 3)))
+    expected_jaxpr = make_jaxpr(lambda x: lax.pmax(x, axis_name))(onp.zeros((5, 3)))
     assert repr(jaxpr) == repr(expected_jaxpr)
 
     arg = onp.arange(15.).reshape((5, 3))
@@ -96,8 +92,7 @@ class PapplyTest(jtu.JaxTestCase):
     pfun, axis_name = _papply(fun)
 
     jaxpr = make_jaxpr(pfun)(onp.zeros(5))
-    expected_jaxpr = make_jaxpr(
-        lambda x: x - np.log(lax.psum(np.exp(x), axis_name)))(onp.zeros(5))
+    expected_jaxpr = make_jaxpr(lambda x: x - np.log(lax.psum(np.exp(x), axis_name)))(onp.zeros(5))
     assert repr(jaxpr) == repr(expected_jaxpr)
 
     ans = soft_pmap(pfun, axis_name)(onp.arange(1., 5.))
@@ -126,15 +121,13 @@ class PapplyTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=True)
 
   def testMakeJaxprPapplyComposition(self):
-    raise SkipTest(             # TODO(mattjj)
+    raise SkipTest(  # TODO(mattjj)
         "fails because select's papply rule calls an SPMD primitive")
     x = b = onp.ones(3)
     pfun, axis_name = _papply(lambda a: np.where(x, a, b))
     make_jaxpr(pfun)(onp.ones(3))  # doesn't crash
 
-
 class ParallelizeTest(jtu.JaxTestCase):
-
   def dedup(self, arr, expected_rank):
     if arr.ndim == expected_rank + 1:
       for i in range(arr.shape[0] - 1):
@@ -145,7 +138,6 @@ class ParallelizeTest(jtu.JaxTestCase):
       return arr
 
   def testNormalize(self):
-
     def f(x):
       return x / x.sum(0)
 
@@ -160,7 +152,10 @@ class ParallelizeTest(jtu.JaxTestCase):
   def testAdd(self):
     x = onp.arange(10)
     y = 2 * onp.arange(10)
-    def f(x): return x + y
+
+    def f(x):
+      return x + y
+
     expected = f(x)
     ans = _parallelize(f)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
@@ -168,7 +163,10 @@ class ParallelizeTest(jtu.JaxTestCase):
   def testAdd2(self):
     x = onp.arange(10)
     y = 2 * onp.arange(10)
-    def f(y): return x + y
+
+    def f(y):
+      return x + y
+
     expected = f(y)
     ans = _parallelize(f)(y)
     self.assertAllClose(ans, expected, check_dtypes=False)
@@ -176,8 +174,10 @@ class ParallelizeTest(jtu.JaxTestCase):
   def testAdd3(self):
     x = onp.arange(10)
     y = 2 * onp.arange(10)
+
     def f(x, y):
       return x + y
+
     expected = f(x, y)
     ans = _parallelize(f)(x, y)
     self.assertAllClose(ans, expected, check_dtypes=False)
@@ -186,7 +186,10 @@ class ParallelizeTest(jtu.JaxTestCase):
   def testOuter(self):
     x = onp.arange(10)
     y = 2 * onp.arange(10)
-    def f(x): return x[:, None] * y
+
+    def f(x):
+      return x[:, None] * y
+
     expected = f(x)
     ans = _parallelize(f)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
@@ -194,7 +197,10 @@ class ParallelizeTest(jtu.JaxTestCase):
   def testOuter2(self):
     x = onp.arange(10)
     y = 2 * onp.arange(10)
-    def f(y): return x[:, None] * y
+
+    def f(y):
+      return x[:, None] * y
+
     expected = f(y)
     ans = _parallelize(f)(y)
     self.assertAllClose(ans, expected, check_dtypes=False)
@@ -203,26 +209,23 @@ class ParallelizeTest(jtu.JaxTestCase):
   def testOuter3(self):
     x = onp.arange(10)
     y = 2 * onp.arange(10)
-    def f(x, y): return x[:, None] * y
+
+    def f(x, y):
+      return x[:, None] * y
+
     expected = f(x, y)
     ans = _parallelize(f)(x, y)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "testTranspose_shape={}_perm={}"
-       .format(shape, perm),
-       "shape": shape, "perm": perm}
-      for shape in [
-          (2, 2),
-          (3, 3),
-          (2, 2, 2),
-          (2, 3, 4),
-          (2, 3, 2)
-      ]
-      for perm in itertools.permutations(list(range(len(shape))))
-  ))
+  @parameterized.named_parameters(
+      jtu.cases_from_list({
+          "testcase_name": "testTranspose_shape={}_perm={}".format(shape, perm),
+          "shape": shape,
+          "perm": perm
+      }
+                          for shape in [(2, 2), (3, 3), (2, 2, 2), (2, 3, 4), (2, 3, 2)]
+                          for perm in itertools.permutations(list(range(len(shape))))))
   def testTranspose(self, shape, perm):
-
     def fun(x):
       return lax.transpose(x, perm)
 
@@ -232,7 +235,6 @@ class ParallelizeTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testTransposeAndAddRank2(self):
-
     def fun(x):
       return x + x.T
 
@@ -242,7 +244,6 @@ class ParallelizeTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testTransposeAndAddRank3(self):
-
     def fun(x):
       return x + x.T
 
@@ -268,13 +269,14 @@ class ParallelizeTest(jtu.JaxTestCase):
   # for every matching of dimensions, and each matched pair of dimensions being
   # {batch, contracting, neither}. In combination with that, split the first
   # dimension of the LHS, that of the RHS, and that of both.
-  @parameterized.named_parameters(
-      {"testcase_name": "_dimMatch={}_matchTypes={}_split={}".format(
-          matching, coloring, split),
-       "matching": matching, "coloring": coloring, "split": split}
-      for matching in itertools.permutations(range(3))
-      for coloring in itertools.product(range(3), range(3), range(3))
-      for split in range(3))
+  @parameterized.named_parameters({
+      "testcase_name": "_dimMatch={}_matchTypes={}_split={}".format(matching, coloring, split),
+      "matching": matching,
+      "coloring": coloring,
+      "split": split
+  } for matching in itertools.permutations(range(3))
+                                  for coloring in itertools.product(range(3), range(3), range(3))
+                                  for split in range(3))
   def testDotGeneral(self, matching, coloring, split):
     BATCH, CONTRACT, _ = range(3)
     SPLIT_LHS, SPLIT_RHS, SPLIT_BOTH = range(3)
@@ -284,10 +286,7 @@ class ParallelizeTest(jtu.JaxTestCase):
 
     cdims = [(i, matching[i]) for i in range(3) if coloring[i] == CONTRACT]
     bdims = [(i, matching[i]) for i in range(3) if coloring[i] == BATCH]
-    dimension_numbers = [
-        list(zip(*cdims)) or [(), ()],
-        list(zip(*bdims)) or [(), ()]
-    ]
+    dimension_numbers = [list(zip(*cdims)) or [(), ()], list(zip(*bdims)) or [(), ()]]
 
     def f(x, y):
       return lax.dot_general(x, y, dimension_numbers)
@@ -323,7 +322,6 @@ class ParallelizeTest(jtu.JaxTestCase):
     expected = fun(x)
     ans = _parallelize(fun)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
-
 
 if __name__ == '__main__':
   absltest.main()

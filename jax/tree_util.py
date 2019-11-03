@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """Utilities for working with tree-like container data structures.
 
 This module provides a small set of utility functions for working with tree-like
@@ -43,7 +42,6 @@ from six.moves import reduce
 from .lib import pytree
 
 from .util import partial, safe_zip, unzip2
-
 
 def tree_map(f, tree):
   """Map a function over a pytree to produce a new pytree.
@@ -138,6 +136,7 @@ _registry = {
                          lambda keys, xs: dict(zip(keys, xs))),
     type(None): _RegistryEntry(lambda z: ((), None), lambda _, xs: None),
 }
+
 def _replace_nones(sentinel, tree):
   if tree is None:
     return sentinel
@@ -155,19 +154,14 @@ def _replace_nones(sentinel, tree):
     else:
       return tree
 
-
 def tree_reduce(f, tree):
   return reduce(f, tree_leaves(tree))
-
 
 def tree_all(tree):
   return all(tree_leaves(tree))
 
-register_pytree_node(
-  collections.OrderedDict,
-  lambda x: (list(x.values()), list(x.keys())),
-  lambda keys, values: collections.OrderedDict(safe_zip(keys, values)))
-
+register_pytree_node(collections.OrderedDict, lambda x: (list(x.values()), list(x.keys())),
+                     lambda keys, values: collections.OrderedDict(safe_zip(keys, values)))
 
 class Partial(functools.partial):
   """A version of functools.partial that works in pytrees.

@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """A basic MNIST example using JAX with the mini-libraries stax and optimizers.
 
 The mini-library jax.experimental.stax is for neural network building, and
@@ -36,7 +35,6 @@ from jax.experimental import stax
 from jax.experimental.stax import Dense, Relu, LogSoftmax
 from examples import datasets
 
-
 def loss(params, batch):
   inputs, targets = batch
   preds = predict(params, inputs)
@@ -49,9 +47,7 @@ def accuracy(params, batch):
   return np.mean(predicted_class == target_class)
 
 init_random_params, predict = stax.serial(
-    Dense(1024), Relu,
-    Dense(1024), Relu,
-    Dense(10), LogSoftmax)
+    Dense(1024), Relu, Dense(1024), Relu, Dense(10), LogSoftmax)
 
 if __name__ == "__main__":
   rng = random.PRNGKey(0)
@@ -73,6 +69,7 @@ if __name__ == "__main__":
       for i in range(num_batches):
         batch_idx = perm[i * batch_size:(i + 1) * batch_size]
         yield train_images[batch_idx], train_labels[batch_idx]
+
   batches = data_stream()
 
   opt_init, opt_update, get_params = optimizers.momentum(step_size, mass=momentum_mass)

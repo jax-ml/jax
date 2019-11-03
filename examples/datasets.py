@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 """Datasets used in examples."""
 
 from __future__ import absolute_import
@@ -27,9 +26,7 @@ from six.moves.urllib.request import urlretrieve
 
 import numpy as np
 
-
 _DATA = "/tmp/jax_example_data/"
-
 
 def _download(url, filename):
   """Download a url to a file in the JAX data temp directory."""
@@ -40,16 +37,13 @@ def _download(url, filename):
     urlretrieve(url, out_file)
     print("downloaded {} to {}".format(url, _DATA))
 
-
 def _partial_flatten(x):
   """Flatten all but the first dimension of an ndarray."""
   return np.reshape(x, (x.shape[0], -1))
 
-
 def _one_hot(x, k, dtype=np.float32):
   """Create a one-hot encoding of x of size k."""
   return np.array(x[:, None] == np.arange(k), dtype)
-
 
 def mnist_raw():
   """Download and parse the raw MNIST dataset."""
@@ -64,11 +58,12 @@ def mnist_raw():
   def parse_images(filename):
     with gzip.open(filename, "rb") as fh:
       _, num_data, rows, cols = struct.unpack(">IIII", fh.read(16))
-      return np.array(array.array("B", fh.read()),
-                      dtype=np.uint8).reshape(num_data, rows, cols)
+      return np.array(array.array("B", fh.read()), dtype=np.uint8).reshape(num_data, rows, cols)
 
-  for filename in ["train-images-idx3-ubyte.gz", "train-labels-idx1-ubyte.gz",
-                   "t10k-images-idx3-ubyte.gz", "t10k-labels-idx1-ubyte.gz"]:
+  for filename in [
+      "train-images-idx3-ubyte.gz", "train-labels-idx1-ubyte.gz", "t10k-images-idx3-ubyte.gz",
+      "t10k-labels-idx1-ubyte.gz"
+  ]:
     _download(base_url + filename, filename)
 
   train_images = parse_images(path.join(_DATA, "train-images-idx3-ubyte.gz"))
@@ -77,7 +72,6 @@ def mnist_raw():
   test_labels = parse_labels(path.join(_DATA, "t10k-labels-idx1-ubyte.gz"))
 
   return train_images, train_labels, test_images, test_labels
-
 
 def mnist(permute_train=False):
   """Download, parse and process MNIST data to unit scale and one-hot labels."""

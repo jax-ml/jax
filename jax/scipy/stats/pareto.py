@@ -22,7 +22,6 @@ import scipy.stats as osp_stats
 from ... import lax
 from ...numpy.lax_numpy import _promote_args_like, _constant_like, _wraps, inf, where
 
-
 @_wraps(osp_stats.pareto.logpdf, update_doc=False)
 def logpdf(x, b, loc=0, scale=1):
   x, b, loc, scale = _promote_args_like(osp_stats.pareto.logpdf, x, b, loc, scale)

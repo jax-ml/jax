@@ -1,0 +1,12 @@
+[style]
+based_on_style = chromium
+split_before_logical_operator = true
+join_multiple_lines = true
+column_limit = 100
+split_before_named_assigns = false
+blank_line_before_nested_class_or_def = false
+blank_lines_around_top_level_definition = 1
+allow_split_before_dict_value = false
+each_dict_entry_on_separate_line = true
+allow_multiline_dictionary_keys = false
+indent_dictionary_value = true

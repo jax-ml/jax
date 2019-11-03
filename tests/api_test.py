@@ -46,7 +46,6 @@ config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
 class APITest(jtu.JaxTestCase):
-
   def test_grad_argnums(self):
     def f(x, y, z, flag=False):
       assert flag
@@ -72,7 +71,7 @@ class APITest(jtu.JaxTestCase):
     def f(x, y, z, flag=False, flag2=False):
       assert flag
       side.append(None)
-      return 100*x + 10*y + z
+      return 100 * x + 10 * y + z
 
     f1 = jit(f, static_argnums=(3, 4))
     assert f1(1, 2, 3, True, False) == 123
@@ -102,7 +101,7 @@ class APITest(jtu.JaxTestCase):
 
     def f(x, y, z):
       side.append(None)
-      return 100*x + 10*y + z
+      return 100 * x + 10 * y + z
 
     f = jit(f)
     assert f(1, 2, 3) == 123
@@ -151,16 +150,15 @@ class APITest(jtu.JaxTestCase):
     assert g(2.0) == 4.0
     assert len(side) == 1
 
-
   def test_bad_input(self):
     def f(x):
       return x
 
     jtu.check_raises_regexp(lambda: grad(f)("foo"), TypeError,
-                     ".* 'foo' of type <.*'str'> is not a valid JAX type")
+                            ".* 'foo' of type <.*'str'> is not a valid JAX type")
 
     jtu.check_raises_regexp(lambda: jit(f)("foo"), TypeError,
-                     ".* 'foo' of type <.*'str'> is not a valid JAX type")
+                            ".* 'foo' of type <.*'str'> is not a valid JAX type")
 
   # TODO(dougalm): enable when we remove 'None' from pytree nodes
   # def test_bad_output(self):
@@ -172,7 +170,7 @@ class APITest(jtu.JaxTestCase):
   #   assert False
 
   def test_grad_tuple_output(self):
-    jtu.check_raises(lambda: grad(lambda x: (x,x))(1.0), TypeError,
+    jtu.check_raises(lambda: grad(lambda x: (x, x))(1.0), TypeError,
                      "Gradient only defined for scalar-output functions. ")
 
   def test_grad_unit_output(self):
@@ -187,32 +185,27 @@ class APITest(jtu.JaxTestCase):
     def f(x):
       return onp.exp(x)
 
-    jtu.check_raises(lambda: grad(f)(onp.zeros(3)), Exception,
-                     "Tracer can't be used with raw numpy functions. "
-                     "You might have\n  import numpy as np\ninstead of\n"
-                     "  import jax.numpy as np")
+    jtu.check_raises(
+        lambda: grad(f)(onp.zeros(3)), Exception, "Tracer can't be used with raw numpy functions. "
+        "You might have\n  import numpy as np\ninstead of\n"
+        "  import jax.numpy as np")
 
   def test_binop_mismatch(self):
     def f(x, y):
       return x + y
 
-    jtu.check_raises(
-        lambda: f(np.zeros(3), np.zeros(4)),
-        TypeError,
-        "add got incompatible shapes for broadcasting: (3,), (4,).")
+    jtu.check_raises(lambda: f(np.zeros(3), np.zeros(4)), TypeError,
+                     "add got incompatible shapes for broadcasting: (3,), (4,).")
 
-    jtu.check_raises(
-        lambda: grad(f)(onp.zeros(3), onp.zeros(4)),
-        TypeError,
-        "add got incompatible shapes for broadcasting: (3,), (4,).")
+    jtu.check_raises(lambda: grad(f)(onp.zeros(3), onp.zeros(4)), TypeError,
+                     "add got incompatible shapes for broadcasting: (3,), (4,).")
 
   def test_dot_mismatch(self):
     def f(x, y):
       return np.dot(x, y)
 
-    jtu.check_raises_regexp(
-        lambda: grad(f)(onp.zeros(3), onp.zeros(4)), TypeError,
-        "Incompatible shapes for dot: got \\(3L?,\\) and \\(4L?,\\).")
+    jtu.check_raises_regexp(lambda: grad(f)(onp.zeros(3), onp.zeros(4)), TypeError,
+                            "Incompatible shapes for dot: got \\(3L?,\\) and \\(4L?,\\).")
 
   def test_switch_value_jit(self):
     def f(x):
@@ -234,20 +227,19 @@ class APITest(jtu.JaxTestCase):
 
     assert jit(f, static_argnums=(1,))(0, 5) == 10
     jtu.check_raises_regexp(
-        lambda: jit(f)(0, 5), TypeError,
-        "('JaxprTracer' object cannot be interpreted as an integer"
+        lambda: jit(f)(0, 5), TypeError, "('JaxprTracer' object cannot be interpreted as an integer"
         "|Abstract value passed to .*)")
 
   def test_casts(self):
     for castfun in [float, complex, hex, oct] + list(six.integer_types):
       f = lambda x: castfun(x)
       jtu.check_raises_regexp(
-          lambda: jit(f)(0), TypeError,
-          "('JaxprTracer' object cannot be interpreted as an integer"
+          lambda: jit(f)(0), TypeError, "('JaxprTracer' object cannot be interpreted as an integer"
           "|Abstract value passed to .*)")
 
   def test_unimplemented_interpreter_rules(self):
     foo_p = Primitive('foo')
+
     def foo(x):
       return foo_p.bind(x)
 
@@ -295,7 +287,7 @@ class APITest(jtu.JaxTestCase):
     if xb.device_count() == 1:
       raise unittest.SkipTest("this test requires multiple devices")
     d1, d2 = xb.local_devices()[:2]
-    x = api.device_put(onp.array([1,2,3]), device=d1)
+    x = api.device_put(onp.array([1, 2, 3]), device=d1)
     self.assertEqual(x.device_buffer.device(), d1)
     y = api.device_put(x, device=d2)
     self.assertEqual(y.device_buffer.device(), d2)
@@ -353,28 +345,28 @@ class APITest(jtu.JaxTestCase):
       self.assertAllClose(ans, expected, check_dtypes=False)
 
       ans = jacfun(lambda x, y: (x, y), (0, 1))(0., 1.)
-      expected = ((1., 0.),
-                  (0., 1.),)
+      expected = (
+          (1., 0.),
+          (0., 1.),
+      )
       self.assertAllClose(ans, expected, check_dtypes=False)
 
       ans = jacfun(lambda x: x[:2])((1., 2., 3.))
-      expected = ((1., 0., 0.),
-                  (0., 1., 0.))
+      expected = ((1., 0., 0.), (0., 1., 0.))
       self.assertAllClose(ans, expected, check_dtypes=False)
 
       R = onp.random.RandomState(0).randn
       x = R(2)
       y = R(3)
       ans = jacfun(lambda x, y: {'x': x, 'xy': np.outer(x, y)})(x, y)
-      expected = {'x': onp.eye(2),
-                  'xy': onp.kron(onp.eye(2), y[:, None]).reshape(2, 3, 2)}
+      expected = {'x': onp.eye(2), 'xy': onp.kron(onp.eye(2), y[:, None]).reshape(2, 3, 2)}
       self.assertAllClose(ans, expected, check_dtypes=False)
 
   @jtu.skip_on_devices("tpu")
   def test_hessian_on_pytrees(self):
     ans = hessian(lambda x: np.array(x)**2)((1., 2.))
-    expected = ((onp.array([2., 0.]), onp.array([0., 0.])),
-                (onp.array([0., 0.]), onp.array([0., 2.])))
+    expected = ((onp.array([2., 0.]), onp.array([0., 0.])), (onp.array([0.,
+                                                                        0.]), onp.array([0., 2.])))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   @jtu.skip_on_devices("tpu")
@@ -471,6 +463,7 @@ class APITest(jtu.JaxTestCase):
   def test_jarrett_jvps(self):
     def f1(x):
       return np.sin(np.sin(np.sin(x)))
+
     f2 = api.jarrett(f1)
 
     for x in [3., onp.array([2., 3., 4.])]:
@@ -487,6 +480,7 @@ class APITest(jtu.JaxTestCase):
   def test_jarrett_jvps2(self):
     def f1(x, y):
       return np.sin(x) * np.cos(y) * np.sin(x) * np.cos(y)
+
     f2 = api.jarrett(f1)
 
     # TODO(mattjj): doesn't work for (3., onp.array([4., 5.]))
@@ -516,11 +510,10 @@ class APITest(jtu.JaxTestCase):
       return np.sum(np.cos(np.abs(z)))
 
     ans = grad(f)(zs)
-    expected = onp.array([ 0.        +0.j,
-                          -0.80430663+0.40215331j,
-                          -0.70368982+0.35184491j,
-                           0.1886467 -0.09432335j,
-                           0.86873727-0.43436864j])
+    expected = onp.array([
+        0. + 0.j, -0.80430663 + 0.40215331j, -0.70368982 + 0.35184491j, 0.1886467 - 0.09432335j,
+        0.86873727 - 0.43436864j
+    ])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_complex_output_jacrev_raises_error(self):
@@ -542,7 +535,9 @@ class APITest(jtu.JaxTestCase):
 
   def test_defvjp_all(self):
     foo_p = Primitive('foo')
-    def foo(x): return 2. * foo_p.bind(x)
+
+    def foo(x):
+      return 2. * foo_p.bind(x)
 
     ad.defvjp_all(foo_p, lambda x: (x**2, lambda g: (4 * g * np.sin(x),)))
     val_ans, grad_ans = api.value_and_grad(foo)(3.)
@@ -551,7 +546,9 @@ class APITest(jtu.JaxTestCase):
 
   def test_defvjp_all_const(self):
     foo_p = Primitive('foo')
-    def foo(x): return foo_p.bind(x)
+
+    def foo(x):
+      return foo_p.bind(x)
 
     ad.defvjp_all(foo_p, lambda x: (x**2, lambda g: (12.,)))
     val_ans, grad_ans = api.value_and_grad(foo)(3.)
@@ -560,9 +557,11 @@ class APITest(jtu.JaxTestCase):
 
   def test_defvjp_all_higher_order_revmode(self):
     foo_p = Primitive('foo')
-    def foo(x): return 2. * foo_p.bind(x)
 
-    ad.defvjp_all(foo_p, lambda x: (x**2, lambda g: (g * x ** 2,)))
+    def foo(x):
+      return 2. * foo_p.bind(x)
+
+    ad.defvjp_all(foo_p, lambda x: (x**2, lambda g: (g * x**2,)))
     ans = api.grad(api.grad(foo))(3.)
     self.assertAllClose(ans, 2 * 2 * 3., check_dtypes=False)
 
@@ -571,7 +570,9 @@ class APITest(jtu.JaxTestCase):
     # the first argument in one case
 
     foo_p = Primitive('foo')
-    def foo(x, y): return foo_p.bind(x, y)
+
+    def foo(x, y):
+      return foo_p.bind(x, y)
 
     def vjpfun(x, y):
       out = x**2 + y**3
@@ -630,8 +631,7 @@ class APITest(jtu.JaxTestCase):
     api.defvjp(foo, None, lambda g, ans, x, y: g * x * y + np.cos(ans))
     val_ans, grad_ans = api.value_and_grad(foo, 1)(3., 4.)
     self.assertAllClose(val_ans, onp.sin(3. * 4.), check_dtypes=False)
-    self.assertAllClose(grad_ans, 3. * 4. + onp.cos(onp.sin(3. * 4)),
-                        check_dtypes=False)
+    self.assertAllClose(grad_ans, 3. * 4. + onp.cos(onp.sin(3. * 4)), check_dtypes=False)
 
   # TODO
   # def test_defjvp_closure_error(self):
@@ -719,6 +719,7 @@ class APITest(jtu.JaxTestCase):
       @api.custom_transforms
       def g(y):
         return x * y
+
       return g(x)
 
     ans = api.grad(f)(1.)
@@ -728,7 +729,7 @@ class APITest(jtu.JaxTestCase):
   def test_custom_gradient(self):
     @api.custom_gradient
     def f(x):
-      return x ** 2, lambda g: (g * x,)
+      return x**2, lambda g: (g * x,)
 
     self.assertAllClose(f(3.), 9., check_dtypes=False)
     self.assertAllClose(api.grad(f)(3.), 3., check_dtypes=False)
@@ -749,8 +750,7 @@ class APITest(jtu.JaxTestCase):
   def test_devicearray_delete(self):
     x = device_put(1.)
     x.delete()
-    jtu.check_raises_regexp(lambda: repr(x), ValueError,
-                            "DeviceValue has been deleted.")
+    jtu.check_raises_regexp(lambda: repr(x), ValueError, "DeviceValue has been deleted.")
 
   def test_devicearray_block_until_ready(self):
     x = device_put(1.)
@@ -763,7 +763,7 @@ class APITest(jtu.JaxTestCase):
     Point = collections.namedtuple("Point", ["x", "y"])
 
     def f(pt):
-      return np.sqrt(pt.x ** 2 + pt.y ** 2)
+      return np.sqrt(pt.x**2 + pt.y**2)
 
     pt = Point(1., 2.)
 
@@ -785,7 +785,7 @@ class APITest(jtu.JaxTestCase):
     pt = ZeroPoint(0., 0.)
 
     def f(pt):
-      return 0. if pt.is_zero() else np.sqrt(pt.x ** 2 + pt.y ** 2)
+      return 0. if pt.is_zero() else np.sqrt(pt.x**2 + pt.y**2)
 
     f(pt)  # doesn't crash
     g = api.grad(f)(pt)
@@ -895,28 +895,29 @@ class APITest(jtu.JaxTestCase):
     c = onp.ones((2, 3, 3))
 
     jaxpr = api.make_jaxpr(lambda b, c: f(a, b, c))(b, c)
-    subjaxpr = next(eqn.bound_subjaxprs[0][0] for eqn in jaxpr.eqns
-                    if eqn.bound_subjaxprs)
+    subjaxpr = next(eqn.bound_subjaxprs[0][0] for eqn in jaxpr.eqns if eqn.bound_subjaxprs)
     self.assertEqual(len(subjaxpr.eqns), 1)
 
   def test_grad_of_int_errors(self):
-    dfn = grad(lambda x: x ** 2)
+    dfn = grad(lambda x: x**2)
     jtu.check_raises_regexp(
-      lambda: dfn(3), TypeError,
-      "Primal inputs to reverse-mode differentiation must be of float or "
-      "complex type, got type int..")
+        lambda: dfn(3), TypeError,
+        "Primal inputs to reverse-mode differentiation must be of float or "
+        "complex type, got type int..")
 
   def test_xla_computation(self):
     # these tests basically check the examples in the xla_computation docstring
 
     def h(x):
       return np.sin(np.cos(x))
+
     c = api.xla_computation(h)(2.)
     self.assertIn('cosine', c.GetHloText())
     self.assertIn('sine', c.GetHloText())
 
     def f(x):
       return x - lax.psum(x, 'i')
+
     axis_env = [('i', 4)]
     c = api.xla_computation(f, axis_env=axis_env)(2)
     self.assertIn('all-reduce', c.GetHloText())
@@ -927,6 +928,7 @@ class APITest(jtu.JaxTestCase):
       colsum = lax.psum(x, 'j')
       allsum = lax.psum(x, ('i', 'j'))
       return rowsum, colsum, allsum
+
     axis_env = [('i', 4), ('j', 2)]
     c = api.xla_computation(g, axis_env=axis_env)(5.)
     self.assertIn('all-reduce', c.GetHloText())
@@ -944,12 +946,12 @@ class APITest(jtu.JaxTestCase):
     c = api.xla_computation(foo, tuple_args=True)(1., 2., 3.)
     param_shapes = c.GetProgramShape().parameter_shapes()
     self.assertEqual(len(param_shapes), 1)
-    self.assertEqual(param_shapes[0].xla_element_type(),
-                     xb.xla_client.PrimitiveType.TUPLE)
+    self.assertEqual(param_shapes[0].xla_element_type(), xb.xla_client.PrimitiveType.TUPLE)
 
   def test_staging_out_multi_replica(self):
     def f(x):
       return api.pmap(np.mean)(x)
+
     xla_comp = api.xla_computation(f)
     xla_comp(np.arange(8)).GetHloText()  # doesn't crash
 
@@ -960,8 +962,7 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(x.device_buffer.device(), device)
 
   def test_jit_of_noncallable(self):
-    jtu.check_raises_regexp(lambda: api.jit(3), TypeError,
-                            "Expected a callable value.*")
+    jtu.check_raises_regexp(lambda: api.jit(3), TypeError, "Expected a callable value.*")
 
   def test_issue_1062(self):
     # code from https://github.com/google/jax/issues/1062 @shoyer
@@ -1036,28 +1037,23 @@ class APITest(jtu.JaxTestCase):
         nowarn()
         assert len(w) == prev_len
 
-    check_warning(lambda: np.array([1, 2, 3], dtype="float64"),
-                  lambda: np.array([1, 2, 3], dtype="float32"),)
-    check_warning(lambda: np.ones(3, dtype=onp.float64),
-                  lambda: np.ones(3))
+    check_warning(
+        lambda: np.array([1, 2, 3], dtype="float64"),
+        lambda: np.array([1, 2, 3], dtype="float32"),
+    )
+    check_warning(lambda: np.ones(3, dtype=onp.float64), lambda: np.ones(3))
     check_warning(lambda: np.ones_like(3, dtype=onp.int64),
                   lambda: np.ones_like(3, dtype=onp.int32))
-    check_warning(lambda: np.zeros(3, dtype="int64"),
-                  lambda: np.zeros(3, dtype="int32"))
+    check_warning(lambda: np.zeros(3, dtype="int64"), lambda: np.zeros(3, dtype="int32"))
     check_warning(lambda: np.zeros_like(3, dtype="float64"),
                   lambda: np.zeros_like(3, dtype="float32"))
-    check_warning(lambda: np.full((2, 3), 1, dtype="int64"),
-                  lambda: np.full((2, 3), 1))
-    check_warning(lambda: np.ones(3).astype("float64"),
-                  lambda: np.ones(3).astype("float32"))
-    check_warning(lambda: np.eye(3, dtype=onp.float64),
-                  lambda: np.eye(3))
-    check_warning(lambda: np.arange(3, dtype=onp.float64),
-                  lambda: np.arange(3, dtype=onp.float32))
+    check_warning(lambda: np.full((2, 3), 1, dtype="int64"), lambda: np.full((2, 3), 1))
+    check_warning(lambda: np.ones(3).astype("float64"), lambda: np.ones(3).astype("float32"))
+    check_warning(lambda: np.eye(3, dtype=onp.float64), lambda: np.eye(3))
+    check_warning(lambda: np.arange(3, dtype=onp.float64), lambda: np.arange(3, dtype=onp.float32))
     check_warning(lambda: np.linspace(0, 3, dtype=onp.float64),
                   lambda: np.linspace(0, 3, dtype=onp.float32))
-    check_warning(lambda: np.tri(2, dtype="float64"),
-                  lambda: np.tri(2, dtype="float32"))
+    check_warning(lambda: np.tri(2, dtype="float64"), lambda: np.tri(2, dtype="float32"))
 
   def test_custom_vjp_zeros(self):
     @api.custom_transforms
@@ -1067,7 +1063,10 @@ class APITest(jtu.JaxTestCase):
     def f_vjp(x, y):
       return (2 * x, 3 * y), lambda ts: (4 * ts[0], 5 * ts[1])
 
-    api.defvjp_all(f, f_vjp, )
+    api.defvjp_all(
+        f,
+        f_vjp,
+    )
     api.grad(lambda x, y: f(x, y)[0])(1., 2.)  # doesn't crash
 
   def test_custom_transforms_vjp_nones(self):
@@ -1075,17 +1074,21 @@ class APITest(jtu.JaxTestCase):
     @jax.custom_transforms
     def solve(a, b):
       return np.dot(np.linalg.inv(a), b)
+
     # print(solve(a, b))
 
     def solve_vjp(a, b):
       x = solve(a, b)
+
       def vjp(x_tangent):
         dx = np.dot(solve(a, x_tangent), x.T)
         out = (dx, b * 0.)
         return out
+
       return x, vjp
+
     jax.defvjp_all(solve, solve_vjp)
-    gf = grad(lambda a,b: np.sum(solve(a, b)))
+    gf = grad(lambda a, b: np.sum(solve(a, b)))
 
     n = 3
     a_in = np.linspace(0, 1, n)[:, None]
@@ -1097,12 +1100,10 @@ class APITest(jtu.JaxTestCase):
   def test_vmap_in_axes_tree_prefix_error(self):
     # https://github.com/google/jax/issues/795
     jtu.check_raises_regexp(
-        lambda: api.vmap(lambda x: x, in_axes=(0, 0))(np.ones(3)),
-        ValueError,
+        lambda: api.vmap(lambda x: x, in_axes=(0, 0))(np.ones(3)), ValueError,
         "axes specification must be a tree prefix of the corresponding "
         r"value, got specification \(0, 0\) for value "
-        r"PyTreeDef\(tuple, \[\*\]\)."
-    )
+        r"PyTreeDef\(tuple, \[\*\]\).")
 
   def test_vmap_unbatched_object_passthrough_issue_183(self):
     # https://github.com/google/jax/issues/183
@@ -1120,32 +1121,32 @@ class APITest(jtu.JaxTestCase):
     U = onp.random.randn(10, 2)
 
     self.assertRaisesRegex(
-        ValueError,
-        "vmap got inconsistent sizes for array axes to be mapped:\n"
-        r"arg 0 has shape \(10, 4\) and axis 0 is to be mapped" "\n"
-        r"arg 1 has shape \(10, 2\) and axis 1 is to be mapped" "\n"
+        ValueError, "vmap got inconsistent sizes for array axes to be mapped:\n"
+        r"arg 0 has shape \(10, 4\) and axis 0 is to be mapped"
+        "\n"
+        r"arg 1 has shape \(10, 2\) and axis 1 is to be mapped"
+        "\n"
         "so\n"
         "arg 0 has an axis to be mapped of size 10\n"
-        "arg 1 has an axis to be mapped of size 2",
-        lambda: api.vmap(h, in_axes=(0, 1))(X, U))
+        "arg 1 has an axis to be mapped of size 2", lambda: api.vmap(h, in_axes=(0, 1))(X, U))
 
     self.assertRaisesRegex(
-        ValueError,
-        "vmap got inconsistent sizes for array axes to be mapped:\n"
-        r"arg 0 has shape \(10, 4\) and axis 0 is to be mapped" "\n"
-        r"arg 1 has shape \(10, 2\) and axis 1 is to be mapped" "\n"
-        r"arg 2 has shape \(10, 4\) and axis 0 is to be mapped" "\n"
+        ValueError, "vmap got inconsistent sizes for array axes to be mapped:\n"
+        r"arg 0 has shape \(10, 4\) and axis 0 is to be mapped"
+        "\n"
+        r"arg 1 has shape \(10, 2\) and axis 1 is to be mapped"
+        "\n"
+        r"arg 2 has shape \(10, 4\) and axis 0 is to be mapped"
+        "\n"
         "so\n"
         "args 0, 2 have axes to be mapped of size 10\n"
         "arg 1 has an axis to be mapped of size 2",
         lambda: api.vmap(lambda x, y, z: None, in_axes=(0, 1, 0))(X, U, X))
 
     self.assertRaisesRegex(
-        ValueError,
-        "vmap got inconsistent sizes for array axes to be mapped:\n"
+        ValueError, "vmap got inconsistent sizes for array axes to be mapped:\n"
         "the tree of axis sizes is:\n"
-        r"\(10, \[2, 2\]\)",
-        lambda: api.vmap(h, in_axes=(0, 1))(X, [U, U]))
+        r"\(10, \[2, 2\]\)", lambda: api.vmap(h, in_axes=(0, 1))(X, [U, U]))
 
   def test_vmap_structured_in_axes(self):
 
@@ -1173,29 +1174,28 @@ class APITest(jtu.JaxTestCase):
       y, z = dct['a'], dct['b']
       return np.dot(x, np.dot(y, z))
 
-    tree = (x, {'a':y, 'b':z})
-    vfoo = api.vmap(foo, in_axes=((0, {'a':1, 'b':2}),))
+    tree = (x, {'a': y, 'b': z})
+    vfoo = api.vmap(foo, in_axes=((0, {'a': 1, 'b': 2}),))
     self.assertEqual(vfoo(tree).shape, (6, 2, 5))
 
     tree = (x, collections.OrderedDict([('a', y), ('b', z)]))
-    vfoo = api.vmap(
-        foo, in_axes=((0, collections.OrderedDict([('a', 1), ('b', 2)])),))
+    vfoo = api.vmap(foo, in_axes=((0, collections.OrderedDict([('a', 1), ('b', 2)])),))
     self.assertEqual(vfoo(tree).shape, (6, 2, 5))
 
   def test_jit_reference_dropping(self):
     x = onp.ones(10)
     f = (lambda x: lambda: x)(x)  # reference to x in f's closure
     g = jit(f)
-    x = weakref.ref(x)      # no more strong ref to x in this scope
+    x = weakref.ref(x)  # no more strong ref to x in this scope
     assert x() is not None  # x is still around
-    f()                     # f runs
-    g()                     # g runs
-    g()                     # g runs a second time
-    del f                   # delete the raw callable
+    f()  # f runs
+    g()  # g runs
+    g()  # g runs a second time
+    del f  # delete the raw callable
     assert x() is not None  # x is still around
-    g()                     # g still runs
-    del g                   # no more references to x
-    assert x() is None      # x is gone
+    g()  # g still runs
+    del g  # no more references to x
+    assert x() is None  # x is gone
 
   def test_jit_global_cache(self):
     def f(x):
@@ -1223,7 +1223,6 @@ class APITest(jtu.JaxTestCase):
     api.pmap(f, 'i')(x)
     python_should_be_executing = False
     api.pmap(f, 'i')(x)
-
 
 if __name__ == '__main__':
   absltest.main()

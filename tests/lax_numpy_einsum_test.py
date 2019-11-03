@@ -29,13 +29,10 @@ import jax.test_util as jtu
 from jax.config import config
 config.parse_flags_with_absl()
 
-
 def rng():
   return onp.random.RandomState(0)
 
-
 class EinsumTest(jtu.JaxTestCase):
-
   def _check(self, s, *ops):
     a = onp.einsum(s, *ops)
     b = np.einsum(s, *ops)
@@ -222,39 +219,40 @@ class EinsumTest(jtu.JaxTestCase):
     self._check(s, x, y, z)
 
   # these tests are based on https://github.com/dask/dask/pull/3412/files
-  @parameterized.named_parameters(
-      {"testcase_name": "_{}".format(einstr), "einstr": einstr}
-      for einstr in [
-          'abc,bad->abcd',
-          'abcdef,bcdfg->abcdeg',
-          'ea,fb,abcd,gc,hd->efgh',
-          'ab,b',
-          'aa',
-          'a,a->',
-          'a,a->a',
-          'a,a',
-          'a,b',
-          'a,b,c',
-          'a',
-          'ba,b',
-          'ba,b->',
-          'defab,fedbc->defac',
-          'ab...,bc...->ac...',
-          'a...a',
-          'abc...->cba...',
-          '...ab->...a',
-          'a...a->a...',
-          # Following 2 from # https://stackoverflow.com/a/19203475/1611416
-          '...abc,...abcd->...d',
-          'ab...,b->ab...',
-          # https://github.com/dask/dask/pull/3412#discussion_r182413444
-          'aa->a',
-          'ab,ab,c->c',
-          'aab,bc->ac',
-          'aab,bcc->ac',
-          'fdf,cdd,ccd,afe->ae',
-          'fff,fae,bef,def->abd',
-      ])
+  @parameterized.named_parameters({
+      "testcase_name": "_{}".format(einstr),
+      "einstr": einstr
+  } for einstr in [
+      'abc,bad->abcd',
+      'abcdef,bcdfg->abcdeg',
+      'ea,fb,abcd,gc,hd->efgh',
+      'ab,b',
+      'aa',
+      'a,a->',
+      'a,a->a',
+      'a,a',
+      'a,b',
+      'a,b,c',
+      'a',
+      'ba,b',
+      'ba,b->',
+      'defab,fedbc->defac',
+      'ab...,bc...->ac...',
+      'a...a',
+      'abc...->cba...',
+      '...ab->...a',
+      'a...a->a...',
+      # Following 2 from # https://stackoverflow.com/a/19203475/1611416
+      '...abc,...abcd->...d',
+      'ab...,b->ab...',
+      # https://github.com/dask/dask/pull/3412#discussion_r182413444
+      'aa->a',
+      'ab,ab,c->c',
+      'aab,bc->ac',
+      'aab,bcc->ac',
+      'fdf,cdd,ccd,afe->ae',
+      'fff,fae,bef,def->abd',
+  ])
   def test_from_dask(self, einstr):
     r = rng()
     if '->' in einstr:
@@ -265,15 +263,14 @@ class EinsumTest(jtu.JaxTestCase):
 
     dims = itertools.cycle([2, 3, 4])
     shapes = defaultdict(lambda: next(dims))
-    input_shapes = [tuple(shapes[c] for c in names.replace('...', '01'))
-                    for names in input_names]
+    input_shapes = [tuple(shapes[c] for c in names.replace('...', '01')) for names in input_names]
     operands = [r.randn(*shape) for shape in input_shapes]
 
     self._check(einstr, *operands)
 
   def test_ordered_front_batch_dim_case(self):
-    x = onp.ones((1,8,20,4))
-    y = onp.ones((1,8,20,4))
+    x = onp.ones((1, 8, 20, 4))
+    y = onp.ones((1, 8, 20, 4))
     s = 'ijkl,ijml->ijkm'
     self._check(s, x, y)
 
@@ -285,8 +282,7 @@ class EinsumTest(jtu.JaxTestCase):
 
     path_info = onp.einsum_path('ij,jk,kl->il', a, b, c, optimize='greedy')
     self.assertEqual(str(path_info[0]), "['einsum_path', (1, 2), (0, 1)]")
-    self.assertEqual(path_info[1].split('\n')[0],
-                     '  Complete contraction:  ij,jk,kl->il')
+    self.assertEqual(path_info[1].split('\n')[0], '  Complete contraction:  ij,jk,kl->il')
 
     # check this doesn't crash
     I = onp.random.rand(10, 10, 10, 10)
@@ -295,7 +291,11 @@ class EinsumTest(jtu.JaxTestCase):
 
   def test_einsum_kpmurphy_example(self):
     # code from an email with @murphyk
-    N = 2; C = 3; D = 4; K = 5; T = 6;
+    N = 2
+    C = 3
+    D = 4
+    K = 5
+    T = 6
     r = rng()
     S = r.randn(N, T, K)
     W = r.randn(K, D)
@@ -307,13 +307,11 @@ class EinsumTest(jtu.JaxTestCase):
         for d in range(D):
           for k in range(K):
             for t in range(T):
-                s += S[n,t,k] * W[k,d] * V[d,c]
-        L[n,c] = s
+              s += S[n, t, k] * W[k, d] * V[d, c]
+        L[n, c] = s
 
     path = np.einsum_path('ntk,kd,dc->nc', S, W, V, optimize='optimal')[0]
-    self.assertAllClose(L, np.einsum('ntk,kd,dc->nc', S, W, V, optimize=path),
-                        check_dtypes=False)
-
+    self.assertAllClose(L, np.einsum('ntk,kd,dc->nc', S, W, V, optimize=path), check_dtypes=False)
 
 if __name__ == '__main__':
   absltest.main()
