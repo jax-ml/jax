@@ -67,7 +67,6 @@ def _is_prng_key(key):
     return False
 
 ### utilities
-
 def _make_rotate_left(dtype):
   if not np.issubdtype(dtype, onp.integer):
     raise TypeError("_rotate_left only accepts integer dtypes.")
@@ -85,7 +84,6 @@ def _bit_stats(bits):
   return onp.array([list(map(int, onp.binary_repr(x, 64))) for x in bits]).mean(0)
 
 ### hash function and split
-
 @jit
 def threefry_2x32(keypair, count):
   """Apply the Threefry 2x32 hash.

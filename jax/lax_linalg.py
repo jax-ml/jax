@@ -41,7 +41,6 @@ from jax.lib import lapack
 from jax.lib import cusolver
 
 # traceables
-
 def cholesky(x, symmetrize_input=True):
   if symmetrize_input:
     x = symmetrize(x)
@@ -79,6 +78,11 @@ def triangular_solve(a, b, left_side=False, lower=False, transpose_a=False, conj
                                  conjugate_a=conjugate_a, unit_diagonal=unit_diagonal)
 
 # utilities
+def _T(x):
+  return np.swapaxes(x, -1, -2)
+
+def _H(x):
+  return np.conj(_T(x))
 
 def _T(x):
   return np.swapaxes(x, -1, -2)
@@ -101,7 +105,6 @@ def _unpack_tuple(f, n):
 _cpu_lapack_types = {np.float32, np.float64, np.complex64, np.complex128}
 
 # Cholesky decomposition
-
 def cholesky_jvp_rule(primals, tangents):
   x, = primals
   sigma_dot, = tangents
@@ -152,7 +155,6 @@ def cholesky_cpu_translation_rule(c, operand):
 xla.backend_specific_translations['cpu'][cholesky_p] = cholesky_cpu_translation_rule
 
 # Asymmetric eigendecomposition
-
 def eig_impl(operand):
   return xla.apply_primitive(eig_p, operand)
 
@@ -203,7 +205,6 @@ xla.backend_specific_translations['cpu'][eig_p] = eig_cpu_translation_rule
 batching.primitive_batchers[eig_p] = eig_batching_rule
 
 # Symmetric/Hermitian eigendecomposition
-
 def eigh_impl(operand, lower):
   v, w = xla.apply_primitive(eigh_p, operand, lower=lower)
   return v, w
@@ -411,7 +412,6 @@ xla.backend_specific_translations['gpu'][triangular_solve_p] = \
 # Computes a pivoted LU decomposition such that
 # PA = LU
 # In the style of LAPACK, LU are stored in the same matrix.
-
 def _lu_unblocked(a):
   """Unblocked LU decomposition, as a rolled loop."""
   m, n = a.shape
@@ -610,7 +610,6 @@ def lu_pivots_to_permutation(swaps, m):
   return result
 
 # QR decomposition
-
 def qr_impl(operand, full_matrices):
   q, r = xla.apply_primitive(qr_p, operand, full_matrices=full_matrices)
   return q, r
@@ -698,7 +697,6 @@ if hasattr(cusolver, "geqrf"):
                                                            cusolver.geqrf, cusolver.orgqr)
 
 # Singular value decomposition
-
 def svd_impl(operand, full_matrices, compute_uv):
   s, u, vt = xla.apply_primitive(svd_p, operand, full_matrices=full_matrices, compute_uv=compute_uv)
   return s, u, vt

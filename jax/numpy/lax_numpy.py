@@ -164,7 +164,6 @@ savez = onp.savez
 load = onp.load
 
 ### utility functions
-
 def _promote_shapes(fun_name, *args):
   """Prepend implicit leading singleton dimensions for Numpy broadcasting."""
   if len(args) < 2:
@@ -299,12 +298,18 @@ def _wraps(fun, update_doc=True):
           summary = sections[i].strip()
           break
       body = "\n\n".join(signatures + sections[i + 1:])
+<<<<<<< HEAD
       if update_doc:
         body = update_numpydoc(body, fun, op)
       docstr = ("{summary}\n\nLAX-backend implementation of :func:`{fun}`. "
                 "Original docstring below.\n\n{body}".format(summary=summary, fun=fun.__name__,
                                                              body=body))
 
+=======
+      docstr = ("{summary}\n\nLAX-backend implementation of :func:`{fun}`. "
+                "Original docstring below.\n\n{body}".format(summary=summary, fun=fun.__name__,
+                                                             body=body))
+>>>>>>> 9ac7a317b69c30578e206b7e5e5b3454207eaed7
       op.__name__ = fun.__name__
       op.__doc__ = docstr
     finally:
@@ -322,7 +327,10 @@ def _canonicalize_axis(axis, num_dims):
   return axis
 
 ### implementations of numpy functions in terms of lax
+<<<<<<< HEAD
 
+=======
+>>>>>>> 9ac7a317b69c30578e206b7e5e5b3454207eaed7
 def _one_to_one_unop(numpy_fn, lax_fn, promote_like=False):
   if promote_like:
     fn = lambda x: lax_fn(lax.convert_element_type(x, _result_dtype(numpy_fn, x)))
@@ -377,6 +385,7 @@ maximum = _one_to_one_binop(onp.maximum, lax.max)
 float_power = _one_to_one_binop(onp.float_power, lax.pow, True)
 
 def _comparison_op(numpy_fn, lax_fn):
+<<<<<<< HEAD
   def fn(x1, x2):
     x1, x2 = _promote_args(numpy_fn.__name__, x1, x2)
     # Comparison on complex types are defined as a lexicographic ordering on
@@ -386,6 +395,17 @@ def _comparison_op(numpy_fn, lax_fn):
       ry = lax.real(x2)
       return lax.select(lax.eq(rx, ry), lax_fn(lax.imag(x1), lax.imag(x2)), lax_fn(rx, ry))
     return lax_fn(x1, x2)
+=======
+  def fn(x, y):
+    x, y = _promote_args(numpy_fn.__name__, x, y)
+    # Comparison on complex types are defined as a lexicographic ordering on
+    # the (real, imag) pair.
+    if issubdtype(_dtype(x), complexfloating):
+      rx = lax.real(x)
+      ry = lax.real(y)
+      return lax.select(lax.eq(rx, ry), lax_fn(lax.imag(x), lax.imag(y)), lax_fn(rx, ry))
+    return lax_fn(x, y)
+>>>>>>> 9ac7a317b69c30578e206b7e5e5b3454207eaed7
 
   return _wraps(numpy_fn)(fn)
 
@@ -398,7 +418,11 @@ def _logical_op(np_op, bitwise_op):
   @_wraps(np_op, update_doc=False)
   def op(*args):
     zero = lambda x: lax.full_like(x, shape=(), fill_value=0)
+<<<<<<< HEAD
     args = (x if issubdtype(_dtype(x), onp.bool_) else lax.ne(x, zero(x)) for x in args)
+=======
+    args = (x if onp.issubdtype(_dtype(x), onp.bool_) else lax.ne(x, zero(x)) for x in args)
+>>>>>>> 9ac7a317b69c30578e206b7e5e5b3454207eaed7
     return bitwise_op(*_promote_args(np_op.__name__, *args))
 
   return op
@@ -499,8 +523,12 @@ def logaddexp(x1, x2):
 def logaddexp2(x1, x2):
   x1, x2 = _promote_shapes("logaddexp2", *_promote_to_result_dtype(onp.logaddexp2, x1, x2))
   amax = lax.max(x1, x2)
+<<<<<<< HEAD
   return lax.add(
       amax, lax.div(lax.log1p(exp2(-lax.abs(lax.sub(x1, x2)))), _constant_like(x1, onp.log(2))))
+=======
+  return lax.add(amax, log2(lax.add(exp2(lax.sub(x1, amax)), exp2(lax.sub(x2, amax)))))
+>>>>>>> 9ac7a317b69c30578e206b7e5e5b3454207eaed7
 
 @_wraps(onp.log2)
 def log2(x):
@@ -525,10 +553,17 @@ def remainder(x1, x2):
   trunc_mod_not_zero = lax.ne(trunc_mod, zero)
   do_plus = lax.bitwise_and(lax.ne(lax.lt(trunc_mod, zero), lax.lt(x2, zero)), trunc_mod_not_zero)
   return lax.select(do_plus, lax.add(trunc_mod, x2), trunc_mod)
+<<<<<<< HEAD
 
 mod = remainder
 fmod = _wraps(onp.fmod)(lambda x1, x2: lax.rem(x1, x2))
 
+=======
+
+mod = remainder
+fmod = _wraps(onp.fmod)(lambda x, y: lax.rem(x, y))
+
+>>>>>>> 9ac7a317b69c30578e206b7e5e5b3454207eaed7
 @_wraps(onp.cbrt)
 def cbrt(x):
   x, = _promote_to_result_dtype(onp.cbrt, x)
@@ -553,6 +588,7 @@ degrees = rad2deg
 radians = deg2rad
 
 @_wraps(onp.heaviside)
+<<<<<<< HEAD
 def heaviside(x1, x2):
   x1, x2 = _promote_to_result_dtype(onp.heaviside, x1, x2)
   zero = lax._const(x1, 0)
@@ -562,13 +598,28 @@ def heaviside(x1, x2):
 def hypot(x1, x2):
   x1, x2 = _promote_to_result_dtype(onp.hypot, x1, x2)
   return lax.sqrt(x1 * x1 + x2 * x2)
+=======
+def heaviside(x, y):
+  x, y = _promote_to_result_dtype(onp.heaviside, x, y)
+  zero = lax._const(x, 0)
+  return where(lax.lt(x, zero), zero, where(lax.gt(x, zero), lax._const(x, 1), y))
+
+@_wraps(onp.hypot)
+def hypot(x, y):
+  x, y = _promote_to_result_dtype(onp.hypot, x, y)
+  return lax.sqrt(x * x + y * y)
+>>>>>>> 9ac7a317b69c30578e206b7e5e5b3454207eaed7
 
 @_wraps(onp.reciprocal)
 def reciprocal(x):
   x, = _promote_to_result_dtype(onp.reciprocal, x)
   return lax.div(lax._const(x, 1), x)
 
+<<<<<<< HEAD
 @_wraps(onp.sinc, update_doc=False)
+=======
+@_wraps(onp.sinc)
+>>>>>>> 9ac7a317b69c30578e206b7e5e5b3454207eaed7
 def sinc(x):
   x, = _promote_to_result_dtype(onp.sinc, x)
   pi_x = lax.mul(lax._const(x, pi), x)
@@ -618,9 +669,15 @@ def arctanh(x):
   return lax.select(abs(x) <= 1, result, lax.full_like(x, onp.nan))
 
 @_wraps(onp.transpose)
+<<<<<<< HEAD
 def transpose(a, axes=None):
   axes = onp.arange(ndim(a))[::-1] if axes is None else axes
   return lax.transpose(a, axes)
+=======
+def transpose(x, axes=None):
+  axes = onp.arange(ndim(x))[::-1] if axes is None else axes
+  return lax.transpose(x, axes)
+>>>>>>> 9ac7a317b69c30578e206b7e5e5b3454207eaed7
 
 @_wraps(onp.rot90)
 def rot90(m, k=1, axes=(0, 1)):
@@ -661,12 +718,21 @@ def conjugate(x):
 conj = conjugate
 
 @_wraps(onp.imag)
+<<<<<<< HEAD
 def imag(val):
   return lax.imag(val) if iscomplexobj(val) else zeros_like(val)
 
 @_wraps(onp.real)
 def real(val):
   return lax.real(val) if iscomplexobj(val) else val
+=======
+def imag(x):
+  return lax.imag(x) if iscomplexobj(x) else zeros_like(x)
+
+@_wraps(onp.real)
+def real(x):
+  return lax.real(x) if iscomplexobj(x) else x
+>>>>>>> 9ac7a317b69c30578e206b7e5e5b3454207eaed7
 
 @_wraps(onp.iscomplex)
 def iscomplex(x):
@@ -683,7 +749,11 @@ def angle(z):
   re = real(z)
   im = imag(z)
   dtype = _dtype(re)
+<<<<<<< HEAD
   if not issubdtype(dtype, inexact) or (issubdtype(_dtype(z), floating) and ndim(z) == 0):
+=======
+  if not issubdtype(dtype, inexact) or (issubdtype(_dtype(x), floating) and ndim(x) == 0):
+>>>>>>> 9ac7a317b69c30578e206b7e5e5b3454207eaed7
     dtype = xla_bridge.canonicalize_dtype(float64)
     re = lax.convert_element_type(re, dtype)
     im = lax.convert_element_type(im, dtype)
@@ -718,8 +788,13 @@ def diff(
   return a
 
 @_wraps(onp.isrealobj)
+<<<<<<< HEAD
 def isrealobj(x):
   return not iscomplexobj(x)
+=======
+def isrealobj(a):
+  return not iscomplexobj(a)
+>>>>>>> 9ac7a317b69c30578e206b7e5e5b3454207eaed7
 
 @_wraps(onp.reshape)
 def reshape(a, newshape, order="C"):
@@ -884,7 +959,17 @@ def broadcast_to(arr, shape):
     diff, = onp.where(onp.not_equal(shape[nlead:], arr_shape))
     new_dims = tuple(range(nlead)) + tuple(nlead + diff)
     kept_dims = tuple(onp.delete(onp.arange(len(shape)), new_dims))
+<<<<<<< HEAD
     return lax.broadcast_in_dim(squeeze(arr, diff), shape, kept_dims)
+=======
+    perm = onp.argsort(new_dims + kept_dims)
+
+    broadcast_dims = onp.take(shape, new_dims)
+    squeezed_array = squeeze(arr, diff)
+    return lax.transpose(lax.broadcast(squeezed_array, broadcast_dims), perm)
+  else:
+    return arr
+>>>>>>> 9ac7a317b69c30578e206b7e5e5b3454207eaed7
 
 @_wraps(onp.split)
 def split(ary, indices_or_sections, axis=0):
@@ -929,6 +1014,7 @@ def _dtype_info(dtype):
     return onp.iinfo(dtype)
   return finfo(dtype)
 
+<<<<<<< HEAD
 def _round_to_nearest_even(x):
   half = lax._const(x, 0.5)
   one = lax._const(x, 1)
@@ -941,6 +1027,9 @@ def _round_to_nearest_even(x):
       lax.add(round_val, one), round_val)
 
 @_wraps(onp.round, update_doc=False)
+=======
+@_wraps(onp.round)
+>>>>>>> 9ac7a317b69c30578e206b7e5e5b3454207eaed7
 def round(a, decimals=0):
   dtype = _dtype(a)
   if issubdtype(dtype, integer):
@@ -952,6 +1041,7 @@ def round(a, decimals=0):
     if decimals == 0:
       return _round_to_nearest_even(x)
 
+<<<<<<< HEAD
     # TODO(phawkins): the strategy of rescaling the value isn't necessarily a
     # good one since we may be left with an incorrectly rounded value at the
     # end due to precision problems. As a workaround for float16, convert to
@@ -960,6 +1050,10 @@ def round(a, decimals=0):
     factor = _constant_like(x, 10**decimals)
     out = lax.div(_round_to_nearest_even(lax.mul(x, factor)), factor)
     return lax.convert_element_type(out, dtype) if dtype == onp.float16 else out
+=======
+    factor = _constant_like(x, 10**decimals)
+    return lax.div(lax.round(lax.mul(x, factor)), factor)
+>>>>>>> 9ac7a317b69c30578e206b7e5e5b3454207eaed7
 
   if issubdtype(dtype, complexfloating):
     return lax.complex(_round_float(lax.real(a)), _round_float(lax.imag(a)))
@@ -1027,7 +1121,10 @@ def nan_to_num(x, copy=True):
   return x
 
 ### Reducers
+<<<<<<< HEAD
 
+=======
+>>>>>>> 9ac7a317b69c30578e206b7e5e5b3454207eaed7
 def _make_reduction(np_fun, op, init_val, preproc=None):
   """Creates reduction function given a binary operation and monoid identity."""
   @_wraps(np_fun)
@@ -1091,7 +1188,11 @@ def mean(a, axis=None, dtype=None, out=None, keepdims=False):
   else:
     normalizer = onp.prod(onp.take(shape(a), axis))
   if dtype is None:
+<<<<<<< HEAD
     if (issubdtype(_dtype(a), onp.bool_) or issubdtype(_dtype(a), onp.integer)):
+=======
+    if (onp.issubdtype(_dtype(a), onp.bool_) or onp.issubdtype(_dtype(a), onp.integer)):
+>>>>>>> 9ac7a317b69c30578e206b7e5e5b3454207eaed7
       dtype = xla_bridge.canonicalize_dtype(onp.float64)
     else:
       dtype = _dtype(a)
@@ -1149,7 +1250,11 @@ def var(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
     raise ValueError("var does not support the `out` argument.")
 
   if dtype is None:
+<<<<<<< HEAD
     if (issubdtype(_dtype(a), onp.bool_) or issubdtype(_dtype(a), onp.integer)):
+=======
+    if (onp.issubdtype(_dtype(a), onp.bool_) or onp.issubdtype(_dtype(a), onp.integer)):
+>>>>>>> 9ac7a317b69c30578e206b7e5e5b3454207eaed7
       dtype = xla_bridge.canonicalize_dtype(onp.float64)
   centered = subtract(a, mean(a, axis, dtype=dtype, keepdims=True))
   if iscomplexobj(centered):
@@ -1209,7 +1314,11 @@ nanprod = _make_nan_reduction(onp.nanprod, prod, 1, nan_if_all_nan=False)
 def nanmean(a, axis=None, dtype=None, out=None, keepdims=False):
   if out is not None:
     raise ValueError("nanmean does not support the `out` argument.")
+<<<<<<< HEAD
   if (issubdtype(_dtype(a), onp.bool_) or issubdtype(_dtype(a), onp.integer)):
+=======
+  if (onp.issubdtype(_dtype(a), onp.bool_) or onp.issubdtype(_dtype(a), onp.integer)):
+>>>>>>> 9ac7a317b69c30578e206b7e5e5b3454207eaed7
     return mean(a, axis, dtype, out, keepdims)
   if dtype is None:
     dtype = _dtype(a)
@@ -1269,7 +1378,6 @@ nancumsum = _make_cumulative_reduction(onp.nancumsum, lax._reduce_window_sum, 0,
 nancumprod = _make_cumulative_reduction(onp.nancumprod, lax._reduce_window_prod, 1, squash_nan=True)
 
 ### Array-creation functions
-
 @partial(jit, static_argnums=(1, 2))
 def _pad(array, pad_width, mode, constant_values):
   array = asarray(array)
@@ -1397,7 +1505,11 @@ def column_stack(tup):
     arrays.append(arr)
   return concatenate(arrays, 1)
 
+<<<<<<< HEAD
 @_wraps(onp.atleast_1d, update_doc=False)
+=======
+@_wraps(onp.atleast_1d)
+>>>>>>> 9ac7a317b69c30578e206b7e5e5b3454207eaed7
 def atleast_1d(*arys):
   if len(arys) == 1:
     arr = array(arys[0])
@@ -1405,7 +1517,11 @@ def atleast_1d(*arys):
   else:
     return [atleast_1d(arr) for arr in arys]
 
+<<<<<<< HEAD
 @_wraps(onp.atleast_2d, update_doc=False)
+=======
+@_wraps(onp.atleast_2d)
+>>>>>>> 9ac7a317b69c30578e206b7e5e5b3454207eaed7
 def atleast_2d(*arys):
   if len(arys) == 1:
     arr = array(arys[0])
@@ -1413,7 +1529,11 @@ def atleast_2d(*arys):
   else:
     return [atleast_2d(arr) for arr in arys]
 
+<<<<<<< HEAD
 @_wraps(onp.atleast_3d, update_doc=False)
+=======
+@_wraps(onp.atleast_3d)
+>>>>>>> 9ac7a317b69c30578e206b7e5e5b3454207eaed7
 def atleast_3d(*arys):
   if len(arys) == 1:
     arr = array(arys[0])
@@ -1727,7 +1847,11 @@ def tril(m, k=0):
   mask = tri(*m_shape[-2:], k=k, dtype=bool)
   return lax.select(lax.broadcast(mask, m_shape[:-2]), m, zeros_like(m))
 
+<<<<<<< HEAD
 @_wraps(onp.triu, update_doc=False)
+=======
+@_wraps(onp.triu)
+>>>>>>> 9ac7a317b69c30578e206b7e5e5b3454207eaed7
 def triu(m, k=0):
   m_shape = shape(m)
   if len(m_shape) < 2:
@@ -1827,7 +1951,10 @@ def append(arr, values, axis=None):
     return concatenate([arr, values], axis=axis)
 
 ### Tensor contraction operations
+<<<<<<< HEAD
 
+=======
+>>>>>>> 9ac7a317b69c30578e206b7e5e5b3454207eaed7
 @_wraps(onp.dot)
 def dot(a, b):  # pylint: disable=missing-docstring
   _check_arraylike("dot", a, b)
@@ -2179,7 +2306,10 @@ def vander(x, N=None, increasing=False):
   return power(x[..., None], iota)
 
 ### Misc
+<<<<<<< HEAD
 
+=======
+>>>>>>> 9ac7a317b69c30578e206b7e5e5b3454207eaed7
 @_wraps(onp.argmax)
 def argmax(a, axis=None):
   if axis is None:
@@ -2357,12 +2487,15 @@ def _take_along_axis(arr, indices, axis):
       start_index_map=tuple(start_index_map))
   return lax.gather(arr, gather_indices, dnums, tuple(slice_sizes))
 
+<<<<<<< HEAD
 @_wraps(getattr(onp, "take_along_axis", None), update_doc=False)
+=======
+@_wraps(getattr(onp, "take_along_axis", None))
+>>>>>>> 9ac7a317b69c30578e206b7e5e5b3454207eaed7
 def take_along_axis(arr, indices, axis):
   return _take_along_axis(arr, indices, axis)
 
 ### Indexing
-
 def _rewriting_take(arr, idx):
   # Computes arr[idx].
   # All supported cases of indexing can be implemented as an XLA gather,
@@ -2379,8 +2512,12 @@ def _gather(arr, treedef, static_idx, dynamic_idx):
   indexer = _index_to_gather(shape(arr), idx)  # shared with _scatter_update
   y = arr
 
+<<<<<<< HEAD
   if indexer.gather_indices.size:
     y = lax.gather(y, indexer.gather_indices, indexer.dnums, indexer.gather_slice_shape)
+=======
+  y = lax.gather(arr, indexer.gather_indices, indexer.dnums, indexer.gather_slice_shape)
+>>>>>>> 9ac7a317b69c30578e206b7e5e5b3454207eaed7
 
   # Reverses axes with negative strides.
   if indexer.reversed_y_dims:
@@ -2478,7 +2615,11 @@ def _index_to_gather(x_shape, idx):
     idx_no_nones = [(i, d) for i, d in enumerate(idx) if d is not None]
     advanced_pairs = ((asarray(e), i, j)
                       for j, (i, e) in enumerate(idx_no_nones)
+<<<<<<< HEAD
                       if (isinstance(e, Sequence) or isinstance(e, ndarray)))
+=======
+                      if (isinstance(e, collections.Sequence) or isinstance(e, ndarray)))
+>>>>>>> 9ac7a317b69c30578e206b7e5e5b3454207eaed7
     advanced_pairs = ((_normalize_index(e, x_shape[j]), i, j) for e, i, j in advanced_pairs)
     advanced_indexes, idx_advanced_axes, x_advanced_axes = zip(*advanced_pairs)
     advanced_axes_are_contiguous = onp.all(onp.diff(idx_advanced_axes) == 1)
@@ -2619,7 +2760,11 @@ def _index_to_gather(x_shape, idx):
 
 def _should_unpack_list_index(x):
   """Helper for _eliminate_deprecated_list_indexing."""
+<<<<<<< HEAD
   return (isinstance(x, ndarray) and onp.ndim(x) != 0 or isinstance(x, Sequence)
+=======
+  return (isinstance(x, ndarray) and onp.ndim(x) != 0 or isinstance(x, collections.Sequence)
+>>>>>>> 9ac7a317b69c30578e206b7e5e5b3454207eaed7
           or isinstance(x, slice) or x is Ellipsis or x is None)
 
 def _eliminate_deprecated_list_indexing(idx):
@@ -2645,9 +2790,15 @@ def _expand_bool_indices(idx):
       abstract_i = core.get_aval(i)
     except TypeError:
       abstract_i = None
+<<<<<<< HEAD
     if (isinstance(abstract_i, ShapedArray) and issubdtype(abstract_i.dtype, onp.bool_)
         or isinstance(i, list)
         and _all(not _shape(e) and issubdtype(_dtype(e), onp.bool_) for e in i)):
+=======
+    if (isinstance(abstract_i, ShapedArray) and onp.issubdtype(abstract_i.dtype, onp.bool_)
+        or isinstance(i, list)
+        and _all(not _shape(e) and onp.issubdtype(_dtype(e), onp.bool_) for e in i)):
+>>>>>>> 9ac7a317b69c30578e206b7e5e5b3454207eaed7
       if isinstance(i, list):
         i = array(i)
         abstract_i = core.get_aval(i)
@@ -2892,7 +3043,6 @@ def _astype(arr, dtype):
   return lax.convert_element_type(arr, dtype)
 
 ### track unimplemented functions
-
 def _not_implemented(fun):
   @_wraps(fun)
   def wrapped(*args, **kwargs):
@@ -2911,7 +3061,10 @@ for func in get_module_functions(onp):
 # We add operator overloads to DeviceArray and ShapedArray. These method and
 # operator overloads mainly just forward calls to the corresponding lax_numpy
 # functions, which can themselves handle instances from any of these classes.
+<<<<<<< HEAD
 
+=======
+>>>>>>> 9ac7a317b69c30578e206b7e5e5b3454207eaed7
 def _swap_args(f):
   return lambda x, y: f(y, x)
 

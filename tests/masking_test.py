@@ -34,7 +34,6 @@ config.parse_flags_with_absl()
 
 # These are 'manual' tests for masking and shape checking. The more exhaustive,
 # more systematic tests should live in lax_test.py.
-
 class MaskingTest(jtu.JaxTestCase):
   @parameterized.parameters([
       ['(m, n)', 'ShapeSpec(m, n)'],

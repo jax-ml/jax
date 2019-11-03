@@ -172,7 +172,6 @@ def optimizer(opt_maker):
   return tree_opt_maker
 
 ### optimizers
-
 @optimizer
 def sgd(step_size):
   """Construct optimizer triple for stochastic gradient descent.
@@ -447,7 +446,6 @@ def sm3(step_size, momentum=0.9):
   return init, update, get_params
 
 ### learning rate schedules
-
 def constant(step_size):
   def schedule(i):
     return step_size
@@ -502,7 +500,6 @@ def make_schedule(scalar_or_schedule):
     raise TypeError(type(scalar_or_schedule))
 
 ### utilities
-
 def l2_norm(tree):
   """Compute the l2 norm of a pytree of arrays. Useful for weight decay."""
   leaves, _ = tree_flatten(tree)
@@ -515,7 +512,6 @@ def clip_grads(grad_tree, max_norm):
   return tree_map(normalize, grad_tree)
 
 ### serialization utilities
-
 class JoinPoint(object):
   """Marks the boundary between two joined (nested) pytrees."""
   def __init__(self, subtree):

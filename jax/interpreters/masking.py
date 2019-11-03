@@ -94,7 +94,6 @@ def mask_subtrace(master, in_vals, shape_exprs):
 #   type ShapeExpr = [Poly]
 #   type Poly = Map Mon Int
 #   type Mon = Map Str Int
-
 class ShapeExpr(tuple):  # type ShapeExpr = [Poly]
   def __str__(self):
     return 'ShapeExpr({})'.format(', '.join(map(str, self)))
@@ -203,7 +202,6 @@ class ShapeSyntaxError(Exception):
 #
 # ShapeSpecs encode ShapeExprs but can have some monomorphic dims inside them,
 # which must be replaced with concrete shapes when known.
-
 class ShapeSpec(list):
   def __str__(self):
     return 'ShapeSpec({})'.format(', '.join(map(str, self)))
@@ -254,7 +252,6 @@ monomorphic_dim = MonomorphicDim()
 # Two convenient ways to provide shape annotations:
 #   1. '(m, n)'
 #   2. s_['m', 'n']
-
 class S_(object):
   def __getitem__(self, idx):
     if type(idx) is tuple:
@@ -265,7 +262,6 @@ class S_(object):
 s_ = S_()
 
 ### automasking tracer machinery
-
 class MaskTracer(Tracer):
   __slots__ = ["val", "shape_expr"]
 
@@ -352,7 +348,6 @@ def binop_masking_rule(prim, padded_vals, logical_shapes):
   return prim.bind(padded_x, padded_y)
 
 ### definition-time (import-time) shape checker tracer machinery
-
 def shapecheck(fun, in_shapes):
   with core.new_master(ShapeCheckTrace) as master:
     out_shapes = check_subtrace(fun, master).call_wrapped(in_shapes)

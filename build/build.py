@@ -50,7 +50,6 @@ def shell(cmd):
   return output.decode("UTF-8").strip()
 
 # Python
-
 def get_python_bin_path(python_bin_path_flag):
   """Returns the path to the Python interpreter to use."""
   return python_bin_path_flag or sys.executable

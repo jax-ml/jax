@@ -187,7 +187,6 @@ def host_count(backend=None):
   return len(host_ids(backend))
 
 ### utility functions
-
 @util.memoize
 def dtype_to_etype(dtype):
   """Convert from dtype to canonical etype (reading FLAGS.jax_enable_x64)."""

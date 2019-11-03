@@ -210,7 +210,6 @@ def reducer_batcher(prim, batched_args, batch_dims, axes, **params):
   return prim.bind(operand, axes=axes, **params), bdim_out
 
 # sets up primitive batchers for ad_util and xla primitives
-
 def add_batched(batched_args, batch_dims):
   bdx, bdy = batch_dims
   x, y = batched_args
@@ -245,6 +244,8 @@ defvectorized(xla.device_put_p)
 # DeviceArrays, numpy.ndarrays, or traced versions of those. This strategy
 # almost works, except for broadcast, for which raw numpy.ndarrays don't have a
 # method. To handle that case, the `broadcast` function uses a try/except.
+class _Last(object):
+  pass
 
 class _Last(object):
   pass

@@ -30,7 +30,6 @@ import jax.numpy as np
 import jax.scipy.stats.norm as norm
 
 # ========= Functions to define the evidence lower bound. =========
-
 def diag_gaussian_sample(rng, mean, log_std):
   # Take a single sample from a diagonal multivariate Gaussian.
   return mean + np.exp(log_std) * random.normal(rng, mean.shape)
@@ -51,7 +50,6 @@ def batch_elbo(logprob, rng, params, num_samples):
   return np.mean(vectorized_elbo(rngs, *params))
 
 # ========= Helper function for plotting. =========
-
 @partial(jit, static_argnums=(0, 1, 2, 4))
 def mesh_eval(func, x_limits, y_limits, params, num_ticks=101):
   # Evaluate func on a 2D grid defined by x_limits and y_limits.
@@ -63,7 +61,6 @@ def mesh_eval(func, x_limits, y_limits, params, num_ticks=101):
   return X, Y, zs.reshape(X.shape)
 
 # ========= Define an intractable unnormalized density =========
-
 def funnel_log_density(params):
   return norm.logpdf(params[0], 0, np.exp(params[1])) + \
          norm.logpdf(params[1], 0, 1.35)

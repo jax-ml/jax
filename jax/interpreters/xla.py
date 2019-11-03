@@ -128,7 +128,6 @@ for _t in array_types:
   pytype_aval_mappings[_t] = make_shaped_array
 
 ### op-by-op execution
-
 def apply_primitive(prim, *args, **params):
   """Impl rule that compiles and runs a single primitive 'prim' using XLA."""
   abstract_args = map(abstractify, args)
@@ -410,7 +409,6 @@ def eqn_replicas(eqn):
     return 1
 
 ### xla_call underlying jit
-
 def _xla_call_impl(fun, *args, **params):
   device = params['device']
   backend = params.get('backend', None)
@@ -760,7 +758,6 @@ pe.custom_partial_eval_rules[device_put_p] = lambda trace, x, **params: x
 ad.deflinear(device_put_p, lambda cotangent, **kwargs: [cotangent])
 
 ### lazy constants
-
 class DeviceConstant(DeviceArray):
   def copy_to_host_async(self):
     pass

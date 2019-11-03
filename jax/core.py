@@ -39,7 +39,6 @@ zip = safe_zip
 map = safe_map
 
 # -------------------- jaxprs --------------------
-
 class Jaxpr(object):
   def __init__(self, constvars, freevars, invars, outvars, eqns):
     self.constvars = list(constvars)
@@ -176,7 +175,6 @@ class Primitive(object):
     raise NotImplementedError("Abstract evaluation for '{}' not implemented".format(self.name))
 
 # -------------------- lifting --------------------
-
 def eval_jaxpr(jaxpr, consts, freevar_vals, *args):
   def read(v):
     if type(v) is Literal:
@@ -221,7 +219,6 @@ def find_top_trace(xs):
     return type(top_trace)(top_trace.master, cur_sublevel())
 
 # -------------------- tracing --------------------
-
 class Trace(object):
   def __init__(self, master, sublevel):
     self.master = master
@@ -544,7 +541,6 @@ def new_sublevel():
       raise Exception('Leaked sublevel {}'.format(t()))
 
 # -------------------- abstract values --------------------
-
 class AbstractValue(object):
   __slots__ = []
 
@@ -626,7 +622,6 @@ identity_p.def_impl(lambda x: x)
 identity_p.def_custom_bind(lambda x: x)
 
 # ------------------- Call -------------------
-
 def apply_todos(todos, outs):
   while todos:
     outs = map(full_lower, todos.pop()(outs))
@@ -671,7 +666,6 @@ call_p.def_custom_bind(call)
 call_p.def_impl(call_impl)
 
 # ------------------- Jaxpr printed representation -------------------
-
 def check_jaxpr(jaxpr):
   def context():
     return "\njaxpr:\n{}\n".format(jaxpr)

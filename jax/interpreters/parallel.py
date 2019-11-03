@@ -40,7 +40,6 @@ def identity(x):
   return x
 
 ### papply
-
 def papply(fun, name, in_vals, axis_size):
   # this function is for testing purposes, so we drop the out_axis
   fun, _ = papply_transform(fun, name, axis_size)

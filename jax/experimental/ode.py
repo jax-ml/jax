@@ -515,7 +515,6 @@ def test_odeint_vjp():
   check_vjp(swoop_odeint_wrap, swoop_vjp_wrap, wrap_args)
 
   # decay() check_vjp hangs!
-
 def test_defvjp_all():
   """Use build_odeint to check odeint VJP calculations."""
   n_trials = 5

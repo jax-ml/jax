@@ -38,7 +38,6 @@ from jax.lib import xla_client
 from jax.interpreters.pxla import axis_index
 
 ### parallel traceables
-
 def psum(x, axis_name):
   """Compute an all-reduce sum on ``x`` over the pmapped axis ``axis_name``.
 
@@ -171,7 +170,6 @@ def all_to_all(x, axis_name, split_axis, concat_axis):
   return all_to_all_p.bind(x, split_axis=split_axis, concat_axis=concat_axis, axis_name=axis_name)
 
 ### parallel primitives
-
 def standard_pmap_primitive(name):
   prim = core.Primitive(name)
   prim.def_impl(partial(pxla.apply_parallel_primitive, prim))
@@ -268,7 +266,6 @@ pxla.split_axis_rules[all_to_all_p] = _all_to_all_split_axis_rule
 # TODO(skye): it would be nice if we could put these with their corresponding
 # primitives, but that currently causes circular dependencies. More refactoring
 # might fix this.
-
 def _drop(x, dim, axis_name):
   return lax.dynamic_index_in_dim(x, axis_index(axis_name), dim, False)
 

@@ -78,7 +78,6 @@ class FixedPointError(Exception):
   pass
 
 ### fori_loop and while_loop
-
 def _fori_cond_fun(loop_carry):
   i, upper, _ = loop_carry
   return lax.lt(i, upper)
@@ -280,7 +279,6 @@ xla.initial_style_translations[while_p] = _while_loop_translation_rule
 batching.primitive_batchers[while_p] = _while_loop_batching_rule
 
 ### cond
-
 def cond(pred, true_operand, true_fun, false_operand, false_fun):
   """Conditionally apply ``true_fun`` or ``false_fun``.
 
@@ -396,7 +394,6 @@ batching.primitive_batchers[cond_p] = _cond_batching_rule
 xla.initial_style_translations[cond_p] = _cond_translation_rule
 
 ### scan
-
 def scan(f, init, xs):
   """Scan a function over leading array axes while carrying along state.
 

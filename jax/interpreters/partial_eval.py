@@ -43,7 +43,6 @@ def identity(x):
 # and the Unknown arm, represented by an AbstractValue instance, indicates an
 # unknown value.
 # When the pv is an AbstractValue, then the const must be unit.
-
 class JaxprTrace(Trace):
   def pure(self, val):
     return self.new_const(val)

@@ -25,6 +25,14 @@ import jax.numpy as np
 from jax import jarrett
 
 # activations
+def relu(x):
+  return np.maximum(x, 0)
+
+def softplus(x):
+  return np.logaddexp(x, 0)
+
+def soft_sign(x):
+  return x / (np.abs(x) + 1)
 
 def relu(x):
   return np.maximum(x, 0)
@@ -80,7 +88,6 @@ def glu(x, axis=-1):
   return x[..., :size] * sigmoid(x[..., size:])
 
 # other functions
-
 def log_softmax(x, axis=-1):
   shifted = x - x.max(axis, keepdims=True)
   return shifted - np.log(np.sum(np.exp(shifted), axis, keepdims=True))

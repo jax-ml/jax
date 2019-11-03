@@ -1090,7 +1090,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     results = api.jit(sqrt_cubed)(5.0)
     self.assertAllClose(results, 5.0**1.5, check_dtypes=False)
-
+    
   def test_custom_root_vector_with_solve_closure(self):
     def vector_solve(f, y):
       return np.linalg.solve(api.jacobian(f)(y), y)

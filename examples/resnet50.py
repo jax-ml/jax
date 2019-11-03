@@ -33,7 +33,6 @@ from jax.experimental.stax import (AvgPool, BatchNorm, Conv, Dense, FanInSum, Fa
                                    GeneralConv, Identity, MaxPool, Relu, LogSoftmax)
 
 # ResNet blocks compose other layers
-
 def ConvBlock(kernel_size, filters, strides=(2, 2)):
   ks = kernel_size
   filters1, filters2, filters3 = filters
@@ -57,7 +56,6 @@ def IdentityBlock(kernel_size, filters):
   return stax.serial(FanOut(2), stax.parallel(Main, Identity), FanInSum, Relu)
 
 # ResNet architectures compose layers and ResNet blocks
-
 def ResNet50(num_classes):
   return stax.serial(
       GeneralConv(('HWCN', 'OIHW', 'NHWC'), 64, (7, 7), (2, 2), 'SAME'), BatchNorm(), Relu,

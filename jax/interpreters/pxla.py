@@ -41,7 +41,6 @@ from . import xla
 from . import ad
 
 ### util
-
 def identity(x):
   return x
 
@@ -178,7 +177,6 @@ def replica_groups(nrep, mesh_spec, mesh_axes):
   return tuple(map(tuple, groups.T))
 
 ### the main pmap machinery lowers SPMD jaxprs to multi-replica XLA computations
-
 def compile_replicated(jaxpr, backend, axis_name, axis_size, global_axis_size, devices, consts,
                        tuple_args, *abstract_args):
   jaxpr_replicas = xla.jaxpr_replicas(jaxpr)
@@ -231,7 +229,6 @@ def compile_replicated(jaxpr, backend, axis_name, axis_size, global_axis_size, d
 # have a table of parallel_pure_rules. To handle the latter case, we'll have a
 # globally-scoped root environment frame and compile and execute a single-op
 # XLA collective.
-
 class DynamicAxisEnvFrame(object):
   __slots__ = ["name", "pmap_trace", "hard_size", "soft_trace", "soft_size"]
 
@@ -321,7 +318,6 @@ xla.translations[axis_index_p] = _axis_index_translation_rule
 pe.custom_partial_eval_rules[axis_index_p] = _axis_index_partial_eval
 
 ### lazy device-memory persistence and result handling
-
 class ShardedDeviceValue(xla.DeviceValue):
   def _check_if_deleted(self):
     if self.device_buffers is None:
@@ -437,7 +433,6 @@ xla.canonicalize_dtype_handlers[ChunkedDeviceArray] = identity
 xb.register_constant_handler(ChunkedDeviceArray, xla._device_array_constant_handler)
 
 ### the xla_pmap primitive and its rules are comparable to xla_call in xla.py
-
 def xla_pmap_impl(fun, *args, **params):
   axis_name = params.pop('axis_name')
   axis_size = params.pop('axis_size')
@@ -597,7 +592,6 @@ def _xla_shard_start_indices(c, axis_size, ndim):
 # original function correspond to both device-local operations and collective
 # communication operations across hardware devices that implement the original
 # logical semantics.
-
 @lu.transformation
 def split_axis(axis_name, chunk_size, *args):
   with core.new_master(SplitAxisTrace) as master:

@@ -48,7 +48,6 @@ logsoftmax = log_softmax
 #   init_fun: takes an rng key and an input shape and returns an
 #     (output_shape, params) pair,
 #   apply_fun: takes params, inputs, and an rng key and applies the layer.
-
 def Dense(out_dim, W_init=glorot_normal(), b_init=normal()):
   """Layer constructor function for a dense (fully-connected) layer."""
   def init_fun(rng, input_shape):
@@ -275,7 +274,6 @@ def Dropout(rate, mode='train'):
   return init_fun, apply_fun
 
 # Composing layers via combinators
-
 def serial(*layers):
   """Combinator for composing layers in serial.
 

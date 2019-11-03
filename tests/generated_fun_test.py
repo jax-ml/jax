@@ -138,7 +138,7 @@ def thin(xs, p):
 def gen_broadcasting_unifier(t1, t2):
   assert t1.shape == t2.shape
   return lambda x, y: (x, y), t1
-  # TODO: generate slices and paddings to match shapes
+# TODO: generate slices and paddings to match shapes
 
 def wrap_singleton(f):
   return lambda *xs: (f(*xs),)

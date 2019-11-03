@@ -96,7 +96,6 @@ def _identity(x):
   return x
 
 ### traceables
-
 def neg(x):
   r"""Elementwise negation: :math:`-x`."""
   return neg_p.bind(x)
@@ -1078,7 +1077,6 @@ def _safe_mul(x, y):
   return safe_mul_p.bind(x, y)
 
 ### convenience wrappers around traceables
-
 def conv(lhs, rhs, window_strides, padding, precision=None):
   """Convenience wrapper around `conv_general_dilated`.
 
@@ -1307,7 +1305,6 @@ def batch_matmul(lhs, rhs):
 
 # These functions also exist in the XLA client library, but we treat them
 # as non-primitive to maintain a smaller set of autodiff primitives.
-
 def square(x):
   r"""Elementwise square: :math:`x^2`."""
   return mul(x, x)
@@ -1381,7 +1378,6 @@ def _iter(tracer):
 ShapedArray._iter = staticmethod(_iter)
 
 # Add some ad handlers that use (or could use) lax primitives
-
 def zeros_like_array(x):
   return full_like(x, 0)
 
@@ -3709,7 +3705,6 @@ batching.primitive_batchers[shaped_identity_p] = \
     lambda a, d, shape: (shaped_identity(a[0]), d[0])
 
 ### constants
-
 class _FilledConstant(xla.DeviceConstant):
   __slots__ = ["fill_value"]
 
@@ -3797,7 +3792,6 @@ for _t in [_FilledConstant, _IotaConstant, _EyeConstant]:
   ad_util.jaxval_zeros_likers[_t] = zeros_like_array
 
 ### stop-gradient
-
 def _stop_gradient_jvp_rule(primals, tangents):
   # if we don't call stop_gradient here, we'd only peel off one autodiff tracer
   x, = primals
