@@ -103,9 +103,6 @@ def cholesky_jvp_rule(primals, tangents):
   sigma_dot, = tangents
   L = np.tril(cholesky_p.bind(x))
 
-  if sigma_dot is ad_util.zero:
-    return L, ad_util.zero
-
   # Forward-mode rule from https://arxiv.org/pdf/1602.07527.pdf
   def phi(X):
     l = np.tril(X)
@@ -130,7 +127,7 @@ batching.primitive_batchers[cholesky_p] = cholesky_batching_rule
 def _nan_like(c, operand):
   shape = c.GetShape(operand)
   dtype = shape.element_type()
-  if onp.issubdtype(dtype, onp.complexfloating):
+  if np.issubdtype(dtype, onp.complexfloating):
     nan = c.Constant(onp.array(onp.nan * (1. + 1j), dtype=dtype))
   else:
     nan = c.Constant(onp.array(onp.nan, dtype=dtype))
@@ -262,9 +259,6 @@ def eigh_jvp_rule(primals, tangents, lower):
 
   v, w = eigh_p.bind(symmetrize(a), lower=lower)
 
-  if a_dot is ad_util.zero:
-    return core.pack((v, w)), ad.TangentTuple(ad_util.zero, ad_util.zero)
-
   # for complex numbers we need eigenvalues to be full dtype of v, a:
   w = w.astype(a.dtype)
   eye_n = np.eye(a.shape[-1], dtype=a.dtype)
@@ -326,8 +320,6 @@ def triangular_solve_shape_rule(a, b, left_side=False, **unused_kwargs):
 
 def triangular_solve_jvp_rule_a(
     g_a, ans, a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
-  if g_a is ad_util.zero:
-    return ad_util.zero
   m, n = b.shape[-2:]
   k = 1 if unit_diagonal else 0
   g_a = np.tril(g_a, k=-k) if lower else np.triu(g_a, k=k)
@@ -362,8 +354,11 @@ def triangular_solve_transpose_rule(
   # Triangular solve is nonlinear in its first argument and linear in its second
   # argument, analogous to `div` but swapped.
   assert a is not ad.undefined_primal and b is ad.undefined_primal
-  cotangent_b = triangular_solve(a, cotangent, left_side, lower,
-                                 not transpose_a, conjugate_a, unit_diagonal)
+  if cotangent is ad_util.zero:
+    cotangent_b = ad_util.zero
+  else:
+    cotangent_b = triangular_solve(a, cotangent, left_side, lower,
+                                   not transpose_a, conjugate_a, unit_diagonal)
   return [None, cotangent_b]
 
 
@@ -537,10 +532,6 @@ def _lu_jvp_rule(primals, tangents):
   a_dot, = tangents
   lu, pivots = lu_p.bind(a)
 
-  if a_dot is ad_util.zero:
-    return (core.pack((lu, pivots)),
-            ad.TangentTuple((ad_util.zero, ad_util.zero)))
-
   a_shape = np.shape(a)
   m, n = a_shape[-2:]
   dtype = lax.dtype(a)
@@ -680,8 +671,6 @@ def qr_jvp_rule(primals, tangents, full_matrices):
   x, = primals
   dx, = tangents
   q, r = qr_p.bind(x, full_matrices=False)
-  if dx is ad_util.zero:
-    return core.pack((q, r)), ad.TangentTuple(ad_util.zero, ad_util.zero)
   if full_matrices or np.shape(x)[-2] < np.shape(x)[-1]:
     raise NotImplementedError
   dx_rinv = triangular_solve(r, dx)  # Right side solve by default
@@ -777,9 +766,6 @@ def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
   A, = primals
   dA, = tangents
   s, U, Vt = svd_p.bind(A, full_matrices=False, compute_uv=True)
-
-  if dA is ad_util.zero:
-    return ((s, U, Vt), (ad_util.zero, ad_util.zero, ad_util.zero))
 
   if full_matrices:
     # TODO: implement full matrices case, documented here: https://people.maths.ox.ac.uk/gilesm/files/NA-08-01.pdf

@@ -18,6 +18,7 @@ from __future__ import print_function
 
 import collections
 import enum
+import functools
 import itertools
 import operator
 import string
@@ -180,6 +181,18 @@ def digamma(x):
   r"""Elementwise digamma: :math:`\psi(x)`."""
   return digamma_p.bind(x)
 
+def bessel_i0e(x):
+  r"""Exponentially scaled modified Bessel function of order 0:
+  :math:`\mathrm{i0e}(x) = e^{-\mathrm{abs}(x)} \mathrm{i0}(x)`
+  """
+  return bessel_i0e_p.bind(x)
+
+def bessel_i1e(x):
+  r"""Exponentially scaled modified Bessel function of order 1:
+  :math:`\mathrm{i1e}(x) = e^{-\mathrm{abs}(x)} \mathrm{i1}(x)`
+  """
+  return bessel_i1e_p.bind(x)
+
 def erf(x):
   r"""Elementwise error function: :math:`\mathrm{erf}(x)`."""
   return erf_p.bind(x)
@@ -341,7 +354,7 @@ def convert_element_type(operand, new_dtype):
     if (onp.issubdtype(old_dtype, onp.complexfloating) and
         not onp.issubdtype(new_dtype, onp.complexfloating)):
       msg = "Casting complex values to real discards the imaginary part"
-      warnings.warn(msg, onp.ComplexWarning)
+      warnings.warn(msg, onp.ComplexWarning, stacklevel=2)
       operand = real(operand)
       old_dtype = _dtype(operand)
     return convert_element_type_p.bind(
@@ -587,7 +600,7 @@ def broadcast(operand, sizes):
   return broadcast_p.bind(operand, sizes=tuple(sizes))
 
 def broadcast_in_dim(operand, shape, broadcast_dimensions):
-  if operand.ndim == len(shape) and not len(broadcast_dimensions):
+  if onp.ndim(operand) == len(shape) and not len(broadcast_dimensions):
     return operand
   if any(x < 0 or x >= len(shape) for x in broadcast_dimensions):
     msg = ("broadcast dimensions must be >= 0 and < ndim(shape), got {} for "
@@ -1262,8 +1275,8 @@ def full_like(x, fill_value, dtype=None, shape=None):
     `fill_value`, similar to the output of np.full.
   """
   shape = onp.shape(x) if shape is None else _canonicalize_shape(shape)
-  out = full(shape, fill_value, dtype or _dtype(x))
-  return tie_in(x, out)
+  fill_value = tie_in(x, fill_value)
+  return full(shape, fill_value, dtype or _dtype(x))
 
 
 def collapse(operand, start_dimension, stop_dimension):
@@ -1363,15 +1376,18 @@ def reciprocal(x):
   r"""Elementwise reciprocal: :math:`1 \over x`."""
   return div(_const(x, 1), x)
 
+@api.jit
 def tan(x):
   r"""Elementwise tangent: :math:`\mathrm{tan}(x)`."""
   return div(sin(x), cos(x))
 
+@api.jit
 def asin(x):
   r"""Elementwise arc sine: :math:`\mathrm{asin}(x)`."""
   return mul(_const(x, 2),
              atan2(x, add(_const(x, 1), sqrt(sub(_const(x, 1), square(x))))))
 
+@api.jit
 def acos(x):
   r"""Elementwise arc cosine: :math:`\mathrm{acos}(x)`."""
   return select(
@@ -1384,12 +1400,27 @@ def atan(x):
   r"""Elementwise arc tangent: :math:`\mathrm{atan}(x)`."""
   return atan2(x, _const(x, 1))
 
+def _upcast_fp16_for_computation(f):
+  @functools.wraps(f)
+  def f_wrapped(x):
+    dtype = _dtype(x)
+    if dtype == onp.float16:
+      return convert_element_type(
+        f(convert_element_type(x, onp.float32)), dtype)
+    return f(x)
+
+  return f_wrapped
+
+@api.jit
+@_upcast_fp16_for_computation
 def sinh(x):
   r"""Elementwise hyperbolic sine: :math:`\mathrm{sinh}(x)`."""
   log_half = _const(x, onp.log(0.5))
   # This formulation avoids overflow when e^x is inf but e^x/2 is not inf.
   return sub(exp(add(log_half, x)), exp(sub(log_half, x)))
 
+@api.jit
+@_upcast_fp16_for_computation
 def cosh(x):
   r"""Elementwise hyperbolic cosine: :math:`\mathrm{cosh}(x)`."""
   log_half = _const(x, onp.log(0.5))
@@ -1611,6 +1642,19 @@ ad.defjvp(lgamma_p, lambda g, x: mul(g, digamma(x)))
 
 digamma_p = standard_unop(_float, 'digamma')
 
+bessel_i0e_p = standard_unop(_float, 'bessel_i0e')
+ad.defjvp2(bessel_i0e_p, lambda g, y, x: g * (bessel_i1e(x) - sign(x) * y))
+
+bessel_i1e_p = standard_unop(_float, 'bessel_i1e')
+def _bessel_i1e_jvp(g, y, x):
+  eps = onp.finfo(_dtype(x)).eps
+  x_is_not_tiny = abs(x) > eps
+  safe_x = select(x_is_not_tiny, x, full_like(x, eps))
+  dy_dx = bessel_i0e(safe_x) - y * (sign(safe_x) + reciprocal(safe_x))
+  dy_dx = select(x_is_not_tiny, dy_dx, full_like(x, 0.5))
+  return g * dy_dx
+ad.defjvp2(bessel_i1e_p, _bessel_i1e_jvp)
+
 erf_p = standard_unop(_float, 'erf')
 ad.defjvp(erf_p, lambda g, x: mul(_const(x, 2. / onp.sqrt(onp.pi)),
                                   mul(g, exp(neg(square(x))))))
@@ -1634,7 +1678,7 @@ complex_p = binop(_complex_dtype, [_complex_elem_types, _complex_elem_types],
                   'complex')
 ad.deflinear(complex_p, lambda t: [real(t), imag(neg(t))])
 
-conj_p = unop(_complex_dtype, _float | _complex, 'conj')
+conj_p = unop(_complex_dtype, _complex_elem_types | _complex, 'conj')
 
 def _conj_transpose_rule(t, x, input_dtype):
   assert x is ad.undefined_primal
@@ -1669,17 +1713,17 @@ ad.defjvp2(rsqrt_p,
 
 pow_p = standard_binop([_float | _complex, _float | _complex], 'pow')
 
-def _pow_jvp_lhs(g, x, y):
+def _pow_jvp_lhs(g, ans, x, y):
   # we call _safe_mul here so that we get the behavior 0*inf = 0, since when a
   # coefficient in `g` is zero we want to keep it at zero, not produce a nan.
   # see https://github.com/google/jax/pull/383
   jac = mul(y, pow(x, select(eq(y, _zeros(y)), _ones(y), sub(y, _ones(y)))))
   return _safe_mul(_brcast(g, y), jac)
 
-def _pow_jvp_rhs(g, x, y):
-  return mul(_brcast(g, x), mul(log(_replace_zero(x)), pow(x, y)))
+def _pow_jvp_rhs(g, ans, x, y):
+  return mul(_brcast(g, x), mul(log(_replace_zero(x)), ans))
 
-ad.defjvp(pow_p, _pow_jvp_lhs, _pow_jvp_rhs)
+ad.defjvp2(pow_p, _pow_jvp_lhs, _pow_jvp_rhs)
 _replace_zero = lambda x: select(eq(x, _const(x, 0)), _ones(x), x)
 
 not_p = standard_unop(_int | _bool, 'not')

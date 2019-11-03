@@ -32,7 +32,7 @@ def gammaln(x):
   return lax.lgamma(x)
 
 
-@_wraps(osp_special.digamma)
+@_wraps(osp_special.digamma, update_doc=False)
 def digamma(x):
   x, = _promote_args_like(osp_special.digamma, x)
   return lax.digamma(x)
@@ -44,7 +44,7 @@ def erf(x):
   return lax.erf(x)
 
 
-@_wraps(osp_special.erfc)
+@_wraps(osp_special.erfc, update_doc=False)
 def erfc(x):
   x, = _promote_args_like(osp_special.erfc, x)
   return lax.erfc(x)
@@ -56,7 +56,7 @@ def erfinv(x):
   return lax.erf_inv(x)
 
 
-@_wraps(osp_special.logit)
+@_wraps(osp_special.logit, update_doc=False)
 @custom_transforms
 def logit(x):
   x = asarray(x)
@@ -64,7 +64,7 @@ def logit(x):
 defjvp(logit, lambda g, ans, x: g / (x * (1 - x)))
 
 
-@_wraps(osp_special.expit)
+@_wraps(osp_special.expit, update_doc=False)
 @custom_transforms
 def expit(x):
   x = asarray(x)
@@ -93,7 +93,7 @@ def xlogy(x, y):
   return lax._safe_mul(x, lax.log(y))
 
 
-@_wraps(osp_special.xlog1py)
+@_wraps(osp_special.xlog1py, update_doc=False)
 def xlog1py(x, y):
   x, y = _promote_args_like(osp_special.xlog1py, x, y)
   return lax._safe_mul(x, lax.log1p(y))
@@ -107,7 +107,7 @@ def entr(x):
                     lax.neg(xlogy(x, x)))
 
 
-@_wraps(osp_special.multigammaln)
+@_wraps(osp_special.multigammaln, update_doc=False)
 def multigammaln(a, d):
   a, = _promote_args_like(lambda a: osp_special.multigammaln(a, 1), a)
   d = lax.convert_element_type(d, lax.dtype(a))
@@ -521,3 +521,11 @@ def _norm_logpdf(x):
 
 defjvp(log_ndtr,
        lambda g, ans, x: lax.mul(g, lax.exp(lax.sub(_norm_logpdf(x), ans))))
+
+@_wraps(osp_special.i0e)
+def i0e(x):
+  return lax.bessel_i0e(x)
+
+@_wraps(osp_special.i1e)
+def i1e(x):
+  return lax.bessel_i1e(x)

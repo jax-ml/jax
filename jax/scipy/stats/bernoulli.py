@@ -24,7 +24,7 @@ from ...numpy import lax_numpy as np
 from ..special import xlogy, xlog1py
 
 
-@np._wraps(osp_stats.bernoulli.logpmf)
+@np._wraps(osp_stats.bernoulli.logpmf, update_doc=False)
 def logpmf(k, p, loc=0):
   k, p, loc = np._promote_args_like(osp_stats.bernoulli.logpmf, k, p, loc)
   zero = np._constant_like(k, 0)
@@ -34,6 +34,6 @@ def logpmf(k, p, loc=0):
   return np.where(np.logical_or(lax.lt(x, zero), lax.gt(x, one)),
                   -np.inf, log_probs)
 
-@np._wraps(osp_stats.bernoulli.pmf)
+@np._wraps(osp_stats.bernoulli.pmf, update_doc=False)
 def pmf(k, p, loc=0):
   return np.exp(pmf(k, p, loc))

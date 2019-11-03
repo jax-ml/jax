@@ -89,7 +89,12 @@ language = None
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
 # This pattern also affects html_static_path and html_extra_path.
-exclude_patterns = []
+exclude_patterns = [
+    # Slow notebook: long time to load tf.ds
+    'notebooks/neural_network_with_tfds_data.ipynb',
+    # Slow notebook
+    'notebooks/Neural_Network_and_Data_Loading.ipynb',
+]
 
 # The name of the Pygments (syntax highlighting) style to use.
 pygments_style = None
@@ -101,6 +106,7 @@ napolean_use_rtype = False
 # -- Options for nbsphinx -----------------------------------------------------
 
 # Execute notebooks before conversion: 'always', 'never', 'auto' (default)
+# We execute all notebooks, exclude the slow ones using 'exclude_patterns'
 nbsphinx_execute = 'always'
 
 # Use this kernel instead of the one stored in the notebook metadata:
@@ -114,7 +120,7 @@ nbsphinx_execute = 'always'
 
 
 # Controls when a cell will time out (defaults to 30; use -1 for no timeout):
-nbsphinx_timeout = 60
+nbsphinx_timeout = 90
 
 # Default Pygments lexer for syntax highlighting in code cells:
 #nbsphinx_codecell_lexer = 'ipython3'

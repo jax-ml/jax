@@ -37,7 +37,7 @@ are instances of such transformations. Another is [`vmap`](#auto-vectorization-w
 for automatic vectorization, with more to come.
 
 This is a research project, not an official Google product. Expect bugs and
-[sharp edges](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb).
+[sharp edges](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html).
 Please help by trying it out, [reporting
 bugs](https://github.com/google/jax/issues), and letting us know what you
 think!
@@ -70,7 +70,6 @@ open](https://github.com/google/jax) by a growing number of
 ### Contents
 * [Quickstart: Colab in the Cloud](#quickstart-colab-in-the-cloud)
 * [Installation](#installation)
-* [Running the tests](#running-the-tests)
 * [Reference documentation](#reference-documentation)
 * [A brief tour](#a-brief-tour)
 * [What's supported](#whats-supported)
@@ -84,26 +83,30 @@ open](https://github.com/google/jax) by a growing number of
 
 ## Quickstart: Colab in the Cloud
 Jump right in using a notebook in your browser, connected to a Google Cloud GPU. Here are some starter notebooks:
-- [The basics: NumPy on accelerators, `grad` for differentiation, `jit` for compilation, and `vmap` for vectorization](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/quickstart.ipynb)
-- [Training a Simple Neural Network, with PyTorch Data Loading](https://colab.research.google.com/github/google/jax/blob/master/notebooks/neural_network_and_data_loading.ipynb)
-- [Training a Simple Neural Network, with TensorFlow Dataset Data Loading](https://colab.research.google.com/github/google/jax/blob/master/notebooks/neural_network_with_tfds_data.ipynb)
+- [The basics: NumPy on accelerators, `grad` for differentiation, `jit` for compilation, and `vmap` for vectorization](https://jax.readthedocs.io/en/latest/notebooks/quickstart.html)
+- [Training a Simple Neural Network, with PyTorch Data Loading](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/Neural_Network_and_Data_Loading.ipynb)
+- [Training a Simple Neural Network, with TensorFlow Dataset Data Loading](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/neural_network_with_tfds_data.ipynb)
 
 And for a deeper dive into JAX:
-- [Common gotchas and sharp edges](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/Common_Gotchas_in_JAX.ipynb)
-- [The Autodiff Cookbook, Part 1: easy and powerful automatic differentiation in JAX](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/autodiff_cookbook.ipynb)
-- [Directly using XLA in Python](https://colab.research.google.com/github/google/jax/blob/master/notebooks/XLA_in_Python.ipynb)
-- [MAML Tutorial with JAX](https://colab.research.google.com/github/google/jax/blob/master/notebooks/maml.ipynb)
-- [Generative Modeling by Estimating Gradients of Data Distribution in JAX](https://colab.research.google.com/github/google/jax/blob/master/notebooks/score_matching.ipynb).
-[How JAX primitives work](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/How_JAX_primitives_work.ipynb)
+- [Common gotchas and sharp edges](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html)
+- [The Autodiff Cookbook, Part 1: easy and powerful automatic differentiation in JAX](https://jax.readthedocs.io/en/latest/notebooks/autodiff_cookbook.html)
+- [Directly using XLA in Python](https://jax.readthedocs.io/en/latest/notebooks/XLA_in_Python.html)
+- [How JAX primitives work](https://jax.readthedocs.io/en/latest/notebooks/How_JAX_primitives_work.html)
+- [MAML Tutorial with JAX](https://jax.readthedocs.io/en/latest/notebooks/maml.html)
+- [Generative Modeling by Estimating Gradients of Data Distribution in JAX](https://jax.readthedocs.io/en/latest/notebooks/score_matching.html).
+
 
 ## Installation
 JAX is written in pure Python, but it depends on XLA, which needs to be compiled
 and installed as the `jaxlib` package. Use the following instructions to
 install a binary package with `pip`, or to build JAX from source.
 
-We support installing or building `jaxlib` on Linux and macOS platforms, but not
-Windows. We're not currently working on Windows support, but contributions are
-welcome (see [#438](https://github.com/google/jax/issues/438)).
+We support installing or building `jaxlib` on Linux (Ubuntu 16.04 or later) and
+macOS (10.12 or later) platforms, but not yet Windows. We're not currently
+working on Windows support, but contributions are welcome
+(see [#438](https://github.com/google/jax/issues/438)). Some users have reported
+success with building a CPU-only `jaxlib` from source using the Windows Subsytem
+for Linux.
 
 ### pip installation
 
@@ -111,8 +114,12 @@ To install a CPU-only version, which might be useful for doing local
 development on a laptop, you can run
 
 ```bash
+pip install --upgrade pip
 pip install --upgrade jax jaxlib  # CPU-only version
 ```
+
+On Linux, it is often necessary to first update `pip` to a version that supports
+`manylinux2010` wheels.
 
 If you want to install JAX with both CPU and GPU support, using existing CUDA
 and CUDNN7 installations on your machine (for example, preinstalled on your
@@ -124,7 +131,7 @@ PYTHON_VERSION=cp37  # alternatives: cp27, cp35, cp36, cp37
 CUDA_VERSION=cuda92  # alternatives: cuda90, cuda92, cuda100, cuda101
 PLATFORM=linux_x86_64  # alternatives: linux_x86_64
 BASE_URL='https://storage.googleapis.com/jax-releases'
-pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.30-$PYTHON_VERSION-none-$PLATFORM.whl
+pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.31-$PYTHON_VERSION-none-$PLATFORM.whl
 
 pip install --upgrade jax  # install jax
 ```
@@ -232,7 +239,7 @@ print("Trained loss: {:0.2f}".format(loss(weights, inputs, targets)))
 ```
 
 To see more, check out the [quickstart
-notebook](https://colab.research.google.com/github/google/jax/blob/master/notebooks/quickstart.ipynb),
+notebook](https://jax.readthedocs.io/en/latest/notebooks/quickstart.html),
 a [simple MNIST classifier
 example](https://github.com/google/jax/blob/master/examples/mnist_classifier.py)
 and the rest of the [JAX
@@ -680,13 +687,13 @@ code to compile and end-to-end optimize much bigger functions.
 ## Current gotchas
 
 For a survey of current gotchas, with examples and explanations, we highly
-recommend reading the [Gotchas Notebook](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb).
+recommend reading the [Gotchas Notebook](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html).
 
 Some stand-out gotchas that might surprise NumPy users:
 1. JAX enforces single-precision (32-bit, e.g. `float32`) values by default, and
    to enable double-precision (64-bit, e.g. `float64`) one needs to set the
    `jax_enable_x64` variable **at startup** (or set the environment variable
-   `JAX_ENABLE_X64=True`, see [the Gotchas Notebook](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb#scrollTo=YTktlwTTMgFl))
+   `JAX_ENABLE_X64=True`, see [the Gotchas Notebook](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#scrollTo=Double-(64bit)-precision))
 2. Some of NumPy's dtype promotion semantics involving a mix of Python scalars
    and NumPy types aren't preserved, namely `np.add(1, np.array([2],
    np.float32)).dtype` is `float64` rather than `float32`.
@@ -697,7 +704,7 @@ Some stand-out gotchas that might surprise NumPy users:
    reasons](https://github.com/google/jax/blob/master/design_notes/prng.md), and
    non-reuse (linearity) is not yet checked.
 
-See [the notebook](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb) for much more information.
+See [the notebook](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html) for much more information.
 
 ## Citing JAX
 

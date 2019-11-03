@@ -109,6 +109,12 @@ def eig(a):
   return w, vr
 
 
+@_wraps(onp.linalg.eigvals)
+def eigvals(a):
+  w, _ = eig(a)
+  return w
+
+
 @_wraps(onp.linalg.eigh)
 def eigh(a, UPLO=None, symmetrize_input=True):
   if UPLO is None or UPLO == "L":
@@ -122,6 +128,12 @@ def eigh(a, UPLO=None, symmetrize_input=True):
   a = _promote_arg_dtypes(np.asarray(a))
   v, w = lax_linalg.eigh(a, lower=lower, symmetrize_input=symmetrize_input)
   return w, v
+
+
+@_wraps(onp.linalg.eigvalsh)
+def eigvalsh(a, UPLO='L'):
+  w, _ = eigh(a, UPLO)
+  return w
 
 
 @_wraps(onp.linalg.inv)

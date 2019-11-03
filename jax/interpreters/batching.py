@@ -38,8 +38,8 @@ map = safe_map
 
 
 def batch(fun, in_vals, in_dims, out_dim_dests):
-  out_vals, out_dims = batch_fun(fun, in_vals, in_dims)
   size, = {x.shape[d] for x, d in zip(in_vals, in_dims) if d is not not_mapped}
+  out_vals, out_dims = batch_fun(fun, in_vals, in_dims)
   return map(partial(matchaxis, size), out_dims, out_dim_dests(), out_vals)
 
 def batch_fun(fun, in_vals, in_dims):
@@ -52,7 +52,8 @@ def batch_fun(fun, in_vals, in_dims):
 @transformation_with_aux
 def batch_subtrace(master, in_dims, *in_vals):
   trace = BatchTrace(master, core.cur_sublevel())
-  in_tracers = map(partial(BatchTracer, trace), in_vals, in_dims)
+  in_tracers = [BatchTracer(trace, val, dim) if dim is not None else val
+                for val, dim in zip(in_vals, in_dims)]
   outs = yield in_tracers, {}
   out_tracers = map(trace.full_raise, outs)
   out_vals, out_dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
@@ -162,8 +163,8 @@ def get_primitive_batcher(p):
   try:
     return primitive_batchers[p]
   except KeyError:
-    raise NotImplementedError(
-        "Batching rule for '{}' not implemented".format(p))
+    msg = "Batching rule for '{}' not implemented"
+    raise NotImplementedError(msg.format(p))
 
 def defvectorized(prim):
   primitive_batchers[prim] = partial(vectorized_batcher, prim)

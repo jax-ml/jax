@@ -557,6 +557,7 @@ class Token(object): pass
 token = Token()
 
 pytype_aval_mappings[Token] = lambda _: abstract_token
+core.pytype_aval_mappings[Token] = lambda _: abstract_token
 xla_shape_handlers[AbstractToken] = lambda _: xc.Shape.token_shape()
 xla_result_handlers[AbstractToken] = lambda _: lambda _: token
 canonicalize_dtype_handlers[Token] = lambda x: x
