@@ -22,9 +22,9 @@ Each transformation defines:
 * an `init_fn`, to initialize a (possibly empty) set of statistics, or `state`.
 * an `update_fn` to transform an input gradient and update the state.
 
-An (optional) `chainer` utility can be used to build custom optimizers by
+An (optional) `chain` utility can be used to build custom optimizers by
 chaining arbitrary sequences of transformations. For any sequence of
-transformations `chainer` returns a single `init_fn` and `update_fn`.
+transformations `chain` returns a single `init_fn` and `update_fn`.
 
 An (optional) `apply_updates` function can be used to eventually apply the
 transformed gradients to the set of parameters of interest.
@@ -323,10 +323,10 @@ def add_noise(eta, gamma, seed):
 ### Utilities for building and using custom optimizers. ###
 
 
-def chainer(*args):
+def chain(*args):
   """Applies a list of chainable update transformations.
 
-  Given a sequence of chainable transforms, `chainer` returns an `init_fn`
+  Given a sequence of chainable transforms, `chain` returns an `init_fn`
   that constructs a `state` by concatenating the states of the individual
   transforms, and returns an `update_fn` which chains the update transformations
   feeding the appropriate state to each.
@@ -375,30 +375,30 @@ def apply_updates(params, updates):
 
 
 def sgd(learning_rate, momentum=0., nesterov=False):
-  return chainer(
+  return chain(
       trace(decay=momentum, nesterov=nesterov),
       scale(-learning_rate))
 
 
 def noisy_sgd(learning_rate, eta=0.01, gamma=0.55, seed=42):
-  return chainer(
+  return chain(
       trace(decay=0., nesterov=False),
       scale(-learning_rate),
       add_noise(eta, gamma, seed))
 
 
 def adam(learning_rate, b1=0.9, b2=0.999, eps=1e-8):
-  return chainer(
+  return chain(
       scale_by_adam(b1=b1, b2=b2, eps=eps),
       scale(-learning_rate))
 
 
 def rmsprop(learning_rate, decay=0.9, eps=1e-8, centered=False):
   if not centered:
-    return chainer(
+    return chain(
         scale_by_rms(decay=decay, eps=eps),
         scale(-learning_rate))
   else:
-    return chainer(
+    return chain(
         scale_by_stddev(decay=decay, eps=eps),
         scale(-learning_rate))
