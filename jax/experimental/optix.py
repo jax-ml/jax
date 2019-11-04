@@ -380,6 +380,13 @@ def sgd(learning_rate, momentum=0., nesterov=False):
       scale(-learning_rate))
 
 
+def noisy_sgd(learning_rate, eta=0.01, gamma=0.55, seed=42):
+  return chainer(
+      trace(decay=0., nesterov=False),
+      scale(-learning_rate),
+      add_noise(eta, gamma, seed))
+
+
 def adam(learning_rate, b1=0.9, b2=0.999, eps=1e-8):
   return chainer(
       scale_by_adam(b1=b1, b2=b2, eps=eps),
