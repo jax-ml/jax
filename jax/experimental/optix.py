@@ -313,13 +313,13 @@ def add_noise(eta, gamma, seed):
     num_vars = len(tree_leaves(updates))
     treedef = tree_structure(updates)
     variance = eta / (1 + state.count) ** gamma
-    keys = jrandom.split(rng_key, num=num_vars + 1)
-    keys = tree_unflatten(treedef, keys[1:])
+    all_keys = jrandom.split(state.rng_key, num=num_vars + 1)
     noise = tree_multimap(
-        lambda g, k: jrandom.normal(k, shape=g.shape), updates, keys)
+        lambda g, k: jrandom.normal(k, shape=g.shape),
+        updates, tree_unflatten(treedef, all_keys[1:]))
     updates = tree_multimap(
         lambda g, n: g + variance * n, updates, noise)
-    return updates, AddNoiseState(count=state.count + 1, rng_key=keys[0])
+    return updates, AddNoiseState(count=state.count + 1, rng_key=all_keys[0])
 
   return init_fn, update_fn
 
