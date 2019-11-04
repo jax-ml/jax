@@ -545,6 +545,26 @@ def exp2(x):
   return lax.exp(lax.mul(lax.log(_constant_like(x, 2)), x))
 
 
+@_wraps(onp.signbit)
+def signbit(x):
+  x, = _promote_shapes("signbits", x)
+
+  if issubdtype(_dtype(x), onp.integer):
+    x = lax.convert_element_type(x, onp.float64)
+
+  info = finfo(_dtype(x))
+
+  if info.bits == 16:
+    int_type = onp.int16
+  elif info.bits == 32:
+    int_type = onp.int32
+  elif info.bits == 64:
+    int_type = onp.int64
+
+  x = lax.bitcast_convert_type(x, int_type)
+  return lax.convert_element_type(x >> (info.nexp + info.nmant), onp.bool)
+
+
 @_wraps(onp.remainder)
 def remainder(x1, x2):
   x1, x2 = _promote_args("remainder", x1, x2)
