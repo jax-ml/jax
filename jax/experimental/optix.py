@@ -45,8 +45,12 @@ from __future__ import print_function
 import collections
 
 from jax import numpy as jnp
+from jax import random as jrandom
+
 from jax.tree_util import tree_leaves
 from jax.tree_util import tree_multimap
+from jax.tree_util import tree_structure
+from jax.tree_util import tree_unflatten
 
 
 ### Composable gradient transformations. ###
@@ -305,7 +309,7 @@ def add_noise(eta, gamma, seed):
   def init_fn(_):
     return AddNoiseState(count=jnp.zeros([]), rng_key=jrandom.PRNGKey(seed))
 
-  def update_fn(updates, state):
+  def update_fn(updates, state):  # pylint: disable=missing-docstring
     num_vars = len(tree_leaves(updates))
     treedef = tree_structure(updates)
     variance = eta / (1 + state.count) ** gamma
