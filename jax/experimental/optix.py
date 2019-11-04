@@ -284,6 +284,42 @@ def scale_by_schedule(step_size_fn):
   return init_fn, update_fn
 
 
+AddNoiseState = collections.namedtuple("AddNoiseState", "count rng_key")
+
+
+def add_noise(eta, gamma, seed):
+  """Add gradient noise.
+
+  References:
+    [Neelakantan et al, 2014](https://arxiv.org/abs/1511.06807)
+
+  Args:
+    eta: base variance of the gaussian noise added to the gradient.
+    gamma: decay exponent for annealing of the variance.
+    seed: seed for random number generation.
+
+  Returns:
+    An (init_fn, update_fn) tuple.
+  """
+
+  def init_fn(_):
+    return AddNoiseState(count=jnp.zeros([]), rng_key=jrandom.PRNGKey(seed))
+
+  def update_fn(updates, state):
+    num_vars = len(tree_leaves(updates))
+    treedef = tree_structure(updates)
+    variance = eta / (1 + state.count) ** gamma
+    keys = jrandom.split(rng_key, num=num_vars + 1)
+    keys = tree_unflatten(treedef, keys[1:])
+    noise = tree_multimap(
+        lambda g, k: jrandom.normal(k, shape=g.shape), updates, keys)
+    updates = tree_multimap(
+        lambda g, n: g + variance * n, updates, noise)
+    return updates, AddNoiseState(count=state.count + 1, rng_key=keys[0])
+
+  return init_fn, update_fn
+
+
 ### Utilities for building and using custom optimizers. ###
 
 
