@@ -950,6 +950,22 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     ans = api.vmap(lambda c, as_:            lax.scan(f, c, as_), in_axes)(c, as_)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testScanVmapFixpoint(self):
+    def f(carry_init):
+      def scan_body(c, x):
+        # The carry is a 4-tuple, the last element starts batched,
+        # and the carry is shifted left at each iteration.
+        return ((c[1], c[2], c[3], 0.), None)
+      return lax.scan(scan_body, (0., 1., 2., carry_init), np.zeros(2))
+    carry_init = np.array([3., 4., 5.])
+    carry_out, _ = api.vmap(f)(carry_init)
+    self.assertAllClose(carry_out[3], np.array([0., 0., 0.]), check_dtypes=False)
+    self.assertAllClose(carry_out[2], np.array([0., 0., 0.]), check_dtypes = False)
+    # After two shifts, we get the carry_init
+    self.assertAllClose(carry_out[1], carry_init, check_dtypes=False)
+    self.assertAllClose(carry_out[0], np.array([2., 2., 2.]), check_dtypes = False)
+
+
   # TODO(mattjj, dougalm): fix this test when skip_checks is False
   def testIssue757(self):
     # code from https://github.com/google/jax/issues/757
