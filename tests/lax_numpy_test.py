@@ -191,9 +191,11 @@ JAX_COMPOUND_OP_RECORDS = [
               test_name="log1p_large", tolerance={onp.float64: 1e-12}),
     op_record("log1p", 1, number_dtypes, all_shapes, jtu.rand_small_positive(), [],
               tolerance={onp.float64: 1e-12}),
-    op_record("logaddexp", 2, float_dtypes, all_shapes, jtu.rand_default(), ["rev"],
+    op_record("logaddexp", 2, float_dtypes, all_shapes,
+              jtu.rand_some_inf_and_nan(), ["rev"],
               tolerance={onp.float64: 1e-12}),
-    op_record("logaddexp2", 2, float_dtypes, all_shapes, jtu.rand_default(), ["rev"],
+    op_record("logaddexp2", 2, float_dtypes, all_shapes,
+              jtu.rand_some_inf_and_nan(), ["rev"],
               tolerance={onp.float16: 1e-2}),
     op_record("polyval", 2, number_dtypes, nonempty_nonscalar_array_shapes,
               jtu.rand_default(), [], check_dtypes=False,
@@ -1851,7 +1853,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     onp_op = getattr(onp, op)
     lnp_op = getattr(lnp, op)
     dtype = onp.dtype(xla_bridge.canonicalize_dtype(dtype)).type
-    for x in (onp.nan, -onp.inf, -100., -2. -1., 0., 1., 2., 100., onp.inf,
+    for x in (onp.nan, -onp.inf, -100., -2., -1., 0., 1., 2., 100., onp.inf,
               lnp.finfo(dtype).max, onp.sqrt(lnp.finfo(dtype).max),
               onp.sqrt(lnp.finfo(dtype).max) * 2.):
       if onp.isnan(x) and op in ("sinh", "cosh", "expm1", "exp"):
