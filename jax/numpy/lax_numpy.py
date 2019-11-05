@@ -560,6 +560,8 @@ def signbit(x):
     int_type = onp.int32
   elif info.bits == 64:
     int_type = onp.int64
+  else:
+    raise ValueError("Only support 16, 32 and 64 bits now.")
 
   x = lax.bitcast_convert_type(x, int_type)
   return lax.convert_element_type(x >> (info.nexp + info.nmant), onp.bool)
