@@ -243,8 +243,13 @@ def _while_loop_batching_rule(args, dims, cond_nconsts, cond_jaxpr,
   orig_batched = [d is not batching.not_mapped for d in dims]
   cconst_bat, bconst_bat, init_bat = split_list(orig_batched, [cond_nconsts, body_nconsts])
 
+  # Fixpoint computation of which carry are batched: either
+  # batched from init, or the carry out is batched. Each iteration promotes
+  # at least one carry to batched. We need at most len(carry) iterations,
+  # but we need one last iteration to prepare the jaxpr based on the final
+  # carry_bat.
   carry_bat = init_bat
-  for _ in range(1000):
+  for _ in range(1 + len(carry_bat)):
     batched = bconst_bat + carry_bat
     body_jaxpr_batched, carry_bat_out = batching.batch_jaxpr(
         body_jaxpr, size, batched, instantiate=carry_bat)
@@ -254,9 +259,9 @@ def _while_loop_batching_rule(args, dims, cond_nconsts, cond_jaxpr,
     if carry_bat_out == carry_bat:
       break
     else:
-      carry_bat = carry_bat_out
+      carry_bat = _map(operator.or_, carry_bat, carry_bat_out)
   else:
-    raise FixedPointError
+    assert False, "Fixpoint not reached"
 
   consts, init = split_list(args, [cond_nconsts + body_nconsts])
   const_dims, init_dims = split_list(dims, [cond_nconsts + body_nconsts])
@@ -536,8 +541,13 @@ def _scan_jvp(primals, tangents, forward, length, jaxpr, num_consts, num_carry,
   nonzeros = [t is not ad_util.zero for t in tangents]
   const_nz, init_nz, xs_nz = split_list(nonzeros, [num_consts, num_carry])
 
+  # Fixpoint computation of which carry are not ad.zero: either
+  # non-zero from init, or the carry out is non-zero. Each iteration promotes
+  # at least one carry to non-zero. We need at most len(carry) iterations,
+  # but we need one last iteration to prepare the jaxpr based on the final
+  # carry_nz.
   carry_nz = init_nz
-  for _ in range(1000):
+  for _ in range(1 + len(carry_nz)):
     nonzeros = const_nz + carry_nz + xs_nz
     jaxpr_jvp, nonzeros_out = ad.jvp_jaxpr(
         jaxpr, nonzeros, instantiate=carry_nz + [False] * num_ys)
@@ -545,9 +555,10 @@ def _scan_jvp(primals, tangents, forward, length, jaxpr, num_consts, num_carry,
     if carry_nz_out == carry_nz:
       break
     else:
-      carry_nz = carry_nz_out
+      carry_nz = _map(operator.or_, carry_nz, carry_nz_out)
   else:
-    raise FixedPointError
+    assert False, "Fixpoint not reached"
+
   tangents = [ad.instantiate_zeros(x, t) if t is ad_util.zero and nz else t
               for x, t, nz in zip(primals, tangents, nonzeros)]
 
@@ -586,11 +597,16 @@ def _scan_partial_eval(trace, *tracers, **kwargs):
   num_xs = len(jaxpr.in_avals) - num_carry - num_consts
   num_ys = len(jaxpr.out_avals) - num_carry
 
-  unknowns = original_unknowns = [t.pval[0] is not None for t in tracers]
+  unknowns = [t.pval[0] is not None for t in tracers]
   const_uk, init_uk, xs_uk = split_list(unknowns, [num_consts, num_carry])
 
+  # Fixpoint computation of which carry are unknown (not a constant): either
+  # unknown from init, or the carry out is unknown. Each iteration promotes
+  # at least one carry to unknown. We need at most len(carry) iterations,
+  # but we need one last iteration to prepare the jaxpr based on the final
+  # carry_uk.
   carry_uk = init_uk
-  for _ in range(1000):
+  for _ in range(1 + len(carry_uk)):
     unknowns = const_uk + carry_uk + xs_uk
     jaxpr_1, jaxpr_2, out_uk = pe.partial_eval_jaxpr(
         jaxpr, unknowns, instantiate=carry_uk + [False] * num_ys)
@@ -598,9 +614,9 @@ def _scan_partial_eval(trace, *tracers, **kwargs):
     if carry_uk_out == carry_uk:
       break
     else:
-      carry_uk = carry_uk_out
+      carry_uk = _map(operator.or_, carry_uk, carry_uk_out)
   else:
-    raise FixedPointError
+    assert False, "Fixpoint not reached"
 
   in_consts = [core.unit if uk else t.pval[1] for uk, t in zip(unknowns, tracers)]
   new_tracers = [trace.instantiate_const(t) if uk else trace.new_instantiated_literal(core.unit)
@@ -702,8 +718,13 @@ def _scan_batching_rule(args, dims, forward, length, jaxpr, num_consts,
   orig_batched = [d is not batching.not_mapped for d in dims]
   const_batched, init_batched, xs_batched = split_list(orig_batched, [num_consts, num_carry])
 
+  # Fixpoint computation of which carry are batched: either
+  # batched from init, or the carry out is batched. Each iteration promotes
+  # at least one carry to batched. We need at most len(carry) iterations,
+  # but we need one last iteration to prepare the jaxpr based on the final
+  # carry_batched.
   carry_batched = init_batched
-  for _ in range(1000):
+  for _ in range(1 + len(carry_batched)):
     batched = const_batched + carry_batched + xs_batched
     jaxpr_batched, batched_out = batching.batch_jaxpr(
         jaxpr, size, batched, instantiate=carry_batched + [False] * num_ys)
@@ -711,9 +732,9 @@ def _scan_batching_rule(args, dims, forward, length, jaxpr, num_consts,
     if carry_batched_out == carry_batched:
       break
     else:
-      carry_batched = carry_batched_out
+      carry_batched = _map(operator.or_, carry_batched, carry_batched_out)
   else:
-    raise FixedPointError
+    assert False, "Fixpoint not reached"
 
   consts, init, xs = split_list(args, [num_consts, num_carry])
   consts_bdims, init_bdims, xs_bdims = split_list(dims, [num_consts, num_carry])
