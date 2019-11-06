@@ -307,48 +307,69 @@ def _rand_dtype(rand, shape, dtype, scale=1., post=lambda x: x):
   return _cast_to_shape(onp.asarray(post(vals), dtype), shape, dtype)
 
 
+class _DelayedRandomState(object):
+  def __init__(self, seed):
+    self._seed = seed
+    self._rng = None
+
+  @property
+  def rng(self):
+    if self._rng is None:
+      self._rng = npr.RandomState(self._seed)
+    return self._rng
+
+  def rand(self, *args, **kwargs):
+    return self.rng.rand(*args, **kwargs)
+
+  def randn(self, *args, **kwargs):
+    return self.rng.randn(*args, **kwargs)
+
+  def randint(self, *args, **kwargs):
+    return self.rng.randint(*args, **kwargs)
+
+
 def rand_default():
-  randn = npr.RandomState(0).randn
+  randn = _DelayedRandomState(0).randn
   return partial(_rand_dtype, randn, scale=3)
 
 
 def rand_nonzero():
   post = lambda x: onp.where(x == 0, 1, x)
-  randn = npr.RandomState(0).randn
+  randn = _DelayedRandomState(0).randn
   return partial(_rand_dtype, randn, scale=3, post=post)
 
 
 def rand_positive():
   post = lambda x: x + 1
-  rand = npr.RandomState(0).rand
+  rand = _DelayedRandomState(0).rand
   return partial(_rand_dtype, rand, scale=2, post=post)
 
 
 def rand_small():
-  randn = npr.RandomState(0).randn
+  randn = _DelayedRandomState(0).randn
   return partial(_rand_dtype, randn, scale=1e-3)
 
 
 def rand_not_small():
   post = lambda x: x + onp.where(x > 0, 10., -10.)
-  randn = npr.RandomState(0).randn
+  randn = _DelayedRandomState(0).randn
   return partial(_rand_dtype, randn, scale=3., post=post)
 
 
 def rand_small_positive():
-  rand = npr.RandomState(0).rand
+  rand = _DelayedRandomState(0).rand
   return partial(_rand_dtype, rand, scale=2e-5)
 
 def rand_uniform(low=0.0, high=1.0):
   assert low < high
-  rand = npr.RandomState(0).rand
+  rand = _DelayedRandomState(0).rand
   post = lambda x: x * (high - low) + low
   return partial(_rand_dtype, rand, post=post)
 
 
 def rand_some_equal():
-  randn = npr.RandomState(0).randn
-  rng = npr.RandomState(0)
+  randn = _DelayedRandomState(0).randn
+  rng = _DelayedRandomState(0)
 
   def post(x):
     x_ravel = x.ravel()
@@ -362,7 +383,7 @@ def rand_some_equal():
 
 def rand_some_inf():
   """Return a random sampler that produces infinities in floating types."""
-  rng = npr.RandomState(1)
+  rng = _DelayedRandomState(1)
   base_rand = rand_default()
 
   """
@@ -393,7 +414,7 @@ def rand_some_inf():
 
 def rand_some_nan():
   """Return a random sampler that produces nans in floating types."""
-  rng = npr.RandomState(1)
+  rng = _DelayedRandomState(1)
   base_rand = rand_default()
 
   def rand(shape, dtype):
@@ -418,7 +439,7 @@ def rand_some_nan():
 
 def rand_some_inf_and_nan():
   """Return a random sampler that produces infinities in floating types."""
-  rng = npr.RandomState(1)
+  rng = _DelayedRandomState(1)
   base_rand = rand_default()
 
   """
@@ -452,7 +473,7 @@ def rand_some_inf_and_nan():
 # TODO(mattjj): doesn't handle complex types
 def rand_some_zero():
   """Return a random sampler that produces some zeros."""
-  rng = npr.RandomState(1)
+  rng = _DelayedRandomState(1)
   base_rand = rand_default()
 
   def rand(shape, dtype):
@@ -469,13 +490,13 @@ def rand_some_zero():
 
 
 def rand_int(low, high=None):
-  randint = npr.RandomState(0).randint
+  randint = _DelayedRandomState(0).randint
   def fn(shape, dtype):
     return randint(low, high=high, size=shape, dtype=dtype)
   return fn
 
 def rand_bool():
-  rng = npr.RandomState(0)
+  rng = _DelayedRandomState(0)
   def generator(shape, dtype):
     return _cast_to_shape(rng.rand(*_dims_of_shape(shape)) < 0.5, shape, dtype)
   return generator
@@ -494,12 +515,18 @@ def check_raises_regexp(thunk, err_type, pattern):
   except err_type as e:
     assert re.match(pattern, str(e)), "{}\n\n{}\n".format(e, pattern)
 
+
+_CACHED_INDICES = {}
+
 def cases_from_list(xs):
-  rng = npr.RandomState(42)
   xs = list(xs)
-  k = min(len(xs), FLAGS.num_generated_cases)
-  indices = rng.choice(onp.arange(len(xs)), k, replace=False)
-  return [xs[i] for i in indices]
+  n = len(xs)
+  k = min(n, FLAGS.num_generated_cases)
+  indices = _CACHED_INDICES.get(n)
+  if indices is None:
+    rng = npr.RandomState(42)
+    _CACHED_INDICES[n] = indices = rng.permutation(n)
+  return [xs[i] for i in indices[:k]]
 
 def cases_from_gens(*gens):
   sizes = [1, 3, 10]
