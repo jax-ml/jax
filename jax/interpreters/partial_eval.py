@@ -322,8 +322,6 @@ def join_pvals(pval1, pval2):
 def as_abstract_val(pv):
   if isinstance(pv, AbstractValue):
     return pv
-  elif isinstance(pv, JaxprTracerTuple):
-    return AbstractTuple(map(as_abstract_val, pv))
   elif pv is None:
     raise TypeError("{} is not abstract".format(pv))
 

@@ -28,17 +28,20 @@ from jax import lax
 from jax import random
 import jax.numpy as np
 
-def zeros(key, shape, dtype=np.float32): return np.zeros(shape, dtype)
-def ones(key, shape, dtype=np.float32): return np.ones(shape, dtype)
+def zeros(key, shape, dtype=np.float32):
+  return lax.yield_value(lax.tie_in(key, np.zeros(shape, dtype)))
+
+def ones(key, shape, dtype=np.float32):
+  return lax.yield_value(lax.tie_in(key, np.ones(shape, dtype)))
 
 def uniform(scale=1e-2):
   def init(key, shape, dtype=np.float32):
-    return random.uniform(key, shape, dtype) * scale
+    return lax.yield_value(random.uniform(key, shape, dtype) * scale)
   return init
 
 def normal(stddev=1e-2):
   def init(key, shape, dtype=np.float32):
-    return random.normal(key, shape, dtype) * stddev
+    return lax.yield_value(random.normal(key, shape, dtype) * stddev)
   return init
 
 def _compute_fans(shape, in_axis=-2, out_axis=-1):
@@ -60,11 +63,11 @@ def variance_scaling(scale, mode, distribution, in_axis=-2, out_axis=-1):
     if distribution == "truncated_normal":
       # constant is stddev of standard normal truncated to (-2, 2)
       stddev = np.sqrt(variance) / np.array(.87962566103423978, dtype)
-      return random.truncated_normal(key, -2, 2, shape, dtype) * stddev
+      return lax.yield_value(random.truncated_normal(key, -2, 2, shape, dtype) * stddev)
     elif distribution == "normal":
-      return random.normal(key, shape, dtype) * np.sqrt(variance)
+      return lax.yield_value(random.normal(key, shape, dtype) * np.sqrt(variance))
     elif distribution == "uniform":
-      return random.uniform(key, shape, dtype, -1) * onp.sqrt(3 * variance)
+      return lax.yield_value(random.uniform(key, shape, dtype, -1) * onp.sqrt(3 * variance))
     else:
       raise ValueError("invalid distribution for variance scaling initializer")
   return init
@@ -94,5 +97,5 @@ def orthogonal(scale=1.0, column_axis=-1):
     if n_rows < n_cols: Q = Q.T
     Q = np.reshape(Q, tuple(onp.delete(shape, column_axis)) + (shape[column_axis],))
     Q = np.moveaxis(Q, -1, column_axis)
-    return scale * Q
+    return lax.yield_value(scale * Q)
   return init

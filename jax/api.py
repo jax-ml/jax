@@ -46,6 +46,7 @@ from . import ad_util
 from .core import eval_jaxpr
 from .api_util import (wraps, flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
                        flatten_fun_nokwargs2, apply_flat_fun_nokwargs)
+from .dict_util import as_dict, iterpaths
 from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, tree_leaves, tree_multimap,
                         _replace_nones)
@@ -62,6 +63,7 @@ from .interpreters import ad
 from .interpreters import batching
 from .interpreters import parallel
 from .interpreters import masking
+from .interpreters import tagging
 from .interpreters.masking import shapecheck
 from .config import flags, config
 
@@ -936,9 +938,9 @@ def _reshape_merge(x):
     return x.reshape((-1,) + x.shape[2:])
 
 
-def _papply(fun):
+def _papply(fun, axis_name=None):
   # This function is for testing purposes.
-  axis_name = _TempAxisName(fun)
+  if axis_name is None: axis_name = _TempAxisName(fun)
 
   def papply_fun(*args, **kwargs):
     f = lu.wrap_init(fun)
@@ -1944,3 +1946,108 @@ def eval_shape(fun, *args, **kwargs):
   out = pe.abstract_eval_fun(fun.call_wrapped, *map(abstractify, args_flat))
   out = [ShapeDtypeStruct(x.shape, x.dtype) for x in out]
   return tree_unflatten(out_tree(), out)
+
+
+def collect(f, path_filter=lambda path: True, scope_argnum=0):
+  """Collect tagged intermediate values produced during function execution.
+
+  These values might be, for example, metrics collected for debugging or evaluation,
+  ancestral samples computed in a probabilistic program, or weights initialized in a
+  neural network.
+
+  Args:
+    f: a Python callable whose arguments and return values are arrays, scalars,
+      or pytrees.
+    path_filter: a function from path tuples to booleans used to select a subset of
+      intermediate values to collect.
+    scope_argnum: which positional argument of `f` to propagate tag paths from.
+      For instance, this can be the PRNG key if using key splits/`fold_in`s to
+      address intermediate samples, or a value representing a scope or namespace.
+
+  For example:
+
+  >>> def foo(x):
+  ...   y = lax.tag(x ** 2, "y")
+  ...   z = y + 1
+  ...   return z
+  >>> collect(foo)(2.)
+  (5., {"y": 4.})
+
+  >>> def bar(key, x):
+  ...   y = lax.tag(random.normal(random.fold_in(key, "y")))
+  ...   return x + y
+  >>> def baz(key, x):
+  ...   a = bar(random.fold_in(key, 1), x)
+  ...   b = bar(random.fold_in(key, 2), x)
+  ...   return a + b
+  >>> collect(baz)(random.PRNGKey(0), 2.)
+  (4.2031232, {1: {"y": 0.723153976}, 2: {"y": 0.34818583}})
+  """
+  fun = lu.wrap_init(f)
+  def collect_fn(*args, **kwargs):
+    flat_args, in_tree = tree_flatten((args, kwargs))
+    flat_fun, out_tree = flatten_fun(fun, in_tree)
+    paths = (None,) * scope_argnum + ((),) + (None,) * (len(flat_args) - scope_argnum - 1)
+    out_flat, _, tree = tagging.tag_fun(flat_fun, flat_args, paths, None, dict())
+    tree = as_dict((path, val) for path, val in iterpaths(tree) if path_filter(path))
+    return tree_unflatten(out_tree(), out_flat), tree
+  return collect_fn
+
+def inject(f, tree, accum_fn=lambda old, new: new, scope_argnum=0):
+  """Inject new values in place of tagged intermediates during function execution.
+
+  These replacement values might be e.g. updated weights for a neural network or
+  perturbations for differentiating with respect to intermediates.
+
+  Args:
+    f: a Python callable whose arguments and return values are arrays, scalars,
+      or pytrees.
+    tree: a nested dictionary containing values to inject, indexed by the tag
+      paths of the intermediates they should replace.
+    accum_fn: function to combine the intermediate value found in the function
+      with the value provided in `tree`. The default is to replace the original
+      intermediate with the injected value, but e.g. `lambda old, new: old + new`
+      would instead replace it with their sum.
+    scope_argnum: which positional argument of `f` to propagate tag paths from.
+      For instance, this can be the PRNG key if using key splits/`fold_in`s to
+      address intermediate samples, or a value representing a scope or namespace.
+
+  For example:
+
+  >>> def foo(x):
+  ...   y = lax.tag(x ** 2, "y")
+  ...   z = y + 1
+  ...   return z
+  >>> inject(foo, {"y": 1.})(2.)
+  2.
+
+  >>> def bar(key, x):
+  ...   y = lax.tag(random.normal(random.fold_in(key, "y")))
+  ...   return x + y
+  >>> def baz(key, x):
+  ...   a = bar(random.fold_in(key, 1), x)
+  ...   b = bar(random.fold_in(key, 2), x)
+  ...   return a + b
+  >>> inject(baz, {1: {"y": 0.3}, 2: {"y": 0.5}})(random.PRNGKey(0), 2.)
+  4.8
+  """
+  fun = lu.wrap_init(f)
+  def inject_fn(*args, **kwargs):
+    flat_args, in_tree = tree_flatten((args, kwargs))
+    flat_fun, out_tree = flatten_fun(fun, in_tree)
+    paths = (None,) * scope_argnum + ((),) + (None,) * (len(flat_args) - scope_argnum - 1)
+    out_vals, _, _, = tagging.tag_fun(flat_fun, flat_args, paths, accum_fn, tree)
+    return tree_unflatten(out_tree(), out_vals)
+  return inject_fn
+
+def grad_intermediates(f, path_filter=lambda path: True, scope_argnum=0):
+  def grad_fun(*args, **kwargs):
+    _, orig_tree = collect(f, path_filter, scope_argnum)(*args, **kwargs)
+    def fun_for_grad(perturbation_tree):
+      inject_fun = inject(f, perturbation_tree, lambda old, new: old + new, scope_argnum)
+      return inject_fun(*args, **kwargs)
+    # cannot use np.zeros_like in api.py
+    zeros_tree = tree_map(lambda x: 0 * x, orig_tree)
+    return grad(fun_for_grad)(zeros_tree)
+  return grad_fun
+  

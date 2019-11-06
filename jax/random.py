@@ -34,10 +34,8 @@ from . import tree_util
 from .api import custom_transforms, defjvp, jit, vmap
 from .numpy.lax_numpy import _constant_like, asarray, stack
 from jax.lib import xla_bridge
-from jax import core
 from jax.scipy.special import logit
 from jax.scipy.linalg import cholesky
-
 
 def PRNGKey(seed):
   """Create a pseudo-random number generator (PRNG) key given an integer seed.
@@ -204,13 +202,14 @@ def fold_in(key, data):
 
   Args:
     key: a PRNGKey (an array with shape (2,) and dtype uint32).
-    data: a 32bit integer representing data to be folded in to the key.
+    data: data to be folded into the key; will be hashed first if not an int.
 
   Returns:
     A new PRNGKey that is a deterministic function of the inputs and is
     statistically safe for producing a stream of new pseudo-random values.
   """
-  return _fold_in(key, data)
+  int_data = data if isinstance(data, int) else hash(data)
+  return lax.push_tag(_fold_in(key, int_data), data)
 
 @jit
 def _fold_in(key, data):

@@ -46,6 +46,7 @@ from ..interpreters import pxla
 from ..interpreters import ad
 from ..interpreters import batching
 from ..interpreters import masking
+from ..interpreters import tagging
 from ..interpreters.masking import ShapeExpr, ShapeError
 from ..util import curry, cache, safe_zip, unzip2, prod
 from ..tree_util import build_tree, tree_unflatten, tree_map
@@ -1026,7 +1027,24 @@ def sort_key_val(keys, values, dimension=-1):
 
 
 def tie_in(x, y):
+  """Returns `y`, with data dependence on `x`."""
   return tie_in_p.bind(x, y)
+
+def push_tag(x, name):
+  """Returns `x`, with `name` added to its stack of tags."""
+  return push_tag_p.bind(x, name=name)
+
+def yield_value(x):
+  """Returns `x`, but marks it as a tagged intermediate."""
+  return yield_p.bind(x)
+
+def tag(x, name=None, scope=None):
+  """Marks `x` as a tagged intermediate whose path is `scope`'s tag stack plus `name`."""
+  if scope is None:
+    scope = x
+  if name is not None:
+    scope = push_tag(scope, name)
+  return yield_value(tie_in(scope, x))
 
 def shaped_identity(x):
   return shaped_identity_p.bind(x, shape=x.shape)
@@ -3971,6 +3989,11 @@ def _tie_in_batch_rule(batched_args, batch_dims):
   _, bdim_y = batch_dims
   return y, bdim_y
 
+def _tie_in_tagging_rule(args, paths, **params):
+  out = tie_in_p.bind(*args, **params)
+  out_path = paths[0]
+  return out, out_path, False
+
 tie_in_p = Primitive('tie_in')
 tie_in_p.def_impl(lambda x, y: y)
 tie_in_p.def_abstract_eval(lambda x, y: y)
@@ -3979,6 +4002,33 @@ ad.deflinear(tie_in_p, _tie_in_transpose_rule)
 batching.primitive_batchers[tie_in_p] = _tie_in_batch_rule
 masking.shape_rules[tie_in_p] = lambda shape_exprs: shape_exprs[1]
 masking.masking_rules[tie_in_p] = lambda vals, logical_shapes: vals[1]
+tagging.custom_tagging_rules[tie_in_p] = _tie_in_tagging_rule
+
+
+def _push_tag_tagging_rule(args, paths, **params):
+  out = push_tag_p.bind(*args, **params)
+  out_path = out_path + (params["name"],)
+  return out, out_path, False
+
+push_tag_p = Primitive('push_tag')
+push_tag_p.def_impl(lambda x, name: x)
+push_tag_p.def_abstract_eval(lambda x, name: x)
+xla.translations[push_tag_p] = lambda c, x, name: x
+ad.deflinear(push_tag_p, lambda t, name: [push_tag(t, name)])
+batching.primitive_batchers[push_tag_p] = \
+    lambda a, d, name: (push_tag(a[0]), d[0])
+tagging.custom_tagging_rules[push_tag_p] = _push_tag_tagging_rule
+
+
+yield_p = Primitive('yield')
+yield_p.def_impl(lambda x: x)
+yield_p.def_abstract_eval(lambda x: x)
+xla.translations[yield_p] = lambda c, x: x
+ad.deflinear(yield_p, lambda t: [yield_value(t)])
+batching.primitive_batchers[yield_p] = \
+    lambda a, d: (yield_value(a[0]), d[0])
+tagging.yield_primitives.add(yield_p)
+
 
 shaped_identity_p = Primitive('shape_id')
 shaped_identity_p.def_impl(lambda x, shape: x)
