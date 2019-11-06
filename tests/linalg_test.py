@@ -245,6 +245,9 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for rng in [jtu.rand_default()]))
   def testEigvalsh(self, shape, dtype, rng):
     _skip_if_unsupported_type(dtype)
+    if jtu.device_under_test() == "tpu":
+      if np.issubdtype(dtype, np.complexfloating):
+        raise unittest.SkipTest("No complex eigh on TPU")
     n = shape[-1]
     def args_maker():
       a = rng((n, n), dtype)
