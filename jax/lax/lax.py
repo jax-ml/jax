@@ -3989,9 +3989,12 @@ def _tie_in_batch_rule(batched_args, batch_dims):
   _, bdim_y = batch_dims
   return y, bdim_y
 
-def _tie_in_tagging_rule(args, paths, **params):
-  out = tie_in_p.bind(*args, **params)
-  out_path = paths[0]
+def _tie_in_tagging_rule(args, paths):
+  if paths[0] is not None:
+    out_path = paths[0]
+  else:
+    out_path = paths[1]
+  out = tie_in_p.bind(*args)
   return out, out_path, False
 
 tie_in_p = Primitive('tie_in')
