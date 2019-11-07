@@ -547,7 +547,7 @@ def exp2(x):
 
 @_wraps(onp.signbit)
 def signbit(x):
-  x, = _promote_shapes("signbits", asarray(x))
+  x, = _promote_shapes("signbit", x)
 
   dtype = _dtype(x)
 
