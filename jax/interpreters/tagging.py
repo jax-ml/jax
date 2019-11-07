@@ -91,7 +91,7 @@ class TagTrace(core.Trace):
   def process_primitive(self, primitive, tracers, params):
     args, paths = unzip2((t.val, t.path) for t in tracers)
     tagging_rule = get_primitive_tagger(primitive)
-    out, out_path, is_sample = tagging_rule(args, paths)
+    out, out_path, is_sample = tagging_rule(args, paths, **params)
     if is_sample:
       assert not primitive.multiple_results
       out = self.maybe_set(out_path, out)

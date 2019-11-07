@@ -4010,7 +4010,7 @@ tagging.custom_tagging_rules[tie_in_p] = _tie_in_tagging_rule
 
 def _push_tag_tagging_rule(args, paths, **params):
   out = push_tag_p.bind(*args, **params)
-  out_path = out_path + (params["name"],)
+  out_path = paths[0] + (params["name"],)
   return out, out_path, False
 
 push_tag_p = Primitive('push_tag')
