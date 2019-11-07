@@ -35,18 +35,21 @@ def swish(x): return x * sigmoid(x)
 def log_sigmoid(x): return -softplus(-x)
 
 def elu(x, alpha=1.0):
-  safe_x = np.where(x > 0, 0., x)
-  return np.where(x > 0, x, alpha * np.expm1(safe_x))
+  safe_x = lax.select(x > 0, np.zeros(onp.shape(x)), x)
+  return lax.select(x > 0, x, alpha * np.expm1(safe_x))
 
 def leaky_relu(x, negative_slope=1e-2):
-  return np.where(x >= 0, x, negative_slope * x)
+  return lax.select(x >= 0, x, negative_slope * x)
 
 def hard_tanh(x):
-  return np.where(x > 1, 1, np.where(x < -1, -1, x))
+  shape = onp.shape(x)
+  ones = np.full(shape, 1.)
+  minus_ones = np.full(shape, -1.)
+  return lax.select(x > 1, ones, lax.select(x < -1, minus_ones, x))
 
 def celu(x, alpha=1.0):
   """Continuously-differentiable exponential linear unit activation"""
-  return np.where(x > 0, x, alpha * np.expm1(x / alpha))
+  return lax.select(x > 0, x, alpha * np.expm1(x / alpha))
 
 def selu(x):
   """Scaled exponential linear unit activation"""

@@ -30,6 +30,7 @@ from jax.test_util import check_grads
 from jax import nn
 from jax import random
 import jax
+import jax.numpy as np
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -49,6 +50,12 @@ class NNFunctionsTest(jtu.JaxTestCase):
   def testEluValue(self):
     val = nn.elu(1e4)
     self.assertAllClose(val, 1e4, check_dtypes=False)
+
+  def testEluMemory(self):
+      jax.make_jaxpr(nn.elu)(np.ones((10 ** 12,)))
+
+  def testHardTanhMemory(self):
+      jax.make_jaxpr(nn.hard_tanh)(np.ones((10 ** 12,)))
 
 InitializerRecord = collections.namedtuple(
   "InitializerRecord",
