@@ -736,6 +736,15 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertEqual(len(jaxpr.eqns), 1)
     self.assertNotIn('gather', str(jaxpr))
 
+  def testBooleanIndexingWithEmptyResult(self):
+    # based on a TensorFlow Probability test that started failing after #1622
+    x = lnp.array([-1])
+    mask = lnp.array([False])
+    ans = x[mask]  # doesn't crash
+
+    expected =  onp.array([-1])[onp.array([False])]
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
 
 def _broadcastable_shapes(shape):
   """Returns all shapes that broadcast to `shape`."""
