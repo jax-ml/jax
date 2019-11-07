@@ -204,7 +204,8 @@ def cache(call):
   seen_hashes = set()
   persistent_functions = set()
   def maybe_seen_before(f):
-    return len(seen_hashes) == (seen_hashes.add(hash(f)) or len(seen_hashes))
+    key = hash((f, getattr(f, '__name__', None), getattr(f, '__module__', None)))
+    return len(seen_hashes) == (seen_hashes.add(key) or len(seen_hashes))
 
   def memoized_fun(fun, *args):
     cache = fun_caches.setdefault(fun.f, {})
