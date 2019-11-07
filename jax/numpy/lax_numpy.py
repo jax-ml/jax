@@ -547,10 +547,17 @@ def exp2(x):
 
 @_wraps(onp.signbit)
 def signbit(x):
-  x, = _promote_shapes("signbits", x)
+  x, = _promote_shapes("signbits", asarray(x))
 
-  if issubdtype(_dtype(x), onp.integer):
-    x = lax.convert_element_type(x, onp.float64)
+  dtype = _dtype(x)
+
+  if issubdtype(dtype, integer):
+    return lax.lt(x, _constant_like(x, 0))
+  elif issubdtype(dtype, bool_):
+    return full_like(x, False, dtype=bool_)
+  elif not issubdtype(dtype, floating):
+    raise ValueError(
+        "jax.numpy.signbit is not well defined for %s" % dtype)
 
   info = finfo(_dtype(x))
 
@@ -561,7 +568,8 @@ def signbit(x):
   elif info.bits == 64:
     int_type = onp.int64
   else:
-    raise ValueError("Only support 16, 32 and 64 bits now.")
+    raise NotImplementedError(
+        "jax.numpy.signbit only supports 16, 32, and 64-bit types.")
 
   x = lax.bitcast_convert_type(x, int_type)
   return lax.convert_element_type(x >> (info.nexp + info.nmant), onp.bool)
