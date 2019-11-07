@@ -1224,6 +1224,32 @@ class APITest(jtu.JaxTestCase):
     python_should_be_executing = False
     api.pmap(f, 'i')(x)
 
+  def test_equal_functions_compile_only_twice(self):
+    class partial(object):
+      def __init__(self, f, *args):
+        self.stuff = (f, args)
+      def __hash__(self):
+        return hash(self.stuff)
+      def __eq__(self, other):
+        return type(other) is partial and self.stuff == other.stuff
+      def __call__(self, *rest):
+        f, args = self.stuff
+        return f(*(args + rest))
+
+    execution_count = [0]
+    def f(x, y):
+      execution_count[0] += 1
+      return x + y
+
+    self.assertEqual(partial(f, 2), partial(f, 2))
+
+    api.jit(partial(f, 2))(3)
+    api.jit(partial(f, 2))(4)
+    api.jit(partial(f, 2))(5)
+    api.jit(partial(f, 2))(6)
+
+    self.assertLessEqual(execution_count[0], 2)
+
 
 if __name__ == '__main__':
   absltest.main()

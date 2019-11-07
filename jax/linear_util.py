@@ -198,8 +198,18 @@ def wrap_init(f, params={}):
 
 def cache(call):
   fun_caches = weakref.WeakKeyDictionary()
+
+  # This cache implements the James Bondbury (You Only Compile Twice) heuristic,
+  # which may change. See https://github.com/google/jax/issues/NNNN.
+  seen_hashes = set()
+  persistent_functions = set()
+  def maybe_seen_before(f):
+    return len(seen_hashes) == (seen_hashes.add(hash(f)) or len(seen_hashes))
+
   def memoized_fun(fun, *args):
     cache = fun_caches.setdefault(fun.f, {})
+    if not cache and maybe_seen_before(fun.f):
+      persistent_functions.add(fun.f)
     key = (fun.transforms, fun.params, args)
     result = cache.get(key, None)
     if result is not None:
