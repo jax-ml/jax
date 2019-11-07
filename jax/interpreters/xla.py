@@ -465,7 +465,7 @@ def _execute_replicated(compiled, backend, handlers, tuple_args, *args):
       [device_put(x, device, backend=backend) for x in args if x is not token]
       for device in compiled.local_devices()]
   if tuple_args:
-    input_bufs = [[make_tuple(bufs, device)] for bufs, device in
+    input_bufs = [[make_tuple(bufs, device, backend)] for bufs, device in
                   zip(input_bufs, compiled.local_devices())]
   out_bufs = compiled.ExecutePerReplica(input_bufs)[0].destructure()
   if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_bufs)
