@@ -64,7 +64,7 @@ class MaskingTest(jtu.JaxTestCase):
     def thunk():
       @shapecheck(['(m, n)', 'n'], 'm')
       def matvec(A, b):
-        return np.dot(b, A)
+        return lax.dot_general(A, b, [((0,), (0,)), ((), ())])
     self.assertRaisesRegex(ShapeError, "", thunk)
 
   def test_flatten_shape_checking(self):

@@ -35,34 +35,17 @@ import jax.lax
 import jax.numpy as np
 import jax.ops
 from jax.test_util import check_vjp
-import matplotlib.pyplot as plt
 import numpy as onp
 import scipy.integrate as osp_integrate
-
-
-# Dopri5 Butcher tableaux
-alpha = np.array([1 / 5, 3 / 10, 4 / 5, 8 / 9, 1., 1., 0])
-beta = np.array(
-    [[1 / 5, 0, 0, 0, 0, 0, 0],
-     [3 / 40, 9 / 40, 0, 0, 0, 0, 0],
-     [44 / 45, -56 / 15, 32 / 9, 0, 0, 0, 0],
-     [19372 / 6561, -25360 / 2187, 64448 / 6561, -212 / 729, 0, 0, 0],
-     [9017 / 3168, -355 / 33, 46732 / 5247, 49 / 176, -5103 / 18656, 0, 0],
-     [35 / 384, 0, 500 / 1113, 125 / 192, -2187 / 6784, 11 / 84, 0]])
-c_sol = np.array([35 / 384, 0, 500 / 1113, 125 / 192, -2187 / 6784, 11 / 84,
-                  0])
-c_error = np.array([35 / 384 - 1951 / 21600, 0, 500 / 1113 - 22642 / 50085,
-                    125 / 192 - 451 / 720, -2187 / 6784 - -12231 / 42400,
-                    11 / 84 - 649 / 6300, -1. / 60.])
-dps_c_mid = np.array([
-    6025192743 / 30085553152 / 2, 0, 51252292925 / 65400821598 / 2,
-    -2691868925 / 45128329728 / 2, 187940372067 / 1594534317056 / 2,
-    -1776094331 / 19743644256 / 2, 11237099 / 235043384 / 2])
 
 
 @jax.jit
 def interp_fit_dopri(y0, y1, k, dt):
   # Fit a polynomial to the results of a Runge-Kutta step.
+  dps_c_mid = np.array([
+      6025192743 / 30085553152 / 2, 0, 51252292925 / 65400821598 / 2,
+      -2691868925 / 45128329728 / 2, 187940372067 / 1594534317056 / 2,
+      -1776094331 / 19743644256 / 2, 11237099 / 235043384 / 2])
   y_mid = y0 + dt * np.dot(dps_c_mid, k)
   return np.array(fit_4th_order_polynomial(y0, y1, y_mid, k[0], k[-1], dt))
 
@@ -122,9 +105,9 @@ def initial_step_size(fun, t0, y0, order, rtol, atol, f0):
 
   y1 = y0 + h0 * f0
   f1 = fun(y1, t0 + h0)
-  d2 = (np.linalg.norm(f1 - f0) / scale) / h0
+  d2 = np.linalg.norm((f1 - f0) / scale) / h0
 
-  h1 = np.where(np.all(np.asarray([d1 <= 1e-15, d2 < 1e-15])),
+  h1 = np.where(np.all(np.asarray([d1 <= 1e-15, d2 <= 1e-15])),
                 np.maximum(1e-6, h0 * 1e-3),
                 (0.01 / np.max(d1 + d2))**order_pow)
 
@@ -151,6 +134,21 @@ def runge_kutta_step(func, y0, f0, t0, dt):
       y1_error: estimated error at t1
       k: list of Runge-Kutta coefficients `k` used for calculating these terms.
   """
+  # Dopri5 Butcher tableaux
+  alpha = np.array([1 / 5, 3 / 10, 4 / 5, 8 / 9, 1., 1., 0])
+  beta = np.array(
+      [[1 / 5, 0, 0, 0, 0, 0, 0],
+       [3 / 40, 9 / 40, 0, 0, 0, 0, 0],
+       [44 / 45, -56 / 15, 32 / 9, 0, 0, 0, 0],
+       [19372 / 6561, -25360 / 2187, 64448 / 6561, -212 / 729, 0, 0, 0],
+       [9017 / 3168, -355 / 33, 46732 / 5247, 49 / 176, -5103 / 18656, 0, 0],
+       [35 / 384, 0, 500 / 1113, 125 / 192, -2187 / 6784, 11 / 84, 0]])
+  c_sol = np.array([35 / 384, 0, 500 / 1113, 125 / 192, -2187 / 6784, 11 / 84,
+                    0])
+  c_error = np.array([35 / 384 - 1951 / 21600, 0, 500 / 1113 - 22642 / 50085,
+                      125 / 192 - 451 / 720, -2187 / 6784 - -12231 / 42400,
+                      11 / 84 - 649 / 6300, -1. / 60.])
+
   def _fori_body_fun(i, val):
     ti = t0 + dt * alpha[i-1]
     yi = y0 + dt * np.dot(beta[i-1, :], val)
@@ -211,21 +209,23 @@ def odeint(ofunc, y0, t, *args, **kwargs):
     **kwargs: Two relevant keyword arguments:
       'rtol': Relative local error tolerance for solver.
       'atol': Absolute local error tolerance for solver.
+      'mxstep': Maximum number of steps to take for each timepoint.
 
   Returns:
     Integrated system values at each timepoint.
   """
   rtol = kwargs.get('rtol', 1.4e-8)
   atol = kwargs.get('atol', 1.4e-8)
+  mxstep = kwargs.get('mxstep', np.inf)
 
   @functools.partial(jax.jit, static_argnums=(0,))
   def _fori_body_fun(func, i, val):
     """Internal fori_loop body to interpolate an integral at each timestep."""
     t, cur_y, cur_f, cur_t, dt, last_t, interp_coeff, solution = val
-    cur_y, cur_f, cur_t, dt, last_t, interp_coeff = jax.lax.while_loop(
-        lambda x: x[2] < t[i],
+    cur_y, cur_f, cur_t, dt, last_t, interp_coeff, _ = jax.lax.while_loop(
+        lambda x: (x[2] < t[i]) & (x[-1] < mxstep),
         functools.partial(_while_body_fun, func),
-        (cur_y, cur_f, cur_t, dt, last_t, interp_coeff))
+        (cur_y, cur_f, cur_t, dt, last_t, interp_coeff, 0.))
 
     relative_output_time = (t[i] - last_t) / (cur_t - last_t)
     out_x = np.polyval(interp_coeff, relative_output_time)
@@ -238,7 +238,7 @@ def odeint(ofunc, y0, t, *args, **kwargs):
   @functools.partial(jax.jit, static_argnums=(0,))
   def _while_body_fun(func, x):
     """Internal while_loop body to determine interpolation coefficients."""
-    cur_y, cur_f, cur_t, dt, last_t, interp_coeff = x
+    cur_y, cur_f, cur_t, dt, last_t, interp_coeff, j = x
     next_t = cur_t + dt
     next_y, next_f, next_y_error, k = runge_kutta_step(
         func, cur_y, cur_f, cur_t, dt)
@@ -246,10 +246,11 @@ def odeint(ofunc, y0, t, *args, **kwargs):
     new_interp_coeff = interp_fit_dopri(cur_y, next_y, k, dt)
     dt = optimal_step_size(dt, error_ratios)
 
+    next_j = j + 1
     new_rav, unravel = ravel_pytree(
-        (next_y, next_f, next_t, dt, cur_t, new_interp_coeff))
+        (next_y, next_f, next_t, dt, cur_t, new_interp_coeff, next_j))
     old_rav, _ = ravel_pytree(
-        (cur_y, cur_f, cur_t, dt, last_t, interp_coeff))
+        (cur_y, cur_f, cur_t, dt, last_t, interp_coeff, next_j))
 
     return unravel(np.where(np.all(error_ratios <= 1.),
                             new_rav,
@@ -282,6 +283,7 @@ def vjp_odeint(ofunc, y0, t, *args, **kwargs):
     **kwargs: Two relevant keyword arguments:
       'rtol': Relative local error tolerance for solver.
       'atol': Absolute local error tolerance for solver.
+      'mxstep': Maximum number of steps to take for each timepoint.
 
   Returns:
     VJP function `vjp = vjp_all(g)` where `yt = ofunc(y, t, *args)`
@@ -291,6 +293,7 @@ def vjp_odeint(ofunc, y0, t, *args, **kwargs):
   """
   rtol = kwargs.get('rtol', 1.4e-8)
   atol = kwargs.get('atol', 1.4e-8)
+  mxstep = kwargs.get('mxstep', np.inf)
 
   flat_args, unravel_args = ravel_pytree(args)
   flat_func = lambda y, t, flat_args: ofunc(y, t, *unravel_args(flat_args))
@@ -327,7 +330,8 @@ def vjp_odeint(ofunc, y0, t, *args, **kwargs):
                      this_tarray,
                      flat_args,
                      rtol=rtol,
-                     atol=atol)
+                     atol=atol,
+                     mxstep=mxstep)
     vjp_y = aug_ans[1][state_len:2*state_len] + this_gim1
     vjp_t0 = aug_ans[1][2*state_len]
     vjp_args = aug_ans[1][2*state_len+1:]
@@ -364,13 +368,13 @@ def vjp_odeint(ofunc, y0, t, *args, **kwargs):
 
     return tuple([result[-4], vjp_times] + list(result[-2]))
 
-  primals_out = odeint(flat_func, y0, t, flat_args)
+  primals_out = odeint(flat_func, y0, t, flat_args, rtol=rtol, atol=atol, mxstep=mxstep)
   vjp_fun = lambda g: vjp_all(g, primals_out, t)
 
   return primals_out, vjp_fun
 
 
-def build_odeint(ofunc, rtol=1.4e-8, atol=1.4e-8):
+def build_odeint(ofunc, rtol=1.4e-8, atol=1.4e-8, mxstep=onp.inf):
   """Return `f(y0, t, args) = odeint(ofunc(y, t, *args), y0, t, args)`.
 
   Given the function ofunc(y, t, *args), return the jitted function
@@ -385,14 +389,15 @@ def build_odeint(ofunc, rtol=1.4e-8, atol=1.4e-8):
     ofunc: The function to be wrapped into an ODE integration.
     rtol: relative local error tolerance for solver.
     atol: absolute local error tolerance for solver.
+    mxstep: Maximum number of steps to take for each timepoint.
 
   Returns:
     `f(y0, t, args) = odeint(ofunc(y, t, *args), y0, t, args)`
   """
   ct_odeint = jax.custom_transforms(
-      lambda y0, t, *args: odeint(ofunc, y0, t, *args, rtol=rtol, atol=atol))
+      lambda y0, t, *args: odeint(ofunc, y0, t, *args, rtol=rtol, atol=atol, mxstep=mxstep))
 
-  v = lambda y0, t, *args: vjp_odeint(ofunc, y0, t, *args, rtol=rtol, atol=atol)
+  v = lambda y0, t, *args: vjp_odeint(ofunc, y0, t, *args, rtol=rtol, atol=atol, mxstep=mxstep)
   jax.defvjp_all(ct_odeint, v)
 
   return jax.jit(ct_odeint)
@@ -467,30 +472,6 @@ def plot_gradient_field(ax, func, xlimits, ylimits, numticks=30):
   ax.quiver(x_mesh, y_mesh, np.ones(z_mesh.shape), z_mesh)
   ax.set_xlim(xlimits)
   ax.set_ylim(ylimits)
-
-
-def plot_demo():
-  """Demo plot of simple ode integration and gradient field."""
-  def f(y, t, arg1, arg2):
-    return y - np.sin(t) - np.cos(t) * arg1 + arg2
-
-  t0 = 0.
-  t1 = 5.0
-  ts = np.linspace(t0, t1, 100)
-  y0 = np.array([1.])
-  fargs = (1.0, 0.0)
-
-  ys = odeint(f, y0, ts, *fargs, atol=0.001, rtol=0.001)
-
-  # Set up figure.
-  fig = plt.figure(figsize=(8, 6), facecolor='white')
-  ax = fig.add_subplot(111, frameon=False)
-  f_no_args = lambda y, t: f(y, t, *fargs)
-  plot_gradient_field(ax, f_no_args, xlimits=[t0, t1], ylimits=[-1.1, 1.1])
-  ax.plot(ts, ys, 'g-')
-  ax.set_xlabel('t')
-  ax.set_ylabel('y')
-  plt.show()
 
 
 @jax.jit

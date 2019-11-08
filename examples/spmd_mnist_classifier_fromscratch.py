@@ -57,7 +57,7 @@ def predict(params, inputs):
 def loss(params, batch):
   inputs, targets = batch
   preds = predict(params, inputs)
-  return -np.mean(preds * targets)
+  return -np.mean(np.sum(preds * targets, axis=1))
 
 @jit
 def accuracy(params, batch):

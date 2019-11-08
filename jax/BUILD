@@ -61,13 +61,19 @@ py_library(
 )
 
 py_library(
-    name = "lapax",
-    srcs = ["experimental/lapax.py"],
+    name = "optix",
+    srcs = ["experimental/optix.py"],
     deps = [":jax"],
 )
 
 py_library(
     name = "ode",
     srcs = ["experimental/ode.py"],
+    deps = [":jax"],
+)
+
+py_library(
+    name = "vectorize",
+    srcs = ["experimental/vectorize.py"],
     deps = [":jax"],
 )

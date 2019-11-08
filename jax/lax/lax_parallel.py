@@ -193,13 +193,22 @@ def _allreduce_translation_rule(prim, c, val, replica_groups, backend=None):
   computation = xla.primitive_computation(prim, scalar, scalar, backend=backend)
   return c.AllReduce(val, computation, replica_groups=replica_groups)
 
+# psum translation rule has special handling for complex dtypes
+def _psum_translation_rule(c, val, replica_groups, backend=None):
+  psum = partial(_allreduce_translation_rule, lax.add_p, c,
+                 replica_groups=replica_groups, backend=backend)
+  dtype = c.GetShape(val).numpy_dtype()
+  if onp.issubdtype(dtype, onp.complexfloating):
+    return c.Complex(psum(c.Real(val)), psum(c.Imag(val)))
+  else:
+    return psum(val)
+
 psum_p = standard_pmap_primitive('psum')
 pxla.split_axis_rules[psum_p] = \
     partial(_allreduce_split_axis_rule, psum_p, lax._reduce_sum)
-xla.parallel_translations[psum_p] = \
-    partial(_allreduce_translation_rule, lax.add_p)
+xla.parallel_translations[psum_p] = _psum_translation_rule
 pxla.parallel_pure_rules[psum_p] = lambda x, shape: x * prod(shape)
-ad.deflinear(psum_p, lambda t, axis_name: [t])
+ad.deflinear(psum_p, lambda t, axis_name: [psum(t, axis_name)])
 
 
 pmax_p = standard_pmap_primitive('pmax')
@@ -410,11 +419,6 @@ _defreducer(lax.reduce_sum_p, psum_p)
 _defreducer(lax.reduce_max_p, pmax_p)
 _defreducer(lax.reduce_min_p, pmin_p)
 
-
-def _dot_papply_rule(name, size, vals, dims, precision):
-  x, _ = vals
-  dim_nums = [((x.ndim,), (0,)), ((), ())]
-  return _dot_general_papply_rule(name, size, vals, dims, dim_nums, precision)
 
 def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers,
                              precision):
@@ -700,7 +704,6 @@ def _gather_papply_rule(
     raise NotImplementedError
 
 
-parallel.papply_primitive_rules[lax.dot_p] = _dot_papply_rule
 parallel.papply_primitive_rules[lax.dot_general_p] = _dot_general_papply_rule
 parallel.papply_primitive_rules[lax.reshape_p] = _reshape_papply_rule
 parallel.papply_primitive_rules[lax.transpose_p] = _transpose_papply_rule

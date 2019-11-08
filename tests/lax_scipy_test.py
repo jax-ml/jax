@@ -84,7 +84,10 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_axis={}_keepdims={}".format(
           jtu.format_shape_dtype_string(shape, dtype), axis, keepdims),
-       "rng": jtu.rand_default(), "shape": shape, "dtype": dtype,
+       # TODO(b/133842870): re-enable when exp(nan) returns NaN on CPU.
+       "rng": jtu.rand_some_inf_and_nan() if jtu.device_under_test() != "cpu"
+              else jtu.rand_default(),
+       "shape": shape, "dtype": dtype,
        "axis": axis, "keepdims": keepdims}
       for shape in all_shapes for dtype in float_dtypes
       for axis in range(-len(shape), len(shape))
@@ -102,16 +105,17 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": jtu.format_test_name_suffix(
-          rec.test_name, shapes, dtypes),
-       "rng": rec.rng, "shapes": shapes, "dtypes": dtypes,
-       "test_autodiff": rec.test_autodiff,
-       "scipy_op": getattr(osp_special, rec.name),
-       "lax_op": getattr(lsp_special, rec.name)}
-      for rec in JAX_SPECIAL_FUNCTION_RECORDS
-      for shapes in CombosWithReplacement(all_shapes, rec.nargs)
-      for dtypes in CombosWithReplacement(rec.dtypes, rec.nargs)))
+  @parameterized.named_parameters(itertools.chain.from_iterable(
+    jtu.cases_from_list(
+        {"testcase_name": jtu.format_test_name_suffix(
+            rec.test_name, shapes, dtypes),
+         "rng": rec.rng, "shapes": shapes, "dtypes": dtypes,
+         "test_autodiff": rec.test_autodiff,
+         "scipy_op": getattr(osp_special, rec.name),
+         "lax_op": getattr(lsp_special, rec.name)}
+        for shapes in CombosWithReplacement(all_shapes, rec.nargs)
+        for dtypes in CombosWithReplacement(rec.dtypes, rec.nargs))
+      for rec in JAX_SPECIAL_FUNCTION_RECORDS))
   def testScipySpecialFun(self, scipy_op, lax_op, rng, shapes, dtypes,
                           test_autodiff):
     args_maker = self._GetArgsMaker(rng, shapes, dtypes)

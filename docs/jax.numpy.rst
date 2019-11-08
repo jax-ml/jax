@@ -70,6 +70,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     blackman
     broadcast_arrays
     broadcast_to
+    can_cast
     ceil
     clip
     column_stack
@@ -105,7 +106,6 @@ Not every function in NumPy is implemented; contributions are welcome!
     expm1
     eye
     fabs
-    fftn
     fix
     flip
     fliplr
@@ -137,6 +137,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     isneginf
     isposinf
     isreal
+    isscalar
     issubdtype
     issubsctype
     ix_
@@ -188,6 +189,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     positive
     prod
     product
+    promote_types
     ptp
     quantile
     rad2deg
@@ -198,6 +200,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     remainder
     repeat
     reshape
+    result_type
     right_shift
     roll
     rot90
@@ -241,6 +244,17 @@ Not every function in NumPy is implemented; contributions are welcome!
     where
     zeros
     zeros_like
+
+jax.numpy.fft
+-------------
+
+.. automodule:: jax.numpy.fft
+
+.. autosummary::
+  :toctree: _autosummary
+
+  fftn
+  ifftn
 
 jax.numpy.linalg
 ----------------

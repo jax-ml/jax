@@ -62,16 +62,18 @@ lgamma = scipy.special.gammaln
 digamma = scipy.special.digamma
 erf = scipy.special.erf
 erfc = scipy.special.erfc
-erf_inv = scipy.special.erfi
+erf_inv = scipy.special.erfinv
+bessel_i0e = scipy.special.i0e
+bessel_i1e = scipy.special.i1e
 
 real = onp.real
 imag = onp.imag
 
 def conj(x):
-  return onp.asarray(onp.conj(x), dtype=onp.complex64)
+  return onp.conj(x) + onp.complex64(0)
 
 def complex(x, y):
-  return onp.asarray(x + 1j * y, dtype=onp.complex64)
+  return x + onp.complex64(1j) * y
 
 abs = onp.absolute
 pow = onp.power

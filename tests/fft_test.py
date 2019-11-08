@@ -16,6 +16,8 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import unittest
+
 import numpy as onp
 
 from absl.testing import absltest
@@ -23,6 +25,10 @@ from absl.testing import parameterized
 
 from jax import numpy as np
 from jax import test_util as jtu
+
+from jax.config import config
+config.parse_flags_with_absl()
+
 
 float_dtypes = [onp.float32, onp.float64]
 complex_dtypes = [onp.complex64, onp.complex128]
@@ -45,17 +51,21 @@ def _get_fftn_test_axes(shape):
 class FftTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}_axes={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), axes),
-       "axes": axes, "shape": shape, "dtype": dtype, "rng": rng}
+      {"testcase_name": "_inverse={}_shape={}_axes={}".format(
+          inverse, jtu.format_shape_dtype_string(shape, dtype), axes),
+       "axes": axes, "shape": shape, "dtype": dtype, "rng": rng,
+       "inverse": inverse}
+      for inverse in [False, True]
       for rng in [jtu.rand_default()]
       for dtype in all_dtypes
       for shape in [(10,), (10, 10), (2, 3, 4), (2, 3, 4, 5)]
       for axes in _get_fftn_test_axes(shape)))
-  def testFftn(self, shape, dtype, axes, rng):
+  def testFftn(self, inverse, shape, dtype, axes, rng):
     args_maker = lambda: (rng(shape, dtype),)
-    np_fn = lambda a: np.fft.fftn(a, axes=axes)
-    onp_fn = lambda a: onp.fft.fftn(a, axes=axes)
+    np_op = np.fft.ifftn if inverse else np.fft.fftn
+    onp_op = onp.fft.ifftn if inverse else onp.fft.fftn
+    np_fn = lambda a: np_op(a, axes=axes)
+    onp_fn = lambda a: onp_op(a, axes=axes)
     self._CheckAgainstNumpy(onp_fn, np_fn, args_maker, check_dtypes=True,
                             tol=1e-4)
     self._CompileAndCheck(np_fn, args_maker, check_dtypes=True)
@@ -66,24 +76,30 @@ class FftTest(jtu.JaxTestCase):
       jtu.check_grads(np_fn, args_maker(), order=1, atol=tol, rtol=tol)
       jtu.check_grads(np_fn, args_maker(), order=2, atol=tol, rtol=tol)
 
-  def testFftnErrors(self):
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_inverse={}".format(inverse),
+       "inverse": inverse}
+      for inverse in [False, True]))
+  def testFftnErrors(self, inverse):
     rng = jtu.rand_default()
-    self.assertRaisesRegexp(
+    name = 'ifftn' if inverse else 'fftn'
+    func = np.fft.ifftn if inverse else np.fft.fftn
+    self.assertRaisesRegex(
         ValueError,
-        "jax.np.fftn only supports 1D, 2D, and 3D FFTs over the innermost axes. "
-        "Got axes None with input rank 4.",
-        lambda: np.fft.fftn(rng([2, 3, 4, 5], dtype=onp.float64), axes=None))
-    self.assertRaisesRegexp(
+        "jax.np.fft.{} only supports 1D, 2D, and 3D FFTs over the innermost axes. "
+        "Got axes None with input rank 4.".format(name),
+        lambda: func(rng([2, 3, 4, 5], dtype=onp.float64), axes=None))
+    self.assertRaisesRegex(
         ValueError,
-        "jax.np.fftn only supports 1D, 2D, and 3D FFTs over the innermost axes. "
-        "Got axes \[0\] with input rank 4.",
-        lambda: np.fft.fftn(rng([2, 3, 4, 5], dtype=onp.float64), axes=[0]))
-    self.assertRaisesRegexp(
+        "jax.np.fft.{} only supports 1D, 2D, and 3D FFTs over the innermost axes. "
+        "Got axes \\[0\\] with input rank 4.".format(name),
+        lambda: func(rng([2, 3, 4, 5], dtype=onp.float64), axes=[0]))
+    self.assertRaisesRegex(
         ValueError,
-        "jax.np.fftn does not support repeated axes. Got axes \[1, 1\].",
-        lambda: np.fft.fftn(rng([2, 3], dtype=onp.float64), axes=[1, 1]))
+        "jax.np.fft.{} does not support repeated axes. Got axes \\[1, 1\\].".format(name),
+        lambda: func(rng([2, 3], dtype=onp.float64), axes=[1, 1]))
     self.assertRaises(
-        IndexError, lambda: np.fft.fftn(rng([2, 3], dtype=onp.float64), axes=[2]))
+        IndexError, lambda: func(rng([2, 3], dtype=onp.float64), axes=[2]))
 
 
 if __name__ == "__main__":

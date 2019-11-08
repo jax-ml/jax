@@ -20,6 +20,7 @@ import collections
 from functools import partial
 import unittest
 import warnings
+import weakref
 
 from absl.testing import absltest
 import numpy as onp
@@ -289,6 +290,18 @@ class APITest(jtu.JaxTestCase):
     assert onp.all(y2[1][0] == 2 * x)
     self.assertIsInstance(y2[1][1], onp.ndarray)
     assert onp.all(y2[1][1] == 3 * x)
+
+  def test_device_put_across_devices(self):
+    if xb.device_count() == 1:
+      raise unittest.SkipTest("this test requires multiple devices")
+    d1, d2 = xb.local_devices()[:2]
+    x = api.device_put(onp.array([1,2,3]), device=d1)
+    self.assertEqual(x.device_buffer.device(), d1)
+    y = api.device_put(x, device=d2)
+    self.assertEqual(y.device_buffer.device(), d2)
+    # Make sure these don't crash
+    api.device_put(x)
+    api.device_put(y)
 
   @jtu.skip_on_devices("tpu")
   def test_jacobian(self):
@@ -1080,6 +1093,136 @@ class APITest(jtu.JaxTestCase):
     real_x = onp.random.RandomState(0).randn(n)
     b = np.dot(a + np.eye(a.shape[0]), real_x)
     print(gf(a, b))  # doesn't crash
+
+  def test_vmap_in_axes_tree_prefix_error(self):
+    # https://github.com/google/jax/issues/795
+    jtu.check_raises_regexp(
+        lambda: api.vmap(lambda x: x, in_axes=(0, 0))(np.ones(3)),
+        ValueError,
+        "axes specification must be a tree prefix of the corresponding "
+        r"value, got specification \(0, 0\) for value "
+        r"PyTreeDef\(tuple, \[\*\]\)."
+    )
+
+  def test_vmap_unbatched_object_passthrough_issue_183(self):
+    # https://github.com/google/jax/issues/183
+    fun = lambda f, x: f(x)
+    vfun = api.vmap(fun, (None, 0))
+    ans = vfun(lambda x: x + 1, np.arange(3))
+    self.assertAllClose(ans, onp.arange(1, 4), check_dtypes=False)
+
+  def test_vmap_mismatched_axis_sizes_error_message_issue_705(self):
+    # https://github.com/google/jax/issues/705
+    def h(a, b):
+      return np.sum(a) + np.sum(b)
+
+    X = onp.random.randn(10, 4)
+    U = onp.random.randn(10, 2)
+
+    self.assertRaisesRegex(
+        ValueError,
+        "vmap got inconsistent sizes for array axes to be mapped:\n"
+        r"arg 0 has shape \(10, 4\) and axis 0 is to be mapped" "\n"
+        r"arg 1 has shape \(10, 2\) and axis 1 is to be mapped" "\n"
+        "so\n"
+        "arg 0 has an axis to be mapped of size 10\n"
+        "arg 1 has an axis to be mapped of size 2",
+        lambda: api.vmap(h, in_axes=(0, 1))(X, U))
+
+    self.assertRaisesRegex(
+        ValueError,
+        "vmap got inconsistent sizes for array axes to be mapped:\n"
+        r"arg 0 has shape \(10, 4\) and axis 0 is to be mapped" "\n"
+        r"arg 1 has shape \(10, 2\) and axis 1 is to be mapped" "\n"
+        r"arg 2 has shape \(10, 4\) and axis 0 is to be mapped" "\n"
+        "so\n"
+        "args 0, 2 have axes to be mapped of size 10\n"
+        "arg 1 has an axis to be mapped of size 2",
+        lambda: api.vmap(lambda x, y, z: None, in_axes=(0, 1, 0))(X, U, X))
+
+    self.assertRaisesRegex(
+        ValueError,
+        "vmap got inconsistent sizes for array axes to be mapped:\n"
+        "the tree of axis sizes is:\n"
+        r"\(10, \[2, 2\]\)",
+        lambda: api.vmap(h, in_axes=(0, 1))(X, [U, U]))
+
+  def test_vmap_structured_in_axes(self):
+
+    A, B, C, D = 2, 3, 4, 5
+    K = 6  # batch size
+    x = onp.ones((K, A, B))  # batch axis in different locations
+    y = onp.ones((B, K, C))
+    z = onp.ones((C, D, K))
+
+    def foo(tree_arg):
+      x, (y, z) = tree_arg
+      return np.dot(x, np.dot(y, z))
+
+    tree = (x, (y, z))
+    vfoo = api.vmap(foo, in_axes=((0, (1, 2)),))
+    self.assertEqual(vfoo(tree).shape, (6, 2, 5))
+
+    Point = collections.namedtuple("Point", ["x", "y"])
+    tree = (x, Point(y, z))
+    vfoo = api.vmap(foo, in_axes=((0, Point(1, 2)),))
+    self.assertEqual(vfoo(tree).shape, (6, 2, 5))
+
+    def foo(tree_arg):
+      x, dct = tree_arg
+      y, z = dct['a'], dct['b']
+      return np.dot(x, np.dot(y, z))
+
+    tree = (x, {'a':y, 'b':z})
+    vfoo = api.vmap(foo, in_axes=((0, {'a':1, 'b':2}),))
+    self.assertEqual(vfoo(tree).shape, (6, 2, 5))
+
+    tree = (x, collections.OrderedDict([('a', y), ('b', z)]))
+    vfoo = api.vmap(
+        foo, in_axes=((0, collections.OrderedDict([('a', 1), ('b', 2)])),))
+    self.assertEqual(vfoo(tree).shape, (6, 2, 5))
+
+  def test_jit_reference_dropping(self):
+    x = onp.ones(10)
+    f = (lambda x: lambda: x)(x)  # reference to x in f's closure
+    g = jit(f)
+    x = weakref.ref(x)      # no more strong ref to x in this scope
+    assert x() is not None  # x is still around
+    f()                     # f runs
+    g()                     # g runs
+    g()                     # g runs a second time
+    del f                   # delete the raw callable
+    assert x() is not None  # x is still around
+    g()                     # g still runs
+    del g                   # no more references to x
+    assert x() is None      # x is gone
+
+  def test_jit_global_cache(self):
+    def f(x):
+      assert python_should_be_executing
+      return x
+
+    python_should_be_executing = True
+    api.jit(f)(2)
+    python_should_be_executing = False
+    api.jit(f)(3)
+
+  def test_pmap_global_cache(self):
+    def f(x):
+      assert python_should_be_executing
+      return x
+
+    x = onp.ones(1)
+
+    python_should_be_executing = True
+    api.pmap(f)(x)
+    python_should_be_executing = False
+    api.pmap(f)(x)
+
+    python_should_be_executing = True
+    api.pmap(f, 'i')(x)
+    python_should_be_executing = False
+    api.pmap(f, 'i')(x)
 
 
 if __name__ == '__main__':

@@ -730,6 +730,20 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertAllClose(expected, primals, check_dtypes=True)
     self.assertAllClose(onp.zeros_like(x), tangents, check_dtypes=True)
 
+  def testTrivialGatherIsntGenerated(self):
+    # https://github.com/google/jax/issues/1621
+    jaxpr = api.make_jaxpr(lambda x: x[:, None])(onp.arange(4))
+    self.assertEqual(len(jaxpr.eqns), 1)
+    self.assertNotIn('gather', str(jaxpr))
+
+  def testBooleanIndexingWithEmptyResult(self):
+    # based on a TensorFlow Probability test that started failing after #1622
+    x = lnp.array([-1])
+    mask = lnp.array([False])
+    ans = x[mask]  # doesn't crash
+
+    expected =  onp.array([-1])[onp.array([False])]
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
 
 def _broadcastable_shapes(shape):
@@ -889,7 +903,6 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     ans = ops.segment_sum(data, segment_ids)
     expected = onp.array([13, 2, 7, 4])
     self.assertAllClose(ans, expected, check_dtypes=False)
-
 
 
 if __name__ == "__main__":

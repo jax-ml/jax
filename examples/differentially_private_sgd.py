@@ -127,7 +127,7 @@ def loss(params, batch):
   inputs, targets = batch
   logits = predict(params, inputs)
   logits = stax.logsoftmax(logits)  # log normalize
-  return -np.mean(np.sum(logits * targets, 1))  # cross entropy loss
+  return -np.mean(np.sum(logits * targets, axis=1))  # cross entropy loss
 
 
 def accuracy(params, batch):

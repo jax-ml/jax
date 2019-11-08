@@ -233,7 +233,6 @@ class BatchingTest(jtu.JaxTestCase):
     y = R(3, 10, 5, 6)
     fun = lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))])
     ans = vmap(fun, in_axes=(2, 1))(x, y)
-    fun = lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))])
     expected = onp.stack([fun(x[..., i, :], y[:, i, ...]) for i in range(10)])
     self.assertAllClose(ans, expected, check_dtypes=True)
 
@@ -241,7 +240,6 @@ class BatchingTest(jtu.JaxTestCase):
     y = R(3, 5, 6)
     fun = lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))])
     ans = vmap(fun, in_axes=(3, None))(x, y)
-    fun = lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))])
     expected = onp.stack([fun(x[..., i], y) for i in range(10)])
     self.assertAllClose(ans, expected, check_dtypes=True)
 
@@ -249,8 +247,14 @@ class BatchingTest(jtu.JaxTestCase):
     y = R(3, 5, 10, 6)
     fun = lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))])
     ans = vmap(fun, in_axes=(None, 2))(x, y)
-    fun = lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))])
     expected = onp.stack([fun(x, y[..., i, :]) for i in range(10)])
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
+    x = R(4)
+    y = R(4, 10)
+    fun = lambda x, y: lax.dot_general(x, y, [((0,), (0,)), ((), ())])
+    ans = vmap(fun, in_axes=(None, 1))(x, y)
+    expected = onp.stack([fun(x, y[..., i]) for i in range(10)])
     self.assertAllClose(ans, expected, check_dtypes=True)
 
   def testDot(self):
@@ -365,20 +369,22 @@ class BatchingTest(jtu.JaxTestCase):
 
   def testDynamicSlice(self):
     # test dynamic_slice via numpy indexing syntax
-    x = onp.arange(30).reshape((10, 3))
+    # see https://github.com/google/jax/issues/1613 for an explanation of why we
+    # need to use np rather than onp to create x and idx
+    x = np.arange(30).reshape((10, 3))
 
     ans = vmap(lambda x, i: x[i], in_axes=(0, None))(x, 1)
     expected = x[:, 1]
     self.assertAllClose(ans, expected, check_dtypes=False)
 
 
-    idx = onp.array([0, 1, 2, 1, 0] * 2)
+    idx = np.array([0, 1, 2, 1, 0] * 2)
     ans = vmap(lambda x, i: x[i], in_axes=(0, 0))(x, idx)
     expected = x[onp.arange(10), idx]
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    x = onp.arange(3)
-    idx = onp.array([0, 1, 2, 1, 0] * 2)
+    x = np.arange(3)
+    idx = np.array([0, 1, 2, 1, 0] * 2)
     ans = vmap(lambda x, i: x[i], in_axes=(None, 0))(x, idx)
     expected = x[idx]
     self.assertAllClose(ans, expected, check_dtypes=False)

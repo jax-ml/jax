@@ -43,7 +43,7 @@ def cho_factor(a, lower=False, overwrite_a=False, check_finite=True):
   return (cholesky(a, lower=lower), lower)
 
 
-@_wraps(scipy.linalg.cho_solve)
+@_wraps(scipy.linalg.cho_solve, update_doc=False)
 def cho_solve(c_and_lower, b, overwrite_b=False, check_finite=True):
   del overwrite_b, check_finite
   c, lower = c_and_lower
@@ -159,7 +159,7 @@ def lu_solve(lu_and_piv, b, trans=0, overwrite_b=False, check_finite=True):
   lu, pivots = lu_and_piv
   return _lu_solve(lu, pivots, b, trans)
 
-@_wraps(scipy.linalg.lu)
+@_wraps(scipy.linalg.lu, update_doc=False)
 def lu(a, permute_l=False, overwrite_a=False, check_finite=True):
   del overwrite_a, check_finite
   a = np_linalg._promote_arg_dtypes(np.asarray(a))

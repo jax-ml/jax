@@ -23,6 +23,7 @@ import numpy as onp
 from absl.testing import absltest
 from absl.testing import parameterized
 
+import jax
 import jax.numpy as np
 from jax import test_util as jtu
 from jax import core
@@ -66,6 +67,17 @@ class PmapTest(jtu.JaxTestCase):
     ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testComplexPsum(self):
+    f = pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i')
+
+    shape = (xla_bridge.device_count(), 4 * 2)
+    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape).view(onp.complex64)
+    expected = x - onp.sum(x, 0)
+
+    ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+
   def testNestedBasic(self):
     f = lambda x: lax.psum(lax.psum(x, 'i'), 'j')
     f = pmap(pmap(f, 'i'), 'j')
@@ -79,6 +91,13 @@ class PmapTest(jtu.JaxTestCase):
     ans = f(x)
     expected = sum_and_broadcast(sum_and_broadcast(x, 0), 1)
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testMismatchedAxisSizes(self):
+    n = xla_bridge.device_count()
+    f = pmap(lambda x, y: x + y)
+    jtu.check_raises_regexp(
+        lambda: f(onp.random.randn(n), onp.random.randn(n - 1)), ValueError,
+        "Axis size .* does not match leading dimension of shape .*")
 
   @parameterized.named_parameters(
       {"testcase_name": "_mesh={}".format(device_mesh_shape),
@@ -127,6 +146,15 @@ class PmapTest(jtu.JaxTestCase):
     ans = grad(lambda x: np.sum(np.sin(x)))(x)
     expected = grad(lambda x: np.sum(f(x)))(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testGradOfPsum(self):
+    @partial(pmap, axis_name='i')
+    def f(x):
+      return lax.psum(x, axis_name='i')
+
+    shape = (jax.device_count(), 4)
+    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+    jtu.check_grads(f, (x,), 2, ["fwd", "rev"], 1e-2, 1e-2, eps=1.)
 
   def testGradOfJvp(self):
     @partial(pmap, axis_name='i')

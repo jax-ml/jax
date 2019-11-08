@@ -36,6 +36,11 @@ from jax import test_util as jtu
 from jax.util import unzip2
 from jax.lib import xla_bridge
 import jax.numpy as np  # scan tests use numpy
+import jax.scipy as jsp
+
+from jax.config import config
+config.parse_flags_with_absl()
+
 
 def scan_reference(f, init, xs):
   carry = init
@@ -45,6 +50,10 @@ def scan_reference(f, init, xs):
     ys.append(lax.reshape(y, (1,) + onp.shape(y)))
   ys = lax.concatenate(ys, 0)
   return carry, ys
+
+
+def high_precision_dot(a, b):
+  return lax.dot(a, b, precision=lax.Precision.HIGHEST)
 
 
 class LaxControlFlowTest(jtu.JaxTestCase):
@@ -71,6 +80,17 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertEqual(cloop(2), limit - 2)
     self.assertEqual(cloop(2), limit - 2)
     self.assertEqual(cloop(3), limit - 3)
+
+  def testWhileWithManyArgs(self):
+    nargs = 256
+
+    def loop_cond(state):
+      return lax.lt(state[0], 2)
+
+    def loop_body(state):
+      return tuple(lax.add(s, 1) for s in state)
+
+    _ = lax.while_loop(loop_cond, loop_body, (0,) * nargs)
 
   def testNestedWhile(self):
 
@@ -299,6 +319,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     ans = api.vmap(fun)(onp.array([0, 1]))
     expected = (onp.array([10, 11]), onp.array([20, 20]))
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testForiLoopBatchedIssue1190(self):
+    f = lambda x: lax.fori_loop(0, 4, lambda _, x: x + 1, x)
+    jaxpr = api.make_jaxpr(api.vmap(f))(np.arange(3))
+    eqn = jaxpr.eqns[0]
+    self.assertIs(eqn.primitive, lax.while_p)
+    self.assertEqual(eqn.params['cond_jaxpr'].in_avals[0].shape, ())
 
   def testForiLoopBasic(self):
     def body_fun(i, tot):
@@ -696,7 +723,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     if jit_f:
       f = api.jit(f)
     if jit_scan:
-      scan = api.jit(lax.scan, (0,))
+      scan = api.jit(lax.scan, static_argnums=(0,))
     else:
       scan = lax.scan
 
@@ -761,7 +788,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     api.grad(loss)(params, inputs, targets)
 
     # gradient check passes
-    jtu.check_grads(loss, (params, inputs, targets), order=2)
+    jtu.check_grads(loss, (params, inputs, targets), order=2, rtol=1e-2)
 
     # we can vmap to batch things
     batch_size = 7
@@ -811,10 +838,34 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def plus_one(p, iter_idx):
       return Point(p.x+1, p.y+1), iter_idx
 
-    self.assertRaisesRegexp(
+    self.assertRaisesRegex(
         ValueError,
         'scan got value with no leading axis to scan over.*',
         lambda: lax.scan(plus_one, p0, list(range(5))))
+
+  @jtu.skip_on_flag('jax_enable_x64', True)  # With float64 error messages are different; hard to check precisely
+  def testScanTypeErrors(self):
+    """Test typing error messages for scan."""
+    a = np.arange(5)
+    # Body output not a tuple
+    with self.assertRaisesRegex(TypeError,
+        re.escape("scan body output must be a pair, got ShapedArray(int32[]).")):
+      lax.scan(lambda c, x: 0, 0, a)
+    with  self.assertRaisesRegex(TypeError,
+        re.escape("scan carry output and input must have same type structure, "
+                  "got PyTreeDef(tuple, [*,*,*]) and PyTreeDef(tuple, [*,PyTreeDef(tuple, [*,*])])")):
+      lax.scan(lambda c, x: ((0, 0, 0), x), (1, (2, 3)), a)
+    with self.assertRaisesRegex(TypeError,
+        re.escape("scan carry output and input must have same type structure, got * and PyTreeDef(None, []).")):
+      lax.scan(lambda c, x: (0, x), None, a)
+    with self.assertRaisesRegex(TypeError,
+        re.escape("scan carry output and input must have identical types, "
+                  "got ShapedArray(int32[]) and ShapedArray(float32[]).")):
+      lax.scan(lambda c, x: (0, x), 1.0, a)
+    with self.assertRaisesRegex(TypeError,
+        re.escape("scan carry output and input must have same type structure, got * and PyTreeDef(tuple, [*,*]).")):
+      lax.scan(lambda c, x: (0, x), (1, 2), np.arange(5))
+
 
   def testScanHigherOrderDifferentiation(self):
     d = 0.75
@@ -898,6 +949,22 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     ans = api.vmap(lambda c, as_:            lax.scan(f, c, as_), in_axes)(c, as_)
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testScanVmapFixpoint(self):
+    def f(carry_init):
+      def scan_body(c, x):
+        # The carry is a 4-tuple, the last element starts batched,
+        # and the carry is shifted left at each iteration.
+        return ((c[1], c[2], c[3], 0.), None)
+      return lax.scan(scan_body, (0., 1., 2., carry_init), np.zeros(2))
+    carry_init = np.array([3., 4., 5.])
+    carry_out, _ = api.vmap(f)(carry_init)
+    self.assertAllClose(carry_out[3], np.array([0., 0., 0.]), check_dtypes=False)
+    self.assertAllClose(carry_out[2], np.array([0., 0., 0.]), check_dtypes = False)
+    # After two shifts, we get the carry_init
+    self.assertAllClose(carry_out[1], carry_init, check_dtypes=False)
+    self.assertAllClose(carry_out[0], np.array([2., 2., 2.]), check_dtypes = False)
+
 
   # TODO(mattjj, dougalm): fix this test when skip_checks is False
   def testIssue757(self):
@@ -1010,7 +1077,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     api.grad(lambda x: jit_run_scan(x))(0.)  # doesn't crash
 
-  def test_root_scalar(self):
+  def test_custom_root_scalar(self):
+
+    # TODO(shoyer): Figure out why this fails and re-enable it, if possible. My
+    # best guess is that TPUs use less stable numerics for pow().
+    if jtu.device_under_test() == "tpu":
+      raise SkipTest("Test fails on TPU")
 
     def scalar_solve(f, y):
       return y / f(1.0)
@@ -1035,53 +1107,263 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     def sqrt_cubed(x, tangent_solve=scalar_solve):
       f = lambda y: y ** 2 - x ** 3
-      return lax.root(f, 0.0, binary_search, tangent_solve)
+      return lax.custom_root(f, 0.0, binary_search, tangent_solve)
 
     value, grad = api.value_and_grad(sqrt_cubed)(5.0)
     self.assertAllClose(value, 5 ** 1.5, check_dtypes=False)
     self.assertAllClose(grad, api.grad(pow)(5.0, 1.5), check_dtypes=False)
-
     jtu.check_grads(sqrt_cubed, (5.0,), order=2, rtol=1e-3)
 
-    inputs = np.array([4.0, 5.0])
-    results = api.vmap(sqrt_cubed)(inputs)
-    self.assertAllClose(results, inputs ** 1.5, check_dtypes=False)
+    # TODO(shoyer): reenable when batching works
+    # inputs = np.array([4.0, 5.0])
+    # results = api.vmap(sqrt_cubed)(inputs)
+    # self.assertAllClose(results, inputs ** 1.5, check_dtypes=False)
 
     results = api.jit(sqrt_cubed)(5.0)
     self.assertAllClose(results, 5.0 ** 1.5, check_dtypes=False)
 
-  def test_root_vector(self):
-
-    def oracle(func, x0):
-      del func  # unused
-      return x0
+  def test_custom_root_vector_with_solve_closure(self):
 
     def vector_solve(f, y):
       return np.linalg.solve(api.jacobian(f)(y), y)
 
     def linear_solve(a, b):
-      f = lambda y: np.dot(a, y) - b
-      x0 = np.linalg.solve(a, b)
-      return lax.root(f, x0, oracle, vector_solve)
+      f = lambda y: high_precision_dot(a, y) - b
+      x0 = np.zeros_like(b)
+      solution = np.linalg.solve(a, b)
+      oracle = lambda func, x0: solution
+      return lax.custom_root(f, x0, oracle, vector_solve)
 
     rng = onp.random.RandomState(0)
     a = rng.randn(2, 2)
     b = rng.randn(2)
     jtu.check_grads(linear_solve, (a, b), order=2)
 
-  def test_root_errors(self):
+    actual = api.jit(linear_solve)(a, b)
+    expected = np.linalg.solve(a, b)
+    self.assertAllClose(expected, actual, check_dtypes=True)
+
+  def test_custom_root_with_custom_linear_solve(self):
+
+    # TODO(shoyer): Figure out why this fails and re-enable it.
+    if jtu.device_under_test() == "tpu":
+      raise SkipTest("Test fails on TPU")
+
+    def linear_solve(a, b):
+      f = lambda x: np.dot(a, x) - b
+      factors = jsp.linalg.cho_factor(a)
+      cho_solve = lambda f, b: jsp.linalg.cho_solve(factors, b)
+      def pos_def_solve(g, b):
+        return lax.custom_linear_solve(g, b, cho_solve, symmetric=True)
+      return lax.custom_root(f, b, cho_solve, pos_def_solve)
+
+    rng = onp.random.RandomState(0)
+    a = rng.randn(2, 2)
+    b = rng.randn(2)
+
+    actual = linear_solve(np.dot(a, a.T), b)
+    expected = np.linalg.solve(np.dot(a, a.T), b)
+    self.assertAllClose(expected, actual, check_dtypes=True)
+
+    actual = api.jit(linear_solve)(np.dot(a, a.T), b)
+    expected = np.linalg.solve(np.dot(a, a.T), b)
+    self.assertAllClose(expected, actual, check_dtypes=True)
+
+    jtu.check_grads(lambda x, y: linear_solve(np.dot(x, x.T), y),
+                    (a, b), order=2)
+
+  def test_custom_root_errors(self):
     with self.assertRaisesRegex(TypeError, re.escape("f() output pytree")):
-      lax.root(lambda x: (x, x), 0.0, lambda f, x: x, lambda f, x: x)
+      lax.custom_root(lambda x: (x, x), 0.0, lambda f, x: x, lambda f, x: x)
     with self.assertRaisesRegex(TypeError, re.escape("solve() output pytree")):
-      lax.root(lambda x: x, 0.0, lambda f, x: (x, x), lambda f, x: x)
+      lax.custom_root(lambda x: x, 0.0, lambda f, x: (x, x), lambda f, x: x)
 
     def dummy_root_usage(x):
       f = lambda y: x - y
-      return lax.root(f, 0.0, lambda f, x: x, lambda f, x: (x, x))
+      return lax.custom_root(f, 0.0, lambda f, x: x, lambda f, x: (x, x))
 
     with self.assertRaisesRegex(
         TypeError, re.escape("tangent_solve() output pytree")):
       api.jvp(dummy_root_usage, (0.0,), (0.0,))
+
+  @parameterized.named_parameters(
+      {"testcase_name": "nonsymmetric", "symmetric": False},
+      {"testcase_name": "symmetric", "symmetric": True},
+  )
+  def test_custom_linear_solve(self, symmetric):
+
+    def explicit_jacobian_solve(matvec, b):
+      return lax.stop_gradient(np.linalg.solve(api.jacobian(matvec)(b), b))
+
+    def matrix_free_solve(matvec, b):
+      return lax.custom_linear_solve(
+          matvec, b, explicit_jacobian_solve, explicit_jacobian_solve,
+          symmetric=symmetric)
+
+    def linear_solve(a, b):
+      return matrix_free_solve(partial(high_precision_dot, a), b)
+
+    rng = onp.random.RandomState(0)
+    a = rng.randn(3, 3)
+    if symmetric:
+      a = a + a.T
+    b = rng.randn(3)
+    jtu.check_grads(linear_solve, (a, b), order=2)
+
+    expected = np.linalg.solve(a, b)
+    actual = api.jit(linear_solve)(a, b)
+    self.assertAllClose(expected, actual, check_dtypes=True)
+
+    # TODO(shoyer): reenable when batching works
+    # c = rng.randn(3, 2)
+    # expected = np.linalg.solve(a, c)
+    # actual = api.vmap(linear_solve, (None, 1), 1)(a, c)
+    # self.assertAllClose(expected, actual, check_dtypes=True)
+
+  def test_custom_linear_solve_zeros(self):
+    def explicit_jacobian_solve(matvec, b):
+      return lax.stop_gradient(np.linalg.solve(api.jacobian(matvec)(b), b))
+
+    def matrix_free_solve(matvec, b):
+      return lax.custom_linear_solve(matvec, b, explicit_jacobian_solve,
+                                     explicit_jacobian_solve)
+
+    def linear_solve(a, b):
+      return matrix_free_solve(partial(high_precision_dot, a), b)
+
+    rng = onp.random.RandomState(0)
+    a = rng.randn(3, 3)
+    b = rng.randn(3)
+    jtu.check_grads(lambda x: linear_solve(x, b), (a,), order=2)
+    jtu.check_grads(lambda x: linear_solve(a, x), (b,), order=2)
+
+  def test_custom_linear_solve_iterative(self):
+
+    def richardson_iteration(matvec, b, omega=0.1, tolerance=1e-6):
+      # Equivalent to vanilla gradient descent:
+      # https://en.wikipedia.org/wiki/Modified_Richardson_iteration
+      def cond(x):
+        return np.linalg.norm(matvec(x) - b) > tolerance
+      def body(x):
+        return x + omega * (b - matvec(x))
+      return lax.while_loop(cond, body, b)
+
+    def matrix_free_solve(matvec, b):
+      return lax.custom_linear_solve(matvec, b, richardson_iteration,
+                                     richardson_iteration)
+
+    def build_and_solve(a, b):
+      # intentionally non-linear in a and b
+      matvec = partial(high_precision_dot, np.exp(a))
+      return matrix_free_solve(matvec, np.cos(b))
+
+    rng = onp.random.RandomState(0)
+    a = rng.randn(2, 2)
+    b = rng.randn(2)
+    expected = np.linalg.solve(np.exp(a), np.cos(b))
+    actual = build_and_solve(a, b)
+    self.assertAllClose(expected, actual, atol=1e-5, check_dtypes=True)
+    jtu.check_grads(build_and_solve, (a, b), atol=1e-5, order=2)
+
+    # TODO(shoyer): reenable when batching works
+    # a2 = rng.randn(1, 2, 2)
+    # b2 = rng.randn(1, 2, 2)
+    # jtu.check_grads(api.vmap(build_and_solve), (a2, b2), atol=1e-5, order=2)
+
+  def test_custom_linear_solve_cholesky(self):
+
+    def positive_definite_solve(a, b):
+      factors = jsp.linalg.cho_factor(a)
+      def solve(matvec, x):
+        return jsp.linalg.cho_solve(factors, x)
+      matvec = partial(high_precision_dot, a)
+      return lax.custom_linear_solve(matvec, b, solve, symmetric=True)
+
+    rng = onp.random.RandomState(0)
+    a = rng.randn(2, 2)
+    b = rng.randn(2)
+
+    expected = np.linalg.solve(high_precision_dot(a, a.T), b)
+    actual = positive_definite_solve(high_precision_dot(a, a.T), b)
+    self.assertAllClose(expected, actual, check_dtypes=True)
+
+    actual = api.jit(positive_definite_solve)(high_precision_dot(a, a.T), b)
+    self.assertAllClose(expected, actual, check_dtypes=True)
+
+    # numerical gradients are only well defined if ``a`` is guaranteed to be
+    # positive definite.
+    jtu.check_grads(
+        lambda x, y: positive_definite_solve(high_precision_dot(x, x.T), y),
+        (a, b), order=2)
+
+  def test_custom_linear_solve_lu(self):
+
+    # TODO(b/143528110): re-enable when underlying XLA TPU issue is fixed
+    if jtu.device_under_test() == "tpu":
+      raise SkipTest("Test fails on TPU")
+
+    def linear_solve(a, b):
+      a_factors = jsp.linalg.lu_factor(a)
+      at_factors = jsp.linalg.lu_factor(a.T)
+      def solve(matvec, x):
+        return jsp.linalg.lu_solve(a_factors, x)
+      def transpose_solve(vecmat, x):
+        return jsp.linalg.lu_solve(at_factors, x)
+      return lax.custom_linear_solve(
+          partial(high_precision_dot, a), b, solve, transpose_solve)
+
+    rng = onp.random.RandomState(0)
+    a = rng.randn(3, 3)
+    b = rng.randn(3)
+
+    expected = np.linalg.solve(a, b)
+    actual = linear_solve(a, b)
+    self.assertAllClose(expected, actual, check_dtypes=True)
+
+    jtu.check_grads(linear_solve, (a, b), order=2)
+
+    # regression test for https://github.com/google/jax/issues/1536
+    jtu.check_grads(api.jit(linear_solve), (a, b), order=2)
+
+  def test_custom_linear_solve_without_transpose_solve(self):
+
+    def explicit_jacobian_solve(matvec, b):
+      return lax.stop_gradient(np.linalg.solve(api.jacobian(matvec)(b), b))
+
+    def loss(a, b):
+      matvec = partial(high_precision_dot, a)
+      x = lax.custom_linear_solve(matvec, b, explicit_jacobian_solve)
+      return np.sum(x)
+
+    rng = onp.random.RandomState(0)
+    a = rng.randn(2, 2)
+    b = rng.randn(2)
+
+    jtu.check_grads(loss, (a, b), atol=1e-5, order=2, modes=['fwd'])
+
+    with self.assertRaisesRegex(TypeError, "transpose_solve required"):
+      api.grad(loss)(a, b)
+
+  def test_custom_linear_solve_errors(self):
+
+    solve = lambda f, x: x
+
+    with self.assertRaisesRegex(TypeError, re.escape("matvec() output pytree")):
+      lax.custom_linear_solve(lambda x: [x], 1.0, solve, solve)
+    with self.assertRaisesRegex(TypeError, re.escape("solve() output pytree")):
+      lax.custom_linear_solve(lambda x: x, 1.0, lambda f, x: [x], solve)
+    with self.assertRaisesRegex(
+        TypeError, re.escape("transpose_solve() output pytree")):
+      lax.custom_linear_solve(lambda x: x, 1.0, solve, lambda f, x: [x])
+
+    with self.assertRaisesRegex(ValueError, re.escape("solve() output shapes")):
+      lax.custom_linear_solve(lambda x: x, 1.0, lambda f, x: np.ones(2), solve)
+
+    def bad_matvec_usage(a):
+      return lax.custom_linear_solve(
+          lambda x: a * np.ones(2), 1.0, solve, solve)
+    with self.assertRaisesRegex(ValueError, re.escape("matvec() output shapes")):
+      api.jvp(bad_matvec_usage, (1.0,), (1.0,))
 
 
 if __name__ == '__main__':

@@ -1,3 +1,4 @@
+# coding=utf-8
 # Copyright 2018 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,6 +36,7 @@ from jax.core import Primitive
 from jax.lax import (standard_primitive, standard_unop, binop_dtype_rule,
                      _float, _complex, _input_dtype, _broadcasting_select)
 from jax.lib import xla_bridge as xb
+from jax.lib import xla_client
 from jax.lib import lapack
 from jax.lib import cusolver
 
@@ -101,9 +103,6 @@ def cholesky_jvp_rule(primals, tangents):
   sigma_dot, = tangents
   L = np.tril(cholesky_p.bind(x))
 
-  if sigma_dot is ad_util.zero:
-    return L, ad_util.zero
-
   # Forward-mode rule from https://arxiv.org/pdf/1602.07527.pdf
   def phi(X):
     l = np.tril(X)
@@ -128,7 +127,7 @@ batching.primitive_batchers[cholesky_p] = cholesky_batching_rule
 def _nan_like(c, operand):
   shape = c.GetShape(operand)
   dtype = shape.element_type()
-  if onp.issubdtype(dtype, onp.complexfloating):
+  if np.issubdtype(dtype, onp.complexfloating):
     nan = c.Constant(onp.array(onp.nan * (1. + 1j), dtype=dtype))
   else:
     nan = c.Constant(onp.array(onp.nan, dtype=dtype))
@@ -211,8 +210,14 @@ def eigh_impl(operand, lower):
   return v, w
 
 def eigh_translation_rule(c, operand, lower):
-  raise NotImplementedError(
-    "Symmetric eigendecomposition is only implemented on the CPU and GPU backends")
+  shape = c.GetShape(operand)
+  dims = shape.dimensions()
+  if dims[-1] == 0:
+    return c.Tuple(operand, c.Reshape(operand, None, dims[:-1]))
+  if not lower:
+    n = len(dims)
+    operand = c.Transpose(operand, list(range(n - 2)) + [n - 1, n - 2])
+  return c.Eigh(operand)
 
 def eigh_abstract_eval(operand, lower):
   if isinstance(operand, ShapedArray):
@@ -254,19 +259,16 @@ def eigh_jvp_rule(primals, tangents, lower):
 
   v, w = eigh_p.bind(symmetrize(a), lower=lower)
 
-  if a_dot is ad_util.zero:
-    return core.pack((v, w)), ad.TangentTuple(ad_util.zero, ad_util.zero)
-
   # for complex numbers we need eigenvalues to be full dtype of v, a:
   w = w.astype(a.dtype)
   eye_n = np.eye(a.shape[-1], dtype=a.dtype)
   # carefully build reciprocal delta-eigenvalue matrix, avoiding NaNs.
-  Fmat = np.reciprocal(eye_n + w - w[..., np.newaxis]) - eye_n
+  Fmat = np.reciprocal(eye_n + w[..., np.newaxis, :] - w[..., np.newaxis]) - eye_n
   # eigh impl doesn't support batch dims, but future-proof the grad.
   dot = lax.dot if a.ndim == 2 else lax.batch_matmul
   vdag_adot_v = dot(dot(_H(v), a_dot), v)
   dv = dot(v, np.multiply(Fmat, vdag_adot_v))
-  dw = np.diagonal(vdag_adot_v)
+  dw = np.diagonal(vdag_adot_v, axis1=-2, axis2=-1)
   return (v, w), (dv, dw)
 
 def eigh_batching_rule(batched_args, batch_dims, lower):
@@ -281,6 +283,7 @@ eigh_p.def_impl(eigh_impl)
 eigh_p.def_abstract_eval(eigh_abstract_eval)
 xla.translations[eigh_p] = eigh_translation_rule
 ad.primitive_jvps[eigh_p] = eigh_jvp_rule
+batching.primitive_batchers[eigh_p] = eigh_batching_rule
 
 _cpu_syevd = lapack.syevd
 
@@ -289,7 +292,7 @@ xla.backend_specific_translations['cpu'][eigh_p] = partial(
 
 xla.backend_specific_translations['gpu'][eigh_p] = partial(
   _eigh_cpu_gpu_translation_rule, cusolver.syevd)
-batching.primitive_batchers[eigh_p] = eigh_batching_rule
+
 
 
 
@@ -317,20 +320,33 @@ def triangular_solve_shape_rule(a, b, left_side=False, **unused_kwargs):
 
 def triangular_solve_jvp_rule_a(
     g_a, ans, a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
-  if g_a is ad_util.zero:
-    return ad_util.zero
+  m, n = b.shape[-2:]
   k = 1 if unit_diagonal else 0
   g_a = np.tril(g_a, k=-k) if lower else np.triu(g_a, k=k)
   g_a = lax.neg(g_a)
   g_a = np.swapaxes(g_a, -1, -2) if transpose_a else g_a
   g_a = np.conj(g_a) if conjugate_a else g_a
-  tmp = triangular_solve(a, g_a, left_side, lower, transpose_a, conjugate_a,
-                         unit_diagonal)
   dot = lax.dot if g_a.ndim == 2 else lax.batch_matmul
+
+  def a_inverse(rhs):
+    return triangular_solve(a, rhs, left_side, lower, transpose_a, conjugate_a,
+                            unit_diagonal)
+
+  # triangular_solve is about the same cost as matrix multplication (~n^2 FLOPs
+  # for matrix/vector inputs). Order these operations in whichever order is
+  # cheaper.
   if left_side:
-    return dot(tmp, ans)
+    assert g_a.shape[-2:] == a.shape[-2:] == (m, m) and ans.shape[-2:] == (m, n)
+    if m > n:
+      return a_inverse(dot(g_a, ans))  # A^{-1} (∂A X)
+    else:
+      return dot(a_inverse(g_a), ans)  # (A^{-1} ∂A) X
   else:
-    return dot(ans, tmp)
+    assert g_a.shape[-2:] == a.shape[-2:] == (n, n) and ans.shape[-2:] == (m, n)
+    if m < n:
+      return a_inverse(dot(ans, g_a))  # (X ∂A) A^{-1}
+    else:
+      return dot(ans, a_inverse(g_a))  # X (∂A A^{-1})
 
 def triangular_solve_transpose_rule(
     cotangent, a, b, left_side, lower, transpose_a, conjugate_a,
@@ -338,8 +354,11 @@ def triangular_solve_transpose_rule(
   # Triangular solve is nonlinear in its first argument and linear in its second
   # argument, analogous to `div` but swapped.
   assert a is not ad.undefined_primal and b is ad.undefined_primal
-  cotangent_b = triangular_solve(a, cotangent, left_side, lower,
-                                 not transpose_a, conjugate_a, unit_diagonal)
+  if cotangent is ad_util.zero:
+    cotangent_b = ad_util.zero
+  else:
+    cotangent_b = triangular_solve(a, cotangent, left_side, lower,
+                                   not transpose_a, conjugate_a, unit_diagonal)
   return [None, cotangent_b]
 
 
@@ -513,10 +532,6 @@ def _lu_jvp_rule(primals, tangents):
   a_dot, = tangents
   lu, pivots = lu_p.bind(a)
 
-  if a_dot is ad_util.zero:
-    return (core.pack((lu, pivots)),
-            ad.TangentTuple((ad_util.zero, ad_util.zero)))
-
   a_shape = np.shape(a)
   m, n = a_shape[-2:]
   dtype = lax.dtype(a)
@@ -656,8 +671,6 @@ def qr_jvp_rule(primals, tangents, full_matrices):
   x, = primals
   dx, = tangents
   q, r = qr_p.bind(x, full_matrices=False)
-  if dx is ad_util.zero:
-    return core.pack((q, r)), ad.TangentTuple(ad_util.zero, ad_util.zero)
   if full_matrices or np.shape(x)[-2] < np.shape(x)[-1]:
     raise NotImplementedError
   dx_rinv = triangular_solve(r, dx)  # Right side solve by default
@@ -753,9 +766,6 @@ def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
   A, = primals
   dA, = tangents
   s, U, Vt = svd_p.bind(A, full_matrices=False, compute_uv=True)
-
-  if dA is ad_util.zero:
-    return ((s, U, Vt), (ad_util.zero, ad_util.zero, ad_util.zero))
 
   if full_matrices:
     # TODO: implement full matrices case, documented here: https://people.maths.ox.ac.uk/gilesm/files/NA-08-01.pdf

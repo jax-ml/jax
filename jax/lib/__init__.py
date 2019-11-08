@@ -17,7 +17,7 @@
 
 import jaxlib
 
-_minimum_jaxlib_version = (0, 1, 28)
+_minimum_jaxlib_version = (0, 1, 31)
 try:
   from jaxlib import version as jaxlib_version
 except:
@@ -31,6 +31,13 @@ version = tuple(int(x) for x in jaxlib_version.__version__.split('.'))
 def _check_jaxlib_version():
   if version < _minimum_jaxlib_version:
     msg = 'jaxlib is version {}, but this version of jax requires version {}.'
+
+    if version == (0, 1, 23):
+        msg += ('\n\nA common cause of this error is that you installed jaxlib '
+                'using pip, but your version of pip is too old to support '
+                'manylinux2010 wheels. Try running:\n\n'
+                'pip install --upgrade pip\n'
+                'pip install --upgrade jax jaxlib\n')
     raise ValueError(msg.format('.'.join(map(str, version)),
                                 '.'.join(map(str, _minimum_jaxlib_version))))
 
@@ -38,7 +45,6 @@ _check_jaxlib_version()
 
 
 from jaxlib import xla_client
-from jaxlib import xrt
 from jaxlib import lapack
 
 from jaxlib import pytree

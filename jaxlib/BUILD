@@ -41,7 +41,6 @@ pybind_extension(
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
-        "-Wno-c++98-c++11-compat",
     ],
     features = ["-use_header_modules"],
     module_name = "pytree",
@@ -62,7 +61,6 @@ pybind_extension(
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
-        "-Wno-c++98-c++11-compat",
     ],
     features = ["-use_header_modules"],
     module_name = "cublas_kernels",
@@ -89,7 +87,6 @@ pybind_extension(
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
-        "-Wno-c++98-c++11-compat",
     ],
     features = ["-use_header_modules"],
     module_name = "cusolver_kernels",

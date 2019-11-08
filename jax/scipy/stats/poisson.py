@@ -16,22 +16,21 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import numpy as onp
 import scipy.stats as osp_stats
 
 from ... import lax
-from ...numpy.lax_numpy import _promote_args_like, _constant_like, _wraps
+from ...numpy import lax_numpy as np
+from ..special import xlogy, gammaln
 
 
-@_wraps(osp_stats.cauchy.logpdf, update_doc=False)
-def logpdf(x, loc=0, scale=1):
-  x, loc, scale = _promote_args_like(osp_stats.cauchy.logpdf, x, loc, scale)
-  one = _constant_like(x, 1)
-  pi = _constant_like(x, onp.pi)
-  scaled_x = lax.div(lax.sub(x, loc), scale)
-  normalize_term = lax.log(lax.mul(pi, scale))
-  return lax.neg(lax.add(normalize_term, lax.log1p(lax.mul(scaled_x, scaled_x))))
+@np._wraps(osp_stats.poisson.logpmf, update_doc=False)
+def logpmf(k, mu, loc=0):
+  k, mu, loc = np._promote_args_like(osp_stats.poisson.logpmf, k, mu, loc)
+  zero = np._constant_like(k, 0)
+  x = lax.sub(k, loc)
+  log_probs = xlogy(x, mu) - gammaln(x + 1) - mu
+  return np.where(lax.lt(x, zero), -np.inf, log_probs)
 
-@_wraps(osp_stats.cauchy.pdf, update_doc=False)
-def pdf(x, loc=0, scale=1):
-  return lax.exp(logpdf(x, loc, scale))
+@np._wraps(osp_stats.poisson.pmf, update_doc=False)
+def pmf(k, mu, loc=0):
+  return np.exp(pmf(k, mu, loc))
