@@ -3963,9 +3963,6 @@ ad.primitive_transposes[sort_key_val_p] = _sort_key_val_transpose_rule
 batching.primitive_batchers[sort_key_val_p] = _sort_key_val_batch_rule
 
 
-def _tie_in_transpose_rule(t):
-  return [ad_util.zero, t]
-
 def _tie_in_batch_rule(batched_args, batch_dims):
   y = tie_in(*batched_args)
   _, bdim_y = batch_dims
@@ -3973,9 +3970,9 @@ def _tie_in_batch_rule(batched_args, batch_dims):
 
 tie_in_p = Primitive('tie_in')
 tie_in_p.def_impl(lambda x, y: y)
-tie_in_p.def_abstract_eval(lambda x, y: y)
-xla.translations[tie_in_p] = lambda c, x, y: y
-ad.deflinear(tie_in_p, _tie_in_transpose_rule)
+pe.custom_partial_eval_rules[tie_in_p] = \
+    lambda trace, _, y: trace.instantiate_const(trace.full_raise(y))
+ad.deflinear(tie_in_p, lambda t: [ad_util.zero, t])
 batching.primitive_batchers[tie_in_p] = _tie_in_batch_rule
 masking.shape_rules[tie_in_p] = lambda shape_exprs: shape_exprs[1]
 masking.masking_rules[tie_in_p] = lambda vals, logical_shapes: vals[1]

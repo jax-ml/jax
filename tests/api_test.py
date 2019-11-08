@@ -1224,6 +1224,17 @@ class APITest(jtu.JaxTestCase):
     python_should_be_executing = False
     api.pmap(f, 'i')(x)
 
+  def test_tie_in_jaxpr(self):
+    def f(x):
+      y = lax.tie_in(x, 1)
+      z = y + 2
+      return x + z
+
+    jaxpr = api.make_jaxpr(f)(0)
+    self.assertEqual(len(jaxpr.eqns), 2)
+    self.assertIs(jaxpr.eqns[0].primitive, lax.add_p)
+    self.assertIs(jaxpr.eqns[1].primitive, lax.add_p)
+
 
 if __name__ == '__main__':
   absltest.main()
