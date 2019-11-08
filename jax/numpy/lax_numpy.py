@@ -2559,7 +2559,7 @@ def _gather(arr, treedef, static_idx, dynamic_idx):
 
   # We avoid generating a gather when indexer.gather_indices.size is empty
   # unless indexer.slice_shape also corresponds to an empty array.
-  if indexer.gather_indices.size or not prod(indexer.slice_shape):
+  if indexer.gather_indices.size or not _prod(indexer.slice_shape):
     y = lax.gather(y, indexer.gather_indices, indexer.dnums,
                    indexer.gather_slice_shape)
 
