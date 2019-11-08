@@ -34,8 +34,10 @@ def maybe_set_dict(tree, path, val, accum_fn):
     subtree = subtree[path_element]
   if accum_fn is None: # storing, i.e. collect
     if path[-1] in subtree:
+      # Some users might want `val = subtree[path[-1]]` here?
       raise RuntimeError("cannot store multiple values to the same nested dict path")
-    subtree[path[-1]] = val
+    else:
+      subtree[path[-1]] = val
   elif path[-1] in subtree:
     val = accum_fn(val, subtree[path[-1]])
   return val
