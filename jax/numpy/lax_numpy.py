@@ -986,11 +986,11 @@ def clip(a, a_min=None, a_max=None):
   if a_min is not None:
     if _dtype(a_min) != _dtype(a):
       a_min = lax.convert_element_type(a_min, _dtype(a))
-    a = lax.max(a_min, a)
+    a = maximum(a_min, a)
   if a_max is not None:
     if _dtype(a_max) != _dtype(a):
       a_max = lax.convert_element_type(a_max, _dtype(a))
-    a = lax.min(a_max, a)
+    a = minimum(a_max, a)
   return a
 
 
