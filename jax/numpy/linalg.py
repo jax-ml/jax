@@ -136,6 +136,21 @@ def eigvalsh(a, UPLO='L'):
   return w
 
 
+@_wraps(onp.linalg.pinv)
+def pinv(a, rcond=1e-15):
+  a = np.conj(a)
+  rcond = np.asarray(rcond)
+  u, s, v = svd(a, full_matrices=False)
+  # Singular values less than or equal to ``rcond * largest_singular_value`` 
+  # are set to zero.
+  cutoff = rcond[..., np.newaxis] * np.amax(s, axis=-1, keepdims=True)
+  large = s > cutoff
+  s = np.divide(1, s)
+  s = np.where(large, s, 0)
+  res = np.matmul(np.transpose(v), np.multiply(s[..., np.newaxis], np.transpose(u)))
+  return res
+
+
 @_wraps(onp.linalg.inv)
 def inv(a):
   if np.ndim(a) < 2 or a.shape[-1] != a.shape[-2]:
