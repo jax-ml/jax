@@ -651,7 +651,8 @@ class BatchingTest(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, dtype), axis, idxs, dnums,
           slice_sizes),
        "axis": axis, "shape": shape, "dtype": dtype, "idxs": idxs, "dnums": dnums,
-       "slice_sizes": slice_sizes, "rng": rng, "rng_idx": rng_idx}
+       "slice_sizes": slice_sizes, "rng_factory": rng_factory,
+       "rng_idx_factory": rng_idx_factory}
       for dtype in [onp.float32, onp.int32]
       for axis, shape, idxs, dnums, slice_sizes in [
           (0, (3, 5), onp.array([[0], [2]]), lax.GatherDimensionNumbers(
@@ -669,10 +670,12 @@ class BatchingTest(jtu.JaxTestCase):
              start_index_map=(0, 1)),
             (1, 3)),
       ]
-      for rng_idx in [jtu.rand_int(max(shape))]
-      for rng in [jtu.rand_default()])
+      for rng_idx_factory in [partial(jtu.rand_int, max(shape))]
+      for rng_factory in [jtu.rand_default])
   def testGatherBatchedOperand(self, axis, shape, dtype, idxs, dnums,
-                               slice_sizes, rng, rng_idx):
+                               slice_sizes, rng_factory, rng_idx_factory):
+    rng = rng_factory()
+    rng_idx = rng_idx_factory()
     fun = partial(lax.gather, dimension_numbers=dnums, slice_sizes=slice_sizes)
     operand = rng(shape, dtype)
     ans = vmap(fun, (axis, None))(operand, idxs)
@@ -685,7 +688,8 @@ class BatchingTest(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, dtype), axis, idxs, dnums,
           slice_sizes),
        "axis": axis, "shape": shape, "dtype": dtype, "idxs": idxs, "dnums": dnums,
-       "slice_sizes": slice_sizes, "rng": rng, "rng_idx": rng_idx}
+       "slice_sizes": slice_sizes, "rng_factory": rng_factory,
+       "rng_idx_factory": rng_idx_factory}
       for dtype in [onp.float32, onp.float64]
       for axis, shape, idxs, dnums, slice_sizes in [
           (0, (3, 5), onp.array([[0], [2]]), lax.GatherDimensionNumbers(
@@ -702,10 +706,12 @@ class BatchingTest(jtu.JaxTestCase):
              offset_dims=(1,), collapsed_slice_dims=(0,),
              start_index_map=(0, 1)),
             (1, 3)),      ]
-      for rng_idx in [jtu.rand_int(max(shape))]
-      for rng in [jtu.rand_default()])
+      for rng_idx_factory in [partial(jtu.rand_int, max(shape))]
+      for rng_factory in [jtu.rand_default])
   def testGatherGradBatchedOperand(self, axis, shape, dtype, idxs, dnums,
-                                   slice_sizes, rng, rng_idx):
+                                   slice_sizes, rng_factory, rng_idx_factory):
+    rng = rng_factory()
+    rng_idx = rng_idx_factory()
     fun = partial(lax.gather, dimension_numbers=dnums, slice_sizes=slice_sizes)
     gfun = grad(lambda x, idx: np.sum(np.sin(fun(x, idx))))
     operand = rng(shape, dtype)
@@ -719,7 +725,8 @@ class BatchingTest(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, dtype), axis, idxs, dnums,
           slice_sizes),
        "axis": axis, "shape": shape, "dtype": dtype, "idxs": idxs, "dnums": dnums,
-       "slice_sizes": slice_sizes, "rng": rng, "rng_idx": rng_idx}
+       "slice_sizes": slice_sizes, "rng_factory": rng_factory,
+       "rng_idx_factory": rng_idx_factory}
       for dtype in [onp.float32, onp.int32]
       for axis, shape, idxs, dnums, slice_sizes in [
           (0, (5,), onp.array([[[0], [2]], [[1], [3]]]), lax.GatherDimensionNumbers(
@@ -734,10 +741,12 @@ class BatchingTest(jtu.JaxTestCase):
                                   [[1, 0], [2, 3]]]), lax.GatherDimensionNumbers(
             offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1)), (1, 3)),
       ]
-      for rng_idx in [jtu.rand_int(max(shape))]
-      for rng in [jtu.rand_default()])
+      for rng_idx_factory in [partial(jtu.rand_int, max(shape))]
+      for rng_factory in [jtu.rand_default])
   def testGatherBatchedIndices(self, axis, shape, dtype, idxs, dnums,
-                               slice_sizes, rng, rng_idx):
+                               slice_sizes, rng_factory, rng_idx_factory):
+    rng = rng_factory()
+    rng_idx = rng_idx_factory()
     fun = partial(lax.gather, dimension_numbers=dnums, slice_sizes=slice_sizes)
     operand = rng(shape, dtype)
     ans = vmap(fun, (None, axis))(operand, idxs)
@@ -750,7 +759,8 @@ class BatchingTest(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, dtype), axis, idxs, dnums,
           slice_sizes),
        "axis": axis, "shape": shape, "dtype": dtype, "idxs": idxs, "dnums": dnums,
-       "slice_sizes": slice_sizes, "rng": rng, "rng_idx": rng_idx}
+       "slice_sizes": slice_sizes, "rng_factory": rng_factory,
+       "rng_idx_factory": rng_idx_factory}
       for dtype in [onp.float32, onp.float64]
       for axis, shape, idxs, dnums, slice_sizes in [
           (0, (5,), onp.array([[[0], [2]], [[1], [3]]]), lax.GatherDimensionNumbers(
@@ -765,10 +775,12 @@ class BatchingTest(jtu.JaxTestCase):
                                   [[1, 0], [2, 3]]]), lax.GatherDimensionNumbers(
             offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1)), (1, 3)),
       ]
-      for rng_idx in [jtu.rand_int(max(shape))]
-      for rng in [jtu.rand_default()])
+      for rng_idx_factory in [partial(jtu.rand_int, max(shape))]
+      for rng_factory in [jtu.rand_default])
   def testGatherGradBatchedIndices(self, axis, shape, dtype, idxs, dnums,
-                                   slice_sizes, rng, rng_idx):
+                                   slice_sizes, rng_factory, rng_idx_factory):
+    rng = rng_factory()
+    rng_idx = rng_idx_factory()
     fun = partial(lax.gather, dimension_numbers=dnums, slice_sizes=slice_sizes)
     gfun = grad(lambda x, idx: np.sum(np.sin(fun(x, idx))))
     operand = rng(shape, dtype)
@@ -783,7 +795,7 @@ class BatchingTest(jtu.JaxTestCase):
           dnums, slice_sizes),
        "op_axis": op_axis, "idxs_axis": idxs_axis, "shape": shape, "dtype":
        dtype, "idxs": idxs, "dnums": dnums, "slice_sizes": slice_sizes,
-       "rng": rng, "rng_idx": rng_idx}
+       "rng_factory": rng_factory, "rng_idx_factory": rng_idx_factory}
       for dtype in [onp.float32, onp.int32]
       for op_axis, idxs_axis, shape, idxs, dnums, slice_sizes in [
           (0, 0, (2, 5), onp.array([[[0], [2]], [[1], [3]]]),
@@ -804,10 +816,12 @@ class BatchingTest(jtu.JaxTestCase):
             offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1)),
            (1, 3)),
       ]
-      for rng_idx in [jtu.rand_int(max(shape))]
-      for rng in [jtu.rand_default()])
+      for rng_idx_factory in [partial(jtu.rand_int, max(shape))]
+      for rng_factory in [jtu.rand_default])
   def testGatherBatchedBoth(self, op_axis, idxs_axis, shape, dtype, idxs, dnums,
-                            slice_sizes, rng, rng_idx):
+                            slice_sizes, rng_factory, rng_idx_factory):
+    rng = rng_factory()
+    rng_idx = rng_idx_factory()
     fun = partial(lax.gather, dimension_numbers=dnums, slice_sizes=slice_sizes)
     operand = rng(shape, dtype)
     assert operand.shape[op_axis] == idxs.shape[idxs_axis]
@@ -823,7 +837,7 @@ class BatchingTest(jtu.JaxTestCase):
           dnums, slice_sizes),
        "op_axis": op_axis, "idxs_axis": idxs_axis, "shape": shape, "dtype":
        dtype, "idxs": idxs, "dnums": dnums, "slice_sizes": slice_sizes,
-       "rng": rng, "rng_idx": rng_idx}
+       "rng_factory": rng_factory, "rng_idx_factory": rng_idx_factory}
       for dtype in [onp.float32]
       for op_axis, idxs_axis, shape, idxs, dnums, slice_sizes in [
           (0, 0, (2, 5), onp.array([[[0], [2]], [[1], [3]]]),
@@ -844,10 +858,12 @@ class BatchingTest(jtu.JaxTestCase):
             offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1)),
            (1, 3)),
       ]
-      for rng_idx in [jtu.rand_int(max(shape))]
-      for rng in [jtu.rand_default()])
+      for rng_idx_factory in [partial(jtu.rand_int, max(shape))]
+      for rng_factory in [jtu.rand_default])
   def testGatherGradBatchedBoth(self, op_axis, idxs_axis, shape, dtype, idxs, dnums,
-                            slice_sizes, rng, rng_idx):
+                                slice_sizes, rng_factory, rng_idx_factory):
+    rng = rng_factory()
+    rng_idx = rng_idx_factory()
     fun = partial(lax.gather, dimension_numbers=dnums, slice_sizes=slice_sizes)
     gfun = grad(lambda x, idx: np.sum(np.sin(fun(x, idx))))
     operand = rng(shape, dtype)

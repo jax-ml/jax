@@ -494,12 +494,19 @@ def check_raises_regexp(thunk, err_type, pattern):
   except err_type as e:
     assert re.match(pattern, str(e)), "{}\n\n{}\n".format(e, pattern)
 
+_CACHED_INDICES = {}
+
 def cases_from_list(xs):
-  rng = npr.RandomState(42)
   xs = list(xs)
-  k = min(len(xs), FLAGS.num_generated_cases)
-  indices = rng.choice(onp.arange(len(xs)), k, replace=False)
-  return [xs[i] for i in indices]
+  n = len(xs)
+  k = min(n, FLAGS.num_generated_cases)
+  # Random sampling for every parameterized test is expensive. Do it once and
+  # cache the result.
+  indices = _CACHED_INDICES.get(n)
+  if indices is None:
+    rng = npr.RandomState(42)
+    _CACHED_INDICES[n] = indices = rng.permutation(n)
+  return [xs[i] for i in indices[:k]]
 
 def cases_from_gens(*gens):
   sizes = [1, 3, 10]
