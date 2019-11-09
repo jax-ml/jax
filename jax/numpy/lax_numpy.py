@@ -278,12 +278,12 @@ _numpy_signature_re = re.compile(r'^([\w., ]+=)?\s*[\w\.]+\(.*\)$')
 
 def _wraps(fun, update_doc=True):
   """Like functools.wraps but works with numpy.ufuncs.
-     It is important that when wrapping numpy functions the parameters names 
+     It is important that when wrapping numpy functions the parameters names
      in the original function and in the JAX version are the same
     Parameters:
       fun: The function being wrapped
       update_doc: whether to transform the numpy docstring to remove references of
-      parameters that are supported by the numpy version but not the JAX version. 
+      parameters that are supported by the numpy version but not the JAX version.
       If False, include the numpy docstring verbatim.
   """
   def wrap(op):
@@ -1664,6 +1664,84 @@ def identity(n, dtype=None):
   lax._check_user_dtype_supported(dtype, "identity")
   return eye(n, dtype=dtype)
 
+@_wraps(onp.unique)
+def unique(ar, return_index=False, return_inverse=False,return_counts=False,
+           axis=None):
+
+	def _unpack_tuple(x):
+		if len(x) == 1:
+			return x[0]
+		else:
+			return x
+
+	def asanyarray(a, dtype=None, order=None):
+	    return onp.array(a, dtype, copy=False, order=order, subok=True)
+
+	def ascontiguousarray(a, dtype=None):
+	    return onp.array(a, dtype, copy=False, order='C', ndmin=1)
+
+	def _unique1d(ar, return_index=False, return_inverse=False,
+				return_counts=False):
+
+		ar = asanyarray(ar).flatten()
+
+		optional_indices = return_index or return_inverse
+
+		if optional_indices:
+			perm = ar.argsort(kind='mergesort' if return_index else 'quicksort')
+			aux = ar[perm]
+		else:
+			ar.sort()
+			aux = ar
+		mask = onp.empty(aux.shape, dtype=onp.bool_)
+		mask[:1] = True
+		mask[1:] = aux[1:] != aux[:-1]
+
+		ret = (aux[mask],)
+		if return_index:
+			ret += (perm[mask],)
+		if return_inverse:
+			imask = onp.cumsum(mask) - 1
+			inv_idx = onp.empty(mask.shape, dtype=onp.intp)
+			inv_idx[perm] = imask
+			ret += (inv_idx,)
+		if return_counts:
+			idx = onp.concatenate(onp.nonzero(mask) + ([mask.size],))
+			ret += (onp.diff(idx),)
+		return (ret)
+
+	ar = asanyarray(ar)
+	if axis is None:
+		ret = _unique1d(ar, return_index, return_inverse, return_counts)
+		return _unpack_tuple(ret)
+
+	if (ar.ndim <= axis or axis < 0):
+		raise ValueError("axis {} is out of bounds for array of dimension {}".\
+		format(axis, ar.ndim))
+
+	ar = onp.swapaxes(ar, axis, 0)
+	orig_shape, orig_dtype = ar.shape, ar.dtype
+	ar = ar.reshape(orig_shape[0], -1)
+	ar = ascontiguousarray(ar)
+
+	dtype = [('f{i}'.format(i=i), ar.dtype) for i in range(ar.shape[1])]
+
+	try:
+		consolidated = ar.view(dtype)
+	except TypeError:
+		msg = 'The axis argument to unique is not supported for dtype {dt}'
+		raise TypeError(msg.format(dt=ar.dtype))
+
+	def reshape_uniq(uniq):
+		uniq = uniq.view(orig_dtype)
+		uniq = uniq.reshape(-1, *orig_shape[1:])
+		uniq = onp.swapaxes(uniq, 0, axis)
+		return uniq
+
+	output = _unique1d(consolidated, return_index,
+			           return_inverse, return_counts)
+	output = (reshape_uniq(output[0]),) + output[1:]
+	return _unpack_tuple(output)
 
 @_wraps(onp.arange)
 def arange(start, stop=None, step=None, dtype=None):
