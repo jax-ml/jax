@@ -2034,6 +2034,167 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     lnp_fun = partial(lnp.meshgrid, indexing=indexing, sparse=sparse)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
+  def assertDowncastDtypeEqual(self, x, y):
+    """Heuristic for comparing numpy and jax downcast dtypes."""
+    x_dt = jtu._dtype(x)
+    y_dt = jtu._dtype(y)
+    testing_tpu = jtu.device_under_test().startswith("tpu")
+    testing_x32 = not jax.config.read('jax_enable_x64')
+    to32dtype = {onp.int64: onp.int32, onp.uint64: onp.uint32,
+                 onp.float64: onp.float32, onp.float128: onp.float32,
+                 onp.complex128: onp.complex64, onp.complex256: onp.complex64}
+    to32dtype = {onp.dtype(k): onp.dtype(v) for k,v in to32dtype.items()}
+    if testing_tpu or testing_x32:
+      x_dt = to32dtype.get(x_dt, x_dt)
+      y_dt = to32dtype.get(y_dt, y_dt)
+    assert x_dt == y_dt, "truncated dtypes %s != %s" % (x_dt, y_dt)
+
+  @parameterized.named_parameters(
+      jtu.cases_from_list(
+        {"testcase_name": ("_start_shape={}_stop_shape={}_num={}_endpoint={}"
+                           "_retstep={}_dtype={}").format(
+            start_shape, stop_shape, num, endpoint, retstep, dtype),
+         "start_shape": start_shape, "stop_shape": stop_shape,
+         "num": num, "endpoint": endpoint, "retstep": retstep,
+         "dtype": dtype, "rng_factory": rng_factory}
+        for start_shape in [(), (2,), (2, 2)]
+        for stop_shape in [(), (2,), (2, 2)]
+        for num in [5, 20]
+        for endpoint in [True, False]
+        for retstep in [True, False]
+        for dtype in number_dtypes + [None,]
+        for rng_factory in [jtu.rand_default]))
+  def testLinspace(self, start_shape, stop_shape, num, endpoint,
+                   retstep, dtype, rng_factory):
+    rng = rng_factory()
+    # relax default tolerances slightly
+    tol = tolerance(dtype if dtype else onp.float32) * 10
+    args_maker = self._GetArgsMaker(rng,
+                                    [start_shape, stop_shape],
+                                    [dtype, dtype])
+    start, stop = args_maker()
+    ndim = len(onp.shape(start + stop))
+    for axis in range(-ndim, ndim):
+      lnp_op = lambda start, stop: lnp.linspace(
+        start, stop, num,
+        endpoint=endpoint, retstep=retstep, dtype=dtype, axis=axis)
+      onp_op = lambda start, stop: onp.linspace(
+        start, stop, num,
+        endpoint=endpoint, retstep=retstep, dtype=dtype, axis=axis)
+      self._CheckAgainstNumpy(onp_op, lnp_op, args_maker,
+                              check_dtypes=False, tol=tol)
+      # Check dtype equivalence within expected 32bit downcasting.
+      a, b = lnp_op(start, stop), onp_op(start, stop)
+      if retstep:
+        self.assertDowncastDtypeEqual(a[0], b[0])
+        self.assertDowncastDtypeEqual(a[1], b[1])
+      else:
+        self.assertDowncastDtypeEqual(a, b)
+      # floating-point compute between jitted platforms and non-jit + rounding
+      # cause unavoidable variation in integer truncation for some inputs.
+      if dtype in (inexact_dtypes + [None,]):
+        self._CompileAndCheck(lnp_op, args_maker,
+                              check_dtypes=False, atol=tol, rtol=tol)
+
+  @parameterized.named_parameters(
+      jtu.cases_from_list(
+        {"testcase_name": ("_start_shape={}_stop_shape={}_num={}_endpoint={}"
+                           "_base={}_dtype={}").format(
+            start_shape, stop_shape, num, endpoint, base, dtype),
+         "start_shape": start_shape,
+         "stop_shape": stop_shape,
+         "num": num, "endpoint": endpoint, "base": base,
+         "dtype": dtype, "rng_factory": rng_factory}
+        for start_shape in [(), (2,), (2, 2)]
+        for stop_shape in [(), (2,), (2, 2)]
+        for num in [5, 20]
+        for endpoint in [True, False]
+        for base in [10.0, 2, onp.e]
+        for dtype in number_dtypes + [None,]
+        for rng_factory in [jtu.rand_default]))
+  def testLogspace(self, start_shape, stop_shape, num,
+                   endpoint, base, dtype, rng_factory):
+    if (dtype in int_dtypes and
+        jtu.device_under_test() == "gpu" and
+        not FLAGS.jax_enable_x64):
+      raise unittest.SkipTest("GPUx32 truncated exponentiation"
+                              " doesn't exactly match other platforms.")
+    rng = rng_factory()
+    # relax default tolerances slightly
+    tol = tolerance(dtype if dtype else onp.float32) * 10
+    args_maker = self._GetArgsMaker(rng,
+                                    [start_shape, stop_shape],
+                                    [dtype, dtype])
+    start, stop = args_maker()
+    ndim = len(onp.shape(start + stop))
+    for axis in range(-ndim, ndim):
+      lnp_op = lambda start, stop: lnp.logspace(
+        start, stop, num, endpoint=endpoint, base=base, dtype=dtype, axis=axis)
+      onp_op = lambda start, stop: onp.logspace(
+        start, stop, num, endpoint=endpoint, base=base, dtype=dtype, axis=axis)
+      self._CheckAgainstNumpy(onp_op, lnp_op, args_maker,
+                              check_dtypes=False, tol=tol)
+      # Check dtype equivalence within expected 32bit downcasting.
+      a, b = lnp_op(start, stop), onp_op(start, stop)
+      self.assertDowncastDtypeEqual(a, b)
+      if dtype in (inexact_dtypes + [None,]):
+        # Why do compiled and op-by-op float16 np.power numbers differ
+        # slightly more than expected?
+        atol = tol if dtype != onp.float16 else 10 * tol
+        self._CompileAndCheck(lnp_op, args_maker,
+                              check_dtypes=False, atol=atol, rtol=tol)
+
+  @parameterized.named_parameters(
+      jtu.cases_from_list(
+        {"testcase_name": ("_start_shape={}_stop_shape={}_num={}_endpoint={}"
+                           "_dtype={}").format(
+            start_shape, stop_shape, num, endpoint, dtype),
+         "start_shape": start_shape,
+         "stop_shape": stop_shape,
+         "num": num, "endpoint": endpoint,
+         "dtype": dtype, "rng_factory": rng_factory}
+        for start_shape in [(), (2,), (2, 2)]
+        for stop_shape in [(), (2,), (2, 2)]
+        for num in [5, 20]
+        for endpoint in [True, False]
+        # NB: numpy's geomspace gives nonsense results on integer types
+        for dtype in inexact_dtypes + [None,]
+        for rng_factory in [jtu.rand_default]))
+  def testGeomspace(self, start_shape, stop_shape, num,
+                    endpoint, dtype, rng_factory):
+    rng = rng_factory()
+    # relax default tolerances slightly
+    tol = tolerance(dtype if dtype else onp.float32) * 10
+    def args_maker():
+      """Test the set of inputs onp.geomspace is well-defined on."""
+      start, stop = self._GetArgsMaker(rng,
+                                [start_shape, stop_shape],
+                                [dtype, dtype])()
+      # onp.geomspace can't handle differently ranked tensors
+      # w. negative numbers!
+      start, stop = lnp.broadcast_arrays(start, stop)
+      if dtype in complex_dtypes:
+        return start, stop
+      # to avoid NaNs, non-complex start and stop cannot
+      # differ in sign, elementwise
+      start = start * lnp.sign(start) * lnp.sign(stop)
+      return start, stop
+    start, stop = args_maker()
+    ndim = len(onp.shape(start + stop))
+    for axis in range(-ndim, ndim):
+      lnp_op = lambda start, stop: lnp.geomspace(
+        start, stop, num, endpoint=endpoint, dtype=dtype, axis=axis)
+      onp_op = lambda start, stop: onp.geomspace(
+        start, stop, num, endpoint=endpoint, dtype=dtype, axis=axis)
+      self._CheckAgainstNumpy(onp_op, lnp_op, args_maker,
+                              check_dtypes=False, tol=tol)
+      # Check dtype equivalence within expected 32bit downcasting.
+      a, b = lnp_op(start, stop), onp_op(start, stop)
+      self.assertDowncastDtypeEqual(a, b)
+      if dtype in (inexact_dtypes + [None,]):
+        self._CompileAndCheck(lnp_op, args_maker,
+                              check_dtypes=False, atol=tol, rtol=tol)
+
   def testDisableNumpyRankPromotionBroadcasting(self):
     try:
       prev_flag = FLAGS.jax_numpy_rank_promotion
