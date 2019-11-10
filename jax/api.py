@@ -908,7 +908,7 @@ def soft_pmap(fun, axis_name=None, backend=None):
       msg = ("soft_pmap mapped axis size must be divisble by the number of "
              "XLA devices (or be less than or equal to that number), but got "
              "an axis size of {} with {} devices.")
-      raise ValueError(msg.format(axis_size, pxla.pxla.unmapped_device_count()))
+      raise ValueError(msg.format(axis_size, pxla.unmapped_device_count()))
     num_chunks = axis_size // chunk_size
 
     reshaped_args = [_reshape_split(num_chunks, x) for x in args_flat]

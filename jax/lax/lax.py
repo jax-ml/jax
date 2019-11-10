@@ -1458,7 +1458,7 @@ def _iter(tracer):
   else:
     n = tracer.shape[0]
     # return (index_in_dim(tracer, i, keepdims=False) for i in xrange(n))
-    return iter([index_in_dim(tracer, i, keepdims=False) for i in xrange(n)])
+    return iter([push_tag(index_in_dim(tracer, i, keepdims=False), i) for i in xrange(n)])
 ShapedArray._iter = staticmethod(_iter)
 
 # Add some ad handlers that use (or could use) lax primitives
