@@ -592,16 +592,22 @@ def _prune_zeros(ts):
   return [t for t in ts if t is not ad_util.zero]
 
 def _scan_partial_eval(trace, *tracers, **kwargs):
+  # lots of partial evaling is happening here, so we distinguish the
+  # partial eval being performed by the rule (unzipping a scan into what
+  # we'll call "primal" and "tangent" scans, although it need not have
+  # been invoked by AD) from partial eval used to unzip computation into
+  # "const" (non-time-varying) and "extensive"/time-varying parts.
   forward, length, num_consts, num_carry, jaxpr, linear = split_dict(
       kwargs, ["forward", "length", "num_consts", "num_carry", "jaxpr", "linear"])
   num_xs = len(jaxpr.in_avals) - num_carry - num_consts
   num_ys = len(jaxpr.out_avals) - num_carry
 
+  # "unknown" values are tangents in the AD case
   unknowns = [t.pval[0] is not None for t in tracers]
   const_uk, init_uk, xs_uk = split_list(unknowns, [num_consts, num_carry])
 
-  # Fixpoint computation of which carry are unknown (not a constant): either
-  # unknown from init, or the carry out is unknown. Each iteration promotes
+  # Fixpoint computation of which carry are unknown (depend on any tangents,
+  # either in the first or any subsequent step). Each iteration promotes
   # at least one carry to unknown. We need at most len(carry) iterations,
   # but we need one last iteration to prepare the jaxpr based on the final
   # carry_uk.
@@ -617,7 +623,36 @@ def _scan_partial_eval(trace, *tracers, **kwargs):
       carry_uk = _map(operator.or_, carry_uk, carry_uk_out)
   else:
     assert False, "Fixpoint not reached"
+  
+  # trim jaxpr_1 so it only produces non-const/extensive outputs, so that
+  # const outputs don't get duplicated across time
+  pvals_1 = [pe.PartialVal((None, t.pval[1])) for t in tracers[:num_consts]]
+  pvals_2 = [pe.PartialVal((aval, core.unit)) for aval in jaxpr_1.in_avals[num_consts:]]
+  jaxpr1_fun = lu.wrap_init(core.jaxpr_as_fun(jaxpr_1))
+  jaxpr1_noconsts, pvals_out, consts = pe.trace_to_jaxpr(jaxpr1_fun, pvals_1 + pvals_2)
 
+  # pvals contains consts that jaxpr_2 is expecting
+  # consts contains consts that jaxpr_1 is expecting
+
+  in_avals_1 = [core.abstract_unit] * num_consts + jaxpr_1.in_avals[num_consts:]
+  out_avals_1 = [core.abstract_unit if pval[0] is None else pval[0]
+                 for pval in pvals_out]
+  jaxpr1_noconsts = core.TypedJaxpr(jaxpr1_noconsts, consts, in_avals_1, out_avals_1)
+  print(jaxpr1_noconsts)
+
+  jaxpr1_args = [core.unit if aval is core.abstract_unit else t.pval[1]
+                 for aval, t in zip(in_avals_1, tracers)]
+
+  linear_1 = [lin or aval is core.unit for aval, lin in zip(in_avals_1, linear)]
+  out_flat = scan_p.bind(
+      *jaxpr1_args, forward=forward, length=length, jaxpr=jaxpr1_noconsts,
+      num_consts=num_consts, num_carry=num_carry, linear=linear_1)
+  out_carry, ys, residuals = split_list(out_flat, [num_carry, num_ys])
+  jaxpr2_new_consts = 
+  # args for second scan:
+  # consts from extensive pvals_out, num_consts, num_carry, orig extensive in, residual extensive in
+
+  
   in_consts = [core.unit if uk else t.pval[1] for uk, t in zip(unknowns, tracers)]
   new_tracers = [trace.instantiate_const(t) if uk else trace.new_instantiated_literal(core.unit)
                  for uk, t in zip(unknowns, tracers)]
