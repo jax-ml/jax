@@ -26,14 +26,6 @@ from .lax_numpy import _wraps
 from . import lax_numpy as np
 
 
-def _promote_to_complex(arg):
-  dtype = np.result_type(arg, onp.complex64)
-  # XLA's FFT op only supports C64.
-  if dtype == onp.complex128:
-    dtype = onp.complex64
-  return lax.convert_element_type(arg, dtype)
-
-
 def _fft_core(func_name, fft_type, a, s, axes, norm):
   # TODO(skye): implement padding/cropping based on 's'.
   full_name = "jax.np.fft." + func_name
@@ -52,10 +44,6 @@ def _fft_core(func_name, fft_type, a, s, axes, norm):
     else:
       axes = range(a.ndim - len(s), a.ndim)
 
-  # XLA doesn't support 0-rank axes.
-  if len(axes) == 0:
-    return a
-
   if len(axes) != len(set(axes)):
     raise ValueError(
         "%s does not support repeated axes. Got axes %s." % (full_name, axes))
@@ -66,8 +54,13 @@ def _fft_core(func_name, fft_type, a, s, axes, norm):
         " Got axes %s with input rank %s." % (full_name, orig_axes, a.ndim))
 
   if s is None:
-    s = [a.shape[axis] for axis in axes]
-  a = _promote_to_complex(a)
+    if fft_type == xla_client.FftType.IRFFT:
+      s = [a.shape[axis] for axis in axes[:-1]]
+      if axes:
+        s += [2 * (a.shape[axes[-1]] - 1)]
+    else:
+      s = [a.shape[axis] for axis in axes]
+
   return lax.fft(a, fft_type, s)
 
 
@@ -79,6 +72,16 @@ def fftn(a, s=None, axes=None, norm=None):
 @_wraps(onp.fft.ifftn)
 def ifftn(a, s=None, axes=None, norm=None):
   return _fft_core('ifftn', xla_client.FftType.IFFT, a, s, axes, norm)
+
+
+@_wraps(onp.fft.fftn)
+def rfftn(a, s=None, axes=None, norm=None):
+  return _fft_core('rfftn', xla_client.FftType.RFFT, a, s, axes, norm)
+
+
+@_wraps(onp.fft.ifftn)
+def irfftn(a, s=None, axes=None, norm=None):
+  return _fft_core('irfftn', xla_client.FftType.IRFFT, a, s, axes, norm)
 
 
 for func in get_module_functions(onp.fft):
