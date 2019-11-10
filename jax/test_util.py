@@ -66,34 +66,33 @@ def is_sequence(x):
   else:
     return True
 
-def numpy_eq(x, y):
+
+def assert_numpy_eq(x, y):
   testing_tpu = FLAGS.jax_test_dut and FLAGS.jax_test_dut.startswith("tpu")
   testing_x32 = not FLAGS.jax_enable_x64
   if testing_tpu or testing_x32:
-    return onp.allclose(x, y, 1e-3, 1e-3, equal_nan=testing_tpu)
+    onp.testing.assert_allclose(x, y, 1e-3, 1e-3)
   else:
-    return onp.allclose(x, y)
+    onp.testing.assert_allclose(x, y)
 
 
-def numpy_close(a, b, atol=ATOL, rtol=RTOL, equal_nan=False):
+def assert_numpy_close(a, b, atol=ATOL, rtol=RTOL):
   testing_tpu = FLAGS.jax_test_dut and FLAGS.jax_test_dut.startswith("tpu")
   testing_x32 = not FLAGS.jax_enable_x64
   if testing_tpu or testing_x32:
     atol = max(atol, 1e-1)
     rtol = max(rtol, 1e-1)
   assert a.shape == b.shape
-  return onp.allclose(a, b, atol=atol * a.size, rtol=rtol * b.size,
-                      equal_nan=equal_nan or testing_tpu)
+  onp.testing.assert_allclose(a, b, atol=atol * a.size, rtol=rtol * b.size)
 
 
 def check_eq(xs, ys):
-  assert tree_all(tree_multimap(numpy_eq, xs, ys)), \
-      '\n{} != \n{}'.format(xs, ys)
+  tree_all(tree_multimap(assert_numpy_eq, xs, ys))
 
 
 def check_close(xs, ys, atol=ATOL, rtol=RTOL):
-  close = partial(numpy_close, atol=atol, rtol=rtol)
-  assert tree_all(tree_multimap(close, xs, ys)), '\n{} != \n{}'.format(xs, ys)
+  assert_close = partial(assert_numpy_close, atol=atol, rtol=rtol)
+  tree_all(tree_multimap(assert_close, xs, ys))
 
 
 def inner_prod(xs, ys):
@@ -531,11 +530,7 @@ class JaxTestCase(parameterized.TestCase):
       atol = max(atol, 0.5)
       rtol = max(rtol, 1e-1)
 
-    if not onp.allclose(x, y, atol=atol, rtol=rtol, equal_nan=True):
-      msg = ('Arguments x and y not equal to tolerance atol={}, rtol={}:\n'
-             'x:\n{}\n'
-             'y:\n{}\n').format(atol, rtol, x, y)
-      raise self.failureException(msg)
+    onp.testing.assert_allclose(x, y, atol=atol, rtol=rtol)
 
     if check_dtypes:
       self.assertDtypesMatch(x, y)
