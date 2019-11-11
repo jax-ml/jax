@@ -284,7 +284,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     assert onp.max(
       onp.linalg.norm(onp.abs(new_w*(v+dv) - onp.dot(new_a, (v+dv))), axis=0) /
       onp.linalg.norm(onp.abs(new_w*(v+dv)), axis=0)
-    ) < (30 * RTOL)
+    ) < RTOL
 
   def testEighGradDegenerate(self):
     rng = jtu.rand_default()

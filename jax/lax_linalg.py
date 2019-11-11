@@ -309,13 +309,14 @@ def eigh_jvp_rule(primals, tangents, lower, handle_degeneracies):
     dw = dw[..., order]
 
     deltas_dot = dw[..., np.newaxis, :] - dw[..., np.newaxis]
-    same_subspace = abs(deltas_dot) < epsilon
-    # If there are still some degenerate eigenvalue derivatives, we can use the
-    # original basis of eigenvectors, so set C=0.
-    Fmat_dot = np.where(same_subspace, 0.0, 1.0 / deltas_dot)
+    same_dot_subspace = abs(deltas_dot) < epsilon
+    # If there are still some degenerate eigenvalue derivatives, the choice of
+    # basis is arbitrary (up to first order perturbations), so it's safe to set
+    # these terms in C_dot to 0.
+    Fmat_dot = np.where(same_dot_subspace, 0.0, 1.0 / deltas_dot)
     vdag_adot_dv_non_degen = dot(vdag_adot, dv_non_degenerate)
-    C = Fmat_dot * vdag_adot_dv_non_degen
-    dv = dot(v, C)
+    C_dot = Fmat_dot * vdag_adot_dv_non_degen
+    dv = dot(v, np.where(same_subspace, C_dot, C))
     v = dot(v, A)
   else:
     dv = dv_non_degenerate
