@@ -516,7 +516,10 @@ def logaddexp(x1, x2):
   x1, x2 = _promote_shapes("logaddexp",
                            *_promote_to_result_dtype(onp.logaddexp, x1, x2))
   amax = lax.max(x1, x2)
-  return lax.add(amax, lax.log1p(lax.exp(-lax.abs(lax.sub(x1, x2)))))
+  delta = lax.sub(x1, x2)
+  return lax.select(isnan(delta),
+                    lax.add(x1, x2),  # NaNs or infinities of the same sign.
+                    lax.add(amax, lax.log1p(lax.exp(-lax.abs(delta)))))
 
 
 @_wraps(onp.logaddexp2)
@@ -524,8 +527,12 @@ def logaddexp2(x1, x2):
   x1, x2 = _promote_shapes("logaddexp2",
                            *_promote_to_result_dtype(onp.logaddexp2, x1, x2))
   amax = lax.max(x1, x2)
-  return lax.add(amax, lax.div(lax.log1p(exp2(-lax.abs(lax.sub(x1, x2)))),
-                               _constant_like(x1, onp.log(2))))
+  delta = lax.sub(x1, x2)
+  return lax.select(isnan(delta),
+                    lax.add(x1, x2),  # NaNs or infinities of the same sign.
+                    lax.add(amax, lax.div(lax.log1p(exp2(-lax.abs(delta))),
+                                          _constant_like(x1, onp.log(2)))))
+
 
 @_wraps(onp.log2)
 def log2(x):
@@ -979,11 +986,11 @@ def clip(a, a_min=None, a_max=None):
   if a_min is not None:
     if _dtype(a_min) != _dtype(a):
       a_min = lax.convert_element_type(a_min, _dtype(a))
-    a = lax.max(a_min, a)
+    a = maximum(a_min, a)
   if a_max is not None:
     if _dtype(a_max) != _dtype(a):
       a_max = lax.convert_element_type(a_max, _dtype(a))
-    a = lax.min(a_max, a)
+    a = minimum(a_max, a)
   return a
 
 
@@ -2548,9 +2555,13 @@ def _rewriting_take(arr, idx):
 def _gather(arr, treedef, static_idx, dynamic_idx):
   idx = _merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
   indexer = _index_to_gather(shape(arr), idx)  # shared with _scatter_update
+  y = arr
 
-  y = lax.gather(arr, indexer.gather_indices, indexer.dnums,
-                 indexer.gather_slice_shape)
+  # We avoid generating a gather when indexer.gather_indices.size is empty
+  # unless indexer.slice_shape also corresponds to an empty array.
+  if indexer.gather_indices.size or not _prod(indexer.slice_shape):
+    y = lax.gather(y, indexer.gather_indices, indexer.dnums,
+                   indexer.gather_slice_shape)
 
   # Reverses axes with negative strides.
   if indexer.reversed_y_dims:

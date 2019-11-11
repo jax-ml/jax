@@ -349,7 +349,7 @@ def convert_element_type(operand, new_dtype):
     An array with the same shape as `operand`, cast elementwise to `new_dtype`.
   """
   new_dtype = xla_bridge.canonicalize_dtype(new_dtype)
-  old_dtype = _dtype(operand)
+  old_dtype = xla_bridge.canonicalize_dtype(_dtype(operand))
   if old_dtype != new_dtype:
     if (onp.issubdtype(old_dtype, onp.complexfloating) and
         not onp.issubdtype(new_dtype, onp.complexfloating)):

@@ -84,7 +84,10 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_axis={}_keepdims={}".format(
           jtu.format_shape_dtype_string(shape, dtype), axis, keepdims),
-       "rng": jtu.rand_default(), "shape": shape, "dtype": dtype,
+       # TODO(b/133842870): re-enable when exp(nan) returns NaN on CPU.
+       "rng": jtu.rand_some_inf_and_nan() if jtu.device_under_test() != "cpu"
+              else jtu.rand_default(),
+       "shape": shape, "dtype": dtype,
        "axis": axis, "keepdims": keepdims}
       for shape in all_shapes for dtype in float_dtypes
       for axis in range(-len(shape), len(shape))

@@ -208,7 +208,7 @@ pxla.split_axis_rules[psum_p] = \
     partial(_allreduce_split_axis_rule, psum_p, lax._reduce_sum)
 xla.parallel_translations[psum_p] = _psum_translation_rule
 pxla.parallel_pure_rules[psum_p] = lambda x, shape: x * prod(shape)
-ad.deflinear(psum_p, lambda t, axis_name: [t])
+ad.deflinear(psum_p, lambda t, axis_name: [psum(t, axis_name)])
 
 
 pmax_p = standard_pmap_primitive('pmax')
