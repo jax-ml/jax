@@ -85,6 +85,7 @@ ClipByGlobalNormState = collections.namedtuple("ClipByGlobalNormState", "")
 
 def global_norm(items):
   return jnp.sqrt(jnp.sum([jnp.sum(x**2) for x in tree_leaves(items)]))
+_global_norm = global_norm  # TODO(mtthss): remove when google code updated
 
 
 def clip_by_global_norm(max_norm):
