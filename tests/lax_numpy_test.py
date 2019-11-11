@@ -597,7 +597,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testDot(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype, rng_factory):
     rng = rng_factory()
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
-    tol_spec = {onp.float16: 1e-2}
+    tol_spec = {onp.float16: 1e-2, onp.float32: 1e-5, onp.float64: 1e-14}
     tol = max(tolerance(lhs_dtype, tol_spec), tolerance(rhs_dtype, tol_spec))
     self._CheckAgainstNumpy(onp.dot, lnp.dot, args_maker, check_dtypes=True,
                             tol=tol)
@@ -1975,7 +1975,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
             shape, dtype, rowvar, ddof, bias),
          "shape": shape, "dtype": dtype, "rowvar": rowvar, "ddof": ddof,
          "bias": bias, "rng_factory": rng_factory}
-        for shape in [(5,), (10, 5), (3, 10)]
+        for shape in [(5,), (10, 5), (5, 10)]
         for dtype in all_dtypes
         for rowvar in [True, False]
         for bias in [True, False]
