@@ -1989,7 +1989,7 @@ def collect(f, path_filter=lambda path: True, scope_argnum=0):
     flat_args, in_tree = tree_flatten((args, kwargs))
     flat_fun, out_tree = flatten_fun(fun, in_tree)
     paths = (None,) * scope_argnum + ((),) + (None,) * (len(flat_args) - scope_argnum - 1)
-    out_flat, _, tree = tagging.tag_fun(flat_fun, flat_args, paths, None, dict())
+    out_flat, tree = tagging.tag_fun(flat_fun, flat_args, paths, None, dict())
     tree = as_dict((path, val) for path, val in iterpaths(tree) if path_filter(path))
     return tree_unflatten(out_tree(), out_flat), tree
   return collect_fn
@@ -2037,7 +2037,7 @@ def inject(f, tree, accum_fn=lambda old, new: new, scope_argnum=0):
     flat_args, in_tree = tree_flatten((args, kwargs))
     flat_fun, out_tree = flatten_fun(fun, in_tree)
     paths = (None,) * scope_argnum + ((),) + (None,) * (len(flat_args) - scope_argnum - 1)
-    out_vals, _, _, = tagging.tag_fun(flat_fun, flat_args, paths, accum_fn, tree)
+    out_vals, _ = tagging.tag_fun(flat_fun, flat_args, paths, accum_fn, tree)
     return tree_unflatten(out_tree(), out_vals)
   return inject_fn
 

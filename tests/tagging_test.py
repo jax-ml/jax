@@ -43,7 +43,6 @@ class TaggingTest(jtu.JaxTestCase):
       y = lax.tag(x ** 2, "y")
       z = y + 1
       return z
-    self.skipTest("collect(jit) doesn't work yet")
     val, tree = collect(jit(foo))(2.)
     self.assertAllClose(val, foo(2.), check_dtypes=True)
     self.assertAllClose(tree, {"y": 4.}, check_dtypes=True)

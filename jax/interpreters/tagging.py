@@ -41,6 +41,8 @@ from ..ad_util import add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_
 from ..linear_util import transformation, transformation_with_aux, wrap_init
 from ..dict_util import maybe_set_dict
 from ..util import unzip2, partial, safe_map
+from ..api_util import flatten_fun, flatten_fun_nokwargs
+from ..tree_util import tree_flatten, tree_unflatten
 from . import xla
 from . import partial_eval as pe
 
@@ -102,8 +104,12 @@ class TagTrace(core.Trace):
 
   def process_call(self, call_primitive, f, tracers, params):
     in_vals, in_paths = unzip2((t.val, t.path) for t in tracers)
-    f_key, out_paths = tag_subtrace(f, self, in_paths)
-    out_vals = call_primitive.bind(f_key, *in_vals, **params)
+    f_tag, out_paths = tag_subtrace(f, self, in_paths)
+    all_args, in_treedef = tree_flatten((self.tree, in_vals))
+    f_tag_flat, out_treedef = flatten_fun_nokwargs(f_tag, in_treedef)
+    out_flat = call_primitive.bind(f_tag_flat, *all_args, **params)
+    out_vals, out_tree = tree_unflatten(out_treedef(), out_flat)
+    self.tree.update(out_tree)
     return [TagTracer(self, v, p) for v, p in zip(out_vals, out_paths())]
 
   def process_map(self, map_primitive, f, tracers, params):
@@ -135,18 +141,24 @@ class TagTracer(core.Tracer):
 
 
 @transformation_with_aux
-def tag_subtrace(parent, in_paths, *in_vals):
+def tag_subtrace(parent, in_paths, in_tree, in_vals):
   trace = parent.with_sublevel(core.cur_sublevel())
+  trace.tree = in_tree
   in_tracers = map(partial(TagTracer, trace), in_vals, in_paths)
   outs = yield in_tracers, {}
   out_tracers = map(trace.full_raise, outs)
   out_vals, out_paths = unzip2((t.val, t.path) for t in out_tracers)
-  yield out_vals, out_paths
+  out_tree = trace.tree
+  yield (out_vals, out_tree), out_paths
 
 def tag_fun(fun, in_vals, in_paths, accum_fn, in_tree):
   with core.new_master(TagTrace) as master:
-    trace = TagTrace(master, core.cur_sublevel(), accum_fn, in_tree)
-    fun, out_paths = tag_subtrace(fun, trace, in_paths)
-    out_vals = fun.call_wrapped(*in_vals)
+    trace = TagTrace(master, core.cur_sublevel(), accum_fn)
+    f_tag, out_paths = tag_subtrace(fun, trace, in_paths)
+    all_args, in_treedef = tree_flatten((in_tree, in_vals))
+    f_tag_flat, out_treedef = flatten_fun_nokwargs(f_tag, in_treedef)
+    out_flat = f_tag_flat.call_wrapped(*all_args)
+    out_vals, out_tree = tree_unflatten(out_treedef(), out_flat)
+    in_tree.update(out_tree)
     del master
-  return out_vals, out_paths(), trace.tree
+  return out_vals, in_tree
