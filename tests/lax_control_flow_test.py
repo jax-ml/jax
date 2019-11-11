@@ -1368,7 +1368,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
   def testIssue810(self):
     def loss(A):
       def step(x, i):
-        return A @ x, None
+        return np.matmul(A, x), None
       init_x = np.zeros(A.shape[-1:])
       last_x, _ = lax.scan(step, init_x, np.arange(10))
       return np.sum(last_x)
