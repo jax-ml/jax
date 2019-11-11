@@ -53,14 +53,15 @@ class FftTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inverse={}_shape={}_axes={}".format(
           inverse, jtu.format_shape_dtype_string(shape, dtype), axes),
-       "axes": axes, "shape": shape, "dtype": dtype, "rng": rng,
+       "axes": axes, "shape": shape, "dtype": dtype, "rng_factory": rng_factory,
        "inverse": inverse}
       for inverse in [False, True]
-      for rng in [jtu.rand_default()]
+      for rng_factory in [jtu.rand_default]
       for dtype in all_dtypes
       for shape in [(10,), (10, 10), (2, 3, 4), (2, 3, 4, 5)]
       for axes in _get_fftn_test_axes(shape)))
-  def testFftn(self, inverse, shape, dtype, axes, rng):
+  def testFftn(self, inverse, shape, dtype, axes, rng_factory):
+    rng = rng_factory()
     args_maker = lambda: (rng(shape, dtype),)
     np_op = np.fft.ifftn if inverse else np.fft.fftn
     onp_op = onp.fft.ifftn if inverse else onp.fft.fftn
