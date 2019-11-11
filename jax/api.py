@@ -51,8 +51,8 @@ from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                         _replace_nones)
 from .util import (unzip2, unzip3, curry, partial, safe_map, safe_zip,
                    WrapHashably, Hashable, prod, split_list)
-from .lib.xla_bridge import (canonicalize_dtype, device_count,
-                             local_device_count, devices, local_devices,
+from .lib import xla_bridge as xb
+from .lib.xla_bridge import (device_count, local_device_count, devices, local_devices,
                              host_id, host_ids, host_count)
 from .abstract_arrays import ShapedArray, raise_to_shaped
 from .interpreters import partial_eval as pe
@@ -276,10 +276,7 @@ def xla_computation(fun, static_argnums=(), axis_env=None, backend=None,
   }
   """
   _check_callable(fun)
-
-  def pv_like(x):
-    aval = xla.abstractify(x)
-    return pe.PartialVal((aval, core.unit))
+  fun_name = getattr(fun, '__name__', 'unknown')
 
   def make_axis_env(nreps):
     if axis_env is None:
@@ -294,11 +291,16 @@ def xla_computation(fun, static_argnums=(), axis_env=None, backend=None,
     wrapped = lu.wrap_init(fun)
     jax_args, in_tree = tree_flatten((args, kwargs))
     jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
-    pvals = map(pv_like, jax_args)
+    avals = map(xla.abstractify, jax_args)
+    pvals = [pe.PartialVal((aval, core.unit)) for aval in avals]
     jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
     axis_env_ = make_axis_env(xla.jaxpr_replicas(jaxpr))
-    return xla.build_jaxpr(jaxpr, backend, axis_env_, consts, tuple_args,
-                           *map(xla.abstractify, jax_args))
+    c = xb.make_computation_builder('xla_computation_{}'.format(fun_name))
+    xla_consts = map(c.Constant, consts)
+    xla_args = xla._xla_callable_args(c, avals, tuple_args)
+    outs = xla.jaxpr_subcomp(c, jaxpr, backend, axis_env_, xla_consts, (),
+                             *xla_args)
+    return c.Build(c.Tuple(*outs))
   return computation_maker
 
 def grad(fun, argnums=0, has_aux=False, holomorphic=False):
@@ -558,7 +560,7 @@ def _split(x, indices, axis):
     return x.split(indices, axis)
 
 def _dtype(x):
-  return canonicalize_dtype(onp.result_type(x))
+  return xb.canonicalize_dtype(onp.result_type(x))
 
 
 def vmap(fun, in_axes=0, out_axes=0):

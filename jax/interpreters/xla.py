@@ -498,9 +498,9 @@ def lower_fun(fun, instantiate=False, initial_style=False):
     pvals = [pe.PartialVal((a, core.unit)) for a in avals]
     jaxpr, _, consts = pe.trace_to_jaxpr(
         lu.wrap_init(fun, params), pvals, instantiate=True)
-    built_c = jaxpr_computation(jaxpr, backend, axis_env, consts, (),
-                                xla_shapes, inner=True)
-    return c.Call(built_c, xla_args)
+    consts = _map(c.Constant, consts)
+    outs = jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, (), *xla_args)
+    return c.Tuple(*outs)
   return f
 
 def _aval_from_xla_shape(xla_shape):
