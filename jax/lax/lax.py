@@ -4019,7 +4019,7 @@ push_tag_p.def_abstract_eval(lambda x, name: x)
 xla.translations[push_tag_p] = lambda c, x, name: x
 ad.deflinear(push_tag_p, lambda t, name: [push_tag(t, name)])
 batching.primitive_batchers[push_tag_p] = \
-    lambda a, d, name: (push_tag(a[0]), d[0])
+    lambda a, d, name: (push_tag(a[0], name), d[0])
 tagging.custom_tagging_rules[push_tag_p] = _push_tag_tagging_rule
 
 
