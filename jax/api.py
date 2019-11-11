@@ -1971,7 +1971,7 @@ def collect(f, path_filter=lambda path: True, scope_argnum=0):
   ...   z = y + 1
   ...   return z
   >>> collect(foo)(2.)
-  (5., {"y": 4.})
+  (DeviceArray(5., dtype=float32), {'y': DeviceArray(4., dtype=float32)})
 
   >>> def bar(key, x):
   ...   y = lax.tag(random.normal(random.fold_in(key, "y")))
@@ -1981,7 +1981,8 @@ def collect(f, path_filter=lambda path: True, scope_argnum=0):
   ...   b = bar(random.fold_in(key, 2), x)
   ...   return a + b
   >>> collect(baz)(random.PRNGKey(0), 2.)
-  (4.2031232, {1: {"y": 0.723153976}, 2: {"y": 0.34818583}})
+  (DeviceArray(5.1561937, dtype=float32), {1: {'y': DeviceArray(0.2645052, dtype=float32)},
+  2: {'y': DeviceArray(0.8916887, dtype=float32)}})
   """
   fun = lu.wrap_init(f)
   def collect_fn(*args, **kwargs):
@@ -2019,7 +2020,7 @@ def inject(f, tree, accum_fn=lambda old, new: new, scope_argnum=0):
   ...   z = y + 1
   ...   return z
   >>> inject(foo, {"y": 1.})(2.)
-  2.
+  DeviceArray(2., dtype=float32)
 
   >>> def bar(key, x):
   ...   y = lax.tag(random.normal(random.fold_in(key, "y")))
@@ -2029,7 +2030,7 @@ def inject(f, tree, accum_fn=lambda old, new: new, scope_argnum=0):
   ...   b = bar(random.fold_in(key, 2), x)
   ...   return a + b
   >>> inject(baz, {1: {"y": 0.3}, 2: {"y": 0.5}})(random.PRNGKey(0), 2.)
-  4.8
+  DeviceArray(4.8, dtype=float32)
   """
   fun = lu.wrap_init(f)
   def inject_fn(*args, **kwargs):
