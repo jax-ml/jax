@@ -38,7 +38,6 @@ def elu(x, alpha=1.0):
   x = np.asarray(x)
   alpha = np.asarray(alpha, x.dtype)
   safe_x = lax.select(x > 0, np.zeros(onp.shape(x), x.dtype), x)
-  print(x.dtype, safe_x.dtype, np.expm1(safe_x).dtype, type(alpha), (alpha * np.expm1(safe_x)).dtype )
   return lax.select(x > 0, x, alpha * np.expm1(safe_x))
 
 def leaky_relu(x, negative_slope=1e-2):
