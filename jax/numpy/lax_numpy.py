@@ -516,7 +516,10 @@ def logaddexp(x1, x2):
   x1, x2 = _promote_shapes("logaddexp",
                            *_promote_to_result_dtype(onp.logaddexp, x1, x2))
   amax = lax.max(x1, x2)
-  return lax.add(amax, lax.log1p(lax.exp(-lax.abs(lax.sub(x1, x2)))))
+  delta = lax.sub(x1, x2)
+  return lax.select(isnan(delta),
+                    lax.add(x1, x2),  # NaNs or infinities of the same sign.
+                    lax.add(amax, lax.log1p(lax.exp(-lax.abs(delta)))))
 
 
 @_wraps(onp.logaddexp2)
@@ -524,8 +527,12 @@ def logaddexp2(x1, x2):
   x1, x2 = _promote_shapes("logaddexp2",
                            *_promote_to_result_dtype(onp.logaddexp2, x1, x2))
   amax = lax.max(x1, x2)
-  return lax.add(amax, lax.div(lax.log1p(exp2(-lax.abs(lax.sub(x1, x2)))),
-                               _constant_like(x1, onp.log(2))))
+  delta = lax.sub(x1, x2)
+  return lax.select(isnan(delta),
+                    lax.add(x1, x2),  # NaNs or infinities of the same sign.
+                    lax.add(amax, lax.div(lax.log1p(exp2(-lax.abs(delta))),
+                                          _constant_like(x1, onp.log(2)))))
+
 
 @_wraps(onp.log2)
 def log2(x):
@@ -1009,11 +1016,11 @@ def clip(a, a_min=None, a_max=None):
   if a_min is not None:
     if _dtype(a_min) != _dtype(a):
       a_min = lax.convert_element_type(a_min, _dtype(a))
-    a = lax.max(a_min, a)
+    a = maximum(a_min, a)
   if a_max is not None:
     if _dtype(a_max) != _dtype(a):
       a_max = lax.convert_element_type(a_max, _dtype(a))
-    a = lax.min(a_max, a)
+    a = minimum(a_max, a)
   return a
 
 
@@ -1700,6 +1707,7 @@ def arange(start, stop=None, step=None, dtype=None):
   # Fall back to instantiating an ndarray in host memory
   return onp.arange(start, stop=stop, step=step, dtype=dtype)
 
+
 def _wrap_numpy_nullary_function(f):
   """Adapts `f` to return a DeviceArray instead of an onp.ndarray.
 
@@ -1710,24 +1718,58 @@ def _wrap_numpy_nullary_function(f):
     return asarray(f(*args, **kwargs))
   return wrapper
 
+
+@_wraps(onp.linspace)
 def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
              axis=0):
+  """Implementation of linspace differentiable in start and stop args."""
   lax._check_user_dtype_supported(dtype, "linspace")
-  try:
-    out = onp.linspace(start, stop, num, endpoint, retstep, dtype, axis)
-    if retstep:
-      return asarray(out[0]), out[1]
-    else:
-      return asarray(out)
-  except TypeError:  # Old versions of onp may lack axis arg.
-    out = onp.linspace(start, stop, num, endpoint, retstep, dtype)
-    if retstep:
-      return moveaxis(asarray(out[0]), 0, axis), out[1]
-    else:
-      return moveaxis(asarray(out), 0, axis)
+  dtype = dtype or onp.result_type(start, stop, float(num))
+  bounds_shape = list(lax.broadcast_shapes(shape(start), shape(stop)))
+  broadcast_start = broadcast_to(start, bounds_shape)
+  axis = len(bounds_shape) + axis + 1 if axis < 0 else axis
+  bounds_shape.insert(axis, 1)
+  iota_shape = [1,] * len(bounds_shape)
+  iota_shape[axis] = num
+  if endpoint:
+    delta = (stop - start) / (num - 1)
+  else:
+    delta = (stop - start) / num
+  out = (reshape(broadcast_start, bounds_shape) +
+         reshape(lax.iota(dtype, num), iota_shape) *
+         reshape(delta, bounds_shape))
+  if retstep:
+    return lax.convert_element_type(out, dtype), delta
+  else:
+    return lax.convert_element_type(out, dtype)
 
-logspace = _wrap_numpy_nullary_function(onp.logspace)
-geomspace = _wrap_numpy_nullary_function(onp.geomspace)
+
+@_wraps(onp.logspace)
+def logspace(start, stop, num=50, endpoint=True, base=10.0, dtype=None, axis=0):
+  """Implementation of logspace differentiable in start and stop args."""
+  lin = linspace(start, stop, num,
+                 endpoint=endpoint, retstep=False, dtype=None, axis=axis)
+  if dtype is None:
+    return power(base, lin)
+  else:
+    return lax.convert_element_type(power(base, lin), dtype)
+
+
+@_wraps(onp.geomspace)
+def geomspace(start, stop, num=50, endpoint=True, dtype=None, axis=0):
+  """Implementation of geomspace differentiable in start and stop args."""
+  dtype = dtype or onp.result_type(start, stop, float(num),
+                                   zeros((), dtype))
+  # follow the numpy geomspace convention for negative and complex endpoints
+  signflip = 1 - (1 - sign(real(start))) * (1 - sign(real(stop))) // 2
+  res = signflip * logspace(log10(signflip * start),
+                            log10(signflip * stop), num,
+                            endpoint=endpoint, base=10.0,
+                            dtype=dtype, axis=0)
+  if axis != 0:
+    res = moveaxis(res, 0, axis)
+  return lax.convert_element_type(res, dtype)
+
 
 @_wraps(onp.meshgrid)
 def meshgrid(*args, **kwargs):
@@ -2580,7 +2622,9 @@ def _gather(arr, treedef, static_idx, dynamic_idx):
   indexer = _index_to_gather(shape(arr), idx)  # shared with _scatter_update
   y = arr
 
-  if indexer.gather_indices.size:
+  # We avoid generating a gather when indexer.gather_indices.size is empty
+  # unless indexer.slice_shape also corresponds to an empty array.
+  if indexer.gather_indices.size or not _prod(indexer.slice_shape):
     y = lax.gather(y, indexer.gather_indices, indexer.dnums,
                    indexer.gather_slice_shape)
 

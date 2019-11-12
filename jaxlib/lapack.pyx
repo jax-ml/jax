@@ -21,7 +21,7 @@
 from __future__ import print_function
 
 from libc.stdlib cimport malloc, free
-from libc.stdint cimport int32_t
+from libc.stdint cimport int32_t, int64_t
 from libc.string cimport memcpy
 from libcpp cimport bool as bool_t
 from libcpp.string cimport string
@@ -65,7 +65,7 @@ cdef void blas_strsm(void* out, void** data) nogil:
 
   cdef float* x = <float*>(out)
   if x != b:
-    memcpy(x, b, m * n * sizeof(float))
+    memcpy(x, b, <int64_t>(m) * <int64_t>(n) * sizeof(float))
 
   cdef char cside = 'L' if left_side else 'R'
   cdef char cuplo = 'L' if lower else 'U'
@@ -94,7 +94,7 @@ cdef void blas_dtrsm(void* out, void** data) nogil:
 
   cdef double* x = <double*>(out)
   if x != b:
-    memcpy(x, b, m * n * sizeof(double))
+    memcpy(x, b, <int64_t>(m) * <int64_t>(n) * sizeof(double))
 
   cdef char cside = 'L' if left_side else 'R'
   cdef char cuplo = 'L' if lower else 'U'
@@ -124,7 +124,7 @@ cdef void blas_ctrsm(void* out, void** data) nogil:
 
   cdef float complex* x = <float complex*>(out)
   if x != b:
-    memcpy(x, b, m * n * sizeof(float complex))
+    memcpy(x, b, <int64_t>(m) * <int64_t>(n) * sizeof(float complex))
 
   cdef char cside = 'L' if left_side else 'R'
   cdef char cuplo = 'L' if lower else 'U'
@@ -153,7 +153,7 @@ cdef void blas_ztrsm(void* out, void** data) nogil:
 
   cdef double complex* x = <double complex*>(out)
   if x != b:
-    memcpy(x, b, m * n * sizeof(double complex))
+    memcpy(x, b, <int64_t>(m) * <int64_t>(n) * sizeof(double complex))
 
   cdef char cside = 'L' if left_side else 'R'
   cdef char cuplo = 'L' if lower else 'U'
@@ -233,7 +233,8 @@ cdef void lapack_sgetrf(void* out_tuple, void** data) nogil:
   cdef int* ipiv = <int*>(out[1])
   cdef int* info = <int*>(out[2])
   if a_out != a_in:
-    memcpy(a_out, a_in, b * m * n * sizeof(float))
+    memcpy(a_out, a_in,
+           <int64_t>(b) * <int64_t>(m) * <int64_t>(n) * sizeof(float))
 
   for i in range(b):
     sgetrf(&m, &n, a_out, &m, ipiv, info)
@@ -255,7 +256,8 @@ cdef void lapack_dgetrf(void* out_tuple, void** data) nogil:
   cdef int* ipiv = <int*>(out[1])
   cdef int* info = <int*>(out[2])
   if a_out != a_in:
-    memcpy(a_out, a_in, b * m * n * sizeof(double))
+    memcpy(a_out, a_in,
+           <int64_t>(b) * <int64_t>(m) * <int64_t>(n) * sizeof(double))
 
   for i in range(b):
     dgetrf(&m, &n, a_out, &m, ipiv, info)
@@ -277,7 +279,8 @@ cdef void lapack_cgetrf(void* out_tuple, void** data) nogil:
   cdef int* ipiv = <int*>(out[1])
   cdef int* info = <int*>(out[2])
   if a_out != a_in:
-    memcpy(a_out, a_in, b * m * n * sizeof(float complex))
+    memcpy(a_out, a_in,
+           <int64_t>(b) * <int64_t>(m) * <int64_t>(n) * sizeof(float complex))
 
   for i in range(b):
     cgetrf(&m, &n, a_out, &m, ipiv, info)
@@ -299,7 +302,8 @@ cdef void lapack_zgetrf(void* out_tuple, void** data) nogil:
   cdef int* ipiv = <int*>(out[1])
   cdef int* info = <int*>(out[2])
   if a_out != a_in:
-    memcpy(a_out, a_in, b * m * n * sizeof(double complex))
+    memcpy(a_out, a_in,
+           <int64_t>(b) * <int64_t>(m) * <int64_t>(n) * sizeof(double complex))
 
   for i in range(b):
     zgetrf(&m, &n, a_out, &m, ipiv, info)
@@ -390,7 +394,8 @@ cdef void lapack_sgeqrf(void* out_tuple, void** data) nogil:
   cdef float* work = <float*>(out[3])
 
   if a_out != a_in:
-    memcpy(a_out, a_in, b * m * n * sizeof(float))
+    memcpy(a_out, a_in,
+           <int64_t>(b) * <int64_t>(m) * <int64_t>(n) * sizeof(float))
 
   for i in range(b):
     sgeqrf(&m, &n, a_out, &m, tau, work, &lwork, info)
@@ -421,7 +426,8 @@ cdef void lapack_dgeqrf(void* out_tuple, void** data) nogil:
   cdef double* work = <double*>(out[3])
 
   if a_out != a_in:
-    memcpy(a_out, a_in, b * m * n * sizeof(double))
+    memcpy(a_out, a_in,
+           <int64_t>(b) * <int64_t>(m) * <int64_t>(n) * sizeof(double))
 
   for i in range(b):
     dgeqrf(&m, &n, a_out, &m, tau, work, &lwork, info)
@@ -452,7 +458,8 @@ cdef void lapack_cgeqrf(void* out_tuple, void** data) nogil:
   cdef float complex* work = <float complex*>(out[3])
 
   if a_out != a_in:
-    memcpy(a_out, a_in, b * m * n * sizeof(float complex))
+    memcpy(a_out, a_in,
+           <int64_t>(b) * <int64_t>(m) * <int64_t>(n) * sizeof(float complex))
 
   for i in range(b):
     cgeqrf(&m, &n, a_out, &m, tau, work, &lwork, info)
@@ -483,7 +490,8 @@ cdef void lapack_zgeqrf(void* out_tuple, void** data) nogil:
   cdef double complex* work = <double complex*>(out[3])
 
   if a_out != a_in:
-    memcpy(a_out, a_in, b * m * n * sizeof(double complex))
+    memcpy(a_out, a_in,
+           <int64_t>(b) * <int64_t>(m) * <int64_t>(n) * sizeof(double complex))
 
   for i in range(b):
     zgeqrf(&m, &n, a_out, &m, tau, work, &lwork, info)
@@ -580,7 +588,8 @@ cdef void lapack_sorgqr(void* out_tuple, void** data) nogil:
   cdef float* work = <float*>(out[2])
 
   if a_out != a_in:
-    memcpy(a_out, a_in, b * m * n * sizeof(float))
+    memcpy(a_out, a_in,
+           <int64_t>(b) * <int64_t>(m) * <int64_t>(n) * sizeof(float))
 
   for i in range(b):
     sorgqr(&m, &n, &k, a_out, &m, tau, work, &lwork, info)
@@ -612,7 +621,8 @@ cdef void lapack_dorgqr(void* out_tuple, void** data) nogil:
   cdef double* work = <double*>(out[2])
 
   if a_out != a_in:
-    memcpy(a_out, a_in, b * m * n * sizeof(double))
+    memcpy(a_out, a_in,
+           <int64_t>(b) * <int64_t>(m) * <int64_t>(n) * sizeof(double))
 
   for i in range(b):
     dorgqr(&m, &n, &k, a_out, &m, tau, work, &lwork, info)
@@ -644,7 +654,8 @@ cdef void lapack_cungqr(void* out_tuple, void** data) nogil:
   cdef float complex* work = <float complex*>(out[2])
 
   if a_out != a_in:
-    memcpy(a_out, a_in, b * m * n * sizeof(float complex))
+    memcpy(a_out, a_in,
+           <int64_t>(b) * <int64_t>(m) * <int64_t>(n) * sizeof(float complex))
 
   for i in range(b):
     cungqr(&m, &n, &k, a_out, &m, tau, work, &lwork, info)
@@ -676,7 +687,8 @@ cdef void lapack_zungqr(void* out_tuple, void** data) nogil:
   cdef double complex* work = <double complex*>(out[2])
 
   if a_out != a_in:
-    memcpy(a_out, a_in, b * m * n * sizeof(double complex))
+    memcpy(a_out, a_in,
+           <int64_t>(b) * <int64_t>(m) * <int64_t>(n) * sizeof(double complex))
 
   for i in range(b):
     zungqr(&m, &n, &k, a_out, &m, tau, work, &lwork, info)
@@ -769,7 +781,7 @@ cdef void lapack_spotrf(void* out_tuple, void** data) nogil:
   cdef float* a_out = <float*>(out[0])
   cdef int* info = <int*>(out[1])
   if a_out != a_in:
-    memcpy(a_out, a_in, n * n * sizeof(float))
+    memcpy(a_out, a_in, <int64_t>(n) * <int64_t>(n) * sizeof(float))
 
   spotrf(&uplo, &n, a_out, &n, info)
 
@@ -786,7 +798,7 @@ cdef void lapack_dpotrf(void* out_tuple, void** data) nogil:
   cdef double* a_out = <double*>(out[0])
   cdef int* info = <int*>(out[1])
   if a_out != a_in:
-    memcpy(a_out, a_in, n * n * sizeof(double))
+    memcpy(a_out, a_in, <int64_t>(n) * <int64_t>(n) * sizeof(double))
 
   dpotrf(&uplo, &n, a_out, &n, info)
 
@@ -803,7 +815,7 @@ cdef void lapack_cpotrf(void* out_tuple, void** data) nogil:
   cdef float complex* a_out = <float complex*>(out[0])
   cdef int* info = <int*>(out[1])
   if a_out != a_in:
-    memcpy(a_out, a_in, n * n * sizeof(float complex))
+    memcpy(a_out, a_in, <int64_t>(n) * <int64_t>(n) * sizeof(float complex))
 
   cpotrf(&uplo, &n, a_out, &n, info)
 
@@ -819,7 +831,7 @@ cdef void lapack_zpotrf(void* out_tuple, void** data) nogil:
   cdef double complex* a_out = <double complex*>(out[0])
   cdef int* info = <int*>(out[1])
   if a_out != a_in:
-    memcpy(a_out, a_in, n * n * sizeof(double complex))
+    memcpy(a_out, a_in, <int64_t>(n) * <int64_t>(n) * sizeof(double complex))
 
   zpotrf(&uplo, &n, a_out, &n, info)
 
@@ -915,7 +927,8 @@ cdef void lapack_sgesdd(void* out_tuple, void** data) nogil:
   cdef float* work = <float*>(out[6])
 
   if a_out != a_in:
-    memcpy(a_out, a_in, b * m * n * sizeof(float))
+    memcpy(a_out, a_in,
+           <int64_t>(b) * <int64_t>(m) * <int64_t>(n) * sizeof(float))
 
   cdef char jobz = gesdd_jobz(job_opt_compute_uv, job_opt_full_matrices)
 
@@ -966,7 +979,8 @@ cdef void lapack_dgesdd(void* out_tuple, void** data) nogil:
   cdef double* work = <double*>(out[6])
 
   if a_out != a_in:
-    memcpy(a_out, a_in, b * m * n * sizeof(double))
+    memcpy(a_out, a_in,
+           <int64_t>(b) * <int64_t>(m) * <int64_t>(n) * sizeof(double))
 
   cdef char jobz = gesdd_jobz(job_opt_compute_uv, job_opt_full_matrices)
 
@@ -1017,7 +1031,8 @@ cdef void lapack_cgesdd(void* out_tuple, void** data) nogil:
   cdef float complex* work = <float complex*>(out[7])
 
   if a_out != a_in:
-    memcpy(a_out, a_in, b * m * n * sizeof(float complex))
+    memcpy(a_out, a_in,
+           <int64_t>(b) * <int64_t>(m) * <int64_t>(n) * sizeof(float complex))
 
   cdef char jobz = gesdd_jobz(job_opt_compute_uv, job_opt_full_matrices)
 
@@ -1069,7 +1084,8 @@ cdef void lapack_zgesdd(void* out_tuple, void** data) nogil:
   cdef double complex* work = <double complex*>(out[7])
 
   if a_out != a_in:
-    memcpy(a_out, a_in, b * m * n * sizeof(double complex))
+    memcpy(a_out, a_in,
+           <int64_t>(b) * <int64_t>(m) * <int64_t>(n) * sizeof(double complex))
 
   cdef char jobz = gesdd_jobz(job_opt_compute_uv, job_opt_full_matrices)
 
@@ -1202,7 +1218,8 @@ cdef void lapack_ssyevd(void* out_tuple, void** data) nogil:
   cdef float* work = <float*>(out[3])
   cdef int* iwork = <int*>(out[4])
   if a_out != a_in:
-    memcpy(a_out, a_in, b * n * n * sizeof(float))
+    memcpy(a_out, a_in,
+           <int64_t>(b) * <int64_t>(n) * <int64_t>(n) * sizeof(float))
 
   cdef char jobz = 'V'
   cdef char uplo = 'L' if lower else 'U'
@@ -1231,7 +1248,8 @@ cdef void lapack_dsyevd(void* out_tuple, void** data) nogil:
   cdef double* work = <double*>(out[3])
   cdef int* iwork = <int*>(out[4])
   if a_out != a_in:
-    memcpy(a_out, a_in, b * n * n * sizeof(double))
+    memcpy(a_out, a_in,
+           <int64_t>(b) * <int64_t>(n) * <int64_t>(n) * sizeof(double))
 
   cdef char jobz = 'V'
   cdef char uplo = 'L' if lower else 'U'
@@ -1269,7 +1287,8 @@ cdef void lapack_cheevd(void* out_tuple, void** data) nogil:
   cdef float* rwork = <float*>(out[4])
   cdef int* iwork = <int*>(out[5])
   if a_out != a_in:
-    memcpy(a_out, a_in, b * n * n * sizeof(float complex))
+    memcpy(a_out, a_in,
+           <int64_t>(b) * <int64_t>(n) * <int64_t>(n) * sizeof(float complex))
 
   cdef char jobz = 'V'
   cdef char uplo = 'L' if lower else 'U'
@@ -1301,7 +1320,8 @@ cdef void lapack_zheevd(void* out_tuple, void** data) nogil:
   cdef double* rwork = <double*>(out[4])
   cdef int* iwork = <int*>(out[5])
   if a_out != a_in:
-    memcpy(a_out, a_in, b * n * n * sizeof(double complex))
+    memcpy(a_out, a_in,
+           <int64_t>(b) * <int64_t>(n) * <int64_t>(n) * sizeof(double complex))
 
   cdef char jobz = 'V'
   cdef char uplo = 'L' if lower else 'U'
@@ -1443,7 +1463,7 @@ cdef void lapack_sgeev(void* out_tuple, void** data) nogil:
   cdef float* work = <float*> malloc(lwork * sizeof(float))
 
   for i in range(b):
-    memcpy(a_work, a_in, n * n * sizeof(float))
+    memcpy(a_work, a_in, <int64_t>(n) * <int64_t>(n) * sizeof(float))
     sgeev(&jobvlr, &jobvlr, &n, a_work, &n, wr_out, wi_out, vl_work, &n,
           vr_work, &n, work, &lwork, info_out)
     _unpack_float_eigenvectors(n, wi_out, vl_work, vl_out)
@@ -1506,7 +1526,7 @@ cdef void lapack_dgeev(void* out_tuple, void** data) nogil:
   cdef double* work = <double*> malloc(lwork * sizeof(double))
 
   for i in range(b):
-    memcpy(a_work, a_in, n * n * sizeof(double))
+    memcpy(a_work, a_in, <int64_t>(n) * <int64_t>(n) * sizeof(double))
     dgeev(&jobvlr, &jobvlr, &n, a_work, &n, wr_out, wi_out, vl_work, &n,
           vr_work, &n, work, &lwork, info_out)
     _unpack_double_eigenvectors(n, wi_out, vl_work, vl_out)
@@ -1547,7 +1567,7 @@ cdef void lapack_cgeev(void* out_tuple, void** data) nogil:
       lwork * sizeof(float complex))
 
   for i in range(b):
-    memcpy(a_work, a_in, n * n * sizeof(float complex))
+    memcpy(a_work, a_in, <int64_t>(n) * <int64_t>(n) * sizeof(float complex))
     cgeev(&jobvlr, &jobvlr, &n, a_work, &n, w_out, vl_out, &n, vr_out, &n,
           work, &lwork, r_work, info_out)
 
@@ -1585,7 +1605,7 @@ cdef void lapack_zgeev(void* out_tuple, void** data) nogil:
       lwork * sizeof(double complex))
 
   for i in range(b):
-    memcpy(a_work, a_in, n * n * sizeof(double complex))
+    memcpy(a_work, a_in, <int64_t>(n) * <int64_t>(n) * sizeof(double complex))
     zgeev(&jobvlr, &jobvlr, &n, a_work, &n, w_out, vl_out, &n, vr_out, &n,
           work, &lwork, r_work, info_out)
 

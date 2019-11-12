@@ -143,31 +143,23 @@ def xla_primitive_callable(prim, *abstract_args, **params):
 
 @cache()
 def primitive_computation(prim, *xla_shapes, **params):
-  backend = params.get('backend', None)
-  new_params = {k: params[k] for k in params if k != 'backend'}
   c = xb.make_computation_builder("primitive_computation_{}".format(prim.name))
-  newvar = core.gensym('')
-  c.SetOpMetadata(xc.OpMetadata(
-      op_type=prim.name,
-      op_name=str(core.new_jaxpr_eqn(
-          [newvar() for i in range(len(xla_shapes))],
-          [newvar()],
-          prim, (), params))
-  ))
+  c.SetOpMetadata(xc.OpMetadata(op_type=prim.name, op_name=str(params)))
+  backend = params.pop("backend", None)
   platform = xb.get_backend(backend).platform
   xla_args = (_parameter_or_create_token(c, shape) for shape in xla_shapes)
   if prim in backend_specific_translations[platform]:
     rule = backend_specific_translations[platform][prim]
-    rule(c, *xla_args, **new_params)  # return val set as a side-effect on c
+    rule(c, *xla_args, **params)  # return val set as a side-effect on c
   elif prim in translations:
     rule = translations[prim]
-    rule(c, *xla_args, **new_params)  # return val set as a side-effect on c
+    rule(c, *xla_args, **params)  # return val set as a side-effect on c
   elif prim in reduction_translations:
     rule = reduction_translations[prim]
-    rule(c, *xla_args, backend=backend, **new_params)  # return val set as a side-effect on c
+    rule(c, *xla_args, backend=backend, **params)  # return val set as a side-effect on c
   elif prim in initial_style_translations:
     rule = initial_style_translations[prim]
-    rule(c, AxisEnv(), *xla_args,  backend=backend, **new_params)  # side-effect on c
+    rule(c, AxisEnv(), *xla_args,  backend=backend, **params)  # side-effect on c
   else:
     raise NotImplementedError("XLA translation rule for {} not found".format(prim))
   c.ClearOpMetadata()
@@ -307,10 +299,7 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, freevars, *args):
   _map(write, jaxpr.freevars, freevars)
   _map(write, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
-    c.SetOpMetadata(xc.OpMetadata(
-      op_type=eqn.primitive.name,
-      op_name=str(eqn)
-    ))
+    c.SetOpMetadata(xc.OpMetadata( op_type=eqn.primitive.name, op_name=str(eqn)))
     in_nodes = list(map(read, eqn.invars))
     if eqn.primitive in backend_specific_translations[platform]:
       rule = backend_specific_translations[platform][eqn.primitive]
@@ -432,7 +421,7 @@ def _xla_callable(fun, device, backend, *abstract_args):
   tuple_args = len(abstract_args) > 100
   with core.new_master(pe.JaxprTrace, True) as master:
     jaxpr, (pvals, consts, env) = pe.trace_to_subjaxpr(fun, master, False).call_wrapped(pvals)
-    assert not env  # no subtraces here (though cond might eventually need them)
+    assert not env  # no subtraces here
     axis_env = AxisEnv(jaxpr_replicas(jaxpr), [], [])
     compiled = _compile_jaxpr(jaxpr, device, backend, axis_env, consts,
                               tuple_args, *abstract_args)
@@ -465,7 +454,7 @@ def _execute_replicated(compiled, backend, handlers, tuple_args, *args):
       [device_put(x, device, backend=backend) for x in args if x is not token]
       for device in compiled.local_devices()]
   if tuple_args:
-    input_bufs = [[make_tuple(bufs, device)] for bufs, device in
+    input_bufs = [[make_tuple(bufs, device, backend)] for bufs, device in
                   zip(input_bufs, compiled.local_devices())]
   out_bufs = compiled.ExecutePerReplica(input_bufs)[0].destructure()
   if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_bufs)
@@ -658,7 +647,7 @@ class DeviceArray(DeviceValue):
     self._npy_value = None
 
   def __repr__(self):
-    return onp.array_repr(self)
+    return onp.array_repr(self._value)
 
   def item(self):
     if onp.issubdtype(self.dtype, onp.complexfloating):

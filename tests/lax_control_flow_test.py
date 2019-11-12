@@ -950,6 +950,22 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     ans = api.vmap(lambda c, as_:            lax.scan(f, c, as_), in_axes)(c, as_)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testScanVmapFixpoint(self):
+    def f(carry_init):
+      def scan_body(c, x):
+        # The carry is a 4-tuple, the last element starts batched,
+        # and the carry is shifted left at each iteration.
+        return ((c[1], c[2], c[3], 0.), None)
+      return lax.scan(scan_body, (0., 1., 2., carry_init), np.zeros(2))
+    carry_init = np.array([3., 4., 5.])
+    carry_out, _ = api.vmap(f)(carry_init)
+    self.assertAllClose(carry_out[3], np.array([0., 0., 0.]), check_dtypes=False)
+    self.assertAllClose(carry_out[2], np.array([0., 0., 0.]), check_dtypes = False)
+    # After two shifts, we get the carry_init
+    self.assertAllClose(carry_out[1], carry_init, check_dtypes=False)
+    self.assertAllClose(carry_out[0], np.array([2., 2., 2.]), check_dtypes = False)
+
+
   # TODO(mattjj, dougalm): fix this test when skip_checks is False
   def testIssue757(self):
     # code from https://github.com/google/jax/issues/757
@@ -1348,6 +1364,20 @@ class LaxControlFlowTest(jtu.JaxTestCase):
           lambda x: a * np.ones(2), 1.0, solve, solve)
     with self.assertRaisesRegex(ValueError, re.escape("matvec() output shapes")):
       api.jvp(bad_matvec_usage, (1.0,), (1.0,))
+
+  def testIssue810(self):
+    def loss(A):
+      def step(x, i):
+        return np.matmul(A, x), None
+      init_x = np.zeros(A.shape[-1:])
+      last_x, _ = lax.scan(step, init_x, np.arange(10))
+      return np.sum(last_x)
+
+    A = np.zeros((3, 3))
+    # The second DUS was unnecessarily replicating A across time.
+    # We check XLA because _scan_impl is "underneath" the jaxpr language.
+    s = str(api.xla_computation(api.grad(loss))(A).GetHloText())
+    assert s.count("dynamic-update-slice(") < 2
 
 
 if __name__ == '__main__':

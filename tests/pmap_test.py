@@ -23,6 +23,7 @@ import numpy as onp
 from absl.testing import absltest
 from absl.testing import parameterized
 
+import jax
 import jax.numpy as np
 from jax import test_util as jtu
 from jax import core
@@ -145,6 +146,15 @@ class PmapTest(jtu.JaxTestCase):
     ans = grad(lambda x: np.sum(np.sin(x)))(x)
     expected = grad(lambda x: np.sum(f(x)))(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testGradOfPsum(self):
+    @partial(pmap, axis_name='i')
+    def f(x):
+      return lax.psum(x, axis_name='i')
+
+    shape = (jax.device_count(), 4)
+    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+    jtu.check_grads(f, (x,), 2, ["fwd", "rev"], 1e-2, 1e-2, eps=1.)
 
   def testGradOfJvp(self):
     @partial(pmap, axis_name='i')

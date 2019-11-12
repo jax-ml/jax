@@ -61,6 +61,12 @@ py_library(
 )
 
 py_library(
+    name = "optix",
+    srcs = ["experimental/optix.py"],
+    deps = [":jax"],
+)
+
+py_library(
     name = "ode",
     srcs = ["experimental/ode.py"],
     deps = [":jax"],
