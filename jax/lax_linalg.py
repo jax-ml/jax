@@ -303,10 +303,10 @@ def eigh_jvp_rule(primals, tangents, lower, handle_degeneracies):
     # TODO(shoyer): consider rewriting with an explicit loop over degenerate
     # subspaces instead?
     v2 = dot(v, A)
-    w2 = np.einsum('ij,jk,ki->i', _H(v2), a_sym, v2).real
-    order = np.argsort(w2)
-    A = A[..., :, order]
-    dw = dw[..., order]
+    w2 = np.einsum('...ij,...jk,...ki->...i', _H(v2), a_sym, v2).real
+    order = np.argsort(w2, axis=-1)
+    A = np.take_along_axis(A, order[..., np.newaxis, :], axis=-1)
+    dw = np.take_along_axis(dw, order, axis=-1)
 
     deltas_dot = dw[..., np.newaxis, :] - dw[..., np.newaxis]
     same_dot_subspace = abs(deltas_dot) < epsilon
