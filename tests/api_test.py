@@ -1224,6 +1224,9 @@ class APITest(jtu.JaxTestCase):
     python_should_be_executing = False
     api.pmap(f, 'i')(x)
 
+  def test_repr(self):
+    rep = repr(np.ones(()) + 1.)
+    self.assertStartsWith(rep, 'DeviceArray')
 
 if __name__ == '__main__':
   absltest.main()
