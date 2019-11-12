@@ -178,6 +178,9 @@ def optimizer(opt_maker):
 
 
 ### optimizers
+@optimizer
+def lbfgs(lr):
+
 
 @optimizer
 def sgd(step_size):
