@@ -62,8 +62,16 @@ cp -f "$(rlocation __main__/jaxlib/version.py)" "${TARGET}/jaxlib"
 cp -f "$(rlocation __main__/jaxlib/cusolver.py)" "${TARGET}/jaxlib"
 cp -f "$(rlocation org_tensorflow/tensorflow/compiler/xla/python/xla_extension.so)" \
   "${TARGET}/jaxlib"
+cp -f "$(rlocation org_tensorflow/tensorflow/compiler/xla/python/tpu_driver/client/tpu_client_extension.so)" \
+  "${TARGET}/jaxlib"
 sed \
   -e 's/from tensorflow.compiler.xla.python import xla_extension as _xla/from . import xla_extension as _xla/' \
   -e 's/from tensorflow.compiler.xla.python.xla_extension import ops/from .xla_extension import ops/' \
   < "$(rlocation org_tensorflow/tensorflow/compiler/xla/python/xla_client.py)" \
   > "${TARGET}/jaxlib/xla_client.py"
+sed \
+  -e 's/from tensorflow.compiler.xla.python import xla_extension as _xla/from . import xla_extension as _xla/' \
+  -e 's/from tensorflow.compiler.xla.python import xla_client/from . import xla_client/' \
+  -e 's/from tensorflow.compiler.xla.python.tpu_driver.client import tpu_client_extension as _tpu_client/from . import tpu_client_extension as _tpu_client/' \
+  < "$(rlocation org_tensorflow/tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.py)" \
+  > "${TARGET}/jaxlib/tpu_client.py"
