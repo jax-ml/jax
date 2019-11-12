@@ -35,26 +35,35 @@ def swish(x): return x * sigmoid(x)
 def log_sigmoid(x): return -softplus(-x)
 
 def elu(x, alpha=1.0):
-  safe_x = lax.select(x > 0, np.zeros(onp.shape(x)), x)
+  x = np.asarray(x)
+  alpha = np.asarray(alpha, x.dtype)
+  safe_x = lax.select(x > 0, np.zeros(onp.shape(x), x.dtype), x)
+  print(x.dtype, safe_x.dtype, np.expm1(safe_x).dtype, type(alpha), (alpha * np.expm1(safe_x)).dtype )
   return lax.select(x > 0, x, alpha * np.expm1(safe_x))
 
 def leaky_relu(x, negative_slope=1e-2):
+  x = np.asarray(x)
+  negative_slope = np.asarray(negative_slope, x.dtype)
   return lax.select(x >= 0, x, negative_slope * x)
 
 def hard_tanh(x):
+  x = np.asarray(x)
   shape = onp.shape(x)
-  ones = np.full(shape, 1.)
-  minus_ones = np.full(shape, -1.)
+  ones = np.full(shape, 1., x.dtype)
+  minus_ones = np.full(shape, -1., x.dtype)
   return lax.select(x > 1, ones, lax.select(x < -1, minus_ones, x))
 
 def celu(x, alpha=1.0):
   """Continuously-differentiable exponential linear unit activation"""
+  x = np.asarray(x)
+  alpha = np.asarray(alpha, x.dtype)
   return lax.select(x > 0, x, alpha * np.expm1(x / alpha))
 
 def selu(x):
   """Scaled exponential linear unit activation"""
-  alpha = 1.6732632423543772848170429916717
-  scale = 1.0507009873554804934193349852946
+  x = np.asarray(x)
+  alpha = onp.array(1.6732632423543772848170429916717, x.dtype)
+  scale = onp.array(1.0507009873554804934193349852946, x.dtype)
   return scale * elu(x, alpha)
 
 def gelu(x):
