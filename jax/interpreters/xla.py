@@ -647,10 +647,8 @@ class DeviceArray(DeviceValue):
     self._npy_value = None
 
   def __repr__(self):
-    # TODO(mattjj): consider implementing array_repr ourselves
-    s = onp.array_repr(self._value)
-    assert s.startswith('array(')
-    return 'DeviceArray(' + s[6:]
+    s = onp.array2string(self._value, prefix='DeviceArray(', suffix=')')
+    return "DeviceArray({})".format(s)
 
   def item(self):
     if onp.issubdtype(self.dtype, onp.complexfloating):
