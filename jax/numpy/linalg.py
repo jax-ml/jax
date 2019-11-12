@@ -138,6 +138,7 @@ def eigvalsh(a, UPLO='L'):
 
 @_wraps(onp.linalg.pinv)
 def pinv(a, rcond=1e-15):
+  # ported from https://github.com/numpy/numpy/blob/v1.17.0/numpy/linalg/linalg.py#L1890-L1979
   a = np.conj(a)
   rcond = np.asarray(rcond)
   u, s, v = svd(a, full_matrices=False)
@@ -147,7 +148,9 @@ def pinv(a, rcond=1e-15):
   large = s > cutoff
   s = np.divide(1, s)
   s = np.where(large, s, 0)
-  res = np.matmul(np.transpose(v), np.multiply(s[..., np.newaxis], np.transpose(u)))
+  vT = np.swapaxes(v, -1, -2)
+  uT = np.swapaxes(u, -1, -2)
+  res = np.matmul(vT, np.multiply(s[..., np.newaxis], uT))
   return res
 
 

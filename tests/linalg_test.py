@@ -563,8 +563,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       {"testcase_name":
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype, "rng": rng}
-      for shape in [(1, 1), (4, 4), (2, 5, 5), (200, 200), (5, 5, 5)]
-      for dtype in float_types
+      for shape in [(1, 1), (4, 4), (2, 70, 7), (700, 70), (70, 700), (70, 7, 2)]
+      for dtype in float_types + complex_types
       for rng in [jtu.rand_default()]))
     def testPinv(self, shape, dtype, rng):
       _skip_if_unsupported_type(dtype)
@@ -573,7 +573,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
       def args_maker():
         a = rng(shape, dtype)
-        onp.linalg.pinv(a)
         return [a]
 
       self._CheckAgainstNumpy(onp.linalg.pinv, np.linalg.pinv, args_maker,
