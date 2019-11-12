@@ -159,7 +159,7 @@ class ControlBenchmarkTest(jtu.JaxTestCase):
     lqr = one_step_lqr(dim, T)
     p = control_from_lqr(lqr)
     x0 = randn(dim)
-    X, U = control.ilqr(p, num_iters, x0, np.zeros((T, dim)))
+    X, U = control.ilqr(num_iters, p, x0, np.zeros((T, dim)))
     self.assertAllClose(X[0], x0, check_dtypes=True)
     self.assertAllClose(U[0], -x0, check_dtypes=True)
     self.assertAllClose(X[1:], np.zeros((T, 2)), check_dtypes=True)
@@ -171,7 +171,7 @@ class ControlBenchmarkTest(jtu.JaxTestCase):
     dim, T, num_iters = 2, 10, 3
     p = one_step_control(dim, T)
     x0 = randn(dim)
-    X, U = control.ilqr(p, num_iters, x0, np.zeros((T, dim)))
+    X, U = control.ilqr(num_iters, p, x0, np.zeros((T, dim)))
     self.assertAllClose(X[0], x0, check_dtypes=True)
     self.assertAllClose(U[0], -x0, check_dtypes=True)
     self.assertAllClose(X[1:], np.zeros((T, 2)), check_dtypes=True)
@@ -189,7 +189,54 @@ class ControlBenchmarkTest(jtu.JaxTestCase):
     p = control.ControlSpec(cost, dynamics, T, d, d)
 
     x0 = np.array([0.2])
-    X, U = control.ilqr(p, num_iters, x0, 1e-5 * np.ones((T, d)))
+    X, U = control.ilqr(num_iters, p, x0, 1e-5 * np.ones((T, d)))
+    assert_close = partial(self.assertAllClose, atol=1e-2, check_dtypes=True)
+    assert_close(X[0], x0)
+    assert_close(U[0] ** 2., x0 ** 2.)
+    assert_close(X[1:], np.zeros((T, d)))
+    assert_close(U[1:], np.zeros((T - 1, d)))
+
+
+  def testMpcWithLqrProblem(self):
+    randn = onp.random.RandomState(0).randn
+    dim, T, num_iters = 2, 10, 3
+    lqr = one_step_lqr(dim, T)
+    p = control_from_lqr(lqr)
+    x0 = randn(dim)
+    solver = partial(control.ilqr, num_iters)
+    X, U = control.mpc_predict(solver, p, x0, np.zeros((T, dim)))
+    self.assertAllClose(X[0], x0, check_dtypes=True)
+    self.assertAllClose(U[0], -x0, check_dtypes=True)
+    self.assertAllClose(X[1:], np.zeros((T, 2)), check_dtypes=True)
+    self.assertAllClose(U[1:], np.zeros((T - 1, 2)), check_dtypes=True)
+
+
+  def testMpcWithLqrProblemSpecifiedGenerally(self):
+    randn = onp.random.RandomState(0).randn
+    dim, T, num_iters = 2, 10, 3
+    p = one_step_control(dim, T)
+    x0 = randn(dim)
+    solver = partial(control.ilqr, num_iters)
+    X, U = control.mpc_predict(solver, p, x0, np.zeros((T, dim)))
+    self.assertAllClose(X[0], x0, check_dtypes=True)
+    self.assertAllClose(U[0], -x0, check_dtypes=True)
+    self.assertAllClose(X[1:], np.zeros((T, 2)), check_dtypes=True)
+    self.assertAllClose(U[1:], np.zeros((T - 1, 2)), check_dtypes=True)
+
+
+  def testMpcWithNonlinearProblem(self):
+    def cost(t, x, u):
+      return (x[0] ** 2. + 1e-3 * u[0] ** 2.) / (t + 1.)
+
+    def dynamics(t, x, u):
+      return (x ** 2. - u ** 2.) / (t + 1.)
+
+    T, num_iters, d = 10, 7, 1
+    p = control.ControlSpec(cost, dynamics, T, d, d)
+
+    x0 = np.array([0.2])
+    solver = partial(control.ilqr, num_iters)
+    X, U = control.mpc_predict(solver, p, x0, 1e-5 * np.ones((T, d)))
     assert_close = partial(self.assertAllClose, atol=1e-2, check_dtypes=True)
     assert_close(X[0], x0)
     assert_close(U[0] ** 2., x0 ** 2.)

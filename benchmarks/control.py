@@ -164,7 +164,7 @@ def lqr_predict(spec, x0):
   return X, U
 
 
-def ilqr(p, iterations, x0, U):
+def ilqr(iterations, p, x0, U):
   assert x0.ndim == 1 and x0.shape[0] == p.state_dim, x0.shape
   assert U.ndim > 0 and U.shape[0] == p.horizon, (U.shape, p.horizon)
 
@@ -179,3 +179,30 @@ def ilqr(p, iterations, x0, U):
 
   X = trajectory(p.dynamics, U, x0)
   return lax.fori_loop(0, iterations, loop, (X, U))
+
+
+def mpc_predict(solver, p, x0, U):
+  assert x0.ndim == 1 and x0.shape[0] == p.state_dim
+  T = p.horizon
+
+  def zero_padded_controls_window(U, t):
+    U_pad = np.vstack((U, np.zeros(U.shape)))
+    return lax.dynamic_slice_in_dim(U_pad, t, T, axis=0)
+
+  def loop(t, (X, U)):
+    cost = lambda t_, x, u: p.cost(t + t_, x, u)
+    dyns = lambda t_, x, u: p.dynamics(t + t_, x, u)
+
+    p_ = ControlSpec(cost, dyns, T, p.state_dim, p.control_dim)
+    xt = X[t]
+    U_rem = zero_padded_controls_window(U, t)
+    _, U_ = solver(p_, xt, U_rem)
+    ut = U_[0]
+    x = p.dynamics(t, xt, ut)
+    X = jo.index_update(X, jo.index[t + 1], x)
+    U = jo.index_update(U, jo.index[t], ut)
+    return X, U
+
+  X = np.zeros((T + 1, p.state_dim))
+  X = jo.index_update(X, jo.index[0], x0)
+  return lax.fori_loop(0, T, loop, (X, U))
