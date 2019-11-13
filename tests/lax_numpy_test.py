@@ -1242,7 +1242,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for axis in set(range(-len(shape), len(shape))) | set([None])
       # `weights_shape` is either `None`, same as the averaged axis, or same as
       # that of the input
-      for weights_shape in ([None, shape] if axis is None
+      for weights_shape in ([None, shape] if axis is None or len(shape) == 1
                             else [None, (shape[axis],), shape])
       for returned in [False, True]))
   def testAverage(self, shape, dtype, axis, weights_shape, returned, rng_factory):
@@ -2059,16 +2059,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
          "dtype": dtype, "rng_factory": rng_factory}
         for start_shape in [(), (2,), (2, 2)]
         for stop_shape in [(), (2,), (2, 2)]
-        for num in [5, 20]
+        for num in [0, 1, 2, 5, 20]
         for endpoint in [True, False]
         for retstep in [True, False]
         for dtype in number_dtypes + [None,]
         for rng_factory in [jtu.rand_default]))
   def testLinspace(self, start_shape, stop_shape, num, endpoint,
                    retstep, dtype, rng_factory):
-    # TODO(mattjj,levskaya): re-enable when test failure is sorted out
-    raise SkipTest("tfp test failures")
-
     rng = rng_factory()
     # relax default tolerances slightly
     tol = tolerance(dtype if dtype else onp.float32) * 10
@@ -2110,16 +2107,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
          "dtype": dtype, "rng_factory": rng_factory}
         for start_shape in [(), (2,), (2, 2)]
         for stop_shape in [(), (2,), (2, 2)]
-        for num in [5, 20]
+        for num in [0, 1, 2, 5, 20]
         for endpoint in [True, False]
         for base in [10.0, 2, onp.e]
         for dtype in number_dtypes + [None,]
         for rng_factory in [jtu.rand_default]))
   def testLogspace(self, start_shape, stop_shape, num,
                    endpoint, base, dtype, rng_factory):
-    # TODO(mattjj,levskaya): re-enable when test failure is sorted out
-    raise SkipTest("tfp test failures")
-
     if (dtype in int_dtypes and
         jtu.device_under_test() == "gpu" and
         not FLAGS.jax_enable_x64):
@@ -2161,16 +2155,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
          "dtype": dtype, "rng_factory": rng_factory}
         for start_shape in [(), (2,), (2, 2)]
         for stop_shape in [(), (2,), (2, 2)]
-        for num in [5, 20]
+        for num in [0, 1, 2, 5, 20]
         for endpoint in [True, False]
         # NB: numpy's geomspace gives nonsense results on integer types
         for dtype in inexact_dtypes + [None,]
         for rng_factory in [jtu.rand_default]))
   def testGeomspace(self, start_shape, stop_shape, num,
                     endpoint, dtype, rng_factory):
-    # TODO(mattjj,levskaya): re-enable when test failure is sorted out
-    raise SkipTest("tfp test failures")
-
     rng = rng_factory()
     # relax default tolerances slightly
     tol = tolerance(dtype if dtype else onp.float32) * 10
