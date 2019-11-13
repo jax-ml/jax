@@ -31,7 +31,7 @@ from .. import core
 from .. import linear_util as lu
 from ..abstract_arrays import (ConcreteArray, ShapedArray, array_types,
                                raise_to_shaped)
-from ..util import partial, unzip2, concatenate, prod
+from ..util import partial, unzip2, concatenate, prod, safe_map
 from ..lib import xla_bridge as xb
 from .xla import aval_to_xla_shape, xla_destructure
 from .partial_eval import trace_to_subjaxpr, merge_pvals, JaxprTrace, PartialVal
@@ -40,6 +40,8 @@ from . import batching
 from . import partial_eval as pe
 from . import xla
 from . import ad
+
+_map = safe_map
 
 
 ### util
@@ -172,50 +174,6 @@ def replica_groups(nrep, mesh_spec, mesh_axes):
       onp.moveaxis(iota, mesh_axes, onp.arange(len(mesh_axes))),
       (prod(onp.take(full_spec, mesh_axes)), -1))
   return tuple(map(tuple, groups.T))
-
-
-### the main pmap machinery lowers SPMD jaxprs to multi-replica XLA computations
-
-def compile_replicated(jaxpr, backend, axis_name, axis_size, global_axis_size,
-                       devices, consts, tuple_args, *abstract_args):
-  jaxpr_replicas = xla.jaxpr_replicas(jaxpr)
-  num_local_replicas = axis_size * jaxpr_replicas
-  num_replicas = global_axis_size * jaxpr_replicas
-  logging.vlog(
-      1, "compile_replicated: axis_size=%d global_axis_size=%d jaxpr_replicas=%d"
-      % (axis_size, global_axis_size, jaxpr_replicas))
-
-  if devices is None:
-    if num_replicas > xb.device_count(backend):
-      msg = ("compiling computation that requires {} replicas, but only {} XLA "
-             "devices are available")
-      raise ValueError(msg.format(num_replicas, xb.device_count(backend)))
-    device_assignment = None
-  else:
-    assert any(d.host_id == xb.host_id() for d in devices)
-    local_devices = [d for d in devices if d.host_id == xb.host_id()]
-    assert len(local_devices) > 0
-    if num_local_replicas != len(local_devices):
-      local_devices_str = ", ".join(map(str, local_devices))
-      raise ValueError(
-          "Leading axis size of input to pmapped function must equal the "
-          "number of local devices passed to pmap. Got axis_size=%d, "
-          "num_local_devices=%d.\n(Local devices passed to pmap: %s)"
-          % (axis_size, len(local_devices), local_devices_str))
-    if num_replicas != len(devices):
-      raise ValueError("compiling computation that requires %s replicas, "
-                       "but %s devices were specified"
-                       % (num_replicas, len(devices)))
-    device_assignment = tuple(d.id for d in devices)
-
-  axis_env = xla.AxisEnv(num_replicas, [axis_name], [global_axis_size], devices)
-  arg_shapes = list(map(aval_to_xla_shape, abstract_args))
-  built_c = xla.jaxpr_computation(jaxpr, backend, axis_env, consts, (), arg_shapes,
-                                  tuple_args=tuple_args, inner=False)
-  compiled = built_c.Compile(
-      compile_options=xb.get_compile_options(num_replicas, device_assignment),
-      backend=xb.get_backend(backend))
-  return compiled, num_local_replicas
 
 
 ### applying parallel primitives in op-by-op Python dispatch
@@ -460,10 +418,6 @@ def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
   if devices is not None and len(devices) == 0:
     raise ValueError("'devices' argument to pmap must be non-empty, or None.")
 
-  avals = tuple(map(partial(shard_aval, axis_size), avals))
-  pvals = [PartialVal((aval, core.unit)) for aval in avals]
-  pval = PartialVal([core.abstract_unit, core.unit])  # dummy value
-
   if devices:
     global_axis_size = len(devices)
   elif xb.host_count() > 1:
@@ -484,6 +438,9 @@ def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
     with extend_dynamic_axis_env(axis_name, dummy.trace, global_axis_size):
       return fun.call_wrapped(*args)
 
+  avals = tuple(map(partial(shard_aval, axis_size), avals))
+  pvals = [PartialVal((aval, core.unit)) for aval in avals]
+  pval = PartialVal([core.abstract_unit, core.unit])  # dummy value for axis env
   with core.new_master(JaxprTrace, True) as master:
     jaxpr, (out_pvals, consts, env) = \
         trace_to_subjaxpr(dynamic_fun, master, False).call_wrapped([pval] + pvals)
@@ -491,6 +448,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
     assert not env
     del master
   out_pvs, out_consts = unzip2(out_pvals)
+
   if all(pv is None for pv in out_pvs):
     # When the output doesn't depend on the input we don't need to compile an
     # XLA computation at all; we handle this as a special case so we can stage
@@ -499,18 +457,51 @@ def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
     handlers = [_pval_to_result_handler(axis_size, None, pval) for pval in out_pvals]
     results = [handler(None) for handler in handlers]
     return lambda *_: results
+
+  jaxpr_replicas = xla.jaxpr_replicas(jaxpr)
+  num_local_replicas = axis_size * jaxpr_replicas
+  nrep = global_axis_size * jaxpr_replicas
+  axis_env = xla.AxisEnv(nrep, [axis_name], [global_axis_size], devices)
+
+  tuple_args = len(avals) > 100  # pass long arg lists as tuple for TPU
+
+  c = xb.make_computation_builder("pmap_{}".format(fun.__name__))
+  xla_consts = _map(c.Constant, consts)
+  xla_args = xla._xla_callable_args(c, avals, tuple_args)
+  out_nodes = xla.jaxpr_subcomp(c, jaxpr, backend, axis_env, xla_consts, (), *xla_args)
+  built = c.Build(c.Tuple(*out_nodes))
+
+  if devices is None:
+    if nrep > xb.device_count(backend):
+      msg = ("compiling computation that requires {} replicas, but only {} XLA "
+             "devices are available")
+      raise ValueError(msg.format(nrep, xb.device_count(backend)))
+    device_assignment = None
   else:
-    # Condense many arguments into single tuple argument to avoid a TPU issue.
-    tuple_args = len(avals) > 100
-    compiled, nrep = compile_replicated(jaxpr, backend, axis_name, axis_size,
-                                        global_axis_size, devices, consts,
-                                        tuple_args, *avals)
-    local_devices = compiled.local_devices()
-    assignments = assign_shards_to_replicas(nrep, axis_size)
-    handle_args = partial(shard_args, backend, local_devices, assignments,
-                          axis_size, tuple_args)
-    handle_outs = _pvals_to_results_handler(axis_size, nrep, out_pvals)
-    return partial(execute_replicated, compiled, backend, nrep, handle_args, handle_outs)
+    assert any(d.host_id == xb.host_id() for d in devices)
+    local_devices = [d for d in devices if d.host_id == xb.host_id()]
+    assert len(local_devices) > 0
+    if num_local_replicas != len(local_devices):
+      local_devices_str = ", ".join(map(str, local_devices))
+      raise ValueError(
+          "Leading axis size of input to pmapped function must equal the "
+          "number of local devices passed to pmap. Got axis_size=%d, "
+          "num_local_devices=%d.\n(Local devices passed to pmap: %s)"
+          % (axis_size, len(local_devices), local_devices_str))
+    if nrep != len(devices):
+      raise ValueError("compiling computation that requires %s replicas, "
+                       "but %s devices were specified"
+                       % (nrep, len(devices)))
+    device_assignment = tuple(d.id for d in devices)
+  compiled = built.Compile(
+      compile_options=xb.get_compile_options(nrep, device_assignment),
+      backend=xb.get_backend(backend))
+
+  handle_args = partial(shard_args, backend, compiled.local_devices(),
+                        assign_shards_to_replicas(nrep, axis_size),
+                        axis_size, tuple_args)
+  handle_outs = _pvals_to_results_handler(axis_size, nrep, out_pvals)
+  return partial(execute_replicated, compiled, backend, nrep, handle_args, handle_outs)
 
 def _pvals_to_results_handler(size, nrep, out_pvals):
   nouts = len(out_pvals)

@@ -426,24 +426,15 @@ class PmapTest(jtu.JaxTestCase):
 
     f = pmap(lambda x: x)
     x = np.arange(device_count + 1)
-    self.assertRaisesRegexp(
-        ValueError,
-        ".*requires.*replicas",
-        lambda: f(x))
+    self.assertRaisesRegex(ValueError, ".*requires.*replicas", lambda: f(x))
 
     f = pmap(lambda x: x)
     x = onp.ones((device_count + 1, 10))
-    self.assertRaisesRegexp(
-        ValueError,
-        ".*requires.*replicas",
-        lambda: f(x))
+    self.assertRaisesRegex(ValueError, ".*requires.*replicas", lambda: f(x))
 
     f = pmap(lambda x: pmap(lambda x: x)(x))
     x = onp.ones((device_count, 2, 10))
-    self.assertRaisesRegexp(
-        ValueError,
-        ".*requires.*replicas",
-        lambda: f(x))
+    self.assertRaisesRegex(ValueError, ".*requires.*replicas", lambda: f(x))
 
   def testPmapConstant(self):
     device_count = xla_bridge.device_count()
@@ -627,7 +618,7 @@ class PmapTest(jtu.JaxTestCase):
     z = x + 2
     self.assertIsInstance(z, xla.DeviceArray)  # should have forced collection
     x._npy_value = onp.float32(onp.nan)  # can't be coerced to ndarray for xfer
-    self.assertRaisesRegexp(
+    self.assertRaisesRegex(
         RuntimeError,
         '.*does not match host shape or layout of computation parameter 0.*',
         lambda: x + 2)
