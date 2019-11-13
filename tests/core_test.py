@@ -106,19 +106,19 @@ def product_io_fun(x, y):
 
 
 R = onp.random.randn
-TestSpec = namedtuple('TestSpec', ['fun', 'args'])
+CallSpec = namedtuple('CallSpec', ['fun', 'args'])
 test_specs_base = [
-    TestSpec(simple_fun, (R(3, 2), R(3, 2))),
-    TestSpec(simple_fun_fanout, (R(3, 2), R(3, 2))),
-    TestSpec(product_io_fun, ({'a': R(2, 2), 'b': R(2, 2)},
+    CallSpec(simple_fun, (R(3, 2), R(3, 2))),
+    CallSpec(simple_fun_fanout, (R(3, 2), R(3, 2))),
+    CallSpec(product_io_fun, ({'a': R(2, 2), 'b': R(2, 2)},
                               (R(2, 2), (R(2, 2), R(2, 2))))),
-    TestSpec(fun_with_call, (R(3, 2),)),
-    TestSpec(fun_with_two_calls, (R(3, 2),)),
-    TestSpec(fun_with_call_closure, (R(3, 2),)),
-    TestSpec(fun_call_jitted, (R(1,),)),
-    TestSpec(fun_with_nested_calls, (R(),)),
-    TestSpec(fun_with_nested_calls, (R(3, 2),)),
-    TestSpec(fun_with_nested_calls_2, (R(1, 2),)),
+    CallSpec(fun_with_call, (R(3, 2),)),
+    CallSpec(fun_with_two_calls, (R(3, 2),)),
+    CallSpec(fun_with_call_closure, (R(3, 2),)),
+    CallSpec(fun_call_jitted, (R(1,),)),
+    CallSpec(fun_with_nested_calls, (R(),)),
+    CallSpec(fun_with_nested_calls, (R(3, 2),)),
+    CallSpec(fun_with_nested_calls_2, (R(1, 2),)),
 ]
 
 def jvp_unlinearized(f, primals, tangents):
@@ -128,10 +128,10 @@ def jvp_unlinearized(f, primals, tangents):
 test_specs = []
 for ts in test_specs_base:
   test_specs.append(ts)
-  test_specs.append(TestSpec(partial(jvp, ts.fun), (ts.args, ts.args)))
-  test_specs.append(TestSpec(jit(ts.fun), ts.args))
-  test_specs.append(TestSpec(jit(jit(ts.fun)), ts.args))
-  test_specs.append(TestSpec(partial(jvp_unlinearized, ts.fun),
+  test_specs.append(CallSpec(partial(jvp, ts.fun), (ts.args, ts.args)))
+  test_specs.append(CallSpec(jit(ts.fun), ts.args))
+  test_specs.append(CallSpec(jit(jit(ts.fun)), ts.args))
+  test_specs.append(CallSpec(partial(jvp_unlinearized, ts.fun),
                              (ts.args, ts.args)))
 
 

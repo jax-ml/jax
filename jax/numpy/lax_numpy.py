@@ -1677,6 +1677,7 @@ def arange(start, stop=None, step=None, dtype=None):
   # Fall back to instantiating an ndarray in host memory
   return onp.arange(start, stop=stop, step=step, dtype=dtype)
 
+
 def _wrap_numpy_nullary_function(f):
   """Adapts `f` to return a DeviceArray instead of an onp.ndarray.
 
@@ -1686,6 +1687,59 @@ def _wrap_numpy_nullary_function(f):
   def wrapper(*args, **kwargs):
     return asarray(f(*args, **kwargs))
   return wrapper
+
+
+# TODO(mattjj,levskaya): use this version when we sort out test failure
+# @_wraps(onp.linspace)
+# def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
+#              axis=0):
+#   """Implementation of linspace differentiable in start and stop args."""
+#   lax._check_user_dtype_supported(dtype, "linspace")
+#   dtype = dtype or onp.result_type(start, stop, float(num))
+#   bounds_shape = list(lax.broadcast_shapes(shape(start), shape(stop)))
+#   broadcast_start = broadcast_to(start, bounds_shape)
+#   axis = len(bounds_shape) + axis + 1 if axis < 0 else axis
+#   bounds_shape.insert(axis, 1)
+#   iota_shape = [1,] * len(bounds_shape)
+#   iota_shape[axis] = num
+#   if endpoint:
+#     delta = (stop - start) / (num - 1)
+#   else:
+#     delta = (stop - start) / num
+#   out = (reshape(broadcast_start, bounds_shape) +
+#          reshape(lax.iota(dtype, num), iota_shape) *
+#          reshape(delta, bounds_shape))
+#   if retstep:
+#     return lax.convert_element_type(out, dtype), delta
+#   else:
+#     return lax.convert_element_type(out, dtype)
+#
+#
+# @_wraps(onp.logspace)
+# def logspace(start, stop, num=50, endpoint=True, base=10.0, dtype=None, axis=0):
+#   """Implementation of logspace differentiable in start and stop args."""
+#   lin = linspace(start, stop, num,
+#                  endpoint=endpoint, retstep=False, dtype=None, axis=axis)
+#   if dtype is None:
+#     return power(base, lin)
+#   else:
+#     return lax.convert_element_type(power(base, lin), dtype)
+#
+#
+# @_wraps(onp.geomspace)
+# def geomspace(start, stop, num=50, endpoint=True, dtype=None, axis=0):
+#   """Implementation of geomspace differentiable in start and stop args."""
+#   dtype = dtype or onp.result_type(start, stop, float(num),
+#                                    zeros((), dtype))
+#   # follow the numpy geomspace convention for negative and complex endpoints
+#   signflip = 1 - (1 - sign(real(start))) * (1 - sign(real(stop))) // 2
+#   res = signflip * logspace(log10(signflip * start),
+#                             log10(signflip * stop), num,
+#                             endpoint=endpoint, base=10.0,
+#                             dtype=dtype, axis=0)
+#   if axis != 0:
+#     res = moveaxis(res, 0, axis)
+#   return lax.convert_element_type(res, dtype)
 
 def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
              axis=0):
@@ -1705,6 +1759,7 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
 
 logspace = _wrap_numpy_nullary_function(onp.logspace)
 geomspace = _wrap_numpy_nullary_function(onp.geomspace)
+
 
 @_wraps(onp.meshgrid)
 def meshgrid(*args, **kwargs):
