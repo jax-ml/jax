@@ -63,6 +63,13 @@ def gelu(x):
   cdf = 0.5 * (1.0 + np.tanh((np.sqrt(2 / np.pi) * (x + 0.044715 * x**3))))
   return x * cdf
 
+def mish(x):
+  """Mish activation function.
+
+  Reference: https://arxiv.org/abs/1908.08681
+  """
+  return x * np.tanh(softplus(x))
+
 def glu(x, axis=-1):
   """Gated linear unit activation"""
   size = x.shape[axis]
