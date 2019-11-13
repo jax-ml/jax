@@ -9,7 +9,13 @@ First, obtain the JAX source code.
     cd jax
 
 
-You must also install some prerequisites:
+There are two steps to building JAX: building ``jaxlib`` and installing ``jax``.
+
+If you're only modifying Python portions of JAX, you may be able to install
+``jaxlib`` from pip or a prebuilt wheel and skip to installing ``jax`` from
+source.
+
+To build ``jaxlib``, you must also install some prerequisites:
  * a C++ compiler (g++ or clang)
  * Numpy
  * Scipy
@@ -51,9 +57,6 @@ To build ``jaxlib`` without CUDA GPU support (CPU only), drop the ``--enable_cud
 
   python build/build.py
   pip install -e build  # installs jaxlib (includes XLA)
-
-If you're only modifying Python portions of JAX, you may be able to skip this
-step and install ``jaxlib`` from pip or a prebuilt wheel.
 
 Once ``jaxlib`` has been installed, you can install ``jax`` by running
 
