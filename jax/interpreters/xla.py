@@ -135,19 +135,18 @@ def xla_primitive_callable(prim, *abstract_args, **params):
     handle_result = lambda xs: tuple(h(x) for h, x in zip(handlers, xs.destructure()))
   else:
     handle_result = aval_to_result_handler(aval_out)
-  xla_shapes = tuple(map(aval_to_xla_shape, abstract_args))
-  built_c = primitive_computation(prim, *xla_shapes, **params)
+  built_c = primitive_computation(prim, *abstract_args, **params)
   compiled = built_c.Compile(compile_options=xb.get_compile_options(),
                              backend=xb.get_backend(backend))
   return partial(_execute_compiled_primitive, prim, compiled, backend, handle_result)
 
 @cache()
-def primitive_computation(prim, *xla_shapes, **params):
+def primitive_computation(prim, *avals, **params):
   c = xb.make_computation_builder("primitive_computation_{}".format(prim.name))
   c.SetOpMetadata(xc.OpMetadata(op_type=prim.name, op_name=str(params)))
   backend = params.pop("backend", None)
   platform = xb.get_backend(backend).platform
-  xla_args = _map(c.ParameterWithShape, xla_shapes)
+  xla_args = _xla_callable_args(c, avals, False)
   if prim in backend_specific_translations[platform]:
     rule = backend_specific_translations[platform][prim]
     rule(c, *xla_args, **params)  # return val set as a side-effect on c

@@ -189,7 +189,7 @@ def _allreduce_split_axis_rule(prim, reducer, vals, which_mapped, axis_name):
 
 def _allreduce_translation_rule(prim, c, val, replica_groups, backend=None):
   dtype = c.GetShape(val).numpy_dtype()
-  scalar = xla_client.Shape.array_shape(dtype, ())
+  scalar = ShapedArray((), dtype)
   computation = xla.primitive_computation(prim, scalar, scalar, backend=backend)
   return c.AllReduce(val, computation, replica_groups=replica_groups)
 
