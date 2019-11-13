@@ -9,7 +9,13 @@ First, obtain the JAX source code.
     cd jax
 
 
-You must also install some prerequisites:
+There are two steps to building JAX: building ``jaxlib`` and installing ``jax``.
+
+If you're only modifying Python portions of JAX, you may be able to install
+``jaxlib`` from pip or a prebuilt wheel and skip to installing ``jax`` from
+source.
+
+To build ``jaxlib``, you must also install some prerequisites:
  * a C++ compiler (g++ or clang)
  * Numpy
  * Scipy
@@ -38,7 +44,6 @@ To build ``jaxlib`` with CUDA support, you can run
 
     python build/build.py --enable_cuda
     pip install -e build  # installs jaxlib (includes XLA)
-    pip install -e .      # installs jax (pure Python)
 
 
 See ``python build/build.py --help`` for configuration options, including ways to
@@ -52,13 +57,17 @@ To build ``jaxlib`` without CUDA GPU support (CPU only), drop the ``--enable_cud
 
   python build/build.py
   pip install -e build  # installs jaxlib (includes XLA)
-  pip install -e .      # installs jax
 
+Once ``jaxlib`` has been installed, you can install ``jax`` by running
+
+.. code-block:: shell
+
+  pip install -e .  # installs jax
 
 To upgrade to the latest version from GitHub, just run ``git pull`` from the JAX
-repository root, and rebuild by running ``build.py`` if necessary. You shouldn't have
-to reinstall because ``pip install -e`` sets up symbolic links from site-packages
-into the repository.
+repository root, and rebuild by running ``build.py`` or upgrading ``jaxlib`` if
+necessary. You shouldn't have to reinstall because ``pip install -e`` sets up
+symbolic links from site-packages into the repository.
 
 Running the tests
 =================
@@ -128,17 +137,17 @@ Documentation building on readthedocs.io
 
 JAX's auto-generated documentations is at `jax.readthedocs.io <https://jax.readthedocs.io/>`_.
 
-The documentation building is controlled for the entire project by the 
+The documentation building is controlled for the entire project by the
 `readthedocs JAX settings <https://readthedocs.org/dashboard/jax>`_. The current settings
 trigger a documentation build as soon as code is pushed to the GitHub ``master`` branch.
-For each code version, the building process is driven by the 
+For each code version, the building process is driven by the
 ``.readthedocs.yml`` and the ``docs/conf.py`` configuration files.
 
-For each automated documentation build you can see the 
+For each automated documentation build you can see the
 `documentation build logs <https://readthedocs.org/projects/jax/builds/>`_.
 
 If you want to test the documentation generation on Readthedocs, you can push code to the ``test-docs``
-branch. That branch is also built automatically, and you can 
+branch. That branch is also built automatically, and you can
 see the generated documentation `here <https://jax.readthedocs.io/en/test-docs/>`_.
 
 For a local test, I was able to do it in a fresh directory by replaying the commands
