@@ -4195,6 +4195,12 @@ outfeed_p.def_impl(partial(xla.apply_primitive, outfeed_p))
 outfeed_p.def_abstract_eval(_outfeed_abstract_eval)
 xla.translations[outfeed_p] = _outfeed_translation_rule
 
+
+iota_p = core.Primitive("iota")
+iota_p.def_abstract_eval(lambda dtype, size: ShapedArray((size,), dtype))
+xla.translations[iota_p] = lambda c, dtype, size: c.Iota(dtype, size)
+
+
 ### util
 
 _ndim = onp.ndim

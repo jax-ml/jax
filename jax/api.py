@@ -1942,3 +1942,19 @@ def eval_shape(fun, *args, **kwargs):
   out = pe.abstract_eval_fun(fun.call_wrapped, *map(abstractify, args_flat))
   out = [ShapeDtypeStruct(x.shape, x.dtype) for x in out]
   return tree_unflatten(out_tree(), out)
+
+
+def pure_jaxpr(f, *args, **kwargs):
+  f = lu.wrap_init(f)
+  jax_args, in_tree = tree_flatten((args, kwargs))
+  jaxtree_fun, out_tree = _partially_flatten_fun(f, in_tree)
+  avals = [raise_to_shaped(core.get_aval(x)) for x in args]
+  pvals = [pe.PartialVal((aval, core.unit)) for aval in avals]
+  jaxpr, _, _ = pe.pure_trace_to_jaxpr(jaxtree_fun, pvals, False)
+  return jaxpr
+
+@lu.transformation_with_aux
+def _partially_flatten_fun(in_tree, arg, *args_flat):
+  py_args, py_kwargs = tree_unflatten(in_tree, args_flat)
+  ans = yield (arg,) + py_args, py_kwargs
+  yield tree_flatten(ans)

@@ -86,7 +86,7 @@ class JaxprTrace(Trace):
       return custom_partial_eval_rules[primitive](self, *tracers, **params)
     else:
       pvs, consts = unzip2(t.pval for t in tracers)
-      if all(pv is None for pv in pvs):
+      if pvs and all(pv is None for pv in pvs):
         return primitive.bind(*consts, **params)
       tracers = map(self.instantiate_const, tracers)
       avals = [t.aval for t in tracers]
@@ -476,3 +476,37 @@ def _split_aval(unknown, aval):
   return (abstract_unit, aval) if unknown else (aval, abstract_unit)
 
 custom_partial_eval_rules = {}
+
+
+def pure_trace_to_jaxpr(fun, pvals, instantiate):
+  with core.new_master(JaxprTrace) as master:
+    jaxpr, out_pvals, consts = pure_trace_to_subjaxpr(fun, master, instantiate, pvals)
+    del master
+  return jaxpr, out_pvals, consts
+
+def pure_trace_to_subjaxpr(fun, master, instantiate, pvals):
+  trace = JaxprTrace(master, core.cur_sublevel())
+  in_tracers = map(trace.new_arg, pvals)
+  ans = fun.call_wrapped(*it.chain([Pure(trace)], in_tracers))
+  instantiate = [instantiate] * len(ans) if type(instantiate) is bool else instantiate
+  out_tracers = map(trace.full_raise, map(core.full_lower, ans))
+  out_tracers = map(partial(instantiate_const_at, trace), instantiate, out_tracers)
+  jaxpr, consts, env = tracers_to_jaxpr(in_tracers, out_tracers)
+  assert not env
+  out_pvals = [t.pval for t in out_tracers]
+  return jaxpr, out_pvals, consts
+
+class Pure(object):
+  __slots__ = ["_trace"]
+
+  def __init__(self, trace):
+    self._trace = trace
+
+  def lit(self, val):
+    t = self._trace
+    return t.instantiate_const(t.full_raise(val))
+
+  def app(self, prim, *args, **params):
+    t = self._trace
+    tracers = [t.instantiate_const(t.full_raise(x)) for x in args]
+    return t.process_primitive(prim, tracers, params)

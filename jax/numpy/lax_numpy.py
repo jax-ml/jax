@@ -901,7 +901,7 @@ else:
 # `np.where(np.zeros(1000), 7, 4)`. In op-by-op mode, we don't want to
 # materialize the broadcast forms of scalar arguments.
 @_wraps(onp.where, update_doc=False)
-@jit
+# @jit
 def where(condition, x=None, y=None):
   if x is None or y is None:
     raise ValueError("Must use the three-argument form of where().")

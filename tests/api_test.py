@@ -18,6 +18,7 @@ from __future__ import print_function
 
 import collections
 from functools import partial
+import textwrap
 import unittest
 import warnings
 import weakref
@@ -1224,9 +1225,27 @@ class APITest(jtu.JaxTestCase):
     python_should_be_executing = False
     api.pmap(f, 'i')(x)
 
-  def test_repr(self):
+  def test_device_array_repr(self):
     rep = repr(np.ones(()) + 1.)
     self.assertStartsWith(rep, 'DeviceArray')
+
+  def test_explicit_jaxpr_embedding_lit(self):
+    def f(pure):
+      x = pure.lit(1)
+      y = np.broadcast_to(x, (1000,))
+      return y
+
+    jaxpr = api.pure_jaxpr(f)
+    self.assertLen(jaxpr.eqns, 1)
+
+  def test_explicit_jaxpr_embedding_app(self):
+    def g(pure, y):
+      x = pure.app(lax.iota_p, dtype=np.int32, size=10)
+      return x + y
+
+    jaxpr = api.pure_jaxpr(g, 3)
+    self.assertLen(jaxpr.eqns, 2)
+
 
 if __name__ == '__main__':
   absltest.main()

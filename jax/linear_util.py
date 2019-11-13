@@ -144,6 +144,7 @@ class WrappedFun(object):
 
   def call_wrapped(self, *args, **kwargs):
     stack = []
+    gen = None
     for (gen, gen_args), out_store in zip(self.transforms, self.stores):
       gen = gen(*(gen_args + tuple(args)), **kwargs)
       args, kwargs = next(gen)
