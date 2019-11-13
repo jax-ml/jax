@@ -580,18 +580,14 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
-       "shape": shape, "dtype": dtype, "rng": rng}
+       "shape": shape, "dtype": dtype, "rng_factory": rng_factory}
       for shape in [(1, 1), (4, 4), (2, 70, 7), (700, 70), (70, 700), (70, 7, 2)]
       for dtype in float_types + complex_types
-      for rng in [jtu.rand_default()]))
-    def testPinv(self, shape, dtype, rng):
+      for rng_factory in [jtu.rand_default()]))
+    def testPinv(self, shape, dtype, rng_factory):
+      rng = rng_factory()
       _skip_if_unsupported_type(dtype)
-      if jtu.device_under_test() == "gpu" and shape == (200, 200):
-        raise unittest.SkipTest("Test is flaky on GPU")
-
-      def args_maker():
-        a = rng(shape, dtype)
-        return [a]
+      args_maker = lambda: [rng(shape, dtype)]
 
       self._CheckAgainstNumpy(onp.linalg.pinv, np.linalg.pinv, args_maker,
                               check_dtypes=True, tol=1e-3)
