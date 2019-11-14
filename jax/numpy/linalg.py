@@ -146,7 +146,6 @@ def pinv(a, rcond=None):
       else:
         num_rows = np.shape(a)[-2]
         num_cols = np.shape(a)[-1]
-
       max_rows_cols = np.max(num_rows, num_cols)
       rcond = 10. * max_rows_cols * np.finfo(a.dtype)
   rcond = np.asarray(rcond)
