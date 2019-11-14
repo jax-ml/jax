@@ -616,11 +616,16 @@ class DeviceArray(DeviceValue):
     self._npy_value = None
 
   def __repr__(self):
-    class_name = self.__class__.__name__
-    s = onp.array2string(self._value,
-                         prefix='{}('.format(class_name),
-                         suffix=')')
-    return "{}({})".format(class_name, s)
+    line_width = onp.get_printoptions()['linewidth']
+    prefix = '{}('.format(self.__class__.__name__)
+    s = onp.array2string(self._value, prefix=prefix, suffix=',',
+                         separator=', ', max_line_width=line_width)
+    dtype_str = 'dtype={})'.format(self.dtype.name)
+    last_line_len = len(s) - s.rfind('\n') + 1
+    sep = ' '
+    if last_line_len + len(dtype_str) + 1 > line_width:
+      sep = ' ' * len(prefix)
+    return "{}{},{}{}".format(prefix, s, sep, dtype_str)
 
   def item(self):
     if onp.issubdtype(self.dtype, onp.complexfloating):
