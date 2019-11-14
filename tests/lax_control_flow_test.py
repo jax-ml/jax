@@ -321,6 +321,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = (onp.array([4, 3]), onp.array([1, 2]))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testForiLoopErrors(self):
+    """Test typing error messages for while."""
+    with self.assertRaisesRegex(
+      TypeError, "arguments to fori_loop must have equal types"):
+      lax.fori_loop(np.int16(0), np.int32(10), (lambda i, c: c), np.float32(7))
+
   def testForiLoopBatched(self):
     def body_fun(i, loop_carry):
       x, y = loop_carry
@@ -461,11 +467,11 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     def fun(pred):
       return lax.cond(pred, pred, lambda x: (True, x), pred, lambda x: (False, x))
-    
+
     @api.jit
     def cfun(pred):
       return fun(pred)
-    
+
     self.assertEqual(fun(0), cfun(0), (False,0))
     self.assertEqual(fun(0.), cfun(0.), (False,0.))
     self.assertEqual(fun(1), cfun(1), (True,1))
@@ -475,7 +481,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     for pred in ["abc", [], [1,2]]:
       for f in [fun, cfun]:
         self.assertRaises(TypeError, f, pred)
-    
+
   def testNestedCond(self):
     def fun(x):
       if x < 2:
