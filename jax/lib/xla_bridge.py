@@ -35,7 +35,10 @@ import numpy as onp  # 'onp' rather than 'np' to distinguish from autograd.numpy
 import six
 import threading
 
-from . import tpu_client
+try:
+  from . import tpu_client
+except ImportError:
+  tpu_client = None
 from . import version
 from . import xla_client
 
@@ -128,7 +131,8 @@ def _get_tpu_driver_backend(platform):
 
 
 register_backend('xla', _get_local_backend)
-register_backend('tpu_driver', _get_tpu_driver_backend)
+if tpu_client:
+  register_backend('tpu_driver', _get_tpu_driver_backend)
 
 _backend_lock = threading.Lock()
 
