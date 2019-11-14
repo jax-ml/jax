@@ -486,13 +486,6 @@ def check_raises(thunk, err_type, msg):
   except err_type as e:
     assert str(e).startswith(msg), "\n{}\n\n{}\n".format(e, msg)
 
-def check_raises_regexp(thunk, err_type, pattern):
-  try:
-    thunk()
-    assert False
-  except err_type as e:
-    assert re.match(pattern, str(e)), "{}\n\n{}\n".format(e, pattern)
-
 _CACHED_INDICES = {}
 
 def cases_from_list(xs):

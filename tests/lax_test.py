@@ -1502,13 +1502,15 @@ class LaxTest(jtu.JaxTestCase):
     ans = lax.reshape(onp.ones((3,), onp.float32), (lax.add(1, 2), 1))
     self.assertAllClose(ans, onp.ones((3, 1), onp.float32), check_dtypes=True)
 
-    jtu.check_raises_regexp(
-      lambda: lax.reshape(onp.ones(3,), (onp.array([3, 1]),)), TypeError,
-      "Shapes must be 1D sequences of concrete values of integer type.*")
+    self.assertRaisesRegexp(
+      TypeError,
+      "Shapes must be 1D sequences of concrete values of integer type.*",
+      lambda: lax.reshape(onp.ones(3,), (onp.array([3, 1]),)))
 
-    jtu.check_raises_regexp(
-      lambda: lax.reshape(onp.ones(3,), (1.5, 2.0)), TypeError,
-      "Shapes must be 1D sequences of concrete values of integer type.*")
+    self.assertRaisesRegexp(
+      TypeError,
+      "Shapes must be 1D sequences of concrete values of integer type.*",
+      lambda: lax.reshape(onp.ones(3,), (1.5, 2.0)))
 
 
 class DeviceConstantTest(jtu.JaxTestCase):
