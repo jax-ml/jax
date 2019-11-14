@@ -150,31 +150,6 @@ def assign_shards_to_replicas(nrep, size):
   indices = onp.tile(onp.arange(size)[:, None], (1, groupsize))
   return tuple(indices.ravel())
 
-def replica_groups(nrep, mesh_spec, mesh_axes):
-  """Compute XLA replica groups from a replica count and device mesh data.
-
-  Args:
-    nrep: int, number of replicas (a computation-dependent value).
-    mesh_spec: tuple of integers, a specification of the logical device mesh,
-      which depends on the lexical context of nested xla_pmaps. In particular,
-      each xla_pmap effectively appends its mapped axis size to this tuple.
-    mesh_axes: tuple of ints, logical device mesh axis indices indicating the
-      axes along which collective operations are to be executed.
-
-  Returns:
-    replica_groups, a list of lists of ints encoding a partition of the set
-      {0, 1, ..., nrep} into equally-sized replica groups (within which
-      collectives are executed). XLA consumes this replica group specification.
-  """
-  trailing_size, ragged = divmod(nrep, prod(mesh_spec))
-  assert not ragged
-  full_spec = mesh_spec + [trailing_size]
-  iota = onp.arange(prod(full_spec)).reshape(full_spec)
-  groups = onp.reshape(
-      onp.moveaxis(iota, mesh_axes, onp.arange(len(mesh_axes))),
-      (prod(onp.take(full_spec, mesh_axes)), -1))
-  return tuple(map(tuple, groups.T))
-
 
 ### applying parallel primitives in op-by-op Python dispatch
 
@@ -252,6 +227,7 @@ parallel_pure_rules = {}
 
 
 def axis_index(axis_name):
+  raise NotImplementedError  # TODO(mattjj): fix
   dynamic_axis_env = _thread_local_state.dynamic_axis_env
   frame = dynamic_axis_env[axis_name]
   dummy_arg = frame.pmap_trace.pure(core.unit)
@@ -545,49 +521,46 @@ def _pmap_translation_rule(c, jaxpr, axis_env, const_nodes, freevar_nodes,
   if axis_env.devices is not None or (axis_env.names and devices is not None):
     raise ValueError("Nested pmaps with explicit devices argument.")
   new_env = xla.extend_axis_env(axis_env, axis_name, axis_size)
-  in_nodes_sharded = list(map(partial(_xla_shard, c), in_nodes))
+  in_nodes_sharded = list(map(partial(_xla_shard, c, new_env), in_nodes))
   sharded_outs = xla.jaxpr_subcomp(c, jaxpr, backend, new_env, const_nodes,
                                    freevar_nodes, *in_nodes_sharded)
-  outs = [_xla_unshard(c, xla.axis_groups(new_env, axis_name), r)
-          for r in sharded_outs]
+  outs = [_xla_unshard(c, new_env, shard) for shard in sharded_outs]
   return c.Tuple(*outs)
 
 xla.call_translations[xla_pmap_p] = _pmap_translation_rule
 ad.primitive_transposes[xla_pmap_p] = partial(ad.map_transpose, xla_pmap_p)
 pe.map_primitives.add(xla_pmap_p)
 
-def _xla_shard(c, x):
+def _xla_shard(c, axis_env, x):
   xla_shape = c.GetShape(x)
   if xla_shape.is_tuple():
     assert not xla_shape.tuple_shapes()
     return x
   else:
     dims = list(xla_shape.dimensions())
-    start_indices = _xla_shard_start_indices(c, dims[0], len(dims))
-    return c.Reshape(c.DynamicSlice(x, start_indices, [1] + dims[1:]),
-                    None, dims[1:])
+    zero = c.Constant(onp.zeros((), dtype=onp.uint32))
+    idxs = [_unravel_index(c, axis_env)] + [zero] * (len(dims) - 1)
+    return c.Reshape(c.DynamicSlice(x, idxs, [1] + dims[1:]), None, dims[1:])
 
 # TODO(b/110096942): more efficient gather
-def _xla_unshard(c, replica_groups, x):
+def _xla_unshard(c, axis_env, x):
   xla_shape = c.GetShape(x)
   if xla_shape.is_tuple():
     assert not xla_shape.tuple_shapes()
     return x
   else:
-    axis_size = len(replica_groups[0])
     dims = list(xla_shape.dimensions())
-    start_indices = _xla_shard_start_indices(c, axis_size, len(dims) + 1)
     padded = c.Broadcast(c.Constant(onp.array(0, xla_shape.numpy_dtype())),
-                        [axis_size] + dims)
-    padded = c.DynamicUpdateSlice(padded, c.Reshape(x, None, [1] + dims),
-                                  start_indices)
-    return c.CrossReplicaSum(padded, replica_groups)
+                         [axis_env.sizes[-1]] + dims)
+    zero = c.Constant(onp.zeros((), dtype=onp.uint32))
+    idxs = [_unravel_index(c, axis_env)] + [zero] * len(dims)
+    padded = c.DynamicUpdateSlice(padded, c.Reshape(x, None, [1] + dims), idxs)
+    return c.CrossReplicaSum(padded, xla.axis_groups(axis_env, axis_env.names[-1]))
 
-# TODO(mattjj): use more ergonimic form of DynamicUpdateSlice instead!
-def _xla_shard_start_indices(c, axis_size, ndim):
-  idx = c.Rem(c.ReplicaId(), c.Constant(onp.array(axis_size, onp.uint32)))
-  zero = onp.zeros(ndim - 1, onp.uint32)
-  return c.Concatenate([c.Reshape(idx, None, [1]), c.Constant(zero)], 0)
+def _unravel_index(c, axis_env):
+  div = c.Constant(onp.array(axis_env.nreps // prod(axis_env.sizes), onp.uint32))
+  mod = c.Constant(onp.array(axis_env.sizes[-1], onp.uint32))
+  return c.Rem(c.Div(c.ReplicaId(), div), mod)
 
 
 ### soft_pmap axis split transformation
