@@ -227,6 +227,7 @@ parallel_pure_rules = {}
 
 
 def axis_index(axis_name):
+  raise NotImplementedError  # TODO(mattjj): fix
   dynamic_axis_env = _thread_local_state.dynamic_axis_env
   frame = dynamic_axis_env[axis_name]
   dummy_arg = frame.pmap_trace.pure(core.unit)
