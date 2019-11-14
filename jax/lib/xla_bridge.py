@@ -35,6 +35,10 @@ import numpy as onp  # 'onp' rather than 'np' to distinguish from autograd.numpy
 import six
 import threading
 
+try:
+  from . import tpu_client
+except ImportError:
+  tpu_client = None
 from . import version
 from . import xla_client
 
@@ -44,7 +48,8 @@ flags.DEFINE_bool('jax_enable_x64',
                   'Enable 64-bit types to be used.')
 flags.DEFINE_string(
     'jax_xla_backend', 'xla',
-    'Default is "xla" for the XLA service directly.')
+    'Default is "xla" for the XLA service directly, '
+    'or "tpu_driver" for using high-performance access to Cloud TPU hardware.')
 flags.DEFINE_string(
     'jax_backend_target', 'local',
     'Either "local" or "rpc:address" to connect to a remote service target.')
@@ -116,7 +121,18 @@ def _get_local_backend(platform=None):
   return backend
 
 
+def _get_tpu_driver_backend(platform):
+  del platform
+  backend_target = FLAGS.jax_backend_target
+  if backend_target is None:
+    raise ValueError('When using TPU Driver as the backend, you must specify '
+                     '--jax_backend_target=<hostname>:8470.')
+  return tpu_client.TpuBackend.create(worker=backend_target)
+
+
 register_backend('xla', _get_local_backend)
+if tpu_client:
+  register_backend('tpu_driver', _get_tpu_driver_backend)
 
 _backend_lock = threading.Lock()
 
