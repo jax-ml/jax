@@ -121,7 +121,13 @@ def fori_loop(lower, upper, body_fun, init_val):
   Returns:
     Loop value from the final iteration, of type ``a``.
   """
-  # TODO: perhaps do some type checking here, for better error messages
+  # TODO: perhaps do more type checking here, for better error messages.
+  lower_dtype = xb.canonicalize_dtype(lax.dtype(lower))
+  upper_dtype = xb.canonicalize_dtype(lax.dtype(upper))
+  if lower_dtype != upper_dtype:
+    msg = ("lower and upper arguments to fori_loop must have equal types, "
+           "got {} and {}")
+    raise TypeError(msg.format(lower_dtype.name, upper_dtype.name))
   _, _, result = while_loop(_fori_cond_fun, _fori_body_fun(body_fun),
                             (lower, upper, init_val))
   return result
