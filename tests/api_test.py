@@ -468,6 +468,28 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(g, grad(lambda x: x**3)(4.))
     self.assertEqual(aux, [4.**2, 4.])
 
+  def test_jvp_mismatched_arguments(self):
+    self.assertRaisesRegex(
+      TypeError,
+      ("primal and tangent arguments to jax.jvp must have the same tree "
+       "structure"),
+      lambda: api.jvp(lambda x, y: x * y, (onp.float32(2),), ()))
+    self.assertRaisesRegex(
+      TypeError,
+      "primal and tangent arguments to jax.jvp must have equal types",
+      lambda: api.jvp(lambda x: -x, (onp.float16(2),), (onp.float32(4),)))
+
+  def test_vjp_mismatched_arguments(self):
+    _, pullback = api.vjp(lambda x, y: x * y, onp.float32(3), onp.float32(4))
+    self.assertRaisesRegex(
+      TypeError,
+      "Tree structure of cotangent input.*does not match",
+      lambda: pullback((onp.float32(7), onp.float32(100))))
+    self.assertRaisesRegex(
+      TypeError,
+      "Type of cotangent input to vjp pullback.*does not match type",
+      lambda: pullback((onp.float16(42))))
+
   def test_jarrett_jvps(self):
     def f1(x):
       return np.sin(np.sin(np.sin(x)))
