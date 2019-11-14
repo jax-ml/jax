@@ -82,12 +82,18 @@ Then, from the repository root directory run
 
 
 JAX generates test cases combinatorially, and you can control the number of
-cases that are generated and checked for each test (default 10):
+cases that are generated and checked for each test (default is 10). The automated tests
+currently use 25:
 
 .. code-block:: shell
 
- JAX_NUM_GENERATED_CASES=100 pytest -n auto tests
+ JAX_NUM_GENERATED_CASES=25 pytest -n auto tests
 
+The automated tests also run the tests with default 64-bit floats and ints:
+
+.. code-block:: shell
+
+ JAX_ENABLE_X64=1 JAX_NUM_GENERATED_CASES=25 pytest -n auto tests
 
 You can run a more specific set of tests using
 `pytest <https://docs.pytest.org/en/latest/usage.html#specifying-tests-selecting-tests>`_'s
