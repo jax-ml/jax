@@ -187,6 +187,14 @@ class DynamicAxisEnv(list):
     else:
       assert False
 
+  @property
+  def sizes(self):
+    return tuple(frame.hard_size for frame in self)
+
+  @property
+  def nreps(self):
+    return prod(frame.hard_size for frame in self)
+
 class _ThreadLocalState(threading.local):
   def __init__(self):
     self.dynamic_axis_env = DynamicAxisEnv()
@@ -227,13 +235,15 @@ parallel_pure_rules = {}
 
 
 def axis_index(axis_name):
-  raise NotImplementedError  # TODO(mattjj): fix
   dynamic_axis_env = _thread_local_state.dynamic_axis_env
   frame = dynamic_axis_env[axis_name]
+  sizes = dynamic_axis_env.sizes[:dynamic_axis_env.index(frame)+1]
+  nreps = dynamic_axis_env.nreps
   dummy_arg = frame.pmap_trace.pure(core.unit)
   if frame.soft_trace:
     dummy_arg = frame.soft_trace.pure(dummy_arg)
-  return axis_index_p.bind(dummy_arg, hard_size=frame.hard_size,
+
+  return axis_index_p.bind(dummy_arg, nreps=nreps, sizes=sizes,
                            soft_size=frame.soft_size, axis_name=axis_name)
 
 def _axis_index_partial_eval(trace, _, **params):
@@ -246,9 +256,10 @@ def _axis_index_partial_eval(trace, _, **params):
   out_tracer.recipe = eqn
   return out_tracer
 
-def _axis_index_translation_rule(c, hard_size, soft_size, axis_name):
-  unsigned_index = c.Rem(c.ReplicaId(),
-                         c.Constant(onp.array(hard_size, onp.uint32)))
+def _axis_index_translation_rule(c, nreps, sizes, soft_size, axis_name):
+  div = c.Constant(onp.array(nreps // prod(sizes), dtype=onp.uint32))
+  mod = c.Constant(onp.array(sizes[-1], dtype=onp.uint32))
+  unsigned_index = c.Rem(c.Div(c.ReplicaId(), div), mod)
   return c.ConvertElementType(unsigned_index, xb.dtype_to_etype(onp.int32))
 
 axis_index_p = core.Primitive('axis_index')
