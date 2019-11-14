@@ -45,7 +45,7 @@ from . import linear_util as lu
 from . import ad_util
 from .core import eval_jaxpr
 from .api_util import (wraps, flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
-                       flatten_fun_nokwargs2, apply_flat_fun_nokwargs)
+                       flatten_fun_nokwargs2)
 from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, tree_leaves, tree_multimap,
                         _replace_nones)
@@ -1083,7 +1083,16 @@ def jvp(fun, primals, tangents):
 
   ps_flat, tree_def = tree_flatten(primals)
   ts_flat, tree_def_2 = tree_flatten(tangents)
-  assert tree_def == tree_def_2, (tree_def, tree_def_2)
+  if tree_def != tree_def_2:
+    msg = ("primal and tangent arguments to jax.jvp must have the same tree "
+           "structure; primals have tree structure {} whereas tangents have "
+           "tree structure {}")
+    raise TypeError(msg.format(tree_def, tree_def_2))
+  for p, t in safe_zip(ps_flat, ts_flat):
+    if _dtype(p) != _dtype(t):
+      msg = ("primal and tangent arguments to jax.jvp must have equal types; "
+             "type mismatch primal {} vs tangent {}")
+      raise TypeError(msg.format(_dtype(p), _dtype(t)))
   flat_fun, out_tree = flatten_fun_nokwargs(fun, tree_def)
   out_primals, out_tangents = ad.jvp(flat_fun).call_wrapped(ps_flat, ts_flat)
   return (tree_unflatten(out_tree(), out_primals),
@@ -1178,6 +1187,21 @@ def _check_inexact_input_vjp(x):
            "or complex type, got type {}")
     raise TypeError(msg.format(aval.dtype.name))
 
+def _vjp_pullback_wrapper(fun, cotangent_dtypes, io_tree, py_args):
+  in_tree_expected, out_tree = io_tree
+  args, in_tree = tree_flatten(py_args)
+  if in_tree != in_tree_expected:
+    msg = ("Tree structure of cotangent input {}, does not match structure of "
+           "primal output {}")
+    raise TypeError(msg.format(in_tree_expected, in_tree))
+  for a, dtype in safe_zip(args, cotangent_dtypes):
+    if _dtype(a) != dtype:
+      msg = ("Type of cotangent input to vjp pullback function ({}) does not "
+             "match type of corresponding primal output ({})")
+      raise TypeError(msg.format(_dtype(a), dtype))
+  ans = fun(*args)
+  return tree_unflatten(out_tree, ans)
+
 
 def vjp(fun, *primals, **kwargs):
   """Compute a (reverse-mode) vector-Jacobian product of `fun`.
@@ -1229,7 +1253,8 @@ def vjp(fun, *primals, **kwargs):
     out_primal, out_vjp, aux = ad.vjp(flat_fun, primals_flat, has_aux=True)
     out_tree, aux_tree = out_aux_trees()
   out_primal_py = tree_unflatten(out_tree, out_primal)
-  vjp_py = partial(apply_flat_fun_nokwargs, out_vjp, (out_tree, in_tree))
+  vjp_py = partial(_vjp_pullback_wrapper, out_vjp,
+                   [_dtype(x) for x in out_primal], (out_tree, in_tree))
   if not has_aux:
     return out_primal_py, vjp_py
   else:
