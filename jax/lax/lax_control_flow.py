@@ -121,6 +121,7 @@ def fori_loop(lower, upper, body_fun, init_val):
   Returns:
     Loop value from the final iteration, of type ``a``.
   """
+  # TODO: perhaps do some type checking here, for better error messages
   _, _, result = while_loop(_fori_cond_fun, _fori_body_fun(body_fun),
                             (lower, upper, init_val))
   return result
@@ -172,9 +173,13 @@ def while_loop(cond_fun, body_fun, init_val):
   if cond_jaxpr.out_avals != [ShapedArray((), onp.bool_)]:
     msg = "cond_fun must return a boolean scalar, but got output type(s) {}."
     raise TypeError(msg.format(cond_jaxpr.out_avals))
-  if not treedef_children(in_tree) == [body_tree]:
-    msg = "body_fun output pytree structure must match init_val, got {} and {}."
-    raise TypeError(msg.format(body_tree, treedef_children(in_tree)[0]))
+
+  in_tree_children = in_tree.children()
+  assert len(in_tree_children) == 1
+  _check_tree_and_avals("body_fun output and input",
+                        # Extract the subtree and avals for the first element of the return tuple
+                        body_tree, body_jaxpr.out_avals,
+                        in_tree_children[0], init_avals)
   outs = while_p.bind(*itertools.chain(cond_consts, body_consts, init_vals),
                       cond_nconsts=len(cond_consts), cond_jaxpr=cond_jaxpr,
                       body_nconsts=len(body_consts), body_jaxpr=body_jaxpr)
@@ -303,34 +308,34 @@ def cond(pred, true_operand, true_fun, false_operand, false_fun):
   """
 
   if len(onp.shape(pred)) != 0:
-    raise TypeError("Pred must be a scalar, got {} of shape {}".format(pred, onp.shape(pred)))
+    raise TypeError("Pred must be a scalar, got {} of shape {}.".format(pred, onp.shape(pred)))
 
-  pred_dtype = onp.result_type(pred)
+  try:
+    pred_dtype = onp.result_type(pred)
+  except TypeError:
+    msg = ("Pred type must be either boolean or number, got {}.")
+    raise TypeError(msg.format(pred))
+
   if pred_dtype.kind != 'b':
     if pred_dtype.kind in 'iuf':
       pred = pred != 0
     else:
-      msg = ("Pred type must be either boolean or number, got {}")
+      msg = ("Pred type must be either boolean or number, got {}.")
       raise TypeError(msg.format(pred_dtype))
   true_ops, true_tree = tree_flatten((true_operand,))
   true_avals = tuple(_map(_abstractify, true_ops))
-  true_jaxpr, true_consts, out_tree = _initial_style_jaxpr(true_fun, true_tree, true_avals)
+  true_jaxpr, true_consts, true_out_tree = _initial_style_jaxpr(true_fun, true_tree, true_avals)
   false_ops, false_tree = tree_flatten((false_operand,))
   false_avals = tuple(_map(_abstractify, false_ops))
-  false_jaxpr, false_consts, out_tree2 = _initial_style_jaxpr(false_fun, false_tree, false_avals)
-  if out_tree != out_tree2:
-    msg = ("true_fun and false_fun outputs must have identical tree structure, "
-           "got {} and {}.")
-    raise TypeError(msg.format(out_tree, out_tree2))
-  if not all(_map(typematch, true_jaxpr.out_avals, false_jaxpr.out_avals)):
-    msg = ("true_fun and false_fun outputs must have identical types, "
-           "got {} and {}.")
-    raise TypeError(msg.format(true_jaxpr.out_avals, false_jaxpr.out_avals))
+  false_jaxpr, false_consts, false_out_tree = _initial_style_jaxpr(false_fun, false_tree, false_avals)
+  _check_tree_and_avals("true_fun and false_fun output",
+                        true_out_tree, true_jaxpr.out_avals,
+                        false_out_tree, false_jaxpr.out_avals)
   out = cond_p.bind(
       *itertools.chain([pred], true_consts, true_ops, false_consts, false_ops),
       true_jaxpr=true_jaxpr, false_jaxpr=false_jaxpr,
       true_nconsts=len(true_consts), false_nconsts=len(false_consts))
-  return tree_unflatten(out_tree, out)
+  return tree_unflatten(true_out_tree, out)
 
 def _cond_abstract_eval(*args, **kwargs):
   return kwargs["true_jaxpr"].out_avals
