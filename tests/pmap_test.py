@@ -479,7 +479,6 @@ class PmapTest(jtu.JaxTestCase):
     self.assertEqual(c.ravel()[0], device_count * 1)
 
   def testAxisIndex(self):
-    raise SkipTest("buggy")  # TODO(mattjj): fix
     device_count = xla_bridge.device_count()
     f = pmap(lambda x: x + pxla.axis_index('i'), 'i')
     x = np.ones(device_count)
@@ -559,7 +558,6 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testSoftPmapAxisIndex(self):
-    raise SkipTest("buggy")  # TODO(mattjj): fix
     n = 4 * xla_bridge.device_count()
     def f(x):
       return x * lax.axis_index('i')
@@ -576,7 +574,6 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testSoftPmapNested(self):
-    raise SkipTest("buggy")  # TODO(mattjj): fix
     n = 4 * xla_bridge.device_count()
 
     @partial(soft_pmap, axis_name='i')
@@ -590,7 +587,6 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testGradOfSoftPmap(self):
-    raise SkipTest("buggy")  # TODO(mattjj): fix
     n = 4 * xla_bridge.device_count()
 
     @partial(soft_pmap, axis_name='i')

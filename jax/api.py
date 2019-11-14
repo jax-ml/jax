@@ -888,6 +888,7 @@ class _TempAxisName(object):
 
 
 def soft_pmap(fun, axis_name=None, backend=None):
+  warn("soft_pmap is an experimental feature and probably has bugs!")
   _check_callable(fun)
   axis_name = _TempAxisName(fun) if axis_name is None else axis_name
 

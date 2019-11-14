@@ -76,7 +76,6 @@ class PapplyTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testSelect(self):
-    raise SkipTest("buggy")  # TODO(mattjj): fix
     p = onp.arange(15).reshape((5, 3)) % 4 == 1
     f = onp.zeros((5, 3))
 
@@ -159,7 +158,6 @@ class ParallelizeTest(jtu.JaxTestCase):
     self.assertIn('psum', repr(jaxpr))
 
   def testAdd(self):
-    raise SkipTest("buggy")  # TODO(mattjj): fix
     x = onp.arange(10)
     y = 2 * onp.arange(10)
     def f(x): return x + y
@@ -168,7 +166,6 @@ class ParallelizeTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testAdd2(self):
-    raise SkipTest("buggy")  # TODO(mattjj): fix
     x = onp.arange(10)
     y = 2 * onp.arange(10)
     def f(y): return x + y
