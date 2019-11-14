@@ -191,6 +191,21 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertEqual(cloop(3, limit, 1), limit - 3)
     assert not effect[0]
 
+  def testWhileTypeErrors(self):
+    """Test typing error messages for while."""
+    with self.assertRaisesRegex(TypeError,
+        re.escape("cond_fun must return a boolean scalar, but got pytree PyTreeDef(tuple, [*,*]).")):
+      lax.while_loop(lambda c: (1., 1.), lambda c: c, 0.)
+    with  self.assertRaisesRegex(TypeError,
+        re.escape("cond_fun must return a boolean scalar, but got output type(s) [ShapedArray(float32[])].")):
+      lax.while_loop(lambda c: 1., lambda c: c, 0.)
+    with self.assertRaisesRegex(TypeError,
+        re.escape("body_fun output and input must have same type structure, got PyTreeDef(tuple, [*,*]) and *.")):
+      lax.while_loop(lambda c: True, lambda c: (1., 1.), 0.)
+    with self.assertRaisesRegex(TypeError,
+        re.escape("body_fun output and input must have identical types, got ShapedArray(bool[]) and ShapedArray(float32[]).")):
+      lax.while_loop(lambda c: True, lambda c: True, 0.)
+
   def testNestedWhileWithDynamicUpdateSlice(self):
     num = 5
 
@@ -486,6 +501,30 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertEqual(cfun(1), fun(1))
     self.assertEqual(cfun(3), fun(3))
     self.assertEqual(cfun(6), fun(6))
+
+  def testCondTypeErrors(self):
+    """Test typing error messages for  cond."""
+    with self.assertRaisesRegex(TypeError,
+        re.escape("Pred type must be either boolean or number, got <function")):
+      lax.cond(lambda x: True,
+               1., lambda top: 1., 2., lambda fop: 2.)
+    with self.assertRaisesRegex(TypeError,
+        re.escape("Pred type must be either boolean or number, got foo.")):
+      lax.cond("foo",
+               1., lambda top: 1., 2., lambda fop: 2.)
+    with self.assertRaisesRegex(TypeError,
+        re.escape("Pred must be a scalar, got (1.0, 1.0) of shape (2,).")):
+      lax.cond((1., 1.),
+               1., lambda top: 1., 2., lambda fop: 2.)
+    with self.assertRaisesRegex(TypeError,
+        re.escape("true_fun and false_fun output must have same type structure, got * and PyTreeDef(tuple, [*,*]).")):
+      lax.cond(True,
+               1., lambda top: 1., 2., lambda fop: (2., 2.))
+    with self.assertRaisesRegex(TypeError,
+        re.escape("true_fun and false_fun output must have identical types, got ShapedArray(int32[1]) and ShapedArray(int32[]).")):
+      lax.cond(True,
+               1., lambda top: np.array([1]), 2., lambda fop: 1)
+
 
   def testCondOneBranchConstant(self):
     def fun(x):
