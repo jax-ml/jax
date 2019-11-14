@@ -1510,6 +1510,21 @@ class LaxTest(jtu.JaxTestCase):
       lambda: lax.reshape(onp.ones(3,), (1.5, 2.0)), TypeError,
       "Shapes must be 1D sequences of concrete values of integer type.*")
 
+  def testDynamicSliceTypeErrors(self):
+    self.assertRaisesRegexp(
+      TypeError,
+      "index arguments to dynamic_slice must be integers of the same type",
+      lambda: lax.dynamic_slice(onp.ones((3, 4), dtype=onp.float32),
+                                (onp.int32(1), onp.int16(2)), (2, 2)))
+
+  def testDynamicUpdateSliceTypeErrors(self):
+    self.assertRaisesRegexp(
+      TypeError,
+      "index arguments to dynamic_update_slice must be integers of the same "
+      "type",
+      lambda: lax.dynamic_update_slice(onp.ones((3, 4), dtype=onp.float32),
+                                       onp.zeros((2, 2), dtype=onp.float32),
+                                       (onp.int32(1), onp.int16(2))))
 
 class DeviceConstantTest(jtu.JaxTestCase):
   def _CheckDeviceConstant(self, make_const, expected):
