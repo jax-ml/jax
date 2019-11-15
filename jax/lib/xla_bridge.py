@@ -30,7 +30,7 @@ from absl import logging
 
 from ..config import flags
 from .. import util
-from .. import types
+from .. import dtypes
 import numpy as onp  # 'onp' rather than 'np' to distinguish from autograd.numpy
 import six
 import threading
@@ -221,12 +221,12 @@ def host_count(backend=None):
 @util.memoize
 def dtype_to_etype(dtype):
   """Convert from dtype to canonical etype (reading FLAGS.jax_enable_x64)."""
-  return xla_client.dtype_to_etype(types.canonicalize_dtype(dtype))
+  return xla_client.dtype_to_etype(dtypes.canonicalize_dtype(dtype))
 
 
 @util.memoize
 def supported_numpy_dtypes():
-  return {types.canonicalize_dtype(dtype)
+  return {dtypes.canonicalize_dtype(dtype)
           for dtype in xla_client.XLA_ELEMENT_TYPE_TO_DTYPE.values()}
 
 
@@ -235,7 +235,7 @@ def normalize_to_xla_dtypes(val):
   """Normalize dtypes in a value."""
   if hasattr(val, '__array__') or onp.isscalar(val):
     return onp.asarray(val,
-                       dtype=types.canonicalize_dtype(types.result_type(val)))
+                       dtype=dtypes.canonicalize_dtype(dtypes.result_type(val)))
   elif isinstance(val, (tuple, list)):
     return tuple(normalize_to_xla_dtypes(x) for x in val)
   raise TypeError('Can\'t convert to XLA: {}'.format(val))

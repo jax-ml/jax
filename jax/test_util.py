@@ -31,7 +31,7 @@ import numpy.random as npr
 from six.moves import xrange
 
 from . import api
-from . import types
+from . import dtypes
 from .config import flags
 from .util import partial
 from .tree_util import tree_multimap, tree_all, tree_map, tree_reduce
@@ -114,7 +114,7 @@ def rand_like(rng, x):
   shape = onp.shape(x)
   dtype = _dtype(x)
   randn = lambda: onp.asarray(rng.randn(*shape), dtype=dtype)
-  if types.issubdtype(dtype, onp.complexfloating):
+  if dtypes.issubdtype(dtype, onp.complexfloating):
     return randn() + dtype.type(1.0j) * randn()
   else:
     return randn()
@@ -300,7 +300,7 @@ def _rand_dtype(rand, shape, dtype, scale=1., post=lambda x: x):
     to rand but scaled, converted to the appropriate dtype, and post-processed.
   """
   r = lambda: onp.asarray(scale * rand(*_dims_of_shape(shape)), dtype)
-  if types.issubdtype(dtype, onp.complexfloating):
+  if dtypes.issubdtype(dtype, onp.complexfloating):
     vals = r() + 1.0j * r()
   else:
     vals = r()
@@ -371,11 +371,11 @@ def rand_some_inf():
   """
   def rand(shape, dtype):
     """The random sampler function."""
-    if not types.issubdtype(dtype, onp.floating):
+    if not dtypes.issubdtype(dtype, onp.floating):
       # only float types have inf
       return base_rand(shape, dtype)
 
-    if types.issubdtype(dtype, onp.complexfloating):
+    if dtypes.issubdtype(dtype, onp.complexfloating):
       base_dtype = onp.real(onp.array(0, dtype=dtype)).dtype
       return rand(shape, base_dtype) + 1j * rand(shape, base_dtype)
 
@@ -398,11 +398,11 @@ def rand_some_nan():
 
   def rand(shape, dtype):
     """The random sampler function."""
-    if types.issubdtype(dtype, onp.complexfloating):
+    if dtypes.issubdtype(dtype, onp.complexfloating):
       base_dtype = onp.real(onp.array(0, dtype=dtype)).dtype
       return rand(shape, base_dtype) + 1j * rand(shape, base_dtype)
 
-    if not types.issubdtype(dtype, onp.floating):
+    if not dtypes.issubdtype(dtype, onp.floating):
       # only float types have inf
       return base_rand(shape, dtype)
 
@@ -427,11 +427,11 @@ def rand_some_inf_and_nan():
   """
   def rand(shape, dtype):
     """The random sampler function."""
-    if not types.issubdtype(dtype, onp.floating):
+    if not dtypes.issubdtype(dtype, onp.floating):
       # only float types have inf
       return base_rand(shape, dtype)
 
-    if types.issubdtype(dtype, onp.complexfloating):
+    if dtypes.issubdtype(dtype, onp.complexfloating):
       base_dtype = onp.real(onp.array(0, dtype=dtype)).dtype
       return rand(shape, base_dtype) + 1j * rand(shape, base_dtype)
 

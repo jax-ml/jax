@@ -30,7 +30,7 @@ import six
 
 from jax import api
 from jax import core
-from jax import types
+from jax import dtypes
 from jax.lax import lax
 from jax import linear_util as lu
 from jax.abstract_arrays import ShapedArray, raise_to_shaped
@@ -123,8 +123,8 @@ def fori_loop(lower, upper, body_fun, init_val):
     Loop value from the final iteration, of type ``a``.
   """
   # TODO: perhaps do more type checking here, for better error messages.
-  lower_dtype = types.canonicalize_dtype(lax.dtype(lower))
-  upper_dtype = types.canonicalize_dtype(lax.dtype(upper))
+  lower_dtype = dtypes.canonicalize_dtype(lax.dtype(lower))
+  upper_dtype = dtypes.canonicalize_dtype(lax.dtype(upper))
   if lower_dtype != upper_dtype:
     msg = ("lower and upper arguments to fori_loop must have equal types, "
            "got {} and {}")
@@ -318,7 +318,7 @@ def cond(pred, true_operand, true_fun, false_operand, false_fun):
     raise TypeError("Pred must be a scalar, got {} of shape {}.".format(pred, onp.shape(pred)))
 
   try:
-    pred_dtype = types.result_type(pred)
+    pred_dtype = dtypes.result_type(pred)
   except TypeError:
     msg = ("Pred type must be either boolean or number, got {}.")
     raise TypeError(msg.format(pred))

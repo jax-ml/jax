@@ -21,7 +21,7 @@ import six
 
 from . import core
 from . import ad_util
-from . import types
+from . import dtypes
 from . util import prod
 
 
@@ -44,7 +44,7 @@ class UnshapedArray(core.AbstractValue):
   array_abstraction_level = 3
 
   def __init__(self, dtype):
-    self.dtype = onp.dtype(types.canonicalize_dtype(dtype))
+    self.dtype = onp.dtype(dtypes.canonicalize_dtype(dtype))
 
   def __eq__(self, other):
     return type(self) is type(other) and self.dtype == other.dtype
@@ -88,7 +88,7 @@ class ShapedArray(UnshapedArray):
   array_abstraction_level = 2
 
   def __init__(self, shape, dtype):
-    self.dtype = onp.dtype(types.canonicalize_dtype(dtype))
+    self.dtype = onp.dtype(dtypes.canonicalize_dtype(dtype))
     self.shape = shape
 
   ndim = property(lambda self: len(self.shape))
@@ -137,7 +137,7 @@ class ConcreteArray(ShapedArray):
     self.val = val
     self.shape = onp.shape(val)
     # canonicalized self.dtype doesn't necessarily match self.val
-    self.dtype = onp.dtype(types.canonicalize_dtype(types.result_type(val)))
+    self.dtype = onp.dtype(dtypes.canonicalize_dtype(dtypes.result_type(val)))
     assert self.dtype != onp.dtype('O')
 
   def __eq__(self, other):
@@ -170,11 +170,11 @@ abstract_token = AbstractToken()
 
 
 def make_shaped_array(x):
-  dtype = types.canonicalize_dtype(types.result_type(x))
+  dtype = dtypes.canonicalize_dtype(dtypes.result_type(x))
   return ShapedArray(onp.shape(x), dtype)
 
 def zeros_like_array(x):
-  dtype = types.canonicalize_dtype(types.result_type(x))
+  dtype = dtypes.canonicalize_dtype(dtypes.result_type(x))
   return onp.broadcast_to(onp.array(0, dtype), onp.shape(x))
 
 array_types = {onp.ndarray, onp.float64, onp.float32, onp.float16,

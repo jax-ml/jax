@@ -27,7 +27,7 @@ from jax import api_util
 from jax import core
 from jax import lax
 from jax import ops
-from jax import types
+from jax import dtypes
 from jax.interpreters import xla
 from jax.interpreters import ad
 from jax.interpreters import batching
@@ -165,8 +165,8 @@ def eig_abstract_eval(operand):
 
     batch_dims = operand.shape[:-2]
     n = operand.shape[-1]
-    dtype = onp.complex64 if types.finfo(operand.dtype).bits == 32 else onp.complex128
-    dtype = types.canonicalize_dtype(dtype)
+    dtype = onp.complex64 if dtypes.finfo(operand.dtype).bits == 32 else onp.complex128
+    dtype = dtypes.canonicalize_dtype(dtype)
     vl = vr = ShapedArray(batch_dims + (n, n), dtype)
     w = ShapedArray(batch_dims + (n,), dtype)
   else:

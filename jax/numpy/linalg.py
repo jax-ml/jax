@@ -24,7 +24,7 @@ import warnings
 from jax import jit
 from .. import lax
 from .. import lax_linalg
-from .. import types
+from .. import dtypes
 from .lax_numpy import _not_implemented
 from .lax_numpy import _wraps
 from . import lax_numpy as np
@@ -40,7 +40,7 @@ def _promote_arg_dtypes(*args):
   def _to_inexact_type(type):
     return type if np.issubdtype(type, np.inexact) else np.float64
   inexact_types = [_to_inexact_type(np._dtype(arg)) for arg in args]
-  dtype = types.canonicalize_dtype(np.result_type(*inexact_types))
+  dtype = dtypes.canonicalize_dtype(np.result_type(*inexact_types))
   args = [lax.convert_element_type(arg, dtype) for arg in args]
   if len(args) == 1:
     return args[0]

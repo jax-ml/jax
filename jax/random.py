@@ -31,7 +31,7 @@ import numpy as onp
 from . import lax
 from . import numpy as np
 from . import tree_util
-from . import types
+from . import dtypes
 from .api import custom_transforms, defjvp, jit, vmap
 from .numpy.lax_numpy import _constant_like, asarray, stack
 from jax.lib import xla_bridge
@@ -271,7 +271,7 @@ def uniform(key, shape=(), dtype=onp.float64, minval=0., maxval=1.):
   Returns:
     A random array with the specified shape and dtype.
   """
-  dtype = types.canonicalize_dtype(dtype)
+  dtype = dtypes.canonicalize_dtype(dtype)
   return _uniform(key, shape, dtype, minval, maxval)
 
 @partial(jit, static_argnums=(1, 2))
@@ -319,7 +319,7 @@ def randint(key, shape, minval, maxval, dtype=onp.int64):
   Returns:
     A random array with the specified shape and dtype.
   """
-  dtype = types.canonicalize_dtype(dtype)
+  dtype = dtypes.canonicalize_dtype(dtype)
   return _randint(key, shape, minval, maxval, dtype)
 
 @partial(jit, static_argnums=(1, 4))
@@ -417,7 +417,7 @@ def normal(key, shape=(), dtype=onp.float64):
   Returns:
     A random array with the specified shape and dtype.
   """
-  dtype = types.canonicalize_dtype(dtype)
+  dtype = dtypes.canonicalize_dtype(dtype)
   return _normal(key, shape, dtype)
 
 @partial(jit, static_argnums=(1, 2))
@@ -450,7 +450,7 @@ def multivariate_normal(key, mean, cov, shape=None, dtype=onp.float64):
     ``shape + mean.shape[-1:]`` if ``shape`` is not None, or else
     ``broadcast_shapes(mean.shape[:-1], cov.shape[:-2]) + mean.shape[-1:]``.
   """
-  dtype = types.canonicalize_dtype(dtype)
+  dtype = dtypes.canonicalize_dtype(dtype)
   return _multivariate_normal(key, mean, cov, shape, dtype)
 
 @partial(jit, static_argnums=(3, 4))
@@ -497,7 +497,7 @@ def truncated_normal(key, lower, upper, shape=None, dtype=onp.float64):
     A random array with the specified dtype and shape given by ``shape`` if
     ``shape`` is not None, or else by broadcasting ``lower`` and ``upper``.
   """
-  dtype = types.canonicalize_dtype(dtype)
+  dtype = dtypes.canonicalize_dtype(dtype)
   return _truncated_normal(key, lower, upper, shape, dtype)
 
 @partial(jit, static_argnums=(3, 4))
@@ -531,7 +531,7 @@ def bernoulli(key, p=onp.float32(0.5), shape=None):
     A random array with boolean dtype and shape given by ``shape`` if ``shape``
     is not None, or else ``p.shape``.
   """
-  dtype = types.canonicalize_dtype(lax.dtype(p))
+  dtype = dtypes.canonicalize_dtype(lax.dtype(p))
   if not np.issubdtype(dtype, onp.floating):
     msg = "bernoulli probability `p` must have a floating dtype, got {}."
     raise TypeError(msg.format(dtype))
@@ -567,7 +567,7 @@ def beta(key, a, b, shape=None, dtype=onp.float64):
     A random array with the specified dtype and shape given by ``shape`` if
     ``shape`` is not None, or else by broadcasting ``a`` and ``b``.
   """
-  dtype = types.canonicalize_dtype(dtype)
+  dtype = dtypes.canonicalize_dtype(dtype)
   return _beta(key, a, b, shape, dtype)
 
 @partial(jit, static_argnums=(3, 4))
@@ -598,7 +598,7 @@ def cauchy(key, shape=(), dtype=onp.float64):
   Returns:
     A random array with the specified shape and dtype.
   """
-  dtype = types.canonicalize_dtype(dtype)
+  dtype = dtypes.canonicalize_dtype(dtype)
   return _cauchy(key, shape, dtype)
 
 @partial(jit, static_argnums=(1, 2))
@@ -629,7 +629,7 @@ def dirichlet(key, alpha, shape=None, dtype=onp.float64):
     ``shape + (alpha.shape[-1],)`` if ``shape`` is not None, or else
     ``alpha.shape``.
   """
-  dtype = types.canonicalize_dtype(dtype)
+  dtype = dtypes.canonicalize_dtype(dtype)
   return _dirichlet(key, alpha, shape, dtype)
 
 @partial(jit, static_argnums=(2, 3))
@@ -661,7 +661,7 @@ def exponential(key, shape=(), dtype=onp.float64):
   Returns:
     A random array with the specified shape and dtype.
   """
-  dtype = types.canonicalize_dtype(dtype)
+  dtype = dtypes.canonicalize_dtype(dtype)
   return _exponential(key, shape, dtype)
 
 @partial(jit, static_argnums=(1, 2))
@@ -862,7 +862,7 @@ def gamma(key, a, shape=None, dtype=onp.float64):
     A random array with the specified dtype and with shape given by ``shape`` if
     ``shape`` is not None, or else by ``a.shape``.
   """
-  dtype = types.canonicalize_dtype(dtype)
+  dtype = dtypes.canonicalize_dtype(dtype)
   return _gamma(key, a, shape, dtype)
 
 @partial(jit, static_argnums=(2, 3))
@@ -891,7 +891,7 @@ def gumbel(key, shape=(), dtype=onp.float64):
   Returns:
     A random array with the specified shape and dtype.
   """
-  dtype = types.canonicalize_dtype(dtype)
+  dtype = dtypes.canonicalize_dtype(dtype)
   return _gumbel(key, shape, dtype)
 
 @partial(jit, static_argnums=(1, 2))
@@ -914,7 +914,7 @@ def laplace(key, shape=(), dtype=onp.float64):
   Returns:
     A random array with the specified shape and dtype.
   """
-  dtype = types.canonicalize_dtype(dtype)
+  dtype = dtypes.canonicalize_dtype(dtype)
   return _laplace(key, shape, dtype)
 
 @partial(jit, static_argnums=(1, 2))
@@ -938,7 +938,7 @@ def logistic(key, shape=(), dtype=onp.float64):
   Returns:
     A random array with the specified shape and dtype.
   """
-  dtype = types.canonicalize_dtype(dtype)
+  dtype = dtypes.canonicalize_dtype(dtype)
   return _logistic(key, shape, dtype)
 
 @partial(jit, static_argnums=(1, 2))
@@ -964,7 +964,7 @@ def pareto(key, b, shape=None, dtype=onp.float64):
     A random array with the specified dtype and with shape given by ``shape`` if
     ``shape`` is not None, or else by ``b.shape``.
   """
-  dtype = types.canonicalize_dtype(dtype)
+  dtype = dtypes.canonicalize_dtype(dtype)
   return _pareto(key, b, shape, dtype)
 
 @partial(jit, static_argnums=(2, 3))
@@ -996,7 +996,7 @@ def t(key, df, shape=(), dtype=onp.float64):
     A random array with the specified dtype and with shape given by ``shape`` if
     ``shape`` is not None, or else by ``df.shape``.
   """
-  dtype = types.canonicalize_dtype(dtype)
+  dtype = dtypes.canonicalize_dtype(dtype)
   return _t(key, df, shape, dtype)
 
 @partial(jit, static_argnums=(2, 3))
