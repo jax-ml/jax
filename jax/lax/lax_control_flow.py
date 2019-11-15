@@ -112,6 +112,14 @@ def fori_loop(lower, upper, body_fun, init_val):
   Unlike that Python version, ``fori_loop`` is implemented in terms of a call to
   ``while_loop``. See the docstring for ``while_loop`` for more information.
 
+  Also unlike the Python analogue, the loop-carried value ``val`` must hold a
+  fixed shape and dtype across all iterations (and not just be consistent up to
+  NumPy rank/shape broadcasting and dtype promotion rules, for example). In
+  other words, the type ``a`` in the type signature above represents an array
+  with a fixed shape and dtype (or a nested tuple/list/dict container data
+  structure with a fixed structure and arrays with fixed shape and dtype at the
+  leaves).
+
   Args:
     lower: an integer representing the loop index lower bound (inclusive)
     upper: an integer representing the loop index upper bound (exclusive)
@@ -154,6 +162,14 @@ def while_loop(cond_fun, body_fun, init_val):
   to a single XLA While HLO. That makes it useful for reducing compilation times
   for jit-compiled functions, since native Python loop constructs in an ``@jit``
   function are unrolled, leading to large XLA computations.
+
+  Also unlike the Python analogue, the loop-carried value ``val`` must hold a
+  fixed shape and dtype across all iterations (and not just be consistent up to
+  NumPy rank/shape broadcasting and dtype promotion rules, for example). In
+  other words, the type ``a`` in the type signature above represents an array
+  with a fixed shape and dtype (or a nested tuple/list/dict container data
+  structure with a fixed structure and arrays with fixed shape and dtype at the
+  leaves).
 
   Another difference from using Python-native loop constructs is that
   ``while_loop`` is not reverse-mode differentiable because XLA computations
@@ -454,6 +470,13 @@ def scan(f, init, xs):
   a single XLA While HLO. That makes it useful for reducing compilation times
   for jit-compiled functions, since native Python loop constructs in an ``@jit``
   function are unrolled, leading to large XLA computations.
+
+  Finally, the loop-carried value ``carry`` must hold a fixed shape and dtype
+  across all iterations (and not just be consistent up to NumPy rank/shape
+  broadcasting and dtype promotion rules, for example). In other words, the type
+  ``c`` in the type signature above represents an array with a fixed shape and
+  dtype (or a nested tuple/list/dict container data structure with a fixed
+  structure and arrays with fixed shape and dtype at the leaves).
 
   Args:
     f: a Python function to be scanned of type ``c -> a -> (c, b)``, meaning
@@ -968,7 +991,7 @@ def _check_tree_and_avals(what, tree1, avals1, tree2, avals2):
     raise TypeError(msg.format(what, tree1, tree2))
   if not all(safe_map(typematch, avals1, avals2)):
     msg = ("{} must have identical types, "
-           "got {} and {}.")
+           "got\n{}\nand\n{}.")
     raise TypeError(msg.format(what, tree_unflatten(tree1, avals1),
                                tree_unflatten(tree2, avals2)))
 
