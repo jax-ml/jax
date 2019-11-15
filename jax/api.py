@@ -388,6 +388,13 @@ def value_and_grad(fun, argnums=0, has_aux=False, holomorphic=False):
 
   @wraps(fun, docstr=docstr, argnums=argnums)
   def value_and_grad_f(*args, **kwargs):
+    max_argnum = argnums if type(argnums) is int else max(argnums)
+    if max_argnum >= len(args):
+      msg = ("differentiating with respect to argnums={} requires at least "
+             "{} positional arguments to be passed by the caller, but got only "
+             "{} positional arguments.")
+      raise TypeError(msg.format(argnums, max_argnum + 1, len(args)))
+
     f = lu.wrap_init(fun, kwargs)
     f_partial, dyn_args = _argnums_partial(f, argnums, args)
     if not has_aux:

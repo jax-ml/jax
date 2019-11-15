@@ -1253,5 +1253,17 @@ class APITest(jtu.JaxTestCase):
     rep = repr(np.ones(()) + 1.)
     self.assertStartsWith(rep, 'DeviceArray')
 
+  def test_grad_without_enough_args_error_message(self):
+    # https://github.com/google/jax/issues/1696
+    def f(x, y): return x + y
+    df = api.grad(f, argnums=0)
+    self.assertRaisesRegexp(
+        TypeError,
+        "differentiating with respect to argnums=0 requires at least 1 "
+        "positional arguments to be passed by the caller, but got only 0 "
+        "positional arguments.",
+        lambda: partial(df, x=0.)(y=1.))
+
+
 if __name__ == '__main__':
   absltest.main()
