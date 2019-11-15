@@ -1512,6 +1512,7 @@ class LaxTest(jtu.JaxTestCase):
       "Shapes must be 1D sequences of concrete values of integer type.*",
       lambda: lax.reshape(onp.ones(3,), (1.5, 2.0)))
 
+  @jtu.skip_on_devices("tpu")  # S16 not supported on TPU
   def testDynamicSliceTypeErrors(self):
     self.assertRaisesRegexp(
       TypeError,
@@ -1519,6 +1520,7 @@ class LaxTest(jtu.JaxTestCase):
       lambda: lax.dynamic_slice(onp.ones((3, 4), dtype=onp.float32),
                                 (onp.int32(1), onp.int16(2)), (2, 2)))
 
+  @jtu.skip_on_devices("tpu")  # S16 not supported on TPU
   def testDynamicUpdateSliceTypeErrors(self):
     self.assertRaisesRegexp(
       TypeError,
