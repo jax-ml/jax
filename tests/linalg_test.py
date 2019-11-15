@@ -81,7 +81,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                             check_dtypes=True, tol=1e-3)
     self._CompileAndCheck(np.linalg.cholesky, args_maker, check_dtypes=True)
 
-    if onp.finfo(dtype).bits == 64:
+    if np.finfo(dtype).bits == 64:
       jtu.check_grads(np.linalg.cholesky, args_maker(), order=2)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -162,7 +162,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     # Norm, adjusted for dimension and type.
     def norm(x):
       norm = onp.linalg.norm(x, axis=(-2, -1))
-      return norm / ((n + 1) * onp.finfo(dtype).eps)
+      return norm / ((n + 1) * np.finfo(dtype).eps)
 
     a, = args_maker()
     w, v = np.linalg.eig(a)
@@ -232,7 +232,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     # Norm, adjusted for dimension and type.
     def norm(x):
       norm = onp.linalg.norm(x, axis=(-2, -1))
-      return norm / ((n + 1) * onp.finfo(dtype).eps)
+      return norm / ((n + 1) * np.finfo(dtype).eps)
 
     a, = args_maker()
     a = (a + onp.conj(a.T)) / 2
@@ -416,7 +416,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     # Norm, adjusted for dimension and type.
     def norm(x):
       norm = onp.linalg.norm(x, axis=(-2, -1))
-      return norm / (max(m, n) * onp.finfo(dtype).eps)
+      return norm / (max(m, n) * np.finfo(dtype).eps)
 
     a, = args_maker()
     out = np.linalg.svd(a, full_matrices=full_matrices, compute_uv=compute_uv)
@@ -487,7 +487,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     # Norm, adjusted for dimension and type.
     def norm(x):
       n = onp.linalg.norm(x, axis=(-2, -1))
-      return n / (max_rank * onp.finfo(dtype).eps)
+      return n / (max_rank * np.finfo(dtype).eps)
 
     def compare_orthogonal(q1, q2):
       # Q is unique up to sign, so normalize the sign first.

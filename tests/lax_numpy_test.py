@@ -38,9 +38,9 @@ from jax import lax
 from jax import linear_util
 from jax import numpy as lnp
 from jax import test_util as jtu
+from jax import types
 from jax.interpreters import partial_eval
 from jax.test_util import check_grads
-from jax.lib import xla_bridge
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -320,7 +320,7 @@ def _dtypes_are_compatible_for_bitwise_ops(args):
   if len(args) <= 1:
     return True
   is_signed = lambda dtype: lnp.issubdtype(dtype, onp.signedinteger)
-  width = lambda dtype: onp.iinfo(dtype).bits
+  width = lambda dtype: lnp.iinfo(dtype).bits
   x, y = args
   if width(x) > width(y):
     x, y = y, x
@@ -446,7 +446,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testBitwiseOp(self, onp_op, lnp_op, rng_factory, shapes, dtypes):
     rng = rng_factory()
     if not FLAGS.jax_enable_x64 and any(
-        onp.iinfo(dtype).bits == 64 for dtype in dtypes):
+        lnp.iinfo(dtype).bits == 64 for dtype in dtypes):
       self.skipTest("x64 types are disabled by jax_enable_x64")
     args_maker = self._GetArgsMaker(rng, shapes, dtypes)
     self._CheckAgainstNumpy(onp_op, lnp_op, args_maker,
@@ -1682,7 +1682,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for dtype in inexact_dtypes))
   def testNanToNum(self, rng_factory, shape, dtype):
     rng = rng_factory()
-    dtype = onp.dtype(xla_bridge.canonicalize_dtype(dtype)).type
+    dtype = onp.dtype(types.canonicalize_dtype(dtype)).type
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(onp.nan_to_num, lnp.nan_to_num, args_maker,
                             check_dtypes=True)
@@ -1907,7 +1907,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testMathSpecialFloatValues(self, op, dtype):
     onp_op = getattr(onp, op)
     lnp_op = getattr(lnp, op)
-    dtype = onp.dtype(xla_bridge.canonicalize_dtype(dtype)).type
+    dtype = onp.dtype(types.canonicalize_dtype(dtype)).type
     for x in (onp.nan, -onp.inf, -100., -2., -1., 0., 1., 2., 100., onp.inf,
               lnp.finfo(dtype).max, onp.sqrt(lnp.finfo(dtype).max),
               onp.sqrt(lnp.finfo(dtype).max) * 2.):
@@ -2318,7 +2318,7 @@ GRAD_SPECIAL_VALUE_TEST_RECORDS = [
 ]
 
 def num_float_bits(dtype):
-  return lnp.finfo(xla_bridge.canonicalize_dtype(dtype)).bits
+  return lnp.finfo(types.canonicalize_dtype(dtype)).bits
 
 class NumpyGradTests(jtu.JaxTestCase):
   @parameterized.named_parameters(itertools.chain.from_iterable(

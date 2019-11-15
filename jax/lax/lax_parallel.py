@@ -26,6 +26,7 @@ import numpy as onp
 
 from jax import core
 from jax import ad_util
+from jax import types
 from jax.lax import lax
 from jax.abstract_arrays import ShapedArray
 from jax.interpreters import ad
@@ -198,7 +199,7 @@ def _psum_translation_rule(c, val, replica_groups, backend=None):
   psum = partial(_allreduce_translation_rule, lax.add_p, c,
                  replica_groups=replica_groups, backend=backend)
   dtype = c.GetShape(val).numpy_dtype()
-  if onp.issubdtype(dtype, onp.complexfloating):
+  if types.issubdtype(dtype, onp.complexfloating):
     return c.Complex(psum(c.Real(val)), psum(c.Imag(val)))
   else:
     return psum(val)

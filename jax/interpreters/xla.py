@@ -30,6 +30,7 @@ from ..config import flags
 from .. import core
 from .. import ad_util
 from .. import tree_util
+from .. import types
 from .. import linear_util as lu
 from ..abstract_arrays import (ConcreteArray, ShapedArray, AbstractToken,
                                make_shaped_array, array_types, raise_to_shaped,
@@ -103,7 +104,7 @@ def canonicalize_dtype(x):
 canonicalize_dtype_handlers = {}
 canonicalize_dtype_handlers[core.Unit] = identity
 def _canonicalize_ndarray_dtype(x):
-  return onp.asarray(x, xb.canonicalize_dtype(onp.result_type(x)))
+  return onp.asarray(x, types.canonicalize_dtype(types.result_type(x)))
 for _t in array_types:
   canonicalize_dtype_handlers[_t] = _canonicalize_ndarray_dtype
 
@@ -190,7 +191,7 @@ def _check_nans(name, xla_shape, buf):
   if xla_shape.is_tuple():
     assert not xla_shape.tuple_shapes()
   else:
-    if onp.issubdtype(xla_shape.element_type(), onp.floating):
+    if types.issubdtype(xla_shape.element_type(), onp.floating):
       if onp.any(onp.isnan(buf.to_py())):
         msg = "invalid value (nan) encountered in {}"
         raise FloatingPointError(msg.format(name))
@@ -628,13 +629,13 @@ class DeviceArray(DeviceValue):
     return "{}{},{}{}".format(prefix, s, sep, dtype_str)
 
   def item(self):
-    if onp.issubdtype(self.dtype, onp.complexfloating):
+    if types.issubdtype(self.dtype, onp.complexfloating):
       return complex(self)
-    elif onp.issubdtype(self.dtype, onp.floating):
+    elif types.issubdtype(self.dtype, onp.floating):
       return float(self)
-    elif onp.issubdtype(self.dtype, onp.integer):
+    elif types.issubdtype(self.dtype, onp.integer):
       return int(self)
-    elif onp.issubdtype(self.dtype, onp.bool_):
+    elif types.issubdtype(self.dtype, onp.bool_):
       return bool(self)
     else:
       raise TypeError(self.dtype)

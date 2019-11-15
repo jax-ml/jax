@@ -43,6 +43,7 @@ from six.moves import reduce
 from . import core
 from . import linear_util as lu
 from . import ad_util
+from . import types
 from .core import eval_jaxpr
 from .api_util import (wraps, flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
                        flatten_fun_nokwargs2)
@@ -395,8 +396,8 @@ def value_and_grad(fun, argnums=0, has_aux=False, holomorphic=False):
     else:
       ans, vjp_py, aux = vjp(f_partial, *dyn_args, has_aux=True)
     _check_scalar(ans)
-    dtype = onp.result_type(ans)
-    if not (holomorphic or onp.issubdtype(dtype, onp.floating)):
+    dtype = types.result_type(ans)
+    if not (holomorphic or types.issubdtype(dtype, onp.floating)):
       msg = ("Gradient only defined for real-output functions (with dtype that "
              "is a subdtype of np.floating), but got dtype {}. For holomorphic "
              "differentiation, pass holomorphic=True.")
@@ -462,7 +463,7 @@ def jacfwd(fun, argnums=0, holomorphic=False):
 
 def _check_real_input_jacfwd(x):
   aval = core.get_aval(x)
-  if not onp.issubdtype(aval.dtype, onp.floating):
+  if not types.issubdtype(aval.dtype, onp.floating):
     msg = ("jacfwd only defined for functions with input dtypes that are "
            "sub-dtypes of `np.floating` (i.e. that model real values), but got "
            "{}. For holomorphic differentiation, pass holomorphic=True.")
@@ -509,7 +510,7 @@ jacobian = jacrev
 
 def _check_real_output_jacrev(x):
   aval = core.get_aval(x)
-  if not onp.issubdtype(aval.dtype, onp.floating):
+  if not types.issubdtype(aval.dtype, onp.floating):
     msg = ("jacrev only defined for functions with output dtypes that are "
            "sub-dtypes of `np.floating` (i.e. that model real values), but got "
            "{}. For holomorphic differentiation, pass holomorphic=True.")
@@ -541,7 +542,7 @@ def _std_basis(pytree):
   leaves, _ = tree_flatten(pytree)
   ndim = sum(map(onp.size, leaves))
   # TODO(mattjj): use a symbolic identity matrix here
-  dtype = onp.result_type(*leaves)
+  dtype = types.result_type(*leaves)
   flat_basis = onp.eye(ndim, dtype=dtype)
   return _unravel_array_into_pytree(pytree, 1, flat_basis)
 
@@ -560,7 +561,7 @@ def _split(x, indices, axis):
     return x.split(indices, axis)
 
 def _dtype(x):
-  return xb.canonicalize_dtype(onp.result_type(x))
+  return types.canonicalize_dtype(types.result_type(x))
 
 
 def vmap(fun, in_axes=0, out_axes=0):
@@ -1182,7 +1183,7 @@ def lift_linearized(jaxpr, primal_avals, consts, io_tree, out_pvals, *py_args):
 
 def _check_inexact_input_vjp(x):
   aval = core.get_aval(x)
-  if not onp.issubdtype(aval.dtype, onp.inexact):
+  if not types.issubdtype(aval.dtype, onp.inexact):
     msg = ("Primal inputs to reverse-mode differentiation must be of float "
            "or complex type, got type {}")
     raise TypeError(msg.format(aval.dtype.name))
@@ -1827,8 +1828,8 @@ def _elementwise_std_basis(pytree):
   arity = len(leaves)
   dims = map(onp.size, leaves)
   # TODO(mattjj): use symbolic constants
-  dtype = onp.result_type(*leaves)
-  if not onp.issubdtype(dtype, onp.floating):
+  dtype = types.result_type(*leaves)
+  if not types.issubdtype(dtype, onp.floating):
     msg = ("Jacobian only defined for functions with floating input and output "
            "dtypes (i.e. dtypes that model real numbers), got {}.")
     raise TypeError(msg.format(dtype))  # TODO(mattjj, dougalm): handle complex
@@ -1964,7 +1965,7 @@ def eval_shape(fun, *args, **kwargs):
   dtype('float32')
   """
   def abstractify(x):
-    return ShapedArray(onp.shape(x), onp.result_type(x))
+    return ShapedArray(onp.shape(x), types.result_type(x))
   args_flat, in_tree = tree_flatten((args, kwargs))
   fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
   out = pe.abstract_eval_fun(fun.call_wrapped, *map(abstractify, args_flat))

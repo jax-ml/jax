@@ -412,7 +412,7 @@ class IndexingTest(jtu.JaxTestCase):
     for rng_factory in [jtu.rand_default])
   def testStaticIndexingGrads(self, shape, dtype, rng_factory, indexer):
     rng = rng_factory()
-    tol = 1e-2 if onp.finfo(dtype).bits == 32 else None
+    tol = 1e-2 if lnp.finfo(dtype).bits == 32 else None
     arg = rng(shape, dtype)
     fun = lambda x: x[indexer]**2
     check_grads(fun, (arg,), 2, tol, tol, tol)
@@ -526,7 +526,7 @@ class IndexingTest(jtu.JaxTestCase):
       for rng_factory in [jtu.rand_default])
   def testDynamicIndexingWithIntegersGrads(self, shape, dtype, rng_factory, indexer):
     rng = rng_factory()
-    tol = 1e-2 if onp.finfo(dtype).bits == 32 else None
+    tol = 1e-2 if lnp.finfo(dtype).bits == 32 else None
     unpacked_indexer, pack_indexer = self._ReplaceSlicesWithTuples(indexer)
 
     @api.jit
@@ -606,7 +606,7 @@ class IndexingTest(jtu.JaxTestCase):
       for rng_factory in [jtu.rand_default])
   def testAdvancedIntegerIndexingGrads(self, shape, dtype, rng_factory, indexer):
     rng = rng_factory()
-    tol = 1e-2 if onp.finfo(dtype).bits == 32 else None
+    tol = 1e-2 if lnp.finfo(dtype).bits == 32 else None
     arg = rng(shape, dtype)
     fun = lambda x: x[indexer]**2
     check_grads(fun, (arg,), 2, tol, tol, tol)

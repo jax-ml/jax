@@ -47,13 +47,13 @@ from six.moves import builtins, xrange
 
 from jax import jit, device_put, custom_transforms, defjvp
 from .. import core
+from .. import types as jtypes
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
 from ..config import flags
 from ..interpreters.xla import DeviceArray
 from .. import lax
 from ..util import partial, get_module_functions, unzip2, prod as _prod
 from ..lib import pytree
-from ..lib import xla_bridge
 from ..lib import xla_client
 
 FLAGS = flags.FLAGS
@@ -148,14 +148,14 @@ integer = onp.integer
 signedinteger = onp.signedinteger
 unsignedinteger = onp.unsignedinteger
 
-iinfo = onp.iinfo
-finfo = onp.finfo
+iinfo = jtypes.iinfo
+finfo = jtypes.finfo
 
-can_cast = onp.can_cast
-issubdtype = onp.issubdtype
-issubsctype = onp.issubsctype
-result_type = onp.result_type
-promote_types = onp.promote_types
+can_cast = jtypes.can_cast
+issubdtype = jtypes.issubdtype
+issubsctype = jtypes.issubsctype
+result_type = jtypes.result_type
+promote_types = jtypes.promote_types
 
 ComplexWarning = onp.ComplexWarning
 
@@ -207,7 +207,7 @@ def _promote_dtypes(*args):
     return args
   else:
     from_dtypes = map(_dtype, args)
-    to_dtype = xla_bridge.canonicalize_dtype(result_type(*from_dtypes))
+    to_dtype = jtypes.canonicalize_dtype(result_type(*from_dtypes))
     return [lax.convert_element_type(x, to_dtype)
             if _dtype(x) != to_dtype else x for x in args]
 
@@ -218,7 +218,7 @@ def _promote_to_result_dtype(op, *args):
 
 
 def _result_dtype(op, *args):
-  """Compute result dtype of applying op to arguments with given dtypes."""
+  """Compute result dtype of applying op to arguments with given djtypes."""
   args = [onp.ones((0,) * ndim(arg), _dtype(arg)) for arg in args]
   return _dtype(op(*args))
 
@@ -742,7 +742,7 @@ def angle(z):
   dtype = _dtype(re)
   if not issubdtype(dtype, inexact) or (
       issubdtype(_dtype(z), floating) and ndim(z) == 0):
-    dtype = xla_bridge.canonicalize_dtype(float64)
+    dtype = jtypes.canonicalize_dtype(float64)
     re = lax.convert_element_type(re, dtype)
     im = lax.convert_element_type(im, dtype)
   return lax.atan2(im, re)
@@ -997,7 +997,7 @@ def clip(a, a_min=None, a_max=None):
 def _dtype_info(dtype):
   """Helper function for to get dtype info needed for clipping."""
   if issubdtype(dtype, onp.integer):
-    return onp.iinfo(dtype)
+    return iinfo(dtype)
   return finfo(dtype)
 
 def _round_to_nearest_even(x):
@@ -1095,7 +1095,7 @@ def nan_to_num(x, copy=True):
   dtype = _dtype(x)
   if issubdtype(dtype, complexfloating):
     return lax.complex(nan_to_num(lax.real(x)), nan_to_num(lax.imag(x)))
-  info = finfo(xla_bridge.canonicalize_dtype(dtype))
+  info = finfo(jtypes.canonicalize_dtype(dtype))
   x = where(isnan(x), _constant_like(x, 0), x)
   x = where(isposinf(x), _constant_like(x, info.max), x)
   x = where(isneginf(x), _constant_like(x, info.min), x)
@@ -1139,15 +1139,15 @@ def _reduction_dims(a, axis):
     raise TypeError("Unexpected type of axis argument: {}".format(type(axis)))
 
 def _reduction_init_val(a, init_val):
-  a_dtype = xla_bridge.canonicalize_dtype(_dtype(a))
+  a_dtype = jtypes.canonicalize_dtype(_dtype(a))
   if a_dtype == 'bool':
     return onp.array(init_val > 0, dtype=a_dtype)
   try:
     return onp.array(init_val, dtype=a_dtype)
   except OverflowError:
     assert issubdtype(a_dtype, onp.integer)
-    sign, iinfo = onp.sign(init_val), onp.iinfo(a_dtype)
-    return onp.array(iinfo.min if sign < 0 else iinfo.max, dtype=a_dtype)
+    sign, info = onp.sign(init_val), iinfo(a_dtype)
+    return onp.array(info.min if sign < 0 else info.max, dtype=a_dtype)
 
 _cast_to_bool = partial(lax.convert_element_type, new_dtype=onp.bool_)
 
@@ -1171,7 +1171,7 @@ def mean(a, axis=None, dtype=None, out=None, keepdims=False):
   if dtype is None:
     if (issubdtype(_dtype(a), onp.bool_) or
         issubdtype(_dtype(a), onp.integer)):
-      dtype = xla_bridge.canonicalize_dtype(onp.float64)
+      dtype = jtypes.canonicalize_dtype(onp.float64)
     else:
       dtype = _dtype(a)
 
@@ -1193,11 +1193,11 @@ def average(a, axis=None, weights=None, returned=False):
         weights = asarray(weights)
 
         if issubdtype(a.dtype, integer) or issubdtype(a.dtype, bool_):
-            out_dtype = xla_bridge.canonicalize_dtype(result_type(a.dtype,
+            out_dtype = jtypes.canonicalize_dtype(result_type(a.dtype,
                                                                   weights.dtype,
                                                                   floating))
         else:
-            out_dtype = xla_bridge.canonicalize_dtype(result_type(a.dtype, weights.dtype))
+            out_dtype = jtypes.canonicalize_dtype(result_type(a.dtype, weights.dtype))
 
         a_shape = shape(a)
         a_ndim = len(a_shape)
@@ -1237,7 +1237,7 @@ def var(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
   if dtype is None:
     if (issubdtype(_dtype(a), onp.bool_) or
         issubdtype(_dtype(a), onp.integer)):
-      dtype = xla_bridge.canonicalize_dtype(onp.float64)
+      dtype = jtypes.canonicalize_dtype(onp.float64)
   centered = subtract(a, mean(a, axis, dtype=dtype, keepdims=True))
   if iscomplexobj(centered):
     centered = lax.abs(centered)
@@ -1277,7 +1277,7 @@ def allclose(a, b, rtol=1e-05, atol=1e-08):
 @_wraps(onp.count_nonzero)
 def count_nonzero(a, axis=None):
   return sum(lax.ne(a, _constant_like(a, 0)), axis=axis,
-             dtype=xla_bridge.canonicalize_dtype(onp.int_))
+             dtype=jtypes.canonicalize_dtype(onp.int_))
 
 
 def _make_nan_reduction(onp_reduction, np_reduction, init_val, nan_if_all_nan):
@@ -1546,13 +1546,13 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
   lax._check_user_dtype_supported(dtype, "array")
 
   if isinstance(object, ndarray):
-    if dtype and _dtype(object) != xla_bridge.canonicalize_dtype(dtype):
+    if dtype and _dtype(object) != jtypes.canonicalize_dtype(dtype):
       out = lax.convert_element_type(object, dtype)
     else:
       out = device_put(object)
   elif hasattr(object, '__array__'):
     # this case is for duck-typed handling of objects that implement `__array__`
-    out = array(object.__array__(), dtype and xla_bridge.canonicalize_dtype(dtype))
+    out = array(object.__array__(), dtype and jtypes.canonicalize_dtype(dtype))
   elif isinstance(object, (list, tuple)):
     if object:
       out = stack([array(elt, dtype=dtype) for elt in object])
@@ -1560,7 +1560,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
       out = onp.array([], dtype)
   elif isscalar(object):
     out = lax.reshape(object, ())
-    if dtype and _dtype(out) != xla_bridge.canonicalize_dtype(dtype):
+    if dtype and _dtype(out) != jtypes.canonicalize_dtype(dtype):
       out = lax.convert_element_type(out, dtype)
   else:
     try:
@@ -1696,7 +1696,7 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
   lax._check_user_dtype_supported(dtype, "linspace")
   if num < 0:
     raise ValueError("Number of samples, %s, must be non-negative." % num)
-  dtype = dtype or onp.result_type(start, stop, float(num))
+  dtype = dtype or result_type(start, stop, float(num))
   bounds_shape = list(lax.broadcast_shapes(shape(start), shape(stop)))
   broadcast_start = broadcast_to(start, bounds_shape)
   axis = len(bounds_shape) + axis + 1 if axis < 0 else axis
@@ -1737,8 +1737,7 @@ def logspace(start, stop, num=50, endpoint=True, base=10.0, dtype=None, axis=0):
 @_wraps(onp.geomspace)
 def geomspace(start, stop, num=50, endpoint=True, dtype=None, axis=0):
   """Implementation of geomspace differentiable in start and stop args."""
-  dtype = dtype or onp.result_type(start, stop, float(num),
-                                   zeros((), dtype))
+  dtype = dtype or result_type(start, stop, float(num), zeros((), dtype))
   # follow the numpy geomspace convention for negative and complex endpoints
   signflip = 1 - (1 - sign(real(start))) * (1 - sign(real(stop))) // 2
   res = signflip * logspace(log10(signflip * start),
@@ -1934,7 +1933,7 @@ def trace(a, offset=0, axis1=0, axis2=1, dtype=None, out=None):
   if dtype is None:
     dtype = _dtype(a)
     if issubdtype(dtype, integer):
-      default_int = xla_bridge.canonicalize_dtype(onp.int_)
+      default_int = jtypes.canonicalize_dtype(onp.int_)
       if iinfo(dtype).bits < iinfo(default_int).bits:
         dtype = default_int
 
@@ -2410,7 +2409,7 @@ def _argminmax(op, a, axis):
   shape = [1] * a.ndim
   shape[axis] = a.shape[axis]
   idxs = lax.tie_in(a, arange(a.shape[axis])).reshape(shape)
-  maxval = onp.iinfo(xla_bridge.canonicalize_dtype(idxs.dtype)).max
+  maxval = iinfo(jtypes.canonicalize_dtype(idxs.dtype)).max
   maxval = lax.tie_in(a, maxval)
   mask_idxs = where(lax._eq_meet(a, op(a, axis, keepdims=True)), idxs, maxval)
   return min(mask_idxs, axis)
@@ -2998,7 +2997,8 @@ def cov(m, y=None, rowvar=True, bias=False, ddof=None, fweights=None,
 
   if m.ndim > 2:
     raise ValueError("m has more than 2 dimensions")  # same as numpy error
-  X = array(m, ndmin=2, dtype=xla_bridge.canonicalize_dtype(result_type(m, onp.float64)), copy=False)
+  X = array(m, ndmin=2, dtype=jtypes.canonicalize_dtype(
+    result_type(m, onp.float64)), copy=False)
   if not rowvar and X.shape[0] != 1:
     X = X.T
   if X.shape[0] == 0:

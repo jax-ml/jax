@@ -25,12 +25,12 @@ from __future__ import print_function
 
 import os
 import warnings
-from distutils.util import strtobool
 
 from absl import logging
 
 from ..config import flags
 from .. import util
+from .. import types
 import numpy as onp  # 'onp' rather than 'np' to distinguish from autograd.numpy
 import six
 import threading
@@ -43,9 +43,7 @@ from . import version
 from . import xla_client
 
 FLAGS = flags.FLAGS
-flags.DEFINE_bool('jax_enable_x64',
-                  strtobool(os.getenv('JAX_ENABLE_X64', 'False')),
-                  'Enable 64-bit types to be used.')
+
 flags.DEFINE_string(
     'jax_xla_backend', 'xla',
     'Default is "xla" for the XLA service directly, '
@@ -223,31 +221,12 @@ def host_count(backend=None):
 @util.memoize
 def dtype_to_etype(dtype):
   """Convert from dtype to canonical etype (reading FLAGS.jax_enable_x64)."""
-  return xla_client.dtype_to_etype(canonicalize_dtype(dtype))
-
-
-_dtype_to_32bit_dtype = {
-    onp.dtype('int64'): onp.dtype('int32'),
-    onp.dtype('uint64'): onp.dtype('uint32'),
-    onp.dtype('float64'): onp.dtype('float32'),
-    onp.dtype('complex128'): onp.dtype('complex64'),
-}
-
-
-@util.memoize
-def canonicalize_dtype(dtype):
-  """Convert from a dtype to a canonical dtype based on FLAGS.jax_enable_x64."""
-  dtype = onp.dtype(dtype)
-
-  if FLAGS.jax_enable_x64:
-    return dtype
-  else:
-    return _dtype_to_32bit_dtype.get(dtype, dtype)
+  return xla_client.dtype_to_etype(types.canonicalize_dtype(dtype))
 
 
 @util.memoize
 def supported_numpy_dtypes():
-  return {canonicalize_dtype(dtype)
+  return {types.canonicalize_dtype(dtype)
           for dtype in xla_client.XLA_ELEMENT_TYPE_TO_DTYPE.values()}
 
 
@@ -255,7 +234,8 @@ def supported_numpy_dtypes():
 def normalize_to_xla_dtypes(val):
   """Normalize dtypes in a value."""
   if hasattr(val, '__array__') or onp.isscalar(val):
-    return onp.asarray(val, dtype=canonicalize_dtype(onp.result_type(val)))
+    return onp.asarray(val,
+                       dtype=types.canonicalize_dtype(types.result_type(val)))
   elif isinstance(val, (tuple, list)):
     return tuple(normalize_to_xla_dtypes(x) for x in val)
   raise TypeError('Can\'t convert to XLA: {}'.format(val))
