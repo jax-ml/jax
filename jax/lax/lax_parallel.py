@@ -114,7 +114,7 @@ def ppermute(x, axis_name, perm):
     An array with the same shape as ``x`` with slices along the axis
     ``axis_name`` gathered from ``x`` according to the permutation ``perm``.
   """
-  return ppermute_p.bind(x, axis_name=axis_name, perm=perm)
+  return ppermute_p.bind(x, axis_name=axis_name, perm=tuple(perm))
 
 def pswapaxes(x, axis_name, axis):
   """Swap the pmapped axis ``axis_name`` with the unmapped axis ``axis``.

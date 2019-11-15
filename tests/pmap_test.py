@@ -332,6 +332,16 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   @jtu.skip_on_devices("cpu", "gpu")
+  def testIssue1703(self):
+    num_devices = xla_bridge.device_count()
+    perm = [num_devices - 1] + list(range(num_devices - 1))
+    f = pmap(
+      lambda x: lax.ppermute(x, "i", zip(range(num_devices), perm)), "i")
+    result = f(np.arange(num_devices))
+    expected = np.asarray(perm, dtype=np.float32)
+    self.assertAllClose(result, expected)
+
+  @jtu.skip_on_devices("cpu", "gpu")
   def testRule30(self):
     # This is a test of collective_permute implementing a simple halo exchange
     # to run a rule 30 simulation: https://en.wikipedia.org/wiki/Rule_30
