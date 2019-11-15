@@ -337,7 +337,7 @@ class PmapTest(jtu.JaxTestCase):
     perm = [num_devices - 1] + list(range(num_devices - 1))
     f = pmap(
       lambda x: lax.ppermute(x, "i", zip(range(num_devices), perm)), "i")
-    result = f(np.arange(num_devices))
+    result = f(np.arange(num_devices, dtype=np.float32))
     expected = np.asarray(perm, dtype=np.float32)
     self.assertAllClose(result, expected)
 
