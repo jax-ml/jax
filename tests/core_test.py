@@ -172,7 +172,7 @@ class CoreTest(jtu.JaxTestCase):
 
   @parameterized.parameters(test_specs)
   def test_jit(self, f, args):
-    jtu.check_eq(jit(f)(*args), f(*args))
+    jtu.check_close(jit(f)(*args), f(*args))
 
   @parameterized.parameters(test_specs)
   def test_jvp(self, f, args):
@@ -192,7 +192,9 @@ class CoreTest(jtu.JaxTestCase):
 
   @parameterized.parameters(test_specs)
   def test_vjp(self, f, args):
-    jtu.check_vjp(f, partial(vjp, f), args)
+    jtu.check_vjp(f, partial(vjp, f), args,
+                  rtol={onp.float32: 1e-2, onp.float64: 1e-5},
+                  atol={onp.float32: 1e-2, onp.float64: 1e-5})
 
   def test_jvp_closure(self):
     def foo(x):

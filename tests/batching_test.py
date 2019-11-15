@@ -57,7 +57,9 @@ class BatchingTest(jtu.JaxTestCase):
 
     ans = matmat(A, B)
     expected = onp.dot(A, B)
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    self.assertAllClose(
+        ans, expected, check_dtypes=False,
+        rtol={onp.float32:1e-2} if jtu.device_under_test() == "tpu" else None)
 
     jaxpr = make_jaxpr(matmat)(A, B)
     self.assertEqual(len(jaxpr.eqns), 1)
@@ -217,7 +219,9 @@ class BatchingTest(jtu.JaxTestCase):
           np.maximum(np.dot(W_t, np.transpose(x_ex)), 0.0), x_ex)
       expected_ans = np.transpose(expected_ans)
 
-      self.assertAllClose(ans[i], expected_ans, check_dtypes=False)
+      self.assertAllClose(
+          ans[i], expected_ans, check_dtypes=False,
+          atol={onp.float32:5e-2} if jtu.device_under_test() == "tpu" else None)
 
   def testDotGeneral(self):
     R = onp.random.RandomState(0).randn
@@ -566,7 +570,8 @@ class BatchingTest(jtu.JaxTestCase):
       per_example_direct += [
           np.reshape(g, (1,) + g.shape)]
     per_example_direct = np.concatenate(per_example_direct, axis=0)
-    self.assertAllClose(per_example, per_example_direct, check_dtypes=True)
+    self.assertAllClose(per_example, per_example_direct, check_dtypes=True,
+                        rtol=1e-5)
 
   def testCumProd(self):
    x = np.arange(9).reshape(3, 3) + 1
@@ -616,7 +621,7 @@ class BatchingTest(jtu.JaxTestCase):
 
     ans = vmap(lax_linalg.cholesky)(a)
     expected = onp.linalg.cholesky(a)
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    self.assertAllClose(ans, expected, check_dtypes=False, rtol=1e-4)
 
     b = onp.random.RandomState(0).randn(10, 5, 5).astype(onp.float32)
     b = onp.matmul(b, onp.conj(onp.swapaxes(b, -1, -2)))
@@ -624,7 +629,7 @@ class BatchingTest(jtu.JaxTestCase):
 
     ans = vmap(lax_linalg.cholesky, in_axes=1, out_axes=0)(b_trans)
     expected = onp.linalg.cholesky(b)
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    self.assertAllClose(ans, expected, check_dtypes=False, rtol=1e-4)
 
   def testLaxLinalgTriangularSolve(self):
     a = onp.random.RandomState(0).randn(4, 10, 4).astype(onp.float32)

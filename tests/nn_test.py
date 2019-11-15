@@ -37,7 +37,8 @@ config.parse_flags_with_absl()
 class NNFunctionsTest(jtu.JaxTestCase):
 
   def testSoftplusGrad(self):
-    check_grads(nn.softplus, (1e-8,), 4)
+    check_grads(nn.softplus, (1e-8,), 4,
+                rtol=1e-2 if jtu.device_under_test() == "tpu" else None)
 
   def testSoftplusValue(self):
     val = nn.softplus(89.)

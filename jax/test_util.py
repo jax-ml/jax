@@ -53,8 +53,6 @@ flags.DEFINE_integer(
   help='Number of generated cases to test')
 
 EPS = 1e-4
-ATOL = 1e-4
-RTOL = 1e-4
 
 _dtype = lambda x: getattr(x, 'dtype', None) or onp.asarray(x).dtype
 
@@ -67,32 +65,60 @@ def is_sequence(x):
   else:
     return True
 
+default_tolerance = {
+  onp.dtype(onp.bool_): 0,
+  onp.dtype(onp.int8): 0,
+  onp.dtype(onp.int16): 0,
+  onp.dtype(onp.int32): 0,
+  onp.dtype(onp.int64): 0,
+  onp.dtype(onp.uint8): 0,
+  onp.dtype(onp.uint16): 0,
+  onp.dtype(onp.uint32): 0,
+  onp.dtype(onp.uint64): 0,
+  onp.dtype(onp.float16): 1e-3,
+  onp.dtype(onp.float32): 1e-6,
+  onp.dtype(onp.float64): 1e-15,
+  onp.dtype(onp.complex64): 1e-6,
+  onp.dtype(onp.complex128): 1e-15,
+}
 
-def assert_numpy_eq(x, y):
-  testing_tpu = FLAGS.jax_test_dut and FLAGS.jax_test_dut.startswith("tpu")
-  testing_x32 = not FLAGS.jax_enable_x64
-  if testing_tpu or testing_x32:
-    onp.testing.assert_allclose(x, y, 1e-3, 1e-3)
-  else:
-    onp.testing.assert_allclose(x, y)
+tpu_default_tolerance = default_tolerance.copy()
+tpu_default_tolerance[onp.dtype(onp.float32)] = 1e-3
+tpu_default_tolerance[onp.dtype(onp.complex64)] = 1e-3
 
+default_gradient_tolerance = {
+  onp.dtype(onp.float16): 1e-2,
+  onp.dtype(onp.float32): 1e-3,
+  onp.dtype(onp.float64): 1e-6,
+  onp.dtype(onp.complex64): 1e-3,
+  onp.dtype(onp.complex128): 1e-6,
+}
 
-def assert_numpy_close(a, b, atol=ATOL, rtol=RTOL):
-  testing_tpu = FLAGS.jax_test_dut and FLAGS.jax_test_dut.startswith("tpu")
-  testing_x32 = not FLAGS.jax_enable_x64
-  if testing_tpu or testing_x32:
-    atol = max(atol, 1e-1)
-    rtol = max(rtol, 1e-1)
+def _assert_numpy_eq(x, y):
+  onp.testing.assert_allclose(x, y)
+
+def _tolerance(tol, dtype):
+  tol = tol or {}
+  if not isinstance(tol, dict):
+    return tol
+  tol = {onp.dtype(key): value for key, value in tol.items()}
+  default = (tpu_default_tolerance if device_under_test() == "tpu"
+             else default_tolerance)
+  return tol.get(dtypes.canonicalize_dtype(dtype), default[dtype])
+
+def _assert_numpy_close(a, b, atol=None, rtol=None):
   assert a.shape == b.shape
+  atol = max(_tolerance(atol, a.dtype), _tolerance(atol, b.dtype))
+  rtol = max(_tolerance(rtol, a.dtype), _tolerance(rtol, b.dtype))
   onp.testing.assert_allclose(a, b, atol=atol * a.size, rtol=rtol * b.size)
 
 
 def check_eq(xs, ys):
-  tree_all(tree_multimap(assert_numpy_eq, xs, ys))
+  tree_all(tree_multimap(_assert_numpy_eq, xs, ys))
 
 
-def check_close(xs, ys, atol=ATOL, rtol=RTOL):
-  assert_close = partial(assert_numpy_close, atol=atol, rtol=rtol)
+def check_close(xs, ys, atol=None, rtol=None):
+  assert_close = partial(_assert_numpy_close, atol=atol, rtol=rtol)
   tree_all(tree_multimap(assert_close, xs, ys))
 
 
@@ -127,7 +153,9 @@ def numerical_jvp(f, primals, tangents, eps=EPS):
   return scalar_mul(sub(f_pos, f_neg), 0.5 / eps)
 
 
-def check_jvp(f, f_jvp, args, atol=ATOL, rtol=RTOL, eps=EPS):
+def check_jvp(f, f_jvp, args, atol=None, rtol=None, eps=EPS):
+  atol = atol or default_gradient_tolerance
+  rtol = rtol or default_gradient_tolerance
   rng = onp.random.RandomState(0)
   tangent = tree_map(partial(rand_like, rng), args)
   v_out, t_out = f_jvp(args, tangent)
@@ -140,7 +168,9 @@ def check_jvp(f, f_jvp, args, atol=ATOL, rtol=RTOL, eps=EPS):
   check_close(t_out, t_out_expected, atol=atol, rtol=rtol)
 
 
-def check_vjp(f, f_vjp, args, atol=ATOL, rtol=RTOL, eps=EPS):
+def check_vjp(f, f_vjp, args, atol=None, rtol=None, eps=EPS):
+  atol = atol or default_gradient_tolerance
+  rtol = rtol or default_gradient_tolerance
   _rand_like = partial(rand_like, onp.random.RandomState(0))
   v_out, vjpfun = f_vjp(*args)
   v_out_expected = f(*args)
@@ -157,9 +187,6 @@ def check_vjp(f, f_vjp, args, atol=ATOL, rtol=RTOL, eps=EPS):
 def check_grads(f, args, order,
                 modes=["fwd", "rev"], atol=None, rtol=None, eps=None):
   args = tuple(args)
-  default_tol = 1e-6 if FLAGS.jax_enable_x64 else 1e-2
-  atol = atol or default_tol
-  rtol = rtol or default_tol
   eps = eps or EPS
 
   _check_jvp = partial(check_jvp, atol=atol, rtol=rtol, eps=eps)
@@ -487,6 +514,13 @@ def check_raises(thunk, err_type, msg):
   except err_type as e:
     assert str(e).startswith(msg), "\n{}\n\n{}\n".format(e, msg)
 
+def check_raises_regexp(thunk, err_type, pattern):
+  try:
+    thunk()
+    assert False
+  except err_type as e:
+    assert re.match(pattern, str(e)), "{}\n\n{}\n".format(e, pattern)
+
 _CACHED_INDICES = {}
 
 def cases_from_list(xs):
@@ -515,14 +549,12 @@ class JaxTestCase(parameterized.TestCase):
   def assertArraysAllClose(self, x, y, check_dtypes, atol=None, rtol=None):
     """Assert that x and y are close (up to numerical tolerances)."""
     self.assertEqual(x.shape, y.shape)
-    dtype = lambda x: str(onp.asarray(x).dtype)
-    tol = 1e-2 if str(onp.dtype(onp.float32)) in {dtype(x), dtype(y)} else 1e-5
-    atol = atol or tol
-    rtol = rtol or tol
+    atol = max(_tolerance(atol, _dtype(x)), _tolerance(atol, _dtype(y)))
+    rtol = max(_tolerance(rtol, _dtype(x)), _tolerance(rtol, _dtype(y)))
 
-    if FLAGS.jax_test_dut == 'tpu':
-      atol = max(atol, 0.5)
-      rtol = max(rtol, 1e-1)
+    # if FLAGS.jax_test_dut == 'tpu':
+    #   atol = max(atol, 0.5)
+    #   rtol = max(rtol, 1e-1)
 
     onp.testing.assert_allclose(x, y, atol=atol, rtol=rtol)
 
@@ -530,17 +562,8 @@ class JaxTestCase(parameterized.TestCase):
       self.assertDtypesMatch(x, y)
 
   def assertDtypesMatch(self, x, y):
-    # special rule for complex128, which XLA doesn't support
-    def c128_to_c64(dtype):
-      if dtype == onp.complex128:
-        return onp.complex64
-      else:
-        return dtype
-
     if FLAGS.jax_enable_x64:
-      x_dtype = c128_to_c64(onp.asarray(x).dtype)
-      y_dtype = c128_to_c64(onp.asarray(y).dtype)
-      self.assertEqual(x_dtype, y_dtype)
+      self.assertEqual(onp.asarray(x).dtype, onp.asarray(y).dtype)
 
   def assertAllClose(self, x, y, check_dtypes, atol=None, rtol=None):
     """Assert that x and y, either arrays or nested tuples/lists, are close."""
@@ -560,7 +583,7 @@ class JaxTestCase(parameterized.TestCase):
       y = onp.asarray(y)
       self.assertArraysAllClose(x, y, check_dtypes, atol=atol, rtol=rtol)
     elif x == y:
-        return
+      return
     else:
       raise TypeError((type(x), type(y)))
 
@@ -590,8 +613,8 @@ class JaxTestCase(parameterized.TestCase):
     python_should_be_executing = False
     compiled_ans = cfun(*args)
 
-    self.assertAllClose(python_ans, monitored_ans, check_dtypes, rtol, atol)
-    self.assertAllClose(python_ans, compiled_ans, check_dtypes, rtol, atol)
+    self.assertAllClose(python_ans, monitored_ans, check_dtypes, atol, rtol)
+    self.assertAllClose(python_ans, compiled_ans, check_dtypes, atol, rtol)
 
     args = args_maker()
 
@@ -601,10 +624,10 @@ class JaxTestCase(parameterized.TestCase):
     python_should_be_executing = False
     compiled_ans = cfun(*args)
 
-    self.assertAllClose(python_ans, compiled_ans, check_dtypes, rtol, atol)
+    self.assertAllClose(python_ans, compiled_ans, check_dtypes, atol, rtol)
 
   def _CheckAgainstNumpy(self, numpy_reference_op, lax_op, args_maker,
-                         check_dtypes=False, tol=1e-5):
+                         check_dtypes=False, tol=None):
     args = args_maker()
     numpy_ans = numpy_reference_op(*args)
     lax_ans = lax_op(*args)

@@ -109,8 +109,8 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("exp", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"]),
     op_record("fabs", 1, float_dtypes, all_shapes, jtu.rand_default, ["rev"]),
     op_record("float_power", 2, inexact_dtypes, all_shapes, jtu.rand_default, ["rev"],
-              tolerance={onp.float32: 1e-5, onp.float64: 1e-12,
-                         onp.complex64: 1e-5, onp.complex128: 1e-12}),
+              tolerance={onp.float32: 1e-3, onp.float64: 1e-12,
+                         onp.complex64: 2e-4, onp.complex128: 1e-12}),
     op_record("floor", 1, float_dtypes, all_shapes, jtu.rand_default, []),
     op_record("greater", 2, number_dtypes, all_shapes, jtu.rand_some_equal, []),
     op_record("greater_equal", 2, number_dtypes, all_shapes, jtu.rand_some_equal, []),
@@ -201,7 +201,8 @@ JAX_COMPOUND_OP_RECORDS = [
               jtu.rand_default, [], check_dtypes=False,
               tolerance={onp.float16: 1e-2, onp.float64: 1e-12}),
     op_record("positive", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"]),
-    op_record("power", 2, number_dtypes, all_shapes, jtu.rand_positive, ["rev"]),
+    op_record("power", 2, number_dtypes, all_shapes, jtu.rand_positive, ["rev"],
+              tolerance={onp.complex128: 1e-14}),
     op_record("rad2deg", 1, float_dtypes, all_shapes, jtu.rand_default, []),
     op_record("ravel", 1, all_dtypes, all_shapes, jtu.rand_default, ["rev"]),
     op_record("real", 1, number_dtypes, all_shapes, jtu.rand_some_inf, []),
@@ -262,7 +263,8 @@ JAX_OPERATOR_OVERLOADS = [
     op_record("__gt__", 2, default_dtypes, all_shapes, jtu.rand_default, []),
     op_record("__ge__", 2, default_dtypes, all_shapes, jtu.rand_default, []),
     op_record("__neg__", 1, number_dtypes, all_shapes, jtu.rand_default, []),
-    op_record("__pow__", 2, inexact_dtypes, all_shapes, jtu.rand_positive, []),
+    op_record("__pow__", 2, inexact_dtypes, all_shapes, jtu.rand_positive, [],
+              tolerance={onp.float32: 2e-4, onp.complex64: 2e-4, onp.complex128: 1e-14}),
     op_record("__mod__", 2, default_dtypes, all_shapes, jtu.rand_nonzero, [],
               tolerance={onp.float16: 1e-1}),
     op_record("__floordiv__", 2, default_dtypes, all_shapes, jtu.rand_nonzero, []),
@@ -282,7 +284,8 @@ JAX_RIGHT_OPERATOR_OVERLOADS = [
     op_record("__radd__", 2, number_dtypes, all_shapes, jtu.rand_default, []),
     op_record("__rsub__", 2, number_dtypes, all_shapes, jtu.rand_default, []),
     op_record("__rmul__", 2, number_dtypes, all_shapes, jtu.rand_default, []),
-    op_record("__rpow__", 2, inexact_dtypes, all_shapes, jtu.rand_positive, []),
+    op_record("__rpow__", 2, inexact_dtypes, all_shapes, jtu.rand_positive, [],
+              tolerance={onp.float32: 2e-4, onp.complex64: 1e-3}),
     op_record("__rmod__", 2, default_dtypes, all_shapes, jtu.rand_nonzero, [],
               tolerance={onp.float16: 1e-1}),
     op_record("__rfloordiv__", 2, default_dtypes, all_shapes, jtu.rand_nonzero, []),
@@ -356,7 +359,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                                                       dtypes),
          "rng_factory": rec.rng_factory, "shapes": shapes, "dtypes": dtypes,
          "onp_op": getattr(onp, rec.name), "lnp_op": getattr(lnp, rec.name),
-         "check_dtypes": rec.check_dtypes, "op_tolerance": rec.tolerance}
+         "check_dtypes": rec.check_dtypes, "tol": rec.tolerance}
         for shapes in filter(
           _shapes_are_broadcast_compatible,
           CombosWithReplacement(rec.shapes, rec.nargs))
@@ -364,14 +367,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for rec in itertools.chain(JAX_ONE_TO_ONE_OP_RECORDS,
                                  JAX_COMPOUND_OP_RECORDS)))
   def testOp(self, onp_op, lnp_op, rng_factory, shapes, dtypes, check_dtypes,
-             op_tolerance):
+             tol):
     rng = rng_factory()
     args_maker = self._GetArgsMaker(rng, shapes, dtypes)
     scalar_arg = (jtu.PYTHON_SCALAR_SHAPE in shapes or
                   jtu.NUMPY_SCALAR_SHAPE in shapes or
                   () in shapes)
     empty_shape = any(isinstance(s, tuple) and 0 in s for s in shapes)
-    tol = max(tolerance(dtype, op_tolerance) for dtype in dtypes)
     self._CheckAgainstNumpy(
       onp_op, lnp_op, args_maker,
       check_dtypes=check_dtypes and not scalar_arg and not empty_shape,
@@ -384,17 +386,16 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         {"testcase_name": jtu.format_test_name_suffix(rec.test_name, shapes,
                                                       dtypes),
          "rng_factory": rec.rng_factory, "shapes": shapes, "dtypes": dtypes, "name": rec.name,
-         "op_tolerance": rec.tolerance}
+         "tol": rec.tolerance}
         for shapes in filter(
           _shapes_are_broadcast_compatible,
           CombosWithReplacement(rec.shapes, rec.nargs))
         for dtypes in CombosWithReplacement(rec.dtypes, rec.nargs))
       for rec in JAX_OPERATOR_OVERLOADS))
-  def testOperatorOverload(self, name, rng_factory, shapes, dtypes, op_tolerance):
+  def testOperatorOverload(self, name, rng_factory, shapes, dtypes, tol):
     rng = rng_factory()
     args_maker = self._GetArgsMaker(rng, shapes, dtypes)
     fun = lambda *xs: getattr(operator, name.strip('_'))(*xs)
-    tol = max(tolerance(dtype, op_tolerance) for dtype in dtypes)
     scalar_arg = (jtu.PYTHON_SCALAR_SHAPE in shapes or
                   jtu.NUMPY_SCALAR_SHAPE in shapes or
                   () in shapes)
@@ -597,8 +598,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testDot(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype, rng_factory):
     rng = rng_factory()
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
-    tol_spec = {onp.float16: 1e-2, onp.float32: 1e-5, onp.float64: 1e-14}
-    tol = max(tolerance(lhs_dtype, tol_spec), tolerance(rhs_dtype, tol_spec))
+    tol = {onp.float16: 1e-2, onp.float32: 1e-5, onp.float64: 1e-14,
+           onp.complex128: 1e-14}
+    if jtu.device_under_test() == "tpu":
+      tol[onp.float32] = tol[onp.complex64] = 2e-1
     self._CheckAgainstNumpy(onp.dot, lnp.dot, args_maker, check_dtypes=True,
                             tol=tol)
     self._CompileAndCheck(lnp.dot, args_maker, check_dtypes=True, atol=tol,
@@ -628,8 +631,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testMatmul(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype, rng_factory):
     rng = rng_factory()
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
-    tol_spec = {onp.float16: 1e-2, onp.float32: 1e-3, onp.float64: 1e-12}
-    tol = max(tolerance(lhs_dtype, tol_spec), tolerance(rhs_dtype, tol_spec))
+    tol = {onp.float16: 1e-2, onp.float32: 2e-2, onp.float64: 1e-12}
+    if jtu.device_under_test() == "tpu":
+      tol[onp.float32] = tol[onp.complex64] = 4e-2
     self._CheckAgainstNumpy(onp.matmul, lnp.matmul, args_maker,
                             check_dtypes=True, tol=tol)
     self._CompileAndCheck(lnp.matmul, args_maker, check_dtypes=True, atol=tol,
@@ -657,10 +661,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
     lnp_fun = lambda a, b: lnp.tensordot(a, b, axes)
     onp_fun = lambda a, b: onp.tensordot(a, b, axes)
-    tol_spec = {onp.float16: 1e-1, onp.float32: 1e-3, onp.float64: 1e-12,
-                onp.complex64: 1e-3, onp.complex128: 1e-12}
+    tol = {onp.float16: 1e-1, onp.float32: 1e-3, onp.float64: 1e-12,
+           onp.complex64: 1e-3, onp.complex128: 1e-12}
+    if jtu.device_under_test() == "tpu":
+      tol[onp.float32] = tol[onp.complex64] = 2e-1
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True,
-                            tol=max(tolerance(lhs_dtype, tol_spec), tolerance(rhs_dtype, tol_spec)))
+                            tol=tol)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -682,7 +688,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
     onp_fun = lambda lhs, rhs: onp.inner(lhs, rhs)
     lnp_fun = lambda lhs, rhs: lnp.inner(lhs, rhs)
-    tol = max(tolerance(lhs_dtype), tolerance(rhs_dtype))
+    tol = 2e-1 if jtu.device_under_test() == "tpu" else {onp.float64: 1e-13}
     # TODO(phawkins): there are float32/float64 disagreements for some inputs.
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=False,
                             tol=tol)
@@ -1670,7 +1676,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # np.vander seems to return float64 for all floating types. We could obey
     # those semantics, but they seem like a bug.
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=False,
-                            tol=tolerance(dtype))
+                            tol={onp.float32: 1e-3})
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=False)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -1743,8 +1749,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # TODO(phawkins): we currently set dtype=False because we aren't as
     # aggressive about promoting to float64. It's not clear we want to mimic
     # Numpy here.
-    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=False)
-    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=False,
+                            tol={onp.float64: 1e-6})
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True,
+                          rtol={onp.float32: 1e-5, onp.float64: 1e-7})
 
   @parameterized.named_parameters(jtu.cases_from_list(
         {"testcase_name": jtu.format_test_name_suffix("select", shapes,
@@ -1987,7 +1995,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = self._GetArgsMaker(rng, [shape], [dtype])
     onp_fun = partial(onp.cov, rowvar=rowvar, ddof=ddof, bias=bias)
     lnp_fun = partial(lnp.cov, rowvar=rowvar, ddof=ddof, bias=bias)
-    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(
+        onp_fun, lnp_fun, args_maker, check_dtypes=True,
+        tol=7e-2 if jtu.device_under_test() == "tpu" else {onp.float64: 1e-13})
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
   def testIssue967(self):
@@ -2012,7 +2022,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     onp_fun = partial(onp.corrcoef, rowvar=rowvar, ddof=ddof, bias=bias)
     lnp_fun = partial(lnp.corrcoef, rowvar=rowvar, ddof=ddof, bias=bias)
     if not onp.any(onp.isclose(onp.std(mat), 0.0)):
-      self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+      self._CheckAgainstNumpy(
+          onp_fun, lnp_fun, args_maker, check_dtypes=True,
+          tol=1e-2 if jtu.device_under_test() == "tpu" else None)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(
@@ -2115,13 +2127,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testLogspace(self, start_shape, stop_shape, num,
                    endpoint, base, dtype, rng_factory):
     if (dtype in int_dtypes and
-        jtu.device_under_test() == "gpu" and
+        jtu.device_under_test() in ("gpu", "tpu") and
         not FLAGS.jax_enable_x64):
       raise unittest.SkipTest("GPUx32 truncated exponentiation"
                               " doesn't exactly match other platforms.")
     rng = rng_factory()
     # relax default tolerances slightly
-    tol = tolerance(dtype if dtype else onp.float32) * 10
+    tol = {onp.float16: 2e-2, onp.float32: 1e-2, onp.float64: 1e-14,
+           onp.complex64: 1e-3, onp.complex128: 1e-14}
     args_maker = self._GetArgsMaker(rng,
                                     [start_shape, stop_shape],
                                     [dtype, dtype])
@@ -2140,7 +2153,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       if dtype in (inexact_dtypes + [None,]):
         # Why do compiled and op-by-op float16 np.power numbers differ
         # slightly more than expected?
-        atol = tol if dtype != onp.float16 else 10 * tol
+        atol = {onp.float16: 1e-2}
         self._CompileAndCheck(lnp_op, args_maker,
                               check_dtypes=False, atol=atol, rtol=tol)
 
@@ -2164,7 +2177,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                     endpoint, dtype, rng_factory):
     rng = rng_factory()
     # relax default tolerances slightly
-    tol = tolerance(dtype if dtype else onp.float32) * 10
+    tol = {onp.float16: 2e-3, onp.float32: 2e-3, onp.complex128: 1e-14}
     def args_maker():
       """Test the set of inputs onp.geomspace is well-defined on."""
       start, stop = self._GetArgsMaker(rng,
@@ -2343,7 +2356,8 @@ class NumpyGradTests(jtu.JaxTestCase):
           for special_value in rec.values)
       for rec in GRAD_SPECIAL_VALUE_TEST_RECORDS))
   def testOpGradSpecialValue(self, op, special_value):
-    check_grads(op, (special_value,), 2, ["fwd", "rev"])
+    check_grads(op, (special_value,), 2, ["fwd", "rev"],
+                atol={onp.float32: 3e-3})
 
   def testTakeAlongAxisIssue1521(self):
     # https://github.com/google/jax/issues/1521
