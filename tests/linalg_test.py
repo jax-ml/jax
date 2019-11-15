@@ -581,7 +581,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       {"testcase_name":
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype, "rng_factory": rng_factory}
-      for shape in [(1, 1), (4, 4), (2, 70, 7), (7e5, 70), (70, 7e6), (70, 7, 2)]
+      for shape in [(1, 1), (4, 4), (2, 70, 7), (int(7e5), 70), (70, int(7e6)), (70, 7, 2)]
       for dtype in float_types + complex_types
       for rng_factory in [jtu.rand_default]))
   def testPinv(self, shape, dtype, rng_factory):
