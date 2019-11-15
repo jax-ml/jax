@@ -141,7 +141,7 @@ def pinv(a, rcond=None):
   # ported from https://github.com/numpy/numpy/blob/v1.17.0/numpy/linalg/linalg.py#L1890-L1979
   a = np.conj(a)
   if rcond is None:
-      max_rows_cols = np.max(a.shape[-2:])
+      max_rows_cols = float(max(a.shape[-2:]))
       rcond = 10. * max_rows_cols * np.finfo(a.dtype).eps
   rcond = np.asarray(rcond)
   u, s, v = svd(a, full_matrices=False)
