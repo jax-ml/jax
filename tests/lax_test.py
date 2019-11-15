@@ -34,7 +34,7 @@ from jax import core
 from jax import lax
 from jax import test_util as jtu
 from jax import lax_reference
-from jax import types
+from jax import dtypes
 from jax.test_util import check_grads
 from jax.interpreters import xla
 from jax.lib import xla_client
@@ -45,7 +45,7 @@ FLAGS = config.FLAGS
 
 
 def num_float_bits(dtype):
-  return types.finfo(types.canonicalize_dtype(dtype)).bits
+  return dtypes.finfo(dtypes.canonicalize_dtype(dtype)).bits
 
 
 ### lax tests
@@ -1116,28 +1116,28 @@ class LaxTest(jtu.JaxTestCase):
                init_val),
        "op": op, "init_val": init_val, "shape": shape, "dtype": dtype,
        "dims": dims, "rng_factory": rng_factory}
-      for init_val, op, dtypes in [
+      for init_val, op, types in [
           (0, lax.add, default_dtypes),
           (1, lax.mul, default_dtypes),
           (0, lax.max, all_dtypes), # non-monoidal
           (-onp.inf, lax.max, float_dtypes),
-          (types.iinfo(onp.int32).min, lax.max, [onp.int32]),
-          # (types.iinfo(onp.int64).min, lax.max, [onp.int64]),  # TODO fails
-          (types.iinfo(onp.uint32).min, lax.max, [onp.uint32]),
-          (types.iinfo(onp.uint64).min, lax.max, [onp.uint64]),
+          (dtypes.iinfo(onp.int32).min, lax.max, [onp.int32]),
+          # (dtypes.iinfo(onp.int64).min, lax.max, [onp.int64]),  # TODO fails
+          (dtypes.iinfo(onp.uint32).min, lax.max, [onp.uint32]),
+          (dtypes.iinfo(onp.uint64).min, lax.max, [onp.uint64]),
           (onp.inf, lax.min, float_dtypes),
-          (types.iinfo(onp.int32).max, lax.min, [onp.int32]),
-          # (types.iinfo(onp.int64).max, lax.min, [onp.int64]),  # TODO fails
-          (types.iinfo(onp.uint32).max, lax.min, [onp.uint32]),
-          (types.iinfo(onp.uint64).max, lax.min, [onp.uint64]),
+          (dtypes.iinfo(onp.int32).max, lax.min, [onp.int32]),
+          # (dtypes.iinfo(onp.int64).max, lax.min, [onp.int64]),  # TODO fails
+          (dtypes.iinfo(onp.uint32).max, lax.min, [onp.uint32]),
+          (dtypes.iinfo(onp.uint64).max, lax.min, [onp.uint64]),
       ]
-      for dtype in dtypes
+      for dtype in types
       for shape, dims in [
           [(3, 4, 5), (0,)], [(3, 4, 5), (1, 2)],
           [(3, 4, 5), (0, 2)], [(3, 4, 5), (0, 1, 2)]
       ]
       for rng_factory in [
-          jtu.rand_default if types.issubdtype(dtype, onp.integer)
+          jtu.rand_default if dtypes.issubdtype(dtype, onp.integer)
           else jtu.rand_small]))
   def testReduce(self, op, init_val, shape, dtype, dims, rng_factory):
     rng = rng_factory()
@@ -1576,7 +1576,7 @@ class DeviceConstantTest(jtu.JaxTestCase):
   def testIotaConstant(self, dtype, shape, dimension):
     make_const = lambda: lax.broadcasted_iota(dtype, shape, dimension)
 
-    arr = onp.arange(shape[dimension], dtype=types.canonicalize_dtype(dtype))
+    arr = onp.arange(shape[dimension], dtype=dtypes.canonicalize_dtype(dtype))
     singleton_shape = [1] * len(shape)
     singleton_shape[dimension] = shape[dimension]
     expected = onp.broadcast_to(arr.reshape(singleton_shape), shape)
@@ -2252,8 +2252,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     operand = rng(shape, dtype)
     init_val = onp.asarray(init_val, dtype=dtype)
     reduce = lambda operand: lax.reduce(operand, init_val, op, dims)
-    eps = (1.0 if types.finfo(dtype).bits == 16 and op is lax.add else
-           1e-2 if types.finfo(dtype).bits == 32 else None)
+    eps = (1.0 if dtypes.finfo(dtype).bits == 16 and op is lax.add else
+           1e-2 if dtypes.finfo(dtype).bits == 32 else None)
     check_grads(reduce, (operand,), 1, ["fwd", "rev"], tol, tol, eps)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -2598,7 +2598,7 @@ class LaxVmapTest(jtu.JaxTestCase):
       self, lhs_shape, rhs_shape, dtype, strides, padding, lhs_dil, rhs_dil,
       dimension_numbers, perms, feature_group_count, lhs_bdim, rhs_bdim, rng_factory):
     rng = rng_factory()
-    tol = 1e-1 if types.finfo(dtype).bits <= 32 else 1e-3
+    tol = 1e-1 if dtypes.finfo(dtype).bits <= 32 else 1e-3
 
     # permute shapes to match dim_spec, scale by feature_group_count
     lhs_perm, rhs_perm = perms
@@ -2880,15 +2880,15 @@ class LaxVmapTest(jtu.JaxTestCase):
           (1, lax.mul, default_dtypes),
           (0, lax.max, all_dtypes), # non-monoidal
           (-onp.inf, lax.max, float_dtypes),
-          (types.iinfo(onp.int32).min, lax.max, [onp.int32]),
-          (types.iinfo(onp.int64).min, lax.max, [onp.int64]),
-          (types.iinfo(onp.uint32).min, lax.max, [onp.uint32]),
-          (types.iinfo(onp.uint64).min, lax.max, [onp.uint64]),
+          (dtypes.iinfo(onp.int32).min, lax.max, [onp.int32]),
+          (dtypes.iinfo(onp.int64).min, lax.max, [onp.int64]),
+          (dtypes.iinfo(onp.uint32).min, lax.max, [onp.uint32]),
+          (dtypes.iinfo(onp.uint64).min, lax.max, [onp.uint64]),
           (onp.inf, lax.min, float_dtypes),
-          (types.iinfo(onp.int32).max, lax.min, [onp.int32]),
-          (types.iinfo(onp.int64).max, lax.min, [onp.int64]),
-          (types.iinfo(onp.uint32).max, lax.min, [onp.uint32]),
-          (types.iinfo(onp.uint64).max, lax.min, [onp.uint64]),
+          (dtypes.iinfo(onp.int32).max, lax.min, [onp.int32]),
+          (dtypes.iinfo(onp.int64).max, lax.min, [onp.int64]),
+          (dtypes.iinfo(onp.uint32).max, lax.min, [onp.uint32]),
+          (dtypes.iinfo(onp.uint64).max, lax.min, [onp.uint64]),
       ]
       for dtype in dtypes
       for shape, dims in [

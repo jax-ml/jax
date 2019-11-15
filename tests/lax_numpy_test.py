@@ -38,7 +38,7 @@ from jax import lax
 from jax import linear_util
 from jax import numpy as lnp
 from jax import test_util as jtu
-from jax import types
+from jax import dtypes
 from jax.interpreters import partial_eval
 from jax.test_util import check_grads
 
@@ -1682,7 +1682,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for dtype in inexact_dtypes))
   def testNanToNum(self, rng_factory, shape, dtype):
     rng = rng_factory()
-    dtype = onp.dtype(types.canonicalize_dtype(dtype)).type
+    dtype = onp.dtype(dtypes.canonicalize_dtype(dtype)).type
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(onp.nan_to_num, lnp.nan_to_num, args_maker,
                             check_dtypes=True)
@@ -1907,7 +1907,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testMathSpecialFloatValues(self, op, dtype):
     onp_op = getattr(onp, op)
     lnp_op = getattr(lnp, op)
-    dtype = onp.dtype(types.canonicalize_dtype(dtype)).type
+    dtype = onp.dtype(dtypes.canonicalize_dtype(dtype)).type
     for x in (onp.nan, -onp.inf, -100., -2., -1., 0., 1., 2., 100., onp.inf,
               lnp.finfo(dtype).max, onp.sqrt(lnp.finfo(dtype).max),
               onp.sqrt(lnp.finfo(dtype).max) * 2.):
@@ -2318,7 +2318,7 @@ GRAD_SPECIAL_VALUE_TEST_RECORDS = [
 ]
 
 def num_float_bits(dtype):
-  return lnp.finfo(types.canonicalize_dtype(dtype)).bits
+  return lnp.finfo(dtypes.canonicalize_dtype(dtype)).bits
 
 class NumpyGradTests(jtu.JaxTestCase):
   @parameterized.named_parameters(itertools.chain.from_iterable(
