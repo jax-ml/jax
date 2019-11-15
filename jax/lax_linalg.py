@@ -27,6 +27,7 @@ from jax import api_util
 from jax import core
 from jax import lax
 from jax import ops
+from jax import dtypes
 from jax.interpreters import xla
 from jax.interpreters import ad
 from jax.interpreters import batching
@@ -35,7 +36,6 @@ from jax.abstract_arrays import ShapedArray
 from jax.core import Primitive
 from jax.lax import (standard_primitive, standard_unop, binop_dtype_rule,
                      _float, _complex, _input_dtype, _broadcasting_select)
-from jax.lib import xla_bridge as xb
 from jax.lib import xla_client
 from jax.lib import lapack
 from jax.lib import cusolver
@@ -165,8 +165,8 @@ def eig_abstract_eval(operand):
 
     batch_dims = operand.shape[:-2]
     n = operand.shape[-1]
-    dtype = onp.complex64 if onp.finfo(operand.dtype).bits == 32 else onp.complex128
-    dtype = xb.canonicalize_dtype(dtype)
+    dtype = onp.complex64 if dtypes.finfo(operand.dtype).bits == 32 else onp.complex128
+    dtype = dtypes.canonicalize_dtype(dtype)
     vl = vr = ShapedArray(batch_dims + (n, n), dtype)
     w = ShapedArray(batch_dims + (n,), dtype)
   else:
