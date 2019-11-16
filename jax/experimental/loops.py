@@ -20,38 +20,38 @@ should work (see below), but we have not yet fine-tuned the performance of the r
 By default, loops and control-flow in JAX are executed and inlined during tracing. For example, in the following code
 the `for` loop is unrolled during JAX tracing::
 
-  arr = np.zeros(5)
+  arr = onp.zeros(5)
   for i in range(arr.shape[0]):
-    arr[i] = i + 2
+    arr[i] += 2.
     if i % 2 == 0:
-      arr[i] += 1
+      arr[i] += 1.
 
 In order to capture the structured control-flow one has to use the higher-order JAX operations, which require
 you to express the body of the loops and conditionals as functions,
 and the array updates using a functional style that returns an updated array, e.g.::
 
-  arr = np.zeros(5)
+  arr = onp.zeros(5)
   def loop_body(i, acc_arr):
-    let arr1 = lax.index_update(acc_arr, i, acc_arr[i] + 2)
+    arr1 = ops.index_update(acc_arr, i, acc_arr[i] + 2.)
     return lax.cond(i % 2 == 0,
                     arr1,
-                    lambda arr1: lax.index_update(arr1, i, arr1[i] + 1),
+                    lambda arr1: ops.index_update(arr1, i, arr1[i] + 1),
                     arr1,
                     lambda arr1: arr1)
-  arr = lax.fori(0, arr.shape[0], loop_body, arr)
+  arr = lax.fori_loop(0, arr.shape[0], loop_body, arr)
 
+The default notation quickly gets unreadable with deeper nested loops.
 With the utilities in this module you can write loops and conditionals that look closer to plain Python,
 as long as you keep the loop-carried state in a special `loops.scope` object and use `for` loops
 over special `scope.range` iterators::
 
   from jax.experimental import loops
-  with loops.scope() as s:
-      s.arr = np.zeros(5)  # Must create the mutable state of the loop as `scope` fields.
-      for i in s.range(s.arr.shape[0]):
-        s.arr = lax.index_update(s.arr, i, s.arr[i] + 2)
-        for _ in s.cond_range(i % 2 == 0):  # Conditionals are also sugared as loops with 0 or 1 iterations
-          s.arr = lax.index_update(s.arr, i, s.arr[i] + 1)
-
+  with loops.Scope() as s:
+    s.arr = np.zeros(5)  # Must create the mutable state of the loop as `scope` fields.
+    for i in s.range(s.arr.shape[0]):
+      s.arr = ops.index_update(s.arr, i, s.arr[i] + 2.)
+      for _ in s.cond_range(i % 2 == 0):  # Conditionals are also sugared as loops with 0 or 1 iterations
+        s.arr = ops.index_update(s.arr, i, s.arr[i] + 1.)
 
 Notes:
   * Loops and conditionals to be functionalized can appear only inside scopes constructed with `loops.Scope`
@@ -299,6 +299,9 @@ class _BodyTracer(object):
       self.end_tracing_body()
       self.scope._pop_range(self)
       raise StopIteration  # Trace only one iteration.
+
+  def next(self):  # For PY2
+    return self.__next__()
 
   def start_tracing_body(self):
     """Called upon starting the tracing of the loop body."""
