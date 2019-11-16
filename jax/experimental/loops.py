@@ -92,8 +92,8 @@ import copy
 from functools import partial
 import itertools
 import numpy as onp
+import six
 import traceback
-from warnings import warn
 
 from jax import abstract_arrays
 from jax import lax, core
@@ -263,7 +263,10 @@ class _BodyTracer(object):
     self.scope = scope
     self.loop_builder = loop_builder
     self.first_iteration = True  # If we are tracing the first iteration
-    self.stack = traceback.StackSummary.from_list(traceback.extract_stack()[:-2])  # Stack trace, without this line and the s.range function
+    if six.PY3:
+      self.stack = traceback.StackSummary.from_list(traceback.extract_stack()[:-2])  # Stack trace, without this line and the s.range function
+    else:
+      self.stack = None
 
     # The rest is state kept from the start of the first iteration to the end of the iteration.
     self.carried_state_initial = {}  # The initial values of the mutable state upon entering the range body.
@@ -276,7 +279,10 @@ class _BodyTracer(object):
 
   def location(self):
     """A multiline string representing the source location of the range."""
-    return "   ".join(self.stack.format())
+    if self.stack is not None:
+      return "   ".join(self.stack.format())
+    else:
+      return ""
 
   def __iter__(self):
     """Called before starting the first iteration."""

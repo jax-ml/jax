@@ -21,6 +21,7 @@ from __future__ import print_function
 from absl.testing import absltest
 import numpy as onp
 import re
+import six
 
 from jax import api, ops
 from jax import numpy as np
@@ -28,7 +29,7 @@ from jax import test_util as jtu
 from jax.experimental import loops
 
 
-class LoopsSugarTest(jtu.JaxTestCase):
+class LoopsTest(jtu.JaxTestCase):
 
   def test_scope_no_loops(self):
     def f_op(r):
@@ -89,8 +90,8 @@ class LoopsSugarTest(jtu.JaxTestCase):
           s.out = ops.index_add(s.out, i, x[i] + y[i])
         return s.out
 
-    x = np.array([1., 2., 3.])
-    y = np.array([4., 5., 6.])
+    x = np.array([1., 2., 3.], dtype=np.float32)
+    y = np.array([4., 5., 6.], dtype=np.float32)
     self.assertAllClose(np.add(x, y), add_vec(x, y), check_dtypes=True)
 
   def test_matmul(self):
@@ -106,8 +107,8 @@ class LoopsSugarTest(jtu.JaxTestCase):
               s.out = ops.index_add(s.out, (i, j), x[i, k] * y[k, j])
         return s.out
 
-    x = np.array([[1., 2., 3.]])  # 1x3
-    y = np.array([[4.], [5.], [6.]])  # 3x1
+    x = np.array([[1., 2., 3.]], dtype=np.float32)  # 1x3
+    y = np.array([[4.], [5.], [6.]], dtype=np.float32)  # 3x1
     self.assertAllClose(np.matmul(x, y), matmul(x, y), check_dtypes=True)
 
   def test_reuse_range(self):
@@ -153,6 +154,7 @@ class LoopsSugarTest(jtu.JaxTestCase):
 
   def test_range_locations(self):
     """Ranges have locations."""
+    if six.PY2: self.skipTest("Source location not implemented for PY2")
     with loops.Scope() as s:
       r = s.range(5)
       cr = s.cond_range(True)
@@ -191,10 +193,11 @@ class LoopsSugarTest(jtu.JaxTestCase):
           pass
         return 0.
 
-    with self.assertRaisesRegex(ValueError,
-                                re.compile(("Some ranges have exited prematurely. The innermost such range is at"
-                                           ".*s.range.555."), re.DOTALL)):
-      bad_function("break")
+    if six.PY3:
+      with self.assertRaisesRegex(ValueError,
+                                  re.compile(("Some ranges have exited prematurely. The innermost such range is at"
+                                             ".*s.range.555."), re.DOTALL)):
+        bad_function("break")
     with self.assertRaisesRegex(ValueError, "Some ranges have exited prematurely"):
       bad_function("return")
     # On exception exit, we let the exception propagate
