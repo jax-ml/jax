@@ -143,7 +143,7 @@ def pinv(a, rcond=None):
   if rcond is None:
       max_rows_cols = max(a.shape[-2:])
       rcond = 10. * max_rows_cols * np.finfo(a.dtype).eps
-  rcond = np.asarray(rcond)
+  rcond = np.asarray(rcond, dtype=a.dtype)
   u, s, v = svd(a, full_matrices=False)
   # Singular values less than or equal to ``rcond * largest_singular_value`` 
   # are set to zero.
