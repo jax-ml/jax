@@ -150,7 +150,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
     rng = rng_factory()
     args_maker = lambda: [rng(shape, dtype) + (d - 1) / 2.]
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True,
+                            tol={onp.float32: 1e-3, onp.float64: 1e-14})
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
   def testIssue980(self):

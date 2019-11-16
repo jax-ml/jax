@@ -39,7 +39,9 @@ class EinsumTest(jtu.JaxTestCase):
   def _check(self, s, *ops):
     a = onp.einsum(s, *ops)
     b = np.einsum(s, *ops)
-    self.assertAllClose(a, b, atol=1e-4, rtol=1e-4, check_dtypes=True)
+
+    atol = 2e-1 if jtu.device_under_test() == "tpu" else 1e-4
+    self.assertAllClose(a, b, atol=atol, rtol=1e-4, check_dtypes=True)
 
   def test_three_operands_1(self):
     r = rng()
@@ -311,8 +313,9 @@ class EinsumTest(jtu.JaxTestCase):
         L[n,c] = s
 
     path = np.einsum_path('ntk,kd,dc->nc', S, W, V, optimize='optimal')[0]
+    rtol = 1e-2 if jtu.device_under_test() == "tpu" else None
     self.assertAllClose(L, np.einsum('ntk,kd,dc->nc', S, W, V, optimize=path),
-                        check_dtypes=False)
+                        check_dtypes=False, rtol=rtol)
 
 
 if __name__ == '__main__':

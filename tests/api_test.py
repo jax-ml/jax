@@ -546,7 +546,9 @@ class APITest(jtu.JaxTestCase):
                           -0.70368982+0.35184491j,
                            0.1886467 -0.09432335j,
                            0.86873727-0.43436864j])
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    self.assertAllClose(ans, expected, check_dtypes=False,
+                        atol=jtu.default_gradient_tolerance,
+                        rtol=jtu.default_gradient_tolerance)
 
   def test_complex_output_jacrev_raises_error(self):
     self.assertRaises(TypeError, lambda: jacrev(lambda x: np.sin(x))(1 + 2j))

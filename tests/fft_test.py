@@ -31,7 +31,9 @@ config.parse_flags_with_absl()
 
 
 float_dtypes = [onp.float32, onp.float64]
-complex_dtypes = [onp.complex64, onp.complex128]
+# TODO(b/144573940): onp.complex128 isn't supported by XLA, and the JAX
+# implementation casts to complex64.
+complex_dtypes = [onp.complex64]
 inexact_dtypes = float_dtypes + complex_dtypes
 int_dtypes = [onp.int32, onp.int64]
 bool_dtypes = [onp.bool_]
@@ -67,7 +69,8 @@ class FftTest(jtu.JaxTestCase):
     onp_op = onp.fft.ifftn if inverse else onp.fft.fftn
     np_fn = lambda a: np_op(a, axes=axes)
     onp_fn = lambda a: onp_op(a, axes=axes)
-    self._CheckAgainstNumpy(onp_fn, np_fn, args_maker, check_dtypes=True,
+    # Numpy promotes to complex128 aggressively.
+    self._CheckAgainstNumpy(onp_fn, np_fn, args_maker, check_dtypes=False,
                             tol=1e-4)
     self._CompileAndCheck(np_fn, args_maker, check_dtypes=True)
     # Test gradient for differentiable types.

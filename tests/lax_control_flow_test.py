@@ -722,7 +722,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     ans = api.jvp(lambda c, as_:                scan(f, c, as_), (c, as_), (c, as_))
     expected = api.jvp(lambda c, as_: scan_reference(f, c, as_), (c, as_), (c, as_))
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    self.assertAllClose(ans, expected, check_dtypes=False,
+                        rtol={onp.float64: 1e-14})
 
     jtu.check_grads(partial(scan, f), (c, as_), order=2, modes=["fwd"])
 
@@ -755,7 +756,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     ans = api.linearize(lambda c, as_:                scan(f, c, as_), c, as_)[1](c, as_)
     expected = api.linearize(lambda c, as_: scan_reference(f, c, as_), c, as_)[1](c, as_)
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    self.assertAllClose(ans, expected, check_dtypes=False,
+                        rtol={onp.float64: 1e-14})
 
   @parameterized.named_parameters(
       {"testcase_name": "_jit_scan={}_jit_f={}".format(jit_scan, jit_f),
@@ -786,10 +788,11 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     ans = api.grad(lambda c, as_:      list(          scan(f, c, as_))[0].sum())(c, as_)
     expected = api.grad(lambda c, as_: list(scan_reference(f, c, as_))[0].sum())(c, as_)
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    self.assertAllClose(ans, expected, check_dtypes=False,
+                        rtol={onp.float32: 2e-5, onp.float64: 1e-13})
 
     jtu.check_grads(partial(scan, f), (c, as_), order=2, modes=["rev"],
-                    atol=1e-3, rtol=1e-3)
+                    atol=1e-3, rtol=2e-3)
 
   def testScanRnn(self):
     r = npr.RandomState(0)
@@ -829,7 +832,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     api.jvp(lambda params: loss(params, inputs, targets), (params,), (params,))
 
     # jvp numerical check passes
-    jtu.check_grads(loss, (params, inputs, targets), order=2, modes=["fwd"])
+    jtu.check_grads(loss, (params, inputs, targets), order=2, modes=["fwd"],
+                    rtol={onp.float32: 2e-2, onp.float64: 1e-6})
 
     # linearize works
     _, expected = api.jvp(loss, (params, inputs, targets),
@@ -842,7 +846,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     api.grad(loss)(params, inputs, targets)
 
     # gradient check passes
-    jtu.check_grads(loss, (params, inputs, targets), order=2, rtol=1e-2)
+    jtu.check_grads(loss, (params, inputs, targets), order=2, rtol=2e-2)
 
     # we can vmap to batch things
     batch_size = 7
@@ -852,7 +856,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     losses = batched_loss(batched_inputs, batched_targets)
     expected = onp.stack(list(map(lambda x, y: loss(params, x, y),
                                   batched_inputs, batched_targets)))
-    self.assertAllClose(losses, expected, check_dtypes=False)
+    self.assertAllClose(losses, expected, check_dtypes=False, rtol=1e-2)
 
   def testIssue711(self):
     # Tests reverse-mode differentiation through a scan for which the scanned
@@ -934,7 +938,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     c = 1.
 
     jtu.check_grads(lambda c, as_: lax.scan(f, c, as_), (c, as_),
-                    modes=["rev"], order=2)
+                    modes=["rev"], order=2, rtol={onp.float32: 6e-3})
 
   @parameterized.named_parameters(
       {"testcase_name": "_jit_scan={}_jit_f={}_in_axes={}".format(
@@ -1166,8 +1170,9 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return lax.custom_root(f, 0.0, binary_search, tangent_solve)
 
     value, grad = api.value_and_grad(sqrt_cubed)(5.0)
-    self.assertAllClose(value, 5 ** 1.5, check_dtypes=False)
-    self.assertAllClose(grad, api.grad(pow)(5.0, 1.5), check_dtypes=False)
+    self.assertAllClose(value, 5 ** 1.5, check_dtypes=False, rtol=1e-6)
+    self.assertAllClose(grad, api.grad(pow)(5.0, 1.5), check_dtypes=False,
+                        rtol=1e-7)
     jtu.check_grads(sqrt_cubed, (5.0,), order=2, rtol=1e-3)
 
     # TODO(shoyer): reenable when batching works
@@ -1176,7 +1181,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     # self.assertAllClose(results, inputs ** 1.5, check_dtypes=False)
 
     results = api.jit(sqrt_cubed)(5.0)
-    self.assertAllClose(results, 5.0 ** 1.5, check_dtypes=False)
+    self.assertAllClose(results, 5.0 ** 1.5, check_dtypes=False,
+                        rtol={onp.float64:1e-7})
 
   def test_custom_root_vector_with_solve_closure(self):
 
@@ -1193,7 +1199,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     rng = onp.random.RandomState(0)
     a = rng.randn(2, 2)
     b = rng.randn(2)
-    jtu.check_grads(linear_solve, (a, b), order=2)
+    jtu.check_grads(linear_solve, (a, b), order=2,
+                    atol={onp.float32: 1e-2, onp.float64: 1e-11})
 
     actual = api.jit(linear_solve)(a, b)
     expected = np.linalg.solve(a, b)
@@ -1264,7 +1271,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     if symmetric:
       a = a + a.T
     b = rng.randn(3)
-    jtu.check_grads(linear_solve, (a, b), order=2)
+    jtu.check_grads(linear_solve, (a, b), order=2, rtol=2e-3)
 
     expected = np.linalg.solve(a, b)
     actual = api.jit(linear_solve)(a, b)
@@ -1290,8 +1297,10 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     rng = onp.random.RandomState(0)
     a = rng.randn(3, 3)
     b = rng.randn(3)
-    jtu.check_grads(lambda x: linear_solve(x, b), (a,), order=2)
-    jtu.check_grads(lambda x: linear_solve(a, x), (b,), order=2)
+    jtu.check_grads(lambda x: linear_solve(x, b), (a,), order=2,
+                    rtol={onp.float32: 5e-3})
+    jtu.check_grads(lambda x: linear_solve(a, x), (b,), order=2,
+                    rtol={onp.float32: 5e-3})
 
   def test_custom_linear_solve_iterative(self):
 
@@ -1319,7 +1328,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = np.linalg.solve(np.exp(a), np.cos(b))
     actual = build_and_solve(a, b)
     self.assertAllClose(expected, actual, atol=1e-5, check_dtypes=True)
-    jtu.check_grads(build_and_solve, (a, b), atol=1e-5, order=2)
+    jtu.check_grads(build_and_solve, (a, b), atol=1e-5, order=2, rtol=2e-3)
 
     # TODO(shoyer): reenable when batching works
     # a2 = rng.randn(1, 2, 2)
@@ -1350,7 +1359,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     # positive definite.
     jtu.check_grads(
         lambda x, y: positive_definite_solve(high_precision_dot(x, x.T), y),
-        (a, b), order=2)
+        (a, b), order=2, rtol=1e-2)
 
   def test_custom_linear_solve_lu(self):
 
@@ -1376,10 +1385,11 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     actual = linear_solve(a, b)
     self.assertAllClose(expected, actual, check_dtypes=True)
 
-    jtu.check_grads(linear_solve, (a, b), order=2)
+    jtu.check_grads(linear_solve, (a, b), order=2, rtol=2e-3)
 
     # regression test for https://github.com/google/jax/issues/1536
-    jtu.check_grads(api.jit(linear_solve), (a, b), order=2)
+    jtu.check_grads(api.jit(linear_solve), (a, b), order=2,
+                    rtol={onp.float32: 2e-3})
 
   def test_custom_linear_solve_without_transpose_solve(self):
 
@@ -1395,7 +1405,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     a = rng.randn(2, 2)
     b = rng.randn(2)
 
-    jtu.check_grads(loss, (a, b), atol=1e-5, order=2, modes=['fwd'])
+    jtu.check_grads(loss, (a, b), order=2, modes=['fwd'],
+                    atol={onp.float32: 2e-3, onp.float64: 1e-11})
 
     with self.assertRaisesRegex(TypeError, "transpose_solve required"):
       api.grad(loss)(a, b)

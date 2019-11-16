@@ -129,7 +129,8 @@ LAX_OPS = [
     op_record("cosh", 1, float_dtypes + complex_dtypes, jtu.rand_default),
 
     op_record("lgamma", 1, float_dtypes, jtu.rand_positive,
-              {onp.float32: 1e-5, onp.float64: 1e-14}),
+              {onp.float32: 1e-3 if jtu.device_under_test() == "tpu" else 1e-5,
+               onp.float64: 1e-14}),
     op_record("digamma", 1, float_dtypes, jtu.rand_positive,
               {onp.float64: 1e-14}),
     op_record("erf", 1, float_dtypes, jtu.rand_small),
@@ -208,7 +209,7 @@ class LaxTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype) for shape in shapes]
     op = getattr(lax, op_name)
     numpy_op = getattr(lax_reference, op_name)
-    self._CheckAgainstNumpy(op, numpy_op, args_maker, tol=tolerance(dtype, tol))
+    self._CheckAgainstNumpy(op, numpy_op, args_maker, tol=tol)
 
   # TODO test shift_left, shift_right_arithmetic, shift_right_logical
 
@@ -671,8 +672,8 @@ class LaxTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
     tol = {onp.float16: 1e-2,
            onp.float64: max(default_tolerance[onp.float64], 1e-14)}
-    self._CheckAgainstNumpy(lax.dot, lax_reference.dot, args_maker,
-                            tol=tolerance(dtype, tol))
+    lax_op = partial(lax.dot, precision=lax.Precision.HIGHEST)
+    self._CheckAgainstNumpy(lax_op, lax_reference.dot, args_maker, tol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -1704,20 +1705,26 @@ LAX_GRAD_OPS = [
 ]
 
 GradSpecialValuesTestSpec = collections.namedtuple(
-    "GradSpecialValuesTestSpec", ["op", "values"])
+    "GradSpecialValuesTestSpec", ["op", "values", "tol"])
+def grad_special_values_test_spec(op, values, tol=None):
+  return GradSpecialValuesTestSpec(op, values, tol)
 
 LAX_GRAD_SPECIAL_VALUE_TESTS = [
-    GradSpecialValuesTestSpec(lax.sinh, [0.]),
-    GradSpecialValuesTestSpec(lax.cosh, [0.]),
-    GradSpecialValuesTestSpec(lax.tanh, [0., 1000.]),
-    GradSpecialValuesTestSpec(lax.sin, [0., onp.pi, onp.pi/2., onp.pi/4.]),
-    GradSpecialValuesTestSpec(lax.cos, [0., onp.pi, onp.pi/2., onp.pi/4.]),
-    GradSpecialValuesTestSpec(lax.tan, [0.]),
-    GradSpecialValuesTestSpec(lax.asin, [0.]),
-    GradSpecialValuesTestSpec(lax.acos, [0.]),
-    GradSpecialValuesTestSpec(lax.atan, [0., 1000.]),
-    GradSpecialValuesTestSpec(lax.erf, [0., 10.]),
-    GradSpecialValuesTestSpec(lax.erfc, [0., 10.]),
+    grad_special_values_test_spec(
+      lax.sinh, [0.],
+      tol={onp.float32: 1e-2} if jtu.device_under_test() == "tpu" else None),
+    grad_special_values_test_spec(
+      lax.cosh, [0.],
+      tol={onp.float32: 1e-2} if jtu.device_under_test() == "tpu" else None),
+    grad_special_values_test_spec(lax.tanh, [0., 1000.]),
+    grad_special_values_test_spec(lax.sin, [0., onp.pi, onp.pi/2., onp.pi/4.]),
+    grad_special_values_test_spec(lax.cos, [0., onp.pi, onp.pi/2., onp.pi/4.]),
+    grad_special_values_test_spec(lax.tan, [0.]),
+    grad_special_values_test_spec(lax.asin, [0.]),
+    grad_special_values_test_spec(lax.acos, [0.]),
+    grad_special_values_test_spec(lax.atan, [0., 1000.]),
+    grad_special_values_test_spec(lax.erf, [0., 10.]),
+    grad_special_values_test_spec(lax.erfc, [0., 10.]),
 ]
 
 
@@ -1774,11 +1781,11 @@ class LaxAutodiffTest(jtu.JaxTestCase):
   @parameterized.named_parameters(itertools.chain.from_iterable(
       jtu.cases_from_list(
           {"testcase_name": "_{}_{}".format(rec.op.__name__, special_value),
-           "op": rec.op, "special_value": special_value}
+           "op": rec.op, "special_value": special_value, "tol": rec.tol}
           for special_value in rec.values)
       for rec in LAX_GRAD_SPECIAL_VALUE_TESTS))
-  def testOpGradSpecialValue(self, op, special_value):
-    check_grads(op, (special_value,), 2, ["fwd", "rev"])
+  def testOpGradSpecialValue(self, op, special_value, tol):
+    check_grads(op, (special_value,), 2, ["fwd", "rev"], rtol=tol, atol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_from_dtype={}_to_dtype={}".format(
@@ -2101,7 +2108,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     check_grads(rev, (onp.array([3., 2., 1.]),), 2)
 
     dimensions = [0, 1]
-    check_grads(rev, (onp.array([[6., 5., 4.], [3., 2., 1.]]),), 2)
+    check_grads(rev, (onp.array([[6., 5., 4.], [3., 2., 1.]]),), 2,
+                rtol={onp.float32: 3e-3})
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_predshape={}_argshapes={}".format(
@@ -2248,7 +2256,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     if jtu.device_under_test() == "tpu" and op is lax.mul:
       raise SkipTest("unimplemented case")
     tol = gradient_tolerance(
-      dtype, {onp.float16: 1e-1, onp.float32: 1e-2, onp.float64: 1e-3})
+      dtype, {onp.float16: 1e-1, onp.float32: 4e-2, onp.float64: 1e-3})
     operand = rng(shape, dtype)
     init_val = onp.asarray(init_val, dtype=dtype)
     reduce = lambda operand: lax.reduce(operand, init_val, op, dims)
@@ -2682,7 +2690,8 @@ class LaxVmapTest(jtu.JaxTestCase):
       for rng_factory in [jtu.rand_default]))
   def testDot(self, lhs_shape, rhs_shape, dtype, bdims, rng_factory):
     rng = rng_factory()
-    self._CheckBatching(lax.dot, 5, bdims, (lhs_shape, rhs_shape), dtype, rng,
+    op = partial(lax.dot, precision=lax.Precision.HIGHEST)
+    self._CheckBatching(op, 5, bdims, (lhs_shape, rhs_shape), dtype, rng,
                         rtol=tolerance(dtype, {onp.float16: 5e-2}))
 
   @parameterized.named_parameters(jtu.cases_from_list(

@@ -301,7 +301,9 @@ class MaskingTest(jtu.JaxTestCase):
     seqs_ = [xs[:t] for xs, t in zip(seqs, ts)]
     expected = grad(lambda W: rnn_reference(W, seqs_, ys).sum())(W)
 
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    self.assertAllClose(
+        ans, expected, check_dtypes=False,
+        rtol={onp.float32:2e-2} if jtu.device_under_test() == "tpu" else None)
 
   def test_nesting(self):
     raise SkipTest("not yet implemented")

@@ -98,7 +98,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
     self._CheckAgainstNumpy(onp.linalg.det, np.linalg.det, args_maker,
                             check_dtypes=True, tol=1e-3)
-    self._CompileAndCheck(np.linalg.det, args_maker, check_dtypes=True)
+    self._CompileAndCheck(np.linalg.det, args_maker, check_dtypes=True,
+                          rtol={onp.float64: 1e-13})
 
   def testDetOfSingularMatrix(self):
     x = np.array([[-1., 3./2], [2./3, -1.]], dtype=onp.float32)
@@ -629,7 +630,9 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     x, = args_maker()
     p, l, u = jsp.linalg.lu(x)
-    self.assertAllClose(x, onp.matmul(p, onp.matmul(l, u)), check_dtypes=True)
+    self.assertAllClose(x, onp.matmul(p, onp.matmul(l, u)), check_dtypes=True,
+                        rtol={onp.float32: 1e-4, onp.float64:1e-12,
+                              onp.complex64: 1e-4, onp.complex128:1e-12})
     self._CompileAndCheck(jsp.linalg.lu, args_maker, check_dtypes=True)
 
   def testLuOfSingularMatrix(self):
@@ -691,7 +694,8 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     u = onp.triu(lu)
     for i in range(n):
       x[[i, piv[i]],] = x[[piv[i], i],]
-    self.assertAllClose(x, onp.matmul(l, u), check_dtypes=True, rtol=1e-3)
+    self.assertAllClose(x, onp.matmul(l, u), check_dtypes=True, rtol=1e-3,
+                        atol=1e-3)
     self._CompileAndCheck(jsp.linalg.lu_factor, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -813,7 +817,8 @@ class ScipyLinalgTest(jtu.JaxTestCase):
         l if lower else T(l), b, trans=1 if transpose_a else 0, lower=lower,
         unit_diagonal=unit_diagonal)
 
-    self.assertAllClose(onp_ans, ans, check_dtypes=True)
+    self.assertAllClose(onp_ans, ans, check_dtypes=True,
+                        rtol={onp.float32: 1e-4, onp.float64: 1e-11})
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":

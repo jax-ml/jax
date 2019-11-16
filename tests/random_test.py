@@ -286,7 +286,8 @@ class LaxRandomTest(jtu.JaxTestCase):
     pdf = scipy.stats.gamma.pdf(z, alpha)
     expected_grad = -cdf_dot / pdf
 
-    self.assertAllClose(actual_grad, expected_grad, check_dtypes=True, rtol=0.0005)
+    self.assertAllClose(actual_grad, expected_grad, check_dtypes=True,
+                        rtol=2e-2 if jtu.device_under_test() == "tpu" else 5e-4)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
