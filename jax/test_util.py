@@ -104,8 +104,8 @@ def tolerance(dtype, tol=None):
   tol = {onp.dtype(key): value for key, value in tol.items()}
   default = (tpu_default_tolerance if device_under_test() == "tpu"
              else default_tolerance)
-  dtype = onp.dtype(dtype)
-  return tol.get(dtypes.canonicalize_dtype(dtype), default[dtype])
+  dtype = dtypes.canonicalize_dtype(onp.dtype(dtype))
+  return tol.get(dtype, default[dtype])
 
 def _assert_numpy_close(a, b, atol=None, rtol=None):
   assert a.shape == b.shape
