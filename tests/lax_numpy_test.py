@@ -72,28 +72,6 @@ OpRecord = collections.namedtuple(
   ["name", "nargs", "dtypes", "shapes", "rng_factory", "diff_modes",
    "test_name", "check_dtypes", "tolerance"])
 
-default_tolerance = {
-  onp.bool_: 0,
-  onp.int16: 0,
-  onp.int32: 0,
-  onp.int64: 0,
-  onp.float16: 1e-3,
-  onp.float32: 1e-6,
-  onp.float64: 1e-15,
-  onp.complex64: 1e-6,
-  onp.complex128: 1e-15,
-}
-
-def tolerance(dtype, tol=None):
-  if not FLAGS.jax_enable_x64:
-    if dtype == onp.float64:
-      dtype = onp.float32
-    elif dtype == onp.complex128:
-      dtype = onp.complex64
-  tol = tol or {}
-  return tol.get(dtype, default_tolerance[dtype])
-
-
 def op_record(name, nargs, dtypes, shapes, rng_factory, diff_modes,
               test_name=None, check_dtypes=True, tolerance=None):
   test_name = test_name or name
@@ -422,7 +400,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     rng = rng_factory()
     args_maker = self._GetArgsMaker(rng, shapes, dtypes)
     fun = lambda fst, snd: getattr(snd, name)(fst)
-    tol = max(tolerance(dtype, op_tolerance) for dtype in dtypes)
+    tol = max(jtu.tolerance(dtype, op_tolerance) for dtype in dtypes)
     scalar_arg = (jtu.PYTHON_SCALAR_SHAPE in shapes or
                   jtu.NUMPY_SCALAR_SHAPE in shapes or
                   () in shapes)
@@ -474,8 +452,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     tol_spec = {onp.float16: 1e-2, onp.float32: 1e-3, onp.complex64: 1e-3,
                 onp.float64: 1e-5, onp.complex128: 1e-5}
-    tol = tolerance(dtype, tol_spec)
-    tol = max(tol, tolerance(out_dtype, tol_spec)) if out_dtype else tol
+    tol = jtu.tolerance(dtype, tol_spec)
+    tol = max(tol, jtu.tolerance(out_dtype, tol_spec)) if out_dtype else tol
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True,
                             tol=tol)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True, atol=tol,
@@ -568,7 +546,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     lnp_fun = lambda a, b: lnp.cross(a, b, axisa, axisb, axisc, axis)
     onp_fun = lambda a, b: onp.cross(a, b, axisa, axisb, axisc, axis)
     tol_spec = {onp.float16: 1e-2}
-    tol = max(tolerance(lhs_dtype, tol_spec), tolerance(rhs_dtype, tol_spec))
+    tol = max(jtu.tolerance(lhs_dtype, tol_spec),
+              jtu.tolerance(rhs_dtype, tol_spec))
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True,
                             tol=tol)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True, atol=tol,
@@ -688,7 +667,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
     onp_fun = lambda lhs, rhs: onp.inner(lhs, rhs)
     lnp_fun = lambda lhs, rhs: lnp.inner(lhs, rhs)
-    tol = 2e-1 if jtu.device_under_test() == "tpu" else {onp.float64: 1e-13}
+    tol_spec = {onp.float64: 1e-13}
+    if jtu.device_under_test() == "tpu":
+      tol_spec[onp.float32] = 2e-1
+    tol = max(jtu.tolerance(lhs_dtype), jtu.tolerance(rhs_dtype))
     # TODO(phawkins): there are float32/float64 disagreements for some inputs.
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=False,
                             tol=tol)
@@ -728,7 +710,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     onp_fun = lambda x: onp.round(x, decimals=decimals)
     lnp_fun = lambda x: lnp.round(x, decimals=decimals)
     args_maker = lambda: [rng(shape, dtype)]
-    tol = tolerance(dtype, {onp.float16: 1e-2})
+    tol = {onp.float16: 1e-2}
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True,
                             tol=tol)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True, atol=tol,
@@ -908,7 +890,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     args_maker = lambda: [rng(shape, dtype)]
 
-    tol = max(tolerance(dtype), tolerance(out_dtype))
+    tol = max(jtu.tolerance(dtype), jtu.tolerance(out_dtype))
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True,
                             tol=tol)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
@@ -1262,9 +1244,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       lnp_fun = lambda x, weights: lnp.average(x, axis, weights, returned)
       args_maker = lambda: [rng(shape, dtype), rng(weights_shape, dtype)]
 
-    tol = tolerance(dtype, {onp.float16: 1e-1, onp.float32: 1e-3,
-                            onp.float64: 1e-10, onp.complex64: 1e-3,
-                            onp.complex128: 1e-10})
+    tol = jtu.tolerance(dtype, {onp.float16: 1e-1, onp.float32: 1e-3,
+                                onp.float64: 1e-10, onp.complex64: 1e-3,
+                                onp.complex128: 1e-10})
     try:
         self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True,
                                 tol=tol)
@@ -1749,10 +1731,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # TODO(phawkins): we currently set dtype=False because we aren't as
     # aggressive about promoting to float64. It's not clear we want to mimic
     # Numpy here.
+    tol_spec = {onp.float32: 1e-5, onp.float64: 5e-6}
+    tol = max(jtu.tolerance(a_dtype, tol_spec),
+              jtu.tolerance(q_dtype, tol_spec))
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=False,
-                            tol={onp.float64: 1e-6})
-    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True,
-                          rtol={onp.float32: 1e-5, onp.float64: 1e-7})
+                            tol=tol)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True, rtol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
         {"testcase_name": jtu.format_test_name_suffix("select", shapes,
@@ -1929,7 +1913,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       x = dtype(x)
       expected = onp_op(x)
       actual = lnp_op(x)
-      tol = tolerance(dtype, {onp.float32: 1e-3, onp.float64: 1e-7})
+      tol = jtu.tolerance(dtype, {onp.float32: 1e-3, onp.float64: 1e-7})
       self.assertAllClose(expected, actual, check_dtypes=True, atol=tol,
                           rtol=tol)
 
@@ -1971,7 +1955,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = self._GetArgsMaker(rng, [shape], [dtype])
     onp_fun = partial(onp.var, dtype=out_dtype, axis=axis, ddof=ddof, keepdims=keepdims)
     lnp_fun = partial(lnp.var, dtype=out_dtype, axis=axis, ddof=ddof, keepdims=keepdims)
-    tol = tolerance(out_dtype, {onp.float16: 1e-1})
+    tol = jtu.tolerance(out_dtype, {onp.float16: 1e-1})
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True,
                             tol=tol)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True, rtol=tol,
@@ -2080,7 +2064,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                    retstep, dtype, rng_factory):
     rng = rng_factory()
     # relax default tolerances slightly
-    tol = tolerance(dtype if dtype else onp.float32) * 10
+    tol = jtu.tolerance(dtype if dtype else onp.float32) * 10
     args_maker = self._GetArgsMaker(rng,
                                     [start_shape, stop_shape],
                                     [dtype, dtype])

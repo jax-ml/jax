@@ -88,7 +88,7 @@ tpu_default_tolerance[onp.dtype(onp.complex64)] = 1e-3
 
 default_gradient_tolerance = {
   onp.dtype(onp.float16): 1e-2,
-  onp.dtype(onp.float32): 1e-3,
+  onp.dtype(onp.float32): 2e-3,
   onp.dtype(onp.float64): 1e-6,
   onp.dtype(onp.complex64): 1e-3,
   onp.dtype(onp.complex128): 1e-6,
@@ -97,19 +97,20 @@ default_gradient_tolerance = {
 def _assert_numpy_eq(x, y):
   onp.testing.assert_allclose(x, y)
 
-def _tolerance(tol, dtype):
+def tolerance(dtype, tol=None):
   tol = tol or {}
   if not isinstance(tol, dict):
     return tol
   tol = {onp.dtype(key): value for key, value in tol.items()}
   default = (tpu_default_tolerance if device_under_test() == "tpu"
              else default_tolerance)
+  dtype = onp.dtype(dtype)
   return tol.get(dtypes.canonicalize_dtype(dtype), default[dtype])
 
 def _assert_numpy_close(a, b, atol=None, rtol=None):
   assert a.shape == b.shape
-  atol = max(_tolerance(atol, a.dtype), _tolerance(atol, b.dtype))
-  rtol = max(_tolerance(rtol, a.dtype), _tolerance(rtol, b.dtype))
+  atol = max(tolerance(a.dtype, atol), tolerance(b.dtype, atol))
+  rtol = max(tolerance(a.dtype, rtol), tolerance(b.dtype, rtol))
   onp.testing.assert_allclose(a, b, atol=atol * a.size, rtol=rtol * b.size)
 
 
@@ -549,12 +550,8 @@ class JaxTestCase(parameterized.TestCase):
   def assertArraysAllClose(self, x, y, check_dtypes, atol=None, rtol=None):
     """Assert that x and y are close (up to numerical tolerances)."""
     self.assertEqual(x.shape, y.shape)
-    atol = max(_tolerance(atol, _dtype(x)), _tolerance(atol, _dtype(y)))
-    rtol = max(_tolerance(rtol, _dtype(x)), _tolerance(rtol, _dtype(y)))
-
-    # if FLAGS.jax_test_dut == 'tpu':
-    #   atol = max(atol, 0.5)
-    #   rtol = max(rtol, 1e-1)
+    atol = max(tolerance(_dtype(x), atol), tolerance(_dtype(y), atol))
+    rtol = max(tolerance(_dtype(x), rtol), tolerance(_dtype(y), rtol))
 
     onp.testing.assert_allclose(x, y, atol=atol, rtol=rtol)
 
