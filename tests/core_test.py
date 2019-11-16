@@ -193,7 +193,7 @@ class CoreTest(jtu.JaxTestCase):
   @parameterized.parameters(test_specs)
   def test_vjp(self, f, args):
     jtu.check_vjp(f, partial(vjp, f), args,
-                  rtol={onp.float32: 1e-2, onp.float64: 1e-5},
+                  rtol={onp.float32: 3e-2, onp.float64: 1e-5},
                   atol={onp.float32: 1e-2, onp.float64: 1e-5})
 
   def test_jvp_closure(self):
