@@ -332,7 +332,8 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   @jtu.skip_on_devices("cpu", "gpu")
-  def testIssue1703(self):
+  def testPpermuteWithZipObject(self):
+    # https://github.com/google/jax/issues/1703
     num_devices = xla_bridge.device_count()
     perm = [num_devices - 1] + list(range(num_devices - 1))
     f = pmap(
