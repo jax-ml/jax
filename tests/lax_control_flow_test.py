@@ -271,7 +271,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return total
 
     cfun = api.jit(sum_first_n)
-    x = npr.RandomState(0).randn(10)
+    x = npr.RandomState(0).randn(10).astype(np.float_)
 
     for num in [0, 5, 10, 15]:
       self.assertAllClose(sum_first_n(x, num), onp.sum(x[:num]),
@@ -304,7 +304,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def fun(x, y):
       return lax.while_loop(lambda x: x < 3, lambda x: x + y, x)
 
-    ans = api.vmap(fun, in_axes=(None, 0))(0, onp.array([2, 3]))
+    ans = api.vmap(fun, in_axes=(None, 0))(0, np.array([2, 3]))
     expected = onp.array([4, 3])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
@@ -393,7 +393,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return total
 
     cfun = api.jit(sum_first_n)
-    x = npr.RandomState(0).randn(10)
+    x = npr.RandomState(0).randn(10).astype(np.float_)
 
     for num in [0, 5, 10, 15]:
       self.assertAllClose(sum_first_n(x, num), onp.sum(x[:num]),
@@ -413,7 +413,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return out_val['total']
 
     cfun = api.jit(sum_first_n)
-    x = npr.RandomState(0).randn(10)
+    x = npr.RandomState(0).randn(10).astype(np.float_)
 
     for num in [0, 5, 10, 15]:
       self.assertAllClose(sum_first_n(x, num), onp.sum(x[:num]),
@@ -433,7 +433,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return tot
 
     cfun = api.jit(sum_first_n)
-    x = npr.RandomState(0).randn(10)
+    x = npr.RandomState(0).randn(10).astype(np.float_)
 
     for num in [0, 5, 10, 15]:
       self.assertAllClose(sum_first_n(x, num), onp.sum(x[:num]),
@@ -583,16 +583,16 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return lax.cond(pred, y, true_fun, z, false_fun)
 
     # these cases stay as cond
-    x = onp.array(2)
-    y = onp.array([1, 2])
-    z = onp.array([3, 4])
+    x = np.array(2)
+    y = np.array([1, 2])
+    z = np.array([3, 4])
     ans = api.vmap(fun, (None, 0, 0))(x, y, z)
     jaxpr = api.make_jaxpr(api.vmap(fun, (None, 0, 0)))(x, y, z)
     expected = onp.array([1, 2])
     self.assertAllClose(ans, expected, check_dtypes=False)
     assert "select" not in str(jaxpr)
 
-    x = onp.array(4)
+    x = np.array(4)
     ans = api.vmap(fun, (None, 0, 0))(x, y, z)
     jaxpr = api.make_jaxpr(api.vmap(fun, (None, 0, 0)))(x, y, z)
     expected = onp.array([-3, -4])
@@ -604,7 +604,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = onp.array([-3, -4])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    z = onp.array(5)
+    z = np.array(5)
     ans = api.vmap(fun, (None, 0, None))(x, y, z)
     jaxpr = api.make_jaxpr(api.vmap(fun, (None, 0, None)))(x, y, z)
     expected = onp.array([-5, -5])
@@ -613,14 +613,14 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
 
     # these cases become select
-    x = onp.array([2, 4])
+    x = np.array([2, 4])
     ans = api.vmap(fun, (0, 0, None))(x, y, z)
     jaxpr = api.make_jaxpr(api.vmap(fun, (0, 0, None)))(x, y, z)
     expected = onp.array([1, -5])
     self.assertAllClose(ans, expected, check_dtypes=False)
     assert "select" in str(jaxpr)
 
-    z = onp.array([3, 4])
+    z = np.array([3, 4])
     ans = api.vmap(fun)(x, y, z)
     jaxpr = api.make_jaxpr(api.vmap(fun))(x, y, z)
     expected = onp.array([1, -4])
@@ -802,12 +802,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     n_out = 1
     length = 3
 
-    W_trans = r.randn(n_hid, n_hid + n_in)
-    W_out = r.randn(n_out, n_hid + n_in)
+    W_trans = r.randn(n_hid, n_hid + n_in).astype(np.float_)
+    W_out = r.randn(n_out, n_hid + n_in).astype(np.float_)
     params = W_trans, W_out
 
-    inputs = r.randn(length, n_in)
-    targets = r.randn(length, n_out)
+    inputs = r.randn(length, n_in).astype(np.float_)
+    targets = r.randn(length, n_out).astype(np.float_)
 
     def step(params, state, input):
       W_trans, W_out = params
@@ -850,8 +850,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     # we can vmap to batch things
     batch_size = 7
-    batched_inputs = r.randn(batch_size, length, n_in)
-    batched_targets = r.randn(batch_size, length, n_out)
+    batched_inputs = r.randn(batch_size, length, n_in).astype(np.float_)
+    batched_targets = r.randn(batch_size, length, n_out).astype(np.float_)
     batched_loss = api.vmap(lambda x, y: loss(params, x, y))
     losses = batched_loss(batched_inputs, batched_targets)
     expected = onp.stack(list(map(lambda x, y: loss(params, x, y),
@@ -1166,7 +1166,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return solution
 
     def sqrt_cubed(x, tangent_solve=scalar_solve):
-      f = lambda y: y ** 2 - x ** 3
+      f = lambda y: y ** 2. - np.array(x) ** 3.
       return lax.custom_root(f, 0.0, binary_search, tangent_solve)
 
     value, grad = api.value_and_grad(sqrt_cubed)(5.0)

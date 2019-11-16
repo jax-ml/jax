@@ -576,7 +576,8 @@ class BatchingTest(jtu.JaxTestCase):
   def testCumProd(self):
    x = np.arange(9).reshape(3, 3) + 1
    y = vmap(lambda x: np.cumprod(x, axis=-1))(x)
-   self.assertAllClose(onp.cumprod(x, axis=1), y, check_dtypes=True)
+   self.assertAllClose(onp.cumprod(x, axis=1, dtype=np.int_), y,
+                       check_dtypes=True)
 
   def testSelect(self):
     pred = onp.array([True, False])
@@ -962,7 +963,8 @@ class BatchingTest(jtu.JaxTestCase):
         key, _ = random.split(key)
         return u, key
 
-      u, _ = lax.while_loop(lambda uk: uk[0] > 0.5, body_fn, (1., key))
+      u, _ = lax.while_loop(lambda uk: uk[0] > 0.5, body_fn,
+                            (np.float64(1.), key))
       return u
 
     print(vmap(f)(random.split(random.PRNGKey(0), 2)))  # no crash

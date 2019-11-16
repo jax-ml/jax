@@ -34,7 +34,7 @@ from .. import dtypes
 from .. import linear_util as lu
 from ..abstract_arrays import (ConcreteArray, ShapedArray, AbstractToken,
                                make_shaped_array, array_types, raise_to_shaped,
-                               abstract_token)
+                               abstract_token, make_abstract_python_scalar)
 from ..core import valid_jaxtype, Literal
 from ..util import partial, partialmethod, cache, safe_map, prod, unzip2
 from ..lib import xla_bridge as xb
@@ -95,6 +95,12 @@ def _device_put_array(x, device, backend=None):
 for _t in array_types:
   device_put_handlers[_t] = _device_put_array
 
+def _device_put_scalar(x, device, backend=None):
+  return xc.Buffer.from_pyval(dtypes.coerce_to_array(x), device,
+                              backend=xb.get_backend(backend))
+for _t in dtypes.python_scalar_dtypes.keys():
+  device_put_handlers[_t] = _device_put_array
+
 # TODO(mattjj): try to remove this canonicalize_dtype stuff
 def canonicalize_dtype(x):
   try:
@@ -107,6 +113,11 @@ def _canonicalize_ndarray_dtype(x):
   return onp.asarray(x, dtypes.canonicalize_dtype(dtypes.result_type(x)))
 for _t in array_types:
   canonicalize_dtype_handlers[_t] = _canonicalize_ndarray_dtype
+def _canonicalize_python_scalar_dtype(x):
+  return onp.asarray(
+    x, dtypes.canonicalize_dtype(dtypes.python_scalar_dtypes[type(x)]))
+for _t in dtypes.python_scalar_dtypes.keys():
+  canonicalize_dtype_handlers[_t] = _canonicalize_python_scalar_dtype
 
 def abstractify(x):
   try:
@@ -117,6 +128,8 @@ pytype_aval_mappings = {}
 pytype_aval_mappings[core.Unit] = lambda _: core.abstract_unit
 for _t in array_types:
   pytype_aval_mappings[_t] = make_shaped_array
+for _t in dtypes.python_scalar_dtypes.keys():
+  pytype_aval_mappings[_t] = make_abstract_python_scalar
 
 
 ### op-by-op execution

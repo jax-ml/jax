@@ -849,7 +849,7 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
 
     ndevices = xla_bridge.device_count()
     ans = foo(np.ones((ndevices, 1)))
-    expected = onp.ones((ndevices, 1)) * ndevices * 2
+    expected = onp.ones((ndevices, 1), dtype=np.float_) * ndevices * 2
     self.assertAllClose(ans, expected, check_dtypes=True)
 
   def testPmapInJit(self):
@@ -862,7 +862,7 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
 
     ndevices = xla_bridge.device_count()
     ans = foo(np.ones((ndevices, 1)))
-    expected = onp.ones((ndevices, 1)) * ndevices
+    expected = onp.ones((ndevices, 1), dtype=np.float_) * ndevices
     self.assertAllClose(ans, expected, check_dtypes=True)
 
   def testGradBasic(self):

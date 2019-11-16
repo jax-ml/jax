@@ -31,6 +31,7 @@ import six
 
 from jax import api
 from jax import core
+from jax import dtypes
 from jax import lax
 from jax import test_util as jtu
 from jax import lax_reference
@@ -1561,7 +1562,8 @@ class DeviceConstantTest(jtu.JaxTestCase):
       for fill_value in [0, 1, onp.pi]))
   def testFilledConstant(self, shape, fill_value, dtype):
     make_const = lambda: lax.full(shape, fill_value, dtype)
-    expected = onp.full(shape, fill_value, dtype)
+    expected = onp.full(shape, fill_value,
+                        dtype or dtypes.result_type(fill_value))
     self._CheckDeviceConstant(make_const, expected)
 
   @parameterized.named_parameters(jtu.cases_from_list(

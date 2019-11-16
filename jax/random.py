@@ -59,8 +59,8 @@ def PRNGKey(seed):
     # when jax_enable_x64=False and we don't want to drop the top 32 bits
     k1 = convert(onp.bitwise_and(onp.right_shift(seed, 32), 0xFFFFFFFF))
   else:
-    k1 = convert(lax.shift_right_logical(seed, 32))
-  k2 = convert(lax.bitwise_and(seed, 0xFFFFFFFF))
+    k1 = convert(lax.shift_right_logical(seed, lax._const(seed, 32)))
+  k2 = convert(np.bitwise_and(seed, 0xFFFFFFFF))
   return lax.concatenate([k1, k2], 0)
 
 def _is_prng_key(key):
@@ -823,7 +823,7 @@ def _gamma_grad_one(z, alpha):
 
     _, _, grad, flag = lax.while_loop(lambda zagf: (~zagf[3]) & (zagf[0] < 0.8),
                                       _case1,
-                                      (z, alpha, 0.0, False))
+                                      (z, alpha, lax._const(alpha, 0.0), False))
     _, _, grad, flag = lax.while_loop(_cond2, _case2, (z, alpha, grad, flag))
     _, _, grad, flag = lax.while_loop(_cond3, _case3, (z, alpha, grad, flag))
     _, _, grad, flag = lax.while_loop(lambda zagf: ~zagf[3], _case4, (z, alpha, grad, flag))

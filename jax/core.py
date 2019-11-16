@@ -282,7 +282,7 @@ class Tracer(object):
   __array_priority__ = 1000
   __slots__ = ['trace', '__weakref__']
 
-  def __array__(self):
+  def __array__(self, *args, **kw):
     raise Exception("Tracer can't be used with raw numpy functions. "
                     "You might have\n  import numpy as np\ninstead of\n  import jax.numpy as np")
 
@@ -491,6 +491,8 @@ class AbstractValue(object):
     except AttributeError:
       return self.__class__.__name__
 
+  def strip_weak_type(self):
+    return self
 
 class Bot(AbstractValue): pass
 

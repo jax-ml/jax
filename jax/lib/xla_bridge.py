@@ -23,6 +23,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from functools import partial
 import os
 import warnings
 
@@ -347,8 +348,11 @@ def _scalar_constant_handler(c, val, canonicalize_types=True):
 for scalar_type in [onp.int8, onp.int16, onp.int32, onp.int64,
                     onp.uint8, onp.uint16, onp.uint32, onp.uint64,
                     onp.float16, onp.float32, onp.float64, onp.float128,
-                    float, int, bool, onp.bool_, onp.longlong]:
+                    onp.bool_, onp.longlong]:
   register_constant_handler(scalar_type, _scalar_constant_handler)
 
-if six.PY2:
-  register_constant_handler(long, _scalar_constant_handler) # noqa: F821
+def _python_scalar_handler(dtype, c, val, canonicalize_dtypes=True):
+  return c.NumpyArrayConstant(dtype.type(val))
+
+for ptype, dtype in dtypes.python_scalar_dtypes.items():
+  register_constant_handler(ptype, partial(_python_scalar_handler, dtype))
