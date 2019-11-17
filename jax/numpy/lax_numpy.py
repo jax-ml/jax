@@ -935,7 +935,9 @@ def broadcast_arrays(*args):
   if len(set(shapes)) == 1:
     return [arg if isinstance(arg, ndarray) or isscalar(arg) else array(arg)
             for arg in args]
+  largest_arg = _max(args, key=lambda arg: prod(shape(arg)))
   result_shape = lax.broadcast_shapes(*shapes)
+  args = [lax.tie_in(largest_arg, arg) for arg in args]
   return [broadcast_to(arg, result_shape) for arg in args]
 
 
