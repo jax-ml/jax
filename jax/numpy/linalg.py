@@ -142,7 +142,7 @@ def pinv(a, rcond=None):
   a = np.conj(a)
   if rcond is None:
       max_rows_cols = max(a.shape[-2:])
-      rcond = np.float32(10) * max_rows_cols * np.finfo(a.dtype).eps
+      rcond = 10. * max_rows_cols * np.finfo(a.dtype).eps
   rcond = np.asarray(rcond)
   u, s, v = svd(a, full_matrices=False)
   # Singular values less than or equal to ``rcond * largest_singular_value`` 
@@ -154,7 +154,7 @@ def pinv(a, rcond=None):
   vT = np.swapaxes(v, -1, -2)
   uT = np.swapaxes(u, -1, -2)
   res = np.matmul(vT, np.multiply(s[..., np.newaxis], uT))
-  return res
+  return lax.convert_element_type(res, a.dtype)
 
 
 @_wraps(onp.linalg.inv)
