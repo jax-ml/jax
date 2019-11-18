@@ -400,7 +400,7 @@ def tracers_to_jaxpr(in_tracers, out_tracers):
         eqns.append(eqn_tracer_to_var(var, recipe))
         processed_eqns.add(recipe.eqn_id)
     elif isinstance(recipe, LambdaBinding):
-      assert any(t is in_tracer for in_tracer in in_tracers)
+      assert any(t is in_tracer for in_tracer in in_tracers), "Encountered unexpected tracer"
       assert in_tracers, "Lambda binding with no args"
     elif isinstance(recipe, FreeVar):
       env[var(t)] = recipe.val
