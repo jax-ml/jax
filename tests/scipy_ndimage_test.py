@@ -25,6 +25,7 @@ from absl.testing import parameterized
 import scipy.ndimage as osp_ndimage
 
 from jax import test_util as jtu
+from jax import dtypes
 from jax.scipy import ndimage as lsp_ndimage
 
 from jax.config import config
@@ -91,7 +92,8 @@ class NdimageTest(jtu.JaxTestCase):
     order = 1
     lsp_op = lambda x, c: lsp_ndimage.map_coordinates(x, c, order, mode, cval)
     osp_op = lambda x, c: _fixed_scipy_map_coordinates(x, c, order, mode, cval)
-    epsilon = max(onp.finfo(dtype).eps, onp.finfo(coords_dtype).eps)
+    epsilon = max([dtypes.finfo(dtypes.canonicalize_dtype(d)).eps
+                   for d in [dtype, coords_dtype]])
     self._CheckAgainstNumpy(lsp_op, osp_op, args_maker, tol=10*epsilon,
                             check_dtypes=True)
 
