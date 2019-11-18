@@ -27,15 +27,6 @@ from ..numpy import lax_numpy as np
 from ..numpy.lax_numpy import _wraps
 
 
-_NOTE = '\n'.join(textwrap.wrap("""\
-Only linear interpolation (``order=1``) and modes ``'constant'``, ``'nearest'``
-and ``'wrap'`` are currently supported. Note that interpolation near boundaries
-differs from the scipy function, because we fixed an outstanding bug
-(https://github.com/scipy/scipy/issues/2640) -- this function interprets the
-``mode`` argument as documented by SciPy, but not as implemented by SciPy.
-""", width=72)) + "\n"
-
-
 def _prod(values):
   out = 1
   for value in values:
@@ -51,7 +42,14 @@ _INDEX_FIXERS = {
 }
 
 
-@_wraps(scipy.ndimage.map_coordinates, lax_description=_NOTE)
+@_wraps(scipy.ndimage.map_coordinates, lax_description=textwrap.dedent("""\
+    Only linear interpolation (``order=1``) and modes ``'constant'``,
+    ``'nearest'`` and ``'wrap'`` are currently supported. Note that
+    interpolation near boundaries differs from the scipy function, because we
+    fixed an outstanding bug (https://github.com/scipy/scipy/issues/2640);
+    this function interprets the ``mode`` argument as documented by SciPy, but
+    not as implemented by SciPy.
+    """))
 def map_coordinates(
     input, coordinates, order, mode='constant', cval=0.0,
 ):
