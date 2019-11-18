@@ -753,6 +753,9 @@ class IndexingTest(jtu.JaxTestCase):
     expected =  onp.array([-1])[onp.array([False])]
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testFloatIndexingError(self):
+    x = lnp.array([1, 2, 3])
+    self.assertRaises(TypeError, lambda: x[3.5])
 
 def _broadcastable_shapes(shape):
   """Returns all shapes that broadcast to `shape`."""
