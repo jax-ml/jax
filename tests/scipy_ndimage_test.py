@@ -39,7 +39,7 @@ bool_dtypes = [onp.bool_]
 all_dtypes = float_dtypes + complex_dtypes + int_dtypes + bool_dtypes
 
 
-def _fixed_scipy_map_coordinates(input, coordinates, order, mode):
+def _fixed_scipy_map_coordinates(input, coordinates, order, mode, cval=0.0):
   # https://github.com/scipy/scipy/issues/2640
   assert order == 1
   padding = [(max(-onp.floor(c.min()).astype(int) + 1, 0),
@@ -49,30 +49,36 @@ def _fixed_scipy_map_coordinates(input, coordinates, order, mode):
   pad_mode = {
       'nearest': 'edge', 'mirror': 'reflect', 'reflect': 'symmetric'
   }.get(mode, mode)
-  padded = onp.pad(input, padding, mode=pad_mode)
-  return osp_ndimage.map_coordinates(
-      padded, shifted_coords, order=order, mode=mode)
+  if mode == 'constant':
+    padded = onp.pad(input, padding, mode=pad_mode, constant_values=cval)
+  else:
+    padded = onp.pad(input, padding, mode=pad_mode)
+  dtype = onp.result_type(padded, *shifted_coords)
+  result = osp_ndimage.map_coordinates(
+      padded, shifted_coords, order=order, mode=mode, cval=cval)
+  return result
 
 
 class NdimageTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_coordinates={}_mode={}_round={}".format(
+      {"testcase_name": "_{}_coordinates={}_mode={}_cval={}_round={}".format(
           jtu.format_shape_dtype_string(shape, dtype),
           jtu.format_shape_dtype_string(coords_shape, coords_dtype),
-          mode, round_),
-       "rng_factory": rng_factory, "shape": shape,
-       "coords_shape": coords_shape, "dtype": dtype,
-       "coords_dtype": coords_dtype, "mode": mode, "round_": round_}
+          mode, cval, round_),
+       "rng_factory": rng_factory, "shape": shape, "coords_shape": coords_shape,
+       "dtype": dtype, "coords_dtype": coords_dtype, "mode": mode, "cval": cval,
+       "round_": round_}
       for shape in [(5,), (3, 4), (3, 4, 5)]
       for coords_shape in [(7,), (2, 3, 4)]
       for dtype in float_dtypes
       for coords_dtype in float_dtypes
       for mode in ['wrap', 'constant', 'nearest']
+      for cval in ([0, -1] if mode == 'constant' else [0])
       for rng_factory in [partial(jtu.rand_uniform, -0.75, 1.75)]
       for round_ in [True, False]))
   def testMapCoordinates(self, shape, dtype, coords_shape, coords_dtype, mode,
-                         round_, rng_factory):
+                         cval, round_, rng_factory):
 
     def args_maker():
       x = onp.arange(onp.prod(shape), dtype=dtype).reshape(shape)
@@ -82,9 +88,12 @@ class NdimageTest(jtu.JaxTestCase):
       return x, coords
 
     rng = rng_factory()
-    lsp_op = lambda x, c: lsp_ndimage.map_coordinates(x, c, order=1, mode=mode)
-    osp_op = lambda x, c: _fixed_scipy_map_coordinates(x, c, order=1, mode=mode)
-    self._CheckAgainstNumpy(lsp_op, osp_op, args_maker, check_dtypes=True)
+    order = 1
+    lsp_op = lambda x, c: lsp_ndimage.map_coordinates(x, c, order, mode, cval)
+    osp_op = lambda x, c: _fixed_scipy_map_coordinates(x, c, order, mode, cval)
+    epsilon = max(onp.finfo(dtype).eps, onp.finfo(coords_dtype).eps)
+    self._CheckAgainstNumpy(lsp_op, osp_op, args_maker, tol=10*epsilon,
+                            check_dtypes=True)
 
   def testMapCoordinateDocstring(self):
     self.assertIn("Only linear interpolation",

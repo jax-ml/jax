@@ -25,16 +25,12 @@ import scipy.ndimage
 
 from ..numpy import lax_numpy as np
 from ..numpy.lax_numpy import _wraps
+from ..util import safe_zip as zip
 
 
-def _prod(values):
-  out = 1
-  for value in values:
-    out *= value
-  return out
+_nonempty_prod = functools.partial(functools.reduce, operator.mul)
+_nonempty_sum = functools.partial(functools.reduce, operator.add)
 
-
-# Note: these only hold for order=1
 _INDEX_FIXERS = {
     'constant': lambda index, size: index,
     'nearest': lambda index, size: np.clip(index, 0, size - 1),
@@ -58,6 +54,9 @@ def map_coordinates(
         'jax.scipy.ndimage.map_coordinates currently requires order=1')
 
   input = np.asarray(input)
+  coordinates = [np.asarray(c, input.dtype) for c in coordinates]
+  one = input.dtype.type(1)
+  cval = np.asarray(cval, input.dtype)
 
   index_fixer = _INDEX_FIXERS.get(mode)
   if index_fixer is None:
@@ -76,8 +75,8 @@ def map_coordinates(
     upper = np.ceil(coordinate)
     l_index = lower.astype(np.int32)
     u_index = upper.astype(np.int32)
-    l_weight = 1 - (coordinate - lower)
-    u_weight = 1 - l_weight  # handles the edge case lower==upper
+    l_weight = one - (coordinate - lower)
+    u_weight = one - l_weight  # handles the edge case lower==upper
     all_indices_and_weights.append(
         [(index_fixer(l_index, size), is_valid(l_index, size), l_weight),
          (index_fixer(u_index, size), is_valid(u_index, size), u_weight)]
@@ -91,6 +90,6 @@ def map_coordinates(
       contribution = np.where(all_valid, input[indices], cval)
     else:
       contribution = input[indices]
-    outputs.append(_prod(weights) * contribution)
-  result = sum(outputs)
+    outputs.append(_nonempty_prod(weights) * contribution)
+  result = _nonempty_sum(outputs)
   return result
