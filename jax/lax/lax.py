@@ -1449,7 +1449,7 @@ ShapedArray._iter = staticmethod(_iter)
 def zeros_like_array(x):
   return full_like(x, 0)
 
-for t in itertools.chain(dtypes.python_scalar_dtypes.key(), array_types,
+for t in itertools.chain(dtypes.python_scalar_dtypes.keys(), array_types,
                          [xla.DeviceArray]):
   ad_util.jaxval_adders[t] = add
 ad_util.jaxval_zeros_likers[xla.DeviceArray] = zeros_like_array
