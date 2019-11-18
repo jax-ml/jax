@@ -41,7 +41,7 @@ def concretization_function_error(fun):
 
 class UnshapedArray(core.AbstractValue):
   __slots__ = ['dtype', 'weak_type']
-  array_abstraction_level = 1
+  array_abstraction_level = 2
 
   def __init__(self, dtype, weak_type=False):
     self.dtype = onp.dtype(dtypes.canonicalize_dtype(dtype))
