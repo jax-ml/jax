@@ -242,3 +242,5 @@ def _make_concrete_python_scalar(x):
 for t in dtypes.python_scalar_dtypes.keys():
   core.pytype_aval_mappings[t] = _make_concrete_python_scalar
   ad_util.jaxval_zeros_likers[t] = _zeros_like_python_scalar
+
+core.literalable_types.update(dtypes.python_scalar_dtypes.keys())
