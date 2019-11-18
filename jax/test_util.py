@@ -162,7 +162,7 @@ def _merge_tolerance(tol, default):
     return tol
   out = default.copy()
   for k, v in tol.items():
-    out[k] = v
+    out[onp.dtype(k)] = v
   return out
 
 def check_jvp(f, f_jvp, args, atol=None, rtol=None, eps=EPS):
