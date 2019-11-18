@@ -489,7 +489,8 @@ class BatchingTest(jtu.JaxTestCase):
       per_example_direct += [
           np.reshape(g, (1,) + g.shape)]
     per_example_direct = np.concatenate(per_example_direct, axis=0)
-    self.assertAllClose(per_example, per_example_direct, check_dtypes=True)
+    self.assertAllClose(per_example, per_example_direct, check_dtypes=True,
+                        rtol=2e-2)
 
   def testConvGeneralDilatedBatchNotMajor(self):
     W = np.array(onp.random.randn(3, 3, 1, 4), dtype=onp.float32)
@@ -540,7 +541,8 @@ class BatchingTest(jtu.JaxTestCase):
       per_example_direct += [
           np.reshape(g, (1,) + g.shape)]
     per_example_direct = np.concatenate(per_example_direct, axis=0)
-    self.assertAllClose(per_example, per_example_direct, check_dtypes=True)
+    self.assertAllClose(per_example, per_example_direct, check_dtypes=True,
+                        rtol=1e-3)
 
   def testSumPool(self):
     W = np.array(onp.random.randn(3, 3, 1, 5), dtype=onp.float32)
@@ -571,7 +573,7 @@ class BatchingTest(jtu.JaxTestCase):
           np.reshape(g, (1,) + g.shape)]
     per_example_direct = np.concatenate(per_example_direct, axis=0)
     self.assertAllClose(per_example, per_example_direct, check_dtypes=True,
-                        rtol=1e-5)
+                        rtol=1e-3)
 
   def testCumProd(self):
    x = np.arange(9).reshape(3, 3) + 1
@@ -936,7 +938,8 @@ class BatchingTest(jtu.JaxTestCase):
     scales = onp.array([[0.1], [0.2], [0.3], [0.4], [0.5]])
     ans = vmapped_f_grad(scales)  # don't crash!
     expected = onp.stack([grad(f)(scale) for scale in scales])
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    self.assertAllClose(ans, expected, check_dtypes=False,
+                        rtol=jtu.default_gradient_tolerance)
 
   def testIssue387(self):
     # https://github.com/google/jax/issues/387
