@@ -343,11 +343,13 @@ py::object PyTreeDef::Unflatten(py::iterable leaves) const {
       case Kind::kList:
       case Kind::kDict:
       case Kind::kCustom: {
-        int size = agenda.size();
-        py::object o = MakeNode(
-            node,
-            absl::Span<py::object>(&agenda[size - node.arity], node.arity));
-        agenda.resize(agenda.size() - node.arity);
+        const int size = agenda.size();
+        absl::Span<py::object> span;
+        if (node.arity > 0) {
+          span = absl::Span<py::object>(&agenda[size - node.arity], node.arity);
+        }
+        py::object o = MakeNode(node, span);
+        agenda.resize(size - node.arity);
         agenda.push_back(o);
         break;
       }
