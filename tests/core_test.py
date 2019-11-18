@@ -176,7 +176,7 @@ class CoreTest(jtu.JaxTestCase):
 
   @parameterized.parameters(test_specs)
   def test_jvp(self, f, args):
-    jtu.check_jvp(f, partial(jvp, f), args)
+    jtu.check_jvp(f, partial(jvp, f), args, rtol={onp.float32: 3e-2})
 
   def test_jvp_zeros(self):
     def foo(x):
@@ -188,7 +188,8 @@ class CoreTest(jtu.JaxTestCase):
 
   @parameterized.parameters(test_specs)
   def test_jvp_linearized(self, f, args):
-    jtu.check_jvp(f, partial(jvp_unlinearized, f), args)
+    jtu.check_jvp(f, partial(jvp_unlinearized, f), args,
+                  rtol={onp.float32: 3e-2})
 
   @parameterized.parameters(test_specs)
   def test_vjp(self, f, args):
