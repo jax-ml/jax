@@ -340,7 +340,7 @@ class PmapTest(jtu.JaxTestCase):
       lambda x: lax.ppermute(x, "i", zip(range(num_devices), perm)), "i")
     result = f(np.arange(num_devices, dtype=np.float32))
     expected = np.asarray(perm, dtype=np.float32)
-    self.assertAllClose(result, expected)
+    self.assertAllClose(result, expected, check_dtypes=True)
 
   @jtu.skip_on_devices("cpu", "gpu")
   def testRule30(self):
@@ -849,7 +849,7 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
 
     ndevices = xla_bridge.device_count()
     ans = foo(np.ones((ndevices, 1)))
-    expected = onp.ones((ndevices, 1)) * ndevices * 2
+    expected = onp.ones((ndevices, 1), dtype=np.float_) * ndevices * 2
     self.assertAllClose(ans, expected, check_dtypes=True)
 
   def testPmapInJit(self):
@@ -862,7 +862,7 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
 
     ndevices = xla_bridge.device_count()
     ans = foo(np.ones((ndevices, 1)))
-    expected = onp.ones((ndevices, 1)) * ndevices
+    expected = onp.ones((ndevices, 1), dtype=np.float_) * ndevices
     self.assertAllClose(ans, expected, check_dtypes=True)
 
   def testGradBasic(self):

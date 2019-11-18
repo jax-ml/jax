@@ -1318,7 +1318,7 @@ def index_in_dim(operand, index, axis=0, keepdims=True):
 
 def dynamic_slice_in_dim(operand, start_index, slice_size, axis=0):
   """Convenience wrapper around dynamic_slice applying to one dimension."""
-  start_indices = [0] * operand.ndim
+  start_indices = [_zero(start_index)] * operand.ndim
   slice_sizes = list(operand.shape)
 
   axis = int(axis)
@@ -1338,7 +1338,7 @@ def dynamic_index_in_dim(operand, index, axis=0, keepdims=True):
 
 def dynamic_update_slice_in_dim(operand, update, start_index, axis):
   axis = int(axis)
-  start_indices = [0] * _ndim(operand)
+  start_indices = [_zero(start_index)] * _ndim(operand)
   start_indices[axis] = start_index
   return dynamic_update_slice(operand, update, start_indices)
 
@@ -1449,7 +1449,8 @@ ShapedArray._iter = staticmethod(_iter)
 def zeros_like_array(x):
   return full_like(x, 0)
 
-for t in itertools.chain(array_types, [xla.DeviceArray]):
+for t in itertools.chain(dtypes.python_scalar_dtypes.keys(), array_types,
+                         [xla.DeviceArray]):
   ad_util.jaxval_adders[t] = add
 ad_util.jaxval_zeros_likers[xla.DeviceArray] = zeros_like_array
 
@@ -4376,6 +4377,8 @@ def _dynamic_slice_indices(operand, start_indices):
 
 
 def _const(example, val):
+  if dtypes.is_python_scalar(example):
+    return dtypes.scalar_type_of(example)(val)
   return onp.array(val, _dtype(example))
 
 _zeros = partial(full_like, fill_value=0)

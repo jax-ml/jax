@@ -1266,6 +1266,8 @@ class APITest(jtu.JaxTestCase):
         "positional arguments.",
         lambda: partial(df, x=0.)(y=1.))
 
+  def test_scalar_literals(self):
+    self.assertLen(api.make_jaxpr(lambda x: x + 2)(42).constvars, 0)
 
 if __name__ == '__main__':
   absltest.main()

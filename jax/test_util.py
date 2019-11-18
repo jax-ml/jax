@@ -54,8 +54,10 @@ flags.DEFINE_integer(
 
 EPS = 1e-4
 
-_dtype = lambda x: getattr(x, 'dtype', None) or onp.asarray(x).dtype
-
+def _dtype(x):
+  return (getattr(x, 'dtype', None) or
+          onp.dtype(dtypes.python_scalar_dtypes.get(type(x), None)) or
+          onp.asarray(x).dtype)
 
 def is_sequence(x):
   try:
@@ -89,9 +91,9 @@ tpu_default_tolerance[onp.dtype(onp.complex64)] = 1e-3
 default_gradient_tolerance = {
   onp.dtype(onp.float16): 1e-2,
   onp.dtype(onp.float32): 2e-3,
-  onp.dtype(onp.float64): 1e-6,
+  onp.dtype(onp.float64): 1e-5,
   onp.dtype(onp.complex64): 1e-3,
-  onp.dtype(onp.complex128): 1e-6,
+  onp.dtype(onp.complex128): 1e-5,
 }
 
 def _assert_numpy_eq(x, y):
@@ -128,10 +130,9 @@ def inner_prod(xs, ys):
   return tree_reduce(onp.add, tree_multimap(contract, xs, ys))
 
 
-add = partial(tree_multimap, onp.add)
-sub = partial(tree_multimap, onp.subtract)
-conj = partial(tree_map, onp.conj)
-
+add = partial(tree_multimap, lambda x, y: onp.add(x, y, dtype=_dtype(x)))
+sub = partial(tree_multimap, lambda x, y: onp.subtract(x, y, dtype=_dtype(x)))
+conj = partial(tree_map, lambda x: onp.conj(x, dtype=_dtype(x)))
 
 def scalar_mul(xs, a):
   return tree_map(lambda x: onp.multiply(x, a, dtype=_dtype(x)), xs)
@@ -154,9 +155,19 @@ def numerical_jvp(f, primals, tangents, eps=EPS):
   return scalar_mul(sub(f_pos, f_neg), 0.5 / eps)
 
 
+def _merge_tolerance(tol, default):
+  if tol is None:
+    return default
+  if not isinstance(tol, dict):
+    return tol
+  out = default.copy()
+  for k, v in tol.items():
+    out[onp.dtype(k)] = v
+  return out
+
 def check_jvp(f, f_jvp, args, atol=None, rtol=None, eps=EPS):
-  atol = atol or default_gradient_tolerance
-  rtol = rtol or default_gradient_tolerance
+  atol = _merge_tolerance(atol, default_gradient_tolerance)
+  rtol = _merge_tolerance(rtol, default_gradient_tolerance)
   rng = onp.random.RandomState(0)
   tangent = tree_map(partial(rand_like, rng), args)
   v_out, t_out = f_jvp(args, tangent)
@@ -170,8 +181,8 @@ def check_jvp(f, f_jvp, args, atol=None, rtol=None, eps=EPS):
 
 
 def check_vjp(f, f_vjp, args, atol=None, rtol=None, eps=EPS):
-  atol = atol or default_gradient_tolerance
-  rtol = rtol or default_gradient_tolerance
+  atol = _merge_tolerance(atol, default_gradient_tolerance)
+  rtol = _merge_tolerance(rtol, default_gradient_tolerance)
   _rand_like = partial(rand_like, onp.random.RandomState(0))
   v_out, vjpfun = f_vjp(*args)
   v_out_expected = f(*args)

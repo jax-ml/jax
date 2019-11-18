@@ -68,14 +68,15 @@ def _abstractify(x):
   return raise_to_shaped(core.get_aval(x))
 
 def typecheck(aval, x):
-  aval = raise_to_shaped(aval)
+  aval = raise_to_shaped(aval).strip_weak_type()
   try:
-    return aval == core.lattice_join(aval, core.get_aval(x))
+    return aval == core.lattice_join(aval, core.get_aval(x)).strip_weak_type()
   except TypeError:
     return False
 
 def typematch(aval1, aval2):
-  return raise_to_shaped(aval1) == raise_to_shaped(aval2)
+  return (raise_to_shaped(aval1).strip_weak_type() ==
+          raise_to_shaped(aval2).strip_weak_type())
 
 class FixedPointError(Exception): pass
 
@@ -190,10 +191,10 @@ def while_loop(cond_fun, body_fun, init_val):
   init_avals = tuple(_map(_abstractify, init_vals))
   cond_jaxpr, cond_consts, cond_tree = _initial_style_jaxpr(cond_fun, in_tree, init_avals)
   body_jaxpr, body_consts, body_tree = _initial_style_jaxpr(body_fun, in_tree, init_avals)
-  if not treedef_is_leaf(cond_tree):
+  if not treedef_is_leaf(cond_tree) or len(cond_jaxpr.out_avals) != 1:
     msg = "cond_fun must return a boolean scalar, but got pytree {}."
     raise TypeError(msg.format(cond_tree))
-  if cond_jaxpr.out_avals != [ShapedArray((), onp.bool_)]:
+  if cond_jaxpr.out_avals[0].strip_weak_type() != ShapedArray((), onp.bool_):
     msg = "cond_fun must return a boolean scalar, but got output type(s) {}."
     raise TypeError(msg.format(cond_jaxpr.out_avals))
 
@@ -515,7 +516,6 @@ def scan(f, init, xs):
   x_dtypes = [x.dtype for x in xs_flat]
   x_avals = tuple(_map(ShapedArray, x_shapes, x_dtypes))
   jaxpr, consts, out_tree = _initial_style_jaxpr(f, in_tree, carry_avals + x_avals)
-
   out_tree_children = out_tree.children()
   if len(out_tree_children) != 2:
     msg = "scan body output must be a pair, got {}."
@@ -549,7 +549,7 @@ def _scan_impl(*args, **kwargs):
     return carry_out + ys_out
 
   ys_init = _map(partial(_empty_array, length), y_avals)
-  return fori_loop(0, length, body_fun, init + ys_init)
+  return fori_loop(lax._const(length, 0), length, body_fun, init + ys_init)
 
 def _index_array(i, aval, x):
   if aval is core.abstract_unit:
@@ -884,7 +884,7 @@ def _masked_scan_jaxpr(jaxpr, num_consts, num_carry):
                  for new_c, c in zip(new_carry, carry)]
     return [i + 1] + new_carry + ys
 
-  aval = ShapedArray((), onp.int64)
+  aval = ShapedArray((), dtypes.int_)
   const_avals, carry_avals, x_avals = split_list(jaxpr.in_avals, [num_consts, num_carry])
   return _make_typed_jaxpr(masked, [aval] + const_avals + [aval] + carry_avals + x_avals)
 
@@ -897,7 +897,7 @@ def scan_bind(*args, **kwargs):
   # check that args match input types
   consts_avals, init_avals, x_avals = split_list(jaxpr.in_avals, [num_consts, num_carry])
   xs_avals = _map(partial(_promote_aval_rank, length), x_avals)
-  assert all(_map(typecheck, consts_avals, consts))
+  assert all(_map(typecheck, consts_avals, consts)), (consts, consts_avals)
   assert all(_map(typecheck, init_avals, init))
   # assert all(_map(typecheck, xs_avals, xs))
   # check that output carry type matches input carry type

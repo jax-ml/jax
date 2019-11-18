@@ -114,15 +114,18 @@ class ndarray(six.with_metaclass(_ArrayMeta, onp.ndarray)):
                     " Use jax.numpy.array, or jax.numpy.zeros instead.")
 
 
-isscalar = onp.isscalar
 iscomplexobj = onp.iscomplexobj
 
 shape = _shape = onp.shape
 ndim = _ndim = onp.ndim
 size = onp.size
-_dtype = lax.dtype
+_dtype = dtypes.result_type
 
 bool_ = onp.bool_
+int_ = dtypes.int_
+float_ = dtypes.float_
+complex_ = dtypes.complex_
+
 uint8 = onp.uint8
 uint16 = onp.uint16
 uint32 = onp.uint32
@@ -206,10 +209,8 @@ def _promote_dtypes(*args):
   if len(args) < 2:
     return args
   else:
-    from_dtypes = map(_dtype, args)
-    to_dtype = dtypes.canonicalize_dtype(result_type(*from_dtypes))
-    return [lax.convert_element_type(x, to_dtype)
-            if _dtype(x) != to_dtype else x for x in args]
+    to_dtype = result_type(*args)
+    return [lax.convert_element_type(x, to_dtype) for x in args]
 
 def _promote_to_result_dtype(op, *args):
   """Convenience function to promote args directly to the op's result dtype."""
@@ -223,11 +224,12 @@ def _result_dtype(op, *args):
   return _dtype(op(*args))
 
 
+def _arraylike(x): return isinstance(x, ndarray) or isscalar(x)
 def _check_arraylike(fun_name, *args):
   """Check if all args fit JAX's definition of arraylike (ndarray or scalar)."""
-  not_array = lambda x: not isinstance(x, ndarray) and not onp.isscalar(x)
-  if _any(not_array(arg) for arg in args):
-    pos, arg = next((i, arg) for i, arg in enumerate(args) if not_array(arg))
+  if _any(not _arraylike(arg) for arg in args):
+    pos, arg = next((i, arg) for i, arg in enumerate(args)
+                    if not _arraylike(arg))
     msg = "{} requires ndarray or scalar arguments, got {} at position {}."
     raise TypeError(msg.format(fun_name, type(arg), pos))
 
@@ -335,6 +337,12 @@ def _canonicalize_axis(axis, num_dims):
 
 ### implementations of numpy functions in terms of lax
 
+@_wraps(onp.isscalar)
+def isscalar(num): return dtypes.is_python_scalar(num) or onp.isscalar(num)
+
+@_wraps(onp.result_type)
+def result_type(*args):
+  return dtypes.result_type(*args)
 
 def _one_to_one_unop(numpy_fn, lax_fn, promote_like=False):
   if promote_like:
@@ -1550,6 +1558,10 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
       out = lax.convert_element_type(object, dtype)
     else:
       out = device_put(object)
+  elif isscalar(object):
+    out = lax.reshape(object, ())
+    if dtype and _dtype(out) != dtypes.canonicalize_dtype(dtype):
+      out = lax.convert_element_type(out, dtype)
   elif hasattr(object, '__array__'):
     # this case is for duck-typed handling of objects that implement `__array__`
     out = array(object.__array__(), dtype and dtypes.canonicalize_dtype(dtype))
@@ -1558,10 +1570,6 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
       out = stack([array(elt, dtype=dtype) for elt in object])
     else:
       out = onp.array([], dtype)
-  elif isscalar(object):
-    out = lax.reshape(object, ())
-    if dtype and _dtype(out) != dtypes.canonicalize_dtype(dtype):
-      out = lax.convert_element_type(out, dtype)
   else:
     try:
       view = memoryview(object)
@@ -1611,8 +1619,8 @@ def zeros(shape, dtype=None):
   if isinstance(shape, types.GeneratorType):
     raise TypeError("expected sequence object with len >= 0 or a single integer")
   lax._check_user_dtype_supported(dtype, "zeros")
-  dtype = onp.dtype("float64") if dtype is None else dtype
-  shape = (shape,) if onp.isscalar(shape) else shape
+  dtype = float_ if dtype is None else dtype
+  shape = (shape,) if isscalar(shape) else shape
   return lax.full(shape, 0, dtype)
 
 @_wraps(onp.ones)
@@ -1620,8 +1628,8 @@ def ones(shape, dtype=None):
   if isinstance(shape, types.GeneratorType):
     raise TypeError("expected sequence object with len >= 0 or a single integer")
   lax._check_user_dtype_supported(dtype, "ones")
-  dtype = onp.dtype("float64") if dtype is None else dtype
-  shape = (shape,) if onp.isscalar(shape) else shape
+  dtype = float_ if dtype is None else dtype
+  shape = (shape,) if isscalar(shape) else shape
   return lax.full(shape, 1, dtype)
 
 
@@ -1642,7 +1650,7 @@ empty = zeros
 @_wraps(onp.eye)
 def eye(N, M=None, k=None, dtype=None):
   lax._check_user_dtype_supported(dtype, "eye")
-  dtype = onp.dtype("float64") if dtype is None else dtype
+  dtype = float_ if dtype is None else dtype
   M = N if M is None else M
   if N < 0 or M < 0:
     msg = "negative dimensions are not allowed, got {} and {}"
@@ -1675,6 +1683,8 @@ def arange(start, stop=None, step=None, dtype=None):
       return lax.iota(dtype, start)  # avoids materializing
 
   # Fall back to instantiating an ndarray in host memory
+  dtype = dtype or result_type(
+    *(x for x in (start, stop, step) if x is not None))
   return onp.arange(start, stop=stop, step=step, dtype=dtype)
 
 
@@ -2981,6 +2991,7 @@ def gcd(x1, x2):
 
 @_wraps(getattr(onp, "lcm", None))
 def lcm(x1, x2):
+  x1, x2 = _promote_dtypes(x1, x2)
   d = gcd(x1, x2)
   return where(d == 0, lax._const(d, 0),
                lax.div(lax.abs(multiply(x1, x2)), d))
@@ -3067,7 +3078,6 @@ def quantile(a, q, axis=None, out=None, overwrite_input=False,
     raise NotImplementedError("Only interpolation='linear' is implemented")
 
   a = asarray(a)
-  q = asarray(q)
 
   if axis is None:
     a = ravel(a)
