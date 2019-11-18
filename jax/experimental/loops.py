@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Loops is an **experimental** module for syntactic sugar for loops and control-flow in JAX.
+"""Loops is an **experimental** module for syntactic sugar for loops and control-flow.
 
-The current implementation should convert loops correctly to JAX internal representation, and most transformation
-should work (see below), but we have not yet fine-tuned the performance of the resulting XLA compilation!
+The current implementation should convert loops correctly to JAX internal
+representation, and most transformations should work (see below), but we have
+not yet fine-tuned the performance of the resulting XLA compilation!
 
-By default, loops and control-flow in JAX are executed and inlined during tracing. For example, in the following code
-the `for` loop is unrolled during JAX tracing::
+By default, loops and control-flow in JAX are executed and inlined during tracing.
+For example, in the following code the `for` loop is unrolled during JAX tracing::
 
   arr = onp.zeros(5)
   for i in range(arr.shape[0]):
@@ -26,9 +27,10 @@ the `for` loop is unrolled during JAX tracing::
     if i % 2 == 0:
       arr[i] += 1.
 
-In order to capture the structured control-flow one has to use the higher-order JAX operations, which require
-you to express the body of the loops and conditionals as functions,
-and the array updates using a functional style that returns an updated array, e.g.::
+In order to capture the structured control-flow one has to use the higher-order
+JAX operations, which require you to express the body of the loops and
+conditionals as functions, and the array updates using a functional style that
+returns an updated array, e.g.::
 
   arr = onp.zeros(5)
   def loop_body(i, acc_arr):
@@ -41,45 +43,62 @@ and the array updates using a functional style that returns an updated array, e.
   arr = lax.fori_loop(0, arr.shape[0], loop_body, arr)
 
 The default notation quickly gets unreadable with deeper nested loops.
-With the utilities in this module you can write loops and conditionals that look closer to plain Python,
-as long as you keep the loop-carried state in a special `loops.scope` object and use `for` loops
-over special `scope.range` iterators::
+With the utilities in this module you can write loops and conditionals that
+look closer to plain Python, as long as you keep the loop-carried state in a
+special `loops.scope` object and use `for` loops over special
+`scope.range` iterators::
 
   from jax.experimental import loops
   with loops.Scope() as s:
-    s.arr = np.zeros(5)  # Must create the mutable state of the loop as `scope` fields.
+    s.arr = np.zeros(5)  # Create the mutable state of the loop as `scope` fields.
     for i in s.range(s.arr.shape[0]):
       s.arr = ops.index_update(s.arr, i, s.arr[i] + 2.)
-      for _ in s.cond_range(i % 2 == 0):  # Conditionals are also sugared as loops with 0 or 1 iterations
+      for _ in s.cond_range(i % 2 == 0):  # Conditionals as loops with 0 or 1 iterations
         s.arr = ops.index_update(s.arr, i, s.arr[i] + 1.)
 
+Loops constructed with `range` must have literal constant bounds. If you need
+loops with dynamic bounds, you can use the more general `while_range` iterator.
+However, in that case that `grad` transformation is not supported::
+
+    s.idx = start
+    for _ in s.while_range(lambda: s.idx < end):
+      s.idx += 1
+
 Notes:
-  * Loops and conditionals to be functionalized can appear only inside scopes constructed with `loops.Scope`
-    and they must use one of the `Scope.range` iterators. All other loops are unrolled during tracing, as usual in JAX.
-  * Only scope data (stored in fields of the scope object) is functionalized. All other state, e.g., in other
-    Python variables, will not be considered as being part of the loop output.
-    All references to the mutable state should be through the scope: `s.arr`.
-  * Conceptually, this model is still "functional" in the sense that a loop over a `Scope.range` behaves
-    as a function whose input and output is the scope data.
-  * Scopes should be passed down to callees that need to use loop functionalization, or they may be nested.
-  * The programming model is that the loop body over a `scope.range` is traced only once, using abstract shape values,
-    similar to how JAX traces function bodies.
+  * Loops and conditionals to be functionalized can appear only inside scopes
+    constructed with `loops.Scope` and they must use one of the `Scope.range`
+    iterators. All other loops are unrolled during tracing, as usual in JAX.
+  * Only scope data (stored in fields of the scope object) is functionalized.
+    All other state, e.g., in other Python variables, will not be considered as
+    being part of the loop output. All references to the mutable state should be
+    through the scope: `s.arr`.
+  * Conceptually, this model is still "functional" in the sense that a loop over
+    a `Scope.range` behaves as a function whose input and output is the scope data.
+  * Scopes should be passed down to callees that need to use loop
+    functionalization, or they may be nested.
+  * The programming model is that the loop body over a `scope.range` is traced
+    only once, using abstract shape values, similar to how JAX traces function
+    bodies.
 
 Restrictions:
-  * The tracing of the loop body should not exit prematurely with `return`, `exception`, `break`.
-    This would be detected and reported as errors when we encounter unnested scopes.
-  * The loop index variable should not be used after the loop. Similarly, one should not use outside the loop
-    data computed in the loop body, except data stored in fields of the scope object.
-  * No new mutable state can be created inside a loop to be functionalized. All mutable state must be created outside
-    all loops and conditionals.
-  * For a `while` loop, the conditional function is not allowed to modify the scope state. This is a checked error.
-    Also, for `while` loops the `grad` transformation does not work. An alternative that allows `grad` is a bounded
-    loop (`range`) with a conditional to ignore a suffix of iterations.
+  * The tracing of the loop body should not exit prematurely with `return`,
+    `exception`, `break`. This would be detected and reported as errors when we
+     encounter unnested scopes.
+  * The loop index variable should not be used after the loop. Similarly, one
+    should not use outside the loop data computed in the loop body, except data
+    stored in fields of the scope object.
+  * No new mutable state can be created inside a loop to be functionalized.
+    All mutable state must be created outside all loops and conditionals.
+  * For a `while` loop, the conditional function is not allowed to modify the
+    scope state. This is a checked error. Also, for `while` loops the `grad`
+    transformation does not work. An alternative that allows `grad` is a bounded
+    loop (`range`).
 
 Transformations:
-  * All transformations are supported, except `grad` is not supported for `Scope.while_range` loops.
-  * `vmap` is very useful for such loops because it pushes more work into the inner-loops, which should help
-    performance for accelerators.
+  * All transformations are supported, except `grad` is not supported for
+    `Scope.while_range` loops.
+  * `vmap` is very useful for such loops because it pushes more work into the
+    inner-loops, which should help performance for accelerators.
 
 For usage example, see tests/loops_test.py.
 """
@@ -118,13 +137,14 @@ class Scope(object):
   """
 
   def __init__(self):
-    self._mutable_state = {}  # Keep here the state to be functionalized, indexed by name.
-    self._active_ranges = []  # The stack of active ranges, the last one is the innermost.
+    self._mutable_state = {}  # state to be functionalized, indexed by name.
+    self._active_ranges = []  # stack of active ranges, last one is the innermost.
 
   def range(self, first, second=None, third=None):
-    """Creates a range for bounded iterations to be functionalized.
+    """Creates an iterator for bounded iterations to be functionalized.
 
     The body is converted to a `lax.scan`, for which all JAX transformations work.
+    The `first`, `second`, and `third` arguments must be integer literals.
 
     Usage::
 
@@ -151,7 +171,7 @@ class Scope(object):
     return _BodyTracer(self, _BoundedLoopBuilder(start, stop, step))
 
   def cond_range(self, pred):
-    """Creates a conditional range with 0 or 1 iterations based on the boolean "pred".
+    """Creates a conditional iterator with 0 or 1 iterations based on the boolean.
 
     The body is converted to a `lax.cond`. All JAX transformations work.
 
@@ -162,7 +182,8 @@ class Scope(object):
     """
     # TODO: share these checks with lax_control_flow.cond
     if len(onp.shape(pred)) != 0:
-      raise TypeError("Pred must be a scalar, got {} of shape {}.".format(pred, onp.shape(pred)))
+      raise TypeError(
+        "Pred must be a scalar, got {} of shape {}.".format(pred, onp.shape(pred)))
 
     try:
       pred_dtype = onp.result_type(pred)
@@ -180,9 +201,10 @@ class Scope(object):
     return _BodyTracer(self, _CondBuilder(pred))
 
   def while_range(self, cond_func):
-    """Creates a range that continues as long as `cond_func` returns true.
+    """Creates an iterator that continues as long as `cond_func` returns true.
 
-    The body is converted to a `lax.while_loop`. The `grad` transformation does not work.
+    The body is converted to a `lax.while_loop`.
+    The `grad` transformation does not work.
 
     Usage::
 
@@ -194,14 +216,14 @@ class Scope(object):
     """
     return _BodyTracer(self, _WhileBuilder(cond_func))
 
-  def _push_range(self, range):
+  def _push_range(self, range_):
     for ar in self._active_ranges:
-      if ar is range:
-        raise ValueError("Range is reused nested inside itself.")  # No need to include location, range is in stacktrace
-    self._active_ranges.append(range)
+      if ar is range_:
+        raise ValueError("Range is reused nested inside itself.")
+    self._active_ranges.append(range_)
 
-  def _pop_range(self, range):
-    if not (range is self._active_ranges[-1]):
+  def _pop_range(self, range_):
+    if not (range_ is self._active_ranges[-1]):
       self._error_premature_exit_range()
     self._active_ranges.pop()
 
@@ -218,7 +240,8 @@ class Scope(object):
     """
     mt_val = self._mutable_state.get(key)
     if mt_val is None:
-      raise AttributeError("Reading uninitialized data '{}' from the scope.".format(key))
+      raise AttributeError(
+        "Reading uninitialized data '{}' from the scope.".format(key))
     return mt_val
 
   def __setattr__(self, key, value):
@@ -230,7 +253,8 @@ class Scope(object):
       object.__setattr__(self, key, value)
     else:
       if self._active_ranges and key not in self._mutable_state:
-        raise ValueError("New mutable state '{}' cannot be created inside a loop.".format(key))
+        raise ValueError(
+          "New mutable state '{}' cannot be created inside a loop.".format(key))
       self._mutable_state[key] = value
 
   def __enter__(self):
@@ -264,16 +288,19 @@ class _BodyTracer(object):
     self.loop_builder = loop_builder
     self.first_iteration = True  # If we are tracing the first iteration
     if six.PY3:
-      self.stack = traceback.StackSummary.from_list(traceback.extract_stack()[:-2])  # Stack trace, without this line and the s.range function
+      # Stack trace, without this line and the s.range function
+      self.stack = traceback.StackSummary.from_list(traceback.extract_stack()[:-2])
     else:
       self.stack = None
 
-    # The rest is state kept from the start of the first iteration to the end of the iteration.
-    self.carried_state_initial = {}  # The initial values of the mutable state upon entering the range body.
-    self.carried_state_vars = {}  # The parameters that were created for state upon entering an arbitrary iteration.
+    # Next are state kept from the start of the first iteration to the end of the iteration.
+    self.carried_state_initial = {}
+    # The parameters that were created for state upon entering an arbitrary iteration.
+    self.carried_state_vars = {}
 
     self.trace = None
-    self.carried_state_names = None  # List of scope fields carried through the loop
+    # List of scope fields carried through the loop
+    self.carried_state_names = None
     self.init_tree = None  # The PyTreeDef corresponding to carried_state_names
     self.init_vals = None  # The values corresponding to self.init_tree
 
@@ -326,35 +353,45 @@ class _BodyTracer(object):
 
   def end_tracing_body(self):
     """Called when we are done tracing one iteration of the body."""
-    # We will turn the body of the loop into a function that takes some values for the scope state (carried_state_names)
-    # and returns the values for the same state fields after one execution of the body. For some of the ranges,
+    # We will turn the body of the loop into a function that takes some values
+    # for the scope state (carried_state_names) and returns the values for the
+    # same state fields after one execution of the body. For some of the ranges,
     # e.g., scope.range, the function will also take the index_var as last parameter.
     in_tracers = [self.carried_state_vars[ms] for ms in self.carried_state_names]
     if self.loop_builder.can_use_index_var():
       in_tracers += [self._index_var]
 
     # Make the jaxpr for the body of the loop
-    # TODO: See which mutable state was changed in the one iteration. For now, we assume all state changes.
-    body_out_tracers = tuple([self.scope._mutable_state[ms] for ms in self.carried_state_names])
+    # TODO: See which mutable state was changed in the one iteration.
+    # For now, we assume all state changes.
+    body_out_tracers = tuple([self.scope._mutable_state[ms]
+                              for ms in self.carried_state_names])
     try:
-      # If the body actually uses the index variable, and is not allowed to (e.g., cond_range and while_range),
-      # then in_tracers will not contain the tracer for the index_var, and trace_to_jaxpr_finalize will throw
+      # If the body actually uses the index variable, and is not allowed to
+      # (e.g., cond_range and while_range), then in_tracers will not contain
+      # the tracer for the index_var, and trace_to_jaxpr_finalize will throw
       # an assertion error.
-      body_typed_jaxpr, body_const_vals = _BodyTracer.trace_to_jaxpr_finalize(in_tracers=in_tracers,
-                                                                              out_tracers=body_out_tracers,
-                                                                              trace=self.trace)
+      body_typed_jaxpr, body_const_vals = _BodyTracer.trace_to_jaxpr_finalize(
+        in_tracers=in_tracers,
+        out_tracers=body_out_tracers,
+        trace=self.trace)
     except AssertionError as e:
       if "Encountered unexpected tracer" == str(e):
-        raise ValueError("Body of cond_range or while_range should not use the index variable returned by iterator.")
+        raise ValueError("Body of cond_range or while_range should not use the "
+                         "index variable returned by iterator.")
       raise
-    _BodyTracer.end_subtrace()  # End the subtrace for the loop body, before we trace the condition
+    # End the subtrace for the loop body, before we trace the condition
+    _BodyTracer.end_subtrace()
 
-    carried_init_val = tuple([self.carried_state_initial[ms] for ms in self.carried_state_names])
+    carried_init_val = tuple([self.carried_state_initial[ms]
+                              for ms in self.carried_state_names])
     carried_init_vals, carried_tree = tree_util.tree_flatten(carried_init_val)
 
     carried_out_vals = self.loop_builder.build_output_vals(
-      self.scope, self.carried_state_names, carried_tree, carried_init_vals, body_typed_jaxpr, body_const_vals)
-    carried_mutable_state_unflattened = tree_util.tree_unflatten(carried_tree, carried_out_vals)
+      self.scope, self.carried_state_names, carried_tree,
+      carried_init_vals, body_typed_jaxpr, body_const_vals)
+    carried_mutable_state_unflattened = tree_util.tree_unflatten(carried_tree,
+                                                                 carried_out_vals)
 
     # Update the mutable state with the values of the changed vars, after the loop.
     for ms, mv in zip(self.carried_state_names, carried_mutable_state_unflattened):
@@ -383,7 +420,8 @@ class _BodyTracer(object):
     # TODO: This is the final part of the partial_eval.trace_to_subjaxpr. Share.
     instantiate = [instantiate] * len(out_tracers)
     out_tracers = safe_map(trace.full_raise, safe_map(core.full_lower, out_tracers))
-    out_tracers = safe_map(partial(pe.instantiate_const_at, trace), instantiate, out_tracers)
+    out_tracers = safe_map(partial(pe.instantiate_const_at, trace),
+                           instantiate, out_tracers)
     jaxpr, consts, env = pe.tracers_to_jaxpr(in_tracers, out_tracers)
     out_pvals = [t.pval for t in out_tracers]
     # TODO: this is from partial_eval.trace_to_jaxpr. Share.
@@ -391,7 +429,8 @@ class _BodyTracer(object):
 
     # TODO: this is from the final part of lax_control_flow._initial_style_jaxpr
     out_avals = safe_map(abstract_arrays.raise_to_shaped, unzip2(out_pvals)[0])
-    const_avals = tuple(abstract_arrays.raise_to_shaped(core.get_aval(c)) for c in consts)
+    const_avals = tuple(abstract_arrays.raise_to_shaped(core.get_aval(c))
+                        for c in consts)
 
     in_pvals = [t.pval for t in in_tracers]
     in_avals = tuple(safe_map(abstract_arrays.raise_to_shaped, unzip2(in_pvals)[0]))
@@ -408,15 +447,18 @@ class _LoopBuilder(object):
     """Whether this kind of loop can use the index var returned by the range iterator."""
     raise NotImplementedError
 
-  def build_output_vals(self, scope, carried_state_names, carried_tree, init_vals, body_typed_jaxpr, body_const_vals):
+  def build_output_vals(self, scope, carried_state_names, carried_tree,
+                        init_vals, body_typed_jaxpr, body_const_vals):
     """Builds the output values for the loop carried state.
 
     Params:
       scope: the current Scope object.
-      carried_state_names: the list of names of mutable state fields that is carried through the body.
+      carried_state_names: the list of names of mutable state fields that is
+        carried through the body.
       carried_tree: the PyTreeDef for the tuple of carried_state_names.
       init_vals: the initial values on body entry corresponding to the init_tree.
-      body_typed_jaxpr: the Jaxpr for the body returning the new values of carried_state_names.
+      body_typed_jaxpr: the Jaxpr for the body returning the new values of
+        carried_state_names.
       body_const_vals: the constant values for the body.
 
     Returns:
@@ -440,12 +482,17 @@ class _BoundedLoopBuilder(_LoopBuilder):
   def can_use_index_var(self):
     return True
 
-  def build_output_vals(self, scope, carried_state_names, carried_tree, init_vals, body_typed_jaxpr, body_const_vals):
+  def build_output_vals(self, scope, carried_state_names, carried_tree,
+                        init_vals, body_typed_jaxpr, body_const_vals):
     arange_val = jnp.arange(self.start, stop=self.stop, step=self.step)
-    return lax_control_flow.scan_p.bind(*itertools.chain(body_const_vals, init_vals, [arange_val]),
-                                        forward=True, length=arange_val.shape[0], jaxpr=body_typed_jaxpr,
-                                        num_consts=len(body_const_vals), num_carry=len(init_vals),
-                                        linear=(False,) * (len(body_const_vals) + len(init_vals) + 1))
+    return lax_control_flow.scan_p.bind(*itertools.chain(body_const_vals,
+                                                         init_vals, [arange_val]),
+                                        forward=True, length=arange_val.shape[0],
+                                        jaxpr=body_typed_jaxpr,
+                                        num_consts=len(body_const_vals),
+                                        num_carry=len(init_vals),
+                                        linear=(False,) * (len(body_const_vals) +
+                                                           len(init_vals) + 1))
 
 
 class _CondBuilder(_LoopBuilder):
@@ -457,14 +504,17 @@ class _CondBuilder(_LoopBuilder):
   def can_use_index_var(self):
     return False
 
-  def build_output_vals(self, scope, carried_state_names, carried_tree, init_vals, body_typed_jaxpr, body_const_vals):
+  def build_output_vals(self, scope, carried_state_names, carried_tree,
+                        init_vals, body_typed_jaxpr, body_const_vals):
     # Simulate a pass-through false branch
     init_avals = safe_map(_BodyTracer.abstractify, init_vals)
-    false_body_typed_jaxpr, false_body_const_vals, _ = lax_control_flow._initial_style_jaxpr(lambda *args: args,
-                                                                                             carried_tree,
-                                                                                             tuple(init_avals))
+    false_body_typed_jaxpr, false_body_const_vals, _ = (
+      lax_control_flow._initial_style_jaxpr(lambda *args: args,
+                                            carried_tree,
+                                            tuple(init_avals)))
     return lax_control_flow.cond_p.bind(
-      *itertools.chain([self.pred], body_const_vals, init_vals, false_body_const_vals, init_vals),
+      *itertools.chain([self.pred], body_const_vals,
+                       init_vals, false_body_const_vals, init_vals),
       true_jaxpr=body_typed_jaxpr, false_jaxpr=false_body_typed_jaxpr,
       true_nconsts=len(body_const_vals), false_nconsts=len(false_body_const_vals))
 
@@ -478,10 +528,13 @@ class _WhileBuilder(_LoopBuilder):
   def can_use_index_var(self):
     return False
 
-  def build_output_vals(self, scope, carried_state_names, carried_tree, init_vals, body_typed_jaxpr, body_const_vals):
-    # Trace the conditional function. cond_func takes 0 arguments, but for lax.while we need a conditional function
-    # that takes the carried_state_names. _initial_style_jaxpr will start its own trace and will create tracers for
-    # all the carried state. We must put these values in the scope._mutable_state before we trace the conditional
+  def build_output_vals(self, scope, carried_state_names, carried_tree,
+                        init_vals, body_typed_jaxpr, body_const_vals):
+    # Trace the conditional function. cond_func takes 0 arguments, but
+    # for lax.while we need a conditional function that takes the
+    # carried_state_names. _initial_style_jaxpr will start its own trace and
+    # will create tracers for all the carried state. We must put these values
+    # in the scope._mutable_state before we trace the conditional
     # function.
     def cond_func_wrapped(*args):
       assert len(args) == len(carried_state_names)
@@ -496,9 +549,10 @@ class _WhileBuilder(_LoopBuilder):
       return res
 
     init_avals = safe_map(_BodyTracer.abstractify, init_vals)
-    cond_jaxpr, cond_consts, cond_tree = lax_control_flow._initial_style_jaxpr(cond_func_wrapped,
-                                                                               carried_tree,
-                                                                               tuple(init_avals))
+    cond_jaxpr, cond_consts, cond_tree = (
+      lax_control_flow._initial_style_jaxpr(cond_func_wrapped,
+                                            carried_tree,
+                                            tuple(init_avals)))
     # TODO: share these checks with lax_control_flow.while
     if not tree_util.treedef_is_leaf(cond_tree):
       msg = "cond_fun must return a boolean scalar, but got pytree {}."
@@ -507,7 +561,11 @@ class _WhileBuilder(_LoopBuilder):
       msg = "cond_fun must return a boolean scalar, but got output type(s) {}."
       raise TypeError(msg.format(cond_jaxpr.out_avals))
 
-    return lax_control_flow.while_p.bind(*itertools.chain(cond_consts, body_const_vals, init_vals),
-                                         cond_nconsts=len(cond_consts), cond_jaxpr=cond_jaxpr,
-                                         body_nconsts=len(body_const_vals), body_jaxpr=body_typed_jaxpr)
+    return lax_control_flow.while_p.bind(*itertools.chain(cond_consts,
+                                                          body_const_vals,
+                                                          init_vals),
+                                         cond_nconsts=len(cond_consts),
+                                         cond_jaxpr=cond_jaxpr,
+                                         body_nconsts=len(body_const_vals),
+                                         body_jaxpr=body_typed_jaxpr)
 
