@@ -340,7 +340,7 @@ class PmapTest(jtu.JaxTestCase):
       lambda x: lax.ppermute(x, "i", zip(range(num_devices), perm)), "i")
     result = f(np.arange(num_devices, dtype=np.float32))
     expected = np.asarray(perm, dtype=np.float32)
-    self.assertAllClose(result, expected)
+    self.assertAllClose(result, expected, check_dtypes=True)
 
   @jtu.skip_on_devices("cpu", "gpu")
   def testRule30(self):

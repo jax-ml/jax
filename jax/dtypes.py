@@ -71,7 +71,7 @@ python_scalar_dtypes = {
 }
 
 if six.PY2:
-  python_scalar_dtypes[long] = int_  # noqa: F821
+  python_scalar_dtypes[long] = onp.dtype(int_)  # noqa: F821
 
 def scalar_type_of(x):
   typ = dtype(x)

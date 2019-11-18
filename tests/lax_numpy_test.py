@@ -689,7 +689,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     lnp_fun = lambda lhs, rhs: lnp.inner(lhs, rhs)
     tol_spec = {onp.float16: 1e-2, onp.float64: 1e-13}
     if jtu.device_under_test() == "tpu":
-      tol_spec[onp.float32] = 2e-1
+      tol_spec[onp.float32] = tol_spec[onp.complex64] = 2e-1
     tol = max(jtu.tolerance(lhs_dtype, tol_spec),
               jtu.tolerance(rhs_dtype, tol_spec))
     # TODO(phawkins): there are float32/float64 disagreements for some inputs.
