@@ -37,7 +37,7 @@ from .. import api
 from .. import linear_util as lu
 from .. import dtypes
 from ..config import flags
-from ..core import Primitive
+from ..core import Primitive, tie_in
 from ..abstract_arrays import (UnshapedArray, ShapedArray, ConcreteArray,
                                AbstractToken, array_types, make_shaped_array,
                                raise_to_shaped, abstract_token)
@@ -1025,9 +1025,6 @@ def sort_key_val(keys, values, dimension=-1):
   sorted_keys, sorted_values = result
   return sorted_keys, sorted_values
 
-
-def tie_in(x, y):
-  return tie_in_p.bind(x, y)
 
 def shaped_identity(x):
   return shaped_identity_p.bind(x, shape=x.shape)
@@ -2583,7 +2580,7 @@ def _select_dtype_rule(pred, on_true, on_false):
   return on_true.dtype
 
 def _select_transpose_rule(t, pred, on_true, on_false):
-  assert pred is not ad.undefined_primal
+  assert pred is not ad.undefined_primal  # TODO
   if t is ad_util.zero:
     return [None,
             ad_util.zero if on_true is ad.undefined_primal else None,
@@ -3978,22 +3975,15 @@ ad.primitive_transposes[sort_key_val_p] = _sort_key_val_transpose_rule
 batching.primitive_batchers[sort_key_val_p] = _sort_key_val_batch_rule
 
 
-def _tie_in_transpose_rule(t):
-  return [ad_util.zero, t]
-
+# TODO move these
 def _tie_in_batch_rule(batched_args, batch_dims):
   y = tie_in(*batched_args)
   _, bdim_y = batch_dims
   return y, bdim_y
+batching.primitive_batchers[core.tie_in_p] = _tie_in_batch_rule
+masking.shape_rules[core.tie_in_p] = lambda shape_exprs: shape_exprs[1]
+masking.masking_rules[core.tie_in_p] = lambda vals, logical_shapes: vals[1]
 
-tie_in_p = Primitive('tie_in')
-tie_in_p.def_impl(lambda x, y: y)
-tie_in_p.def_abstract_eval(lambda x, y: y)
-xla.translations[tie_in_p] = lambda c, x, y: y
-ad.deflinear(tie_in_p, _tie_in_transpose_rule)
-batching.primitive_batchers[tie_in_p] = _tie_in_batch_rule
-masking.shape_rules[tie_in_p] = lambda shape_exprs: shape_exprs[1]
-masking.masking_rules[tie_in_p] = lambda vals, logical_shapes: vals[1]
 
 shaped_identity_p = Primitive('shape_id')
 shaped_identity_p.def_impl(lambda x, shape: x)

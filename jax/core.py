@@ -663,3 +663,11 @@ def pp_jaxpr(jaxpr):
           ((pp('let ') >>
             vcat(map(pp_eqn, jaxpr.eqns))) +
            pp('in {} }}'.format(jaxpr.outvars))).indent(2))
+
+
+def tie_in(x, y):
+  return tie_in_p.bind(x, y)
+
+tie_in_p = Primitive('tie_in')
+tie_in_p.def_impl(lambda x, y: y)
+tie_in_p.def_abstract_eval(lambda x, y: y)

@@ -139,6 +139,9 @@ def unpair_pval(pval):
     return (aval_1, const_1), (aval_2, const_2)
 
 def backward_pass(jaxpr, consts, freevar_vals, args, cotangents_in):
+  if all(ct is zero for ct in cotangents_in):
+    return [zero] * len(jaxpr.freevars), [zero] * len(jaxpr.invars)
+
   def write_cotangent(v, ct):
     # assert v not in primal_env
     if ct is not None:
@@ -162,9 +165,42 @@ def backward_pass(jaxpr, consts, freevar_vals, args, cotangents_in):
   map(write_primal, jaxpr.freevars, freevar_vals)
   map(write_primal, jaxpr.invars, args)
 
+  def is_linear(var):
+    if type(var) is Literal:
+      return False
+    else:
+      return primal_env.get(var, undefined_primal) is undefined_primal
+
+  # TODO(mattjj,dougalm): revise with explicit embedding #1677
+  linear_eqns = []
+  meat_hook = next(ct for ct in cotangents_in if ct is not zero)
+  for eqn in jaxpr.eqns:
+    if eqn.primitive is core.tie_in_p:
+      if is_linear(eqn.invars[1]):
+        linear_eqns.append(eqn)
+      else:
+        ans = core.tie_in(meat_hook, read_primal(eqn.invars[1]))
+        write_primal(eqn.outvars[0], ans)
+    elif any(is_linear(v) for v in eqn.invars):
+      linear_eqns.append(eqn)
+    else:
+      if eqn.bound_subjaxprs:
+        (_, const_bindings, freevar_bindings), = eqn.bound_subjaxprs
+        if any(is_linear(v) for v in it.chain(const_bindings, freevar_bindings)):
+          linear_eqns.append(eqn)
+        else:
+          raise NotImplementedError
+      else:
+        in_vals = map(read_primal, eqn.invars)
+        ans = eqn.primitive.bind(*in_vals, **eqn.params)
+        if eqn.primitive.multiple_results:
+          map(write_primal, eqn.outvars, ans)
+        else:
+          write_primal(eqn.outvars[0], ans)
+
   ct_env = {}
   map(write_cotangent, jaxpr.outvars, cotangents_in)
-  for eqn in jaxpr.eqns[::-1]:
+  for eqn in linear_eqns[::-1]:
     invals = map(read_primal, eqn.invars)
     if eqn.primitive.multiple_results:
       cts_in = map(read_cotangent, eqn.outvars)
@@ -514,3 +550,5 @@ def _perm(primal_counts, tangent_counts, lst):
 def _interleave(xs, ys):
   assert len(xs) == len(ys)
   return [e for pair in zip(xs, ys) for l in pair for e in l]
+
+deflinear(core.tie_in_p, lambda t: [zero, t])

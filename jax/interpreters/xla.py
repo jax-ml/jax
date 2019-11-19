@@ -763,3 +763,5 @@ def _instantiate_device_constant(const, device=None, backend=None, cutoff=1e6):
   else:
     return xc.Buffer.from_pyval(onp.asarray(const), device,
                                 backend=xb.get_backend(backend))
+
+translations[core.tie_in_p] = lambda c, x, y: y

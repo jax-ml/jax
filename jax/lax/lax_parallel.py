@@ -414,7 +414,7 @@ _defbroadcasting(lax.shift_left_p)
 _defbroadcasting(lax.shift_right_arithmetic_p)
 _defbroadcasting(lax.shift_right_logical_p)
 
-_defidentity(lax.tie_in_p)
+_defidentity(core.tie_in_p)
 
 _defreducer(lax.reduce_sum_p, psum_p)
 _defreducer(lax.reduce_max_p, pmax_p)
