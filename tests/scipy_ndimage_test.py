@@ -40,9 +40,12 @@ bool_dtypes = [onp.bool_]
 all_dtypes = float_dtypes + complex_dtypes + int_dtypes + bool_dtypes
 
 
-def _fixed_scipy_map_coordinates(input, coordinates, order, mode, cval=0.0):
+def _fixed_ref_map_coordinates(input, coordinates, order, mode, cval=0.0):
+  # SciPy's implementation of map_coordinates handles boundaries incorrectly,
+  # unless mode='reflect'. For order=1, this only affects interpolation outside
+  # the bounds of the original array.
   # https://github.com/scipy/scipy/issues/2640
-  assert order == 1
+  assert order <= 1
   padding = [(max(-onp.floor(c.min()).astype(int) + 1, 0),
               max(onp.ceil(c.max()).astype(int) + 1 - size, 0))
              for c, size in zip(coordinates, input.shape)]
@@ -63,35 +66,42 @@ def _fixed_scipy_map_coordinates(input, coordinates, order, mode, cval=0.0):
 class NdimageTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_coordinates={}_mode={}_cval={}_round={}".format(
+      {"testcase_name": "_{}_coordinates={}_order={}_mode={}_cval={}_impl={}_round={}".format(
           jtu.format_shape_dtype_string(shape, dtype),
           jtu.format_shape_dtype_string(coords_shape, coords_dtype),
-          mode, cval, round_),
-       "rng_factory": rng_factory, "shape": shape, "coords_shape": coords_shape,
-       "dtype": dtype, "coords_dtype": coords_dtype, "mode": mode, "cval": cval,
-       "round_": round_}
+          order, mode, cval, impl, round_),
+       "rng_factory": rng_factory, "shape": shape,
+       "coords_shape": coords_shape, "dtype": dtype,
+       "coords_dtype": coords_dtype, "order": order, "mode": mode,
+       "cval": cval, "impl": impl, "round_": round_}
       for shape in [(5,), (3, 4), (3, 4, 5)]
       for coords_shape in [(7,), (2, 3, 4)]
       for dtype in float_dtypes
       for coords_dtype in float_dtypes
+      for order in [0, 1]
       for mode in ['wrap', 'constant', 'nearest']
       for cval in ([0, -1] if mode == 'constant' else [0])
-      for rng_factory in [partial(jtu.rand_uniform, -0.75, 1.75)]
+      for impl, rng_factory in [
+          ("original", partial(jtu.rand_uniform, 0, 1)),
+          ("fixed", partial(jtu.rand_uniform, -0.75, 1.75)),
+      ]
       for round_ in [True, False]))
-  def testMapCoordinates(self, shape, dtype, coords_shape, coords_dtype, mode,
-                         cval, round_, rng_factory):
+  def testMapCoordinates(self, shape, dtype, coords_shape, coords_dtype, order,
+                         mode, cval, impl, round_, rng_factory):
 
     def args_maker():
       x = onp.arange(onp.prod(shape), dtype=dtype).reshape(shape)
-      coords = [size * rng(coords_shape, coords_dtype) for size in shape]
+      coords = [(size - 1) * rng(coords_shape, coords_dtype) for size in shape]
       if round_:
         coords = [c.round().astype(int) for c in coords]
       return x, coords
 
     rng = rng_factory()
-    order = 1
-    lsp_op = lambda x, c: lsp_ndimage.map_coordinates(x, c, order, mode, cval)
-    osp_op = lambda x, c: _fixed_scipy_map_coordinates(x, c, order, mode, cval)
+    lsp_op = lambda x, c: lsp_ndimage.map_coordinates(
+        x, c, order=order, mode=mode, cval=cval)
+    impl_fun = (osp_ndimage.map_coordinates if impl == "original"
+                else _fixed_ref_map_coordinates)
+    osp_op = lambda x, c: impl_fun(x, c, order=order, mode=mode, cval=cval)
     epsilon = max([dtypes.finfo(dtypes.canonicalize_dtype(d)).eps
                    for d in [dtype, coords_dtype]])
     self._CheckAgainstNumpy(lsp_op, osp_op, args_maker, tol=10*epsilon,

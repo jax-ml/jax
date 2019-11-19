@@ -38,6 +38,23 @@ _INDEX_FIXERS = {
 }
 
 
+def _nearest_indices_and_weights(coordinate):
+  index = np.around(coordinate).astype(np.int32)
+  weight = coordinate.dtype.type(1)
+  return [(index, weight)]
+
+
+def _linear_indices_and_weights(coordinate):
+  lower = np.floor(coordinate)
+  upper = np.ceil(coordinate)
+  l_index = lower.astype(np.int32)
+  u_index = upper.astype(np.int32)
+  one = coordinate.dtype.type(1)
+  l_weight = one - (coordinate - lower)
+  u_weight = one - l_weight  # handles the edge case lower==upper
+  return [(l_index, l_weight), (u_index, u_weight)]
+
+
 @_wraps(scipy.ndimage.map_coordinates, lax_description=textwrap.dedent("""\
     Only linear interpolation (``order=1``) and modes ``'constant'``,
     ``'nearest'`` and ``'wrap'`` are currently supported. Note that
@@ -49,13 +66,8 @@ _INDEX_FIXERS = {
 def map_coordinates(
     input, coordinates, order, mode='constant', cval=0.0,
 ):
-  if order != 1:
-    raise NotImplementedError(
-        'jax.scipy.ndimage.map_coordinates currently requires order=1')
-
   input = np.asarray(input)
   coordinates = [np.asarray(c, input.dtype) for c in coordinates]
-  one = input.dtype.type(1)
   cval = np.asarray(cval, input.dtype)
 
   index_fixer = _INDEX_FIXERS.get(mode)
@@ -69,21 +81,26 @@ def map_coordinates(
   else:
     is_valid = lambda index, size: True
 
-  all_indices_and_weights = []
+  if order == 0:
+    interp_fun = _nearest_indices_and_weights
+  elif order == 1:
+    interp_fun = _linear_indices_and_weights
+  else:
+    raise NotImplementedError(
+        'jax.scipy.ndimage.map_coordinates currently requires order<=1')
+
+  valid_1d_interpolations = []
   for coordinate, size in zip(coordinates, input.shape):
-    lower = np.floor(coordinate)
-    upper = np.ceil(coordinate)
-    l_index = lower.astype(np.int32)
-    u_index = upper.astype(np.int32)
-    l_weight = one - (coordinate - lower)
-    u_weight = one - l_weight  # handles the edge case lower==upper
-    all_indices_and_weights.append(
-        [(index_fixer(l_index, size), is_valid(l_index, size), l_weight),
-         (index_fixer(u_index, size), is_valid(u_index, size), u_weight)]
-    )
+    interp_nodes = interp_fun(coordinate)
+    valid_interp = []
+    for index, weight in interp_nodes:
+      fixed_index = index_fixer(index, size)
+      valid = is_valid(index, size)
+      valid_interp.append((fixed_index, valid, weight))
+    valid_1d_interpolations.append(valid_interp)
 
   outputs = []
-  for items in itertools.product(*all_indices_and_weights):
+  for items in itertools.product(*valid_1d_interpolations):
     indices, validities, weights = zip(*items)
     if any(valid is not True for valid in validities):
       all_valid = functools.reduce(operator.and_, validities)
