@@ -256,6 +256,7 @@ JAX_OPERATOR_OVERLOADS = [
     op_record("__lt__", 2, default_dtypes, all_shapes, jtu.rand_default, []),
     op_record("__gt__", 2, default_dtypes, all_shapes, jtu.rand_default, []),
     op_record("__ge__", 2, default_dtypes, all_shapes, jtu.rand_default, []),
+    op_record("__pos__", 1, number_dtypes, all_shapes, jtu.rand_default, []),
     op_record("__neg__", 1, number_dtypes, all_shapes, jtu.rand_default, []),
     op_record("__pow__", 2, inexact_dtypes, all_shapes, jtu.rand_positive, [],
               tolerance={onp.float32: 2e-4, onp.complex64: 2e-4, onp.complex128: 1e-14}),

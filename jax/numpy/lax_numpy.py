@@ -3194,6 +3194,7 @@ _operators = {
     "getitem": _rewriting_take,
     "setitem": _unimplemented_setitem,
     "neg": negative,
+    "pos": positive,
     "eq": equal,
     "ne": not_equal,
     "lt": less,
