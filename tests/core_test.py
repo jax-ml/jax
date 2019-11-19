@@ -16,8 +16,9 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import operator
 from collections import namedtuple
+import gc
+import operator
 from unittest import skip
 
 import numpy as onp
@@ -257,6 +258,23 @@ class CoreTest(jtu.JaxTestCase):
     assert d_sin(0.0) == 1.0
     assert d2_sin(0.0) == 0.0
     assert d3_sin(0.0) == -1.0
+
+  def test_reference_cycles(self):
+    gc.collect()
+
+    def f(x):
+      return x.sum()
+
+    fn = partial(linearize, f)
+    params = np.zeros([])
+
+    debug = gc.get_debug()
+    try:
+      fn(params)
+      gc.set_debug(gc.DEBUG_SAVEALL)
+      self.assertEqual(gc.collect(), 0)
+    finally:
+      gc.set_debug(debug)
 
 
 if __name__ == '__main__':
