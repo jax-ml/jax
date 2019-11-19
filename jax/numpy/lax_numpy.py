@@ -2843,8 +2843,8 @@ def _index_to_gather(x_shape, idx):
       y_axis += 1
       x_axis += 1
     else:
-      if (not issubdtype(abstract_i.dtype, integer)
-          and not issubdtype(abstract_i.dtype, bool_)):
+      if abstract_i and not (issubdtype(abstract_i.dtype, integer) or
+                             issubdtype(abstract_i.dtype, bool_)):
         msg = ("Indexer must have integer or boolean type, got indexer "
                "with type {} at position {}, indexer value {}")
         raise TypeError(msg.format(abstract_i.dtype.name, idx_pos, i))
