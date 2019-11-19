@@ -107,6 +107,17 @@ class NdimageTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(lsp_op, osp_op, args_maker, tol=10*epsilon,
                             check_dtypes=True)
 
+  def testMapCoordinatesErrors(self):
+    x = onp.arange(5.0)
+    c = [onp.linspace(0, 5, num=3)]
+    with self.assertRaisesRegex(NotImplementedError, 'requires order<=1'):
+      lsp_ndimage.map_coordinates(x, c, order=2)
+    with self.assertRaisesRegex(
+        NotImplementedError, 'does not yet support mode'):
+      lsp_ndimage.map_coordinates(x, c, order=1, mode='reflect')
+    with self.assertRaisesRegex(ValueError, 'sequence of length'):
+      lsp_ndimage.map_coordinates(x, [c, c], order=1)
+
   def testMapCoordinateDocstring(self):
     self.assertIn("Only linear interpolation",
                   lsp_ndimage.map_coordinates.__doc__)

@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2019 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -69,6 +69,10 @@ def map_coordinates(
   input = np.asarray(input)
   coordinates = [np.asarray(c, input.dtype) for c in coordinates]
   cval = np.asarray(cval, input.dtype)
+
+  if len(coordinates) != input.ndim:
+    raise ValueError('coordinates must be a sequence of length input.ndim, but '
+                     '{} != {}'.format(len(coordinates), input.ndim))
 
   index_fixer = _INDEX_FIXERS.get(mode)
   if index_fixer is None:
