@@ -300,6 +300,7 @@ class Tracer(object):
     assert False
 
   def __neg__(self): return self.aval._neg(self)
+  def __pos__(self): return self.aval._pos(self)
   def __eq__(self, other): return self.aval._eq(self, other)
   def __ne__(self, other): return self.aval._ne(self, other)
   def __lt__(self, other): return self.aval._lt(self, other)
