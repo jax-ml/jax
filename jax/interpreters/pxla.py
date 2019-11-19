@@ -269,7 +269,7 @@ def _axis_index_partial_eval(trace, _, **params):
   # rule except that we don't attempt to lower out of the trace.
   out_aval = ShapedArray((), onp.int32)
   out_tracer = pe.JaxprTracer(trace, pe.PartialVal((out_aval, core.unit)), None)
-  eqn = core.new_jaxpr_eqn([], [out_tracer], axis_index_p, (), params)
+  eqn = pe.new_eqn_recipe([], [out_tracer], axis_index_p, (), params)
   out_tracer.recipe = eqn
   return out_tracer
 

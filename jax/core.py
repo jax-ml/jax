@@ -80,13 +80,11 @@ def jaxpr_as_fun(typed_jaxpr, *args):
   return eval_jaxpr(typed_jaxpr.jaxpr, typed_jaxpr.literals, (), *args)
 
 
-def new_jaxpr_eqn(*args):
-  return JaxprEqn(object(), *args)
-
-JaxprEqn = namedtuple('JaxprEqn', ['eqn_id', 'invars', 'outvars', 'primitive',
+JaxprEqn = namedtuple('JaxprEqn', ['invars', 'outvars', 'primitive',
                                    'bound_subjaxprs', 'params'])
+JaxprEqn.__repr__ = JaxprEqn.__str__ = lambda eqn: str(pp_eqn(eqn)).rstrip()
+new_jaxpr_eqn = JaxprEqn
 
-JaxprEqn.__repr__ = JaxprEqn.__str__ = lambda eqn: str(pp_eqn(eqn))[:-1]
 
 class Var(object):
   def __init__(self, count, suffix):

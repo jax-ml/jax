@@ -704,11 +704,11 @@ def _scan_partial_eval(trace, *tracers, **kwargs):
   linear_2 = ([False] * len(int_res_tracers) +
               [lin or not uk for uk, lin in zip(unknowns, linear)] +
               [False] * len(ext_res_tracers))
-  eqn = pe.new_jaxpr_eqn(int_res_tracers + new_tracers + ext_res_tracers,
-                         out_tracers, scan_p, (),
-                         dict(forward=forward, length=length, jaxpr=jaxpr_2_opt,
-                              num_consts=num_consts_2,
-                              num_carry=num_carry, linear=linear_2))
+  eqn = pe.new_eqn_recipe(int_res_tracers + new_tracers + ext_res_tracers,
+                          out_tracers, scan_p, (),
+                          dict(forward=forward, length=length, jaxpr=jaxpr_2_opt,
+                               num_consts=num_consts_2,
+                               num_carry=num_carry, linear=linear_2))
   for t in out_tracers: t.recipe = eqn
   return out_tracers
 
