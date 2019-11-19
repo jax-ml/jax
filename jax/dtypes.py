@@ -17,19 +17,39 @@ from __future__ import division
 from __future__ import print_function
 
 from distutils.util import strtobool
+import functools
 import os
 
 import numpy as onp
 import six
 
-from .config import flags
 from . import util
+from .config import flags
+from .lib import xla_client
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_enable_x64',
                   strtobool(os.getenv('JAX_ENABLE_X64', 'False')),
                   'Enable 64-bit types to be used.')
 
+# bfloat16 support
+bfloat16 = xla_client.bfloat16
+_bfloat16_dtype = onp.dtype(bfloat16)
+
+class _bfloat16_finfo(object):
+  bits = 16
+  eps = bfloat16(float.fromhex("0x1p-7"))
+  epsneg = bfloat16(float.fromhex("0x1p-8"))
+  machep = -7
+  negep = -8
+  max = bfloat16(float.fromhex("0x1.FEp127"))
+  min = -max
+  nexp = 8
+  nmant = 7
+  iexp = nexp
+  precision = 2
+  resolution = 10 ** -2
+  tiny = bfloat16(float.fromhex("0x1p-126"))
 
 # Default types.
 
@@ -96,12 +116,57 @@ def coerce_to_array(x):
   return onp.array(x, dtype) if dtype else onp.array(x)
 
 iinfo = onp.iinfo
-finfo = onp.finfo
+
+def finfo(dtype):
+  # Since NumPy doesn't consider bfloat16 a floating-point type, we have to
+  # provide an alternative implementation of finfo that does so.
+  if onp.result_type(dtype) == _bfloat16_dtype:
+    return _bfloat16_finfo
+  else:
+    return onp.finfo(dtype)
+
+
+def issubdtype(a, b):
+  if a == bfloat16:
+    return b in [onp.floating, onp.inexact, onp.number]
+  return onp.issubdtype(a, b)
 
 can_cast = onp.can_cast
-issubdtype = onp.issubdtype
 issubsctype = onp.issubsctype
 promote_types = onp.promote_types
+
+_bfloat16_type_promotions = {
+  onp.dtype('bool'): onp.dtype(bfloat16),
+  onp.dtype(bfloat16): onp.dtype(bfloat16),
+  onp.dtype('float16'): onp.dtype('float32'),
+  onp.dtype('float32'): onp.dtype('float32'),
+  onp.dtype('float64'): onp.dtype('float64'),
+  onp.dtype('complex64'): onp.dtype('complex64'),
+  onp.dtype('complex128'): onp.dtype('complex128'),
+  onp.dtype('int8'): onp.dtype(bfloat16),
+  onp.dtype('int16'): onp.dtype('float32'),
+  onp.dtype('int32'): onp.dtype('float64'),
+  onp.dtype('int64'): onp.dtype('float64'),
+  onp.dtype('uint8'): onp.dtype(bfloat16),
+  onp.dtype('uint16'): onp.dtype('float32'),
+  onp.dtype('uint32'): onp.dtype('float64'),
+  onp.dtype('uint64'): onp.dtype('float64'),
+}
+
+def promote_types(a, b):
+  a = onp.dtype(a)
+  b = onp.dtype(b)
+  if b == _bfloat16_dtype:
+    a, b = b, a
+
+  if a == _bfloat16_dtype:
+    try:
+      return _bfloat16_type_promotions[b]
+    except:
+      raise TypeError("invalid type promotion of bfloat16 type and {}"
+                      .format(b))
+
+  return onp.promote_types(a, b)
 
 
 def is_python_scalar(x):
@@ -138,4 +203,4 @@ def result_type(*args):
     (scalars if is_python_scalar(x) else dtypes).append(dtype(x))
   array_priority = max(map(_dtype_priority, dtypes)) if dtypes else -1
   dtypes += [x for x in scalars if _dtype_priority(x) > array_priority]
-  return canonicalize_dtype(onp.result_type(*dtypes))
+  return canonicalize_dtype(functools.reduce(promote_types, dtypes))

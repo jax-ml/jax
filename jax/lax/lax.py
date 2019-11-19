@@ -351,17 +351,23 @@ def convert_element_type(operand, new_dtype):
   """
   new_dtype = dtypes.canonicalize_dtype(new_dtype)
   old_dtype = dtypes.canonicalize_dtype(_dtype(operand))
-  if old_dtype != new_dtype:
-    if (dtypes.issubdtype(old_dtype, onp.complexfloating) and
-        not dtypes.issubdtype(new_dtype, onp.complexfloating)):
-      msg = "Casting complex values to real discards the imaginary part"
-      warnings.warn(msg, onp.ComplexWarning, stacklevel=2)
-      operand = real(operand)
-      old_dtype = _dtype(operand)
-    return convert_element_type_p.bind(
-        operand, new_dtype=new_dtype, old_dtype=old_dtype)
-  else:
+  if old_dtype == new_dtype:
     return operand
+  if (dtypes.issubdtype(old_dtype, onp.complexfloating) and
+      not dtypes.issubdtype(new_dtype, onp.complexfloating)):
+    msg = "Casting complex values to real discards the imaginary part"
+    warnings.warn(msg, onp.ComplexWarning, stacklevel=2)
+    operand = real(operand)
+    old_dtype = _dtype(operand)
+  # TODO(b/143311238, b/142974574): work around bfloat16 conversion bugs by
+  # introducing an intermediate cast via float32.
+  if ((old_dtype == dtypes.bfloat16 and new_dtype != onp.float32) or
+      (new_dtype == dtypes.bfloat16 and old_dtype != onp.float32)):
+    operand = convert_element_type_p.bind(
+        operand, new_dtype=onp.float32, old_dtype=old_dtype)
+    old_dtype = onp.float32
+  return convert_element_type_p.bind(
+      operand, new_dtype=new_dtype, old_dtype=old_dtype)
 
 def bitcast_convert_type(operand, new_dtype):
   """Elementwise bitcast.
@@ -1377,7 +1383,19 @@ def reciprocal(x):
   r"""Elementwise reciprocal: :math:`1 \over x`."""
   return div(_const(x, 1), x)
 
+def _upcast_fp16_for_computation(f):
+  @functools.wraps(f)
+  def f_wrapped(x):
+    dtype = _dtype(x)
+    if dtype == onp.float16 or dtype == dtypes.bfloat16:
+      return convert_element_type(
+        f(convert_element_type(x, onp.float32)), dtype)
+    return f(x)
+
+  return f_wrapped
+
 @api.jit
+@_upcast_fp16_for_computation
 def tan(x):
   r"""Elementwise tangent: :math:`\mathrm{tan}(x)`."""
   return div(sin(x), cos(x))
@@ -1400,17 +1418,6 @@ def acos(x):
 def atan(x):
   r"""Elementwise arc tangent: :math:`\mathrm{atan}(x)`."""
   return atan2(x, _const(x, 1))
-
-def _upcast_fp16_for_computation(f):
-  @functools.wraps(f)
-  def f_wrapped(x):
-    dtype = _dtype(x)
-    if dtype == onp.float16:
-      return convert_element_type(
-        f(convert_element_type(x, onp.float32)), dtype)
-    return f(x)
-
-  return f_wrapped
 
 @api.jit
 @_upcast_fp16_for_computation
@@ -1586,7 +1593,7 @@ def _brcast_to(x, shape):
     return broadcast(x, shape)
 
 
-_float = {onp.floating}
+_float = {onp.floating, dtypes.bfloat16}
 _complex = {onp.complexfloating}
 _complex_elem_types = {onp.float32, onp.float64}
 _int = {onp.integer}

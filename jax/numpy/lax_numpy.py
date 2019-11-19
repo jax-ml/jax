@@ -134,6 +134,7 @@ int8 = onp.int8
 int16 = onp.int16
 int32 = onp.int32
 int64 = onp.int64
+bfloat16 = dtypes.bfloat16
 float16 = onp.float16
 float32 = single = onp.float32
 float64 = double = onp.float64
@@ -152,10 +153,8 @@ signedinteger = onp.signedinteger
 unsignedinteger = onp.unsignedinteger
 
 iinfo = dtypes.iinfo
-finfo = dtypes.finfo
 
 can_cast = dtypes.can_cast
-issubdtype = dtypes.issubdtype
 issubsctype = dtypes.issubsctype
 result_type = dtypes.result_type
 promote_types = dtypes.promote_types
@@ -337,6 +336,14 @@ def _canonicalize_axis(axis, num_dims):
   return axis
 
 ### implementations of numpy functions in terms of lax
+
+@_wraps(onp.finfo)
+def finfo(dtype): return dtypes.finfo(dtype)
+
+@_wraps(onp.issubdtype)
+def issubdtype(arg1, arg2): return dtypes.issubdtype(arg1, arg2)
+
+issubdtype = dtypes.issubdtype
 
 @_wraps(onp.isscalar)
 def isscalar(num): return dtypes.is_python_scalar(num) or onp.isscalar(num)
@@ -1113,7 +1120,8 @@ def nan_to_num(x, copy=True):
 ### Reducers
 
 
-def _make_reduction(np_fun, op, init_val, preproc=None):
+def _make_reduction(np_fun, op, init_val, preproc=None,
+                    upcast_f16_for_computation=False):
   """Creates reduction function given a binary operation and monoid identity."""
 
   @_wraps(np_fun)
@@ -1124,16 +1132,18 @@ def _make_reduction(np_fun, op, init_val, preproc=None):
     a = a if isinstance(a, ndarray) else asarray(a)
     a = preproc(a) if preproc else a
     dims = _reduction_dims(a, axis)
-    result_dtype = _dtype(np_fun(onp.ones((), dtype=dtype or _dtype(a))))
-    if _dtype(a) != result_dtype:
-      a = lax.convert_element_type(a, result_dtype)
+    dtype = dtype or _dtype(a)
+    #result_dtype = _dtype(np_fun(onp.ones((), dtype=dtype or _dtype(a))))
+    if upcast_f16_for_computation and issubdtype(dtype, inexact):
+      computation_dtype = promote_types(dtype, float32)
+    else:
+      computation_dtype = dtype
+    a = lax.convert_element_type(a, computation_dtype)
     result = lax.reduce(a, _reduction_init_val(a, init_val), op, dims)
     if keepdims:
       shape_with_singletons = lax.subvals(shape(a), zip(dims, (1,) * len(dims)))
       result = lax.reshape(result, shape_with_singletons)
-    if dtype and onp.dtype(dtype) != onp.dtype(result_dtype):
-      result = lax.convert_element_type(result, dtype)
-    return result
+    return lax.convert_element_type(result, dtype)
 
   return reduction
 
@@ -1160,8 +1170,9 @@ def _reduction_init_val(a, init_val):
 
 _cast_to_bool = partial(lax.convert_element_type, new_dtype=onp.bool_)
 
-sum = _make_reduction(onp.sum, lax.add, 0)
-product = prod = _make_reduction(onp.prod, lax.mul, 1)
+sum = _make_reduction(onp.sum, lax.add, 0, upcast_f16_for_computation=True)
+product = prod = _make_reduction(onp.prod, lax.mul, 1,
+                                 upcast_f16_for_computation=True)
 amax = max = _make_reduction(onp.max, lax.max, -onp.inf)
 amin = min = _make_reduction(onp.min, lax.min, onp.inf)
 all = alltrue = _make_reduction(onp.all, lax.bitwise_and, True, _cast_to_bool)
@@ -1737,24 +1748,28 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
 @_wraps(onp.logspace)
 def logspace(start, stop, num=50, endpoint=True, base=10.0, dtype=None, axis=0):
   """Implementation of logspace differentiable in start and stop args."""
+  dtype = dtype or result_type(start, stop, float_)
+  computation_dtype = promote_types(dtype, float_)
+  start = asarray(start, dtype=computation_dtype)
+  stop = asarray(stop, dtype=computation_dtype)
   lin = linspace(start, stop, num,
                  endpoint=endpoint, retstep=False, dtype=None, axis=axis)
-  if dtype is None:
-    return power(base, lin)
-  else:
-    return lax.convert_element_type(power(base, lin), dtype)
+  return lax.convert_element_type(power(base, lin), dtype)
 
 
 @_wraps(onp.geomspace)
 def geomspace(start, stop, num=50, endpoint=True, dtype=None, axis=0):
   """Implementation of geomspace differentiable in start and stop args."""
   dtype = dtype or result_type(start, stop, float(num), zeros((), dtype))
+  computation_dtype = promote_types(dtype, float32)
+  start = asarray(start, dtype=computation_dtype)
+  stop = asarray(stop, dtype=computation_dtype)
   # follow the numpy geomspace convention for negative and complex endpoints
   signflip = 1 - (1 - sign(real(start))) * (1 - sign(real(stop))) // 2
   res = signflip * logspace(log10(signflip * start),
                             log10(signflip * stop), num,
                             endpoint=endpoint, base=10.0,
-                            dtype=dtype, axis=0)
+                            dtype=computation_dtype, axis=0)
   if axis != 0:
     res = moveaxis(res, 0, axis)
   return lax.convert_element_type(res, dtype)
@@ -3074,6 +3089,7 @@ def corrcoef(x, y=None, rowvar=True, bias=None, ddof=None):
       c = real_part
   return c
 
+
 @_wraps(getattr(onp, "quantile", None))
 def quantile(a, q, axis=None, out=None, overwrite_input=False,
              interpolation="linear", keepdims=False):
@@ -3083,9 +3099,11 @@ def quantile(a, q, axis=None, out=None, overwrite_input=False,
     raise ValueError(msg)
   if interpolation != "linear":
     raise NotImplementedError("Only interpolation='linear' is implemented")
+  return _quantile(a, q, axis, keepdims)
 
+@partial(jit, static_argnums=(2, 3))
+def _quantile(a, q, axis, keepdims):
   a = asarray(a)
-
   if axis is None:
     a = ravel(a)
     axis = 0
@@ -3098,10 +3116,14 @@ def quantile(a, q, axis=None, out=None, overwrite_input=False,
   if q_ndim > 1:
     raise ValueError("q must be have rank <= 1, got shape {}".format(shape(q)))
 
-  a, q = _promote_dtypes(a, q)
-  if not issubdtype(a.dtype, floating):
+  q = asarray(q)
+
+  if not issubdtype(a.dtype, floating) or not issubdtype(q.dtype, floating):
     msg = "q and a arguments to quantile must be of float type, got {} and {}"
     raise TypeError(msg.format(a.dtype, q.dtype))
+
+  # Promote q to at least float32 for precise interpolation.
+  q = lax.convert_element_type(q, promote_types(q.dtype, float32))
 
   a_shape = shape(a)
   a = lax.sort(a, dimension=axis)
@@ -3138,8 +3160,9 @@ def quantile(a, q, axis=None, out=None, overwrite_input=False,
                                       broadcast_dimensions=(0,))
     high_weight = lax.broadcast_in_dim(high_weight, high_value.shape,
                                       broadcast_dimensions=(0,))
-  return lax.add(lax.mul(low_value, low_weight),
-                 lax.mul(high_value, high_weight))
+  return lax.convert_element_type(
+    lax.add(lax.mul(low_value.astype(q.dtype), low_weight),
+            lax.mul(high_value.astype(q.dtype), high_weight)), a.dtype)
 
 
 @_wraps(onp.percentile)

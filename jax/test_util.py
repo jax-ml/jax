@@ -77,6 +77,7 @@ default_tolerance = {
   onp.dtype(onp.uint16): 0,
   onp.dtype(onp.uint32): 0,
   onp.dtype(onp.uint64): 0,
+  onp.dtype(dtypes.bfloat16): 1e-2,
   onp.dtype(onp.float16): 1e-3,
   onp.dtype(onp.float32): 1e-6,
   onp.dtype(onp.float64): 1e-15,
@@ -89,6 +90,7 @@ tpu_default_tolerance[onp.dtype(onp.float32)] = 1e-3
 tpu_default_tolerance[onp.dtype(onp.complex64)] = 1e-3
 
 default_gradient_tolerance = {
+  onp.dtype(dtypes.bfloat16): 1e-1,
   onp.dtype(onp.float16): 1e-2,
   onp.dtype(onp.float32): 2e-3,
   onp.dtype(onp.float64): 1e-5,
@@ -96,8 +98,10 @@ default_gradient_tolerance = {
   onp.dtype(onp.complex128): 1e-5,
 }
 
-def _assert_numpy_eq(x, y):
-  onp.testing.assert_allclose(x, y)
+def _assert_numpy_allclose(a, b, atol=None, rtol=None):
+  a = a.astype(onp.float32) if a.dtype == dtypes.bfloat16 else a
+  b = b.astype(onp.float32) if b.dtype == dtypes.bfloat16 else b
+  onp.testing.assert_allclose(a, b, atol=atol, rtol=rtol)
 
 def tolerance(dtype, tol=None):
   tol = tol or {}
@@ -113,11 +117,11 @@ def _assert_numpy_close(a, b, atol=None, rtol=None):
   assert a.shape == b.shape
   atol = max(tolerance(a.dtype, atol), tolerance(b.dtype, atol))
   rtol = max(tolerance(a.dtype, rtol), tolerance(b.dtype, rtol))
-  onp.testing.assert_allclose(a, b, atol=atol * a.size, rtol=rtol * b.size)
+  _assert_numpy_allclose(a, b, atol=atol * a.size, rtol=rtol * b.size)
 
 
 def check_eq(xs, ys):
-  tree_all(tree_multimap(_assert_numpy_eq, xs, ys))
+  tree_all(tree_multimap(_assert_numpy_allclose, xs, ys))
 
 
 def check_close(xs, ys, atol=None, rtol=None):
@@ -126,7 +130,8 @@ def check_close(xs, ys, atol=None, rtol=None):
 
 
 def inner_prod(xs, ys):
-  contract = lambda x, y: onp.real(onp.vdot(x, y))
+  def contract(x, y):
+    return onp.real(onp.dot(onp.conj(x).reshape(-1), y.reshape(-1)))
   return tree_reduce(onp.add, tree_multimap(contract, xs, ys))
 
 
@@ -226,12 +231,12 @@ def device_under_test():
 def supported_dtypes():
   if device_under_test() == "tpu":
     return {onp.bool_, onp.int32, onp.int64, onp.uint32, onp.uint64,
-            onp.float32, onp.complex64}
+            dtypes.bfloat16, onp.float32, onp.complex64}
   else:
     return {onp.bool_, onp.int8, onp.int16, onp.int32, onp.int64,
             onp.uint8, onp.uint16, onp.uint32, onp.uint64,
-            onp.float16, onp.float32, onp.float64, onp.complex64,
-            onp.complex128}
+            dtypes.bfloat16, onp.float16, onp.float32, onp.float64,
+            onp.complex64, onp.complex128}
 
 def skip_on_devices(*disabled_devices):
   """A decorator for test methods to skip the test on certain devices."""
@@ -352,7 +357,7 @@ def rand_default():
 
 
 def rand_nonzero():
-  post = lambda x: onp.where(x == 0, 1, x)
+  post = lambda x: onp.where(x == 0, onp.array(1, dtype=x.dtype), x)
   randn = npr.RandomState(0).randn
   return partial(_rand_dtype, randn, scale=3, post=post)
 
@@ -423,8 +428,8 @@ def rand_some_inf():
     neginf_flips = rng.rand(*dims) < 0.1
 
     vals = base_rand(shape, dtype)
-    vals = onp.where(posinf_flips, onp.inf, vals)
-    vals = onp.where(neginf_flips, -onp.inf, vals)
+    vals = onp.where(posinf_flips, onp.array(onp.inf, dtype=dtype), vals)
+    vals = onp.where(neginf_flips, onp.array(-onp.inf, dtype=dtype), vals)
 
     return _cast_to_shape(onp.asarray(vals, dtype=dtype), shape, dtype)
 
@@ -449,7 +454,7 @@ def rand_some_nan():
     nan_flips = rng.rand(*dims) < 0.1
 
     vals = base_rand(shape, dtype)
-    vals = onp.where(nan_flips, onp.nan, vals)
+    vals = onp.where(nan_flips, onp.array(onp.nan, dtype=dtype), vals)
 
     return _cast_to_shape(onp.asarray(vals, dtype=dtype), shape, dtype)
 
@@ -480,9 +485,9 @@ def rand_some_inf_and_nan():
     nan_flips = rng.rand(*dims) < 0.1
 
     vals = base_rand(shape, dtype)
-    vals = onp.where(posinf_flips, onp.inf, vals)
-    vals = onp.where(neginf_flips, -onp.inf, vals)
-    vals = onp.where(nan_flips, onp.nan, vals)
+    vals = onp.where(posinf_flips, onp.array(onp.inf, dtype=dtype), vals)
+    vals = onp.where(neginf_flips, onp.array(-onp.inf, dtype=dtype), vals)
+    vals = onp.where(nan_flips, onp.array(onp.nan, dtype=dtype), vals)
 
     return _cast_to_shape(onp.asarray(vals, dtype=dtype), shape, dtype)
 
@@ -500,7 +505,7 @@ def rand_some_zero():
     zeros = rng.rand(*dims) < 0.5
 
     vals = base_rand(shape, dtype)
-    vals = onp.where(zeros, 0, vals)
+    vals = onp.where(zeros, onp.array(0, dtype=dtype), vals)
 
     return _cast_to_shape(onp.asarray(vals, dtype=dtype), shape, dtype)
 
@@ -564,7 +569,7 @@ class JaxTestCase(parameterized.TestCase):
     atol = max(tolerance(_dtype(x), atol), tolerance(_dtype(y), atol))
     rtol = max(tolerance(_dtype(x), rtol), tolerance(_dtype(y), rtol))
 
-    onp.testing.assert_allclose(x, y, atol=atol, rtol=rtol)
+    _assert_numpy_allclose(x, y, atol=atol, rtol=rtol)
 
     if check_dtypes:
       self.assertDtypesMatch(x, y)
@@ -639,5 +644,5 @@ class JaxTestCase(parameterized.TestCase):
     args = args_maker()
     numpy_ans = numpy_reference_op(*args)
     lax_ans = lax_op(*args)
-    self.assertAllClose(lax_ans, numpy_ans, check_dtypes=check_dtypes,
+    self.assertAllClose(numpy_ans, lax_ans, check_dtypes=check_dtypes,
                         atol=tol, rtol=tol)
