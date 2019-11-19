@@ -673,17 +673,6 @@ write unrestricted Python+Numpy and still make use of a hardware accelerator.
 But when you want to maximize performance, you can often use `jit` in your own
 code to compile and end-to-end optimize much bigger functions.
 
-## What we're working on
-1. Documentation!
-2. Cloud TPU support
-3. Multi-GPU and multi-TPU support
-4. Full NumPy coverage and some SciPy coverage
-5. Full coverage for vmap
-6. Make everything faster
-    * Lowering the XLA function dispatch overhead
-    * Linear algebra routines (MKL on CPU, MAGMA on GPU)
-7. `cond` and `while` primitives with efficient automatic differentiation
-
 ## Current gotchas
 
 For a survey of current gotchas, with examples and explanations, we highly
