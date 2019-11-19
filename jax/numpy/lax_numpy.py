@@ -2843,6 +2843,12 @@ def _index_to_gather(x_shape, idx):
       y_axis += 1
       x_axis += 1
     else:
+      if (not issubdtype(abstract_i.dtype, integer)
+          and not issubdtype(abstract_i.dtype, bool_)):
+        msg = ("Indexer must have integer or boolean type, got indexer "
+               "with type {} at position {}, indexer value {}")
+        raise TypeError(msg.format(abstract_i.dtype.name, idx_pos, i))
+
       msg = "Indexing mode not yet supported. Open a feature request!\n{}"
       raise IndexError(msg.format(idx))
 
