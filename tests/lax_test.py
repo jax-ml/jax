@@ -2210,7 +2210,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     init_val = onp.asarray(init_val, dtype=dtype)
     reduce = lambda operand: lax.reduce(operand, init_val, op, dims)
     eps = (1.0 if dtypes.finfo(dtype).bits == 16 and op is lax.add else
-           5e-1 if dtype == dtypes.bfloat16 and op is lax.mul else
+           2e-0 if dtype == dtypes.bfloat16 and op is lax.mul else
            1e-1 if dtype == dtypes.bfloat16 else
            1e-2 if dtypes.finfo(dtype).bits == 32 else None)
     check_grads(reduce, (operand,), 1, ["fwd", "rev"], tol, tol, eps)

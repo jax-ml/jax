@@ -157,7 +157,7 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("divmod", 2, int_dtypes + float_dtypes, all_shapes,
               jtu.rand_nonzero, []),
     op_record("exp2", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"],
-              tolerance={lnp.bfloat16: 1e-2, onp.float16: 1e-2}),
+              tolerance={lnp.bfloat16: 2e-2, onp.float16: 1e-2}),
     # TODO(b/142975473): on CPU, expm1 for float64 is only accurate to ~float32
     # precision.
     op_record("expm1", 1, number_dtypes, all_shapes, jtu.rand_positive, [],
@@ -374,7 +374,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                   jtu.NUMPY_SCALAR_SHAPE in shapes or
                   () in shapes)
     empty_shape = any(isinstance(s, tuple) and 0 in s for s in shapes)
-    tol = max(jtu.tolerance(dtype, tolerance) for dtype in dtypes)
+    tol_dtypes = list(dtypes) + [lnp.result_type(*dtypes)]
+    tol = max(jtu.tolerance(dtype, tolerance) for dtype in tol_dtypes)
     self._CheckAgainstNumpy(
       onp_op, lnp_op, args_maker,
       check_dtypes=check_dtypes and not scalar_arg and not empty_shape,
@@ -717,7 +718,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       dtype = lnp.promote_types(lhs_dtype, rhs_dtype)
       return onp.inner(lhs, rhs).astype(dtype)
     lnp_fun = lambda lhs, rhs: lnp.inner(lhs, rhs)
-    tol_spec = {onp.float16: 1e-2, onp.float64: 1e-13}
+    tol_spec = {onp.float16: 1e-2, onp.float32: 1e-5, onp.float64: 1e-13}
     if jtu.device_under_test() == "tpu":
       tol_spec[onp.float32] = tol_spec[onp.complex64] = 2e-1
     tol = max(jtu.tolerance(lhs_dtype, tol_spec),
