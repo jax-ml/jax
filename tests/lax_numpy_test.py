@@ -122,6 +122,8 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("array_equal", 2, number_dtypes, all_shapes, jtu.rand_some_equal, ["rev"]),
     op_record("reciprocal", 1, inexact_dtypes, all_shapes, jtu.rand_default, []),
     op_record("subtract", 2, number_dtypes, all_shapes, jtu.rand_default, ["rev"]),
+    op_record("signbit", 1, default_dtypes + bool_dtypes, all_shapes,
+              jtu.rand_some_inf_and_nan, ["rev"]),
     op_record("sin", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"]),
     op_record("cos", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"]),
     op_record("tan", 1, number_dtypes, all_shapes,

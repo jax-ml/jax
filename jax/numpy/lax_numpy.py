@@ -561,6 +561,36 @@ def exp2(x):
   return lax.exp(lax.mul(lax.log(_constant_like(x, 2)), x))
 
 
+@_wraps(onp.signbit)
+def signbit(x):
+  x, = _promote_shapes("signbit", x)
+
+  dtype = _dtype(x)
+
+  if issubdtype(dtype, integer):
+    return lax.lt(x, _constant_like(x, 0))
+  elif issubdtype(dtype, bool_):
+    return full_like(x, False, dtype=bool_)
+  elif not issubdtype(dtype, floating):
+    raise ValueError(
+        "jax.numpy.signbit is not well defined for %s" % dtype)
+
+  info = finfo(_dtype(x))
+
+  if info.bits == 16:
+    int_type = onp.int16
+  elif info.bits == 32:
+    int_type = onp.int32
+  elif info.bits == 64:
+    int_type = onp.int64
+  else:
+    raise NotImplementedError(
+        "jax.numpy.signbit only supports 16, 32, and 64-bit types.")
+
+  x = lax.bitcast_convert_type(x, int_type)
+  return lax.convert_element_type(x >> (info.nexp + info.nmant), onp.bool)
+
+
 @_wraps(onp.remainder)
 def remainder(x1, x2):
   x1, x2 = _promote_args("remainder", x1, x2)
