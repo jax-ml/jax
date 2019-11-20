@@ -278,7 +278,7 @@ def update_numpydoc(docstr, fun, op):
 
 _numpy_signature_re = re.compile(r'^([\w., ]+=)?\s*[\w\.]+\(.*\)$')
 
-def _wraps(fun, update_doc=True):
+def _wraps(fun, update_doc=True, lax_description=""):
   """Like functools.wraps but works with numpy.ufuncs.
      It is important that when wrapping numpy functions the parameters names 
      in the original function and in the JAX version are the same
@@ -312,11 +312,12 @@ def _wraps(fun, update_doc=True):
       body = "\n\n".join(signatures + sections[i + 1:])
       if update_doc:
         body = update_numpydoc(body, fun, op)
+      desc = lax_description + "\n" if lax_description else ""
       docstr = (
-        "{summary}\n\nLAX-backend implementation of :func:`{fun}`. "
-        "Original docstring below.\n\n{body}".format(
-          summary=summary, fun=fun.__name__, body=body))
-
+          "{summary}\n\nLAX-backend implementation of :func:`{fun}`.\n"
+          "{lax_description}Original docstring below.\n\n{body}"
+          .format(summary=summary, lax_description=desc,
+                  fun=fun.__name__, body=body))
 
       op.__name__ = fun.__name__
       op.__doc__ = docstr
