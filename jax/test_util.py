@@ -116,6 +116,21 @@ def tolerance(dtype, tol=None):
   dtype = dtypes.canonicalize_dtype(onp.dtype(dtype))
   return tol.get(dtype, default[dtype])
 
+def _normalize_tolerance(tol):
+  tol = tol or 0
+  if isinstance(tol, dict):
+    return {onp.dtype(k): v for k, v in tol.items()}
+  else:
+    return {k: tol for k in default_tolerance.keys()}
+
+def join_tolerance(tol1, tol2):
+  tol1 = _normalize_tolerance(tol1)
+  tol2 = _normalize_tolerance(tol2)
+  out = tol1
+  for k, v in tol2.items():
+    out[k] = max(v, tol1.get(k, 0))
+  return out
+
 def _assert_numpy_close(a, b, atol=None, rtol=None):
   assert a.shape == b.shape
   atol = max(tolerance(a.dtype, atol), tolerance(b.dtype, atol))

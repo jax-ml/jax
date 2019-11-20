@@ -374,8 +374,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                   jtu.NUMPY_SCALAR_SHAPE in shapes or
                   () in shapes)
     empty_shape = any(isinstance(s, tuple) and 0 in s for s in shapes)
-    tol_dtypes = list(dtypes) + [lnp.result_type(*dtypes)]
-    tol = max(jtu.tolerance(dtype, tolerance) for dtype in tol_dtypes)
+    tol = max(jtu.tolerance(dtype, tolerance) for dtype in dtypes)
+    tol = functools.reduce(jtu.join_tolerance,
+                           [tolerance, tol, jtu.default_tolerance])
     self._CheckAgainstNumpy(
       onp_op, lnp_op, args_maker,
       check_dtypes=check_dtypes and not scalar_arg and not empty_shape,
