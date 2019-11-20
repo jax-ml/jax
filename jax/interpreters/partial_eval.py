@@ -376,43 +376,38 @@ def new_eqn_recipe(invars, outvars, primitive, bound_subjaxprs, params):
   return JaxprEqnRecipe(object(), invars, map(ref, outvars), primitive,
                         bound_subjaxprs, params)
 
-def recipe_to_eqn(unused_var, var, recipe):
+def recipe_to_eqn(unused_var, getvar, recipe):
   _, in_tracers, out_tracer_refs, primitive, bound_subjaxprs, params = recipe
-  out_tracers = [t_ref() if t_ref() is not None else unused_var()
-                 for t_ref in out_tracer_refs]
-  assert not any(t is None for t in out_tracers)
-
-  invars  = [var(t) for t in in_tracers]
-  outvars = [var(t) for t in out_tracers]
-  new_bound_subjaxprs = [(j, map(var, c), map(var, f))
+  out_tracers = [t_ref() for t_ref in out_tracer_refs]
+  invars  = [getvar(t) for t in in_tracers]
+  outvars = [unused_var() if t is None else getvar(t) for t in out_tracers]
+  new_bound_subjaxprs = [(j, map(getvar, c), map(getvar, f))
                          for j, c, f in bound_subjaxprs]
   return new_jaxpr_eqn(invars, outvars, primitive, new_bound_subjaxprs, params)
 
-
 def tracers_to_jaxpr(in_tracers, out_tracers):
   newvar = core.gensym('')
-  unused_var = core.gensym('_unused')
   t_to_var = defaultdict(newvar)
-  var = lambda t: t_to_var[id(t)]
+  getvar = lambda t: t_to_var[id(t)]
   sorted_tracers = toposort(out_tracers)
-  invars = map(var, in_tracers)
+  invars = map(getvar, in_tracers)
   eqns = []
   env = {}
   consts = {}
   const_to_var = defaultdict(newvar)
   destructuring_vars = {}
-  processed_recipes = set()
+  processed_eqn_ids = set()
   for t in sorted_tracers:
     recipe = t.recipe
     if isinstance(recipe, JaxprEqnRecipe):
-      if recipe.eqn_id not in processed_recipes:
-        eqns.append(recipe_to_eqn(unused_var, var, recipe))
-        processed_recipes.add(recipe.eqn_id)
+      if recipe.eqn_id not in processed_eqn_ids:
+        eqns.append(recipe_to_eqn(newvar, getvar, recipe))
+        processed_eqn_ids.add(recipe.eqn_id)
     elif isinstance(recipe, LambdaBinding):
       assert any(t is in_tracer for in_tracer in in_tracers), "Encountered unexpected tracer"
       assert in_tracers, "Lambda binding with no args"
     elif isinstance(recipe, FreeVar):
-      env[var(t)] = recipe.val
+      env[getvar(t)] = recipe.val
     elif isinstance(recipe, ConstVar):
       v = t_to_var[id(t)] = const_to_var[id(recipe.val)]
       consts[v] = recipe.val
@@ -425,9 +420,10 @@ def tracers_to_jaxpr(in_tracers, out_tracers):
 
   env_vars, env_vals = unzip2(env.items())
   const_vars, const_vals = unzip2(consts.items())
-  jaxpr = Jaxpr(const_vars, env_vars, invars, list(map(var, out_tracers)), eqns)
+  jaxpr = Jaxpr(const_vars, env_vars, invars, list(map(getvar, out_tracers)), eqns)
   core.skip_checks or core.check_jaxpr(jaxpr)
   return jaxpr, const_vals, env_vals
+
 
 
 def eqn_parents(eqn):
