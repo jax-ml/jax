@@ -102,8 +102,9 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("exp", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"]),
     op_record("fabs", 1, float_dtypes, all_shapes, jtu.rand_default, ["rev"]),
     op_record("float_power", 2, inexact_dtypes, all_shapes, jtu.rand_default, ["rev"],
-              tolerance={onp.float32: 1e-3, onp.float64: 1e-12,
-                         onp.complex64: 2e-4, onp.complex128: 1e-12}),
+              tolerance={lnp.bfloat16: 1e-2, onp.float32: 1e-3,
+                         onp.float64: 1e-12, onp.complex64: 2e-4,
+                         onp.complex128: 1e-12}),
     op_record("floor", 1, float_dtypes, all_shapes, jtu.rand_default, []),
     op_record("greater", 2, number_dtypes, all_shapes, jtu.rand_some_equal, []),
     op_record("greater_equal", 2, number_dtypes, all_shapes, jtu.rand_some_equal, []),
@@ -156,7 +157,7 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("divmod", 2, int_dtypes + float_dtypes, all_shapes,
               jtu.rand_nonzero, []),
     op_record("exp2", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"],
-              tolerance={onp.float16: 1e-2}),
+              tolerance={lnp.bfloat16: 1e-2, onp.float16: 1e-2}),
     # TODO(b/142975473): on CPU, expm1 for float64 is only accurate to ~float32
     # precision.
     op_record("expm1", 1, number_dtypes, all_shapes, jtu.rand_positive, [],
@@ -227,10 +228,8 @@ JAX_BITWISE_OP_RECORDS = [
 
 JAX_REDUCER_RECORDS = [
     op_record("mean", 1, number_dtypes, nonempty_shapes, jtu.rand_default, []),
-    op_record("prod", 1, number_dtypes, all_shapes, jtu.rand_small_positive, []),
-    op_record("sum", 1, number_dtypes, all_shapes, jtu.rand_default, []),
-    op_record("var", 1, number_dtypes, nonempty_shapes, jtu.rand_default, []),
-    op_record("std", 1, inexact_dtypes, nonempty_shapes, jtu.rand_default, []),
+    op_record("prod", 1, all_dtypes, all_shapes, jtu.rand_small_positive, []),
+    op_record("sum", 1, all_dtypes, all_shapes, jtu.rand_default, []),
     op_record("nanmean", 1, inexact_dtypes, nonempty_shapes, jtu.rand_some_nan, []),
     op_record("nanprod", 1, inexact_dtypes, all_shapes, jtu.rand_some_nan, []),
     op_record("nansum", 1, number_dtypes, all_shapes, jtu.rand_some_nan, []),
@@ -241,6 +240,8 @@ JAX_REDUCER_NO_DTYPE_RECORDS = [
     op_record("any", 1, all_dtypes, all_shapes, jtu.rand_some_zero, []),
     op_record("max", 1, all_dtypes, nonempty_shapes, jtu.rand_default, []),
     op_record("min", 1, all_dtypes, nonempty_shapes, jtu.rand_default, []),
+    op_record("var", 1, all_dtypes, nonempty_shapes, jtu.rand_default, []),
+    op_record("std", 1, all_dtypes, nonempty_shapes, jtu.rand_default, []),
 ]
 
 JAX_ARGMINMAX_RECORDS = [
@@ -356,7 +357,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                                                       dtypes),
          "rng_factory": rec.rng_factory, "shapes": shapes, "dtypes": dtypes,
          "onp_op": getattr(onp, rec.name), "lnp_op": getattr(lnp, rec.name),
-         "check_dtypes": rec.check_dtypes, "tol": rec.tolerance}
+         "check_dtypes": rec.check_dtypes, "tolerance": rec.tolerance}
         for shapes in filter(
           _shapes_are_broadcast_compatible,
           CombosWithReplacement(rec.shapes, rec.nargs))
@@ -365,7 +366,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for rec in itertools.chain(JAX_ONE_TO_ONE_OP_RECORDS,
                                  JAX_COMPOUND_OP_RECORDS)))
   def testOp(self, onp_op, lnp_op, rng_factory, shapes, dtypes, check_dtypes,
-             tol):
+             tolerance):
     rng = rng_factory()
     args_maker = self._GetArgsMaker(rng, shapes, dtypes)
     python_scalar = jtu.PYTHON_SCALAR_SHAPE in shapes
@@ -373,6 +374,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                   jtu.NUMPY_SCALAR_SHAPE in shapes or
                   () in shapes)
     empty_shape = any(isinstance(s, tuple) and 0 in s for s in shapes)
+    tol = max(jtu.tolerance(dtype, tolerance) for dtype in dtypes)
     self._CheckAgainstNumpy(
       onp_op, lnp_op, args_maker,
       check_dtypes=check_dtypes and not scalar_arg and not empty_shape,
@@ -456,33 +458,34 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                             check_dtypes=jtu.PYTHON_SCALAR_SHAPE not in shapes)
     self._CompileAndCheck(lnp_op, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "{}_inshape={}_axis={}_dtype={}_keepdims={}".format(
-          rec.test_name.capitalize(),
-          jtu.format_shape_dtype_string(shape, dtype), axis,
-          "None" if out_dtype is None else onp.dtype(out_dtype).name, keepdims),
-       "rng_factory": rec.rng_factory, "shape": shape, "dtype": dtype, "out_dtype": out_dtype,
-       "onp_op": getattr(onp, rec.name), "lnp_op": getattr(lnp, rec.name),
-       "axis": axis, "keepdims": keepdims}
-      for rec in JAX_REDUCER_RECORDS
-      for shape in rec.shapes for dtype in rec.dtypes
-      for out_dtype in [None] + rec.dtypes
-      for axis in set(range(-len(shape), len(shape))) | set([None])
-      for keepdims in [False, True]))
+  @parameterized.named_parameters(itertools.chain.from_iterable(
+      jtu.cases_from_list(
+        {"testcase_name": "{}_inshape={}_axis={}_dtype={}_keepdims={}".format(
+            rec.test_name.capitalize(),
+            jtu.format_shape_dtype_string(shape, dtype), axis,
+            "None" if out_dtype is None else onp.dtype(out_dtype).name, keepdims),
+         "rng_factory": rec.rng_factory, "shape": shape, "dtype": dtype, "out_dtype": out_dtype,
+         "onp_op": getattr(onp, rec.name), "lnp_op": getattr(lnp, rec.name),
+         "axis": axis, "keepdims": keepdims}
+        for shape in rec.shapes for dtype in rec.dtypes
+        for out_dtype in [None] + rec.dtypes
+        for axis in set(range(-len(shape), len(shape))) | set([None])
+        for keepdims in [False, True])
+    for rec in JAX_REDUCER_RECORDS))
   def testReducer(self, onp_op, lnp_op, rng_factory, shape, dtype, out_dtype, axis, keepdims):
     rng = rng_factory()
     def onp_fun(x):
-      x = x if dtype != lnp.bfloat16 else x.astype(onp.float32)
-      out_t = out_dtype or dtype
+      x_cast = x if dtype != lnp.bfloat16 else x.astype(onp.float32)
       t = out_dtype if out_dtype != lnp.bfloat16 else onp.float32
-      return onp_op(x, axis, dtype=t, keepdims=keepdims).astype(out_t)
+      return onp_op(x_cast, axis, dtype=t, keepdims=keepdims)
     lnp_fun = lambda x: lnp_op(x, axis, dtype=out_dtype, keepdims=keepdims)
     args_maker = lambda: [rng(shape, dtype)]
     tol_spec = {onp.float16: 1e-2, onp.float32: 1e-3, onp.complex64: 1e-3,
                 onp.float64: 1e-5, onp.complex128: 1e-5}
     tol = jtu.tolerance(dtype, tol_spec)
     tol = max(tol, jtu.tolerance(out_dtype, tol_spec)) if out_dtype else tol
-    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True,
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker,
+                            check_dtypes=lnp.bfloat16 not in (dtype, out_dtype),
                             tol=tol)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True, atol=tol,
                           rtol=tol)
@@ -577,7 +580,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       b = b.astype(onp.float32) if rhs_dtype == lnp.bfloat16 else b
       out = onp.cross(a, b, axisa, axisb, axisc, axis)
       return out.astype(lnp.promote_types(lhs_dtype, rhs_dtype))
-    tol_spec = {onp.float16: 1e-2}
+    tol_spec = {dtypes.bfloat16: 3e-1, onp.float16: 1e-2}
     tol = max(jtu.tolerance(lhs_dtype, tol_spec),
               jtu.tolerance(rhs_dtype, tol_spec))
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True,
@@ -649,7 +652,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       dtype = lnp.promote_types(lhs_dtype, rhs_dtype)
       return onp.matmul(x, y).astype(dtype)
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
-    tol = {onp.float16: 1e-2, onp.float32: 2e-2, onp.float64: 1e-12}
+    tol = {onp.float16: 1e-2, onp.float32: 2e-2, onp.float64: 1e-12,
+           onp.complex128: 1e-12}
     if jtu.device_under_test() == "tpu":
       tol[onp.float32] = tol[onp.complex64] = 4e-2
     self._CheckAgainstNumpy(onp_fun, lnp.matmul, args_maker,
@@ -757,7 +761,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     onp_fun = lambda x: onp.round(x, decimals=decimals)
     lnp_fun = lambda x: lnp.round(x, decimals=decimals)
     args_maker = lambda: [rng(shape, dtype)]
-    tol = {onp.float16: 1e-2}
+    tol = {lnp.bfloat16: 5e-2, onp.float16: 1e-2}
     check_dtypes = shape is not jtu.PYTHON_SCALAR_SHAPE
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker,
                             check_dtypes=check_dtypes, tol=tol)
@@ -1308,8 +1312,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       lnp_fun = lambda x, weights: lnp.average(x, axis, weights, returned)
       args_maker = lambda: [rng(shape, dtype), rng(weights_shape, dtype)]
 
-    tol = {onp.float16: 1e-1, onp.float32: 1e-3, onp.float64: 1e-10,
-           onp.complex64: 1e-3, onp.complex128: 1e-10}
+    tol = {lnp.bfloat16: 1e-1, onp.float16: 1e-1, onp.float32: 1e-3,
+           onp.float64: 1e-10, onp.complex64: 1e-3, onp.complex128: 1e-10}
     check_dtypes = shape is not jtu.PYTHON_SCALAR_SHAPE
     try:
         self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker,
@@ -2037,7 +2041,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
          "ddof": ddof, "keepdims": keepdims, "rng_factory": rng_factory}
         for shape in [(5,), (10, 5)]
         for dtype in all_dtypes
-        for out_dtype in number_dtypes
+        for out_dtype in inexact_dtypes
         for axis in [None, 0, -1]
         for ddof in [0, 1, 2]
         for keepdims in [False, True]
@@ -2046,11 +2050,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     rng = rng_factory()
     args_maker = self._GetArgsMaker(rng, [shape], [dtype])
     def onp_fun(x):
-      t = out_dtype if out_dtype != lnp.bfloat16 else onp.float32
-      out = onp.var(x, dtype=t, axis=axis, ddof=ddof, keepdims=keepdims)
+      out = onp.var(x.astype(lnp.promote_types(onp.float32, dtype)),
+                    axis=axis, ddof=ddof, keepdims=keepdims)
       return out.astype(out_dtype)
     lnp_fun = partial(lnp.var, dtype=out_dtype, axis=axis, ddof=ddof, keepdims=keepdims)
-    tol = jtu.tolerance(out_dtype, {onp.float16: 1e-1})
+    tol = jtu.tolerance(out_dtype, {onp.float16: 1e-1, onp.float32: 1e-3,
+                                    onp.float64: 1e-3, onp.complex128: 1e-6})
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True,
                             tol=tol)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True, rtol=tol,

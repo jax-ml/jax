@@ -101,7 +101,10 @@ default_gradient_tolerance = {
 def _assert_numpy_allclose(a, b, atol=None, rtol=None):
   a = a.astype(onp.float32) if a.dtype == dtypes.bfloat16 else a
   b = b.astype(onp.float32) if b.dtype == dtypes.bfloat16 else b
-  onp.testing.assert_allclose(a, b, atol=atol, rtol=rtol)
+  kw = {}
+  if atol: kw["atol"] = atol
+  if rtol: kw["rtol"] = rtol
+  onp.testing.assert_allclose(a, b, **kw)
 
 def tolerance(dtype, tol=None):
   tol = tol or {}

@@ -1121,7 +1121,8 @@ def nan_to_num(x, copy=True):
 
 
 def _make_reduction(np_fun, op, init_val, preproc=None,
-                    upcast_f16_for_computation=False):
+                    upcast_f16_for_computation=False,
+                    bool_op=None):
   """Creates reduction function given a binary operation and monoid identity."""
 
   @_wraps(np_fun)
@@ -1132,18 +1133,17 @@ def _make_reduction(np_fun, op, init_val, preproc=None,
     a = a if isinstance(a, ndarray) else asarray(a)
     a = preproc(a) if preproc else a
     dims = _reduction_dims(a, axis)
-    dtype = dtype or _dtype(a)
-    #result_dtype = _dtype(np_fun(onp.ones((), dtype=dtype or _dtype(a))))
-    if upcast_f16_for_computation and issubdtype(dtype, inexact):
-      computation_dtype = promote_types(dtype, float32)
+    result_dtype = dtype or _dtype(np_fun(onp.ones((), dtype=_dtype(a))))
+    if upcast_f16_for_computation and issubdtype(result_dtype, inexact):
+      computation_dtype = promote_types(result_dtype, float32)
     else:
-      computation_dtype = dtype
+      computation_dtype = result_dtype
     a = lax.convert_element_type(a, computation_dtype)
     result = lax.reduce(a, _reduction_init_val(a, init_val), op, dims)
     if keepdims:
       shape_with_singletons = lax.subvals(shape(a), zip(dims, (1,) * len(dims)))
       result = lax.reshape(result, shape_with_singletons)
-    return lax.convert_element_type(result, dtype)
+    return lax.convert_element_type(result, dtype or result_dtype)
 
   return reduction
 
@@ -1168,7 +1168,7 @@ def _reduction_init_val(a, init_val):
     sign, info = onp.sign(init_val), iinfo(a_dtype)
     return onp.array(info.min if sign < 0 else info.max, dtype=a_dtype)
 
-_cast_to_bool = partial(lax.convert_element_type, new_dtype=onp.bool_)
+_cast_to_bool = partial(lax.convert_element_type, new_dtype=bool_)
 
 sum = _make_reduction(onp.sum, lax.add, 0, upcast_f16_for_computation=True)
 product = prod = _make_reduction(onp.prod, lax.mul, 1,
@@ -1191,7 +1191,7 @@ def mean(a, axis=None, dtype=None, out=None, keepdims=False):
   if dtype is None:
     if (issubdtype(_dtype(a), onp.bool_) or
         issubdtype(_dtype(a), onp.integer)):
-      dtype = dtypes.canonicalize_dtype(onp.float64)
+      dtype = float_
     else:
       dtype = _dtype(a)
 
@@ -1248,19 +1248,28 @@ def average(a, axis=None, weights=None, returned=False):
         return avg, weights_sum
     return avg
 
+_complex_basetype = lambda dtype: onp.abs(onp.zeros((), dtype)).dtype
 
 @_wraps(onp.var)
 def var(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
   if out is not None:
     raise ValueError("var does not support the `out` argument.")
 
-  if dtype is None:
-    if (issubdtype(_dtype(a), onp.bool_) or
-        issubdtype(_dtype(a), onp.integer)):
-      dtype = dtypes.canonicalize_dtype(onp.float64)
-  centered = subtract(a, mean(a, axis, dtype=dtype, keepdims=True))
-  if iscomplexobj(centered):
-    centered = lax.abs(centered)
+  a_dtype = _dtype(a)
+  if dtype:
+    a_dtype = promote_types(a_dtype, dtype)
+  else:
+    if not issubdtype(a_dtype, inexact):
+      dtype = a_dtype = float_
+    else:
+      dtype = _complex_basetype(a_dtype)
+      a_dtype = promote_types(a_dtype, float32)
+  a_mean = mean(a, axis, dtype=a_dtype, keepdims=True)
+  centered = a - a_mean
+  if issubdtype(centered.dtype, complexfloating):
+    centered = lax.real(lax.mul(centered, lax.conj(centered)))
+  else:
+    centered = lax.square(centered)
 
   if axis is None:
     normalizer = size(a)
@@ -1268,9 +1277,10 @@ def var(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
     normalizer = onp.prod(onp.take(shape(a), axis))
   normalizer = normalizer - ddof
 
-  result = sum(lax.mul(centered, centered), axis,
-               dtype=dtype, keepdims=keepdims)
-  return lax.div(result, lax.convert_element_type(normalizer, _dtype(result)))
+  result = sum(centered, axis, keepdims=keepdims)
+  out = lax.div(result, lax.convert_element_type(normalizer, result.dtype))
+  return lax.convert_element_type(out, dtype)
+
 
 
 @_wraps(onp.std)

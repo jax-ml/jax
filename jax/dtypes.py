@@ -133,7 +133,6 @@ def issubdtype(a, b):
 
 can_cast = onp.can_cast
 issubsctype = onp.issubsctype
-promote_types = onp.promote_types
 
 _bfloat16_type_promotions = {
   onp.dtype('bool'): onp.dtype(bfloat16),
