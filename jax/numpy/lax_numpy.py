@@ -1120,10 +1120,11 @@ def nan_to_num(x, copy=True):
 ### Reducers
 
 
-def _make_reduction(np_fun, op, init_val, preproc=None,
-                    upcast_f16_for_computation=False,
-                    bool_op=None):
+def _make_reduction(np_fun, op, init_val, preproc=None, bool_op=None,
+                    upcast_f16_for_computation=False):
   """Creates reduction function given a binary operation and monoid identity."""
+
+  bool_op = bool_op or op
 
   @_wraps(np_fun)
   def reduction(a, axis=None, dtype=None, out=None, keepdims=False):
@@ -1139,7 +1140,8 @@ def _make_reduction(np_fun, op, init_val, preproc=None,
     else:
       computation_dtype = result_dtype
     a = lax.convert_element_type(a, computation_dtype)
-    result = lax.reduce(a, _reduction_init_val(a, init_val), op, dims)
+    result = lax.reduce(a, _reduction_init_val(a, init_val),
+                        op if computation_dtype != bool_ else bool_op, dims)
     if keepdims:
       shape_with_singletons = lax.subvals(shape(a), zip(dims, (1,) * len(dims)))
       result = lax.reshape(result, shape_with_singletons)
@@ -1170,8 +1172,9 @@ def _reduction_init_val(a, init_val):
 
 _cast_to_bool = partial(lax.convert_element_type, new_dtype=bool_)
 
-sum = _make_reduction(onp.sum, lax.add, 0, upcast_f16_for_computation=True)
-product = prod = _make_reduction(onp.prod, lax.mul, 1,
+sum = _make_reduction(onp.sum, lax.add, 0, upcast_f16_for_computation=True,
+                      bool_op=lax.bitwise_or)
+product = prod = _make_reduction(onp.prod, lax.mul, 1, bool_op=lax.bitwise_and,
                                  upcast_f16_for_computation=True)
 amax = max = _make_reduction(onp.max, lax.max, -onp.inf)
 amin = min = _make_reduction(onp.min, lax.min, onp.inf)

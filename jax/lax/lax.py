@@ -1750,11 +1750,7 @@ def _add_transpose(t, x, y):
   # assert x is ad.undefined_primal and y is ad.undefined_primal  # not affine
   return [t, t]
 
-def _add_translation_rule(c, x, y):
-  return (c.Add if c.GetShape(x).numpy_dtype() != onp.bool_ else c.Or)(x, y)
-
-add_p = standard_binop([_num, _num], 'add',
-                       translation_rule=_add_translation_rule)
+add_p = standard_binop([_num, _num], 'add')
 ad.defjvp(add_p, lambda g, x, y: _brcast(g, y), lambda g, x, y: _brcast(g, x))
 ad.primitive_transposes[add_p] = _add_transpose
 
@@ -1769,10 +1765,7 @@ ad.defjvp(sub_p,
           lambda g, x, y: _brcast(neg(g), x))
 ad.primitive_transposes[sub_p] = _sub_transpose
 
-def _mul_translation_rule(c, x, y):
-  return (c.Mul if c.GetShape(x).numpy_dtype() != onp.bool_ else c.And)(x, y)
-mul_p = standard_binop([_num, _num], 'mul',
-                       translation_rule=_mul_translation_rule)
+mul_p = standard_binop([_num, _num], 'mul')
 ad.defbilinear_broadcasting(_brcast, mul_p, mul, mul)
 
 
