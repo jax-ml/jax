@@ -43,8 +43,24 @@ def rvjp(typed_jaxpr, out_primals, out_cotangents):
       return v.val
     else:
       result = primal_env.get(v, unknown)
-      assert result is not deleted
+      if v not in jaxpr.invars:
+        assert result is not deleted, v
       return result
+
+  def delete(v):
+    print("Deleting:", v)
+    primal_env[v] = deleted
+    ct_env[v] = deleted
+
+  refcount = defaultdict(int)
+
+  def incref(v):
+    refcount[v] += 1
+
+  def decref(v):
+    refcount[v] -= 1
+    if refcount[v] == 0:
+      delete(v)
 
   def write_primal(v, val):
     assert val is not deleted
@@ -58,7 +74,8 @@ def rvjp(typed_jaxpr, out_primals, out_cotangents):
 
   def read_cotangent(v):
     result = ct_env.get(v, ad.zero)
-    assert result is not deleted
+    if v not in jaxpr.invars:
+      assert result is not deleted, v
     return result
 
   def neighbors(v):
@@ -66,9 +83,12 @@ def rvjp(typed_jaxpr, out_primals, out_cotangents):
 
   neighbors_ = defaultdict(set)
   eqns_by_id = {}
+  for invar in jaxpr.invars:
+    incref(invar)
   for eqn in jaxpr.eqns:
     eqns_by_id[id(eqn)] = eqn
     for v in it.chain(eqn.invars, eqn.outvars):
+      incref(v)
       neighbors_[v].add(id(eqn))
 
   ct_env = {}
@@ -83,7 +103,6 @@ def rvjp(typed_jaxpr, out_primals, out_cotangents):
 
   done_eqns = set()
   while queue:
-    print(map(id, queue), done_eqns)
     eqn = queue.popleft()
     assert id(eqn) not in done_eqns
     invals = map(read_primal, eqn.invars)
@@ -104,6 +123,8 @@ def rvjp(typed_jaxpr, out_primals, out_cotangents):
         cts_out = primitive_vjp(eqn.primitive, cts_in, new_invals, new_outvals)
         map(write_cotangent, eqn.invars, cts_out)
         done_eqns.add(id(eqn))
+        for var in it.chain(eqn.invars, eqn.outvars):
+          decref(var)
       else:
         assert id(eqn) not in done_eqns
         queue.append(eqn)
