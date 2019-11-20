@@ -31,6 +31,10 @@ class Unknown(object):
   def __repr__(self): return '?'
 unknown = Unknown()
 
+class Deleted(object):
+  def __repr__(self): return '-'
+deleted = Deleted()
+
 def rvjp(typed_jaxpr, out_primals, out_cotangents):
   jaxpr = typed_jaxpr.jaxpr
 
@@ -38,25 +42,24 @@ def rvjp(typed_jaxpr, out_primals, out_cotangents):
     if type(v) is core.Literal:
       return v.val
     else:
-      return primal_env.get(v, unknown)
+      result = primal_env.get(v, unknown)
+      assert result is not deleted
+      return result
 
   def write_primal(v, val):
+    assert val is not deleted
     if val is not unknown:
       primal_env[v] = val
 
   def write_cotangent(v, ct):
-    # assert v not in primal_env
+    assert ct is not deleted
     if ct is not None:
       ct_env[v] = ad.add_tangents(ct_env[v], ct) if v in ct_env else ct
 
   def read_cotangent(v):
-    return ct_env.get(v, ad.zero)
-
-  def clear_outputs(vs):
-    pass  # TODO
-    # for v in vs:
-    #   del primal_env[v]
-    #   del ct_env[v]  # TODO
+    result = ct_env.get(v, ad.zero)
+    assert result is not deleted
+    return result
 
   def neighbors(v):
     return [eqns_by_id[i] for i in neighbors_[v]]
@@ -74,10 +77,15 @@ def rvjp(typed_jaxpr, out_primals, out_cotangents):
   primal_env = {}
   map(write_primal, jaxpr.constvars, typed_jaxpr.literals)
   map(write_primal, jaxpr.outvars, out_primals)
-  queue = deque(it.chain.from_iterable(neighbors(v) for v in jaxpr.outvars))
 
+  out_eqns = it.chain.from_iterable(neighbors(v) for v in jaxpr.outvars)
+  queue = deque({id(e): e for e in out_eqns}.values())  # de-duplicate
+
+  done_eqns = set()
   while queue:
+    print(map(id, queue), done_eqns)
     eqn = queue.popleft()
+    assert id(eqn) not in done_eqns
     invals = map(read_primal, eqn.invars)
     outvals = map(read_primal, eqn.outvars)
     rule = inverses[eqn.primitive]
@@ -91,16 +99,19 @@ def rvjp(typed_jaxpr, out_primals, out_cotangents):
     updated_vars = [var for var, old_val, new_val in zip(all_vars, old_vals, new_vals)
                     if old_val is unknown and new_val is not unknown]
     if updated_vars:
-      for v in updated_vars:
-        queue.extendleft(e for e in neighbors(v) if e is not eqn)
       if not any(val is unknown for val in new_vals):
         cts_in = map(read_cotangent, eqn.outvars)
         cts_out = primitive_vjp(eqn.primitive, cts_in, new_invals, new_outvals)
         map(write_cotangent, eqn.invars, cts_out)
-        clear_outputs(eqn.outvars)
+        done_eqns.add(id(eqn))
       else:
+        assert id(eqn) not in done_eqns
         queue.append(eqn)
+      for v in updated_vars:
+        queue.extendleft(e for e in neighbors(v) if e is not eqn
+                         and e not in queue and id(e) not in done_eqns)
     else:
+      assert id(eqn) not in done_eqns
       queue.append(eqn)
 
   return map(read_primal, jaxpr.invars), map(read_cotangent, jaxpr.invars)
@@ -163,10 +174,9 @@ print(jaxpr)
 #   in [c, d] }
 
 
-# TODO
-# in_primals, in_cotangents = rvjp(jaxpr, (7.389, 5.0), (1., 1.))
-# print(in_primals)
-# print(in_cotangents)
+in_primals, in_cotangents = rvjp(jaxpr, (7.389, 5.0), (1., 1.))
+print(in_primals)
+print(in_cotangents)
 
 _, f_vjp = vjp(f, 2., 3.)
 print(f_vjp((1., 1.)))
