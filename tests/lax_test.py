@@ -2188,7 +2188,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
           (-onp.inf, lax.max, [t for t in inexact_dtypes if t != onp.float16]),
           (onp.inf, lax.min, [t for t in inexact_dtypes if t != onp.float16]),
           # The mul test overflows the range of a float16.
-          (1, lax.mul, [t for t in inexact_dtypes if t != onp.float16]),
+          (1, lax.mul, [t for t in inexact_dtypes
+                        if t not in (onp.float16, dtypes.bfloat16)]),
       ]
       for dtype in dtypes
       for shape, dims in [
@@ -2204,13 +2205,12 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     rng = rng_factory()
     if jtu.device_under_test() == "tpu" and op is lax.mul:
       raise SkipTest("unimplemented case")
-    tol = {dtypes.bfloat16: 1e-1, onp.float16: 1e-1, onp.float32: 4e-2,
+    tol = {dtypes.bfloat16: 2e-1, onp.float16: 1e-1, onp.float32: 4e-2,
            onp.float64: 1e-3, onp.complex64: 1e-2}
     operand = rng(shape, dtype)
     init_val = onp.asarray(init_val, dtype=dtype)
     reduce = lambda operand: lax.reduce(operand, init_val, op, dims)
     eps = (1.0 if dtypes.finfo(dtype).bits == 16 and op is lax.add else
-           2e-0 if dtype == dtypes.bfloat16 and op is lax.mul else
            1e-1 if dtype == dtypes.bfloat16 else
            1e-2 if dtypes.finfo(dtype).bits == 32 else None)
     check_grads(reduce, (operand,), 1, ["fwd", "rev"], tol, tol, eps)
