@@ -624,8 +624,10 @@ def reciprocal(x):
 @_wraps(onp.sinc, update_doc=False)
 def sinc(x):
   x, = _promote_to_result_dtype(onp.sinc, x)
-  pi_x = lax.mul(lax._const(x, pi), x)
-  return where(lax.eq(x, lax._const(x, 0)),
+  eq_zero = lax.eq(x, lax._const(x, 0))
+  safe_x = where(eq_zero, lax._const(x, 0), x)
+  pi_x = lax.mul(lax._const(x, pi), safe_x)
+  return where(eq_zero,
                lax._const(x, 1), lax.div(lax.sin(pi_x), pi_x))
 
 

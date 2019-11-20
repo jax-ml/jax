@@ -2337,12 +2337,13 @@ GRAD_TEST_RECORDS = [
 ]
 
 GradSpecialValuesTestSpec = collections.namedtuple(
-    "GradSpecialValuesTestSpec", ["op", "values"])
+    "GradSpecialValuesTestSpec", ["op", "values", "order"])
 
 GRAD_SPECIAL_VALUE_TEST_RECORDS = [
-    GradSpecialValuesTestSpec(lnp.arcsinh, [0., 1000.]),
-    GradSpecialValuesTestSpec(lnp.arccosh, [1000.]),
-    GradSpecialValuesTestSpec(lnp.arctanh, [0.]),
+    GradSpecialValuesTestSpec(lnp.arcsinh, [0., 1000.], 2),
+    GradSpecialValuesTestSpec(lnp.arccosh, [1000.], 2),
+    GradSpecialValuesTestSpec(lnp.arctanh, [0.], 2),
+    GradSpecialValuesTestSpec(lnp.sinc, [0.], 1)
 ]
 
 def num_float_bits(dtype):
@@ -2367,11 +2368,11 @@ class NumpyGradTests(jtu.JaxTestCase):
   @parameterized.named_parameters(itertools.chain.from_iterable(
       jtu.cases_from_list(
           {"testcase_name": "_{}_{}".format(rec.op.__name__, special_value),
-           "op": rec.op, "special_value": special_value}
+           "op": rec.op, "special_value": special_value, "order": rec.order}
           for special_value in rec.values)
       for rec in GRAD_SPECIAL_VALUE_TEST_RECORDS))
-  def testOpGradSpecialValue(self, op, special_value):
-    check_grads(op, (special_value,), 2, ["fwd", "rev"],
+  def testOpGradSpecialValue(self, op, special_value, order):
+    check_grads(op, (special_value,), order, ["fwd", "rev"],
                 atol={onp.float32: 3e-3})
 
   def testTakeAlongAxisIssue1521(self):
