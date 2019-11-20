@@ -464,8 +464,8 @@ def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
 
   jaxpr_replicas = xla.jaxpr_replicas(jaxpr)
   num_local_replicas = axis_size * jaxpr_replicas
-  nrep = global_axis_size * jaxpr_replicas
-  axis_env = xla.AxisEnv(nrep, [axis_name], [global_axis_size], devices)
+  num_global_replicas = global_axis_size * jaxpr_replicas
+  axis_env = xla.AxisEnv(num_global_replicas, [axis_name], [global_axis_size], devices)
 
   tuple_args = len(avals) > 100  # pass long arg lists as tuple for TPU
 
@@ -476,10 +476,10 @@ def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
   built = c.Build(c.Tuple(*out_nodes))
 
   if devices is None:
-    if nrep > xb.device_count(backend):
+    if num_global_replicas > xb.device_count(backend):
       msg = ("compiling computation that requires {} replicas, but only {} XLA "
              "devices are available")
-      raise ValueError(msg.format(nrep, xb.device_count(backend)))
+      raise ValueError(msg.format(num_global_replicas, xb.device_count(backend)))
     device_assignment = None
   else:
     assert any(d.host_id == xb.host_id() for d in devices)
@@ -492,29 +492,34 @@ def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
           "number of local devices passed to pmap. Got axis_size=%d, "
           "num_local_devices=%d.\n(Local devices passed to pmap: %s)"
           % (axis_size, len(local_devices), local_devices_str))
-    if nrep != len(devices):
+    if num_global_replicas != len(devices):
       raise ValueError("compiling computation that requires %s replicas, "
                        "but %s devices were specified"
-                       % (nrep, len(devices)))
+                       % (num_global_replicas, len(devices)))
     device_assignment = tuple(d.id for d in devices)
   compiled = built.Compile(
-      compile_options=xb.get_compile_options(nrep, device_assignment),
+      compile_options=xb.get_compile_options(num_global_replicas, device_assignment),
       backend=xb.get_backend(backend))
 
   handle_args = partial(shard_args, backend, compiled.local_devices(),
-                        assign_shards_to_replicas(nrep, axis_size),
+                        assign_shards_to_replicas(num_local_replicas, axis_size),
                         axis_size, tuple_args)
-  handle_outs = _pvals_to_results_handler(axis_size, nrep, out_pvals)
-  return partial(execute_replicated, compiled, backend, nrep, handle_args, handle_outs)
+  handle_outs = _pvals_to_results_handler(axis_size, num_local_replicas, out_pvals)
+  return partial(execute_replicated, compiled, backend, num_local_replicas, handle_args, handle_outs)
+
+class ResultToPopulate(object): pass
+result_to_populate = ResultToPopulate()
 
 def _pvals_to_results_handler(size, nrep, out_pvals):
   nouts = len(out_pvals)
   handlers = [_pval_to_result_handler(size, nrep, pval) for pval in out_pvals]
   def handler(out_bufs):
-    buffers = [[None] * nrep for _ in range(nouts)]
+    buffers = [[result_to_populate] * nrep for _ in range(nouts)]
     for r, tuple_buf in enumerate(out_bufs):
       for i, buf in enumerate(tuple_buf.destructure()):
         buffers[i][r] = buf
+    assert not any(buf is result_to_populate for bufs in buffers
+                   for buf in bufs)
     return [h(bufs) for h, bufs in zip(handlers, buffers)]
   return handler
 
