@@ -43,12 +43,10 @@ def rvjp(typed_jaxpr, out_primals, out_cotangents):
       return v.val
     else:
       result = primal_env.get(v, unknown)
-      if v not in jaxpr.invars:
-        assert result is not deleted, v
+      assert result is not deleted, v
       return result
 
   def delete(v):
-    print("Deleting:", v)
     primal_env[v] = deleted
     ct_env[v] = deleted
 
@@ -74,8 +72,7 @@ def rvjp(typed_jaxpr, out_primals, out_cotangents):
 
   def read_cotangent(v):
     result = ct_env.get(v, ad.zero)
-    if v not in jaxpr.invars:
-      assert result is not deleted, v
+    assert result is not deleted, v
     return result
 
   def neighbors(v):
