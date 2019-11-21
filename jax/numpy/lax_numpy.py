@@ -2033,7 +2033,14 @@ def append(arr, values, axis=None):
 ### Tensor contraction operations
 
 
-@_wraps(onp.dot)
+_PRECISION_DOC = """\
+In addition to the original NumPy arguments listed below, also supports
+``precision`` for extra control over matrix-multiplication precision
+on supported devices. See :py:func:`jax.lax.dot` for details.
+"""
+
+
+@_wraps(onp.dot, lax_description=_PRECISION_DOC)
 def dot(a, b, precision=None):  # pylint: disable=missing-docstring
   _check_arraylike("dot", a, b)
   a, b = _promote_dtypes(a, b)
@@ -2051,7 +2058,7 @@ def dot(a, b, precision=None):  # pylint: disable=missing-docstring
   return lax.dot_general(a, b, (contract_dims, batch_dims), precision)
 
 
-@_wraps(onp.matmul)
+@_wraps(onp.matmul, lax_description=_PRECISION_DOC)
 def matmul(a, b, precision=None):  # pylint: disable=missing-docstring
   _check_arraylike("matmul", a, b)
   a_is_vec, b_is_vec = (ndim(a) == 1), (ndim(b) == 1)
@@ -2075,14 +2082,14 @@ def matmul(a, b, precision=None):  # pylint: disable=missing-docstring
     return result
 
 
-@_wraps(onp.vdot)
+@_wraps(onp.vdot, lax_description=_PRECISION_DOC)
 def vdot(a, b, precision=None):
   if issubdtype(_dtype(a), onp.complexfloating):
     a = conj(a)
   return dot(a.ravel(), b.ravel(), precision=precision)
 
 
-@_wraps(onp.tensordot)
+@_wraps(onp.tensordot, lax_description=_PRECISION_DOC)
 def tensordot(a, b, axes=2, precision=None):
   _check_arraylike("tensordot", a, b)
   if not (ndim(a) >= 1 and ndim(b) >= 1):
@@ -2119,7 +2126,7 @@ def tensordot(a, b, axes=2, precision=None):
   raise TypeError(msg)
 
 
-@_wraps(onp.einsum)
+@_wraps(onp.einsum, lax_description=_PRECISION_DOC)
 def einsum(*operands, **kwargs):
   optimize = kwargs.pop('optimize', 'auto')
   optimize = 'greedy' if optimize is True else optimize
@@ -2311,7 +2318,7 @@ def _movechars(s, src, dst):
   return ''.join(chars)
 
 
-@_wraps(onp.inner)
+@_wraps(onp.inner, lax_description=_PRECISION_DOC)
 def inner(a, b, precision=None):
   if ndim(a) == 0 or ndim(b) == 0:
     return a * b
