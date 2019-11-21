@@ -2895,6 +2895,32 @@ class LaxVmapTest(jtu.JaxTestCase):
         self._CheckBatching(fun, 3, bdims, (shape,), dtype, rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_dtype={}_padding={}".format(onp.dtype(dtype).name,
+                                                      padding),
+       "dtype": dtype, "padding": padding, "rng_factory": rng_factory}
+      for dtype in float_dtypes
+      for padding in ["VALID", "SAME"]
+      for rng_factory in [jtu.rand_small]))
+  def testSelectAndGatherAdd(self, dtype, padding, rng_factory):
+    rng = rng_factory()
+    all_configs = itertools.chain(
+        itertools.product(
+            [(4, 6)],
+            [(2, 1), (1, 2)],
+            [(1, 1), (2, 1), (1, 2)]),
+        itertools.product(
+            [(3, 2, 4, 6)], [(1, 1, 2, 1), (2, 1, 2, 1)],
+            [(1, 2, 2, 1), (1, 1, 1, 1)]))
+
+    def fun(operand, tangents):
+      return lax._select_and_gather_add(operand, tangents, lax.ge_p, dims,
+                                        strides, padding)
+
+    for shape, dims, strides in all_configs:
+      for bdims in all_bdims(shape, shape):
+        self._CheckBatching(fun, 3, bdims, (shape, shape), dtype, rng)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_bdims={}_fft_ndims={}"
        .format(shape, bdims, fft_ndims),
        "shape": shape, "bdims": bdims, "fft_ndims": fft_ndims, "rng_factory": rng_factory}
