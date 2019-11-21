@@ -571,9 +571,7 @@ def exp2(x):
 @_wraps(onp.signbit)
 def signbit(x):
   x, = _promote_shapes("signbit", x)
-
   dtype = _dtype(x)
-
   if issubdtype(dtype, integer):
     return lax.lt(x, _constant_like(x, 0))
   elif issubdtype(dtype, bool_):
@@ -582,8 +580,13 @@ def signbit(x):
     raise ValueError(
         "jax.numpy.signbit is not well defined for %s" % dtype)
 
-  info = finfo(_dtype(x))
+  # TPU supports BF16 but not S16 types, so as a workaround, convert BF16 to
+  # F32.
+  if dtype == bfloat16:
+    dtype = float32
+    x = lax.convert_element_type(x, float32)
 
+  info = finfo(dtype)
   if info.bits == 16:
     int_type = onp.int16
   elif info.bits == 32:
