@@ -44,6 +44,10 @@ def _check_jaxlib_version():
 _check_jaxlib_version()
 
 
+try:
+  from jaxlib import tpu_client
+except:
+  tpu_client = None
 from jaxlib import xla_client
 from jaxlib import lapack
 

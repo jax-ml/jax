@@ -43,16 +43,17 @@ from six.moves import reduce
 from . import core
 from . import linear_util as lu
 from . import ad_util
+from . import dtypes
 from .core import eval_jaxpr
 from .api_util import (wraps, flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
-                       flatten_fun_nokwargs2, apply_flat_fun_nokwargs)
+                       flatten_fun_nokwargs2)
 from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, tree_leaves, tree_multimap,
                         _replace_nones)
 from .util import (unzip2, unzip3, curry, partial, safe_map, safe_zip,
                    WrapHashably, Hashable, prod, split_list)
-from .lib.xla_bridge import (canonicalize_dtype, device_count,
-                             local_device_count, devices, local_devices,
+from .lib import xla_bridge as xb
+from .lib.xla_bridge import (device_count, local_device_count, devices, local_devices,
                              host_id, host_ids, host_count)
 from .abstract_arrays import ShapedArray, raise_to_shaped
 from .interpreters import partial_eval as pe
@@ -276,10 +277,7 @@ def xla_computation(fun, static_argnums=(), axis_env=None, backend=None,
   }
   """
   _check_callable(fun)
-
-  def pv_like(x):
-    aval = xla.abstractify(x)
-    return pe.PartialVal((aval, core.unit))
+  fun_name = getattr(fun, '__name__', 'unknown')
 
   def make_axis_env(nreps):
     if axis_env is None:
@@ -294,11 +292,16 @@ def xla_computation(fun, static_argnums=(), axis_env=None, backend=None,
     wrapped = lu.wrap_init(fun)
     jax_args, in_tree = tree_flatten((args, kwargs))
     jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
-    pvals = map(pv_like, jax_args)
+    avals = map(xla.abstractify, jax_args)
+    pvals = [pe.PartialVal((aval, core.unit)) for aval in avals]
     jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
     axis_env_ = make_axis_env(xla.jaxpr_replicas(jaxpr))
-    return xla.build_jaxpr(jaxpr, backend, axis_env_, consts, tuple_args,
-                           *map(xla.abstractify, jax_args))
+    c = xb.make_computation_builder('xla_computation_{}'.format(fun_name))
+    xla_consts = map(c.Constant, consts)
+    xla_args = xla._xla_callable_args(c, avals, tuple_args)
+    outs = xla.jaxpr_subcomp(c, jaxpr, backend, axis_env_, xla_consts, (),
+                             *xla_args)
+    return c.Build(c.Tuple(*outs))
   return computation_maker
 
 def grad(fun, argnums=0, has_aux=False, holomorphic=False):
@@ -386,6 +389,13 @@ def value_and_grad(fun, argnums=0, has_aux=False, holomorphic=False):
 
   @wraps(fun, docstr=docstr, argnums=argnums)
   def value_and_grad_f(*args, **kwargs):
+    max_argnum = argnums if type(argnums) is int else max(argnums)
+    if max_argnum >= len(args):
+      msg = ("differentiating with respect to argnums={} requires at least "
+             "{} positional arguments to be passed by the caller, but got only "
+             "{} positional arguments.")
+      raise TypeError(msg.format(argnums, max_argnum + 1, len(args)))
+
     f = lu.wrap_init(fun, kwargs)
     f_partial, dyn_args = _argnums_partial(f, argnums, args)
     if not has_aux:
@@ -393,8 +403,8 @@ def value_and_grad(fun, argnums=0, has_aux=False, holomorphic=False):
     else:
       ans, vjp_py, aux = vjp(f_partial, *dyn_args, has_aux=True)
     _check_scalar(ans)
-    dtype = onp.result_type(ans)
-    if not (holomorphic or onp.issubdtype(dtype, onp.floating)):
+    dtype = dtypes.result_type(ans)
+    if not (holomorphic or dtypes.issubdtype(dtype, onp.floating)):
       msg = ("Gradient only defined for real-output functions (with dtype that "
              "is a subdtype of np.floating), but got dtype {}. For holomorphic "
              "differentiation, pass holomorphic=True.")
@@ -460,7 +470,7 @@ def jacfwd(fun, argnums=0, holomorphic=False):
 
 def _check_real_input_jacfwd(x):
   aval = core.get_aval(x)
-  if not onp.issubdtype(aval.dtype, onp.floating):
+  if not dtypes.issubdtype(aval.dtype, onp.floating):
     msg = ("jacfwd only defined for functions with input dtypes that are "
            "sub-dtypes of `np.floating` (i.e. that model real values), but got "
            "{}. For holomorphic differentiation, pass holomorphic=True.")
@@ -507,7 +517,7 @@ jacobian = jacrev
 
 def _check_real_output_jacrev(x):
   aval = core.get_aval(x)
-  if not onp.issubdtype(aval.dtype, onp.floating):
+  if not dtypes.issubdtype(aval.dtype, onp.floating):
     msg = ("jacrev only defined for functions with output dtypes that are "
            "sub-dtypes of `np.floating` (i.e. that model real values), but got "
            "{}. For holomorphic differentiation, pass holomorphic=True.")
@@ -539,7 +549,7 @@ def _std_basis(pytree):
   leaves, _ = tree_flatten(pytree)
   ndim = sum(map(onp.size, leaves))
   # TODO(mattjj): use a symbolic identity matrix here
-  dtype = onp.result_type(*leaves)
+  dtype = dtypes.result_type(*leaves)
   flat_basis = onp.eye(ndim, dtype=dtype)
   return _unravel_array_into_pytree(pytree, 1, flat_basis)
 
@@ -558,7 +568,7 @@ def _split(x, indices, axis):
     return x.split(indices, axis)
 
 def _dtype(x):
-  return canonicalize_dtype(onp.result_type(x))
+  return dtypes.canonicalize_dtype(dtypes.result_type(x))
 
 
 def vmap(fun, in_axes=0, out_axes=0):
@@ -886,6 +896,7 @@ class _TempAxisName(object):
 
 
 def soft_pmap(fun, axis_name=None, backend=None):
+  warn("soft_pmap is an experimental feature and probably has bugs!")
   _check_callable(fun)
   axis_name = _TempAxisName(fun) if axis_name is None else axis_name
 
@@ -1080,7 +1091,16 @@ def jvp(fun, primals, tangents):
 
   ps_flat, tree_def = tree_flatten(primals)
   ts_flat, tree_def_2 = tree_flatten(tangents)
-  assert tree_def == tree_def_2, (tree_def, tree_def_2)
+  if tree_def != tree_def_2:
+    msg = ("primal and tangent arguments to jax.jvp must have the same tree "
+           "structure; primals have tree structure {} whereas tangents have "
+           "tree structure {}")
+    raise TypeError(msg.format(tree_def, tree_def_2))
+  for p, t in safe_zip(ps_flat, ts_flat):
+    if _dtype(p) != _dtype(t):
+      msg = ("primal and tangent arguments to jax.jvp must have equal types; "
+             "type mismatch primal {} vs tangent {}")
+      raise TypeError(msg.format(_dtype(p), _dtype(t)))
   flat_fun, out_tree = flatten_fun_nokwargs(fun, tree_def)
   out_primals, out_tangents = ad.jvp(flat_fun).call_wrapped(ps_flat, ts_flat)
   return (tree_unflatten(out_tree(), out_primals),
@@ -1170,10 +1190,25 @@ def lift_linearized(jaxpr, primal_avals, consts, io_tree, out_pvals, *py_args):
 
 def _check_inexact_input_vjp(x):
   aval = core.get_aval(x)
-  if not onp.issubdtype(aval.dtype, onp.inexact):
+  if not dtypes.issubdtype(aval.dtype, onp.inexact):
     msg = ("Primal inputs to reverse-mode differentiation must be of float "
            "or complex type, got type {}")
     raise TypeError(msg.format(aval.dtype.name))
+
+def _vjp_pullback_wrapper(fun, cotangent_dtypes, io_tree, py_args):
+  in_tree_expected, out_tree = io_tree
+  args, in_tree = tree_flatten(py_args)
+  if in_tree != in_tree_expected:
+    msg = ("Tree structure of cotangent input {}, does not match structure of "
+           "primal output {}")
+    raise TypeError(msg.format(in_tree_expected, in_tree))
+  for a, dtype in safe_zip(args, cotangent_dtypes):
+    if _dtype(a) != dtype:
+      msg = ("Type of cotangent input to vjp pullback function ({}) does not "
+             "match type of corresponding primal output ({})")
+      raise TypeError(msg.format(_dtype(a), dtype))
+  ans = fun(*args)
+  return tree_unflatten(out_tree, ans)
 
 
 def vjp(fun, *primals, **kwargs):
@@ -1226,7 +1261,8 @@ def vjp(fun, *primals, **kwargs):
     out_primal, out_vjp, aux = ad.vjp(flat_fun, primals_flat, has_aux=True)
     out_tree, aux_tree = out_aux_trees()
   out_primal_py = tree_unflatten(out_tree, out_primal)
-  vjp_py = partial(apply_flat_fun_nokwargs, out_vjp, (out_tree, in_tree))
+  vjp_py = partial(_vjp_pullback_wrapper, out_vjp,
+                   [_dtype(x) for x in out_primal], (out_tree, in_tree))
   if not has_aux:
     return out_primal_py, vjp_py
   else:
@@ -1799,8 +1835,8 @@ def _elementwise_std_basis(pytree):
   arity = len(leaves)
   dims = map(onp.size, leaves)
   # TODO(mattjj): use symbolic constants
-  dtype = onp.result_type(*leaves)
-  if not onp.issubdtype(dtype, onp.floating):
+  dtype = dtypes.result_type(*leaves)
+  if not dtypes.issubdtype(dtype, onp.floating):
     msg = ("Jacobian only defined for functions with floating input and output "
            "dtypes (i.e. dtypes that model real numbers), got {}.")
     raise TypeError(msg.format(dtype))  # TODO(mattjj, dougalm): handle complex
@@ -1936,7 +1972,7 @@ def eval_shape(fun, *args, **kwargs):
   dtype('float32')
   """
   def abstractify(x):
-    return ShapedArray(onp.shape(x), onp.result_type(x))
+    return ShapedArray(onp.shape(x), dtypes.result_type(x))
   args_flat, in_tree = tree_flatten((args, kwargs))
   fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
   out = pe.abstract_eval_fun(fun.call_wrapped, *map(abstractify, args_flat))

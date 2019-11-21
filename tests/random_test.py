@@ -67,7 +67,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     if not FLAGS.jax_enable_x64 and np.issubdtype(dtype, onp.float64):
       raise SkipTest("can't test float64 agreement")
 
-    bits_dtype = onp.uint32 if onp.finfo(dtype).bits == 32 else onp.uint64
+    bits_dtype = onp.uint32 if np.finfo(dtype).bits == 32 else onp.uint64
     numpy_bits = onp.array(1., dtype).view(bits_dtype)
     xla_bits = api.jit(
         lambda: lax.bitcast_convert_type(onp.array(1., dtype), bits_dtype))()
@@ -107,7 +107,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     compiled_samples = crand(key)
 
     for samples in [uncompiled_samples, compiled_samples]:
-      self._CheckCollisions(samples, onp.finfo(dtype).nmant)
+      self._CheckCollisions(samples, np.finfo(dtype).nmant)
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.uniform().cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -286,7 +286,8 @@ class LaxRandomTest(jtu.JaxTestCase):
     pdf = scipy.stats.gamma.pdf(z, alpha)
     expected_grad = -cdf_dot / pdf
 
-    self.assertAllClose(actual_grad, expected_grad, check_dtypes=True, rtol=0.0005)
+    self.assertAllClose(actual_grad, expected_grad, check_dtypes=True,
+                        rtol=2e-2 if jtu.device_under_test() == "tpu" else 5e-4)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}

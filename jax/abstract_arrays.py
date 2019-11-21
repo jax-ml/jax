@@ -21,8 +21,8 @@ import six
 
 from . import core
 from . import ad_util
+from . import dtypes
 from . util import prod
-from .lib import xla_bridge
 
 
 def concretization_err_msg(fun):
@@ -40,14 +40,16 @@ def concretization_function_error(fun):
 
 
 class UnshapedArray(core.AbstractValue):
-  __slots__ = ['dtype']
-  array_abstraction_level = 3
+  __slots__ = ['dtype', 'weak_type']
+  array_abstraction_level = 2
 
-  def __init__(self, dtype):
-    self.dtype = onp.dtype(xla_bridge.canonicalize_dtype(dtype))
+  def __init__(self, dtype, weak_type=False):
+    self.dtype = onp.dtype(dtypes.canonicalize_dtype(dtype))
+    self.weak_type = weak_type
 
   def __eq__(self, other):
-    return type(self) is type(other) and self.dtype == other.dtype
+    return (type(self) is type(other) and self.dtype == other.dtype and
+            self.weak_type == other.weak_type)
 
   def __ne__(self, other):
     return not self == other
@@ -56,10 +58,11 @@ class UnshapedArray(core.AbstractValue):
     # can use hash(self.dtype) and rely on the fact that numpy reuses base dtype
     # objects, e.g. `onp.zeros(3).dtype is onp.zeros(4).dtype`, or we can use
     # the unique character code via hash(self.dtype.char)
-    return hash(self.dtype)
+    return hash((self.dtype, self.weak_type))
 
   def __repr__(self):
-    return '{}({})'.format(self.__class__.__name__, self.str_short())
+    return '{}({}{})'.format(self.__class__.__name__, self.str_short(),
+                             ", weak_type=True" if self.weak_type else "")
 
   _bool = _nonzero = concretization_function_error(bool)
   _float   = concretization_function_error(float)
@@ -75,20 +78,27 @@ class UnshapedArray(core.AbstractValue):
 
   def join(self, other):
     if self.dtype == other.dtype:
-      return self
+      if self.weak_type == other.weak_type:
+        return self
+      else:
+        return UnshapedArray(self.dtype, weak_type=False)
     else:
-      raise TypeError(other)
+      raise TypeError(self, other)
 
   def str_short(self):
     return self.dtype.name
 
+  def strip_weak_type(self):
+    """Returns a copy of the aval with weak_type=False."""
+    return UnshapedArray(self.dtype) if self.weak_type else self
+
 
 class ShapedArray(UnshapedArray):
   __slots__ = ['shape']
-  array_abstraction_level = 2
+  array_abstraction_level = 1
 
-  def __init__(self, shape, dtype):
-    self.dtype = onp.dtype(xla_bridge.canonicalize_dtype(dtype))
+  def __init__(self, shape, dtype, weak_type=False):
+    super(ShapedArray, self).__init__(dtype, weak_type=weak_type)
     self.shape = shape
 
   ndim = property(lambda self: len(self.shape))
@@ -96,24 +106,28 @@ class ShapedArray(UnshapedArray):
 
   def __eq__(self, other):
     return (type(self) is type(other)
-            and self.dtype == other.dtype and self.shape == other.shape)
+            and self.dtype == other.dtype and self.shape == other.shape
+            and self.weak_type == other.weak_type)
 
   def __hash__(self):
     # can use hash(self.dtype) and rely on the fact that numpy reuses base dtype
     # objects, e.g. `onp.zeros(3).dtype is onp.zeros(4).dtype`, or we can use
     # the unique character code via hash(self.dtype.char)
-    return hash((self.shape, self.dtype))
+    return hash((self.shape, self.dtype, self.weak_type))
 
   def at_least_vspace(self):
     return self
 
   def join(self, other):
     if self.shape == other.shape and self.dtype == other.dtype:
-      return self
+      if self.weak_type == other.weak_type:
+        return self
+      else:
+        return ShapedArray(self.shape, self.dtype, weak_type=False)
     elif self.dtype == other.dtype:
       return UnshapedArray(self.dtype)
     else:
-      raise TypeError(other)
+      raise TypeError(self, other)
 
   def str_short(self):
     shapestr = ','.join(map(str, self.shape))
@@ -128,41 +142,48 @@ class ShapedArray(UnshapedArray):
   def _len(self, ignored_tracer):
     return len(self)
 
+  def strip_weak_type(self):
+    return ShapedArray(self.shape, self.dtype) if self.weak_type else self
 
 class ConcreteArray(ShapedArray):
   __slots__ = ['val']
   array_abstraction_level = 0
 
-  def __init__(self, val):
+  def __init__(self, val, weak_type=False):
+    super(ConcreteArray, self).__init__(onp.shape(val), onp.result_type(val),
+                                        weak_type=weak_type)
+    # Note: canonicalized self.dtype doesn't necessarily match self.val
     self.val = val
-    self.shape = onp.shape(val)
-    # canonicalized self.dtype doesn't necessarily match self.val
-    self.dtype = onp.dtype(xla_bridge.canonicalize_dtype(onp.result_type(val)))
     assert self.dtype != onp.dtype('O')
 
   def __eq__(self, other):
     return (type(self) is type(other) and self.dtype == other.dtype
-            and self.shape == other.shape and onp.all(self.val == other.val))
+            and self.shape == other.shape and self.weak_type == other.weak_type
+            and onp.all(self.val == other.val))
 
   def __hash__(self):
     return id(self.val)
 
   def at_least_vspace(self):
-    return ShapedArray(self.shape, self.dtype)
+    return ShapedArray(self.shape, self.dtype, weak_type=self.weak_type)
 
   def join(self, other):
     if self == other:
       return self
     elif self.shape == other.shape and self.dtype == other.dtype:
-      return ShapedArray(self.shape, self.dtype)
+      return ShapedArray(self.shape, self.dtype,
+                         weak_type=self.weak_type and other.weak_type)
     elif self.dtype == other.dtype:
-      return UnshapedArray(self.dtype)
+      return UnshapedArray(self.dtype,
+                           weak_type=self.weak_type and other.weak_type)
     else:
-      raise TypeError(other)
+      raise TypeError(self, other)
 
   def str_short(self):
     return str(self.val)
 
+  def strip_weak_type(self):
+    return ConcreteArray(self.val) if self.weak_type else self
 
 class AbstractToken(core.AbstractValue): pass
 
@@ -170,21 +191,19 @@ abstract_token = AbstractToken()
 
 
 def make_shaped_array(x):
-  dtype = xla_bridge.canonicalize_dtype(onp.result_type(x))
+  dtype = dtypes.canonicalize_dtype(dtypes.result_type(x))
   return ShapedArray(onp.shape(x), dtype)
 
 def zeros_like_array(x):
-  dtype = xla_bridge.canonicalize_dtype(onp.result_type(x))
+  dtype = dtypes.canonicalize_dtype(dtypes.result_type(x))
   return onp.broadcast_to(onp.array(0, dtype), onp.shape(x))
 
-array_types = {onp.ndarray, onp.float64, onp.float32, onp.float16,
+array_types = {onp.ndarray, onp.bool_,
+               onp.int8, onp.int16, onp.int32, onp.int64,
+               onp.uint8, onp.uint16, onp.uint32, onp.uint64,
+               dtypes.bfloat16, onp.float16, onp.float32, onp.float64,
                onp.complex64, onp.complex128,
-               onp.int64, onp.int32, onp.int16, onp.int8,
-               onp.bool_, onp.uint64, onp.uint32, onp.uint16, onp.uint8,
-               onp.longlong, complex, float, int, bool}
-
-if six.PY2:
-  array_types.add(long)  # noqa: F821
+               onp.longlong}
 
 for t in array_types:
   core.pytype_aval_mappings[t] = ConcreteArray
@@ -208,3 +227,21 @@ def raise_to_shaped(aval):
     raise TypeError(type(aval))
 
 core.literalable_types.update(array_types)
+
+def make_abstract_python_scalar(x):
+  return ShapedArray((), dtypes.python_scalar_dtypes[type(x)],
+                     weak_type=True)
+
+def _zeros_like_python_scalar(x):
+  return onp.array(0, dtypes.python_scalar_dtypes[type(x)])
+
+def _make_concrete_python_scalar(x):
+  return ConcreteArray(
+    onp.array(x, dtype=dtypes.python_scalar_dtypes[type(x)]),
+    weak_type=True)
+
+for t in dtypes.python_scalar_dtypes.keys():
+  core.pytype_aval_mappings[t] = _make_concrete_python_scalar
+  ad_util.jaxval_zeros_likers[t] = _zeros_like_python_scalar
+
+core.literalable_types.update(dtypes.python_scalar_dtypes.keys())
