@@ -77,7 +77,6 @@ open](https://github.com/google/jax) by a growing number of
 * [Random numbers are different](#random-numbers-are-different)
 * [Mini-libraries](#mini-libraries)
 * [How it works](#how-it-works)
-* [What we're working on](#what-were-working-on)
 * [Current gotchas](#current-gotchas)
 * [Citing JAX](#citing-jax)
 
