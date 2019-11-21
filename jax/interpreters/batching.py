@@ -262,6 +262,8 @@ def broadcast(x, sz, axis):
 def moveaxis(x, src, dst):
   if core.get_aval(x) is core.abstract_unit:
     return core.unit
+  if src == dst:
+    return x
   src, dst = src % x.ndim, dst % x.ndim
   perm = [i for i in range(onp.ndim(x)) if i != src]
   perm.insert(dst, src)

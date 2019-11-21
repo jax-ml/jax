@@ -198,10 +198,11 @@ def zeros_like_array(x):
   dtype = dtypes.canonicalize_dtype(dtypes.result_type(x))
   return onp.broadcast_to(onp.array(0, dtype), onp.shape(x))
 
-array_types = {onp.ndarray, onp.float64, onp.float32, onp.float16,
+array_types = {onp.ndarray, onp.bool_,
+               onp.int8, onp.int16, onp.int32, onp.int64,
+               onp.uint8, onp.uint16, onp.uint32, onp.uint64,
+               dtypes.bfloat16, onp.float16, onp.float32, onp.float64,
                onp.complex64, onp.complex128,
-               onp.int64, onp.int32, onp.int16, onp.int8,
-               onp.bool_, onp.uint64, onp.uint32, onp.uint16, onp.uint8,
                onp.longlong}
 
 for t in array_types:
