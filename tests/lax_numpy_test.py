@@ -925,7 +925,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     m = lnp.array([1,2,3,4,5,6])
     args_maker = lambda: [m]
 
-    for repeats in [2, [1,3,2,1,1,2], [2], lnp.array([1,3,2,1,1,2]), lnp.array([2])]:
+    for repeats in [2, [1,3,2,1,1,2], [1,3,0,1,1,2], [2], lnp.array([1,3,2,1,1,2]), lnp.array([2])]:
       test_single(m, args_maker, repeats, None)
 
     m_rect = m.reshape((2,3))

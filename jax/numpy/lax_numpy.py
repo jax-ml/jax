@@ -1958,7 +1958,8 @@ def repeat(a, repeats, axis=None):
   for i, repeat in enumerate(repeats_tiled):
     if not isinstance(repeat, int):
       repeat = repeat.item()
-    ret = concatenate((ret, tile(a_splitted[i], repeat)))
+    if repeat != 0:
+      ret = concatenate((ret, tile(a_splitted[i], repeat)))
 
   return reshape(ret, new_shape)
 
