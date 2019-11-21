@@ -3778,7 +3778,7 @@ def _select_and_gather_add_translation(
                                          canonicalize_types=False)
 
   if double_word_reduction:
-    # XLA doesn't yet implement ReduceWindow on tuples (Google bug b/73062247), so
+    # TODO(b/73062247): XLA doesn't yet implement ReduceWindow on tuples, so
     # we implement a pair-wise ReduceWindow by packing two k-bit values into
     # 2k-bit unsigned integer using bit tricks.
     word_dtype = _UINT_DTYPES[nbits]
@@ -3852,7 +3852,7 @@ def _select_and_gather_add_translation(
     return c.Build()
 
 
-  assert select_prim is ge_p or select_prim is le_p
+  assert select_prim is ge_p or select_prim is le_p, select_prim
   init = -onp.inf if select_prim is ge_p else onp.inf
   out = c.ReduceWindow(pack(operand, tangents),
                        pack(const(c, dtype, init), const(c, dtype, 0)),
@@ -3885,12 +3885,30 @@ def _select_and_gather_add_transpose(
                                    window_strides, padding)
   return [result, None]
 
+def _select_and_gather_add_batching_rule(
+    batched_args, batch_dims, select_prim, window_dimensions, window_strides,
+    padding):
+  t, x = batched_args
+  t_bdim, x_bdim = batch_dims
+  size = next(a.shape[bdim] for a, bdim in zip(batched_args, batch_dims)
+              if bdim is not None)
+  t = batching.bdim_at_front(t, t_bdim, size)
+  x = batching.bdim_at_front(x, x_bdim, size)
+  window_dimensions = (1,) + window_dimensions
+  window_strides = (1,) + window_strides
+  out = _select_and_gather_add(t, x, select_prim, window_dimensions,
+                               window_strides, padding)
+  return (out, 0)
+
+
 select_and_gather_add_p = standard_primitive(
     _select_and_gather_add_shape_rule, _input_dtype, 'select_and_gather_add',
     _select_and_gather_add_translation)
 ad.primitive_jvps[select_and_gather_add_p] = _select_and_gather_add_jvp
 ad.primitive_transposes[select_and_gather_add_p] = \
-    _select_and_gather_add_transpose
+  _select_and_gather_add_transpose
+batching.primitive_batchers[select_and_gather_add_p] = \
+  _select_and_gather_add_batching_rule
 xla.backend_specific_translations['tpu'][select_and_gather_add_p] = partial(
   _select_and_gather_add_translation,
   max_bits=32)
