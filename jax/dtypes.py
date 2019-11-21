@@ -12,6 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Array type functions.
+#
+# JAX dtypes differ from NumPy in both:
+# a) their type promotion rules, and
+# b) the set of supported types (e.g., bfloat16),
+# so we need our own implementation that deviates from NumPy in places.
+
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
