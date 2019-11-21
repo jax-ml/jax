@@ -2325,39 +2325,41 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       raise SkipTest("requires python 3 (for unittest.mock)")
 
     @contextlib.contextmanager
-    def assert_highest_precision():
+    def assert_precision(expected_precision):
       with unittest.mock.patch.object(
           lax.dot_general_p, 'bind', wraps=lax.dot_general_p.bind) as wrapper:
         yield
         (_, kwargs), = wrapper.call_args_list
-        precision = kwargs['precision']
-        self.assertEqual(precision, lax.Precision.HIGHEST)
+        actual_precision = kwargs['precision']
+        self.assertEqual(actual_precision, expected_precision)
 
     ones_1d = onp.ones((2,))
     ones_2d = onp.ones((2, 2))
     ones_3d = onp.ones((2, 2, 2))
 
-    with assert_highest_precision():
+    with assert_precision(None):
+      lnp.dot(ones_1d, ones_1d)
+    with assert_precision(lax.Precision.HIGHEST):
       lnp.dot(ones_1d, ones_1d, precision=lax.Precision.HIGHEST)
-    with assert_highest_precision():
+    with assert_precision(lax.Precision.HIGHEST):
       lnp.dot(ones_3d, ones_3d, precision=lax.Precision.HIGHEST)
-    with assert_highest_precision():
+    with assert_precision(lax.Precision.HIGHEST):
       lnp.matmul(ones_2d, ones_2d, precision=lax.Precision.HIGHEST)
-    with assert_highest_precision():
+    with assert_precision(lax.Precision.HIGHEST):
       lnp.vdot(ones_1d, ones_1d, precision=lax.Precision.HIGHEST)
-    with assert_highest_precision():
+    with assert_precision(lax.Precision.HIGHEST):
       lnp.tensordot(ones_2d, ones_2d, axes=2, precision=lax.Precision.HIGHEST)
-    with assert_highest_precision():
+    with assert_precision(lax.Precision.HIGHEST):
       lnp.tensordot(
           ones_1d, ones_1d, axes=(0, 0), precision=lax.Precision.HIGHEST)
-    with assert_highest_precision():
+    with assert_precision(lax.Precision.HIGHEST):
       lnp.tensordot(
           ones_1d, ones_1d, axes=((0,), (0,)), precision=lax.Precision.HIGHEST)
-    with assert_highest_precision():
+    with assert_precision(lax.Precision.HIGHEST):
       lnp.einsum('i,i', ones_1d, ones_1d, precision=lax.Precision.HIGHEST)
-    with assert_highest_precision():
+    with assert_precision(lax.Precision.HIGHEST):
       lnp.einsum('ij,ij', ones_2d, ones_2d, precision=lax.Precision.HIGHEST)
-    with assert_highest_precision():
+    with assert_precision(lax.Precision.HIGHEST):
       lnp.inner(ones_1d, ones_1d, precision=lax.Precision.HIGHEST)
 
 # Most grad tests are at the lax level (see lax_test.py), but we add some here
