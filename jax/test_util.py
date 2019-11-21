@@ -67,7 +67,7 @@ def is_sequence(x):
   else:
     return True
 
-default_tolerance = {
+_default_tolerance = {
   onp.dtype(onp.bool_): 0,
   onp.dtype(onp.int8): 0,
   onp.dtype(onp.int16): 0,
@@ -85,9 +85,13 @@ default_tolerance = {
   onp.dtype(onp.complex128): 1e-15,
 }
 
-tpu_default_tolerance = default_tolerance.copy()
-tpu_default_tolerance[onp.dtype(onp.float32)] = 1e-3
-tpu_default_tolerance[onp.dtype(onp.complex64)] = 1e-3
+def default_tolerance():
+  if device_under_test() != "tpu":
+    return _default_tolerance
+  tol = _default_tolerance.copy()
+  tol[onp.dtype(onp.float32)] = 1e-3
+  tol[onp.dtype(onp.complex64)] = 1e-3
+  return tol
 
 default_gradient_tolerance = {
   onp.dtype(dtypes.bfloat16): 1e-1,
@@ -111,17 +115,15 @@ def tolerance(dtype, tol=None):
   if not isinstance(tol, dict):
     return tol
   tol = {onp.dtype(key): value for key, value in tol.items()}
-  default = (tpu_default_tolerance if device_under_test() == "tpu"
-             else default_tolerance)
   dtype = dtypes.canonicalize_dtype(onp.dtype(dtype))
-  return tol.get(dtype, default[dtype])
+  return tol.get(dtype, default_tolerance()[dtype])
 
 def _normalize_tolerance(tol):
   tol = tol or 0
   if isinstance(tol, dict):
     return {onp.dtype(k): v for k, v in tol.items()}
   else:
-    return {k: tol for k in default_tolerance.keys()}
+    return {k: tol for k in _default_tolerance.keys()}
 
 def join_tolerance(tol1, tol2):
   tol1 = _normalize_tolerance(tol1)

@@ -376,7 +376,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     empty_shape = any(isinstance(s, tuple) and 0 in s for s in shapes)
     tol = max(jtu.tolerance(dtype, tolerance) for dtype in dtypes)
     tol = functools.reduce(jtu.join_tolerance,
-                           [tolerance, tol, jtu.default_tolerance])
+                           [tolerance, tol, jtu.default_tolerance()])
     self._CheckAgainstNumpy(
       onp_op, lnp_op, args_maker,
       check_dtypes=check_dtypes and not scalar_arg and not empty_shape,
@@ -1057,10 +1057,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         return onp.trace(arg, offset, axis1, axis2, onp.float32).astype(lnp.bfloat16)
       else:
         return onp.trace(arg, offset, axis1, axis2, out_dtype)
-    #   t = out_dtype if out_dtype != lnp.bfloat16 else onp.float32
-    #   out = onp.trace(arg, offset, axis1, axis2, t)
-    #   return out.astype(out_t) if out_dtype else out
-    # onp_fun = lambda arg: onp.trace(arg, offset, axis1, axis2, out_dtype)
     lnp_fun = lambda arg: lnp.trace(arg, offset, axis1, axis2, out_dtype)
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
