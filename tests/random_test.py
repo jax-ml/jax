@@ -408,6 +408,9 @@ class LaxRandomTest(jtu.JaxTestCase):
     assert onp.unique(onp.ravel(keys)).shape == (20,)
 
   def testStaticShapeErrors(self):
+    if config.read("jax_disable_jit"):
+      raise SkipTest("test only relevant when jit enabled")
+
     @api.jit
     def feature_map(n, d, sigma=1.0, seed=123):
       key = random.PRNGKey(seed)

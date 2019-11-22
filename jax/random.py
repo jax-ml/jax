@@ -324,7 +324,7 @@ def randint(key, shape, minval, maxval, dtype=onp.int64):
 
 @partial(jit, static_argnums=(1, 4))
 def _randint(key, shape, minval, maxval, dtype):
-  _check_shape("randint", shape, minval.shape, maxval.shape)
+  _check_shape("randint", shape, onp.shape(minval), onp.shape(maxval))
   if not np.issubdtype(dtype, onp.integer):
     raise TypeError("randint only accepts integer dtypes.")
 
@@ -503,9 +503,9 @@ def truncated_normal(key, lower, upper, shape=None, dtype=onp.float64):
 @partial(jit, static_argnums=(3, 4))
 def _truncated_normal(key, lower, upper, shape, dtype):
   if shape is None:
-    shape = lax.broadcast_shapes(lower.shape, upper.shape)
+    shape = lax.broadcast_shapes(onp.shape(lower), onp.shape(upper))
   else:
-    _check_shape("truncated_normal", shape, lower.shape, upper.shape)
+    _check_shape("truncated_normal", shape, onp.shape(lower), onp.shape(upper))
 
   sqrt2 = onp.array(onp.sqrt(2), dtype)
   a = lax.erf(lax.convert_element_type(lower, dtype) / sqrt2)
@@ -541,9 +541,9 @@ def bernoulli(key, p=onp.float32(0.5), shape=None):
 @partial(jit, static_argnums=(2,))
 def _bernoulli(key, p, shape):
   if shape is None:
-    shape = p.shape
+    shape = onp.shape(p)
   else:
-    _check_shape("bernoulli", shape, p.shape)
+    _check_shape("bernoulli", shape, onp.shape(p))
 
   return uniform(key, shape, lax.dtype(p)) < p
 
@@ -573,9 +573,9 @@ def beta(key, a, b, shape=None, dtype=onp.float64):
 @partial(jit, static_argnums=(3, 4))
 def _beta(key, a, b, shape, dtype):
   if shape is None:
-    shape = lax.broadcast_shapes(a.shape, b.shape)
+    shape = lax.broadcast_shapes(onp.shape(a), onp.shape(b))
   else:
-    _check_shape("beta", shape, a.shape, b.shape)
+    _check_shape("beta", shape, onp.shape(a), onp.shape(b))
 
   a = lax.convert_element_type(a, dtype)
   b = lax.convert_element_type(b, dtype)
@@ -639,12 +639,12 @@ def _dirichlet(key, alpha, shape, dtype):
     raise ValueError(msg.format(onp.ndim(alpha)))
 
   if shape is None:
-    shape = alpha.shape[:-1]
+    shape = onp.shape(alpha)[:-1]
   else:
-    _check_shape("dirichlet", shape, alpha.shape[:-1])
+    _check_shape("dirichlet", shape, onp.shape(alpha)[:-1])
 
   alpha = lax.convert_element_type(alpha, dtype)
-  gamma_samples = gamma(key, alpha, shape + alpha.shape[-1:], dtype)
+  gamma_samples = gamma(key, alpha, shape + onp.shape(alpha)[-1:], dtype)
   return gamma_samples / np.sum(gamma_samples, axis=-1, keepdims=True)
 
 
@@ -833,14 +833,14 @@ def _gamma_grad(sample, a):
     samples = np.reshape(sample, -1)
     alphas = np.reshape(a, -1)
     grads = vmap(_gamma_grad_one)(samples, alphas)
-    return grads.reshape(a.shape)
+    return grads.reshape(onp.shape(a))
 
 @custom_transforms
 def _gamma_impl(key, a):
     alphas = np.reshape(a, -1)
     keys = split(key, onp.size(alphas))
     samples = vmap(_gamma_one)(keys, alphas)
-    return np.reshape(samples, np.shape(a))
+    return np.reshape(samples, onp.shape(a))
 
 defjvp(_gamma_impl, None,
        lambda tangent, ans, key, a, **kwargs: tangent * _gamma_grad(ans, a))
@@ -868,9 +868,9 @@ def gamma(key, a, shape=None, dtype=onp.float64):
 @partial(jit, static_argnums=(2, 3))
 def _gamma(key, a, shape, dtype):
   if shape is None:
-    shape = a.shape
+    shape = onp.shape(a)
   else:
-    _check_shape("gamma", shape, a.shape)
+    _check_shape("gamma", shape, onp.shape(a))
 
   a = lax.convert_element_type(a, dtype)
   if onp.shape(a) != shape:
@@ -970,7 +970,7 @@ def pareto(key, b, shape=None, dtype=onp.float64):
 @partial(jit, static_argnums=(2, 3))
 def _pareto(key, b, shape, dtype):
   if shape is None:
-    shape = b.shape
+    shape = onp.shape(b)
   else:
     _check_shape("pareto", shape)
 
@@ -1002,9 +1002,9 @@ def t(key, df, shape=(), dtype=onp.float64):
 @partial(jit, static_argnums=(2, 3))
 def _t(key, df, shape, dtype):
   if shape is None:
-    shape = df.shape
+    shape = onp.shape(df)
   else:
-    _check_shape("t", shape, df.shape)
+    _check_shape("t", shape, onp.shape(df))
 
   df = lax.convert_element_type(df, dtype)
   key_n, key_g = split(key)
