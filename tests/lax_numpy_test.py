@@ -1821,7 +1821,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # TODO(phawkins): we currently set dtype=False because we aren't as
     # aggressive about promoting to float64. It's not clear we want to mimic
     # Numpy here.
-    tol_spec = {onp.float32: 1e-5, onp.float64: 5e-6}
+    tol_spec = {onp.float32: 1e-4, onp.float64: 5e-6}
     tol = max(jtu.tolerance(a_dtype, tol_spec),
               jtu.tolerance(q_dtype, tol_spec))
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=False,
@@ -2079,10 +2079,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = self._GetArgsMaker(rng, [shape], [dtype])
     onp_fun = partial(onp.cov, rowvar=rowvar, ddof=ddof, bias=bias)
     lnp_fun = partial(lnp.cov, rowvar=rowvar, ddof=ddof, bias=bias)
+    tol = 7e-2 if jtu.device_under_test() == "tpu" else {onp.float64: 1e-13}
     self._CheckAgainstNumpy(
-        onp_fun, lnp_fun, args_maker, check_dtypes=True,
-        tol=7e-2 if jtu.device_under_test() == "tpu" else {onp.float64: 1e-13})
-    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+        onp_fun, lnp_fun, args_maker, check_dtypes=True, tol=tol)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True, atol=tol,
+                          rtol=tol)
 
   def testIssue967(self):
     self.assertRaises(TypeError, lambda: lnp.zeros(1.5))
