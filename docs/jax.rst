@@ -56,3 +56,10 @@ Parallelization (:code:`pmap`)
 ------------------------------
 
 .. autofunction:: pmap
+.. autofunction:: devices
+.. autofunction:: local_devices
+.. autofunction:: host_id
+.. autofunction:: host_ids
+.. autofunction:: device_count
+.. autofunction:: local_device_count
+.. autofunction:: host_count
