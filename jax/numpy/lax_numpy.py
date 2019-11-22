@@ -154,6 +154,7 @@ unsignedinteger = onp.unsignedinteger
 
 iinfo = dtypes.iinfo
 
+dtype = onp.dtype
 can_cast = dtypes.can_cast
 issubsctype = dtypes.issubsctype
 result_type = dtypes.result_type
