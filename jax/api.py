@@ -304,7 +304,7 @@ def xla_computation(fun: Callable,
     jax_args, in_tree = tree_flatten((args, kwargs))
     jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
     avals = map(xla.abstractify, jax_args)
-    pvals = [pe.PartialVal((aval, core.unit)) for aval in avals]
+    pvals = [pe.PartialVal(aval) for aval in avals]
     jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals,
                                          instantiate=instantiate_const_outputs)
     axis_env_ = make_axis_env(xla.jaxpr_replicas(jaxpr))
@@ -1391,8 +1391,7 @@ def make_jaxpr(fun: Callable) -> Callable[..., core.TypedJaxpr]:
   _check_callable(fun)
 
   def pv_like(x):
-    aval = xla.abstractify(x)
-    return pe.PartialVal((aval, core.unit))
+    return pe.PartialVal(xla.abstractify(x))
 
   @wraps(fun)
   def jaxpr_maker(*args, **kwargs):
@@ -1494,7 +1493,7 @@ class CustomTransformsFunction(object):
     # TODO(mattjj): instead of tracing to a jaxpr, use process_call
     args_flat, in_tree = tree_flatten(args)
     flat_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(self.fun), in_tree)
-    in_pvals = [pe.PartialVal((raise_to_shaped(core.get_aval(x)), core.unit))
+    in_pvals = [pe.PartialVal(raise_to_shaped(core.get_aval(x)))
                 for x in args_flat]
     jaxpr, _, consts = pe.trace_to_jaxpr(flat_fun, in_pvals, instantiate=True)
     outs = self.prim.bind(*it.chain(consts, args_flat), jaxpr=jaxpr,
@@ -1968,8 +1967,7 @@ def _make_graphviz(fun):
   # TODO(mattjj): handle subjaxprs
 
   def pv_like(x):
-    aval = xla.abstractify(x)
-    return pe.PartialVal((aval, core.unit))
+    return pe.PartialVal(xla.abstractify(x))
 
   id_names = ("id{}".format(i) for i in it.count())
 

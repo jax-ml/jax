@@ -87,9 +87,8 @@ def linearize(traceable, *primals, **kwargs):
   else:
     jvpfun, aux = jvp(traceable, has_aux=True)
 
-  in_pvals = (tuple(pe.PartialVal((None, p)) for p in primals)
-            + tuple(pe.PartialVal((get_aval(p).at_least_vspace(), core.unit))
-                    for p in primals))
+  in_pvals = (tuple(pe.PartialVal(p) for p in primals)
+            + tuple(pe.PartialVal(get_aval(p).at_least_vspace()) for p in primals))
   _, in_tree = tree_flatten(((primals, primals), {}))
   jvpfun_flat, out_tree = flatten_fun(jvpfun, in_tree)
   jaxpr, out_pvals, consts = pe.trace_to_jaxpr(jvpfun_flat, in_pvals)
@@ -454,7 +453,7 @@ def defvjp_all(prim, custom_vjp):
     if not prim.multiple_results:
       primals_out = [primals_out]
     out_avals = [raise_to_shaped(get_aval(x)) for x in primals_out]
-    ct_pvals = [pe.PartialVal((aval, core.unit)) for aval in out_avals]
+    ct_pvals = [pe.PartialVal(aval) for aval in out_avals]
     jaxpr, _, res = pe.trace_to_jaxpr(lu.wrap_init(vjp_py), ct_pvals, instantiate=True)
     tangents_out = fun_lin_p.bind(*it.chain(res, tangents), trans_jaxpr=jaxpr,
                                   num_res=len(res), out_avals=out_avals)
@@ -575,7 +574,7 @@ def jvp_jaxpr(jaxpr, nonzeros, instantiate):
   f_jvp, out_nonzeros = f_jvp_traceable(jvp(f, instantiate=instantiate), nonzeros)
   tangent_avals = [aval for aval, nz in zip(jaxpr.in_avals, nonzeros) if nz]
   avals_in = list(it.chain(jaxpr.in_avals, tangent_avals))
-  pvals = [pe.PartialVal((aval, core.unit)) for aval in avals_in]
+  pvals = [pe.PartialVal(aval) for aval in avals_in]
   jaxpr_out, pvals_out, literals_out = pe.trace_to_jaxpr(f_jvp, pvals, instantiate=True)
   avals_out, _ = unzip2(pvals_out)
   jaxpr_out = core.TypedJaxpr(jaxpr_out, literals_out, avals_in, avals_out)

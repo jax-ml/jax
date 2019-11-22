@@ -466,7 +466,7 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, *arg_specs):
                      "got device={} and backend={}".format(device, backend))
 
   abstract_args, arg_devices = unzip2(arg_specs)
-  pvals = [pe.PartialVal((aval, core.unit)) for aval in abstract_args]
+  pvals = [pe.PartialVal(aval) for aval in abstract_args]
   jaxpr, pvals, consts = pe.trace_to_jaxpr(
       fun, pvals, instantiate=False, stage_out_calls=True, bottom=True)
 
@@ -648,7 +648,7 @@ def lower_fun(fun):
   def f(c, *xla_args, **params):
     # TODO(mattjj): revise this 'calling convention'
     avals = [_array_aval_from_xla_shape(c.GetShape(x)) for x in xla_args]
-    pvals = [pe.PartialVal((a, core.unit)) for a in avals]
+    pvals = [pe.PartialVal(a) for a in avals]
     jaxpr, _, consts = pe.trace_to_jaxpr(
         lu.wrap_init(fun, params), pvals, instantiate=True)
     consts = _map(c.Constant, consts)
@@ -665,7 +665,7 @@ def _array_aval_from_xla_shape(xla_shape):
 
 def lower_fun_initial_style(fun):
   def f(c, axis_env, name_stack, avals, backend, *xla_args, **params):
-    pvals = [pe.PartialVal((a, core.unit)) for a in avals]
+    pvals = [pe.PartialVal(a) for a in avals]
     jaxpr, _, consts = pe.trace_to_jaxpr(
         lu.wrap_init(fun, params), pvals, instantiate=True)
     consts = _map(c.Constant, consts)

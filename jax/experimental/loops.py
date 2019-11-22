@@ -337,13 +337,13 @@ class _BodyTracer(object):
     # Set the scope._mutable_state to new tracing variables.
     for key, initial in self.carried_state_initial.items():
       mt_aval = _BodyTracer.abstractify(initial)
-      mt_pval = pe.PartialVal((mt_aval, core.unit))
+      mt_pval = pe.PartialVal(mt_aval)
       mt_var = self.trace.new_arg(mt_pval)
       self.carried_state_vars[key] = mt_var
       self.scope._mutable_state[key] = mt_var
 
     index_var_aval = _BodyTracer.abstractify(0)
-    index_var_pval = pe.PartialVal((index_var_aval, core.unit))
+    index_var_pval = pe.PartialVal(index_var_aval)
     self._index_var = self.trace.new_arg(index_var_pval)
 
   def end_tracing_body(self):

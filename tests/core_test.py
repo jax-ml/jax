@@ -36,8 +36,8 @@ from jax.interpreters import xla
 from jax.config import config
 config.parse_flags_with_absl()
 
-_ = pe.PartialVal((UnshapedArray(onp.float32), core.unit))
-__ = pe.PartialVal((ShapedArray((), onp.float32), core.unit))
+_ = pe.PartialVal(UnshapedArray(onp.float32))
+__ = pe.PartialVal(ShapedArray((), onp.float32))
 
 def call(f, *args):
   return jit(f)(*args)

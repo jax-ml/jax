@@ -54,7 +54,7 @@ _reduce = functools.reduce
 
 @cache()
 def _initial_style_jaxpr(fun: Callable, in_tree, in_avals):
-  in_pvals = [pe.PartialVal((aval, core.unit)) for aval in in_avals]
+  in_pvals = [pe.PartialVal(aval) for aval in in_avals]
   wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
   jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
     wrapped_fun, in_pvals, instantiate=True, stage_out_calls=True)
@@ -608,7 +608,7 @@ def _cond_partial_eval(trace, *tracers, true_jaxpr, false_jaxpr, linear):
   res_tracers = _map(trace.new_instantiated_const, res)
   true_res_tracers, false_res_tracers = split_list(res_tracers, [num_t_res])
 
-  out_tracers = [pe.JaxprTracer(trace, pe.PartialVal((pv, const)), None)
+  out_tracers = [pe.JaxprTracer(trace, pe.make_pval(pv, const), None)
                  for pv, const in zip(out_pvs, out_consts)]
 
   tops_lin, fops_lin = _map(tuple, split_list(linear, [len(true_jaxpr.in_avals)]))
@@ -969,9 +969,9 @@ def _scan_partial_eval(trace, *tracers, forward, length, num_consts, num_carry,
   # The residuals are treated as extensive outputs of jaxpr_1 (and extensive
   # inputs to jaxpr_2), but residuals that are loop-invariant can be hoisted.
   # TODO(mattjj): hoist other loop-invariant values here too (instantiate=False)
-  invariant_pvals = [pe.PartialVal((None, core.unit if uk else t.pval[1]))
+  invariant_pvals = [pe.PartialVal(core.unit if uk else t.pval[1])
                      for uk, t in zip(unknowns[:num_consts], tracers[:num_consts])]
-  other_pvals = [pe.PartialVal((a, core.unit)) for a in jaxpr_1.in_avals[num_consts:]]
+  other_pvals = [pe.PartialVal(a) for a in jaxpr_1.in_avals[num_consts:]]
   in_pvals_1 = invariant_pvals + other_pvals
   untyped_jaxpr_1, out_pvals_1, consts_1 = pe.trace_to_jaxpr(
       lu.wrap_init(core.jaxpr_as_fun(jaxpr_1)), in_pvals_1,
@@ -1017,7 +1017,7 @@ def _scan_partial_eval(trace, *tracers, forward, length, num_consts, num_carry,
   out_consts = out_carry + ys
   int_res_tracers = _map(trace.new_instantiated_const, intensive_residuals)
   ext_res_tracers = _map(trace.new_instantiated_const, extensive_residuals)
-  out_tracers = [pe.JaxprTracer(trace, pe.PartialVal((pv, const)), None)
+  out_tracers = [pe.JaxprTracer(trace, pe.make_pval(pv, const), None)
                  for pv, const in zip(out_pvs, out_consts)]
   linear_2 = ([False] * len(int_res_tracers) +
               [lin or not uk for uk, lin in zip(unknowns, linear)] +
@@ -1101,7 +1101,7 @@ def _transpose_scan_jaxpr(num_res1, num_c, num_res2, jaxpr):
   return _make_typed_jaxpr(transposed, res1_avals + c_avals + b_avals + res2_avals)
 
 def _make_typed_jaxpr(traceable: lu.WrappedFun, in_avals):
-  pvals = [pe.PartialVal((aval, core.unit)) for aval in in_avals]
+  pvals = [pe.PartialVal(aval) for aval in in_avals]
   jaxpr, pvals_out, consts = pe.trace_to_jaxpr(traceable, pvals, instantiate=True)
   out_avals, _ = unzip2(pvals_out)
   return core.TypedJaxpr(jaxpr, consts, in_avals, _map(raise_to_shaped, out_avals))
