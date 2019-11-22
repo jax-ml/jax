@@ -2068,7 +2068,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
          "shape": shape, "dtype": dtype, "rowvar": rowvar, "ddof": ddof,
          "bias": bias, "rng_factory": rng_factory}
         for shape in [(5,), (10, 5), (5, 10)]
-        for dtype in all_dtypes
+        for dtype in [onp.float16] #all_dtypes
         for rowvar in [True, False]
         for bias in [True, False]
         for ddof in [None, 2, 3]
@@ -2079,7 +2079,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = self._GetArgsMaker(rng, [shape], [dtype])
     onp_fun = partial(onp.cov, rowvar=rowvar, ddof=ddof, bias=bias)
     lnp_fun = partial(lnp.cov, rowvar=rowvar, ddof=ddof, bias=bias)
-    tol = 7e-2 if jtu.device_under_test() == "tpu" else {onp.float64: 1e-13}
+    tol = {onp.float64: 1e-13, onp.complex128: 1e-13}
+    tol = 7e-2 if jtu.device_under_test() == "tpu" else tol
+    tol = jtu.join_tolerance(tol, jtu.tolerance(dtype))
     self._CheckAgainstNumpy(
         onp_fun, lnp_fun, args_maker, check_dtypes=True, tol=tol)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True, atol=tol,
