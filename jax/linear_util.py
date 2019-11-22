@@ -148,8 +148,8 @@ class WrappedFun(object):
       gen = gen(*(gen_args + tuple(args)), **kwargs)
       args, kwargs = next(gen)
       stack.append((gen, out_store))
+    gen = None
 
-    del gen
     ans = self.f(*args, **dict(self.params, **kwargs))
     del args
     while stack:

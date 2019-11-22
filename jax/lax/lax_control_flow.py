@@ -1084,7 +1084,7 @@ def custom_root(f, initial_guess, solve, tangent_solve):
 
 
 def _root_abstract_eval(*args, **kwargs):
-  return args[sum(kwargs['const_lengths']):]
+  return _map(raise_to_shaped, args[sum(kwargs['const_lengths']):])
 
 
 def _root_impl(*args, **kwargs):
@@ -1253,7 +1253,7 @@ def custom_linear_solve(
 
 
 def _linear_solve_abstract_eval(*args, **kwargs):
-  return args[sum(kwargs['const_lengths']):]
+  return _map(raise_to_shaped, args[sum(kwargs['const_lengths']):])
 
 
 def _custom_linear_solve_impl(*args, **kwargs):

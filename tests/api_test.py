@@ -1326,6 +1326,163 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(ans1, onp.cos(2.), check_dtypes=False)
     self.assertAllClose(ans2, onp.cos(3.), check_dtypes=False)
 
+  def test_remat_basic(self):
+    @api.remat
+    def g(x):
+      return lax.sin(x), 3.
+
+    def f(x):
+      x, _ = g(x)
+      return x
+
+    ans = f(2.)
+    expected = onp.sin(2.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans, f_lin = api.linearize(f, 2.)
+    expected = onp.sin(2.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = f_lin(3.)
+    expected = onp.cos(2.) * 3.
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    jaxpr = api.make_jaxpr(f_lin)(3.)
+    self.assertIn('sin', str(jaxpr))
+
+  def test_remat_grad_python_control_flow(self):
+    @partial(api.remat, concrete=True)
+    def g(x):
+      if x > 0:
+        return lax.sin(x), 3.
+      else:
+        return lax.cos(x), 4.
+
+    def f(x):
+      x, _ = g(x)
+      return x
+
+    ans = f(2.)
+    expected = onp.sin(2.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = api.grad(f)(2.)
+    expected = onp.cos(2.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_remat_jit(self):
+    @api.remat
+    def g(x):
+      return lax.sin(lax.sin(x))
+
+    def f_(x):
+      return g(x)
+    f = api.jit(f_)
+
+    ans = f(2.)
+    expected = onp.sin(onp.sin(2.))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = api.grad(f)(2.)
+    expected = onp.cos(onp.sin(2.)) * onp.cos(2.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = api.jit(api.grad(f_))(2.)
+    expected = onp.cos(onp.sin(2.)) * onp.cos(2.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_remat_vmap(self):
+    @api.remat
+    def g(x):
+      return lax.sin(lax.sin(x))
+
+    x = onp.arange(3.)
+
+    ans = api.vmap(g)(x)
+    expected = onp.sin(onp.sin(x))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = api.jacfwd(g)(x)
+    expected = onp.diag(onp.cos(onp.sin(x)) * onp.cos(x))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = api.jacrev(g)(x)
+    expected = onp.diag(onp.cos(onp.sin(x)) * onp.cos(x))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_remat_higher_order_autodiff(self):
+    def f(x):
+      return lax.cos(lax.sin(x))
+    g = api.remat(f)
+
+    ans = api.grad(api.grad(g))(3.)
+    expected = api.grad(api.grad(f))(3.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_remat_scan(self):
+    to_scan = lambda c, x: (np.sin(c), None)
+
+    def f_noremat(x):
+      y, _ = lax.scan(to_scan, x, onp.arange(3.))
+      return y
+
+    def f_yesremat(x):
+      y, _ = lax.scan(api.remat(to_scan), x, onp.arange(3.))
+      return y
+
+    ans = f_yesremat(4.)
+    expected = f_noremat(4.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = api.grad(f_yesremat)(4.)
+    expected = api.grad(f_noremat)(4.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    jaxpr = api.make_jaxpr(api.linearize(f_yesremat, 4.)[1])(1.)
+    scan_eqn, = jaxpr.eqns
+    self.assertIn(' sin ', str(scan_eqn.params['jaxpr']))
+
+    jaxpr = api.make_jaxpr(api.vjp(f_yesremat, 4.)[1])(1.)
+    scan_eqn, = jaxpr.eqns
+    self.assertIn(' cos ', str(scan_eqn.params['jaxpr']))
+
+  def test_remat_no_redundant_flops(self):
+    # see https://github.com/google/jax/pull/1749#issuecomment-558267584
+
+    @api.jit
+    def g(x):
+      return f(2., x)
+
+    @api.remat
+    def f(x, y):
+      return np.sin(x) * y
+
+    # We swap out sin_p's impl rule to count how many times it's invoked
+    called = []
+    sin_impl = lax.sin_p.impl
+    try:
+      lax.sin_p.def_impl(lambda x: called.append(1) or sin_impl(x))
+      api.grad(g)(3.)
+    finally:
+      lax.sin_p.def_impl(sin_impl)
+    num_calls = len(called)
+    self.assertEqual(num_calls, 1)
+
+  def test_remat_binomial_checkpointing(self):
+    def binom_checkpoint(funs):
+      if len(funs) == 1:
+        return funs[0]
+      else:
+        f1 = binom_checkpoint(funs[:len(funs)//2])
+        f2 = binom_checkpoint(funs[len(funs)//2:])
+        return api.remat(lambda x: f1(f2(x)))
+
+    f1 = binom_checkpoint([np.sin, np.sin, np.sin, np.sin])
+    f2 = lambda x: np.sin(np.sin(np.sin(np.sin(x))))
+    x = 4.
+    self.assertAllClose(f1(x), f2(x), check_dtypes=False)
+    self.assertAllClose(api.grad(f1)(x), api.grad(f2)(x), check_dtypes=False)
+
 
 if __name__ == '__main__':
   absltest.main()
