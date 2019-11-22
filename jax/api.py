@@ -55,7 +55,7 @@ from .util import (unzip2, unzip3, curry, partial, safe_map, safe_zip,
 from .lib import xla_bridge as xb
 from .lib.xla_bridge import (device_count, local_device_count, devices, local_devices,
                              host_id, host_ids, host_count)
-from .abstract_arrays import ShapedArray, raise_to_shaped
+from .abstract_arrays import ConcreteArray, ShapedArray, raise_to_shaped
 from .interpreters import partial_eval as pe
 from .interpreters import xla
 from .interpreters import pxla
@@ -1982,3 +1982,14 @@ def eval_shape(fun, *args, **kwargs):
   out = pe.abstract_eval_fun(fun.call_wrapped, *map(abstractify, args_flat))
   out = [ShapeDtypeStruct(x.shape, x.dtype) for x in out]
   return tree_unflatten(out_tree(), out)
+
+
+def checkpoint(fun, concrete=False):
+  @wraps(fun)
+  def fun_remat(*args, **kwargs):
+    args_flat, in_tree = tree_flatten((args, kwargs))
+    flat_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
+    out_flat = pe.remat_call(flat_fun, *args_flat, concrete=concrete)
+    return tree_unflatten(out_tree(), out_flat)
+  return fun_remat
+remat = checkpoint

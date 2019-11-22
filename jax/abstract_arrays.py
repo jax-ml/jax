@@ -22,7 +22,7 @@ import six
 from . import core
 from . import ad_util
 from . import dtypes
-from . util import prod
+from . util import prod, partialmethod
 
 
 def concretization_err_msg(fun):
@@ -145,6 +145,9 @@ class ShapedArray(UnshapedArray):
   def strip_weak_type(self):
     return ShapedArray(self.shape, self.dtype) if self.weak_type else self
 
+def _forward_to_value(self, fun, ignored_tracer, *args):
+  return fun(self.val, *args)
+
 class ConcreteArray(ShapedArray):
   __slots__ = ['val']
   array_abstraction_level = 0
@@ -184,6 +187,15 @@ class ConcreteArray(ShapedArray):
 
   def strip_weak_type(self):
     return ConcreteArray(self.val) if self.weak_type else self
+
+  _bool = _nonzero = partialmethod(_forward_to_value, bool)
+  _float   = partialmethod(_forward_to_value, float)
+  _int     = partialmethod(_forward_to_value, int)
+  if six.PY2:
+    _long   = partialmethod(_forward_to_value, long)  # noqa: F821
+  _complex = partialmethod(_forward_to_value, complex)
+  _hex     = partialmethod(_forward_to_value, hex)
+  _oct     = partialmethod(_forward_to_value, oct)
 
 class AbstractToken(core.AbstractValue): pass
 
