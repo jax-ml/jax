@@ -593,7 +593,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     A = np.array(onp.random.randn(100, 3, 3), dtype=np.float32)
     b = np.array(onp.random.randn(100, 3), dtype=np.float32)
     x = np.linalg.solve(A, b)
-    self.assertAllClose(vmap(np.dot)(A, x), b, atol=1e-3, rtol=1e-3,
+    self.assertAllClose(vmap(np.dot)(A, x), b, atol=1e-3, rtol=1e-2,
                         check_dtypes=True)
     jac0 = jax.jacobian(np.linalg.solve, argnums=0)(A, b)
     jac1 = jax.jacobian(np.linalg.solve, argnums=1)(A, b)

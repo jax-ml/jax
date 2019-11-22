@@ -2571,7 +2571,7 @@ class LaxVmapTest(jtu.JaxTestCase):
                    feature_group_count=feature_group_count,
                    precision=lax.Precision.HIGHEST)
     self._CheckBatching(conv, 5, (lhs_bdim, rhs_bdim), (lhs_shape, rhs_shape),
-                        dtype, rng)
+                        dtype, rng, rtol=tol, atol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_from_dtype={}_to_dtype={}_bdims={}".format(
