@@ -2079,7 +2079,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = self._GetArgsMaker(rng, [shape], [dtype])
     onp_fun = partial(onp.cov, rowvar=rowvar, ddof=ddof, bias=bias)
     lnp_fun = partial(lnp.cov, rowvar=rowvar, ddof=ddof, bias=bias)
-    tol = {onp.float64: 1e-13, onp.complex128: 1e-13}
+    tol = {onp.float32: 1e-5, onp.float64: 1e-13, onp.complex128: 1e-13}
     tol = 7e-2 if jtu.device_under_test() == "tpu" else tol
     tol = jtu.join_tolerance(tol, jtu.tolerance(dtype))
     self._CheckAgainstNumpy(
