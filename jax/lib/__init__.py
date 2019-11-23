@@ -53,3 +53,7 @@ from jaxlib import lapack
 
 from jaxlib import pytree
 from jaxlib import cusolver
+try:
+  from jaxlib import cuda_prng
+except ImportError:
+  cuda_prng = None
