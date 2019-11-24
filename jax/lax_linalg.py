@@ -280,47 +280,38 @@ def eigh_jvp_rule(primals, tangents, lower, handle_degeneracies):
   w = w.astype(a.dtype)
   epsilon = 10 * np.finfo(a.dtype).resolution
 
+  dot = lax.dot if a.ndim == 2 else lax.batch_matmul
+  vdag_adot = dot(_H(v), a_dot)
+  vdag_adot_v = dot(vdag_adot, v)
+
   deltas = w[..., np.newaxis, :] - w[..., np.newaxis]
   same_subspace = (abs(deltas) < epsilon
                    if handle_degeneracies
                    else np.eye(a.shape[-1], dtype=bool))
-  # Note: if not handling degeneracies, this intentionally will result in
-  # nan/inf if there happen to be degenerate eigenvalues.
-  Fmat = np.where(same_subspace, 0.0, 1.0 / deltas)
-
-  dot = lax.dot if a.ndim == 2 else lax.batch_matmul
-  vdag_adot = dot(_H(v), a_dot)
-  vdag_adot_v = dot(vdag_adot, v)
-  C = Fmat * vdag_adot_v
-  dv_non_degenerate = dot(v, C)
 
   if handle_degeneracies:
+    # Note: this only works for the JVP rule -- we can't transpose it.
     # Diagonalize the perturbation in any degenerate subspaces.
-    A, dw = eigh_p.bind(vdag_adot_v * same_subspace, lower=lower,
-                        handle_degeneracies=handle_degeneracies)
-
+    v_dot, w_dot = eigh_p.bind(vdag_adot_v * same_subspace, lower=lower,
+                               handle_degeneracies=handle_degeneracies)
     # Reorder these into sorted order of the original eigenvalues.
     # TODO(shoyer): consider rewriting with an explicit loop over degenerate
     # subspaces instead?
-    v2 = dot(v, A)
+    v2 = dot(v, v_dot)
     w2 = np.einsum('...ij,...jk,...ki->...i', _H(v2), a_sym, v2).real
     order = np.argsort(w2, axis=-1)
-    A = np.take_along_axis(A, order[..., np.newaxis, :], axis=-1)
-    dw = np.take_along_axis(dw, order, axis=-1)
-
-    deltas_dot = dw[..., np.newaxis, :] - dw[..., np.newaxis]
-    same_dot_subspace = abs(deltas_dot) < epsilon
-    # If there are still some degenerate eigenvalue derivatives, the choice of
-    # basis is arbitrary (up to first order perturbations), so it's safe to set
-    # these terms in C_dot to 0.
-    Fmat_dot = np.where(same_dot_subspace, 0.0, 1.0 / deltas_dot)
-    vdag_adot_dv_non_degen = dot(vdag_adot, dv_non_degenerate)
-    C_dot = Fmat_dot * vdag_adot_dv_non_degen
-    dv = dot(v, np.where(same_subspace, C_dot, C))
-    v = dot(v, A)
+    v = np.take_along_axis(v2, order[..., np.newaxis, :], axis=-1)
+    dw = np.take_along_axis(w_dot, order, axis=-1)
+    deltas = w[..., np.newaxis, :] - w[..., np.newaxis]
+    same_subspace = abs(deltas) < epsilon
   else:
-    dv = dv_non_degenerate
     dw = np.diagonal(vdag_adot_v, axis1=-2, axis2=-1)
+
+  # Note: if not handling degeneracies, this intentionally will result in
+  # nan/inf if there happen to be degenerate eigenvalues.
+  Fmat = np.where(same_subspace, 0.0, 1.0 / deltas)
+  C = Fmat * vdag_adot_v
+  dv = dot(v, C)
 
   return (v, w), (dv, dw)
 
