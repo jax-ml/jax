@@ -17,6 +17,7 @@
 load("@org_tensorflow//tensorflow/core/platform:default/build_config.bzl", "pyx_library")
 load("@org_tensorflow//tensorflow:tensorflow.bzl", "pybind_extension")
 load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
+
 licenses(["notice"])
 
 package(default_visibility = ["//visibility:public"])
