@@ -16,10 +16,23 @@
 
 load("@org_tensorflow//tensorflow/core/platform:default/build_config.bzl", "pyx_library")
 load("@org_tensorflow//tensorflow:tensorflow.bzl", "pybind_extension")
-
+load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
 licenses(["notice"])
 
 package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "kernel_helpers",
+    hdrs = ["kernel_helpers.h"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    deps = [
+        "@com_google_absl//absl/base",
+        "@pybind11",
+    ],
+)
 
 pyx_library(
     name = "lapack",
@@ -30,8 +43,18 @@ pyx_library(
 py_library(
     name = "jaxlib",
     srcs = [
+        "cuda_prng.py",
         "cusolver.py",
         "version.py",
+    ],
+)
+
+py_library(
+    name = "gpu_support",
+    deps = [
+        ":cublas_kernels",
+        ":cuda_prng_kernels",
+        ":cusolver_kernels",
     ],
 )
 
@@ -65,6 +88,7 @@ pybind_extension(
     features = ["-use_header_modules"],
     module_name = "cublas_kernels",
     deps = [
+        ":kernel_helpers",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -91,6 +115,7 @@ pybind_extension(
     features = ["-use_header_modules"],
     module_name = "cusolver_kernels",
     deps = [
+        ":kernel_helpers",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -102,6 +127,37 @@ pybind_extension(
         "@local_config_cuda//cuda:cuda_headers",
         "@local_config_cuda//cuda:cudart",
         "@local_config_cuda//cuda:cusolver",
+    ],
+)
+
+cuda_library(
+    name = "cuda_prng_kernels_lib",
+    srcs = ["cuda_prng_kernels.cu.cc"],
+    hdrs = ["cuda_prng_kernels.h"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    deps = [
+        ":kernel_helpers",
+        "@local_config_cuda//cuda:cuda_headers",
+    ],
+)
+
+pybind_extension(
+    name = "cuda_prng_kernels",
+    srcs = ["cuda_prng_kernels.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    module_name = "cuda_prng_kernels",
+    deps = [
+        ":cuda_prng_kernels_lib",
+        ":kernel_helpers",
+        "@local_config_cuda//cuda:cuda_headers",
+        "@local_config_cuda//cuda:cudart",
         "@pybind11",
     ],
 )

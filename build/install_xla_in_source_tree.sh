@@ -57,9 +57,11 @@ cp -f "$(rlocation __main__/jaxlib/pytree.so)" "${TARGET}/jaxlib"
 if [[ -x "$(rlocation __main__/jaxlib/cusolver_kernels.so)" ]]; then
   cp -f "$(rlocation __main__/jaxlib/cublas_kernels.so)" "${TARGET}/jaxlib"
   cp -f "$(rlocation __main__/jaxlib/cusolver_kernels.so)" "${TARGET}/jaxlib"
+  cp -f "$(rlocation __main__/jaxlib/cuda_prng_kernels.so)" "${TARGET}/jaxlib"
 fi
 cp -f "$(rlocation __main__/jaxlib/version.py)" "${TARGET}/jaxlib"
 cp -f "$(rlocation __main__/jaxlib/cusolver.py)" "${TARGET}/jaxlib"
+cp -f "$(rlocation __main__/jaxlib/cuda_prng.py)" "${TARGET}/jaxlib"
 cp -f "$(rlocation org_tensorflow/tensorflow/compiler/xla/python/xla_extension.so)" \
   "${TARGET}/jaxlib"
 cp -f "$(rlocation org_tensorflow/tensorflow/compiler/xla/python/tpu_driver/client/tpu_client_extension.so)" \

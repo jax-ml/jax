@@ -25,6 +25,7 @@ from __future__ import division
 from __future__ import print_function
 
 from functools import partial
+import itertools
 
 import numpy as onp
 
@@ -35,9 +36,13 @@ from . import dtypes
 from .api import custom_transforms, defjvp, jit, vmap
 from .numpy.lax_numpy import _constant_like, asarray, stack
 from jax.lib import xla_bridge
+from jax.lib import cuda_prng
 from jax import core
+from jax import abstract_arrays
 from jax.scipy.special import logit
 from jax.scipy.linalg import cholesky
+from jax.interpreters import batching
+from jax.interpreters import xla
 
 
 def PRNGKey(seed):
@@ -92,9 +97,18 @@ def _bit_stats(bits):
 
 ### hash function and split
 
+def _threefry2x32_abstract_eval(*args):
+  if any(a.dtype != np.uint32 for a in args):
+    raise TypeError("Arguments to threefry2x32 must have uint32 type, got {}"
+                    .format(args))
+  if all(isinstance(arg, abstract_arrays.ShapedArray) for arg in args):
+    shape = lax._broadcasting_shape_rule(*args)
+    aval = abstract_arrays.ShapedArray(shape, np.dtype(np.uint32))
+  else:
+    aval = abstract_arrays.UnshapedArray(np.dtype(np.uint32))
+  return (aval,) * 2
 
-@jit
-def threefry_2x32(keypair, count):
+def _threefry2x32_lowering(key1, key2, x1, x2, use_rolled_loops=True):
   """Apply the Threefry 2x32 hash.
 
   Args:
@@ -104,13 +118,8 @@ def threefry_2x32(keypair, count):
   Returns:
     An array of dtype uint32 with the same shape as `count`.
   """
-  # Based on ThreeFry2x32 by phawkins@ in //.../xla/client/lib/prng.cc
-  key1, key2 = keypair
-  if not lax.dtype(key1) == lax.dtype(key2) == lax.dtype(count) == onp.uint32:
-    msg = "threefry_2x32 requires uint32 arguments, got {}"
-    raise TypeError(msg.format([lax.dtype(x) for x in [key1, key2, count]]))
-
-  rotate_left = _make_rotate_left(lax.dtype(count))
+  x = [x1, x2]
+  rotate_left = _make_rotate_left(onp.uint32)
 
   def apply_round(v, rot):
     v = v[:]
@@ -119,23 +128,10 @@ def threefry_2x32(keypair, count):
     v[1] = v[0] ^ v[1]
     return v
 
-  odd_size = count.size % 2
-  if odd_size:
-    x = list(np.split(np.concatenate([count.ravel(), onp.uint32([0])]), 2))
-  else:
-    x = list(np.split(count.ravel(), 2))
 
   rotations = [onp.array([13, 15, 26, 6], dtype=onp.uint32),
                onp.array([17, 29, 16, 24], dtype=onp.uint32)]
   ks = [key1, key2, key1 ^ key2 ^ onp.uint32(0x1BD11BDA)]
-
-  # TODO(mattjj): see https://github.com/google/jax/issues/1267, as a hopefully
-  # temporary workaround for the facts that (1) XLA:CPU compile time is too slow
-  # with unrolled loops and (2) XLA:GPU execution time is too slow with rolled
-  # loops, we switch on whether the default backend is CPU or GPU. If this kind
-  # of switch ends up sticking around, we should take into account #1211 and put
-  # the switch in the translation rule rather than here in the traceable.
-  use_rolled_loops = xla_bridge.get_backend().platform == "cpu"
 
   x[0] = x[0] + ks[0]
   x[1] = x[1] + ks[1]
@@ -176,6 +172,56 @@ def threefry_2x32(keypair, count):
     x[0] = x[0] + ks[2]
     x[1] = x[1] + ks[0] + onp.uint32(5)
 
+  return tuple(x)
+
+
+def _threefry2x32_gpu_translation_rule(c, k1, k2, x1, x2):
+  shape = lax.broadcast_shapes(
+      c.GetShape(k1).dimensions(), c.GetShape(k2).dimensions(),
+      c.GetShape(x1).dimensions(), c.GetShape(x2).dimensions())
+  rank = len(shape)
+  def _broadcast(x):
+    ndims = c.GetShape(x).rank()
+    return c.BroadcastInDim(x, shape, tuple(range(rank - ndims, rank)))
+  return cuda_prng.threefry2x32(
+      c, (_broadcast(k1), _broadcast(k2)), (_broadcast(x1), _broadcast(x2)))
+
+threefry2x32_p = core.Primitive("threefry2x32")
+threefry2x32_p.multiple_results = True
+threefry2x32_p.def_impl(partial(xla.apply_primitive, threefry2x32_p))
+threefry2x32_p.def_abstract_eval(_threefry2x32_abstract_eval)
+batching.defbroadcasting(threefry2x32_p)
+xla.translations[threefry2x32_p] = xla.lower_fun(
+    partial(_threefry2x32_lowering, use_rolled_loops=False), instantiate=True)
+xla.backend_specific_translations['cpu'][threefry2x32_p] = xla.lower_fun(
+    partial(_threefry2x32_lowering, use_rolled_loops=True), instantiate=True)
+if cuda_prng:
+  xla.backend_specific_translations['gpu'][threefry2x32_p] = \
+      _threefry2x32_gpu_translation_rule
+
+@jit
+def threefry_2x32(keypair, count):
+  """Apply the Threefry 2x32 hash.
+
+  Args:
+    keypair: a pair of 32bit unsigned integers used for the key.
+    count: an array of dtype uint32 used for the counts.
+
+  Returns:
+    An array of dtype uint32 with the same shape as `count`.
+  """
+  key1, key2 = keypair
+  if not lax.dtype(key1) == lax.dtype(key2) == lax.dtype(count) == onp.uint32:
+    msg = "threefry_2x32 requires uint32 arguments, got {}"
+    raise TypeError(msg.format([lax.dtype(x) for x in [key1, key2, count]]))
+
+  odd_size = count.size % 2
+  if odd_size:
+    x = list(np.split(np.concatenate([count.ravel(), onp.uint32([0])]), 2))
+  else:
+    x = list(np.split(count.ravel(), 2))
+
+  x = threefry2x32_p.bind(key1, key2, x[0], x[1])
   out = np.concatenate(x)
   assert out.dtype == onp.uint32
   return lax.reshape(out[:-1] if odd_size else out, count.shape)

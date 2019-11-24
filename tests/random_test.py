@@ -95,6 +95,17 @@ class LaxRandomTest(jtu.JaxTestCase):
         onp.uint32([0x243f6a88, 0x85a308d3]))
     self.assertEqual(expected, result_to_hex(result))
 
+  def testThreefry2x32Large(self):
+    n = 10000000
+    result = random.threefry_2x32(
+      (onp.uint32(0x13198a2e), onp.uint32(0x03707344)),
+      np.concatenate([
+        np.full((n,), 0x243f6a88, np.uint32),
+        np.full((n,), 0x85a308d3, np.uint32)
+      ]))
+    onp.testing.assert_equal(result[:n], onp.full((n,), 0xc4923a9c, dtype=onp.uint32))
+    onp.testing.assert_equal(result[n:], onp.full((n,), 0x483df7a0, dtype=onp.uint32))
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
       for dtype in [onp.float32, onp.float64]))

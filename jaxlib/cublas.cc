@@ -28,6 +28,7 @@ limitations under the License.
 #include "include/pybind11/numpy.h"
 #include "include/pybind11/pybind11.h"
 #include "include/pybind11/stl.h"
+#include "jaxlib/kernel_helpers.h"
 
 namespace jax {
 namespace {
@@ -184,27 +185,6 @@ int SizeOfType(Type type) {
     case Type::C128:
       return sizeof(cuDoubleComplex);
   }
-}
-
-// Descriptor objects are opaque host-side objects used to pass data from JAX
-// to the custom kernel launched by XLA. Currently simply treat host-side
-// structures as byte-strings; this is not portable across architectures. If
-// portability is needed, we could switch to using a representation such as
-// protocol buffers or flatbuffers.
-
-// Packs a descriptor object into a py::bytes structure.
-template <typename T>
-py::bytes PackDescriptor(const T& descriptor) {
-  return py::bytes(absl::bit_cast<const char*>(&descriptor), sizeof(T));
-}
-
-// Unpacks a descriptor object from a byte string.
-template <typename T>
-const T* UnpackDescriptor(const char* opaque, size_t opaque_len) {
-  if (opaque_len != sizeof(T)) {
-    throw std::runtime_error("Invalid size for linalg operation descriptor.");
-  }
-  return absl::bit_cast<const T*>(opaque);
 }
 
 // Builds an array of pointers to each array in a batch, in device memory.
@@ -388,11 +368,6 @@ void GetrfBatched(cudaStream_t stream, void** buffers, const char* opaque,
       break;
     }
   }
-}
-
-template <typename T>
-py::capsule EncapsulateFunction(T* fn) {
-  return py::capsule(absl::bit_cast<void*>(fn), "xla._CUSTOM_CALL_TARGET");
 }
 
 py::dict Registrations() {
