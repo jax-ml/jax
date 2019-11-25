@@ -79,25 +79,25 @@ def array_result_handler(aval): return partial(DeviceArray, raise_to_shaped(aval
 xla_result_handlers[ShapedArray] = array_result_handler
 xla_result_handlers[ConcreteArray] = array_result_handler
 
-def device_put(x, device=None, backend=None):
+def device_put(x, device=None):
   x = canonicalize_dtype(x)
   try:
-    return device_put_handlers[type(x)](x, device, backend=backend)
+    return device_put_handlers[type(x)](x, device)
   except KeyError:
     raise TypeError("No device_put handler for type: {}".format(type(x)))
 
 device_put_handlers = {}
 device_put_handlers[core.Unit] = \
-    lambda _, device, backend=None: xc.Buffer.from_pyval(
-        (), device, backend=xb.get_backend(backend))
-def _device_put_array(x, device, backend=None):
-  return xc.Buffer.from_pyval(x, device, backend=xb.get_backend(backend))
+    lambda _, device: xc.Buffer.from_pyval(
+        (), device, backend=xb.get_device_backend(device))
+def _device_put_array(x, device):
+  return xc.Buffer.from_pyval(x, device, backend=xb.get_device_backend(device))
 for _t in array_types:
   device_put_handlers[_t] = _device_put_array
 
-def _device_put_scalar(x, device, backend=None):
+def _device_put_scalar(x, device):
   return xc.Buffer.from_pyval(dtypes.coerce_to_array(x), device,
-                              backend=xb.get_backend(backend))
+                              backend=xb.get_device_backend(device))
 for _t in dtypes.python_scalar_dtypes.keys():
   device_put_handlers[_t] = _device_put_array
 
@@ -186,8 +186,7 @@ def primitive_computation(prim, *avals, **params):
 
 def _execute_compiled_primitive(prim, compiled, backend, result_handler, *args):
   device, = compiled.local_devices()
-  input_bufs = [device_put(x, device, backend=backend) for x in args
-                if x is not token]
+  input_bufs = [device_put(x, device) for x in args if x is not token]
   out_buf = compiled.Execute(input_bufs)
   if FLAGS.jax_debug_nans:
     check_nans(prim, out_buf.destructure() if prim.multiple_results else out_buf)
@@ -425,8 +424,7 @@ def _pval_to_result_handler(pval):
 
 def _execute_compiled(compiled, backend, handlers, tuple_args, *args):
   device, = compiled.local_devices()
-  input_bufs = [device_put(x, device, backend=backend) for x in args
-                if x is not token]
+  input_bufs = [device_put(x, device) for x in args if x is not token]
   if tuple_args:
     input_bufs = [make_tuple(input_bufs, device, backend)]
   out_bufs = compiled.Execute(input_bufs).destructure()
@@ -435,7 +433,7 @@ def _execute_compiled(compiled, backend, handlers, tuple_args, *args):
 
 def _execute_replicated(compiled, backend, handlers, tuple_args, *args):
   input_bufs = [
-      [device_put(x, device, backend=backend) for x in args if x is not token]
+      [device_put(x, device) for x in args if x is not token]
       for device in compiled.local_devices()]
   if tuple_args:
     input_bufs = [[make_tuple(bufs, device, backend)] for bufs, device in
@@ -710,29 +708,29 @@ def _device_array_constant_handler(c, val, canonicalize_types=True):
   return c.Constant(onp.asarray(val), canonicalize_types=canonicalize_types)
 xb.register_constant_handler(DeviceArray, _device_array_constant_handler)
 
-def _device_put_device_array(x, device, backend):
+def _device_put_device_array(x, device):
   # TODO(skye): we're assuming the DeviceBuffers without "platform" are
   # XrtBuffers. Figure out a less risky way to deal with XrtBuffers.
   if (not hasattr(x.device_buffer, "platform") or
-      xb.get_backend(backend).platform == x.device_buffer.platform()):
+      xb.get_device_backend(device).platform == x.device_buffer.platform()):
     if device is None or x.device_buffer.device() == device:
       return x.device_buffer
     else:
       return x.device_buffer.copy_to_device(device)
   else:
    # Buffers from different XLA backends are passed through the host.
-   return xc.Buffer.from_pyval(x, device, backend=xb.get_backend(backend))
+   return xc.Buffer.from_pyval(x, device, backend=xb.get_device_backend(device))
 device_put_handlers[DeviceArray] = _device_put_device_array
 
 
-def _device_put_impl(x, device=None, backend=None):
+def _device_put_impl(x, device=None):
   try:
     a = abstractify(x)
   except TypeError:
     raise TypeError("Argument '{}' of type {} is not a valid JAX type"
                     .format(x, type(x)))
   handler = aval_to_result_handler(a)
-  return handler(device_put(x, device, backend=backend))
+  return handler(device_put(x, device))
 
 device_put_p = core.Primitive('device_put')
 device_put_p.def_impl(_device_put_impl)
