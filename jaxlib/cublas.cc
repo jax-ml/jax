@@ -28,18 +28,13 @@ limitations under the License.
 #include "include/pybind11/numpy.h"
 #include "include/pybind11/pybind11.h"
 #include "include/pybind11/stl.h"
+#include "jaxlib/gpu_kernel_helpers.h"
 #include "jaxlib/kernel_helpers.h"
 
 namespace jax {
 namespace {
 
 namespace py = pybind11;
-
-void ThrowIfError(cudaError_t error) {
-  if (error != cudaSuccess) {
-    throw std::runtime_error("CUDA operation failed");
-  }
-}
 
 void ThrowIfErrorStatus(cublasStatus_t status) {
   switch (status) {

@@ -16,6 +16,7 @@ limitations under the License.
 #include <cstddef>
 
 #include "jaxlib/cuda_prng_kernels.h"
+#include "jaxlib/gpu_kernel_helpers.h"
 #include "jaxlib/kernel_helpers.h"
 
 namespace jax {
@@ -123,6 +124,7 @@ void CudaThreeFry2x32(cudaStream_t stream, void** buffers, const char* opaque,
   ThreeFry2x32Kernel<<<grid_dim, block_dim, /*dynamic_shared_mem_bytes=*/0,
                        stream>>>(keys[0], keys[1], data[0], data[1], out[0],
                                  out[1], descriptor.n);
+  ThrowIfError(cudaGetLastError());
 }
 
 }  // namespace jax
