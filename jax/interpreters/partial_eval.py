@@ -294,28 +294,6 @@ def merge_pvals(val, pval):
   else:
     raise TypeError(pv)
 
-def join_pvals(pval1, pval2):
-  pv1, const1 = pval1
-  pv2, const2 = pval2
-  if pv1 is None and pv2 is None:
-    aval1, aval2 = core.get_aval(const1), core.get_aval(const2)
-    if aval1 == aval2:
-      return pval1  # both pvals known, equal constants
-    else:
-      aval = core.lattice_join(aval1, aval2)
-      return PartialVal((aval, unit))  # both pvals known, different constants
-  elif pv1 is None and isinstance(pv2, AbstractValue):
-    aval = pv2
-    return PartialVal((aval, unit))  # first pval known, second not known
-  elif isinstance(pv1, AbstractValue) and pv2 is None:
-    aval = pv1
-    return PartialVal((aval, unit))  # first pval not known, second known
-  elif isinstance(pv1, AbstractValue) and isinstance(pv2, AbstractValue):
-    aval = core.lattice_join(pv1, pv2)
-    return PartialVal((aval, unit))  # neither is known
-  else:
-    raise TypeError((pval1, pval2))
-
 def partial_val_aval(pv, const):
   if isinstance(pv, AbstractValue):
     return pv
