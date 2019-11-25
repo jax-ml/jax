@@ -352,6 +352,20 @@ def eqn_replicas(eqn):
   else:
     return 1
 
+def jaxpr_has_pmap(jaxpr):
+  return any(eqn_has_pmap(eqn) for eqn in jaxpr.eqns)
+
+def eqn_has_pmap(eqn):
+  if eqn.bound_subjaxprs:
+    (subjaxpr, _, _), = eqn.bound_subjaxprs
+    return jaxpr_has_pmap(subjaxpr)
+  elif eqn.primitive in initial_style_translations:
+    return any(jaxpr_has_pmap(param if type(param) is core.Jaxpr else param.jaxpr)
+               for param in eqn.params.values()
+               if type(param) in (core.Jaxpr, core.TypedJaxpr))
+  else:
+    return 'pmap' in eqn.primitive.name
+
 
 ### xla_call underlying jit
 
@@ -384,6 +398,11 @@ def _xla_callable(fun, device, backend, *abstract_args):
     raise ValueError(msg.format(num_replicas, xb.device_count(backend)))
   axis_env = AxisEnv(nreps, [], [])
 
+  if xb.host_count() > 1 and (nreps > 1 or jaxpr_has_pmap(jaxpr)):
+    raise NotImplementedError(
+        "jit of multi-host pmap not implemented (and jit-of-pmap can cause "
+        "extra data movement anyway, so maybe you don't want it after all).")
+
   tuple_args = len(abstract_args) > 100  # pass long arg lists as tuple for TPU
 
   c = xb.make_computation_builder("jit_{}".format(fun.__name__))
@@ -392,12 +411,14 @@ def _xla_callable(fun, device, backend, *abstract_args):
   out_nodes = jaxpr_subcomp(c, jaxpr, backend, axis_env, xla_consts, (), *xla_args)
   built = c.Build(c.Tuple(*out_nodes))
 
+  if device is not None and nreps > 1:
+    raise ValueError("can't specify device assignment for jit-of-pmap")
   options = xb.get_compile_options(
       num_replicas=nreps, device_assignment=(device.id,) if device else None)
   compiled = built.Compile(compile_options=options, backend=xb.get_backend(backend))
 
   result_handlers = tuple(map(_pval_to_result_handler, pvals))
-  if axis_env.nreps == 1:
+  if nreps == 1:
     return partial(_execute_compiled, compiled, backend, result_handlers, tuple_args)
   else:
     return partial(_execute_replicated, compiled, backend, result_handlers, tuple_args)
