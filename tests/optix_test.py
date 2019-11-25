@@ -22,8 +22,12 @@ from absl.testing import absltest
 from jax import numpy as jnp
 from jax.experimental import optimizers
 from jax.experimental import optix
+import jax.test_util  # imported only for flags
 from jax.tree_util import tree_leaves
 import numpy as onp
+
+from jax.config import config
+config.parse_flags_with_absl()
 
 
 STEPS = 50
@@ -80,7 +84,7 @@ class OptixTest(absltest.TestCase):
 
     # Check equivalence.
     for x, y in zip(tree_leaves(jax_params), tree_leaves(optix_params)):
-      onp.testing.assert_allclose(x, y, rtol=1e-5)
+      onp.testing.assert_allclose(x, y, rtol=1e-4)
 
   def test_rmsprop(self):
     decay, eps = .9, 0.1

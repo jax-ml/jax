@@ -912,7 +912,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     Following numpy test suite from `test_repeat` at https://github.com/numpy/numpy/blob/master/numpy/core/tests/test_multiarray.py
     '''
     tol = 1e-5
-    
+
     def test_single(m, args_maker, repeats, axis):
       lax_ans = lnp.repeat(m, repeats, axis)
       numpy_ans = onp.repeat(m, repeats, axis)
@@ -925,7 +925,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     m = lnp.array([1,2,3,4,5,6])
     args_maker = lambda: [m]
 
-    for repeats in [2, [1,3,2,1,1,2], [2], lnp.array([1,3,2,1,1,2]), lnp.array([2])]:
+    for repeats in [2, [1,3,2,1,1,2], [1,3,0,1,1,2], [2], lnp.array([1,3,2,1,1,2]), lnp.array([2])]:
       test_single(m, args_maker, repeats, None)
 
     m_rect = m.reshape((2,3))
@@ -1821,7 +1821,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # TODO(phawkins): we currently set dtype=False because we aren't as
     # aggressive about promoting to float64. It's not clear we want to mimic
     # Numpy here.
-    tol_spec = {onp.float32: 1e-5, onp.float64: 5e-6}
+    tol_spec = {onp.float32: 1e-4, onp.float64: 5e-6}
     tol = max(jtu.tolerance(a_dtype, tol_spec),
               jtu.tolerance(q_dtype, tol_spec))
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=False,
@@ -2079,10 +2079,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = self._GetArgsMaker(rng, [shape], [dtype])
     onp_fun = partial(onp.cov, rowvar=rowvar, ddof=ddof, bias=bias)
     lnp_fun = partial(lnp.cov, rowvar=rowvar, ddof=ddof, bias=bias)
+    tol = {onp.float32: 1e-5, onp.float64: 1e-13, onp.complex128: 1e-13}
+    tol = 7e-2 if jtu.device_under_test() == "tpu" else tol
+    tol = jtu.join_tolerance(tol, jtu.tolerance(dtype))
     self._CheckAgainstNumpy(
-        onp_fun, lnp_fun, args_maker, check_dtypes=True,
-        tol=7e-2 if jtu.device_under_test() == "tpu" else {onp.float64: 1e-13})
-    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+        onp_fun, lnp_fun, args_maker, check_dtypes=True, tol=tol)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True, atol=tol,
+                          rtol=tol)
 
   def testIssue967(self):
     self.assertRaises(TypeError, lambda: lnp.zeros(1.5))
@@ -2389,6 +2392,68 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testBroadcastToIntIssue1548(self):
     self.assertAllClose(lnp.broadcast_to(1, (3, 2)), onp.ones((3, 2)),
                         check_dtypes=False)
+
+  def testPrecision(self):
+
+    def iter_eqns(jaxpr):
+      for eqn in jaxpr.eqns:
+        yield eqn
+        for subjaxpr, _, _ in eqn.bound_subjaxprs:
+          for sub_eqn in iter_eqns(subjaxpr):
+            yield sub_eqn
+
+    def assert_precision(expected, fun, *args):
+      jaxpr = jax.make_jaxpr(fun)(*args)
+      precision, = [eqn.params['precision'] for eqn in iter_eqns(jaxpr)
+                    if eqn.primitive == lax.dot_general_p]
+      self.assertEqual(precision, expected)
+
+    ones_1d = onp.ones((2,))
+    ones_2d = onp.ones((2, 2))
+    ones_3d = onp.ones((2, 2, 2))
+    HIGHEST = lax.Precision.HIGHEST
+
+    assert_precision(None, lnp.dot, ones_1d, ones_1d)
+    assert_precision(
+        HIGHEST,
+        partial(lnp.dot, precision=HIGHEST),
+        ones_1d, ones_1d)
+    assert_precision(
+        HIGHEST,
+        partial(lnp.dot, precision=HIGHEST),
+        ones_3d, ones_3d)
+    assert_precision(
+        HIGHEST,
+        partial(lnp.matmul, precision=HIGHEST),
+        ones_2d, ones_2d)
+    assert_precision(
+        HIGHEST,
+        partial(lnp.vdot, precision=HIGHEST),
+        ones_1d, ones_1d)
+    assert_precision(
+        HIGHEST,
+        partial(lnp.tensordot, axes=2, precision=HIGHEST),
+        ones_2d, ones_2d)
+    assert_precision(
+        HIGHEST,
+        partial(lnp.tensordot, axes=(0, 0), precision=HIGHEST),
+        ones_1d, ones_1d)
+    assert_precision(
+        HIGHEST,
+        partial(lnp.tensordot, axes=((0,), (0,)), precision=HIGHEST),
+        ones_1d, ones_1d)
+    assert_precision(
+        HIGHEST,
+        partial(lnp.einsum, 'i,i', precision=HIGHEST),
+        ones_1d, ones_1d)
+    assert_precision(
+        HIGHEST,
+        partial(lnp.einsum, 'ij,ij', precision=HIGHEST),
+        ones_2d, ones_2d)
+    assert_precision(
+        HIGHEST,
+        partial(lnp.inner, precision=HIGHEST),
+        ones_1d, ones_1d)
 
 # Most grad tests are at the lax level (see lax_test.py), but we add some here
 # as needed for e.g. particular compound ops of interest.

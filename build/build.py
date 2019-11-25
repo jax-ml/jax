@@ -177,6 +177,9 @@ build:mkl_open_source_only --define=tensorflow_mkldnn_contraction_kernel=1
 # Sets the default Apple platform to macOS.
 build --apple_platform_type=macos
 
+# Make Bazel print out all options from rc files.
+build --announce_rc
+
 # Disable enabled-by-default TensorFlow features that we don't care about.
 build --define=no_aws_support=true
 build --define=no_gcp_support=true
@@ -280,13 +283,6 @@ def main():
       parser,
       "enable_cuda",
       help_str="Should we build with CUDA enabled? Requires CUDA and CuDNN.")
-  add_boolean_argument(
-      parser,
-      "include_gpu_backend_if_cuda_enabled",
-      default=True,
-      help_str="If CUDA is enabled, should we build the GPU backend? This is "
-               "mostly useful to build a CPU-only build with a CUDA-enabled "
-               "toolchain.")
   parser.add_argument(
       "--cuda_path",
       default=None,
@@ -341,12 +337,12 @@ def main():
     config_args += ["--config=mkl_open_source_only"]
   if args.enable_cuda:
     config_args += ["--config=cuda"]
-    if args.include_gpu_backend_if_cuda_enabled:
-      config_args += ["--define=xla_python_enable_gpu=true"]
-  shell(
-    [bazel_path] + args.bazel_startup_options +
+    config_args += ["--define=xla_python_enable_gpu=true"]
+  command = ([bazel_path] + args.bazel_startup_options +
     ["run", "--verbose_failures=true"] + config_args +
     [":install_xla_in_source_tree", os.getcwd()])
+  print(" ".join(command))
+  shell(command)
   shell([bazel_path, "shutdown"])
 
 

@@ -1335,7 +1335,7 @@ class LaxTest(jtu.JaxTestCase):
       ]
       for rng_idx_factory in [partial(jtu.rand_int, max(shape))]
       for rng_factory in [jtu.rand_default]))
-  def testGather(self, shape, dtype, idxs, dnums, slice_sizes, rng_factory, 
+  def testGather(self, shape, dtype, idxs, dnums, slice_sizes, rng_factory,
                  rng_idx_factory):
     rng = rng_factory()
     rng_idx = rng_idx_factory()
@@ -2571,7 +2571,7 @@ class LaxVmapTest(jtu.JaxTestCase):
                    feature_group_count=feature_group_count,
                    precision=lax.Precision.HIGHEST)
     self._CheckBatching(conv, 5, (lhs_bdim, rhs_bdim), (lhs_shape, rhs_shape),
-                        dtype, rng)
+                        dtype, rng, rtol=tol, atol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_from_dtype={}_to_dtype={}_bdims={}".format(
@@ -2902,6 +2902,8 @@ class LaxVmapTest(jtu.JaxTestCase):
       for padding in ["VALID", "SAME"]
       for rng_factory in [jtu.rand_small]))
   def testSelectAndGatherAdd(self, dtype, padding, rng_factory):
+    if jtu.device_under_test() == "tpu" and dtype == dtypes.bfloat16:
+      raise SkipTest("bfloat16 _select_and_gather_add doesn't work on tpu")
     rng = rng_factory()
     all_configs = itertools.chain(
         itertools.product(

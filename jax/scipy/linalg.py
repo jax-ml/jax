@@ -30,24 +30,23 @@ from ..numpy import linalg as np_linalg
 
 _T = lambda x: np.swapaxes(x, -1, -2)
 
-@_wraps(scipy.linalg.cholesky)
-def cholesky(a, lower=False, overwrite_a=False, check_finite=True):
-  del overwrite_a, check_finite
+@partial(jit, static_argnums=(1,))
+def _cholesky(a, lower):
   a = np_linalg._promote_arg_dtypes(np.asarray(a))
   l = lax_linalg.cholesky(a if lower else np.conj(_T(a)), symmetrize_input=False)
   return l if lower else np.conj(_T(l))
 
+@_wraps(scipy.linalg.cholesky)
+def cholesky(a, lower=False, overwrite_a=False, check_finite=True):
+  del overwrite_a, check_finite
+  return _cholesky(a, lower)
 
 @_wraps(scipy.linalg.cho_factor)
 def cho_factor(a, lower=False, overwrite_a=False, check_finite=True):
   return (cholesky(a, lower=lower), lower)
 
-
-@_wraps(scipy.linalg.cho_solve, update_doc=False)
-def cho_solve(c_and_lower, b, overwrite_b=False, check_finite=True):
-  del overwrite_b, check_finite
-  c, lower = c_and_lower
-
+@partial(jit, static_argnums=(2,))
+def _cho_solve(c, b, lower):
   c, b = np_linalg._promote_arg_dtypes(np.asarray(c), np.asarray(b))
   c_shape = np.shape(c)
   b_shape = np.shape(b)
@@ -68,6 +67,11 @@ def cho_solve(c_and_lower, b, overwrite_b=False, check_finite=True):
                                   transpose_a=lower, conjugate_a=lower)
   return b[..., 0] if c_ndims != b_ndims else b
 
+@_wraps(scipy.linalg.cho_solve, update_doc=False)
+def cho_solve(c_and_lower, b, overwrite_b=False, check_finite=True):
+  del overwrite_b, check_finite
+  c, lower = c_and_lower
+  return _cho_solve(c, b, lower)
 
 @_wraps(scipy.linalg.svd)
 def svd(a, full_matrices=True, compute_uv=True, overwrite_a=False,
@@ -159,9 +163,9 @@ def lu_solve(lu_and_piv, b, trans=0, overwrite_b=False, check_finite=True):
   lu, pivots = lu_and_piv
   return _lu_solve(lu, pivots, b, trans)
 
-@_wraps(scipy.linalg.lu, update_doc=False)
-def lu(a, permute_l=False, overwrite_a=False, check_finite=True):
-  del overwrite_a, check_finite
+
+@partial(jit, static_argnums=(1,))
+def _lu(a, permute_l):
   a = np_linalg._promote_arg_dtypes(np.asarray(a))
   lu, pivots = lax_linalg.lu(a)
   dtype = lax.dtype(a)
@@ -176,11 +180,13 @@ def lu(a, permute_l=False, overwrite_a=False, check_finite=True):
   else:
     return p, l, u
 
+@_wraps(scipy.linalg.lu, update_doc=False)
+def lu(a, permute_l=False, overwrite_a=False, check_finite=True):
+  del overwrite_a, check_finite
+  return _lu(a, permute_l)
 
-@_wraps(scipy.linalg.qr)
-def qr(a, overwrite_a=False, lwork=None, mode="full", pivoting=False,
-       check_finite=True):
-  del overwrite_a, lwork, check_finite
+@partial(jit, static_argnums=(1, 2))
+def _qr(a, mode, pivoting):
   if pivoting:
     raise NotImplementedError(
         "The pivoting=True case of qr is not implemented.")
@@ -196,22 +202,28 @@ def qr(a, overwrite_a=False, lwork=None, mode="full", pivoting=False,
     return r
   return q, r
 
-@_wraps(scipy.linalg.solve)
-def solve(a, b, sym_pos=False, lower=False, overwrite_a=False, overwrite_b=False,
-          debug=False, check_finite=True):
-  del overwrite_a, overwrite_b, debug, check_finite
+@_wraps(scipy.linalg.qr)
+def qr(a, overwrite_a=False, lwork=None, mode="full", pivoting=False,
+       check_finite=True):
+  del overwrite_a, lwork, check_finite
+  return _qr(a, mode, pivoting)
+
+@partial(jit, static_argnums=(2, 3))
+def _solve(a, b, sym_pos, lower):
   if not sym_pos:
     return np_linalg.solve(a, b)
 
   a, b = np_linalg._promote_arg_dtypes(np.asarray(a), np.asarray(b))
   return cho_solve(cho_factor(a, lower=lower), b)
 
+@_wraps(scipy.linalg.solve)
+def solve(a, b, sym_pos=False, lower=False, overwrite_a=False, overwrite_b=False,
+          debug=False, check_finite=True):
+  del overwrite_a, overwrite_b, debug, check_finite
+  return _solve(a, b, sym_pos, lower)
 
-@_wraps(scipy.linalg.solve_triangular)
-def solve_triangular(a, b, trans=0, lower=False, unit_diagonal=False,
-                     overwrite_b=False, debug=None, check_finite=True):
-  del overwrite_b, debug, check_finite
-
+@partial(jit, static_argnums=(2, 3, 4))
+def _solve_triangular(a, b, trans, lower, unit_diagonal):
   if trans == 0 or trans == "N":
     transpose_a, conjugate_a = False, False
   elif trans == 1 or trans == "T":
@@ -235,6 +247,13 @@ def solve_triangular(a, b, trans=0, lower=False, unit_diagonal=False,
     return out[..., 0]
   else:
     return out
+
+@_wraps(scipy.linalg.solve_triangular)
+def solve_triangular(a, b, trans=0, lower=False, unit_diagonal=False,
+                     overwrite_b=False, debug=None, check_finite=True):
+  del overwrite_b, debug, check_finite
+  return _solve_triangular(a, b, trans, lower, unit_diagonal)
+
 
 
 @_wraps(scipy.linalg.tril)
