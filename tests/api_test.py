@@ -939,7 +939,7 @@ class APITest(jtu.JaxTestCase):
     c = onp.ones((2, 3, 3))
 
     jaxpr = api.make_jaxpr(lambda b, c: f(a, b, c))(b, c)
-    subjaxpr = next(eqn.bound_subjaxprs[0][0] for eqn in jaxpr.eqns
+    subjaxpr = next(eqn.bound_subjaxprs[0][0] for eqn in jaxpr.jaxpr.eqns
                     if eqn.bound_subjaxprs)
     self.assertEqual(len(subjaxpr.eqns), 1)
 
@@ -1283,8 +1283,48 @@ class APITest(jtu.JaxTestCase):
         "positional arguments.",
         lambda: partial(df, x=0.)(y=1.))
 
+
+class JaxprTest(jtu.JaxTestCase):
+
   def test_scalar_literals(self):
-    self.assertLen(api.make_jaxpr(lambda x: x + 2)(42).constvars, 0)
+    jaxpr = api.make_jaxpr(lambda x: x + 2)(42)
+    self.assertLen(jaxpr.jaxpr.constvars, 0)
+
+  def test_const(self):
+    def fun(x):
+      return (x, 1., np.zeros(1))
+
+    jaxpr = api.make_jaxpr(fun)(0.)
+    self.assertEqualIgnoreWhitespace(str(jaxpr), """
+    { lambda  b ;  ; a.
+        let
+        in [a, 1.0, b] }
+    """)
+
+  def test_cond(self):
+    def f(x):
+      return lax.cond(x >= 0.,
+                      x + 1.,
+                      lambda xt: xt + x,
+                      x + 2.,
+                      lambda xf: xf - x)
+    jaxpr = api.make_jaxpr(f)(3.)
+    self.assertEqualIgnoreWhitespace(str(jaxpr), """
+    { lambda  ;  ; a.
+        let b = ge a 0.0
+            c = add a 1.0
+            d = add a 2.0
+            e = cond[ true_jaxpr={ lambda  ;  ; b a.
+                                   let c = add a b
+                                   in [c] }
+                      false_jaxpr={ lambda  ;  ; b a.
+                                    let c = sub a b
+                                    in [c] }
+                      true_nconsts=1
+                      false_nconsts=1 ] b a c a d
+        in [e] }
+        """)
+
 
 if __name__ == '__main__':
   absltest.main()

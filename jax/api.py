@@ -1279,7 +1279,7 @@ def make_jaxpr(fun):
 
   Returns:
     A wrapped version of `fun` that when applied to example arguments returns a
-    jaxpr representation of `fun` on those arguments.
+    TypedJaxpr representation of `fun` on those arguments.
 
   A `jaxpr` is JAX's intermediate representation for program traces. The `jaxpr`
   language is based on the simply-typed first-order lambda calculus with
@@ -1299,20 +1299,16 @@ def make_jaxpr(fun):
   { lambda  ;  ; a.
     let b = cos a
         c = sin b
-    in c }
+    in [c] }
   >>> jax.make_jaxpr(jax.grad(f))(3.0)
-  { lambda b ;  ; a.
-    let c = pack a
-        (d) = id c
-        e = cos d
-        f = cos e
-        g = mul b f
-        h = neg g
-        i = sin d
-        j = mul h i
-        k = pack j
-        (l) = id k
-    in l }
+  { lambda  ;  ; a.
+    let b = cos a
+        c = cos b
+        d = mul 1.0 c
+        e = neg d
+        f = sin a
+        g = mul e f
+    in [g] }
   """
   _check_callable(fun)
 
@@ -1325,9 +1321,12 @@ def make_jaxpr(fun):
     wrapped = lu.wrap_init(fun)
     jax_args, in_tree = tree_flatten((args, kwargs))
     jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
-    pvals = map(pv_like, jax_args)
-    jaxpr, _, _ = pe.trace_to_jaxpr(jaxtree_fun, pvals)
-    return jaxpr
+    in_pvals = map(pv_like, jax_args)
+    jaxpr, out_pvals, consts = pe.trace_to_jaxpr(jaxtree_fun, in_pvals, instantiate=True)
+    out_avals = map(raise_to_shaped, unzip2(out_pvals)[0])
+    in_avals = tuple(raise_to_shaped(in_aval) for in_aval, _ in in_pvals)
+    typed_jaxpr = core.TypedJaxpr(jaxpr, consts, in_avals, out_avals)
+    return typed_jaxpr
 
   jaxpr_maker.__name__ = "make_jaxpr({})".format(jaxpr_maker.__name__)
   return jaxpr_maker

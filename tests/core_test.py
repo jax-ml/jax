@@ -19,7 +19,6 @@ from __future__ import print_function
 from collections import namedtuple
 import gc
 import operator
-from unittest import skip
 
 import numpy as onp
 from absl.testing import absltest
@@ -275,7 +274,6 @@ class CoreTest(jtu.JaxTestCase):
       self.assertEqual(gc.collect(), 0)
     finally:
       gc.set_debug(debug)
-
 
 if __name__ == '__main__':
   absltest.main()

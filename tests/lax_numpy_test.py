@@ -2396,7 +2396,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testPrecision(self):
 
     def iter_eqns(jaxpr):
-      for eqn in jaxpr.eqns:
+      for eqn in jaxpr.jaxpr.eqns:
         yield eqn
         for subjaxpr, _, _ in eqn.bound_subjaxprs:
           for sub_eqn in iter_eqns(subjaxpr):

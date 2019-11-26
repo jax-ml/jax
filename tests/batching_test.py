@@ -62,7 +62,7 @@ class BatchingTest(jtu.JaxTestCase):
         rtol={onp.float32:1e-2} if jtu.device_under_test() == "tpu" else None)
 
     jaxpr = make_jaxpr(matmat)(A, B)
-    self.assertEqual(len(jaxpr.eqns), 1)
+    self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
 
   def testPerExampleGradients(self):
     def predict(params, inputs):

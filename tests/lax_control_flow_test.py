@@ -348,7 +348,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
   def testForiLoopBatchedIssue1190(self):
     f = lambda x: lax.fori_loop(0, 4, lambda _, x: x + 1, x)
     jaxpr = api.make_jaxpr(api.vmap(f))(np.arange(3))
-    eqn = jaxpr.eqns[0]
+    eqn = jaxpr.jaxpr.eqns[0]
     self.assertIs(eqn.primitive, lax.while_p)
     self.assertEqual(eqn.params['cond_jaxpr'].in_avals[0].shape, ())
 
