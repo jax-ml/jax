@@ -22,6 +22,7 @@ import unittest
 import warnings
 import weakref
 
+from absl import logging
 from absl.testing import absltest
 import numpy as onp
 import six
@@ -1285,6 +1286,23 @@ class APITest(jtu.JaxTestCase):
 
   def test_scalar_literals(self):
     self.assertLen(api.make_jaxpr(lambda x: x + 2)(42).constvars, 0)
+
+  def test_grad_of_jit_compilation_caching(self):
+    if not hasattr(self, "assertLogs"):
+      raise unittest.SkipTest("test requires assertLogs (python 3)")
+
+    lax.add(1, 2)  # make sure some initial warnings are already printed
+
+    sin = api.jit(np.sin)
+
+    with self.assertLogs(level=logging.DEBUG) as l:
+      ans1 = api.grad(sin)(2.)
+      ans2 = api.grad(sin)(3.)
+    self.assertLen(l.output, 2)
+
+    self.assertAllClose(ans1, onp.cos(2.), check_dtypes=False)
+    self.assertAllClose(ans2, onp.cos(3.), check_dtypes=False)
+
 
 if __name__ == '__main__':
   absltest.main()
