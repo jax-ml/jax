@@ -210,3 +210,8 @@ def cache(call):
       cache[key] = (ans, fun.stores)
     return ans
   return memoized_fun
+
+@transformation
+def hashable_partial(x, *args):
+  ans = yield (x,) + args, {}
+  yield ans

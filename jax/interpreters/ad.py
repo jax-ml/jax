@@ -26,7 +26,8 @@ from ..ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like
 from ..abstract_arrays import raise_to_shaped
 from ..util import unzip2, unzip3, safe_map, safe_zip, partial, split_list
 from ..tree_util import build_tree, register_pytree_node, tree_map
-from ..linear_util import thunk, transformation, transformation_with_aux, wrap_init
+from ..linear_util import (thunk, transformation, transformation_with_aux,
+                           wrap_init, hashable_partial)
 from ..api_util import flatten_fun, flatten_fun_nokwargs
 from ..tree_util import tree_flatten, tree_unflatten
 
@@ -451,18 +452,18 @@ def traceable(num_primals, in_tree_def, *primals_and_tangents):
   out_flat, tree_def = tree_flatten((primal_out, tangent_out))
   yield out_flat, tree_def
 
+
 def call_transpose(primitive, params, jaxpr, consts, freevar_vals, args, ct):
   all_args, in_tree_def = tree_flatten((consts, freevar_vals, args, ct))
-  fun = wrap_init(partial(backward_pass, jaxpr))
+  fun = hashable_partial(wrap_init(backward_pass), jaxpr)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
   out_flat = primitive.bind(fun, *all_args, **params)
   return tree_unflatten(out_tree(), out_flat)
-
 primitive_transposes[core.call_p] = partial(call_transpose, call_p)
 
 def map_transpose(primitive, params, jaxpr, consts, freevar_vals, args, ct):
   all_args, in_tree_def = tree_flatten((consts, freevar_vals, args, ct))
-  fun = wrap_init(partial(backward_pass, jaxpr))
+  fun = hashable_partial(wrap_init(backward_pass), jaxpr)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
   out_flat = primitive.bind(fun, *all_args, **params)
   freevar_cts, arg_cts = tree_unflatten(out_tree(), out_flat)

@@ -22,6 +22,7 @@ import itertools as it
 import operator as op
 import os
 
+from absl import logging
 import numpy as onp
 import six
 from six.moves import xrange
@@ -381,8 +382,10 @@ def _xla_call_impl(fun, *args, **params):
 
 @lu.cache
 def _xla_callable(fun, device, backend, *abstract_args):
-  if FLAGS.jax_log_compiles:
-    print("Compiling {} for args {}.".format(fun.__name__, abstract_args))
+  log_priority = logging.WARNING if FLAGS.jax_log_compiles else logging.DEBUG
+  logging.log(log_priority,
+              "Compiling {} for args {}.".format(fun.__name__, abstract_args))
+
   pvals = [pe.PartialVal((aval, core.unit)) for aval in abstract_args]
   with core.new_master(pe.JaxprTrace, True) as master:
     jaxpr, (pvals, consts, env) = pe.trace_to_subjaxpr(fun, master, False).call_wrapped(pvals)
