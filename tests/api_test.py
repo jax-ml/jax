@@ -1311,18 +1311,18 @@ class JaxprTest(jtu.JaxTestCase):
     jaxpr = api.make_jaxpr(f)(3.)
     self.assertMultiLineStrippedEqual(str(jaxpr), """
     { lambda  ;  ; a.
-        let b = ge a 0.0
-            c = add a 1.0
-            d = add a 2.0
-            e = cond[ true_jaxpr={ lambda  ;  ; b a.
-                                   let c = add a b
-                                   in [c] }
-                      false_jaxpr={ lambda  ;  ; b a.
-                                    let c = sub a b
-                                    in [c] }
-                      true_nconsts=1
-                      false_nconsts=1 ] b a c a d
-        in [e] }
+      let b = ge a 0.0
+          c = add a 1.0
+          d = add a 2.0
+          e = cond[ false_jaxpr={ lambda  ;  ; b a.
+                                  let c = sub a b
+                                  in [c] }
+                    false_nconsts=1
+                    true_jaxpr={ lambda  ;  ; b a.
+                                 let c = add a b
+                                 in [c] }
+                    true_nconsts=1 ] b a c a d
+      in [e] }
         """)
 
 

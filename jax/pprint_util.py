@@ -64,7 +64,7 @@ def vcat(ps):
 
 def pp_kv_pairs(kv_pairs):
   if kv_pairs:
-    kv_pairs = vcat([pp('{}='.format(k)) >> pp(v) for k, v in kv_pairs])
+    kv_pairs = vcat([pp('{}='.format(k)) >> pp(kv_pairs[k]) for k in sorted(kv_pairs)])
     return pp('[ ') >> kv_pairs >> pp(' ]')
   else:
     return pp('')
