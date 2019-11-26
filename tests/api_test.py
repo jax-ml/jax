@@ -306,6 +306,23 @@ class APITest(jtu.JaxTestCase):
     api.device_put(x)
     api.device_put(y)
 
+  @jtu.skip_on_devices("cpu")
+  def test_device_put_across_platforms(self):
+    default_device = jax.devices()[0]
+    cpu_device = jax.devices("cpu")[0]
+
+    onp_arr = onp.array([1,2,3])
+    scalar = 1
+    device_arr = np.array([1,2,3])
+    assert device_arr.device_buffer.device() is default_device
+
+    for val in [onp_arr, device_arr, scalar]:
+      x = api.device_put(val, device=cpu_device)
+      self.assertEqual(x.device_buffer.device(), cpu_device)
+
+    y = api.device_put(x)
+    self.assertEqual(y.device_buffer.device(), default_device)
+
   @jtu.skip_on_devices("tpu")
   def test_jacobian(self):
     R = onp.random.RandomState(0).randn

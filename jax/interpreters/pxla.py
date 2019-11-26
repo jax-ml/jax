@@ -95,7 +95,7 @@ def shard_args(backend, devices, assignments, axis_size, tuple_args, args):
           else:
             buffers[r][a] = buf.copy_to_device(devices[r])
     else:
-      bufs = shard_arg_handlers[type(arg)](arg, devices, assignments, backend=backend)
+      bufs = shard_arg_handlers[type(arg)](arg, devices, assignments)
       for r, buf in enumerate(bufs):
         buffers[r][a] = buf
 
@@ -108,18 +108,17 @@ def shard_args(backend, devices, assignments, axis_size, tuple_args, args):
 
 shard_arg_handlers = {}
 shard_arg_handlers[core.Unit] = \
-    lambda x, devices, _, backend=None: [
-        xla.device_put(core.unit, d, backend=backend) for d in devices]
-def _shard_array(x, devices, assignments, backend=None):
+    lambda x, devices, _: [xla.device_put(core.unit, d) for d in devices]
+def _shard_array(x, devices, assignments):
   nrep = len(devices)
-  return (xla.device_put(x[assignments[r]], devices[r], backend=backend) for r in range(nrep))
+  return (xla.device_put(x[assignments[r]], devices[r]) for r in range(nrep))
 for _t in array_types:
   shard_arg_handlers[_t] = _shard_array
 
-def _shard_device_array(x, devices, assignments, backend=None):
+def _shard_device_array(x, devices, assignments):
   nrep = len(devices)
   xs = x._unstack()
-  return (xla.device_put(xs[assignments[r]], devices[r], backend=backend)
+  return (xla.device_put(xs[assignments[r]], devices[r])
           for r in range(nrep))
 shard_arg_handlers[xla.DeviceArray] = _shard_device_array
 

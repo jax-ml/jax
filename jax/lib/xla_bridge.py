@@ -145,6 +145,12 @@ def get_backend(platform=None):
     return backend(platform)
 
 
+def get_device_backend(device=None):
+  """Returns the Backend associated with `device`, or the default Backend."""
+  platform = device.platform if device else None
+  return get_backend(platform)
+
+
 def device_count(backend=None):
   """Returns the total number of devices.
 
