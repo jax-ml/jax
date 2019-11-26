@@ -77,3 +77,9 @@ py_library(
     srcs = ["experimental/vectorize.py"],
     deps = [":jax"],
 )
+
+py_library(
+    name = "loops",
+    srcs = ["experimental/loops.py"],
+    deps = [":jax"],
+)
