@@ -256,6 +256,8 @@ def update_numpydoc(docstr, fun, op):
 
   #Some numpy functions have an extra tab at the beginning of each line,
   #If this function is one of those we remove this extra tab from all the lines
+  if not hasattr(op, '__code__'):
+    return docstr
   if docstr[:4] == '    ':
     lines = docstr.split('\n')
     for idx, line in enumerate(lines):
@@ -289,6 +291,8 @@ def _wraps(fun, update_doc=True, lax_description=""):
       If False, include the numpy docstring verbatim.
   """
   def wrap(op):
+    if not hasattr(fun, '__doc__') or fun.__doc__ is None:
+      return op
     try:
       # Numpy doc comments have the form:
       # fn(x, y, z)          (optional)
