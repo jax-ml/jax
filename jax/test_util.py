@@ -620,13 +620,12 @@ class JaxTestCase(parameterized.TestCase):
     else:
       raise TypeError((type(x), type(y)))
 
-  def assertEqualIgnoreWhitespace(self, expected, what):
-    """Asserts two strings are equal ignoring whitespace."""
-    ignore_space_re = re.compile(r"[\n\s]+")
-    expected_clean = re.sub(ignore_space_re, " ", expected).strip()
-    what_clean = re.sub(ignore_space_re, " ", what).strip()
-    if expected_clean != what_clean:
-      self.assertEqual(expected, what, "Checking " + what)  # For error msg
+  def assertMultiLineStrippedEqual(self, expected, what):
+    """Asserts two strings are equal, after stripping each line."""
+    ignore_space_re = re.compile(r'\s*\n\s*')
+    expected_clean = re.sub(ignore_space_re, '\n', expected.strip())
+    what_clean = re.sub(ignore_space_re, '\n', what.strip())
+    self.assertMultiLineEqual(expected_clean, what_clean)
 
   def _CompileAndCheck(self, fun, args_maker, check_dtypes,
                        rtol=None, atol=None):

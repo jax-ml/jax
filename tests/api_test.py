@@ -1295,8 +1295,8 @@ class JaxprTest(jtu.JaxTestCase):
       return (x, 1., np.zeros(1))
 
     jaxpr = api.make_jaxpr(fun)(0.)
-    self.assertEqualIgnoreWhitespace(str(jaxpr), """
-    { lambda  b ;  ; a.
+    self.assertMultiLineStrippedEqual(str(jaxpr), """
+    { lambda b ;  ; a.
         let
         in [a, 1.0, b] }
     """)
@@ -1309,7 +1309,7 @@ class JaxprTest(jtu.JaxTestCase):
                       x + 2.,
                       lambda xf: xf - x)
     jaxpr = api.make_jaxpr(f)(3.)
-    self.assertEqualIgnoreWhitespace(str(jaxpr), """
+    self.assertMultiLineStrippedEqual(str(jaxpr), """
     { lambda  ;  ; a.
         let b = ge a 0.0
             c = add a 1.0
