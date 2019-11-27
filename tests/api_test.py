@@ -1470,8 +1470,7 @@ class APITest(jtu.JaxTestCase):
 
     jaxpr = api.make_jaxpr(api.linearize(f_yesremat, 4.)[1])(1.)
     scan_eqn, = jaxpr.eqns
-    import ipdb; ipdb.set_trace()
-    self.assertIn(' sin ', str(scan_eqn.params['jaxpr']))
+    self.assertIn(' cos ', str(scan_eqn.params['jaxpr']))
 
     jaxpr = api.make_jaxpr(api.vjp(f_yesremat, 4.)[1])(1.)
     scan_eqn, = jaxpr.eqns
