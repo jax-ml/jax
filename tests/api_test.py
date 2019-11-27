@@ -1329,26 +1329,56 @@ class APITest(jtu.JaxTestCase):
   def test_remat_basic(self):
     @api.remat
     def g(x):
-      return lax.sin(x), 3.
+      return lax.sin(lax.sin(x)), 3.
 
     def f(x):
       x, _ = g(x)
       return x
 
     ans = f(2.)
-    expected = onp.sin(2.)
+    expected = onp.sin(onp.sin(2.))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
     ans, f_lin = api.linearize(f, 2.)
-    expected = onp.sin(2.)
+    expected = onp.sin(onp.sin(2.))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
     ans = f_lin(3.)
-    expected = onp.cos(2.) * 3.
+    expected = onp.cos(onp.sin(2.)) * onp.cos(2.) * 3.
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    jaxpr = api.make_jaxpr(f_lin)(3.)
-    self.assertIn('sin', str(jaxpr))
+    sin_calls = []
+    cos_calls = []
+    sin_impl = lax.sin_p.impl
+    cos_impl = lax.cos_p.impl
+    try:
+      lax.sin_p.def_impl(lambda x: sin_calls.append(1) or sin_impl(x))
+      lax.cos_p.def_impl(lambda x: cos_calls.append(1) or cos_impl(x))
+      f_lin(3.)
+    finally:
+      lax.sin_p.def_impl(sin_impl)
+      lax.cos_p.def_impl(cos_impl)
+    self.assertEqual(len(sin_calls), 1)
+    self.assertEqual(len(cos_calls), 2)
+
+  def test_remat_freevars(self):
+    def f1(x):
+      y = 2 * np.sin(x)
+      z = np.cos(x) * np.sin(y)
+      return z
+
+    def f2(x):
+      y = 2 * np.sin(x)
+      z = api.remat(lambda x: np.cos(x) * np.sin(y))(x)
+      return z
+
+    ans, f_lin = api.linearize(f2, 2.)
+    expected, f_lin_expected = api.linearize(f1, 2.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = f_lin(3.)
+    expected = f_lin_expected(3.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_remat_grad_python_control_flow(self):
     @partial(api.remat, concrete=True)
@@ -1440,6 +1470,7 @@ class APITest(jtu.JaxTestCase):
 
     jaxpr = api.make_jaxpr(api.linearize(f_yesremat, 4.)[1])(1.)
     scan_eqn, = jaxpr.eqns
+    import ipdb; ipdb.set_trace()
     self.assertIn(' sin ', str(scan_eqn.params['jaxpr']))
 
     jaxpr = api.make_jaxpr(api.vjp(f_yesremat, 4.)[1])(1.)

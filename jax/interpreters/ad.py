@@ -187,17 +187,19 @@ def backward_pass(jaxpr, consts, freevar_vals, args, cotangents_in):
           write_primal(eqn.outvars[0], ans)
     else:
       (subjaxpr, const_vars, bound_vars), = eqn.bound_subjaxprs
-      if any(is_linear(v) for v in it.chain(eqn.invars, const_vars, bound_vars)):
+      if any(is_linear(v) for v in it.chain(eqn.invars, bound_vars)):
         linear_eqns.append(eqn)
-      sub_consts = map(read_primal, const_vars)
-      sub_freevar_vals = map(read_primal, bound_vars)
-      in_vals = map(read_primal, eqn.invars)
-      all_args, in_tree_def = tree_flatten((sub_consts, sub_freevar_vals, in_vals))
-      fun = hashable_partial(wrap_init(_eval_primals), subjaxpr)
-      fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
-      out_flat = eqn.primitive.bind(fun, *all_args, **eqn.params)
-      ans = tree_unflatten(out_tree(), out_flat)
-      map(write_primal, eqn.outvars, ans)
+      else:
+        assert not any(is_linear(v) for v in const_vars)
+        sub_consts = map(read_primal, const_vars)
+        sub_freevar_vals = map(read_primal, bound_vars)
+        in_vals = map(read_primal, eqn.invars)
+        all_args, in_tree_def = tree_flatten((sub_consts, sub_freevar_vals, in_vals))
+        fun = hashable_partial(wrap_init(_eval_primals), subjaxpr)
+        fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
+        out_flat = eqn.primitive.bind(fun, *all_args, **eqn.params)
+        ans = tree_unflatten(out_tree(), out_flat)
+        map(write_primal, eqn.outvars, ans)
 
   ct_env = {}
   map(write_cotangent, jaxpr.outvars, cotangents_in)

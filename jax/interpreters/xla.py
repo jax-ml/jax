@@ -778,14 +778,18 @@ def _remat_translation_rule(c, jaxpr, axis_env, const_nodes, freevar_nodes, in_n
 call_translations[pe.remat_call_p] = _remat_translation_rule
 
 def _foil_cse(c, x):
-  rng = c.RngNormal(c.Constant(onp.array(0, dtype=onp.float32)),
-                    c.Constant(onp.array(1, dtype=onp.float32)),
-                    [])
-  pred = c.Lt(rng, c.Constant(onp.finfo(onp.float32).max))
   xla_shape = c.GetShape(x)
-  shape, dtype = xla_shape.dimensions(), xla_shape.numpy_dtype()
-  zero = c.Broadcast(c.Constant(onp.array(0, dtype=dtype)), shape)
-  return c.Select(pred, x, zero)
+  if xla_shape.is_tuple():
+    assert not xla_shape.tuple_shapes()
+    return x
+  else:
+    rng = c.RngNormal(c.Constant(onp.array(0, dtype=onp.float32)),
+                      c.Constant(onp.array(1, dtype=onp.float32)),
+                      [])
+    pred = c.Lt(rng, c.Constant(onp.finfo(onp.float32).max))
+    shape, dtype = xla_shape.dimensions(), xla_shape.numpy_dtype()
+    zero = c.Broadcast(c.Constant(onp.array(0, dtype=dtype)), shape)
+    return c.Select(pred, x, zero)
 
 
 ### lazy constants
