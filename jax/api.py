@@ -1089,6 +1089,11 @@ def jvp(fun, primals, tangents):
   if not isinstance(fun, lu.WrappedFun):
     fun = lu.wrap_init(fun)
 
+  if not isinstance(primals, tuple) or not isinstance(tangents, tuple):
+    msg = ("primal and tangent arguments to jax.jvp must be tuples; "
+           "found {} and {}.")
+    raise TypeError(msg.format(type(primals).__name__, type(tangents).__name__))
+
   ps_flat, tree_def = tree_flatten(primals)
   ts_flat, tree_def_2 = tree_flatten(tangents)
   if tree_def != tree_def_2:

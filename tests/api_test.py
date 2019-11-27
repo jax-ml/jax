@@ -500,6 +500,18 @@ class APITest(jtu.JaxTestCase):
       "primal and tangent arguments to jax.jvp must have equal types",
       lambda: api.jvp(lambda x: -x, (onp.float16(2),), (onp.float32(4),)))
 
+
+  def test_jvp_non_tuple_arguments(self):
+    def f(x, y): return x + y
+    self.assertRaisesRegex(
+        TypeError,
+        "primal and tangent arguments to jax.jvp must be tuples; found float and tuple.",
+        lambda: partial(api.jvp(f, 0., (1.,))))
+    self.assertRaisesRegex(
+        TypeError,
+        "primal and tangent arguments to jax.jvp must be tuples; found tuple and ndarray.",
+        lambda: partial(api.jvp(f, (0.,), onp.array([1., 2.]))))
+
   def test_vjp_mismatched_arguments(self):
     _, pullback = api.vjp(lambda x, y: x * y, onp.float32(3), onp.float32(4))
     self.assertRaisesRegex(

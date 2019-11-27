@@ -248,7 +248,7 @@ class GeneratedFunTest(jtu.JaxTestCase):
     tangents = [tangents[i] for i in dyn_argnums]
     fun, vals = partial_argnums(fun, vals, dyn_argnums)
     ans1, deriv1 = jvp_fd(fun, vals, tangents)
-    ans2, deriv2 = jvp(fun, vals, tangents)
+    ans2, deriv2 = jvp(fun, tuple(vals), tuple(tangents))
     check_all_close(ans1, ans2)
     check_all_close(deriv1, deriv2)
 
