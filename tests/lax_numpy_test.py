@@ -2394,7 +2394,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                         check_dtypes=False)
 
   def testBroadcastToOnScalar(self):
-    self.assertTrue(isinstance(lnp.broadcast_to(10.0, ()), lnp.ndarray))
+    self.assertIsInstance(lnp.broadcast_to(10.0, ()), lnp.ndarray)
+    self.assertIsInstance(onp.broadcast_to(10.0, ()), onp.ndarray)
 
   def testPrecision(self):
 
