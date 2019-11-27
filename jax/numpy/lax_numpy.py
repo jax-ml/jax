@@ -80,6 +80,7 @@ _any = builtins.any
 _max = builtins.max
 _min = builtins.min
 _sum = builtins.sum
+_divmod = builtins.divmod
 
 # We need some numpy scalars
 pi = onp.pi
@@ -1447,6 +1448,12 @@ nancumprod = _make_cumulative_reduction(
 
 ### Array-creation functions
 
+def _check_no_padding(axis_padding, mode):
+  if (axis_padding[0] > 0 or axis_padding[1] > 0):
+    msg = "Cannot apply '{}' padding to empty axis"
+    raise ValueError(msg.format(mode))
+
+
 @partial(jit, static_argnums=(1, 2))
 def _pad(array, pad_width, mode, constant_values):
   array = asarray(array)
@@ -1465,18 +1472,31 @@ def _pad(array, pad_width, mode, constant_values):
       widths[i] = (0, pad_width[i, 1], 0)
       array = lax.pad(array, constant_values[i, 1], widths)
     return array
-  elif mode in ("symmetric", "reflect", "wrap"):
+  elif mode == "wrap":
     for i in xrange(nd):
       if array.shape[i] == 0:
-        if (pad_width[i, 0] > 0 or pad_width[i, 1] > 0):
-          msg = "Cannot apply '{}' padding to empty axis"
-          raise ValueError(msg.format(mode))
+        _check_no_padding(pad_width[i], mode)
+        continue
+      size = array.shape[i]
+      repeats, (left_remainder, right_remainder) = _divmod(pad_width[i], size)
+      total_repeats = repeats.sum() + 1
+      parts = []
+      if left_remainder:
+        parts += [lax.slice_in_dim(array, size - left_remainder, size, axis=i)]
+      parts += total_repeats * [array]
+      if right_remainder:
+        parts += [lax.slice_in_dim(array, 0, right_remainder, axis=i)]
+      array = lax.concatenate(parts, dimension=i)
+    return array
+  elif mode in ("symmetric", "reflect"):
+    for i in xrange(nd):
+      if array.shape[i] == 0:
+        _check_no_padding(pad_width[i], mode)
         continue
 
       n = array.shape[i]
       rarray = lax.rev(array, dimensions=(i,))
       offset = 1 if (mode == "reflect" and n > 1) else 0
-      wrap_mode = mode == "wrap"
 
       def build_padding(padding, forward):
         xs = []
@@ -1485,18 +1505,17 @@ def _pad(array, pad_width, mode, constant_values):
           padding -= delta
           p = array if forward else rarray
           xs.append(lax.slice_in_dim(p, offset, n, axis=i))
-          if not wrap_mode:
-            forward = not forward
+          forward = not forward
         if padding > 0:
           x = lax.slice_in_dim(array if forward else rarray, offset,
                                padding + offset, axis=i)
           xs.append(x)
         return xs
 
-      parts = reversed(build_padding(pad_width[i, 0], forward=not wrap_mode))
+      parts = reversed(build_padding(pad_width[i, 0], forward=True))
       parts = [lax.rev(x, dimensions=(i,)) for x in parts]
       parts += [array]
-      parts += build_padding(pad_width[i, 1], forward=wrap_mode)
+      parts += build_padding(pad_width[i, 1], forward=False)
       array = lax.concatenate(parts, dimension=i)
     return array
   else:
