@@ -29,6 +29,7 @@ cc_library(
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
+    features = ["-use_header_modules"],
     deps = [
         "@com_google_absl//absl/base",
         "@pybind11",
@@ -161,6 +162,7 @@ cuda_library(
         ":gpu_kernel_helpers",
         ":kernel_helpers",
         "@local_config_cuda//cuda:cuda_headers",
+        "@pybind11",
     ],
 )
 

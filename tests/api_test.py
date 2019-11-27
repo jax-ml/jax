@@ -1295,9 +1295,14 @@ class APITest(jtu.JaxTestCase):
 
     sin = api.jit(np.sin)
 
-    with self.assertLogs(level=logging.DEBUG) as l:
-      ans1 = api.grad(sin)(2.)
-      ans2 = api.grad(sin)(3.)
+    prev_level = logging.get_verbosity()
+    try:
+      logging.set_verbosity('DEBUG')
+      with self.assertLogs(level=logging.DEBUG) as l:
+        ans1 = api.grad(sin)(2.)
+        ans2 = api.grad(sin)(3.)
+    finally:
+      logging.set_verbosity(prev_level)
     self.assertLen(l.output, 2)
 
     self.assertAllClose(ans1, onp.cos(2.), check_dtypes=False)
