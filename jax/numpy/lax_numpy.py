@@ -2302,8 +2302,9 @@ def _einsum(operands, contractions, precision):
         # contract using lax.dot_general
         lhs_cont, rhs_cont = unzip2((lhs_names.index(n), rhs_names.index(n))
                                     for n in contracted_names)
-        operand = _dot_general(lhs, rhs, lhs_cont, rhs_cont, len(batch_dims),
-                               precision)
+        bdims = tuple(range(len(batch_dims)))
+        dimension_numbers = [(lhs_cont, rhs_cont), (bdims, bdims)]
+        operand = lax.dot_general(lhs, rhs, dimension_numbers, precision)
         deleted_names = batch_names + ''.join(contracted_names)
         names = (batch_names + removechars(lhs_names, deleted_names)
                  + removechars(rhs_names, deleted_names))
@@ -2329,50 +2330,6 @@ def _einsum(operands, contractions, precision):
     operands.append(operand)  # used in next iteration
 
   return operands[0]
-
-
-def _dot_general(lhs, rhs, lhs_cont, rhs_cont, nbatch, precision):
-  """Helper for einsum contractions."""
-  # lax.dot_general has some tight constraints on dimension_numbers that this
-  # wrapper loosens via transposes and reshapes
-  assert len(lhs_cont) == len(rhs_cont) > 0
-  ncont = len(lhs_cont)
-  lhs_ntensor = lhs.ndim - nbatch - ncont
-  rhs_ntensor = rhs.ndim - nbatch - ncont
-  batch_dims = tuple(range(nbatch))
-
-  if ncont == 1 and 0 <= lhs_ntensor <= 1 and 0 <= rhs_ntensor <= 1:
-    dimension_numbers = [(lhs_cont, rhs_cont), (batch_dims, batch_dims)]
-    return lax.dot_general(lhs, rhs, dimension_numbers, precision)
-  else:
-    # move contracting dimensions to the end. lax.dot_general only allows one
-    # contracting dimension, so if there's more than one we collapse them.
-    if ncont > 1:
-      lhs_cdims = tuple(range(lhs.ndim - ncont, lhs.ndim))
-      lhs = moveaxis(lhs, lhs_cont, lhs_cdims)
-      lhs = lhs.reshape(lhs.shape[:-ncont] + (-1,))
-
-      rhs_cdims = tuple(range(rhs.ndim - ncont, rhs.ndim))
-      rhs = moveaxis(rhs, rhs_cont, rhs_cdims)
-      rhs = rhs.reshape(rhs.shape[:-ncont] + (-1,))
-    else:
-      lhs = moveaxis(lhs, lhs_cont[0], -1)
-      rhs = moveaxis(rhs, rhs_cont[0], -1)
-
-    # lax.dot_general only allows zero or one tensor product dims per operand,
-    # so if there's more than one we collapse them.
-    result_shape = lhs.shape[:nbatch] + lhs.shape[nbatch:-1] + rhs.shape[nbatch:-1]
-
-    if lhs_ntensor > 1:
-      lhs = lhs.reshape(lhs.shape[:nbatch] + (-1,) + lhs.shape[-1:])
-
-    if rhs_ntensor > 1:
-      rhs = rhs.reshape(rhs.shape[:nbatch] + (-1,) + rhs.shape[-1:])
-
-    lhs_cont, rhs_cont = [lhs.ndim - 1], [rhs.ndim - 1]
-    dimension_numbers = [(lhs_cont, rhs_cont), (batch_dims, batch_dims)]
-    result = lax.dot_general(lhs, rhs, dimension_numbers, precision)
-    return lax.reshape(result, result_shape)
 
 
 def _movechars(s, src, dst):
