@@ -397,7 +397,7 @@ def _xla_callable(fun, device, backend, *abstract_args):
   if nreps > xb.device_count(backend):
     msg = ("compiling computation that requires {} replicas, but only {} XLA "
             "devices are available")
-    raise ValueError(msg.format(num_replicas, xb.device_count(backend)))
+    raise ValueError(msg.format(nreps, xb.device_count(backend)))
   axis_env = AxisEnv(nreps, [], [])
 
   if xb.host_count() > 1 and (nreps > 1 or jaxpr_has_pmap(jaxpr)):
