@@ -2393,6 +2393,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertAllClose(lnp.broadcast_to(1, (3, 2)), onp.ones((3, 2)),
                         check_dtypes=False)
 
+  def testBroadcastToOnScalar(self):
+    self.assertIsInstance(lnp.broadcast_to(10.0, ()), lnp.ndarray)
+    self.assertIsInstance(onp.broadcast_to(10.0, ()), onp.ndarray)
+
   def testPrecision(self):
 
     def iter_eqns(jaxpr):
