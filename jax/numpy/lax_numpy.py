@@ -2299,25 +2299,15 @@ def _einsum(operands, contractions, precision):
         batch_names = ''.join(lhs_names[i] for i in range(len(lhs_names))
                               if i in batch_dims)
 
-      if contracted_names:
-        # contract using lax.dot_general
-        lhs_cont, rhs_cont = unzip2((lhs_names.index(n), rhs_names.index(n))
-                                    for n in contracted_names)
-        bdims = tuple(range(len(batch_dims)))
-        dimension_numbers = [(lhs_cont, rhs_cont), (bdims, bdims)]
-        operand = lax.dot_general(lhs, rhs, dimension_numbers, precision)
-        deleted_names = batch_names + ''.join(contracted_names)
-        names = (batch_names + removechars(lhs_names, deleted_names)
-                 + removechars(rhs_names, deleted_names))
-      else:
-        # no contraction, just a tensor product
-        nbatch = len(batch_names)
-        assert lhs.shape[:nbatch] == rhs.shape[:nbatch]
-        names = batch_names + lhs_names[nbatch:] + rhs_names[nbatch:]
-        lhs_shape = lhs.shape + (1,) * (rhs.ndim - nbatch)
-        rhs_shape = rhs.shape[:nbatch] + (1,) * (lhs.ndim - nbatch) + rhs.shape[nbatch:]
-        operand = lax.reshape(lhs, lhs_shape) * lax.reshape(rhs, rhs_shape)
-
+      # contract using lax.dot_general
+      lhs_cont, rhs_cont = unzip2((lhs_names.index(n), rhs_names.index(n))
+                                  for n in contracted_names)
+      bdims = tuple(range(len(batch_dims)))
+      dimension_numbers = [(lhs_cont, rhs_cont), (bdims, bdims)]
+      operand = lax.dot_general(lhs, rhs, dimension_numbers, precision)
+      deleted_names = batch_names + ''.join(contracted_names)
+      names = (batch_names + removechars(lhs_names, deleted_names)
+               + removechars(rhs_names, deleted_names))
     else:
       raise NotImplementedError  # if this is actually reachable, open an issue!
 
