@@ -1064,13 +1064,11 @@ def jvp(fun, primals, tangents):
       or standard Python containers of arrays or scalars. It should return an
       array, scalar, or standard Python container of arrays or scalars.
     primals: The primal values at which the Jacobian of `fun` should be
-      evaluated. Should be a tuple of arrays, scalar, or standard Python
-      container thereof. The length of the tuple is equal to the number of
-      positional parameters of `fun`.
+      evaluated. Should be either a tuple or a list of arguments,
+      and its length should  equal to the number of positional parameters of `fun`.
     tangents: The tangent vector for which the Jacobian-vector product should be
-      evaluated. Should be a tuple of arrays, scalar, or standard Python
-      container thereof, with the same tree structure and array shapes as
-      `primals`.
+      evaluated. Should be either a tuple or a list of tangents, with the same
+      tree structure and array shapes as `primals`.
 
   Returns:
     A `(primals_out, tangents_out)` pair, where `primals_out` is
@@ -1089,8 +1087,9 @@ def jvp(fun, primals, tangents):
   if not isinstance(fun, lu.WrappedFun):
     fun = lu.wrap_init(fun)
 
-  if not isinstance(primals, tuple) or not isinstance(tangents, tuple):
-    msg = ("primal and tangent arguments to jax.jvp must be tuples; "
+  if (not isinstance(primals, (tuple, list)) or
+      not isinstance(tangents, (tuple, list))):
+    msg = ("primal and tangent arguments to jax.jvp must be tuples or lists; "
            "found {} and {}.")
     raise TypeError(msg.format(type(primals).__name__, type(tangents).__name__))
 

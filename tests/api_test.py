@@ -495,6 +495,12 @@ class APITest(jtu.JaxTestCase):
       ("primal and tangent arguments to jax.jvp must have the same tree "
        "structure"),
       lambda: api.jvp(lambda x, y: x * y, (onp.float32(2),), ()))
+    # If primals and tangents must both be tuples or both lists
+    self.assertRaisesRegex(
+      TypeError,
+      ("primal and tangent arguments to jax.jvp must have the same tree "
+       "structure"),
+      lambda: api.jvp(lambda x, y: x * y, (onp.float32(2),), [onp.float32(2)]))
     self.assertRaisesRegex(
       TypeError,
       "primal and tangent arguments to jax.jvp must have equal types",
@@ -505,11 +511,11 @@ class APITest(jtu.JaxTestCase):
     def f(x, y): return x + y
     self.assertRaisesRegex(
         TypeError,
-        "primal and tangent arguments to jax.jvp must be tuples; found float and tuple.",
+        "primal and tangent arguments to jax.jvp must be tuples or lists; found float and tuple.",
         lambda: partial(api.jvp(f, 0., (1.,))))
     self.assertRaisesRegex(
         TypeError,
-        "primal and tangent arguments to jax.jvp must be tuples; found tuple and ndarray.",
+        "primal and tangent arguments to jax.jvp must be tuples or lists; found tuple and ndarray.",
         lambda: partial(api.jvp(f, (0.,), onp.array([1., 2.]))))
 
   def test_vjp_mismatched_arguments(self):
