@@ -381,7 +381,7 @@ def _xla_callable(fun, device, backend, *abstract_args):
   if nreps > xb.device_count(backend):
     msg = ("compiling computation that requires {} replicas, but only {} XLA "
             "devices are available")
-    raise ValueError(msg.format(num_replicas, xb.device_count(backend)))
+    raise ValueError(msg.format(nreps, xb.device_count(backend)))
   axis_env = AxisEnv(nreps, [], [])
 
   tuple_args = len(abstract_args) > 100  # pass long arg lists as tuple for TPU
