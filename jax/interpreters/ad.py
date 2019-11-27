@@ -187,18 +187,21 @@ def backward_pass(jaxpr, consts, freevar_vals, args, cotangents_in):
           write_primal(eqn.outvars[0], ans)
     else:
       (subjaxpr, const_vars, bound_vars), = eqn.bound_subjaxprs
+      assert not any(is_linear(v) for v in const_vars)
       if any(is_linear(v) for v in it.chain(eqn.invars, bound_vars)):
         linear_eqns.append(eqn)
-      else:
-        assert not any(is_linear(v) for v in const_vars)
-        sub_consts = map(read_primal, const_vars)
-        sub_freevar_vals = map(read_primal, bound_vars)
-        in_vals = map(read_primal, eqn.invars)
-        all_args, in_tree_def = tree_flatten((sub_consts, sub_freevar_vals, in_vals))
-        fun = hashable_partial(wrap_init(_eval_primals), subjaxpr)
-        fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
-        out_flat = eqn.primitive.bind(fun, *all_args, **eqn.params)
-        ans = tree_unflatten(out_tree(), out_flat)
+      elif eqn.primitive is not pe.remat_call_p:
+        ans = _eval_subjaxpr_primals(
+            eqn.primitive, subjaxpr, map(read_primal, const_vars),
+            map(read_primal, bound_vars), map(read_primal, eqn.invars), eqn.params)
+        map(write_primal, eqn.outvars, ans)
+
+      # we special-case remat_call here because it can be mixed linear /
+      # nonlinear, so we always evaluate it even if it has a linear part
+      if eqn.primitive is pe.remat_call_p:
+        ans = _eval_subjaxpr_primals(
+            eqn.primitive, subjaxpr, map(read_primal, const_vars),
+            map(read_primal, bound_vars), map(read_primal, eqn.invars), eqn.params)
         map(write_primal, eqn.outvars, ans)
 
   ct_env = {}
@@ -224,6 +227,13 @@ def backward_pass(jaxpr, consts, freevar_vals, args, cotangents_in):
   freevar_cts = map(read_cotangent, jaxpr.freevars)
   cotangents_out = map(read_cotangent, jaxpr.invars)
   return freevar_cts, cotangents_out
+
+def _eval_subjaxpr_primals(prim, jaxpr, consts, freevar_vals, in_vals, params):
+  all_args, in_tree_def = tree_flatten((consts, freevar_vals, in_vals))
+  fun = hashable_partial(wrap_init(_eval_primals), jaxpr)
+  fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
+  out_flat = prim.bind(fun, *all_args, **params)
+  return tree_unflatten(out_tree(), out_flat)
 
 def _eval_primals(jaxpr, consts, freevar_vals, args):
   primal_env = {}
@@ -259,15 +269,13 @@ def _eval_primals(jaxpr, consts, freevar_vals, args):
           write_primal(eqn.outvars[0], ans)
     else:
       (subjaxpr, const_vars, bound_vars), = eqn.bound_subjaxprs
-      sub_consts = map(read_primal, const_vars)
-      sub_freevar_vals = map(read_primal, bound_vars)
-      in_vals = map(read_primal, eqn.invars)
-      all_args, in_tree_def = tree_flatten((sub_consts, sub_freevar_vals, in_vals))
-      fun = hashable_partial(wrap_init(_eval_primals), subjaxpr)
-      fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
-      out_flat = eqn.primitive.bind(fun, *all_args, **eqn.params)
-      ans = tree_unflatten(out_tree(), out_flat)
-      map(write_primal, eqn.outvars, ans)
+      assert not any(is_linear(v) for v in const_vars)
+      if (eqn.primitive is pe.remat_call_p or
+          not any(is_linear(v) for v in it.chain(eqn.invars, bound_vars))):
+        ans = _eval_subjaxpr_primals(
+            eqn.primitive, subjaxpr, map(read_primal, const_vars),
+            map(read_primal, bound_vars), map(read_primal, eqn.invars), eqn.params)
+        map(write_primal, eqn.outvars, ans)
   return map(read_primal, jaxpr.outvars)
 
 class UndefinedPrimal(object):
