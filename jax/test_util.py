@@ -31,6 +31,7 @@ import numpy.random as npr
 from six.moves import xrange
 
 from . import api
+from . import dtypes
 from .config import flags
 from .util import partial
 from .tree_util import tree_multimap, tree_all, tree_map, tree_reduce
@@ -52,11 +53,11 @@ flags.DEFINE_integer(
   help='Number of generated cases to test')
 
 EPS = 1e-4
-ATOL = 1e-4
-RTOL = 1e-4
 
-_dtype = lambda x: getattr(x, 'dtype', None) or onp.asarray(x).dtype
-
+def _dtype(x):
+  return (getattr(x, 'dtype', None) or
+          onp.dtype(dtypes.python_scalar_dtypes.get(type(x), None)) or
+          onp.asarray(x).dtype)
 
 def is_sequence(x):
   try:
@@ -66,44 +67,97 @@ def is_sequence(x):
   else:
     return True
 
+_default_tolerance = {
+  onp.dtype(onp.bool_): 0,
+  onp.dtype(onp.int8): 0,
+  onp.dtype(onp.int16): 0,
+  onp.dtype(onp.int32): 0,
+  onp.dtype(onp.int64): 0,
+  onp.dtype(onp.uint8): 0,
+  onp.dtype(onp.uint16): 0,
+  onp.dtype(onp.uint32): 0,
+  onp.dtype(onp.uint64): 0,
+  onp.dtype(dtypes.bfloat16): 1e-2,
+  onp.dtype(onp.float16): 1e-3,
+  onp.dtype(onp.float32): 1e-6,
+  onp.dtype(onp.float64): 1e-15,
+  onp.dtype(onp.complex64): 1e-6,
+  onp.dtype(onp.complex128): 1e-15,
+}
 
-def assert_numpy_eq(x, y):
-  testing_tpu = FLAGS.jax_test_dut and FLAGS.jax_test_dut.startswith("tpu")
-  testing_x32 = not FLAGS.jax_enable_x64
-  if testing_tpu or testing_x32:
-    onp.testing.assert_allclose(x, y, 1e-3, 1e-3)
+def default_tolerance():
+  if device_under_test() != "tpu":
+    return _default_tolerance
+  tol = _default_tolerance.copy()
+  tol[onp.dtype(onp.float32)] = 1e-3
+  tol[onp.dtype(onp.complex64)] = 1e-3
+  return tol
+
+default_gradient_tolerance = {
+  onp.dtype(dtypes.bfloat16): 1e-1,
+  onp.dtype(onp.float16): 1e-2,
+  onp.dtype(onp.float32): 2e-3,
+  onp.dtype(onp.float64): 1e-5,
+  onp.dtype(onp.complex64): 1e-3,
+  onp.dtype(onp.complex128): 1e-5,
+}
+
+def _assert_numpy_allclose(a, b, atol=None, rtol=None):
+  a = a.astype(onp.float32) if a.dtype == dtypes.bfloat16 else a
+  b = b.astype(onp.float32) if b.dtype == dtypes.bfloat16 else b
+  kw = {}
+  if atol: kw["atol"] = atol
+  if rtol: kw["rtol"] = rtol
+  onp.testing.assert_allclose(a, b, **kw)
+
+def tolerance(dtype, tol=None):
+  tol = tol or {}
+  if not isinstance(tol, dict):
+    return tol
+  tol = {onp.dtype(key): value for key, value in tol.items()}
+  dtype = dtypes.canonicalize_dtype(onp.dtype(dtype))
+  return tol.get(dtype, default_tolerance()[dtype])
+
+def _normalize_tolerance(tol):
+  tol = tol or 0
+  if isinstance(tol, dict):
+    return {onp.dtype(k): v for k, v in tol.items()}
   else:
-    onp.testing.assert_allclose(x, y)
+    return {k: tol for k in _default_tolerance.keys()}
 
+def join_tolerance(tol1, tol2):
+  tol1 = _normalize_tolerance(tol1)
+  tol2 = _normalize_tolerance(tol2)
+  out = tol1
+  for k, v in tol2.items():
+    out[k] = max(v, tol1.get(k, 0))
+  return out
 
-def assert_numpy_close(a, b, atol=ATOL, rtol=RTOL):
-  testing_tpu = FLAGS.jax_test_dut and FLAGS.jax_test_dut.startswith("tpu")
-  testing_x32 = not FLAGS.jax_enable_x64
-  if testing_tpu or testing_x32:
-    atol = max(atol, 1e-1)
-    rtol = max(rtol, 1e-1)
+def _assert_numpy_close(a, b, atol=None, rtol=None):
   assert a.shape == b.shape
-  onp.testing.assert_allclose(a, b, atol=atol * a.size, rtol=rtol * b.size)
+  atol = max(tolerance(a.dtype, atol), tolerance(b.dtype, atol))
+  rtol = max(tolerance(a.dtype, rtol), tolerance(b.dtype, rtol))
+  _assert_numpy_allclose(a, b, atol=atol * a.size, rtol=rtol * b.size)
 
 
 def check_eq(xs, ys):
-  tree_all(tree_multimap(assert_numpy_eq, xs, ys))
+  tree_all(tree_multimap(_assert_numpy_allclose, xs, ys))
 
 
-def check_close(xs, ys, atol=ATOL, rtol=RTOL):
-  assert_close = partial(assert_numpy_close, atol=atol, rtol=rtol)
+def check_close(xs, ys, atol=None, rtol=None):
+  assert_close = partial(_assert_numpy_close, atol=atol, rtol=rtol)
   tree_all(tree_multimap(assert_close, xs, ys))
 
 
 def inner_prod(xs, ys):
-  contract = lambda x, y: onp.real(onp.vdot(x, y))
+  def contract(x, y):
+    return onp.real(onp.dot(onp.conj(x).reshape(-1), y.reshape(-1)))
   return tree_reduce(onp.add, tree_multimap(contract, xs, ys))
 
 
-add = partial(tree_multimap, onp.add)
-sub = partial(tree_multimap, onp.subtract)
-conj = partial(tree_map, onp.conj)
-
+add = partial(tree_multimap, lambda x, y: onp.add(x, y, dtype=_dtype(x)))
+sub = partial(tree_multimap, lambda x, y: onp.subtract(x, y, dtype=_dtype(x)))
+conj = partial(tree_map, lambda x: onp.conj(x, dtype=_dtype(x)))
 
 def scalar_mul(xs, a):
   return tree_map(lambda x: onp.multiply(x, a, dtype=_dtype(x)), xs)
@@ -113,7 +167,7 @@ def rand_like(rng, x):
   shape = onp.shape(x)
   dtype = _dtype(x)
   randn = lambda: onp.asarray(rng.randn(*shape), dtype=dtype)
-  if onp.issubdtype(dtype, onp.complexfloating):
+  if dtypes.issubdtype(dtype, onp.complexfloating):
     return randn() + dtype.type(1.0j) * randn()
   else:
     return randn()
@@ -126,7 +180,19 @@ def numerical_jvp(f, primals, tangents, eps=EPS):
   return scalar_mul(sub(f_pos, f_neg), 0.5 / eps)
 
 
-def check_jvp(f, f_jvp, args, atol=ATOL, rtol=RTOL, eps=EPS):
+def _merge_tolerance(tol, default):
+  if tol is None:
+    return default
+  if not isinstance(tol, dict):
+    return tol
+  out = default.copy()
+  for k, v in tol.items():
+    out[onp.dtype(k)] = v
+  return out
+
+def check_jvp(f, f_jvp, args, atol=None, rtol=None, eps=EPS):
+  atol = _merge_tolerance(atol, default_gradient_tolerance)
+  rtol = _merge_tolerance(rtol, default_gradient_tolerance)
   rng = onp.random.RandomState(0)
   tangent = tree_map(partial(rand_like, rng), args)
   v_out, t_out = f_jvp(args, tangent)
@@ -139,7 +205,9 @@ def check_jvp(f, f_jvp, args, atol=ATOL, rtol=RTOL, eps=EPS):
   check_close(t_out, t_out_expected, atol=atol, rtol=rtol)
 
 
-def check_vjp(f, f_vjp, args, atol=ATOL, rtol=RTOL, eps=EPS):
+def check_vjp(f, f_vjp, args, atol=None, rtol=None, eps=EPS):
+  atol = _merge_tolerance(atol, default_gradient_tolerance)
+  rtol = _merge_tolerance(rtol, default_gradient_tolerance)
   _rand_like = partial(rand_like, onp.random.RandomState(0))
   v_out, vjpfun = f_vjp(*args)
   v_out_expected = f(*args)
@@ -156,9 +224,6 @@ def check_vjp(f, f_vjp, args, atol=ATOL, rtol=RTOL, eps=EPS):
 def check_grads(f, args, order,
                 modes=["fwd", "rev"], atol=None, rtol=None, eps=None):
   args = tuple(args)
-  default_tol = 1e-6 if FLAGS.jax_enable_x64 else 1e-2
-  atol = atol or default_tol
-  rtol = rtol or default_tol
   eps = eps or EPS
 
   _check_jvp = partial(check_jvp, atol=atol, rtol=rtol, eps=eps)
@@ -186,12 +251,12 @@ def device_under_test():
 def supported_dtypes():
   if device_under_test() == "tpu":
     return {onp.bool_, onp.int32, onp.int64, onp.uint32, onp.uint64,
-            onp.float32, onp.complex64}
+            dtypes.bfloat16, onp.float32, onp.complex64}
   else:
     return {onp.bool_, onp.int8, onp.int16, onp.int32, onp.int64,
             onp.uint8, onp.uint16, onp.uint32, onp.uint64,
-            onp.float16, onp.float32, onp.float64, onp.complex64,
-            onp.complex128}
+            dtypes.bfloat16, onp.float16, onp.float32, onp.float64,
+            onp.complex64, onp.complex128}
 
 def skip_on_devices(*disabled_devices):
   """A decorator for test methods to skip the test on certain devices."""
@@ -299,7 +364,7 @@ def _rand_dtype(rand, shape, dtype, scale=1., post=lambda x: x):
     to rand but scaled, converted to the appropriate dtype, and post-processed.
   """
   r = lambda: onp.asarray(scale * rand(*_dims_of_shape(shape)), dtype)
-  if onp.issubdtype(dtype, onp.complexfloating):
+  if dtypes.issubdtype(dtype, onp.complexfloating):
     vals = r() + 1.0j * r()
   else:
     vals = r()
@@ -312,7 +377,7 @@ def rand_default():
 
 
 def rand_nonzero():
-  post = lambda x: onp.where(x == 0, 1, x)
+  post = lambda x: onp.where(x == 0, onp.array(1, dtype=x.dtype), x)
   randn = npr.RandomState(0).randn
   return partial(_rand_dtype, randn, scale=3, post=post)
 
@@ -370,11 +435,11 @@ def rand_some_inf():
   """
   def rand(shape, dtype):
     """The random sampler function."""
-    if not onp.issubdtype(dtype, onp.floating):
+    if not dtypes.issubdtype(dtype, onp.floating):
       # only float types have inf
       return base_rand(shape, dtype)
 
-    if onp.issubdtype(dtype, onp.complexfloating):
+    if dtypes.issubdtype(dtype, onp.complexfloating):
       base_dtype = onp.real(onp.array(0, dtype=dtype)).dtype
       return rand(shape, base_dtype) + 1j * rand(shape, base_dtype)
 
@@ -383,8 +448,8 @@ def rand_some_inf():
     neginf_flips = rng.rand(*dims) < 0.1
 
     vals = base_rand(shape, dtype)
-    vals = onp.where(posinf_flips, onp.inf, vals)
-    vals = onp.where(neginf_flips, -onp.inf, vals)
+    vals = onp.where(posinf_flips, onp.array(onp.inf, dtype=dtype), vals)
+    vals = onp.where(neginf_flips, onp.array(-onp.inf, dtype=dtype), vals)
 
     return _cast_to_shape(onp.asarray(vals, dtype=dtype), shape, dtype)
 
@@ -397,11 +462,11 @@ def rand_some_nan():
 
   def rand(shape, dtype):
     """The random sampler function."""
-    if onp.issubdtype(dtype, onp.complexfloating):
+    if dtypes.issubdtype(dtype, onp.complexfloating):
       base_dtype = onp.real(onp.array(0, dtype=dtype)).dtype
       return rand(shape, base_dtype) + 1j * rand(shape, base_dtype)
 
-    if not onp.issubdtype(dtype, onp.floating):
+    if not dtypes.issubdtype(dtype, onp.floating):
       # only float types have inf
       return base_rand(shape, dtype)
 
@@ -409,7 +474,7 @@ def rand_some_nan():
     nan_flips = rng.rand(*dims) < 0.1
 
     vals = base_rand(shape, dtype)
-    vals = onp.where(nan_flips, onp.nan, vals)
+    vals = onp.where(nan_flips, onp.array(onp.nan, dtype=dtype), vals)
 
     return _cast_to_shape(onp.asarray(vals, dtype=dtype), shape, dtype)
 
@@ -426,11 +491,11 @@ def rand_some_inf_and_nan():
   """
   def rand(shape, dtype):
     """The random sampler function."""
-    if not onp.issubdtype(dtype, onp.floating):
+    if not dtypes.issubdtype(dtype, onp.floating):
       # only float types have inf
       return base_rand(shape, dtype)
 
-    if onp.issubdtype(dtype, onp.complexfloating):
+    if dtypes.issubdtype(dtype, onp.complexfloating):
       base_dtype = onp.real(onp.array(0, dtype=dtype)).dtype
       return rand(shape, base_dtype) + 1j * rand(shape, base_dtype)
 
@@ -440,9 +505,9 @@ def rand_some_inf_and_nan():
     nan_flips = rng.rand(*dims) < 0.1
 
     vals = base_rand(shape, dtype)
-    vals = onp.where(posinf_flips, onp.inf, vals)
-    vals = onp.where(neginf_flips, -onp.inf, vals)
-    vals = onp.where(nan_flips, onp.nan, vals)
+    vals = onp.where(posinf_flips, onp.array(onp.inf, dtype=dtype), vals)
+    vals = onp.where(neginf_flips, onp.array(-onp.inf, dtype=dtype), vals)
+    vals = onp.where(nan_flips, onp.array(onp.nan, dtype=dtype), vals)
 
     return _cast_to_shape(onp.asarray(vals, dtype=dtype), shape, dtype)
 
@@ -460,7 +525,7 @@ def rand_some_zero():
     zeros = rng.rand(*dims) < 0.5
 
     vals = base_rand(shape, dtype)
-    vals = onp.where(zeros, 0, vals)
+    vals = onp.where(zeros, onp.array(0, dtype=dtype), vals)
 
     return _cast_to_shape(onp.asarray(vals, dtype=dtype), shape, dtype)
 
@@ -521,32 +586,17 @@ class JaxTestCase(parameterized.TestCase):
   def assertArraysAllClose(self, x, y, check_dtypes, atol=None, rtol=None):
     """Assert that x and y are close (up to numerical tolerances)."""
     self.assertEqual(x.shape, y.shape)
-    dtype = lambda x: str(onp.asarray(x).dtype)
-    tol = 1e-2 if str(onp.dtype(onp.float32)) in {dtype(x), dtype(y)} else 1e-5
-    atol = atol or tol
-    rtol = rtol or tol
+    atol = max(tolerance(_dtype(x), atol), tolerance(_dtype(y), atol))
+    rtol = max(tolerance(_dtype(x), rtol), tolerance(_dtype(y), rtol))
 
-    if FLAGS.jax_test_dut == 'tpu':
-      atol = max(atol, 0.5)
-      rtol = max(rtol, 1e-1)
-
-    onp.testing.assert_allclose(x, y, atol=atol, rtol=rtol)
+    _assert_numpy_allclose(x, y, atol=atol, rtol=rtol)
 
     if check_dtypes:
       self.assertDtypesMatch(x, y)
 
   def assertDtypesMatch(self, x, y):
-    # special rule for complex128, which XLA doesn't support
-    def c128_to_c64(dtype):
-      if dtype == onp.complex128:
-        return onp.complex64
-      else:
-        return dtype
-
     if FLAGS.jax_enable_x64:
-      x_dtype = c128_to_c64(onp.asarray(x).dtype)
-      y_dtype = c128_to_c64(onp.asarray(y).dtype)
-      self.assertEqual(x_dtype, y_dtype)
+      self.assertEqual(onp.asarray(x).dtype, onp.asarray(y).dtype)
 
   def assertAllClose(self, x, y, check_dtypes, atol=None, rtol=None):
     """Assert that x and y, either arrays or nested tuples/lists, are close."""
@@ -566,7 +616,7 @@ class JaxTestCase(parameterized.TestCase):
       y = onp.asarray(y)
       self.assertArraysAllClose(x, y, check_dtypes, atol=atol, rtol=rtol)
     elif x == y:
-        return
+      return
     else:
       raise TypeError((type(x), type(y)))
 
@@ -596,8 +646,8 @@ class JaxTestCase(parameterized.TestCase):
     python_should_be_executing = False
     compiled_ans = cfun(*args)
 
-    self.assertAllClose(python_ans, monitored_ans, check_dtypes, rtol, atol)
-    self.assertAllClose(python_ans, compiled_ans, check_dtypes, rtol, atol)
+    self.assertAllClose(python_ans, monitored_ans, check_dtypes, atol, rtol)
+    self.assertAllClose(python_ans, compiled_ans, check_dtypes, atol, rtol)
 
     args = args_maker()
 
@@ -607,12 +657,12 @@ class JaxTestCase(parameterized.TestCase):
     python_should_be_executing = False
     compiled_ans = cfun(*args)
 
-    self.assertAllClose(python_ans, compiled_ans, check_dtypes, rtol, atol)
+    self.assertAllClose(python_ans, compiled_ans, check_dtypes, atol, rtol)
 
   def _CheckAgainstNumpy(self, numpy_reference_op, lax_op, args_maker,
-                         check_dtypes=False, tol=1e-5):
+                         check_dtypes=False, tol=None):
     args = args_maker()
     numpy_ans = numpy_reference_op(*args)
     lax_ans = lax_op(*args)
-    self.assertAllClose(lax_ans, numpy_ans, check_dtypes=check_dtypes,
+    self.assertAllClose(numpy_ans, lax_ans, check_dtypes=check_dtypes,
                         atol=tol, rtol=tol)

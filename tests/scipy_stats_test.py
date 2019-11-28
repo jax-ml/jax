@@ -66,7 +66,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       return [k, mu, loc]
 
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True,
-                            tol=1e-4)
+                            tol=1e-3)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
   @genNamedParametersNArgs(3, jtu.rand_default)
@@ -97,8 +97,8 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       return [x, a, b, loc, scale]
 
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True,
-                            tol=1e-4)
-    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
+                            tol=1e-3)
+    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True, rtol=2e-5)
 
   @genNamedParametersNArgs(3, jtu.rand_default)
   def testCauchyLogPdf(self, rng_factory, shapes, dtypes):
@@ -112,7 +112,8 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       scale = onp.clip(onp.abs(scale), a_min=0.1, a_max=None)
       return [x, loc, scale]
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True,
+                            tol=1e-4)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
   @genNamedParametersNArgs(2, jtu.rand_positive)
@@ -128,7 +129,8 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       x = x / onp.sum(x, axis=-1, keepdims=True)
       return [x, alpha]
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True,
+                            tol=1e-4)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
   @genNamedParametersNArgs(3, jtu.rand_positive)
@@ -141,7 +143,8 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       x, loc, scale = map(rng, shapes, dtypes)
       return [x, loc, scale]
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True,
+                            tol=1e-4)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
   @genNamedParametersNArgs(4, jtu.rand_positive)
@@ -170,7 +173,8 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       scale = onp.clip(scale, a_min=0.1, a_max=None)
       return [x, loc, scale]
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True,
+                            tol=1e-4)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
   @genNamedParametersNArgs(3, jtu.rand_default)
@@ -185,7 +189,8 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       scale = onp.clip(scale, a_min=0.1, a_max=None)
       return [x, loc, scale]
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True,
+                            tol=1e-6)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
   # TODO: currently it ignores the argument "shapes" and only tests dim=4
@@ -218,7 +223,8 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       scale = onp.clip(onp.abs(scale), a_min=0.1, a_max=None)
       return [x, loc, scale]
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True,
+                            tol=1e-3)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
 
@@ -234,7 +240,8 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       scale = onp.clip(onp.abs(scale), a_min=0.1, a_max=None)
       return [x, loc, scale]
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True,
+                            tol=1e-4)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
 
@@ -250,7 +257,8 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       scale = onp.clip(onp.abs(scale), a_min=0.1, a_max=None)
       return [x, loc, scale]
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True,
+                            tol=1e-6)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
 
@@ -268,8 +276,9 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       scale = onp.clip(onp.abs(scale), a_min=0.1, a_max=None)
       return [q, loc, scale]
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
-    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True,
+                            tol=1e-4)
+    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True, rtol=1e-5)
 
 
   @genNamedParametersNArgs(4, jtu.rand_positive)
@@ -282,7 +291,8 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       x, b, loc, scale = map(rng, shapes, dtypes)
       return [x, b, loc, scale]
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True,
+                            tol=1e-3)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
 
@@ -298,7 +308,8 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       scale = onp.clip(onp.abs(scale), a_min=0.1, a_max=None)
       return [x, df, loc, scale]
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True,
+                            tol=1e-3)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
 
@@ -312,7 +323,8 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       x, loc, scale = map(rng, shapes, dtypes)
       return [x, loc, onp.abs(scale)]
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=True,
+                            tol=1e-4)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
   def testIssue972(self):

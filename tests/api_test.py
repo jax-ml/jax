@@ -22,6 +22,7 @@ import unittest
 import warnings
 import weakref
 
+from absl import logging
 from absl.testing import absltest
 import numpy as onp
 import six
@@ -156,11 +157,13 @@ class APITest(jtu.JaxTestCase):
     def f(x):
       return x
 
-    jtu.check_raises_regexp(lambda: grad(f)("foo"), TypeError,
-                     ".* 'foo' of type <.*'str'> is not a valid JAX type")
+    self.assertRaisesRegexp(
+      TypeError, ".* 'foo' of type <.*'str'> is not a valid JAX type",
+      lambda: grad(f)("foo"))
 
-    jtu.check_raises_regexp(lambda: jit(f)("foo"), TypeError,
-                     ".* 'foo' of type <.*'str'> is not a valid JAX type")
+    self.assertRaisesRegexp(
+      TypeError, ".* 'foo' of type <.*'str'> is not a valid JAX type",
+      lambda: jit(f)("foo"))
 
   # TODO(dougalm): enable when we remove 'None' from pytree nodes
   # def test_bad_output(self):
@@ -210,9 +213,9 @@ class APITest(jtu.JaxTestCase):
     def f(x, y):
       return np.dot(x, y)
 
-    jtu.check_raises_regexp(
-        lambda: grad(f)(onp.zeros(3), onp.zeros(4)), TypeError,
-        "Incompatible shapes for dot: got \\(3L?,\\) and \\(4L?,\\).")
+    self.assertRaisesRegexp(
+      TypeError, "Incompatible shapes for dot: got \\(3L?,\\) and \\(4L?,\\).",
+      lambda: grad(f)(onp.zeros(3), onp.zeros(4)))
 
   def test_switch_value_jit(self):
     def f(x):
@@ -233,18 +236,19 @@ class APITest(jtu.JaxTestCase):
       return x
 
     assert jit(f, static_argnums=(1,))(0, 5) == 10
-    jtu.check_raises_regexp(
-        lambda: jit(f)(0, 5), TypeError,
+    self.assertRaisesRegexp(
+        TypeError,
         "('JaxprTracer' object cannot be interpreted as an integer"
-        "|Abstract value passed to .*)")
+        "|Abstract value passed to .*)",
+        lambda: jit(f)(0, 5))
 
   def test_casts(self):
     for castfun in [float, complex, hex, oct] + list(six.integer_types):
       f = lambda x: castfun(x)
-      jtu.check_raises_regexp(
-          lambda: jit(f)(0), TypeError,
+      self.assertRaisesRegexp(
+          TypeError,
           "('JaxprTracer' object cannot be interpreted as an integer"
-          "|Abstract value passed to .*)")
+          "|Abstract value passed to .*)", lambda: jit(f)(0))
 
   def test_unimplemented_interpreter_rules(self):
     foo_p = Primitive('foo')
@@ -302,6 +306,23 @@ class APITest(jtu.JaxTestCase):
     # Make sure these don't crash
     api.device_put(x)
     api.device_put(y)
+
+  @jtu.skip_on_devices("cpu")
+  def test_device_put_across_platforms(self):
+    default_device = jax.devices()[0]
+    cpu_device = jax.devices("cpu")[0]
+
+    onp_arr = onp.array([1,2,3])
+    scalar = 1
+    device_arr = np.array([1,2,3])
+    assert device_arr.device_buffer.device() is default_device
+
+    for val in [onp_arr, device_arr, scalar]:
+      x = api.device_put(val, device=cpu_device)
+      self.assertEqual(x.device_buffer.device(), cpu_device)
+
+    y = api.device_put(x)
+    self.assertEqual(y.device_buffer.device(), default_device)
 
   @jtu.skip_on_devices("tpu")
   def test_jacobian(self):
@@ -468,6 +489,46 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(g, grad(lambda x: x**3)(4.))
     self.assertEqual(aux, [4.**2, 4.])
 
+  def test_jvp_mismatched_arguments(self):
+    self.assertRaisesRegex(
+      TypeError,
+      ("primal and tangent arguments to jax.jvp must have the same tree "
+       "structure"),
+      lambda: api.jvp(lambda x, y: x * y, (onp.float32(2),), ()))
+    # If primals and tangents must both be tuples or both lists
+    self.assertRaisesRegex(
+      TypeError,
+      ("primal and tangent arguments to jax.jvp must have the same tree "
+       "structure"),
+      lambda: api.jvp(lambda x, y: x * y, (onp.float32(2),), [onp.float32(2)]))
+    self.assertRaisesRegex(
+      TypeError,
+      "primal and tangent arguments to jax.jvp must have equal types",
+      lambda: api.jvp(lambda x: -x, (onp.float16(2),), (onp.float32(4),)))
+
+
+  def test_jvp_non_tuple_arguments(self):
+    def f(x, y): return x + y
+    self.assertRaisesRegex(
+        TypeError,
+        "primal and tangent arguments to jax.jvp must be tuples or lists; found float and tuple.",
+        lambda: partial(api.jvp(f, 0., (1.,))))
+    self.assertRaisesRegex(
+        TypeError,
+        "primal and tangent arguments to jax.jvp must be tuples or lists; found tuple and ndarray.",
+        lambda: partial(api.jvp(f, (0.,), onp.array([1., 2.]))))
+
+  def test_vjp_mismatched_arguments(self):
+    _, pullback = api.vjp(lambda x, y: x * y, onp.float32(3), onp.float32(4))
+    self.assertRaisesRegex(
+      TypeError,
+      "Tree structure of cotangent input.*does not match",
+      lambda: pullback((onp.float32(7), onp.float32(100))))
+    self.assertRaisesRegex(
+      TypeError,
+      "Type of cotangent input to vjp pullback.*does not match type",
+      lambda: pullback((onp.float16(42))))
+
   def test_jarrett_jvps(self):
     def f1(x):
       return np.sin(np.sin(np.sin(x)))
@@ -521,7 +582,9 @@ class APITest(jtu.JaxTestCase):
                           -0.70368982+0.35184491j,
                            0.1886467 -0.09432335j,
                            0.86873727-0.43436864j])
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    self.assertAllClose(ans, expected, check_dtypes=False,
+                        atol=jtu.default_gradient_tolerance,
+                        rtol=jtu.default_gradient_tolerance)
 
   def test_complex_output_jacrev_raises_error(self):
     self.assertRaises(TypeError, lambda: jacrev(lambda x: np.sin(x))(1 + 2j))
@@ -749,8 +812,8 @@ class APITest(jtu.JaxTestCase):
   def test_devicearray_delete(self):
     x = device_put(1.)
     x.delete()
-    jtu.check_raises_regexp(lambda: repr(x), ValueError,
-                            "DeviceValue has been deleted.")
+    self.assertRaisesRegexp(ValueError, "DeviceValue has been deleted.",
+                            lambda: repr(x))
 
   def test_devicearray_block_until_ready(self):
     x = device_put(1.)
@@ -901,10 +964,10 @@ class APITest(jtu.JaxTestCase):
 
   def test_grad_of_int_errors(self):
     dfn = grad(lambda x: x ** 2)
-    jtu.check_raises_regexp(
-      lambda: dfn(3), TypeError,
+    self.assertRaisesRegexp(
+      TypeError,
       "Primal inputs to reverse-mode differentiation must be of float or "
-      "complex type, got type int..")
+      "complex type, got type int..", lambda: dfn(3))
 
   def test_xla_computation(self):
     # these tests basically check the examples in the xla_computation docstring
@@ -960,8 +1023,8 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(x.device_buffer.device(), device)
 
   def test_jit_of_noncallable(self):
-    jtu.check_raises_regexp(lambda: api.jit(3), TypeError,
-                            "Expected a callable value.*")
+    self.assertRaisesRegexp(TypeError, "Expected a callable value.*",
+                            lambda: api.jit(3))
 
   def test_issue_1062(self):
     # code from https://github.com/google/jax/issues/1062 @shoyer
@@ -1096,12 +1159,12 @@ class APITest(jtu.JaxTestCase):
 
   def test_vmap_in_axes_tree_prefix_error(self):
     # https://github.com/google/jax/issues/795
-    jtu.check_raises_regexp(
-        lambda: api.vmap(lambda x: x, in_axes=(0, 0))(np.ones(3)),
+    self.assertRaisesRegexp(
         ValueError,
         "axes specification must be a tree prefix of the corresponding "
         r"value, got specification \(0, 0\) for value "
-        r"PyTreeDef\(tuple, \[\*\]\)."
+        r"PyTreeDef\(tuple, \[\*\]\).",
+        lambda: api.vmap(lambda x: x, in_axes=(0, 0))(np.ones(3))
     )
 
   def test_vmap_unbatched_object_passthrough_issue_183(self):
@@ -1227,6 +1290,229 @@ class APITest(jtu.JaxTestCase):
   def test_repr(self):
     rep = repr(np.ones(()) + 1.)
     self.assertStartsWith(rep, 'DeviceArray')
+
+  def test_grad_without_enough_args_error_message(self):
+    # https://github.com/google/jax/issues/1696
+    def f(x, y): return x + y
+    df = api.grad(f, argnums=0)
+    self.assertRaisesRegexp(
+        TypeError,
+        "differentiating with respect to argnums=0 requires at least 1 "
+        "positional arguments to be passed by the caller, but got only 0 "
+        "positional arguments.",
+        lambda: partial(df, x=0.)(y=1.))
+
+  def test_scalar_literals(self):
+    self.assertLen(api.make_jaxpr(lambda x: x + 2)(42).constvars, 0)
+
+  def test_grad_of_jit_compilation_caching(self):
+    if not hasattr(self, "assertLogs"):
+      raise unittest.SkipTest("test requires assertLogs (python 3)")
+
+    lax.add(1, 2)  # make sure some initial warnings are already printed
+
+    sin = api.jit(np.sin)
+
+    prev_level = logging.get_verbosity()
+    try:
+      logging.set_verbosity('DEBUG')
+      with self.assertLogs(level=logging.DEBUG) as l:
+        ans1 = api.grad(sin)(2.)
+        ans2 = api.grad(sin)(3.)
+    finally:
+      logging.set_verbosity(prev_level)
+    self.assertLen(l.output, 2)
+
+    self.assertAllClose(ans1, onp.cos(2.), check_dtypes=False)
+    self.assertAllClose(ans2, onp.cos(3.), check_dtypes=False)
+
+  def test_remat_basic(self):
+    @api.remat
+    def g(x):
+      return lax.sin(lax.sin(x)), 3.
+
+    def f(x):
+      x, _ = g(x)
+      return x
+
+    ans = f(2.)
+    expected = onp.sin(onp.sin(2.))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans, f_lin = api.linearize(f, 2.)
+    expected = onp.sin(onp.sin(2.))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = f_lin(3.)
+    expected = onp.cos(onp.sin(2.)) * onp.cos(2.) * 3.
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    sin_calls = []
+    cos_calls = []
+    sin_impl = lax.sin_p.impl
+    cos_impl = lax.cos_p.impl
+    try:
+      lax.sin_p.def_impl(lambda x: sin_calls.append(1) or sin_impl(x))
+      lax.cos_p.def_impl(lambda x: cos_calls.append(1) or cos_impl(x))
+      f_lin(3.)
+    finally:
+      lax.sin_p.def_impl(sin_impl)
+      lax.cos_p.def_impl(cos_impl)
+    self.assertEqual(len(sin_calls), 1)
+    self.assertEqual(len(cos_calls), 2)
+
+  def test_remat_freevars(self):
+    def f1(x):
+      y = 2 * np.sin(x)
+      z = np.cos(x) * np.sin(y)
+      return z
+
+    def f2(x):
+      y = 2 * np.sin(x)
+      z = api.remat(lambda x: np.cos(x) * np.sin(y))(x)
+      return z
+
+    ans, f_lin = api.linearize(f2, 2.)
+    expected, f_lin_expected = api.linearize(f1, 2.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = f_lin(3.)
+    expected = f_lin_expected(3.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_remat_grad_python_control_flow(self):
+    @partial(api.remat, concrete=True)
+    def g(x):
+      if x > 0:
+        return lax.sin(x), 3.
+      else:
+        return lax.cos(x), 4.
+
+    def f(x):
+      x, _ = g(x)
+      return x
+
+    ans = f(2.)
+    expected = onp.sin(2.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = api.grad(f)(2.)
+    expected = onp.cos(2.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_remat_jit(self):
+    @api.remat
+    def g(x):
+      return lax.sin(lax.sin(x))
+
+    def f_(x):
+      return g(x)
+    f = api.jit(f_)
+
+    ans = f(2.)
+    expected = onp.sin(onp.sin(2.))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = api.grad(f)(2.)
+    expected = onp.cos(onp.sin(2.)) * onp.cos(2.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = api.jit(api.grad(f_))(2.)
+    expected = onp.cos(onp.sin(2.)) * onp.cos(2.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_remat_vmap(self):
+    @api.remat
+    def g(x):
+      return lax.sin(lax.sin(x))
+
+    x = onp.arange(3.)
+
+    ans = api.vmap(g)(x)
+    expected = onp.sin(onp.sin(x))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = api.jacfwd(g)(x)
+    expected = onp.diag(onp.cos(onp.sin(x)) * onp.cos(x))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = api.jacrev(g)(x)
+    expected = onp.diag(onp.cos(onp.sin(x)) * onp.cos(x))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_remat_higher_order_autodiff(self):
+    def f(x):
+      return lax.cos(lax.sin(x))
+    g = api.remat(f)
+
+    ans = api.grad(api.grad(g))(3.)
+    expected = api.grad(api.grad(f))(3.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_remat_scan(self):
+    to_scan = lambda c, x: (np.sin(c), None)
+
+    def f_noremat(x):
+      y, _ = lax.scan(to_scan, x, onp.arange(3.))
+      return y
+
+    def f_yesremat(x):
+      y, _ = lax.scan(api.remat(to_scan), x, onp.arange(3.))
+      return y
+
+    ans = f_yesremat(4.)
+    expected = f_noremat(4.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = api.grad(f_yesremat)(4.)
+    expected = api.grad(f_noremat)(4.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    jaxpr = api.make_jaxpr(api.linearize(f_yesremat, 4.)[1])(1.)
+    scan_eqn, = jaxpr.eqns
+    self.assertIn(' cos ', str(scan_eqn.params['jaxpr']))
+
+    jaxpr = api.make_jaxpr(api.vjp(f_yesremat, 4.)[1])(1.)
+    scan_eqn, = jaxpr.eqns
+    self.assertIn(' cos ', str(scan_eqn.params['jaxpr']))
+
+  def test_remat_no_redundant_flops(self):
+    # see https://github.com/google/jax/pull/1749#issuecomment-558267584
+
+    @api.jit
+    def g(x):
+      return f(2., x)
+
+    @api.remat
+    def f(x, y):
+      return np.sin(x) * y
+
+    # We swap out sin_p's impl rule to count how many times it's invoked
+    called = []
+    sin_impl = lax.sin_p.impl
+    try:
+      lax.sin_p.def_impl(lambda x: called.append(1) or sin_impl(x))
+      api.grad(g)(3.)
+    finally:
+      lax.sin_p.def_impl(sin_impl)
+    num_calls = len(called)
+    self.assertEqual(num_calls, 1)
+
+  def test_remat_binomial_checkpointing(self):
+    def binom_checkpoint(funs):
+      if len(funs) == 1:
+        return funs[0]
+      else:
+        f1 = binom_checkpoint(funs[:len(funs)//2])
+        f2 = binom_checkpoint(funs[len(funs)//2:])
+        return api.remat(lambda x: f1(f2(x)))
+
+    f1 = binom_checkpoint([np.sin, np.sin, np.sin, np.sin])
+    f2 = lambda x: np.sin(np.sin(np.sin(np.sin(x))))
+    x = 4.
+    self.assertAllClose(f1(x), f2(x), check_dtypes=False)
+    self.assertAllClose(api.grad(f1)(x), api.grad(f2)(x), check_dtypes=False)
+
 
 if __name__ == '__main__':
   absltest.main()

@@ -24,12 +24,12 @@ import warnings
 from jax import jit
 from .. import lax
 from .. import lax_linalg
+from .. import dtypes
 from .lax_numpy import _not_implemented
 from .lax_numpy import _wraps
 from . import lax_numpy as np
 from ..api import custom_transforms, defjvp
 from ..util import get_module_functions
-from ..lib import xla_bridge
 
 
 _T = lambda x: np.swapaxes(x, -1, -2)
@@ -38,9 +38,9 @@ _T = lambda x: np.swapaxes(x, -1, -2)
 def _promote_arg_dtypes(*args):
   """Promotes `args` to a common inexact type."""
   def _to_inexact_type(type):
-    return type if np.issubdtype(type, np.inexact) else np.float64
+    return type if np.issubdtype(type, np.inexact) else np.float_
   inexact_types = [_to_inexact_type(np._dtype(arg)) for arg in args]
-  dtype = xla_bridge.canonicalize_dtype(np.result_type(*inexact_types))
+  dtype = dtypes.canonicalize_dtype(np.result_type(*inexact_types))
   args = [lax.convert_element_type(arg, dtype) for arg in args]
   if len(args) == 1:
     return args[0]
@@ -202,8 +202,10 @@ def _norm(x, ord, axis, keepdims):
       # special case too.
       return np.sum(np.abs(x), axis=axis, keepdims=keepdims)
     else:
-      return np.power(np.sum(np.abs(x) ** ord, axis=axis, keepdims=keepdims),
-                      1. / ord)
+      abs_x = np.abs(x)
+      ord = lax._const(abs_x, ord)
+      out = np.sum(abs_x ** ord, axis=axis, keepdims=keepdims)
+      return np.power(out, 1. / ord)
 
   elif num_axes == 2:
     row_axis, col_axis = axis

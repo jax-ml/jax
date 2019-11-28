@@ -13,7 +13,7 @@ for PYTHON_VERSION in $PYTHON_VERSIONS
 do
   mkdir -p dist/nocuda/
   docker run -it --tmpfs /build:exec --rm -v $(pwd)/dist:/dist jaxbuild $PYTHON_VERSION nocuda
-  mv dist/*.whl dist/nocuda/
+  mv -f dist/*.whl dist/nocuda/
 done
 
 # build the cuda linux packages, tagging with linux_x86_64
@@ -26,7 +26,7 @@ do
     do
       mkdir -p dist/${CUDA_VARIANT}${CUDA_VERSION//.}
       docker run -it --tmpfs /build:exec --rm -v $(pwd)/dist:/dist jaxbuild $PYTHON_VERSION $CUDA_VARIANT
-      mv dist/*.whl dist/${CUDA_VARIANT}${CUDA_VERSION//.}/
+      mv -f dist/*.whl dist/${CUDA_VARIANT}${CUDA_VERSION//.}/
     done
   done
 done

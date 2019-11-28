@@ -95,9 +95,10 @@ class PmapTest(jtu.JaxTestCase):
   def testMismatchedAxisSizes(self):
     n = xla_bridge.device_count()
     f = pmap(lambda x, y: x + y)
-    jtu.check_raises_regexp(
-        lambda: f(onp.random.randn(n), onp.random.randn(n - 1)), ValueError,
-        "Axis size .* does not match leading dimension of shape .*")
+    self.assertRaisesRegexp(
+        ValueError,
+        "Axis size .* does not match leading dimension of shape .*",
+        lambda: f(onp.random.randn(n), onp.random.randn(n - 1)))
 
   @parameterized.named_parameters(
       {"testcase_name": "_mesh={}".format(device_mesh_shape),
@@ -276,17 +277,18 @@ class PmapTest(jtu.JaxTestCase):
     expected = sum_and_broadcast(sum_and_broadcast(x, 0), 1)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  def testReplicaGroups(self):
-    groups = pxla.replica_groups(8, [4, 2], (0,))
+  def testAxisGroups(self):
+    axis_env = xla.AxisEnv(8, ['i', 'j'], [4, 2])
+    groups = xla.axis_groups(axis_env, 'i')
     self.assertEqual(groups, ((0, 2, 4, 6), (1, 3, 5, 7)))
 
-    groups = pxla.replica_groups(8, [4, 2], (1,))
+    groups = xla.axis_groups(axis_env, 'j')
     self.assertEqual(groups, ((0, 1), (2, 3), (4, 5), (6, 7)))
 
-    groups = pxla.replica_groups(8, [4, 2], (0, 1))
+    groups = xla.axis_groups(axis_env, ('i', 'j'))
     self.assertEqual(groups, ((0, 1, 2, 3, 4, 5, 6, 7,),))
 
-    groups = pxla.replica_groups(8, [4, 2], (1, 0))
+    groups = xla.axis_groups(axis_env, ('j', 'i'))
     self.assertEqual(len(groups), 1)
     self.assertEqual((tuple(sorted(groups[0])),),
                      ((0, 1, 2, 3, 4, 5, 6, 7,),))  # order doesn't matter
@@ -328,6 +330,17 @@ class PmapTest(jtu.JaxTestCase):
     ans = grad(g)(x)
     expected = onp.roll(onp.pi + onp.arange(device_count), 1)
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @jtu.skip_on_devices("cpu", "gpu")
+  def testPpermuteWithZipObject(self):
+    # https://github.com/google/jax/issues/1703
+    num_devices = xla_bridge.device_count()
+    perm = [num_devices - 1] + list(range(num_devices - 1))
+    f = pmap(
+      lambda x: lax.ppermute(x, "i", zip(range(num_devices), perm)), "i")
+    result = f(np.arange(num_devices, dtype=np.float32))
+    expected = np.asarray(perm, dtype=np.float32)
+    self.assertAllClose(result, expected, check_dtypes=True)
 
   @jtu.skip_on_devices("cpu", "gpu")
   def testRule30(self):
@@ -426,24 +439,15 @@ class PmapTest(jtu.JaxTestCase):
 
     f = pmap(lambda x: x)
     x = np.arange(device_count + 1)
-    self.assertRaisesRegexp(
-        ValueError,
-        ".*requires.*replicas",
-        lambda: f(x))
+    self.assertRaisesRegex(ValueError, ".*requires.*replicas", lambda: f(x))
 
     f = pmap(lambda x: x)
     x = onp.ones((device_count + 1, 10))
-    self.assertRaisesRegexp(
-        ValueError,
-        ".*requires.*replicas",
-        lambda: f(x))
+    self.assertRaisesRegex(ValueError, ".*requires.*replicas", lambda: f(x))
 
     f = pmap(lambda x: pmap(lambda x: x)(x))
     x = onp.ones((device_count, 2, 10))
-    self.assertRaisesRegexp(
-        ValueError,
-        ".*requires.*replicas",
-        lambda: f(x))
+    self.assertRaisesRegex(ValueError, ".*requires.*replicas", lambda: f(x))
 
   def testPmapConstant(self):
     device_count = xla_bridge.device_count()
@@ -627,7 +631,7 @@ class PmapTest(jtu.JaxTestCase):
     z = x + 2
     self.assertIsInstance(z, xla.DeviceArray)  # should have forced collection
     x._npy_value = onp.float32(onp.nan)  # can't be coerced to ndarray for xfer
-    self.assertRaisesRegexp(
+    self.assertRaisesRegex(
         RuntimeError,
         '.*does not match host shape or layout of computation parameter 0.*',
         lambda: x + 2)
@@ -845,7 +849,7 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
 
     ndevices = xla_bridge.device_count()
     ans = foo(np.ones((ndevices, 1)))
-    expected = onp.ones((ndevices, 1)) * ndevices * 2
+    expected = onp.ones((ndevices, 1), dtype=np.float_) * ndevices * 2
     self.assertAllClose(ans, expected, check_dtypes=True)
 
   def testPmapInJit(self):
@@ -858,7 +862,7 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
 
     ndevices = xla_bridge.device_count()
     ans = foo(np.ones((ndevices, 1)))
-    expected = onp.ones((ndevices, 1)) * ndevices
+    expected = onp.ones((ndevices, 1), dtype=np.float_) * ndevices
     self.assertAllClose(ans, expected, check_dtypes=True)
 
   def testGradBasic(self):

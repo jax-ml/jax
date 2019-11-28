@@ -148,8 +148,8 @@ class WrappedFun(object):
       gen = gen(*(gen_args + tuple(args)), **kwargs)
       args, kwargs = next(gen)
       stack.append((gen, out_store))
+    gen = None
 
-    del gen
     ans = self.f(*args, **dict(self.params, **kwargs))
     del args
     while stack:
@@ -210,3 +210,8 @@ def cache(call):
       cache[key] = (ans, fun.stores)
     return ans
   return memoized_fun
+
+@transformation
+def hashable_partial(x, *args):
+  ans = yield (x,) + args, {}
+  yield ans

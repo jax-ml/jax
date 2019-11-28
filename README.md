@@ -77,7 +77,6 @@ open](https://github.com/google/jax) by a growing number of
 * [Random numbers are different](#random-numbers-are-different)
 * [Mini-libraries](#mini-libraries)
 * [How it works](#how-it-works)
-* [What we're working on](#what-were-working-on)
 * [Current gotchas](#current-gotchas)
 * [Citing JAX](#citing-jax)
 
@@ -131,7 +130,7 @@ PYTHON_VERSION=cp37  # alternatives: cp27, cp35, cp36, cp37
 CUDA_VERSION=cuda92  # alternatives: cuda90, cuda92, cuda100, cuda101
 PLATFORM=linux_x86_64  # alternatives: linux_x86_64
 BASE_URL='https://storage.googleapis.com/jax-releases'
-pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.32-$PYTHON_VERSION-none-$PLATFORM.whl
+pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.36-$PYTHON_VERSION-none-$PLATFORM.whl
 
 pip install --upgrade jax  # install jax
 ```
@@ -672,17 +671,6 @@ The good news about this tradeoff is that `jit` is opt-in: JAX libraries use
 write unrestricted Python+Numpy and still make use of a hardware accelerator.
 But when you want to maximize performance, you can often use `jit` in your own
 code to compile and end-to-end optimize much bigger functions.
-
-## What we're working on
-1. Documentation!
-2. Cloud TPU support
-3. Multi-GPU and multi-TPU support
-4. Full NumPy coverage and some SciPy coverage
-5. Full coverage for vmap
-6. Make everything faster
-    * Lowering the XLA function dispatch overhead
-    * Linear algebra routines (MKL on CPU, MAGMA on GPU)
-7. `cond` and `while` primitives with efficient automatic differentiation
 
 ## Current gotchas
 

@@ -280,7 +280,7 @@ class OptimizerTests(jtu.JaxTestCase):
       assert trip == 75
       return opt_final
 
-    initial_params = 0.5
+    initial_params = np.float64(0.5)
     minimize_structure(initial_params)
 
     def loss(test_params):
@@ -291,7 +291,7 @@ class OptimizerTests(jtu.JaxTestCase):
 
     J1 = jacrev(loss, argnums=(0,))(initial_params)
     J2 = jacfwd(loss, argnums=(0,))(initial_params)
-    self.assertAllClose(J1, J2, check_dtypes=True)
+    self.assertAllClose(J1, J2, check_dtypes=True, rtol=1e-6)
 
   def testUnpackPackRoundTrip(self):
     opt_init, _, _ = optimizers.momentum(0.1, mass=0.9)

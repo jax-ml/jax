@@ -30,6 +30,7 @@ import six
 
 from jax import api
 from jax import core
+from jax import dtypes
 from jax.lax import lax
 from jax import linear_util as lu
 from jax.abstract_arrays import ShapedArray, raise_to_shaped
@@ -67,14 +68,15 @@ def _abstractify(x):
   return raise_to_shaped(core.get_aval(x))
 
 def typecheck(aval, x):
-  aval = raise_to_shaped(aval)
+  aval = raise_to_shaped(aval).strip_weak_type()
   try:
-    return aval == core.lattice_join(aval, core.get_aval(x))
+    return aval == core.lattice_join(aval, core.get_aval(x)).strip_weak_type()
   except TypeError:
     return False
 
 def typematch(aval1, aval2):
-  return raise_to_shaped(aval1) == raise_to_shaped(aval2)
+  return (raise_to_shaped(aval1).strip_weak_type() ==
+          raise_to_shaped(aval2).strip_weak_type())
 
 class FixedPointError(Exception): pass
 
@@ -112,6 +114,14 @@ def fori_loop(lower, upper, body_fun, init_val):
   Unlike that Python version, ``fori_loop`` is implemented in terms of a call to
   ``while_loop``. See the docstring for ``while_loop`` for more information.
 
+  Also unlike the Python analogue, the loop-carried value ``val`` must hold a
+  fixed shape and dtype across all iterations (and not just be consistent up to
+  NumPy rank/shape broadcasting and dtype promotion rules, for example). In
+  other words, the type ``a`` in the type signature above represents an array
+  with a fixed shape and dtype (or a nested tuple/list/dict container data
+  structure with a fixed structure and arrays with fixed shape and dtype at the
+  leaves).
+
   Args:
     lower: an integer representing the loop index lower bound (inclusive)
     upper: an integer representing the loop index upper bound (exclusive)
@@ -121,6 +131,13 @@ def fori_loop(lower, upper, body_fun, init_val):
   Returns:
     Loop value from the final iteration, of type ``a``.
   """
+  # TODO: perhaps do more type checking here, for better error messages.
+  lower_dtype = dtypes.canonicalize_dtype(lax.dtype(lower))
+  upper_dtype = dtypes.canonicalize_dtype(lax.dtype(upper))
+  if lower_dtype != upper_dtype:
+    msg = ("lower and upper arguments to fori_loop must have equal types, "
+           "got {} and {}")
+    raise TypeError(msg.format(lower_dtype.name, upper_dtype.name))
   _, _, result = while_loop(_fori_cond_fun, _fori_body_fun(body_fun),
                             (lower, upper, init_val))
   return result
@@ -148,6 +165,14 @@ def while_loop(cond_fun, body_fun, init_val):
   for jit-compiled functions, since native Python loop constructs in an ``@jit``
   function are unrolled, leading to large XLA computations.
 
+  Also unlike the Python analogue, the loop-carried value ``val`` must hold a
+  fixed shape and dtype across all iterations (and not just be consistent up to
+  NumPy rank/shape broadcasting and dtype promotion rules, for example). In
+  other words, the type ``a`` in the type signature above represents an array
+  with a fixed shape and dtype (or a nested tuple/list/dict container data
+  structure with a fixed structure and arrays with fixed shape and dtype at the
+  leaves).
+
   Another difference from using Python-native loop constructs is that
   ``while_loop`` is not reverse-mode differentiable because XLA computations
   require static bounds on memory requirements.
@@ -166,15 +191,19 @@ def while_loop(cond_fun, body_fun, init_val):
   init_avals = tuple(_map(_abstractify, init_vals))
   cond_jaxpr, cond_consts, cond_tree = _initial_style_jaxpr(cond_fun, in_tree, init_avals)
   body_jaxpr, body_consts, body_tree = _initial_style_jaxpr(body_fun, in_tree, init_avals)
-  if not treedef_is_leaf(cond_tree):
+  if not treedef_is_leaf(cond_tree) or len(cond_jaxpr.out_avals) != 1:
     msg = "cond_fun must return a boolean scalar, but got pytree {}."
     raise TypeError(msg.format(cond_tree))
-  if cond_jaxpr.out_avals != [ShapedArray((), onp.bool_)]:
+  if cond_jaxpr.out_avals[0].strip_weak_type() != ShapedArray((), onp.bool_):
     msg = "cond_fun must return a boolean scalar, but got output type(s) {}."
     raise TypeError(msg.format(cond_jaxpr.out_avals))
-  if not treedef_children(in_tree) == [body_tree]:
-    msg = "body_fun output pytree structure must match init_val, got {} and {}."
-    raise TypeError(msg.format(body_tree, treedef_children(in_tree)[0]))
+
+  in_tree_children = in_tree.children()
+  assert len(in_tree_children) == 1
+  _check_tree_and_avals("body_fun output and input",
+                        # Extract the subtree and avals for the first element of the return tuple
+                        body_tree, body_jaxpr.out_avals,
+                        in_tree_children[0], init_avals)
   outs = while_p.bind(*itertools.chain(cond_consts, body_consts, init_vals),
                       cond_nconsts=len(cond_consts), cond_jaxpr=cond_jaxpr,
                       body_nconsts=len(body_consts), body_jaxpr=body_jaxpr)
@@ -205,7 +234,7 @@ def _while_loop_translation_rule(c, axis_env, *args, **kwargs):
   pred, = xla.jaxpr_subcomp(cond_c, cond_jaxpr.jaxpr, backend, axis_env,
                             _map(cond_c.Constant, cond_jaxpr.literals), (), *(x + z))
   if batched:
-    scalar = xla_client.Shape.array_shape(onp.dtype(onp.bool_), ())
+    scalar = ShapedArray((), onp.bool_)
     or_ = xla.primitive_computation(lax.or_p, scalar, scalar)
     pred = cond_c.Reduce(pred, cond_c.Constant(onp.array(False)), or_,
                          list(range(cond_jaxpr.out_avals[0].ndim)))
@@ -303,34 +332,34 @@ def cond(pred, true_operand, true_fun, false_operand, false_fun):
   """
 
   if len(onp.shape(pred)) != 0:
-    raise TypeError("Pred must be a scalar, got {} of shape {}".format(pred, onp.shape(pred)))
+    raise TypeError("Pred must be a scalar, got {} of shape {}.".format(pred, onp.shape(pred)))
 
-  pred_dtype = onp.result_type(pred)
+  try:
+    pred_dtype = dtypes.result_type(pred)
+  except TypeError:
+    msg = ("Pred type must be either boolean or number, got {}.")
+    raise TypeError(msg.format(pred))
+
   if pred_dtype.kind != 'b':
     if pred_dtype.kind in 'iuf':
       pred = pred != 0
     else:
-      msg = ("Pred type must be either boolean or number, got {}")
+      msg = ("Pred type must be either boolean or number, got {}.")
       raise TypeError(msg.format(pred_dtype))
   true_ops, true_tree = tree_flatten((true_operand,))
   true_avals = tuple(_map(_abstractify, true_ops))
-  true_jaxpr, true_consts, out_tree = _initial_style_jaxpr(true_fun, true_tree, true_avals)
+  true_jaxpr, true_consts, true_out_tree = _initial_style_jaxpr(true_fun, true_tree, true_avals)
   false_ops, false_tree = tree_flatten((false_operand,))
   false_avals = tuple(_map(_abstractify, false_ops))
-  false_jaxpr, false_consts, out_tree2 = _initial_style_jaxpr(false_fun, false_tree, false_avals)
-  if out_tree != out_tree2:
-    msg = ("true_fun and false_fun outputs must have identical tree structure, "
-           "got {} and {}.")
-    raise TypeError(msg.format(out_tree, out_tree2))
-  if not all(_map(typematch, true_jaxpr.out_avals, false_jaxpr.out_avals)):
-    msg = ("true_fun and false_fun outputs must have identical types, "
-           "got {} and {}.")
-    raise TypeError(msg.format(true_jaxpr.out_avals, false_jaxpr.out_avals))
+  false_jaxpr, false_consts, false_out_tree = _initial_style_jaxpr(false_fun, false_tree, false_avals)
+  _check_tree_and_avals("true_fun and false_fun output",
+                        true_out_tree, true_jaxpr.out_avals,
+                        false_out_tree, false_jaxpr.out_avals)
   out = cond_p.bind(
       *itertools.chain([pred], true_consts, true_ops, false_consts, false_ops),
       true_jaxpr=true_jaxpr, false_jaxpr=false_jaxpr,
       true_nconsts=len(true_consts), false_nconsts=len(false_consts))
-  return tree_unflatten(out_tree, out)
+  return tree_unflatten(true_out_tree, out)
 
 def _cond_abstract_eval(*args, **kwargs):
   return kwargs["true_jaxpr"].out_avals
@@ -444,6 +473,13 @@ def scan(f, init, xs):
   for jit-compiled functions, since native Python loop constructs in an ``@jit``
   function are unrolled, leading to large XLA computations.
 
+  Finally, the loop-carried value ``carry`` must hold a fixed shape and dtype
+  across all iterations (and not just be consistent up to NumPy rank/shape
+  broadcasting and dtype promotion rules, for example). In other words, the type
+  ``c`` in the type signature above represents an array with a fixed shape and
+  dtype (or a nested tuple/list/dict container data structure with a fixed
+  structure and arrays with fixed shape and dtype at the leaves).
+
   Args:
     f: a Python function to be scanned of type ``c -> a -> (c, b)``, meaning
       that ``f`` accepts two arguments where the first is a value of the loop
@@ -480,7 +516,6 @@ def scan(f, init, xs):
   x_dtypes = [x.dtype for x in xs_flat]
   x_avals = tuple(_map(ShapedArray, x_shapes, x_dtypes))
   jaxpr, consts, out_tree = _initial_style_jaxpr(f, in_tree, carry_avals + x_avals)
-
   out_tree_children = out_tree.children()
   if len(out_tree_children) != 2:
     msg = "scan body output must be a pair, got {}."
@@ -514,7 +549,7 @@ def _scan_impl(*args, **kwargs):
     return carry_out + ys_out
 
   ys_init = _map(partial(_empty_array, length), y_avals)
-  return fori_loop(0, length, body_fun, init + ys_init)
+  return fori_loop(lax._const(length, 0), length, body_fun, init + ys_init)
 
 def _index_array(i, aval, x):
   if aval is core.abstract_unit:
@@ -640,7 +675,7 @@ def _scan_partial_eval(trace, *tracers, **kwargs):
   _, _, res_pvals = split_list(out_pvals_1, [num_carry, num_ys])
   intensive_residuals = [const for pv, const in res_pvals if pv is None]
   move = [False] * len(jaxpr_1.in_avals) + [pv is None for pv, _ in res_pvals]
-  jaxpr_2_opt = _move_binders_to_front(jaxpr_2, move)
+  jaxpr_2_opt = pe.move_binders_to_front(jaxpr_2, move)
   num_consts_2 = num_consts + len(intensive_residuals)
 
   in_consts = (list(consts_1) + [core.unit] * num_consts +
@@ -669,28 +704,13 @@ def _scan_partial_eval(trace, *tracers, **kwargs):
   linear_2 = ([False] * len(int_res_tracers) +
               [lin or not uk for uk, lin in zip(unknowns, linear)] +
               [False] * len(ext_res_tracers))
-  eqn = pe.new_jaxpr_eqn(int_res_tracers + new_tracers + ext_res_tracers,
-                         out_tracers, scan_p, (),
-                         dict(forward=forward, length=length, jaxpr=jaxpr_2_opt,
-                              num_consts=num_consts_2,
-                              num_carry=num_carry, linear=linear_2))
+  eqn = pe.new_eqn_recipe(int_res_tracers + new_tracers + ext_res_tracers,
+                          out_tracers, scan_p, (),
+                          dict(forward=forward, length=length, jaxpr=jaxpr_2_opt,
+                               num_consts=num_consts_2,
+                               num_carry=num_carry, linear=linear_2))
   for t in out_tracers: t.recipe = eqn
   return out_tracers
-
-def _move_binders_to_front(typed_jaxpr, to_move):
-  assert not typed_jaxpr.jaxpr.constvars and not typed_jaxpr.jaxpr.freevars
-  assert len(typed_jaxpr.in_avals) == len(to_move)
-  new_invars = _move_to_front(typed_jaxpr.jaxpr.invars, to_move)
-  new_jaxpr = core.Jaxpr((), (), new_invars, typed_jaxpr.jaxpr.outvars,
-                         typed_jaxpr.jaxpr.eqns)
-  new_in_avals = _move_to_front(typed_jaxpr.in_avals, to_move)
-  new_typed_jaxpr = core.TypedJaxpr(new_jaxpr, typed_jaxpr.literals,
-                                    new_in_avals, typed_jaxpr.out_avals)
-  return new_typed_jaxpr
-
-def _move_to_front(lst, to_move):
-  return ([elt for elt, move in zip(lst, to_move) if move] +
-          [elt for elt, move in zip(lst, to_move) if not move])
 
 def _promote_aval_rank(sz, aval):
   if aval is core.abstract_unit:
@@ -849,7 +869,7 @@ def _masked_scan_jaxpr(jaxpr, num_consts, num_carry):
                  for new_c, c in zip(new_carry, carry)]
     return [i + 1] + new_carry + ys
 
-  aval = ShapedArray((), onp.int64)
+  aval = ShapedArray((), dtypes.int_)
   const_avals, carry_avals, x_avals = split_list(jaxpr.in_avals, [num_consts, num_carry])
   return _make_typed_jaxpr(masked, [aval] + const_avals + [aval] + carry_avals + x_avals)
 
@@ -862,7 +882,7 @@ def scan_bind(*args, **kwargs):
   # check that args match input types
   consts_avals, init_avals, x_avals = split_list(jaxpr.in_avals, [num_consts, num_carry])
   xs_avals = _map(partial(_promote_aval_rank, length), x_avals)
-  assert all(_map(typecheck, consts_avals, consts))
+  assert all(_map(typecheck, consts_avals, consts)), (consts, consts_avals)
   assert all(_map(typecheck, init_avals, init))
   # assert all(_map(typecheck, xs_avals, xs))
   # check that output carry type matches input carry type
@@ -957,7 +977,7 @@ def _check_tree_and_avals(what, tree1, avals1, tree2, avals2):
     raise TypeError(msg.format(what, tree1, tree2))
   if not all(safe_map(typematch, avals1, avals2)):
     msg = ("{} must have identical types, "
-           "got {} and {}.")
+           "got\n{}\nand\n{}.")
     raise TypeError(msg.format(what, tree_unflatten(tree1, avals1),
                                tree_unflatten(tree2, avals2)))
 
@@ -1049,7 +1069,7 @@ def custom_root(f, initial_guess, solve, tangent_solve):
 
 
 def _root_abstract_eval(*args, **kwargs):
-  return args[sum(kwargs['const_lengths']):]
+  return _map(raise_to_shaped, args[sum(kwargs['const_lengths']):])
 
 
 def _root_impl(*args, **kwargs):
@@ -1218,7 +1238,7 @@ def custom_linear_solve(
 
 
 def _linear_solve_abstract_eval(*args, **kwargs):
-  return args[sum(kwargs['const_lengths']):]
+  return _map(raise_to_shaped, args[sum(kwargs['const_lengths']):])
 
 
 def _custom_linear_solve_impl(*args, **kwargs):

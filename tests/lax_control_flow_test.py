@@ -191,6 +191,25 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertEqual(cloop(3, limit, 1), limit - 3)
     assert not effect[0]
 
+  def testWhileTypeErrors(self):
+    """Test typing error messages for while."""
+    with self.assertRaisesRegex(TypeError,
+        re.escape("cond_fun must return a boolean scalar, but got pytree PyTreeDef(tuple, [*,*]).")):
+      lax.while_loop(lambda c: (1., 1.), lambda c: c, 0.)
+    with  self.assertRaisesRegex(TypeError,
+        re.escape("cond_fun must return a boolean scalar, but got output type(s) [ShapedArray(float32[])].")):
+      lax.while_loop(lambda c: np.float32(1.), lambda c: c, np.float32(0.))
+    with self.assertRaisesRegex(TypeError,
+        re.escape("body_fun output and input must have same type structure, got PyTreeDef(tuple, [*,*]) and *.")):
+      lax.while_loop(lambda c: True, lambda c: (1., 1.), 0.)
+    with self.assertRaisesRegex(
+        TypeError,
+        "body_fun output and input must have identical types, got\\n"
+        "ShapedArray\(bool\[\]\)\\n"
+        "and\\n"
+        "ShapedArray\(float32\[\]\)."):
+      lax.while_loop(lambda c: True, lambda c: True, np.float32(0.))
+
   def testNestedWhileWithDynamicUpdateSlice(self):
     num = 5
 
@@ -252,7 +271,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return total
 
     cfun = api.jit(sum_first_n)
-    x = npr.RandomState(0).randn(10)
+    x = npr.RandomState(0).randn(10).astype(np.float_)
 
     for num in [0, 5, 10, 15]:
       self.assertAllClose(sum_first_n(x, num), onp.sum(x[:num]),
@@ -285,7 +304,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def fun(x, y):
       return lax.while_loop(lambda x: x < 3, lambda x: x + y, x)
 
-    ans = api.vmap(fun, in_axes=(None, 0))(0, onp.array([2, 3]))
+    ans = api.vmap(fun, in_axes=(None, 0))(0, np.array([2, 3]))
     expected = onp.array([4, 3])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
@@ -305,6 +324,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     ans = api.vmap(fun)(onp.array([0, 0]), onp.array([1, 2]))
     expected = (onp.array([4, 3]), onp.array([1, 2]))
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testForiLoopErrors(self):
+    """Test typing error messages for while."""
+    with self.assertRaisesRegex(
+      TypeError, "arguments to fori_loop must have equal types"):
+      lax.fori_loop(np.int16(0), np.int32(10), (lambda i, c: c), np.float32(7))
 
   def testForiLoopBatched(self):
     def body_fun(i, loop_carry):
@@ -368,7 +393,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return total
 
     cfun = api.jit(sum_first_n)
-    x = npr.RandomState(0).randn(10)
+    x = npr.RandomState(0).randn(10).astype(np.float_)
 
     for num in [0, 5, 10, 15]:
       self.assertAllClose(sum_first_n(x, num), onp.sum(x[:num]),
@@ -388,7 +413,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return out_val['total']
 
     cfun = api.jit(sum_first_n)
-    x = npr.RandomState(0).randn(10)
+    x = npr.RandomState(0).randn(10).astype(np.float_)
 
     for num in [0, 5, 10, 15]:
       self.assertAllClose(sum_first_n(x, num), onp.sum(x[:num]),
@@ -408,7 +433,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return tot
 
     cfun = api.jit(sum_first_n)
-    x = npr.RandomState(0).randn(10)
+    x = npr.RandomState(0).randn(10).astype(np.float_)
 
     for num in [0, 5, 10, 15]:
       self.assertAllClose(sum_first_n(x, num), onp.sum(x[:num]),
@@ -446,11 +471,11 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     def fun(pred):
       return lax.cond(pred, pred, lambda x: (True, x), pred, lambda x: (False, x))
-    
+
     @api.jit
     def cfun(pred):
       return fun(pred)
-    
+
     self.assertEqual(fun(0), cfun(0), (False,0))
     self.assertEqual(fun(0.), cfun(0.), (False,0.))
     self.assertEqual(fun(1), cfun(1), (True,1))
@@ -460,7 +485,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     for pred in ["abc", [], [1,2]]:
       for f in [fun, cfun]:
         self.assertRaises(TypeError, f, pred)
-    
+
   def testNestedCond(self):
     def fun(x):
       if x < 2:
@@ -486,6 +511,35 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertEqual(cfun(1), fun(1))
     self.assertEqual(cfun(3), fun(3))
     self.assertEqual(cfun(6), fun(6))
+
+  def testCondTypeErrors(self):
+    """Test typing error messages for  cond."""
+    with self.assertRaisesRegex(TypeError,
+        re.escape("Pred type must be either boolean or number, got <function")):
+      lax.cond(lambda x: True,
+               1., lambda top: 1., 2., lambda fop: 2.)
+    with self.assertRaisesRegex(TypeError,
+        re.escape("Pred type must be either boolean or number, got foo.")):
+      lax.cond("foo",
+               1., lambda top: 1., 2., lambda fop: 2.)
+    with self.assertRaisesRegex(TypeError,
+        re.escape("Pred must be a scalar, got (1.0, 1.0) of shape (2,).")):
+      lax.cond((1., 1.),
+               1., lambda top: 1., 2., lambda fop: 2.)
+    with self.assertRaisesRegex(TypeError,
+        re.escape("true_fun and false_fun output must have same type structure, got * and PyTreeDef(tuple, [*,*]).")):
+      lax.cond(True,
+               1., lambda top: 1., 2., lambda fop: (2., 2.))
+    with self.assertRaisesRegex(
+        TypeError,
+        "true_fun and false_fun output must have identical types, got\n"
+        "ShapedArray\(float32\[1\]\)\n"
+        "and\n"
+        "ShapedArray\(float32\[\]\)."):
+      lax.cond(True,
+               1., lambda top: np.array([1.], np.float32),
+               2., lambda fop: np.float32(1.))
+
 
   def testCondOneBranchConstant(self):
     def fun(x):
@@ -529,16 +583,16 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return lax.cond(pred, y, true_fun, z, false_fun)
 
     # these cases stay as cond
-    x = onp.array(2)
-    y = onp.array([1, 2])
-    z = onp.array([3, 4])
+    x = np.array(2)
+    y = np.array([1, 2])
+    z = np.array([3, 4])
     ans = api.vmap(fun, (None, 0, 0))(x, y, z)
     jaxpr = api.make_jaxpr(api.vmap(fun, (None, 0, 0)))(x, y, z)
     expected = onp.array([1, 2])
     self.assertAllClose(ans, expected, check_dtypes=False)
     assert "select" not in str(jaxpr)
 
-    x = onp.array(4)
+    x = np.array(4)
     ans = api.vmap(fun, (None, 0, 0))(x, y, z)
     jaxpr = api.make_jaxpr(api.vmap(fun, (None, 0, 0)))(x, y, z)
     expected = onp.array([-3, -4])
@@ -550,7 +604,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = onp.array([-3, -4])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    z = onp.array(5)
+    z = np.array(5)
     ans = api.vmap(fun, (None, 0, None))(x, y, z)
     jaxpr = api.make_jaxpr(api.vmap(fun, (None, 0, None)))(x, y, z)
     expected = onp.array([-5, -5])
@@ -559,14 +613,14 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
 
     # these cases become select
-    x = onp.array([2, 4])
+    x = np.array([2, 4])
     ans = api.vmap(fun, (0, 0, None))(x, y, z)
     jaxpr = api.make_jaxpr(api.vmap(fun, (0, 0, None)))(x, y, z)
     expected = onp.array([1, -5])
     self.assertAllClose(ans, expected, check_dtypes=False)
     assert "select" in str(jaxpr)
 
-    z = onp.array([3, 4])
+    z = np.array([3, 4])
     ans = api.vmap(fun)(x, y, z)
     jaxpr = api.make_jaxpr(api.vmap(fun))(x, y, z)
     expected = onp.array([1, -4])
@@ -668,7 +722,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     ans = api.jvp(lambda c, as_:                scan(f, c, as_), (c, as_), (c, as_))
     expected = api.jvp(lambda c, as_: scan_reference(f, c, as_), (c, as_), (c, as_))
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    self.assertAllClose(ans, expected, check_dtypes=False,
+                        rtol={onp.float64: 1e-14})
 
     jtu.check_grads(partial(scan, f), (c, as_), order=2, modes=["fwd"])
 
@@ -701,7 +756,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     ans = api.linearize(lambda c, as_:                scan(f, c, as_), c, as_)[1](c, as_)
     expected = api.linearize(lambda c, as_: scan_reference(f, c, as_), c, as_)[1](c, as_)
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    self.assertAllClose(ans, expected, check_dtypes=False,
+                        rtol={onp.float64: 1e-14})
 
   @parameterized.named_parameters(
       {"testcase_name": "_jit_scan={}_jit_f={}".format(jit_scan, jit_f),
@@ -732,10 +788,11 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     ans = api.grad(lambda c, as_:      list(          scan(f, c, as_))[0].sum())(c, as_)
     expected = api.grad(lambda c, as_: list(scan_reference(f, c, as_))[0].sum())(c, as_)
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    self.assertAllClose(ans, expected, check_dtypes=False,
+                        rtol={onp.float32: 2e-5, onp.float64: 1e-13})
 
     jtu.check_grads(partial(scan, f), (c, as_), order=2, modes=["rev"],
-                    atol=1e-3, rtol=1e-3)
+                    atol=1e-3, rtol=2e-3)
 
   def testScanRnn(self):
     r = npr.RandomState(0)
@@ -745,12 +802,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     n_out = 1
     length = 3
 
-    W_trans = r.randn(n_hid, n_hid + n_in)
-    W_out = r.randn(n_out, n_hid + n_in)
+    W_trans = r.randn(n_hid, n_hid + n_in).astype(np.float_)
+    W_out = r.randn(n_out, n_hid + n_in).astype(np.float_)
     params = W_trans, W_out
 
-    inputs = r.randn(length, n_in)
-    targets = r.randn(length, n_out)
+    inputs = r.randn(length, n_in).astype(np.float_)
+    targets = r.randn(length, n_out).astype(np.float_)
 
     def step(params, state, input):
       W_trans, W_out = params
@@ -775,7 +832,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     api.jvp(lambda params: loss(params, inputs, targets), (params,), (params,))
 
     # jvp numerical check passes
-    jtu.check_grads(loss, (params, inputs, targets), order=2, modes=["fwd"])
+    jtu.check_grads(loss, (params, inputs, targets), order=2, modes=["fwd"],
+                    rtol={onp.float32: 2e-2, onp.float64: 1e-6})
 
     # linearize works
     _, expected = api.jvp(loss, (params, inputs, targets),
@@ -788,17 +846,17 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     api.grad(loss)(params, inputs, targets)
 
     # gradient check passes
-    jtu.check_grads(loss, (params, inputs, targets), order=2, rtol=1e-2)
+    jtu.check_grads(loss, (params, inputs, targets), order=2, rtol=2e-2)
 
     # we can vmap to batch things
     batch_size = 7
-    batched_inputs = r.randn(batch_size, length, n_in)
-    batched_targets = r.randn(batch_size, length, n_out)
+    batched_inputs = r.randn(batch_size, length, n_in).astype(np.float_)
+    batched_targets = r.randn(batch_size, length, n_out).astype(np.float_)
     batched_loss = api.vmap(lambda x, y: loss(params, x, y))
     losses = batched_loss(batched_inputs, batched_targets)
     expected = onp.stack(list(map(lambda x, y: loss(params, x, y),
                                   batched_inputs, batched_targets)))
-    self.assertAllClose(losses, expected, check_dtypes=False)
+    self.assertAllClose(losses, expected, check_dtypes=False, rtol=1e-2)
 
   def testIssue711(self):
     # Tests reverse-mode differentiation through a scan for which the scanned
@@ -843,14 +901,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         'scan got value with no leading axis to scan over.*',
         lambda: lax.scan(plus_one, p0, list(range(5))))
 
-  @jtu.skip_on_flag('jax_enable_x64', True)  # With float64 error messages are different; hard to check precisely
   def testScanTypeErrors(self):
     """Test typing error messages for scan."""
     a = np.arange(5)
     # Body output not a tuple
     with self.assertRaisesRegex(TypeError,
-        re.escape("scan body output must be a pair, got ShapedArray(int32[]).")):
-      lax.scan(lambda c, x: 0, 0, a)
+        re.escape("scan body output must be a pair, got ShapedArray(float32[]).")):
+      lax.scan(lambda c, x: np.float32(0.), 0, a)
     with  self.assertRaisesRegex(TypeError,
         re.escape("scan carry output and input must have same type structure, "
                   "got PyTreeDef(tuple, [*,*,*]) and PyTreeDef(tuple, [*,PyTreeDef(tuple, [*,*])])")):
@@ -858,10 +915,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError,
         re.escape("scan carry output and input must have same type structure, got * and PyTreeDef(None, []).")):
       lax.scan(lambda c, x: (0, x), None, a)
-    with self.assertRaisesRegex(TypeError,
-        re.escape("scan carry output and input must have identical types, "
-                  "got ShapedArray(int32[]) and ShapedArray(float32[]).")):
-      lax.scan(lambda c, x: (0, x), 1.0, a)
+    with self.assertRaisesRegex(
+        TypeError,
+        "scan carry output and input must have identical types, got\n"
+        "ShapedArray\(int32\[\]\)\\n"
+        "and\\n"
+        "ShapedArray\(float32\[\]\)."):
+      lax.scan(lambda c, x: (np.int32(0), x), np.float32(1.0), a)
     with self.assertRaisesRegex(TypeError,
         re.escape("scan carry output and input must have same type structure, got * and PyTreeDef(tuple, [*,*]).")):
       lax.scan(lambda c, x: (0, x), (1, 2), np.arange(5))
@@ -878,7 +938,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     c = 1.
 
     jtu.check_grads(lambda c, as_: lax.scan(f, c, as_), (c, as_),
-                    modes=["rev"], order=2)
+                    modes=["rev"], order=2, rtol={onp.float32: 6e-3})
 
   @parameterized.named_parameters(
       {"testcase_name": "_jit_scan={}_jit_f={}_in_axes={}".format(
@@ -1106,12 +1166,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return solution
 
     def sqrt_cubed(x, tangent_solve=scalar_solve):
-      f = lambda y: y ** 2 - x ** 3
+      f = lambda y: y ** 2. - np.array(x) ** 3.
       return lax.custom_root(f, 0.0, binary_search, tangent_solve)
 
     value, grad = api.value_and_grad(sqrt_cubed)(5.0)
-    self.assertAllClose(value, 5 ** 1.5, check_dtypes=False)
-    self.assertAllClose(grad, api.grad(pow)(5.0, 1.5), check_dtypes=False)
+    self.assertAllClose(value, 5 ** 1.5, check_dtypes=False, rtol=1e-6)
+    self.assertAllClose(grad, api.grad(pow)(5.0, 1.5), check_dtypes=False,
+                        rtol=1e-7)
     jtu.check_grads(sqrt_cubed, (5.0,), order=2, rtol=1e-3)
 
     # TODO(shoyer): reenable when batching works
@@ -1120,7 +1181,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     # self.assertAllClose(results, inputs ** 1.5, check_dtypes=False)
 
     results = api.jit(sqrt_cubed)(5.0)
-    self.assertAllClose(results, 5.0 ** 1.5, check_dtypes=False)
+    self.assertAllClose(results, 5.0 ** 1.5, check_dtypes=False,
+                        rtol={onp.float64:1e-7})
 
   def test_custom_root_vector_with_solve_closure(self):
 
@@ -1137,7 +1199,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     rng = onp.random.RandomState(0)
     a = rng.randn(2, 2)
     b = rng.randn(2)
-    jtu.check_grads(linear_solve, (a, b), order=2)
+    jtu.check_grads(linear_solve, (a, b), order=2,
+                    atol={onp.float32: 1e-2, onp.float64: 1e-11})
 
     actual = api.jit(linear_solve)(a, b)
     expected = np.linalg.solve(a, b)
@@ -1208,7 +1271,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     if symmetric:
       a = a + a.T
     b = rng.randn(3)
-    jtu.check_grads(linear_solve, (a, b), order=2)
+    jtu.check_grads(linear_solve, (a, b), order=2, rtol=2e-3)
 
     expected = np.linalg.solve(a, b)
     actual = api.jit(linear_solve)(a, b)
@@ -1234,8 +1297,10 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     rng = onp.random.RandomState(0)
     a = rng.randn(3, 3)
     b = rng.randn(3)
-    jtu.check_grads(lambda x: linear_solve(x, b), (a,), order=2)
-    jtu.check_grads(lambda x: linear_solve(a, x), (b,), order=2)
+    jtu.check_grads(lambda x: linear_solve(x, b), (a,), order=2,
+                    rtol={onp.float32: 5e-3})
+    jtu.check_grads(lambda x: linear_solve(a, x), (b,), order=2,
+                    rtol={onp.float32: 5e-3})
 
   def test_custom_linear_solve_iterative(self):
 
@@ -1263,7 +1328,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = np.linalg.solve(np.exp(a), np.cos(b))
     actual = build_and_solve(a, b)
     self.assertAllClose(expected, actual, atol=1e-5, check_dtypes=True)
-    jtu.check_grads(build_and_solve, (a, b), atol=1e-5, order=2)
+    jtu.check_grads(build_and_solve, (a, b), atol=1e-5, order=2, rtol=2e-3)
 
     # TODO(shoyer): reenable when batching works
     # a2 = rng.randn(1, 2, 2)
@@ -1294,7 +1359,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     # positive definite.
     jtu.check_grads(
         lambda x, y: positive_definite_solve(high_precision_dot(x, x.T), y),
-        (a, b), order=2)
+        (a, b), order=2, rtol=1e-2)
 
   def test_custom_linear_solve_lu(self):
 
@@ -1320,10 +1385,11 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     actual = linear_solve(a, b)
     self.assertAllClose(expected, actual, check_dtypes=True)
 
-    jtu.check_grads(linear_solve, (a, b), order=2)
+    jtu.check_grads(linear_solve, (a, b), order=2, rtol=2e-3)
 
     # regression test for https://github.com/google/jax/issues/1536
-    jtu.check_grads(api.jit(linear_solve), (a, b), order=2)
+    jtu.check_grads(api.jit(linear_solve), (a, b), order=2,
+                    rtol={onp.float32: 2e-3})
 
   def test_custom_linear_solve_without_transpose_solve(self):
 
@@ -1339,7 +1405,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     a = rng.randn(2, 2)
     b = rng.randn(2)
 
-    jtu.check_grads(loss, (a, b), atol=1e-5, order=2, modes=['fwd'])
+    jtu.check_grads(loss, (a, b), order=2, modes=['fwd'],
+                    atol={onp.float32: 2e-3, onp.float64: 1e-11})
 
     with self.assertRaisesRegex(TypeError, "transpose_solve required"):
       api.grad(loss)(a, b)

@@ -16,8 +16,9 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import operator
 from collections import namedtuple
+import gc
+import operator
 from unittest import skip
 
 import numpy as onp
@@ -172,11 +173,11 @@ class CoreTest(jtu.JaxTestCase):
 
   @parameterized.parameters(test_specs)
   def test_jit(self, f, args):
-    jtu.check_eq(jit(f)(*args), f(*args))
+    jtu.check_close(jit(f)(*args), f(*args))
 
   @parameterized.parameters(test_specs)
   def test_jvp(self, f, args):
-    jtu.check_jvp(f, partial(jvp, f), args)
+    jtu.check_jvp(f, partial(jvp, f), args, rtol={onp.float32: 3e-2})
 
   def test_jvp_zeros(self):
     def foo(x):
@@ -188,11 +189,14 @@ class CoreTest(jtu.JaxTestCase):
 
   @parameterized.parameters(test_specs)
   def test_jvp_linearized(self, f, args):
-    jtu.check_jvp(f, partial(jvp_unlinearized, f), args)
+    jtu.check_jvp(f, partial(jvp_unlinearized, f), args,
+                  rtol={onp.float32: 3e-2})
 
   @parameterized.parameters(test_specs)
   def test_vjp(self, f, args):
-    jtu.check_vjp(f, partial(vjp, f), args)
+    jtu.check_vjp(f, partial(vjp, f), args,
+                  rtol={onp.float32: 7e-2, onp.float64: 1e-5},
+                  atol={onp.float32: 1e-2, onp.float64: 1e-5})
 
   def test_jvp_closure(self):
     def foo(x):
@@ -254,6 +258,23 @@ class CoreTest(jtu.JaxTestCase):
     assert d_sin(0.0) == 1.0
     assert d2_sin(0.0) == 0.0
     assert d3_sin(0.0) == -1.0
+
+  def test_reference_cycles(self):
+    gc.collect()
+
+    def f(x):
+      return x.sum()
+
+    fn = partial(linearize, f)
+    params = np.zeros([])
+
+    debug = gc.get_debug()
+    try:
+      fn(params)
+      gc.set_debug(gc.DEBUG_SAVEALL)
+      self.assertEqual(gc.collect(), 0)
+    finally:
+      gc.set_debug(debug)
 
 
 if __name__ == '__main__':

@@ -234,8 +234,8 @@ class MaskingTest(jtu.JaxTestCase):
       return predicted
 
     rng = onp.random.RandomState(0)
-    W = onp.eye(n)
-    xs = rng.randn(10, n)
+    W = np.eye(n)
+    xs = rng.randn(10, n).astype(np.float_)
     ans = rnn([W, xs], dict(t=4))
     expected = xs[:4].sum(0)
     self.assertAllClose(ans, expected, check_dtypes=False)
@@ -252,9 +252,9 @@ class MaskingTest(jtu.JaxTestCase):
       return np.sum((predicted - target)**2)
 
     rng = onp.random.RandomState(0)
-    W = rng.randn(n, n)
-    xs = rng.randn(10, n)
-    y = rng.randn(n)
+    W = rng.randn(n, n).astype(np.float_)
+    xs = rng.randn(10, n).astype(np.float_)
+    y = rng.randn(n).astype(np.float_)
 
     ans = grad(lambda W: rnn([W, xs, y], dict(t=4)))(W)
 
@@ -281,8 +281,8 @@ class MaskingTest(jtu.JaxTestCase):
       return np.sum((predicted - target)**2)
 
     rng = onp.random.RandomState(0)
-    W = rng.randn(n, n)
-    seqs = rng.randn(3, 10, n)
+    W = rng.randn(n, n).astype(np.float_)
+    seqs = rng.randn(3, 10, n).astype(np.float_)
     ts = np.array([2, 5, 4])
     ys = rng.randn(3, n)
 
@@ -301,7 +301,9 @@ class MaskingTest(jtu.JaxTestCase):
     seqs_ = [xs[:t] for xs, t in zip(seqs, ts)]
     expected = grad(lambda W: rnn_reference(W, seqs_, ys).sum())(W)
 
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    self.assertAllClose(
+        ans, expected, check_dtypes=False,
+        rtol={onp.float32:2e-2} if jtu.device_under_test() == "tpu" else None)
 
   def test_nesting(self):
     raise SkipTest("not yet implemented")

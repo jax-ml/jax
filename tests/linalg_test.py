@@ -81,7 +81,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                             check_dtypes=True, tol=1e-3)
     self._CompileAndCheck(np.linalg.cholesky, args_maker, check_dtypes=True)
 
-    if onp.finfo(dtype).bits == 64:
+    if np.finfo(dtype).bits == 64:
       jtu.check_grads(np.linalg.cholesky, args_maker(), order=2)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -98,7 +98,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
     self._CheckAgainstNumpy(onp.linalg.det, np.linalg.det, args_maker,
                             check_dtypes=True, tol=1e-3)
-    self._CompileAndCheck(np.linalg.det, args_maker, check_dtypes=True)
+    self._CompileAndCheck(np.linalg.det, args_maker, check_dtypes=True,
+                          rtol={onp.float64: 1e-13})
 
   def testDetOfSingularMatrix(self):
     x = np.array([[-1., 3./2], [2./3, -1.]], dtype=onp.float32)
@@ -162,7 +163,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     # Norm, adjusted for dimension and type.
     def norm(x):
       norm = onp.linalg.norm(x, axis=(-2, -1))
-      return norm / ((n + 1) * onp.finfo(dtype).eps)
+      return norm / ((n + 1) * np.finfo(dtype).eps)
 
     a, = args_maker()
     w, v = np.linalg.eig(a)
@@ -232,7 +233,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     # Norm, adjusted for dimension and type.
     def norm(x):
       norm = onp.linalg.norm(x, axis=(-2, -1))
-      return norm / ((n + 1) * onp.finfo(dtype).eps)
+      return norm / ((n + 1) * np.finfo(dtype).eps)
 
     a, = args_maker()
     a = (a + onp.conj(a.T)) / 2
@@ -416,7 +417,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     # Norm, adjusted for dimension and type.
     def norm(x):
       norm = onp.linalg.norm(x, axis=(-2, -1))
-      return norm / (max(m, n) * onp.finfo(dtype).eps)
+      return norm / (max(m, n) * np.finfo(dtype).eps)
 
     a, = args_maker()
     out = np.linalg.svd(a, full_matrices=full_matrices, compute_uv=compute_uv)
@@ -487,7 +488,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     # Norm, adjusted for dimension and type.
     def norm(x):
       n = onp.linalg.norm(x, axis=(-2, -1))
-      return n / (max_rank * onp.finfo(dtype).eps)
+      return n / (max_rank * np.finfo(dtype).eps)
 
     def compare_orthogonal(q1, q2):
       # Q is unique up to sign, so normalize the sign first.
@@ -608,7 +609,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     A = np.array(onp.random.randn(100, 3, 3), dtype=np.float32)
     b = np.array(onp.random.randn(100, 3), dtype=np.float32)
     x = np.linalg.solve(A, b)
-    self.assertAllClose(vmap(np.dot)(A, x), b, atol=1e-3, rtol=1e-3,
+    self.assertAllClose(vmap(np.dot)(A, x), b, atol=1e-3, rtol=1e-2,
                         check_dtypes=True)
     jac0 = jax.jacobian(np.linalg.solve, argnums=0)(A, b)
     jac1 = jax.jacobian(np.linalg.solve, argnums=1)(A, b)
@@ -645,7 +646,9 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     x, = args_maker()
     p, l, u = jsp.linalg.lu(x)
-    self.assertAllClose(x, onp.matmul(p, onp.matmul(l, u)), check_dtypes=True)
+    self.assertAllClose(x, onp.matmul(p, onp.matmul(l, u)), check_dtypes=True,
+                        rtol={onp.float32: 1e-4, onp.float64:1e-12,
+                              onp.complex64: 1e-4, onp.complex128:1e-12})
     self._CompileAndCheck(jsp.linalg.lu, args_maker, check_dtypes=True)
 
   def testLuOfSingularMatrix(self):
@@ -707,7 +710,8 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     u = onp.triu(lu)
     for i in range(n):
       x[[i, piv[i]],] = x[[piv[i], i],]
-    self.assertAllClose(x, onp.matmul(l, u), check_dtypes=True, rtol=1e-3)
+    self.assertAllClose(x, onp.matmul(l, u), check_dtypes=True, rtol=1e-3,
+                        atol=1e-3)
     self._CompileAndCheck(jsp.linalg.lu_factor, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -829,7 +833,8 @@ class ScipyLinalgTest(jtu.JaxTestCase):
         l if lower else T(l), b, trans=1 if transpose_a else 0, lower=lower,
         unit_diagonal=unit_diagonal)
 
-    self.assertAllClose(onp_ans, ans, check_dtypes=True)
+    self.assertAllClose(onp_ans, ans, check_dtypes=True,
+                        rtol={onp.float32: 1e-4, onp.float64: 1e-11})
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
