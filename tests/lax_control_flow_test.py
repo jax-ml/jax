@@ -202,12 +202,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError,
         re.escape("body_fun output and input must have same type structure, got PyTreeDef(tuple, [*,*]) and *.")):
       lax.while_loop(lambda c: True, lambda c: (1., 1.), 0.)
-    with self.assertRaisesRegex(
+    with self.assertRaisesWithLiteralMatch(
         TypeError,
-        "body_fun output and input must have identical types, got\\n"
-        "ShapedArray\(bool\[\]\)\\n"
-        "and\\n"
-        "ShapedArray\(float32\[\]\)."):
+        "body_fun output and input must have identical types, got\n"
+        "ShapedArray(bool[])\n"
+        "and\n"
+        "ShapedArray(float32[])."):
       lax.while_loop(lambda c: True, lambda c: True, np.float32(0.))
 
   def testNestedWhileWithDynamicUpdateSlice(self):
@@ -530,12 +530,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         re.escape("true_fun and false_fun output must have same type structure, got * and PyTreeDef(tuple, [*,*]).")):
       lax.cond(True,
                1., lambda top: 1., 2., lambda fop: (2., 2.))
-    with self.assertRaisesRegex(
+    with self.assertRaisesWithLiteralMatch(
         TypeError,
         "true_fun and false_fun output must have identical types, got\n"
-        "ShapedArray\(float32\[1\]\)\n"
+        "ShapedArray(float32[1])\n"
         "and\n"
-        "ShapedArray\(float32\[\]\)."):
+        "ShapedArray(float32[])."):
       lax.cond(True,
                1., lambda top: np.array([1.], np.float32),
                2., lambda fop: np.float32(1.))
@@ -915,12 +915,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError,
         re.escape("scan carry output and input must have same type structure, got * and PyTreeDef(None, []).")):
       lax.scan(lambda c, x: (0, x), None, a)
-    with self.assertRaisesRegex(
+    with self.assertRaisesWithLiteralMatch(
         TypeError,
         "scan carry output and input must have identical types, got\n"
-        "ShapedArray\(int32\[\]\)\\n"
-        "and\\n"
-        "ShapedArray\(float32\[\]\)."):
+        "ShapedArray(int32[])\n"
+        "and\n"
+        "ShapedArray(float32[])."):
       lax.scan(lambda c, x: (np.int32(0), x), np.float32(1.0), a)
     with self.assertRaisesRegex(TypeError,
         re.escape("scan carry output and input must have same type structure, got * and PyTreeDef(tuple, [*,*]).")):
