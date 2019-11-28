@@ -877,6 +877,35 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     expected = grad(lambda x: np.sum(f(x)))(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testPmapStaticArgnums(self):
+    @partial(pmap, axis_name='i', static_argnums=1)
+    def f(x, y):
+      return np.sin(x + y)
+    shape = (xla_bridge.device_count(), 4)
+    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+    y = onp.arange(4, dtype=onp.float32)
+
+    ans = f(x, y)
+    expected = onp.sin(x + y[None])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testPmapStaticArgnumsError(self):
+    broadcast = pmap(lambda arg: arg)
+    @partial(pmap, axis_name='i', static_argnums=1)
+    def f(x, y):
+      return np.sin(x + y)
+    shape = (xla_bridge.device_count(), 4)
+    x = broadcast(onp.arange(prod(shape), dtype=onp.float32).reshape(shape))
+    y = broadcast(onp.arange(prod(shape), dtype=onp.float32).reshape(shape))
+
+    with self.assertRaisesRegex(
+        ValueError,
+        r"Argument \d is of type ShardedDeviceArray, but it "
+        r"has been marked as static. Consider either not "
+        r"marking it as static or convert it to a non-sharded"
+        r" array with np.array()."):
+      f(x, y)
+
 
 if __name__ == '__main__':
   absltest.main()
