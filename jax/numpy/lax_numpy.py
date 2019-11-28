@@ -256,6 +256,8 @@ def update_numpydoc(docstr, fun, op):
 
   #Some numpy functions have an extra tab at the beginning of each line,
   #If this function is one of those we remove this extra tab from all the lines
+  if not hasattr(op, '__code__'):
+    return docstr
   if docstr[:4] == '    ':
     lines = docstr.split('\n')
     for idx, line in enumerate(lines):
@@ -289,6 +291,8 @@ def _wraps(fun, update_doc=True, lax_description=""):
       If False, include the numpy docstring verbatim.
   """
   def wrap(op):
+    if not hasattr(fun, '__doc__') or fun.__doc__ is None:
+      return op
     try:
       # Numpy doc comments have the form:
       # fn(x, y, z)          (optional)
@@ -993,7 +997,7 @@ def broadcast_arrays(*args):
 
 def broadcast_to(arr, shape):
   """Like Numpy's broadcast_to but doesn't necessarily return views."""
-  arr = arr if isinstance(arr, ndarray) or isscalar(arr) else array(arr)
+  arr = arr if isinstance(arr, ndarray) else array(arr)
   shape = tuple(map(int, shape))  # check that shape is concrete
   arr_shape = _shape(arr)
   if arr_shape == shape:
@@ -2157,38 +2161,35 @@ def vdot(a, b, precision=None):
 @_wraps(onp.tensordot, lax_description=_PRECISION_DOC)
 def tensordot(a, b, axes=2, precision=None):
   _check_arraylike("tensordot", a, b)
-  if not (ndim(a) >= 1 and ndim(b) >= 1):
+  a_ndim = ndim(a)
+  b_ndim = ndim(b)
+  if a_ndim < 1 or b_ndim < 1:
     msg = "tensordot requires a.ndim and b.dim to be at least 1, got {} and {}."
     raise TypeError(msg.format(ndim(a), ndim(b)))
 
+  a, b = _promote_dtypes(a, b)
   if type(axes) is int:
-    if axes == 0:
-      a, b = _promote_dtypes(a, b)
-      return lax.mul(lax.reshape(a, shape(a) + (1,) * ndim(b)),
-                     lax.reshape(b, (1,) * ndim(a) + shape(b)))
-    else:
-      a, b = _promote_dtypes(a, b)
-      a_reshape = lax.reshape(a, (_prod(a.shape[:-axes]), _prod(a.shape[-axes:])))
-      b_reshape = lax.reshape(b, (_prod(b.shape[:axes]), _prod(b.shape[axes:])))
-      out_reshape = lax.dot(a_reshape, b_reshape, precision=precision)
-      return lax.reshape(out_reshape, a.shape[:-axes] + b.shape[axes:])
+    if axes > _min(a_ndim, b_ndim):
+      msg = "Number of tensordot axes (axes {}) exceeds input ranks ({} and {})"
+      raise msg.format(axes, a.shape, b.shape)
+    contracting_dims = tuple(range(a_ndim - axes, a_ndim)), tuple(range(axes))
   elif type(axes) in (list, tuple) and len(axes) == 2:
     ax1, ax2 = axes
     if type(ax1) == type(ax2) == int:
-      a_transposed = moveaxis(a, ax1, -1) if ax1 != a.ndim - 1 else a
-      b_transposed = moveaxis(b, ax2, 0) if ax2 != 0 else b
-      return tensordot(a_transposed, b_transposed, 1, precision)
+      contracting_dims = ((_canonicalize_axis(ax1, a_ndim),),
+                          (_canonicalize_axis(ax2, b_ndim),))
     elif type(ax1) in (list, tuple) and type(ax2) in (list, tuple):
       if len(ax1) != len(ax2):
         msg = "tensordot requires axes lists to have equal length, got {} and {}."
         raise TypeError(msg.format(ax1, ax2))
-      num_axes = len(ax1)
-      a_transposed = moveaxis(a, ax1, tuple(range(a.ndim - num_axes, a.ndim)))
-      b_transposed = moveaxis(b, ax2, tuple(range(num_axes)))
-      return tensordot(a_transposed, b_transposed, num_axes, precision)
-  msg = ("tensordot axes argument must be an int, a pair of ints, or a pair of "
-         "lists/tuples of ints.")
-  raise TypeError(msg)
+      contracting_dims = (tuple(_canonicalize_axis(i, a_ndim) for i in ax1),
+                          tuple(_canonicalize_axis(i, b_ndim) for i in ax2))
+  else:
+    msg = ("tensordot axes argument must be an int, a pair of ints, or a pair "
+           "of lists/tuples of ints.")
+    raise TypeError(msg)
+  return lax.dot_general(a, b, (contracting_dims, ((), ())),
+                         precision=precision)
 
 
 @_wraps(onp.einsum, lax_description=_PRECISION_DOC)
@@ -2298,24 +2299,15 @@ def _einsum(operands, contractions, precision):
         batch_names = ''.join(lhs_names[i] for i in range(len(lhs_names))
                               if i in batch_dims)
 
-      if contracted_names:
-        # contract using lax.dot_general
-        lhs_cont, rhs_cont = unzip2((lhs_names.index(n), rhs_names.index(n))
-                                    for n in contracted_names)
-        operand = _dot_general(lhs, rhs, lhs_cont, rhs_cont, len(batch_dims),
-                               precision)
-        deleted_names = batch_names + ''.join(contracted_names)
-        names = (batch_names + removechars(lhs_names, deleted_names)
-                 + removechars(rhs_names, deleted_names))
-      else:
-        # no contraction, just a tensor product
-        nbatch = len(batch_names)
-        assert lhs.shape[:nbatch] == rhs.shape[:nbatch]
-        names = batch_names + lhs_names[nbatch:] + rhs_names[nbatch:]
-        lhs_shape = lhs.shape + (1,) * (rhs.ndim - nbatch)
-        rhs_shape = rhs.shape[:nbatch] + (1,) * (lhs.ndim - nbatch) + rhs.shape[nbatch:]
-        operand = lax.reshape(lhs, lhs_shape) * lax.reshape(rhs, rhs_shape)
-
+      # contract using lax.dot_general
+      lhs_cont, rhs_cont = unzip2((lhs_names.index(n), rhs_names.index(n))
+                                  for n in contracted_names)
+      bdims = tuple(range(len(batch_dims)))
+      dimension_numbers = [(lhs_cont, rhs_cont), (bdims, bdims)]
+      operand = lax.dot_general(lhs, rhs, dimension_numbers, precision)
+      deleted_names = batch_names + ''.join(contracted_names)
+      names = (batch_names + removechars(lhs_names, deleted_names)
+               + removechars(rhs_names, deleted_names))
     else:
       raise NotImplementedError  # if this is actually reachable, open an issue!
 
@@ -2329,50 +2321,6 @@ def _einsum(operands, contractions, precision):
     operands.append(operand)  # used in next iteration
 
   return operands[0]
-
-
-def _dot_general(lhs, rhs, lhs_cont, rhs_cont, nbatch, precision):
-  """Helper for einsum contractions."""
-  # lax.dot_general has some tight constraints on dimension_numbers that this
-  # wrapper loosens via transposes and reshapes
-  assert len(lhs_cont) == len(rhs_cont) > 0
-  ncont = len(lhs_cont)
-  lhs_ntensor = lhs.ndim - nbatch - ncont
-  rhs_ntensor = rhs.ndim - nbatch - ncont
-  batch_dims = tuple(range(nbatch))
-
-  if ncont == 1 and 0 <= lhs_ntensor <= 1 and 0 <= rhs_ntensor <= 1:
-    dimension_numbers = [(lhs_cont, rhs_cont), (batch_dims, batch_dims)]
-    return lax.dot_general(lhs, rhs, dimension_numbers, precision)
-  else:
-    # move contracting dimensions to the end. lax.dot_general only allows one
-    # contracting dimension, so if there's more than one we collapse them.
-    if ncont > 1:
-      lhs_cdims = tuple(range(lhs.ndim - ncont, lhs.ndim))
-      lhs = moveaxis(lhs, lhs_cont, lhs_cdims)
-      lhs = lhs.reshape(lhs.shape[:-ncont] + (-1,))
-
-      rhs_cdims = tuple(range(rhs.ndim - ncont, rhs.ndim))
-      rhs = moveaxis(rhs, rhs_cont, rhs_cdims)
-      rhs = rhs.reshape(rhs.shape[:-ncont] + (-1,))
-    else:
-      lhs = moveaxis(lhs, lhs_cont[0], -1)
-      rhs = moveaxis(rhs, rhs_cont[0], -1)
-
-    # lax.dot_general only allows zero or one tensor product dims per operand,
-    # so if there's more than one we collapse them.
-    result_shape = lhs.shape[:nbatch] + lhs.shape[nbatch:-1] + rhs.shape[nbatch:-1]
-
-    if lhs_ntensor > 1:
-      lhs = lhs.reshape(lhs.shape[:nbatch] + (-1,) + lhs.shape[-1:])
-
-    if rhs_ntensor > 1:
-      rhs = rhs.reshape(rhs.shape[:nbatch] + (-1,) + rhs.shape[-1:])
-
-    lhs_cont, rhs_cont = [lhs.ndim - 1], [rhs.ndim - 1]
-    dimension_numbers = [(lhs_cont, rhs_cont), (batch_dims, batch_dims)]
-    result = lax.dot_general(lhs, rhs, dimension_numbers, precision)
-    return lax.reshape(result, result_shape)
 
 
 def _movechars(s, src, dst):

@@ -53,10 +53,10 @@ class OptixTest(absltest.TestCase):
 
     # experimental/optix.py
     optix_params = self.init_params
-    opt_init, opt_update = optix.sgd(LR, 0.0)
-    state = opt_init(optix_params)
+    sgd = optix.sgd(LR, 0.0)
+    state = sgd.init(optix_params)
     for _ in range(STEPS):
-      updates, state = opt_update(self.per_step_updates, state)
+      updates, state = sgd.update(self.per_step_updates, state)
       optix_params = optix.apply_updates(optix_params, updates)
 
     # Check equivalence.
@@ -76,10 +76,10 @@ class OptixTest(absltest.TestCase):
 
     # experimental/optix.py
     optix_params = self.init_params
-    opt_init, opt_update = optix.adam(LR, b1, b2, eps)
-    state = opt_init(optix_params)
+    adam = optix.adam(LR, b1, b2, eps)
+    state = adam.init(optix_params)
     for _ in range(STEPS):
-      updates, state = opt_update(self.per_step_updates, state)
+      updates, state = adam.update(self.per_step_updates, state)
       optix_params = optix.apply_updates(optix_params, updates)
 
     # Check equivalence.
@@ -99,10 +99,10 @@ class OptixTest(absltest.TestCase):
 
     # experimental/optix.py
     optix_params = self.init_params
-    opt_init, opt_update = optix.rmsprop(LR, decay, eps)
-    state = opt_init(optix_params)
+    rmsprop = optix.rmsprop(LR, decay, eps)
+    state = rmsprop.init(optix_params)
     for _ in range(STEPS):
-      updates, state = opt_update(self.per_step_updates, state)
+      updates, state = rmsprop.update(self.per_step_updates, state)
       optix_params = optix.apply_updates(optix_params, updates)
 
     # Check equivalence.

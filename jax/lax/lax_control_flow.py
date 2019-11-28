@@ -675,7 +675,7 @@ def _scan_partial_eval(trace, *tracers, **kwargs):
   _, _, res_pvals = split_list(out_pvals_1, [num_carry, num_ys])
   intensive_residuals = [const for pv, const in res_pvals if pv is None]
   move = [False] * len(jaxpr_1.in_avals) + [pv is None for pv, _ in res_pvals]
-  jaxpr_2_opt = _move_binders_to_front(jaxpr_2, move)
+  jaxpr_2_opt = pe.move_binders_to_front(jaxpr_2, move)
   num_consts_2 = num_consts + len(intensive_residuals)
 
   in_consts = (list(consts_1) + [core.unit] * num_consts +
@@ -711,21 +711,6 @@ def _scan_partial_eval(trace, *tracers, **kwargs):
                                num_carry=num_carry, linear=linear_2))
   for t in out_tracers: t.recipe = eqn
   return out_tracers
-
-def _move_binders_to_front(typed_jaxpr, to_move):
-  assert not typed_jaxpr.jaxpr.constvars and not typed_jaxpr.jaxpr.freevars
-  assert len(typed_jaxpr.in_avals) == len(to_move)
-  new_invars = _move_to_front(typed_jaxpr.jaxpr.invars, to_move)
-  new_jaxpr = core.Jaxpr((), (), new_invars, typed_jaxpr.jaxpr.outvars,
-                         typed_jaxpr.jaxpr.eqns)
-  new_in_avals = _move_to_front(typed_jaxpr.in_avals, to_move)
-  new_typed_jaxpr = core.TypedJaxpr(new_jaxpr, typed_jaxpr.literals,
-                                    new_in_avals, typed_jaxpr.out_avals)
-  return new_typed_jaxpr
-
-def _move_to_front(lst, to_move):
-  return ([elt for elt, move in zip(lst, to_move) if move] +
-          [elt for elt, move in zip(lst, to_move) if not move])
 
 def _promote_aval_rank(sz, aval):
   if aval is core.abstract_unit:
@@ -1084,7 +1069,7 @@ def custom_root(f, initial_guess, solve, tangent_solve):
 
 
 def _root_abstract_eval(*args, **kwargs):
-  return args[sum(kwargs['const_lengths']):]
+  return _map(raise_to_shaped, args[sum(kwargs['const_lengths']):])
 
 
 def _root_impl(*args, **kwargs):
@@ -1253,7 +1238,7 @@ def custom_linear_solve(
 
 
 def _linear_solve_abstract_eval(*args, **kwargs):
-  return args[sum(kwargs['const_lengths']):]
+  return _map(raise_to_shaped, args[sum(kwargs['const_lengths']):])
 
 
 def _custom_linear_solve_impl(*args, **kwargs):

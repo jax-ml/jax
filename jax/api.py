@@ -55,7 +55,7 @@ from .util import (unzip2, unzip3, curry, partial, safe_map, safe_zip,
 from .lib import xla_bridge as xb
 from .lib.xla_bridge import (device_count, local_device_count, devices, local_devices,
                              host_id, host_ids, host_count)
-from .abstract_arrays import ShapedArray, raise_to_shaped
+from .abstract_arrays import ConcreteArray, ShapedArray, raise_to_shaped
 from .interpreters import partial_eval as pe
 from .interpreters import xla
 from .interpreters import pxla
@@ -1064,13 +1064,11 @@ def jvp(fun, primals, tangents):
       or standard Python containers of arrays or scalars. It should return an
       array, scalar, or standard Python container of arrays or scalars.
     primals: The primal values at which the Jacobian of `fun` should be
-      evaluated. Should be a tuple of arrays, scalar, or standard Python
-      container thereof. The length of the tuple is equal to the number of
-      positional parameters of `fun`.
+      evaluated. Should be either a tuple or a list of arguments,
+      and its length should  equal to the number of positional parameters of `fun`.
     tangents: The tangent vector for which the Jacobian-vector product should be
-      evaluated. Should be a tuple of arrays, scalar, or standard Python
-      container thereof, with the same tree structure and array shapes as
-      `primals`.
+      evaluated. Should be either a tuple or a list of tangents, with the same
+      tree structure and array shapes as `primals`.
 
   Returns:
     A `(primals_out, tangents_out)` pair, where `primals_out` is
@@ -1088,6 +1086,12 @@ def jvp(fun, primals, tangents):
   """
   if not isinstance(fun, lu.WrappedFun):
     fun = lu.wrap_init(fun)
+
+  if (not isinstance(primals, (tuple, list)) or
+      not isinstance(tangents, (tuple, list))):
+    msg = ("primal and tangent arguments to jax.jvp must be tuples or lists; "
+           "found {} and {}.")
+    raise TypeError(msg.format(type(primals).__name__, type(tangents).__name__))
 
   ps_flat, tree_def = tree_flatten(primals)
   ts_flat, tree_def_2 = tree_flatten(tangents)
@@ -1978,3 +1982,14 @@ def eval_shape(fun, *args, **kwargs):
   out = pe.abstract_eval_fun(fun.call_wrapped, *map(abstractify, args_flat))
   out = [ShapeDtypeStruct(x.shape, x.dtype) for x in out]
   return tree_unflatten(out_tree(), out)
+
+
+def checkpoint(fun, concrete=False):
+  @wraps(fun)
+  def fun_remat(*args, **kwargs):
+    args_flat, in_tree = tree_flatten((args, kwargs))
+    flat_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
+    out_flat = pe.remat_call(flat_fun, *args_flat, concrete=concrete)
+    return tree_unflatten(out_tree(), out_flat)
+  return fun_remat
+remat = checkpoint

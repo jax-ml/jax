@@ -18,13 +18,15 @@ from __future__ import print_function
 
 import itertools as it
 from collections import namedtuple, Counter, defaultdict
+import contextlib
+import threading
 from weakref import ref
 
 import numpy as onp
 
 from .. import core
 from .. import linear_util as lu
-from ..abstract_arrays import ShapedArray, ConcreteArray
+from ..abstract_arrays import ShapedArray, ConcreteArray, raise_to_shaped
 from ..linear_util import thunk, transformation, transformation_with_aux
 from ..util import unzip2, safe_zip, safe_map, toposort, partial, split_list
 from ..core import (Trace, Tracer, new_master, Jaxpr, Literal, get_aval,
@@ -104,6 +106,8 @@ class JaxprTrace(Trace):
         return out_tracer
 
   def process_call(self, call_primitive, f, tracers, params):
+    if call_primitive in call_partial_eval_rules:
+      return call_partial_eval_rules[call_primitive](self, f, tracers, params)
     if call_primitive in map_primitives:
       return self.process_map(call_primitive, f, tracers, params)
     in_pvs, in_consts = unzip2([t.pval for t in tracers])
@@ -188,7 +192,6 @@ class JaxprTrace(Trace):
       return out_tracers
     return out, todo
 
-
 def _mapped_aval(aval):
   if aval is core.abstract_unit:
     return aval
@@ -207,6 +210,8 @@ def _unmapped_aval(size, aval):
     raise TypeError(aval)
 
 map_primitives = set()
+custom_partial_eval_rules = {}
+call_partial_eval_rules = {}
 
 
 def partial_eval(f, trace, pvs):
@@ -408,6 +413,14 @@ def closure_convert_jaxpr(jaxpr):
   core.skip_checks or core.check_jaxpr(lifted_jaxpr)
   return lifted_jaxpr
 
+def convert_freevars_jaxpr(jaxpr):
+  core.skip_checks or core.check_jaxpr(jaxpr)
+  lifted_jaxpr = Jaxpr(constvars=jaxpr.constvars, freevars=(),
+                       invars=jaxpr.freevars + jaxpr.invars,
+                       outvars=jaxpr.outvars, eqns=jaxpr.eqns)
+  core.skip_checks or core.check_jaxpr(lifted_jaxpr)
+  return lifted_jaxpr
+
 def partial_eval_jaxpr(jaxpr, unknowns, instantiate):
   f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
 
@@ -450,4 +463,148 @@ def partial_eval_jaxpr(jaxpr, unknowns, instantiate):
 def _split_aval(unknown, aval):
   return (abstract_unit, aval) if unknown else (aval, abstract_unit)
 
-custom_partial_eval_rules = {}
+
+remat_call_p = core.Primitive('remat_call')
+remat_call = partial(core.call_bind, remat_call_p)
+remat_call_p.def_custom_bind(remat_call)
+remat_call_p.def_impl(core.call_impl)
+remat_call_p.multiple_results = True
+
+def _remat_partial_eval(trace, f, tracers, params):
+  concrete = params['concrete']
+
+  # Unlike JaxprTrace.process_call, we want to form a jaxpr for the entirety of
+  # the function being called, not just for the unknown parts. To do that, we
+  # instantiate all the input tracers as constants in the jaxpr being formed.
+  # Those tracers might have concrete avals, and doing abstract interpretation
+  # on concrete avals engenders a tradeoff: it allows data-dependent Python
+  # control flow to work, but it can in some cases lead to redundant FLOPs (done
+  # both in the `bind` call below and the `core.jaxpr_as_fun` call). We use the
+  # `concrete` parameter to switch this behavior, and if `concrete` is False
+  # then we raise the avals to the Shaped level.
+  instantiated_tracers = map(trace.instantiate_const, tracers)
+  if not concrete:
+    instantiated_tracers = [
+        JaxprTracer(trace, PartialVal((raise_to_shaped(t.pval[0]), unit)), t.recipe)
+        if type(t.pval[0]) is ConcreteArray else t for t in instantiated_tracers]
+
+  # Using the instantiated tracers, run call_bind like JaxprTrace.process_call.
+  in_pvs, in_consts = unzip2(t.pval for t in instantiated_tracers)
+  fun, aux = partial_eval(f, trace, in_pvs)
+  if concrete:
+    # TODO(mattjj): remove `remat_context` when confident no accidental FLOPs
+    with remat_context():
+      out_flat = remat_call_p.bind(fun, *in_consts, **params)
+  else:
+    out_flat = remat_call_p.bind(fun, *in_consts, **params)
+  out_pvs, jaxpr, env = aux()
+  env = map(trace.full_raise, env)
+  out_pval_consts1, consts = split_list(out_flat, [len(out_flat)-len(jaxpr.constvars)])
+  out_pvals1 = [PartialVal((pv, const)) for pv, const in zip(out_pvs, out_pval_consts1)]
+
+  # Since we traced with everything marked as unknown, but we need to know which
+  # outputs are known/unknown, we use partial_eval_jaxpr to get out_unknowns.
+  jaxpr_converted = convert_freevars_jaxpr(jaxpr)
+  in_avals = ([raise_to_shaped(t.pval[0]) for t in env]
+              + [raise_to_shaped(pv) for pv in in_pvs])
+  out_avals = [raise_to_shaped(pv if pv is not None else core.get_aval(const))
+               for pv, const in zip(out_pvs, out_pval_consts1)]
+  typed_jaxpr = core.TypedJaxpr(jaxpr_converted, consts, in_avals, out_avals)
+  in_unknowns = [t.pval[0] is not None for t in it.chain(env, tracers)]
+  jaxpr_1, jaxpr_2, out_unknowns = partial_eval_jaxpr(typed_jaxpr, in_unknowns, False)
+  num_res = len(jaxpr_1.out_avals) - len(jaxpr_2.out_avals)
+
+  # First, we prune the jaxpr to be staged out not to have too many outputs.
+  typed_jaxpr = _dce_jaxpr(typed_jaxpr, out_unknowns)
+
+  # Next, we need values for the outputs that should be known. Since consts
+  # weren't passed through Python for evaluation, we need to evaluate jaxpr_1,
+  # minus the residual outputs that we don't need. When `concrete=True`, as an
+  # optimization we can avoid redoing *some* redundant FLOPs, namely those that
+  # produced concrete avals at the output, simply by using those as computed
+  # values. For the use case of reverse-mode ad in op-by-op ("eager mode")
+  # evaluation, all the primal outputs should be concrete (thus not recomputed).
+  to_compute = [not uk and type(pv) is not ConcreteArray
+                for uk, pv in zip(out_unknowns, out_pvs)]
+  jaxpr_1_primals = _dce_jaxpr(jaxpr_1, to_compute + [False] * num_res)
+  _, in_consts = unzip2(t.pval for t in it.chain(env, tracers))
+  out_pval_consts2 = core.jaxpr_as_fun(jaxpr_1_primals)(*in_consts)[:-num_res or None]
+  out_pvals = map(_reconstruct_pval, out_pvals1, out_pval_consts2, out_unknowns)
+
+  # Now that we have out_pvals, the rest is just like JaxprTrace.process_call.
+  instantiated_tracers = env + instantiated_tracers
+  const_tracers = map(trace.new_instantiated_const, consts)
+  bound_subjaxpr = (typed_jaxpr.jaxpr, const_tracers, ())
+  out_tracers = [JaxprTracer(trace, out_pval, None) for out_pval in out_pvals]
+  eqn = new_eqn_recipe(instantiated_tracers, out_tracers, remat_call_p,
+                       (bound_subjaxpr,), params)
+  for t in out_tracers: t.recipe = eqn
+  return out_tracers
+call_partial_eval_rules[remat_call_p] = _remat_partial_eval
+
+def _dce_jaxpr(typed_jaxpr, outputs):
+  # This dead-code elimination is pretty rudimentary, and in particular doesn't
+  # nontrivially DCE through scan, call, or other higher-order primitives.
+  # TODO(mattjj): better DCE
+  jaxpr = typed_jaxpr.jaxpr
+  outvars, out_avals = jaxpr.outvars, typed_jaxpr.out_avals
+  out_pairs = [(var, aval) if output else (core.unitvar, core.abstract_unit)
+              for var, aval, output in zip(outvars, out_avals, outputs)]
+  new_outvars, new_out_avals = unzip2(out_pairs)
+
+  needed_vars = set(new_outvars)
+  new_eqns = []
+  for eqn in jaxpr.eqns[::-1]:
+    if set(eqn.outvars) & needed_vars:
+      new_eqns.append(eqn)
+      needed_vars.update(eqn.invars)
+  new_eqns = new_eqns[::-1]
+
+  new_jaxpr = core.Jaxpr(jaxpr.constvars, jaxpr.freevars, jaxpr.invars,
+                         new_outvars, new_eqns)
+  return core.TypedJaxpr(new_jaxpr, typed_jaxpr.literals, typed_jaxpr.in_avals,
+                         new_out_avals)
+
+def _reconstruct_pval(pval1, const2, unknown):
+  pv1, const1 = pval1
+  if unknown or pv1 is None:
+    return pval1
+  else:
+    if type(pv1) is ConcreteArray:
+      return PartialVal((None, pv1.val))
+    else:
+      return PartialVal((None, const2))
+
+# TODO(mattjj): for https://github.com/google/jax/pull/1749 we allowed
+# standard_abstract_eval to perform concrete evaluation (i.e. FLOPs), but we
+# don't think it should happen except for in a remat context
+@contextlib.contextmanager
+def remat_context():
+  try:
+    prev_state = _thread_local_state.remat
+    _thread_local_state.remat = True
+    yield
+  finally:
+    _thread_local_state.remat = prev_state
+
+class _ThreadLocalState(threading.local):
+  def __init__(self):
+    self.remat = False
+_thread_local_state = _ThreadLocalState()
+
+
+def move_binders_to_front(typed_jaxpr, to_move):
+  assert not typed_jaxpr.jaxpr.constvars and not typed_jaxpr.jaxpr.freevars
+  assert len(typed_jaxpr.in_avals) == len(to_move)
+  new_invars = _move_to_front(typed_jaxpr.jaxpr.invars, to_move)
+  new_jaxpr = core.Jaxpr((), (), new_invars, typed_jaxpr.jaxpr.outvars,
+                         typed_jaxpr.jaxpr.eqns)
+  new_in_avals = _move_to_front(typed_jaxpr.in_avals, to_move)
+  new_typed_jaxpr = core.TypedJaxpr(new_jaxpr, typed_jaxpr.literals,
+                                    new_in_avals, typed_jaxpr.out_avals)
+  return new_typed_jaxpr
+
+def _move_to_front(lst, to_move):
+  return ([elt for elt, move in zip(lst, to_move) if move] +
+          [elt for elt, move in zip(lst, to_move) if not move])
+

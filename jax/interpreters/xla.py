@@ -22,6 +22,7 @@ import itertools as it
 import operator as op
 import os
 
+from absl import logging
 import numpy as onp
 import six
 from six.moves import xrange
@@ -381,8 +382,10 @@ def _xla_call_impl(fun, *args, **params):
 
 @lu.cache
 def _xla_callable(fun, device, backend, *abstract_args):
-  if FLAGS.jax_log_compiles:
-    print("Compiling {} for args {}.".format(fun.__name__, abstract_args))
+  log_priority = logging.WARNING if FLAGS.jax_log_compiles else logging.DEBUG
+  logging.log(log_priority,
+              "Compiling {} for args {}.".format(fun.__name__, abstract_args))
+
   pvals = [pe.PartialVal((aval, core.unit)) for aval in abstract_args]
   with core.new_master(pe.JaxprTrace, True) as master:
     jaxpr, (pvals, consts, env) = pe.trace_to_subjaxpr(fun, master, False).call_wrapped(pvals)
@@ -394,7 +397,7 @@ def _xla_callable(fun, device, backend, *abstract_args):
   if nreps > xb.device_count(backend):
     msg = ("compiling computation that requires {} replicas, but only {} XLA "
             "devices are available")
-    raise ValueError(msg.format(num_replicas, xb.device_count(backend)))
+    raise ValueError(msg.format(nreps, xb.device_count(backend)))
   axis_env = AxisEnv(nreps, [], [])
 
   if xb.host_count() > 1 and (nreps > 1 or jaxpr_has_pmap(jaxpr)):
@@ -757,6 +760,36 @@ device_put_p = core.Primitive('device_put')
 device_put_p.def_impl(_device_put_impl)
 pe.custom_partial_eval_rules[device_put_p] = lambda trace, x, **params: x
 ad.deflinear(device_put_p, lambda cotangent, **kwargs: [cotangent])
+
+
+def _remat_translation_rule(c, jaxpr, axis_env, const_nodes, freevar_nodes, in_nodes,
+                            backend=None, device=None, concrete=None):
+  # This looks a lot like _xla_call_translation_rule, except for a widget we use
+  # to foil CSE.
+  del device, concrete  # Unused.
+  subc = xb.make_computation_builder("remat_call_subcomputation")
+  consts = [subc.ParameterWithShape(c.GetShape(n)) for n in const_nodes]
+  freevars = [subc.ParameterWithShape(c.GetShape(n)) for n in freevar_nodes]
+  args = [subc.ParameterWithShape(c.GetShape(n)) for n in in_nodes]
+  args = [_foil_cse(subc, x) for x in args]
+  out_nodes = jaxpr_subcomp(subc, jaxpr, backend, axis_env, consts, freevars, *args)
+  subc = subc.Build(subc.Tuple(*out_nodes))
+  return c.Call(subc, list(const_nodes) + list(freevar_nodes) + list(in_nodes))
+call_translations[pe.remat_call_p] = _remat_translation_rule
+
+def _foil_cse(c, x):
+  xla_shape = c.GetShape(x)
+  if xla_shape.is_tuple():
+    assert not xla_shape.tuple_shapes()
+    return x
+  else:
+    rng = c.RngNormal(c.Constant(onp.array(0, dtype=onp.float32)),
+                      c.Constant(onp.array(1, dtype=onp.float32)),
+                      [])
+    pred = c.Lt(rng, c.Constant(onp.finfo(onp.float32).max))
+    shape, dtype = xla_shape.dimensions(), xla_shape.numpy_dtype()
+    zero = c.Broadcast(c.Constant(onp.array(0, dtype=dtype)), shape)
+    return c.Select(pred, x, zero)
 
 
 ### lazy constants

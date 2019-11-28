@@ -56,6 +56,7 @@ from jax.tree_util import tree_unflatten
 ### Composable gradient transformations. ###
 
 
+InitUpdate = collections.namedtuple("InitUpdate", ("init", "update"))
 ClipState = collections.namedtuple("ClipState", "")
 
 
@@ -77,7 +78,7 @@ def clip(max_delta):
         lambda g: jnp.clip_by_value(g, -max_delta, max_delta), updates)
     return updates, state
 
-  return init_fn, update_fn
+  return InitUpdate(init_fn, update_fn)
 
 
 ClipByGlobalNormState = collections.namedtuple("ClipByGlobalNormState", "")
@@ -111,7 +112,7 @@ def clip_by_global_norm(max_norm):
         lambda t: jnp.where(trigger, t, t * (max_norm / g_norm)), updates)
     return updates, state
 
-  return init_fn, update_fn
+  return InitUpdate(init_fn, update_fn)
 
 
 TraceState = collections.namedtuple("TraceState", "trace")
@@ -138,7 +139,7 @@ def trace(decay, nesterov):
         tree_multimap(f, updates, update_trace) if nesterov else update_trace)
     return updates, TraceState(trace=update_trace)
 
-  return init_fn, update_fn
+  return InitUpdate(init_fn, update_fn)
 
 
 ScaleByRmsState = collections.namedtuple("ScaleByRmsState", "nu")
@@ -172,7 +173,7 @@ def scale_by_rms(decay=0.9, eps=1e-8):
     updates = tree_multimap(lambda g, n: g / (jnp.sqrt(n + eps)), updates, nu)
     return updates, ScaleByRmsState(nu=nu)
 
-  return init_fn, update_fn
+  return InitUpdate(init_fn, update_fn)
 
 
 ScaleByRStdDevState = collections.namedtuple("ScaleByRStdDevState", "mu nu")
@@ -204,7 +205,7 @@ def scale_by_stddev(decay=0.9, eps=1e-8):
         lambda g, m, n: g / jnp.sqrt(n - m**2 + eps), updates, mu, nu)
     return updates, ScaleByRStdDevState(mu=mu, nu=nu)
 
-  return init_fn, update_fn
+  return InitUpdate(init_fn, update_fn)
 
 
 ScaleByAdamState = collections.namedtuple("ScaleByAdamState", "count mu nu")
@@ -239,7 +240,7 @@ def scale_by_adam(b1=0.9, b2=0.999, eps=1e-8):
         lambda m, v: m / (jnp.sqrt(v) + eps), mu_hat, nu_hat)
     return updates, ScaleByAdamState(count=state.count + 1, mu=mu, nu=nu)
 
-  return init_fn, update_fn
+  return InitUpdate(init_fn, update_fn)
 
 
 ScaleState = collections.namedtuple("ScaleState", "")
@@ -262,7 +263,7 @@ def scale(step_size):
     updates = tree_multimap(lambda g: step_size * g, updates)
     return updates, state
 
-  return init_fn, update_fn
+  return InitUpdate(init_fn, update_fn)
 
 
 ScaleByScheduleState = collections.namedtuple("ScaleByScheduleState", "count")
@@ -286,7 +287,7 @@ def scale_by_schedule(step_size_fn):
     updates = tree_multimap(lambda g: step_size_fn(state.count) * g, updates)
     return updates, ScaleByScheduleState(count=state.count + 1)
 
-  return init_fn, update_fn
+  return InitUpdate(init_fn, update_fn)
 
 
 AddNoiseState = collections.namedtuple("AddNoiseState", "count rng_key")
@@ -322,7 +323,7 @@ def add_noise(eta, gamma, seed):
         lambda g, n: g + variance * n, updates, noise)
     return updates, AddNoiseState(count=state.count + 1, rng_key=all_keys[0])
 
-  return init_fn, update_fn
+  return InitUpdate(init_fn, update_fn)
 
 
 ### Utilities for building and using custom optimizers. ###
@@ -345,17 +346,17 @@ def chain(*args):
 
   init_fns, update_fns = zip(*args)
 
-  def init(params):
+  def init_fn(params):
     return [fn(params) for fn in init_fns]
 
-  def update(updates, state):
+  def update_fn(updates, state):
     new_state = []
     for s, fn in zip(state, update_fns):
       updates, new_s = fn(updates, s)
       new_state.append(new_s)
     return updates, new_state
 
-  return init, update
+  return InitUpdate(init_fn, update_fn)
 
 
 def apply_updates(params, updates):
