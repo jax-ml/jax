@@ -1487,7 +1487,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "rng_factory": rng_factory, "shape": shape, "dtype": dtype, "axis": axis}
       for shape in [(3,), (2, 3)]
       for dtype in default_dtypes
-      for axis in range(-len(shape), len(shape))  # Test negative axes
+      for axis in list(range(-len(shape), len(shape))) + [None]  # Test negative axes
       for rng_factory in [jtu.rand_default]))
   def testFlip(self, shape, dtype, axis, rng_factory):
     rng = rng_factory()

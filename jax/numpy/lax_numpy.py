@@ -751,7 +751,9 @@ def rot90(m, k=1, axes=(0, 1)):
 
 
 @_wraps(onp.flip)
-def flip(m, axis):
+def flip(m, axis=None):
+  if axis is None:
+    return lax.rev(m, list(range(len(m.shape))))
   return lax.rev(m, [_canonicalize_axis(axis, len(m.shape))])
 
 
