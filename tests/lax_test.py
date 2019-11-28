@@ -1485,19 +1485,19 @@ class LaxTest(jtu.JaxTestCase):
     ans = lax.reshape(onp.ones((3,), onp.float32), (lax.add(1, 2), 1))
     self.assertAllClose(ans, onp.ones((3, 1), onp.float32), check_dtypes=True)
 
-    self.assertRaisesRegexp(
+    self.assertRaisesRegex(
       TypeError,
       "Shapes must be 1D sequences of concrete values of integer type.*",
       lambda: lax.reshape(onp.ones(3,), (onp.array([3, 1]),)))
 
-    self.assertRaisesRegexp(
+    self.assertRaisesRegex(
       TypeError,
       "Shapes must be 1D sequences of concrete values of integer type.*",
       lambda: lax.reshape(onp.ones(3,), (1.5, 2.0)))
 
   @jtu.skip_on_devices("tpu")  # S16 not supported on TPU
   def testDynamicSliceTypeErrors(self):
-    self.assertRaisesRegexp(
+    self.assertRaisesRegex(
       TypeError,
       "index arguments to dynamic_slice must be integers of the same type",
       lambda: lax.dynamic_slice(onp.ones((3, 4), dtype=onp.float32),
@@ -1505,7 +1505,7 @@ class LaxTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices("tpu")  # S16 not supported on TPU
   def testDynamicUpdateSliceTypeErrors(self):
-    self.assertRaisesRegexp(
+    self.assertRaisesRegex(
       TypeError,
       "index arguments to dynamic_update_slice must be integers of the same "
       "type",

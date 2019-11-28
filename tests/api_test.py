@@ -157,11 +157,11 @@ class APITest(jtu.JaxTestCase):
     def f(x):
       return x
 
-    self.assertRaisesRegexp(
+    self.assertRaisesRegex(
       TypeError, ".* 'foo' of type <.*'str'> is not a valid JAX type",
       lambda: grad(f)("foo"))
 
-    self.assertRaisesRegexp(
+    self.assertRaisesRegex(
       TypeError, ".* 'foo' of type <.*'str'> is not a valid JAX type",
       lambda: jit(f)("foo"))
 
@@ -213,7 +213,7 @@ class APITest(jtu.JaxTestCase):
     def f(x, y):
       return np.dot(x, y)
 
-    self.assertRaisesRegexp(
+    self.assertRaisesRegex(
       TypeError, "Incompatible shapes for dot: got \\(3L?,\\) and \\(4L?,\\).",
       lambda: grad(f)(onp.zeros(3), onp.zeros(4)))
 
@@ -236,7 +236,7 @@ class APITest(jtu.JaxTestCase):
       return x
 
     assert jit(f, static_argnums=(1,))(0, 5) == 10
-    self.assertRaisesRegexp(
+    self.assertRaisesRegex(
         TypeError,
         "('JaxprTracer' object cannot be interpreted as an integer"
         "|Abstract value passed to .*)",
@@ -245,7 +245,7 @@ class APITest(jtu.JaxTestCase):
   def test_casts(self):
     for castfun in [float, complex, hex, oct] + list(six.integer_types):
       f = lambda x: castfun(x)
-      self.assertRaisesRegexp(
+      self.assertRaisesRegex(
           TypeError,
           "('JaxprTracer' object cannot be interpreted as an integer"
           "|Abstract value passed to .*)", lambda: jit(f)(0))
@@ -812,7 +812,7 @@ class APITest(jtu.JaxTestCase):
   def test_devicearray_delete(self):
     x = device_put(1.)
     x.delete()
-    self.assertRaisesRegexp(ValueError, "DeviceValue has been deleted.",
+    self.assertRaisesRegex(ValueError, "DeviceValue has been deleted.",
                             lambda: repr(x))
 
   def test_devicearray_block_until_ready(self):
@@ -964,7 +964,7 @@ class APITest(jtu.JaxTestCase):
 
   def test_grad_of_int_errors(self):
     dfn = grad(lambda x: x ** 2)
-    self.assertRaisesRegexp(
+    self.assertRaisesRegex(
       TypeError,
       "Primal inputs to reverse-mode differentiation must be of float or "
       "complex type, got type int..", lambda: dfn(3))
@@ -1023,7 +1023,7 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(x.device_buffer.device(), device)
 
   def test_jit_of_noncallable(self):
-    self.assertRaisesRegexp(TypeError, "Expected a callable value.*",
+    self.assertRaisesRegex(TypeError, "Expected a callable value.*",
                             lambda: api.jit(3))
 
   def test_issue_1062(self):
@@ -1159,7 +1159,7 @@ class APITest(jtu.JaxTestCase):
 
   def test_vmap_in_axes_tree_prefix_error(self):
     # https://github.com/google/jax/issues/795
-    self.assertRaisesRegexp(
+    self.assertRaisesRegex(
         ValueError,
         "axes specification must be a tree prefix of the corresponding "
         r"value, got specification \(0, 0\) for value "
@@ -1295,7 +1295,7 @@ class APITest(jtu.JaxTestCase):
     # https://github.com/google/jax/issues/1696
     def f(x, y): return x + y
     df = api.grad(f, argnums=0)
-    self.assertRaisesRegexp(
+    self.assertRaisesRegex(
         TypeError,
         "differentiating with respect to argnums=0 requires at least 1 "
         "positional arguments to be passed by the caller, but got only 0 "
