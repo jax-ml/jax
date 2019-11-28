@@ -1509,11 +1509,11 @@ class JaxprTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
     jaxpr = api.make_jaxpr(api.linearize(f_yesremat, 4.)[1])(1.)
-    scan_eqn, = jaxpr.eqns
+    scan_eqn, = jaxpr.jaxpr.eqns
     self.assertIn(' cos ', str(scan_eqn.params['jaxpr']))
 
     jaxpr = api.make_jaxpr(api.vjp(f_yesremat, 4.)[1])(1.)
-    scan_eqn, = jaxpr.eqns
+    scan_eqn, = jaxpr.jaxpr.eqns
     self.assertIn(' cos ', str(scan_eqn.params['jaxpr']))
 
   def test_remat_no_redundant_flops(self):
