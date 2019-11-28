@@ -182,13 +182,15 @@ def broadcast_batcher(prim, args, dims, **params):
   if len(shapes) == 1:
     # if there's only agreeing batch dims and scalars, just call the primitive
     d = next(d for d in dims if d is not not_mapped)
-    return prim.bind(*args, **params), d
+    out = prim.bind(*args, **params)
+    return (out, (d,) * len(out)) if prim.multiple_results else (out, d)
   else:
     size, = {shape[d] for shape, d in shapes if d is not not_mapped}
     args = [bdim_at_front(x, d, size) for x, d in zip(args, dims)]
     ndim = max(onp.ndim(x) for x in args)  # special-case scalar broadcasting
     args = [_handle_scalar_broadcasting(ndim, x, d) for x, d in zip(args, dims)]
-    return prim.bind(*args, **params), 0
+    out = prim.bind(*args, **params)
+    return (out, (0,) * len(out)) if prim.multiple_results else (out, 0)
 
 def _handle_scalar_broadcasting(nd, x, d):
   if d is not_mapped or nd == onp.ndim(x):
@@ -262,6 +264,8 @@ def broadcast(x, sz, axis):
 def moveaxis(x, src, dst):
   if core.get_aval(x) is core.abstract_unit:
     return core.unit
+  if src == dst:
+    return x
   src, dst = src % x.ndim, dst % x.ndim
   perm = [i for i in range(onp.ndim(x)) if i != src]
   perm.insert(dst, src)

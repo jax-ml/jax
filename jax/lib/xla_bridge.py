@@ -145,16 +145,22 @@ def get_backend(platform=None):
     return backend(platform)
 
 
+def get_device_backend(device=None):
+  """Returns the Backend associated with `device`, or the default Backend."""
+  platform = device.platform if device else None
+  return get_backend(platform)
+
+
 def device_count(backend=None):
   """Returns the total number of devices.
 
-  On most platforms, this is the same as `local_device_count()`. However, on
+  On most platforms, this is the same as ``local_device_count()``. However, on
   multi-host platforms, this will return the total number of devices across all
   hosts.
 
   Args:
     backend: This is an experimental feature and the API is likely to change.
-      Optional, a string representing the xla backend. 'cpu','gpu', or 'tpu'.
+      Optional, a string representing the xla backend. 'cpu', 'gpu', or 'tpu'.
 
   Returns:
     Number of devices.
@@ -172,12 +178,12 @@ def devices(backend=None):
 
   Each device is represented by a subclass of Device (e.g. CpuDevice,
   GpuDevice). The length of the returned list is equal to
-  `device_count()`. Local devices can be identified by comparing
-  `Device.host_id` to `host_id()`.
+  ``device_count()``. Local devices can be identified by comparing
+  ``Device.host_id`` to ``host_id()``.
 
   Args:
     backend: This is an experimental feature and the API is likely to change.
-      Optional, a string representing the xla backend. 'cpu','gpu', or 'tpu'.
+      Optional, a string representing the xla backend. 'cpu', 'gpu', or 'tpu'.
 
   Returns:
     List of Device subclasses.
@@ -200,7 +206,7 @@ def host_id(backend=None):
 
   Args:
     backend: This is an experimental feature and the API is likely to change.
-      Optional, a string representing the xla backend. 'cpu','gpu', or 'tpu'.
+      Optional, a string representing the xla backend. 'cpu', 'gpu', or 'tpu'.
 
   Returns:
     Integer host ID.
@@ -214,6 +220,7 @@ def host_ids(backend=None):
 
 
 def host_count(backend=None):
+  """Returns the number of hosts."""
   return len(host_ids(backend))
 
 

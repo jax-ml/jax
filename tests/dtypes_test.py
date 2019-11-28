@@ -48,6 +48,7 @@ class DtypesTest(jtu.JaxTestCase):
     {"testcase_name": "_swap={}_jit={}".format(swap, jit),
      "swap": swap, "jit": jit} 
     for swap in [False, True] for jit in [False, True])
+  @jtu.skip_on_devices("tpu")  # F16 not supported on TPU
   def testBinaryPromotion(self, swap, jit):
     testcases = [
       (np.array(1.), 0., np.float_),

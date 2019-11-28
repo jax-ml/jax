@@ -17,7 +17,7 @@
 
 import jaxlib
 
-_minimum_jaxlib_version = (0, 1, 31)
+_minimum_jaxlib_version = (0, 1, 36)
 try:
   from jaxlib import version as jaxlib_version
 except:
@@ -53,3 +53,7 @@ from jaxlib import lapack
 
 from jaxlib import pytree
 from jaxlib import cusolver
+try:
+  from jaxlib import cuda_prng
+except ImportError:
+  cuda_prng = None

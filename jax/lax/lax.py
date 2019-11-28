@@ -1035,9 +1035,6 @@ def sort_key_val(keys, values, dimension=-1):
 def tie_in(x, y):
   return tie_in_p.bind(x, y)
 
-def shaped_identity(x):
-  return shaped_identity_p.bind(x, shape=x.shape)
-
 
 def full(shape, fill_value, dtype=None):
   """Returns an array of `shape` filled with `fill_value`.
@@ -1472,7 +1469,7 @@ _complex_basetype = lambda dtype: onp.abs(onp.zeros((), dtype)).dtype
 def standard_primitive(shape_rule, dtype_rule, name, translation_rule=None):
   prim = Primitive(name)
   prim.def_impl(partial(xla.apply_primitive, prim))
-  prim.def_abstract_eval(partial(standard_abstract_eval, shape_rule, dtype_rule))
+  prim.def_abstract_eval(partial(standard_abstract_eval, prim, shape_rule, dtype_rule))
   xla.translations[prim] = translation_rule or partial(standard_translate, name)
   return prim
 
@@ -1480,17 +1477,21 @@ def standard_primitive(shape_rule, dtype_rule, name, translation_rule=None):
 def standard_reduction_primitive(shape_rule, dtype_rule, name, translation_rule=None):
   prim = Primitive(name)
   prim.def_impl(partial(xla.apply_primitive, prim))
-  prim.def_abstract_eval(partial(standard_abstract_eval, shape_rule, dtype_rule))
+  prim.def_abstract_eval(partial(standard_abstract_eval, prim, shape_rule, dtype_rule))
   xla.reduction_translations[prim] = translation_rule or partial(standard_translate, name)
   return prim
 
 
-def standard_abstract_eval(shape_rule, dtype_rule, *args, **kwargs):
+def standard_abstract_eval(prim, shape_rule, dtype_rule, *args, **kwargs):
   assert all(isinstance(arg, UnshapedArray) for arg in args), args
   least_specialized = _max(
       map(type, args), key=operator.attrgetter('array_abstraction_level'))
   if least_specialized is ConcreteArray:
-    return ShapedArray(shape_rule(*args, **kwargs), dtype_rule(*args, **kwargs))
+    msg = ("If you see this error, please let us know by opening an issue at\n"
+           "https://github.com/google/jax/issues \n"
+           "since we thought this was unreachable!")
+    assert pe._thread_local_state.remat, msg
+    return ConcreteArray(prim.impl(*[x.val for x in args], **kwargs))
   elif least_specialized is ShapedArray:
     return ShapedArray(shape_rule(*args, **kwargs), dtype_rule(*args, **kwargs))
   elif least_specialized is UnshapedArray:
@@ -3778,7 +3779,7 @@ def _select_and_gather_add_translation(
                                          canonicalize_types=False)
 
   if double_word_reduction:
-    # XLA doesn't yet implement ReduceWindow on tuples (Google bug b/73062247), so
+    # TODO(b/73062247): XLA doesn't yet implement ReduceWindow on tuples, so
     # we implement a pair-wise ReduceWindow by packing two k-bit values into
     # 2k-bit unsigned integer using bit tricks.
     word_dtype = _UINT_DTYPES[nbits]
@@ -3852,7 +3853,7 @@ def _select_and_gather_add_translation(
     return c.Build()
 
 
-  assert select_prim is ge_p or select_prim is le_p
+  assert select_prim is ge_p or select_prim is le_p, select_prim
   init = -onp.inf if select_prim is ge_p else onp.inf
   out = c.ReduceWindow(pack(operand, tangents),
                        pack(const(c, dtype, init), const(c, dtype, 0)),
@@ -3885,12 +3886,30 @@ def _select_and_gather_add_transpose(
                                    window_strides, padding)
   return [result, None]
 
+def _select_and_gather_add_batching_rule(
+    batched_args, batch_dims, select_prim, window_dimensions, window_strides,
+    padding):
+  t, x = batched_args
+  t_bdim, x_bdim = batch_dims
+  size = next(a.shape[bdim] for a, bdim in zip(batched_args, batch_dims)
+              if bdim is not None)
+  t = batching.bdim_at_front(t, t_bdim, size)
+  x = batching.bdim_at_front(x, x_bdim, size)
+  window_dimensions = (1,) + window_dimensions
+  window_strides = (1,) + window_strides
+  out = _select_and_gather_add(t, x, select_prim, window_dimensions,
+                               window_strides, padding)
+  return (out, 0)
+
+
 select_and_gather_add_p = standard_primitive(
     _select_and_gather_add_shape_rule, _input_dtype, 'select_and_gather_add',
     _select_and_gather_add_translation)
 ad.primitive_jvps[select_and_gather_add_p] = _select_and_gather_add_jvp
 ad.primitive_transposes[select_and_gather_add_p] = \
-    _select_and_gather_add_transpose
+  _select_and_gather_add_transpose
+batching.primitive_batchers[select_and_gather_add_p] = \
+  _select_and_gather_add_batching_rule
 xla.backend_specific_translations['tpu'][select_and_gather_add_p] = partial(
   _select_and_gather_add_translation,
   max_bits=32)
@@ -3915,7 +3934,7 @@ batching.primitive_batchers[sort_p] = _sort_batch_rule
 
 
 def _sort_key_val_abstract_eval(keys, values, dimension):
-  return keys, values
+  return raise_to_shaped(keys), raise_to_shaped(values)
 
 def _sort_key_val_jvp(primals, tangents, dimension):
   # NOTE(mattjj): this re-sorts three times, but if we had a variadic
@@ -3973,7 +3992,7 @@ def _sort_key_val_batch_rule(batched_args, batch_dims, dimension):
     new_dimension = dimension + (keys_bdim <= dimension)
     return sort_key_val(keys, new_values, new_dimension), (keys_bdim, keys_bdim)
   else:
-    raise Exception  # unreachable
+    assert False  # unreachable
 
 sort_key_val_p = Primitive('sort_key_val')
 sort_key_val_p.multiple_results = True
@@ -3995,20 +4014,12 @@ def _tie_in_batch_rule(batched_args, batch_dims):
 
 tie_in_p = Primitive('tie_in')
 tie_in_p.def_impl(lambda x, y: y)
-tie_in_p.def_abstract_eval(lambda x, y: y)
+tie_in_p.def_abstract_eval(lambda x, y: raise_to_shaped(y))
 xla.translations[tie_in_p] = lambda c, x, y: y
 ad.deflinear(tie_in_p, _tie_in_transpose_rule)
 batching.primitive_batchers[tie_in_p] = _tie_in_batch_rule
 masking.shape_rules[tie_in_p] = lambda shape_exprs: shape_exprs[1]
 masking.masking_rules[tie_in_p] = lambda vals, logical_shapes: vals[1]
-
-shaped_identity_p = Primitive('shape_id')
-shaped_identity_p.def_impl(lambda x, shape: x)
-shaped_identity_p.def_abstract_eval(lambda x, shape: x)
-xla.translations[shaped_identity_p] = lambda c, x, shape: x
-ad.deflinear(shaped_identity_p, lambda t, shape: [shaped_identity(t)])
-batching.primitive_batchers[shaped_identity_p] = \
-    lambda a, d, shape: (shaped_identity(a[0]), d[0])
 
 
 ### constants

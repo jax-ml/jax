@@ -25,6 +25,7 @@ from __future__ import division
 from __future__ import print_function
 
 from functools import partial
+import itertools
 
 import numpy as onp
 
@@ -35,9 +36,13 @@ from . import dtypes
 from .api import custom_transforms, defjvp, jit, vmap
 from .numpy.lax_numpy import _constant_like, asarray, stack
 from jax.lib import xla_bridge
+from jax.lib import cuda_prng
 from jax import core
+from jax import abstract_arrays
 from jax.scipy.special import logit
 from jax.scipy.linalg import cholesky
+from jax.interpreters import batching
+from jax.interpreters import xla
 
 
 def PRNGKey(seed):
@@ -92,9 +97,18 @@ def _bit_stats(bits):
 
 ### hash function and split
 
+def _threefry2x32_abstract_eval(*args):
+  if any(a.dtype != np.uint32 for a in args):
+    raise TypeError("Arguments to threefry2x32 must have uint32 type, got {}"
+                    .format(args))
+  if all(isinstance(arg, abstract_arrays.ShapedArray) for arg in args):
+    shape = lax._broadcasting_shape_rule(*args)
+    aval = abstract_arrays.ShapedArray(shape, np.dtype(np.uint32))
+  else:
+    aval = abstract_arrays.UnshapedArray(np.dtype(np.uint32))
+  return (aval,) * 2
 
-@jit
-def threefry_2x32(keypair, count):
+def _threefry2x32_lowering(key1, key2, x1, x2, use_rolled_loops=True):
   """Apply the Threefry 2x32 hash.
 
   Args:
@@ -104,13 +118,8 @@ def threefry_2x32(keypair, count):
   Returns:
     An array of dtype uint32 with the same shape as `count`.
   """
-  # Based on ThreeFry2x32 by phawkins@ in //.../xla/client/lib/prng.cc
-  key1, key2 = keypair
-  if not lax.dtype(key1) == lax.dtype(key2) == lax.dtype(count) == onp.uint32:
-    msg = "threefry_2x32 requires uint32 arguments, got {}"
-    raise TypeError(msg.format([lax.dtype(x) for x in [key1, key2, count]]))
-
-  rotate_left = _make_rotate_left(lax.dtype(count))
+  x = [x1, x2]
+  rotate_left = _make_rotate_left(onp.uint32)
 
   def apply_round(v, rot):
     v = v[:]
@@ -119,23 +128,10 @@ def threefry_2x32(keypair, count):
     v[1] = v[0] ^ v[1]
     return v
 
-  odd_size = count.size % 2
-  if odd_size:
-    x = list(np.split(np.concatenate([count.ravel(), onp.uint32([0])]), 2))
-  else:
-    x = list(np.split(count.ravel(), 2))
 
   rotations = [onp.array([13, 15, 26, 6], dtype=onp.uint32),
                onp.array([17, 29, 16, 24], dtype=onp.uint32)]
   ks = [key1, key2, key1 ^ key2 ^ onp.uint32(0x1BD11BDA)]
-
-  # TODO(mattjj): see https://github.com/google/jax/issues/1267, as a hopefully
-  # temporary workaround for the facts that (1) XLA:CPU compile time is too slow
-  # with unrolled loops and (2) XLA:GPU execution time is too slow with rolled
-  # loops, we switch on whether the default backend is CPU or GPU. If this kind
-  # of switch ends up sticking around, we should take into account #1211 and put
-  # the switch in the translation rule rather than here in the traceable.
-  use_rolled_loops = xla_bridge.get_backend().platform == "cpu"
 
   x[0] = x[0] + ks[0]
   x[1] = x[1] + ks[1]
@@ -176,6 +172,56 @@ def threefry_2x32(keypair, count):
     x[0] = x[0] + ks[2]
     x[1] = x[1] + ks[0] + onp.uint32(5)
 
+  return tuple(x)
+
+
+def _threefry2x32_gpu_translation_rule(c, k1, k2, x1, x2):
+  shape = lax.broadcast_shapes(
+      c.GetShape(k1).dimensions(), c.GetShape(k2).dimensions(),
+      c.GetShape(x1).dimensions(), c.GetShape(x2).dimensions())
+  rank = len(shape)
+  def _broadcast(x):
+    ndims = c.GetShape(x).rank()
+    return c.BroadcastInDim(x, shape, tuple(range(rank - ndims, rank)))
+  return cuda_prng.threefry2x32(
+      c, (_broadcast(k1), _broadcast(k2)), (_broadcast(x1), _broadcast(x2)))
+
+threefry2x32_p = core.Primitive("threefry2x32")
+threefry2x32_p.multiple_results = True
+threefry2x32_p.def_impl(partial(xla.apply_primitive, threefry2x32_p))
+threefry2x32_p.def_abstract_eval(_threefry2x32_abstract_eval)
+batching.defbroadcasting(threefry2x32_p)
+xla.translations[threefry2x32_p] = xla.lower_fun(
+    partial(_threefry2x32_lowering, use_rolled_loops=False), instantiate=True)
+xla.backend_specific_translations['cpu'][threefry2x32_p] = xla.lower_fun(
+    partial(_threefry2x32_lowering, use_rolled_loops=True), instantiate=True)
+if cuda_prng:
+  xla.backend_specific_translations['gpu'][threefry2x32_p] = \
+      _threefry2x32_gpu_translation_rule
+
+@jit
+def threefry_2x32(keypair, count):
+  """Apply the Threefry 2x32 hash.
+
+  Args:
+    keypair: a pair of 32bit unsigned integers used for the key.
+    count: an array of dtype uint32 used for the counts.
+
+  Returns:
+    An array of dtype uint32 with the same shape as `count`.
+  """
+  key1, key2 = keypair
+  if not lax.dtype(key1) == lax.dtype(key2) == lax.dtype(count) == onp.uint32:
+    msg = "threefry_2x32 requires uint32 arguments, got {}"
+    raise TypeError(msg.format([lax.dtype(x) for x in [key1, key2, count]]))
+
+  odd_size = count.size % 2
+  if odd_size:
+    x = list(np.split(np.concatenate([count.ravel(), onp.uint32([0])]), 2))
+  else:
+    x = list(np.split(count.ravel(), 2))
+
+  x = threefry2x32_p.bind(key1, key2, x[0], x[1])
   out = np.concatenate(x)
   assert out.dtype == onp.uint32
   return lax.reshape(out[:-1] if odd_size else out, count.shape)
@@ -324,7 +370,7 @@ def randint(key, shape, minval, maxval, dtype=onp.int64):
 
 @partial(jit, static_argnums=(1, 4))
 def _randint(key, shape, minval, maxval, dtype):
-  _check_shape("randint", shape, minval.shape, maxval.shape)
+  _check_shape("randint", shape, onp.shape(minval), onp.shape(maxval))
   if not np.issubdtype(dtype, onp.integer):
     raise TypeError("randint only accepts integer dtypes.")
 
@@ -503,9 +549,9 @@ def truncated_normal(key, lower, upper, shape=None, dtype=onp.float64):
 @partial(jit, static_argnums=(3, 4))
 def _truncated_normal(key, lower, upper, shape, dtype):
   if shape is None:
-    shape = lax.broadcast_shapes(lower.shape, upper.shape)
+    shape = lax.broadcast_shapes(onp.shape(lower), onp.shape(upper))
   else:
-    _check_shape("truncated_normal", shape, lower.shape, upper.shape)
+    _check_shape("truncated_normal", shape, onp.shape(lower), onp.shape(upper))
 
   sqrt2 = onp.array(onp.sqrt(2), dtype)
   a = lax.erf(lax.convert_element_type(lower, dtype) / sqrt2)
@@ -541,9 +587,9 @@ def bernoulli(key, p=onp.float32(0.5), shape=None):
 @partial(jit, static_argnums=(2,))
 def _bernoulli(key, p, shape):
   if shape is None:
-    shape = p.shape
+    shape = onp.shape(p)
   else:
-    _check_shape("bernoulli", shape, p.shape)
+    _check_shape("bernoulli", shape, onp.shape(p))
 
   return uniform(key, shape, lax.dtype(p)) < p
 
@@ -573,9 +619,9 @@ def beta(key, a, b, shape=None, dtype=onp.float64):
 @partial(jit, static_argnums=(3, 4))
 def _beta(key, a, b, shape, dtype):
   if shape is None:
-    shape = lax.broadcast_shapes(a.shape, b.shape)
+    shape = lax.broadcast_shapes(onp.shape(a), onp.shape(b))
   else:
-    _check_shape("beta", shape, a.shape, b.shape)
+    _check_shape("beta", shape, onp.shape(a), onp.shape(b))
 
   a = lax.convert_element_type(a, dtype)
   b = lax.convert_element_type(b, dtype)
@@ -639,12 +685,12 @@ def _dirichlet(key, alpha, shape, dtype):
     raise ValueError(msg.format(onp.ndim(alpha)))
 
   if shape is None:
-    shape = alpha.shape[:-1]
+    shape = onp.shape(alpha)[:-1]
   else:
-    _check_shape("dirichlet", shape, alpha.shape[:-1])
+    _check_shape("dirichlet", shape, onp.shape(alpha)[:-1])
 
   alpha = lax.convert_element_type(alpha, dtype)
-  gamma_samples = gamma(key, alpha, shape + alpha.shape[-1:], dtype)
+  gamma_samples = gamma(key, alpha, shape + onp.shape(alpha)[-1:], dtype)
   return gamma_samples / np.sum(gamma_samples, axis=-1, keepdims=True)
 
 
@@ -833,14 +879,14 @@ def _gamma_grad(sample, a):
     samples = np.reshape(sample, -1)
     alphas = np.reshape(a, -1)
     grads = vmap(_gamma_grad_one)(samples, alphas)
-    return grads.reshape(a.shape)
+    return grads.reshape(onp.shape(a))
 
 @custom_transforms
 def _gamma_impl(key, a):
     alphas = np.reshape(a, -1)
     keys = split(key, onp.size(alphas))
     samples = vmap(_gamma_one)(keys, alphas)
-    return np.reshape(samples, np.shape(a))
+    return np.reshape(samples, onp.shape(a))
 
 defjvp(_gamma_impl, None,
        lambda tangent, ans, key, a, **kwargs: tangent * _gamma_grad(ans, a))
@@ -868,9 +914,9 @@ def gamma(key, a, shape=None, dtype=onp.float64):
 @partial(jit, static_argnums=(2, 3))
 def _gamma(key, a, shape, dtype):
   if shape is None:
-    shape = a.shape
+    shape = onp.shape(a)
   else:
-    _check_shape("gamma", shape, a.shape)
+    _check_shape("gamma", shape, onp.shape(a))
 
   a = lax.convert_element_type(a, dtype)
   if onp.shape(a) != shape:
@@ -970,7 +1016,7 @@ def pareto(key, b, shape=None, dtype=onp.float64):
 @partial(jit, static_argnums=(2, 3))
 def _pareto(key, b, shape, dtype):
   if shape is None:
-    shape = b.shape
+    shape = onp.shape(b)
   else:
     _check_shape("pareto", shape)
 
@@ -1002,9 +1048,9 @@ def t(key, df, shape=(), dtype=onp.float64):
 @partial(jit, static_argnums=(2, 3))
 def _t(key, df, shape, dtype):
   if shape is None:
-    shape = df.shape
+    shape = onp.shape(df)
   else:
-    _check_shape("t", shape, df.shape)
+    _check_shape("t", shape, onp.shape(df))
 
   df = lax.convert_element_type(df, dtype)
   key_n, key_g = split(key)
