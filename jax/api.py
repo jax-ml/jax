@@ -1322,7 +1322,8 @@ def make_jaxpr(fun):
     jax_args, in_tree = tree_flatten((args, kwargs))
     jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
     in_pvals = map(pv_like, jax_args)
-    jaxpr, out_pvals, consts = pe.trace_to_jaxpr(jaxtree_fun, in_pvals, instantiate=True)
+    jaxpr, out_pvals, consts = pe.trace_to_jaxpr(jaxtree_fun, in_pvals,
+                                                 instantiate=True)
     out_avals = map(raise_to_shaped, unzip2(out_pvals)[0])
     in_avals = tuple(raise_to_shaped(in_aval) for in_aval, _ in in_pvals)
     typed_jaxpr = core.TypedJaxpr(jaxpr, consts, in_avals, out_avals)

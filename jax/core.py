@@ -652,7 +652,7 @@ def pp_eqn(eqn):
           >> pp(' [ {} ; {} ]'.format(pp_vars(const_vars),
                                       pp_vars(bound_vars))))
   return (pp('{} = '.format(lhs)) >>
-          pp(eqn.primitive.name) >> pp_kv_pairs(eqn.params)
+          pp(eqn.primitive.name) >> pp_kv_pairs(sorted(eqn.params.items()))
           >> pp(' ') >> pp(pp_vars(eqn.invars))) + pp_subexpr
 
 def pp_jaxpr(jaxpr):
