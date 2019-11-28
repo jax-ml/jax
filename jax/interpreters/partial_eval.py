@@ -18,6 +18,8 @@ from __future__ import print_function
 
 import itertools as it
 from collections import namedtuple, Counter, defaultdict
+import contextlib
+import threading
 from weakref import ref
 
 import numpy as onp
@@ -489,7 +491,12 @@ def _remat_partial_eval(trace, f, tracers, params):
   # Using the instantiated tracers, run call_bind like JaxprTrace.process_call.
   in_pvs, in_consts = unzip2(t.pval for t in instantiated_tracers)
   fun, aux = partial_eval(f, trace, in_pvs)
-  out_flat = remat_call_p.bind(fun, *in_consts, **params)
+  if concrete:
+    # TODO(mattjj): remove `remat_context` when confident no accidental FLOPs
+    with remat_context():
+      out_flat = remat_call_p.bind(fun, *in_consts, **params)
+  else:
+    out_flat = remat_call_p.bind(fun, *in_consts, **params)
   out_pvs, jaxpr, env = aux()
   env = map(trace.full_raise, env)
   out_pval_consts1, consts = split_list(out_flat, [len(out_flat)-len(jaxpr.constvars)])
@@ -567,6 +574,23 @@ def _reconstruct_pval(pval1, const2, unknown):
       return PartialVal((None, pv1.val))
     else:
       return PartialVal((None, const2))
+
+# TODO(mattjj): for https://github.com/google/jax/pull/1749 we allowed
+# standard_abstract_eval to perform concrete evaluation (i.e. FLOPs), but we
+# don't think it should happen except for in a remat context
+@contextlib.contextmanager
+def remat_context():
+  try:
+    prev_state = _thread_local_state.remat
+    _thread_local_state.remat = True
+    yield
+  finally:
+    _thread_local_state.remat = prev_state
+
+class _ThreadLocalState(threading.local):
+  def __init__(self):
+    self.remat = False
+_thread_local_state = _ThreadLocalState()
 
 
 def move_binders_to_front(typed_jaxpr, to_move):
