@@ -2408,7 +2408,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     def assert_precision(expected, fun, *args):
       jaxpr = jax.make_jaxpr(fun)(*args)
-      precision, = [eqn.params['precision'] for eqn in iter_eqns(jaxpr)
+      precision, = [eqn.params['precision'] for eqn in iter_eqns(jaxpr.jaxpr)
                     if eqn.primitive == lax.dot_general_p]
       self.assertEqual(precision, expected)
 
