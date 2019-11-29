@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <algorithm>
+#include <cstdint>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -28,17 +29,13 @@ limitations under the License.
 #include "include/pybind11/numpy.h"
 #include "include/pybind11/pybind11.h"
 #include "include/pybind11/stl.h"
+#include "jaxlib/gpu_kernel_helpers.h"
+#include "jaxlib/kernel_helpers.h"
 
 namespace jax {
 namespace {
 
 namespace py = pybind11;
-
-void ThrowIfError(cudaError_t error) {
-  if (error != cudaSuccess) {
-    throw std::runtime_error("CUDA operation failed");
-  }
-}
 
 void ThrowIfErrorStatus(cusolverStatus_t status) {
   switch (status) {
@@ -191,27 +188,6 @@ int SizeOfType(Type type) {
   }
 }
 
-// Descriptor objects are opaque host-side objects used to pass data from JAX
-// to the custom kernel launched by XLA. Currently simply treat host-side
-// structures as byte-strings; this is not portable across architectures. If
-// portability is needed, we could switch to using a representation such as
-// protocol buffers or flatbuffers.
-
-// Packs a descriptor object into a py::bytes structure.
-template <typename T>
-py::bytes PackDescriptor(const T& descriptor) {
-  return py::bytes(absl::bit_cast<const char*>(&descriptor), sizeof(T));
-}
-
-// Unpacks a descriptor object from a byte string.
-template <typename T>
-const T* UnpackDescriptor(const char* opaque, size_t opaque_len) {
-  if (opaque_len != sizeof(T)) {
-    throw std::runtime_error("Invalid size for linalg operation descriptor.");
-  }
-  return absl::bit_cast<const T*>(opaque);
-}
-
 // getrf: LU decomposition
 
 struct GetrfDescriptor {
@@ -256,9 +232,11 @@ void Getrf(cudaStream_t stream, void** buffers, const char* opaque,
       *UnpackDescriptor<GetrfDescriptor>(opaque, opaque_len);
   auto handle = SolverHandlePool::Borrow(stream);
   if (buffers[1] != buffers[0]) {
-    ThrowIfError(cudaMemcpyAsync(buffers[1], buffers[0],
-                                 SizeOfType(d.type) * d.batch * d.m * d.n,
-                                 cudaMemcpyDeviceToDevice, stream));
+    ThrowIfError(cudaMemcpyAsync(
+        buffers[1], buffers[0],
+        SizeOfType(d.type) * static_cast<std::int64_t>(d.batch) *
+            static_cast<std::int64_t>(d.m) * static_cast<std::int64_t>(d.n),
+        cudaMemcpyDeviceToDevice, stream));
   }
 
   int* ipiv = static_cast<int*>(buffers[2]);
@@ -360,9 +338,11 @@ void Geqrf(cudaStream_t stream, void** buffers, const char* opaque,
       *UnpackDescriptor<GeqrfDescriptor>(opaque, opaque_len);
   auto handle = SolverHandlePool::Borrow(stream);
   if (buffers[1] != buffers[0]) {
-    ThrowIfError(cudaMemcpyAsync(buffers[1], buffers[0],
-                                 SizeOfType(d.type) * d.batch * d.m * d.n,
-                                 cudaMemcpyDeviceToDevice, stream));
+    ThrowIfError(cudaMemcpyAsync(
+        buffers[1], buffers[0],
+        SizeOfType(d.type) * static_cast<std::int64_t>(d.batch) *
+            static_cast<std::int64_t>(d.m) * static_cast<std::int64_t>(d.n),
+        cudaMemcpyDeviceToDevice, stream));
   }
 
   int* info = static_cast<int*>(buffers[3]);
@@ -471,9 +451,11 @@ void Orgqr(cudaStream_t stream, void** buffers, const char* opaque,
       *UnpackDescriptor<OrgqrDescriptor>(opaque, opaque_len);
   auto handle = SolverHandlePool::Borrow(stream);
   if (buffers[2] != buffers[0]) {
-    ThrowIfError(cudaMemcpyAsync(buffers[2], buffers[0],
-                                 SizeOfType(d.type) * d.batch * d.m * d.n,
-                                 cudaMemcpyDeviceToDevice, stream));
+    ThrowIfError(cudaMemcpyAsync(
+        buffers[2], buffers[0],
+        SizeOfType(d.type) * static_cast<std::int64_t>(d.batch) *
+            static_cast<std::int64_t>(d.m) * static_cast<std::int64_t>(d.n),
+        cudaMemcpyDeviceToDevice, stream));
   }
 
   int* info = static_cast<int*>(buffers[3]);
@@ -582,9 +564,11 @@ void Syevd(cudaStream_t stream, void** buffers, const char* opaque,
   const SyevdDescriptor& d =
       *UnpackDescriptor<SyevdDescriptor>(opaque, opaque_len);
   auto handle = SolverHandlePool::Borrow(stream);
-  ThrowIfError(cudaMemcpyAsync(buffers[1], buffers[0],
-                               SizeOfType(d.type) * d.batch * d.n * d.n,
-                               cudaMemcpyDeviceToDevice, stream));
+  ThrowIfError(cudaMemcpyAsync(
+      buffers[1], buffers[0],
+      SizeOfType(d.type) * static_cast<std::int64_t>(d.batch) *
+          static_cast<std::int64_t>(d.n) * static_cast<std::int64_t>(d.n),
+      cudaMemcpyDeviceToDevice, stream));
   cusolverEigMode_t jobz = CUSOLVER_EIG_MODE_VECTOR;
   int* info = static_cast<int*>(buffers[3]);
   void* work = buffers[4];
@@ -723,9 +707,11 @@ void Syevj(cudaStream_t stream, void** buffers, const char* opaque,
       *UnpackDescriptor<SyevjDescriptor>(opaque, opaque_len);
   auto handle = SolverHandlePool::Borrow(stream);
   if (buffers[1] != buffers[0]) {
-    ThrowIfError(cudaMemcpyAsync(buffers[1], buffers[0],
-                                 SizeOfType(d.type) * d.batch * d.n * d.n,
-                                 cudaMemcpyDeviceToDevice, stream));
+    ThrowIfError(cudaMemcpyAsync(
+        buffers[1], buffers[0],
+        SizeOfType(d.type) * static_cast<std::int64_t>(d.batch) *
+            static_cast<std::int64_t>(d.n) * static_cast<std::int64_t>(d.n),
+        cudaMemcpyDeviceToDevice, stream));
   }
   syevjInfo_t params;
   ThrowIfErrorStatus(cusolverDnCreateSyevjInfo(&params));
@@ -862,9 +848,11 @@ void Gesvd(cudaStream_t stream, void** buffers, const char* opaque,
   const GesvdDescriptor& d =
       *UnpackDescriptor<GesvdDescriptor>(opaque, opaque_len);
   auto handle = SolverHandlePool::Borrow(stream);
-  ThrowIfError(cudaMemcpyAsync(buffers[1], buffers[0],
-                               SizeOfType(d.type) * d.batch * d.m * d.n,
-                               cudaMemcpyDeviceToDevice, stream));
+  ThrowIfError(cudaMemcpyAsync(
+      buffers[1], buffers[0],
+      SizeOfType(d.type) * static_cast<std::int64_t>(d.batch) *
+          static_cast<std::int64_t>(d.m) * static_cast<std::int64_t>(d.n),
+      cudaMemcpyDeviceToDevice, stream));
   int* info = static_cast<int*>(buffers[5]);
   void* work = buffers[6];
   switch (d.type) {
@@ -1036,9 +1024,11 @@ void Gesvdj(cudaStream_t stream, void** buffers, const char* opaque,
   const GesvdjDescriptor& d =
       *UnpackDescriptor<GesvdjDescriptor>(opaque, opaque_len);
   auto handle = SolverHandlePool::Borrow(stream);
-  ThrowIfError(cudaMemcpyAsync(buffers[1], buffers[0],
-                               SizeOfType(d.type) * d.batch * d.m * d.n,
-                               cudaMemcpyDeviceToDevice, stream));
+  ThrowIfError(cudaMemcpyAsync(
+      buffers[1], buffers[0],
+      SizeOfType(d.type) * static_cast<std::int64_t>(d.batch) *
+          static_cast<std::int64_t>(d.m) * static_cast<std::int64_t>(d.n),
+      cudaMemcpyDeviceToDevice, stream));
   int* info = static_cast<int*>(buffers[5]);
   void* work = buffers[6];
   gesvdjInfo_t params;
@@ -1133,11 +1123,6 @@ void Gesvdj(cudaStream_t stream, void** buffers, const char* opaque,
       }
     }
   }
-}
-
-template <typename T>
-py::capsule EncapsulateFunction(T* fn) {
-  return py::capsule(absl::bit_cast<void*>(fn), "xla._CUSTOM_CALL_TARGET");
 }
 
 py::dict Registrations() {

@@ -22,7 +22,9 @@ For an introduction to JAX, start at the
 
    notebooks/Common_Gotchas_in_JAX
    notebooks/XLA_in_Python
+   notebooks/JAX_pytrees
    notebooks/How_JAX_primitives_work
+   notebooks/Writing_custom_interpreters_in_Jax.ipynb
    Training a Simple Neural Network, with Tensorflow Datasets Data Loading <https://github.com/google/jax/blob/master/docs/notebooks/neural_network_with_tfds_data.ipynb>
    notebooks/maml
    notebooks/score_matching

@@ -17,7 +17,7 @@
 
 import jaxlib
 
-_minimum_jaxlib_version = (0, 1, 31)
+_minimum_jaxlib_version = (0, 1, 36)
 try:
   from jaxlib import version as jaxlib_version
 except:
@@ -44,8 +44,16 @@ def _check_jaxlib_version():
 _check_jaxlib_version()
 
 
+try:
+  from jaxlib import tpu_client
+except:
+  tpu_client = None
 from jaxlib import xla_client
 from jaxlib import lapack
 
 from jaxlib import pytree
 from jaxlib import cusolver
+try:
+  from jaxlib import cuda_prng
+except ImportError:
+  cuda_prng = None

@@ -67,7 +67,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     if not FLAGS.jax_enable_x64 and np.issubdtype(dtype, onp.float64):
       raise SkipTest("can't test float64 agreement")
 
-    bits_dtype = onp.uint32 if onp.finfo(dtype).bits == 32 else onp.uint64
+    bits_dtype = onp.uint32 if np.finfo(dtype).bits == 32 else onp.uint64
     numpy_bits = onp.array(1., dtype).view(bits_dtype)
     xla_bits = api.jit(
         lambda: lax.bitcast_convert_type(onp.array(1., dtype), bits_dtype))()
@@ -95,6 +95,17 @@ class LaxRandomTest(jtu.JaxTestCase):
         onp.uint32([0x243f6a88, 0x85a308d3]))
     self.assertEqual(expected, result_to_hex(result))
 
+  def testThreefry2x32Large(self):
+    n = 10000000
+    result = random.threefry_2x32(
+      (onp.uint32(0x13198a2e), onp.uint32(0x03707344)),
+      np.concatenate([
+        np.full((n,), 0x243f6a88, np.uint32),
+        np.full((n,), 0x85a308d3, np.uint32)
+      ]))
+    onp.testing.assert_equal(result[:n], onp.full((n,), 0xc4923a9c, dtype=onp.uint32))
+    onp.testing.assert_equal(result[n:], onp.full((n,), 0x483df7a0, dtype=onp.uint32))
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
       for dtype in [onp.float32, onp.float64]))
@@ -107,7 +118,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     compiled_samples = crand(key)
 
     for samples in [uncompiled_samples, compiled_samples]:
-      self._CheckCollisions(samples, onp.finfo(dtype).nmant)
+      self._CheckCollisions(samples, np.finfo(dtype).nmant)
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.uniform().cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -286,7 +297,8 @@ class LaxRandomTest(jtu.JaxTestCase):
     pdf = scipy.stats.gamma.pdf(z, alpha)
     expected_grad = -cdf_dot / pdf
 
-    self.assertAllClose(actual_grad, expected_grad, check_dtypes=True, rtol=0.0005)
+    self.assertAllClose(actual_grad, expected_grad, check_dtypes=True,
+                        rtol=2e-2 if jtu.device_under_test() == "tpu" else 5e-4)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
@@ -407,6 +419,9 @@ class LaxRandomTest(jtu.JaxTestCase):
     assert onp.unique(onp.ravel(keys)).shape == (20,)
 
   def testStaticShapeErrors(self):
+    if config.read("jax_disable_jit"):
+      raise SkipTest("test only relevant when jit enabled")
+
     @api.jit
     def feature_map(n, d, sigma=1.0, seed=123):
       key = random.PRNGKey(seed)

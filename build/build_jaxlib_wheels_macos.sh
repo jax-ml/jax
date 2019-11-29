@@ -47,4 +47,4 @@ build_jax 2.7.15 cp27 1.15.4 1.2.0
 build_jax 3.5.6 cp35 1.15.4 1.2.0
 build_jax 3.6.8 cp36 1.15.4 1.2.0
 build_jax 3.7.2 cp37 1.15.4 1.2.0
-build_jax 3.8.0 cp38 1.17.3 1.3.1
+build_jax 3.8.0 cp38 1.17.3 1.3.2

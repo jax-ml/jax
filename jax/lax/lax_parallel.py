@@ -26,6 +26,7 @@ import numpy as onp
 
 from jax import core
 from jax import ad_util
+from jax import dtypes
 from jax.lax import lax
 from jax.abstract_arrays import ShapedArray
 from jax.interpreters import ad
@@ -113,7 +114,7 @@ def ppermute(x, axis_name, perm):
     An array with the same shape as ``x`` with slices along the axis
     ``axis_name`` gathered from ``x`` according to the permutation ``perm``.
   """
-  return ppermute_p.bind(x, axis_name=axis_name, perm=perm)
+  return ppermute_p.bind(x, axis_name=axis_name, perm=tuple(perm))
 
 def pswapaxes(x, axis_name, axis):
   """Swap the pmapped axis ``axis_name`` with the unmapped axis ``axis``.
@@ -189,7 +190,7 @@ def _allreduce_split_axis_rule(prim, reducer, vals, which_mapped, axis_name):
 
 def _allreduce_translation_rule(prim, c, val, replica_groups, backend=None):
   dtype = c.GetShape(val).numpy_dtype()
-  scalar = xla_client.Shape.array_shape(dtype, ())
+  scalar = ShapedArray((), dtype)
   computation = xla.primitive_computation(prim, scalar, scalar, backend=backend)
   return c.AllReduce(val, computation, replica_groups=replica_groups)
 
@@ -198,7 +199,7 @@ def _psum_translation_rule(c, val, replica_groups, backend=None):
   psum = partial(_allreduce_translation_rule, lax.add_p, c,
                  replica_groups=replica_groups, backend=backend)
   dtype = c.GetShape(val).numpy_dtype()
-  if onp.issubdtype(dtype, onp.complexfloating):
+  if dtypes.issubdtype(dtype, onp.complexfloating):
     return c.Complex(psum(c.Real(val)), psum(c.Imag(val)))
   else:
     return psum(val)

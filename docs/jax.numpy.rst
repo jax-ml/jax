@@ -208,6 +208,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     row_stack
     select
     sign
+    signbit
     sin
     sinc
     sinh

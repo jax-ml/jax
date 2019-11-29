@@ -55,7 +55,7 @@ class MultiBackendTest(jtu.JaxTestCase):
     y = npr.uniform(size=(10,10))
     z_host = onp.matmul(x, y)
     z = fun(x, y)
-    self.assertAllClose(z, z_host, check_dtypes=True)
+    self.assertAllClose(z, z_host, check_dtypes=True, rtol=1e-2)
     correct_platform = backend if backend else jtu.device_under_test()
     self.assertEqual(z.device_buffer.platform(), correct_platform)
 
@@ -77,7 +77,7 @@ class MultiBackendTest(jtu.JaxTestCase):
     y = npr.uniform(size=(10,10))
     z_host = onp.matmul(x, y) + onp.ones_like(x)
     z = fun(x, y)
-    self.assertAllClose(z, z_host, check_dtypes=True)
+    self.assertAllClose(z, z_host, check_dtypes=True, rtol=1e-2)
     correct_platform = outer if outer else jtu.device_under_test()
     self.assertEqual(z.device_buffer.platform(), correct_platform)
 

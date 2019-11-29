@@ -86,13 +86,11 @@ def jaxpr_as_fun(typed_jaxpr, *args):
   return eval_jaxpr(typed_jaxpr.jaxpr, typed_jaxpr.literals, (), *args)
 
 
-def new_jaxpr_eqn(*args):
-  return JaxprEqn(object(), *args)
-
-JaxprEqn = namedtuple('JaxprEqn', ['eqn_id', 'invars', 'outvars', 'primitive',
+JaxprEqn = namedtuple('JaxprEqn', ['invars', 'outvars', 'primitive',
                                    'bound_subjaxprs', 'params'])
+JaxprEqn.__repr__ = JaxprEqn.__str__ = lambda eqn: str(pp_eqn(eqn)).rstrip()
+new_jaxpr_eqn = JaxprEqn
 
-JaxprEqn.__repr__ = JaxprEqn.__str__ = lambda eqn: str(pp_eqn(eqn))[:-1]
 
 class Var(object):
   def __init__(self, count, suffix):
@@ -288,7 +286,7 @@ class Tracer(object):
   __array_priority__ = 1000
   __slots__ = ['trace', '__weakref__']
 
-  def __array__(self):
+  def __array__(self, *args, **kw):
     raise Exception("Tracer can't be used with raw numpy functions. "
                     "You might have\n  import numpy as np\ninstead of\n  import jax.numpy as np")
 
@@ -306,6 +304,7 @@ class Tracer(object):
     assert False
 
   def __neg__(self): return self.aval._neg(self)
+  def __pos__(self): return self.aval._pos(self)
   def __eq__(self, other): return self.aval._eq(self, other)
   def __ne__(self, other): return self.aval._ne(self, other)
   def __lt__(self, other): return self.aval._lt(self, other)
@@ -497,6 +496,8 @@ class AbstractValue(object):
     except AttributeError:
       return self.__class__.__name__
 
+  def strip_weak_type(self):
+    return self
 
 class Bot(AbstractValue): pass
 
@@ -602,7 +603,8 @@ def call_bind(primitive, f, *args, **params):
 
 
 def call_impl(f, *args, **params):
-  return f.call_wrapped(*args, **params)
+  del params  # params parameterize the call primitive, not the function
+  return f.call_wrapped(*args)
 
 
 call_p = Primitive('call')
@@ -657,7 +659,7 @@ def pp_eqn(eqn):
           >> pp(' [ {} ; {} ]'.format(pp_vars(const_vars),
                                       pp_vars(bound_vars))))
   return (pp('{} = '.format(lhs)) >>
-          pp(eqn.primitive.name) >> pp_kv_pairs(eqn.params.items())
+          pp(eqn.primitive.name) >> pp_kv_pairs(sorted(eqn.params.items()))
           >> pp(' ') >> pp(pp_vars(eqn.invars))) + pp_subexpr
 
 def pp_jaxpr(jaxpr):
