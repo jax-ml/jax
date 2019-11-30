@@ -32,6 +32,12 @@ def gammaln(x):
   return lax.lgamma(x)
 
 
+@_wraps(osp_special.betaln)
+def betaln(x, y):
+  x, y = _promote_args_like(osp_special.betaln, x, y)
+  return lax.sub(lax.add(lax.lgamma(x), lax.lgamma(y)), lax.lgamma(x + y))
+
+
 @_wraps(osp_special.digamma, update_doc=False)
 def digamma(x):
   x, = _promote_args_like(osp_special.digamma, x)
