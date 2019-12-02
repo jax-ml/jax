@@ -120,18 +120,27 @@ def _get_local_backend(platform=None):
   return backend
 
 
+register_backend('xla', _get_local_backend)
+
+
+# memoize the TPU driver to be consistent with xla_client behavior
+_tpu_backend = None
+
 def _get_tpu_driver_backend(platform):
   del platform
-  backend_target = FLAGS.jax_backend_target
-  if backend_target is None:
-    raise ValueError('When using TPU Driver as the backend, you must specify '
-                     '--jax_backend_target=<hostname>:8470.')
-  return tpu_client.TpuBackend.create(worker=backend_target)
+  global _tpu_backend
+  if _tpu_backend is None:
+    backend_target = FLAGS.jax_backend_target
+    if backend_target is None:
+      raise ValueError('When using TPU Driver as the backend, you must specify '
+                       '--jax_backend_target=<hostname>:8470.')
+    _tpu_backend = tpu_client.TpuBackend.create(worker=backend_target)
+  return _tpu_backend
 
 
-register_backend('xla', _get_local_backend)
 if tpu_client:
   register_backend('tpu_driver', _get_tpu_driver_backend)
+
 
 _backend_lock = threading.Lock()
 
