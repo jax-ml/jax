@@ -122,7 +122,6 @@ def _get_local_backend(platform=None):
 
 register_backend('xla', _get_local_backend)
 
-
 # memoize the TPU driver to be consistent with xla_client behavior
 _tpu_backend = None
 
