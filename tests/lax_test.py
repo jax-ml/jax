@@ -1908,7 +1908,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
                                  padding, lhs_dil, rhs_dil, dimension_numbers,
                                  perms, feature_group_count, rng_factory):
     rng = rng_factory()
-    tol = {dtypes.bfloat16: 3e-1, onp.float16: 5e-1, onp.float32: 1e-4}
+    tol = {dtypes.bfloat16: 1e-0, onp.float16: 5e-1, onp.float32: 1e-4}
 
     # permute shapes to match dim_spec, scale by feature_group_count
     lhs_perm, rhs_perm = perms
