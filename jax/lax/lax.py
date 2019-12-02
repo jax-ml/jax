@@ -1974,7 +1974,9 @@ def _conv_general_dilated_transpose_rhs(
     dimension_numbers, feature_group_count,
     lhs_shape, rhs_shape, precision):
   assert type(dimension_numbers) is ConvDimensionNumbers
-
+  if onp.size(g) == 0:
+    # Avoids forming degenerate convolutions where the RHS has spatial size 0.
+    return ad_util.zero
   lhs_sdims, rhs_sdims, out_sdims = map(_conv_sdims, dimension_numbers)
   lhs_trans, rhs_trans, out_trans = map(_conv_spec_transpose, dimension_numbers)
   if feature_group_count > 1:
@@ -4239,7 +4241,8 @@ def _dilate_shape(shape, dilation):
     msg = "All dilations must be positive, got {}."
     raise TypeError(msg.format(dilation))
   dilation = (1,) * (len(shape) - len(dilation)) + tuple(dilation)
-  return onp.multiply(dilation, onp.subtract(shape, 1)) + 1
+  return onp.where(shape == 0, 0,
+                   onp.multiply(dilation, onp.subtract(shape, 1)) + 1)
 
 
 

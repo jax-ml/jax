@@ -451,12 +451,13 @@ class LaxTest(jtu.JaxTestCase):
        "rhs_dilation": rhs_dilation, "dimension_numbers": dim_nums,
        "perms": perms, "rng_factory": rng_factory}
       for lhs_shape, rhs_shape in [
-          ((b, i, 9, 10), (j, i, 4, 5))
+          ((b, i, 9, w), (j, i, 4, 5))
+          for w in [0, 10]
           for b, i, j in itertools.product([2, 3], repeat=3)]
       for dtype in float_dtypes for strides in [(1, 1), (2, 1)]
-      for padding in [((1, 2), (2, 0))]
+      for padding in [((1, 2), (2, 0)), ((10, 8), (7, 13))]
       for lhs_dilation, rhs_dilation in itertools.product(
-          [(1, 1), (1, 2)], repeat=2)
+          [(1, 1), (1, 2), (1, 4)], repeat=2)
       for rng_factory in [jtu.rand_small]
       for dim_nums, perms in [
         (("NCHW", "OIHW", "NCHW"), ([0, 1, 2, 3], [0, 1, 2, 3])),
@@ -1881,20 +1882,21 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        "strides": strides, "padding": padding, "lhs_dil": lhs_dil,
        "rhs_dil": rhs_dil, "rng_factory": rng_factory, "dimension_numbers": dim_nums,
        "perms": perms, "feature_group_count": feature_group_count}
-      for lhs_shape, rhs_shape, all_strides, all_pads, lhs_dils, rhs_dils in [
-          ((b, i, 6, 7),  # lhs_shape
+      for lhs_shapes, rhs_shape, all_strides, lhs_dils, rhs_dils in [
+          ([(b, i, 6, 7), (b, i, 0, 4)],  # lhs_shape
            (j, i, 1, 2),  # rhs_shape
            [(1, 1), (1, 2), (2, 1)],  # strides
-           [((0, 0), (0, 0)), ((1, 0), (0, 1)), ((0, -1), (0, 0))],  # pads
            [(1, 1), (2, 1)],  # lhs_dils
            [(1, 1), (2, 2)])  # rhs_dils
           for b, i, j in itertools.product([1, 2], repeat=3)]
+      for lhs_shape in lhs_shapes
       for feature_group_count in [1, 2]
       for strides in all_strides
       for rhs_dil in rhs_dils
       for lhs_dil in lhs_dils
       for dtype in float_dtypes
-      for padding in all_pads
+      for padding in ([((0, 0), (0, 0)), ((1, 0), (0, 1))] +
+        ([((0, -1), (0, 0))] if lhs_shape[2] != 0 else []))
       for dim_nums, perms in [
           (("NCHW", "OIHW", "NCHW"), ([0, 1, 2, 3], [0, 1, 2, 3])),
           (("NHWC", "HWIO", "NHWC"), ([0, 2, 3, 1], [2, 3, 1, 0])),

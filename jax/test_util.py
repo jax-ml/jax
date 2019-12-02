@@ -640,6 +640,10 @@ class JaxTestCase(parameterized.TestCase):
     python_should_be_executing = True
     python_ans = fun(*args)
 
+    python_shapes = tree_map(lambda x: x.shape, python_ans)
+    onp_shapes = tree_map(lambda x: onp.asarray(x).shape, python_ans)
+    self.assertEqual(python_shapes, onp_shapes)
+
     cache_misses = xla.xla_primitive_callable.cache_info().misses
     python_ans = fun(*args)
     self.assertEqual(
