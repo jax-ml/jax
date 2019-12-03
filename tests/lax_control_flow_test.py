@@ -1446,6 +1446,14 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     s = str(api.xla_computation(api.grad(loss))(A).GetHloText())
     assert s.count("dynamic-update-slice(") < 2
 
+  def testScanLengthArg(self):
+    def arange(n):
+      return lax.scan(lambda c, _: (c + 1, c), 0, None, length=n)[1]
+
+    ans = arange(10)
+    expected = onp.arange(10)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
 
 if __name__ == '__main__':
   absltest.main()
