@@ -24,9 +24,9 @@ http_archive(
 http_archive(
     name = "org_tensorflow",
     sha256 = "412ef0824d5dcfe6e139e1fa25f72569e699b3ec06d374c0e19ba0bf60c32952",
-    strip_prefix = "tensorflow-883b5becaced22f7dd9e3c23d9d259f55e087cb5",
+    strip_prefix = "tensorflow-08266e2d237fc78511393ee52bec667a83891c53",
     urls = [
-        "https://github.com/tensorflow/tensorflow/archive/883b5becaced22f7dd9e3c23d9d259f55e087cb5.tar.gz",
+        "https://github.com/tensorflow/tensorflow/archive/08266e2d237fc78511393ee52bec667a83891c53.tar.gz",
     ],
 )
 
