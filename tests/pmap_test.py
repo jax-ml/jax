@@ -17,6 +17,7 @@ from __future__ import division
 from __future__ import print_function
 
 from functools import partial
+import os
 from unittest import SkipTest
 
 import numpy as onp
@@ -39,9 +40,30 @@ from jax.interpreters import xla
 from jax.config import config
 config.parse_flags_with_absl()
 
+prev_xla_flags = None
+
+# Run all tests with 8 CPU devices.
+def setUpModule():
+  global prev_xla_flags
+  prev_xla_flags = os.getenv("XLA_FLAGS")
+  flags_str = prev_xla_flags or ""
+  # Don't override user-specified device count, or other XLA flags.
+  if "xla_force_host_platform_device_count" not in flags_str:
+    os.environ["XLA_FLAGS"] = (flags_str +
+                               " --xla_force_host_platform_device_count=8")
+  # Clear any cached backends so new CPU backend will pick up the env var.
+  xla_bridge.get_backend.cache_clear()
+
+# Reset to previous configuration in case other test modules will be run.
+def tearDownModule():
+  if prev_xla_flags is None:
+    del os.environ["XLA_FLAGS"]
+  else:
+    os.environ["XLA_FLAGS"] = prev_xla_flags
+  xla_bridge.get_backend.cache_clear()
+
 
 class PmapTest(jtu.JaxTestCase):
-
   def _getMeshShape(self, device_mesh_shape):
     device_count = xla_bridge.device_count()
     if any(size == -1 for size in device_mesh_shape):
@@ -223,7 +245,7 @@ class PmapTest(jtu.JaxTestCase):
 
     ans = grad(lambda x: np.sum(test_fun(x)))(x)
     expected = grad(lambda x: np.sum(baseline_fun(x)))(x)
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected, check_dtypes=True, atol=1e-3)
 
   def testShardedDeviceArrays(self):
     f = lambda x: 2 * x
@@ -554,6 +576,9 @@ class PmapTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("gpu")
   def testPswapaxes(self):
     device_count = xla_bridge.device_count()
+    # TODO: AllToAll not yet implemented on XLA:CPU
+    if jtu.device_under_test() == "cpu":
+      device_count = 1
     shape = (device_count, 3, device_count, 5)
     x = onp.arange(prod(shape)).reshape(shape)
 
@@ -783,8 +808,8 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     r0 = f0(x)
     r1 = f1(x)
     expected = onp.expand_dims(onp.dot(x.squeeze(), x.squeeze().T), 0)
-    self.assertAllClose(r0, expected, check_dtypes=True)
-    self.assertAllClose(r1, expected, check_dtypes=True)
+    self.assertAllClose(r0, expected, check_dtypes=True, atol=1e-13, rtol=1e-14)
+    self.assertAllClose(r1, expected, check_dtypes=True, atol=1e-12, rtol=1e-14)
 
   def testNoDevicesError(self):
     f = pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i', devices=[])
