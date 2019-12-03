@@ -251,13 +251,14 @@ def fold_in(key, data):
 
   Args:
     key: a PRNGKey (an array with shape (2,) and dtype uint32).
-    data: a 32bit integer representing data to be folded in to the key.
+    data: data to be folded into the key; will be hashed first if not an int.
 
   Returns:
     A new PRNGKey that is a deterministic function of the inputs and is
     statistically safe for producing a stream of new pseudo-random values.
   """
-  return _fold_in(key, data)
+  int_data = data if isinstance(data, int) else hash(data)
+  return _fold_in(key, int_data)
 
 @jit
 def _fold_in(key, data):

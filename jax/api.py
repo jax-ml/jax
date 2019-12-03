@@ -915,7 +915,7 @@ def soft_pmap(fun, axis_name=None, backend=None):
       msg = ("soft_pmap mapped axis size must be divisble by the number of "
              "XLA devices (or be less than or equal to that number), but got "
              "an axis size of {} with {} devices.")
-      raise ValueError(msg.format(axis_size, pxla.pxla.unmapped_device_count()))
+      raise ValueError(msg.format(axis_size, pxla.unmapped_device_count()))
     num_chunks = axis_size // chunk_size
 
     reshaped_args = [_reshape_split(num_chunks, x) for x in args_flat]
@@ -945,9 +945,9 @@ def _reshape_merge(x):
     return x.reshape((-1,) + x.shape[2:])
 
 
-def _papply(fun):
+def _papply(fun, axis_name=None):
   # This function is for testing purposes.
-  axis_name = _TempAxisName(fun)
+  if axis_name is None: axis_name = _TempAxisName(fun)
 
   def papply_fun(*args, **kwargs):
     f = lu.wrap_init(fun)

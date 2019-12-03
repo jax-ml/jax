@@ -1033,6 +1033,7 @@ def sort_key_val(keys, values, dimension=-1):
 
 
 def tie_in(x, y):
+  """Returns `y`, with data dependence on `x`."""
   return tie_in_p.bind(x, y)
 
 
