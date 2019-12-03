@@ -966,12 +966,9 @@ def where(condition, x=None, y=None):
     raise ValueError("Must use the three-argument form of where().")
   if not issubdtype(_dtype(condition), onp.bool_):
     condition = lax.ne(condition, zeros_like(condition))
+  x, y = _promote_dtypes(x, y)
   condition, x, y = broadcast_arrays(condition, x, y)
-  if not onp.size(x):
-    empty, _ = _promote_dtypes(x, y)
-    return empty
-  else:
-    return lax.select(condition, *_promote_dtypes(x, y))
+  return lax.select(condition, x, y) if onp.size(x) else x
 
 
 @_wraps(onp.select)

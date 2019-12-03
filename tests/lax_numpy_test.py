@@ -1862,13 +1862,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertEqual(x[0, 0], 1)
 
   def testScalarDtypePromotion(self):
-    # disabled this test after https://github.com/google/jax/issues/732
-    msg = ("jax.numpy differs from numpy in promotion rules for Python scalars."
-           " See https://github.com/google/jax/issues/732.")
-    raise SkipTest(msg)
     orig_numpy_result = (1 + onp.eye(1, dtype=onp.float32)).dtype
     jax_numpy_result = (1 + lnp.eye(1, dtype=lnp.float32)).dtype
     self.assertEqual(orig_numpy_result, jax_numpy_result)
+
+  def testWhereScalarPromotion(self):
+    x = lnp.where(lnp.array([True, False]), 3,
+                  lnp.ones((2,), dtype=lnp.float32))
+    self.assertEqual(x.dtype, onp.dtype(onp.float32))
 
   def testSymmetrizeDtypePromotion(self):
     x = onp.eye(3, dtype=onp.float32)
