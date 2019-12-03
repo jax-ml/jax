@@ -101,10 +101,11 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("equal", 2, all_dtypes, all_shapes, jtu.rand_some_equal, []),
     op_record("exp", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"]),
     op_record("fabs", 1, float_dtypes, all_shapes, jtu.rand_default, ["rev"]),
-    op_record("float_power", 2, inexact_dtypes, all_shapes, jtu.rand_default, ["rev"],
+    op_record("float_power", 2, inexact_dtypes, all_shapes,
+              partial(jtu.rand_default, scale=1), ["rev"],
               tolerance={lnp.bfloat16: 1e-2, onp.float32: 1e-3,
                          onp.float64: 1e-12, onp.complex64: 2e-4,
-                         onp.complex128: 1e-12}),
+                         onp.complex128: 1e-12}, check_dtypes=False),
     op_record("floor", 1, float_dtypes, all_shapes, jtu.rand_default, []),
     op_record("greater", 2, number_dtypes, all_shapes, jtu.rand_some_equal, []),
     op_record("greater_equal", 2, number_dtypes, all_shapes, jtu.rand_some_equal, []),
@@ -1821,7 +1822,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # TODO(phawkins): we currently set dtype=False because we aren't as
     # aggressive about promoting to float64. It's not clear we want to mimic
     # Numpy here.
-    tol_spec = {onp.float32: 1e-4, onp.float64: 5e-6}
+    tol_spec = {onp.float32: 2e-4, onp.float64: 5e-6}
     tol = max(jtu.tolerance(a_dtype, tol_spec),
               jtu.tolerance(q_dtype, tol_spec))
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=False,
@@ -1851,7 +1852,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       choicelist = [x if lnp.result_type(x) != lnp.bfloat16
                     else x.astype(onp.float32) for x in choicelist]
       dtype = lnp.result_type(default, *choicelist)
-      return onp.select(condlist, choicelist, default).astype(dtype)
+      return onp.select(condlist,
+                        [onp.asarray(x, dtype=dtype) for x in choicelist],
+                        onp.asarray(default, dtype=dtype))
     self._CheckAgainstNumpy(onp_fun, lnp.select, args_maker,
                             check_dtypes=False)
     self._CompileAndCheck(lnp.select, args_maker, check_dtypes=True)
