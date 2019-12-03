@@ -20,12 +20,12 @@ import numpy as onp
 import scipy.stats as osp_stats
 
 from ... import lax
-from ...numpy.lax_numpy import _promote_args_like, _wraps, where, inf
+from ...numpy.lax_numpy import _promote_args_inexact, _wraps, where, inf
 
 
 @_wraps(osp_stats.expon.logpdf, update_doc=False)
 def logpdf(x, loc=0, scale=1):
-  x, loc, scale = _promote_args_like(osp_stats.expon.logpdf, x, loc, scale)
+  x, loc, scale = _promote_args_inexact("expon.logpdf", x, loc, scale)
   log_scale = lax.log(scale)
   linear_term = lax.div(lax.sub(x, loc), scale)
   log_probs = lax.neg(lax.add(linear_term, log_scale))

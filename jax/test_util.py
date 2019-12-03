@@ -371,9 +371,9 @@ def _rand_dtype(rand, shape, dtype, scale=1., post=lambda x: x):
   return _cast_to_shape(onp.asarray(post(vals), dtype), shape, dtype)
 
 
-def rand_default():
+def rand_default(scale=3):
   randn = npr.RandomState(0).randn
-  return partial(_rand_dtype, randn, scale=3)
+  return partial(_rand_dtype, randn, scale=scale)
 
 
 def rand_nonzero():

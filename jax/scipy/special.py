@@ -23,42 +23,42 @@ from .. import lax
 from ..api import custom_transforms, defjvp
 from ..numpy import lax_numpy as np
 from ..numpy.lax_numpy import (_wraps, asarray, _reduction_dims, _constant_like,
-                               _promote_args_like)
+                               _promote_args_inexact)
 
 
 @_wraps(osp_special.gammaln)
 def gammaln(x):
-  x, = _promote_args_like(osp_special.gammaln, x)
+  x, = _promote_args_inexact("gammaln", x)
   return lax.lgamma(x)
 
 
 @_wraps(osp_special.betaln)
 def betaln(x, y):
-  x, y = _promote_args_like(osp_special.betaln, x, y)
+  x, y = _promote_args_inexact("betaln", x, y)
   return lax.lgamma(x) + lax.lgamma(y) - lax.lgamma(x + y)
 
 
 @_wraps(osp_special.digamma, update_doc=False)
 def digamma(x):
-  x, = _promote_args_like(osp_special.digamma, x)
+  x, = _promote_args_inexact("digamma", x)
   return lax.digamma(x)
 
 
 @_wraps(osp_special.erf)
 def erf(x):
-  x, = _promote_args_like(osp_special.erf, x)
+  x, = _promote_args_inexact("erf", x)
   return lax.erf(x)
 
 
 @_wraps(osp_special.erfc, update_doc=False)
 def erfc(x):
-  x, = _promote_args_like(osp_special.erfc, x)
+  x, = _promote_args_inexact("erfc", x)
   return lax.erfc(x)
 
 
 @_wraps(osp_special.erfinv)
 def erfinv(x):
-  x, = _promote_args_like(osp_special.erfinv, x)
+  x, = _promote_args_inexact("erfinv", x)
   return lax.erf_inv(x)
 
 
@@ -96,19 +96,19 @@ def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
 
 @_wraps(osp_special.xlogy)
 def xlogy(x, y):
-  x, y = _promote_args_like(osp_special.xlogy, x, y)
+  x, y = _promote_args_inexact("xlogy", x, y)
   return lax._safe_mul(x, lax.log(y))
 
 
 @_wraps(osp_special.xlog1py, update_doc=False)
 def xlog1py(x, y):
-  x, y = _promote_args_like(osp_special.xlog1py, x, y)
+  x, y = _promote_args_inexact("xlog1py", x, y)
   return lax._safe_mul(x, lax.log1p(y))
 
 
 @_wraps(osp_special.entr)
 def entr(x):
-  x, = _promote_args_like(osp_special.entr, x)
+  x, = _promote_args_inexact("entr", x)
   return lax.select(lax.lt(x, _constant_like(x, 0)),
                     lax.full_like(x, -onp.inf),
                     lax.neg(xlogy(x, x)))
@@ -116,7 +116,7 @@ def entr(x):
 
 @_wraps(osp_special.multigammaln, update_doc=False)
 def multigammaln(a, d):
-  a, = _promote_args_like(lambda a: osp_special.multigammaln(a, 1), a)
+  a, = _promote_args_inexact("multigammaln", a)
   d = lax.convert_element_type(d, lax.dtype(a))
   constant = lax.mul(lax.mul(lax.mul(_constant_like(a, 0.25), d),
                              lax.sub(d, _constant_like(a, 1))),

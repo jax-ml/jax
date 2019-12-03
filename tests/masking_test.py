@@ -303,7 +303,7 @@ class MaskingTest(jtu.JaxTestCase):
 
     self.assertAllClose(
         ans, expected, check_dtypes=False,
-        rtol={onp.float32:2e-2} if jtu.device_under_test() == "tpu" else None)
+        rtol=2e-2 if jtu.device_under_test() == "tpu" else 1e-14)
 
   def test_nesting(self):
     raise SkipTest("not yet implemented")
