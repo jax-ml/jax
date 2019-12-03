@@ -574,6 +574,22 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                             check_dtypes=True, tol=1e-3)
     self._CompileAndCheck(np.linalg.inv, args_maker, check_dtypes=True)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype, "rng_factory": rng_factory}
+      for shape in [(1, 1), (4, 4), (2, 70, 7), (2000, 7), (7, 10000), (70, 7, 2)]
+      for dtype in float_types + complex_types
+      for rng_factory in [jtu.rand_default]))
+  def testPinv(self, shape, dtype, rng_factory):
+    rng = rng_factory()
+    _skip_if_unsupported_type(dtype)
+    args_maker = lambda: [rng(shape, dtype)]
+
+    self._CheckAgainstNumpy(onp.linalg.pinv, np.linalg.pinv, args_maker,
+                            check_dtypes=True, tol=1e-3)
+    self._CompileAndCheck(np.linalg.pinv, args_maker, check_dtypes=True)
+
   # Regression test for incorrect type for eigenvalues of a complex matrix.
   @jtu.skip_on_devices("tpu")  # TODO(phawkins): No complex eigh implementation on TPU.
   def testIssue669(self):

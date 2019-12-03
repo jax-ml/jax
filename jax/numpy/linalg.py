@@ -136,6 +136,27 @@ def eigvalsh(a, UPLO='L'):
   return w
 
 
+@_wraps(onp.linalg.pinv)
+def pinv(a, rcond=None):
+  # ported from https://github.com/numpy/numpy/blob/v1.17.0/numpy/linalg/linalg.py#L1890-L1979
+  a = np.conj(a)
+  if rcond is None:
+      max_rows_cols = max(a.shape[-2:])
+      rcond = 10. * max_rows_cols * np.finfo(a.dtype).eps
+  rcond = np.asarray(rcond)
+  u, s, v = svd(a, full_matrices=False)
+  # Singular values less than or equal to ``rcond * largest_singular_value`` 
+  # are set to zero.
+  cutoff = rcond[..., np.newaxis] * np.amax(s, axis=-1, keepdims=True)
+  large = s > cutoff
+  s = np.divide(1, s)
+  s = np.where(large, s, 0)
+  vT = np.swapaxes(v, -1, -2)
+  uT = np.swapaxes(u, -1, -2)
+  res = np.matmul(vT, np.multiply(s[..., np.newaxis], uT))
+  return lax.convert_element_type(res, a.dtype)
+
+
 @_wraps(onp.linalg.inv)
 def inv(a):
   if np.ndim(a) < 2 or a.shape[-1] != a.shape[-2]:
