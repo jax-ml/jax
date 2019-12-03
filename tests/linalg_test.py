@@ -328,13 +328,36 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     new_a = (new_a + onp.conj(new_a.T)) / 2
     # Assert rtol eigenvalue delta between perturbed eigenvectors vs new true eigenvalues.
     RTOL=1e-2
-    assert onp.max(
-      onp.abs((onp.diag(onp.dot(onp.conj((v+dv).T), onp.dot(new_a,(v+dv)))) - new_w) / new_w)) < RTOL
+    onp.testing.assert_allclose(
+        onp.diag(onp.dot(onp.conj((v+dv).T), onp.dot(new_a,(v+dv)))), new_w,
+        rtol=RTOL)
     # Redundant to above, but also assert rtol for eigenvector property with new true eigenvalues.
     assert onp.max(
       onp.linalg.norm(onp.abs(new_w*(v+dv) - onp.dot(new_a, (v+dv))), axis=0) /
       onp.linalg.norm(onp.abs(new_w*(v+dv)), axis=0)
     ) < RTOL
+
+  def testEighGradDegenerate(self):
+    a = np.eye(2)
+    a_dot = a[:, ::-1]
+    (w, v), (dw, dv) = jvp(np.linalg.eigh, primals=(a,), tangents=(a_dot,))
+    # correct eigenvectors are 1/sqrt(2) * [[-1, 1], [1, 1]], up to arbitrary
+    # choice of phase
+    onp.testing.assert_allclose(abs(v), onp.ones((2, 2)) / onp.sqrt(2))
+    onp.testing.assert_allclose(w, onp.ones((2,)))
+    onp.testing.assert_allclose(abs(dv), onp.zeros((2, 2)))
+    onp.testing.assert_allclose(dw, onp.array([-1, 1]))
+
+  def testEighGradBatchDim(self):
+    rng = jtu.rand_default()
+    a = rng((2, 3, 3), onp.float32)
+    a = (a + onp.conj(T(a))) / 2
+    a_dot = rng((2, 3, 3), onp.float32)
+    a_dot = (a_dot + onp.conj(T(a_dot))) / 2
+    _, (dw, dv) = jvp(jsp.linalg.eigh, (a,), (a_dot,))
+    _, (dw_expected, dv_expected) = jvp(jsp.linalg.eigh, (a[0],), (a_dot[0],))
+    onp.testing.assert_allclose(dv[0], dv_expected)
+    onp.testing.assert_allclose(dw[0], dw_expected)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
