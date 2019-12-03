@@ -85,7 +85,9 @@ def get_compile_options(num_replicas=None, device_assignment=None):
       msg = "device_assignment does not match num_replicas: {} vs {}."
       raise ValueError(msg.format(device_assignment, num_replicas))
     compile_options = compile_options or xla_client.CompileOptions()
-    device_assignment = onp.array(device_assignment)[:, None]
+    device_assignment = onp.array(device_assignment)
+    if device_assignment.ndim == 1:
+      device_assignment = device_assignment[:, None]
     device_assignment = xla_client.DeviceAssignment.create(device_assignment)
     assert num_replicas is None or device_assignment.replica_count() == num_replicas
     compile_options.device_assignment = device_assignment
