@@ -46,7 +46,8 @@ from . import ad_util
 from . import dtypes
 from .core import eval_jaxpr
 from .api_util import (wraps, flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
-                       flatten_fun_nokwargs2)
+                       flatten_fun_nokwargs2, apply_flat_fun_nokwargs)
+from .dict_util import as_dict, iterpaths
 from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, tree_leaves, tree_multimap,
                         _replace_nones)
@@ -63,7 +64,9 @@ from .interpreters import ad
 from .interpreters import batching
 from .interpreters import parallel
 from .interpreters import masking
+from .interpreters import tagging
 from .interpreters.masking import shapecheck
+from .interpreters.tagging import Scope
 from .config import flags, config
 
 map = safe_map
@@ -1993,3 +1996,103 @@ def checkpoint(fun, concrete=False):
     return tree_unflatten(out_tree(), out_flat)
   return fun_remat
 remat = checkpoint
+
+
+def collect(f, path_filter=lambda path: True):
+  """Collect tagged intermediate values produced during function execution.
+
+  These values might be, for example, metrics collected for debugging or evaluation,
+  ancestral samples computed in a probabilistic program, or weights initialized in a
+  neural network. The function returned by collect returns the original result
+  together with a dictionary of tagged intermediate values; that dictionary is
+  either flat (if no ``jax.Scope``s are used) or nested.
+
+  Args:
+    f: a Python callable whose arguments and return values are arrays, scalars,
+      scopes, or pytrees.
+    path_filter: a function from path tuples to booleans used to select a subset of
+      intermediate values to collect.
+
+  For example:
+
+  >>> def foo(x):
+  ...   y = lax.tag(x ** 2, "y")
+  ...   z = y + 1
+  ...   return z
+  >>> collect(foo)(2.)
+  (DeviceArray(5.), {'y': DeviceArray(4.)})
+
+  >>> def bar(scope, key, x):
+  ...   y = lax.tag(random.normal(key), scope, "y")
+  ...   return x + y
+  >>> def baz(scope, key, x):
+  ...   key1, key2 = random.split(key)
+  ...   a = bar(lax.push_scope(scope, 1), key1, x)
+  ...   b = bar(lax.push_scope(scope, 2), key2, x)
+  ...   return a + b
+  >>> collect(baz)(jax.Scope(), random.PRNGKey(0), 2.)
+  (DeviceArray(2.8923516), {1: {'y': DeviceArray(0.14389044)}, 2: {'y': DeviceArray(-1.2515389)}})
+  """
+  fun = lu.wrap_init(f)
+  def collect_fn(*args, **kwargs):
+    flat_args, in_tree = tree_flatten((args, kwargs))
+    flat_fun, out_tree = flatten_fun(fun, in_tree)
+    out_flat, tree = tagging.tag_fun(flat_fun, flat_args, dict(), None)
+    tree = as_dict((path, val) for path, val in iterpaths(tree) if path_filter(path))
+    return tree_unflatten(out_tree(), out_flat), tree
+  return collect_fn
+
+def inject(f, tree, accum_fn=lambda old, new: new):
+  """Inject new values in place of tagged intermediates during function execution.
+
+  These replacement values might be e.g. updated weights for a neural network or
+  perturbations for differentiating with respect to intermediates.
+
+  Args:
+    f: a Python callable whose arguments and return values are arrays, scalars,
+      or pytrees.
+    tree: a nested dictionary containing values to inject, indexed by the tag
+      paths of the intermediates they should replace.
+    accum_fn: function to combine the intermediate value found in the function
+      with the value provided in `tree`. The default is to replace the original
+      intermediate with the injected value, but e.g. `lambda old, new: old + new`
+      would instead replace it with their sum.
+
+  For example:
+
+  >>> def foo(x):
+  ...   y = lax.tag(x ** 2, "y")
+  ...   z = y + 1
+  ...   return z
+  >>> inject(foo, {"y": 1.})(2.)
+  DeviceArray(2.)
+
+  >>> def bar(scope, key, x):
+  ...   y = lax.tag(random.normal(key), scope, "y")
+  ...   return x + y
+  >>> def baz(scope, key, x):
+  ...   key1, key2 = random.split(key)
+  ...   a = bar(lax.push_scope(scope, 1), key1, x)
+  ...   b = bar(lax.push_scope(scope, 2), key2, x)
+  ...   return a + b
+  >>> inject(baz, {1: {"y": 0.3}, 2: {"y": 0.5}})(jax.Scope(), random.PRNGKey(0), 2.)
+  DeviceArray(4.8)
+  """
+  fun = lu.wrap_init(f)
+  def inject_fn(*args, **kwargs):
+    flat_args, in_tree = tree_flatten((args, kwargs))
+    flat_fun, out_tree = flatten_fun(fun, in_tree)
+    out_vals, _ = tagging.tag_fun(flat_fun, flat_args, tree, accum_fn)
+    return tree_unflatten(out_tree(), out_vals)
+  return inject_fn
+
+def grad_intermediates(f, path_filter=lambda path: True):
+  def grad_fun(*args, **kwargs):
+    _, orig_tree = collect(f, path_filter)(*args, **kwargs)
+    def fun_for_grad(perturbation_tree):
+      inject_fun = inject(f, perturbation_tree, lambda old, new: old + new)
+      return inject_fun(*args, **kwargs)
+    # cannot use np.zeros_like in api.py
+    zeros_tree = tree_map(lambda x: 0 * x, orig_tree)
+    return grad(fun_for_grad)(zeros_tree)
+  return grad_fun

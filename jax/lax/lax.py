@@ -47,6 +47,7 @@ from ..interpreters import pxla
 from ..interpreters import ad
 from ..interpreters import batching
 from ..interpreters import masking
+from ..interpreters import tagging
 from ..interpreters.masking import ShapeExpr, ShapeError
 from ..util import curry, cache, safe_zip, unzip2, prod
 from ..tree_util import build_tree, tree_unflatten, tree_map
@@ -1036,6 +1037,17 @@ def tie_in(x, y):
   """Returns `y`, with data dependence on `x`."""
   return tie_in_p.bind(x, y)
 
+def push_scope(x, name):
+  """Returns `x`, with `name` added to its stack of tags."""
+  return push_scope_p.bind(x, name=name)
+
+def tag(x, scope=None, name=None):
+  """Marks `x` as a tagged intermediate whose path is `scope`'s tag stack plus `name`."""
+  if scope is None:
+    scope = tagging.Scope()
+  if name is not None:
+    scope = push_scope(scope, name)
+  return tag_p.bind(x, scope)
 
 def full(shape, fill_value, dtype=None):
   """Returns an array of `shape` filled with `fill_value`.
@@ -4021,6 +4033,23 @@ ad.deflinear(tie_in_p, _tie_in_transpose_rule)
 batching.primitive_batchers[tie_in_p] = _tie_in_batch_rule
 masking.shape_rules[tie_in_p] = lambda shape_exprs: shape_exprs[1]
 masking.masking_rules[tie_in_p] = lambda vals, logical_shapes: vals[1]
+
+
+push_scope_p = Primitive('push_scope')
+push_scope_p.def_impl(lambda scope, name: tagging.Scope(scope.path + (name,)))
+push_scope_p.def_abstract_eval(lambda x, name: tagging.AbstractScope(x.path + (name,)))
+xla.translations[push_scope_p] = lambda c, x, name: x
+
+
+tag_p = Primitive('tag')
+tag_p.def_impl(lambda x, scope: x)
+tag_p.def_abstract_eval(lambda x, scope: x)
+xla.translations[tag_p] = lambda c, x, scope: x
+ad.deflinear(tag_p, lambda t, scope: [tag(t, scope)])
+batching.primitive_batchers[tag_p] = \
+    lambda a, d: (tag_value(a[0], a[1]), d[0])
+tagging.tag_primitives.add(tag_p)
+
 
 
 ### constants

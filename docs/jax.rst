@@ -63,3 +63,10 @@ Parallelization (:code:`pmap`)
 .. autofunction:: device_count
 .. autofunction:: local_device_count
 .. autofunction:: host_count
+
+Tagging (:code:`collect` and :code:`inject`)
+------------------------------
+
+.. autofunction:: Scope
+.. autofunction:: collect
+.. autofunction:: inject
