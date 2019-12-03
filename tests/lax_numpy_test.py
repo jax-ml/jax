@@ -1852,8 +1852,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       choicelist = [x if lnp.result_type(x) != lnp.bfloat16
                     else x.astype(onp.float32) for x in choicelist]
       dtype = lnp.result_type(default, *choicelist)
-      return onp.select(condlist, [x.astype(dtype) for x in choicelist],
-                        default.astype(dtype))
+      return onp.select(condlist,
+                        [onp.asarray(x, dtype=dtype) for x in choicelist],
+                        onp.asarray(default, dtype=dtype))
     self._CheckAgainstNumpy(onp_fun, lnp.select, args_maker,
                             check_dtypes=False)
     self._CompileAndCheck(lnp.select, args_maker, check_dtypes=True)
