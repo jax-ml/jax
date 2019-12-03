@@ -453,10 +453,12 @@ def scan(f, init, xs, length=None):
   represents the type with the same pytree structure and corresponding leaves
   each with an additional leading axis.
 
-  When both ``a`` and ``b`` are array types, the semantics of ``scan`` are given
-  by this Python implementation::
+  When ``a`` is an array type or None, and ``b`` is an array type, the semantics
+  of ``scan`` are given roughly by this Python implementation::
 
-    def scan(f, init, xs):
+    def scan(f, init, xs, length=None):
+      if xs is None:
+        xs = [None] * length
       carry = init
       ys = []
       for x in xs:
@@ -466,7 +468,7 @@ def scan(f, init, xs, length=None):
 
   Unlike that Python version, both ``a`` and ``b`` may be arbitrary pytree
   types, and so multiple arrays can be scanned over at once and produce multiple
-  output arrays.
+  output arrays. (None is actually an empty pytree.)
 
   Also unlike that Python version, ``scan`` is a JAX primitive and is lowered to
   a single XLA While HLO. That makes it useful for reducing compilation times
