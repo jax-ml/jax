@@ -484,15 +484,22 @@ def conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation=None,
   if type(dimension_numbers) is not ConvDimensionNumbers:
     dimension_numbers = conv_dimension_numbers(
         lhs.shape, rhs.shape, dimension_numbers)
-  if isinstance(padding, str):
-    lhs_perm, rhs_perm, _ = dimension_numbers
-    padding = padtype_to_pads(
-        onp.take(lhs.shape, lhs_perm)[2:], onp.take(rhs.shape, rhs_perm)[2:],
-        window_strides, padding)
   if lhs_dilation is None:
     lhs_dilation = (1,) * (lhs.ndim - 2)
+  elif isinstance(padding, str) and not len(lhs_dilation) == lhs_dilation.count(1):
+    raise ValueError(
+        "String padding is not implemented for transposed convolution "
+        "using this op. Please either exactly specify the required padding or "
+        "use conv_transpose.")
   if rhs_dilation is None:
     rhs_dilation = (1,) * (rhs.ndim - 2)
+  if isinstance(padding, str):
+    lhs_perm, rhs_perm, _ = dimension_numbers
+    rhs_shape = onp.take(rhs.shape, rhs_perm)[2:]
+    effective_rhs_shape = [(k-1) * r + 1 for k, r in zip(rhs_shape, rhs_dilation)]
+    padding = padtype_to_pads(
+        onp.take(lhs.shape, lhs_perm)[2:], effective_rhs_shape,
+        window_strides, padding)
   return conv_general_dilated_p.bind(
       lhs, rhs, window_strides=tuple(window_strides), padding=tuple(padding),
       lhs_dilation=tuple(lhs_dilation), rhs_dilation=tuple(rhs_dilation),
