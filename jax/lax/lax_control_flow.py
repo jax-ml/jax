@@ -438,7 +438,7 @@ xla.initial_style_translations[cond_p] = _cond_translation_rule
 
 ### scan
 
-def scan(f, init, xs):
+def scan(f, init, xs, length=None):
   """Scan a function over leading array axes while carrying along state.
 
   The type signature in brief is
@@ -493,6 +493,9 @@ def scan(f, init, xs):
     xs: the value of type ``[a]`` over which to scan along the leading axis,
       where ``[a]`` can be an array or any pytree (nested Python
       tuple/list/dict) thereof with consistent leading axis sizes.
+    length: optional integer specifying the number of loop iterations, which
+      must agree with the sizes of leading axes of the arrays in ``xs`` (but can
+      be used to perform scans where no input ``xs`` are needed).
 
   Returns:
     A pair of type ``(c, [b])`` where the first element represents the final
@@ -502,14 +505,30 @@ def scan(f, init, xs):
   init_flat, init_tree = tree_flatten(init)
   xs_flat, _ = tree_flatten(xs)
   in_flat, in_tree = tree_flatten((init, xs))
+
   try:
-    length, = {x.shape[0] for x in xs_flat}
+    lengths = [x.shape[0] for x in xs_flat]
   except AttributeError:
     msg = "scan got value with no leading axis to scan over: {}."
-    raise ValueError(msg.format([x for x in xs_flat if not hasattr(x, 'shape')]))
-  except ValueError:
-    msg = "scan got values with different leading axis sizes: {}."
-    raise ValueError(msg.format([x.shape[0] for x in xs_flat]))
+    raise ValueError(msg.format(', '.join(str(x) for x in xs_flat
+                                          if not hasattr(x, 'shape'))))
+
+  if length is not None:
+    length = int(length)
+    if not all(length == l for l in lengths):
+      msg = ("scan got `length` argument of {} which disagrees with "
+             "leading axis sizes {}.")
+      raise ValueError(msg.format(length, [x.shape[0] for x in xs_flat]))
+  else:
+    unique_lengths = set(lengths)
+    if len(unique_lengths) > 1:
+      msg = "scan got values with different leading axis sizes: {}."
+      raise ValueError(msg.format(', '.join(str(x.shape[0]) for x in xs_flat)))
+    elif len(unique_lengths) == 0:
+      msg = "scan got no values to scan over and `length` not provided."
+      raise ValueError(msg)
+    else:
+      length, = unique_lengths
 
   carry_avals = tuple(_map(_abstractify, init_flat))
   x_shapes = [masking.padded_shape_as_value(x.shape[1:]) for x in xs_flat]
