@@ -83,4 +83,5 @@ in the table above. There are two key differences:
   (:code:`jax.numpy.bfloat16`), which is useful for neural network training.
   For a description of bfloat16, see details
   The only notable promotion behavior is with respect to IEEE-754
-  :code:`float16`, which which :code:`bfloat16` promotes to a :code:`float32`.
+  :code:`float16`, with which :code:`bfloat16` promotes to a :code:`float32`.
+  
