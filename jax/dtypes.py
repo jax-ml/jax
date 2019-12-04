@@ -189,6 +189,17 @@ def _make_type_promotion_table():
 _type_promotion_table = _make_type_promotion_table()
 
 def promote_types(a, b):
+  """Returns the type to which a binary operation should cast its arguments.
+
+  For details of JAX's type promotion semantics, see :ref:`type-promotion`.
+
+  Args:
+    a: a :class:`numpy.dtype` or a dtype specifier.
+    b: a :class:`numpy.dtype` or a dtype specifier.
+
+  Returns:
+    A :class:`numpy.dtype` object.
+  """
   a = onp.dtype(a)
   b = onp.dtype(b)
   try:

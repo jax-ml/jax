@@ -9,7 +9,7 @@ following table, where, for example
 
 * "b1" means :code:`np.bool_`,
 * "s2" means :code:`np.int16`,
-* "u4" means :code:`np.int32`,
+* "u4" means :code:`np.uint32`,
 * "bf" means :code:`np.bfloat16`,
 * "f2" means :code:`np.float16`, and
 * "c8" means :code:`np.complex128`.
