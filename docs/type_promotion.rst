@@ -81,7 +81,6 @@ in the table above. There are two key differences:
   `bfloat16 <https://en.wikipedia.org/wiki/Bfloat16_floating-point_format>`_
   non-standard 16-bit floating point type
   (:code:`jax.numpy.bfloat16`), which is useful for neural network training.
-  For a description of bfloat16, see details
   The only notable promotion behavior is with respect to IEEE-754
   :code:`float16`, with which :code:`bfloat16` promotes to a :code:`float32`.
   
