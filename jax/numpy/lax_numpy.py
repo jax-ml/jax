@@ -82,11 +82,15 @@ _min = builtins.min
 _sum = builtins.sum
 _divmod = builtins.divmod
 
-# We need some numpy scalars
+# NumPy constants
+
 pi = onp.pi
 e = onp.e
+euler_gamma = onp.euler_gamma
 inf = onp.inf
 NINF = onp.NINF
+PZERO = onp.PZERO
+NZERO = onp.NZERO
 nan = onp.nan
 
 # And some numpy utility functions
