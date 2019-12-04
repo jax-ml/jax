@@ -745,7 +745,7 @@ def svd_impl(operand, full_matrices, compute_uv):
 
 def svd_translation_rule(c, operand, full_matrices, compute_uv):
   raise NotImplementedError(
-    "Singular value decomposition is only implemented on the CPU backend")
+    "Singular value decomposition is only implemented on the CPU and GPU backends")
 
 def svd_abstract_eval(operand, full_matrices, compute_uv):
   if isinstance(operand, ShapedArray):

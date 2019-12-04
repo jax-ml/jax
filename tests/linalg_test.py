@@ -581,6 +581,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for shape in [(1, 1), (4, 4), (2, 70, 7), (2000, 7), (7, 10000), (70, 7, 2)]
       for dtype in float_types + complex_types
       for rng_factory in [jtu.rand_default]))
+  @jtu.skip_on_devices("tpu")  # SVD is not implemented on the TPU backend
   def testPinv(self, shape, dtype, rng_factory):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
