@@ -2373,25 +2373,23 @@ def outer(a, b, out=None):
 
 @partial(jit, static_argnums=(2, 3, 4))
 def _cross(a, b, axisa, axisb, axisc):
-  a = moveaxis(a, _canonicalize_axis(axisa, ndim(a)), -1)
-  b = moveaxis(b, _canonicalize_axis(axisb, ndim(b)), -1)
-  a_shape = shape(a)
-  b_shape = shape(b)
+  a = moveaxis(a, axisa, -1)
+  b = moveaxis(b, axisb, -1)
 
-  if a_shape[-1] not in (2, 3) or b_shape[-1] not in (2, 3):
+  if a.shape[-1] not in (2, 3) or b.shape[-1] not in (2, 3):
     raise ValueError("Dimension must be either 2 or 3 for cross product")
 
-  if a_shape[-1] == 2 and b_shape[-1] == 2:
+  if a.shape[-1] == 2 and b.shape[-1] == 2:
     return a[..., 0] * b[..., 1] - a[..., 1] * b[..., 0]
 
   a0 = a[..., 0]
   a1 = a[..., 1]
-  a2 = a[..., 2] if a_shape[-1] == 3 else zeros_like(a0)
+  a2 = a[..., 2] if a.shape[-1] == 3 else zeros_like(a0)
   b0 = b[..., 0]
   b1 = b[..., 1]
-  b2 = b[..., 2] if b_shape[-1] == 3 else zeros_like(b0)
+  b2 = b[..., 2] if b.shape[-1] == 3 else zeros_like(b0)
   c = array([a1 * b2 - a2 * b1, a2 * b0 - a0 * b2, a0 * b1 - a1 * b0])
-  return moveaxis(c, 0, _canonicalize_axis(axisc, ndim(c)))
+  return moveaxis(c, 0, axisc)
 
 @_wraps(onp.cross)
 def cross(a, b, axisa=-1, axisb=-1, axisc=-1, axis=None):
