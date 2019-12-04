@@ -198,7 +198,7 @@ def disable_jit():
 
 
 def xla_computation(fun, static_argnums=(), axis_env=None, backend=None,
-                    tuple_args=False, instantiate_const_outputs=False):
+                    tuple_args=False, instantiate_const_outputs=True):
   """Creates a function that produces its XLA computation given example args.
 
   Args:
@@ -215,7 +215,7 @@ def xla_computation(fun, static_argnums=(), axis_env=None, backend=None,
     tuple_args: Optional bool, defaults to False. If True, the resulting XLA
       computation will have a single tuple argument that is unpacked into the
       specified function arguments.
-    instantiate_const_outputs: Optional bool, defaults to False. If False, then
+    instantiate_const_outputs: Optional bool, defaults to True. If False, then
       ``xla_computation`` does not instantiate constant-valued outputs in the
       XLA computation, and so the result is closer to the computation that
       ``jax.jit`` produces and may be more useful for studying ``jit`` behavior.
