@@ -585,7 +585,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       b = b.astype(onp.float32) if rhs_dtype == lnp.bfloat16 else b
       out = onp.cross(a, b, axisa, axisb, axisc, axis)
       return out.astype(lnp.promote_types(lhs_dtype, rhs_dtype))
-    tol_spec = {dtypes.bfloat16: 3e-1, onp.float16: 1e-2}
+    tol_spec = {dtypes.bfloat16: 3e-1, onp.float16: 0.15}
     tol = max(jtu.tolerance(lhs_dtype, tol_spec),
               jtu.tolerance(rhs_dtype, tol_spec))
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True,
