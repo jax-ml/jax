@@ -198,7 +198,7 @@ def disable_jit():
 
 
 def xla_computation(fun, static_argnums=(), axis_env=None, backend=None,
-                    tuple_args=False):
+                    tuple_args=False, instantiate_const_outputs=False):
   """Creates a function that produces its XLA computation given example args.
 
   Args:
@@ -212,9 +212,16 @@ def xla_computation(fun, static_argnums=(), axis_env=None, backend=None,
       applications of ``jax.pmap``. See the examples below.
     backend: This is an experimental feature and the API is likely to change.
       Optional, a string representing the xla backend. 'cpu','gpu', or 'tpu'.
-    tuple_args: Optional, defaults to False. If True, the resulting XLA
+    tuple_args: Optional bool, defaults to False. If True, the resulting XLA
       computation will have a single tuple argument that is unpacked into the
       specified function arguments.
+    instantiate_const_outputs: Optional bool, defaults to False. If False, then
+      ``xla_computation`` does not instantiate constant-valued outputs in the
+      XLA computation, and so the result is closer to the computation that
+      ``jax.jit`` produces and may be more useful for studying ``jit`` behavior.
+      If True, then constant-valued outputs are instantiated in the XLA
+      computation, which may be more useful for staging computations out of JAX
+      entirely.
 
   Returns:
     A wrapped version of ``fun`` that when applied to example arguments returns a
@@ -294,7 +301,8 @@ def xla_computation(fun, static_argnums=(), axis_env=None, backend=None,
     jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
     avals = map(xla.abstractify, jax_args)
     pvals = [pe.PartialVal((aval, core.unit)) for aval in avals]
-    jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
+    jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals,
+                                         instantiate=instantiate_const_outputs)
     axis_env_ = make_axis_env(xla.jaxpr_replicas(jaxpr))
     c = xb.make_computation_builder('xla_computation_{}'.format(fun_name))
     xla_consts = map(c.Constant, consts)
