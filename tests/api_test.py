@@ -1016,6 +1016,14 @@ class APITest(jtu.JaxTestCase):
     xla_comp = api.xla_computation(f)
     xla_comp(np.arange(8)).GetHloText()  # doesn't crash
 
+  def test_xla_computation_instantiate_constant_outputs(self):
+    def f():
+      return np.zeros((3, 4))
+
+    xla_comp = api.xla_computation(f, instantiate_const_outputs=True)()
+    out_shape, = xla_comp.GetReturnValueShape().tuple_shapes()
+    self.assertEqual(out_shape.dimensions(), (3, 4))
+
   def test_jit_device(self):
     device = xb.devices()[-1]
     x = api.jit(lambda x: x, device=device)(3.)
