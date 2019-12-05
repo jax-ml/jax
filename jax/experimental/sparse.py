@@ -18,19 +18,20 @@ from __future__ import print_function
 
 import scipy.sparse.linalg
 import jax.numpy as np
+from jax.numpy.lax_numpy import _wraps
 from .. import lax
-from .lax_numpy import _wraps
 
 _T = lambda x: np.swapaxes(x, -1, -2)
 
 @_wraps(scipy.sparse.linalg.cg)
 def cg(A, b, x0=None, tol=1e-05, maxiter=None):
+  # solves for x where Ax = b  
   N = np.shape(A)[0]
   if x0 is None:
     x_k = np.zeros(N)
   else:
     x_k = x0
-    if not (np.shape(x0) == (N,1) or np.shape(x0) == (N,)):
+    if not (np.shape(x0) == (N, 1) or np.shape(x0) == (N,)):
       raise ValueError('A and x have incompatible dimensions')
   if maxiter is None:
     maxiter = np.inf
