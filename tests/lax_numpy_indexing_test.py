@@ -741,7 +741,7 @@ class IndexingTest(jtu.JaxTestCase):
   def testTrivialGatherIsntGenerated(self):
     # https://github.com/google/jax/issues/1621
     jaxpr = api.make_jaxpr(lambda x: x[:, None])(onp.arange(4))
-    self.assertEqual(len(jaxpr.eqns), 1)
+    self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
     self.assertNotIn('gather', str(jaxpr))
 
   def testBooleanIndexingWithEmptyResult(self):

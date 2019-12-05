@@ -30,6 +30,7 @@ Activation functions
     celu
     selu
     gelu
+    glu
 
 Other functions
 ---------------

@@ -202,12 +202,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError,
         re.escape("body_fun output and input must have same type structure, got PyTreeDef(tuple, [*,*]) and *.")):
       lax.while_loop(lambda c: True, lambda c: (1., 1.), 0.)
-    with self.assertRaisesRegex(
+    with self.assertRaisesWithLiteralMatch(
         TypeError,
-        "body_fun output and input must have identical types, got\\n"
-        "ShapedArray\(bool\[\]\)\\n"
-        "and\\n"
-        "ShapedArray\(float32\[\]\)."):
+        "body_fun output and input must have identical types, got\n"
+        "ShapedArray(bool[])\n"
+        "and\n"
+        "ShapedArray(float32[])."):
       lax.while_loop(lambda c: True, lambda c: True, np.float32(0.))
 
   def testNestedWhileWithDynamicUpdateSlice(self):
@@ -348,7 +348,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
   def testForiLoopBatchedIssue1190(self):
     f = lambda x: lax.fori_loop(0, 4, lambda _, x: x + 1, x)
     jaxpr = api.make_jaxpr(api.vmap(f))(np.arange(3))
-    eqn = jaxpr.eqns[0]
+    eqn = jaxpr.jaxpr.eqns[0]
     self.assertIs(eqn.primitive, lax.while_p)
     self.assertEqual(eqn.params['cond_jaxpr'].in_avals[0].shape, ())
 
@@ -530,12 +530,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         re.escape("true_fun and false_fun output must have same type structure, got * and PyTreeDef(tuple, [*,*]).")):
       lax.cond(True,
                1., lambda top: 1., 2., lambda fop: (2., 2.))
-    with self.assertRaisesRegex(
+    with self.assertRaisesWithLiteralMatch(
         TypeError,
         "true_fun and false_fun output must have identical types, got\n"
-        "ShapedArray\(float32\[1\]\)\n"
+        "ShapedArray(float32[1])\n"
         "and\n"
-        "ShapedArray\(float32\[\]\)."):
+        "ShapedArray(float32[])."):
       lax.cond(True,
                1., lambda top: np.array([1.], np.float32),
                2., lambda fop: np.float32(1.))
@@ -915,12 +915,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError,
         re.escape("scan carry output and input must have same type structure, got * and PyTreeDef(None, []).")):
       lax.scan(lambda c, x: (0, x), None, a)
-    with self.assertRaisesRegex(
+    with self.assertRaisesWithLiteralMatch(
         TypeError,
         "scan carry output and input must have identical types, got\n"
-        "ShapedArray\(int32\[\]\)\\n"
-        "and\\n"
-        "ShapedArray\(float32\[\]\)."):
+        "ShapedArray(int32[])\n"
+        "and\n"
+        "ShapedArray(float32[])."):
       lax.scan(lambda c, x: (np.int32(0), x), np.float32(1.0), a)
     with self.assertRaisesRegex(TypeError,
         re.escape("scan carry output and input must have same type structure, got * and PyTreeDef(tuple, [*,*]).")):
@@ -1445,6 +1445,14 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     # We check XLA because _scan_impl is "underneath" the jaxpr language.
     s = str(api.xla_computation(api.grad(loss))(A).GetHloText())
     assert s.count("dynamic-update-slice(") < 2
+
+  def testScanLengthArg(self):
+    def arange(n):
+      return lax.scan(lambda c, _: (c + 1, c), 0, None, length=n)[1]
+
+    ans = arange(10)
+    expected = onp.arange(10)
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
 
 if __name__ == '__main__':
