@@ -152,7 +152,6 @@ class APITest(jtu.JaxTestCase):
     assert g(2.0) == 4.0
     assert len(side) == 1
 
-
   def test_bad_input(self):
     def f(x):
       return x
@@ -164,15 +163,6 @@ class APITest(jtu.JaxTestCase):
     self.assertRaisesRegex(
       TypeError, ".* 'foo' of type <.*'str'> is not a valid JAX type",
       lambda: jit(f)("foo"))
-
-  # TODO(dougalm): enable when we remove 'None' from pytree nodes
-  # def test_bad_output(self):
-  #   def f(x):
-  #     pass
-
-  #   grad(f)(onp.zeros(3))
-  #   jit(f)(onp.zeros(3))
-  #   assert False
 
   def test_grad_tuple_output(self):
     jtu.check_raises(lambda: grad(lambda x: (x,x))(1.0), TypeError,
@@ -505,7 +495,6 @@ class APITest(jtu.JaxTestCase):
       TypeError,
       "primal and tangent arguments to jax.jvp must have equal types",
       lambda: api.jvp(lambda x: -x, (onp.float16(2),), (onp.float32(4),)))
-
 
   def test_jvp_non_tuple_arguments(self):
     def f(x, y): return x + y
@@ -1310,49 +1299,6 @@ class APITest(jtu.JaxTestCase):
         "positional arguments.",
         lambda: partial(df, x=0.)(y=1.))
 
-
-class JaxprTest(jtu.JaxTestCase):
-
-  def test_scalar_literals(self):
-    jaxpr = api.make_jaxpr(lambda x: x + 2)(42)
-    self.assertLen(jaxpr.jaxpr.constvars, 0)
-
-  def test_const(self):
-    def fun(x):
-      return (x, 1., np.zeros(1))
-
-    jaxpr = api.make_jaxpr(fun)(0.)
-    self.assertMultiLineStrippedEqual(str(jaxpr), """
-    { lambda b ;  ; a.
-        let
-        in [a, 1.0, b] }
-    """)
-
-  def test_cond(self):
-    def f(x):
-      return lax.cond(x >= 0.,
-                      x + 1.,
-                      lambda xt: xt + x,
-                      x + 2.,
-                      lambda xf: xf - x)
-    jaxpr = api.make_jaxpr(f)(3.)
-    self.assertMultiLineStrippedEqual(str(jaxpr), """
-    { lambda  ;  ; a.
-      let b = ge a 0.0
-          c = add a 1.0
-          d = add a 2.0
-          e = cond[ false_jaxpr={ lambda  ;  ; b a.
-                                  let c = sub a b
-                                  in [c] }
-                    false_nconsts=1
-                    true_jaxpr={ lambda  ;  ; b a.
-                                 let c = add a b
-                                 in [c] }
-                    true_nconsts=1 ] b a c a d
-      in [e] }
-        """)
-
-
   def test_grad_of_jit_compilation_caching(self):
     if not hasattr(self, "assertLogs"):
       raise unittest.SkipTest("test requires assertLogs (python 3)")
@@ -1560,6 +1506,62 @@ class JaxprTest(jtu.JaxTestCase):
     x = 4.
     self.assertAllClose(f1(x), f2(x), check_dtypes=False)
     self.assertAllClose(api.grad(f1)(x), api.grad(f2)(x), check_dtypes=False)
+
+  def test_trivial_computations(self):
+    x = np.array([1, 2, 3])
+    y = api.jit(lambda x: x)(x)
+    self.assertIs(x, y)
+
+    z1, z2 = api.jit(lambda x: (x, x))(x)
+    self.assertIs(z1, z2)
+
+    x1, x2 = np.array([1, 2]), np.array([2, 3])
+    z1, z2, z3 = api.jit(lambda x, y: (y, 1, x))(x1, x2)
+    self.assertIs(z1, x2)
+    self.assertIs(z3, x1)
+    self.assertEqual(z2, 1)
+
+
+class JaxprTest(jtu.JaxTestCase):
+
+  def test_scalar_literals(self):
+    jaxpr = api.make_jaxpr(lambda x: x + 2)(42)
+    self.assertLen(jaxpr.jaxpr.constvars, 0)
+
+  def test_const(self):
+    def fun(x):
+      return (x, 1., np.zeros(1))
+
+    jaxpr = api.make_jaxpr(fun)(0.)
+    self.assertMultiLineStrippedEqual(str(jaxpr), """
+    { lambda b ;  ; a.
+        let
+        in [a, 1.0, b] }
+    """)
+
+  def test_cond(self):
+    def f(x):
+      return lax.cond(x >= 0.,
+                      x + 1.,
+                      lambda xt: xt + x,
+                      x + 2.,
+                      lambda xf: xf - x)
+    jaxpr = api.make_jaxpr(f)(3.)
+    self.assertMultiLineStrippedEqual(str(jaxpr), """
+    { lambda  ;  ; a.
+      let b = ge a 0.0
+          c = add a 1.0
+          d = add a 2.0
+          e = cond[ false_jaxpr={ lambda  ;  ; b a.
+                                  let c = sub a b
+                                  in [c] }
+                    false_nconsts=1
+                    true_jaxpr={ lambda  ;  ; b a.
+                                 let c = add a b
+                                 in [c] }
+                    true_nconsts=1 ] b a c a d
+      in [e] }
+        """)
 
 
 if __name__ == '__main__':
