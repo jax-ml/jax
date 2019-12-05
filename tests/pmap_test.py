@@ -95,7 +95,7 @@ class PmapTest(jtu.JaxTestCase):
   def testMismatchedAxisSizes(self):
     n = xla_bridge.device_count()
     f = pmap(lambda x, y: x + y)
-    self.assertRaisesRegexp(
+    self.assertRaisesRegex(
         ValueError,
         "Axis size .* does not match leading dimension of shape .*",
         lambda: f(onp.random.randn(n), onp.random.randn(n - 1)))

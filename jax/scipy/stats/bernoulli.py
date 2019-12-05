@@ -26,7 +26,7 @@ from ..special import xlogy, xlog1py
 
 @np._wraps(osp_stats.bernoulli.logpmf, update_doc=False)
 def logpmf(k, p, loc=0):
-  k, p, loc = np._promote_args_like(osp_stats.bernoulli.logpmf, k, p, loc)
+  k, p, loc = np._promote_args_inexact("bernoulli.logpmf", k, p, loc)
   zero = np._constant_like(k, 0)
   one = np._constant_like(k, 1)
   x = lax.sub(k, loc)

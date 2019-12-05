@@ -371,9 +371,9 @@ def _rand_dtype(rand, shape, dtype, scale=1., post=lambda x: x):
   return _cast_to_shape(onp.asarray(post(vals), dtype), shape, dtype)
 
 
-def rand_default():
+def rand_default(scale=3):
   randn = npr.RandomState(0).randn
-  return partial(_rand_dtype, randn, scale=3)
+  return partial(_rand_dtype, randn, scale=scale)
 
 
 def rand_nonzero():
@@ -620,6 +620,14 @@ class JaxTestCase(parameterized.TestCase):
     else:
       raise TypeError((type(x), type(y)))
 
+  def assertMultiLineStrippedEqual(self, expected, what):
+    """Asserts two strings are equal, after stripping each line."""
+    ignore_space_re = re.compile(r'\s*\n\s*')
+    expected_clean = re.sub(ignore_space_re, '\n', expected.strip())
+    what_clean = re.sub(ignore_space_re, '\n', what.strip())
+    self.assertMultiLineEqual(expected_clean, what_clean,
+                              msg="Expecting\n"+expected)
+
   def _CompileAndCheck(self, fun, args_maker, check_dtypes,
                        rtol=None, atol=None):
     """Helper method for running JAX compilation and allclose assertions."""
@@ -631,6 +639,10 @@ class JaxTestCase(parameterized.TestCase):
 
     python_should_be_executing = True
     python_ans = fun(*args)
+
+    python_shapes = tree_map(lambda x: onp.shape(x), python_ans)
+    onp_shapes = tree_map(lambda x: onp.shape(onp.asarray(x)), python_ans)
+    self.assertEqual(python_shapes, onp_shapes)
 
     cache_misses = xla.xla_primitive_callable.cache_info().misses
     python_ans = fun(*args)

@@ -54,8 +54,6 @@ def _skip_if_unsupported_type(dtype):
     raise unittest.SkipTest("--jax_enable_x64 is not set")
 
 
-numpy_version = tuple(map(int, onp.version.version.split('.')))
-
 class NumpyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -387,11 +385,9 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     onp_fn = partial(onp.linalg.norm, ord=ord, axis=axis, keepdims=keepdims)
     np_fn = partial(np.linalg.norm, ord=ord, axis=axis, keepdims=keepdims)
-    # Older numpy versions promote to float64 unnecessarily..
-    check_dtypes = numpy_version >= (1, 15)
     self._CheckAgainstNumpy(onp_fn, np_fn, args_maker,
-                            check_dtypes=check_dtypes, tol=1e-3)
-    self._CompileAndCheck(np_fn, args_maker, check_dtypes=check_dtypes)
+                            check_dtypes=False, tol=1e-3)
+    self._CompileAndCheck(np_fn, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_n={}_full_matrices={}_compute_uv={}".format(
@@ -509,7 +505,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
         norm(onp.eye(k) -onp.matmul(onp.conj(T(lq)), lq)) < 5))
 
     if not full_matrices and m >= n:
-        jtu.check_jvp(np.linalg.qr, partial(jvp, np.linalg.qr), (a,), atol=1e-3)
+        jtu.check_jvp(np.linalg.qr, partial(jvp, np.linalg.qr), (a,), atol=3e-3)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}".format(
@@ -577,6 +573,23 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp.linalg.inv, np.linalg.inv, args_maker,
                             check_dtypes=True, tol=1e-3)
     self._CompileAndCheck(np.linalg.inv, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype, "rng_factory": rng_factory}
+      for shape in [(1, 1), (4, 4), (2, 70, 7), (2000, 7), (7, 10000), (70, 7, 2)]
+      for dtype in float_types + complex_types
+      for rng_factory in [jtu.rand_default]))
+  @jtu.skip_on_devices("tpu")  # SVD is not implemented on the TPU backend
+  def testPinv(self, shape, dtype, rng_factory):
+    rng = rng_factory()
+    _skip_if_unsupported_type(dtype)
+    args_maker = lambda: [rng(shape, dtype)]
+
+    self._CheckAgainstNumpy(onp.linalg.pinv, np.linalg.pinv, args_maker,
+                            check_dtypes=True, tol=1e-3)
+    self._CompileAndCheck(np.linalg.pinv, args_maker, check_dtypes=True)
 
   # Regression test for incorrect type for eigenvalues of a complex matrix.
   @jtu.skip_on_devices("tpu")  # TODO(phawkins): No complex eigh implementation on TPU.
@@ -858,7 +871,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     f = partial(lax_linalg.triangular_solve, lower=lower,
                 transpose_a=transpose_a, conjugate_a=conjugate_a,
                 unit_diagonal=unit_diagonal, left_side=left_side)
-    jtu.check_grads(f, (A, B), 2, rtol=2e-2, eps=1e-3)
+    jtu.check_grads(f, (A, B), 2, rtol=4e-2, eps=1e-3)
 
 
 if __name__ == "__main__":

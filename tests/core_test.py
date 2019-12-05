@@ -19,7 +19,6 @@ from __future__ import print_function
 from collections import namedtuple
 import gc
 import operator
-from unittest import skip
 
 import numpy as onp
 from absl.testing import absltest
@@ -195,7 +194,7 @@ class CoreTest(jtu.JaxTestCase):
   @parameterized.parameters(test_specs)
   def test_vjp(self, f, args):
     jtu.check_vjp(f, partial(vjp, f), args,
-                  rtol={onp.float32: 7e-2, onp.float64: 1e-5},
+                  rtol={onp.float32: 3e-1, onp.float64: 1e-5},
                   atol={onp.float32: 1e-2, onp.float64: 1e-5})
 
   def test_jvp_closure(self):
@@ -275,7 +274,6 @@ class CoreTest(jtu.JaxTestCase):
       self.assertEqual(gc.collect(), 0)
     finally:
       gc.set_debug(debug)
-
 
 if __name__ == '__main__':
   absltest.main()
