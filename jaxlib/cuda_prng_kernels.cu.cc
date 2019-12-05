@@ -101,8 +101,8 @@ struct ThreeFry2x32Descriptor {
   std::int64_t n;
 };
 
-pybind11::bytes BuildCudaThreeFry2x32Descriptor(std::int64_t n) {
-  return PackDescriptor(ThreeFry2x32Descriptor{n});
+std::string BuildCudaThreeFry2x32Descriptor(std::int64_t n) {
+  return PackDescriptorAsString(ThreeFry2x32Descriptor{n});
 }
 
 void CudaThreeFry2x32(cudaStream_t stream, void** buffers, const char* opaque,

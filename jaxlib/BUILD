@@ -23,16 +23,27 @@ licenses(["notice"])
 package(default_visibility = ["//visibility:public"])
 
 cc_library(
-    name = "kernel_helpers",
-    hdrs = ["kernel_helpers.h"],
+    name = "kernel_pybind11_helpers",
+    hdrs = ["kernel_pybind11_helpers.h"],
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
     features = ["-use_header_modules"],
     deps = [
-        "@com_google_absl//absl/base",
+        ":kernel_helpers",
         "@pybind11",
+    ],
+)
+
+cc_library(
+    name = "kernel_helpers",
+    hdrs = ["kernel_helpers.h"],
+    copts = [
+        "-fexceptions",
+    ],
+    deps = [
+        "@com_google_absl//absl/base",
     ],
 )
 
@@ -106,7 +117,7 @@ pybind_extension(
     module_name = "cublas_kernels",
     deps = [
         ":gpu_kernel_helpers",
-        ":kernel_helpers",
+        ":kernel_pybind11_helpers",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -134,7 +145,7 @@ pybind_extension(
     module_name = "cusolver_kernels",
     deps = [
         ":gpu_kernel_helpers",
-        ":kernel_helpers",
+        ":kernel_pybind11_helpers",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -154,15 +165,10 @@ cuda_library(
     name = "cuda_prng_kernels_lib",
     srcs = ["cuda_prng_kernels.cu.cc"],
     hdrs = ["cuda_prng_kernels.h"],
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
     deps = [
         ":gpu_kernel_helpers",
         ":kernel_helpers",
         "@local_config_cuda//cuda:cuda_headers",
-        "@pybind11",
     ],
 )
 
@@ -177,7 +183,7 @@ pybind_extension(
     module_name = "cuda_prng_kernels",
     deps = [
         ":cuda_prng_kernels_lib",
-        ":kernel_helpers",
+        ":kernel_pybind11_helpers",
         "@local_config_cuda//cuda:cuda_headers",
         "@local_config_cuda//cuda:cudart",
         "@pybind11",
