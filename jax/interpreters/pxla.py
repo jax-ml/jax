@@ -27,6 +27,7 @@ import numpy as onp
 import six
 from six.moves import reduce
 
+from ..config import flags
 from .. import core
 from .. import linear_util as lu
 from ..abstract_arrays import (ConcreteArray, ShapedArray, array_types,
@@ -40,6 +41,8 @@ from . import batching
 from . import partial_eval as pe
 from . import xla
 from . import ad
+
+FLAGS = flags.FLAGS
 
 _map = safe_map
 
@@ -435,6 +438,11 @@ def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
     global_axis_size = xb.device_count()
   else:
     global_axis_size = axis_size
+
+  log_priority = logging.WARNING if FLAGS.jax_log_compiles else logging.DEBUG
+  logging.log(log_priority,
+              "Compiling {} for {} devices with args {}.".format(
+                  fun.__name__, global_axis_size, avals))
 
   @lu.wrap_init
   def dynamic_fun(dummy, *args):
