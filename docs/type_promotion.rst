@@ -41,23 +41,55 @@ following table, where, for example
     </style>
 
     <table id="types">
-    <tr><th></th><th>b1</th><th>s1</th><th>s2</th><th>s4</th><th>s8</th><th>u1</th><th>u2</th><th>u4</th><th>u8</th><th>bf</th><th>f2</th><th>f4</th><th>f8</th><th>c4</th><th>c8</th></tr>
-    <tr><td>b1</td><td>b1</td><td>s1</td><td>s2</td><td>s4</td><td>s8</td><td>u1</td><td>u2</td><td>u4</td><td>u8</td><td class="d">bf</td><td>f2</td><td>f4</td><td>f8</td><td>c4</td><td>c8</td></tr>
-    <tr><td>s1</td><td>s1</td]]><td>s1</td><td>s2</td><td>s4</td><td>s8</td><td>s2</td><td>s4</td><td>s8</td><td>f8</td><td class="d">bf</td><td>f2</td><td>f4</td><td>f8</td><td>c4</td><td>c8</td></tr>
-    <tr><td>s2</td><td>s2</td><td>s2</td><td>s2</td><td>s4</td><td>s8</td><td>s2</td><td>s4</td><td>s8</td><td>f8</td><td class="d">bf</td><td class="d">f2</td><td>f4</td><td>f8</td><td>c4</td><td>c8</td></tr>
-    <tr><td>s4</td><td>s4</td><td>s4</td><td>s4</td><td>s4</td><td>s8</td><td>s4</td><td>s4</td><td>s8</td><td>f8</td><td class="d">bf</td><td class="d">f2</td><td class="d">f4</td><td>f8</td><td class="d">c4</td><td>c8</td></tr>
-    <tr><td>s8</td><td>s8</td><td>s8</td><td>s8</td><td>s8</td><td>s8</td><td>s8</td><td>s8</td><td>s8</td><td>f8</td><td class="d">bf</td><td class="d">f2</td><td class="d">f4</td><td>f8</td><td class="d">c4</td><td>c8</td></tr>
-    <tr><td>u1</td><td>u1</td><td>s2</td><td>s2</td><td>s4</td><td>s8</td><td>u1</td><td>u2</td><td>u4</td><td>u8</td><td class="d">bf</td><td>f2</td><td>f4</td><td>f8</td><td>c4</td><td>c8</td></tr>
-    <tr><td>u2</td><td>u2</td><td>s4</td><td>s4</td><td>s4</td><td>s8</td><td>u2</td><td>u2</td><td>u4</td><td>u8</td><td class="d">bf</td><td class="d">f2</td><td>f4</td><td>f8</td><td>c4</td><td>c8</td></tr>
-    <tr><td>u4</td><td>u4</td><td>s8</td><td>s8</td><td>s8</td><td>s8</td><td>u4</td><td>u4</td><td>u4</td><td>u8</td><td class="d">bf</td><td class="d">f2</td><td class="d">f4</td><td>f8</td><td class="d">c4</td><td>c8</td></tr>
-    <tr><td>u8</td><td>u8</td><td>f8</td><td>f8</td><td>f8</td><td>f8</td><td>u8</td><td>u8</td><td>u8</td><td>u8</td><td class="d">bf</td><td class="d">f2</td><td class="d">f4</td><td>f8</td><td class="d">c4</td><td>c8</td></tr>
-    <tr class="d"><td>bf</td><td>bf</td><td>bf</td><td>bf</td><td>bf</td><td>bf</td><td>bf</td><td>bf</td><td>bf</td><td class="d">bf</td><td>bf</td><td>f4</td><td>f4</td><td>f8</td><td>c4</td><td>c8</td></tr>
+    <tr><th></th><th>b1</th><th>u1</th><th>u2</th><th>u4</th><th>u8</th><th>i1</th><th>i2</th><th>i4</th><th>i8</th><th>bf</th><th>f2</th><th>f4</th><th>f8</th><th>c4</th><th>c8</th></tr>
+    <tr><td>b1</td><td>b1</td><td>u1</td><td>u2</td><td>u4</td><td>u8</td><td>i1</td><td>i2</td><td>i4</td><td>i8</td><td class="d">bf</td><td>f2</td><td>f4</td><td>f8</td><td>c4</td><td>c8</td></tr>
+    <tr><td>u1</td><td>u1</td><td>u1</td><td>u2</td><td>u4</td><td>u8</td><td>i2</td><td>i2</td><td>i4</td><td>i8</td><td class="d">bf</td><td>f2</td><td>f4</td><td>f8</td><td>c4</td><td>c8</td></tr>
+    <tr><td>u2</td><td>u2</td><td>u2</td><td>u2</td><td>u4</td><td>u8</td><td>i4</td><td>i4</td><td>i4</td><td>i8</td><td class="d">bf</td><td class="d">f2</td><td>f4</td><td>f8</td><td>c4</td><td>c8</td></tr>
+    <tr><td>u4</td><td>u4</td><td>u4</td><td>u4</td><td>u4</td><td>u8</td><td>i8</td><td>i8</td><td>i8</td><td>i8</td><td class="d">bf</td><td class="d">f2</td><td class="d">f4</td><td>f8</td><td class="d">c4</td><td>c8</td></tr>
+    <tr><td>u8</td><td>u8</td><td>u8</td><td>u8</td><td>u8</td><td>u8</td><td>f8</td><td>f8</td><td>f8</td><td>f8</td><td class="d">bf</td><td class="d">f2</td><td class="d">f4</td><td>f8</td><td class="d">c4</td><td>c8</td></tr>
+    <tr><td>i1</td><td>i1</td><td>i2</td><td>i4</td><td>i8</td><td>f8</td><td>i1</td><td>i2</td><td>i4</td><td>i8</td><td class="d">bf</td><td>f2</td><td>f4</td><td>f8</td><td>c4</td><td>c8</td></tr>
+    <tr><td>i2</td><td>i2</td><td>i2</td><td>i4</td><td>i8</td><td>f8</td><td>i2</td><td>i2</td><td>i4</td><td>i8</td><td class="d">bf</td><td class="d">f2</td><td>f4</td><td>f8</td><td>c4</td><td>c8</td></tr>
+    <tr><td>i4</td><td>i4</td><td>i4</td><td>i4</td><td>i8</td><td>f8</td><td>i4</td><td>i4</td><td>i4</td><td>i8</td><td class="d">bf</td><td class="d">f2</td><td class="d">f4</td><td>f8</td><td class="d">c4</td><td>c8</td></tr>
+    <tr><td>i8</td><td>i8</td><td>i8</td><td>i8</td><td>i8</td><td>f8</td><td>i8</td><td>i8</td><td>i8</td><td>i8</td><td class="d">bf</td><td class="d">f2</td><td class="d">f4</td><td>f8</td><td class="d">c4</td><td>c8</td></tr>
+    <tr><td>bf</td><td class="d">bf</td><td class="d">bf</td><td class="d">bf</td><td class="d">bf</td><td class="d">bf</td><td class="d">bf</td><td class="d">bf</td><td class="d">bf</td><td class="d">bf</td><td class="d">bf</td><td class="d">f4</td><td class="d">f4</td><td class="d">f8</td><td class="d">c4</td><td class="d">c8</td></tr>
     <tr><td>f2</td><td>f2</td><td>f2</td><td class="d">f2</td><td class="d">f2</td><td class="d">f2</td><td>f2</td><td class="d">f2</td><td class="d">f2</td><td class="d">f2</td><td class="d">f4</td><td>f2</td><td>f4</td><td>f8</td><td>c4</td><td>c8</td></tr>
     <tr><td>f4</td><td>f4</td><td>f4</td><td>f4</td><td class="d">f4</td><td class="d">f4</td><td>f4</td><td>f4</td><td class="d">f4</td><td class="d">f4</td><td class="d">f4</td><td>f4</td><td>f4</td><td>f8</td><td>c4</td><td>c8</td></tr>
     <tr><td>f8</td><td>f8</td><td>f8</td><td>f8</td><td>f8</td><td>f8</td><td>f8</td><td>f8</td><td>f8</td><td>f8</td><td class="d">f8</td><td>f8</td><td>f8</td><td>f8</td><td>c8</td><td>c8</td></tr>
     <tr><td>c4</td><td>c4</td><td>c4</td><td>c4</td><td class="d">c4</td><td class="d">c4</td><td>c4</td><td>c4</td><td class="d">c4</td><td class="d">c4</td><td class="d">c4</td><td>c4</td><td>c4</td><td>c8</td><td>c4</td><td>c8</td></tr>
     <tr><td>c8</td><td>c8</td><td>c8</td><td>c8</td><td>c8</td><td>c8</td><td>c8</td><td>c8</td><td>c8</td><td>c8</td><td class="d">c8</td><td>c8</td><td>c8</td><td>c8</td><td>c8</td><td>c8</td></tr>
     </table><p>
+
+.. The table above was generated by the following Python code.
+    import numpy as onp
+    from jax import numpy as np
+
+    types = [onp.bool_, onp.uint8, onp.uint16, onp.uint32, onp.uint64,
+             onp.int8, onp.int16, onp.int32, onp.int64,
+             np.bfloat16, onp.float16, onp.float32, onp.float64,
+             onp.complex64, onp.complex128]
+
+    def name(d):
+      d = onp.dtype(d)
+      if d == onp.dtype(np.bfloat16):
+        return "bf"
+      return "{}{}".format(
+        d.kind,
+        d.itemsize // 2 if onp.issubdtype(d, onp.complexfloating) else d.itemsize)
+
+    out = "<tr><th></th>"
+    for t in types:
+      out += "<th>{}</th>".format(name(t))
+    out += "</tr>\n"
+
+    for t1 in types:
+      out += "<tr><td>{}</td>".format(name(t1))
+      for t2 in types:
+        t = np.promote_types(t1, t2)
+        different = np.bfloat16 in (t1, t2) or t != onp.promote_types(t1, t2)
+        out += "<td{}>{}</td>".format(" class=\"d\"" if different else "", name(t))
+      out += "</tr>\n"
+
+    print(out)
 
 Jax's type promotion rules differ from those of NumPy, as given by
 :func:`numpy.promote_types`, in those cells highlighted with a green background
@@ -83,4 +115,3 @@ in the table above. There are two key differences:
   (:code:`jax.numpy.bfloat16`), which is useful for neural network training.
   The only notable promotion behavior is with respect to IEEE-754
   :code:`float16`, with which :code:`bfloat16` promotes to a :code:`float32`.
-  
