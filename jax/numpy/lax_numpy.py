@@ -2369,6 +2369,7 @@ def inner(a, b, precision=None):
 def outer(a, b, out=None):
   if out:
     raise NotImplementedError("The 'out' argument to outer is not supported.")
+  a, b = _promote_dtypes(a, b)
   return ravel(a)[:, None] * ravel(b)
 
 @partial(jit, static_argnums=(2, 3, 4))
