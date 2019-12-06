@@ -1219,8 +1219,8 @@ def _flip_axes(x, axes):
   return x
 
 
-def conv_transpose(lhs, rhs, strides, padding, dimension_numbers=None,
-                   transpose_kernel=False, precision=None):
+def conv_transpose(lhs, rhs, strides, padding, rhs_dilation=None,
+                   dimension_numbers=None, transpose_kernel=False, precision=None):
   """Convenience wrapper for calculating the N-d convolution "transpose".
 
   This function directly calculates a fractionally strided conv rather than
@@ -1233,6 +1233,9 @@ def conv_transpose(lhs, rhs, strides, padding, dimension_numbers=None,
     padding: 'SAME', 'VALID' will set as transpose of corresponding forward
       conv, or a sequence of `n` integer 2-tuples describing before-and-after
       padding for each `n` spatial dimension.
+    rhs_dilation: `None`, or a sequence of `n` integers, giving the
+      dilation factor to apply in each spatial dimension of `rhs`. RHS dilation
+      is also known as atrous convolution.
     dimension_numbers: tuple of dimension descriptors as in
       lax.conv_general_dilated. Defaults to tensorflow convention.
     transpose_kernel: if True flips spatial axes and swaps the input/output
@@ -1265,15 +1268,18 @@ def conv_transpose(lhs, rhs, strides, padding, dimension_numbers=None,
   k_sdims = k_shape[2:]
   # Calculate correct output shape given padding and strides.
   if padding in {'SAME', 'VALID'}:
+    if rhs_dilation is None:
+      rhs_dilation = (1,) * (rhs.ndim - 2)
+    effective_k_size = map(lambda k, r: (k-1) * r + 1, k_sdims, rhs_dilation)
     pads = [_conv_transpose_padding(k, s, padding)
-            for k,s in zip(k_sdims.tolist(), strides)]
+            for k,s in zip(effective_k_size, strides)]
   else:
     pads = padding
   if transpose_kernel:
     # flip spatial dims and swap input / output channel axes
     rhs = _flip_axes(rhs, onp.array(dn.rhs_spec)[2:])
     rhs = onp.swapaxes(rhs, dn.rhs_spec[0], dn.rhs_spec[1])
-  return conv_general_dilated(lhs, rhs, one, pads, strides, one, dn,
+  return conv_general_dilated(lhs, rhs, one, pads, strides, rhs_dilation, dn,
                               precision=precision)
 
 
