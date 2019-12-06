@@ -749,7 +749,10 @@ def pmap(fun, axis_name=None, devices=None, backend=None):
   *all* participating devices, including those on other hosts, via
   device-to-device communication.  Conceptually, this can be thought of as
   running a pmap over a single array sharded across hosts, where each host
-  "sees" only its local shard of the input and output.
+  "sees" only its local shard of the input and output. The SPMD model requires
+  that the same multi-host pmaps must be run in the same order on all devices,
+  but they can be interspersed with arbitrary operations running on a single
+  host.
 
   Args:
     fun: Function to be mapped over argument axes. Its arguments and return
