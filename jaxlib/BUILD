@@ -41,7 +41,9 @@ cc_library(
     hdrs = ["kernel_helpers.h"],
     copts = [
         "-fexceptions",
+        "-fno-strict-aliasing",
     ],
+    features = ["-use_header_modules"],
     deps = [
         "@com_google_absl//absl/base",
     ],

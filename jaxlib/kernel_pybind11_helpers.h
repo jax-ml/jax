@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef JAXLIB_KERNEL_HELPERS_H_
-#define JAXLIB_KERNEL_HELPERS_H_
+#ifndef JAXLIB_KERNEL_PYBIND11_HELPERS_H_
+#define JAXLIB_KERNEL_PYBIND11_HELPERS_H_
 
 #include "include/pybind11/pybind11.h"
 #include "jaxlib/kernel_helpers.h"
@@ -41,4 +41,4 @@ pybind11::capsule EncapsulateFunction(T* fn) {
 
 }  // namespace jax
 
-#endif  // JAXLIB_KERNEL_HELPERS_H_
+#endif  // JAXLIB_KERNEL_PYBIND11_HELPERS_H_

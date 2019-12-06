@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef JAXLIB_KERNEL_HELPERS_NO_PYBIND11_H_
-#define JAXLIB_KERNEL_HELPERS_NO_PYBIND11_H_
+#ifndef JAXLIB_KERNEL_HELPERS_H_
+#define JAXLIB_KERNEL_HELPERS_H_
 
 #include <cstddef>
 #include <stdexcept>
@@ -45,4 +45,4 @@ const T* UnpackDescriptor(const char* opaque, std::size_t opaque_len) {
 
 }  // namespace jax
 
-#endif  // JAXLIB_KERNEL_HELPERS_NO_PYBIND11_H_
+#endif  // JAXLIB_KERNEL_HELPERS_H_
