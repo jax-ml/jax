@@ -59,16 +59,12 @@ class _bfloat16_finfo(object):
   tiny = bfloat16(float.fromhex("0x1p-126"))
 
 # Default types.
-
+# Unlike classic NumPy, we use 32-bit default types. The goal is to be more
+# friendly to modern accelerator hardware.
 bool_ = onp.bool_
-int_ = onp.int64
-float_ = onp.float64
-complex_ = onp.complex128
-
-# TODO(phawkins): change the above defaults to:
-# int_ = onp.int32
-# float_ = onp.float32
-# complex_ = onp.complex64
+int_ = onp.int32
+float_ = onp.float32
+complex_ = onp.complex64
 
 
 _dtype_to_32bit_dtype = {

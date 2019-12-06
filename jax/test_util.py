@@ -602,7 +602,7 @@ class JaxTestCase(parameterized.TestCase):
 
   def assertDtypesMatch(self, x, y):
     if FLAGS.jax_enable_x64:
-      self.assertEqual(onp.asarray(x).dtype, onp.asarray(y).dtype)
+      self.assertEqual(_dtype(x), _dtype(y))
 
   def assertAllClose(self, x, y, check_dtypes, atol=None, rtol=None):
     """Assert that x and y, either arrays or nested tuples/lists, are close."""
@@ -618,9 +618,11 @@ class JaxTestCase(parameterized.TestCase):
         self.assertAllClose(x_elt, y_elt, check_dtypes, atol=atol, rtol=rtol)
     elif hasattr(x, '__array__') or onp.isscalar(x):
       self.assertTrue(hasattr(y, '__array__') or onp.isscalar(y))
+      if check_dtypes:
+        self.assertDtypesMatch(x, y)
       x = onp.asarray(x)
       y = onp.asarray(y)
-      self.assertArraysAllClose(x, y, check_dtypes, atol=atol, rtol=rtol)
+      self.assertArraysAllClose(x, y, check_dtypes=False, atol=atol, rtol=rtol)
     elif x == y:
       return
     else:
