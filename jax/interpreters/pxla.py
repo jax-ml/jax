@@ -462,7 +462,11 @@ def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
 
   # TODO(skye,mattjj): allow more collectives on multi-host as we test them, but
   # for now raise an error
-  if xb.host_count() > 1:
+  if devices is not None:
+    is_multi_host_pmap = any(d.host_id != xb.host_id() for d in devices)
+  else:
+    is_multi_host_pmap = xb.host_count() > 1
+  if is_multi_host_pmap:
     used_collectives = set(xla.jaxpr_collectives(jaxpr))
     if not used_collectives.issubset(multi_host_supported_collectives):
       msg = "using collectives that aren't supported for multi-host: {}"
