@@ -353,6 +353,9 @@ def eqn_replicas(eqn):
   else:
     return 1
 
+# TODO(mattjj,skyewm): the functions here are utilities for checking if
+# not-yet-supported features are used with multi-host programming
+
 def jaxpr_has_pmap(jaxpr):
   return any(eqn_has_pmap(eqn) for eqn in jaxpr.eqns)
 
@@ -366,6 +369,27 @@ def eqn_has_pmap(eqn):
                if type(param) in (core.Jaxpr, core.TypedJaxpr))
   else:
     return 'pmap' in eqn.primitive.name
+
+
+def jaxpr_collectives(jaxpr):
+  return it.chain.from_iterable(eqn_collectives(eqn) for eqn in jaxpr.eqns)
+
+def eqn_collectives(eqn):
+  if eqn.bound_subjaxprs:
+    (subjaxpr, _, _), = eqn.bound_subjaxprs
+    for c in jaxpr_collectives(subjaxpr):
+      yield c
+  elif eqn.primitive in initial_style_translations:
+    for param in eqn.params.values():
+      if type(param) is core.Jaxpr:
+        for c in jaxpr_collectives(param):
+          yield c
+      elif type(param) is core.TypedJaxpr:
+        for c in jaxpr_collectives(param.jaxpr):
+          yield c
+  else:
+    if eqn.primitive in parallel_translations:
+      yield eqn.primitive
 
 
 ### xla_call underlying jit
