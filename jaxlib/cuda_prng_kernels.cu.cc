@@ -13,6 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <array>
 #include <cstddef>
 
 #include "jaxlib/cuda_prng_kernels.h"
