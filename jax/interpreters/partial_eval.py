@@ -68,6 +68,10 @@ class JaxprTrace(Trace):
   def new_instantiated_const(self, val):
     return JaxprTracer(self, PartialVal((get_aval(val), unit)), ConstVar(val))
 
+  def new_instantiated_const_abstract(self, val):
+    aval = raise_to_shaped(get_aval(val))
+    return JaxprTracer(self, PartialVal((aval, unit)), ConstVar(val))
+
   def new_arg(self, pval):
     _, const = pval
     return JaxprTracer(self, pval, LambdaBinding())

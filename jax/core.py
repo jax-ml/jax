@@ -147,10 +147,18 @@ class Primitive(object):
                               or valid_jaxtype(arg) for arg in args), args
     top_trace = find_top_trace(args)
     if top_trace is None:
-      return self.impl(*args, **kwargs)
+      top_trace = get_top_dynamic_trace()
+      if top_trace is None:
+        return self.impl(*args, **kwargs)
+      else:
+        with handling_dynamic_trace(top_trace):
+          t = type(top_trace)(top_trace.master, cur_sublevel())
+          tracers = [t.new_instantiated_const_abstract(t.full_raise(x)) for x in args]
+          out_tracer = t.process_primitive(self, tracers, kwargs)
+    else:
+      tracers = map(top_trace.full_raise, args)
+      out_tracer = top_trace.process_primitive(self, tracers, kwargs)
 
-    tracers = map(top_trace.full_raise, args)
-    out_tracer = top_trace.process_primitive(self, tracers, kwargs)
     if self.multiple_results:
       return map(full_lower, out_tracer)
     else:
@@ -225,6 +233,29 @@ def find_top_trace(xs):
    return None
  else:
    return type(top_trace)(top_trace.master, cur_sublevel())
+
+
+@contextmanager
+def new_dynamic_trace(trace):
+  trace_state.dynamic_traces.add(trace)
+  try:
+    yield
+  finally:
+    trace_state.dynamic_traces.remove(trace)
+
+def get_top_dynamic_trace():
+  if not trace_state.dynamic_traces:
+    return None
+  else:
+    return max(trace_state.dynamic_traces, key=attrgetter('level'))
+
+@contextmanager
+def handling_dynamic_trace(trace):
+  trace_state.dynamic_traces.remove(trace)
+  try:
+    yield
+  finally:
+    trace_state.dynamic_traces.add(trace)
 
 
 # -------------------- tracing --------------------
@@ -432,6 +463,7 @@ class TraceState(threading.local):
   def __init__(self):
     self.trace_stack = TraceStack()
     self.substack = [Sublevel(0)]
+    self.dynamic_traces = set()
 
 trace_state = TraceState()
 
