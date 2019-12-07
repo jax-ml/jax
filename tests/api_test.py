@@ -34,9 +34,9 @@ import jax
 import jax.numpy as np
 from jax import jit, grad, device_put, jacfwd, jacrev, hessian
 from jax import api, lax
-from jax.core import Primitive
+from jax import core
 from jax.interpreters import ad
-from jax.interpreters.xla import DeviceArray
+from jax.interpreters import xla
 from jax.abstract_arrays import concretization_err_msg
 from jax.lib import xla_bridge as xb
 from jax import test_util as jtu
@@ -241,7 +241,7 @@ class APITest(jtu.JaxTestCase):
           "|Abstract value passed to .*)", lambda: jit(f)(0))
 
   def test_unimplemented_interpreter_rules(self):
-    foo_p = Primitive('foo')
+    foo_p = core.Primitive('foo')
     def foo(x):
       return foo_p.bind(x)
 
@@ -268,7 +268,7 @@ class APITest(jtu.JaxTestCase):
   def test_device_put_and_get(self):
     x = onp.arange(12.).reshape((3, 4)).astype("float32")
     dx = api.device_put(x)
-    self.assertIsInstance(dx, DeviceArray)
+    self.assertIsInstance(dx, xla.DeviceArray)
     x2 = api.device_get(dx)
     self.assertIsInstance(x2, onp.ndarray)
     assert onp.all(x == x2)
@@ -593,7 +593,7 @@ class APITest(jtu.JaxTestCase):
     self.assertRaises(TypeError, lambda: jacfwd(lambda x: np.sin(x))(1 + 2j))
 
   def test_defvjp_all(self):
-    foo_p = Primitive('foo')
+    foo_p = core.Primitive('foo')
     def foo(x): return 2. * foo_p.bind(x)
 
     ad.defvjp_all(foo_p, lambda x: (x**2, lambda g: (4 * g * np.sin(x),)))
@@ -602,7 +602,7 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(grad_ans, 4 * 2 * onp.sin(3.), check_dtypes=False)
 
   def test_defvjp_all_const(self):
-    foo_p = Primitive('foo')
+    foo_p = core.Primitive('foo')
     def foo(x): return foo_p.bind(x)
 
     ad.defvjp_all(foo_p, lambda x: (x**2, lambda g: (12.,)))
@@ -611,7 +611,7 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(grad_ans, 12., check_dtypes=True)
 
   def test_defvjp_all_higher_order_revmode(self):
-    foo_p = Primitive('foo')
+    foo_p = core.Primitive('foo')
     def foo(x): return 2. * foo_p.bind(x)
 
     ad.defvjp_all(foo_p, lambda x: (x**2, lambda g: (g * x ** 2,)))
@@ -622,7 +622,7 @@ class APITest(jtu.JaxTestCase):
     # also tests passing in symbolic zero tangents b/c we differentiate wrt only
     # the first argument in one case
 
-    foo_p = Primitive('foo')
+    foo_p = core.Primitive('foo')
     def foo(x, y): return foo_p.bind(x, y)
 
     def vjpfun(x, y):
@@ -791,11 +791,11 @@ class APITest(jtu.JaxTestCase):
 
   def test_devicearray_repr(self):
     x = device_put(np.zeros(3))
-    self.assertIsInstance(x, DeviceArray)
+    self.assertIsInstance(x, xla.DeviceArray)
     repr(x)  # doesn't crash
 
     x = device_put(np.ones(3) + 1j * np.ones(3))
-    self.assertIsInstance(x, DeviceArray)
+    self.assertIsInstance(x, xla.DeviceArray)
     repr(x)  # doesn't crash
 
   def test_devicearray_delete(self):
@@ -1016,7 +1016,7 @@ class APITest(jtu.JaxTestCase):
   def test_jit_device(self):
     device = xb.devices()[-1]
     x = api.jit(lambda x: x, device=device)(3.)
-    self.assertIsInstance(x, DeviceArray)
+    self.assertIsInstance(x, xla.DeviceArray)
     self.assertEqual(x.device_buffer.device(), device)
 
   def test_jit_of_noncallable(self):
@@ -1562,6 +1562,26 @@ class JaxprTest(jtu.JaxTestCase):
                     true_nconsts=1 ] b a c a d
       in [e] }
         """)
+
+  def test_eval_jaxpr_caching(self):
+    eval_jaxpr = core.eval_jaxpr
+
+    count = [0]
+    def eval_jaxpr_and_count(*args):
+      count[0] += 1
+      return eval_jaxpr(*args)
+
+    f = jit(lambda x: 2 * x)
+    jaxpr = api.make_jaxpr(f)(3)
+
+    try:
+      core.eval_jaxpr = eval_jaxpr_and_count
+      core.jaxpr_as_fun(jaxpr)(3)  # once outer and once inner
+      core.jaxpr_as_fun(jaxpr)(4)  # once outer but inner is cached
+    finally:
+      core.eval_jaxpr = eval_jaxpr
+
+    self.assertEqual(count[0], 3)
 
 
 if __name__ == '__main__':
