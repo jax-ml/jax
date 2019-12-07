@@ -27,7 +27,8 @@ import types
 import six
 
 from . import linear_util as lu
-from .util import safe_zip, safe_map, partial, curry
+from .linear_util import transformation, transformation_with_aux, wrap_init
+from .util import safe_zip, safe_map, partial, curry, WrapHashably
 from .pprint_util import pp, vcat, hcat, pp_kv_pairs
 
 # TODO(dougalm): the trace cache breaks the leak detector. Consisder solving.
@@ -197,17 +198,27 @@ def eval_jaxpr(jaxpr, consts, freevar_vals, *args):
   map(write, jaxpr.freevars, freevar_vals)
   for eqn in jaxpr.eqns:
     in_vals = map(read, eqn.invars)
-    subfuns = [partial(eval_jaxpr, subjaxpr, map(read, const_bindings),
-                                             map(read, freevar_bindings))
-               for subjaxpr, const_bindings, freevar_bindings
-               in eqn.bound_subjaxprs]
-    subfuns = map(lu.wrap_init, subfuns)
-    ans = eqn.primitive.bind(*(subfuns + in_vals), **eqn.params)
+    if not eqn.bound_subjaxprs:
+      ans = eqn.primitive.bind(*in_vals, **eqn.params)
+    else:
+      (subjaxpr, const_bindings, freevar_bindings), = eqn.bound_subjaxprs
+      sub_consts = tuple(WrapHashably(read(v)) for v in const_bindings)
+      sub_freevar_vals = tuple(WrapHashably(read(v)) for v in freevar_bindings)
+      fun = hashable_partial(wrap_init(eval_jaxpr), subjaxpr,
+                             sub_consts, sub_freevar_vals)
+      ans = eqn.primitive.bind(fun, *in_vals, **eqn.params)
     if eqn.primitive.multiple_results:
       map(write, eqn.outvars, ans)
     else:
       write(eqn.outvars[0], ans)
   return map(read, jaxpr.outvars)
+
+@transformation
+def hashable_partial(jaxpr, consts_hashable, freevar_vals_hashable, *args):
+  consts = [x.val for x in consts_hashable]
+  freevar_vals = [x.val for x in freevar_vals_hashable]
+  ans = yield (jaxpr, consts, freevar_vals) + args, {}
+  yield ans
 
 
 def full_lower(val):
@@ -565,7 +576,7 @@ def apply_todos(todos, outs):
     outs = map(full_lower, todos.pop()(outs))
   return outs
 
-@lu.transformation_with_aux
+@transformation_with_aux
 def process_env_traces(primitive, level, params_tuple, *args):
   outs = yield args, {}
   params = dict(params_tuple)
