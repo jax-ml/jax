@@ -297,12 +297,12 @@ _numpy_signature_re = re.compile(r'^([\w., ]+=)?\s*[\w\.]+\(.*\)$')
 
 def _wraps(fun, update_doc=True, lax_description=""):
   """Like functools.wraps but works with numpy.ufuncs.
-     It is important that when wrapping numpy functions the parameters names 
+     It is important that when wrapping numpy functions the parameters names
      in the original function and in the JAX version are the same
     Parameters:
       fun: The function being wrapped
       update_doc: whether to transform the numpy docstring to remove references of
-      parameters that are supported by the numpy version but not the JAX version. 
+      parameters that are supported by the numpy version but not the JAX version.
       If False, include the numpy docstring verbatim.
   """
   def wrap(op):
@@ -3088,6 +3088,25 @@ def cov(m, y=None, rowvar=True, bias=False, ddof=None, fweights=None,
   X_T = X.T if w is None else (X * w).T
   return true_divide(dot(X, X_T.conj()), f).squeeze()
 
+@_wraps(onp.convolve)
+def convolve(x, y, mode='full'):
+  if len(shape(x)) != 1 or len(shape(y)) != 1:
+    msg = ("jax.numpy.convolve only accept 1d array")
+    raise ValueError(msg)
+  if shape(y)[0] > shape(x)[0]:
+    x, y = y, x
+  x, y = _promote_dtypes(x, y)
+  x_jax = lax.reshape(x, (1, 1, len(x)))
+  y_jax = flip(lax.reshape(y, (1, 1, len(y))))
+  if mode.lower() == 'full':
+    return ravel(lax.conv_general_dilated(x_jax, y_jax, [1], [(len(y)-1, len(y)-1)]))
+  elif mode.lower() == 'valid':
+    return ravel(lax.conv(x_jax, y_jax, (1,), "VALID"))
+  elif mode.lower() == 'same':
+    pads = lax.padtype_to_pads(x_jax.shape[2:], y_jax.shape[2:], (1,), "SAME")
+    if y_jax.shape[2]%2 == 0:
+      pads = [(pads[0][0]+1, pads[0][1]-1)]
+    return ravel(lax.conv_general_dilated(x_jax, y_jax, (1,), pads, precision=None))
 
 @_wraps(onp.corrcoef)
 def corrcoef(x, y=None, rowvar=True, bias=None, ddof=None):

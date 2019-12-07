@@ -1142,7 +1142,7 @@ def conv(lhs, rhs, window_strides, padding, precision=None):
     An array containing the convolution result.
   """
   pads = padtype_to_pads(lhs.shape[2:], rhs.shape[2:], window_strides, padding)
-  return conv_general_dilated(lhs, rhs, window_strides, padding,
+  return conv_general_dilated(lhs, rhs, window_strides, pads,
                               precision=precision)
 
 def conv_with_general_padding(lhs, rhs, window_strides, padding,

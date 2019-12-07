@@ -2119,6 +2119,28 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True, atol=tol,
                           rtol=tol)
 
+  @parameterized.named_parameters(
+      jtu.cases_from_list(
+        {"testcase_name": "_shape={}_shape2={}_dtype={}_mode={}".format(
+            shape, shape2, dtype, mode),
+         "shape": shape, "dtype": dtype, "mode": mode,
+         "shape2": shape2,"rng_factory": rng_factory}
+        for shape in [(i,) for i in range(2, 100)]
+        for shape2 in [(i,) for i in range(2, 100)]
+        for dtype in [onp.float16, onp.float32, onp.float64]
+        for mode in ['valid', 'same', 'full']
+        for rng_factory in [jtu.rand_default]))
+  def test_convolve(self, shape, shape2, dtype, mode, rng_factory):
+    rng = rng_factory()
+    args_maker = lambda: [onp.asarray(rng(shape, dtype)), onp.asarray(rng(shape2, dtype))]
+    onp_fun = lambda a, b: onp.convolve(a, b, mode)
+    lnp_fun = lambda a, b: lnp.convolve(a, b, mode)
+    tol = {onp.float16: 2e-2, onp.float32: 1e-5, onp.float64: 1e-13}
+    tol = jtu.join_tolerance(tol, jtu.tolerance(dtype))
+    self._CheckAgainstNumpy(
+        onp_fun, lnp_fun, args_maker, check_dtypes=True, tol=tol)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
   def testIssue967(self):
     self.assertRaises(TypeError, lambda: lnp.zeros(1.5))
 
