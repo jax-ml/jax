@@ -372,6 +372,12 @@ class Tracer(object):
   def __repr__(self):
     return 'Traced<{}>with<{}>'.format(self.aval, self.trace)
 
+  def __copy__(self):
+    return self
+
+  def __deepcopy__(self, unused_memo):
+    return self
+
 
 # these can be used to set up forwarding of properties and instance methods from
 # Tracer instances to the underlying avals

@@ -17,6 +17,7 @@ from __future__ import division
 from __future__ import print_function
 
 import collections
+import copy
 from functools import partial
 import unittest
 import warnings
@@ -1266,6 +1267,16 @@ class APITest(jtu.JaxTestCase):
     api.jit(f)(2)
     python_should_be_executing = False
     api.jit(f)(3)
+
+  def test_jit_shallow_copy(self):
+    def f(x):
+      return copy.copy(x)
+    api.jit(f)(1)
+
+  def test_jit_deep_copy(self):
+    def f(x):
+      return copy.deepcopy(x)
+    api.jit(f)(1)
 
   def test_pmap_global_cache(self):
     def f(x):
