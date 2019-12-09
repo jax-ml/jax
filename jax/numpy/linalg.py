@@ -20,6 +20,7 @@ from functools import partial
 
 import numpy as onp
 import warnings
+import textwrap
 
 from jax import jit
 from .. import lax
@@ -136,10 +137,15 @@ def eigvalsh(a, UPLO='L'):
   return w
 
 
-@_wraps(onp.linalg.pinv)
+@_wraps(onp.linalg.pinv, lax_description=textwrap.dedent("""\
+    It differs only in default value of `rcond`. In `numpy.linalg.pinv`, the
+    default `rcond` is `1e-15`. Here the default is
+    `10. * max(num_rows, num_cols) * np.finfo(dtype).eps`.
+    """))
 def pinv(a, rcond=None):
   # ported from https://github.com/numpy/numpy/blob/v1.17.0/numpy/linalg/linalg.py#L1890-L1979
   a = np.conj(a)
+  # copied from https://github.com/tensorflow/probability/blob/master/tensorflow_probability/python/math/linalg.py#L442
   if rcond is None:
       max_rows_cols = max(a.shape[-2:])
       rcond = 10. * max_rows_cols * np.finfo(a.dtype).eps
