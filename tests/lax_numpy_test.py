@@ -173,7 +173,7 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("conjugate", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"]),
     op_record("deg2rad", 1, float_dtypes, all_shapes, jtu.rand_default, []),
     op_record("divide", 2, number_dtypes, all_shapes, jtu.rand_nonzero, ["rev"],
-              inexact=True),
+              inexact=six.PY3),
     op_record("divmod", 2, int_dtypes + float_dtypes, all_shapes,
               jtu.rand_nonzero, []),
     op_record("exp2", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"],
