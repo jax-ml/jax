@@ -20,6 +20,7 @@ from functools import partial
 
 import numpy as onp
 import warnings
+import textwrap
 
 from jax import jit
 from .. import lax
@@ -137,8 +138,6 @@ def eigvalsh(a, UPLO='L'):
 
 
 @_wraps(onp.linalg.pinv, lax_description=textwrap.dedent("""\
-    This function is analogous to [`numpy.linalg.pinv`](
-    https://docs.scipy.org/doc/numpy/reference/generated/numpy.linalg.pinv.html).
     It differs only in default value of `rcond`. In `numpy.linalg.pinv`, the
     default `rcond` is `1e-15`. Here the default is
     `10. * max(num_rows, num_cols) * np.finfo(dtype).eps`.
