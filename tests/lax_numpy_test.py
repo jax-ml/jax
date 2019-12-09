@@ -387,10 +387,12 @@ def _promote_like_lnp(fun, inexact=False):
   implementation.
   """
   def wrapper(*args, **kw):
-    dtypes = [lnp.result_type(x) for x in tree_util.tree_leaves(args)]
-    if inexact and not any(lnp.issubdtype(dtype, lnp.inexact) for dtype in dtypes):
-      dtypes.append(lnp.float_)
-    dtype = lnp.result_type(*dtypes)
+    flat_args = tree_util.tree_leaves(args)
+    if inexact and not any(lnp.issubdtype(lnp.result_type(x), lnp.inexact)
+                           for x in flat_args):
+      dtype = lnp.result_type(lnp.float_, *flat_args)
+    else:
+      dtype = lnp.result_type(*flat_args)
     args = tree_util.tree_map(lambda a: onp.asarray(a, dtype), args)
     return fun(*args, **kw)
   return wrapper
