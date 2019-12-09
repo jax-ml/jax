@@ -39,6 +39,7 @@ from jax import linear_util
 from jax import numpy as lnp
 from jax import test_util as jtu
 from jax import dtypes
+from jax import tree_util
 from jax.interpreters import partial_eval
 from jax.test_util import check_grads
 
@@ -208,13 +209,12 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("mod", 2, default_dtypes, all_shapes, jtu.rand_nonzero, []),
     op_record("sinc", 1, [t for t in number_dtypes if t != lnp.bfloat16],
               all_shapes, jtu.rand_default, ["rev"],
-              tolerance={onp.complex64: 1e-5}),
+              tolerance={onp.complex64: 1e-5}, check_dtypes=False),
     op_record("square", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"]),
     op_record("sqrt", 1, number_dtypes, all_shapes, jtu.rand_positive, ["rev"]),
     op_record("transpose", 1, all_dtypes, all_shapes, jtu.rand_default, ["rev"],
               check_dtypes=False),
     op_record("true_divide", 2, all_dtypes, all_shapes, jtu.rand_nonzero, ["rev"]),
-    op_record("where", 3, (onp.float32, onp.int64), all_shapes, jtu.rand_some_zero, []),
     op_record("diff", 1, number_dtypes, nonzerodim_shapes, jtu.rand_default, ["rev"]),
 ]
 
@@ -348,11 +348,27 @@ def _shapes_are_equal_length(shapes):
   return all(len(shape) == len(shapes[0]) for shape in shapes[1:])
 
 
+def _promote_like_lnp(fun):
+  """Decorator that promotes the arguments of `fun` to `lnp.result_type(*args)`.
+
+  lnp and onp have different type promotion semantics; this decorator allows
+  tests make an onp reference implementation act more like an lnp
+  implementation.
+  """
+  def wrapper(*args, **kw):
+    dtype = lnp.result_type(*tree_util.tree_leaves(args))
+    args = tree_util.tree_map(lambda a: onp.asarray(a, dtype), args)
+    return fun(*args, **kw)
+  return wrapper
+
 class LaxBackedNumpyTests(jtu.JaxTestCase):
   """Tests for LAX-backed Numpy implementation."""
 
-  def _GetArgsMaker(self, rng, shapes, dtypes):
-    return lambda: [rng(shape, dtype) for shape, dtype in zip(shapes, dtypes)]
+  def _GetArgsMaker(self, rng, shapes, dtypes, onp_arrays=True):
+    def f():
+      out = [rng(shape, dtype) for shape, dtype in zip(shapes, dtypes)]
+      return out if onp_arrays else [lnp.asarray(a) for a in out]
+    return f
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
       jtu.cases_from_list(
@@ -371,21 +387,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testOp(self, onp_op, lnp_op, rng_factory, shapes, dtypes, check_dtypes,
              tolerance):
     rng = rng_factory()
-    args_maker = self._GetArgsMaker(rng, shapes, dtypes)
-    python_scalar = jtu.PYTHON_SCALAR_SHAPE in shapes
-    scalar_arg = (jtu.PYTHON_SCALAR_SHAPE in shapes or
-                  jtu.NUMPY_SCALAR_SHAPE in shapes or
-                  () in shapes)
-    empty_shape = any(isinstance(s, tuple) and 0 in s for s in shapes)
+    args_maker = self._GetArgsMaker(rng, shapes, dtypes, onp_arrays=False)
     tol = max(jtu.tolerance(dtype, tolerance) for dtype in dtypes)
     tol = functools.reduce(jtu.join_tolerance,
                            [tolerance, tol, jtu.default_tolerance()])
-    self._CheckAgainstNumpy(
-      onp_op, lnp_op, args_maker,
-      check_dtypes=check_dtypes and not scalar_arg and not empty_shape,
-      tol=tol)
-    self._CompileAndCheck(lnp_op, args_maker,
-                          check_dtypes=check_dtypes and not python_scalar,
+    self._CheckAgainstNumpy(_promote_like_lnp(onp_op), lnp_op, args_maker,
+                            check_dtypes=check_dtypes, tol=tol)
+    self._CompileAndCheck(lnp_op, args_maker, check_dtypes=check_dtypes,
                           atol=tol, rtol=tol)
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
@@ -402,14 +410,16 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for rec in JAX_OPERATOR_OVERLOADS))
   def testOperatorOverload(self, name, rng_factory, shapes, dtypes, tol):
     rng = rng_factory()
-    args_maker = self._GetArgsMaker(rng, shapes, dtypes)
+    # onp and lnp arrays have different type promotion rules; force the use of
+    # lnp arrays.
+    args_maker = self._GetArgsMaker(rng, shapes, dtypes, onp_arrays=False)
     fun = lambda *xs: getattr(operator, name.strip('_'))(*xs)
     scalar_arg = (jtu.PYTHON_SCALAR_SHAPE in shapes or
                   jtu.NUMPY_SCALAR_SHAPE in shapes or
                   () in shapes)
     empty_shape = any(isinstance(s, tuple) and 0 in s for s in shapes)
     self._CompileAndCheck(
-      fun, args_maker, check_dtypes=not scalar_arg and not empty_shape,
+      fun, args_maker, check_dtypes=True, #not scalar_arg and not empty_shape,
       atol=tol, rtol=tol)
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
@@ -429,7 +439,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     if shapes[1] is jtu.PYTHON_SCALAR_SHAPE:
       raise SkipTest()  # TODO(mattjj): clean up
     rng = rng_factory()
-    args_maker = self._GetArgsMaker(rng, shapes, dtypes)
+    args_maker = self._GetArgsMaker(rng, shapes, dtypes, onp_arrays=False)
     fun = lambda fst, snd: getattr(snd, name)(fst)
     tol = max(jtu.tolerance(dtype, op_tolerance) for dtype in dtypes)
     scalar_arg = (jtu.PYTHON_SCALAR_SHAPE in shapes or
@@ -437,7 +447,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                   () in shapes)
     empty_shape = any(isinstance(s, tuple) and 0 in s for s in shapes)
     self._CompileAndCheck(
-      fun, args_maker, check_dtypes=not scalar_arg and not empty_shape,
+      fun, args_maker, check_dtypes=True, # not scalar_arg and not empty_shape,
       atol=tol, rtol=tol)
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
@@ -1082,7 +1092,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testStack(self, shape, axis, dtypes, rng_factory):
     rng = rng_factory()
     args_maker = lambda: [[rng(shape, dtype) for dtype in dtypes]]
-    onp_fun = partial(onp.stack, axis=axis)
+    onp_fun = _promote_like_lnp(partial(onp.stack, axis=axis))
     lnp_fun = partial(lnp.stack, axis=axis)
     self._CheckAgainstNumpy(lnp_fun, onp_fun, args_maker, check_dtypes=True)
 
@@ -1104,7 +1114,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testHVDStack(self, shape, op, dtypes, rng_factory):
     rng = rng_factory()
     args_maker = lambda: [[rng(shape, dtype) for dtype in dtypes]]
-    onp_fun = getattr(onp, op)
+    onp_fun = _promote_like_lnp(getattr(onp, op))
     lnp_fun = getattr(lnp, op)
     self._CheckAgainstNumpy(lnp_fun, onp_fun, args_maker, check_dtypes=True)
 
@@ -1829,8 +1839,31 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                             tol=tol)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True, rtol=tol)
 
+
   @parameterized.named_parameters(jtu.cases_from_list(
-        {"testcase_name": jtu.format_test_name_suffix("select", shapes,
+    {"testcase_name": "_{}".format("_".join(
+        jtu.format_shape_dtype_string(shape, dtype)
+        for shape, dtype in zip(shapes, dtypes))),
+     "rng_factory": jtu.rand_default, "shapes": shapes, "dtypes": dtypes}
+    for shapes in filter(_shapes_are_broadcast_compatible,
+                         CombosWithReplacement(all_shapes, 3))
+    for dtypes in CombosWithReplacement(all_dtypes, 3)))
+  def testWhere(self, rng_factory, shapes, dtypes):
+    rng = rng_factory()
+    args_maker = self._GetArgsMaker(rng_factory(), shapes, dtypes)
+    def onp_fun(cond, x, y):
+      return _promote_like_lnp(partial(onp.where, cond))(x, y)
+    self._CheckAgainstNumpy(onp_fun, lnp.where, args_maker,
+                            check_dtypes=True)
+    self._CompileAndCheck(lnp.where, args_maker, check_dtypes=True)
+
+  def testWhereScalarPromotion(self):
+    x = lnp.where(lnp.array([True, False]), 3,
+                  lnp.ones((2,), dtype=lnp.float32))
+    self.assertEqual(x.dtype, onp.dtype(onp.float32))
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+        {"testcase_name": jtu.format_test_name_suffix("", shapes,
                                                       (onp.bool_,) * n + dtypes),
          "rng_factory": jtu.rand_default, "shapes": shapes, "dtypes": dtypes}
         for n in range(0, 3)
@@ -1838,7 +1871,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           _shapes_are_broadcast_compatible,
           CombosWithReplacement(all_shapes, 2 * n + 1))
         for dtypes in CombosWithReplacement(all_dtypes, n + 1)))
-  def test(self, rng_factory, shapes, dtypes):
+  def testSelect(self, rng_factory, shapes, dtypes):
     rng = rng_factory()
     n = len(dtypes) - 1
     def args_maker():
@@ -1868,11 +1901,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     orig_numpy_result = (1 + onp.eye(1, dtype=onp.float32)).dtype
     jax_numpy_result = (1 + lnp.eye(1, dtype=lnp.float32)).dtype
     self.assertEqual(orig_numpy_result, jax_numpy_result)
-
-  def testWhereScalarPromotion(self):
-    x = lnp.where(lnp.array([True, False]), 3,
-                  lnp.ones((2,), dtype=lnp.float32))
-    self.assertEqual(x.dtype, onp.dtype(onp.float32))
 
   def testSymmetrizeDtypePromotion(self):
     x = onp.eye(3, dtype=onp.float32)

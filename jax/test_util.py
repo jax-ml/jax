@@ -250,8 +250,8 @@ def device_under_test():
 
 def supported_dtypes():
   if device_under_test() == "tpu":
-    return {onp.bool_, onp.int32, onp.int64, onp.uint32, onp.uint64,
-            dtypes.bfloat16, onp.float32, onp.complex64}
+    return {onp.bool_, onp.int32, onp.uint32, dtypes.bfloat16, onp.float32,
+            onp.complex64}
   else:
     return {onp.bool_, onp.int8, onp.int16, onp.int32, onp.int64,
             onp.uint8, onp.uint16, onp.uint32, onp.uint64,
@@ -441,7 +441,9 @@ def rand_some_inf():
 
     if dtypes.issubdtype(dtype, onp.complexfloating):
       base_dtype = onp.real(onp.array(0, dtype=dtype)).dtype
-      return rand(shape, base_dtype) + 1j * rand(shape, base_dtype)
+      out = (rand(shape, base_dtype) +
+             onp.array(1j, dtype) * rand(shape, base_dtype))
+      return _cast_to_shape(out, shape, dtype)
 
     dims = _dims_of_shape(shape)
     posinf_flips = rng.rand(*dims) < 0.1
@@ -464,7 +466,9 @@ def rand_some_nan():
     """The random sampler function."""
     if dtypes.issubdtype(dtype, onp.complexfloating):
       base_dtype = onp.real(onp.array(0, dtype=dtype)).dtype
-      return rand(shape, base_dtype) + 1j * rand(shape, base_dtype)
+      out = (rand(shape, base_dtype) +
+             onp.array(1j, dtype) * rand(shape, base_dtype))
+      return _cast_to_shape(out, shape, dtype)
 
     if not dtypes.issubdtype(dtype, onp.floating):
       # only float types have inf
@@ -497,7 +501,9 @@ def rand_some_inf_and_nan():
 
     if dtypes.issubdtype(dtype, onp.complexfloating):
       base_dtype = onp.real(onp.array(0, dtype=dtype)).dtype
-      return rand(shape, base_dtype) + 1j * rand(shape, base_dtype)
+      out = (rand(shape, base_dtype) +
+             onp.array(1j, dtype) * rand(shape, base_dtype))
+      return _cast_to_shape(out, shape, dtype)
 
     dims = _dims_of_shape(shape)
     posinf_flips = rng.rand(*dims) < 0.1

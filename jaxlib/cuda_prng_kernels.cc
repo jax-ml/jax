@@ -15,7 +15,7 @@ limitations under the License.
 
 #include "jaxlib/cuda_prng_kernels.h"
 
-#include "jaxlib/kernel_helpers.h"
+#include "jaxlib/kernel_pybind11_helpers.h"
 #include "include/pybind11/pybind11.h"
 
 namespace jax {
@@ -29,7 +29,10 @@ pybind11::dict Registrations() {
 
 PYBIND11_MODULE(cuda_prng_kernels, m) {
   m.def("registrations", &Registrations);
-  m.def("cuda_threefry2x32_descriptor", &BuildCudaThreeFry2x32Descriptor);
+  m.def("cuda_threefry2x32_descriptor", [](std::int64_t n) {
+      std::string result = BuildCudaThreeFry2x32Descriptor(n);
+      return pybind11::bytes(result);
+    });
 }
 
 }  // namespace

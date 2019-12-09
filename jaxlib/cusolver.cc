@@ -30,7 +30,7 @@ limitations under the License.
 #include "include/pybind11/pybind11.h"
 #include "include/pybind11/stl.h"
 #include "jaxlib/gpu_kernel_helpers.h"
-#include "jaxlib/kernel_helpers.h"
+#include "jaxlib/kernel_pybind11_helpers.h"
 
 namespace jax {
 namespace {

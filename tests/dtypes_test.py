@@ -16,10 +16,13 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import itertools
 import operator
 
 from absl.testing import absltest
 from absl.testing import parameterized
+
+import numpy as onp
 
 import jax
 from jax import dtypes
@@ -29,6 +32,25 @@ from jax import test_util as jtu
 from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
+
+bool_dtypes = [onp.dtype('bool')]
+
+signed_dtypes = [onp.dtype('int8'), onp.dtype('int16'), onp.dtype('int32'),
+                 onp.dtype('int64')]
+
+unsigned_dtypes = [onp.dtype('uint8'), onp.dtype('uint16'), onp.dtype('uint32'),
+                   onp.dtype('uint64')]
+
+onp_float_dtypes = [onp.dtype('float16'), onp.dtype('float32'),
+                    onp.dtype('float64')]
+
+float_dtypes = [onp.dtype(dtypes.bfloat16)] + onp_float_dtypes
+
+complex_dtypes = [onp.dtype('complex64'), onp.dtype('complex128')]
+
+
+all_dtypes = (bool_dtypes + signed_dtypes + unsigned_dtypes + float_dtypes +
+              complex_dtypes)
 
 
 class DtypesTest(jtu.JaxTestCase):
@@ -80,6 +102,36 @@ class DtypesTest(jtu.JaxTestCase):
       z = x + y
       self.assertTrue(isinstance(z, np.ndarray), msg=(x, y, z))
       self.assertEqual(z.dtype, dtypes.canonicalize_dtype(dtype), msg=(x, y, z))
+
+  def testPromoteDtypes(self):
+    for t1 in all_dtypes:
+      self.assertEqual(t1, dtypes.promote_types(t1, t1))
+
+      self.assertEqual(t1, dtypes.promote_types(t1, onp.bool_))
+      self.assertEqual(onp.dtype(onp.complex128),
+                       dtypes.promote_types(t1, onp.complex128))
+
+      for t2 in all_dtypes:
+        # Symmetry
+        self.assertEqual(dtypes.promote_types(t1, t2),
+                         dtypes.promote_types(t2, t1))
+
+    self.assertEqual(onp.dtype(onp.float32),
+                     dtypes.promote_types(onp.float16, dtypes.bfloat16))
+
+    # Promotions of non-inexact types against inexact types always prefer
+    # the inexact types.
+    for t in float_dtypes + complex_dtypes:
+      for i in bool_dtypes + signed_dtypes + unsigned_dtypes:
+        self.assertEqual(t, dtypes.promote_types(t, i))
+
+    # Promotions between exact types, or between inexact types, match NumPy.
+    for groups in [bool_dtypes + signed_dtypes + unsigned_dtypes,
+                   onp_float_dtypes + complex_dtypes]:
+      for t1, t2 in itertools.combinations(groups, 2):
+          self.assertEqual(onp.promote_types(t1, t2),
+                           dtypes.promote_types(t1, t2))
+
 
 if __name__ == "__main__":
   absltest.main()
