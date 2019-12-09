@@ -37,7 +37,8 @@ from ..abstract_arrays import (ConcreteArray, ShapedArray, AbstractToken,
                                make_shaped_array, array_types, raise_to_shaped,
                                abstract_token, make_abstract_python_scalar)
 from ..core import valid_jaxtype, Literal
-from ..util import partial, partialmethod, cache, safe_map, prod, unzip2
+from ..util import (partial, partialmethod, cache, safe_map, prod, unzip2,
+                    memoize)
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from . import partial_eval as pe
@@ -352,6 +353,9 @@ def eqn_replicas(eqn):
   else:
     return 1
 
+# TODO(mattjj,skyewm): the functions here are utilities for checking if
+# not-yet-supported features are used with multi-host programming
+
 def jaxpr_has_pmap(jaxpr):
   return any(eqn_has_pmap(eqn) for eqn in jaxpr.eqns)
 
@@ -365,6 +369,27 @@ def eqn_has_pmap(eqn):
                if type(param) in (core.Jaxpr, core.TypedJaxpr))
   else:
     return 'pmap' in eqn.primitive.name
+
+
+def jaxpr_collectives(jaxpr):
+  return it.chain.from_iterable(eqn_collectives(eqn) for eqn in jaxpr.eqns)
+
+def eqn_collectives(eqn):
+  if eqn.bound_subjaxprs:
+    (subjaxpr, _, _), = eqn.bound_subjaxprs
+    for c in jaxpr_collectives(subjaxpr):
+      yield c
+  elif eqn.primitive in initial_style_translations:
+    for param in eqn.params.values():
+      if type(param) is core.Jaxpr:
+        for c in jaxpr_collectives(param):
+          yield c
+      elif type(param) is core.TypedJaxpr:
+        for c in jaxpr_collectives(param.jaxpr):
+          yield c
+  else:
+    if eqn.primitive in parallel_translations:
+      yield eqn.primitive
 
 
 ### xla_call underlying jit
@@ -382,16 +407,24 @@ def _xla_call_impl(fun, *args, **params):
 
 @lu.cache
 def _xla_callable(fun, device, backend, *abstract_args):
-  log_priority = logging.WARNING if FLAGS.jax_log_compiles else logging.DEBUG
-  logging.log(log_priority,
-              "Compiling {} for args {}.".format(fun.__name__, abstract_args))
-
   pvals = [pe.PartialVal((aval, core.unit)) for aval in abstract_args]
   with core.new_master(pe.JaxprTrace, True) as master:
     jaxpr, (pvals, consts, env) = pe.trace_to_subjaxpr(fun, master, False).call_wrapped(pvals)
     assert not env  # no subtraces here
     del master, env
   _map(prefetch, it.chain(consts, jaxpr_literals(jaxpr)))
+  result_handlers = tuple(map(_pval_to_result_handler, pvals))
+
+  # Computations that only produce constants and/or only rearrange their inputs,
+  # which are often produced from partial evaluation, don't need compilation,
+  # and don't need to force their (potentially lazy) arguments.
+  if not jaxpr.eqns:
+    device = _get_device(device, backend)
+    return partial(_execute_trivial, jaxpr, device, consts, result_handlers)
+
+  log_priority = logging.WARNING if FLAGS.jax_log_compiles else logging.DEBUG
+  logging.log(log_priority,
+              "Compiling {} for args {}.".format(fun.__name__, abstract_args))
 
   nreps = jaxpr_replicas(jaxpr)
   if nreps > xb.device_count(backend):
@@ -419,7 +452,6 @@ def _xla_callable(fun, device, backend, *abstract_args):
       num_replicas=nreps, device_assignment=(device.id,) if device else None)
   compiled = built.Compile(compile_options=options, backend=xb.get_backend(backend))
 
-  result_handlers = tuple(map(_pval_to_result_handler, pvals))
   if nreps == 1:
     return partial(_execute_compiled, compiled, backend, result_handlers, tuple_args)
   else:
@@ -466,9 +498,28 @@ def _execute_replicated(compiled, backend, handlers, tuple_args, *args):
   if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_bufs)
   return [handler(out_buf) for handler, out_buf in zip(handlers, out_bufs)]
 
+def _execute_trivial(jaxpr, device, consts, handlers, *args):
+  env = {core.unitvar : core.unit}
+  _map(env.setdefault, jaxpr.invars, args)
+  _map(env.setdefault, jaxpr.constvars, consts)
+  outs = [canonicalize_dtype(v.val) if type(v) is Literal else env[v]
+          for v in jaxpr.outvars]
+  return [x if type(x) is DeviceArray else handler(device_put(x, device))
+          for handler, x in zip(handlers, outs)]
+
 def make_tuple(bufs, device, backend):
   return xb.get_backend(backend).make_tuple(bufs, device)
 
+@memoize
+def _get_device(device, backend):
+  # TODO(mattjj): after jaxlib update, avoid compile here, just to get device
+  c = xb.make_computation_builder("get_device")
+  built = c.Build(c.Tuple())
+  options = xb.get_compile_options(
+      num_replicas=1, device_assignment=(device.id,) if device else None)
+  compiled = built.Compile(compile_options=options, backend=xb.get_backend(backend))
+  out, = compiled.local_devices()
+  return out
 
 xla_call_p = core.Primitive('xla_call')
 xla_call_p.multiple_results = True

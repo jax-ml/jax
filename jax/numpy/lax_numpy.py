@@ -811,7 +811,7 @@ def angle(z):
   dtype = _dtype(re)
   if not issubdtype(dtype, inexact) or (
       issubdtype(_dtype(z), floating) and ndim(z) == 0):
-    dtype = dtypes.canonicalize_dtype(float64)
+    dtype = dtypes.canonicalize_dtype(float_)
     re = lax.convert_element_type(re, dtype)
     im = lax.convert_element_type(im, dtype)
   return lax.atan2(im, re)
@@ -1254,52 +1254,51 @@ def mean(a, axis=None, dtype=None, out=None, keepdims=False):
 
 @_wraps(onp.average)
 def average(a, axis=None, weights=None, returned=False):
-    a = asarray(a)
+  a = asarray(a)
 
-    if weights is None: # Treat all weights as 1
-        avg = mean(a, axis=axis)
-        if axis is None:
-            weights_sum = full((), size(a), dtype=avg.dtype)
-        else:
-            weights_sum = full_like(avg, a.shape[axis], dtype=avg.dtype)
+  if weights is None: # Treat all weights as 1
+    avg = mean(a, axis=axis)
+    if axis is None:
+      weights_sum = full((), size(a), dtype=avg.dtype)
     else:
-        weights = asarray(weights)
+      weights_sum = full_like(avg, a.shape[axis], dtype=avg.dtype)
+  else:
+    weights = asarray(weights)
 
-        if issubdtype(a.dtype, integer) or issubdtype(a.dtype, bool_):
-            out_dtype = dtypes.canonicalize_dtype(result_type(a.dtype,
-                                                                  weights.dtype,
-                                                                  floating))
-        else:
-            out_dtype = dtypes.canonicalize_dtype(result_type(a.dtype, weights.dtype))
+    if issubdtype(a.dtype, inexact):
+      out_dtype = result_type(a.dtype, weights.dtype)
+    else:
+      out_dtype = result_type(a.dtype, weights.dtype, float_)
+    out_dtype = dtypes.canonicalize_dtype(out_dtype)
 
-        a_shape = shape(a)
-        a_ndim = len(a_shape)
-        weights_shape = shape(weights)
-        axis = None if axis is None else _canonicalize_axis(axis, a_ndim)
+    a_shape = shape(a)
+    a_ndim = len(a_shape)
+    weights_shape = shape(weights)
+    axis = None if axis is None else _canonicalize_axis(axis, a_ndim)
 
-        if a_shape != weights_shape:
-            # Make sure the dimensions work out
-            if axis is None:
-                raise ValueError("Axis must be specified when shapes of a and "
-                                 "weights differ.")
-            if len(weights_shape) != 1:
-                raise ValueError("1D weights expected when shapes of a and "
-                                 "weights differ.")
-            if weights_shape[0] != a_shape[axis]:
-                raise ValueError("Length of weights not "
-                                 "compatible with specified axis.")
+    if a_shape != weights_shape:
+      # Make sure the dimensions work out
+      if axis is None:
+        raise ValueError("Axis must be specified when shapes of a and "
+                         "weights differ.")
+      if len(weights_shape) != 1:
+        raise ValueError("1D weights expected when shapes of a and "
+                         "weights differ.")
+      if weights_shape[0] != a_shape[axis]:
+        raise ValueError("Length of weights not "
+                         "compatible with specified axis.")
 
-            weights = broadcast_to(weights, (a_ndim - 1) * (1,) + weights_shape)
-            weights = moveaxis(weights, -1, axis)
+      weights = broadcast_to(weights, (a_ndim - 1) * (1,) + weights_shape)
+      weights = moveaxis(weights, -1, axis)
 
-        weights_sum = sum(weights, axis=axis, dtype=out_dtype)
-        avg = sum(multiply(a, weights), axis=axis, dtype=out_dtype) / weights_sum
+    weights_sum = sum(weights, axis=axis, dtype=out_dtype)
+    avg = sum(multiply(a, weights), axis=axis, dtype=out_dtype) / weights_sum
 
-    if returned:
-        if avg.shape != weights_sum.shape:
-            weights_sum = broadcast_to(weights_sum, avg.shape)
-        return avg, weights_sum
-    return avg
+  if returned:
+    if avg.shape != weights_sum.shape:
+      weights_sum = broadcast_to(weights_sum, avg.shape)
+    return avg, weights_sum
+  return avg
 
 
 @_wraps(onp.var)
@@ -1661,7 +1660,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
     if object:
       out = stack([array(elt, dtype=dtype) for elt in object])
     else:
-      out = onp.array([], dtype)
+      out = onp.array([], dtype or float_)
   else:
     try:
       view = memoryview(object)
@@ -1798,7 +1797,8 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
   lax._check_user_dtype_supported(dtype, "linspace")
   if num < 0:
     raise ValueError("Number of samples, %s, must be non-negative." % num)
-  dtype = dtype or result_type(start, stop, float(num))
+  dt = result_type(start, stop, float(num))
+  dtype = dtype or dt
   bounds_shape = list(lax.broadcast_shapes(shape(start), shape(stop)))
   broadcast_start = broadcast_to(start, bounds_shape)
   axis = len(bounds_shape) + axis + 1 if axis < 0 else axis
@@ -1807,9 +1807,9 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
   iota_shape[axis] = num
   div = (num - 1) if endpoint else num
   if num > 1:
-    delta = (stop - start) / div
+    delta = lax.convert_element_type(stop - start, dt) / div
     out = (reshape(broadcast_start, bounds_shape) +
-           reshape(lax.iota(dtype, num), iota_shape) *
+           reshape(lax.iota(dt, num), iota_shape) *
            reshape(delta, bounds_shape))
   elif num == 1:
     delta = nan
@@ -1818,7 +1818,7 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
     empty_shape = list(lax.broadcast_shapes(shape(start), shape(stop)))
     empty_shape.insert(axis, 0)
     delta = nan
-    out = reshape(array([]), empty_shape).astype(dtype)
+    out = reshape(array([], dtype=dt), empty_shape)
   if retstep:
     return lax.convert_element_type(out, dtype), delta
   else:
@@ -2369,6 +2369,7 @@ def inner(a, b, precision=None):
 def outer(a, b, out=None):
   if out:
     raise NotImplementedError("The 'out' argument to outer is not supported.")
+  a, b = _promote_dtypes(a, b)
   return ravel(a)[:, None] * ravel(b)
 
 @partial(jit, static_argnums=(2, 3, 4))
@@ -3049,8 +3050,7 @@ def cov(m, y=None, rowvar=True, bias=False, ddof=None, fweights=None,
 
   if m.ndim > 2:
     raise ValueError("m has more than 2 dimensions")  # same as numpy error
-  X = array(m, ndmin=2, dtype=dtypes.canonicalize_dtype(
-    result_type(m, onp.float64)), copy=False)
+  X = array(m, ndmin=2, dtype=dtypes.canonicalize_dtype(result_type(m, float_)))
   if not rowvar and X.shape[0] != 1:
     X = X.T
   if X.shape[0] == 0:
