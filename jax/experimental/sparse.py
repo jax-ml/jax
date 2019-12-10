@@ -37,7 +37,6 @@ def body_fun(matvec, p, x, r, k):
 
 def _cg_solve(matvec, b, x0, tol, maxiter):
   N = np.shape(b)[0]
-  info = 0
   if x0 is None:
     x_k = np.zeros_like(b)
   else:
@@ -52,16 +51,13 @@ def _cg_solve(matvec, b, x0, tol, maxiter):
   matvec, p_k, x_k, r_k, k = lax.while_loop(
       lambda r_k, k: (r_k < tol) & (k < maxiter), body_fun, (matvec, p_k, x_k, r_k, k)
   )
-  #when to set info = -1 ??
-  if info >= 0 and r_k > tol:
-    # info isn't set appropriately otherwise
-    info = maxiter
-  return x_k, info
+  return x_k
 
 @_wraps(scipy.sparse.linalg.cg)
 def cg(matvec, b, x0=None, tol=1e-05, maxiter=None):
   # exposed as scipy.sparse.cg
-  return lax.custom_linear_solve(
-      matvec, b, partial(_cg_solve, x0, tol, maxiter), symmetric=True
-  )
+  info = 0
+  x = lax.custom_linear_solve(
+      matvec, b, partial(_cg_solve, x0, tol, maxiter), symmetric=True)
+  return x, info
   
