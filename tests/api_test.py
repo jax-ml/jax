@@ -36,7 +36,7 @@ from jax import jit, grad, device_put, jacfwd, jacrev, hessian
 from jax import api, lax
 from jax.core import Primitive
 from jax.interpreters import ad
-from jax.interpreters.xla import DeviceArray
+from jax.interpreters import xla
 from jax.abstract_arrays import concretization_err_msg
 from jax.lib import xla_bridge as xb
 from jax import test_util as jtu
@@ -118,12 +118,27 @@ class APITest(jtu.JaxTestCase):
 
     f(1, 2, z=onp.zeros(3))  # doesn't crash
 
-  def test_jit_many_args(self):
+  def test_jit_many_args_tuples(self):
     @jit
     def f(args_list):
       return sum(args_list)
 
-    self.assertEqual(f(list(range(500))), sum(range(500)))
+    make_tuple = xla.make_tuple
+
+    counts = [0]
+    def make_tuple_and_count(*args, **kwargs):
+      counts[0] += 1
+      return make_tuple(*args, **kwargs)
+
+    try:
+      xla.make_tuple = make_tuple_and_count
+      ans = f(list(range(500)))
+    finally:
+      xla.make_tuple = make_tuple
+
+    expected = sum(range(500))
+    self.assertEqual(counts[0], 1)  # formed a tuple on dispatch
+    self.assertEqual(ans, expected)  # computed the correct result
 
   def test_grad_of_jit(self):
     side = []
@@ -268,7 +283,7 @@ class APITest(jtu.JaxTestCase):
   def test_device_put_and_get(self):
     x = onp.arange(12.).reshape((3, 4)).astype("float32")
     dx = api.device_put(x)
-    self.assertIsInstance(dx, DeviceArray)
+    self.assertIsInstance(dx, xla.DeviceArray)
     x2 = api.device_get(dx)
     self.assertIsInstance(x2, onp.ndarray)
     assert onp.all(x == x2)
@@ -791,11 +806,11 @@ class APITest(jtu.JaxTestCase):
 
   def test_devicearray_repr(self):
     x = device_put(np.zeros(3))
-    self.assertIsInstance(x, DeviceArray)
+    self.assertIsInstance(x, xla.DeviceArray)
     repr(x)  # doesn't crash
 
     x = device_put(np.ones(3) + 1j * np.ones(3))
-    self.assertIsInstance(x, DeviceArray)
+    self.assertIsInstance(x, xla.DeviceArray)
     repr(x)  # doesn't crash
 
   def test_devicearray_delete(self):
@@ -1016,7 +1031,7 @@ class APITest(jtu.JaxTestCase):
   def test_jit_device(self):
     device = xb.devices()[-1]
     x = api.jit(lambda x: x, device=device)(3.)
-    self.assertIsInstance(x, DeviceArray)
+    self.assertIsInstance(x, xla.DeviceArray)
     self.assertEqual(x.device_buffer.device(), device)
 
   def test_jit_of_noncallable(self):
