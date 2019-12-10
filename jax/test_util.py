@@ -32,6 +32,7 @@ from six.moves import xrange
 
 from . import api
 from . import dtypes
+from . import lax
 from .config import flags
 from .util import partial
 from .tree_util import tree_multimap, tree_all, tree_map, tree_reduce
@@ -563,6 +564,23 @@ def check_raises_regexp(thunk, err_type, pattern):
     assert False
   except err_type as e:
     assert re.match(pattern, str(e)), "{}\n\n{}\n".format(e, pattern)
+
+
+def _iter_eqns(jaxpr):
+  for eqn in jaxpr.eqns:
+    yield eqn
+    for subjaxpr, _, _ in eqn.bound_subjaxprs:
+      for sub_eqn in _iter_eqns(subjaxpr):
+        yield sub_eqn
+
+def assert_dot_precision(expected_precision, fun, *args):
+  jaxpr = api.make_jaxpr(fun)(*args)
+  precisions = [eqn.params['precision'] for eqn in _iter_eqns(jaxpr.jaxpr)
+                if eqn.primitive == lax.dot_general_p]
+  for precision in precisions:
+    msg = "Unexpected precision: {} != {}".format(expected_precision, precision)
+    assert precision == expected_precision, msg
+
 
 _CACHED_INDICES = {}
 

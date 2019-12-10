@@ -30,6 +30,7 @@ from absl.testing import parameterized
 import jax
 import jax.lib
 from jax import jit, grad, jvp, vmap
+from jax import lax
 from jax import lax_linalg
 from jax import numpy as np
 from jax import scipy as jsp
@@ -81,6 +82,13 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
     if np.finfo(dtype).bits == 64:
       jtu.check_grads(np.linalg.cholesky, args_maker(), order=2)
+
+  def testCholeskyGradPrecision(self):
+    rng = jtu.rand_default()
+    a = rng((3, 3), onp.float32)
+    a = onp.dot(a, a.T)
+    jtu.assert_dot_precision(
+        lax.Precision.HIGHEST, partial(jvp, np.linalg.cholesky), (a,), (a,))
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -333,6 +341,12 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       onp.linalg.norm(onp.abs(new_w*(v+dv) - onp.dot(new_a, (v+dv))), axis=0) /
       onp.linalg.norm(onp.abs(new_w*(v+dv)), axis=0)
     ) < RTOL
+
+  def testEighGradPrecision(self):
+    rng = jtu.rand_default()
+    a = rng((3, 3), onp.float32)
+    jtu.assert_dot_precision(
+        lax.Precision.HIGHEST, partial(jvp, np.linalg.eigh), (a,), (a,))
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -873,6 +887,15 @@ class ScipyLinalgTest(jtu.JaxTestCase):
                 unit_diagonal=unit_diagonal, left_side=left_side)
     jtu.check_grads(f, (A, B), 2, rtol=4e-2, eps=1e-3)
 
+  def testTriangularSolveGradPrecision(self):
+    rng = jtu.rand_default()
+    a = np.tril(rng((3, 3), onp.float32))
+    b = rng((1, 3), onp.float32)
+    jtu.assert_dot_precision(
+        lax.Precision.HIGHEST,
+        partial(jvp, lax_linalg.triangular_solve),
+        (a, b),
+        (a, b))
 
 if __name__ == "__main__":
   absltest.main()

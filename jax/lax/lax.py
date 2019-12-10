@@ -1367,7 +1367,7 @@ def dynamic_update_index_in_dim(operand, update, index, axis):
   return dynamic_update_slice_in_dim(operand, update, index, axis)
 
 
-def batch_matmul(lhs, rhs):
+def batch_matmul(lhs, rhs, precision=None):
   """Batch matrix multiplication."""
   if _min(lhs.ndim, rhs.ndim) < 2:
     raise ValueError('Arguments to batch_matmul must be at least 2D, got {}, {}'
@@ -1378,7 +1378,8 @@ def batch_matmul(lhs, rhs):
   lhs_contract = (lhs.ndim - 1,)
   rhs_contract = (rhs.ndim - 2,)
   batch = tuple(range(lhs.ndim - 2))
-  return dot_general(lhs, rhs, [(lhs_contract, rhs_contract), (batch, batch)])
+  return dot_general(lhs, rhs, [(lhs_contract, rhs_contract), (batch, batch)],
+                     precision=precision)
 
 
 # These functions also exist in the XLA client library, but we treat them
