@@ -15,6 +15,7 @@
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
+from functools import partial
 
 import scipy.sparse.linalg
 import jax.numpy as np
@@ -34,7 +35,7 @@ def body_fun(matvec, p, x, r, k):
   p_new = r_new + (r_sq_new / r_sq) * p
   return matvec, p_new, x_new, r_new, k+1
 
-def _cg_solve(matvec, b, x0=None, tol=1e-05, maxiter=None):
+def _cg_solve(matvec, b, x0, tol, maxiter):
   N = np.shape(b)[0]
   if x0 is None:
     x_k = np.zeros(N)
@@ -48,12 +49,14 @@ def _cg_solve(matvec, b, x0=None, tol=1e-05, maxiter=None):
   p_k = r_k
   k = 0
   matvec, p_k, x_k, r_k, k = lax.while_loop(
-    lambda r_k, k: (r_k < tol) & (k < maxiter), body_fun, (matvec, p_k, x_k, r_k, k)
+      lambda r_k, k: (r_k < tol) & (k < maxiter), body_fun, (matvec, p_k, x_k, r_k, k)
   )
   return x_k
 
 @_wraps(scipy.sparse.linalg.cg)
-def cg(matvec, b):
+def cg(matvec, b, x0=None, tol=1e-05, maxiter=None):
   # exposed as scipy.sparse.cg
-  return lax.custom_linear_solve(matvec, b, _cg_solve, symmetric=True)
+  return lax.custom_linear_solve(
+      matvec, b, partial(_cg_solve, x0, tol, maxiter), symmetric=True
+  )
   
