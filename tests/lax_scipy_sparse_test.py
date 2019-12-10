@@ -53,7 +53,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       rng = rng_factory()
       square_mat = rng(shape, dtype)
       b = rng((shape[0],), dtype)
-      diag_mat = np.eye(shape, dtype) + 0.3
+      diag_mat = np.eye(N=shape[0], dtype=dtype) + 0.3
       spd_mat = np.matmul(np.matmul(square_mat, diag_mat), _T(square_mat))
       return spd_mat, b
 
