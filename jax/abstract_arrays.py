@@ -240,10 +240,6 @@ def raise_to_shaped(aval):
 
 core.literalable_types.update(array_types)
 
-def make_abstract_python_scalar(x):
-  return ShapedArray((), dtypes.python_scalar_dtypes[type(x)],
-                     weak_type=True)
-
 def _zeros_like_python_scalar(x):
   return onp.array(0, dtypes.python_scalar_dtypes[type(x)])
 

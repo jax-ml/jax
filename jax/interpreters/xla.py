@@ -35,7 +35,7 @@ from .. import dtypes
 from .. import linear_util as lu
 from ..abstract_arrays import (ConcreteArray, ShapedArray, AbstractToken,
                                make_shaped_array, array_types, raise_to_shaped,
-                               abstract_token, make_abstract_python_scalar)
+                               abstract_token)
 from ..core import valid_jaxtype, Literal
 from ..util import (partial, partialmethod, cache, safe_map, prod, unzip2,
                     memoize)
@@ -105,34 +105,39 @@ for _t in dtypes.python_scalar_dtypes.keys():
 
 # TODO(mattjj): try to remove this canonicalize_dtype stuff
 def canonicalize_dtype(x):
-  try:
-    return canonicalize_dtype_handlers[type(x)](x)
-  except KeyError:
-    raise TypeError("No canonicalize_dtype handler for type: {}".format(type(x)))
+  for typ in type(x).mro():
+    handler = canonicalize_dtype_handlers.get(typ)
+    if handler:
+      return handler(x)
+  raise TypeError("No canonicalize_dtype handler for type: {}".format(type(x)))
 canonicalize_dtype_handlers = {}
 canonicalize_dtype_handlers[core.Unit] = identity
 def _canonicalize_ndarray_dtype(x):
   return onp.asarray(x, dtypes.canonicalize_dtype(dtypes.result_type(x)))
 for _t in array_types:
   canonicalize_dtype_handlers[_t] = _canonicalize_ndarray_dtype
-def _canonicalize_python_scalar_dtype(x):
+def _canonicalize_python_scalar_dtype(typ, x):
   return onp.asarray(
-    x, dtypes.canonicalize_dtype(dtypes.python_scalar_dtypes[type(x)]))
+    x, dtypes.canonicalize_dtype(dtypes.python_scalar_dtypes[typ]))
 for _t in dtypes.python_scalar_dtypes.keys():
-  canonicalize_dtype_handlers[_t] = _canonicalize_python_scalar_dtype
+  canonicalize_dtype_handlers[_t] = partial(_canonicalize_python_scalar_dtype, _t)
 
 def abstractify(x):
-  try:
-    return pytype_aval_mappings[type(x)](x)
-  except KeyError:
-    raise TypeError("No abstraction handler for type: {}".format(type(x)))
+  for typ in type(x).mro():
+    aval_fn = pytype_aval_mappings.get(typ)
+    if aval_fn:
+      return aval_fn(x)
+  raise TypeError("No abstraction handler for type: {}".format(type(x)))
+
 pytype_aval_mappings = {}
 pytype_aval_mappings[core.Unit] = lambda _: core.abstract_unit
 for _t in array_types:
   pytype_aval_mappings[_t] = make_shaped_array
-for _t in dtypes.python_scalar_dtypes.keys():
-  pytype_aval_mappings[_t] = make_abstract_python_scalar
 
+def _make_abstract_python_scalar(typ, _):
+  return ShapedArray((), dtypes.python_scalar_dtypes[typ], weak_type=True)
+for _t in dtypes.python_scalar_dtypes.keys():
+  pytype_aval_mappings[_t] = partial(_make_abstract_python_scalar, _t)
 
 ### op-by-op execution
 

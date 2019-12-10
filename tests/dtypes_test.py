@@ -18,6 +18,12 @@ from __future__ import print_function
 
 import itertools
 import operator
+import unittest
+
+import six
+
+if six.PY3:
+  import enum
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -132,6 +138,16 @@ class DtypesTest(jtu.JaxTestCase):
           self.assertEqual(onp.promote_types(t1, t2),
                            dtypes.promote_types(t1, t2))
 
+
+  @unittest.skipIf(six.PY2, "Test requires Python 3")
+  def testEnumPromotion(self):
+    class AnEnum(enum.IntEnum):
+      A = 42
+      B = 101
+    onp.testing.assert_equal(onp.array(42), onp.array(AnEnum.A))
+    onp.testing.assert_equal(np.array(42), np.array(AnEnum.A))
+    onp.testing.assert_equal(onp.int32(101), onp.int32(AnEnum.B))
+    onp.testing.assert_equal(np.int32(101), np.int32(AnEnum.B))
 
 if __name__ == "__main__":
   absltest.main()
