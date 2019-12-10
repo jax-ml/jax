@@ -22,7 +22,7 @@ import jax.numpy as np
 from jax.numpy.lax_numpy import _wraps
 from .. import lax
 
-_T = lambda x: np.swapaxes(x, -1, -2)
+_T = lambda x: np.swapaxes(np.conj(x), -1, -2)
 
 def body_fun(matvec, p, x, r, k):
   # inspired by https://en.wikipedia.org/wiki/Conjugate_gradient_method#Example_code_in_MATLAB_/_GNU_Octave
@@ -37,21 +37,26 @@ def body_fun(matvec, p, x, r, k):
 
 def _cg_solve(matvec, b, x0, tol, maxiter):
   N = np.shape(b)[0]
+  info = 0
   if x0 is None:
-    x_k = np.zeros(N)
+    x_k = np.zeros_like(b)
   else:
     x_k = x0
-    if not (np.shape(x0) == (N, 1) or np.shape(x0) == (N,)):
+    if not np.shape(x0) == (N,):
       raise ValueError('A and x have incompatible dimensions')
     if maxiter is None:
-      maxiter = np.inf
+      maxiter = N*10
   r_k = b - matvec(x_k)
   p_k = r_k
   k = 0
   matvec, p_k, x_k, r_k, k = lax.while_loop(
       lambda r_k, k: (r_k < tol) & (k < maxiter), body_fun, (matvec, p_k, x_k, r_k, k)
   )
-  return x_k
+  #when to set info = -1 ??
+  if info >= 0 and r_k > tol:
+    # info isn't set appropriately otherwise
+    info = maxiter
+  return x_k, info
 
 @_wraps(scipy.sparse.linalg.cg)
 def cg(matvec, b, x0=None, tol=1e-05, maxiter=None):
