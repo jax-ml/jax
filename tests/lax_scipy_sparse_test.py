@@ -44,29 +44,26 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     def high_precision_dot(a, b):
       return lax.dot(a, b, precision=lax.Precision.HIGHEST)
 
-    def build_and_solve(a, b):
+    def build_and_solve(a, b, maxiter=None):
       # intentionally non-linear in a and b
       matvec = partial(high_precision_dot, a)
-      return sparse.cg(matvec, b)
+      return sparse.cg(matvec=matvec, b=b,maxiter=maxiter)
 
     def args_maker():
       rng = rng_factory()
       square_mat = rng(shape, dtype)
-      b = rng(shape[0], dtype)
+      b = rng((shape[0],), dtype)
       spd_mat = np.dot(square_mat, _T(square_mat)) + shape[0] * np.eye(shape[0], dtype)
       return spd_mat, b
 
     a, b = args_maker()
-    #TODO: figure out how to make sparse matrix
-    # diags = onp.array([0, -1, 2], dtype=dtype)
     expected = osp_sparse.cg(a, b)
+    expected_1_step = osp_sparse.cg(A=a, b=b, maxiter=1)
     actual = build_and_solve(a, b)
-    # expected_sparse = osp_sparse.cg(a_sparse, b)
-    # actual_sparse = build_and_solve(a_sparse, b)
+    actual_1_step = build_and_solve(a, b, 1)
     self.assertAllClose(expected, actual, atol=1e-5, check_dtypes=True)
-    # self.assertAllClose(expected_sparse, actual_sparse, atol=1e-5, check_dtypes=True)
+    self.assertAllClose(expected_1_step, actual_1_step, atol=1e-5, check_dtypes=True)
     jtu.check_grads(build_and_solve, (a, b), atol=1e-5, order=2, rtol=2e-3)
-    # jtu.check_grads(build_and_solve, (a_sparse, b), atol=1e-5, order=2, rtol=2e-3)
 
 if __name__ == "__main__":
   absltest.main()
