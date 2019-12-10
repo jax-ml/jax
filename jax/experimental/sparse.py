@@ -24,16 +24,15 @@ from .. import lax
 
 _T = lambda x: np.swapaxes(np.conj(x), -1, -2)
 
-def body_fun(matvec, p, x, r, k):
+def body_fun(matvec, p, x, r, r_norm, k):
   # inspired by https://en.wikipedia.org/wiki/Conjugate_gradient_method#Example_code_in_MATLAB_/_GNU_Octave
-  r_sq = np.matmul(_T(r), r)
   Ap = matvec(p)
-  alpha = r_sq / np.matmul(_T(p), Ap)
+  alpha = r_norm / np.matmul(_T(p), Ap)
   x_new = x + alpha * p
   r_new = r - alpha * Ap
-  r_sq_new = np.matmul(_T(r_new), r_new)
-  p_new = r_new + (r_sq_new / r_sq) * p
-  return matvec, p_new, x_new, r_new, k+1
+  r_norm_new = np.linalg.norm(r_new)
+  p_new = r_new + (r_norm_new / r_norm) * p
+  return matvec, p_new, x_new, r_new, r_norm_new, k+1
 
 def _cg_solve(matvec, b, x0, tol, maxiter):
   N = np.shape(b)[0]
@@ -46,12 +45,13 @@ def _cg_solve(matvec, b, x0, tol, maxiter):
     if maxiter is None:
       maxiter = N*10
   r_k = b - matvec(x_k)
+  r_k_norm = np.linalg.norm(r_k)
   p_k = r_k
   k = 0
   full_tol = tol * np.linalg.norm(b)
-  matvec, p_k, x_k, r_k, k = lax.while_loop(
-      lambda r_k, k:
-      (np.linalg.norm(r_k) < full_tol) & (k < maxiter), body_fun, (matvec, p_k, x_k, r_k, k)
+  matvec, p_k, x_k, r_k, r_k_norm, k = lax.while_loop(
+      lambda r_k_norm, k:
+      (r_k_norm < full_tol) & (k < maxiter), body_fun, (matvec, p_k, x_k, r_k, r_k_norm, k)
   )
   return x_k
 
