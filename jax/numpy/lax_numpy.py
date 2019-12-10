@@ -126,29 +126,40 @@ ndim = _ndim = onp.ndim
 size = onp.size
 _dtype = dtypes.result_type
 
-bool_ = onp.bool_
-int_ = dtypes.int_
-float_ = dtypes.float_
-complex_ = dtypes.complex_
+# At present JAX doesn't have a reason to distinguish between scalars and arrays
+# in its object system. Further, we want JAX scalars to have the same type
+# promotion behaviors as JAX arrays. Rather than introducing a new type of JAX
+# scalar object with JAX promotion behaviors, instead we make the JAX scalar
+# types return JAX arrays when instantiated.
 
-uint8 = onp.uint8
-uint16 = onp.uint16
-uint32 = onp.uint32
-uint64 = onp.uint64
-int8 = onp.int8
-int16 = onp.int16
-int32 = onp.int32
-int64 = onp.int64
-bfloat16 = dtypes.bfloat16
-float16 = onp.float16
-float32 = single = onp.float32
-float64 = double = onp.float64
-complex64 = csingle = onp.complex64
-complex128 = cdouble = onp.complex128
+class _ScalarType(object):
+  def __new__(cls, x):
+    return array(x, dtype=cls.dtype)
 
-flexible = onp.flexible
-character = onp.character
-object_ = onp.object_
+def _make_scalar_type(onp_scalar_type):
+  return type(onp_scalar_type.__name__, (_ScalarType,),
+              {"dtype": onp.dtype(onp_scalar_type)})
+
+bool_ = _make_scalar_type(onp.bool_)
+uint8 = _make_scalar_type(onp.uint8)
+uint16 = _make_scalar_type(onp.uint16)
+uint32 = _make_scalar_type(onp.uint32)
+uint64 = _make_scalar_type(onp.uint64)
+int8 = _make_scalar_type(onp.int8)
+int16 = _make_scalar_type(onp.int16)
+int32 = _make_scalar_type(onp.int32)
+int64 = _make_scalar_type(onp.int64)
+bfloat16 = _make_scalar_type(dtypes.bfloat16)
+float16 = _make_scalar_type(onp.float16)
+float32 = single = _make_scalar_type(onp.float32)
+float64 = double = _make_scalar_type(onp.float64)
+complex64 = csingle = _make_scalar_type(onp.complex64)
+complex128 = cdouble = _make_scalar_type(onp.complex128)
+
+int_ = int32 if dtypes.int_ == onp.int32 else int64
+float_ = float32 if dtypes.float_ == onp.float32 else float64
+complex_ = complex64 if dtypes.complex_ == onp.complex64 else complex128
+
 number = onp.number
 inexact = onp.inexact
 complexfloating = onp.complexfloating
@@ -156,6 +167,10 @@ floating = onp.floating
 integer = onp.integer
 signedinteger = onp.signedinteger
 unsignedinteger = onp.unsignedinteger
+
+flexible = onp.flexible
+character = onp.character
+object_ = onp.object_
 
 iinfo = dtypes.iinfo
 
@@ -599,7 +614,7 @@ def signbit(x):
   dtype = _dtype(x)
   if issubdtype(dtype, integer):
     return lax.lt(x, _constant_like(x, 0))
-  elif issubdtype(dtype, bool_):
+  elif issubdtype(dtype, onp.bool_):
     return full_like(x, False, dtype=bool_)
   elif not issubdtype(dtype, floating):
     raise ValueError(
@@ -1199,7 +1214,7 @@ def _make_reduction(np_fun, op, init_val, preproc=None, bool_op=None,
       computation_dtype = result_dtype
     a = lax.convert_element_type(a, computation_dtype)
     result = lax.reduce(a, _reduction_init_val(a, init_val),
-                        op if computation_dtype != bool_ else bool_op, dims)
+                        op if computation_dtype != onp.bool_ else bool_op, dims)
     if keepdims:
       shape_with_singletons = lax.subvals(shape(a), zip(dims, (1,) * len(dims)))
       result = lax.reshape(result, shape_with_singletons)
