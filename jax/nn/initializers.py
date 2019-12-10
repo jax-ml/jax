@@ -100,7 +100,7 @@ def orthogonal(scale=1.0, column_axis=-1):
 
 def delta_orthogonal(scale=1.0, column_axis=-1):
   """
-  Construct an initializer for delta orthogonal kernels.
+  Construct an initializer for delta orthogonal kernels; see arXiv:1806.05393. 
 
   The shape must be 3D, 4D or 5D.
   """
