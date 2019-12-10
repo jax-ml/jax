@@ -2431,62 +2431,49 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   def testPrecision(self):
 
-    def iter_eqns(jaxpr):
-      for eqn in jaxpr.eqns:
-        yield eqn
-        for subjaxpr, _, _ in eqn.bound_subjaxprs:
-          for sub_eqn in iter_eqns(subjaxpr):
-            yield sub_eqn
-
-    def assert_precision(expected, fun, *args):
-      jaxpr = jax.make_jaxpr(fun)(*args)
-      precision, = [eqn.params['precision'] for eqn in iter_eqns(jaxpr.jaxpr)
-                    if eqn.primitive == lax.dot_general_p]
-      self.assertEqual(precision, expected)
-
     ones_1d = onp.ones((2,))
     ones_2d = onp.ones((2, 2))
     ones_3d = onp.ones((2, 2, 2))
     HIGHEST = lax.Precision.HIGHEST
 
-    assert_precision(None, lnp.dot, ones_1d, ones_1d)
-    assert_precision(
+    jtu.assert_dot_precision(None, lnp.dot, ones_1d, ones_1d)
+    jtu.assert_dot_precision(
         HIGHEST,
         partial(lnp.dot, precision=HIGHEST),
         ones_1d, ones_1d)
-    assert_precision(
+    jtu.assert_dot_precision(
         HIGHEST,
         partial(lnp.dot, precision=HIGHEST),
         ones_3d, ones_3d)
-    assert_precision(
+    jtu.assert_dot_precision(
         HIGHEST,
         partial(lnp.matmul, precision=HIGHEST),
         ones_2d, ones_2d)
-    assert_precision(
+    jtu.assert_dot_precision(
         HIGHEST,
         partial(lnp.vdot, precision=HIGHEST),
         ones_1d, ones_1d)
-    assert_precision(
+    jtu.assert_dot_precision(
         HIGHEST,
         partial(lnp.tensordot, axes=2, precision=HIGHEST),
         ones_2d, ones_2d)
-    assert_precision(
+    jtu.assert_dot_precision(
         HIGHEST,
         partial(lnp.tensordot, axes=(0, 0), precision=HIGHEST),
         ones_1d, ones_1d)
-    assert_precision(
+    jtu.assert_dot_precision(
         HIGHEST,
         partial(lnp.tensordot, axes=((0,), (0,)), precision=HIGHEST),
         ones_1d, ones_1d)
-    assert_precision(
+    jtu.assert_dot_precision(
         HIGHEST,
         partial(lnp.einsum, 'i,i', precision=HIGHEST),
         ones_1d, ones_1d)
-    assert_precision(
+    jtu.assert_dot_precision(
         HIGHEST,
         partial(lnp.einsum, 'ij,ij', precision=HIGHEST),
         ones_2d, ones_2d)
-    assert_precision(
+    jtu.assert_dot_precision(
         HIGHEST,
         partial(lnp.inner, precision=HIGHEST),
         ones_1d, ones_1d)
