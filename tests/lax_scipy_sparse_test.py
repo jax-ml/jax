@@ -47,7 +47,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     def build_and_solve(a, b, maxiter=None):
       # intentionally non-linear in a and b
       matvec = partial(high_precision_dot, a)
-      return sparse.cg(matvec=matvec, b=b,maxiter=maxiter)
+      return sparse.cg(matvec=matvec, b=b, maxiter=maxiter)
 
     def args_maker():
       rng = rng_factory()
