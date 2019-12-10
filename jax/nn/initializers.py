@@ -96,3 +96,31 @@ def orthogonal(scale=1.0, column_axis=-1):
     Q = np.moveaxis(Q, -1, column_axis)
     return scale * Q
   return init
+
+
+def delta_orthogonal(scale=1.0, column_axis=-1):
+  """
+  Construct an initializer for delta orthogonal kernels.
+
+  The shape must be 3D, 4D or 5D.
+  """
+  def init(key, shape, dtype=np.float32):
+    if len(shape) not in [3, 4, 5]:
+      raise ValueError("Delta orthogonal initializer requires a 3D, 4D or 5D "
+                       "shape.")
+    if shape[-1] < shape[-2]:
+      raise ValueError("`fan_in` must be less or equal than `fan_out`. ")
+    ortho_init = orthogonal(scale=scale, column_axis=column_axis)
+    ortho_matrix = ortho_init(key, shape[-2:])
+    W = np.zeros(shape)
+    if len(shape) == 3:
+      k = shape[0]
+      return ops.index_update(W, [(k-1)//2, ...], ortho_matrix)
+    elif len(shape) == 4:
+      k1, k2 = shape[:2]
+      return ops.index_update(W, [(k1-1)//2, (k2-1)//2, ...], ortho_matrix)
+    else:
+      k1, k2, k3 = shape[:3]
+      return ops.index_update(W, [(k1-1)//2, (k2-1)//2, (k3-1)//2, ...],
+                              ortho_matrix)
+  return init
