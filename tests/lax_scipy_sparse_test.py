@@ -28,7 +28,7 @@ from jax.experimental import sparse
 @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}D_{}".format(dim, onp.dtype(dtype).name),
        "dim": dim, "dtype": dtype}
-      for dim in [1, 3, 5]
+      for dim in [3, 5, 10]
       for dtype in [onp.float32, onp.float64]))
 def test_linalg_sparse_cg(self, dim, dtype):
   def high_precision_dot(a, b):
