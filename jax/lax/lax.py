@@ -118,6 +118,10 @@ def sign(x):
   """
   return sign_p.bind(x)
 
+def nextafter(x1, x2):
+  r"""Returns the next representable value after `x1` in the direction of `x2`."""
+  return nextafter_p.bind(_brcast(x1, x2), _brcast(x2, x1))
+
 def floor(x):
   r"""Elementwise floor: :math:`\left\lfloor x \right\rfloor`."""
   return floor_p.bind(x)
@@ -184,13 +188,13 @@ def digamma(x):
 
 def bessel_i0e(x):
   r"""Exponentially scaled modified Bessel function of order 0:
-  :math:`\mathrm{i0e}(x) = e^{-\mathrm{abs}(x)} \mathrm{i0}(x)`
+  :math:`\mathrm{i0e}(x) = e^{-|x|} \mathrm{i0}(x)`
   """
   return bessel_i0e_p.bind(x)
 
 def bessel_i1e(x):
   r"""Exponentially scaled modified Bessel function of order 1:
-  :math:`\mathrm{i1e}(x) = e^{-\mathrm{abs}(x)} \mathrm{i1}(x)`
+  :math:`\mathrm{i1e}(x) = e^{-|x|} \mathrm{i1}(x)`
   """
   return bessel_i1e_p.bind(x)
 
@@ -1621,6 +1625,10 @@ ad.deflinear(neg_p, lambda t: [neg(t)])
 
 sign_p = standard_unop(_num, 'sign')
 ad.defjvp_zero(sign_p)
+
+nextafter_p = standard_binop(
+  [_float, _float], 'nextafter',
+  translation_rule=lambda c, x1, x2: c.NextAfter(x1, x2))
 
 floor_p = standard_unop(_float, 'floor')
 ad.defjvp_zero(floor_p)

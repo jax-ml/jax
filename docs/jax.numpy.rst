@@ -178,6 +178,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     nanprod
     nansum
     negative
+    nextafter
     not_equal
     ones
     ones_like

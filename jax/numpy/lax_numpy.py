@@ -427,6 +427,7 @@ arctan2 = _one_to_one_binop(onp.arctan2, lax.atan2, True)
 minimum = _one_to_one_binop(onp.minimum, lax.min)
 maximum = _one_to_one_binop(onp.maximum, lax.max)
 float_power = _one_to_one_binop(onp.float_power, lax.pow, True)
+nextafter = _one_to_one_binop(onp.nextafter, lax.nextafter, True)
 
 
 def _comparison_op(numpy_fn, lax_fn):
