@@ -147,7 +147,7 @@ class DtypesTest(jtu.JaxTestCase):
     for t in [np.bool_, np.int32, np.bfloat16, np.float32, np.complex64]:
       a = t(1)
       self.assertEqual(a.dtype, np.dtype(t))
-      self.assertTrue(isinstance(a, xla.DeviceArray))
+      self.assertIsInstance(a, xla.DeviceArray)
       self.assertEqual(0, np.ndim(a))
 
   def testIsSubdtype(self):
