@@ -378,8 +378,6 @@ def finfo(dtype): return dtypes.finfo(dtype)
 @_wraps(onp.issubdtype)
 def issubdtype(arg1, arg2): return dtypes.issubdtype(arg1, arg2)
 
-issubdtype = dtypes.issubdtype
-
 @_wraps(onp.isscalar)
 def isscalar(num): return dtypes.is_python_scalar(num) or onp.isscalar(num)
 
@@ -474,7 +472,7 @@ def _logical_op(np_op, bitwise_op):
   @_wraps(np_op, update_doc=False)
   def op(*args):
     zero = lambda x: lax.full_like(x, shape=(), fill_value=0)
-    args = (x if issubdtype(_dtype(x), onp.bool_) else lax.ne(x, zero(x))
+    args = (x if issubdtype(_dtype(x), bool_) else lax.ne(x, zero(x))
             for x in args)
     return bitwise_op(*_promote_args(np_op.__name__, *args))
   return op
@@ -496,7 +494,7 @@ def divide(x1, x2):
   # decide whether to perform integer division based on Numpy result dtype, as a
   # way to check whether Python 3 style division is active in Numpy
   result_dtype = _result_dtype(onp.divide, x1, x2)
-  if issubdtype(result_dtype, onp.integer):
+  if issubdtype(result_dtype, integer):
     return floor_divide(x1, x2)
   else:
     return true_divide(x1, x2)
@@ -529,7 +527,7 @@ def floor_divide(x1, x2):
 @_wraps(onp.divmod)
 def divmod(x1, x2):
   x1, x2 = _promote_args("divmod", x1, x2)
-  if issubdtype(_dtype(x1), onp.integer):
+  if issubdtype(_dtype(x1), integer):
     return floor_divide(x1, x2), remainder(x1, x2)
   else:
     return _float_divmod(x1, x2)
@@ -614,7 +612,7 @@ def signbit(x):
   dtype = _dtype(x)
   if issubdtype(dtype, integer):
     return lax.lt(x, _constant_like(x, 0))
-  elif issubdtype(dtype, onp.bool_):
+  elif issubdtype(dtype, bool_):
     return full_like(x, False, dtype=bool_)
   elif not issubdtype(dtype, floating):
     raise ValueError(
@@ -719,7 +717,7 @@ def arcsinh(x):
   x, = _promote_dtypes_inexact(x)
   one = lax._const(x, 1)
   result = lax.log(x + lax.sqrt(x * x + one))
-  if issubdtype(_dtype(result), onp.complexfloating):
+  if issubdtype(_dtype(result), complexfloating):
     return result
   a = abs(x)
   sqrt_max_value = onp.sqrt(finfo(_dtype(x)).max)
@@ -738,7 +736,7 @@ def arccosh(x):
   x, = _promote_dtypes_inexact(x)
   one = lax._const(x, 1)
   result = lax.log(x + lax.sqrt((x + one) * (x - one)))
-  if issubdtype(_dtype(result), onp.complexfloating):
+  if issubdtype(_dtype(result), complexfloating):
     return result
   sqrt_max_value = onp.sqrt(finfo(_dtype(x)).max)
   log2 = lax._const(x, onp.log(2))
@@ -751,7 +749,7 @@ def arctanh(x):
   x, = _promote_dtypes_inexact(x)
   one = lax._const(x, 1)
   result = lax._const(x, 0.5) * lax.log((one + x) / (one - x))
-  if issubdtype(_dtype(result), onp.complexfloating):
+  if issubdtype(_dtype(result), complexfloating):
     return result
   return lax.select(abs(x) <= 1, result, lax.full_like(x, onp.nan))
 
@@ -996,7 +994,7 @@ else:
 def where(condition, x=None, y=None):
   if x is None or y is None:
     raise ValueError("Must use the three-argument form of where().")
-  if not issubdtype(_dtype(condition), onp.bool_):
+  if not issubdtype(_dtype(condition), bool_):
     condition = lax.ne(condition, zeros_like(condition))
   x, y = _promote_dtypes(x, y)
   condition, x, y = broadcast_arrays(condition, x, y)
@@ -1085,7 +1083,7 @@ def clip(a, a_min=None, a_max=None):
 
 def _dtype_info(dtype):
   """Helper function for to get dtype info needed for clipping."""
-  if issubdtype(dtype, onp.integer):
+  if issubdtype(dtype, integer):
     return iinfo(dtype)
   return finfo(dtype)
 
@@ -1239,7 +1237,7 @@ def _reduction_init_val(a, init_val):
   try:
     return onp.array(init_val, dtype=a_dtype)
   except OverflowError:
-    assert issubdtype(a_dtype, onp.integer)
+    assert issubdtype(a_dtype, integer)
     sign, info = onp.sign(init_val), iinfo(a_dtype)
     return onp.array(info.min if sign < 0 else info.max, dtype=a_dtype)
 
@@ -1265,8 +1263,7 @@ def mean(a, axis=None, dtype=None, out=None, keepdims=False):
   else:
     normalizer = onp.prod(onp.take(shape(a), axis))
   if dtype is None:
-    if (issubdtype(_dtype(a), onp.bool_) or
-        issubdtype(_dtype(a), onp.integer)):
+    if issubdtype(_dtype(a), bool_) or issubdtype(_dtype(a), integer):
       dtype = float_
     else:
       dtype = _dtype(a)
@@ -1406,8 +1403,7 @@ nanprod = _make_nan_reduction(onp.nanprod, prod, 1, nan_if_all_nan=False)
 def nanmean(a, axis=None, dtype=None, out=None, keepdims=False):
   if out is not None:
     raise ValueError("nanmean does not support the `out` argument.")
-  if (issubdtype(_dtype(a), onp.bool_) or
-      issubdtype(_dtype(a), onp.integer)):
+  if issubdtype(_dtype(a), bool_) or issubdtype(_dtype(a), integer):
     return mean(a, axis, dtype, out, keepdims)
   if dtype is None:
     dtype = _dtype(a)
@@ -1774,7 +1770,7 @@ def eye(N, M=None, k=None, dtype=None):
     return lax.broadcasted_eye(dtype, (N, M), (0, 1))
   else:
     k_dtype = _dtype(k)
-    if not issubdtype(k_dtype, onp.integer):
+    if not issubdtype(k_dtype, integer):
       msg = "eye argument `k` must be of integer dtype, got {}"
       raise TypeError(msg.format(k_dtype))
     rows = k + lax.broadcasted_iota(k_dtype, (N, M), 0)
@@ -1794,7 +1790,7 @@ def arange(start, stop=None, step=None, dtype=None):
   # If called like np.arange(N), we create a lazy lax._IotaConstant.
   if stop is None and step is None:
     dtype = dtype or _dtype(start)
-    if issubdtype(dtype, onp.integer):
+    if issubdtype(dtype, integer):
       return lax.iota(dtype, start)  # avoids materializing
 
   # Fall back to instantiating an ndarray in host memory
@@ -2204,7 +2200,7 @@ def matmul(a, b, precision=None):  # pylint: disable=missing-docstring
 
 @_wraps(onp.vdot, lax_description=_PRECISION_DOC)
 def vdot(a, b, precision=None):
-  if issubdtype(_dtype(a), onp.complexfloating):
+  if issubdtype(_dtype(a), complexfloating):
     a = conj(a)
   return dot(a.ravel(), b.ravel(), precision=precision)
 
@@ -2750,7 +2746,7 @@ def _merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx):
   return treedef.unflatten(idx)
 
 def _int(aval):
-  return not aval.shape and issubdtype(aval.dtype, onp.integer)
+  return not aval.shape and issubdtype(aval.dtype, integer)
 
 def _index_to_gather(x_shape, idx):
   # Remove ellipses and add trailing slice(None)s.
@@ -2960,8 +2956,8 @@ def _expand_bool_indices(idx):
       abstract_i = core.get_aval(i)
     except TypeError:
       abstract_i = None
-    if (isinstance(abstract_i, ShapedArray) and issubdtype(abstract_i.dtype, onp.bool_)
-          or isinstance(i, list) and _all(not _shape(e) and issubdtype(_dtype(e), onp.bool_)
+    if (isinstance(abstract_i, ShapedArray) and issubdtype(abstract_i.dtype, bool_)
+          or isinstance(i, list) and _all(not _shape(e) and issubdtype(_dtype(e), bool_)
                                           for e in i)):
       if isinstance(i, list):
         i = array(i)
