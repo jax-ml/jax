@@ -25,6 +25,7 @@ from functools import partial
 import numpy as onp
 
 from jax import lax
+from jax import ops
 from jax import random
 import jax.numpy as np
 
