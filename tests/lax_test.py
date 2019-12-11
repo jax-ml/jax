@@ -81,6 +81,8 @@ LAX_OPS = [
     op_record("floor", 1, float_dtypes, jtu.rand_small),
     op_record("ceil", 1, float_dtypes, jtu.rand_small),
     op_record("round", 1, float_dtypes, jtu.rand_default),
+    op_record("nextafter", 2, [f for f in float_dtypes if f != dtypes.bfloat16],
+              jtu.rand_default, tol=0),
 
     op_record("is_finite", 1, float_dtypes, jtu.rand_small),
 

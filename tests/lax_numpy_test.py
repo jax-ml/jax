@@ -123,6 +123,8 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("minimum", 2, number_dtypes, all_shapes, jtu.rand_some_inf, []),
     op_record("multiply", 2, number_dtypes, all_shapes, jtu.rand_default, ["rev"]),
     op_record("negative", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"]),
+    op_record("nextafter", 2, [f for f in float_dtypes if f != lnp.bfloat16],
+              all_shapes, jtu.rand_default, ["rev"], inexact=True, tolerance=0),
     op_record("not_equal", 2, number_dtypes, all_shapes, jtu.rand_some_equal, ["rev"]),
     op_record("array_equal", 2, number_dtypes, all_shapes, jtu.rand_some_equal, ["rev"]),
     op_record("reciprocal", 1, inexact_dtypes, all_shapes, jtu.rand_default, []),
