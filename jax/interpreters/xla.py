@@ -105,11 +105,14 @@ for _t in dtypes.python_scalar_dtypes.keys():
 
 # TODO(mattjj): try to remove this canonicalize_dtype stuff
 def canonicalize_dtype(x):
-  for typ in type(x).mro():
+  typ = type(x)
+  handler = canonicalize_dtype_handlers.get(typ)
+  if handler: return handler(x)
+  for typ in typ.mro():
     handler = canonicalize_dtype_handlers.get(typ)
-    if handler:
-      return handler(x)
+    if handler: return handler(x)
   raise TypeError("No canonicalize_dtype handler for type: {}".format(type(x)))
+
 canonicalize_dtype_handlers = {}
 canonicalize_dtype_handlers[core.Unit] = identity
 def _canonicalize_ndarray_dtype(x):
@@ -123,10 +126,12 @@ for _t in dtypes.python_scalar_dtypes.keys():
   canonicalize_dtype_handlers[_t] = partial(_canonicalize_python_scalar_dtype, _t)
 
 def abstractify(x):
-  for typ in type(x).mro():
+  typ = type(x)
+  aval_fn = pytype_aval_mappings.get(typ)
+  if aval_fn: return aval_fn(x)
+  for typ in typ.mro():
     aval_fn = pytype_aval_mappings.get(typ)
-    if aval_fn:
-      return aval_fn(x)
+    if aval_fn: return aval_fn(x)
   raise TypeError("No abstraction handler for type: {}".format(type(x)))
 
 pytype_aval_mappings = {}
@@ -134,10 +139,11 @@ pytype_aval_mappings[core.Unit] = lambda _: core.abstract_unit
 for _t in array_types:
   pytype_aval_mappings[_t] = make_shaped_array
 
-def _make_abstract_python_scalar(typ, _):
-  return ShapedArray((), dtypes.python_scalar_dtypes[typ], weak_type=True)
-for _t in dtypes.python_scalar_dtypes.keys():
-  pytype_aval_mappings[_t] = partial(_make_abstract_python_scalar, _t)
+def _make_abstract_python_scalar(aval, _): return aval
+
+for _t, _v in dtypes.python_scalar_dtypes.items():
+  pytype_aval_mappings[_t] = partial(
+    _make_abstract_python_scalar, ShapedArray((), _v, weak_type=True))
 
 ### op-by-op execution
 
