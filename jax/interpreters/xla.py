@@ -139,11 +139,11 @@ pytype_aval_mappings[core.Unit] = lambda _: core.abstract_unit
 for _t in array_types:
   pytype_aval_mappings[_t] = make_shaped_array
 
-def _make_abstract_python_scalar(aval, _): return aval
+def _make_abstract_python_scalar(typ, _):
+  return ShapedArray((), dtypes.python_scalar_dtypes[typ], weak_type=True)
 
-for _t, _v in dtypes.python_scalar_dtypes.items():
-  pytype_aval_mappings[_t] = partial(
-    _make_abstract_python_scalar, ShapedArray((), _v, weak_type=True))
+for _t in dtypes.python_scalar_dtypes.keys():
+  pytype_aval_mappings[_t] = partial(_make_abstract_python_scalar, _t)
 
 ### op-by-op execution
 
