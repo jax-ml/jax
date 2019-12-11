@@ -18,6 +18,7 @@ from __future__ import print_function
 
 from functools import partial
 import os
+from random import shuffle
 from unittest import SkipTest
 
 import numpy as onp
@@ -478,6 +479,98 @@ class PmapTest(jtu.JaxTestCase):
     ans = f(x)
     expected = onp.repeat(3, device_count)
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+    f = pmap(lambda x: (x, 3))
+    _, ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testPmapConstantDevices(self):
+    if xla_bridge.device_count() == 1:
+      raise SkipTest("this test requires multiple devices")
+
+    devices = xla_bridge.devices()[:-1]
+    shuffle(devices)
+    f = pmap(lambda x: 3, devices=devices)
+    x = np.arange(len(devices))
+    ans = f(x)
+    expected = onp.repeat(3, len(devices))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    # Test that 'ans' was properly replicated across devices.
+    self.assertEqual([b.device() for b in ans.device_buffers], devices)
+
+  def testPmapConstantError(self):
+    device_count = xla_bridge.device_count()
+    f = pmap(lambda x: 3)
+    x = np.arange(device_count + 1)
+    self.assertRaisesRegex(
+        ValueError, r"Cannot replicate across \d+ replicas because only \d+ "
+        r"local devices are available.", lambda: f(x))
+
+    f = pmap(lambda x: 3, devices=[xla_bridge.devices()[0]])
+    x = np.arange(2)
+    self.assertRaisesRegex(
+        ValueError, "Cannot replicate across 2 replicas because only 1 "
+        "local devices are available.", lambda: f(x))
+
+  def testNestedPmapConstant(self):
+    if xla_bridge.device_count() == 1:
+      raise SkipTest("this test requires multiple devices")
+
+    f = pmap(pmap(lambda x: 3))
+    shape = (2, xla_bridge.device_count() // 2, 3)
+    x = np.arange(prod(shape)).reshape(shape)
+    ans = f(x)
+    expected = 3 * onp.ones(shape[:2])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    # Test that 'ans' was properly replicated across devices.
+    expected_sharded = pmap(pmap(lambda x: x))(expected)
+    self.assertEqual([b.device() for b in ans.device_buffers],
+                     [b.device() for b in expected_sharded.device_buffers])
+
+    f = pmap(pmap(lambda x: (x, 3)))
+    x_sharded, ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+    self.assertEqual([b.device() for b in ans.device_buffers],
+                     [b.device() for b in x_sharded.device_buffers])
+
+
+  def testNestedPmapConstantDevices(self):
+    raise SkipTest("Nested pmaps with devices not yet implemented")
+
+    if xla_bridge.device_count() < 6:
+      raise SkipTest("this test requires >= 6 devices")
+
+    devices = xla_bridge.devices()[:-2]
+    shuffle(devices)
+    f = pmap(pmap(lambda x: 3), devices=devices)
+    shape = (2, len(devices) // 2, 3)
+    x = np.arange(prod(shape)).reshape(shape)
+    ans = f(x)
+    expected = 3 * onp.ones(shape[:2])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    # Test that 'ans' was properly replicated across devices.
+    expected_sharded = pmap(pmap(lambda x: x), devices=devices)(expected)
+    self.assertEqual([b.device() for b in ans.device_buffers],
+                     [b.device() for b in expected_sharded.device_buffers])
+
+  def testNestedPmapConstantError(self):
+    f = pmap(pmap(lambda x: 3))
+    shape = (2, xla_bridge.device_count() // 2 + 1, 3)
+    x = np.arange(prod(shape)).reshape(shape)
+    self.assertRaisesRegex(
+        ValueError, r"Cannot replicate across \d+ replicas because only \d+ "
+        r"local devices are available.", lambda: f(x))
+
+    if xla_bridge.device_count() > 1:
+      f = pmap(pmap(lambda x: 3), devices=xla_bridge.devices()[:-1])
+      shape = (2, xla_bridge.device_count() // 2, 3)
+      x = np.arange(prod(shape)).reshape(shape)
+      self.assertRaisesRegex(
+          ValueError, r"Cannot replicate across \d+ replicas because only \d+ "
+          r"local devices are available.", lambda: f(x))
 
   def testCollectiveConstant(self):
     device_count = xla_bridge.device_count()
