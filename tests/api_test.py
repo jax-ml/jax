@@ -1547,6 +1547,41 @@ class APITest(jtu.JaxTestCase):
     self.assertIs(z3, x1)
     self.assertEqual(z2, 1)
 
+  def test_nested_jit_hoisting(self):
+    @api.jit
+    def f(x, y):
+      z = 2 * x
+      return y + z, 3
+
+    @api.jit
+    def g(x):
+      return f(2, x)
+
+    jaxpr_subcomp = xla.jaxpr_subcomp
+
+    jaxprs = []
+    def jaxpr_subcomp_and_collect(c, jaxpr, *args, **kwargs):
+      jaxprs.append(jaxpr)
+      return jaxpr_subcomp(c, jaxpr, *args, **kwargs)
+
+    try:
+      xla.jaxpr_subcomp = jaxpr_subcomp_and_collect
+      ans = g(3)
+    finally:
+      xla.jaxpr_subcomp = jaxpr_subcomp
+
+    self.assertEqual(ans, (7, 3))
+    self.assertLen(jaxprs, 2)
+    outer_jaxpr, inner_jaxpr = jaxprs
+
+    self.assertLen(outer_jaxpr.eqns, 1)
+    self.assertEqual(outer_jaxpr.eqns[0].primitive.name, 'xla_call')
+    (subjaxpr_1, _,  _), = outer_jaxpr.eqns[0].bound_subjaxprs
+    self.assertEqual(str(subjaxpr_1), str(inner_jaxpr))
+    self.assertLen(inner_jaxpr.eqns, 2)
+    self.assertEqual(inner_jaxpr.eqns[0].primitive.name, 'mul')
+    self.assertEqual(inner_jaxpr.eqns[1].primitive.name, 'add')
+
 
 class JaxprTest(jtu.JaxTestCase):
 

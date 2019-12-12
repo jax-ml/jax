@@ -419,7 +419,7 @@ def _xla_call_impl(fun, *args, **params):
 @lu.cache
 def _xla_callable(fun, device, backend, *abstract_args):
   pvals = [pe.PartialVal((aval, core.unit)) for aval in abstract_args]
-  with core.new_master(pe.JaxprTrace, True) as master:
+  with core.new_master(pe.StagingJaxprTrace, True) as master:
     jaxpr, (pvals, consts, env) = pe.trace_to_subjaxpr(fun, master, False).call_wrapped(pvals)
     assert not env  # no subtraces here
     del master, env
