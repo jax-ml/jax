@@ -162,18 +162,20 @@ def xla_primitive_callable(prim, *abstract_args, **params):
     handle_result = lambda xs: tuple(h(x) for h, x in zip(handlers, xs.destructure()))
   else:
     handle_result = aval_to_result_handler(aval_out)
-  built_c = primitive_computation(prim, *abstract_args, **params)
+  tuple_args = len(abstract_args) > 100
+  built_c = primitive_computation(prim, tuple_args, *abstract_args, **params)
   compiled = built_c.Compile(compile_options=xb.get_compile_options(),
                              backend=xb.get_backend(backend))
-  return partial(_execute_compiled_primitive, prim, compiled, backend, handle_result)
+  return partial(_execute_compiled_primitive, prim, compiled, backend,
+                 tuple_args, handle_result)
 
 @cache()
-def primitive_computation(prim, *avals, **params):
+def primitive_computation(prim, tuple_args, *avals, **params):
   c = xb.make_computation_builder("primitive_computation_{}".format(prim.name))
   c.SetOpMetadata(xc.OpMetadata(op_type=prim.name, op_name=str(params)))
   backend = params.pop("backend", None)
   platform = xb.get_backend(backend).platform
-  xla_args = _xla_callable_args(c, avals, False)
+  xla_args = _xla_callable_args(c, avals, tuple_args)
   if prim in backend_specific_translations[platform]:
     rule = backend_specific_translations[platform][prim]
     rule(c, *xla_args, **params)  # return val set as a side-effect on c
@@ -197,9 +199,15 @@ def primitive_computation(prim, *avals, **params):
            "https://github.com/google/jax/issues\n")
     raise RuntimeError(msg)
 
-def _execute_compiled_primitive(prim, compiled, backend, result_handler, *args):
+def primitive_subcomputation(prim, *avals, **params):
+  return primitive_computation(prim, False, *avals, **params)
+
+def _execute_compiled_primitive(prim, compiled, backend, tuple_args,
+                                result_handler, *args):
   device, = compiled.local_devices()
   input_bufs = [device_put(x, device) for x in args if x is not token]
+  if tuple_args:
+    input_bufs = [make_tuple(input_bufs, device, backend)]
   out_buf = compiled.Execute(input_bufs)
   if FLAGS.jax_debug_nans:
     check_nans(prim, out_buf.destructure() if prim.multiple_results else out_buf)

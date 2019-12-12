@@ -235,7 +235,7 @@ def _while_loop_translation_rule(c, axis_env, *args, **kwargs):
                             _map(cond_c.Constant, cond_jaxpr.literals), (), *(x + z))
   if batched:
     scalar = ShapedArray((), onp.bool_)
-    or_ = xla.primitive_computation(lax.or_p, scalar, scalar)
+    or_ = xla.primitive_subcomputation(lax.or_p, scalar, scalar)
     pred = cond_c.Reduce(pred, cond_c.Constant(onp.array(False)), or_,
                          list(range(cond_jaxpr.out_avals[0].ndim)))
 

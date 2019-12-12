@@ -3393,7 +3393,7 @@ def _reduce_sum_translation_rule(c, operand, axes, input_shape):
   dtype = c.GetShape(operand).numpy_dtype()
   scalar = ShapedArray((), dtype)
   return c.Reduce(operand, c.Constant(onp.array(0, dtype)),
-                  xla.primitive_computation(add_p, scalar, scalar),
+                  xla.primitive_subcomputation(add_p, scalar, scalar),
                   axes)
 
 def _reduce_sum_transpose_rule(cotangent, input_shape, axes):
@@ -3417,7 +3417,7 @@ def _reduce_prod_translation_rule(c, operand, axes):
   dtype = c.GetShape(operand).numpy_dtype()
   scalar = ShapedArray((), dtype)
   return c.Reduce(operand, c.Constant(onp.array(1, dtype)),
-                  xla.primitive_computation(mul_p, scalar, scalar),
+                  xla.primitive_subcomputation(mul_p, scalar, scalar),
                   axes)
 
 def _reduce_prod_jvp_rule(tangent, operand, axes):
@@ -3463,7 +3463,7 @@ def _reduce_chooser_translation_rule(prim, identity, c, operand, axes):
   dtype = c.GetShape(operand).numpy_dtype()
   scalar = ShapedArray((), dtype)
   return c.Reduce(operand, c.Constant(identity(dtype)),
-                  xla.primitive_computation(prim, scalar, scalar), axes)
+                  xla.primitive_subcomputation(prim, scalar, scalar), axes)
 
 def _reduce_chooser_jvp_rule(g, ans, operand, axes):
   # TODO(mattjj): an alternative is to use variadic reduce to compute the chosen
@@ -3500,7 +3500,7 @@ def _reduce_logical_shape_rule(operand, axes):
 def _reduce_logical_translation_rule(prim, identity, c, operand, axes):
   scalar = ShapedArray((), onp.bool_)
   return c.Reduce(operand, c.Constant(identity(onp.bool_)),
-                  xla.primitive_computation(prim, scalar, scalar), axes)
+                  xla.primitive_subcomputation(prim, scalar, scalar), axes)
 
 _reduce_or_translation_rule = partial(_reduce_logical_translation_rule,
                                       or_p, _get_max_identity)
@@ -3563,7 +3563,7 @@ def _reduce_window_sum_translation_rule(c, operand, window_dimensions,
   dtype = c.GetShape(operand).numpy_dtype()
   scalar = ShapedArray((), dtype)
   return c.ReduceWindow(operand, c.Constant(onp.array(0, dtype)),
-                        xla.primitive_computation(add_p, scalar, scalar),
+                        xla.primitive_subcomputation(add_p, scalar, scalar),
                         window_dimensions, window_strides, padding)
 
 def _reduce_window_sum_transpose_rule(cotangent, window_dimensions,
@@ -3610,7 +3610,7 @@ def _reduce_window_chooser_translation_rule(
   dtype = c.GetShape(operand).numpy_dtype()
   scalar = ShapedArray((), dtype)
   return c.ReduceWindow(operand, c.Constant(identity(dtype)),
-                        xla.primitive_computation(prim, scalar, scalar),
+                        xla.primitive_subcomputation(prim, scalar, scalar),
                         window_dimensions, window_strides, padding)
 
 def _reduce_window_chooser_jvp_rule(prim, g, operand, window_dimensions,
@@ -3700,8 +3700,8 @@ def _select_and_scatter_add_translation(
     padding):
   dtype = c.GetShape(operand).numpy_dtype()
   scalar = ShapedArray((), dtype)
-  select = xla.primitive_computation(select_prim, scalar, scalar)
-  scatter = xla.primitive_computation(add_p, scalar, scalar)
+  select = xla.primitive_subcomputation(select_prim, scalar, scalar)
+  scatter = xla.primitive_subcomputation(add_p, scalar, scalar)
   zero = c.Constant(onp.array(0, dtype))
   return c.SelectAndScatter(operand, select, window_dimensions, window_strides,
                             padding, source, zero, scatter)
