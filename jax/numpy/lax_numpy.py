@@ -3235,6 +3235,11 @@ def _unimplemented_setitem(self, i, x):
          "jax.ops.index_add instead?")
   raise TypeError(msg.format(type(self)))
 
+def _operator_round(number, ndigits=None):
+  out = round(number, decimals=ndigits or 0)
+  # If `ndigits` is None, for a builtin float round(7.5) returns an integer.
+  return out.astype(int_) if ndigits is None else out
+
 _operators = {
     "getitem": _rewriting_take,
     "setitem": _unimplemented_setitem,
@@ -3276,6 +3281,7 @@ _operators = {
     "invert": bitwise_not,
     "lshift": left_shift,
     "rshift": right_shift,
+    "round": _operator_round,
 }
 
 # These numpy.ndarray methods are just refs to an equivalent numpy function

@@ -828,6 +828,21 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=check_dtypes,
                           atol=tol, rtol=tol)
 
+  def testOperatorRound(self):
+    self.assertAllClose(round(onp.float32(7.532), 1),
+                        round(lnp.float32(7.5), 1), check_dtypes=True)
+    self.assertAllClose(round(onp.float32(1.234), 2),
+                        round(lnp.float32(1.234), 2), check_dtypes=True)
+    self.assertAllClose(round(onp.float32(1.234)),
+                        round(lnp.float32(1.234)), check_dtypes=False)
+    self.assertAllClose(round(onp.float32(7.532), 1),
+                        round(lnp.array(7.5, lnp.float32), 1), check_dtypes=True)
+    self.assertAllClose(round(onp.float32(1.234), 2),
+                        round(lnp.array(1.234, lnp.float32), 2), check_dtypes=True)
+    self.assertAllClose(round(onp.float32(1.234)),
+                        round(lnp.array(1.234, lnp.float32)),
+                        check_dtypes=False)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_mode={}_rpadwidth={}_rconstantvalues={}".format(
           jtu.format_shape_dtype_string(shape, dtype), mode, pad_width_rank,
