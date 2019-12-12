@@ -89,7 +89,7 @@ class JaxprTrace(Trace):
     if isinstance(pv, AbstractValue):
       return tracer
     elif pv is None:
-      aval = raise_to_shaped(get_aval(const))
+      aval = raise_to_shaped(get_aval(const), onp.isscalar(const))
       return JaxprTracer(self, PartialVal((aval, unit)), ConstVar(const))
     else:
       raise TypeError(pv)
