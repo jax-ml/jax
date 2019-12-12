@@ -35,7 +35,6 @@ from ..abstract_arrays import (ConcreteArray, ShapedArray, array_types,
 from ..util import partial, unzip2, concatenate, prod, safe_map
 from ..lib import xla_bridge as xb
 from .xla import aval_to_xla_shape, xla_destructure
-from .partial_eval import trace_to_subjaxpr, merge_pvals, JaxprTrace, PartialVal
 from .batching import broadcast, not_mapped
 from . import batching
 from . import partial_eval as pe
@@ -450,11 +449,11 @@ def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
       return fun.call_wrapped(*args)
 
   avals = tuple(map(partial(shard_aval, axis_size), avals))
-  pvals = [PartialVal((aval, core.unit)) for aval in avals]
-  pval = PartialVal([core.abstract_unit, core.unit])  # dummy value for axis env
-  with core.new_master(JaxprTrace, True) as master:
-    jaxpr, (out_pvals, consts, env) = \
-        trace_to_subjaxpr(dynamic_fun, master, False).call_wrapped([pval] + pvals)
+  pvals = [pe.PartialVal((aval, core.unit)) for aval in avals]
+  pval = pe.PartialVal([core.abstract_unit, core.unit])  # dummy value for axis env
+  with core.new_master(pe.StagingJaxprTrace, True) as master:
+    jaxpr, (out_pvals, consts, env) = pe.trace_to_subjaxpr(
+        dynamic_fun, master, False).call_wrapped([pval] + pvals)
     jaxpr.invars = jaxpr.invars[1:]  # ignore dummy
     assert not env
     del master
