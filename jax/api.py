@@ -1703,11 +1703,27 @@ def defvjp_all(fun, custom_vjp):
     args = tree_unflatten(params['in_tree'], args_flat)
     out, vjp = custom_vjp(*args)
     out_flat, out_tree = tree_flatten(out)
-    assert out_tree == params['out_tree']  # TODO(mattjj): better error message
+    if out_tree != params['out_tree']:
+      msg = (
+        "First output of `custom_vjp`: {} doesn't match the structure of "
+        "the output of `fun`: {}\n"
+        "{}\n"
+        "vs\n"
+        "{}\n".format(custom_vjp, fun, out_tree, params['out_tree'])
+      )
+      raise TypeError(msg)
     def vjp_flat(*cts_flat):
       cts = tree_unflatten(out_tree, cts_flat)
       args_cts_flat, in_tree2 = tree_flatten(vjp(cts))
-      assert in_tree == in_tree2  # TODO(mattjj): better error message
+      if in_tree != in_tree2:
+        msg = (
+          "Output of the `vjp`: {} doesn't match the structure of args of "
+          "`fun`: {}\n"
+          "{}\n"
+          "vs\n"
+          "{}\n".format(vjp, fun, in_tree2, in_tree)
+        )
+        raise TypeError(msg)
       return [core.unit] * num_consts + list(args_cts_flat)
     return out_flat, vjp_flat
   ad.defvjp_all(fun.prim, custom_transforms_vjp)
