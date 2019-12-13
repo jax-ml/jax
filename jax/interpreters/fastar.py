@@ -456,28 +456,6 @@ def _unbroadcast_slice(s, shape):
                for s, dim_sz in zip(s[len(s) - len(shape):], shape))
 
 
-def _sliceableop_update(func, old_out, output_mask,
-                        input_slices_from_output_slice, *args, **params):
-  """Update rule for operations where any slice of their (only) output can be
-  calculated by applying the operation itself to one slice of each input.
-
-  :param input_slices_from_output_slice:
-      Specifies which input slices are required for an output slice."""
-
-  outval, old_outmask = old_out
-  new_mask = output_mask & ~old_outmask
-  output_slices = _mask_to_slices(new_mask)
-  for output_slice in output_slices:
-    assert np.all(outval[output_slice] == _init_value)
-
-    input_slices = input_slices_from_output_slice(output_slice)
-    sliced_inputs = tuple(arg[s] for arg, s in zip(args, input_slices))
-    sliced_output = func.bind(*sliced_inputs, **params)
-    outval = index_update(outval, output_slice, sliced_output)
-
-  return Parray((outval, output_mask))
-
-
 # n-ary elementwise operators with broadcasting
 @curry
 def _nop_update(op, ans, *args):

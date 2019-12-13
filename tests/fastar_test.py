@@ -11,6 +11,7 @@ from jax.util import safe_map, safe_zip
 map = safe_map
 zip = safe_zip
 
+jtu.FLAGS.num_generated_cases = 50
 
 def increasing_masks(rng, *arrs_raw):
   idxs = shuffled_idxs(rng, *arrs_raw)
@@ -199,13 +200,16 @@ class FastarTest(jtu.JaxTestCase):
       'strides': strides, 'padding': padding, 'lhs_dilation': lhs_dilation,
       'dimension_numbers': dimension_numbers, 'lhs_perm': lhs_perm, 'rhs_perm': rhs_perm}
     for strides in ((1, 2), (2, 1))
-    for padding in ('SAME', 'VALID')
-    for lhs_dilation in ((1, 2), (2, 1))
+    for padding in (((0, 0), (0, 0)), 'VALID', 'SAME')
+    for lhs_dilation in (None, (1, 2))
     for dimension_numbers, (lhs_perm, rhs_perm) in (
             (("NCHW", "OIHW", "NCHW"), ((0, 1, 2, 3), (0, 1, 2, 3))),
             (("NHWC", "HWIO", "NHWC"), ((0, 2, 3, 1), (2, 3, 1, 0))),
             (("NCHW", "HWIO", "NHWC"), ((0, 1, 2, 3), (2, 3, 1, 0))))))
   def test_convolution(self, strides, padding, lhs_dilation, dimension_numbers, lhs_perm, rhs_perm):
+    if lhs_dilation is not None and isinstance(padding, str):
+      return # String padding is not implemented for transposed convolution, see conv_general_dilated implementation
+
     lhs_shape = (1, 2, 4, 4)
     rhs_shape = (3, 2, 3, 2)
     check(
