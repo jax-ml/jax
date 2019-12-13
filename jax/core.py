@@ -53,12 +53,6 @@ class Jaxpr(object):
     return str(pp_jaxpr(self))
   __repr__ = __str__
 
-  def __hash__(self):
-      return hash(str(self))
-
-  def __eq__(self, other):
-      return type(self) is type(other) and str(self) == str(other)
-
 class TypedJaxpr(object):
   def __init__(self, jaxpr, literals, in_avals, out_avals):
     assert type(jaxpr) is Jaxpr
