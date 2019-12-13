@@ -228,9 +228,9 @@ def zeros_like_shaped_array(aval):
 
 ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
 
-def raise_to_shaped(aval):
+def raise_to_shaped(aval, weak_type=False):
   if isinstance(aval, ShapedArray):
-    return ShapedArray(aval.shape, aval.dtype)
+    return ShapedArray(aval.shape, aval.dtype, weak_type=weak_type)
   elif aval is core.abstract_unit:
     return core.abstract_unit
   elif aval is abstract_token:
@@ -239,10 +239,6 @@ def raise_to_shaped(aval):
     raise TypeError(type(aval))
 
 core.literalable_types.update(array_types)
-
-def make_abstract_python_scalar(x):
-  return ShapedArray((), dtypes.python_scalar_dtypes[type(x)],
-                     weak_type=True)
 
 def _zeros_like_python_scalar(x):
   return onp.array(0, dtypes.python_scalar_dtypes[type(x)])

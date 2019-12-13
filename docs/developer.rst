@@ -73,7 +73,8 @@ Running the tests
 =================
 
 To run all the JAX tests, we recommend using ``pytest-xdist``, which can run tests in
-parallel. First, install ``pytest-xdist`` by running ``pip install pytest-xdist``.
+parallel. First, install ``pytest-xdist`` and ``pytest-benchmark`` by running
+``pip install pytest-xdist pytest-benchmark``.
 Then, from the repository root directory run
 
 .. code-block:: shell

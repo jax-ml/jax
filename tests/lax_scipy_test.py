@@ -59,6 +59,7 @@ def op_record(name, nargs, dtypes, rng_factory, test_grad, test_name=None):
 
 JAX_SPECIAL_FUNCTION_RECORDS = [
     # TODO: digamma has no JVP implemented.
+    op_record("betaln", 2, float_dtypes, jtu.rand_positive, False),
     op_record("digamma", 1, float_dtypes, jtu.rand_positive, False),
     op_record("erf", 1, float_dtypes, jtu.rand_small_positive, True),
     op_record("erfc", 1, float_dtypes, jtu.rand_small_positive, True),
@@ -128,7 +129,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     args = args_maker()
     self.assertAllClose(scipy_op(*args), lax_op(*args), atol=1e-3, rtol=1e-3,
                         check_dtypes=False)
-    self._CompileAndCheck(lax_op, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lax_op, args_maker, check_dtypes=True, rtol=1e-5)
 
     if test_autodiff:
       jtu.check_grads(lax_op, args, order=1, atol=1e-3, rtol=3e-3, eps=1e-3)

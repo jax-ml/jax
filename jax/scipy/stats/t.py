@@ -20,12 +20,12 @@ import numpy as onp
 import scipy.stats as osp_stats
 
 from ... import lax
-from ...numpy.lax_numpy import _promote_args_like, _constant_like, _wraps
+from ...numpy.lax_numpy import _promote_args_inexact, _constant_like, _wraps
 
 
 @_wraps(osp_stats.t.logpdf, update_doc=False)
 def logpdf(x, df, loc=0, scale=1):
-  x, df, loc, scale = _promote_args_like(osp_stats.t.logpdf, x, df, loc, scale)
+  x, df, loc, scale = _promote_args_inexact("t.logpdf", x, df, loc, scale)
   two = _constant_like(x, 2)
   scaled_x = lax.div(lax.sub(x, loc), scale)
   df_over_two = lax.div(df, two)

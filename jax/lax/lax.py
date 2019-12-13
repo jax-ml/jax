@@ -118,6 +118,10 @@ def sign(x):
   """
   return sign_p.bind(x)
 
+def nextafter(x1, x2):
+  r"""Returns the next representable value after `x1` in the direction of `x2`."""
+  return nextafter_p.bind(_brcast(x1, x2), _brcast(x2, x1))
+
 def floor(x):
   r"""Elementwise floor: :math:`\left\lfloor x \right\rfloor`."""
   return floor_p.bind(x)
@@ -184,13 +188,13 @@ def digamma(x):
 
 def bessel_i0e(x):
   r"""Exponentially scaled modified Bessel function of order 0:
-  :math:`\mathrm{i0e}(x) = e^{-\mathrm{abs}(x)} \mathrm{i0}(x)`
+  :math:`\mathrm{i0e}(x) = e^{-|x|} \mathrm{i0}(x)`
   """
   return bessel_i0e_p.bind(x)
 
 def bessel_i1e(x):
   r"""Exponentially scaled modified Bessel function of order 1:
-  :math:`\mathrm{i1e}(x) = e^{-\mathrm{abs}(x)} \mathrm{i1}(x)`
+  :math:`\mathrm{i1e}(x) = e^{-|x|} \mathrm{i1}(x)`
   """
   return bessel_i1e_p.bind(x)
 
@@ -350,6 +354,11 @@ def convert_element_type(operand, new_dtype):
     An array with the same shape as `operand`, cast elementwise to `new_dtype`.
   """
   new_dtype = dtypes.canonicalize_dtype(new_dtype)
+  # Avoids dropping precision by casting Python scalars to the default Jax
+  # type. If we passed a Python scalar directly to the bind call below, it is
+  # cast to the default type as part of the calling convention.
+  if type(operand) in dtypes.python_scalar_dtypes:
+    operand = onp.asarray(operand, new_dtype)
   old_dtype = dtypes.canonicalize_dtype(_dtype(operand))
   if old_dtype == new_dtype:
     return operand
@@ -484,15 +493,22 @@ def conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation=None,
   if type(dimension_numbers) is not ConvDimensionNumbers:
     dimension_numbers = conv_dimension_numbers(
         lhs.shape, rhs.shape, dimension_numbers)
-  if isinstance(padding, str):
-    lhs_perm, rhs_perm, _ = dimension_numbers
-    padding = padtype_to_pads(
-        onp.take(lhs.shape, lhs_perm)[2:], onp.take(rhs.shape, rhs_perm)[2:],
-        window_strides, padding)
   if lhs_dilation is None:
     lhs_dilation = (1,) * (lhs.ndim - 2)
+  elif isinstance(padding, str) and not len(lhs_dilation) == lhs_dilation.count(1):
+    raise ValueError(
+        "String padding is not implemented for transposed convolution "
+        "using this op. Please either exactly specify the required padding or "
+        "use conv_transpose.")
   if rhs_dilation is None:
     rhs_dilation = (1,) * (rhs.ndim - 2)
+  if isinstance(padding, str):
+    lhs_perm, rhs_perm, _ = dimension_numbers
+    rhs_shape = onp.take(rhs.shape, rhs_perm)[2:]
+    effective_rhs_shape = [(k-1) * r + 1 for k, r in zip(rhs_shape, rhs_dilation)]
+    padding = padtype_to_pads(
+        onp.take(lhs.shape, lhs_perm)[2:], effective_rhs_shape,
+        window_strides, padding)
   return conv_general_dilated_p.bind(
       lhs, rhs, window_strides=tuple(window_strides), padding=tuple(padding),
       lhs_dilation=tuple(lhs_dilation), rhs_dilation=tuple(rhs_dilation),
@@ -1364,7 +1380,7 @@ def dynamic_update_index_in_dim(operand, update, index, axis):
   return dynamic_update_slice_in_dim(operand, update, index, axis)
 
 
-def batch_matmul(lhs, rhs):
+def batch_matmul(lhs, rhs, precision=None):
   """Batch matrix multiplication."""
   if _min(lhs.ndim, rhs.ndim) < 2:
     raise ValueError('Arguments to batch_matmul must be at least 2D, got {}, {}'
@@ -1375,7 +1391,8 @@ def batch_matmul(lhs, rhs):
   lhs_contract = (lhs.ndim - 1,)
   rhs_contract = (rhs.ndim - 2,)
   batch = tuple(range(lhs.ndim - 2))
-  return dot_general(lhs, rhs, [(lhs_contract, rhs_contract), (batch, batch)])
+  return dot_general(lhs, rhs, [(lhs_contract, rhs_contract), (batch, batch)],
+                     precision=precision)
 
 
 # These functions also exist in the XLA client library, but we treat them
@@ -1617,6 +1634,10 @@ ad.deflinear(neg_p, lambda t: [neg(t)])
 
 sign_p = standard_unop(_num, 'sign')
 ad.defjvp_zero(sign_p)
+
+nextafter_p = standard_binop(
+  [_float, _float], 'nextafter',
+  translation_rule=lambda c, x1, x2: c.NextAfter(x1, x2))
 
 floor_p = standard_unop(_float, 'floor')
 ad.defjvp_zero(floor_p)
@@ -1983,7 +2004,9 @@ def _conv_general_dilated_transpose_rhs(
     dimension_numbers, feature_group_count,
     lhs_shape, rhs_shape, precision):
   assert type(dimension_numbers) is ConvDimensionNumbers
-
+  if onp.size(g) == 0:
+    # Avoids forming degenerate convolutions where the RHS has spatial size 0.
+    return ad_util.zero
   lhs_sdims, rhs_sdims, out_sdims = map(_conv_sdims, dimension_numbers)
   lhs_trans, rhs_trans, out_trans = map(_conv_spec_transpose, dimension_numbers)
   if feature_group_count > 1:
@@ -3412,7 +3435,7 @@ def _reduce_sum_translation_rule(c, operand, axes, input_shape):
   dtype = c.GetShape(operand).numpy_dtype()
   scalar = ShapedArray((), dtype)
   return c.Reduce(operand, c.Constant(onp.array(0, dtype)),
-                  xla.primitive_computation(add_p, scalar, scalar),
+                  xla.primitive_subcomputation(add_p, scalar, scalar),
                   axes)
 
 def _reduce_sum_transpose_rule(cotangent, input_shape, axes):
@@ -3436,7 +3459,7 @@ def _reduce_prod_translation_rule(c, operand, axes):
   dtype = c.GetShape(operand).numpy_dtype()
   scalar = ShapedArray((), dtype)
   return c.Reduce(operand, c.Constant(onp.array(1, dtype)),
-                  xla.primitive_computation(mul_p, scalar, scalar),
+                  xla.primitive_subcomputation(mul_p, scalar, scalar),
                   axes)
 
 def _reduce_prod_jvp_rule(tangent, operand, axes):
@@ -3482,7 +3505,7 @@ def _reduce_chooser_translation_rule(prim, identity, c, operand, axes):
   dtype = c.GetShape(operand).numpy_dtype()
   scalar = ShapedArray((), dtype)
   return c.Reduce(operand, c.Constant(identity(dtype)),
-                  xla.primitive_computation(prim, scalar, scalar), axes)
+                  xla.primitive_subcomputation(prim, scalar, scalar), axes)
 
 def _reduce_chooser_jvp_rule(g, ans, operand, axes):
   # TODO(mattjj): an alternative is to use variadic reduce to compute the chosen
@@ -3519,7 +3542,7 @@ def _reduce_logical_shape_rule(operand, axes):
 def _reduce_logical_translation_rule(prim, identity, c, operand, axes):
   scalar = ShapedArray((), onp.bool_)
   return c.Reduce(operand, c.Constant(identity(onp.bool_)),
-                  xla.primitive_computation(prim, scalar, scalar), axes)
+                  xla.primitive_subcomputation(prim, scalar, scalar), axes)
 
 _reduce_or_translation_rule = partial(_reduce_logical_translation_rule,
                                       or_p, _get_max_identity)
@@ -3582,7 +3605,7 @@ def _reduce_window_sum_translation_rule(c, operand, window_dimensions,
   dtype = c.GetShape(operand).numpy_dtype()
   scalar = ShapedArray((), dtype)
   return c.ReduceWindow(operand, c.Constant(onp.array(0, dtype)),
-                        xla.primitive_computation(add_p, scalar, scalar),
+                        xla.primitive_subcomputation(add_p, scalar, scalar),
                         window_dimensions, window_strides, padding)
 
 def _reduce_window_sum_transpose_rule(cotangent, window_dimensions,
@@ -3629,7 +3652,7 @@ def _reduce_window_chooser_translation_rule(
   dtype = c.GetShape(operand).numpy_dtype()
   scalar = ShapedArray((), dtype)
   return c.ReduceWindow(operand, c.Constant(identity(dtype)),
-                        xla.primitive_computation(prim, scalar, scalar),
+                        xla.primitive_subcomputation(prim, scalar, scalar),
                         window_dimensions, window_strides, padding)
 
 def _reduce_window_chooser_jvp_rule(prim, g, operand, window_dimensions,
@@ -3719,8 +3742,8 @@ def _select_and_scatter_add_translation(
     padding):
   dtype = c.GetShape(operand).numpy_dtype()
   scalar = ShapedArray((), dtype)
-  select = xla.primitive_computation(select_prim, scalar, scalar)
-  scatter = xla.primitive_computation(add_p, scalar, scalar)
+  select = xla.primitive_subcomputation(select_prim, scalar, scalar)
+  scatter = xla.primitive_subcomputation(add_p, scalar, scalar)
   zero = c.Constant(onp.array(0, dtype))
   return c.SelectAndScatter(operand, select, window_dimensions, window_strides,
                             padding, source, zero, scatter)
@@ -4281,7 +4304,8 @@ def _dilate_shape(shape, dilation):
     msg = "All dilations must be positive, got {}."
     raise TypeError(msg.format(dilation))
   dilation = (1,) * (len(shape) - len(dilation)) + tuple(dilation)
-  return onp.multiply(dilation, onp.subtract(shape, 1)) + 1
+  return onp.where(shape == 0, 0,
+                   onp.multiply(dilation, onp.subtract(shape, 1)) + 1)
 
 
 

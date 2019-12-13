@@ -17,13 +17,13 @@ limitations under the License.
 #define JAXLIB_PRNG_KERNELS_H_
 
 #include <cstddef>
+#include <string>
 
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
-#include "include/pybind11/pybind11.h"
 
 namespace jax {
 
-pybind11::bytes BuildCudaThreeFry2x32Descriptor(std::int64_t n);
+std::string BuildCudaThreeFry2x32Descriptor(std::int64_t n);
 
 void CudaThreeFry2x32(cudaStream_t stream, void** buffers, const char* opaque,
                       std::size_t opaque_len);

@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2019 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,21 +16,33 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import scipy.stats as osp_stats
+import pytest
+import numpy as np
+import six
 
-from ... import lax
-from ...numpy.lax_numpy import (_constant_like, _promote_args_inexact, _wraps,
-                                where, inf, logical_or)
+import jax
+from jax import numpy as jnp
+from jax.interpreters import xla
 
 
-@_wraps(osp_stats.uniform.logpdf, update_doc=False)
-def logpdf(x, loc=0, scale=1):
-  x, loc, scale = _promote_args_inexact("uniform.logpdf", x, loc, scale)
-  log_probs = lax.neg(lax.log(scale))
-  return where(logical_or(lax.gt(x, lax.add(loc, scale)),
-                          lax.lt(x, loc)),
-               -inf, log_probs)
+_abstractify_args = [
+  3,
+  3.5,
+  np.int32(3),
+  np.uint32(7),
+  np.random.randn(3, 4, 5, 6),
+  np.arange(100, dtype=np.float32),
+  jnp.int64(-3),
+  jnp.array([1, 2, 3])
+]
 
-@_wraps(osp_stats.uniform.pdf, update_doc=False)
-def pdf(x, loc=0, scale=1):
-  return lax.exp(logpdf(x, loc, scale))
+if six.PY3:
+  import enum
+  class AnEnum(enum.IntEnum):
+    A = 123
+    B = 456
+  _abstractify_args.append(AnEnum.B)
+
+@pytest.mark.parametrize("arg", _abstractify_args)
+def test_abstractify(benchmark, arg):
+  benchmark(xla.abstractify, arg)

@@ -56,9 +56,12 @@ def num_float_bits(dtype):
 
 float_dtypes = list(jtu.supported_dtypes().intersection(
   {dtypes.bfloat16, onp.float16, onp.float32, onp.float64}))
-complex_dtypes = [onp.complex64, onp.complex128]
+complex_elem_dtypes = list(jtu.supported_dtypes().intersection(
+    {onp.float32, onp.float64}))
+complex_dtypes = list(jtu.supported_dtypes().intersection(
+    {onp.complex64, onp.complex128}))
 inexact_dtypes = float_dtypes + complex_dtypes
-int_dtypes = [onp.int32, onp.int64]
+int_dtypes = list(jtu.supported_dtypes().intersection({onp.int32, onp.int64}))
 bool_dtypes = [onp.bool_]
 default_dtypes = float_dtypes + int_dtypes
 all_dtypes = float_dtypes + complex_dtypes + int_dtypes + bool_dtypes
@@ -78,6 +81,8 @@ LAX_OPS = [
     op_record("floor", 1, float_dtypes, jtu.rand_small),
     op_record("ceil", 1, float_dtypes, jtu.rand_small),
     op_record("round", 1, float_dtypes, jtu.rand_default),
+    op_record("nextafter", 2, [f for f in float_dtypes if f != dtypes.bfloat16],
+              jtu.rand_default, tol=0),
 
     op_record("is_finite", 1, float_dtypes, jtu.rand_small),
 
@@ -124,8 +129,8 @@ LAX_OPS = [
 
     op_record("real", 1, complex_dtypes, jtu.rand_default),
     op_record("imag", 1, complex_dtypes, jtu.rand_default),
-    op_record("complex", 2, [onp.float32, onp.float64], jtu.rand_default),
-    op_record("conj", 1, [onp.float32, onp.float64] + complex_dtypes,
+    op_record("complex", 2, complex_elem_dtypes, jtu.rand_default),
+    op_record("conj", 1, complex_elem_dtypes + complex_dtypes,
               jtu.rand_default),
     op_record("abs", 1, default_dtypes + complex_dtypes, jtu.rand_default),
     op_record("pow", 2, float_dtypes + complex_dtypes, jtu.rand_positive),
@@ -451,12 +456,13 @@ class LaxTest(jtu.JaxTestCase):
        "rhs_dilation": rhs_dilation, "dimension_numbers": dim_nums,
        "perms": perms, "rng_factory": rng_factory}
       for lhs_shape, rhs_shape in [
-          ((b, i, 9, 10), (j, i, 4, 5))
+          ((b, i, 9, w), (j, i, 4, 5))
+          for w in [0, 10]
           for b, i, j in itertools.product([2, 3], repeat=3)]
       for dtype in float_dtypes for strides in [(1, 1), (2, 1)]
-      for padding in [((1, 2), (2, 0))]
+      for padding in [((1, 2), (2, 0)), ((10, 8), (7, 13))]
       for lhs_dilation, rhs_dilation in itertools.product(
-          [(1, 1), (1, 2)], repeat=2)
+          [(1, 1), (1, 2), (1, 4)], repeat=2)
       for rng_factory in [jtu.rand_small]
       for dim_nums, perms in [
         (("NCHW", "OIHW", "NCHW"), ([0, 1, 2, 3], [0, 1, 2, 3])),
@@ -1598,93 +1604,99 @@ def grad_test_spec(op, nargs, order, rng_factory, dtypes, name=None, tol=None):
   return GradTestSpec(
       op, nargs, order, rng_factory, dtypes, name or op.__name__, tol)
 
+grad_float_dtypes = list(jtu.supported_dtypes().intersection(
+  {onp.float32, onp.float64}))
+grad_complex_dtypes = list(jtu.supported_dtypes().intersection(
+  {onp.complex64, onp.complex128}))
+grad_inexact_dtypes = grad_float_dtypes + grad_complex_dtypes
+
 LAX_GRAD_OPS = [
     grad_test_spec(lax.neg, nargs=1, order=2, rng_factory=jtu.rand_default,
-                   dtypes=[onp.float64, onp.complex64]),
+                   dtypes=grad_inexact_dtypes),
     grad_test_spec(lax.floor, nargs=1, order=2, rng_factory=jtu.rand_default,
-                   dtypes=[onp.float64]),
+                   dtypes=grad_float_dtypes),
     grad_test_spec(lax.ceil, nargs=1, order=2, rng_factory=jtu.rand_default,
-                   dtypes=[onp.float64]),
+                   dtypes=grad_float_dtypes),
     grad_test_spec(lax.round, nargs=1, order=2, rng_factory=jtu.rand_default,
-                   dtypes=[onp.float64]),
+                   dtypes=grad_float_dtypes),
 
     grad_test_spec(lax.exp, nargs=1, order=2, rng_factory=jtu.rand_small,
-                   dtypes=[onp.float64, onp.complex64]),
+                   dtypes=grad_inexact_dtypes),
     grad_test_spec(lax.expm1, nargs=1, order=2, rng_factory=jtu.rand_default,
-                   dtypes=[onp.float64, onp.complex64]),
+                   dtypes=grad_inexact_dtypes),
     grad_test_spec(lax.log, nargs=1, order=2, rng_factory=jtu.rand_positive,
-                   dtypes=[onp.float64, onp.complex64]),
+                   dtypes=grad_inexact_dtypes),
     grad_test_spec(lax.log1p, nargs=1, order=2, rng_factory=jtu.rand_positive,
-                   dtypes=[onp.float64, onp.complex64]),
+                   dtypes=grad_inexact_dtypes),
     grad_test_spec(lax.sinh, nargs=1, order=2, rng_factory=jtu.rand_default,
-                   dtypes=[onp.float64, onp.complex64], tol=1e-5),
+                   dtypes=grad_float_dtypes + [onp.complex64], tol=1e-5),
     grad_test_spec(lax.cosh, nargs=1, order=2, rng_factory=jtu.rand_default,
-                   dtypes=[onp.float64, onp.complex64], tol=1e-5),
+                   dtypes=grad_inexact_dtypes, tol=1e-5),
     grad_test_spec(lax.tanh, nargs=1, order=2, rng_factory=jtu.rand_default,
-                   dtypes=[onp.float64, onp.complex64], tol=1e-5),
+                   dtypes=grad_inexact_dtypes, tol=1e-5),
     grad_test_spec(lax.sin, nargs=1, order=2, rng_factory=jtu.rand_default,
-                   dtypes=[onp.float64, onp.complex64]),
+                   dtypes=grad_inexact_dtypes),
     grad_test_spec(lax.cos, nargs=1, order=2, rng_factory=jtu.rand_default,
-                   dtypes=[onp.float64, onp.complex64]),
+                   dtypes=grad_inexact_dtypes),
     grad_test_spec(lax.tan, nargs=1, order=2,
                    rng_factory=partial(jtu.rand_uniform, -1.3, 1.3),
-                   dtypes=[onp.float64, onp.complex64], tol=1e-3),
+                   dtypes=grad_inexact_dtypes, tol=1e-3),
     grad_test_spec(lax.asin, nargs=1, order=2,
                    rng_factory=partial(jtu.rand_uniform, -1.3, 1.3),
-                   dtypes=[onp.float64], tol=1e-3),
+                   dtypes=grad_float_dtypes, tol=1e-3),
     grad_test_spec(lax.acos, nargs=1, order=2,
                    rng_factory=partial(jtu.rand_uniform, -1.3, 1.3),
-                   dtypes=[onp.float64], tol=1e-3),
+                   dtypes=grad_float_dtypes, tol=1e-3),
     # TODO(proteneer): atan2 input is already a representation of a
     # complex number. Need to think harder about what this even means
     # if each input itself is a complex number.
     grad_test_spec(lax.atan2, nargs=2, order=2, rng_factory=jtu.rand_default,
-                   dtypes=[onp.float64]),
+                   dtypes=grad_float_dtypes),
 
     grad_test_spec(lax.erf, nargs=1, order=2, rng_factory=jtu.rand_small,
-                   dtypes=[onp.float64]),
+                   dtypes=grad_float_dtypes),
     grad_test_spec(lax.erfc, nargs=1, order=2, rng_factory=jtu.rand_small,
-                   dtypes=[onp.float64]),
+                   dtypes=grad_float_dtypes),
     grad_test_spec(lax.erf_inv, nargs=1, order=2, rng_factory=jtu.rand_small,
-                   dtypes=[onp.float64]),
+                   dtypes=grad_float_dtypes),
     # grad_test_spec(lax.lgamma, nargs=1, order=2, rng_factory=jtu.rand_small,
-    #                dtypes=[onp.float64]),  # TODO(mattjj): enable
+    #                dtypes=grad_float_dtypes),  # TODO(mattjj): enable
     grad_test_spec(lax.bessel_i0e, nargs=1, order=2, rng_factory=jtu.rand_default,
-                   dtypes=[onp.float64]),
+                   dtypes=grad_float_dtypes),
     grad_test_spec(lax.bessel_i1e, nargs=1, order=2, rng_factory=jtu.rand_default,
-                   dtypes=[onp.float64]),
+                   dtypes=grad_float_dtypes),
 
     grad_test_spec(lax.real, nargs=1, order=2, rng_factory=jtu.rand_default,
-                   dtypes=[onp.complex64]),
+                   dtypes=grad_complex_dtypes),
     grad_test_spec(lax.imag, nargs=1, order=2, rng_factory=jtu.rand_default,
-                   dtypes=[onp.complex64]),
+                   dtypes=grad_complex_dtypes),
     grad_test_spec(lax.complex, nargs=2, order=2, rng_factory=jtu.rand_default,
-                   dtypes=[onp.float32]),
+                   dtypes=grad_float_dtypes),
     grad_test_spec(lax.conj, nargs=1, order=2, rng_factory=jtu.rand_default,
-                   dtypes=[onp.float32, onp.complex64]),
+                   dtypes=grad_inexact_dtypes),
     grad_test_spec(lax.abs, nargs=1, order=2, rng_factory=jtu.rand_positive,
-                   dtypes=[onp.float64, onp.complex64]),
+                   dtypes=grad_inexact_dtypes),
     grad_test_spec(lax.pow, nargs=2, order=2, rng_factory=jtu.rand_positive,
-                   dtypes=[onp.float64, onp.complex64]),
+                   dtypes=grad_inexact_dtypes),
 
     grad_test_spec(lax.add, nargs=2, order=2, rng_factory=jtu.rand_default,
-                   dtypes=[onp.float64, onp.complex64]),
+                   dtypes=grad_inexact_dtypes),
     grad_test_spec(lax.sub, nargs=2, order=2, rng_factory=jtu.rand_default,
-                   dtypes=[onp.float64, onp.complex64]),
+                   dtypes=grad_inexact_dtypes),
     grad_test_spec(lax.mul, nargs=2, order=2, rng_factory=jtu.rand_default,
-                   dtypes=[onp.float64, onp.complex64]),
+                   dtypes=grad_inexact_dtypes),
     grad_test_spec(lax.div, nargs=2, order=1, rng_factory=jtu.rand_not_small,
-                   dtypes=[onp.float64, onp.complex64]),
+                   dtypes=grad_inexact_dtypes),
 
     grad_test_spec(lax.max, nargs=2, order=2, rng_factory=jtu.rand_default,
-                   dtypes=[onp.float64]),
+                   dtypes=grad_float_dtypes),
     grad_test_spec(lax.min, nargs=2, order=2, rng_factory=jtu.rand_default,
-                   dtypes=[onp.float64]),
+                   dtypes=grad_float_dtypes),
     # TODO(mattjj): make some-equal checks more robust, enable second-order
     # grad_test_spec(lax.max, nargs=2, order=1, rng_factory=jtu.rand_some_equal,
-    #                dtypes=[onp.float64], name="MaxSomeEqual"),
+    #                dtypes=grad_float_dtypes, name="MaxSomeEqual"),
     # grad_test_spec(lax.min, nargs=2, order=1, rng_factory=jtu.rand_some_equal,
-    #                dtypes=[onp.float64], name="MinSomeEqual"),
+    #                dtypes=grad_float_dtypes, name="MinSomeEqual"),
 ]
 
 GradSpecialValuesTestSpec = collections.namedtuple(
@@ -1881,20 +1893,21 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        "strides": strides, "padding": padding, "lhs_dil": lhs_dil,
        "rhs_dil": rhs_dil, "rng_factory": rng_factory, "dimension_numbers": dim_nums,
        "perms": perms, "feature_group_count": feature_group_count}
-      for lhs_shape, rhs_shape, all_strides, all_pads, lhs_dils, rhs_dils in [
-          ((b, i, 6, 7),  # lhs_shape
+      for lhs_shapes, rhs_shape, all_strides, lhs_dils, rhs_dils in [
+          ([(b, i, 6, 7), (b, i, 0, 4)],  # lhs_shape
            (j, i, 1, 2),  # rhs_shape
            [(1, 1), (1, 2), (2, 1)],  # strides
-           [((0, 0), (0, 0)), ((1, 0), (0, 1)), ((0, -1), (0, 0))],  # pads
            [(1, 1), (2, 1)],  # lhs_dils
            [(1, 1), (2, 2)])  # rhs_dils
           for b, i, j in itertools.product([1, 2], repeat=3)]
+      for lhs_shape in lhs_shapes
       for feature_group_count in [1, 2]
       for strides in all_strides
       for rhs_dil in rhs_dils
       for lhs_dil in lhs_dils
       for dtype in float_dtypes
-      for padding in all_pads
+      for padding in ([((0, 0), (0, 0)), ((1, 0), (0, 1))] +
+        ([((0, -1), (0, 0))] if lhs_shape[2] != 0 else []))
       for dim_nums, perms in [
           (("NCHW", "OIHW", "NCHW"), ([0, 1, 2, 3], [0, 1, 2, 3])),
           (("NHWC", "HWIO", "NHWC"), ([0, 2, 3, 1], [2, 3, 1, 0])),
@@ -1906,7 +1919,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
                                  padding, lhs_dil, rhs_dil, dimension_numbers,
                                  perms, feature_group_count, rng_factory):
     rng = rng_factory()
-    tol = {dtypes.bfloat16: 3e-1, onp.float16: 5e-1, onp.float32: 1e-4}
+    tol = {dtypes.bfloat16: 1e-0, onp.float16: 5e-1, onp.float32: 1e-4}
 
     # permute shapes to match dim_spec, scale by feature_group_count
     lhs_perm, rhs_perm = perms

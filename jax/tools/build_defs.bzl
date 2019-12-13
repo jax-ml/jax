@@ -153,7 +153,7 @@ EOF
     native.genrule(
         name = name + "_jax_to_hlo_genrule",
         outs = [name + ".pb", name + ".txt"],
-        tools = [runner],
+        exec_tools = [runner],
         cmd = """
         JAX_PLATFORM_NAME=cpu \
         '$(location {runner})' \

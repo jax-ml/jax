@@ -27,6 +27,7 @@ import numpy as onp
 import six
 from six.moves import reduce
 
+from ..config import flags
 from .. import core
 from .. import linear_util as lu
 from ..abstract_arrays import (ConcreteArray, ShapedArray, array_types,
@@ -34,12 +35,13 @@ from ..abstract_arrays import (ConcreteArray, ShapedArray, array_types,
 from ..util import partial, unzip2, concatenate, prod, safe_map
 from ..lib import xla_bridge as xb
 from .xla import aval_to_xla_shape, xla_destructure
-from .partial_eval import trace_to_subjaxpr, merge_pvals, JaxprTrace, PartialVal
 from .batching import broadcast, not_mapped
 from . import batching
 from . import partial_eval as pe
 from . import xla
 from . import ad
+
+FLAGS = flags.FLAGS
 
 _map = safe_map
 
@@ -436,21 +438,38 @@ def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
   else:
     global_axis_size = axis_size
 
+  log_priority = logging.WARNING if FLAGS.jax_log_compiles else logging.DEBUG
+  logging.log(log_priority,
+              "Compiling {} for {} devices with args {}.".format(
+                  fun.__name__, global_axis_size, avals))
+
   @lu.wrap_init
   def dynamic_fun(dummy, *args):
     with extend_dynamic_axis_env(axis_name, dummy.trace, global_axis_size):
       return fun.call_wrapped(*args)
 
   avals = tuple(map(partial(shard_aval, axis_size), avals))
-  pvals = [PartialVal((aval, core.unit)) for aval in avals]
-  pval = PartialVal([core.abstract_unit, core.unit])  # dummy value for axis env
-  with core.new_master(JaxprTrace, True) as master:
-    jaxpr, (out_pvals, consts, env) = \
-        trace_to_subjaxpr(dynamic_fun, master, False).call_wrapped([pval] + pvals)
+  pvals = [pe.PartialVal((aval, core.unit)) for aval in avals]
+  pval = pe.PartialVal([core.abstract_unit, core.unit])  # dummy value for axis env
+  with core.new_master(pe.StagingJaxprTrace, True) as master:
+    jaxpr, (out_pvals, consts, env) = pe.trace_to_subjaxpr(
+        dynamic_fun, master, False).call_wrapped([pval] + pvals)
     jaxpr.invars = jaxpr.invars[1:]  # ignore dummy
     assert not env
     del master
   out_pvs, out_consts = unzip2(out_pvals)
+
+  # TODO(skye,mattjj): allow more collectives on multi-host as we test them, but
+  # for now raise an error
+  if devices is not None:
+    is_multi_host_pmap = any(d.host_id != xb.host_id() for d in devices)
+  else:
+    is_multi_host_pmap = xb.host_count() > 1
+  if is_multi_host_pmap:
+    used_collectives = set(xla.jaxpr_collectives(jaxpr))
+    if not used_collectives.issubset(multi_host_supported_collectives):
+      msg = "using collectives that aren't supported for multi-host: {}"
+      raise TypeError(msg.format(", ".join(map(str, used_collectives))))
 
   if all(pv is None for pv in out_pvs):
     # When the output doesn't depend on the input we don't need to compile an
@@ -505,6 +524,8 @@ def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
                         axis_size, tuple_args)
   handle_outs = _pvals_to_results_handler(axis_size, num_local_replicas, out_pvals)
   return partial(execute_replicated, compiled, backend, num_local_replicas, handle_args, handle_outs)
+
+multi_host_supported_collectives = set()
 
 class ResultToPopulate(object): pass
 result_to_populate = ResultToPopulate()

@@ -20,6 +20,7 @@ from functools import partial
 
 import numpy as onp
 import warnings
+import textwrap
 
 from jax import jit
 from .. import lax
@@ -134,6 +135,32 @@ def eigh(a, UPLO=None, symmetrize_input=True):
 def eigvalsh(a, UPLO='L'):
   w, _ = eigh(a, UPLO)
   return w
+
+
+@_wraps(onp.linalg.pinv, lax_description=textwrap.dedent("""\
+    It differs only in default value of `rcond`. In `numpy.linalg.pinv`, the
+    default `rcond` is `1e-15`. Here the default is
+    `10. * max(num_rows, num_cols) * np.finfo(dtype).eps`.
+    """))
+def pinv(a, rcond=None):
+  # ported from https://github.com/numpy/numpy/blob/v1.17.0/numpy/linalg/linalg.py#L1890-L1979
+  a = np.conj(a)
+  # copied from https://github.com/tensorflow/probability/blob/master/tensorflow_probability/python/math/linalg.py#L442
+  if rcond is None:
+      max_rows_cols = max(a.shape[-2:])
+      rcond = 10. * max_rows_cols * np.finfo(a.dtype).eps
+  rcond = np.asarray(rcond)
+  u, s, v = svd(a, full_matrices=False)
+  # Singular values less than or equal to ``rcond * largest_singular_value`` 
+  # are set to zero.
+  cutoff = rcond[..., np.newaxis] * np.amax(s, axis=-1, keepdims=True)
+  large = s > cutoff
+  s = np.divide(1, s)
+  s = np.where(large, s, 0)
+  vT = np.swapaxes(v, -1, -2)
+  uT = np.swapaxes(u, -1, -2)
+  res = np.matmul(vT, np.multiply(s[..., np.newaxis], uT))
+  return lax.convert_element_type(res, a.dtype)
 
 
 @_wraps(onp.linalg.inv)

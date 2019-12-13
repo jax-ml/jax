@@ -176,6 +176,7 @@ build:mkl_open_source_only --define=tensorflow_mkldnn_contraction_kernel=1
 
 # Sets the default Apple platform to macOS.
 build --apple_platform_type=macos
+build --macos_minimum_os=10.9
 
 # Make Bazel print out all options from rc files.
 build --announce_rc

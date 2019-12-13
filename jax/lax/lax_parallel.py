@@ -191,7 +191,7 @@ def _allreduce_split_axis_rule(prim, reducer, vals, which_mapped, axis_name):
 def _allreduce_translation_rule(prim, c, val, replica_groups, backend=None):
   dtype = c.GetShape(val).numpy_dtype()
   scalar = ShapedArray((), dtype)
-  computation = xla.primitive_computation(prim, scalar, scalar, backend=backend)
+  computation = xla.primitive_subcomputation(prim, scalar, scalar, backend=backend)
   return c.AllReduce(val, computation, replica_groups=replica_groups)
 
 # psum translation rule has special handling for complex dtypes
@@ -210,6 +210,7 @@ pxla.split_axis_rules[psum_p] = \
 xla.parallel_translations[psum_p] = _psum_translation_rule
 pxla.parallel_pure_rules[psum_p] = lambda x, shape: x * prod(shape)
 ad.deflinear(psum_p, lambda t, axis_name: [psum(t, axis_name)])
+pxla.multi_host_supported_collectives.add(psum_p)
 
 
 pmax_p = standard_pmap_primitive('pmax')

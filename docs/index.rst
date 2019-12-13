@@ -39,6 +39,7 @@ For an introduction to JAX, start at the
    gpu_memory_allocation
    profiling
    rank_promotion_warning
+   type_promotion
 
 .. toctree::
    :maxdepth: 2
