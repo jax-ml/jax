@@ -26,7 +26,7 @@ import numpy as onp
 import scipy.special
 import scipy.stats
 
-from jax import api, safe_zip, safe_map
+from jax import api
 from jax import lax
 from jax import numpy as np
 from jax import random
@@ -37,8 +37,6 @@ from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
-zip = safe_zip
-map = safe_map
 
 class LaxRandomTest(jtu.JaxTestCase):
 
