@@ -1,0 +1,14 @@
+{
+    "commit_hash": "d946075feda3bafeb21a29af59436433e46f5123",
+    "install_checksum": [
+        "",
+        600,
+        "JAX",
+        null,
+        [
+            "in-dir={env_dir} python -mpip install --upgrade jax jaxlib"
+        ],
+        null
+    ],
+    "version": 1
+}

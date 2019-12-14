@@ -1,0 +1,9 @@
+{
+    "arch": "x86_64",
+    "cpu": "Intel(R) Core(TM) i5-7300HQ CPU @ 2.50GHz",
+    "machine": "joaogui1",
+    "num_cpu": "4",
+    "os": "Linux 5.0.0-37-generic",
+    "ram": "8079364",
+    "version": 1
+}
