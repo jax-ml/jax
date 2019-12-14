@@ -8,9 +8,8 @@ import jax.core as jc
 import jax.interpreters.partial_eval as pe
 import jax.lax as lax
 import jax.linear_util as lu
-import jax.numpy as np
 import jax.scipy.special as special
-from jax import abstract_arrays, jit as jit_
+from jax import numpy as np, abstract_arrays, jit as jit_
 from jax.ad_util import zeros_like_aval
 from jax.api_util import flatten_fun_nokwargs
 from jax.interpreters import xla
@@ -465,7 +464,7 @@ def _nop_update(op, ans, *args):
   new_ans_mask = reduce(and_, arg_masks)
   slices = _mask_to_slices(new_ans_mask & ~ ans_mask)
   for s in slices:
-    part_args = [a[_unbroadcast_slice(s, np.shape(a))] for a in args]
+    part_args = [a[_unbroadcast_slice(s, onp.shape(a))] for a in args]
     ans = index_update(ans, s, op.bind(*part_args))
   return Parray((ans, new_ans_mask))
 
@@ -514,7 +513,7 @@ def _logexpit_update(op, ans, x, **params):
   (ans, ans_mask), = ans
   slices = _mask_to_slices(x_mask & ~ ans_mask)
   for s in slices:
-    part_x = x[_unbroadcast_slice(s, np.shape(x))]
+    part_x = x[_unbroadcast_slice(s, onp.shape(x))]
     ans = index_update(ans, s, op.bind(part_x, **params)[0])
   return [Parray((ans, x_mask))]
 
@@ -603,7 +602,7 @@ def _reduce_update(op, ans, a, **params):
       a_slice.insert(axis, slice(None))
     a_part = a[tuple(a_slice)]
     if 'input_shape' in params:
-      params['input_shape'] = np.shape(a_part)
+      params['input_shape'] = onp.shape(a_part)
     ans = index_update(ans, s, op.bind(a_part, **params))
   return Parray((ans, new_ans_mask))
 
@@ -711,9 +710,8 @@ def _pad_update(old_out, input, padding_value, padding_config):
   output_mask[unpad_slice] = cropped_input_mask
   if new_padding_value_mask:
     for s in pad_slices():
-      outval = index_update(outval, s, np.broadcast_to(padding_value,
-                                                       output_mask[
-                                                         s].shape))
+      outval = index_update(outval, s, onp.broadcast_to(
+        padding_value, output_mask[s].shape))
       output_mask[s] = True
 
   cropped_input_new_mask = cropped_input_mask & ~unpad(old_outmask)
@@ -743,7 +741,7 @@ update_rules[lax.pad_p] = _pad_update
 
 def _conv_general_dilated_outmask(lhs_mask, rhs_mask, **params):
   # Note: we assume that rhs_mask doesn't change
-  lhs_mask, rhs_mask = np.float32(lhs_mask), np.float32(rhs_mask)
+  lhs_mask, rhs_mask = onp.float32(lhs_mask), onp.float32(rhs_mask)
   out = onp.array(lax.conv_general_dilated(lhs_mask, rhs_mask, **params))
   full_out = onp.array(lax.conv_general_dilated(
     onp.ones_like(lhs_mask), onp.ones_like(rhs_mask), **params))
@@ -755,8 +753,8 @@ def _conv_general_dilated_update_slice_op(
         lhs_dilation=None, rhs_dilation=None, dimension_numbers=None,
         precision=None):
   lhs_spec, rhs_spec, out_spec = dimension_numbers
-  lhs_shape = onp.take(np.shape(lhs), lhs_spec)
-  rhs_shape = onp.take(np.shape(rhs), rhs_spec)
+  lhs_shape = onp.take(onp.shape(lhs), lhs_spec)
+  rhs_shape = onp.take(onp.shape(rhs), rhs_spec)
   out_slc = [slc[i] for i in out_spec]
   pad_low, _ = onp.transpose(padding)
   window_shape = lax.lax._dilate_shape(rhs_shape, rhs_dilation)[2:]
@@ -796,7 +794,7 @@ def _conv_general_dilated_update(old_out, lhs, rhs, window_strides, padding,
   lhs, lhs_mask = lhs
   rhs, rhs_mask = rhs
 
-  if not np.all(rhs_mask) or feature_group_count > 1:
+  if not onp.all(rhs_mask) or feature_group_count > 1:
     raise NotImplementedError
 
   outval, old_outmask = old_out
