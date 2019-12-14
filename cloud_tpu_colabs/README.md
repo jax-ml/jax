@@ -22,6 +22,9 @@ Solve the wave equation with `pmap`, and make cool movies! The spatial domain is
 
 ![](https://raw.githubusercontent.com/google/jax/master/cloud_tpu_colabs/images/wave_movie.gif)
 
+### [JAX Demo](https://colab.research.google.com/github/google/jax/blob/master/cloud_tpu_colabs/NeurIPS_2019_JAX_demo.ipynb)
+An overview of JAX presented at the Program Transformations for ML workshop at NeurIPS 2019. Covers basic numpy usage, grad, jit, vmap, and pmap.
+
 ## Performance notes
 
 The [guidance on running TensorFlow on TPUs](https://cloud.google.com/tpu/docs/performance-guide) applies to JAX as well, with the exception of TensorFlow-specific details. Here we highlight a few important details that are particularly relevant to using TPUs in JAX.
