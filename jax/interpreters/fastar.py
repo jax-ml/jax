@@ -356,9 +356,6 @@ def _update_env(fun, args, env):
   return tree_unflatten(out_tree, ans), env
 
 
-_init_value = 0
-
-
 def _unbroadcast_slice(s, shape):
   return tuple(s if dim_sz > 1 else slice(None)
                for s, dim_sz in zip(s[len(s) - len(shape):], shape))
