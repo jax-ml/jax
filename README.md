@@ -282,7 +282,7 @@ print(normalize(np.arange(4.)))
 # prints [0.         0.16666667 0.33333334 0.5       ]
 ```
 
-You can even [nest `pmap` functions](https://github.com/google/jax) for more
+You can even [nest `pmap` functions](https://colab.sandbox.google.com/github/google/jax/blob/master/cloud_tpu_colabs/Pmap_Cookbook.ipynb#scrollTo=MdRscR5MONuN) for more
 sophisticated communication patterns.
 
 It all composes, so you're free to differentiate through parallel computations:
@@ -314,8 +314,9 @@ print(grad(lambda x: np.sum(f(x)))(x))
 When reverse-mode differentiating a `pmap` function (e.g. with `grad`), the
 backward pass of the computation is parallelized just like the forward pass.
 
-See the [SPMD Cookbook](https://github.com/google/jax) and the [SPMD MNIST
-classifier from scratch
+See the [SPMD
+Cookbook](https://colab.sandbox.google.com/github/google/jax/blob/master/cloud_tpu_colabs/Pmap_Cookbook.ipynb)
+and the [SPMD MNIST classifier from scratch
 example](https://github.com/google/jax/blob/master/examples/spmd_mnist_classifier_fromscratch.py)
 for more.
 
