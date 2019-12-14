@@ -12,6 +12,7 @@ import jax.scipy.special as special
 from jax import numpy as np, abstract_arrays, jit as jit_
 from jax.ad_util import zeros_like_aval
 from jax.api_util import flatten_fun_nokwargs
+from jax.fastar_util import true_mask, false_mask, mask_all, HashableMask, mask_to_slices
 from jax.interpreters import xla
 from jax.ops import index_update
 from jax.tree_util import (
@@ -21,98 +22,6 @@ from jax.util import partial, unzip3, cache
 
 map = safe_map
 zip = safe_zip
-
-
-def true_mask(val):
-  return onp.full(onp.shape(val), True, dtype=bool)
-
-
-def false_mask(val):
-  return onp.full(onp.shape(val), False, dtype=bool)
-
-
-def _mask_all(parray):
-  _, mask = parray
-  return onp.all(mask)
-
-
-class HashableMask(object):
-  def __init__(self, mask):
-    self.mask = mask
-
-  def __hash__(self):
-    return hash(self.mask.tostring())
-
-  def __eq__(self, other):
-    return onp.all(self.mask == other.mask)
-
-
-def _to_tree(idxs):
-  tree = {}
-  for idx in idxs:
-    branch = tree
-    for i in idx:
-      branch = branch.setdefault(i, {})
-  return tree
-
-
-def _contains_rectangle(idx_tree, rectangle):
-  """
-  Return True if rectangle is contained in idx_tree, else False.
-  """
-  (start, stop), rectangle = rectangle[0], rectangle[1:]
-  return all(
-    n in idx_tree
-    and (not rectangle or _contains_rectangle(idx_tree[n], rectangle))
-    for n in range(start, stop))
-
-
-def _remove_rectangle(idx_tree, rectangle):
-  (start, stop), rectangle = rectangle[0], rectangle[1:]
-  new_tree = {}
-  for root, branch in idx_tree.items():
-    if start <= root < stop:
-      if rectangle:
-        new_branch = _remove_rectangle(branch, rectangle)
-        if new_branch:
-          new_tree[root] = new_branch
-    else:
-      new_tree[root] = branch
-  return new_tree
-
-
-def _find_rectangle(idx_tree):
-  """
-  Greedily find a rectangle in idx_tree.
-  """
-  start = min(idx_tree.keys())
-  stop = start + 1
-  branch = idx_tree[start]
-  if branch:
-    rect = _find_rectangle(branch)
-    while stop in idx_tree and _contains_rectangle(idx_tree[stop], rect):
-      stop += 1
-    return ((start, stop),) + rect
-  else:
-    while stop in idx_tree:
-      stop += 1
-    return (start, stop),
-
-
-def _mask_to_slices(mask):
-  """
-  Greedily search for rectangular slices in mask.
-  """
-  if onp.shape(mask) == ():
-    return [()] if mask else []
-
-  rectangles = []
-  idx_tree = _to_tree(onp.argwhere(mask))
-  while idx_tree:
-    rect = _find_rectangle(idx_tree)
-    rectangles.append(rect)
-    idx_tree = _remove_rectangle(idx_tree, rect)
-  return [tuple(slice(s, e) for s, e in rect) for rect in rectangles]
 
 
 def _get_aval(x):
@@ -392,10 +301,10 @@ def accelerate_sections(fixed_point_fun, jit_every=10):
     x = tree_map(lambda arr: parray(arr, false_mask(arr)), x)
     x, env = _init_env(fp, [x])
     i = 1
-    while not _mask_all(x) and i < jit_every:
+    while not mask_all(x) and i < jit_every:
       x, env = _update_env(fp, [x], env)
       i = i + 1
-    if _mask_all(x):
+    if mask_all(x):
       return x, None
     else:
       return x, Partial(accelerated_section, fp_args, env)
@@ -404,10 +313,10 @@ def accelerate_sections(fixed_point_fun, jit_every=10):
   def accelerated_section(fp_args, env, x):
     fp = fixed_point_fun(*fp_args)
     i = 0
-    while not _mask_all(x) and i < jit_every:
+    while not mask_all(x) and i < jit_every:
       x, env = _update_env(fp, [x], env)
       i = i + 1
-    if _mask_all(x):
+    if mask_all(x):
       return x, None
     else:
       return x, Partial(accelerated_section, fp_args, env)
@@ -462,7 +371,7 @@ def _nop_update(op, ans, *args):
   args = map(np.asarray, args)
   ans, ans_mask = ans
   new_ans_mask = reduce(and_, arg_masks)
-  slices = _mask_to_slices(new_ans_mask & ~ ans_mask)
+  slices = mask_to_slices(new_ans_mask & ~ ans_mask)
   for s in slices:
     part_args = [a[_unbroadcast_slice(s, onp.shape(a))] for a in args]
     ans = index_update(ans, s, op.bind(*part_args))
@@ -511,7 +420,7 @@ for op in _nops:
 def _logexpit_update(op, ans, x, **params):
   x, x_mask = x
   (ans, ans_mask), = ans
-  slices = _mask_to_slices(x_mask & ~ ans_mask)
+  slices = mask_to_slices(x_mask & ~ ans_mask)
   for s in slices:
     part_x = x[_unbroadcast_slice(s, onp.shape(x))]
     ans = index_update(ans, s, op.bind(part_x, **params)[0])
@@ -595,7 +504,7 @@ def _reduce_update(op, ans, a, **params):
   ans, ans_mask = ans
   axes = params['axes']
   new_ans_mask = onp.all(a_mask, axes)
-  slices = _mask_to_slices(new_ans_mask & ~ ans_mask)
+  slices = mask_to_slices(new_ans_mask & ~ ans_mask)
   for s in slices:
     a_slice = list(s)
     for axis in axes:
@@ -646,7 +555,7 @@ def _dot_general_update(ans, a, b, dimension_numbers, precision=None):
           a_mask[(Ellipsis,) + len(b_outr_dims) * (onp.newaxis,)]
           & b_mask[btch_ndim * (slice(None),)
                    + len(a_outr_dims) * (onp.newaxis,)])
-  for s in _mask_to_slices(new_ansmask & ~ ansmask):
+  for s in mask_to_slices(new_ansmask & ~ ansmask):
     s_btch, s_a, s_b = (s[:btch_ndim],
                         s[btch_ndim:btch_ndim + len(a_outr_dims)],
                         s[btch_ndim + len(a_outr_dims):])
@@ -715,7 +624,7 @@ def _pad_update(old_out, input, padding_value, padding_config):
       output_mask[s] = True
 
   cropped_input_new_mask = cropped_input_mask & ~unpad(old_outmask)
-  cropped_input_slices = _mask_to_slices(cropped_input_new_mask)
+  cropped_input_slices = mask_to_slices(cropped_input_new_mask)
   for cropped_input_slice in cropped_input_slices:
     output_slice = tuple(
       slice((lo if lo > 0 else 0) + s.start * (interior + 1),
@@ -810,7 +719,7 @@ def _conv_general_dilated_update(old_out, lhs, rhs, window_strides, padding,
   #   assert dimension_numbers.out_spec == tuple(range(np.ndim(outval)))
 
   new_mask = outmask & ~old_outmask
-  for slice in _mask_to_slices(new_mask):
+  for slice in mask_to_slices(new_mask):
     outval = _conv_general_dilated_update_slice_op(
       slice, outval, lhs, rhs, window_strides, padding,
       lhs_dilation, rhs_dilation, dimension_numbers, precision)

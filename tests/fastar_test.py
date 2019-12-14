@@ -5,13 +5,12 @@ import jax.lax as lax
 import jax.scipy.special as special
 from jax import numpy as np, jit
 from jax import test_util as jtu
-from jax.interpreters.fastar import accelerate_part, Parray, false_mask, _mask_to_slices
+from jax.interpreters.fastar import accelerate_part, Parray
+from jax.fastar_util import false_mask, mask_to_slices
 from jax.util import safe_map, safe_zip
 
 map = safe_map
 zip = safe_zip
-
-jtu.FLAGS.num_generated_cases = 50
 
 def increasing_masks(rng, *arrs_raw):
   idxs = shuffled_idxs(rng, *arrs_raw)
@@ -226,13 +225,13 @@ class FastarTest(jtu.JaxTestCase):
     check(lambda x, y: jit(lambda x: x * y)(x), (1,), (1,))
 
   def test_mask_to_slices(self):
-    assert _mask_to_slices(False) == []
-    assert _mask_to_slices(True) == [()]
-    assert _mask_to_slices(onp.array(False)) == []
-    assert _mask_to_slices(onp.array(True)) == [()]
-    assert _mask_to_slices(onp.array([True, False, False, True, True])) == [
+    assert mask_to_slices(False) == []
+    assert mask_to_slices(True) == [()]
+    assert mask_to_slices(onp.array(False)) == []
+    assert mask_to_slices(onp.array(True)) == [()]
+    assert mask_to_slices(onp.array([True, False, False, True, True])) == [
       (slice(0, 1, None),), (slice(3, 5, None),)]
-    assert _mask_to_slices(onp.array([
+    assert mask_to_slices(onp.array([
       [True, True, False],
       [True, True, True],
       [True, True, False]])) == [
