@@ -354,9 +354,9 @@ Some standouts:
 
 ## Installation
 
-JAX is written in pure Python, but it depends on XLA, which needs to be compiled
-and installed as the `jaxlib` package. Use the following instructions to
-install a binary package with `pip`, or to build JAX from source.
+JAX is written in pure Python, but it depends on XLA, which needs to be
+installed as the `jaxlib` package. Use the following instructions to install a
+binary package with `pip`, or to build JAX from source.
 
 We support installing or building `jaxlib` on Linux (Ubuntu 16.04 or later) and
 macOS (10.12 or later) platforms, but not yet Windows. We're not currently
