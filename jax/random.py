@@ -951,7 +951,8 @@ def categorical(key, logits, axis=-1, shape=()):
 
   Args:
     key: a PRNGKey used as the random key.
-    logits: Unnormalized log probabilities of the categorical distribution(s) to sample from.
+    logits: Unnormalized log probabilities of the categorical distribution(s) to sample from, so that
+    `softmax(logits, axis)` gives the corresponding probabilities.
     axis: Specifies the axis along which logits belong to the same categorical distribution.
     shape: Specifies how many samples to take per categorical distribution and in what shape to arrange them.
 
