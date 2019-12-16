@@ -1,13 +1,16 @@
 import numpy as onp
 from absl.testing import parameterized
+from jax.tree_util import Partial
 
 import jax.lax as lax
 import jax.scipy.special as special
 from jax import numpy as np, jit
 from jax import test_util as jtu
-from jax.experimental.fastar import accelerate_part, Parray
+from jax.experimental.fastar import Parray, _init_env, _update_env
 from jax.fastar_util import false_mask, mask_to_slices
 from jax.util import safe_map, safe_zip
+
+jit_ = jit
 
 map = safe_map
 zip = safe_zip
@@ -75,6 +78,19 @@ def check(fun, *shapes, **kwargs):
   check_custom_input(fun, lambda rng: tuple(rng.randn(*shape)
                                             for shape in shapes), **kwargs)
 
+def accelerate_part(fun, jit=True):
+  def fast_fun(env, *args):
+    ans, env = _update_env(fun, args, env)
+    return ans, Partial(fast_fun, env)
+
+  fast_fun = jit_(fast_fun) if jit else fast_fun
+
+  def first_fun(*args):
+    ans, env = _init_env(fun, args)
+    return ans, Partial(fast_fun, env)
+
+  first_fun = jit_(first_fun) if jit else first_fun
+  return first_fun
 
 class FastarTest(jtu.JaxTestCase):
   @parameterized.named_parameters(

@@ -279,22 +279,7 @@ def _protect_parrays():
 
 
 ## High level API
-def accelerate_part(fun, jit=True):
-  def fast_fun(env, *args):
-    ans, env = _update_env(fun, args, env)
-    return ans, Partial(fast_fun, env)
-
-  fast_fun = jit_(fast_fun) if jit else fast_fun
-
-  def first_fun(*args):
-    ans, env = _init_env(fun, args)
-    return ans, Partial(fast_fun, env)
-
-  first_fun = jit_(first_fun) if jit else first_fun
-  return first_fun
-
-
-def accelerate_sections(fixed_point_fun, jit_every=10):
+def accelerate(fixed_point_fun, jit_every=10):
   @jit_
   def accelerated_start(fp_args, x):
     fp = fixed_point_fun(*fp_args)
