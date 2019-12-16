@@ -1,6 +1,8 @@
-# Example Cloud TPU notebooks
+# JAX Cloud TPU Preview
 
-JAX now runs on Cloud TPUs!
+JAX now runs on Cloud TPUs! **This is a preview**, and we're still working on it. Help us out by kicking the tires, and letting us know on [the issue tracker](https://github.com/google/jax/issues) if you run into any problems.
+
+## Example Cloud TPU notebooks
 
 The following notebooks showcase how to use and what you can do with Cloud TPUs on Colab:
 
