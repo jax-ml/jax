@@ -634,7 +634,7 @@ class LaxTest(jtu.JaxTestCase):
        "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
        "precision": precision, "rng_factory": rng_factory}
       for lhs_shape in [(3,), (4, 3)] for rhs_shape in [(3,), (3, 6)]
-      for dtype in default_dtypes
+      for dtype in all_dtypes
       for precision in [None, lax.Precision.DEFAULT, lax.Precision.HIGH,
                         lax.Precision.HIGHEST]
       for rng_factory in [jtu.rand_default]))
@@ -651,7 +651,7 @@ class LaxTest(jtu.JaxTestCase):
        "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
        "rng_factory": rng_factory}
       for lhs_shape in [(3,), (4, 3)] for rhs_shape in [(3,), (3, 6)]
-      for dtype in default_dtypes
+      for dtype in all_dtypes
       for rng_factory in [jtu.rand_default]))
   def testDotAgainstNumpy(self, lhs_shape, rhs_shape, dtype, rng_factory):
     rng = rng_factory()
@@ -680,7 +680,7 @@ class LaxTest(jtu.JaxTestCase):
           [(1, 2, 2, 3), (1, 2, 3, 1), [1], [1]],
           [(3, 2), (2, 4), [1], [0]],
       ]
-      for dtype in default_dtypes
+      for dtype in all_dtypes
       for rng_factory in [jtu.rand_small]))
   def testDotGeneralContractOnly(self, lhs_shape, rhs_shape, dtype,
                                  lhs_contracting, rhs_contracting, rng_factory):
@@ -705,7 +705,7 @@ class LaxTest(jtu.JaxTestCase):
           ((3, 3, 2), (3, 2, 4), (([2], [1]), ([0], [0]))),
           ((3, 4, 2, 4), (3, 4, 3, 2), (([2], [3]), ([0, 1], [0, 1]))),
       ]
-      for dtype in default_dtypes
+      for dtype in all_dtypes
       for rng_factory in [jtu.rand_small]))
   def testDotGeneralContractAndBatch(self, lhs_shape, rhs_shape, dtype,
                                      dimension_numbers, rng_factory):
@@ -729,7 +729,7 @@ class LaxTest(jtu.JaxTestCase):
           ((3, 3, 2), (3, 2, 4), (([2], [1]), ([0], [0]))),
           ((3, 4, 2, 4), (3, 4, 3, 2), (([2], [3]), ([0, 1], [0, 1]))),
       ]
-      for dtype in default_dtypes
+      for dtype in all_dtypes
       for rng_factory in [jtu.rand_small]))
   def testDotGeneralAgainstNumpy(self, lhs_shape, rhs_shape, dtype,
                                  dimension_numbers, rng_factory):
