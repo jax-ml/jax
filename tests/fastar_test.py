@@ -5,7 +5,7 @@ import jax.lax as lax
 import jax.scipy.special as special
 from jax import numpy as np, jit
 from jax import test_util as jtu
-from jax.interpreters.fastar import accelerate_part, Parray
+from jax.experimental.fastar import accelerate_part, Parray
 from jax.fastar_util import false_mask, mask_to_slices
 from jax.util import safe_map, safe_zip
 
