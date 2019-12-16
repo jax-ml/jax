@@ -76,12 +76,14 @@ def get_squares_(size):
   return values
 
 class Linalg:
-  params = [['svd', 'pinv', 'det', 'norm'], [10, 100, 200]]
+  params = [['cholesky', 'svd', 'pinv', 'det', 'norm'], [10, 20, 100]]
   param_names = ['op', 'size']
 
   def setup(self, op, size):
     self.func = getattr(linalg, op)
     self.a = get_squares_(size)
+    if op == 'cholesky':
+      self.a *= self.a.T
 
   def time_op(self, op, size):
     self.func(self.a)
