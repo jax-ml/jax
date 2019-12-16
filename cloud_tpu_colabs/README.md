@@ -1,6 +1,6 @@
 # JAX Cloud TPU Preview
 
-JAX now runs on Cloud TPUs! **This is a preview**, and we're still working on it. Help us out by kicking the tires, and letting us know on [the issue tracker](https://github.com/google/jax/issues) if you run into any problems.
+JAX now runs on Cloud TPUs! **This is a preview**, and we're still working on it. Help us out by kicking the tires, and letting us know if you run into any problems (see the [Reporting issues](#reporting-issues) section below).
 
 ## Example Cloud TPU notebooks
 
