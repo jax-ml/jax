@@ -2657,9 +2657,13 @@ def _gather(arr, treedef, static_idx, dynamic_idx):
   indexer = _index_to_gather(shape(arr), idx)  # shared with _scatter_update
   y = arr
 
-  # We avoid generating a gather when indexer.gather_indices.size is empty
-  # unless indexer.slice_shape also corresponds to an empty array.
-  if indexer.gather_indices.size or not _prod(indexer.slice_shape):
+  # Avoid calling gather if the slice shape is empty, both as a fast path and to
+  # handle cases like zeros(0)[array([], int32)].
+  if _prod(indexer.slice_shape) == 0:
+    return zeros(indexer.slice_shape, dtype=y.dtype)
+
+  # We avoid generating a gather when indexer.gather_indices.size is empty.
+  if indexer.gather_indices.size:
     y = lax.gather(y, indexer.gather_indices, indexer.dnums,
                    indexer.gather_slice_shape)
 
