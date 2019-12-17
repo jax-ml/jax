@@ -1185,7 +1185,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           onp.dtype(out_dtype).name if out_dtype else "None"),
        "shape": shape, "fill_value_dtype": fill_value_dtype,
        "out_dtype": out_dtype, "rng_factory": jtu.rand_default}
-      for shape in array_shapes
+      for shape in array_shapes + [3, onp.array(7, dtype=onp.int32)]
       for fill_value_dtype in default_dtypes
       for out_dtype in [None] + default_dtypes))
   def testFull(self, shape, fill_value_dtype, out_dtype, rng_factory):
@@ -1195,6 +1195,23 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng((), fill_value_dtype)]
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(
+    jtu.cases_from_list(
+      {"testcase_name": ("_op={}_shape={}_dtype={}").format(op, shape, dtype),
+       "onp_op": getattr(onp, op), "lnp_op": getattr(lnp, op),
+       "shape": shape, "dtype": dtype}
+      for op in ["zeros", "ones"]
+      for shape in [2, (), (2,), (3, 0), onp.array((4, 5, 6), dtype=onp.int32),
+                    onp.array(4, dtype=onp.int32)]
+      for dtype in all_dtypes))
+  def testZerosOnes(self, onp_op, lnp_op, shape, dtype):
+    rng = jtu.rand_default()
+    def args_maker(): return []
+    onp_op = partial(onp_op, shape, dtype)
+    lnp_op = partial(lnp_op, shape, dtype)
+    self._CheckAgainstNumpy(onp_op, lnp_op, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_op, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_filldtype={}_outdtype={}".format(

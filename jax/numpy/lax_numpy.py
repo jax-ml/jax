@@ -1704,6 +1704,7 @@ def ones_like(x, dtype=None):
 @_wraps(onp.full)
 def full(shape, fill_value, dtype=None):
   lax._check_user_dtype_supported(dtype, "full")
+  shape = (shape,) if ndim(shape) == 0 else shape
   return lax.full(shape, fill_value, dtype)
 
 
@@ -1719,7 +1720,7 @@ def zeros(shape, dtype=None):
     raise TypeError("expected sequence object with len >= 0 or a single integer")
   lax._check_user_dtype_supported(dtype, "zeros")
   dtype = float_ if dtype is None else dtype
-  shape = (shape,) if isscalar(shape) else shape
+  shape = (shape,) if ndim(shape) == 0 else shape
   return lax.full(shape, 0, dtype)
 
 @_wraps(onp.ones)
@@ -1728,7 +1729,7 @@ def ones(shape, dtype=None):
     raise TypeError("expected sequence object with len >= 0 or a single integer")
   lax._check_user_dtype_supported(dtype, "ones")
   dtype = float_ if dtype is None else dtype
-  shape = (shape,) if isscalar(shape) else shape
+  shape = (shape,) if ndim(shape) == 0 else shape
   return lax.full(shape, 1, dtype)
 
 
