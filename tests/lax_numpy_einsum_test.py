@@ -23,6 +23,7 @@ import numpy as onp
 from absl.testing import absltest
 from absl.testing import parameterized
 
+from jax import lax
 import jax.numpy as np
 import jax.test_util as jtu
 
@@ -38,10 +39,8 @@ class EinsumTest(jtu.JaxTestCase):
 
   def _check(self, s, *ops):
     a = onp.einsum(s, *ops)
-    b = np.einsum(s, *ops)
-
-    atol = 2e-1 if jtu.device_under_test() == "tpu" else 1e-4
-    self.assertAllClose(a, b, atol=atol, rtol=1e-4, check_dtypes=True)
+    b = np.einsum(s, *ops, precision=lax.Precision.HIGHEST)
+    self.assertAllClose(a, b, atol=1e-4, rtol=1e-4, check_dtypes=True)
 
   def test_three_operands_1(self):
     r = rng()
