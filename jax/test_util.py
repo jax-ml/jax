@@ -344,6 +344,8 @@ def format_shape_dtype_string(shape, dtype):
     return '{}[{}]'.format(dtype_str(dtype), shapestr)
   elif type(shape) is int:
     return '{}[{},]'.format(dtype_str(dtype), shape)
+  elif isinstance(shape, onp.ndarray):
+    return '{}[{}]'.format(dtype_str(dtype), shape)
   else:
     raise TypeError(type(shape))
 
