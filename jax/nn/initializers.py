@@ -116,12 +116,12 @@ def delta_orthogonal(scale=1.0, column_axis=-1):
     W = np.zeros(shape)
     if len(shape) == 3:
       k = shape[0]
-      return ops.index_update(W, [(k-1)//2, ...], ortho_matrix)
+      return ops.index_update(W, ops.index[(k-1)//2, ...], ortho_matrix)
     elif len(shape) == 4:
       k1, k2 = shape[:2]
-      return ops.index_update(W, [(k1-1)//2, (k2-1)//2, ...], ortho_matrix)
+      return ops.index_update(W, ops.index[(k1-1)//2, (k2-1)//2, ...], ortho_matrix)
     else:
       k1, k2, k3 = shape[:3]
-      return ops.index_update(W, [(k1-1)//2, (k2-1)//2, (k3-1)//2, ...],
+      return ops.index_update(W, ops.index[(k1-1)//2, (k2-1)//2, (k3-1)//2, ...],
                               ortho_matrix)
   return init
