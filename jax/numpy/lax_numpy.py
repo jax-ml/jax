@@ -388,6 +388,12 @@ def _one_to_one_binop(numpy_fn, lax_fn, promote_to_inexact=False):
     fn = lambda x1, x2: lax_fn(*_promote_args(numpy_fn.__name__, x1, x2))
   return _wraps(numpy_fn)(fn)
 
+def _maybe_bool_binop(numpy_fn, lax_fn, bool_lax_fn):
+  def fn(x1, x2):
+    x1, x2 = _promote_args(numpy_fn.__name__, x1, x2)
+    return lax_fn(x1, x2) if x1.dtype != bool_ else bool_lax_fn(x1, x2)
+  return _wraps(numpy_fn)(fn)
+
 absolute = abs = _one_to_one_unop(onp.absolute, lax.abs)
 fabs = _one_to_one_unop(onp.fabs, lax.abs, True)
 bitwise_not = _one_to_one_unop(onp.bitwise_not, lax.bitwise_not)
@@ -413,14 +419,14 @@ tanh = _one_to_one_unop(onp.tanh, lax.tanh, True)
 sqrt = _one_to_one_unop(onp.sqrt, lax.sqrt, True)
 
 
-add = _one_to_one_binop(onp.add, lax.add)
+add = _maybe_bool_binop(onp.add, lax.add, lax.bitwise_or)
 bitwise_and = _one_to_one_binop(onp.bitwise_and, lax.bitwise_and)
 bitwise_or = _one_to_one_binop(onp.bitwise_or, lax.bitwise_or)
 bitwise_xor = _one_to_one_binop(onp.bitwise_xor, lax.bitwise_xor)
 right_shift = _one_to_one_binop(onp.right_shift, lax.shift_right_arithmetic)
 left_shift = _one_to_one_binop(onp.left_shift, lax.shift_left)
 equal = _one_to_one_binop(onp.equal, lax.eq)
-multiply = _one_to_one_binop(onp.multiply, lax.mul)
+multiply = _maybe_bool_binop(onp.multiply, lax.mul, lax.bitwise_and)
 not_equal = _one_to_one_binop(onp.not_equal, lax.ne)
 subtract = _one_to_one_binop(onp.subtract, lax.sub)
 arctan2 = _one_to_one_binop(onp.arctan2, lax.atan2, True)
@@ -2244,7 +2250,9 @@ def einsum_path(subscripts, *operands, **kwargs):
 @partial(jit, static_argnums=(1, 2))
 def _einsum(operands, contractions, precision):
   operands = list(_promote_dtypes(*operands))
-  sum = lambda x, axes: lax.reduce(x, onp.array(0, x.dtype), lax.add, axes)
+  def sum(x, axes):
+    return lax.reduce(x, onp.array(0, x.dtype),
+                      lax.add if x.dtype != bool_ else lax.bitwise_or, axes)
 
   def sum_uniques(operand, names, uniques):
     if uniques:

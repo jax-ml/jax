@@ -535,18 +535,6 @@ def dot(lhs, rhs, precision=None):
   Returns:
     An array containing the product.
   """
-  # TODO(b/134526360): XLA doesn't support integer dots, so we emit a sum of
-  # products instead.
-  if dtypes.issubdtype(lhs.dtype, onp.integer):
-    lhs_shape = onp.shape(lhs)
-    lhs_ndim = len(lhs_shape)
-    rhs_ndim = onp.ndim(rhs)
-    if rhs_ndim > 1:
-      lhs = broadcast_in_dim(lhs, lhs_shape + (1,), tuple(range(len(lhs_shape))))
-    if lhs_ndim > 1:
-      rhs = broadcast(rhs, (1,))
-    return reduce(mul(lhs, rhs), _zero(lhs), add, (len(lhs_shape) - 1,))
-
   if 1 <= lhs.ndim <= 2 and 1 <= rhs.ndim <= 2 and lhs.shape[-1] == rhs.shape[0]:
     return dot_general(lhs, rhs, (((lhs.ndim - 1,), (0,)), ((), ())),
                        precision=precision)
@@ -576,9 +564,9 @@ def dot_general(lhs, rhs, dimension_numbers, precision=None):
   contract_dims, batch_dims = dimension_numbers
   contract_dims = tuple(map(tuple, contract_dims))
   batch_dims = tuple(map(tuple, batch_dims))
-  if dtypes.issubdtype(lhs.dtype, onp.integer):
-    # TODO(b/134526360): XLA doesn't support integer dots, so we emit a sum of
-    # products instead.
+  if not dtypes.issubdtype(lhs.dtype, onp.inexact):
+    # TODO(b/134526360): XLA doesn't support bool or integer dots, so we emit a
+    # sum of products instead.
     lhs_contract_dims, rhs_contract_dims = contract_dims
     lhs_batch_dims, rhs_batch_dims = batch_dims
     lhs_noncontract_dims = tuple(sorted(
@@ -589,16 +577,19 @@ def dot_general(lhs, rhs, dimension_numbers, precision=None):
                     lhs_batch_dims + lhs_noncontract_dims + lhs_contract_dims)
     rhs = transpose(rhs,
                     rhs_batch_dims + rhs_noncontract_dims + rhs_contract_dims)
-    new_lhs_shape = onp.insert(
-      onp.shape(lhs), len(lhs_batch_dims) + len(lhs_noncontract_dims),
-      (1,) * len(rhs_noncontract_dims))
-    new_rhs_shape = onp.insert(onp.shape(rhs), len(lhs_batch_dims),
+    new_lhs_shape = onp.insert(onp.array(onp.shape(lhs), dtype=onp.int64),
+                               len(lhs_batch_dims) + len(lhs_noncontract_dims),
+                               (1,) * len(rhs_noncontract_dims))
+    new_rhs_shape = onp.insert(onp.array(onp.shape(rhs), dtype=onp.int64),
+                               len(lhs_batch_dims),
                                (1,) * len(lhs_noncontract_dims))
     lhs = reshape(lhs, new_lhs_shape)
     rhs = reshape(rhs, new_rhs_shape)
     out_ndim = (len(lhs_batch_dims) + len(lhs_noncontract_dims) +
                 len(rhs_noncontract_dims))
-    return reduce(mul(lhs, rhs), _zero(lhs), add,
+    op_product = bitwise_and if lhs.dtype == onp.bool_ else mul
+    op_sum = bitwise_or if lhs.dtype == onp.bool_ else add
+    return reduce(op_product(lhs, rhs), _zero(lhs), op_sum,
                   tuple(range(out_ndim, out_ndim + len(lhs_contract_dims))))
 
   return dot_general_p.bind(lhs, rhs,
@@ -1526,7 +1517,7 @@ def unop_dtype_rule(result_dtype, accepted_dtypes, name, aval, **kwargs):
   if not any(dtypes.issubdtype(aval.dtype, t) for t in accepted_dtypes):
     msg = '{} does not accept dtype {}. Accepted dtypes are subtypes of {}.'
     typename = str(onp.dtype(aval.dtype).name)
-    accepted_typenames = (str(onp.dtype(t).name) for t in accepted_dtypes)
+    accepted_typenames = (t.__name__ for t in accepted_dtypes)
     raise TypeError(msg.format(name, typename, ', '.join(accepted_typenames)))
   return result_dtype(aval.dtype)
 
@@ -1548,7 +1539,7 @@ def binop_dtype_rule(result_dtype, accepted_dtypes, name, *avals, **kwargs):
       msg = ('{} does not accept dtype {} at position {}. '
              'Accepted dtypes at position {} are subtypes of {}.')
       typename = str(onp.dtype(aval_dtype).name)
-      typenames = ', '.join(str(onp.dtype(t).name) for t in types)
+      typenames = ', '.join(t.__name__ for t in types)
       raise TypeError(msg.format(name, typename, i, i, typenames))
   _check_same_dtypes(name, False, *aval_dtypes)
   return result_dtype(*avals)
@@ -1611,7 +1602,7 @@ def _brcast_to(x, shape):
     return broadcast(x, shape)
 
 
-_float = {onp.floating, dtypes.bfloat16}
+_float = {onp.floating}
 _complex = {onp.complexfloating}
 _complex_elem_types = {onp.float32, onp.float64}
 _int = {onp.integer}
@@ -3384,6 +3375,12 @@ reduce_p = standard_reduction_primitive(_reduce_shape_rule, _input_dtype, 'reduc
 batching.primitive_batchers[reduce_p] = _reduce_batch_rule
 
 
+def _reduce_number_dtype_rule(name, operand, *args, **kw):
+  if not dtypes.issubdtype(operand.dtype, onp.number):
+    raise TypeError("{} does not accept dtype {}. Accepted dtypes are subtypes "
+                    "of number.".format(name, onp.dtype(operand.dtype).name))
+  return dtypes.canonicalize_dtype(operand.dtype)
+
 def _reduce_sum_shape_rule(operand, axes, input_shape):
   assert operand.shape == input_shape, ('{} != {}'
                                         .format(operand.shape, input_shape))
@@ -3402,8 +3399,9 @@ def _reduce_sum_transpose_rule(cotangent, input_shape, axes):
   assert result.shape == input_shape
   return [result]
 
-reduce_sum_p = standard_primitive(_reduce_sum_shape_rule, _input_dtype,
-                                  'reduce_sum', _reduce_sum_translation_rule)
+reduce_sum_p = standard_primitive(
+  _reduce_sum_shape_rule, partial(_reduce_number_dtype_rule, 'reduce_sum'),
+  'reduce_sum', _reduce_sum_translation_rule)
 ad.deflinear(reduce_sum_p, _reduce_sum_transpose_rule)
 batching.defreducer(reduce_sum_p)
 _masking_defreducer(reduce_sum_p,
@@ -3450,8 +3448,9 @@ def _reduce_prod_jvp_rule(tangent, operand, axes):
   # Multiply partial products with the tangents and sum.
   return _reduce_sum(mul(tangent, mul(left_products, right_products)), (0,))
 
-reduce_prod_p = standard_primitive(_reduce_prod_shape_rule, _input_dtype,
-                                   'reduce_prod', _reduce_prod_translation_rule)
+reduce_prod_p = standard_primitive(
+  _reduce_prod_shape_rule, partial(_reduce_number_dtype_rule, 'reduce_prod'),
+  'reduce_prod', _reduce_prod_translation_rule)
 ad.defjvp(reduce_prod_p, _reduce_prod_jvp_rule)
 batching.defreducer(reduce_prod_p)
 
