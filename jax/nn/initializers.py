@@ -24,10 +24,10 @@ from functools import partial
 
 import numpy as onp
 
+import jax.numpy as np
 from jax import lax
 from jax import ops
 from jax import random
-import jax.numpy as np
 
 def zeros(key, shape, dtype=np.float32): return np.zeros(shape, dtype)
 def ones(key, shape, dtype=np.float32): return np.ones(shape, dtype)
