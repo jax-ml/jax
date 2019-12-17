@@ -409,6 +409,30 @@ class LaxRandomTest(jtu.JaxTestCase):
       # eigenvectors follow a standard normal distribution.
       self._CheckKolmogorovSmirnovCDF(whitened.ravel(), scipy.stats.norm().cdf)
 
+  def testMultivariateNormalCovariance(self):
+    # test code based on https://github.com/google/jax/issues/1869
+    N = 100000
+    cov = np.array([[ 0.19,  0.00, -0.13,  0.00],
+                   [  0.00,  0.29,  0.00, -0.23],
+                   [ -0.13,  0.00,  0.39,  0.00],
+                   [  0.00, -0.23,  0.00,  0.49]])
+    mean = np.zeros(4)
+
+    out_onp = onp.random.RandomState(0).multivariate_normal(mean, cov, N)
+
+    key = random.PRNGKey(0)
+    out_jnp = random.multivariate_normal(key, mean=mean, cov=cov, shape=(N,))
+
+    var_onp = out_onp.var(axis=0)
+    var_jnp = out_jnp.var(axis=0)
+    self.assertAllClose(var_onp, var_jnp, rtol=1e-2, atol=1e-2,
+                        check_dtypes=False)
+
+    var_onp = onp.cov(out_onp, rowvar=False)
+    var_jnp = onp.cov(out_jnp, rowvar=False)
+    self.assertAllClose(var_onp, var_jnp, rtol=1e-2, atol=1e-2,
+                        check_dtypes=False)
+
   def testIssue222(self):
     x = random.randint(random.PRNGKey(10003), (), 0, 0)
     assert x == 0

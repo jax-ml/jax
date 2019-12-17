@@ -39,8 +39,8 @@ from jax.lib import xla_bridge
 from jax.lib import cuda_prng
 from jax import core
 from jax import abstract_arrays
+from jax.numpy.linalg import cholesky
 from jax.scipy.special import logit
-from jax.scipy.linalg import cholesky
 from jax.interpreters import batching
 from jax.interpreters import xla
 
