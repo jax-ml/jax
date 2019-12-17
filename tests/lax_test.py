@@ -658,7 +658,9 @@ class LaxTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
     tol = {
       onp.float16: 1e-2,
-      onp.float64: max(jtu.default_tolerance()[onp.dtype(onp.float64)], 1e-14)
+      onp.float64: max(jtu.default_tolerance()[onp.dtype(onp.float64)], 1e-14),
+      onp.complex128: max(jtu.default_tolerance()[onp.dtype(onp.complex128)],
+                          1e-14)
     }
     lax_op = partial(lax.dot, precision=lax.Precision.HIGHEST)
     self._CheckAgainstNumpy(lax_op, lax_reference.dot, args_maker, tol=tol)
