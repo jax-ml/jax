@@ -85,7 +85,7 @@ class _ThreadLocalState(threading.local):
 
 _thread_local_state = _ThreadLocalState()
 
-def jit(fun, static_argnums=(), device=None, backend=None):
+def jit(fun, static_argnums=(), device=None):
   """Sets up `fun` for just-in-time compilation with XLA.
 
   Args:
@@ -107,8 +107,6 @@ def jit(fun, static_argnums=(), device=None, backend=None):
       Optional, the Device the jitted function will run on. (Available devices
       can be retrieved via ``jax.devices()``.) The default is inherited from
       XLA's DeviceAssignment logic and is usually to use ``jax.devices()[0]``.
-    backend: This is an experimental feature and the API is likely to change.
-      Optional, a string representing the xla backend. 'cpu','gpu', or 'tpu'.
 
   Returns:
     A wrapped version of `fun`, set up for just-in-time compilation.
@@ -147,7 +145,7 @@ def jit(fun, static_argnums=(), device=None, backend=None):
     args_flat, in_tree = tree_flatten((dyn_args, kwargs))
     _check_args(args_flat)
     flat_fun, out_tree = flatten_fun(f, in_tree)
-    out = xla.xla_call(flat_fun, *args_flat, device=device, backend=backend)
+    out = xla.xla_call(flat_fun, *args_flat, device=device)
     return tree_unflatten(out_tree(), out)
 
   jitted_name =  "jit({}, static_argnums={})"

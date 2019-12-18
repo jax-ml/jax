@@ -220,7 +220,7 @@ def _execute_compiled_primitive(prim, compiled, backend, tuple_args,
   device, = compiled.local_devices()
   input_bufs = [device_put(x, device) for x in args if x is not token]
   if tuple_args:
-    input_bufs = [make_tuple(input_bufs, device, backend)]
+    input_bufs = [make_tuple(input_bufs, device)]
   out_buf = compiled.Execute(input_bufs)
   if FLAGS.jax_debug_nans:
     check_nans(prim, out_buf.destructure() if prim.multiple_results else out_buf)
@@ -424,8 +424,7 @@ def eqn_collectives(eqn):
 
 def _xla_call_impl(fun, *args, **params):
   device = params['device']
-  backend = params['backend']
-  compiled_fun = _xla_callable(fun, device, backend, *map(abstractify, args))
+  compiled_fun = _xla_callable(fun, device, *map(abstractify, args))
   try:
     return compiled_fun(*args)
   except FloatingPointError:
@@ -434,7 +433,7 @@ def _xla_call_impl(fun, *args, **params):
     return fun.call_wrapped(*args)  # probably won't return
 
 @lu.cache
-def _xla_callable(fun, device, backend, *abstract_args):
+def _xla_callable(fun, device, *abstract_args):
   pvals = [pe.PartialVal((aval, core.unit)) for aval in abstract_args]
   with core.new_master(pe.StagingJaxprTrace, True) as master:
     jaxpr, (pvals, consts, env) = pe.trace_to_subjaxpr(fun, master, False).call_wrapped(pvals)
@@ -447,18 +446,20 @@ def _xla_callable(fun, device, backend, *abstract_args):
   # which are often produced from partial evaluation, don't need compilation,
   # and don't need to force their (potentially lazy) arguments.
   if not jaxpr.eqns:
-    device = _get_device(device, backend)
+    if device is None:
+      device, = xb.get_backend().get_default_device_assignment(1)
     return partial(_execute_trivial, jaxpr, device, consts, result_handlers)
 
   log_priority = logging.WARNING if FLAGS.jax_log_compiles else logging.DEBUG
   logging.log(log_priority,
               "Compiling {} for args {}.".format(fun.__name__, abstract_args))
 
+  backend = xb.get_device_backend(device)
   nreps = jaxpr_replicas(jaxpr)
-  if nreps > xb.device_count(backend):
+  if nreps > backend.device_count():
     msg = ("compiling computation that requires {} replicas, but only {} XLA "
             "devices are available")
-    raise ValueError(msg.format(nreps, xb.device_count(backend)))
+    raise ValueError(msg.format(nreps, backend.device_count()))
   axis_env = AxisEnv(nreps, [], [])
 
   if xb.host_count() > 1 and (nreps > 1 or jaxpr_has_pmap(jaxpr)):
@@ -471,19 +472,19 @@ def _xla_callable(fun, device, backend, *abstract_args):
   c = xb.make_computation_builder("jit_{}".format(fun.__name__))
   xla_consts = _map(c.Constant, consts)
   xla_args = _xla_callable_args(c, abstract_args, tuple_args)
-  out_nodes = jaxpr_subcomp(c, jaxpr, backend, axis_env, xla_consts, (), *xla_args)
+  out_nodes = jaxpr_subcomp(c, jaxpr, backend.platform, axis_env, xla_consts, (), *xla_args)
   built = c.Build(c.Tuple(*out_nodes))
 
   if device is not None and nreps > 1:
     raise ValueError("can't specify device assignment for jit-of-pmap")
   options = xb.get_compile_options(
       num_replicas=nreps, device_assignment=(device.id,) if device else None)
-  compiled = built.Compile(compile_options=options, backend=xb.get_backend(backend))
+  compiled = built.Compile(compile_options=options, backend=backend)
 
   if nreps == 1:
-    return partial(_execute_compiled, compiled, backend, result_handlers, tuple_args)
+    return partial(_execute_compiled, compiled, result_handlers, tuple_args)
   else:
-    return partial(_execute_replicated, compiled, backend, result_handlers, tuple_args)
+    return partial(_execute_replicated, compiled, result_handlers, tuple_args)
 
 def _xla_callable_args(c, avals, tuple_args):
   if not tuple_args:
@@ -506,21 +507,21 @@ def _pval_to_result_handler(pval):
   else:
     return aval_to_result_handler(pv)
 
-def _execute_compiled(compiled, backend, handlers, tuple_args, *args):
+def _execute_compiled(compiled, handlers, tuple_args, *args):
   device, = compiled.local_devices()
   input_bufs = [device_put(x, device) for x in args if x is not token]
   if tuple_args:
-    input_bufs = [make_tuple(input_bufs, device, backend)]
+    input_bufs = [make_tuple(input_bufs, device)]
   out_bufs = compiled.Execute(input_bufs).destructure()
   if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_bufs)
   return [handler(out_buf) for handler, out_buf in zip(handlers, out_bufs)]
 
-def _execute_replicated(compiled, backend, handlers, tuple_args, *args):
+def _execute_replicated(compiled, handlers, tuple_args, *args):
   input_bufs = [
       [device_put(x, device) for x in args if x is not token]
       for device in compiled.local_devices()]
   if tuple_args:
-    input_bufs = [[make_tuple(bufs, device, backend)] for bufs, device in
+    input_bufs = [[make_tuple(bufs, device)] for bufs, device in
                   zip(input_bufs, compiled.local_devices())]
   out_bufs = compiled.ExecutePerReplica(input_bufs)[0].destructure()
   if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_bufs)
@@ -535,8 +536,8 @@ def _execute_trivial(jaxpr, device, consts, handlers, *args):
   return [x if type(x) is DeviceArray else handler(device_put(x, device))
           for handler, x in zip(handlers, outs)]
 
-def make_tuple(bufs, device, backend):
-  return xb.get_backend(backend).make_tuple(bufs, device)
+def make_tuple(bufs, device):
+  return xb.get_device_backend(device).make_tuple(bufs, device)
 
 @memoize
 def _get_device(device, backend):
