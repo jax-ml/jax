@@ -3021,7 +3021,8 @@ class LaxVmapTest(jtu.JaxTestCase):
   def testScatterAdd(self, arg_shape, dtype, idxs, update_shape, dnums, bdims):
     fun = partial(lax.scatter_add, dimension_numbers=dnums)
     self._CheckBatching(fun, 5, bdims, [arg_shape, idxs.shape, update_shape],
-                        [dtype, idxs.dtype, dtype], jtu.rand_default())
+                        [dtype, idxs.dtype, dtype], jtu.rand_default(),
+                        rtol={onp.float16: 5e-3})
 
   # TODO Concatenate
   # TODO Reverse
