@@ -172,6 +172,7 @@ def xla_primitive_callable(prim, *arg_specs, **params):
   else:
     all_devices = it.chain(xb.devices(), xb.devices('cpu'))
     device = device and next(d for d in all_devices if (type(d), d.id) == device)
+  backend = xb.get_device_backend(device)
   aval_out = prim.abstract_eval(*avals, **params)
   if prim.multiple_results:
     handlers = tuple(map(aval_to_result_handler, aval_out))
@@ -179,18 +180,17 @@ def xla_primitive_callable(prim, *arg_specs, **params):
   else:
     handle_result = aval_to_result_handler(aval_out)
   tuple_args = len(avals) > 100
-  built_c = primitive_computation(prim, tuple_args, *avals, **params)
+  built_c = primitive_computation(prim, backend, tuple_args, *avals, **params)
   options = xb.get_compile_options(device_assignment=(device.id,) if device else None)
-  compiled = built_c.Compile(compile_options=options,
-                             backend=xb.get_device_backend(device))
-  return partial(_execute_compiled_primitive, prim, compiled, tuple_args,
-                 handle_result)
+  compiled = built_c.Compile(compile_options=options, backend=backend)
+  return partial(_execute_compiled_primitive, prim, compiled, backend,
+                 tuple_args, handle_result)
 
 @cache()
-def primitive_computation(prim, tuple_args, *avals, **params):
+def primitive_computation(prim, backend, tuple_args, *avals, **params):
   c = xb.make_computation_builder("primitive_computation_{}".format(prim.name))
   c.SetOpMetadata(xc.OpMetadata(op_type=prim.name, op_name=str(params)))
-  platform = xb.get_backend(None).platform
+  platform = xb.get_backend(backend).platform
   xla_args = _xla_callable_args(c, avals, tuple_args)
   if prim in backend_specific_translations[platform]:
     rule = backend_specific_translations[platform][prim]
@@ -198,12 +198,9 @@ def primitive_computation(prim, tuple_args, *avals, **params):
   elif prim in translations:
     rule = translations[prim]
     rule(c, *xla_args, **params)  # return val set as a side-effect on c
-  elif prim in reduction_translations:
-    rule = reduction_translations[prim]
-    rule(c, *xla_args, **params)  # return val set as a side-effect on c
   elif prim in initial_style_translations:
     rule = initial_style_translations[prim]
-    rule(c, AxisEnv(), *xla_args, **params)  # side-effect on c
+    rule(c, AxisEnv(), *xla_args, backend=backend, **params)  # side-effect on c
   else:
     raise NotImplementedError("XLA translation rule for {} not found".format(prim))
   c.ClearOpMetadata()
@@ -216,14 +213,14 @@ def primitive_computation(prim, tuple_args, *avals, **params):
     raise RuntimeError(msg)
 
 def primitive_subcomputation(prim, *avals, **params):
-  return primitive_computation(prim, False, *avals, **params)
+  return primitive_computation(prim, None, False, *avals, **params)
 
-def _execute_compiled_primitive(prim, compiled, tuple_args,
+def _execute_compiled_primitive(prim, compiled, backend, tuple_args,
                                 result_handler, *args):
   device, = compiled.local_devices()
   input_bufs = [device_put(x, device) for x in args if x is not token]
   if tuple_args:
-    input_bufs = [make_tuple(input_bufs, device, None)]
+    input_bufs = [make_tuple(input_bufs, device, backend)]
   out_buf = compiled.Execute(input_bufs)
   if FLAGS.jax_debug_nans:
     check_nans(prim, out_buf.destructure() if prim.multiple_results else out_buf)
@@ -296,17 +293,13 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, freevars, *args):
       ans = rule(c, *in_nodes, **eqn.params)
     elif eqn.primitive in translations:
       ans = translations[eqn.primitive](c, *in_nodes, **eqn.params)
-    elif eqn.primitive in reduction_translations:
-      new_params = check_backend_params(eqn.params, backend)
-      ans = reduction_translations[eqn.primitive](c, *in_nodes, backend=backend, **new_params)
     elif eqn.primitive in initial_style_translations:
       new_params = check_backend_params(eqn.params, backend)
       rule = initial_style_translations[eqn.primitive]
       ans = rule(c, axis_env, *in_nodes, backend=backend, **new_params)
     elif eqn.primitive in parallel_translations:
-      new_params = check_backend_params(eqn.params, backend)
-      replica_groups = axis_groups(axis_env, new_params['axis_name'])
-      new_params = {k: new_params[k] for k in new_params if k != 'axis_name'}
+      replica_groups = axis_groups(axis_env, eqn.params['axis_name'])
+      new_params = {k: v for k, v in eqn.params.items() if k != 'axis_name'}
       rule = parallel_translations[eqn.primitive]
       ans = rule(c, *in_nodes, replica_groups=replica_groups, **new_params)
     elif eqn.primitive in call_translations:
@@ -431,7 +424,7 @@ def eqn_collectives(eqn):
 
 def _xla_call_impl(fun, *args, **params):
   device = params['device']
-  backend = params.get('backend', None)
+  backend = params['backend']
   compiled_fun = _xla_callable(fun, device, backend, *map(abstractify, args))
   try:
     return compiled_fun(*args)
@@ -563,7 +556,7 @@ xla_call_p.def_custom_bind(xla_call)
 xla_call_p.def_impl(_xla_call_impl)
 
 def _xla_call_translation_rule(c, jaxpr, axis_env, const_nodes, freevar_nodes,
-                               in_nodes, device=None, backend=None):
+                               in_nodes, backend, device=None):
   del device  # Ignored.
   subc = xb.make_computation_builder("jaxpr_subcomputation")  # TODO(mattjj): name
   consts = [subc.ParameterWithShape(c.GetShape(n)) for n in const_nodes]
@@ -578,7 +571,6 @@ ad.primitive_transposes[xla_call_p] = partial(ad.call_transpose, xla_call_p)
 ### translation tables
 
 translations = {}
-reduction_translations = {}
 parallel_translations = {}
 initial_style_translations = {}
 call_translations = {}
@@ -853,7 +845,7 @@ ad.deflinear(device_put_p, lambda cotangent, **kwargs: [cotangent])
 
 
 def _remat_translation_rule(c, jaxpr, axis_env, const_nodes, freevar_nodes, in_nodes,
-                            backend=None, device=None, concrete=None):
+                            backend, device=None, concrete=None):
   # This looks a lot like _xla_call_translation_rule, except for a widget we use
   # to foil CSE.
   del device, concrete  # Unused.
