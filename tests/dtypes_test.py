@@ -34,6 +34,7 @@ import jax
 from jax import dtypes
 from jax import numpy as np
 from jax import test_util as jtu
+from jax.interpreters import xla
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -58,6 +59,10 @@ complex_dtypes = [onp.dtype('complex64'), onp.dtype('complex128')]
 all_dtypes = (bool_dtypes + signed_dtypes + unsigned_dtypes + float_dtypes +
               complex_dtypes)
 
+scalar_types = [np.bool_, np.int8, np.int16, np.int32, np.int64,
+                np.uint8, np.uint16, np.uint32, np.uint64,
+                np.bfloat16, np.float16, np.float32, np.float64,
+                np.complex64, np.complex128]
 
 class DtypesTest(jtu.JaxTestCase):
 
@@ -138,6 +143,31 @@ class DtypesTest(jtu.JaxTestCase):
           self.assertEqual(onp.promote_types(t1, t2),
                            dtypes.promote_types(t1, t2))
 
+  def testScalarInstantiation(self):
+    for t in [np.bool_, np.int32, np.bfloat16, np.float32, np.complex64]:
+      a = t(1)
+      self.assertEqual(a.dtype, np.dtype(t))
+      self.assertIsInstance(a, xla.DeviceArray)
+      self.assertEqual(0, np.ndim(a))
+
+  def testIsSubdtype(self):
+    for t in scalar_types:
+      self.assertTrue(dtypes.issubdtype(t, t))
+      self.assertTrue(dtypes.issubdtype(onp.dtype(t).type, t))
+      self.assertTrue(dtypes.issubdtype(t, onp.dtype(t).type))
+      if t != np.bfloat16:
+        for category in [onp.generic, np.inexact, np.integer, np.signedinteger,
+                         np.unsignedinteger, np.floating, np.complexfloating]:
+          self.assertEqual(dtypes.issubdtype(t, category),
+                           onp.issubdtype(onp.dtype(t).type, category))
+          self.assertEqual(dtypes.issubdtype(t, category),
+                           onp.issubdtype(onp.dtype(t).type, category))
+
+  def testArrayCasts(self):
+    for t in [np.bool_, np.int32, np.bfloat16, np.float32, np.complex64]:
+      a = onp.array([1, 2.5, -3.7])
+      self.assertEqual(a.astype(t).dtype, np.dtype(t))
+      self.assertEqual(np.array(a).astype(t).dtype, np.dtype(t))
 
   @unittest.skipIf(six.PY2, "Test requires Python 3")
   def testEnumPromotion(self):

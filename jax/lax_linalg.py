@@ -94,7 +94,8 @@ def _unpack_tuple(f, n):
 
 # primitives
 
-_cpu_lapack_types = {np.float32, np.float64, np.complex64, np.complex128}
+_cpu_lapack_types = {onp.dtype(onp.float32), onp.dtype(onp.float64),
+                     onp.dtype(onp.complex64), onp.dtype(onp.complex128)}
 
 # Cholesky decomposition
 
@@ -137,7 +138,7 @@ def _nan_like(c, operand):
 def cholesky_cpu_translation_rule(c, operand):
   shape = c.GetShape(operand)
   dtype = shape.element_type().type
-  if len(shape.dimensions()) == 2 and dtype in _cpu_lapack_types:
+  if len(shape.dimensions()) == 2 and onp.dtype(dtype) in _cpu_lapack_types:
     result, info = lapack.potrf(c, operand, lower=True)
     return c.Select(c.Eq(info, c.ConstantS32Scalar(0)), result,
                     _nan_like(c, result))
@@ -392,7 +393,7 @@ def _triangular_solve_cpu_translation_rule(
     c, a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
   shape = c.GetShape(a)
   dtype = shape.element_type().type
-  if len(shape.dimensions()) == 2 and dtype in _cpu_lapack_types:
+  if len(shape.dimensions()) == 2 and onp.dtype(dtype) in _cpu_lapack_types:
     if conjugate_a and not transpose_a:
       a = c.Conj(a)
       conjugate_a = False
