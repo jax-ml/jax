@@ -20,8 +20,10 @@ import os
 from unittest import SkipTest
 
 from absl.testing import absltest
+import numpy as onp
 
 import jax
+import jax.numpy as np
 from jax import lax
 from jax import test_util as jtu
 from jax.lib import xla_bridge
@@ -76,6 +78,12 @@ class MultiDeviceTest(jtu.JaxTestCase):
     y = 4
     z = x + y
     self.assertEqual(z, 5)
+    self.assertEqual(z.device_buffer.device(), jax.devices()[1])
+
+    x = jax.device_put(1, jax.devices()[1])
+    y = np.ones(3)
+    z = x + y
+    self.assertAllClose(z, 1 + onp.ones(3), check_dtypes=False)
     self.assertEqual(z.device_buffer.device(), jax.devices()[1])
 
     x = jax.device_put(1, jax.devices()[0])
