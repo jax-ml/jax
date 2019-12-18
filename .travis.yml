@@ -13,9 +13,6 @@ matrix:
   include:
     - python: "3.7"
       env: JAX_ENABLE_X64=1 JAX_ONLY_DOCUMENTATION=true
-  include:
-    - python: "3.7"
-      env: MULTI_DEVICE_TEST=1
 
 before_install:
   - if [[ "$TRAVIS_PYTHON_VERSION" == "2.7" ]]; then
@@ -45,9 +42,7 @@ install:
       pip install sklearn;
     fi
 script:
-  - if [[ "$MULTI_DEVICE_TEST" != "" ]]; then
-      XLA_FLAGS=--xla_force_host_platform_device_count=2 python tests/api_test.py MultiDeviceTest;
-    elif [[ "$JAX_ONLY_DOCUMENTATION" == "" ]]; then
+  - if [[ "$JAX_ONLY_DOCUMENTATION" == "" ]]; then
       pytest -n 1 tests examples -W ignore ;
     else
       sphinx-build -b html -D nbsphinx_execute=always docs docs/build/html;
