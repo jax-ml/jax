@@ -139,6 +139,9 @@ class _ScalarMeta(type):
   def __eq__(self, other):
     return id(self) == id(other) or self.dtype == other
 
+  def __ne__(self, other):
+    return not (self == other)
+
   def __call__(self, x):
     return array(self.dtype.type(x), dtype=self.dtype)
 

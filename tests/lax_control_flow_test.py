@@ -329,7 +329,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     """Test typing error messages for while."""
     with self.assertRaisesRegex(
       TypeError, "arguments to fori_loop must have equal types"):
-      lax.fori_loop(np.int16(0), np.int32(10), (lambda i, c: c), np.float32(7))
+      lax.fori_loop(onp.int16(0), np.int32(10), (lambda i, c: c), np.float32(7))
 
   def testForiLoopBatched(self):
     def body_fun(i, loop_carry):
