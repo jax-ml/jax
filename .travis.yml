@@ -13,6 +13,9 @@ matrix:
   include:
     - python: "3.7"
       env: JAX_ENABLE_X64=1 JAX_ONLY_DOCUMENTATION=true
+  include:
+    - python: "3.7"
+      env: MULTI_DEVICE_TEST=1
 
 before_install:
   - if [[ "$TRAVIS_PYTHON_VERSION" == "2.7" ]]; then
