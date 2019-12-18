@@ -557,8 +557,8 @@ def _float_divmod(x1, x2):
 
 @_wraps(onp.power)
 def power(x1, x2):
-  x1 = asarray(x1)
-  x2 = asarray(x2)
+  x1 = asanyarray(x1)
+  x2 = asanyarray(x2)
   x1, x2 = _promote_args(onp.power, x1, x2)
   dtype = _dtype(x1)
   if not issubdtype(dtype, integer):
@@ -969,7 +969,7 @@ def moveaxis(a, source, destination):
 
 @_wraps(onp.isclose)
 def isclose(a, b, rtol=1e-05, atol=1e-08):
-  a, b = _promote_args("isclose", asarray(a), asarray(b))
+  a, b = _promote_args("isclose", asanyarray(a), asanyarray(b))
   dtype = _dtype(a)
   if issubdtype(dtype, inexact):
     if issubdtype(dtype, complexfloating):
@@ -1038,7 +1038,7 @@ def broadcast_arrays(*args):
 
 def broadcast_to(arr, shape):
   """Like Numpy's broadcast_to but doesn't necessarily return views."""
-  arr = arr if isinstance(arr, ndarray) else array(arr)
+  arr = asanyarray(arr)
   shape = tuple(map(int, shape))  # check that shape is concrete
   arr_shape = _shape(arr)
   if arr_shape == shape:
@@ -1212,7 +1212,7 @@ def _make_reduction(np_fun, op, init_val, preproc=None, bool_op=None,
     if out is not None:
       raise ValueError("reduction does not support the `out` argument.")
 
-    a = a if isinstance(a, ndarray) else asarray(a)
+    a = asanyarray(a)
     a = preproc(a) if preproc else a
     dims = _reduction_dims(a, axis)
     result_dtype = dtype or _dtype(np_fun(onp.ones((), dtype=_dtype(a))))
@@ -1284,7 +1284,7 @@ def mean(a, axis=None, dtype=None, out=None, keepdims=False):
 
 @_wraps(onp.average)
 def average(a, axis=None, weights=None, returned=False):
-  a = asarray(a)
+  a = asanyarray(a)
 
   if weights is None: # Treat all weights as 1
     avg = mean(a, axis=axis)
@@ -1293,7 +1293,7 @@ def average(a, axis=None, weights=None, returned=False):
     else:
       weights_sum = full_like(avg, a.shape[axis], dtype=avg.dtype)
   else:
-    weights = asarray(weights)
+    weights = asanyarray(weights)
 
     if issubdtype(a.dtype, inexact):
       out_dtype = result_type(a.dtype, weights.dtype)
@@ -1492,14 +1492,14 @@ def _check_no_padding(axis_padding, mode):
 
 @partial(jit, static_argnums=(1, 2))
 def _pad(array, pad_width, mode, constant_values):
-  array = asarray(array)
+  array = asanyarray(array)
   nd = ndim(array)
   pad_width = onp.broadcast_to(onp.asarray(pad_width), (nd, 2))
   if any(pad_width < 0):
     raise ValueError("index can't contain negative values")
 
   if mode == "constant":
-    constant_values = broadcast_to(asarray(constant_values), (nd, 2))
+    constant_values = broadcast_to(asanyarray(constant_values), (nd, 2))
     constant_values = lax.convert_element_type(constant_values, array.dtype)
     for i in xrange(nd):
       widths = [(0, 0, 0)] * nd
@@ -1710,6 +1710,15 @@ def asarray(a, dtype=None, order=None):
   return array(a, dtype=dtype, copy=False, order=order)
 
 
+@_wraps(onp.asanyarray)
+def asanyarray(a, dtype=None, order=None):
+  if isinstance(a, ndarray):
+    if dtype is None or a.dtype == dtype:
+      return a
+  lax._check_user_dtype_supported(dtype, "asanyarray")
+  return asarray(a, dtype=dtype, order=order)
+
+
 @_wraps(onp.zeros_like)
 def zeros_like(x, dtype=None):
   lax._check_user_dtype_supported(dtype, "zeros_like")
@@ -1757,10 +1766,10 @@ def ones(shape, dtype=None):
 @_wraps(onp.array_equal)
 def array_equal(a1, a2):
   try:
-    a1, a2 = asarray(a1), asarray(a2)
+    a1, a2 = asanyarray(a1), asanyarray(a2)
   except Exception:
     return False
-  return shape(a1) == shape(a2) and all(asarray(a1 == a2))
+  return shape(a1) == shape(a2) and all(asanyarray(a1 == a2))
 
 
 # We can't create uninitialized arrays in XLA; use zeros for empty.
@@ -1816,7 +1825,7 @@ def _wrap_numpy_nullary_function(f):
   """
   @_wraps(f, update_doc=False)
   def wrapper(*args, **kwargs):
-    return asarray(f(*args, **kwargs))
+    return asanyarray(f(*args, **kwargs))
   return wrapper
 
 
@@ -1860,8 +1869,8 @@ def logspace(start, stop, num=50, endpoint=True, base=10.0, dtype=None, axis=0):
   """Implementation of logspace differentiable in start and stop args."""
   dtype = dtype or result_type(start, stop, float_)
   computation_dtype = promote_types(dtype, float_)
-  start = asarray(start, dtype=computation_dtype)
-  stop = asarray(stop, dtype=computation_dtype)
+  start = asanyarray(start, dtype=computation_dtype)
+  stop = asanyarray(stop, dtype=computation_dtype)
   lin = linspace(start, stop, num,
                  endpoint=endpoint, retstep=False, dtype=None, axis=axis)
   return lax.convert_element_type(power(base, lin), dtype)
@@ -1872,8 +1881,8 @@ def geomspace(start, stop, num=50, endpoint=True, dtype=None, axis=0):
   """Implementation of geomspace differentiable in start and stop args."""
   dtype = dtype or result_type(start, stop, float(num), zeros((), dtype))
   computation_dtype = promote_types(dtype, float32)
-  start = asarray(start, dtype=computation_dtype)
-  stop = asarray(stop, dtype=computation_dtype)
+  start = asanyarray(start, dtype=computation_dtype)
+  stop = asanyarray(stop, dtype=computation_dtype)
   # follow the numpy geomspace convention for negative and complex endpoints
   signflip = 1 - (1 - sign(real(start))) * (1 - sign(real(stop))) // 2
   res = signflip * logspace(log10(signflip * start),
@@ -1903,7 +1912,7 @@ def meshgrid(*args, **kwargs):
 
   shape = []
   for i, a in enumerate(args):
-    args[i] = a = asarray(a)
+    args[i] = a = asanyarray(a)
     if len(a.shape) != 1:
       msg = "Arguments to jax.numpy.meshgrid must be 1D, got shape {}"
       raise ValueError(msg.format(a.shape))
@@ -1911,7 +1920,7 @@ def meshgrid(*args, **kwargs):
 
   output = []
   for i, a in enumerate(args):
-    a = asarray(a)
+    a = asanyarray(a)
     s = shape
     if sparse:
       s = list(s)
@@ -1929,7 +1938,7 @@ def ix_(*args):
   n = len(args)
   output = []
   for i, a in enumerate(args):
-    a = asarray(a)
+    a = asanyarray(a)
     if len(a.shape) != 1:
       msg = "Arguments to jax.numpy.ix_ must be 1-dimensional, got shape {}"
       raise ValueError(msg.format(a.shape))
@@ -2088,7 +2097,7 @@ def trace(a, offset=0, axis1=0, axis2=1, dtype=None, out=None):
 def _wrap_indices_function(f):
   @_wraps(f, update_doc=False)
   def wrapper(*args, **kwargs):
-    return tuple(asarray(x) for x in f(*args, **kwargs))
+    return tuple(asanyarray(x) for x in f(*args, **kwargs))
   return wrapper
 
 diag_indices = _wrap_indices_function(onp.diag_indices)
@@ -2447,7 +2456,7 @@ def kron(a, b):
 
 @_wraps(onp.vander)
 def vander(x, N=None, increasing=False):
-  x = asarray(x)
+  x = asanyarray(x)
   dtype = _dtype(x)
   if ndim(x) != 1:
     raise ValueError("x must be a one-dimensional array")
@@ -2524,13 +2533,13 @@ def argsort(a, axis=-1, kind='quicksort', order=None):
 
 @_wraps(onp.roll)
 def roll(a, shift, axis=None):
-  a = asarray(a)
+  a = asanyarray(a)
   a_shape = shape(a)
   if axis is None:
     return lax.reshape(roll(ravel(a), shift, axis=0), a_shape)
 
   a_ndim = len(a_shape)
-  shift = asarray(shift)
+  shift = asanyarray(shift)
   axis = onp.asarray(axis)
   b_shape = lax.broadcast_shapes(shift.shape, axis.shape, (1,))
   if len(b_shape) != 1:
@@ -2553,8 +2562,8 @@ def take(a, indices, axis=None, out=None, mode=None):
   if out:
     raise NotImplementedError("The 'out' argument to np.take is not supported.")
 
-  a = asarray(a)
-  indices = asarray(indices)
+  a = asanyarray(a)
+  indices = asanyarray(indices)
 
   if axis is None:
     a = ravel(a)
@@ -2666,7 +2675,7 @@ def _rewriting_take(arr, idx):
   # Computes arr[idx].
   # All supported cases of indexing can be implemented as an XLA gather,
   # followed by an optional reverse and a reshape.
-  arr = asarray(arr)
+  arr = asanyarray(arr)
   treedef, static_idx, dynamic_idx = _split_index_for_jit(idx)
   return _gather(arr, treedef, static_idx, dynamic_idx)
 
@@ -2781,7 +2790,7 @@ def _index_to_gather(x_shape, idx):
   if _is_advanced_int_indexer(idx):
     idx_no_nones = [(i, d) for i, d in enumerate(idx) if d is not None]
     advanced_pairs = (
-      (asarray(e), i, j) for j, (i, e) in enumerate(idx_no_nones)
+      (asanyarray(e), i, j) for j, (i, e) in enumerate(idx_no_nones)
       if (isinstance(e, Sequence) or isinstance(e, ndarray)))
     advanced_pairs = ((_normalize_index(e, x_shape[j]), i, j)
                       for e, i, j in advanced_pairs)
@@ -3100,7 +3109,7 @@ def cov(m, y=None, rowvar=True, bias=False, ddof=None, fweights=None,
       raise RuntimeError("cannot handle multidimensional fweights")
     if onp.shape(fweights)[0] != X.shape[1]:
       raise RuntimeError("incompatible numbers of samples and fweights")
-    w = asarray(fweights)
+    w = asanyarray(fweights)
   if aweights is not None:
     if onp.ndim(aweights) > 1:
       raise RuntimeError("cannot handle multidimensional aweights")
@@ -3158,7 +3167,7 @@ def quantile(a, q, axis=None, out=None, overwrite_input=False,
 
 @partial(jit, static_argnums=(2, 3))
 def _quantile(a, q, axis, keepdims):
-  a = asarray(a)
+  a = asanyarray(a)
   if axis is None:
     a = ravel(a)
     axis = 0
@@ -3171,7 +3180,7 @@ def _quantile(a, q, axis, keepdims):
   if q_ndim > 1:
     raise ValueError("q must be have rank <= 1, got shape {}".format(shape(q)))
 
-  q = asarray(q)
+  q = asanyarray(q)
 
   if not issubdtype(a.dtype, floating) or not issubdtype(q.dtype, floating):
     msg = "q and a arguments to quantile must be of float type, got {} and {}"
@@ -3223,7 +3232,7 @@ def _quantile(a, q, axis, keepdims):
 @_wraps(onp.percentile)
 def percentile(a, q, axis=None, out=None, overwrite_input=False,
                interpolation="linear", keepdims=False):
-  q = true_divide(asarray(q), float32(100.0))
+  q = true_divide(asanyarray(q), float32(100.0))
   return quantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
                   interpolation=interpolation, keepdims=keepdims)
 

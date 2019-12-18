@@ -1439,6 +1439,24 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_i{}_dtype={}".format(i, dtype),
+       "arg": arg, "dtype": dtype}
+      for i, arg in enumerate([0, 1.] + [onp.ones([1, 1], dtype=dt)
+                                         for dt in (lnp.float16, lnp.float32)])
+      for dtype in (None, lnp.float32, lnp.float16)))
+  def testAsAnyArray(self, arg, dtype):
+    args_maker = lambda: [arg]
+    onp_fun = partial(onp.asanyarray, dtype=dtype)
+    lnp_fun = partial(lnp.asanyarray, dtype=dtype)
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+    if dtype is None:
+      # Should be zero copy.
+      arg = lnp.asarray(arg)
+      self.assertIs(arg, lnp_fun(arg))
+
   def testIssue121(self):
     assert not onp.isscalar(lnp.array(3))
 
