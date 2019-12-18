@@ -49,9 +49,10 @@ def _cg_solve(matvec, b, x0, tol, maxiter):
   p_k = r_k
   k = 0
   full_tol = tol * np.linalg.norm(b)
-  matvec, p_k, x_k, r_k, r_k_norm, k = lax.while_loop(
-      lambda r_k_norm, k:
-      (r_k_norm < full_tol) & (k < maxiter), body_fun, (matvec, p_k, x_k, r_k, r_k_norm, k)
+  p_k, x_k, r_k, r_k_norm, k = lax.while_loop(
+      lambda r_k_norm, k: (r_k_norm < full_tol) & (k < maxiter),
+      partial(body_fun, matvec),
+      (p_k, x_k, r_k, r_k_norm, k)
   )
   return x_k
 
@@ -62,4 +63,3 @@ def cg(matvec, b, x0=None, tol=1e-05, maxiter=None):
   cg_solve = lambda matvec, b: _cg_solve(matvec, b, x0, tol, maxiter)
   x = lax.custom_linear_solve(matvec, b, cg_solve, symmetric=True)
   return x, info
-  
