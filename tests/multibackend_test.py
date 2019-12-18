@@ -121,7 +121,7 @@ class MultiBackendTest(jtu.JaxTestCase):
     z = fun(x, y)
     w = np.sin(z)
     self.assertEqual(z.device_buffer.platform(), backend)
-    self.assertEqual(w.device_buffer.platform(), jtu.device_under_test())
+    self.assertEqual(w.device_buffer.platform(), backend)
 
 
 if __name__ == "__main__":

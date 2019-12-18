@@ -42,7 +42,9 @@ install:
       pip install sklearn;
     fi
 script:
-  - if [[ "$JAX_ONLY_DOCUMENTATION" == "" ]]; then
+  - if [[ "$MULTI_DEVICE_TEST" != "" ]]; then
+      XLA_FLAGS=--xla_force_host_platform_device_count=2 python tests/api_test.py MultiDeviceTest;
+    elif [[ "$JAX_ONLY_DOCUMENTATION" == "" ]]; then
       pytest -n 1 tests examples -W ignore ;
     else
       sphinx-build -b html -D nbsphinx_execute=always docs docs/build/html;

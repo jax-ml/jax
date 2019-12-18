@@ -149,32 +149,48 @@ for _t in dtypes.python_scalar_dtypes.keys():
 
 def apply_primitive(prim, *args, **params):
   """Impl rule that compiles and runs a single primitive 'prim' using XLA."""
-  abstract_args = map(abstractify, args)
-  compiled_fun = xla_primitive_callable(prim, *abstract_args, **params)
+  compiled_fun = xla_primitive_callable(prim, *map(arg_spec, args), **params)
   return compiled_fun(*args)
 
+def arg_spec(x):
+  aval = abstractify(x)
+  try:
+    return aval, x._device
+  except:
+    return aval, None
+
 @cache()
-def xla_primitive_callable(prim, *abstract_args, **params):
-  backend = params.get('backend', None)
-  aval_out = prim.abstract_eval(*abstract_args, **params)
+def xla_primitive_callable(prim, *arg_specs, **params):
+  avals, devices = unzip2(arg_specs)
+  # TODO(mattjj): make Device hashable instead of handling pairs here
+  try:
+    device, = set(d for d in devices if d is not None) or (None,)
+  except ValueError:
+    msg = "primitive arguments must be colocated on the same device, got {}"
+    names = ("{}({})".format(d[0].__name__, d[1]) for d in devices if d is not None)
+    raise ValueError(msg.format(", ".join(names)))
+  else:
+    all_devices = it.chain(xb.devices(), xb.devices('cpu'))
+    device = device and next(d for d in all_devices if (type(d), d.id) == device)
+  aval_out = prim.abstract_eval(*avals, **params)
   if prim.multiple_results:
     handlers = tuple(map(aval_to_result_handler, aval_out))
     handle_result = lambda xs: tuple(h(x) for h, x in zip(handlers, xs.destructure()))
   else:
     handle_result = aval_to_result_handler(aval_out)
-  tuple_args = len(abstract_args) > 100
-  built_c = primitive_computation(prim, tuple_args, *abstract_args, **params)
-  compiled = built_c.Compile(compile_options=xb.get_compile_options(),
-                             backend=xb.get_backend(backend))
-  return partial(_execute_compiled_primitive, prim, compiled, backend,
-                 tuple_args, handle_result)
+  tuple_args = len(avals) > 100
+  built_c = primitive_computation(prim, tuple_args, *avals, **params)
+  options = xb.get_compile_options(device_assignment=(device.id,) if device else None)
+  compiled = built_c.Compile(compile_options=options,
+                             backend=xb.get_device_backend(device))
+  return partial(_execute_compiled_primitive, prim, compiled, tuple_args,
+                 handle_result)
 
 @cache()
 def primitive_computation(prim, tuple_args, *avals, **params):
   c = xb.make_computation_builder("primitive_computation_{}".format(prim.name))
   c.SetOpMetadata(xc.OpMetadata(op_type=prim.name, op_name=str(params)))
-  backend = params.pop("backend", None)
-  platform = xb.get_backend(backend).platform
+  platform = xb.get_backend(None).platform
   xla_args = _xla_callable_args(c, avals, tuple_args)
   if prim in backend_specific_translations[platform]:
     rule = backend_specific_translations[platform][prim]
@@ -184,10 +200,10 @@ def primitive_computation(prim, tuple_args, *avals, **params):
     rule(c, *xla_args, **params)  # return val set as a side-effect on c
   elif prim in reduction_translations:
     rule = reduction_translations[prim]
-    rule(c, *xla_args, backend=backend, **params)  # return val set as a side-effect on c
+    rule(c, *xla_args, **params)  # return val set as a side-effect on c
   elif prim in initial_style_translations:
     rule = initial_style_translations[prim]
-    rule(c, AxisEnv(), *xla_args,  backend=backend, **params)  # side-effect on c
+    rule(c, AxisEnv(), *xla_args, **params)  # side-effect on c
   else:
     raise NotImplementedError("XLA translation rule for {} not found".format(prim))
   c.ClearOpMetadata()
@@ -202,12 +218,12 @@ def primitive_computation(prim, tuple_args, *avals, **params):
 def primitive_subcomputation(prim, *avals, **params):
   return primitive_computation(prim, False, *avals, **params)
 
-def _execute_compiled_primitive(prim, compiled, backend, tuple_args,
+def _execute_compiled_primitive(prim, compiled, tuple_args,
                                 result_handler, *args):
   device, = compiled.local_devices()
   input_bufs = [device_put(x, device) for x in args if x is not token]
   if tuple_args:
-    input_bufs = [make_tuple(input_bufs, device, backend)]
+    input_bufs = [make_tuple(input_bufs, device, None)]
   out_buf = compiled.Execute(input_bufs)
   if FLAGS.jax_debug_nans:
     check_nans(prim, out_buf.destructure() if prim.multiple_results else out_buf)
@@ -292,7 +308,7 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, freevars, *args):
       replica_groups = axis_groups(axis_env, new_params['axis_name'])
       new_params = {k: new_params[k] for k in new_params if k != 'axis_name'}
       rule = parallel_translations[eqn.primitive]
-      ans = rule(c, *in_nodes, replica_groups=replica_groups, backend=backend, **new_params)
+      ans = rule(c, *in_nodes, replica_groups=replica_groups, **new_params)
     elif eqn.primitive in call_translations:
       new_params = check_backend_params(eqn.params, backend)
       (subjaxpr, const_bindings, freevar_bindings), = eqn.bound_subjaxprs
@@ -660,12 +676,16 @@ class DeviceArray(DeviceValue):
   """A DeviceArray is an ndarray backed by a single device memory buffer."""
   # We don't subclass ndarray because that would open up a host of issues,
   # but lax_numpy.py overrides isinstance behavior and attaches ndarray methods.
-  __slots__ = ["_npy_value"]
+  __slots__ = ["_npy_value", "_device"]
   __array_priority__ = 100
 
   def __init__(self, aval, device_buffer):
     self.aval = aval
     self.device_buffer = device_buffer
+    # TODO(mattjj): make Device hashable
+    device = device_buffer.device()
+    self._device = device and (type(device), device.id)
+
     self._npy_value = None
     if not core.skip_checks:
       assert type(aval) is ShapedArray
