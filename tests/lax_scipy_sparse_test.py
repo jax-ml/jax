@@ -58,8 +58,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       return spd_mat, b
 
     a, b = args_maker()
-    expected = osp_sparse.cg(a, b)
-    expected_1_step = osp_sparse.cg(A=a, b=b, maxiter=1)
+    expected = osp_sparse.cg(onp.asarray(a), onp.asarray(b))
+    expected_1_step = osp_sparse.cg(A=onp.asarray(a), b=onp.asarray(b), maxiter=1)
     actual = build_and_solve(a, b)
     actual_1_step = build_and_solve(a, b, 1)
     self.assertAllClose(expected, actual, atol=1e-5, check_dtypes=True)

@@ -59,7 +59,7 @@ def _cg_solve(matvec, b, x0, tol, maxiter):
 def cg(matvec, b, x0=None, tol=1e-05, maxiter=None):
   # exposed as scipy.sparse.cg
   info = 0
-  x = lax.custom_linear_solve(
-      matvec, b, partial(_cg_solve, x0, tol, maxiter), symmetric=True)
+  cg_solve = lambda matvec, b: _cg_solve(matvec, b, x0, tol, maxiter)
+  x = lax.custom_linear_solve(matvec, b, cg_solve, symmetric=True)
   return x, info
   
