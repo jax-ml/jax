@@ -726,17 +726,11 @@ xla.translations[qr_p] = qr_translation_rule
 ad.primitive_jvps[qr_p] = qr_jvp_rule
 batching.primitive_batchers[qr_p] = qr_batching_rule
 
-# TODO(phawkins): make unconditional after the minimum Jaxlib version is
-# increased past 0.1.28.
-if hasattr(lapack, "geqrf"):
-  xla.backend_specific_translations['cpu'][qr_p] = partial(
-    _qr_cpu_gpu_translation_rule, lapack.geqrf, lapack.orgqr)
+xla.backend_specific_translations['cpu'][qr_p] = partial(
+  _qr_cpu_gpu_translation_rule, lapack.geqrf, lapack.orgqr)
 
-# TODO(phawkins): make unconditional after the minimum Jaxlib version is
-# increased past 0.1.28.
-if hasattr(cusolver, "geqrf"):
-  xla.backend_specific_translations['gpu'][qr_p] = partial(
-    _qr_cpu_gpu_translation_rule, cusolver.geqrf, cusolver.orgqr)
+xla.backend_specific_translations['gpu'][qr_p] = partial(
+  _qr_cpu_gpu_translation_rule, cusolver.geqrf, cusolver.orgqr)
 
 
 # Singular value decomposition

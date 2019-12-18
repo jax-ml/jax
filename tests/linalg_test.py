@@ -416,12 +416,10 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for full_matrices in [False, True]
       for compute_uv in [False, True]
       for rng_factory in [jtu.rand_default]))
-  @jtu.skip_on_devices("tpu")
+  @jtu.skip_on_devices("gpu", "tpu")  # TODO(b/145608614): SVD crashes on GPU.
   def testSVD(self, b, m, n, dtype, full_matrices, compute_uv, rng_factory):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
-    if b != () and jax.lib.version <= (0, 1, 28):
-      raise unittest.SkipTest("Batched SVD requires jaxlib 0.1.29")
     args_maker = lambda: [rng(b + (m, n), dtype)]
 
     # Norm, adjusted for dimension and type.
@@ -474,7 +472,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
     if (np.issubdtype(dtype, onp.complexfloating) and
-        (jtu.device_under_test() == "tpu" or jax.lib.version <= (0, 1, 27))):
+        jtu.device_under_test() == "tpu"):
       raise unittest.SkipTest("No complex QR implementation")
     m, n = shape[-2:]
 
