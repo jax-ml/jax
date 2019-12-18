@@ -39,6 +39,7 @@ from jax import dtypes
 from jax.test_util import check_grads
 from jax.interpreters import xla
 from jax.lib import xla_client
+import jax.util
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -2516,10 +2517,11 @@ def args_slicer(args, bdims):
 
 class LaxVmapTest(jtu.JaxTestCase):
 
-  def _CheckBatching(self, op, bdim_size, bdims, shapes, dtype, rng,
+  def _CheckBatching(self, op, bdim_size, bdims, shapes, dtypes, rng,
                      rtol=None, atol=None):
-    batched_shapes = map(partial(add_bdim, bdim_size), bdims, shapes)
-    args = [rng(shape, dtype) for shape in batched_shapes]
+    batched_shapes = list(map(partial(add_bdim, bdim_size), bdims, shapes))
+    args = [rng(shape, dtype)
+            for shape, dtype in jax.util.safe_zip(batched_shapes, dtypes)]
     args_slice = args_slicer(args, bdims)
     ans = api.vmap(op, bdims)(*args)
     expected = onp.stack([op(*args_slice(i)) for i in range(bdim_size)])
@@ -2540,7 +2542,7 @@ class LaxVmapTest(jtu.JaxTestCase):
   def testOp(self, op_name, rng_factory, shapes, dtype, bdims):
     rng = rng_factory()
     op = getattr(lax, op_name)
-    self._CheckBatching(op, 10, bdims, shapes, dtype, rng)
+    self._CheckBatching(op, 10, bdims, shapes, [dtype] * len(shapes), rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -2600,7 +2602,7 @@ class LaxVmapTest(jtu.JaxTestCase):
                    feature_group_count=feature_group_count,
                    precision=lax.Precision.HIGHEST)
     self._CheckBatching(conv, 5, (lhs_bdim, rhs_bdim), (lhs_shape, rhs_shape),
-                        dtype, rng, rtol=tol, atol=tol)
+                        (dtype, dtype), rng, rtol=tol, atol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_from_dtype={}_to_dtype={}_bdims={}".format(
@@ -2615,7 +2617,7 @@ class LaxVmapTest(jtu.JaxTestCase):
   def testConvertElementType(self, shape, from_dtype, to_dtype, bdims, rng_factory):
     rng = rng_factory()
     op = lambda x: lax.convert_element_type(x, to_dtype)
-    self._CheckBatching(op, 10, bdims, (shape,), from_dtype, rng)
+    self._CheckBatching(op, 10, bdims, (shape,), (from_dtype,), rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_from_dtype={}_to_dtype={}_bdims={}".format(
@@ -2630,7 +2632,7 @@ class LaxVmapTest(jtu.JaxTestCase):
   def testBitcastElementType(self, shape, from_dtype, to_dtype, bdims, rng_factory):
     rng = rng_factory()
     op = lambda x: lax.bitcast_convert_type(x, to_dtype)
-    self._CheckBatching(op, 10, bdims, (shape,), from_dtype, rng)
+    self._CheckBatching(op, 10, bdims, (shape,), (from_dtype,), rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_min_shape={}_operand_shape={}_max_shape={}_bdims={}"
@@ -2653,7 +2655,7 @@ class LaxVmapTest(jtu.JaxTestCase):
     rng = rng_factory()
     raise SkipTest("batching rule for clamp not implemented")  # TODO(mattj)
     shapes = [min_shape, operand_shape, max_shape]
-    self._CheckBatching(lax.clamp, 10, bdims, shapes, dtype, rng)
+    self._CheckBatching(lax.clamp, 10, bdims, shapes, [dtype] * 3, rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_lhs_shape={}_rhs_shape={}_bdims={}".format(
@@ -2669,8 +2671,8 @@ class LaxVmapTest(jtu.JaxTestCase):
   def testDot(self, lhs_shape, rhs_shape, dtype, bdims, rng_factory):
     rng = rng_factory()
     op = partial(lax.dot, precision=lax.Precision.HIGHEST)
-    self._CheckBatching(op, 5, bdims, (lhs_shape, rhs_shape), dtype, rng,
-                        rtol={onp.float16: 5e-2})
+    self._CheckBatching(op, 5, bdims, (lhs_shape, rhs_shape), (dtype, dtype),
+                        rng, rtol={onp.float16: 5e-2})
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -2697,7 +2699,8 @@ class LaxVmapTest(jtu.JaxTestCase):
     rng = rng_factory()
     dimension_numbers = ((lhs_contracting, rhs_contracting), ([], []))
     dot = partial(lax.dot_general, dimension_numbers=dimension_numbers)
-    self._CheckBatching(dot, 5, bdims, (lhs_shape, rhs_shape), dtype, rng)
+    self._CheckBatching(dot, 5, bdims, (lhs_shape, rhs_shape), (dtype, dtype),
+                        rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -2718,7 +2721,8 @@ class LaxVmapTest(jtu.JaxTestCase):
                                      dimension_numbers, bdims, rng_factory):
     rng = rng_factory()
     dot = partial(lax.dot_general, dimension_numbers=dimension_numbers)
-    self._CheckBatching(dot, 5, bdims, (lhs_shape, rhs_shape), dtype, rng)
+    self._CheckBatching(dot, 5, bdims, (lhs_shape, rhs_shape), (dtype, dtype),
+                        rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_dtype={}_broadcast_sizes={}_bdims={}".format(
@@ -2733,7 +2737,7 @@ class LaxVmapTest(jtu.JaxTestCase):
   def testBroadcast(self, shape, dtype, broadcast_sizes, bdims, rng_factory):
     rng = rng_factory()
     op = lambda x: lax.broadcast(x, broadcast_sizes)
-    self._CheckBatching(op, 5, bdims, (shape,), dtype, rng)
+    self._CheckBatching(op, 5, bdims, (shape,), (dtype,), rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_outshape={}_bcdims={}_bdims={}".format(
@@ -2755,7 +2759,7 @@ class LaxVmapTest(jtu.JaxTestCase):
     rng = rng_factory()
     raise SkipTest("this test has failures in some cases")  # TODO(mattjj)
     op = lambda x: lax.broadcast_in_dim(x, outshape, dimensions)
-    self._CheckBatching(op, 5, bdims, (inshape,), dtype, rng)
+    self._CheckBatching(op, 5, bdims, (inshape,), (dtype,), rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_outshape={}_dims={}_bdims={}".format(
@@ -2778,7 +2782,7 @@ class LaxVmapTest(jtu.JaxTestCase):
   def testReshape(self, arg_shape, out_shape, dtype, dimensions, bdims, rng_factory):
     rng = rng_factory()
     op = lambda x: lax.reshape(x, out_shape, dimensions=dimensions)
-    self._CheckBatching(op, 10, bdims, (arg_shape,), dtype, rng)
+    self._CheckBatching(op, 10, bdims, (arg_shape,), (dtype,), rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_pads={}_bdims={}"
@@ -2792,7 +2796,7 @@ class LaxVmapTest(jtu.JaxTestCase):
   def testPad(self, shape, dtype, pads, bdims, rng_factory):
     rng = rng_factory()
     fun = lambda operand: lax.pad(operand, onp.array(0, dtype), pads)
-    self._CheckBatching(fun, 5, bdims, (shape,), dtype, rng)
+    self._CheckBatching(fun, 5, bdims, (shape,), (dtype,), rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_predshape={}_argshapes={}_bdims={}".format(
@@ -2810,7 +2814,7 @@ class LaxVmapTest(jtu.JaxTestCase):
     rng = rng_factory()
     op = lambda c, x, y: lax.select(c < 0, x, y)
     self._CheckBatching(op, 5, bdims, (pred_shape, arg_shape, arg_shape,),
-                        arg_dtype, rng)
+                        (onp.bool_, arg_dtype, arg_dtype), rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -2836,7 +2840,7 @@ class LaxVmapTest(jtu.JaxTestCase):
   def testSlice(self, shape, dtype, starts, limits, strides, bdims, rng_factory):
     rng = rng_factory()
     op = lambda x: lax.slice(x, starts, limits, strides)
-    self._CheckBatching(op, 5, bdims, (shape,), dtype, rng)
+    self._CheckBatching(op, 5, bdims, (shape,), (dtype,), rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_perm={}_bdims={}".format(
@@ -2854,7 +2858,7 @@ class LaxVmapTest(jtu.JaxTestCase):
   def testTranspose(self, shape, dtype, perm, bdims, rng_factory):
     rng = rng_factory()
     op = lambda x: lax.transpose(x, perm)
-    self._CheckBatching(op, 5, bdims, (shape,), dtype, rng)
+    self._CheckBatching(op, 5, bdims, (shape,), (dtype,), rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_op={}_inshape={}_reducedims={}_initval={}_bdims={}"
@@ -2888,7 +2892,7 @@ class LaxVmapTest(jtu.JaxTestCase):
     rng = rng_factory()
     init_val = onp.asarray(init_val, dtype=dtype)
     fun = lambda operand: lax.reduce(operand, init_val, op, dims)
-    self._CheckBatching(fun, 5, bdims, (shape,), dtype, rng)
+    self._CheckBatching(fun, 5, bdims, (shape,), (dtype,), rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_op={}_dtype={}_padding={}"
@@ -2921,7 +2925,7 @@ class LaxVmapTest(jtu.JaxTestCase):
 
     for shape, dims, strides in all_configs:
       for bdims in all_bdims(shape):
-        self._CheckBatching(fun, 3, bdims, (shape,), dtype, rng)
+        self._CheckBatching(fun, 3, bdims, (shape,), (dtype,), rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}_padding={}".format(onp.dtype(dtype).name,
@@ -2949,7 +2953,7 @@ class LaxVmapTest(jtu.JaxTestCase):
 
     for shape, dims, strides in all_configs:
       for bdims in all_bdims(shape, shape):
-        self._CheckBatching(fun, 3, bdims, (shape, shape), dtype, rng)
+        self._CheckBatching(fun, 3, bdims, (shape, shape), (dtype, dtype), rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_bdims={}_fft_ndims={}"
@@ -2966,7 +2970,58 @@ class LaxVmapTest(jtu.JaxTestCase):
     axes = range(ndims - fft_ndims, ndims)
     fft_lengths = [shape[axis] for axis in axes]
     op = lambda x: lax.fft(x, xla_client.FftType.FFT, fft_lengths)
-    self._CheckBatching(op, 5, bdims, [shape], onp.complex64, rng)
+    self._CheckBatching(op, 5, bdims, [shape], [onp.complex64], rng)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_idxs={}_dnums={}_slice_sizes={}_bdims={}"
+       .format(jtu.format_shape_dtype_string(shape, dtype), idxs, dnums,
+               slice_sizes, bdims),
+       "shape": shape, "dtype": dtype, "idxs": idxs, "dnums": dnums,
+       "slice_sizes": slice_sizes, "bdims": bdims}
+      for dtype in all_dtypes
+      for shape, idxs, dnums, slice_sizes in [
+          ((5,), onp.array([[0], [2]]), lax.GatherDimensionNumbers(
+            offset_dims=(), collapsed_slice_dims=(0,), start_index_map=(0,)),
+            (1,)),
+          ((10,), onp.array([[0], [0], [0]]), lax.GatherDimensionNumbers(
+            offset_dims=(1,), collapsed_slice_dims=(), start_index_map=(0,)),
+            (2,)),
+          ((10, 5,), onp.array([[0], [2], [1]]), lax.GatherDimensionNumbers(
+            offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0,)),
+            (1, 3)),
+          ((10, 5), onp.array([[0, 2], [1, 0]]), lax.GatherDimensionNumbers(
+            offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1)),
+            (1, 3)),
+      ]
+      for bdims in all_bdims(shape, idxs.shape)))
+  def testGather(self, shape, dtype, idxs, dnums, slice_sizes, bdims):
+    fun = partial(lax.gather, dimension_numbers=dnums, slice_sizes=slice_sizes)
+    self._CheckBatching(fun, 5, bdims, [shape, idxs.shape], [dtype, idxs.dtype],
+                        jtu.rand_default())
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_idxs={}_update={}_dnums={}_bdims={}".format(
+          jtu.format_shape_dtype_string(arg_shape, dtype),
+          idxs, update_shape, dnums, bdims),
+       "arg_shape": arg_shape, "dtype": dtype, "idxs": idxs,
+       "update_shape": update_shape, "dnums": dnums, "bdims": bdims}
+      for dtype in float_dtypes
+      for arg_shape, idxs, update_shape, dnums in [
+          ((5,), onp.array([[0], [2]]), (2,), lax.ScatterDimensionNumbers(
+            update_window_dims=(), inserted_window_dims=(0,),
+            scatter_dims_to_operand_dims=(0,))),
+          ((10,), onp.array([[0], [0], [0]]), (3, 2), lax.ScatterDimensionNumbers(
+            update_window_dims=(1,), inserted_window_dims=(),
+            scatter_dims_to_operand_dims=(0,))),
+          ((10, 5,), onp.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
+            update_window_dims=(1,), inserted_window_dims=(0,),
+            scatter_dims_to_operand_dims=(0,))),
+      ]
+      for bdims in all_bdims(arg_shape, idxs.shape, update_shape)))
+  def testScatterAdd(self, arg_shape, dtype, idxs, update_shape, dnums, bdims):
+    fun = partial(lax.scatter_add, dimension_numbers=dnums)
+    self._CheckBatching(fun, 5, bdims, [arg_shape, idxs.shape, update_shape],
+                        [dtype, idxs.dtype, dtype], jtu.rand_default())
 
   # TODO Concatenate
   # TODO Reverse
@@ -2975,7 +3030,6 @@ class LaxVmapTest(jtu.JaxTestCase):
   # TODO Sort
   # TODO SortKeyVal
   # TODO Collapse
-  # TODO ScatterAdd
   # TODO Scatter
 
 

@@ -3170,12 +3170,9 @@ def _scatter_batching_rule(
   operand = batching.bdim_at_front(operand, operand_bdim, size)
   operand_bdim = 0
 
-  if scatter_indices_bdim is not None and updates_bdim is None:
-    updates = broadcast(updates, (size,))
-    updates_bdim = 0
+  updates = batching.bdim_at_front(updates, updates_bdim, size)
 
-  if scatter_indices_bdim is None and updates_bdim is not None:
-    updates = batching.moveaxis(updates, updates_bdim, 0)
+  if scatter_indices_bdim is None:
     inserted_window_dims = tuple(onp.add(1, dimension_numbers.inserted_window_dims))
     update_window_dims = (0,) + tuple(onp.add(1, dimension_numbers.update_window_dims))
     scatter_dims_to_operand_dims = tuple(onp.add(1, dimension_numbers.scatter_dims_to_operand_dims))
@@ -3184,26 +3181,27 @@ def _scatter_batching_rule(
         inserted_window_dims=inserted_window_dims,
         scatter_dims_to_operand_dims=scatter_dims_to_operand_dims)
     return scatter_op(operand, scatter_indices, updates, dnums), 0
-  else:
-    # see the third case in _gather_batching_rule for comparison and comments
-    scatter_indices = batching.moveaxis(scatter_indices, scatter_indices_bdim, 0)
-    updates = batching.moveaxis(updates, updates_bdim, 0)
 
-    count_shape = list(scatter_indices.shape)
-    count_shape[-1] = 1
-    counts = broadcasted_iota(scatter_indices.dtype, tuple(count_shape), 0)
-    scatter_indices = concatenate([counts, scatter_indices],
-                                  len(count_shape) - 1)
 
-    update_window_dims = tuple(onp.add(1, dimension_numbers.update_window_dims))
-    inserted_window_dims = (0,) + tuple(onp.add(1, dimension_numbers.inserted_window_dims))
-    scatter_dims_to_operand_dims = (0,) + tuple(onp.add(1, dimension_numbers.scatter_dims_to_operand_dims))
+  # see the third case in _gather_batching_rule for comparison and comments
+  scatter_indices = batching.bdim_at_front(
+    scatter_indices, scatter_indices_bdim, size)
 
-    dnums = ScatterDimensionNumbers(
-        update_window_dims=update_window_dims,
-        inserted_window_dims=inserted_window_dims,
-        scatter_dims_to_operand_dims=scatter_dims_to_operand_dims)
-    return scatter_op(operand, scatter_indices, updates, dnums), 0
+  count_shape = list(scatter_indices.shape)
+  count_shape[-1] = 1
+  counts = broadcasted_iota(scatter_indices.dtype, tuple(count_shape), 0)
+  scatter_indices = concatenate([counts, scatter_indices],
+                                len(count_shape) - 1)
+
+  update_window_dims = tuple(onp.add(1, dimension_numbers.update_window_dims))
+  inserted_window_dims = (0,) + tuple(onp.add(1, dimension_numbers.inserted_window_dims))
+  scatter_dims_to_operand_dims = (0,) + tuple(onp.add(1, dimension_numbers.scatter_dims_to_operand_dims))
+
+  dnums = ScatterDimensionNumbers(
+      update_window_dims=update_window_dims,
+      inserted_window_dims=inserted_window_dims,
+      scatter_dims_to_operand_dims=scatter_dims_to_operand_dims)
+  return scatter_op(operand, scatter_indices, updates, dnums), 0
 
 scatter_add_p = standard_reduction_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-add',
