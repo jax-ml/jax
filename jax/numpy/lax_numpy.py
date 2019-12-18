@@ -132,12 +132,19 @@ _dtype = dtypes.result_type
 # scalar object with JAX promotion behaviors, instead we make the JAX scalar
 # types return JAX arrays when instantiated.
 
-class _ScalarType(object):
-  def __new__(cls, x):
-    return array(x, dtype=cls.dtype)
+class _ScalarMeta(type):
+  def __hash__(self):
+    return hash(self.dtype.type)
+
+  def __eq__(self, other):
+    return id(self) == id(other) or self.dtype == other
+
+  def __call__(self, x):
+    return array(self.dtype.type(x), dtype=self.dtype)
 
 def _make_scalar_type(onp_scalar_type):
-  return type(onp_scalar_type.__name__, (_ScalarType,),
+  return type(onp_scalar_type.__name__,
+              (six.with_metaclass(_ScalarMeta, object),),
               {"dtype": onp.dtype(onp_scalar_type)})
 
 bool_ = _make_scalar_type(onp.bool_)
