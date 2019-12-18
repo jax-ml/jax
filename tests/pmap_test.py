@@ -901,8 +901,8 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     r0 = f0(x)
     r1 = f1(x)
     expected = onp.expand_dims(onp.dot(x.squeeze(), x.squeeze().T), 0)
-    self.assertAllClose(r0, expected, check_dtypes=True, atol=1e-13, rtol=1e-14)
-    self.assertAllClose(r1, expected, check_dtypes=True, atol=1e-12, rtol=1e-14)
+    self.assertAllClose(r0, expected, check_dtypes=True, atol=1e-6, rtol=1e-3)
+    self.assertAllClose(r1, expected, check_dtypes=True, atol=1e-6, rtol=1e-3)
 
   def testNoDevicesError(self):
     f = pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i', devices=[])
