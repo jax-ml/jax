@@ -157,11 +157,13 @@ class StaxTest(jtu.JaxTestCase):
     _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}".format(input_shape),
-       "input_shape": input_shape}
-      for input_shape in [(2, 3), (2, 3, 4)]))
-  def testFlattenShape(self, input_shape):
-    init_fun, apply_fun = stax.Flatten
+      {"testcase_name": "_shape={}_spec={}".format(input_shape, spec),
+       "input_shape": input_shape,
+       "spec": spec}
+      for input_shape in [(2, 3), (2, 3, 4), (0, 2)]
+      for spec in ['NC', 'CN', 'CNH']))
+  def testFlattenShape(self, input_shape, spec):
+    init_fun, apply_fun = stax.Flatten(spec=spec)
     _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -170,7 +172,7 @@ class StaxTest(jtu.JaxTestCase):
       for input_shape in [(2, 5, 6, 1)]
       for i, spec in enumerate([
           [stax.Conv(3, (2, 2))],
-          [stax.Conv(3, (2, 2)), stax.Flatten, stax.Dense(4)]])))
+          [stax.Conv(3, (2, 2)), stax.Flatten(), stax.Dense(4)]])))
   def testSerialComposeLayersShape(self, input_shape, spec):
     init_fun, apply_fun = stax.serial(*spec)
     _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)

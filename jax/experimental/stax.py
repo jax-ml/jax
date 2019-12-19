@@ -207,15 +207,27 @@ def _normalize_by_window_size(dims, strides, padding):
 AvgPool = _pooling_layer(lax.add, 0., _normalize_by_window_size)
 
 
-def Flatten():
-  """Layer construction function for flattening all but the leading dim."""
+def Flatten(spec='NC'):
+  """Layer construction function for flattening all but the batch (`N`) dim."""
+  batch_axis = spec.index('N')
+
+  def get_output_shape(input_shape):
+    return (
+      input_shape[batch_axis],
+      functools.reduce(op.mul,
+                       input_shape[:batch_axis] + input_shape[batch_axis + 1:],
+                       1))
+
   def init_fun(rng, input_shape):
-    output_shape = input_shape[0], reduce(op.mul, input_shape[1:], 1)
+    output_shape = get_output_shape(input_shape)
     return output_shape, ()
+
   def apply_fun(params, inputs, **kwargs):
-    return np.reshape(inputs, (inputs.shape[0], -1))
+    output_shape = get_output_shape(inputs.shape)
+    inputs = np.moveaxis(inputs, batch_axis, 0)
+    return np.reshape(inputs, output_shape)
+
   return init_fun, apply_fun
-Flatten = Flatten()
 
 
 def Identity():
