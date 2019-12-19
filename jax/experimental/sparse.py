@@ -24,15 +24,16 @@ from .. import lax
 
 _T = lambda x: np.swapaxes(np.conj(x), -1, -2)
 
-def body_fun(matvec, p, x, r, r_norm, k):
+def body_fun(matvec, x):
+  p, x_current, r, r_norm, k = x
   # inspired by https://en.wikipedia.org/wiki/Conjugate_gradient_method#Example_code_in_MATLAB_/_GNU_Octave
   Ap = matvec(p)
   alpha = r_norm / np.matmul(_T(p), Ap)
-  x_new = x + alpha * p
+  x_new = x_current + alpha * p
   r_new = r - alpha * Ap
   r_norm_new = np.linalg.norm(r_new)
   p_new = r_new + (r_norm_new / r_norm) * p
-  return matvec, p_new, x_new, r_new, r_norm_new, k+1
+  return p_new, x_new, r_new, r_norm_new, k+1
 
 def _cg_solve(matvec, b, x0, tol, maxiter):
   N = np.shape(b)[0]
@@ -50,7 +51,7 @@ def _cg_solve(matvec, b, x0, tol, maxiter):
   k = 0
   full_tol = tol * np.linalg.norm(b)
   p_k, x_k, r_k, r_k_norm, k = lax.while_loop(
-      lambda r_k_norm, k: (r_k_norm < full_tol) & (k < maxiter),
+      lambda x: (x[-2] < full_tol) & (x[-1] < maxiter),
       partial(body_fun, matvec),
       (p_k, x_k, r_k, r_k_norm, k)
   )
