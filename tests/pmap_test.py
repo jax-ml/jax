@@ -476,12 +476,16 @@ class PmapTest(jtu.JaxTestCase):
     device_count = xla_bridge.device_count()
     f = pmap(lambda x: 3)
     x = np.arange(device_count)
-    ans = f(x)
+    with jtu.count_jit_and_pmap_compiles() as count:
+      ans = f(x)
+    self.assertEqual(count[0], 0)
     expected = onp.repeat(3, device_count)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
     f = pmap(lambda x: (x, 3))
-    _, ans = f(x)
+    with jtu.count_jit_and_pmap_compiles() as count:
+      _, ans = f(x)
+    self.assertEqual(count[0], 1)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testPmapConstantDevices(self):
@@ -492,7 +496,9 @@ class PmapTest(jtu.JaxTestCase):
     shuffle(devices)
     f = pmap(lambda x: 3, devices=devices)
     x = np.arange(len(devices))
-    ans = f(x)
+    with jtu.count_jit_and_pmap_compiles() as count:
+      ans = f(x)
+    self.assertEqual(count[0], 0)
     expected = onp.repeat(3, len(devices))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
@@ -520,7 +526,9 @@ class PmapTest(jtu.JaxTestCase):
     f = pmap(pmap(lambda x: 3))
     shape = (2, xla_bridge.device_count() // 2, 3)
     x = np.arange(prod(shape)).reshape(shape)
-    ans = f(x)
+    with jtu.count_jit_and_pmap_compiles() as count:
+      ans = f(x)
+    self.assertEqual(count[0], 0)
     expected = 3 * onp.ones(shape[:2])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
@@ -547,7 +555,9 @@ class PmapTest(jtu.JaxTestCase):
     f = pmap(pmap(lambda x: 3), devices=devices)
     shape = (2, len(devices) // 2, 3)
     x = np.arange(prod(shape)).reshape(shape)
-    ans = f(x)
+    with jtu.count_jit_and_pmap_compiles() as count:
+      ans = f(x)
+    self.assertEqual(count[0], 0)
     expected = 3 * onp.ones(shape[:2])
     self.assertAllClose(ans, expected, check_dtypes=False)
 

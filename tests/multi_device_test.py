@@ -93,22 +93,11 @@ class MultiDeviceTest(jtu.JaxTestCase):
     if len(jax.devices()) < 2:
       raise SkipTest("test requires multiple devices")
 
-    primitive_computation = xla.primitive_computation
-    xla.xla_primitive_callable.cache_clear()  # clear op-by-op cache
-
-    count = [0]
-    def primitive_computation_and_count(*args, **kwargs):
-      count[0] += 1
-      return primitive_computation(*args, **kwargs)
-
     x = jax.device_put(1, jax.devices()[1])
 
-    try:
-      xla.primitive_computation = primitive_computation_and_count
+    with jtu.count_primitive_compiles() as count:
       y = lax.add(x, x)
       z = lax.add(y, y)
-    finally:
-      xla.primitive_computation = primitive_computation
 
     self.assertEqual(count[0], 1)
     self.assertEqual(y.device_buffer.device(), jax.devices()[1])

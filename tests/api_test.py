@@ -1583,22 +1583,9 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(inner_jaxpr.eqns[1].primitive.name, 'add')
 
   def test_primitive_compilation_cache(self):
-    primitive_computation = xla.primitive_computation
-    xla.xla_primitive_callable.cache_clear()  # clear op-by-op cache
-
-    count = [0]
-    def primitive_computation_and_count(*args, **kwargs):
-      count[0] += 1
-      return primitive_computation(*args, **kwargs)
-
-
-    try:
-      xla.primitive_computation = primitive_computation_and_count
+    with jtu.count_primitive_compiles() as count:
       lax.add(1, 2)
       lax.add(2, 3)
-    finally:
-      xla.primitive_computation = primitive_computation
-
     self.assertEqual(count[0], 1)
 
 
