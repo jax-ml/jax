@@ -211,7 +211,7 @@ def cache(call):
       cache[key] = (ans, fun.stores)
     return ans
 
-  memoized_fun.cache_clear = lambda: fun_caches.clear()
+  memoized_fun.cache_clear = fun_caches.clear
   return memoized_fun
 
 @transformation
