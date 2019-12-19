@@ -410,18 +410,18 @@ def xla_pmap_impl(fun, *args, **params):
   axis_name = params.pop('axis_name')
   axis_size = params.pop('axis_size')
   devices = params.pop('devices')
-  backend = params.pop('backend', None)
   assert not params
 
   abstract_args = map(xla.abstractify, args)
-  compiled_fun = parallel_callable(fun, backend, axis_name, axis_size, devices,
+  compiled_fun = parallel_callable(fun, axis_name, axis_size, devices,
                                    *abstract_args)
   return compiled_fun(*args)
 
 @lu.cache
-def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
+def parallel_callable(fun, axis_name, axis_size, devices, *avals):
   if devices is not None and len(devices) == 0:
     raise ValueError("'devices' argument to pmap must be non-empty, or None.")
+  devices, backend = xla.canonicalize_device_arg(devices)
 
   if devices:
     global_axis_size = len(devices)

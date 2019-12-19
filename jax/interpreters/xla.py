@@ -341,7 +341,7 @@ def xla_destructure(c, ans):
 def check_backend_params(params, outer_backend):
   # For nested calls, the outermost call sets the backend for all inner calls;
   # it's an error if the inner call has a conflicting explicit backend spec.
-  inner_backend = params.get('backend', None)
+  inner_backend = params.get('device', None)
   if inner_backend and inner_backend != outer_backend:
     msg = (
       "Outer-jit backend specification {} must match explicit inner-jit "
@@ -438,8 +438,7 @@ def eqn_collectives(eqn):
 
 def _xla_call_impl(fun, *args, **params):
   device = params['device']
-  backend = params['backend']
-  compiled_fun = _xla_callable(fun, device, backend, *map(arg_spec, args))
+  compiled_fun = _xla_callable(fun, device, *map(arg_spec, args))
   try:
     return compiled_fun(*args)
   except FloatingPointError:
@@ -448,11 +447,8 @@ def _xla_call_impl(fun, *args, **params):
     return fun.call_wrapped(*args)  # probably won't return
 
 @lu.cache
-def _xla_callable(fun, device, backend, *arg_specs):
-  if device is not None and backend is not None:
-    raise ValueError("can't specify both a device and a backend for jit, "
-                     "got device={} and backend={}".format(device, backend))
-
+def _xla_callable(fun, device, *arg_specs):
+  device, backend = canonicalize_device_arg(device)
   abstract_args, arg_devices = unzip2(arg_specs)
   pvals = [pe.PartialVal((aval, core.unit)) for aval in abstract_args]
   with core.new_master(pe.StagingJaxprTrace, True) as master:
@@ -874,6 +870,23 @@ device_put_p = core.Primitive('device_put')
 device_put_p.def_impl(_device_put_impl)
 pe.custom_partial_eval_rules[device_put_p] = lambda trace, x, **params: x
 ad.deflinear(device_put_p, lambda cotangent, **kwargs: [cotangent])
+
+
+VALID_PLATFORMS = ["cpu", "gpu", "tpu"]
+
+def canonicalize_device_arg(device_arg):
+  if isinstance(device_arg, str):
+    if device_arg not in VALID_PLATFORMS:
+      raise ValueError(
+          "Got invalid platform string '%s' (valid platforms are: %s)"
+          % (device_arg, VALID_PLATFORMS))
+    return None, device_arg
+  try:
+    device = device_arg[0]
+  except TypeError:
+    device = device_arg
+  platform = device and device.platform
+  return device_arg, platform
 
 
 def _remat_translation_rule(c, jaxpr, axis_env, const_nodes, freevar_nodes, in_nodes,

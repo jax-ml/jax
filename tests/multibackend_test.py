@@ -48,7 +48,7 @@ class MultiBackendTest(jtu.JaxTestCase):
   def testMultiBackend(self, backend):
     if backend not in ('cpu', jtu.device_under_test(), None):
       raise SkipTest()
-    @partial(api.jit, backend=backend)
+    @partial(api.jit, device=backend)
     def fun(x, y):
         return np.matmul(x, y)
     x = npr.uniform(size=(10,10))
@@ -67,9 +67,9 @@ class MultiBackendTest(jtu.JaxTestCase):
     outer, inner = ordering
     if outer not in ('cpu', jtu.device_under_test(), None):
       raise SkipTest()
-    @partial(api.jit, backend=outer)
+    @partial(api.jit, device=outer)
     def fun(x, y):
-        @partial(api.jit, backend=inner)
+        @partial(api.jit, device=inner)
         def infun(x, y):
             return np.matmul(x, y)
         return infun(x, y) + np.ones_like(x)
@@ -95,9 +95,9 @@ class MultiBackendTest(jtu.JaxTestCase):
       raise SkipTest()
     if inner not in ('cpu', jtu.device_under_test(), None):
       raise SkipTest()
-    @partial(api.jit, backend=outer)
+    @partial(api.jit, device=outer)
     def fun(x, y):
-        @partial(api.jit, backend=inner)
+        @partial(api.jit, device=inner)
         def infun(x, y):
             return np.matmul(x, y)
         return infun(x, y) + np.ones_like(x)
@@ -113,7 +113,7 @@ class MultiBackendTest(jtu.JaxTestCase):
   def testGpuMultiBackendOpByOpReturn(self, backend):
     if backend not in ('cpu', jtu.device_under_test()):
       raise SkipTest()
-    @partial(api.jit, backend=backend)
+    @partial(api.jit, device=backend)
     def fun(x, y):
         return np.matmul(x, y)
     x = npr.uniform(size=(10,10))
@@ -125,7 +125,7 @@ class MultiBackendTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices("cpu")  # test can only fail with non-cpu backends
   def testJitCpu(self):
-    @partial(api.jit, backend='cpu')
+    @partial(api.jit, device='cpu')
     def get_arr(scale):
       return scale + np.ones((2, 2))
 

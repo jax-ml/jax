@@ -147,7 +147,7 @@ def jit(fun, static_argnums=(), device=None):
     args_flat, in_tree = tree_flatten((dyn_args, kwargs))
     _check_args(args_flat)
     flat_fun, out_tree = flatten_fun(f, in_tree)
-    out = xla.xla_call(flat_fun, *args_flat, device=device, backend=backend)
+    out = xla.xla_call(flat_fun, *args_flat, device=device)
     return tree_unflatten(out_tree(), out)
 
   jitted_name =  "jit({}, static_argnums={})"
@@ -286,6 +286,7 @@ def xla_computation(fun, static_argnums=(), axis_env=None, device=None,
   """
   _check_callable(fun)
   fun_name = getattr(fun, '__name__', 'unknown')
+  _, backend = xla.canonicalize_device_arg(device)
 
   def make_axis_env(nreps):
     if axis_env is None:
@@ -868,6 +869,8 @@ def pmap(fun, axis_name=None, devices=None):
   """
   _check_callable(fun)
   axis_name = _TempAxisName(fun) if axis_name is None else axis_name
+  if devices is not None and type(devices) != str:
+    devices = tuple(devices)
 
   @wraps(fun)
   def f_pmapped(*args, **kwargs):
@@ -877,8 +880,7 @@ def pmap(fun, axis_name=None, devices=None):
     _check_args(args)
     flat_fun, out_tree = flatten_fun(f, in_tree)
     out = pxla.xla_pmap(flat_fun, *args, axis_name=axis_name, axis_size=axis_size,
-                        devices=tuple(devices) if devices is not None else devices,
-                        backend=backend)
+                        devices=devices)
     return tree_unflatten(out_tree(), out)
 
   namestr = "pmap({}, axis_name={})".format
@@ -910,6 +912,12 @@ def soft_pmap(fun, axis_name=None, devices=None):
   warn("soft_pmap is an experimental feature and probably has bugs!")
   _check_callable(fun)
   axis_name = _TempAxisName(fun) if axis_name is None else axis_name
+  devices, backend = xla.canonicalize_device_arg(devices)
+  if devices is not None:
+    raise ValueError(
+        "soft_pmap only supports specifying a platform name. Please file an "
+        "issue at https://github.com/google/jax/issues if you need to specify "
+        "specific devices.")
 
   @wraps(fun)
   def f_pmapped(*args, **kwargs):
@@ -933,7 +941,7 @@ def soft_pmap(fun, axis_name=None, devices=None):
     soft_mapped_fun = pxla.split_axis(flat_fun, axis_name, chunk_size)
     reshaped_outs = pxla.xla_pmap(soft_mapped_fun, *reshaped_args,
                                   axis_name=axis_name, axis_size=num_chunks,
-                                  devices=None, backend=backend)
+                                  devices=backend)
     outs = [_reshape_merge(out) for out in reshaped_outs]
     return tree_unflatten(out_tree(), outs)
 
