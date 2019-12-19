@@ -85,7 +85,7 @@ class _ThreadLocalState(threading.local):
 
 _thread_local_state = _ThreadLocalState()
 
-def jit(fun, static_argnums=(), device=None, backend=None):
+def jit(fun, static_argnums=(), device=None):
   """Sets up `fun` for just-in-time compilation with XLA.
 
   Args:
@@ -107,8 +107,8 @@ def jit(fun, static_argnums=(), device=None, backend=None):
       Optional, the Device the jitted function will run on. (Available devices
       can be retrieved via ``jax.devices()``.) The default is inherited from
       XLA's DeviceAssignment logic and is usually to use ``jax.devices()[0]``.
-    backend: This is an experimental feature and the API is likely to change.
-      Optional, a string representing the xla backend. 'cpu','gpu', or 'tpu'.
+      Can also be passed ``'cpu'``, ``'gpu'``, or ``'tpu'`` to use the default
+      device for that platform.
 
   Returns:
     A wrapped version of `fun`, set up for just-in-time compilation.
@@ -197,7 +197,7 @@ def disable_jit():
     _thread_local_state.jit_is_disabled = prev_val
 
 
-def xla_computation(fun, static_argnums=(), axis_env=None, backend=None,
+def xla_computation(fun, static_argnums=(), axis_env=None, device=None,
                     tuple_args=False, instantiate_const_outputs=True):
   """Creates a function that produces its XLA computation given example args.
 
@@ -210,8 +210,9 @@ def xla_computation(fun, static_argnums=(), axis_env=None, backend=None,
       functions that involve parallel communication collectives, and it
       specifies the axis name/size environment that would be set up by
       applications of ``jax.pmap``. See the examples below.
-    backend: This is an experimental feature and the API is likely to change.
-      Optional, a string representing the xla backend. 'cpu','gpu', or 'tpu'.
+    device: This is an experimental feature and the API is likely to change.
+      Optional, either a Device object or ``'cpu'``, ``'gpu'``, or ``'tpu'``.
+      Specifies which platform to target.
     tuple_args: Optional bool, defaults to False. If True, the resulting XLA
       computation will have a single tuple argument that is unpacked into the
       specified function arguments.
@@ -718,7 +719,7 @@ def _flatten_axes(treedef, axis_tree):
   return axes
 
 
-def pmap(fun, axis_name=None, devices=None, backend=None):
+def pmap(fun, axis_name=None, devices=None):
   """Parallel map with support for collectives.
 
   The purpose of ``pmap`` is to express single-program multiple-data (SPMD)
@@ -763,11 +764,10 @@ def pmap(fun, axis_name=None, devices=None, backend=None):
     devices: This is an experimental feature and the API is likely to change.
       Optional, a sequence of Devices to map over. (Available devices can be
       retrieved via jax.devices()). If specified, the size of the mapped axis
-      must be equal to the number of local devices in the sequence. Nested
-      ``pmap`` s with ``devices`` specified in either the inner or outer ``pmap``
-      are not yet supported.
-    backend: This is an experimental feature and the API is likely to change.
-      Optional, a string representing the xla backend. 'cpu', 'gpu', or 'tpu'.
+      must be equal to the number of local devices in the sequence.  Can also be
+      passed ``'cpu'``, ``'gpu'``, or ``'tpu'`` to use the default devices for
+      that platform.  Nested ``pmap`` s with ``devices`` specified in either the
+      inner or outer ``pmap`` are not yet supported.
 
   Returns:
     A parallelized version of ``fun`` with arguments that correspond to those of
@@ -906,7 +906,7 @@ class _TempAxisName(object):
     return self.obj is other.obj
 
 
-def soft_pmap(fun, axis_name=None, backend=None):
+def soft_pmap(fun, axis_name=None, devices=None):
   warn("soft_pmap is an experimental feature and probably has bugs!")
   _check_callable(fun)
   axis_name = _TempAxisName(fun) if axis_name is None else axis_name
