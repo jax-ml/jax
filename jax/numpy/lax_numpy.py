@@ -2091,11 +2091,19 @@ def _wrap_indices_function(f):
     return tuple(asarray(x) for x in f(*args, **kwargs))
   return wrapper
 
-diag_indices = _wrap_indices_function(onp.diag_indices)
 tril_indices = _wrap_indices_function(onp.tril_indices)
 triu_indices = _wrap_indices_function(onp.triu_indices)
 mask_indices = _wrap_indices_function(onp.mask_indices)
 
+@_wraps(onp.diag_indices)
+def diag_indices(n, ndim=2):
+  if n < 0:
+    raise ValueError("n argument to diag_indices must be nonnegative, got {}"
+                     .format(n))
+  if ndim < 0:
+    raise ValueError("ndim argument to diag_indices must be nonnegative, got {}"
+                     .format(ndim))
+  return (lax.iota(int_, n),) * ndim
 
 @_wraps(onp.diagonal)
 def diagonal(a, offset=0, axis1=0, axis2=1):
