@@ -584,6 +584,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}".format(
+          jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype}
+      for shape in all_shapes for dtype in all_dtypes))
+  def testNonzero(self, shape, dtype):
+    rng = jtu.rand_some_zero()
+    onp_fun = lambda x: onp.nonzero(x)
+    lnp_fun = lambda x: lnp.nonzero(x)
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=False)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "{}_inshape={}_axis={}".format(
           rec.test_name.capitalize(),
           jtu.format_shape_dtype_string(shape, dtype), axis),
@@ -1930,6 +1942,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}".format(
+          jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype}
+      for shape in all_shapes for dtype in all_dtypes))
+  def testWhereOneArgument(self, shape, dtype):
+    rng = jtu.rand_some_zero()
+    onp_fun = lambda x: onp.where(x)
+    lnp_fun = lambda x: lnp.where(x)
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=False)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "_{}".format("_".join(
         jtu.format_shape_dtype_string(shape, dtype)
         for shape, dtype in zip(shapes, dtypes))),
@@ -1937,7 +1961,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     for shapes in filter(_shapes_are_broadcast_compatible,
                          CombosWithReplacement(all_shapes, 3))
     for dtypes in CombosWithReplacement(all_dtypes, 3)))
-  def testWhere(self, rng_factory, shapes, dtypes):
+  def testWhereThreeArgument(self, rng_factory, shapes, dtypes):
     rng = rng_factory()
     args_maker = self._GetArgsMaker(rng_factory(), shapes, dtypes)
     def onp_fun(cond, x, y):
