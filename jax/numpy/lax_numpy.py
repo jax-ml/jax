@@ -1012,7 +1012,14 @@ def _where(condition, x=None, y=None):
   return lax.select(condition, x, y) if onp.size(x) else x
 
 
-@_wraps(onp.where, update_doc=False)
+_WHERE_DOC = """\
+At present, JAX does not support JIT-compilation of the single-argument form
+of :py:func:`jax.numpy.where` because its output shape is data-dependent. The
+three-argument form does not have a data-dependent shape and can be JIT-compiled
+successfully.
+"""
+
+@_wraps(onp.where, update_doc=False, lax_description=_WHERE_DOC)
 def where(condition, x=None, y=None):
   if x is None and y is None:
     return nonzero(asarray(condition))
@@ -1400,7 +1407,12 @@ def count_nonzero(a, axis=None):
              dtype=dtypes.canonicalize_dtype(onp.int_))
 
 
-@_wraps(onp.nonzero)
+_NONZERO_DOC = """\
+At present, JAX does not support JIT-compilation of :py:func:`jax.numpy.nonzero`
+because its output shape is data-dependent.
+"""
+
+@_wraps(onp.nonzero, lax_description=_NONZERO_DOC)
 def nonzero(a):
   # Note: this function cannot be jitted because its output has a dynamic
   # shape.
