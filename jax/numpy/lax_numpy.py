@@ -1391,6 +1391,19 @@ def count_nonzero(a, axis=None):
              dtype=dtypes.canonicalize_dtype(onp.int_))
 
 
+@_wraps(onp.nonzero)
+def nonzero(a):
+  # Note: this function cannot be jitted because its output has a dynamic
+  # shape.
+  a = atleast_1d(a)
+  dims = shape(a)
+  ndims = len(dims)
+  ds = [lax.broadcasted_iota(int_, dims + (1,), i) for i in range(ndims)]
+  d = concatenate(ds, axis=-1)
+  indexes = d[a != 0]
+  return [indexes[..., i] for i in range(ndims)]
+
+
 def _make_nan_reduction(onp_reduction, np_reduction, init_val, nan_if_all_nan):
   @_wraps(onp_reduction)
   def nan_reduction(a, axis=None, out=None, keepdims=False, **kwargs):

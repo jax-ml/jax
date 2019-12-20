@@ -584,6 +584,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}".format(
+          jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype}
+      for shape in all_shapes for dtype in all_dtypes))
+  def testNonzero(self, shape, dtype):
+    rng = jtu.rand_some_zero()
+    onp_fun = lambda x: onp.nonzero(x)
+    lnp_fun = lambda x: lnp.nonzero(x)
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=False)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "{}_inshape={}_axis={}".format(
           rec.test_name.capitalize(),
           jtu.format_shape_dtype_string(shape, dtype), axis),

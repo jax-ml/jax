@@ -179,6 +179,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     nansum
     negative
     nextafter
+    nonzero
     not_equal
     ones
     ones_like
