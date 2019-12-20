@@ -3232,6 +3232,9 @@ def _scatter_jvp(primals, tangents, update_jaxpr, update_consts,
     tangent_out = ad_util.zero
     return val_out, tangent_out
 
+  g_operand = ad.instantiate_zeros(operand, g_operand)
+  g_updates = ad.instantiate_zeros(updates, g_updates)
+
   # If there are overlapping indices in the scatter, it is unspecified which
   # update "wins". So we use the following perhaps surprising scheme:
   # a) attach a positive ID to each update in updates, forming (value, id) pairs
@@ -3298,8 +3301,6 @@ def _scatter_jvp(primals, tangents, update_jaxpr, update_consts,
                          slice_sizes=slice_sizes)
 
   # c) mask off input JVP elements that do not correspond to a primal output.
-  g_operand = ad.instantiate_zeros(operand, g_operand)
-  g_updates = ad.instantiate_zeros(updates, g_updates)
   masked_g_operand = select(eq(scattered_ids, _zeros(scattered_ids)),
                             g_operand, _zeros(g_operand))
   masked_g_updates = select(eq(update_ids, gathered_update_ids),

@@ -2465,6 +2465,16 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     y = rng(update_shape, dtype)
     check_grads(scatter, (x, y), 2, ["fwd", "rev"], 1e-2, 1e-2, 1.)
 
+  def testScatterGradSymbolicZeroUpdate(self):
+    # https://github.com/google/jax/issues/1901
+    def f(x):
+      n = x.shape[0]
+      y = onp.arange(n, dtype=x.dtype)
+      return jax.ops.index_update(x, onp.diag_indices(n), y)
+    rng = jtu.rand_default()
+    check_grads(f, (rng((5, 5), onp.float32),), 2, ["fwd", "rev"], 1e-2, 1e-2,
+                1.)
+
   def testStopGradient(self):
     def f(x):
       return lax.sin(x) * lax.cos(lax.stop_gradient(x))
