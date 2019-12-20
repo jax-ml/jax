@@ -4399,8 +4399,8 @@ def _dynamic_slice_indices(operand, start_indices):
     start_indices = [reshape(slice(start_indices, [i], [i+1]), ())
                      for i in range(operand.ndim)]
   else:
-    start_indices = [onp.asarray(i) if isinstance(i, int) else i
-                     for i in start_indices]
+    start_indices = [onp.asarray(i, dtype=dtypes.int_) if isinstance(i, int)
+                     else i for i in start_indices]
   if len(start_indices) != operand.ndim:
     msg = ("Length of slice indices must match number of operand dimensions ({} "
           "vs {})")
