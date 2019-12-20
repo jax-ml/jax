@@ -999,16 +999,24 @@ else:
 # The `jit` on `where` exists to avoid materializing constants in cases like
 # `np.where(np.zeros(1000), 7, 4)`. In op-by-op mode, we don't want to
 # materialize the broadcast forms of scalar arguments.
-@_wraps(onp.where, update_doc=False)
 @jit
-def where(condition, x=None, y=None):
+def _where(condition, x=None, y=None):
   if x is None or y is None:
-    raise ValueError("Must use the three-argument form of where().")
+    raise ValueError("Either both or neither of the x and y arguments should "
+                     "be provided to jax.numpy.where, got {} and {}.", x, y)
   if not issubdtype(_dtype(condition), bool_):
     condition = lax.ne(condition, zeros_like(condition))
   x, y = _promote_dtypes(x, y)
   condition, x, y = broadcast_arrays(condition, x, y)
   return lax.select(condition, x, y) if onp.size(x) else x
+
+
+@_wraps(onp.where, update_doc=False)
+def where(condition, x=None, y=None):
+  if x is None and y is None:
+    return nonzero(asarray(condition))
+  else:
+    return _where(condition, x, y)
 
 
 @_wraps(onp.select)
