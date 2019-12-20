@@ -1003,7 +1003,8 @@ else:
 def _where(condition, x=None, y=None):
   if x is None or y is None:
     raise ValueError("Either both or neither of the x and y arguments should "
-                     "be provided to jax.numpy.where, got {} and {}.", x, y)
+                     "be provided to jax.numpy.where, got {} and {}."
+                     .format(x, y))
   if not issubdtype(_dtype(condition), bool_):
     condition = lax.ne(condition, zeros_like(condition))
   x, y = _promote_dtypes(x, y)
@@ -1409,7 +1410,7 @@ def nonzero(a):
   ds = [lax.broadcasted_iota(int_, dims + (1,), i) for i in range(ndims)]
   d = concatenate(ds, axis=-1)
   indexes = d[a != 0]
-  return [indexes[..., i] for i in range(ndims)]
+  return tuple(indexes[..., i] for i in range(ndims))
 
 
 def _make_nan_reduction(onp_reduction, np_reduction, init_val, nan_if_all_nan):
