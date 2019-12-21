@@ -65,6 +65,8 @@ PYTREES = [
     ([AnObject(3, None, [4, "foo"])],),
     ({"a": 1, "b": 2},),
     (collections.OrderedDict([("foo", 34), ("baz", 101), ("something", -42)]),),
+    (collections.defaultdict(dict,
+                             [("foo", 34), ("baz", 101), ("something", -42)]),),
     (ANamedTupleSubclass(foo="hello", bar=3.5),),
 ]
 
