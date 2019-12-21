@@ -205,6 +205,11 @@ register_pytree_node(
   lambda x: (list(x.values()), list(x.keys())),
   lambda keys, values: collections.OrderedDict(safe_zip(keys, values)))
 
+register_pytree_node(
+  collections.defaultdict,
+  lambda x: (tuple(x.values()), (x.default_factory, tuple(x.keys()))),
+  lambda s, values: collections.defaultdict(s[0], safe_zip(s[1], values)))
+
 
 class Partial(functools.partial):
   """A version of functools.partial that works in pytrees.
