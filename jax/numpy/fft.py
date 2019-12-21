@@ -60,15 +60,24 @@ def _fft_core(func_name, fft_type, a, s, axes, norm):
     raise ValueError(
         "%s does not support repeated axes. Got axes %s." % (full_name, axes))
 
-  if any(axis in range(a.ndim - 3) for axis in axes):
+  if len(axes) > 3:
     raise ValueError(
-        "%s only supports 1D, 2D, and 3D FFTs over the innermost axes."
-        " Got axes %s with input rank %s." % (full_name, orig_axes, a.ndim))
+        "%s only supports 1D, 2D, and 3D FFTs. "
+        "Got axes %s with input rank %s." % (full_name, orig_axes, a.ndim))
+
+  if orig_axes is not None:
+    axes = tuple(range(a.ndim - len(axes), a.ndim))
+    a = np.moveaxis(a, orig_axes, axes)
 
   if s is None:
     s = [a.shape[axis] for axis in axes]
+
   a = _promote_to_complex(a)
-  return lax.fft(a, fft_type, s)
+  transformed = lax.fft(a, fft_type, s)
+
+  if orig_axes is not None:
+    transformed = np.moveaxis(transformed, axes, orig_axes)
+  return transformed
 
 
 @_wraps(onp.fft.fftn)
