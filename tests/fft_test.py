@@ -94,7 +94,8 @@ class FftTest(jtu.JaxTestCase):
     func = np.fft.ifftn if inverse else np.fft.fftn
     self.assertRaisesRegex(
         ValueError,
-        "jax.np.fft.{} only supports 1D, 2D, and 3D FFTs".format(name),
+        "jax.np.fft.{} only supports 1D, 2D, and 3D FFTs. "
+        "Got axes None with input rank 4.".format(name),
         lambda: func(rng([2, 3, 4, 5], dtype=onp.float64), axes=None))
     self.assertRaisesRegex(
         ValueError,

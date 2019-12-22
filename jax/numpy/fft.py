@@ -61,10 +61,12 @@ def _fft_core(func_name, fft_type, a, s, axes, norm):
         "%s does not support repeated axes. Got axes %s." % (full_name, axes))
 
   if len(axes) > 3:
+    # XLA does not support FFTs over more than 3 dimensions
     raise ValueError(
         "%s only supports 1D, 2D, and 3D FFTs. "
         "Got axes %s with input rank %s." % (full_name, orig_axes, a.ndim))
 
+  # XLA only supports FFTs over the innermost axes, so rearrange if necessary.
   if orig_axes is not None:
     axes = tuple(range(a.ndim - len(axes), a.ndim))
     a = np.moveaxis(a, orig_axes, axes)
