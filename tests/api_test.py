@@ -1533,6 +1533,35 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(f1(x), f2(x), check_dtypes=False)
     self.assertAllClose(api.grad(f1)(x), api.grad(f2)(x), check_dtypes=False)
 
+  def test_remat_symbolic_zeros(self):
+    # code from https://github.com/google/jax/issues/1907
+    test_remat = True
+    test_scan = True
+
+    key = jax.random.PRNGKey(0)
+    key, split = jax.random.split(key)
+    n = 5
+
+    def func(D0):
+      def shift(R, dR, **unused_kwargs):
+        return R + dR
+
+      def apply_fn(R):
+        return D0 * R
+
+      Rinit = jax.random.uniform(split, (n,3), minval=0.0, maxval=5.0,
+                                 dtype=np.float32)
+
+      def move(R,i):
+        F = apply_fn(R)
+        return shift(R, 0.001 * F), np.array([0.])
+
+      move = api.remat(move)
+      R, temp = lax.scan(move, Rinit, np.arange(2))
+      return R[0, 0]
+
+    api.grad(func)(5.0)  # doesn't crash
+
   def test_trivial_computations(self):
     x = np.array([1, 2, 3])
     y = api.jit(lambda x: x)(x)
