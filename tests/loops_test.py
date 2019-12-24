@@ -63,8 +63,9 @@ class LoopsTest(jtu.JaxTestCase):
     self.assertAllClose(f_expected(2.), api.jit(f_op)(2.), check_dtypes=True)
     self.assertAllClose(5., api.grad(f_op)(2.), check_dtypes=True)
     self.assertAllClose(5., api.grad(f_op)(2.), check_dtypes=True)
-    inc_batch = onp.arange(5, dtype=onp.float32)
-    self.assertAllClose(np.array([f_expected(inc) for inc in inc_batch]),
+    inc_batch = onp.arange(5, dtype=np.float_)
+    self.assertAllClose(np.array([f_expected(inc) for inc in inc_batch],
+                                 dtype=np.float_),
                         api.vmap(f_op)(inc_batch), check_dtypes=True)
 
 
@@ -143,7 +144,7 @@ class LoopsTest(jtu.JaxTestCase):
   def test_example_doc(self):
     "The example from the module docstring."
     def f_expected():
-      arr = onp.zeros(5)
+      arr = onp.zeros(5, dtype=np.float_)
       for i in range(arr.shape[0]):
         arr[i] += 2.
         if i % 2 == 0:
@@ -151,7 +152,7 @@ class LoopsTest(jtu.JaxTestCase):
       return arr
 
     def f_op_jax():
-      arr = onp.zeros(5)
+      arr = np.zeros(5)
       def loop_body(i, acc_arr):
         arr1 = ops.index_update(acc_arr, i, acc_arr[i] + 2.)
         return lax.cond(i % 2 == 0,
@@ -380,8 +381,9 @@ class LoopsTest(jtu.JaxTestCase):
     self.assertAllClose(f_expected(2.), f_op(2.), check_dtypes=True)
     self.assertAllClose(f_expected(2.), api.jit(f_op)(2.), check_dtypes=True)
     self.assertAllClose(f_expected(1.), f_op(1.), check_dtypes=True)
-    init_batch = np.array([1., 2., 3.])
-    self.assertAllClose(np.array([f_expected(init) for init in init_batch]),
+    init_batch = onp.array([1., 2., 3.], dtype=onp.float32)
+    self.assertAllClose(onp.array([f_expected(init) for init in init_batch],
+                                  dtype=onp.float32),
                         api.vmap(f_op)(init_batch), check_dtypes=True)
 
   def test_error_while_cond_mutation(self):

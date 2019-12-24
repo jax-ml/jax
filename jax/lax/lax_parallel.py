@@ -188,16 +188,16 @@ def _allreduce_split_axis_rule(prim, reducer, vals, which_mapped, axis_name):
   x, = vals
   return prim.bind(reducer(x, [0]), axis_name=axis_name), False
 
-def _allreduce_translation_rule(prim, c, val, replica_groups, backend=None):
+def _allreduce_translation_rule(prim, c, val, replica_groups):
   dtype = c.GetShape(val).numpy_dtype()
   scalar = ShapedArray((), dtype)
-  computation = xla.primitive_computation(prim, scalar, scalar, backend=backend)
+  computation = xla.primitive_subcomputation(prim, scalar, scalar)
   return c.AllReduce(val, computation, replica_groups=replica_groups)
 
 # psum translation rule has special handling for complex dtypes
-def _psum_translation_rule(c, val, replica_groups, backend=None):
+def _psum_translation_rule(c, val, replica_groups):
   psum = partial(_allreduce_translation_rule, lax.add_p, c,
-                 replica_groups=replica_groups, backend=backend)
+                 replica_groups=replica_groups)
   dtype = c.GetShape(val).numpy_dtype()
   if dtypes.issubdtype(dtype, onp.complexfloating):
     return c.Complex(psum(c.Real(val)), psum(c.Imag(val)))
@@ -210,6 +210,7 @@ pxla.split_axis_rules[psum_p] = \
 xla.parallel_translations[psum_p] = _psum_translation_rule
 pxla.parallel_pure_rules[psum_p] = lambda x, shape: x * prod(shape)
 ad.deflinear(psum_p, lambda t, axis_name: [psum(t, axis_name)])
+pxla.multi_host_supported_collectives.add(psum_p)
 
 
 pmax_p = standard_pmap_primitive('pmax')
@@ -226,8 +227,7 @@ pxla.split_axis_rules[pmin_p] = \
     partial(_allreduce_split_axis_rule, pmin_p, lax._reduce_min)
 
 
-def _ppermute_translation_rule(c, x, replica_groups, perm, backend=None):
-  del backend
+def _ppermute_translation_rule(c, x, replica_groups, perm):
   group_size = len(replica_groups[0])
   srcs, dsts = unzip2((src % group_size, dst % group_size) for src, dst in perm)
   if not (len(srcs) == len(set(srcs)) and len(dsts) == len(set(dsts))):
@@ -250,8 +250,7 @@ ad.deflinear(ppermute_p, _ppermute_transpose_rule)
 xla.parallel_translations[ppermute_p] = _ppermute_translation_rule
 
 
-def _all_to_all_translation_rule(c, x, split_axis, concat_axis, replica_groups, backend=None):
-  del backend
+def _all_to_all_translation_rule(c, x, split_axis, concat_axis, replica_groups):
   return c.AllToAll(x, split_axis, concat_axis, replica_groups)
 
 def _all_to_all_split_axis_rule(vals, which_mapped, split_axis, concat_axis,

@@ -37,6 +37,7 @@ sign = onp.sign
 floor = onp.floor
 ceil = onp.ceil
 round = onp.round
+nextafter = onp.nextafter
 
 is_finite = onp.isfinite
 

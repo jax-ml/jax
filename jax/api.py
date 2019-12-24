@@ -198,7 +198,7 @@ def disable_jit():
 
 
 def xla_computation(fun, static_argnums=(), axis_env=None, backend=None,
-                    tuple_args=False):
+                    tuple_args=False, instantiate_const_outputs=True):
   """Creates a function that produces its XLA computation given example args.
 
   Args:
@@ -212,9 +212,16 @@ def xla_computation(fun, static_argnums=(), axis_env=None, backend=None,
       applications of ``jax.pmap``. See the examples below.
     backend: This is an experimental feature and the API is likely to change.
       Optional, a string representing the xla backend. 'cpu','gpu', or 'tpu'.
-    tuple_args: Optional, defaults to False. If True, the resulting XLA
+    tuple_args: Optional bool, defaults to False. If True, the resulting XLA
       computation will have a single tuple argument that is unpacked into the
       specified function arguments.
+    instantiate_const_outputs: Optional bool, defaults to True. If False, then
+      ``xla_computation`` does not instantiate constant-valued outputs in the
+      XLA computation, and so the result is closer to the computation that
+      ``jax.jit`` produces and may be more useful for studying ``jit`` behavior.
+      If True, then constant-valued outputs are instantiated in the XLA
+      computation, which may be more useful for staging computations out of JAX
+      entirely.
 
   Returns:
     A wrapped version of ``fun`` that when applied to example arguments returns a
@@ -294,7 +301,8 @@ def xla_computation(fun, static_argnums=(), axis_env=None, backend=None,
     jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
     avals = map(xla.abstractify, jax_args)
     pvals = [pe.PartialVal((aval, core.unit)) for aval in avals]
-    jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
+    jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals,
+                                         instantiate=instantiate_const_outputs)
     axis_env_ = make_axis_env(xla.jaxpr_replicas(jaxpr))
     c = xb.make_computation_builder('xla_computation_{}'.format(fun_name))
     xla_consts = map(c.Constant, consts)
@@ -741,7 +749,10 @@ def pmap(fun, axis_name=None, devices=None, backend=None):
   *all* participating devices, including those on other hosts, via
   device-to-device communication.  Conceptually, this can be thought of as
   running a pmap over a single array sharded across hosts, where each host
-  "sees" only its local shard of the input and output.
+  "sees" only its local shard of the input and output. The SPMD model requires
+  that the same multi-host pmaps must be run in the same order on all devices,
+  but they can be interspersed with arbitrary operations running on a single
+  host.
 
   Args:
     fun: Function to be mapped over argument axes. Its arguments and return
@@ -1692,11 +1703,27 @@ def defvjp_all(fun, custom_vjp):
     args = tree_unflatten(params['in_tree'], args_flat)
     out, vjp = custom_vjp(*args)
     out_flat, out_tree = tree_flatten(out)
-    assert out_tree == params['out_tree']  # TODO(mattjj): better error message
+    if out_tree != params['out_tree']:
+      msg = (
+        "First output of `custom_vjp`: {} doesn't match the structure of "
+        "the output of `fun`: {}\n"
+        "{}\n"
+        "vs\n"
+        "{}\n".format(custom_vjp, fun, out_tree, params['out_tree'])
+      )
+      raise TypeError(msg)
     def vjp_flat(*cts_flat):
       cts = tree_unflatten(out_tree, cts_flat)
       args_cts_flat, in_tree2 = tree_flatten(vjp(cts))
-      assert in_tree == in_tree2  # TODO(mattjj): better error message
+      if in_tree != in_tree2:
+        msg = (
+          "Output of the `vjp`: {} doesn't match the structure of args of "
+          "`fun`: {}\n"
+          "{}\n"
+          "vs\n"
+          "{}\n".format(vjp, fun, in_tree2, in_tree)
+        )
+        raise TypeError(msg)
       return [core.unit] * num_consts + list(args_cts_flat)
     return out_flat, vjp_flat
   ad.defvjp_all(fun.prim, custom_transforms_vjp)

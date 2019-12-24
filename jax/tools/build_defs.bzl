@@ -139,7 +139,7 @@ EOF
         srcs = [
             runner + ".py",
         ],
-        python_version = "PY2",
+        python_version = "PY3",
         deps = deps + [
             "//third_party/py/jax/jaxlib",
             "//third_party/py/jax/tools:jax_to_hlo",
@@ -153,7 +153,7 @@ EOF
     native.genrule(
         name = name + "_jax_to_hlo_genrule",
         outs = [name + ".pb", name + ".txt"],
-        tools = [runner],
+        exec_tools = [runner],
         cmd = """
         JAX_PLATFORM_NAME=cpu \
         '$(location {runner})' \

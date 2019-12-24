@@ -198,6 +198,7 @@ def wrap_init(f, params={}):
 
 def cache(call):
   fun_caches = weakref.WeakKeyDictionary()
+
   def memoized_fun(fun, *args):
     cache = fun_caches.setdefault(fun.f, {})
     key = (fun.transforms, fun.params, args)
@@ -209,6 +210,8 @@ def cache(call):
       ans = call(fun, *args)
       cache[key] = (ans, fun.stores)
     return ans
+
+  memoized_fun.cache_clear = fun_caches.clear
   return memoized_fun
 
 @transformation

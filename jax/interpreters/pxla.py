@@ -27,6 +27,7 @@ import numpy as onp
 import six
 from six.moves import reduce
 
+from ..config import flags
 from .. import core
 from .. import linear_util as lu
 from ..abstract_arrays import (ConcreteArray, ShapedArray, array_types,
@@ -34,12 +35,13 @@ from ..abstract_arrays import (ConcreteArray, ShapedArray, array_types,
 from ..util import partial, unzip2, concatenate, prod, safe_map
 from ..lib import xla_bridge as xb
 from .xla import aval_to_xla_shape, xla_destructure
-from .partial_eval import trace_to_subjaxpr, merge_pvals, JaxprTrace, PartialVal
 from .batching import broadcast, not_mapped
 from . import batching
 from . import partial_eval as pe
 from . import xla
 from . import ad
+
+FLAGS = flags.FLAGS
 
 _map = safe_map
 
@@ -436,28 +438,53 @@ def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
   else:
     global_axis_size = axis_size
 
+  log_priority = logging.WARNING if FLAGS.jax_log_compiles else logging.DEBUG
+  logging.log(log_priority,
+              "Compiling {} for {} devices with args {}.".format(
+                  fun.__name__, global_axis_size, avals))
+
+  if devices:
+    local_devices = [d for d in devices if d.host_id == xb.host_id()]
+    assert len(local_devices) > 0
+  else:
+    local_devices = None
+
   @lu.wrap_init
   def dynamic_fun(dummy, *args):
     with extend_dynamic_axis_env(axis_name, dummy.trace, global_axis_size):
       return fun.call_wrapped(*args)
 
   avals = tuple(map(partial(shard_aval, axis_size), avals))
-  pvals = [PartialVal((aval, core.unit)) for aval in avals]
-  pval = PartialVal([core.abstract_unit, core.unit])  # dummy value for axis env
-  with core.new_master(JaxprTrace, True) as master:
-    jaxpr, (out_pvals, consts, env) = \
-        trace_to_subjaxpr(dynamic_fun, master, False).call_wrapped([pval] + pvals)
+  pvals = [pe.PartialVal((aval, core.unit)) for aval in avals]
+  pval = pe.PartialVal([core.abstract_unit, core.unit])  # dummy value for axis env
+  with core.new_master(pe.StagingJaxprTrace, True) as master:
+    jaxpr, (out_pvals, consts, env) = pe.trace_to_subjaxpr(
+        dynamic_fun, master, False).call_wrapped([pval] + pvals)
     jaxpr.invars = jaxpr.invars[1:]  # ignore dummy
     assert not env
     del master
   out_pvs, out_consts = unzip2(out_pvals)
+
+  # TODO(skye,mattjj): allow more collectives on multi-host as we test them, but
+  # for now raise an error
+  if devices is not None:
+    is_multi_host_pmap = any(d.host_id != xb.host_id() for d in devices)
+  else:
+    is_multi_host_pmap = xb.host_count() > 1
+  if is_multi_host_pmap:
+    used_collectives = set(xla.jaxpr_collectives(jaxpr))
+    if not used_collectives.issubset(multi_host_supported_collectives):
+      msg = "using collectives that aren't supported for multi-host: {}"
+      raise TypeError(msg.format(", ".join(map(str, used_collectives))))
 
   if all(pv is None for pv in out_pvs):
     # When the output doesn't depend on the input we don't need to compile an
     # XLA computation at all; we handle this as a special case so we can stage
     # out multi-replica XLA computations regardless of the hardware available.
     # The 'None' values here are just dummies we know will be ignored.
-    handlers = [_pval_to_result_handler(axis_size, None, pval) for pval in out_pvals]
+    handlers = [_pval_to_result_handler(axis_size, None, pval, local_devices,
+                                        backend)
+                for pval in out_pvals]
     results = [handler(None) for handler in handlers]
     return lambda *_: results
 
@@ -481,9 +508,6 @@ def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
       raise ValueError(msg.format(num_global_replicas, xb.device_count(backend)))
     device_assignment = None
   else:
-    assert any(d.host_id == xb.host_id() for d in devices)
-    local_devices = [d for d in devices if d.host_id == xb.host_id()]
-    assert len(local_devices) > 0
     if num_local_replicas != len(local_devices):
       local_devices_str = ", ".join(map(str, local_devices))
       raise ValueError(
@@ -503,15 +527,20 @@ def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
   handle_args = partial(shard_args, backend, compiled.local_devices(),
                         assign_shards_to_replicas(num_local_replicas, axis_size),
                         axis_size, tuple_args)
-  handle_outs = _pvals_to_results_handler(axis_size, num_local_replicas, out_pvals)
+  handle_outs = _pvals_to_results_handler(axis_size, num_local_replicas,
+                                          out_pvals, compiled.local_devices(),
+                                          backend)
   return partial(execute_replicated, compiled, backend, num_local_replicas, handle_args, handle_outs)
+
+multi_host_supported_collectives = set()
 
 class ResultToPopulate(object): pass
 result_to_populate = ResultToPopulate()
 
-def _pvals_to_results_handler(size, nrep, out_pvals):
+def _pvals_to_results_handler(size, nrep, out_pvals, devices, backend):
   nouts = len(out_pvals)
-  handlers = [_pval_to_result_handler(size, nrep, pval) for pval in out_pvals]
+  handlers = [_pval_to_result_handler(size, nrep, pval, devices, backend)
+              for pval in out_pvals]
   def handler(out_bufs):
     buffers = [[result_to_populate] * nrep for _ in range(nouts)]
     for r, tuple_buf in enumerate(out_bufs):
@@ -522,13 +551,65 @@ def _pvals_to_results_handler(size, nrep, out_pvals):
     return [h(bufs) for h, bufs in zip(handlers, buffers)]
   return handler
 
-def _pval_to_result_handler(size, nrep, pval):
+def replicate(val, axis_size, nrep, devices=None, backend=None):
+  """Replicates ``val`` across multiple devices.
+
+  Args:
+    val: the value to be replicated.
+    axis_size: the length of the output, i.e. the logical number of replicas to
+    create. Usually equal to `nrep`, but in the case of nested pmaps, `nrep` may
+    be a multiple of `axis_size`.
+    nrep: the number of replicas to create. If ``devices`` is set, must be equal
+      to ``len(devices)``.
+    devices: the devices to replicate across. If None, ``nrep`` will be used to
+      generate a default device assignment.
+    backend: string specifying which backend to use.
+
+  Returns:
+    A ShardedDeviceArray of length `axis_size` where each shard is equal to
+    ``val``.
+  """
+  device_count = (len(devices) if devices else xb.local_device_count())
+  if nrep > device_count:
+    msg = ("Cannot replicate across %d replicas because only %d local devices "
+           "are available." % (nrep, device_count))
+    if devices:
+      msg += (" (local devices = %s)"
+              % ", ".join(map(str, devices)) if devices else str(None))
+    raise ValueError(msg)
+
+  if devices is None:
+    assert nrep is not None
+    devices = xb.get_backend(backend).get_default_device_assignment(nrep)
+  assert nrep == len(devices)
+
+  aval = xla.abstractify(val)
+  aval = ShapedArray((axis_size,) + aval.shape, aval.dtype)
+  device_buffers = [xla.device_put(val, d) for d in devices]
+  return ShardedDeviceArray(aval, device_buffers)
+
+def _pval_to_result_handler(axis_size, nrep, pval, devices, backend):
+  if devices:
+    assert all(d.host_id == xb.host_id(backend) for d in devices)
   pv, const = pval
   if pv is None:
-    bcast_const = core.unit if const is core.unit else broadcast(const, size, 0)
+    if nrep is None:
+      nrep = axis_size
+      # If 'const' is a ShardedDeviceArray, it must have come from a pmap nested
+      # inside the one we're currently evaluating, and we should replicate
+      # 'const' across the total number of devices needed. We don't necessarily
+      # know the nested pmap's axis_size (e.g. the jaxpr for
+      # pmap(pmap(lambda x: 3)) is trivial, with no pmaps), but we can use the
+      # axis size of the output 'const'.
+      # TODO: we might be doing unnecessary device transfers in the inner pmap.
+      if isinstance(const, ShardedDeviceArray):
+        nrep *= len(const)
+
+    bcast_const = (core.unit if const is core.unit
+                   else replicate(const, axis_size, nrep, devices, backend))
     return lambda _: bcast_const
   else:
-    return aval_to_result_handler(size, nrep, pv)
+    return aval_to_result_handler(axis_size, nrep, pv)
 
 def execute_replicated(compiled, backend, nrep, in_handler, out_handler, *args):
   if nrep > xb.device_count(backend):

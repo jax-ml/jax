@@ -94,7 +94,8 @@ def _unpack_tuple(f, n):
 
 # primitives
 
-_cpu_lapack_types = {np.float32, np.float64, np.complex64, np.complex128}
+_cpu_lapack_types = {onp.dtype(onp.float32), onp.dtype(onp.float64),
+                     onp.dtype(onp.complex64), onp.dtype(onp.complex128)}
 
 # Cholesky decomposition
 
@@ -111,7 +112,8 @@ def cholesky_jvp_rule(primals, tangents):
   tmp = triangular_solve(L, sigma_dot, left_side=False, transpose_a=True,
                          conjugate_a=True, lower=True)
   L_dot = lax.batch_matmul(L, phi(triangular_solve(
-      L, tmp, left_side=True, transpose_a=False, lower=True)))
+      L, tmp, left_side=True, transpose_a=False, lower=True)),
+      precision=lax.Precision.HIGHEST)
   return L, L_dot
 
 def cholesky_batching_rule(batched_args, batch_dims):
@@ -136,7 +138,7 @@ def _nan_like(c, operand):
 def cholesky_cpu_translation_rule(c, operand):
   shape = c.GetShape(operand)
   dtype = shape.element_type().type
-  if len(shape.dimensions()) == 2 and dtype in _cpu_lapack_types:
+  if len(shape.dimensions()) == 2 and onp.dtype(dtype) in _cpu_lapack_types:
     result, info = lapack.potrf(c, operand, lower=True)
     return c.Select(c.Eq(info, c.ConstantS32Scalar(0)), result,
                     _nan_like(c, result))
@@ -265,7 +267,8 @@ def eigh_jvp_rule(primals, tangents, lower):
   # carefully build reciprocal delta-eigenvalue matrix, avoiding NaNs.
   Fmat = np.reciprocal(eye_n + w[..., np.newaxis, :] - w[..., np.newaxis]) - eye_n
   # eigh impl doesn't support batch dims, but future-proof the grad.
-  dot = lax.dot if a.ndim == 2 else lax.batch_matmul
+  dot = partial(lax.dot if a.ndim == 2 else lax.batch_matmul,
+                precision=lax.Precision.HIGHEST)
   vdag_adot_v = dot(dot(_H(v), a_dot), v)
   dv = dot(v, np.multiply(Fmat, vdag_adot_v))
   dw = np.diagonal(vdag_adot_v, axis1=-2, axis2=-1)
@@ -326,7 +329,8 @@ def triangular_solve_jvp_rule_a(
   g_a = lax.neg(g_a)
   g_a = np.swapaxes(g_a, -1, -2) if transpose_a else g_a
   g_a = np.conj(g_a) if conjugate_a else g_a
-  dot = lax.dot if g_a.ndim == 2 else lax.batch_matmul
+  dot = partial(lax.dot if g_a.ndim == 2 else lax.batch_matmul,
+                precision=lax.Precision.HIGHEST)
 
   def a_inverse(rhs):
     return triangular_solve(a, rhs, left_side, lower, transpose_a, conjugate_a,
@@ -389,7 +393,7 @@ def _triangular_solve_cpu_translation_rule(
     c, a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
   shape = c.GetShape(a)
   dtype = shape.element_type().type
-  if len(shape.dimensions()) == 2 and dtype in _cpu_lapack_types:
+  if len(shape.dimensions()) == 2 and onp.dtype(dtype) in _cpu_lapack_types:
     if conjugate_a and not transpose_a:
       a = c.Conj(a)
       conjugate_a = False
@@ -723,17 +727,11 @@ xla.translations[qr_p] = qr_translation_rule
 ad.primitive_jvps[qr_p] = qr_jvp_rule
 batching.primitive_batchers[qr_p] = qr_batching_rule
 
-# TODO(phawkins): make unconditional after the minimum Jaxlib version is
-# increased past 0.1.28.
-if hasattr(lapack, "geqrf"):
-  xla.backend_specific_translations['cpu'][qr_p] = partial(
-    _qr_cpu_gpu_translation_rule, lapack.geqrf, lapack.orgqr)
+xla.backend_specific_translations['cpu'][qr_p] = partial(
+  _qr_cpu_gpu_translation_rule, lapack.geqrf, lapack.orgqr)
 
-# TODO(phawkins): make unconditional after the minimum Jaxlib version is
-# increased past 0.1.28.
-if hasattr(cusolver, "geqrf"):
-  xla.backend_specific_translations['gpu'][qr_p] = partial(
-    _qr_cpu_gpu_translation_rule, cusolver.geqrf, cusolver.orgqr)
+xla.backend_specific_translations['gpu'][qr_p] = partial(
+  _qr_cpu_gpu_translation_rule, cusolver.geqrf, cusolver.orgqr)
 
 
 # Singular value decomposition
@@ -745,7 +743,7 @@ def svd_impl(operand, full_matrices, compute_uv):
 
 def svd_translation_rule(c, operand, full_matrices, compute_uv):
   raise NotImplementedError(
-    "Singular value decomposition is only implemented on the CPU backend")
+    "Singular value decomposition is only implemented on the CPU and GPU backends")
 
 def svd_abstract_eval(operand, full_matrices, compute_uv):
   if isinstance(operand, ShapedArray):

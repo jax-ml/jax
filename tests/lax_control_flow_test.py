@@ -329,7 +329,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     """Test typing error messages for while."""
     with self.assertRaisesRegex(
       TypeError, "arguments to fori_loop must have equal types"):
-      lax.fori_loop(np.int16(0), np.int32(10), (lambda i, c: c), np.float32(7))
+      lax.fori_loop(onp.int16(0), np.int32(10), (lambda i, c: c), np.float32(7))
 
   def testForiLoopBatched(self):
     def body_fun(i, loop_carry):
@@ -1445,6 +1445,14 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     # We check XLA because _scan_impl is "underneath" the jaxpr language.
     s = str(api.xla_computation(api.grad(loss))(A).GetHloText())
     assert s.count("dynamic-update-slice(") < 2
+
+  def testScanLengthArg(self):
+    def arange(n):
+      return lax.scan(lambda c, _: (c + 1, c), 0, None, length=n)[1]
+
+    ans = arange(10)
+    expected = onp.arange(10)
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
 
 if __name__ == '__main__':

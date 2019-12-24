@@ -39,8 +39,8 @@ from jax.lib import xla_bridge
 from jax.lib import cuda_prng
 from jax import core
 from jax import abstract_arrays
+from jax.numpy.linalg import cholesky
 from jax.scipy.special import logit
-from jax.scipy.linalg import cholesky
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
@@ -878,33 +878,27 @@ def _gamma_grad_one(z, alpha):
     return grad
 
 def _gamma_grad(sample, a):
-    samples = np.reshape(sample, -1)
-    alphas = np.reshape(a, -1)
-    if np.size(alphas) == 1:
-        grads = _gamma_grad_one(samples[0], alphas[0])
-    else:
-        # TODO: benchmark execute time against grads = vmap(_gamma_grad_one)(samples, alphas)
-        grads = lax.map(lambda args: _gamma_grad_one(*args), (samples, alphas))
-    return grads.reshape(onp.shape(a))
+  samples = np.reshape(sample, -1)
+  alphas = np.reshape(a, -1)
+  if xla_bridge.get_backend().platform == 'cpu':
+    grads = lax.map(lambda args: _gamma_grad_one(*args), (samples, alphas))
+  else:
+    grads = vmap(_gamma_grad_one)(samples, alphas)
+  return grads.reshape(onp.shape(a))
 
 def _gamma_impl(key, a):
   if key.ndim == 2:  # batch of keys and alphas
     size = np.size(a[0])
-    if size > 1:
-      key = lax.map(lambda k: split(k, size), key)
+    key = vmap(split, in_axes=(0, None))(key, size)
   else:
-    size = np.size(a)
-    if size > 1:
-      key = split(key, size)
+    key = split(key, np.size(a))
   alphas = np.reshape(a, -1)
   keys = np.reshape(key, (-1, 2))
-  if np.size(alphas) == 1:
-    samples = _gamma_one(keys[0], alphas[0])
-  else:
-    # XXX in GPU, using lax.map is slower than using vmap if alphas.size > 50000
-    # but that usage case is rare and can be resolved by vectorizing gamma sampler
+  if xla_bridge.get_backend().platform == 'cpu':
     samples = lax.map(lambda args: _gamma_one(*args), (keys, alphas))
-  return np.reshape(samples, np.shape(a))
+  else:
+    samples = vmap(_gamma_one)(keys, alphas)
+  return np.reshape(samples, np.shape(a)),
 
 def _gamma_batching_rule(batched_args, batch_dims):
     k, a = batched_args
@@ -912,12 +906,13 @@ def _gamma_batching_rule(batched_args, batch_dims):
     size = next(t.shape[i] for t, i in zip(batched_args, batch_dims) if i is not None)
     k = batching.bdim_at_front(k, bk, size)
     a = batching.bdim_at_front(a, ba, size)
-    return random_gamma_p.bind(k, a), 0
+    return random_gamma_p.bind(k, a), (0,)
 
 random_gamma_p = core.Primitive('random_gamma')
-random_gamma_p.def_impl(_gamma_impl)  # partial(xla.apply_primitive, random_gamma_p))
-random_gamma_p.def_abstract_eval(lambda key, a: abstract_arrays.raise_to_shaped(a))
-ad.defjvp2(random_gamma_p, None, lambda tangent, ans, key, a, **kwargs: tangent * _gamma_grad(ans, a))
+random_gamma_p.multiple_results = True
+random_gamma_p.def_impl(_gamma_impl)
+random_gamma_p.def_abstract_eval(lambda key, a: (abstract_arrays.raise_to_shaped(a),))
+ad.defjvp2(random_gamma_p, None, lambda tangent, ans, key, a: (tangent * _gamma_grad(ans[0], a),))
 xla.translations[random_gamma_p] = xla.lower_fun(_gamma_impl, instantiate=True)
 batching.primitive_batchers[random_gamma_p] = _gamma_batching_rule
 
@@ -941,7 +936,7 @@ def gamma(key, a, shape=None, dtype=onp.float64):
   dtype = dtypes.canonicalize_dtype(dtype)
   return _gamma(key, a, shape, dtype)
 
-# @partial(jit, static_argnums=(2, 3))
+@partial(jit, static_argnums=(2, 3))
 def _gamma(key, a, shape, dtype):
   if shape is None:
     shape = onp.shape(a)
@@ -951,7 +946,7 @@ def _gamma(key, a, shape, dtype):
   a = lax.convert_element_type(a, dtype)
   if onp.shape(a) != shape:
     a = np.broadcast_to(a, shape)
-  return random_gamma_p.bind(key, a)
+  return random_gamma_p.bind(key, a)[0]
 
 
 def gumbel(key, shape=(), dtype=onp.float64):

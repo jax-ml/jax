@@ -213,7 +213,7 @@ def _while_loop_abstract_eval(*args, **kwargs):
   return kwargs["body_jaxpr"].out_avals
 
 def _while_loop_translation_rule(c, axis_env, *args, **kwargs):
-  backend = kwargs.pop('backend', None)
+  backend = kwargs.pop('backend')
   cond_jaxpr, body_jaxpr, cond_nconsts, body_nconsts = split_dict(
       kwargs, ["cond_jaxpr", "body_jaxpr", "cond_nconsts", "body_nconsts"])
   cond_consts, body_consts, init_vals = split_list(args, [cond_nconsts, body_nconsts])
@@ -235,7 +235,7 @@ def _while_loop_translation_rule(c, axis_env, *args, **kwargs):
                             _map(cond_c.Constant, cond_jaxpr.literals), (), *(x + z))
   if batched:
     scalar = ShapedArray((), onp.bool_)
-    or_ = xla.primitive_computation(lax.or_p, scalar, scalar)
+    or_ = xla.primitive_subcomputation(lax.or_p, scalar, scalar)
     pred = cond_c.Reduce(pred, cond_c.Constant(onp.array(False)), or_,
                          list(range(cond_jaxpr.out_avals[0].ndim)))
 
@@ -438,7 +438,7 @@ xla.initial_style_translations[cond_p] = _cond_translation_rule
 
 ### scan
 
-def scan(f, init, xs):
+def scan(f, init, xs, length=None):
   """Scan a function over leading array axes while carrying along state.
 
   The type signature in brief is
@@ -453,10 +453,12 @@ def scan(f, init, xs):
   represents the type with the same pytree structure and corresponding leaves
   each with an additional leading axis.
 
-  When both ``a`` and ``b`` are array types, the semantics of ``scan`` are given
-  by this Python implementation::
+  When ``a`` is an array type or None, and ``b`` is an array type, the semantics
+  of ``scan`` are given roughly by this Python implementation::
 
-    def scan(f, init, xs):
+    def scan(f, init, xs, length=None):
+      if xs is None:
+        xs = [None] * length
       carry = init
       ys = []
       for x in xs:
@@ -466,7 +468,7 @@ def scan(f, init, xs):
 
   Unlike that Python version, both ``a`` and ``b`` may be arbitrary pytree
   types, and so multiple arrays can be scanned over at once and produce multiple
-  output arrays.
+  output arrays. (None is actually an empty pytree.)
 
   Also unlike that Python version, ``scan`` is a JAX primitive and is lowered to
   a single XLA While HLO. That makes it useful for reducing compilation times
@@ -493,6 +495,9 @@ def scan(f, init, xs):
     xs: the value of type ``[a]`` over which to scan along the leading axis,
       where ``[a]`` can be an array or any pytree (nested Python
       tuple/list/dict) thereof with consistent leading axis sizes.
+    length: optional integer specifying the number of loop iterations, which
+      must agree with the sizes of leading axes of the arrays in ``xs`` (but can
+      be used to perform scans where no input ``xs`` are needed).
 
   Returns:
     A pair of type ``(c, [b])`` where the first element represents the final
@@ -502,14 +507,30 @@ def scan(f, init, xs):
   init_flat, init_tree = tree_flatten(init)
   xs_flat, _ = tree_flatten(xs)
   in_flat, in_tree = tree_flatten((init, xs))
+
   try:
-    length, = {x.shape[0] for x in xs_flat}
+    lengths = [x.shape[0] for x in xs_flat]
   except AttributeError:
     msg = "scan got value with no leading axis to scan over: {}."
-    raise ValueError(msg.format([x for x in xs_flat if not hasattr(x, 'shape')]))
-  except ValueError:
-    msg = "scan got values with different leading axis sizes: {}."
-    raise ValueError(msg.format([x.shape[0] for x in xs_flat]))
+    raise ValueError(msg.format(', '.join(str(x) for x in xs_flat
+                                          if not hasattr(x, 'shape'))))
+
+  if length is not None:
+    length = int(length)
+    if not all(length == l for l in lengths):
+      msg = ("scan got `length` argument of {} which disagrees with "
+             "leading axis sizes {}.")
+      raise ValueError(msg.format(length, [x.shape[0] for x in xs_flat]))
+  else:
+    unique_lengths = set(lengths)
+    if len(unique_lengths) > 1:
+      msg = "scan got values with different leading axis sizes: {}."
+      raise ValueError(msg.format(', '.join(str(x.shape[0]) for x in xs_flat)))
+    elif len(unique_lengths) == 0:
+      msg = "scan got no values to scan over and `length` not provided."
+      raise ValueError(msg)
+    else:
+      length, = unique_lengths
 
   carry_avals = tuple(_map(_abstractify, init_flat))
   x_shapes = [masking.padded_shape_as_value(x.shape[1:]) for x in xs_flat]

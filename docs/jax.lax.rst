@@ -90,6 +90,7 @@ Operators
     mul
     ne
     neg
+    nextafter
     pad
     pow
     real

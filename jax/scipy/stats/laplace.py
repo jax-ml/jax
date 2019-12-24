@@ -20,12 +20,12 @@ import numpy as onp
 import scipy.stats as osp_stats
 
 from ... import lax
-from ...numpy.lax_numpy import _promote_args_like, _constant_like, _wraps
+from ...numpy.lax_numpy import _promote_args_inexact, _constant_like, _wraps
 
 
 @_wraps(osp_stats.laplace.logpdf, update_doc=False)
 def logpdf(x, loc=0, scale=1):
-  x, loc, scale = _promote_args_like(osp_stats.laplace.logpdf, x, loc, scale)
+  x, loc, scale = _promote_args_inexact("laplace.logpdf", x, loc, scale)
   two = _constant_like(x, 2)
   linear_term = lax.div(lax.abs(lax.sub(x, loc)), scale)
   return lax.neg(lax.add(linear_term, lax.log(lax.mul(two, scale))))
@@ -36,7 +36,7 @@ def pdf(x, loc=0, scale=1):
 
 @_wraps(osp_stats.laplace.cdf, update_doc=False)
 def cdf(x, loc=0, scale=1):
-  x, loc, scale = _promote_args_like(osp_stats.laplace.cdf, x, loc, scale)
+  x, loc, scale = _promote_args_inexact("laplace.cdf", x, loc, scale)
   half = _constant_like(x, 0.5)
   one = _constant_like(x, 1)
   zero = _constant_like(x, 0)

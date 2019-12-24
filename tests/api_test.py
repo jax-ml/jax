@@ -17,6 +17,7 @@ from __future__ import division
 from __future__ import print_function
 
 import collections
+import copy
 from functools import partial
 import unittest
 import warnings
@@ -36,7 +37,7 @@ from jax import jit, grad, device_put, jacfwd, jacrev, hessian
 from jax import api, lax
 from jax.core import Primitive
 from jax.interpreters import ad
-from jax.interpreters.xla import DeviceArray
+from jax.interpreters import xla
 from jax.abstract_arrays import concretization_err_msg
 from jax.lib import xla_bridge as xb
 from jax import test_util as jtu
@@ -118,12 +119,27 @@ class APITest(jtu.JaxTestCase):
 
     f(1, 2, z=onp.zeros(3))  # doesn't crash
 
-  def test_jit_many_args(self):
+  def test_jit_many_args_tuples(self):
     @jit
     def f(args_list):
       return sum(args_list)
 
-    self.assertEqual(f(list(range(500))), sum(range(500)))
+    make_tuple = xla.make_tuple
+
+    counts = [0]
+    def make_tuple_and_count(*args, **kwargs):
+      counts[0] += 1
+      return make_tuple(*args, **kwargs)
+
+    try:
+      xla.make_tuple = make_tuple_and_count
+      ans = f(list(range(500)))
+    finally:
+      xla.make_tuple = make_tuple
+
+    expected = sum(range(500))
+    self.assertEqual(counts[0], 1)  # formed a tuple on dispatch
+    self.assertEqual(ans, expected)  # computed the correct result
 
   def test_grad_of_jit(self):
     side = []
@@ -152,7 +168,6 @@ class APITest(jtu.JaxTestCase):
     assert g(2.0) == 4.0
     assert len(side) == 1
 
-
   def test_bad_input(self):
     def f(x):
       return x
@@ -164,15 +179,6 @@ class APITest(jtu.JaxTestCase):
     self.assertRaisesRegex(
       TypeError, ".* 'foo' of type <.*'str'> is not a valid JAX type",
       lambda: jit(f)("foo"))
-
-  # TODO(dougalm): enable when we remove 'None' from pytree nodes
-  # def test_bad_output(self):
-  #   def f(x):
-  #     pass
-
-  #   grad(f)(onp.zeros(3))
-  #   jit(f)(onp.zeros(3))
-  #   assert False
 
   def test_grad_tuple_output(self):
     jtu.check_raises(lambda: grad(lambda x: (x,x))(1.0), TypeError,
@@ -278,7 +284,7 @@ class APITest(jtu.JaxTestCase):
   def test_device_put_and_get(self):
     x = onp.arange(12.).reshape((3, 4)).astype("float32")
     dx = api.device_put(x)
-    self.assertIsInstance(dx, DeviceArray)
+    self.assertIsInstance(dx, xla.DeviceArray)
     x2 = api.device_get(dx)
     self.assertIsInstance(x2, onp.ndarray)
     assert onp.all(x == x2)
@@ -457,7 +463,7 @@ class APITest(jtu.JaxTestCase):
   def test_grad_and_aux_basic(self):
     g, aux = grad(lambda x: (x**3, [x**2]), has_aux=True)(3.)
     self.assertAllClose(g, grad(lambda x: x**3)(3.), check_dtypes=True)
-    self.assertAllClose(aux, [9.], check_dtypes=True)
+    self.assertAllClose(aux, [9.], check_dtypes=False)
 
   def test_grad_and_aux_nested(self):
     def f(x):
@@ -505,7 +511,6 @@ class APITest(jtu.JaxTestCase):
       TypeError,
       "primal and tangent arguments to jax.jvp must have equal types",
       lambda: api.jvp(lambda x: -x, (onp.float16(2),), (onp.float32(4),)))
-
 
   def test_jvp_non_tuple_arguments(self):
     def f(x, y): return x + y
@@ -802,11 +807,11 @@ class APITest(jtu.JaxTestCase):
 
   def test_devicearray_repr(self):
     x = device_put(np.zeros(3))
-    self.assertIsInstance(x, DeviceArray)
+    self.assertIsInstance(x, xla.DeviceArray)
     repr(x)  # doesn't crash
 
     x = device_put(np.ones(3) + 1j * np.ones(3))
-    self.assertIsInstance(x, DeviceArray)
+    self.assertIsInstance(x, xla.DeviceArray)
     repr(x)  # doesn't crash
 
   def test_devicearray_delete(self):
@@ -1016,10 +1021,18 @@ class APITest(jtu.JaxTestCase):
     xla_comp = api.xla_computation(f)
     xla_comp(np.arange(8)).GetHloText()  # doesn't crash
 
+  def test_xla_computation_instantiate_constant_outputs(self):
+    def f():
+      return np.zeros((3, 4))
+
+    xla_comp = api.xla_computation(f, instantiate_const_outputs=True)()
+    out_shape, = xla_comp.GetReturnValueShape().tuple_shapes()
+    self.assertEqual(out_shape.dimensions(), (3, 4))
+
   def test_jit_device(self):
     device = xb.devices()[-1]
     x = api.jit(lambda x: x, device=device)(3.)
-    self.assertIsInstance(x, DeviceArray)
+    self.assertIsInstance(x, xla.DeviceArray)
     self.assertEqual(x.device_buffer.device(), device)
 
   def test_jit_of_noncallable(self):
@@ -1270,6 +1283,16 @@ class APITest(jtu.JaxTestCase):
     python_should_be_executing = False
     api.jit(f)(3)
 
+  def test_jit_shallow_copy(self):
+    def f(x):
+      return copy.copy(x)
+    api.jit(f)(1)
+
+  def test_jit_deep_copy(self):
+    def f(x):
+      return copy.deepcopy(x)
+    api.jit(f)(1)
+
   def test_pmap_global_cache(self):
     def f(x):
       assert python_should_be_executing
@@ -1301,49 +1324,6 @@ class APITest(jtu.JaxTestCase):
         "positional arguments to be passed by the caller, but got only 0 "
         "positional arguments.",
         lambda: partial(df, x=0.)(y=1.))
-
-
-class JaxprTest(jtu.JaxTestCase):
-
-  def test_scalar_literals(self):
-    jaxpr = api.make_jaxpr(lambda x: x + 2)(42)
-    self.assertLen(jaxpr.jaxpr.constvars, 0)
-
-  def test_const(self):
-    def fun(x):
-      return (x, 1., np.zeros(1))
-
-    jaxpr = api.make_jaxpr(fun)(0.)
-    self.assertMultiLineStrippedEqual(str(jaxpr), """
-    { lambda b ;  ; a.
-        let
-        in [a, 1.0, b] }
-    """)
-
-  def test_cond(self):
-    def f(x):
-      return lax.cond(x >= 0.,
-                      x + 1.,
-                      lambda xt: xt + x,
-                      x + 2.,
-                      lambda xf: xf - x)
-    jaxpr = api.make_jaxpr(f)(3.)
-    self.assertMultiLineStrippedEqual(str(jaxpr), """
-    { lambda  ;  ; a.
-      let b = ge a 0.0
-          c = add a 1.0
-          d = add a 2.0
-          e = cond[ false_jaxpr={ lambda  ;  ; b a.
-                                  let c = sub a b
-                                  in [c] }
-                    false_nconsts=1
-                    true_jaxpr={ lambda  ;  ; b a.
-                                 let c = add a b
-                                 in [c] }
-                    true_nconsts=1 ] b a c a d
-      in [e] }
-        """)
-
 
   def test_grad_of_jit_compilation_caching(self):
     if not hasattr(self, "assertLogs"):
@@ -1552,6 +1532,103 @@ class JaxprTest(jtu.JaxTestCase):
     x = 4.
     self.assertAllClose(f1(x), f2(x), check_dtypes=False)
     self.assertAllClose(api.grad(f1)(x), api.grad(f2)(x), check_dtypes=False)
+
+  def test_trivial_computations(self):
+    x = np.array([1, 2, 3])
+    y = api.jit(lambda x: x)(x)
+    self.assertIs(x, y)
+
+    z1, z2 = api.jit(lambda x: (x, x))(x)
+    self.assertIs(z1, z2)
+
+    x1, x2 = np.array([1, 2]), np.array([2, 3])
+    z1, z2, z3 = api.jit(lambda x, y: (y, 1, x))(x1, x2)
+    self.assertIs(z1, x2)
+    self.assertIs(z3, x1)
+    self.assertEqual(z2, 1)
+
+  def test_nested_jit_hoisting(self):
+    @api.jit
+    def f(x, y):
+      z = 2 * x
+      return y + z, 3
+
+    @api.jit
+    def g(x):
+      return f(2, x)
+
+    jaxpr_subcomp = xla.jaxpr_subcomp
+
+    jaxprs = []
+    def jaxpr_subcomp_and_collect(c, jaxpr, *args, **kwargs):
+      jaxprs.append(jaxpr)
+      return jaxpr_subcomp(c, jaxpr, *args, **kwargs)
+
+    try:
+      xla.jaxpr_subcomp = jaxpr_subcomp_and_collect
+      ans = g(3)
+    finally:
+      xla.jaxpr_subcomp = jaxpr_subcomp
+
+    self.assertEqual(ans, (7, 3))
+    self.assertLen(jaxprs, 2)
+    outer_jaxpr, inner_jaxpr = jaxprs
+
+    self.assertLen(outer_jaxpr.eqns, 1)
+    self.assertEqual(outer_jaxpr.eqns[0].primitive.name, 'xla_call')
+    (subjaxpr_1, _,  _), = outer_jaxpr.eqns[0].bound_subjaxprs
+    self.assertEqual(str(subjaxpr_1), str(inner_jaxpr))
+    self.assertLen(inner_jaxpr.eqns, 2)
+    self.assertEqual(inner_jaxpr.eqns[0].primitive.name, 'mul')
+    self.assertEqual(inner_jaxpr.eqns[1].primitive.name, 'add')
+
+  def test_primitive_compilation_cache(self):
+    with jtu.count_primitive_compiles() as count:
+      lax.add(1, 2)
+      lax.add(2, 3)
+    self.assertEqual(count[0], 1)
+
+
+class JaxprTest(jtu.JaxTestCase):
+
+  def test_scalar_literals(self):
+    jaxpr = api.make_jaxpr(lambda x: x + 2)(42)
+    self.assertLen(jaxpr.jaxpr.constvars, 0)
+
+  def test_const(self):
+    def fun(x):
+      return (x, 1., np.zeros(1))
+
+    jaxpr = api.make_jaxpr(fun)(0.)
+    self.assertMultiLineStrippedEqual(str(jaxpr), """
+    { lambda b ;  ; a.
+        let
+        in [a, 1.0, b] }
+    """)
+
+  def test_cond(self):
+    def f(x):
+      return lax.cond(x >= 0.,
+                      x + 1.,
+                      lambda xt: xt + x,
+                      x + 2.,
+                      lambda xf: xf - x)
+    jaxpr = api.make_jaxpr(f)(3.)
+    self.assertMultiLineStrippedEqual(str(jaxpr), """
+    { lambda  ;  ; a.
+      let b = ge a 0.0
+          c = add a 1.0
+          d = add a 2.0
+          e = cond[ false_jaxpr={ lambda  ;  ; b a.
+                                  let c = sub a b
+                                  in [c] }
+                    false_nconsts=1
+                    true_jaxpr={ lambda  ;  ; b a.
+                                 let c = add a b
+                                 in [c] }
+                    true_nconsts=1 ] b a c a d
+      in [e] }
+        """)
 
 
 if __name__ == '__main__':

@@ -25,7 +25,7 @@ from ..special import xlogy, gammaln
 
 @np._wraps(osp_stats.poisson.logpmf, update_doc=False)
 def logpmf(k, mu, loc=0):
-  k, mu, loc = np._promote_args_like(osp_stats.poisson.logpmf, k, mu, loc)
+  k, mu, loc = np._promote_args_inexact("poisson.logpmf", k, mu, loc)
   zero = np._constant_like(k, 0)
   x = lax.sub(k, loc)
   log_probs = xlogy(x, mu) - gammaln(x + 1) - mu
