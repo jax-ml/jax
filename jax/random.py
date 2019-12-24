@@ -618,7 +618,6 @@ def beta(key, a, b, shape=None, dtype=onp.float64):
   dtype = dtypes.canonicalize_dtype(dtype)
   return _beta(key, a, b, shape, dtype)
 
-@partial(jit, static_argnums=(3, 4))
 def _beta(key, a, b, shape, dtype):
   if shape is None:
     shape = lax.broadcast_shapes(onp.shape(a), onp.shape(b))
@@ -628,6 +627,8 @@ def _beta(key, a, b, shape, dtype):
   a = lax.convert_element_type(a, dtype)
   b = lax.convert_element_type(b, dtype)
   key_a, key_b = split(key)
+  a = np.broadcast_to(a, shape)
+  b = np.broadcast_to(b, shape)
   gamma_a = gamma(key_a, a, shape, dtype)
   gamma_b = gamma(key_b, b, shape, dtype)
   return gamma_a / (gamma_a + gamma_b)
