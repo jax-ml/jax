@@ -999,16 +999,32 @@ else:
 # The `jit` on `where` exists to avoid materializing constants in cases like
 # `np.where(np.zeros(1000), 7, 4)`. In op-by-op mode, we don't want to
 # materialize the broadcast forms of scalar arguments.
-@_wraps(onp.where, update_doc=False)
 @jit
-def where(condition, x=None, y=None):
+def _where(condition, x=None, y=None):
   if x is None or y is None:
-    raise ValueError("Must use the three-argument form of where().")
+    raise ValueError("Either both or neither of the x and y arguments should "
+                     "be provided to jax.numpy.where, got {} and {}."
+                     .format(x, y))
   if not issubdtype(_dtype(condition), bool_):
     condition = lax.ne(condition, zeros_like(condition))
   x, y = _promote_dtypes(x, y)
   condition, x, y = broadcast_arrays(condition, x, y)
   return lax.select(condition, x, y) if onp.size(x) else x
+
+
+_WHERE_DOC = """\
+At present, JAX does not support JIT-compilation of the single-argument form
+of :py:func:`jax.numpy.where` because its output shape is data-dependent. The
+three-argument form does not have a data-dependent shape and can be JIT-compiled
+successfully.
+"""
+
+@_wraps(onp.where, update_doc=False, lax_description=_WHERE_DOC)
+def where(condition, x=None, y=None):
+  if x is None and y is None:
+    return nonzero(asarray(condition))
+  else:
+    return _where(condition, x, y)
 
 
 @_wraps(onp.select)
@@ -1389,6 +1405,24 @@ def allclose(a, b, rtol=1e-05, atol=1e-08):
 def count_nonzero(a, axis=None):
   return sum(lax.ne(a, _constant_like(a, 0)), axis=axis,
              dtype=dtypes.canonicalize_dtype(onp.int_))
+
+
+_NONZERO_DOC = """\
+At present, JAX does not support JIT-compilation of :py:func:`jax.numpy.nonzero`
+because its output shape is data-dependent.
+"""
+
+@_wraps(onp.nonzero, lax_description=_NONZERO_DOC)
+def nonzero(a):
+  # Note: this function cannot be jitted because its output has a dynamic
+  # shape.
+  a = atleast_1d(a)
+  dims = shape(a)
+  ndims = len(dims)
+  ds = [lax.broadcasted_iota(int_, dims + (1,), i) for i in range(ndims)]
+  d = concatenate(ds, axis=-1)
+  indexes = d[a != 0]
+  return tuple(indexes[..., i] for i in range(ndims))
 
 
 def _make_nan_reduction(onp_reduction, np_reduction, init_val, nan_if_all_nan):
@@ -2091,11 +2125,19 @@ def _wrap_indices_function(f):
     return tuple(asarray(x) for x in f(*args, **kwargs))
   return wrapper
 
-diag_indices = _wrap_indices_function(onp.diag_indices)
 tril_indices = _wrap_indices_function(onp.tril_indices)
 triu_indices = _wrap_indices_function(onp.triu_indices)
 mask_indices = _wrap_indices_function(onp.mask_indices)
 
+@_wraps(onp.diag_indices)
+def diag_indices(n, ndim=2):
+  if n < 0:
+    raise ValueError("n argument to diag_indices must be nonnegative, got {}"
+                     .format(n))
+  if ndim < 0:
+    raise ValueError("ndim argument to diag_indices must be nonnegative, got {}"
+                     .format(ndim))
+  return (lax.iota(int_, n),) * ndim
 
 @_wraps(onp.diagonal)
 def diagonal(a, offset=0, axis1=0, axis2=1):

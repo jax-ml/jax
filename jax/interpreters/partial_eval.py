@@ -524,8 +524,11 @@ def _remat_partial_eval(trace, f, tracers, params):
   jaxpr_converted = convert_freevars_jaxpr(jaxpr)
   in_avals = ([raise_to_shaped(t.pval[0]) for t in env]
               + [raise_to_shaped(pv) for pv in in_pvs])
-  out_avals = [raise_to_shaped(pv if pv is not None else core.get_aval(const))
-               for pv, const in zip(out_pvs, out_pval_consts1)]
+  out_avals = [raise_to_shaped(pv if pv is not None
+                               else abstract_unit if var is unitvar
+                               else get_aval(var.val) if type(var) is Literal
+                               else get_aval(const))
+               for var, pv, const in zip(jaxpr.outvars, out_pvs, out_pval_consts1)]
   typed_jaxpr = core.TypedJaxpr(jaxpr_converted, consts, in_avals, out_avals)
   in_unknowns = [t.pval[0] is not None for t in it.chain(env, tracers)]
   jaxpr_1, jaxpr_2, out_unknowns = partial_eval_jaxpr(typed_jaxpr, in_unknowns, False)
@@ -565,7 +568,7 @@ def _dce_jaxpr(typed_jaxpr, outputs):
   # TODO(mattjj): better DCE
   jaxpr = typed_jaxpr.jaxpr
   outvars, out_avals = jaxpr.outvars, typed_jaxpr.out_avals
-  out_pairs = [(var, aval) if output else (core.unitvar, core.abstract_unit)
+  out_pairs = [(var, aval) if output else (unitvar, core.abstract_unit)
               for var, aval, output in zip(outvars, out_avals, outputs)]
   new_outvars, new_out_avals = unzip2(out_pairs)
 

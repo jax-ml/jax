@@ -33,4 +33,4 @@ def logpmf(k, mu, loc=0):
 
 @np._wraps(osp_stats.poisson.pmf, update_doc=False)
 def pmf(k, mu, loc=0):
-  return np.exp(pmf(k, mu, loc))
+  return np.exp(logpmf(k, mu, loc))

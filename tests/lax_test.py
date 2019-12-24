@@ -998,9 +998,10 @@ class LaxTest(jtu.JaxTestCase):
        "shape": shape, "dtype": dtype, "start_indices": start_indices,
        "size_indices": size_indices, "rng_factory": rng_factory}
       for shape, start_indices, size_indices in [
-        [(3,), (1,), (1,)],
+        [(3,), onp.array((1,)), (1,)],
         [(5, 3), (1, 1), (3, 1)],
-        [(7, 5, 3), (4, 1, 0), (2, 0, 1)],
+        [(5, 3), onp.array((1, 1)), (3, 1)],
+        [(7, 5, 3), onp.array((4, 1, 0)), (2, 0, 1)],
       ]
       for dtype in default_dtypes
       for rng_factory in [jtu.rand_default]))
@@ -1030,6 +1031,12 @@ class LaxTest(jtu.JaxTestCase):
     op = lambda x, s: lax.dynamic_slice(x, s, size_indices)
     numpy_op = lambda x, s: lax_reference.dynamic_slice(x, s, size_indices)
     self._CheckAgainstNumpy(op, numpy_op, args_maker)
+
+  def testDynamicSliceInDim(self):
+    # Regression test for mixed type problem in dynamic_slice_in_dim.
+    rng = jtu.rand_default()
+    x = rng((6, 7), onp.int32)
+    onp.testing.assert_equal(lax.dynamic_slice_in_dim(x, 2, 3), x[2:5])
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_start_indices={}_update_shape={}".format(
@@ -2457,6 +2464,16 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     x = rng(arg_shape, dtype)
     y = rng(update_shape, dtype)
     check_grads(scatter, (x, y), 2, ["fwd", "rev"], 1e-2, 1e-2, 1.)
+
+  def testScatterGradSymbolicZeroUpdate(self):
+    # https://github.com/google/jax/issues/1901
+    def f(x):
+      n = x.shape[0]
+      y = onp.arange(n, dtype=x.dtype)
+      return jax.ops.index_update(x, onp.diag_indices(n), y)
+    rng = jtu.rand_default()
+    check_grads(f, (rng((5, 5), onp.float32),), 2, ["fwd", "rev"], 1e-2, 1e-2,
+                1.)
 
   def testStopGradient(self):
     def f(x):
