@@ -70,14 +70,15 @@ xla_shape_handlers[core.AbstractUnit] = lambda _: xc.Shape.tuple_shape(())
 xla_shape_handlers[ShapedArray] = lambda a: xc.Shape.array_shape(a.dtype, a.shape)
 xla_shape_handlers[ConcreteArray] = lambda a: xc.Shape.array_shape(a.dtype, a.shape)
 
-def aval_to_result_handler(aval):
+def aval_to_result_handler(device, aval):
   try:
-    return xla_result_handlers[type(aval)](aval)
+    return xla_result_handlers[type(aval)](device, aval)
   except KeyError:
     raise TypeError("No xla_result_handler for type: {}".format(type(aval)))
 xla_result_handlers = {}
-xla_result_handlers[core.AbstractUnit] = lambda _: lambda _: core.unit
-def array_result_handler(aval): return partial(DeviceArray, raise_to_shaped(aval))
+xla_result_handlers[core.AbstractUnit] = lambda _, __: lambda _: core.unit
+def array_result_handler(device, aval):
+  return partial(DeviceArray, raise_to_shaped(aval), device)
 xla_result_handlers[ShapedArray] = array_result_handler
 xla_result_handlers[ConcreteArray] = array_result_handler
 
@@ -147,11 +148,6 @@ for _t in dtypes.python_scalar_dtypes.keys():
 
 ### op-by-op execution
 
-def apply_primitive(prim, *args, **params):
-  """Impl rule that compiles and runs a single primitive 'prim' using XLA."""
-  compiled_fun = xla_primitive_callable(prim, *map(arg_spec, args), **params)
-  return compiled_fun(*args)
-
 def arg_spec(x):
   aval = abstractify(x)
   try:
@@ -159,10 +155,41 @@ def arg_spec(x):
   except:
     return aval, None
 
+def apply_primitive(prim, *args, **params):
+  """Impl rule that compiles and runs a single primitive 'prim' using XLA."""
+  compiled_fun = xla_primitive_callable(prim, *map(arg_spec, args), **params)
+  return compiled_fun(*args)
+
 @cache()
 def xla_primitive_callable(prim, *arg_specs, **params):
-  avals, devices = unzip2(arg_specs)
-  # TODO(mattjj): make Device hashable instead of handling pairs here
+  avals, arg_devices = unzip2(arg_specs)
+  device = _device_from_arg_devices(arg_devices)
+  backend = xb.get_device_backend(device)
+  aval_out = prim.abstract_eval(*avals, **params)
+  if not prim.multiple_results:
+    handle_result = aval_to_result_handler(device, aval_out)
+  else:
+    handlers = tuple(map(partial(aval_to_result_handler, device), aval_out))
+    handle_result = lambda xs: tuple(h(x) for h, x in zip(handlers, xs.destructure()))
+  tuple_args = len(avals) > 100
+  built_c = primitive_computation(prim, backend, tuple_args, *avals, **params)
+  options = xb.get_compile_options(device_assignment=device and (device.id,))
+  compiled = built_c.Compile(compile_options=options, backend=backend)
+  return partial(_execute_compiled_primitive, prim, compiled, backend,
+                 tuple_args, handle_result)
+
+# TODO(mattjj): make Device instances hashable instead of handling pairs here
+def _device_from_arg_devices(devices):
+  """Given devices of inputs, determine where to perform a computation.
+
+  Args:
+    devices: list where each element is a either a pair consisting of a device
+      class and an int id (representing a Device instance) or a None.
+  Returns:
+    A Device instance or None.
+  Raises:
+    ValueError if input devices are inconsistent.
+  """
   try:
     device, = set(d for d in devices if d is not None) or (None,)
   except ValueError:
@@ -171,20 +198,7 @@ def xla_primitive_callable(prim, *arg_specs, **params):
     raise ValueError(msg.format(", ".join(names)))
   else:
     all_devices = it.chain(xb.devices(), xb.devices('cpu'))
-    device = device and next(d for d in all_devices if (type(d), d.id) == device)
-  backend = xb.get_device_backend(device)
-  aval_out = prim.abstract_eval(*avals, **params)
-  if prim.multiple_results:
-    handlers = tuple(map(aval_to_result_handler, aval_out))
-    handle_result = lambda xs: tuple(h(x) for h, x in zip(handlers, xs.destructure()))
-  else:
-    handle_result = aval_to_result_handler(aval_out)
-  tuple_args = len(avals) > 100
-  built_c = primitive_computation(prim, backend, tuple_args, *avals, **params)
-  options = xb.get_compile_options(device_assignment=(device.id,) if device else None)
-  compiled = built_c.Compile(compile_options=options, backend=backend)
-  return partial(_execute_compiled_primitive, prim, compiled, backend,
-                 tuple_args, handle_result)
+    return device and next(d for d in all_devices if (type(d), d.id) == device)
 
 @cache()
 def primitive_computation(prim, backend, tuple_args, *avals, **params):
@@ -425,7 +439,7 @@ def eqn_collectives(eqn):
 def _xla_call_impl(fun, *args, **params):
   device = params['device']
   backend = params['backend']
-  compiled_fun = _xla_callable(fun, device, backend, *map(abstractify, args))
+  compiled_fun = _xla_callable(fun, device, backend, *map(arg_spec, args))
   try:
     return compiled_fun(*args)
   except FloatingPointError:
@@ -434,33 +448,38 @@ def _xla_call_impl(fun, *args, **params):
     return fun.call_wrapped(*args)  # probably won't return
 
 @lu.cache
-def _xla_callable(fun, device, backend, *abstract_args):
+def _xla_callable(fun, device, backend, *arg_specs):
+  if device is not None and backend is not None:
+    raise ValueError("can't specify both a device and a backend for jit, "
+                     "got device={} and backend={}".format(device, backend))
+
+  abstract_args, arg_devices = unzip2(arg_specs)
   pvals = [pe.PartialVal((aval, core.unit)) for aval in abstract_args]
   with core.new_master(pe.StagingJaxprTrace, True) as master:
     jaxpr, (pvals, consts, env) = pe.trace_to_subjaxpr(fun, master, False).call_wrapped(pvals)
     assert not env  # no subtraces here
     del master, env
   _map(prefetch, it.chain(consts, jaxpr_literals(jaxpr)))
-  result_handlers = tuple(map(_pval_to_result_handler, pvals))
+
+  nreps = jaxpr_replicas(jaxpr)
+  device = _xla_callable_device(nreps, backend, device, arg_devices)
+  result_handlers = tuple(map(partial(_pval_to_result_handler, device), pvals))
 
   # Computations that only produce constants and/or only rearrange their inputs,
   # which are often produced from partial evaluation, don't need compilation,
   # and don't need to force their (potentially lazy) arguments.
   if not jaxpr.eqns:
-    device = _get_device(device, backend)
+    device = device or xb.get_backend(None).get_default_device_assignment(1)[0]
     return partial(_execute_trivial, jaxpr, device, consts, result_handlers)
 
   log_priority = logging.WARNING if FLAGS.jax_log_compiles else logging.DEBUG
   logging.log(log_priority,
               "Compiling {} for args {}.".format(fun.__name__, abstract_args))
 
-  nreps = jaxpr_replicas(jaxpr)
   if nreps > xb.device_count(backend):
     msg = ("compiling computation that requires {} replicas, but only {} XLA "
             "devices are available")
     raise ValueError(msg.format(nreps, xb.device_count(backend)))
-  axis_env = AxisEnv(nreps, [], [])
-
   if xb.host_count() > 1 and (nreps > 1 or jaxpr_has_pmap(jaxpr)):
     raise NotImplementedError(
         "jit of multi-host pmap not implemented (and jit-of-pmap can cause "
@@ -471,11 +490,10 @@ def _xla_callable(fun, device, backend, *abstract_args):
   c = xb.make_computation_builder("jit_{}".format(fun.__name__))
   xla_consts = _map(c.Constant, consts)
   xla_args = _xla_callable_args(c, abstract_args, tuple_args)
-  out_nodes = jaxpr_subcomp(c, jaxpr, backend, axis_env, xla_consts, (), *xla_args)
+  out_nodes = jaxpr_subcomp(c, jaxpr, backend, AxisEnv(nreps, [], []),
+                            xla_consts, (), *xla_args)
   built = c.Build(c.Tuple(*out_nodes))
 
-  if device is not None and nreps > 1:
-    raise ValueError("can't specify device assignment for jit-of-pmap")
   options = xb.get_compile_options(
       num_replicas=nreps, device_assignment=(device.id,) if device else None)
   compiled = built.Compile(compile_options=options, backend=xb.get_backend(backend))
@@ -484,6 +502,22 @@ def _xla_callable(fun, device, backend, *abstract_args):
     return partial(_execute_compiled, compiled, backend, result_handlers, tuple_args)
   else:
     return partial(_execute_replicated, compiled, backend, result_handlers, tuple_args)
+
+def _xla_callable_device(nreps, backend, device, arg_devices):
+  if nreps > 1:
+    if device is not None or backend is not None:
+      raise ValueError("can't specify device or backend for jit-of-pmap, "
+                       "got device={} and backend={}".format(device, backend))
+    return None
+  else:
+    if device is None and backend is None:
+      return _device_from_arg_devices(arg_devices)
+    elif device is not None and backend is None:
+      return device
+    elif device is None and backend is not None:
+      return xb.get_backend(backend).get_default_device_assignment(1)[0]
+    else:
+      assert False  # Unreachable given the error check in _xla_callable
 
 def _xla_callable_args(c, avals, tuple_args):
   if not tuple_args:
@@ -499,12 +533,12 @@ def _xla_callable_args(c, avals, tuple_args):
     assert next(xla_inputs, None) is None
     return xla_args
 
-def _pval_to_result_handler(pval):
+def _pval_to_result_handler(device, pval):
   pv, const = pval
   if pv is None:
     return lambda _: const
   else:
-    return aval_to_result_handler(pv)
+    return aval_to_result_handler(device, pv)
 
 def _execute_compiled(compiled, backend, handlers, tuple_args, *args):
   device, = compiled.local_devices()
@@ -631,7 +665,7 @@ token = Token()
 pytype_aval_mappings[Token] = lambda _: abstract_token
 core.pytype_aval_mappings[Token] = lambda _: abstract_token
 xla_shape_handlers[AbstractToken] = lambda _: xc.Shape.token_shape()
-xla_result_handlers[AbstractToken] = lambda _: lambda _: token
+xla_result_handlers[AbstractToken] = lambda _, __: lambda _: token
 canonicalize_dtype_handlers[Token] = identity
 
 
@@ -671,11 +705,9 @@ class DeviceArray(DeviceValue):
   __slots__ = ["_npy_value", "_device"]
   __array_priority__ = 100
 
-  def __init__(self, aval, device_buffer):
+  def __init__(self, aval, device, device_buffer):
     self.aval = aval
     self.device_buffer = device_buffer
-    # TODO(mattjj): make Device hashable
-    device = device_buffer.device()
     self._device = device and (type(device), device.id)
 
     self._npy_value = None
@@ -835,7 +867,7 @@ def _device_put_impl(x, device=None):
   except TypeError:
     raise TypeError("Argument '{}' of type {} is not a valid JAX type"
                     .format(x, type(x)))
-  handler = aval_to_result_handler(a)
+  handler = aval_to_result_handler(device, a)
   return handler(device_put(x, device))
 
 device_put_p = core.Primitive('device_put')
@@ -887,13 +919,13 @@ def _instantiate_device_constant(const, device=None, backend=None, cutoff=1e6):
   # dispatch an XLA Computation to build the constant on the device if it's
   # large, or alternatively build it on the host and transfer it if it's small
   assert isinstance(const, DeviceConstant)
+  backend = xb.get_backend(device.platform) if device else xb.get_backend(backend)
   if const.size > cutoff:
     c = xb.make_computation_builder("constant_instantiating_computation")
     xla_const = const.constant_handler(c, const)
     device_assignment = (device.id,) if device else None
     opts = xb.get_compile_options(device_assignment=device_assignment)
-    compiled = c.Build(xla_const).Compile((), opts, backend=xb.get_backend(backend))
+    compiled = c.Build(xla_const).Compile((), opts, backend=backend)
     return compiled.Execute(())
   else:
-    return xc.Buffer.from_pyval(onp.asarray(const), device,
-                                backend=xb.get_backend(backend))
+    return xc.Buffer.from_pyval(onp.asarray(const), device, backend=backend)

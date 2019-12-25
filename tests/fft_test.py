@@ -79,8 +79,7 @@ class FftTest(jtu.JaxTestCase):
     self._CompileAndCheck(np_fn, args_maker, check_dtypes=True)
     # Test gradient for differentiable types.
     if dtype in inexact_dtypes:
-      # TODO(skye): can we be more precise?
-      tol = 1e-1
+      tol = 0.15  # TODO(skye): can we be more precise?
       jtu.check_grads(np_fn, args_maker(), order=1, atol=tol, rtol=tol)
       jtu.check_grads(np_fn, args_maker(), order=2, atol=tol, rtol=tol)
 
