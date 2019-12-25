@@ -62,30 +62,77 @@ class MultiDeviceTest(jtu.JaxTestCase):
     if len(jax.devices()) < 2:
       raise SkipTest("test requires multiple devices")
 
+    # computation follows data explicitly placed on device 1
+    x = jax.device_put(1, jax.devices()[1])
+    y = x.reshape((1, 1))
+    self.assertEqual(y.device_buffer.device(), jax.devices()[1])
+    z = y.reshape((1, 1))
+    self.assertEqual(z.device_buffer.device(), jax.devices()[1])
+
+    # multiple arguments explicitly placed on device 0 are compatible
     x = jax.device_put(1, jax.devices()[0])
     y = jax.device_put(2, jax.devices()[0])
     z = x + y
     self.assertEqual(z, 3)
     self.assertEqual(z.device_buffer.device(), jax.devices()[0])
+    w = z + x
+    self.assertEqual(w.device_buffer.device(), jax.devices()[0])
 
+    f = jax.jit(lambda x: x + 1, device=jax.devices()[0])
+    z = f(1) + f(2)
+    self.assertEqual(z, 5)
+    self.assertEqual(z.device_buffer.device(), jax.devices()[0])
+    w = z + z
+    self.assertEqual(z.device_buffer.device(), jax.devices()[0])
+
+    # multiple arguments explicitly placed on device 1 are compatible
     x = jax.device_put(1, jax.devices()[1])
     y = jax.device_put(2, jax.devices()[1])
     z = x + y
     self.assertEqual(z, 3)
     self.assertEqual(z.device_buffer.device(), jax.devices()[1])
+    w = z + x
+    self.assertEqual(z.device_buffer.device(), jax.devices()[1])
 
-    x = jax.device_put(1, jax.devices()[1])
-    y = 4
-    z = x + y
+    f = jax.jit(lambda x: x + 1, device=jax.devices()[1])
+    z = f(1) + f(2)
     self.assertEqual(z, 5)
     self.assertEqual(z.device_buffer.device(), jax.devices()[1])
-
-    x = jax.device_put(1, jax.devices()[1])
-    y = np.ones(3)
-    z = x + y
-    self.assertAllClose(z, 1 + onp.ones(3), check_dtypes=False)
+    w = z + z
     self.assertEqual(z.device_buffer.device(), jax.devices()[1])
 
+    # an argument explicitly placed on one device still works with values that
+    # aren't device-committed (and computaiton follows device-committed values)
+    z = jax.device_put(1., jax.devices()[1]) + 4
+    self.assertEqual(z, 5.)
+    self.assertEqual(z.device_buffer.device(), jax.devices()[1])
+    w = z + 3
+    self.assertEqual(w, 8.)
+    self.assertEqual(w.device_buffer.device(), jax.devices()[1])
+
+    z = jax.device_put(1., jax.devices()[1]) + np.ones(3)
+    self.assertAllClose(z, 1 + onp.ones(3), check_dtypes=False)
+    self.assertEqual(z.device_buffer.device(), jax.devices()[1])
+    w = z - 3
+    self.assertAllClose(w, 1 + onp.ones(3) - 3, check_dtypes=False)
+    self.assertEqual(w.device_buffer.device(), jax.devices()[1])
+
+    z = jax.device_put(1., jax.devices()[1]) + np.array([1, 2])
+    self.assertAllClose(z, 1 + onp.array([1, 2]), check_dtypes=False)
+    self.assertEqual(z.device_buffer.device(), jax.devices()[1])
+    w = z * 2
+    self.assertAllClose(w, (1 + onp.array([1, 2])) * 2, check_dtypes=False)
+    self.assertEqual(w.device_buffer.device(), jax.devices()[1])
+
+    z = jax.device_put(1., jax.devices()[1]) + jax.device_put(2)
+    self.assertAllClose(z, 3., check_dtypes=False)
+    self.assertEqual(z.device_buffer.device(), jax.devices()[1])
+
+    z = jax.device_put(1., jax.devices()[1]) + jax.jit(lambda x: x + 1)(3)
+    self.assertAllClose(z, 5., check_dtypes=False)
+    self.assertEqual(z.device_buffer.device(), jax.devices()[1])
+
+    # multiple arguments explicitly placed on distinct devices cause errors
     x = jax.device_put(1, jax.devices()[0])
     y = jax.device_put(2, jax.devices()[1])
     self.assertRaisesRegex(
@@ -93,9 +140,12 @@ class MultiDeviceTest(jtu.JaxTestCase):
         "primitive arguments must be colocated on the same device",
         lambda: x + y)
 
-    x = jax.device_put(1, jax.devices()[1])
-    y = x.reshape((1, 1))
-    self.assertEqual(y.device_buffer.device(), jax.devices()[1])
+    f = jax.jit(lambda x: x + 1, device=jax.devices()[0])
+    g = jax.jit(lambda x: x + 1, device=jax.devices()[1])
+    self.assertRaisesRegex(
+        ValueError,
+        "primitive arguments must be colocated on the same device",
+        lambda: f(1) + g(2))
 
   def test_primitive_compilation_cache(self):
     if len(jax.devices()) < 2:

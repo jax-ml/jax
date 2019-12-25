@@ -123,6 +123,22 @@ class MultiBackendTest(jtu.JaxTestCase):
     self.assertEqual(z.device_buffer.platform(), backend)
     self.assertEqual(w.device_buffer.platform(), backend)
 
+  @jtu.skip_on_devices("cpu")  # test can only fail with non-cpu backends
+  def testJitCpu(self):
+    @partial(api.jit, backend='cpu')
+    def get_arr(scale):
+      return scale + np.ones((2, 2))
+
+    x = get_arr(0.1)
+
+    a = x / x.shape[0]
+    b = x + np.ones_like(x)
+    c = x + np.eye(2)
+
+    self.assertEqual(a.device_buffer.device(), api.devices('cpu')[0])
+    self.assertEqual(b.device_buffer.device(), api.devices('cpu')[0])
+    self.assertEqual(c.device_buffer.device(), api.devices('cpu')[0])
+
 
 if __name__ == "__main__":
   absltest.main()
