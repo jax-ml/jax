@@ -101,7 +101,7 @@ pygments_style = None
 
 
 autosummary_generate = True
-napoleon_use_rtype = False
+napolean_use_rtype = False
 
 # -- Options for nbsphinx -----------------------------------------------------
 
