@@ -45,6 +45,7 @@ from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
+from jax.util import prod
 
 
 def PRNGKey(seed):
@@ -888,18 +889,18 @@ def _gamma_grad(sample, a):
   return grads.reshape(onp.shape(a))
 
 def _gamma_impl(key, a):
-  if key.ndim == 2:  # batch of keys and alphas
-    size = np.size(a[0])
-    key = vmap(split, in_axes=(0, None))(key, size)
-  else:
-    key = split(key, np.size(a))
-  alphas = np.reshape(a, -1)
+  a_shape = np.shape(a)
+  # split key to match the shape of a
+  key_ndim = np.ndim(key) - 1
+  key = np.reshape(key, (-1, 2))
+  key = vmap(split, in_axes=(0, None))(key, prod(a_shape[key_ndim:]))
   keys = np.reshape(key, (-1, 2))
+  alphas = np.reshape(a, -1)
   if xla_bridge.get_backend().platform == 'cpu':
     samples = lax.map(lambda args: _gamma_one(*args), (keys, alphas))
   else:
     samples = vmap(_gamma_one)(keys, alphas)
-  return np.reshape(samples, np.shape(a)),
+  return np.reshape(samples, a_shape),
 
 def _gamma_batching_rule(batched_args, batch_dims):
     k, a = batched_args
