@@ -1023,7 +1023,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_rank={}".format(rank), "rank": rank}
-      for rank in range(7))
+      for rank in range(7)))
   def testALen(self, rank):
     args_maker = lambda: []
     self._CheckAgainstNumpy(onp.alen, lnp.alen, args_maker, check_dtypes=True)
