@@ -1022,10 +1022,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       test_single(m_rect, args_maker, repeats, axis=1)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_rank={}".format(rank), "rank": rank}
-      for rank in range(7)))
-  def testALen(self, rank):
-    args_maker = lambda: []
+      {"testcase_name": "_shape={}_dtype={}".format(rank), "shape": shape,
+          "dtype": default_dtypes, "rng_factory": jtu.rand_default}
+      for shape in [(), (1), (2), (1, 10), (3, 4, 5)]))
+  def testALen(self, shape, dtype, rng_factory):
+    rng = rng_factory()
+    args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(onp.alen, lnp.alen, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp.alen, args_maker, check_dtypes=True)
 
