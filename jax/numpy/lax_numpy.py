@@ -624,6 +624,11 @@ def alen(a):
     return len(array(a, ndmin=1))
 
 
+@_wraps(onp.asscalar)
+def asscalar(a):
+  return a.item()
+
+
 @_wraps(onp.signbit)
 def signbit(x):
   x, = _promote_shapes("signbit", x)
