@@ -391,6 +391,14 @@ def issubdtype(arg1, arg2): return dtypes.issubdtype(arg1, arg2)
 @_wraps(onp.isscalar)
 def isscalar(num): return dtypes.is_python_scalar(num) or onp.isscalar(num)
 
+@_wraps(onp.iterable)
+def iterable(y):
+  try:
+    iter(y)
+  except TypeError:
+    return False
+  return True
+
 @_wraps(onp.result_type)
 def result_type(*args):
   return dtypes.result_type(*args)
