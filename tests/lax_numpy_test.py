@@ -1024,7 +1024,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_dtype={}".format(shape, dtype),
        "shape": shape, "dtype": dtype, "rng_factory": jtu.rand_default}
-      for shape in [(), (1,), (2), (1, 10), (3, 4, 5)]
+      for shape in [(), (1,), (2,), (1, 10), (3, 4, 5)]
       for dtype in default_dtypes))
   def testALen(self, shape, dtype, rng_factory):
     rng = rng_factory()
