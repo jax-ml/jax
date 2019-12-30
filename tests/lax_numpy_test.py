@@ -1041,8 +1041,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     rng = rng_factory()
     shape = (1, ) * ndim if ndim else ()
     args_maker = lambda: [rng(shape, dtype)]
+    # TODO(fedden): NumPy implementation returns a true Python scalar, whereas
+    #               the jax implementation returns a composite scalar type. The
+    #               jax implementation retains the original dtype, but the
+    #               numpy implementation will be a 64 byte int/float (if casted
+    #               to an array).`check_dtypes` is set to False to avoid it
+    #               throwing an error.
     self._CheckAgainstNumpy(
-      onp.asscalar, lnp.asscalar, args_maker, check_dtypes=True)
+      onp.asscalar, lnp.asscalar, args_maker, check_dtypes=False)
     self._CompileAndCheck(lnp.asscalar, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
