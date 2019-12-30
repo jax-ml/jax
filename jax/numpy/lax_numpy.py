@@ -626,7 +626,10 @@ def alen(a):
 
 @_wraps(onp.asscalar)
 def asscalar(a):
-  return a.item()
+  if lax.prod(a.shape) > 1:
+    raise ValueError('can only convert an array of size 1 to a Python scalar')
+  zero_indices = (0,) * len(a.shape)
+  return a[zero_indices]
 
 
 @_wraps(onp.signbit)
