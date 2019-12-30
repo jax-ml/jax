@@ -105,6 +105,16 @@ class FftTest(jtu.JaxTestCase):
     self.assertRaises(
         ValueError, lambda: func(rng([2, 3], dtype=onp.float64), axes=[-3]))
 
+  def testFft(self, inverse, size, dtype, axis, rng_factory):
+    # placeholder for fft/ifft tests
+    pass
+
+  def testFftErrors(self, inverse):
+    # placeholder for fft/ifft tests
+    pass
+
+
+
 
 if __name__ == "__main__":
   absltest.main()
