@@ -1029,8 +1029,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testALen(self, shape, dtype, rng_factory):
     rng = rng_factory()
     args_maker = lambda: [rng(shape, dtype)]
-    self._CheckAgainstNumpy(onp.alen, lnp.alen, args_maker, check_dtypes=True)
-    self._CompileAndCheck(lnp.alen, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(onp.alen, lnp.alen, args_maker, check_dtypes=False)
+    self._CompileAndCheck(lnp.alen, args_maker, check_dtypes=False)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "op={}_shape=[{}]_axis={}_out_dtype={}".format(
