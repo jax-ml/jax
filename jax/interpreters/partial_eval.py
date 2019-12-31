@@ -325,10 +325,10 @@ def partial_val_aval(pv, const):
   else:
     raise TypeError(pv)
 
-def trace_to_jaxpr(fun, pvals, **kwargs):
+def trace_to_jaxpr(fun, pvals, instantiate=False, stage_out_calls=False):
   """Traces a function, given abstract inputs, to a jaxpr."""
-  instantiate = kwargs.pop('instantiate', False)
-  with new_master(JaxprTrace) as master:
+  trace_type = StagingJaxprTrace if stage_out_calls else JaxprTrace
+  with new_master(trace_type) as master:
     fun = trace_to_subjaxpr(fun, master, instantiate)
     jaxpr, (out_pvals, consts, env) = fun.call_wrapped(pvals)
     assert not env
