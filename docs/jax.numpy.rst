@@ -258,6 +258,8 @@ jax.numpy.fft
 
   fftn
   ifftn
+  fft
+  ifft
 
 jax.numpy.linalg
 ----------------

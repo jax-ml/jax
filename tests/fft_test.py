@@ -116,7 +116,6 @@ class FftTest(jtu.JaxTestCase):
       for size in [10]
       for axis in [-1, 0]))
   def testFft(self, inverse, size, dtype, axis, rng_factory):
-    # placeholder for fft/ifft tests
     rng = rng_factory()
     args_maker = lambda: (rng([size], dtype),)
     np_op = np.fft.ifft if inverse else np.fft.fft
@@ -132,7 +131,6 @@ class FftTest(jtu.JaxTestCase):
         tol = 0.15  # TODO(skye): can we be more precise?
         jtu.check_grads(np_fn, args_maker(), order=1, atol=tol, rtol=tol)
         jtu.check_grads(np_fn, args_maker(), order=2, atol=tol, rtol=tol)
-    pass
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inverse={}".format(inverse),
