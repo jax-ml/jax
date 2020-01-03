@@ -92,6 +92,36 @@ def ifftn(a, s=None, axes=None, norm=None):
   return _fft_core('ifftn', xla_client.FftType.IFFT, a, s, axes, norm)
 
 
+@_wraps(onp.fft.fft)
+def fft(a, n=None, axis=-1, norm=None):
+  if isinstance(axis,list) or isinstance(axis,tuple):
+    raise ValueError(
+      "jax.np.fft.fft does not support multiple axes. "
+      "Please use jax.np.fft.fftn. "
+      "Got axis %s." % (list(axis))
+    )
+
+  if not axis is None:
+    axis = [axis]
+
+  return _fft_core('fft', xla_client.FftType.FFT, a, s=n, axes=axis, norm=norm)
+
+
+@_wraps(onp.fft.ifft)
+def ifft(a, n=None, axis=-1, norm=None):
+  if isinstance(axis,list) or isinstance(axis,tuple):
+    raise ValueError(
+      "jax.np.fft.ifft does not support multiple axes. "
+      "Please use jax.np.fft.ifftn. "
+      "Got axis %s." % (list(axis))
+    )
+
+  if not axis is None:
+    axis = [axis]
+
+  return _fft_core('ifft', xla_client.FftType.IFFT, a, s=n, axes=axis, norm=norm)
+
+
 for func in get_module_functions(onp.fft):
   if func.__name__ not in globals():
     globals()[func.__name__] = _not_implemented(func)
