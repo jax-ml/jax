@@ -122,6 +122,28 @@ def ifft(a, n=None, axis=-1, norm=None):
   return _fft_core('ifft', xla_client.FftType.IFFT, a, s=n, axes=axis, norm=norm)
 
 
+@_wraps(onp.fft.fft2)
+def fft2(a, s=None, axes=(-2,-1), norm=None):
+  if len(axes) != 2:
+    raise ValueError(
+      "jax.np.fft.fft2 only supports 2 axes. "
+      "Got axes = %s." % (list(axes))
+    )
+
+  return _fft_core('fft', xla_client.FftType.FFT, a, s=s, axes=axes, norm=norm)
+
+
+@_wraps(onp.fft.ifft2)
+def ifft2(a, s=None, axes=(-2,-1), norm=None):
+  if len(axes) != 2:
+    raise ValueError(
+      "jax.np.fft.ifft2 only supports 2 axes. "
+      "Got axes = %s." % (list(axes))
+    )
+
+  return _fft_core('ifft', xla_client.FftType.IFFT, a, s=s, axes=axes, norm=norm)
+
+
 for func in get_module_functions(onp.fft):
   if func.__name__ not in globals():
     globals()[func.__name__] = _not_implemented(func)
