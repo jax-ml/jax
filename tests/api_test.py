@@ -17,6 +17,7 @@ from __future__ import division
 from __future__ import print_function
 
 import collections
+from contextlib import contextmanager
 import copy
 from functools import partial
 import unittest
@@ -24,7 +25,7 @@ import warnings
 import weakref
 
 from absl import logging
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 import numpy as onp
 import six
 
@@ -34,7 +35,7 @@ if six.PY3:
 import jax
 import jax.numpy as np
 from jax import jit, grad, device_put, jacfwd, jacrev, hessian
-from jax import api, core, lax
+from jax import api, core, lax, lax_reference
 from jax.core import Primitive
 from jax.interpreters import ad
 from jax.interpreters import xla
@@ -1344,7 +1345,7 @@ class APITest(jtu.JaxTestCase):
     python_should_be_executing = False
     api.pmap(f, 'i')(x)
 
-  def test_repr(self):
+  def test_device_array_repr(self):
     rep = repr(np.ones(()) + 1.)
     self.assertStartsWith(rep, 'DeviceArray')
 
@@ -1692,6 +1693,187 @@ class JaxprTest(jtu.JaxTestCase):
                     true_nconsts=1 ] b a c a d
       in [e] }
         """)
+
+
+class LazyTest(jtu.JaxTestCase):
+
+  @contextmanager
+  def count_compiles(self):
+
+    make_computation_builder = xb.make_computation_builder
+    count = [0]
+
+    def make_computation_builder_and_count(*args, **kwargs):
+      count[0] += 1
+      return make_computation_builder(*args, **kwargs)
+
+    xb.make_computation_builder = make_computation_builder_and_count
+    try:
+      yield count
+    finally:
+      xb.make_computation_builder = make_computation_builder
+
+  @jtu.skip_on_devices("tpu")
+  def test_lazy_jit_closed_over_values(self):
+    if not core.skip_checks:
+      raise SkipTest("oom test skipped when core.skip_checks is False")
+
+    y = np.arange(int(1e12))  # will likely oom if materialized
+    ans = jit(lambda x: (x + y)[1])(1)
+    self.assertEqual(ans, 2)
+
+  def test_jit_forces_arguments(self):
+
+    @api.jit
+    def f(x):
+      assert python_should_be_executing
+      return np.sum(x)
+
+    x = np.arange(10, dtype=np.int32)
+    assert xla.is_device_constant(x)  # lazy iota
+
+    python_should_be_executing = True
+    _ = f(x)
+
+    python_should_be_executing = False  # should not recompile
+    x = onp.arange(10, dtype=onp.int32)
+    _ = f(x)
+
+  @parameterized.parameters(jtu.cases_from_list(range(10000)))
+  def test_random_lazy_program(self, seed):
+
+    def random_array(rng):
+      kind = rng.choice(['arr', 'iota', 'eye', 'tri'])
+      if kind == 'arr':
+        dtype = [onp.float32, onp.int32][rng.choice(2)]
+        dim = rng.randint(4)
+        shape = rng.randint(4, size=dim)
+        onp_x = onp.asarray(rng.randn(*shape), dtype=dtype)
+        jax_x = np.array(onp_x, dtype=dtype)
+      elif kind == 'iota':
+        dtype = [onp.float32, onp.int32][rng.choice(2)]
+        size = rng.randint(5)
+        onp_x = onp.arange(size, dtype=dtype)
+        jax_x = lax.iota(dtype, size)
+      elif kind == 'eye':
+        dtype = [onp.float32, onp.int32][rng.choice(2)]
+        N = rng.randint(2, 5)
+        M = None if rng.rand() < 0.5 else rng.randint(2, 5)
+        k = rng.choice([-1, 0, 1])
+        onp_x = onp.eye(N, M, k, dtype=dtype)
+        jax_x = np.eye(N, M, k, dtype=dtype)
+      elif kind == 'tri':
+        dtype = [onp.float32, onp.int32][rng.choice(2)]
+        N = rng.randint(2, 5)
+        M = None if rng.rand() < 0.5 else rng.randint(2, 5)
+        k = rng.choice([-1, 0, 1])
+        onp_x = onp.tri(N, M, k, dtype=dtype)
+        jax_x = np.tri(N, M, k, dtype=dtype)
+      else:
+        assert False
+      assert type(onp_x) is onp.ndarray and type(jax_x) is xla.DeviceArray
+      return onp_x, jax_x
+
+    def random_op(rng, shape):
+      kind = rng.choice(['transpose', 'broadcast', 'reshape'])
+      if kind == 'transpose':
+        perm = tuple(rng.permutation(len(shape)))
+        return Op(partial(onp.transpose, axes=perm),
+                  partial(lax.transpose, permutation=perm))
+      elif kind == 'broadcast':
+        n = rng.randint(1, 3)
+        new_sizes = rng.randint(1, 4, size=n)
+        new_ndim  = n + len(shape)
+        bcast_dims = tuple(sorted(rng.permutation(new_ndim)[:len(shape)]))
+        shape_iter = iter(shape)
+        new_sizes = iter(rng.randint(1, 4, size=n))
+        new_shape = [next(shape_iter) if i in  bcast_dims else next(new_sizes)
+                    for i in range(new_ndim)]
+        return Op(partial(lax_reference.broadcast_in_dim, shape=new_shape,
+                          broadcast_dimensions=bcast_dims),
+                  partial(lax.broadcast_in_dim, shape=new_shape,
+                          broadcast_dimensions=bcast_dims))
+      elif kind == 'reshape':
+        new_shape = list(shape)
+        for _ in range(rng.randint(1, 3)):
+          loc = len(new_shape) and rng.randint(len(new_shape))
+          new_shape.insert(loc, 1)
+        new_shape = tuple(new_shape)
+        return Op(partial(onp.reshape, newshape=new_shape),
+                  partial(lax.reshape, new_sizes=new_shape))
+      else:
+        assert False
+    Op = collections.namedtuple('Op', ['onp_fn', 'jax_fn'])
+
+    rng = onp.random.RandomState(seed)
+    onp_x, jax_x = _, orig_x = random_array(rng)
+    ops = []
+    with jtu.count_primitive_compiles() as count:
+      for _ in range(rng.randint(5)):
+        op = random_op(rng, onp.shape(onp_x))
+        onp_x = op.onp_fn(onp_x)
+        jax_x = op.jax_fn(jax_x)
+        ops.append(op)
+    self.assertEqual(count[0], 0)
+
+    kind = rng.choice(['closure', 'npy_value', 'force', 'add'])
+    if kind == 'closure':
+      result = api.jit(lambda x: x + jax_x)(0)
+      self.assertAllClose(onp_x, result, check_dtypes=False)
+    elif kind == 'npy_value':
+      self.assertAllClose(onp_x, jax_x, check_dtypes=False)
+    elif kind == 'force':
+      result = xla._force(jax_x)
+      self.assertAllClose(onp_x, result, check_dtypes=False)
+    elif kind == 'add':
+      result = jax_x + onp.zeros(jax_x.shape, dtype=jax_x.dtype)
+      self.assertAllClose(onp_x, result, check_dtypes=False)
+    else:
+      assert False
+
+    @jit
+    def apply_ops(x):
+      for op in ops:
+        x = op.jax_fn(x)
+      return x
+
+    jit_result = apply_ops(orig_x)
+    self.assertAllClose(jit_result, onp_x, check_dtypes=False)
+
+    @jit
+    def apply_ops_closure():
+      x = orig_x
+      for op in ops:
+        x = op.jax_fn(x)
+      return x
+
+    jit_result = apply_ops_closure()
+    self.assertAllClose(jit_result, onp_x, check_dtypes=False)
+
+  def test_constant_forcing_computations_cached(self):
+    # from https://github.com/google/jax/issues/1909
+    xla._lazy_force_computation.cache_clear()  # clear force compile cache
+    big_lazy_x = np.ones((api.device_count(), 100))
+    f = api.pmap(lambda x: 2 * x)
+    _ = f(big_lazy_x)
+
+    with self.count_compiles() as count:
+      _ = f(big_lazy_x)
+    self.assertEqual(count[0], 0)
+
+  def test_zeros_ones_compilation(self):
+    w = np.ones(3) + np.ones(3)  # ensure + has a cache entry
+    w.block_until_ready()
+
+    xla._lazy_force_computation.cache_clear()  # clear force compile cache
+
+    with self.count_compiles() as count:
+      x = np.ones(3) + np.zeros(3)
+      y = np.ones(3) + np.ones(3)
+
+    self.assertEqual(count[0], 1)
+    self.assertAllClose(x, onp.ones(3), check_dtypes=False)
+    self.assertAllClose(y, onp.ones(3) + onp.ones(3), check_dtypes=False)
 
 
 if __name__ == '__main__':

@@ -40,7 +40,7 @@ from jax import numpy as lnp
 from jax import test_util as jtu
 from jax import dtypes
 from jax import tree_util
-from jax.interpreters import partial_eval
+from jax.interpreters import partial_eval, xla
 from jax.test_util import check_grads
 
 from jax.config import config
@@ -2074,11 +2074,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertAllClose(lnp.arange(53, 5, -3),
                         onp.arange(53, 5, -3, dtype=lnp.int_),
                         check_dtypes=True)
-    # TODO(mattjj): make these tests work when jax_enable_x64=True
-    # self.assertAllClose(lnp.arange(77, dtype=float),
-    #                     onp.arange(77, dtype=float), check_dtypes=True)
-    # self.assertAllClose(lnp.arange(2, 13, dtype=int),
-    #                     onp.arange(2, 13, dtype=int), check_dtypes=True)
+    self.assertAllClose(lnp.arange(77, dtype=float),
+                        onp.arange(77, dtype=float), check_dtypes=True)
+    self.assertAllClose(lnp.arange(2, 13, dtype=int),
+                        onp.arange(2, 13, dtype=int), check_dtypes=True)
     self.assertAllClose(lnp.arange(0, 1, -0.5),
                         onp.arange(0, 1, -0.5, dtype=lnp.float_),
                         check_dtypes=True)
@@ -2094,6 +2093,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                      type(onp.arange(77, dtype=onp.int32)))
     self.assertTrue(type(lnp.arange(77, dtype=lnp.int32)) ==
                     type(lax.iota(onp.int32, 77)))
+
+    # test laziness for int dtypes
+    self.assertTrue(xla.is_device_constant(lnp.arange(77)))
+    self.assertTrue(xla.is_device_constant(lnp.arange(77, dtype=lnp.int32)))
 
   def testIssue830(self):
     a = lnp.arange(4, dtype=lnp.complex64)
