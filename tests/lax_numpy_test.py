@@ -290,6 +290,7 @@ JAX_OPERATOR_OVERLOADS = [
     op_record("__eq__", 2, number_dtypes, all_shapes, jtu.rand_default, []),
     op_record("__ne__", 2, number_dtypes, all_shapes, jtu.rand_default, []),
     op_record("__lt__", 2, default_dtypes, all_shapes, jtu.rand_default, []),
+    op_record("__le__", 2, default_dtypes, all_shapes, jtu.rand_default, []),
     op_record("__gt__", 2, default_dtypes, all_shapes, jtu.rand_default, []),
     op_record("__ge__", 2, default_dtypes, all_shapes, jtu.rand_default, []),
     op_record("__pos__", 1, number_dtypes, all_shapes, jtu.rand_default, []),
@@ -328,6 +329,21 @@ JAX_RIGHT_OPERATOR_OVERLOADS = [
     # op_record("__rxor__", 2, number_dtypes, all_shapes, jtu.rand_bool, []),
     # op_record("__rdivmod__", 2, number_dtypes, all_shapes, jtu.rand_nonzero, []),
 ]
+
+class _OverrideEverything(object):
+  pass
+
+for rec in JAX_OPERATOR_OVERLOADS + JAX_RIGHT_OPERATOR_OVERLOADS:
+  if rec.nargs == 2:
+    setattr(_OverrideEverything, rec.name, lambda self, other: self)
+
+class _OverrideNothing(object):
+  pass
+
+for rec in JAX_OPERATOR_OVERLOADS + JAX_RIGHT_OPERATOR_OVERLOADS:
+  if rec.nargs == 2:
+    setattr(_OverrideNothing, rec.name, lambda self, other: NotImplemented)
+
 
 numpy_version = tuple(map(int, onp.version.version.split('.')))
 if numpy_version >= (1, 15):
@@ -490,6 +506,34 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(
       fun, args_maker, check_dtypes=True, # not scalar_arg and not empty_shape,
       atol=tol, rtol=tol)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": rec.test_name + "_{}".format(dtype),
+       "rng_factory": rec.rng_factory,
+       "op_name": rec.name, "dtype": dtype}
+      for rec in JAX_OPERATOR_OVERLOADS if rec.nargs == 2
+      for dtype in rec.dtypes))
+  def testBinaryOperatorDefers(self, op_name, rng_factory, dtype):
+    rng = rng_factory()
+    arg = jax.device_put(rng((), dtype))
+    op = getattr(operator, op_name)
+
+    other = _OverrideEverything()
+    assert op(other, arg) is other
+    assert op(arg, other) is other
+
+    other = _OverrideNothing()
+    if op_name == "__eq__":
+      assert op(other, arg) is False
+      assert op(arg, other) is False
+    elif op_name == "__ne__":
+      assert op(other, arg) is True
+      assert op(arg, other) is True
+    else:
+      with self.assertRaises(TypeError):
+        op(other, arg)
+      with self.assertRaises(TypeError):
+        op(arg, other)
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
       jtu.cases_from_list(
