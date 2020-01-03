@@ -52,7 +52,7 @@ from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
 from ..config import flags
 from ..interpreters.xla import DeviceArray
 from .. import lax
-from ..util import partial, get_module_functions, unzip2, prod as _prod
+from ..util import partial, get_module_functions, unzip2, prod as _prod, subvals
 from ..lib import pytree
 from ..lib import xla_client
 
@@ -1087,7 +1087,7 @@ def split(ary, indices_or_sections, axis=0):
   subarrays = onp.split(dummy_val, indices_or_sections, axis)  # shapes
   split_indices = onp.cumsum([0] + [onp.shape(sub)[axis] for sub in subarrays])
   starts, ends = [0] * ndim(ary), shape(ary)
-  _subval = lambda x, i, v: lax.subvals(x, [(i, v)])
+  _subval = lambda x, i, v: subvals(x, [(i, v)])
   return [lax.slice(ary, _subval(starts, axis, start), _subval(ends, axis, end))
           for start, end in zip(split_indices[:-1], split_indices[1:])]
 
@@ -1250,7 +1250,7 @@ def _make_reduction(np_fun, op, init_val, preproc=None, bool_op=None,
     result = lax.reduce(a, _reduction_init_val(a, init_val),
                         op if computation_dtype != onp.bool_ else bool_op, dims)
     if keepdims:
-      shape_with_singletons = lax.subvals(shape(a), zip(dims, (1,) * len(dims)))
+      shape_with_singletons = subvals(shape(a), zip(dims, (1,) * len(dims)))
       result = lax.reshape(result, shape_with_singletons)
     return lax.convert_element_type(result, dtype or result_dtype)
 
@@ -1813,23 +1813,20 @@ empty = zeros
 
 
 @_wraps(onp.eye)
-def eye(N, M=None, k=None, dtype=None):
+def eye(N, M=None, k=0, dtype=None):
   lax._check_user_dtype_supported(dtype, "eye")
   dtype = float_ if dtype is None else dtype
   M = N if M is None else M
+  k = int(k)
   if N < 0 or M < 0:
     msg = "negative dimensions are not allowed, got {} and {}"
     raise ValueError(msg.format(N, M))
-  if k is None:
-    return lax.broadcasted_eye(dtype, (N, M), (0, 1))
-  else:
+  if k is not None:
     k_dtype = _dtype(k)
     if not issubdtype(k_dtype, integer):
       msg = "eye argument `k` must be of integer dtype, got {}"
       raise TypeError(msg.format(k_dtype))
-    rows = k + lax.broadcasted_iota(k_dtype, (N, M), 0)
-    cols = lax.broadcasted_iota(k_dtype, (N, M), 1)
-    return lax.convert_element_type(lax.eq(rows, cols), dtype)
+  return lax._eye(dtype, (N, M), k)
 
 
 @_wraps(onp.identity)
@@ -1841,16 +1838,11 @@ def identity(n, dtype=None):
 @_wraps(onp.arange)
 def arange(start, stop=None, step=None, dtype=None):
   lax._check_user_dtype_supported(dtype, "arange")
-  # If called like np.arange(N), we create a lazy lax._IotaConstant.
   if stop is None and step is None:
     dtype = dtype or _dtype(start)
-    if issubdtype(dtype, integer):
-      return lax.iota(dtype, start)  # avoids materializing
-
-  # Fall back to instantiating an ndarray in host memory
-  dtype = dtype or result_type(
-    *(x for x in (start, stop, step) if x is not None))
-  return onp.arange(start, stop=stop, step=step, dtype=dtype)
+    return lax.iota(dtype, start)  # avoids materializing
+  else:
+    return array(onp.arange(start, stop=stop, step=step, dtype=dtype))
 
 
 def _wrap_numpy_nullary_function(f):
@@ -2074,13 +2066,7 @@ def tri(N, M=None, k=0, dtype=None):
   lax._check_user_dtype_supported(dtype, "tri")
   M = M if M is not None else N
   dtype = dtype or float32
-  x = arange(N, dtype=int32)
-  y = arange(M, dtype=int32)
-  mask = lax.ge(
-      (lax.broadcast_in_dim(x, shape=(N, M), broadcast_dimensions=(0,)) +
-       int32(k)),
-      lax.broadcast(y, [N]))
-  return lax.convert_element_type(mask, dtype)
+  return lax._tri(dtype, (N, M), k)
 
 
 @_wraps(onp.tril)
@@ -2339,7 +2325,7 @@ def _einsum(operands, contractions, precision):
     for name, count in counts.items():
       if count > 1:
         axes = [i for i, n in enumerate(names) if n == name]
-        eye = lax.broadcasted_eye(operand.dtype, operand.shape, axes)
+        eye = lax._delta(operand.dtype, operand.shape, axes)
         if name not in keep_names:
           operand = sum(operand * eye, axes)
           names = names.replace(name, '')
@@ -2849,7 +2835,7 @@ def _index_to_gather(x_shape, idx):
   collapsed_slice_dims = []
   start_index_map = []
 
-  gather_indices = zeros((0,), dtype=int32)
+  gather_indices = onp.zeros((0,), dtype=int32)  # use onp to save a compilation
 
   # We perform three transformations to y before the scatter op, in order:
   # First, y is broadcast to slice_shape. In general `y` only need broadcast to
