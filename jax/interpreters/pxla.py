@@ -30,6 +30,7 @@ from six.moves import reduce
 from ..config import flags
 from .. import core
 from .. import linear_util as lu
+from .. import lazy
 from ..abstract_arrays import (ConcreteArray, ShapedArray, array_types,
                                raise_to_shaped)
 from ..util import partial, unzip2, concatenate, prod, safe_map
@@ -360,8 +361,7 @@ class ShardedDeviceArray(ShardedDeviceValue, xla.DeviceArray):
       ids = self._ids()
       device_buffer = self.device_buffers[ids[idx]]
       aval = ShapedArray(self.aval.shape[1:], self.aval.dtype)
-      handler = xla.aval_to_result_handler(None, aval)
-      return handler(device_buffer)
+      return xla.DeviceArray(aval, None, lazy.array(aval.shape), device_buffer)
     else:
       return super(ShardedDeviceArray, self).__getitem__(idx)
 
@@ -376,11 +376,14 @@ def _shard_sharded_device_array(x, devices, assignments):
     return (xla.device_put(x[assignments[r]], devices[r]) for r in range(n))
 shard_arg_handlers[ShardedDeviceArray] = _shard_sharded_device_array
 
+def _sharded_device_array_constant_handler(c, val, canonicalize_types=True):
+  return c.Constant(onp.asarray(val), canonicalize_types=canonicalize_types)
+xb.register_constant_handler(ShardedDeviceArray, _sharded_device_array_constant_handler)
+
 core.pytype_aval_mappings[ShardedDeviceArray] = ConcreteArray
 xla.device_put_handlers[ShardedDeviceArray] = xla._device_put_array
-xla.pytype_aval_mappings[ShardedDeviceArray] = lambda x: x.aval
+xla.pytype_aval_mappings[ShardedDeviceArray] = op.attrgetter('aval')
 xla.canonicalize_dtype_handlers[ShardedDeviceArray] = identity
-xb.register_constant_handler(ShardedDeviceArray, xla._device_array_constant_handler)
 
 
 class ChunkedDeviceArray(ShardedDeviceArray):
@@ -398,10 +401,8 @@ shard_arg_handlers[ChunkedDeviceArray] = _shard_array
 
 core.pytype_aval_mappings[ChunkedDeviceArray] = ConcreteArray
 xla.device_put_handlers[ChunkedDeviceArray] = xla._device_put_array
-xla.pytype_aval_mappings[ChunkedDeviceArray] = lambda x: x.aval
+xla.pytype_aval_mappings[ChunkedDeviceArray] = op.attrgetter('aval')
 xla.canonicalize_dtype_handlers[ChunkedDeviceArray] = identity
-xb.register_constant_handler(ChunkedDeviceArray,
-                             xla._device_array_constant_handler)
 
 
 ### the xla_pmap primitive and its rules are comparable to xla_call in xla.py

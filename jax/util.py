@@ -56,6 +56,12 @@ def unzip3(xyzs):
     zs.append(z)
   return tuple(xs), tuple(ys), tuple(zs)
 
+def subvals(lst, replace):
+  lst = list(lst)
+  for i, v in replace:
+    lst[i] = v
+  return tuple(lst)
+
 def split_list(args, ns):
   assert type(ns) is list
   args = list(args)
