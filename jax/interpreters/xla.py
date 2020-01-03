@@ -28,6 +28,7 @@ from .. import tree_util
 from .. import dtypes
 from .. import lazy
 from .. import linear_util as lu
+from .. import partition_util
 from ..abstract_arrays import (ConcreteArray, ShapedArray, AbstractToken,
                                make_shaped_array, array_types, raise_to_shaped,
                                abstract_token)
@@ -301,8 +302,6 @@ def eqn_literals(eqn):
       yield v.val
 
 def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
-  platform = xb.get_backend(backend).platform
-
   def read(v):
     if type(v) is Literal:
       return c.Constant(canonicalize_dtype(v.val))
@@ -318,40 +317,46 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
   _map(write, jaxpr.constvars, consts)
   _map(write, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
-    c.SetOpMetadata(xc.OpMetadata(
-        op_type=eqn.primitive.name,
-        op_name=str(pp(name_stack) >> pp_eqn_compact(
-            eqn.primitive.name, eqn.params))))
-    in_nodes = list(map(read, eqn.invars))
-    if eqn.primitive in backend_specific_translations[platform]:
-      rule = backend_specific_translations[platform][eqn.primitive]
-      ans = rule(c, *in_nodes, **eqn.params)
-    elif eqn.primitive in translations:
-      ans = translations[eqn.primitive](c, *in_nodes, **eqn.params)
-    elif eqn.primitive in initial_style_translations:
-      new_params = check_backend_params(eqn.params, backend)
-      rule = initial_style_translations[eqn.primitive]
-      ans = rule(c, axis_env, extend_name_stack(name_stack, eqn.primitive.name),
-                 *in_nodes, backend=backend, **new_params)
-    elif eqn.primitive in parallel_translations:
-      replica_groups = axis_groups(axis_env, eqn.params['axis_name'])
-      new_params = {k: v for k, v in eqn.params.items() if k != 'axis_name'}
-      rule = parallel_translations[eqn.primitive]
-      ans = rule(c, *in_nodes, replica_groups=replica_groups, **new_params)
-    elif eqn.primitive in call_translations:
-      new_params = check_backend_params(eqn.params, backend)
-      rule = call_translations[eqn.primitive]
-      ans = rule(c, eqn.bound_subjaxpr, axis_env, in_nodes,
-                 name_stack, backend=backend, **new_params)
-    else:
-      msg = "XLA translation rule for primitive '{}' not found"
-      raise NotImplementedError(msg.format(eqn.primitive.name))
-
-    c.GetShape(ans)  # force xla to do shape error checking
-    out_nodes = xla_destructure(c, ans) if eqn.primitive.multiple_results else [ans]
-    c.ClearOpMetadata()
+    out_nodes = jaxpr_subcomp_eqn(c, eqn, backend, axis_env, name_stack, read)
     _map(write, eqn.outvars, out_nodes)
   return _map(read, jaxpr.outvars)
+
+def jaxpr_subcomp_eqn(c, eqn, backend, axis_env, name_stack, read_var):
+  platform = xb.get_backend(backend).platform
+
+  c.SetOpMetadata(xc.OpMetadata(
+      op_type=eqn.primitive.name,
+      op_name=str(pp(name_stack) >> pp_eqn_compact(
+          eqn.primitive.name, eqn.params))))
+  in_nodes = list(map(read_var, eqn.invars))
+  if eqn.primitive in backend_specific_translations[platform]:
+    rule = backend_specific_translations[platform][eqn.primitive]
+    ans = rule(c, *in_nodes, **eqn.params)
+  elif eqn.primitive in translations:
+    ans = translations[eqn.primitive](c, *in_nodes, **eqn.params)
+  elif eqn.primitive in initial_style_translations:
+    new_params = check_backend_params(eqn.params, backend)
+    rule = initial_style_translations[eqn.primitive]
+    ans = rule(c, axis_env, extend_name_stack(name_stack, eqn.primitive.name),
+               *in_nodes, backend=backend, **new_params)
+  elif eqn.primitive in parallel_translations:
+    replica_groups = axis_groups(axis_env, eqn.params['axis_name'])
+    new_params = {k: v for k, v in eqn.params.items() if k != 'axis_name'}
+    rule = parallel_translations[eqn.primitive]
+    ans = rule(c, *in_nodes, replica_groups=replica_groups, **new_params)
+  elif eqn.primitive in call_translations:
+    new_params = check_backend_params(eqn.params, backend)
+    rule = call_translations[eqn.primitive]
+    ans = rule(c, eqn.bound_subjaxpr, axis_env, in_nodes,
+               name_stack, backend=backend, **new_params)
+  else:
+    msg = "XLA translation rule for primitive '{}' not found"
+    raise NotImplementedError(msg.format(eqn.primitive.name))
+
+  c.GetShape(ans)  # force xla to do shape error checking
+  out_nodes = xla_destructure(c, ans) if eqn.primitive.multiple_results else [ans]
+  c.ClearOpMetadata()
+  return out_nodes
 
 def xla_destructure(c, ans):
   num_elements = len(c.GetShape(ans).tuple_shapes())
@@ -420,6 +425,15 @@ def initial_style_primitive_replicas(params):
           if type(param) in (core.Jaxpr, core.TypedJaxpr))
   return max(it.chain([1], nums))
 
+def jaxpr_partitions(jaxpr):
+  return max(it.chain([1], (eqn_partitions(eqn) for eqn in jaxpr.eqns)))
+
+def eqn_partitions(eqn):
+  if eqn.bound_subjaxpr:
+    return jaxpr_partitions(eqn.bound_subjaxpr)
+  else:
+    return max(eqn.params.get('partition_ids', [0])) + 1
+
 # TODO(mattjj,skyewm): the functions here are utilities for checking if
 # not-yet-supported features are used with multi-host programming
 
@@ -483,8 +497,12 @@ def _xla_callable(fun, device, backend, name, *arg_specs):
   _map(prefetch, it.chain(consts, jaxpr_literals(jaxpr)))
 
   nreps = jaxpr_replicas(jaxpr)
-  device = _xla_callable_device(nreps, backend, device, arg_devices)
+  nparts = jaxpr_partitions(jaxpr)
+  device = _xla_callable_device(nreps, nparts, backend, device, arg_devices)
   result_handlers = tuple(map(partial(_pval_to_result_handler, device), pvals))
+
+  var_partition_ids = partition_util.get_var_partition_ids(jaxpr, tuple(range(nparts)))
+  out_partition_ids = tuple(var_partition_ids[v] for v in jaxpr.outvars)
 
   # Computations that only produce constants and/or only rearrange their inputs,
   # which are often produced from partial evaluation, don't need compilation,
@@ -497,10 +515,10 @@ def _xla_callable(fun, device, backend, name, *arg_specs):
   logging.log(log_priority,
               "Compiling {} for args {}.".format(fun.__name__, abstract_args))
 
-  if nreps > xb.device_count(backend):
-    msg = ("compiling computation that requires {} replicas, but only {} XLA "
-            "devices are available")
-    raise ValueError(msg.format(nreps, xb.device_count(backend)))
+  if nreps * nparts > xb.device_count(backend):
+    msg = ("compiling computation that requires {} devices, but only {} XLA "
+           "devices are available")
+    raise ValueError(msg.format(nreps * nparts, xb.device_count(backend)))
   if xb.host_count() > 1 and (nreps > 1 or jaxpr_has_pmap(jaxpr)):
     raise NotImplementedError(
         "jit of multi-host pmap not implemented (and jit-of-pmap can cause "
@@ -516,22 +534,94 @@ def _xla_callable(fun, device, backend, name, *arg_specs):
       extend_name_stack(wrap_name(name, 'jit')), *xla_args)
   built = c.Build(c.Tuple(*out_nodes))
 
+  if device:
+    device_assignment = ((device.id,),)
+  else:
+    device_assignment = xb.get_backend(backend).get_default_device_assignment(nreps, nparts)
+    device_assignment = onp.vectorize(lambda d: d.id)(onp.array(device_assignment))
+
   options = xb.get_compile_options(
-      num_replicas=nreps,
-      num_partitions=1,
-      device_assignment=(device.id,) if device else None)
+      num_replicas=nreps, num_partitions=nparts, device_assignment=device_assignment)
   compiled = built.Compile(compile_options=options, backend=xb.get_backend(backend))
 
-  if nreps == 1:
+  # TODO(cjfj): Benchmark to determine if we need these special cases.
+  if nreps == 1 and nparts == 1:
     return partial(_execute_compiled, compiled, backend, result_handlers, tuple_args)
-  else:
+  elif nparts == 1:
     return partial(_execute_replicated, compiled, backend, result_handlers, tuple_args)
+  else:
+    return create_execute_fn(
+        compiled, device_assignment=device_assignment, backend=backend,
+        tuple_args=tuple_args, result_handlers=result_handlers,
+        out_partition_ids=out_partition_ids)
 
-def _xla_callable_device(nreps, backend, device, arg_devices):
-  if nreps > 1:
+def create_execute_fn(
+    compiled, *, device_assignment, backend, tuple_args, result_handlers, out_partition_ids):
+  # TODO(cjfj): Expose device assignment from the executable.
+  local_devices = compiled.local_devices()
+  # We are assuming here that `local_devices` are ordered by replica then partition.
+  # TODO(cjfj): Expose logical devices from the executable, rather than re-computing here.
+  local_logical_devices = []
+  local_device_ids = {d.id for d in local_devices}
+  for replica_id, replica_devices in enumerate(device_assignment):
+    for partition_id, device_id in enumerate(replica_devices):
+      if device_id in local_device_ids:
+        local_logical_devices.append((replica_id, partition_id))
+
+  # We take our outputs from the replica 0 devices. Pre-compute the mappings
+  # to these devices for each partition.
+  local_replica0_devices = {
+      part_id: local_device_id for local_device_id, (replica_id, part_id)
+      in enumerate(local_logical_devices) if replica_id == 0}
+
+  # Maps each output to a (local_device ID, buffer ID) pair, or `None` if the
+  # given output is not on this host.
+  out_buf_locs = []
+  out_buf_count = [0] * len(local_devices)
+  for out_partition_id in out_partition_ids:
+    local_device_id = local_replica0_devices.get(out_partition_id)
+    if local_device_id is None:
+      out_buf_locs.append(None)
+    else:
+      out_buf_locs.append((local_device_id, out_buf_count[local_device_id]))
+      out_buf_count[local_device_id] += 1
+
+  def execute(*args):
+    in_bufs = []
+    for device, (_, partition_id) in zip(local_devices, local_logical_devices):
+      # All inputs are on partition 0 at the moment.
+      if partition_id == 0:
+        device_in_bufs = [device_put(x, device) for x in args if x is not token]
+        if tuple_args:
+          device_in_bufs = [make_tuple(device_in_bufs, device, backend)]
+      else:
+        device_in_bufs = []
+
+      in_bufs.append(device_in_bufs)
+
+    out_bufs = [x.destructure() for x in compiled.ExecuteOnLocalDevices(in_bufs)]
+    if FLAGS.jax_debug_nans:
+      for device_out_bufs in out_bufs:
+        check_nans(xla_call_p, device_out_bufs)
+
+    results = []
+    for handler, out_buf_loc in zip(result_handlers, out_buf_locs):
+      if out_buf_loc is None:  # Output is not on this host.
+        # TODO(cjfj): Should we return an `AbstractValue` here instead?
+        results.append(None)
+      else:
+        local_device_id, buf_id = out_buf_loc
+        results.append(handler(out_bufs[local_device_id][buf_id]))
+    return results
+  return execute
+
+
+def _xla_callable_device(nreps, nparts, backend, device, arg_devices):
+  if (nreps > 1) or (nparts > 1):
     if device is not None or backend is not None:
-      raise ValueError("can't specify device or backend for jit-of-pmap, "
-                       "got device={} and backend={}".format(device, backend))
+      raise ValueError(
+          "can't specify device or backend for jit-of-pmap or jit-of-partition,"
+          " got device={} and backend={}".format(device, backend))
     return None
   else:
     if device is None and backend is None:

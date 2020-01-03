@@ -492,6 +492,11 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
     return lambda *_: results
 
   jaxpr_replicas = xla.jaxpr_replicas(jaxpr)
+  jaxpr_partitions = xla.jaxpr_partitions(jaxpr)
+
+  if jaxpr_partitions != 1:
+    raise NotImplementedError("`partition` calls are not yet supported within `pmap`")
+
   num_local_replicas = axis_size * jaxpr_replicas
   num_global_replicas = global_axis_size * jaxpr_replicas
   axis_env = xla.AxisEnv(num_global_replicas, (axis_name,), (global_axis_size,), devices)
