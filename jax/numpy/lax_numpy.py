@@ -873,6 +873,49 @@ def diff(a, n=1, axis=-1,):
   return a
 
 
+@partial(jit, static_argnums=1)
+def _gradient(a, axis):
+  def gradient_along_axis(a, axis):
+    a_swap = swapaxes(a, 0, axis)
+    a_grad = concatenate((
+      (a_swap[1]  - a_swap[0])[newaxis],
+      (a_swap[2:] - a_swap[:-2]) * 0.5,
+      (a_swap[-1] - a_swap[-2])[newaxis]
+      ), axis=0)
+    return swapaxes(a_grad, 0, axis)
+
+  if axis is None:
+    axis = range(a.ndim)
+  else:
+    if isinstance(axis, int):
+      axis = (axis,)
+    if not (isinstance(axis, tuple) or isinstance(axis, list)):
+      raise ValueError("Give `axis` either as int or iterable")
+    axis = [_canonicalize_axis(i, a.ndim) for i in axis]
+
+  if min([s for i, s in enumerate(a.shape) if i in axis]) < 2:
+    raise ValueError(
+      "Shape of array too small to calculate a numerical gradient")
+
+  # TODO: use jax.lax loop tools if possible
+  a_grad = [gradient_along_axis(a, ax) for ax in axis]
+
+  if len(axis) == 1:
+    a_grad = a_grad[0]
+
+  return a_grad
+
+
+@_wraps(onp.gradient)
+def gradient(a, *args, **kwargs):
+  axis = kwargs.pop("axis", None)
+  if not len(args) == 0:
+    raise ValueError("*varargs not implemented")
+  if not len(kwargs) == 0:
+    raise ValueError("Only `axis` keyword is implemented")
+  return _gradient(a, axis)
+
+
 @_wraps(onp.isrealobj)
 def isrealobj(x):
   return not iscomplexobj(x)
