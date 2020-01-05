@@ -260,6 +260,8 @@ jax.numpy.fft
   ifftn
   fft
   ifft
+  fft2
+  ifft2
 
 jax.numpy.linalg
 ----------------
