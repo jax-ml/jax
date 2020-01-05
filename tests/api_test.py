@@ -567,6 +567,21 @@ class APITest(jtu.JaxTestCase):
       # jaxpr2 = api.make_jaxpr(f2_vjp)(y)
       # assert len(jaxpr2.constvars) == 2
 
+  def test_jvp_jit_cached(self):
+    """Bug in caching in presence of JVP and JIT."""
+
+    def func(x):
+      def inner(y):
+        return y * x
+
+      # Must have two calls to the inner jit (the second one hits the cache)
+      res1 = api.jit(inner)(4.)
+      res2 = api.jit(inner)(5.)
+      return res1 + res2
+
+    self.assertAllClose((45., 9.), api.jvp(func, (5.,), (1.,)), check_dtypes=True)
+
+
   def test_complex_grad_raises_error(self):
     self.assertRaises(TypeError, lambda: grad(lambda x: np.sin(x))(1 + 2j))
 
