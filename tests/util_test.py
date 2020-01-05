@@ -32,10 +32,12 @@ class UtilTest(jtu.JaxTestCase):
   def test_wrapped_fun_transforms(self):
     """Test a combination of transforms."""
 
-    def f(*args, factor=2):
+    def f(*args, **kwargs):
       """The function to be transformed.
       Scales the positional arguments by a factor.
       Takes only one keyword argument, the factor to scale by."""
+      factor = kwargs.pop('factor', 2)  # For PY2
+      assert not kwargs
       return tuple(a * factor for a in args)
 
     @lu.transformation_with_aux
