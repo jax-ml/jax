@@ -567,8 +567,9 @@ identity_p.def_custom_bind(lambda x: x)
 
 
 def apply_todos(todos, outs):
-  while todos:
-    outs = map(full_lower, todos.pop()(outs))
+  todos_list = list(todos)
+  while todos_list:
+    outs = map(full_lower, todos_list.pop()(outs))
   return outs
 
 @lu.transformation_with_aux
@@ -586,7 +587,7 @@ def process_env_traces(primitive, level, params_tuple, *args):
     outs = map(trace.full_raise, outs)
     outs, cur_todo = trace.post_process_call(primitive, outs, params)
     todo.append(cur_todo)
-  yield outs, todo
+  yield outs, tuple(todo)  # Ensure the aux output is immutable
 
 def call_bind(primitive, f, *args, **params):
   top_trace = find_top_trace(args)
