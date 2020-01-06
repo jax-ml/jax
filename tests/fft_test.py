@@ -213,6 +213,50 @@ class FftTest(jtu.JaxTestCase):
     self.assertRaises(
       ValueError, lambda: func(rng([2, 3], dtype=onp.float64), axes=[-3, -4]))
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "_size={}_d={}".format(
+      jtu.format_shape_dtype_string([size], dtype), d),
+      "dtype": dtype, "size": size, "rng_factory": rng_factory, "d": d}
+    for rng_factory in [jtu.rand_default]
+    for dtype in all_dtypes
+    for size in [9, 10, 101, 102]
+    for d in [0.1, 2.]))
+  def testFftfreq(self, size, d, dtype, rng_factory):
+    rng = rng_factory()
+    args_maker = lambda: (rng([size], dtype),)
+    np_op = np.fft.fftfreq
+    onp_op = onp.fft.fftfreq
+    np_fn = lambda a: np_op(size, d=d)
+    onp_fn = lambda a: onp_op(size, d=d)
+    # Numpy promotes to complex128 aggressively.
+    self._CheckAgainstNumpy(onp_fn, np_fn, args_maker, check_dtypes=False,
+                            tol=1e-4)
+    self._CompileAndCheck(np_fn, args_maker, check_dtypes=True)
+    # Test gradient for differentiable types.
+    if dtype in inexact_dtypes:
+      tol = 0.15  # TODO(skye): can we be more precise?
+      jtu.check_grads(np_fn, args_maker(), order=1, atol=tol, rtol=tol)
+      jtu.check_grads(np_fn, args_maker(), order=2, atol=tol, rtol=tol)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "_n={}".format(n),
+     "n": n}
+    for n in [[0,1,2]]))
+  def testFftfreqErrors(self, n):
+    name = 'fftfreq'
+    func = np.fft.fftfreq
+    self.assertRaisesRegex(
+      ValueError,
+      "The n argument of jax.np.fft.{} only takes an int. "
+      "Got n = \\[0, 1, 2\\]".format(name),
+      lambda: func(n=n)
+    )
+    self.assertRaisesRegex(
+      ValueError,
+      "The d argument of jax.np.fft.{} only takes a single value. "
+      "Got d = \\[0, 1, 2\\].".format(name),
+      lambda: func(n=10, d=n)
+    )
 
 if __name__ == "__main__":
   absltest.main()
