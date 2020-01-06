@@ -19,6 +19,7 @@ from __future__ import print_function
 from operator import attrgetter
 from contextlib import contextmanager
 from collections import namedtuple, Counter, defaultdict
+from functools import total_ordering
 import itertools as it
 from weakref import ref
 import threading
@@ -86,10 +87,17 @@ JaxprEqn.__repr__ = JaxprEqn.__str__ = lambda eqn: str(pp_eqn(eqn)).rstrip()
 new_jaxpr_eqn = JaxprEqn
 
 
+@total_ordering
 class Var(object):
   def __init__(self, count, suffix):
     self.count = count
     self.suffix = suffix
+
+  def __lt__(self, other):
+    if not isinstance(other, Var):
+      return NotImplemented
+    else:
+      return (self.count, self.suffix) < (other.count, other.suffix)
 
   def __repr__(self):
     rem = self.count
