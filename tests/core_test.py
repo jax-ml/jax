@@ -18,6 +18,7 @@ from __future__ import print_function
 
 from collections import namedtuple
 import gc
+import itertools as it
 import operator
 
 import numpy as onp
@@ -30,7 +31,7 @@ from jax import numpy as np
 from jax import test_util as jtu
 from jax.api import jvp, linearize, vjp, jit
 from jax.lax import UnshapedArray, ShapedArray, ConcreteArray
-from jax.tree_util import tree_flatten, tree_unflatten, tree_multimap, tree_reduce
+from jax.tree_util import tree_flatten, tree_unflatten, tree_multimap, tree_reduce, tree_leaves
 from jax.util import partial
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
@@ -274,6 +275,35 @@ class CoreTest(jtu.JaxTestCase):
       self.assertEqual(gc.collect(), 0)
     finally:
       gc.set_debug(debug)
+
+  def test_comparing_var(self):
+    newsym = core.gensym('')
+    a = newsym()
+    b = newsym()
+    c = newsym()
+    assert a < b < c
+    assert c > b > a
+    assert a != b and b != c and a != c
+
+  def test_var_ordering(self):
+    newsym = core.gensym('')
+    a = newsym()
+    b = newsym()
+    c = newsym()
+    for ordering in it.permutations([a, b, c]):
+      assert sorted(list(ordering)) == [a, b, c]
+
+  def test_var_compared_by_identity(self):
+    a1 = core.gensym('')()
+    a2 = core.gensym('')()
+    assert str(a1) == str(a2)
+    assert a1 != a2
+
+  def test_var_tree_flatten(self):
+    newsym = core.gensym('')
+    a, b, c, d = newsym(), newsym(), newsym(), newsym()
+    syms = {c: d, a: b}
+    assert 'bd' == ''.join(map(str, tree_leaves(syms)))
 
 if __name__ == '__main__':
   absltest.main()
