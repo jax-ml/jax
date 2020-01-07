@@ -889,7 +889,7 @@ def _gradient(a, axis):
   else:
     if isinstance(axis, int):
       axis = (axis,)
-    if not (isinstance(axis, tuple) or isinstance(axis, list)):
+    if not isinstance(axis, tuple) and not isinstance(axis, list):
       raise ValueError("Give `axis` either as int or iterable")
     axis = [_canonicalize_axis(i, a.ndim) for i in axis]
 
@@ -910,7 +910,7 @@ def _gradient(a, axis):
 def gradient(a, *args, **kwargs):
   axis = kwargs.pop("axis", None)
   if not len(args) == 0:
-    raise ValueError("*varargs not implemented")
+    raise ValueError("*args (sample distances) not implemented")
   if not len(kwargs) == 0:
     raise ValueError("Only `axis` keyword is implemented")
   return _gradient(a, axis)

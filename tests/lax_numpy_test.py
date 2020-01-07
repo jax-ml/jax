@@ -2565,6 +2565,26 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         partial(lnp.inner, precision=HIGHEST),
         ones_1d, ones_1d)
 
+  @parameterized.named_parameters(
+      jtu.cases_from_list(
+        {"testcase_name": ("_shape={}_dtype={}").format(shape, dtype),
+         "shape": shape,
+         "dtype": dtype, "rng_factory": rng_factory}
+        for shape in [(10,), (10, 15), (10, 15, 20)]
+        for dtype in inexact_dtypes
+        for rng_factory in [jtu.rand_default]))
+  def testGradient(self, shape, dtype, rng_factory):
+    rng = rng_factory()
+    args_maker = self._GetArgsMaker(rng, [shape], [dtype])
+    ndim = len(shape)
+    for num_axes in range(ndim):
+      for axis in itertools.combinations(range(ndim), num_axes):
+        lnp_fun = lambda y: lnp.gradient(y, axis=axis)
+        onp_fun = lambda y: onp.gradient(y, axis=axis)
+        self._CheckAgainstNumpy(
+            onp_fun, lnp_fun, args_maker, check_dtypes=True)
+        self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
 # Most grad tests are at the lax level (see lax_test.py), but we add some here
 # as needed for e.g. particular compound ops of interest.
 
