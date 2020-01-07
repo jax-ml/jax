@@ -34,7 +34,7 @@ if six.PY3:
 import jax
 import jax.numpy as np
 from jax import jit, grad, device_put, jacfwd, jacrev, hessian
-from jax import api, lax
+from jax import api, core, lax
 from jax.core import Primitive
 from jax.interpreters import ad
 from jax.interpreters import xla
@@ -494,6 +494,17 @@ class APITest(jtu.JaxTestCase):
     g, aux = grad(lambda x: (x**3, [x**2, 4.]), has_aux=True)(4.)
     self.assertEqual(g, grad(lambda x: x**3)(4.))
     self.assertEqual(aux, [4.**2, 4.])
+
+  def test_grad_and_aux_no_tracers(self):
+    # see https://github.com/google/jax/issues/1950
+    def f(x):
+      aux = dict(identity=x, p1=x+1)
+      return x ** 2, aux
+
+    _, aux = jax.grad(f, has_aux=True)(3.)
+    self.assertIsInstance(aux, dict)
+    for val in aux.values():
+      self.assertNotIsInstance(val, core.Tracer)
 
   def test_jvp_mismatched_arguments(self):
     self.assertRaisesRegex(
