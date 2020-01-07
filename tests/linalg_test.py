@@ -73,7 +73,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       return [onp.matmul(a, np.conj(T(a)))]
 
     if (np.issubdtype(dtype, np.complexfloating) and
-        jtu.device_under_test() == "tpu"):
+        (jtu.device_under_test() == "tpu" or
+         (jtu.device_under_test() == "cpu" and jax.lib.version < (0, 1, 38)))):
       self.skipTest("Unimplemented case for complex Cholesky decomposition.")
 
     self._CheckAgainstNumpy(onp.linalg.cholesky, np.linalg.cholesky, args_maker,

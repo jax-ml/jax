@@ -287,16 +287,9 @@ void Potrf(cudaStream_t stream, void** buffers, const char* opaque,
       }
     }
   } else {
-    auto buffer_ptrs = absl::make_unique<void*[]>(d.batch);
-    for (int64 i = 0; i < d.batch; ++i) {
-      buffer_ptrs[i] =
-          static_cast<char*>(buffers[1]) + SizeOfType(d.type) * i * d.n * d.n;
-    }
-    ThrowIfError(cudaMemcpyAsync(workspace, buffer_ptrs.get(),
-                                 sizeof(void*) * d.batch,
-                                 cudaMemcpyHostToDevice, stream));
-    // Make sure that accesses to buffer_ptrs complete before we delete it
-    // host-side.
+    auto buffer_ptrs_host = MakeBatchPointers(
+      stream, buffers[1], workspace, d.batch, SizeOfType(d.type) * d.n * d.n);
+    // Make sure that accesses to buffer_ptrs_host complete before we delete it.
     // TODO(phawkins): avoid synchronization here.
     ThrowIfError(cudaStreamSynchronize(stream));
     switch (d.type) {

@@ -182,21 +182,6 @@ int SizeOfType(Type type) {
   }
 }
 
-// Builds an array of pointers to each array in a batch, in device memory.
-template <typename T>
-cudaError_t MakeBatchPointers(T* buffer, T** dev_ptrs, int batch,
-                              int batch_elem_size) {
-  std::vector<T*> host_ptrs(batch);
-  for (int i = 0; i < batch; ++i) {
-    host_ptrs[i] = buffer;
-    buffer += batch_elem_size;
-  }
-  // TODO(phawkins): ideally we would not use a synchronous copy here, but to
-  // avoid it we need a way to keep the host-side buffer alive until the copy
-  // completes.
-  return cudaMemcpy(dev_ptrs, host_ptrs.data(), sizeof(T*) * batch,
-                    cudaMemcpyHostToDevice);
-}
 
 // Batched triangular solve: trsmbatched
 
@@ -238,14 +223,20 @@ void TrsmBatched(cudaStream_t stream, void** buffers, const char* opaque,
   }
   const int lda = d.side == CUBLAS_SIDE_LEFT ? d.m : d.n;
   const int ldb = d.m;
+  auto a_batch_host = MakeBatchPointers(stream, a, buffers[3], d.batch,
+                                        SizeOfType(d.type) * lda * lda);
+  auto b_batch_host = MakeBatchPointers(stream, b, buffers[4], d.batch,
+                                        SizeOfType(d.type) * d.m * d.n);
+  // TODO(phawkins): ideally we would not need to synchronize here, but to
+  // avoid it we need a way to keep the host-side buffer alive until the copy
+  // completes.
+  ThrowIfError(cudaStreamSynchronize(stream));
   switch (d.type) {
     case Type::F32: {
       float* a = static_cast<float*>(buffers[0]);
       float* b = static_cast<float*>(buffers[2]);
       float** a_batch_ptrs = static_cast<float**>(buffers[3]);
       float** b_batch_ptrs = static_cast<float**>(buffers[4]);
-      ThrowIfError(MakeBatchPointers(a, a_batch_ptrs, d.batch, lda * lda));
-      ThrowIfError(MakeBatchPointers(b, b_batch_ptrs, d.batch, d.m * d.n));
       // NOTE(phawkins): if alpha is in GPU memory, cuBlas seems to segfault.
       const float alpha = 1.0f;
       ThrowIfErrorStatus(cublasStrsmBatched(
@@ -260,8 +251,6 @@ void TrsmBatched(cudaStream_t stream, void** buffers, const char* opaque,
       double** a_batch_ptrs = static_cast<double**>(buffers[3]);
       double** b_batch_ptrs = static_cast<double**>(buffers[4]);
       const double alpha = 1.0;
-      ThrowIfError(MakeBatchPointers(a, a_batch_ptrs, d.batch, lda * lda));
-      ThrowIfError(MakeBatchPointers(b, b_batch_ptrs, d.batch, d.m * d.n));
       ThrowIfErrorStatus(cublasDtrsmBatched(
           handle.get(), d.side, d.uplo, d.trans, d.diag, d.m, d.n, &alpha,
           const_cast<const double**>(a_batch_ptrs), lda, b_batch_ptrs, ldb,
@@ -274,8 +263,6 @@ void TrsmBatched(cudaStream_t stream, void** buffers, const char* opaque,
       cuComplex** a_batch_ptrs = static_cast<cuComplex**>(buffers[3]);
       cuComplex** b_batch_ptrs = static_cast<cuComplex**>(buffers[4]);
       const cuComplex alpha = make_cuComplex(1.0f, 0.0f);
-      ThrowIfError(MakeBatchPointers(a, a_batch_ptrs, d.batch, lda * lda));
-      ThrowIfError(MakeBatchPointers(b, b_batch_ptrs, d.batch, d.m * d.n));
       ThrowIfErrorStatus(cublasCtrsmBatched(
           handle.get(), d.side, d.uplo, d.trans, d.diag, d.m, d.n, &alpha,
           const_cast<const cuComplex**>(a_batch_ptrs), lda, b_batch_ptrs, ldb,
@@ -290,8 +277,6 @@ void TrsmBatched(cudaStream_t stream, void** buffers, const char* opaque,
       cuDoubleComplex** b_batch_ptrs =
           static_cast<cuDoubleComplex**>(buffers[4]);
       const cuDoubleComplex alpha = make_cuDoubleComplex(1.0f, 0.0f);
-      ThrowIfError(MakeBatchPointers(a, a_batch_ptrs, d.batch, lda * lda));
-      ThrowIfError(MakeBatchPointers(b, b_batch_ptrs, d.batch, d.m * d.n));
       ThrowIfErrorStatus(cublasZtrsmBatched(
           handle.get(), d.side, d.uplo, d.trans, d.diag, d.m, d.n, &alpha,
           const_cast<const cuDoubleComplex**>(a_batch_ptrs), lda, b_batch_ptrs,
@@ -329,11 +314,16 @@ void GetrfBatched(cudaStream_t stream, void** buffers, const char* opaque,
 
   int* ipiv = static_cast<int*>(buffers[2]);
   int* info = static_cast<int*>(buffers[3]);
+  ThrowIfError(MakeBatchPointers(stream, a, buffers[4], d.batch,
+                                 SizeOfType(d.type) * d.n * d.n));
+  // TODO(phawkins): ideally we would not need to synchronize here, but to
+  // avoid it we need a way to keep the host-side buffer alive until the copy
+  // completes.
+  ThrowIfError(cudaStreamSynchronize(stream));
   switch (d.type) {
     case Type::F32: {
       float* a = static_cast<float*>(buffers[1]);
       float** batch_ptrs = static_cast<float**>(buffers[4]);
-      ThrowIfError(MakeBatchPointers(a, batch_ptrs, d.batch, d.n * d.n));
       ThrowIfErrorStatus(cublasSgetrfBatched(handle.get(), d.n, batch_ptrs, d.n,
                                              ipiv, info, d.batch));
       break;
@@ -341,7 +331,6 @@ void GetrfBatched(cudaStream_t stream, void** buffers, const char* opaque,
     case Type::F64: {
       double* a = static_cast<double*>(buffers[1]);
       double** batch_ptrs = static_cast<double**>(buffers[4]);
-      ThrowIfError(MakeBatchPointers(a, batch_ptrs, d.batch, d.n * d.n));
       ThrowIfErrorStatus(cublasDgetrfBatched(handle.get(), d.n, batch_ptrs, d.n,
                                              ipiv, info, d.batch));
       break;
@@ -349,7 +338,6 @@ void GetrfBatched(cudaStream_t stream, void** buffers, const char* opaque,
     case Type::C64: {
       cuComplex* a = static_cast<cuComplex*>(buffers[1]);
       cuComplex** batch_ptrs = static_cast<cuComplex**>(buffers[4]);
-      ThrowIfError(MakeBatchPointers(a, batch_ptrs, d.batch, d.n * d.n));
       ThrowIfErrorStatus(cublasCgetrfBatched(handle.get(), d.n, batch_ptrs, d.n,
                                              ipiv, info, d.batch));
       break;
@@ -357,7 +345,6 @@ void GetrfBatched(cudaStream_t stream, void** buffers, const char* opaque,
     case Type::C128: {
       cuDoubleComplex* a = static_cast<cuDoubleComplex*>(buffers[1]);
       cuDoubleComplex** batch_ptrs = static_cast<cuDoubleComplex**>(buffers[4]);
-      ThrowIfError(MakeBatchPointers(a, batch_ptrs, d.batch, d.n * d.n));
       ThrowIfErrorStatus(cublasZgetrfBatched(handle.get(), d.n, batch_ptrs, d.n,
                                              ipiv, info, d.batch));
       break;
