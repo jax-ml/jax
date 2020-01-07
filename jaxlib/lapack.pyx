@@ -773,67 +773,87 @@ def orgqr(c, a, tau):
 
 cdef void lapack_spotrf(void* out_tuple, void** data) nogil:
   cdef int32_t lower = (<int32_t*>(data[0]))[0]
-  cdef int n = (<int32_t*>(data[1]))[0]
-  cdef const float* a_in = <float*>(data[2])
+  cdef int b = (<int32_t*>(data[1]))[0]
+  cdef int n = (<int32_t*>(data[2]))[0]
+  cdef const float* a_in = <float*>(data[3])
   cdef char uplo = 'L' if lower else 'U'
 
   cdef void** out = <void**>(out_tuple)
   cdef float* a_out = <float*>(out[0])
   cdef int* info = <int*>(out[1])
   if a_out != a_in:
-    memcpy(a_out, a_in, <int64_t>(n) * <int64_t>(n) * sizeof(float))
+    memcpy(a_out, a_in,
+           <int64_t>(b) * <int64_t>(n) * <int64_t>(n) * sizeof(float))
 
-  spotrf(&uplo, &n, a_out, &n, info)
+  for i in range(b):
+    spotrf(&uplo, &n, a_out, &n, info)
+    a_out += <int64_t>(n) * <int64_t>(n)
+    info += 1
 
 register_cpu_custom_call_target(b"lapack_spotrf", <void*>(lapack_spotrf))
 
 
 cdef void lapack_dpotrf(void* out_tuple, void** data) nogil:
   cdef int32_t lower = (<int32_t*>(data[0]))[0]
-  cdef int n = (<int32_t*>(data[1]))[0]
-  cdef const double* a_in = <double*>(data[2])
+  cdef int b = (<int32_t*>(data[1]))[0]
+  cdef int n = (<int32_t*>(data[2]))[0]
+  cdef const double* a_in = <double*>(data[3])
   cdef char uplo = 'L' if lower else 'U'
 
   cdef void** out = <void**>(out_tuple)
   cdef double* a_out = <double*>(out[0])
   cdef int* info = <int*>(out[1])
   if a_out != a_in:
-    memcpy(a_out, a_in, <int64_t>(n) * <int64_t>(n) * sizeof(double))
+    memcpy(a_out, a_in,
+           <int64_t>(b) * <int64_t>(n) * <int64_t>(n) * sizeof(double))
 
-  dpotrf(&uplo, &n, a_out, &n, info)
+  for i in range(b):
+    dpotrf(&uplo, &n, a_out, &n, info)
+    a_out += <int64_t>(n) * <int64_t>(n)
+    info += 1
 
 register_cpu_custom_call_target(b"lapack_dpotrf", <void*>(lapack_dpotrf))
 
 
 cdef void lapack_cpotrf(void* out_tuple, void** data) nogil:
   cdef int32_t lower = (<int32_t*>(data[0]))[0]
-  cdef int n = (<int32_t*>(data[1]))[0]
-  cdef const float complex* a_in = <float complex*>(data[2])
+  cdef int b = (<int32_t*>(data[1]))[0]
+  cdef int n = (<int32_t*>(data[2]))[0]
+  cdef const float complex* a_in = <float complex*>(data[3])
   cdef char uplo = 'L' if lower else 'U'
 
   cdef void** out = <void**>(out_tuple)
   cdef float complex* a_out = <float complex*>(out[0])
   cdef int* info = <int*>(out[1])
   if a_out != a_in:
-    memcpy(a_out, a_in, <int64_t>(n) * <int64_t>(n) * sizeof(float complex))
+    memcpy(a_out, a_in,
+           <int64_t>(b) * <int64_t>(n) * <int64_t>(n) * sizeof(float complex))
 
-  cpotrf(&uplo, &n, a_out, &n, info)
+  for i in range(b):
+    cpotrf(&uplo, &n, a_out, &n, info)
+    a_out += <int64_t>(n) * <int64_t>(n)
+    info += 1
 
 register_cpu_custom_call_target(b"lapack_cpotrf", <void*>(lapack_cpotrf))
 
 cdef void lapack_zpotrf(void* out_tuple, void** data) nogil:
   cdef int32_t lower = (<int32_t*>(data[0]))[0]
-  cdef int n = (<int32_t*>(data[1]))[0]
-  cdef const double complex* a_in = <double complex*>(data[2])
+  cdef int b = (<int32_t*>(data[1]))[0]
+  cdef int n = (<int32_t*>(data[2]))[0]
+  cdef const double complex* a_in = <double complex*>(data[3])
   cdef char uplo = 'L' if lower else 'U'
 
   cdef void** out = <void**>(out_tuple)
   cdef double complex* a_out = <double complex*>(out[0])
   cdef int* info = <int*>(out[1])
   if a_out != a_in:
-    memcpy(a_out, a_in, <int64_t>(n) * <int64_t>(n) * sizeof(double complex))
+    memcpy(a_out, a_in,
+           <int64_t>(b) * <int64_t>(n) * <int64_t>(n) * sizeof(double complex))
 
-  zpotrf(&uplo, &n, a_out, &n, info)
+  for i in range(b):
+    zpotrf(&uplo, &n, a_out, &n, info)
+    a_out += <int64_t>(n) * <int64_t>(n)
+    info += 1
 
 register_cpu_custom_call_target(b"lapack_zpotrf", <void*>(lapack_zpotrf))
 
@@ -842,7 +862,8 @@ def potrf(c, a, lower=False):
 
   a_shape = c.GetShape(a)
   dtype = a_shape.element_type()
-  m, n = a_shape.dimensions()
+  dims = a_shape.dimensions()
+  m, n = dims[-2:]
   if m != n:
     raise ValueError("potrf expects a square matrix, got {}".format(a_shape))
   if dtype == np.float32:
@@ -855,23 +876,29 @@ def potrf(c, a, lower=False):
     fn = b"lapack_zpotrf"
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
+  batch_dims = tuple(dims[:-2])
+  num_bd = len(batch_dims)
+  b = 1
+  for d in batch_dims:
+    b *= d
 
+  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
   out = c.CustomCall(
       fn,
-      operands=(c.ConstantS32Scalar(int(lower)), c.ConstantS32Scalar(n), a),
+      operands=(c.ConstantS32Scalar(int(lower)),
+                c.ConstantS32Scalar(b), c.ConstantS32Scalar(n), a),
       shape_with_layout=Shape.tuple_shape((
-          Shape.array_shape(dtype, (n, n), (0, 1)),
-          Shape.array_shape(np.dtype(np.int32), (), ()),
+          Shape.array_shape(dtype, dims, layout),
+          Shape.array_shape(
+              np.dtype(np.int32), batch_dims, tuple(range(num_bd - 1, -1, -1))),
       )),
       operand_shapes_with_layout=(
           Shape.array_shape(np.dtype(np.int32), (), ()),
           Shape.array_shape(np.dtype(np.int32), (), ()),
-          Shape.array_shape(dtype, (n, n), (0, 1)),
+          Shape.array_shape(np.dtype(np.int32), (), ()),
+          Shape.array_shape(dtype, dims, layout),
       ))
   return tuple(c.GetTupleElement(out, i) for i in range(2))
-
-def jax_potrf(c, a, lower=False):
-  return c.Tuple(*potrf(c, a, lower))
 
 
 # ?gesdd: Singular value decomposition

@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <stdexcept>
 
+#include "absl/memory/memory.h"
 #include "absl/strings/str_cat.h"
 
 namespace jax {
@@ -28,5 +29,18 @@ void ThrowIfError(cudaError_t error) {
   }
 }
 
+std::unique_ptr<void* []> MakeBatchPointers(cudaStream_t stream, void* buffer,
+                                           void* dev_ptrs, int batch,
+                                           int batch_elem_size) {
+  char* ptr = static_cast<char*>(buffer);
+  auto host_ptrs = absl::make_unique<void*[]>(batch);
+  for (int i = 0; i < batch; ++i) {
+    host_ptrs[i] = ptr;
+    ptr += batch_elem_size;
+  }
+  ThrowIfError(cudaMemcpyAsync(dev_ptrs, host_ptrs.get(), sizeof(void*) * batch,
+                               cudaMemcpyHostToDevice, stream));
+  return host_ptrs;
+}
 }  // namespace jax
 
