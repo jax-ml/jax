@@ -211,7 +211,7 @@ def while_loop(cond_fun, body_fun, init_val):
   return tree_unflatten(body_tree, outs)
 
 def _while_loop_abstract_eval(*args, **kwargs):
-  return kwargs["body_jaxpr"].out_avals
+  return _map(raise_to_shaped, kwargs["body_jaxpr"].out_avals)
 
 def _while_loop_translation_rule(c, axis_env, *args, **kwargs):
   backend = kwargs.pop('backend')
@@ -363,7 +363,7 @@ def cond(pred, true_operand, true_fun, false_operand, false_fun):
   return tree_unflatten(true_out_tree, out)
 
 def _cond_abstract_eval(*args, **kwargs):
-  return kwargs["true_jaxpr"].out_avals
+  return _map(raise_to_shaped, kwargs["true_jaxpr"].out_avals)
 
 def _cond_translation_rule(c, axis_env, pred, *args, **kwargs):
   backend = kwargs.pop("backend", None)
