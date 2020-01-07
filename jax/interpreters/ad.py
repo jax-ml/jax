@@ -79,6 +79,7 @@ def jvp_subtrace_aux(master, primals, tangents):
   aux_tracers = map(trace.full_raise, aux)
   out_primals, out_tangents = unzip2((t.primal, t.tangent) for t in ans_tracers)
   aux_primals, _            = unzip2((t.primal, t.tangent) for t in aux_tracers)
+  aux_primals = map(core.full_lower, aux_primals)
   yield (out_primals, out_tangents), aux_primals
 
 def linearize(traceable, *primals, **kwargs):
