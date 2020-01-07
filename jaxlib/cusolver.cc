@@ -288,7 +288,7 @@ void Potrf(cudaStream_t stream, void** buffers, const char* opaque,
     }
   } else {
     auto buffer_ptrs_host = MakeBatchPointers(
-      stream, buffers[1], workspace, d.batch, SizeOfType(d.type) * d.n * d.n);
+        stream, buffers[1], workspace, d.batch, SizeOfType(d.type) * d.n * d.n);
     // Make sure that accesses to buffer_ptrs_host complete before we delete it.
     // TODO(phawkins): avoid synchronization here.
     ThrowIfError(cudaStreamSynchronize(stream));

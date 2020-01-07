@@ -182,7 +182,6 @@ int SizeOfType(Type type) {
   }
 }
 
-
 // Batched triangular solve: trsmbatched
 
 struct TrsmBatchedDescriptor {
@@ -223,9 +222,9 @@ void TrsmBatched(cudaStream_t stream, void** buffers, const char* opaque,
   }
   const int lda = d.side == CUBLAS_SIDE_LEFT ? d.m : d.n;
   const int ldb = d.m;
-  auto a_batch_host = MakeBatchPointers(stream, a, buffers[3], d.batch,
+  auto a_batch_host = MakeBatchPointers(stream, buffers[0], buffers[3], d.batch,
                                         SizeOfType(d.type) * lda * lda);
-  auto b_batch_host = MakeBatchPointers(stream, b, buffers[4], d.batch,
+  auto b_batch_host = MakeBatchPointers(stream, buffers[2], buffers[4], d.batch,
                                         SizeOfType(d.type) * d.m * d.n);
   // TODO(phawkins): ideally we would not need to synchronize here, but to
   // avoid it we need a way to keep the host-side buffer alive until the copy
@@ -314,8 +313,8 @@ void GetrfBatched(cudaStream_t stream, void** buffers, const char* opaque,
 
   int* ipiv = static_cast<int*>(buffers[2]);
   int* info = static_cast<int*>(buffers[3]);
-  ThrowIfError(MakeBatchPointers(stream, a, buffers[4], d.batch,
-                                 SizeOfType(d.type) * d.n * d.n));
+  auto a_ptrs_host = MakeBatchPointers(stream, buffers[1], buffers[4], d.batch,
+                                       SizeOfType(d.type) * d.n * d.n);
   // TODO(phawkins): ideally we would not need to synchronize here, but to
   // avoid it we need a way to keep the host-side buffer alive until the copy
   // completes.

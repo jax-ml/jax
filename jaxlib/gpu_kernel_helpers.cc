@@ -29,18 +29,17 @@ void ThrowIfError(cudaError_t error) {
   }
 }
 
-std::unique_ptr<void*[]> MakeBatchPointers(cudaStream_t stream, void* buffer,
-                                           void** dev_ptrs, int batch,
-                                           int batch_elem_size);
-                                            {
+std::unique_ptr<void* []> MakeBatchPointers(cudaStream_t stream, void* buffer,
+                                           void* dev_ptrs, int batch,
+                                           int batch_elem_size) {
+  char* ptr = static_cast<char*>(buffer);
   auto host_ptrs = absl::make_unique<void*[]>(batch);
   for (int i = 0; i < batch; ++i) {
-    host_ptrs[i] = buffer;
-    buffer += batch_elem_size;
+    host_ptrs[i] = ptr;
+    ptr += batch_elem_size;
   }
-  ThrowIfError(cudaMemcpyAsync(dev_ptrs, host_ptrs.data(),
-                               sizeof(void*) * batch, cudaMemcpyHostToDevice,
-                               stream));
+  ThrowIfError(cudaMemcpyAsync(dev_ptrs, host_ptrs.get(), sizeof(void*) * batch,
+                               cudaMemcpyHostToDevice, stream));
   return host_ptrs;
 }
 }  // namespace jax
