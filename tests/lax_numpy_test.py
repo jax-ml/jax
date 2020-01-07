@@ -2565,6 +2565,19 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         partial(lnp.inner, precision=HIGHEST),
         ones_1d, ones_1d)
 
+  def testZerosShapeErrors(self):
+    # see https://github.com/google/jax/issues/1822
+    self.assertRaisesRegex(
+        TypeError,
+        "Shapes must be 1D sequences of concrete values of integer type.*",
+        lambda: lnp.zeros(1.))
+    self.assertRaisesRegex(
+        TypeError,
+        "Shapes must be 1D sequences of concrete values of integer type.*\n"
+        "If using `jit`, try using `static_argnums` or applying `jit` to smaller subfunctions.",
+        lambda: api.jit(lnp.zeros)(2))
+
+
 # Most grad tests are at the lax level (see lax_test.py), but we add some here
 # as needed for e.g. particular compound ops of interest.
 
