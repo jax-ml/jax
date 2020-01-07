@@ -1054,10 +1054,10 @@ def full(shape, fill_value, dtype=None):
   """
   try:
     shape = _canonicalize_shape(shape)
-  except TypeError:
-    msg = ("`full` requires shapes to be concrete. If using `jit`, try using "
-           "`static_argnums` or applying `jit` to smaller subfunctions instead.")
-    raise TypeError(msg)
+  except TypeError as e:
+    msg = ("Note: `full` requires shapes to be concrete. If using `jit`, try "
+           "using `static_argnums` or applying `jit` to smaller subfunctions.")
+    raise TypeError("{}. {}".format(e.message, msg))
 
   if onp.shape(fill_value):
     msg = "full must be called with scalar fill_value, got fill_value.shape {}."
