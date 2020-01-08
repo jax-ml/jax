@@ -38,6 +38,7 @@ py_library(
             "*_test.py",
             "**/*_test.py",
         ],
+        srcs_version = "PY3",
     ),
     deps = ["@org_tensorflow//tensorflow/compiler/xla/python:xla_client"],
 )
