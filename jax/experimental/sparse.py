@@ -22,29 +22,27 @@ import jax.numpy as np
 from jax.numpy.lax_numpy import _wraps
 from .. import lax
 
-_T = lambda x: np.swapaxes(np.conj(x), -1, -2)
-
 def body_fun(matvec, x):
   p, x_current, r, r_norm, k = x
   # inspired by https://en.wikipedia.org/wiki/Conjugate_gradient_method#Example_code_in_MATLAB_/_GNU_Octave
   Ap = matvec(p)
-  alpha = r_norm / np.matmul(_T(p), Ap)
+  alpha = r_norm / np.dot(np.conj(p), Ap)
   x_new = x_current + alpha * p
   r_new = r - alpha * Ap
   r_norm_new = np.linalg.norm(r_new)
   p_new = r_new + (r_norm_new / r_norm) * p
+  print(p_new, x_new, r_new, r_norm_new, k+1)
   return p_new, x_new, r_new, r_norm_new, k+1
 
 def _cg_solve(matvec, b, x0, tol, maxiter):
   N = np.shape(b)[0]
-  if x0 is None:
-    x_k = np.zeros_like(b)
-  else:
+  x_k = np.zeros_like(b)
+  if x0 is not None:
     x_k = x0
     if not np.shape(x0) == (N,):
       raise ValueError('A and x have incompatible dimensions')
-    if maxiter is None:
-      maxiter = N*10
+  if maxiter is None:
+    maxiter = N*10
   r_k = b - matvec(x_k)
   r_k_norm = np.linalg.norm(r_k)
   p_k = r_k

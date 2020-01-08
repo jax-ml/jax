@@ -55,7 +55,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       b = rng((shape[0],), dtype)
       diag_mat = np.eye(N=shape[0], dtype=dtype) + 0.3
       spd_mat = np.matmul(np.matmul(square_mat, diag_mat), _T(square_mat))
-      return spd_mat, b
+      return lax.convert_element_type(spd_mat, dtype), b
 
     a, b = args_maker()
     expected = osp_sparse.cg(onp.asarray(a), onp.asarray(b))
