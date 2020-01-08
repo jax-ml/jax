@@ -60,10 +60,12 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     a, b = args_maker()
     expected = osp_sparse.cg(onp.asarray(a), onp.asarray(b))
     expected_1_step = osp_sparse.cg(A=onp.asarray(a), b=onp.asarray(b), maxiter=1)
-    actual = build_and_solve(a, b)
-    actual_1_step = build_and_solve(a, b, 1)
-    self.assertAllClose(expected, actual, atol=1e-5, check_dtypes=True)
-    self.assertAllClose(expected_1_step, actual_1_step, atol=1e-5, check_dtypes=True)
+    actual, _ = build_and_solve(a, b)
+    actual_1_step, _ = build_and_solve(a, b, 1)
+    print(actual)
+    print(actual_1_step)
+    self.assertAllClose(expected, actual, atol=1e-5, check_dtypes=False)
+    self.assertAllClose(expected_1_step, actual_1_step, atol=1e-5, check_dtypes=False)
     jtu.check_grads(build_and_solve, (a, b), atol=1e-5, order=2, rtol=2e-3)
 
 if __name__ == "__main__":

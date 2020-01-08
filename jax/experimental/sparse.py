@@ -31,7 +31,6 @@ def body_fun(matvec, x):
   r_new = r - alpha * Ap
   r_norm_new = np.linalg.norm(r_new)
   p_new = r_new + (r_norm_new / r_norm) * p
-  print(p_new, x_new, r_new, r_norm_new, k+1)
   return p_new, x_new, r_new, r_norm_new, k+1
 
 def _cg_solve(matvec, b, x0, tol, maxiter):
@@ -48,12 +47,12 @@ def _cg_solve(matvec, b, x0, tol, maxiter):
   p_k = r_k
   k = 0
   full_tol = tol * np.linalg.norm(b)
-  p_k, x_k, r_k, r_k_norm, k = lax.while_loop(
+  _, x_k_final, _, _, _ = lax.while_loop(
       lambda x: (x[-2] < full_tol) & (x[-1] < maxiter),
       partial(body_fun, matvec),
       (p_k, x_k, r_k, r_k_norm, k)
   )
-  return x_k
+  return x_k_final
 
 @_wraps(scipy.sparse.linalg.cg)
 def cg(matvec, b, x0=None, tol=1e-05, maxiter=None):
