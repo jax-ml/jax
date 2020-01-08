@@ -19,9 +19,6 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import six
-from six.moves import xrange
-
 import numpy as onp
 
 from jax import core
@@ -503,14 +500,14 @@ def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers,
         y = _allgather(y, ydim, size, name)
         z = lax.dot_general(
             x, y, sub_dims(xdim, None, xc, yc, xb, yb), precision)
-        zdim = xdim + len(xb) - len([d for d in xrange(xdim) if d in xc])
+        zdim = xdim + len(xb) - len([d for d in range(xdim) if d in xc])
         return True, (z, zdim)
       else:
         # case f: x split but not contracting, y not split
         assert ydim is None
         z = lax.dot_general(
             x, y, sub_dims(xdim, None, xc, yc, xb, yb), precision)
-        zdim = xdim + len(xb) - len([d for d in xrange(xdim) if d in xc])
+        zdim = xdim + len(xb) - len([d for d in range(xdim) if d in xc])
         return True, (z, zdim)
     else:
       # cases g, h
@@ -527,7 +524,7 @@ def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers,
         # zdim = (
         #     ydim + len(xb) +                # batch dimensions
         #     x.ndim - len(xc) -              # non-contracting x dimensions
-        #     len([d for d in xrange(ydim) if d in yc]))
+        #     len([d for d in range(ydim) if d in yc]))
         # return True, (z, zdim)
         return False, 'lhs not split, rhs split but not contracting'
 

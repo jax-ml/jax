@@ -22,9 +22,6 @@ import itertools as it
 
 import numpy as onp
 
-import six
-from six.moves import reduce
-
 from .. import core
 from .. import dtypes
 from ..core import Trace, Tracer, new_master

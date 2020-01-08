@@ -27,7 +27,6 @@ from absl.testing import parameterized
 
 import numpy as onp
 import numpy.random as npr
-import six
 
 from jax import api
 from jax import core
@@ -1497,11 +1496,6 @@ class LaxTest(jtu.JaxTestCase):
                           rng(update_shape, dtype)]
     fun = partial(lax.scatter, dimension_numbers=dnums)
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)
-
-  def testLongConstantHandling(self):
-    if six.PY3:
-      self.skipTest("Test is Python 2 specific")
-    self.assertTrue(api.jit(lambda x: lax.lt(x, long(10)))(long(3)))  # noqa: F821
 
   def testIssue831(self):
     # Tests the DeviceTuple constant handler

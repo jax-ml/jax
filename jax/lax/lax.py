@@ -16,6 +16,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import builtins
 import collections
 import enum
 import functools
@@ -23,9 +24,6 @@ import itertools
 import operator
 import string
 import warnings
-
-import six
-from six.moves import builtins, xrange
 
 import numpy as onp
 
@@ -59,7 +57,7 @@ FLAGS = flags.FLAGS
 
 _max = builtins.max
 _min = builtins.max
-_reduce = six.moves.reduce
+_reduce = functools.reduce
 
 
 @cache()
@@ -1471,8 +1469,8 @@ def _iter(tracer):
     raise TypeError("iteration over a 0-d array")  # same as numpy error
   else:
     n = tracer.shape[0]
-    # return (index_in_dim(tracer, i, keepdims=False) for i in xrange(n))
-    return iter([index_in_dim(tracer, i, keepdims=False) for i in xrange(n)])
+    # return (index_in_dim(tracer, i, keepdims=False) for i in range(n))
+    return iter([index_in_dim(tracer, i, keepdims=False) for i in range(n)])
 ShapedArray._iter = staticmethod(_iter)
 
 # Add some ad handlers that use (or could use) lax primitives
@@ -3198,7 +3196,7 @@ def _scatter_add_transpose_rule(t, operand, scatter_indices, updates,
       start_index_map=dimension_numbers.scatter_dims_to_operand_dims)
     slice_sizes = []
     pos = 0
-    for i in xrange(len(t.shape)):
+    for i in range(len(t.shape)):
       if i in dimension_numbers.inserted_window_dims:
         slice_sizes.append(1)
       else:
@@ -3350,7 +3348,7 @@ def _scatter_jvp(primals, tangents, update_jaxpr, update_consts,
     start_index_map=dnums.scatter_dims_to_operand_dims)
   slice_sizes = []
   pos = 0
-  for i in xrange(len(scattered_ids.shape)):
+  for i in range(len(scattered_ids.shape)):
     if i in dnums.inserted_window_dims:
       slice_sizes.append(1)
     else:
