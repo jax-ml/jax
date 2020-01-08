@@ -142,13 +142,10 @@ class MultiBackendTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("cpu")  # test can only fail with non-cpu backends
   def test_closed_over_values_device_placement(self):
     # see https://github.com/google/jax/issues/1431
-    if len(jax.devices()) < 2:
-      raise SkipTest("test requires multiple devices")
-
     def f(): return lax.add(3., 4.)
-    self.assertNotEqual(jax.jit(f)().device_buffer.device(),
+    self.assertNotEqual(api.jit(f)().device_buffer.device(),
                         api.devices('cpu')[0])
-    self.assertEqual(jax.jit(f, backend='cpu')().device_buffer.device(),
+    self.assertEqual(api.jit(f, backend='cpu')().device_buffer.device(),
                      api.devices('cpu')[0])
 
 
