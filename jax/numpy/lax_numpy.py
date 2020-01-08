@@ -876,13 +876,13 @@ def diff(a, n=1, axis=-1,):
 @partial(jit, static_argnums=1)
 def _gradient(a, axis):
   def gradient_along_axis(a, axis):
-    a_swap = swapaxes(a, 0, axis)
+    sliced = partial(lax.slice_in_dim, a, axis=axis)
     a_grad = concatenate((
-      (a_swap[1]  - a_swap[0])[newaxis],
-      (a_swap[2:] - a_swap[:-2]) * 0.5,
-      (a_swap[-1] - a_swap[-2])[newaxis]
-      ), axis=0)
-    return swapaxes(a_grad, 0, axis)
+      sliced(1, 2) - sliced(0, 1),
+      (sliced(2, None) - sliced(0, -2)) * 0.5,
+      sliced(-1, None) - sliced(-2, -1),
+    ), axis)
+    return a_grad
 
   if axis is None:
     axis = range(a.ndim)
