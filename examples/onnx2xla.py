@@ -25,7 +25,7 @@ import sys
 import onnx
 from onnx import numpy_helper
 from onnx import onnx_pb2
-from six.moves.urllib.request import urlopen
+import urllib
 
 import jax.numpy as np
 from jax import jit, grad
@@ -115,7 +115,7 @@ if __name__ == "__main__":
   url = ('https://github.com/onnx/models/blob/'
          '81c4779096d1205edd0b809e191a924c58c38fef/'
          'mnist/model.onnx?raw=true')
-  download = urlopen(url).read()
+  download = urllib.request.urlopen(url).read()
   if hashlib.md5(download).hexdigest() != 'bc8ad9bd19c5a058055dc18d0f089dad':
     print("onnx file checksum mismatch")
     sys.exit(1)

@@ -27,10 +27,12 @@ import scipy.special
 import scipy.stats
 
 from jax import api
+from jax import grad
 from jax import lax
 from jax import numpy as np
 from jax import random
 from jax import test_util as jtu
+from jax import vmap
 from jax.interpreters import xla
 
 from jax.config import config
@@ -466,6 +468,12 @@ class LaxRandomTest(jtu.JaxTestCase):
       self.assertEqual(onp.result_type(w), onp.float64)
     else:
       self.assertEqual(onp.result_type(w), onp.float32)
+
+  def testIssue1789(self):
+    def f(x):
+      return random.gamma(random.PRNGKey(0), x)
+
+    grad(lambda x: np.sum(vmap(f)(x)))(np.ones(2))
 
   def testNoOpByOpUnderHash(self):
     def fail(*args, **kwargs): assert False

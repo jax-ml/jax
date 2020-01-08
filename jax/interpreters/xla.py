@@ -24,14 +24,13 @@ import os
 
 from absl import logging
 import numpy as onp
-import six
-from six.moves import xrange
 
 from ..config import flags
 from .. import core
 from .. import ad_util
 from .. import tree_util
 from .. import dtypes
+from .. import lazy
 from .. import linear_util as lu
 from ..abstract_arrays import (ConcreteArray, ShapedArray, AbstractToken,
                                make_shaped_array, array_types, raise_to_shaped,
@@ -78,7 +77,7 @@ def aval_to_result_handler(device, aval):
 xla_result_handlers = {}
 xla_result_handlers[core.AbstractUnit] = lambda _, __: lambda _: core.unit
 def array_result_handler(device, aval):
-  return partial(DeviceArray, raise_to_shaped(aval), device)
+  return partial(DeviceArray, raise_to_shaped(aval), device, lazy.array(aval.shape))
 xla_result_handlers[ShapedArray] = array_result_handler
 xla_result_handlers[ConcreteArray] = array_result_handler
 
@@ -145,6 +144,7 @@ def _make_abstract_python_scalar(typ, _):
 
 for _t in dtypes.python_scalar_dtypes.keys():
   pytype_aval_mappings[_t] = partial(_make_abstract_python_scalar, _t)
+
 
 ### op-by-op execution
 
@@ -300,7 +300,7 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, freevars, *args):
   _map(write, jaxpr.freevars, freevars)
   _map(write, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
-    c.SetOpMetadata(xc.OpMetadata( op_type=eqn.primitive.name, op_name=str(eqn)))
+    c.SetOpMetadata(xc.OpMetadata(op_type=eqn.primitive.name))
     in_nodes = list(map(read, eqn.invars))
     if eqn.primitive in backend_specific_translations[platform]:
       rule = backend_specific_translations[platform][eqn.primitive]
@@ -536,6 +536,7 @@ def _xla_callable_args(c, avals, tuple_args):
 def _pval_to_result_handler(device, pval):
   pv, const = pval
   if pv is None:
+    const = _device_put_impl(const, device) if device else const
     return lambda _: const
   else:
     return aval_to_result_handler(device, pv)
@@ -566,8 +567,8 @@ def _execute_trivial(jaxpr, device, consts, handlers, *args):
   _map(env.setdefault, jaxpr.constvars, consts)
   outs = [canonicalize_dtype(v.val) if type(v) is Literal else env[v]
           for v in jaxpr.outvars]
-  return [x if type(x) is DeviceArray else handler(device_put(x, device))
-          for handler, x in zip(handlers, outs)]
+  return [_copy_device_array_to_device(x, device) if type(x) is DeviceArray
+          else h(device_put(x, device)) for h, x in zip(handlers, outs)]
 
 def make_tuple(bufs, device, backend):
   return xb.get_backend(backend).make_tuple(bufs, device)
@@ -678,7 +679,7 @@ class DeviceValue(object):
     self.device_buffer = device_buffer
 
   def _check_if_deleted(self):
-    if self.device_buffer is None:
+    if self.device_buffer is deleted_buffer:
       raise ValueError("DeviceValue has been deleted.")
 
   def block_until_ready(self):
@@ -702,13 +703,14 @@ class DeviceArray(DeviceValue):
   """A DeviceArray is an ndarray backed by a single device memory buffer."""
   # We don't subclass ndarray because that would open up a host of issues,
   # but lax_numpy.py overrides isinstance behavior and attaches ndarray methods.
-  __slots__ = ["_npy_value", "_device"]
+  __slots__ = ["_npy_value", "_device", "_lazy_expr"]
   __array_priority__ = 100
 
-  def __init__(self, aval, device, device_buffer):
+  def __init__(self, aval, device, lazy_expr, device_buffer):
     self.aval = aval
     self.device_buffer = device_buffer
     self._device = device and (type(device), device.id)
+    self._lazy_expr = lazy_expr
 
     self._npy_value = None
     if not core.skip_checks:
@@ -720,7 +722,10 @@ class DeviceArray(DeviceValue):
   def _value(self):
     self._check_if_deleted()
     if self._npy_value is None:
-      self._npy_value = self.device_buffer.to_py()
+      if is_device_constant(self):
+        self._npy_value = lazy.eval_lexpr(self._lazy_expr, None)
+      else:
+        self._npy_value = _force(self).device_buffer.to_py()
       self._npy_value.flags.writeable = False
     return self._npy_value
 
@@ -747,7 +752,7 @@ class DeviceArray(DeviceValue):
   def copy_to_host_async(self):
     """Requests a copy of the buffer to the host."""
     self._check_if_deleted()
-    if self._npy_value is None:
+    if self._npy_value is None and not is_device_constant(self):
       self.device_buffer.copy_to_host_async()
 
   def delete(self):
@@ -762,7 +767,7 @@ class DeviceArray(DeviceValue):
     time of deletion.
     """
     self.device_buffer.delete()
-    self.device_buffer = None
+    self.device_buffer = deleted_buffer
     self._npy_value = None
 
   def __repr__(self):
@@ -821,8 +826,6 @@ class DeviceArray(DeviceValue):
   __bool__ = __nonzero__ = partialmethod(_forward_to_value, bool)
   __float__ = partialmethod(_forward_to_value, float)
   __int__ = partialmethod(_forward_to_value, int)
-  if six.PY2:
-    __long__ = partialmethod(_forward_to_value, long)  # noqa: F821
   __complex__ = partialmethod(_forward_to_value, complex)
   __hex__ = partialmethod(_forward_to_value, hex)
   __oct__ = partialmethod(_forward_to_value, oct)
@@ -837,31 +840,97 @@ class DeviceArray(DeviceValue):
   def __hash__(self):
     raise TypeError("JAX DeviceArray, like numpy.ndarray, is not hashable.")
 
+class DeletedBuffer(object): pass
+deleted_buffer = DeletedBuffer()
+
+class DeviceConstant(object):
+  __slots__ = ["_device"]
+  def __init__(self, device=None): self._device = device
+  def device(self): return self._device
+  def to_py(self): return None
+
+def is_device_constant(x):
+  return type(x) is DeviceArray and type(x.device_buffer) is DeviceConstant
+
 core.literalable_types.add(DeviceArray)
 core.pytype_aval_mappings[DeviceArray] = ConcreteArray
-pytype_aval_mappings[DeviceArray] = lambda x: x.aval
+pytype_aval_mappings[DeviceArray] = op.attrgetter('aval')
 canonicalize_dtype_handlers[DeviceArray] = identity
 
 def _device_array_constant_handler(c, val, canonicalize_types=True):
-  return c.Constant(onp.asarray(val), canonicalize_types=canonicalize_types)
+  if is_device_constant(val):
+    return lazy.stage_lexpr(c, val._lazy_expr, None)
+  else:
+    base_val = c.Constant(val.device_buffer.to_py())
+    return lazy.stage_lexpr(c, val._lazy_expr, base_val)
 xb.register_constant_handler(DeviceArray, _device_array_constant_handler)
 
 def _device_put_device_array(x, device):
-  # TODO(skye): we're assuming the DeviceBuffers without "platform" are
-  # XrtBuffers. Figure out a less risky way to deal with XrtBuffers.
-  if (not hasattr(x.device_buffer, "platform") or
-      xb.get_device_backend(device).platform == x.device_buffer.platform()):
-    if device is None or x.device_buffer.device() == device:
-      return x.device_buffer
-    else:
-      return x.device_buffer.copy_to_device(device)
-  else:
-   # Buffers from different XLA backends are passed through the host.
-   return xc.Buffer.from_pyval(x, device, backend=xb.get_device_backend(device))
+  x = _copy_device_array_to_device(x, device)
+  return _force(x).device_buffer
 device_put_handlers[DeviceArray] = _device_put_device_array
+
+def _copy_device_array_to_device(x, device):
+  if is_device_constant(x):
+    return DeviceArray(x.aval, device, x._lazy_expr, DeviceConstant(device))
+  elif xb.get_device_backend(device).platform == x.device_buffer.platform():
+    if device is None or x.device_buffer.device() == device:
+      return x
+    else:
+      moved_buf = x.device_buffer.copy_to_device(device)
+  else:
+    # Buffers from different XLA backends are passed through the host.
+    moved_buf = xc.Buffer.from_pyval(x.device_buffer.to_py(), device,
+                                     backend=xb.get_device_backend(device))
+  return DeviceArray(x.aval, device, x._lazy_expr, moved_buf)
+
+def _force(x):
+  if lazy.is_trivial(x._lazy_expr):
+    return x
+  else:
+    # force x on the device where it lives, but preserve stickiness on result
+    if x._device:
+      device = x._device
+      sticky = True
+    else:
+      d = x.device_buffer.device()
+      device = d and (type(d), d.id)
+      sticky = False
+    force_fun = _lazy_force_computation(sticky, x.aval, device, x._lazy_expr)
+    return force_fun(x)
+
+@cache()
+def _lazy_force_computation(sticky, aval, device, lexpr):
+  c = xb.make_computation_builder("lazy_force")
+  if lazy.is_constant(lexpr):
+    param = None
+  else:
+    idxs = [(src, dst) for dst, src in enumerate(lexpr.dims) if src is not None]
+    param_shape = [None] * len(idxs)
+    for src, dst in idxs:
+      param_shape[src] = aval.shape[dst]
+    param = c.ParameterWithShape(xc.Shape.array_shape(aval.dtype, param_shape))
+  xla_out = lazy.stage_lexpr(c, lexpr, param)
+  built_c = c.Build(xla_out)
+
+  device = _device_from_arg_devices([device])
+  options = xb.get_compile_options(device_assignment=device and (device.id,))
+  backend = xb.get_device_backend(device)
+  compiled = built_c.Compile(compile_options=options, backend=backend)
+
+  result_device = device if sticky else None
+  handler = partial(DeviceArray, aval, result_device, lazy.array(aval.shape))
+  if lazy.is_constant(lexpr):
+    force_fun = lambda _: handler(compiled.Execute([]))
+  else:
+    force_fun = lambda x: handler(compiled.Execute([x.device_buffer]))
+  return force_fun
 
 
 def _device_put_impl(x, device=None):
+  if type(x) is DeviceArray:
+    return _copy_device_array_to_device(x, device)
+
   try:
     a = abstractify(x)
   except TypeError:
@@ -904,28 +973,3 @@ def _foil_cse(c, x):
     shape, dtype = xla_shape.dimensions(), xla_shape.numpy_dtype()
     zero = c.Broadcast(c.Constant(onp.array(0, dtype=dtype)), shape)
     return c.Select(pred, x, zero)
-
-
-### lazy constants
-
-class DeviceConstant(DeviceArray):
-  def copy_to_host_async(self): pass
-
-  @staticmethod
-  def constant_handler(c, constant_instance, canonicalize_types=True):
-    assert False
-
-def _instantiate_device_constant(const, device=None, backend=None, cutoff=1e6):
-  # dispatch an XLA Computation to build the constant on the device if it's
-  # large, or alternatively build it on the host and transfer it if it's small
-  assert isinstance(const, DeviceConstant)
-  backend = xb.get_backend(device.platform) if device else xb.get_backend(backend)
-  if const.size > cutoff:
-    c = xb.make_computation_builder("constant_instantiating_computation")
-    xla_const = const.constant_handler(c, const)
-    device_assignment = (device.id,) if device else None
-    opts = xb.get_compile_options(device_assignment=device_assignment)
-    compiled = c.Build(xla_const).Compile((), opts, backend=backend)
-    return compiled.Execute(())
-  else:
-    return xc.Buffer.from_pyval(onp.asarray(const), device, backend=backend)

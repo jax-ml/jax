@@ -16,13 +16,13 @@ from __future__ import print_function
 
 from contextlib import contextmanager
 from collections import defaultdict, Counter, namedtuple
+import functools
 from functools import partial, wraps
 import itertools as it
 import operator as op
 import string
 
 import numpy as onp
-import six
 
 from .. import core
 from ..core import Trace, Tracer
@@ -33,11 +33,10 @@ from . import partial_eval as pe
 
 map = safe_map
 zip = safe_zip
-reduce = six.moves.reduce
 
 def prod(xs):
   xs = list(xs)
-  return reduce(op.mul, xs) if xs else 1
+  return functools.reduce(op.mul, xs) if xs else 1
 
 
 ### main transformation functions
@@ -225,10 +224,10 @@ def parse_spec(spec=''):
 def parse_dim(spec):
   if '+' in spec:
     terms = map(parse_dim, spec.split('+'))
-    return reduce(op.add, terms)
+    return functools.reduce(op.add, terms)
   elif '*' in spec:
     terms = map(parse_dim, spec.split('*'))
-    return reduce(op.mul, terms)
+    return functools.reduce(op.mul, terms)
   elif spec in digits:
     return parse_lit(spec)
   elif spec in identifiers:

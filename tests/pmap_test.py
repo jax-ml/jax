@@ -483,6 +483,7 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
     f = pmap(lambda x: (x, 3))
+    x = onp.arange(device_count)
     with jtu.count_jit_and_pmap_compiles() as count:
       _, ans = f(x)
     self.assertEqual(count[0], 1)

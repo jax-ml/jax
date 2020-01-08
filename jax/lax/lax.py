@@ -16,6 +16,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import builtins
 import collections
 import enum
 import functools
@@ -23,9 +24,6 @@ import itertools
 import operator
 import string
 import warnings
-
-import six
-from six.moves import builtins, xrange
 
 import numpy as onp
 
@@ -36,6 +34,7 @@ from .. import ad_util
 from .. import api
 from .. import linear_util as lu
 from .. import dtypes
+from .. import lazy
 from ..config import flags
 from ..core import Primitive
 from ..abstract_arrays import (UnshapedArray, ShapedArray, ConcreteArray,
@@ -58,7 +57,7 @@ FLAGS = flags.FLAGS
 
 _max = builtins.max
 _min = builtins.max
-_reduce = six.moves.reduce
+_reduce = functools.reduce
 
 
 @cache()
@@ -94,7 +93,11 @@ def _canonicalize_shape(shape):
   except TypeError:
     pass
   msg = ("Shapes must be 1D sequences of concrete values of integer type, "
-         "got {}")
+         "got {}.")
+  if any(isinstance(x, core.Tracer) and isinstance(core.get_aval(x), ShapedArray)
+         and not isinstance(core.get_aval(x), ConcreteArray) for x in shape):
+    msg += ("\nIf using `jit`, try using `static_argnums` or applying `jit` to "
+            "smaller subfunctions.")
   raise TypeError(msg.format(shape))
 
 def _identity(x): return x
@@ -611,15 +614,12 @@ def broadcast(operand, sizes):
   Returns:
     An array containing the result.
   """
-  return broadcast_p.bind(operand, sizes=tuple(sizes))
+  dims = tuple(range(len(sizes), len(sizes) + onp.ndim(operand)))
+  return broadcast_in_dim(operand, tuple(sizes) + onp.shape(operand), dims)
 
 def broadcast_in_dim(operand, shape, broadcast_dimensions):
   if onp.ndim(operand) == len(shape) and not len(broadcast_dimensions):
     return operand
-  if any(x < 0 or x >= len(shape) for x in broadcast_dimensions):
-    msg = ("broadcast dimensions must be >= 0 and < ndim(shape), got {} for "
-           "shape {}")
-    raise ValueError(msg.format(broadcast_dimensions, shape))
   return broadcast_in_dim_p.bind(
       operand, shape=tuple(shape),
       broadcast_dimensions=tuple(broadcast_dimensions))
@@ -1047,62 +1047,73 @@ def full(shape, fill_value, dtype=None):
   """Returns an array of `shape` filled with `fill_value`.
 
   Arguments:
-    shape: sequence of integers, describing the shape of the output array
-    fill_value: the value to fill the new array with
+    shape: sequence of integers, describing the shape of the output array.
+    fill_value: the value to fill the new array with.
     dtype: the type of the output array, or `None`. If not `None`, `fill_value`
       will be cast to `dtype`.
   """
-  try:
-    shape = _canonicalize_shape(shape)
-  except TypeError:
-    msg = ("`full` requires shapes to be concrete. If using `jit`, try using "
-           "`static_argnums` or applying `jit` to smaller subfunctions instead.")
-    raise TypeError(msg)
-
+  shape = _canonicalize_shape(shape)
   if onp.shape(fill_value):
     msg = "full must be called with scalar fill_value, got fill_value.shape {}."
     raise TypeError(msg.format(onp.shape(fill_value)))
-  dtype = dtype or _dtype(fill_value)
-  dtype = dtypes.canonicalize_dtype(dtype)
-
-  # For constants (defined as Python scalars, raw ndarrays, or DeviceValues),
-  # create a _FilledConstant value, otherwise just call broadcast.
-  if onp.isscalar(fill_value) or type(fill_value) is onp.ndarray:
-    return _FilledConstant(onp.asarray(fill_value, dtype), shape)
-  elif isinstance(fill_value, xla.DeviceValue):
-    val = onp.asarray(fill_value, dtype)
-    return _FilledConstant(val, shape)
-  else:
-    return broadcast(convert_element_type(fill_value, dtype), shape)
+  dtype = dtypes.canonicalize_dtype(dtype or _dtype(fill_value))
+  # TODO(mattjj): remove device_put when dtype conversion produces DeviceArray
+  fill_value = xla.device_put_p.bind(convert_element_type(fill_value, dtype))
+  return broadcast(fill_value, shape)
 
 def iota(dtype, size):
   """Wraps XLA's `Iota
   <https://www.tensorflow.org/xla/operation_semantics#iota>`_
   operator.
   """
-  return broadcasted_iota(dtype, (int(size),), 0)
+  size = int(size)
+  dtype = dtypes.canonicalize_dtype(dtype)
+  lazy_expr = lazy.iota(dtype, size)
+  aval = ShapedArray((size,), dtype)
+  return xla.DeviceArray(aval, None, lazy_expr, xla.DeviceConstant())
 
 def broadcasted_iota(dtype, shape, dimension):
-  """Wraps XLA's `Iota
-  <https://www.tensorflow.org/xla/operation_semantics#iota>`_
-  operator.
-  """
+  """Convenience wrapper around ``iota``."""
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = _canonicalize_shape(shape)
   dimension = int(dimension)
-  return _IotaConstant(dtype, shape, dimension)
+  return broadcast_in_dim(iota(dtype, shape[dimension]), shape, [dimension])
 
-def eye(dtype, size):
-  return broadcasted_eye(dtype, (size, size), (0, 1))
+def _eye(dtype, shape, offset):
+  """Like numpy.eye, create a 2D array with ones on a diagonal.
 
-def broadcasted_eye(dtype, shape, axes):
-  if not isinstance(axes, (list, tuple)) or not len(axes) >= 2:
-    raise TypeError("make_diagonal `axes` must be a tuple with len at least 2.")
+  This function exists for creating lazy identity matrices; that is,
+  materialization of the array is delayed and it may be fused into consumers to
+  avoid materialization at all."""
+  N, M = tuple(map(int, shape))
+  offset = int(offset)
   dtype = dtypes.canonicalize_dtype(dtype)
-  shape = _canonicalize_shape(shape)
-  axes = tuple(map(int, axes))
-  return _EyeConstant(shape, axes, dtype)
+  lazy_expr = lazy.eye(dtype, (N, M), offset)
+  aval = ShapedArray((N, M), dtype)
+  return xla.DeviceArray(aval, None, lazy_expr, xla.DeviceConstant())
 
+def _delta(dtype, shape, axes):
+  """This function exists for creating lazy Kronecker delta arrays, particularly
+  for use in jax.numpy.einsum to express traces. It differs from ``eye`` in that
+  it can create arrays of any rank, but doesn't allow offsets."""
+  shape = tuple(map(int, shape))
+  axes = tuple(map(int, axes))
+  dtype = dtypes.canonicalize_dtype(dtype)
+  base_shape = tuple(onp.take(shape, axes))
+  lazy_expr = lazy.broadcast(lazy.delta(dtype, base_shape), shape, axes)
+  aval = ShapedArray(shape, dtype)
+  return xla.DeviceArray(aval, None, lazy_expr, xla.DeviceConstant())
+
+def _tri(dtype, shape, offset):
+  """Like numpy.tri, create a 2D array with ones below a diagonal.
+  This function exists for creating lazy triangular matrices, particularly for
+  use in jax.numpy.tri."""
+  N, M = tuple(map(int, shape))
+  offset = int(offset)
+  dtype = dtypes.canonicalize_dtype(dtype)
+  lazy_expr = lazy.tri(dtype, (N, M), offset)
+  aval = ShapedArray((N, M), dtype)
+  return xla.DeviceArray(aval, None, lazy_expr, xla.DeviceConstant())
 
 def stop_gradient(x):
   """Stops gradient computation.
@@ -1458,8 +1469,8 @@ def _iter(tracer):
     raise TypeError("iteration over a 0-d array")  # same as numpy error
   else:
     n = tracer.shape[0]
-    # return (index_in_dim(tracer, i, keepdims=False) for i in xrange(n))
-    return iter([index_in_dim(tracer, i, keepdims=False) for i in xrange(n)])
+    # return (index_in_dim(tracer, i, keepdims=False) for i in range(n))
+    return iter([index_in_dim(tracer, i, keepdims=False) for i in range(n)])
 ShapedArray._iter = staticmethod(_iter)
 
 # Add some ad handlers that use (or could use) lax primitives
@@ -2290,11 +2301,23 @@ broadcast_p = standard_primitive(
 ad.deflinear(broadcast_p, lambda t, sizes: [_reduce_sum(t, range(len(sizes)))])
 batching.primitive_batchers[broadcast_p] = _broadcast_batch_rule
 
+def _broadcast_in_dim_impl(operand, shape, broadcast_dimensions):
+  if type(operand) is xla.DeviceArray:
+    aval = ShapedArray(shape, _dtype(operand))
+    lazy_expr = lazy.broadcast(operand._lazy_expr, shape, broadcast_dimensions)
+    return xla.DeviceArray(aval, None, lazy_expr, operand.device_buffer)
+  else:
+    return xla.apply_primitive(broadcast_in_dim_p, operand, shape=shape,
+                               broadcast_dimensions=broadcast_dimensions)
 
 def _broadcast_in_dim_shape_rule(operand, shape, broadcast_dimensions):
   _check_shapelike('broadcast_in_dim', 'shape', shape)
   _check_shapelike('broadcast_in_dim', 'broadcast_dimensions',
                    broadcast_dimensions)
+  if any(x >= len(shape) for x in broadcast_dimensions):
+    msg = ("broadcast_in_dim broadcast dimensions must be less than "
+           "ndim(shape), got {} for shape {}.")
+    raise ValueError(msg.format(broadcast_dimensions, shape))
   if operand.ndim != len(broadcast_dimensions):
     msg = ('broadcast_in_dim broadcast_dimensions must have length equal to '
            'operand ndim, got broadcast_dimensions {} for operand ndim {}.')
@@ -2321,6 +2344,7 @@ def _broadcast_in_dim_batch_rule(batched_args, batch_dims, shape,
 
 broadcast_in_dim_p = standard_primitive(
     _broadcast_in_dim_shape_rule, _input_dtype, 'broadcast_in_dim')
+broadcast_in_dim_p.def_impl(_broadcast_in_dim_impl)
 ad.deflinear(broadcast_in_dim_p, _broadcast_in_dim_transpose_rule)
 batching.primitive_batchers[broadcast_in_dim_p] = _broadcast_in_dim_batch_rule
 
@@ -2468,9 +2492,14 @@ ad.primitive_transposes[pad_p] = _pad_transpose
 batching.primitive_batchers[pad_p] = _pad_batch_rule
 
 
-# We have a nonstandard reshape impl so that we can be lazy about data movement
-# for specific types, particularly ShardedDeviceArrays / ChunkedDeviceArrays
+# We have a nonstandard reshape impl so that we can be lazy about data movement.
 def _reshape_impl(operand, new_sizes, dimensions, old_sizes):
+  if type(operand) is xla.DeviceArray and dimensions is None:
+    bcast_dims = _is_singleton_reshape(old_sizes, new_sizes)
+    if bcast_dims is not None:
+      aval = ShapedArray(new_sizes, operand.dtype)
+      lazy_expr = lazy.broadcast(operand._lazy_expr, new_sizes, bcast_dims)
+      return xla.DeviceArray(aval, None, lazy_expr, operand.device_buffer)
   if (type(operand) is pxla.ShardedDeviceArray and dimensions is None
       and _is_axis_merge(old_sizes, new_sizes)):
     aval = ShapedArray(new_sizes, operand.dtype)
@@ -2483,6 +2512,26 @@ def _reshape_impl(operand, new_sizes, dimensions, old_sizes):
   else:
     return xla.apply_primitive(reshape_p, operand, new_sizes=new_sizes,
                                dimensions=dimensions, old_sizes=old_sizes)
+
+def _is_singleton_reshape(old, new):
+  # A singleton reshape is one where only singleton dimensions are added. We
+  # want to detect them because they can be expressed as (lazy) broadcasts.
+  old, new = iter(old), iter(new)
+  d1, d2 = next(old, None), next(new, None)
+  bcast_dims = []
+  i = 0
+  while True:
+    if d1 is d2 is None:
+      return bcast_dims
+    elif d1 == d2:
+      bcast_dims.append(i)
+      i += 1
+      d1, d2 = next(old, None), next(new, None)
+    elif d2 == 1:
+      i += 1
+      d2 = next(new, None)
+    else:
+      return None
 
 def _is_axis_merge(s1, s2):
   return s1[2:] == s2[1:] and s1[0] * s1[1] == s2[0]
@@ -2562,6 +2611,14 @@ ad.deflinear(rev_p, lambda t, dimensions: [rev(t, dimensions)])
 batching.primitive_batchers[rev_p] = _rev_batch_rule
 
 
+def _transpose_impl(operand, permutation):
+  if type(operand) is xla.DeviceArray:
+    lazy_expr = lazy.transpose(operand._lazy_expr, permutation)
+    aval = ShapedArray(lazy_expr.shape, operand.dtype)
+    return xla.DeviceArray(aval, None, lazy_expr, operand.device_buffer)
+  else:
+    return xla.apply_primitive(transpose_p, operand, permutation=permutation)
+
 def _transpose_shape_rule(operand, permutation):
   if not isinstance(permutation, (tuple, list, onp.ndarray)):
     msg = "transpose permutation must be a tuple/list/ndarray, got {}."
@@ -2580,6 +2637,7 @@ def _transpose_batch_rule(batched_args, batch_dims, permutation):
 
 transpose_p = standard_primitive(_transpose_shape_rule, _input_dtype,
                                  'transpose')
+transpose_p.def_impl(_transpose_impl)
 ad.deflinear(transpose_p,
              lambda t, permutation: [transpose(t, onp.argsort(permutation))])
 batching.primitive_batchers[transpose_p] = _transpose_batch_rule
@@ -3138,7 +3196,7 @@ def _scatter_add_transpose_rule(t, operand, scatter_indices, updates,
       start_index_map=dimension_numbers.scatter_dims_to_operand_dims)
     slice_sizes = []
     pos = 0
-    for i in xrange(len(t.shape)):
+    for i in range(len(t.shape)):
       if i in dimension_numbers.inserted_window_dims:
         slice_sizes.append(1)
       else:
@@ -3290,7 +3348,7 @@ def _scatter_jvp(primals, tangents, update_jaxpr, update_consts,
     start_index_map=dnums.scatter_dims_to_operand_dims)
   slice_sizes = []
   pos = 0
-  for i in xrange(len(scattered_ids.shape)):
+  for i in range(len(scattered_ids.shape)):
     if i in dnums.inserted_window_dims:
       slice_sizes.append(1)
     else:
@@ -4039,100 +4097,6 @@ masking.shape_rules[tie_in_p] = lambda shape_exprs: shape_exprs[1]
 masking.masking_rules[tie_in_p] = lambda vals, logical_shapes: vals[1]
 
 
-### constants
-
-
-class _FilledConstant(xla.DeviceConstant):
-  __slots__ = ["fill_value"]
-
-  def __init__(self, fill_value, shape):
-    assert type(fill_value) is onp.ndarray
-    self.aval = ShapedArray(shape, _dtype(fill_value))
-    self._npy_value = None
-
-    self.fill_value = fill_value
-
-  @property
-  def _value(self):
-    return onp.full(self.shape, self.fill_value)
-
-  @staticmethod
-  def constant_handler(c, filled_const, canonicalize_types=True):
-    return c.Broadcast(
-      c.NumpyArrayConstant(filled_const.fill_value, canonicalize_types),
-      filled_const.shape)
-
-
-class _IotaConstant(xla.DeviceConstant):
-  __slots__ = ["axis"]
-
-  def __init__(self, dtype, shape, axis):
-    self.aval = ShapedArray(shape, onp.dtype(dtype))
-    self._npy_value = None
-
-    self.axis = axis
-
-  @property
-  def _value(self):
-    if self._npy_value is None:
-      iota = onp.arange(self.shape[self.axis], dtype=self.dtype)
-      iota = iota.reshape([self.shape[self.axis] if i == self.axis else 1
-                           for i in range(self.ndim)])
-      self._npy_value = onp.broadcast_to(iota, self.shape)
-    return self._npy_value
-
-  @staticmethod
-  def constant_handler(c, iota_constant, canonicalize_types=True):
-    dtype = iota_constant.dtype
-    if canonicalize_types:
-      dtype = dtypes.canonicalize_dtype(dtype)
-    return c.BroadcastedIota(dtype, iota_constant.shape, iota_constant.axis)
-
-
-class _EyeConstant(xla.DeviceConstant):
-  __slots__ = ["axes"]
-
-  def __init__(self, shape, axes, dtype):
-    self.aval = ShapedArray(shape, onp.dtype(dtype))
-    self._npy_value = None
-
-    self.axes = axes
-
-  @property
-  def _value(self):
-    if self._npy_value is None:
-      ones = [1] * self.ndim
-      iotas = [onp.arange(self.shape[axis]).reshape(subvals(ones, [(axis, -1)]))
-               for axis in self.axes]
-      eyes = [i1 == i2 for i1, i2 in zip(iotas[:-1], iotas[1:])]
-      result = onp.asarray(_reduce(operator.and_, eyes), self.dtype)
-      self._npy_value = onp.broadcast_to(result, self.shape)
-    return self._npy_value
-
-  @staticmethod
-  def constant_handler(c, diag_const, canonicalize_types=True):
-    if canonicalize_types:
-      etype = xla_bridge.dtype_to_etype(diag_const.dtype)
-    else:
-      etype = xla_client.dtype_to_etype(diag_const.dtype)
-    etype = xla_bridge.dtype_to_etype(diag_const.dtype)
-    iotas = [c.BroadcastedIota(onp.uint32, diag_const.shape, axis)
-             for axis in diag_const.axes]
-    eyes = [c.Eq(i1, i2) for i1, i2 in zip(iotas[:-1], iotas[1:])]
-    return c.ConvertElementType(_reduce(c.And, eyes), etype)
-
-
-for _t in [_FilledConstant, _IotaConstant, _EyeConstant]:
-  xla_bridge.register_constant_handler(_t, _t.constant_handler)
-  core.pytype_aval_mappings[_t] = ConcreteArray
-  xla.pytype_aval_mappings[_t] = make_shaped_array
-  xla.device_put_handlers[_t] = xla._instantiate_device_constant
-  pxla.shard_arg_handlers[_t] = pxla._shard_array
-  xla.canonicalize_dtype_handlers[_t] = _identity
-  ad_util.jaxval_adders[_t] = add
-  ad_util.jaxval_zeros_likers[_t] = zeros_like_array
-
-
 ### stop-gradient
 
 def _stop_gradient_jvp_rule(primals, tangents):
@@ -4589,13 +4553,6 @@ def _eq_meet(a, b):
     else:
       b = convert_element_type(b, a_dtype)
   return eq(a, b)
-
-
-def subvals(lst, replace):
-  lst = list(lst)
-  for i, v in replace:
-    lst[i] = v
-  return tuple(lst)
 
 
 def _abstractify(x):

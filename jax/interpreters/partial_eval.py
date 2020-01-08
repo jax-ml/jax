@@ -27,7 +27,6 @@ import numpy as onp
 from .. import core
 from .. import linear_util as lu
 from ..abstract_arrays import ShapedArray, ConcreteArray, raise_to_shaped
-from ..linear_util import thunk, transformation, transformation_with_aux
 from ..util import unzip2, safe_zip, safe_map, toposort, partial, split_list
 from ..core import (Trace, Tracer, new_master, Jaxpr, Literal, get_aval,
                     AbstractValue, unit, unitvar, abstract_unit, Primitive,
@@ -237,7 +236,7 @@ def partial_eval(f, trace, pvs):
   return partial_eval_wrapper(f, tuple(pvs))
 
 
-@transformation_with_aux
+@lu.transformation_with_aux
 def partial_eval_wrapper(avals, *consts):
   py_args = (map(PartialVal, zip(avals, consts)),)
   jaxpr, (out_pvals, consts, env) = yield py_args, {}
@@ -336,7 +335,7 @@ def trace_to_jaxpr(fun, pvals, instantiate=False, stage_out_calls=False):
 
   return jaxpr, out_pvals, consts
 
-@transformation
+@lu.transformation
 def trace_to_subjaxpr(master, instantiate, pvals):
   assert all([isinstance(pv, PartialVal) for pv in pvals]), pvals
   trace = JaxprTrace(master, core.cur_sublevel())
