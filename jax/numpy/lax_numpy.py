@@ -391,6 +391,8 @@ def issubdtype(arg1, arg2): return dtypes.issubdtype(arg1, arg2)
 @_wraps(onp.isscalar)
 def isscalar(num): return dtypes.is_python_scalar(num) or onp.isscalar(num)
 
+iterable = onp.iterable
+
 @_wraps(onp.result_type)
 def result_type(*args):
   return dtypes.result_type(*args)
@@ -885,10 +887,18 @@ def reshape(a, newshape, order="C"):
   except AttributeError:
     return _reshape(a, newshape, order=order)
 
-def _reshape(a, newshape, order="C"):
-  dummy_val = onp.broadcast_to(0, shape(a))  # zero strides
-  computed_newshape = onp.reshape(dummy_val, newshape).shape
+def _compute_newshape(a, newshape):
+  """Fixes a -1 value in newshape, if present."""
+  # other errors, like having more than one -1, are caught downstream
+  newsize = _prod(newshape)
+  if newsize < 0:
+    fix = a.size // -newsize
+    return [d if d != -1 else fix for d in newshape]
+  else:
+    return newshape
 
+def _reshape(a, newshape, order="C"):
+  computed_newshape = _compute_newshape(a, newshape)
   if order == "C":
     return lax.reshape(a, computed_newshape, None)
   elif order == "F":

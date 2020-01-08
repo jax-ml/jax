@@ -57,7 +57,8 @@ _reduce = six.moves.reduce
 def _initial_style_jaxpr(fun, in_tree, in_avals):
   in_pvals = [pe.PartialVal((aval, core.unit)) for aval in in_avals]
   fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
-  jaxpr, out_pvals, consts = pe.trace_to_jaxpr(fun, in_pvals, instantiate=True)
+  jaxpr, out_pvals, consts = pe.trace_to_jaxpr(fun, in_pvals, instantiate=True,
+                                               stage_out_calls=True)
   out_avals = _map(raise_to_shaped, unzip2(out_pvals)[0])
   const_avals = tuple(raise_to_shaped(core.get_aval(c)) for c in consts)
   typed_jaxpr = core.TypedJaxpr(pe.closure_convert_jaxpr(jaxpr),
@@ -210,7 +211,7 @@ def while_loop(cond_fun, body_fun, init_val):
   return tree_unflatten(body_tree, outs)
 
 def _while_loop_abstract_eval(*args, **kwargs):
-  return kwargs["body_jaxpr"].out_avals
+  return _map(raise_to_shaped, kwargs["body_jaxpr"].out_avals)
 
 def _while_loop_translation_rule(c, axis_env, *args, **kwargs):
   backend = kwargs.pop('backend')
@@ -362,7 +363,7 @@ def cond(pred, true_operand, true_fun, false_operand, false_fun):
   return tree_unflatten(true_out_tree, out)
 
 def _cond_abstract_eval(*args, **kwargs):
-  return kwargs["true_jaxpr"].out_avals
+  return _map(raise_to_shaped, kwargs["true_jaxpr"].out_avals)
 
 def _cond_translation_rule(c, axis_env, pred, *args, **kwargs):
   backend = kwargs.pop("backend", None)

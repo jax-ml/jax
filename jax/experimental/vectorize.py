@@ -235,7 +235,7 @@ import functools
 def vectorize(signature):
   """Vectorize a function using JAX.
 
-  Turns an abritrary function into a numpy style "gufunc". Once
+  Turns an arbitrary function into a numpy style "gufunc". Once
   you specify the behavior of the core axis, the rest will be 
   broadcast naturally.
 

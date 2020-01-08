@@ -24,6 +24,7 @@ from ..util import get_module_functions
 from .lax_numpy import _not_implemented
 from .lax_numpy import _wraps
 from . import lax_numpy as np
+from .. import ops as jaxops
 
 
 def _promote_to_complex(arg):
@@ -82,6 +83,44 @@ def _fft_core(func_name, fft_type, a, s, axes, norm):
   return transformed
 
 
+@_wraps(onp.fft.fftfreq)
+def fftfreq(n, d=1.0):
+  if isinstance(n, list) or isinstance(n, tuple):
+    raise ValueError(
+          "The n argument of jax.np.fft.fftfreq only takes an int. "
+          "Got n = %s." % list(n))
+
+  elif isinstance(d, list) or isinstance(d, tuple):
+    raise ValueError(
+          "The d argument of jax.np.fft.fftfreq only takes a single value. "
+          "Got d = %s." % list(d))
+
+  k = np.zeros(n)
+  if n % 2 == 0:
+    # k[0: n // 2 - 1] = np.arange(0, n // 2 - 1)
+    k = jaxops.index_update(k,
+                        jaxops.index[0: n // 2],
+                        np.arange(0, n // 2))
+
+    # k[n // 2:] = np.arange(-n // 2, -1)
+    k = jaxops.index_update(k,
+                        jaxops.index[n // 2:],
+                        np.arange(-n // 2, 0))
+
+  else:
+    # k[0: (n - 1) // 2] = np.arange(0, (n - 1) // 2)
+    k = jaxops.index_update(k,
+                        jaxops.index[0: (n - 1) // 2 + 1],
+                        np.arange(0, (n - 1) // 2 + 1))
+
+    # k[(n - 1) // 2 + 1:] = np.arange(-(n - 1) // 2, -1)
+    k = jaxops.index_update(k,
+                        jaxops.index[(n - 1) // 2 + 1:],
+                        np.arange(-(n - 1) // 2, 0))
+
+  return k / (d * n)
+
+
 @_wraps(onp.fft.fftn)
 def fftn(a, s=None, axes=None, norm=None):
   return _fft_core('fftn', xla_client.FftType.FFT, a, s, axes, norm)
@@ -90,6 +129,58 @@ def fftn(a, s=None, axes=None, norm=None):
 @_wraps(onp.fft.ifftn)
 def ifftn(a, s=None, axes=None, norm=None):
   return _fft_core('ifftn', xla_client.FftType.IFFT, a, s, axes, norm)
+
+
+@_wraps(onp.fft.fft)
+def fft(a, n=None, axis=-1, norm=None):
+  if isinstance(axis,list) or isinstance(axis,tuple):
+    raise ValueError(
+      "jax.np.fft.fft does not support multiple axes. "
+      "Please use jax.np.fft.fftn. "
+      "Got axis %s." % (list(axis))
+    )
+
+  if not axis is None:
+    axis = [axis]
+
+  return _fft_core('fft', xla_client.FftType.FFT, a, s=n, axes=axis, norm=norm)
+
+
+@_wraps(onp.fft.ifft)
+def ifft(a, n=None, axis=-1, norm=None):
+  if isinstance(axis,list) or isinstance(axis,tuple):
+    raise ValueError(
+      "jax.np.fft.ifft does not support multiple axes. "
+      "Please use jax.np.fft.ifftn. "
+      "Got axis %s." % (list(axis))
+    )
+
+  if not axis is None:
+    axis = [axis]
+
+  return _fft_core('ifft', xla_client.FftType.IFFT, a, s=n, axes=axis, norm=norm)
+
+
+@_wraps(onp.fft.fft2)
+def fft2(a, s=None, axes=(-2,-1), norm=None):
+  if len(axes) != 2:
+    raise ValueError(
+      "jax.np.fft.fft2 only supports 2 axes. "
+      "Got axes = %s." % (list(axes))
+    )
+
+  return _fft_core('fft', xla_client.FftType.FFT, a, s=s, axes=axes, norm=norm)
+
+
+@_wraps(onp.fft.ifft2)
+def ifft2(a, s=None, axes=(-2,-1), norm=None):
+  if len(axes) != 2:
+    raise ValueError(
+      "jax.np.fft.ifft2 only supports 2 axes. "
+      "Got axes = %s." % (list(axes))
+    )
+
+  return _fft_core('ifft', xla_client.FftType.IFFT, a, s=s, axes=axes, norm=norm)
 
 
 for func in get_module_functions(onp.fft):

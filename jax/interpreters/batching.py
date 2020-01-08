@@ -30,7 +30,7 @@ from .. import dtypes
 from ..core import Trace, Tracer, new_master
 from ..abstract_arrays import ShapedArray, make_shaped_array, array_types, raise_to_shaped
 from ..ad_util import add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_p
-from ..linear_util import transformation, transformation_with_aux, wrap_init
+from .. import linear_util as lu
 from ..util import unzip2, partial, safe_map
 from . import xla
 from . import partial_eval as pe
@@ -50,7 +50,7 @@ def batch_fun(fun, in_vals, in_dims):
     del master
   return out_vals, out_dims()
 
-@transformation_with_aux
+@lu.transformation_with_aux
 def batch_subtrace(master, in_dims, *in_vals):
   trace = BatchTrace(master, core.cur_sublevel())
   in_tracers = [BatchTracer(trace, val, dim) if dim is not None else val
@@ -301,7 +301,7 @@ def _promote_aval_rank(sz, aval):
     return ShapedArray((sz,) + aval.shape, aval.dtype)
 
 def batch_jaxpr(jaxpr, size, batched, instantiate):
-  f = wrap_init(core.jaxpr_as_fun(jaxpr))
+  f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
   f, batched_out = batched_traceable(f, size, batched, instantiate)
   avals_in = [_promote_aval_rank(size, a) if b else a
               for a, b in zip(jaxpr.in_avals, batched)]
@@ -311,7 +311,7 @@ def batch_jaxpr(jaxpr, size, batched, instantiate):
   jaxpr_out = core.TypedJaxpr(jaxpr_out, consts_out, avals_in, avals_out)
   return jaxpr_out, batched_out()
 
-@transformation_with_aux
+@lu.transformation_with_aux
 def batched_traceable(size, batched, instantiate, *vals):
   in_dims = [0 if b else None for b in batched]
   with new_master(BatchTrace) as master:

@@ -94,7 +94,11 @@ def _canonicalize_shape(shape):
   except TypeError:
     pass
   msg = ("Shapes must be 1D sequences of concrete values of integer type, "
-         "got {}")
+         "got {}.")
+  if any(isinstance(x, core.Tracer) and isinstance(core.get_aval(x), ShapedArray)
+         and not isinstance(core.get_aval(x), ConcreteArray) for x in shape):
+    msg += ("\nIf using `jit`, try using `static_argnums` or applying `jit` to "
+            "smaller subfunctions.")
   raise TypeError(msg.format(shape))
 
 def _identity(x): return x
@@ -1047,18 +1051,12 @@ def full(shape, fill_value, dtype=None):
   """Returns an array of `shape` filled with `fill_value`.
 
   Arguments:
-    shape: sequence of integers, describing the shape of the output array
-    fill_value: the value to fill the new array with
+    shape: sequence of integers, describing the shape of the output array.
+    fill_value: the value to fill the new array with.
     dtype: the type of the output array, or `None`. If not `None`, `fill_value`
       will be cast to `dtype`.
   """
-  try:
-    shape = _canonicalize_shape(shape)
-  except TypeError:
-    msg = ("`full` requires shapes to be concrete. If using `jit`, try using "
-           "`static_argnums` or applying `jit` to smaller subfunctions instead.")
-    raise TypeError(msg)
-
+  shape = _canonicalize_shape(shape)
   if onp.shape(fill_value):
     msg = "full must be called with scalar fill_value, got fill_value.shape {}."
     raise TypeError(msg.format(onp.shape(fill_value)))
