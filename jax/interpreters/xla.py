@@ -39,7 +39,7 @@ from ..abstract_arrays import (ConcreteArray, ShapedArray, AbstractToken,
                                abstract_token)
 from ..core import valid_jaxtype, Literal
 from ..util import (partial, partialmethod, cache, safe_map, prod, unzip2,
-                    memoize)
+                    unzip3, memoize)
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from . import partial_eval as pe
@@ -150,21 +150,23 @@ for _t in dtypes.python_scalar_dtypes.keys():
 
 ### op-by-op execution
 
-def arg_spec(x):
+def arg_spec_lazy(x):
   aval = abstractify(x)
   try:
-    return aval, x._device
+    return aval, x._device, x._lazy_expr
   except:
-    return aval, None
+    return aval, None, None
 
 def apply_primitive(prim, *args, **params):
   """Impl rule that compiles and runs a single primitive 'prim' using XLA."""
-  compiled_fun = xla_primitive_callable(prim, *map(arg_spec, args), **params)
+  compiled_fun = xla_primitive_callable(prim, *map(arg_spec_lazy, args), **params)
   return compiled_fun(*args)
 
 @cache()
 def xla_primitive_callable(prim, *arg_specs, **params):
-  avals, arg_devices = unzip2(arg_specs)
+  if FLAGS.jax_log_compiles:
+    logging.warning("Compiling primitive {} for {}.".format(prim.name, arg_specs))
+  avals, arg_devices, lazy_exprs = unzip3(arg_specs)
   device = _device_from_arg_devices(arg_devices)
   backend = xb.get_device_backend(device)
   aval_out = prim.abstract_eval(*avals, **params)
@@ -174,7 +176,8 @@ def xla_primitive_callable(prim, *arg_specs, **params):
     handlers = tuple(map(partial(aval_to_result_handler, device), aval_out))
     handle_result = lambda xs: tuple(h(x) for h, x in zip(handlers, xs.destructure()))
   tuple_args = len(avals) > 100
-  built_c = primitive_computation(prim, backend, tuple_args, *avals, **params)
+  built_c = primitive_computation(prim, backend, tuple_args,
+                                  *zip(avals, lazy_exprs), **params)
   options = xb.get_compile_options(device_assignment=device and (device.id,))
   compiled = built_c.Compile(compile_options=options, backend=backend)
   return partial(_execute_compiled_primitive, prim, compiled, backend,
@@ -203,11 +206,11 @@ def _device_from_arg_devices(devices):
     return device and next(d for d in all_devices if (type(d), d.id) == device)
 
 @cache()
-def primitive_computation(prim, backend, tuple_args, *avals, **params):
+def primitive_computation(prim, backend, tuple_args, *arg_specs, **params):
   c = xb.make_computation_builder("primitive_computation_{}".format(prim.name))
   c.SetOpMetadata(xc.OpMetadata(op_type=prim.name, op_name=str(params)))
   platform = xb.get_backend(backend).platform
-  xla_args = _xla_callable_args(c, avals, tuple_args)
+  xla_args = _xla_callable_args_lazy(c, arg_specs, tuple_args)
   if prim in backend_specific_translations[platform]:
     rule = backend_specific_translations[platform][prim]
     rule(c, *xla_args, **params)  # return val set as a side-effect on c
@@ -229,18 +232,54 @@ def primitive_computation(prim, backend, tuple_args, *avals, **params):
     raise RuntimeError(msg)
 
 def primitive_subcomputation(prim, *avals, **params):
-  return primitive_computation(prim, None, False, *avals, **params)
+  arg_specs = [(aval, None) for aval in avals]
+  return primitive_computation(prim, None, False, *arg_specs, **params)
+
+def _xla_callable_args_lazy(c, arg_specs, tuple_args):
+  if not tuple_args:
+    args = (c.ParameterWithShape(_xla_shape(aval, lexpr))
+            for aval, lexpr in arg_specs
+            if aval is not abstract_token and not lazy.is_constant(lexpr))
+  else:
+    elt_shapes = [_xla_shape(aval, lexpr) for aval, lexpr in arg_specs
+                  if aval is not abstract_token and not lazy.is_constant(lexpr)]
+    tuple_param = c.ParameterWithShape(xc.Shape.tuple_shape(elt_shapes))
+    args = iter(xla_destructure(c, tuple_param))
+  xla_args = [lazy.stage_lexpr(c, lexpr,
+                               None if lazy.is_constant(lexpr) else next(args))
+              if aval is not abstract_token else c.CreateToken()
+              for aval, lexpr in arg_specs]
+  assert next(args, None) is None
+  return xla_args
+
+def _xla_shape(aval, lexpr):
+  """Compute the XLA shape for an input given an aval and lazy expression."""
+  assert not lazy.is_constant(lexpr)
+  if lexpr is None:
+    return aval_to_xla_shape(aval)
+  else:
+    idxs = [(src, dst) for dst, src in enumerate(lexpr.dims) if src is not None]
+    input_shape = [None] * len(idxs)
+    for src, dst in idxs:
+      input_shape[src] = aval.shape[dst]
+    return aval_to_xla_shape(ShapedArray(tuple(input_shape), aval.dtype))
 
 def _execute_compiled_primitive(prim, compiled, backend, tuple_args,
                                 result_handler, *args):
   device, = compiled.local_devices()
-  input_bufs = [device_put(x, device) for x in args if x is not token]
+  input_bufs = [_device_put_device_array_lazy(x, device)
+                if type(x) is DeviceArray else device_put(x, device)
+                for x in args if x is not token and not is_device_constant(x)]
   if tuple_args:
     input_bufs = [make_tuple(input_bufs, device, backend)]
   out_buf = compiled.Execute(input_bufs)
   if FLAGS.jax_debug_nans:
     check_nans(prim, out_buf.destructure() if prim.multiple_results else out_buf)
   return result_handler(out_buf)
+
+def _device_put_device_array_lazy(x, device):
+  x = _copy_device_array_to_device(x, device)
+  return x.device_buffer  # no call to _force means laziness isn't materialized
 
 def check_nans(prim, bufs):
   if prim.multiple_results:
@@ -448,6 +487,13 @@ def _xla_call_impl(fun, *args, **params):
     print("Invalid value encountered in the output of a jit function. "
           "Calling the de-optimized version.")
     return fun.call_wrapped(*args)  # probably won't return
+
+def arg_spec(x):
+  aval = abstractify(x)
+  try:
+    return aval, x._device
+  except:
+    return aval, None
 
 @lu.cache
 def _xla_callable(fun, device, backend, *arg_specs):
@@ -727,7 +773,7 @@ class DeviceArray(DeviceValue):
       if is_device_constant(self):
         self._npy_value = lazy.eval_lexpr(self._lazy_expr, None)
       else:
-        self._npy_value = _force(self).device_buffer.to_py()
+        self._npy_value = _force(self).to_py()
       self._npy_value.flags.writeable = False
     return self._npy_value
 
@@ -871,7 +917,7 @@ xb.register_constant_handler(DeviceArray, _device_array_constant_handler)
 
 def _device_put_device_array(x, device):
   x = _copy_device_array_to_device(x, device)
-  return _force(x).device_buffer
+  return _force(x)
 device_put_handlers[DeviceArray] = _device_put_device_array
 
 def _copy_device_array_to_device(x, device):
@@ -889,46 +935,16 @@ def _copy_device_array_to_device(x, device):
   return DeviceArray(x.aval, device, x._lazy_expr, moved_buf)
 
 def _force(x):
+  assert type(x) is DeviceArray
   if lazy.is_trivial(x._lazy_expr):
-    return x
+    return x.device_buffer
   else:
-    # force x on the device where it lives, but preserve stickiness on result
-    if x._device:
-      device = x._device
-      sticky = True
-    else:
-      d = x.device_buffer.device()
-      device = d and (type(d), d.id)
-      sticky = False
-    force_fun = _lazy_force_computation(sticky, x.aval, device, x._lazy_expr)
-    return force_fun(x)
+    x = _copy_device_array_to_device(x, x.device_buffer.device())  # make sticky
+    return apply_primitive(force_p, x).device_buffer
 
-@cache()
-def _lazy_force_computation(sticky, aval, device, lexpr):
-  c = xb.make_computation_builder("lazy_force")
-  if lazy.is_constant(lexpr):
-    param = None
-  else:
-    idxs = [(src, dst) for dst, src in enumerate(lexpr.dims) if src is not None]
-    param_shape = [None] * len(idxs)
-    for src, dst in idxs:
-      param_shape[src] = aval.shape[dst]
-    param = c.ParameterWithShape(xc.Shape.array_shape(aval.dtype, param_shape))
-  xla_out = lazy.stage_lexpr(c, lexpr, param)
-  built_c = c.Build(xla_out)
-
-  device = _device_from_arg_devices([device])
-  options = xb.get_compile_options(device_assignment=device and (device.id,))
-  backend = xb.get_device_backend(device)
-  compiled = built_c.Compile(compile_options=options, backend=backend)
-
-  result_device = device if sticky else None
-  handler = partial(DeviceArray, aval, result_device, lazy.array(aval.shape))
-  if lazy.is_constant(lexpr):
-    force_fun = lambda _: handler(compiled.Execute([]))
-  else:
-    force_fun = lambda x: handler(compiled.Execute([x.device_buffer]))
-  return force_fun
+force_p = core.Primitive('force')
+force_p.def_abstract_eval(raise_to_shaped)
+translations[force_p] = lambda c, x: x
 
 
 def _device_put_impl(x, device=None):

@@ -1816,15 +1816,12 @@ class LazyTest(jtu.JaxTestCase):
         ops.append(op)
     self.assertEqual(count[0], 0)
 
-    kind = rng.choice(['closure', 'npy_value', 'force', 'add'])
+    kind = rng.choice(['closure', 'npy_value', 'add'])
     if kind == 'closure':
       result = api.jit(lambda x: x + jax_x)(0)
       self.assertAllClose(onp_x, result, check_dtypes=False)
     elif kind == 'npy_value':
       self.assertAllClose(onp_x, jax_x, check_dtypes=False)
-    elif kind == 'force':
-      result = xla._force(jax_x)
-      self.assertAllClose(onp_x, result, check_dtypes=False)
     elif kind == 'add':
       result = jax_x + onp.zeros(jax_x.shape, dtype=jax_x.dtype)
       self.assertAllClose(onp_x, result, check_dtypes=False)
@@ -1852,7 +1849,7 @@ class LazyTest(jtu.JaxTestCase):
 
   def test_constant_forcing_computations_cached(self):
     # from https://github.com/google/jax/issues/1909
-    xla._lazy_force_computation.cache_clear()  # clear force compile cache
+    xla.xla_primitive_callable.cache_clear()  # clear compile cache
     big_lazy_x = np.ones((api.device_count(), 100))
     f = api.pmap(lambda x: 2 * x)
     _ = f(big_lazy_x)
@@ -1862,10 +1859,7 @@ class LazyTest(jtu.JaxTestCase):
     self.assertEqual(count[0], 0)
 
   def test_zeros_ones_compilation(self):
-    w = np.ones(3) + np.ones(3)  # ensure + has a cache entry
-    w.block_until_ready()
-
-    xla._lazy_force_computation.cache_clear()  # clear force compile cache
+    xla.xla_primitive_callable.cache_clear()  # clear compile cache
 
     with self.count_compiles() as count:
       x = np.ones(3) + np.zeros(3)
