@@ -23,7 +23,7 @@ import numpy as onp
 from absl.testing import absltest
 from absl.testing import parameterized
 
-from jax import test_util as jtu
+from jax import test_util as jtu, core as jc, api
 from jax.interpreters.masking import ShapeError, shape_as_value, parse_spec
 from jax import mask, vmap, jit, grad, shapecheck
 from jax import lax
@@ -44,6 +44,7 @@ class MaskingTest(jtu.JaxTestCase):
       ['m * n', 'ShapeSpec(m n)'],
       ['(m * n,)', 'ShapeSpec(m n)'],
       ['(3, m)', 'ShapeSpec(3, m)'],
+      ['(10, m)', 'ShapeSpec(10, m)'],
       ['(3 * m)', 'ShapeSpec(3 m)'],
       ['m', 'ShapeSpec(m)'],
       ['', 'ShapeSpec()'],
@@ -82,6 +83,35 @@ class MaskingTest(jtu.JaxTestCase):
       def cat(x, y, z):
         return lax.concatenate([x, y, x], 0)
     self.assertRaisesRegex(ShapeError, "", thunk)
+
+  def test_device_put_shape_checking(self):
+    @shapecheck(['n'], 'n')
+    def d_put(x):
+      return api.device_put(x)
+
+  def test_broadcast_in_dim_shape_checking(self):
+    x = np.zeros((7, 1))
+    lax.broadcast_in_dim(x, shape=(3, x.shape[0], 4), broadcast_dimensions=(1, 2))
+    @shapecheck(['(n, 1)'], '(3, n, 4)')
+    def broadcast_in_dim(x):
+      return lax.broadcast_in_dim(x, shape=(3, x.shape[0], 4), broadcast_dimensions=(1, 2))
+
+  def test_jit_shape_checking(self):
+    @shapecheck(['n'], '2*n')
+    @jit
+    def concat(x):
+      return lax.concatenate([x, x], 0)
+
+  def test_unsupported_op_shape_checking(self):
+    p = jc.Primitive('unsupported_op')
+    p.def_impl(lambda x: x)
+
+    def thunk():
+      @shapecheck(['n'], 'n')
+      def identity(x):
+        return p.bind(x)
+
+    self.assertRaisesRegex(NotImplementedError, "Shape rule for unsupported_op not implemented yet.", thunk)
 
   def test_sum(self):
     @partial(mask, in_shapes=['n'], out_shape='')
@@ -336,7 +366,6 @@ class MaskingTest(jtu.JaxTestCase):
     ans = padded_add([np.array([3, 1, 4, 1, 5])], dict(n=3))
     expected = onp.array([3, 2, 6])
     self.assertAllClose(ans[:3], expected, check_dtypes=False)
-
 
 if __name__ == '__main__':
   absltest.main()

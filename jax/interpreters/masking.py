@@ -229,7 +229,7 @@ def parse_dim(spec):
   elif '*' in spec:
     terms = map(parse_dim, spec.split('*'))
     return reduce(op.mul, terms)
-  elif spec in digits:
+  elif spec.isdigit():
     return parse_lit(spec)
   elif spec in identifiers:
     return parse_id(spec)
@@ -394,8 +394,11 @@ class ShapeCheckTrace(Trace):
 
   def process_primitive(self, primitive, tracers, params):
     shape_exprs = [t.shape_expr for t in tracers]
-    out_shape_expr = shape_rules[primitive](shape_exprs, **params)
+    shape_rule = shape_rules.get(primitive)
+    if shape_rule is None:
+      raise NotImplementedError('Shape rule for {} not implemented yet.'.format(primitive))
+    out_shape_expr = shape_rule(shape_exprs, **params)
     return ShapeCheckTracer(self, out_shape_expr)
 
   def process_call(self, call_primitive, f, tracers, params):
-    raise NotImplementedError  # TODO check-of-jit
+    return map(self.full_raise, f.call_wrapped(*tracers))

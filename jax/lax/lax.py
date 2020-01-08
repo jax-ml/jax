@@ -2343,12 +2343,16 @@ def _broadcast_in_dim_batch_rule(batched_args, batch_dims, shape,
   new_broadcast_dimensions = (0,) + tuple(onp.add(1, broadcast_dimensions))
   return broadcast_in_dim(new_operand, new_shape, new_broadcast_dimensions), 0
 
+def _broadcast_in_dim_polymorphic_shape_rule(shape_exprs, shape, broadcast_dimensions):
+  return ShapeExpr([masking.Poly({masking.Mon(): dim}) if isinstance(dim, int) else dim
+                    for dim in shape])
 
 broadcast_in_dim_p = standard_primitive(
     _broadcast_in_dim_shape_rule, _input_dtype, 'broadcast_in_dim')
 broadcast_in_dim_p.def_impl(_broadcast_in_dim_impl)
 ad.deflinear(broadcast_in_dim_p, _broadcast_in_dim_transpose_rule)
 batching.primitive_batchers[broadcast_in_dim_p] = _broadcast_in_dim_batch_rule
+masking.shape_rules[broadcast_in_dim_p] = _broadcast_in_dim_polymorphic_shape_rule
 
 
 def _clamp_shape_rule(min, operand, max):
