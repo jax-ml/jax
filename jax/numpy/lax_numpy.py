@@ -28,11 +28,9 @@ from __future__ import division
 from __future__ import print_function
 
 from distutils.util import strtobool
+import builtins
 import collections
-try:
-  from collections.abc import Sequence
-except ImportError:  # python 2
-  from collections import Sequence
+from collections.abc import Sequence
 import itertools
 import os
 import re
@@ -42,8 +40,6 @@ import warnings
 
 import numpy as onp
 import opt_einsum
-import six
-from six.moves import builtins, xrange
 
 from jax import jit, device_put, custom_transforms, defjvp
 from .. import core
@@ -64,12 +60,8 @@ flags.DEFINE_enum(
     'Control NumPy-style automatic rank promotion broadcasting '
     '("allow", "warn", or "raise").')
 
-if six.PY3:
-  def removechars(s, chars):
-    return s.translate(str.maketrans(dict.fromkeys(chars)))
-else:
-  def removechars(s, chars):
-    return s.translate(None, ''.join(chars))
+def removechars(s, chars):
+  return s.translate(str.maketrans(dict.fromkeys(chars)))
 
 newaxis = None
 
@@ -112,7 +104,7 @@ class _ArrayMeta(type(onp.ndarray)):
     except AttributeError:
       return isinstance(instance, _arraylike_types)
 
-class ndarray(six.with_metaclass(_ArrayMeta, onp.ndarray)):
+class ndarray(onp.ndarray, metaclass=_ArrayMeta):
   def __init__(shape, dtype=None, buffer=None, offset=0, strides=None,
                order=None):
     raise TypeError("jax.numpy.ndarray() should not be instantiated explicitly."
@@ -146,9 +138,8 @@ class _ScalarMeta(type):
     return array(self.dtype.type(x), dtype=self.dtype)
 
 def _make_scalar_type(onp_scalar_type):
-  return type(onp_scalar_type.__name__,
-              (six.with_metaclass(_ScalarMeta, object),),
-              {"dtype": onp.dtype(onp_scalar_type)})
+  return _ScalarMeta(onp_scalar_type.__name__, (object,),
+                     {"dtype": onp.dtype(onp_scalar_type)})
 
 bool_ = _make_scalar_type(onp.bool_)
 uint8 = _make_scalar_type(onp.uint8)
@@ -347,7 +338,7 @@ def _wraps(fun, update_doc=True, lax_description=""):
 
       signatures = []
       summary = None
-      for i in xrange(len(sections)):
+      for i in range(len(sections)):
         if _numpy_signature_re.match(sections[i]):
           signatures.append(sections[i])
         else:
@@ -571,7 +562,7 @@ def power(x1, x2):
   # TODO(phawkins): add integer pow support to XLA.
   bits = 6  # Anything more would overflow for any x1 > 1
   acc = ones(shape(x1), dtype=dtype)
-  for _ in xrange(bits):
+  for _ in range(bits):
     acc = where(lax.bitwise_and(x2, _constant_like(x2, 1)),
                 lax.mul(acc, x1), acc)
     x1 = lax.mul(x1, x1)
@@ -1545,7 +1536,7 @@ def _pad(array, pad_width, mode, constant_values):
   if mode == "constant":
     constant_values = broadcast_to(asarray(constant_values), (nd, 2))
     constant_values = lax.convert_element_type(constant_values, array.dtype)
-    for i in xrange(nd):
+    for i in range(nd):
       widths = [(0, 0, 0)] * nd
       widths[i] = (pad_width[i, 0], 0, 0)
       array = lax.pad(array, constant_values[i, 0], widths)
@@ -1553,7 +1544,7 @@ def _pad(array, pad_width, mode, constant_values):
       array = lax.pad(array, constant_values[i, 1], widths)
     return array
   elif mode == "wrap":
-    for i in xrange(nd):
+    for i in range(nd):
       if array.shape[i] == 0:
         _check_no_padding(pad_width[i], mode)
         continue
@@ -1569,7 +1560,7 @@ def _pad(array, pad_width, mode, constant_values):
       array = lax.concatenate(parts, dimension=i)
     return array
   elif mode in ("symmetric", "reflect"):
-    for i in xrange(nd):
+    for i in range(nd):
       if array.shape[i] == 0:
         _check_no_padding(pad_width[i], mode)
         continue

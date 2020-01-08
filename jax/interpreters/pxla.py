@@ -24,8 +24,6 @@ import threading
 
 from absl import logging
 import numpy as onp
-import six
-from six.moves import reduce
 
 from ..config import flags
 from .. import core

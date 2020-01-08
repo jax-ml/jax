@@ -74,8 +74,6 @@ from collections import namedtuple
 import functools
 import operator
 
-from six.moves import reduce
-
 import jax.numpy as np
 from jax.util import partial, safe_zip, safe_map, unzip2
 from jax import tree_util
@@ -420,7 +418,7 @@ def sm3(step_size, momentum=0.9):
   def update(i, g, state):
     x, m, vs = state
     vs = [broadcast_into(g.ndim, v, i) for i, v in enumerate(vs)]
-    accum = reduce(np.minimum, vs) + g ** 2
+    accum = functools.reduce(np.minimum, vs) + g ** 2
     accum_inv_sqrt = np.where(accum > 0, 1. / np.sqrt(accum), 0)
     m = (1. - momentum) * (g * accum_inv_sqrt) + momentum * m
     x = x - step_size(i) * m

@@ -16,6 +16,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import functools
 import itertools as it
 
 from . import partial_eval as pe
@@ -29,8 +30,6 @@ from ..tree_util import register_pytree_node
 from .. import linear_util as lu
 from ..api_util import flatten_fun, flatten_fun_nokwargs
 from ..tree_util import tree_flatten, tree_unflatten
-
-from six.moves import reduce
 
 zip = safe_zip
 map = safe_map
@@ -412,7 +411,7 @@ def standard_jvp(jvprules, primitive, primals, tangents, **params):
   val_out = primitive.bind(*primals, **params)
   tangents_out = [rule(t, *primals, **params) for rule, t in zip(jvprules, tangents)
                   if rule is not None and t is not zero]
-  return val_out, reduce(add_tangents, tangents_out, zero)
+  return val_out, functools.reduce(add_tangents, tangents_out, zero)
 
 def defjvp2(primitive, *jvprules):
   assert isinstance(primitive, Primitive)
@@ -422,7 +421,7 @@ def standard_jvp2(jvprules, primitive, primals, tangents, **params):
   val_out = primitive.bind(*primals, **params)
   tangents_out = (rule(t, val_out, *primals, **params) for rule, t in zip(jvprules, tangents)
                   if rule is not None and t is not zero)
-  return val_out, reduce(add_tangents, tangents_out, zero)
+  return val_out, functools.reduce(add_tangents, tangents_out, zero)
 
 def add_tangents(x, y):
   if x is zero:

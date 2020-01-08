@@ -28,7 +28,6 @@ import functools
 import os
 
 import numpy as onp
-import six
 
 from . import util
 from .config import flags
@@ -96,9 +95,6 @@ python_scalar_dtypes = {
   float: onp.dtype(float_),
   complex: onp.dtype(complex_),
 }
-
-if six.PY2:
-  python_scalar_dtypes[long] = onp.dtype(int_)  # noqa: F821
 
 def scalar_type_of(x):
   typ = dtype(x)

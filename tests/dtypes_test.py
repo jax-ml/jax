@@ -16,14 +16,10 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import enum
 import itertools
 import operator
 import unittest
-
-import six
-
-if six.PY3:
-  import enum
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -169,7 +165,6 @@ class DtypesTest(jtu.JaxTestCase):
       self.assertEqual(a.astype(t).dtype, np.dtype(t))
       self.assertEqual(np.array(a).astype(t).dtype, np.dtype(t))
 
-  @unittest.skipIf(six.PY2, "Test requires Python 3")
   def testEnumPromotion(self):
     class AnEnum(enum.IntEnum):
       A = 42

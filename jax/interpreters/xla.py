@@ -24,8 +24,6 @@ import os
 
 from absl import logging
 import numpy as onp
-import six
-from six.moves import xrange
 
 from ..config import flags
 from .. import core
@@ -828,8 +826,6 @@ class DeviceArray(DeviceValue):
   __bool__ = __nonzero__ = partialmethod(_forward_to_value, bool)
   __float__ = partialmethod(_forward_to_value, float)
   __int__ = partialmethod(_forward_to_value, int)
-  if six.PY2:
-    __long__ = partialmethod(_forward_to_value, long)  # noqa: F821
   __complex__ = partialmethod(_forward_to_value, complex)
   __hex__ = partialmethod(_forward_to_value, hex)
   __oct__ = partialmethod(_forward_to_value, oct)

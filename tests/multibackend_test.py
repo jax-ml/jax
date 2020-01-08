@@ -23,7 +23,6 @@ from absl.testing import parameterized
 
 import numpy as onp
 import numpy.random as npr
-import six
 from unittest import SkipTest
 
 from jax import api

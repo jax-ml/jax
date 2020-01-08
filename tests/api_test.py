@@ -27,10 +27,8 @@ import weakref
 from absl import logging
 from absl.testing import absltest, parameterized
 import numpy as onp
-import six
 
-if six.PY3:
-  import concurrent.futures
+import concurrent.futures
 
 import jax
 import jax.numpy as np
@@ -250,7 +248,7 @@ class APITest(jtu.JaxTestCase):
         lambda: jit(f)(0, 5))
 
   def test_casts(self):
-    for castfun in [float, complex, hex, oct] + list(six.integer_types):
+    for castfun in [float, complex, hex, oct, int]:
       f = lambda x: castfun(x)
       self.assertRaisesRegex(
           TypeError,
@@ -1094,7 +1092,6 @@ class APITest(jtu.JaxTestCase):
     u = np.ones((device_count, 100))
     u_final = multi_step_pmap(u)  # doesn't crash
 
-  @unittest.skipIf(six.PY2, "Test requires Python 3")
   def test_concurrent_device_get_and_put(self):
     def f(x):
       for _ in range(100):
@@ -1109,7 +1106,6 @@ class APITest(jtu.JaxTestCase):
     for x, y in zip(xs, ys):
       self.assertAllClose(x, y, check_dtypes=True)
 
-  @unittest.skipIf(six.PY2, "Test requires Python 3")
   def test_concurrent_jit(self):
     @jit
     def f(x):
