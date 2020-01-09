@@ -111,7 +111,6 @@ import copy
 from functools import partial
 import itertools
 import numpy as onp
-import six
 import traceback
 
 from jax import abstract_arrays
@@ -287,11 +286,8 @@ class _BodyTracer(object):
     self.scope = scope
     self.loop_builder = loop_builder
     self.first_iteration = True  # If we are tracing the first iteration
-    if six.PY3:
-      # Stack trace, without this line and the s.range function
-      self.stack = traceback.StackSummary.from_list(traceback.extract_stack()[:-2])
-    else:
-      self.stack = None
+    # Stack trace, without this line and the s.range function
+    self.stack = traceback.StackSummary.from_list(traceback.extract_stack()[:-2])
 
     # Next are state kept from the start of the first iteration to the end of the iteration.
     self.carried_state_initial = {}

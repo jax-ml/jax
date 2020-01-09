@@ -19,12 +19,11 @@ from __future__ import print_function
 from operator import attrgetter
 from contextlib import contextmanager
 from collections import namedtuple, Counter, defaultdict
+from functools import total_ordering
 import itertools as it
 from weakref import ref
 import threading
 import types
-
-import six
 
 from . import linear_util as lu
 from .util import safe_zip, safe_map, partial, curry
@@ -86,10 +85,17 @@ JaxprEqn.__repr__ = JaxprEqn.__str__ = lambda eqn: str(pp_eqn(eqn)).rstrip()
 new_jaxpr_eqn = JaxprEqn
 
 
+@total_ordering
 class Var(object):
   def __init__(self, count, suffix):
     self.count = count
     self.suffix = suffix
+
+  def __lt__(self, other):
+    if not isinstance(other, Var):
+      return NotImplemented
+    else:
+      return (self.count, self.suffix) < (other.count, other.suffix)
 
   def __repr__(self):
     rem = self.count
@@ -362,10 +368,7 @@ class Tracer(object):
       if t is aval_property:
         return attr.fget(self)
       elif t is aval_method:
-        if six.PY3:
-          return types.MethodType(attr.fun, self)
-        else:
-          return types.MethodType(attr.fun, self, None)
+        return types.MethodType(attr.fun, self)
       else:
         return attr
 
@@ -567,8 +570,9 @@ identity_p.def_custom_bind(lambda x: x)
 
 
 def apply_todos(todos, outs):
-  while todos:
-    outs = map(full_lower, todos.pop()(outs))
+  todos_list = list(todos)
+  while todos_list:
+    outs = map(full_lower, todos_list.pop()(outs))
   return outs
 
 @lu.transformation_with_aux
@@ -586,7 +590,7 @@ def process_env_traces(primitive, level, params_tuple, *args):
     outs = map(trace.full_raise, outs)
     outs, cur_todo = trace.post_process_call(primitive, outs, params)
     todo.append(cur_todo)
-  yield outs, todo
+  yield outs, tuple(todo)  # Ensure the aux output is immutable
 
 def call_bind(primitive, f, *args, **params):
   top_trace = find_top_trace(args)

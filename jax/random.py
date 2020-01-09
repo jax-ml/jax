@@ -41,8 +41,11 @@ from jax import core
 from jax import abstract_arrays
 from jax.numpy.linalg import cholesky
 from jax.scipy.special import logit
+from jax.interpreters import ad
 from jax.interpreters import batching
+from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
+from jax.util import prod
 
 
 def PRNGKey(seed):
@@ -616,7 +619,6 @@ def beta(key, a, b, shape=None, dtype=onp.float64):
   dtype = dtypes.canonicalize_dtype(dtype)
   return _beta(key, a, b, shape, dtype)
 
-@partial(jit, static_argnums=(3, 4))
 def _beta(key, a, b, shape, dtype):
   if shape is None:
     shape = lax.broadcast_shapes(onp.shape(a), onp.shape(b))
@@ -626,6 +628,8 @@ def _beta(key, a, b, shape, dtype):
   a = lax.convert_element_type(a, dtype)
   b = lax.convert_element_type(b, dtype)
   key_a, key_b = split(key)
+  a = np.broadcast_to(a, shape)
+  b = np.broadcast_to(b, shape)
   gamma_a = gamma(key_a, a, shape, dtype)
   gamma_b = gamma(key_b, b, shape, dtype)
   return gamma_a / (gamma_a + gamma_b)
@@ -876,20 +880,43 @@ def _gamma_grad_one(z, alpha):
     return grad
 
 def _gamma_grad(sample, a):
-    samples = np.reshape(sample, -1)
-    alphas = np.reshape(a, -1)
+  samples = np.reshape(sample, -1)
+  alphas = np.reshape(a, -1)
+  if xla_bridge.get_backend().platform == 'cpu':
+    grads = lax.map(lambda args: _gamma_grad_one(*args), (samples, alphas))
+  else:
     grads = vmap(_gamma_grad_one)(samples, alphas)
-    return grads.reshape(onp.shape(a))
+  return grads.reshape(onp.shape(a))
 
-@custom_transforms
 def _gamma_impl(key, a):
-    alphas = np.reshape(a, -1)
-    keys = split(key, onp.size(alphas))
+  a_shape = np.shape(a)
+  # split key to match the shape of a
+  key_ndim = np.ndim(key) - 1
+  key = np.reshape(key, (-1, 2))
+  key = vmap(split, in_axes=(0, None))(key, prod(a_shape[key_ndim:]))
+  keys = np.reshape(key, (-1, 2))
+  alphas = np.reshape(a, -1)
+  if xla_bridge.get_backend().platform == 'cpu':
+    samples = lax.map(lambda args: _gamma_one(*args), (keys, alphas))
+  else:
     samples = vmap(_gamma_one)(keys, alphas)
-    return np.reshape(samples, onp.shape(a))
+  return np.reshape(samples, a_shape),
 
-defjvp(_gamma_impl, None,
-       lambda tangent, ans, key, a, **kwargs: tangent * _gamma_grad(ans, a))
+def _gamma_batching_rule(batched_args, batch_dims):
+    k, a = batched_args
+    bk, ba = batch_dims
+    size = next(t.shape[i] for t, i in zip(batched_args, batch_dims) if i is not None)
+    k = batching.bdim_at_front(k, bk, size)
+    a = batching.bdim_at_front(a, ba, size)
+    return random_gamma_p.bind(k, a), (0,)
+
+random_gamma_p = core.Primitive('random_gamma')
+random_gamma_p.multiple_results = True
+random_gamma_p.def_impl(_gamma_impl)
+random_gamma_p.def_abstract_eval(lambda key, a: (abstract_arrays.raise_to_shaped(a),))
+ad.defjvp2(random_gamma_p, None, lambda tangent, ans, key, a: (tangent * _gamma_grad(ans[0], a),))
+xla.translations[random_gamma_p] = xla.lower_fun(_gamma_impl, instantiate=True)
+batching.primitive_batchers[random_gamma_p] = _gamma_batching_rule
 
 def gamma(key, a, shape=None, dtype=onp.float64):
   """Sample Gamma random values with given shape and float dtype.
@@ -921,7 +948,7 @@ def _gamma(key, a, shape, dtype):
   a = lax.convert_element_type(a, dtype)
   if onp.shape(a) != shape:
     a = np.broadcast_to(a, shape)
-  return _gamma_impl(key, a)
+  return random_gamma_p.bind(key, a)[0]
 
 
 def gumbel(key, shape=(), dtype=onp.float64):

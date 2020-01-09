@@ -27,7 +27,6 @@ import warnings
 
 from absl.testing import absltest
 from absl.testing import parameterized
-import six
 
 import numpy as onp
 
@@ -40,7 +39,7 @@ from jax import numpy as lnp
 from jax import test_util as jtu
 from jax import dtypes
 from jax import tree_util
-from jax.interpreters import partial_eval
+from jax.interpreters import partial_eval, xla
 from jax.test_util import check_grads
 
 from jax.config import config
@@ -175,7 +174,7 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("conjugate", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"]),
     op_record("deg2rad", 1, float_dtypes, all_shapes, jtu.rand_default, []),
     op_record("divide", 2, number_dtypes, all_shapes, jtu.rand_nonzero, ["rev"],
-              inexact=six.PY3),
+              inexact=True),
     op_record("divmod", 2, int_dtypes + float_dtypes, all_shapes,
               jtu.rand_nonzero, []),
     op_record("exp2", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"],
@@ -340,15 +339,6 @@ if numpy_version >= (1, 15):
   JAX_REDUCER_NO_DTYPE_RECORDS += [
       op_record("ptp", 1, number_dtypes, nonempty_shapes, jtu.rand_default, []),
   ]
-
-if six.PY2:
-  JAX_OPERATOR_OVERLOADS += [
-    op_record("__div__", 2, number_dtypes, all_shapes, jtu.rand_nonzero, []),
-  ]
-  JAX_RIGHT_OPERATOR_OVERLOADS += [
-    op_record("__rdiv__", 2, number_dtypes, all_shapes, jtu.rand_nonzero, []),
-  ]
-
 
 CombosWithReplacement = itertools.combinations_with_replacement
 
@@ -2074,11 +2064,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertAllClose(lnp.arange(53, 5, -3),
                         onp.arange(53, 5, -3, dtype=lnp.int_),
                         check_dtypes=True)
-    # TODO(mattjj): make these tests work when jax_enable_x64=True
-    # self.assertAllClose(lnp.arange(77, dtype=float),
-    #                     onp.arange(77, dtype=float), check_dtypes=True)
-    # self.assertAllClose(lnp.arange(2, 13, dtype=int),
-    #                     onp.arange(2, 13, dtype=int), check_dtypes=True)
+    self.assertAllClose(lnp.arange(77, dtype=float),
+                        onp.arange(77, dtype=float), check_dtypes=True)
+    self.assertAllClose(lnp.arange(2, 13, dtype=int),
+                        onp.arange(2, 13, dtype=int), check_dtypes=True)
     self.assertAllClose(lnp.arange(0, 1, -0.5),
                         onp.arange(0, 1, -0.5, dtype=lnp.float_),
                         check_dtypes=True)
@@ -2094,6 +2083,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                      type(onp.arange(77, dtype=onp.int32)))
     self.assertTrue(type(lnp.arange(77, dtype=lnp.int32)) ==
                     type(lax.iota(onp.int32, 77)))
+
+    # test laziness for int dtypes
+    self.assertTrue(xla.is_device_constant(lnp.arange(77)))
+    self.assertTrue(xla.is_device_constant(lnp.arange(77, dtype=lnp.int32)))
 
   def testIssue830(self):
     a = lnp.arange(4, dtype=lnp.complex64)
@@ -2584,6 +2577,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         self._CheckAgainstNumpy(
             onp_fun, lnp_fun, args_maker, check_dtypes=True)
         self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+  def testZerosShapeErrors(self):
+    # see https://github.com/google/jax/issues/1822
+    self.assertRaisesRegex(
+        TypeError,
+        "Shapes must be 1D sequences of concrete values of integer type.*",
+        lambda: lnp.zeros(1.))
+    self.assertRaisesRegex(
+        TypeError,
+        "Shapes must be 1D sequences of concrete values of integer type.*\n"
+        "If using `jit`, try using `static_argnums` or applying `jit` to smaller subfunctions.",
+        lambda: api.jit(lnp.zeros)(2))
 
 # Most grad tests are at the lax level (see lax_test.py), but we add some here
 # as needed for e.g. particular compound ops of interest.

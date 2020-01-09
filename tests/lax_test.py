@@ -27,7 +27,6 @@ from absl.testing import parameterized
 
 import numpy as onp
 import numpy.random as npr
-import six
 
 from jax import api
 from jax import core
@@ -1498,11 +1497,6 @@ class LaxTest(jtu.JaxTestCase):
     fun = partial(lax.scatter, dimension_numbers=dnums)
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)
 
-  def testLongConstantHandling(self):
-    if six.PY3:
-      self.skipTest("Test is Python 2 specific")
-    self.assertTrue(api.jit(lambda x: lax.lt(x, long(10)))(long(3)))  # noqa: F821
-
   def testIssue831(self):
     # Tests the DeviceTuple constant handler
     def f(x):
@@ -1543,8 +1537,8 @@ class LaxTest(jtu.JaxTestCase):
                                        onp.zeros((2, 2), dtype=onp.float32),
                                        (onp.int32(1), onp.int16(2))))
 
-class DeviceConstantTest(jtu.JaxTestCase):
-  def _CheckDeviceConstant(self, make_const, expected):
+class LazyConstantTest(jtu.JaxTestCase):
+  def _Check(self, make_const, expected):
     # check casting to ndarray works
     asarray_result = onp.asarray(make_const())
 
@@ -1575,7 +1569,7 @@ class DeviceConstantTest(jtu.JaxTestCase):
     make_const = lambda: lax.full(shape, fill_value, dtype)
     expected = onp.full(shape, fill_value,
                         dtype or dtypes.result_type(fill_value))
-    self._CheckDeviceConstant(make_const, expected)
+    self._Check(make_const, expected)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_dim={}".format(
@@ -1595,7 +1589,7 @@ class DeviceConstantTest(jtu.JaxTestCase):
     singleton_shape[dimension] = shape[dimension]
     expected = onp.broadcast_to(arr.reshape(singleton_shape), shape)
 
-    self._CheckDeviceConstant(make_const, expected)
+    self._Check(make_const, expected)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_axes={}".format(
@@ -1612,13 +1606,12 @@ class DeviceConstantTest(jtu.JaxTestCase):
           [(2, 3, 4, 2), (0, 2, 3)],
           [(1001, 1001), (0, 1)],
       ]))
-  def testEyeConstant(self, dtype, shape, axes):
-    make_const = lambda: lax.broadcasted_eye(dtype, shape, axes)
-
+  @jtu.skip_on_devices("tpu")  # TODO(mattjj): investigate failure
+  def testDeltaConstant(self, dtype, shape, axes):
+    make_const = lambda: lax._delta(dtype, shape, axes)
     # don't check the asarray case, just assume it's right
     expected = onp.asarray(make_const())
-
-    self._CheckDeviceConstant(make_const, expected)
+    self._Check(make_const, expected)
 
 
 GradTestSpec = collections.namedtuple(

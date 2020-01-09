@@ -41,7 +41,6 @@ from __future__ import print_function
 
 import functools
 import collections
-from six.moves import reduce
 
 from .lib import pytree
 
@@ -195,7 +194,7 @@ def _replace_nones(sentinel, tree):
       return tree
 
 def tree_reduce(f, tree):
-  return reduce(f, tree_leaves(tree))
+  return functools.reduce(f, tree_leaves(tree))
 
 def tree_all(tree):
   return all(tree_leaves(tree))

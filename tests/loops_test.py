@@ -21,7 +21,6 @@ from __future__ import print_function
 from absl.testing import absltest
 import numpy as onp
 import re
-import six
 
 from jax import api, lax, ops
 from jax import numpy as np
@@ -191,7 +190,6 @@ class LoopsTest(jtu.JaxTestCase):
 
   def test_range_locations(self):
     """Ranges have locations."""
-    if six.PY2: self.skipTest("Source location not implemented for PY2")
     with loops.Scope() as s:
       r = s.range(5)
       cr = s.cond_range(True)
@@ -230,11 +228,10 @@ class LoopsTest(jtu.JaxTestCase):
           pass
         return 0.
 
-    if six.PY3:
-      with self.assertRaisesRegex(ValueError,
-                                  re.compile(("Some ranges have exited prematurely. The innermost such range is at"
-                                             ".*s.range.555."), re.DOTALL)):
-        bad_function("break")
+    with self.assertRaisesRegex(ValueError,
+                                re.compile(("Some ranges have exited prematurely. The innermost such range is at"
+                                           ".*s.range.555."), re.DOTALL)):
+      bad_function("break")
     with self.assertRaisesRegex(ValueError, "Some ranges have exited prematurely"):
       bad_function("return")
     # On exception exit, we let the exception propagate

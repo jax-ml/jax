@@ -23,7 +23,7 @@ import gzip
 import os
 from os import path
 import struct
-from six.moves.urllib.request import urlretrieve
+import urllib
 
 import numpy as np
 
@@ -37,7 +37,7 @@ def _download(url, filename):
     os.makedirs(_DATA)
   out_file = path.join(_DATA, filename)
   if not path.isfile(out_file):
-    urlretrieve(url, out_file)
+    urllib.request.urlretrieve(url, out_file)
     print("downloaded {} to {}".format(url, _DATA))
 
 

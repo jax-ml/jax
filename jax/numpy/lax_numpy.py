@@ -28,11 +28,9 @@ from __future__ import division
 from __future__ import print_function
 
 from distutils.util import strtobool
+import builtins
 import collections
-try:
-  from collections.abc import Sequence
-except ImportError:  # python 2
-  from collections import Sequence
+from collections.abc import Sequence
 import itertools
 import os
 import re
@@ -42,8 +40,6 @@ import warnings
 
 import numpy as onp
 import opt_einsum
-import six
-from six.moves import builtins, xrange
 
 from jax import jit, device_put, custom_transforms, defjvp
 from .. import core
@@ -52,7 +48,7 @@ from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
 from ..config import flags
 from ..interpreters.xla import DeviceArray
 from .. import lax
-from ..util import partial, get_module_functions, unzip2, prod as _prod
+from ..util import partial, get_module_functions, unzip2, prod as _prod, subvals
 from ..lib import pytree
 from ..lib import xla_client
 
@@ -64,12 +60,8 @@ flags.DEFINE_enum(
     'Control NumPy-style automatic rank promotion broadcasting '
     '("allow", "warn", or "raise").')
 
-if six.PY3:
-  def removechars(s, chars):
-    return s.translate(str.maketrans(dict.fromkeys(chars)))
-else:
-  def removechars(s, chars):
-    return s.translate(None, ''.join(chars))
+def removechars(s, chars):
+  return s.translate(str.maketrans(dict.fromkeys(chars)))
 
 newaxis = None
 
@@ -112,7 +104,7 @@ class _ArrayMeta(type(onp.ndarray)):
     except AttributeError:
       return isinstance(instance, _arraylike_types)
 
-class ndarray(six.with_metaclass(_ArrayMeta, onp.ndarray)):
+class ndarray(onp.ndarray, metaclass=_ArrayMeta):
   def __init__(shape, dtype=None, buffer=None, offset=0, strides=None,
                order=None):
     raise TypeError("jax.numpy.ndarray() should not be instantiated explicitly."
@@ -146,9 +138,8 @@ class _ScalarMeta(type):
     return array(self.dtype.type(x), dtype=self.dtype)
 
 def _make_scalar_type(onp_scalar_type):
-  return type(onp_scalar_type.__name__,
-              (six.with_metaclass(_ScalarMeta, object),),
-              {"dtype": onp.dtype(onp_scalar_type)})
+  return _ScalarMeta(onp_scalar_type.__name__, (object,),
+                     {"dtype": onp.dtype(onp_scalar_type)})
 
 bool_ = _make_scalar_type(onp.bool_)
 uint8 = _make_scalar_type(onp.uint8)
@@ -347,7 +338,7 @@ def _wraps(fun, update_doc=True, lax_description=""):
 
       signatures = []
       summary = None
-      for i in xrange(len(sections)):
+      for i in range(len(sections)):
         if _numpy_signature_re.match(sections[i]):
           signatures.append(sections[i])
         else:
@@ -390,6 +381,8 @@ def issubdtype(arg1, arg2): return dtypes.issubdtype(arg1, arg2)
 
 @_wraps(onp.isscalar)
 def isscalar(num): return dtypes.is_python_scalar(num) or onp.isscalar(num)
+
+iterable = onp.iterable
 
 @_wraps(onp.result_type)
 def result_type(*args):
@@ -569,7 +562,7 @@ def power(x1, x2):
   # TODO(phawkins): add integer pow support to XLA.
   bits = 6  # Anything more would overflow for any x1 > 1
   acc = ones(shape(x1), dtype=dtype)
-  for _ in xrange(bits):
+  for _ in range(bits):
     acc = where(lax.bitwise_and(x2, _constant_like(x2, 1)),
                 lax.mul(acc, x1), acc)
     x1 = lax.mul(x1, x1)
@@ -1128,7 +1121,7 @@ def split(ary, indices_or_sections, axis=0):
   subarrays = onp.split(dummy_val, indices_or_sections, axis)  # shapes
   split_indices = onp.cumsum([0] + [onp.shape(sub)[axis] for sub in subarrays])
   starts, ends = [0] * ndim(ary), shape(ary)
-  _subval = lambda x, i, v: lax.subvals(x, [(i, v)])
+  _subval = lambda x, i, v: subvals(x, [(i, v)])
   return [lax.slice(ary, _subval(starts, axis, start), _subval(ends, axis, end))
           for start, end in zip(split_indices[:-1], split_indices[1:])]
 
@@ -1291,7 +1284,7 @@ def _make_reduction(np_fun, op, init_val, preproc=None, bool_op=None,
     result = lax.reduce(a, _reduction_init_val(a, init_val),
                         op if computation_dtype != onp.bool_ else bool_op, dims)
     if keepdims:
-      shape_with_singletons = lax.subvals(shape(a), zip(dims, (1,) * len(dims)))
+      shape_with_singletons = subvals(shape(a), zip(dims, (1,) * len(dims)))
       result = lax.reshape(result, shape_with_singletons)
     return lax.convert_element_type(result, dtype or result_dtype)
 
@@ -1586,7 +1579,7 @@ def _pad(array, pad_width, mode, constant_values):
   if mode == "constant":
     constant_values = broadcast_to(asarray(constant_values), (nd, 2))
     constant_values = lax.convert_element_type(constant_values, array.dtype)
-    for i in xrange(nd):
+    for i in range(nd):
       widths = [(0, 0, 0)] * nd
       widths[i] = (pad_width[i, 0], 0, 0)
       array = lax.pad(array, constant_values[i, 0], widths)
@@ -1594,7 +1587,7 @@ def _pad(array, pad_width, mode, constant_values):
       array = lax.pad(array, constant_values[i, 1], widths)
     return array
   elif mode == "wrap":
-    for i in xrange(nd):
+    for i in range(nd):
       if array.shape[i] == 0:
         _check_no_padding(pad_width[i], mode)
         continue
@@ -1610,7 +1603,7 @@ def _pad(array, pad_width, mode, constant_values):
       array = lax.concatenate(parts, dimension=i)
     return array
   elif mode in ("symmetric", "reflect"):
-    for i in xrange(nd):
+    for i in range(nd):
       if array.shape[i] == 0:
         _check_no_padding(pad_width[i], mode)
         continue
@@ -1854,23 +1847,20 @@ empty = zeros
 
 
 @_wraps(onp.eye)
-def eye(N, M=None, k=None, dtype=None):
+def eye(N, M=None, k=0, dtype=None):
   lax._check_user_dtype_supported(dtype, "eye")
   dtype = float_ if dtype is None else dtype
   M = N if M is None else M
+  k = int(k)
   if N < 0 or M < 0:
     msg = "negative dimensions are not allowed, got {} and {}"
     raise ValueError(msg.format(N, M))
-  if k is None:
-    return lax.broadcasted_eye(dtype, (N, M), (0, 1))
-  else:
+  if k is not None:
     k_dtype = _dtype(k)
     if not issubdtype(k_dtype, integer):
       msg = "eye argument `k` must be of integer dtype, got {}"
       raise TypeError(msg.format(k_dtype))
-    rows = k + lax.broadcasted_iota(k_dtype, (N, M), 0)
-    cols = lax.broadcasted_iota(k_dtype, (N, M), 1)
-    return lax.convert_element_type(lax.eq(rows, cols), dtype)
+  return lax._eye(dtype, (N, M), k)
 
 
 @_wraps(onp.identity)
@@ -1882,16 +1872,11 @@ def identity(n, dtype=None):
 @_wraps(onp.arange)
 def arange(start, stop=None, step=None, dtype=None):
   lax._check_user_dtype_supported(dtype, "arange")
-  # If called like np.arange(N), we create a lazy lax._IotaConstant.
   if stop is None and step is None:
     dtype = dtype or _dtype(start)
-    if issubdtype(dtype, integer):
-      return lax.iota(dtype, start)  # avoids materializing
-
-  # Fall back to instantiating an ndarray in host memory
-  dtype = dtype or result_type(
-    *(x for x in (start, stop, step) if x is not None))
-  return onp.arange(start, stop=stop, step=step, dtype=dtype)
+    return lax.iota(dtype, start)  # avoids materializing
+  else:
+    return array(onp.arange(start, stop=stop, step=step, dtype=dtype))
 
 
 def _wrap_numpy_nullary_function(f):
@@ -2115,13 +2100,7 @@ def tri(N, M=None, k=0, dtype=None):
   lax._check_user_dtype_supported(dtype, "tri")
   M = M if M is not None else N
   dtype = dtype or float32
-  x = arange(N, dtype=int32)
-  y = arange(M, dtype=int32)
-  mask = lax.ge(
-      (lax.broadcast_in_dim(x, shape=(N, M), broadcast_dimensions=(0,)) +
-       int32(k)),
-      lax.broadcast(y, [N]))
-  return lax.convert_element_type(mask, dtype)
+  return lax._tri(dtype, (N, M), k)
 
 
 @_wraps(onp.tril)
@@ -2380,7 +2359,7 @@ def _einsum(operands, contractions, precision):
     for name, count in counts.items():
       if count > 1:
         axes = [i for i, n in enumerate(names) if n == name]
-        eye = lax.broadcasted_eye(operand.dtype, operand.shape, axes)
+        eye = lax._delta(operand.dtype, operand.shape, axes)
         if name not in keep_names:
           operand = sum(operand * eye, axes)
           names = names.replace(name, '')
@@ -2890,7 +2869,7 @@ def _index_to_gather(x_shape, idx):
   collapsed_slice_dims = []
   start_index_map = []
 
-  gather_indices = zeros((0,), dtype=int32)
+  gather_indices = onp.zeros((0,), dtype=int32)  # use onp to save a compilation
 
   # We perform three transformations to y before the scatter op, in order:
   # First, y is broadcast to slice_shape. In general `y` only need broadcast to

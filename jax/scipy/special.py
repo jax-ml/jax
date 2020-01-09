@@ -20,6 +20,7 @@ import numpy as onp
 import scipy.special as osp_special
 
 from .. import lax
+from .. import util
 from ..api import custom_transforms, defjvp
 from ..numpy import lax_numpy as np
 from ..numpy.lax_numpy import (_wraps, asarray, _reduction_dims, _constant_like,
@@ -84,7 +85,7 @@ def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
   if b is not None or return_sign:
     raise NotImplementedError("Only implemented for b=None, return_sign=False")
   dims = _reduction_dims(a, axis)
-  shape = lax.subvals(onp.shape(a), zip(dims, (1,) * len(dims)))
+  shape = util.subvals(onp.shape(a), zip(dims, (1,) * len(dims)))
   dimadd = lambda x: lax.reshape(x, shape)
   amax = lax.reduce(a, _constant_like(a, -onp.inf), lax.max, dims)
   amax = lax.select(lax.is_finite(amax), amax, lax.full_like(amax, 0))

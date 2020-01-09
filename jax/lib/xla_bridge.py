@@ -33,7 +33,6 @@ from ..config import flags
 from .. import util
 from .. import dtypes
 import numpy as onp  # 'onp' rather than 'np' to distinguish from autograd.numpy
-import six
 import threading
 
 try:

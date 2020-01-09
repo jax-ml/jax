@@ -161,6 +161,40 @@ class MultiDeviceTest(jtu.JaxTestCase):
     self.assertEqual(y.device_buffer.device(), jax.devices()[1])
     self.assertEqual(z.device_buffer.device(), jax.devices()[1])
 
+  def test_device_put(self):
+    if len(jax.devices()) < 2:
+      raise SkipTest("test requires multiple devices")
+
+    # test device_put on regular values
+    x = jax.device_put(1, device=jax.devices()[0])
+    self.assertEqual(x.device_buffer.device(), jax.devices()[0])
+
+    # test device_put on its own output
+    y = jax.device_put(x, device=jax.devices()[1])
+    self.assertEqual(y.device_buffer.device(), jax.devices()[1])
+
+    # test device_put on lazy values
+    x = jax.device_put(np.zeros(2), device=jax.devices()[0])
+    self.assertEqual(x.device_buffer.device(), jax.devices()[0])
+
+    y = jax.device_put(x, device=jax.devices()[1])
+    self.assertEqual(y.device_buffer.device(), jax.devices()[1])
+
+    x = jax.device_put(np.zeros(2), device=jax.devices()[1])
+    self.assertEqual(x.device_buffer.device(), jax.devices()[1])
+
+  def test_closed_over_values_device_placement(self):
+    # see https://github.com/google/jax/issues/1431
+    if len(jax.devices()) < 2:
+      raise SkipTest("test requires multiple devices")
+
+    def f(): return lax.add(3., 4.)
+    self.assertIsInstance(f(), xla.DeviceArray)
+    self.assertEqual(f().device_buffer.device(), jax.devices()[0])
+    self.assertEqual(jax.jit(f)().device_buffer.device(), jax.devices()[0])
+    self.assertEqual(jax.jit(f, device=jax.devices()[1])().device_buffer.device(),
+                     jax.devices()[1])
+
 
 if __name__ == '__main__':
   absltest.main()

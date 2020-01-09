@@ -59,6 +59,7 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         "@com_google_absl//absl/base",
+        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@local_config_cuda//cuda:cuda_headers",
     ],
