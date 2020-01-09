@@ -415,7 +415,6 @@ fabs = _one_to_one_unop(onp.fabs, lax.abs, True)
 bitwise_not = _one_to_one_unop(onp.bitwise_not, lax.bitwise_not)
 negative = _one_to_one_unop(onp.negative, lax.neg)
 positive = _one_to_one_unop(onp.positive, lambda x: x)
-sign = _one_to_one_unop(onp.sign, lax.sign)
 
 floor = _one_to_one_unop(onp.floor, lax.floor, True)
 ceil = _one_to_one_unop(onp.ceil, lax.ceil, True)
@@ -484,6 +483,16 @@ logical_and = _logical_op(onp.logical_and, lax.bitwise_and)
 logical_not = _logical_op(onp.logical_not, lax.bitwise_not)
 logical_or = _logical_op(onp.logical_or, lax.bitwise_or)
 logical_xor = _logical_op(onp.logical_xor, lax.bitwise_xor)
+
+
+@_wraps(onp.sign)
+def sign(x):
+  dtype = _dtype(x)
+  if issubdtype(dtype, complexfloating):
+    re = lax.real(x)
+    return lax.complex(
+      lax.sign(where(re != 0, re, lax.imag(x))), _constant_like(re, 0))
+  return lax.sign(x)
 
 
 @_wraps(onp.true_divide)

@@ -111,13 +111,24 @@ def neg(x):
 def sign(x):
   r"""Elementwise sign.
 
+  For floating-point inputs, returns
   :math:`\mathrm{sign}(x) = \begin{cases}
   -1 & x < 0\\
   -0 & x = -0\\
   \mathit{NaN} & x = \mathit{NaN}\\
   +0 & x = +0\\
   1 & x > 0
-  \end{cases}`.
+  \end{cases}`
+
+  For signed integer inputs, returns
+  :math:`\mathrm{sign}(x) = \begin{cases}
+  -1 & x < 0\\
+  0 & x = 0\\
+  1 & x > 0
+  \end{cases}`
+
+  For complex inputs, returns the complex phase, i.e.
+  :math:`\mathrm{sign}(x) = \frac{x}{|x|}`.
   """
   return sign_p.bind(x)
 
@@ -1531,9 +1542,10 @@ def unop_dtype_rule(result_dtype, accepted_dtypes, name, aval, **kwargs):
   return result_dtype(aval.dtype)
 
 
-def unop(result_dtype, accepted_dtypes, name):
+def unop(result_dtype, accepted_dtypes, name, translation_rule=None):
   dtype_rule = partial(unop_dtype_rule, result_dtype, accepted_dtypes, name)
-  prim = standard_primitive(_attrgetter('shape'), dtype_rule, name)
+  prim = standard_primitive(_attrgetter('shape'), dtype_rule, name,
+                            translation_rule=translation_rule)
   batching.defvectorized(prim)
   masking.defvectorized(prim)
   return prim
@@ -1623,7 +1635,17 @@ _any = _int | _float | _complex | _bool
 neg_p = standard_unop(_num, 'neg')
 ad.deflinear(neg_p, lambda t: [neg(t)])
 
-sign_p = standard_unop(_num, 'sign')
+def _sign_translation_rule(c, x):
+  shape = c.GetShape(x)
+  dtype = shape.numpy_dtype()
+  if dtypes.issubdtype(dtype, onp.unsignedinteger):
+    zero = c.Constant(onp.array(0, dtype=dtype))
+    dims = c.GetShape(x).dimensions()
+    return c.Select(c.Eq(x, zero), c.Broadcast(zero, dims),
+                    c.Broadcast(c.Constant(onp.array(1, dtype=dtype)), dims))
+  return c.Sign(x)
+
+sign_p = standard_unop(_num, 'sign', translation_rule=_sign_translation_rule)
 ad.defjvp_zero(sign_p)
 
 nextafter_p = standard_binop(

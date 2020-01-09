@@ -62,6 +62,7 @@ complex_dtypes = list(jtu.supported_dtypes().intersection(
     {onp.complex64, onp.complex128}))
 inexact_dtypes = float_dtypes + complex_dtypes
 int_dtypes = list(jtu.supported_dtypes().intersection({onp.int32, onp.int64}))
+uint_dtypes = list(jtu.supported_dtypes().intersection({onp.uint32, onp.uint64}))
 bool_dtypes = [onp.bool_]
 default_dtypes = float_dtypes + int_dtypes
 all_dtypes = float_dtypes + complex_dtypes + int_dtypes + bool_dtypes
@@ -77,7 +78,7 @@ def op_record(op, nargs, dtypes, rng_factory, tol=None):
 
 LAX_OPS = [
     op_record("neg", 1, default_dtypes + complex_dtypes, jtu.rand_small),
-    op_record("sign", 1, default_dtypes, jtu.rand_small),
+    op_record("sign", 1, default_dtypes + uint_dtypes, jtu.rand_small),
     op_record("floor", 1, float_dtypes, jtu.rand_small),
     op_record("ceil", 1, float_dtypes, jtu.rand_small),
     op_record("round", 1, float_dtypes, jtu.rand_default),
