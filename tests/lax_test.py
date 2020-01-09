@@ -489,6 +489,16 @@ class LaxTest(jtu.JaxTestCase):
 
   # TODO(mattjj): test conv_general_dilated against numpy
 
+  def testConv0DIsDot(self):
+    rng = jtu.rand_default()
+    def args_maker():
+      return [rng((10, 5), onp.float32), rng((5, 7), onp.float32)]
+    jnp_fun = partial(lax.conv_general_dilated, window_strides=(),
+                      padding='VALID', dimension_numbers=('NC', 'IO', 'NC'))
+    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(jnp_fun, onp.dot, args_maker)
+
+
   @staticmethod
   def _conv_transpose_via_grad(data, kernel, strides, padding,
                                rhs_dilation=None, dimension_numbers=None):

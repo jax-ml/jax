@@ -4331,7 +4331,8 @@ def conv_shape_tuple(lhs_shape, rhs_shape, strides, pads):
     msg = "Wrong number of explicit pads for convolution: expected {}, got {}."
     raise TypeError(msg.format(len(lhs_shape) - 2, len(pads)))
 
-  lhs_padded = onp.add(lhs_shape[2:], onp.add(*zip(*pads)))
+  lhs_padded = onp.add(lhs_shape[2:], onp.sum(onp.array(pads).reshape(-1, 2),
+                                              axis=1))
   out_space = onp.floor_divide(
       onp.subtract(lhs_padded, rhs_shape[2:]), strides) + 1
   out_space = onp.maximum(0, out_space)
