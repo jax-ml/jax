@@ -60,6 +60,7 @@ float_dtypes = list(jtu.supported_dtypes().intersection(
   {lnp.bfloat16, onp.float16, onp.float32, onp.float64}))
 complex_dtypes = [onp.complex64, onp.complex128]
 int_dtypes = [onp.int32, onp.int64]
+uint_dtypes = [onp.uint32, onp.uint64]
 unsigned_dtypes = [onp.uint32, onp.uint64]
 bool_dtypes = [onp.bool_]
 default_dtypes = float_dtypes + int_dtypes
@@ -188,6 +189,10 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("fix", 1, float_dtypes, all_shapes, jtu.rand_default, []),
     op_record("floor_divide", 2, number_dtypes, all_shapes, jtu.rand_nonzero,
               ["rev"]),
+    # TODO(phawkins): merge this with the preceding entry after the minimum
+    # Jaxlib version is increased to 0.1.38.
+    op_record("floor_divide", 2, uint_dtypes, all_shapes, jtu.rand_nonzero,
+              ["rev"]),
     op_record("heaviside", 2, default_dtypes, all_shapes, jtu.rand_default, [],
               inexact=True),
     op_record("hypot", 2, default_dtypes, all_shapes, jtu.rand_default, [],
@@ -230,6 +235,8 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("remainder", 2, default_dtypes, all_shapes, jtu.rand_nonzero, [],
               tolerance={onp.float16: 1e-2}),
     op_record("mod", 2, default_dtypes, all_shapes, jtu.rand_nonzero, []),
+    op_record("sign", 1, number_dtypes + uint_dtypes, all_shapes,
+              jtu.rand_some_inf_and_nan, []),
     op_record("sinc", 1, [t for t in number_dtypes if t != lnp.bfloat16],
               all_shapes, jtu.rand_default, ["rev"],
               tolerance={onp.complex64: 1e-5}, inexact=True,
@@ -297,7 +304,8 @@ JAX_OPERATOR_OVERLOADS = [
               tolerance={onp.float32: 2e-4, onp.complex64: 2e-4, onp.complex128: 1e-14}),
     op_record("__mod__", 2, default_dtypes, all_shapes, jtu.rand_nonzero, [],
               tolerance={onp.float16: 1e-1}),
-    op_record("__floordiv__", 2, default_dtypes, all_shapes, jtu.rand_nonzero, []),
+    op_record("__floordiv__", 2, default_dtypes, all_shapes,
+              jtu.rand_nonzero, []),
     op_record("__truediv__", 2, number_dtypes, all_shapes, jtu.rand_nonzero, [],
               inexact=True),
     op_record("__abs__", 1, number_dtypes, all_shapes, jtu.rand_default, []),
@@ -319,7 +327,8 @@ JAX_RIGHT_OPERATOR_OVERLOADS = [
               tolerance={onp.float32: 2e-4, onp.complex64: 1e-3}),
     op_record("__rmod__", 2, default_dtypes, all_shapes, jtu.rand_nonzero, [],
               tolerance={onp.float16: 1e-1}),
-    op_record("__rfloordiv__", 2, default_dtypes, all_shapes, jtu.rand_nonzero, []),
+    op_record("__rfloordiv__", 2, default_dtypes, all_shapes,
+              jtu.rand_nonzero, []),
     op_record("__rtruediv__", 2, number_dtypes, all_shapes, jtu.rand_nonzero, [],
               inexact=True),
     # op_record("__ror__", 2, number_dtypes, all_shapes, jtu.rand_bool, []),
