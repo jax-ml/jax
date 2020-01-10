@@ -189,6 +189,35 @@ class LaxRandomTest(jtu.JaxTestCase):
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckChiSquared(samples, scipy.stats.bernoulli(p).pmf)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "_p={}_{}_{}".format(p, dtype, sample_shape),
+     "p": p, "axis": axis, "dtype": onp.dtype(dtype).name, 'sample_shape': sample_shape}
+    for (p, axis) in [([.25] * 4, -1), ([[.25, .25], [.1, .9]], 1), ([[.25, .1], [.25, .9]], 0)]
+    for sample_shape in [(10000,), (5000, 2)]
+    for dtype in [onp.float32, onp.float64]))
+  def testCategorical(self, p, axis, dtype, sample_shape):
+    key = random.PRNGKey(0)
+    p = onp.array(p, dtype=dtype)
+    logits = onp.log(p) - 42 # test unnormalized
+    shape = sample_shape + tuple(onp.delete(logits.shape, axis))
+    rand = lambda key, p: random.categorical(key, logits, shape=shape, axis=axis)
+    crand = api.jit(rand)
+
+    uncompiled_samples = rand(key, p)
+    compiled_samples = crand(key, p)
+
+    for samples in [uncompiled_samples, compiled_samples]:
+      if axis < 0:
+       axis += len(logits.shape)
+
+      assert samples.shape == shape
+
+      if len(p.shape[:-1]) > 0:
+        for cat_index, p_ in enumerate(p):
+          self._CheckChiSquared(samples[:, cat_index], pmf=lambda x: p_[x])
+      else:
+        self._CheckChiSquared(samples, pmf=lambda x: p[x])
+
   def testBernoulliShape(self):
     key = random.PRNGKey(0)
     x = random.bernoulli(key, onp.array([0.2, 0.3]), shape=(3, 2))
