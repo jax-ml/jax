@@ -87,6 +87,9 @@ new_jaxpr_eqn = JaxprEqn
 
 @total_ordering
 class Var(object):
+  # TODO(frostig,mattjj): We don't override __eq__ or __hash__, so comparison is
+  # by object id, but pretty printing might collide.
+
   def __init__(self, count, suffix):
     self.count = count
     self.suffix = suffix

@@ -307,10 +307,70 @@ def _while_loop_batching_rule(args, dims, cond_nconsts, cond_jaxpr,
   out_bdims = [0 if b else batching.not_mapped for b in carry_bat]
   return outs, out_bdims
 
+def _while_loop_jvp(primals, tangents, cond_nconsts, cond_jaxpr, body_nconsts,
+                    body_jaxpr):
+  nonzeros = [t is not ad_util.zero for t in tangents]
+  cconst_nz, bconst_nz, init_nz = split_list(nonzeros, [cond_nconsts, body_nconsts])
+
+  carry_nz = init_nz
+  for _ in range(1 + len(carry_nz)):
+    nonzeros = bconst_nz + carry_nz
+    body_jvp, nonzeros_out = ad.jvp_jaxpr(
+        body_jaxpr, nonzeros, instantiate=carry_nz)
+    if nonzeros_out == carry_nz:
+      break
+    else:
+      carry_nz = _map(operator.or_, carry_nz, nonzeros_out)
+  else:
+    assert False, "Fixpoint not reached"
+
+  tangents = [ad.instantiate_zeros(x, t) if t is ad_util.zero and nz else t
+              for x, t, nz in zip(primals, tangents, nonzeros)]
+
+  cconst, bconst, init = split_list(primals, [cond_nconsts, body_nconsts])
+  _, bconst_dot, init_dot = split_list(tangents, [cond_nconsts, body_nconsts])
+  bconst_dot = _prune_zeros(bconst_dot)
+  init_dot = _prune_zeros(init_dot)
+
+  num_carry = len(primals) - cond_nconsts - body_nconsts
+
+  body_jvp_rearranged = ad.rearrange_binders(
+      body_jvp,
+      [body_nconsts, num_carry], [len(bconst_dot), len(init_dot)],
+      [num_carry], [len(init_dot)])
+
+  newvar = core.gensym('')
+  invars_aug = (
+      cond_jaxpr.jaxpr.invars + [newvar() for _ in range(len(init_dot))])
+  cond_jaxpr_augmented = core.Jaxpr(cond_jaxpr.jaxpr.constvars,
+                                    cond_jaxpr.jaxpr.freevars,
+                                    invars_aug,
+                                    cond_jaxpr.jaxpr.outvars,
+                                    cond_jaxpr.jaxpr.eqns)
+  in_avals_aug = (cond_jaxpr.in_avals[:cond_nconsts] +
+                  body_jvp_rearranged.in_avals[body_nconsts + len(bconst_dot):])
+  cond_jaxpr_augmented = core.TypedJaxpr(cond_jaxpr_augmented,
+                                         cond_jaxpr.literals,
+                                         in_avals_aug,
+                                         cond_jaxpr.out_avals)
+
+  out = while_p.bind(
+      *(cconst + bconst + bconst_dot + init + init_dot),
+      cond_nconsts=cond_nconsts,
+      cond_jaxpr=cond_jaxpr_augmented,
+      body_nconsts=len(bconst) + len(bconst_dot),
+      body_jaxpr=body_jvp_rearranged)
+
+  out_carry, out_carry_dot = split_list(out, [num_carry])
+  out_tangents = iter(out_carry_dot)
+  out_tangents = [next(out_tangents) if nz else ad_util.zero for nz in nonzeros_out]
+  return out_carry, out_tangents
+
 while_p = lax.Primitive('while')
 while_p.multiple_results = True
 while_p.def_impl(partial(xla.apply_primitive, while_p))
 while_p.def_abstract_eval(_while_loop_abstract_eval)
+ad.primitive_jvps[while_p] = _while_loop_jvp
 xla.initial_style_translations[while_p] = _while_loop_translation_rule
 batching.primitive_batchers[while_p] = _while_loop_batching_rule
 
