@@ -133,8 +133,8 @@ def pshuffle(x, axis_name, perm):
   """
   if set(perm) != set(range(len(perm))):
     raise AssertionError(
-      "Perm {} does not represent a real permutation".format(perm))
-  return ppermute(x, axis_name, zip(perm, range(len(perm))))
+      "Given `perm` does not represent a real permutation: {}".format(perm))
+  return ppermute(x, axis_name, list(zip(perm, range(len(perm)))))
 
 
 def pswapaxes(x, axis_name, axis):

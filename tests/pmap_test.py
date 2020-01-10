@@ -355,6 +355,31 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   @jtu.skip_on_devices("cpu", "gpu")
+  def testCollectivePermuteCyclicGradWithPShuffle(self):
+    device_count = xla_bridge.device_count()
+    shift_right = [(i - 1) % device_count for i in range(device_count)]
+    f = lambda x: lax.pshuffle(x, perm=shift_right, axis_name='i')
+    y = onp.pi + onp.arange(device_count, dtype=onp.float32)
+    g = lambda x: np.sum(y * pmap(f, 'i')(x))
+
+    x = onp.arange(device_count, dtype=onp.float32)
+    ans = grad(g)(x)
+    expected = onp.roll(onp.pi + onp.arange(device_count), 1)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @jtu.skip_on_devices("cpu", "gpu")
+  def testPShuffleWithBadPerm(self):
+    device_count = xla_bridge.device_count()
+    bad_perm = list(range(device_count))
+    bad_perm[0] = 1
+    f = lambda x: lax.pshuffle(x, perm=bad_perm, axis_name='i')
+    g = lambda: pmap(f, "i")(onp.arange(device_count))
+    self.assertRaisesRegex(
+      AssertionError, 
+      "Given `perm` does not represent a real permutation: .*", 
+      g)
+
+  @jtu.skip_on_devices("cpu", "gpu")
   def testPpermuteWithZipObject(self):
     # https://github.com/google/jax/issues/1703
     num_devices = xla_bridge.device_count()
