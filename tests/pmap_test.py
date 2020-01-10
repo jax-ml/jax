@@ -361,7 +361,6 @@ class PmapTest(jtu.JaxTestCase):
     f = lambda x: lax.pshuffle(x, perm=shift_right, axis_name='i')
     y = onp.pi + onp.arange(device_count, dtype=onp.float32)
     g = lambda x: np.sum(y * pmap(f, 'i')(x))
-
     x = onp.arange(device_count, dtype=onp.float32)
     ans = grad(g)(x)
     expected = onp.roll(onp.pi + onp.arange(device_count), 1)
@@ -376,7 +375,7 @@ class PmapTest(jtu.JaxTestCase):
     g = lambda: pmap(f, "i")(onp.arange(device_count))
     self.assertRaisesRegex(
       AssertionError, 
-      "Given `perm` does not represent a real permutation: .*", 
+      "Given `perm` does not represent a real permutation: {}".format(bad_perm), 
       g)
 
   @jtu.skip_on_devices("cpu", "gpu")
