@@ -489,6 +489,7 @@ class LaxTest(jtu.JaxTestCase):
 
   # TODO(mattjj): test conv_general_dilated against numpy
 
+  @jtu.skip_on_devices("gpu") # b/147488740
   def testConv0DIsDot(self):
     rng = jtu.rand_default()
     def args_maker():
