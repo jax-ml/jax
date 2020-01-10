@@ -354,8 +354,8 @@ class PmapTest(jtu.JaxTestCase):
     expected = onp.roll(onp.pi + onp.arange(device_count), 1)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @jtu.skip_on_devices("cpu", "gpu")
-  def testCollectivePermuteCyclicGradWithPShuffle(self):
+  @jtu.skip_on_devices("cpu")
+  def testCollectivePermuteCyclicWithPShuffle(self):
     device_count = xla_bridge.device_count()
     values = onp.arange(device_count)
     shift_right = [(i - 1) % device_count for i in range(device_count)]
@@ -364,7 +364,7 @@ class PmapTest(jtu.JaxTestCase):
     ans = onp.asarray(pmap(f, "i")(values))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @jtu.skip_on_devices("cpu", "gpu")
+  @jtu.skip_on_devices("cpu")
   def testPShuffleWithBadPerm(self):
     device_count = xla_bridge.device_count()
     bad_perm = list(range(device_count))
