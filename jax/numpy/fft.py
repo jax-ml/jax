@@ -121,6 +121,29 @@ def fftfreq(n, d=1.0):
   return k / (d * n)
 
 
+@_wraps(onp.fft.rfftfreq)
+def rfftfreq(n, d=1.0):
+  if isinstance(n, list) or isinstance(n, tuple):
+    raise ValueError(
+          "The n argument of jax.np.fft.rfftfreq only takes an int. "
+          "Got n = %s." % list(n))
+
+  elif isinstance(d, list) or isinstance(d, tuple):
+    raise ValueError(
+          "The d argument of jax.np.fft.rfftfreq only takes a single value. "
+          "Got d = %s." % list(d))
+
+  if n % 2 == 0:
+    # k[0: n // 2 - 1] = np.arange(0, n // 2 - 1)
+    k = np.arange(0, n // 2 + 1)
+
+  else:
+    # k[0: (n - 1) // 2] = np.arange(0, (n - 1) // 2)
+    k = np.arange(0, (n - 1) // 2 + 1)
+
+  return k / (d * n)
+
+
 @_wraps(onp.fft.fftn)
 def fftn(a, s=None, axes=None, norm=None):
   return _fft_core('fftn', xla_client.FftType.FFT, a, s, axes, norm)
