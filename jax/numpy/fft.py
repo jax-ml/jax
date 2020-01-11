@@ -134,11 +134,9 @@ def rfftfreq(n, d=1.0):
           "Got d = %s." % list(d))
 
   if n % 2 == 0:
-    # k[0: n // 2 - 1] = np.arange(0, n // 2 - 1)
     k = np.arange(0, n // 2 + 1)
 
   else:
-    # k[0: (n - 1) // 2] = np.arange(0, (n - 1) // 2)
     k = np.arange(0, (n - 1) // 2 + 1)
 
   return k / (d * n)
