@@ -113,6 +113,30 @@ def ppermute(x, axis_name, perm):
   """
   return ppermute_p.bind(x, axis_name=axis_name, perm=tuple(perm))
 
+def pshuffle(x, axis_name, perm):
+  """Perform a collective shuffle according to the permutation ``perm``.
+
+  This function is a simple wrapper around jax.lax.ppermute.
+
+  Args:
+    x: array with a mapped axis named ``axis_name``.
+    axis_name: hashable Python object used to name a pmapped axis (see the
+      ``pmap`` docstring for more details).
+    perm: list of of ints, representing the new order of the source indicies
+      that encode how the mapped axis named ``axis_name`` should be
+      shuffled. The integer values are treated as indices into the mapped axis
+      ``axis_name``. Every int between 0 and ``len(perm)-1`` should be included.
+
+  Returns:
+    An array with the same shape as ``x`` with slices along the axis
+    ``axis_name`` gathered from ``x`` according to the permutation ``perm``.
+  """
+  if set(perm) != set(range(len(perm))):
+    raise AssertionError(
+      "Given `perm` does not represent a real permutation: {}".format(perm))
+  return ppermute(x, axis_name, list(zip(perm, range(len(perm)))))
+
+
 def pswapaxes(x, axis_name, axis):
   """Swap the pmapped axis ``axis_name`` with the unmapped axis ``axis``.
 
