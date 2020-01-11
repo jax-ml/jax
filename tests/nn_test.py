@@ -30,6 +30,7 @@ from jax.test_util import check_grads
 from jax import nn
 from jax import random
 import jax
+import jax.numpy as np
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -37,7 +38,8 @@ config.parse_flags_with_absl()
 class NNFunctionsTest(jtu.JaxTestCase):
 
   def testSoftplusGrad(self):
-    check_grads(nn.softplus, (1e-8,), 4)
+    check_grads(nn.softplus, (1e-8,), 4,
+                rtol=1e-2 if jtu.device_under_test() == "tpu" else None)
 
   def testSoftplusValue(self):
     val = nn.softplus(89.)
@@ -49,6 +51,16 @@ class NNFunctionsTest(jtu.JaxTestCase):
   def testEluValue(self):
     val = nn.elu(1e4)
     self.assertAllClose(val, 1e4, check_dtypes=False)
+
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testEluMemory(self):
+    # see https://github.com/google/jax/pull/1640
+    jax.make_jaxpr(nn.elu)(np.ones((10 ** 12,)))  # don't oom
+
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testHardTanhMemory(self):
+    # see https://github.com/google/jax/pull/1640
+    jax.make_jaxpr(nn.hard_tanh)(np.ones((10 ** 12,)))  # don't oom
 
 InitializerRecord = collections.namedtuple(
   "InitializerRecord",
@@ -70,7 +82,8 @@ INITIALIZER_RECS = [
     initializer_record("glorot_uniform", nn.initializers.glorot_uniform()),
     initializer_record("lecun_normal", nn.initializers.lecun_normal()),
     initializer_record("lecun_uniform", nn.initializers.lecun_uniform()),
-    initializer_record("orthogonal", nn.initializers.orthogonal(), 2, 2)
+    initializer_record("orthogonal", nn.initializers.orthogonal(), 2, 2),
+    initializer_record("orthogonal", nn.initializers.delta_orthogonal(), 4, 4)
 ]
 
 class NNInitializersTest(jtu.JaxTestCase):

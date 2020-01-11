@@ -39,6 +39,7 @@ py_library(
             "**/*_test.py",
         ],
     ),
+    srcs_version = "PY3",
     deps = ["@org_tensorflow//tensorflow/compiler/xla/python:xla_client"],
 )
 
@@ -75,5 +76,11 @@ py_library(
 py_library(
     name = "vectorize",
     srcs = ["experimental/vectorize.py"],
+    deps = [":jax"],
+)
+
+py_library(
+    name = "loops",
+    srcs = ["experimental/loops.py"],
     deps = [":jax"],
 )

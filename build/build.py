@@ -176,6 +176,10 @@ build:mkl_open_source_only --define=tensorflow_mkldnn_contraction_kernel=1
 
 # Sets the default Apple platform to macOS.
 build --apple_platform_type=macos
+build --macos_minimum_os=10.9
+
+# Make Bazel print out all options from rc files.
+build --announce_rc
 
 # Disable enabled-by-default TensorFlow features that we don't care about.
 build --define=no_aws_support=true
@@ -334,10 +338,12 @@ def main():
     config_args += ["--config=mkl_open_source_only"]
   if args.enable_cuda:
     config_args += ["--config=cuda"]
-  shell(
-    [bazel_path] + args.bazel_startup_options +
+    config_args += ["--define=xla_python_enable_gpu=true"]
+  command = ([bazel_path] + args.bazel_startup_options +
     ["run", "--verbose_failures=true"] + config_args +
     [":install_xla_in_source_tree", os.getcwd()])
+  print(" ".join(command))
+  shell(command)
   shell([bazel_path, "shutdown"])
 
 

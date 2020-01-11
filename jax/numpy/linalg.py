@@ -20,16 +20,17 @@ from functools import partial
 
 import numpy as onp
 import warnings
+import textwrap
 
 from jax import jit
 from .. import lax
 from .. import lax_linalg
+from .. import dtypes
 from .lax_numpy import _not_implemented
 from .lax_numpy import _wraps
 from . import lax_numpy as np
 from ..api import custom_transforms, defjvp
 from ..util import get_module_functions
-from ..lib import xla_bridge
 
 
 _T = lambda x: np.swapaxes(x, -1, -2)
@@ -38,9 +39,9 @@ _T = lambda x: np.swapaxes(x, -1, -2)
 def _promote_arg_dtypes(*args):
   """Promotes `args` to a common inexact type."""
   def _to_inexact_type(type):
-    return type if np.issubdtype(type, np.inexact) else np.float64
+    return type if np.issubdtype(type, np.inexact) else np.float_
   inexact_types = [_to_inexact_type(np._dtype(arg)) for arg in args]
-  dtype = xla_bridge.canonicalize_dtype(np.result_type(*inexact_types))
+  dtype = dtypes.canonicalize_dtype(np.result_type(*inexact_types))
   args = [lax.convert_element_type(arg, dtype) for arg in args]
   if len(args) == 1:
     return args[0]
@@ -136,6 +137,32 @@ def eigvalsh(a, UPLO='L'):
   return w
 
 
+@_wraps(onp.linalg.pinv, lax_description=textwrap.dedent("""\
+    It differs only in default value of `rcond`. In `numpy.linalg.pinv`, the
+    default `rcond` is `1e-15`. Here the default is
+    `10. * max(num_rows, num_cols) * np.finfo(dtype).eps`.
+    """))
+def pinv(a, rcond=None):
+  # ported from https://github.com/numpy/numpy/blob/v1.17.0/numpy/linalg/linalg.py#L1890-L1979
+  a = np.conj(a)
+  # copied from https://github.com/tensorflow/probability/blob/master/tensorflow_probability/python/math/linalg.py#L442
+  if rcond is None:
+      max_rows_cols = max(a.shape[-2:])
+      rcond = 10. * max_rows_cols * np.finfo(a.dtype).eps
+  rcond = np.asarray(rcond)
+  u, s, v = svd(a, full_matrices=False)
+  # Singular values less than or equal to ``rcond * largest_singular_value`` 
+  # are set to zero.
+  cutoff = rcond[..., np.newaxis] * np.amax(s, axis=-1, keepdims=True)
+  large = s > cutoff
+  s = np.divide(1, s)
+  s = np.where(large, s, 0)
+  vT = np.swapaxes(v, -1, -2)
+  uT = np.swapaxes(u, -1, -2)
+  res = np.matmul(vT, np.multiply(s[..., np.newaxis], uT))
+  return lax.convert_element_type(res, a.dtype)
+
+
 @_wraps(onp.linalg.inv)
 def inv(a):
   if np.ndim(a) < 2 or a.shape[-1] != a.shape[-2]:
@@ -181,8 +208,10 @@ def _norm(x, ord, axis, keepdims):
       # special case too.
       return np.sum(np.abs(x), axis=axis, keepdims=keepdims)
     else:
-      return np.power(np.sum(np.abs(x) ** ord, axis=axis, keepdims=keepdims),
-                      1. / ord)
+      abs_x = np.abs(x)
+      ord = lax._const(abs_x, ord)
+      out = np.sum(abs_x ** ord, axis=axis, keepdims=keepdims)
+      return np.power(out, 1. / ord)
 
   elif num_axes == 2:
     row_axis, col_axis = axis

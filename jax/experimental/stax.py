@@ -26,7 +26,6 @@ import itertools
 import operator as op
 
 import numpy as onp
-from six.moves import reduce
 
 from jax import lax
 from jax import random
@@ -87,7 +86,7 @@ def GeneralConv(dimension_numbers, out_chan, filter_shape,
   def apply_fun(params, inputs, **kwargs):
     W, b = params
     return lax.conv_general_dilated(inputs, W, strides, padding, one, one,
-                                    dimension_numbers) + b
+                                    dimension_numbers=dimension_numbers) + b
   return init_fun, apply_fun
 Conv = functools.partial(GeneralConv, ('NHWC', 'HWIO', 'NHWC'))
 
@@ -115,7 +114,7 @@ def GeneralConvTranspose(dimension_numbers, out_chan, filter_shape,
   def apply_fun(params, inputs, **kwargs):
     W, b = params
     return lax.conv_transpose(inputs, W, strides, padding,
-                              dimension_numbers) + b
+                              dimension_numbers=dimension_numbers) + b
   return init_fun, apply_fun
 Conv1DTranspose = functools.partial(GeneralConvTranspose, ('NHC', 'HIO', 'NHC'))
 ConvTranspose = functools.partial(GeneralConvTranspose,
@@ -167,18 +166,24 @@ Gelu = elementwise(gelu)
 
 
 def _pooling_layer(reducer, init_val, rescaler=None):
-  def PoolingLayer(window_shape, strides=None, padding='VALID'):
+  def PoolingLayer(window_shape, strides=None, padding='VALID', spec='NHWC'):
     """Layer construction function for a pooling layer."""
     strides = strides or (1,) * len(window_shape)
     rescale = rescaler(window_shape, strides, padding) if rescaler else None
-    dims = (1,) + window_shape + (1,)  # NHWC
-    strides = (1,) + strides + (1,)
+
+    non_spatial_axes = spec.index('N'), spec.index('C')
+    for i in sorted(non_spatial_axes):
+      window_shape = window_shape[:i] + (1,) + window_shape[i:]
+      strides = strides[:i] + (1,) + strides[i:]
+
     def init_fun(rng, input_shape):
-      out_shape = lax.reduce_window_shape_tuple(input_shape, dims, strides, padding)
+      out_shape = lax.reduce_window_shape_tuple(input_shape, window_shape,
+                                                strides, padding)
       return out_shape, ()
     def apply_fun(params, inputs, **kwargs):
-      out = lax.reduce_window(inputs, init_val, reducer, dims, strides, padding)
-      return rescale(out, inputs) if rescale else out
+      out = lax.reduce_window(inputs, init_val, reducer, window_shape,
+                              strides, padding)
+      return rescale(out, inputs, spec) if rescale else out
     return init_fun, apply_fun
   return PoolingLayer
 MaxPool = _pooling_layer(lax.max, -np.inf)
@@ -186,10 +191,17 @@ SumPool = _pooling_layer(lax.add, 0.)
 
 
 def _normalize_by_window_size(dims, strides, padding):
-  def rescale(outputs, inputs):
-    one = np.ones(inputs.shape[1:-1], dtype=inputs.dtype)
+  def rescale(outputs, inputs, spec):
+    non_spatial_axes = spec.index('N'), spec.index('C')
+    spatial_shape = tuple(inputs.shape[i]
+                          for i in range(inputs.ndim)
+                          if i not in non_spatial_axes)
+    one = np.ones(spatial_shape, dtype=inputs.dtype)
     window_sizes = lax.reduce_window(one, 0., lax.add, dims, strides, padding)
-    return outputs / window_sizes[..., np.newaxis]
+    for i in sorted(non_spatial_axes):
+      window_sizes = np.expand_dims(window_sizes, i)
+
+    return outputs / window_sizes
   return rescale
 AvgPool = _pooling_layer(lax.add, 0., _normalize_by_window_size)
 
@@ -197,7 +209,7 @@ AvgPool = _pooling_layer(lax.add, 0., _normalize_by_window_size)
 def Flatten():
   """Layer construction function for flattening all but the leading dim."""
   def init_fun(rng, input_shape):
-    output_shape = input_shape[0], reduce(op.mul, input_shape[1:], 1)
+    output_shape = input_shape[0], functools.reduce(op.mul, input_shape[1:], 1)
     return output_shape, ()
   def apply_fun(params, inputs, **kwargs):
     return np.reshape(inputs, (inputs.shape[0], -1))

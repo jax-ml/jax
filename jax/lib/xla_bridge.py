@@ -23,28 +23,31 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from functools import partial
 import os
 import warnings
-from distutils.util import strtobool
 
 from absl import logging
 
 from ..config import flags
 from .. import util
+from .. import dtypes
 import numpy as onp  # 'onp' rather than 'np' to distinguish from autograd.numpy
-import six
 import threading
 
+try:
+  from . import tpu_client
+except ImportError:
+  tpu_client = None
 from . import version
 from . import xla_client
 
 FLAGS = flags.FLAGS
-flags.DEFINE_bool('jax_enable_x64',
-                  strtobool(os.getenv('JAX_ENABLE_X64', 'False')),
-                  'Enable 64-bit types to be used.')
+
 flags.DEFINE_string(
     'jax_xla_backend', 'xla',
-    'Default is "xla" for the XLA service directly.')
+    'Default is "xla" for the XLA service directly, '
+    'or "tpu_driver" for using high-performance access to Cloud TPU hardware.')
 flags.DEFINE_string(
     'jax_backend_target', 'local',
     'Either "local" or "rpc:address" to connect to a remote service target.')
@@ -81,7 +84,9 @@ def get_compile_options(num_replicas=None, device_assignment=None):
       msg = "device_assignment does not match num_replicas: {} vs {}."
       raise ValueError(msg.format(device_assignment, num_replicas))
     compile_options = compile_options or xla_client.CompileOptions()
-    device_assignment = onp.array(device_assignment)[:, None]
+    device_assignment = onp.array(device_assignment)
+    if device_assignment.ndim == 1:
+      device_assignment = device_assignment[:, None]
     device_assignment = xla_client.DeviceAssignment.create(device_assignment)
     assert num_replicas is None or device_assignment.replica_count() == num_replicas
     compile_options.device_assignment = device_assignment
@@ -118,10 +123,34 @@ def _get_local_backend(platform=None):
 
 register_backend('xla', _get_local_backend)
 
+# memoize the TPU driver to be consistent with xla_client behavior
+_tpu_backend = None
+
+def _get_tpu_driver_backend(platform):
+  del platform
+  global _tpu_backend
+  if _tpu_backend is None:
+    backend_target = FLAGS.jax_backend_target
+    if backend_target is None:
+      raise ValueError('When using TPU Driver as the backend, you must specify '
+                       '--jax_backend_target=<hostname>:8470.')
+    _tpu_backend = tpu_client.TpuBackend.create(worker=backend_target)
+  return _tpu_backend
+
+
+if tpu_client:
+  register_backend('tpu_driver', _get_tpu_driver_backend)
+
+
 _backend_lock = threading.Lock()
 
 @util.memoize
 def get_backend(platform=None):
+  # TODO(mattjj,skyewm): remove this input polymorphism after we clean up how
+  # 'backend' values are handled
+  if isinstance(platform, xla_client.Backend):
+    return platform
+
   with _backend_lock:
     backend = _backends.get(FLAGS.jax_xla_backend)
     if backend is None:
@@ -130,16 +159,22 @@ def get_backend(platform=None):
     return backend(platform)
 
 
+def get_device_backend(device=None):
+  """Returns the Backend associated with `device`, or the default Backend."""
+  platform = device.platform if device else None
+  return get_backend(platform)
+
+
 def device_count(backend=None):
   """Returns the total number of devices.
 
-  On most platforms, this is the same as `local_device_count()`. However, on
+  On most platforms, this is the same as ``local_device_count()``. However, on
   multi-host platforms, this will return the total number of devices across all
   hosts.
 
   Args:
     backend: This is an experimental feature and the API is likely to change.
-      Optional, a string representing the xla backend. 'cpu','gpu', or 'tpu'.
+      Optional, a string representing the xla backend. 'cpu', 'gpu', or 'tpu'.
 
   Returns:
     Number of devices.
@@ -157,12 +192,12 @@ def devices(backend=None):
 
   Each device is represented by a subclass of Device (e.g. CpuDevice,
   GpuDevice). The length of the returned list is equal to
-  `device_count()`. Local devices can be identified by comparing
-  `Device.host_id` to `host_id()`.
+  ``device_count()``. Local devices can be identified by comparing
+  ``Device.host_id`` to ``host_id()``.
 
   Args:
     backend: This is an experimental feature and the API is likely to change.
-      Optional, a string representing the xla backend. 'cpu','gpu', or 'tpu'.
+      Optional, a string representing the xla backend. 'cpu', 'gpu', or 'tpu'.
 
   Returns:
     List of Device subclasses.
@@ -185,7 +220,7 @@ def host_id(backend=None):
 
   Args:
     backend: This is an experimental feature and the API is likely to change.
-      Optional, a string representing the xla backend. 'cpu','gpu', or 'tpu'.
+      Optional, a string representing the xla backend. 'cpu', 'gpu', or 'tpu'.
 
   Returns:
     Integer host ID.
@@ -199,6 +234,7 @@ def host_ids(backend=None):
 
 
 def host_count(backend=None):
+  """Returns the number of hosts."""
   return len(host_ids(backend))
 
 
@@ -207,31 +243,12 @@ def host_count(backend=None):
 @util.memoize
 def dtype_to_etype(dtype):
   """Convert from dtype to canonical etype (reading FLAGS.jax_enable_x64)."""
-  return xla_client.dtype_to_etype(canonicalize_dtype(dtype))
-
-
-_dtype_to_32bit_dtype = {
-    onp.dtype('int64'): onp.dtype('int32'),
-    onp.dtype('uint64'): onp.dtype('uint32'),
-    onp.dtype('float64'): onp.dtype('float32'),
-    onp.dtype('complex128'): onp.dtype('complex64'),
-}
-
-
-@util.memoize
-def canonicalize_dtype(dtype):
-  """Convert from a dtype to a canonical dtype based on FLAGS.jax_enable_x64."""
-  dtype = onp.dtype(dtype)
-
-  if FLAGS.jax_enable_x64:
-    return dtype
-  else:
-    return _dtype_to_32bit_dtype.get(dtype, dtype)
+  return xla_client.dtype_to_etype(dtypes.canonicalize_dtype(dtype))
 
 
 @util.memoize
 def supported_numpy_dtypes():
-  return {canonicalize_dtype(dtype)
+  return {dtypes.canonicalize_dtype(dtype)
           for dtype in xla_client.XLA_ELEMENT_TYPE_TO_DTYPE.values()}
 
 
@@ -239,7 +256,8 @@ def supported_numpy_dtypes():
 def normalize_to_xla_dtypes(val):
   """Normalize dtypes in a value."""
   if hasattr(val, '__array__') or onp.isscalar(val):
-    return onp.asarray(val, dtype=canonicalize_dtype(onp.result_type(val)))
+    return onp.asarray(val,
+                       dtype=dtypes.canonicalize_dtype(dtypes.result_type(val)))
   elif isinstance(val, (tuple, list)):
     return tuple(normalize_to_xla_dtypes(x) for x in val)
   raise TypeError('Can\'t convert to XLA: {}'.format(val))
@@ -351,8 +369,11 @@ def _scalar_constant_handler(c, val, canonicalize_types=True):
 for scalar_type in [onp.int8, onp.int16, onp.int32, onp.int64,
                     onp.uint8, onp.uint16, onp.uint32, onp.uint64,
                     onp.float16, onp.float32, onp.float64, onp.float128,
-                    float, int, bool, onp.bool_, onp.longlong]:
+                    onp.bool_, onp.longlong]:
   register_constant_handler(scalar_type, _scalar_constant_handler)
 
-if six.PY2:
-  register_constant_handler(long, _scalar_constant_handler) # noqa: F821
+def _python_scalar_handler(dtype, c, val, canonicalize_dtypes=True):
+  return c.NumpyArrayConstant(dtype.type(val))
+
+for ptype, dtype in dtypes.python_scalar_dtypes.items():
+  register_constant_handler(ptype, partial(_python_scalar_handler, dtype))

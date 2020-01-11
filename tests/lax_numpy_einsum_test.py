@@ -23,6 +23,7 @@ import numpy as onp
 from absl.testing import absltest
 from absl.testing import parameterized
 
+from jax import lax
 import jax.numpy as np
 import jax.test_util as jtu
 
@@ -38,7 +39,7 @@ class EinsumTest(jtu.JaxTestCase):
 
   def _check(self, s, *ops):
     a = onp.einsum(s, *ops)
-    b = np.einsum(s, *ops)
+    b = np.einsum(s, *ops, precision=lax.Precision.HIGHEST)
     self.assertAllClose(a, b, atol=1e-4, rtol=1e-4, check_dtypes=True)
 
   def test_three_operands_1(self):
@@ -223,7 +224,8 @@ class EinsumTest(jtu.JaxTestCase):
 
   # these tests are based on https://github.com/dask/dask/pull/3412/files
   @parameterized.named_parameters(
-      {"testcase_name": "_{}".format(einstr), "einstr": einstr}
+      {"testcase_name": "_{}_dtype={}".format(einstr, dtype.__name__),
+      "einstr": einstr, "dtype": dtype}
       for einstr in [
           'abc,bad->abcd',
           'abcdef,bcdfg->abcdeg',
@@ -254,9 +256,10 @@ class EinsumTest(jtu.JaxTestCase):
           'aab,bcc->ac',
           'fdf,cdd,ccd,afe->ae',
           'fff,fae,bef,def->abd',
-      ])
-  def test_from_dask(self, einstr):
-    r = rng()
+      ]
+      for dtype in [np.float32, np.int32, np.complex64, np.bool_])
+  def test_from_dask(self, einstr, dtype):
+    r = jtu.rand_default()
     if '->' in einstr:
       input_str, result_names = einstr.split('->')
     else:
@@ -267,7 +270,7 @@ class EinsumTest(jtu.JaxTestCase):
     shapes = defaultdict(lambda: next(dims))
     input_shapes = [tuple(shapes[c] for c in names.replace('...', '01'))
                     for names in input_names]
-    operands = [r.randn(*shape) for shape in input_shapes]
+    operands = [r(shape, dtype) for shape in input_shapes]
 
     self._check(einstr, *operands)
 
@@ -311,8 +314,9 @@ class EinsumTest(jtu.JaxTestCase):
         L[n,c] = s
 
     path = np.einsum_path('ntk,kd,dc->nc', S, W, V, optimize='optimal')[0]
+    rtol = 1e-2 if jtu.device_under_test() == "tpu" else None
     self.assertAllClose(L, np.einsum('ntk,kd,dc->nc', S, W, V, optimize=path),
-                        check_dtypes=False)
+                        check_dtypes=False, rtol=rtol)
 
 
 if __name__ == '__main__':

@@ -25,18 +25,27 @@ from __future__ import division
 from __future__ import print_function
 
 from functools import partial
+import itertools
 
 import numpy as onp
 
 from . import lax
 from . import numpy as np
 from . import tree_util
+from . import dtypes
 from .api import custom_transforms, defjvp, jit, vmap
 from .numpy.lax_numpy import _constant_like, asarray, stack
 from jax.lib import xla_bridge
+from jax.lib import cuda_prng
 from jax import core
+from jax import abstract_arrays
+from jax.numpy.linalg import cholesky
 from jax.scipy.special import logit
-from jax.scipy.linalg import cholesky
+from jax.interpreters import ad
+from jax.interpreters import batching
+from jax.interpreters import partial_eval as pe
+from jax.interpreters import xla
+from jax.util import prod
 
 
 def PRNGKey(seed):
@@ -58,8 +67,8 @@ def PRNGKey(seed):
     # when jax_enable_x64=False and we don't want to drop the top 32 bits
     k1 = convert(onp.bitwise_and(onp.right_shift(seed, 32), 0xFFFFFFFF))
   else:
-    k1 = convert(lax.shift_right_logical(seed, 32))
-  k2 = convert(lax.bitwise_and(seed, 0xFFFFFFFF))
+    k1 = convert(lax.shift_right_logical(seed, lax._const(seed, 32)))
+  k2 = convert(np.bitwise_and(seed, 0xFFFFFFFF))
   return lax.concatenate([k1, k2], 0)
 
 def _is_prng_key(key):
@@ -75,7 +84,7 @@ def _is_prng_key(key):
 def _make_rotate_left(dtype):
   if not np.issubdtype(dtype, onp.integer):
     raise TypeError("_rotate_left only accepts integer dtypes.")
-  nbits = onp.array(onp.iinfo(dtype).bits, dtype)
+  nbits = onp.array(np.iinfo(dtype).bits, dtype)
 
   def _rotate_left(x, d):
     if lax.dtype(d) != lax.dtype(x):
@@ -91,9 +100,18 @@ def _bit_stats(bits):
 
 ### hash function and split
 
+def _threefry2x32_abstract_eval(*args):
+  if any(a.dtype != np.uint32 for a in args):
+    raise TypeError("Arguments to threefry2x32 must have uint32 type, got {}"
+                    .format(args))
+  if all(isinstance(arg, abstract_arrays.ShapedArray) for arg in args):
+    shape = lax._broadcasting_shape_rule(*args)
+    aval = abstract_arrays.ShapedArray(shape, np.dtype(np.uint32))
+  else:
+    aval = abstract_arrays.UnshapedArray(np.dtype(np.uint32))
+  return (aval,) * 2
 
-@jit
-def threefry_2x32(keypair, count):
+def _threefry2x32_lowering(key1, key2, x1, x2, use_rolled_loops=True):
   """Apply the Threefry 2x32 hash.
 
   Args:
@@ -103,13 +121,8 @@ def threefry_2x32(keypair, count):
   Returns:
     An array of dtype uint32 with the same shape as `count`.
   """
-  # Based on ThreeFry2x32 by phawkins@ in //.../xla/client/lib/prng.cc
-  key1, key2 = keypair
-  if not lax.dtype(key1) == lax.dtype(key2) == lax.dtype(count) == onp.uint32:
-    msg = "threefry_2x32 requires uint32 arguments, got {}"
-    raise TypeError(msg.format([lax.dtype(x) for x in [key1, key2, count]]))
-
-  rotate_left = _make_rotate_left(lax.dtype(count))
+  x = [x1, x2]
+  rotate_left = _make_rotate_left(onp.uint32)
 
   def apply_round(v, rot):
     v = v[:]
@@ -118,23 +131,10 @@ def threefry_2x32(keypair, count):
     v[1] = v[0] ^ v[1]
     return v
 
-  odd_size = count.size % 2
-  if odd_size:
-    x = list(np.split(np.concatenate([count.ravel(), onp.uint32([0])]), 2))
-  else:
-    x = list(np.split(count.ravel(), 2))
 
   rotations = [onp.array([13, 15, 26, 6], dtype=onp.uint32),
                onp.array([17, 29, 16, 24], dtype=onp.uint32)]
   ks = [key1, key2, key1 ^ key2 ^ onp.uint32(0x1BD11BDA)]
-
-  # TODO(mattjj): see https://github.com/google/jax/issues/1267, as a hopefully
-  # temporary workaround for the facts that (1) XLA:CPU compile time is too slow
-  # with unrolled loops and (2) XLA:GPU execution time is too slow with rolled
-  # loops, we switch on whether the default backend is CPU or GPU. If this kind
-  # of switch ends up sticking around, we should take into account #1211 and put
-  # the switch in the translation rule rather than here in the traceable.
-  use_rolled_loops = xla_bridge.get_backend().platform == "cpu"
 
   x[0] = x[0] + ks[0]
   x[1] = x[1] + ks[1]
@@ -175,6 +175,56 @@ def threefry_2x32(keypair, count):
     x[0] = x[0] + ks[2]
     x[1] = x[1] + ks[0] + onp.uint32(5)
 
+  return tuple(x)
+
+
+def _threefry2x32_gpu_translation_rule(c, k1, k2, x1, x2):
+  shape = lax.broadcast_shapes(
+      c.GetShape(k1).dimensions(), c.GetShape(k2).dimensions(),
+      c.GetShape(x1).dimensions(), c.GetShape(x2).dimensions())
+  rank = len(shape)
+  def _broadcast(x):
+    ndims = c.GetShape(x).rank()
+    return c.BroadcastInDim(x, shape, tuple(range(rank - ndims, rank)))
+  return cuda_prng.threefry2x32(
+      c, (_broadcast(k1), _broadcast(k2)), (_broadcast(x1), _broadcast(x2)))
+
+threefry2x32_p = core.Primitive("threefry2x32")
+threefry2x32_p.multiple_results = True
+threefry2x32_p.def_impl(partial(xla.apply_primitive, threefry2x32_p))
+threefry2x32_p.def_abstract_eval(_threefry2x32_abstract_eval)
+batching.defbroadcasting(threefry2x32_p)
+xla.translations[threefry2x32_p] = xla.lower_fun(
+    partial(_threefry2x32_lowering, use_rolled_loops=False), instantiate=True)
+xla.backend_specific_translations['cpu'][threefry2x32_p] = xla.lower_fun(
+    partial(_threefry2x32_lowering, use_rolled_loops=True), instantiate=True)
+if cuda_prng:
+  xla.backend_specific_translations['gpu'][threefry2x32_p] = \
+      _threefry2x32_gpu_translation_rule
+
+@jit
+def threefry_2x32(keypair, count):
+  """Apply the Threefry 2x32 hash.
+
+  Args:
+    keypair: a pair of 32bit unsigned integers used for the key.
+    count: an array of dtype uint32 used for the counts.
+
+  Returns:
+    An array of dtype uint32 with the same shape as `count`.
+  """
+  key1, key2 = keypair
+  if not lax.dtype(key1) == lax.dtype(key2) == lax.dtype(count) == onp.uint32:
+    msg = "threefry_2x32 requires uint32 arguments, got {}"
+    raise TypeError(msg.format([lax.dtype(x) for x in [key1, key2, count]]))
+
+  odd_size = count.size % 2
+  if odd_size:
+    x = list(np.split(np.concatenate([count.ravel(), onp.uint32([0])]), 2))
+  else:
+    x = list(np.split(count.ravel(), 2))
+
+  x = threefry2x32_p.bind(key1, key2, x[0], x[1])
   out = np.concatenate(x)
   assert out.dtype == onp.uint32
   return lax.reshape(out[:-1] if odd_size else out, count.shape)
@@ -225,7 +275,7 @@ def _random_bits(key, bit_width, shape):
   if bit_width not in (32, 64):
     raise TypeError("requires 32- or 64-bit field width.")
   max_count = (bit_width // 32) * onp.prod(shape)
-  if max_count >= onp.iinfo(onp.uint32).max:
+  if max_count >= np.iinfo(onp.uint32).max:
     # TODO(mattjj): just split the key here
     raise TypeError("requesting more random bits than a single call provides.")
 
@@ -270,7 +320,7 @@ def uniform(key, shape=(), dtype=onp.float64, minval=0., maxval=1.):
   Returns:
     A random array with the specified shape and dtype.
   """
-  dtype = xla_bridge.canonicalize_dtype(dtype)
+  dtype = dtypes.canonicalize_dtype(dtype)
   return _uniform(key, shape, dtype, minval, maxval)
 
 @partial(jit, static_argnums=(1, 2))
@@ -281,7 +331,7 @@ def _uniform(key, shape, dtype, minval, maxval):
 
   minval = lax.convert_element_type(minval, dtype)
   maxval = lax.convert_element_type(maxval, dtype)
-  finfo = onp.finfo(dtype)
+  finfo = np.finfo(dtype)
   nbits, nmant = finfo.bits, finfo.nmant
 
   if nbits not in (32, 64):
@@ -318,18 +368,18 @@ def randint(key, shape, minval, maxval, dtype=onp.int64):
   Returns:
     A random array with the specified shape and dtype.
   """
-  dtype = xla_bridge.canonicalize_dtype(dtype)
+  dtype = dtypes.canonicalize_dtype(dtype)
   return _randint(key, shape, minval, maxval, dtype)
 
 @partial(jit, static_argnums=(1, 4))
 def _randint(key, shape, minval, maxval, dtype):
-  _check_shape("randint", shape, minval.shape, maxval.shape)
+  _check_shape("randint", shape, onp.shape(minval), onp.shape(maxval))
   if not np.issubdtype(dtype, onp.integer):
     raise TypeError("randint only accepts integer dtypes.")
 
   minval = lax.convert_element_type(minval, dtype)
   maxval = lax.convert_element_type(maxval, dtype)
-  nbits = onp.iinfo(dtype).bits
+  nbits = np.iinfo(dtype).bits
 
   if nbits not in (32, 64):
     raise TypeError("randint only accepts 32- or 64-bit dtypes.")
@@ -392,7 +442,7 @@ def _shuffle(key, x, axis):
   # Section 2 of http://people.csail.mit.edu/costis/6896sp11/lec5s.pdf for
   # another analysis (where the keys are generated one bit at a time).
   exponent = 3  # see tjablin@'s analysis for explanation of this parameter
-  uint32max = onp.iinfo(onp.uint32).max
+  uint32max = np.iinfo(onp.uint32).max
   num_rounds = int(onp.ceil(exponent * onp.log(x.size) / onp.log(uint32max)))
 
   for _ in range(num_rounds):
@@ -416,7 +466,7 @@ def normal(key, shape=(), dtype=onp.float64):
   Returns:
     A random array with the specified shape and dtype.
   """
-  dtype = xla_bridge.canonicalize_dtype(dtype)
+  dtype = dtypes.canonicalize_dtype(dtype)
   return _normal(key, shape, dtype)
 
 @partial(jit, static_argnums=(1, 2))
@@ -449,7 +499,7 @@ def multivariate_normal(key, mean, cov, shape=None, dtype=onp.float64):
     ``shape + mean.shape[-1:]`` if ``shape`` is not None, or else
     ``broadcast_shapes(mean.shape[:-1], cov.shape[:-2]) + mean.shape[-1:]``.
   """
-  dtype = xla_bridge.canonicalize_dtype(dtype)
+  dtype = dtypes.canonicalize_dtype(dtype)
   return _multivariate_normal(key, mean, cov, shape, dtype)
 
 @partial(jit, static_argnums=(3, 4))
@@ -496,22 +546,22 @@ def truncated_normal(key, lower, upper, shape=None, dtype=onp.float64):
     A random array with the specified dtype and shape given by ``shape`` if
     ``shape`` is not None, or else by broadcasting ``lower`` and ``upper``.
   """
-  dtype = xla_bridge.canonicalize_dtype(dtype)
+  dtype = dtypes.canonicalize_dtype(dtype)
   return _truncated_normal(key, lower, upper, shape, dtype)
 
 @partial(jit, static_argnums=(3, 4))
 def _truncated_normal(key, lower, upper, shape, dtype):
   if shape is None:
-    shape = lax.broadcast_shapes(lower.shape, upper.shape)
+    shape = lax.broadcast_shapes(onp.shape(lower), onp.shape(upper))
   else:
-    _check_shape("truncated_normal", shape, lower.shape, upper.shape)
+    _check_shape("truncated_normal", shape, onp.shape(lower), onp.shape(upper))
 
   sqrt2 = onp.array(onp.sqrt(2), dtype)
   a = lax.erf(lax.convert_element_type(lower, dtype) / sqrt2)
   b = lax.erf(lax.convert_element_type(upper, dtype) / sqrt2)
   if not np.issubdtype(dtype, onp.floating):
     raise TypeError("truncated_normal only accepts floating point dtypes.")
-  u = uniform(key, shape, dtype, minval=onp.finfo(dtype).tiny)
+  u = uniform(key, shape, dtype, minval=np.finfo(dtype).tiny)
   return sqrt2 * lax.erf_inv(a + u * (b - a))
 
 
@@ -530,7 +580,7 @@ def bernoulli(key, p=onp.float32(0.5), shape=None):
     A random array with boolean dtype and shape given by ``shape`` if ``shape``
     is not None, or else ``p.shape``.
   """
-  dtype = xla_bridge.canonicalize_dtype(lax.dtype(p))
+  dtype = dtypes.canonicalize_dtype(lax.dtype(p))
   if not np.issubdtype(dtype, onp.floating):
     msg = "bernoulli probability `p` must have a floating dtype, got {}."
     raise TypeError(msg.format(dtype))
@@ -540,9 +590,9 @@ def bernoulli(key, p=onp.float32(0.5), shape=None):
 @partial(jit, static_argnums=(2,))
 def _bernoulli(key, p, shape):
   if shape is None:
-    shape = p.shape
+    shape = onp.shape(p)
   else:
-    _check_shape("bernoulli", shape, p.shape)
+    _check_shape("bernoulli", shape, onp.shape(p))
 
   return uniform(key, shape, lax.dtype(p)) < p
 
@@ -566,19 +616,20 @@ def beta(key, a, b, shape=None, dtype=onp.float64):
     A random array with the specified dtype and shape given by ``shape`` if
     ``shape`` is not None, or else by broadcasting ``a`` and ``b``.
   """
-  dtype = xla_bridge.canonicalize_dtype(dtype)
+  dtype = dtypes.canonicalize_dtype(dtype)
   return _beta(key, a, b, shape, dtype)
 
-@partial(jit, static_argnums=(3, 4))
 def _beta(key, a, b, shape, dtype):
   if shape is None:
-    shape = lax.broadcast_shapes(a.shape, b.shape)
+    shape = lax.broadcast_shapes(onp.shape(a), onp.shape(b))
   else:
-    _check_shape("beta", shape, a.shape, b.shape)
+    _check_shape("beta", shape, onp.shape(a), onp.shape(b))
 
   a = lax.convert_element_type(a, dtype)
   b = lax.convert_element_type(b, dtype)
   key_a, key_b = split(key)
+  a = np.broadcast_to(a, shape)
+  b = np.broadcast_to(b, shape)
   gamma_a = gamma(key_a, a, shape, dtype)
   gamma_b = gamma(key_b, b, shape, dtype)
   return gamma_a / (gamma_a + gamma_b)
@@ -597,13 +648,13 @@ def cauchy(key, shape=(), dtype=onp.float64):
   Returns:
     A random array with the specified shape and dtype.
   """
-  dtype = xla_bridge.canonicalize_dtype(dtype)
+  dtype = dtypes.canonicalize_dtype(dtype)
   return _cauchy(key, shape, dtype)
 
 @partial(jit, static_argnums=(1, 2))
 def _cauchy(key, shape, dtype):
   _check_shape("cauchy", shape)
-  u = uniform(key, shape, dtype, minval=onp.finfo(dtype).eps, maxval=1.)
+  u = uniform(key, shape, dtype, minval=np.finfo(dtype).eps, maxval=1.)
   pi = _constant_like(u, onp.pi)
   return lax.tan(lax.mul(pi, lax.sub(u, _constant_like(u, 0.5))))
 
@@ -628,7 +679,7 @@ def dirichlet(key, alpha, shape=None, dtype=onp.float64):
     ``shape + (alpha.shape[-1],)`` if ``shape`` is not None, or else
     ``alpha.shape``.
   """
-  dtype = xla_bridge.canonicalize_dtype(dtype)
+  dtype = dtypes.canonicalize_dtype(dtype)
   return _dirichlet(key, alpha, shape, dtype)
 
 @partial(jit, static_argnums=(2, 3))
@@ -638,12 +689,12 @@ def _dirichlet(key, alpha, shape, dtype):
     raise ValueError(msg.format(onp.ndim(alpha)))
 
   if shape is None:
-    shape = alpha.shape[:-1]
+    shape = onp.shape(alpha)[:-1]
   else:
-    _check_shape("dirichlet", shape, alpha.shape[:-1])
+    _check_shape("dirichlet", shape, onp.shape(alpha)[:-1])
 
   alpha = lax.convert_element_type(alpha, dtype)
-  gamma_samples = gamma(key, alpha, shape + alpha.shape[-1:], dtype)
+  gamma_samples = gamma(key, alpha, shape + onp.shape(alpha)[-1:], dtype)
   return gamma_samples / np.sum(gamma_samples, axis=-1, keepdims=True)
 
 
@@ -660,7 +711,7 @@ def exponential(key, shape=(), dtype=onp.float64):
   Returns:
     A random array with the specified shape and dtype.
   """
-  dtype = xla_bridge.canonicalize_dtype(dtype)
+  dtype = dtypes.canonicalize_dtype(dtype)
   return _exponential(key, shape, dtype)
 
 @partial(jit, static_argnums=(1, 2))
@@ -724,7 +775,7 @@ def _gamma_one(key, alpha):
   # initial state is chosen such that _cond_fn will return True
   _, _, V, _ = lax.while_loop(_cond_fn, _body_fn, (key, zero, one, _constant_like(alpha, 2)))
   z = lax.mul(lax.mul(d, V), boost)
-  return lax.select(lax.eq(z, zero), onp.finfo(z.dtype).tiny, z)
+  return lax.select(lax.eq(z, zero), np.finfo(z.dtype).tiny, z)
 
 _bivariate_coef = [[0.16009398, -0.094634816, 0.025146379, -0.0030648348,
                     1, 0.3266811, 0.10406087, 0.0014179033],
@@ -822,27 +873,50 @@ def _gamma_grad_one(z, alpha):
 
     _, _, grad, flag = lax.while_loop(lambda zagf: (~zagf[3]) & (zagf[0] < 0.8),
                                       _case1,
-                                      (z, alpha, 0.0, False))
+                                      (z, alpha, lax._const(alpha, 0.0), False))
     _, _, grad, flag = lax.while_loop(_cond2, _case2, (z, alpha, grad, flag))
     _, _, grad, flag = lax.while_loop(_cond3, _case3, (z, alpha, grad, flag))
     _, _, grad, flag = lax.while_loop(lambda zagf: ~zagf[3], _case4, (z, alpha, grad, flag))
     return grad
 
 def _gamma_grad(sample, a):
-    samples = np.reshape(sample, -1)
-    alphas = np.reshape(a, -1)
+  samples = np.reshape(sample, -1)
+  alphas = np.reshape(a, -1)
+  if xla_bridge.get_backend().platform == 'cpu':
+    grads = lax.map(lambda args: _gamma_grad_one(*args), (samples, alphas))
+  else:
     grads = vmap(_gamma_grad_one)(samples, alphas)
-    return grads.reshape(a.shape)
+  return grads.reshape(onp.shape(a))
 
-@custom_transforms
 def _gamma_impl(key, a):
-    alphas = np.reshape(a, -1)
-    keys = split(key, onp.size(alphas))
+  a_shape = np.shape(a)
+  # split key to match the shape of a
+  key_ndim = np.ndim(key) - 1
+  key = np.reshape(key, (-1, 2))
+  key = vmap(split, in_axes=(0, None))(key, prod(a_shape[key_ndim:]))
+  keys = np.reshape(key, (-1, 2))
+  alphas = np.reshape(a, -1)
+  if xla_bridge.get_backend().platform == 'cpu':
+    samples = lax.map(lambda args: _gamma_one(*args), (keys, alphas))
+  else:
     samples = vmap(_gamma_one)(keys, alphas)
-    return np.reshape(samples, np.shape(a))
+  return np.reshape(samples, a_shape),
 
-defjvp(_gamma_impl, None,
-       lambda tangent, ans, key, a, **kwargs: tangent * _gamma_grad(ans, a))
+def _gamma_batching_rule(batched_args, batch_dims):
+    k, a = batched_args
+    bk, ba = batch_dims
+    size = next(t.shape[i] for t, i in zip(batched_args, batch_dims) if i is not None)
+    k = batching.bdim_at_front(k, bk, size)
+    a = batching.bdim_at_front(a, ba, size)
+    return random_gamma_p.bind(k, a), (0,)
+
+random_gamma_p = core.Primitive('random_gamma')
+random_gamma_p.multiple_results = True
+random_gamma_p.def_impl(_gamma_impl)
+random_gamma_p.def_abstract_eval(lambda key, a: (abstract_arrays.raise_to_shaped(a),))
+ad.defjvp2(random_gamma_p, None, lambda tangent, ans, key, a: (tangent * _gamma_grad(ans[0], a),))
+xla.translations[random_gamma_p] = xla.lower_fun(_gamma_impl, instantiate=True)
+batching.primitive_batchers[random_gamma_p] = _gamma_batching_rule
 
 def gamma(key, a, shape=None, dtype=onp.float64):
   """Sample Gamma random values with given shape and float dtype.
@@ -861,20 +935,20 @@ def gamma(key, a, shape=None, dtype=onp.float64):
     A random array with the specified dtype and with shape given by ``shape`` if
     ``shape`` is not None, or else by ``a.shape``.
   """
-  dtype = xla_bridge.canonicalize_dtype(dtype)
+  dtype = dtypes.canonicalize_dtype(dtype)
   return _gamma(key, a, shape, dtype)
 
 @partial(jit, static_argnums=(2, 3))
 def _gamma(key, a, shape, dtype):
   if shape is None:
-    shape = a.shape
+    shape = onp.shape(a)
   else:
-    _check_shape("gamma", shape, a.shape)
+    _check_shape("gamma", shape, onp.shape(a))
 
   a = lax.convert_element_type(a, dtype)
   if onp.shape(a) != shape:
     a = np.broadcast_to(a, shape)
-  return _gamma_impl(key, a)
+  return random_gamma_p.bind(key, a)[0]
 
 
 def gumbel(key, shape=(), dtype=onp.float64):
@@ -890,15 +964,43 @@ def gumbel(key, shape=(), dtype=onp.float64):
   Returns:
     A random array with the specified shape and dtype.
   """
-  dtype = xla_bridge.canonicalize_dtype(dtype)
+  dtype = dtypes.canonicalize_dtype(dtype)
   return _gumbel(key, shape, dtype)
 
 @partial(jit, static_argnums=(1, 2))
 def _gumbel(key, shape, dtype):
   _check_shape("gumbel", shape)
   return -np.log(-np.log(
-      uniform(key, shape, dtype, minval=onp.finfo(dtype).eps, maxval=1.)))
+      uniform(key, shape, dtype, minval=np.finfo(dtype).eps, maxval=1.)))
 
+def categorical(key, logits, axis=-1, shape=None):
+  """Sample random values from categorical distributions.
+
+  Args:
+    key: a PRNGKey used as the random key.
+    logits: Unnormalized log probabilities of the categorical distribution(s) to sample from,
+      so that `softmax(logits, axis)` gives the corresponding probabilities.
+    axis: Axis along which logits belong to the same categorical distribution.
+    shape: Optional, a tuple of nonnegative integers representing the result shape.
+      Must be broadcast-compatible with ``onp.delete(logits.shape, axis)``.
+      The default (None) produces a result shape equal to ``onp.delete(logits.shape, axis)``.
+
+  Returns:
+    A random array with int dtype and shape given by ``shape`` if ``shape``
+    is not None, or else ``onp.delete(logits.shape, axis)``.
+  """
+
+  if axis >= 0:
+    axis -= len(logits.shape)
+
+  batch_shape = tuple(onp.delete(logits.shape, axis))
+  if shape is None:
+    shape = batch_shape
+  else:
+    _check_shape("categorical", shape, batch_shape)
+
+  sample_shape = shape[:len(shape)-len(batch_shape)]
+  return np.argmax(gumbel(key, sample_shape + logits.shape, logits.dtype) + logits, axis=axis)
 
 def laplace(key, shape=(), dtype=onp.float64):
   """Sample Laplace random values with given shape and float dtype.
@@ -913,7 +1015,7 @@ def laplace(key, shape=(), dtype=onp.float64):
   Returns:
     A random array with the specified shape and dtype.
   """
-  dtype = xla_bridge.canonicalize_dtype(dtype)
+  dtype = dtypes.canonicalize_dtype(dtype)
   return _laplace(key, shape, dtype)
 
 @partial(jit, static_argnums=(1, 2))
@@ -937,7 +1039,7 @@ def logistic(key, shape=(), dtype=onp.float64):
   Returns:
     A random array with the specified shape and dtype.
   """
-  dtype = xla_bridge.canonicalize_dtype(dtype)
+  dtype = dtypes.canonicalize_dtype(dtype)
   return _logistic(key, shape, dtype)
 
 @partial(jit, static_argnums=(1, 2))
@@ -963,13 +1065,13 @@ def pareto(key, b, shape=None, dtype=onp.float64):
     A random array with the specified dtype and with shape given by ``shape`` if
     ``shape`` is not None, or else by ``b.shape``.
   """
-  dtype = xla_bridge.canonicalize_dtype(dtype)
+  dtype = dtypes.canonicalize_dtype(dtype)
   return _pareto(key, b, shape, dtype)
 
 @partial(jit, static_argnums=(2, 3))
 def _pareto(key, b, shape, dtype):
   if shape is None:
-    shape = b.shape
+    shape = onp.shape(b)
   else:
     _check_shape("pareto", shape)
 
@@ -995,15 +1097,15 @@ def t(key, df, shape=(), dtype=onp.float64):
     A random array with the specified dtype and with shape given by ``shape`` if
     ``shape`` is not None, or else by ``df.shape``.
   """
-  dtype = xla_bridge.canonicalize_dtype(dtype)
+  dtype = dtypes.canonicalize_dtype(dtype)
   return _t(key, df, shape, dtype)
 
 @partial(jit, static_argnums=(2, 3))
 def _t(key, df, shape, dtype):
   if shape is None:
-    shape = df.shape
+    shape = onp.shape(df)
   else:
-    _check_shape("t", shape, df.shape)
+    _check_shape("t", shape, onp.shape(df))
 
   df = lax.convert_element_type(df, dtype)
   key_n, key_g = split(key)

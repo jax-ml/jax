@@ -90,6 +90,7 @@ Operators
     mul
     ne
     neg
+    nextafter
     pad
     pow
     real
@@ -104,7 +105,6 @@ Operators
     scatter
     scatter_add
     select
-    shaped_identity
     shift_left
     shift_right_arithmetic
     shift_right_logical

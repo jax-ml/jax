@@ -88,8 +88,6 @@ class ExamplesTest(jtu.JaxTestCase):
                         check_dtypes=False)
 
   def testKernelRegressionTrainAndPredict(self):
-    # TODO(frostig): reenable this test.
-    self.skipTest("Test is broken")
     n, d = 100, 20
     rng = onp.random.RandomState(0)
     truth = rng.randn(d)

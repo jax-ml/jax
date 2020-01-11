@@ -4,7 +4,6 @@ notifications:
 dist: xenial
 language: python
 python:
-  - "2.7"
   - "3.6"
 env:
   - JAX_ENABLE_X64=0 JAX_NUM_GENERATED_CASES=25
@@ -15,11 +14,7 @@ matrix:
       env: JAX_ENABLE_X64=1 JAX_ONLY_DOCUMENTATION=true
 
 before_install:
-  - if [[ "$TRAVIS_PYTHON_VERSION" == "2.7" ]]; then
-      wget https://repo.continuum.io/miniconda/Miniconda2-latest-Linux-x86_64.sh -O miniconda.sh;
-    else
-      wget https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh;
-    fi
+  - wget https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh;
   - bash miniconda.sh -b -p $HOME/miniconda
   - export PATH="$HOME/miniconda/bin:$PATH"
   - conda config --set always_yes yes --set changeps1 no --set show_channel_urls yes
@@ -29,8 +24,11 @@ before_install:
   - conda config --add channels conda-forge
   - conda update -q conda
 install:
-  - conda install --yes python=$TRAVIS_PYTHON_VERSION pip six protobuf>=3.6.0 absl-py opt_einsum numpy scipy pytest-xdist fastcache
-  - pip install jaxlib
+  - conda install --yes python=$TRAVIS_PYTHON_VERSION pip six protobuf>=3.6.0 absl-py opt_einsum numpy scipy pytest-xdist pytest-benchmark fastcache
+  # The jaxlib version should match the minimum jaxlib version in
+  # jax/lib/__init__.py. This tests JAX PRs against the oldest permitted
+  # jaxlib.
+  - pip install jaxlib==0.1.37
   - pip install -v .
   # The following are needed to test the Colab notebooks and the documentation building
   - if [[ "$JAX_ONLY_DOCUMENTATION" != "" ]]; then

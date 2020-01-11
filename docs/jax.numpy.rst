@@ -178,6 +178,8 @@ Not every function in NumPy is implemented; contributions are welcome!
     nanprod
     nansum
     negative
+    nextafter
+    nonzero
     not_equal
     ones
     ones_like
@@ -208,6 +210,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     row_stack
     select
     sign
+    signbit
     sin
     sinc
     sinh
@@ -255,6 +258,12 @@ jax.numpy.fft
 
   fftn
   ifftn
+  fft
+  ifft
+  fft2
+  ifft2
+  fftfreq
+  rfftfreq
 
 jax.numpy.linalg
 ----------------

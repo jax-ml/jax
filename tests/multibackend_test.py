@@ -23,7 +23,6 @@ from absl.testing import parameterized
 
 import numpy as onp
 import numpy.random as npr
-import six
 from unittest import SkipTest
 
 from jax import api
@@ -55,7 +54,7 @@ class MultiBackendTest(jtu.JaxTestCase):
     y = npr.uniform(size=(10,10))
     z_host = onp.matmul(x, y)
     z = fun(x, y)
-    self.assertAllClose(z, z_host, check_dtypes=True)
+    self.assertAllClose(z, z_host, check_dtypes=True, rtol=1e-2)
     correct_platform = backend if backend else jtu.device_under_test()
     self.assertEqual(z.device_buffer.platform(), correct_platform)
 
@@ -77,7 +76,7 @@ class MultiBackendTest(jtu.JaxTestCase):
     y = npr.uniform(size=(10,10))
     z_host = onp.matmul(x, y) + onp.ones_like(x)
     z = fun(x, y)
-    self.assertAllClose(z, z_host, check_dtypes=True)
+    self.assertAllClose(z, z_host, check_dtypes=True, rtol=1e-2)
     correct_platform = outer if outer else jtu.device_under_test()
     self.assertEqual(z.device_buffer.platform(), correct_platform)
 
@@ -121,7 +120,32 @@ class MultiBackendTest(jtu.JaxTestCase):
     z = fun(x, y)
     w = np.sin(z)
     self.assertEqual(z.device_buffer.platform(), backend)
-    self.assertEqual(w.device_buffer.platform(), jtu.device_under_test())
+    self.assertEqual(w.device_buffer.platform(), backend)
+
+  @jtu.skip_on_devices("cpu")  # test can only fail with non-cpu backends
+  def testJitCpu(self):
+    @partial(api.jit, backend='cpu')
+    def get_arr(scale):
+      return scale + np.ones((2, 2))
+
+    x = get_arr(0.1)
+
+    a = x / x.shape[0]
+    b = x + np.ones_like(x)
+    c = x + np.eye(2)
+
+    self.assertEqual(a.device_buffer.device(), api.devices('cpu')[0])
+    self.assertEqual(b.device_buffer.device(), api.devices('cpu')[0])
+    self.assertEqual(c.device_buffer.device(), api.devices('cpu')[0])
+
+  @jtu.skip_on_devices("cpu")  # test can only fail with non-cpu backends
+  def test_closed_over_values_device_placement(self):
+    # see https://github.com/google/jax/issues/1431
+    def f(): return np.add(3., 4.)
+    self.assertNotEqual(api.jit(f)().device_buffer.device(),
+                        api.devices('cpu')[0])
+    self.assertEqual(api.jit(f, backend='cpu')().device_buffer.device(),
+                     api.devices('cpu')[0])
 
 
 if __name__ == "__main__":

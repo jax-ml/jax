@@ -2,6 +2,8 @@ FROM gcr.io/tensorflow-testing/nosla-cuda10.0-cudnn7-ubuntu16.04-manylinux2010
 LABEL maintainer "Matt Johnson <mattjj@google.com>"
 
 WORKDIR /
+RUN apt-get update
+RUN apt-get install libffi-dev
 RUN git clone --branch v1.2.14 https://github.com/pyenv/pyenv.git /pyenv
 ENV PYENV_ROOT /pyenv
 RUN /pyenv/bin/pyenv install 2.7.15

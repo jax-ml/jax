@@ -1,7 +1,7 @@
 #!/bin/bash
 set -xev
 
-PYTHON_VERSIONS="2.7.15 3.5.6 3.6.8 3.7.2 3.8.0"
+PYTHON_VERSIONS="3.5.6 3.6.8 3.7.2 3.8.0"
 CUDA_VERSIONS="9.0 9.2 10.0 10.1"
 CUDA_VARIANTS="cuda" # "cuda-included"
 
@@ -13,7 +13,7 @@ for PYTHON_VERSION in $PYTHON_VERSIONS
 do
   mkdir -p dist/nocuda/
   docker run -it --tmpfs /build:exec --rm -v $(pwd)/dist:/dist jaxbuild $PYTHON_VERSION nocuda
-  mv dist/*.whl dist/nocuda/
+  mv -f dist/*.whl dist/nocuda/
 done
 
 # build the cuda linux packages, tagging with linux_x86_64
@@ -26,7 +26,7 @@ do
     do
       mkdir -p dist/${CUDA_VARIANT}${CUDA_VERSION//.}
       docker run -it --tmpfs /build:exec --rm -v $(pwd)/dist:/dist jaxbuild $PYTHON_VERSION $CUDA_VARIANT
-      mv dist/*.whl dist/${CUDA_VARIANT}${CUDA_VERSION//.}/
+      mv -f dist/*.whl dist/${CUDA_VARIANT}${CUDA_VERSION//.}/
     done
   done
 done

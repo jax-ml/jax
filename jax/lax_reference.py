@@ -16,6 +16,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import builtins
 import collections
 import itertools
 
@@ -23,7 +24,7 @@ import numpy as onp
 import opt_einsum
 import scipy.special
 
-from six.moves import builtins
+from . import dtypes
 
 _slice = builtins.slice
 _max = builtins.max
@@ -35,6 +36,7 @@ sign = onp.sign
 floor = onp.floor
 ceil = onp.ceil
 round = onp.round
+nextafter = onp.nextafter
 
 is_finite = onp.isfinite
 
@@ -88,7 +90,7 @@ sub = onp.subtract
 mul = onp.multiply
 
 def div(lhs, rhs):
-  if onp.issubdtype(onp.result_type(lhs), onp.integer):
+  if dtypes.issubdtype(dtypes.result_type(lhs), onp.integer):
     quotient = onp.floor_divide(lhs, rhs)
     select = onp.logical_and(onp.sign(lhs) != onp.sign(rhs),
                              onp.remainder(lhs, rhs) != 0)
@@ -176,7 +178,11 @@ def dot_general(lhs, rhs, dimension_numbers):
   not_none = lambda x: x is not None
   out_axis_ids = filter(not_none,
                         batch_ids + lhs_out_axis_ids + rhs_out_axis_ids)
-  return onp.einsum(lhs, lhs_axis_ids, rhs, rhs_axis_ids, out_axis_ids)
+  assert lhs.dtype == rhs.dtype
+  dtype = onp.float32 if lhs.dtype == dtypes.bfloat16 else None
+  out = onp.einsum(lhs, lhs_axis_ids, rhs, rhs_axis_ids, out_axis_ids,
+                   dtype=dtype)
+  return out.astype(dtypes.bfloat16) if lhs.dtype == dtypes.bfloat16 else out
 
 def broadcast(operand, sizes):
   return onp.broadcast_to(operand, sizes + onp.shape(operand))
@@ -352,15 +358,15 @@ def _make_reducer(py_binop, init_val):
   monoid_record = _monoids.get(getattr(py_binop, '__name__'))
   if monoid_record:
     reducer, monoid_identity = monoid_record
-    if init_val == monoid_identity(onp.result_type(init_val)):
+    if init_val == monoid_identity(dtypes.result_type(init_val)):
       return reducer
   return _reducer_from_pyfunc(py_binop, init_val)
 
 def _get_max_identity(dt):
-  return -onp.inf if onp.issubdtype(dt, onp.floating) else onp.iinfo(dt).min
+  return -onp.inf if dtypes.issubdtype(dt, onp.floating) else onp.iinfo(dt).min
 
 def _get_min_identity(dt):
-  return onp.inf if onp.issubdtype(dt, onp.floating) else onp.iinfo(dt).max
+  return onp.inf if dtypes.issubdtype(dt, onp.floating) else onp.iinfo(dt).max
 
 def _identity_getter(op):
   return lambda dtype: onp.asarray(op.identity, dtype=dtype)

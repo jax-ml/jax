@@ -19,12 +19,11 @@ from __future__ import print_function
 from operator import attrgetter
 from contextlib import contextmanager
 from collections import namedtuple, Counter, defaultdict
+from functools import total_ordering
 import itertools as it
 from weakref import ref
 import threading
 import types
-
-import six
 
 from . import linear_util as lu
 from .util import safe_zip, safe_map, partial, curry
@@ -80,18 +79,23 @@ def jaxpr_as_fun(typed_jaxpr, *args):
   return eval_jaxpr(typed_jaxpr.jaxpr, typed_jaxpr.literals, (), *args)
 
 
-def new_jaxpr_eqn(*args):
-  return JaxprEqn(object(), *args)
-
-JaxprEqn = namedtuple('JaxprEqn', ['eqn_id', 'invars', 'outvars', 'primitive',
+JaxprEqn = namedtuple('JaxprEqn', ['invars', 'outvars', 'primitive',
                                    'bound_subjaxprs', 'params'])
+JaxprEqn.__repr__ = JaxprEqn.__str__ = lambda eqn: str(pp_eqn(eqn)).rstrip()
+new_jaxpr_eqn = JaxprEqn
 
-JaxprEqn.__repr__ = JaxprEqn.__str__ = lambda eqn: str(pp_eqn(eqn))[:-1]
 
+@total_ordering
 class Var(object):
   def __init__(self, count, suffix):
     self.count = count
     self.suffix = suffix
+
+  def __lt__(self, other):
+    if not isinstance(other, Var):
+      return NotImplemented
+    else:
+      return (self.count, self.suffix) < (other.count, other.suffix)
 
   def __repr__(self):
     rem = self.count
@@ -282,7 +286,7 @@ class Tracer(object):
   __array_priority__ = 1000
   __slots__ = ['trace', '__weakref__']
 
-  def __array__(self):
+  def __array__(self, *args, **kw):
     raise Exception("Tracer can't be used with raw numpy functions. "
                     "You might have\n  import numpy as np\ninstead of\n  import jax.numpy as np")
 
@@ -300,6 +304,7 @@ class Tracer(object):
     assert False
 
   def __neg__(self): return self.aval._neg(self)
+  def __pos__(self): return self.aval._pos(self)
   def __eq__(self, other): return self.aval._eq(self, other)
   def __ne__(self, other): return self.aval._ne(self, other)
   def __lt__(self, other): return self.aval._lt(self, other)
@@ -363,15 +368,18 @@ class Tracer(object):
       if t is aval_property:
         return attr.fget(self)
       elif t is aval_method:
-        if six.PY3:
-          return types.MethodType(attr.fun, self)
-        else:
-          return types.MethodType(attr.fun, self, None)
+        return types.MethodType(attr.fun, self)
       else:
         return attr
 
   def __repr__(self):
     return 'Traced<{}>with<{}>'.format(self.aval, self.trace)
+
+  def __copy__(self):
+    return self
+
+  def __deepcopy__(self, unused_memo):
+    return self
 
 
 # these can be used to set up forwarding of properties and instance methods from
@@ -491,6 +499,8 @@ class AbstractValue(object):
     except AttributeError:
       return self.__class__.__name__
 
+  def strip_weak_type(self):
+    return self
 
 class Bot(AbstractValue): pass
 
@@ -560,8 +570,9 @@ identity_p.def_custom_bind(lambda x: x)
 
 
 def apply_todos(todos, outs):
-  while todos:
-    outs = map(full_lower, todos.pop()(outs))
+  todos_list = list(todos)
+  while todos_list:
+    outs = map(full_lower, todos_list.pop()(outs))
   return outs
 
 @lu.transformation_with_aux
@@ -579,7 +590,7 @@ def process_env_traces(primitive, level, params_tuple, *args):
     outs = map(trace.full_raise, outs)
     outs, cur_todo = trace.post_process_call(primitive, outs, params)
     todo.append(cur_todo)
-  yield outs, todo
+  yield outs, tuple(todo)  # Ensure the aux output is immutable
 
 def call_bind(primitive, f, *args, **params):
   top_trace = find_top_trace(args)
@@ -596,7 +607,8 @@ def call_bind(primitive, f, *args, **params):
 
 
 def call_impl(f, *args, **params):
-  return f.call_wrapped(*args, **params)
+  del params  # params parameterize the call primitive, not the function
+  return f.call_wrapped(*args)
 
 
 call_p = Primitive('call')
@@ -651,7 +663,7 @@ def pp_eqn(eqn):
           >> pp(' [ {} ; {} ]'.format(pp_vars(const_vars),
                                       pp_vars(bound_vars))))
   return (pp('{} = '.format(lhs)) >>
-          pp(eqn.primitive.name) >> pp_kv_pairs(eqn.params.items())
+          pp(eqn.primitive.name) >> pp_kv_pairs(sorted(eqn.params.items()))
           >> pp(' ') >> pp(pp_vars(eqn.invars))) + pp_subexpr
 
 def pp_jaxpr(jaxpr):

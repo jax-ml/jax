@@ -21,7 +21,7 @@ import numpy as onp
 from jax.abstract_arrays import ShapedArray
 from jax.core import Primitive
 from jax.interpreters import xla
-from . import lax
+from . import dtypes, lax
 from ..lib.xla_bridge import xla_client
 from ..interpreters import ad
 from ..interpreters import batching

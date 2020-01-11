@@ -27,6 +27,7 @@ from jax import api_util
 from jax import core
 from jax import lax
 from jax import ops
+from jax import dtypes
 from jax.interpreters import xla
 from jax.interpreters import ad
 from jax.interpreters import batching
@@ -35,7 +36,6 @@ from jax.abstract_arrays import ShapedArray
 from jax.core import Primitive
 from jax.lax import (standard_primitive, standard_unop, binop_dtype_rule,
                      _float, _complex, _input_dtype, _broadcasting_select)
-from jax.lib import xla_bridge as xb
 from jax.lib import xla_client
 from jax.lib import lapack
 from jax.lib import cusolver
@@ -94,7 +94,8 @@ def _unpack_tuple(f, n):
 
 # primitives
 
-_cpu_lapack_types = {np.float32, np.float64, np.complex64, np.complex128}
+_cpu_lapack_types = {onp.dtype(onp.float32), onp.dtype(onp.float64),
+                     onp.dtype(onp.complex64), onp.dtype(onp.complex128)}
 
 # Cholesky decomposition
 
@@ -111,7 +112,8 @@ def cholesky_jvp_rule(primals, tangents):
   tmp = triangular_solve(L, sigma_dot, left_side=False, transpose_a=True,
                          conjugate_a=True, lower=True)
   L_dot = lax.batch_matmul(L, phi(triangular_solve(
-      L, tmp, left_side=True, transpose_a=False, lower=True)))
+      L, tmp, left_side=True, transpose_a=False, lower=True)),
+      precision=lax.Precision.HIGHEST)
   return L, L_dot
 
 def cholesky_batching_rule(batched_args, batch_dims):
@@ -133,20 +135,31 @@ def _nan_like(c, operand):
     nan = c.Constant(onp.array(onp.nan, dtype=dtype))
   return c.Broadcast(nan, shape.dimensions())
 
-def cholesky_cpu_translation_rule(c, operand):
+# TODO(phawkins): remove supports_batching argument after the minimum jaxlib
+# version is 0.1.38.
+def _cholesky_cpu_gpu_translation_rule(potrf_impl, potrf_supports_batching, c,
+                                       operand):
   shape = c.GetShape(operand)
+  batch_dims = shape.dimensions()[:-2]
   dtype = shape.element_type().type
-  if len(shape.dimensions()) == 2 and dtype in _cpu_lapack_types:
-    result, info = lapack.potrf(c, operand, lower=True)
-    return c.Select(c.Eq(info, c.ConstantS32Scalar(0)), result,
-                    _nan_like(c, result))
+  if len(batch_dims) == 0 or potrf_supports_batching:
+    result, info = potrf_impl(c, operand, lower=True)
+    ok = c.Eq(info, c.ConstantS32Scalar(0))
+    return _broadcasting_select(c,
+                                c.Reshape(ok, None, batch_dims + (1, 1)), result,
+                                _nan_like(c, result))
   else:
-    # Fall back to the HLO implementation for batched Cholesky decomposition or
-    # unsupported types.
-    # TODO(phawkins): support LAPACK primitives in batched mode.
+    # Fall back to the HLO implementation for batched Cholesky decomposition.
     return c.Cholesky(operand)
 
-xla.backend_specific_translations['cpu'][cholesky_p] = cholesky_cpu_translation_rule
+xla.backend_specific_translations['cpu'][cholesky_p] = partial(
+  _cholesky_cpu_gpu_translation_rule, lapack.potrf,
+  not hasattr(lapack, "jax_potrf"))
+
+# TODO(phawkins): remove after the minimum jaxlib version is 0.1.38.
+if hasattr(cusolver, "potrf"):
+  xla.backend_specific_translations['gpu'][cholesky_p] = partial(
+    _cholesky_cpu_gpu_translation_rule, cusolver.potrf, True)
 
 # Asymmetric eigendecomposition
 
@@ -165,8 +178,8 @@ def eig_abstract_eval(operand):
 
     batch_dims = operand.shape[:-2]
     n = operand.shape[-1]
-    dtype = onp.complex64 if onp.finfo(operand.dtype).bits == 32 else onp.complex128
-    dtype = xb.canonicalize_dtype(dtype)
+    dtype = onp.complex64 if dtypes.finfo(operand.dtype).bits == 32 else onp.complex128
+    dtype = dtypes.canonicalize_dtype(dtype)
     vl = vr = ShapedArray(batch_dims + (n, n), dtype)
     w = ShapedArray(batch_dims + (n,), dtype)
   else:
@@ -265,7 +278,8 @@ def eigh_jvp_rule(primals, tangents, lower):
   # carefully build reciprocal delta-eigenvalue matrix, avoiding NaNs.
   Fmat = np.reciprocal(eye_n + w[..., np.newaxis, :] - w[..., np.newaxis]) - eye_n
   # eigh impl doesn't support batch dims, but future-proof the grad.
-  dot = lax.dot if a.ndim == 2 else lax.batch_matmul
+  dot = partial(lax.dot if a.ndim == 2 else lax.batch_matmul,
+                precision=lax.Precision.HIGHEST)
   vdag_adot_v = dot(dot(_H(v), a_dot), v)
   dv = dot(v, np.multiply(Fmat, vdag_adot_v))
   dw = np.diagonal(vdag_adot_v, axis1=-2, axis2=-1)
@@ -326,7 +340,8 @@ def triangular_solve_jvp_rule_a(
   g_a = lax.neg(g_a)
   g_a = np.swapaxes(g_a, -1, -2) if transpose_a else g_a
   g_a = np.conj(g_a) if conjugate_a else g_a
-  dot = lax.dot if g_a.ndim == 2 else lax.batch_matmul
+  dot = partial(lax.dot if g_a.ndim == 2 else lax.batch_matmul,
+                precision=lax.Precision.HIGHEST)
 
   def a_inverse(rhs):
     return triangular_solve(a, rhs, left_side, lower, transpose_a, conjugate_a,
@@ -389,7 +404,7 @@ def _triangular_solve_cpu_translation_rule(
     c, a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
   shape = c.GetShape(a)
   dtype = shape.element_type().type
-  if len(shape.dimensions()) == 2 and dtype in _cpu_lapack_types:
+  if len(shape.dimensions()) == 2 and onp.dtype(dtype) in _cpu_lapack_types:
     if conjugate_a and not transpose_a:
       a = c.Conj(a)
       conjugate_a = False
@@ -723,17 +738,11 @@ xla.translations[qr_p] = qr_translation_rule
 ad.primitive_jvps[qr_p] = qr_jvp_rule
 batching.primitive_batchers[qr_p] = qr_batching_rule
 
-# TODO(phawkins): make unconditional after the minimum Jaxlib version is
-# increased past 0.1.28.
-if hasattr(lapack, "geqrf"):
-  xla.backend_specific_translations['cpu'][qr_p] = partial(
-    _qr_cpu_gpu_translation_rule, lapack.geqrf, lapack.orgqr)
+xla.backend_specific_translations['cpu'][qr_p] = partial(
+  _qr_cpu_gpu_translation_rule, lapack.geqrf, lapack.orgqr)
 
-# TODO(phawkins): make unconditional after the minimum Jaxlib version is
-# increased past 0.1.28.
-if hasattr(cusolver, "geqrf"):
-  xla.backend_specific_translations['gpu'][qr_p] = partial(
-    _qr_cpu_gpu_translation_rule, cusolver.geqrf, cusolver.orgqr)
+xla.backend_specific_translations['gpu'][qr_p] = partial(
+  _qr_cpu_gpu_translation_rule, cusolver.geqrf, cusolver.orgqr)
 
 
 # Singular value decomposition
@@ -745,7 +754,7 @@ def svd_impl(operand, full_matrices, compute_uv):
 
 def svd_translation_rule(c, operand, full_matrices, compute_uv):
   raise NotImplementedError(
-    "Singular value decomposition is only implemented on the CPU backend")
+    "Singular value decomposition is only implemented on the CPU and GPU backends")
 
 def svd_abstract_eval(operand, full_matrices, compute_uv):
   if isinstance(operand, ShapedArray):
