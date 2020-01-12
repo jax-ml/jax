@@ -64,7 +64,7 @@ def _fft_core(func_name, fft_type, a, s, axes, norm):
     if fft_type == xla_client.FftType.IRFFT:
       s = [a.shape[axis] for axis in axes[:-1]]
       if axes:
-        s += [2 * (a.shape[axes[-1]] - 1)]
+        s += [max(0, 2 * (a.shape[axes[-1]] - 1))]
     else:
       s = [a.shape[axis] for axis in axes]
 

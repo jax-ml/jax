@@ -24,6 +24,7 @@ import numpy as onp
 from absl.testing import absltest
 from absl.testing import parameterized
 
+from jax import lax
 from jax import numpy as np
 from jax import test_util as jtu
 
@@ -57,9 +58,36 @@ def _get_fftn_test_axes(shape):
 
 def _get_fftn_func(module, inverse, real):
   if inverse:
-    return module.irfftn if real else module.ifftn
+    return _irfft_with_zeroed_inputs(module.irfftn) if real else module.ifftn
   else:
     return module.rfftn if real else module.fftn
+
+
+def _irfft_with_zeroed_inputs(irfft_fun):
+  # irfft isn't defined on the full domain of inputs, so in order to have a
+  # well defined derivative on the whole domain of the function, we zero-out
+  # the imaginary part of the first and possibly the last elements.
+  def wrapper(z, axes):
+    return irfft_fun(_zero_for_irfft(z, axes), axes=axes)
+  return wrapper
+
+
+def _zero_for_irfft(z, axes):
+  if axes is not None and not axes:
+    return z
+  axis = z.ndim - 1 if axes is None else axes[-1]
+  try:
+    size = z.shape[axis]
+  except IndexError:
+    return z  # only if axis is invalid, as occurs in some tests
+  if size % 2:
+    parts = [lax.slice_in_dim(z.real, 0, 1, axis=axis).real,
+             lax.slice_in_dim(z.real, 1, size - 1, axis=axis),
+             lax.slice_in_dim(z.real, size - 1, size, axis=axis).real]
+  else:
+    parts = [lax.slice_in_dim(z.real, 0, 1, axis=axis).real,
+             lax.slice_in_dim(z.real, 1, size, axis=axis)]
+  return np.concatenate(parts, axis=axis)
 
 
 class FftTest(jtu.JaxTestCase):
@@ -71,7 +99,7 @@ class FftTest(jtu.JaxTestCase):
        "rng_factory": rng_factory, "inverse": inverse, "real": real}
       for inverse in [False, True]
       for real in [False, True]
-      for rng in [jtu.rand_default]
+      for rng_factory in [jtu.rand_default]
       for dtype in (real_dtypes if real and not inverse else all_dtypes)
       for shape in [(10,), (10, 10), (9,), (2, 3, 4), (2, 3, 4, 5)]
       for axes in _get_fftn_test_axes(shape)))
@@ -89,8 +117,6 @@ class FftTest(jtu.JaxTestCase):
     if dtype in (float_dtypes if real and not inverse else inexact_dtypes):
       # TODO(skye): can we be more precise?
       tol = 1e-1
-      jtu.check_grads(np_fn, args_maker(), order=1, atol=tol, rtol=tol)
-      # if not real:
       jtu.check_grads(np_fn, args_maker(), order=2, atol=tol, rtol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -199,7 +225,6 @@ class FftTest(jtu.JaxTestCase):
     # Test gradient for differentiable types.
     if dtype in inexact_dtypes:
       tol = 0.15  # TODO(skye): can we be more precise?
-      jtu.check_grads(np_fn, args_maker(), order=1, atol=tol, rtol=tol)
       jtu.check_grads(np_fn, args_maker(), order=2, atol=tol, rtol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -250,7 +275,6 @@ class FftTest(jtu.JaxTestCase):
     # Test gradient for differentiable types.
     if dtype in inexact_dtypes:
       tol = 0.15  # TODO(skye): can we be more precise?
-      jtu.check_grads(np_fn, args_maker(), order=1, atol=tol, rtol=tol)
       jtu.check_grads(np_fn, args_maker(), order=2, atol=tol, rtol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -295,7 +319,6 @@ class FftTest(jtu.JaxTestCase):
     # Test gradient for differentiable types.
     if dtype in inexact_dtypes:
       tol = 0.15  # TODO(skye): can we be more precise?
-      jtu.check_grads(np_fn, args_maker(), order=1, atol=tol, rtol=tol)
       jtu.check_grads(np_fn, args_maker(), order=2, atol=tol, rtol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(

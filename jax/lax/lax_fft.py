@@ -16,9 +16,12 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from functools import partial
+
 import numpy as onp
 
 from jax.abstract_arrays import ShapedArray
+from jax.api import jit, vjp
 from jax.core import Primitive
 from jax.interpreters import xla
 from . import dtypes, lax
@@ -83,14 +86,44 @@ def _prod(xs):
     result *= x
   return result
 
+def _naive_rfft(x, fft_lengths):
+  y = fft(x, xla_client.FftType.FFT, fft_lengths)
+  n = fft_lengths[-1]
+  return y[..., : n//2 + 1]
+
+@partial(jit, static_argnums=1)
+def _rfft_transpose(t, fft_lengths):
+  # The transpose of RFFT can't be expressed only in terms of irfft. Instead of
+  # manually building up larger twiddle matrices (which would increase the
+  # asymptotic complexity and is also rather complicated), we rely JAX to
+  # transpose a naive RFFT implementation.
+  dummy_shape = t.shape[:-len(fft_lengths)] + fft_lengths
+  dummy_primals = lax.full_like(t, 0.0, onp.float64, dummy_shape)
+  _, jvpfun = vjp(partial(_naive_rfft, fft_lengths=fft_lengths), dummy_primals)
+  return jvpfun(t)
+
+def _irfft_transpose(t, fft_lengths):
+  # The transpose of IRFFT is the RFFT of the cotangent times a scaling
+  # factor and a mask. The mask scales the cotangent for the Hermitian
+  # symmetric components of the RFFT by a factor of two, since these components
+  # are de-duplicated in the RFFT.
+  x = fft(t, xla_client.FftType.RFFT, fft_lengths)
+  n = x.shape[-1]
+  is_odd = fft_lengths[-1] % 2
+  full = partial(lax.full_like, t, dtype=onp.float64)
+  mask = lax.concatenate(
+      [full(1.0, shape=(1,)),
+       full(2.0, shape=(n - 2 + is_odd,)),
+       full(1.0, shape=(1 - is_odd,))],
+      dimension=0)
+  scale = 1 / _prod(fft_lengths)
+  return scale * mask * x
+
 def fft_transpose_rule(t, fft_type, fft_lengths):
   if fft_type == xla_client.FftType.RFFT:
-    scale = _prod(fft_lengths)
-    result = scale * fft(
-        t.conj(), xla_client.FftType.IRFFT, fft_lengths).conj()
+    (result,) = _rfft_transpose(t, fft_lengths)
   elif fft_type == xla_client.FftType.IRFFT:
-    scale = 1 / _prod(fft_lengths)
-    result = scale * fft(t, xla_client.FftType.RFFT, fft_lengths)
+    result = _irfft_transpose(t, fft_lengths)
   else:
     result = fft(t, fft_type, fft_lengths)
   return result,
