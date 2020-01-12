@@ -144,12 +144,12 @@ def ifftn(a, s=None, axes=None, norm=None):
   return _fft_core('ifftn', xla_client.FftType.IFFT, a, s, axes, norm)
 
 
-@_wraps(onp.fft.fftn)
+@_wraps(onp.fft.rfftn)
 def rfftn(a, s=None, axes=None, norm=None):
   return _fft_core('rfftn', xla_client.FftType.RFFT, a, s, axes, norm)
 
 
-@_wraps(onp.fft.ifftn)
+@_wraps(onp.fft.irfftn)
 def irfftn(a, s=None, axes=None, norm=None):
   return _fft_core('irfftn', xla_client.FftType.IRFFT, a, s, axes, norm)
 
