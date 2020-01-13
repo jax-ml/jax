@@ -102,15 +102,13 @@ class MaskingTest(jtu.JaxTestCase):
     def concat(x):
       return lax.concatenate([x, x], 0)
 
-  def test_lax_pad_shape_checking(self):
-    @shapecheck(['n'], 'n+3')
-    @jit
+  def test_pad_shape_checking(self):
+    @shapecheck(['n'], '2*n+1')
     def p(x):
       return lax.pad(x, 0, [(1, 1, 1)])
 
   def test_numpy_pad_shape_checking(self):
     @shapecheck(['n'], 'n+1')
-    @jit
     def p(x):
       return np.pad(x, (0, 1))
 

@@ -2497,8 +2497,8 @@ def _pad_shape_rule(operand, padding_value, padding_config):
 def _pad_polymorphic_shape_rule(shape_expr, padding_config):
   shape_expr, _ = shape_expr
 
-  return ShapeExpr(poly + const_poly(lo + hi) +
-                   const_poly(interior) * (poly + const_poly(-1))
+  return ShapeExpr(poly * const_poly(interior + 1) +
+                   const_poly(lo + hi - interior)
                    for poly, (lo, hi, interior) in zip(shape_expr, padding_config))
 
 def _pad_transpose(t, operand, padding_value, padding_config):
