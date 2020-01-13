@@ -46,7 +46,7 @@ from ..interpreters import pxla
 from ..interpreters import ad
 from ..interpreters import batching
 from ..interpreters import masking
-from ..interpreters.masking import ShapeExpr, ShapeError
+from ..interpreters.masking import ShapeExpr, ShapeError, Poly, const_poly
 from ..util import curry, cache, safe_zip, unzip2, prod
 from ..tree_util import build_tree, tree_unflatten, tree_map
 from ..lib import pytree
@@ -2494,6 +2494,13 @@ def _pad_shape_rule(operand, padding_value, padding_config):
                       onp.multiply(interior, onp.subtract(operand.shape, 1)))
   return tuple(out_shape)
 
+def _pad_polymorphic_shape_rule(shape_expr, padding_config):
+  shape_expr, _ = shape_expr
+
+  return ShapeExpr(poly + const_poly(lo + hi) +
+                   const_poly(interior) * (poly + const_poly(-1))
+                   for poly, (lo, hi, interior) in zip(shape_expr, padding_config))
+
 def _pad_transpose(t, operand, padding_value, padding_config):
   if t is ad_util.zero:
     return [ad_util.zero if operand is ad.undefined_primal else None,
@@ -2527,6 +2534,7 @@ pad_p = standard_primitive(_pad_shape_rule, _input_dtype, 'pad')
 ad.deflinear(pad_p, _pad_transpose)
 ad.primitive_transposes[pad_p] = _pad_transpose
 batching.primitive_batchers[pad_p] = _pad_batch_rule
+masking.shape_rules[pad_p] = _pad_polymorphic_shape_rule
 
 
 # We have a nonstandard reshape impl so that we can be lazy about data movement.
@@ -3054,6 +3062,21 @@ def _gather_shape_rule(operand, start_indices, dimension_numbers, slice_sizes,
   return tuple(next(slice_sizes) if i in dimension_numbers.offset_dims
                else next(start_indices_shape) for i in range(result_rank))
 
+def _gather_polymorphic_shape_rule(shape_exprs, dimension_numbers, slice_sizes,
+                       operand_shape):
+  operand_shape, start_indices_shape = shape_exprs
+
+  assert operand_shape == operand_shape
+  if len(operand_shape) != len(slice_sizes):
+    msg = ("slice_sizes must have rank equal to the gather operand; "
+           "operand.shape={}, slice_sizes={}".format(operand_shape, slice_sizes))
+    raise ValueError(msg)
+  result_rank = len(dimension_numbers.offset_dims) + len(start_indices_shape) - 1
+  start_indices_shape = iter(start_indices_shape[:-1])
+  slice_sizes = iter(onp.delete(slice_sizes, dimension_numbers.collapsed_slice_dims))
+  return ShapeExpr(tuple(next(slice_sizes) if i in dimension_numbers.offset_dims
+                   else next(start_indices_shape) for i in range(result_rank)))
+
 def _gather_translation_rule(c, operand, start_indices, dimension_numbers,
                              slice_sizes, operand_shape):
   indices_shape = c.GetShape(start_indices)
@@ -3137,6 +3160,7 @@ gather_p = standard_primitive(
 ad.defjvp(gather_p, _gather_jvp_rule, None)
 ad.primitive_transposes[gather_p] = _gather_transpose_rule
 batching.primitive_batchers[gather_p] = _gather_batching_rule
+masking.shape_rules[gather_p] = _gather_polymorphic_shape_rule
 
 
 class ScatterDimensionNumbers(collections.namedtuple(

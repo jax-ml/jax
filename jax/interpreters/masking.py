@@ -250,7 +250,8 @@ digits = frozenset(string.digits)
 identifiers = frozenset(string.ascii_lowercase)
 
 def parse_id(name): return Poly({Mon({name: 1}): 1})
-def parse_lit(val_str): return Poly({Mon(): int(val_str)})
+def parse_lit(val_str): return const_poly(int(val_str))
+def const_poly(val: int): return  Poly({Mon(): val})
 
 class MonomorphicDim(object):
   def __str__(self): return '_'
