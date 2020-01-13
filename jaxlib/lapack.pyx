@@ -59,14 +59,14 @@ cdef void blas_strsm(void* out, void** data) nogil:
   cdef int32_t diag = (<int32_t*>(data[3]))[0]
   cdef int m = (<int32_t*>(data[4]))[0]
   cdef int n = (<int32_t*>(data[5]))[0]
-  cdef int num_b = (<int32_t*>(data[6]))[0]
+  cdef int batch = (<int32_t*>(data[6]))[0]
   cdef float* alpha = <float*>(data[7])
   cdef float* a = <float*>(data[8])
   cdef float* b = <float*>(data[9])
 
   cdef float* x = <float*>(out)
   if x != b:
-    memcpy(x, b, <int64_t>(num_b) * <int64_t>(m) * <int64_t>(n) * sizeof(float))
+    memcpy(x, b, <int64_t>(batch) * <int64_t>(m) * <int64_t>(n) * sizeof(float))
 
   cdef char cside = 'L' if left_side else 'R'
   cdef char cuplo = 'L' if lower else 'U'
@@ -79,10 +79,13 @@ cdef void blas_strsm(void* out, void** data) nogil:
   cdef int lda = m if left_side else n
   cdef int ldb = m
 
-  for _ in range(num_b):
+  cdef int64_t x_plus = <int64_t>(m) * <int64_t>(n)
+  cdef int64_t a_plus = <int64_t>(lda) * <int64_t>(lda)
+
+  for _ in range(batch):
     strsm(&cside, &cuplo, &ctransa, &cdiag, &m, &n, alpha, a, &lda, x, &ldb)
-    x += n*m
-    a += lda**2
+    x += x_plus
+    a += a_plus
 
 register_cpu_custom_call_target(b"blas_strsm", <void*>(blas_strsm))
 
@@ -93,14 +96,14 @@ cdef void blas_dtrsm(void* out, void** data) nogil:
   cdef int32_t diag = (<int32_t*>(data[3]))[0]
   cdef int m = (<int32_t*>(data[4]))[0]
   cdef int n = (<int32_t*>(data[5]))[0]
-  cdef int num_b = (<int32_t*>(data[6]))[0]
+  cdef int batch = (<int32_t*>(data[6]))[0]
   cdef double* alpha = <double*>(data[7])
   cdef double* a = <double*>(data[8])
   cdef double* b = <double*>(data[9])
 
   cdef double* x = <double*>(out)
   if x != b:
-    memcpy(x, b, <int64_t>(num_b) * <int64_t>(m) * <int64_t>(n) * sizeof(double))
+    memcpy(x, b, <int64_t>(batch) * <int64_t>(m) * <int64_t>(n) * sizeof(double))
 
   cdef char cside = 'L' if left_side else 'R'
   cdef char cuplo = 'L' if lower else 'U'
@@ -113,10 +116,13 @@ cdef void blas_dtrsm(void* out, void** data) nogil:
   cdef int lda = m if left_side else n
   cdef int ldb = m
 
-  for i in range(num_b):
+  cdef int64_t x_plus = <int64_t>(m) * <int64_t>(n)
+  cdef int64_t a_plus = <int64_t>(lda) * <int64_t>(lda)
+
+  for _ in range(batch):
     dtrsm(&cside, &cuplo, &ctransa, &cdiag, &m, &n, alpha, a, &lda, x, &ldb)
-    x += m*n
-    a += lda**2
+    x += x_plus
+    a += a_plus
 
 
 register_cpu_custom_call_target(b"blas_dtrsm", <void*>(blas_dtrsm))
@@ -129,14 +135,14 @@ cdef void blas_ctrsm(void* out, void** data) nogil:
   cdef int32_t diag = (<int32_t*>(data[3]))[0]
   cdef int m = (<int32_t*>(data[4]))[0]
   cdef int n = (<int32_t*>(data[5]))[0]
-  cdef int num_b = (<int32_t*>(data[6]))[0]
+  cdef int batch = (<int32_t*>(data[6]))[0]
   cdef float complex* alpha = <float complex*>(data[7])
   cdef float complex* a = <float complex*>(data[8])
   cdef float complex* b = <float complex*>(data[9])
 
   cdef float complex* x = <float complex*>(out)
   if x != b:
-    memcpy(x, b, <int64_t>(num_b) * <int64_t>(m) * <int64_t>(n) * sizeof(float complex))
+    memcpy(x, b, <int64_t>(batch) * <int64_t>(m) * <int64_t>(n) * sizeof(float complex))
 
   cdef char cside = 'L' if left_side else 'R'
   cdef char cuplo = 'L' if lower else 'U'
@@ -149,10 +155,13 @@ cdef void blas_ctrsm(void* out, void** data) nogil:
   cdef int lda = m if left_side else n
   cdef int ldb = m
 
-  for _ in range(num_b):
+  cdef int64_t x_plus = <int64_t>(m) * <int64_t>(n)
+  cdef int64_t a_plus = <int64_t>(lda) * <int64_t>(lda)
+
+  for _ in range(batch):
     ctrsm(&cside, &cuplo, &ctransa, &cdiag, &m, &n, alpha, a, &lda, x, &ldb)
-    x += m*n
-    a += lda**2
+    x += x_plus
+    a += a_plus
 
 
 register_cpu_custom_call_target(b"blas_ctrsm", <void*>(blas_ctrsm))
@@ -164,14 +173,14 @@ cdef void blas_ztrsm(void* out, void** data) nogil:
   cdef int32_t diag = (<int32_t*>(data[3]))[0]
   cdef int m = (<int32_t*>(data[4]))[0]
   cdef int n = (<int32_t*>(data[5]))[0]
-  cdef int n_b = (<int32_t*>(data[6]))[0]
+  cdef int batch = (<int32_t*>(data[6]))[0]
   cdef double complex* alpha = <double complex*>(data[7])
   cdef double complex* a = <double complex*>(data[8])
   cdef double complex* b = <double complex*>(data[9])
 
   cdef double complex* x = <double complex*>(out)
   if x != b:
-    memcpy(x, b, <int64_t>(n_b) * <int64_t>(m) * <int64_t>(n) * sizeof(double complex))
+    memcpy(x, b, <int64_t>(batch) * <int64_t>(m) * <int64_t>(n) * sizeof(double complex))
 
   cdef char cside = 'L' if left_side else 'R'
   cdef char cuplo = 'L' if lower else 'U'
@@ -184,10 +193,13 @@ cdef void blas_ztrsm(void* out, void** data) nogil:
   cdef int lda = m if left_side else n
   cdef int ldb = m
 
-  for _ in range(n_b):
+  cdef int64_t x_plus = <int64_t>(m) * <int64_t>(n)
+  cdef int64_t a_plus = <int64_t>(lda) * <int64_t>(lda)
+
+  for _ in range(batch):
     ztrsm(&cside, &cuplo, &ctransa, &cdiag, &m, &n, alpha, a, &lda, x, &ldb)
-    x += m*n
-    a += lda**2
+    x += x_plus
+    a += a_plus
 
 register_cpu_custom_call_target(b"blas_ztrsm", <void*>(blas_ztrsm))
 

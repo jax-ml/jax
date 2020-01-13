@@ -404,7 +404,8 @@ def _triangular_solve_cpu_translation_rule(
     c, a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
   shape = c.GetShape(a)
   dtype = shape.element_type().type
-  if onp.dtype(dtype) in _cpu_lapack_types:
+
+  if len(shape.dimensions()) == 2 and onp.dtype(dtype) in _cpu_lapack_types:
     if conjugate_a and not transpose_a:
       a = c.Conj(a)
       conjugate_a = False
@@ -412,7 +413,7 @@ def _triangular_solve_cpu_translation_rule(
       c, c.Constant(onp.array(1, dtype=dtype)), a, b, left_side, lower,
                     transpose_a, conjugate_a, unit_diagonal)
   else:
-    # Fall back to the HLO implementation for unsupported types.
+    # Fall back to the HLO implementation for unsupported types or batching.
     return c.TriangularSolve(a, b, left_side, lower, transpose_a, conjugate_a,
                              unit_diagonal)
 
