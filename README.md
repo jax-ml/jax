@@ -88,6 +88,14 @@ For a deeper dive into JAX:
 - See the [full list of
 notebooks](https://github.com/google/jax/tree/master/docs/notebooks).
 
+You can also take a look at [the mini-libraries in
+`jax.experimental`](https://github.com/google/jax/tree/master/jax/experimental/README.md),
+like [`stax` for building neural
+networks](https://github.com/google/jax/tree/master/jax/experimental/README.md#neural-net-building-with-stax)
+and [`optimizers` for first-order stochastic
+optimization](https://github.com/google/jax/tree/master/jax/experimental/README.md#first-order-optimization),
+or the [examples](https://github.com/google/jax/tree/master/examples).
+
 ## Transformations
 
 At its core, JAX is an extensible system for transforming numerical functions.
@@ -391,7 +399,7 @@ cloud VM), you can run
 
 ```bash
 # install jaxlib
-PYTHON_VERSION=cp37  # alternatives: cp27, cp35, cp36, cp37
+PYTHON_VERSION=cp37  # alternatives: cp35, cp36, cp37, cp38
 CUDA_VERSION=cuda92  # alternatives: cuda90, cuda92, cuda100, cuda101
 PLATFORM=linux_x86_64  # alternatives: linux_x86_64
 BASE_URL='https://storage.googleapis.com/jax-releases'
@@ -412,8 +420,9 @@ grep CUDNN_MAJOR -A 2 /usr/local/cuda/include/cudnn.h  # might need different pa
 ```
 
 The Python version must match your Python interpreter. There are prebuilt wheels
-for Python 2.7, 3.5, 3.6, and 3.7; for anything else, you must build from
-source.
+for Python 3.5, 3.6, 3.7, and 3.8; for anything else, you must build from
+source. Jax requires Python 3.5 or above. Jax does not support Python 2 any
+more.
 
 Please let us know on [the issue tracker](https://github.com/google/jax/issues)
 if you run into any errors or problems with the prebuilt wheels.

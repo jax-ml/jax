@@ -19,9 +19,6 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import six
-from six.moves import xrange
-
 import numpy as onp
 
 from jax import core
@@ -115,6 +112,30 @@ def ppermute(x, axis_name, perm):
     ``axis_name`` gathered from ``x`` according to the permutation ``perm``.
   """
   return ppermute_p.bind(x, axis_name=axis_name, perm=tuple(perm))
+
+def pshuffle(x, axis_name, perm):
+  """Perform a collective shuffle according to the permutation ``perm``.
+
+  This function is a simple wrapper around jax.lax.ppermute.
+
+  Args:
+    x: array with a mapped axis named ``axis_name``.
+    axis_name: hashable Python object used to name a pmapped axis (see the
+      ``pmap`` docstring for more details).
+    perm: list of of ints, representing the new order of the source indicies
+      that encode how the mapped axis named ``axis_name`` should be
+      shuffled. The integer values are treated as indices into the mapped axis
+      ``axis_name``. Every int between 0 and ``len(perm)-1`` should be included.
+
+  Returns:
+    An array with the same shape as ``x`` with slices along the axis
+    ``axis_name`` gathered from ``x`` according to the permutation ``perm``.
+  """
+  if set(perm) != set(range(len(perm))):
+    raise AssertionError(
+      "Given `perm` does not represent a real permutation: {}".format(perm))
+  return ppermute(x, axis_name, list(zip(perm, range(len(perm)))))
+
 
 def pswapaxes(x, axis_name, axis):
   """Swap the pmapped axis ``axis_name`` with the unmapped axis ``axis``.
@@ -248,6 +269,7 @@ def _ppermute_transpose_rule(t, perm, axis_name):
 ppermute_p = standard_pmap_primitive('ppermute')
 ad.deflinear(ppermute_p, _ppermute_transpose_rule)
 xla.parallel_translations[ppermute_p] = _ppermute_translation_rule
+pxla.multi_host_supported_collectives.add(ppermute_p)
 
 
 def _all_to_all_translation_rule(c, x, split_axis, concat_axis, replica_groups):
@@ -503,14 +525,14 @@ def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers,
         y = _allgather(y, ydim, size, name)
         z = lax.dot_general(
             x, y, sub_dims(xdim, None, xc, yc, xb, yb), precision)
-        zdim = xdim + len(xb) - len([d for d in xrange(xdim) if d in xc])
+        zdim = xdim + len(xb) - len([d for d in range(xdim) if d in xc])
         return True, (z, zdim)
       else:
         # case f: x split but not contracting, y not split
         assert ydim is None
         z = lax.dot_general(
             x, y, sub_dims(xdim, None, xc, yc, xb, yb), precision)
-        zdim = xdim + len(xb) - len([d for d in xrange(xdim) if d in xc])
+        zdim = xdim + len(xb) - len([d for d in range(xdim) if d in xc])
         return True, (z, zdim)
     else:
       # cases g, h
@@ -527,7 +549,7 @@ def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers,
         # zdim = (
         #     ydim + len(xb) +                # batch dimensions
         #     x.ndim - len(xc) -              # non-contracting x dimensions
-        #     len([d for d in xrange(ydim) if d in yc]))
+        #     len([d for d in range(ydim) if d in yc]))
         # return True, (z, zdim)
         return False, 'lhs not split, rhs split but not contracting'
 

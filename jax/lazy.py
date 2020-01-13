@@ -17,10 +17,10 @@ from __future__ import division
 from __future__ import print_function
 
 from collections import namedtuple
+import functools
 import operator as op
 
 import numpy as onp
-from six.moves import reduce
 
 from .util import safe_map, safe_zip, unzip2, subvals
 from .lib import xla_bridge as xb
@@ -175,7 +175,7 @@ def eval_lexpr(lexpr, x):
     iotas = [onp.arange(d).reshape(subvals(ones, [(i, -1)]))
              for i, d in enumerate(input_.shape)]
     eyes = [i1 == i2 for i1, i2 in zip(iotas[:-1], iotas[1:])]
-    x = onp.asarray(reduce(op.and_, eyes), input_.dtype)
+    x = onp.asarray(functools.reduce(op.and_, eyes), input_.dtype)
   else:
     assert False
 
@@ -230,7 +230,7 @@ def stage_lexpr(c, lexpr, x):
     iotas = [c.BroadcastedIota(onp.uint32, input_.shape, i)
              for i in range(len(input_.shape))]
     eyes = [c.Eq(i1, i2) for i1, i2 in zip(iotas[:-1], iotas[1:])]
-    x = c.ConvertElementType(reduce(c.And, eyes), etype)
+    x = c.ConvertElementType(functools.reduce(c.And, eyes), etype)
   else:
     assert False
 

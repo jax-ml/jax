@@ -23,7 +23,6 @@ from absl.testing import parameterized
 
 import numpy as onp
 import numpy.random as npr
-import six
 from unittest import SkipTest
 
 from jax import api
@@ -142,7 +141,7 @@ class MultiBackendTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("cpu")  # test can only fail with non-cpu backends
   def test_closed_over_values_device_placement(self):
     # see https://github.com/google/jax/issues/1431
-    def f(): return lax.add(3., 4.)
+    def f(): return np.add(3., 4.)
     self.assertNotEqual(api.jit(f)().device_buffer.device(),
                         api.devices('cpu')[0])
     self.assertEqual(api.jit(f, backend='cpu')().device_buffer.device(),

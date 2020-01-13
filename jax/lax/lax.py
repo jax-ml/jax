@@ -16,6 +16,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import builtins
 import collections
 import enum
 import functools
@@ -23,9 +24,6 @@ import itertools
 import operator
 import string
 import warnings
-
-import six
-from six.moves import builtins, xrange
 
 import numpy as onp
 
@@ -59,7 +57,7 @@ FLAGS = flags.FLAGS
 
 _max = builtins.max
 _min = builtins.max
-_reduce = six.moves.reduce
+_reduce = functools.reduce
 
 
 @cache()
@@ -113,13 +111,24 @@ def neg(x):
 def sign(x):
   r"""Elementwise sign.
 
+  For floating-point inputs, returns
   :math:`\mathrm{sign}(x) = \begin{cases}
   -1 & x < 0\\
   -0 & x = -0\\
   \mathit{NaN} & x = \mathit{NaN}\\
   +0 & x = +0\\
   1 & x > 0
-  \end{cases}`.
+  \end{cases}`
+
+  For signed integer inputs, returns
+  :math:`\mathrm{sign}(x) = \begin{cases}
+  -1 & x < 0\\
+  0 & x = 0\\
+  1 & x > 0
+  \end{cases}`
+
+  For complex inputs, returns the complex phase, i.e.
+  :math:`\mathrm{sign}(x) = \frac{x}{|x|}`.
   """
   return sign_p.bind(x)
 
@@ -1322,6 +1331,17 @@ def slice_in_dim(operand, start_index, limit_index, stride=1, axis=0):
   limit_indices = list(operand.shape)
   strides = [1] * operand.ndim
 
+  # translate `None`
+  len_axis = operand.shape[axis]
+  start_index = start_index if start_index is not None else 0
+  limit_index = limit_index if limit_index is not None else len_axis
+  
+  # translate negative indices
+  if start_index < 0:
+    start_index = start_index + len_axis
+  if limit_index < 0:
+    limit_index = limit_index + len_axis
+
   axis = int(axis)
   start_indices[axis] = int(start_index)
   limit_indices[axis] = int(limit_index)
@@ -1471,8 +1491,8 @@ def _iter(tracer):
     raise TypeError("iteration over a 0-d array")  # same as numpy error
   else:
     n = tracer.shape[0]
-    # return (index_in_dim(tracer, i, keepdims=False) for i in xrange(n))
-    return iter([index_in_dim(tracer, i, keepdims=False) for i in xrange(n)])
+    # return (index_in_dim(tracer, i, keepdims=False) for i in range(n))
+    return iter([index_in_dim(tracer, i, keepdims=False) for i in range(n)])
 ShapedArray._iter = staticmethod(_iter)
 
 # Add some ad handlers that use (or could use) lax primitives
@@ -1533,9 +1553,10 @@ def unop_dtype_rule(result_dtype, accepted_dtypes, name, aval, **kwargs):
   return result_dtype(aval.dtype)
 
 
-def unop(result_dtype, accepted_dtypes, name):
+def unop(result_dtype, accepted_dtypes, name, translation_rule=None):
   dtype_rule = partial(unop_dtype_rule, result_dtype, accepted_dtypes, name)
-  prim = standard_primitive(_attrgetter('shape'), dtype_rule, name)
+  prim = standard_primitive(_attrgetter('shape'), dtype_rule, name,
+                            translation_rule=translation_rule)
   batching.defvectorized(prim)
   masking.defvectorized(prim)
   return prim
@@ -1625,7 +1646,17 @@ _any = _int | _float | _complex | _bool
 neg_p = standard_unop(_num, 'neg')
 ad.deflinear(neg_p, lambda t: [neg(t)])
 
-sign_p = standard_unop(_num, 'sign')
+def _sign_translation_rule(c, x):
+  shape = c.GetShape(x)
+  dtype = shape.numpy_dtype()
+  if dtypes.issubdtype(dtype, onp.unsignedinteger):
+    zero = c.Constant(onp.array(0, dtype=dtype))
+    dims = c.GetShape(x).dimensions()
+    return c.Select(c.Eq(x, zero), c.Broadcast(zero, dims),
+                    c.Broadcast(c.Constant(onp.array(1, dtype=dtype)), dims))
+  return c.Sign(x)
+
+sign_p = standard_unop(_num, 'sign', translation_rule=_sign_translation_rule)
 ad.defjvp_zero(sign_p)
 
 nextafter_p = standard_binop(
@@ -3202,7 +3233,7 @@ def _scatter_add_transpose_rule(t, operand, scatter_indices, updates,
       start_index_map=dimension_numbers.scatter_dims_to_operand_dims)
     slice_sizes = []
     pos = 0
-    for i in xrange(len(t.shape)):
+    for i in range(len(t.shape)):
       if i in dimension_numbers.inserted_window_dims:
         slice_sizes.append(1)
       else:
@@ -3354,7 +3385,7 @@ def _scatter_jvp(primals, tangents, update_jaxpr, update_consts,
     start_index_map=dnums.scatter_dims_to_operand_dims)
   slice_sizes = []
   pos = 0
-  for i in xrange(len(scattered_ids.shape)):
+  for i in range(len(scattered_ids.shape)):
     if i in dnums.inserted_window_dims:
       slice_sizes.append(1)
     else:
@@ -4304,7 +4335,8 @@ def conv_shape_tuple(lhs_shape, rhs_shape, strides, pads):
     msg = "Wrong number of explicit pads for convolution: expected {}, got {}."
     raise TypeError(msg.format(len(lhs_shape) - 2, len(pads)))
 
-  lhs_padded = onp.add(lhs_shape[2:], onp.add(*zip(*pads)))
+  lhs_padded = onp.add(lhs_shape[2:], onp.sum(onp.array(pads).reshape(-1, 2),
+                                              axis=1))
   out_space = onp.floor_divide(
       onp.subtract(lhs_padded, rhs_shape[2:]), strides) + 1
   out_space = onp.maximum(0, out_space)

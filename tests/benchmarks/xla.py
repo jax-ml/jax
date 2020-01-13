@@ -16,13 +16,18 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import enum
 import pytest
 import numpy as np
-import six
 
 import jax
 from jax import numpy as jnp
 from jax.interpreters import xla
+
+
+class AnEnum(enum.IntEnum):
+  A = 123
+  B = 456
 
 
 _abstractify_args = [
@@ -33,15 +38,9 @@ _abstractify_args = [
   np.random.randn(3, 4, 5, 6),
   np.arange(100, dtype=np.float32),
   jnp.int64(-3),
-  jnp.array([1, 2, 3])
+  jnp.array([1, 2, 3]),
+  AnEnum.B,
 ]
-
-if six.PY3:
-  import enum
-  class AnEnum(enum.IntEnum):
-    A = 123
-    B = 456
-  _abstractify_args.append(AnEnum.B)
 
 @pytest.mark.parametrize("arg", _abstractify_args)
 def test_abstractify(benchmark, arg):

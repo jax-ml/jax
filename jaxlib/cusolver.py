@@ -16,10 +16,10 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import functools
 import operator
 
 import numpy as np
-from six.moves import reduce
 
 from jaxlib import xla_client
 
@@ -54,7 +54,7 @@ def _real_type(dtype):
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
 
-_prod = lambda xs: reduce(operator.mul, xs, 1)
+_prod = lambda xs: functools.reduce(operator.mul, xs, 1)
 
 def trsm(c, a, b, left_side=False, lower=False, trans_a=False, conj_a=False,
          diag=False):

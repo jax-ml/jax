@@ -27,7 +27,6 @@ from absl.testing import parameterized
 
 import numpy as onp
 import numpy.random as npr
-import six
 
 from jax import api
 from jax import core
@@ -63,6 +62,7 @@ complex_dtypes = list(jtu.supported_dtypes().intersection(
     {onp.complex64, onp.complex128}))
 inexact_dtypes = float_dtypes + complex_dtypes
 int_dtypes = list(jtu.supported_dtypes().intersection({onp.int32, onp.int64}))
+uint_dtypes = list(jtu.supported_dtypes().intersection({onp.uint32, onp.uint64}))
 bool_dtypes = [onp.bool_]
 default_dtypes = float_dtypes + int_dtypes
 all_dtypes = float_dtypes + complex_dtypes + int_dtypes + bool_dtypes
@@ -78,7 +78,7 @@ def op_record(op, nargs, dtypes, rng_factory, tol=None):
 
 LAX_OPS = [
     op_record("neg", 1, default_dtypes + complex_dtypes, jtu.rand_small),
-    op_record("sign", 1, default_dtypes, jtu.rand_small),
+    op_record("sign", 1, default_dtypes + uint_dtypes, jtu.rand_small),
     op_record("floor", 1, float_dtypes, jtu.rand_small),
     op_record("ceil", 1, float_dtypes, jtu.rand_small),
     op_record("round", 1, float_dtypes, jtu.rand_default),
@@ -488,6 +488,17 @@ class LaxTest(jtu.JaxTestCase):
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)
 
   # TODO(mattjj): test conv_general_dilated against numpy
+
+  @jtu.skip_on_devices("gpu") # b/147488740
+  def testConv0DIsDot(self):
+    rng = jtu.rand_default()
+    def args_maker():
+      return [rng((10, 5), onp.float32), rng((5, 7), onp.float32)]
+    jnp_fun = partial(lax.conv_general_dilated, window_strides=(),
+                      padding='VALID', dimension_numbers=('NC', 'IO', 'NC'))
+    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(jnp_fun, onp.dot, args_maker, tol=.1)
+
 
   @staticmethod
   def _conv_transpose_via_grad(data, kernel, strides, padding,
@@ -1497,11 +1508,6 @@ class LaxTest(jtu.JaxTestCase):
                           rng(update_shape, dtype)]
     fun = partial(lax.scatter, dimension_numbers=dnums)
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)
-
-  def testLongConstantHandling(self):
-    if six.PY3:
-      self.skipTest("Test is Python 2 specific")
-    self.assertTrue(api.jit(lambda x: lax.lt(x, long(10)))(long(3)))  # noqa: F821
 
   def testIssue831(self):
     # Tests the DeviceTuple constant handler

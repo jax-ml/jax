@@ -263,6 +263,7 @@ jax.numpy.fft
   fft2
   ifft2
   fftfreq
+  rfftfreq
 
 jax.numpy.linalg
 ----------------

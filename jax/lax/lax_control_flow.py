@@ -21,12 +21,12 @@ from __future__ import division
 from __future__ import print_function
 
 import collections
+import functools
 import itertools
 import operator
 import threading
 
 import numpy as onp
-import six
 
 from jax import api
 from jax import core
@@ -50,7 +50,7 @@ from jax import ad_util
 
 _map = safe_map
 zip = safe_zip
-_reduce = six.moves.reduce
+_reduce = functools.reduce
 
 
 @cache()

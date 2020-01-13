@@ -29,8 +29,6 @@ from absl.testing import parameterized
 import numpy as onp
 import numpy.random as npr
 
-from six.moves import xrange
-
 from . import api
 from . import dtypes
 from . import lax
@@ -644,7 +642,7 @@ def cases_from_gens(*gens):
   sizes = [1, 3, 10]
   cases_per_size = int(FLAGS.num_generated_cases / len(sizes)) + 1
   for size in sizes:
-    for i in xrange(cases_per_size):
+    for i in range(cases_per_size):
       yield ('_{}_{}'.format(size, i),) + tuple(gen(size) for gen in gens)
 
 

@@ -17,7 +17,6 @@ from __future__ import division
 from __future__ import print_function
 
 import numpy as onp
-import six
 
 from . import core
 from . import ad_util
@@ -67,8 +66,6 @@ class UnshapedArray(core.AbstractValue):
   _bool = _nonzero = concretization_function_error(bool)
   _float   = concretization_function_error(float)
   _int     = concretization_function_error(int)
-  if six.PY2:
-    _long    = concretization_function_error(long)  # noqa: F821
   _complex = concretization_function_error(complex)
   _hex     = concretization_function_error(hex)
   _oct     = concretization_function_error(oct)
@@ -191,8 +188,6 @@ class ConcreteArray(ShapedArray):
   _bool = _nonzero = partialmethod(_forward_to_value, bool)
   _float   = partialmethod(_forward_to_value, float)
   _int     = partialmethod(_forward_to_value, int)
-  if six.PY2:
-    _long   = partialmethod(_forward_to_value, long)  # noqa: F821
   _complex = partialmethod(_forward_to_value, complex)
   _hex     = partialmethod(_forward_to_value, hex)
   _oct     = partialmethod(_forward_to_value, oct)

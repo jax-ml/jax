@@ -25,8 +25,6 @@ from weakref import ref
 import threading
 import types
 
-import six
-
 from . import linear_util as lu
 from .util import safe_zip, safe_map, partial, curry
 from .pprint_util import pp, vcat, hcat, pp_kv_pairs
@@ -370,10 +368,7 @@ class Tracer(object):
       if t is aval_property:
         return attr.fget(self)
       elif t is aval_method:
-        if six.PY3:
-          return types.MethodType(attr.fun, self)
-        else:
-          return types.MethodType(attr.fun, self, None)
+        return types.MethodType(attr.fun, self)
       else:
         return attr
 
