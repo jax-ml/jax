@@ -90,6 +90,16 @@ class PmapTest(jtu.JaxTestCase):
     ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testNoLeadingAxis(self):
+    f = pmap(lambda x, y: x + y, axis_name='i')
+    shape = (xla_bridge.device_count(), 4)
+    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+    ans = lambda: f(x, 1)
+    self.assertRaisesRegex(
+        ValueError,
+        "Some argument is missing a leading dimesion. (Did you mean to use a partial?)"
+        ans)
+
   def testComplexPsum(self):
     f = pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i')
 
@@ -99,7 +109,6 @@ class PmapTest(jtu.JaxTestCase):
 
     ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
-
 
   def testNestedBasic(self):
     f = lambda x: lax.psum(lax.psum(x, 'i'), 'j')

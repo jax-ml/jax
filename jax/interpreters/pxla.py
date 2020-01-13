@@ -131,6 +131,9 @@ def shard_aval(size, aval):
 shard_aval_handlers = {}
 shard_aval_handlers[core.AbstractUnit] = lambda size, x: x
 def _shard_abstract_array(size, x):
+  if len(x.shape) < 1:
+    raise ValueError("Some argument is missing a leading dimesion. "
+                     "(Did you mean to use a partial?)")
   if x.shape[0] != size:
     raise ValueError("Axis size {} does not match leading dimension of "
                      "shape {}".format(size, x.shape))
