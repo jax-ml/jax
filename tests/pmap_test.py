@@ -360,7 +360,7 @@ class PmapTest(jtu.JaxTestCase):
     values = onp.arange(device_count)
     shift_right = [(i - 1) % device_count for i in range(device_count)]
     f = lambda x: lax.pshuffle(x, perm=shift_right, axis_name='i')
-    expected = onp.transpose(values, shift_right)
+    expected = onp.roll(values, -1)
     ans = onp.asarray(pmap(f, "i")(values))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
