@@ -110,13 +110,14 @@ class FftTest(jtu.JaxTestCase):
     onp_op = _get_fftn_func(onp.fft, inverse, real)
     np_fn = lambda a: np_op(a, axes=axes)
     onp_fn = lambda a: onp_op(a, axes=axes) if axes is None or axes else a
-    self._CheckAgainstNumpy(onp_fn, np_fn, args_maker, check_dtypes=True,
+    # Numpy promotes to complex128 aggressively.  
+    self._CheckAgainstNumpy(onp_fn, np_fn, args_maker, check_dtypes=False,
                             tol=1e-4)
     self._CompileAndCheck(np_fn, args_maker, check_dtypes=True)
     # Test gradient for differentiable types.
     if dtype in (float_dtypes if real and not inverse else inexact_dtypes):
       # TODO(skye): can we be more precise?
-      tol = 1e-1
+      tol = 0.15
       jtu.check_grads(np_fn, args_maker(), order=2, atol=tol, rtol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(

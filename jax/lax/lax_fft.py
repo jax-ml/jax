@@ -24,6 +24,7 @@ from jax.abstract_arrays import ShapedArray
 from jax.api import jit, vjp
 from jax.core import Primitive
 from jax.interpreters import xla
+from jax.util import prod
 from . import dtypes, lax
 from ..lib.xla_bridge import xla_client
 from ..interpreters import ad
@@ -80,12 +81,6 @@ def fft_abstract_eval(x, fft_type, fft_lengths):
 def fft_translation_rule(c, x, fft_type, fft_lengths):
   return c.Fft(x, fft_type, fft_lengths)
 
-def _prod(xs):
-  result = 1
-  for x in xs:
-    result *= x
-  return result
-
 def _naive_rfft(x, fft_lengths):
   y = fft(x, xla_client.FftType.FFT, fft_lengths)
   n = fft_lengths[-1]
@@ -100,7 +95,8 @@ def _rfft_transpose(t, fft_lengths):
   dummy_shape = t.shape[:-len(fft_lengths)] + fft_lengths
   dummy_primals = lax.full_like(t, 0.0, onp.float64, dummy_shape)
   _, jvpfun = vjp(partial(_naive_rfft, fft_lengths=fft_lengths), dummy_primals)
-  return jvpfun(t)
+  result, = jvpfun(t)
+  return result
 
 def _irfft_transpose(t, fft_lengths):
   # The transpose of IRFFT is the RFFT of the cotangent times a scaling
@@ -116,12 +112,12 @@ def _irfft_transpose(t, fft_lengths):
        full(2.0, shape=(n - 2 + is_odd,)),
        full(1.0, shape=(1 - is_odd,))],
       dimension=0)
-  scale = 1 / _prod(fft_lengths)
+  scale = 1 / prod(fft_lengths)
   return scale * mask * x
 
 def fft_transpose_rule(t, fft_type, fft_lengths):
   if fft_type == xla_client.FftType.RFFT:
-    (result,) = _rfft_transpose(t, fft_lengths)
+    result = _rfft_transpose(t, fft_lengths)
   elif fft_type == xla_client.FftType.IRFFT:
     result = _irfft_transpose(t, fft_lengths)
   else:
