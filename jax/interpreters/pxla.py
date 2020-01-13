@@ -505,7 +505,21 @@ def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
       msg = ("compiling computation that requires {} replicas, but only {} XLA "
              "devices are available")
       raise ValueError(msg.format(num_global_replicas, xb.device_count(backend)))
-    device_assignment = None
+
+    # On a single host, we use the platform's default device assignment to
+    # potentially take advantage of device locality. On multiple hosts, the
+    # default device assignment may interleave different hosts' replicas,
+    # violating pmap's semantics where data is sharded across replicas in
+    # row-major order. Instead, manually create a device assignment that ensures
+    # each host is responsible for a continguous set of replicas.
+    if xb.host_count() > 1:
+      # TODO(skye): use a locality-aware assignment that satisfies the above
+      # constraint.
+      devices = [d for host_id in xb.host_ids()
+                 for d in xb.local_devices(host_id)]
+    else:
+      devices = xb.get_backend(backend).get_default_device_assignment(
+          num_global_replicas)
   else:
     if num_local_replicas != len(local_devices):
       local_devices_str = ", ".join(map(str, local_devices))
@@ -518,7 +532,8 @@ def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
       raise ValueError("compiling computation that requires %s replicas, "
                        "but %s devices were specified"
                        % (num_global_replicas, len(devices)))
-    device_assignment = tuple(d.id for d in devices)
+
+  device_assignment = tuple(d.id for d in devices)
   compiled = built.Compile(
       compile_options=xb.get_compile_options(num_global_replicas, device_assignment),
       backend=xb.get_backend(backend))

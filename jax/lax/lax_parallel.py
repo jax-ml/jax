@@ -269,6 +269,7 @@ def _ppermute_transpose_rule(t, perm, axis_name):
 ppermute_p = standard_pmap_primitive('ppermute')
 ad.deflinear(ppermute_p, _ppermute_transpose_rule)
 xla.parallel_translations[ppermute_p] = _ppermute_translation_rule
+pxla.multi_host_supported_collectives.add(ppermute_p)
 
 
 def _all_to_all_translation_rule(c, x, split_axis, concat_axis, replica_groups):

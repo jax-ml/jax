@@ -973,6 +973,34 @@ def _gumbel(key, shape, dtype):
   return -np.log(-np.log(
       uniform(key, shape, dtype, minval=np.finfo(dtype).eps, maxval=1.)))
 
+def categorical(key, logits, axis=-1, shape=None):
+  """Sample random values from categorical distributions.
+
+  Args:
+    key: a PRNGKey used as the random key.
+    logits: Unnormalized log probabilities of the categorical distribution(s) to sample from,
+      so that `softmax(logits, axis)` gives the corresponding probabilities.
+    axis: Axis along which logits belong to the same categorical distribution.
+    shape: Optional, a tuple of nonnegative integers representing the result shape.
+      Must be broadcast-compatible with ``onp.delete(logits.shape, axis)``.
+      The default (None) produces a result shape equal to ``onp.delete(logits.shape, axis)``.
+
+  Returns:
+    A random array with int dtype and shape given by ``shape`` if ``shape``
+    is not None, or else ``onp.delete(logits.shape, axis)``.
+  """
+
+  if axis >= 0:
+    axis -= len(logits.shape)
+
+  batch_shape = tuple(onp.delete(logits.shape, axis))
+  if shape is None:
+    shape = batch_shape
+  else:
+    _check_shape("categorical", shape, batch_shape)
+
+  sample_shape = shape[:len(shape)-len(batch_shape)]
+  return np.argmax(gumbel(key, sample_shape + logits.shape, logits.dtype) + logits, axis=axis)
 
 def laplace(key, shape=(), dtype=onp.float64):
   """Sample Laplace random values with given shape and float dtype.

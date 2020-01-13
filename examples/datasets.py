@@ -23,7 +23,7 @@ import gzip
 import os
 from os import path
 import struct
-import urllib
+import urllib.request
 
 import numpy as np
 

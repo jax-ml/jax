@@ -489,6 +489,7 @@ class LaxTest(jtu.JaxTestCase):
 
   # TODO(mattjj): test conv_general_dilated against numpy
 
+  @jtu.skip_on_devices("gpu") # b/147488740
   def testConv0DIsDot(self):
     rng = jtu.rand_default()
     def args_maker():
@@ -496,7 +497,7 @@ class LaxTest(jtu.JaxTestCase):
     jnp_fun = partial(lax.conv_general_dilated, window_strides=(),
                       padding='VALID', dimension_numbers=('NC', 'IO', 'NC'))
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
-    self._CheckAgainstNumpy(jnp_fun, onp.dot, args_maker)
+    self._CheckAgainstNumpy(jnp_fun, onp.dot, args_maker, tol=.1)
 
 
   @staticmethod
