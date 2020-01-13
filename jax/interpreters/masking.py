@@ -105,10 +105,15 @@ class ShapeExpr(tuple):  # type ShapeExpr = [Poly]
   def __str__(self):
     return 'ShapeExpr({})'.format(', '.join(map(str, self)))
   def __getitem__(self, idx):
-    if type(idx) is int:
-      return super(ShapeExpr, self).__getitem__(idx)
-    else:
-      return ShapeExpr(super(ShapeExpr, self).__getitem__(idx))
+    poly: Poly = super(ShapeExpr, self).__getitem__(idx)
+    if type(idx) is not int:
+      return ShapeExpr(poly)
+
+    if poly.is_const:
+      return next(iter(poly.values()))
+
+    return poly
+
 
 class Poly(Counter):  # type Poly = Map Mon Int -- monomials to coeffs
   def __mul__(p1, p2):
@@ -129,6 +134,10 @@ class Poly(Counter):  # type Poly = Map Mon Int -- monomials to coeffs
     return ' + '.join('{} {}'.format(v, k) if v != 1 else str(k)
                       for k, v in sorted(self.items())).strip()
 
+  @property
+  def is_const(self):
+    return len(self) == 1 and next(iter(self)).degree == 0
+
 class Mon(Counter):  # type Mon = Map Id Int -- ids to degrees
   def __hash__(self):
     return hash(tuple(self.items()))
@@ -139,10 +148,11 @@ class Mon(Counter):  # type Mon = Map Id Int -- ids to degrees
 
   def __lt__(self, other):
     # sort by total degree, then lexicographically on indets
-    self_key = self.degree(), tuple(sorted(self))
-    other_key = other.degree(), tuple(sorted(other))
+    self_key = self.degree, tuple(sorted(self))
+    other_key = other.degree, tuple(sorted(other))
     return self_key < other_key
 
+  @property
   def degree(self):
     return sum(self.values())
 
