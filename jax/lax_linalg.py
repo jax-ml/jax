@@ -414,6 +414,7 @@ def _triangular_solve_cpu_translation_rule(
                     transpose_a, conjugate_a, unit_diagonal)
   else:
     # Fall back to the HLO implementation for unsupported types or batching.
+    # TODO: Consider swapping XLA for LAPACK in batched case
     return c.TriangularSolve(a, b, left_side, lower, transpose_a, conjugate_a,
                              unit_diagonal)
 
