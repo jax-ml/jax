@@ -97,7 +97,7 @@ class PmapTest(jtu.JaxTestCase):
     ans = lambda: f(x, 1)
     self.assertRaisesRegex(
         ValueError,
-        "Some argument is missing a leading dimesion. (Did you mean to use a partial?)"
+        "Some argument is missing a leading dimesion. (Did you mean to use a partial?)",
         ans)
 
   def testComplexPsum(self):
