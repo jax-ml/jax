@@ -218,8 +218,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     lax_fun = lsp_stats.logistic.cdf
 
     def args_maker():
-      x = map(rng, shapes, dtypes)
-      return list(x)
+      return list(map(rng, shapes, dtypes))
 
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                             tol=1e-6)
@@ -232,8 +231,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     lax_fun = lsp_stats.logistic.logpdf
 
     def args_maker():
-      x = map(rng, shapes, dtypes)
-      return list(x)
+      return list(map(rng, shapes, dtypes))
 
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                             tol=1e-6)
@@ -246,8 +244,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     lax_fun = lsp_stats.logistic.ppf
 
     def args_maker():
-      x = map(rng, shapes, dtypes)
-      return list(x)
+      return list(map(rng, shapes, dtypes))
 
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                             tol=1e-6)
@@ -260,8 +257,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     lax_fun = lsp_stats.logistic.sf
 
     def args_maker():
-      x = map(rng, shapes, dtypes)
-      return list(x)
+      return list(map(rng, shapes, dtypes))
 
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                             tol=1e-6)
