@@ -519,7 +519,7 @@ class APITest(jtu.JaxTestCase):
       TypeError,
       ("primal and tangent arguments to jax.jvp must have the same tree "
        "structure"),
-      lambda: api.jvp(lambda x, y: x * y, (np.float32(2),), [np.float32(2)]))
+      lambda: api.jvp(lambda x, y: x * y, (np.float32(2),), [[np.float32(2)]]))
     self.assertRaisesRegex(
       TypeError,
       "primal and tangent arguments to jax.jvp must have equal types",
@@ -1012,8 +1012,9 @@ class APITest(jtu.JaxTestCase):
     self.assertRaisesRegex(
         ValueError,
         "axes specification must be a tree prefix of the corresponding "
-        r"value, got specification \(0, 0\) for value "
-        r"PyTreeDef\(tuple, \[\*\]\).",
+        r"value, got specification \(None, \(0, 0\)\) for value "
+        r"PyTreeDef\(tuple, \[PyTreeDef\(None, \[\]\),PyTreeDef\("
+        r"tuple, \[\*\]\)\]\).",
         lambda: api.vmap(lambda x: x, in_axes=(0, 0))(jnp.ones(3))
     )
 

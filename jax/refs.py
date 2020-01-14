@@ -92,3 +92,17 @@ def inject(fun, ref_tree):
     tree_store(ref_tree, val_tree)
     return fun(*args, **kwargs)
   return inner
+
+@lu.transformation
+def functionalize_refs_splatted(ref_tree, val_tree, *args, **kwargs):
+  tree_store(ref_tree, val_tree)
+  out = yield args, kwargs
+  val_tree = tree_load(ref_tree, allow_no_value=True)
+  yield out, val_tree
+
+@lu.transformation
+def functionalize_refs(ref_tree, val_tree, args, **kwargs):
+  tree_store(ref_tree, val_tree)
+  out = yield args, kwargs
+  val_tree = tree_load(ref_tree, allow_no_value=True)
+  yield out, val_tree

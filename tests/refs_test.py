@@ -57,6 +57,15 @@ class RefsTest(jtu.JaxTestCase):
     pure_foo = jit(collect(foo, ref))
     assert pure_foo(3) == (10, 9)
 
+  def test_collect_jit(self):
+    ref = Ref()
+    def foo(x):
+      y = x ** 2
+      ref.store(y)
+      return y + 1
+    pure_foo = collect(jit(foo, refs=ref), ref)
+    assert pure_foo(3) == (10, 9)
+
   def test_collect_list(self):
     refs = [Ref(), Ref()]
 
