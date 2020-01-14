@@ -112,6 +112,42 @@ class MaskingTest(jtu.JaxTestCase):
     def p(x):
       return np.pad(x, (0, 1))
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {
+      'testcase_name': "strides={}_padding={}_lhs_dilation={}_dimension_numbers"
+                       "={}_lhs_perm={}_rhs_perm={}_out_perm={}".format(
+        strides, padding, lhs_dilation, dimension_numbers, lhs_perm, rhs_perm, out_perm),
+      'strides': strides, 'padding': padding, 'lhs_dilation': lhs_dilation,
+      'dimension_numbers': dimension_numbers, 'lhs_perm': lhs_perm,
+      'rhs_perm': rhs_perm, 'out_perm': out_perm}
+    for strides in [(1, 1), (2, 1)]
+    for padding in ['SAME', 'VALID', ((1, 0), (2, 0))]
+    for lhs_dilation in (None, (1, 2))
+    for dimension_numbers, (lhs_perm, rhs_perm, out_perm) in (
+            (("NCHW", "OIHW", "NCHW"), ((0, 1, 2, 3), (0, 1, 2, 3), (0, 1, 2, 3))),
+            (("NHWC", "HWIO", "NHWC"), ((0, 2, 3, 1), (2, 3, 1, 0), (0, 2, 3, 1))),
+            (("NCHW", "HWIO", "NHWC"), ((0, 1, 2, 3), (2, 3, 1, 0), (0, 2, 3, 1)))
+    )
+    # String padding is not implemented for transposed convolution, see conv_general_dilated implementation:
+    if (lhs_dilation is None or not isinstance(padding, str)) and
+    # only test strides with same padding:
+    (strides[0] == 1 or padding == 'SAME')))
+  def test_conv_shape_checking(self, strides, padding, lhs_dilation, dimension_numbers,
+                               lhs_perm, rhs_perm, out_perm):
+    valid = padding == 'VALID'
+    is_strided = strides[0] != 1
+    lhs_shape = '({}, {}, {}, {})'.format(*onp.take(['n', 'i', '2*h' if is_strided else 'h', 'w'], lhs_perm))
+    rhs_shape = '({}, {}, {}, {})'.format(*onp.take(['o', 'i', '2', '3'], rhs_perm))
+    out_shape = '({}, {}, {}, {})'.format(*onp.take([
+      'n', 'o', 'h+-1' if valid and not is_strided else 'h',
+      ('w+-2' if valid else 'w') if lhs_dilation is None else '2*w+-1'], out_perm))
+
+    @shapecheck([lhs_shape, rhs_shape], out_shape)
+    def conv(lhs, rhs):
+      return lax.conv_general_dilated(
+        lhs, rhs, strides, padding,
+        lhs_dilation=lhs_dilation, dimension_numbers=dimension_numbers)
+
   def test_unsupported_op_shape_checking(self):
     p = jc.Primitive('unsupported_op')
     p.def_impl(lambda x: x)

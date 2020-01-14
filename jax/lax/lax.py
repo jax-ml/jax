@@ -46,7 +46,7 @@ from ..interpreters import pxla
 from ..interpreters import ad
 from ..interpreters import batching
 from ..interpreters import masking
-from ..interpreters.masking import ShapeExpr, ShapeError, Poly, const_poly
+from ..interpreters.masking import ShapeExpr, ShapeError, Poly, concrete_poly
 from ..util import curry, cache, safe_zip, unzip2, prod
 from ..tree_util import build_tree, tree_unflatten, tree_map
 from ..lib import pytree
@@ -1961,33 +1961,41 @@ masking.defvectorized(bitcast_convert_type_p)
 def _conv_general_dilated_shape_rule(
     lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
     dimension_numbers, feature_group_count, **unused_kwargs):
+   return tuple(_conv_general_dilated_polymorphic_shape_rule(
+    (lhs.shape, rhs.shape), window_strides, padding, lhs_dilation, rhs_dilation,
+    dimension_numbers, feature_group_count, **unused_kwargs))
+
+def _conv_general_dilated_polymorphic_shape_rule(
+    shape_exprs, window_strides, padding, lhs_dilation, rhs_dilation,
+    dimension_numbers, feature_group_count, **unused_kwargs):
+  lhs_shape, rhs_shape = shape_exprs
   assert type(dimension_numbers) is ConvDimensionNumbers
   if not feature_group_count > 0:
     msg = ("conv_general_dilated feature_group_count "
            "must be a positive integer, got {}.")
     raise ValueError(msg.format(feature_group_count))
-  lhs_feature_count = lhs.shape[dimension_numbers.lhs_spec[1]]
+  lhs_feature_count = lhs_shape[dimension_numbers.lhs_spec[1]]
   quot, rem = divmod(lhs_feature_count, feature_group_count)
   if rem:
     msg = ("conv_general_dilated feature_group_count must divide lhs feature "
            "dimension size, but {} does not divide {}.")
     raise ValueError(msg.format(feature_group_count, lhs_feature_count))
-  if quot != rhs.shape[dimension_numbers.rhs_spec[1]]:
+  if quot != rhs_shape[dimension_numbers.rhs_spec[1]]:
     msg = ("conv_general_dilated lhs feature dimension size divided by "
            "feature_group_count must equal the rhs input feature dimension "
            "size, but {} // {} != {}.")
     raise ValueError(msg.format(lhs_feature_count, feature_group_count,
-                                rhs.shape[dimension_numbers.rhs_spec[1]]))
-  if rhs.shape[dimension_numbers.rhs_spec[0]] % feature_group_count:
+                                rhs_shape[dimension_numbers.rhs_spec[1]]))
+  if rhs_shape[dimension_numbers.rhs_spec[0]] % feature_group_count:
     msg = ("conv_general_dilated rhs output feature dimension size must be a "
            "multiple of feature_group_count, but {} is not a multiple of {}.")
-    raise ValueError(msg.format(rhs.shape[dimension_numbers.rhs_spec[0]],
+    raise ValueError(msg.format(rhs_shape[dimension_numbers.rhs_spec[0]],
                                 feature_group_count))
   lhs_perm, rhs_perm, out_perm = dimension_numbers
-  lhs_trans = _dilate_shape(onp.take(lhs.shape, lhs_perm), lhs_dilation)
-  rhs_trans = _dilate_shape(onp.take(rhs.shape, rhs_perm), rhs_dilation)
+  lhs_trans = _dilate_shape(onp.take(lhs_shape, lhs_perm), lhs_dilation)
+  rhs_trans = _dilate_shape(onp.take(rhs_shape, rhs_perm), rhs_dilation)
   out_trans = conv_shape_tuple(lhs_trans, rhs_trans, window_strides, padding)
-  return tuple(onp.take(out_trans, onp.argsort(out_perm)))
+  return ShapeExpr(onp.take(out_trans, onp.argsort(out_perm)))
 
 def _conv_general_dilated_dtype_rule(
     lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
@@ -2121,6 +2129,7 @@ ad.defbilinear(conv_general_dilated_p,
                _conv_general_dilated_transpose_rhs)
 batching.primitive_batchers[conv_general_dilated_p] = \
     _conv_general_dilated_batch_rule
+masking.shape_rules[conv_general_dilated_p] = _conv_general_dilated_polymorphic_shape_rule
 
 
 def _reshape_axis_into(src, dst, x):
@@ -2497,8 +2506,8 @@ def _pad_shape_rule(operand, padding_value, padding_config):
 def _pad_polymorphic_shape_rule(shape_expr, padding_config):
   shape_expr, _ = shape_expr
 
-  return ShapeExpr(poly * const_poly(interior + 1) +
-                   const_poly(lo + hi - interior)
+  return ShapeExpr(poly * concrete_poly(interior + 1) +
+                   concrete_poly(lo + hi - interior)
                    for poly, (lo, hi, interior) in zip(shape_expr, padding_config))
 
 def _pad_transpose(t, operand, padding_value, padding_config):
@@ -3052,21 +3061,14 @@ def _gather_dtype_rule(operand, start_indices, **kwargs):
 def _gather_shape_rule(operand, start_indices, dimension_numbers, slice_sizes,
                        operand_shape):
   assert operand.shape == operand_shape
-  if len(operand_shape) != len(slice_sizes):
-    msg = ("slice_sizes must have rank equal to the gather operand; "
-          "operand.shape={}, slice_sizes={}".format(operand_shape, slice_sizes))
-    raise ValueError(msg)
-  result_rank = len(dimension_numbers.offset_dims) + start_indices.ndim - 1
-  start_indices_shape = iter(start_indices.shape[:-1])
-  slice_sizes = iter(onp.delete(slice_sizes, dimension_numbers.collapsed_slice_dims))
-  return tuple(next(slice_sizes) if i in dimension_numbers.offset_dims
-               else next(start_indices_shape) for i in range(result_rank))
+  return tuple(_gather_polymorphic_shape_rule(
+    (operand.shape, start_indices.shape),
+    dimension_numbers, slice_sizes, operand_shape))
 
 def _gather_polymorphic_shape_rule(shape_exprs, dimension_numbers, slice_sizes,
                        operand_shape):
   operand_shape, start_indices_shape = shape_exprs
 
-  assert operand_shape == operand_shape
   if len(operand_shape) != len(slice_sizes):
     msg = ("slice_sizes must have rank equal to the gather operand; "
            "operand.shape={}, slice_sizes={}".format(operand_shape, slice_sizes))
@@ -4282,9 +4284,23 @@ def _dilate_shape(shape, dilation):
     raise TypeError(msg.format(dilation))
   dilation = (1,) * (len(shape) - len(dilation)) + tuple(dilation)
   return onp.where(shape == 0, 0,
-                   onp.multiply(dilation, onp.subtract(shape, 1)) + 1)
+                   onp.multiply(onp.subtract(shape, 1), dilation) + 1)
 
+def is_polymorphic(shape):
+  return any(map(lambda d: isinstance(d, Poly), shape))
 
+def ceil_div_shape(shape, divisor):
+  if is_polymorphic(shape):
+    return ShapeExpr(onp.vectorize(lambda p, d: p.ceil_div(d))(shape, divisor))
+
+  return onp.ceil(onp.true_divide(shape, divisor)).astype(int)
+
+def nonnegative_shape(shape):
+  if is_polymorphic(shape):
+    # can't do maximum in polymorphic case, ignore:
+    return shape
+
+  return onp.maximum(shape, 0)
 
 def padtype_to_pads(in_shape, window_shape, window_strides, padding):
   """Convert padding string to list of pairs of pad values."""
@@ -4299,10 +4315,11 @@ def padtype_to_pads(in_shape, window_shape, window_strides, padding):
       raise RuntimeError(msg.format(padding))
 
   if padding == PaddingType.SAME:
-    out_shape = onp.ceil(onp.true_divide(in_shape, window_strides)).astype(int)
-    pad_sizes = [_max((out_size - 1) * stride + window_shape - in_size, 0)
-                 for out_size, stride, window_shape, in_size
-                 in zip(out_shape, window_strides, window_shape, in_shape)]
+    out_shape = ceil_div_shape(in_shape, window_strides)
+    pad_sizes = nonnegative_shape(
+      [(out_size - 1) * stride + window_shape - in_size
+       for out_size, stride, window_shape, in_size
+       in zip(out_shape, window_strides, window_shape, in_shape)])
     return [(pad_size // 2, pad_size - pad_size // 2) for pad_size in pad_sizes]
   elif padding == PaddingType.VALID:
     return [(0, 0)] * len(in_shape)
@@ -4363,7 +4380,7 @@ def conv_shape_tuple(lhs_shape, rhs_shape, strides, pads):
                                               axis=1))
   out_space = onp.floor_divide(
       onp.subtract(lhs_padded, rhs_shape[2:]), strides) + 1
-  out_space = onp.maximum(0, out_space)
+  out_space = nonnegative_shape(out_space)
   out_shape = (lhs_shape[0], rhs_shape[0]) + tuple(out_space)
   return tuple(out_shape)
 

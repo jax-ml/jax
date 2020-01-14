@@ -104,37 +104,94 @@ class ShapeExpr(tuple):  # type ShapeExpr = [Poly]
   def __str__(self):
     return 'ShapeExpr({})'.format(', '.join(map(str, self)))
   def __getitem__(self, idx):
-    poly: Poly = super(ShapeExpr, self).__getitem__(idx)
-    if type(idx) is not int:
-      return ShapeExpr(poly)
+    poly = super(ShapeExpr, self).__getitem__(idx)
+    return poly if type(idx) is int else ShapeExpr(poly)
 
-    if poly.is_const:
-      return next(iter(poly.values()))
 
-    return poly
+def canonicalize_poly(p):
+  if isinstance(p, int):
+    return concrete_poly(p)
 
+  assert isinstance(p, Poly)
+
+  return p
+
+def poly_without_zeros(d):
+  d = {mon: count for mon, count in d.items() if count != 0}
+
+  return concrete_poly(0) if len(d) == 0 else Poly(d)
 
 class Poly(Counter):  # type Poly = Map Mon Int -- monomials to coeffs
+  def __add__(p1, p2):
+    d = p1.copy()
+
+    for mon, count in canonicalize_poly(p2).items():
+      d[mon] = d.get(mon, 0) + count
+
+    return poly_without_zeros(d)
+
+  def __sub__(p1, p2):
+    d = p1.copy()
+
+    for mon, count in canonicalize_poly(p2).items():
+       d[mon] = d.get(mon, 0) - count
+
+    return poly_without_zeros(d)
+
   def __mul__(p1, p2):
-    new_poly = Poly()
+    p2 = canonicalize_poly(p2)
+
+    new_poly = dict()
     for (mon1, coeff1), (mon2, coeff2) in it.product(p1.items(), p2.items()):
       mon = Mon(mon1 + mon2)                        # add monomials' id degrees
       coeff = coeff1 * coeff2                       # multiply integer coeffs
       new_poly[mon] = new_poly.get(mon, 0) + coeff  # accumulate coeffs
-    return new_poly
 
-  def __add__(p1, p2):
-    return Poly(Counter.__add__(p1, p2))
+    return poly_without_zeros(new_poly)
+
+  def __floordiv__(self, divisor):
+    q, _ = divmod(self, divisor)
+    return q
+
+  def __mod__(self, divisor):
+    _, r = divmod(self, divisor)
+    return r
+
+  def ceil_div(self, divisor):
+    if self.is_concrete:
+      return concrete_poly(int(onp.ceil(int(self) / divisor)))
+
+    return self // divisor
+
+  def __divmod__(self, divisor):
+    if self.is_concrete:
+      q, r = divmod(int(self), divisor)
+
+      return concrete_poly(q), r
+
+    def divided(count):
+      q, r = divmod(count, divisor)
+      if r != 0:
+        raise ValueError('shapecheck currently only supports strides '
+                         'that exactly divide the strided axis length.')
+      return q
+
+    return Poly({k: divided(count) for k, count in self.items()}), 0
 
   def __hash__(self):
     return hash(tuple(self.items()))
 
   def __str__(self):
-    return ' + '.join('{} {}'.format(v, k) if v != 1 else str(k)
+    return ' + '.join('{} {}'.format(v, k) if (v != 1 or k.degree == 0) else str(k)
                       for k, v in sorted(self.items())).strip()
 
+  def __int__(self):
+    assert self.is_concrete
+
+    return next(iter(self.values()))
+
   @property
-  def is_const(self):
+  def is_concrete(self):
     return len(self) == 1 and next(iter(self)).degree == 0
 
 class Mon(Counter):  # type Mon = Map Id Int -- ids to degrees
@@ -158,8 +215,8 @@ class Mon(Counter):  # type Mon = Map Id Int -- ids to degrees
 def concrete_shape(shape):
   if type(shape) is ShapeExpr:
     return shape
-  else:
-    return ShapeExpr((Poly({Mon(): d}) for d in shape))
+
+  return ShapeExpr((concrete_poly(d) for d in shape))
 
 def eval_shape_expr(env, expr):
   return tuple(eval_dim_expr(env, poly) for poly in expr)
@@ -184,13 +241,6 @@ def mul(coeff, mon):
     return coeff * mon
   else:
     return  0 if coeff == 0 else mon if coeff == 1 else coeff * mon
-
-def is_constant(poly):
-  try:
-    ([], _), = poly.items()
-    return True
-  except (ValueError, TypeError):
-    return False
 
 class ShapeError(Exception): pass
 
@@ -238,7 +288,7 @@ def parse_dim(spec):
   elif '*' in spec:
     terms = map(parse_dim, spec.split('*'))
     return functools.reduce(op.mul, terms)
-  elif spec.isdigit():
+  elif spec.isdigit() or spec.startswith('-') and spec[1:].isdigit:
     return parse_lit(spec)
   elif spec in identifiers:
     return parse_id(spec)
@@ -250,8 +300,8 @@ digits = frozenset(string.digits)
 identifiers = frozenset(string.ascii_lowercase)
 
 def parse_id(name): return Poly({Mon({name: 1}): 1})
-def parse_lit(val_str): return const_poly(int(val_str))
-def const_poly(val: int): return  Poly({Mon(): val})
+def parse_lit(val_str): return concrete_poly(int(val_str))
+def concrete_poly(val): return Poly({Mon(): val})
 
 class MonomorphicDim(object):
   def __str__(self): return '_'
@@ -286,7 +336,7 @@ class MaskTracer(Tracer):
     return ShapedArray(self.shape_expr, self.val.dtype)
 
   def is_pure(self):
-    return all(is_constant(poly) for poly in self.shape_expr)
+    return all(poly.is_concrete for poly in self.shape_expr)
 
   def full_lower(self):
     if self.is_pure():
@@ -411,4 +461,5 @@ class ShapeCheckTrace(Trace):
     return ShapeCheckTracer(self, out_shape_expr)
 
   def process_call(self, call_primitive, f, tracers, params):
+    # TODO apply proper subtrace:
     return map(self.full_raise, f.call_wrapped(*tracers))
