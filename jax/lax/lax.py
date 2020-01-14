@@ -192,6 +192,14 @@ def atan2(x, y):
     :math:`\mathrm{atan}({x \over y})`."""
   return atan2_p.bind(x, y)
 
+def betainc(a, b, x):
+  r"""Elementwise regularized incomplete beta integral."""
+  # TODO(srvasude): Remove these once XLA broadcasts these inputs.
+  a = _brcast(_brcast(a, b), x)
+  b = _brcast(b, a)
+  x = _brcast(x, a)
+  return regularized_incomplete_beta_p.bind(a, b, x)
+
 def lgamma(x):
   r"""Elementwise log gamma: :math:`\mathrm{log}(\Gamma(x))`."""
   return lgamma_p.bind(x)
@@ -1335,7 +1343,7 @@ def slice_in_dim(operand, start_index, limit_index, stride=1, axis=0):
   len_axis = operand.shape[axis]
   start_index = start_index if start_index is not None else 0
   limit_index = limit_index if limit_index is not None else len_axis
-  
+
   # translate negative indices
   if start_index < 0:
     start_index = start_index + len_axis
@@ -1564,7 +1572,7 @@ standard_unop = partial(unop, _identity)
 _attrgetter = lambda name: lambda x, **kwargs: getattr(x, name)
 
 
-def binop_dtype_rule(result_dtype, accepted_dtypes, name, *avals, **kwargs):
+def naryop_dtype_rule(result_dtype, accepted_dtypes, name, *avals, **kwargs):
   aval_dtypes = [aval.dtype for aval in avals]
   for i, (aval_dtype, types) in enumerate(zip(aval_dtypes, accepted_dtypes)):
     if not any(dtypes.issubdtype(aval_dtype, t) for t in types):
@@ -1594,7 +1602,7 @@ def _broadcasting_shape_rule(name, *avals):
 
 
 def binop(result_dtype, accepted_dtypes, name, translation_rule=None):
-  dtype_rule = partial(binop_dtype_rule, result_dtype, accepted_dtypes, name)
+  dtype_rule = partial(naryop_dtype_rule, result_dtype, accepted_dtypes, name)
   shape_rule = partial(_broadcasting_shape_rule, name)
   prim = standard_primitive(shape_rule, dtype_rule, name,
                             translation_rule=translation_rule)
@@ -1602,6 +1610,16 @@ def binop(result_dtype, accepted_dtypes, name, translation_rule=None):
   masking.defbinop(prim)
   return prim
 standard_binop = partial(binop, _input_dtype)
+
+def terop(result_dtype, accepted_dtypes, name, translation_rule=None):
+  dtype_rule = partial(naryop_dtype_rule, result_dtype, accepted_dtypes, name)
+  shape_rule = partial(_broadcasting_shape_rule, name)
+  prim = standard_primitive(shape_rule, dtype_rule, name,
+                            translation_rule=translation_rule)
+  batching.defbroadcasting(prim)
+  masking.defterop(prim)
+  return prim
+standard_terop = partial(terop, _input_dtype)
 
 
 # NOTE(mattjj): this isn't great for orchestrate fwd mode because it means JVPs
@@ -1700,6 +1718,9 @@ atan2_p = standard_binop([_float, _float], 'atan2')
 ad.defjvp(atan2_p,
   lambda g, x, y: _brcast(g, y) * (y / (square(x) + square(y))),
   lambda g, x, y: _brcast(g, x) * -x / (square(x) + square(y)))
+
+regularized_incomplete_beta_p = standard_terop(
+    [_float, _float, _float], 'regularized_incomplete_beta')
 
 lgamma_p = standard_unop(_float, 'lgamma')
 ad.defjvp(lgamma_p, lambda g, x: mul(g, digamma(x)))
@@ -1992,7 +2013,7 @@ def _conv_general_dilated_shape_rule(
 def _conv_general_dilated_dtype_rule(
     lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
     dimension_numbers, **unused_kwargs):
-  return binop_dtype_rule(_input_dtype, [_float, _float],
+  return naryop_dtype_rule(_input_dtype, [_float, _float],
                           'conv_general_dilated', lhs, rhs)
 
 _conv_spec_transpose = lambda spec: (spec[1], spec[0]) + spec[2:]
@@ -2185,7 +2206,7 @@ def _dot_general_shape_rule(lhs, rhs, dimension_numbers, precision):
 
 
 def _dot_general_dtype_rule(lhs, rhs, dimension_numbers, precision):
-  return binop_dtype_rule(_input_dtype, [_num, _num], 'dot_general', lhs, rhs)
+  return naryop_dtype_rule(_input_dtype, [_num, _num], 'dot_general', lhs, rhs)
 
 
 def _dot_general_transpose_lhs(g, y, dimension_numbers, precision,
@@ -2391,7 +2412,7 @@ def _clamp_shape_rule(min, operand, max):
     raise TypeError(m.format(max.shape))
   return operand.shape
 
-_clamp_dtype_rule = partial(binop_dtype_rule, _input_dtype, [_any, _any, _any],
+_clamp_dtype_rule = partial(naryop_dtype_rule, _input_dtype, [_any, _any, _any],
                             'clamp')
 
 clamp_p = standard_primitive(_clamp_shape_rule, _clamp_dtype_rule, 'clamp')

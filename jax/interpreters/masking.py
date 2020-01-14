@@ -348,6 +348,29 @@ def binop_masking_rule(prim, padded_vals, logical_shapes):
   padded_x, padded_y = padded_vals
   return prim.bind(padded_x, padded_y)
 
+def defterop(prim):
+  shape_rules[prim] = terop_shape_rule
+  masking_rules[prim] = partial(terop_masking_rule, prim)
+
+def terop_shape_rule(shape_exprs):
+  x_, y_, z_ = shape_exprs
+  if x_ == y_ and y_ == z_:
+    return x_
+  elif not x_:
+    return binop_shape_rule([y_, z_])
+  elif not y_:
+    return binop_shape_rule([x_, z_])
+  elif not z_:
+    return binop_shape_rule([x_, y_])
+  else:
+    return ShapeError
+
+def terop_masking_rule(prim, padded_vals, logical_shapes):
+  del logical_shapes  # Unused.
+  padded_x, padded_y, padded_z = padded_vals
+  return prim.bind(padded_x, padded_y, padded_z)
+
+
 
 ### definition-time (import-time) shape checker tracer machinery
 

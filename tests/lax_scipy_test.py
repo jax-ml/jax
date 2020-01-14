@@ -58,8 +58,9 @@ def op_record(name, nargs, dtypes, rng_factory, test_grad, test_name=None):
   return OpRecord(name, nargs, dtypes, rng_factory, test_grad, test_name)
 
 JAX_SPECIAL_FUNCTION_RECORDS = [
-    # TODO: digamma has no JVP implemented.
+    # TODO: betainc, digamma has no JVP implemented.
     op_record("betaln", 2, float_dtypes, jtu.rand_positive, False),
+    op_record("betainc", 3, float_dtypes, jtu.rand_positive, False),
     op_record("digamma", 1, float_dtypes, jtu.rand_positive, False),
     op_record("erf", 1, float_dtypes, jtu.rand_small_positive, True),
     op_record("erfc", 1, float_dtypes, jtu.rand_small_positive, True),
