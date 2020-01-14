@@ -966,10 +966,10 @@ def _foil_cse(c, x):
     assert not xla_shape.tuple_shapes()
     return x
   else:
-    rng = c.RngNormal(c.Constant(onp.array(0, dtype=onp.float32)),
-                      c.Constant(onp.array(1, dtype=onp.float32)),
-                      [])
-    pred = c.Lt(rng, c.Constant(onp.finfo(onp.float32).max))
+    rng = c.RngUniform(c.Constant(onp.array(0, dtype=onp.float32)),
+                       c.Constant(onp.array(1, dtype=onp.float32)),
+                       [])
+    pred = c.Lt(rng, c.Constant(onp.array(2, dtype=onp.float32)))
     shape, dtype = xla_shape.dimensions(), xla_shape.numpy_dtype()
     zero = c.Broadcast(c.Constant(onp.array(0, dtype=dtype)), shape)
     return c.Select(pred, x, zero)
