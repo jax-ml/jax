@@ -163,6 +163,8 @@ def apply_primitive(prim, *args, **params):
 
 @cache()
 def xla_primitive_callable(prim, *arg_specs, **params):
+  if FLAGS.jax_log_compiles:
+    print("compiling primitive {} for args {}".format(prim.name, arg_specs))
   avals, arg_devices = unzip2(arg_specs)
   device = _device_from_arg_devices(arg_devices)
   backend = xb.get_device_backend(device)
@@ -646,7 +648,8 @@ def lower_fun(fun, instantiate=False, initial_style=False):
     avals = map(_aval_from_xla_shape, xla_shapes)
     pvals = [pe.PartialVal((a, core.unit)) for a in avals]
     jaxpr, _, consts = pe.trace_to_jaxpr(
-        lu.wrap_init(fun, params), pvals, instantiate=True)
+        lu.wrap_init(fun, params), pvals, instantiate=True,
+        stage_out_calls=True)
     consts = _map(c.Constant, consts)
     outs = jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, (), *xla_args)
     return c.Tuple(*outs)

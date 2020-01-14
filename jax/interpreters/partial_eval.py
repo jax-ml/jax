@@ -76,7 +76,7 @@ class JaxprTrace(Trace):
     if isinstance(pv, AbstractValue):
       return tracer
     elif pv is None:
-      if type(const) in core.literalable_types and onp.shape(const) == ():
+      if type(const) in core.literalable_types and onp.size(const) == 1:
         return self.new_instantiated_literal(const)
       else:
         return self.new_instantiated_const(const)
@@ -84,12 +84,17 @@ class JaxprTrace(Trace):
       raise TypeError(pv)
 
   def instantiate_const_abstracted(self, tracer):
+    # instantiate a constant in the trace and abstract its aval to shaped level
     pv, const = tracer.pval
     if isinstance(pv, AbstractValue):
       return tracer
     elif pv is None:
       aval = raise_to_shaped(get_aval(const), onp.isscalar(const))
-      return JaxprTracer(self, PartialVal((aval, unit)), ConstVar(const))
+      if type(const) in core.literalable_types and onp.size(const) == 1:
+        recipe = Literal(const)
+      else:
+        recipe = ConstVar(const)
+      return JaxprTracer(self, PartialVal((aval, unit)), recipe)
     else:
       raise TypeError(pv)
 
