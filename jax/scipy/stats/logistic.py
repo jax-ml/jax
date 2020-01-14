@@ -25,8 +25,7 @@ from ...numpy.lax_numpy import _promote_args_inexact, _wraps
 
 @_wraps(osp_stats.logistic.logpdf, update_doc=False)
 def logpdf(x):
-  x = _promote_args_inexact("logistic.logpdf", x)
-  return -x - 2. * lax.log1p(lax.exp(-x))
+  return lax.neg(x) - 2. * lax.log1p(lax.exp(lax.neg(x)))
 
 @_wraps(osp_stats.logistic.pdf, update_doc=False)
 def pdf(x):
@@ -38,7 +37,7 @@ def ppf(x):
 
 @_wraps(osp_stats.logistic.sf, update_doc=False)
 def sf(x):
-  return expit(-x)
+  return expit(lax.neg(x))
 
 @_wraps(osp_stats.logistic.isf, update_doc=False)
 def isf(x):
@@ -46,5 +45,4 @@ def isf(x):
 
 @_wraps(osp_stats.logistic.cdf, update_doc=False)
 def cdf(x):
-  x = _promote_args_inexact("logistic.logpdf", x)
   return expit(x)
