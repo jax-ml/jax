@@ -31,31 +31,30 @@ def body_fun(matvec, x):
   r_new = r - alpha * Ap
   r_norm_new = np.linalg.norm(r_new)
   p_new = r_new + (r_norm_new / r_norm) * p
-  return p_new, x_new, r_new, r_norm_new, k+1
+  return p_new, x_new, r_new, r_norm_new, (k+1)
 
 def _cg_solve(matvec, b, x0, tol, maxiter):
   N = np.shape(b)[0]
-  x_k = np.zeros_like(b)
+  x_0 = np.zeros_like(b)
   if x0 is not None:
-    x_k = x0
+    x_0 = x0
     if not np.shape(x0) == (N,):
       raise ValueError('A and x have incompatible dimensions')
   if maxiter is None:
     maxiter = N*10
-  r_k = b - matvec(x_k)
-  r_k_norm = np.linalg.norm(r_k)
-  p_k = r_k
-  k = 0
-  full_tol = tol * np.linalg.norm(b)
-  _, x_k_final, _, _, _ = lax.while_loop(
+  r_0 = b - matvec(x_0)
+  r_0_norm = np.linalg.norm(r_0)
+  p_0 = r_0
+  full_tol = tol * np.linalg.norm(r_0)
+  _, x_final, _, _, _ = lax.while_loop(
       lambda x: (x[-2] > full_tol) & (x[-1] < maxiter),
       partial(body_fun, matvec),
-      (p_k, x_k, r_k, r_k_norm, k)
+      (p_0, x_0, r_0, r_0_norm, 0)
   )
-  return x_k_final
+  return x_final
 
 @_wraps(scipy.sparse.linalg.cg)
-def cg(matvec, b, x0=None, tol=1e-05, maxiter=None):
+def cg(matvec, b, x0=None, tol=1e-4, maxiter=None):
   # exposed as scipy.sparse.cg
   info = 0
   cg_solve = lambda matvec, b: _cg_solve(matvec, b, x0, tol, maxiter)
