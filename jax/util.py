@@ -21,7 +21,6 @@ import functools
 import itertools as it
 import types
 
-import fastcache
 import numpy as onp
 
 
@@ -177,9 +176,9 @@ def split_merge(predicate, xs):
   return lhs, rhs, merge
 
 def cache(max_size=4096):
-  return fastcache.clru_cache(maxsize=max_size)
+  return functools.lru_cache(maxsize=max_size)
 
-memoize = fastcache.clru_cache(maxsize=None)
+memoize = functools.lru_cache(maxsize=None)
 
 def prod(xs):
   out = 1
