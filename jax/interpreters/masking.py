@@ -29,7 +29,6 @@ from ..core import Trace, Tracer
 from ..util import unzip2, safe_map, safe_zip, curry
 from ..abstract_arrays import ShapedArray
 from .. import linear_util as lu
-from . import partial_eval as pe
 
 map = safe_map
 zip = safe_zip
@@ -53,10 +52,13 @@ def extend_shape_envs(logical_env, padded_env):
   yield
   shape_envs = prev
 
+def is_polymorphic(shape):
+  return any(map(lambda d: isinstance(d, Poly), shape))
+
 def shape_as_value(expr):
   if type(expr) is ShapeExpr:
     return eval_shape_expr(shape_envs.logical, expr)
-  elif type(expr) is tuple and any(type(d) is Poly for d in expr):
+  elif type(expr) is tuple and is_polymorphic(expr):
     return tuple(eval_dim_expr(shape_envs.logical, d) if type(d) is Poly else d
                  for d in expr)
   else:
@@ -65,7 +67,7 @@ def shape_as_value(expr):
 def padded_shape_as_value(expr):
   if type(expr) is ShapeExpr:
     return eval_shape_expr(shape_envs.padded, expr)
-  elif type(expr) is tuple and any(type(d) is Poly for d in expr):
+  elif type(expr) is tuple and is_polymorphic(expr):
     return tuple(eval_dim_expr(shape_envs.padded, d) if type(d) is Poly else d
                  for d in expr)
   else:
@@ -113,7 +115,6 @@ def canonicalize_poly(p):
     return concrete_poly(p)
 
   assert isinstance(p, Poly)
-
   return p
 
 def poly_without_zeros(d):
@@ -131,12 +132,10 @@ class Poly(Counter):  # type Poly = Map Mon Int -- monomials to coeffs
     return poly_without_zeros(d)
 
   def __sub__(p1, p2):
-    d = p1.copy()
+    return p1 + -p2
 
-    for mon, count in canonicalize_poly(p2).items():
-       d[mon] = d.get(mon, 0) - count
-
-    return poly_without_zeros(d)
+  def __neg__(self):
+    return Poly({mon: -count for mon, count in self.items()})
 
   def __mul__(p1, p2):
     p2 = canonicalize_poly(p2)
@@ -156,12 +155,6 @@ class Poly(Counter):  # type Poly = Map Mon Int -- monomials to coeffs
   def __mod__(self, divisor):
     _, r = divmod(self, divisor)
     return r
-
-  def ceil_div(self, divisor):
-    if self.is_concrete:
-      return concrete_poly(int(onp.ceil(int(self) / divisor)))
-
-    return self // divisor
 
   def __divmod__(self, divisor):
     if self.is_concrete:
@@ -188,7 +181,7 @@ class Poly(Counter):  # type Poly = Map Mon Int -- monomials to coeffs
   def __int__(self):
     assert self.is_concrete
 
-    return next(iter(self.values()))
+    return int(next(iter(self.values())))
 
   @property
   def is_concrete(self):
@@ -216,7 +209,7 @@ def concrete_shape(shape):
   if type(shape) is ShapeExpr:
     return shape
 
-  return ShapeExpr((concrete_poly(d) for d in shape))
+  return ShapeExpr(concrete_poly(d) for d in shape)
 
 def eval_shape_expr(env, expr):
   return tuple(eval_dim_expr(env, poly) for poly in expr)

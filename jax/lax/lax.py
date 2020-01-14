@@ -46,7 +46,7 @@ from ..interpreters import pxla
 from ..interpreters import ad
 from ..interpreters import batching
 from ..interpreters import masking
-from ..interpreters.masking import ShapeExpr, ShapeError, Poly, concrete_poly
+from ..interpreters.masking import ShapeExpr, ShapeError, Poly
 from ..util import curry, cache, safe_zip, unzip2, prod
 from ..tree_util import build_tree, tree_unflatten, tree_map
 from ..lib import pytree
@@ -86,7 +86,7 @@ def _canonicalize_shape(shape):
   """
   # TODO(mattjj): this next check is a temporary workaround for masking
   if (type(shape) is ShapeExpr
-      or type(shape) is tuple and any(type(d) is masking.Poly for d in shape)):
+      or type(shape) is tuple and masking.is_polymorphic(shape)):
     return shape
   try:
     return tuple(map(operator.index, shape))
@@ -2384,8 +2384,7 @@ def _broadcast_in_dim_batch_rule(batched_args, batch_dims, shape,
   return broadcast_in_dim(new_operand, new_shape, new_broadcast_dimensions), 0
 
 def _broadcast_in_dim_polymorphic_shape_rule(shape_exprs, shape, broadcast_dimensions):
-  return ShapeExpr([masking.Poly({masking.Mon(): dim}) if isinstance(dim, int) else dim
-                    for dim in shape])
+  return ShapeExpr(map(masking.canonicalize_poly, shape))
 
 broadcast_in_dim_p = standard_primitive(
     _broadcast_in_dim_shape_rule, _input_dtype, 'broadcast_in_dim')
@@ -2498,17 +2497,17 @@ def _pad_shape_rule(operand, padding_value, padding_config):
     msg = "pad operand and padding_value must be same dtype: got {} and {}."
     raise TypeError(msg.format(operand.dtype, padding_value.dtype))
 
+  return tuple(_pad_polymorphic_shape_rule(
+    (operand.shape, padding_value.shape), padding_config))
+
+def _pad_polymorphic_shape_rule(shape_exprs, padding_config):
+  operand_shape, _ = shape_exprs
+
   lo, hi, interior = zip(*padding_config)
-  out_shape = onp.add(onp.add(onp.add(lo, hi), operand.shape),
-                      onp.multiply(interior, onp.subtract(operand.shape, 1)))
-  return tuple(out_shape)
+  out_shape = onp.add(onp.add(operand_shape, onp.add(lo, hi)),
+                      onp.multiply(onp.subtract(operand_shape, 1), interior))
 
-def _pad_polymorphic_shape_rule(shape_expr, padding_config):
-  shape_expr, _ = shape_expr
-
-  return ShapeExpr(poly * concrete_poly(interior + 1) +
-                   concrete_poly(lo + hi - interior)
-                   for poly, (lo, hi, interior) in zip(shape_expr, padding_config))
+  return ShapeExpr(out_shape)
 
 def _pad_transpose(t, operand, padding_value, padding_config):
   if t is ad_util.zero:
@@ -3474,7 +3473,7 @@ def _masking_defreducer(prim, identity):
 
 def _reducer_polymorphic_shape_rule(shape_exprs, axes, **unused_params):
   shape_expr, = shape_exprs
-  return ShapeExpr([d for i, d in enumerate(shape_expr) if i not in axes])
+  return ShapeExpr(onp.delete(shape_expr, axes))
 
 def _reducer_masking_rule(prim, identity, padded_vals, logical_shapes,
                           axes, input_shape):
@@ -4286,21 +4285,15 @@ def _dilate_shape(shape, dilation):
   return onp.where(shape == 0, 0,
                    onp.multiply(onp.subtract(shape, 1), dilation) + 1)
 
-def is_polymorphic(shape):
-  return any(map(lambda d: isinstance(d, Poly), shape))
-
-def ceil_div_shape(shape, divisor):
-  if is_polymorphic(shape):
-    return ShapeExpr(onp.vectorize(lambda p, d: p.ceil_div(d))(shape, divisor))
-
-  return onp.ceil(onp.true_divide(shape, divisor)).astype(int)
-
 def nonnegative_shape(shape):
-  if is_polymorphic(shape):
+  if masking.is_polymorphic(shape):
     # can't do maximum in polymorphic case, ignore:
     return shape
 
   return onp.maximum(shape, 0)
+
+def ceil_divide(x1, x2):
+  return -onp.floor_divide(-x1, x2)
 
 def padtype_to_pads(in_shape, window_shape, window_strides, padding):
   """Convert padding string to list of pairs of pad values."""
@@ -4315,7 +4308,7 @@ def padtype_to_pads(in_shape, window_shape, window_strides, padding):
       raise RuntimeError(msg.format(padding))
 
   if padding == PaddingType.SAME:
-    out_shape = ceil_div_shape(in_shape, window_strides)
+    out_shape = ceil_divide(in_shape, window_strides)
     pad_sizes = nonnegative_shape(
       [(out_size - 1) * stride + window_shape - in_size
        for out_size, stride, window_shape, in_size
@@ -4415,7 +4408,7 @@ def conv_transpose_shape_tuple(lhs_shape, rhs_shape, window_strides, padding,
 def _check_shapelike(fun_name, arg_name, obj):
   """Check that `obj` is a shape-like value (e.g. tuple of nonnegative ints)."""
   if (type(obj) is masking.ShapeExpr
-      or type(obj) is tuple and any(type(d) is masking.Poly for d in obj)):
+          or type(obj) is tuple and masking.is_polymorphic(obj)):
     return obj
   if not isinstance(obj, (tuple, list, onp.ndarray)):
     msg = "{} {} must be of type tuple/list/ndarray, got {}."
