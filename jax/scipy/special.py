@@ -41,7 +41,7 @@ def betaln(x, y):
 
 @_wraps(osp_special.betainc)
 def betainc(a, b, x):
-  a, b, x = _promote_args_inexact("betaln", a, b, x)
+  a, b, x = _promote_args_inexact("betainc", a, b, x)
   return lax.betainc(a, b, x)
 
 
