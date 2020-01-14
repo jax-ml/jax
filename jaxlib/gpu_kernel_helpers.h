@@ -16,11 +16,21 @@ limitations under the License.
 #ifndef JAXLIB_GPU_KERNEL_HELPERS_H_
 #define JAXLIB_GPU_KERNEL_HELPERS_H_
 
+#include <memory>
+
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 
 namespace jax {
 
 void ThrowIfError(cudaError_t error);
+
+// Builds an array of pointers to each array in a batch, in device memory.
+// Caution: the return value must be kept alive (e.g., via a stream
+// synchronization) until the copy enqueued by MakeBatchPointers on `stream`
+// completes.
+std::unique_ptr<void*[]> MakeBatchPointers(cudaStream_t stream, void* buffer,
+                                           void* dev_ptrs, int batch,
+                                           int batch_elem_size);
 
 }  // namespace jax
 

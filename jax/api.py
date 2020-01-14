@@ -28,6 +28,7 @@ from __future__ import division
 from __future__ import print_function
 
 import collections
+import functools
 import itertools as it
 import operator as op
 import os
@@ -37,8 +38,6 @@ from warnings import warn
 import numpy as onp
 from contextlib import contextmanager
 from distutils.util import strtobool
-import six
-from six.moves import reduce
 
 from . import core
 from . import linear_util as lu
@@ -1337,8 +1336,8 @@ def make_jaxpr(fun):
     jax_args, in_tree = tree_flatten((args, kwargs))
     jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
     in_pvals = map(pv_like, jax_args)
-    jaxpr, out_pvals, consts = pe.trace_to_jaxpr(jaxtree_fun, in_pvals,
-                                                 instantiate=True)
+    jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
+        jaxtree_fun, in_pvals, instantiate=True, stage_out_calls=True)
     out_avals = map(raise_to_shaped, unzip2(out_pvals)[0])
     in_avals = tuple(raise_to_shaped(in_aval) for in_aval, _ in in_pvals)
     typed_jaxpr = core.TypedJaxpr(jaxpr, consts, in_avals, out_avals)
@@ -1628,7 +1627,7 @@ def defjvp(fun, *jvprules):
     ans = fun(*primals)
     tangents_out = [rule(t, ans, *primals) for rule, t in zip(jvprules, tangents)
                     if rule is not None and t is not ad_util.zero]
-    return ans, reduce(ad.add_tangents, tangents_out, ad_util.zero)
+    return ans, functools.reduce(ad.add_tangents, tangents_out, ad_util.zero)
   defjvp_all(fun, custom_jvp)
 
 def defvjp_all(fun, custom_vjp):
@@ -1703,11 +1702,27 @@ def defvjp_all(fun, custom_vjp):
     args = tree_unflatten(params['in_tree'], args_flat)
     out, vjp = custom_vjp(*args)
     out_flat, out_tree = tree_flatten(out)
-    assert out_tree == params['out_tree']  # TODO(mattjj): better error message
+    if out_tree != params['out_tree']:
+      msg = (
+        "First output of `custom_vjp`: {} doesn't match the structure of "
+        "the output of `fun`: {}\n"
+        "{}\n"
+        "vs\n"
+        "{}\n".format(custom_vjp, fun, out_tree, params['out_tree'])
+      )
+      raise TypeError(msg)
     def vjp_flat(*cts_flat):
       cts = tree_unflatten(out_tree, cts_flat)
       args_cts_flat, in_tree2 = tree_flatten(vjp(cts))
-      assert in_tree == in_tree2  # TODO(mattjj): better error message
+      if in_tree != in_tree2:
+        msg = (
+          "Output of the `vjp`: {} doesn't match the structure of args of "
+          "`fun`: {}\n"
+          "{}\n"
+          "vs\n"
+          "{}\n".format(vjp, fun, in_tree2, in_tree)
+        )
+        raise TypeError(msg)
       return [core.unit] * num_consts + list(args_cts_flat)
     return out_flat, vjp_flat
   ad.defvjp_all(fun.prim, custom_transforms_vjp)

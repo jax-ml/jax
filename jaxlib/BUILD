@@ -14,7 +14,7 @@
 
 # JAX is Autograd and XLA
 
-load("@org_tensorflow//tensorflow/core/platform:default/build_config.bzl", "pyx_library")
+load("@org_tensorflow//tensorflow/core/platform/default:build_config.bzl", "pyx_library")
 load("@org_tensorflow//tensorflow:tensorflow.bzl", "pybind_extension")
 load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
 
@@ -59,6 +59,7 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         "@com_google_absl//absl/base",
+        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@local_config_cuda//cuda:cuda_headers",
     ],

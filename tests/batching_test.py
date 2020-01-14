@@ -299,7 +299,7 @@ class BatchingTest(jtu.JaxTestCase):
     ans = vmap(np.dot, in_axes=(1, None))(xs, ys)
     expected = onp.einsum('ij,i->j', xs, ys)
     self.assertAllClose(ans, expected, check_dtypes=False)
-  
+
   def testDot5(self):
     f = vmap(partial(np.einsum, 'ij,j->i'), (None, 0))
     jaxpr = make_jaxpr(f)(np.zeros((1000, 1000)), np.zeros((1000, 1000)))

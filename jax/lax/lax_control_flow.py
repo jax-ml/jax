@@ -21,12 +21,12 @@ from __future__ import division
 from __future__ import print_function
 
 import collections
+import functools
 import itertools
 import operator
 import threading
 
 import numpy as onp
-import six
 
 from jax import api
 from jax import core
@@ -50,14 +50,15 @@ from jax import ad_util
 
 _map = safe_map
 zip = safe_zip
-_reduce = six.moves.reduce
+_reduce = functools.reduce
 
 
 @cache()
 def _initial_style_jaxpr(fun, in_tree, in_avals):
   in_pvals = [pe.PartialVal((aval, core.unit)) for aval in in_avals]
   fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
-  jaxpr, out_pvals, consts = pe.trace_to_jaxpr(fun, in_pvals, instantiate=True)
+  jaxpr, out_pvals, consts = pe.trace_to_jaxpr(fun, in_pvals, instantiate=True,
+                                               stage_out_calls=True)
   out_avals = _map(raise_to_shaped, unzip2(out_pvals)[0])
   const_avals = tuple(raise_to_shaped(core.get_aval(c)) for c in consts)
   typed_jaxpr = core.TypedJaxpr(pe.closure_convert_jaxpr(jaxpr),
@@ -210,10 +211,10 @@ def while_loop(cond_fun, body_fun, init_val):
   return tree_unflatten(body_tree, outs)
 
 def _while_loop_abstract_eval(*args, **kwargs):
-  return kwargs["body_jaxpr"].out_avals
+  return _map(raise_to_shaped, kwargs["body_jaxpr"].out_avals)
 
 def _while_loop_translation_rule(c, axis_env, *args, **kwargs):
-  backend = kwargs.pop('backend', None)
+  backend = kwargs.pop('backend')
   cond_jaxpr, body_jaxpr, cond_nconsts, body_nconsts = split_dict(
       kwargs, ["cond_jaxpr", "body_jaxpr", "cond_nconsts", "body_nconsts"])
   cond_consts, body_consts, init_vals = split_list(args, [cond_nconsts, body_nconsts])
@@ -235,7 +236,7 @@ def _while_loop_translation_rule(c, axis_env, *args, **kwargs):
                             _map(cond_c.Constant, cond_jaxpr.literals), (), *(x + z))
   if batched:
     scalar = ShapedArray((), onp.bool_)
-    or_ = xla.primitive_computation(lax.or_p, scalar, scalar)
+    or_ = xla.primitive_subcomputation(lax.or_p, scalar, scalar)
     pred = cond_c.Reduce(pred, cond_c.Constant(onp.array(False)), or_,
                          list(range(cond_jaxpr.out_avals[0].ndim)))
 
@@ -362,7 +363,7 @@ def cond(pred, true_operand, true_fun, false_operand, false_fun):
   return tree_unflatten(true_out_tree, out)
 
 def _cond_abstract_eval(*args, **kwargs):
-  return kwargs["true_jaxpr"].out_avals
+  return _map(raise_to_shaped, kwargs["true_jaxpr"].out_avals)
 
 def _cond_translation_rule(c, axis_env, pred, *args, **kwargs):
   backend = kwargs.pop("backend", None)

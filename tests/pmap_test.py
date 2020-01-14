@@ -17,6 +17,8 @@ from __future__ import division
 from __future__ import print_function
 
 from functools import partial
+import os
+from random import shuffle
 from unittest import SkipTest
 
 import numpy as onp
@@ -39,9 +41,30 @@ from jax.interpreters import xla
 from jax.config import config
 config.parse_flags_with_absl()
 
+prev_xla_flags = None
+
+# Run all tests with 8 CPU devices.
+def setUpModule():
+  global prev_xla_flags
+  prev_xla_flags = os.getenv("XLA_FLAGS")
+  flags_str = prev_xla_flags or ""
+  # Don't override user-specified device count, or other XLA flags.
+  if "xla_force_host_platform_device_count" not in flags_str:
+    os.environ["XLA_FLAGS"] = (flags_str +
+                               " --xla_force_host_platform_device_count=8")
+  # Clear any cached backends so new CPU backend will pick up the env var.
+  xla_bridge.get_backend.cache_clear()
+
+# Reset to previous configuration in case other test modules will be run.
+def tearDownModule():
+  if prev_xla_flags is None:
+    del os.environ["XLA_FLAGS"]
+  else:
+    os.environ["XLA_FLAGS"] = prev_xla_flags
+  xla_bridge.get_backend.cache_clear()
+
 
 class PmapTest(jtu.JaxTestCase):
-
   def _getMeshShape(self, device_mesh_shape):
     device_count = xla_bridge.device_count()
     if any(size == -1 for size in device_mesh_shape):
@@ -223,7 +246,7 @@ class PmapTest(jtu.JaxTestCase):
 
     ans = grad(lambda x: np.sum(test_fun(x)))(x)
     expected = grad(lambda x: np.sum(baseline_fun(x)))(x)
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected, check_dtypes=True, atol=1e-3)
 
   def testShardedDeviceArrays(self):
     f = lambda x: 2 * x
@@ -330,6 +353,27 @@ class PmapTest(jtu.JaxTestCase):
     ans = grad(g)(x)
     expected = onp.roll(onp.pi + onp.arange(device_count), 1)
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @jtu.skip_on_devices("cpu")
+  def testCollectivePermuteCyclicWithPShuffle(self):
+    device_count = xla_bridge.device_count()
+    values = onp.arange(device_count)
+    shift_right = [(i - 1) % device_count for i in range(device_count)]
+    f = lambda x: lax.pshuffle(x, perm=shift_right, axis_name='i')
+    expected = onp.roll(values, -1)
+    ans = onp.asarray(pmap(f, "i")(values))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @jtu.skip_on_devices("cpu")
+  def testPShuffleWithBadPerm(self):
+    device_count = xla_bridge.device_count()
+    bad_perm = list(range(device_count))
+    bad_perm[0] = 1
+    f = lambda x: lax.pshuffle(x, perm=bad_perm, axis_name='i')
+    g = lambda: pmap(f, "i")(onp.arange(device_count))
+    self.assertRaisesRegex(
+      AssertionError,
+      "Given `perm` does not represent a real permutation: \[1.*\]", g)
 
   @jtu.skip_on_devices("cpu", "gpu")
   def testPpermuteWithZipObject(self):
@@ -453,9 +497,112 @@ class PmapTest(jtu.JaxTestCase):
     device_count = xla_bridge.device_count()
     f = pmap(lambda x: 3)
     x = np.arange(device_count)
-    ans = f(x)
+    with jtu.count_jit_and_pmap_compiles() as count:
+      ans = f(x)
+    self.assertEqual(count[0], 0)
     expected = onp.repeat(3, device_count)
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+    f = pmap(lambda x: (x, 3))
+    x = onp.arange(device_count)
+    with jtu.count_jit_and_pmap_compiles() as count:
+      _, ans = f(x)
+    self.assertEqual(count[0], 1)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testPmapConstantDevices(self):
+    if xla_bridge.device_count() == 1:
+      raise SkipTest("this test requires multiple devices")
+
+    devices = xla_bridge.devices()[:-1]
+    shuffle(devices)
+    f = pmap(lambda x: 3, devices=devices)
+    x = np.arange(len(devices))
+    with jtu.count_jit_and_pmap_compiles() as count:
+      ans = f(x)
+    self.assertEqual(count[0], 0)
+    expected = onp.repeat(3, len(devices))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    # Test that 'ans' was properly replicated across devices.
+    self.assertEqual([b.device() for b in ans.device_buffers], devices)
+
+  def testPmapConstantError(self):
+    device_count = xla_bridge.device_count()
+    f = pmap(lambda x: 3)
+    x = np.arange(device_count + 1)
+    self.assertRaisesRegex(
+        ValueError, r"Cannot replicate across \d+ replicas because only \d+ "
+        r"local devices are available.", lambda: f(x))
+
+    f = pmap(lambda x: 3, devices=[xla_bridge.devices()[0]])
+    x = np.arange(2)
+    self.assertRaisesRegex(
+        ValueError, "Cannot replicate across 2 replicas because only 1 "
+        "local devices are available.", lambda: f(x))
+
+  def testNestedPmapConstant(self):
+    if xla_bridge.device_count() == 1:
+      raise SkipTest("this test requires multiple devices")
+
+    f = pmap(pmap(lambda x: 3))
+    shape = (2, xla_bridge.device_count() // 2, 3)
+    x = np.arange(prod(shape)).reshape(shape)
+    with jtu.count_jit_and_pmap_compiles() as count:
+      ans = f(x)
+    self.assertEqual(count[0], 0)
+    expected = 3 * onp.ones(shape[:2])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    # Test that 'ans' was properly replicated across devices.
+    expected_sharded = pmap(pmap(lambda x: x))(expected)
+    self.assertEqual([b.device() for b in ans.device_buffers],
+                     [b.device() for b in expected_sharded.device_buffers])
+
+    f = pmap(pmap(lambda x: (x, 3)))
+    x_sharded, ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+    self.assertEqual([b.device() for b in ans.device_buffers],
+                     [b.device() for b in x_sharded.device_buffers])
+
+
+  def testNestedPmapConstantDevices(self):
+    raise SkipTest("Nested pmaps with devices not yet implemented")
+
+    if xla_bridge.device_count() < 6:
+      raise SkipTest("this test requires >= 6 devices")
+
+    devices = xla_bridge.devices()[:-2]
+    shuffle(devices)
+    f = pmap(pmap(lambda x: 3), devices=devices)
+    shape = (2, len(devices) // 2, 3)
+    x = np.arange(prod(shape)).reshape(shape)
+    with jtu.count_jit_and_pmap_compiles() as count:
+      ans = f(x)
+    self.assertEqual(count[0], 0)
+    expected = 3 * onp.ones(shape[:2])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    # Test that 'ans' was properly replicated across devices.
+    expected_sharded = pmap(pmap(lambda x: x), devices=devices)(expected)
+    self.assertEqual([b.device() for b in ans.device_buffers],
+                     [b.device() for b in expected_sharded.device_buffers])
+
+  def testNestedPmapConstantError(self):
+    f = pmap(pmap(lambda x: 3))
+    shape = (2, xla_bridge.device_count() // 2 + 1, 3)
+    x = np.arange(prod(shape)).reshape(shape)
+    self.assertRaisesRegex(
+        ValueError, r"Cannot replicate across \d+ replicas because only \d+ "
+        r"local devices are available.", lambda: f(x))
+
+    if xla_bridge.device_count() > 1:
+      f = pmap(pmap(lambda x: 3), devices=xla_bridge.devices()[:-1])
+      shape = (2, xla_bridge.device_count() // 2, 3)
+      x = np.arange(prod(shape)).reshape(shape)
+      self.assertRaisesRegex(
+          ValueError, r"Cannot replicate across \d+ replicas because only \d+ "
+          r"local devices are available.", lambda: f(x))
 
   def testCollectiveConstant(self):
     device_count = xla_bridge.device_count()
@@ -554,6 +701,9 @@ class PmapTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("gpu")
   def testPswapaxes(self):
     device_count = xla_bridge.device_count()
+    # TODO: AllToAll not yet implemented on XLA:CPU
+    if jtu.device_under_test() == "cpu":
+      device_count = 1
     shape = (device_count, 3, device_count, 5)
     x = onp.arange(prod(shape)).reshape(shape)
 
@@ -783,8 +933,8 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     r0 = f0(x)
     r1 = f1(x)
     expected = onp.expand_dims(onp.dot(x.squeeze(), x.squeeze().T), 0)
-    self.assertAllClose(r0, expected, check_dtypes=True)
-    self.assertAllClose(r1, expected, check_dtypes=True)
+    self.assertAllClose(r0, expected, check_dtypes=True, atol=1e-6, rtol=1e-3)
+    self.assertAllClose(r1, expected, check_dtypes=True, atol=1e-6, rtol=1e-3)
 
   def testNoDevicesError(self):
     f = pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i', devices=[])

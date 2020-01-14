@@ -16,7 +16,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from six.moves import reduce
+import functools
 
 
 class PrettyPrint(object):
@@ -52,14 +52,14 @@ def pp(s):
 
 
 def hcat(ps):
-  return reduce(lambda x, y: x >> y, ps)
+  return functools.reduce(lambda x, y: x >> y, ps)
 
 
 def vcat(ps):
   if not ps:
     return pp('')
   else:
-    return reduce(lambda x, y: x + y, ps)
+    return functools.reduce(lambda x, y: x + y, ps)
 
 
 def pp_kv_pairs(kv_pairs):

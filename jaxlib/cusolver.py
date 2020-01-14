@@ -16,10 +16,10 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import functools
 import operator
 
 import numpy as np
-from six.moves import reduce
 
 from jaxlib import xla_client
 
@@ -54,7 +54,7 @@ def _real_type(dtype):
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
 
-_prod = lambda xs: reduce(operator.mul, xs, 1)
+_prod = lambda xs: functools.reduce(operator.mul, xs, 1)
 
 def trsm(c, a, b, left_side=False, lower=False, trans_a=False, conj_a=False,
          diag=False):
@@ -97,6 +97,39 @@ def trsm(c, a, b, left_side=False, lower=False, trans_a=False, conj_a=False,
       ),
       opaque=opaque)
   return c.GetTupleElement(out, 0)
+
+
+def potrf(c, a, lower):
+  """Cholesky decomposition."""
+  a_shape = c.GetShape(a)
+  dtype = a_shape.element_type()
+  dims = a_shape.dimensions()
+  m, n = dims[-2:]
+  assert m == n
+  batch_dims = tuple(dims[:-2])
+  num_bd = len(batch_dims)
+  batch = _prod(batch_dims)
+
+  lwork, opaque = cusolver_kernels.build_potrf_descriptor(
+      np.dtype(dtype), lower, batch, n)
+  kernel = b"cusolver_potrf"
+
+  out = c.CustomCall(
+      kernel,
+      operands=(a,),
+      shape_with_layout=_Shape.tuple_shape((
+          _Shape.array_shape(
+              dtype, batch_dims + (n, n),
+              (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
+          _Shape.array_shape(
+              np.dtype(np.int32), batch_dims, tuple(range(num_bd - 1, -1, -1))),
+          _Shape.array_shape(np.dtype(np.int8), (lwork,), (0,)),
+      )),
+      operand_shapes_with_layout=(_Shape.array_shape(
+          dtype, batch_dims + (n, n),
+          (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),),
+      opaque=opaque)
+  return c.GetTupleElement(out, 0), c.GetTupleElement(out, 1)
 
 
 def getrf(c, a):

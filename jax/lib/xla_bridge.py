@@ -33,7 +33,6 @@ from ..config import flags
 from .. import util
 from .. import dtypes
 import numpy as onp  # 'onp' rather than 'np' to distinguish from autograd.numpy
-import six
 import threading
 
 try:
@@ -147,6 +146,11 @@ _backend_lock = threading.Lock()
 
 @util.memoize
 def get_backend(platform=None):
+  # TODO(mattjj,skyewm): remove this input polymorphism after we clean up how
+  # 'backend' values are handled
+  if isinstance(platform, xla_client.Backend):
+    return platform
+
   with _backend_lock:
     backend = _backends.get(FLAGS.jax_xla_backend)
     if backend is None:
