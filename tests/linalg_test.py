@@ -618,8 +618,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     n = shape[-1]
     args_maker = lambda: [rng(shape, dtype)]
     a, = args_maker()
-    self.assertTrue(np.linalg.matrix_rank(a) == onp.linalg.matrix_rank(a))
-
+    self._CheckAgainstNumpy(onp.linalg.matrix_rank, np.linalg.matrix_rank,
+                            args_maker, check_dtypes=True, tol=1e-3)
   # Regression test for incorrect type for eigenvalues of a complex matrix.
   @jtu.skip_on_devices("tpu")  # TODO(phawkins): No complex eigh implementation on TPU.
   def testIssue669(self):
