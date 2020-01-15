@@ -26,7 +26,6 @@ from .. import lax_linalg
 from ..numpy.lax_numpy import _wraps
 from ..numpy import lax_numpy as np
 from ..numpy import linalg as np_linalg
-from ..api import custom_transforms, defvjp
 
 _T = lambda x: np.swapaxes(x, -1, -2)
 
