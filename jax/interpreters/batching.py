@@ -36,26 +36,50 @@ map = safe_map
 
 
 def batch(fun, in_vals, in_dims, out_dim_dests):
-  size, = {x.shape[d] for x, d in zip(in_vals, in_dims) if d is not not_mapped}
-  out_vals, out_dims = batch_fun(fun, in_vals, in_dims)
-  return map(partial(matchaxis, size), out_dims, out_dim_dests(), out_vals)
+  # executes a batched version of `fun` following out_dim_dests
+  batched_fun = batch_fun(fun, in_dims, out_dim_dests)
+  return batched_fun.call_wrapped(*in_vals)
 
-def batch_fun(fun, in_vals, in_dims):
-  with new_master(BatchTrace) as master:
-    fun, out_dims = batch_subtrace(fun, master, in_dims)
-    out_vals = fun.call_wrapped(*in_vals)
-    del master
-  return out_vals, out_dims()
+def batch2(fun, in_vals, in_dims):
+  # like `batch` but returns output batch dims (rather than using out_dim_dests)
+  batched_fun, out_dims = batch_fun2(fun, in_dims)
+  return batched_fun.call_wrapped(*in_vals), out_dims()
 
 @lu.transformation_with_aux
-def batch_subtrace(master, in_dims, *in_vals):
+def batch_subtrace(master, in_dims, *in_vals, **params):
   trace = BatchTrace(master, core.cur_sublevel())
   in_tracers = [BatchTracer(trace, val, dim) if dim is not None else val
                 for val, dim in zip(in_vals, in_dims)]
-  outs = yield in_tracers, {}
+  outs = yield in_tracers, params
   out_tracers = map(trace.full_raise, outs)
   out_vals, out_dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
   yield out_vals, out_dims
+
+def batch_fun(fun, in_dims, out_dim_dests):
+  # transformation version of batch, which doesn't call the function
+  fun, out_dims = batch_subtrace(fun)
+  return _batch_fun(fun, in_dims, out_dims, out_dim_dests)
+
+@lu.transformation
+def _batch_fun(in_dims, out_dims, out_dim_dests, *in_vals, **params):
+  size, = {x.shape[d] for x, d in zip(in_vals, in_dims) if d is not not_mapped}
+  with new_master(BatchTrace) as master:
+    out_vals = yield (master, in_dims,) + in_vals, params
+    del master
+  out_vals = map(partial(matchaxis, size), out_dims(), out_dim_dests(), out_vals)
+  yield out_vals
+
+def batch_fun2(fun, bottom, in_dims):
+  # transformation version of batch2, which doesn't call the function
+  fun, out_dims = batch_subtrace(fun)
+  return _batch_fun2(fun, bottom, in_dims), out_dims
+
+@lu.transformation
+def _batch_fun2(bottom, in_dims, *in_vals, **params):
+  with new_master(BatchTrace, bottom) as master:
+    out_vals = yield (master, in_dims,) + in_vals, params
+    del master
+  yield out_vals
 
 
 ### tracer
@@ -151,6 +175,14 @@ class BatchTrace(Trace):
       trace = BatchTrace(master, core.cur_sublevel())
       return map(partial(BatchTracer, trace), x, dims)
     return vals, todo
+
+  def process_custom_call(self, call_primitive, fun, tracers, params):
+    bdims, stores = params.pop('bdims', ()), params.pop('stores', ())
+    vals, dims_in = unzip2((t.val, t.batch_dim) for t in tracers)
+    out_dims = lu.Store()
+    outs = call_primitive.bind(fun, *vals, bdims=(dims_in,) + bdims,
+                               stores=(out_dims,) + stores, **params)
+    return [BatchTracer(self, x, d) for x, d in zip(outs, out_dims.val)]
 
 
 ### primitives

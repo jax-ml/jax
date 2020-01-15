@@ -203,6 +203,7 @@ class JaxprTrace(Trace):
       return out_tracers
     return out, todo
 
+
 # This subclass is used just for its type tag, which switches the behavior of
 # process_call to stage out into the jaxpr any call primitives encountered
 # (rather than doing partial evaluation into the call).
@@ -241,7 +242,7 @@ def partial_eval_wrapper(avals, *consts):
   py_args = (map(PartialVal, zip(avals, consts)),)
   jaxpr, (out_pvals, consts, env) = yield py_args, {}
   out_pvs, out_consts = unzip2(out_pvals)
-  out = tuple(out_consts) + tuple(consts)  # TODO: can consts be traced?
+  out = tuple(out_consts) + tuple(consts)
   yield out, (out_pvs, jaxpr, env)
 
 

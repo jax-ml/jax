@@ -340,6 +340,32 @@ class JVPTrace(Trace):
       return map(partial(JVPTracer, trace), primals, tangents)
     return out, todo
 
+  def process_custom_call(self, call_primitive, fun, tracers, params):
+    assert params.pop('keep_res') is False
+    primals_in, tangents_in = unzip2((t.primal, t.tangent) for t in tracers)
+    outs = call_primitive.impl(fun, *primals_in, keep_res=True, **params)
+    ans_tree, res_tree, num_res = params['out_data']()
+    res, primals_out = split_list(outs, [num_res])
+    bdims_res, bdims_out = unzip2([split_list(s.val, [num_res])
+                                  for s in params.get('stores', ())])
+    if call_primitive.name == 'custom_jvp_call':
+      tangents_in = [t if t is not zero else None for t in tangents_in]
+      ts, kws = tree_unflatten(params['in_tree'], tangents_in)
+      tangents_out = params['jvp'](tree_unflatten(res_tree, res), *ts, **kws)
+      tangents_out, ans_tree2 = tree_flatten(tangents_out)
+      assert ans_tree == ans_tree2
+    elif call_primitive.name == 'custom_vjp_call':
+      argnums, nz_tangents = unzip2((i, t) for i, t in enumerate(tangents_in)
+                                    if t is not zero)
+      avals_out = [raise_to_shaped(get_aval(x)) for x in primals_out]
+      tangents_out = custom_linearized_p.bind(
+          *it.chain(res, nz_tangents), num_res=len(res), bwd=params['bwd'],
+          avals_out=avals_out, ans_tree=ans_tree, res_tree=res_tree, argnums=argnums,
+          bdims_res=bdims_res, bdims_in=params.get('bdims', ()), bdims_out=bdims_out)
+    else:
+      raise TypeError(call_primitive)
+    return map(partial(JVPTracer, self), primals_out, tangents_out)
+
   def join(self, xt, yt):
     xz, yz = xt is zero, yt is zero
     if xz == yz:
@@ -432,65 +458,6 @@ def add_tangents(x, y):
     return x
   else:
     return add_jaxvals(x, y)
-
-
-def defvjp_all(prim, custom_vjp):
-  # see https://github.com/google/jax/pull/636
-  name = prim.name
-
-  def fun_jvp(xs, ts, **params):
-    ts = map(instantiate_zeros, xs, ts)
-    primals_and_tangents = fun_jvp_p.bind(*it.chain(xs, ts), **params)
-    primals, tangents = split_list(primals_and_tangents, [len(primals_and_tangents) // 2])
-    if prim.multiple_results:
-      return primals, tangents
-    else:
-      primal, = primals
-      tangent, = tangents
-      return primal, tangent
-  primitive_jvps[prim] = fun_jvp
-
-  fun_jvp_p = core.Primitive('{name}_jvp'.format(name=name))
-  fun_jvp_p.multiple_results = True
-  def fun_jvp_partial_eval(trace, *tracers, **params):
-    primals, tangents = split_list(tracers, [len(tracers) // 2])
-    primals_out, vjp_py = custom_vjp(*primals, **params)
-    if not prim.multiple_results:
-      primals_out = [primals_out]
-    out_avals = [raise_to_shaped(get_aval(x)) for x in primals_out]
-    ct_pvals = [pe.PartialVal((aval, core.unit)) for aval in out_avals]
-    jaxpr, _, res = pe.trace_to_jaxpr(lu.wrap_init(vjp_py), ct_pvals, instantiate=True)
-    tangents_out = fun_lin_p.bind(*it.chain(res, tangents), trans_jaxpr=jaxpr,
-                                  num_res=len(res), out_avals=out_avals)
-    return primals_out + tangents_out
-  pe.custom_partial_eval_rules[fun_jvp_p] = fun_jvp_partial_eval
-
-  fun_lin_p = core.Primitive('{name}_lin'.format(name=name))
-  fun_lin_p.multiple_results = True
-  fun_lin_p.def_abstract_eval(lambda *_, **kwargs: kwargs['out_avals'])
-  def fun_lin_transpose(cts, *args, **kwargs):
-    num_res, trans_jaxpr = kwargs['num_res'], kwargs['trans_jaxpr']
-    res, _ = split_list(args, [num_res])
-    cts = map(instantiate_zeros_aval, kwargs['out_avals'], cts)
-    outs = core.eval_jaxpr(trans_jaxpr, res, (), *cts)
-    return [None] * num_res + outs
-  primitive_transposes[fun_lin_p] = fun_lin_transpose
-
-def defvjp(prim, *vjps):
-  def vjpmaker(*primals):
-    ans = prim.bind(*primals)
-    vjpfun = lambda ct: [vjp(ct, *primals) if vjp else zeros_like_jaxval(x)
-                         for x, vjp in zip(primals, vjps)]
-    return ans, vjpfun
-  defvjp_all(prim, vjpmaker)
-
-def defvjp2(prim, *vjps):
-  def vjpmaker(*primals):
-    ans = prim.bind(*primals)
-    vjpfun = lambda ct: [vjp(ct, ans, *primals) if vjp else zeros_like_jaxval(x)
-                         for x, vjp in zip(primals, vjps)]
-    return ans, vjpfun
-  defvjp_all(prim, vjpmaker)
 
 
 def defbilinear_broadcasting(bcast, prim, lhs_rule, rhs_rule):
@@ -608,3 +575,8 @@ def _perm(primal_counts, tangent_counts, lst):
 def _interleave(xs, ys):
   assert len(xs) == len(ys)
   return [e for pair in zip(xs, ys) for l in pair for e in l]
+
+
+custom_linearized_p = core.Primitive('custom_lin')
+custom_linearized_p.def_abstract_eval(lambda *_, **params: params['avals_out'])
+custom_linearized_p.multiple_results = True

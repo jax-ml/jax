@@ -19,9 +19,9 @@ from __future__ import print_function
 import numpy as onp
 import scipy.special as osp_special
 
-from .. import lax
 from .. import util
-from ..api import custom_transforms, defjvp
+from .. import lax
+from .. import api
 from ..numpy import lax_numpy as np
 from ..numpy.lax_numpy import (_wraps, asarray, _reduction_dims, _constant_like,
                                _promote_args_inexact)
@@ -69,21 +69,24 @@ def erfinv(x):
   return lax.erf_inv(x)
 
 
-@_wraps(osp_special.logit, update_doc=False)
-@custom_transforms
-def logit(x):
+def _logit_fwd(x):
   x = asarray(x)
-  return lax.log(lax.div(x, lax.sub(lax._const(x, 1), x)))
-defjvp(logit, lambda g, ans, x: g / (x * (1 - x)))
+  return lax.log(lax.div(x, lax.sub(lax._const(x, 1), x))), x
+def _logit_jvp(x, g):
+  return g / (x * (1 - x))
+logit = _wraps(osp_special.logit, update_doc=False)(
+    api.custom_jvp(_logit_fwd, _logit_jvp))
 
 
-@_wraps(osp_special.expit, update_doc=False)
-@custom_transforms
-def expit(x):
+def _expit_fwd(x):
   x = asarray(x)
   one = lax._const(x, 1)
-  return lax.div(one, lax.add(one, lax.exp(lax.neg(x))))
-defjvp(expit, lambda g, ans, x: g * ans * (lax._const(ans, 1) - ans))
+  ans = lax.div(one, lax.add(one, lax.exp(lax.neg(x))))
+  return ans, ans
+def _expit_jvp(ans, g):
+  return g * ans * (lax._const(ans, 1) - ans)
+expit = _wraps(osp_special.expit, update_doc=False)(
+    api.custom_jvp(_expit_fwd, _expit_jvp))
 
 
 @_wraps(osp_special.logsumexp)
@@ -390,8 +393,7 @@ def _ndtri(p):
   return x_nan_replaced
 
 
-@custom_transforms
-def log_ndtr(x, series_order=3):
+def _log_ndtr_fwd(x, series_order=3):
   r"""Log Normal distribution function.
 
   For details of the Normal distribution function see `ndtr`.
@@ -484,14 +486,20 @@ def log_ndtr(x, series_order=3):
   #   the gradient of a select involves the calculation 1*dy+0*(-inf)=nan
   #   regardless of whether dy is finite. Note that the minimum is a NOP if
   #   the branch is chosen.
-  return np.where(
+  ans = np.where(
       lax.gt(x, upper_segment),
       -_ndtr(-x),  # log(1-x) ~= -x, x << 1
       np.where(lax.gt(x, lower_segment),
                       lax.log(_ndtr(lax.max(x, lower_segment))),
                       _log_ndtr_lower(lax.min(x, lower_segment),
                                       series_order)))
+  return ans, (x, ans)
 
+def _log_ndtr_jvp(c, g):
+  x, ans = c
+  return lax.mul(g, lax.exp(lax.sub(_norm_logpdf(x), ans)))
+
+log_ndtr = api.custom_jvp(_log_ndtr_fwd, _log_ndtr_jvp)
 
 def _log_ndtr_lower(x, series_order):
   """Asymptotic expansion version of `Log[cdf(x)]`, appropriate for `x<<-1`."""
@@ -532,9 +540,6 @@ def _norm_logpdf(x):
   neg_half = _constant_like(x, -0.5)
   log_normalizer = _constant_like(x, _norm_logpdf_constant)
   return lax.sub(lax.mul(neg_half, lax.square(x)), log_normalizer)
-
-defjvp(log_ndtr,
-       lambda g, ans, x: lax.mul(g, lax.exp(lax.sub(_norm_logpdf(x), ans))))
 
 @_wraps(osp_special.i0e)
 def i0e(x):

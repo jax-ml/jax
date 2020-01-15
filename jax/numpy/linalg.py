@@ -30,7 +30,6 @@ from .. import dtypes
 from .lax_numpy import _not_implemented
 from .lax_numpy import _wraps
 from . import lax_numpy as np
-from ..api import custom_transforms, defjvp
 from ..util import get_module_functions
 
 
@@ -62,15 +61,14 @@ def svd(a, full_matrices=True, compute_uv=True):
   return lax_linalg.svd(a, full_matrices, compute_uv)
 
 
-# TODO(pfau): make this work for complex types
 def _jvp_slogdet(g, ans, x):
-  jvp_sign = np.zeros(x.shape[:-2])
+  if np.issubdtype(np._dtype(x), np.complexfloating):
+    raise NotImplementedError  # TODO(pfau): make this work for complex types
   jvp_logdet = np.trace(solve(x, g), axis1=-1, axis2=-2)
-  return jvp_sign, jvp_logdet
+  return ad_util.zero, jvp_logdet
 
 
 @_wraps(onp.linalg.slogdet)
-@custom_transforms
 @jit
 def slogdet(a):
   a = _promote_arg_dtypes(np.asarray(a))
@@ -95,7 +93,7 @@ def slogdet(a):
       is_zero, np.array(-np.inf, dtype=dtype),
       np.sum(np.log(np.abs(diag)), axis=-1))
   return sign, np.real(logdet)
-defjvp(slogdet, _jvp_slogdet)
+# defjvp(slogdet, _jvp_slogdet)  # TODO TODO
 
 
 @_wraps(onp.linalg.det)

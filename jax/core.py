@@ -26,7 +26,7 @@ import threading
 import types
 
 from . import linear_util as lu
-from .util import safe_zip, safe_map, partial, curry
+from .util import safe_zip, safe_map, partial, curry, split_list
 from .pprint_util import pp, vcat, hcat, pp_kv_pairs
 
 # TODO(dougalm): the trace cache breaks the leak detector. Consisder solving.
