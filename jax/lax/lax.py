@@ -1471,6 +1471,12 @@ def cosh(x):
   # This formulation avoids overflow when e^x is inf but e^x/2 is not inf.
   return add(exp(add(log_half, x)), exp(sub(log_half, x)))
 
+# Define arcsinh (asinh) as a primitive for differentiation stability.
+@api.jit
+@_upcast_fp16_for_computation
+def asinh(x):
+  return asinh_p.bind(x)
+
 
 # Add some methods to ShapedArray that rely on lax primitives
 
@@ -1689,6 +1695,9 @@ ad.defjvp(sin_p, lambda g, x: mul(g, cos(x)))
 
 cos_p = standard_unop(_float | _complex, 'cos')
 ad.defjvp(cos_p, lambda g, x: neg(mul(g, sin(x))))
+
+asinh_p = standard_unop(_float | _complex, 'asinh')
+ad.defjvp(asinh_p, lambda g, x: g / sqrt(_const(x, 1) + square(x)))
 
 atan2_p = standard_naryop([_float, _float], 'atan2')
 ad.defjvp(atan2_p,

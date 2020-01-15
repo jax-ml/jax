@@ -33,26 +33,47 @@ map = safe_map
 
 
 def batch(fun, in_vals, in_dims, out_dim_dests):
-  size, = {x.shape[d] for x, d in zip(in_vals, in_dims) if d is not not_mapped}
-  out_vals, out_dims = batch_fun(fun, in_vals, in_dims)
-  return map(partial(matchaxis, size), out_dims, out_dim_dests(), out_vals)
-
-def batch_fun(fun, in_vals, in_dims):
-  with new_master(BatchTrace) as master:
-    fun, out_dims = batch_subtrace(fun, master, in_dims)
-    out_vals = fun.call_wrapped(*in_vals)
-    del master
-  return out_vals, out_dims()
+  # executes a batched version of `fun` following out_dim_dests
+  batched_fun = batch_fun(fun, in_dims, out_dim_dests)
+  return batched_fun.call_wrapped(*in_vals)
 
 @lu.transformation_with_aux
-def batch_subtrace(master, in_dims, *in_vals):
+def batch_subtrace(master, in_dims, *in_vals, **params):
   trace = BatchTrace(master, core.cur_sublevel())
   in_tracers = [BatchTracer(trace, val, dim) if dim is not None else val
                 for val, dim in zip(in_vals, in_dims)]
-  outs = yield in_tracers, {}
+  outs = yield in_tracers, params
   out_tracers = map(trace.full_raise, outs)
   out_vals, out_dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
   yield out_vals, out_dims
+
+def batch_fun(fun, in_dims, out_dim_dests):
+  # transformation version of batch, which doesn't call the function
+  fun, out_dims = batch_subtrace(fun)
+  return _batch_fun(fun, in_dims, out_dims, out_dim_dests)
+
+@lu.transformation
+def _batch_fun(in_dims, out_dims, out_dim_dests, *in_vals, **params):
+  in_dims = in_dims() if callable(in_dims) else in_dims
+  size, = {x.shape[d] for x, d in zip(in_vals, in_dims) if d is not not_mapped}
+  with new_master(BatchTrace) as master:
+    out_vals = yield (master, in_dims,) + in_vals, params
+    del master
+  out_dim_dests = out_dim_dests() if callable(out_dim_dests) else out_dim_dests
+  out_vals = map(partial(matchaxis, size), out_dims(), out_dim_dests, out_vals)
+  yield out_vals
+
+def batch_fun2(fun, in_dims):
+  # like `batch_fun` but returns output batch dims (so no out_dim_dests)
+  fun, out_dims = batch_subtrace(fun)
+  return _batch_fun2(fun, in_dims), out_dims
+
+@lu.transformation
+def _batch_fun2(in_dims, *in_vals, **params):
+  with new_master(BatchTrace) as master:
+    out_vals = yield (master, in_dims,) + in_vals, params
+    del master
+  yield out_vals
 
 
 ### tracer
@@ -116,17 +137,19 @@ class BatchTrace(Trace):
 
   def process_call(self, call_primitive, f, tracers, params):
     assert call_primitive.multiple_results
-    name = params.get('name', f.__name__)
-    params = dict(params, name=wrap_name(name, 'vmap'))
-    if call_primitive in pe.map_primitives:
+    params = dict(params, name=wrap_name(params.get('name', f.__name__), 'vmap'))
+    if call_primitive in call_batching_rules:
+      return call_batching_rules[call_primitive](self, call_primitive, f, tracers, params)
+    elif call_primitive in pe.map_primitives:
       return self.process_map(call_primitive, f, tracers, params)
-    vals, dims = unzip2((t.val, t.batch_dim) for t in tracers)
-    if all(bdim is not_mapped for bdim in dims):
-      return call_primitive.bind(f, *vals, **params)
     else:
-      f, dims_out = batch_subtrace(f, self.master, dims)
-      vals_out = call_primitive.bind(f, *vals, **params)
-      return [BatchTracer(self, v, d) for v, d in zip(vals_out, dims_out())]
+      vals, dims = unzip2((t.val, t.batch_dim) for t in tracers)
+      if all(bdim is not_mapped for bdim in dims):
+        return call_primitive.bind(f, *vals, **params)
+      else:
+        f, dims_out = batch_subtrace(f, self.master, dims)
+        vals_out = call_primitive.bind(f, *vals, **params)
+        return [BatchTracer(self, v, d) for v, d in zip(vals_out, dims_out())]
 
   def process_map(self, map_primitive, f, tracers, params):
     vals, dims = unzip2((t.val, t.batch_dim) for t in tracers)
@@ -155,6 +178,7 @@ class BatchTrace(Trace):
 ### primitives
 
 primitive_batchers = {}
+call_batching_rules = {}
 
 def get_primitive_batcher(p):
   try:

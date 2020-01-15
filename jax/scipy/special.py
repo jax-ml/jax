@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
 
 import numpy as onp
 import scipy.special as osp_special
 
-from .. import lax
 from .. import util
-from ..api import custom_transforms, defjvp
+from .. import lax
+from .. import api
 from ..numpy import lax_numpy as np
 from ..numpy.lax_numpy import (_wraps, asarray, _reduction_dims, _constant_like,
                                _promote_args_inexact)
@@ -78,21 +79,26 @@ def erfinv(x):
   return lax.erf_inv(x)
 
 
-@_wraps(osp_special.logit, update_doc=False)
-@custom_transforms
+@api.custom_jvp
 def logit(x):
-  x = asarray(x)
   return lax.log(lax.div(x, lax.sub(lax._const(x, 1), x)))
-defjvp(logit, lambda g, ans, x: g / (x * (1 - x)))
+def _logit_jvp(primals, tangents):
+  (x,), (t,) = primals, tangents
+  ans = logit(x)
+  t_out = lax.div(lax.mul(x, lax.sub(lax._const(x, 1), x)))
+  return ans, t_out
+logit.defjvp(_logit_jvp)
 
 
-@_wraps(osp_special.expit, update_doc=False)
-@custom_transforms
+@api.custom_jvp
 def expit(x):
-  x = asarray(x)
-  one = lax._const(x, 1)
-  return lax.div(one, lax.add(one, lax.exp(lax.neg(x))))
-defjvp(expit, lambda g, ans, x: g * ans * (lax._const(ans, 1) - ans))
+  return 1 / (1 + lax.exp(-x))
+def _expit_jvp(primals, tangents):
+  (x,), (t,) = primals, tangents
+  ans = expit(x)
+  t_out = t * ans * (1 - ans)
+  return ans, t_out
+expit.defjvp(_expit_jvp)
 
 
 @_wraps(osp_special.logsumexp)
@@ -399,7 +405,7 @@ def _ndtri(p):
   return x_nan_replaced
 
 
-@custom_transforms
+@partial(api.custom_jvp, nondiff_argnums=(1,))
 def log_ndtr(x, series_order=3):
   r"""Log Normal distribution function.
 
@@ -501,6 +507,12 @@ def log_ndtr(x, series_order=3):
                       _log_ndtr_lower(lax.min(x, lower_segment),
                                       series_order)))
 
+def _log_ndtr_jvp(primals, tangents, series_order=3):
+  (x,), (t,) = primals, tangents
+  ans = log_ndtr(x, series_order=series_order)
+  t_out = lax.mul(t, lax.exp(lax.sub(_norm_logpdf(x), ans)))
+  return ans, t_out
+log_ndtr.defjvp(_log_ndtr_jvp)
 
 def _log_ndtr_lower(x, series_order):
   """Asymptotic expansion version of `Log[cdf(x)]`, appropriate for `x<<-1`."""
@@ -541,9 +553,6 @@ def _norm_logpdf(x):
   neg_half = _constant_like(x, -0.5)
   log_normalizer = _constant_like(x, _norm_logpdf_constant)
   return lax.sub(lax.mul(neg_half, lax.square(x)), log_normalizer)
-
-defjvp(log_ndtr,
-       lambda g, ans, x: lax.mul(g, lax.exp(lax.sub(_norm_logpdf(x), ans))))
 
 @_wraps(osp_special.i0e)
 def i0e(x):

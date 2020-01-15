@@ -23,7 +23,7 @@ import threading
 import types
 
 from . import linear_util as lu
-from .util import safe_zip, safe_map, partial, curry
+from .util import safe_zip, safe_map, partial, curry, split_list
 from .pprint_util import pp, vcat, hcat, pp_kv_pairs
 
 # TODO(dougalm): the trace cache breaks the leak detector. Consisder solving.
@@ -280,13 +280,6 @@ class Trace(object):
     self.level = master.level
     self.sublevel = sublevel
 
-  def escaped_tracer_error(self, detail):
-    msg = ("Encountered an unexpected tracer. Perhaps this tracer escaped "
-           "through global state from a previously traced function.\n"
-           "The functions being transformed should not save traced values to "
-           "global state.\nDetails: {}.")
-    raise ValueError(msg.format(detail))
-
   def full_raise(self, val):
     if not isinstance(val, Tracer):
       return self.pure(val)
@@ -298,36 +291,43 @@ class Trace(object):
       elif val._trace.sublevel < sublevel:
         return self.sublift(val)
       else:
-        self.escaped_tracer_error(
+        escaped_tracer_error(
           "Can't lift sublevels {} to {}".format(val._trace.sublevel, sublevel))
     elif val._trace.level < level:
       if val._trace.sublevel > sublevel:
-        self.escaped_tracer_error(
+        escaped_tracer_error(
           "Incompatible sublevel: {}, {}".format(val._trace, (level, sublevel)))
       return self.lift(val)
     elif val._trace.level > level:
-      self.escaped_tracer_error(
+      escaped_tracer_error(
         "Can't lift level {} to {}".format(val, self))
     else:  # val._trace.level == self.level:
-      self.escaped_tracer_error("Different traces at same level: {}, {}".format(val, self))
-
+      escaped_tracer_error("Different traces at same level: {}, {}".format(val, self))
 
   def pure(self, val):
-    assert False
+    raise NotImplementedError("must override")
 
   def lift(self, tracer):
-    assert False
+    raise NotImplementedError("must override")
 
   def sublift(self, tracer):
-    assert False
+    raise NotImplementedError("must override")
 
   def process_primitive(self, primitive, tracers, params):
-    assert False, "Must override"
+    raise NotImplementedError("must override")
 
   def __repr__(self):
     return '{}(level={}/{})'.format(
         self.__class__.__name__, self.level, self.sublevel)
 
+def escaped_tracer_error(detail):
+  msg = ("Encountered an unexpected tracer. Perhaps this tracer escaped "
+          "through global state from a previously traced function.\n"
+          "The functions being transformed should not save traced values to "
+          "global state.\nDetails: {}.")
+  raise UnexpectedTracerError(msg.format(detail))
+
+class UnexpectedTracerError(Exception): pass
 
 class Tracer(object):
   __array_priority__ = 1000
@@ -335,7 +335,10 @@ class Tracer(object):
 
   def __array__(self, *args, **kw):
     raise Exception("Tracer can't be used with raw numpy functions. "
-                    "You might have\n  import numpy as np\ninstead of\n  import jax.numpy as np")
+                    "You might have\n"
+                    "  import numpy as np\n"
+                    "instead of\n"
+                    "  import jax.numpy as np")
 
   def __init__(self, trace):
     self._trace = trace
@@ -348,7 +351,7 @@ class Tracer(object):
 
   @property
   def aval(self):
-    assert False
+    raise NotImplementedError("must override")
 
   def __neg__(self): return self.aval._neg(self)
   def __pos__(self): return self.aval._pos(self)
