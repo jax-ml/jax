@@ -32,6 +32,7 @@ from jax import api
 from jax import core
 from jax import dtypes
 from jax import lax
+from jax import lib
 from jax import test_util as jtu
 from jax import lax_reference
 from jax import dtypes
