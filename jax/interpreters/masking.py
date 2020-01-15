@@ -398,14 +398,12 @@ def vectorized_masking_rule(prim, padded_vals, logical_shapes, **params):
   return prim.bind(padded_val, **params)
 
 
-def defbinop(prim):
-  masking_rules[prim] = partial(binop_masking_rule, prim)
+def defnaryop(prim):
+  masking_rules[prim] = partial(naryop_masking_rule, prim)
 
-
-def binop_masking_rule(prim, padded_vals, logical_shapes):
+def naryop_masking_rule(prim, padded_vals, logical_shapes):
   del logical_shapes  # Unused.
-  padded_x, padded_y = padded_vals
-  return prim.bind(padded_x, padded_y)
+  return prim.bind(*padded_vals)
 
 
 ### definition-time (import-time) shape checker tracer machinery

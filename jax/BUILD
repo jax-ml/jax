@@ -43,12 +43,6 @@ py_library(
     deps = ["@org_tensorflow//tensorflow/compiler/xla/python:xla_client"],
 )
 
-# Old name for library, use ":jax" instead.
-py_library(
-    name = "libjax",
-    deps = [":jax"],
-)
-
 py_library(
     name = "stax",
     srcs = ["experimental/stax.py"],

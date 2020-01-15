@@ -32,6 +32,7 @@ from jax import api
 from jax import core
 from jax import dtypes
 from jax import lax
+from jax import lib
 from jax import test_util as jtu
 from jax import lax_reference
 from jax import dtypes
@@ -157,6 +158,11 @@ LAX_OPS = [
     op_record("le", 2, default_dtypes, jtu.rand_small),
     op_record("lt", 2, default_dtypes, jtu.rand_small),
 ]
+if lib.version > (0, 1, 37):
+  LAX_OPS.append(
+      op_record("betainc", 3, float_dtypes, jtu.rand_positive,
+                {onp.float64: 1e-14})
+  )
 
 CombosWithReplacement = itertools.combinations_with_replacement
 

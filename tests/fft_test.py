@@ -24,6 +24,7 @@ import numpy as onp
 from absl.testing import absltest
 from absl.testing import parameterized
 
+from jax import lax
 from jax import numpy as np
 from jax import test_util as jtu
 
@@ -38,7 +39,8 @@ complex_dtypes = [onp.complex64]
 inexact_dtypes = float_dtypes + complex_dtypes
 int_dtypes = [onp.int32, onp.int64]
 bool_dtypes = [onp.bool_]
-all_dtypes = float_dtypes + complex_dtypes + int_dtypes + bool_dtypes
+real_dtypes = float_dtypes + int_dtypes + bool_dtypes
+all_dtypes = real_dtypes + complex_dtypes
 
 
 def _get_fftn_test_axes(shape):
@@ -54,43 +56,83 @@ def _get_fftn_test_axes(shape):
   return axes
 
 
+def _get_fftn_func(module, inverse, real):
+  if inverse:
+    return _irfft_with_zeroed_inputs(module.irfftn) if real else module.ifftn
+  else:
+    return module.rfftn if real else module.fftn
+
+
+def _irfft_with_zeroed_inputs(irfft_fun):
+  # irfft isn't defined on the full domain of inputs, so in order to have a
+  # well defined derivative on the whole domain of the function, we zero-out
+  # the imaginary part of the first and possibly the last elements.
+  def wrapper(z, axes):
+    return irfft_fun(_zero_for_irfft(z, axes), axes=axes)
+  return wrapper
+
+
+def _zero_for_irfft(z, axes):
+  if axes is not None and not axes:
+    return z
+  axis = z.ndim - 1 if axes is None else axes[-1]
+  try:
+    size = z.shape[axis]
+  except IndexError:
+    return z  # only if axis is invalid, as occurs in some tests
+  if size % 2:
+    parts = [lax.slice_in_dim(z.real, 0, 1, axis=axis).real,
+             lax.slice_in_dim(z.real, 1, size - 1, axis=axis),
+             lax.slice_in_dim(z.real, size - 1, size, axis=axis).real]
+  else:
+    parts = [lax.slice_in_dim(z.real, 0, 1, axis=axis).real,
+             lax.slice_in_dim(z.real, 1, size, axis=axis)]
+  return np.concatenate(parts, axis=axis)
+
+
 class FftTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inverse={}_shape={}_axes={}".format(
-          inverse, jtu.format_shape_dtype_string(shape, dtype), axes),
-       "axes": axes, "shape": shape, "dtype": dtype, "rng_factory": rng_factory,
-       "inverse": inverse}
+      {"testcase_name": "_inverse={}_real={}_shape={}_axes={}".format(
+          inverse, real, jtu.format_shape_dtype_string(shape, dtype), axes),
+       "axes": axes, "shape": shape, "dtype": dtype,
+       "rng_factory": rng_factory, "inverse": inverse, "real": real}
       for inverse in [False, True]
+      for real in [False, True]
       for rng_factory in [jtu.rand_default]
-      for dtype in all_dtypes
-      for shape in [(10,), (10, 10), (2, 3, 4), (2, 3, 4, 5)]
+      for dtype in (real_dtypes if real and not inverse else all_dtypes)
+      for shape in [(10,), (10, 10), (9,), (2, 3, 4), (2, 3, 4, 5)]
       for axes in _get_fftn_test_axes(shape)))
-  def testFftn(self, inverse, shape, dtype, axes, rng_factory):
+  def testFftn(self, inverse, real, shape, dtype, axes, rng_factory):
     rng = rng_factory()
     args_maker = lambda: (rng(shape, dtype),)
-    np_op = np.fft.ifftn if inverse else np.fft.fftn
-    onp_op = onp.fft.ifftn if inverse else onp.fft.fftn
+    np_op = _get_fftn_func(np.fft, inverse, real)
+    onp_op = _get_fftn_func(onp.fft, inverse, real)
     np_fn = lambda a: np_op(a, axes=axes)
-    onp_fn = lambda a: onp_op(a, axes=axes)
-    # Numpy promotes to complex128 aggressively.
+    onp_fn = lambda a: onp_op(a, axes=axes) if axes is None or axes else a
+    # Numpy promotes to complex128 aggressively.  
     self._CheckAgainstNumpy(onp_fn, np_fn, args_maker, check_dtypes=False,
                             tol=1e-4)
     self._CompileAndCheck(np_fn, args_maker, check_dtypes=True)
     # Test gradient for differentiable types.
-    if dtype in inexact_dtypes:
-      tol = 0.15  # TODO(skye): can we be more precise?
-      jtu.check_grads(np_fn, args_maker(), order=1, atol=tol, rtol=tol)
+    if dtype in (float_dtypes if real and not inverse else inexact_dtypes):
+      # TODO(skye): can we be more precise?
+      tol = 0.15
       jtu.check_grads(np_fn, args_maker(), order=2, atol=tol, rtol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inverse={}".format(inverse),
-       "inverse": inverse}
-      for inverse in [False, True]))
-  def testFftnErrors(self, inverse):
+      {"testcase_name": "_inverse={}_real={}".format(inverse, real),
+       "inverse": inverse, "real": real}
+      for inverse in [False, True]
+      for real in [False, True]))
+  def testFftnErrors(self, inverse, real):
     rng = jtu.rand_default()
-    name = 'ifftn' if inverse else 'fftn'
-    func = np.fft.ifftn if inverse else np.fft.fftn
+    name = 'fftn'
+    if real:
+      name = 'r' + name
+    if inverse:
+      name = 'i' + name
+    func = _get_fftn_func(np.fft, inverse, real)
     self.assertRaisesRegex(
         ValueError,
         "jax.np.fft.{} only supports 1D, 2D, and 3D FFTs. "
@@ -106,53 +148,59 @@ class FftTest(jtu.JaxTestCase):
         ValueError, lambda: func(rng([2, 3], dtype=onp.float64), axes=[-3]))
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inverse={}_size={}_axis={}".format(
-          inverse, jtu.format_shape_dtype_string([size], dtype), axis),
-          "axis": axis, "size": size, "dtype": dtype, "rng_factory": rng_factory,
-          "inverse": inverse}
+      {"testcase_name": "_inverse={}_real={}_shape={}_axis={}".format(
+          inverse, real, jtu.format_shape_dtype_string(shape, dtype), axis),
+       "axis": axis, "shape": shape, "dtype": dtype,
+       "rng_factory": rng_factory, "inverse": inverse, "real": real}
       for inverse in [False, True]
+      for real in [False, True]
       for rng_factory in [jtu.rand_default]
-      for dtype in all_dtypes
-      for size in [10]
+      for dtype in (real_dtypes if real and not inverse else all_dtypes)
+      for shape in [(10,)]
       for axis in [-1, 0]))
-  def testFft(self, inverse, size, dtype, axis, rng_factory):
+  def testFft(self, inverse, real, shape, dtype, axis, rng_factory):
     rng = rng_factory()
-    args_maker = lambda: (rng([size], dtype),)
-    np_op = np.fft.ifft if inverse else np.fft.fft
-    onp_op = onp.fft.ifft if inverse else onp.fft.fft
+    args_maker = lambda: (rng(shape, dtype),)
+    name = 'fft'
+    if real:
+      name = 'r' + name
+    if inverse:
+      name = 'i' + name
+    np_op = getattr(np.fft, name)
+    onp_op = getattr(onp.fft, name)
     np_fn = lambda a: np_op(a, axis=axis)
     onp_fn = lambda a: onp_op(a, axis=axis)
     # Numpy promotes to complex128 aggressively.
-    self._CheckAgainstNumpy(onp_fn, np_fn, args_maker, check_dtypes=False,
+    self._CheckAgainstNumpy(onp_op, np_op, args_maker, check_dtypes=False,
                             tol=1e-4)
-    self._CompileAndCheck(np_fn, args_maker, check_dtypes=True)
-    # Test gradient for differentiable types.
-    if dtype in inexact_dtypes:
-        tol = 0.15  # TODO(skye): can we be more precise?
-        jtu.check_grads(np_fn, args_maker(), order=1, atol=tol, rtol=tol)
-        jtu.check_grads(np_fn, args_maker(), order=2, atol=tol, rtol=tol)
+    self._CompileAndCheck(np_op, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inverse={}".format(inverse),
-       "inverse": inverse}
-      for inverse in [False, True]))
-  def testFftErrors(self, inverse):
+      {"testcase_name": "_inverse={}_real={}".format(inverse, real),
+       "inverse": inverse, "real": real}
+      for inverse in [False, True]
+      for real in [False, True]))
+  def testFftErrors(self, inverse, real):
     rng = jtu.rand_default()
-    name = 'ifft' if inverse else 'fft'
-    func = np.fft.ifft if inverse else np.fft.fft
+    name = 'fft'
+    if real:
+      name = 'r' + name
+    if inverse:
+      name = 'i' + name
+    func = getattr(np.fft, name)
 
     self.assertRaisesRegex(
       ValueError,
       "jax.np.fft.{} does not support multiple axes. "
       "Please use jax.np.fft.{}n. "
-      "Got axis \\[1, 1\\].".format(name, name),
+      "Got axis = \\[1, 1\\].".format(name, name),
       lambda: func(rng([2, 3], dtype=onp.float64), axis=[1, 1])
     )
     self.assertRaisesRegex(
       ValueError,
       "jax.np.fft.{} does not support multiple axes. "
       "Please use jax.np.fft.{}n. "
-      "Got axis \\[1, 1\\].".format(name, name),
+      "Got axis = \\(1, 1\\).".format(name, name),
       lambda: func(rng([2, 3], dtype=onp.float64), axis=(1, 1))
     )
     self.assertRaises(
@@ -161,40 +209,44 @@ class FftTest(jtu.JaxTestCase):
         ValueError, lambda: func(rng([2, 3], dtype=onp.float64), axis=[-3]))
 
   @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": "_inverse={}_shape={}_axis={}".format(
-      inverse, jtu.format_shape_dtype_string(shape, dtype), axes),
-      "axes": axes, "shape": shape, "dtype": dtype, "rng_factory": rng_factory,
-      "inverse": inverse}
-    for inverse in [False, True]
-    for rng_factory in [jtu.rand_default]
-    for dtype in all_dtypes
-    for shape in [(16, 8, 4, 8), (16, 8, 4, 8, 4)]
-    for axes in [(-2, -1), (0, 1), (1, 3), (-1, 2)]))
-  def testFft2(self, inverse, shape, dtype, axes, rng_factory):
+      {"testcase_name": "_inverse={}_real={}_shape={}_axes={}".format(
+          inverse, real, jtu.format_shape_dtype_string(shape, dtype), axes),
+       "axes": axes, "shape": shape, "dtype": dtype,
+       "rng_factory": rng_factory, "inverse": inverse, "real": real}
+      for inverse in [False, True]
+      for real in [False, True]
+      for rng_factory in [jtu.rand_default]
+      for dtype in (real_dtypes if real and not inverse else all_dtypes)
+      for shape in [(16, 8, 4, 8), (16, 8, 4, 8, 4)]
+      for axes in [(-2, -1), (0, 1), (1, 3), (-1, 2)]))
+  def testFft2(self, inverse, real, shape, dtype, axes, rng_factory):
     rng = rng_factory()
     args_maker = lambda: (rng(shape, dtype),)
-    np_op = np.fft.ifft2 if inverse else np.fft.fft2
-    onp_op = onp.fft.ifft2 if inverse else onp.fft.fft2
-    np_fn = lambda a: np_op(a, axes=axes)
-    onp_fn = lambda a: onp_op(a, axes=axes)
+    name = 'fft2'
+    if real:
+      name = 'r' + name
+    if inverse:
+      name = 'i' + name
+    np_op = getattr(np.fft, name)
+    onp_op = getattr(onp.fft, name)
     # Numpy promotes to complex128 aggressively.
-    self._CheckAgainstNumpy(onp_fn, np_fn, args_maker, check_dtypes=False,
+    self._CheckAgainstNumpy(onp_op, np_op, args_maker, check_dtypes=False,
                             tol=1e-4)
-    self._CompileAndCheck(np_fn, args_maker, check_dtypes=True)
-    # Test gradient for differentiable types.
-    if dtype in inexact_dtypes:
-      tol = 0.15  # TODO(skye): can we be more precise?
-      jtu.check_grads(np_fn, args_maker(), order=1, atol=tol, rtol=tol)
-      jtu.check_grads(np_fn, args_maker(), order=2, atol=tol, rtol=tol)
+    self._CompileAndCheck(np_op, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": "_inverse={}".format(inverse),
-     "inverse": inverse}
-    for inverse in [False, True]))
-  def testFft2Errors(self, inverse):
+      {"testcase_name": "_inverse={}_real={}".format(inverse, real),
+       "inverse": inverse, "real": real}
+      for inverse in [False, True]
+      for real in [False, True]))
+  def testFft2Errors(self, inverse, real):
     rng = jtu.rand_default()
-    name = 'ifft2' if inverse else 'fft2'
-    func = np.fft.ifft2 if inverse else np.fft.fft2
+    name = 'fft2'
+    if real:
+      name = 'r' + name
+    if inverse:
+      name = 'i' + name
+    func = getattr(np.fft, name)
 
     self.assertRaisesRegex(
       ValueError,
@@ -205,7 +257,7 @@ class FftTest(jtu.JaxTestCase):
     self.assertRaisesRegex(
       ValueError,
       "jax.np.fft.{} only supports 2 axes. "
-      "Got axes = \\[0, 1, 2\\].".format(name, name),
+      "Got axes = \\(0, 1, 2\\).".format(name, name),
       lambda: func(rng([2, 3, 3], dtype=onp.float64), axes=(0, 1, 2))
     )
     self.assertRaises(
@@ -235,7 +287,6 @@ class FftTest(jtu.JaxTestCase):
     # Test gradient for differentiable types.
     if dtype in inexact_dtypes:
       tol = 0.15  # TODO(skye): can we be more precise?
-      jtu.check_grads(np_fn, args_maker(), order=1, atol=tol, rtol=tol)
       jtu.check_grads(np_fn, args_maker(), order=2, atol=tol, rtol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -280,7 +331,6 @@ class FftTest(jtu.JaxTestCase):
     # Test gradient for differentiable types.
     if dtype in inexact_dtypes:
       tol = 0.15  # TODO(skye): can we be more precise?
-      jtu.check_grads(np_fn, args_maker(), order=1, atol=tol, rtol=tol)
       jtu.check_grads(np_fn, args_maker(), order=2, atol=tol, rtol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(

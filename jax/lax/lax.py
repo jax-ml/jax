@@ -190,6 +190,13 @@ def atan2(x, y):
     :math:`\mathrm{atan}({x \over y})`."""
   return atan2_p.bind(x, y)
 
+def betainc(a, b, x):
+  r"""Elementwise regularized incomplete beta integral."""
+  a = _brcast(_brcast(a, b), x)
+  b = _brcast(b, a)
+  x = _brcast(x, a)
+  return regularized_incomplete_beta_p.bind(a, b, x)
+
 def lgamma(x):
   r"""Elementwise log gamma: :math:`\mathrm{log}(\Gamma(x))`."""
   return lgamma_p.bind(x)
@@ -1333,7 +1340,7 @@ def slice_in_dim(operand, start_index, limit_index, stride=1, axis=0):
   len_axis = operand.shape[axis]
   start_index = start_index if start_index is not None else 0
   limit_index = limit_index if limit_index is not None else len_axis
-  
+
   # translate negative indices
   if start_index < 0:
     start_index = start_index + len_axis
@@ -1563,7 +1570,7 @@ standard_unop = partial(unop, _identity)
 _attrgetter = lambda name: lambda x, **kwargs: getattr(x, name)
 
 
-def binop_dtype_rule(result_dtype, accepted_dtypes, name, *avals, **kwargs):
+def naryop_dtype_rule(result_dtype, accepted_dtypes, name, *avals, **kwargs):
   aval_dtypes = [aval.dtype for aval in avals]
   for i, (aval_dtype, types) in enumerate(zip(aval_dtypes, accepted_dtypes)):
     if not any(dtypes.issubdtype(aval_dtype, t) for t in types):
@@ -1592,15 +1599,15 @@ def _broadcasting_shape_rule(name, *avals):
   return tuple(result_shape)
 
 
-def binop(result_dtype, accepted_dtypes, name, translation_rule=None):
-  dtype_rule = partial(binop_dtype_rule, result_dtype, accepted_dtypes, name)
+def naryop(result_dtype, accepted_dtypes, name, translation_rule=None):
+  dtype_rule = partial(naryop_dtype_rule, result_dtype, accepted_dtypes, name)
   shape_rule = partial(_broadcasting_shape_rule, name)
   prim = standard_primitive(shape_rule, dtype_rule, name,
                             translation_rule=translation_rule)
   batching.defbroadcasting(prim)
-  masking.defbinop(prim)
+  masking.defnaryop(prim)
   return prim
-standard_binop = partial(binop, _input_dtype)
+standard_naryop = partial(naryop, _input_dtype)
 
 
 # NOTE(mattjj): this isn't great for orchestrate fwd mode because it means JVPs
@@ -1608,7 +1615,7 @@ standard_binop = partial(binop, _input_dtype)
 # a broadcast). but saving the shape info with the primitives isn't great either
 # because then we can't trace these ops without shape data.
 def _brcast(x, *others):
-  # Used in jvprules to make binop broadcasting explicit for transposability.
+  # Used in jvprules to make naryop broadcasting explicit for transposability.
   # Requires shape info during jvp tracing, which isn't strictly necessary.
   # We don't need full numpy broadcasting, but otherwise the logic is the same
   # so we reuse the broadcast_shapes function after filtering out scalars.
@@ -1658,7 +1665,7 @@ def _sign_translation_rule(c, x):
 sign_p = standard_unop(_num, 'sign', translation_rule=_sign_translation_rule)
 ad.defjvp_zero(sign_p)
 
-nextafter_p = standard_binop(
+nextafter_p = standard_naryop(
   [_float, _float], 'nextafter',
   translation_rule=lambda c, x1, x2: c.NextAfter(x1, x2))
 
@@ -1695,10 +1702,27 @@ ad.defjvp(sin_p, lambda g, x: mul(g, cos(x)))
 cos_p = standard_unop(_float | _complex, 'cos')
 ad.defjvp(cos_p, lambda g, x: neg(mul(g, sin(x))))
 
-atan2_p = standard_binop([_float, _float], 'atan2')
+atan2_p = standard_naryop([_float, _float], 'atan2')
 ad.defjvp(atan2_p,
   lambda g, x, y: _brcast(g, y) * (y / (square(x) + square(y))),
   lambda g, x, y: _brcast(g, x) * -x / (square(x) + square(y)))
+
+regularized_incomplete_beta_p = standard_naryop(
+    [_float, _float, _float], 'regularized_incomplete_beta')
+
+def betainc_gradx(g, a, b, x):
+  lbeta = lgamma(a) + lgamma(b) - lgamma(a + b)
+  partial_x = exp((b - 1) * log1p(-x) +
+                  (a - 1) * log(x) - lbeta)
+  return partial_x * g
+
+def betainc_grad_not_implemented(g, a, b, x):
+  raise ValueError("Betainc gradient with respect to a and b not supported.")
+
+ad.defjvp(regularized_incomplete_beta_p,
+  betainc_grad_not_implemented,
+  betainc_grad_not_implemented,
+  betainc_gradx)
 
 lgamma_p = standard_unop(_float, 'lgamma')
 ad.defjvp(lgamma_p, lambda g, x: mul(g, digamma(x)))
@@ -1737,7 +1761,7 @@ imag_p = unop(_complex_basetype, _complex, 'imag')
 ad.defjvp(imag_p, lambda g, _: real(mul(_const(g, -1j), g)))
 
 _complex_dtype = lambda dtype, *args: (onp.zeros((), dtype) + onp.zeros((), onp.complex64)).dtype
-complex_p = binop(_complex_dtype, [_complex_elem_types, _complex_elem_types],
+complex_p = naryop(_complex_dtype, [_complex_elem_types, _complex_elem_types],
                   'complex')
 ad.deflinear(complex_p, lambda t: [real(t), imag(neg(t))])
 
@@ -1774,7 +1798,7 @@ ad.defjvp2(rsqrt_p,
            lambda g, ans, x:
            _safe_mul(g, mul(_const(x, -0.5), pow(x, _const(x, -1.5)))))
 
-pow_p = standard_binop([_float | _complex, _float | _complex], 'pow')
+pow_p = standard_naryop([_float | _complex, _float | _complex], 'pow')
 
 def _pow_jvp_lhs(g, ans, x, y):
   # we call _safe_mul here so that we get the behavior 0*inf = 0, since when a
@@ -1791,20 +1815,20 @@ _replace_zero = lambda x: select(eq(x, _const(x, 0)), _ones(x), x)
 
 not_p = standard_unop(_int | _bool, 'not')
 
-and_p = standard_binop([_any, _any], 'and')
+and_p = standard_naryop([_any, _any], 'and')
 ad.defjvp_zero(and_p)
 
-or_p = standard_binop([_any, _any], 'or')
+or_p = standard_naryop([_any, _any], 'or')
 ad.defjvp_zero(or_p)
 
-xor_p = standard_binop([_any, _any], 'xor')
+xor_p = standard_naryop([_any, _any], 'xor')
 ad.defjvp_zero(xor_p)
 
 def _add_transpose(t, x, y):
   # assert x is ad.undefined_primal and y is ad.undefined_primal  # not affine
   return [t, t]
 
-add_p = standard_binop([_num, _num], 'add')
+add_p = standard_naryop([_num, _num], 'add')
 ad.defjvp(add_p, lambda g, x, y: _brcast(g, y), lambda g, x, y: _brcast(g, x))
 ad.primitive_transposes[add_p] = _add_transpose
 
@@ -1813,13 +1837,13 @@ def _sub_transpose(t, x, y):
   assert x is ad.undefined_primal and y is ad.undefined_primal  # not affine
   return [t, neg(t) if t is not ad_util.zero else ad_util.zero]
 
-sub_p = standard_binop([_num, _num], 'sub')
+sub_p = standard_naryop([_num, _num], 'sub')
 ad.defjvp(sub_p,
           lambda g, x, y: _brcast(g, y),
           lambda g, x, y: _brcast(neg(g), x))
 ad.primitive_transposes[sub_p] = _sub_transpose
 
-mul_p = standard_binop([_num, _num], 'mul')
+mul_p = standard_naryop([_num, _num], 'mul')
 ad.defbilinear_broadcasting(_brcast, mul_p, mul, mul)
 
 
@@ -1832,7 +1856,7 @@ def _safe_mul_translation_rule(c, x, y):
                   c.Broadcast(zero, out_shape),
                   c.Mul(x, y))
 
-safe_mul_p = standard_binop([_num, _num], 'safe_mul',
+safe_mul_p = standard_naryop([_num, _num], 'safe_mul',
                             translation_rule=_safe_mul_translation_rule)
 ad.defbilinear_broadcasting(_brcast, safe_mul_p, _safe_mul, _safe_mul)
 
@@ -1841,13 +1865,13 @@ def _div_transpose_rule(cotangent, x, y):
   assert x is ad.undefined_primal and y is not ad.undefined_primal
   res = ad_util.zero if cotangent is ad_util.zero else div(cotangent, y)
   return res, None
-div_p = standard_binop([_num, _num], 'div')
+div_p = standard_naryop([_num, _num], 'div')
 ad.defjvp(div_p,
           lambda g, x, y: div(_brcast(g, y), y),
           lambda g, x, y: div(mul(neg(_brcast(g, x)), x), square(y)))
 ad.primitive_transposes[div_p] = _div_transpose_rule
 
-rem_p = standard_binop([_num, _num], 'rem')
+rem_p = standard_naryop([_num, _num], 'rem')
 ad.defjvp(rem_p,
           lambda g, x, y: _brcast(g, y),
           lambda g, x, y: mul(_brcast(neg(g), x), floor(div(x, y))))
@@ -1878,44 +1902,44 @@ def _minmax_translation_rule(c, x, y, minmax=None, cmp=None):
         x, y)
   return minmax(c)(x, y)
 
-max_p = standard_binop([_any, _any], 'max', translation_rule=partial(
+max_p = standard_naryop([_any, _any], 'max', translation_rule=partial(
     _minmax_translation_rule, minmax=lambda c: c.Max, cmp=lambda c: c.Gt))
 ad.defjvp2(max_p,
            lambda g, ans, x, y: mul(_brcast(g, y), _balanced_eq(x, ans, y)),
            lambda g, ans, x, y: mul(_brcast(g, x), _balanced_eq(y, ans, x)))
 
-min_p = standard_binop([_any, _any], 'min', translation_rule=partial(
+min_p = standard_naryop([_any, _any], 'min', translation_rule=partial(
     _minmax_translation_rule, minmax=lambda c: c.Min, cmp=lambda c: c.Lt))
 ad.defjvp2(min_p,
            lambda g, ans, x, y: mul(_brcast(g, y), _balanced_eq(x, ans, y)),
            lambda g, ans, x, y: mul(_brcast(g, x), _balanced_eq(y, ans, x)))
 
 
-shift_left_p = standard_binop([_int, _int], 'shift_left')
+shift_left_p = standard_naryop([_int, _int], 'shift_left')
 ad.defjvp_zero(shift_left_p)
 
-shift_right_arithmetic_p = standard_binop([_int, _int], 'shift_right_arithmetic')
+shift_right_arithmetic_p = standard_naryop([_int, _int], 'shift_right_arithmetic')
 ad.defjvp_zero(shift_right_arithmetic_p)
 
-shift_right_logical_p = standard_binop([_int, _int], 'shift_right_logical')
+shift_right_logical_p = standard_naryop([_int, _int], 'shift_right_logical')
 ad.defjvp_zero(shift_right_logical_p)
 
-eq_p = binop(_fixed_dtype(onp.bool_), [_any, _any], 'eq')
+eq_p = naryop(_fixed_dtype(onp.bool_), [_any, _any], 'eq')
 ad.defjvp_zero(eq_p)
 
-ne_p = binop(_fixed_dtype(onp.bool_), [_any, _any], 'ne')
+ne_p = naryop(_fixed_dtype(onp.bool_), [_any, _any], 'ne')
 ad.defjvp_zero(ne_p)
 
-ge_p = binop(_fixed_dtype(onp.bool_), [_any, _any], 'ge')
+ge_p = naryop(_fixed_dtype(onp.bool_), [_any, _any], 'ge')
 ad.defjvp_zero(ge_p)
 
-gt_p = binop(_fixed_dtype(onp.bool_), [_any, _any], 'gt')
+gt_p = naryop(_fixed_dtype(onp.bool_), [_any, _any], 'gt')
 ad.defjvp_zero(gt_p)
 
-le_p = binop(_fixed_dtype(onp.bool_), [_any, _any], 'le')
+le_p = naryop(_fixed_dtype(onp.bool_), [_any, _any], 'le')
 ad.defjvp_zero(le_p)
 
-lt_p = binop(_fixed_dtype(onp.bool_), [_any, _any], 'lt')
+lt_p = naryop(_fixed_dtype(onp.bool_), [_any, _any], 'lt')
 ad.defjvp_zero(lt_p)
 
 
@@ -1991,7 +2015,7 @@ def _conv_general_dilated_shape_rule(
 def _conv_general_dilated_dtype_rule(
     lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
     dimension_numbers, **unused_kwargs):
-  return binop_dtype_rule(_input_dtype, [_float, _float],
+  return naryop_dtype_rule(_input_dtype, [_float, _float],
                           'conv_general_dilated', lhs, rhs)
 
 _conv_spec_transpose = lambda spec: (spec[1], spec[0]) + spec[2:]
@@ -2184,7 +2208,7 @@ def _dot_general_shape_rule(lhs, rhs, dimension_numbers, precision):
 
 
 def _dot_general_dtype_rule(lhs, rhs, dimension_numbers, precision):
-  return binop_dtype_rule(_input_dtype, [_num, _num], 'dot_general', lhs, rhs)
+  return naryop_dtype_rule(_input_dtype, [_num, _num], 'dot_general', lhs, rhs)
 
 
 def _dot_general_transpose_lhs(g, y, dimension_numbers, precision,
@@ -2367,7 +2391,7 @@ def _clamp_shape_rule(min, operand, max):
     raise TypeError(m.format(max.shape))
   return operand.shape
 
-_clamp_dtype_rule = partial(binop_dtype_rule, _input_dtype, [_any, _any, _any],
+_clamp_dtype_rule = partial(naryop_dtype_rule, _input_dtype, [_any, _any, _any],
                             'clamp')
 
 clamp_p = standard_primitive(_clamp_shape_rule, _clamp_dtype_rule, 'clamp')
