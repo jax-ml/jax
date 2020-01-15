@@ -194,7 +194,7 @@ def atan2(x, y):
 
 def betainc(a, b, x):
   r"""Elementwise regularized incomplete beta integral."""
-  a = _brcast(lax._brcast(a, b), x)
+  a = _brcast(_brcast(a, b), x)
   b = _brcast(b, a)
   x = _brcast(x, a)
   return regularized_incomplete_beta_p.bind(a, b, x)
