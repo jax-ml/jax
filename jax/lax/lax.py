@@ -4293,7 +4293,7 @@ def nonnegative_shape(shape):
   return onp.maximum(shape, 0)
 
 def ceil_divide(x1, x2):
-  return -onp.floor_divide(-x1, x2)
+  return -onp.floor_divide(onp.negative(x1), x2)
 
 def padtype_to_pads(in_shape, window_shape, window_strides, padding):
   """Convert padding string to list of pairs of pad values."""

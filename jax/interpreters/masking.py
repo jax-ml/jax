@@ -281,7 +281,7 @@ def parse_dim(spec):
   elif '*' in spec:
     terms = map(parse_dim, spec.split('*'))
     return functools.reduce(op.mul, terms)
-  elif spec.isdigit() or spec.startswith('-') and spec[1:].isdigit:
+  elif spec.isdigit() or spec.startswith('-') and spec[1:].isdigit():
     return parse_lit(spec)
   elif spec in identifiers:
     return parse_id(spec)
