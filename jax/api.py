@@ -717,7 +717,7 @@ def _flatten_axes(treedef, axis_tree):
   return axes
 
 
-def pmap(fun, axis_name=None, devices=None, backend=None):
+def pmap(fun, axis_name=None, devices=None, backend=None, axis_size=None):
   """Parallel map with support for collectives.
 
   The purpose of ``pmap`` is to express single-program multiple-data (SPMD)
@@ -868,16 +868,28 @@ def pmap(fun, axis_name=None, devices=None, backend=None):
   _check_callable(fun)
   axis_name = _TempAxisName(fun) if axis_name is None else axis_name
 
+  # axis_size is an optional integer representing the global axis size.
+  # The aggregate size (across all hosts) size of the mapped axis must match
+  # the given value. This argument is mutually exclusive with ``devices``.
+  if axis_size is not None and devices is not None:
+    msg = "pmap got devices and axis_size. They're mutually exclusive."
+    raise ValueError(msg)
+
   @wraps(fun)
   def f_pmapped(*args, **kwargs):
     f = lu.wrap_init(fun)
     args, in_tree = tree_flatten((args, kwargs))
-    axis_size = _pmap_axis_size(args)
+    local_axis_size = _pmap_axis_size(args)
     _check_args(args)
     flat_fun, out_tree = flatten_fun(f, in_tree)
-    out = pxla.xla_pmap(flat_fun, *args, axis_name=axis_name, axis_size=axis_size,
-                        devices=tuple(devices) if devices is not None else devices,
-                        backend=backend)
+    out = pxla.xla_pmap(
+        flat_fun,
+        *args,
+        axis_name=axis_name,
+        axis_size=local_axis_size,
+        global_axis_size=axis_size,
+        devices=tuple(devices) if devices is not None else devices,
+        backend=backend)
     return tree_unflatten(out_tree(), out)
 
   namestr = "pmap({}, axis_name={})".format
@@ -932,7 +944,8 @@ def soft_pmap(fun, axis_name=None, backend=None):
     soft_mapped_fun = pxla.split_axis(flat_fun, axis_name, chunk_size)
     reshaped_outs = pxla.xla_pmap(soft_mapped_fun, *reshaped_args,
                                   axis_name=axis_name, axis_size=num_chunks,
-                                  devices=None, backend=backend)
+                                  global_axis_size=None, devices=None,
+                                  backend=backend)
     outs = [_reshape_merge(out) for out in reshaped_outs]
     return tree_unflatten(out_tree(), outs)
 
@@ -990,7 +1003,8 @@ def _parallelize(fun):
     f, out_axes = parallel.papply_transform(f, axis_name, axis_size)
     f = pxla.split_axis(f, axis_name, chunk_size)
     outs = pxla.xla_pmap(f, *reshaped_args, axis_name=axis_name,
-                         axis_size=num_chunks, devices=None)
+                         axis_size=num_chunks, global_axis_size=None,
+                         devices=None, backend=None)
     outs = map(_reshape_merge, outs)
     outs = [batching.matchaxis(axis_size, 0, dst, x)
             for dst, x in zip(out_axes(), outs)]
