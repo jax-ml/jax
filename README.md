@@ -136,7 +136,7 @@ print(grad(grad(grad(tanh)))(1.0))
 For more advanced autodiff, you can use
 [`jax.vjp`](https://jax.readthedocs.io/en/latest/jax.html#jax.vjp) for
 reverse-mode vector-Jacobian products and
-[`jax.jvp`](https://jax.readthedocs.io/en/latest/jax.html#jax.defjvp) for
+[`jax.jvp`](https://jax.readthedocs.io/en/latest/jax.html#jax.jvp) for
 forward-mode Jacobian-vector products. The two can be composed arbitrarily with
 one another, and with other JAX transformations. Here's one way to compose those
 to make a function that efficiently computes [full Hessian

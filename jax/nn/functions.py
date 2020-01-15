@@ -17,15 +17,15 @@
 
 import numpy as onp
 
+from jax import custom_jvp
 from jax import dtypes
-from jax import custom_transforms, defjvp
 from jax import lax
 from jax.scipy.special import expit
 import jax.numpy as np
 
 # activations
 
-@custom_transforms
+@custom_jvp
 def relu(x):
   r"""Rectified linear unit activation function.
 
@@ -35,7 +35,11 @@ def relu(x):
     \mathrm{relu}(x) = \max(x, 0)
   """
   return np.maximum(x, 0)
-defjvp(relu, lambda g, ans, x: lax.select(x > 0, g, lax.full_like(g, 0)))
+def _relu_jvp(primals, tangents):
+  x, = primals
+  t, = tangents
+  return relu(x), lax.select(x > 0, t, lax.full_like(t, 0))
+relu.defjvp(_relu_jvp)
 
 def softplus(x):
   r"""Softplus activation function.

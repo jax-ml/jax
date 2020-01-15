@@ -77,7 +77,7 @@ jax 0.1.59 (February 11, 2020)
   * Simplified :py:class:`Jaxpr` by removing the ``Jaxpr.freevars`` and
     ``Jaxpr.bound_subjaxprs``. The call primitives (``xla_call``, ``xla_pmap``,
     ``sharded_call``, and ``remat_call``) get a new parameter ``call_jaxpr`` with a
-    fully-closed (no ``constvars``) JAXPR. Also, added a new field ``call_primitive``
+    fully-closed (no ``constvars``) jaxpr. Also, added a new field ``call_primitive``
     to primitives.
 * New features:
 

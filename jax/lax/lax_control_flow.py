@@ -26,7 +26,7 @@ from typing import Callable
 
 import numpy as onp
 
-from jax import api
+import jax
 from jax import core
 from jax import dtypes
 from jax.lax import lax
@@ -44,7 +44,8 @@ from jax.lib import xla_client
 from jax.util import (partial, unzip2, safe_map, safe_zip, split_list,
                       split_dict, cache, extend_name_stack)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
-                           treedef_children, treedef_tuple)
+                           treedef_children, treedef_tuple, tree_leaves,
+                           tree_multimap)
 from jax import ad_util
 
 _map = safe_map
@@ -78,7 +79,11 @@ def typematch(aval1, aval2):
   return (raise_to_shaped(aval1).strip_weak_type() ==
           raise_to_shaped(aval2).strip_weak_type())
 
-class FixedPointError(Exception): pass
+def _disable_jit_impl(prim, interp, *args, **kwargs):
+  if jax.api._jit_is_disabled():
+    return interp(*args, **kwargs)
+  else:
+    return xla.apply_primitive(prim, *args, **kwargs)
 
 
 ### fori_loop and while_loop
@@ -210,6 +215,12 @@ def while_loop(cond_fun, body_fun, init_val):
   Returns:
     The output from the final iteration of body_fun, of type ``a``.
   """
+  if jax.api._jit_is_disabled():
+    val = init_val
+    while cond_fun(val):
+      val = body_fun(val)
+    return val
+
   init_vals, in_tree = tree_flatten((init_val,))
   init_avals = tuple(_map(_abstractify, init_vals))
   cond_jaxpr, cond_consts, cond_tree = _initial_style_jaxpr(cond_fun, in_tree, init_avals)
@@ -430,6 +441,13 @@ def cond(pred, true_operand, true_fun, false_operand, false_fun):
     else:
       msg = ("Pred type must be either boolean or number, got {}.")
       raise TypeError(msg.format(pred_dtype))
+
+  if jax.api._jit_is_disabled():
+    if pred:
+      return true_fun(true_operand)
+    else:
+      return false_fun(false_operand)
+
   true_ops, true_tree = tree_flatten((true_operand,))
   true_avals = tuple(_map(_abstractify, true_ops))
   true_jaxpr, true_consts, true_out_tree = _initial_style_jaxpr(true_fun, true_tree, true_avals)
@@ -783,7 +801,7 @@ def scan(f, init, xs, length=None):
     the second output of ``f`` when scanned over the leading axis of the inputs.
   """
   init_flat, init_tree = tree_flatten(init)
-  xs_flat, _ = tree_flatten(xs)
+  xs_flat, xs_tree = tree_flatten(xs)
   in_flat, in_tree = tree_flatten((init, xs))
 
   try:
@@ -810,6 +828,17 @@ def scan(f, init, xs, length=None):
       raise ValueError(msg)
     else:
       length, = unique_lengths
+
+  if jax.api._jit_is_disabled():
+    carry = init
+    ys = []
+    for i in range(length):
+      xs_slice = [_index_array(i, core.get_aval(x), x) for x in xs_flat]
+      carry, y = f(carry, tree_unflatten(xs_tree, xs_slice))
+      ys.append(y)
+    stack = lambda y, *ys: (y if core.get_aval(y) is core.abstract_unit
+                            else jax.numpy.stack((y, *ys)))
+    return carry, tree_multimap(stack, *ys)
 
   carry_avals = tuple(_map(_abstractify, init_flat))
   x_shapes = [masking.padded_shape_as_value(x.shape[1:]) for x in xs_flat]
@@ -1363,7 +1392,7 @@ def custom_root(f, initial_guess, solve, tangent_solve):
   _check_tree("solve", "initial_guess", solution_tree, in_tree)
 
   def linearize_and_solve(x, b):
-    unchecked_zeros, f_jvp = api.linearize(f, x)
+    unchecked_zeros, f_jvp = jax.linearize(f, x)
     return tangent_solve(f_jvp, b)
 
   l_and_s_jaxpr, l_and_s_consts, out_tree = _initial_style_jaxpr(
@@ -1445,7 +1474,7 @@ def _transpose_function(linear_fun, primals):
   # TODO(shoyer): can we use something more direct than the vjp machinery?
   # It's particularly awkward that we need the second argument to give
   # particular values of the primals, which are entirely arbitrary.
-  _, vjp_fun = api.vjp(linear_fun, primals)
+  _, vjp_fun = jax.vjp(linear_fun, primals)
 
   def transposed_fun(x):
     (y,) = vjp_fun(x)
