@@ -149,7 +149,6 @@ class Poly(Counter):
     return r
 
   def __divmod__(self, divisor):
-    # TODO allow divisor * poly + k
     if self.is_constant:
       q, r = divmod(int(self), divisor)
 
@@ -162,7 +161,8 @@ class Poly(Counter):
                          'that exactly divide the strided axis length.')
       return q
 
-    return Poly({k: divided(count) for k, count in self.items()}), 0
+    return Poly({k: count // divisor if k.degree == 0 else divided(count)
+                 for k, count in self.items()}), self[Mon()] % divisor
 
   def __hash__(self):
     return hash(super())

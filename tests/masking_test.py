@@ -25,7 +25,7 @@ from absl.testing import parameterized
 
 from jax import test_util as jtu, core as jc, api
 from jax.interpreters.masking import ShapeError, shape_as_value, parse_spec, \
-  constant_poly, Mon, Poly
+  constant_poly, Mon, Poly, parse_id
 from jax import mask, vmap, jit, grad, shapecheck
 from jax import lax
 import jax.numpy as np
@@ -86,6 +86,11 @@ class MaskingTest(jtu.JaxTestCase):
     assert constant_poly(3) > 1
     self.assertRaisesRegex(ValueError, "", lambda: poly >= 2)
     self.assertRaisesRegex(ValueError, "", lambda: poly > 1)
+
+  def test_poly_divmod(self):
+    n = parse_id('n')
+    assert (2*n, 0) == divmod(10*n, 5)
+    assert (2*n+4, 3) == divmod(10*n+23, 5)
 
   def test_shapecheck_add_broadcast(self):
      @shapecheck(['(m, n)', 'n'], '(m, n)')
@@ -203,6 +208,16 @@ class MaskingTest(jtu.JaxTestCase):
       return lax.conv_general_dilated(
         lhs, rhs, strides, padding,
         lhs_dilation=lhs_dilation, dimension_numbers=dimension_numbers)
+
+  # TODO:
+  def DISABLED_shapecheck_slicing(self):
+    @shapecheck(['n'], 'n+-1')
+    def slice(x):
+      return x[1:]
+
+    @shapecheck(['n'], 'n+-1')
+    def slice(x):
+      return x[:-1]
 
   def test_shapecheck_unsupported_op(self):
     p = jc.Primitive('unsupported_op')
