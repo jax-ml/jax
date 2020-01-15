@@ -328,25 +328,25 @@ def vectorized_masking_rule(prim, padded_vals, logical_shapes, **params):
   return prim.bind(padded_val, **params)
 
 
-def defbinop(prim):
-  shape_rules[prim] = binop_shape_rule
-  masking_rules[prim] = partial(binop_masking_rule, prim)
+def defnaryop(prim):
+  shape_rules[prim] = naryop_shape_rule
+  masking_rules[prim] = partial(naryop_masking_rule, prim)
 
-def binop_shape_rule(shape_exprs):
-  x_shape_expr, y_shape_expr = shape_exprs
-  if x_shape_expr == y_shape_expr:
-    return x_shape_expr
-  elif not x_shape_expr:
-    return y_shape_expr
-  elif not y_shape_expr:
-    return x_shape_expr
-  else:
-    raise ShapeError
-
-def binop_masking_rule(prim, padded_vals, logical_shapes):
+def naryop_masking_rule(prim, padded_vals, logical_shapes):
   del logical_shapes  # Unused.
-  padded_x, padded_y = padded_vals
-  return prim.bind(padded_x, padded_y)
+  return prim.bind(*padded_vals)
+
+# Assumes n > 1
+def naryop_shape_rule(shape_exprs):
+  if shape_exprs.count(shape_exprs[0]) == len(shape_exprs):
+    return shape_exprs[0]
+
+  filtered_exprs = [s for s in shape_exprs if s]
+  if filtered_exprs.count(filtered_exprs[0]) == len(filtered_exprs):
+    return filtered_exprs[0]
+
+  raise ShapeError
+
 
 
 ### definition-time (import-time) shape checker tracer machinery

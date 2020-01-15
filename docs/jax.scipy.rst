@@ -43,6 +43,7 @@ jax.scipy.special
 .. autosummary::
   :toctree: _autosummary
 
+   betainc
    digamma
    entr
    erf
