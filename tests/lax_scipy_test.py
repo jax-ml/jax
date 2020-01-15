@@ -30,6 +30,7 @@ import scipy.special as osp_special
 import scipy.stats as osp_stats
 
 from jax import api
+from jax import lib
 from jax import test_util as jtu
 from jax.scipy import special as lsp_special
 from jax.scipy import stats as lsp_stats
@@ -58,9 +59,8 @@ def op_record(name, nargs, dtypes, rng_factory, test_grad, test_name=None):
   return OpRecord(name, nargs, dtypes, rng_factory, test_grad, test_name)
 
 JAX_SPECIAL_FUNCTION_RECORDS = [
-    # TODO: betainc, digamma has no JVP implemented.
+    # TODO: digamma has no JVP implemented.
     op_record("betaln", 2, float_dtypes, jtu.rand_positive, False),
-    op_record("betainc", 3, float_dtypes, jtu.rand_positive, False),
     op_record("digamma", 1, float_dtypes, jtu.rand_positive, False),
     op_record("erf", 1, float_dtypes, jtu.rand_small_positive, True),
     op_record("erfc", 1, float_dtypes, jtu.rand_small_positive, True),
@@ -76,6 +76,12 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     # TODO(phawkins): gradient of entr yields NaNs.
     op_record("entr", 1, float_dtypes, jtu.rand_default, False),
 ]
+
+if lib.version > (0, 1, 37):
+  JAX_SPECIAL_FUNCTION_RECORDS.append(
+      # TODO: betainc has no JVP implemented.
+      op_record("betainc", 3, float_dtypes, jtu.rand_positive, False)
+  )
 
 CombosWithReplacement = itertools.combinations_with_replacement
 
