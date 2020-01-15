@@ -42,6 +42,9 @@ def betaln(x, y):
 @_wraps(osp_special.betainc)
 def betainc(a, b, x):
   a, b, x = _promote_args_inexact("betainc", a, b, x)
+  a = lax._brcast(lax._brcast(a, b), x)  # pylint: disable=protected-access
+  b = lax._brcast(b, a)  # pylint: disable=protected-access
+  x = lax._brcast(x, a)  # pylint: disable=protected-access
   return lax.betainc(a, b, x)
 
 

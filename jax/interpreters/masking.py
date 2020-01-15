@@ -328,47 +328,24 @@ def vectorized_masking_rule(prim, padded_vals, logical_shapes, **params):
   return prim.bind(padded_val, **params)
 
 
-def defbinop(prim):
-  shape_rules[prim] = binop_shape_rule
-  masking_rules[prim] = partial(binop_masking_rule, prim)
+def defnaryop(prim):
+  shape_rules[prim] = naryop_shape_rule
+  masking_rules[prim] = partial(naryop_masking_rule, prim)
 
-def binop_shape_rule(shape_exprs):
-  x_shape_expr, y_shape_expr = shape_exprs
-  if x_shape_expr == y_shape_expr:
-    return x_shape_expr
-  elif not x_shape_expr:
-    return y_shape_expr
-  elif not y_shape_expr:
-    return x_shape_expr
-  else:
-    raise ShapeError
-
-def binop_masking_rule(prim, padded_vals, logical_shapes):
+def naryop_masking_rule(prim, padded_vals, logical_shapes):
   del logical_shapes  # Unused.
-  padded_x, padded_y = padded_vals
-  return prim.bind(padded_x, padded_y)
+  return prim.bind(*padded_vals)
 
-def defterop(prim):
-  shape_rules[prim] = terop_shape_rule
-  masking_rules[prim] = partial(terop_masking_rule, prim)
+# Assumes n > 1
+def naryop_shape_rule(shape_exprs):
+  if shape_exprs.count(shape_exprs[0]) == len(shape_exprs):
+    return shape_exprs[0]
 
-def terop_shape_rule(shape_exprs):
-  x_, y_, z_ = shape_exprs
-  if x_ == y_ and y_ == z_:
-    return x_
-  elif not x_:
-    return binop_shape_rule([y_, z_])
-  elif not y_:
-    return binop_shape_rule([x_, z_])
-  elif not z_:
-    return binop_shape_rule([x_, y_])
-  else:
-    return ShapeError
+  filtered_exprs = [s for s in shape_exprs if s]
+  if filtered_exprs.count(filtered_exprs[0]) == len(filtered_exprs):
+    return filtered_exprs[0]
 
-def terop_masking_rule(prim, padded_vals, logical_shapes):
-  del logical_shapes  # Unused.
-  padded_x, padded_y, padded_z = padded_vals
-  return prim.bind(padded_x, padded_y, padded_z)
+  raise ShapeError
 
 
 
