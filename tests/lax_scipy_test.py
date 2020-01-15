@@ -79,7 +79,6 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
 
 if lib.version > (0, 1, 37):
   JAX_SPECIAL_FUNCTION_RECORDS.append(
-      # TODO: betainc has no JVP implemented.
       op_record("betainc", 3, float_dtypes, jtu.rand_positive, False)
   )
 

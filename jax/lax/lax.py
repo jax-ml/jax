@@ -194,7 +194,9 @@ def atan2(x, y):
 
 def betainc(a, b, x):
   r"""Elementwise regularized incomplete beta integral."""
-  # TODO(srvasude): Remove these once XLA broadcasts these inputs.
+  a = _brcast(lax._brcast(a, b), x)
+  b = _brcast(b, a)
+  x = _brcast(x, a)
   return regularized_incomplete_beta_p.bind(a, b, x)
 
 def lgamma(x):
@@ -1713,17 +1715,13 @@ def betainc_gradx(g, a, b, x):
   lbeta = lgamma(a) + lgamma(b) - lgamma(a + b)
   partial_x = exp((b - 1) * log1p(-x) +
                   (a - 1) * log(x) - lbeta)
-  g = _brcast(_brcast(g, a), b)
   return partial_x * g
 
-def raise_if_tangent_not_zero(g, a, b, x):
-  if g is ad_util.zero:
-    return _brcast(_brcast(_brcast(g, a), b), x)
-  raise ValueError("Betainc gradient with respect to a and b not supported.")
+_betainc_msg = "Betainc gradient with respect to a and b not supported."
 
 ad.defjvp(regularized_incomplete_beta_p,
-  raise_if_tangent_not_zero,
-  raise_if_tangent_not_zero,
+  lambda g, a, b, x: raise ValueError(_betainc_msg),
+  lambda g, a, b, x: raise ValueError(_betainc_msg),
   betainc_gradx)
 
 lgamma_p = standard_unop(_float, 'lgamma')
