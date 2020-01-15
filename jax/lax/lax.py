@@ -1957,45 +1957,36 @@ ad.defjvp_zero(bitcast_convert_type_p)
 batching.defvectorized(bitcast_convert_type_p)
 masking.defvectorized(bitcast_convert_type_p)
 
-
 def _conv_general_dilated_shape_rule(
-    lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
-    dimension_numbers, feature_group_count, **unused_kwargs):
-   return tuple(_conv_general_dilated_polymorphic_shape_rule(
-    (lhs.shape, rhs.shape), window_strides, padding, lhs_dilation, rhs_dilation,
-    dimension_numbers, feature_group_count, **unused_kwargs))
-
-def _conv_general_dilated_polymorphic_shape_rule(
-    shape_exprs, window_strides, padding, lhs_dilation, rhs_dilation,
-    dimension_numbers, feature_group_count, **unused_kwargs):
-  lhs_shape, rhs_shape = shape_exprs
+        lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
+        dimension_numbers, feature_group_count, **unused_kwargs):
   assert type(dimension_numbers) is ConvDimensionNumbers
   if not feature_group_count > 0:
     msg = ("conv_general_dilated feature_group_count "
            "must be a positive integer, got {}.")
     raise ValueError(msg.format(feature_group_count))
-  lhs_feature_count = lhs_shape[dimension_numbers.lhs_spec[1]]
+  lhs_feature_count = lhs.shape[dimension_numbers.lhs_spec[1]]
   quot, rem = divmod(lhs_feature_count, feature_group_count)
   if rem:
     msg = ("conv_general_dilated feature_group_count must divide lhs feature "
            "dimension size, but {} does not divide {}.")
     raise ValueError(msg.format(feature_group_count, lhs_feature_count))
-  if quot != rhs_shape[dimension_numbers.rhs_spec[1]]:
+  if quot != rhs.shape[dimension_numbers.rhs_spec[1]]:
     msg = ("conv_general_dilated lhs feature dimension size divided by "
            "feature_group_count must equal the rhs input feature dimension "
            "size, but {} // {} != {}.")
     raise ValueError(msg.format(lhs_feature_count, feature_group_count,
-                                rhs_shape[dimension_numbers.rhs_spec[1]]))
-  if rhs_shape[dimension_numbers.rhs_spec[0]] % feature_group_count:
+                                rhs.shape[dimension_numbers.rhs_spec[1]]))
+  if rhs.shape[dimension_numbers.rhs_spec[0]] % feature_group_count:
     msg = ("conv_general_dilated rhs output feature dimension size must be a "
            "multiple of feature_group_count, but {} is not a multiple of {}.")
-    raise ValueError(msg.format(rhs_shape[dimension_numbers.rhs_spec[0]],
+    raise ValueError(msg.format(rhs.shape[dimension_numbers.rhs_spec[0]],
                                 feature_group_count))
   lhs_perm, rhs_perm, out_perm = dimension_numbers
-  lhs_trans = _dilate_shape(onp.take(lhs_shape, lhs_perm), lhs_dilation)
-  rhs_trans = _dilate_shape(onp.take(rhs_shape, rhs_perm), rhs_dilation)
+  lhs_trans = _dilate_shape(onp.take(lhs.shape, lhs_perm), lhs_dilation)
+  rhs_trans = _dilate_shape(onp.take(rhs.shape, rhs_perm), rhs_dilation)
   out_trans = conv_shape_tuple(lhs_trans, rhs_trans, window_strides, padding)
-  return ShapeExpr(onp.take(out_trans, onp.argsort(out_perm)))
+  return tuple(onp.take(out_trans, onp.argsort(out_perm)))
 
 def _conv_general_dilated_dtype_rule(
     lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
@@ -2129,7 +2120,7 @@ ad.defbilinear(conv_general_dilated_p,
                _conv_general_dilated_transpose_rhs)
 batching.primitive_batchers[conv_general_dilated_p] = \
     _conv_general_dilated_batch_rule
-masking.shape_rules[conv_general_dilated_p] = _conv_general_dilated_polymorphic_shape_rule
+masking.shape_rules[conv_general_dilated_p] = _conv_general_dilated_shape_rule
 
 
 def _reshape_axis_into(src, dst, x):
@@ -2277,28 +2268,6 @@ def _dot_general_translation_rule(c, lhs, rhs, dimension_numbers, precision):
   return c.DotGeneral(lhs, rhs, dimension_numbers,
                       precision_config=_precision_config(precision))
 
-def _dot_general_polymorphic_shape_rule(shape_exprs, dimension_numbers,
-                                        precision):
-  del precision  # Unused.
-  lhs_shape, rhs_shape = shape_exprs
-  lhs_ndim, rhs_ndim = len(lhs_shape), len(rhs_shape)
-  (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
-
-  lhs_batch_shape = [lhs_shape[d] for d in lhs_batch]
-  rhs_batch_shape = [rhs_shape[d] for d in rhs_batch]
-  if lhs_batch_shape != rhs_batch_shape: raise ShapeError
-
-  lhs_contract_shape = [lhs_shape[d] for d in lhs_contract]
-  rhs_contract_shape = [rhs_shape[d] for d in rhs_contract]
-  if lhs_contract_shape != rhs_contract_shape: raise ShapeError
-
-  lhs_tensorprod_shape = [lhs_shape[d] for d in range(lhs_ndim)
-                          if d not in lhs_batch and d not in lhs_contract]
-  rhs_tensorprod_shape = [rhs_shape[d] for d in range(rhs_ndim)
-                          if d not in rhs_batch and d not in rhs_contract]
-  return ShapeExpr(
-      lhs_batch_shape + lhs_tensorprod_shape + rhs_tensorprod_shape)
-
 def _dot_general_masking_rule(padded_vals, logical_shapes, dimension_numbers,
                               precision):
   lhs, rhs = padded_vals
@@ -2324,7 +2293,7 @@ dot_general_p = standard_primitive(_dot_general_shape_rule,
 ad.defbilinear(dot_general_p,
                _dot_general_transpose_lhs, _dot_general_transpose_rhs)
 batching.primitive_batchers[dot_general_p] = _dot_general_batch_rule
-masking.shape_rules[dot_general_p] = _dot_general_polymorphic_shape_rule
+masking.shape_rules[dot_general_p] = _dot_general_shape_rule
 masking.masking_rules[dot_general_p] = _dot_general_masking_rule
 
 
@@ -2383,15 +2352,12 @@ def _broadcast_in_dim_batch_rule(batched_args, batch_dims, shape,
   new_broadcast_dimensions = (0,) + tuple(onp.add(1, broadcast_dimensions))
   return broadcast_in_dim(new_operand, new_shape, new_broadcast_dimensions), 0
 
-def _broadcast_in_dim_polymorphic_shape_rule(shape_exprs, shape, broadcast_dimensions):
-  return ShapeExpr(map(masking.canonicalize_poly, shape))
-
 broadcast_in_dim_p = standard_primitive(
     _broadcast_in_dim_shape_rule, _input_dtype, 'broadcast_in_dim')
 broadcast_in_dim_p.def_impl(_broadcast_in_dim_impl)
 ad.deflinear(broadcast_in_dim_p, _broadcast_in_dim_transpose_rule)
 batching.primitive_batchers[broadcast_in_dim_p] = _broadcast_in_dim_batch_rule
-masking.shape_rules[broadcast_in_dim_p] = _broadcast_in_dim_polymorphic_shape_rule
+masking.shape_rules[broadcast_in_dim_p] = _broadcast_in_dim_shape_rule
 
 
 def _clamp_shape_rule(min, operand, max):
@@ -2475,11 +2441,6 @@ def _concatenate_batch_rule(batched_args, batch_dims, dimension, operand_shapes)
               for op, bdim in zip(batched_args, batch_dims)]
   return concatenate(operands, dimension + 1), 0
 
-def _concat_polymorphic_shape_rule(shape_exprs, dimension, operand_shapes):
-  out_shape = list(shape_exprs[0])
-  out_shape[dimension] = _reduce(operator.add, [e[dimension] for e in shape_exprs])
-  return ShapeExpr(out_shape)
-
 # The concatenate_p masking rule requires use of a while-loop construct and so
 # is defined in lax_control_flow.py
 
@@ -2489,25 +2450,21 @@ concatenate_p = standard_primitive(
 ad.deflinear(concatenate_p, _concatenate_transpose_rule)
 ad.primitive_transposes[concatenate_p] = _concatenate_transpose_rule
 batching.primitive_batchers[concatenate_p] = _concatenate_batch_rule
-masking.shape_rules[concatenate_p] = _concat_polymorphic_shape_rule
+masking.shape_rules[concatenate_p] = _concatenate_shape_rule
 
 
-def _pad_shape_rule(operand, padding_value, padding_config):
+def _pad_dtype_rule(operand, padding_value, padding_config):
   if operand.dtype != padding_value.dtype:
     msg = "pad operand and padding_value must be same dtype: got {} and {}."
     raise TypeError(msg.format(operand.dtype, padding_value.dtype))
 
-  return tuple(_pad_polymorphic_shape_rule(
-    (operand.shape, padding_value.shape), padding_config))
+  return _input_dtype(operand, padding_value)
 
-def _pad_polymorphic_shape_rule(shape_exprs, padding_config):
-  operand_shape, _ = shape_exprs
-
+def _pad_shape_rule(operand, padding_value, padding_config):
   lo, hi, interior = zip(*padding_config)
-  out_shape = onp.add(onp.add(operand_shape, onp.add(lo, hi)),
-                      onp.multiply(onp.subtract(operand_shape, 1), interior))
-
-  return ShapeExpr(out_shape)
+  out_shape = onp.add(onp.add(onp.add(lo, hi), operand.shape),
+                      onp.multiply(interior, onp.subtract(operand.shape, 1)))
+  return tuple(out_shape)
 
 def _pad_transpose(t, operand, padding_value, padding_config):
   if t is ad_util.zero:
@@ -2538,11 +2495,11 @@ def _pad_batch_rule(batched_args, batch_dims, padding_config):
   else:
     raise NotImplementedError  # loop and stack
 
-pad_p = standard_primitive(_pad_shape_rule, _input_dtype, 'pad')
+pad_p = standard_primitive(_pad_shape_rule, _pad_dtype_rule, 'pad')
 ad.deflinear(pad_p, _pad_transpose)
 ad.primitive_transposes[pad_p] = _pad_transpose
 batching.primitive_batchers[pad_p] = _pad_batch_rule
-masking.shape_rules[pad_p] = _pad_polymorphic_shape_rule
+masking.shape_rules[pad_p] = _pad_shape_rule
 
 
 # We have a nonstandard reshape impl so that we can be lazy about data movement.
@@ -2593,7 +2550,7 @@ def _is_axis_split(s1, s2):
   return _is_axis_merge(s2, s1)
 
 def _reshape_shape_rule(operand, new_sizes, dimensions, **unused_kwargs):
-  if not onp.all(onp.greater_equal(new_sizes, 0)):
+  if not is_shape_nonnegative(new_sizes):
     msg = 'reshape new_sizes must all be positive, got {}.'
     raise TypeError(msg.format(new_sizes))
   if prod(onp.shape(operand)) != prod(new_sizes):
@@ -2628,18 +2585,12 @@ def _reshape_batch_rule(batched_args, batch_dims, new_sizes, dimensions, **unuse
     dimensions = (0,) + tuple(onp.add(1, dimensions))
   return reshape(operand, operand.shape[:1] + new_sizes, dimensions), 0
 
-def _reshape_polymorphic_shape_rule(shape_exprs, new_sizes, dimensions, old_sizes):
-  if dimensions is not None: raise NotImplementedError
-  shape_expr, = shape_exprs
-  if masking.prod(shape_expr) != masking.prod(new_sizes): raise ShapeError
-  return new_sizes
-
 reshape_p = standard_primitive(_reshape_shape_rule, _reshape_dtype_rule,
                                'reshape', _reshape_translation_rule)
 reshape_p.def_impl(_reshape_impl)
 ad.deflinear(reshape_p, _reshape_transpose_rule)
 batching.primitive_batchers[reshape_p] = _reshape_batch_rule
-masking.shape_rules[reshape_p] = _reshape_polymorphic_shape_rule
+masking.shape_rules[reshape_p] = _reshape_shape_rule
 
 
 def _rev_shape_rule(operand, dimensions):
@@ -3060,23 +3011,15 @@ def _gather_dtype_rule(operand, start_indices, **kwargs):
 def _gather_shape_rule(operand, start_indices, dimension_numbers, slice_sizes,
                        operand_shape):
   assert operand.shape == operand_shape
-  return tuple(_gather_polymorphic_shape_rule(
-    (operand.shape, start_indices.shape),
-    dimension_numbers, slice_sizes, operand_shape))
-
-def _gather_polymorphic_shape_rule(shape_exprs, dimension_numbers, slice_sizes,
-                       operand_shape):
-  operand_shape, start_indices_shape = shape_exprs
-
   if len(operand_shape) != len(slice_sizes):
     msg = ("slice_sizes must have rank equal to the gather operand; "
            "operand.shape={}, slice_sizes={}".format(operand_shape, slice_sizes))
     raise ValueError(msg)
-  result_rank = len(dimension_numbers.offset_dims) + len(start_indices_shape) - 1
-  start_indices_shape = iter(start_indices_shape[:-1])
+  result_rank = len(dimension_numbers.offset_dims) + start_indices.ndim - 1
+  start_indices_shape = iter(start_indices.shape[:-1])
   slice_sizes = iter(onp.delete(slice_sizes, dimension_numbers.collapsed_slice_dims))
-  return ShapeExpr(tuple(next(slice_sizes) if i in dimension_numbers.offset_dims
-                   else next(start_indices_shape) for i in range(result_rank)))
+  return tuple(next(slice_sizes) if i in dimension_numbers.offset_dims
+               else next(start_indices_shape) for i in range(result_rank))
 
 def _gather_translation_rule(c, operand, start_indices, dimension_numbers,
                              slice_sizes, operand_shape):
@@ -3161,7 +3104,7 @@ gather_p = standard_primitive(
 ad.defjvp(gather_p, _gather_jvp_rule, None)
 ad.primitive_transposes[gather_p] = _gather_transpose_rule
 batching.primitive_batchers[gather_p] = _gather_batching_rule
-masking.shape_rules[gather_p] = _gather_polymorphic_shape_rule
+masking.shape_rules[gather_p] = _gather_shape_rule
 
 
 class ScatterDimensionNumbers(collections.namedtuple(
@@ -3468,12 +3411,7 @@ def _reduction_computation(c, jaxpr, consts, init_value):
   return subc.Build(out)
 
 def _masking_defreducer(prim, identity):
-  masking.shape_rules[prim] = _reducer_polymorphic_shape_rule
   masking.masking_rules[prim] = partial(_reducer_masking_rule, prim, identity)
-
-def _reducer_polymorphic_shape_rule(shape_exprs, axes, **unused_params):
-  shape_expr, = shape_exprs
-  return ShapeExpr(onp.delete(shape_expr, axes))
 
 def _reducer_masking_rule(prim, identity, padded_vals, logical_shapes,
                           axes, input_shape):
@@ -3520,6 +3458,7 @@ reduce_sum_p = standard_primitive(
   'reduce_sum', _reduce_sum_translation_rule)
 ad.deflinear(reduce_sum_p, _reduce_sum_transpose_rule)
 batching.defreducer(reduce_sum_p)
+masking.shape_rules[reduce_sum_p] = _reduce_sum_shape_rule
 _masking_defreducer(reduce_sum_p,
                     lambda shape, dtype: onp.broadcast_to(onp.array(0, dtype), shape))
 
@@ -4283,7 +4222,14 @@ def _dilate_shape(shape, dilation):
     raise TypeError(msg.format(dilation))
   dilation = (1,) * (len(shape) - len(dilation)) + tuple(dilation)
   return onp.where(shape == 0, 0,
-                   onp.multiply(onp.subtract(shape, 1), dilation) + 1)
+                   onp.multiply(dilation, onp.subtract(shape, 1)) + 1)
+
+def is_shape_nonnegative(shape):
+  if masking.is_polymorphic(shape):
+    # can't do greater_equal in polymorphic case, ignore:
+    return True
+
+  return onp.all(onp.greater_equal(shape, 0))
 
 def nonnegative_shape(shape):
   if masking.is_polymorphic(shape):
@@ -4372,7 +4318,7 @@ def conv_shape_tuple(lhs_shape, rhs_shape, strides, pads):
   lhs_padded = onp.add(lhs_shape[2:], onp.sum(onp.array(pads).reshape(-1, 2),
                                               axis=1))
   out_space = onp.floor_divide(
-      onp.subtract(lhs_padded, rhs_shape[2:]), strides) + 1
+    onp.subtract(lhs_padded, rhs_shape[2:]), strides) + 1
   out_space = nonnegative_shape(out_space)
   out_shape = (lhs_shape[0], rhs_shape[0]) + tuple(out_space)
   return tuple(out_shape)

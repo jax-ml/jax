@@ -111,42 +111,53 @@ class ShapeExpr(tuple):  # type ShapeExpr = [Poly]
 
 
 def canonicalize_poly(p):
-  if isinstance(p, int):
-    return concrete_poly(p)
+  if onp.isscalar(p) and onp.issubdtype(onp.int, onp.array(p).dtype):
+    return constant_poly(p)
 
   assert isinstance(p, Poly)
   return p
 
+def canonicalize_polymorphic_shape(shape):
+  return ShapeExpr(map(canonicalize_poly, shape))
+
 def poly_without_zeros(d):
   d = {mon: count for mon, count in d.items() if count != 0}
 
-  return concrete_poly(0) if len(d) == 0 else Poly(d)
+  return constant_poly(0) if len(d) == 0 else Poly(d)
 
 class Poly(Counter):  # type Poly = Map Mon Int -- monomials to coeffs
-  def __add__(p1, p2):
-    d = p1.copy()
+  def __add__(self, other):
+    d = self.copy()
 
-    for mon, count in canonicalize_poly(p2).items():
+    for mon, count in canonicalize_poly(other).items():
       d[mon] = d.get(mon, 0) + count
 
     return poly_without_zeros(d)
 
-  def __sub__(p1, p2):
-    return p1 + -p2
+  def __sub__(self, other):
+    return self + -other
 
   def __neg__(self):
     return Poly({mon: -count for mon, count in self.items()})
 
-  def __mul__(p1, p2):
-    p2 = canonicalize_poly(p2)
-
+  def __mul__(self, other):
     new_poly = dict()
-    for (mon1, coeff1), (mon2, coeff2) in it.product(p1.items(), p2.items()):
+    for (mon1, coeff1), (mon2, coeff2) \
+            in it.product(self.items(), canonicalize_poly(other).items()):
       mon = Mon(mon1 + mon2)                        # add monomials' id degrees
       coeff = coeff1 * coeff2                       # multiply integer coeffs
       new_poly[mon] = new_poly.get(mon, 0) + coeff  # accumulate coeffs
 
     return poly_without_zeros(new_poly)
+
+  def __rmul__(self, other):
+    return self * other
+
+  def __radd__(self, other):
+    return self + other
+
+  def __rsub__(self, other):
+    return self + -other
 
   def __floordiv__(self, divisor):
     q, _ = divmod(self, divisor)
@@ -157,10 +168,10 @@ class Poly(Counter):  # type Poly = Map Mon Int -- monomials to coeffs
     return r
 
   def __divmod__(self, divisor):
-    if self.is_concrete:
+    if self.is_constant:
       q, r = divmod(int(self), divisor)
 
-      return concrete_poly(q), r
+      return constant_poly(q), r
 
     def divided(count):
       q, r = divmod(count, divisor)
@@ -179,12 +190,12 @@ class Poly(Counter):  # type Poly = Map Mon Int -- monomials to coeffs
                       for k, v in sorted(self.items())).strip()
 
   def __int__(self):
-    assert self.is_concrete
+    assert self.is_constant
 
     return int(next(iter(self.values())))
 
   @property
-  def is_concrete(self):
+  def is_constant(self):
     return len(self) == 1 and next(iter(self)).degree == 0
 
 class Mon(Counter):  # type Mon = Map Id Int -- ids to degrees
@@ -204,12 +215,6 @@ class Mon(Counter):  # type Mon = Map Id Int -- ids to degrees
   @property
   def degree(self):
     return sum(self.values())
-
-def concrete_shape(shape):
-  if type(shape) is ShapeExpr:
-    return shape
-
-  return ShapeExpr(concrete_poly(d) for d in shape)
 
 def eval_shape_expr(env, expr):
   return tuple(eval_dim_expr(env, poly) for poly in expr)
@@ -257,7 +262,7 @@ class ShapeSyntaxError(Exception): pass
 # ShapeSpecs encode ShapeExprs but can have some monomorphic dims inside them,
 # which must be replaced with concrete shapes when known.
 
-class ShapeSpec(list):
+class ShapeSpec(tuple):
   def __str__(self):
     return 'ShapeSpec({})'.format(', '.join(map(str, self)))
 
@@ -293,8 +298,8 @@ digits = frozenset(string.digits)
 identifiers = frozenset(string.ascii_lowercase)
 
 def parse_id(name): return Poly({Mon({name: 1}): 1})
-def parse_lit(val_str): return concrete_poly(int(val_str))
-def concrete_poly(val): return Poly({Mon(): val})
+def parse_lit(val_str): return constant_poly(int(val_str))
+def constant_poly(val): return Poly({Mon(): val})
 
 class MonomorphicDim(object):
   def __str__(self): return '_'
@@ -329,7 +334,7 @@ class MaskTracer(Tracer):
     return ShapedArray(self.shape_expr, self.val.dtype)
 
   def is_pure(self):
-    return all(poly.is_concrete for poly in self.shape_expr)
+    return all(poly.is_constant for poly in self.shape_expr)
 
   def full_lower(self):
     if self.is_pure():
@@ -339,10 +344,10 @@ class MaskTracer(Tracer):
 
 class MaskTrace(Trace):
   def pure(self, val):
-    return MaskTracer(self, val, concrete_shape(onp.shape(val)))
+    return MaskTracer(self, val, canonicalize_polymorphic_shape(onp.shape(val)))
 
   def lift(self, val):
-    return MaskTracer(self, val, concrete_shape(onp.shape(val)))
+    return MaskTracer(self, val, canonicalize_polymorphic_shape(onp.shape(val)))
 
   def sublift(self, val):
     return MaskTracer(self, val.val, val.shape_expr)
@@ -353,7 +358,7 @@ class MaskTrace(Trace):
       rule = shape_parameterized_primitive_rules[primitive]
       out, out_shape = rule(shape_envs, vals, shape_exprs, **params)
     else:
-      out_shape = shape_rules[primitive](shape_exprs, **params)
+      out_shape = shape_rules[primitive](*(t.aval for t in tracers), **params)
       logical_shapes = map(partial(eval_shape_expr, shape_envs.logical), shape_exprs)
       out = masking_rules[primitive](vals, logical_shapes, **params)
     if not primitive.multiple_results:
@@ -372,9 +377,8 @@ def defvectorized(prim):
   shape_rules[prim] = vectorized_shape_rule
   masking_rules[prim] = partial(vectorized_masking_rule, prim)
 
-def vectorized_shape_rule(shape_exprs, **unused_params):
-  shape_expr, = shape_exprs
-  return shape_expr
+def vectorized_shape_rule(operand, **unused_params):
+  return operand.shape
 
 def vectorized_masking_rule(prim, padded_vals, logical_shapes, **params):
   del logical_shapes  # Unused.
@@ -386,14 +390,13 @@ def defbinop(prim):
   shape_rules[prim] = binop_shape_rule
   masking_rules[prim] = partial(binop_masking_rule, prim)
 
-def binop_shape_rule(shape_exprs):
-  x_shape_expr, y_shape_expr = shape_exprs
-  if x_shape_expr == y_shape_expr:
-    return x_shape_expr
-  elif not x_shape_expr:
-    return y_shape_expr
-  elif not y_shape_expr:
-    return x_shape_expr
+def binop_shape_rule(x, y):
+  if x.shape == y.shape:
+    return x.shape
+  elif not x.shape:
+    return y.shape
+  elif not y.shape:
+    return x.shape
   else:
     raise ShapeError
 
@@ -437,21 +440,21 @@ class ShapeCheckTracer(Tracer):
 
 class ShapeCheckTrace(Trace):
   def pure(self, val):
-    return ShapeCheckTracer(self, concrete_shape(onp.shape(val)))
+    return ShapeCheckTracer(self, canonicalize_polymorphic_shape(onp.shape(val)))
 
   def lift(self, val):
-    return ShapeCheckTracer(self, concrete_shape(onp.shape(val)))
+    return ShapeCheckTracer(self, canonicalize_polymorphic_shape(onp.shape(val)))
 
   def sublift(self, val):
     return ShapeCheckTracer(self, val.shape_expr)
 
   def process_primitive(self, primitive, tracers, params):
-    shape_exprs = [t.shape_expr for t in tracers]
+    avals = [t.aval for t in tracers]
     shape_rule = shape_rules.get(primitive)
     if shape_rule is None:
       raise NotImplementedError('Shape rule for {} not implemented yet.'.format(primitive))
-    out_shape_expr = shape_rule(shape_exprs, **params)
-    return ShapeCheckTracer(self, out_shape_expr)
+    out_shape = canonicalize_polymorphic_shape(shape_rule(*avals, **params))
+    return ShapeCheckTracer(self, out_shape)
 
   def process_call(self, call_primitive, f, tracers, params):
     # TODO apply proper subtrace:

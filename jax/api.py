@@ -1041,7 +1041,7 @@ def _bind_shapes(shape_exprs, shapes):
   env = {}
   for shape_expr, shape in zip(shape_exprs, shapes):
     for poly, d in zip(shape_expr, shape):
-      if poly.is_concrete:
+      if poly.is_constant:
         continue
       else:
         (binder,), = poly  # TODO generalize to handle striding
