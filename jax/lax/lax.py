@@ -66,9 +66,9 @@ def broadcast_shapes(*shapes):
     return shapes[0]
   ndim = _max(len(shape) for shape in shapes)
   shapes = onp.array([(1,) * (ndim - len(shape)) + shape for shape in shapes])
-  min_shape = onp.min(shapes, axis=0)
+  is_zero = onp.any(shapes == 0, axis=0)
   max_shape = onp.max(shapes, axis=0)
-  result_shape = onp.where(min_shape == 0, 0, max_shape)
+  result_shape = onp.where(is_zero, 0, max_shape)
   if not onp.all((shapes == result_shape) | (shapes == 1)):
     raise ValueError("Incompatible shapes for broadcasting: {}"
                      .format(tuple(map(tuple, shapes))))
@@ -1583,9 +1583,9 @@ def _broadcasting_shape_rule(name, *avals):
   if len({len(shape) for shape in shapes}) != 1:
     msg = '{} got arrays of different rank: {}.'
     raise TypeError(msg.format(name, ', '.join(map(str, map(tuple, shapes)))))
-  min_shape = onp.min(shapes, axis=0)
+  is_zero = onp.any(shapes == 0, axis=0)
   max_shape = onp.max(shapes, axis=0)
-  result_shape = onp.where(min_shape == 0, 0, max_shape)
+  result_shape = onp.where(is_zero, 0, max_shape)
   if not onp.all((shapes == result_shape) | (shapes == 1)):
     msg = '{} got incompatible shapes for broadcasting: {}.'
     raise TypeError(msg.format(name, ', '.join(map(str, map(tuple, shapes)))))
@@ -2546,7 +2546,7 @@ def _is_axis_split(s1, s2):
   return _is_axis_merge(s2, s1)
 
 def _reshape_shape_rule(operand, new_sizes, dimensions, **unused_kwargs):
-  if not _is_shape_nonnegative(new_sizes):
+  if not onp.all(onp.greater_equal(new_sizes, 0)):
     msg = 'reshape new_sizes must all be positive, got {}.'
     raise TypeError(msg.format(new_sizes))
   if prod(onp.shape(operand)) != prod(new_sizes):
@@ -4217,20 +4217,6 @@ def _dilate_shape(shape, dilation):
   return onp.where(shape == 0, 0,
                    onp.multiply(dilation, onp.subtract(shape, 1)) + 1)
 
-def _is_shape_nonnegative(shape):
-  if masking.is_polymorphic(shape):
-    # can't do greater_equal in polymorphic case, ignore:
-    return True
-
-  return onp.all(onp.greater_equal(shape, 0))
-
-def _nonnegative_shape(shape):
-  if masking.is_polymorphic(shape):
-    # can't do maximum in polymorphic case, ignore:
-    return shape
-
-  return onp.maximum(shape, 0)
-
 def _ceil_divide(x1, x2):
   return -onp.floor_divide(onp.negative(x1), x2)
 
@@ -4248,8 +4234,8 @@ def padtype_to_pads(in_shape, window_shape, window_strides, padding):
 
   if padding == PaddingType.SAME:
     out_shape = _ceil_divide(in_shape, window_strides)
-    pad_sizes = _nonnegative_shape((out_shape - 1) * window_strides +
-                                   window_shape - in_shape)
+    pad_sizes = onp.maximum(0, (out_shape - 1) * window_strides +
+                                window_shape - in_shape)
     return [(pad_size // 2, pad_size - pad_size // 2) for pad_size in pad_sizes]
   elif padding == PaddingType.VALID:
     return [(0, 0)] * len(in_shape)
@@ -4310,7 +4296,7 @@ def conv_shape_tuple(lhs_shape, rhs_shape, strides, pads):
                                               axis=1))
   out_space = onp.floor_divide(
     onp.subtract(lhs_padded, rhs_shape[2:]), strides) + 1
-  out_space = _nonnegative_shape(out_space)
+  out_space = onp.maximum(0, out_space)
   out_shape = (lhs_shape[0], rhs_shape[0]) + tuple(out_space)
   return tuple(out_shape)
 

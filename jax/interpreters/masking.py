@@ -90,11 +90,10 @@ def mask_subtrace(master, in_vals, shape_exprs):
 
 
 def ensure_poly(p):
-  if onp.isscalar(p) and onp.issubdtype(onp.int, onp.array(p).dtype):
-    return constant_poly(p)
+  if isinstance(p, Poly):
+    return p
 
-  assert isinstance(p, Poly)
-  return p
+  return constant_poly(int(p))
 
 def _poly_without_zeros(d):
   d = {mon: count for mon, count in d.items() if count != 0}
@@ -170,6 +169,37 @@ class Poly(Counter):
 
   def __eq__(self, other):
     return super().__eq__(ensure_poly(other))
+
+  def __ne__(self, other):
+    return not self == other
+
+  def __ge__(self, other):
+    other = ensure_poly(other)
+
+    if other.is_constant and self.is_constant:
+      return int(self) >= int(other)
+
+    if other.is_constant and int(other) <= 1:
+        # Assume polynomials > 0, allowing to use shape rules of binops, conv:
+        return True
+
+    if self.is_constant and int(self) <= 0:
+      return False # See above.
+
+    if self == other:
+      return True
+
+    raise ValueError('Polynomials comparison "{} >= {}" is inconclusive.'
+                     .format(self, other))
+
+  def __le__(self, other):
+    return ensure_poly(other) >= self
+
+  def __lt__(self, other):
+    return not (self >= other)
+
+  def __gt__(self, other):
+    return not (ensure_poly(other) >= self)
 
   def __str__(self):
     return ' + '.join('{} {}'.format(v, k) if (v != 1 or k.degree == 0) else str(k)
@@ -369,18 +399,8 @@ def vectorized_masking_rule(prim, padded_vals, logical_shapes, **params):
 
 
 def defbinop(prim):
-  shape_rules[prim] = binop_shape_rule
   masking_rules[prim] = partial(binop_masking_rule, prim)
 
-def binop_shape_rule(x, y):
-  if x.shape == y.shape:
-    return x.shape
-  elif not x.shape:
-    return y.shape
-  elif not y.shape:
-    return x.shape
-  else:
-    raise ShapeError
 
 def binop_masking_rule(prim, padded_vals, logical_shapes):
   del logical_shapes  # Unused.
