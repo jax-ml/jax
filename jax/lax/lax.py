@@ -1717,11 +1717,12 @@ def betainc_gradx(g, a, b, x):
                   (a - 1) * log(x) - lbeta)
   return partial_x * g
 
-_betainc_msg = "Betainc gradient with respect to a and b not supported."
+def betainc_grad_not_implemented(g, a, b, x):
+  raise ValueError("Betainc gradient with respect to a and b not supported.")
 
 ad.defjvp(regularized_incomplete_beta_p,
-  lambda g, a, b, x: raise ValueError(_betainc_msg),
-  lambda g, a, b, x: raise ValueError(_betainc_msg),
+  betainc_grad_not_implemented,
+  betainc_grad_not_implemented,
   betainc_gradx)
 
 lgamma_p = standard_unop(_float, 'lgamma')
