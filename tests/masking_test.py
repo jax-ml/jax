@@ -24,7 +24,8 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 from jax import test_util as jtu, core as jc, api
-from jax.interpreters.masking import ShapeError, shape_as_value, parse_spec
+from jax.interpreters.masking import ShapeError, shape_as_value, parse_spec, \
+  constant_poly, Mon, Poly
 from jax import mask, vmap, jit, grad, shapecheck
 from jax import lax
 import jax.numpy as np
@@ -57,6 +58,23 @@ class MaskingTest(jtu.JaxTestCase):
   ])
   def test_shape_parsing(self, spec, ans):
     self.assertEqual(str(parse_spec(spec)), ans)
+
+  def test_poly_equal(self):
+    assert constant_poly(3) == 3
+    assert constant_poly(4) != 3
+    assert 3 == constant_poly(3)
+    assert 4 != constant_poly(3)
+    assert constant_poly(4) == constant_poly(4)
+    assert constant_poly(3) != constant_poly(4)
+    assert Poly({Mon(): 3, Mon({'n': 1}): 4}) == Poly({Mon({'n': 1}): 4, Mon(): 3})
+    assert Poly({Mon(): 3, Mon({'n': 1}): 4}) != Poly({Mon(): 3, Mon({'n': 2}): 4})
+    assert Poly({Mon(): 3, Mon({'m': 1}): 4}) != Poly({Mon(): 3, Mon({'n': 1}): 4})
+
+  # def test_shapecheck_add_broadcast(self):
+  #   @shapecheck(['(m, n)', 'n'], '(m, n)')
+  #   @shapecheck(['n', ''], 'n')
+  #   def add(a, b):
+  #     return a + b
 
   def test_shapecheck_sum(self):
     @shapecheck(['(m, n)'], '')

@@ -56,18 +56,14 @@ def is_polymorphic(shape):
   return any(map(lambda d: isinstance(d, Poly), shape))
 
 def shape_as_value(expr):
-  if type(expr) is ShapeExpr:
-    return eval_shape_expr(shape_envs.logical, expr)
-  elif type(expr) is tuple and is_polymorphic(expr):
+  if type(expr) is tuple and is_polymorphic(expr):
     return tuple(eval_dim_expr(shape_envs.logical, d) if type(d) is Poly else d
                  for d in expr)
   else:
     return expr
 
 def padded_shape_as_value(expr):
-  if type(expr) is ShapeExpr:
-    return eval_shape_expr(shape_envs.padded, expr)
-  elif type(expr) is tuple and is_polymorphic(expr):
+  if type(expr) is tuple and is_polymorphic(expr):
     return tuple(eval_dim_expr(shape_envs.padded, d) if type(d) is Poly else d
                  for d in expr)
   else:
@@ -93,46 +89,32 @@ def mask_subtrace(master, in_vals, shape_exprs):
   yield out_vals, out_shapes
 
 
-### shape expressions
-
-# Shape expressions model tuples of formal polynomials with integer
-# coefficients. Here are the internal data structures we use to represent them.
-#
-#   type ShapeExpr = [Poly]
-#   type Poly = Map Mon Int
-#   type Mon = Map Str Int
-
-class ShapeExpr(tuple):  # type ShapeExpr = [Poly]
-  def __str__(self):
-    return 'ShapeExpr({})'.format(', '.join(map(str, self)))
-  def __getitem__(self, idx):
-    poly = super(ShapeExpr, self).__getitem__(idx)
-    return poly if type(idx) is int else ShapeExpr(poly)
-
-
-def canonicalize_poly(p):
+def ensure_poly(p):
   if onp.isscalar(p) and onp.issubdtype(onp.int, onp.array(p).dtype):
     return constant_poly(p)
 
   assert isinstance(p, Poly)
   return p
 
-def canonicalize_polymorphic_shape(shape):
-  return ShapeExpr(map(canonicalize_poly, shape))
-
-def poly_without_zeros(d):
+def _poly_without_zeros(d):
   d = {mon: count for mon, count in d.items() if count != 0}
 
   return constant_poly(0) if len(d) == 0 else Poly(d)
 
-class Poly(Counter):  # type Poly = Map Mon Int -- monomials to coeffs
+class Poly(Counter):
+  """Polynomial with integer coefficients,
+  usable as element in a polymorphic shape.
+
+  type Poly = Map Mon Int -- monomials to coeffs
+  type Mon = Map Str Int
+  """
   def __add__(self, other):
     d = self.copy()
 
-    for mon, count in canonicalize_poly(other).items():
+    for mon, count in ensure_poly(other).items():
       d[mon] = d.get(mon, 0) + count
 
-    return poly_without_zeros(d)
+    return _poly_without_zeros(d)
 
   def __sub__(self, other):
     return self + -other
@@ -143,12 +125,12 @@ class Poly(Counter):  # type Poly = Map Mon Int -- monomials to coeffs
   def __mul__(self, other):
     new_poly = dict()
     for (mon1, coeff1), (mon2, coeff2) \
-            in it.product(self.items(), canonicalize_poly(other).items()):
+            in it.product(self.items(), ensure_poly(other).items()):
       mon = Mon(mon1 + mon2)                        # add monomials' id degrees
       coeff = coeff1 * coeff2                       # multiply integer coeffs
       new_poly[mon] = new_poly.get(mon, 0) + coeff  # accumulate coeffs
 
-    return poly_without_zeros(new_poly)
+    return _poly_without_zeros(new_poly)
 
   def __rmul__(self, other):
     return self * other
@@ -168,6 +150,7 @@ class Poly(Counter):  # type Poly = Map Mon Int -- monomials to coeffs
     return r
 
   def __divmod__(self, divisor):
+    # TODO allow divisor * poly + k
     if self.is_constant:
       q, r = divmod(int(self), divisor)
 
@@ -183,7 +166,10 @@ class Poly(Counter):  # type Poly = Map Mon Int -- monomials to coeffs
     return Poly({k: divided(count) for k, count in self.items()}), 0
 
   def __hash__(self):
-    return hash(tuple(self.items()))
+    return hash(super())
+
+  def __eq__(self, other):
+    return super().__eq__(ensure_poly(other))
 
   def __str__(self):
     return ' + '.join('{} {}'.format(v, k) if (v != 1 or k.degree == 0) else str(k)
@@ -267,8 +253,8 @@ class ShapeSpec(tuple):
     return 'ShapeSpec({})'.format(', '.join(map(str, self)))
 
 def finalize_spec(spec, shape):
-  return ShapeExpr(parse_lit(d) if e is monomorphic_dim else e
-                   for e, d in zip(spec, shape))
+  return tuple(parse_lit(d) if e is monomorphic_dim else e
+               for e, d in zip(spec, shape))
 
 def parse_spec(spec=''):
   if not spec:
@@ -334,7 +320,7 @@ class MaskTracer(Tracer):
     return ShapedArray(self.shape_expr, self.val.dtype)
 
   def is_pure(self):
-    return all(poly.is_constant for poly in self.shape_expr)
+    return all(ensure_poly(poly).is_constant for poly in self.shape_expr)
 
   def full_lower(self):
     if self.is_pure():
@@ -344,10 +330,10 @@ class MaskTracer(Tracer):
 
 class MaskTrace(Trace):
   def pure(self, val):
-    return MaskTracer(self, val, canonicalize_polymorphic_shape(onp.shape(val)))
+    return MaskTracer(self, val, onp.shape(val))
 
   def lift(self, val):
-    return MaskTracer(self, val, canonicalize_polymorphic_shape(onp.shape(val)))
+    return MaskTracer(self, val, onp.shape(val))
 
   def sublift(self, val):
     return MaskTracer(self, val.val, val.shape_expr)
@@ -436,10 +422,10 @@ class ShapeCheckTracer(Tracer):
 
 class ShapeCheckTrace(Trace):
   def pure(self, val):
-    return ShapeCheckTracer(self, canonicalize_polymorphic_shape(onp.shape(val)))
+    return ShapeCheckTracer(self, onp.shape(val))
 
   def lift(self, val):
-    return ShapeCheckTracer(self, canonicalize_polymorphic_shape(onp.shape(val)))
+    return ShapeCheckTracer(self, onp.shape(val))
 
   def sublift(self, val):
     return ShapeCheckTracer(self, val.shape_expr)
@@ -449,7 +435,7 @@ class ShapeCheckTrace(Trace):
     shape_rule = shape_rules.get(primitive)
     if shape_rule is None:
       raise NotImplementedError('Shape rule for {} not implemented yet.'.format(primitive))
-    out_shape = canonicalize_polymorphic_shape(shape_rule(*avals, **params))
+    out_shape = shape_rule(*avals, **params)
     return ShapeCheckTracer(self, out_shape)
 
   def process_call(self, call_primitive, f, tracers, params):
