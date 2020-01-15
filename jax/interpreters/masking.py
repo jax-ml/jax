@@ -374,11 +374,7 @@ masking_rules = {}
 shape_rules = {}
 
 def defvectorized(prim):
-  shape_rules[prim] = vectorized_shape_rule
   masking_rules[prim] = partial(vectorized_masking_rule, prim)
-
-def vectorized_shape_rule(operand, **unused_params):
-  return operand.shape
 
 def vectorized_masking_rule(prim, padded_vals, logical_shapes, **params):
   del logical_shapes  # Unused.

@@ -58,6 +58,26 @@ class MaskingTest(jtu.JaxTestCase):
   def test_shape_parsing(self, spec, ans):
     self.assertEqual(str(parse_spec(spec)), ans)
 
+  def test_shapecheck_sum(self):
+    @shapecheck(['(m, n)'], '')
+    def sum(x):
+      return np.sum(x)
+
+  def test_shapecheck_prod(self):
+    @shapecheck(['(m, n)'], '')
+    def prod(x):
+      return np.prod(x)
+
+  def test_shapecheck_max(self):
+    @shapecheck(['(m, n)'], '')
+    def prod(x):
+      return np.max(x)
+
+  def test_shapecheck_min(self):
+    @shapecheck(['(m, n)'], '')
+    def prod(x):
+      return np.min(x)
+
   def test_shapecheck_dot(self):
     @shapecheck(['(m, n)', 'n'], 'm')
     def matvec(A, b):
@@ -413,6 +433,7 @@ class MaskingTest(jtu.JaxTestCase):
     ans = padded_add([np.array([3, 1, 4, 1, 5])], dict(n=3))
     expected = onp.array([3, 2, 6])
     self.assertAllClose(ans[:3], expected, check_dtypes=False)
+
 
 if __name__ == '__main__':
   absltest.main()
