@@ -1709,6 +1709,23 @@ ad.defjvp(atan2_p,
 regularized_incomplete_beta_p = standard_naryop(
     [_float, _float, _float], 'regularized_incomplete_beta')
 
+def betainc_gradx(g, a, b, x):
+  lbeta = lgamma(a) + lgamma(b) - lgamma(a + b)
+  partial_x = exp((b - 1) * log1p(-x) +
+                  (a - 1) * log(x) - lbeta)
+  g = _brcast(_brcast(g, a), b)
+  return partial_x * g
+
+def raise_if_tangent_not_zero(g, a, b, x):
+  if g is ad_util.zero:
+    return _brcast(_brcast(_brcast(g, a), b), x)
+  raise ValueError("Betainc gradient with respect to a and b not supported.")
+
+ad.defjvp(regularized_incomplete_beta_p,
+  raise_if_tangent_not_zero,
+  raise_if_tangent_not_zero,
+  betainc_gradx)
+
 lgamma_p = standard_unop(_float, 'lgamma')
 ad.defjvp(lgamma_p, lambda g, x: mul(g, digamma(x)))
 
