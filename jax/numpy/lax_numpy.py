@@ -3340,6 +3340,15 @@ for func in get_module_functions(onp):
 # operator overloads mainly just forward calls to the corresponding lax_numpy
 # functions, which can themselves handle instances from any of these classes.
 
+_scalar_types = (int, float, complex, onp.generic)
+
+def _defer_to_unrecognized_arg(binary_op):
+  # Ensure that other array types have the chance to override arithmetic.
+  def deferring_binary_op(self, other):
+    if not isinstance(other, _scalar_types + _arraylike_types + (core.Tracer,)):
+      return NotImplemented
+    return binary_op(self, other)
+  return deferring_binary_op
 
 def _swap_args(f):
   return lambda x, y: f(y, x)
@@ -3360,42 +3369,42 @@ _operators = {
     "setitem": _unimplemented_setitem,
     "neg": negative,
     "pos": positive,
-    "eq": equal,
-    "ne": not_equal,
-    "lt": less,
-    "le": less_equal,
-    "gt": greater,
-    "ge": greater_equal,
+    "eq": _defer_to_unrecognized_arg(equal),
+    "ne": _defer_to_unrecognized_arg(not_equal),
+    "lt": _defer_to_unrecognized_arg(less),
+    "le": _defer_to_unrecognized_arg(less_equal),
+    "gt": _defer_to_unrecognized_arg(greater),
+    "ge": _defer_to_unrecognized_arg(greater_equal),
     "abs": abs,
-    "add": add,
-    "radd": add,
-    "sub": subtract,
-    "rsub": _swap_args(subtract),
-    "mul": multiply,
-    "rmul": multiply,
-    "div": divide,
-    "rdiv": _swap_args(divide),
-    "truediv": true_divide,
-    "rtruediv": _swap_args(true_divide),
-    "floordiv": floor_divide,
-    "rfloordiv": _swap_args(floor_divide),
-    "divmod": divmod,
-    "rdivmod": _swap_args(divmod),
-    "mod": mod,
-    "rmod": _swap_args(mod),
-    "pow": power,
-    "rpow": _swap_args(power),
-    "matmul": matmul,
-    "rmatmul": _swap_args(matmul),
-    "and": bitwise_and,
-    "rand": bitwise_and,
-    "or": bitwise_or,
-    "ror": bitwise_or,
-    "xor": bitwise_xor,
-    "rxor": bitwise_xor,
+    "add": _defer_to_unrecognized_arg(add),
+    "radd": _defer_to_unrecognized_arg(add),
+    "sub": _defer_to_unrecognized_arg(subtract),
+    "rsub": _defer_to_unrecognized_arg(_swap_args(subtract)),
+    "mul": _defer_to_unrecognized_arg(multiply),
+    "rmul": _defer_to_unrecognized_arg(multiply),
+    "div": _defer_to_unrecognized_arg(divide),
+    "rdiv": _defer_to_unrecognized_arg(_swap_args(divide)),
+    "truediv": _defer_to_unrecognized_arg(true_divide),
+    "rtruediv": _defer_to_unrecognized_arg(_swap_args(true_divide)),
+    "floordiv": _defer_to_unrecognized_arg(floor_divide),
+    "rfloordiv": _defer_to_unrecognized_arg(_swap_args(floor_divide)),
+    "divmod": _defer_to_unrecognized_arg(divmod),
+    "rdivmod": _defer_to_unrecognized_arg(_swap_args(divmod)),
+    "mod": _defer_to_unrecognized_arg(mod),
+    "rmod": _defer_to_unrecognized_arg(_swap_args(mod)),
+    "pow": _defer_to_unrecognized_arg(power),
+    "rpow": _defer_to_unrecognized_arg(_swap_args(power)),
+    "matmul": _defer_to_unrecognized_arg(matmul),
+    "rmatmul": _defer_to_unrecognized_arg(_swap_args(matmul)),
+    "and": _defer_to_unrecognized_arg(bitwise_and),
+    "rand": _defer_to_unrecognized_arg(bitwise_and),
+    "or": _defer_to_unrecognized_arg(bitwise_or),
+    "ror": _defer_to_unrecognized_arg(bitwise_or),
+    "xor": _defer_to_unrecognized_arg(bitwise_xor),
+    "rxor": _defer_to_unrecognized_arg(bitwise_xor),
     "invert": bitwise_not,
-    "lshift": left_shift,
-    "rshift": right_shift,
+    "lshift": _defer_to_unrecognized_arg(left_shift),
+    "rshift": _defer_to_unrecognized_arg(right_shift),
     "round": _operator_round,
 }
 
