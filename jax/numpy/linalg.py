@@ -61,6 +61,19 @@ def svd(a, full_matrices=True, compute_uv=True):
   return lax_linalg.svd(a, full_matrices, compute_uv)
 
 
+@_wraps(onp.linalg.matrix_rank)
+def matrix_rank(M, tol=None):
+  M = _promote_arg_dtypes(np.asarray(M))
+  if M.ndim > 2:
+    raise TypeError("array should have 2 or fewer dimensions")
+  if M.ndim < 2:
+    return int(not all(M==0))
+  S = svd(M, full_matrices=False, compute_uv=False)
+  if tol is None:
+    tol = S.max() * np.max(M.shape) * np.finfo(S.dtype).eps
+  return sum(S > tol)
+
+
 # TODO(pfau): make this work for complex types
 def _jvp_slogdet(g, ans, x):
   jvp_sign = np.zeros(x.shape[:-2])
