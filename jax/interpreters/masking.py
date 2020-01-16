@@ -95,11 +95,6 @@ def ensure_poly(p):
 
   return constant_poly(int(p))
 
-def _poly_without_zeros(d):
-  d = {mon: count for mon, count in d.items() if count != 0}
-
-  return constant_poly(0) if len(d) == 0 else Poly(d)
-
 class Poly(Counter):
   """Polynomial with integer coefficients,
   usable as element in a polymorphic shape.
@@ -107,29 +102,35 @@ class Poly(Counter):
   type Poly = Map Mon Int -- monomials to coeffs
   type Mon = Map Str Int
   """
+  def __init__(self, coeffs):
+    # Makes sure Polynomials are always in canonical form to simplify operators:
+    coeffs = {mon: coeff for mon, coeff in coeffs.items() if coeff != 0}
+    coeffs = {Mon(): 0} if len(coeffs) == 0 else coeffs
+    super().__init__(coeffs)
+
   def __add__(self, other):
-    d = self.copy()
+    coeffs = self.copy()
 
-    for mon, count in ensure_poly(other).items():
-      d[mon] = d.get(mon, 0) + count
+    for mon, coeff in ensure_poly(other).items():
+      coeffs[mon] = coeffs.get(mon, 0) + coeff
 
-    return _poly_without_zeros(d)
+    return Poly(coeffs)
 
   def __sub__(self, other):
     return self + -other
 
   def __neg__(self):
-    return Poly({mon: -count for mon, count in self.items()})
+    return Poly({mon: -coeff for mon, coeff in self.items()})
 
   def __mul__(self, other):
-    new_poly = dict()
+    coeffs = dict()
     for (mon1, coeff1), (mon2, coeff2) \
             in it.product(self.items(), ensure_poly(other).items()):
       mon = Mon(mon1 + mon2)                        # add monomials' id degrees
       coeff = coeff1 * coeff2                       # multiply integer coeffs
-      new_poly[mon] = new_poly.get(mon, 0) + coeff  # accumulate coeffs
+      coeffs[mon] = coeffs.get(mon, 0) + coeff  # accumulate coeffs
 
-    return _poly_without_zeros(new_poly)
+    return Poly(coeffs)
 
   def __rmul__(self, other):
     return self * other
@@ -161,8 +162,9 @@ class Poly(Counter):
                          'that exactly divide the strided axis length.')
       return q
 
-    return Poly({k: count // divisor if k.degree == 0 else divided(count)
-                 for k, count in self.items()}), self[Mon()] % divisor
+    return Poly(
+      {k: coeff // divisor if k.degree == 0 else divided(coeff)
+      for k, coeff in self.items()}), self[Mon()] % divisor
 
   def __hash__(self):
     return hash(super())

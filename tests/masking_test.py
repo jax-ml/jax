@@ -89,6 +89,7 @@ class MaskingTest(jtu.JaxTestCase):
 
   def test_poly_divmod(self):
     n = parse_id('n')
+    assert (n, 1) == divmod(2*n+1, 2)
     assert (2*n, 0) == divmod(10*n, 5)
     assert (2*n+4, 3) == divmod(10*n+23, 5)
 
