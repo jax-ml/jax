@@ -314,16 +314,16 @@ def _while_loop_jvp(primals, tangents, cond_nconsts, cond_jaxpr, body_nconsts,
 
   carry_nz = init_nz
   for _ in range(1 + len(carry_nz)):
-    nonzeros = bconst_nz + carry_nz
+    body_nonzeros = bconst_nz + carry_nz
     body_jvp, nonzeros_out = ad.jvp_jaxpr(
-        body_jaxpr, nonzeros, instantiate=carry_nz)
+        body_jaxpr, body_nonzeros, instantiate=carry_nz)
     if nonzeros_out == carry_nz:
       break
-    else:
-      carry_nz = _map(operator.or_, carry_nz, nonzeros_out)
+    carry_nz = _map(operator.or_, carry_nz, nonzeros_out)
   else:
     assert False, "Fixpoint not reached"
 
+  nonzeros = cconst_nz + body_nonzeros
   tangents = [ad.instantiate_zeros(x, t) if t is ad_util.zero and nz else t
               for x, t, nz in zip(primals, tangents, nonzeros)]
 
