@@ -270,6 +270,9 @@ class _JaxComputationBuilder(xla_client.ComputationBuilder):
   ComputationBuilder to form JaxComputationBuilder
   """
 
+  def Select(self, *args, **kwargs):
+    return super(_JaxComputationBuilder, self).Select(*args, **kwargs)
+
   # Method name case follows that of the XLA ComputationBuilder
   # pylint: disable=invalid-name
 

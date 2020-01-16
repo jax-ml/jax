@@ -2665,10 +2665,13 @@ def take(a, indices, axis=None, out=None, mode=None):
 
 def _normalize_index(index, axis_size):
   """Normalizes an index value in the range [-N, N) to the range [0, N)."""
-  return lax.select(
-    lax.lt(index, _constant_like(index, 0)),
-    lax.add(index, _constant_like(index, axis_size)),
-    index)
+  if type(core.get_aval(index)) is ConcreteArray:
+    return index + axis_size if index < 0 else index
+  else:
+    return lax.select(
+      lax.lt(index, _constant_like(index, 0)),
+      lax.add(index, _constant_like(index, axis_size)),
+      index)
 
 @partial(jit, static_argnums=(2,))
 def _take_along_axis(arr, indices, axis):
