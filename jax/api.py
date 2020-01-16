@@ -62,7 +62,7 @@ from .interpreters import ad
 from .interpreters import batching
 from .interpreters import parallel
 from .interpreters import masking
-from .interpreters.masking import shapecheck
+from .interpreters.masking import shapecheck, ensure_poly
 from .config import flags, config
 
 map = safe_map
@@ -1055,7 +1055,7 @@ def _bind_shapes(shape_exprs, shapes):
   env = {}
   for shape_expr, shape in zip(shape_exprs, shapes):
     for poly, d in zip(shape_expr, shape):
-      if masking.is_constant(poly):
+      if ensure_poly(poly).is_constant:
         continue
       else:
         (binder,), = poly  # TODO generalize to handle striding

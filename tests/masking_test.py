@@ -23,8 +23,9 @@ import numpy as onp
 from absl.testing import absltest
 from absl.testing import parameterized
 
-from jax import test_util as jtu
-from jax.interpreters.masking import ShapeError, shape_as_value, parse_spec
+from jax import test_util as jtu, core as jc, api
+from jax.interpreters.masking import ShapeError, shape_as_value, parse_spec, \
+  constant_poly, Mon, Poly, parse_id
 from jax import mask, vmap, jit, grad, shapecheck
 from jax import lax
 import jax.numpy as np
@@ -44,6 +45,8 @@ class MaskingTest(jtu.JaxTestCase):
       ['m * n', 'ShapeSpec(m n)'],
       ['(m * n,)', 'ShapeSpec(m n)'],
       ['(3, m)', 'ShapeSpec(3, m)'],
+      ['(10, m)', 'ShapeSpec(10, m)'],
+      ['(-10, m)', 'ShapeSpec(-10, m)'],
       ['(3 * m)', 'ShapeSpec(3 m)'],
       ['m', 'ShapeSpec(m)'],
       ['', 'ShapeSpec()'],
@@ -56,7 +59,67 @@ class MaskingTest(jtu.JaxTestCase):
   def test_shape_parsing(self, spec, ans):
     self.assertEqual(str(parse_spec(spec)), ans)
 
-  def test_dot_shape_checking(self):
+  def test_poly_equal(self):
+    assert constant_poly(3) == 3
+    assert onp.array(3, onp.int64) == constant_poly(3)
+    assert onp.array(3, onp.int64)[()] == constant_poly(3)
+    assert not onp.array(3, onp.int64) != constant_poly(3)
+    assert constant_poly(4) != 3
+    assert 3 == constant_poly(3)
+    assert 4 != constant_poly(3)
+    assert constant_poly(4) == constant_poly(4)
+    assert constant_poly(3) != constant_poly(4)
+    assert Poly({Mon(): 3, Mon({'n': 1}): 4}) == Poly({Mon({'n': 1}): 4, Mon(): 3})
+    assert Poly({Mon(): 3, Mon({'n': 1}): 4}) != Poly({Mon(): 3, Mon({'n': 2}): 4})
+    assert Poly({Mon(): 3, Mon({'m': 1}): 4}) != Poly({Mon(): 3, Mon({'n': 1}): 4})
+
+  def test_poly_compare(self):
+    poly = Poly({Mon(): 3, Mon({'n': 1}): 4})
+    # Assume poly > 0 to make various shape rules work with polymorphic shapes:
+    assert poly >= 0
+    assert poly >= 1
+    assert poly > 0
+
+    assert 0 <= poly
+    assert 0 < poly
+    assert constant_poly(3) >= 1
+    assert constant_poly(3) > 1
+    self.assertRaisesRegex(ValueError, "", lambda: poly >= 2)
+    self.assertRaisesRegex(ValueError, "", lambda: poly > 1)
+
+  def test_poly_divmod(self):
+    n = parse_id('n')
+    assert (n, 1) == divmod(2*n+1, 2)
+    assert (2*n, 0) == divmod(10*n, 5)
+    assert (2*n+4, 3) == divmod(10*n+23, 5)
+
+  def test_shapecheck_add_broadcast(self):
+     @shapecheck(['(m, n)', 'n'], '(m, n)')
+     @shapecheck(['n', ''], 'n')
+     def add(a, b):
+       return a + b
+
+  def test_shapecheck_sum(self):
+    @shapecheck(['(m, n)'], '')
+    def sum(x):
+      return np.sum(x)
+
+  def test_shapecheck_prod(self):
+    @shapecheck(['(m, n)'], '')
+    def prod(x):
+      return np.prod(x)
+
+  def test_shapecheck_max(self):
+    @shapecheck(['(m, n)'], '')
+    def prod(x):
+      return np.max(x)
+
+  def test_shapecheck_min(self):
+    @shapecheck(['(m, n)'], '')
+    def prod(x):
+      return np.min(x)
+
+  def test_shapecheck_dot(self):
     @shapecheck(['(m, n)', 'n'], 'm')
     def matvec(A, b):
       return np.dot(A, b)
@@ -65,14 +128,14 @@ class MaskingTest(jtu.JaxTestCase):
       @shapecheck(['(m, n)', 'n'], 'm')
       def matvec(A, b):
         return lax.dot_general(A, b, [((0,), (0,)), ((), ())])
-    self.assertRaisesRegex(ShapeError, "", thunk)
+    self.assertRaisesRegex(TypeError, "", thunk)
 
-  def test_flatten_shape_checking(self):
+  def test_shapecheck_flatten(self):
     @shapecheck(['(m, n)'], 'm * n')
     def flatten(x):
       return lax.reshape(x, (x.shape[0] * x.shape[1],))
 
-  def test_concatenate_shape_checking(self):
+  def test_shapecheck_concatenate(self):
     @shapecheck(['m', 'n', 'm'], '3*m + n')
     def cat(x, y, z):
       return lax.concatenate([x, y, x, z], 0)
@@ -82,6 +145,91 @@ class MaskingTest(jtu.JaxTestCase):
       def cat(x, y, z):
         return lax.concatenate([x, y, x], 0)
     self.assertRaisesRegex(ShapeError, "", thunk)
+
+  def test_shapecheck_device_put(self):
+    @shapecheck(['n'], 'n')
+    def d_put(x):
+      return api.device_put(x)
+
+  def test_shapecheck_broadcast_in_dim(self):
+    x = np.zeros((7, 1))
+    lax.broadcast_in_dim(x, shape=(3, x.shape[0], 4), broadcast_dimensions=(1, 2))
+    @shapecheck(['(n, 1)'], '(3, n, 4)')
+    def broadcast_in_dim(x):
+      return lax.broadcast_in_dim(x, shape=(3, x.shape[0], 4), broadcast_dimensions=(1, 2))
+
+  def test_shapecheck_jit(self):
+    @shapecheck(['n'], '2*n')
+    @jit
+    def concat(x):
+      return lax.concatenate([x, x], 0)
+
+  def test_shapecheck_pad(self):
+    @shapecheck(['n'], '2*n+1')
+    def p(x):
+      return lax.pad(x, 0, [(1, 1, 1)])
+
+  def test_shapecheck_numpy_pad(self):
+    @shapecheck(['n'], 'n+1')
+    def p(x):
+      return np.pad(x, (0, 1))
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {
+      'testcase_name': "strides={}_padding={}_lhs_dilation={}_dimension_numbers"
+                       "={}_lhs_perm={}_rhs_perm={}_out_perm={}".format(
+        strides, padding, lhs_dilation, dimension_numbers, lhs_perm, rhs_perm, out_perm),
+      'strides': strides, 'padding': padding, 'lhs_dilation': lhs_dilation,
+      'dimension_numbers': dimension_numbers, 'lhs_perm': lhs_perm,
+      'rhs_perm': rhs_perm, 'out_perm': out_perm}
+    for strides in [(1, 1), (2, 1)]
+    for padding in ['SAME', 'VALID', ((1, 0), (2, 0))]
+    for lhs_dilation in (None, (1, 2))
+    for dimension_numbers, (lhs_perm, rhs_perm, out_perm) in (
+            (("NCHW", "OIHW", "NCHW"), ((0, 1, 2, 3), (0, 1, 2, 3), (0, 1, 2, 3))),
+            (("NHWC", "HWIO", "NHWC"), ((0, 2, 3, 1), (2, 3, 1, 0), (0, 2, 3, 1))),
+            (("NCHW", "HWIO", "NHWC"), ((0, 1, 2, 3), (2, 3, 1, 0), (0, 2, 3, 1)))
+    )
+    # String padding is not implemented for transposed convolution, see conv_general_dilated implementation:
+    if (lhs_dilation is None or not isinstance(padding, str)) and
+    # only test strides with same padding:
+    (strides[0] == 1 or padding == 'SAME')))
+  def test_shapecheck_conv(self, strides, padding, lhs_dilation,
+                           dimension_numbers, lhs_perm, rhs_perm, out_perm):
+    valid = padding == 'VALID'
+    is_strided = strides[0] != 1
+    lhs_shape = '({}, {}, {}, {})'.format(*onp.take(['n', 'i', '2*h' if is_strided else 'h', 'w'], lhs_perm))
+    rhs_shape = '({}, {}, {}, {})'.format(*onp.take(['o', 'i', '2', '3'], rhs_perm))
+    out_shape = '({}, {}, {}, {})'.format(*onp.take([
+      'n', 'o', 'h+-1' if valid and not is_strided else 'h',
+      ('w+-2' if valid else 'w') if lhs_dilation is None else '2*w+-1'], out_perm))
+
+    @shapecheck([lhs_shape, rhs_shape], out_shape)
+    def conv(lhs, rhs):
+      return lax.conv_general_dilated(
+        lhs, rhs, strides, padding,
+        lhs_dilation=lhs_dilation, dimension_numbers=dimension_numbers)
+
+  # TODO:
+  def DISABLED_shapecheck_slicing(self):
+    @shapecheck(['n'], 'n+-1')
+    def slice(x):
+      return x[1:]
+
+    @shapecheck(['n'], 'n+-1')
+    def slice(x):
+      return x[:-1]
+
+  def test_shapecheck_unsupported_op(self):
+    p = jc.Primitive('unsupported_op')
+    p.def_impl(lambda x: x)
+
+    def thunk():
+      @shapecheck(['n'], 'n')
+      def identity(x):
+        return p.bind(x)
+
+    self.assertRaisesRegex(NotImplementedError, "Shape rule for unsupported_op not implemented yet.", thunk)
 
   def test_sum(self):
     @partial(mask, in_shapes=['n'], out_shape='')
