@@ -18,6 +18,7 @@ from __future__ import print_function
 
 import numpy as onp
 import scipy.special as osp_special
+from jax.interpreters import masking
 
 from .. import lax
 from .. import util
@@ -84,6 +85,7 @@ def expit(x):
   one = lax._const(x, 1)
   return lax.div(one, lax.add(one, lax.exp(lax.neg(x))))
 defjvp(expit, lambda g, ans, x: g * ans * (lax._const(ans, 1) - ans))
+masking.shape_rules[expit.prim] = lambda x, **_: (x.shape,)
 
 
 @_wraps(osp_special.logsumexp)

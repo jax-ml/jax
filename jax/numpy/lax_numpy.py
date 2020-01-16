@@ -27,7 +27,6 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from distutils.util import strtobool
 import builtins
 import collections
 from collections.abc import Sequence
@@ -47,6 +46,7 @@ from .. import dtypes
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
 from ..config import flags
 from ..interpreters.xla import DeviceArray
+from ..interpreters.masking import Poly, is_polymorphic
 from .. import lax
 from ..util import partial, get_module_functions, unzip2, prod as _prod, subvals
 from ..lib import pytree
@@ -1108,7 +1108,7 @@ def broadcast_arrays(*args):
 def broadcast_to(arr, shape):
   """Like Numpy's broadcast_to but doesn't necessarily return views."""
   arr = arr if isinstance(arr, ndarray) else array(arr)
-  shape = tuple(map(int, shape))  # check that shape is concrete
+  shape = tuple(map(lambda x: x.__index__(), shape))  # check that shape is concrete
   arr_shape = _shape(arr)
   if arr_shape == shape:
     return arr
@@ -1126,6 +1126,28 @@ def broadcast_to(arr, shape):
 
 @_wraps(onp.split)
 def split(ary, indices_or_sections, axis=0):
+  # TODO remove this special case:
+  if is_polymorphic(ary.shape):
+    # returns a correctly shaped dummy:
+    if type(indices_or_sections) in (list, tuple):
+      assert len(indices_or_sections) == 1 # TODO generalize
+      index = indices_or_sections[0].__index__()
+      assert index > 0 # TODO generalize
+      slices = [[slice(None)] * ary.ndim for _ in range(2)]
+      slices[0][axis] = slice(None, index)
+      slices[1][axis] = slice(index, None)
+
+      return [ary[slices[0]], ary[slices[1]]]
+
+    count = indices_or_sections.__index__()
+
+    s = [slice(None)] * ary.ndim
+    split_size, r = _divmod(ary.shape[axis], count)
+    s[axis] = slice(None, split_size)
+    assert r == 0
+
+    return [ary[s]] * count
+
   dummy_val = onp.broadcast_to(0, ary.shape)  # zero strides
   subarrays = onp.split(dummy_val, indices_or_sections, axis)  # shapes
   split_indices = onp.cumsum([0] + [onp.shape(sub)[axis] for sub in subarrays])
@@ -2665,6 +2687,9 @@ def take(a, indices, axis=None, out=None, mode=None):
 
 def _normalize_index(index, axis_size):
   """Normalizes an index value in the range [-N, N) to the range [0, N)."""
+  if type(axis_size) is Poly:
+    return index + axis_size if index < 0 else index
+
   return lax.select(
     lax.lt(index, _constant_like(index, 0)),
     lax.add(index, _constant_like(index, axis_size)),
@@ -2933,9 +2958,9 @@ def _index_to_gather(x_shape, idx):
     if (isinstance(abstract_i, ConcreteArray) or
         isinstance(abstract_i, ShapedArray)) and _int(abstract_i):
       i = _normalize_index(i, x_shape[x_axis])
-      i = lax.convert_element_type(i, int32)
-      i = broadcast_to(i, tuple(gather_indices.shape[:-1]) + (1,))
-      gather_indices = concatenate((gather_indices, i), -1)
+      i = lax.convert_element_type(i, int32) if type(i) is not Poly else i
+      i = onp.broadcast_to(i, tuple(gather_indices.shape[:-1]) + (1,))
+      gather_indices = onp.concatenate((gather_indices, i), -1)
       collapsed_slice_dims.append(x_axis)
       gather_slice_shape.append(1)
       start_index_map.append(x_axis)
@@ -2955,7 +2980,7 @@ def _index_to_gather(x_shape, idx):
       x_axis += 1
     # Handle slice index (only static, otherwise an error is raised)
     elif isinstance(i, slice):
-      if not _all(elt is None or type(core.get_aval(elt)) is ConcreteArray
+      if not _all(elt is None or type(elt) is Poly or type(core.get_aval(elt)) is ConcreteArray
                   for elt in (i.start, i.stop, i.step)):
         msg = ("Array slice indices must have static start/stop/step to be used "
                "with Numpy indexing syntax. Try lax.dynamic_slice/"
@@ -3105,12 +3130,20 @@ def _canonicalize_tuple_index(arr_ndim, idx):
     idx = tuple(idx) + colons
   return idx
 
+def _slice_indices(idx, size):
+  # like idx.indices(size), but allows for polymorphic slice and size
+  assert isinstance(idx, slice)
+
+  start = 0 if idx.start is None else idx.start + (size if idx.start < 0 else 0)
+  stop = size if idx.stop is None else idx.stop + (size if idx.stop < 0 else 0)
+  step = 1 if idx.step is None else idx.step
+  return start, stop, step
 
 def _static_idx(idx, size):
   """Helper function to compute the static slice start/limit/stride values."""
-  assert isinstance(idx, slice)
-  start, stop, step = idx.indices(size)
-  if (step < 0 and stop >= start) or (step > 0 and start >= stop):
+  start, stop, step = _slice_indices(idx, size)
+  if (not is_polymorphic((start, stop, step)) and
+      ((step < 0 and stop >= start) or (step > 0 and start >= stop))):
     return 0, 0, 1, False  # sliced to size zero
 
   if step > 0:

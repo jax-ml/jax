@@ -56,18 +56,12 @@ def is_polymorphic(shape):
   return any(map(lambda d: isinstance(d, Poly), shape))
 
 def shape_as_value(expr):
-  if type(expr) is tuple and is_polymorphic(expr):
-    return tuple(eval_dim_expr(shape_envs.logical, d) if type(d) is Poly else d
-                 for d in expr)
-  else:
-    return expr
+  return tuple(eval_dim_expr(shape_envs.logical, d) if type(d) is Poly else d
+               for d in expr)
 
 def padded_shape_as_value(expr):
-  if type(expr) is tuple and is_polymorphic(expr):
-    return tuple(eval_dim_expr(shape_envs.padded, d) if type(d) is Poly else d
-                 for d in expr)
-  else:
-    return expr
+  return tuple(eval_dim_expr(shape_envs.padded, d) if type(d) is Poly else d
+               for d in expr)
 
 
 def mask_fun(fun, logical_env, padded_env, in_vals, shape_exprs):
@@ -211,6 +205,9 @@ class Poly(Counter):
     assert self.is_constant
 
     return int(next(iter(self.values())))
+
+  def __index__(self):
+    return self
 
   @property
   def is_constant(self):
@@ -456,7 +453,11 @@ class ShapeCheckTrace(Trace):
     if shape_rule is None:
       raise NotImplementedError('Shape rule for {} not implemented yet.'.format(primitive))
     out_shape = shape_rule(*avals, **params)
-    return ShapeCheckTracer(self, out_shape)
+
+    if primitive.multiple_results:
+      return map(partial(ShapeCheckTracer, self), out_shape)
+    else:
+      return ShapeCheckTracer(self, out_shape)
 
   def process_call(self, call_primitive, f, tracers, params):
     # TODO apply proper subtrace:

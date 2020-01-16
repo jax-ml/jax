@@ -23,11 +23,12 @@ import numpy as onp
 from absl.testing import absltest
 from absl.testing import parameterized
 
-from jax import test_util as jtu, core as jc, api
+from jax import test_util as jtu, core as jc, api, random
 from jax.interpreters.masking import ShapeError, shape_as_value, parse_spec, \
   constant_poly, Mon, Poly, parse_id
 from jax import mask, vmap, jit, grad, shapecheck
 from jax import lax
+from jax.scipy.special import expit
 import jax.numpy as np
 
 from jax.config import config
@@ -86,6 +87,10 @@ class MaskingTest(jtu.JaxTestCase):
     assert constant_poly(3) > 1
     self.assertRaisesRegex(ValueError, "", lambda: poly >= 2)
     self.assertRaisesRegex(ValueError, "", lambda: poly > 1)
+
+  def test_poly_index(self):
+    p = Poly({Mon(): 3, Mon({'n': 1}): 4})
+    assert p == p.__index__()
 
   def test_poly_divmod(self):
     n = parse_id('n')
@@ -210,8 +215,22 @@ class MaskingTest(jtu.JaxTestCase):
         lhs, rhs, strides, padding,
         lhs_dilation=lhs_dilation, dimension_numbers=dimension_numbers)
 
-  # TODO:
-  def DISABLED_shapecheck_slicing(self):
+  def test_shapecheck_indexing(self):
+    @shapecheck(['n'], '')
+    def first(x):
+      return x[0]
+
+    @shapecheck(['n'], '')
+    def last(x):
+      return x[-1]
+
+    @shapecheck(['(n,m,a)'], 'n,m')
+    @vmap
+    @shapecheck(['(n,a)'], 'n')
+    def last_column(x):
+      return x[..., -1]
+
+  def test_shapecheck_slicing(self):
     @shapecheck(['n'], 'n+-1')
     def slice(x):
       return x[1:]
@@ -219,6 +238,42 @@ class MaskingTest(jtu.JaxTestCase):
     @shapecheck(['n'], 'n+-1')
     def slice(x):
       return x[:-1]
+
+  def test_shapecheck_split(self):
+    @shapecheck(['2*n'], ['n', 'n'])
+    def split_half(x):
+      return np.split(x, 2)
+
+    @shapecheck(['n'], ['10', 'n+-10'])
+    def split_after_ten(x):
+      return np.split(x, [10])
+
+  def test_shapecheck_iota(self):
+    @shapecheck(['n'], 'n')
+    def range_like(x):
+      return lax.iota(np.int32, x.shape[0])
+
+  def test_shapecheck_expit(self):
+    @shapecheck(['n'], 'n')
+    def expit_(x):
+      return expit(x)
+
+  def test_shapecheck_reshape(self):
+    @shapecheck(['n, a, b'], 'n, a*b')
+    def flatten(x):
+      return np.reshape(x, (x.shape[0], x.shape[1] * x.shape[2]))
+
+  def test_shapecheck_uniform(self):
+    @shapecheck(['2', 'n'], 'n')
+    def uniform_like(key, x):
+      return random.uniform(key, x.shape)
+
+  def test_ravel(self):
+    a = np.array(1)
+
+    @shapecheck(['n'], '')
+    def thunk(n):
+      return -(a + n.ravel()[0] * 0)
 
   def test_shapecheck_unsupported_op(self):
     p = jc.Primitive('unsupported_op')

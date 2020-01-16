@@ -74,6 +74,12 @@ def broadcast_shapes(*shapes):
                      .format(tuple(map(tuple, shapes))))
   return tuple(result_shape)
 
+def _try_canonicalize_shape(shape):
+  try:
+    return tuple(map(lambda x: x.__index__(), shape))
+  except TypeError:
+    return None
+
 def _canonicalize_shape(shape):
   """Canonicalizes and checks for errors in a user-provided shape value.
 
@@ -83,13 +89,10 @@ def _canonicalize_shape(shape):
   Returns:
     A tuple of integers.
   """
-  # TODO(mattjj): this next check is a temporary workaround for masking
-  if (type(shape) is tuple and masking.is_polymorphic(shape)):
-    return shape
-  try:
-    return tuple(map(operator.index, shape))
-  except TypeError:
-    pass
+  canonical = _try_canonicalize_shape(shape)
+  if canonical is not None:
+    return canonical
+
   msg = ("Shapes must be 1D sequences of concrete values of integer type, "
          "got {}.")
   if any(isinstance(x, core.Tracer) and isinstance(core.get_aval(x), ShapedArray)
@@ -1082,7 +1085,7 @@ def iota(dtype, size):
   <https://www.tensorflow.org/xla/operation_semantics#iota>`_
   operator.
   """
-  size = int(size)
+  size = size.__index__()
   dtype = dtypes.canonicalize_dtype(dtype)
   lazy_expr = lazy.iota(dtype, size)
   aval = ShapedArray((size,), dtype)
@@ -4354,8 +4357,6 @@ def conv_transpose_shape_tuple(lhs_shape, rhs_shape, window_strides, padding,
 
 def _check_shapelike(fun_name, arg_name, obj):
   """Check that `obj` is a shape-like value (e.g. tuple of nonnegative ints)."""
-  if (type(obj) is tuple and masking.is_polymorphic(obj)):
-    return obj
   if not isinstance(obj, (tuple, list, onp.ndarray)):
     msg = "{} {} must be of type tuple/list/ndarray, got {}."
     raise TypeError(msg.format(fun_name, arg_name, type(obj)))
@@ -4366,7 +4367,7 @@ def _check_shapelike(fun_name, arg_name, obj):
   if obj_arr.ndim != 1:
     msg = "{} {} must be rank 1, got {}."
     raise TypeError(msg.format(obj_arr.ndim))
-  if not dtypes.issubdtype(obj_arr.dtype, onp.integer):
+  if _try_canonicalize_shape(obj_arr) is None:
     msg = "{} {} must have every element be an integer type, got {}."
     raise TypeError(msg.format(fun_name, arg_name, tuple(map(type, obj))))
   if not (obj_arr >= 0).all():

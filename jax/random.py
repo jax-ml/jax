@@ -43,7 +43,7 @@ from jax.numpy.linalg import cholesky
 from jax.scipy.special import logit
 from jax.interpreters import ad
 from jax.interpreters import batching
-from jax.interpreters import partial_eval as pe
+from jax.interpreters import masking
 from jax.interpreters import xla
 from jax.util import prod
 
@@ -270,6 +270,14 @@ def _fold_in(key, data):
 
 def _random_bits(key, bit_width, shape):
   """Sample uniform random bits of given width and shape using PRNG key."""
+
+  # TODO remove this special case:
+  if masking.is_polymorphic(shape):
+    # returns a correctly shaped dummy:
+    # make input dependent, see TODO_shapecheck_input_indepentent in masking_test.py
+    return np.broadcast_to(0 * key[0], shape).astype(
+      onp.uint64 if bit_width == 64 else onp.uint32)
+
   if not _is_prng_key(key):
     raise TypeError("_random_bits got invalid prng key.")
   if bit_width not in (32, 64):
@@ -292,7 +300,7 @@ def _random_bits(key, bit_width, shape):
 
 def _check_shape(name, shape, *param_shapes):
   try:
-    shape = tuple(map(int, shape))
+    shape = tuple(map(lambda x: x.__index__(), shape))
   except TypeError:
     msg = "{} requires a concrete tuple of integers as shape argument, got {}."
     raise ValueError(msg.format(name, shape))
