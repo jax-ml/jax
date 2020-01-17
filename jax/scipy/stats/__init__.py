@@ -26,4 +26,3 @@ from . import norm
 from . import pareto
 from . import t
 from . import uniform
-from . import logistic

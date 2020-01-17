@@ -211,58 +211,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                             tol=1e-6)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
-  @genNamedParametersNArgs(1, jtu.rand_default)
-  def testLogisticCdf(self, rng_factory, shapes, dtypes):
-    rng = rng_factory()
-    scipy_fun = osp_stats.logistic.cdf
-    lax_fun = lsp_stats.logistic.cdf
-
-    def args_maker():
-      return list(map(rng, shapes, dtypes))
-
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-                            tol=1e-6)
-    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
-
-  @genNamedParametersNArgs(1, jtu.rand_default)
-  def testLogisticLogpdf(self, rng_factory, shapes, dtypes):
-    rng = rng_factory()
-    scipy_fun = osp_stats.logistic.logpdf
-    lax_fun = lsp_stats.logistic.logpdf
-
-    def args_maker():
-      return list(map(rng, shapes, dtypes))
-
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-                            tol=1e-6)
-    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
-
-  @genNamedParametersNArgs(1, jtu.rand_default)
-  def testLogisticPpf(self, rng_factory, shapes, dtypes):
-    rng = rng_factory()
-    scipy_fun = osp_stats.logistic.ppf
-    lax_fun = lsp_stats.logistic.ppf
-
-    def args_maker():
-      return list(map(rng, shapes, dtypes))
-
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-                            tol=1e-6)
-    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
-
-  @genNamedParametersNArgs(1, jtu.rand_default)
-  def testLogisticSf(self, rng_factory, shapes, dtypes):
-    rng = rng_factory()
-    scipy_fun = osp_stats.logistic.sf
-    lax_fun = lsp_stats.logistic.sf
-
-    def args_maker():
-      return list(map(rng, shapes, dtypes))
-
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-                            tol=1e-6)
-    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
-
   # TODO: currently it ignores the argument "shapes" and only tests dim=4
   @genNamedParametersNArgs(3, jtu.rand_default)
   def testMultivariateNormalLogPdf(self, rng_factory, shapes, dtypes):
