@@ -2958,9 +2958,12 @@ def _index_to_gather(x_shape, idx):
     if (isinstance(abstract_i, ConcreteArray) or
         isinstance(abstract_i, ShapedArray)) and _int(abstract_i):
       i = _normalize_index(i, x_shape[x_axis])
-      i = lax.convert_element_type(i, int32) if type(i) is not Poly else i
-      i = onp.broadcast_to(i, tuple(gather_indices.shape[:-1]) + (1,))
-      gather_indices = onp.concatenate((gather_indices, i), -1)
+      is_poly = type(i) is Poly
+      i = i if is_poly else lax.convert_element_type(i, int32)
+      _broadcast_to = onp.broadcast_to if is_poly else broadcast_to
+      i = _broadcast_to(i, tuple(gather_indices.shape[:-1]) + (1,))
+      _concatenate = onp.concatenate if is_poly else concatenate
+      gather_indices = _concatenate((gather_indices, i), -1)
       collapsed_slice_dims.append(x_axis)
       gather_slice_shape.append(1)
       start_index_map.append(x_axis)
