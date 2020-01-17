@@ -374,7 +374,7 @@ for scalar_type in [onp.int8, onp.int16, onp.int32, onp.int64,
 
 def _python_scalar_handler(dtype, c, val, canonicalize_dtypes=True):
   if val >= (2 ** 31) and dtype in [onp.int32, onp.uint32, onp.float32]:
-    raise TypeError("Scalar out of range for 32-bit dtype conversion: {}".format(x))
+    raise TypeError("Scalar out of range for 32-bit dtype conversion: {}".format(val))
   return c.NumpyArrayConstant(dtype.type(val))
 
 for ptype, dtype in dtypes.python_scalar_dtypes.items():
