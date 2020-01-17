@@ -120,8 +120,10 @@ def _canonicalize_ndarray_dtype(x):
 for _t in array_types:
   canonicalize_dtype_handlers[_t] = _canonicalize_ndarray_dtype
 def _canonicalize_python_scalar_dtype(typ, x):
-  return onp.asarray(
-    x, dtypes.canonicalize_dtype(dtypes.python_scalar_dtypes[typ]))
+  dtype = dtypes.canonicalize_dtype(dtypes.python_scalar_dtypes[typ])
+  if x >= (2 ** 31) and dtype in [onp.dtype('int32'), onp.dtype('uint32'), onp.dtype('float32')]:
+      raise TypeError("Scalar out of range for 32-bit dtype conversion: {}".format(x))
+  return onp.asarray(x, dtype)
 for _t in dtypes.python_scalar_dtypes.keys():
   canonicalize_dtype_handlers[_t] = partial(_canonicalize_python_scalar_dtype, _t)
 
