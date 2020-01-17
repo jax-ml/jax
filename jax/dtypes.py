@@ -117,7 +117,8 @@ def coerce_to_array(x):
   rules.
   """
   dtype = python_scalar_dtypes.get(type(x), None)
-  if np.any(x >= (2 ** 31)) and dtype in [onp.dtype('int32'), onp.dtype('uint32'), onp.dtype('float32')]:
+  if np.isscalar(x) and dtype in [onp.int32, onp.uint32]:
+    if x > onp.iinfo(dtype).max or x < onp.iinfo(dtype).min:
       raise TypeError("Scalar out of range for 32-bit dtype conversion: {}".format(x))
   return onp.array(x, dtype) if dtype else onp.array(x)
 
