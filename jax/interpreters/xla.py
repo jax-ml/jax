@@ -82,7 +82,7 @@ xla_result_handlers[ShapedArray] = array_result_handler
 xla_result_handlers[ConcreteArray] = array_result_handler
 
 def device_put(x, device=None):
-  x = canonicalize_dtype(x)
+  x = dtypes.coerce_to_array(x)
   try:
     return device_put_handlers[type(x)](x, device)
   except KeyError:
@@ -102,30 +102,6 @@ def _device_put_scalar(x, device):
                               backend=xb.get_device_backend(device))
 for _t in dtypes.python_scalar_dtypes.keys():
   device_put_handlers[_t] = _device_put_array
-
-# TODO(mattjj): try to remove this canonicalize_dtype stuff
-def canonicalize_dtype(x):
-  typ = type(x)
-  handler = canonicalize_dtype_handlers.get(typ)
-  if handler: return handler(x)
-  for typ in typ.mro():
-    handler = canonicalize_dtype_handlers.get(typ)
-    if handler: return handler(x)
-  raise TypeError("No canonicalize_dtype handler for type: {}".format(type(x)))
-
-canonicalize_dtype_handlers = {}
-canonicalize_dtype_handlers[core.Unit] = identity
-def _canonicalize_ndarray_dtype(x):
-  return onp.asarray(x, dtypes.canonicalize_dtype(dtypes.result_type(x)))
-for _t in array_types:
-  canonicalize_dtype_handlers[_t] = _canonicalize_ndarray_dtype
-def _canonicalize_python_scalar_dtype(typ, x):
-  dtype = dtypes.canonicalize_dtype(dtypes.python_scalar_dtypes[typ])
-  if x >= (2 ** 31) and dtype in [onp.dtype('int32'), onp.dtype('uint32'), onp.dtype('float32')]:
-      raise TypeError("Scalar out of range for 32-bit dtype conversion: {}".format(x))
-  return onp.asarray(x, dtype)
-for _t in dtypes.python_scalar_dtypes.keys():
-  canonicalize_dtype_handlers[_t] = partial(_canonicalize_python_scalar_dtype, _t)
 
 def abstractify(x):
   typ = type(x)
@@ -288,7 +264,7 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, freevars, *args):
 
   def read(v):
     if type(v) is Literal:
-      return c.Constant(canonicalize_dtype(v.val))
+      return c.Constant(dtypes.coerce_to_array(v.val))
     else:
       return env[v]
 
@@ -567,7 +543,7 @@ def _execute_trivial(jaxpr, device, consts, handlers, *args):
   env = {core.unitvar : core.unit}
   _map(env.setdefault, jaxpr.invars, args)
   _map(env.setdefault, jaxpr.constvars, consts)
-  outs = [canonicalize_dtype(v.val) if type(v) is Literal else env[v]
+  outs = [dtypes.coerce_to_array(v.val) if type(v) is Literal else env[v]
           for v in jaxpr.outvars]
   return [_copy_device_array_to_device(x, device) if type(x) is DeviceArray
           else h(device_put(x, device)) for h, x in zip(handlers, outs)]
