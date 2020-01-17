@@ -24,6 +24,7 @@ import os
 
 from absl import logging
 import numpy as onp
+import jax.numpy as np
 
 from ..config import flags
 from .. import core
