@@ -42,6 +42,7 @@ from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from . import partial_eval as pe
 from . import ad
+from . import masking
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_debug_nans',
@@ -82,7 +83,7 @@ xla_result_handlers[ShapedArray] = array_result_handler
 xla_result_handlers[ConcreteArray] = array_result_handler
 
 def device_put(x, device=None):
-  x = dtypes.coerce_to_array(x)
+  x = canonicalize_dtype(x)
   try:
     return device_put_handlers[type(x)](x, device)
   except KeyError:
@@ -102,6 +103,31 @@ def _device_put_scalar(x, device):
                               backend=xb.get_device_backend(device))
 for _t in dtypes.python_scalar_dtypes.keys():
   device_put_handlers[_t] = _device_put_array
+
+# TODO(mattjj): try to remove this canonicalize_dtype stuff
+def canonicalize_dtype(x):
+  typ = type(x)
+  handler = canonicalize_dtype_handlers.get(typ)
+  if handler: return handler(x)
+  for typ in typ.mro():
+    handler = canonicalize_dtype_handlers.get(typ)
+    if handler: return handler(x)
+  raise TypeError("No canonicalize_dtype handler for type: {}".format(type(x)))
+
+canonicalize_dtype_handlers = {}
+canonicalize_dtype_handlers[core.Unit] = identity
+def _canonicalize_ndarray_dtype(x):
+  return onp.asarray(x, dtypes.canonicalize_dtype(dtypes.result_type(x)))
+for _t in array_types:
+  canonicalize_dtype_handlers[_t] = _canonicalize_ndarray_dtype
+def _canonicalize_python_scalar_dtype(typ, x):
+  dtype = dtypes.canonicalize_dtype(dtypes.python_scalar_dtypes[typ])
+  if np.isscalar(x) and dtype in [onp.int32, onp.uint32]:
+    if x > onp.iinfo(dtype).max or x < onp.iinfo(dtype).min:
+      raise TypeError("Scalar out of range for 32-bit dtype conversion: {}".format(x))
+  return onp.asarray(x, dtype)
+for _t in dtypes.python_scalar_dtypes.keys():
+  canonicalize_dtype_handlers[_t] = partial(_canonicalize_python_scalar_dtype, _t)
 
 def abstractify(x):
   typ = type(x)
@@ -264,7 +290,7 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, freevars, *args):
 
   def read(v):
     if type(v) is Literal:
-      return c.Constant(dtypes.coerce_to_array(v.val))
+      return c.Constant(canonicalize_dtype(v.val))
     else:
       return env[v]
 
@@ -543,7 +569,7 @@ def _execute_trivial(jaxpr, device, consts, handlers, *args):
   env = {core.unitvar : core.unit}
   _map(env.setdefault, jaxpr.invars, args)
   _map(env.setdefault, jaxpr.constvars, consts)
-  outs = [dtypes.coerce_to_array(v.val) if type(v) is Literal else env[v]
+  outs = [canonicalize_dtype(v.val) if type(v) is Literal else env[v]
           for v in jaxpr.outvars]
   return [_copy_device_array_to_device(x, device) if type(x) is DeviceArray
           else h(device_put(x, device)) for h, x in zip(handlers, outs)]
@@ -645,6 +671,8 @@ pytype_aval_mappings[Token] = lambda _: abstract_token
 core.pytype_aval_mappings[Token] = lambda _: abstract_token
 xla_shape_handlers[AbstractToken] = lambda _: xc.Shape.token_shape()
 xla_result_handlers[AbstractToken] = lambda _, __: lambda _: token
+canonicalize_dtype_handlers[Token] = identity
+
 
 class DeviceValue(object):
   """A DeviceValue represents a value backed by device memory."""
@@ -831,6 +859,7 @@ def is_device_constant(x):
 core.literalable_types.add(DeviceArray)
 core.pytype_aval_mappings[DeviceArray] = ConcreteArray
 pytype_aval_mappings[DeviceArray] = op.attrgetter('aval')
+canonicalize_dtype_handlers[DeviceArray] = identity
 
 def _device_array_constant_handler(c, val, canonicalize_types=True):
   if is_device_constant(val):
@@ -918,6 +947,8 @@ device_put_p = core.Primitive('device_put')
 device_put_p.def_impl(_device_put_impl)
 pe.custom_partial_eval_rules[device_put_p] = lambda trace, x, **params: x
 ad.deflinear(device_put_p, lambda cotangent, **kwargs: [cotangent])
+masking.shape_rules[device_put_p] = lambda x, **_: x.shape
+masking.defvectorized(device_put_p)
 
 
 def _remat_translation_rule(c, jaxpr, axis_env, const_nodes, freevar_nodes, in_nodes,
@@ -941,10 +972,10 @@ def _foil_cse(c, x):
     assert not xla_shape.tuple_shapes()
     return x
   else:
-    rng = c.RngNormal(c.Constant(onp.array(0, dtype=onp.float32)),
-                      c.Constant(onp.array(1, dtype=onp.float32)),
-                      [])
-    pred = c.Lt(rng, c.Constant(onp.finfo(onp.float32).max))
+    rng = c.RngUniform(c.Constant(onp.array(0, dtype=onp.float32)),
+                       c.Constant(onp.array(1, dtype=onp.float32)),
+                       [])
+    pred = c.Lt(rng, c.Constant(onp.array(2, dtype=onp.float32)))
     shape, dtype = xla_shape.dimensions(), xla_shape.numpy_dtype()
     zero = c.Broadcast(c.Constant(onp.array(0, dtype=dtype)), shape)
     return c.Select(pred, x, zero)

@@ -381,6 +381,7 @@ xb.register_constant_handler(ShardedDeviceArray, _sharded_device_array_constant_
 core.pytype_aval_mappings[ShardedDeviceArray] = ConcreteArray
 xla.device_put_handlers[ShardedDeviceArray] = xla._device_put_array
 xla.pytype_aval_mappings[ShardedDeviceArray] = op.attrgetter('aval')
+xla.canonicalize_dtype_handlers[ShardedDeviceArray] = identity
 
 
 class ChunkedDeviceArray(ShardedDeviceArray):
@@ -399,40 +400,55 @@ shard_arg_handlers[ChunkedDeviceArray] = _shard_array
 core.pytype_aval_mappings[ChunkedDeviceArray] = ConcreteArray
 xla.device_put_handlers[ChunkedDeviceArray] = xla._device_put_array
 xla.pytype_aval_mappings[ChunkedDeviceArray] = op.attrgetter('aval')
+xla.canonicalize_dtype_handlers[ChunkedDeviceArray] = identity
+
 
 ### the xla_pmap primitive and its rules are comparable to xla_call in xla.py
 
 def xla_pmap_impl(fun, *args, **params):
   axis_name = params.pop('axis_name')
   axis_size = params.pop('axis_size')
+  global_axis_size = params.pop('global_axis_size')
   devices = params.pop('devices')
-  backend = params.pop('backend', None)
+  backend = params.pop('backend')
   assert not params
 
   abstract_args = map(xla.abstractify, args)
-  compiled_fun = parallel_callable(fun, backend, axis_name, axis_size, devices,
-                                   *abstract_args)
+  compiled_fun = parallel_callable(fun, backend, axis_name, axis_size,
+                                   global_axis_size, devices, *abstract_args)
   return compiled_fun(*args)
 
 @lu.cache
-def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
+def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
+                      devices, *avals):
   if devices is not None and len(devices) == 0:
     raise ValueError("'devices' argument to pmap must be non-empty, or None.")
 
+  # Determine global_axis_size for use in AxisEnv.
   if devices:
+    assert global_axis_size is None  # Checked in api.py
     global_axis_size = len(devices)
   elif xb.host_count() > 1:
-    # TODO(skye): relax this constraint or provide functionality for
-    # automatically passing appropriate `devices`.
-    if axis_size != xb.local_device_count():
-      raise ValueError(
-          "On multi-host platforms, the input to pmapped functions must have "
-          "leading axis size equal to the number of local devices if no "
-          "`devices` argument is specified. Got axis_size=%d, "
-          "num_local_devices=%d" % (axis_size, xb.local_device_count()))
-    global_axis_size = xb.device_count()
+    if global_axis_size is None:
+      # TODO(skye): relax this constraint or provide functionality for
+      # automatically passing appropriate `devices`.
+      # TODO(trevorcai): This check forces us to provide global_axis_size for
+      # all pmaps on pmap-on-pod. Can we do it after tracing?
+      if axis_size != xb.local_device_count():
+        raise ValueError(
+            "On multi-host platforms, the input to pmapped functions must have "
+            "leading axis size equal to the number of local devices if no "
+            "`devices` argument is specified. Got axis_size=%d, "
+            "num_local_devices=%d" % (axis_size, xb.local_device_count()))
+      global_axis_size = xb.device_count()
   else:
-    global_axis_size = axis_size
+    if global_axis_size is not None:
+      if global_axis_size != axis_size:
+        raise ValueError(
+            "Specified axis_size {} doesn't match received axis_size {}.".format(
+                global_axis_size, axis_size))
+    else:
+      global_axis_size = axis_size
 
   log_priority = logging.WARNING if FLAGS.jax_log_compiles else logging.DEBUG
   logging.log(log_priority,
@@ -509,7 +525,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
     # violating pmap's semantics where data is sharded across replicas in
     # row-major order. Instead, manually create a device assignment that ensures
     # each host is responsible for a continguous set of replicas.
-    if xb.host_count() > 1:
+    if num_global_replicas > num_local_replicas:
       # TODO(skye): use a locality-aware assignment that satisfies the above
       # constraint.
       devices = [d for host_id in xb.host_ids()
@@ -541,7 +557,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
   handle_outs = _pvals_to_results_handler(axis_size, num_local_replicas,
                                           out_pvals, compiled.local_devices(),
                                           backend)
-  return partial(execute_replicated, compiled, backend, num_local_replicas, handle_args, handle_outs)
+  return partial(execute_replicated, compiled, backend, handle_args, handle_outs)
 
 multi_host_supported_collectives = set()
 
@@ -622,11 +638,7 @@ def _pval_to_result_handler(axis_size, nrep, pval, devices, backend):
   else:
     return aval_to_result_handler(axis_size, nrep, pv)
 
-def execute_replicated(compiled, backend, nrep, in_handler, out_handler, *args):
-  if nrep > xb.device_count(backend):
-    msg = ("executing pmap computation that requires {} replicas, but only {} "
-           "XLA devices are available")
-    raise ValueError(msg.format(nrep, xb.device_count(backend)))
+def execute_replicated(compiled, backend, in_handler, out_handler, *args):
   input_bufs = in_handler(args)
   out_bufs = compiled.ExecutePerReplica(list(input_bufs))
   return out_handler(out_bufs)
@@ -639,12 +651,15 @@ xla_pmap_p.def_custom_bind(xla_pmap)
 xla_pmap_p.def_impl(xla_pmap_impl)
 
 def _pmap_translation_rule(c, jaxpr, axis_env, const_nodes, freevar_nodes,
-                           in_nodes, axis_name, axis_size, devices, backend=None):
+                           in_nodes, axis_name, axis_size, global_axis_size,
+                           devices, backend=None):
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
   if axis_env.devices is not None or (axis_env.names and devices is not None):
     raise ValueError("Nested pmaps with explicit devices argument.")
-  new_env = xla.extend_axis_env(axis_env, axis_name, axis_size)
+  if global_axis_size is None:
+    global_axis_size = axis_size
+  new_env = xla.extend_axis_env(axis_env, axis_name, global_axis_size)
   in_nodes_sharded = list(map(partial(_xla_shard, c, new_env), in_nodes))
   sharded_outs = xla.jaxpr_subcomp(c, jaxpr, backend, new_env, const_nodes,
                                    freevar_nodes, *in_nodes_sharded)
@@ -819,7 +834,7 @@ class SplitAxisTrace(core.Trace):
   def process_map(self, map_primitive, f, tracers, params):
     vals, names = unzip2((t.val, t.axis_name) for t in tracers)
     if all(name is not_mapped for name in names):
-        return map_primitive.bind(f, *vals, **params)
+      return map_primitive.bind(f, *vals, **params)
     else:
       # because the map primitive maps over leading axes, we need to transpose
       # the software-mapped axis on any mapped arguments to be the second axis;
