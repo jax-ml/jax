@@ -911,6 +911,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     jsp_fun = lambda a: jsp.linalg.expm(a)
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
                             check_dtypes=True)
+    self._CompileAndCheck(jsp_fun, args_maker, check_dtypes=True)
 
 if __name__ == "__main__":
   absltest.main()
