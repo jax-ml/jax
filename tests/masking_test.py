@@ -253,6 +253,11 @@ class MaskingTest(jtu.JaxTestCase):
     def range_like(x):
       return lax.iota(np.int32, x.shape[0])
 
+  def test_shapecheck_arange(self):
+    @shapecheck(['n'], 'n')
+    def arange_like(x):
+      return np.arange(x.shape[0], dtype=np.int32)
+
   def test_shapecheck_expit(self):
     @shapecheck(['n'], 'n')
     def expit_(x):

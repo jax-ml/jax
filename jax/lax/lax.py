@@ -77,7 +77,7 @@ def broadcast_shapes(*shapes):
 def _try_canonicalize_shape(shape):
   try:
     return tuple(map(lambda x: x.__index__(), shape))
-  except TypeError:
+  except AttributeError:
     return None
 
 def _canonicalize_shape(shape):

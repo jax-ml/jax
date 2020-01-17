@@ -1905,7 +1905,8 @@ def arange(start, stop=None, step=None, dtype=None):
   lax._check_user_dtype_supported(dtype, "arange")
   if stop is None and step is None:
     dtype = dtype or _dtype(start)
-    return lax.iota(dtype, start)  # avoids materializing
+    size = start if type(start) is Poly else lax.convert_element_type(start, onp.uint32)
+    return lax.iota(dtype, size) # avoids materializing
   else:
     return array(onp.arange(start, stop=stop, step=step, dtype=dtype))
 
