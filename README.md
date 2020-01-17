@@ -282,7 +282,7 @@ print(pmap(np.mean)(result))
 # prints [1.1566595 1.1805978 ... 1.2321935 1.2015157]
 ```
 
-In addition to expressing pure maps, you can fast use [collective communication
+In addition to expressing pure maps, you can use fast [collective communication
 operations](https://jax.readthedocs.io/en/latest/jax.lax.html#parallel-operators)
 between devices:
 
