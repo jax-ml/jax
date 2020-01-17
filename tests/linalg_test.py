@@ -899,9 +899,9 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       {"testcase_name":
        "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),
        "n": n, "dtype": dtype, "rng_factory": rng_factory}
-      for n in [1, 4, 5, 20, 25, 50]
+      for n in [1, 4, 5, 20, 50, 100]
       for dtype in float_types + complex_types
-      for rng_factory in [jtu.rand_default]))
+      for rng_factory in [jtu.rand_small]))
   def testExpm(self, n, dtype, rng_factory):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
@@ -910,7 +910,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     osp_fun = lambda a: osp.linalg.expm(a)
     jsp_fun = lambda a: jsp.linalg.expm(a)
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
-                            check_dtypes=True, tol=1e-4)
+                            check_dtypes=True)
 
 if __name__ == "__main__":
   absltest.main()
