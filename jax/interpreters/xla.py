@@ -24,7 +24,6 @@ import os
 
 from absl import logging
 import numpy as onp
-import jax.numpy as np
 
 from ..config import flags
 from .. import core
@@ -123,7 +122,7 @@ for _t in array_types:
   canonicalize_dtype_handlers[_t] = _canonicalize_ndarray_dtype
 def _canonicalize_python_scalar_dtype(typ, x):
   dtype = dtypes.canonicalize_dtype(dtypes.python_scalar_dtypes[typ])
-  if np.isscalar(x) and dtype in [onp.int32, onp.uint32]:
+  if dtype in [onp.int32, onp.uint32]:
     if x > onp.iinfo(dtype).max or x < onp.iinfo(dtype).min:
       raise TypeError("Scalar out of range for 32-bit dtype conversion: {}".format(x))
   return onp.asarray(x, dtype)
