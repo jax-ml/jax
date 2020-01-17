@@ -19,6 +19,7 @@ from __future__ import print_function
 from collections import namedtuple
 import functools
 import operator as op
+from typing import Any, Callable
 
 import numpy as onp
 
@@ -32,7 +33,7 @@ zip = safe_zip
 ### util
 
 # TODO(mattjj): replace with dataclass when Python 2 support is removed
-def taggedtuple(name, fields):
+def taggedtuple(name, fields) -> Callable[..., Any]:
   """Lightweight version of namedtuple where equality depends on the type."""
   def __new__(cls, *xs):
     return tuple.__new__(cls, (cls,) + xs)
@@ -99,12 +100,14 @@ def taggedtuple(name, fields):
 #   hash(A(1, 2)) == hash(B(1, 2))   # True
 # but we want hashes to be sensitive to the type tag (while still being fast).
 
+# pytype: disable=wrong-arg-count
 LazyExpr = namedtuple('LazyExpr', ['input', 'shape', 'dims'])
 ArrayVar = taggedtuple('ArrayVar', [])
 Iota = taggedtuple('Iota', ['dtype', 'size'])           # like np.arange(N)
 Eye = taggedtuple('Eye', ['dtype', 'shape', 'offset'])  # like np.eye
 Tri = taggedtuple('Tri', ['dtype', 'shape', 'offset'])  # like np.tri
 Delta = taggedtuple('Delta', ['dtype', 'shape'])  # kronecker delta arrays
+# pytype: enable=wrong-arg-count
 
 def array(shape):
   return LazyExpr(ArrayVar(), shape, tuple(range(len(shape))))

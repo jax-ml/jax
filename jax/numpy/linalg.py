@@ -21,6 +21,7 @@ from functools import partial
 import numpy as onp
 import warnings
 import textwrap
+from typing import Tuple, Union, cast
 
 from jax import jit
 from .. import lax
@@ -173,7 +174,7 @@ def inv(a):
 
 
 @partial(jit, static_argnums=(1, 2, 3))
-def _norm(x, ord, axis, keepdims):
+def _norm(x, ord, axis: Union[None, Tuple[int, ...], int], keepdims):
   x = _promote_arg_dtypes(np.asarray(x))
   x_shape = np.shape(x)
   ndim = len(x_shape)
@@ -214,7 +215,7 @@ def _norm(x, ord, axis, keepdims):
       return np.power(out, 1. / ord)
 
   elif num_axes == 2:
-    row_axis, col_axis = axis
+    row_axis, col_axis = cast(Tuple[int, ...], axis)
     if ord is None or ord in ('f', 'fro'):
       return np.sqrt(np.sum(np.real(x * np.conj(x)), axis=axis,
                             keepdims=keepdims))

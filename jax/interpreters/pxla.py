@@ -286,19 +286,7 @@ pe.custom_partial_eval_rules[axis_index_p] = _axis_index_partial_eval
 
 ### lazy device-memory persistence and result handling
 
-class ShardedDeviceValue(xla.DeviceValue):
-  def _check_if_deleted(self):
-    if self.device_buffers is None:
-      raise ValueError("ShardedDeviceValue has been deleted.")
-
-  def block_until_ready(self):
-    self._check_if_deleted()
-    for buf in self.device_buffers:
-      buf.block_host_until_ready()
-    return self
-
-
-class ShardedDeviceArray(ShardedDeviceValue, xla.DeviceArray):
+class ShardedDeviceArray(xla.DeviceArray):
   """A ShardedDeviceArray is an ndarray sharded across devices.
 
   The purpose of a ShardedDeviceArray is to reduce the number of transfers when
@@ -345,6 +333,16 @@ class ShardedDeviceArray(ShardedDeviceValue, xla.DeviceArray):
       buf.delete()
     self.device_buffers = None
     self._npy_value = None
+
+  def _check_if_deleted(self):
+    if self.device_buffers is None:
+      raise ValueError("ShardedDeviceArray has been deleted.")
+
+  def block_until_ready(self):
+    self._check_if_deleted()
+    for buf in self.device_buffers:
+      buf.block_host_until_ready()
+    return self
 
   @property
   def _value(self):
@@ -757,6 +755,7 @@ class SplitAxisTracer(core.Tracer):
     if self.axis_name is not_mapped:
       return aval
     else:
+      assert isinstance(aval, ShapedArray)
       return ShapedArray(aval.shape[1:], aval.dtype)
 
   def full_lower(self):

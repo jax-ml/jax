@@ -362,8 +362,9 @@ def _while_loop_jvp(primals, tangents, cond_nconsts, cond_jaxpr, body_nconsts,
       body_jaxpr=body_jvp_rearranged)
 
   out_carry, out_carry_dot = split_list(out, [num_carry])
-  out_tangents = iter(out_carry_dot)
-  out_tangents = [next(out_tangents) if nz else ad_util.zero for nz in nonzeros_out]
+  out_tangents_iter = iter(out_carry_dot)
+  out_tangents = [next(out_tangents_iter) if nz else ad_util.zero
+                  for nz in nonzeros_out]
   return out_carry, out_tangents
 
 while_p = lax.Primitive('while')
@@ -701,8 +702,9 @@ def _scan_jvp(primals, tangents, forward, length, jaxpr, num_consts, num_carry,
 
   carry, carry_dot, ys, ys_dot = split_list(out_flat, [num_carry, len(init_dot), num_ys])
   primals_out = carry + ys
-  tangents_out = iter(carry_dot + ys_dot)
-  tangents_out = [next(tangents_out) if nz else ad_util.zero for nz in nonzeros_out]
+  tangents_out_iter = iter(carry_dot + ys_dot)
+  tangents_out = [next(tangents_out_iter) if nz else ad_util.zero
+                  for nz in nonzeros_out]
   return primals_out, tangents_out
 
 def _prune_zeros(ts):
@@ -919,7 +921,7 @@ def _scan_shape_rule(shapes, forward, length, jaxpr,
                      num_consts, num_carry, linear):
   const_shexprs, init_shexprs, xs_shexprs = split_list(shapes, [num_consts, num_carry])
   _, y_avals = split_list(jaxpr.out_avals, [num_carry])
-  ys_shapes = [tuple(length, *y_aval.shape) for y_aval in y_avals]
+  ys_shapes = [(length,) + tuple(y_aval.shape) for y_aval in y_avals]
   return init_shexprs + ys_shapes
 
 def _scan_masking_rule(shape_envs, padded_vals, shape_exprs, forward, length,

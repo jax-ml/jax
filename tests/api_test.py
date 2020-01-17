@@ -527,11 +527,11 @@ class APITest(jtu.JaxTestCase):
     self.assertRaisesRegex(
         TypeError,
         "primal and tangent arguments to jax.jvp must be tuples or lists; found float and tuple.",
-        lambda: partial(api.jvp(f, 0., (1.,))))
+        lambda: api.jvp(f, 0., (1.,)))
     self.assertRaisesRegex(
         TypeError,
         "primal and tangent arguments to jax.jvp must be tuples or lists; found tuple and ndarray.",
-        lambda: partial(api.jvp(f, (0.,), onp.array([1., 2.]))))
+        lambda: api.jvp(f, (0.,), onp.array([1., 2.])))
 
   def test_vjp_mismatched_arguments(self):
     _, pullback = api.vjp(lambda x, y: x * y, onp.float32(3), onp.float32(4))
@@ -1712,7 +1712,7 @@ class LazyTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu")
   def test_lazy_jit_closed_over_values(self):
     if not core.skip_checks:
-      raise SkipTest("oom test skipped when core.skip_checks is False")
+      raise unittest.SkipTest("oom test skipped when core.skip_checks is False")
 
     y = np.arange(int(1e12))  # will likely oom if materialized
     ans = jit(lambda x: (x + y)[1])(1)
