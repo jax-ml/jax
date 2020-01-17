@@ -28,6 +28,7 @@ import functools
 import os
 
 import numpy as onp
+import jax.numpy as np
 
 from . import util
 from .config import flags
@@ -116,7 +117,7 @@ def coerce_to_array(x):
   rules.
   """
   dtype = python_scalar_dtypes.get(type(x), None)
-  if x >= (2 ** 31) and dtype in [onp.dtype('int32'), onp.dtype('uint32'), onp.dtype('float32')]:
+  if np.any(x >= (2 ** 31)) and dtype in [onp.dtype('int32'), onp.dtype('uint32'), onp.dtype('float32')]:
       raise TypeError("Scalar out of range for 32-bit dtype conversion: {}".format(x))
   return onp.array(x, dtype) if dtype else onp.array(x)
 
