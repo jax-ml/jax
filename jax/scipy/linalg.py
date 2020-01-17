@@ -264,6 +264,7 @@ def tril(m, k=0):
 def triu(m, k=0):
   return np.triu(m, k)
 
+@jit
 def expm(A):
     """
     Compute the matrix exponential using Pade approximation.
