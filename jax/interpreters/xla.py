@@ -645,8 +645,6 @@ pytype_aval_mappings[Token] = lambda _: abstract_token
 core.pytype_aval_mappings[Token] = lambda _: abstract_token
 xla_shape_handlers[AbstractToken] = lambda _: xc.Shape.token_shape()
 xla_result_handlers[AbstractToken] = lambda _, __: lambda _: token
-canonicalize_dtype_handlers[Token] = identity
-
 
 class DeviceValue(object):
   """A DeviceValue represents a value backed by device memory."""
@@ -833,7 +831,6 @@ def is_device_constant(x):
 core.literalable_types.add(DeviceArray)
 core.pytype_aval_mappings[DeviceArray] = ConcreteArray
 pytype_aval_mappings[DeviceArray] = op.attrgetter('aval')
-canonicalize_dtype_handlers[DeviceArray] = identity
 
 def _device_array_constant_handler(c, val, canonicalize_types=True):
   if is_device_constant(val):
