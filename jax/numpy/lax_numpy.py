@@ -1905,7 +1905,7 @@ def arange(start, stop=None, step=None, dtype=None):
   lax._check_user_dtype_supported(dtype, "arange")
   if stop is None and step is None:
     dtype = dtype or _dtype(start)
-    size = start if type(start) is Poly else lax.convert_element_type(start, onp.uint32)
+    size = start if type(start) is Poly else lax.convert_element_type(start, onp.uint64)
     return lax.iota(dtype, size) # avoids materializing
   else:
     return array(onp.arange(start, stop=stop, step=step, dtype=dtype))
@@ -3146,7 +3146,7 @@ def _slice_indices(idx, size):
 def _static_idx(idx, size):
   """Helper function to compute the static slice start/limit/stride values."""
   start, stop, step = _slice_indices(idx, size)
-  if (not is_polymorphic((start, stop, step)) and
+  if (type(start) is not Poly and type(stop) is not Poly and
       ((step < 0 and stop >= start) or (step > 0 and start >= stop))):
     return 0, 0, 1, False  # sliced to size zero
 

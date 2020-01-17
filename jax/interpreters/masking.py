@@ -52,8 +52,9 @@ def extend_shape_envs(logical_env, padded_env):
   yield
   shape_envs = prev
 
+# TODO remove remaining usages:
 def is_polymorphic(shape):
-  return any(map(lambda d: isinstance(d, Poly), shape))
+  return any(map(lambda d: type(d) is Poly, shape))
 
 def shape_as_value(expr):
   return tuple(eval_dim_expr(shape_envs.logical, d) if type(d) is Poly else d
@@ -83,11 +84,11 @@ def mask_subtrace(master, in_vals, shape_exprs):
   yield out_vals, out_shapes
 
 
-def ensure_poly(p):
-  if isinstance(p, Poly):
+def _ensure_poly(p):
+  if type(p) is Poly:
     return p
 
-  return constant_poly(int(p))
+  return _constant_poly(p)
 
 class Poly(Counter):
   """Polynomial with integer coefficients,
@@ -105,7 +106,7 @@ class Poly(Counter):
   def __add__(self, other):
     coeffs = self.copy()
 
-    for mon, coeff in ensure_poly(other).items():
+    for mon, coeff in _ensure_poly(other).items():
       coeffs[mon] = coeffs.get(mon, 0) + coeff
 
     return Poly(coeffs)
@@ -119,7 +120,7 @@ class Poly(Counter):
   def __mul__(self, other):
     coeffs = dict()
     for (mon1, coeff1), (mon2, coeff2) \
-            in it.product(self.items(), ensure_poly(other).items()):
+            in it.product(self.items(), _ensure_poly(other).items()):
       mon = Mon(mon1 + mon2)                        # add monomials' id degrees
       coeff = coeff1 * coeff2                       # multiply integer coeffs
       coeffs[mon] = coeffs.get(mon, 0) + coeff  # accumulate coeffs
@@ -145,9 +146,7 @@ class Poly(Counter):
 
   def __divmod__(self, divisor):
     if self.is_constant:
-      q, r = divmod(int(self), divisor)
-
-      return constant_poly(q), r
+      return divmod(int(self), divisor)
 
     def divided(count):
       q, r = divmod(count, divisor)
@@ -164,13 +163,13 @@ class Poly(Counter):
     return hash(super())
 
   def __eq__(self, other):
-    return super().__eq__(ensure_poly(other))
+    return super().__eq__(_ensure_poly(other))
 
   def __ne__(self, other):
     return not self == other
 
   def __ge__(self, other):
-    other = ensure_poly(other)
+    other = _ensure_poly(other)
 
     if other.is_constant and self.is_constant:
       return int(self) >= int(other)
@@ -189,13 +188,13 @@ class Poly(Counter):
                      .format(self, other))
 
   def __le__(self, other):
-    return ensure_poly(other) >= self
+    return _ensure_poly(other) >= self
 
   def __lt__(self, other):
     return not (self >= other)
 
   def __gt__(self, other):
-    return not (ensure_poly(other) >= self)
+    return not (_ensure_poly(other) >= self)
 
   def __str__(self):
     return ' + '.join('{} {}'.format(v, k) if (v != 1 or k.degree == 0) else str(k)
@@ -282,7 +281,7 @@ class ShapeSpec(tuple):
     return 'ShapeSpec({})'.format(', '.join(map(str, self)))
 
 def finalize_spec(spec, shape):
-  return tuple(parse_lit(d) if e is monomorphic_dim else e
+  return tuple(_parse_lit(d) if e is monomorphic_dim else e
                for e, d in zip(spec, shape))
 
 def parse_spec(spec=''):
@@ -291,20 +290,20 @@ def parse_spec(spec=''):
   if spec[0] == '(':
     if spec[-1] != ')': raise ShapeSyntaxError(spec)
     spec = spec[1:-1]
-  dims = map(parse_dim, spec.replace(' ', '').strip(',').split(','))
+  dims = map(_parse_dim, spec.replace(' ', '').strip(',').split(','))
   return ShapeSpec(dims)
 
-def parse_dim(spec):
+def _parse_dim(spec):
   if '+' in spec:
-    terms = map(parse_dim, spec.split('+'))
+    terms = map(_parse_dim, spec.split('+'))
     return functools.reduce(op.add, terms)
   elif '*' in spec:
-    terms = map(parse_dim, spec.split('*'))
+    terms = map(_parse_dim, spec.split('*'))
     return functools.reduce(op.mul, terms)
   elif spec.isdigit() or spec.startswith('-') and spec[1:].isdigit():
-    return parse_lit(spec)
+    return _parse_lit(spec)
   elif spec in identifiers:
-    return parse_id(spec)
+    return _parse_id(spec)
   elif spec == '_':
     return monomorphic_dim
   else:
@@ -312,9 +311,9 @@ def parse_dim(spec):
 digits = frozenset(string.digits)
 identifiers = frozenset(string.ascii_lowercase)
 
-def parse_id(name): return Poly({Mon({name: 1}): 1})
-def parse_lit(val_str): return constant_poly(int(val_str))
-def constant_poly(val): return Poly({Mon(): val})
+def _parse_id(name): return Poly({Mon({name: 1}): 1})
+def _parse_lit(val_str): return _constant_poly(int(val_str))
+def _constant_poly(val): return Poly({Mon(): val.__index__()})
 
 class MonomorphicDim(object):
   def __str__(self): return '_'
@@ -349,7 +348,7 @@ class MaskTracer(Tracer):
     return ShapedArray(self.shape_expr, self.val.dtype)
 
   def is_pure(self):
-    return all(ensure_poly(poly).is_constant for poly in self.shape_expr)
+    return all(_ensure_poly(poly).is_constant for poly in self.shape_expr)
 
   def full_lower(self):
     if self.is_pure():

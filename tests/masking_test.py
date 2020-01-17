@@ -25,7 +25,7 @@ from absl.testing import parameterized
 
 from jax import test_util as jtu, core as jc, api, random
 from jax.interpreters.masking import ShapeError, shape_as_value, parse_spec, \
-  constant_poly, Mon, Poly, parse_id
+  _constant_poly, Mon, Poly
 from jax import mask, vmap, jit, grad, shapecheck
 from jax import lax
 from jax.scipy.special import expit
@@ -61,15 +61,15 @@ class MaskingTest(jtu.JaxTestCase):
     self.assertEqual(str(parse_spec(spec)), ans)
 
   def test_poly_equal(self):
-    assert constant_poly(3) == 3
-    assert onp.array(3, onp.int64) == constant_poly(3)
-    assert onp.array(3, onp.int64)[()] == constant_poly(3)
-    assert not onp.array(3, onp.int64) != constant_poly(3)
-    assert constant_poly(4) != 3
-    assert 3 == constant_poly(3)
-    assert 4 != constant_poly(3)
-    assert constant_poly(4) == constant_poly(4)
-    assert constant_poly(3) != constant_poly(4)
+    assert _constant_poly(3) == 3
+    assert onp.array(3, onp.int64) == _constant_poly(3)
+    assert onp.array(3, onp.int64)[()] == _constant_poly(3)
+    assert not onp.array(3, onp.int64) != _constant_poly(3)
+    assert _constant_poly(4) != 3
+    assert 3 == _constant_poly(3)
+    assert 4 != _constant_poly(3)
+    assert _constant_poly(4) == _constant_poly(4)
+    assert _constant_poly(3) != _constant_poly(4)
     assert Poly({Mon(): 3, Mon({'n': 1}): 4}) == Poly({Mon({'n': 1}): 4, Mon(): 3})
     assert Poly({Mon(): 3, Mon({'n': 1}): 4}) != Poly({Mon(): 3, Mon({'n': 2}): 4})
     assert Poly({Mon(): 3, Mon({'m': 1}): 4}) != Poly({Mon(): 3, Mon({'n': 1}): 4})
@@ -83,8 +83,8 @@ class MaskingTest(jtu.JaxTestCase):
 
     assert 0 <= poly
     assert 0 < poly
-    assert constant_poly(3) >= 1
-    assert constant_poly(3) > 1
+    assert _constant_poly(3) >= 1
+    assert _constant_poly(3) > 1
     self.assertRaisesRegex(ValueError, "", lambda: poly >= 2)
     self.assertRaisesRegex(ValueError, "", lambda: poly > 1)
 
@@ -93,7 +93,7 @@ class MaskingTest(jtu.JaxTestCase):
     assert p == p.__index__()
 
   def test_poly_divmod(self):
-    n = parse_id('n')
+    n = Poly({Mon({'n': 1}): 1})
     assert (n, 1) == divmod(2*n+1, 2)
     assert (2*n, 0) == divmod(10*n, 5)
     assert (2*n+4, 3) == divmod(10*n+23, 5)

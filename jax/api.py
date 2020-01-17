@@ -30,7 +30,6 @@ from __future__ import print_function
 import collections
 import functools
 import itertools as it
-import operator as op
 import os
 import threading
 from warnings import warn
@@ -52,8 +51,6 @@ from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
 from .util import (unzip2, unzip3, curry, partial, safe_map, safe_zip,
                    WrapHashably, Hashable, prod, split_list)
 from .lib import xla_bridge as xb
-from .lib.xla_bridge import (device_count, local_device_count, devices, local_devices,
-                             host_id, host_ids, host_count)
 from .abstract_arrays import ConcreteArray, ShapedArray, raise_to_shaped
 from .interpreters import partial_eval as pe
 from .interpreters import xla
@@ -62,7 +59,7 @@ from .interpreters import ad
 from .interpreters import batching
 from .interpreters import parallel
 from .interpreters import masking
-from .interpreters.masking import shapecheck, ensure_poly
+from .interpreters.masking import Poly
 from .config import flags, config
 
 map = safe_map
@@ -1055,7 +1052,7 @@ def _bind_shapes(shape_exprs, shapes):
   env = {}
   for shape_expr, shape in zip(shape_exprs, shapes):
     for poly, d in zip(shape_expr, shape):
-      if ensure_poly(poly).is_constant:
+      if type(poly) is not Poly or poly.is_constant:
         continue
       else:
         (binder,), = poly  # TODO generalize to handle striding
