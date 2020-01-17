@@ -47,7 +47,3 @@ script:
     else
       sphinx-build -b html -D nbsphinx_execute=always docs docs/build/html;
     fi
-branches:
-  only:
-    - Issue1635
-    - master
