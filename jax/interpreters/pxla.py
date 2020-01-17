@@ -381,7 +381,6 @@ xb.register_constant_handler(ShardedDeviceArray, _sharded_device_array_constant_
 core.pytype_aval_mappings[ShardedDeviceArray] = ConcreteArray
 xla.device_put_handlers[ShardedDeviceArray] = xla._device_put_array
 xla.pytype_aval_mappings[ShardedDeviceArray] = op.attrgetter('aval')
-xla.canonicalize_dtype_handlers[ShardedDeviceArray] = identity
 
 
 class ChunkedDeviceArray(ShardedDeviceArray):
@@ -400,8 +399,6 @@ shard_arg_handlers[ChunkedDeviceArray] = _shard_array
 core.pytype_aval_mappings[ChunkedDeviceArray] = ConcreteArray
 xla.device_put_handlers[ChunkedDeviceArray] = xla._device_put_array
 xla.pytype_aval_mappings[ChunkedDeviceArray] = op.attrgetter('aval')
-xla.canonicalize_dtype_handlers[ChunkedDeviceArray] = identity
-
 
 ### the xla_pmap primitive and its rules are comparable to xla_call in xla.py
 
