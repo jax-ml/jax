@@ -261,7 +261,9 @@ differentiation for fast Jacobian and Hessian matrix calculations in
 For parallel programming of multiple accelerators, like multiple GPUs, use
 [`pmap`](https://jax.readthedocs.io/en/latest/jax.html#parallelization-pmap).
 With `pmap` you write single-program multiple-data (SPMD) programs, including
-fast parallel collective communication operations.
+fast parallel collective communication operations. Applying `pmap` will mean
+that the function you write is compiled by XLA (similarly to `jit`), then
+replicated and executed in parallel accross devices.
 
 Here's an example on an 8-GPU machine:
 

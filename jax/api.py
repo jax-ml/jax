@@ -721,12 +721,13 @@ def pmap(fun, axis_name=None, devices=None, backend=None, axis_size=None):
   """Parallel map with support for collectives.
 
   The purpose of ``pmap`` is to express single-program multiple-data (SPMD)
-  programs and execute them in parallel on XLA devices, such as multiple GPUs or
-  multiple TPU cores. Semantically it is comparable to ``vmap`` because both
-  transformations map a function over array axes, but where ``vmap`` vectorizes
-  functions by pushing the mapped axis down into primitive operations, ``pmap``
-  instead replicates the function and executes each replica on its own XLA
-  device in parallel.
+  programs. Applying ``pmap`` to a function will compile the function with XLA
+  (similarly to ``jit``), then execute it in parallel on XLA devices, such as
+  multiple GPUs or multiple TPU cores. Semantically it is comparable to
+  ``vmap`` because both transformations map a function over array axes, but
+  where ``vmap`` vectorizes functions by pushing the mapped axis down into
+  primitive operations, ``pmap`` instead replicates the function and executes
+  each replica on its own XLA device in parallel.
 
   Another key difference with ``vmap`` is that while ``vmap`` can only express
   pure maps, ``pmap`` enables the use of parallel SPMD collective operations,
