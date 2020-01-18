@@ -825,9 +825,9 @@ class DeviceArray(DeviceValue):
 
   __str__ = partialmethod(_forward_to_value, str)
   __bool__ = __nonzero__ = partialmethod(_forward_to_value, bool)
-  __float__ = partialmethod(_forward_to_value, float)
-  __int__ = partialmethod(_forward_to_value, int)
-  __complex__ = partialmethod(_forward_to_value, complex)
+  def __float__(self): return self._value.__float__()
+  def __int__(self): return self._value.__int__()
+  def __complex__(self): return self._value.__complex__()
   __hex__ = partialmethod(_forward_to_value, hex)
   __oct__ = partialmethod(_forward_to_value, oct)
   __index__ = partialmethod(_forward_to_value, op.index)
@@ -840,6 +840,9 @@ class DeviceArray(DeviceValue):
 
   def __hash__(self):
     raise TypeError("JAX DeviceArray, like numpy.ndarray, is not hashable.")
+
+  # The following methods are dynamically overridden in lax_numpy.py.
+  def __getitem__(self, i): raise NotImplementedError
 
 class DeletedBuffer(object): pass
 deleted_buffer = DeletedBuffer()

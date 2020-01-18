@@ -619,12 +619,14 @@ def _add_jaxvals_papply_rule(name, size, vals, dims):
   xdim, ydim = dims
   if xdim == ydim:
     out_dim = xdim
-  elif ydim is None:
-    y = lax.psplit_like(y, x, name)
-    out_dim = xdim
   else:
-    x = lax.psplit_like(x, y, name)
-    out_dim = ydim
+    raise NotImplementedError
+  # elif ydim is None:
+  #   y = lax.psplit_like(y, x, name)
+  #   out_dim = xdim
+  # else:
+  #   x = lax.psplit_like(x, y, name)
+  #   out_dim = ydim
   return ad_util.add_jaxvals_p.bind(x, y), out_dim
 
 

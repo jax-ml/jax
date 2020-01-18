@@ -136,7 +136,7 @@ class Literal(object):
 
   def __repr__(self):
     if self.hash is None:
-      return 'Literal(val={}, hashable={})'.format(self.val, self.hashable)
+      return 'Literal(val={})'.format(self.val)
     else:
       return '{}'.format(self.val)
 
