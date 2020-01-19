@@ -19,6 +19,7 @@ from __future__ import print_function
 from functools import partial
 
 import scipy.linalg
+import textwrap
 
 from jax import jit
 from .. import lax
@@ -264,24 +265,14 @@ def tril(m, k=0):
 def triu(m, k=0):
   return np.triu(m, k)
 
-@jit
+@_wraps(scipy.linalg.expm, lax_description=textwrap.dedent("""\
+It does not take advantage of the sparsity of `A`. In `scipy.linalg.expm`, the sparsity is exploited.
+"""))
 def expm(A):
-    """
-    Compute the matrix exponential using Pade approximation.
-    Based on TensorFlow's tf.linalg.expm
+  return _expm(A)
 
-    Args:
-    A : square matrix of type float32, float64, complex64, complex128
-    
-    Returns:
-    Matrix exponential of A , square matrix of same dimensions as A
-        
-
-    See: "The Scaling and Squaring Method for the Matrix
-    Exponential Revisited", Nicholas Higham, 2005.
-    
-    TODO: Write a version to exploit the sparsity of A
-    """
+@jit
+def _expm(A):
     A = np.asarray(A)
     if A.ndim != 2 or A.shape[0] != A.shape[1]:
         raise ValueError('expected A to be a square matrix')
