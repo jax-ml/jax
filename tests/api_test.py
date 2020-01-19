@@ -1648,6 +1648,14 @@ class APITest(jtu.JaxTestCase):
       lax.add(2, 3)
     self.assertEqual(count[0], 1)
 
+  def test_arange_jit(self):
+    # see https://github.com/google/jax/issues/553
+    def fun(x):
+      r = np.arange(x.shape[0])[x]
+      return r
+
+    jit(fun)(np.array([0, 1, 2], dtype=np.int32))  # doesn't crash
+
 
 class JaxprTest(jtu.JaxTestCase):
 
