@@ -287,15 +287,6 @@ def expm(A):
         raise ValueError('expected A to be a square matrix')
     A_L1 = np_linalg.norm(A,1)
     n_squarings = 0
-    def _nest_where(vals, cases):
-      assert len(vals) == len(cases) - 1
-      if len(vals) == 1:
-        return np.where(
-            np.less(A_L1, vals[0]), cases[0], cases[1])
-      else:
-        return np.where(
-            np.less(A_L1, vals[0]), cases[0],
-            _nest_where(vals[1:], cases[1:]))
     if A.dtype == 'float64' or A.dtype == 'complex128':
        U3,V3 = _pade3(A)
        U5,V5 = _pade5(A)
@@ -306,8 +297,8 @@ def expm(A):
        A = A / 2**n_squarings
        U13,V13 = _pade13(A)
        conds=np.array([1.495585217958292e-002, 2.539398330063230e-001, 9.504178996162932e-001, 2.097847961257068e+000])
-       U=_nest_where(conds,(U3,U5,U7,U9,U13))
-       V=_nest_where(conds,(V3,V5,V7,V9,V13))
+       U = np.select((maxnorm<conds),(U3,U5,U7,U9),U13)
+       V = np.select((maxnorm<conds),(V3,V5,V7,V9),V13)
     elif A.dtype == 'float32' or A.dtype == 'complex64':
         U3,V3 = _pade3(A)
         U5,V5 = _pade5(A)
@@ -316,8 +307,8 @@ def expm(A):
         A = A / 2**n_squarings
         U7,V7 = _pade7(A)
         conds=np.array([4.258730016922831e-001, 1.880152677804762e+000])
-        U=_nest_where(conds,(U3,U5,U7))
-        V=_nest_where(conds,(V3,V5,V7))
+        U = np.select((maxnorm<conds),(U3,U5),U7)
+        V = np.select((maxnorm<conds),(V3,V5),V7)
     else:
         raise TypeError("A.dtype={} is not supported.".format(A.dtype))
     P = U + V  # p_m(A) : numerator
