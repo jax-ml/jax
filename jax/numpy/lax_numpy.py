@@ -1109,7 +1109,7 @@ def broadcast_arrays(*args):
 def broadcast_to(arr, shape):
   """Like Numpy's broadcast_to but doesn't necessarily return views."""
   arr = arr if isinstance(arr, ndarray) else array(arr)
-  shape = tuple(map(lambda x: to_index(x), shape))  # check that shape is concrete
+  shape = tuple(map(to_index, shape))  # check that shape is concrete
   arr_shape = _shape(arr)
   if arr_shape == shape:
     return arr

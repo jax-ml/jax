@@ -35,7 +35,11 @@ from jax.lax import lax
 from jax import linear_util as lu
 from jax.abstract_arrays import ShapedArray, raise_to_shaped
 from jax.api_util import flatten_fun_nokwargs, apply_flat_fun_nokwargs
-from jax.interpreters import ad, xla, batching, masking, partial_eval as pe
+from jax.interpreters import ad
+from jax.interpreters import partial_eval as pe
+from jax.interpreters import xla
+from jax.interpreters import batching
+from jax.interpreters import masking
 from jax.lib import xla_bridge as xb
 from jax.util import (partial, unzip2, safe_map, safe_zip, split_list,
                       split_dict, cache)

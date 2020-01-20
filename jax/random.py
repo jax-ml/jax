@@ -299,7 +299,7 @@ def _random_bits(key, bit_width, shape):
 
 def _check_shape(name, shape, *param_shapes):
   try:
-    shape = tuple(map(lambda x: to_index(x), shape))
+    shape = tuple(map(to_index, shape))
   except TypeError:
     msg = "{} requires a concrete tuple of integers as shape argument, got {}."
     raise ValueError(msg.format(name, shape))
