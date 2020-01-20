@@ -265,9 +265,7 @@ def tril(m, k=0):
 def triu(m, k=0):
   return np.triu(m, k)
 
-@_wraps(scipy.linalg.expm, lax_description=textwrap.dedent("""\
-It does not take advantage of the sparsity of `A`. In `scipy.linalg.expm`, the sparsity is exploited.
-"""))
+@_wraps(scipy.linalg.expm)
 def expm(A):
   return _expm(A)
 
