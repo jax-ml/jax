@@ -1154,6 +1154,15 @@ def custom_root(f, initial_guess, solve, tangent_solve):
     params, solution = aux
     params_dot, _ = _split_root_args(tangents, const_lengths)
 
+    # F(m, u) = 0      # system of equations in u, parameterized by m 
+    #                  # solution is u*(m) defined in a neighborhood  
+    # F(m, u*(m)) = 0  # satisfied in a neighborhood  
+    # 
+    # ∂_0 F(m, u*(m)) + ∂_1 F(m, u*(m)) ∂ u*(m) = 0       # implied by line above 
+    # ∂ u*(m) = - (∂_1 F(m, u*(m)))^{-1} ∂_0 F(m, u*(m))  # rearrange 
+    # 
+    # ∂ u*(m)[v] = - (∂_1 F(m, u*(m)))^{-1} [∂_0 F(m, u*(m))[v]]  # jvp 
+
     f = core.jaxpr_as_fun(f_jaxpr)
     linearize_and_solve = partial(
         core.jaxpr_as_fun(l_and_s_jaxpr), *params.l_and_s)
