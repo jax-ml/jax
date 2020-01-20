@@ -265,13 +265,17 @@ def tril(m, k=0):
 def triu(m, k=0):
   return np.triu(m, k)
 
-@_wraps(scipy.linalg.expm)
-def expm(A, isuppertriangular=False):
-    return _expm(A, isuppertriangular)
+@_wraps(scipy.linalg.expm, lax_description=textwrap.dedent("""\
+    In addition to the original NumPy argument(s) listed below,
+    also supports the optional boolean argument ``upper_triangular``
+    to specify whether the ``A`` matrix is upper triangular.
+    """))
+def expm(A, *, upper_triangular=False):
+    return _expm(A, upper_triangular)
 
-def _expm(A, isuppertriangular=False):
+def _expm(A, upper_triangular=False):
     P,Q,n_squarings = _calc_P_Q(A)
-    R = _solve_P_Q(P, Q, isuppertriangular)
+    R = _solve_P_Q(P, Q, upper_triangular)
     R = _squaring(R, n_squarings)
     return R
     
@@ -310,11 +314,11 @@ def _calc_P_Q(A):
     Q = -U + V # q_m(A) : denominator
     return P,Q,n_squarings
 
-def _solve_P_Q(P, Q, isuppertriangular=False):
-    if isuppertriangular == False:
-        return np_linalg.solve(Q,P)
-    else:
+def _solve_P_Q(P, Q, upper_triangular=False):
+    if upper_triangular:
         return solve_triangular(Q, P)
+    else:
+        return np_linalg.solve(Q,P)
 
 @jit
 def _squaring(R, n_squarings):
