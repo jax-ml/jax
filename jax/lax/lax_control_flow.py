@@ -1144,61 +1144,29 @@ def custom_root(f, initial_guess, solve, tangent_solve):
 
   all_consts = [f_consts, solve_consts, l_and_s_consts]
   const_lengths = _RootTuple(*_map(len, all_consts))
-  jaxprs = _RootTuple(f_jaxpr, solve_jaxpr, l_and_s_jaxpr)
 
-  out_flat = root_p.bind(
-      *(_flatten(all_consts) + guess_flat),
-      const_lengths=const_lengths, jaxprs=jaxprs)
+  def root_fwd(args):
+    params, initial_guess = _split_root_args(args, const_lengths)
+    solution = core.jaxpr_as_fun(solve_jaxpr)(*(params.solve + initial_guess))
+    return solution, (params, solution)
+
+  def root_jvp(aux, tangents):
+    params, solution = aux
+    params_dot, _ = _split_root_args(tangents, const_lengths)
+
+    f = core.jaxpr_as_fun(f_jaxpr)
+    linearize_and_solve = partial(
+        core.jaxpr_as_fun(l_and_s_jaxpr), *params.l_and_s)
+    f_at_solution = lambda *params: f(*itertools.chain(params, solution))
+    _, rhs = ad.jvp(lu.wrap_init(f_at_solution)).call_wrapped(
+        params.f, params_dot.f)
+    solution_dot = _map(
+        operator.neg, linearize_and_solve(*itertools.chain(solution, rhs)))
+    return solution_dot
+
+  root = api.custom_jvp(root_fwd, root_jvp)
+  out_flat = root(_flatten(all_consts) + guess_flat)
   return tree_unflatten(out_tree, out_flat)
-
-
-def _root_abstract_eval(*args, **kwargs):
-  return _map(raise_to_shaped, args[sum(kwargs['const_lengths']):])
-
-
-def _root_impl(*args, **kwargs):
-  const_lengths, jaxprs = split_dict(kwargs, ['const_lengths', 'jaxprs'])
-  params, initial_guess = _split_root_args(args, const_lengths)
-  solution = core.jaxpr_as_fun(jaxprs.solve)(*(params.solve + initial_guess))
-  return solution
-
-
-def _root_jvp(primals, tangents, const_lengths, jaxprs):
-  params, _ = _split_root_args(primals, const_lengths)
-  solution = tuple(root_p.bind(
-      *primals, const_lengths=const_lengths, jaxprs=jaxprs))
-
-  params_dot, _ = _split_root_args(tangents, const_lengths)
-
-  # F(m, u) = 0      # system of equations in u, parameterized by m
-  #                  # solution is u*(m) defined in a neighborhood
-  # F(m, u*(m)) = 0  # satisfied in a neighborhood
-  #
-  # ∂_0 F(m, u*(m)) + ∂_1 F(m, u*(m)) ∂ u*(m) = 0       # implied by line above
-  # ∂ u*(m) = - (∂_1 F(m, u*(m)))^{-1} ∂_0 F(m, u*(m))  # rearrange
-  #
-  # ∂ u*(m)[v] = - (∂_1 F(m, u*(m)))^{-1} [∂_0 F(m, u*(m))[v]]  # jvp
-
-  f = core.jaxpr_as_fun(jaxprs.f)
-  linearize_and_solve = partial(
-      core.jaxpr_as_fun(jaxprs.l_and_s), *params.l_and_s)
-  f_at_solution = lambda *params: f(*itertools.chain(params, solution))
-  _, rhs = ad.jvp(lu.wrap_init(f_at_solution)).call_wrapped(
-      params.f, params_dot.f)
-  solution_dot = _map(
-      operator.neg, linearize_and_solve(*itertools.chain(solution, rhs)))
-
-  return solution, solution_dot
-
-
-root_p = core.Primitive('root')
-root_p.multiple_results = True
-root_p.def_impl(_root_impl)
-root_p.def_abstract_eval(_root_abstract_eval)
-ad.primitive_jvps[root_p] = _root_jvp
-xla.initial_style_translations[root_p] = xla.lower_fun(
-    _root_impl, initial_style=True)
-# TODO(shoyer): write batching rule
 
 
 class _LinearSolveTuple(collections.namedtuple(
