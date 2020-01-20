@@ -1524,7 +1524,6 @@ def standard_primitive(shape_rule, dtype_rule, name, translation_rule=None):
   prim.def_impl(partial(xla.apply_primitive, prim))
   prim.def_abstract_eval(partial(standard_abstract_eval, prim, shape_rule, dtype_rule))
   xla.translations[prim] = translation_rule or partial(standard_translate, name)
-  shapes.shape_rules[prim] = shape_rule
   return prim
 
 
@@ -4113,7 +4112,6 @@ tie_in_p.def_abstract_eval(lambda x, y: raise_to_shaped(y))
 xla.translations[tie_in_p] = lambda c, x, y: y
 ad.deflinear(tie_in_p, _tie_in_transpose_rule)
 batching.primitive_batchers[tie_in_p] = _tie_in_batch_rule
-shapes.shape_rules[tie_in_p] = lambda x, y: y.shape
 masking.masking_rules[tie_in_p] = lambda vals, logical_shapes: vals[1]
 
 

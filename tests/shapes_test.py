@@ -169,7 +169,7 @@ class ShapesTest(jtu.JaxTestCase):
   def test_pad(self):
     @shapecheck(['n'], '2*n+1')
     def p(x):
-      return lax.pad(x, 0., [(1, 1, 1)])
+      return lax.pad(x, np.array(0., x.dtype), [(1, 1, 1)])
 
   def test_numpy_pad(self):
     @shapecheck(['n'], 'n+1')

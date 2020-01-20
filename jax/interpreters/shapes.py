@@ -17,14 +17,10 @@ from __future__ import print_function
 import operator as op
 import string
 from collections import Counter
-from functools import partial, reduce
+from functools import reduce
 from itertools import product
 
-import numpy as onp
-
-from ..abstract_arrays import ShapedArray
 from ..util import safe_map, safe_zip
-from . import partial_eval as pe
 
 map = safe_map
 zip = safe_zip
@@ -241,15 +237,14 @@ def _parse_dim(spec):
     return reduce(op.mul, terms)
   elif spec.isdigit() or spec.startswith('-') and spec[1:].isdigit():
     return _parse_lit(spec)
-  elif spec in identifiers:
+  elif spec in _identifiers:
     return _parse_id(spec)
   elif spec == '_':
     return monomorphic_dim
   else:
     raise ShapeSyntaxError(spec)
 
-digits = frozenset(string.digits)
-identifiers = frozenset(string.ascii_lowercase)
+_identifiers = frozenset(string.ascii_lowercase)
 
 def _parse_id(name): return Poly({Mon({name: 1}): 1})
 
@@ -274,8 +269,3 @@ class S_(object):
       return parse_spec(str(idx))
 
 s_ = S_()
-shape_rules = {}
-
-def eval_shape_(fun, in_shapes):
-  avals = map(partial(ShapedArray, dtype=onp.float32), in_shapes)
-  return [o.shape for o in pe.abstract_eval_fun(fun.call_wrapped, *avals)]

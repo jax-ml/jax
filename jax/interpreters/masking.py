@@ -3,7 +3,7 @@ from functools import partial
 from itertools import chain
 
 import numpy as onp
-from jax.interpreters.shapes import Poly, shape_rules, eval_polymorphic_shape
+from jax.interpreters.shapes import Poly, eval_polymorphic_shape
 from contextlib import contextmanager
 from .. import core
 from ..core import Trace, Tracer
@@ -106,7 +106,9 @@ class MaskTrace(Trace):
       rule = shape_parameterized_primitive_rules[primitive]
       out, out_shape = rule(shape_envs, vals, shape_exprs, **params)
     else:
-      out_shape = shape_rules[primitive](*(t.aval for t in tracers), **params)
+      avals = [t.aval for t in tracers]
+      out = primitive.abstract_eval(*avals, **params)
+      out_shape = [o.shape for o in out] if primitive.multiple_results else out.shape
       logical_shapes = map(partial(eval_polymorphic_shape, values_dict=shape_envs.logical), shape_exprs)
       out = masking_rules[primitive](vals, logical_shapes, **params)
     if not primitive.multiple_results:

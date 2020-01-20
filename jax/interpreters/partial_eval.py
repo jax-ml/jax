@@ -27,7 +27,8 @@ import numpy as onp
 from .. import core
 from .. import linear_util as lu
 from ..abstract_arrays import ShapedArray, ConcreteArray, raise_to_shaped
-from ..util import unzip2, safe_zip, safe_map, toposort, partial, split_list
+from ..util import unzip2, safe_zip, safe_map, toposort, partial, split_list, \
+  prod
 from ..core import (Trace, Tracer, new_master, Jaxpr, Literal, get_aval,
                     AbstractValue, unit, unitvar, abstract_unit, Primitive,
                     call_p, TypedJaxpr, new_jaxpr_eqn)

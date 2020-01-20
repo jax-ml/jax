@@ -85,7 +85,6 @@ def expit(x):
   one = lax._const(x, 1)
   return lax.div(one, lax.add(one, lax.exp(lax.neg(x))))
 defjvp(expit, lambda g, ans, x: g * ans * (lax._const(ans, 1) - ans))
-shapes.shape_rules[expit.prim] = lambda x, **_: (x.shape,)
 
 
 @_wraps(osp_special.logsumexp)
