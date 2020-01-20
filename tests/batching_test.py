@@ -20,6 +20,7 @@ import numpy as onp
 from absl.testing import absltest
 from absl.testing import parameterized
 
+import jax
 import jax.numpy as np
 from jax import test_util as jtu
 from jax.abstract_arrays import ShapedArray

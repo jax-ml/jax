@@ -23,6 +23,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 import numpy as onp
+import scipy.linalg
 import scipy.special
 import scipy.stats
 

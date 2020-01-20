@@ -23,6 +23,7 @@ import functools
 import itertools
 import operator
 import string
+from typing import Any
 import warnings
 
 import numpy as onp
@@ -682,7 +683,7 @@ def select(pred, on_true, on_false):
   """
   return select_p.bind(pred, on_true, on_false)
 
-def slice(operand, start_indices, limit_indices, strides=None):
+def slice(operand: Any, start_indices, limit_indices, strides=None):
   """Wraps XLA's `Slice
   <https://www.tensorflow.org/xla/operation_semantics#slice>`_
   operator.
@@ -4184,8 +4185,8 @@ def infeed(token, shape=None):
   flat_shapes, treedef = pytree.flatten(shape)
   for shape in flat_shapes:
     if not isinstance(shape, ShapedArray):
-      raise TypeError("shapes argument to infeed must be a pytree of "
-                      "ShapedArray values, got {}".format(shapes))
+      raise TypeError("shape argument to infeed must be a pytree of "
+                      "ShapedArray values, got {}".format(shape))
   xs_and_token = infeed_p.bind(token, shapes=tuple(flat_shapes))
   return (treedef.unflatten(xs_and_token[:-1]), xs_and_token[-1])
 
@@ -4389,7 +4390,7 @@ def _dynamic_slice_indices(operand, start_indices):
   if len(start_indices) != operand.ndim:
     msg = ("Length of slice indices must match number of operand dimensions ({} "
           "vs {})")
-    raise ValueError(msg.format(len(start_indices, operand.shape)))
+    raise ValueError(msg.format(len(start_indices), operand.shape))
   # map int over operand.shape to raise any dynamic-shape errors
   return [select(lt(i, _const(i, 0)), add(i, _const(i, int(d))), i)
           for i, d in zip(start_indices, operand.shape)]

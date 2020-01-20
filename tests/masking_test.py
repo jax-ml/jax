@@ -493,7 +493,7 @@ class MaskingTest(jtu.JaxTestCase):
     ans = grad(lambda W: vmap(rnn, ((None, 0, 0), 0))((W, seqs, ys), dict(t=ts)).sum())(W)
 
     def rnn_reference(W, seqs, targets):
-      total_loss = 0
+      total_loss = np.array(0, np.float_)
       for xs, target in zip(seqs, targets):
         h = np.zeros(n)
         for x in xs:

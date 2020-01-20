@@ -141,11 +141,11 @@ class Poly(Counter):
     return self + -other
 
   def __floordiv__(self, divisor):
-    q, _ = divmod(self, divisor)
+    q, _ = divmod(self, divisor)  # pytype: disable=wrong-arg-types
     return q
 
   def __mod__(self, divisor):
-    _, r = divmod(self, divisor)
+    _, r = divmod(self, divisor)  # pytype: disable=wrong-arg-types
     return r
 
   def __divmod__(self, divisor):
