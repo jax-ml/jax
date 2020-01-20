@@ -14,20 +14,19 @@
 
 from __future__ import print_function
 
-from contextlib import contextmanager
-from collections import Counter, namedtuple
-from functools import partial, reduce
-import itertools as it
+from itertools import product
 import operator as op
 import string
+from collections import Counter
+from functools import partial, reduce
 
 import numpy as onp
 
 from .. import core
+from .. import linear_util as lu
+from ..abstract_arrays import ShapedArray
 from ..core import Trace, Tracer
 from ..util import safe_map, safe_zip
-from ..abstract_arrays import ShapedArray
-from .. import linear_util as lu
 
 map = safe_map
 zip = safe_zip
@@ -37,16 +36,17 @@ def prod(xs):
   return reduce(op.mul, xs) if xs else 1
 
 def to_index(x):
-  """Like operator.index, but allowing polymorphic shapes.
+  """Like operator.index, but allowing polymorphic dimensions.
   Not implemented as `Poly.__index__`, since operator.index only allows ints."""
   return x if isinstance(x, Poly) else op.index(x)
-
-### main transformation functions
 
 # TODO remove remaining usages:
 def is_polymorphic(shape):
   return any(map(lambda d: type(d) is Poly, shape))
 
+def eval_polymorphic_shape(shape, values_dict):
+  return tuple(dim.evaluate(values_dict) if type(dim) is Poly else dim
+               for dim in shape)
 
 def _ensure_poly(p):
   if type(p) is Poly:
@@ -84,7 +84,7 @@ class Poly(Counter):
   def __mul__(self, other):
     coeffs = dict()
     for (mon1, coeff1), (mon2, coeff2) \
-            in it.product(self.items(), _ensure_poly(other).items()):
+            in product(self.items(), _ensure_poly(other).items()):
       mon = Mon(mon1 + mon2)                        # add monomials' id degrees
       coeff = coeff1 * coeff2                       # multiply integer coeffs
       coeffs[mon] = coeffs.get(mon, 0) + coeff  # accumulate coeffs
@@ -161,13 +161,18 @@ class Poly(Counter):
     return not (_ensure_poly(other) >= self)
 
   def __str__(self):
-    return ' + '.join('{} {}'.format(v, k) if (v != 1 or k.degree == 0) else str(k)
+    return ' + '.join('{} {}'.format(v, k)
+                      if (v != 1 or k.degree == 0) else str(k)
                       for k, v in sorted(self.items())).strip()
 
   def __int__(self):
     assert self.is_constant
 
     return int(next(iter(self.values())))
+
+  def evaluate(self, values_dict):
+    return sum(coeff * prod([values_dict[id] ** deg for id, deg in mon.items()])
+               for mon, coeff in self.items())
 
   @property
   def is_constant(self):
@@ -190,30 +195,6 @@ class Mon(Counter):  # type Mon = Map Id Int -- ids to degrees
   @property
   def degree(self):
     return sum(self.values())
-
-def eval_shape_expr(env, expr):
-  return tuple(eval_dim_expr(env, poly) for poly in expr)
-
-def eval_dim_expr(env, poly):
-  terms = [mul(coeff, prod([pow(env[id], deg) for id, deg in mon.items()]))
-           for mon, coeff in poly.items()]
-  return sum(terms) if len(terms) > 1 else terms[0]
-
-def pow(x, deg):
-  try:
-    deg = int(deg)
-  except:
-    return x ** deg
-  else:
-    return 1 if deg == 0 else x if deg == 1 else x ** deg
-
-def mul(coeff, mon):
-  try:
-    coeff = int(coeff)
-  except:
-    return coeff * mon
-  else:
-    return  0 if coeff == 0 else mon if coeff == 1 else coeff * mon
 
 class ShapeError(Exception): pass
 
@@ -274,7 +255,7 @@ identifiers = frozenset(string.ascii_lowercase)
 
 def _parse_id(name): return Poly({Mon({name: 1}): 1})
 def _parse_lit(val_str): return _constant_poly(int(val_str))
-def _constant_poly(val): return Poly({Mon(): to_index(val)})
+def _constant_poly(val): return Poly({Mon(): op.index(val)})
 
 class MonomorphicDim(object):
   def __str__(self): return '_'
@@ -342,8 +323,8 @@ class ShapeCheckTrace(Trace):
   def process_primitive(self, primitive, tracers, params):
     avals = [t.aval for t in tracers]
     shape_rule = shape_rules.get(primitive)
-    if shape_rule is None:
-      raise NotImplementedError('Shape rule for {} not implemented yet.'.format(primitive))
+    if shape_rule is None: raise NotImplementedError(
+        'Shape rule for {} not implemented yet.'.format(primitive))
     out_shape = shape_rule(*avals, **params)
 
     if primitive.multiple_results:

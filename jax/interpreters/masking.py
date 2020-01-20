@@ -3,9 +3,7 @@ from functools import partial
 from itertools import chain
 
 import numpy as onp
-from jax.interpreters.shapes import _ensure_poly, eval_shape_expr, \
-  eval_dim_expr, Poly, shape_rules
-
+from jax.interpreters.shapes import Poly, shape_rules, eval_polymorphic_shape
 from contextlib import contextmanager
 from .. import core
 from ..core import Trace, Tracer
@@ -46,13 +44,12 @@ def extend_shape_envs(logical_env, padded_env):
   yield
   shape_envs = prev
 
-def shape_as_value(expr):
-  return tuple(eval_dim_expr(shape_envs.logical, d) if type(d) is Poly else d
-               for d in expr)
+def shape_as_value(shape):
+  return eval_polymorphic_shape(shape, shape_envs.logical)
 
-def padded_shape_as_value(expr):
-  return tuple(eval_dim_expr(shape_envs.padded, d) if type(d) is Poly else d
-               for d in expr)
+def padded_shape_as_value(shape):
+  return eval_polymorphic_shape(shape, shape_envs.padded)
+
 def mask_fun(fun, logical_env, padded_env, in_vals, shape_exprs):
   with core.new_master(MaskTrace) as master:
     fun, out_shapes = mask_subtrace(fun, master)
@@ -84,7 +81,7 @@ class MaskTracer(Tracer):
     return ShapedArray(self.shape_expr, self.val.dtype)
 
   def is_pure(self):
-    return all(_ensure_poly(poly).is_constant for poly in self.shape_expr)
+    return all(type(poly) is not Poly or poly.is_constant for poly in self.shape_expr)
 
   def full_lower(self):
     if self.is_pure():
@@ -110,7 +107,7 @@ class MaskTrace(Trace):
       out, out_shape = rule(shape_envs, vals, shape_exprs, **params)
     else:
       out_shape = shape_rules[primitive](*(t.aval for t in tracers), **params)
-      logical_shapes = map(partial(eval_shape_expr, shape_envs.logical), shape_exprs)
+      logical_shapes = map(partial(eval_polymorphic_shape, values_dict=shape_envs.logical), shape_exprs)
       out = masking_rules[primitive](vals, logical_shapes, **params)
     if not primitive.multiple_results:
       return MaskTracer(self, out, out_shape)

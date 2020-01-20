@@ -22,7 +22,6 @@ from unittest import SkipTest
 import numpy as onp
 from absl.testing import absltest
 from jax.interpreters.masking import shape_as_value
-
 from jax.interpreters.shapes import ShapeError
 from jax import numpy as np, test_util as jtu, mask, vmap, jit, grad, lax
 from jax.config import config

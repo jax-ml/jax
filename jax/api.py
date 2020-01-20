@@ -1039,8 +1039,8 @@ def mask(fun, in_shapes, out_shape):
     out_shapes = map(shapes.finalize_spec, out_specs, map(onp.shape, outs))
     if not out_shapes == list(out_shapes_):
       raise ShapeError
-    if not all(onp.shape(out) == shapes.eval_shape_expr(padded_env, expr)
-               for out, expr in zip(outs, out_shapes)):
+    if not all(onp.shape(out) == shapes.eval_polymorphic_shape(shape, padded_env)
+               for out, shape in zip(outs, out_shapes)):
       raise ShapeError
     return tree_unflatten(out_tree(), outs)
   return wrapped_fun
