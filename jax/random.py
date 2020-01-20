@@ -44,7 +44,7 @@ from jax.scipy.special import logit
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import xla
-from jax.interpreters.masking import is_polymorphic, index_
+from jax.interpreters.shapes import is_polymorphic, to_index
 from jax.util import prod
 
 
@@ -299,7 +299,7 @@ def _random_bits(key, bit_width, shape):
 
 def _check_shape(name, shape, *param_shapes):
   try:
-    shape = tuple(map(lambda x: index_(x), shape))
+    shape = tuple(map(lambda x: to_index(x), shape))
   except TypeError:
     msg = "{} requires a concrete tuple of integers as shape argument, got {}."
     raise ValueError(msg.format(name, shape))

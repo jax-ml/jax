@@ -47,7 +47,7 @@ from .. import dtypes
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
 from ..config import flags
 from ..interpreters.xla import DeviceArray
-from ..interpreters.masking import Poly, is_polymorphic, index_
+from ..interpreters.shapes import Poly, is_polymorphic, to_index
 from .. import lax
 from ..util import partial, get_module_functions, unzip2, prod as _prod, subvals
 from ..lib import pytree
@@ -1109,7 +1109,7 @@ def broadcast_arrays(*args):
 def broadcast_to(arr, shape):
   """Like Numpy's broadcast_to but doesn't necessarily return views."""
   arr = arr if isinstance(arr, ndarray) else array(arr)
-  shape = tuple(map(lambda x: index_(x), shape))  # check that shape is concrete
+  shape = tuple(map(lambda x: to_index(x), shape))  # check that shape is concrete
   arr_shape = _shape(arr)
   if arr_shape == shape:
     return arr
@@ -1132,7 +1132,7 @@ def split(ary, indices_or_sections, axis=0):
     # returns a correctly shaped dummy:
     if type(indices_or_sections) in (list, tuple):
       assert len(indices_or_sections) == 1 # TODO generalize
-      index = index_(indices_or_sections[0])
+      index = to_index(indices_or_sections[0])
       assert index > 0 # TODO generalize
       slices = [[slice(None)] * ary.ndim for _ in range(2)]
       slices[0][axis] = slice(None, index)
@@ -1140,7 +1140,7 @@ def split(ary, indices_or_sections, axis=0):
 
       return [ary[slices[0]], ary[slices[1]]]
 
-    count = index_(indices_or_sections)
+    count = to_index(indices_or_sections)
 
     s = [slice(None)] * ary.ndim
     split_size, r = _divmod(ary.shape[axis], count)

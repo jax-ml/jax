@@ -35,13 +35,9 @@ from jax.lax import lax
 from jax import linear_util as lu
 from jax.abstract_arrays import ShapedArray, raise_to_shaped
 from jax.api_util import flatten_fun_nokwargs, apply_flat_fun_nokwargs
-from jax.interpreters import ad
-from jax.interpreters import partial_eval as pe
-from jax.interpreters import xla
-from jax.interpreters import batching
-from jax.interpreters import masking
+from jax.interpreters import ad, xla, batching, shapes, masking, \
+  partial_eval as pe
 from jax.lib import xla_bridge as xb
-from jax.lib import xla_client
 from jax.util import (partial, unzip2, safe_map, safe_zip, split_list,
                       split_dict, cache)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
@@ -928,7 +924,7 @@ def _scan_masking_rule(shape_envs, padded_vals, shape_exprs, forward, length,
                        jaxpr, num_consts, num_carry, linear):
   out_shape = _scan_shape_rule(shape_exprs, forward, length, jaxpr,
                                num_consts, num_carry, linear)
-  dynamic_length = masking.eval_dim_expr(shape_envs.logical, length)
+  dynamic_length = shapes.eval_dim_expr(shape_envs.logical, length)
   masked_jaxpr = _masked_scan_jaxpr(jaxpr, num_consts, num_carry)
   consts, init, xs = split_list(padded_vals, [num_consts, num_carry])
   max_length, = {x.shape[0] for x in xs}
