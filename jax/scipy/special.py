@@ -18,7 +18,6 @@ from __future__ import print_function
 
 import numpy as onp
 import scipy.special as osp_special
-from jax.interpreters import shapes
 
 from .. import lax
 from .. import util

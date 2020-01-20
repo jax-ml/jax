@@ -42,7 +42,6 @@ from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from . import partial_eval as pe
 from . import ad
-from . import shapes
 from . import masking
 
 FLAGS = flags.FLAGS

@@ -31,6 +31,7 @@ import collections
 import functools
 import itertools as it
 import os
+import string
 import threading
 from warnings import warn
 
@@ -54,15 +55,9 @@ from .util import (unzip2, unzip3, curry, partial, safe_map, safe_zip,
 from .lib import xla_bridge as xb
 from .lib.xla_bridge import (device_count, local_device_count, devices,
                              local_devices, host_id, host_ids, host_count)
-from .abstract_arrays import ConcreteArray, ShapedArray, raise_to_shaped
-from .interpreters import partial_eval as pe
-from .interpreters import xla
-from .interpreters import pxla
-from .interpreters import ad
-from .interpreters import batching
-from .interpreters import parallel
-from .interpreters import shapes
-from .interpreters.shapes import Poly, ShapeError
+from .abstract_arrays import ConcreteArray, ShapedArray, raise_to_shaped, \
+  eval_polymorphic_shape, Poly, Mon
+from .interpreters import partial_eval as pe, xla, pxla, ad, batching, parallel
 from .config import flags, config
 
 map = safe_map
@@ -1018,8 +1013,8 @@ def mask(fun, in_shapes, out_shape):
   in_specs, in_shapes_tree = tree_flatten(in_shapes)
   out_specs, out_shapes_tree = tree_flatten(out_shape)
 
-  in_specs = map(shapes.parse_spec, in_specs)
-  out_specs = map(shapes.parse_spec, out_specs)
+  in_specs = map(_parse_shape_spec, in_specs)
+  out_specs = map(_parse_shape_spec, out_specs)
 
   unique_ids = collections.defaultdict(object)
   in_specs  = map(partial(_remap_ids, unique_ids), in_specs)
@@ -1029,27 +1024,27 @@ def mask(fun, in_shapes, out_shape):
     args_flat, in_tree = tree_flatten(args)
     if in_tree != in_shapes_tree: raise TypeError("pytree mismatch")
     logical_env = {unique_ids[name] : val for name, val in logical_env.items()}
-    in_shapes = map(shapes.finalize_spec, in_specs, map(onp.shape, args_flat))
+    in_shapes = map(_finalize_shape_spec, in_specs, map(onp.shape, args_flat))
     padded_env = _bind_shapes(in_shapes, [x.shape for x in args_flat])
     f = lu.wrap_init(fun)
     flat_fun, out_tree = flatten_fun_nokwargs(f, in_tree)
     outs, out_shapes_ = jax.interpreters.masking.mask_fun(
         flat_fun, logical_env, padded_env, args_flat, in_shapes)
     if not out_tree() == out_shapes_tree: raise TypeError("pytree mismatch")
-    out_shapes = map(shapes.finalize_spec, out_specs, map(onp.shape, outs))
+    out_shapes = map(_finalize_shape_spec, out_specs, map(onp.shape, outs))
     if not out_shapes == list(out_shapes_):
       raise ShapeError
-    if not all(onp.shape(out) == shapes.eval_polymorphic_shape(shape, padded_env)
+    if not all(onp.shape(out) == eval_polymorphic_shape(shape, padded_env)
                for out, shape in zip(outs, out_shapes)):
       raise ShapeError
     return tree_unflatten(out_tree(), outs)
   return wrapped_fun
 
 def _remap_ids(names, shape_spec):
-  ShapeSpec, Mon, mdim = shapes.ShapeSpec, shapes.Mon, shapes.monomorphic_dim
   return ShapeSpec(Poly({Mon({names[id] : deg for id, deg in mon.items()})
                           : coeff for mon, coeff in poly.items()})
-                   if poly is not mdim else mdim for poly in shape_spec)
+                   if poly is not _monomorphic_dim else
+                   _monomorphic_dim for poly in shape_spec)
 
 def _bind_shapes(shape_exprs, shapes):
   env = {}
@@ -1066,9 +1061,9 @@ def _bind_shapes(shape_exprs, shapes):
 @curry
 def shapecheck(in_shapes, out_shape, fun):
   in_shapes, in_tree = tree_flatten(in_shapes)
-  in_shapes = map(shapes.parse_spec, in_shapes)
+  in_shapes = map(_parse_shape_spec, in_shapes)
   out_shapes, out_tree = tree_flatten(out_shape)
-  out_shapes = map(shapes.parse_spec, out_shapes)
+  out_shapes = map(_parse_shape_spec, out_shapes)
   flat_fun, out_tree_ = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
   avals = map(partial(ShapedArray, dtype=onp.float32), in_shapes)
   out_shapes_ = [o.shape for o in pe.abstract_eval_fun(flat_fun.call_wrapped, *avals)]
@@ -1077,8 +1072,83 @@ def shapecheck(in_shapes, out_shape, fun):
     raise ShapeError
   return fun
 
+class ShapeError(Exception): pass
+
+class ShapeSyntaxError(Exception): pass
+
+# To denote some shape expressions (for annotations) we use a small language.
+#
+#   data ShapeSpec = ShapeSpec [Dim]
+#   data Dim = Id PyObj
+#            | Lit Int
+#            | Mul Dim Dim
+#            | Add Dim Dim
+#            | MonomorphicDim
+#
+# We'll also make a simple concrete syntax for annotation. The grammar is
+#
+#   shape_spec ::= '(' dims ')'
+#   dims       ::= dim ',' dims | ''
+#   dim        ::= str | int | dim '*' dim | dim '+' dim | '_'
+#
+# ShapeSpecs can have some monomorphic dims inside them,
+# which must be replaced with concrete shapes when known.
+
+class ShapeSpec(tuple):
+  def __str__(self):
+    return 'ShapeSpec({})'.format(', '.join(map(str, self)))
+
+def _finalize_shape_spec(spec, shape):
+  return tuple(_parse_lit(d) if e is _monomorphic_dim else e
+               for e, d in zip(spec, shape))
+
+def _parse_shape_spec(spec=''):
+  if not spec:
+    return ShapeSpec(())
+  if spec[0] == '(':
+    if spec[-1] != ')': raise ShapeSyntaxError(spec)
+    spec = spec[1:-1]
+  dims = map(_parse_dim, spec.replace(' ', '').strip(',').split(','))
+  return ShapeSpec(dims)
+
+def _parse_dim(spec):
+  if '+' in spec:
+    return onp.sum(map(_parse_dim, spec.split('+')))
+  elif '*' in spec:
+    return prod(map(_parse_dim, spec.split('*')))
+  elif spec.isdigit() or spec.startswith('-') and spec[1:].isdigit():
+    return _parse_lit(spec)
+  elif spec in _identifiers:
+    return _parse_id(spec)
+  elif spec == '_':
+    return _monomorphic_dim
+  else:
+    raise ShapeSyntaxError(spec)
+
+_identifiers = frozenset(string.ascii_lowercase)
+
+def _parse_id(name): return Poly({Mon({name: 1}): 1})
+
+def _parse_lit(val_str): return Poly({Mon(): int(val_str)})
+
+class MonomorphicDim(object):
+  def __str__(self): return '_'
+
+_monomorphic_dim = MonomorphicDim()
+
+# Two convenient ways to provide shape annotations:
+#   1. '(m, n)'
+#   2. s_['m', 'n']
+
+class S_(object):
+  def __getitem__(self, idx):
+    return _parse_shape_spec(('(' + ','.join(map(str, idx)) + ')')
+                             if type(idx) is tuple else str(idx))
+
+s_ = S_()
+
 def _shape_spec_consistent(spec, expr):
-  return all(a == b for a, b in zip(spec, expr) if a is not shapes.monomorphic_dim)
+  return all(a == b for a, b in zip(spec, expr) if a is not _monomorphic_dim)
 
 
 def jvp(fun, primals, tangents):

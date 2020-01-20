@@ -16,12 +16,18 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from collections import Counter
+from itertools import product
+import operator as op
+
 import numpy as onp
 
 from . import core
 from . import ad_util
 from . import dtypes
-from . util import prod, partialmethod
+from . util import prod, partialmethod, safe_map, safe_zip
+map = safe_map
+zip = safe_zip
 
 
 def concretization_err_msg(fun):
@@ -155,8 +161,6 @@ class ConcreteArray(ShapedArray):
     # Note: canonicalized self.dtype doesn't necessarily match self.val
     self.val = val
 
-    # not imported from shapes since this would cause circular reference:
-    is_polymorphic = lambda shape: onp.any(onp.vectorize(lambda d: type(d).__name__ == 'Poly')(val))
     assert self.dtype != onp.dtype('O') or is_polymorphic(val)
 
   def __eq__(self, other):
@@ -251,3 +255,167 @@ for t in dtypes.python_scalar_dtypes.keys():
   ad_util.jaxval_zeros_likers[t] = _zeros_like_python_scalar
 
 core.literalable_types.update(dtypes.python_scalar_dtypes.keys())
+
+def to_index(x):
+  """Like operator.index, but allowing polymorphic dimensions.
+  Not implemented as `Poly.__index__`, since operator.index only allows ints."""
+  return x if isinstance(x, Poly) else op.index(x)
+
+# TODO remove remaining usages:
+def is_polymorphic(shape):
+  return any(map(lambda d: type(d) is Poly, shape))
+
+def eval_polymorphic_shape(shape, values_dict):
+  return tuple(dim.evaluate(values_dict) if type(dim) is Poly else dim
+               for dim in shape)
+
+def _ensure_poly(p):
+  if type(p) is Poly:
+    return p
+
+  return Poly({Mon(): p})
+
+class Poly(dict):
+  """Polynomial with integer coefficients,
+  usable as element in a polymorphic shape.
+
+  type Poly = Map Mon Int -- monomials to coeffs
+  type Mon = Map Str Int
+  """
+
+  def __init__(self, coeffs):
+    # Makes sure Polynomials are always in canonical form to simplify operators:
+    coeffs = {mon: op.index(coeff) for mon, coeff in coeffs.items() if coeff != 0}
+    coeffs = {Mon(): 0} if len(coeffs) == 0 else coeffs
+    super().__init__(coeffs)
+
+  def __add__(self, other):
+    coeffs = self.copy()
+
+    for mon, coeff in _ensure_poly(other).items():
+      coeffs[mon] = coeffs.get(mon, 0) + coeff
+
+    return Poly(coeffs)
+
+  def __sub__(self, other):
+    return self + -other
+
+  def __neg__(self):
+    return Poly({mon: -coeff for mon, coeff in self.items()})
+
+  def __mul__(self, other):
+    coeffs = dict()
+    for (mon1, coeff1), (mon2, coeff2) \
+            in product(self.items(), _ensure_poly(other).items()):
+      mon = mon1 * mon2
+      coeffs[mon] = coeffs.get(mon, 0) + coeff1 * coeff2
+
+    return Poly(coeffs)
+
+  def __rmul__(self, other):
+    return self * other
+
+  def __radd__(self, other):
+    return self + other
+
+  def __rsub__(self, other):
+    return self + -other
+
+  def __floordiv__(self, divisor):
+    q, _ = divmod(self, divisor)  # pytype: disable=wrong-arg-types
+    return q
+
+  def __mod__(self, divisor):
+    _, r = divmod(self, divisor)  # pytype: disable=wrong-arg-types
+    return r
+
+  def __divmod__(self, divisor):
+    if self.is_constant:
+      return divmod(int(self), divisor)
+
+    def divided(count):
+      q, r = divmod(count, divisor)
+      if r != 0:
+        raise ValueError('shapecheck currently only supports strides '
+                         'that exactly divide the strided axis length.')
+      return q
+
+    return Poly(
+      {k: coeff // divisor if k.degree == 0 else divided(coeff)
+       for k, coeff in self.items()}), self.get(Mon(), 0) % divisor
+
+  def __hash__(self):
+    return hash(super())
+
+  def __eq__(self, other):
+    return super().__eq__(_ensure_poly(other))
+
+  def __ne__(self, other):
+    return not self == other
+
+  def __ge__(self, other):
+    other = _ensure_poly(other)
+
+    if other.is_constant and self.is_constant:
+      return int(self) >= int(other)
+
+    if other.is_constant and int(other) <= 1:
+      # Assume polynomials > 0, allowing to use shape rules of binops, conv:
+      return True
+
+    if self.is_constant and int(self) <= 0:
+      return False  # See above.
+
+    if self == other:
+      return True
+
+    raise ValueError('Polynomials comparison "{} >= {}" is inconclusive.'
+                     .format(self, other))
+
+  def __le__(self, other):
+    return _ensure_poly(other) >= self
+
+  def __lt__(self, other):
+    return not (self >= other)
+
+  def __gt__(self, other):
+    return not (_ensure_poly(other) >= self)
+
+  def __str__(self):
+    return ' + '.join('{} {}'.format(v, k)
+                      if (v != 1 or k.degree == 0) else str(k)
+                      for k, v in sorted(self.items())).strip()
+
+  def __int__(self):
+    assert self.is_constant
+
+    return op.index(next(iter(self.values())))
+
+  def evaluate(self, values_dict):
+    return sum(coeff * prod([values_dict[id] ** deg for id, deg in mon.items()])
+               for mon, coeff in self.items())
+
+  @property
+  def is_constant(self):
+    return len(self) == 1 and next(iter(self)).degree == 0
+
+class Mon(dict):  # type Mon = Map Id Int -- ids to degrees
+  def __hash__(self):
+    return hash(tuple(self.items()))
+
+  def __str__(self):
+    return ' '.join('{}**{}'.format(k, v) if v != 1 else str(k)
+                    for k, v in sorted(self.items()))
+
+  def __lt__(self, other):
+    # sort by total degree, then lexicographically on indets
+    self_key = self.degree, tuple(sorted(self))
+    other_key = other.degree, tuple(sorted(other))
+    return self_key < other_key
+
+  def __mul__(self, other):
+    return Mon(Counter(self) + Counter(other))
+
+  @property
+  def degree(self):
+    return sum(self.values())

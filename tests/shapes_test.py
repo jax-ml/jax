@@ -19,10 +19,12 @@ from __future__ import print_function
 import numpy as onp
 from absl.testing import absltest, parameterized
 
-from jax import numpy as np, test_util as jtu, core as jc, lax, api, random, \
-  vmap, jit, shapecheck, grad
-from jax.interpreters.shapes import ShapeError, parse_spec, _constant_poly, \
-  Mon, Poly
+from jax import numpy as np, test_util as jtu, lax, api, random, vmap, jit, \
+  shapecheck
+
+from jax.abstract_arrays import Poly, Mon
+from jax.api import _parse_shape_spec, ShapeError
+
 from jax.scipy.special import expit
 
 from jax.config import config
@@ -31,6 +33,9 @@ config.parse_flags_with_absl()
 
 # These are 'manual' tests for shape checking. The more exhaustive,
 # more systematic tests should live in lax_test.py.
+
+def const_poly(c):
+  return Poly({Mon(): c})
 
 class ShapesTest(jtu.JaxTestCase):
 
@@ -52,18 +57,18 @@ class ShapesTest(jtu.JaxTestCase):
       ['_', 'ShapeSpec(_)'],
   ])
   def test_parse_spec(self, spec, ans):
-    self.assertEqual(str(parse_spec(spec)), ans)
+    self.assertEqual(str(_parse_shape_spec(spec)), ans)
 
   def test_Poly_equal(self):
-    assert _constant_poly(3) == 3
-    assert onp.array(3, onp.int64) == _constant_poly(3)
-    assert onp.array(3, onp.int64)[()] == _constant_poly(3)
-    assert not onp.array(3, onp.int64) != _constant_poly(3)
-    assert _constant_poly(4) != 3
-    assert 3 == _constant_poly(3)
-    assert 4 != _constant_poly(3)
-    assert _constant_poly(4) == _constant_poly(4)
-    assert _constant_poly(3) != _constant_poly(4)
+    assert const_poly(3) == 3
+    assert onp.array(3, onp.int64) == const_poly(3)
+    assert onp.array(3, onp.int64)[()] == const_poly(3)
+    assert not onp.array(3, onp.int64) != const_poly(3)
+    assert const_poly(4) != 3
+    assert 3 == const_poly(3)
+    assert 4 != const_poly(3)
+    assert const_poly(4) == const_poly(4)
+    assert const_poly(3) != const_poly(4)
     assert Poly({Mon(): 3, Mon({'n': 1}): 4}) == Poly({Mon({'n': 1}): 4, Mon(): 3})
     assert Poly({Mon(): 3, Mon({'n': 1}): 4}) != Poly({Mon(): 3, Mon({'n': 2}): 4})
     assert Poly({Mon(): 3, Mon({'m': 1}): 4}) != Poly({Mon(): 3, Mon({'n': 1}): 4})
@@ -77,8 +82,8 @@ class ShapesTest(jtu.JaxTestCase):
 
     assert 0 <= poly
     assert 0 < poly
-    assert _constant_poly(3) >= 1
-    assert _constant_poly(3) > 1
+    assert const_poly(3) >= 1
+    assert const_poly(3) > 1
     self.assertRaisesRegex(ValueError, "", lambda: poly >= 2)
     self.assertRaisesRegex(ValueError, "", lambda: poly > 1)
 

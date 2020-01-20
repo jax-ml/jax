@@ -44,8 +44,8 @@ from jax.scipy.special import logit
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import xla
-from jax.interpreters.shapes import is_polymorphic, to_index
 from jax.util import prod
+from jax.abstract_arrays import is_polymorphic, to_index
 
 
 def PRNGKey(seed):

@@ -3,12 +3,11 @@ from functools import partial
 from itertools import chain
 
 import numpy as onp
-from jax.interpreters.shapes import Poly, eval_polymorphic_shape
 from contextlib import contextmanager
 from .. import core
 from ..core import Trace, Tracer
 from ..util import safe_map, safe_zip, unzip2
-from ..abstract_arrays import ShapedArray
+from ..abstract_arrays import ShapedArray, Poly, eval_polymorphic_shape
 from .. import linear_util as lu
 
 map = safe_map
