@@ -27,7 +27,7 @@ from typing import Any
 import warnings
 
 import numpy as onp
-from jax.interpreters.shapes import to_index
+from jax.interpreters.shapes import to_index, is_polymorphic, Poly
 
 from ..util import partial, prod
 
@@ -3024,7 +3024,8 @@ def _gather_dimensions_proto(indices_shape, dimension_numbers):
   return proto
 
 def _gather_dtype_rule(operand, start_indices, **kwargs):
-  if not dtypes.issubdtype(start_indices.dtype, onp.integer):
+  if (not (type(start_indices) is ConcreteArray and is_polymorphic(start_indices.val)) and
+      not dtypes.issubdtype(start_indices.dtype, onp.integer)):
     raise ValueError("start_indices must have an integer type")
   return dtypes.canonicalize_dtype(operand.dtype)
 

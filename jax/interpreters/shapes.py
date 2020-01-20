@@ -22,18 +22,12 @@ from itertools import product
 
 import numpy as onp
 
-from .. import core
-from .. import linear_util as lu
 from ..abstract_arrays import ShapedArray
-from ..core import Trace, Tracer
 from ..util import safe_map, safe_zip
+from . import partial_eval as pe
 
 map = safe_map
 zip = safe_zip
-
-def prod(xs):
-  xs = list(xs)
-  return reduce(op.mul, xs) if xs else 1
 
 def to_index(x):
   """Like operator.index, but allowing polymorphic dimensions.
@@ -171,7 +165,7 @@ class Poly(dict):
     return int(next(iter(self.values())))
 
   def evaluate(self, values_dict):
-    return sum(coeff * prod([values_dict[id] ** deg for id, deg in mon.items()])
+    return sum(coeff * reduce(op.mul, [values_dict[id] ** deg for id, deg in mon.items()], 1)
                for mon, coeff in self.items())
 
   @property
@@ -218,7 +212,7 @@ class ShapeSyntaxError(Exception): pass
 #   dims       ::= dim ',' dims | ''
 #   dim        ::= str | int | dim '*' dim | dim '+' dim | '_'
 #
-# ShapeSpecs encode ShapeExprs but can have some monomorphic dims inside them,
+# ShapeSpecs can have some monomorphic dims inside them,
 # which must be replaced with concrete shapes when known.
 
 class ShapeSpec(tuple):
@@ -280,62 +274,8 @@ class S_(object):
       return parse_spec(str(idx))
 
 s_ = S_()
-
 shape_rules = {}
 
-### definition-time (import-time) shape checker tracer machinery
-
-def shapecheck(fun, in_shapes):
-  with core.new_master(ShapeCheckTrace) as master:
-    out_shapes = check_subtrace(fun, master).call_wrapped(in_shapes)
-    del master
-  return out_shapes
-
-@lu.transformation
-def check_subtrace(master, in_shapes):
-  trace = ShapeCheckTrace(master, core.cur_sublevel())
-  in_tracers = map(partial(ShapeCheckTracer, trace), in_shapes)
-  outs = yield in_tracers, {}
-  out_tracers = map(trace.full_raise, outs)
-  yield [t.shape_expr for t in out_tracers]
-
-# TODO(mattjj): add dtypes?
-class ShapeCheckTracer(Tracer):
-  __slots__ = ["shape_expr"]
-
-  def __init__(self, trace, shape_expr):
-    self.trace = trace
-    self.shape_expr = shape_expr
-
-  @property
-  def aval(self):
-    return ShapedArray(self.shape_expr, None)
-
-  def full_lower(self):
-    return self
-
-class ShapeCheckTrace(Trace):
-  def pure(self, val):
-    return ShapeCheckTracer(self, onp.shape(val))
-
-  def lift(self, val):
-    return ShapeCheckTracer(self, onp.shape(val))
-
-  def sublift(self, val):
-    return ShapeCheckTracer(self, val.shape_expr)
-
-  def process_primitive(self, primitive, tracers, params):
-    avals = [t.aval for t in tracers]
-    shape_rule = shape_rules.get(primitive)
-    if shape_rule is None: raise NotImplementedError(
-      'Shape rule for {} not implemented yet.'.format(primitive))
-    out_shape = shape_rule(*avals, **params)
-
-    if primitive.multiple_results:
-      return map(partial(ShapeCheckTracer, self), out_shape)
-    else:
-      return ShapeCheckTracer(self, out_shape)
-
-  def process_call(self, call_primitive, f, tracers, params):
-    # TODO apply proper subtrace:
-    return map(self.full_raise, f.call_wrapped(*tracers))
+def eval_shape_(fun, in_shapes):
+  avals = map(partial(ShapedArray, dtype=onp.float32), in_shapes)
+  return [o.shape for o in pe.abstract_eval_fun(fun.call_wrapped, *avals)]

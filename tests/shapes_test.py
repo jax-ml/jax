@@ -20,7 +20,7 @@ import numpy as onp
 from absl.testing import absltest, parameterized
 
 from jax import numpy as np, test_util as jtu, core as jc, lax, api, random, \
-  vmap, jit, shapecheck
+  vmap, jit, shapecheck, grad
 from jax.interpreters.shapes import ShapeError, parse_spec, _constant_poly, \
   Mon, Poly
 from jax.scipy.special import expit
@@ -159,10 +159,17 @@ class ShapesTest(jtu.JaxTestCase):
     def concat(x):
       return lax.concatenate([x, x], 0)
 
+    # TODO:
+    # @shapecheck(['n'], 'n')
+    # @jit
+    # @grad
+    # def sum_square(x):
+    #   return np.sum(x ** 2)
+
   def test_pad(self):
     @shapecheck(['n'], '2*n+1')
     def p(x):
-      return lax.pad(x, 0, [(1, 1, 1)])
+      return lax.pad(x, 0., [(1, 1, 1)])
 
   def test_numpy_pad(self):
     @shapecheck(['n'], 'n+1')
@@ -269,17 +276,6 @@ class ShapesTest(jtu.JaxTestCase):
     @shapecheck(['n'], '')
     def thunk(n):
       return -(a + n.ravel()[0] * 0)
-
-  def test_unsupported_op(self):
-    p = jc.Primitive('unsupported_op')
-    p.def_impl(lambda x: x)
-
-    def thunk():
-      @shapecheck(['n'], 'n')
-      def identity(x):
-        return p.bind(x)
-
-    self.assertRaisesRegex(NotImplementedError, "Shape rule for unsupported_op not implemented yet.", thunk)
 
 
 if __name__ == '__main__':
