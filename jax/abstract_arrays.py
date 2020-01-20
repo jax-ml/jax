@@ -24,8 +24,8 @@ import numpy as onp
 from . import core
 from . import ad_util
 from . import dtypes
-
 from . util import prod, partialmethod
+
 
 def concretization_err_msg(fun):
   fname = getattr(fun, "__name__", fun)
