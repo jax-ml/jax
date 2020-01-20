@@ -14,11 +14,11 @@
 
 from __future__ import print_function
 
-from itertools import product
 import operator as op
 import string
 from collections import Counter
 from functools import partial, reduce
+from itertools import product
 
 import numpy as onp
 
@@ -54,13 +54,14 @@ def _ensure_poly(p):
 
   return _constant_poly(p)
 
-class Poly(Counter):
+class Poly(dict):
   """Polynomial with integer coefficients,
   usable as element in a polymorphic shape.
 
   type Poly = Map Mon Int -- monomials to coeffs
   type Mon = Map Str Int
   """
+
   def __init__(self, coeffs):
     # Makes sure Polynomials are always in canonical form to simplify operators:
     coeffs = {mon: coeff for mon, coeff in coeffs.items() if coeff != 0}
@@ -85,9 +86,8 @@ class Poly(Counter):
     coeffs = dict()
     for (mon1, coeff1), (mon2, coeff2) \
             in product(self.items(), _ensure_poly(other).items()):
-      mon = Mon(mon1 + mon2)                        # add monomials' id degrees
-      coeff = coeff1 * coeff2                       # multiply integer coeffs
-      coeffs[mon] = coeffs.get(mon, 0) + coeff  # accumulate coeffs
+      mon = mon1 * mon2
+      coeffs[mon] = coeffs.get(mon, 0) + coeff1 * coeff2
 
     return Poly(coeffs)
 
@@ -121,7 +121,7 @@ class Poly(Counter):
 
     return Poly(
       {k: coeff // divisor if k.degree == 0 else divided(coeff)
-      for k, coeff in self.items()}), self[Mon()] % divisor
+       for k, coeff in self.items()}), self.get(Mon(), 0) % divisor
 
   def __hash__(self):
     return hash(super())
@@ -139,11 +139,11 @@ class Poly(Counter):
       return int(self) >= int(other)
 
     if other.is_constant and int(other) <= 1:
-        # Assume polynomials > 0, allowing to use shape rules of binops, conv:
-        return True
+      # Assume polynomials > 0, allowing to use shape rules of binops, conv:
+      return True
 
     if self.is_constant and int(self) <= 0:
-      return False # See above.
+      return False  # See above.
 
     if self == other:
       return True
@@ -178,7 +178,7 @@ class Poly(Counter):
   def is_constant(self):
     return len(self) == 1 and next(iter(self)).degree == 0
 
-class Mon(Counter):  # type Mon = Map Id Int -- ids to degrees
+class Mon(dict):  # type Mon = Map Id Int -- ids to degrees
   def __hash__(self):
     return hash(tuple(self.items()))
 
@@ -191,6 +191,9 @@ class Mon(Counter):  # type Mon = Map Id Int -- ids to degrees
     self_key = self.degree, tuple(sorted(self))
     other_key = other.degree, tuple(sorted(other))
     return self_key < other_key
+
+  def __mul__(self, other):
+    return Mon(Counter(self) + Counter(other))
 
   @property
   def degree(self):
@@ -250,17 +253,20 @@ def _parse_dim(spec):
     return monomorphic_dim
   else:
     raise ShapeSyntaxError(spec)
+
 digits = frozenset(string.digits)
 identifiers = frozenset(string.ascii_lowercase)
 
 def _parse_id(name): return Poly({Mon({name: 1}): 1})
+
 def _parse_lit(val_str): return _constant_poly(int(val_str))
+
 def _constant_poly(val): return Poly({Mon(): op.index(val)})
 
 class MonomorphicDim(object):
   def __str__(self): return '_'
-monomorphic_dim = MonomorphicDim()
 
+monomorphic_dim = MonomorphicDim()
 
 # Two convenient ways to provide shape annotations:
 #   1. '(m, n)'
@@ -272,11 +278,10 @@ class S_(object):
       return parse_spec('(' + ','.join(map(str, idx)) + ')')
     else:
       return parse_spec(str(idx))
+
 s_ = S_()
 
-
 shape_rules = {}
-
 
 ### definition-time (import-time) shape checker tracer machinery
 
@@ -293,7 +298,6 @@ def check_subtrace(master, in_shapes):
   outs = yield in_tracers, {}
   out_tracers = map(trace.full_raise, outs)
   yield [t.shape_expr for t in out_tracers]
-
 
 # TODO(mattjj): add dtypes?
 class ShapeCheckTracer(Tracer):
@@ -324,7 +328,7 @@ class ShapeCheckTrace(Trace):
     avals = [t.aval for t in tracers]
     shape_rule = shape_rules.get(primitive)
     if shape_rule is None: raise NotImplementedError(
-        'Shape rule for {} not implemented yet.'.format(primitive))
+      'Shape rule for {} not implemented yet.'.format(primitive))
     out_shape = shape_rule(*avals, **params)
 
     if primitive.multiple_results:
