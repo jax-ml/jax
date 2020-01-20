@@ -35,7 +35,6 @@ import string
 import threading
 from warnings import warn
 
-import jax.interpreters.masking
 import numpy as onp
 from contextlib import contextmanager
 from distutils.util import strtobool
@@ -53,11 +52,17 @@ from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
 from .util import (unzip2, unzip3, curry, partial, safe_map, safe_zip,
                    WrapHashably, Hashable, prod, split_list)
 from .lib import xla_bridge as xb
-from .lib.xla_bridge import (device_count, local_device_count, devices,
-                             local_devices, host_id, host_ids, host_count)
+from .lib.xla_bridge import (device_count, local_device_count, devices, local_devices,
+                             host_id, host_ids, host_count)
 from .abstract_arrays import ConcreteArray, ShapedArray, raise_to_shaped, \
   eval_polymorphic_shape, Poly, Mon
-from .interpreters import partial_eval as pe, xla, pxla, ad, batching, parallel
+from .interpreters import partial_eval as pe
+from .interpreters import xla
+from .interpreters import pxla
+from .interpreters import ad
+from .interpreters import batching
+from .interpreters import parallel
+from .interpreters import masking
 from .config import flags, config
 
 map = safe_map
@@ -1028,7 +1033,7 @@ def mask(fun, in_shapes, out_shape):
     padded_env = _bind_shapes(in_shapes, [x.shape for x in args_flat])
     f = lu.wrap_init(fun)
     flat_fun, out_tree = flatten_fun_nokwargs(f, in_tree)
-    outs, out_shapes_ = jax.interpreters.masking.mask_fun(
+    outs, out_shapes_ = masking.mask_fun(
         flat_fun, logical_env, padded_env, args_flat, in_shapes)
     if not out_tree() == out_shapes_tree: raise TypeError("pytree mismatch")
     out_shapes = map(_finalize_shape_spec, out_specs, map(onp.shape, outs))

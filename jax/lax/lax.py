@@ -42,7 +42,12 @@ from ..abstract_arrays import (UnshapedArray, ShapedArray, ConcreteArray,
                                AbstractToken, array_types, make_shaped_array,
                                raise_to_shaped, abstract_token, to_index,
                                is_polymorphic)
-from ..interpreters import xla, pxla, ad, batching, masking, partial_eval as pe
+from ..interpreters import partial_eval as pe
+from ..interpreters import xla
+from ..interpreters import pxla
+from ..interpreters import ad
+from ..interpreters import batching
+from ..interpreters import masking
 from ..util import curry, cache, safe_zip, unzip2, prod
 from ..tree_util import build_tree, tree_unflatten, tree_map
 from ..lib import pytree

@@ -25,10 +25,7 @@ import numpy as onp
 from . import core
 from . import ad_util
 from . import dtypes
-from . util import prod, partialmethod, safe_map, safe_zip
-map = safe_map
-zip = safe_zip
-
+from .util import prod, partialmethod
 
 def concretization_err_msg(fun):
   fname = getattr(fun, "__name__", fun)
@@ -259,7 +256,7 @@ core.literalable_types.update(dtypes.python_scalar_dtypes.keys())
 def to_index(x):
   """Like operator.index, but allowing polymorphic dimensions.
   Not implemented as `Poly.__index__`, since operator.index only allows ints."""
-  return x if isinstance(x, Poly) else op.index(x)
+  return x if type(x) is Poly else op.index(x)
 
 # TODO remove remaining usages:
 def is_polymorphic(shape):
@@ -345,10 +342,10 @@ class Poly(dict):
        for k, coeff in self.items()}), self.get(Mon(), 0) % divisor
 
   def __hash__(self):
-    return hash(super())
+    return hash(tuple(sorted(self.items())))
 
   def __eq__(self, other):
-    return super().__eq__(_ensure_poly(other))
+    return dict.__eq__(self, _ensure_poly(other))
 
   def __ne__(self, other):
     return not self == other
