@@ -266,11 +266,17 @@ def triu(m, k=0):
   return np.triu(m, k)
 
 @_wraps(scipy.linalg.expm)
-def expm(A):
-  return _expm(A)
+def expm(A, isuppertriangular=False):
+    return _expm(A, isuppertriangular)
 
+def _expm(A, isuppertriangular=False):
+    P,Q,n_squarings = _calc_P_Q(A)
+    R = _solve_P_Q(P, Q, isuppertriangular)
+    R = _squaring(R, n_squarings)
+    return R
+    
 @jit
-def _expm(A):
+def _calc_P_Q(A):
     A = np.asarray(A)
     if A.ndim != 2 or A.shape[0] != A.shape[1]:
         raise ValueError('expected A to be a square matrix')
@@ -302,7 +308,16 @@ def _expm(A):
         raise TypeError("A.dtype={} is not supported.".format(A.dtype))
     P = U + V  # p_m(A) : numerator
     Q = -U + V # q_m(A) : denominator
-    R = np_linalg.solve(Q,P)
+    return P,Q,n_squarings
+
+def _solve_P_Q(P, Q, isuppertriangular=False):
+    if isuppertriangular == False:
+        return np_linalg.solve(Q,P)
+    else:
+        return solve_triangular(Q, P)
+
+@jit
+def _squaring(R, n_squarings):
     # squaring step to undo scaling
     def my_body_fun(i,R):
       return np.dot(R,R)

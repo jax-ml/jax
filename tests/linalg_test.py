@@ -913,5 +913,11 @@ class ScipyLinalgTest(jtu.JaxTestCase):
                             check_dtypes=True)
     self._CompileAndCheck(jsp_fun, args_maker, check_dtypes=True)
 
+    args_maker_triu = lambda: [onp.triu(rng((n, n), dtype))]
+    jsp_fun_triu = lambda a: jsp.linalg.expm(a,True)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun_triu, args_maker_triu,
+                            check_dtypes=True)
+    self._CompileAndCheck(jsp_fun_triu, args_maker_triu, check_dtypes=True)
+
 if __name__ == "__main__":
   absltest.main()
