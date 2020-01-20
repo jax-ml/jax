@@ -19,13 +19,13 @@ from __future__ import print_function
 from collections import Counter
 from itertools import product
 import operator as op
-
 import numpy as onp
 
 from . import core
 from . import ad_util
 from . import dtypes
-from .util import prod, partialmethod
+
+from . util import prod, partialmethod
 
 def concretization_err_msg(fun):
   fname = getattr(fun, "__name__", fun)
@@ -157,7 +157,6 @@ class ConcreteArray(ShapedArray):
                                         weak_type=weak_type)
     # Note: canonicalized self.dtype doesn't necessarily match self.val
     self.val = val
-
     assert self.dtype != onp.dtype('O') or is_polymorphic(val)
 
   def __eq__(self, other):

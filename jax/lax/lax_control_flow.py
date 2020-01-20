@@ -41,6 +41,7 @@ from jax.interpreters import xla
 from jax.interpreters import batching
 from jax.interpreters import masking
 from jax.lib import xla_bridge as xb
+from jax.lib import xla_client
 from jax.util import (partial, unzip2, safe_map, safe_zip, split_list,
                       split_dict, cache)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
