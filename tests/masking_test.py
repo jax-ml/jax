@@ -88,10 +88,6 @@ class MaskingTest(jtu.JaxTestCase):
     self.assertRaisesRegex(ValueError, "", lambda: poly >= 2)
     self.assertRaisesRegex(ValueError, "", lambda: poly > 1)
 
-  def test_poly_index(self):
-    p = Poly({Mon(): 3, Mon({'n': 1}): 4})
-    assert p == p.__index__()
-
   def test_poly_divmod(self):
     n = Poly({Mon({'n': 1}): 1})
     assert (n, 1) == divmod(2*n+1, 2)

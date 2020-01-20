@@ -37,6 +37,10 @@ def prod(xs):
   xs = list(xs)
   return functools.reduce(op.mul, xs) if xs else 1
 
+def index_(x):
+  """Like operator.index, but allowing polymorphic shapes.
+  Not implemented as `Poly.__index__`, since operator.index only allows ints."""
+  return x if isinstance(x, Poly) else op.index(x)
 
 ### main transformation functions
 
@@ -205,9 +209,6 @@ class Poly(Counter):
 
     return int(next(iter(self.values())))
 
-  def __index__(self):
-    return self
-
   @property
   def is_constant(self):
     return len(self) == 1 and next(iter(self)).degree == 0
@@ -313,7 +314,7 @@ identifiers = frozenset(string.ascii_lowercase)
 
 def _parse_id(name): return Poly({Mon({name: 1}): 1})
 def _parse_lit(val_str): return _constant_poly(int(val_str))
-def _constant_poly(val): return Poly({Mon(): val.__index__()})
+def _constant_poly(val): return Poly({Mon(): index_(val)})
 
 class MonomorphicDim(object):
   def __str__(self): return '_'

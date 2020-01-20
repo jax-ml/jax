@@ -26,6 +26,7 @@ import string
 import warnings
 
 import numpy as onp
+from jax.interpreters.masking import index_
 
 from ..util import partial, prod
 
@@ -76,7 +77,7 @@ def broadcast_shapes(*shapes):
 
 def _try_canonicalize_shape(shape):
   try:
-    return tuple(map(lambda x: x.__index__(), shape))
+    return tuple(map(lambda x: masking.index_(x), shape))
   except (TypeError, AttributeError):
     return None
 
@@ -1085,7 +1086,7 @@ def iota(dtype, size):
   <https://www.tensorflow.org/xla/operation_semantics#iota>`_
   operator.
   """
-  size = size.__index__()
+  size = index_(size)
   dtype = dtypes.canonicalize_dtype(dtype)
   lazy_expr = lazy.iota(dtype, size)
   aval = ShapedArray((size,), dtype)
