@@ -51,6 +51,8 @@ from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
 from .util import (unzip2, unzip3, curry, partial, safe_map, safe_zip,
                    WrapHashably, Hashable, prod, split_list)
 from .lib import xla_bridge as xb
+from .lib.xla_bridge import (device_count, local_device_count, devices,
+                             local_devices, host_id, host_ids, host_count)
 from .abstract_arrays import ConcreteArray, ShapedArray, raise_to_shaped
 from .interpreters import partial_eval as pe
 from .interpreters import xla

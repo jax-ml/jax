@@ -3139,9 +3139,9 @@ def _slice_indices(idx, size):
   # like idx.indices(size), but allows for polymorphic slice and size
   assert isinstance(idx, slice)
 
-  start = 0 if idx.start is None else idx.start + (size if idx.start < 0 else 0)
-  stop = size if idx.stop is None else idx.stop + (size if idx.stop < 0 else 0)
   step = 1 if idx.step is None else idx.step
+  start = (size - 1 if step < 0 else 0) if idx.start is None else idx.start + (size if idx.start < 0 else 0)
+  stop = (-1 if step < 0 else size) if idx.stop is None else idx.stop + (size if idx.stop < 0 else 0)
   return start, stop, step
 
 def _static_idx(idx, size):
