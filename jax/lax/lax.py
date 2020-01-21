@@ -40,8 +40,7 @@ from ..config import flags
 from ..core import Primitive
 from ..abstract_arrays import (UnshapedArray, ShapedArray, ConcreteArray,
                                AbstractToken, array_types, make_shaped_array,
-                               raise_to_shaped, abstract_token, to_index,
-                               is_polymorphic)
+                               raise_to_shaped, abstract_token, to_index)
 from ..interpreters import partial_eval as pe
 from ..interpreters import xla
 from ..interpreters import pxla
