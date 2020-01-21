@@ -286,6 +286,14 @@ class ShapesTest(jtu.JaxTestCase):
     def thunk(n):
       return -(a + n.ravel()[0] * 0)
 
+  def test_where(self):
+    @shapecheck(['n'], 'n')
+    def relu(x):
+      return np.where(x < 0, 0., x)
+
+    @shapecheck(['n'], 'n')
+    def reverse_relu(x):
+      return -np.where(x < 0, x, 0.)
 
 if __name__ == '__main__':
   absltest.main()

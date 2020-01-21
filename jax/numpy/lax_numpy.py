@@ -1054,7 +1054,6 @@ else:
 # The `jit` on `where` exists to avoid materializing constants in cases like
 # `np.where(np.zeros(1000), 7, 4)`. In op-by-op mode, we don't want to
 # materialize the broadcast forms of scalar arguments.
-@jit
 def _where(condition, x=None, y=None):
   if x is None or y is None:
     raise ValueError("Either both or neither of the x and y arguments should "
@@ -1063,6 +1062,12 @@ def _where(condition, x=None, y=None):
   if not issubdtype(_dtype(condition), bool_):
     condition = lax.ne(condition, zeros_like(condition))
   x, y = _promote_dtypes(x, y)
+
+  # TODO remove this special case:
+  result_shape = lax.broadcast_shapes(condition.shape, x.shape, y.shape)
+  if is_polymorphic(result_shape):
+    return lax.convert_element_type(broadcast_to(condition, result_shape), x.dtype)
+
   condition, x, y = broadcast_arrays(condition, x, y)
   return lax.select(condition, x, y) if onp.size(x) else x
 
