@@ -46,7 +46,7 @@ from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax.util import prod
-from jax.abstract_arrays import to_index
+from jax.interpreters.masking import to_index
 
 
 def PRNGKey(seed):

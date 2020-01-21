@@ -22,8 +22,7 @@ from absl.testing import absltest, parameterized
 from jax import numpy as np, test_util as jtu, lax, api, random, vmap, jit, \
   shapecheck
 
-from jax.abstract_arrays import Poly, Mon
-from jax.api import _parse_shape_spec, ShapeError
+from jax.interpreters.masking import Poly, Mon, _parse_shape_spec, ShapeError
 
 from jax.scipy.special import expit
 

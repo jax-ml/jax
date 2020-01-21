@@ -45,10 +45,10 @@ import opt_einsum
 from jax import jit, device_put, custom_transforms, defjvp
 from .. import core
 from .. import dtypes
-from ..abstract_arrays import (UnshapedArray, ShapedArray, ConcreteArray, Poly,
-                               to_index)
+from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
 from ..config import flags
 from ..interpreters.xla import DeviceArray
+from ..interpreters.masking import Poly, to_index
 from .. import lax
 from ..util import partial, get_module_functions, unzip2, prod as _prod, subvals
 from ..lib import pytree
