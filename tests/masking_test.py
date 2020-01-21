@@ -34,41 +34,41 @@ config.parse_flags_with_absl()
 # These are 'manual' tests for masking. The more exhaustive,
 # more systematic tests should live in lax_test.py.
 
-def const_poly(c):
+def constant_poly(c):
   return Poly({Mon(): c})
 
 class ShapesTest(jtu.JaxTestCase):
 
   @parameterized.parameters([
-    ['(m, n)', 'ShapeSpec(m, n)'],
-    ['(m * n)', 'ShapeSpec(m n)'],
-    ['m * n', 'ShapeSpec(m n)'],
-    ['(m * n,)', 'ShapeSpec(m n)'],
-    ['(3, m)', 'ShapeSpec(3, m)'],
-    ['(10, m)', 'ShapeSpec(10, m)'],
-    ['(-10, m)', 'ShapeSpec(-10, m)'],
-    ['(3 * m)', 'ShapeSpec(3 m)'],
-    ['m', 'ShapeSpec(m)'],
-    ['', 'ShapeSpec()'],
-    ['m + n', 'ShapeSpec(m + n)'],
-    ['m + n * k', 'ShapeSpec(m + k n)'],
-    ['m + 3 * k', 'ShapeSpec(3 k + m)'],
-    ['', 'ShapeSpec()'],
-    ['_', 'ShapeSpec(_)'],
+      ['(m, n)', 'ShapeSpec(m, n)'],
+      ['(m * n)', 'ShapeSpec(m n)'],
+      ['m * n', 'ShapeSpec(m n)'],
+      ['(m * n,)', 'ShapeSpec(m n)'],
+      ['(3, m)', 'ShapeSpec(3, m)'],
+      ['(10, m)', 'ShapeSpec(10, m)'],
+      ['(-10, m)', 'ShapeSpec(-10, m)'],
+      ['(3 * m)', 'ShapeSpec(3 m)'],
+      ['m', 'ShapeSpec(m)'],
+      ['', 'ShapeSpec()'],
+      ['m + n', 'ShapeSpec(m + n)'],
+      ['m + n * k', 'ShapeSpec(m + k n)'],
+      ['m + 3 * k', 'ShapeSpec(3 k + m)'],
+      ['', 'ShapeSpec()'],
+      ['_', 'ShapeSpec(_)'],
   ])
   def test_parse_spec(self, spec, ans):
     self.assertEqual(str(_parse_shape_spec(spec)), ans)
 
   def test_Poly_equal(self):
-    assert const_poly(3) == 3
-    assert onp.array(3, onp.int64) == const_poly(3)
-    assert onp.array(3, onp.int64)[()] == const_poly(3)
-    assert not onp.array(3, onp.int64) != const_poly(3)
-    assert const_poly(4) != 3
-    assert 3 == const_poly(3)
-    assert 4 != const_poly(3)
-    assert const_poly(4) == const_poly(4)
-    assert const_poly(3) != const_poly(4)
+    assert constant_poly(3) == 3
+    assert onp.array(3, onp.int64) == constant_poly(3)
+    assert onp.array(3, onp.int64)[()] == constant_poly(3)
+    assert not onp.array(3, onp.int64) != constant_poly(3)
+    assert constant_poly(4) != 3
+    assert 3 == constant_poly(3)
+    assert 4 != constant_poly(3)
+    assert constant_poly(4) == constant_poly(4)
+    assert constant_poly(3) != constant_poly(4)
     assert Poly({Mon(): 3, Mon({'n': 1}): 4}) == Poly({Mon({'n': 1}): 4, Mon(): 3})
     assert Poly({Mon(): 3, Mon({'n': 1}): 4}) != Poly({Mon(): 3, Mon({'n': 2}): 4})
     assert Poly({Mon(): 3, Mon({'m': 1}): 4}) != Poly({Mon(): 3, Mon({'n': 1}): 4})
@@ -86,8 +86,8 @@ class ShapesTest(jtu.JaxTestCase):
 
     assert 0 <= poly
     assert 0 < poly
-    assert const_poly(3) >= 1
-    assert const_poly(3) > 1
+    assert constant_poly(3) >= 1
+    assert constant_poly(3) > 1
     self.assertRaisesRegex(ValueError, "", lambda: poly >= 2)
     self.assertRaisesRegex(ValueError, "", lambda: poly > 1)
 
