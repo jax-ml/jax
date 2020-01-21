@@ -54,8 +54,8 @@ from .util import (unzip2, unzip3, curry, partial, safe_map, safe_zip,
 from .lib import xla_bridge as xb
 from .lib.xla_bridge import (device_count, local_device_count, devices, local_devices,
                              host_id, host_ids, host_count)
-from .abstract_arrays import ConcreteArray, ShapedArray, raise_to_shaped, \
-  eval_polymorphic_shape, Poly, Mon
+from .abstract_arrays import (ConcreteArray, ShapedArray, raise_to_shaped,
+                              eval_polymorphic_shape, Poly, Mon)
 from .interpreters import partial_eval as pe
 from .interpreters import xla
 from .interpreters import pxla
