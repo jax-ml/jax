@@ -157,7 +157,7 @@ class ConcreteArray(ShapedArray):
                                         weak_type=weak_type)
     # Note: canonicalized self.dtype doesn't necessarily match self.val
     self.val = val
-    assert self.dtype != onp.dtype('O') or is_polymorphic(val)
+    assert self.dtype != onp.dtype('O')
 
   def __eq__(self, other):
     return (type(self) is type(other) and self.dtype == other.dtype
