@@ -1054,6 +1054,7 @@ else:
 # The `jit` on `where` exists to avoid materializing constants in cases like
 # `np.where(np.zeros(1000), 7, 4)`. In op-by-op mode, we don't want to
 # materialize the broadcast forms of scalar arguments.
+@jit
 def _where(condition, x=None, y=None):
   if x is None or y is None:
     raise ValueError("Either both or neither of the x and y arguments should "
