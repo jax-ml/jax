@@ -46,7 +46,7 @@ from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax.util import prod
-from jax.abstract_arrays import is_polymorphic, to_index
+from jax.abstract_arrays import to_index
 
 
 def PRNGKey(seed):
@@ -271,12 +271,6 @@ def _fold_in(key, data):
 
 def _random_bits(key, bit_width, shape):
   """Sample uniform random bits of given width and shape using PRNG key."""
-
-  # TODO remove this special case:
-  if is_polymorphic(shape):
-    # returns a correctly shaped dummy:
-    return np.broadcast_to(0 * key[0], shape).astype(
-      onp.uint64 if bit_width == 64 else onp.uint32)
 
   if not _is_prng_key(key):
     raise TypeError("_random_bits got invalid prng key.")

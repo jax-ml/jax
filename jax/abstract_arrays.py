@@ -257,10 +257,6 @@ def to_index(x):
   Not implemented as `Poly.__index__`, since operator.index only allows ints."""
   return x if type(x) is Poly else op.index(x)
 
-# TODO remove remaining usages:
-def is_polymorphic(shape):
-  return any(map(lambda d: type(d) is Poly, shape))
-
 def eval_polymorphic_shape(shape, values_dict):
   return tuple(dim.evaluate(values_dict) if type(dim) is Poly else dim
                for dim in shape)

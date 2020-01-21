@@ -245,15 +245,6 @@ class ShapesTest(jtu.JaxTestCase):
     def slice(x):
       return x[:-1]
 
-  def test_split(self):
-    @shapecheck(['2*n'], ['n', 'n'])
-    def split_half(x):
-      return np.split(x, 2)
-
-    @shapecheck(['n'], ['10', 'n+-10'])
-    def split_after_ten(x):
-      return np.split(x, [10])
-
   def test_iota(self):
     @shapecheck(['n'], 'n')
     def range_like(x):
@@ -274,26 +265,12 @@ class ShapesTest(jtu.JaxTestCase):
     def flatten(x):
       return np.reshape(x, (x.shape[0], x.shape[1] * x.shape[2]))
 
-  def test_uniform(self):
-    @shapecheck(['2', 'n'], 'n')
-    def uniform_like(key, x):
-      return random.uniform(key, x.shape)
-
   def test_ravel(self):
     a = np.array(1)
 
     @shapecheck(['n'], '')
     def thunk(n):
       return -(a + n.ravel()[0] * 0)
-
-  def test_where(self):
-    @shapecheck(['n'], 'n')
-    def relu(x):
-      return np.where(x < 0, 0., x)
-
-    @shapecheck(['n'], 'n')
-    def reverse_relu(x):
-      return -np.where(x < 0, x, 0.)
 
 if __name__ == '__main__':
   absltest.main()
