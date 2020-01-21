@@ -96,8 +96,11 @@ def main():
 ```
 
 Some points to notice:
-- there is no sequential dependence between the calls to bar() and baz() and they can be evaluated in either order without affecting the value of the result, which solves the remaining performance goals (#5, #6),
-- functions do not need to return updated versions of PRNGs and it is straightforward to call a random subroutine without affecting existing PRNG states, improving the expressiveness (#1) from the other functional model.
+
+<ol type="A">
+ <li>there is no sequential dependence between the calls to bar() and baz() and they can be evaluated in either order without affecting the value of the result, which solves the remaining performance goals (#5, #6),</li>
+ <li>functions do not need to return updated versions of PRNGs and it is straightforward to call a random subroutine without affecting existing PRNG states, improving the expressiveness (#1) from the other functional model.</li>
+</ol>
 
 The example doesn’t show it, but as a consequence of the choice (B) the only way to advance the PRNG state is to call split(). That is, we have two ways to achieve (A), and they differ in whether they burden the user program with explicit calls to split(), as in the above example, or instead burden the user program with explicit threading. We prefer the former, i.e. the version with explicit splitting, because we can easily implement the explicit-threading version in terms of it.
 
@@ -176,7 +179,7 @@ def parallel(*layers):
   return init_fun, apply_fun
 ```
 
-Here we’re using a version a simple extended version of split that can produce multiple copies.
+Here we’re using a simple extended version of split that can produce multiple copies.
 
 ## Tradeoffs and alternatives
 
