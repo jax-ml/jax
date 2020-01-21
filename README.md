@@ -454,7 +454,7 @@ the year corresponds to the project's open-source release.
 
 A nascent version of JAX, supporting only automatic differentiation and
 compilation to XLA, was described in a [paper that appeared at SysML
-2018](https://www.sysml.cc/doc/2018/146.pdf). We're currently working on
+2018](https://mlsys.org/Conferences/2019/doc/2018/146.pdf). We're currently working on
 covering JAX's ideas and capabilities in a more comprehensive and up-to-date
 paper.
 
