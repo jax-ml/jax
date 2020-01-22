@@ -935,7 +935,7 @@ def soft_pmap(fun, axis_name=None, backend=None):
     if chunk_size == 0 and leftover:
       return pmap(fun, axis_name, backend)(*args)  # can map directly onto hardware
     elif leftover:
-      msg = ("soft_pmap mapped axis size must be divisble by the number of "
+      msg = ("soft_pmap mapped axis size must be divisible by the number of "
              "XLA devices (or be less than or equal to that number), but got "
              "an axis size of {} with {} devices.")
       raise ValueError(msg.format(axis_size, pxla.unmapped_device_count()))
@@ -1668,7 +1668,7 @@ def defvjp_all(fun, custom_vjp):
   Args:
     fun: a custom_transforms function.
     custom_vjp: a Python callable specifying the VJP rule, taking the same
-      arguments as ``fun`` and returning a pair where the first elment is the
+      arguments as ``fun`` and returning a pair where the first element is the
       value of ``fun`` applied to the arguments and the second element is a
       Python callable representing the VJP map from output cotangents to input
       cotangents. The returned VJP function must accept a value with the same

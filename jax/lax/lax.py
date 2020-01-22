@@ -4498,7 +4498,7 @@ def conv_general_permutations(dimension_numbers):
   for i, (a, b) in enumerate(charpairs):
     if not dimension_numbers[i].count(a) == dimension_numbers[i].count(b) == 1:
       msg = ("convolution dimension_numbers[{}] must contain the characters "
-             "'{}' and '{}' exatly once, got {}.")
+             "'{}' and '{}' exactly once, got {}.")
       raise TypeError(msg.format(i, a, b, dimension_numbers[i]))
     if len(dimension_numbers[i]) != len(set(dimension_numbers[i])):
       msg = ("convolution dimension_numbers[{}] cannot have duplicate "

@@ -1249,7 +1249,7 @@ def custom_linear_solve(
 
   This function allows for overriding or defining gradients for a linear
   solve directly via implicit differentiation at the solution, rather than by
-  differenting *through* the solve operation. This can sometimes be much faster
+  differentiating *through* the solve operation. This can sometimes be much faster
   or more numerically stable, or differentiating through the solve operation
   may not even be implemented (e.g., if ``solve`` uses ``lax.while_loop``).
 
@@ -1264,7 +1264,7 @@ def custom_linear_solve(
       of arrays.
     solve: higher level function that solves for solution to the linear
       equation, i.e., ``solve(matvec, x)) == x`` for all ``x`` of the same form
-      as ``b``. This function need not be differenatiable.
+      as ``b``. This function need not be differentiable.
     transpose_solve: higher level function for solving the transpose linear
       equation, i.e., ``transpose_solve(vecmat, x) == x``, where ``vecmat`` is
       the transpose of the linear map ``matvec`` (computed automatically with
