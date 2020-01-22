@@ -206,13 +206,13 @@ def digamma(x):
   r"""Elementwise digamma: :math:`\psi(x)`."""
   return digamma_p.bind(x)
 
-def igamma(x):
+def igamma(a, x):
   r"""Elementwise regularized incomplete gamma function."""
-  return igamma_p.bind(x)
+  return igamma_p.bind(a, x)
 
-def igammac(x):
+def igammac(a, x):
   r"""Elementwise complementary regularized incomplete gamma function."""
-  return igammac_p.bind(x)
+  return igammac_p.bind(a, x)
 
 def bessel_i0e(x):
   r"""Exponentially scaled modified Bessel function of order 0:
