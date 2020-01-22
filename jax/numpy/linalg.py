@@ -67,7 +67,7 @@ def matrix_rank(M, tol=None):
   if M.ndim > 2:
     raise TypeError("array should have 2 or fewer dimensions")
   if M.ndim < 2:
-    return int(not all(M==0))
+    return np.any(M != 0).astype(np.int32)
   S = svd(M, full_matrices=False, compute_uv=False)
   if tol is None:
     tol = S.max() * np.max(M.shape) * np.finfo(S.dtype).eps
