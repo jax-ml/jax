@@ -65,9 +65,12 @@ def svd(a, full_matrices=True, compute_uv=True):
 @_wraps(onp.linalg.matrix_power)
 def matrix_power(a, n):
   a = _promote_arg_dtypes(np.asarray(a))
-  # _assertRankAtLeast2(a)
-  # _assertNdSquareness(a)
 
+  if a.ndim < 2:
+    raise TypeError("%d-dimensional array given. Array must be at least "
+                    "two-dimensional" % a.ndim)
+  if a.shape[-2] != a.shape[-1]:
+    raise TypeError("Last 2 dimensions of the array must be square")
   try:
     n = operator.index(n)
   except TypeError:

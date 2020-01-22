@@ -611,7 +611,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for shape in [(1, 1), (2, 2), (4, 4), (5, 5),
                     (1, 2, 2), (2, 3, 3), (2, 5, 5)]
       for dtype in float_types + complex_types
-      for n in [-5, -2, -1, 0, 1, 2, 3, 4, 5, 10, 15]
+      for n in [-5, -2, -1, 0, 1, 2, 3, 4, 5, 10]
       for rng_factory in [jtu.rand_default]))
   def testMatrixPower(self, shape, dtype, n, rng_factory):
     rng = rng_factory()
