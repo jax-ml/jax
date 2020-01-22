@@ -87,6 +87,9 @@ new_jaxpr_eqn = JaxprEqn
 
 @total_ordering
 class Var(object):
+  # TODO(frostig,mattjj): We don't override __eq__ or __hash__, so comparison is
+  # by object id, but pretty printing might collide.
+
   def __init__(self, count, suffix):
     self.count = count
     self.suffix = suffix
@@ -133,7 +136,7 @@ class Literal(object):
 
   def __repr__(self):
     if self.hash is None:
-      return 'Literal(val={}, hashable={})'.format(self.val, self.hashable)
+      return 'Literal(val={})'.format(self.val)
     else:
       return '{}'.format(self.val)
 

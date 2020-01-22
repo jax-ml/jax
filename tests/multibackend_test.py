@@ -46,7 +46,7 @@ class MultiBackendTest(jtu.JaxTestCase):
         ))
   def testMultiBackend(self, backend):
     if backend not in ('cpu', jtu.device_under_test(), None):
-      raise SkipTest()
+      raise SkipTest("Backend is not CPU or the device under test")
     @partial(api.jit, backend=backend)
     def fun(x, y):
         return np.matmul(x, y)
@@ -65,7 +65,7 @@ class MultiBackendTest(jtu.JaxTestCase):
   def testMultiBackendNestedJit(self, ordering):
     outer, inner = ordering
     if outer not in ('cpu', jtu.device_under_test(), None):
-      raise SkipTest()
+      raise SkipTest("Backend is not CPU or the device under test")
     @partial(api.jit, backend=outer)
     def fun(x, y):
         @partial(api.jit, backend=inner)
@@ -91,9 +91,9 @@ class MultiBackendTest(jtu.JaxTestCase):
   def testMultiBackendNestedJitConflict(self, ordering):
     outer, inner = ordering
     if outer not in ('cpu', jtu.device_under_test(), None):
-      raise SkipTest()
+      raise SkipTest("Backend is not CPU or the device under test")
     if inner not in ('cpu', jtu.device_under_test(), None):
-      raise SkipTest()
+      raise SkipTest("Backend is not CPU or the device under test")
     @partial(api.jit, backend=outer)
     def fun(x, y):
         @partial(api.jit, backend=inner)
@@ -111,7 +111,7 @@ class MultiBackendTest(jtu.JaxTestCase):
         ))
   def testGpuMultiBackendOpByOpReturn(self, backend):
     if backend not in ('cpu', jtu.device_under_test()):
-      raise SkipTest()
+      raise SkipTest("Backend is not CPU or the device under test")
     @partial(api.jit, backend=backend)
     def fun(x, y):
         return np.matmul(x, y)

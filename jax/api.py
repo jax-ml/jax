@@ -62,7 +62,7 @@ from .interpreters import ad
 from .interpreters import batching
 from .interpreters import parallel
 from .interpreters import masking
-from .interpreters.masking import shapecheck
+from .interpreters.masking import shapecheck, ensure_poly
 from .config import flags, config
 
 map = safe_map
@@ -721,12 +721,13 @@ def pmap(fun, axis_name=None, devices=None, backend=None, axis_size=None):
   """Parallel map with support for collectives.
 
   The purpose of ``pmap`` is to express single-program multiple-data (SPMD)
-  programs and execute them in parallel on XLA devices, such as multiple GPUs or
-  multiple TPU cores. Semantically it is comparable to ``vmap`` because both
-  transformations map a function over array axes, but where ``vmap`` vectorizes
-  functions by pushing the mapped axis down into primitive operations, ``pmap``
-  instead replicates the function and executes each replica on its own XLA
-  device in parallel.
+  programs. Applying ``pmap`` to a function will compile the function with XLA
+  (similarly to ``jit``), then execute it in parallel on XLA devices, such as
+  multiple GPUs or multiple TPU cores. Semantically it is comparable to
+  ``vmap`` because both transformations map a function over array axes, but
+  where ``vmap`` vectorizes functions by pushing the mapped axis down into
+  primitive operations, ``pmap`` instead replicates the function and executes
+  each replica on its own XLA device in parallel.
 
   Another key difference with ``vmap`` is that while ``vmap`` can only express
   pure maps, ``pmap`` enables the use of parallel SPMD collective operations,
@@ -937,7 +938,7 @@ def soft_pmap(fun, axis_name=None, backend=None):
       msg = ("soft_pmap mapped axis size must be divisble by the number of "
              "XLA devices (or be less than or equal to that number), but got "
              "an axis size of {} with {} devices.")
-      raise ValueError(msg.format(axis_size, pxla.pxla.unmapped_device_count()))
+      raise ValueError(msg.format(axis_size, pxla.unmapped_device_count()))
     num_chunks = axis_size // chunk_size
 
     reshaped_args = [_reshape_split(num_chunks, x) for x in args_flat]
@@ -1055,7 +1056,7 @@ def _bind_shapes(shape_exprs, shapes):
   env = {}
   for shape_expr, shape in zip(shape_exprs, shapes):
     for poly, d in zip(shape_expr, shape):
-      if masking.is_constant(poly):
+      if ensure_poly(poly).is_constant:
         continue
       else:
         (binder,), = poly  # TODO generalize to handle striding
@@ -1921,15 +1922,12 @@ def _make_graphviz(fun):
     fragment.extend(map(constant_node, jaxpr.constvars, consts))
 
     for eqn in jaxpr.eqns:
-      if eqn.destructure:
-        id_name = next(id_names)
-        fragment.append(function_node(id_name, eqn.primitive.name))
-        fragment.extend(edge(invar, id_name) for invar in eqn.invars)
-        fragment.extend(edge(id_name, outvar) for outvar in eqn.outvars)
-      else:
-        fragment.append(function_node(eqn.outvars[0], eqn.primitive.name))
-        fragment.extend(edge(invar, eqn.outvars[0]) for invar in eqn.invars)
-    fragment.append(outvar_node(jaxpr.outvar, "out"))
+      id_name = next(id_names)
+      fragment.append(function_node(id_name, eqn.primitive.name))
+      fragment.extend(edge(invar, id_name) for invar in eqn.invars)
+      fragment.extend(edge(id_name, outvar) for outvar in eqn.outvars)
+    for ov in jaxpr.outvars:
+      fragment.append(outvar_node(ov, "out"))
     return graph(''.join(fragment))
 
   edge = '{} -> {} [color=gray30];\n'.format
@@ -1943,8 +1941,8 @@ def _make_graphviz(fun):
   @wraps(fun)
   def graphviz_maker(*args, **kwargs):
     wrapped = lu.wrap_init(fun, kwargs)
-    jax_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
-    jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(wrapped, in_trees)
+    jax_args, in_tree = tree_flatten((args, kwargs))
+    jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
     pvals = map(pv_like, jax_args)
     jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
     return jaxpr_to_graphviz(jaxpr, consts)
