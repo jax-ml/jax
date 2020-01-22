@@ -1889,8 +1889,7 @@ def arange(start, stop=None, step=None, dtype=None):
       args.append(stop)
     if step is not None:
       args.append(step)
-    # TODO(shoyer): needs value based casting if all args are builtin integers?
-    dtype = _dtype(*args)
+    dtype = _dtype(*args, int_)
 
   if stop is None and step is None:
     return lax.iota(dtype, start)  # avoids materializing
