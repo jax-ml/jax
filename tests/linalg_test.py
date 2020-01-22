@@ -896,5 +896,29 @@ class ScipyLinalgTest(jtu.JaxTestCase):
         (a, b),
         (a, b))
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),
+       "n": n, "dtype": dtype, "rng_factory": rng_factory}
+      for n in [1, 4, 5, 20, 50, 100]
+      for dtype in float_types + complex_types
+      for rng_factory in [jtu.rand_small]))
+  def testExpm(self, n, dtype, rng_factory):
+    rng = rng_factory()
+    _skip_if_unsupported_type(dtype)
+    args_maker = lambda: [rng((n, n), dtype)]
+
+    osp_fun = lambda a: osp.linalg.expm(a)
+    jsp_fun = lambda a: jsp.linalg.expm(a)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
+                            check_dtypes=True)
+    self._CompileAndCheck(jsp_fun, args_maker, check_dtypes=True)
+
+    args_maker_triu = lambda: [onp.triu(rng((n, n), dtype))]
+    jsp_fun_triu = lambda a: jsp.linalg.expm(a,upper_triangular=True)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun_triu, args_maker_triu,
+                            check_dtypes=True)
+    self._CompileAndCheck(jsp_fun_triu, args_maker_triu, check_dtypes=True)
+
 if __name__ == "__main__":
   absltest.main()
