@@ -15,6 +15,9 @@
 import sys
 
 
+_DEPRECATED_FLAGS = frozenset()
+
+
 class Config(object):
   def __init__(self):
     self.values = {}
@@ -23,6 +26,9 @@ class Config(object):
     self.use_absl = False
 
   def update(self, name, val):
+    if name in _DEPRECATED_FLAGS:
+      warnings.warn("Config option {} is deprecated and is now ignored"
+                    .format(name))
     if self.use_absl:
       setattr(self.absl_flags.FLAGS, name, val)
     else:

@@ -34,6 +34,7 @@ from .config import flags
 from .lib import xla_client
 
 FLAGS = flags.FLAGS
+# TODO: add deprecation warning
 flags.DEFINE_bool('jax_enable_x64',
                   strtobool(os.getenv('JAX_ENABLE_X64', 'False')),
                   'Enable 64-bit types to be used.')
@@ -60,14 +61,14 @@ class _bfloat16_finfo(object):
 # Default types.
 
 bool_ = onp.bool_
-int_ = onp.int64
-float_ = onp.float64
-complex_ = onp.complex128
+# int_ = onp.int64
+# float_ = onp.float64
+# complex_ = onp.complex128
 
 # TODO(phawkins): change the above defaults to:
-# int_ = onp.int32
-# float_ = onp.float32
-# complex_ = onp.complex64
+int_ = onp.int32
+float_ = onp.float32
+complex_ = onp.complex64
 
 
 _dtype_to_32bit_dtype = {
@@ -79,21 +80,17 @@ _dtype_to_32bit_dtype = {
 
 @util.memoize
 def canonicalize_dtype(dtype):
-  """Convert from a dtype to a canonical dtype based on FLAGS.jax_enable_x64."""
-  dtype = onp.dtype(dtype)
-
-  if FLAGS.jax_enable_x64:
-    return dtype
-  else:
-    return _dtype_to_32bit_dtype.get(dtype, dtype)
+  """Convert from a dtype to a canonical dtype."""
+  # TODO(shoyer): remove this
+  return onp.dtype(dtype)
 
 
 # Default dtypes corresponding to Python scalars.
 python_scalar_dtypes = {
-  bool: onp.dtype(bool_),
-  int: onp.dtype(int_),
-  float: onp.dtype(float_),
-  complex: onp.dtype(complex_),
+    bool: onp.dtype(bool_),
+    int: onp.dtype(int_),
+    float: onp.dtype(float_),
+    complex: onp.dtype(complex_),
 }
 
 def scalar_type_of(x):

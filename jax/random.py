@@ -305,15 +305,14 @@ def _check_shape(name, shape, *param_shapes):
       raise ValueError(msg.format(name, shape_, shape))
 
 
-def uniform(key, shape=(), dtype=onp.float64, minval=0., maxval=1.):
+def uniform(key, shape=(), dtype=dtypes.float_, minval=0., maxval=1.):
   """Sample uniform random values in [minval, maxval) with given shape/dtype.
 
   Args:
     key: a PRNGKey used as the random key.
     shape: optional, a tuple of nonnegative integers representing the result
       shape. Default ().
-    dtype: optional, a float dtype for the returned values (default float64 if
-      jax_enable_x64 is true, otherwise float32).
+    dtype: optional, a float dtype for the returned values (default float32).
     minval: optional, a minimum (inclusive) value for the range (default 0).
     maxval: optional, a maximum (exclusive) value for the range (default 1).
 
@@ -453,15 +452,14 @@ def _shuffle(key, x, axis):
   return x
 
 
-def normal(key, shape=(), dtype=onp.float64):
+def normal(key, shape=(), dtype=dtypes.float_):
   """Sample standard normal random values with given shape and float dtype.
 
   Args:
     key: a PRNGKey used as the random key.
     shape: optional, a tuple of nonnegative integers representing the result
       shape. Default ().
-    dtype: optional, a float dtype for the returned values (default float64 if
-      jax_enable_x64 is true, otherwise float32).
+    dtype: optional, a float dtype for the returned values (default float32).
 
   Returns:
     A random array with the specified shape and dtype.
@@ -478,7 +476,7 @@ def _normal(key, shape, dtype):
   return onp.array(onp.sqrt(2), dtype) * lax.erf_inv(u)
 
 
-def multivariate_normal(key, mean, cov, shape=None, dtype=onp.float64):
+def multivariate_normal(key, mean, cov, shape=None, dtype=dtypes.float_):
   """Sample multivariate normal random values with given mean and covariance.
 
   Args:
@@ -491,8 +489,7 @@ def multivariate_normal(key, mean, cov, shape=None, dtype=onp.float64):
       axis. Must be broadcast-compatible with ``mean.shape[:-1]`` and
       ``cov.shape[:-2]``. The default (None) produces a result batch shape by
       broadcasting together the batch shapes of ``mean`` and ``cov``.
-    dtype: optional, a float dtype for the returned values (default float64 if
-      jax_enable_x64 is true, otherwise float32).
+    dtype: optional, a float dtype for the returned values (default float32).
 
   Returns:
     A random array with the specified dtype and shape given by
@@ -526,7 +523,7 @@ def _multivariate_normal(key, mean, cov, shape, dtype):
   return mean + np.tensordot(normal_samples, chol_factor, [-1, 1])
 
 
-def truncated_normal(key, lower, upper, shape=None, dtype=onp.float64):
+def truncated_normal(key, lower, upper, shape=None, dtype=dtypes.float_):
   """Sample truncated standard normal random values with given shape and dtype.
 
   Args:
@@ -539,8 +536,7 @@ def truncated_normal(key, lower, upper, shape=None, dtype=onp.float64):
       shape. Must be broadcast-compatible with ``lower`` and ``upper``. The
       default (None) produces a result shape by broadcasting ``lower`` and
       ``upper``.
-    dtype: optional, a float dtype for the returned values (default float64 if
-      jax_enable_x64 is true, otherwise float32).
+    dtype: optional, a float dtype for the returned values (default float32).
 
   Returns:
     A random array with the specified dtype and shape given by ``shape`` if
@@ -597,7 +593,7 @@ def _bernoulli(key, p, shape):
   return uniform(key, shape, lax.dtype(p)) < p
 
 
-def beta(key, a, b, shape=None, dtype=onp.float64):
+def beta(key, a, b, shape=None, dtype=dtypes.float_):
   """Sample Bernoulli random values with given shape and mean.
 
   Args:
@@ -609,8 +605,7 @@ def beta(key, a, b, shape=None, dtype=onp.float64):
     shape: optional, a tuple of nonnegative integers specifying the result
       shape. Must be broadcast-compatible with ``a`` and ``b``. The default
       (None) produces a result shape by broadcasting ``a`` and ``b``.
-    dtype: optional, a float dtype for the returned values (default float64 if
-      jax_enable_x64 is true, otherwise float32).
+    dtype: optional, a float dtype for the returned values (default float32).
 
   Returns:
     A random array with the specified dtype and shape given by ``shape`` if
@@ -635,15 +630,14 @@ def _beta(key, a, b, shape, dtype):
   return gamma_a / (gamma_a + gamma_b)
 
 
-def cauchy(key, shape=(), dtype=onp.float64):
+def cauchy(key, shape=(), dtype=dtypes.float_):
   """Sample Cauchy random values with given shape and float dtype.
 
   Args:
     key: a PRNGKey used as the random key.
     shape: optional, a tuple of nonnegative integers representing the result
       shape. Default ().
-    dtype: optional, a float dtype for the returned values (default float64 if
-      jax_enable_x64 is true, otherwise float32).
+    dtype: optional, a float dtype for the returned values (default float32).
 
   Returns:
     A random array with the specified shape and dtype.
@@ -659,7 +653,7 @@ def _cauchy(key, shape, dtype):
   return lax.tan(lax.mul(pi, lax.sub(u, _constant_like(u, 0.5))))
 
 
-def dirichlet(key, alpha, shape=None, dtype=onp.float64):
+def dirichlet(key, alpha, shape=None, dtype=dtypes.float_):
   """Sample Cauchy random values with given shape and float dtype.
 
   Args:
@@ -671,8 +665,7 @@ def dirichlet(key, alpha, shape=None, dtype=onp.float64):
       element of value ``n``. Must be broadcast-compatible with
       ``alpha.shape[:-1]``. The default (None) produces a result shape equal to
       ``alpha.shape``.
-    dtype: optional, a float dtype for the returned values (default float64 if
-      jax_enable_x64 is true, otherwise float32).
+    dtype: optional, a float dtype for the returned values (default float32).
 
   Returns:
     A random array with the specified dtype and shape given by
@@ -698,15 +691,14 @@ def _dirichlet(key, alpha, shape, dtype):
   return gamma_samples / np.sum(gamma_samples, axis=-1, keepdims=True)
 
 
-def exponential(key, shape=(), dtype=onp.float64):
+def exponential(key, shape=(), dtype=dtypes.float_):
   """Sample Exponential random values with given shape and float dtype.
 
   Args:
     key: a PRNGKey used as the random key.
     shape: optional, a tuple of nonnegative integers representing the result
       shape. Default ().
-    dtype: optional, a float dtype for the returned values (default float64 if
-      jax_enable_x64 is true, otherwise float32).
+    dtype: optional, a float dtype for the returned values (default float32).
 
   Returns:
     A random array with the specified shape and dtype.
@@ -918,7 +910,7 @@ ad.defjvp2(random_gamma_p, None, lambda tangent, ans, key, a: (tangent * _gamma_
 xla.translations[random_gamma_p] = xla.lower_fun(_gamma_impl, instantiate=True)
 batching.primitive_batchers[random_gamma_p] = _gamma_batching_rule
 
-def gamma(key, a, shape=None, dtype=onp.float64):
+def gamma(key, a, shape=None, dtype=dtypes.float_):
   """Sample Gamma random values with given shape and float dtype.
 
   Args:
@@ -928,8 +920,7 @@ def gamma(key, a, shape=None, dtype=onp.float64):
     shape: optional, a tuple of nonnegative integers specifying the result
       shape. Must be broadcast-compatible with ``a``. The default (None)
       produces a result shape equal to ``a.shape``.
-    dtype: optional, a float dtype for the returned values (default float64 if
-      jax_enable_x64 is true, otherwise float32).
+    dtype: optional, a float dtype for the returned values (default float32).
 
   Returns:
     A random array with the specified dtype and with shape given by ``shape`` if
@@ -951,15 +942,14 @@ def _gamma(key, a, shape, dtype):
   return random_gamma_p.bind(key, a)[0]
 
 
-def gumbel(key, shape=(), dtype=onp.float64):
+def gumbel(key, shape=(), dtype=dtypes.float_):
   """Sample Gumbel random values with given shape and float dtype.
 
   Args:
     key: a PRNGKey used as the random key.
     shape: optional, a tuple of nonnegative integers representing the result
       shape. Default ().
-    dtype: optional, a float dtype for the returned values (default float64 if
-      jax_enable_x64 is true, otherwise float32).
+    dtype: optional, a float dtype for the returned values (default float32).
 
   Returns:
     A random array with the specified shape and dtype.
@@ -1002,15 +992,14 @@ def categorical(key, logits, axis=-1, shape=None):
   sample_shape = shape[:len(shape)-len(batch_shape)]
   return np.argmax(gumbel(key, sample_shape + logits.shape, logits.dtype) + logits, axis=axis)
 
-def laplace(key, shape=(), dtype=onp.float64):
+def laplace(key, shape=(), dtype=dtypes.float_):
   """Sample Laplace random values with given shape and float dtype.
 
   Args:
     key: a PRNGKey used as the random key.
     shape: optional, a tuple of nonnegative integers representing the result
       shape. Default ().
-    dtype: optional, a float dtype for the returned values (default float64 if
-      jax_enable_x64 is true, otherwise float32).
+    dtype: optional, a float dtype for the returned values (default float32).
 
   Returns:
     A random array with the specified shape and dtype.
@@ -1026,15 +1015,14 @@ def _laplace(key, shape, dtype):
   return lax.mul(lax.sign(u), lax.log1p(lax.neg(lax.abs(u))))
 
 
-def logistic(key, shape=(), dtype=onp.float64):
+def logistic(key, shape=(), dtype=dtypes.float_):
   """Sample logistic random values with given shape and float dtype.
 
   Args:
     key: a PRNGKey used as the random key.
     shape: optional, a tuple of nonnegative integers representing the result
       shape. Default ().
-    dtype: optional, a float dtype for the returned values (default float64 if
-      jax_enable_x64 is true, otherwise float32).
+    dtype: optional, a float dtype for the returned values (default float32).
 
   Returns:
     A random array with the specified shape and dtype.
@@ -1048,7 +1036,7 @@ def _logistic(key, shape, dtype):
   return logit(uniform(key, shape, dtype))
 
 
-def pareto(key, b, shape=None, dtype=onp.float64):
+def pareto(key, b, shape=None, dtype=dtypes.float_):
   """Sample Pareto random values with given shape and float dtype.
 
   Args:
@@ -1058,8 +1046,7 @@ def pareto(key, b, shape=None, dtype=onp.float64):
     shape: optional, a tuple of nonnegative integers specifying the result
       shape. Must be broadcast-compatible with ``b``. The default (None)
       produces a result shape equal to ``b.shape``.
-    dtype: optional, a float dtype for the returned values (default float64 if
-      jax_enable_x64 is true, otherwise float32).
+    dtype: optional, a float dtype for the returned values (default float32).
 
   Returns:
     A random array with the specified dtype and with shape given by ``shape`` if
@@ -1080,7 +1067,7 @@ def _pareto(key, b, shape, dtype):
   return lax.exp(e / b)
 
 
-def t(key, df, shape=(), dtype=onp.float64):
+def t(key, df, shape=(), dtype=dtypes.float_):
   """Sample Student's t random values with given shape and float dtype.
 
   Args:
@@ -1090,8 +1077,7 @@ def t(key, df, shape=(), dtype=onp.float64):
     shape: optional, a tuple of nonnegative integers specifying the result
       shape. Must be broadcast-compatible with ``df``. The default (None)
       produces a result shape equal to ``df.shape``.
-    dtype: optional, a float dtype for the returned values (default float64 if
-      jax_enable_x64 is true, otherwise float32).
+    dtype: optional, a float dtype for the returned values (default float32).
 
   Returns:
     A random array with the specified dtype and with shape given by ``shape`` if

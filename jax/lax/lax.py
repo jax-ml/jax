@@ -4579,6 +4579,7 @@ def _abstractify(x):
 
 
 def _check_user_dtype_supported(dtype, fun_name=None):
+  # TODO(shoyer): remove this
   if dtype is not None and onp.dtype(dtype) != dtypes.canonicalize_dtype(dtype):
     msg = ("Explicitly requested dtype {} {} is not available, "
            "and will be truncated to dtype {}. To enable more dtypes, set the "

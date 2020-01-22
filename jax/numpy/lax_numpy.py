@@ -1882,8 +1882,17 @@ def identity(n, dtype=None):
 @_wraps(onp.arange)
 def arange(start, stop=None, step=None, dtype=None):
   lax._check_user_dtype_supported(dtype, "arange")
+
+  if dtype is None:
+    args = [start]
+    if stop is not None:
+      args.append(stop)
+    if step is not None:
+      args.append(step)
+    # TODO(shoyer): needs value based casting if all args are builtin integers?
+    dtype = _dtype(*args)
+
   if stop is None and step is None:
-    dtype = dtype or _dtype(start)
     return lax.iota(dtype, start)  # avoids materializing
   else:
     return array(onp.arange(start, stop=stop, step=step, dtype=dtype))
