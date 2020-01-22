@@ -113,7 +113,7 @@ def delta_orthogonal(scale=1.0, column_axis=-1, dtype=np.float32):
       raise ValueError("`fan_in` must be less or equal than `fan_out`. ")
     ortho_init = orthogonal(scale=scale, column_axis=column_axis, dtype=dtype)
     ortho_matrix = ortho_init(key, shape[-2:])
-    W = np.zeros(shape)
+    W = np.zeros(shape, dtype=dtype)
     if len(shape) == 3:
       k = shape[0]
       return ops.index_update(W, ops.index[(k-1)//2, ...], ortho_matrix)

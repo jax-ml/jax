@@ -83,7 +83,7 @@ INITIALIZER_RECS = [
     initializer_record("lecun_normal", nn.initializers.lecun_normal),
     initializer_record("lecun_uniform", nn.initializers.lecun_uniform),
     initializer_record("orthogonal", nn.initializers.orthogonal, 2, 2),
-    initializer_record("orthogonal", nn.initializers.delta_orthogonal, 4, 4)
+    initializer_record("delta_orthogonal", nn.initializers.delta_orthogonal, 4, 4)
 ]
 
 class NNInitializersTest(jtu.JaxTestCase):
