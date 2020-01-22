@@ -163,7 +163,11 @@ LAX_OPS = [
 if lib.version > (0, 1, 37):
   LAX_OPS.append(
       op_record("betainc", 3, float_dtypes, jtu.rand_positive,
-                {onp.float64: 1e-14})
+                {onp.float64: 1e-14}),
+      op_record("igamma", 2, float_dtypes, jtu.rand_positive,
+                {onp.float64: 1e-14}),
+      op_record("igammac", 2, float_dtypes, jtu.rand_positive,
+                {onp.float64: 1e-14}),
   )
 
 CombosWithReplacement = itertools.combinations_with_replacement
