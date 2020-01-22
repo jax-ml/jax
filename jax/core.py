@@ -132,6 +132,8 @@ class Literal(object):
     return id(self.val) if self.hash is None else self.hash
 
   def __eq__(self, other):
+    if not isinstance(other, Literal):
+      return False
     return self.val is other.val if self.hash is None else self.val == other.val
 
   def __repr__(self):
