@@ -16,6 +16,8 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import operator
+
 import numpy as onp
 
 from . import core
@@ -96,7 +98,7 @@ class ShapedArray(UnshapedArray):
 
   def __init__(self, shape, dtype, weak_type=False):
     super(ShapedArray, self).__init__(dtype, weak_type=weak_type)
-    self.shape = shape
+    self.shape = tuple(map(operator.index, shape))
 
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self: prod(self.shape))
