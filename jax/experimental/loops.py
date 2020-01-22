@@ -112,6 +112,7 @@ from functools import partial
 import itertools
 import numpy as onp
 import traceback
+from typing import Any, List, cast
 
 from jax import abstract_arrays
 from jax import lax, core
@@ -287,7 +288,8 @@ class _BodyTracer(object):
     self.loop_builder = loop_builder
     self.first_iteration = True  # If we are tracing the first iteration
     # Stack trace, without this line and the s.range function
-    self.stack = traceback.StackSummary.from_list(traceback.extract_stack()[:-2])
+    self.stack = traceback.StackSummary.from_list(
+      cast(List[Any], traceback.extract_stack()[:-2]))
 
     # Next are state kept from the start of the first iteration to the end of the iteration.
     self.carried_state_initial = {}

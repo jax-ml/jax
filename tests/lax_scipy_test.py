@@ -30,6 +30,7 @@ import scipy.special as osp_special
 import scipy.stats as osp_stats
 
 from jax import api
+from jax import lib
 from jax import test_util as jtu
 from jax.scipy import special as lsp_special
 from jax.scipy import stats as lsp_stats
@@ -75,6 +76,11 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     # TODO(phawkins): gradient of entr yields NaNs.
     op_record("entr", 1, float_dtypes, jtu.rand_default, False),
 ]
+
+if lib.version > (0, 1, 37):
+  JAX_SPECIAL_FUNCTION_RECORDS.append(
+      op_record("betainc", 3, float_dtypes, jtu.rand_positive, False)
+  )
 
 CombosWithReplacement = itertools.combinations_with_replacement
 

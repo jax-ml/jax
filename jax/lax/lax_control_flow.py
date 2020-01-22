@@ -307,10 +307,71 @@ def _while_loop_batching_rule(args, dims, cond_nconsts, cond_jaxpr,
   out_bdims = [0 if b else batching.not_mapped for b in carry_bat]
   return outs, out_bdims
 
+def _while_loop_jvp(primals, tangents, cond_nconsts, cond_jaxpr, body_nconsts,
+                    body_jaxpr):
+  nonzeros = [t is not ad_util.zero for t in tangents]
+  cconst_nz, bconst_nz, init_nz = split_list(nonzeros, [cond_nconsts, body_nconsts])
+
+  carry_nz = init_nz
+  for _ in range(1 + len(carry_nz)):
+    body_nonzeros = bconst_nz + carry_nz
+    body_jvp, nonzeros_out = ad.jvp_jaxpr(
+        body_jaxpr, body_nonzeros, instantiate=carry_nz)
+    if nonzeros_out == carry_nz:
+      break
+    carry_nz = _map(operator.or_, carry_nz, nonzeros_out)
+  else:
+    assert False, "Fixpoint not reached"
+
+  nonzeros = cconst_nz + body_nonzeros
+  tangents = [ad.instantiate_zeros(x, t) if t is ad_util.zero and nz else t
+              for x, t, nz in zip(primals, tangents, nonzeros)]
+
+  cconst, bconst, init = split_list(primals, [cond_nconsts, body_nconsts])
+  _, bconst_dot, init_dot = split_list(tangents, [cond_nconsts, body_nconsts])
+  bconst_dot = _prune_zeros(bconst_dot)
+  init_dot = _prune_zeros(init_dot)
+
+  num_carry = len(primals) - cond_nconsts - body_nconsts
+
+  body_jvp_rearranged = ad.rearrange_binders(
+      body_jvp,
+      [body_nconsts, num_carry], [len(bconst_dot), len(init_dot)],
+      [num_carry], [len(init_dot)])
+
+  newvar = core.gensym('')
+  invars_aug = (
+      cond_jaxpr.jaxpr.invars + [newvar() for _ in range(len(init_dot))])
+  cond_jaxpr_augmented = core.Jaxpr(cond_jaxpr.jaxpr.constvars,
+                                    cond_jaxpr.jaxpr.freevars,
+                                    invars_aug,
+                                    cond_jaxpr.jaxpr.outvars,
+                                    cond_jaxpr.jaxpr.eqns)
+  in_avals_aug = (cond_jaxpr.in_avals[:cond_nconsts] +
+                  body_jvp_rearranged.in_avals[body_nconsts + len(bconst_dot):])
+  cond_jaxpr_augmented = core.TypedJaxpr(cond_jaxpr_augmented,
+                                         cond_jaxpr.literals,
+                                         in_avals_aug,
+                                         cond_jaxpr.out_avals)
+
+  out = while_p.bind(
+      *(cconst + bconst + bconst_dot + init + init_dot),
+      cond_nconsts=cond_nconsts,
+      cond_jaxpr=cond_jaxpr_augmented,
+      body_nconsts=len(bconst) + len(bconst_dot),
+      body_jaxpr=body_jvp_rearranged)
+
+  out_carry, out_carry_dot = split_list(out, [num_carry])
+  out_tangents_iter = iter(out_carry_dot)
+  out_tangents = [next(out_tangents_iter) if nz else ad_util.zero
+                  for nz in nonzeros_out]
+  return out_carry, out_tangents
+
 while_p = lax.Primitive('while')
 while_p.multiple_results = True
 while_p.def_impl(partial(xla.apply_primitive, while_p))
 while_p.def_abstract_eval(_while_loop_abstract_eval)
+ad.primitive_jvps[while_p] = _while_loop_jvp
 xla.initial_style_translations[while_p] = _while_loop_translation_rule
 batching.primitive_batchers[while_p] = _while_loop_batching_rule
 
@@ -641,8 +702,9 @@ def _scan_jvp(primals, tangents, forward, length, jaxpr, num_consts, num_carry,
 
   carry, carry_dot, ys, ys_dot = split_list(out_flat, [num_carry, len(init_dot), num_ys])
   primals_out = carry + ys
-  tangents_out = iter(carry_dot + ys_dot)
-  tangents_out = [next(tangents_out) if nz else ad_util.zero for nz in nonzeros_out]
+  tangents_out_iter = iter(carry_dot + ys_dot)
+  tangents_out = [next(tangents_out_iter) if nz else ad_util.zero
+                  for nz in nonzeros_out]
   return primals_out, tangents_out
 
 def _prune_zeros(ts):
@@ -855,17 +917,17 @@ def _scan_batching_rule(args, dims, forward, length, jaxpr, num_consts,
   ys_bdims = [1 if b else batching.not_mapped for b in ys_batched]
   return outs, carry_bdims + ys_bdims
 
-def _scan_polymorphic_shape_rule(shape_exprs, forward, length, jaxpr,
-                                 num_consts, num_carry, linear):
-  const_shexprs, init_shexprs, xs_shexprs = split_list(shape_exprs, [num_consts, num_carry])
+def _scan_shape_rule(shapes, forward, length, jaxpr,
+                     num_consts, num_carry, linear):
+  const_shexprs, init_shexprs, xs_shexprs = split_list(shapes, [num_consts, num_carry])
   _, y_avals = split_list(jaxpr.out_avals, [num_carry])
-  ys_shapes = [ShapeExpr(length, *y_aval.shape) for y_aval in y_avals]
+  ys_shapes = [(length,) + tuple(y_aval.shape) for y_aval in y_avals]
   return init_shexprs + ys_shapes
 
 def _scan_masking_rule(shape_envs, padded_vals, shape_exprs, forward, length,
                        jaxpr, num_consts, num_carry, linear):
-  out_shape = _scan_polymorphic_shape_rule(shape_exprs, forward, length, jaxpr,
-                                           num_consts, num_carry, linear)
+  out_shape = _scan_shape_rule(shape_exprs, forward, length, jaxpr,
+                               num_consts, num_carry, linear)
   dynamic_length = masking.eval_dim_expr(shape_envs.logical, length)
   masked_jaxpr = _masked_scan_jaxpr(jaxpr, num_consts, num_carry)
   consts, init, xs = split_list(padded_vals, [num_consts, num_carry])

@@ -14,13 +14,15 @@
 
 # JAX is Autograd and XLA
 
+pytype_library = py_library
+
 licenses(["notice"])
 
 package(default_visibility = ["//visibility:public"])
 
 # top-level EF placeholder
 
-py_library(
+pytype_library(
     name = "jax",
     srcs = glob(
         [
@@ -43,38 +45,44 @@ py_library(
     deps = ["@org_tensorflow//tensorflow/compiler/xla/python:xla_client"],
 )
 
-py_library(
+pytype_library(
     name = "stax",
     srcs = ["experimental/stax.py"],
+    srcs_version = "PY3",
     deps = [":jax"],
 )
 
-py_library(
+pytype_library(
     name = "optimizers",
     srcs = ["experimental/optimizers.py"],
+    srcs_version = "PY3",
     deps = [":jax"],
 )
 
-py_library(
+pytype_library(
     name = "optix",
     srcs = ["experimental/optix.py"],
+    srcs_version = "PY3",
     deps = [":jax"],
 )
 
-py_library(
+pytype_library(
     name = "ode",
     srcs = ["experimental/ode.py"],
+    srcs_version = "PY3",
     deps = [":jax"],
 )
 
-py_library(
+pytype_library(
     name = "vectorize",
     srcs = ["experimental/vectorize.py"],
+    srcs_version = "PY3",
     deps = [":jax"],
 )
 
-py_library(
+pytype_library(
     name = "loops",
     srcs = ["experimental/loops.py"],
+    srcs_version = "PY3",
     deps = [":jax"],
 )

@@ -22,6 +22,7 @@ import numpy as onp
 import warnings
 import textwrap
 import operator
+from typing import Tuple, Union, cast
 
 from jax import jit, ops
 from .. import lax
@@ -199,7 +200,7 @@ def pinv(a, rcond=None):
       rcond = 10. * max_rows_cols * np.finfo(a.dtype).eps
   rcond = np.asarray(rcond)
   u, s, v = svd(a, full_matrices=False)
-  # Singular values less than or equal to ``rcond * largest_singular_value`` 
+  # Singular values less than or equal to ``rcond * largest_singular_value``
   # are set to zero.
   cutoff = rcond[..., np.newaxis] * np.amax(s, axis=-1, keepdims=True)
   large = s > cutoff
@@ -221,7 +222,7 @@ def inv(a):
 
 
 @partial(jit, static_argnums=(1, 2, 3))
-def _norm(x, ord, axis, keepdims):
+def _norm(x, ord, axis: Union[None, Tuple[int, ...], int], keepdims):
   x = _promote_arg_dtypes(np.asarray(x))
   x_shape = np.shape(x)
   ndim = len(x_shape)
@@ -262,7 +263,7 @@ def _norm(x, ord, axis, keepdims):
       return np.power(out, 1. / ord)
 
   elif num_axes == 2:
-    row_axis, col_axis = axis
+    row_axis, col_axis = cast(Tuple[int, ...], axis)
     if ord is None or ord in ('f', 'fro'):
       return np.sqrt(np.sum(np.real(x * np.conj(x)), axis=axis,
                             keepdims=keepdims))

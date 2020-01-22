@@ -20,6 +20,7 @@ import collections
 import functools
 from functools import partial
 import itertools
+from typing import Optional, cast
 from unittest import skip, SkipTest
 
 from absl.testing import absltest
@@ -28,10 +29,12 @@ from absl.testing import parameterized
 import numpy as onp
 import numpy.random as npr
 
+import jax
 from jax import api
 from jax import core
 from jax import dtypes
 from jax import lax
+from jax import lib
 from jax import test_util as jtu
 from jax import lax_reference
 from jax import dtypes
@@ -157,6 +160,11 @@ LAX_OPS = [
     op_record("le", 2, default_dtypes, jtu.rand_small),
     op_record("lt", 2, default_dtypes, jtu.rand_small),
 ]
+if lib.version > (0, 1, 37):
+  LAX_OPS.append(
+      op_record("betainc", 3, float_dtypes, jtu.rand_positive,
+                {onp.float64: 1e-14})
+  )
 
 CombosWithReplacement = itertools.combinations_with_replacement
 
@@ -2518,7 +2526,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
 
 
 def all_bdims(*shapes):
-  bdims = (itertools.chain([None], range(len(shape) + 1)) for shape in shapes)
+  bdims = (itertools.chain([cast(Optional[int], None)],
+                           range(len(shape) + 1)) for shape in shapes)
   return (t for t in itertools.product(*bdims) if not all(e is None for e in t))
 
 def add_bdim(bdim_size, bdim, shape):
@@ -2597,8 +2606,10 @@ class LaxVmapTest(jtu.JaxTestCase):
           (("NCHW", "OIHW", "NCHW"), ([0, 1, 2, 3], [0, 1, 2, 3])),
           (("NHWC", "HWIO", "NHWC"), ([0, 2, 3, 1], [2, 3, 1, 0])),
           (("NHWC", "OIHW", "NCHW"), ([0, 2, 3, 1], [0, 1, 2, 3]))]
-      for lhs_bdim in itertools.chain([None], range(len(lhs_shape) + 1))
-      for rhs_bdim in itertools.chain([None], range(len(rhs_shape) + 1))
+      for lhs_bdim in itertools.chain([cast(Optional[int], None)],
+                                      range(len(lhs_shape) + 1))
+      for rhs_bdim in itertools.chain([cast(Optional[int], None)],
+                                      range(len(rhs_shape) + 1))
       if (lhs_bdim, rhs_bdim) != (None, None)
       for rng_factory in [jtu.rand_default]
   ))
