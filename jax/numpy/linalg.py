@@ -21,8 +21,9 @@ from functools import partial
 import numpy as onp
 import warnings
 import textwrap
+import operator
 
-from jax import jit
+from jax import jit, ops
 from .. import lax
 from .. import lax_linalg
 from .. import dtypes
@@ -59,6 +60,50 @@ def cholesky(a):
 def svd(a, full_matrices=True, compute_uv=True):
   a = _promote_arg_dtypes(np.asarray(a))
   return lax_linalg.svd(a, full_matrices, compute_uv)
+
+
+@_wraps(onp.linalg.matrix_power)
+def matrix_power(a, n):
+  a = _promote_arg_dtypes(np.asarray(a))
+  # _assertRankAtLeast2(a)
+  # _assertNdSquareness(a)
+
+  try:
+    n = operator.index(n)
+  except TypeError:
+    raise TypeError("exponent must be an integer")
+
+  if a.dtype != object:
+    fmatmul = np.matmul
+  elif a.ndim == 2:
+    fmatmul = np.dot
+  else:
+    raise NotImplementedError(
+        "matrix_power not supported for stacks of object arrays")
+
+  if n == 0:
+    a = np.empty_like(a)
+    a = ops.index_update(a, ..., np.eye(a.shape[-2], dtype=a.dtype))
+    return a
+  elif n < 0:
+    a = inv(a)
+    n = np.abs(n)
+
+  if n == 1:
+    return a
+  elif n == 2:
+    return fmatmul(a, a)
+  elif n == 3:
+    return fmatmul(fmatmul(a, a), a)
+
+  z = result = None
+  while n > 0:
+    z = a if z is None else fmatmul(z, z)
+    n, bit = divmod(n, 2)
+    if bit:
+      result = z if result is None else fmatmul(result, z)
+
+  return result
 
 
 # TODO(pfau): make this work for complex types
