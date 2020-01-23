@@ -146,7 +146,7 @@ def backward_pass(jaxpr, consts, freevar_vals, args, cotangents_in):
 
   def write_cotangent(v, ct):
     # assert v not in primal_env
-    if ct is not None:
+    if ct is not None and type(v) is not Literal:
       ct_env[v] = add_tangents(ct_env[v], ct) if v in ct_env else ct
 
   def read_cotangent(v):

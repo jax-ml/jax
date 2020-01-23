@@ -571,12 +571,12 @@ def _dce_jaxpr(typed_jaxpr, outputs):
               for var, aval, output in zip(outvars, out_avals, outputs)]
   new_outvars, new_out_avals = unzip2(out_pairs)
 
-  needed_vars = set(new_outvars)
+  needed_vars = {v for v in new_outvars if type(v) is not Literal}
   new_eqns = []
   for eqn in jaxpr.eqns[::-1]:
     if set(eqn.outvars) & needed_vars:
       new_eqns.append(eqn)
-      needed_vars.update(eqn.invars)
+      needed_vars.update(v for v in eqn.invars if type(v) is not Literal)
   new_eqns = new_eqns[::-1]
 
   new_jaxpr = core.Jaxpr(jaxpr.constvars, jaxpr.freevars, jaxpr.invars,
