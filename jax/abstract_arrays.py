@@ -69,7 +69,7 @@ class UnshapedArray(core.AbstractValue):
       float, "Try using `value.astype(float)` instead.")
   _int     = concretization_function_error(
       int, "Try using `value.astype(int)` instead.")
-  _complex = concretization_function_error(complex,
+  _complex = concretization_function_error(
       complex, "Try using `value.astype(complex)` instead.")
   _hex     = concretization_function_error(hex)
   _oct     = concretization_function_error(oct)
