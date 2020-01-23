@@ -24,17 +24,18 @@ from . import dtypes
 from . util import prod, partialmethod
 
 
-def concretization_err_msg(fun):
+def concretization_err_msg(fun, context):
   fname = getattr(fun, "__name__", fun)
-  msg = ("Abstract value passed to `{}`, which requires a concrete value. "
-         "The function to be transformed can't be traced at the required level "
-         "of abstraction. If using `jit`, try using `static_argnums` or "
-         "applying `jit` to smaller subfunctions instead.")
-  return msg.format(fname)
+  if context is None:
+    context = ("The function to be transformed can't be traced at the required level "
+        "of abstraction. If using `jit`, try using `static_argnums` or "
+        "applying `jit` to smaller subfunctions instead.")
+  msg = "Abstract value passed to `{}`, which requires a concrete value. {}"
+  return msg.format(fname, context)
 
-def concretization_function_error(fun):
+def concretization_function_error(fun, context=None):
   def error(self, *args):
-    raise TypeError(concretization_err_msg(fun))
+    raise TypeError(concretization_err_msg(fun, context))
   return error
 
 
@@ -64,9 +65,12 @@ class UnshapedArray(core.AbstractValue):
                              ", weak_type=True" if self.weak_type else "")
 
   _bool = _nonzero = concretization_function_error(bool)
-  _float   = concretization_function_error(float)
-  _int     = concretization_function_error(int)
-  _complex = concretization_function_error(complex)
+  _float   = concretization_function_error(
+      float, "Try using `value.astype(float)` instead.")
+  _int     = concretization_function_error(
+      int, "Try using `value.astype(int)` instead.")
+  _complex = concretization_function_error(complex,
+      complex, "Try using `value.astype(complex)` instead.")
   _hex     = concretization_function_error(hex)
   _oct     = concretization_function_error(oct)
 
