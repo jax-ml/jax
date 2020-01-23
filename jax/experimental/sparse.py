@@ -21,15 +21,16 @@ import scipy.sparse.linalg
 import jax.numpy as np
 from jax.numpy.lax_numpy import _wraps
 from .. import lax
+import numpy as onp
 
 def body_fun(matvec, x):
   p, x_current, r, r_norm, k = x
   # inspired by https://en.wikipedia.org/wiki/Conjugate_gradient_method#Example_code_in_MATLAB_/_GNU_Octave
   Ap = matvec(p)
-  alpha = r_norm / np.dot(np.conj(p), Ap)
+  alpha = r_norm / lax.dot(p, Ap)
   x_new = x_current + alpha * p
   r_new = r - alpha * Ap
-  r_norm_new = np.linalg.norm(r_new)
+  r_norm_new = lax.dot(r_new, np.conj(r_new))
   p_new = r_new + (r_norm_new / r_norm) * p
   return p_new, x_new, r_new, r_norm_new, (k+1)
 
@@ -41,20 +42,19 @@ def _cg_solve(matvec, b, x0, tol, maxiter):
     if not np.shape(x0) == (N,):
       raise ValueError('A and x have incompatible dimensions')
   if maxiter is None:
-    maxiter = N*10
+    maxiter = max(N*10, 1000)
   r_0 = b - matvec(x_0)
-  r_0_norm = np.linalg.norm(r_0)
+  r_0_norm = lax.dot(r_0, np.conj(r_0))
   p_0 = r_0
-  full_tol = tol * np.linalg.norm(r_0)
   _, x_final, _, _, _ = lax.while_loop(
-      lambda x: (x[-2] > full_tol) & (x[-1] < maxiter),
+      lambda x: (x[-2] > tol) & (x[-1] < maxiter),
       partial(body_fun, matvec),
       (p_0, x_0, r_0, r_0_norm, 0)
   )
   return x_final
 
 @_wraps(scipy.sparse.linalg.cg)
-def cg(matvec, b, x0=None, tol=1e-4, maxiter=None):
+def cg(matvec, b, x0=None, tol=1e-10, maxiter=None):
   # exposed as scipy.sparse.cg
   info = 0
   cg_solve = lambda matvec, b: _cg_solve(matvec, b, x0, tol, maxiter)
