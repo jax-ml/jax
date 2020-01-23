@@ -122,7 +122,7 @@ def pshuffle(x, axis_name, perm):
     x: array with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
       ``pmap`` docstring for more details).
-    perm: list of of ints, representing the new order of the source indicies
+    perm: list of of ints, representing the new order of the source indices
       that encode how the mapped axis named ``axis_name`` should be
       shuffled. The integer values are treated as indices into the mapped axis
       ``axis_name``. Every int between 0 and ``len(perm)-1`` should be included.
