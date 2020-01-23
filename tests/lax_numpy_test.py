@@ -423,7 +423,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     def f():
       out = [rng(shape, dtype or lnp.float_)
              for shape, dtype in zip(shapes, dtypes)]
-      return out if onp_arrays else [lnp.asarray(a) for a in out]
+      if onp_arrays:
+        return out
+      return [lnp.asarray(a) if isinstance(a, (onp.ndarray, onp.generic)) else a
+              for a in out]
     return f
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
