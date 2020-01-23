@@ -542,7 +542,10 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
 
   device_assignment = tuple(d.id for d in devices)
   compiled = built.Compile(
-      compile_options=xb.get_compile_options(num_global_replicas, device_assignment),
+      compile_options=xb.get_compile_options(
+          num_replicas=num_global_replicas,
+          num_partitions=1,
+          device_assignment=device_assignment),
       backend=xb.get_backend(backend))
 
   handle_args = partial(shard_args, backend, compiled.local_devices(),
