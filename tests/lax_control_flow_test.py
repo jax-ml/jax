@@ -42,6 +42,12 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 
+def while_loop_reference(cond, body, carry):
+  while cond(carry):
+    carry = body(carry)
+  return carry
+
+
 def scan_reference(f, init, xs):
   carry = init
   ys = []
@@ -627,6 +633,27 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
     assert "select" in str(jaxpr)
 
+  def testCondJVP(self):
+    def fun_ref(x):
+      if x < 3:
+        return (x, x)
+      else:
+        y = 2 * x
+        return y, 2 * y
+
+    def fun(x):
+      def false_fun(x):
+        y = 2 * x
+        return y, 2 * y
+      return lax.cond(x < 3, x, lambda x: (x, x), x, false_fun)
+
+    x = 3.14
+    ans = api.jvp(fun, (x,), (x,))
+    expected = api.jvp(fun_ref, (x,), (x,))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    jtu.check_grads(fun, (x,), order=2, modes=["fwd"])
+
   def testIssue1263(self):
     def f(rng, x):
       cond = random.bernoulli(rng)
@@ -1116,6 +1143,73 @@ class LaxControlFlowTest(jtu.JaxTestCase):
   def testWhileCondConstant(self):
     out = lax.while_loop(lambda _: False, lambda _: (), ())  # doesn't crash
     self.assertEqual(out, ())
+
+  @parameterized.named_parameters(
+      {"testcase_name": "_jit_loop={}_jit_body={}_jit_cond={}".format(
+          jit_loop, jit_body, jit_cond),
+       "jit_loop": jit_loop, "jit_body": jit_body, "jit_cond": jit_cond}
+      for jit_loop in [False, True]
+      for jit_body in [False, True]
+      for jit_cond in [False, True])
+  def testWhileJVP(self, jit_loop, jit_body, jit_cond):
+    cond = lambda x: x[0, 2] <= 8
+    body = lambda x: x * x
+
+    if jit_cond:
+      cond = api.jit(cond)
+    if jit_body:
+      body = api.jit(body)
+
+    loop = partial(lax.while_loop, cond, body)
+    if jit_loop:
+      loop = api.jit(loop)
+
+    loop_ref = partial(while_loop_reference, cond, body)
+
+    x = np.arange(9.).reshape((3, 3))
+    ans = api.jvp(loop, (x,), (x,))
+    expected = api.jvp(loop_ref, (x,), (x,))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    jtu.check_grads(loop, (x,), order=2, modes=["fwd"])
+
+  def testWhileJVPViaForiLoop(self):
+    f = lambda x: lax.fori_loop(0, 3, lambda i, x: x * 2, x)
+    self.assertAllClose(f(2.), 16., check_dtypes=False)
+    self.assertAllClose(api.jvp(f, (2.,), (1.,)), (16., 8.), check_dtypes=False)
+    jtu.check_grads(f, (2.,), order=2, modes=["fwd"])
+
+    f = lambda x: lax.fori_loop(0, 3, lambda i, x: x * (i + 1), x)
+    self.assertAllClose(f(2.), 12., check_dtypes=False)
+    self.assertAllClose(api.jvp(f, (2.,), (1.,)), (12., 6.), check_dtypes=False)
+    jtu.check_grads(f, (2.,), order=2, modes=["fwd"])
+
+  def testWhileJVPWithGrowingNonzeroTangents(self):
+    rng = onp.random.RandomState(0)
+
+    def cond(state):
+      i, x, y, z = state
+      return i < 2
+
+    def body(state):
+      i, x, y, z = state
+      y = x * x
+      z = y * y
+      return i + 1, x, y, z
+
+    y, z = rng.randn(2), rng.randn(2)
+    def loop(loop_impl, x):
+      return loop_impl(cond, body, (0, x, y, z))[1]
+
+    loop_lax = partial(loop, lax.while_loop)
+    loop_ref = partial(loop, while_loop_reference)
+
+    x = rng.randn(2)
+    ans = api.jvp(loop_lax, (x,), (x,))
+    expected = api.jvp(loop_ref, (x,), (x,))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    jtu.check_grads(loop_lax, (x,), order=2, modes=["fwd"])
 
   def testIssue1316(self):
     def f(carry, _):

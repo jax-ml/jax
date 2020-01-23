@@ -18,6 +18,7 @@ from __future__ import print_function
 
 import functools
 import itertools as it
+from typing import Any
 
 from . import partial_eval as pe
 from .. import core as core
@@ -36,12 +37,13 @@ map = safe_map
 def identity(x): return x
 
 
-def jvp(fun, has_aux=False, instantiate=True):
+def jvp(fun, has_aux=False, instantiate=True) -> Any:
   if not has_aux:
     return jvpfun(jvp_subtrace(fun), instantiate)
   else:
     fun, aux = jvp_subtrace_aux(fun)
     return jvpfun(fun, instantiate), aux
+
 
 @lu.transformation
 def jvpfun(instantiate, primals, tangents):
@@ -144,7 +146,7 @@ def backward_pass(jaxpr, consts, freevar_vals, args, cotangents_in):
 
   def write_cotangent(v, ct):
     # assert v not in primal_env
-    if ct is not None:
+    if ct is not None and type(v) is not Literal:
       ct_env[v] = add_tangents(ct_env[v], ct) if v in ct_env else ct
 
   def read_cotangent(v):

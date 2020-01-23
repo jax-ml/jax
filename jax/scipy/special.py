@@ -39,6 +39,12 @@ def betaln(x, y):
   return lax.lgamma(x) + lax.lgamma(y) - lax.lgamma(x + y)
 
 
+@_wraps(osp_special.betainc)
+def betainc(a, b, x):
+  a, b, x = _promote_args_inexact("betainc", a, b, x)
+  return lax.betainc(a, b, x)
+
+
 @_wraps(osp_special.digamma, update_doc=False)
 def digamma(x):
   x, = _promote_args_inexact("digamma", x)

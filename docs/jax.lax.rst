@@ -32,6 +32,7 @@ Operators
     batch_matmul
     bessel_i0e
     bessel_i1e
+    betainc
     bitcast_convert_type
     bitwise_not
     bitwise_and

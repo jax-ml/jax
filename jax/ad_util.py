@@ -39,9 +39,6 @@ def add_impl(xs, ys):
 def add_abstract(xs, ys):
   return lattice_join(xs, ys)
 
-def zeros_like_impl_jaxtuple(xs):
-  return JaxTuple(map(zeros_like_impl, xs))
-
 jaxval_zeros_likers = {}
 
 def zeros_like_aval(aval):

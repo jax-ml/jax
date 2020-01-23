@@ -122,7 +122,7 @@ def pshuffle(x, axis_name, perm):
     x: array with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
       ``pmap`` docstring for more details).
-    perm: list of of ints, representing the new order of the source indicies
+    perm: list of of ints, representing the new order of the source indices
       that encode how the mapped axis named ``axis_name`` should be
       shuffled. The integer values are treated as indices into the mapped axis
       ``axis_name``. Every int between 0 and ``len(perm)-1`` should be included.
@@ -619,12 +619,14 @@ def _add_jaxvals_papply_rule(name, size, vals, dims):
   xdim, ydim = dims
   if xdim == ydim:
     out_dim = xdim
-  elif ydim is None:
-    y = lax.psplit_like(y, x, name)
-    out_dim = xdim
   else:
-    x = lax.psplit_like(x, y, name)
-    out_dim = ydim
+    raise NotImplementedError
+  # elif ydim is None:
+  #   y = lax.psplit_like(y, x, name)
+  #   out_dim = xdim
+  # else:
+  #   x = lax.psplit_like(x, y, name)
+  #   out_dim = ydim
   return ad_util.add_jaxvals_p.bind(x, y), out_dim
 
 

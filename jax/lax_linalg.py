@@ -34,7 +34,7 @@ from jax.interpreters import batching
 from jax.util import partial, prod
 from jax.abstract_arrays import ShapedArray
 from jax.core import Primitive
-from jax.lax import (standard_primitive, standard_unop, binop_dtype_rule,
+from jax.lax import (standard_primitive, standard_unop, naryop_dtype_rule,
                      _float, _complex, _input_dtype, _broadcasting_select)
 from jax.lib import xla_client
 from jax.lib import lapack
@@ -311,7 +311,7 @@ xla.backend_specific_translations['gpu'][eigh_p] = partial(
 
 
 triangular_solve_dtype_rule = partial(
-    binop_dtype_rule, _input_dtype, (_float | _complex, _float | _complex),
+    naryop_dtype_rule, _input_dtype, (_float | _complex, _float | _complex),
     'triangular_solve')
 
 def triangular_solve_shape_rule(a, b, left_side=False, **unused_kwargs):
@@ -404,6 +404,7 @@ def _triangular_solve_cpu_translation_rule(
     c, a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
   shape = c.GetShape(a)
   dtype = shape.element_type().type
+
   if len(shape.dimensions()) == 2 and onp.dtype(dtype) in _cpu_lapack_types:
     if conjugate_a and not transpose_a:
       a = c.Conj(a)
@@ -412,9 +413,8 @@ def _triangular_solve_cpu_translation_rule(
       c, c.Constant(onp.array(1, dtype=dtype)), a, b, left_side, lower,
                     transpose_a, conjugate_a, unit_diagonal)
   else:
-    # Fall back to the HLO implementation for batched triangular_solve or
-    # unsupported types.
-    # TODO(phawkins): support BLAS primitives in batched mode.
+    # Fall back to the HLO implementation for unsupported types or batching.
+    # TODO: Consider swapping XLA for LAPACK in batched case
     return c.TriangularSolve(a, b, left_side, lower, transpose_a, conjugate_a,
                              unit_diagonal)
 

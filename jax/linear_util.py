@@ -175,7 +175,7 @@ class WrappedFun(object):
             self.params == other.params)
 
 @curry
-def transformation(gen, fun, *gen_static_args):
+def transformation(gen, fun: WrappedFun, *gen_static_args):
   """Adds one more transformation to a WrappedFun.
   Args:
     gen: the transformation generator function
@@ -185,7 +185,7 @@ def transformation(gen, fun, *gen_static_args):
   return fun.wrap(gen, gen_static_args, None)
 
 @curry
-def transformation_with_aux(gen, fun, *gen_static_args):
+def transformation_with_aux(gen, fun: WrappedFun, *gen_static_args):
   """Adds one more transformation with auxiliary output to a WrappedFun."""
   out_store = Store()
   out_thunk = lambda: out_store.val

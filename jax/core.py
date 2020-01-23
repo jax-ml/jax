@@ -87,6 +87,9 @@ new_jaxpr_eqn = JaxprEqn
 
 @total_ordering
 class Var(object):
+  # TODO(frostig,mattjj): We don't override __eq__ or __hash__, so comparison is
+  # by object id, but pretty printing might collide.
+
   def __init__(self, count, suffix):
     self.count = count
     self.suffix = suffix
@@ -126,14 +129,14 @@ class Literal(object):
           self.hash = None
 
   def __hash__(self):
-    return id(self.val) if self.hash is None else self.hash
+    assert False
 
   def __eq__(self, other):
-    return self.val is other.val if self.hash is None else self.val == other.val
+    assert False
 
   def __repr__(self):
     if self.hash is None:
-      return 'Literal(val={}, hashable={})'.format(self.val, self.hashable)
+      return 'Literal(val={})'.format(self.val)
     else:
       return '{}'.format(self.val)
 
@@ -624,7 +627,7 @@ def check_jaxpr(jaxpr):
     return "\njaxpr:\n{}\n".format(jaxpr)
 
   def read_env(env, v):
-    if v not in env and type(v) is not Literal:
+    if type(v) is not Literal and v not in env:
       raise Exception("Variable '{}' not defined".format(v) + context())
 
   def write_env(env, v):
