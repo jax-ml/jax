@@ -560,8 +560,6 @@ def _float_divmod(x1, x2):
 
 @_wraps(onp.power)
 def power(x1, x2):
-  x1 = asarray(x1)
-  x2 = asarray(x2)
   x1, x2 = _promote_args(onp.power, x1, x2)
   dtype = _dtype(x1)
   if not issubdtype(dtype, integer):
@@ -1023,7 +1021,7 @@ def moveaxis(a, source, destination):
 
 @_wraps(onp.isclose)
 def isclose(a, b, rtol=1e-05, atol=1e-08):
-  a, b = _promote_args("isclose", asarray(a), asarray(b))
+  a, b = _promote_args("isclose", a, b)
   dtype = _dtype(a)
   if issubdtype(dtype, inexact):
     if issubdtype(dtype, complexfloating):
@@ -3143,9 +3141,10 @@ def gcd(x1, x2):
   if (not issubdtype(_dtype(x1), integer) or
       not issubdtype(_dtype(x2), integer)):
     raise ValueError("Arguments to gcd must be integers.")
-  x1, x2 = _promote_dtypes(lax.abs(x1), lax.abs(x2))
+  x1, x2 = _promote_dtypes(x1, x2)
   x1, x2 = broadcast_arrays(x1, x2)
-  gcd, _ = lax.while_loop(_gcd_cond_fn, _gcd_body_fn, (x1, x2))
+  gcd, _ = lax.while_loop(_gcd_cond_fn, _gcd_body_fn,
+                          (lax.abs(x1), lax.abs(x2)))
   return gcd
 
 
