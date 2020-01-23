@@ -29,7 +29,7 @@ from jax.experimental import sparse
 
 float_types = [onp.float32, onp.float64]
 complex_types = [onp.complex64, onp.complex128]
-_T = lambda x: np.swapaxes(np.conj(x), -1, -2)
+_T = lambda x: np.swapaxes(x, -1, -2)
 
 
 class LaxBackedScipyTests(jtu.JaxTestCase):
@@ -51,7 +51,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       b = rng((shape[0],), dtype)
       square_mat = np.eye(N=shape[0], dtype=dtype) + square_mat
       spd_mat = np.matmul(square_mat, _T(square_mat))
-      return lax.convert_element_type(spd_mat, dtype), b
+      return spd_mat, b
 
     a, b = args_maker()
     expected = osp_sparse.cg(onp.asarray(a), onp.asarray(b))
@@ -60,7 +60,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     actual_1_step = build_and_solve(a, b, 1)
     self.assertAllClose(expected, actual, atol=1e-4, check_dtypes=True)
     self.assertAllClose(expected_1_step, actual_1_step, atol=1e-4, check_dtypes=True)
-    #jtu.check_grads(build_and_solve, (a, b), atol=1e-4, order=2, rtol=2e-3)
+    jtu.check_grads(build_and_solve, (a, b), atol=1e-4, order=2, rtol=2e-3)
 
 if __name__ == "__main__":
   absltest.main()
