@@ -28,7 +28,6 @@ import functools
 import os
 
 import numpy as onp
-import six
 
 from . import util
 from .config import flags
@@ -97,9 +96,6 @@ python_scalar_dtypes = {
   complex: onp.dtype(complex_),
 }
 
-if six.PY2:
-  python_scalar_dtypes[long] = onp.dtype(int_)  # noqa: F821
-
 def scalar_type_of(x):
   typ = dtype(x)
   if onp.issubdtype(typ, onp.bool_):
@@ -114,7 +110,7 @@ def scalar_type_of(x):
     raise TypeError("Invalid scalar value {}".format(x))
 
 def coerce_to_array(x):
-  """Coreces a scalar or NumPy array to an onp.array.
+  """Coerces a scalar or NumPy array to an onp.array.
 
   Handles Python scalar type promotion according to JAX's rules, not NumPy's
   rules.
@@ -135,7 +131,14 @@ def finfo(dtype):
 
 def issubdtype(a, b):
   if a == bfloat16:
-    return b in [onp.floating, onp.inexact, onp.number]
+    return b in [bfloat16, _bfloat16_dtype, onp.floating, onp.inexact,
+                 onp.number]
+  if not issubclass(b, onp.generic):
+    # Workaround for JAX scalar types. NumPy's issubdtype has a backward
+    # compatibility behavior for the second argument of issubdtype that
+    # interacts badly with JAX's custom scalar types. As a workaround,
+    # explicitly cast the second argument to a NumPy type object.
+    b = onp.dtype(b).type
   return onp.issubdtype(a, b)
 
 can_cast = onp.can_cast

@@ -16,6 +16,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from contextlib import contextmanager
 import functools
 import re
 import itertools as it
@@ -28,10 +29,9 @@ from absl.testing import parameterized
 import numpy as onp
 import numpy.random as npr
 
-from six.moves import xrange
-
 from . import api
 from . import dtypes
+from . import lax
 from .config import flags
 from .util import partial
 from .tree_util import tree_multimap, tree_all, tree_map, tree_reduce
@@ -245,6 +245,47 @@ def check_grads(f, args, order,
 
   _check_grads(f, args, order)
 
+
+@contextmanager
+def count_primitive_compiles():
+  xla.xla_primitive_callable.cache_clear()
+
+  # We count how many times we call primitive_computation (which is called
+  # inside xla_primitive_callable) instead of xla_primitive_callable so we don't
+  # count cache hits.
+  primitive_computation = xla.primitive_computation
+  count = [0]
+
+  def primitive_computation_and_count(*args, **kwargs):
+    count[0] += 1
+    return primitive_computation(*args, **kwargs)
+
+  xla.primitive_computation = primitive_computation_and_count
+  try:
+    yield count
+  finally:
+    xla.primitive_computation = primitive_computation
+
+
+@contextmanager
+def count_jit_and_pmap_compiles():
+  # No need to clear any caches since we generally jit and pmap fresh callables
+  # in tests.
+
+  jaxpr_subcomp = xla.jaxpr_subcomp
+  count = [0]
+
+  def jaxpr_subcomp_and_count(*args, **kwargs):
+    count[0] += 1
+    return jaxpr_subcomp(*args, **kwargs)
+
+  xla.jaxpr_subcomp = jaxpr_subcomp_and_count
+  try:
+    yield count
+  finally:
+    xla.jaxpr_subcomp = jaxpr_subcomp
+
+
 def device_under_test():
   return FLAGS.jax_test_dut or xla_bridge.get_backend().platform
 
@@ -343,6 +384,8 @@ def format_shape_dtype_string(shape, dtype):
     return '{}[{}]'.format(dtype_str(dtype), shapestr)
   elif type(shape) is int:
     return '{}[{},]'.format(dtype_str(dtype), shape)
+  elif isinstance(shape, onp.ndarray):
+    return '{}[{}]'.format(dtype_str(dtype), shape)
   else:
     raise TypeError(type(shape))
 
@@ -564,6 +607,23 @@ def check_raises_regexp(thunk, err_type, pattern):
   except err_type as e:
     assert re.match(pattern, str(e)), "{}\n\n{}\n".format(e, pattern)
 
+
+def _iter_eqns(jaxpr):
+  for eqn in jaxpr.eqns:
+    yield eqn
+    for subjaxpr, _, _ in eqn.bound_subjaxprs:
+      for sub_eqn in _iter_eqns(subjaxpr):
+        yield sub_eqn
+
+def assert_dot_precision(expected_precision, fun, *args):
+  jaxpr = api.make_jaxpr(fun)(*args)
+  precisions = [eqn.params['precision'] for eqn in _iter_eqns(jaxpr.jaxpr)
+                if eqn.primitive == lax.dot_general_p]
+  for precision in precisions:
+    msg = "Unexpected precision: {} != {}".format(expected_precision, precision)
+    assert precision == expected_precision, msg
+
+
 _CACHED_INDICES = {}
 
 def cases_from_list(xs):
@@ -582,7 +642,7 @@ def cases_from_gens(*gens):
   sizes = [1, 3, 10]
   cases_per_size = int(FLAGS.num_generated_cases / len(sizes)) + 1
   for size in sizes:
-    for i in xrange(cases_per_size):
+    for i in range(cases_per_size):
       yield ('_{}_{}'.format(size, i),) + tuple(gen(size) for gen in gens)
 
 
@@ -602,7 +662,7 @@ class JaxTestCase(parameterized.TestCase):
 
   def assertDtypesMatch(self, x, y):
     if FLAGS.jax_enable_x64:
-      self.assertEqual(onp.asarray(x).dtype, onp.asarray(y).dtype)
+      self.assertEqual(_dtype(x), _dtype(y))
 
   def assertAllClose(self, x, y, check_dtypes, atol=None, rtol=None):
     """Assert that x and y, either arrays or nested tuples/lists, are close."""
@@ -618,9 +678,11 @@ class JaxTestCase(parameterized.TestCase):
         self.assertAllClose(x_elt, y_elt, check_dtypes, atol=atol, rtol=rtol)
     elif hasattr(x, '__array__') or onp.isscalar(x):
       self.assertTrue(hasattr(y, '__array__') or onp.isscalar(y))
+      if check_dtypes:
+        self.assertDtypesMatch(x, y)
       x = onp.asarray(x)
       y = onp.asarray(y)
-      self.assertArraysAllClose(x, y, check_dtypes, atol=atol, rtol=rtol)
+      self.assertArraysAllClose(x, y, check_dtypes=False, atol=atol, rtol=rtol)
     elif x == y:
       return
     else:

@@ -16,14 +16,13 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import builtins
 import collections
 import itertools
 
 import numpy as onp
 import opt_einsum
 import scipy.special
-
-from six.moves import builtins
 
 from . import dtypes
 
@@ -37,6 +36,7 @@ sign = onp.sign
 floor = onp.floor
 ceil = onp.ceil
 round = onp.round
+nextafter = onp.nextafter
 
 is_finite = onp.isfinite
 
@@ -60,6 +60,7 @@ atan = onp.arctan
 sinh = onp.sinh
 cosh = onp.cosh
 
+betainc = scipy.special.betainc
 lgamma = scipy.special.gammaln
 digamma = scipy.special.digamma
 erf = scipy.special.erf

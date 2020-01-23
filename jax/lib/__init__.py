@@ -17,7 +17,7 @@
 
 import jaxlib
 
-_minimum_jaxlib_version = (0, 1, 36)
+_minimum_jaxlib_version = (0, 1, 37)
 try:
   from jaxlib import version as jaxlib_version
 except:
@@ -45,7 +45,7 @@ _check_jaxlib_version()
 
 
 try:
-  from jaxlib import tpu_client
+  from jaxlib import tpu_client  # pytype: disable=import-error
 except:
   tpu_client = None
 from jaxlib import xla_client
