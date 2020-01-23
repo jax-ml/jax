@@ -17,6 +17,7 @@ from __future__ import division
 from __future__ import print_function
 
 from collections import namedtuple, defaultdict
+from contextlib import contextmanager
 from distutils.util import strtobool
 import itertools as it
 import operator as op
@@ -201,24 +202,33 @@ def _device_from_arg_devices(devices):
     all_devices = it.chain(xb.devices(), xb.devices('cpu'))
     return device and next(d for d in all_devices if (type(d), d.id) == device)
 
+
+@contextmanager
+def _op_metadata(computation_builder, op_metadata):
+  computation_builder.SetOpMetadata(op_metadata)
+  try:
+    yield
+  finally:
+    computation_builder.ClearOpMetadata()
+
+
 @cache()
 def primitive_computation(prim, backend, tuple_args, *avals, **params):
   c = xb.make_computation_builder("primitive_computation_{}".format(prim.name))
-  c.SetOpMetadata(xc.OpMetadata(op_type=prim.name, op_name=str(params)))
-  platform = xb.get_backend(backend).platform
-  xla_args = _xla_callable_args(c, avals, tuple_args)
-  if prim in backend_specific_translations[platform]:
-    rule = backend_specific_translations[platform][prim]
-    rule(c, *xla_args, **params)  # return val set as a side-effect on c
-  elif prim in translations:
-    rule = translations[prim]
-    rule(c, *xla_args, **params)  # return val set as a side-effect on c
-  elif prim in initial_style_translations:
-    rule = initial_style_translations[prim]
-    rule(c, AxisEnv(), *xla_args, backend=backend, **params)  # side-effect on c
-  else:
-    raise NotImplementedError("XLA translation rule for {} not found".format(prim))
-  c.ClearOpMetadata()
+  with _op_metadata(c, xc.OpMetadata(op_type=prim.name, op_name=str(params))):
+    platform = xb.get_backend(backend).platform
+    xla_args = _xla_callable_args(c, avals, tuple_args)
+    if prim in backend_specific_translations[platform]:
+      rule = backend_specific_translations[platform][prim]
+      rule(c, *xla_args, **params)  # return val set as a side-effect on c
+    elif prim in translations:
+      rule = translations[prim]
+      rule(c, *xla_args, **params)  # return val set as a side-effect on c
+    elif prim in initial_style_translations:
+      rule = initial_style_translations[prim]
+      rule(c, AxisEnv(), *xla_args, backend=backend, **params)  # side-effect on c
+    else:
+      raise NotImplementedError("XLA translation rule for {} not found".format(prim))
   try:
     return c.Build()
   except RuntimeError as e:
@@ -282,6 +292,22 @@ def eqn_literals(eqn):
     if type(v) is core.Literal:
       yield v.val
 
+
+@contextmanager
+def _op_partition(computation_builder, partition_id):
+  if partition_id is None:
+    yield
+  else:
+    sharding = xc.OpSharding()
+    sharding.type = xc.OpSharding.Type.MAXIMAL
+    sharding.tile_assignment_devices = [partition_id]
+    computation_builder.SetSharding(sharding)
+    try:
+      yield
+    finally:
+      computation_builder.ClearSharding()
+
+
 def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, freevars, *args):
   platform = xb.get_backend(backend).platform
 
@@ -301,37 +327,37 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, freevars, *args):
   _map(write, jaxpr.freevars, freevars)
   _map(write, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
-    c.SetOpMetadata(xc.OpMetadata(op_type=eqn.primitive.name))
-    in_nodes = list(map(read, eqn.invars))
-    if eqn.primitive in backend_specific_translations[platform]:
-      rule = backend_specific_translations[platform][eqn.primitive]
-      ans = rule(c, *in_nodes, **eqn.params)
-    elif eqn.primitive in translations:
-      ans = translations[eqn.primitive](c, *in_nodes, **eqn.params)
-    elif eqn.primitive in initial_style_translations:
-      new_params = check_backend_params(eqn.params, backend)
-      rule = initial_style_translations[eqn.primitive]
-      ans = rule(c, axis_env, *in_nodes, backend=backend, **new_params)
-    elif eqn.primitive in parallel_translations:
-      replica_groups = axis_groups(axis_env, eqn.params['axis_name'])
-      new_params = {k: v for k, v in eqn.params.items() if k != 'axis_name'}
-      rule = parallel_translations[eqn.primitive]
-      ans = rule(c, *in_nodes, replica_groups=replica_groups, **new_params)
-    elif eqn.primitive in call_translations:
-      new_params = check_backend_params(eqn.params, backend)
-      (subjaxpr, const_bindings, freevar_bindings), = eqn.bound_subjaxprs
-      const_nodes = _map(read, const_bindings)
-      freevar_nodes = _map(read, freevar_bindings)
-      rule = call_translations[eqn.primitive]
-      ans = rule(c, subjaxpr, axis_env, const_nodes, freevar_nodes, in_nodes,
-                 backend=backend, **new_params)
-    else:
-      msg = "XLA translation rule for primitive '{}' not found"
-      raise NotImplementedError(msg.format(eqn.primitive.name))
+    with _op_metadata(c, xc.OpMetadata(op_type=eqn.primitive.name)), \
+         _op_partition(c, eqn.partition_id):
+      in_nodes = list(map(read, eqn.invars))
+      if eqn.primitive in backend_specific_translations[platform]:
+        rule = backend_specific_translations[platform][eqn.primitive]
+        ans = rule(c, *in_nodes, **eqn.params)
+      elif eqn.primitive in translations:
+        ans = translations[eqn.primitive](c, *in_nodes, **eqn.params)
+      elif eqn.primitive in initial_style_translations:
+        new_params = check_backend_params(eqn.params, backend)
+        rule = initial_style_translations[eqn.primitive]
+        ans = rule(c, axis_env, *in_nodes, backend=backend, **new_params)
+      elif eqn.primitive in parallel_translations:
+        replica_groups = axis_groups(axis_env, eqn.params["axis_name"])
+        new_params = {k: v for k, v in eqn.params.items() if k != "axis_name"}
+        rule = parallel_translations[eqn.primitive]
+        ans = rule(c, *in_nodes, replica_groups=replica_groups, **new_params)
+      elif eqn.primitive in call_translations:
+        new_params = check_backend_params(eqn.params, backend)
+        (subjaxpr, const_bindings, freevar_bindings), = eqn.bound_subjaxprs
+        const_nodes = _map(read, const_bindings)
+        freevar_nodes = _map(read, freevar_bindings)
+        rule = call_translations[eqn.primitive]
+        ans = rule(c, subjaxpr, axis_env, const_nodes, freevar_nodes, in_nodes,
+                   backend=backend, **new_params)
+      else:
+        msg = "XLA translation rule for primitive '{}' not found"
+        raise NotImplementedError(msg.format(eqn.primitive.name))
 
-    c.GetShape(ans)  # force xla to do shape error checking
-    out_nodes = xla_destructure(c, ans) if eqn.primitive.multiple_results else [ans]
-    c.ClearOpMetadata()
+      c.GetShape(ans)  # force xla to do shape error checking
+      out_nodes = xla_destructure(c, ans) if eqn.primitive.multiple_results else [ans]
     _map(write, eqn.outvars, out_nodes)
   return _map(read, jaxpr.outvars)
 

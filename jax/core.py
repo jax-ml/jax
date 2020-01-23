@@ -79,8 +79,9 @@ def jaxpr_as_fun(typed_jaxpr, *args):
   return eval_jaxpr(typed_jaxpr.jaxpr, typed_jaxpr.literals, (), *args)
 
 
-JaxprEqn = namedtuple('JaxprEqn', ['invars', 'outvars', 'primitive',
-                                   'bound_subjaxprs', 'params'])
+JaxprEqn = namedtuple(
+    'JaxprEqn',
+    ['invars', 'outvars', 'primitive', 'bound_subjaxprs', 'params', 'partition_id'])
 JaxprEqn.__repr__ = JaxprEqn.__str__ = lambda eqn: str(pp_eqn(eqn)).rstrip()
 new_jaxpr_eqn = JaxprEqn
 
@@ -665,9 +666,16 @@ def pp_eqn(eqn):
           pp_jaxpr(subjaxpr).indent(2)
           >> pp(' [ {} ; {} ]'.format(pp_vars(const_vars),
                                       pp_vars(bound_vars))))
-  return (pp('{} = '.format(lhs)) >>
-          pp(eqn.primitive.name) >> pp_kv_pairs(sorted(eqn.params.items()))
-          >> pp(' ') >> pp(pp_vars(eqn.invars))) + pp_subexpr
+
+  if eqn.partition_id is None:
+    pp_partition = pp('')
+  else:
+    pp_partition = pp(' (partition={})'.format(eqn.partition_id))
+
+  return (pp('{} = '.format(lhs)) >> pp(eqn.primitive.name) >> pp_kv_pairs(
+      sorted(eqn.params.items())) >> pp(' ') >> pp(pp_vars(
+          eqn.invars))) >> pp_partition + pp_subexpr
+
 
 def pp_jaxpr(jaxpr):
   return (pp('{{ lambda {} ; {} ; {}.'.format(pp_vars(jaxpr.constvars),

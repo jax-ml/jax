@@ -375,7 +375,7 @@ def recipe_to_eqn(unused_var, getvar, recipe):
   outvars = [unused_var() if t is None else getvar(t) for t in out_tracers]
   new_bound_subjaxprs = [(j, map(getvar, c), map(getvar, f))
                          for j, c, f in bound_subjaxprs]
-  return new_jaxpr_eqn(invars, outvars, primitive, new_bound_subjaxprs, params)
+  return new_jaxpr_eqn(invars, outvars, primitive, new_bound_subjaxprs, params, None)
 
 def tracers_to_jaxpr(in_tracers, out_tracers):
   newvar = core.gensym('')
