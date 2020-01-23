@@ -77,14 +77,6 @@ def matrix_power(a, n):
   except TypeError:
     raise TypeError("exponent must be an integer")
 
-  if a.dtype != object:
-    fmatmul = np.matmul
-  elif a.ndim == 2:
-    fmatmul = np.dot
-  else:
-    raise NotImplementedError(
-        "matrix_power not supported for stacks of object arrays")
-
   if n == 0:
     a = np.empty_like(a)
     a = ops.index_update(a, ..., np.eye(a.shape[-2], dtype=a.dtype))
@@ -96,16 +88,16 @@ def matrix_power(a, n):
   if n == 1:
     return a
   elif n == 2:
-    return fmatmul(a, a)
+    return a @ a
   elif n == 3:
-    return fmatmul(fmatmul(a, a), a)
+    return (a @ a) @ a
 
   z = result = None
   while n > 0:
-    z = a if z is None else fmatmul(z, z)
+    z = a if z is None else (z @ z)
     n, bit = divmod(n, 2)
     if bit:
-      result = z if result is None else fmatmul(result, z)
+      result = z if result is None else (result @ z)
 
   return result
 
