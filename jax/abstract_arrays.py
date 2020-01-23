@@ -24,7 +24,7 @@ from . import dtypes
 from . util import prod, partialmethod
 
 
-def concretization_err_msg(fun, context):
+def concretization_err_msg(fun, context=None):
   fname = getattr(fun, "__name__", fun)
   if context is None:
     context = ("The function to be transformed can't be traced at the required level "
