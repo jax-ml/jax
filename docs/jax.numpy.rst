@@ -285,6 +285,7 @@ jax.numpy.linalg
   eigh
   inv
   norm
+  matrix_rank
   qr
   slogdet
   solve
