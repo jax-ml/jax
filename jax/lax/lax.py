@@ -4229,6 +4229,37 @@ outfeed_p.def_impl(partial(xla.apply_primitive, outfeed_p))
 outfeed_p.def_abstract_eval(_outfeed_abstract_eval)
 xla.translations[outfeed_p] = _outfeed_translation_rule
 
+def rng_uniform(a, b, shape):
+  """Stateful PRNG generator. Experimental and its use is discouraged.
+
+  Returns uniformly distributed random numbers in the range [a, b)
+
+  You should use jax.random for most purposes; this function exists only for
+  niche use cases with special performance requirements.
+
+  This API may be removed at any time.
+  """
+  return rng_uniform_p.bind(a, b, shape=tuple(shape))
+
+def _rng_uniform_abstract_eval(a, b, shape):
+  if a.dtype != b.dtype:
+    raise ValueError(
+      "Arguments to rng_uniform must have identical dtypes, got {} "
+      "and {}.".format(a.dtype, b.dtype))
+  if a.shape != () or b.shape != ():
+    raise ValueError(
+      "Arguments to rng_uniform must be scalars; got shapes {} and {}."
+      .format(a.shape, b.shape))
+  return ShapedArray(shape, a.dtype)
+
+def _rng_uniform_translation_rule(c, a, b, shape):
+  return c.RngUniform(a, b, shape)
+
+rng_uniform_p = Primitive("rng_uniform")
+rng_uniform_p.def_impl(partial(xla.apply_primitive, rng_uniform_p))
+rng_uniform_p.def_abstract_eval(_rng_uniform_abstract_eval)
+xla.translations[rng_uniform_p] = _rng_uniform_translation_rule
+
 ### util
 
 _ndim = onp.ndim
