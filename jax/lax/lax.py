@@ -208,11 +208,11 @@ def digamma(x):
 
 def igamma(a, x):
   r"""Elementwise regularized incomplete gamma function."""
-  return igamma_p.bind(a, x)
+  return igamma_p.bind(_brcast(a, x), _brcast(x, a))
 
 def igammac(a, x):
   r"""Elementwise complementary regularized incomplete gamma function."""
-  return igammac_p.bind(a, x)
+  return igammac_p.bind(_brcast(a, x), _brcast(x, a))
 
 def bessel_i0e(x):
   r"""Exponentially scaled modified Bessel function of order 0:
@@ -1745,7 +1745,7 @@ def igamma_gradx(g, a, x):
   return g * exp(-x + (a - 1.) * log(x) - lgamma(a))
 
 def gamma_grad_not_implemented(a, b, x):
-  raise ValueError("Igamma(c) gradient with respect to a not supported.")
+  raise ValueError("Igamma(c) gradient with respect to `a` not supported.")
 
 ad.defjvp(igamma_p, gamma_grad_not_implemented, igamma_gradx)
 
