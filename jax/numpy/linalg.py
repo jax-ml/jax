@@ -68,19 +68,17 @@ def matrix_power(a, n):
   a = _promote_arg_dtypes(np.asarray(a))
 
   if a.ndim < 2:
-    raise TypeError("%d-dimensional array given. Array must be at least "
-                    "two-dimensional" % a.ndim)
+    raise TypeError("{}-dimensional array given. Array must be at least "
+                    "two-dimensional".format(a.ndim))
   if a.shape[-2] != a.shape[-1]:
     raise TypeError("Last 2 dimensions of the array must be square")
   try:
     n = operator.index(n)
   except TypeError:
-    raise TypeError("exponent must be an integer")
+    raise TypeError("exponent must be an integer, got {}".format(n))
 
   if n == 0:
-    a = np.empty_like(a)
-    a = ops.index_update(a, ..., np.eye(a.shape[-2], dtype=a.dtype))
-    return a
+    return np.broadcast_to(np.eye(a.shape[-2], dtype=a.dtype), a.shape)
   elif n < 0:
     a = inv(a)
     n = np.abs(n)
