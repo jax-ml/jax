@@ -155,7 +155,6 @@ def jit(fun, static_argnums=(), device=None, backend=None):
       msg = ("Jitted function has static_argnums={} but was called with only {}"
              " arguments.")
       raise TypeError(msg.format(static_argnums, len(args)))
-
     f = lu.wrap_init(_fun)
     if static_argnums:
       dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
