@@ -285,8 +285,8 @@ jax.numpy.linalg
   eigh
   inv
   matrix_power
-  norm
   matrix_rank
+  norm
   qr
   slogdet
   solve
