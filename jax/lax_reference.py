@@ -60,6 +60,7 @@ atan = onp.arctan
 sinh = onp.sinh
 cosh = onp.cosh
 
+betainc = scipy.special.betainc
 lgamma = scipy.special.gammaln
 digamma = scipy.special.digamma
 erf = scipy.special.erf

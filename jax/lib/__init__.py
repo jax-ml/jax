@@ -45,7 +45,7 @@ _check_jaxlib_version()
 
 
 try:
-  from jaxlib import tpu_client
+  from jaxlib import tpu_client  # pytype: disable=import-error
 except:
   tpu_client = None
 from jaxlib import xla_client

@@ -14,6 +14,7 @@ jax.scipy.linalg
    cholesky
    det
    eigh
+   expm
    inv
    lu
    lu_factor
@@ -43,6 +44,7 @@ jax.scipy.special
 .. autosummary::
   :toctree: _autosummary
 
+   betainc
    digamma
    entr
    erf

@@ -261,7 +261,9 @@ differentiation for fast Jacobian and Hessian matrix calculations in
 For parallel programming of multiple accelerators, like multiple GPUs, use
 [`pmap`](https://jax.readthedocs.io/en/latest/jax.html#parallelization-pmap).
 With `pmap` you write single-program multiple-data (SPMD) programs, including
-fast parallel collective communication operations.
+fast parallel collective communication operations. Applying `pmap` will mean
+that the function you write is compiled by XLA (similarly to `jit`), then
+replicated and executed in parallel accross devices.
 
 Here's an example on an 8-GPU machine:
 
@@ -280,7 +282,7 @@ print(pmap(np.mean)(result))
 # prints [1.1566595 1.1805978 ... 1.2321935 1.2015157]
 ```
 
-In addition to expressing pure maps, you can fast use [collective communication
+In addition to expressing pure maps, you can use fast [collective communication
 operations](https://jax.readthedocs.io/en/latest/jax.lax.html#parallel-operators)
 between devices:
 
@@ -341,22 +343,23 @@ we highly recommend reading the [Gotchas
 Notebook](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html).
 Some standouts:
 
+1. JAX transformations only work on [pure functions](https://en.wikipedia.org/wiki/Pure_function), which don't have side-effects and respect [referential transparency](https://en.wikipedia.org/wiki/Referential_transparency) (i.e. object identity testing with `is` isn't preserved). If you use a JAX transformation on an impure Python function, you might see an error like `Exception: Can't lift Traced...`  or `Exception: Different traces at same level`.
 1. [In-place mutating updates of
    arrays](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#%F0%9F%94%AA-In-Place-Updates), like `x[i] += y`, aren't supported, but [there are functional alternatives](https://jax.readthedocs.io/en/latest/jax.ops.html). Under a `jit`, those functional alternatives will reuse buffers in-place automatically.
-2. [Random numbers are
+1. [Random numbers are
    different](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#%F0%9F%94%AA-Random-Numbers), but for [good reasons](https://github.com/google/jax/blob/master/design_notes/prng.md).
-3. If you're looking for [convolution
+1. If you're looking for [convolution
    operators](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#%F0%9F%94%AA-Convolutions),
    they're in the `jax.lax` package.
-4. JAX enforces single-precision (32-bit, e.g. `float32`) values by default, and
+1. JAX enforces single-precision (32-bit, e.g. `float32`) values by default, and
    [to enable
    double-precision](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#Double-(64bit)-precision)
    (64-bit, e.g. `float64`) one needs to set the `jax_enable_x64` variable at
    startup (or set the environment variable `JAX_ENABLE_X64=True`).
-5. Some of NumPy's dtype promotion semantics involving a mix of Python scalars
+1. Some of NumPy's dtype promotion semantics involving a mix of Python scalars
    and NumPy types aren't preserved, namely `np.add(1, np.array([2],
    np.float32)).dtype` is `float64` rather than `float32`.
-6. Some transformations, like `jit`, [constrain how you can use Python control
+1. Some transformations, like `jit`, [constrain how you can use Python control
    flow](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#%F0%9F%94%AA-Control-Flow).
    You'll always get loud errors if something goes wrong. You might have to use
    [`jit`'s `static_argnums`
@@ -452,7 +455,7 @@ the year corresponds to the project's open-source release.
 
 A nascent version of JAX, supporting only automatic differentiation and
 compilation to XLA, was described in a [paper that appeared at SysML
-2018](https://www.sysml.cc/doc/2018/146.pdf). We're currently working on
+2018](https://mlsys.org/Conferences/2019/doc/2018/146.pdf). We're currently working on
 covering JAX's ideas and capabilities in a more comprehensive and up-to-date
 paper.
 

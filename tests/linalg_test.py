@@ -605,6 +605,25 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(np.linalg.pinv, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_n={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), n),
+       "shape": shape, "dtype": dtype, "n": n, "rng_factory": rng_factory}
+      for shape in [(1, 1), (2, 2), (4, 4), (5, 5),
+                    (1, 2, 2), (2, 3, 3), (2, 5, 5)]
+      for dtype in float_types + complex_types
+      for n in [-5, -2, -1, 0, 1, 2, 3, 4, 5, 10]
+      for rng_factory in [jtu.rand_default]))
+  def testMatrixPower(self, shape, dtype, n, rng_factory):
+    rng = rng_factory()
+    _skip_if_unsupported_type(dtype)
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(partial(onp.linalg.matrix_power, n=n),
+                            partial(np.linalg.matrix_power, n=n),
+                            args_maker, check_dtypes=True, tol=1e-3)
+    self._CompileAndCheck(partial(np.linalg.matrix_power, n=n), args_maker,
+                          check_dtypes=True, rtol=1e-3)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}".format(
            jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype, "rng_factory": rng_factory}
@@ -622,6 +641,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                             args_maker, check_dtypes=False, tol=1e-3)
     self._CompileAndCheck(np.linalg.matrix_rank, args_maker,
                           check_dtypes=False, rtol=1e-3)
+
   # Regression test for incorrect type for eigenvalues of a complex matrix.
   @jtu.skip_on_devices("tpu")  # TODO(phawkins): No complex eigh implementation on TPU.
   def testIssue669(self):
@@ -913,6 +933,30 @@ class ScipyLinalgTest(jtu.JaxTestCase):
         partial(jvp, lax_linalg.triangular_solve),
         (a, b),
         (a, b))
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),
+       "n": n, "dtype": dtype, "rng_factory": rng_factory}
+      for n in [1, 4, 5, 20, 50, 100]
+      for dtype in float_types + complex_types
+      for rng_factory in [jtu.rand_small]))
+  def testExpm(self, n, dtype, rng_factory):
+    rng = rng_factory()
+    _skip_if_unsupported_type(dtype)
+    args_maker = lambda: [rng((n, n), dtype)]
+
+    osp_fun = lambda a: osp.linalg.expm(a)
+    jsp_fun = lambda a: jsp.linalg.expm(a)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
+                            check_dtypes=True)
+    self._CompileAndCheck(jsp_fun, args_maker, check_dtypes=True)
+
+    args_maker_triu = lambda: [onp.triu(rng((n, n), dtype))]
+    jsp_fun_triu = lambda a: jsp.linalg.expm(a,upper_triangular=True)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun_triu, args_maker_triu,
+                            check_dtypes=True)
+    self._CompileAndCheck(jsp_fun_triu, args_maker_triu, check_dtypes=True)
 
 if __name__ == "__main__":
   absltest.main()

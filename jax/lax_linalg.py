@@ -34,7 +34,7 @@ from jax.interpreters import batching
 from jax.util import partial, prod
 from jax.abstract_arrays import ShapedArray
 from jax.core import Primitive
-from jax.lax import (standard_primitive, standard_unop, binop_dtype_rule,
+from jax.lax import (standard_primitive, standard_unop, naryop_dtype_rule,
                      _float, _complex, _input_dtype, _broadcasting_select)
 from jax.lib import xla_client
 from jax.lib import lapack
@@ -311,7 +311,7 @@ xla.backend_specific_translations['gpu'][eigh_p] = partial(
 
 
 triangular_solve_dtype_rule = partial(
-    binop_dtype_rule, _input_dtype, (_float | _complex, _float | _complex),
+    naryop_dtype_rule, _input_dtype, (_float | _complex, _float | _complex),
     'triangular_solve')
 
 def triangular_solve_shape_rule(a, b, left_side=False, **unused_kwargs):

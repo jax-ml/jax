@@ -21,6 +21,7 @@ import functools
 from functools import partial
 import itertools
 import operator
+from typing import cast, Optional
 import unittest
 from unittest import SkipTest
 import warnings
@@ -422,7 +423,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     def f():
       out = [rng(shape, dtype or lnp.float_)
              for shape, dtype in zip(shapes, dtypes)]
-      return out if onp_arrays else [lnp.asarray(a) for a in out]
+      if onp_arrays:
+        return out
+      return [lnp.asarray(a) if isinstance(a, (onp.ndarray, onp.generic)) else a
+              for a in out]
     return f
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
@@ -493,7 +497,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testRightOperatorOverload(self, name, rng_factory, shapes, dtypes,
                                 op_tolerance):
     if shapes[1] is jtu.PYTHON_SCALAR_SHAPE:
-      raise SkipTest()  # TODO(mattjj): clean up
+      raise SkipTest("scalars not implemented")  # TODO(mattjj): clean up
     rng = rng_factory()
     args_maker = self._GetArgsMaker(rng, shapes, dtypes, onp_arrays=False)
     fun = lambda fst, snd: getattr(snd, name)(fst)
@@ -1815,7 +1819,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "index_dtype": index_dtype, "axis": axis, "mode": mode}
       for shape in [(3,), (3, 4), (3, 4, 5)]
       for index_shape in scalar_shapes + [(3,), (2, 1, 3)]
-      for axis in itertools.chain(range(-len(shape), len(shape)), [None])
+      for axis in itertools.chain(range(-len(shape), len(shape)),
+                                  [cast(Optional[int], None)])
       for dtype in all_dtypes
       for index_dtype in int_dtypes
       for mode in ['wrap', 'clip']
@@ -1844,7 +1849,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         _shapes_are_equal_length,
         filter(_shapes_are_broadcast_compatible,
                CombosWithReplacement(nonempty_nonscalar_array_shapes, 2)))
-      for axis in itertools.chain(range(len(x_shape)), [-1], [None])
+      for axis in itertools.chain(range(len(x_shape)), [-1],
+                                  [cast(Optional[int], None)])
       for dtype in default_dtypes
       for rng_factory in [jtu.rand_default]))
   def testTakeAlongAxis(self, x_shape, i_shape, dtype, axis, rng_factory):

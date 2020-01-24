@@ -36,7 +36,7 @@ understand by looking at a few examples:
 * Addition: `(),()->()`
 * 1D inner product: `(i),(i)->()`
 * 1D sum: `(i)->()`
-* Matrix multiplcation: `(m,n),(n,k)->(m,k)`
+* Matrix multiplication: `(m,n),(n,k)->(m,k)`
 
 Why write gufuncs?
 =====================

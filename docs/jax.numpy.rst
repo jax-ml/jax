@@ -284,6 +284,7 @@ jax.numpy.linalg
   eig
   eigh
   inv
+  matrix_power
   norm
   matrix_rank
   qr

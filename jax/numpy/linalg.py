@@ -21,8 +21,10 @@ from functools import partial
 import numpy as onp
 import warnings
 import textwrap
+import operator
+from typing import Tuple, Union, cast
 
-from jax import jit
+from jax import jit, ops
 from .. import lax
 from .. import lax_linalg
 from .. import dtypes
@@ -59,6 +61,43 @@ def cholesky(a):
 def svd(a, full_matrices=True, compute_uv=True):
   a = _promote_arg_dtypes(np.asarray(a))
   return lax_linalg.svd(a, full_matrices, compute_uv)
+
+
+@_wraps(onp.linalg.matrix_power)
+def matrix_power(a, n):
+  a = _promote_arg_dtypes(np.asarray(a))
+
+  if a.ndim < 2:
+    raise TypeError("{}-dimensional array given. Array must be at least "
+                    "two-dimensional".format(a.ndim))
+  if a.shape[-2] != a.shape[-1]:
+    raise TypeError("Last 2 dimensions of the array must be square")
+  try:
+    n = operator.index(n)
+  except TypeError:
+    raise TypeError("exponent must be an integer, got {}".format(n))
+
+  if n == 0:
+    return np.broadcast_to(np.eye(a.shape[-2], dtype=a.dtype), a.shape)
+  elif n < 0:
+    a = inv(a)
+    n = np.abs(n)
+
+  if n == 1:
+    return a
+  elif n == 2:
+    return a @ a
+  elif n == 3:
+    return (a @ a) @ a
+
+  z = result = None
+  while n > 0:
+    z = a if z is None else (z @ z)
+    n, bit = divmod(n, 2)
+    if bit:
+      result = z if result is None else (result @ z)
+
+  return result
 
 
 @_wraps(onp.linalg.matrix_rank)
@@ -164,7 +203,7 @@ def pinv(a, rcond=None):
       rcond = 10. * max_rows_cols * np.finfo(a.dtype).eps
   rcond = np.asarray(rcond)
   u, s, v = svd(a, full_matrices=False)
-  # Singular values less than or equal to ``rcond * largest_singular_value`` 
+  # Singular values less than or equal to ``rcond * largest_singular_value``
   # are set to zero.
   cutoff = rcond[..., np.newaxis] * np.amax(s, axis=-1, keepdims=True)
   large = s > cutoff
@@ -186,7 +225,7 @@ def inv(a):
 
 
 @partial(jit, static_argnums=(1, 2, 3))
-def _norm(x, ord, axis, keepdims):
+def _norm(x, ord, axis: Union[None, Tuple[int, ...], int], keepdims):
   x = _promote_arg_dtypes(np.asarray(x))
   x_shape = np.shape(x)
   ndim = len(x_shape)
@@ -227,7 +266,7 @@ def _norm(x, ord, axis, keepdims):
       return np.power(out, 1. / ord)
 
   elif num_axes == 2:
-    row_axis, col_axis = axis
+    row_axis, col_axis = cast(Tuple[int, ...], axis)
     if ord is None or ord in ('f', 'fro'):
       return np.sqrt(np.sum(np.real(x * np.conj(x)), axis=axis,
                             keepdims=keepdims))

@@ -110,7 +110,7 @@ def scalar_type_of(x):
     raise TypeError("Invalid scalar value {}".format(x))
 
 def coerce_to_array(x):
-  """Coreces a scalar or NumPy array to an onp.array.
+  """Coerces a scalar or NumPy array to an onp.array.
 
   Handles Python scalar type promotion according to JAX's rules, not NumPy's
   rules.
