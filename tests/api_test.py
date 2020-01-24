@@ -229,7 +229,7 @@ class APITest(jtu.JaxTestCase):
 
       self.assertRaisesRegex(
           TypeError,
-          "Try using value.astype\({}\) instead".format(castfun.__name__),
+          "Try using `value.astype\({}\)` instead".format(castfun.__name__),
           lambda: jit(f)(1.0))
 
   def test_switch_value_jit(self):
