@@ -129,7 +129,18 @@ def jit(fun, static_argnums=(), device=None, backend=None):
   _check_callable(fun)
   if isinstance(static_argnums, int):
     static_argnums = (static_argnums,)
+
   fun_sig = inspect.signature(fun)
+  def _fun(*args):
+    fun_params = list(fun_sig.parameters.values())
+    new_args = []
+    new_kwargs = {}
+    for arg, param in zip(args, fun_params):
+      if param.kind is inspect.Parameter.KEYWORD_ONLY:
+        new_kwargs[param.name] = arg
+      else:
+        new_args.append(arg)
+    return fun(*new_args, **new_kwargs)
 
   @wraps(fun)
   def f_jitted(*args, **kwargs):
@@ -138,33 +149,19 @@ def jit(fun, static_argnums=(), device=None, backend=None):
 
     ba = fun_sig.bind(*args, **kwargs)
     ba.apply_defaults()
-    args = tuple(ba.arguments.values())
-    kwargs = {}
+    args, kwargs = tuple(ba.arguments.values()), {}
 
     if static_argnums and max(static_argnums) >= len(args):
       msg = ("Jitted function has static_argnums={} but was called with only {}"
              " arguments.")
       raise TypeError(msg.format(static_argnums, len(args)))
 
-    # Wrap `fun` to circumvent keyword-only arguments
-    def fun_pos(*args):
-      fun_params = list(fun_sig.parameters.values())
-      new_args = []
-      new_kwargs = {}
-      for arg, param in zip(args, fun_params):
-        if param.kind is inspect.Parameter.KEYWORD_ONLY:
-          new_kwargs[param.name] = arg
-        else:
-          new_args.append(arg)
-      return fun(*new_args, **new_kwargs)
-    f = lu.wrap_init(fun_pos)
-
+    f = lu.wrap_init(_fun)
     if static_argnums:
       dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
       f, dyn_args = _argnums_partial(f, dyn_argnums, args)
     else:
       dyn_args = args
-
     args_flat, in_tree = tree_flatten((dyn_args, kwargs))
     _check_args(args_flat)
     flat_fun, out_tree = flatten_fun(f, in_tree)
