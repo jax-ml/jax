@@ -29,6 +29,7 @@ from __future__ import print_function
 
 import collections
 import functools
+import inspect
 import itertools as it
 import operator as op
 import os
@@ -128,28 +129,49 @@ def jit(fun, static_argnums=(), device=None, backend=None):
   _check_callable(fun)
   if isinstance(static_argnums, int):
     static_argnums = (static_argnums,)
+  fun_sig = inspect.signature(fun)
 
   @wraps(fun)
   def f_jitted(*args, **kwargs):
     if _thread_local_state.jit_is_disabled or config.read('jax_disable_jit'):
       return fun(*args, **kwargs)
+
+    ba = fun_sig.bind(*args, **kwargs)
+    ba.apply_defaults()
+    args = tuple(ba.arguments.values())
+    kwargs = {}
+
     if static_argnums and max(static_argnums) >= len(args):
       msg = ("Jitted function has static_argnums={} but was called with only {}"
-             " positional arguments.")
+             " arguments.")
       raise TypeError(msg.format(static_argnums, len(args)))
-    f = lu.wrap_init(fun)
+
+    # Wrap `fun` to circumvent keyword-only arguments
+    def fun_pos(*args):
+      fun_params = list(fun_sig.parameters.values())
+      new_args = []
+      new_kwargs = {}
+      for arg, param in zip(args, fun_params):
+        if param.kind is inspect.Parameter.KEYWORD_ONLY:
+          new_kwargs[param.name] = arg
+        else:
+          new_args.append(arg)
+      return fun(*new_args, **new_kwargs)
+    f = lu.wrap_init(fun_pos)
+
     if static_argnums:
       dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
       f, dyn_args = _argnums_partial(f, dyn_argnums, args)
     else:
       dyn_args = args
+
     args_flat, in_tree = tree_flatten((dyn_args, kwargs))
     _check_args(args_flat)
     flat_fun, out_tree = flatten_fun(f, in_tree)
     out = xla.xla_call(flat_fun, *args_flat, device=device, backend=backend)
     return tree_unflatten(out_tree(), out)
 
-  jitted_name =  "jit({}, static_argnums={})"
+  jitted_name = "jit({}, static_argnums={})"
   f_jitted.__name__ = jitted_name.format(f_jitted.__name__, static_argnums)
   return f_jitted
 
