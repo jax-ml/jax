@@ -314,12 +314,12 @@ _numpy_signature_re = re.compile(r'^([\w., ]+=)?\s*[\w\.]+\(.*\)$')
 
 def _wraps(fun, update_doc=True, lax_description=""):
   """Like functools.wraps but works with numpy.ufuncs.
-     It is important that when wrapping numpy functions the parameters names 
+     It is important that when wrapping numpy functions the parameters names
      in the original function and in the JAX version are the same
     Parameters:
       fun: The function being wrapped
       update_doc: whether to transform the numpy docstring to remove references of
-      parameters that are supported by the numpy version but not the JAX version. 
+      parameters that are supported by the numpy version but not the JAX version.
       If False, include the numpy docstring verbatim.
   """
   def wrap(op):
@@ -560,8 +560,6 @@ def _float_divmod(x1, x2):
 
 @_wraps(onp.power)
 def power(x1, x2):
-  x1 = asarray(x1)
-  x2 = asarray(x2)
   x1, x2 = _promote_args(onp.power, x1, x2)
   dtype = _dtype(x1)
   if not issubdtype(dtype, integer):
@@ -3143,9 +3141,10 @@ def gcd(x1, x2):
   if (not issubdtype(_dtype(x1), integer) or
       not issubdtype(_dtype(x2), integer)):
     raise ValueError("Arguments to gcd must be integers.")
-  x1, x2 = _promote_dtypes(lax.abs(x1), lax.abs(x2))
+  x1, x2 = _promote_dtypes(x1, x2)
   x1, x2 = broadcast_arrays(x1, x2)
-  gcd, _ = lax.while_loop(_gcd_cond_fn, _gcd_body_fn, (x1, x2))
+  gcd, _ = lax.while_loop(_gcd_cond_fn, _gcd_body_fn,
+                          (lax.abs(x1), lax.abs(x2)))
   return gcd
 
 

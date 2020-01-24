@@ -490,10 +490,63 @@ def _cond_batching_rule(args, dims, true_jaxpr, false_jaxpr, true_nconsts,
       true_jaxpr=true_jaxpr_batched, false_jaxpr=false_jaxpr_batched,
       true_nconsts=len(true_consts), false_nconsts=len(false_consts)), out_dims
 
+def _cond_jvp(primals, tangents, true_jaxpr, false_jaxpr, true_nconsts,
+              false_nconsts):
+  nonzeros = [t is not ad_util.zero for t in tangents]
+
+  true_nops = len(true_jaxpr.in_avals) - true_nconsts
+  false_nops = len(false_jaxpr.in_avals) - false_nconsts
+
+  (pred_nz,), tconst_nz, t_nz, fconst_nz, f_nz = split_list(
+      nonzeros, [1, true_nconsts, true_nops, false_nconsts])
+
+  assert pred_nz is False
+
+  _, true_out_nz = ad.jvp_jaxpr(true_jaxpr, tconst_nz + t_nz,
+                                instantiate=False)
+  _, false_out_nz = ad.jvp_jaxpr(false_jaxpr, fconst_nz + f_nz,
+                                 instantiate=False)
+
+  out_nz = [a or b for a, b in zip(true_out_nz, false_out_nz)]
+
+  true_jvp, _ = ad.jvp_jaxpr(true_jaxpr, tconst_nz + t_nz, instantiate=out_nz)
+  false_jvp, _ = ad.jvp_jaxpr(false_jaxpr, fconst_nz + f_nz, instantiate=out_nz)
+
+  (pred,), tconsts, tops, fconsts, fops = split_list(
+      primals, [1, true_nconsts, true_nops, false_nconsts])
+  _, tconsts_dot, tops_dot, fconsts_dot, fops_dot = split_list(
+      tangents, [1, true_nconsts, true_nops, false_nconsts])
+
+  tconsts_dot = _prune_zeros(tconsts_dot)
+  tops_dot = _prune_zeros(tops_dot)
+  fconsts_dot = _prune_zeros(fconsts_dot)
+  fops_dot = _prune_zeros(fops_dot)
+
+  true_jvp = ad.rearrange_binders(true_jvp, [true_nconsts, true_nops],
+                                  [len(tconsts_dot), len(tops_dot)],
+                                  [len(out_nz)], [sum(out_nz)])
+  false_jvp = ad.rearrange_binders(false_jvp, [false_nconsts, false_nops],
+                                   [len(fconsts_dot), len(fops_dot)],
+                                   [len(out_nz)], [sum(out_nz)])
+
+  out = cond_p.bind(
+      *itertools.chain([pred],
+                       tconsts, tconsts_dot, tops, tops_dot,
+                       fconsts, fconsts_dot, fops, fops_dot),
+      true_jaxpr=true_jvp, false_jaxpr=false_jvp,
+      true_nconsts=len(tconsts) + len(tconsts_dot),
+      false_nconsts=len(fconsts) + len(fconsts_dot))
+  out_primals, out_tangents = split_list(out, [len(out_nz)])
+  out_tangents_iter = iter(out_tangents)
+  out_tangents = [
+      next(out_tangents_iter) if nz else ad_util.zero for nz in out_nz]
+  return out_primals, out_tangents
+
 cond_p = lax.Primitive('cond')
 cond_p.multiple_results = True
 cond_p.def_impl(partial(xla.apply_primitive, cond_p))
 cond_p.def_abstract_eval(_cond_abstract_eval)
+ad.primitive_jvps[cond_p] = _cond_jvp
 batching.primitive_batchers[cond_p] = _cond_batching_rule
 xla.initial_style_translations[cond_p] = _cond_translation_rule
 
@@ -1249,7 +1302,7 @@ def custom_linear_solve(
 
   This function allows for overriding or defining gradients for a linear
   solve directly via implicit differentiation at the solution, rather than by
-  differenting *through* the solve operation. This can sometimes be much faster
+  differentiating *through* the solve operation. This can sometimes be much faster
   or more numerically stable, or differentiating through the solve operation
   may not even be implemented (e.g., if ``solve`` uses ``lax.while_loop``).
 
@@ -1264,7 +1317,7 @@ def custom_linear_solve(
       of arrays.
     solve: higher level function that solves for solution to the linear
       equation, i.e., ``solve(matvec, x)) == x`` for all ``x`` of the same form
-      as ``b``. This function need not be differenatiable.
+      as ``b``. This function need not be differentiable.
     transpose_solve: higher level function for solving the transpose linear
       equation, i.e., ``transpose_solve(vecmat, x) == x``, where ``vecmat`` is
       the transpose of the linear map ``matvec`` (computed automatically with

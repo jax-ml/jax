@@ -129,10 +129,10 @@ class Literal(object):
           self.hash = None
 
   def __hash__(self):
-    return id(self.val) if self.hash is None else self.hash
+    assert False
 
   def __eq__(self, other):
-    return self.val is other.val if self.hash is None else self.val == other.val
+    assert False
 
   def __repr__(self):
     if self.hash is None:
@@ -627,7 +627,7 @@ def check_jaxpr(jaxpr):
     return "\njaxpr:\n{}\n".format(jaxpr)
 
   def read_env(env, v):
-    if v not in env and type(v) is not Literal:
+    if type(v) is not Literal and v not in env:
       raise Exception("Variable '{}' not defined".format(v) + context())
 
   def write_env(env, v):

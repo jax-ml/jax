@@ -14,6 +14,7 @@ jax.scipy.linalg
    cholesky
    det
    eigh
+   expm
    inv
    lu
    lu_factor
