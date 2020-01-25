@@ -324,6 +324,8 @@ class JVPTrace(Trace):
     tangents = [t.tangent for t in tracers]
     nonzero_tangents, in_tree_def = tree_flatten(tangents)
     f_jvp, out_tree_def = traceable(jvp_subtrace(f, self.master), len(primals), in_tree_def)
+    name = params.get('name', f.__name__)
+    params = dict(params, name='jvp(' + name + ')')
     result = call_primitive.bind(f_jvp, *(primals + nonzero_tangents), **params)
     primal_out, tangent_out = tree_unflatten(out_tree_def(), result)
     return [JVPTracer(self, p, t) for p, t in zip(primal_out, tangent_out)]
@@ -549,6 +551,7 @@ def call_transpose(primitive, params, jaxpr, consts, freevar_vals, args, ct):
   all_args, in_tree_def = tree_flatten((consts, freevar_vals, args, ct))
   fun = lu.hashable_partial(lu.wrap_init(backward_pass), jaxpr)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
+  params = dict(params, name='transpose(' + params['name'] + ')')
   out_flat = primitive.bind(fun, *all_args, **params)
   return tree_unflatten(out_tree(), out_flat)
 primitive_transposes[core.call_p] = partial(call_transpose, call_p)
@@ -558,6 +561,7 @@ def map_transpose(primitive, params, jaxpr, consts, freevar_vals, args, ct):
   all_args, in_tree_def = tree_flatten((consts, freevar_vals, args, ct))
   fun = lu.hashable_partial(lu.wrap_init(backward_pass), jaxpr)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
+  params = dict(params, name='transpose(' + params['name'] + ')')
   out_flat = primitive.bind(fun, *all_args, **params)
   freevar_cts, arg_cts = tree_unflatten(out_tree(), out_flat)
   freevar_cts = [x.sum(0) if x is not zero else x for x in freevar_cts]

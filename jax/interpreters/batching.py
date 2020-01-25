@@ -119,6 +119,8 @@ class BatchTrace(Trace):
 
   def process_call(self, call_primitive, f, tracers, params):
     assert call_primitive.multiple_results
+    name = params.get('name', f.__name__)
+    params = dict(params, name='vmap(' + name + ')')
     if call_primitive in pe.map_primitives:
       return self.process_map(call_primitive, f, tracers, params)
     vals, dims = unzip2((t.val, t.batch_dim) for t in tracers)

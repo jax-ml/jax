@@ -146,10 +146,11 @@ def jit(fun, static_argnums=(), device=None, backend=None):
     args_flat, in_tree = tree_flatten((dyn_args, kwargs))
     _check_args(args_flat)
     flat_fun, out_tree = flatten_fun(f, in_tree)
-    out = xla.xla_call(flat_fun, *args_flat, device=device, backend=backend)
+    out = xla.xla_call(flat_fun, *args_flat, device=device, backend=backend,
+                       name=flat_fun.__name__)
     return tree_unflatten(out_tree(), out)
 
-  jitted_name =  "jit({}, static_argnums={})"
+  jitted_name = "jit({}, static_argnums={})"
   f_jitted.__name__ = jitted_name.format(f_jitted.__name__, static_argnums)
   return f_jitted
 
@@ -307,7 +308,7 @@ def xla_computation(fun, static_argnums=(), axis_env=None, backend=None,
     xla_consts = map(c.Constant, consts)
     xla_args = xla._xla_callable_args(c, avals, tuple_args)
     outs = xla.jaxpr_subcomp(c, jaxpr, backend, axis_env_, xla_consts, (),
-                             *xla_args)
+                             'xla_computation(' + fun_name + ')/', *xla_args)
     return c.Build(c.Tuple(*outs))
   return computation_maker
 
@@ -886,11 +887,12 @@ def pmap(fun, axis_name=None, devices=None, backend=None, axis_size=None):
     out = pxla.xla_pmap(
         flat_fun,
         *args,
+        backend=backend,
         axis_name=axis_name,
         axis_size=local_axis_size,
         global_axis_size=axis_size,
         devices=tuple(devices) if devices is not None else devices,
-        backend=backend)
+        name=flat_fun.__name__)
     return tree_unflatten(out_tree(), out)
 
   namestr = "pmap({}, axis_name={})".format

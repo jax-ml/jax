@@ -403,22 +403,16 @@ xla.canonicalize_dtype_handlers[ChunkedDeviceArray] = identity
 
 ### the xla_pmap primitive and its rules are comparable to xla_call in xla.py
 
-def xla_pmap_impl(fun, *args, **params):
-  axis_name = params.pop('axis_name')
-  axis_size = params.pop('axis_size')
-  global_axis_size = params.pop('global_axis_size')
-  devices = params.pop('devices')
-  backend = params.pop('backend')
-  assert not params
-
+def xla_pmap_impl(fun, *args, backend, axis_name, axis_size, global_axis_size,
+                  devices, name):
   abstract_args = map(xla.abstractify, args)
   compiled_fun = parallel_callable(fun, backend, axis_name, axis_size,
-                                   global_axis_size, devices, *abstract_args)
+                                   global_axis_size, devices, name, *abstract_args)
   return compiled_fun(*args)
 
 @lu.cache
 def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
-                      devices, *avals):
+                      devices, name, *avals):
   if devices is not None and len(devices) == 0:
     raise ValueError("'devices' argument to pmap must be non-empty, or None.")
 
@@ -508,7 +502,8 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   c = xb.make_computation_builder("pmap_{}".format(fun.__name__))
   xla_consts = _map(c.Constant, consts)
   xla_args = xla._xla_callable_args(c, avals, tuple_args)
-  out_nodes = xla.jaxpr_subcomp(c, jaxpr, backend, axis_env, xla_consts, (), *xla_args)
+  out_nodes = xla.jaxpr_subcomp(c, jaxpr, backend, axis_env, xla_consts, (),
+                                'pmap(' + name + ')/', *xla_args)
   built = c.Build(c.Tuple(*out_nodes))
 
   if devices is None:
@@ -649,8 +644,8 @@ xla_pmap_p.def_custom_bind(xla_pmap)
 xla_pmap_p.def_impl(xla_pmap_impl)
 
 def _pmap_translation_rule(c, jaxpr, axis_env, const_nodes, freevar_nodes,
-                           in_nodes, axis_name, axis_size, global_axis_size,
-                           devices, backend=None):
+                           in_nodes, call_stack, axis_name, axis_size,
+                           global_axis_size, devices, name, backend=None):
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
   if axis_env.devices is not None or (axis_env.names and devices is not None):
@@ -660,7 +655,8 @@ def _pmap_translation_rule(c, jaxpr, axis_env, const_nodes, freevar_nodes,
   new_env = xla.extend_axis_env(axis_env, axis_name, global_axis_size)
   in_nodes_sharded = list(map(partial(_xla_shard, c, new_env), in_nodes))
   sharded_outs = xla.jaxpr_subcomp(c, jaxpr, backend, new_env, const_nodes,
-                                   freevar_nodes, *in_nodes_sharded)
+                                   freevar_nodes, call_stack + 'pmap(' + name + ')/',
+                                   *in_nodes_sharded)
   outs = [_xla_unshard(c, new_env, shard) for shard in sharded_outs]
   return c.Tuple(*outs)
 

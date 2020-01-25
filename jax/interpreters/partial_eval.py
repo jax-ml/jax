@@ -115,8 +115,12 @@ class JaxprTrace(Trace):
         return out_tracer
 
   def process_call(self, call_primitive, f, tracers, params):
+    name = params.get('name', f.__name__)
     if self.master.trace_type is StagingJaxprTrace:
       tracers = map(self.instantiate_const_abstracted, tracers)
+    else:
+      name = 'pe(' + name + ')'
+    params = dict(params, name=name)
     if call_primitive in call_partial_eval_rules:
       return call_partial_eval_rules[call_primitive](self, f, tracers, params)
     if call_primitive in map_primitives:

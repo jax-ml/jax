@@ -3427,7 +3427,7 @@ def _reduction_computation(c, jaxpr, consts, init_value):
   subc = xla_bridge.make_computation_builder("reduction_computation")
   consts = [subc.ParameterWithShape(const) for const in consts]
   args = [subc.ParameterWithShape(shape), subc.ParameterWithShape(shape)]
-  out, = xla.jaxpr_subcomp(subc, jaxpr, None, axis_env, consts, (), *args)
+  out, = xla.jaxpr_subcomp(subc, jaxpr, None, axis_env, consts, (), None, *args)
   return subc.Build(out)
 
 def _masking_defreducer(prim, identity):
