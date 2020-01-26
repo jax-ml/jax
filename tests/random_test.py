@@ -494,7 +494,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testIssue756(self):
     key = random.PRNGKey(0)
     w = random.normal(key, ())
-    self.assertEqual(onp.result_type(w), onp.float64)
+    self.assertEqual(onp.result_type(w), np.float_)
 
   def testIssue1789(self):
     def f(x):
