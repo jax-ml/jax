@@ -92,13 +92,19 @@ class UnshapedArray(core.AbstractValue):
     return UnshapedArray(self.dtype) if self.weak_type else self
 
 
+def _canonicalize_shape(shape):
+  """Ensure shape is a tuple of int or Poly objects."""
+  from .interpreters import masking
+  return tuple(map(masking.to_index, shape))
+
+
 class ShapedArray(UnshapedArray):
   __slots__ = ['shape']
   array_abstraction_level = 1
 
   def __init__(self, shape, dtype, weak_type=False):
     super(ShapedArray, self).__init__(dtype, weak_type=weak_type)
-    self.shape = tuple(map(operator.index, shape))
+    self.shape = _canonicalize_shape(shape)
 
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self: prod(self.shape))
