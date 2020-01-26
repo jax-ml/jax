@@ -218,6 +218,9 @@ def is_python_scalar(x):
   except AttributeError:
     return type(x) in python_scalar_dtypes
 
+def is_scalar(x):
+  return is_python_scalar(x) or isinstance(x, onp.generic)
+
 def _dtype_priority(dtype):
   if issubdtype(dtype, onp.bool_):
     return 0
@@ -243,7 +246,7 @@ def result_type(*args):
   scalars = []
   dtypes = []
   for x in args:
-    (scalars if is_python_scalar(x) else dtypes).append(dtype(x))
+    (scalars if is_scalar(x) else dtypes).append(dtype(x))
   array_priority = max(map(_dtype_priority, dtypes)) if dtypes else -1
   dtypes += [x for x in scalars if _dtype_priority(x) > array_priority]
   return canonicalize_dtype(functools.reduce(promote_types, dtypes))
