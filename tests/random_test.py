@@ -494,10 +494,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testIssue756(self):
     key = random.PRNGKey(0)
     w = random.normal(key, ())
-    if FLAGS.jax_enable_x64:
-      self.assertEqual(onp.result_type(w), onp.float64)
-    else:
-      self.assertEqual(onp.result_type(w), onp.float32)
+    self.assertEqual(onp.result_type(w), onp.float64)
 
   def testIssue1789(self):
     def f(x):
