@@ -100,6 +100,19 @@ def matrix_power(a, n):
   return result
 
 
+@_wraps(onp.linalg.matrix_rank)
+def matrix_rank(M, tol=None):
+  M = _promote_arg_dtypes(np.asarray(M))
+  if M.ndim > 2:
+    raise TypeError("array should have 2 or fewer dimensions")
+  if M.ndim < 2:
+    return np.any(M != 0).astype(np.int32)
+  S = svd(M, full_matrices=False, compute_uv=False)
+  if tol is None:
+    tol = S.max() * np.max(M.shape) * np.finfo(S.dtype).eps
+  return np.sum(S > tol)
+
+
 # TODO(pfau): make this work for complex types
 def _jvp_slogdet(g, ans, x):
   jvp_sign = np.zeros(x.shape[:-2])

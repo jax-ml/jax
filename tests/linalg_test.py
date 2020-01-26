@@ -623,6 +623,25 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(partial(np.linalg.matrix_power, n=n), args_maker,
                           check_dtypes=True, rtol=1e-3)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}".format(
+           jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype, "rng_factory": rng_factory}
+      for shape in [(3, ), (1, 2), (8, 5), (4, 4), (5, 5), (50, 50)]
+      for dtype in float_types + complex_types
+      for rng_factory in [jtu.rand_default]))
+  @jtu.skip_on_devices("gpu", "tpu")  # TODO(b/145608614): SVD crashes on GPU.
+  def testMatrixRank(self, shape, dtype, rng_factory):
+    rng = rng_factory()
+    _skip_if_unsupported_type(dtype)
+    n = shape[-1]
+    args_maker = lambda: [rng(shape, dtype)]
+    a, = args_maker()
+    self._CheckAgainstNumpy(onp.linalg.matrix_rank, np.linalg.matrix_rank,
+                            args_maker, check_dtypes=False, tol=1e-3)
+    self._CompileAndCheck(np.linalg.matrix_rank, args_maker,
+                          check_dtypes=False, rtol=1e-3)
+
   # Regression test for incorrect type for eigenvalues of a complex matrix.
   @jtu.skip_on_devices("tpu")  # TODO(phawkins): No complex eigh implementation on TPU.
   def testIssue669(self):
