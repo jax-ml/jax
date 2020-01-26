@@ -36,7 +36,7 @@ from .lib import xla_client
 FLAGS = flags.FLAGS
 # TODO: add deprecation warning
 flags.DEFINE_bool('jax_enable_x64',
-                  strtobool(os.getenv('JAX_ENABLE_X64', 'False')),
+                  strtobool(os.getenv('JAX_ENABLE_X64', 'True')),
                   'Enable 64-bit types to be used.')
 
 # bfloat16 support
@@ -81,9 +81,12 @@ _dtype_to_32bit_dtype = {
 @util.memoize
 def canonicalize_dtype(dtype):
   """Convert from a dtype to a canonical dtype."""
-  # TODO(shoyer): remove this
-  return onp.dtype(dtype)
+  dtype = onp.dtype(dtype)
 
+  if FLAGS.jax_enable_x64:
+    return dtype
+  else:
+    return _dtype_to_32bit_dtype.get(dtype, dtype)
 
 # Default dtypes corresponding to Python scalars.
 python_scalar_dtypes = {
