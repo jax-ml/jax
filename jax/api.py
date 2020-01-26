@@ -946,10 +946,10 @@ def soft_pmap(fun, axis_name=None, backend=None):
 
     reshaped_args = [_reshape_split(num_chunks, x) for x in args_flat]
     soft_mapped_fun = pxla.split_axis(flat_fun, axis_name, chunk_size)
-    reshaped_outs = pxla.xla_pmap(soft_mapped_fun, *reshaped_args,
+    reshaped_outs = pxla.xla_pmap(soft_mapped_fun, *reshaped_args, backend=backend,
                                   axis_name=axis_name, axis_size=num_chunks,
                                   global_axis_size=None, devices=None,
-                                  backend=backend)
+                                  name=soft_mapped_fun.__name__)
     outs = [_reshape_merge(out) for out in reshaped_outs]
     return tree_unflatten(out_tree(), outs)
 
@@ -1006,9 +1006,9 @@ def _parallelize(fun):
     reshaped_args = [_reshape_split(num_chunks, x) for x in args_flat]
     f, out_axes = parallel.papply_transform(f, axis_name, axis_size)
     f = pxla.split_axis(f, axis_name, chunk_size)
-    outs = pxla.xla_pmap(f, *reshaped_args, axis_name=axis_name,
+    outs = pxla.xla_pmap(f, *reshaped_args, backend=None, axis_name=axis_name,
                          axis_size=num_chunks, global_axis_size=None,
-                         devices=None, backend=None)
+                         devices=None, name=f.__name__)
     outs = map(_reshape_merge, outs)
     outs = [batching.matchaxis(axis_size, 0, dst, x)
             for dst, x in zip(out_axes(), outs)]
