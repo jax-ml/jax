@@ -110,7 +110,7 @@ def matrix_rank(M, tol=None):
   S = svd(M, full_matrices=False, compute_uv=False)
   if tol is None:
     tol = S.max() * np.max(M.shape) * np.finfo(S.dtype).eps
-  return sum(S > tol)
+  return np.sum(S > tol)
 
 
 # TODO(pfau): make this work for complex types
