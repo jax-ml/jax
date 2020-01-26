@@ -91,6 +91,16 @@ class PmapTest(jtu.JaxTestCase):
     ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testMean(self):
+    f = pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+
+    shape = (xla_bridge.device_count(), 4)
+    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+    expected = x - onp.broadcast_to(onp.mean(x, 0), x.shape)
+
+    ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def testTrees(self):
     ptranspose = lambda x, axis_name: lax.all_to_all(x, axis_name, 0, 0)
     def protate(x, axis_name):
@@ -113,6 +123,7 @@ class PmapTest(jtu.JaxTestCase):
     assert_allclose(jax_f(lax.pmax)(x), onp_f(onp.max)(x))
     assert_allclose(jax_f(lax.pmin)(x), onp_f(onp.min)(x))
     assert_allclose(jax_f(lax.psum)(x), onp_f(onp.sum)(x))
+    assert_allclose(jax_f(lax.pmean)(x), onp_f(onp.mean)(x))
     if jtu.device_under_test() not in ("cpu", "gpu"):
       # NOTE: all-to-all and ppermute only supported on TPU.
       assert_allclose(jax_f(ptranspose)(x), onp_transpose(x))

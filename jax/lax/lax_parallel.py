@@ -66,6 +66,34 @@ def psum(x, axis_name):
   """
   return tree_util.tree_map(partial(psum_p.bind, axis_name=axis_name), x)
 
+def pmean(x, axis_name):
+  """Compute an all-reduce mean on ``x`` over the pmapped axis ``axis_name``.
+
+  If ``x`` is a pytree then the result is equivalent to mapping this function to
+  each leaf in the tree.
+
+  Args:
+    x: array(s) with a mapped axis named ``axis_name``.
+    axis_name: hashable Python object used to name a pmapped axis (see the
+      ``pmap`` docstring for more details).
+
+  Returns:
+    Array(s) with the same shape as ``x`` representing the result of an
+    all-reduce mean along the axis ``axis_name``.
+
+  For example, with 4 XLA devices available:
+
+  >>> x = np.arange(4)
+  >>> y = jax.pmap(lambda x: jax.lax.pmean(x, 'i'), axis_name='i')(x)
+  >>> print(y)
+  [ 1.5         1.5         1.5         1.5       ]
+  >>> y = jax.pmap(lambda x: x / jax.lax.pmean(x, 'i'), axis_name='i')(x)
+  >>> print(y)
+  [ 0.          0.66666667  1.33333334  2.0       ]
+  """
+  x, n = psum((x, 1), axis_name=axis_name)
+  return tree_util.tree_map(lambda v: v / n, x)
+
 def pmax(x, axis_name):
   """Compute an all-reduce max on ``x`` over the pmapped axis ``axis_name``.
 
