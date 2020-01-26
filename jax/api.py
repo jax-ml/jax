@@ -50,7 +50,7 @@ from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, tree_leaves, tree_multimap,
                         _replace_nones)
 from .util import (unzip2, unzip3, curry, partial, safe_map, safe_zip,
-                   WrapHashably, Hashable, prod, split_list)
+                   WrapHashably, Hashable, prod, split_list, extend_name_stack, wrap_name)
 from .lib import xla_bridge as xb
 from .lib.xla_bridge import (device_count, local_device_count, devices, local_devices,
                              host_id, host_ids, host_count)
@@ -307,8 +307,9 @@ def xla_computation(fun, static_argnums=(), axis_env=None, backend=None,
     c = xb.make_computation_builder('xla_computation_{}'.format(fun_name))
     xla_consts = map(c.Constant, consts)
     xla_args = xla._xla_callable_args(c, avals, tuple_args)
-    outs = xla.jaxpr_subcomp(c, jaxpr, backend, axis_env_, xla_consts, (),
-                             'xla_computation(' + fun_name + ')/', *xla_args)
+    outs = xla.jaxpr_subcomp(
+        c, jaxpr, backend, axis_env_, xla_consts, (),
+        extend_name_stack(wrap_name(fun_name, 'xla_computation')), *xla_args)
     return c.Build(c.Tuple(*outs))
   return computation_maker
 

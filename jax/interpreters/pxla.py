@@ -31,7 +31,8 @@ from .. import linear_util as lu
 from .. import lazy
 from ..abstract_arrays import (ConcreteArray, ShapedArray, array_types,
                                raise_to_shaped)
-from ..util import partial, unzip2, concatenate, prod, safe_map
+from ..util import (partial, unzip2, concatenate, prod, safe_map,
+                    extend_name_stack, wrap_name)
 from ..lib import xla_bridge as xb
 from .xla import aval_to_xla_shape, xla_destructure
 from .batching import broadcast, not_mapped
@@ -503,7 +504,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   xla_consts = _map(c.Constant, consts)
   xla_args = xla._xla_callable_args(c, avals, tuple_args)
   out_nodes = xla.jaxpr_subcomp(c, jaxpr, backend, axis_env, xla_consts, (),
-                                'pmap(' + name + ')/', *xla_args)
+                                extend_name_stack(wrap_name(name, 'pmap')), *xla_args)
   built = c.Build(c.Tuple(*out_nodes))
 
   if devices is None:
@@ -644,7 +645,7 @@ xla_pmap_p.def_custom_bind(xla_pmap)
 xla_pmap_p.def_impl(xla_pmap_impl)
 
 def _pmap_translation_rule(c, jaxpr, axis_env, const_nodes, freevar_nodes,
-                           in_nodes, call_stack, axis_name, axis_size,
+                           in_nodes, name_stack, axis_name, axis_size,
                            global_axis_size, devices, name, backend=None):
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
@@ -654,9 +655,9 @@ def _pmap_translation_rule(c, jaxpr, axis_env, const_nodes, freevar_nodes,
     global_axis_size = axis_size
   new_env = xla.extend_axis_env(axis_env, axis_name, global_axis_size)
   in_nodes_sharded = list(map(partial(_xla_shard, c, new_env), in_nodes))
-  sharded_outs = xla.jaxpr_subcomp(c, jaxpr, backend, new_env, const_nodes,
-                                   freevar_nodes, call_stack + 'pmap(' + name + ')/',
-                                   *in_nodes_sharded)
+  sharded_outs = xla.jaxpr_subcomp(
+      c, jaxpr, backend, new_env, const_nodes, freevar_nodes,
+      extend_name_stack(name_stack, wrap_name(name, 'pmap')), *in_nodes_sharded)
   outs = [_xla_unshard(c, new_env, shard) for shard in sharded_outs]
   return c.Tuple(*outs)
 

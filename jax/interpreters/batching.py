@@ -28,7 +28,7 @@ from ..core import Trace, Tracer, new_master
 from ..abstract_arrays import ShapedArray, make_shaped_array, array_types, raise_to_shaped
 from ..ad_util import add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_p
 from .. import linear_util as lu
-from ..util import unzip2, partial, safe_map
+from ..util import unzip2, partial, safe_map, wrap_name
 from . import xla
 from . import partial_eval as pe
 
@@ -120,7 +120,7 @@ class BatchTrace(Trace):
   def process_call(self, call_primitive, f, tracers, params):
     assert call_primitive.multiple_results
     name = params.get('name', f.__name__)
-    params = dict(params, name='vmap(' + name + ')')
+    params = dict(params, name=wrap_name(name, 'vmap'))
     if call_primitive in pe.map_primitives:
       return self.process_map(call_primitive, f, tracers, params)
     vals, dims = unzip2((t.val, t.batch_dim) for t in tracers)
