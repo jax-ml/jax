@@ -16,6 +16,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import inspect
 from .tree_util import (build_tree, tree_flatten, tree_unflatten,
                         treedef_is_leaf)
 from . import linear_util as lu
@@ -30,6 +31,7 @@ def wraps(wrapped, fun, namestr="{fun}", docstr="{doc}", **kwargs):
     fun.__name__ = namestr.format(fun=get_name(wrapped))
     fun.__module__ = get_module(wrapped)
     fun.__doc__ = docstr.format(fun=get_name(wrapped), doc=get_doc(wrapped), **kwargs)
+    fun.__signature__ = inspect.signature(wrapped)
     fun.__wrapped__ = wrapped
   finally:
     return fun
