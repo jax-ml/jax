@@ -456,8 +456,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
     self._CompileAndCheck(partial(np.linalg.svd, full_matrices=full_matrices, compute_uv=compute_uv),
                           args_maker, check_dtypes=True)
-    if not full_matrices:
-      svd = partial(np.linalg.svd, full_matrices=False)
+    if not (compute_uv and full_matrices):
+      svd = partial(np.linalg.svd, full_matrices=full_matrices, compute_uv=compute_uv)
       jtu.check_jvp(svd, partial(jvp, svd), (a,), rtol=1e-2, atol=1e-1)
 
   @parameterized.named_parameters(jtu.cases_from_list(
