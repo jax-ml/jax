@@ -221,6 +221,16 @@ class APITest(jtu.JaxTestCase):
     self.assertRaisesRegex(
       TypeError, "Incompatible shapes for dot: got \\(3L?,\\) and \\(4L?,\\).",
       lambda: grad(f)(onp.zeros(3), onp.zeros(4)))
+  
+  def test_abstract_error_message(self):
+    for castfun in [float, complex, int]:
+      def f(x):
+        return castfun(x)
+
+      self.assertRaisesRegex(
+          TypeError,
+          "Try using `value.astype\({}\)` instead".format(castfun.__name__),
+          lambda: jit(f)(1.0))
 
   def test_switch_value_jit(self):
     def f(x):
