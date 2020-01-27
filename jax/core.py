@@ -656,6 +656,11 @@ def check_jaxpr(jaxpr):
 def pp_vars(vs):
     return ' '.join(map(str, vs))
 
+def pp_eqn_compact(primitive_name, params):
+  filtered_params = {k: v for k, v in params.items()
+                     if not isinstance(v, (Jaxpr, TypedJaxpr))}
+  return pp(primitive_name) >> pp_kv_pairs(sorted(filtered_params.items()))
+
 def pp_eqn(eqn):
   lhs = pp_vars(eqn.outvars)
   pp_subexpr = pp('')

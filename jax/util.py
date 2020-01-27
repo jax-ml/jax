@@ -228,3 +228,9 @@ def get_module_functions(module):
         attr, (types.BuiltinFunctionType, types.FunctionType, onp.ufunc)):
       module_fns.add(attr)
   return module_fns
+
+def wrap_name(name, transform_name):
+  return transform_name + '(' + name + ')'
+
+def extend_name_stack(stack, name=''):
+  return stack + name + '/'
