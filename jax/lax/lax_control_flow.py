@@ -546,11 +546,87 @@ def _cond_jvp(primals, tangents, true_jaxpr, false_jaxpr, true_nconsts,
       next(out_tangents_iter) if nz else ad_util.zero for nz in out_nz]
   return out_primals, out_tangents
 
+def _cond_partial_eval(trace, *tracers, true_jaxpr, false_jaxpr, true_nconsts,
+                       false_nconsts):
+  true_nops = len(true_jaxpr.in_avals) - true_nconsts
+  false_nops = len(false_jaxpr.in_avals) - false_nconsts
+
+  unknowns = [t.pval[0] is not None for t in tracers]
+
+  (pred_uk,), tconst_uk, t_uk, fconst_uk, f_uk = split_list(
+      unknowns, [1, true_nconsts, true_nops, false_nconsts])
+
+  _, _, t_out_uks = pe.partial_eval_jaxpr(true_jaxpr, tconst_uk + t_uk,
+                                          instantiate=False)
+  _, _, f_out_uks = pe.partial_eval_jaxpr(false_jaxpr, fconst_uk + f_uk,
+                                          instantiate=False)
+  out_uks = [a or b for a, b in zip(t_out_uks, f_out_uks)]
+
+  true_jaxpr_1, true_jaxpr_2, _ = pe.partial_eval_jaxpr(
+      true_jaxpr, tconst_uk + t_uk, instantiate=out_uks)
+  false_jaxpr_1, false_jaxpr_2, _ = pe.partial_eval_jaxpr(
+      false_jaxpr, fconst_uk + f_uk, instantiate=out_uks)
+
+  num_t_res = len(true_jaxpr_1.out_avals) - len(out_uks)
+  num_f_res = len(false_jaxpr_1.out_avals) - len(out_uks)
+
+  move = [False] * len(true_jaxpr.in_avals) + [True] * num_t_res
+  true_jaxpr_2 = pe.move_binders_to_front(true_jaxpr_2, move)
+  move = [False] * len(false_jaxpr.in_avals) + [True] * num_f_res
+  false_jaxpr_2 = pe.move_binders_to_front(false_jaxpr_2, move)
+
+  # TODO(frostig,mattjj): do we need to track nconsts at all?
+
+  t_res_avals = true_jaxpr_2.in_avals[:num_t_res]
+  f_res_avals = false_jaxpr_2.in_avals[:num_f_res]
+
+  true_jaxpr_1, true_jaxpr_2 = _join_cond_outputs(
+      true_jaxpr_1, true_jaxpr_2, f_res_avals, other_residuals_on_left=True)
+  false_jaxpr_1, false_jaxpr_2 = _join_cond_outputs(
+      false_jaxpr_1, false_jaxpr_2, t_res_avals, other_residuals_on_left=False)
+
+  import ipdb; ipdb.set_trace()
+
+  # TODO bind the cond
+  # TODO fill some inline comments above, borrow from notes
+
+def _join_cond_outputs(jaxpr1, jaxpr2,
+                       other_residual_avals,
+                       other_residuals_on_left):
+  num_outs = len(jaxpr2.out_avals)
+  num_ins = len(jaxpr1.in_avals)
+
+  @lu.wrap_init
+  def f1_aug(*args):
+    outs_and_res = core.jaxpr_as_fun(jaxpr1)(*args)
+    outs, res = split_list(outs_and_res, [num_outs])
+    other_res = [ad_util.zeros_like_aval(a) for a in other_residual_avals]
+    if other_residuals_on_left:
+      return outs + other_res + res
+    else:
+      return outs + res + other_res
+
+  # TODO maybe factor/abstract this out:
+  in_pvals = [pe.PartialVal((aval, core.unit)) for aval in jaxpr1.in_avals]
+  jaxpr1_aug, out_pvals, consts = pe.trace_to_jaxpr(f1_aug, in_pvals,
+                                                    instantiate=True)
+  out_avals, _ = unzip2(out_pvals)
+  jaxpr1_aug = core.TypedJaxpr(
+      jaxpr1_aug, consts, jaxpr1.in_avals, out_avals)
+
+  # TODO munge input side of jaxpr2 similar to above (use num_ins)
+  # accept other_res as inputs and drop them
+
+def _cond_transpose(cts, *args, **kwargs):
+  pass
+
 cond_p = lax.Primitive('cond')
 cond_p.multiple_results = True
 cond_p.def_impl(partial(xla.apply_primitive, cond_p))
 cond_p.def_abstract_eval(_cond_abstract_eval)
 ad.primitive_jvps[cond_p] = _cond_jvp
+ad.primitive_transposes[cond_p] = _cond_transpose
+pe.custom_partial_eval_rules[cond_p] = _cond_partial_eval
 batching.primitive_batchers[cond_p] = _cond_batching_rule
 xla.initial_style_translations[cond_p] = _cond_translation_rule
 

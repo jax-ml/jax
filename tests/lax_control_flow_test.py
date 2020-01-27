@@ -654,6 +654,11 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     jtu.check_grads(fun, (x,), order=2, modes=["fwd"])
 
+  def testCondPartialEval(self):
+    def f(x):
+      return lax.cond(x[0] < 2, x, lambda x: np.array([1.,2.]) * x, x, lambda x: np.sin(x))
+    api.grad(api.jit(f))(np.ones(2) * 3.)
+
   def testIssue1263(self):
     def f(rng, x):
       cond = random.bernoulli(rng)
