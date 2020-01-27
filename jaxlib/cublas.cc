@@ -19,6 +19,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/casts.h"
+#include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
@@ -116,7 +117,7 @@ class BlasHandlePool {
   void Return(cublasHandle_t handle);
 
   absl::Mutex mu_;
-  std::vector<cublasHandle_t> handles_ GUARDED_BY(mu_);
+  std::vector<cublasHandle_t> handles_ ABSL_GUARDED_BY(mu_);
 };
 
 /*static*/ BlasHandlePool* BlasHandlePool::Instance() {

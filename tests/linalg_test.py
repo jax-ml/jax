@@ -617,9 +617,10 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
     args_maker = lambda: [rng(shape, dtype)]
+    tol = 1e-1 if jtu.device_under_test() == "tpu" else 1e-3
     self._CheckAgainstNumpy(partial(onp.linalg.matrix_power, n=n),
                             partial(np.linalg.matrix_power, n=n),
-                            args_maker, check_dtypes=True, tol=1e-3)
+                            args_maker, check_dtypes=True, tol=tol)
     self._CompileAndCheck(partial(np.linalg.matrix_power, n=n), args_maker,
                           check_dtypes=True, rtol=1e-3)
 
