@@ -34,7 +34,6 @@ from .. import util
 from .. import dtypes
 import numpy as onp  # 'onp' rather than 'np' to distinguish from autograd.numpy
 import threading
-import jax.numpy as np
 
 try:
   from . import tpu_client
@@ -374,7 +373,7 @@ for scalar_type in [onp.int8, onp.int16, onp.int32, onp.int64,
   register_constant_handler(scalar_type, _scalar_constant_handler)
 
 def _python_scalar_handler(dtype, c, val, canonicalize_dtypes=True):
-  if np.isscalar(val) and dtype in [onp.int32, onp.uint32]:
+  if onp.isscalar(val) and dtype in [onp.int32, onp.uint32]:
     if val > onp.iinfo(dtype).max or val < onp.iinfo(dtype).min:
       raise TypeError("Scalar out of range for 32-bit dtype conversion: {}".format(val))
   return c.NumpyArrayConstant(dtype.type(val))
