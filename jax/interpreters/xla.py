@@ -180,15 +180,13 @@ def xla_primitive_callable(prim, *arg_specs, **params):
   return partial(_execute_compiled_primitive, prim, compiled, backend,
                  tuple_args, handle_result)
 
-# TODO(mattjj): make Device instances hashable instead of handling pairs here
 def _device_from_arg_devices(devices):
   """Given devices of inputs, determine where to perform a computation.
 
   Args:
-    devices: list where each element is a either a pair consisting of a device
-      class and an int id (representing a Device instance) or a None.
+    devices: list where each element is a either a `Device` instance or `None`.
   Returns:
-    A Device instance or None.
+    A `Device` instance or None.
   Raises:
     ValueError if input devices are inconsistent.
   """
@@ -200,7 +198,7 @@ def _device_from_arg_devices(devices):
     raise ValueError(msg.format(", ".join(names)))
   else:
     all_devices = it.chain(xb.devices(), xb.devices('cpu'))
-    return device and next(d for d in all_devices if (type(d), d.id) == device)
+    return device and next(d for d in all_devices if d == device)
 
 @cache()
 def primitive_computation(prim, backend, tuple_args, *avals, **params):
@@ -719,7 +717,7 @@ class DeviceArray(DeviceValue):
   def __init__(self, aval, device, lazy_expr, device_buffer):
     self.aval = aval
     self.device_buffer = device_buffer
-    self._device = device and (type(device), device.id)
+    self._device = device
     self._lazy_expr = lazy_expr
 
     self._npy_value = None
@@ -906,8 +904,7 @@ def _force(x):
       device = x._device
       sticky = True
     else:
-      d = x.device_buffer.device()
-      device = d and (type(d), d.id)
+      device = x.device_buffer.device()
       sticky = False
     force_fun = _lazy_force_computation(sticky, x.aval, device, x._lazy_expr)
     return force_fun(x)
