@@ -913,6 +913,10 @@ class LaxTest(jtu.JaxTestCase):
   def testReverse(self):
     rev = api.jit(lambda operand: lax.rev(operand, dimensions))
 
+    dimensions = []
+    self.assertAllClose(onp.array([0, 1, 2, 3]), rev(onp.array([0, 1, 2, 3])),
+                        check_dtypes=False)
+
     dimensions = [0]
     self.assertAllClose(onp.array([3, 2, 1]), rev(onp.array([1, 2, 3])),
                         check_dtypes=False)
