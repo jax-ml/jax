@@ -1464,21 +1464,29 @@ def _linear_solve_batching_rule(args, dims, **kwargs):
   # Fixpoint computation of which parts of x and b are batched; we need to
   # ensure this is consistent between all four jaxprs
   b_bat = orig_b_bat
-  x_bat = [False] * len(vecmat.out_avals)
-  for i in range(1 + len(orig_b_bat) + len(vecmat.out_avals)):
+  x_bat = [False] * len(solve.out_avals)
+  for i in range(1 + len(orig_b_bat) + len(solve.out_avals)):
     # Apply vecmat and solve -> new batched parts of x
-    vecmat_jaxpr_batched, vecmat_x_bat = batching.batch_jaxpr(
-        vecmat, size, vecmat_bat + b_bat, instantiate=x_bat)
     solve_jaxpr_batched, solve_x_bat = batching.batch_jaxpr(
         solve, size, solve_bat + b_bat, instantiate=x_bat)
-    x_bat_out = _map(operator.or_, vecmat_x_bat, solve_x_bat)
+    if vecmat is None:
+      vecmat_jaxpr_batched = None
+      x_bat_out = solve_x_bat
+    else:
+      vecmat_jaxpr_batched, vecmat_x_bat = batching.batch_jaxpr(
+          vecmat, size, vecmat_bat + b_bat, instantiate=x_bat)
+      x_bat_out = _map(operator.or_, vecmat_x_bat, solve_x_bat)
     # Apply matvec and solve_t -> new batched parts of b
     matvec_jaxpr_batched, matvec_b_bat = batching.batch_jaxpr(
         matvec, size, matvec_bat + x_bat_out, instantiate=b_bat)
-    solve_t_jaxpr_batched, solve_t_b_bat = batching.batch_jaxpr(
-        solve_t, size, solve_t_bat + x_bat_out, instantiate=b_bat)
-    b_bat_out = _map(lambda m, s, o: m or s or o, matvec_b_bat, solve_t_b_bat,
-                     orig_b_bat)
+    if solve_t is None:
+      solve_t_jaxpr_batched = None
+      b_bat_out = _map(operator.or_, matvec_b_bat, orig_b_bat)
+    else:
+      solve_t_jaxpr_batched, solve_t_b_bat = batching.batch_jaxpr(
+          solve_t, size, solve_t_bat + x_bat_out, instantiate=b_bat)
+      b_bat_out = _map(lambda m, s, o: m or s or o, matvec_b_bat, solve_t_b_bat,
+                      orig_b_bat)
     if x_bat_out == x_bat and b_bat_out == b_bat:
       break
     else:

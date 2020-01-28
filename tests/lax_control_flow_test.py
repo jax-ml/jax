@@ -1502,6 +1502,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     jtu.check_grads(loss, (a, b), order=2, modes=['fwd'],
                     atol={onp.float32: 2e-3, onp.float64: 1e-11})
+    jtu.check_grads(api.vmap(loss), (a[None,:,:], b[None,:]), order=2,
+                    modes=['fwd'], atol={onp.float32: 2e-3, onp.float64: 1e-11})
 
     with self.assertRaisesRegex(TypeError, "transpose_solve required"):
       api.grad(loss)(a, b)
