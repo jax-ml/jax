@@ -8,18 +8,34 @@ First, obtain the JAX source code.
     git clone https://github.com/google/jax
     cd jax
 
+Building JAX involves two steps:
 
-There are two steps to building JAX: building ``jaxlib`` and installing ``jax``.
+1. Building or installing ``jaxlib``, the C++ support library for ``jax``.
+2. Installing the ``jax`` Python package.
+
+Building or installing ``jaxlib``
+---------------------------------
+
+Installing ``jaxlib`` with pip
+..............................
 
 If you're only modifying Python portions of JAX, you may be able to install
-``jaxlib`` from pip or a prebuilt wheel and skip to installing ``jax`` from
-source.
+``jaxlib`` from pip (or a prebuilt wheel). You can install with pip by running:
 
-To build ``jaxlib``, you must also install some prerequisites:
- * a C++ compiler (g++ or clang)
- * Numpy
- * Scipy
- * Cython
+.. code-block:: shell
+
+ pip install jaxlib
+
+
+Building ``jaxlib`` from source
+...............................
+
+To build ``jaxlib`` from source, you must also install some prerequisites:
+
+* a C++ compiler (g++ or clang)
+* Numpy
+* Scipy
+* Cython
 
 On Ubuntu 18.04 or Debian you can install the necessary prerequisites with:
 
@@ -58,6 +74,9 @@ To build ``jaxlib`` without CUDA GPU support (CPU only), drop the ``--enable_cud
   python build/build.py
   pip install -e build  # installs jaxlib (includes XLA)
 
+Installing ``jax``
+------------------
+
 Once ``jaxlib`` has been installed, you can install ``jax`` by running
 
 .. code-block:: shell
@@ -66,8 +85,8 @@ Once ``jaxlib`` has been installed, you can install ``jax`` by running
 
 To upgrade to the latest version from GitHub, just run ``git pull`` from the JAX
 repository root, and rebuild by running ``build.py`` or upgrading ``jaxlib`` if
-necessary. You shouldn't have to reinstall because ``pip install -e`` sets up
-symbolic links from site-packages into the repository.
+necessary. You shouldn't have to reinstall ``jax`` because ``pip install -e``
+sets up symbolic links from site-packages into the repository.
 
 Running the tests
 =================

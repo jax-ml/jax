@@ -3445,6 +3445,7 @@ setattr(DeviceArray, "T", property(transpose))
 setattr(DeviceArray, "real", property(real))
 setattr(DeviceArray, "imag", property(imag))
 setattr(DeviceArray, "astype", _astype)
+setattr(DeviceArray, "tolist", lambda x: onp.array(x).tolist())
 
 
 # Extra methods that are handy

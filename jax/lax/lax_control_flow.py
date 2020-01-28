@@ -43,7 +43,7 @@ from jax.interpreters import masking
 from jax.lib import xla_bridge as xb
 from jax.lib import xla_client
 from jax.util import (partial, unzip2, safe_map, safe_zip, split_list,
-                      split_dict, cache)
+                      split_dict, cache, extend_name_stack)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
                            treedef_children, treedef_tuple)
 from jax import ad_util
@@ -213,7 +213,7 @@ def while_loop(cond_fun, body_fun, init_val):
 def _while_loop_abstract_eval(*args, **kwargs):
   return _map(raise_to_shaped, kwargs["body_jaxpr"].out_avals)
 
-def _while_loop_translation_rule(c, axis_env, *args, **kwargs):
+def _while_loop_translation_rule(c, axis_env, name_stack, *args, **kwargs):
   backend = kwargs.pop('backend')
   cond_jaxpr, body_jaxpr, cond_nconsts, body_nconsts = split_dict(
       kwargs, ["cond_jaxpr", "body_jaxpr", "cond_nconsts", "body_nconsts"])
@@ -233,7 +233,8 @@ def _while_loop_translation_rule(c, axis_env, *args, **kwargs):
   cond_carry_elts = [cond_c.GetTupleElement(cond_carry, i) for i in range(len(args))]
   x, _, z = split_list(cond_carry_elts, [cond_nconsts, body_nconsts])
   pred, = xla.jaxpr_subcomp(cond_c, cond_jaxpr.jaxpr, backend, axis_env,
-                            _map(cond_c.Constant, cond_jaxpr.literals), (), *(x + z))
+                            _map(cond_c.Constant, cond_jaxpr.literals), (),
+                            extend_name_stack(name_stack, 'cond'), *(x + z))
   if batched:
     scalar = ShapedArray((), onp.bool_)
     or_ = xla.primitive_subcomputation(lax.or_p, scalar, scalar)
@@ -245,10 +246,12 @@ def _while_loop_translation_rule(c, axis_env, *args, **kwargs):
   body_carry_elts = [body_c.GetTupleElement(body_carry, i) for i in range(len(args))]
   x, y, z = split_list(body_carry_elts, [cond_nconsts, body_nconsts])
   new_z = xla.jaxpr_subcomp(body_c, body_jaxpr.jaxpr, backend, axis_env,
-                            _map(body_c.Constant, body_jaxpr.literals), (), *(y + z))
+                            _map(body_c.Constant, body_jaxpr.literals), (),
+                            extend_name_stack(name_stack, 'body'), *(y + z))
   if batched:
     body_pred, = xla.jaxpr_subcomp(body_c, cond_jaxpr.jaxpr, backend, axis_env,
-                                   _map(body_c.Constant, cond_jaxpr.literals), (), *(x + z))
+                                   _map(body_c.Constant, cond_jaxpr.literals), (),
+                                   extend_name_stack(name_stack, 'body_pred'), *(x + z))
     new_z = _map(partial(_pred_bcast_select, body_c, body_pred), new_z, z)
     assert _map(body_c.GetShape, new_z) == _map(body_c.GetShape, z) # no broadcast
   new_carry = body_c.Tuple(*itertools.chain(x, y, new_z))
@@ -426,7 +429,7 @@ def cond(pred, true_operand, true_fun, false_operand, false_fun):
 def _cond_abstract_eval(*args, **kwargs):
   return _map(raise_to_shaped, kwargs["true_jaxpr"].out_avals)
 
-def _cond_translation_rule(c, axis_env, pred, *args, **kwargs):
+def _cond_translation_rule(c, axis_env, name_stack, pred, *args, **kwargs):
   backend = kwargs.pop("backend", None)
   true_jaxpr, false_jaxpr, true_nconsts, false_nconsts = split_dict(
       kwargs, ["true_jaxpr", "false_jaxpr", "true_nconsts", "false_nconsts"])
@@ -435,18 +438,19 @@ def _cond_translation_rule(c, axis_env, pred, *args, **kwargs):
       args, [true_nconsts, true_nops, false_nconsts])
 
   def make_computation(name, jaxpr, op_shape):
-    c = xb.make_computation_builder(name)
+    c = xb.make_computation_builder(name + '_comp')
     op = c.ParameterWithShape(op_shape)
     ops = [c.GetTupleElement(op, i) for i in range(len(jaxpr.in_avals))]
     outs = xla.jaxpr_subcomp(c, jaxpr.jaxpr, backend, axis_env,
-                             _map(c.Constant, jaxpr.literals), (), *ops)
+                             _map(c.Constant, jaxpr.literals), (),
+                             extend_name_stack(name_stack, name + '_fun'), *ops)
     return c.Build(c.Tuple(*outs))
 
   true_op = c.Tuple(*(true_consts + true_ops))
-  true_c = make_computation("true_comp", true_jaxpr, c.GetShape(true_op))
+  true_c = make_computation('true', true_jaxpr, c.GetShape(true_op))
 
   false_op = c.Tuple(*(false_consts + false_ops))
-  false_c = make_computation("false_comp", false_jaxpr, c.GetShape(false_op))
+  false_c = make_computation('false', false_jaxpr, c.GetShape(false_op))
 
   return c.Conditional(pred, true_op, true_c, false_op, false_c)
 
