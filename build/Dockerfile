@@ -7,18 +7,12 @@ RUN apt-get update
 RUN apt-get install libffi-dev
 RUN git clone --branch v1.2.14 https://github.com/pyenv/pyenv.git /pyenv
 ENV PYENV_ROOT /pyenv
-RUN /pyenv/bin/pyenv install 2.7.15
 RUN /pyenv/bin/pyenv install 3.5.6
 RUN /pyenv/bin/pyenv install 3.6.8
 RUN /pyenv/bin/pyenv install 3.7.2
 RUN /pyenv/bin/pyenv install 3.8.0
 
-# Install build-dependencies of scipy.
-# TODO(phawkins): remove when there are scipy wheels for Python 3.8.
-RUN apt-get update && apt-get install -y libopenblas-dev gfortran
-
 # We pin numpy to a version < 1.16 to avoid version compatibility issues.
-RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 2.7.15 && pip install numpy==1.15.4 scipy cython setuptools wheel future six
 RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.5.6 && pip install numpy==1.15.4 scipy cython setuptools wheel six
 RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.6.8 && pip install numpy==1.15.4 scipy cython setuptools wheel six
 RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.7.2 && pip install numpy==1.15.4 scipy cython setuptools wheel six
