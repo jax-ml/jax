@@ -9,6 +9,13 @@
 | [**Install guide**](#installation)
 | [**Reference docs**](https://jax.readthedocs.io/en/latest/)
 
+## Announcements
+
+* `jax` 0.1.58 has been released. As of `jax` 0.1.58, JAX has dropped Python 2
+  support. Please update to Python 3.5 or newer.
+
+## What is JAX?
+
 JAX is [Autograd](https://github.com/hips/autograd) and
 [XLA](https://www.tensorflow.org/xla),
 brought together for high-performance machine learning research.
