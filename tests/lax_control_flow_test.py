@@ -654,10 +654,31 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     jtu.check_grads(fun, (x,), order=2, modes=["fwd"])
 
-  def testCondPartialEval(self):
+  def testCondGrad(self):
+    def f(x):
+      return lax.cond(x < 2, x, lambda x: 3. * x, x, lambda x: np.sin(x))
+    api.grad(f)(1.)
+    api.grad(f)(4.)
+
+  def testCondGrad2(self):
     def f(x):
       return lax.cond(x[0] < 2, x, lambda x: np.array([1.,2.]) * x, x, lambda x: np.sin(x))
-    api.grad(api.jit(f))(np.ones(2) * 3.)
+    api.grad(lambda x: api.jit(f)(x).sum())(np.ones(2) * 3.)
+
+  def testCondLinearize(self):
+    def f(x):
+      return lax.cond(x < 2, x, lambda x: 3. * x, x, lambda x: np.sin(x))
+    y, f_lin = api.linearize(f, 1.)
+    self.assertAllClose(y, 3., check_dtypes=False)
+    self.assertAllClose(f_lin(2.), 6., check_dtypes=False)
+    y, f_lin = api.linearize(f, 4.)
+    self.assertAllClose(y, np.sin(4.), check_dtypes=False)
+    self.assertAllClose(f_lin(2.), np.cos(4.) * 2., check_dtypes=False)
+
+  def testCondJit(self):
+    def f(x):
+      return lax.cond(x < 2, x, lambda x: 3. * x, x, lambda x: np.sin(x))
+    api.jit(f)(1.)
 
   def testIssue1263(self):
     def f(rng, x):

@@ -556,6 +556,11 @@ def _cond_partial_eval(trace, *tracers, true_jaxpr, false_jaxpr, true_nconsts,
   (pred_uk,), tconst_uk, t_uk, fconst_uk, f_uk = split_list(
       unknowns, [1, true_nconsts, true_nops, false_nconsts])
 
+  if pred_uk:
+    params = dict(true_jaxpr=true_jaxpr, false_jaxpr=false_jaxpr,
+                  true_nconsts=true_nconsts, false_nconsts=false_nconsts)
+    return trace.default_process_primitive(cond_p, tracers, params)
+
   _, _, t_out_uks = pe.partial_eval_jaxpr(true_jaxpr, tconst_uk + t_uk,
                                           instantiate=False)
   _, _, f_out_uks = pe.partial_eval_jaxpr(false_jaxpr, fconst_uk + f_uk,
@@ -576,18 +581,54 @@ def _cond_partial_eval(trace, *tracers, true_jaxpr, false_jaxpr, true_nconsts,
   false_jaxpr_2 = pe.move_binders_to_front(false_jaxpr_2, move)
 
   # TODO(frostig,mattjj): do we need to track nconsts at all?
+  # TODO(frostig,mattjj): pe.partial_eval_jaxpr should raise to shaped avals
 
-  t_res_avals = true_jaxpr_2.in_avals[:num_t_res]
-  f_res_avals = false_jaxpr_2.in_avals[:num_f_res]
+  t_res_avals = _map(raise_to_shaped, true_jaxpr_2.in_avals[:num_t_res])
+  f_res_avals = _map(raise_to_shaped, false_jaxpr_2.in_avals[:num_f_res])
 
   true_jaxpr_1, true_jaxpr_2 = _join_cond_outputs(
       true_jaxpr_1, true_jaxpr_2, f_res_avals, other_residuals_on_left=True)
   false_jaxpr_1, false_jaxpr_2 = _join_cond_outputs(
       false_jaxpr_1, false_jaxpr_2, t_res_avals, other_residuals_on_left=False)
 
-  import ipdb; ipdb.set_trace()
+  # TODO(frostig,mattjj): reinstate these assertions once pe.partial_eval_jaxpr
+  # raises to shaped avals
+  #assert true_jaxpr_1.out_avals == false_jaxpr_1.out_avals
+  #assert true_jaxpr_2.in_avals == false_jaxpr_2.in_avals
+  num_res = len(true_jaxpr_2.in_avals) - len(true_jaxpr_1.in_avals)
 
-  # TODO bind the cond
+  _, in_consts = unzip2([t.pval for t in tracers])
+  out_consts_and_res = cond_p.bind(
+      *in_consts,
+      true_jaxpr=true_jaxpr_1, false_jaxpr=false_jaxpr_1,
+      true_nconsts=true_nconsts, false_nconsts=false_nconsts)
+  out_consts, res = split_list(
+      out_consts_and_res, [len(out_consts_and_res) - num_res])
+
+  # TODO(frostig,mattjj): remove raised_to_shaped of avals once
+  # pe.partial_eval_jaxpr handles it
+  out_avals = _map(raise_to_shaped, true_jaxpr_2.out_avals)
+  out_pvs = [aval if uk else None for aval, uk in zip(out_avals, out_uks)]
+
+  pred_tracer = trace.new_instantiated_const(tracers[0])
+  new_tracers = [
+      t if uk else trace.new_instantiated_literal(core.unit)
+      for uk, t in zip(unknowns[1:], tracers[1:])]
+  res_tracers = _map(trace.new_instantiated_const, res)
+  out_tracers = [pe.JaxprTracer(trace, pe.PartialVal((pv, const)), None)
+                 for pv, const in zip(out_pvs, out_consts)]
+
+  import ipdb; ipdb.set_trace()
+  params = dict(true_jaxpr=true_jaxpr_2, false_jaxpr=false_jaxpr_2,
+                true_nconsts=true_nconsts + len(res),
+                false_nconsts=false_nconsts + len(res))
+  eqn = pe.new_eqn_recipe([pred_tracer] + res_tracers + new_tracers,
+                          out_tracers, cond_p, (),
+                          params)
+  for t in out_tracers: t.recipe = eqn
+  import ipdb; ipdb.set_trace()
+  return out_tracers
+
   # TODO fill some inline comments above, borrow from notes
 
 def _join_cond_outputs(jaxpr1, jaxpr2,
@@ -595,6 +636,8 @@ def _join_cond_outputs(jaxpr1, jaxpr2,
                        other_residuals_on_left):
   num_outs = len(jaxpr2.out_avals)
   num_ins = len(jaxpr1.in_avals)
+  num_res = len(jaxpr2.in_avals) - len(jaxpr1.in_avals)
+  assert num_res == len(jaxpr1.out_avals) - len(jaxpr2.out_avals)
 
   @lu.wrap_init
   def f1_aug(*args):
@@ -606,16 +649,38 @@ def _join_cond_outputs(jaxpr1, jaxpr2,
     else:
       return outs + res + other_res
 
-  # TODO maybe factor/abstract this out:
+  # -- TODO maybe factor/abstract this out:
   in_pvals = [pe.PartialVal((aval, core.unit)) for aval in jaxpr1.in_avals]
   jaxpr1_aug, out_pvals, consts = pe.trace_to_jaxpr(f1_aug, in_pvals,
                                                     instantiate=True)
   out_avals, _ = unzip2(out_pvals)
-  jaxpr1_aug = core.TypedJaxpr(
-      jaxpr1_aug, consts, jaxpr1.in_avals, out_avals)
+  jaxpr1_aug = core.TypedJaxpr(jaxpr1_aug, consts, jaxpr1.in_avals, out_avals)
+  # -- up to here
 
-  # TODO munge input side of jaxpr2 similar to above (use num_ins)
-  # accept other_res as inputs and drop them
+  @lu.wrap_init
+  def f2_aug(*args):
+    res_aug, ins = split_list(args, [num_res + len(other_residual_avals)])
+    if other_residuals_on_left:
+      _, res = split_list(res_aug, [len(other_residual_avals)])
+    else:
+      res, _ = split_list(res_aug, [num_res])
+    return core.jaxpr_as_fun(jaxpr2)(*(res + ins))
+
+  if other_residuals_on_left:
+    in_avals = other_residual_avals + jaxpr2.in_avals
+  else:
+    res_avals, in_avals = split_list(jaxpr2.in_avals, [num_res])
+    in_avals = res_avals + other_residual_avals + in_avals
+
+  # -- TODO factor
+  in_pvals = [pe.PartialVal((aval, core.unit)) for aval in in_avals]
+  jaxpr2_aug, out_pvals, consts = pe.trace_to_jaxpr(f2_aug, in_pvals,
+                                                    instantiate=True)
+  out_avals, _ = unzip2(out_pvals)
+  jaxpr2_aug = core.TypedJaxpr(jaxpr2_aug, consts, in_avals, out_avals)
+  # --
+
+  return jaxpr1_aug, jaxpr2_aug
 
 def _cond_transpose(cts, *args, **kwargs):
   pass
