@@ -1508,6 +1508,75 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, "transpose_solve required"):
       api.grad(loss)(a, b)
 
+  def test_custom_linear_solve_pytree(self):
+    """Test custom linear solve with inputs and outputs that are pytrees."""
+
+    def unrolled_matvec(mat, x):
+      """Apply a Python list of lists of scalars to a list of scalars."""
+      result = []
+      for i in range(len(mat)):
+        v = 0
+        for j in range(len(x)):
+          if mat[i][j] is not None:
+            v += mat[i][j] * x[j]
+        result.append(v)
+      return result
+
+    def unrolled_substitution_solve(matvec, b, lower_tri):
+      """Solve a triangular unrolled system with fwd/back substitution."""
+      zero = np.zeros(())
+      one = np.ones(())
+      x = [zero for _ in b]
+      ordering = range(len(b)) if lower_tri else range(len(b) - 1, -1, -1)
+      for i in ordering:
+        residual = b[i] - matvec(x)[i]
+        diagonal = matvec([one if i == j else zero for j in range(len(b))])[i]
+        x[i] = residual / diagonal
+      return x
+
+    def custom_unrolled_lower_tri_solve(mat, b):
+      return lax.custom_linear_solve(
+          partial(unrolled_matvec, mat), b,
+          partial(unrolled_substitution_solve, lower_tri=True),
+          partial(unrolled_substitution_solve, lower_tri=False))
+
+    mat = [[1.0, None, None, None, None, None, None],
+           [1.0, 1.0, None, None, None, None, None],
+           [None, 1.0, 1.0, None, None, None, None],
+           [None, None, 1.0, 1.0, None, None, None],
+           [None, None, None, 1.0, 1.0, None, None],
+           [None, None, None, None, None, 2.0, None],
+           [None, None, None, None, None, 4.0, 3.0]]
+
+    rng = onp.random.RandomState(0)
+    b = list(rng.randn(7))
+
+    # Non-batched
+    jtu.check_grads(custom_unrolled_lower_tri_solve, (mat, b), order=2)
+
+    # Batch one element of b (which, because of unrolling, should only affect
+    # the first block of outputs)
+    b_bat = list(b)
+    b_bat[3] = rng.randn(3)
+    jtu.check_grads(
+        api.vmap(
+            custom_unrolled_lower_tri_solve,
+            in_axes=(None, [None, None, None, 0, None, None, None]),
+            out_axes=[0, 0, 0, 0, 0, None, None]), (mat, b_bat),
+        order=2)
+
+    # Batch one element of mat (again only affecting first block)
+    mat[2][1] = rng.randn(3)
+    mat_axis_tree = [
+        [0 if i == 2 and j == 1 else None for j in range(7)] for i in range(7)
+    ]
+    jtu.check_grads(
+        api.vmap(
+            custom_unrolled_lower_tri_solve,
+            in_axes=(mat_axis_tree, None),
+            out_axes=[0, 0, 0, 0, 0, None, None]), (mat, b),
+        order=2)
+
   def test_custom_linear_solve_errors(self):
 
     solve = lambda f, x: x
