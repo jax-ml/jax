@@ -121,9 +121,9 @@ pybind_extension(
     deps = [
         ":gpu_kernel_helpers",
         ":kernel_pybind11_helpers",
-        "//third_party/absl/base:core_headers",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/memory",
@@ -150,9 +150,9 @@ pybind_extension(
     deps = [
         ":gpu_kernel_helpers",
         ":kernel_pybind11_helpers",
-        "//third_party/absl/base:core_headers",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/memory",
