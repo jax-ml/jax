@@ -185,12 +185,10 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("expm1", 1, number_dtypes, all_shapes, jtu.rand_small_positive,
               [], tolerance={onp.float64: 1e-8}, inexact=True),
     op_record("fix", 1, float_dtypes, all_shapes, jtu.rand_default, []),
-    op_record("floor_divide", 2, number_dtypes, all_shapes, jtu.rand_nonzero,
-              ["rev"]),
-    # TODO(phawkins): merge this with the preceding entry after the minimum
-    # Jaxlib version is increased to 0.1.38.
-    op_record("floor_divide", 2, uint_dtypes, all_shapes, jtu.rand_nonzero,
-              ["rev"]),
+    op_record("floor_divide", 2, number_dtypes, all_shapes,
+              jtu.rand_nonzero, ["rev"]),
+    op_record("floor_divide", 2, uint_dtypes, all_shapes,
+              jtu.rand_nonzero, ["rev"]),
     op_record("heaviside", 2, default_dtypes, all_shapes, jtu.rand_default, [],
               inexact=True),
     op_record("hypot", 2, default_dtypes, all_shapes, jtu.rand_default, [],

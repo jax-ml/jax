@@ -4,7 +4,16 @@ These are the release notes for JAX.
 
 ## jax 0.1.59 (unreleased)
 
-## jax 0.1.58
+### Breaking changes
+
+* The minimum jaxlib version is now 0.1.38.
+
+## jaxlib 0.1.38 (January 29, 2020)
+
+* CUDA 9.0 is no longer supported.
+* CUDA 10.2 wheels are now built by default.
+
+## jax 0.1.58 (January 28, 2020)
 
 ### Breaking changes
 

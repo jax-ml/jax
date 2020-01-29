@@ -118,6 +118,14 @@ LAX_OPS = [
                onp.float64: 1e-14}),
     op_record("digamma", 1, float_dtypes, jtu.rand_positive,
               {onp.float64: 1e-14}),
+    op_record("betainc", 3, float_dtypes, jtu.rand_positive,
+              {onp.float64: 1e-14}),
+    op_record("igamma", 2,
+              [f for f in float_dtypes if f not in [dtypes.bfloat16, onp.float16]],
+              jtu.rand_positive, {onp.float64: 1e-14}),
+    op_record("igammac", 2,
+              [f for f in float_dtypes if f not in [dtypes.bfloat16, onp.float16]],
+              jtu.rand_positive, {onp.float64: 1e-14}),
     op_record("erf", 1, float_dtypes, jtu.rand_small),
     op_record("erfc", 1, float_dtypes, jtu.rand_small),
     # TODO(b/142976030): the approximation of erfinf used by XLA is only
@@ -156,17 +164,6 @@ LAX_OPS = [
     op_record("le", 2, default_dtypes, jtu.rand_small),
     op_record("lt", 2, default_dtypes, jtu.rand_small),
 ]
-if lib.version > (0, 1, 37):
-  LAX_OPS += [
-      op_record("betainc", 3, float_dtypes, jtu.rand_positive,
-                {onp.float64: 1e-14}),
-      op_record("igamma", 2,
-                [f for f in float_dtypes if f not in [dtypes.bfloat16, onp.float16]],
-                jtu.rand_positive, {onp.float64: 1e-14}),
-      op_record("igammac", 2,
-                [f for f in float_dtypes if f not in [dtypes.bfloat16, onp.float16]],
-                jtu.rand_positive, {onp.float64: 1e-14}),
-  ]
 
 CombosWithReplacement = itertools.combinations_with_replacement
 
