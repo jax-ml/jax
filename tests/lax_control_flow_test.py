@@ -728,6 +728,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def f(x):
       return lax.cond(x < 2, x, lambda x: 3. * x, x, lambda x: np.sin(x))
     api.jit(f)(1.)
+    # TODO complete
 
   def testIssue1263(self):
     def f(rng, x):
