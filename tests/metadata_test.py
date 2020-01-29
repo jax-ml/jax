@@ -18,7 +18,9 @@ from __future__ import print_function
 
 from absl.testing import absltest
 from jax import test_util as jtu
+from jax.interpreters import xla
 from jax.lib import xla_bridge as xb
+
 import jax
 from jax import numpy as jnp
 
@@ -28,6 +30,8 @@ config.parse_flags_with_absl()
 class MetadataTest(jtu.JaxTestCase):
 
   def setUp(self):
+    xla.xla_primitive_callable.cache_clear()
+    xla._xla_callable.cache_clear()
     self.op_names = []
     self.op_types = []
     def SetOpMetadata(builder, metadata):
