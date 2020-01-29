@@ -12,13 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from absl.testing import absltest
 from jax import test_util as jtu
+from jax.interpreters import xla
 from jax.lib import xla_bridge as xb
+
 import jax
 from jax import numpy as jnp
 
@@ -28,6 +27,8 @@ config.parse_flags_with_absl()
 class MetadataTest(jtu.JaxTestCase):
 
   def setUp(self):
+    xla.xla_primitive_callable.cache_clear()
+    xla._xla_callable.cache_clear()
     self.op_names = []
     self.op_types = []
     def SetOpMetadata(builder, metadata):
@@ -101,8 +102,7 @@ class MetadataTest(jtu.JaxTestCase):
       return jnp.cos(x)
     _ = jax.lax.cond(True, 1., true_fun, 1., false_fun)
     assert self.op_types[-3] == 'cond'
-    assert self.op_names[-3] == 'cond[ false_nconsts=0\n' \
-                                '      true_nconsts=0 ]'
+    assert self.op_names[-3] == 'cond'
     assert self.op_types[-2] == 'sin'
     assert self.op_names[-2] == 'cond/true_fun/sin'
     assert self.op_types[-1] == 'cos'

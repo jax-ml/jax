@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from collections import namedtuple, defaultdict
 from distutils.util import strtobool
@@ -175,32 +172,31 @@ def xla_primitive_callable(prim, *arg_specs, **params):
     handle_result = lambda xs: tuple(h(x) for h, x in zip(handlers, xs.destructure()))
   tuple_args = len(avals) > 100
   built_c = primitive_computation(prim, backend, tuple_args, *avals, **params)
-  options = xb.get_compile_options(device_assignment=device and (device.id,))
+  options = xb.get_compile_options(
+      num_replicas=1,
+      num_partitions=1,
+      device_assignment=device and (device.id,))
   compiled = built_c.Compile(compile_options=options, backend=backend)
   return partial(_execute_compiled_primitive, prim, compiled, backend,
                  tuple_args, handle_result)
 
-# TODO(mattjj): make Device instances hashable instead of handling pairs here
 def _device_from_arg_devices(devices):
   """Given devices of inputs, determine where to perform a computation.
 
   Args:
-    devices: list where each element is a either a pair consisting of a device
-      class and an int id (representing a Device instance) or a None.
+    devices: list where each element is a either a `Device` instance or `None`.
   Returns:
-    A Device instance or None.
+    A `Device` instance or None.
   Raises:
     ValueError if input devices are inconsistent.
   """
   try:
     device, = set(d for d in devices if d is not None) or (None,)
+    return device
   except ValueError:
     msg = "primitive arguments must be colocated on the same device, got {}"
     names = ("{}({})".format(d[0].__name__, d[1]) for d in devices if d is not None)
     raise ValueError(msg.format(", ".join(names)))
-  else:
-    all_devices = it.chain(xb.devices(), xb.devices('cpu'))
-    return device and next(d for d in all_devices if (type(d), d.id) == device)
 
 @cache()
 def primitive_computation(prim, backend, tuple_args, *avals, **params):
@@ -503,7 +499,9 @@ def _xla_callable(fun, device, backend, name, *arg_specs):
   built = c.Build(c.Tuple(*out_nodes))
 
   options = xb.get_compile_options(
-      num_replicas=nreps, device_assignment=(device.id,) if device else None)
+      num_replicas=nreps,
+      num_partitions=1,
+      device_assignment=(device.id,) if device else None)
   compiled = built.Compile(compile_options=options, backend=xb.get_backend(backend))
 
   if nreps == 1:
@@ -587,7 +585,9 @@ def _get_device(device, backend):
   c = xb.make_computation_builder("get_device")
   built = c.Build(c.Tuple())
   options = xb.get_compile_options(
-      num_replicas=1, device_assignment=(device.id,) if device else None)
+      num_replicas=1,
+      num_partitions=1,
+      device_assignment=(device.id,) if device else None)
   compiled = built.Compile(compile_options=options, backend=xb.get_backend(backend))
   out, = compiled.local_devices()
   return out
@@ -719,7 +719,7 @@ class DeviceArray(DeviceValue):
   def __init__(self, aval, device, lazy_expr, device_buffer):
     self.aval = aval
     self.device_buffer = device_buffer
-    self._device = device and (type(device), device.id)
+    self._device = device
     self._lazy_expr = lazy_expr
 
     self._npy_value = None
@@ -906,8 +906,7 @@ def _force(x):
       device = x._device
       sticky = True
     else:
-      d = x.device_buffer.device()
-      device = d and (type(d), d.id)
+      device = x.device_buffer.device()
       sticky = False
     force_fun = _lazy_force_computation(sticky, x.aval, device, x._lazy_expr)
     return force_fun(x)
@@ -927,7 +926,10 @@ def _lazy_force_computation(sticky, aval, device, lexpr):
   built_c = c.Build(xla_out)
 
   device = _device_from_arg_devices([device])
-  options = xb.get_compile_options(device_assignment=device and (device.id,))
+  options = xb.get_compile_options(
+      num_replicas=1,
+      num_partitions=1,
+      device_assignment=device and (device.id,))
   backend = xb.get_device_backend(device)
   compiled = built_c.Compile(compile_options=options, backend=backend)
 

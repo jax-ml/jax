@@ -35,9 +35,6 @@ See the `JAX pytrees notebook <https://jax.readthedocs.io/en/latest/notebooks/JA
 for examples.
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import functools
 import collections

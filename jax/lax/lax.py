@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import builtins
 import collections
@@ -205,6 +202,14 @@ def lgamma(x):
 def digamma(x):
   r"""Elementwise digamma: :math:`\psi(x)`."""
   return digamma_p.bind(x)
+
+def igamma(a, x):
+  r"""Elementwise regularized incomplete gamma function."""
+  return igamma_p.bind(_brcast(a, x), _brcast(x, a))
+
+def igammac(a, x):
+  r"""Elementwise complementary regularized incomplete gamma function."""
+  return igammac_p.bind(_brcast(a, x), _brcast(x, a))
 
 def bessel_i0e(x):
   r"""Exponentially scaled modified Bessel function of order 0:
@@ -1731,6 +1736,27 @@ ad.defjvp(lgamma_p, lambda g, x: mul(g, digamma(x)))
 
 digamma_p = standard_unop(_float, 'digamma')
 
+igamma_p = standard_naryop([_float, _float], 'igamma')
+
+def igamma_gradx(g, a, x):
+  return g * exp(-x + (a - 1.) * log(x) - lgamma(a))
+
+# TODO(srvasude): Igamma and Igammac gradient aren't supported with respect to
+# a. We can reuse some of the reparameterization code in the JAX gamma sampler,
+# but better to add an XLA op for this (which will also allow TF Igamma gradient
+# code to be XLA compiled).
+def gamma_grad_not_implemented(a, b, x):
+  raise ValueError("Igamma(c) gradient with respect to `a` not supported.")
+
+ad.defjvp(igamma_p, gamma_grad_not_implemented, igamma_gradx)
+
+igammac_p = standard_naryop([_float, _float], 'igammac')
+
+def igammac_gradx(g, a, x):
+  return -igamma_gradx(g, a, x)
+
+ad.defjvp(igammac_p, gamma_grad_not_implemented, igammac_gradx)
+
 bessel_i0e_p = standard_unop(_float, 'bessel_i0e')
 ad.defjvp2(bessel_i0e_p, lambda g, y, x: g * (bessel_i1e(x) - sign(x) * y))
 
@@ -2619,7 +2645,7 @@ def _rev_shape_rule(operand, dimensions):
   if len(set(dimensions)) != len(dimensions):
     msg = 'rev dimensions must be unique, got {}.'
     raise TypeError(msg.format(dimensions))
-  if not _max(dimensions) < operand.ndim:
+  if dimensions and not _max(dimensions) < operand.ndim:
     msg = ('rev dimensions must all be less than operand ndim, got dimensions '
            '{} for operand ndim {}.')
     raise TypeError(msg.format(dimensions, operand.ndim))
@@ -3627,6 +3653,9 @@ batching.primitive_batchers[reduce_window_p] = _generic_reduce_window_batch_rule
 
 def _reduce_window_sum_shape_rule(operand, window_dimensions, window_strides,
                                   padding, input_shape):
+  if not dtypes.issubdtype(operand.dtype, onp.number):
+    msg = "operand to reduce_window_sum must have a number dtype, got {}"
+    raise TypeError(msg.format(onp.dtype(operand.dtype).name))
   return _common_reduce_window_shape_rule(operand, window_dimensions,
                                          window_strides, padding)
 

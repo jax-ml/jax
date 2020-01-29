@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
 from .lax import *
 from .lax import (_reduce_sum, _reduce_max, _reduce_min, _reduce_or,
                   _reduce_and, _reduce_window_sum, _reduce_window_max,

@@ -15,9 +15,6 @@
 """A basic example demonstrating using JAX to do Gaussian process regression.
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 from absl import app
 from absl import flags
 from functools import partial

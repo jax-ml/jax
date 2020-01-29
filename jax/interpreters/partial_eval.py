@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import itertools as it
 from collections import namedtuple, Counter, defaultdict
@@ -58,7 +55,7 @@ class JaxprTrace(Trace):
     return JaxprTracer(self, val.pval, FreeVar(val))
 
   def new_const(self, val):
-    if isinstance(val, Tracer) and val.trace.level == self.level:
+    if isinstance(val, Tracer) and val._trace.level == self.level:
       raise Exception
     return JaxprTracer(self, PartialVal((None, val)), unit)
 
@@ -270,13 +267,13 @@ class JaxprTracer(Tracer):
     assert isinstance(pval, PartialVal)
     pv, const = pval
     if isinstance(const, Tracer):
-      assert const.trace.level < trace.level
-    self.trace = trace
+      assert const._trace.level < trace.level
+    self._trace = trace
     self.pval = pval
     self.recipe = recipe
 
   def __repr__(self):
-    return 'Traced<{}:{}>'.format(self.aval, self.trace)
+    return 'Traced<{}:{}>'.format(self.aval, self._trace)
 
   @property
   def aval(self):

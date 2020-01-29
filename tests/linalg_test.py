@@ -13,9 +13,6 @@
 # limitations under the License.
 
 """Tests for the LAPAX linear algebra module."""
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from functools import partial
 import itertools
@@ -73,8 +70,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       return [onp.matmul(a, np.conj(T(a)))]
 
     if (np.issubdtype(dtype, np.complexfloating) and
-        (jtu.device_under_test() == "tpu" or
-         (jtu.device_under_test() == "cpu" and jax.lib.version < (0, 1, 38)))):
+        jtu.device_under_test() == "tpu"):
       self.skipTest("Unimplemented case for complex Cholesky decomposition.")
 
     self._CheckAgainstNumpy(onp.linalg.cholesky, np.linalg.cholesky, args_maker,
@@ -681,6 +677,23 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
 
 class ScipyLinalgTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_i={}".format(i), "args": args}
+      for i, args in enumerate([
+        (),
+        (1,),
+        (7, -2),
+        (3, 4, 5),
+        (onp.ones((3, 4), dtype=np.float_), 5,
+         onp.random.randn(5, 2).astype(np.float_)),
+      ])))
+  def testBlockDiag(self, args):
+    args_maker = lambda: args
+    self._CheckAgainstNumpy(osp.linalg.block_diag, jsp.linalg.block_diag,
+                            args_maker, check_dtypes=True)
+    self._CompileAndCheck(jsp.linalg.block_diag, args_maker, check_dtypes=True)
+
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":

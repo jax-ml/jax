@@ -68,6 +68,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     bitwise_or
     bitwise_xor
     blackman
+    block
     broadcast_arrays
     broadcast_to
     can_cast

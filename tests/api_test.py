@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import collections
 from contextlib import contextmanager
@@ -221,6 +218,16 @@ class APITest(jtu.JaxTestCase):
     self.assertRaisesRegex(
       TypeError, "Incompatible shapes for dot: got \\(3L?,\\) and \\(4L?,\\).",
       lambda: grad(f)(onp.zeros(3), onp.zeros(4)))
+  
+  def test_abstract_error_message(self):
+    for castfun in [float, complex, int]:
+      def f(x):
+        return castfun(x)
+
+      self.assertRaisesRegex(
+          TypeError,
+          "Try using `value.astype\({}\)` instead".format(castfun.__name__),
+          lambda: jit(f)(1.0))
 
   def test_switch_value_jit(self):
     def f(x):
@@ -1690,11 +1697,9 @@ class JaxprTest(jtu.JaxTestCase):
           e = cond[ false_jaxpr={ lambda  ;  ; b a.
                                   let c = sub a b
                                   in [c] }
-                    false_nconsts=1
                     true_jaxpr={ lambda  ;  ; b a.
                                  let c = add a b
-                                 in [c] }
-                    true_nconsts=1 ] b a c a d
+                                 in [c] } ] b a c a d
       in [e] }
         """)
 

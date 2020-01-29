@@ -20,9 +20,6 @@ The JAX PRNG system is based on "Parallel random numbers: as easy as 1, 2, 3"
 https://github.com/google/jax/blob/master/design_notes/prng.md
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from functools import partial
 import itertools

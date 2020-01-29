@@ -20,9 +20,6 @@ minimizing dependencies by avoiding the use of higher-level layers and
 optimizers libraries.
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from functools import partial
 import time

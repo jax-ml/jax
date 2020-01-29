@@ -13,9 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from functools import partial
 import numpy as onp
@@ -135,31 +132,21 @@ def _nan_like(c, operand):
     nan = c.Constant(onp.array(onp.nan, dtype=dtype))
   return c.Broadcast(nan, shape.dimensions())
 
-# TODO(phawkins): remove supports_batching argument after the minimum jaxlib
-# version is 0.1.38.
-def _cholesky_cpu_gpu_translation_rule(potrf_impl, potrf_supports_batching, c,
-                                       operand):
+def _cholesky_cpu_gpu_translation_rule(potrf_impl, c, operand):
   shape = c.GetShape(operand)
   batch_dims = shape.dimensions()[:-2]
   dtype = shape.element_type().type
-  if len(batch_dims) == 0 or potrf_supports_batching:
-    result, info = potrf_impl(c, operand, lower=True)
-    ok = c.Eq(info, c.ConstantS32Scalar(0))
-    return _broadcasting_select(c,
-                                c.Reshape(ok, None, batch_dims + (1, 1)), result,
-                                _nan_like(c, result))
-  else:
-    # Fall back to the HLO implementation for batched Cholesky decomposition.
-    return c.Cholesky(operand)
+  result, info = potrf_impl(c, operand, lower=True)
+  ok = c.Eq(info, c.ConstantS32Scalar(0))
+  return _broadcasting_select(c,
+                              c.Reshape(ok, None, batch_dims + (1, 1)), result,
+                              _nan_like(c, result))
 
 xla.backend_specific_translations['cpu'][cholesky_p] = partial(
-  _cholesky_cpu_gpu_translation_rule, lapack.potrf,
-  not hasattr(lapack, "jax_potrf"))
+  _cholesky_cpu_gpu_translation_rule, lapack.potrf)
 
-# TODO(phawkins): remove after the minimum jaxlib version is 0.1.38.
-if hasattr(cusolver, "potrf"):
-  xla.backend_specific_translations['gpu'][cholesky_p] = partial(
-    _cholesky_cpu_gpu_translation_rule, cusolver.potrf, True)
+xla.backend_specific_translations['gpu'][cholesky_p] = partial(
+  _cholesky_cpu_gpu_translation_rule, cusolver.potrf)
 
 # Asymmetric eigendecomposition
 
