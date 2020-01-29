@@ -128,10 +128,8 @@ LAX_OPS = [
               jtu.rand_positive, {onp.float64: 1e-14}),
     op_record("erf", 1, float_dtypes, jtu.rand_small),
     op_record("erfc", 1, float_dtypes, jtu.rand_small),
-    # TODO(b/142976030): the approximation of erfinf used by XLA is only
-    # accurate to float32 precision.
     op_record("erf_inv", 1, float_dtypes, jtu.rand_small,
-              {onp.float64: 1e-9}),
+              {onp.float64: 1e-14}),
     op_record("bessel_i0e", 1, float_dtypes, jtu.rand_default),
     op_record("bessel_i1e", 1, float_dtypes, jtu.rand_default),
 
