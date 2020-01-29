@@ -58,7 +58,7 @@ def jvp_subtrace(master, primals, tangents):
   trace = JVPTrace(master, core.cur_sublevel())
   for x in list(primals) + list(tangents):
     if isinstance(x, Tracer):
-      assert x.trace.level < trace.level
+      assert x._trace.level < trace.level
   in_tracers = [JVPTracer(trace, x, t) if t is not zero else x
                 for x, t in zip(primals, tangents)]
   ans = yield in_tracers, {}
@@ -71,7 +71,7 @@ def jvp_subtrace_aux(master, primals, tangents):
   trace = JVPTrace(master, core.cur_sublevel())
   for x in list(primals) + list(tangents):
     if isinstance(x, Tracer):
-      assert x.trace.level < trace.level
+      assert x._trace.level < trace.level
   ans, aux = yield map(partial(JVPTracer, trace), primals, tangents), {}
   ans_tracers = map(trace.full_raise, ans)
   aux_tracers = map(trace.full_raise, aux)
@@ -357,7 +357,7 @@ class JVPTracer(Tracer):
   def __init__(self, trace, primal, tangent):
     if not core.skip_checks:
       _primal_tangent_shapes_match(primal, tangent)
-    self.trace = trace
+    self._trace = trace
     self.primal = primal
     self.tangent = tangent
 

@@ -342,7 +342,7 @@ class MaskTracer(Tracer):
   __slots__ = ["val", "shape_expr"]
 
   def __init__(self, trace, val, shape_expr):
-    self.trace = trace
+    self._trace = trace
     self.val = val
     self.shape_expr = shape_expr
 
@@ -429,7 +429,7 @@ class ShapeCheckTracer(Tracer):
   __slots__ = ["shape_expr"]
 
   def __init__(self, trace, shape_expr):
-    self.trace = trace
+    self._trace = trace
     self.shape_expr = shape_expr
 
   @property

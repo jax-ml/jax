@@ -2674,6 +2674,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         "If using `jit`, try using `static_argnums` or applying `jit` to smaller subfunctions.",
         lambda: api.jit(lnp.zeros)(2))
 
+  def testTraceMethod(self):
+    x = onp.random.randn(3, 4).astype(lnp.float_)
+    self.assertAllClose(x.trace(), lnp.array(x).trace(), check_dtypes=True)
+    self.assertAllClose(x.trace(), api.jit(lambda y: y.trace())(x),
+                        check_dtypes=True)
+
 # Most grad tests are at the lax level (see lax_test.py), but we add some here
 # as needed for e.g. particular compound ops of interest.
 
