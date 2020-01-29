@@ -682,15 +682,48 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     jtu.check_grads(fun, (x,), order=2, modes=["fwd"])
 
   def testCondGrad(self):
+    def f_ref(x):
+      return 3. * x if x < 2 else np.sin(x)
+
     def f(x):
       return lax.cond(x < 2, x, lambda x: 3. * x, x, lambda x: np.sin(x))
-    api.grad(f)(1.)
-    api.grad(f)(4.)
+
+    x = 2.14
+    ans = api.grad(f)(x)
+    expected = api.grad(f_ref)(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+    jtu.check_grads(f, (x,), order=x, modes=["rev"])
+
+    x = 1.72
+    ans = api.grad(f)(x)
+    expected = api.grad(f_ref)(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+    jtu.check_grads(f, (x,), order=x, modes=["rev"])
 
   def testCondGrad2(self):
-    def f(x):
-      return lax.cond(x[0] < 2, x, lambda x: np.array([1.,2.]) * x, x, lambda x: np.sin(x))
-    api.grad(lambda x: api.jit(f)(x).sum())(np.ones(2) * 3.)
+    def f_ref(x):
+      z = np.array([1., 2.]) * x if x[0] < 2 else np.sin(x)
+      return z.sum()
+
+    def _f(x):
+      return lax.cond(
+          x[0] < 2,
+          x, lambda x: np.array([1., 2.]) * x,
+          x, lambda x: np.sin(x))
+
+    f = lambda x: api.jit(_f)(x).sum()
+
+    x = 2.14 * np.ones(2)
+    ans = api.grad(f)(x)
+    expected = api.grad(f_ref)(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+    jtu.check_grads(f, (x,), order=x, modes=["rev"])
+
+    x = 1.72 * np.ones(2)
+    ans = api.grad(f)(x)
+    expected = api.grad(f_ref)(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+    jtu.check_grads(f, (x,), order=x, modes=["rev"])
 
   def testCondGrad3(self):
     def fun_ref(x):
@@ -727,8 +760,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
   def testCondJit(self):
     def f(x):
       return lax.cond(x < 2, x, lambda x: 3. * x, x, lambda x: np.sin(x))
-    api.jit(f)(1.)
-    # TODO complete
+    y = api.jit(f)(1.)
+    expected = f(1.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+    y = api.jit(f)(4.)
+    expected = f(4.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testIssue1263(self):
     def f(rng, x):
