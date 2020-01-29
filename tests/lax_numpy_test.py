@@ -2113,6 +2113,29 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
+  @parameterized.named_parameters(*jtu.cases_from_list(
+      {"testcase_name": "_case={}".format(i),
+       "input": input}
+       for i, input in enumerate([
+         3,
+         [3],
+         [onp.array(3)],
+         [onp.array([3])],
+         [[onp.array(3)]],
+         [[onp.array([3])]],
+         [3, 4, 5],
+         [
+           [onp.eye(2, dtype=onp.int32) * 2, onp.zeros((2, 3), dtype=onp.int32)],
+           [onp.ones((3, 2), dtype=onp.int32), onp.eye(3, dtype=onp.int32) * 3],
+         ],
+         [onp.array([1, 2, 3]), onp.array([2, 3, 4]), 10],
+         [onp.ones((2, 2), dtype=onp.int32), onp.zeros((2, 2), dtype=onp.int32)],
+         [[onp.array([1, 2, 3])], [onp.array([2, 3, 4])]],
+       ])))
+  def testBlock(self, input):
+    args_maker = lambda: [input]
+    self._CheckAgainstNumpy(onp.block, lnp.block, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp.block, args_maker, check_dtypes=True)
 
   def testLongLong(self):
     self.assertAllClose(onp.int64(7), api.jit(lambda x: x)(onp.longlong(7)),
