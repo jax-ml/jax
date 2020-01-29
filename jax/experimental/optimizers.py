@@ -66,9 +66,6 @@ the JAX transforms defined in api.py) and it has to be consumable by update_fun
 and get_params.
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from collections import namedtuple
 import functools

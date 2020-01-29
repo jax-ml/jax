@@ -22,9 +22,6 @@ stepsize integration methods.
 Adjoint algorithm based on Appendix C of https://arxiv.org/pdf/1806.07366.pdf
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import functools
 import time

@@ -17,8 +17,6 @@ Common neural network layer initializers, consistent with definitions
 used in Keras and Sonnet.
 """
 
-from __future__ import absolute_import
-from __future__ import division
 
 from functools import partial
 
