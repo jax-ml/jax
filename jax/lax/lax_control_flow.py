@@ -547,10 +547,13 @@ def _cond_partial_eval(trace, *tracers, true_jaxpr, false_jaxpr, linear):
   t_res_avals = _map(raise_to_shaped, true_jaxpr_2.in_avals[:num_t_res])
   f_res_avals = _map(raise_to_shaped, false_jaxpr_2.in_avals[:num_f_res])
 
+  assert len(true_jaxpr_2.out_avals) == len(false_jaxpr_2.out_avals)
+  num_outs = len(true_jaxpr_2.out_avals)
+
   true_jaxpr_1 = _join_cond_outputs(
-      true_jaxpr_1, true_jaxpr_2, f_res_avals, other_residuals_on_left=True)
+      true_jaxpr_1, num_outs, f_res_avals, zeros_on_left=True)
   false_jaxpr_1 = _join_cond_outputs(
-      false_jaxpr_1, false_jaxpr_2, t_res_avals, other_residuals_on_left=False)
+      false_jaxpr_1, num_outs, t_res_avals, zeros_on_left=False)
 
   # TODO(frostig,mattjj): reinstate this assertion once pe.partial_eval_jaxpr
   # raises to shaped avals
@@ -596,29 +599,23 @@ def _cond_partial_eval(trace, *tracers, true_jaxpr, false_jaxpr, linear):
 
   # TODO fill some inline comments above, borrow from notes
 
-def _join_cond_outputs(jaxpr1, jaxpr2,
-                       other_residual_avals,
-                       other_residuals_on_left):
-  num_outs = len(jaxpr2.out_avals)
-  num_ins = len(jaxpr1.in_avals)
-  num_res = len(jaxpr2.in_avals) - len(jaxpr1.in_avals)
-  assert num_res == len(jaxpr1.out_avals) - len(jaxpr2.out_avals)
-
+def _join_cond_outputs(jaxpr, num_prefix, zeros_avals, zeros_on_left):
   @lu.wrap_init
-  def f1_aug(*args):
-    outs_and_res = core.jaxpr_as_fun(jaxpr1)(*args)
-    outs, res = split_list(outs_and_res, [num_outs])
-    other_res = [ad_util.zeros_like_aval(a) for a in other_residual_avals]
-    if other_residuals_on_left:
-      return outs + other_res + res
+  def f_aug(*args):
+    prefix_and_rest = core.jaxpr_as_fun(jaxpr)(*args)
+    prefix, rest = split_list(prefix_and_rest, [num_prefix])
+    zeros = [ad_util.zeros_like_aval(a) for a in zeros_avals]
+    if zeros_on_left:
+      return prefix + zeros + rest
     else:
-      return outs + res + other_res
+      return prefix + rest + zeros
 
-  return _make_typed_jaxpr(f1_aug, jaxpr1.in_avals)
+  return _make_typed_jaxpr(f_aug, jaxpr.in_avals)
 
 def _transpose_cond_jaxpr(jaxpr, num_res):
   num_non_res = len(jaxpr.in_avals) - num_res
   res_avals, primal_avals = split_list(jaxpr.in_avals, [num_res])
+  primal_avals = _map(raise_to_shaped, primal_avals)
 
   @lu.wrap_init
   def transposed(*args):
@@ -641,7 +638,33 @@ def _cond_transpose(cts, *args, true_jaxpr, false_jaxpr, linear):
   t_jaxpr_trans = _transpose_cond_jaxpr(true_jaxpr, num_t_res)
   f_jaxpr_trans = _transpose_cond_jaxpr(false_jaxpr, num_f_res)
 
-  import ipdb; ipdb.set_trace()
+  # TODO(frostig,mattjj): pe.partial_eval_jaxpr should raise to shaped avals
+  t_out_avals = _map(raise_to_shaped, t_jaxpr_trans.out_avals)
+  f_out_avals = _map(raise_to_shaped, f_jaxpr_trans.out_avals)
+
+  t_jaxpr_trans = _join_cond_outputs(
+      t_jaxpr_trans, 0, f_out_avals, zeros_on_left=True)
+  f_jaxpr_trans = _join_cond_outputs(
+      f_jaxpr_trans, 0, t_out_avals, zeros_on_left=False)
+
+  t_res, _ = split_list(tops, [num_t_res])
+  f_res, _ = split_list(fops, [num_f_res])
+
+  linear_trans = ((False,) * num_t_res + (True,) * len(cts) +
+                  (False,) * num_f_res + (True,) * len(cts))
+
+  cts = _map(ad.instantiate_zeros_aval, true_jaxpr.out_avals, cts)
+
+  try:
+    out = cond_p.bind(
+        pred, *itertools.chain(t_res, cts, f_res, cts),
+        true_jaxpr=t_jaxpr_trans, false_jaxpr=f_jaxpr_trans,
+        linear=linear_trans)
+  except:
+    import ipdb; ipdb.set_trace()
+
+  out = iter(out)
+  return [next(out) if z is ad.undefined_primal else None for z in args]
 
   # transpose each
   # join them together

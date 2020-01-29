@@ -689,13 +689,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     ans = api.grad(f)(x)
     expected = api.grad(f_ref)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
-    jtu.check_grads(f, (x,), order=x, modes=["rev"])
+    jtu.check_grads(f, (x,), order=1, modes=["rev"])
 
     x = 1.72
     ans = api.grad(f)(x)
     expected = api.grad(f_ref)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
-    jtu.check_grads(f, (x,), order=x, modes=["rev"])
+    jtu.check_grads(f, (x,), order=1, modes=["rev"])
 
   def testCondGrad2(self):
     def f_ref(x):
@@ -714,13 +714,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     ans = api.grad(f)(x)
     expected = api.grad(f_ref)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
-    jtu.check_grads(f, (x,), order=x, modes=["rev"])
+    jtu.check_grads(f, (x,), order=1, modes=["rev"])
 
     x = 1.72 * np.ones(2)
     ans = api.grad(f)(x)
     expected = api.grad(f_ref)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
-    jtu.check_grads(f, (x,), order=x, modes=["rev"])
+    jtu.check_grads(f, (x,), order=1, modes=["rev"])
 
   def testCondGrad3(self):
     def fun_ref(x):
@@ -736,13 +736,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     ans = api.grad(fun)(x)
     expected = api.grad(fun_ref)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
-    jtu.check_grads(fun, (x,), order=2, modes=["rev"])
+    jtu.check_grads(fun, (x,), order=1, modes=["rev"])
 
     x = 2.72
     ans = api.grad(fun)(x)
     expected = api.grad(fun_ref)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
-    jtu.check_grads(fun, (x,), order=2, modes=["rev"])
+    jtu.check_grads(fun, (x,), order=1, modes=["rev"])
 
   def testCondLinearize(self):
     def f(x):
