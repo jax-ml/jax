@@ -51,6 +51,18 @@ def digamma(x):
   return lax.digamma(x)
 
 
+@_wraps(osp_special.gammainc, update_doc=False)
+def gammainc(a, x):
+  a, x = _promote_args_inexact("gammainc", a, x)
+  return lax.igamma(a, x)
+
+
+@_wraps(osp_special.gammaincc, update_doc=False)
+def gammaincc(a, x):
+  a, x = _promote_args_inexact("gammaincc", a, x)
+  return lax.igammac(a, x)
+
+
 @_wraps(osp_special.erf)
 def erf(x):
   x, = _promote_args_inexact("erf", x)

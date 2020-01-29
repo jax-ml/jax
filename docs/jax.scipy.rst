@@ -52,6 +52,8 @@ jax.scipy.special
    erfc
    erfinv
    expit
+   gammainc
+   gammaincc
    gammaln
    i0e
    i1e

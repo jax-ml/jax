@@ -116,7 +116,6 @@ LAX_OPS = [
     op_record("atan", 1, float_dtypes, jtu.rand_small),
     op_record("sinh", 1, float_dtypes + complex_dtypes, jtu.rand_default),
     op_record("cosh", 1, float_dtypes + complex_dtypes, jtu.rand_default),
-
     op_record("lgamma", 1, float_dtypes, jtu.rand_positive,
               {onp.float32: 1e-3 if jtu.device_under_test() == "tpu" else 1e-5,
                onp.float64: 1e-14}),
@@ -163,7 +162,11 @@ LAX_OPS = [
 if lib.version > (0, 1, 37):
   LAX_OPS.append(
       op_record("betainc", 3, float_dtypes, jtu.rand_positive,
-                {onp.float64: 1e-14})
+                {onp.float64: 1e-14}),
+      op_record("igamma", 2, float_dtypes, jtu.rand_positive,
+                {onp.float64: 1e-14}),
+      op_record("igammac", 2, float_dtypes, jtu.rand_positive,
+                {onp.float64: 1e-14}),
   )
 
 CombosWithReplacement = itertools.combinations_with_replacement

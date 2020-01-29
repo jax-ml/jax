@@ -76,6 +76,8 @@ Operators
     gather
     ge
     gt
+    igamma
+    igammac
     imag
     index_in_dim
     index_take

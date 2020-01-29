@@ -79,7 +79,9 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
 
 if lib.version > (0, 1, 37):
   JAX_SPECIAL_FUNCTION_RECORDS.append(
-      op_record("betainc", 3, float_dtypes, jtu.rand_positive, False)
+      op_record("betainc", 3, float_dtypes, jtu.rand_positive, False),
+      op_record("gammainc", 2, float_dtypes, jtu.rand_positive, False),
+      op_record("gammaincc", 2, float_dtypes, jtu.rand_positive, False),
   )
 
 CombosWithReplacement = itertools.combinations_with_replacement
