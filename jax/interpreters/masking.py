@@ -24,6 +24,7 @@ import string
 
 import numpy as onp
 
+from .. import abstract_arrays
 from .. import core
 from ..core import Trace, Tracer
 from ..util import unzip2, safe_map, safe_zip, curry
@@ -87,11 +88,6 @@ def mask_subtrace(master, in_vals, shape_exprs):
   out_tracers = map(trace.full_raise, outs)
   out_vals, out_shapes = unzip2((t.val, t.shape_expr) for t in out_tracers)
   yield out_vals, out_shapes
-
-def to_index(x):
-  """Like operator.index, but allowing polymorphic dimensions."""
-  # not implemented as `Poly.__index__`, since operator.index only allows ints
-  return x if type(x) is Poly else op.index(x)
 
 def ensure_poly(p):
   if isinstance(p, Poly):
@@ -219,6 +215,9 @@ class Poly(Counter):
   @property
   def is_constant(self):
     return len(self) == 1 and next(iter(self)).degree == 0
+
+abstract_arrays._DIMENSION_TYPES.add(Poly)
+
 
 class Mon(Counter):  # type Mon = Map Id Int -- ids to degrees
   def __hash__(self):

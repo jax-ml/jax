@@ -92,10 +92,19 @@ class UnshapedArray(core.AbstractValue):
     return UnshapedArray(self.dtype) if self.weak_type else self
 
 
+_DIMENSION_TYPES = set()
+
+def _canonicalize_dimension(dim):
+  try:
+    return operator.index(dim)
+  except TypeError:
+    if type(dim) not in _DIMENSION_TYPES:
+      raise
+    return dim
+
 def _canonicalize_shape(shape):
-  """Ensure shape is a tuple of int or Poly objects."""
-  from .interpreters import masking
-  return tuple(map(masking.to_index, shape))
+  """Ensure shape is a tuple of int or registered _DIMENSION_TYPES."""
+  return tuple(map(_canonicalize_dimension, shape))
 
 
 class ShapedArray(UnshapedArray):
