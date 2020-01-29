@@ -91,16 +91,14 @@ class UnshapedArray(core.AbstractValue):
     """Returns a copy of the aval with weak_type=False."""
     return UnshapedArray(self.dtype) if self.weak_type else self
 
-
-_DIMENSION_TYPES = set()
+# Registry for valid dimension types. This is used by masking.Poly.
+_DIMENSION_TYPES = {int}
 
 def _canonicalize_dimension(dim):
-  try:
-    return operator.index(dim)
-  except TypeError:
-    if type(dim) not in _DIMENSION_TYPES:
-      raise
+  if type(dim) in _DIMENSION_TYPES:
     return dim
+  else:
+    return operator.index(dim)
 
 def _canonicalize_shape(shape):
   """Ensure shape is a tuple of int or registered _DIMENSION_TYPES."""
