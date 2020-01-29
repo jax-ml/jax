@@ -814,6 +814,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                             tol=tol)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
+  def testTensordotErrors(self):
+    a = onp.random.random((3, 2, 2))
+    b = onp.random.random((2,))
+    self.assertRaisesRegex(
+      TypeError, "Number of tensordot axes.*exceeds input ranks.*",
+      lambda: lnp.tensordot(a, b, axes=2))
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_{}".format(
           jtu.format_shape_dtype_string(lhs_shape, lhs_dtype),

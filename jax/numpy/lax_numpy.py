@@ -2308,7 +2308,7 @@ def tensordot(a, b, axes=2, precision=None):
   if type(axes) is int:
     if axes > _min(a_ndim, b_ndim):
       msg = "Number of tensordot axes (axes {}) exceeds input ranks ({} and {})"
-      raise msg.format(axes, a.shape, b.shape)
+      raise TypeError(msg.format(axes, a.shape, b.shape))
     contracting_dims = tuple(range(a_ndim - axes, a_ndim)), tuple(range(axes))
   elif type(axes) in (list, tuple) and len(axes) == 2:
     ax1, ax2 = axes
