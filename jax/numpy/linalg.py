@@ -76,17 +76,17 @@ def tensorsolve(a, b, axes=None):
 
     a = a.transpose(allaxes)
   
-  oldshape = a.shape[-(an - b.ndim):]
+  Q = a.shape[-(an - b.ndim):]
+
   prod = 1
-  
-  for k in oldshape:
+  for k in Q:
     prod *= k
 
   a = a.reshape(-1, prod)
   b = b.ravel()
   
   res = np.asarray(solve(a, b))
-  res = res.reshape(oldshape)
+  res = res.reshape(Q)
   
   return res
 
