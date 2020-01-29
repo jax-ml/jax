@@ -13,6 +13,8 @@
 # limitations under the License.
 
 
+import operator
+
 import numpy as onp
 
 from . import core
@@ -90,6 +92,19 @@ class UnshapedArray(core.AbstractValue):
     """Returns a copy of the aval with weak_type=False."""
     return UnshapedArray(self.dtype) if self.weak_type else self
 
+# Registry for valid dimension types. This is used by masking.Poly.
+_DIMENSION_TYPES = {int}
+
+def _canonicalize_dimension(dim):
+  if type(dim) in _DIMENSION_TYPES:
+    return dim
+  else:
+    return operator.index(dim)
+
+def _canonicalize_shape(shape):
+  """Ensure shape is a tuple of int or registered _DIMENSION_TYPES."""
+  return tuple(map(_canonicalize_dimension, shape))
+
 
 class ShapedArray(UnshapedArray):
   __slots__ = ['shape']
@@ -97,7 +112,7 @@ class ShapedArray(UnshapedArray):
 
   def __init__(self, shape, dtype, weak_type=False):
     super(ShapedArray, self).__init__(dtype, weak_type=weak_type)
-    self.shape = shape
+    self.shape = _canonicalize_shape(shape)
 
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self: prod(self.shape))

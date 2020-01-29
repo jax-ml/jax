@@ -3058,6 +3058,10 @@ class LaxVmapTest(jtu.JaxTestCase):
                         [dtype, idxs.dtype, dtype], jtu.rand_default(),
                         rtol={onp.float16: 5e-3})
 
+  def testShapeUsesBuiltinInt(self):
+    x = lax.iota(onp.int32, 3) + 1
+    self.assertIsInstance(x.shape[0], int)  # not np.int64
+
   # TODO Concatenate
   # TODO Reverse
   # TODO DynamicSlice
