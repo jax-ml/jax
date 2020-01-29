@@ -61,9 +61,6 @@ flags.DEFINE_enum(
     'Control NumPy-style automatic rank promotion broadcasting '
     '("allow", "warn", or "raise").')
 
-def removechars(s, chars):
-  return s.translate(str.maketrans(dict.fromkeys(chars)))
-
 newaxis = None
 
 # We replace some builtin names to follow Numpy's API, so we capture here.
@@ -1722,6 +1719,33 @@ def column_stack(tup):
   return concatenate(arrays, 1)
 
 
+def _atleast_nd(x, n):
+  m = ndim(x)
+  return lax.broadcast(x, (1,) * (n - m)) if m < n else x
+
+def _block(xs):
+  if isinstance(xs, tuple):
+    raise ValueError("jax.numpy.block does not allow tuples, got {}"
+                     .format(xs))
+  elif isinstance(xs, list):
+    if len(xs) == 0:
+      raise ValueError("jax.numpy.block does not allow empty list arguments")
+    xs, depths = unzip2([_block(x) for x in xs])
+    if _any(d != depths[0] for d in depths[1:]):
+      raise ValueError("Mismatched list depths in jax.numpy.block")
+    rank = _max(depths[0], _max(ndim(x) for x in xs))
+    xs = [_atleast_nd(x, rank) for x in xs]
+    return concatenate(xs, axis=-depths[0]), depths[0] + 1
+  else:
+    return asarray(xs), 1
+
+@_wraps(onp.block)
+@jit
+def block(arrays):
+  out, _ = _block(arrays)
+  return out
+
+
 @_wraps(onp.atleast_1d, update_doc=False)
 def atleast_1d(*arys):
   if len(arys) == 1:
@@ -2349,6 +2373,9 @@ def einsum_path(subscripts, *operands, **kwargs):
   # using einsum_call=True here is an internal api for opt_einsum
   return opt_einsum.contract_path(subscripts, *operands, optimize=optimize)
 
+def _removechars(s, chars):
+  return s.translate(str.maketrans(dict.fromkeys(chars)))
+
 @partial(jit, static_argnums=(1, 2))
 def _einsum(operands, contractions, precision):
   operands = list(_promote_dtypes(*operands))
@@ -2360,7 +2387,7 @@ def _einsum(operands, contractions, precision):
     if uniques:
       axes = [names.index(name) for name in uniques]
       operand = sum(operand, axes)
-      names = removechars(names, uniques)
+      names = _removechars(names, uniques)
     return operand, names
 
   def sum_repeats(operand, names, counts, keep_names):
@@ -2445,8 +2472,8 @@ def _einsum(operands, contractions, precision):
       dimension_numbers = [(lhs_cont, rhs_cont), (bdims, bdims)]
       operand = lax.dot_general(lhs, rhs, dimension_numbers, precision)
       deleted_names = batch_names + ''.join(contracted_names)
-      names = (batch_names + removechars(lhs_names, deleted_names)
-               + removechars(rhs_names, deleted_names))
+      names = (batch_names + _removechars(lhs_names, deleted_names)
+               + _removechars(rhs_names, deleted_names))
     else:
       raise NotImplementedError  # if this is actually reachable, open an issue!
 
