@@ -159,7 +159,7 @@ LAX_OPS = [
     op_record("le", 2, default_dtypes, jtu.rand_small),
     op_record("lt", 2, default_dtypes, jtu.rand_small),
 ]
-if lib.version > (0, 1, 38):
+if lib.version > (0, 1, 37):
   LAX_OPS.append(
       op_record("betainc", 3, float_dtypes, jtu.rand_positive,
                 {onp.float64: 1e-14}),

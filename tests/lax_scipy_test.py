@@ -77,7 +77,7 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record("entr", 1, float_dtypes, jtu.rand_default, False),
 ]
 
-if lib.version > (0, 1, 38):
+if lib.version > (0, 1, 37):
   JAX_SPECIAL_FUNCTION_RECORDS.append(
       op_record("betainc", 3, float_dtypes, jtu.rand_positive, False),
       op_record("gammainc", 2, float_dtypes, jtu.rand_positive, False),

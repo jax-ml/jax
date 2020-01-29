@@ -1744,6 +1744,10 @@ igamma_p = standard_naryop([_float, _float], 'igamma')
 def igamma_gradx(g, a, x):
   return g * exp(-x + (a - 1.) * log(x) - lgamma(a))
 
+# TODO(srvasude): Igamma and Igammac gradient aren't supported with respect to
+# a. We can reuse some of the reparameterization code in the JAX gamma sampler,
+# but better to add an XLA op for this (which will also allow TF Igamma gradient
+# code to be XLA compiled).
 def gamma_grad_not_implemented(a, b, x):
   raise ValueError("Igamma(c) gradient with respect to `a` not supported.")
 
