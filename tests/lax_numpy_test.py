@@ -1082,7 +1082,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "rng_factory": jtu.rand_default, "lnp_op": getattr(lnp, op),
        "onp_op": getattr(onp, op)}
       for op in ["cumsum", "cumprod"]
-      for dtype in default_dtypes
+      for dtype in all_dtypes
       for out_dtype in default_dtypes
       for shape in all_shapes
       for axis in [None] + list(range(-len(shape), len(shape)))))

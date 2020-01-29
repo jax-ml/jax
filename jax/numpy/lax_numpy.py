@@ -1534,6 +1534,8 @@ def _make_cumulative_reduction(onp_reduction, window_reduce, init_val,
     if squash_nan:
       a = where(isnan(a), _constant_like(a, init_val), a)
 
+    if not dtype and _dtype(a) == bool_:
+      dtype = int_
     if dtype:
       a = lax.convert_element_type(a, dtype)
 
@@ -1553,7 +1555,6 @@ def _make_cumulative_reduction(onp_reduction, window_reduce, init_val,
   def cumulative_reduction(a, axis=None, dtype=None):
     # jit doesn't support kwargs as static_args.
     return _cumulative_reduction(a, axis, dtype)
-
   return cumulative_reduction
 
 

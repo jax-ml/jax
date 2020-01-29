@@ -3627,6 +3627,9 @@ batching.primitive_batchers[reduce_window_p] = _generic_reduce_window_batch_rule
 
 def _reduce_window_sum_shape_rule(operand, window_dimensions, window_strides,
                                   padding, input_shape):
+  if not dtypes.issubdtype(operand.dtype, onp.number):
+    msg = "operand to reduce_window_sum must have a number dtype, got {}"
+    raise TypeError(msg.format(onp.dtype(operand.dtype).name))
   return _common_reduce_window_shape_rule(operand, window_dimensions,
                                          window_strides, padding)
 
