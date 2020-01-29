@@ -9,7 +9,7 @@
 | [**Install guide**](#installation)
 | [**Reference docs**](https://jax.readthedocs.io/en/latest/)
 
-As of `jax` 0.1.58, JAX has dropped Python 2 support. Please update to Python 3.5 or newer.
+**Announcement:** As of version 0.1.58, JAX has dropped Python 2 support, and requires Python 3.5 or newer. See [CHANGELOG.md](https://github.com/google/jax/blob/master/CHANGELOG.md).
 
 ## What is JAX?
 
