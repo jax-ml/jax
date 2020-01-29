@@ -9,6 +9,7 @@ jax.scipy.linalg
 .. autosummary::
   :toctree: _autosummary
 
+   block_diag
    cho_factor
    cho_solve
    cholesky
