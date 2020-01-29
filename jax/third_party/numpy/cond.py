@@ -6,16 +6,6 @@ from jax.numpy import lax_numpy as np
 from jax.numpy import linalg as la
 from jax.numpy.lax_numpy import _wraps
 
-_real_types_map = {np.single: np.single,
-                   np.double: np.double,
-                   np.csingle: np.single,
-                   np.cdouble: np.double}
-
-_complex_types_map = {np.single: np.csingle,
-                      np.double: np.cdouble,
-                      np.csingle: np.csingle,
-                      np.cdouble: np.cdouble}
-
 
 def _isEmpty2d(arr):
         # check size first for efficiency
