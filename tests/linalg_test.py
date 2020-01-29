@@ -683,6 +683,23 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 class ScipyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_i={}".format(i), "args": args}
+      for i, args in enumerate([
+        (),
+        (1,),
+        (7, -2),
+        (3, 4, 5),
+        (onp.ones((3, 4), dtype=np.float_), 5,
+         onp.random.randn(5, 2).astype(np.float_)),
+      ])))
+  def testBlockDiag(self, args):
+    args_maker = lambda: args
+    self._CheckAgainstNumpy(osp.linalg.block_diag, jsp.linalg.block_diag,
+                            args_maker, check_dtypes=True)
+    self._CompileAndCheck(jsp.linalg.block_diag, args_maker, check_dtypes=True)
+
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype, "rng_factory": rng_factory}
