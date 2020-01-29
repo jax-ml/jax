@@ -63,6 +63,34 @@ def svd(a, full_matrices=True, compute_uv=True):
   return lax_linalg.svd(a, full_matrices, compute_uv)
 
 
+@_wraps(onp.linalg.tensorsolve)
+def tensorsolve(a, b, axes=None):
+  a = _promote_arg_dtypes(np.asarray(a))
+  b = _promote_arg_dtypes(np.asarray(b))
+  an = a.ndim
+  if axes is not None:
+    allaxes = list(range(0, an))
+    for k in axes:
+      allaxes.remove(k)
+      allaxes.insert(an, k)
+
+    a = a.transpose(allaxes)
+  
+  oldshape = a.shape[-(an - b.ndim):]
+  prod = 1
+  
+  for k in oldshape:
+    prod *= k
+
+  a = a.reshape(-1, prod)
+  b = b.ravel()
+  
+  res = np.asarray(solve(a, b))
+  res = res.reshape(oldshape)
+  
+  return res
+
+
 @_wraps(onp.linalg.matrix_power)
 def matrix_power(a, n):
   a = _promote_arg_dtypes(np.asarray(a))
