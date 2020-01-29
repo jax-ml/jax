@@ -9,11 +9,13 @@ jax.scipy.linalg
 .. autosummary::
   :toctree: _autosummary
 
+   block_diag
    cho_factor
    cho_solve
    cholesky
    det
    eigh
+   expm
    inv
    lu
    lu_factor
@@ -50,6 +52,8 @@ jax.scipy.special
    erfc
    erfinv
    expit
+   gammainc
+   gammaincc
    gammaln
    i0e
    i1e

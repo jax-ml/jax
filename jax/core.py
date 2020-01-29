@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from operator import attrgetter
 from contextlib import contextmanager
@@ -129,10 +126,10 @@ class Literal(object):
           self.hash = None
 
   def __hash__(self):
-    return id(self.val) if self.hash is None else self.hash
+    assert False
 
   def __eq__(self, other):
-    return self.val is other.val if self.hash is None else self.val == other.val
+    assert False
 
   def __repr__(self):
     if self.hash is None:
@@ -627,7 +624,7 @@ def check_jaxpr(jaxpr):
     return "\njaxpr:\n{}\n".format(jaxpr)
 
   def read_env(env, v):
-    if v not in env and type(v) is not Literal:
+    if type(v) is not Literal and v not in env:
       raise Exception("Variable '{}' not defined".format(v) + context())
 
   def write_env(env, v):
@@ -655,6 +652,11 @@ def check_jaxpr(jaxpr):
 
 def pp_vars(vs):
     return ' '.join(map(str, vs))
+
+def pp_eqn_compact(primitive_name, params):
+  filtered_params = {k: v for k, v in params.items()
+                     if not isinstance(v, (Jaxpr, TypedJaxpr))}
+  return pp(primitive_name) >> pp_kv_pairs(sorted(filtered_params.items()))
 
 def pp_eqn(eqn):
   lhs = pp_vars(eqn.outvars)

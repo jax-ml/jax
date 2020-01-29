@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import collections
 from functools import partial
@@ -632,6 +629,27 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = onp.array([1, -4])
     self.assertAllClose(ans, expected, check_dtypes=False)
     assert "select" in str(jaxpr)
+
+  def testCondJVP(self):
+    def fun_ref(x):
+      if x < 3:
+        return (x, x)
+      else:
+        y = 2 * x
+        return y, 2 * y
+
+    def fun(x):
+      def false_fun(x):
+        y = 2 * x
+        return y, 2 * y
+      return lax.cond(x < 3, x, lambda x: (x, x), x, false_fun)
+
+    x = 3.14
+    ans = api.jvp(fun, (x,), (x,))
+    expected = api.jvp(fun_ref, (x,), (x,))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    jtu.check_grads(fun, (x,), order=2, modes=["fwd"])
 
   def testIssue1263(self):
     def f(rng, x):

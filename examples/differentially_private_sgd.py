@@ -63,9 +63,6 @@ Example invocations:
    --epochs=45 \
    --learning_rate=.25 \
 """
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import itertools
 import time

@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import collections
 import functools
@@ -78,9 +75,11 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
 ]
 
 if lib.version > (0, 1, 37):
-  JAX_SPECIAL_FUNCTION_RECORDS.append(
-      op_record("betainc", 3, float_dtypes, jtu.rand_positive, False)
-  )
+  JAX_SPECIAL_FUNCTION_RECORDS += [
+      op_record("betainc", 3, float_dtypes, jtu.rand_positive, False),
+      op_record("gammainc", 2, float_dtypes, jtu.rand_positive, False),
+      op_record("gammaincc", 2, float_dtypes, jtu.rand_positive, False),
+  ]
 
 CombosWithReplacement = itertools.combinations_with_replacement
 

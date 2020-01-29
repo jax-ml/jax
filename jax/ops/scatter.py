@@ -14,9 +14,6 @@
 
 # Helpers for indexed updates.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import collections
 from functools import partial

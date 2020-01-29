@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import functools
 import itertools as it
@@ -26,7 +23,7 @@ from ..core import Trace, Tracer, new_master, get_aval, call_p, Primitive, Liter
 from ..ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_aval,
                        zeros_like_p, zero)
 from ..abstract_arrays import raise_to_shaped
-from ..util import unzip2, safe_map, safe_zip, partial, split_list
+from ..util import unzip2, safe_map, safe_zip, partial, split_list, wrap_name
 from ..tree_util import register_pytree_node
 from .. import linear_util as lu
 from ..api_util import flatten_fun, flatten_fun_nokwargs
@@ -146,7 +143,7 @@ def backward_pass(jaxpr, consts, freevar_vals, args, cotangents_in):
 
   def write_cotangent(v, ct):
     # assert v not in primal_env
-    if ct is not None:
+    if ct is not None and type(v) is not Literal:
       ct_env[v] = add_tangents(ct_env[v], ct) if v in ct_env else ct
 
   def read_cotangent(v):
@@ -324,6 +321,8 @@ class JVPTrace(Trace):
     tangents = [t.tangent for t in tracers]
     nonzero_tangents, in_tree_def = tree_flatten(tangents)
     f_jvp, out_tree_def = traceable(jvp_subtrace(f, self.master), len(primals), in_tree_def)
+    name = params.get('name', f.__name__)
+    params = dict(params, name=wrap_name(name, 'jvp'))
     result = call_primitive.bind(f_jvp, *(primals + nonzero_tangents), **params)
     primal_out, tangent_out = tree_unflatten(out_tree_def(), result)
     return [JVPTracer(self, p, t) for p, t in zip(primal_out, tangent_out)]
@@ -549,6 +548,7 @@ def call_transpose(primitive, params, jaxpr, consts, freevar_vals, args, ct):
   all_args, in_tree_def = tree_flatten((consts, freevar_vals, args, ct))
   fun = lu.hashable_partial(lu.wrap_init(backward_pass), jaxpr)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
+  params = dict(params, name=wrap_name(params['name'], 'transpose'))
   out_flat = primitive.bind(fun, *all_args, **params)
   return tree_unflatten(out_tree(), out_flat)
 primitive_transposes[core.call_p] = partial(call_transpose, call_p)
@@ -558,6 +558,7 @@ def map_transpose(primitive, params, jaxpr, consts, freevar_vals, args, ct):
   all_args, in_tree_def = tree_flatten((consts, freevar_vals, args, ct))
   fun = lu.hashable_partial(lu.wrap_init(backward_pass), jaxpr)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
+  params = dict(params, name=wrap_name(params['name'], 'transpose'))
   out_flat = primitive.bind(fun, *all_args, **params)
   freevar_cts, arg_cts = tree_unflatten(out_tree(), out_flat)
   freevar_cts = [x.sum(0) if x is not zero else x for x in freevar_cts]

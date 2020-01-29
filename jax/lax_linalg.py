@@ -13,9 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from functools import partial
 import numpy as onp
@@ -776,7 +773,7 @@ def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
   dA, = tangents
   s, U, Vt = svd_p.bind(A, full_matrices=False, compute_uv=True)
 
-  if full_matrices:
+  if compute_uv and full_matrices:
     # TODO: implement full matrices case, documented here: https://people.maths.ox.ac.uk/gilesm/files/NA-08-01.pdf
     raise NotImplementedError(
       "Singular value decomposition JVP not implemented for full matrices")

@@ -16,9 +16,6 @@
 #
 # Helper script for building JAX's libjax easily.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import argparse
 import collections
@@ -307,7 +304,7 @@ def main():
 
   # Find a working Bazel.
   bazel_path = get_bazel_path(args.bazel_path)
-  check_bazel_version(bazel_path, min_version="0.24.0", max_version=None)
+  check_bazel_version(bazel_path, min_version="0.26.0", max_version=None)
   print("Bazel binary path: {}".format(bazel_path))
 
   python_bin_path = get_python_bin_path(args.python_bin_path)

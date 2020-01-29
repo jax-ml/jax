@@ -16,9 +16,6 @@
 Control flow primitives.
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import collections
 import functools
@@ -43,7 +40,7 @@ from jax.interpreters import masking
 from jax.lib import xla_bridge as xb
 from jax.lib import xla_client
 from jax.util import (partial, unzip2, safe_map, safe_zip, split_list,
-                      split_dict, cache)
+                      split_dict, cache, extend_name_stack)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
                            treedef_children, treedef_tuple)
 from jax import ad_util
@@ -213,7 +210,7 @@ def while_loop(cond_fun, body_fun, init_val):
 def _while_loop_abstract_eval(*args, **kwargs):
   return _map(raise_to_shaped, kwargs["body_jaxpr"].out_avals)
 
-def _while_loop_translation_rule(c, axis_env, *args, **kwargs):
+def _while_loop_translation_rule(c, axis_env, name_stack, *args, **kwargs):
   backend = kwargs.pop('backend')
   cond_jaxpr, body_jaxpr, cond_nconsts, body_nconsts = split_dict(
       kwargs, ["cond_jaxpr", "body_jaxpr", "cond_nconsts", "body_nconsts"])
@@ -233,7 +230,8 @@ def _while_loop_translation_rule(c, axis_env, *args, **kwargs):
   cond_carry_elts = [cond_c.GetTupleElement(cond_carry, i) for i in range(len(args))]
   x, _, z = split_list(cond_carry_elts, [cond_nconsts, body_nconsts])
   pred, = xla.jaxpr_subcomp(cond_c, cond_jaxpr.jaxpr, backend, axis_env,
-                            _map(cond_c.Constant, cond_jaxpr.literals), (), *(x + z))
+                            _map(cond_c.Constant, cond_jaxpr.literals), (),
+                            extend_name_stack(name_stack, 'cond'), *(x + z))
   if batched:
     scalar = ShapedArray((), onp.bool_)
     or_ = xla.primitive_subcomputation(lax.or_p, scalar, scalar)
@@ -245,10 +243,12 @@ def _while_loop_translation_rule(c, axis_env, *args, **kwargs):
   body_carry_elts = [body_c.GetTupleElement(body_carry, i) for i in range(len(args))]
   x, y, z = split_list(body_carry_elts, [cond_nconsts, body_nconsts])
   new_z = xla.jaxpr_subcomp(body_c, body_jaxpr.jaxpr, backend, axis_env,
-                            _map(body_c.Constant, body_jaxpr.literals), (), *(y + z))
+                            _map(body_c.Constant, body_jaxpr.literals), (),
+                            extend_name_stack(name_stack, 'body'), *(y + z))
   if batched:
     body_pred, = xla.jaxpr_subcomp(body_c, cond_jaxpr.jaxpr, backend, axis_env,
-                                   _map(body_c.Constant, cond_jaxpr.literals), (), *(x + z))
+                                   _map(body_c.Constant, cond_jaxpr.literals), (),
+                                   extend_name_stack(name_stack, 'body_pred'), *(x + z))
     new_z = _map(partial(_pred_bcast_select, body_c, body_pred), new_z, z)
     assert _map(body_c.GetShape, new_z) == _map(body_c.GetShape, z) # no broadcast
   new_carry = body_c.Tuple(*itertools.chain(x, y, new_z))
@@ -426,7 +426,7 @@ def cond(pred, true_operand, true_fun, false_operand, false_fun):
 def _cond_abstract_eval(*args, **kwargs):
   return _map(raise_to_shaped, kwargs["true_jaxpr"].out_avals)
 
-def _cond_translation_rule(c, axis_env, pred, *args, **kwargs):
+def _cond_translation_rule(c, axis_env, name_stack, pred, *args, **kwargs):
   backend = kwargs.pop("backend", None)
   true_jaxpr, false_jaxpr, true_nconsts, false_nconsts = split_dict(
       kwargs, ["true_jaxpr", "false_jaxpr", "true_nconsts", "false_nconsts"])
@@ -435,18 +435,19 @@ def _cond_translation_rule(c, axis_env, pred, *args, **kwargs):
       args, [true_nconsts, true_nops, false_nconsts])
 
   def make_computation(name, jaxpr, op_shape):
-    c = xb.make_computation_builder(name)
+    c = xb.make_computation_builder(name + '_comp')
     op = c.ParameterWithShape(op_shape)
     ops = [c.GetTupleElement(op, i) for i in range(len(jaxpr.in_avals))]
     outs = xla.jaxpr_subcomp(c, jaxpr.jaxpr, backend, axis_env,
-                             _map(c.Constant, jaxpr.literals), (), *ops)
+                             _map(c.Constant, jaxpr.literals), (),
+                             extend_name_stack(name_stack, name + '_fun'), *ops)
     return c.Build(c.Tuple(*outs))
 
   true_op = c.Tuple(*(true_consts + true_ops))
-  true_c = make_computation("true_comp", true_jaxpr, c.GetShape(true_op))
+  true_c = make_computation('true', true_jaxpr, c.GetShape(true_op))
 
   false_op = c.Tuple(*(false_consts + false_ops))
-  false_c = make_computation("false_comp", false_jaxpr, c.GetShape(false_op))
+  false_c = make_computation('false', false_jaxpr, c.GetShape(false_op))
 
   return c.Conditional(pred, true_op, true_c, false_op, false_c)
 
@@ -490,10 +491,63 @@ def _cond_batching_rule(args, dims, true_jaxpr, false_jaxpr, true_nconsts,
       true_jaxpr=true_jaxpr_batched, false_jaxpr=false_jaxpr_batched,
       true_nconsts=len(true_consts), false_nconsts=len(false_consts)), out_dims
 
+def _cond_jvp(primals, tangents, true_jaxpr, false_jaxpr, true_nconsts,
+              false_nconsts):
+  nonzeros = [t is not ad_util.zero for t in tangents]
+
+  true_nops = len(true_jaxpr.in_avals) - true_nconsts
+  false_nops = len(false_jaxpr.in_avals) - false_nconsts
+
+  (pred_nz,), tconst_nz, t_nz, fconst_nz, f_nz = split_list(
+      nonzeros, [1, true_nconsts, true_nops, false_nconsts])
+
+  assert pred_nz is False
+
+  _, true_out_nz = ad.jvp_jaxpr(true_jaxpr, tconst_nz + t_nz,
+                                instantiate=False)
+  _, false_out_nz = ad.jvp_jaxpr(false_jaxpr, fconst_nz + f_nz,
+                                 instantiate=False)
+
+  out_nz = [a or b for a, b in zip(true_out_nz, false_out_nz)]
+
+  true_jvp, _ = ad.jvp_jaxpr(true_jaxpr, tconst_nz + t_nz, instantiate=out_nz)
+  false_jvp, _ = ad.jvp_jaxpr(false_jaxpr, fconst_nz + f_nz, instantiate=out_nz)
+
+  (pred,), tconsts, tops, fconsts, fops = split_list(
+      primals, [1, true_nconsts, true_nops, false_nconsts])
+  _, tconsts_dot, tops_dot, fconsts_dot, fops_dot = split_list(
+      tangents, [1, true_nconsts, true_nops, false_nconsts])
+
+  tconsts_dot = _prune_zeros(tconsts_dot)
+  tops_dot = _prune_zeros(tops_dot)
+  fconsts_dot = _prune_zeros(fconsts_dot)
+  fops_dot = _prune_zeros(fops_dot)
+
+  true_jvp = ad.rearrange_binders(true_jvp, [true_nconsts, true_nops],
+                                  [len(tconsts_dot), len(tops_dot)],
+                                  [len(out_nz)], [sum(out_nz)])
+  false_jvp = ad.rearrange_binders(false_jvp, [false_nconsts, false_nops],
+                                   [len(fconsts_dot), len(fops_dot)],
+                                   [len(out_nz)], [sum(out_nz)])
+
+  out = cond_p.bind(
+      *itertools.chain([pred],
+                       tconsts, tconsts_dot, tops, tops_dot,
+                       fconsts, fconsts_dot, fops, fops_dot),
+      true_jaxpr=true_jvp, false_jaxpr=false_jvp,
+      true_nconsts=len(tconsts) + len(tconsts_dot),
+      false_nconsts=len(fconsts) + len(fconsts_dot))
+  out_primals, out_tangents = split_list(out, [len(out_nz)])
+  out_tangents_iter = iter(out_tangents)
+  out_tangents = [
+      next(out_tangents_iter) if nz else ad_util.zero for nz in out_nz]
+  return out_primals, out_tangents
+
 cond_p = lax.Primitive('cond')
 cond_p.multiple_results = True
 cond_p.def_impl(partial(xla.apply_primitive, cond_p))
 cond_p.def_abstract_eval(_cond_abstract_eval)
+ad.primitive_jvps[cond_p] = _cond_jvp
 batching.primitive_batchers[cond_p] = _cond_batching_rule
 xla.initial_style_translations[cond_p] = _cond_translation_rule
 
@@ -1249,7 +1303,7 @@ def custom_linear_solve(
 
   This function allows for overriding or defining gradients for a linear
   solve directly via implicit differentiation at the solution, rather than by
-  differenting *through* the solve operation. This can sometimes be much faster
+  differentiating *through* the solve operation. This can sometimes be much faster
   or more numerically stable, or differentiating through the solve operation
   may not even be implemented (e.g., if ``solve`` uses ``lax.while_loop``).
 
@@ -1264,7 +1318,7 @@ def custom_linear_solve(
       of arrays.
     solve: higher level function that solves for solution to the linear
       equation, i.e., ``solve(matvec, x)) == x`` for all ``x`` of the same form
-      as ``b``. This function need not be differenatiable.
+      as ``b``. This function need not be differentiable.
     transpose_solve: higher level function for solving the transpose linear
       equation, i.e., ``transpose_solve(vecmat, x) == x``, where ``vecmat`` is
       the transpose of the linear map ``matvec`` (computed automatically with

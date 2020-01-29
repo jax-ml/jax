@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from functools import partial
 import os
@@ -28,6 +25,7 @@ from absl.testing import parameterized
 import jax
 import jax.numpy as np
 from jax import test_util as jtu
+from jax import tree_util
 from jax import core
 from jax import lax
 from jax import random
@@ -89,6 +87,44 @@ class PmapTest(jtu.JaxTestCase):
 
     ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testMean(self):
+    f = pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+
+    shape = (xla_bridge.device_count(), 4)
+    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+    expected = x - onp.broadcast_to(onp.mean(x, 0), x.shape)
+
+    ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testTrees(self):
+    ptranspose = lambda x, axis_name: lax.all_to_all(x, axis_name, 0, 0)
+    def protate(x, axis_name):
+      n = lax.psum(1, axis_name)
+      return lax.ppermute(x, axis_name, [(i, (i + 1) % n) for i in range(n)])
+
+    tree_f = lambda f: partial(tree_util.tree_map, f)
+    jax_f = lambda p: pmap(lambda x: p(x, 'i'), 'i')
+    onp_f = lambda p: tree_f(lambda x: onp.broadcast_to(p(x, 0), x.shape))
+    onp_transpose = tree_f(onp.transpose)
+    onp_rotate = tree_f(lambda x: onp.concatenate([x[-1:], x[:-1]]))
+
+    n = xla_bridge.device_count()
+    x = {'a': onp.arange(1 * n * n, 2 * n * n).reshape([n, n]),
+         'b': onp.arange(2 * n * n, 3 * n * n).reshape([n, n]),
+         'c': onp.arange(4 * n * n, 5 * n * n).reshape([n, n])}
+
+    assert_allclose = partial(tree_util.tree_multimap,
+                              partial(self.assertAllClose, check_dtypes=False))
+    assert_allclose(jax_f(lax.pmax)(x), onp_f(onp.max)(x))
+    assert_allclose(jax_f(lax.pmin)(x), onp_f(onp.min)(x))
+    assert_allclose(jax_f(lax.psum)(x), onp_f(onp.sum)(x))
+    assert_allclose(jax_f(lax.pmean)(x), onp_f(onp.mean)(x))
+    if jtu.device_under_test() not in ("cpu", "gpu"):
+      # NOTE: all-to-all and ppermute only supported on TPU.
+      assert_allclose(jax_f(ptranspose)(x), onp_transpose(x))
+      assert_allclose(jax_f(protate)(x), onp_rotate(x))
 
   def testComplexPsum(self):
     f = pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i')

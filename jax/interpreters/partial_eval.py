@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import itertools as it
 from collections import namedtuple, Counter, defaultdict
@@ -27,7 +24,8 @@ import numpy as onp
 from .. import core
 from .. import linear_util as lu
 from ..abstract_arrays import ShapedArray, ConcreteArray, raise_to_shaped
-from ..util import unzip2, safe_zip, safe_map, toposort, partial, split_list
+from ..util import (unzip2, safe_zip, safe_map, toposort, partial, split_list,
+                    wrap_name)
 from ..core import (Trace, Tracer, new_master, Jaxpr, Literal, get_aval,
                     AbstractValue, unit, unitvar, abstract_unit, Primitive,
                     call_p, TypedJaxpr, new_jaxpr_eqn)
@@ -115,8 +113,12 @@ class JaxprTrace(Trace):
         return out_tracer
 
   def process_call(self, call_primitive, f, tracers, params):
+    name = params.get('name', f.__name__)
     if self.master.trace_type is StagingJaxprTrace:
       tracers = map(self.instantiate_const_abstracted, tracers)
+    else:
+      name = wrap_name(name, 'pe')
+    params = dict(params, name=name)
     if call_primitive in call_partial_eval_rules:
       return call_partial_eval_rules[call_primitive](self, f, tracers, params)
     if call_primitive in map_primitives:
@@ -571,12 +573,12 @@ def _dce_jaxpr(typed_jaxpr, outputs):
               for var, aval, output in zip(outvars, out_avals, outputs)]
   new_outvars, new_out_avals = unzip2(out_pairs)
 
-  needed_vars = set(new_outvars)
+  needed_vars = {v for v in new_outvars if type(v) is not Literal}
   new_eqns = []
   for eqn in jaxpr.eqns[::-1]:
     if set(eqn.outvars) & needed_vars:
       new_eqns.append(eqn)
-      needed_vars.update(eqn.invars)
+      needed_vars.update(v for v in eqn.invars if type(v) is not Literal)
   new_eqns = new_eqns[::-1]
 
   new_jaxpr = core.Jaxpr(jaxpr.constvars, jaxpr.freevars, jaxpr.invars,

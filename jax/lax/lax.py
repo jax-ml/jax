@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import builtins
 import collections
@@ -209,6 +206,14 @@ def lgamma(x):
 def digamma(x):
   r"""Elementwise digamma: :math:`\psi(x)`."""
   return digamma_p.bind(x)
+
+def igamma(a, x):
+  r"""Elementwise regularized incomplete gamma function."""
+  return igamma_p.bind(_brcast(a, x), _brcast(x, a))
+
+def igammac(a, x):
+  r"""Elementwise complementary regularized incomplete gamma function."""
+  return igammac_p.bind(_brcast(a, x), _brcast(x, a))
 
 def bessel_i0e(x):
   r"""Exponentially scaled modified Bessel function of order 0:
@@ -1652,6 +1657,7 @@ _bool = {onp.bool_}
 
 _num = _int | _float | _complex
 _any = _int | _float | _complex | _bool
+_bool_or_int = _int | _bool
 
 neg_p = standard_unop(_num, 'neg')
 ad.deflinear(neg_p, lambda t: [neg(t)])
@@ -1732,6 +1738,27 @@ lgamma_p = standard_unop(_float, 'lgamma')
 ad.defjvp(lgamma_p, lambda g, x: mul(g, digamma(x)))
 
 digamma_p = standard_unop(_float, 'digamma')
+
+igamma_p = standard_naryop([_float, _float], 'igamma')
+
+def igamma_gradx(g, a, x):
+  return g * exp(-x + (a - 1.) * log(x) - lgamma(a))
+
+# TODO(srvasude): Igamma and Igammac gradient aren't supported with respect to
+# a. We can reuse some of the reparameterization code in the JAX gamma sampler,
+# but better to add an XLA op for this (which will also allow TF Igamma gradient
+# code to be XLA compiled).
+def gamma_grad_not_implemented(a, b, x):
+  raise ValueError("Igamma(c) gradient with respect to `a` not supported.")
+
+ad.defjvp(igamma_p, gamma_grad_not_implemented, igamma_gradx)
+
+igammac_p = standard_naryop([_float, _float], 'igammac')
+
+def igammac_gradx(g, a, x):
+  return -igamma_gradx(g, a, x)
+
+ad.defjvp(igammac_p, gamma_grad_not_implemented, igammac_gradx)
 
 bessel_i0e_p = standard_unop(_float, 'bessel_i0e')
 ad.defjvp2(bessel_i0e_p, lambda g, y, x: g * (bessel_i1e(x) - sign(x) * y))
@@ -1817,15 +1844,15 @@ def _pow_jvp_rhs(g, ans, x, y):
 ad.defjvp2(pow_p, _pow_jvp_lhs, _pow_jvp_rhs)
 _replace_zero = lambda x: select(eq(x, _const(x, 0)), _ones(x), x)
 
-not_p = standard_unop(_int | _bool, 'not')
+not_p = standard_unop(_bool_or_int, 'not')
 
-and_p = standard_naryop([_any, _any], 'and')
+and_p = standard_naryop([_bool_or_int, _bool_or_int], 'and')
 ad.defjvp_zero(and_p)
 
-or_p = standard_naryop([_any, _any], 'or')
+or_p = standard_naryop([_bool_or_int, _bool_or_int], 'or')
 ad.defjvp_zero(or_p)
 
-xor_p = standard_naryop([_any, _any], 'xor')
+xor_p = standard_naryop([_bool_or_int, _bool_or_int], 'xor')
 ad.defjvp_zero(xor_p)
 
 def _add_transpose(t, x, y):
@@ -2621,7 +2648,7 @@ def _rev_shape_rule(operand, dimensions):
   if len(set(dimensions)) != len(dimensions):
     msg = 'rev dimensions must be unique, got {}.'
     raise TypeError(msg.format(dimensions))
-  if not _max(dimensions) < operand.ndim:
+  if dimensions and not _max(dimensions) < operand.ndim:
     msg = ('rev dimensions must all be less than operand ndim, got dimensions '
            '{} for operand ndim {}.')
     raise TypeError(msg.format(dimensions, operand.ndim))
@@ -3429,7 +3456,7 @@ def _reduction_computation(c, jaxpr, consts, init_value):
   subc = xla_bridge.make_computation_builder("reduction_computation")
   consts = [subc.ParameterWithShape(const) for const in consts]
   args = [subc.ParameterWithShape(shape), subc.ParameterWithShape(shape)]
-  out, = xla.jaxpr_subcomp(subc, jaxpr, None, axis_env, consts, (), *args)
+  out, = xla.jaxpr_subcomp(subc, jaxpr, None, axis_env, consts, (), '', *args)
   return subc.Build(out)
 
 def _masking_defreducer(prim, identity):
@@ -3629,6 +3656,9 @@ batching.primitive_batchers[reduce_window_p] = _generic_reduce_window_batch_rule
 
 def _reduce_window_sum_shape_rule(operand, window_dimensions, window_strides,
                                   padding, input_shape):
+  if not dtypes.issubdtype(operand.dtype, onp.number):
+    msg = "operand to reduce_window_sum must have a number dtype, got {}"
+    raise TypeError(msg.format(onp.dtype(operand.dtype).name))
   return _common_reduce_window_shape_rule(operand, window_dimensions,
                                          window_strides, padding)
 
@@ -4230,6 +4260,37 @@ outfeed_p.def_impl(partial(xla.apply_primitive, outfeed_p))
 outfeed_p.def_abstract_eval(_outfeed_abstract_eval)
 xla.translations[outfeed_p] = _outfeed_translation_rule
 
+def rng_uniform(a, b, shape):
+  """Stateful PRNG generator. Experimental and its use is discouraged.
+
+  Returns uniformly distributed random numbers in the range [a, b)
+
+  You should use jax.random for most purposes; this function exists only for
+  niche use cases with special performance requirements.
+
+  This API may be removed at any time.
+  """
+  return rng_uniform_p.bind(a, b, shape=tuple(shape))
+
+def _rng_uniform_abstract_eval(a, b, shape):
+  if a.dtype != b.dtype:
+    raise ValueError(
+      "Arguments to rng_uniform must have identical dtypes, got {} "
+      "and {}.".format(a.dtype, b.dtype))
+  if a.shape != () or b.shape != ():
+    raise ValueError(
+      "Arguments to rng_uniform must be scalars; got shapes {} and {}."
+      .format(a.shape, b.shape))
+  return ShapedArray(shape, a.dtype)
+
+def _rng_uniform_translation_rule(c, a, b, shape):
+  return c.RngUniform(a, b, shape)
+
+rng_uniform_p = Primitive("rng_uniform")
+rng_uniform_p.def_impl(partial(xla.apply_primitive, rng_uniform_p))
+rng_uniform_p.def_abstract_eval(_rng_uniform_abstract_eval)
+xla.translations[rng_uniform_p] = _rng_uniform_translation_rule
+
 ### util
 
 _ndim = onp.ndim
@@ -4498,7 +4559,7 @@ def conv_general_permutations(dimension_numbers):
   for i, (a, b) in enumerate(charpairs):
     if not dimension_numbers[i].count(a) == dimension_numbers[i].count(b) == 1:
       msg = ("convolution dimension_numbers[{}] must contain the characters "
-             "'{}' and '{}' exatly once, got {}.")
+             "'{}' and '{}' exactly once, got {}.")
       raise TypeError(msg.format(i, a, b, dimension_numbers[i]))
     if len(dimension_numbers[i]) != len(set(dimension_numbers[i])):
       msg = ("convolution dimension_numbers[{}] cannot have duplicate "
