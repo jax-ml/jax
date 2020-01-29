@@ -13,9 +13,6 @@
 # limitations under the License.
 
 """An ONNX to XLA compiler by JAX-tracing a Numpy-backed ONNX interpreter."""
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from cStringIO import StringIO
 from functools import partial

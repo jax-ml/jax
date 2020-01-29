@@ -12,6 +12,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
 
 from .scatter import index, index_add, index_update, index_min, index_max, segment_sum

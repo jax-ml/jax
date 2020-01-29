@@ -63,9 +63,6 @@ Implementation note: This script must be python2 compatible for now, because
 Google's genrules still run with python2, b/66712815.
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from ast import literal_eval
 import importlib
