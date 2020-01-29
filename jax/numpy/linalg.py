@@ -33,7 +33,7 @@ from .lax_numpy import _wraps
 from . import lax_numpy as np
 from ..api import custom_transforms, defjvp
 from ..util import get_module_functions
-from ..third_party.numpy.cond import cond
+from ..third_party.numpy.linalg import cond
 
 _T = lambda x: np.swapaxes(x, -1, -2)
 
