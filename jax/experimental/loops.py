@@ -507,10 +507,13 @@ class _CondBuilder(_LoopBuilder):
       lax_control_flow._initial_style_jaxpr(lambda *args: args,
                                             carried_tree,
                                             tuple(init_avals)))
+    args = list(itertools.chain(body_const_vals, init_vals,
+                                false_body_const_vals, init_vals))
     return lax_control_flow.cond_p.bind(
-      *itertools.chain([self.pred], body_const_vals,
-                       init_vals, false_body_const_vals, init_vals),
-      true_jaxpr=body_typed_jaxpr, false_jaxpr=false_body_typed_jaxpr)
+        self.pred, *args,
+        true_jaxpr=body_typed_jaxpr,
+        false_jaxpr=false_body_typed_jaxpr,
+        linear=(False,) * len(args))
 
 
 class _WhileBuilder(_LoopBuilder):
@@ -562,4 +565,3 @@ class _WhileBuilder(_LoopBuilder):
                                          cond_jaxpr=cond_jaxpr,
                                          body_nconsts=len(body_const_vals),
                                          body_jaxpr=body_typed_jaxpr)
-
