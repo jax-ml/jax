@@ -89,7 +89,7 @@ def device_put(x, device=None):
 
 device_put_handlers = {}
 device_put_handlers[core.Unit] = \
-    lambda _, device: xc.Buffer.from_pyval(
+    lambda _, device: xc.Buffer.make_tuple(
         (), device, backend=xb.get_device_backend(device))
 def _device_put_array(x, device):
   return xc.Buffer.from_pyval(x, device, backend=xb.get_device_backend(device))
