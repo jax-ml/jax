@@ -1018,8 +1018,8 @@ def mask(fun, in_shapes, out_shape):
   in_specs, in_shapes_tree = tree_flatten(in_shapes)
   out_specs, out_shapes_tree = tree_flatten(out_shape)
 
-  in_specs = map(masking._parse_shape_spec, in_specs)
-  out_specs = map(masking._parse_shape_spec, out_specs)
+  in_specs = map(masking.parse_spec, in_specs)
+  out_specs = map(masking.parse_spec, out_specs)
 
   unique_ids = collections.defaultdict(object)
   in_specs  = map(partial(_remap_ids, unique_ids), in_specs)
@@ -1029,14 +1029,14 @@ def mask(fun, in_shapes, out_shape):
     args_flat, in_tree = tree_flatten(args)
     if in_tree != in_shapes_tree: raise TypeError("pytree mismatch")
     logical_env = {unique_ids[name] : val for name, val in logical_env.items()}
-    in_shapes = map(masking._finalize_shape_spec, in_specs, map(onp.shape, args_flat))
+    in_shapes = map(masking.finalize_spec, in_specs, map(onp.shape, args_flat))
     padded_env = _bind_shapes(in_shapes, [x.shape for x in args_flat])
     f = lu.wrap_init(fun)
     flat_fun, out_tree = flatten_fun_nokwargs(f, in_tree)
     outs, out_shapes_ = masking.mask_fun(
         flat_fun, logical_env, padded_env, args_flat, in_shapes)
     if not out_tree() == out_shapes_tree: raise TypeError("pytree mismatch")
-    out_shapes = map(masking._finalize_shape_spec, out_specs, map(onp.shape, outs))
+    out_shapes = map(masking.finalize_spec, out_specs, map(onp.shape, outs))
     if not out_shapes == list(out_shapes_):
       raise masking.ShapeError
     if not all(onp.shape(out) == eval_polymorphic_shape(shape, padded_env)
@@ -1066,9 +1066,9 @@ def _bind_shapes(shape_exprs, shapes):
 @curry
 def shapecheck(in_shapes, out_shape, fun):
   in_shapes, in_tree = tree_flatten(in_shapes)
-  in_shapes = map(masking._parse_shape_spec, in_shapes)
+  in_shapes = map(masking.parse_spec, in_shapes)
   out_shapes, out_tree = tree_flatten(out_shape)
-  out_shapes = map(masking._parse_shape_spec, out_shapes)
+  out_shapes = map(masking.parse_spec, out_shapes)
   flat_fun, out_tree_ = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
   avals = map(partial(ShapedArray, dtype=onp.float32), in_shapes)
   out_shapes_ = [o.shape for o in pe.abstract_eval_fun(flat_fun.call_wrapped, *avals)]

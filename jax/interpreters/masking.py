@@ -260,11 +260,11 @@ class ShapeSpec(tuple):
   def __str__(self):
     return 'ShapeSpec({})'.format(', '.join(map(str, self)))
 
-def _finalize_shape_spec(spec, shape):
+def finalize_spec(spec, shape):
   return tuple(_parse_lit(d) if e is _monomorphic_dim else e
                for e, d in zip(spec, shape))
 
-def _parse_shape_spec(spec=''):
+def parse_spec(spec=''):
   if not spec:
     return ShapeSpec(())
   if spec[0] == '(':
@@ -304,7 +304,7 @@ _monomorphic_dim = MonomorphicDim()
 
 class S_(object):
   def __getitem__(self, idx):
-    return _parse_shape_spec(('(' + ','.join(map(str, idx)) + ')')
+    return parse_spec(('(' + ','.join(map(str, idx)) + ')')
                              if type(idx) is tuple else str(idx))
 
 s_ = S_()

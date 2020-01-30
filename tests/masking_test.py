@@ -19,7 +19,7 @@ from unittest import SkipTest
 import numpy as onp
 from absl.testing import absltest, parameterized
 from jax.interpreters.masking import shape_as_value, ShapeError, \
-  _parse_shape_spec, Poly, Mon
+  parse_spec, Poly, Mon
 from jax import numpy as np, test_util as jtu, mask, vmap, jit, grad, lax, \
   shapecheck, api
 from jax.config import config
@@ -54,7 +54,7 @@ class ShapesTest(jtu.JaxTestCase):
       ['_', 'ShapeSpec(_)'],
   ])
   def test_parse_spec(self, spec, ans):
-    self.assertEqual(str(_parse_shape_spec(spec)), ans)
+    self.assertEqual(str(parse_spec(spec)), ans)
 
   def test_Poly_equal(self):
     assert constant_poly(3) == 3
