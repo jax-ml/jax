@@ -2538,18 +2538,29 @@ def _reshape_impl(operand, new_sizes, dimensions):
       aval = ShapedArray(new_sizes, operand.dtype)
       lazy_expr = lazy.broadcast(operand._lazy_expr, new_sizes, bcast_dims)
       return xla.DeviceArray(aval, None, lazy_expr, operand.device_buffer)
-  if (type(operand) is pxla.ShardedDeviceArray and dimensions is None
-      and _is_axis_merge(old_sizes, new_sizes)):
-    aval = ShapedArray(new_sizes, operand.dtype)
-    return pxla.ChunkedDeviceArray(old_sizes[0], aval, operand.device_buffers)
-  elif (type(operand) is pxla.ChunkedDeviceArray and dimensions is None
-        and _is_axis_split(old_sizes, new_sizes)
-        and operand.axis_size == new_sizes[0]):
-    aval = ShapedArray(new_sizes, operand.dtype)
-    return pxla.ShardedDeviceArray(aval, operand.device_buffers)
-  else:
-    return xla.apply_primitive(reshape_p, operand, new_sizes=new_sizes,
-                               dimensions=dimensions)
+
+  if type(operand) is pxla.ShardedDeviceArray and dimensions is None:
+    chunk_shape = operand.device_buffers[0].shape().dimensions()
+    if _is_axis_merge(old_sizes, new_sizes):
+      num_chunks, ragged = divmod(new_sizes[0], chunk_shape[0])
+      if not ragged:
+        aval = ShapedArray(new_sizes, operand.dtype)
+        # TODO(skye): deal with replication
+        indices = [builtins.slice(i, i + chunk_shape[0])
+                   for i in range(0, new_sizes[0], chunk_shape[0])]
+        return pxla.ShardedDeviceArray(aval, indices, operand.device_buffers)
+
+    if _is_axis_split(old_sizes, new_sizes):
+      split_axis_size, ragged = divmod(old_sizes[0], chunk_shape[0])
+      assert not ragged
+      if new_sizes[0] == split_axis_size:
+        aval = ShapedArray(new_sizes, operand.dtype)
+        # TODO(skye): deal with replication
+        indices = list(range(new_sizes[0]))
+        return pxla.ShardedDeviceArray(aval, indices, operand.device_buffers)
+
+  return xla.apply_primitive(reshape_p, operand, new_sizes=new_sizes,
+                             dimensions=dimensions, old_sizes=old_sizes)
 
 def _is_singleton_reshape(old, new):
   # A singleton reshape is one where only singleton dimensions are added. We

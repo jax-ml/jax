@@ -15,22 +15,24 @@
 
 from collections import defaultdict
 from contextlib import contextmanager
+from enum import Enum
+import itertools as it
 import operator as op
 import threading
 from typing import Any, Callable, Dict, List, Sequence, Set, Type
 
 from absl import logging
 import numpy as onp
-
 from ..config import flags
 from .. import core
 from .. import linear_util as lu
 from .. import lazy
 from ..abstract_arrays import (ConcreteArray, ShapedArray, array_types,
                                raise_to_shaped)
-from ..util import (partial, unzip2, prod, safe_map,
+from ..util import (partial, unzip2, prod, safe_map, safe_zip,
                     extend_name_stack, wrap_name)
 from ..lib import xla_bridge as xb
+from ..tree_util import tree_map
 from .batching import broadcast, not_mapped
 from . import batching
 from . import partial_eval as pe
@@ -41,19 +43,19 @@ FLAGS = flags.FLAGS
 
 _map = safe_map
 
-
 ### util
 
 def identity(x): return x
 
-def shard_args(backend, devices, assignments, axis_size, args):
+def shard_args(backend, devices, shard_specs, axis_size, args):
   """Shard each argument data array along its leading axis.
 
   Args:
     backend: the platform to be used
     devices: list of Devices mapping replica index to a physical device.
-    assignments: list of integers with the same length as `devices` mapping
-      replica index to an index along the leading axis (i.e. a shard).
+    indices: list of logical indices into the argument with the same length as
+      `devices`. Can be an int, a slice object, or a tuple thereof. This
+      describes how the input should be sharded across devices.
     axis_size: int, size of the leading axis to be sharded.
     args: a sequence of JaxTypes representing arguments to be sharded along
       their leading axes and placed on `devices`.
@@ -68,32 +70,15 @@ def shard_args(backend, devices, assignments, axis_size, args):
   for a, arg in enumerate(args):
     # The shard_arg_handlers allow an extensible set of types to be sharded, but
     # inline handling for ShardedDeviceArray as a special case for performance
+    # TODO(skye): fix this logic
     if type(arg) is ShardedDeviceArray:
-      if nrep == len(arg.device_buffers):
-        # The argument is already prepared for the right number of replicas, so
-        # we just ensure that buf[r] is on devices[r] for each replica index r
-        # TODO(mattjj): compared to the other case, this logic has less looping
-        # but could incur more device-to-device data movement
+      indices = get_logical_indices(ShapedArray(arg.shape, arg.dtype), shard_specs)
+    if type(arg) is ShardedDeviceArray and indices == arg.logical_indices:
         for r, buf in enumerate(arg.device_buffers):
-          buffers[r][a] = buf if buf.device() == devices[r] else buf.copy_to_device(devices[r])
-      else:
-        # The argument is prepared for a different number of replicas, so for
-        # each of our replica indices we check if there's already a buffer with
-        # the correct logical assignment on the correct device, and if not just
-        # copy one of them
-        prev_assignments = assign_shards_to_replicas(len(arg.device_buffers), axis_size)
-        candidates = defaultdict(list)
-        for r, buf in enumerate(arg.device_buffers):
-          candidates[prev_assignments[r]].append(buf)
-        for r in range(nrep):
-          for buf in candidates[assignments[r]]:
-            if buf.device() == devices[r]:
-              buffers[r][a] = buf
-              break
-          else:
-            buffers[r][a] = buf.copy_to_device(devices[r])
+          buffers[r][a] = (buf if buf.device() == devices[r]
+                           else buf.copy_to_device(devices[r]))
     else:
-      bufs = shard_arg_handlers[type(arg)](arg, devices, assignments)
+      bufs = shard_arg_handlers[type(arg)](arg, devices, shard_specs)
       for r, buf in enumerate(bufs):
         buffers[r][a] = buf
 
@@ -103,16 +88,21 @@ def shard_args(backend, devices, assignments, axis_size, args):
 shard_arg_handlers: Dict[Any, Callable[[Any, Any, Any], Sequence[Any]]] = {}
 shard_arg_handlers[core.Unit] = \
     lambda x, devices, _: [xla.device_put(core.unit, d) for d in devices]
-def _shard_array(x, devices, assignments):
+def _shard_array(x, devices, shard_specs):
   nrep = len(devices)
-  return (xla.device_put(x[assignments[r]], devices[r]) for r in range(nrep))
+  indices = get_logical_indices(ShapedArray(x.shape, x.dtype), shard_specs)
+  assert len(indices) == nrep
+  return (xla.device_put(x[indices[r]], devices[r]) for r in range(nrep))
 for _t in array_types:
   shard_arg_handlers[_t] = _shard_array
 
-def _shard_device_array(x, devices, assignments):
+def _shard_device_array(x, devices, shard_specs):
   nrep = len(devices)
-  xs = x._unstack()
-  return (xla.device_put(xs[assignments[r]], devices[r])
+  # xs = x._unstack() # TODO(skye): why did we need this?
+  indices = get_logical_indices(ShapedArray(x.shape, x.dtype), shard_specs)
+  if len(indices) != nrep: import ipdb; ipdb.set_trace()
+  assert len(indices) == nrep
+  return (xla.device_put(x[indices[r]], devices[r])
           for r in range(nrep))
 shard_arg_handlers[xla.DeviceArray] = _shard_device_array
 
@@ -131,20 +121,75 @@ def _shard_abstract_array(size, x):
   return ShapedArray(x.shape[1:], x.dtype)
 shard_aval_handlers[ShapedArray] = _shard_abstract_array
 
-def aval_to_result_handler(size, nrep, aval):
+def aval_to_result_handler(size, nrep, shard_specs, aval):
   try:
-    return pxla_result_handlers[type(aval)](size, nrep, aval)
+    return pxla_result_handlers[type(aval)](size, nrep, shard_specs, aval)
   except KeyError as err:
     raise TypeError("No pxla_result_handler for type: {}".format(type(aval))
                     ) from err
 PxlaResultHandler = Callable[..., Callable[[Any], Any]]
 pxla_result_handlers: Dict[Type[core.AbstractValue], PxlaResultHandler] = {}
 pxla_result_handlers[core.AbstractUnit] = lambda *_: lambda _: core.unit
-def array_result_handler(size, nrep, aval):
+def array_result_handler(size, nrep, shard_specs, aval):
   full_aval = ShapedArray((size,) + aval.shape, aval.dtype)
-  return partial(ShardedDeviceArray, full_aval)
+  indices = get_logical_indices(full_aval, shard_specs)
+  return partial(ShardedDeviceArray, full_aval, indices)
 pxla_result_handlers[ShapedArray] = array_result_handler
 pxla_result_handlers[ConcreteArray] = array_result_handler
+
+
+class ShardSpec(object):
+  class Type(Enum):
+    FULL_SPLIT = 0
+    INTERNAL_SPLIT = 1
+    REPLICATE = 2
+  FULL_SPLIT, INTERNAL_SPLIT, REPLICATE = (
+      Type.FULL_SPLIT, Type.INTERNAL_SPLIT, Type.REPLICATE)
+
+  def __init__(self, type):
+    self.type = type
+
+  def __repr__(self):
+    return "ShardSpec(ShardSpec.%s)" % self.type.name
+
+
+def get_shard_specs(jaxpr):
+  pmap_eqns = [eqn for eqn in jaxpr.eqns if eqn.primitive == xla_pmap_p]
+  if not pmap_eqns:
+    return []
+
+  if len(jaxpr.eqns) == len(pmap_eqns):
+    shard_specs = [ShardSpec(ShardSpec.FULL_SPLIT)]
+  else:
+    # If there are non-pmap equations in the jaxpr, we'll shard/unshard inside
+    # the HLO computation so the other equations operate on the unsharded data.
+    shard_specs = [ShardSpec(ShardSpec.INTERNAL_SPLIT)]
+
+  sub_specs = [get_shard_specs(_get_subjaxpr(eqn)) for eqn in pmap_eqns]
+  if not all(specs == sub_specs[0] for specs in sub_specs):
+    raise NotImplementedError(
+        "Sequential nested pmaps with different sub-nested pmaps not implemented.")
+  shard_specs.extend(sub_specs[0])
+  return shard_specs
+
+
+def _get_subjaxpr(pmap_eqn):
+  return pmap_eqn.bound_subjaxprs[0][0]
+
+
+def get_logical_indices(aval, shard_specs):
+  assert len(aval.shape) >= len(shard_specs), (aval.shape, shard_specs)
+  indices_per_dim = [_get_logical_indices_for_axis(axis_size, spec)
+                     for axis_size, spec in zip(aval.shape, shard_specs)]
+  return list(it.product(*indices_per_dim))
+
+
+def _get_logical_indices_for_axis(axis_size, shard_spec):
+  if shard_spec.type == ShardSpec.FULL_SPLIT:
+    return range(axis_size)
+  if shard_spec.type in (ShardSpec.REPLICATE, ShardSpec.INTERNAL_SPLIT):
+    return [slice(None)] * axis_size
+  assert False, "Unknown shard type: %s" % shard_spec.type
 
 
 def assign_shards_to_replicas(nrep, size):
@@ -156,7 +201,7 @@ def assign_shards_to_replicas(nrep, size):
 
   Returns:
     A tuple of integers of length nrep in which the elements take on values from
-    0 to size-1. Replica n is assigned shard data_array[assignments[n]].
+    0 to size-1. Replica n is assigned shard data_array[indices[n]].
   """
   groupsize, ragged = divmod(nrep, size)
   assert not ragged
@@ -296,28 +341,21 @@ class ShardedDeviceArray(xla.DeviceArray):
   that is, it is only an optimization to reduce transfers.
 
   The number of device buffers underlying a ShardedDeviceArray instance is equal
-  to the number of replicas of the computation that produced it. Each buffer
-  represents a shard of the original array, meaning a slice along its leading
-  axis. These component buffers reside on distinct devices, but need not
-  represent distinct logical shards. The correspondence can be computed with
-  the assign_shards_to_replicas function.
+  to the number of devices of the computation that produced it. Each buffer
+  represents a shard of the original array, indicated by its corresponding index
+  into the logical array. These component buffers reside on distinct devices,
+  but need not represent distinct logical shards.
   """
-  __slots__ = ["device_buffers", "axis_size"]
-  _collect = staticmethod(onp.stack)
+  __slots__ = ["device_buffers", "logical_indices"]
 
-  def __init__(self, aval, device_buffers):
+  def __init__(self, aval, logical_indices, device_buffers):
+    assert len(logical_indices) == len(device_buffers)
     self.aval = aval
     self.device_buffers = device_buffers
-    self.axis_size = aval.shape[0]
+    self.logical_indices = logical_indices
     self._npy_value = None
     if not core.skip_checks:
       assert type(aval) is ShapedArray
-
-  def _ids(self):
-    num_bufs = len(self.device_buffers)
-    assignments = assign_shards_to_replicas(num_bufs, self.axis_size)
-    _, ids = onp.unique(assignments, return_index=True)
-    return ids
 
   def copy_to_host_async(self):
     if self._npy_value is None:
@@ -343,30 +381,57 @@ class ShardedDeviceArray(xla.DeviceArray):
   @property
   def _value(self):
     if self._npy_value is None:
-      ids = self._ids()
+      # TODO(skye): remove this to avoid transferring replicated buffers?
       self.copy_to_host_async()
-      self._npy_value = self._collect([self.device_buffers[i].to_py() for i in ids])
+      self._npy_value = onp.empty(self.aval.shape, self.aval.dtype)
+      # TODO(skye): benchmark and possibly switch to a set (maybe with with
+      # cached hashable indices?)
+      already_copied_indices = []
+      for buf, idx in zip(self.device_buffers, self.logical_indices):
+        if idx in already_copied_indices:
+          continue
+        self._npy_value[idx] = buf.to_py()
+        already_copied_indices.append(idx)
     return self._npy_value
 
   def __getitem__(self, idx):
-    if self._npy_value is None and type(idx) is int:
-      ids = self._ids()
-      device_buffer = self.device_buffers[ids[idx]]
-      aval = ShapedArray(self.aval.shape[1:], self.aval.dtype)
-      return xla.DeviceArray(aval, None, lazy.array(aval.shape), device_buffer)
+    if self._npy_value is None and idx in self.logical_indices:
+      buf = self.device_buffers[self.logical_indices.index(idx)]
+      aval = ShapedArray(buf.shape().dimensions(), self.aval.dtype)
+      return xla.DeviceArray(aval, None, lazy.array(aval.shape), buf)
     else:
       return super(ShardedDeviceArray, self).__getitem__(idx)
 
-# This handler code is effectively dead because we in-lined it in shard_args for
-# performance reasons.
-def _shard_sharded_device_array(x, devices, assignments):
-  n = len(devices)
-  if n == len(x.device_buffers):
-    return (b if b.device() == devices[r] else b.copy_to_device(devices[r])
-            for r, b in enumerate(x.device_buffers))
-  else:
-    return (xla.device_put(x[assignments[r]], devices[r]) for r in range(n))
-shard_arg_handlers[ShardedDeviceArray] = _shard_sharded_device_array
+def _hashable_index(idx):
+  return tree_map(lambda x: (x.start, x.stop) if type(x) == slice else x,
+                  idx)
+
+# The fast path is handled directly in shard_args().
+def _shard_sharded_device_array_slow_path(x, devices, shard_specs):
+  candidates = defaultdict(list)
+  for buf, buf_idx in zip(x.device_buffers, x.logical_indices):
+    candidates[_hashable_index(buf_idx)].append(buf)
+
+  bufs = []
+  indices = get_logical_indices(x.aval, shard_specs)
+  for idx, device in safe_zip(indices, devices):
+    # Lookup all buffers that contain the correct slice of the logical array.
+    # TODO(skye): dedup equivalent indices?
+    candidates_list = candidates[_hashable_index(idx)]
+    if not candidates_list:
+      # This array isn't sharded correctly. Reshard it via host roundtrip.
+      # TODO(skye): more efficient reshard?
+      return shard_arg_handlers[type(x._value)](x._value, devices, shard_specs)
+    # Try to find a candidate buffer already on the correct device,
+    # otherwise copy one of them.
+    for buf in candidates_list:
+      if buf.device() == device:
+        bufs.append(buf)
+        break
+    else:
+      bufs.append(buf.copy_to_device(device))
+  return bufs
+shard_arg_handlers[ShardedDeviceArray] = _shard_sharded_device_array_slow_path
 
 def _sharded_device_array_constant_handler(c, val, canonicalize_types=True):
   return c.Constant(onp.asarray(val), canonicalize_types=canonicalize_types)
@@ -376,25 +441,6 @@ core.pytype_aval_mappings[ShardedDeviceArray] = ConcreteArray
 xla.device_put_handlers[ShardedDeviceArray] = xla._device_put_array
 xla.pytype_aval_mappings[ShardedDeviceArray] = op.attrgetter('aval')
 xla.canonicalize_dtype_handlers[ShardedDeviceArray] = identity
-
-
-class ChunkedDeviceArray(ShardedDeviceArray):
-  __slots__: List[str] = []
-  _collect = staticmethod(onp.concatenate)
-
-  def __init__(self, axis_size, aval, device_buffers):
-    super(ChunkedDeviceArray, self).__init__(aval, device_buffers)
-    self.axis_size = axis_size
-
-  def __getitem__(self, idx):
-    return xla.DeviceArray.__getitem__(self, idx)
-
-shard_arg_handlers[ChunkedDeviceArray] = _shard_array
-
-core.pytype_aval_mappings[ChunkedDeviceArray] = ConcreteArray
-xla.device_put_handlers[ChunkedDeviceArray] = xla._device_put_array
-xla.pytype_aval_mappings[ChunkedDeviceArray] = op.attrgetter('aval')
-xla.canonicalize_dtype_handlers[ChunkedDeviceArray] = identity
 
 
 ### the xla_pmap primitive and its rules are comparable to xla_call in xla.py
@@ -481,7 +527,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
     # XLA computation at all; we handle this as a special case so we can stage
     # out multi-replica XLA computations regardless of the hardware available.
     # The 'None' values here are just dummies we know will be ignored.
-    handlers = [_pval_to_result_handler(axis_size, None, pval, local_devices,
+    handlers = [_pval_to_result_handler(axis_size, None, None, pval, local_devices,
                                         backend)
                 for pval in out_pvals]
     results = [handler(None) for handler in handlers]
@@ -490,14 +536,22 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   jaxpr_replicas = xla.jaxpr_replicas(jaxpr)
   num_local_replicas = axis_size * jaxpr_replicas
   num_global_replicas = global_axis_size * jaxpr_replicas
-  axis_env = xla.AxisEnv(num_global_replicas, (axis_name,), (global_axis_size,), devices)
+
+  shard_specs = [ShardSpec(ShardSpec.FULL_SPLIT)] + get_shard_specs(jaxpr)
+
+  # TODO(skye): propagate in translation rule somehow
+  needs_unshard = (len(shard_specs) >= 2 and
+                   shard_specs[1].type == ShardSpec.INTERNAL_SPLIT)
+  axis_env = xla.AxisEnv(num_global_replicas, (axis_name,), (global_axis_size,),
+                         devices, needs_unshard=needs_unshard)
 
   tuple_args = len(avals) > 100  # pass long arg lists as tuple for TPU
 
   c = xb.make_computation_builder("pmap_{}".format(fun.__name__))
   xla_consts = _map(c.Constant, consts)
-  xla_args = xla._xla_callable_args(c, avals, tuple_args)
-  out_nodes = xla.jaxpr_subcomp(c, jaxpr, backend, axis_env, xla_consts,
+  # shard_specs[1:] because we've already sharded avals across the first dim.
+  xla_args = _pmap_callable_args(c, shard_specs[1:], avals, tuple_args)
+  out_nodes = xla.jaxpr_subcomp(c, jaxpr, backend, axis_env, xla_consts, (),
                                 extend_name_stack(wrap_name(name, 'pmap')), *xla_args)
   built = c.Build(c.Tuple(*out_nodes))
 
@@ -543,22 +597,36 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
       backend=xb.get_backend(backend))
 
   handle_args = partial(shard_args, backend, compiled.local_devices(),
-                        assign_shards_to_replicas(num_local_replicas, axis_size),
-                        axis_size)
+                        shard_specs, axis_size)
   handle_outs = _pvals_to_results_handler(axis_size, num_local_replicas,
-                                          out_pvals, compiled.local_devices(),
-                                          backend)
+                                          shard_specs, out_pvals,
+                                          compiled.local_devices(), backend)
   return partial(execute_replicated, compiled, backend, handle_args, handle_outs,
                  tuple_args)
 
 multi_host_supported_collectives: Set[core.Primitive] = set()
 
+
+def _pmap_callable_args(c, shard_specs, avals, tuple_args):
+  assert all(len(shard_specs) <= len(aval.shape) for aval in avals
+             if isinstance(aval, ShapedArray))
+  for spec in shard_specs:
+    if spec.type == ShardSpec.FULL_SPLIT:
+      avals = [ShapedArray(aval.shape[1:], aval.dtype)
+               if isinstance(aval, ShapedArray) else aval
+               for aval in avals]
+    elif spec.type == ShardSpec.INTERNAL_SPLIT:
+      break
+    else:
+      assert False, "Unknown shard type: %s" % spec.type
+  return xla._xla_callable_args(c, avals, tuple_args)
+
 class ResultToPopulate(object): pass
 result_to_populate = ResultToPopulate()
 
-def _pvals_to_results_handler(size, nrep, out_pvals, devices, backend):
+def _pvals_to_results_handler(size, nrep, shard_specs, out_pvals, devices, backend):
   nouts = len(out_pvals)
-  handlers = [_pval_to_result_handler(size, nrep, pval, devices, backend)
+  handlers = [_pval_to_result_handler(size, nrep, shard_specs, pval, devices, backend)
               for pval in out_pvals]
   def handler(out_bufs):
     buffers = [[result_to_populate] * nrep for _ in range(nouts)]
@@ -575,9 +643,6 @@ def replicate(val, axis_size, nrep, devices=None, backend=None):
 
   Args:
     val: the value to be replicated.
-    axis_size: the length of the output, i.e. the logical number of replicas to
-    create. Usually equal to `nrep`, but in the case of nested pmaps, `nrep` may
-    be a multiple of `axis_size`.
     nrep: the number of replicas to create. If ``devices`` is set, must be equal
       to ``len(devices)``.
     devices: the devices to replicate across. If None, ``nrep`` will be used to
@@ -604,10 +669,12 @@ def replicate(val, axis_size, nrep, devices=None, backend=None):
 
   aval = xla.abstractify(val)
   aval = ShapedArray((axis_size,) + aval.shape, aval.dtype)
+  # TODO(skye): do something smarter here
+  indices = assign_shards_to_replicas(nrep, axis_size)
   device_buffers = [xla.device_put(val, d) for d in devices]
-  return ShardedDeviceArray(aval, device_buffers)
+  return ShardedDeviceArray(aval, indices, device_buffers)
 
-def _pval_to_result_handler(axis_size, nrep, pval, devices, backend):
+def _pval_to_result_handler(axis_size, nrep, shard_specs, pval, devices, backend):
   if devices:
     assert all(d.host_id == xb.host_id(backend) for d in devices)
   pv, const = pval
@@ -628,7 +695,7 @@ def _pval_to_result_handler(axis_size, nrep, pval, devices, backend):
                    else replicate(const, axis_size, nrep, devices, backend))
     return lambda _: bcast_const
   else:
-    return aval_to_result_handler(axis_size, nrep, pv)
+    return aval_to_result_handler(axis_size, nrep, shard_specs, pv)
 
 def execute_replicated(compiled, backend, in_handler, out_handler, tuple_args,
                        *args):
@@ -655,19 +722,24 @@ def _pmap_translation_rule(c, axis_env,
     raise ValueError("Nested pmaps with explicit devices argument.")
   if global_axis_size is None:
     global_axis_size = axis_size
-  new_env = xla.extend_axis_env(axis_env, axis_name, global_axis_size)
-  # Shard the in_nodes that are mapped
-  in_avals = [v.aval for v in call_jaxpr.invars]
-  in_nodes_sharded = (
-    _xla_shard(c, aval, new_env, in_node) if in_node_mapped else in_node
-    for aval, in_node, in_node_mapped in zip(in_avals, in_nodes, mapped_invars))
+  needs_unshard = not (len(jaxpr.eqns) == 1 and jaxpr.eqns[0].primitive == xla_pmap_p)
+  new_env = xla.extend_axis_env(axis_env, axis_name, global_axis_size, needs_unshard)
+  if axis_env.needs_unshard:
+    # Shard the in_nodes that are mapped
+    in_avals = [v.aval for v in call_jaxpr.invars]
+    in_nodes = (
+      _xla_shard(c, aval, new_env, in_node) if in_node_mapped else in_node
+      for aval, in_node, in_node_mapped in zip(in_avals, in_nodes, mapped_invars))
 
   sharded_outs = xla.jaxpr_subcomp(
       c, call_jaxpr, backend, new_env, (),
       extend_name_stack(name_stack, wrap_name(name, 'pmap')), *in_nodes_sharded)
-  out_avals = [v.aval for v in call_jaxpr.outvars]
-  outs = [_xla_unshard(c, aval, new_env, shard)
-          for aval, shard in zip(out_avals, sharded_outs)]
+  if axis_env.needs_unshard:
+    out_avals = [v.aval for v in call_jaxpr.outvars]
+    outs = [_xla_unshard(c, aval, new_env, shard)
+            for aval, shard in zip(out_avals, sharded_outs)]
+  else:
+    outs = sharded_outs
   return c.Tuple(*outs)
 
 xla.call_translations[xla_pmap_p] = _pmap_translation_rule
