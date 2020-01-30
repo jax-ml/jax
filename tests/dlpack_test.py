@@ -60,8 +60,10 @@ class DLPackTest(jtu.JaxTestCase):
      "shape": shape, "dtype": dtype}
      for shape in all_shapes
      for dtype in scalar_types))
-  def testJaxRoundTrip(self):
-    x = jax.random.normal(jax.random.PRNGKey(42), (3, 1, 5))
+  def testJaxRoundTrip(self, shape, dtype):
+    rng = jtu.rand_default()
+    np = rng(shape, dtype)
+    x = jnp.array(np)
     dlpack = jax.dlpack.to_dlpack(x)
     y = jax.dlpack.from_dlpack(dlpack)
     self.assertAllClose(x, y, check_dtypes=True)
@@ -100,11 +102,8 @@ class DLPackTest(jtu.JaxTestCase):
     np = rng(shape, dtype)
     x = jnp.array(np)
     dlpack = jax.dlpack.to_dlpack(x)
-    print(dlpack)
     y = torch.utils.dlpack.from_dlpack(dlpack)
-    print(dlpack)
     self.assertAllClose(np, y.numpy(), check_dtypes=True)
-    print("ok")
 
 
 if __name__ == "__main__":
