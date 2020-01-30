@@ -689,13 +689,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     ans = api.grad(f)(x)
     expected = api.grad(f_ref)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
-    jtu.check_grads(f, (x,), order=2, modes=["rev"])
+    jtu.check_grads(f, (x,), order=2, modes=["fwd", "rev"])
 
     x = 1.72
     ans = api.grad(f)(x)
     expected = api.grad(f_ref)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
-    jtu.check_grads(f, (x,), order=1, modes=["rev"])
+    jtu.check_grads(f, (x,), order=2, modes=["fwd", "rev"])
 
   def testCondGrad2(self):
     def f_ref(x):
@@ -714,13 +714,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     ans = api.grad(f)(x)
     expected = api.grad(f_ref)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
-    jtu.check_grads(f, (x,), order=1, modes=["rev"])
+    jtu.check_grads(f, (x,), order=2, modes=["fwd", "rev"])
 
     x = 1.72 * np.ones(2)
     ans = api.grad(f)(x)
     expected = api.grad(f_ref)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
-    jtu.check_grads(f, (x,), order=1, modes=["rev"])
+    jtu.check_grads(f, (x,), order=2, modes=["fwd", "rev"])
 
   def testCondGrad3(self):
     def fun_ref(x):
@@ -736,13 +736,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     ans = api.grad(fun)(x)
     expected = api.grad(fun_ref)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
-    jtu.check_grads(fun, (x,), order=1, modes=["rev"])
+    jtu.check_grads(fun, (x,), order=2, modes=["fwd", "rev"])
 
     x = 2.72
     ans = api.grad(fun)(x)
     expected = api.grad(fun_ref)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
-    jtu.check_grads(fun, (x,), order=1, modes=["rev"])
+    jtu.check_grads(fun, (x,), order=2, modes=["fwd", "rev"])
 
   def testCondLinearize(self):
     def f(x):
@@ -753,6 +753,36 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     y, f_lin = api.linearize(f, 4.)
     self.assertAllClose(y, np.sin(4.), check_dtypes=False)
     self.assertAllClose(f_lin(2.), np.cos(4.) * 2., check_dtypes=False)
+
+  def testCondLinearize2(self):
+    def f_ref(x):
+      z = np.array([1., 2.]) * x if x[0] < 2 else np.cos(np.sin(x))
+      return z.sum()
+
+    def f(x):
+      return lax.cond(
+          x[0] < 2,
+          x, lambda x: np.array([1., 2.]) * x,
+          x, lambda x: np.cos(np.sin(x))).sum()
+
+    x = 2.14 * np.ones(2)
+    y, f_lin = api.linearize(f, x)
+    y_ref, f_lin_ref = api.linearize(f_ref, x)
+    self.assertAllClose(y, y_ref, check_dtypes=False)
+    self.assertAllClose(f_lin(x), f_lin_ref(x), check_dtypes=False)
+
+    x = -2.14 * np.ones(2)
+    y, f_lin = api.linearize(f, x)
+    y_ref, f_lin_ref = api.linearize(f_ref, x)
+    self.assertAllClose(y, y_ref, check_dtypes=False)
+    self.assertAllClose(f_lin(x), f_lin_ref(x), check_dtypes=False)
+
+    f = api.jit(f)
+    x = 2.14 * np.ones(2)
+    y, f_lin = api.linearize(f, x)
+    y_ref, f_lin_ref = api.linearize(f_ref, x)
+    self.assertAllClose(y, y_ref, check_dtypes=False)
+    self.assertAllClose(f_lin(x), f_lin_ref(x), check_dtypes=False)
 
   def testCondJit(self):
     def f(x):
