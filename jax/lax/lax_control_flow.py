@@ -660,16 +660,26 @@ def _cond_transpose(cts, *args, true_jaxpr, false_jaxpr, linear):
         pred, *itertools.chain(t_res, cts, f_res, cts),
         true_jaxpr=t_jaxpr_trans, false_jaxpr=f_jaxpr_trans,
         linear=linear_trans)
-  except:
+  except Exception as e:
     import ipdb; ipdb.set_trace()
+    pass
 
-  out = iter(out)
-  return [next(out) if z is ad.undefined_primal else None for z in args]
+  # all_in_avals = list(
+  #     itertools.chain(true_jaxpr.in_avals, false_jaxpr.in_avals))
+  # out_avals = [aval for aval, x in zip(all_in_avals, args[1:])
+  #              if x is ad.undefined_primal]
+  # try:
+  #   assert all(_map(typecheck, out_avals, out))
+  # except:
+  #   import ipdb; ipdb.set_trace()
 
-  # transpose each
-  # join them together
-  # bind a cond
+  # out_iter = (x for x in out if x is not core.unit)
+  # out = [next(out_iter) if z is ad.undefined_primal else None for z in args[1:]]
 
+  out_iter = iter(out)
+  out = [next(out_iter) if l else None for l in linear]
+  assert next(out_iter, None) is None
+  return [None] + out
 
 cond_p = lax.Primitive('cond')
 cond_p.multiple_results = True

@@ -689,7 +689,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     ans = api.grad(f)(x)
     expected = api.grad(f_ref)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
-    jtu.check_grads(f, (x,), order=1, modes=["rev"])
+    jtu.check_grads(f, (x,), order=2, modes=["rev"])
 
     x = 1.72
     ans = api.grad(f)(x)
