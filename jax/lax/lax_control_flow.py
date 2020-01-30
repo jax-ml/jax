@@ -1410,6 +1410,80 @@ def _linear_solve_transpose_rule(cotangent, *primals, **kwargs):
   return [None] * sum(const_lengths) + cotangent_b
 
 
+def _linear_solve_batching_rule(args, dims, **kwargs):
+  const_lengths, jaxprs, tree = split_dict(kwargs,
+                                           ["const_lengths", "jaxprs", "tree"])
+  orig_bat = [d is not batching.not_mapped for d in dims]
+  size, = {
+      a.shape[d] for a, d in zip(args, dims) if d is not batching.not_mapped
+  }
+
+  params, b = _split_linear_solve_args(args, const_lengths)
+  params_dims, b_dims = _split_linear_solve_args(dims, const_lengths)
+  params_bat, orig_b_bat = _split_linear_solve_args(orig_bat, const_lengths)
+
+  (matvec, vecmat, solve, solve_t) = jaxprs
+  (matvec_bat, vecmat_bat, solve_bat, solve_t_bat) = params_bat
+
+  # Fixpoint computation of which parts of x and b are batched; we need to
+  # ensure this is consistent between all four jaxprs
+  b_bat = orig_b_bat
+  x_bat = [False] * len(solve.out_avals)
+  for i in range(1 + len(orig_b_bat) + len(solve.out_avals)):
+    # Apply vecmat and solve -> new batched parts of x
+    solve_jaxpr_batched, solve_x_bat = batching.batch_jaxpr(
+        solve, size, solve_bat + b_bat, instantiate=x_bat)
+    if vecmat is None:
+      vecmat_jaxpr_batched = None
+      x_bat_out = solve_x_bat
+    else:
+      vecmat_jaxpr_batched, vecmat_x_bat = batching.batch_jaxpr(
+          vecmat, size, vecmat_bat + b_bat, instantiate=x_bat)
+      x_bat_out = _map(operator.or_, vecmat_x_bat, solve_x_bat)
+    # Apply matvec and solve_t -> new batched parts of b
+    matvec_jaxpr_batched, matvec_b_bat = batching.batch_jaxpr(
+        matvec, size, matvec_bat + x_bat_out, instantiate=b_bat)
+    if solve_t is None:
+      solve_t_jaxpr_batched = None
+      b_bat_out = _map(operator.or_, matvec_b_bat, orig_b_bat)
+    else:
+      solve_t_jaxpr_batched, solve_t_b_bat = batching.batch_jaxpr(
+          solve_t, size, solve_t_bat + x_bat_out, instantiate=b_bat)
+      b_bat_out = _map(lambda m, s, o: m or s or o, matvec_b_bat, solve_t_b_bat,
+                      orig_b_bat)
+    if x_bat_out == x_bat and b_bat_out == b_bat:
+      break
+    else:
+      x_bat = x_bat_out
+      b_bat = b_bat_out
+  else:
+    assert False, "Fixedpoint not reached"
+
+  batched_jaxprs = _LinearSolveTuple(matvec_jaxpr_batched, vecmat_jaxpr_batched,
+                                     solve_jaxpr_batched, solve_t_jaxpr_batched)
+
+  # Move batched axes to the front
+  new_params = [
+      batching.moveaxis(x, d, 0)
+      if d is not batching.not_mapped and d != 0 else x
+      for x, d in zip(_flatten(params), _flatten(params_dims))
+  ]
+  # Broadcast out b if necessary
+  new_b = [
+      batching.broadcast(x, size, 0) if now_bat and not was_bat else
+      batching.moveaxis(x, d, 0) if now_bat and d != 0 else x
+      for x, d, was_bat, now_bat in zip(b, b_dims, orig_b_bat, b_bat)
+  ]
+
+  outs = linear_solve_p.bind(
+      *(new_params + new_b),
+      const_lengths=const_lengths,
+      jaxprs=batched_jaxprs,
+      tree=tree)
+  out_dims = [0 if batched else batching.not_mapped for batched in b_bat]
+  return outs, out_dims
+
+
 linear_solve_p = core.Primitive('custom_linear_solve')
 linear_solve_p.multiple_results = True
 linear_solve_p.def_impl(_custom_linear_solve_impl)
@@ -1418,4 +1492,4 @@ ad.primitive_jvps[linear_solve_p] = _custom_linear_solve_jvp
 xla.initial_style_translations[linear_solve_p] = xla.lower_fun(
     _custom_linear_solve_impl, initial_style=True)
 ad.primitive_transposes[linear_solve_p] = _linear_solve_transpose_rule
-# TODO(shoyer): write batching rule
+batching.primitive_batchers[linear_solve_p] = _linear_solve_batching_rule
