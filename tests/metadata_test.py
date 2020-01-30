@@ -102,8 +102,7 @@ class MetadataTest(jtu.JaxTestCase):
       return jnp.cos(x)
     _ = jax.lax.cond(True, 1., true_fun, 1., false_fun)
     assert self.op_types[-3] == 'cond'
-    assert self.op_names[-3] == 'cond[ false_nconsts=0\n' \
-                                '      true_nconsts=0 ]'
+    assert self.op_names[-3] == 'cond'
     assert self.op_types[-2] == 'sin'
     assert self.op_names[-2] == 'cond/true_fun/sin'
     assert self.op_types[-1] == 'cos'

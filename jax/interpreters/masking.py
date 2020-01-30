@@ -6,6 +6,8 @@ import operator as op
 
 import numpy as onp
 from contextlib import contextmanager
+
+from .. import abstract_arrays
 from .. import core
 from ..core import Trace, Tracer
 from ..util import safe_map, safe_zip, unzip2, prod
@@ -208,6 +210,9 @@ class Poly(dict):
   def is_constant(self):
     return len(self) == 1 and next(iter(self)).degree == 0
 
+abstract_arrays._DIMENSION_TYPES.add(Poly)
+
+
 class Mon(dict):  # type Mon = Map Id Int -- ids to degrees
   def __hash__(self):
     return hash(tuple(self.items()))
@@ -311,7 +316,7 @@ class MaskTracer(Tracer):
   __slots__ = ["val", "shape_expr"]
 
   def __init__(self, trace, val, shape_expr):
-    self.trace = trace
+    self._trace = trace
     self.val = val
     self.shape_expr = shape_expr
 

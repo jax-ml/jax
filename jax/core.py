@@ -225,7 +225,7 @@ def full_lower(val):
 
 def find_top_trace(xs):
  try:
-   top_trace = max((x.trace for x in xs if isinstance(x, Tracer)),
+   top_trace = max((x._trace for x in xs if isinstance(x, Tracer)),
                    key=attrgetter('level'))
  except ValueError:
    return None
@@ -247,22 +247,22 @@ class Trace(object):
       return self.pure(val)
     level = self.level
     sublevel = self.sublevel
-    if val.trace.master is self.master:
-      if val.trace.sublevel == sublevel:
+    if val._trace.master is self.master:
+      if val._trace.sublevel == sublevel:
         return val
-      elif val.trace.sublevel < sublevel:
+      elif val._trace.sublevel < sublevel:
         return self.sublift(val)
       else:
         raise Exception("Can't lift sublevels {} to {}"
-                        .format(val.trace.sublevel, sublevel))
-    elif val.trace.level < level:
-      if val.trace.sublevel > sublevel:
+                        .format(val._trace.sublevel, sublevel))
+    elif val._trace.level < level:
+      if val._trace.sublevel > sublevel:
         raise Exception("Incompatible sublevel: {}, {}"
-                        .format(val.trace, (level, sublevel)))
+                        .format(val._trace, (level, sublevel)))
       return self.lift(val)
-    elif val.trace.level > level:
+    elif val._trace.level > level:
       raise Exception("Can't lift {} to {}".format(val, self))
-    elif val.trace.level == self.level:
+    elif val._trace.level == self.level:
       raise Exception("Different traces at same level: {}, {}".format(val, self))
     else:
       raise Exception("Can't lift {} to {}".format(val, self))
@@ -284,14 +284,14 @@ class Trace(object):
 
 class Tracer(object):
   __array_priority__ = 1000
-  __slots__ = ['trace', '__weakref__']
+  __slots__ = ['_trace', '__weakref__']
 
   def __array__(self, *args, **kw):
     raise Exception("Tracer can't be used with raw numpy functions. "
                     "You might have\n  import numpy as np\ninstead of\n  import jax.numpy as np")
 
   def __init__(self, trace):
-    self.trace = trace
+    self._trace = trace
 
   def __iter__(self):
     return iter(self.aval._iter(self))
@@ -373,7 +373,7 @@ class Tracer(object):
         return attr
 
   def __repr__(self):
-    return 'Traced<{}>with<{}>'.format(self.aval, self.trace)
+    return 'Traced<{}>with<{}>'.format(self.aval, self._trace)
 
   def __copy__(self):
     return self
@@ -581,12 +581,12 @@ def process_env_traces(primitive, level, params_tuple, *args):
   params = dict(params_tuple)
   todo = []
   while True:
-    tracers = [x for x in outs if isinstance(x, Tracer) and x.trace.level > level]
+    tracers = [x for x in outs if isinstance(x, Tracer) and x._trace.level > level]
     if tracers:
-      ans = max(tracers, key=lambda x: x.trace.level)
+      ans = max(tracers, key=lambda x: x._trace.level)
     else:
       break
-    trace = type(ans.trace)(ans.trace.master, cur_sublevel())
+    trace = type(ans._trace)(ans._trace.master, cur_sublevel())
     outs = map(trace.full_raise, outs)
     outs, cur_todo = trace.post_process_call(primitive, outs, params)
     todo.append(cur_todo)

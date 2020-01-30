@@ -510,8 +510,7 @@ class _CondBuilder(_LoopBuilder):
     return lax_control_flow.cond_p.bind(
       *itertools.chain([self.pred], body_const_vals,
                        init_vals, false_body_const_vals, init_vals),
-      true_jaxpr=body_typed_jaxpr, false_jaxpr=false_body_typed_jaxpr,
-      true_nconsts=len(body_const_vals), false_nconsts=len(false_body_const_vals))
+      true_jaxpr=body_typed_jaxpr, false_jaxpr=false_body_typed_jaxpr)
 
 
 class _WhileBuilder(_LoopBuilder):

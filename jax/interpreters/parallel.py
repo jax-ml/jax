@@ -66,7 +66,7 @@ not_sharded = None
 
 class PapplyTracer(Tracer):
   def __init__(self, trace, name, axis_size, val, axis):
-    self.trace = trace
+    self._trace = trace
     self.name = name
     self.axis_size = axis_size
     self.val = val

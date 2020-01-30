@@ -118,12 +118,18 @@ LAX_OPS = [
                onp.float64: 1e-14}),
     op_record("digamma", 1, float_dtypes, jtu.rand_positive,
               {onp.float64: 1e-14}),
+    op_record("betainc", 3, float_dtypes, jtu.rand_positive,
+              {onp.float64: 1e-14}),
+    op_record("igamma", 2,
+              [f for f in float_dtypes if f not in [dtypes.bfloat16, onp.float16]],
+              jtu.rand_positive, {onp.float64: 1e-14}),
+    op_record("igammac", 2,
+              [f for f in float_dtypes if f not in [dtypes.bfloat16, onp.float16]],
+              jtu.rand_positive, {onp.float64: 1e-14}),
     op_record("erf", 1, float_dtypes, jtu.rand_small),
     op_record("erfc", 1, float_dtypes, jtu.rand_small),
-    # TODO(b/142976030): the approximation of erfinf used by XLA is only
-    # accurate to float32 precision.
     op_record("erf_inv", 1, float_dtypes, jtu.rand_small,
-              {onp.float64: 1e-9}),
+              {onp.float64: 1e-14}),
     op_record("bessel_i0e", 1, float_dtypes, jtu.rand_default),
     op_record("bessel_i1e", 1, float_dtypes, jtu.rand_default),
 
@@ -156,17 +162,6 @@ LAX_OPS = [
     op_record("le", 2, default_dtypes, jtu.rand_small),
     op_record("lt", 2, default_dtypes, jtu.rand_small),
 ]
-if lib.version > (0, 1, 37):
-  LAX_OPS += [
-      op_record("betainc", 3, float_dtypes, jtu.rand_positive,
-                {onp.float64: 1e-14}),
-      op_record("igamma", 2,
-                [f for f in float_dtypes if f not in [dtypes.bfloat16, onp.float16]],
-                jtu.rand_positive, {onp.float64: 1e-14}),
-      op_record("igammac", 2,
-                [f for f in float_dtypes if f not in [dtypes.bfloat16, onp.float16]],
-                jtu.rand_positive, {onp.float64: 1e-14}),
-  ]
 
 CombosWithReplacement = itertools.combinations_with_replacement
 
@@ -3062,6 +3057,10 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(fun, 5, bdims, [arg_shape, idxs.shape, update_shape],
                         [dtype, idxs.dtype, dtype], jtu.rand_default(),
                         rtol={onp.float16: 5e-3})
+
+  def testShapeUsesBuiltinInt(self):
+    x = lax.iota(onp.int32, 3) + 1
+    self.assertIsInstance(x.shape[0], int)  # not np.int64
 
   # TODO Concatenate
   # TODO Reverse

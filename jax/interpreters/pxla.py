@@ -453,7 +453,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
 
   @lu.wrap_init
   def dynamic_fun(dummy, *args):
-    with extend_dynamic_axis_env(axis_name, dummy.trace, global_axis_size):
+    with extend_dynamic_axis_env(axis_name, dummy._trace, global_axis_size):
       return fun.call_wrapped(*args)
 
   avals = tuple(map(partial(shard_aval, axis_size), avals))
@@ -539,7 +539,10 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
 
   device_assignment = tuple(d.id for d in devices)
   compiled = built.Compile(
-      compile_options=xb.get_compile_options(num_global_replicas, device_assignment),
+      compile_options=xb.get_compile_options(
+          num_replicas=num_global_replicas,
+          num_partitions=1,
+          device_assignment=device_assignment),
       backend=xb.get_backend(backend))
 
   handle_args = partial(shard_args, backend, compiled.local_devices(),
@@ -739,7 +742,7 @@ def add_chunk_to_axis_env(axis_name, soft_trace, soft_size):
 
 class SplitAxisTracer(core.Tracer):
   def __init__(self, trace, axis_name, val):
-    self.trace = trace
+    self._trace = trace
     self.axis_name = axis_name
     self.val = val
 

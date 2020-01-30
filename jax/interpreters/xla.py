@@ -172,7 +172,10 @@ def xla_primitive_callable(prim, *arg_specs, **params):
     handle_result = lambda xs: tuple(h(x) for h, x in zip(handlers, xs.destructure()))
   tuple_args = len(avals) > 100
   built_c = primitive_computation(prim, backend, tuple_args, *avals, **params)
-  options = xb.get_compile_options(device_assignment=device and (device.id,))
+  options = xb.get_compile_options(
+      num_replicas=1,
+      num_partitions=1,
+      device_assignment=device and (device.id,))
   compiled = built_c.Compile(compile_options=options, backend=backend)
   return partial(_execute_compiled_primitive, prim, compiled, backend,
                  tuple_args, handle_result)
@@ -496,7 +499,9 @@ def _xla_callable(fun, device, backend, name, *arg_specs):
   built = c.Build(c.Tuple(*out_nodes))
 
   options = xb.get_compile_options(
-      num_replicas=nreps, device_assignment=(device.id,) if device else None)
+      num_replicas=nreps,
+      num_partitions=1,
+      device_assignment=(device.id,) if device else None)
   compiled = built.Compile(compile_options=options, backend=xb.get_backend(backend))
 
   if nreps == 1:
@@ -580,7 +585,9 @@ def _get_device(device, backend):
   c = xb.make_computation_builder("get_device")
   built = c.Build(c.Tuple())
   options = xb.get_compile_options(
-      num_replicas=1, device_assignment=(device.id,) if device else None)
+      num_replicas=1,
+      num_partitions=1,
+      device_assignment=(device.id,) if device else None)
   compiled = built.Compile(compile_options=options, backend=xb.get_backend(backend))
   out, = compiled.local_devices()
   return out
@@ -919,7 +926,10 @@ def _lazy_force_computation(sticky, aval, device, lexpr):
   built_c = c.Build(xla_out)
 
   device = _device_from_arg_devices([device])
-  options = xb.get_compile_options(device_assignment=device and (device.id,))
+  options = xb.get_compile_options(
+      num_replicas=1,
+      num_partitions=1,
+      device_assignment=device and (device.id,))
   backend = xb.get_device_backend(device)
   compiled = built_c.Compile(compile_options=options, backend=backend)
 

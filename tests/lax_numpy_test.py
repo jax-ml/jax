@@ -185,12 +185,10 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("expm1", 1, number_dtypes, all_shapes, jtu.rand_small_positive,
               [], tolerance={onp.float64: 1e-8}, inexact=True),
     op_record("fix", 1, float_dtypes, all_shapes, jtu.rand_default, []),
-    op_record("floor_divide", 2, number_dtypes, all_shapes, jtu.rand_nonzero,
-              ["rev"]),
-    # TODO(phawkins): merge this with the preceding entry after the minimum
-    # Jaxlib version is increased to 0.1.38.
-    op_record("floor_divide", 2, uint_dtypes, all_shapes, jtu.rand_nonzero,
-              ["rev"]),
+    op_record("floor_divide", 2, number_dtypes, all_shapes,
+              jtu.rand_nonzero, ["rev"]),
+    op_record("floor_divide", 2, uint_dtypes, all_shapes,
+              jtu.rand_nonzero, ["rev"]),
     op_record("heaviside", 2, default_dtypes, all_shapes, jtu.rand_default, [],
               inexact=True),
     op_record("hypot", 2, default_dtypes, all_shapes, jtu.rand_default, [],
@@ -2675,6 +2673,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         "Shapes must be 1D sequences of concrete values of integer type.*\n"
         "If using `jit`, try using `static_argnums` or applying `jit` to smaller subfunctions.",
         lambda: api.jit(lnp.zeros)(2))
+
+  def testTraceMethod(self):
+    x = onp.random.randn(3, 4).astype(lnp.float_)
+    self.assertAllClose(x.trace(), lnp.array(x).trace(), check_dtypes=True)
+    self.assertAllClose(x.trace(), api.jit(lambda y: y.trace())(x),
+                        check_dtypes=True)
 
 # Most grad tests are at the lax level (see lax_test.py), but we add some here
 # as needed for e.g. particular compound ops of interest.
