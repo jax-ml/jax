@@ -536,6 +536,26 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
+       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype, "rng_factory": rng_factory}
+      for shape in [(1, 1), (4, 4), (2, 3, 5), (5, 5, 5), (20, 20), (5, 10)]
+      for dtype in float_types + complex_types
+      for rng_factory in [jtu.rand_default]))
+  def testCond(self, shape, dtype, rng_factory):
+    _skip_if_unsupported_type(dtype)
+    rng = rng_factory()
+    args_gen = lambda p: lambda: [rng(shape, dtype), p]
+    for pnorm in ['fro', np.inf, -np.inf, 1, -1, 2, -2]:
+      args_maker = args_gen(pnorm)
+      if pnorm not in [2, -2] and len(set(shape[-2:])) != 1:
+        with self.assertRaises(onp.linalg.LinAlgError):
+          np.linalg.cond(*args_maker())
+      else:
+        self._CheckAgainstNumpy(onp.linalg.cond, np.linalg.cond, args_maker,
+                                check_dtypes=False, tol=1e-3)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
        "_lhs={}_rhs={}".format(
            jtu.format_shape_dtype_string(lhs_shape, dtype),
            jtu.format_shape_dtype_string(rhs_shape, dtype)),
