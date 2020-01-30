@@ -8,6 +8,11 @@ These are the release notes for JAX.
 
 * The minimum jaxlib version is now 0.1.38.
 
+### New features
+
+* Reverse-mode automatic differentiation (e.g. `grad`) of `lax.cond`, making it
+  now differentiable in both modes (https://github.com/google/jax/pull/2091)
+
 ## jaxlib 0.1.38 (January 29, 2020)
 
 * CUDA 9.0 is no longer supported.
