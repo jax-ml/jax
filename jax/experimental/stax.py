@@ -25,12 +25,13 @@ import operator as op
 import numpy as onp
 
 from jax import lax
+from jax import ops
 from jax import random
 import jax.numpy as np
 
 from jax.nn import (relu, log_softmax, softmax, softplus, sigmoid, elu,
                     leaky_relu, selu, gelu, normalize)
-from jax.nn.initializers import glorot_normal, normal, ones, zeros
+from jax.nn.initializers import glorot_normal, normal, ones, uniform, zeros
 
 # aliases for backwards compatibility
 glorot = glorot_normal
@@ -86,7 +87,7 @@ def GeneralConv(dimension_numbers, out_chan, filter_shape,
                                     dimension_numbers=dimension_numbers) + b
   return init_fun, apply_fun
 Conv = functools.partial(GeneralConv, ('NHWC', 'HWIO', 'NHWC'))
-
+Conv1d  = functools.partial(GeneralConv, ('NWC', 'WIO', 'NWC'))
 
 def GeneralConvTranspose(dimension_numbers, out_chan, filter_shape,
                          strides=None, padding='VALID', W_init=None,
@@ -268,6 +269,23 @@ def Dropout(rate, mode='train'):
       return inputs
   return init_fun, apply_fun
 
+
+def Embedding(vocab_size, embedding_dim, initializer=uniform()):
+  """Layer construction function for a word embedding layer."""
+  def init_fun(rng, input_shape):
+    # Expected input is a int tensor of size
+    # [BATCH, SEQUENCE_LEN], therefore the output should be a float tensor
+    # of shape [BATCH, SEQUENCE_LEN, EMBEDDING_SIZE]
+    output_shape = input_shape + (embedding_dim, )
+    rng, subkey = random.split(rng)
+    embedding_matrix = initializer(subkey, 
+                                    shape=(vocab_size, embedding_dim))
+    return output_shape, (embedding_matrix, )
+  def apply_fun(params, inputs, **kwargs):
+    matrix = params[0]
+    return matrix[inputs.astype('int32')]
+
+  return init_fun, apply_fun
 
 # Composing layers via combinators
 
