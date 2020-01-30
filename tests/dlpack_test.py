@@ -35,8 +35,8 @@ except ImportError:
 scalar_types = [jnp.bool_, jnp.int8, jnp.int16, jnp.int32, jnp.int64,
                 jnp.uint8, jnp.uint16, jnp.uint32, jnp.uint64,
                 jnp.bfloat16, jnp.float16, jnp.float32, jnp.float64]
-torch_types = [jnp.bool_, jnp.int8, jnp.int16, jnp.int32, jnp.int64,
-                jnp.uint8, jnp.float16, jnp.float32, jnp.float64]
+torch_types = [jnp.int8, jnp.int16, jnp.int32, jnp.int64,
+               jnp.uint8, jnp.float16, jnp.float32, jnp.float64]
 
 nonempty_nonscalar_array_shapes = [(4,), (3, 4), (2, 3, 4)]
 empty_array_shapes = []
