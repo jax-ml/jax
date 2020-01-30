@@ -29,6 +29,7 @@ from jax import tree_util
 from jax import core
 from jax import lax
 from jax import random
+from jax.abstract_arrays import ShapedArray
 from jax.api import (pmap, soft_pmap, jit, vmap, jvp, grad, make_jaxpr,
                      linearize, device_put)
 from jax.lib import xla_bridge
@@ -747,6 +748,25 @@ class PmapTest(jtu.JaxTestCase):
     expected = onp.swapaxes(x, 0, 2)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testReshardInput(self):
+    if xla_bridge.device_count() < 6:
+      raise SkipTest("testReshardInput requires 6 devices")
+    # Manually construct a ShardedDeviceArray with the wrong sharding for the
+    # subsequent pmap
+    shard_shape = (3,2)
+    shard = np.arange(np.prod(shard_shape)).reshape(shard_shape)
+    bufs = [xla.device_put(shard, d) for d in xla_bridge.devices()[:4]]
+    aval = ShapedArray((6,4), shard.dtype)
+    indices = [(slice(0,3), slice(0,2)),
+               (slice(0,3), slice(2,4)),
+               (slice(3,6), slice(0,2)),
+               (slice(3,6), slice(2,4))]
+    arr = pxla.ShardedDeviceArray(aval, indices, bufs)
+
+    r = pmap(lambda x: x + 1)(arr)
+    self.assertAllClose(r, arr + 1, check_dtypes=True)
+    self.assertEqual(len(r.device_buffers), 6)
+
   def testSoftPmapPsum(self):
     n = 4 * xla_bridge.device_count()
     def f(x):
@@ -802,15 +822,15 @@ class PmapTest(jtu.JaxTestCase):
     # check that we can maintain device persistence across calls
     x = onp.arange(prod(shape)).reshape(shape)
     x = soft_pmap(lambda x: x)(x)
-    self.assertIsInstance(x, pxla.ChunkedDeviceArray)
+    self.assertIsInstance(x, pxla.ShardedDeviceArray)
     x._npy_value = onp.float32(onp.nan)  # can't be coerced to ndarray for xfer
     x = soft_pmap(lambda x: x)(x)  # doesn't crash
-    self.assertIsInstance(x, pxla.ChunkedDeviceArray)
+    self.assertIsInstance(x, pxla.ShardedDeviceArray)
 
     # check that we don't crash when we can't maintain device persistence
     x = onp.arange(prod(shape)).reshape(shape)
     x = soft_pmap(lambda x: x)(x)
-    self.assertIsInstance(x, pxla.ChunkedDeviceArray)
+    self.assertIsInstance(x, pxla.ShardedDeviceArray)
     y = x.reshape(device_count, -1)
     self.assertIsInstance(y, xla.DeviceArray)  # should have forced collection
     soft_pmap(lambda x: x)(y)  # doesn't crash
@@ -825,7 +845,7 @@ class PmapTest(jtu.JaxTestCase):
     # check that different axis merges aren't a problem
     x = onp.arange(prod(shape)).reshape(shape)
     x = soft_pmap(lambda x: x)(x)
-    self.assertIsInstance(x, pxla.ChunkedDeviceArray)
+    self.assertIsInstance(x, pxla.ShardedDeviceArray)
     x = x.reshape(2 * device_count, 2, 2, 3)  # axis merge of the wrong size
     self.assertIsInstance(x, xla.DeviceArray)  # should have forced collection
 
