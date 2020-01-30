@@ -452,17 +452,24 @@ def check_backend_params(params, outer_backend):
   return {k: params[k] for k in params if k != 'backend'}
 
 
-class AxisEnv:
-  def __init__(self, nreps, names=(), sizes=(), devices=None):
+class AxisEnv():
+  def __init__(self, nreps, names=(), sizes=(), devices=None,
+               needs_unshard=True):
     assert isinstance(names, tuple)
     assert isinstance(sizes, tuple)
     self.nreps = nreps
     self.names = names
     self.sizes = sizes
     self.devices = devices
+    self.needs_unshard = needs_unshard
 
-def extend_axis_env(env, name, size):
-  return AxisEnv(env.nreps, env.names + (name,), env.sizes + (size,), env.devices)
+  def __repr__(self):
+    return "AxisEnv(nreps=%d, names=%s, sizes=%s, devices=%s)" % (
+        self.nreps, self.names, self.sizes, self.devices)
+
+def extend_axis_env(env, name, size, needs_unshard):
+  return AxisEnv(env.nreps, env.names + (name,), env.sizes + (size,), env.devices,
+                 needs_unshard)
 
 def axis_read(axis_env, axis_name):
   try:

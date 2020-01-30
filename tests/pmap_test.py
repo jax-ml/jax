@@ -174,6 +174,11 @@ class PmapTest(jtu.JaxTestCase):
 
 
   def testNestedBasic(self):
+    shape = (2, 3, 2)
+    num_devices = shape[0] * shape[1]
+    if xla_bridge.device_count() < num_devices:
+      raise SkipTest(f"requires {num_devices} devices")
+
     f = lambda x: lax.psum(lax.psum(x, 'i'), 'j')
     f = pmap(pmap(f, 'i'), 'j')
 
@@ -186,6 +191,34 @@ class PmapTest(jtu.JaxTestCase):
     ans = f(x)
     expected = sum_and_broadcast(sum_and_broadcast(x, 0), 1)
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+    self.assertIsInstance(ans, pxla.ShardedDeviceArray)
+    self.assertLen(ans.device_buffers, 6)
+    self.assertEqual(ans.sharding_spec.shards_per_axis, (2, 3, 1))
+    self.assertEqual(ans.sharding_spec.is_axis_materialized, (False, False, True))
+    self.assertEqual(ans.sharding_spec.replication_factor, 1)
+
+  def testNestedWithStuff(self):
+    shape = (2, 3, 2)
+    num_devices = shape[0] * shape[1]
+    if xla_bridge.device_count() < num_devices:
+      raise SkipTest(f"requires {num_devices} devices")
+
+    @pmap
+    def f(x):
+      y = x + 1
+      return pmap(lambda z: z + 2)(y)
+
+    x = onp.arange(prod(shape)).reshape(shape)
+    expected = x + 3
+    ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    self.assertIsInstance(ans, pxla.ShardedDeviceArray)
+    self.assertLen(ans.device_buffers, 6)
+    self.assertEqual(ans.sharding_spec.shards_per_axis, (2, 1, 1))
+    self.assertEqual(ans.sharding_spec.is_axis_materialized, (False, True, True))
+    self.assertEqual(ans.sharding_spec.replication_factor, 3)
 
   def testMismatchedAxisSizes(self):
     n = xla_bridge.device_count()
