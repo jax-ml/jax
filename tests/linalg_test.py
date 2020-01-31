@@ -558,8 +558,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       {"testcase_name":
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype, "rng_factory": rng_factory}
-      for shape in [(1, 1), (4, 4), (6, 3, 2), (7, 7, 7, 7)]
-      for dtype in float_types + complex_types
+      for shape in [(1, 1), (4, 4), (200, 200), (7, 7, 7, 7)]
+      for dtype in float_types
       for rng_factory in [jtu.rand_default]))
   def testTensorinv(self, shape, dtype, rng_factory):
     _skip_if_unsupported_type(dtype)
