@@ -31,11 +31,17 @@ try:
 except ImportError:
   torch = None
 
+try:
+  import cupy
+except ImportError:
+  cupy = None
 
-scalar_types = [jnp.bool_, jnp.int8, jnp.int16, jnp.int32, jnp.int64,
-                jnp.uint8, jnp.uint16, jnp.uint32, jnp.uint64,
-                jnp.bfloat16, jnp.float16, jnp.float32, jnp.float64]
-torch_types = [jnp.int8, jnp.int16, jnp.int32, jnp.int64,
+
+standard_dtypes = [jnp.bool_, jnp.int8, jnp.int16, jnp.int32, jnp.int64,
+                   jnp.uint8, jnp.uint16, jnp.uint32, jnp.uint64,
+                   jnp.float16, jnp.float32, jnp.float64]
+all_dtypes = standard_dtypes + [jnp.bfloat16]
+torch_dtypes = [jnp.int8, jnp.int16, jnp.int32, jnp.int64,
                jnp.uint8, jnp.float16, jnp.float32, jnp.float64]
 
 nonempty_nonscalar_array_shapes = [(4,), (3, 4), (2, 3, 4)]
@@ -59,7 +65,7 @@ class DLPackTest(jtu.JaxTestCase):
         jtu.format_shape_dtype_string(shape, dtype)),
      "shape": shape, "dtype": dtype}
      for shape in all_shapes
-     for dtype in scalar_types))
+     for dtype in all_dtypes))
   def testJaxRoundTrip(self, shape, dtype):
     rng = jtu.rand_default()
     np = rng(shape, dtype)
@@ -77,7 +83,7 @@ class DLPackTest(jtu.JaxTestCase):
         jtu.format_shape_dtype_string(shape, dtype)),
      "shape": shape, "dtype": dtype}
      for shape in all_shapes
-     for dtype in torch_types))
+     for dtype in torch_dtypes))
   @unittest.skipIf(not torch, "Test requires PyTorch")
   def testTorchToJax(self, shape, dtype):
     rng = jtu.rand_default()
@@ -93,7 +99,7 @@ class DLPackTest(jtu.JaxTestCase):
         jtu.format_shape_dtype_string(shape, dtype)),
      "shape": shape, "dtype": dtype}
      for shape in all_shapes
-     for dtype in torch_types))
+     for dtype in torch_dtypes))
   @unittest.skipIf(not torch or jax.lib.version <= (0, 1, 38),
                    "Test requires PyTorch and jaxlib >= 0.1.39")
   # TODO(phawkins): the dlpack destructor issues errors in jaxlib 0.1.38.
@@ -104,6 +110,30 @@ class DLPackTest(jtu.JaxTestCase):
     dlpack = jax.dlpack.to_dlpack(x)
     y = torch.utils.dlpack.from_dlpack(dlpack)
     self.assertAllClose(np, y.numpy(), check_dtypes=True)
+
+
+class CudaArrayInterfaceTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    if jtu.device_under_test() != "gpu":
+      self.skipTest("__cuda_array_interface__ is only supported on GPU")
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+     {"testcase_name": "_{}".format(
+        jtu.format_shape_dtype_string(shape, dtype)),
+     "shape": shape, "dtype": dtype}
+     for shape in all_shapes
+     for dtype in standard_dtypes))
+  @unittest.skipIf(not cupy or jax.lib.version <= (0, 1, 38),
+                   "Test requires CuPy and jaxlib >= 0.1.39")
+  def testJaxToCuPy(self, shape, dtype):
+    rng = jtu.rand_default()
+    x = rng(shape, dtype)
+    y = jnp.array(x)
+    z = cupy.asarray(y)
+    self.assertEqual(y.__cuda_array_interface__["data"][0],
+                     z.__cuda_array_interface__["data"][0])
+    self.assertAllClose(x, cupy.asnumpy(z), check_dtypes=True)
 
 
 if __name__ == "__main__":
