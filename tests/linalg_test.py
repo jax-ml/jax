@@ -556,6 +556,33 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
+       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype, "rng_factory": rng_factory}
+      for shape in [(1, 1), (4, 4), (6, 3, 2), (7, 7, 7, 7)]
+      for dtype in float_types + complex_types
+      for rng_factory in [jtu.rand_default]))
+  def testTensorinv(self, shape, dtype, rng_factory):
+    _skip_if_unsupported_type(dtype)
+    rng = rng_factory()
+
+    def tensor_maker():
+      invertible = False
+      while not invertible:
+        a = rng(shape, dtype)
+        try:
+          onp.linalg.inv(a)
+          invertible = True
+        except onp.linalg.LinAlgError:
+          pass
+      return a
+
+
+    args_maker = lambda: [tensor_maker(), int(onp.floor(len(shape) / 2))]
+    self._CheckAgainstNumpy(onp.linalg.tensorinv, np.linalg.tensorinv, args_maker,
+                            check_dtypes=False, tol=1e-3)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
        "_lhs={}_rhs={}".format(
            jtu.format_shape_dtype_string(lhs_shape, dtype),
            jtu.format_shape_dtype_string(rhs_shape, dtype)),
