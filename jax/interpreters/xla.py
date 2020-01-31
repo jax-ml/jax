@@ -832,6 +832,10 @@ class DeviceArray(DeviceValue):
   def __array__(self, dtype=None, context=None):
     return onp.asarray(self._value, dtype=dtype)
 
+  @property
+  def __cuda_array_interface__(self):
+    return _force(self).device_buffer.__cuda_array_interface__
+
   __str__ = partialmethod(_forward_to_value, str)
   __bool__ = __nonzero__ = partialmethod(_forward_to_value, bool)
   def __float__(self): return self._value.__float__()
