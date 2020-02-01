@@ -787,7 +787,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       for lhs_shape, rhs_shape in [
           ((1, 1), (1, 1)),
           ((4, 4), (4,)),
-          ((8, 8), (8, 4, 2)),
+          ((8, 8), (8, 4)),
       ]
       for trans in [0, 1, 2]
       for dtype in float_types + complex_types
