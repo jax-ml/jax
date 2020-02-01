@@ -526,7 +526,7 @@ def _remat_partial_eval(trace, f, tracers, params):
   # Since we traced with everything marked as unknown, but we need to know which
   # outputs are known/unknown, we use partial_eval_jaxpr to get out_unknowns.
   jaxpr_converted = convert_freevars_jaxpr(jaxpr)
-  in_avals = ([raise_to_shaped(t.pval[0]) for t in env]
+  in_avals = ([raise_to_shaped(partial_val_aval(*t.pval)) for t in env]
               + [raise_to_shaped(pv) for pv in in_pvs])
   out_avals = [raise_to_shaped(pv if pv is not None
                                else abstract_unit if var is unitvar
