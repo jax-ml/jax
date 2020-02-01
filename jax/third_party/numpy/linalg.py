@@ -1,10 +1,9 @@
-from __future__ import absolute_import, division, print_function
-
 import numpy as onp
 
 from jax.numpy import lax_numpy as np
 from jax.numpy import linalg as la
 from jax.numpy.lax_numpy import _wraps
+from jax.ops import index_update, index
 
 
 def _isEmpty2d(arr):
@@ -56,15 +55,11 @@ def cond(a, p=None):
   r = np.asarray(r)
   nan_mask = np.isnan(r)
   if nan_mask.any():
-    nan_mask &= ~np.isnan(x).any(axis=(-2, -1))
+    nan_mask = np.logical_and(nan_mask, ~np.isnan(x).any(axis=(-2, -1)))
     if r.ndim > 0:
-      r[nan_mask] = np.inf
+      index_update(r, index[nan_mask], np.inf)
     elif nan_mask:
-      r[()] = np.inf
-
-  # Convention is to return scalars instead of 0d arrays
-  if r.ndim == 0:
-    r = r[()]
+      index_update(r, index[()], np.inf)
 
   return r
 
