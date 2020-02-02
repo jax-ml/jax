@@ -1,6 +1,5 @@
 import numpy as onp
 
-from jax.lax import cond as lax_cond
 from jax.numpy import lax_numpy as np
 from jax.numpy import linalg as la
 from jax.numpy.lax_numpy import _wraps
@@ -75,7 +74,6 @@ def cond(x, p=None):
   orig_nan_check = np.full_like(r, ~np.isnan(r).any())
   nan_mask = np.logical_and(np.isnan(r), ~np.isnan(x).any(axis=(-2, -1)))
   r = np.where(orig_nan_check, np.where(nan_mask, np.inf, r), r)
-  # r = np.where(nan_mask, np.inf, r)
   return r
 
 
