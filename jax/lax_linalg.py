@@ -388,9 +388,9 @@ def triangular_solve_batching_rule(batched_args, batch_dims, left_side,
       y_flat = y.reshape(y.shape[:-2] + (y.shape[-2] * y.shape[-1],))
       bdim_out = y.ndim - 1
     else:
-      y = batching.moveaxis(y, by, 0)
-      y_flat = y.reshape((y.shape[0] * y.shape[1],) + y.shape[2:])
-      bdim_out = 0
+      y = batching.moveaxis(y, by, -2)
+      y_flat = y.reshape(y.shape[:-3]  + (y.shape[-3] * y.shape[-2], y.shape[-1]))
+      bdim_out = y.ndim - 2
     out_flat = triangular_solve(
         x, y_flat, left_side=left_side, lower=lower,
         transpose_a=transpose_a, conjugate_a=conjugate_a,

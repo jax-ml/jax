@@ -931,22 +931,24 @@ class ScipyLinalgTest(jtu.JaxTestCase):
        "left_side": left_side, "a_shape": a_shape, "b_shape": b_shape,
        "bdims": bdims}
       for left_side, a_shape, b_shape, bdims in [
-          (False, (4, 4), (2, 1, 4,), (None, 0)),
-          (False, (2, 4, 4), (1, 4,), (0, None)),
-          (False, (2, 4, 4), (2, 1, 4,), (0, 0)),
-          (True, (2, 4, 4), (2, 4, 1), (0, 0)),
-          (True, (1, 4, 4), (2, 1, 4, 3), (None, 0)),
+          (False, (4, 4), (2, 3, 4,), (None, 0)),
+          (False, (2, 4, 4), (2, 2, 3, 4,), (None, 0)),
+          (False, (2, 4, 4), (3, 4,), (0, None)),
+          (False, (2, 4, 4), (2, 3, 4,), (0, 0)),
+          (True, (2, 4, 4), (2, 4, 3), (0, 0)),
+          (True, (2, 4, 4), (2, 2, 4, 3), (None, 0)),
       ]))
   def testTriangularSolveBatching(self, left_side, a_shape, b_shape, bdims):
     rng = jtu.rand_default()
-    A = np.tril(rng(a_shape, onp.float32) + 5 * onp.eye(a_shape[-1]))
+    A = np.tril(rng(a_shape, onp.float32)
+                + 5 * onp.eye(a_shape[-1], dtype=onp.float32))
     B = rng(b_shape, onp.float32)
-    f = partial(lax_linalg.triangular_solve, lower=True,
-                transpose_a=False, conjugate_a=False,
-                unit_diagonal=False, left_side=left_side)
-    x = vmap(f, bdims)(A, B)
-    actual = A @ x if left_side else x @ A
-    onp.testing.assert_allclose(actual - B, 0, atol=1e-5)
+    solve = partial(lax_linalg.triangular_solve, lower=True,
+                    transpose_a=False, conjugate_a=False,
+                    unit_diagonal=False, left_side=left_side)
+    X = vmap(solve, bdims)(A, B)
+    Y = A @ X if left_side else X @ A
+    onp.testing.assert_allclose(Y - B, 0, atol=1e-5)
 
   def testTriangularSolveGradPrecision(self):
     rng = jtu.rand_default()
