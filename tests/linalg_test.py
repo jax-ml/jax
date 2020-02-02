@@ -544,15 +544,20 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testCond(self, shape, dtype, rng_factory):
     _skip_if_unsupported_type(dtype)
     rng = rng_factory()
+
+    def gen_mat():
+      arr = rng(shape, dtype)
+      nan_arr = np.full_like(arr, np.nan)
+      mask = onp.random.choice([True, False], size=shape, p=[1./2, 1./2])
+      res = np.where(mask, nan_arr, arr)
+      return res
+
     def args_gen(p):
       def _args_gen():
-        arr = rng(shape, dtype)
-        nan_arr = np.full_like(arr, np.nan)
-        mask = onp.random.choice([True, False], size=shape, p=[1./2, 1./2])
-        res = np.where(mask, nan_arr, arr)
-        return [res, p]
+        return [gen_mat(), p]
       return _args_gen
-    norm_types = [np.inf, -np.inf, 1, -1, 2, -2, 'fro']
+
+    norm_types = [-np.inf, 1, -1, 2, -2, 'fro']
     for pnorm in norm_types:
       args_maker = args_gen(pnorm)
       if pnorm not in [2, -2] and len(set(shape[-2:])) != 1:
@@ -561,7 +566,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       else:
         self._CheckAgainstNumpy(onp.linalg.cond, np.linalg.cond, args_maker,
                                 check_dtypes=False, tol=1e-3)
-        self._CompileAndCheck(np.linalg.cond, args_maker,
+        partial_norm = partial(np.linalg.cond, p=pnorm)
+        self._CompileAndCheck(partial_norm, lambda: [gen_mat()],
                               check_dtypes=False, rtol=1e-03, atol=1e-03)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -589,7 +595,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     args_maker = lambda: [tensor_maker(), int(onp.floor(len(shape) / 2))]
     self._CheckAgainstNumpy(onp.linalg.tensorinv, np.linalg.tensorinv, args_maker,
                             check_dtypes=False, tol=1e-3)
-    self._CompileAndCheck(np.linalg.tensorinv, args_maker, check_dtypes=False, rtol=1e-03, atol=1e-03)
+    partial_inv = partial(np.linalg.tensorinv, ind=int(onp.floor(len(shape) / 2)))
+    self._CompileAndCheck(partial_inv, lambda: [tensor_maker()], check_dtypes=False, rtol=1e-03, atol=1e-03)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":

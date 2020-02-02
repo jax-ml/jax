@@ -1,10 +1,9 @@
 import numpy as onp
 
+from jax.lax import cond as lax_cond
 from jax.numpy import lax_numpy as np
 from jax.numpy import linalg as la
 from jax.numpy.lax_numpy import _wraps
-from jax.lax import cond as lax_cond
-from functools import partial
 
 
 def _isEmpty2d(arr):
@@ -36,8 +35,7 @@ def _assertNdSquareness(*arrays):
 
 def __pnorm2Calc(x):
   s = la.svd(x, compute_uv=False)
-  res = s[..., 0] / s[..., -1]
-  return res
+  return s[..., 0] / s[..., -1]
 
 
 def __pnormNeg2Calc(x):
@@ -45,15 +43,13 @@ def __pnormNeg2Calc(x):
   return s[..., -1] / s[..., 0]
 
 
-def __pnormOtherCalc(args):
-  x, p = args
+def __pnormDefaultCalc(x, p):
   # Call inv(x) ignoring errors. The result array will
   # contain nans in the entries where inversion failed.
   _assertRankAtLeast2(x)
   _assertNdSquareness(x)
-  norm_fn = partial(la.norm, ord=p, axis=(-2, -1), keepdims=False)
   invx = la.inv(x)
-  r = norm_fn(x) * norm_fn(invx)
+  r = la.norm(x, ord=p, axis=(-2, -1)) * la.norm(invx, ord=p, axis=(-2, -1))
   return r
 
 
@@ -65,18 +61,23 @@ def _nanMaskUpdate(args):
 
 
 @_wraps(onp.linalg.cond)
-def cond(a, p=None):
-  x = np.asarray(a)  # in case we have a matrix
+def cond(x, p=None):
   _assertNoEmpty2d(x)
-  r = lax_cond(p in (None, 2), x, __pnorm2Calc, x, lambda x: np.empty([]))
-  r = lax_cond(p == -2, x, __pnormNeg2Calc, r, lambda r: r)
-  r = lax_cond(p not in (None, 2, -2), [x, p], __pnormOtherCalc, r, lambda r: r)
+  if p in (None, 2):
+    r = __pnorm2Calc(x)
+  if p == -2:
+    r = __pnormNeg2Calc(x)
+  if p not in (None, 2, -2):
+    r = __pnormDefaultCalc(x, p)
 
   # Convert nans to infs unless the original array had nan entries
   r = np.asarray(r)
-  nan_mask = ~np.isnan(r)
-  r = lax_cond(nan_mask.all(), r, lambda r: r, [nan_mask, x, r], _nanMaskUpdate)
+  orig_nan_check = np.full_like(r, ~np.isnan(r).any())
+  nan_mask = np.logical_and(np.isnan(r), ~np.isnan(x).any(axis=(-2, -1)))
+  r = np.where(orig_nan_check, np.where(nan_mask, np.inf, r), r)
+  # r = np.where(nan_mask, np.inf, r)
   return r
+
 
 @_wraps(onp.linalg.tensorinv)
 def tensorinv(a, ind=2):
