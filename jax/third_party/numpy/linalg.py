@@ -32,45 +32,22 @@ def _assertNdSquareness(*arrays):
           'Last 2 dimensions of the array must be square')
 
 
-def __pnorm2Calc(x):
-  s = la.svd(x, compute_uv=False)
-  return s[..., 0] / s[..., -1]
-
-
-def __pnormNeg2Calc(x):
-  s = la.svd(x, compute_uv=False)
-  return s[..., -1] / s[..., 0]
-
-
-def __pnormDefaultCalc(x, p):
-  # Call inv(x) ignoring errors. The result array will
-  # contain nans in the entries where inversion failed.
-  _assertRankAtLeast2(x)
-  _assertNdSquareness(x)
-  invx = la.inv(x)
-  r = la.norm(x, ord=p, axis=(-2, -1)) * la.norm(invx, ord=p, axis=(-2, -1))
-  return r
-
-
-def _nanMaskUpdate(args):
-  nan_mask, x, r = args
-  nan_mask = np.logical_and(~nan_mask, ~np.isnan(x).any(axis=(-2, -1)))
-  r = np.where(nan_mask, np.inf, r)
-  return r
-
-
 @_wraps(onp.linalg.cond)
 def cond(x, p=None):
   _assertNoEmpty2d(x)
   if p in (None, 2):
-    r = __pnorm2Calc(x)
-  if p == -2:
-    r = __pnormNeg2Calc(x)
-  if p not in (None, 2, -2):
-    r = __pnormDefaultCalc(x, p)
+    s = la.svd(x, compute_uv=False)
+    return s[..., 0] / s[..., -1]
+  elif p == -2:
+    s = la.svd(x, compute_uv=False)
+    r = s[..., -1] / s[..., 0]
+  else:
+    _assertRankAtLeast2(x)
+    _assertNdSquareness(x)
+    invx = la.inv(x)
+    r = la.norm(x, ord=p, axis=(-2, -1)) * la.norm(invx, ord=p, axis=(-2, -1))
 
   # Convert nans to infs unless the original array had nan entries
-  r = np.asarray(r)
   orig_nan_check = np.full_like(r, ~np.isnan(r).any())
   nan_mask = np.logical_and(np.isnan(r), ~np.isnan(x).any(axis=(-2, -1)))
   r = np.where(orig_nan_check, np.where(nan_mask, np.inf, r), r)

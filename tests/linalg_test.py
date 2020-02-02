@@ -536,20 +536,17 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
-       "shape": shape, "dtype": dtype, "rng_factory": rng_factory}
+       "_shape={}_pnorm={}".format(jtu.format_shape_dtype_string(shape, dtype), pnorm),
+       "shape": shape, "pnorm": pnorm, "dtype": dtype}
       for shape in [(1, 1), (4, 4), (2, 3, 5), (5, 5, 5), (20, 20), (5, 10)]
-      for dtype in float_types + complex_types
-      for rng_factory in [jtu.rand_default]))
-  def testCond(self, shape, dtype, rng_factory):
+      for pnorm in [np.inf, -np.inf, 1, -1, 2, -2, 'fro']
+      for dtype in float_types + complex_types))
+  def testCond(self, shape, pnorm, dtype):
     _skip_if_unsupported_type(dtype)
-    rng = rng_factory()
 
     def gen_mat():
-      arr = rng(shape, dtype)
-      nan_arr = np.full_like(arr, np.nan)
-      mask = onp.random.choice([True, False], size=shape, p=[1./2, 1./2])
-      res = np.where(mask, nan_arr, arr)
+      arr_gen = jtu.rand_some_nan()
+      res = arr_gen(shape, dtype)
       return res
 
     def args_gen(p):
@@ -557,18 +554,16 @@ class NumpyLinalgTest(jtu.JaxTestCase):
         return [gen_mat(), p]
       return _args_gen
 
-    norm_types = [-np.inf, 1, -1, 2, -2, 'fro']
-    for pnorm in norm_types:
-      args_maker = args_gen(pnorm)
-      if pnorm not in [2, -2] and len(set(shape[-2:])) != 1:
-        with self.assertRaises(onp.linalg.LinAlgError):
-          np.linalg.cond(*args_maker())
-      else:
-        self._CheckAgainstNumpy(onp.linalg.cond, np.linalg.cond, args_maker,
-                                check_dtypes=False, tol=1e-3)
-        partial_norm = partial(np.linalg.cond, p=pnorm)
-        self._CompileAndCheck(partial_norm, lambda: [gen_mat()],
-                              check_dtypes=False, rtol=1e-03, atol=1e-03)
+    args_maker = args_gen(pnorm)
+    if pnorm not in [2, -2] and len(set(shape[-2:])) != 1:
+      with self.assertRaises(onp.linalg.LinAlgError):
+        np.linalg.cond(*args_maker())
+    else:
+      self._CheckAgainstNumpy(onp.linalg.cond, np.linalg.cond, args_maker,
+                              check_dtypes=False, tol=1e-3)
+      partial_norm = partial(np.linalg.cond, p=pnorm)
+      self._CompileAndCheck(partial_norm, lambda: [gen_mat()],
+                            check_dtypes=False, rtol=1e-03, atol=1e-03)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
