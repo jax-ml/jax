@@ -3,7 +3,8 @@ import numpy as onp
 from jax.numpy import lax_numpy as np
 from jax.numpy import linalg as la
 from jax.numpy.lax_numpy import _wraps
-from jax.ops import index_update, index
+from jax.lax import cond as lax_cond
+from functools import partial
 
 
 def _isEmpty2d(arr):
@@ -33,34 +34,48 @@ def _assertNdSquareness(*arrays):
           'Last 2 dimensions of the array must be square')
 
 
+def __pnorm2Calc(x):
+  s = la.svd(x, compute_uv=False)
+  res = s[..., 0] / s[..., -1]
+  return res
+
+
+def __pnormNeg2Calc(x):
+  s = la.svd(x, compute_uv=False)
+  return s[..., -1] / s[..., 0]
+
+
+def __pnormOtherCalc(args):
+  x, p = args
+  # Call inv(x) ignoring errors. The result array will
+  # contain nans in the entries where inversion failed.
+  _assertRankAtLeast2(x)
+  _assertNdSquareness(x)
+  norm_fn = partial(la.norm, ord=p, axis=(-2, -1), keepdims=False)
+  invx = la.inv(x)
+  r = norm_fn(x) * norm_fn(invx)
+  return r
+
+
+def _nanMaskUpdate(args):
+  nan_mask, x, r = args
+  nan_mask = np.logical_and(~nan_mask, ~np.isnan(x).any(axis=(-2, -1)))
+  r = np.where(nan_mask, np.inf, r)
+  return r
+
+
 @_wraps(onp.linalg.cond)
 def cond(a, p=None):
   x = np.asarray(a)  # in case we have a matrix
   _assertNoEmpty2d(x)
-  if p is None or p == 2 or p == -2:
-    s = la.svd(x, compute_uv=False)
-    if p == -2:
-      r = s[..., -1] / s[..., 0]
-    else:
-      r = s[..., 0] / s[..., -1]
-  else:
-    # Call inv(x) ignoring errors. The result array will
-    # contain nans in the entries where inversion failed.
-    _assertRankAtLeast2(x)
-    _assertNdSquareness(x)
-    invx = la.inv(x)
-    r = la.norm(x, p, axis=(-2, -1)) * la.norm(invx, p, axis=(-2, -1))
+  r = lax_cond(p in (None, 2), x, __pnorm2Calc, x, lambda x: np.empty([]))
+  r = lax_cond(p == -2, x, __pnormNeg2Calc, r, lambda r: r)
+  r = lax_cond(p not in (None, 2, -2), [x, p], __pnormOtherCalc, r, lambda r: r)
 
   # Convert nans to infs unless the original array had nan entries
   r = np.asarray(r)
-  nan_mask = np.isnan(r)
-  if nan_mask.any():
-    nan_mask = np.logical_and(nan_mask, ~np.isnan(x).any(axis=(-2, -1)))
-    if r.ndim > 0:
-      index_update(r, index[nan_mask], np.inf)
-    elif nan_mask:
-      index_update(r, index[()], np.inf)
-
+  nan_mask = ~np.isnan(r)
+  r = lax_cond(nan_mask.all(), r, lambda r: r, [nan_mask, x, r], _nanMaskUpdate)
   return r
 
 @_wraps(onp.linalg.tensorinv)

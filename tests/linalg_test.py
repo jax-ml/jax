@@ -552,8 +552,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
         res = np.where(mask, nan_arr, arr)
         return [res, p]
       return _args_gen
-
-    for pnorm in ['fro', np.inf, -np.inf, 1, -1, 2, -2]:
+    norm_types = [np.inf, -np.inf, 1, -1, 2, -2, 'fro']
+    for pnorm in norm_types:
       args_maker = args_gen(pnorm)
       if pnorm not in [2, -2] and len(set(shape[-2:])) != 1:
         with self.assertRaises(onp.linalg.LinAlgError):
@@ -561,9 +561,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       else:
         self._CheckAgainstNumpy(onp.linalg.cond, np.linalg.cond, args_maker,
                                 check_dtypes=False, tol=1e-3)
-        # self._CompileAndCheck(lambda x: np.linalg.cond(x, pnorm),
-        #                       lambda: [args_maker()[0]],
-        #                       check_dtypes=False, rtol=1e-03, atol=1e-03)
+        self._CompileAndCheck(np.linalg.cond, args_maker,
+                              check_dtypes=False, rtol=1e-03, atol=1e-03)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -590,6 +589,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     args_maker = lambda: [tensor_maker(), int(onp.floor(len(shape) / 2))]
     self._CheckAgainstNumpy(onp.linalg.tensorinv, np.linalg.tensorinv, args_maker,
                             check_dtypes=False, tol=1e-3)
+    self._CompileAndCheck(np.linalg.tensorinv, args_maker, check_dtypes=False, rtol=1e-03, atol=1e-03)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
