@@ -58,7 +58,7 @@ def _initial_style_jaxpr(fun, in_tree, in_avals):
                                                stage_out_calls=True)
   out_avals = _map(raise_to_shaped, unzip2(out_pvals)[0])
   const_avals = tuple(raise_to_shaped(core.get_aval(c)) for c in consts)
-  typed_jaxpr = core.TypedJaxpr(pe.closure_convert_jaxpr(jaxpr),
+  typed_jaxpr = core.TypedJaxpr(pe.convert_constvars_jaxpr(jaxpr),
                                 (), const_avals + in_avals, out_avals)
   return typed_jaxpr, consts, out_tree()
 
@@ -940,7 +940,7 @@ def _scan_partial_eval(trace, *tracers, **kwargs):
   const_avals_1 = [raise_to_shaped(core.get_aval(c)) for c in consts_1]
   in_avals_1 = [core.abstract_unit] * num_consts + jaxpr_1.in_avals[num_consts:]
   out_avals_1 = [core.abstract_unit if pv is None else pv for pv, c in out_pvals_1]
-  jaxpr_1_opt = pe.TypedJaxpr(pe.closure_convert_jaxpr(untyped_jaxpr_1),
+  jaxpr_1_opt = pe.TypedJaxpr(pe.convert_constvars_jaxpr(untyped_jaxpr_1),
                               (), const_avals_1 + in_avals_1, out_avals_1)
   num_consts_1 = num_consts + len(consts_1)
   # any now-known residuals are intensive, so we want to revise jaxpr_2 to take

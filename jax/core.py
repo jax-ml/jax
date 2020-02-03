@@ -85,7 +85,7 @@ def jaxpr_as_fun(typed_jaxpr, *args):
 
 
 JaxprEqn = namedtuple('JaxprEqn', ['invars', 'outvars', 'primitive',
-                                   'bound_subjaxprs', 'params'])
+                                   'bound_subjaxpr', 'params'])
 JaxprEqn.__repr__ = JaxprEqn.__str__ = lambda eqn: str(pp_eqn(eqn)).rstrip()
 new_jaxpr_eqn = JaxprEqn
 
@@ -210,10 +210,10 @@ def eval_jaxpr(jaxpr, consts, *args):
   map(write, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
     in_vals = map(read, eqn.invars)
-    subfuns = [partial(eval_jaxpr, subjaxpr, map(read, const_bindings))
-               for subjaxpr, const_bindings
-               in eqn.bound_subjaxprs]
-    subfuns = map(lu.wrap_init, subfuns)
+    if eqn.bound_subjaxpr:
+      subfuns = [lu.wrap_init(partial(eval_jaxpr, eqn.bound_subjaxpr, ()))]
+    else:
+      subfuns = []
     ans = eqn.primitive.bind(*(subfuns + in_vals), **eqn.params)
     if eqn.primitive.multiple_results:
       map(write, eqn.outvars, ans)
@@ -647,9 +647,8 @@ def check_jaxpr(jaxpr):
   map(write, jaxpr.invars)
   for eqn in jaxpr.eqns:
     map(read, eqn.invars)
-    for subjaxpr, constvars in eqn.bound_subjaxprs:
-      map(read, constvars)
-      check_jaxpr(subjaxpr)
+    if eqn.bound_subjaxpr:
+      check_jaxpr(eqn.bound_subjaxpr)
     map(write, eqn.outvars)
   map(read, jaxpr.outvars)
 
@@ -665,11 +664,10 @@ def pp_eqn_compact(primitive_name, params):
 def pp_eqn(eqn):
   lhs = pp_vars(eqn.outvars)
   pp_subexpr = pp('')
-  if eqn.bound_subjaxprs:
-    for subjaxpr, const_vars in eqn.bound_subjaxprs:
-      pp_subexpr = pp_subexpr + (
-          pp_jaxpr(subjaxpr).indent(2)
-          >> pp(' [ {} ]'.format(pp_vars(const_vars))))
+  if eqn.bound_subjaxpr:
+    pp_subexpr = pp_subexpr + (
+        pp_jaxpr(eqn.bound_subjaxpr).indent(2)
+        >> pp(' [ ]'))
   return (pp('{} = '.format(lhs)) >>
           pp(eqn.primitive.name) >> pp_kv_pairs(sorted(eqn.params.items()))
           >> pp(' ') >> pp(pp_vars(eqn.invars))) + pp_subexpr

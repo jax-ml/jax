@@ -172,7 +172,7 @@ def backward_pass(jaxpr: core.Jaxpr, consts, args, cotangents_in):
 
   linear_eqns = []
   for eqn in jaxpr.eqns:
-    if not eqn.bound_subjaxprs:
+    if not eqn.bound_subjaxpr:
       if any(is_linear(v) for v in eqn.invars):
         linear_eqns.append(eqn)
       else:
@@ -183,13 +183,12 @@ def backward_pass(jaxpr: core.Jaxpr, consts, args, cotangents_in):
         else:
           write_primal(eqn.outvars[0], ans)
     else:
-      (subjaxpr, const_vars), = eqn.bound_subjaxprs
-      assert not any(is_linear(v) for v in const_vars)
+      subjaxpr = eqn.bound_subjaxpr
       if any(is_linear(v) for v in eqn.invars):
         linear_eqns.append(eqn)
       elif eqn.primitive is not pe.remat_call_p:
         ans = _eval_subjaxpr_primals(
-            eqn.primitive, subjaxpr, map(read_primal, const_vars),
+            eqn.primitive, subjaxpr,
             map(read_primal, eqn.invars), eqn.params)
         map(write_primal, eqn.outvars, ans)
 
@@ -197,7 +196,7 @@ def backward_pass(jaxpr: core.Jaxpr, consts, args, cotangents_in):
       # nonlinear, so we always evaluate it even if it has a linear part
       if eqn.primitive is pe.remat_call_p:
         ans = _eval_subjaxpr_primals(
-            eqn.primitive, subjaxpr, map(read_primal, const_vars),
+            eqn.primitive, subjaxpr,
             map(read_primal, eqn.invars), eqn.params)
         map(write_primal, eqn.outvars, ans)
 
@@ -209,11 +208,11 @@ def backward_pass(jaxpr: core.Jaxpr, consts, args, cotangents_in):
       cts_in = map(read_cotangent, eqn.outvars)
     else:
       cts_in, = map(read_cotangent, eqn.outvars)
-    if eqn.bound_subjaxprs:
-      (subjaxpr, const_vars), = eqn.bound_subjaxprs
-      sub_consts = map(read_primal, const_vars)
+    if eqn.bound_subjaxpr:
+      subjaxpr = eqn.bound_subjaxpr
+      # TODO(necula): clean this transpose
       cts_out = get_primitive_transpose(eqn.primitive)(
-          eqn.params, subjaxpr, sub_consts, invals, cts_in)
+          eqn.params, subjaxpr, (), invals, cts_in)
     else:
       cts_out = get_primitive_transpose(eqn.primitive)(cts_in, *invals, **eqn.params)
     cts_out = [zero] * len(eqn.invars) if cts_out is zero else cts_out
@@ -222,14 +221,15 @@ def backward_pass(jaxpr: core.Jaxpr, consts, args, cotangents_in):
   cotangents_out = map(read_cotangent, jaxpr.invars)
   return cotangents_out
 
-def _eval_subjaxpr_primals(prim, jaxpr, consts, in_vals, params):
-  all_args, in_tree_def = tree_flatten((consts, in_vals))
+def _eval_subjaxpr_primals(prim, jaxpr, in_vals, params):
+  assert not jaxpr.constvars
+  all_args, in_tree_def = tree_flatten((in_vals,))
   fun = lu.hashable_partial(lu.wrap_init(_eval_primals), jaxpr)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
   out_flat = prim.bind(fun, *all_args, **params)
   return tree_unflatten(out_tree(), out_flat)
 
-def _eval_primals(jaxpr, consts, args):
+def _eval_primals(jaxpr, args):
   primal_env = {}
 
   def read_primal(v):
@@ -249,10 +249,10 @@ def _eval_primals(jaxpr, consts, args):
       return primal_env.get(var, undefined_primal) is undefined_primal
 
   write_primal(core.unitvar, core.unit)
-  map(write_primal, jaxpr.constvars, consts)
+  assert not jaxpr.constvars
   map(write_primal, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
-    if not eqn.bound_subjaxprs:
+    if not eqn.bound_subjaxpr:
       if not any(is_linear(v) for v in eqn.invars):
         in_vals = map(read_primal, eqn.invars)
         ans = eqn.primitive.bind(*in_vals, **eqn.params)
@@ -261,12 +261,11 @@ def _eval_primals(jaxpr, consts, args):
         else:
           write_primal(eqn.outvars[0], ans)
     else:
-      (subjaxpr, const_vars), = eqn.bound_subjaxprs
-      assert not any(is_linear(v) for v in const_vars)
+      subjaxpr = eqn.bound_subjaxpr
       if (eqn.primitive is pe.remat_call_p or
           not any(is_linear(v) for v in eqn.invars)):
         ans = _eval_subjaxpr_primals(
-            eqn.primitive, subjaxpr, map(read_primal, const_vars),
+            eqn.primitive, subjaxpr,
             map(read_primal, eqn.invars), eqn.params)
         map(write_primal, eqn.outvars, ans)
   return map(read_primal, jaxpr.outvars)
