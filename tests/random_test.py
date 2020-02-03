@@ -329,6 +329,15 @@ class LaxRandomTest(jtu.JaxTestCase):
     self.assertAllClose(actual_grad, expected_grad, check_dtypes=True,
                         rtol=2e-2 if jtu.device_under_test() == "tpu" else 5e-4)
 
+  def testGammaGradType(self):
+    # Regression test for https://github.com/google/jax/issues/2130
+    key = random.PRNGKey(0)
+    a = np.array(1., dtype=np.float32)
+    b = np.array(3., dtype=np.float32)
+    f = lambda x, y: random.gamma(key=key, a=x, dtype=np.float32) / y
+    # Should not crash with a type error.
+    api.vjp(f, a, b)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
       for dtype in [onp.float32, onp.float64]))
