@@ -2027,7 +2027,8 @@ def checkpoint(fun, concrete=False):
   def fun_remat(*args, **kwargs):
     args_flat, in_tree = tree_flatten((args, kwargs))
     flat_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
-    out_flat = pe.remat_call(flat_fun, *args_flat, concrete=concrete)
+    out_flat = pe.remat_call(flat_fun, *args_flat, name=flat_fun.__name__,
+                             concrete=concrete)
     return tree_unflatten(out_tree(), out_flat)
   return fun_remat
 remat = checkpoint

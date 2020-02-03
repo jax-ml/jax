@@ -417,16 +417,19 @@ def cond(pred, true_operand, true_fun, false_operand, false_fun):
   _check_tree_and_avals("true_fun and false_fun output",
                         true_out_tree, true_jaxpr.out_avals,
                         false_out_tree, false_jaxpr.out_avals)
+  linear = (False,) * (len(true_consts) + len(true_ops) + len(false_consts) +
+                       len(false_ops))
   out = cond_p.bind(
       *itertools.chain([pred], true_consts, true_ops, false_consts, false_ops),
-      true_jaxpr=true_jaxpr, false_jaxpr=false_jaxpr)
+      true_jaxpr=true_jaxpr, false_jaxpr=false_jaxpr, linear=linear)
   return tree_unflatten(true_out_tree, out)
 
 def _cond_abstract_eval(*args, **kwargs):
   return _map(raise_to_shaped, kwargs["true_jaxpr"].out_avals)
 
 def _cond_translation_rule(c, axis_env, name_stack, pred, *args,
-                           true_jaxpr, false_jaxpr, backend=None):
+                           true_jaxpr, false_jaxpr, linear, backend=None):
+  del linear  # Unused.
   true_ops, false_ops = split_list(args, [len(true_jaxpr.in_avals)])
 
   def make_computation(name, jaxpr, op_shape):
@@ -450,7 +453,7 @@ def _cond_pred_bcast_select(pred, x, y):
   bcast_pred = lax.broadcast_in_dim(pred, onp.shape(x), list(range(onp.ndim(pred))))
   return lax.select(bcast_pred, x, y)
 
-def _cond_batching_rule(args, dims, true_jaxpr, false_jaxpr):
+def _cond_batching_rule(args, dims, true_jaxpr, false_jaxpr, linear):
   # TODO: maybe avoid moving arg axes to front if we're promoting to select?
   args = [batching.moveaxis(x, d, 0) if d is not batching.not_mapped and d != 0
           else x for x, d in zip(args, dims)]
@@ -479,10 +482,10 @@ def _cond_batching_rule(args, dims, true_jaxpr, false_jaxpr):
     out_dims = [0 if b else batching.not_mapped for b in out_bat]
     out = cond_p.bind(
       *itertools.chain([pred], true_ops, false_ops),
-      true_jaxpr=true_jaxpr_batched, false_jaxpr=false_jaxpr_batched)
+      true_jaxpr=true_jaxpr_batched, false_jaxpr=false_jaxpr_batched, linear=linear)
     return out, out_dims
 
-def _cond_jvp(primals, tangents, true_jaxpr, false_jaxpr):
+def _cond_jvp(primals, tangents, true_jaxpr, false_jaxpr, linear):
   nonzeros = [t is not ad_util.zero for t in tangents]
 
   (pred_nz,), t_nz, f_nz = split_list(nonzeros, [1, len(true_jaxpr.in_avals)])
@@ -501,20 +504,186 @@ def _cond_jvp(primals, tangents, true_jaxpr, false_jaxpr):
   tops_dot = _prune_zeros(tops_dot)
   fops_dot = _prune_zeros(fops_dot)
 
+  tops_lin, fops_lin = _map(tuple, split_list(linear, [len(tops)]))
+  linear_jvp = (tops_lin + (True,) * len(tops_dot) +
+                fops_lin + (True,) * len(fops_dot))
   out = cond_p.bind(
       *itertools.chain([pred], tops, tops_dot, fops, fops_dot),
-      true_jaxpr=true_jvp, false_jaxpr=false_jvp)
+      true_jaxpr=true_jvp, false_jaxpr=false_jvp, linear=linear_jvp)
   out_primals, out_tangents = split_list(out, [len(out_nz)])
   out_tangents_iter = iter(out_tangents)
   out_tangents = [
       next(out_tangents_iter) if nz else ad_util.zero for nz in out_nz]
   return out_primals, out_tangents
 
+def _cond_partial_eval(trace, *tracers, true_jaxpr, false_jaxpr, linear):
+  unknowns = [t.pval[0] is not None for t in tracers]
+
+  (pred_uk,), t_uk, f_uk = split_list(unknowns, [1, len(true_jaxpr.in_avals)])
+
+  if pred_uk:
+    # When the predicate is unknown, we stage out the whole cond.
+    params = dict(true_jaxpr=true_jaxpr, false_jaxpr=false_jaxpr, linear=linear)
+    return trace.default_process_primitive(cond_p, tracers, params)
+
+  _, _, t_out_uks = pe.partial_eval_jaxpr(true_jaxpr, t_uk, instantiate=False)
+  _, _, f_out_uks = pe.partial_eval_jaxpr(false_jaxpr, f_uk, instantiate=False)
+  out_uks = [a or b for a, b in zip(t_out_uks, f_out_uks)]
+
+  true_jaxpr_1, true_jaxpr_2, _ = pe.partial_eval_jaxpr(true_jaxpr, t_uk,
+                                                        instantiate=out_uks)
+  false_jaxpr_1, false_jaxpr_2, _ = pe.partial_eval_jaxpr(false_jaxpr, f_uk,
+                                                          instantiate=out_uks)
+
+  num_t_res = len(true_jaxpr_1.out_avals) - len(out_uks)
+  num_f_res = len(false_jaxpr_1.out_avals) - len(out_uks)
+
+  move = [False] * len(true_jaxpr.in_avals) + [True] * num_t_res
+  true_jaxpr_2 = pe.move_binders_to_front(true_jaxpr_2, move)
+  move = [False] * len(false_jaxpr.in_avals) + [True] * num_f_res
+  false_jaxpr_2 = pe.move_binders_to_front(false_jaxpr_2, move)
+
+  # TODO(frostig,mattjj): pe.partial_eval_jaxpr should raise to shaped avals
+  t_res_avals = _map(raise_to_shaped, true_jaxpr_2.in_avals[:num_t_res])
+  f_res_avals = _map(raise_to_shaped, false_jaxpr_2.in_avals[:num_f_res])
+
+  assert len(true_jaxpr_2.out_avals) == len(false_jaxpr_2.out_avals)
+  num_outs = len(true_jaxpr_2.out_avals)
+
+  true_jaxpr_1 = _join_cond_outputs(
+      true_jaxpr_1, num_outs, f_res_avals, zeros_on_left=False)
+  false_jaxpr_1 = _join_cond_outputs(
+      false_jaxpr_1, num_outs, t_res_avals, zeros_on_left=True)
+
+  # TODO(frostig,mattjj): reinstate this assertion once pe.partial_eval_jaxpr
+  # raises to shaped avals
+  # assert true_jaxpr_1.out_avals == false_jaxpr_1.out_avals
+  num_res = num_t_res + num_f_res
+
+  _, in_consts = unzip2([t.pval for t in tracers])
+  out_consts_res = cond_p.bind(
+      *in_consts, true_jaxpr=true_jaxpr_1, false_jaxpr=false_jaxpr_1,
+      linear=linear)
+  out_consts, res = split_list(out_consts_res, [len(out_consts_res) - num_res])
+
+  # TODO(frostig,mattjj): remove raised_to_shaped of avals once
+  # pe.partial_eval_jaxpr handles it
+  out_avals = _map(raise_to_shaped, true_jaxpr_2.out_avals)
+  out_pvs = [aval if uk else None for aval, uk in zip(out_avals, out_uks)]
+
+  pred_tracer = trace.instantiate_const(tracers[0])
+
+  ops_tracers = [trace.instantiate_const(t) if uk
+                 else trace.new_instantiated_literal(core.unit)
+                 for uk, t in zip(unknowns[1:], tracers[1:])]
+  true_ops_tracers, false_ops_tracers = split_list(
+      ops_tracers, [len(true_jaxpr.in_avals)])
+
+  res_tracers = _map(trace.new_instantiated_const, res)
+  true_res_tracers, false_res_tracers = split_list(res_tracers, [num_t_res])
+
+  out_tracers = [pe.JaxprTracer(trace, pe.PartialVal((pv, const)), None)
+                 for pv, const in zip(out_pvs, out_consts)]
+
+  tops_lin, fops_lin = _map(tuple, split_list(linear, [len(true_jaxpr.in_avals)]))
+  linear_2 = ((False,) * num_t_res + tops_lin + (False,) * num_f_res + fops_lin)
+  params = dict(true_jaxpr=true_jaxpr_2, false_jaxpr=false_jaxpr_2,
+                linear=linear_2)
+  eqn = pe.new_eqn_recipe([pred_tracer] +
+                          true_res_tracers + true_ops_tracers +
+                          false_res_tracers + false_ops_tracers,
+                          out_tracers,
+                          cond_p, (), params)
+  for t in out_tracers: t.recipe = eqn
+  return out_tracers
+
+def _join_cond_outputs(jaxpr, num_prefix, zeros_avals, zeros_on_left):
+  @lu.wrap_init
+  def f_aug(*args):
+    prefix_and_rest = core.jaxpr_as_fun(jaxpr)(*args)
+    prefix, rest = split_list(prefix_and_rest, [num_prefix])
+    zeros = [ad_util.zeros_like_aval(a) for a in zeros_avals]
+    if zeros_on_left:
+      return prefix + zeros + rest
+    else:
+      return prefix + rest + zeros
+
+  return _make_typed_jaxpr(f_aug, jaxpr.in_avals)
+
+def _transpose_cond_jaxpr(jaxpr, num_res):
+  num_non_res = len(jaxpr.in_avals) - num_res
+  res_avals, primal_avals = split_list(jaxpr.in_avals, [num_res])
+  primal_avals = _map(raise_to_shaped, primal_avals)
+
+  @lu.wrap_init
+  def transposed(*args):
+    res, cts_out = split_list(args, [num_res])
+    primals = res + [ad.undefined_primal] * num_non_res
+    _, cts_in = ad.backward_pass(
+        jaxpr.jaxpr, jaxpr.literals, (), primals, cts_out)
+    _, cts_in = split_list(cts_in, [num_res])
+    return _map(ad.instantiate_zeros_aval, primal_avals, cts_in)
+
+  return _make_typed_jaxpr(transposed, res_avals + jaxpr.out_avals)
+
+def _cond_transpose(cts, *args, true_jaxpr, false_jaxpr, linear):
+  (pred,), tops, fops = split_list(args, [1, len(true_jaxpr.in_avals)])
+  tops_lin, fops_lin = split_list(linear, [len(true_jaxpr.in_avals)])
+  in_avals = _map(raise_to_shaped, true_jaxpr.in_avals + false_jaxpr.in_avals)
+
+  num_t_res = len(tops) - sum(tops_lin)
+  num_f_res = len(fops) - sum(fops_lin)
+
+  t_jaxpr_trans = _transpose_cond_jaxpr(true_jaxpr, num_t_res)
+  f_jaxpr_trans = _transpose_cond_jaxpr(false_jaxpr, num_f_res)
+  lin_in_avals = _map(raise_to_shaped, [a for a, l in zip(in_avals, linear) if l])
+  assert t_jaxpr_trans.out_avals + f_jaxpr_trans.out_avals == lin_in_avals
+
+  t_jaxpr_trans_ = _join_cond_outputs(
+      t_jaxpr_trans, 0, f_jaxpr_trans.out_avals, zeros_on_left=False)
+  f_jaxpr_trans_ = _join_cond_outputs(
+      f_jaxpr_trans, 0, t_jaxpr_trans.out_avals, zeros_on_left=True)
+  assert t_jaxpr_trans_.out_avals == f_jaxpr_trans_.out_avals == lin_in_avals
+
+  t_res, _ = split_list(tops, [num_t_res])
+  f_res, _ = split_list(fops, [num_f_res])
+
+  linear_trans = ((False,) * num_t_res + (True,) * len(cts) +
+                  (False,) * num_f_res + (True,) * len(cts))
+
+  cts = _map(ad.instantiate_zeros_aval, true_jaxpr.out_avals, cts)
+
+  out = cond_p.bind(
+      pred, *itertools.chain(t_res, cts, f_res, cts),
+      true_jaxpr=t_jaxpr_trans_, false_jaxpr=f_jaxpr_trans_,
+      linear=linear_trans)
+  assert all(_map(typecheck, lin_in_avals, out))
+
+  out_iter = iter(out)
+  out = [next(out_iter) if l else None for l in linear]
+  assert next(out_iter, None) is None
+  return [None] + out
+
+def cond_bind(*args, true_jaxpr, false_jaxpr, linear):
+  if not core.skip_checks:
+    assert len(linear) + 1 == len(args)
+    assert len(args) == 1 + len(true_jaxpr.in_avals) + len(false_jaxpr.in_avals)
+    (pred,), tops, fops = split_list(args, [1, len(true_jaxpr.in_avals)])
+    assert all(_map(typecheck, true_jaxpr.in_avals, tops))
+    assert all(_map(typecheck, false_jaxpr.in_avals, fops))
+    core.check_jaxpr(true_jaxpr.jaxpr)
+    core.check_jaxpr(false_jaxpr.jaxpr)
+  return core.Primitive.bind(cond_p, *args, true_jaxpr=true_jaxpr,
+                             false_jaxpr=false_jaxpr, linear=linear)
+
 cond_p = lax.Primitive('cond')
 cond_p.multiple_results = True
 cond_p.def_impl(partial(xla.apply_primitive, cond_p))
 cond_p.def_abstract_eval(_cond_abstract_eval)
+cond_p.def_custom_bind(cond_bind)
 ad.primitive_jvps[cond_p] = _cond_jvp
+ad.primitive_transposes[cond_p] = _cond_transpose
+pe.custom_partial_eval_rules[cond_p] = _cond_partial_eval
 batching.primitive_batchers[cond_p] = _cond_batching_rule
 xla.initial_style_translations[cond_p] = _cond_translation_rule
 
@@ -853,7 +1022,8 @@ def _scan_transpose(cts, *args, **kwargs):
 
   #       jaxpr :: [ires, T d] -> [T c] -> [T a, eres] -> ([T c], [T b])
   # jaxpr_trans :: [ires] -> [CT d, CT c] -> [CT b, eres] -> ([CT d, CT c], [CT a])
-  jaxpr_trans = _transpose_jaxpr(num_ires, num_consts - num_ires, num_eres, jaxpr)
+  jaxpr_trans = _transpose_scan_jaxpr(
+      num_ires, num_consts - num_ires, num_eres, jaxpr)
   linear_trans = ([False] * num_ires +
                   [True] * (len(ct_consts) + len(ct_carry) + len(ct_ys)) +
                   [False] * num_eres)
@@ -865,9 +1035,9 @@ def _scan_transpose(cts, *args, **kwargs):
   ct_consts, ct_init, ct_xs = split_list(outs, [num_consts - num_ires, num_carry])
   return [None] * num_ires + ct_consts + ct_init + ct_xs + [None] * num_eres
 
-# transpose_jaxpr :: ([res1, c, a, res2] -> b)
-#                    -> ([res1, CT c, CT b, res2] -> [CT c, CT a])
-def _transpose_jaxpr(num_res1, num_c, num_res2, jaxpr):
+# transpose_scan_jaxpr :: ([res1, c, a, res2] -> b)
+#                         -> ([res1, CT c, CT b, res2] -> [CT c, CT a])
+def _transpose_scan_jaxpr(num_res1, num_c, num_res2, jaxpr):
   num_a = len(jaxpr.in_avals) - num_res1 - num_c - num_res2
   res1_avals, c_avals, a_avals, res2_avals = split_list(
       jaxpr.in_avals, [num_res1, num_c, num_a])
@@ -892,7 +1062,7 @@ def _make_typed_jaxpr(traceable, in_avals):
   pvals = [pe.PartialVal((aval, core.unit)) for aval in in_avals]
   jaxpr, pvals_out, consts = pe.trace_to_jaxpr(traceable, pvals, instantiate=True)
   out_avals, _ = unzip2(pvals_out)
-  return core.TypedJaxpr(jaxpr, consts, in_avals, out_avals)
+  return core.TypedJaxpr(jaxpr, consts, in_avals, _map(raise_to_shaped, out_avals))
 
 
 def _scan_batching_rule(args, dims, forward, length, jaxpr, num_consts,
@@ -978,25 +1148,18 @@ def _masked_scan_jaxpr(jaxpr, num_consts, num_carry):
   const_avals, carry_avals, x_avals = split_list(jaxpr.in_avals, [num_consts, num_carry])
   return _make_typed_jaxpr(masked, [aval] + const_avals + [aval] + carry_avals + x_avals)
 
-def scan_bind(*args, **kwargs):
-  forward, length, num_consts, num_carry, jaxpr, linear = split_dict(
-      kwargs, ["forward", "length", "num_consts", "num_carry", "jaxpr", "linear"])
-  consts, init, xs = split_list(args, [num_consts, num_carry])
-  assert len(linear) == len(args)
-
-  # check that args match input types
-  consts_avals, init_avals, x_avals = split_list(jaxpr.in_avals, [num_consts, num_carry])
-  xs_avals = _map(partial(_promote_aval_rank, length), x_avals)
-  assert all(_map(typecheck, consts_avals, consts)), (consts, consts_avals)
-  assert all(_map(typecheck, init_avals, init))
-  # assert all(_map(typecheck, xs_avals, xs))
-  # check that output carry type matches input carry type
-  carry_avals, _ = split_list(jaxpr.out_avals, [num_carry])
-  assert all(_map(typematch, init_avals, carry_avals))
-
-  # check that the data flow is sensible
-  core.check_jaxpr(jaxpr.jaxpr)
-
+def scan_bind(*args, forward, length, num_consts, num_carry, jaxpr, linear):
+  if not core.skip_checks:
+    assert len(linear) == len(args)
+    consts, init, xs = split_list(args, [num_consts, num_carry])
+    consts_avals, init_avals, x_avals = split_list(jaxpr.in_avals, [num_consts, num_carry])
+    xs_avals = _map(partial(_promote_aval_rank, length), x_avals)
+    assert all(_map(typecheck, consts_avals, consts)), (consts, consts_avals)
+    assert all(_map(typecheck, init_avals, init))
+    # assert all(_map(typecheck, xs_avals, xs))
+    carry_avals, _ = split_list(jaxpr.out_avals, [num_carry])
+    assert all(_map(typematch, init_avals, carry_avals))
+    core.check_jaxpr(jaxpr.jaxpr)
   return core.Primitive.bind(scan_p, *args, forward=forward, length=length,
                              jaxpr=jaxpr, num_consts=num_consts,
                              num_carry=num_carry, linear=linear)
@@ -1410,6 +1573,80 @@ def _linear_solve_transpose_rule(cotangent, *primals, **kwargs):
   return [None] * sum(const_lengths) + cotangent_b
 
 
+def _linear_solve_batching_rule(args, dims, **kwargs):
+  const_lengths, jaxprs, tree = split_dict(kwargs,
+                                           ["const_lengths", "jaxprs", "tree"])
+  orig_bat = [d is not batching.not_mapped for d in dims]
+  size, = {
+      a.shape[d] for a, d in zip(args, dims) if d is not batching.not_mapped
+  }
+
+  params, b = _split_linear_solve_args(args, const_lengths)
+  params_dims, b_dims = _split_linear_solve_args(dims, const_lengths)
+  params_bat, orig_b_bat = _split_linear_solve_args(orig_bat, const_lengths)
+
+  (matvec, vecmat, solve, solve_t) = jaxprs
+  (matvec_bat, vecmat_bat, solve_bat, solve_t_bat) = params_bat
+
+  # Fixpoint computation of which parts of x and b are batched; we need to
+  # ensure this is consistent between all four jaxprs
+  b_bat = orig_b_bat
+  x_bat = [False] * len(solve.out_avals)
+  for i in range(1 + len(orig_b_bat) + len(solve.out_avals)):
+    # Apply vecmat and solve -> new batched parts of x
+    solve_jaxpr_batched, solve_x_bat = batching.batch_jaxpr(
+        solve, size, solve_bat + b_bat, instantiate=x_bat)
+    if vecmat is None:
+      vecmat_jaxpr_batched = None
+      x_bat_out = solve_x_bat
+    else:
+      vecmat_jaxpr_batched, vecmat_x_bat = batching.batch_jaxpr(
+          vecmat, size, vecmat_bat + b_bat, instantiate=x_bat)
+      x_bat_out = _map(operator.or_, vecmat_x_bat, solve_x_bat)
+    # Apply matvec and solve_t -> new batched parts of b
+    matvec_jaxpr_batched, matvec_b_bat = batching.batch_jaxpr(
+        matvec, size, matvec_bat + x_bat_out, instantiate=b_bat)
+    if solve_t is None:
+      solve_t_jaxpr_batched = None
+      b_bat_out = _map(operator.or_, matvec_b_bat, orig_b_bat)
+    else:
+      solve_t_jaxpr_batched, solve_t_b_bat = batching.batch_jaxpr(
+          solve_t, size, solve_t_bat + x_bat_out, instantiate=b_bat)
+      b_bat_out = _map(lambda m, s, o: m or s or o, matvec_b_bat, solve_t_b_bat,
+                      orig_b_bat)
+    if x_bat_out == x_bat and b_bat_out == b_bat:
+      break
+    else:
+      x_bat = x_bat_out
+      b_bat = b_bat_out
+  else:
+    assert False, "Fixedpoint not reached"
+
+  batched_jaxprs = _LinearSolveTuple(matvec_jaxpr_batched, vecmat_jaxpr_batched,
+                                     solve_jaxpr_batched, solve_t_jaxpr_batched)
+
+  # Move batched axes to the front
+  new_params = [
+      batching.moveaxis(x, d, 0)
+      if d is not batching.not_mapped and d != 0 else x
+      for x, d in zip(_flatten(params), _flatten(params_dims))
+  ]
+  # Broadcast out b if necessary
+  new_b = [
+      batching.broadcast(x, size, 0) if now_bat and not was_bat else
+      batching.moveaxis(x, d, 0) if now_bat and d != 0 else x
+      for x, d, was_bat, now_bat in zip(b, b_dims, orig_b_bat, b_bat)
+  ]
+
+  outs = linear_solve_p.bind(
+      *(new_params + new_b),
+      const_lengths=const_lengths,
+      jaxprs=batched_jaxprs,
+      tree=tree)
+  out_dims = [0 if batched else batching.not_mapped for batched in b_bat]
+  return outs, out_dims
+
+
 linear_solve_p = core.Primitive('custom_linear_solve')
 linear_solve_p.multiple_results = True
 linear_solve_p.def_impl(_custom_linear_solve_impl)
@@ -1418,4 +1655,4 @@ ad.primitive_jvps[linear_solve_p] = _custom_linear_solve_jvp
 xla.initial_style_translations[linear_solve_p] = xla.lower_fun(
     _custom_linear_solve_impl, initial_style=True)
 ad.primitive_transposes[linear_solve_p] = _linear_solve_transpose_rule
-# TODO(shoyer): write batching rule
+batching.primitive_batchers[linear_solve_p] = _linear_solve_batching_rule

@@ -89,7 +89,7 @@ def device_put(x, device=None):
 
 device_put_handlers = {}
 device_put_handlers[core.Unit] = \
-    lambda _, device: xc.Buffer.from_pyval(
+    lambda _, device: xc.Buffer.make_tuple(
         (), device, backend=xb.get_device_backend(device))
 def _device_put_array(x, device):
   return xc.Buffer.from_pyval(x, device, backend=xb.get_device_backend(device))
@@ -831,6 +831,10 @@ class DeviceArray(DeviceValue):
 
   def __array__(self, dtype=None, context=None):
     return onp.asarray(self._value, dtype=dtype)
+
+  @property
+  def __cuda_array_interface__(self):
+    return _force(self).device_buffer.__cuda_array_interface__
 
   __str__ = partialmethod(_forward_to_value, str)
   __bool__ = __nonzero__ = partialmethod(_forward_to_value, bool)

@@ -95,6 +95,9 @@ class JaxprTrace(Trace):
     if primitive in custom_partial_eval_rules:
       return custom_partial_eval_rules[primitive](self, *tracers, **params)
     else:
+      return self.default_process_primitive(primitive, tracers, params)
+
+  def default_process_primitive(self, primitive, tracers, params):
       pvs, consts = unzip2(t.pval for t in tracers)
       if all(pv is None for pv in pvs):
         return primitive.bind(*consts, **params)
@@ -523,7 +526,7 @@ def _remat_partial_eval(trace, f, tracers, params):
   # Since we traced with everything marked as unknown, but we need to know which
   # outputs are known/unknown, we use partial_eval_jaxpr to get out_unknowns.
   jaxpr_converted = convert_freevars_jaxpr(jaxpr)
-  in_avals = ([raise_to_shaped(t.pval[0]) for t in env]
+  in_avals = ([raise_to_shaped(partial_val_aval(*t.pval)) for t in env]
               + [raise_to_shaped(pv) for pv in in_pvs])
   out_avals = [raise_to_shaped(pv if pv is not None
                                else abstract_unit if var is unitvar
@@ -628,4 +631,3 @@ def move_binders_to_front(typed_jaxpr, to_move):
 def _move_to_front(lst, to_move):
   return ([elt for elt, move in zip(lst, to_move) if move] +
           [elt for elt, move in zip(lst, to_move) if not move])
-

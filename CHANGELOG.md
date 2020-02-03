@@ -8,6 +8,18 @@ These are the release notes for JAX.
 
 * The minimum jaxlib version is now 0.1.38.
 
+### New features
+
+* Reverse-mode automatic differentiation (e.g. `grad`) of `lax.cond`, making it
+  now differentiable in both modes (https://github.com/google/jax/pull/2091)
+* JAX now supports DLPack, which allows sharing CPU and GPU arrays in a
+  zero-copy way with other libraries, such as PyTorch.
+* JAX GPU DeviceArrays now support `__cuda_array_interface__`, which is another
+  zero-copy protocol for sharing GPU arrays with other libraries such as CuPy
+  and Numba.
+* JAX CPU device buffers now implement the Python buffer protocol, which allows
+  zero-copy buffer sharing between JAX and NumPy.
+
 ## jaxlib 0.1.38 (January 29, 2020)
 
 * CUDA 9.0 is no longer supported.

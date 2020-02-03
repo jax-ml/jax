@@ -120,7 +120,7 @@ nbsphinx_execute = 'always'
 
 
 # Controls when a cell will time out (defaults to 30; use -1 for no timeout):
-nbsphinx_timeout = 90
+nbsphinx_timeout = 180
 
 # Default Pygments lexer for syntax highlighting in code cells:
 #nbsphinx_codecell_lexer = 'ipython3'

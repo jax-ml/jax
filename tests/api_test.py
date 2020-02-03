@@ -1600,6 +1600,46 @@ class APITest(jtu.JaxTestCase):
 
     api.grad(func)(5.0)  # doesn't crash
 
+  def test_remat_jit2(self):
+    @api.jit
+    def f(x):
+      y = 2 * x
+
+      @api.remat
+      def g():
+        return y
+
+      return g()
+
+    self.assertAllClose(f(3), 6, check_dtypes=False)
+
+  def test_remat_nontrivial_env(self):
+    # simplified from https://github.com/google/jax/issues/2030
+
+    @api.remat
+    def foo(state, dt=0.5, c=1):
+      u, u_t = state
+      u_tt = c**2 * u
+      u_t = u_t + u_tt * dt
+      return (u, u_t)
+
+    @partial(api.jit, static_argnums=(1,))
+    def _multi_step(state, count, dt, c):
+      f = lambda s, _: (foo(s, dt, c), _)
+      return lax.scan(f, state, None, count)
+
+    def multi_step(state, count, dt=1/np.sqrt(2), c=1):
+      return _multi_step(state, count, dt, c)
+
+    def loss(u0, target, steps, dt=1/np.sqrt(2), c=1):
+      init = (u0, np.zeros_like(u0))
+      (uf, _), _ = multi_step(init, steps, dt, c)
+      return ((uf - target) ** 2).mean()
+
+    target = np.zeros((128, 128))
+    u0 = np.ones_like(target)
+    loss(u0, target, 10)  # doesn't crash
+
   def test_trivial_computations(self):
     x = np.array([1, 2, 3])
     y = api.jit(lambda x: x)(x)
@@ -1697,6 +1737,7 @@ class JaxprTest(jtu.JaxTestCase):
           e = cond[ false_jaxpr={ lambda  ;  ; b a.
                                   let c = sub a b
                                   in [c] }
+                    linear=(False, False, False, False)
                     true_jaxpr={ lambda  ;  ; b a.
                                  let c = add a b
                                  in [c] } ] b a c a d
