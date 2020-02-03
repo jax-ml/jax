@@ -163,12 +163,16 @@ Gelu = elementwise(gelu)
 
 
 def _pooling_layer(reducer, init_val, rescaler=None):
-  def PoolingLayer(window_shape, strides=None, padding='VALID', spec='NHWC'):
+  def PoolingLayer(window_shape, strides=None, padding='VALID', spec=None):
     """Layer construction function for a pooling layer."""
     strides = strides or (1,) * len(window_shape)
     rescale = rescaler(window_shape, strides, padding) if rescaler else None
 
-    non_spatial_axes = spec.index('N'), spec.index('C')
+    if spec is None:
+      non_spatial_axes = 0, len(window_shape) + 1
+    else:
+      non_spatial_axes = spec.index('N'), spec.index('C')
+
     for i in sorted(non_spatial_axes):
       window_shape = window_shape[:i] + (1,) + window_shape[i:]
       strides = strides[:i] + (1,) + strides[i:]
@@ -189,7 +193,11 @@ SumPool = _pooling_layer(lax.add, 0.)
 
 def _normalize_by_window_size(dims, strides, padding):
   def rescale(outputs, inputs, spec):
-    non_spatial_axes = spec.index('N'), spec.index('C')
+    if spec is None:
+      non_spatial_axes = 0, inputs.ndim - 1
+    else:
+      non_spatial_axes = spec.index('N'), spec.index('C')
+
     spatial_shape = tuple(inputs.shape[i]
                           for i in range(inputs.ndim)
                           if i not in non_spatial_axes)
