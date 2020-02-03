@@ -36,7 +36,6 @@ from jax.lax import (standard_primitive, standard_unop, naryop_dtype_rule,
 from jax.lib import xla_client
 from jax.lib import lapack
 from jax.lib import cusolver
-from .experimental.vectorize import vectorize
 
 
 # traceables
@@ -668,6 +667,7 @@ def _lu_solve_core(lu, pivots, b, trans):
 
 @partial(api.jit, static_argnums=(3,))
 def _lu_solve(lu, pivots, b, trans):
+  from .experimental.vectorize import vectorize  # avoid recursive import
   if len(lu.shape) < 2 or lu.shape[-1] != lu.shape[-2]:
     raise ValueError("last two dimensions of LU decomposition must be equal, "
                      "got shape {}".format(lu.shape))
