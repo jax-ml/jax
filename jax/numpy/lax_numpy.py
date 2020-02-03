@@ -2598,6 +2598,25 @@ def _argminmax(op, a, axis):
   return min(mask_idxs, axis)
 
 
+@_wraps(onp.argwhere)
+def argwhere(a):
+  nnz = nonzero(a)
+  ret = transpose(asarray(nnz))
+  if isscalar(a):
+    ret = ret.reshape((0, 0))
+  return ret
+
+
+@_wraps(onp.flatnonzero)
+def flatnonzero(a):
+  return nonzero(ravel(a))[0]
+
+
+@_wraps(onp.extract)
+def extract(cond, a):
+  return take(ravel(a), nonzero(ravel(cond))[0])
+
+
 @_wraps(onp.sort)
 def sort(a, axis=-1, kind='quicksort', order=None):
   if kind != 'quicksort':

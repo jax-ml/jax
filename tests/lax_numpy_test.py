@@ -638,6 +638,46 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=False)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}".format(
+          jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype}
+      for shape in all_shapes for dtype in all_dtypes))
+  def testArgWhere(self, shape, dtype):
+    rng = jtu.rand_some_zero()
+    onp_fun = lambda x: onp.argwhere(x)
+    lnp_fun = lambda x: lnp.argwhere(x)
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=False)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}".format(
+          jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype}
+      for shape in all_shapes for dtype in all_dtypes))
+  def testFlatNonzero(self, shape, dtype):
+    rng = jtu.rand_some_zero()
+    onp_fun = lambda x: onp.flatnonzero(x)
+    lnp_fun = lambda x: lnp.flatnonzero(x)
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=False)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "_{}".format("_".join(
+        jtu.format_shape_dtype_string(shape, dtype)
+        for shape, dtype in zip(shapes, dtypes))),
+     "rng_factory": jtu.rand_default, "shapes": shapes, "dtypes": dtypes}
+    for shapes in filter(_shapes_are_broadcast_compatible,
+                         CombosWithReplacement(all_shapes, 2))
+    for dtypes in CombosWithReplacement(all_dtypes, 2)))
+  def testExtract(self, rng_factory, shapes, dtypes):
+    rng = rng_factory()
+    args_maker = self._GetArgsMaker(rng_factory(), shapes, dtypes)
+    def onp_fun(cond, x):
+      return _promote_like_lnp(partial(onp.extract, cond))(x)
+    self._CheckAgainstNumpy(onp_fun, lnp.extract, args_maker,
+                            check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "{}_inshape={}_axis={}".format(
           rec.test_name.capitalize(),
           jtu.format_shape_dtype_string(shape, dtype), axis),
