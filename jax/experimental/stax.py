@@ -30,7 +30,8 @@ import jax.numpy as np
 
 from jax.nn import (relu, log_softmax, softmax, softplus, sigmoid, elu,
                     leaky_relu, selu, gelu, normalize)
-from jax.nn.initializers import glorot_normal, normal, ones, zeros
+from jax.nn.initializers import glorot_normal, normal, ones, uniform, zeros
+from jax.ops import index_update
 
 # aliases for backwards compatibility
 glorot = glorot_normal
@@ -141,6 +142,27 @@ def BatchNorm(axis=(0, 1, 2), epsilon=1e-5, center=True, scale=True,
     if center: return z + beta
     if scale: return gamma * z
     return z
+  return init_fun, apply_fun
+
+
+def Embedding(vocab_size,
+              embedding_size,
+              padding_idx=None,
+              embedding_init=uniform()):
+  """Layer construction function for an embedding layer."""
+
+  def init_fun(rng, input_shape):
+    embedding_shape = (vocab_size, embedding_size)
+    embedding_table = embedding_init(rng, embedding_shape)
+    if padding_idx is not None:
+      embedding_table = index_update(embedding_table, padding_idx, 0.)
+    output_shape = input_shape + (embedding_size,)
+    return output_shape, (embedding_table,)
+
+  def apply_fun(params, inputs, **kwargs):
+    embedding_table = params[0]
+    return embedding_table[inputs]
+
   return init_fun, apply_fun
 
 
