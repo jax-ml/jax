@@ -961,7 +961,8 @@ class ScipyLinalgTest(jtu.JaxTestCase):
                     transpose_a=False, conjugate_a=False,
                     unit_diagonal=False, left_side=left_side)
     X = vmap(solve, bdims)(A, B)
-    Y = A @ X if left_side else X @ A
+    matmul = partial(np.matmul, precision=lax.Precision.HIGHEST)
+    Y = matmul(A, X) if left_side else matmul(X, A)
     onp.testing.assert_allclose(Y - B, 0, atol=1e-5)
 
   def testTriangularSolveGradPrecision(self):
