@@ -18,7 +18,6 @@ import functools
 from functools import partial
 import itertools
 import operator
-from packaging import version
 from typing import cast, Optional
 import unittest
 from unittest import SkipTest
