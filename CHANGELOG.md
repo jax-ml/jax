@@ -7,6 +7,8 @@ These are the release notes for JAX.
 ### Breaking changes
 
 * The minimum jaxlib version is now 0.1.38.
+* Simplified `Jaxpr` by removing the `Jaxpr.freevars` and changing the 
+  representation of `Jaxpr.bound_subjaxprs` to drop the environment values. 
 
 ### New features
 
