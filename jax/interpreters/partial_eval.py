@@ -159,14 +159,14 @@ class JaxprTrace(Trace):
     out_tracers = [JaxprTracer(self, PartialVal((out_pv, out_pv_const)), None)
                    for out_pv, out_pv_const in zip(out_pvs, out_pv_consts)]
     # The `jaxpr` already contains the env_vars at start of invars
-    mapped_invars = tuple([True] * len(const_tracers) +
-                          [False] * len(env_tracers) +
-                          [True] * len(tracers))
+    params = params.copy()
+    params["mapped_invars"] = tuple([True] * len(const_tracers) +
+                                    [False] * len(env_tracers) +
+                                    [True] * len(tracers))
     eqn = new_eqn_recipe(tuple(it.chain(const_tracers, env_tracers, tracers)),
                          out_tracers, map_primitive, params,
                          subjaxpr=lifted_jaxpr,
-                         subjaxpr_const_tracers=(),
-                         mapped_invars=mapped_invars)
+                         subjaxpr_const_tracers=())
     for t in out_tracers:
       t.recipe = eqn
     return out_tracers
@@ -213,14 +213,14 @@ class JaxprTrace(Trace):
       lifted_jaxpr = closure_convert_jaxpr(jaxpr)
       out_tracers = [JaxprTracer(trace, PartialVal((out_pv, out_pv_const)), None)
                      for out_pv, out_pv_const in zip(out_pvs, out_pv_consts)]
-      mapped_invars = tuple([True] * len(const_tracers),
-                            [False] * len(env))
+      params = params.copy()
+      params["mapped_invars"] = tuple([True] * len(const_tracers),
+                                      [False] * len(env))
       env_tracers = map(trace.full_raise, env)
       eqn = new_eqn_recipe(it.chain(const_tracers, env_tracers),
                            out_tracers, map_primitive, params,
                            subjaxpr=lifted_jaxpr,
-                           subjaxpr_const_tracers=(),
-                           mapped_invars=mapped_invars)
+                           subjaxpr_const_tracers=())
       for t in out_tracers:
         t.recipe = eqn
       return out_tracers
@@ -390,8 +390,7 @@ JaxprEqnRecipe = namedtuple('JaxprEqnRecipe',
 
 def new_eqn_recipe(invars, outvars, primitive, params,
                    subjaxpr=None,
-                   subjaxpr_const_tracers=(),
-                   mapped_invars=()):
+                   subjaxpr_const_tracers=()):
   """Constructs a new JaxEqnRecipe.
 
   Params:
@@ -404,21 +403,11 @@ def new_eqn_recipe(invars, outvars, primitive, params,
       Also, `subjaxpr.constvars` correspond to `subjaxpr_const_tracers`.
     subjaxpr_const_tracers: The constant tracers for `subjaxpr`. Must be ()
       if not `subjaxpr`.
-    mapped_invars: for `xla_pmap` only, a list of booleans of length
-      `len(subjaxpr.invars)`, with the value True when the corresponding invar
-       is mapped over devices. If present, then `subjaxpr_const_tracers` is
-       empty (`subjaxpr` is closed).
   """
   if subjaxpr is not None:
     assert len(subjaxpr.constvars) == len(subjaxpr_const_tracers)
     assert len(subjaxpr.invars) == len(tuple(invars))
     bound_subjaxprs = ((subjaxpr, subjaxpr_const_tracers),)
-
-    if mapped_invars:
-      # Put this in mapped_invars parameter, for xla_pmap
-      assert not subjaxpr.constvars
-      params = params.copy()
-      params['mapped_invars'] = mapped_invars
   else:
     bound_subjaxprs = ()
 
