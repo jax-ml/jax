@@ -48,7 +48,7 @@ def _parse_gufunc_signature(
       ``(m,n),(n,p)->(m,p)`` for ``np.matmul``.
 
   Returns:
-    Tuple of input and output core dimensions parsed from the signature.
+    Input and output core dimensions parsed from the signature.
   """
   if not re.match(_SIGNATURE, signature):
     raise ValueError(
@@ -62,7 +62,7 @@ def _update_dim_sizes(
     dim_sizes: Dict[str, int],
     shape: Tuple[int, ...],
     core_dims: CoreDims,
-    error_context: str,
+    error_context: str = "",
     *,
     is_input: bool,
 ):
@@ -72,7 +72,8 @@ def _update_dim_sizes(
     dim_sizes: sizes of existing core dimensions. Will be updated in-place.
     shape: shape of this argument.
     core_dims: core dimensions for this argument.
-
+    error_context: string context for error messages.
+    is_input: are we parsing input or output arguments?
   """
   num_core_dims = len(core_dims)
   if is_input:
@@ -99,18 +100,23 @@ def _update_dim_sizes(
 def _parse_input_dimensions(
     args: Tuple[NDArray, ...],
     input_core_dims: List[CoreDims],
-    error_context: str,
+    error_context: str = "",
 ) -> Tuple[Tuple[int, ...], Dict[str, int]]:
   """Parse broadcast and core dimensions for vectorize with a signature.
 
   Args:
     args: tuple of input arguments to examine.
     input_core_dims: list of core dimensions corresponding to each input.
+    error_context: string context for error messages.
 
   Returns:
     broadcast_shape: common shape to broadcast all non-core dimensions to.
     dim_sizes: common sizes for named core dimensions.
   """
+  if len(args) != len(input_core_dims):
+    raise TypeError(
+        'wrong number of positional arguments: expected %r, got %r %s'
+        % (len(input_core_dims), len(args), error_context))
   shapes = []
   dim_sizes = {}
   for arg, core_dims in zip(args, input_core_dims):
@@ -122,29 +128,12 @@ def _parse_input_dimensions(
   return broadcast_shape, dim_sizes
 
 
-def _broadcast_with_core_dims(
-    args: Tuple[NDArray, ...],
-    input_core_dims: List[CoreDims],
-    error_context: str,
-) -> Tuple[Tuple[NDArray, ...], Dict[str, int]]:
-  if len(args) != len(input_core_dims):
-    raise TypeError(
-        'wrong number of positional arguments: expected %r, got %r %s'
-        % (len(input_core_dims), len(args), error_context))
-
-  broadcast_shape, dim_sizes = _parse_input_dimensions(
-      args, input_core_dims, error_context)
-  input_shapes = [broadcast_shape + tuple(dim_sizes[dim] for dim in core_dims)
-                  for core_dims in input_core_dims]
-  args = tuple(map(np.broadcast_to, args, input_shapes))
-  return args, dim_sizes
-
-
 def _check_output_dims(
     func: Callable,
     dim_sizes: Dict[str, int],
     expected_output_core_dims: List[CoreDims],
-    error_context: str):
+    error_context: str = "",
+) -> Callable:
   """Check that output core dimensions match the signature."""
   def wrapped(*args):
     out = func(*args)
@@ -173,6 +162,7 @@ def _check_output_dims(
 
 
 def _apply_excluded(func, excluded, args):
+  """Partially apply positional arguments in `excluded` to a function."""
   if not excluded:
     return func, args
 
@@ -209,7 +199,7 @@ def vectorize(pyfunc, *, excluded=frozenset(), signature=None):
     raise ValueError("excluded={!r} contains negative numbers".format(excluded))
 
   @functools.wraps(pyfunc)
-  def vectorized(*args):
+  def wrapped(*args):
     error_context = ("on vectorized function with excluded={!r} and "
                      "signature={!r}".format(excluded, signature))
     excluded_func, args = _apply_excluded(pyfunc, excluded, args)
@@ -217,20 +207,47 @@ def vectorize(pyfunc, *, excluded=frozenset(), signature=None):
 
     if signature is not None:
       input_core_dims, output_core_dims = _parse_gufunc_signature(signature)
-      broadcast_args, dim_sizes = _broadcast_with_core_dims(
-          args, input_core_dims, error_context)
     else:
       input_core_dims = [()] * len(args)
-      broadcast_args = np.broadcast_arrays(*args)
       output_core_dims = None
-      dim_sizes = {}
+
+    broadcast_shape, dim_sizes = _parse_input_dimensions(
+        args, input_core_dims, error_context)
 
     checked_func = _check_output_dims(
         excluded_func, dim_sizes, output_core_dims, error_context)
 
-    num_batch_dims = broadcast_args[0].ndim - len(input_core_dims[0])
+    # Rather than broadcasting all arguments to full broadcast shapes, prefer
+    # expanding dimensions using vmap when possible. By pushing broadcasting
+    # into vmap, we can make use of more efficient batching rules for
+    # primitives where only some arguments are batched (e.g., for
+    # lax_linalg.triangular_solve).
+
+    vec_args = []
+    vmap_counts = []
+
+    for arg, core_dims in zip(args, input_core_dims):
+      # Explicitly broadcast the dimensions already found on each argument,
+      # because these dimensiosns might be of size 1, which vmap doesn't
+      # handle.
+      # TODO(shoyer): Consider squeezing out size 1 dimensions instead, and
+      # doing all vectorization with vmap? This *might* be a little more
+      # efficient but would require more careful book-keeping.
+      core_shape = tuple(dim_sizes[dim] for dim in core_dims)
+      full_shape = broadcast_shape + core_shape
+      vec_shape = full_shape[-arg.ndim:] if arg.ndim else ()
+
+      vec_arg = np.broadcast_to(arg, vec_shape)
+      vec_args.append(vec_arg)
+
+      vmap_count = len(vec_shape) - len(core_shape)
+      vmap_counts.append(vmap_count)
+
     vectorized_func = checked_func
-    for _ in range(num_batch_dims):
-      vectorized_func = api.vmap(vectorized_func)
-    return vectorized_func(*broadcast_args)
-  return vectorized
+    while any(vmap_counts):
+      in_axes = tuple(0 if c > 0 else None for c in vmap_counts)
+      vmap_counts = [max(c - 1, 0) for c in vmap_counts]
+      vectorized_func = api.vmap(vectorized_func, in_axes)
+    return vectorized_func(*vec_args)
+
+  return wrapped
