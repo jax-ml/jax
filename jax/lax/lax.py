@@ -37,7 +37,7 @@ from ..config import flags
 from ..core import Primitive
 from ..abstract_arrays import (UnshapedArray, ShapedArray, ConcreteArray,
                                AbstractToken, array_types, make_shaped_array,
-                               raise_to_shaped, abstract_token)
+                               raise_to_shaped, abstract_token, canonicalize_shape)
 from ..interpreters import partial_eval as pe
 from ..interpreters import xla
 from ..interpreters import pxla
@@ -84,17 +84,7 @@ def _canonicalize_shape(shape):
   # TODO(mattjj): this next check is a temporary workaround for masking
   if (type(shape) is tuple and masking.is_polymorphic(shape)):
     return shape
-  try:
-    return tuple(map(operator.index, shape))
-  except TypeError:
-    pass
-  msg = ("Shapes must be 1D sequences of concrete values of integer type, "
-         "got {}.")
-  if any(isinstance(x, core.Tracer) and isinstance(core.get_aval(x), ShapedArray)
-         and not isinstance(core.get_aval(x), ConcreteArray) for x in shape):
-    msg += ("\nIf using `jit`, try using `static_argnums` or applying `jit` to "
-            "smaller subfunctions.")
-  raise TypeError(msg.format(shape))
+  return canonicalize_shape(shape)
 
 def _identity(x): return x
 
