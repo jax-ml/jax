@@ -214,7 +214,7 @@ class JaxprTrace(Trace):
       out_tracers = [JaxprTracer(trace, PartialVal((out_pv, out_pv_const)), None)
                      for out_pv, out_pv_const in zip(out_pvs, out_pv_consts)]
       params = params.copy()
-      params["mapped_invars"] = tuple(([True] * len(const_tracers),
+      params["mapped_invars"] = tuple(([True] * len(const_tracers) +
                                        [False] * len(env)))
       env_tracers = map(trace.full_raise, env)
       eqn = new_eqn_recipe(it.chain(const_tracers, env_tracers),
