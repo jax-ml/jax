@@ -101,9 +101,26 @@ def _canonicalize_dimension(dim):
   else:
     return operator.index(dim)
 
-def _canonicalize_shape(shape):
-  """Ensure shape is a tuple of int or registered _DIMENSION_TYPES."""
-  return tuple(map(_canonicalize_dimension, shape))
+def canonicalize_shape(shape):
+  """Canonicalizes and checks for errors in a user-provided shape value.
+
+  Args:
+    shape: a Python value that represents a shape.
+
+  Returns:
+    A tuple of integers.
+  """
+  try:
+    return tuple(map(_canonicalize_dimension, shape))
+  except TypeError:
+    pass
+  msg = ("Shapes must be 1D sequences of concrete values of integer type, "
+         "got {}.")
+  if any(isinstance(x, core.Tracer) and isinstance(core.get_aval(x), ShapedArray)
+         and not isinstance(core.get_aval(x), ConcreteArray) for x in shape):
+    msg += ("\nIf using `jit`, try using `static_argnums` or applying `jit` to "
+            "smaller subfunctions.")
+  raise TypeError(msg.format(shape))
 
 
 class ShapedArray(UnshapedArray):
@@ -112,7 +129,7 @@ class ShapedArray(UnshapedArray):
 
   def __init__(self, shape, dtype, weak_type=False):
     super(ShapedArray, self).__init__(dtype, weak_type=weak_type)
-    self.shape = _canonicalize_shape(shape)
+    self.shape = canonicalize_shape(shape)
 
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self: prod(self.shape))
