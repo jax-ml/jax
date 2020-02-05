@@ -72,20 +72,6 @@ def broadcast_shapes(*shapes):
                      .format(tuple(map(tuple, shapes))))
   return tuple(result_shape)
 
-def _canonicalize_shape(shape):
-  """Canonicalizes and checks for errors in a user-provided shape value.
-
-  Args:
-    shape: a Python value that represents a shape.
-
-  Returns:
-    A tuple of integers.
-  """
-  # TODO(mattjj): this next check is a temporary workaround for masking
-  if (type(shape) is tuple and masking.is_polymorphic(shape)):
-    return shape
-  return canonicalize_shape(shape)
-
 def _identity(x): return x
 
 ### traceables
@@ -641,7 +627,7 @@ def reshape(operand, new_sizes, dimensions=None):
   <https://www.tensorflow.org/xla/operation_semantics#reshape>`_
   operator.
   """
-  new_sizes = _canonicalize_shape(new_sizes)  # TODO
+  new_sizes = canonicalize_shape(new_sizes)  # TODO
   new_sizes = tuple(new_sizes)
   same_shape = onp.shape(operand) == new_sizes
   same_dims = dimensions is None or tuple(dimensions) == tuple(range(onp.ndim(operand)))
@@ -749,7 +735,7 @@ def gather(operand, start_indices, dimension_numbers, slice_sizes):
   """
   return gather_p.bind(
       operand, start_indices, dimension_numbers=dimension_numbers,
-      slice_sizes=_canonicalize_shape(slice_sizes), operand_shape=operand.shape)
+      slice_sizes=canonicalize_shape(slice_sizes), operand_shape=operand.shape)
 
 def scatter_add(operand, scatter_indices, updates, dimension_numbers):
   """Scatter-add operator.
@@ -1064,7 +1050,7 @@ def full(shape, fill_value, dtype=None):
     dtype: the type of the output array, or `None`. If not `None`, `fill_value`
       will be cast to `dtype`.
   """
-  shape = _canonicalize_shape(shape)
+  shape = canonicalize_shape(shape)
   if onp.shape(fill_value):
     msg = "full must be called with scalar fill_value, got fill_value.shape {}."
     raise TypeError(msg.format(onp.shape(fill_value)))
@@ -1087,7 +1073,7 @@ def iota(dtype, size):
 def broadcasted_iota(dtype, shape, dimension):
   """Convenience wrapper around ``iota``."""
   dtype = dtypes.canonicalize_dtype(dtype)
-  shape = _canonicalize_shape(shape)
+  shape = canonicalize_shape(shape)
   dimension = int(dimension)
   return broadcast_in_dim(iota(dtype, shape[dimension]), shape, [dimension])
 
@@ -1314,7 +1300,7 @@ def full_like(x, fill_value, dtype=None, shape=None):
     An ndarray with the same shape as `x` with its entries set equal to
     `fill_value`, similar to the output of np.full.
   """
-  shape = onp.shape(x) if shape is None else _canonicalize_shape(shape)
+  shape = onp.shape(x) if shape is None else canonicalize_shape(shape)
   fill_value = tie_in(x, fill_value)
   return full(shape, fill_value, dtype or _dtype(x))
 
