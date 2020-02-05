@@ -104,12 +104,16 @@ def _canonicalize_dimension(dim):
 def canonicalize_shape(shape):
   """Canonicalizes and checks for errors in a user-provided shape value.
 
+  `None` shape is passed through as is.
+
   Args:
-    shape: a Python value that represents a shape.
+    shape: a Python value that represents a shape, or None.
 
   Returns:
-    A tuple of integers.
+    A tuple of integers, or None.
   """
+  if shape is None:
+    return None
   try:
     return tuple(map(_canonicalize_dimension, shape))
   except TypeError:

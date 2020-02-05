@@ -494,7 +494,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       phi = lambda x, t: np.sqrt(2.0 / d) * np.cos(np.matmul(W, x) + w*t + b)
       return phi
 
-    self.assertRaisesRegex(ValueError, '.*requires a concrete.*',
+    self.assertRaisesRegex(TypeError, 'Shapes must be 1D.*',
                            lambda: feature_map(5, 3))
 
   def testIssue756(self):
