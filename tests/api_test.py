@@ -1683,7 +1683,7 @@ class APITest(jtu.JaxTestCase):
 
     self.assertLen(outer_jaxpr.eqns, 1)
     self.assertEqual(outer_jaxpr.eqns[0].primitive.name, 'xla_call')
-    (subjaxpr_1, _,  _), = outer_jaxpr.eqns[0].bound_subjaxprs
+    (subjaxpr_1, _), = outer_jaxpr.eqns[0].bound_subjaxprs
     self.assertEqual(str(subjaxpr_1), str(inner_jaxpr))
     self.assertLen(inner_jaxpr.eqns, 2)
     self.assertEqual(inner_jaxpr.eqns[0].primitive.name, 'mul')
@@ -1716,7 +1716,7 @@ class JaxprTest(jtu.JaxTestCase):
 
     jaxpr = api.make_jaxpr(fun)(0.)
     self.assertMultiLineStrippedEqual(str(jaxpr), """
-    { lambda b ;  ; a.
+    { lambda b ; a.
         let
         in [a, 1.0, b] }
     """)
@@ -1730,15 +1730,15 @@ class JaxprTest(jtu.JaxTestCase):
                       lambda xf: xf - x)
     jaxpr = api.make_jaxpr(f)(3.)
     self.assertMultiLineStrippedEqual(str(jaxpr), """
-    { lambda  ;  ; a.
+    { lambda  ; a.
       let b = ge a 0.0
           c = add a 1.0
           d = add a 2.0
-          e = cond[ false_jaxpr={ lambda  ;  ; b a.
+          e = cond[ false_jaxpr={ lambda  ; b a.
                                   let c = sub a b
                                   in [c] }
                     linear=(False, False, False, False)
-                    true_jaxpr={ lambda  ;  ; b a.
+                    true_jaxpr={ lambda  ; b a.
                                  let c = add a b
                                  in [c] } ] b a c a d
       in [e] }

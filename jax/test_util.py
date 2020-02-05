@@ -608,7 +608,7 @@ def check_raises_regexp(thunk, err_type, pattern):
 def _iter_eqns(jaxpr):
   for eqn in jaxpr.eqns:
     yield eqn
-    for subjaxpr, _, _ in eqn.bound_subjaxprs:
+    for subjaxpr, _ in eqn.bound_subjaxprs:
       for sub_eqn in _iter_eqns(subjaxpr):
         yield sub_eqn
 

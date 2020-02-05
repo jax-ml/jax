@@ -230,7 +230,7 @@ def _while_loop_translation_rule(c, axis_env, name_stack, *args, **kwargs):
   cond_carry_elts = [cond_c.GetTupleElement(cond_carry, i) for i in range(len(args))]
   x, _, z = split_list(cond_carry_elts, [cond_nconsts, body_nconsts])
   pred, = xla.jaxpr_subcomp(cond_c, cond_jaxpr.jaxpr, backend, axis_env,
-                            _map(cond_c.Constant, cond_jaxpr.literals), (),
+                            _map(cond_c.Constant, cond_jaxpr.literals),
                             extend_name_stack(name_stack, 'cond'), *(x + z))
   if batched:
     scalar = ShapedArray((), onp.bool_)
@@ -243,11 +243,11 @@ def _while_loop_translation_rule(c, axis_env, name_stack, *args, **kwargs):
   body_carry_elts = [body_c.GetTupleElement(body_carry, i) for i in range(len(args))]
   x, y, z = split_list(body_carry_elts, [cond_nconsts, body_nconsts])
   new_z = xla.jaxpr_subcomp(body_c, body_jaxpr.jaxpr, backend, axis_env,
-                            _map(body_c.Constant, body_jaxpr.literals), (),
+                            _map(body_c.Constant, body_jaxpr.literals),
                             extend_name_stack(name_stack, 'body'), *(y + z))
   if batched:
     body_pred, = xla.jaxpr_subcomp(body_c, cond_jaxpr.jaxpr, backend, axis_env,
-                                   _map(body_c.Constant, cond_jaxpr.literals), (),
+                                   _map(body_c.Constant, cond_jaxpr.literals),
                                    extend_name_stack(name_stack, 'body_pred'), *(x + z))
     new_z = _map(partial(_pred_bcast_select, body_c, body_pred), new_z, z)
     assert _map(body_c.GetShape, new_z) == _map(body_c.GetShape, z) # no broadcast
@@ -343,7 +343,6 @@ def _while_loop_jvp(primals, tangents, cond_nconsts, cond_jaxpr, body_nconsts,
   invars_aug = (
       cond_jaxpr.jaxpr.invars + [newvar() for _ in range(len(init_dot))])
   cond_jaxpr_augmented = core.Jaxpr(cond_jaxpr.jaxpr.constvars,
-                                    cond_jaxpr.jaxpr.freevars,
                                     invars_aug,
                                     cond_jaxpr.jaxpr.outvars,
                                     cond_jaxpr.jaxpr.eqns)
@@ -437,7 +436,7 @@ def _cond_translation_rule(c, axis_env, name_stack, pred, *args,
     op = c.ParameterWithShape(op_shape)
     ops = [c.GetTupleElement(op, i) for i in range(len(jaxpr.in_avals))]
     outs = xla.jaxpr_subcomp(c, jaxpr.jaxpr, backend, axis_env,
-                             _map(c.Constant, jaxpr.literals), (),
+                             _map(c.Constant, jaxpr.literals),
                              extend_name_stack(name_stack, name + '_fun'), *ops)
     return c.Build(c.Tuple(*outs))
 
@@ -593,7 +592,7 @@ def _cond_partial_eval(trace, *tracers, true_jaxpr, false_jaxpr, linear):
                           true_res_tracers + true_ops_tracers +
                           false_res_tracers + false_ops_tracers,
                           out_tracers,
-                          cond_p, (), params)
+                          cond_p, params)
   for t in out_tracers: t.recipe = eqn
   return out_tracers
 
@@ -619,8 +618,8 @@ def _transpose_cond_jaxpr(jaxpr, num_res):
   def transposed(*args):
     res, cts_out = split_list(args, [num_res])
     primals = res + [ad.undefined_primal] * num_non_res
-    _, cts_in = ad.backward_pass(
-        jaxpr.jaxpr, jaxpr.literals, (), primals, cts_out)
+    cts_in = ad.backward_pass(
+        jaxpr.jaxpr, jaxpr.literals, primals, cts_out)
     _, cts_in = split_list(cts_in, [num_res])
     return _map(ad.instantiate_zeros_aval, primal_avals, cts_in)
 
@@ -979,7 +978,7 @@ def _scan_partial_eval(trace, *tracers, **kwargs):
               [lin or not uk for uk, lin in zip(unknowns, linear)] +
               [False] * len(ext_res_tracers))
   eqn = pe.new_eqn_recipe(int_res_tracers + new_tracers + ext_res_tracers,
-                          out_tracers, scan_p, (),
+                          out_tracers, scan_p,
                           dict(forward=forward, length=length, jaxpr=jaxpr_2_opt,
                                num_consts=num_consts_2,
                                num_carry=num_carry, linear=linear_2))
@@ -1049,7 +1048,7 @@ def _transpose_scan_jaxpr(num_res1, num_c, num_res2, jaxpr):
     res1, c_bar, b_bar, res2 = split_list(
         res1_cbar_bbar_res2, [num_res1, num_c, num_b])
     primals = res1 + [ad.undefined_primal] * (num_c + num_a) + res2
-    _, cbar_abar = ad.backward_pass(jaxpr.jaxpr, jaxpr.literals, (), primals,
+    cbar_abar = ad.backward_pass(jaxpr.jaxpr, jaxpr.literals, primals,
                                     b_bar)
     _, new_c_bar, a_bar, _ = split_list(cbar_abar, [num_res1, num_c, num_a])
     a_bar = _map(ad.instantiate_zeros_aval, a_avals, a_bar)
