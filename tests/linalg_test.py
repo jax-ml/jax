@@ -1126,6 +1126,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     for dtype in float_types + complex_types
   ))
   def testIssue2131(self, n, dtype):
+    _skip_on_mac_xla_bug()
     args_maker_zeros = lambda: [onp.zeros((n, n), dtype)]
     osp_fun = lambda a: osp.linalg.expm(a)
     jsp_fun = lambda a: jsp.linalg.expm(a)

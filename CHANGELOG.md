@@ -7,8 +7,10 @@ These are the release notes for JAX.
 ### Breaking changes
 
 * The minimum jaxlib version is now 0.1.38.
-* Simplified `Jaxpr` by removing the `Jaxpr.freevars` and changing the 
-  representation of `Jaxpr.bound_subjaxprs` to drop the environment values. 
+* Simplified `Jaxpr` by removing the `Jaxpr.freevars` and 
+  `Jaxpr.bound_subjaxprs`. The call primitives (`xla_call`, `xla_pmap`,
+   `sharded_call`, and `remat_call`) get a new parameter `call_jaxpr` with a
+   fully-closed (no `constvars`) JAXPR.  
 
 ### New features
 
