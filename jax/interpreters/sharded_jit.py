@@ -183,10 +183,9 @@ def _sharded_callable(fun, partitions, name, *abstract_args):
                  handle_outs)
 
 
-def _sharded_jit_translation_rule(c, jaxpr, axis_env, const_nodes, freevar_nodes,
+def _sharded_jit_translation_rule(c, jaxpr, axis_env, freevar_nodes,
                                   in_nodes, name_stack, partitions, backend, name):
   subc = xb.make_computation_builder("jaxpr_subcomputation")  # TODO(mattjj): name
-  consts = [subc.ParameterWithShape(c.GetShape(n)) for n in const_nodes]
   freevars = [subc.ParameterWithShape(c.GetShape(n)) for n in freevar_nodes]
 
   args = []
@@ -196,14 +195,14 @@ def _sharded_jit_translation_rule(c, jaxpr, axis_env, const_nodes, freevar_nodes
     subc._builder.ClearSharding()
   # args = [subc.ParameterWithShape(c.GetShape(n)) for n in in_nodes]
 
-  out_nodes = xla.jaxpr_subcomp(subc, jaxpr, backend, axis_env, consts, freevars, name_stack, *args)
+  out_nodes = xla.jaxpr_subcomp(subc, jaxpr, backend, axis_env, (), freevars, name_stack, *args)
 
   subc._builder.SetSharding(_sharding_to_proto(partitions[1]))
   out_tuple = subc.Tuple(*out_nodes)
   subc._builder.ClearSharding()
 
   subc = subc.Build(out_tuple)
-  return c.Call(subc, list(const_nodes) + list(freevar_nodes) + list(in_nodes))
+  return c.Call(subc, list(freevar_nodes) + list(in_nodes))
 
 def _execute_spatially_partitioned(compiled, in_handler, out_handler, *args):
   input_bufs = in_handler(args)

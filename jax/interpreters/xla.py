@@ -321,10 +321,8 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
       ans = rule(c, *in_nodes, replica_groups=replica_groups, **new_params)
     elif eqn.primitive in call_translations:
       new_params = check_backend_params(eqn.params, backend)
-      const_nodes = () # _map(read, const_bindings)
-      # TODO(necula): clean this
       rule = call_translations[eqn.primitive]
-      ans = rule(c, eqn.bound_subjaxpr, axis_env, const_nodes, in_nodes,
+      ans = rule(c, eqn.bound_subjaxpr, axis_env, in_nodes,
                  name_stack, backend=backend, **new_params)
     else:
       msg = "XLA translation rule for primitive '{}' not found"
@@ -592,16 +590,15 @@ xla_call = partial(core.call_bind, xla_call_p)
 xla_call_p.def_custom_bind(xla_call)
 xla_call_p.def_impl(_xla_call_impl)
 
-def _xla_call_translation_rule(c, jaxpr, axis_env, const_nodes,
+def _xla_call_translation_rule(c, jaxpr, axis_env,
                                in_nodes, name_stack, backend, name, device=None):
   del device  # Ignored.
   subc = xb.make_computation_builder("jit_{}".format(name))
-  consts = [subc.ParameterWithShape(c.GetShape(n)) for n in const_nodes]
   args = [subc.ParameterWithShape(c.GetShape(n)) for n in in_nodes]
-  out_nodes = jaxpr_subcomp(subc, jaxpr, backend, axis_env, consts,
+  out_nodes = jaxpr_subcomp(subc, jaxpr, backend, axis_env, (),
                             extend_name_stack(name_stack, wrap_name(name, 'jit')), *args)
   subc = subc.Build(subc.Tuple(*out_nodes))
-  return c.Call(subc, list(const_nodes) + list(in_nodes))
+  return c.Call(subc, list(in_nodes))
 ad.primitive_transposes[xla_call_p] = partial(ad.call_transpose, xla_call_p)
 
 
@@ -959,19 +956,18 @@ masking.shape_rules[device_put_p] = lambda x, **_: x.shape
 masking.defvectorized(device_put_p)
 
 
-def _remat_translation_rule(c, jaxpr, axis_env, const_nodes, in_nodes,
+def _remat_translation_rule(c, jaxpr, axis_env, in_nodes,
                             name_stack, backend, name, device=None, concrete=None):
   # This looks a lot like _xla_call_translation_rule, except for a widget we use
   # to foil CSE.
   del device, concrete  # Unused.
   subc = xb.make_computation_builder("remat_call_subcomputation")
-  consts = [subc.ParameterWithShape(c.GetShape(n)) for n in const_nodes]
   args = [subc.ParameterWithShape(c.GetShape(n)) for n in in_nodes]
   args = [_foil_cse(subc, x) for x in args]
-  out_nodes = jaxpr_subcomp(subc, jaxpr, backend, axis_env, consts,
+  out_nodes = jaxpr_subcomp(subc, jaxpr, backend, axis_env, (),
                             extend_name_stack(name_stack, wrap_name(name, 'remat')), *args)
   subc = subc.Build(subc.Tuple(*out_nodes))
-  return c.Call(subc, list(const_nodes) + list(in_nodes))
+  return c.Call(subc, list(in_nodes))
 call_translations[pe.remat_call_p] = _remat_translation_rule
 
 def _foil_cse(c, x):

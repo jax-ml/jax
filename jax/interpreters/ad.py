@@ -210,9 +210,8 @@ def backward_pass(jaxpr: core.Jaxpr, consts, args, cotangents_in):
       cts_in, = map(read_cotangent, eqn.outvars)
     if eqn.bound_subjaxpr:
       subjaxpr = eqn.bound_subjaxpr
-      # TODO(necula): clean this transpose
       cts_out = get_primitive_transpose(eqn.primitive)(
-          eqn.params, subjaxpr, (), invals, cts_in)
+          eqn.params, subjaxpr, invals, cts_in)
     else:
       cts_out = get_primitive_transpose(eqn.primitive)(cts_in, *invals, **eqn.params)
     cts_out = [zero] * len(eqn.invars) if cts_out is zero else cts_out
@@ -538,8 +537,8 @@ def traceable(num_primals, in_tree_def, *primals_and_tangents):
   yield out_flat, tree_def
 
 
-def call_transpose(primitive, params, jaxpr, consts, args, ct):
-  all_args, in_tree_def = tree_flatten((consts, args, ct))
+def call_transpose(primitive, params, jaxpr, args, ct):
+  all_args, in_tree_def = tree_flatten(((), args, ct))  # empty consts
   fun = lu.hashable_partial(lu.wrap_init(backward_pass), jaxpr)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
   params = dict(params, name=wrap_name(params['name'], 'transpose'))
@@ -548,8 +547,8 @@ def call_transpose(primitive, params, jaxpr, consts, args, ct):
 primitive_transposes[core.call_p] = partial(call_transpose, call_p)
 primitive_transposes[pe.remat_call_p] = partial(call_transpose, pe.remat_call_p)
 
-def map_transpose(primitive, params, jaxpr, consts, args, ct):
-  all_args, in_tree_def = tree_flatten((consts, args, ct))
+def map_transpose(primitive, params, jaxpr, args, ct):
+  all_args, in_tree_def = tree_flatten(((), args, ct))  # empty consts
   fun = lu.hashable_partial(lu.wrap_init(backward_pass), jaxpr)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
   params = dict(params, name=wrap_name(params['name'], 'transpose'))
