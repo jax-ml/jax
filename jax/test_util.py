@@ -14,6 +14,7 @@
 
 
 from contextlib import contextmanager
+from distutils.util import strtobool
 import functools
 import re
 import itertools as it
@@ -48,6 +49,13 @@ flags.DEFINE_integer(
   'num_generated_cases',
   int(os.getenv('JAX_NUM_GENERATED_CASES', 10)),
   help='Number of generated cases to test')
+
+flags.DEFINE_bool(
+    'jax_skip_slow_tests',
+    strtobool(os.getenv('JAX_SKIP_SLOW_TESTS', '0')),
+    help=
+    'Skip tests marked as slow (> 5 sec).'
+)
 
 EPS = 1e-4
 
