@@ -26,6 +26,7 @@ from typing import Optional, Sequence, Union
 
 import numpy as onp
 
+from .config import flags, bool_env
 from . import lax
 from . import numpy as np
 from . import dtypes
@@ -41,6 +42,11 @@ from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import xla
 from jax.util import prod
+
+FLAGS = flags.FLAGS
+flags.DEFINE_bool('jax_enable_prefix_prng',
+                  bool_env('JAX_ENABLE_PREFIX_PRNG', False),
+                  "Use a PRNG which is compatible with `jax.mask`.")
 
 
 def PRNGKey(seed: int) -> np.ndarray:
@@ -203,27 +209,47 @@ def threefry_2x32(keypair, count):
 
   Args:
     keypair: a pair of 32bit unsigned integers used for the key.
-    count: an array of dtype uint32 used for the counts.
+    count: an array of dtype uint32 used for the counts. Assumed to be
+      comprised of unique pairs, so that it has shape (..., 2), with each
+      uint32 pair simulating a single uint64.
 
   Returns:
     An array of dtype uint32 with the same shape as `count`.
   """
-  key1, key2 = keypair
-  if not lax.dtype(key1) == lax.dtype(key2) == lax.dtype(count) == onp.uint32:
+  if not lax.dtype(keypair) == lax.dtype(count) == onp.uint32:
     msg = "threefry_2x32 requires uint32 arguments, got {}"
-    raise TypeError(msg.format([lax.dtype(x) for x in [key1, key2, count]]))
+    raise TypeError(msg.format([lax.dtype(x) for x in [keypair, count]]))
 
-  odd_size = count.size % 2
-  if odd_size:
-    x = list(np.split(np.concatenate([count.ravel(), onp.uint32([0])]), 2))
-  else:
-    x = list(np.split(count.ravel(), 2))
+  assert np.shape(keypair) == (2,)
+  key1, key2 = keypair
 
-  x = threefry2x32_p.bind(key1, key2, x[0], x[1])
-  out = np.concatenate(x)
+  assert count.shape[-1] == 2
+  count_high, count_low = np.moveaxis(count, -1, 0)
+
+  # Result of theefry2x32_p is a list
+  out = np.stack(threefry2x32_p.bind(key1, key2, count_high, count_low), -1)
   assert out.dtype == onp.uint32
-  return lax.reshape(out[:-1] if odd_size else out, count.shape)
 
+  return out
+
+def _make_count(key, at_least_size):
+  # We generate a different count when jax_enable_prefix_prng == True
+  full = lambda *args: lax.tie_in(key, lax.full(*args))
+  iota = lambda *args: lax.tie_in(key, lax.iota(*args))
+  if FLAGS.jax_enable_prefix_prng:
+    # Simulate a uint64 counter with two uint32 counters
+    max_count = (at_least_size + 1) // 2
+    higher_max = max_count >> 32
+    higher = [full((1 << 32,), i, 'uint32') for i in range(higher_max)]
+    higher.append(full((max_count & 0xFFFFFFFF,), higher_max, 'uint32'))
+    higher = np.concatenate(higher)
+    lower = iota('uint32', max_count)
+  else:
+    count = iota('uint32', at_least_size)
+    if at_least_size % 2:
+      count = np.concatenate([count, onp.uint32([0])])
+    higher, lower = np.split(count, 2)
+  return np.stack([higher, lower], axis=-1)
 
 def split(key: np.ndarray, num: int = 2) -> np.ndarray:
   """Splits a PRNG key into `num` new keys by adding a leading axis.
@@ -240,8 +266,11 @@ def split(key: np.ndarray, num: int = 2) -> np.ndarray:
 
 @partial(jit, static_argnums=(1,))
 def _split(key, num):
-  counts = lax.tie_in(key, lax.iota(onp.uint32, num * 2))
-  return lax.reshape(threefry_2x32(key, counts), (num, 2))
+  out = threefry_2x32(key, _make_count(key, num * 2))
+  if FLAGS.jax_enable_prefix_prng:
+    return out
+  else:
+    return np.transpose(out).reshape(num, 2)
 
 
 def fold_in(key, data):
@@ -249,7 +278,7 @@ def fold_in(key, data):
 
   Args:
     key: a PRNGKey (an array with shape (2,) and dtype uint32).
-    data: a 32bit integer representing data to be folded in to the key.
+    data: a 64- or 32-bit integer representing data to be folded in to the key.
 
   Returns:
     A new PRNGKey that is a deterministic function of the inputs and is
@@ -269,16 +298,20 @@ def _random_bits(key, bit_width, shape):
     raise TypeError("_random_bits got invalid prng key.")
   if bit_width not in (32, 64):
     raise TypeError("requires 32- or 64-bit field width.")
-  max_count = (bit_width // 32) * onp.prod(shape)
-  if max_count >= np.iinfo(onp.uint32).max:
+  size = (bit_width // 32) * (onp.prod(shape) if shape else 1)
+  if size >= np.iinfo(onp.uint32).max:
     # TODO(mattjj): just split the key here
     raise TypeError("requesting more random bits than a single call provides.")
 
-  counts = lax.tie_in(key, lax.iota(onp.uint32, max_count))
-  bits = threefry_2x32(key, counts)
+  bits = threefry_2x32(key, _make_count(key, size))
   if bit_width == 64:
-    bits = [lax.convert_element_type(x, onp.uint64) for x in np.split(bits, 2)]
-    bits = lax.shift_left(bits[0], onp.uint64(32)) | bits[1]
+    bits_high, bits_low = np.transpose(
+        lax.convert_element_type(bits, onp.uint64))
+    bits = lax.shift_left(bits_high, onp.uint64(32)) | bits_low
+  elif FLAGS.jax_enable_prefix_prng:
+    bits = np.ravel(bits)[:size]
+  else:
+    bits = np.ravel(np.transpose(bits))[:size]
   return lax.reshape(bits, shape)
 
 

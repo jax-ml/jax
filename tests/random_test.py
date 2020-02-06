@@ -98,12 +98,12 @@ class LaxRandomTest(jtu.JaxTestCase):
     n = 10000000
     result = random.threefry_2x32(
       (onp.uint32(0x13198a2e), onp.uint32(0x03707344)),
-      np.concatenate([
+      np.stack([
         np.full((n,), 0x243f6a88, np.uint32),
         np.full((n,), 0x85a308d3, np.uint32)
-      ]))
-    onp.testing.assert_equal(result[:n], onp.full((n,), 0xc4923a9c, dtype=onp.uint32))
-    onp.testing.assert_equal(result[n:], onp.full((n,), 0x483df7a0, dtype=onp.uint32))
+      ], -1))
+    onp.testing.assert_equal(result[:,0], onp.full((n,), 0xc4923a9c, dtype=onp.uint32))
+    onp.testing.assert_equal(result[:,1], onp.full((n,), 0x483df7a0, dtype=onp.uint32))
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
@@ -515,10 +515,12 @@ class LaxRandomTest(jtu.JaxTestCase):
     def fail(*args, **kwargs): assert False
     apply_primitive, xla.apply_primitive = xla.apply_primitive, fail
     try:
-      out = random.threefry_2x32(onp.zeros(2, onp.uint32), onp.arange(10, dtype=onp.uint32))
+      out = random.threefry_2x32(onp.zeros(2, onp.uint32),
+                                 onp.arange(10, dtype=onp.uint32).reshape((5, 2)))
     finally:
       xla.apply_primitive = apply_primitive
 
+  @jtu.skip_on_flag('jax_enable_prefix_prng', True)
   def testPRNGValues(self):
     # Test to ensure consistent random values between JAX versions
     k = random.PRNGKey(0)
@@ -551,6 +553,13 @@ class LaxRandomTest(jtu.JaxTestCase):
         random.fold_in(k, 4),
         onp.array([2285895361,  433833334], dtype='uint32'),
         check_dtypes=True)
+
+  @jtu.skip_on_flag('jax_enable_prefix_prng', False)
+  def testPrefixPRNG(self):
+    k = random.PRNGKey(0)
+    arr1 = random.uniform(k, (3,))
+    arr2 = random.uniform(k, (5,))
+    self.assertAllClose(arr1, arr2[:3], check_dtypes=True)
 
 
 if __name__ == "__main__":
