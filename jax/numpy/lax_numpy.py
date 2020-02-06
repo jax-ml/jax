@@ -2902,7 +2902,8 @@ def _index_to_gather(x_shape, idx):
   collapsed_slice_dims = []
   start_index_map = []
 
-  gather_indices = onp.zeros((0,), dtype=int32)  # use onp to save a compilation
+  index_dtype = int64 if max(x_shape) >= (1 << 31) else int32
+  gather_indices = onp.zeros((0,), dtype=index_dtype)  # use onp to save a compilation
 
   # We perform three transformations to y before the scatter op, in order:
   # First, y is broadcast to slice_shape. In general `y` only need broadcast to
@@ -2929,7 +2930,7 @@ def _index_to_gather(x_shape, idx):
       shape = advanced_indexes[0].shape
       ndim = len(shape)
       advanced_indexes = [
-        lax.convert_element_type(lax.reshape(a, shape + (1,)), int32)
+        lax.convert_element_type(lax.reshape(a, shape + (1,)), index_dtype)
         for a in advanced_indexes]
 
       # Broadcast gather_indices from [..., k] to [..., 1, 1, ..., 1, k].
@@ -2957,7 +2958,7 @@ def _index_to_gather(x_shape, idx):
     if (isinstance(abstract_i, ConcreteArray) or
         isinstance(abstract_i, ShapedArray)) and _int(abstract_i):
       i = _normalize_index(i, x_shape[x_axis])
-      i = lax.convert_element_type(i, int32)
+      i = lax.convert_element_type(i, index_dtype)
       i = broadcast_to(i, tuple(gather_indices.shape[:-1]) + (1,))
       gather_indices = concatenate((gather_indices, i), -1)
       collapsed_slice_dims.append(x_axis)
@@ -2989,7 +2990,7 @@ def _index_to_gather(x_shape, idx):
       if needs_rev:
         reversed_y_dims.append(collapsed_y_axis)
       if stride == 1:
-        i = lax.convert_element_type(start, int32)
+        i = lax.convert_element_type(start, index_dtype)
         i = broadcast_to(i, tuple(gather_indices.shape[:-1]) + (1,))
         gather_indices = concatenate((gather_indices, i), -1)
         slice_shape.append(limit - start)
@@ -2997,7 +2998,7 @@ def _index_to_gather(x_shape, idx):
         offset_dims.append(collapsed_y_axis)
         start_index_map.append(x_axis)
       else:
-        i = arange(start, limit, stride, dtype=int32)
+        i = arange(start, limit, stride, dtype=index_dtype)
         size = i.shape[0]
         slice_shape.append(size)
         gather_slice_shape.append(1)
