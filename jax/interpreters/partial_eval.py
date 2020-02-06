@@ -159,12 +159,12 @@ class JaxprTrace(Trace):
     out_tracers = [JaxprTracer(self, PartialVal((out_pv, out_pv_const)), None)
                    for out_pv, out_pv_const in zip(out_pvs, out_pv_consts)]
     # The `jaxpr` already contains the env_vars at start of invars
-    params = params.copy()
-    params["mapped_invars"] = tuple([True] * len(const_tracers) +
-                                    [False] * len(env_tracers) +
-                                    [True] * len(tracers))
+    new_params = dict(params,
+                      mapped_invars=tuple([True] * len(const_tracers) +
+                                          [False] * len(env_tracers) +
+                                          [True] * len(tracers)))
     eqn = new_eqn_recipe(tuple(it.chain(const_tracers, env_tracers, tracers)),
-                         out_tracers, map_primitive, params,
+                         out_tracers, map_primitive, new_params,
                          subjaxpr=lifted_jaxpr)
     for t in out_tracers:
       t.recipe = eqn
@@ -213,12 +213,12 @@ class JaxprTrace(Trace):
       lifted_jaxpr = convert_constvars_jaxpr(jaxpr)
       out_tracers = [JaxprTracer(trace, PartialVal((out_pv, out_pv_const)), None)
                      for out_pv, out_pv_const in zip(out_pvs, out_pv_consts)]
-      params = params.copy()
-      params["mapped_invars"] = tuple(([True] * len(const_tracers) +
-                                       [False] * len(env)))
+      new_params = dict(params,
+                        mapped_invars=tuple([True] * len(const_tracers) +
+                                            [False] * len(env)))
       env_tracers = map(trace.full_raise, env)
       eqn = new_eqn_recipe(it.chain(const_tracers, env_tracers),
-                           out_tracers, map_primitive, params,
+                           out_tracers, map_primitive, new_params,
                            subjaxpr=lifted_jaxpr)
       for t in out_tracers:
         t.recipe = eqn
