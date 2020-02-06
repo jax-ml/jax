@@ -311,6 +311,7 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(z, 2 * 2 * x, check_dtypes=False)
 
     # test that we can handle device movement on dispatch
+    y._npy_value = None
     y.device_buffers = y.device_buffers[::-1]
     z = f(y)
     self.assertAllClose(z, 2 * 2 * x[::-1], check_dtypes=False)

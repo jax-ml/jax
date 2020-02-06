@@ -2528,17 +2528,35 @@ batching.primitive_batchers[pad_p] = _pad_batch_rule
 
 # We have a nonstandard reshape impl so that we can be lazy about data movement.
 def _reshape_impl(operand, new_sizes, dimensions, old_sizes):
-  if type(operand) is xla.DeviceArray and dimensions is None:
-    bcast_dims = _is_singleton_reshape(old_sizes, new_sizes)
-    if bcast_dims is not None:
-      aval = ShapedArray(new_sizes, operand.dtype)
-      lazy_expr = lazy.broadcast(operand._lazy_expr, new_sizes, bcast_dims)
-      return xla.DeviceArray(aval, None, lazy_expr, operand.device_buffer)
-
-  if type(operand) is pxla.ShardedDeviceArray and dimensions is None:
-    array = _reshape_sharded_device_array(operand, new_sizes, old_sizes)
-    if array is not None:
-      return array
+  if dimensions is None:
+    if type(operand) is xla.DeviceArray:
+      # handle case of adding a singleton dimension
+      bcast_dims = _is_singleton_reshape(old_sizes, new_sizes)
+      if bcast_dims is not None:
+        aval = ShapedArray(new_sizes, operand.dtype)
+        lazy_expr = lazy.broadcast(operand._lazy_expr, new_sizes, bcast_dims)
+        return xla.DeviceArray(aval, None, lazy_expr, operand.device_buffer)
+    # handle cases relied on by soft_pmap
+    if type(operand) is pxla.ShardedDeviceArray:
+      # merging a sharded axis 0 and unsharded axis 1 into a chunked axis 0
+      chunk_shape = operand.device_buffers[0].shape().dimensions()
+      if _is_axis_merge(old_sizes, new_sizes):
+        num_chunks, ragged = divmod(new_sizes[0], chunk_shape[0])
+        if not ragged and operand.logical_indices == list(range(old_sizes[0])):
+          aval = ShapedArray(new_sizes, operand.dtype)
+          indices = [builtins.slice(i, i + chunk_shape[0])
+                    for i in range(0, new_sizes[0], chunk_shape[0])]
+          return pxla.ShardedDeviceArray(aval, indices, operand.device_buffers)
+      # splitting a chunked axis 0 into a sharded axis 0 and unsharded axis 1
+      if _is_axis_split(old_sizes, new_sizes):
+        split_axis_size, ragged = divmod(old_sizes[0], chunk_shape[0])
+        assert not ragged
+        required_indices = [builtins.slice(i, i + chunk_shape[0])
+                            for i in range(0, old_sizes[0], chunk_shape[0])]
+        if new_sizes[0] == split_axis_size and operand.logical_indices == required_indices:
+          aval = ShapedArray(new_sizes, operand.dtype)
+          indices = list(range(new_sizes[0]))
+          return pxla.ShardedDeviceArray(aval, indices, operand.device_buffers)
 
   return xla.apply_primitive(reshape_p, operand, new_sizes=new_sizes,
                              dimensions=dimensions, old_sizes=old_sizes)

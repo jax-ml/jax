@@ -41,10 +41,9 @@ from . import ad_util
 from . import dtypes
 from .core import eval_jaxpr
 from .api_util import (wraps, flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
-                       flatten_fun_nokwargs2)
+                       flatten_fun_nokwargs2, flatten_axes)
 from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
-                        tree_transpose, tree_leaves, tree_multimap,
-                        _replace_nones)
+                        tree_transpose, tree_leaves, tree_multimap)
 from .util import (unzip2, unzip3, curry, partial, safe_map, safe_zip,
                    WrapHashably, Hashable, prod, split_list, extend_name_stack, wrap_name)
 from .lib import xla_bridge as xb
@@ -595,7 +594,8 @@ def vmap(fun, in_axes=0, out_axes=0):
       container tree prefix of the positional argument tuple passed to ``fun``.
     out_axes: A nonnegative integer, None, or (nested) standard Python container
       (tuple/list/dict) thereof indicating where the mapped axis should appear
-      in the output.
+      in the output. Using None for a component of ``out_axes`` requires that
+      the corresponding value be identical across the "batch".
 
   Returns:
     Batched/vectorized version of ``fun`` with arguments that correspond to
@@ -651,71 +651,54 @@ def vmap(fun, in_axes=0, out_axes=0):
            "or a (nested) tuple of those types, got {} and {} respectively.")
     raise TypeError(msg.format(type(in_axes), type(out_axes)))
 
-  def _check_axis_sizes(tree, vals, dims):
-    mapped_axis_sizes = {x.shape[d] for x, d in zip(vals, dims) if d is not None}
-    try:
-      sizes, = mapped_axis_sizes
-    except ValueError:
-      msg = "vmap got inconsistent sizes for array axes to be mapped:\n{}"
-      # we switch the error message based on whether args is a tuple of arrays,
-      # in which case we can produce an error message based on argument indices,
-      # or if it has nested containers.
-      # TODO(mattjj,phawkins): add a way to inspect pytree kind more directly
-      if tree == tree_flatten((core.unit,) * tree.num_leaves)[1]:
-        lines1 = ["arg {} has shape {} and axis {} is to be mapped"
-                  .format(i, x.shape, d) for i, (x, d) in enumerate(zip(vals, dims))]
-        sizes = collections.defaultdict(list)
-        for i, (x, d) in enumerate(zip(vals, dims)):
-          if d is not None:
-            sizes[x.shape[d]].append(i)
-        lines2 = ["{} {} {} {} to be mapped of size {}".format(
-                   "args" if len(idxs) > 1 else "arg",
-                   ", ".join(map(str, idxs)),
-                   "have" if len(idxs) > 1 else "has",
-                   "axes" if len(idxs) > 1 else "an axis",
-                   size)
-                  for size, idxs in sizes.items()]
-        raise ValueError(msg.format("\n".join(lines1 + ["so"] + lines2)))
-      else:
-        sizes = [x.shape[d] if d is not None else None for x, d in zip(vals, dims)]
-        sizes = tree_unflatten(tree, sizes)
-        raise ValueError(msg.format("the tree of axis sizes is:\n{}".format(sizes)))
-
   @wraps(fun, docstr=docstr)
   def batched_fun(*args):
     args_flat, in_tree  = tree_flatten(args)
     f = lu.wrap_init(fun)
     flat_fun, out_tree = flatten_fun_nokwargs(f, in_tree)
-    in_axes_flat = _flatten_axes(in_tree, in_axes)
-    _check_axis_sizes(in_tree, args_flat, in_axes_flat)
-    out_flat = batching.batch(flat_fun, args_flat, in_axes_flat,
-                              lambda: _flatten_axes(out_tree(), out_axes))
+    in_axes_flat = flatten_axes(in_tree, in_axes)
+    axis_size = _check_axis_sizes(in_tree, args_flat, in_axes_flat)
+    out_flat = batching.batch(
+        flat_fun, args_flat, in_axes_flat,
+        lambda: flatten_axes(out_tree(), out_axes), axis_size)
     return tree_unflatten(out_tree(), out_flat)
 
   return batched_fun
 
-def _flatten_axes(treedef, axis_tree):
-  # given an axis spec tree axis_tree (a pytree with integers and Nones at the
-  # leaves, i.e. the Nones are to be considered leaves) that is a tree prefix of
-  # the given treedef, build a complete axis spec tree with the same structure
-  # and return the flattened result
-  # TODO(mattjj,phawkins): improve this implementation
-  proxy = object()
-  dummy = tree_unflatten(treedef, [object()] * treedef.num_leaves)
-  axes = []
-  add_leaves = lambda i, x: axes.extend([i] * len(tree_flatten(x)[0]))
+def _check_axis_sizes(tree, vals, dims):
+  mapped_axis_sizes = {x.shape[d] for x, d in zip(vals, dims) if d is not None}
   try:
-    tree_multimap(add_leaves, _replace_nones(proxy, axis_tree), dummy)
+    sizes, = mapped_axis_sizes
+    return sizes
   except ValueError:
-    msg = ("axes specification must be a tree prefix of the corresponding "
-           "value, got specification {} for value {}.")
-    raise ValueError(msg.format(axis_tree, treedef))
-  axes = [None if a is proxy else a for a in axes]
-  assert len(axes) == treedef.num_leaves
-  return axes
+    msg = "vmap/pmap got inconsistent sizes for array axes to be mapped:\n{}"
+    # we switch the error message based on whether args is a tuple of arrays,
+    # in which case we can produce an error message based on argument indices,
+    # or if it has nested containers.
+    # TODO(mattjj,phawkins): add a way to inspect pytree kind more directly
+    if tree == tree_flatten((core.unit,) * tree.num_leaves)[1]:
+      lines1 = ["arg {} has shape {} and axis {} is to be mapped"
+                .format(i, x.shape, d) for i, (x, d) in enumerate(zip(vals, dims))]
+      sizes = collections.defaultdict(list)
+      for i, (x, d) in enumerate(zip(vals, dims)):
+        if d is not None:
+          sizes[x.shape[d]].append(i)
+      lines2 = ["{} {} {} {} to be mapped of size {}".format(
+                  "args" if len(idxs) > 1 else "arg",
+                  ", ".join(map(str, idxs)),
+                  "have" if len(idxs) > 1 else "has",
+                  "axes" if len(idxs) > 1 else "an axis",
+                  size)
+                for size, idxs in sizes.items()]
+      raise ValueError(msg.format("\n".join(lines1 + ["so"] + lines2)))
+    else:
+      sizes = [x.shape[d] if d is not None else None for x, d in zip(vals, dims)]
+      sizes = tree_unflatten(tree, sizes)
+      raise ValueError(msg.format("the tree of axis sizes is:\n{}".format(sizes)))
 
 
-def pmap(fun, axis_name=None, static_broadcasted_argnums=(), devices=None, backend=None, axis_size=None):
+def pmap(fun, axis_name=None, in_axes=0, out_axes=0, static_broadcasted_argnums=(),
+         devices=None, backend=None, axis_size=None):
   """Parallel map with support for collectives.
 
   The purpose of ``pmap`` is to express single-program multiple-data (SPMD)
@@ -758,6 +741,10 @@ def pmap(fun, axis_name=None, static_broadcasted_argnums=(), devices=None, backe
       (tuple/list/dict) thereof.
     axis_name: Optional, a hashable Python object used to identify the mapped
       axis so that parallel collectives can be applied.
+    in_axes: Specification of which axes in the input to map over (with the
+      same semantics as in ``vmap``).
+    out_axes: Specification of which output axes to map over (with the same
+      semantics as in ``vmap``).
     static_broadcasted_argnums: A tuple of ints specifying which positional
       arguments to treat as static (compile-time constant). Operations that
       only depend on static arguments will be constant-folded. Calling the
@@ -776,13 +763,13 @@ def pmap(fun, axis_name=None, static_broadcasted_argnums=(), devices=None, backe
       Optional, a string representing the xla backend. 'cpu', 'gpu', or 'tpu'.
 
   Returns:
-    A parallelized version of ``fun`` with arguments that correspond to those of
-    ``fun`` but each with an additional leading array axis (with equal sizes)
-    and with output that has an additional leading array axis (with the same
-    size).
+    A parallelized version of ``fun`` with arguments that correspond to
+    those of ``fun``, but with extra array axes at positions indicated by
+    ``in_axes``, and a return value that corresponds to that of ``fun``, but
+    with extra array axes at positions indicated by ``out_axes``.
 
   For example, assuming 8 XLA devices are available, ``pmap`` can be used as a
-  map along a leading array axes:
+  map along a leading array axis:
 
   >>> out = pmap(lambda x: x ** 2)(np.arange(8))
   >>> print(out)
@@ -892,20 +879,24 @@ def pmap(fun, axis_name=None, static_broadcasted_argnums=(), devices=None, backe
       f, dyn_args = _argnums_partial(f, dyn_argnums, args)
     else:
       dyn_args = args
-    args, in_tree = tree_flatten((dyn_args, kwargs))
-    local_axis_size = _pmap_axis_size(args)
-    _check_args(args)
+    args_flat, in_tree = tree_flatten((dyn_args, kwargs))
+    _, args_in_tree = tree_flatten(args)
+    in_axes_flat = flatten_axes(args_in_tree, in_axes)
+    local_axis_size = _check_axis_sizes(in_tree, args_flat, in_axes_flat)
+    _check_args(args_flat)
     flat_fun, out_tree = flatten_fun(f, in_tree)
-    out = pxla.xla_pmap(
+    out_flat = pxla.xla_pmap(
         flat_fun,
-        *args,
+        *args_flat,
         backend=backend,
         axis_name=axis_name,
         axis_size=local_axis_size,
         global_axis_size=axis_size,
+        in_dims=in_axes_flat,
+        out_dim_dests=lambda: flatten_axes(out_tree(), out_axes),
         devices=tuple(devices) if devices is not None else devices,
         name=flat_fun.__name__)
-    return tree_unflatten(out_tree(), out)
+    return tree_unflatten(out_tree(), out_flat)
 
   namestr = "pmap({}, axis_name={})".format
   f_pmapped.__name__ = namestr(f_pmapped.__name__, axis_name)
@@ -932,7 +923,7 @@ class _TempAxisName(object):
     return self.obj is other.obj
 
 
-def soft_pmap(fun, axis_name=None, backend=None):
+def soft_pmap(fun, axis_name=None, in_axes=0, out_axes=0, backend=None):
   warn("soft_pmap is an experimental feature and probably has bugs!")
   _check_callable(fun)
   axis_name = _TempAxisName(fun) if axis_name is None else axis_name
@@ -941,7 +932,8 @@ def soft_pmap(fun, axis_name=None, backend=None):
   def f_pmapped(*args, **kwargs):
     f = lu.wrap_init(fun)
     args_flat, in_tree = tree_flatten((args, kwargs))
-    axis_size = _pmap_axis_size(args_flat)
+    in_axes_flat = flatten_axes(in_tree, in_axes)
+    axis_size = _check_axis_sizes(in_tree, args_flat, in_axes_flat)
     _check_args(args_flat)
     flat_fun, out_tree = flatten_fun(f, in_tree)
 
@@ -959,8 +951,9 @@ def soft_pmap(fun, axis_name=None, backend=None):
     soft_mapped_fun = pxla.split_axis(flat_fun, axis_name, chunk_size)
     reshaped_outs = pxla.xla_pmap(soft_mapped_fun, *reshaped_args, backend=backend,
                                   axis_name=axis_name, axis_size=num_chunks,
-                                  global_axis_size=None, devices=None,
-                                  name=soft_mapped_fun.__name__)
+                                  global_axis_size=None, in_dims=in_axes_flat,
+                                  out_dim_dests=lambda: flatten_axes(out_tree(), out_axes),
+                                  devices=None, name=soft_mapped_fun.__name__)
     outs = [_reshape_merge(out) for out in reshaped_outs]
     return tree_unflatten(out_tree(), outs)
 

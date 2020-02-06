@@ -26,7 +26,8 @@ from ..abstract_arrays import raise_to_shaped
 from ..util import unzip2, safe_map, safe_zip, partial, split_list, wrap_name
 from ..tree_util import register_pytree_node
 from .. import linear_util as lu
-from ..api_util import flatten_fun, flatten_fun_nokwargs
+from ..api_util import flatten_fun, flatten_fun_nokwargs, flatten_axes
+from ..map_util import not_mapped
 from ..tree_util import tree_flatten, tree_unflatten
 
 zip = safe_zip
@@ -298,6 +299,8 @@ class JVPTrace(Trace):
       return JVPTracer(self, primal_out, tangent_out)
 
   def process_call(self, call_primitive, f, tracers, params):
+    if call_primitive in pe.map_primitives:
+      return self.process_map(call_primitive, f, tracers, params)
     assert call_primitive.multiple_results
     primals = [t.primal for t in tracers]
     tangents = [t.tangent for t in tracers]
@@ -306,6 +309,24 @@ class JVPTrace(Trace):
     name = params.get('name', f.__name__)
     params = dict(params, name=wrap_name(name, 'jvp'))
     result = call_primitive.bind(f_jvp, *(primals + nonzero_tangents), **params)
+    primal_out, tangent_out = tree_unflatten(out_tree_def(), result)
+    return [JVPTracer(self, p, t) for p, t in zip(primal_out, tangent_out)]
+  
+  def process_map(self, map_primitive, f, tracers, params):
+    assert map_primitive.multiple_results
+    primals = [t.primal for t in tracers]
+    tangents = [t.tangent for t in tracers]
+    nonzero_tangents, in_tree_def = tree_flatten(tangents)
+    f_jvp, out_tree_def = traceable(jvp_subtrace(f, self.master), len(primals), in_tree_def)
+    name = params.get('name', f.__name__)
+    out_dims = params['out_dim_dests']
+    out_dim_dests = out_dims if not isinstance(out_dims, tuple) else lambda: out_dims
+    in_dims = params['in_dims'] + tuple(
+        dim for t, dim in zip(tangents, params['in_dims']) if t is not zero)
+    new_params = dict(params, name=wrap_name(name, 'jvp'), in_dims=in_dims,
+                      out_dim_dests=lambda: flatten_axes(out_tree_def(), (
+                          out_dim_dests(), out_dim_dests())))
+    result = map_primitive.bind(f_jvp, *(primals + nonzero_tangents), **new_params)
     primal_out, tangent_out = tree_unflatten(out_tree_def(), result)
     return [JVPTracer(self, p, t) for p, t in zip(primal_out, tangent_out)]
 
@@ -538,19 +559,26 @@ primitive_transposes[pe.remat_call_p] = partial(call_transpose, pe.remat_call_p)
 
 def map_transpose(primitive, params, call_jaxpr, args, ct):
   all_args, in_tree_def = tree_flatten(((), args, ct))  # empty consts
-  fun = lu.hashable_partial(lu.wrap_init(backward_pass), call_jaxpr)
+  # either an empty (no defined primals) or one-element
+  # (all defined primals have the same batch dim) tuple
+  primal_dim = tuple(dim for arg, dim in zip(args, params['in_dims']) if arg is not undefined_primal)
+  in_dims = primal_dim + tuple(dim for t, dim in zip(ct, params['out_dim_dests'])
+                               if t is not zero)
+  fun = lu.hashable_partial(lu.wrap_init(backward_pass), jaxpr)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
-  params = dict(params, name=wrap_name(params['name'], 'transpose'))
-  out_flat = primitive.bind(fun, *all_args, **params)
+  # TODO(jekbradbury): think harder about the fan-in-sums;
+  # do all cotangents need to be mapped?
+  primal_dim = primal_dim[0] if primal_dim else 0
+  ct_dim = 0 if primal_dim is not_mapped else primal_dim
+  out_dim_dests = lambda: flatten_axes(out_tree(), ct_dim)
+  new_params = dict(params, name=wrap_name(params['name'], 'transpose'),
+                    in_dims=in_dims, out_dim_dests=out_dim_dests)
+  out_flat = primitive.bind(fun, *all_args, **new_params)
   arg_cts = tree_unflatten(out_tree(), out_flat)
-
-  mapped_invars = params['mapped_invars']  # True for each mapped invar
-  # The freevars are being fanned out (not mapped). During transpose the
-  # dual of fan-out is fan-in-sum. We apply it to the unmapped invars.
-  assert len(mapped_invars) == len(arg_cts)
-  arg_cts = (arg_ct if arg_mapped or arg_ct is zero else arg_ct.sum(0)
-             for arg_ct, arg_mapped in zip(arg_cts, mapped_invars))
-
+  # unmapped values may fan out to mapped cotangents; if so
+  # the cotangents need to have a fan-in-sum applied.
+  arg_cts = [x.sum(0) if d is not_mapped and x is not zero else x
+             for x, d in zip(arg_cts, params['in_dims'])]
   return arg_cts
 
 

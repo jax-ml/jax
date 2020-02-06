@@ -642,7 +642,7 @@ def process_env_traces(primitive, level, params_tuple, *args):
 def call_bind(primitive, f, *args, **params):
   top_trace = find_top_trace(args)
   level = trace_state.trace_stack.next_level(True) if top_trace is None else top_trace.level
-  params_tuple = tuple(params.items())
+  params_tuple = tuple((k, v) for k, v in params.items() if k != 'out_dim_dests')
   f, env_trace_todo = process_env_traces(f, primitive, level, params_tuple)
   if top_trace is None:
     with new_sublevel():

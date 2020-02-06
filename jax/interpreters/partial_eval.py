@@ -24,6 +24,7 @@ import numpy as onp
 from .. import core
 from .. import linear_util as lu
 from ..abstract_arrays import ShapedArray, ConcreteArray, raise_to_shaped
+from ..map_util import not_mapped, shard_aval, map_aval
 from ..util import (unzip2, safe_zip, safe_map, toposort, partial, split_list,
                     wrap_name, cache)
 from ..core import (Trace, Tracer, new_master, Jaxpr, Literal, get_aval,
@@ -146,26 +147,36 @@ class JaxprTrace(Trace):
 
   def process_map(self, map_primitive, f, tracers, params):
     in_pvs, in_consts = unzip2([t.pval for t in tracers])
-    reduced_pvs = [None if pv is None else _mapped_aval(pv) for pv in in_pvs]
+    in_dims = params['in_dims']
+    reduced_pvs = [None if pv is None else shard_aval(pv, dim)
+                   for pv, dim in zip(in_pvs, in_dims)]
     fun, aux = partial_eval(f, self, reduced_pvs)
-    out_flat = map_primitive.bind(fun, *in_consts, **params)
+    out_dims = params['out_dim_dests']
+    out_dim_dests = out_dims if not isinstance(out_dims, tuple) else lambda: out_dims
+    # We need to decide what out_dims to use for the residuals. In the xla_pmap case,
+    # 0 is as efficient as any other choice; in the case of something more like vmap,
+    # we'd ideally want to use the same dim as the batching tracer for each residual.
+    # TODO(jekbradbury): allow these to be not_mapped by tracking replication.
+    const_dim_dests = lambda: (0,) * len(aux()[1].constvars)
+    unstaged_out_dim_dests = lambda: out_dim_dests() + const_dim_dests()
+    unstaged_params = dict(params, out_dim_dests=unstaged_out_dim_dests)
+    out_flat = map_primitive.bind(fun, *in_consts, **unstaged_params)
     out_pvs_reduced, jaxpr, env = aux()
-    out_pv_consts, consts = split_list(out_flat, [len(out_flat)-len(jaxpr.constvars)])
-    out_pvs = [None if pv is None else _unmapped_aval(params['axis_size'], pv)
-               for pv in out_pvs_reduced]
+    num_orig_outs = len(out_flat) - len(jaxpr.constvars)
+    out_pv_consts, consts = split_list(out_flat, [num_orig_outs])
+    out_pvs = [None if pv is None else map_aval(params['axis_size'], pv, dim)
+               for pv, dim in zip(out_pvs_reduced, unstaged_out_dim_dests())]
     const_tracers = map(self.new_instantiated_const, consts)
     env_tracers = map(self.full_raise, env)
     lifted_jaxpr = convert_constvars_jaxpr(jaxpr)
     out_tracers = [JaxprTracer(self, PartialVal((out_pv, out_pv_const)), None)
                    for out_pv, out_pv_const in zip(out_pvs, out_pv_consts)]
-    # The `jaxpr` already contains the env_vars at start of invars
-    new_params = dict(params,
-                      mapped_invars=tuple([True] * len(const_tracers) +
-                                          [False] * len(env_tracers) +
-                                          [True] * len(tracers)),
-                      call_jaxpr=lifted_jaxpr)
+    # Values captured from the environment are unmapped.
+    staged_in_dims = const_dim_dests() + (not_mapped,) * len(env) + in_dims
+    staged_params = dict(params, in_dims=staged_in_dims,
+                         out_dim_dests=out_dim_dests(), call_jaxpr=lifted_jaxpr)
     eqn = new_eqn_recipe(tuple(it.chain(const_tracers, env_tracers, tracers)),
-                         out_tracers, map_primitive, new_params)
+                         out_tracers, map_primitive, staged_params)
     for t in out_tracers:
       t.recipe = eqn
     return out_tracers
@@ -197,10 +208,14 @@ class JaxprTrace(Trace):
     return out, todo
 
   def post_process_map(self, map_primitive, out_tracers, params):
+    # TODO(jekbradbury): figure out how to get out_dim_dests here even
+    # though it has to pass through the linear_util machinery.
+    # This might involve a Store. Also just understand what this does
+    # and why...
     jaxpr, consts, env = tracers_to_jaxpr([], out_tracers)
     out_pvs_reduced, out_pv_consts = unzip2(t.pval for t in out_tracers)
-    out_pvs = [None if pv is None else _unmapped_aval(params['axis_size'], pv)
-               for pv in out_pvs_reduced]
+    out_pvs = [None if pv is None else map_aval(params['axis_size'], pv, dim)
+               for pv, dim in zip(out_pvs_reduced, ]
     out = out_pv_consts + consts
     del consts, out_pv_consts
     master = self.master
@@ -230,23 +245,6 @@ class JaxprTrace(Trace):
 # (rather than doing partial evaluation into the call).
 class StagingJaxprTrace(JaxprTrace):
   pass
-
-def _mapped_aval(aval):
-  if aval is core.abstract_unit:
-    return aval
-  elif isinstance(aval, ShapedArray):
-    # might be raising abstraction level from Concrete here
-    return ShapedArray(aval.shape[1:], aval.dtype)
-  else:
-    raise TypeError(aval)
-
-def _unmapped_aval(size, aval):
-  if aval is core.abstract_unit:
-    return aval
-  elif isinstance(aval, ShapedArray):
-    return ShapedArray((size,) + aval.shape, aval.dtype)
-  else:
-    raise TypeError(aval)
 
 map_primitives = set()
 custom_partial_eval_rules = {}

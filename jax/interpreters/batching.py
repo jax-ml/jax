@@ -24,6 +24,7 @@ from .. import dtypes
 from ..core import Trace, Tracer, new_master
 from ..abstract_arrays import ShapedArray, make_shaped_array, array_types, raise_to_shaped
 from ..ad_util import add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_p
+from ..map_util import not_mapped, NotMapped, shard_aval
 from .. import linear_util as lu
 from ..util import unzip2, partial, safe_map, wrap_name
 from . import xla
@@ -32,10 +33,9 @@ from . import partial_eval as pe
 map = safe_map
 
 
-def batch(fun, in_vals, in_dims, out_dim_dests):
-  size, = {x.shape[d] for x, d in zip(in_vals, in_dims) if d is not not_mapped}
+def batch(fun, in_vals, in_dims, out_dim_dests, axis_size):
   out_vals, out_dims = batch_fun(fun, in_vals, in_dims)
-  return map(partial(matchaxis, size), out_dims, out_dim_dests(), out_vals)
+  return map(partial(matchaxis, axis_size), out_dims, out_dim_dests(), out_vals)
 
 def batch_fun(fun, in_vals, in_dims):
   with new_master(BatchTrace) as master:
@@ -57,10 +57,6 @@ def batch_subtrace(master, in_dims, *in_vals):
 
 ### tracer
 
-# TODO(mattjj): use a special sentinel type rather than None
-NotMapped = type(None)
-not_mapped = None
-
 class BatchTracer(Tracer):
   __slots__ = ['val', 'batch_dim']
 
@@ -72,18 +68,9 @@ class BatchTracer(Tracer):
 
   @property
   def aval(self):
-    aval = raise_to_shaped(core.get_aval(self.val))
-    if self.batch_dim is not_mapped:
-      return aval
-    else:
-      if aval is core.abstract_unit:
-        return aval
-      elif type(aval) is ShapedArray:
-        assert 0 <= self.batch_dim < aval.ndim
-        new_shape = tuple(onp.delete(aval.shape, self.batch_dim))
-        return ShapedArray(new_shape, aval.dtype)
-      else:
-        raise TypeError(aval)
+    val_aval = raise_to_shaped(core.get_aval(self.val))
+    aval, _ = shard_aval(val_aval, self.batch_dim)
+    return aval
 
   def full_lower(self):
     if self.batch_dim is not_mapped:

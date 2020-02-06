@@ -99,7 +99,7 @@ def _device_put_scalar(x, device):
   return xc.Buffer.from_pyval(dtypes.coerce_to_array(x), device,
                               backend=xb.get_device_backend(device))
 for _t in dtypes.python_scalar_dtypes.keys():
-  device_put_handlers[_t] = _device_put_array
+  device_put_handlers[_t] = _device_put_scalar
 
 # TODO(mattjj): try to remove this canonicalize_dtype stuff
 def canonicalize_dtype(x):
@@ -212,7 +212,7 @@ def primitive_computation(prim, axis_env, backend, tuple_args, *avals, **params)
       op_type=prim.name,
       op_name=str(pp_eqn_compact(prim.name, params))))
   platform = xb.get_backend(backend).platform
-  xla_args = _xla_callable_args(c, avals, tuple_args)
+  xla_args = _xla_callable_args(c, avals, tuple_args, [False] * len(avals))
   # return val always set as a side-effect on c
   if prim in backend_specific_translations[platform]:
     rule = backend_specific_translations[platform][prim]
@@ -494,7 +494,7 @@ def _xla_callable(fun, device, backend, name, *arg_specs):
 
   c = xb.make_computation_builder("jit_{}".format(fun.__name__))
   xla_consts = _map(c.Constant, consts)
-  xla_args = _xla_callable_args(c, abstract_args, tuple_args)
+  xla_args = _xla_callable_args(c, abstract_args, tuple_args, [False] * len(abstract_args))
   out_nodes = jaxpr_subcomp(
       c, jaxpr, backend, AxisEnv(nreps, (), ()), xla_consts,
       extend_name_stack(wrap_name(name, 'jit')), *xla_args)
@@ -527,14 +527,17 @@ def _xla_callable_device(nreps, backend, device, arg_devices):
     else:
       assert False  # Unreachable given the error check in _xla_callable
 
-def _xla_callable_args(c, avals, tuple_args):
+def _xla_callable_args(c, avals, tuple_args, replicated):
   if not tuple_args:
-    xla_args = [c.ParameterWithShape(aval_to_xla_shape(a))
-                if a is not abstract_token else c.CreateToken() for a in avals]
+    xla_args = [c.ParameterWithShape(aval_to_xla_shape(a), replicated=r)
+                if a is not abstract_token else c.CreateToken()
+                for a, r in zip(avals, replicated)]
     return xla_args
   else:
-    tuple_param = c.ParameterWithShape(xc.Shape.tuple_shape(
-        [aval_to_xla_shape(a) for a in avals if a is not abstract_token]))
+    tuple_param = c.ParameterWithShape(
+        xc.Shape.tuple_shape(
+            [aval_to_xla_shape(a) for a in avals if a is not abstract_token]),
+        replicated=replicated)
     xla_inputs = iter(xla_destructure(c, tuple_param))
     xla_args = [next(xla_inputs) if a is not abstract_token else c.CreateToken()
                 for a in avals]
