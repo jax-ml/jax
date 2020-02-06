@@ -645,7 +645,7 @@ xla_pmap = partial(core.call_bind, xla_pmap_p)
 xla_pmap_p.def_custom_bind(xla_pmap)
 xla_pmap_p.def_impl(xla_pmap_impl)
 
-def _pmap_translation_rule(c, jaxpr, axis_env, const_nodes,
+def _pmap_translation_rule(c, jaxpr, axis_env,
                            in_nodes, name_stack, axis_name, axis_size,
                            global_axis_size, devices, name, backend=None,
                            mapped_invars=None):
@@ -662,7 +662,7 @@ def _pmap_translation_rule(c, jaxpr, axis_env, const_nodes,
     for in_node, in_node_mapped in zip(in_nodes, mapped_invars))
 
   sharded_outs = xla.jaxpr_subcomp(
-      c, jaxpr, backend, new_env, const_nodes,
+      c, jaxpr, backend, new_env, (),
       extend_name_stack(name_stack, wrap_name(name, 'pmap')), *in_nodes_sharded)
   outs = [_xla_unshard(c, new_env, shard) for shard in sharded_outs]
   return c.Tuple(*outs)

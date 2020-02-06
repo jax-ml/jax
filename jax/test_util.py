@@ -606,10 +606,11 @@ def check_raises_regexp(thunk, err_type, pattern):
 
 
 def _iter_eqns(jaxpr):
+  # TODO(necula): why doesn't this search in params?
   for eqn in jaxpr.eqns:
     yield eqn
-    for subjaxpr, _ in eqn.bound_subjaxprs:
-      for sub_eqn in _iter_eqns(subjaxpr):
+    if eqn.bound_subjaxpr:
+      for sub_eqn in _iter_eqns(eqn.bound_subjaxpr):
         yield sub_eqn
 
 def assert_dot_precision(expected_precision, fun, *args):

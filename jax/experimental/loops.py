@@ -430,7 +430,7 @@ class _BodyTracer(object):
     in_pvals = [t.pval for t in in_tracers]
     in_avals = tuple(safe_map(abstract_arrays.raise_to_shaped, unzip2(in_pvals)[0]))
 
-    typed_jaxpr = core.TypedJaxpr(pe.closure_convert_jaxpr(jaxpr),
+    typed_jaxpr = core.TypedJaxpr(pe.convert_constvars_jaxpr(jaxpr),
                                   (), const_avals + in_avals, out_avals)
     return typed_jaxpr, consts
 
