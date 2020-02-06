@@ -564,6 +564,7 @@ class LaxTest(jtu.JaxTestCase):
       for dspec in [('NHWC', 'HWIO', 'NHWC'),]
       for rhs_dilation in [None, (2, 2)]
       for rng_factory in [jtu.rand_small]))
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testConvTranspose2DT(self, lhs_shape, rhs_shape, dtype, strides,
                           padding, dspec, rhs_dilation, rng_factory):
     rng = rng_factory()
@@ -602,6 +603,7 @@ class LaxTest(jtu.JaxTestCase):
       for dspec in [('NHWC', 'HWIO', 'NHWC'),]
       for rhs_dilation in [None, (2, 2)]
       for rng_factory in [jtu.rand_small]))
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testConvTranspose2D(self, lhs_shape, rhs_shape, dtype, strides,
                           padding, dspec, rhs_dilation, rng_factory):
     rng = rng_factory()
@@ -2281,6 +2283,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       for dtype in dtypes
       for padding in ["VALID", "SAME"]
       for rng_factory in [jtu.rand_default]))
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testReduceWindowGrad(self, op, init_val, dtype, padding, rng_factory):
     rng = rng_factory()
     tol = {onp.float16: 1e-1, onp.float32: 1e-3}
@@ -2970,6 +2973,7 @@ class LaxVmapTest(jtu.JaxTestCase):
       for dtype in float_dtypes
       for padding in ["VALID", "SAME"]
       for rng_factory in [jtu.rand_small]))
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testSelectAndGatherAdd(self, dtype, padding, rng_factory):
     if jtu.device_under_test() == "tpu" and dtype == dtypes.bfloat16:
       raise SkipTest("bfloat16 _select_and_gather_add doesn't work on tpu")

@@ -34,7 +34,6 @@ from warnings import warn
 
 import numpy as onp
 from contextlib import contextmanager
-from distutils.util import strtobool
 
 from . import core
 from . import linear_util as lu
@@ -60,14 +59,14 @@ from .interpreters import batching
 from .interpreters import parallel
 from .interpreters import masking
 from .interpreters.masking import shapecheck, ensure_poly
-from .config import flags, config
+from .config import flags, config, bool_env
 
 map = safe_map
 zip = safe_zip
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool("jax_disable_jit",
-                  strtobool(os.getenv("JAX_DISABLE_JIT", "False")),
+                  bool_env("JAX_DISABLE_JIT", False),
                   "Disable JIT compilation and just call original Python.")
 
 
