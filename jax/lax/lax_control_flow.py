@@ -803,10 +803,7 @@ def scan(f, init, xs, length=None):
                     linear=(False,) * (len(consts) + len(in_flat)))
   return tree_unflatten(out_tree, out)
 
-def _scan_impl(*args, **kwargs):
-  forward, length, num_consts, num_carry, jaxpr, linear = split_dict(
-      kwargs, ["forward", "length", "num_consts", "num_carry", "jaxpr", "linear"])
-
+def _scan_impl(*args, forward, length, num_consts, num_carry, jaxpr, linear):
   consts, init, xs = split_list(args, [num_consts, num_carry])
   _, _, x_avals = split_list(jaxpr.in_avals, [num_consts, num_carry])
   _, y_avals = split_list(jaxpr.out_avals, [num_carry])
@@ -840,6 +837,13 @@ def _update_array(i, aval, xs, x):
     return core.unit
   else:
     return lax.dynamic_update_index_in_dim(xs, x, i, 0)
+
+# TODO(mattjj): make scan a primitive
+# def _scan_abstract_eval(*args, forward, length, num_consts, num_carry, jaxpr, linear):
+#   carry_avals, y_avals = split_list(jaxpr.out_avals, [num_carry])
+#   ys_avals = [ShapedArray((length,) + aval.shape, aval.dtype)
+#               if aval is not core.abstract_unit else aval for aval in y_avals]
+#   return carry_avals + y_avals
 
 def _scan_jvp(primals, tangents, forward, length, jaxpr, num_consts, num_carry,
               linear):
@@ -879,9 +883,9 @@ def _scan_jvp(primals, tangents, forward, length, jaxpr, num_consts, num_carry,
       [num_carry, num_ys], [len(init_dot), sum(nonzeros_out) - len(init_dot)])
 
   consts_linear, init_linear, xs_linear = split_list(linear, [num_consts, num_carry])
-  jaxpr_jvp_linear = (consts_linear + [True] * len(consts_dot)
-                      + init_linear + [True] * len(init_dot)
-                      + xs_linear + [True] * len(xs_dot))
+  jaxpr_jvp_linear = tuple(consts_linear + [True] * len(consts_dot)
+                           + init_linear + [True] * len(init_dot)
+                           + xs_linear + [True] * len(xs_dot))
 
   out_flat = scan_p.bind(
       *(consts + consts_dot + init + init_dot + xs + xs_dot),
@@ -899,9 +903,8 @@ def _scan_jvp(primals, tangents, forward, length, jaxpr, num_consts, num_carry,
 def _prune_zeros(ts):
   return [t for t in ts if t is not ad_util.zero]
 
-def _scan_partial_eval(trace, *tracers, **kwargs):
-  forward, length, num_consts, num_carry, jaxpr, linear = split_dict(
-      kwargs, ["forward", "length", "num_consts", "num_carry", "jaxpr", "linear"])
+def _scan_partial_eval(trace, *tracers, forward, length, num_consts, num_carry,
+                       jaxpr, linear):
   num_xs = len(jaxpr.in_avals) - num_carry - num_consts
   num_ys = len(jaxpr.out_avals) - num_carry
 
@@ -955,10 +958,11 @@ def _scan_partial_eval(trace, *tracers, **kwargs):
                [core.unit if uk else t.pval[1]
                 for uk, t in zip(unknowns[num_consts:], tracers[num_consts:])])
   linear_1 = ([False] * len(consts_1) + [True] * num_consts +
-              [lin or uk for uk, lin in zip(unknowns[num_consts:], linear[num_consts:])])
+              [lin or uk for uk, lin
+               in zip(unknowns[num_consts:], linear[num_consts:])])
   out_flat = scan_p.bind(
       *in_consts, forward=forward, length=length, jaxpr=jaxpr_1_opt,
-      num_consts=num_consts_1, num_carry=num_carry, linear=linear_1)
+      num_consts=num_consts_1, num_carry=num_carry, linear=tuple(linear_1))
   out_carry, ys, res_and_units = split_list(out_flat, [num_carry, num_ys])
   extensive_residuals = [r for r, (pv, _) in zip(res_and_units, res_pvals) if pv is not None]
 
@@ -981,7 +985,7 @@ def _scan_partial_eval(trace, *tracers, **kwargs):
                           out_tracers, scan_p,
                           dict(forward=forward, length=length, jaxpr=jaxpr_2_opt,
                                num_consts=num_consts_2,
-                               num_carry=num_carry, linear=linear_2))
+                               num_carry=num_carry, linear=tuple(linear_2)))
   for t in out_tracers: t.recipe = eqn
   return out_tracers
 
@@ -991,10 +995,7 @@ def _promote_aval_rank(sz, aval):
   else:
     return ShapedArray((sz,) + aval.shape, aval.dtype)
 
-def _scan_transpose(cts, *args, **kwargs):
-  forward, length, num_consts, num_carry, jaxpr, linear = split_dict(
-      kwargs, ["forward", "length", "num_consts", "num_carry", "jaxpr", "linear"])
-
+def _scan_transpose(cts, *args, forward, length, num_consts, num_carry, jaxpr, linear):
   # we've only implemented transposing scans with specific lin/nonlin patterns
   consts_lin, init_lin, xs_lin = split_list(linear, [num_consts, num_carry])
   num_ires = len(consts_lin) - sum(consts_lin)
@@ -1030,7 +1031,7 @@ def _scan_transpose(cts, *args, **kwargs):
   outs = scan_p.bind(
       *(ires + ct_consts + ct_carry + ct_ys + eres), forward=not forward,
       length=length, jaxpr=jaxpr_trans, num_consts=num_ires,
-      num_carry=num_consts-num_ires+num_carry, linear=linear_trans)
+      num_carry=num_consts-num_ires+num_carry, linear=tuple(linear_trans))
   ct_consts, ct_init, ct_xs = split_list(outs, [num_consts - num_ires, num_carry])
   return [None] * num_ires + ct_consts + ct_init + ct_xs + [None] * num_eres
 
