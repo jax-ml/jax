@@ -371,6 +371,8 @@ def check_backend_params(params, outer_backend):
 
 class AxisEnv(object):
   def __init__(self, nreps, names=(), sizes=(), devices=None):
+    assert isinstance(names, tuple)
+    assert isinstance(sizes, tuple)
     self.nreps = nreps
     self.names = names
     self.sizes = sizes
@@ -510,7 +512,7 @@ def _xla_callable(fun, device, backend, name, *arg_specs):
   xla_consts = _map(c.Constant, consts)
   xla_args = _xla_callable_args(c, abstract_args, tuple_args)
   out_nodes = jaxpr_subcomp(
-      c, jaxpr, backend, AxisEnv(nreps, [], []), xla_consts,
+      c, jaxpr, backend, AxisEnv(nreps, (), ()), xla_consts,
       extend_name_stack(wrap_name(name, 'jit')), *xla_args)
   built = c.Build(c.Tuple(*out_nodes))
 

@@ -494,7 +494,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   jaxpr_replicas = xla.jaxpr_replicas(jaxpr)
   num_local_replicas = axis_size * jaxpr_replicas
   num_global_replicas = global_axis_size * jaxpr_replicas
-  axis_env = xla.AxisEnv(num_global_replicas, [axis_name], [global_axis_size], devices)
+  axis_env = xla.AxisEnv(num_global_replicas, (axis_name,), (global_axis_size,), devices)
 
   tuple_args = len(avals) > 100  # pass long arg lists as tuple for TPU
 
