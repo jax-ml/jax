@@ -25,7 +25,6 @@ rules for the underlying :code:`lax` primitives.
 """
 
 
-from distutils.util import strtobool
 import builtins
 import collections
 from collections.abc import Sequence

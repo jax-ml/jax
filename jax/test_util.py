@@ -14,7 +14,6 @@
 
 
 from contextlib import contextmanager
-from distutils.util import strtobool
 import functools
 import re
 import itertools as it
@@ -30,7 +29,7 @@ import numpy.random as npr
 from . import api
 from . import dtypes
 from . import lax
-from .config import flags
+from .config import flags, bool_env
 from .util import partial
 from .tree_util import tree_multimap, tree_all, tree_map, tree_reduce
 from .lib import xla_bridge
@@ -52,7 +51,7 @@ flags.DEFINE_integer(
 
 flags.DEFINE_bool(
     'jax_skip_slow_tests',
-    strtobool(os.getenv('JAX_SKIP_SLOW_TESTS', '0')),
+    bool_env('JAX_SKIP_SLOW_TESTS', False),
     help=
     'Skip tests marked as slow (> 5 sec).'
 )

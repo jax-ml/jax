@@ -14,7 +14,6 @@
 
 
 from collections import namedtuple, defaultdict
-from distutils.util import strtobool
 import itertools as it
 import operator as op
 import os
@@ -22,7 +21,7 @@ import os
 from absl import logging
 import numpy as onp
 
-from ..config import flags
+from ..config import flags, bool_env
 from .. import core
 from .. import ad_util
 from .. import tree_util
@@ -44,10 +43,10 @@ from . import masking
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_debug_nans',
-                  strtobool(os.getenv('JAX_DEBUG_NANS', "False")),
+                  bool_env('JAX_DEBUG_NANS', False),
                   'Add nan checks to every operation.')
 flags.DEFINE_bool('jax_log_compiles',
-                  strtobool(os.getenv('JAX_LOG_COMPILES', "False")),
+                  bool_env('JAX_LOG_COMPILES', False),
                   'Print a message each time a `jit` computation is compiled.')
 
 def _map(f, *xs): return tuple(map(f, *xs))
