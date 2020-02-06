@@ -52,10 +52,10 @@ def _skip_if_unsupported_type(dtype):
       dtype in (onp.dtype('float64'), onp.dtype('complex128'))):
     raise unittest.SkipTest("--jax_enable_x64 is not set")
 
-# TODO(phawkins): bug https://github.com/google/jax/issues/2166
+# TODO(phawkins): bug https://github.com/google/jax/issues/432
 def _skip_on_mac_xla_bug():
   if sys.platform == "darwin" and osp.version.version > "1.0.0":
-    raise unittest.SkipTest("Test fails on Mac with new scipy (issue #2166)")
+    raise unittest.SkipTest("Test fails on Mac with new scipy (issue #432)")
 
 class NumpyLinalgTest(jtu.JaxTestCase):
 
