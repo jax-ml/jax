@@ -108,6 +108,19 @@ jax.scipy.stats.laplace
    logpdf
    pdf
 
+jax.scipy.stats.logistic
+~~~~~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.logistic
+.. autosummary::
+  :toctree: _autosummary
+
+   cdf
+   isf
+   logpdf
+   pdf
+   ppf
+   sf
+
 jax.scipy.stats.norm
 ~~~~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.norm
@@ -118,6 +131,7 @@ jax.scipy.stats.norm
    logcdf
    logpdf
    pdf
+   ppf
 
 jax.scipy.stats.uniform
 ~~~~~~~~~~~~~~~~~~~~~~~

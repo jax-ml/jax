@@ -89,7 +89,7 @@ def device_put(x, device=None):
 
 device_put_handlers = {}
 device_put_handlers[core.Unit] = \
-    lambda _, device: xc.Buffer.from_pyval(
+    lambda _, device: xc.Buffer.make_tuple(
         (), device, backend=xb.get_device_backend(device))
 def _device_put_array(x, device):
   return xc.Buffer.from_pyval(x, device, backend=xb.get_device_backend(device))
@@ -269,7 +269,7 @@ def jaxpr_literals(jaxpr):
 
 def eqn_literals(eqn):
   if eqn.bound_subjaxprs:
-    (subjaxpr, _, _), = eqn.bound_subjaxprs
+    (subjaxpr, _), = eqn.bound_subjaxprs
     for literal in jaxpr_literals(subjaxpr):
       yield literal
   if eqn.primitive in initial_style_translations:
@@ -282,7 +282,7 @@ def eqn_literals(eqn):
     if type(v) is core.Literal:
       yield v.val
 
-def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, freevars, name_stack, *args):
+def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
   platform = xb.get_backend(backend).platform
 
   def read(v):
@@ -298,7 +298,6 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, freevars, name_stack, *ar
   env = {}
   write(core.unitvar, c.Tuple())
   _map(write, jaxpr.constvars, consts)
-  _map(write, jaxpr.freevars, freevars)
   _map(write, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
     c.SetOpMetadata(xc.OpMetadata(
@@ -323,11 +322,10 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, freevars, name_stack, *ar
       ans = rule(c, *in_nodes, replica_groups=replica_groups, **new_params)
     elif eqn.primitive in call_translations:
       new_params = check_backend_params(eqn.params, backend)
-      (subjaxpr, const_bindings, freevar_bindings), = eqn.bound_subjaxprs
+      (subjaxpr, const_bindings), = eqn.bound_subjaxprs
       const_nodes = _map(read, const_bindings)
-      freevar_nodes = _map(read, freevar_bindings)
       rule = call_translations[eqn.primitive]
-      ans = rule(c, subjaxpr, axis_env, const_nodes, freevar_nodes, in_nodes,
+      ans = rule(c, subjaxpr, axis_env, const_nodes, in_nodes,
                  name_stack, backend=backend, **new_params)
     else:
       msg = "XLA translation rule for primitive '{}' not found"
@@ -390,7 +388,7 @@ def jaxpr_replicas(jaxpr):
 
 def eqn_replicas(eqn):
   if eqn.bound_subjaxprs:
-    (subjaxpr, _, _), = eqn.bound_subjaxprs
+    (subjaxpr, _), = eqn.bound_subjaxprs
     return eqn.params.get('axis_size', 1) * jaxpr_replicas(subjaxpr)
   elif eqn.primitive in initial_style_translations:
     nums = (jaxpr_replicas(param if type(param) is core.Jaxpr else param.jaxpr)
@@ -408,7 +406,7 @@ def jaxpr_has_pmap(jaxpr):
 
 def eqn_has_pmap(eqn):
   if eqn.bound_subjaxprs:
-    (subjaxpr, _, _), = eqn.bound_subjaxprs
+    (subjaxpr, _), = eqn.bound_subjaxprs
     return jaxpr_has_pmap(subjaxpr)
   elif eqn.primitive in initial_style_translations:
     return any(jaxpr_has_pmap(param if type(param) is core.Jaxpr else param.jaxpr)
@@ -423,7 +421,7 @@ def jaxpr_collectives(jaxpr):
 
 def eqn_collectives(eqn):
   if eqn.bound_subjaxprs:
-    (subjaxpr, _, _), = eqn.bound_subjaxprs
+    (subjaxpr, _), = eqn.bound_subjaxprs
     for c in jaxpr_collectives(subjaxpr):
       yield c
   elif eqn.primitive in initial_style_translations:
@@ -494,7 +492,7 @@ def _xla_callable(fun, device, backend, name, *arg_specs):
   xla_consts = _map(c.Constant, consts)
   xla_args = _xla_callable_args(c, abstract_args, tuple_args)
   out_nodes = jaxpr_subcomp(
-      c, jaxpr, backend, AxisEnv(nreps, [], []), xla_consts, (),
+      c, jaxpr, backend, AxisEnv(nreps, [], []), xla_consts,
       extend_name_stack(wrap_name(name, 'jit')), *xla_args)
   built = c.Build(c.Tuple(*out_nodes))
 
@@ -598,17 +596,16 @@ xla_call = partial(core.call_bind, xla_call_p)
 xla_call_p.def_custom_bind(xla_call)
 xla_call_p.def_impl(_xla_call_impl)
 
-def _xla_call_translation_rule(c, jaxpr, axis_env, const_nodes, freevar_nodes,
+def _xla_call_translation_rule(c, jaxpr, axis_env, const_nodes,
                                in_nodes, name_stack, backend, name, device=None):
   del device  # Ignored.
   subc = xb.make_computation_builder("jit_{}".format(name))
   consts = [subc.ParameterWithShape(c.GetShape(n)) for n in const_nodes]
-  freevars = [subc.ParameterWithShape(c.GetShape(n)) for n in freevar_nodes]
   args = [subc.ParameterWithShape(c.GetShape(n)) for n in in_nodes]
-  out_nodes = jaxpr_subcomp(subc, jaxpr, backend, axis_env, consts, freevars,
+  out_nodes = jaxpr_subcomp(subc, jaxpr, backend, axis_env, consts,
                             extend_name_stack(name_stack, wrap_name(name, 'jit')), *args)
   subc = subc.Build(subc.Tuple(*out_nodes))
-  return c.Call(subc, list(const_nodes) + list(freevar_nodes) + list(in_nodes))
+  return c.Call(subc, list(const_nodes) + list(in_nodes))
 ad.primitive_transposes[xla_call_p] = partial(ad.call_transpose, xla_call_p)
 
 
@@ -656,7 +653,7 @@ def lower_fun(fun, instantiate=False, initial_style=False):
     jaxpr, _, consts = pe.trace_to_jaxpr(
         lu.wrap_init(fun, params), pvals, instantiate=True)
     consts = _map(c.Constant, consts)
-    outs = jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, (),
+    outs = jaxpr_subcomp(c, jaxpr, backend, axis_env, consts,
                          name_stack, *xla_args)
     return c.Tuple(*outs)
   return f
@@ -832,6 +829,10 @@ class DeviceArray(DeviceValue):
   def __array__(self, dtype=None, context=None):
     return onp.asarray(self._value, dtype=dtype)
 
+  @property
+  def __cuda_array_interface__(self):
+    return _force(self).device_buffer.__cuda_array_interface__
+
   __str__ = partialmethod(_forward_to_value, str)
   __bool__ = __nonzero__ = partialmethod(_forward_to_value, bool)
   def __float__(self): return self._value.__float__()
@@ -961,20 +962,19 @@ ad.deflinear(device_put_p, lambda cotangent, **kwargs: [cotangent])
 masking.defvectorized(device_put_p)
 
 
-def _remat_translation_rule(c, jaxpr, axis_env, const_nodes, freevar_nodes, in_nodes,
+def _remat_translation_rule(c, jaxpr, axis_env, const_nodes, in_nodes,
                             name_stack, backend, name, device=None, concrete=None):
   # This looks a lot like _xla_call_translation_rule, except for a widget we use
   # to foil CSE.
   del device, concrete  # Unused.
   subc = xb.make_computation_builder("remat_call_subcomputation")
   consts = [subc.ParameterWithShape(c.GetShape(n)) for n in const_nodes]
-  freevars = [subc.ParameterWithShape(c.GetShape(n)) for n in freevar_nodes]
   args = [subc.ParameterWithShape(c.GetShape(n)) for n in in_nodes]
   args = [_foil_cse(subc, x) for x in args]
-  out_nodes = jaxpr_subcomp(subc, jaxpr, backend, axis_env, consts, freevars,
+  out_nodes = jaxpr_subcomp(subc, jaxpr, backend, axis_env, consts,
                             extend_name_stack(name_stack, wrap_name(name, 'remat')), *args)
   subc = subc.Build(subc.Tuple(*out_nodes))
-  return c.Call(subc, list(const_nodes) + list(freevar_nodes) + list(in_nodes))
+  return c.Call(subc, list(const_nodes) + list(in_nodes))
 call_translations[pe.remat_call_p] = _remat_translation_rule
 
 def _foil_cse(c, x):

@@ -37,7 +37,7 @@ from ..config import flags
 from ..core import Primitive
 from ..abstract_arrays import (UnshapedArray, ShapedArray, ConcreteArray,
                                AbstractToken, array_types, make_shaped_array,
-                               raise_to_shaped, abstract_token)
+                               raise_to_shaped, abstract_token, canonicalize_shape)
 from ..interpreters.masking import to_index
 from ..interpreters import partial_eval as pe
 from ..interpreters import xla
@@ -72,33 +72,6 @@ def broadcast_shapes(*shapes):
     raise ValueError("Incompatible shapes for broadcasting: {}"
                      .format(tuple(map(tuple, shapes))))
   return tuple(result_shape)
-
-def _try_canonicalize_shape(shape):
-  try:
-    return tuple(map(to_index, shape))
-  except (TypeError, AttributeError):
-    return None
-
-def _canonicalize_shape(shape):
-  """Canonicalizes and checks for errors in a user-provided shape value.
-
-  Args:
-    shape: a Python value that represents a shape.
-
-  Returns:
-    A tuple of integers.
-  """
-  canonical = _try_canonicalize_shape(shape)
-  if canonical is not None:
-    return canonical
-
-  msg = ("Shapes must be 1D sequences of concrete values of integer type, "
-         "got {}.")
-  if any(isinstance(x, core.Tracer) and isinstance(core.get_aval(x), ShapedArray)
-         and not isinstance(core.get_aval(x), ConcreteArray) for x in shape):
-    msg += ("\nIf using `jit`, try using `static_argnums` or applying `jit` to "
-            "smaller subfunctions.")
-  raise TypeError(msg.format(shape))
 
 def _identity(x): return x
 
@@ -655,7 +628,7 @@ def reshape(operand, new_sizes, dimensions=None):
   <https://www.tensorflow.org/xla/operation_semantics#reshape>`_
   operator.
   """
-  new_sizes = _canonicalize_shape(new_sizes)  # TODO
+  new_sizes = canonicalize_shape(new_sizes)  # TODO
   new_sizes = tuple(new_sizes)
   same_shape = onp.shape(operand) == new_sizes
   same_dims = dimensions is None or tuple(dimensions) == tuple(range(onp.ndim(operand)))
@@ -763,7 +736,7 @@ def gather(operand, start_indices, dimension_numbers, slice_sizes):
   """
   return gather_p.bind(
       operand, start_indices, dimension_numbers=dimension_numbers,
-      slice_sizes=_canonicalize_shape(slice_sizes), operand_shape=operand.shape)
+      slice_sizes=canonicalize_shape(slice_sizes), operand_shape=operand.shape)
 
 def scatter_add(operand, scatter_indices, updates, dimension_numbers):
   """Scatter-add operator.
@@ -1078,7 +1051,7 @@ def full(shape, fill_value, dtype=None):
     dtype: the type of the output array, or `None`. If not `None`, `fill_value`
       will be cast to `dtype`.
   """
-  shape = _canonicalize_shape(shape)
+  shape = canonicalize_shape(shape)
   if onp.shape(fill_value):
     msg = "full must be called with scalar fill_value, got fill_value.shape {}."
     raise TypeError(msg.format(onp.shape(fill_value)))
@@ -1101,7 +1074,7 @@ def iota(dtype, size):
 def broadcasted_iota(dtype, shape, dimension):
   """Convenience wrapper around ``iota``."""
   dtype = dtypes.canonicalize_dtype(dtype)
-  shape = _canonicalize_shape(shape)
+  shape = canonicalize_shape(shape)
   dimension = int(dimension)
   return broadcast_in_dim(iota(dtype, shape[dimension]), shape, [dimension])
 
@@ -1328,7 +1301,7 @@ def full_like(x, fill_value, dtype=None, shape=None):
     An ndarray with the same shape as `x` with its entries set equal to
     `fill_value`, similar to the output of np.full.
   """
-  shape = onp.shape(x) if shape is None else _canonicalize_shape(shape)
+  shape = onp.shape(x) if shape is None else canonicalize_shape(shape)
   fill_value = tie_in(x, fill_value)
   return full(shape, fill_value, dtype or _dtype(x))
 
@@ -3456,7 +3429,7 @@ def _reduction_computation(c, jaxpr, consts, init_value):
   subc = xla_bridge.make_computation_builder("reduction_computation")
   consts = [subc.ParameterWithShape(const) for const in consts]
   args = [subc.ParameterWithShape(shape), subc.ParameterWithShape(shape)]
-  out, = xla.jaxpr_subcomp(subc, jaxpr, None, axis_env, consts, (), '', *args)
+  out, = xla.jaxpr_subcomp(subc, jaxpr, None, axis_env, consts, '', *args)
   return subc.Build(out)
 
 def _masking_defreducer(prim, identity):
@@ -4428,7 +4401,9 @@ def _check_shapelike(fun_name, arg_name, obj):
   if obj_arr.ndim != 1:
     msg = "{} {} must be rank 1, got {}."
     raise TypeError(msg.format(obj_arr.ndim))
-  if _try_canonicalize_shape(obj_arr) is None:
+  try:
+    canonicalize_shape(obj_arr)
+  except TypeError:
     msg = "{} {} must have every element be an integer type, got {}."
     raise TypeError(msg.format(fun_name, arg_name, tuple(map(type, obj))))
   if not (obj_arr >= 0).all():

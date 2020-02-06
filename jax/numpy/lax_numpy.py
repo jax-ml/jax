@@ -1944,7 +1944,7 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
            reshape(lax.iota(dt, num), iota_shape) *
            reshape(delta, bounds_shape))
   elif num == 1:
-    delta = nan
+    delta = nan if endpoint else lax.convert_element_type(stop - start, dt)
     out = reshape(broadcast_start, bounds_shape)
   else: # num == 0 degenerate case, match onp behavior
     empty_shape = list(lax.broadcast_shapes(shape(start), shape(stop)))

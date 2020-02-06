@@ -57,19 +57,19 @@ def get_python_bin_path(python_bin_path_flag):
 
 # Bazel
 
-BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/0.29.1/"
+BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/1.2.1/"
 BazelPackage = collections.namedtuple("BazelPackage", ["file", "sha256"])
 bazel_packages = {
     "Linux":
         BazelPackage(
-            file="bazel-0.29.1-linux-x86_64",
+            file="bazel-1.2.1-linux-x86_64",
             sha256=
-            "da3031d811f42f6208d24a87984b5b07e1c75afede184cad86eb02bef6c3b9b0"),
+            "f5e21d7448419d1596ad0c5bb71fb336a0af08c832587aec394970ea56701d88"),
     "Darwin":
         BazelPackage(
-            file="bazel-0.29.1-darwin-x86_64",
+            file="bazel-1.2.1-darwin-x86_64",
             sha256=
-            "34daae4caafbdb0952415ed6f97f47f03df84df9af146e9eb910ba65c073efdd"),
+            "6729be5a56e6eadf7a9112afd2d87ce348da8fca22077b882d9bb7a6f5d41d1c"),
 }
 
 
@@ -304,7 +304,7 @@ def main():
 
   # Find a working Bazel.
   bazel_path = get_bazel_path(args.bazel_path)
-  check_bazel_version(bazel_path, min_version="0.26.0", max_version=None)
+  check_bazel_version(bazel_path, min_version="1.2.1", max_version=None)
   print("Bazel binary path: {}".format(bazel_path))
 
   python_bin_path = get_python_bin_path(args.python_bin_path)

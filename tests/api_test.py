@@ -1600,6 +1600,46 @@ class APITest(jtu.JaxTestCase):
 
     api.grad(func)(5.0)  # doesn't crash
 
+  def test_remat_jit2(self):
+    @api.jit
+    def f(x):
+      y = 2 * x
+
+      @api.remat
+      def g():
+        return y
+
+      return g()
+
+    self.assertAllClose(f(3), 6, check_dtypes=False)
+
+  def test_remat_nontrivial_env(self):
+    # simplified from https://github.com/google/jax/issues/2030
+
+    @api.remat
+    def foo(state, dt=0.5, c=1):
+      u, u_t = state
+      u_tt = c**2 * u
+      u_t = u_t + u_tt * dt
+      return (u, u_t)
+
+    @partial(api.jit, static_argnums=(1,))
+    def _multi_step(state, count, dt, c):
+      f = lambda s, _: (foo(s, dt, c), _)
+      return lax.scan(f, state, None, count)
+
+    def multi_step(state, count, dt=1/np.sqrt(2), c=1):
+      return _multi_step(state, count, dt, c)
+
+    def loss(u0, target, steps, dt=1/np.sqrt(2), c=1):
+      init = (u0, np.zeros_like(u0))
+      (uf, _), _ = multi_step(init, steps, dt, c)
+      return ((uf - target) ** 2).mean()
+
+    target = np.zeros((128, 128))
+    u0 = np.ones_like(target)
+    loss(u0, target, 10)  # doesn't crash
+
   def test_trivial_computations(self):
     x = np.array([1, 2, 3])
     y = api.jit(lambda x: x)(x)
@@ -1643,7 +1683,7 @@ class APITest(jtu.JaxTestCase):
 
     self.assertLen(outer_jaxpr.eqns, 1)
     self.assertEqual(outer_jaxpr.eqns[0].primitive.name, 'xla_call')
-    (subjaxpr_1, _,  _), = outer_jaxpr.eqns[0].bound_subjaxprs
+    (subjaxpr_1, _), = outer_jaxpr.eqns[0].bound_subjaxprs
     self.assertEqual(str(subjaxpr_1), str(inner_jaxpr))
     self.assertLen(inner_jaxpr.eqns, 2)
     self.assertEqual(inner_jaxpr.eqns[0].primitive.name, 'mul')
@@ -1676,7 +1716,7 @@ class JaxprTest(jtu.JaxTestCase):
 
     jaxpr = api.make_jaxpr(fun)(0.)
     self.assertMultiLineStrippedEqual(str(jaxpr), """
-    { lambda b ;  ; a.
+    { lambda b ; a.
         let
         in [a, 1.0, b] }
     """)
@@ -1690,14 +1730,15 @@ class JaxprTest(jtu.JaxTestCase):
                       lambda xf: xf - x)
     jaxpr = api.make_jaxpr(f)(3.)
     self.assertMultiLineStrippedEqual(str(jaxpr), """
-    { lambda  ;  ; a.
+    { lambda  ; a.
       let b = ge a 0.0
           c = add a 1.0
           d = add a 2.0
-          e = cond[ false_jaxpr={ lambda  ;  ; b a.
+          e = cond[ false_jaxpr={ lambda  ; b a.
                                   let c = sub a b
                                   in [c] }
-                    true_jaxpr={ lambda  ;  ; b a.
+                    linear=(False, False, False, False)
+                    true_jaxpr={ lambda  ; b a.
                                  let c = add a b
                                  in [c] } ] b a c a d
       in [e] }
