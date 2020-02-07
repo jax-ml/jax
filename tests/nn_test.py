@@ -34,6 +34,7 @@ config.parse_flags_with_absl()
 
 class NNFunctionsTest(jtu.JaxTestCase):
 
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testSoftplusGrad(self):
     check_grads(nn.softplus, (1e-8,), 4,
                 rtol=1e-2 if jtu.device_under_test() == "tpu" else None)
@@ -42,6 +43,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
     val = nn.softplus(89.)
     self.assertAllClose(val, 89., check_dtypes=False)
 
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testEluGrad(self):
     check_grads(nn.elu, (1e4,), 4, eps=1.)
 

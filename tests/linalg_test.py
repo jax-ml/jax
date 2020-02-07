@@ -17,6 +17,7 @@
 from functools import partial
 import itertools
 import unittest
+import sys
 
 import numpy as onp
 import scipy as osp
@@ -51,6 +52,10 @@ def _skip_if_unsupported_type(dtype):
       dtype in (onp.dtype('float64'), onp.dtype('complex128'))):
     raise unittest.SkipTest("--jax_enable_x64 is not set")
 
+# TODO(phawkins): bug https://github.com/google/jax/issues/432
+def _skip_on_mac_xla_bug():
+  if sys.platform == "darwin" and osp.version.version > "1.0.0":
+    raise unittest.SkipTest("Test fails on Mac with new scipy (issue #432)")
 
 class NumpyLinalgTest(jtu.JaxTestCase):
 
@@ -134,6 +139,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for dtype in float_types
       for rng_factory in [jtu.rand_default]))
   @jtu.skip_on_devices("tpu")
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testSlogdetGrad(self, shape, dtype, rng_factory):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
@@ -188,6 +194,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testEigvals(self, shape, dtype, rng_factory):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
+    if shape == (50, 50) and dtype == onp.complex64:
+      _skip_on_mac_xla_bug()
     n = shape[-1]
     args_maker = lambda: [rng(shape, dtype)]
     a, = args_maker()
@@ -565,6 +573,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testInv(self, shape, dtype, rng_factory):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
+    if shape == (200, 200) and dtype == onp.float32:
+      _skip_on_mac_xla_bug()
     if jtu.device_under_test() == "gpu" and shape == (200, 200):
       raise unittest.SkipTest("Test is flaky on GPU")
 
@@ -594,6 +604,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testPinv(self, shape, dtype, rng_factory):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
+    if shape == (7, 10000) and dtype in [onp.complex64, onp.float32]:
+      _skip_on_mac_xla_bug()
     args_maker = lambda: [rng(shape, dtype)]
 
     self._CheckAgainstNumpy(onp.linalg.pinv, np.linalg.pinv, args_maker,
@@ -650,6 +662,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     xc = onp.eye(3, dtype=onp.complex)
     self.assertAllClose(xc, grad_test_jc(xc), check_dtypes=True)
 
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testIssue1151(self):
     A = np.array(onp.random.randn(100, 3, 3), dtype=np.float32)
     b = np.array(onp.random.randn(100, 3), dtype=np.float32)
@@ -661,6 +674,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     jac0 = jax.jacobian(np.linalg.solve, argnums=0)(A[0], b[0])
     jac1 = jax.jacobian(np.linalg.solve, argnums=1)(A[0], b[0])
 
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testIssue1383(self):
     seed = jax.random.PRNGKey(0)
     tmp = jax.random.uniform(seed, (2,2))
@@ -726,6 +740,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       for dtype in float_types + complex_types
       for rng_factory in [jtu.rand_default]))
   @jtu.skip_on_devices("tpu")  # TODO(phawkins): precision problems on TPU.
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testLuGrad(self, shape, dtype, rng_factory):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
@@ -764,6 +779,8 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   def testLuFactor(self, n, dtype, rng_factory):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
+    if n == 200 and dtype == onp.complex64:
+      _skip_on_mac_xla_bug()
     args_maker = lambda: [rng((n, n), dtype)]
 
     x, = args_maker()
@@ -985,6 +1002,8 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   def testExpm(self, n, dtype, rng_factory):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
+    if n == 50 and dtype in [onp.complex64, onp.float32]:
+      _skip_on_mac_xla_bug()
     args_maker = lambda: [rng((n, n), dtype)]
 
     osp_fun = lambda a: osp.linalg.expm(a)

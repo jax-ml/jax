@@ -29,7 +29,7 @@ import numpy.random as npr
 from . import api
 from . import dtypes
 from . import lax
-from .config import flags
+from .config import flags, bool_env
 from .util import partial
 from .tree_util import tree_multimap, tree_all, tree_map, tree_reduce
 from .lib import xla_bridge
@@ -48,6 +48,13 @@ flags.DEFINE_integer(
   'num_generated_cases',
   int(os.getenv('JAX_NUM_GENERATED_CASES', 10)),
   help='Number of generated cases to test')
+
+flags.DEFINE_bool(
+    'jax_skip_slow_tests',
+    bool_env('JAX_SKIP_SLOW_TESTS', False),
+    help=
+    'Skip tests marked as slow (> 5 sec).'
+)
 
 EPS = 1e-4
 
@@ -606,10 +613,11 @@ def check_raises_regexp(thunk, err_type, pattern):
 
 
 def _iter_eqns(jaxpr):
+  # TODO(necula): why doesn't this search in params?
   for eqn in jaxpr.eqns:
     yield eqn
-    for subjaxpr, _ in eqn.bound_subjaxprs:
-      for sub_eqn in _iter_eqns(subjaxpr):
+    if eqn.bound_subjaxpr:
+      for sub_eqn in _iter_eqns(eqn.bound_subjaxpr):
         yield sub_eqn
 
 def assert_dot_precision(expected_precision, fun, *args):

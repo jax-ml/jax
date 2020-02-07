@@ -21,6 +21,7 @@ These are the release notes for JAX.
   and Numba.
 * JAX CPU device buffers now implement the Python buffer protocol, which allows
   zero-copy buffer sharing between JAX and NumPy.
+* Added JAX_SKIP_SLOW_TESTS environment variable to skip tests known as slow.
 
 ## jaxlib 0.1.38 (January 29, 2020)
 
