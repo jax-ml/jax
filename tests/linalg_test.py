@@ -540,6 +540,65 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
+       "_shape={}_pnorm={}".format(jtu.format_shape_dtype_string(shape, dtype), pnorm),
+       "shape": shape, "pnorm": pnorm, "dtype": dtype}
+      for shape in [(1, 1), (4, 4), (2, 3, 5), (5, 5, 5), (20, 20), (5, 10)]
+      for pnorm in [np.inf, -np.inf, 1, -1, 2, -2, 'fro']
+      for dtype in float_types + complex_types))
+  def testCond(self, shape, pnorm, dtype):
+    _skip_if_unsupported_type(dtype)
+
+    def gen_mat():
+      arr_gen = jtu.rand_some_nan()
+      res = arr_gen(shape, dtype)
+      return res
+
+    def args_gen(p):
+      def _args_gen():
+        return [gen_mat(), p]
+      return _args_gen
+
+    args_maker = args_gen(pnorm)
+    if pnorm not in [2, -2] and len(set(shape[-2:])) != 1:
+      with self.assertRaises(onp.linalg.LinAlgError):
+        np.linalg.cond(*args_maker())
+    else:
+      self._CheckAgainstNumpy(onp.linalg.cond, np.linalg.cond, args_maker,
+                              check_dtypes=False, tol=1e-3)
+      partial_norm = partial(np.linalg.cond, p=pnorm)
+      self._CompileAndCheck(partial_norm, lambda: [gen_mat()],
+                            check_dtypes=False, rtol=1e-03, atol=1e-03)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype, "rng_factory": rng_factory}
+      for shape in [(1, 1), (4, 4), (200, 200), (7, 7, 7, 7)]
+      for dtype in float_types
+      for rng_factory in [jtu.rand_default]))
+  def testTensorinv(self, shape, dtype, rng_factory):
+    _skip_if_unsupported_type(dtype)
+    rng = rng_factory()
+
+    def tensor_maker():
+      invertible = False
+      while not invertible:
+        a = rng(shape, dtype)
+        try:
+          onp.linalg.inv(a)
+          invertible = True
+        except onp.linalg.LinAlgError:
+          pass
+      return a
+
+    args_maker = lambda: [tensor_maker(), int(onp.floor(len(shape) / 2))]
+    self._CheckAgainstNumpy(onp.linalg.tensorinv, np.linalg.tensorinv, args_maker,
+                            check_dtypes=False, tol=1e-3)
+    partial_inv = partial(np.linalg.tensorinv, ind=int(onp.floor(len(shape) / 2)))
+    self._CompileAndCheck(partial_inv, lambda: [tensor_maker()], check_dtypes=False, rtol=1e-03, atol=1e-03)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
        "_lhs={}_rhs={}".format(
            jtu.format_shape_dtype_string(lhs_shape, dtype),
            jtu.format_shape_dtype_string(rhs_shape, dtype)),
