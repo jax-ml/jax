@@ -2321,9 +2321,6 @@ def tensordot(a, b, axes=2, precision=None):
   _check_arraylike("tensordot", a, b)
   a_ndim = ndim(a)
   b_ndim = ndim(b)
-  if a_ndim < 1 or b_ndim < 1:
-    msg = "tensordot requires a.ndim and b.dim to be at least 1, got {} and {}."
-    raise TypeError(msg.format(ndim(a), ndim(b)))
 
   a, b = _promote_dtypes(a, b)
   if type(axes) is int:
