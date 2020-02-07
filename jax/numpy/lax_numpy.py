@@ -2906,7 +2906,7 @@ def _index_to_gather(x_shape, idx):
   collapsed_slice_dims = []
   start_index_map = []
 
-  index_dtype = int64 if max(x_shape) >= (1 << 31) else int32
+  index_dtype = int64 if any([type(dim) is Poly or dim >= (1 << 31) for dim in x_shape]) else int32
   gather_indices = onp.zeros((0,), dtype=index_dtype)  # use onp to save a compilation
 
   # We perform three transformations to y before the scatter op, in order:
