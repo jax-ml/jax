@@ -30,7 +30,7 @@ from .lax_numpy import _wraps
 from . import lax_numpy as np
 from ..api import custom_transforms, defjvp
 from ..util import get_module_functions
-from ..third_party.numpy.linalg import cond, tensorinv
+from ..third_party.numpy.linalg import cond, tensorinv, tensorsolve
 
 _T = lambda x: np.swapaxes(x, -1, -2)
 
@@ -58,34 +58,6 @@ def cholesky(a):
 def svd(a, full_matrices=True, compute_uv=True):
   a = _promote_arg_dtypes(np.asarray(a))
   return lax_linalg.svd(a, full_matrices, compute_uv)
-
-
-@_wraps(onp.linalg.tensorsolve)
-def tensorsolve(a, b, axes=None):
-  a = _promote_arg_dtypes(np.asarray(a))
-  b = _promote_arg_dtypes(np.asarray(b))
-  an = a.ndim
-  if axes is not None:
-    allaxes = list(range(0, an))
-    for k in axes:
-      allaxes.remove(k)
-      allaxes.insert(an, k)
-
-    a = a.transpose(allaxes)
-  
-  Q = a.shape[-(an - b.ndim):]
-
-  prod = 1
-  for k in Q:
-    prod *= k
-
-  a = a.reshape(-1, prod)
-  b = b.ravel()
-  
-  res = np.asarray(solve(a, b))
-  res = res.reshape(Q)
-  
-  return res
 
 
 @_wraps(onp.linalg.matrix_power)
