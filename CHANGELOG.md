@@ -4,7 +4,31 @@ These are the release notes for JAX.
 
 ## jax 0.1.59 (unreleased)
 
-## jax 0.1.58
+### Breaking changes
+
+* The minimum jaxlib version is now 0.1.38.
+* Simplified `Jaxpr` by removing the `Jaxpr.freevars` and changing the 
+  representation of `Jaxpr.bound_subjaxprs` to drop the environment values. 
+
+### New features
+
+* Reverse-mode automatic differentiation (e.g. `grad`) of `lax.cond`, making it
+  now differentiable in both modes (https://github.com/google/jax/pull/2091)
+* JAX now supports DLPack, which allows sharing CPU and GPU arrays in a
+  zero-copy way with other libraries, such as PyTorch.
+* JAX GPU DeviceArrays now support `__cuda_array_interface__`, which is another
+  zero-copy protocol for sharing GPU arrays with other libraries such as CuPy
+  and Numba.
+* JAX CPU device buffers now implement the Python buffer protocol, which allows
+  zero-copy buffer sharing between JAX and NumPy.
+* Added JAX_SKIP_SLOW_TESTS environment variable to skip tests known as slow.
+
+## jaxlib 0.1.38 (January 29, 2020)
+
+* CUDA 9.0 is no longer supported.
+* CUDA 10.2 wheels are now built by default.
+
+## jax 0.1.58 (January 28, 2020)
 
 ### Breaking changes
 

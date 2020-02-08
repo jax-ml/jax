@@ -19,9 +19,6 @@
 # b) the set of supported types (e.g., bfloat16),
 # so we need our own implementation that deviates from NumPy in places.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from distutils.util import strtobool
 import functools

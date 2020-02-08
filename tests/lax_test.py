@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import collections
 import functools
@@ -121,6 +118,14 @@ LAX_OPS = [
                onp.float64: 1e-14}),
     op_record("digamma", 1, float_dtypes, jtu.rand_positive,
               {onp.float64: 1e-14}),
+    op_record("betainc", 3, float_dtypes, jtu.rand_positive,
+              {onp.float64: 1e-14}),
+    op_record("igamma", 2,
+              [f for f in float_dtypes if f not in [dtypes.bfloat16, onp.float16]],
+              jtu.rand_positive, {onp.float64: 1e-14}),
+    op_record("igammac", 2,
+              [f for f in float_dtypes if f not in [dtypes.bfloat16, onp.float16]],
+              jtu.rand_positive, {onp.float64: 1e-14}),
     op_record("erf", 1, float_dtypes, jtu.rand_small),
     op_record("erfc", 1, float_dtypes, jtu.rand_small),
     # TODO(b/142976030): the approximation of erfinf used by XLA is only
@@ -159,15 +164,6 @@ LAX_OPS = [
     op_record("le", 2, default_dtypes, jtu.rand_small),
     op_record("lt", 2, default_dtypes, jtu.rand_small),
 ]
-if lib.version > (0, 1, 37):
-  LAX_OPS.append(
-      op_record("betainc", 3, float_dtypes, jtu.rand_positive,
-                {onp.float64: 1e-14}),
-      op_record("igamma", 2, float_dtypes, jtu.rand_positive,
-                {onp.float64: 1e-14}),
-      op_record("igammac", 2, float_dtypes, jtu.rand_positive,
-                {onp.float64: 1e-14}),
-  )
 
 CombosWithReplacement = itertools.combinations_with_replacement
 
@@ -568,6 +564,7 @@ class LaxTest(jtu.JaxTestCase):
       for dspec in [('NHWC', 'HWIO', 'NHWC'),]
       for rhs_dilation in [None, (2, 2)]
       for rng_factory in [jtu.rand_small]))
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testConvTranspose2DT(self, lhs_shape, rhs_shape, dtype, strides,
                           padding, dspec, rhs_dilation, rng_factory):
     rng = rng_factory()
@@ -606,6 +603,7 @@ class LaxTest(jtu.JaxTestCase):
       for dspec in [('NHWC', 'HWIO', 'NHWC'),]
       for rhs_dilation in [None, (2, 2)]
       for rng_factory in [jtu.rand_small]))
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testConvTranspose2D(self, lhs_shape, rhs_shape, dtype, strides,
                           padding, dspec, rhs_dilation, rng_factory):
     rng = rng_factory()
@@ -2285,6 +2283,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       for dtype in dtypes
       for padding in ["VALID", "SAME"]
       for rng_factory in [jtu.rand_default]))
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testReduceWindowGrad(self, op, init_val, dtype, padding, rng_factory):
     rng = rng_factory()
     tol = {onp.float16: 1e-1, onp.float32: 1e-3}
@@ -2974,6 +2973,7 @@ class LaxVmapTest(jtu.JaxTestCase):
       for dtype in float_dtypes
       for padding in ["VALID", "SAME"]
       for rng_factory in [jtu.rand_small]))
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testSelectAndGatherAdd(self, dtype, padding, rng_factory):
     if jtu.device_under_test() == "tpu" and dtype == dtypes.bfloat16:
       raise SkipTest("bfloat16 _select_and_gather_add doesn't work on tpu")
@@ -3063,6 +3063,10 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(fun, 5, bdims, [arg_shape, idxs.shape, update_shape],
                         [dtype, idxs.dtype, dtype], jtu.rand_default(),
                         rtol={onp.float16: 5e-3})
+
+  def testShapeUsesBuiltinInt(self):
+    x = lax.iota(onp.int32, 3) + 1
+    self.assertIsInstance(x.shape[0], int)  # not np.int64
 
   # TODO Concatenate
   # TODO Reverse

@@ -24,11 +24,7 @@ transformations for NumPy primitives can be derived from the transformation
 rules for the underlying :code:`lax` primitives.
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
-from distutils.util import strtobool
 import builtins
 import collections
 from collections.abc import Sequence
@@ -1945,7 +1941,7 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
            reshape(lax.iota(dt, num), iota_shape) *
            reshape(delta, bounds_shape))
   elif num == 1:
-    delta = nan
+    delta = nan if endpoint else lax.convert_element_type(stop - start, dt)
     out = reshape(broadcast_start, bounds_shape)
   else: # num == 0 degenerate case, match onp behavior
     empty_shape = list(lax.broadcast_shapes(shape(start), shape(stop)))
@@ -2325,9 +2321,6 @@ def tensordot(a, b, axes=2, precision=None):
   _check_arraylike("tensordot", a, b)
   a_ndim = ndim(a)
   b_ndim = ndim(b)
-  if a_ndim < 1 or b_ndim < 1:
-    msg = "tensordot requires a.ndim and b.dim to be at least 1, got {} and {}."
-    raise TypeError(msg.format(ndim(a), ndim(b)))
 
   a, b = _promote_dtypes(a, b)
   if type(axes) is int:
@@ -2905,7 +2898,8 @@ def _index_to_gather(x_shape, idx):
   collapsed_slice_dims = []
   start_index_map = []
 
-  gather_indices = onp.zeros((0,), dtype=int32)  # use onp to save a compilation
+  index_dtype = int64 if max(x_shape) >= (1 << 31) else int32
+  gather_indices = onp.zeros((0,), dtype=index_dtype)  # use onp to save a compilation
 
   # We perform three transformations to y before the scatter op, in order:
   # First, y is broadcast to slice_shape. In general `y` only need broadcast to
@@ -2932,7 +2926,7 @@ def _index_to_gather(x_shape, idx):
       shape = advanced_indexes[0].shape
       ndim = len(shape)
       advanced_indexes = [
-        lax.convert_element_type(lax.reshape(a, shape + (1,)), int32)
+        lax.convert_element_type(lax.reshape(a, shape + (1,)), index_dtype)
         for a in advanced_indexes]
 
       # Broadcast gather_indices from [..., k] to [..., 1, 1, ..., 1, k].
@@ -2960,7 +2954,7 @@ def _index_to_gather(x_shape, idx):
     if (isinstance(abstract_i, ConcreteArray) or
         isinstance(abstract_i, ShapedArray)) and _int(abstract_i):
       i = _normalize_index(i, x_shape[x_axis])
-      i = lax.convert_element_type(i, int32)
+      i = lax.convert_element_type(i, index_dtype)
       i = broadcast_to(i, tuple(gather_indices.shape[:-1]) + (1,))
       gather_indices = concatenate((gather_indices, i), -1)
       collapsed_slice_dims.append(x_axis)
@@ -2992,7 +2986,7 @@ def _index_to_gather(x_shape, idx):
       if needs_rev:
         reversed_y_dims.append(collapsed_y_axis)
       if stride == 1:
-        i = lax.convert_element_type(start, int32)
+        i = lax.convert_element_type(start, index_dtype)
         i = broadcast_to(i, tuple(gather_indices.shape[:-1]) + (1,))
         gather_indices = concatenate((gather_indices, i), -1)
         slice_shape.append(limit - start)
@@ -3000,7 +2994,7 @@ def _index_to_gather(x_shape, idx):
         offset_dims.append(collapsed_y_axis)
         start_index_map.append(x_axis)
       else:
-        i = arange(start, limit, stride, dtype=int32)
+        i = arange(start, limit, stride, dtype=index_dtype)
         size = i.shape[0]
         slice_shape.append(size)
         gather_slice_shape.append(1)

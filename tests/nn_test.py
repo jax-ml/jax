@@ -13,9 +13,6 @@
 # limitations under the License.
 
 """Tests for nn module."""
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import collections
 import itertools
@@ -37,6 +34,7 @@ config.parse_flags_with_absl()
 
 class NNFunctionsTest(jtu.JaxTestCase):
 
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testSoftplusGrad(self):
     check_grads(nn.softplus, (1e-8,), 4,
                 rtol=1e-2 if jtu.device_under_test() == "tpu" else None)
@@ -45,6 +43,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
     val = nn.softplus(89.)
     self.assertAllClose(val, 89., check_dtypes=False)
 
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testEluGrad(self):
     check_grads(nn.elu, (1e4,), 4, eps=1.)
 
@@ -74,16 +73,16 @@ def initializer_record(name, initializer, min_dims=2, max_dims=4):
   return InitializerRecord(name, initializer, shapes)
 
 INITIALIZER_RECS = [
-    initializer_record("uniform", nn.initializers.uniform(), 1),
-    initializer_record("normal", nn.initializers.normal(), 1),
-    initializer_record("he_normal", nn.initializers.he_normal()),
-    initializer_record("he_uniform", nn.initializers.he_uniform()),
-    initializer_record("glorot_normal", nn.initializers.glorot_normal()),
-    initializer_record("glorot_uniform", nn.initializers.glorot_uniform()),
-    initializer_record("lecun_normal", nn.initializers.lecun_normal()),
-    initializer_record("lecun_uniform", nn.initializers.lecun_uniform()),
-    initializer_record("orthogonal", nn.initializers.orthogonal(), 2, 2),
-    initializer_record("orthogonal", nn.initializers.delta_orthogonal(), 4, 4)
+    initializer_record("uniform", nn.initializers.uniform, 1),
+    initializer_record("normal", nn.initializers.normal, 1),
+    initializer_record("he_normal", nn.initializers.he_normal),
+    initializer_record("he_uniform", nn.initializers.he_uniform),
+    initializer_record("glorot_normal", nn.initializers.glorot_normal),
+    initializer_record("glorot_uniform", nn.initializers.glorot_uniform),
+    initializer_record("lecun_normal", nn.initializers.lecun_normal),
+    initializer_record("lecun_uniform", nn.initializers.lecun_uniform),
+    initializer_record("orthogonal", nn.initializers.orthogonal, 2, 2),
+    initializer_record("delta_orthogonal", nn.initializers.delta_orthogonal, 4, 4)
 ]
 
 class NNInitializersTest(jtu.JaxTestCase):
@@ -93,7 +92,7 @@ class NNInitializersTest(jtu.JaxTestCase):
        "_{}_{}".format(
            rec.name,
            jtu.format_shape_dtype_string(shape, dtype)),
-       "initializer": rec.initializer,
+       "initializer": rec.initializer(),
        "shape": shape, "dtype": dtype}
       for rec in INITIALIZER_RECS
       for shape in rec.shapes
@@ -101,6 +100,27 @@ class NNInitializersTest(jtu.JaxTestCase):
   def testInitializer(self, initializer, shape, dtype):
     rng = random.PRNGKey(0)
     val = initializer(rng, shape, dtype)
+    self.assertEqual(shape, np.shape(val))
+    self.assertEqual(jax.dtypes.canonicalize_dtype(dtype), np.dtype(val))
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_{}_{}".format(
+           rec.name,
+           jtu.format_shape_dtype_string(shape, dtype)),
+       "initializer_provider": rec.initializer,
+       "shape": shape, "dtype": dtype}
+      for rec in INITIALIZER_RECS
+      for shape in rec.shapes
+      for dtype in [onp.float32, onp.float64]))
+  def testInitializerProvider(self, initializer_provider, shape, dtype):
+    rng = random.PRNGKey(0)
+    initializer = initializer_provider(dtype=dtype)
+    val = initializer(rng, shape)
+
+    self.assertEqual(shape, np.shape(val))
+    self.assertEqual(jax.dtypes.canonicalize_dtype(dtype), np.dtype(val))
+
 
 if __name__ == "__main__":
   absltest.main()
