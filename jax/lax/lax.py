@@ -1906,11 +1906,12 @@ def _minmax_translation_rule(c, x, y, minmax=None, cmp=None):
         x, y)
   return minmax(c)(x, y)
 
+
 max_p = standard_naryop([_any, _any], 'max', translation_rule=partial(
     _minmax_translation_rule, minmax=lambda c: c.Max, cmp=lambda c: c.Gt))
 ad.defjvp2(max_p,
-           lambda g, ans, x, y: mul(_brcast(g, y), _balanced_eq(x, ans, y)),
-           lambda g, ans, x, y: mul(_brcast(g, x), _balanced_eq(y, ans, x)))
+           lambda g, ans, x, y: mul(_brcast(g, y), _eq(ans, x)),
+           lambda g, ans, x, y: mul(_brcast(g, x), _eq(ans, y)))
 
 min_p = standard_naryop([_any, _any], 'min', translation_rule=partial(
     _minmax_translation_rule, minmax=lambda c: c.Min, cmp=lambda c: c.Lt))
@@ -4599,6 +4600,8 @@ def _balanced_eq(x, z, y):
   return div(select(_eq_meet(x, z), _ones(z), _zeros(z)),
              select(_eq_meet(y, z), _twos(z), _ones(z)))
 
+def _eq(x, z):
+  return select(_eq_meet(x, z), _ones(z), _zeros(z))
 
 def _eq_meet(a, b):
   a_dtype, b_dtype = _dtype(a), _dtype(b)
