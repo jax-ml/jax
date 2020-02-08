@@ -1007,9 +1007,12 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     for dtype in float_types + complex_types
   ))
   def testIssue2131(self, n, dtype):
-    M = jsp.linalg.expm(onp.zeros((n, n), dtype))
-    self.assertTrue(onp.all(onp.isfinite(M)))
-
+    args_maker_zeros = lambda: [onp.zeros((n, n), dtype)]
+    osp_fun = lambda a: osp.linalg.expm(a)
+    jsp_fun = lambda a: jsp.linalg.expm(a)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker_zeros,
+                            check_dtypes=True)
+    self._CompileAndCheck(jsp_fun, args_maker_zeros, check_dtypes=True)
 
 if __name__ == "__main__":
   absltest.main()
