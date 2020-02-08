@@ -364,7 +364,7 @@ class BatchingTest(jtu.JaxTestCase):
     ans = hessian(lambda x: fun(x, 0.0))(x)
     expected = onp.array([[0., 0., 0., 0., 0.],
                           [0., 0., 0., 0., 0.],
-                          [0., 0.,0.5, 0., 0.],
+                          [0., 0., 2., 0., 0.],
                           [0., 0., 0., 2., 0.],
                           [0., 0., 0., 0., 2.]])
     self.assertAllClose(ans, expected, check_dtypes=False)

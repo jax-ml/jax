@@ -1910,8 +1910,8 @@ def _minmax_translation_rule(c, x, y, minmax=None, cmp=None):
 max_p = standard_naryop([_any, _any], 'max', translation_rule=partial(
     _minmax_translation_rule, minmax=lambda c: c.Max, cmp=lambda c: c.Gt))
 ad.defjvp2(max_p,
-           lambda g, ans, x, y: mul(_brcast(g, y), _eq(ans, x)),
-           lambda g, ans, x, y: mul(_brcast(g, x), _eq(ans, y)))
+           lambda g, ans, x, y: mul(_brcast(g, y), _eq(x, ans)),
+           lambda g, ans, x, y: mul(_brcast(g, x), _eq(y, ans)))
 
 min_p = standard_naryop([_any, _any], 'min', translation_rule=partial(
     _minmax_translation_rule, minmax=lambda c: c.Min, cmp=lambda c: c.Lt))
