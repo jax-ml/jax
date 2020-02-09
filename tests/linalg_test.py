@@ -115,6 +115,45 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
+       "_m={}_n={}_q={}".format(
+            jtu.format_shape_dtype_string((m,), dtype),
+            jtu.format_shape_dtype_string((nq[0],), dtype),
+            jtu.format_shape_dtype_string(nq[1], dtype)),
+       "m": m,
+       "nq": nq, "dtype": dtype, "rng_factory": rng_factory}
+      for m in [1, 5, 7, 23]
+      for nq in zip([2, 4, 6, 36], [(1, 2), (2, 2), (1, 2, 3), (3, 3, 1, 4)])
+      for dtype in float_types
+      for rng_factory in [jtu.rand_default]))
+  def testTensorsolve(self, m, nq, dtype, rng_factory):
+    rng = rng_factory()
+    _skip_if_unsupported_type(dtype)
+    
+    # According to numpy docs the shapes are as follows:
+    # Coefficient tensor (a), of shape b.shape + Q. 
+    # And prod(Q) == prod(b.shape) 
+    # Therefore, n = prod(q) 
+    n, q = nq
+    b_shape = (n, m)
+    # To accomplish prod(Q) == prod(b.shape) we append the m extra dim
+    # to Q shape
+    Q = q + (m,)
+    args_maker = lambda: [
+        rng(b_shape + Q, dtype), # = a
+        rng(b_shape, dtype)]     # = b
+    a, b = args_maker()
+    result = np.linalg.tensorsolve(*args_maker())
+    self.assertEqual(result.shape, Q)
+
+    self._CheckAgainstNumpy(onp.linalg.tensorsolve, 
+                            np.linalg.tensorsolve, args_maker,
+                            check_dtypes=True, tol=1e-3)
+    self._CompileAndCheck(np.linalg.tensorsolve, 
+                          args_maker, check_dtypes=True,
+                          rtol={onp.float64: 1e-13})
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype, "rng_factory": rng_factory}
       for shape in [(0, 0), (1, 1), (3, 3), (4, 4), (10, 10), (200, 200),
