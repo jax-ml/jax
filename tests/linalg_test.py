@@ -1077,5 +1077,20 @@ class ScipyLinalgTest(jtu.JaxTestCase):
                             check_dtypes=True)
     self._CompileAndCheck(jsp_fun_triu, args_maker_triu, check_dtypes=True)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name":
+     "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),
+     "n": n, "dtype": dtype}
+    for n in [1, 4, 5, 20, 50, 100]
+    for dtype in float_types + complex_types
+  ))
+  def testIssue2131(self, n, dtype):
+    args_maker_zeros = lambda: [onp.zeros((n, n), dtype)]
+    osp_fun = lambda a: osp.linalg.expm(a)
+    jsp_fun = lambda a: jsp.linalg.expm(a)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker_zeros,
+                            check_dtypes=True)
+    self._CompileAndCheck(jsp_fun, args_maker_zeros, check_dtypes=True)
+
 if __name__ == "__main__":
   absltest.main()
