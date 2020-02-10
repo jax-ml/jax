@@ -584,6 +584,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for shape in [(1, 1), (4, 4), (2, 3, 5), (5, 5, 5), (20, 20), (5, 10)]
       for pnorm in [np.inf, -np.inf, 1, -1, 2, -2, 'fro']
       for dtype in float_types + complex_types))
+  @jtu.skip_on_devices("tpu")  # SVD is not implemented on the TPU backend
+  @jtu.skip_on_devices("gpu")  # TODO(#2203): numerical errors
   def testCond(self, shape, pnorm, dtype):
     _skip_if_unsupported_type(dtype)
 
