@@ -519,6 +519,39 @@ class LaxRandomTest(jtu.JaxTestCase):
     finally:
       xla.apply_primitive = apply_primitive
 
+  def testPRNGValues(self):
+    # Test to ensure consistent random values between JAX versions
+    k = random.PRNGKey(0)
+
+    randints = random.randint(k, (3, 3), 0, 8)
+    if FLAGS.jax_enable_x64:
+        self.assertAllClose(
+            random.randint(k, (3, 3), 0, 8),
+            onp.array([[7, 2, 6],
+                       [2, 1, 0],
+                       [6, 7, 7]], dtype='int64'),
+            check_dtypes=True)
+    else:
+        self.assertAllClose(
+            random.randint(k, (3, 3), 0, 8),
+            onp.array([[2, 1, 3],
+                       [6, 1, 5],
+                       [6, 3, 4]], dtype='int32'),
+            check_dtypes=True)
+
+    self.assertAllClose(
+        random.split(k, 4),
+        onp.array([[2285895361, 1501764800],
+                   [1518642379, 4090693311],
+                   [ 433833334, 4221794875],
+                   [ 839183663, 3740430601]], dtype='uint32'),
+        check_dtypes=True)
+
+    self.assertAllClose(
+        random.fold_in(k, 4),
+        onp.array([2285895361,  433833334], dtype='uint32'),
+        check_dtypes=True)
+
 
 if __name__ == "__main__":
   absltest.main()
