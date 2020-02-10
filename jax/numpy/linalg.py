@@ -365,6 +365,17 @@ def solve(a, b):
   return x[..., 0] if a_ndims == b_ndims + 1 else x
 
 
+@_wraps(onp.linalg.lstsq)
+@jit
+def lstsq(a, b):
+  a, b = _promote_arg_dtypes(np.asarray(a), np.asarray(b))
+  aT = np.transpose(a)
+  x_hat = np.linalg.solve(np.dot(aT, a), np.dot(aT, b))
+  if matrix_rank(a) < a.shape[1]:
+    pass
+  return x_hat
+
+
 for func in get_module_functions(onp.linalg):
   if func.__name__ not in globals():
     globals()[func.__name__] = _not_implemented(func)
