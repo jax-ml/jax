@@ -43,7 +43,7 @@ def interp_fit_dopri(y0, y1, k, dt):
       6025192743 / 30085553152 / 2, 0, 51252292925 / 65400821598 / 2,
       -2691868925 / 45128329728 / 2, 187940372067 / 1594534317056 / 2,
       -1776094331 / 19743644256 / 2, 11237099 / 235043384 / 2])
-  y_mid = y0 + dt * np.dot(dps_c_mid, k)
+  y_mid = y0 + dt * np.tensordot(dps_c_mid, k, axes=(0, 0))
   return np.array(fit_4th_order_polynomial(y0, y1, y_mid, k[0], k[-1], dt))
 
 
@@ -63,9 +63,9 @@ def fit_4th_order_polynomial(y0, y1, y_mid, dy0, dy1, dt):
       p = a * x ** 4 + b * x ** 3 + c * x ** 2 + d * x + e
   """
   v = np.stack([dy0, dy1, y0, y1, y_mid])
-  a = np.dot(np.hstack([-2. * dt, 2. * dt, np.array([-8., -8., 16.])]), v)
-  b = np.dot(np.hstack([5. * dt, -3. * dt, np.array([18., 14., -32.])]), v)
-  c = np.dot(np.hstack([-4. * dt, dt, np.array([-11., -5., 16.])]), v)
+  a = np.tensordot(np.hstack([-2. * dt, 2. * dt, np.array([-8., -8., 16.])]), v, axes=(0, 0))
+  b = np.tensordot(np.hstack([5. * dt, -3. * dt, np.array([18., 14., -32.])]), v, axes=(0, 0))
+  c = np.tensordot(np.hstack([-4. * dt, dt, np.array([-11., -5., 16.])]), v, axes=(0, 0))
   d = dt * dy0
   e = y0
   return a, b, c, d, e
@@ -148,18 +148,19 @@ def runge_kutta_step(func, y0, f0, t0, dt):
 
   def _fori_body_fun(i, val):
     ti = t0 + dt * alpha[i-1]
-    yi = y0 + dt * np.dot(beta[i-1, :], val)
+    yi = y0 + dt * np.tensordot(beta[i-1], val, axes=(0, 0))
     ft = func(yi, ti)
-    return jax.ops.index_update(val, jax.ops.index[i, :], ft)
+    return jax.ops.index_update(val, jax.ops.index[i, ...], ft)
 
   k = jax.lax.fori_loop(
       1,
       7,
       _fori_body_fun,
-      jax.ops.index_update(np.zeros((7, f0.shape[0])), jax.ops.index[0, :], f0))
+      jax.ops.index_update(np.zeros((7,) + f0.shape),
+                           jax.ops.index[0, ...], f0))
 
-  y1 = dt * np.dot(c_sol, k) + y0
-  y1_error = dt * np.dot(c_error, k)
+  y1 = dt * np.tensordot(c_sol, k, axes=(0, 0)) + y0
+  y1_error = dt * np.tensordot(c_error, k, axes=(0, 0))
   f1 = k[-1]
   return y1, f1, y1_error, k
 
@@ -229,7 +230,7 @@ def odeint(ofunc, y0, t, *args, **kwargs):
 
     return (t, cur_y, cur_f, cur_t, dt, last_t, interp_coeff,
             jax.ops.index_update(solution,
-                                 jax.ops.index[i, :],
+                                 jax.ops.index[i, ...],
                                  out_x))
 
   @functools.partial(jax.jit, static_argnums=(0,))
@@ -262,10 +263,10 @@ def odeint(ofunc, y0, t, *args, **kwargs):
                            t.shape[0],
                            functools.partial(_fori_body_fun, func),
                            (t, y0, f0, t[0], dt, t[0], interp_coeff,
-                            jax.ops.index_update(
-                                np.zeros((t.shape[0], y0.shape[0])),
-                                jax.ops.index[0, :],
-                                y0)))[-1]
+                           jax.ops.index_update(
+                             np.zeros((t.shape[0],) + y0.shape),
+                             jax.ops.index[0, ...],
+                             y0)))[-1]
 
 
 def vjp_odeint(ofunc, y0, t, *args, **kwargs):
@@ -293,7 +294,7 @@ def vjp_odeint(ofunc, y0, t, *args, **kwargs):
   mxstep = kwargs.get('mxstep', np.inf)
 
   flat_args, unravel_args = ravel_pytree(args)
-  flat_func = lambda y, t, flat_args: ofunc(y, t, *unravel_args(flat_args))
+  flat_func = lambda y, t, flat_args: np.ravel(ofunc(y.reshape(y0.shape), t, *unravel_args(flat_args)))
 
   @jax.jit
   def aug_dynamics(augmented_state, t, flat_args):
@@ -363,12 +364,12 @@ def vjp_odeint(ofunc, y0, t, *args, **kwargs):
     time_vjp_list = jax.ops.index_update(result[-1], -1, result[-3])
     vjp_times = np.hstack(time_vjp_list)[::-1]
 
-    return tuple([result[-4], vjp_times] + list(result[-2]))
+    return tuple([result[-4].reshape(y0.shape), vjp_times] + list(result[-2]))
 
-  primals_out = odeint(flat_func, y0, t, flat_args, rtol=rtol, atol=atol, mxstep=mxstep)
-  vjp_fun = lambda g: vjp_all(g, primals_out, t)
+  primals_out = odeint(flat_func, np.ravel(y0), t, flat_args, rtol=rtol, atol=atol, mxstep=mxstep)
+  vjp_fun = lambda g: vjp_all(g.reshape(t.shape + (y0.size,)), primals_out, t)
 
-  return primals_out, vjp_fun
+  return primals_out.reshape(t.shape + y0.shape), vjp_fun
 
 
 def build_odeint(ofunc, rtol=1.4e-8, atol=1.4e-8, mxstep=onp.inf):
@@ -448,7 +449,7 @@ def test_grad_vjp_odeint():
   dim = 10
   t0 = 0.1
   t1 = 0.2
-  y0 = np.linspace(0.1, 0.9, dim)
+  y0 = np.linspace(0.1, 0.9, dim).reshape((5, 1, 2))
   arg1 = 0.1
   arg2 = 0.2
   wrap_args = (y0, np.array([t0, t1]), arg1, arg2)
@@ -493,9 +494,12 @@ def decay(y, t, arg1, arg2):
 def benchmark_odeint(fun, y0, tspace, *args):
   """Time performance of JAX odeint method against scipy.integrate.odeint."""
   n_trials = 5
+  y0 = np.array(y0)
+  flat_fun = lambda flat_y, t, *args, **kwargs: np.ravel(fun(flat_y.reshape(y0.shape), t, *args, **kwargs))
+
   for k in range(n_trials):
     start = time.time()
-    scipy_result = osp_integrate.odeint(fun, y0, tspace, args)
+    scipy_result = osp_integrate.odeint(flat_fun, np.ravel(y0), tspace, args)
     end = time.time()
     print('scipy odeint elapsed time ({} of {}): {}'.format(
         k+1, n_trials, end-start))
@@ -531,8 +535,8 @@ def test_odeint_grad():
     assert np.allclose(numerical_grad, exact_grad)
 
   ts = np.array((0.1, 0.2))
-  y0 = np.linspace(0.1, 0.9, 10)
-  big_y0 = np.linspace(1.1, 10.9, 10)
+  y0 = np.linspace(0.1, 0.9, 10).reshape((5, 1, 2))
+  big_y0 = np.linspace(1.1, 10.9, 10).reshape((5, 1, 2))
 
   # check pend()
   for cond in (
@@ -560,7 +564,7 @@ def test_odeint_vjp():
   """Use check_vjp to check odeint VJP calculations."""
 
   # check pend()
-  y = np.array([np.pi - 0.1, 0.0])
+  y = np.array([np.pi - 0.1, 0.0, 0.1, -0.2]).reshape((2, 2, 1))
   t = np.linspace(0., 10., 11)
   b = 0.25
   c = 9.8
@@ -570,7 +574,7 @@ def test_odeint_vjp():
   check_vjp(pend_odeint_wrap, pend_vjp_wrap, wrap_args)
 
   # check swoop()
-  y = np.array([0.1])
+  y = np.array([0.1, 0.2, -0.1, 0.5]).reshape((2, 1, 2))
   t = np.linspace(0., 10., 11)
   arg1 = 0.1
   arg2 = 0.2
@@ -587,7 +591,7 @@ def test_defvjp_all():
   n_trials = 5
   swoop_build = build_odeint(swoop)
   jacswoop = jax.jit(jax.jacrev(swoop_build))
-  y = np.array([0.1])
+  y = np.array([0.1, 0.2, 0.1, 0.]).reshape((2, 1, 1, 2))
   t = np.linspace(0., 2., 11)
   arg1 = 0.1
   arg2 = 0.2
