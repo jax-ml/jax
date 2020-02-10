@@ -34,6 +34,8 @@ pytype_library(
             "ops/*.py",
             "scipy/*.py",
             "scipy/stats/*.py",
+            "third_party/*.py",
+            "third_party/numpy/*.py",
             "nn/*.py",
         ],
         exclude = [
