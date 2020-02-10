@@ -366,14 +366,18 @@ def solve(a, b):
 
 
 @_wraps(onp.linalg.lstsq)
-@jit
+# @jit
 def lstsq(a, b):
   a, b = _promote_arg_dtypes(np.asarray(a), np.asarray(b))
-  aT = np.transpose(a)
-  x_hat = np.linalg.solve(np.dot(aT, a), np.dot(aT, b))
-  if matrix_rank(a) < a.shape[1]:
-    pass
-  return x_hat
+  U, s, V = lax_linalg.svd(a)
+
+  tol = s.max() * np.max(a.shape) * np.finfo(s.dtype).eps
+  a_rank = np.sum(s > tol)
+
+  sigma_pinv = np.hstack([np.diag(1. / s[:a_rank]), np.zeros((a.shape[0] - a_rank, a.shape[1])).T])
+  x_hat = np.dot(np.dot(np.dot(V.T, sigma_pinv), U.T), b)
+  residuals = norm(b - np.dot(a, x_hat))
+  return x_hat, residuals, a_rank, s
 
 
 for func in get_module_functions(onp.linalg):
