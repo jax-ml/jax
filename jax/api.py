@@ -1154,6 +1154,7 @@ def linearize(fun, *primals):
 
   In terms of values computed, `linearize` behaves much like a curried `jvp`,
   where these two code blocks compute the same values::
+
     y, out_tangent = jax.jvp(f, (x,), (in_tangent,))
 
     y, f_jvp = jax.linearize(f, x)
@@ -1168,8 +1169,10 @@ def linearize(fun, *primals):
   i.e. to evaluate a pushforward for many different input tangent vectors at the
   same linearization point. Moreover if all the input tangent vectors are known
   at once, it can be more efficient to vectorize using `vmap`, as in::
+
     pushfwd = partial(jvp, f, (x,))
     y, out_tangents = vmap(pushfwd, out_axes=(None, 0))((in_tangents,))
+
   By using `vmap` and `jvp` together like this we avoid the stored-linearization
   memory cost that scales with the depth of the computation, which is incurred
   by both `linearize` and `vjp`.

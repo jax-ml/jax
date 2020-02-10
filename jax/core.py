@@ -309,6 +309,7 @@ class Trace(object):
 
 
   def pure(self, val):
+    """Given a concrete value, makes a Tracer for it."""
     assert False
 
   def lift(self, tracer):
@@ -316,6 +317,19 @@ class Trace(object):
 
   def sublift(self, tracer):
     assert False
+
+  def process_primitive(self, primitive, tracers, params):
+    """Processes a primitive
+
+    Args:
+      primitive: the primitive
+      tracers: the tracers for the arguments
+      params: the primitive parameters
+
+    Returns:
+      either a tracer, or a list of tracers (if primitive.multiple_results)
+    """
+    assert False, "Must override"
 
   def __repr__(self):
     return '{}(level={}/{})'.format(
@@ -713,8 +727,13 @@ def pp_eqn(eqn):
           >> pp(' ') >> pp(pp_vars(eqn.invars))) + pp_subexpr
 
 def pp_jaxpr(jaxpr):
+  if len(jaxpr.outvars) > 1:
+    pp_outvars = str(tuple(jaxpr.outvars))
+  else:
+    pp_outvars = str(jaxpr.outvars[0])
+
   return (pp('{{ lambda {} ; {}.'.format(pp_vars(jaxpr.constvars),
                                          pp_vars(jaxpr.invars))) +
           ((pp('let ') >>
             vcat(map(pp_eqn, jaxpr.eqns))) +
-           pp('in {} }}'.format(jaxpr.outvars))).indent(2))
+           pp('in {} }}'.format(pp_outvars))).indent(2))

@@ -174,6 +174,12 @@ def defbroadcasting(prim):
   primitive_batchers[prim] = partial(broadcast_batcher, prim)
 
 def broadcast_batcher(prim, args, dims, **params):
+  """Process a primitive with built-in broadcasting.
+
+  Args:
+    args: the arguments
+    dims: for each argument, the dimension that is being batched (or None)
+  """
   shapes = {(x.shape, d) for x, d in zip(args, dims) if onp.ndim(x)}
   if len(shapes) == 1:
     # if there's only agreeing batch dims and scalars, just call the primitive
