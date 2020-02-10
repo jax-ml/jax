@@ -23,6 +23,10 @@ These are the release notes for JAX.
   zero-copy buffer sharing between JAX and NumPy.
 * Added JAX_SKIP_SLOW_TESTS environment variable to skip tests known as slow.
 
+## jaxlib 0.1.39 (February 10, 2020)
+
+* Bumped version so JAX can use `PyLocalExecutable::local_logical_device_ids`.
+
 ## jaxlib 0.1.38 (January 29, 2020)
 
 * CUDA 9.0 is no longer supported.
