@@ -183,21 +183,12 @@ def backward_pass(jaxpr: core.Jaxpr, consts, args, cotangents_in):
         else:
           write_primal(eqn.outvars[0], ans)
     else:
-      call_jaxpr = eqn.params["call_jaxpr"]
+      call_jaxpr, params = core.extract_call_jaxpr(eqn.primitive, eqn.params)
       if any(is_linear(v) for v in eqn.invars):
         linear_eqns.append(eqn)
-      elif eqn.primitive is not pe.remat_call_p:
-        ans = _eval_subjaxpr_primals(
-            eqn.primitive, call_jaxpr,
-            map(read_primal, eqn.invars), eqn.params)
-        map(write_primal, eqn.outvars, ans)
-
-      # we special-case remat_call here because it can be mixed linear /
-      # nonlinear, so we always evaluate it even if it has a linear part
-      if eqn.primitive is pe.remat_call_p:
-        ans = _eval_subjaxpr_primals(
-            eqn.primitive, call_jaxpr,
-            map(read_primal, eqn.invars), eqn.params)
+      if any(not is_linear(v) for v in eqn.invars):
+        ans = _eval_subjaxpr_primals(eqn.primitive, call_jaxpr,
+                                     map(read_primal, eqn.invars), params)
         map(write_primal, eqn.outvars, ans)
 
   ct_env = {}
@@ -260,12 +251,10 @@ def _eval_primals(jaxpr, args):
         else:
           write_primal(eqn.outvars[0], ans)
     else:
-      call_jaxpr = eqn.params["call_jaxpr"]
-      if (eqn.primitive is pe.remat_call_p or
-          not any(is_linear(v) for v in eqn.invars)):
-        ans = _eval_subjaxpr_primals(
-            eqn.primitive, call_jaxpr,
-            map(read_primal, eqn.invars), eqn.params)
+      call_jaxpr, params = core.extract_call_jaxpr(eqn.primitive, eqn.params)
+      if any(not is_linear(v) for v in eqn.invars):
+        ans = _eval_subjaxpr_primals(eqn.primitive, call_jaxpr,
+                                     map(read_primal, eqn.invars), params)
         map(write_primal, eqn.outvars, ans)
   return map(read_primal, jaxpr.outvars)
 
