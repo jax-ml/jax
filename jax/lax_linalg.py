@@ -13,9 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from functools import partial
 import numpy as onp
@@ -135,31 +132,21 @@ def _nan_like(c, operand):
     nan = c.Constant(onp.array(onp.nan, dtype=dtype))
   return c.Broadcast(nan, shape.dimensions())
 
-# TODO(phawkins): remove supports_batching argument after the minimum jaxlib
-# version is 0.1.38.
-def _cholesky_cpu_gpu_translation_rule(potrf_impl, potrf_supports_batching, c,
-                                       operand):
+def _cholesky_cpu_gpu_translation_rule(potrf_impl, c, operand):
   shape = c.GetShape(operand)
   batch_dims = shape.dimensions()[:-2]
   dtype = shape.element_type().type
-  if len(batch_dims) == 0 or potrf_supports_batching:
-    result, info = potrf_impl(c, operand, lower=True)
-    ok = c.Eq(info, c.ConstantS32Scalar(0))
-    return _broadcasting_select(c,
-                                c.Reshape(ok, None, batch_dims + (1, 1)), result,
-                                _nan_like(c, result))
-  else:
-    # Fall back to the HLO implementation for batched Cholesky decomposition.
-    return c.Cholesky(operand)
+  result, info = potrf_impl(c, operand, lower=True)
+  ok = c.Eq(info, c.ConstantS32Scalar(0))
+  return _broadcasting_select(c,
+                              c.Reshape(ok, None, batch_dims + (1, 1)), result,
+                              _nan_like(c, result))
 
 xla.backend_specific_translations['cpu'][cholesky_p] = partial(
-  _cholesky_cpu_gpu_translation_rule, lapack.potrf,
-  not hasattr(lapack, "jax_potrf"))
+  _cholesky_cpu_gpu_translation_rule, lapack.potrf)
 
-# TODO(phawkins): remove after the minimum jaxlib version is 0.1.38.
-if hasattr(cusolver, "potrf"):
-  xla.backend_specific_translations['gpu'][cholesky_p] = partial(
-    _cholesky_cpu_gpu_translation_rule, cusolver.potrf, True)
+xla.backend_specific_translations['gpu'][cholesky_p] = partial(
+  _cholesky_cpu_gpu_translation_rule, cusolver.potrf)
 
 # Asymmetric eigendecomposition
 
@@ -318,6 +305,9 @@ def triangular_solve_shape_rule(a, b, left_side=False, **unused_kwargs):
   if a.ndim < 2:
     msg = "triangular_solve requires a.ndim to be at least 2, got {}."
     raise TypeError(msg.format(a.ndim))
+  if b.ndim < 2:
+    msg = "triangular_solve requires b.ndim to be at least 2, got {}."
+    raise TypeError(msg.format(b.ndim))
   if a.shape[-1] != a.shape[-2]:
     msg = ("triangular_solve requires the last two dimensions of a to be equal "
            "in size, got a.shape of {}.")
@@ -382,13 +372,28 @@ def triangular_solve_batching_rule(batched_args, batch_dims, left_side,
                                    unit_diagonal):
   x, y = batched_args
   bx, by = batch_dims
-  size = next(t.shape[i] for t, i in zip(batched_args, batch_dims)
-              if i is not None)
-  x = batching.bdim_at_front(x, bx, size)
-  y = batching.bdim_at_front(y, by, size)
-  return triangular_solve(x, y, left_side=left_side, lower=lower,
-                          transpose_a=transpose_a, conjugate_a=conjugate_a,
-                          unit_diagonal=unit_diagonal), 0
+  if bx is batching.not_mapped:
+    if left_side:
+      y = batching.moveaxis(y, by, -1)
+      y_flat = y.reshape(y.shape[:-2] + (y.shape[-2] * y.shape[-1],))
+      bdim_out = y.ndim - 1
+    else:
+      y = batching.moveaxis(y, by, -2)
+      y_flat = y.reshape(y.shape[:-3]  + (y.shape[-3] * y.shape[-2], y.shape[-1]))
+      bdim_out = y.ndim - 2
+    out_flat = triangular_solve(
+        x, y_flat, left_side=left_side, lower=lower,
+        transpose_a=transpose_a, conjugate_a=conjugate_a,
+        unit_diagonal=unit_diagonal)
+    return out_flat.reshape(y.shape), bdim_out
+  else:
+    size = next(t.shape[i] for t, i in zip(batched_args, batch_dims)
+                if i is not None)
+    x = batching.bdim_at_front(x, bx, size)
+    y = batching.bdim_at_front(y, by, size)
+    return triangular_solve(x, y, left_side=left_side, lower=lower,
+                            transpose_a=transpose_a, conjugate_a=conjugate_a,
+                            unit_diagonal=unit_diagonal), 0
 
 triangular_solve_p = standard_primitive(
     triangular_solve_shape_rule, triangular_solve_dtype_rule,
@@ -776,7 +781,7 @@ def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
   dA, = tangents
   s, U, Vt = svd_p.bind(A, full_matrices=False, compute_uv=True)
 
-  if full_matrices:
+  if compute_uv and full_matrices:
     # TODO: implement full matrices case, documented here: https://people.maths.ox.ac.uk/gilesm/files/NA-08-01.pdf
     raise NotImplementedError(
       "Singular value decomposition JVP not implemented for full matrices")

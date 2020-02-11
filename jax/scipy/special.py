@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import numpy as onp
 import scipy.special as osp_special
@@ -49,6 +46,18 @@ def betainc(a, b, x):
 def digamma(x):
   x, = _promote_args_inexact("digamma", x)
   return lax.digamma(x)
+
+
+@_wraps(osp_special.gammainc, update_doc=False)
+def gammainc(a, x):
+  a, x = _promote_args_inexact("gammainc", a, x)
+  return lax.igamma(a, x)
+
+
+@_wraps(osp_special.gammaincc, update_doc=False)
+def gammaincc(a, x):
+  a, x = _promote_args_inexact("gammaincc", a, x)
+  return lax.igammac(a, x)
 
 
 @_wraps(osp_special.erf)

@@ -62,9 +62,6 @@ dynamic positional arguments for the generators, and also the auxiliary output
 data must be immutable, because it will be stored in function memoization tables.
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import weakref
 

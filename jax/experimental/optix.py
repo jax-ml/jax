@@ -38,9 +38,6 @@ Many popular optimizers can be implemented using `optix` as one-liners, and,
 for convenience, we provide aliases for some of the most popular ones.
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import collections
 

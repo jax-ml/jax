@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import print_function
 
 from contextlib import contextmanager
 from collections import defaultdict, Counter, namedtuple
@@ -24,6 +23,7 @@ import string
 
 import numpy as onp
 
+from .. import abstract_arrays
 from .. import core
 from ..core import Trace, Tracer
 from ..util import unzip2, safe_map, safe_zip, curry
@@ -87,7 +87,6 @@ def mask_subtrace(master, in_vals, shape_exprs):
   out_tracers = map(trace.full_raise, outs)
   out_vals, out_shapes = unzip2((t.val, t.shape_expr) for t in out_tracers)
   yield out_vals, out_shapes
-
 
 def ensure_poly(p):
   if isinstance(p, Poly):
@@ -216,6 +215,9 @@ class Poly(Counter):
   def is_constant(self):
     return len(self) == 1 and next(iter(self)).degree == 0
 
+abstract_arrays._DIMENSION_TYPES.add(Poly)
+
+
 class Mon(Counter):  # type Mon = Map Id Int -- ids to degrees
   def __hash__(self):
     return hash(tuple(self.items()))
@@ -343,7 +345,7 @@ class MaskTracer(Tracer):
   __slots__ = ["val", "shape_expr"]
 
   def __init__(self, trace, val, shape_expr):
-    self.trace = trace
+    self._trace = trace
     self.val = val
     self.shape_expr = shape_expr
 
@@ -430,7 +432,7 @@ class ShapeCheckTracer(Tracer):
   __slots__ = ["shape_expr"]
 
   def __init__(self, trace, shape_expr):
-    self.trace = trace
+    self._trace = trace
     self.shape_expr = shape_expr
 
   @property

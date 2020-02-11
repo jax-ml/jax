@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import collections
 import functools
@@ -188,12 +185,10 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("expm1", 1, number_dtypes, all_shapes, jtu.rand_small_positive,
               [], tolerance={onp.float64: 1e-8}, inexact=True),
     op_record("fix", 1, float_dtypes, all_shapes, jtu.rand_default, []),
-    op_record("floor_divide", 2, number_dtypes, all_shapes, jtu.rand_nonzero,
-              ["rev"]),
-    # TODO(phawkins): merge this with the preceding entry after the minimum
-    # Jaxlib version is increased to 0.1.38.
-    op_record("floor_divide", 2, uint_dtypes, all_shapes, jtu.rand_nonzero,
-              ["rev"]),
+    op_record("floor_divide", 2, number_dtypes, all_shapes,
+              jtu.rand_nonzero, ["rev"]),
+    op_record("floor_divide", 2, uint_dtypes, all_shapes,
+              jtu.rand_nonzero, ["rev"]),
     op_record("heaviside", 2, default_dtypes, all_shapes, jtu.rand_default, [],
               inexact=True),
     op_record("hypot", 2, default_dtypes, all_shapes, jtu.rand_default, [],
@@ -790,6 +785,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "axes": axes, "rng_factory": rng_factory}
       for rng_factory in [jtu.rand_default]
       for lhs_shape, rhs_shape, axes in [
+          [(3,), (), 0],
           [(2, 3, 4), (5, 6, 7), 0],  # from issue #740
           [(2, 3, 4), (3, 4, 5, 6), 2],
           [(2, 3, 4), (5, 4, 3, 6), [1, 2]],
@@ -813,6 +809,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True,
                             tol=tol)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
+  def testTensordotErrors(self):
+    a = onp.random.random((3, 2, 2))
+    b = onp.random.random((2,))
+    self.assertRaisesRegex(
+      TypeError, "Number of tensordot axes.*exceeds input ranks.*",
+      lambda: lnp.tensordot(a, b, axes=2))
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_{}".format(
@@ -1075,7 +1078,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "rng_factory": jtu.rand_default, "lnp_op": getattr(lnp, op),
        "onp_op": getattr(onp, op)}
       for op in ["cumsum", "cumprod"]
-      for dtype in default_dtypes
+      for dtype in all_dtypes
       for out_dtype in default_dtypes
       for shape in all_shapes
       for axis in [None] + list(range(-len(shape), len(shape)))))
@@ -2106,6 +2109,29 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
+  @parameterized.named_parameters(*jtu.cases_from_list(
+      {"testcase_name": "_case={}".format(i),
+       "input": input}
+       for i, input in enumerate([
+         3,
+         [3],
+         [onp.array(3)],
+         [onp.array([3])],
+         [[onp.array(3)]],
+         [[onp.array([3])]],
+         [3, 4, 5],
+         [
+           [onp.eye(2, dtype=onp.int32) * 2, onp.zeros((2, 3), dtype=onp.int32)],
+           [onp.ones((3, 2), dtype=onp.int32), onp.eye(3, dtype=onp.int32) * 3],
+         ],
+         [onp.array([1, 2, 3]), onp.array([2, 3, 4]), 10],
+         [onp.ones((2, 2), dtype=onp.int32), onp.zeros((2, 2), dtype=onp.int32)],
+         [[onp.array([1, 2, 3])], [onp.array([2, 3, 4])]],
+       ])))
+  def testBlock(self, input):
+    args_maker = lambda: [input]
+    self._CheckAgainstNumpy(onp.block, lnp.block, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp.block, args_maker, check_dtypes=True)
 
   def testLongLong(self):
     self.assertAllClose(onp.int64(7), api.jit(lambda x: x)(onp.longlong(7)),
@@ -2349,6 +2375,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for rng_factory in [jtu.rand_default]))
   def testLinspace(self, start_shape, stop_shape, num, endpoint,
                    retstep, dtype, rng_factory):
+    if num == 1 and not endpoint and numpy_version < (1, 17, 5):
+      raise SkipTest("Numpy < 1.17.5 has a linspace bug.")
     rng = rng_factory()
     # relax default tolerances slightly
     tol = jtu.tolerance(dtype if dtype else onp.float32) * 10
@@ -2648,6 +2676,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         "Shapes must be 1D sequences of concrete values of integer type.*\n"
         "If using `jit`, try using `static_argnums` or applying `jit` to smaller subfunctions.",
         lambda: api.jit(lnp.zeros)(2))
+
+  def testTraceMethod(self):
+    x = onp.random.randn(3, 4).astype(lnp.float_)
+    self.assertAllClose(x.trace(), lnp.array(x).trace(), check_dtypes=True)
+    self.assertAllClose(x.trace(), api.jit(lambda y: y.trace())(x),
+                        check_dtypes=True)
 
 # Most grad tests are at the lax level (see lax_test.py), but we add some here
 # as needed for e.g. particular compound ops of interest.

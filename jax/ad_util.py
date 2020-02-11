@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from .core import lattice_join, Primitive, Unit, unit, AbstractUnit, abstract_unit
 from .tree_util import register_pytree_node

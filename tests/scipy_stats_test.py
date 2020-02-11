@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import collections
 import itertools
@@ -206,6 +203,58 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       # ensure that scale is not too low
       scale = onp.clip(scale, a_min=0.1, a_max=None)
       return [x, loc, scale]
+
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                            tol=1e-6)
+    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
+
+  @genNamedParametersNArgs(1, jtu.rand_default)
+  def testLogisticCdf(self, rng_factory, shapes, dtypes):
+    rng = rng_factory()
+    scipy_fun = osp_stats.logistic.cdf
+    lax_fun = lsp_stats.logistic.cdf
+
+    def args_maker():
+      return list(map(rng, shapes, dtypes))
+
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                            tol=1e-6)
+    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
+
+  @genNamedParametersNArgs(1, jtu.rand_default)
+  def testLogisticLogpdf(self, rng_factory, shapes, dtypes):
+    rng = rng_factory()
+    scipy_fun = osp_stats.logistic.logpdf
+    lax_fun = lsp_stats.logistic.logpdf
+
+    def args_maker():
+      return list(map(rng, shapes, dtypes))
+
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                            tol=1e-3)
+    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
+
+  @genNamedParametersNArgs(1, jtu.rand_default)
+  def testLogisticPpf(self, rng_factory, shapes, dtypes):
+    rng = rng_factory()
+    scipy_fun = osp_stats.logistic.ppf
+    lax_fun = lsp_stats.logistic.ppf
+
+    def args_maker():
+      return list(map(rng, shapes, dtypes))
+
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                            tol=1e-4)
+    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
+
+  @genNamedParametersNArgs(1, jtu.rand_default)
+  def testLogisticSf(self, rng_factory, shapes, dtypes):
+    rng = rng_factory()
+    scipy_fun = osp_stats.logistic.sf
+    lax_fun = lsp_stats.logistic.sf
+
+    def args_maker():
+      return list(map(rng, shapes, dtypes))
 
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                             tol=1e-6)

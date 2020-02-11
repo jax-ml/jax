@@ -9,6 +9,10 @@
 | [**Install guide**](#installation)
 | [**Reference docs**](https://jax.readthedocs.io/en/latest/)
 
+**Announcement:** JAX 0.1.58 has dropped Python 2 support, and requires Python 3.5 or newer. See [CHANGELOG.md](https://github.com/google/jax/blob/master/CHANGELOG.md).
+
+## What is JAX?
+
 JAX is [Autograd](https://github.com/hips/autograd) and
 [XLA](https://www.tensorflow.org/xla),
 brought together for high-performance machine learning research.
@@ -403,17 +407,17 @@ cloud VM), you can run
 ```bash
 # install jaxlib
 PYTHON_VERSION=cp37  # alternatives: cp35, cp36, cp37, cp38
-CUDA_VERSION=cuda92  # alternatives: cuda90, cuda92, cuda100, cuda101
+CUDA_VERSION=cuda92  # alternatives: cuda92, cuda100, cuda101, cuda102
 PLATFORM=linux_x86_64  # alternatives: linux_x86_64
 BASE_URL='https://storage.googleapis.com/jax-releases'
-pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.37-$PYTHON_VERSION-none-$PLATFORM.whl
+pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.38-$PYTHON_VERSION-none-$PLATFORM.whl
 
 pip install --upgrade jax  # install jax
 ```
 
 The library package name must correspond to the version of the existing CUDA
-installation you want to use, with `cuda101` for CUDA 10.1, `cuda100` for CUDA
-10.0, `cuda92` for CUDA 9.2, and `cuda90` for CUDA 9.0. To find your CUDA and
+installation you want to use, with `cuda102` for CUDA 10.2, `cuda101` for CUDA
+10.1, `cuda100` for CUDA 10.0, and `cuda92` for CUDA 9.2. To find your CUDA and
 CUDNN versions, you can run commands like these, depending on your CUDNN install
 path:
 
@@ -450,7 +454,7 @@ To cite this repository:
 ```
 
 In the above bibtex entry, names are in alphabetical order, the version number
-is intended to be that from [jax/version.py](../blob/master/jax/version.py), and
+is intended to be that from [jax/version.py](../master/jax/version.py), and
 the year corresponds to the project's open-source release.
 
 A nascent version of JAX, supporting only automatic differentiation and

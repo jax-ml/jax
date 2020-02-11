@@ -20,6 +20,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/casts.h"
+#include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/memory/memory.h"
 #include "absl/strings/str_format.h"
@@ -122,7 +123,7 @@ class SolverHandlePool {
   void Return(cusolverDnHandle_t handle);
 
   absl::Mutex mu_;
-  std::vector<cusolverDnHandle_t> handles_ GUARDED_BY(mu_);
+  std::vector<cusolverDnHandle_t> handles_ ABSL_GUARDED_BY(mu_);
 };
 
 /*static*/ SolverHandlePool* SolverHandlePool::Instance() {

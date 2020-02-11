@@ -13,6 +13,9 @@
 # limitations under the License.
 
 import inspect
+import jax
+import jax.numpy as np
+from jax import api, lax
 from jax import linear_util as lu
 from jax import test_util as jtu
 from jax import util

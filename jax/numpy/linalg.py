@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from functools import partial
 
@@ -33,7 +30,7 @@ from .lax_numpy import _wraps
 from . import lax_numpy as np
 from ..api import custom_transforms, defjvp
 from ..util import get_module_functions
-
+from ..third_party.numpy.linalg import cond, tensorinv, tensorsolve
 
 _T = lambda x: np.swapaxes(x, -1, -2)
 

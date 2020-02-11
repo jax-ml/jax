@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import itertools
 import unittest
@@ -110,7 +107,7 @@ class FftTest(jtu.JaxTestCase):
     onp_op = _get_fftn_func(onp.fft, inverse, real)
     np_fn = lambda a: np_op(a, axes=axes)
     onp_fn = lambda a: onp_op(a, axes=axes) if axes is None or axes else a
-    # Numpy promotes to complex128 aggressively.  
+    # Numpy promotes to complex128 aggressively.
     self._CheckAgainstNumpy(onp_fn, np_fn, args_maker, check_dtypes=False,
                             tol=1e-4)
     self._CompileAndCheck(np_fn, args_maker, check_dtypes=True)
@@ -352,6 +349,36 @@ class FftTest(jtu.JaxTestCase):
       "Got d = \\[0, 1, 2\\].".format(name),
       lambda: func(n=10, d=n)
     )
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "dtype={}_axes={}".format(
+      jtu.format_shape_dtype_string(shape, dtype), axes),
+      "dtype": dtype, "shape": shape, "rng_factory": rng_factory, "axes": axes}
+    for rng_factory in [jtu.rand_default]
+    for dtype in all_dtypes
+    for shape in [[9], [10], [101], [102], [3, 5], [3, 17], [5, 7, 11]]
+    for axes in _get_fftn_test_axes(shape)))
+  def testFftshift(self, shape, dtype, rng_factory, axes):
+    rng = rng_factory()
+    args_maker = lambda: (rng(shape, dtype),)
+    np_fn = lambda arg: np.fft.fftshift(arg, axes=axes)
+    onp_fn = lambda arg: onp.fft.fftshift(arg, axes=axes)
+    self._CheckAgainstNumpy(onp_fn, np_fn, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "dtype={}_axes={}".format(
+      jtu.format_shape_dtype_string(shape, dtype), axes),
+      "dtype": dtype, "shape": shape, "rng_factory": rng_factory, "axes": axes}
+    for rng_factory in [jtu.rand_default]
+    for dtype in all_dtypes
+    for shape in [[9], [10], [101], [102], [3, 5], [3, 17], [5, 7, 11]]
+    for axes in _get_fftn_test_axes(shape)))
+  def testIfftshift(self, shape, dtype, rng_factory, axes):
+    rng = rng_factory()
+    args_maker = lambda: (rng(shape, dtype),)
+    np_fn = lambda arg: np.fft.ifftshift(arg, axes=axes)
+    onp_fn = lambda arg: onp.fft.ifftshift(arg, axes=axes)
+    self._CheckAgainstNumpy(onp_fn, np_fn, args_maker, check_dtypes=True)
 
 if __name__ == "__main__":
   absltest.main()

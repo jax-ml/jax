@@ -23,9 +23,6 @@ tree_util.py), which include nested tuples/lists/dicts, where the leaves are
 arrays.
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import collections
 import functools
@@ -37,7 +34,6 @@ from warnings import warn
 
 import numpy as onp
 from contextlib import contextmanager
-from distutils.util import strtobool
 
 from . import core
 from . import linear_util as lu
@@ -50,7 +46,7 @@ from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, tree_leaves, tree_multimap,
                         _replace_nones)
 from .util import (unzip2, unzip3, curry, partial, safe_map, safe_zip,
-                   WrapHashably, Hashable, prod, split_list)
+                   WrapHashably, Hashable, prod, split_list, extend_name_stack, wrap_name)
 from .lib import xla_bridge as xb
 from .lib.xla_bridge import (device_count, local_device_count, devices, local_devices,
                              host_id, host_ids, host_count)
@@ -63,14 +59,14 @@ from .interpreters import batching
 from .interpreters import parallel
 from .interpreters import masking
 from .interpreters.masking import shapecheck, ensure_poly
-from .config import flags, config
+from .config import flags, config, bool_env
 
 map = safe_map
 zip = safe_zip
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool("jax_disable_jit",
-                  strtobool(os.getenv("JAX_DISABLE_JIT", "False")),
+                  bool_env("JAX_DISABLE_JIT", False),
                   "Disable JIT compilation and just call original Python.")
 
 
@@ -146,10 +142,11 @@ def jit(fun, static_argnums=(), device=None, backend=None):
     args_flat, in_tree = tree_flatten((dyn_args, kwargs))
     _check_args(args_flat)
     flat_fun, out_tree = flatten_fun(f, in_tree)
-    out = xla.xla_call(flat_fun, *args_flat, device=device, backend=backend)
+    out = xla.xla_call(flat_fun, *args_flat, device=device, backend=backend,
+                       name=flat_fun.__name__)
     return tree_unflatten(out_tree(), out)
 
-  jitted_name =  "jit({}, static_argnums={})"
+  jitted_name = "jit({}, static_argnums={})"
   f_jitted.__name__ = jitted_name.format(f_jitted.__name__, static_argnums)
   return f_jitted
 
@@ -306,8 +303,9 @@ def xla_computation(fun, static_argnums=(), axis_env=None, backend=None,
     c = xb.make_computation_builder('xla_computation_{}'.format(fun_name))
     xla_consts = map(c.Constant, consts)
     xla_args = xla._xla_callable_args(c, avals, tuple_args)
-    outs = xla.jaxpr_subcomp(c, jaxpr, backend, axis_env_, xla_consts, (),
-                             *xla_args)
+    outs = xla.jaxpr_subcomp(
+        c, jaxpr, backend, axis_env_, xla_consts,
+        extend_name_stack(wrap_name(fun_name, 'xla_computation')), *xla_args)
     return c.Build(c.Tuple(*outs))
   return computation_maker
 
@@ -886,11 +884,12 @@ def pmap(fun, axis_name=None, devices=None, backend=None, axis_size=None):
     out = pxla.xla_pmap(
         flat_fun,
         *args,
+        backend=backend,
         axis_name=axis_name,
         axis_size=local_axis_size,
         global_axis_size=axis_size,
         devices=tuple(devices) if devices is not None else devices,
-        backend=backend)
+        name=flat_fun.__name__)
     return tree_unflatten(out_tree(), out)
 
   namestr = "pmap({}, axis_name={})".format
@@ -943,10 +942,10 @@ def soft_pmap(fun, axis_name=None, backend=None):
 
     reshaped_args = [_reshape_split(num_chunks, x) for x in args_flat]
     soft_mapped_fun = pxla.split_axis(flat_fun, axis_name, chunk_size)
-    reshaped_outs = pxla.xla_pmap(soft_mapped_fun, *reshaped_args,
+    reshaped_outs = pxla.xla_pmap(soft_mapped_fun, *reshaped_args, backend=backend,
                                   axis_name=axis_name, axis_size=num_chunks,
                                   global_axis_size=None, devices=None,
-                                  backend=backend)
+                                  name=soft_mapped_fun.__name__)
     outs = [_reshape_merge(out) for out in reshaped_outs]
     return tree_unflatten(out_tree(), outs)
 
@@ -1003,9 +1002,9 @@ def _parallelize(fun):
     reshaped_args = [_reshape_split(num_chunks, x) for x in args_flat]
     f, out_axes = parallel.papply_transform(f, axis_name, axis_size)
     f = pxla.split_axis(f, axis_name, chunk_size)
-    outs = pxla.xla_pmap(f, *reshaped_args, axis_name=axis_name,
+    outs = pxla.xla_pmap(f, *reshaped_args, backend=None, axis_name=axis_name,
                          axis_size=num_chunks, global_axis_size=None,
-                         devices=None, backend=None)
+                         devices=None, name=f.__name__)
     outs = map(_reshape_merge, outs)
     outs = [batching.matchaxis(axis_size, 0, dst, x)
             for dst, x in zip(out_axes(), outs)]
@@ -1211,7 +1210,7 @@ def lift_linearized(jaxpr, primal_avals, consts, io_tree, out_pvals, *py_args):
                "the original primal values.")
         raise ValueError(msg)
     dummy = (core.unit,) * len(tangents)
-    out = eval_jaxpr(jaxpr, consts, (), *(dummy + tangents))
+    out = eval_jaxpr(jaxpr, consts, *(dummy + tangents))
     tangents_out = out[len(out)//2:]
     return tuple(map(pe.merge_pvals, tangents_out, out_pvals))
 
@@ -1491,7 +1490,7 @@ def custom_transforms(fun):
 
   def fun_impl(*args, **params):
     consts, args = split_list(args, [params['num_consts']])
-    return core.eval_jaxpr(params['jaxpr'], consts, (), *args)
+    return core.eval_jaxpr(params['jaxpr'], consts, *args)
   fun_p.def_impl(fun_impl)
 
   def fun_jvp(primals, tangents, **params):
@@ -1918,7 +1917,6 @@ def _make_graphviz(fun):
     fragment = []
 
     fragment.extend(map(invar_node, jaxpr.invars, jaxpr.invars))
-    fragment.extend(map(freevar_node, jaxpr.freevars, jaxpr.freevars))
     fragment.extend(map(constant_node, jaxpr.constvars, consts))
 
     for eqn in jaxpr.eqns:
@@ -2027,7 +2025,8 @@ def checkpoint(fun, concrete=False):
   def fun_remat(*args, **kwargs):
     args_flat, in_tree = tree_flatten((args, kwargs))
     flat_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
-    out_flat = pe.remat_call(flat_fun, *args_flat, concrete=concrete)
+    out_flat = pe.remat_call(flat_fun, *args_flat, name=flat_fun.__name__,
+                             concrete=concrete)
     return tree_unflatten(out_tree(), out_flat)
   return fun_remat
 remat = checkpoint

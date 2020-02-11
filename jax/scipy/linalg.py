@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from functools import partial
 
@@ -278,7 +275,7 @@ def _expm(A, upper_triangular=False):
     R = _solve_P_Q(P, Q, upper_triangular)
     R = _squaring(R, n_squarings)
     return R
-    
+
 @jit
 def _calc_P_Q(A):
     A = np.asarray(A)
@@ -292,7 +289,7 @@ def _calc_P_Q(A):
        U7,V7 = _pade7(A)
        U9,V9 = _pade9(A)
        maxnorm = 5.371920351148152
-       n_squarings = np.maximum(0, np.floor_divide(np.log2(A_L1 / maxnorm),1))
+       n_squarings = np.maximum(0, np.floor(np.log2(A_L1 / maxnorm)))
        A = A / 2**n_squarings
        U13,V13 = _pade13(A)
        conds=np.array([1.495585217958292e-002, 2.539398330063230e-001, 9.504178996162932e-001, 2.097847961257068e+000])
@@ -302,7 +299,7 @@ def _calc_P_Q(A):
         U3,V3 = _pade3(A)
         U5,V5 = _pade5(A)
         maxnorm = 3.925724783138660
-        n_squarings = np.maximum(0, np.floor_divide(np.log2(A_L1 / maxnorm),1))
+        n_squarings = np.maximum(0, np.floor(np.log2(A_L1 / maxnorm)))
         A = A / 2**n_squarings
         U7,V7 = _pade7(A)
         conds=np.array([4.258730016922831e-001, 1.880152677804762e+000])
@@ -379,3 +376,25 @@ def _pade13(A):
     U = np.dot(A,np.dot(A6, b[13]*A6 + b[11]*A4 + b[9]*A2) + b[7]*A6 + b[5]*A4 + b[3]*A2 + b[1]*ident)
     V = np.dot(A6, b[12]*A6 + b[10]*A4 + b[8]*A2) + b[6]*A6 + b[4]*A4 + b[2]*A2 + b[0]*ident
     return U,V
+
+
+@_wraps(scipy.linalg.block_diag)
+@jit
+def block_diag(*arrs):
+  if len(arrs) == 0:
+    arrs = [np.zeros((1, 0))]
+  arrs = np._promote_dtypes(*arrs)
+  bad_shapes = [i for i, a in enumerate(arrs) if np.ndim(a) > 2]
+  if bad_shapes:
+    raise ValueError("Arguments to jax.scipy.linalg.block_diag must have at "
+                     "most 2 dimensions, got {} at argument {}."
+                     .format(arrs[bad_shapes[0]], bad_shapes[0]))
+  arrs = [np.atleast_2d(a) for a in arrs]
+  acc = arrs[0]
+  dtype = lax.dtype(acc)
+  for a in arrs[1:]:
+    _, c = a.shape
+    a = lax.pad(a, dtype.type(0), ((0, 0, 0), (acc.shape[-1], 0, 0)))
+    acc = lax.pad(acc, dtype.type(0), ((0, 0, 0), (0, c, 0)))
+    acc = lax.concatenate([acc, a], dimension=0)
+  return acc
