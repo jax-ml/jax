@@ -449,7 +449,7 @@ def test_grad_vjp_odeint():
   dim = 10
   t0 = 0.1
   t1 = 0.2
-  y0 = np.linspace(0.1, 0.9, dim).reshape((5, 1, 2))
+  y0 = np.linspace(0.1, 0.9, dim)
   arg1 = 0.1
   arg2 = 0.2
   wrap_args = (y0, np.array([t0, t1]), arg1, arg2)
@@ -494,12 +494,9 @@ def decay(y, t, arg1, arg2):
 def benchmark_odeint(fun, y0, tspace, *args):
   """Time performance of JAX odeint method against scipy.integrate.odeint."""
   n_trials = 5
-  y0 = np.array(y0)
-  flat_fun = lambda flat_y, t, *args, **kwargs: np.ravel(fun(flat_y.reshape(y0.shape), t, *args, **kwargs))
-
   for k in range(n_trials):
     start = time.time()
-    scipy_result = osp_integrate.odeint(flat_fun, np.ravel(y0), tspace, args)
+    scipy_result = osp_integrate.odeint(fun, y0, tspace, args)
     end = time.time()
     print('scipy odeint elapsed time ({} of {}): {}'.format(
         k+1, n_trials, end-start))
@@ -535,8 +532,8 @@ def test_odeint_grad():
     assert np.allclose(numerical_grad, exact_grad)
 
   ts = np.array((0.1, 0.2))
-  y0 = np.linspace(0.1, 0.9, 10).reshape((5, 1, 2))
-  big_y0 = np.linspace(1.1, 10.9, 10).reshape((5, 1, 2))
+  y0 = np.linspace(0.1, 0.9, 10)
+  big_y0 = np.linspace(1.1, 10.9, 10)
 
   # check pend()
   for cond in (
@@ -564,7 +561,7 @@ def test_odeint_vjp():
   """Use check_vjp to check odeint VJP calculations."""
 
   # check pend()
-  y = np.array([np.pi - 0.1, 0.0, 0.1, -0.2]).reshape((2, 2, 1))
+  y = np.array([np.pi - 0.1, 0.0])
   t = np.linspace(0., 10., 11)
   b = 0.25
   c = 9.8
@@ -574,7 +571,7 @@ def test_odeint_vjp():
   check_vjp(pend_odeint_wrap, pend_vjp_wrap, wrap_args)
 
   # check swoop()
-  y = np.array([0.1, 0.2, -0.1, 0.5]).reshape((2, 1, 2))
+  y = np.array([0.1])
   t = np.linspace(0., 10., 11)
   arg1 = 0.1
   arg2 = 0.2
@@ -591,7 +588,7 @@ def test_defvjp_all():
   n_trials = 5
   swoop_build = build_odeint(swoop)
   jacswoop = jax.jit(jax.jacrev(swoop_build))
-  y = np.array([0.1, 0.2, 0.1, 0.]).reshape((2, 1, 1, 2))
+  y = np.array([0.1])
   t = np.linspace(0., 2., 11)
   arg1 = 0.1
   arg2 = 0.2
@@ -605,7 +602,42 @@ def test_defvjp_all():
         k+1, n_trials, end-start))
 
 
-if __name__ == '__main__':
+def test_odeint_nd():
+  """Test that JAX ODE solver works with rank > 1 tensor functions."""
+  y0 = np.array([[[0.5, 0.2],
+                  [0.2, -0.3],
+                  [0.1, 0.]],
+                 [[1.5, 0.8],
+                  [-0.2, -0.3],
+                  [-3.1, 0.]],
+                ])
 
+  ts = np.array([0., 0.1, 0.2, 0.3])
+
+  def f(y, t, arg1, arg2):
+    return (y + np.max(y, axis=0, keepdims=True) * t * arg1 +
+            np.min(y, axis=1, keepdims=True) * (1 - t) * arg2 +
+            np.median(y, axis=2, keepdims=True))
+
+  arg1, arg2 = (0.3, -0.5)
+  args = arg1, arg2
+
+  def f_flat(y, t, arg1, arg2):
+    return np.ravel(f(y.reshape(y0.shape), t, arg1, arg2))
+
+  sp_result = osp_integrate.odeint(f_flat, np.ravel(y0), ts, args)
+  jax_result = odeint(f, y0, ts, *args)
+  assert np.allclose(sp_result.reshape(jax_result.shape), jax_result)
+
+  odeint_f = build_odeint(f)
+  odeint_f_1d = build_odeint(f_flat)
+  for argnum in (0, 1, 2, 3):
+    do_darg = jax.jacrev(odeint_f, argnum)(y0, ts, *args)
+    do_darg_1d = jax.jacrev(odeint_f_1d, argnum)(np.ravel(y0), ts, *args)
+    assert np.allclose(do_darg_1d, do_darg.reshape(do_darg_1d.shape))
+
+
+if __name__ == '__main__':
+  test_odeint_nd()
   test_odeint_grad()
   test_odeint_vjp()
