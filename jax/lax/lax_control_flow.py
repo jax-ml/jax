@@ -1006,11 +1006,11 @@ def _scan_transpose(cts, *args, forward, length, num_consts, num_carry, jaxpr, l
   if xs_lin != [True] * (len(xs_lin) - num_eres) + [False] * num_eres:
     raise NotImplementedError
   if not all(init_lin):
-    raise NotImplementedError
+    pass  # TODO(mattjj): error check https://github.com/google/jax/issues/1963
 
-  consts, init, xs = split_list(args, [num_consts, num_carry])
-  ires, consts = split_list(consts, [num_ires])
-  xs, eres = split_list(xs, [sum(xs_lin)])
+  consts, _, xs = split_list(args, [num_consts, num_carry])
+  ires, _ = split_list(consts, [num_ires])
+  _, eres = split_list(xs, [sum(xs_lin)])
   assert not any(r is ad.undefined_primal for r in ires)
   assert not any(r is ad.undefined_primal for r in eres)
 

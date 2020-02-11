@@ -1660,6 +1660,45 @@ class APITest(jtu.JaxTestCase):
     u0 = np.ones_like(target)
     loss(u0, target, 10)  # doesn't crash
 
+  def test_remat_jit3(self):
+    # https://github.com/google/jax/issues/2180
+    def f(w, x):
+      a = np.dot(x, w)
+      b = np.einsum("btd,bTd->btT", a, a)
+      c = np.einsum("btT,btd->btd", b, a)
+      return np.sum(c)
+
+    w = np.ones([1, 1])
+    x = np.ones([1, 1, 1])
+    f = api.remat(f)
+    api.grad(f)(w, x)  # doesn't crash
+
+    @api.jit
+    def mul(a, b):
+      return a * b
+
+    def f(w, x):
+      a = mul(w, x)
+      b = mul(a, a)
+      return b
+
+    w = 1.
+    x = 1.
+    f = api.remat(f)
+    api.grad(f)(w, x)  # doesn't crash
+
+  def test_remat_scan2(self):
+    # https://github.com/google/jax/issues/1963
+
+    def scan_bug(x0):
+      f = lambda x, _: (x + 1, None)
+      def scanned_f(x, _):
+        return lax.scan(f, x, xs=None, length=1)[0], None
+      x, _ = jax.remat(scanned_f)(x0, None)
+      return x
+
+    jax.grad(scan_bug)(1.0)  # doesn't crash
+
   def test_trivial_computations(self):
     x = np.array([1, 2, 3])
     y = api.jit(lambda x: x)(x)
