@@ -90,7 +90,7 @@ def partial(wrapped, *args, **kwargs):
     unbound_params = [p for name, p in signature.parameters.items()
                       if name not in bound_params]
     fun.__signature__ = signature.replace(parameters=unbound_params)
-  finally:
+  except:
     pass
   return fun
 
