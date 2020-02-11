@@ -12,9 +12,6 @@ matrix:
   include:
     - python: "3.7"
       env: JAX_ENABLE_X64=1 JAX_ONLY_DOCUMENTATION=true
-  include:
-    - python: "3.7"
-      env: JAX_MULTI_DEVICE_TEST=true
 
 before_install:
   - wget https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh;
@@ -42,8 +39,6 @@ install:
 script:
   - if [ "$JAX_ONLY_DOCUMENTATION" = true ]; then
       sphinx-build -b html -D nbsphinx_execute=always docs docs/build/html ;
-    elif [ "$JAX_MULTI_DEVICE_TEST" = true ]; then
-      env XLA_FLAGS=--xla_force_host_platform_device_count=2 python tests/multi_device_test.py ;
     else
       pytest -n 1 tests examples -W ignore ;
     fi
