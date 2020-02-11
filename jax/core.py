@@ -41,10 +41,8 @@ class Jaxpr(object):
   def __init__(self, constvars, invars, outvars, eqns):
     """
     Params:
-      constvars: list of variables introduced for constants (either literals
-        in the Python program, or the result of constant folding during the
-        generation of the Jaxpr). Array constants are replaced with such variables
-        while scalar constants are kept inline.
+      constvars: list of variables introduced for constants (values not
+        dependent on the values of invars, and not included as literals).
       invars: list of input variables. Together, `constvars` and `invars` are
         the inputs to the Jaxpr.
       outvars: list of output variables.
@@ -120,30 +118,19 @@ def gensym(suffix):
   return lambda: Var(next(counter), suffix)
 
 class Literal(object):
-  __slots__ = ["val", "hash"]
+  __slots__ = ["val"]
 
   def __init__(self, val):
     self.val = val
-    try:
-      self.hash = hash(val)
-    except TypeError:
-      if type(val) in literalable_types:
-        try:
-          self.hash = hash((val.item(), val.dtype))
-        except (TypeError, AttributeError):
-          self.hash = None
 
   def __hash__(self):
-    assert False
+    return id(self.val)
 
   def __eq__(self, other):
-    assert False
+    return self.val is other.val
 
   def __repr__(self):
-    if self.hash is None:
-      return 'Literal(val={})'.format(self.val)
-    else:
-      return '{}'.format(self.val)
+    return '{}'.format(self.val)
 
 literalable_types = set()
 
@@ -677,4 +664,4 @@ def pp_jaxpr(jaxpr):
                                          pp_vars(jaxpr.invars))) +
           ((pp('let ') >>
             vcat(map(pp_eqn, jaxpr.eqns))) +
-           pp('in {} }}'.format(jaxpr.outvars))).indent(2))
+           pp('in {} }}'.format(tuple(jaxpr.outvars)))).indent(2))

@@ -74,7 +74,7 @@ class JaxprTrace(Trace):
     if isinstance(pv, AbstractValue):
       return tracer
     elif pv is None:
-      if type(const) in core.literalable_types and onp.shape(const) == ():
+      if type(const) in core.literalable_types:
         return self.new_instantiated_literal(const)
       else:
         return self.new_instantiated_const(const)
@@ -159,6 +159,7 @@ class JaxprTrace(Trace):
     out_tracers = [JaxprTracer(self, PartialVal((out_pv, out_pv_const)), None)
                    for out_pv, out_pv_const in zip(out_pvs, out_pv_consts)]
     # The `jaxpr` already contains the env_vars at start of invars
+    # TODO(mattjj): avoid consts being broadcasted
     new_params = dict(params,
                       mapped_invars=tuple([True] * len(const_tracers) +
                                           [False] * len(env_tracers) +

@@ -305,7 +305,10 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
 
   def read(v):
     if type(v) is Literal:
-      return c.Constant(canonicalize_dtype(v.val))
+      val = env.get(v, None)
+      if val is None:
+        env[v] = val = c.Constant(canonicalize_dtype(v.val))
+      return val
     else:
       return env[v]
 
