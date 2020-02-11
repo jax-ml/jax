@@ -1003,8 +1003,8 @@ class APITest(jtu.JaxTestCase):
     c = onp.ones((2, 3, 3))
 
     jaxpr = api.make_jaxpr(lambda b, c: f(a, b, c))(b, c)
-    subjaxpr = next(eqn.bound_subjaxpr for eqn in jaxpr.jaxpr.eqns
-                    if eqn.bound_subjaxpr)
+    subjaxpr = next(eqn.params["call_jaxpr"] for eqn in jaxpr.jaxpr.eqns
+                    if "call_jaxpr" in eqn.params)
     self.assertEqual(len(subjaxpr.eqns), 1)
 
   def test_grad_of_int_errors(self):
@@ -1683,7 +1683,7 @@ class APITest(jtu.JaxTestCase):
 
     self.assertLen(outer_jaxpr.eqns, 1)
     self.assertEqual(outer_jaxpr.eqns[0].primitive.name, 'xla_call')
-    subjaxpr_1 = outer_jaxpr.eqns[0].bound_subjaxpr
+    subjaxpr_1 = outer_jaxpr.eqns[0].params["call_jaxpr"]
     self.assertEqual(str(subjaxpr_1), str(inner_jaxpr))
     self.assertLen(inner_jaxpr.eqns, 2)
     self.assertEqual(inner_jaxpr.eqns[0].primitive.name, 'mul')

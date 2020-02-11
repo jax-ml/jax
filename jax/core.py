@@ -58,6 +58,19 @@ class Jaxpr(object):
     return str(pp_jaxpr(self))
   __repr__ = __str__
 
+
+def subjaxprs(jaxpr):
+  """Generator for all subjaxprs found in the params of jaxpr.eqns.
+  Does not descend recursively into the found subjaxprs.
+  """
+  for eqn in jaxpr.eqns:
+    for param in eqn.params.values():
+      if type(param) is Jaxpr:
+        yield param
+      elif type(param) is TypedJaxpr:
+        yield param.jaxpr
+
+
 class TypedJaxpr(object):
   def __init__(self, jaxpr, literals, in_avals, out_avals):
     assert type(jaxpr) is Jaxpr
@@ -84,8 +97,8 @@ def jaxpr_as_fun(typed_jaxpr, *args):
   return eval_jaxpr(typed_jaxpr.jaxpr, typed_jaxpr.literals, *args)
 
 
-JaxprEqn = namedtuple('JaxprEqn', ['invars', 'outvars', 'primitive',
-                                   'bound_subjaxpr', 'params'])
+
+JaxprEqn = namedtuple('JaxprEqn', ['invars', 'outvars', 'primitive', 'params'])
 JaxprEqn.__repr__ = JaxprEqn.__str__ = lambda eqn: str(pp_eqn(eqn)).rstrip()
 new_jaxpr_eqn = JaxprEqn
 
@@ -149,6 +162,8 @@ literalable_types = set()
 
 class Primitive(object):
   multiple_results = False  # override for multi-output primitives
+  call_primitive = False  # override for higher-order primitives that are
+                          # processed in final style.
 
   def __init__(self, name):
     self.name = name
@@ -193,6 +208,24 @@ class Primitive(object):
 
 # -------------------- lifting --------------------
 
+# TODO(necula): this belongs next to pe.new_eqn_recipe, but is needed in
+# core.py. Plan to move all these utilities to jaxpr.py.
+def extract_call_jaxpr(primitive, params):
+  """Extract the call primitive subjaxpr from the params.
+
+  Params:
+    params: a parameter dictionary for a primitive.
+  Returns: the subjaxpr and the params without the "jaxpr" value. If this is
+    not a call primitive then returns (None, params).
+  """
+  if not primitive.call_primitive:
+    return (None, params)
+  else:
+    assert "call_jaxpr" in params
+    new_params = dict(params)
+    del new_params["call_jaxpr"]
+    return (params["call_jaxpr"], new_params)
+
 
 def eval_jaxpr(jaxpr, consts, *args):
   def read(v):
@@ -210,11 +243,12 @@ def eval_jaxpr(jaxpr, consts, *args):
   map(write, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
     in_vals = map(read, eqn.invars)
-    if eqn.bound_subjaxpr:
-      subfuns = [lu.wrap_init(partial(eval_jaxpr, eqn.bound_subjaxpr, ()))]
+    call_jaxpr, params = extract_call_jaxpr(eqn.primitive, eqn.params)
+    if call_jaxpr:
+      subfuns = [lu.wrap_init(partial(eval_jaxpr, call_jaxpr, ()))]
     else:
       subfuns = []
-    ans = eqn.primitive.bind(*(subfuns + in_vals), **eqn.params)
+    ans = eqn.primitive.bind(*(subfuns + in_vals), **params)
     if eqn.primitive.multiple_results:
       map(write, eqn.outvars, ans)
     else:
@@ -626,6 +660,10 @@ call_p.def_impl(call_impl)
 # ------------------- Jaxpr printed representation -------------------
 
 def check_jaxpr(jaxpr):
+  """Checks well-formedness of a jaxpr.
+
+  Specifically it checks that all variabled used are previously defined.
+  """
   def context():
     return "\njaxpr:\n{}\n".format(jaxpr)
 
@@ -646,10 +684,16 @@ def check_jaxpr(jaxpr):
   map(write, jaxpr.constvars)
   map(write, jaxpr.invars)
   for eqn in jaxpr.eqns:
+    if eqn.primitive.call_primitive:
+      if "call_jaxpr" not in eqn.params:
+        raise Exception("Call primitive {} should have a 'call_jaxpr' parameter"
+                        .format(eqn.primitive))
     map(read, eqn.invars)
-    if eqn.bound_subjaxpr:
-      check_jaxpr(eqn.bound_subjaxpr)
     map(write, eqn.outvars)
+
+  for subjaxpr in subjaxprs(jaxpr):
+    check_jaxpr(subjaxpr)
+
   map(read, jaxpr.outvars)
 
 
@@ -664,10 +708,6 @@ def pp_eqn_compact(primitive_name, params):
 def pp_eqn(eqn):
   lhs = pp_vars(eqn.outvars)
   pp_subexpr = pp('')
-  if eqn.bound_subjaxpr:
-    pp_subexpr = pp_subexpr + (
-        pp_jaxpr(eqn.bound_subjaxpr).indent(2)
-        >> pp(' [ ]'))
   return (pp('{} = '.format(lhs)) >>
           pp(eqn.primitive.name) >> pp_kv_pairs(sorted(eqn.params.items()))
           >> pp(' ') >> pp(pp_vars(eqn.invars))) + pp_subexpr

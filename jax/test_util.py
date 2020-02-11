@@ -27,6 +27,7 @@ import numpy as onp
 import numpy.random as npr
 
 from . import api
+from . import core
 from . import dtypes
 from . import lax
 from .config import flags, bool_env
@@ -616,9 +617,8 @@ def _iter_eqns(jaxpr):
   # TODO(necula): why doesn't this search in params?
   for eqn in jaxpr.eqns:
     yield eqn
-    if eqn.bound_subjaxpr:
-      for sub_eqn in _iter_eqns(eqn.bound_subjaxpr):
-        yield sub_eqn
+  for subjaxpr in core.subjaxprs(jaxpr):
+    yield from _iter_eqns(subjaxpr)
 
 def assert_dot_precision(expected_precision, fun, *args):
   jaxpr = api.make_jaxpr(fun)(*args)

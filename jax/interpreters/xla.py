@@ -284,21 +284,14 @@ def prefetch(x):
   return x
 
 def jaxpr_literals(jaxpr):
-  return it.chain.from_iterable(eqn_literals(eqn) for eqn in jaxpr.eqns)
+  """Generates all the literals inside a jaxpr, including nested subjaxprs."""
+  for eqn in jaxpr.eqns:
+    for v in eqn.invars:
+      if type(v) is core.Literal:
+        yield v.val
+  for subjaxpr in core.subjaxprs(jaxpr):
+    yield from jaxpr_literals(subjaxpr)
 
-def eqn_literals(eqn):
-  if eqn.bound_subjaxpr:
-    for literal in jaxpr_literals(eqn.bound_subjaxpr):
-      yield literal
-  if eqn.primitive in initial_style_translations:
-    for param in eqn.params.values():
-      if type(param) in (core.Jaxpr, core.TypedJaxpr):
-        subjaxpr = param if type(param) is core.Jaxpr else param.jaxpr
-        for literal in jaxpr_literals(subjaxpr):
-          yield literal
-  for v in eqn.invars:
-    if type(v) is core.Literal:
-      yield v.val
 
 def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
   platform = xb.get_backend(backend).platform
@@ -341,7 +334,7 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
     elif eqn.primitive in call_translations:
       new_params = check_backend_params(eqn.params, backend)
       rule = call_translations[eqn.primitive]
-      ans = rule(c, eqn.bound_subjaxpr, axis_env, in_nodes,
+      ans = rule(c, axis_env, in_nodes,
                  name_stack, backend=backend, **new_params)
     else:
       msg = "XLA translation rule for primitive '{}' not found"
@@ -402,13 +395,19 @@ def _axis_groups(nrep, mesh_spec, mesh_axes):
   return tuple(map(tuple, groups.T))
 
 def jaxpr_replicas(jaxpr):
+  """The number of replicas needed for a jaxpr.
+
+  For a eqn, multiply the `axis_size` with the `jaxpr_replicas` of the
+  subjaxprs. For a list of eqns, take the maximum number of replicas.
+  """
   return max(it.chain([1], (eqn_replicas(eqn) for eqn in jaxpr.eqns)))
 
 # TODO(mattjj): this function assumes that only pmap has a parameter named
 # axis_size, and that it corresponds to cross-replica mapping
 def eqn_replicas(eqn):
-  if eqn.bound_subjaxpr:
-    return eqn.params.get('axis_size', 1) * jaxpr_replicas(eqn.bound_subjaxpr)
+  call_jaxpr = eqn.params.get("call_jaxpr")
+  if call_jaxpr:
+    return eqn.params.get('axis_size', 1) * jaxpr_replicas(call_jaxpr)
   elif eqn.primitive in initial_style_translations:
     return initial_style_primitive_replicas(eqn.params)
   else:
@@ -424,37 +423,23 @@ def initial_style_primitive_replicas(params):
 # not-yet-supported features are used with multi-host programming
 
 def jaxpr_has_pmap(jaxpr):
-  return any(eqn_has_pmap(eqn) for eqn in jaxpr.eqns)
-
-def eqn_has_pmap(eqn):
-  if eqn.bound_subjaxpr:
-    return jaxpr_has_pmap(eqn.bound_subjaxpr)
-  elif eqn.primitive in initial_style_translations:
-    return any(jaxpr_has_pmap(param if type(param) is core.Jaxpr else param.jaxpr)
-               for param in eqn.params.values()
-               if type(param) in (core.Jaxpr, core.TypedJaxpr))
-  else:
-    return 'pmap' in eqn.primitive.name
+  """Whether there is an xla_pmap primitive anywhere inside a Jaxpr."""
+  for eqn in jaxpr.eqns:
+    if 'xla_pmap' in eqn.primitive.name:
+      return True
+  for subjaxpr in core.subjaxprs(jaxpr):
+    if jaxpr_has_pmap(subjaxpr):
+      return True
+  return False
 
 
 def jaxpr_collectives(jaxpr):
-  return it.chain.from_iterable(eqn_collectives(eqn) for eqn in jaxpr.eqns)
-
-def eqn_collectives(eqn):
-  if eqn.bound_subjaxpr:
-    for c in jaxpr_collectives(eqn.bound_subjaxpr):
-      yield c
-  elif eqn.primitive in initial_style_translations:
-    for param in eqn.params.values():
-      if type(param) is core.Jaxpr:
-        for c in jaxpr_collectives(param):
-          yield c
-      elif type(param) is core.TypedJaxpr:
-        for c in jaxpr_collectives(param.jaxpr):
-          yield c
-  else:
+  """Generates all the collective primitives anywhere inside a Jaxpr."""
+  for eqn in jaxpr.eqns:
     if eqn.primitive in parallel_translations:
       yield eqn.primitive
+  for subjaxpr in core.subjaxprs(jaxpr):
+    yield from jaxpr_collectives(subjaxpr)
 
 
 ### xla_call underlying jit
@@ -611,17 +596,19 @@ def _get_device(device, backend):
   return out
 
 xla_call_p = core.Primitive('xla_call')
+xla_call_p.call_primitive = True
 xla_call_p.multiple_results = True
 xla_call = partial(core.call_bind, xla_call_p)
 xla_call_p.def_custom_bind(xla_call)
 xla_call_p.def_impl(_xla_call_impl)
 
-def _xla_call_translation_rule(c, jaxpr, axis_env,
-                               in_nodes, name_stack, backend, name, device=None):
+def _xla_call_translation_rule(c, axis_env,
+                               in_nodes, name_stack, backend, name,
+                               call_jaxpr, device=None):
   del device  # Ignored.
   subc = xb.make_computation_builder("jit_{}".format(name))
   args = [subc.ParameterWithShape(c.GetShape(n)) for n in in_nodes]
-  out_nodes = jaxpr_subcomp(subc, jaxpr, backend, axis_env, (),
+  out_nodes = jaxpr_subcomp(subc, call_jaxpr, backend, axis_env, (),
                             extend_name_stack(name_stack, wrap_name(name, 'jit')), *args)
   subc = subc.Build(subc.Tuple(*out_nodes))
   return c.Call(subc, list(in_nodes))
@@ -983,15 +970,16 @@ masking.shape_rules[device_put_p] = lambda x, **_: x.shape
 masking.defvectorized(device_put_p)
 
 
-def _remat_translation_rule(c, jaxpr, axis_env, in_nodes,
-                            name_stack, backend, name, device=None, concrete=None):
+def _remat_translation_rule(c, axis_env, in_nodes,
+                            name_stack, backend, name, call_jaxpr,
+                            device=None, concrete=None):
   # This looks a lot like _xla_call_translation_rule, except for a widget we use
   # to foil CSE.
   del device, concrete  # Unused.
   subc = xb.make_computation_builder("remat_call_subcomputation")
   args = [subc.ParameterWithShape(c.GetShape(n)) for n in in_nodes]
   args = [_foil_cse(subc, x) for x in args]
-  out_nodes = jaxpr_subcomp(subc, jaxpr, backend, axis_env, (),
+  out_nodes = jaxpr_subcomp(subc, call_jaxpr, backend, axis_env, (),
                             extend_name_stack(name_stack, wrap_name(name, 'remat')), *args)
   subc = subc.Build(subc.Tuple(*out_nodes))
   return c.Call(subc, list(in_nodes))
