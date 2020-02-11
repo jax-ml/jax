@@ -12,10 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
+import inspect
 import collections
 from contextlib import contextmanager
 import copy
@@ -1697,6 +1694,20 @@ class JaxprTest(jtu.JaxTestCase):
                     true_nconsts=1 ] b a c a d
       in [e] }
         """)
+
+  def test_signatures(self):
+    def f(x: np.ndarray, y: float, z: float = 1):
+      return x + y + z
+
+    f_sig = inspect.signature(f)
+    for g in (jit(f),
+              jax.vmap(f),
+              jit(jax.vmap(f)),
+              jax.vmap(jit(f)),
+              jax.vmap(jax.vmap(f)),
+              jax.pmap(f),
+              jax.grad(f)):
+      self.assertEqual(f_sig, inspect.signature(g))
 
 
 class LazyTest(jtu.JaxTestCase):

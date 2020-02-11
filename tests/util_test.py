@@ -12,16 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
-import jax
-import jax.numpy as np
-from jax import api, lax
+import inspect
 from jax import linear_util as lu
 from jax import test_util as jtu
-from jax import tree_util
+from jax import util
+from absl.testing import absltest
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -68,3 +63,32 @@ class UtilTest(jtu.JaxTestCase):
     self.assertEqual((2, 4), scaled_positional)
     self.assertEqual(dict(three=6, four=8), scaled_kwargs)
     self.assertEqual(2, out_thunk())
+
+  def test_partial(self):
+    def f(x, y: int, z=2) -> int:
+      return x + y + z
+
+    def fx(y: int, z=2) -> int:
+      return 1 + y + z
+
+    f_partial = util.partial(f, 1)
+    self.assertEqual(fx(2, 3), f_partial(2, 3))
+    self.assertEqual(inspect.signature(fx), f_partial.__signature__)
+
+    def fy(x, z=2) -> int:
+      return 1 + x + z
+
+    f_partial = util.partial(f, y=1)
+    self.assertEqual(fy(x=2, z=3), f_partial(x=2, z=3))
+    self.assertEqual(inspect.signature(fy), f_partial.__signature__)
+
+    def fz(x, y:int) -> int:
+      return 1 + x + y
+
+    f_partial = util.partial(f, z=1)
+    self.assertEqual(fz(2, 3), f_partial(2, 3))
+    self.assertEqual(inspect.signature(fz), f_partial.__signature__)
+
+
+if __name__ == '__main__':
+  absltest.main()

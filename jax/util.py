@@ -12,11 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
-import collections
+import inspect
 import functools
 import itertools as it
 import types
@@ -80,11 +76,20 @@ def split_dict(dct, names):
 def concatenate(xs):
   return list(it.chain.from_iterable(xs))
 
-def partial(fun, *args, **kwargs):
-  wrapped = functools.partial(fun, *args, **kwargs)
-  functools.update_wrapper(wrapped, fun)
-  wrapped._bound_args = args
-  return wrapped
+def partial(wrapped, *args, **kwargs):
+  fun_obj = functools.partial(wrapped, *args, **kwargs)
+
+  def fun(*args, **kwargs):
+    return fun_obj(*args, **kwargs)
+
+  signature = inspect.signature(wrapped)
+  bound_params = signature.bind_partial(*args, **kwargs).arguments
+  unbound_params = [p for name, p in signature.parameters.items()
+                    if name not in bound_params]
+
+  fun.__signature__ = signature.replace(parameters=unbound_params)
+  fun.__doc__, fun.__repr__, fun.__str__ = fun_obj.__doc__, fun_obj.__repr__, fun_obj.__str__
+  return fun
 
 class partialmethod(functools.partial):
   def __get__(self, instance, owner):
