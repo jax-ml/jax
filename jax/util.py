@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import inspect
-import collections
 import functools
 import itertools as it
 import types
@@ -83,13 +82,16 @@ def partial(wrapped, *args, **kwargs):
   def fun(*args, **kwargs):
     return fun_obj(*args, **kwargs)
 
-  signature = inspect.signature(wrapped)
-  bound_params = signature.bind_partial(*args, **kwargs).arguments
-  unbound_params = [p for name, p in signature.parameters.items()
-                    if name not in bound_params]
-
-  fun.__signature__ = signature.replace(parameters=unbound_params)
   fun.__doc__, fun.__repr__, fun.__str__ = fun_obj.__doc__, fun_obj.__repr__, fun_obj.__str__
+
+  try:
+    signature = inspect.signature(wrapped)
+    bound_params = signature.bind_partial(*args, **kwargs).arguments
+    unbound_params = [p for name, p in signature.parameters.items()
+                      if name not in bound_params]
+    fun.__signature__ = signature.replace(parameters=unbound_params)
+  finally:
+    pass
   return fun
 
 class partialmethod(functools.partial):
