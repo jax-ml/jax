@@ -891,6 +891,26 @@ class APITest(jtu.JaxTestCase):
     g = api.grad(f)(pt)
     self.assertIsInstance(pt, ZeroPoint)
 
+  @parameterized.parameters(1, 2, 3)
+  def test_shape_dtype_struct(self, i):
+    s = api.ShapeDtypeStruct(shape=(i, 2, 3), dtype=np.float32)
+    self.assertEqual(s.shape, (i, 2, 3))
+    self.assertEqual(s.dtype, np.float32)
+    self.assertEqual(s.ndim, 3)
+    self.assertEqual(s.size, i * 2 * 3)
+    self.assertLen(s, i)
+    for f in (str, repr):
+      self.assertEqual(
+          f(s), "ShapeDtypeStruct(shape=({}, 2, 3), dtype=float32)".format(i))
+
+  def test_shape_dtype_struct_scalar(self):
+    s = api.ShapeDtypeStruct(shape=(), dtype=np.float32)
+    self.assertEmpty(s.shape)
+    self.assertEqual(s.size, 1)
+    self.assertEqual(s.ndim, 0)
+    with self.assertRaisesRegex(TypeError, "len[(][)] of unsized object"):
+      _ = len(s)
+
   def test_eval_shape(self):
     def fun(x, y):
       return np.tanh(np.dot(x, y) + 3.)
