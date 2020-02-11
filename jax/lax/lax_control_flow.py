@@ -2037,11 +2037,14 @@ def associative_scan(fn, elems):
       if num_elems == 2:
         return [np.concatenate([elem[0:1], reduced_elem], axis=0)
                 for (reduced_elem, elem) in zip(reduced_elems, elems)]
-      else:
+      elif num_elems == 3:
+        reduced_reduced_elems = lowered_fn(
+          reduced_elems,
+          [elem[2:3] for elem in elems])
         return [
-            np.concatenate([elem[0:1], reduced_elem,
-                           lowered_fn([reduced_elem], [elem[2:3]])[0]], axis=0)
-            for (reduced_elem, elem) in zip(reduced_elems, elems)]
+            np.concatenate([elem[0:1], reduced_elem, reduced_reduced_elem], axis=0)
+            for (reduced_reduced_elem, reduced_elem, elem)
+            in zip(reduced_reduced_elems, reduced_elems, elems)]
 
     # Recursively compute scan for partially reduced tensors.
     odd_elems = _scan(reduced_elems)
