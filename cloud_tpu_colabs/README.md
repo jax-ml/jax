@@ -129,4 +129,4 @@ tracker](https://github.com/google/jax/issues) and we'll triage it
 appropriately.
 
 If you have any other questions or comments regarding JAX on Cloud TPUs, please
-email jax-tpu@google.com. We’d like to hear from you!
+email jax-tpu@googlegroups.com. We’d like to hear from you!
