@@ -203,8 +203,7 @@ def _device_from_arg_devices(devices):
     return device
   except ValueError:
     msg = "primitive arguments must be colocated on the same device, got {}"
-    names = ("{}({})".format(d[0].__name__, d[1]) for d in devices if d is not None)
-    raise ValueError(msg.format(", ".join(names)))
+    raise ValueError(msg.format(", ".join(map(str, devices))))
 
 @cache()
 def primitive_computation(prim, axis_env, backend, tuple_args, *avals, **params):
