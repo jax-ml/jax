@@ -1745,11 +1745,13 @@ class JaxprTest(jtu.JaxTestCase):
         """)
 
   def test_pmap_constants_not_replicated(self):
+    num_devices = len(xb.local_devices())
     x = jax.random.uniform(jax.random.PRNGKey(0), shape=(1000, 10))
     f = jax.pmap(lambda i: x[i])
-    s = jax.xla_computation(f)(np.arange(10)).GetHloText()
-    self.assertIn('1000,10', s)
-    self.assertNotIn('1,1000,10', s)
+    s = jax.xla_computation(f)(np.arange(num_devices)).GetHloText()
+    self.assertRegex(s, r'constant\.\d+ = f32\[1000,10\]')
+    self.assertNotRegex(s, r'constant\.\d+ = f32\[{num_devices},1000,10\]'
+                        .format(num_devices=num_devices))
 
 
 class LazyTest(jtu.JaxTestCase):
