@@ -2,11 +2,17 @@
 
 These are the release notes for JAX.
 
-## jax 0.1.59 (unreleased)
+## jax 0.1.60 (unreleased)
+
+## jax 0.1.59 (February 11, 2020)
 
 ### Breaking changes
 
 * The minimum jaxlib version is now 0.1.38.
+* Simplified `Jaxpr` by removing the `Jaxpr.freevars` and 
+  `Jaxpr.bound_subjaxprs`. The call primitives (`xla_call`, `xla_pmap`,
+   `sharded_call`, and `remat_call`) get a new parameter `call_jaxpr` with a
+   fully-closed (no `constvars`) JAXPR.
 
 ### New features
 
@@ -19,6 +25,7 @@ These are the release notes for JAX.
   and Numba.
 * JAX CPU device buffers now implement the Python buffer protocol, which allows
   zero-copy buffer sharing between JAX and NumPy.
+* Added JAX_SKIP_SLOW_TESTS environment variable to skip tests known as slow.
 
 ## jaxlib 0.1.38 (January 29, 2020)
 

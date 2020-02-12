@@ -785,6 +785,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "axes": axes, "rng_factory": rng_factory}
       for rng_factory in [jtu.rand_default]
       for lhs_shape, rhs_shape, axes in [
+          [(3,), (), 0],
           [(2, 3, 4), (5, 6, 7), 0],  # from issue #740
           [(2, 3, 4), (3, 4, 5, 6), 2],
           [(2, 3, 4), (5, 4, 3, 6), [1, 2]],
@@ -2374,6 +2375,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for rng_factory in [jtu.rand_default]))
   def testLinspace(self, start_shape, stop_shape, num, endpoint,
                    retstep, dtype, rng_factory):
+    if num == 1 and not endpoint and numpy_version < (1, 17, 5):
+      raise SkipTest("Numpy < 1.17.5 has a linspace bug.")
     rng = rng_factory()
     # relax default tolerances slightly
     tol = jtu.tolerance(dtype if dtype else onp.float32) * 10

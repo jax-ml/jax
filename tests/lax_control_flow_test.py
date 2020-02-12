@@ -957,6 +957,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
        "jit_scan": jit_scan, "jit_f": jit_f}
       for jit_scan in [False, True]
       for jit_f in [False, True])
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testScanGrad(self, jit_scan, jit_f):
     rng = onp.random.RandomState(0)
 
@@ -987,6 +988,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     jtu.check_grads(partial(scan, f), (c, as_), order=2, modes=["rev"],
                     atol=1e-3, rtol=2e-3)
 
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testScanRnn(self):
     r = npr.RandomState(0)
 
@@ -1444,6 +1446,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(results, 5.0 ** 1.5, check_dtypes=False,
                         rtol={onp.float64:1e-7})
 
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_custom_root_vector_with_solve_closure(self):
 
     def vector_solve(f, y):
@@ -1513,6 +1516,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       {"testcase_name": "nonsymmetric", "symmetric": False},
       {"testcase_name": "symmetric", "symmetric": True},
   )
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_custom_linear_solve(self, symmetric):
 
     def explicit_jacobian_solve(matvec, b):
@@ -1542,6 +1546,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     actual = api.vmap(linear_solve, (None, 1), 1)(a, c)
     self.assertAllClose(expected, actual, check_dtypes=True)
 
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_custom_linear_solve_zeros(self):
     def explicit_jacobian_solve(matvec, b):
       return lax.stop_gradient(np.linalg.solve(api.jacobian(matvec)(b), b))
@@ -1561,6 +1566,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     jtu.check_grads(lambda x: linear_solve(a, x), (b,), order=2,
                     rtol={onp.float32: 5e-3})
 
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_custom_linear_solve_iterative(self):
 
     def richardson_iteration(matvec, b, omega=0.1, tolerance=1e-6):
@@ -1622,6 +1628,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         lambda x, y: positive_definite_solve(high_precision_dot(x, x.T), y),
         (a, b), order=2, rtol=1e-2)
 
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_custom_linear_solve_lu(self):
 
     # TODO(b/143528110): re-enable when underlying XLA TPU issue is fixed
@@ -1652,6 +1659,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     jtu.check_grads(api.jit(linear_solve), (a, b), order=2,
                     rtol={onp.float32: 2e-3})
 
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_custom_linear_solve_without_transpose_solve(self):
 
     def explicit_jacobian_solve(matvec, b):
@@ -1674,6 +1682,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, "transpose_solve required"):
       api.grad(loss)(a, b)
 
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_custom_linear_solve_pytree(self):
     """Test custom linear solve with inputs and outputs that are pytrees."""
 

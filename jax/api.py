@@ -34,7 +34,6 @@ from warnings import warn
 
 import numpy as onp
 from contextlib import contextmanager
-from distutils.util import strtobool
 
 from . import core
 from . import linear_util as lu
@@ -60,14 +59,14 @@ from .interpreters import batching
 from .interpreters import parallel
 from .interpreters import masking
 from .interpreters.masking import shapecheck, ensure_poly
-from .config import flags, config
+from .config import flags, config, bool_env
 
 map = safe_map
 zip = safe_zip
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool("jax_disable_jit",
-                  strtobool(os.getenv("JAX_DISABLE_JIT", "False")),
+                  bool_env("JAX_DISABLE_JIT", False),
                   "Disable JIT compilation and just call original Python.")
 
 
@@ -305,7 +304,7 @@ def xla_computation(fun, static_argnums=(), axis_env=None, backend=None,
     xla_consts = map(c.Constant, consts)
     xla_args = xla._xla_callable_args(c, avals, tuple_args)
     outs = xla.jaxpr_subcomp(
-        c, jaxpr, backend, axis_env_, xla_consts, (),
+        c, jaxpr, backend, axis_env_, xla_consts,
         extend_name_stack(wrap_name(fun_name, 'xla_computation')), *xla_args)
     return c.Build(c.Tuple(*outs))
   return computation_maker
@@ -1211,7 +1210,7 @@ def lift_linearized(jaxpr, primal_avals, consts, io_tree, out_pvals, *py_args):
                "the original primal values.")
         raise ValueError(msg)
     dummy = (core.unit,) * len(tangents)
-    out = eval_jaxpr(jaxpr, consts, (), *(dummy + tangents))
+    out = eval_jaxpr(jaxpr, consts, *(dummy + tangents))
     tangents_out = out[len(out)//2:]
     return tuple(map(pe.merge_pvals, tangents_out, out_pvals))
 
@@ -1491,7 +1490,7 @@ def custom_transforms(fun):
 
   def fun_impl(*args, **params):
     consts, args = split_list(args, [params['num_consts']])
-    return core.eval_jaxpr(params['jaxpr'], consts, (), *args)
+    return core.eval_jaxpr(params['jaxpr'], consts, *args)
   fun_p.def_impl(fun_impl)
 
   def fun_jvp(primals, tangents, **params):
@@ -1918,7 +1917,6 @@ def _make_graphviz(fun):
     fragment = []
 
     fragment.extend(map(invar_node, jaxpr.invars, jaxpr.invars))
-    fragment.extend(map(freevar_node, jaxpr.freevars, jaxpr.freevars))
     fragment.extend(map(constant_node, jaxpr.constvars, consts))
 
     for eqn in jaxpr.eqns:
@@ -1956,6 +1954,30 @@ class ShapeDtypeStruct(object):
   def __init__(self, shape, dtype):
     self.shape = shape
     self.dtype = dtype
+
+  size = property(lambda self: onp.prod(self.shape))
+  ndim = property(lambda self: len(self.shape))
+
+  def __len__(self):
+    try:
+      return self.shape[0]
+    except IndexError:
+      raise TypeError("len() of unsized object")  # same as numpy error
+
+  def __repr__(self):
+    return "{}(shape={}, dtype={})".format(
+        type(self).__name__, self.shape, self.dtype.dtype.name)
+
+  __str__ = __repr__
+
+  def __eq__(self, other):
+    if not isinstance(other, ShapeDtypeStruct):
+      return False
+    else:
+      return (other.shape, other.dtype) == (self.shape, self.dtype)
+
+  def __hash__(self):
+    return hash((self.shape, self.dtype))
 
 def eval_shape(fun, *args, **kwargs):
   """Compute the shape/dtype of ``fun(*args, **kwargs)`` without any FLOPs.

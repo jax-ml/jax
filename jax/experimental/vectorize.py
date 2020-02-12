@@ -97,6 +97,15 @@ from jax import grad, jit, vmap
 import jax.numpy as jnp
 import numpy as np
 import re
+import warnings
+
+
+warnings.warn(
+    "jax.experimental.vectorize is deprecated and will be removed soon. Use "
+    "jax.numpy.vectorize instead.",
+    FutureWarning,
+)
+
 
 # See http://docs.scipy.org/doc/numpy/reference/c-api.generalized-ufuncs.html
 _DIMENSION_NAME = r'\w+'

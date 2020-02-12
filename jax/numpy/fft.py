@@ -208,6 +208,34 @@ def rfftfreq(n, d=1.0):
   return k / (d * n)
 
 
+@_wraps(onp.fft.fftshift)
+def fftshift(x, axes=None):
+  x = np.asarray(x)
+  if axes is None:
+    axes = tuple(range(x.ndim))
+    shift = [dim // 2 for dim in x.shape]
+  elif isinstance(axes, int):
+    shift = x.shape[axes] // 2
+  else:
+    shift = [x.shape[ax] // 2 for ax in axes]
+
+  return np.roll(x, shift, axes)
+
+
+@_wraps(onp.fft.ifftshift)
+def ifftshift(x, axes=None):
+  x = np.asarray(x)
+  if axes is None:
+    axes = tuple(range(x.ndim))
+    shift = [-(dim // 2) for dim in x.shape]
+  elif isinstance(axes, int):
+    shift = -(x.shape[axes] // 2)
+  else:
+    shift = [-(x.shape[ax] // 2) for ax in axes]
+
+  return np.roll(x, shift, axes)
+
+
 for func in get_module_functions(onp.fft):
   if func.__name__ not in globals():
     globals()[func.__name__] = _not_implemented(func)

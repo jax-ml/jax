@@ -158,7 +158,7 @@ def assign_shards_to_replicas(nrep, size):
 
   Returns:
     A tuple of integers of length nrep in which the elements take on values from
-    0 to size-1. Replica n is assgined shard data_array[assignments[n]].
+    0 to size-1. Replica n is assigned shard data_array[assignments[n]].
   """
   groupsize, ragged = divmod(nrep, size)
   assert not ragged
@@ -267,7 +267,7 @@ def _axis_index_partial_eval(trace, _, **params):
   # rule except that we don't attempt to lower out of the trace.
   out_aval = ShapedArray((), onp.int32)
   out_tracer = pe.JaxprTracer(trace, pe.PartialVal((out_aval, core.unit)), None)
-  eqn = pe.new_eqn_recipe([], [out_tracer], axis_index_p, (), params)
+  eqn = pe.new_eqn_recipe([], [out_tracer], axis_index_p, params)
   out_tracer.recipe = eqn
   return out_tracer
 
@@ -402,7 +402,7 @@ xla.canonicalize_dtype_handlers[ChunkedDeviceArray] = identity
 ### the xla_pmap primitive and its rules are comparable to xla_call in xla.py
 
 def xla_pmap_impl(fun, *args, backend, axis_name, axis_size, global_axis_size,
-                  devices, name):
+                  devices, name, mapped_invars=None):
   abstract_args = map(xla.abstractify, args)
   compiled_fun = parallel_callable(fun, backend, axis_name, axis_size,
                                    global_axis_size, devices, name, *abstract_args)
@@ -458,6 +458,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
 
   avals = tuple(map(partial(shard_aval, axis_size), avals))
   pvals = [pe.PartialVal((aval, core.unit)) for aval in avals]
+  # We add a dummy first invar, to carry the trace details to `dynamic_fun`
   pval = pe.PartialVal([core.abstract_unit, core.unit])  # dummy value for axis env
   with core.new_master(pe.StagingJaxprTrace, True) as master:
     jaxpr, (out_pvals, consts, env) = pe.trace_to_subjaxpr(
@@ -493,14 +494,14 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   jaxpr_replicas = xla.jaxpr_replicas(jaxpr)
   num_local_replicas = axis_size * jaxpr_replicas
   num_global_replicas = global_axis_size * jaxpr_replicas
-  axis_env = xla.AxisEnv(num_global_replicas, [axis_name], [global_axis_size], devices)
+  axis_env = xla.AxisEnv(num_global_replicas, (axis_name,), (global_axis_size,), devices)
 
   tuple_args = len(avals) > 100  # pass long arg lists as tuple for TPU
 
   c = xb.make_computation_builder("pmap_{}".format(fun.__name__))
   xla_consts = _map(c.Constant, consts)
   xla_args = xla._xla_callable_args(c, avals, tuple_args)
-  out_nodes = xla.jaxpr_subcomp(c, jaxpr, backend, axis_env, xla_consts, (),
+  out_nodes = xla.jaxpr_subcomp(c, jaxpr, backend, axis_env, xla_consts,
                                 extend_name_stack(wrap_name(name, 'pmap')), *xla_args)
   built = c.Build(c.Tuple(*out_nodes))
 
@@ -639,14 +640,17 @@ def execute_replicated(compiled, backend, in_handler, out_handler, *args):
 
 
 xla_pmap_p = core.Primitive('xla_pmap')
+xla_pmap_p.call_primitive = True
 xla_pmap_p.multiple_results = True
 xla_pmap = partial(core.call_bind, xla_pmap_p)
 xla_pmap_p.def_custom_bind(xla_pmap)
 xla_pmap_p.def_impl(xla_pmap_impl)
 
-def _pmap_translation_rule(c, jaxpr, axis_env, const_nodes, freevar_nodes,
+def _pmap_translation_rule(c, axis_env,
                            in_nodes, name_stack, axis_name, axis_size,
-                           global_axis_size, devices, name, backend=None):
+                           global_axis_size, devices, name,
+                           call_jaxpr, backend=None,
+                           mapped_invars=None):
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
   if axis_env.devices is not None or (axis_env.names and devices is not None):
@@ -654,9 +658,13 @@ def _pmap_translation_rule(c, jaxpr, axis_env, const_nodes, freevar_nodes,
   if global_axis_size is None:
     global_axis_size = axis_size
   new_env = xla.extend_axis_env(axis_env, axis_name, global_axis_size)
-  in_nodes_sharded = list(map(partial(_xla_shard, c, new_env), in_nodes))
+  # Shard the in_nodes that are mapped
+  in_nodes_sharded = (
+    _xla_shard(c, new_env, in_node) if in_node_mapped else in_node
+    for in_node, in_node_mapped in zip(in_nodes, mapped_invars))
+
   sharded_outs = xla.jaxpr_subcomp(
-      c, jaxpr, backend, new_env, const_nodes, freevar_nodes,
+      c, call_jaxpr, backend, new_env, (),
       extend_name_stack(name_stack, wrap_name(name, 'pmap')), *in_nodes_sharded)
   outs = [_xla_unshard(c, new_env, shard) for shard in sharded_outs]
   return c.Tuple(*outs)

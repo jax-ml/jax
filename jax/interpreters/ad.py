@@ -110,7 +110,7 @@ def vjp(traceable, primals, has_aux=False):
     cts = tuple(map(ignore_consts, cts, pvals))
     dummy_primals_and_cts = (core.unit,) * len(cts) + cts
     dummy_args = (undefined_primal,) * len(jaxpr.invars)
-    _, arg_cts = backward_pass(jaxpr, consts, (), dummy_args, dummy_primals_and_cts)
+    arg_cts = backward_pass(jaxpr, consts, dummy_args, dummy_primals_and_cts)
     arg_cts = arg_cts[len(primals):]
     return map(instantiate_zeros, primals, arg_cts)
 
@@ -137,9 +137,9 @@ def unpair_pval(pval):
     aval_1, aval_2 = aval
     return (aval_1, const_1), (aval_2, const_2)
 
-def backward_pass(jaxpr, consts, freevar_vals, args, cotangents_in):
+def backward_pass(jaxpr: core.Jaxpr, consts, args, cotangents_in):
   if all(ct is zero for ct in cotangents_in):
-    return [zero] * len(jaxpr.freevars), [zero] * len(jaxpr.invars)
+    return [zero] * len(jaxpr.invars)
 
   def write_cotangent(v, ct):
     # assert v not in primal_env
@@ -162,7 +162,6 @@ def backward_pass(jaxpr, consts, freevar_vals, args, cotangents_in):
   primal_env = {}
   write_primal(core.unitvar, core.unit)
   map(write_primal, jaxpr.constvars, consts)
-  map(write_primal, jaxpr.freevars, freevar_vals)
   map(write_primal, jaxpr.invars, args)
 
   def is_linear(var):
@@ -173,7 +172,7 @@ def backward_pass(jaxpr, consts, freevar_vals, args, cotangents_in):
 
   linear_eqns = []
   for eqn in jaxpr.eqns:
-    if not eqn.bound_subjaxprs:
+    if not eqn.primitive.call_primitive:
       if any(is_linear(v) for v in eqn.invars):
         linear_eqns.append(eqn)
       else:
@@ -184,22 +183,12 @@ def backward_pass(jaxpr, consts, freevar_vals, args, cotangents_in):
         else:
           write_primal(eqn.outvars[0], ans)
     else:
-      (subjaxpr, const_vars, bound_vars), = eqn.bound_subjaxprs
-      assert not any(is_linear(v) for v in const_vars)
-      if any(is_linear(v) for v in it.chain(eqn.invars, bound_vars)):
+      call_jaxpr, params = core.extract_call_jaxpr(eqn.primitive, eqn.params)
+      if any(is_linear(v) for v in eqn.invars):
         linear_eqns.append(eqn)
-      elif eqn.primitive is not pe.remat_call_p:
-        ans = _eval_subjaxpr_primals(
-            eqn.primitive, subjaxpr, map(read_primal, const_vars),
-            map(read_primal, bound_vars), map(read_primal, eqn.invars), eqn.params)
-        map(write_primal, eqn.outvars, ans)
-
-      # we special-case remat_call here because it can be mixed linear /
-      # nonlinear, so we always evaluate it even if it has a linear part
-      if eqn.primitive is pe.remat_call_p:
-        ans = _eval_subjaxpr_primals(
-            eqn.primitive, subjaxpr, map(read_primal, const_vars),
-            map(read_primal, bound_vars), map(read_primal, eqn.invars), eqn.params)
+      if any(not is_linear(v) for v in eqn.invars):
+        ans = _eval_subjaxpr_primals(eqn.primitive, call_jaxpr,
+                                     map(read_primal, eqn.invars), params)
         map(write_primal, eqn.outvars, ans)
 
   ct_env = {}
@@ -210,30 +199,27 @@ def backward_pass(jaxpr, consts, freevar_vals, args, cotangents_in):
       cts_in = map(read_cotangent, eqn.outvars)
     else:
       cts_in, = map(read_cotangent, eqn.outvars)
-    if eqn.bound_subjaxprs:
-      (subjaxpr, const_vars, bound_vars), = eqn.bound_subjaxprs
-      sub_consts = map(read_primal, const_vars)
-      sub_freevar_vals = map(read_primal, bound_vars)
-      ct_free_vars_out, cts_out = get_primitive_transpose(eqn.primitive)(
-          eqn.params, subjaxpr, sub_consts, sub_freevar_vals, invals, cts_in)
-      map(write_cotangent, bound_vars, ct_free_vars_out)
+    if eqn.primitive.call_primitive:
+      call_jaxpr, params = core.extract_call_jaxpr(eqn.primitive, eqn.params)
+      cts_out = get_primitive_transpose(eqn.primitive)(
+          params, call_jaxpr, invals, cts_in)
     else:
       cts_out = get_primitive_transpose(eqn.primitive)(cts_in, *invals, **eqn.params)
     cts_out = [zero] * len(eqn.invars) if cts_out is zero else cts_out
     map(write_cotangent, eqn.invars, cts_out)
 
-  freevar_cts = map(read_cotangent, jaxpr.freevars)
   cotangents_out = map(read_cotangent, jaxpr.invars)
-  return freevar_cts, cotangents_out
+  return cotangents_out
 
-def _eval_subjaxpr_primals(prim, jaxpr, consts, freevar_vals, in_vals, params):
-  all_args, in_tree_def = tree_flatten((consts, freevar_vals, in_vals))
+def _eval_subjaxpr_primals(prim, jaxpr, in_vals, params):
+  assert not jaxpr.constvars
+  all_args, in_tree_def = tree_flatten((in_vals,))
   fun = lu.hashable_partial(lu.wrap_init(_eval_primals), jaxpr)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
   out_flat = prim.bind(fun, *all_args, **params)
   return tree_unflatten(out_tree(), out_flat)
 
-def _eval_primals(jaxpr, consts, freevar_vals, args):
+def _eval_primals(jaxpr, args):
   primal_env = {}
 
   def read_primal(v):
@@ -253,11 +239,10 @@ def _eval_primals(jaxpr, consts, freevar_vals, args):
       return primal_env.get(var, undefined_primal) is undefined_primal
 
   write_primal(core.unitvar, core.unit)
-  map(write_primal, jaxpr.constvars, consts)
-  map(write_primal, jaxpr.freevars, freevar_vals)
+  assert not jaxpr.constvars
   map(write_primal, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
-    if not eqn.bound_subjaxprs:
+    if not eqn.primitive.call_primitive:
       if not any(is_linear(v) for v in eqn.invars):
         in_vals = map(read_primal, eqn.invars)
         ans = eqn.primitive.bind(*in_vals, **eqn.params)
@@ -266,13 +251,10 @@ def _eval_primals(jaxpr, consts, freevar_vals, args):
         else:
           write_primal(eqn.outvars[0], ans)
     else:
-      (subjaxpr, const_vars, bound_vars), = eqn.bound_subjaxprs
-      assert not any(is_linear(v) for v in const_vars)
-      if (eqn.primitive is pe.remat_call_p or
-          not any(is_linear(v) for v in it.chain(eqn.invars, bound_vars))):
-        ans = _eval_subjaxpr_primals(
-            eqn.primitive, subjaxpr, map(read_primal, const_vars),
-            map(read_primal, bound_vars), map(read_primal, eqn.invars), eqn.params)
+      call_jaxpr, params = core.extract_call_jaxpr(eqn.primitive, eqn.params)
+      if any(not is_linear(v) for v in eqn.invars):
+        ans = _eval_subjaxpr_primals(eqn.primitive, call_jaxpr,
+                                     map(read_primal, eqn.invars), params)
         map(write_primal, eqn.outvars, ans)
   return map(read_primal, jaxpr.outvars)
 
@@ -471,7 +453,7 @@ def defvjp_all(prim, custom_vjp):
     num_res, trans_jaxpr = kwargs['num_res'], kwargs['trans_jaxpr']
     res, _ = split_list(args, [num_res])
     cts = map(instantiate_zeros_aval, kwargs['out_avals'], cts)
-    outs = core.eval_jaxpr(trans_jaxpr, res, (), *cts)
+    outs = core.eval_jaxpr(trans_jaxpr, res, *cts)
     return [None] * num_res + outs
   primitive_transposes[fun_lin_p] = fun_lin_transpose
 
@@ -544,9 +526,9 @@ def traceable(num_primals, in_tree_def, *primals_and_tangents):
   yield out_flat, tree_def
 
 
-def call_transpose(primitive, params, jaxpr, consts, freevar_vals, args, ct):
-  all_args, in_tree_def = tree_flatten((consts, freevar_vals, args, ct))
-  fun = lu.hashable_partial(lu.wrap_init(backward_pass), jaxpr)
+def call_transpose(primitive, params, call_jaxpr, args, ct):
+  all_args, in_tree_def = tree_flatten(((), args, ct))  # empty consts
+  fun = lu.hashable_partial(lu.wrap_init(backward_pass), call_jaxpr)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
   params = dict(params, name=wrap_name(params['name'], 'transpose'))
   out_flat = primitive.bind(fun, *all_args, **params)
@@ -554,15 +536,22 @@ def call_transpose(primitive, params, jaxpr, consts, freevar_vals, args, ct):
 primitive_transposes[core.call_p] = partial(call_transpose, call_p)
 primitive_transposes[pe.remat_call_p] = partial(call_transpose, pe.remat_call_p)
 
-def map_transpose(primitive, params, jaxpr, consts, freevar_vals, args, ct):
-  all_args, in_tree_def = tree_flatten((consts, freevar_vals, args, ct))
-  fun = lu.hashable_partial(lu.wrap_init(backward_pass), jaxpr)
+def map_transpose(primitive, params, call_jaxpr, args, ct):
+  all_args, in_tree_def = tree_flatten(((), args, ct))  # empty consts
+  fun = lu.hashable_partial(lu.wrap_init(backward_pass), call_jaxpr)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
   params = dict(params, name=wrap_name(params['name'], 'transpose'))
   out_flat = primitive.bind(fun, *all_args, **params)
-  freevar_cts, arg_cts = tree_unflatten(out_tree(), out_flat)
-  freevar_cts = [x.sum(0) if x is not zero else x for x in freevar_cts]
-  return freevar_cts, arg_cts
+  arg_cts = tree_unflatten(out_tree(), out_flat)
+
+  mapped_invars = params['mapped_invars']  # True for each mapped invar
+  # The freevars are being fanned out (not mapped). During transpose the
+  # dual of fan-out is fan-in-sum. We apply it to the unmapped invars.
+  assert len(mapped_invars) == len(arg_cts)
+  arg_cts = (arg_ct if arg_mapped or arg_ct is zero else arg_ct.sum(0)
+             for arg_ct, arg_mapped in zip(arg_cts, mapped_invars))
+
+  return arg_cts
 
 
 def jvp_jaxpr(jaxpr, nonzeros, instantiate):
@@ -588,10 +577,10 @@ def f_jvp_traceable(nonzeros, *primals_and_nztangents):
   nonzero_tangents_out = [t for t in tangents_out if t is not zero]
   yield list(primals_out) + nonzero_tangents_out, out_nonzeros
 
-def rearrange_binders(jaxpr, primals_in, tangents_in, primals_out, tangents_out):
+def rearrange_binders(jaxpr: core.TypedJaxpr, primals_in, tangents_in, primals_out, tangents_out):
   new_invars = _perm(primals_in, tangents_in, jaxpr.jaxpr.invars)
   new_outvars = _perm(primals_out, tangents_out, jaxpr.jaxpr.outvars)
-  new_jaxpr = core.Jaxpr(jaxpr.jaxpr.constvars, jaxpr.jaxpr.freevars,
+  new_jaxpr = core.Jaxpr(jaxpr.jaxpr.constvars,
                          new_invars, new_outvars, jaxpr.jaxpr.eqns)
   new_in_avals = _perm(primals_in, tangents_in, jaxpr.in_avals)
   new_out_avals = _perm(primals_out, tangents_out, jaxpr.out_avals)

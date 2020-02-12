@@ -254,7 +254,7 @@ def _calc_P_Q(A):
        U7,V7 = _pade7(A)
        U9,V9 = _pade9(A)
        maxnorm = 5.371920351148152
-       n_squarings = np.maximum(0, np.floor_divide(np.log2(A_L1 / maxnorm),1))
+       n_squarings = np.maximum(0, np.floor(np.log2(A_L1 / maxnorm)))
        A = A / 2**n_squarings
        U13,V13 = _pade13(A)
        conds=np.array([1.495585217958292e-002, 2.539398330063230e-001, 9.504178996162932e-001, 2.097847961257068e+000])
@@ -264,7 +264,7 @@ def _calc_P_Q(A):
         U3,V3 = _pade3(A)
         U5,V5 = _pade5(A)
         maxnorm = 3.925724783138660
-        n_squarings = np.maximum(0, np.floor_divide(np.log2(A_L1 / maxnorm),1))
+        n_squarings = np.maximum(0, np.floor(np.log2(A_L1 / maxnorm)))
         A = A / 2**n_squarings
         U7,V7 = _pade7(A)
         conds=np.array([4.258730016922831e-001, 1.880152677804762e+000])
