@@ -18,6 +18,7 @@ from functools import partial
 import numpy as onp
 
 from jax.numpy import lax_numpy as np
+from jax.numpy.vectorize import vectorize
 from jax import ad_util
 from jax import api
 from jax import api_util
@@ -663,6 +664,7 @@ def lu_pivots_to_permutation(swaps, m):
   return result
 
 
+@partial(vectorize, excluded={3}, signature='(n,n),(n),(n,k)->(n,k)')
 def _lu_solve_core(lu, pivots, b, trans):
   m = lu.shape[0]
   permutation = lu_pivots_to_permutation(pivots, m)
@@ -685,7 +687,6 @@ def _lu_solve_core(lu, pivots, b, trans):
 
 @partial(api.jit, static_argnums=(3,))
 def _lu_solve(lu, pivots, b, trans):
-  from .experimental.vectorize import vectorize  # avoid recursive import
   if len(lu.shape) < 2 or lu.shape[-1] != lu.shape[-2]:
     raise ValueError("last two dimensions of LU decomposition must be equal, "
                      "got shape {}".format(lu.shape))
@@ -710,8 +711,7 @@ def _lu_solve(lu, pivots, b, trans):
                        "matrix (shape {}) and second to last axis of b array "
                        "(shape {}) must match"
                        .format(lu.shape, b.shape))
-  solve_once = partial(_lu_solve_core, trans=trans)
-  x = vectorize('(n,n),(n),(n,k)->(n,k)')(solve_once)(lu, pivots, b)
+  x = _lu_solve_core(lu, pivots, b, trans)
   return x[..., 0] if rhs_vector else x
 
 
