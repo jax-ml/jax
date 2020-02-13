@@ -366,17 +366,27 @@ def solve(a, b):
 
 
 @_wraps(onp.linalg.lstsq)
-# @jit
+@partial(jit, static_argnums=(0,))
 def lstsq(a, b):
   a, b = _promote_arg_dtypes(np.asarray(a), np.asarray(b))
   U, s, V = lax_linalg.svd(a)
+  m, n = a.shape
 
   tol = s.max() * np.max(a.shape) * np.finfo(s.dtype).eps
   a_rank = np.sum(s > tol)
 
-  sigma_pinv = np.hstack([np.diag(1. / s[:a_rank]), np.zeros((a.shape[0] - a_rank, a.shape[1])).T])
+  if m != a_rank:
+    sigma_pinv = np.hstack([np.diag(1. / s[:a_rank]), np.zeros((m - a_rank, n)).T])
+  elif n != a_rank:
+    sigma_pinv = np.vstack([np.diag(1. / s[:a_rank]), np.zeros((m, n - a_rank)).T])
+  else:
+    sigma_pinv = np.diag(1. / s[:a_rank])
+
   x_hat = np.dot(np.dot(np.dot(V.T, sigma_pinv), U.T), b)
-  residuals = norm(b - np.dot(a, x_hat))
+  if m <= n or a_rank < n:
+    residuals = np.array([])
+  else:
+    residuals = np.sum(np.square(b - np.dot(a, x_hat)), axis=0)
   return x_hat, residuals, a_rank, s
 
 
