@@ -872,13 +872,6 @@ def pmap(fun, axis_name=None, static_argnums=(), devices=None, backend=None):
   def f_pmapped(*args, **kwargs):
     f = lu.wrap_init(fun)
     if static_argnums:
-      # Check no static arguments have been sharded
-      for i in static_argnums:
-        if type(args[i]) is pxla.ShardedDeviceArray:
-          raise ValueError("Argument %d is of type ShardedDeviceArray, but it "
-                           "has been marked as static. Consider either not "
-                           "marking it as static or convert it to a non-sharded"
-                           " array with np.array()." % i)
       dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
       f, dyn_args = _argnums_partial(f, dyn_argnums, args)
     else:
