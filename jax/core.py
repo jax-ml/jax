@@ -652,6 +652,7 @@ def call_impl(f, *args, **params):
 
 
 call_p = Primitive('call')
+call_p.call_primitive = True
 call = partial(call_bind, call_p)
 call_p.def_custom_bind(call)
 call_p.def_impl(call_impl)
