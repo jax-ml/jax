@@ -454,7 +454,7 @@ To cite this repository:
 ```
 
 In the above bibtex entry, names are in alphabetical order, the version number
-is intended to be that from [jax/version.py](../blob/master/jax/version.py), and
+is intended to be that from [jax/version.py](../master/jax/version.py), and
 the year corresponds to the project's open-source release.
 
 A nascent version of JAX, supporting only automatic differentiation and

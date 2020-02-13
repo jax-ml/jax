@@ -183,8 +183,9 @@ def _sharded_callable(fun, partitions, name, *abstract_args):
                  handle_outs)
 
 
-def _sharded_jit_translation_rule(c, jaxpr, axis_env, freevar_nodes,
-                                  in_nodes, name_stack, partitions, backend, name):
+def _sharded_jit_translation_rule(c, axis_env, freevar_nodes,
+                                  in_nodes, name_stack, partitions, backend,
+                                  name, call_jaxpr):
   subc = xb.make_computation_builder("jaxpr_subcomputation")  # TODO(mattjj): name
   freevars = [subc.ParameterWithShape(c.GetShape(n)) for n in freevar_nodes]
 
@@ -195,7 +196,7 @@ def _sharded_jit_translation_rule(c, jaxpr, axis_env, freevar_nodes,
     subc._builder.ClearSharding()
   # args = [subc.ParameterWithShape(c.GetShape(n)) for n in in_nodes]
 
-  out_nodes = xla.jaxpr_subcomp(subc, jaxpr, backend, axis_env, (), freevars, name_stack, *args)
+  out_nodes = xla.jaxpr_subcomp(subc, call_jaxpr, backend, axis_env, (), freevars, name_stack, *args)
 
   subc._builder.SetSharding(_sharding_to_proto(partitions[1]))
   out_tuple = subc.Tuple(*out_nodes)
@@ -277,6 +278,7 @@ def _sharded_call_impl(fun, *args, **params):
 
 
 sharded_call_p = core.Primitive("sharded_call")
+sharded_call_p.call_primitive = True
 sharded_call_p.multiple_results = True
 sharded_call = partial(core.call_bind, sharded_call_p)
 sharded_call_p.def_custom_bind(sharded_call)

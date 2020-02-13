@@ -1955,6 +1955,30 @@ class ShapeDtypeStruct(object):
     self.shape = shape
     self.dtype = dtype
 
+  size = property(lambda self: onp.prod(self.shape))
+  ndim = property(lambda self: len(self.shape))
+
+  def __len__(self):
+    try:
+      return self.shape[0]
+    except IndexError:
+      raise TypeError("len() of unsized object")  # same as numpy error
+
+  def __repr__(self):
+    return "{}(shape={}, dtype={})".format(
+        type(self).__name__, self.shape, self.dtype.dtype.name)
+
+  __str__ = __repr__
+
+  def __eq__(self, other):
+    if not isinstance(other, ShapeDtypeStruct):
+      return False
+    else:
+      return (other.shape, other.dtype) == (self.shape, self.dtype)
+
+  def __hash__(self):
+    return hash((self.shape, self.dtype))
+
 def eval_shape(fun, *args, **kwargs):
   """Compute the shape/dtype of ``fun(*args, **kwargs)`` without any FLOPs.
 

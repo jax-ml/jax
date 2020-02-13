@@ -31,14 +31,14 @@ install:
   - pip install jaxlib==0.1.38
   - pip install -v .
   # The following are needed to test the Colab notebooks and the documentation building
-  - if [[ "$JAX_ONLY_DOCUMENTATION" != "" ]]; then
+  - if [ "$JAX_ONLY_DOCUMENTATION" = true ]; then
       conda install --yes -c conda-forge pandoc ipykernel;
       conda install --yes sphinx sphinx_rtd_theme nbsphinx jupyter_client matplotlib;
       pip install sklearn;
     fi
 script:
-  - if [[ "$JAX_ONLY_DOCUMENTATION" == "" ]]; then
-      pytest -n 1 tests examples -W ignore ;
+  - if [ "$JAX_ONLY_DOCUMENTATION" = true ]; then
+      sphinx-build -b html -D nbsphinx_execute=always docs docs/build/html ;
     else
-      sphinx-build -b html -D nbsphinx_execute=always docs docs/build/html;
+      pytest -n 1 tests examples -W ignore ;
     fi

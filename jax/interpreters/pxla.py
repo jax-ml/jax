@@ -494,7 +494,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   jaxpr_replicas = xla.jaxpr_replicas(jaxpr)
   num_local_replicas = axis_size * jaxpr_replicas
   num_global_replicas = global_axis_size * jaxpr_replicas
-  axis_env = xla.AxisEnv(num_global_replicas, [axis_name], [global_axis_size], devices)
+  axis_env = xla.AxisEnv(num_global_replicas, (axis_name,), (global_axis_size,), devices)
 
   tuple_args = len(avals) > 100  # pass long arg lists as tuple for TPU
 
@@ -640,14 +640,16 @@ def execute_replicated(compiled, backend, in_handler, out_handler, *args):
 
 
 xla_pmap_p = core.Primitive('xla_pmap')
+xla_pmap_p.call_primitive = True
 xla_pmap_p.multiple_results = True
 xla_pmap = partial(core.call_bind, xla_pmap_p)
 xla_pmap_p.def_custom_bind(xla_pmap)
 xla_pmap_p.def_impl(xla_pmap_impl)
 
-def _pmap_translation_rule(c, jaxpr, axis_env,
+def _pmap_translation_rule(c, axis_env,
                            in_nodes, name_stack, axis_name, axis_size,
-                           global_axis_size, devices, name, backend=None,
+                           global_axis_size, devices, name,
+                           call_jaxpr, backend=None,
                            mapped_invars=None):
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
@@ -662,7 +664,7 @@ def _pmap_translation_rule(c, jaxpr, axis_env,
     for in_node, in_node_mapped in zip(in_nodes, mapped_invars))
 
   sharded_outs = xla.jaxpr_subcomp(
-      c, jaxpr, backend, new_env, (),
+      c, call_jaxpr, backend, new_env, (),
       extend_name_stack(name_stack, wrap_name(name, 'pmap')), *in_nodes_sharded)
   outs = [_xla_unshard(c, new_env, shard) for shard in sharded_outs]
   return c.Tuple(*outs)
