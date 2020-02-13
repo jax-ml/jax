@@ -213,10 +213,8 @@ class Primitive(object):
 def extract_call_jaxpr(primitive, params):
   """Extract the call primitive subjaxpr from the params.
 
-  Params:
-    params: a parameter dictionary for a primitive.
-  Returns: the subjaxpr and the params without the "jaxpr" value. If this is
-    not a call primitive then returns (None, params).
+  Returns the subjaxpr and the params without the "call_jaxpr" value. If this is
+  not a call primitive then returns (None, params).
   """
   if not primitive.call_primitive:
     return (None, params)
@@ -309,7 +307,6 @@ class Trace(object):
 
 
   def pure(self, val):
-    """Given a concrete value, makes a Tracer for it."""
     assert False
 
   def lift(self, tracer):
@@ -319,16 +316,6 @@ class Trace(object):
     assert False
 
   def process_primitive(self, primitive, tracers, params):
-    """Processes a primitive
-
-    Args:
-      primitive: the primitive
-      tracers: the tracers for the arguments
-      params: the primitive parameters
-
-    Returns:
-      either a tracer, or a list of tracers (if primitive.multiple_results)
-    """
     assert False, "Must override"
 
   def __repr__(self):

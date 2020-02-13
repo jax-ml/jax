@@ -1,6 +1,8 @@
 Understanding JAXPR
 ====================
 
+Updated: February 14, 2020 (for commit 9e6fe64).
+
 (Note: the code examples in this file can be seed also in
 ``jax/tests/api_test::JaxprTest.testExamplesJaxprDoc``.)
 

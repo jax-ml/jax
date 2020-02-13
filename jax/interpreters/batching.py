@@ -177,7 +177,7 @@ def broadcast_batcher(prim, args, dims, **params):
   """Process a primitive with built-in broadcasting.
 
   Args:
-    args: the arguments
+    args: the possibly-batched arguments
     dims: for each argument, the dimension that is being batched (or None)
   """
   shapes = {(x.shape, d) for x, d in zip(args, dims) if onp.ndim(x)}
