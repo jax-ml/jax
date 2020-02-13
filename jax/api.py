@@ -23,11 +23,9 @@ tree_util.py), which include nested tuples/lists/dicts, where the leaves are
 arrays.
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import collections
+import functools
 import itertools as it
 import operator as op
 import os
@@ -36,9 +34,6 @@ from warnings import warn
 
 import numpy as onp
 from contextlib import contextmanager
-from distutils.util import strtobool
-import six
-from six.moves import reduce
 
 from . import core
 from . import linear_util as lu
@@ -51,7 +46,7 @@ from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, tree_leaves, tree_multimap,
                         _replace_nones)
 from .util import (unzip2, unzip3, curry, partial, safe_map, safe_zip,
-                   WrapHashably, Hashable, prod, split_list)
+                   WrapHashably, Hashable, prod, split_list, extend_name_stack, wrap_name)
 from .lib import xla_bridge as xb
 from .lib.xla_bridge import (device_count, local_device_count, devices, local_devices,
                              host_id, host_ids, host_count)
@@ -63,15 +58,15 @@ from .interpreters import ad
 from .interpreters import batching
 from .interpreters import parallel
 from .interpreters import masking
-from .interpreters.masking import shapecheck
-from .config import flags, config
+from .interpreters.masking import shapecheck, ensure_poly
+from .config import flags, config, bool_env
 
 map = safe_map
 zip = safe_zip
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool("jax_disable_jit",
-                  strtobool(os.getenv("JAX_DISABLE_JIT", "False")),
+                  bool_env("JAX_DISABLE_JIT", False),
                   "Disable JIT compilation and just call original Python.")
 
 
@@ -147,10 +142,11 @@ def jit(fun, static_argnums=(), device=None, backend=None):
     args_flat, in_tree = tree_flatten((dyn_args, kwargs))
     _check_args(args_flat)
     flat_fun, out_tree = flatten_fun(f, in_tree)
-    out = xla.xla_call(flat_fun, *args_flat, device=device, backend=backend)
+    out = xla.xla_call(flat_fun, *args_flat, device=device, backend=backend,
+                       name=flat_fun.__name__)
     return tree_unflatten(out_tree(), out)
 
-  jitted_name =  "jit({}, static_argnums={})"
+  jitted_name = "jit({}, static_argnums={})"
   f_jitted.__name__ = jitted_name.format(f_jitted.__name__, static_argnums)
   return f_jitted
 
@@ -198,7 +194,7 @@ def disable_jit():
 
 
 def xla_computation(fun, static_argnums=(), axis_env=None, backend=None,
-                    tuple_args=False):
+                    tuple_args=False, instantiate_const_outputs=True):
   """Creates a function that produces its XLA computation given example args.
 
   Args:
@@ -212,9 +208,16 @@ def xla_computation(fun, static_argnums=(), axis_env=None, backend=None,
       applications of ``jax.pmap``. See the examples below.
     backend: This is an experimental feature and the API is likely to change.
       Optional, a string representing the xla backend. 'cpu','gpu', or 'tpu'.
-    tuple_args: Optional, defaults to False. If True, the resulting XLA
+    tuple_args: Optional bool, defaults to False. If True, the resulting XLA
       computation will have a single tuple argument that is unpacked into the
       specified function arguments.
+    instantiate_const_outputs: Optional bool, defaults to True. If False, then
+      ``xla_computation`` does not instantiate constant-valued outputs in the
+      XLA computation, and so the result is closer to the computation that
+      ``jax.jit`` produces and may be more useful for studying ``jit`` behavior.
+      If True, then constant-valued outputs are instantiated in the XLA
+      computation, which may be more useful for staging computations out of JAX
+      entirely.
 
   Returns:
     A wrapped version of ``fun`` that when applied to example arguments returns a
@@ -294,13 +297,15 @@ def xla_computation(fun, static_argnums=(), axis_env=None, backend=None,
     jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
     avals = map(xla.abstractify, jax_args)
     pvals = [pe.PartialVal((aval, core.unit)) for aval in avals]
-    jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
+    jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals,
+                                         instantiate=instantiate_const_outputs)
     axis_env_ = make_axis_env(xla.jaxpr_replicas(jaxpr))
     c = xb.make_computation_builder('xla_computation_{}'.format(fun_name))
     xla_consts = map(c.Constant, consts)
     xla_args = xla._xla_callable_args(c, avals, tuple_args)
-    outs = xla.jaxpr_subcomp(c, jaxpr, backend, axis_env_, xla_consts, (),
-                             *xla_args)
+    outs = xla.jaxpr_subcomp(
+        c, jaxpr, backend, axis_env_, xla_consts,
+        extend_name_stack(wrap_name(fun_name, 'xla_computation')), *xla_args)
     return c.Build(c.Tuple(*outs))
   return computation_maker
 
@@ -710,16 +715,17 @@ def _flatten_axes(treedef, axis_tree):
   return axes
 
 
-def pmap(fun, axis_name=None, static_argnums=(), devices=None, backend=None):
+def pmap(fun, axis_name=None, static_argnums=(), devices=None, backend=None, axis_size=None):
   """Parallel map with support for collectives.
 
   The purpose of ``pmap`` is to express single-program multiple-data (SPMD)
-  programs and execute them in parallel on XLA devices, such as multiple GPUs or
-  multiple TPU cores. Semantically it is comparable to ``vmap`` because both
-  transformations map a function over array axes, but where ``vmap`` vectorizes
-  functions by pushing the mapped axis down into primitive operations, ``pmap``
-  instead replicates the function and executes each replica on its own XLA
-  device in parallel.
+  programs. Applying ``pmap`` to a function will compile the function with XLA
+  (similarly to ``jit``), then execute it in parallel on XLA devices, such as
+  multiple GPUs or multiple TPU cores. Semantically it is comparable to
+  ``vmap`` because both transformations map a function over array axes, but
+  where ``vmap`` vectorizes functions by pushing the mapped axis down into
+  primitive operations, ``pmap`` instead replicates the function and executes
+  each replica on its own XLA device in parallel.
 
   Another key difference with ``vmap`` is that while ``vmap`` can only express
   pure maps, ``pmap`` enables the use of parallel SPMD collective operations,
@@ -741,7 +747,10 @@ def pmap(fun, axis_name=None, static_argnums=(), devices=None, backend=None):
   *all* participating devices, including those on other hosts, via
   device-to-device communication.  Conceptually, this can be thought of as
   running a pmap over a single array sharded across hosts, where each host
-  "sees" only its local shard of the input and output.
+  "sees" only its local shard of the input and output. The SPMD model requires
+  that the same multi-host pmaps must be run in the same order on all devices,
+  but they can be interspersed with arbitrary operations running on a single
+  host.
 
   Args:
     fun: Function to be mapped over argument axes. Its arguments and return
@@ -868,6 +877,13 @@ def pmap(fun, axis_name=None, static_argnums=(), devices=None, backend=None):
   if isinstance(static_argnums, int):
     static_argnums = (static_argnums,)
 
+  # axis_size is an optional integer representing the global axis size.
+  # The aggregate size (across all hosts) size of the mapped axis must match
+  # the given value. This argument is mutually exclusive with ``devices``.
+  if axis_size is not None and devices is not None:
+    msg = "pmap got devices and axis_size. They're mutually exclusive."
+    raise ValueError(msg)
+
   @wraps(fun)
   def f_pmapped(*args, **kwargs):
     f = lu.wrap_init(fun)
@@ -877,12 +893,18 @@ def pmap(fun, axis_name=None, static_argnums=(), devices=None, backend=None):
     else:
       dyn_args = args
     args, in_tree = tree_flatten((dyn_args, kwargs))
-    axis_size = _pmap_axis_size(args)
+    local_axis_size = _pmap_axis_size(args)
     _check_args(args)
     flat_fun, out_tree = flatten_fun(f, in_tree)
-    out = pxla.xla_pmap(flat_fun, *args, axis_name=axis_name, axis_size=axis_size,
-                        devices=tuple(devices) if devices is not None else devices,
-                        backend=backend)
+    out = pxla.xla_pmap(
+        flat_fun,
+        *args,
+        backend=backend,
+        axis_name=axis_name,
+        axis_size=local_axis_size,
+        global_axis_size=axis_size,
+        devices=tuple(devices) if devices is not None else devices,
+        name=flat_fun.__name__)
     return tree_unflatten(out_tree(), out)
 
   namestr = "pmap({}, axis_name={})".format
@@ -927,17 +949,18 @@ def soft_pmap(fun, axis_name=None, backend=None):
     if chunk_size == 0 and leftover:
       return pmap(fun, axis_name, backend)(*args)  # can map directly onto hardware
     elif leftover:
-      msg = ("soft_pmap mapped axis size must be divisble by the number of "
+      msg = ("soft_pmap mapped axis size must be divisible by the number of "
              "XLA devices (or be less than or equal to that number), but got "
              "an axis size of {} with {} devices.")
-      raise ValueError(msg.format(axis_size, pxla.pxla.unmapped_device_count()))
+      raise ValueError(msg.format(axis_size, pxla.unmapped_device_count()))
     num_chunks = axis_size // chunk_size
 
     reshaped_args = [_reshape_split(num_chunks, x) for x in args_flat]
     soft_mapped_fun = pxla.split_axis(flat_fun, axis_name, chunk_size)
-    reshaped_outs = pxla.xla_pmap(soft_mapped_fun, *reshaped_args,
+    reshaped_outs = pxla.xla_pmap(soft_mapped_fun, *reshaped_args, backend=backend,
                                   axis_name=axis_name, axis_size=num_chunks,
-                                  devices=None, backend=backend)
+                                  global_axis_size=None, devices=None,
+                                  name=soft_mapped_fun.__name__)
     outs = [_reshape_merge(out) for out in reshaped_outs]
     return tree_unflatten(out_tree(), outs)
 
@@ -994,8 +1017,9 @@ def _parallelize(fun):
     reshaped_args = [_reshape_split(num_chunks, x) for x in args_flat]
     f, out_axes = parallel.papply_transform(f, axis_name, axis_size)
     f = pxla.split_axis(f, axis_name, chunk_size)
-    outs = pxla.xla_pmap(f, *reshaped_args, axis_name=axis_name,
-                         axis_size=num_chunks, devices=None)
+    outs = pxla.xla_pmap(f, *reshaped_args, backend=None, axis_name=axis_name,
+                         axis_size=num_chunks, global_axis_size=None,
+                         devices=None, name=f.__name__)
     outs = map(_reshape_merge, outs)
     outs = [batching.matchaxis(axis_size, 0, dst, x)
             for dst, x in zip(out_axes(), outs)]
@@ -1046,7 +1070,7 @@ def _bind_shapes(shape_exprs, shapes):
   env = {}
   for shape_expr, shape in zip(shape_exprs, shapes):
     for poly, d in zip(shape_expr, shape):
-      if masking.is_constant(poly):
+      if ensure_poly(poly).is_constant:
         continue
       else:
         (binder,), = poly  # TODO generalize to handle striding
@@ -1201,7 +1225,7 @@ def lift_linearized(jaxpr, primal_avals, consts, io_tree, out_pvals, *py_args):
                "the original primal values.")
         raise ValueError(msg)
     dummy = (core.unit,) * len(tangents)
-    out = eval_jaxpr(jaxpr, consts, (), *(dummy + tangents))
+    out = eval_jaxpr(jaxpr, consts, *(dummy + tangents))
     tangents_out = out[len(out)//2:]
     return tuple(map(pe.merge_pvals, tangents_out, out_pvals))
 
@@ -1341,8 +1365,8 @@ def make_jaxpr(fun):
     jax_args, in_tree = tree_flatten((args, kwargs))
     jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
     in_pvals = map(pv_like, jax_args)
-    jaxpr, out_pvals, consts = pe.trace_to_jaxpr(jaxtree_fun, in_pvals,
-                                                 instantiate=True)
+    jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
+        jaxtree_fun, in_pvals, instantiate=True, stage_out_calls=True)
     out_avals = map(raise_to_shaped, unzip2(out_pvals)[0])
     in_avals = tuple(raise_to_shaped(in_aval) for in_aval, _ in in_pvals)
     typed_jaxpr = core.TypedJaxpr(jaxpr, consts, in_avals, out_avals)
@@ -1481,7 +1505,7 @@ def custom_transforms(fun):
 
   def fun_impl(*args, **params):
     consts, args = split_list(args, [params['num_consts']])
-    return core.eval_jaxpr(params['jaxpr'], consts, (), *args)
+    return core.eval_jaxpr(params['jaxpr'], consts, *args)
   fun_p.def_impl(fun_impl)
 
   def fun_jvp(primals, tangents, **params):
@@ -1632,7 +1656,7 @@ def defjvp(fun, *jvprules):
     ans = fun(*primals)
     tangents_out = [rule(t, ans, *primals) for rule, t in zip(jvprules, tangents)
                     if rule is not None and t is not ad_util.zero]
-    return ans, reduce(ad.add_tangents, tangents_out, ad_util.zero)
+    return ans, functools.reduce(ad.add_tangents, tangents_out, ad_util.zero)
   defjvp_all(fun, custom_jvp)
 
 def defvjp_all(fun, custom_vjp):
@@ -1658,7 +1682,7 @@ def defvjp_all(fun, custom_vjp):
   Args:
     fun: a custom_transforms function.
     custom_vjp: a Python callable specifying the VJP rule, taking the same
-      arguments as ``fun`` and returning a pair where the first elment is the
+      arguments as ``fun`` and returning a pair where the first element is the
       value of ``fun`` applied to the arguments and the second element is a
       Python callable representing the VJP map from output cotangents to input
       cotangents. The returned VJP function must accept a value with the same
@@ -1707,11 +1731,27 @@ def defvjp_all(fun, custom_vjp):
     args = tree_unflatten(params['in_tree'], args_flat)
     out, vjp = custom_vjp(*args)
     out_flat, out_tree = tree_flatten(out)
-    assert out_tree == params['out_tree']  # TODO(mattjj): better error message
+    if out_tree != params['out_tree']:
+      msg = (
+        "First output of `custom_vjp`: {} doesn't match the structure of "
+        "the output of `fun`: {}\n"
+        "{}\n"
+        "vs\n"
+        "{}\n".format(custom_vjp, fun, out_tree, params['out_tree'])
+      )
+      raise TypeError(msg)
     def vjp_flat(*cts_flat):
       cts = tree_unflatten(out_tree, cts_flat)
       args_cts_flat, in_tree2 = tree_flatten(vjp(cts))
-      assert in_tree == in_tree2  # TODO(mattjj): better error message
+      if in_tree != in_tree2:
+        msg = (
+          "Output of the `vjp`: {} doesn't match the structure of args of "
+          "`fun`: {}\n"
+          "{}\n"
+          "vs\n"
+          "{}\n".format(vjp, fun, in_tree2, in_tree)
+        )
+        raise TypeError(msg)
       return [core.unit] * num_consts + list(args_cts_flat)
     return out_flat, vjp_flat
   ad.defvjp_all(fun.prim, custom_transforms_vjp)
@@ -1892,19 +1932,15 @@ def _make_graphviz(fun):
     fragment = []
 
     fragment.extend(map(invar_node, jaxpr.invars, jaxpr.invars))
-    fragment.extend(map(freevar_node, jaxpr.freevars, jaxpr.freevars))
     fragment.extend(map(constant_node, jaxpr.constvars, consts))
 
     for eqn in jaxpr.eqns:
-      if eqn.destructure:
-        id_name = next(id_names)
-        fragment.append(function_node(id_name, eqn.primitive.name))
-        fragment.extend(edge(invar, id_name) for invar in eqn.invars)
-        fragment.extend(edge(id_name, outvar) for outvar in eqn.outvars)
-      else:
-        fragment.append(function_node(eqn.outvars[0], eqn.primitive.name))
-        fragment.extend(edge(invar, eqn.outvars[0]) for invar in eqn.invars)
-    fragment.append(outvar_node(jaxpr.outvar, "out"))
+      id_name = next(id_names)
+      fragment.append(function_node(id_name, eqn.primitive.name))
+      fragment.extend(edge(invar, id_name) for invar in eqn.invars)
+      fragment.extend(edge(id_name, outvar) for outvar in eqn.outvars)
+    for ov in jaxpr.outvars:
+      fragment.append(outvar_node(ov, "out"))
     return graph(''.join(fragment))
 
   edge = '{} -> {} [color=gray30];\n'.format
@@ -1918,8 +1954,8 @@ def _make_graphviz(fun):
   @wraps(fun)
   def graphviz_maker(*args, **kwargs):
     wrapped = lu.wrap_init(fun, kwargs)
-    jax_args, in_trees = unzip2(map(pytree_to_jaxtupletree, args))
-    jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun(wrapped, in_trees)
+    jax_args, in_tree = tree_flatten((args, kwargs))
+    jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
     pvals = map(pv_like, jax_args)
     jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals)
     return jaxpr_to_graphviz(jaxpr, consts)
@@ -1933,6 +1969,30 @@ class ShapeDtypeStruct(object):
   def __init__(self, shape, dtype):
     self.shape = shape
     self.dtype = dtype
+
+  size = property(lambda self: onp.prod(self.shape))
+  ndim = property(lambda self: len(self.shape))
+
+  def __len__(self):
+    try:
+      return self.shape[0]
+    except IndexError:
+      raise TypeError("len() of unsized object")  # same as numpy error
+
+  def __repr__(self):
+    return "{}(shape={}, dtype={})".format(
+        type(self).__name__, self.shape, self.dtype.dtype.name)
+
+  __str__ = __repr__
+
+  def __eq__(self, other):
+    if not isinstance(other, ShapeDtypeStruct):
+      return False
+    else:
+      return (other.shape, other.dtype) == (self.shape, self.dtype)
+
+  def __hash__(self):
+    return hash((self.shape, self.dtype))
 
 def eval_shape(fun, *args, **kwargs):
   """Compute the shape/dtype of ``fun(*args, **kwargs)`` without any FLOPs.
@@ -2004,7 +2064,8 @@ def checkpoint(fun, concrete=False):
   def fun_remat(*args, **kwargs):
     args_flat, in_tree = tree_flatten((args, kwargs))
     flat_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
-    out_flat = pe.remat_call(flat_fun, *args_flat, concrete=concrete)
+    out_flat = pe.remat_call(flat_fun, *args_flat, name=flat_fun.__name__,
+                             concrete=concrete)
     return tree_unflatten(out_tree(), out_flat)
   return fun_remat
 remat = checkpoint

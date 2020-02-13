@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import collections
 import enum
@@ -32,6 +29,7 @@ from jax import lax
 from jax import numpy as lnp
 from jax import ops
 from jax import test_util as jtu
+from jax import util
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -223,6 +221,7 @@ ADVANCED_INDEXING_TESTS = [
      IndexSpec(shape=(3, 4, 5), indexer=onp.array([0, 2, 0, 1])),
      IndexSpec(shape=(3,), indexer=onp.array([-1, 1])),
      IndexSpec(shape=(3,), indexer=onp.array([-2, -1])),
+     IndexSpec(shape=(0,), indexer=onp.array([], dtype=onp.int32)),
      ]),
     ("One2DIntArrayIndex",
      [IndexSpec(shape=(3,), indexer=onp.array([[0, 0]])),
@@ -274,6 +273,7 @@ ADVANCED_INDEXING_TESTS_NO_REPEATS = [
       IndexSpec(shape=(3, 4, 5), indexer=onp.array([0, 2, 1])),
       IndexSpec(shape=(3,), indexer=onp.array([-1, 1])),
       IndexSpec(shape=(3,), indexer=onp.array([-2, -1])),
+      IndexSpec(shape=(0,), indexer=onp.array([], dtype=onp.int32)),
      ]),
     ("One2DIntArrayIndex",
      [IndexSpec(shape=(3,), indexer=onp.array([[0, 1]])),
@@ -424,8 +424,8 @@ class IndexingTest(jtu.JaxTestCase):
       isnone = [i for i, elt in enumerate(triple) if elt is None]
       zeros = itertools.repeat(0)
       nones = itertools.repeat(None)
-      out = lax.subvals(triple, zip(isnone, zeros))
-      return out, lambda out: slice(*lax.subvals(out, zip(isnone, nones)))
+      out = util.subvals(triple, zip(isnone, zeros))
+      return out, lambda out: slice(*util.subvals(out, zip(isnone, nones)))
     elif isinstance(idx, (tuple, list)) and idx:
       t = type(idx)
       elts, packs = zip(*map(self._ReplaceSlicesWithTuples, idx))
@@ -628,7 +628,7 @@ class IndexingTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype), indexer_with_dummies]
 
     def fun(x, indexer_with_dummies):
-      idx = type(indexer)(lax.subvals(indexer_with_dummies, substitutes))
+      idx = type(indexer)(util.subvals(indexer_with_dummies, substitutes))
       return x[idx]
 
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)

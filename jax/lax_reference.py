@@ -12,18 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
+import builtins
 import collections
 import itertools
 
 import numpy as onp
 import opt_einsum
 import scipy.special
-
-from six.moves import builtins
 
 from . import dtypes
 
@@ -37,6 +33,7 @@ sign = onp.sign
 floor = onp.floor
 ceil = onp.ceil
 round = onp.round
+nextafter = onp.nextafter
 
 is_finite = onp.isfinite
 
@@ -60,8 +57,11 @@ atan = onp.arctan
 sinh = onp.sinh
 cosh = onp.cosh
 
+betainc = scipy.special.betainc
 lgamma = scipy.special.gammaln
 digamma = scipy.special.digamma
+igamma = scipy.special.gammainc
+igammac = scipy.special.gammaincc
 erf = scipy.special.erf
 erfc = scipy.special.erfc
 erf_inv = scipy.special.erfinv

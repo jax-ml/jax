@@ -12,13 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from functools import partial
-
-from six.moves import xrange
 
 import numpy.random as npr
 
@@ -50,7 +45,7 @@ def minimize(f, x, num_steps=10000, step_size=0.000001, mass=0.9):
     return opt_update(i, grad(f)(x), opt_state)
 
   opt_state = opt_init(x)
-  for i in xrange(num_steps):
+  for i in range(num_steps):
     opt_state = update(i, opt_state)
   return get_params(opt_state)
 

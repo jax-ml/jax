@@ -12,12 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
+
+import operator
 
 import numpy as onp
-import six
 
 from . import core
 from . import ad_util
@@ -25,17 +23,18 @@ from . import dtypes
 from . util import prod, partialmethod
 
 
-def concretization_err_msg(fun):
+def concretization_err_msg(fun, context=None):
   fname = getattr(fun, "__name__", fun)
-  msg = ("Abstract value passed to `{}`, which requires a concrete value. "
-         "The function to be transformed can't be traced at the required level "
-         "of abstraction. If using `jit`, try using `static_argnums` or "
-         "applying `jit` to smaller subfunctions instead.")
-  return msg.format(fname)
+  if context is None:
+    context = ("The function to be transformed can't be traced at the required level "
+        "of abstraction. If using `jit`, try using `static_argnums` or "
+        "applying `jit` to smaller subfunctions instead.")
+  msg = "Abstract value passed to `{}`, which requires a concrete value. {}"
+  return msg.format(fname, context)
 
-def concretization_function_error(fun):
+def concretization_function_error(fun, context=None):
   def error(self, *args):
-    raise TypeError(concretization_err_msg(fun))
+    raise TypeError(concretization_err_msg(fun, context))
   return error
 
 
@@ -65,11 +64,12 @@ class UnshapedArray(core.AbstractValue):
                              ", weak_type=True" if self.weak_type else "")
 
   _bool = _nonzero = concretization_function_error(bool)
-  _float   = concretization_function_error(float)
-  _int     = concretization_function_error(int)
-  if six.PY2:
-    _long    = concretization_function_error(long)  # noqa: F821
-  _complex = concretization_function_error(complex)
+  _float   = concretization_function_error(
+      float, "Try using `value.astype(float)` instead.")
+  _int     = concretization_function_error(
+      int, "Try using `value.astype(int)` instead.")
+  _complex = concretization_function_error(
+      complex, "Try using `value.astype(complex)` instead.")
   _hex     = concretization_function_error(hex)
   _oct     = concretization_function_error(oct)
 
@@ -92,6 +92,36 @@ class UnshapedArray(core.AbstractValue):
     """Returns a copy of the aval with weak_type=False."""
     return UnshapedArray(self.dtype) if self.weak_type else self
 
+# Registry for valid dimension types. This is used by masking.Poly.
+_DIMENSION_TYPES = {int}
+
+def _canonicalize_dimension(dim):
+  if type(dim) in _DIMENSION_TYPES:
+    return dim
+  else:
+    return operator.index(dim)
+
+def canonicalize_shape(shape):
+  """Canonicalizes and checks for errors in a user-provided shape value.
+
+  Args:
+    shape: a Python value that represents a shape.
+
+  Returns:
+    A tuple of integers.
+  """
+  try:
+    return tuple(map(_canonicalize_dimension, shape))
+  except TypeError:
+    pass
+  msg = ("Shapes must be 1D sequences of concrete values of integer type, "
+         "got {}.")
+  if any(isinstance(x, core.Tracer) and isinstance(core.get_aval(x), ShapedArray)
+         and not isinstance(core.get_aval(x), ConcreteArray) for x in shape):
+    msg += ("\nIf using `jit`, try using `static_argnums` or applying `jit` to "
+            "smaller subfunctions.")
+  raise TypeError(msg.format(shape))
+
 
 class ShapedArray(UnshapedArray):
   __slots__ = ['shape']
@@ -99,7 +129,7 @@ class ShapedArray(UnshapedArray):
 
   def __init__(self, shape, dtype, weak_type=False):
     super(ShapedArray, self).__init__(dtype, weak_type=weak_type)
-    self.shape = shape
+    self.shape = canonicalize_shape(shape)
 
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self: prod(self.shape))
@@ -191,8 +221,6 @@ class ConcreteArray(ShapedArray):
   _bool = _nonzero = partialmethod(_forward_to_value, bool)
   _float   = partialmethod(_forward_to_value, float)
   _int     = partialmethod(_forward_to_value, int)
-  if six.PY2:
-    _long   = partialmethod(_forward_to_value, long)  # noqa: F821
   _complex = partialmethod(_forward_to_value, complex)
   _hex     = partialmethod(_forward_to_value, hex)
   _oct     = partialmethod(_forward_to_value, oct)
@@ -228,9 +256,9 @@ def zeros_like_shaped_array(aval):
 
 ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
 
-def raise_to_shaped(aval):
+def raise_to_shaped(aval, weak_type=False):
   if isinstance(aval, ShapedArray):
-    return ShapedArray(aval.shape, aval.dtype)
+    return ShapedArray(aval.shape, aval.dtype, weak_type=weak_type)
   elif aval is core.abstract_unit:
     return core.abstract_unit
   elif aval is abstract_token:
@@ -239,10 +267,6 @@ def raise_to_shaped(aval):
     raise TypeError(type(aval))
 
 core.literalable_types.update(array_types)
-
-def make_abstract_python_scalar(x):
-  return ShapedArray((), dtypes.python_scalar_dtypes[type(x)],
-                     weak_type=True)
 
 def _zeros_like_python_scalar(x):
   return onp.array(0, dtypes.python_scalar_dtypes[type(x)])

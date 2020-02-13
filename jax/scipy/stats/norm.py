@@ -12,21 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import numpy as onp
 import scipy.stats as osp_stats
 
 from ... import lax
 from ... import numpy as np
-from ...numpy.lax_numpy import _promote_args_like, _constant_like, _wraps
+from ...numpy.lax_numpy import _promote_args_inexact, _constant_like, _wraps
 from .. import special
 
 @_wraps(osp_stats.norm.logpdf, update_doc=False)
 def logpdf(x, loc=0, scale=1):
-  x, loc, scale = _promote_args_like(osp_stats.norm.logpdf, x, loc, scale)
+  x, loc, scale = _promote_args_inexact("norm.logpdf", x, loc, scale)
   two = _constant_like(x, 2)
   scale_sqrd = lax.pow(scale, two)
   log_normalizer = lax.log(lax.mul(_constant_like(x, 2 * onp.pi), scale_sqrd))
@@ -41,13 +38,13 @@ def pdf(x, loc=0, scale=1):
 
 @_wraps(osp_stats.norm.cdf, update_doc=False)
 def cdf(x, loc=0, scale=1):
-  x, loc, scale = _promote_args_like(osp_stats.norm.cdf, x, loc, scale)
+  x, loc, scale = _promote_args_inexact("norm.cdf", x, loc, scale)
   return special.ndtr(lax.div(lax.sub(x, loc), scale))
 
 
 @_wraps(osp_stats.norm.logcdf, update_doc=False)
 def logcdf(x, loc=0, scale=1):
-  x, loc, scale = _promote_args_like(osp_stats.norm.logcdf, x, loc, scale)
+  x, loc, scale = _promote_args_inexact("norm.logcdf", x, loc, scale)
   return special.log_ndtr(lax.div(lax.sub(x, loc), scale))
 
 

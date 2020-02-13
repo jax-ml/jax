@@ -12,15 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
+import functools
 import itertools
 import operator
 
 import numpy as np
-from six.moves import reduce
 
 from jaxlib import xla_client
 
@@ -31,7 +28,7 @@ try:
 except ImportError:
   pass
 
-_prod = lambda xs: reduce(operator.mul, xs, 1)
+_prod = lambda xs: functools.reduce(operator.mul, xs, 1)
 
 
 def threefry2x32(c, keys, data):

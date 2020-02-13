@@ -12,22 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import scipy.stats as osp_stats
 
 from ... import lax
-from ...numpy.lax_numpy import _promote_args_like, _wraps, where, inf, logical_or
+from ...numpy.lax_numpy import (_constant_like, _promote_args_inexact, _wraps,
+                                where, inf, logical_or)
 
 
 @_wraps(osp_stats.uniform.logpdf, update_doc=False)
 def logpdf(x, loc=0, scale=1):
-  x, loc, scale = _promote_args_like(osp_stats.uniform.logpdf, x, loc, scale)
+  x, loc, scale = _promote_args_inexact("uniform.logpdf", x, loc, scale)
   log_probs = lax.neg(lax.log(scale))
   return where(logical_or(lax.gt(x, lax.add(loc, scale)),
-                          lax.lt(x, loc)), -inf, log_probs)
+                          lax.lt(x, loc)),
+               -inf, log_probs)
 
 @_wraps(osp_stats.uniform.pdf, update_doc=False)
 def pdf(x, loc=0, scale=1):

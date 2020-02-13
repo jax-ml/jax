@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
 from .lax_numpy import *
 from . import fft
 from . import linalg
+from .vectorize import vectorize

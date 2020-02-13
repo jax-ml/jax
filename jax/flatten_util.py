@@ -12,12 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from .tree_util import tree_flatten, tree_unflatten
-from .linear_util import transformation_with_aux
+from . import linear_util as lu
 from .util import safe_zip
 
 import jax.numpy as np
@@ -36,7 +33,7 @@ def ravel_list(*lst):
   return np.concatenate([np.ravel(elt) for elt in lst]) if lst else np.array([])
 
 
-@transformation_with_aux
+@lu.transformation_with_aux
 def ravel_fun(unravel_inputs, flat_in, **kwargs):
   pytree_args = unravel_inputs(flat_in)
   ans = yield pytree_args, {}

@@ -32,6 +32,7 @@ Operators
     batch_matmul
     bessel_i0e
     bessel_i1e
+    betainc
     bitcast_convert_type
     bitwise_not
     bitwise_and
@@ -75,6 +76,8 @@ Operators
     gather
     ge
     gt
+    igamma
+    igammac
     imag
     index_in_dim
     index_take
@@ -90,6 +93,7 @@ Operators
     mul
     ne
     neg
+    nextafter
     pad
     pow
     real

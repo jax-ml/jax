@@ -12,22 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import numpy as onp
 import scipy.stats as osp_stats
 
 from ... import lax
-from ...numpy.lax_numpy import (_promote_args_like, _constant_like, _wraps,
+from ...numpy.lax_numpy import (_promote_args_inexact, _constant_like, _wraps,
                                 where, inf)
 from ..special import gammaln
 
 
 @_wraps(osp_stats.gamma.logpdf, update_doc=False)
 def logpdf(x, a, loc=0, scale=1):
-  x, a, loc, scale = _promote_args_like(osp_stats.gamma.logpdf, x, a, loc, scale)
+  x, a, loc, scale = _promote_args_inexact("gamma.logpdf", x, a, loc, scale)
   one = _constant_like(x, 1)
   y = lax.div(lax.sub(x, loc), scale)
   log_linear_term = lax.sub(lax.mul(lax.sub(a, one), lax.log(y)), y)

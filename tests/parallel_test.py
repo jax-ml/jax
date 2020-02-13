@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import itertools
 import unittest
@@ -309,7 +306,7 @@ class ParallelizeTest(jtu.JaxTestCase):
         pfun, axis_name = _papply(fun)
         ans = soft_pmap(pfun, axis_name)(x, y)
     except (NotImplementedError, TypeError) as e:
-      raise SkipTest(e)
+      raise SkipTest(str(e))
 
     ans = self.dedup(ans, expected.ndim)
     self.assertAllClose(ans, expected, check_dtypes=False)

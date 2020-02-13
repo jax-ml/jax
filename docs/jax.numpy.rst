@@ -68,6 +68,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     bitwise_or
     bitwise_xor
     blackman
+    block
     broadcast_arrays
     broadcast_to
     can_cast
@@ -178,6 +179,8 @@ Not every function in NumPy is implemented; contributions are welcome!
     nanprod
     nansum
     negative
+    nextafter
+    nonzero
     not_equal
     ones
     ones_like
@@ -254,8 +257,20 @@ jax.numpy.fft
 .. autosummary::
   :toctree: _autosummary
 
+  fft
+  ifft
+  fft2
+  ifft2
   fftn
   ifftn
+  rfft
+  irfft
+  rfft2
+  irfft2
+  rfftn
+  irfftn
+  fftfreq
+  rfftfreq
 
 jax.numpy.linalg
 ----------------
@@ -270,6 +285,8 @@ jax.numpy.linalg
   eig
   eigh
   inv
+  matrix_power
+  matrix_rank
   norm
   qr
   slogdet

@@ -35,13 +35,9 @@ See the `JAX pytrees notebook <https://jax.readthedocs.io/en/latest/notebooks/JA
 for examples.
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import functools
 import collections
-from six.moves import reduce
 
 from .lib import pytree
 
@@ -195,7 +191,7 @@ def _replace_nones(sentinel, tree):
       return tree
 
 def tree_reduce(f, tree):
-  return reduce(f, tree_leaves(tree))
+  return functools.reduce(f, tree_leaves(tree))
 
 def tree_all(tree):
   return all(tree_leaves(tree))
@@ -204,6 +200,11 @@ register_pytree_node(
   collections.OrderedDict,
   lambda x: (list(x.values()), list(x.keys())),
   lambda keys, values: collections.OrderedDict(safe_zip(keys, values)))
+
+register_pytree_node(
+  collections.defaultdict,
+  lambda x: (tuple(x.values()), (x.default_factory, tuple(x.keys()))),
+  lambda s, values: collections.defaultdict(s[0], safe_zip(s[1], values)))
 
 
 class Partial(functools.partial):

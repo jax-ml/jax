@@ -36,7 +36,7 @@ understand by looking at a few examples:
 * Addition: `(),()->()`
 * 1D inner product: `(i),(i)->()`
 * 1D sum: `(i)->()`
-* Matrix multiplcation: `(m,n),(n,k)->(m,k)`
+* Matrix multiplication: `(m,n),(n,k)->(m,k)`
 
 Why write gufuncs?
 =====================
@@ -97,6 +97,15 @@ from jax import grad, jit, vmap
 import jax.numpy as jnp
 import numpy as np
 import re
+import warnings
+
+
+warnings.warn(
+    "jax.experimental.vectorize is deprecated and will be removed soon. Use "
+    "jax.numpy.vectorize instead.",
+    FutureWarning,
+)
+
 
 # See http://docs.scipy.org/doc/numpy/reference/c-api.generalized-ufuncs.html
 _DIMENSION_NAME = r'\w+'
@@ -235,7 +244,7 @@ import functools
 def vectorize(signature):
   """Vectorize a function using JAX.
 
-  Turns an abritrary function into a numpy style "gufunc". Once
+  Turns an arbitrary function into a numpy style "gufunc". Once
   you specify the behavior of the core axis, the rest will be 
   broadcast naturally.
 

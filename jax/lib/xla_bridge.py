@@ -19,9 +19,6 @@ and provide some automatic type mapping logic for converting between Numpy and
 XLA. There are also a handful of related casting utilities.
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from functools import partial
 import os
@@ -33,7 +30,6 @@ from ..config import flags
 from .. import util
 from .. import dtypes
 import numpy as onp  # 'onp' rather than 'np' to distinguish from autograd.numpy
-import six
 import threading
 
 try:
@@ -60,34 +56,42 @@ flags.DEFINE_string(
     'pass "cpu" for CPU or "gpu" for GPU.')
 
 
-def get_compile_options(num_replicas=None, device_assignment=None):
+def get_compile_options(num_replicas, num_partitions, device_assignment=None):
   """Returns the compile options to use, as derived from flag values.
 
   Args:
-    num_replicas: Optional int indicating the number of replicas for which to
-      compile (default inherited from xla_client.CompileOptions).
+    num_replicas: int indicating the number of replicas for which to compile.
+    num_partitions: int indicating the number of partitions for which to compile.
     device_assignment: Optional tuple of integers indicating the assignment of
       logical replicas to physical devices (default inherited from
-      xla_client.CompileOptions). Must be consistent with `num_replicas`.
+      xla_client.CompileOptions). Must be consistent with `num_replicas` and
+      `num_partitions`.
   """
-  compile_options = None
-  if num_replicas is not None:
-    compile_options = compile_options or xla_client.CompileOptions()
-    compile_options.num_replicas = num_replicas
+  compile_options = xla_client.CompileOptions()
+  compile_options.num_replicas = num_replicas
+  compile_options.num_partitions = num_partitions
   if device_assignment is not None:
-    logging.vlog(2, "get_compile_options: num_replicas=%s device_assignment=%s",
-                 num_replicas, device_assignment)
-    # NOTE(mattjj): xla_client.DeviceAssignment.create expects a 2D ndarray
-    # indexed by replica number and computation per replica, respectively, while
-    # here we currently assume only one computation per replica, hence the
-    # second axis is always trivial.
-    if num_replicas is not None and num_replicas != len(device_assignment):
-      msg = "device_assignment does not match num_replicas: {} vs {}."
+    logging.vlog(
+        2,
+        'get_compile_options: num_replicas=%s num_partitions=%s device_assignment=%s',
+        num_replicas, num_partitions, device_assignment)
+    device_assignment = onp.array(device_assignment)
+
+    # Allow 1D device assignment if num_partitions is 1.
+    if (device_assignment.ndim == 1) and (num_partitions == 1):
+      device_assignment = device_assignment[:, None]
+
+    if num_replicas != device_assignment.shape[0]:
+      msg = 'device_assignment does not match num_replicas: {} vs {}.'
       raise ValueError(msg.format(device_assignment, num_replicas))
-    compile_options = compile_options or xla_client.CompileOptions()
-    device_assignment = onp.array(device_assignment)[:, None]
+
+    if num_partitions != device_assignment.shape[1]:
+      msg = 'device_assignment does not match num_partitions: {} vs {}.'
+      raise ValueError(msg.format(device_assignment, num_partitions))
+
     device_assignment = xla_client.DeviceAssignment.create(device_assignment)
-    assert num_replicas is None or device_assignment.replica_count() == num_replicas
+    assert device_assignment.replica_count() == num_replicas
+    assert device_assignment.computation_count() == num_partitions
     compile_options.device_assignment = device_assignment
   return compile_options
 
@@ -120,23 +124,36 @@ def _get_local_backend(platform=None):
   return backend
 
 
+register_backend('xla', _get_local_backend)
+
+# memoize the TPU driver to be consistent with xla_client behavior
+_tpu_backend = None
+
 def _get_tpu_driver_backend(platform):
   del platform
-  backend_target = FLAGS.jax_backend_target
-  if backend_target is None:
-    raise ValueError('When using TPU Driver as the backend, you must specify '
-                     '--jax_backend_target=<hostname>:8470.')
-  return tpu_client.TpuBackend.create(worker=backend_target)
+  global _tpu_backend
+  if _tpu_backend is None:
+    backend_target = FLAGS.jax_backend_target
+    if backend_target is None:
+      raise ValueError('When using TPU Driver as the backend, you must specify '
+                       '--jax_backend_target=<hostname>:8470.')
+    _tpu_backend = tpu_client.TpuBackend.create(worker=backend_target)
+  return _tpu_backend
 
 
-register_backend('xla', _get_local_backend)
 if tpu_client:
   register_backend('tpu_driver', _get_tpu_driver_backend)
+
 
 _backend_lock = threading.Lock()
 
 @util.memoize
 def get_backend(platform=None):
+  # TODO(mattjj,skyewm): remove this input polymorphism after we clean up how
+  # 'backend' values are handled
+  if isinstance(platform, xla_client.Backend):
+    return platform
+
   with _backend_lock:
     backend = _backends.get(FLAGS.jax_xla_backend)
     if backend is None:

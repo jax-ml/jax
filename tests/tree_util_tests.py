@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import collections
 
@@ -65,6 +62,8 @@ PYTREES = [
     ([AnObject(3, None, [4, "foo"])],),
     ({"a": 1, "b": 2},),
     (collections.OrderedDict([("foo", 34), ("baz", 101), ("something", -42)]),),
+    (collections.defaultdict(dict,
+                             [("foo", 34), ("baz", 101), ("something", -42)]),),
     (ANamedTupleSubclass(foo="hello", bar=3.5),),
 ]
 

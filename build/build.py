@@ -16,9 +16,6 @@
 #
 # Helper script for building JAX's libjax easily.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import argparse
 import collections
@@ -60,19 +57,19 @@ def get_python_bin_path(python_bin_path_flag):
 
 # Bazel
 
-BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/0.29.1/"
+BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/1.2.1/"
 BazelPackage = collections.namedtuple("BazelPackage", ["file", "sha256"])
 bazel_packages = {
     "Linux":
         BazelPackage(
-            file="bazel-0.29.1-linux-x86_64",
+            file="bazel-1.2.1-linux-x86_64",
             sha256=
-            "da3031d811f42f6208d24a87984b5b07e1c75afede184cad86eb02bef6c3b9b0"),
+            "f5e21d7448419d1596ad0c5bb71fb336a0af08c832587aec394970ea56701d88"),
     "Darwin":
         BazelPackage(
-            file="bazel-0.29.1-darwin-x86_64",
+            file="bazel-1.2.1-darwin-x86_64",
             sha256=
-            "34daae4caafbdb0952415ed6f97f47f03df84df9af146e9eb910ba65c073efdd"),
+            "6729be5a56e6eadf7a9112afd2d87ce348da8fca22077b882d9bb7a6f5d41d1c"),
 }
 
 
@@ -128,11 +125,11 @@ def get_bazel_path(bazel_path_flag):
   if bazel_path_flag:
     return bazel_path_flag
 
-  bazel = which("bazel")
+  bazel = download_and_verify_bazel()
   if bazel:
     return bazel
 
-  bazel = download_and_verify_bazel()
+  bazel = which("bazel")
   if bazel:
     return bazel
 
@@ -154,13 +151,13 @@ def check_bazel_version(bazel_path, min_version, max_version):
   if min_ints > actual_ints:
     print("Outdated bazel revision (>= {} required, found {})".format(
         min_version, version))
-    sys.exit(0)
+    sys.exit(-1)
   if max_version is not None:
     max_ints = [int(x) for x in max_version.split(".")]
     if actual_ints >= max_ints:
       print("Please downgrade your bazel revision to build JAX (>= {} and < {}"
             " required, found {})".format(min_version, max_version, version))
-      sys.exit(0)
+      sys.exit(-1)
 
 
 BAZELRC_TEMPLATE = """
@@ -176,6 +173,7 @@ build:mkl_open_source_only --define=tensorflow_mkldnn_contraction_kernel=1
 
 # Sets the default Apple platform to macOS.
 build --apple_platform_type=macos
+build --macos_minimum_os=10.9
 
 # Make Bazel print out all options from rc files.
 build --announce_rc
@@ -306,7 +304,7 @@ def main():
 
   # Find a working Bazel.
   bazel_path = get_bazel_path(args.bazel_path)
-  check_bazel_version(bazel_path, min_version="0.24.0", max_version=None)
+  check_bazel_version(bazel_path, min_version="1.2.1", max_version=None)
   print("Bazel binary path: {}".format(bazel_path))
 
   python_bin_path = get_python_bin_path(args.python_bin_path)

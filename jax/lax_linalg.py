@@ -13,14 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from functools import partial
 import numpy as onp
 
 from jax.numpy import lax_numpy as np
+from jax.numpy.vectorize import vectorize
 from jax import ad_util
 from jax import api
 from jax import api_util
@@ -34,11 +32,12 @@ from jax.interpreters import batching
 from jax.util import partial, prod
 from jax.abstract_arrays import ShapedArray
 from jax.core import Primitive
-from jax.lax import (standard_primitive, standard_unop, binop_dtype_rule,
+from jax.lax import (standard_primitive, standard_unop, naryop_dtype_rule,
                      _float, _complex, _input_dtype, _broadcasting_select)
 from jax.lib import xla_client
 from jax.lib import lapack
 from jax.lib import cusolver
+
 
 # traceables
 
@@ -94,7 +93,8 @@ def _unpack_tuple(f, n):
 
 # primitives
 
-_cpu_lapack_types = {np.float32, np.float64, np.complex64, np.complex128}
+_cpu_lapack_types = {onp.dtype(onp.float32), onp.dtype(onp.float64),
+                     onp.dtype(onp.complex64), onp.dtype(onp.complex128)}
 
 # Cholesky decomposition
 
@@ -111,7 +111,8 @@ def cholesky_jvp_rule(primals, tangents):
   tmp = triangular_solve(L, sigma_dot, left_side=False, transpose_a=True,
                          conjugate_a=True, lower=True)
   L_dot = lax.batch_matmul(L, phi(triangular_solve(
-      L, tmp, left_side=True, transpose_a=False, lower=True)))
+      L, tmp, left_side=True, transpose_a=False, lower=True)),
+      precision=lax.Precision.HIGHEST)
   return L, L_dot
 
 def cholesky_batching_rule(batched_args, batch_dims):
@@ -133,20 +134,21 @@ def _nan_like(c, operand):
     nan = c.Constant(onp.array(onp.nan, dtype=dtype))
   return c.Broadcast(nan, shape.dimensions())
 
-def cholesky_cpu_translation_rule(c, operand):
+def _cholesky_cpu_gpu_translation_rule(potrf_impl, c, operand):
   shape = c.GetShape(operand)
+  batch_dims = shape.dimensions()[:-2]
   dtype = shape.element_type().type
-  if len(shape.dimensions()) == 2 and dtype in _cpu_lapack_types:
-    result, info = lapack.potrf(c, operand, lower=True)
-    return c.Select(c.Eq(info, c.ConstantS32Scalar(0)), result,
-                    _nan_like(c, result))
-  else:
-    # Fall back to the HLO implementation for batched Cholesky decomposition or
-    # unsupported types.
-    # TODO(phawkins): support LAPACK primitives in batched mode.
-    return c.Cholesky(operand)
+  result, info = potrf_impl(c, operand, lower=True)
+  ok = c.Eq(info, c.ConstantS32Scalar(0))
+  return _broadcasting_select(c,
+                              c.Reshape(ok, None, batch_dims + (1, 1)), result,
+                              _nan_like(c, result))
 
-xla.backend_specific_translations['cpu'][cholesky_p] = cholesky_cpu_translation_rule
+xla.backend_specific_translations['cpu'][cholesky_p] = partial(
+  _cholesky_cpu_gpu_translation_rule, lapack.potrf)
+
+xla.backend_specific_translations['gpu'][cholesky_p] = partial(
+  _cholesky_cpu_gpu_translation_rule, cusolver.potrf)
 
 # Asymmetric eigendecomposition
 
@@ -265,7 +267,8 @@ def eigh_jvp_rule(primals, tangents, lower):
   # carefully build reciprocal delta-eigenvalue matrix, avoiding NaNs.
   Fmat = np.reciprocal(eye_n + w[..., np.newaxis, :] - w[..., np.newaxis]) - eye_n
   # eigh impl doesn't support batch dims, but future-proof the grad.
-  dot = lax.dot if a.ndim == 2 else lax.batch_matmul
+  dot = partial(lax.dot if a.ndim == 2 else lax.batch_matmul,
+                precision=lax.Precision.HIGHEST)
   vdag_adot_v = dot(dot(_H(v), a_dot), v)
   dv = dot(v, np.multiply(Fmat, vdag_adot_v))
   dw = np.diagonal(vdag_adot_v, axis1=-2, axis2=-1)
@@ -297,13 +300,16 @@ xla.backend_specific_translations['gpu'][eigh_p] = partial(
 
 
 triangular_solve_dtype_rule = partial(
-    binop_dtype_rule, _input_dtype, (_float | _complex, _float | _complex),
+    naryop_dtype_rule, _input_dtype, (_float | _complex, _float | _complex),
     'triangular_solve')
 
 def triangular_solve_shape_rule(a, b, left_side=False, **unused_kwargs):
   if a.ndim < 2:
     msg = "triangular_solve requires a.ndim to be at least 2, got {}."
     raise TypeError(msg.format(a.ndim))
+  if b.ndim < 2:
+    msg = "triangular_solve requires b.ndim to be at least 2, got {}."
+    raise TypeError(msg.format(b.ndim))
   if a.shape[-1] != a.shape[-2]:
     msg = ("triangular_solve requires the last two dimensions of a to be equal "
            "in size, got a.shape of {}.")
@@ -326,7 +332,8 @@ def triangular_solve_jvp_rule_a(
   g_a = lax.neg(g_a)
   g_a = np.swapaxes(g_a, -1, -2) if transpose_a else g_a
   g_a = np.conj(g_a) if conjugate_a else g_a
-  dot = lax.dot if g_a.ndim == 2 else lax.batch_matmul
+  dot = partial(lax.dot if g_a.ndim == 2 else lax.batch_matmul,
+                precision=lax.Precision.HIGHEST)
 
   def a_inverse(rhs):
     return triangular_solve(a, rhs, left_side, lower, transpose_a, conjugate_a,
@@ -367,13 +374,28 @@ def triangular_solve_batching_rule(batched_args, batch_dims, left_side,
                                    unit_diagonal):
   x, y = batched_args
   bx, by = batch_dims
-  size = next(t.shape[i] for t, i in zip(batched_args, batch_dims)
-              if i is not None)
-  x = batching.bdim_at_front(x, bx, size)
-  y = batching.bdim_at_front(y, by, size)
-  return triangular_solve(x, y, left_side=left_side, lower=lower,
-                          transpose_a=transpose_a, conjugate_a=conjugate_a,
-                          unit_diagonal=unit_diagonal), 0
+  if bx is batching.not_mapped:
+    if left_side:
+      y = batching.moveaxis(y, by, -1)
+      y_flat = y.reshape(y.shape[:-2] + (y.shape[-2] * y.shape[-1],))
+      bdim_out = y.ndim - 1
+    else:
+      y = batching.moveaxis(y, by, -2)
+      y_flat = y.reshape(y.shape[:-3]  + (y.shape[-3] * y.shape[-2], y.shape[-1]))
+      bdim_out = y.ndim - 2
+    out_flat = triangular_solve(
+        x, y_flat, left_side=left_side, lower=lower,
+        transpose_a=transpose_a, conjugate_a=conjugate_a,
+        unit_diagonal=unit_diagonal)
+    return out_flat.reshape(y.shape), bdim_out
+  else:
+    size = next(t.shape[i] for t, i in zip(batched_args, batch_dims)
+                if i is not None)
+    x = batching.bdim_at_front(x, bx, size)
+    y = batching.bdim_at_front(y, by, size)
+    return triangular_solve(x, y, left_side=left_side, lower=lower,
+                            transpose_a=transpose_a, conjugate_a=conjugate_a,
+                            unit_diagonal=unit_diagonal), 0
 
 triangular_solve_p = standard_primitive(
     triangular_solve_shape_rule, triangular_solve_dtype_rule,
@@ -389,7 +411,8 @@ def _triangular_solve_cpu_translation_rule(
     c, a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
   shape = c.GetShape(a)
   dtype = shape.element_type().type
-  if len(shape.dimensions()) == 2 and dtype in _cpu_lapack_types:
+
+  if len(shape.dimensions()) == 2 and onp.dtype(dtype) in _cpu_lapack_types:
     if conjugate_a and not transpose_a:
       a = c.Conj(a)
       conjugate_a = False
@@ -397,9 +420,8 @@ def _triangular_solve_cpu_translation_rule(
       c, c.Constant(onp.array(1, dtype=dtype)), a, b, left_side, lower,
                     transpose_a, conjugate_a, unit_diagonal)
   else:
-    # Fall back to the HLO implementation for batched triangular_solve or
-    # unsupported types.
-    # TODO(phawkins): support BLAS primitives in batched mode.
+    # Fall back to the HLO implementation for unsupported types or batching.
+    # TODO: Consider swapping XLA for LAPACK in batched case
     return c.TriangularSolve(a, b, left_side, lower, transpose_a, conjugate_a,
                              unit_diagonal)
 
@@ -642,6 +664,62 @@ def lu_pivots_to_permutation(swaps, m):
   return result
 
 
+@partial(vectorize, excluded={3}, signature='(n,n),(n),(n,k)->(n,k)')
+def _lu_solve_core(lu, pivots, b, trans):
+  m = lu.shape[0]
+  permutation = lu_pivots_to_permutation(pivots, m)
+  x = np.reshape(b, (m, -1))
+  if trans == 0:
+    x = x[permutation, :]
+    x = triangular_solve(lu, x, left_side=True, lower=True, unit_diagonal=True)
+    x = triangular_solve(lu, x, left_side=True, lower=False)
+  elif trans == 1 or trans == 2:
+    conj = trans == 2
+    x = triangular_solve(lu, x, left_side=True, lower=False, transpose_a=True,
+                         conjugate_a=conj)
+    x = triangular_solve(lu, x, left_side=True, lower=True, unit_diagonal=True,
+                         transpose_a=True, conjugate_a=conj)
+    x = x[np.argsort(permutation), :]
+  else:
+    raise ValueError("'trans' value must be 0, 1, or 2, got {}".format(trans))
+  return lax.reshape(x, b.shape)
+
+
+@partial(api.jit, static_argnums=(3,))
+def _lu_solve(lu, pivots, b, trans):
+  if len(lu.shape) < 2 or lu.shape[-1] != lu.shape[-2]:
+    raise ValueError("last two dimensions of LU decomposition must be equal, "
+                     "got shape {}".format(lu.shape))
+  if len(b.shape) < 1:
+    raise ValueError("b matrix must have rank >= 1, got shape {}"
+                     .format(b.shape))
+  # Broadcasting follows NumPy's convention for linalg.solve: the RHS is
+  # treated as a (batched) vector if the number of dimensions differ by 1.
+  # Otherwise, broadcasting rules apply.
+  rhs_vector = lu.ndim == b.ndim + 1
+  if rhs_vector:
+    if b.shape[-1] != lu.shape[-1]:
+      raise ValueError("When LU decomposition matrix and b have the same "
+                       "number of dimensions, last axis of LU decomposition "
+                       "matrix (shape {}) and b array (shape {}) must match"
+                       .format(lu.shape, b.shape))
+    b = b[..., np.newaxis]
+  else:
+    if b.shape[-2] != lu.shape[-1]:
+      raise ValueError("When LU decomposition matrix and b different "
+                       "numbers of dimensions, last axis of LU decomposition "
+                       "matrix (shape {}) and second to last axis of b array "
+                       "(shape {}) must match"
+                       .format(lu.shape, b.shape))
+  x = _lu_solve_core(lu, pivots, b, trans)
+  return x[..., 0] if rhs_vector else x
+
+
+def lu_solve(lu, pivots, b, trans=0):
+  """LU solve with broadcasting."""
+  return _lu_solve(lu, pivots, b, trans)
+
+
 # QR decomposition
 
 def qr_impl(operand, full_matrices):
@@ -723,17 +801,11 @@ xla.translations[qr_p] = qr_translation_rule
 ad.primitive_jvps[qr_p] = qr_jvp_rule
 batching.primitive_batchers[qr_p] = qr_batching_rule
 
-# TODO(phawkins): make unconditional after the minimum Jaxlib version is
-# increased past 0.1.28.
-if hasattr(lapack, "geqrf"):
-  xla.backend_specific_translations['cpu'][qr_p] = partial(
-    _qr_cpu_gpu_translation_rule, lapack.geqrf, lapack.orgqr)
+xla.backend_specific_translations['cpu'][qr_p] = partial(
+  _qr_cpu_gpu_translation_rule, lapack.geqrf, lapack.orgqr)
 
-# TODO(phawkins): make unconditional after the minimum Jaxlib version is
-# increased past 0.1.28.
-if hasattr(cusolver, "geqrf"):
-  xla.backend_specific_translations['gpu'][qr_p] = partial(
-    _qr_cpu_gpu_translation_rule, cusolver.geqrf, cusolver.orgqr)
+xla.backend_specific_translations['gpu'][qr_p] = partial(
+  _qr_cpu_gpu_translation_rule, cusolver.geqrf, cusolver.orgqr)
 
 
 # Singular value decomposition
@@ -745,7 +817,7 @@ def svd_impl(operand, full_matrices, compute_uv):
 
 def svd_translation_rule(c, operand, full_matrices, compute_uv):
   raise NotImplementedError(
-    "Singular value decomposition is only implemented on the CPU backend")
+    "Singular value decomposition is only implemented on the CPU and GPU backends")
 
 def svd_abstract_eval(operand, full_matrices, compute_uv):
   if isinstance(operand, ShapedArray):
@@ -767,7 +839,7 @@ def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
   dA, = tangents
   s, U, Vt = svd_p.bind(A, full_matrices=False, compute_uv=True)
 
-  if full_matrices:
+  if compute_uv and full_matrices:
     # TODO: implement full matrices case, documented here: https://people.maths.ox.ac.uk/gilesm/files/NA-08-01.pdf
     raise NotImplementedError(
       "Singular value decomposition JVP not implemented for full matrices")

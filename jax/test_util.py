@@ -12,10 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
+from contextlib import contextmanager
 import functools
 import re
 import itertools as it
@@ -28,11 +26,11 @@ from absl.testing import parameterized
 import numpy as onp
 import numpy.random as npr
 
-from six.moves import xrange
-
 from . import api
+from . import core
 from . import dtypes
-from .config import flags
+from . import lax
+from .config import flags, bool_env
 from .util import partial
 from .tree_util import tree_multimap, tree_all, tree_map, tree_reduce
 from .lib import xla_bridge
@@ -51,6 +49,13 @@ flags.DEFINE_integer(
   'num_generated_cases',
   int(os.getenv('JAX_NUM_GENERATED_CASES', 10)),
   help='Number of generated cases to test')
+
+flags.DEFINE_bool(
+    'jax_skip_slow_tests',
+    bool_env('JAX_SKIP_SLOW_TESTS', False),
+    help=
+    'Skip tests marked as slow (> 5 sec).'
+)
 
 EPS = 1e-4
 
@@ -245,13 +250,54 @@ def check_grads(f, args, order,
 
   _check_grads(f, args, order)
 
+
+@contextmanager
+def count_primitive_compiles():
+  xla.xla_primitive_callable.cache_clear()
+
+  # We count how many times we call primitive_computation (which is called
+  # inside xla_primitive_callable) instead of xla_primitive_callable so we don't
+  # count cache hits.
+  primitive_computation = xla.primitive_computation
+  count = [0]
+
+  def primitive_computation_and_count(*args, **kwargs):
+    count[0] += 1
+    return primitive_computation(*args, **kwargs)
+
+  xla.primitive_computation = primitive_computation_and_count
+  try:
+    yield count
+  finally:
+    xla.primitive_computation = primitive_computation
+
+
+@contextmanager
+def count_jit_and_pmap_compiles():
+  # No need to clear any caches since we generally jit and pmap fresh callables
+  # in tests.
+
+  jaxpr_subcomp = xla.jaxpr_subcomp
+  count = [0]
+
+  def jaxpr_subcomp_and_count(*args, **kwargs):
+    count[0] += 1
+    return jaxpr_subcomp(*args, **kwargs)
+
+  xla.jaxpr_subcomp = jaxpr_subcomp_and_count
+  try:
+    yield count
+  finally:
+    xla.jaxpr_subcomp = jaxpr_subcomp
+
+
 def device_under_test():
   return FLAGS.jax_test_dut or xla_bridge.get_backend().platform
 
 def supported_dtypes():
   if device_under_test() == "tpu":
-    return {onp.bool_, onp.int32, onp.int64, onp.uint32, onp.uint64,
-            dtypes.bfloat16, onp.float32, onp.complex64}
+    return {onp.bool_, onp.int32, onp.uint32, dtypes.bfloat16, onp.float32,
+            onp.complex64}
   else:
     return {onp.bool_, onp.int8, onp.int16, onp.int32, onp.int64,
             onp.uint8, onp.uint16, onp.uint32, onp.uint64,
@@ -343,6 +389,8 @@ def format_shape_dtype_string(shape, dtype):
     return '{}[{}]'.format(dtype_str(dtype), shapestr)
   elif type(shape) is int:
     return '{}[{},]'.format(dtype_str(dtype), shape)
+  elif isinstance(shape, onp.ndarray):
+    return '{}[{}]'.format(dtype_str(dtype), shape)
   else:
     raise TypeError(type(shape))
 
@@ -371,9 +419,9 @@ def _rand_dtype(rand, shape, dtype, scale=1., post=lambda x: x):
   return _cast_to_shape(onp.asarray(post(vals), dtype), shape, dtype)
 
 
-def rand_default():
+def rand_default(scale=3):
   randn = npr.RandomState(0).randn
-  return partial(_rand_dtype, randn, scale=3)
+  return partial(_rand_dtype, randn, scale=scale)
 
 
 def rand_nonzero():
@@ -441,7 +489,9 @@ def rand_some_inf():
 
     if dtypes.issubdtype(dtype, onp.complexfloating):
       base_dtype = onp.real(onp.array(0, dtype=dtype)).dtype
-      return rand(shape, base_dtype) + 1j * rand(shape, base_dtype)
+      out = (rand(shape, base_dtype) +
+             onp.array(1j, dtype) * rand(shape, base_dtype))
+      return _cast_to_shape(out, shape, dtype)
 
     dims = _dims_of_shape(shape)
     posinf_flips = rng.rand(*dims) < 0.1
@@ -464,7 +514,9 @@ def rand_some_nan():
     """The random sampler function."""
     if dtypes.issubdtype(dtype, onp.complexfloating):
       base_dtype = onp.real(onp.array(0, dtype=dtype)).dtype
-      return rand(shape, base_dtype) + 1j * rand(shape, base_dtype)
+      out = (rand(shape, base_dtype) +
+             onp.array(1j, dtype) * rand(shape, base_dtype))
+      return _cast_to_shape(out, shape, dtype)
 
     if not dtypes.issubdtype(dtype, onp.floating):
       # only float types have inf
@@ -497,7 +549,9 @@ def rand_some_inf_and_nan():
 
     if dtypes.issubdtype(dtype, onp.complexfloating):
       base_dtype = onp.real(onp.array(0, dtype=dtype)).dtype
-      return rand(shape, base_dtype) + 1j * rand(shape, base_dtype)
+      out = (rand(shape, base_dtype) +
+             onp.array(1j, dtype) * rand(shape, base_dtype))
+      return _cast_to_shape(out, shape, dtype)
 
     dims = _dims_of_shape(shape)
     posinf_flips = rng.rand(*dims) < 0.1
@@ -558,6 +612,23 @@ def check_raises_regexp(thunk, err_type, pattern):
   except err_type as e:
     assert re.match(pattern, str(e)), "{}\n\n{}\n".format(e, pattern)
 
+
+def _iter_eqns(jaxpr):
+  # TODO(necula): why doesn't this search in params?
+  for eqn in jaxpr.eqns:
+    yield eqn
+  for subjaxpr in core.subjaxprs(jaxpr):
+    yield from _iter_eqns(subjaxpr)
+
+def assert_dot_precision(expected_precision, fun, *args):
+  jaxpr = api.make_jaxpr(fun)(*args)
+  precisions = [eqn.params['precision'] for eqn in _iter_eqns(jaxpr.jaxpr)
+                if eqn.primitive == lax.dot_general_p]
+  for precision in precisions:
+    msg = "Unexpected precision: {} != {}".format(expected_precision, precision)
+    assert precision == expected_precision, msg
+
+
 _CACHED_INDICES = {}
 
 def cases_from_list(xs):
@@ -576,7 +647,7 @@ def cases_from_gens(*gens):
   sizes = [1, 3, 10]
   cases_per_size = int(FLAGS.num_generated_cases / len(sizes)) + 1
   for size in sizes:
-    for i in xrange(cases_per_size):
+    for i in range(cases_per_size):
       yield ('_{}_{}'.format(size, i),) + tuple(gen(size) for gen in gens)
 
 
@@ -596,7 +667,7 @@ class JaxTestCase(parameterized.TestCase):
 
   def assertDtypesMatch(self, x, y):
     if FLAGS.jax_enable_x64:
-      self.assertEqual(onp.asarray(x).dtype, onp.asarray(y).dtype)
+      self.assertEqual(_dtype(x), _dtype(y))
 
   def assertAllClose(self, x, y, check_dtypes, atol=None, rtol=None):
     """Assert that x and y, either arrays or nested tuples/lists, are close."""
@@ -612,9 +683,11 @@ class JaxTestCase(parameterized.TestCase):
         self.assertAllClose(x_elt, y_elt, check_dtypes, atol=atol, rtol=rtol)
     elif hasattr(x, '__array__') or onp.isscalar(x):
       self.assertTrue(hasattr(y, '__array__') or onp.isscalar(y))
+      if check_dtypes:
+        self.assertDtypesMatch(x, y)
       x = onp.asarray(x)
       y = onp.asarray(y)
-      self.assertArraysAllClose(x, y, check_dtypes, atol=atol, rtol=rtol)
+      self.assertArraysAllClose(x, y, check_dtypes=False, atol=atol, rtol=rtol)
     elif x == y:
       return
     else:
@@ -639,6 +712,10 @@ class JaxTestCase(parameterized.TestCase):
 
     python_should_be_executing = True
     python_ans = fun(*args)
+
+    python_shapes = tree_map(lambda x: onp.shape(x), python_ans)
+    onp_shapes = tree_map(lambda x: onp.shape(onp.asarray(x)), python_ans)
+    self.assertEqual(python_shapes, onp_shapes)
 
     cache_misses = xla.xla_primitive_callable.cache_info().misses
     python_ans = fun(*args)

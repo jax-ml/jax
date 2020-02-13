@@ -12,13 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from .tree_util import (build_tree, tree_flatten, tree_unflatten,
                         treedef_is_leaf)
-from .linear_util import transformation_with_aux
+from . import linear_util as lu
 from .util import safe_map, unzip2, partial, curry
 
 map = safe_map
@@ -38,7 +35,7 @@ def get_name(fun): return getattr(fun, "__name__", "<unnamed function>")
 def get_module(fun): return getattr(fun, "__module__", "<unknown module>")
 def get_doc(fun): return getattr(fun, "__doc__", "")
 
-@transformation_with_aux
+@lu.transformation_with_aux
 def flatten_fun(in_tree, *args_flat):
   py_args, py_kwargs = tree_unflatten(in_tree, args_flat)
   ans = yield py_args, py_kwargs
@@ -52,7 +49,7 @@ def apply_flat_fun(fun, io_tree, *py_args):
   ans = fun(*args)
   return tree_unflatten(out_tree, ans)
 
-@transformation_with_aux
+@lu.transformation_with_aux
 def flatten_fun_nokwargs(in_tree, *args_flat):
   py_args = tree_unflatten(in_tree, args_flat)
   ans = yield py_args, {}
@@ -66,7 +63,7 @@ def apply_flat_fun_nokwargs(fun, io_tree, py_args):
   ans = fun(*args)
   return tree_unflatten(out_tree, ans)
 
-@transformation_with_aux
+@lu.transformation_with_aux
 def flatten_fun_nokwargs2(in_tree, *args_flat):
   py_args = tree_unflatten(in_tree, args_flat)
   ans, aux = yield py_args, {}

@@ -13,76 +13,59 @@
 # limitations under the License.
 
 """
-Utilities for defining linear functions composed with transformations.
+Utilities for defining functions composed with transformations.
 
-"Linear" here is meant in the sense of linear types; that is, a linear function
-may be called at most once.
+For example,
 
-For example:
+   from jax import linear_util as lu
 
-from jax import linear_util as lu
+   wf = lu.wrap_init(f)  # Produce a WrappedFun for applying transformations on `f`
 
-# A transformation that scales its argument down and its result up.
-@lu.transformation
-def scale_transformer(scale, x):
-  ans = yield (x / scale,)
-  yield x * scale
-
-def f(x):
-  return x + 1
-
-g = lu.wrap_init(f)  # Wraps `f` as a `WrappedFun`.
-g = scale_transformer(g, 2.0)  # Scale inputs/outputs by 2.0
-g = scale_transformer(g, 0.7)  # Scale inputs/outputs further by 0.7.
-print(g.call_wrapped(3.))  # Call the transformed function.
-
-
-A `WrappedFun` object represents a function `f`, together with a
-sequence of nested transformations that are to be applied to the positional
+A `WrappedFun` object represents a function `f`, together with a sequence of
+nested transformations that are to be applied to the positional and keyword
 arguments at call time and function return values at return time.
+A transformation can take some static positional arguments that are given
+at the wrapping time, and may also return some auxiliary output:
+
+    wf, aux_out_thunk = trans1(wf, static_arg)
+
+We can call the transformed function. First, the transformation is applied
+to the dynamic args and keyword args to produce new dynamic and keyword args.
+Then the underlying function is called and the transformation is applied to
+the results.
+If there are multiple transformations, they form a stack. The arguments are
+transformed first with the last applied transformation; the results are
+transformed first with the first applied transformation.
+
+    res = wf.call_wrapped(dynamic_args, kwargs)
+    # Now `aux_out_thunk()` is the auxiliary output.
+
+A transformation is written as a generator function that takes zero or more
+static positional arguments (given when the transformation is instantiated),
+along with positional and keyword arguments to be transformed.
+The generator will yield twice:
+
+    @lu.transformation_with_aux
+    def trans1(static_arg, *dynamic_args, **kwargs):
+      ...
+      # First yield: pair of transformed (args, kwargs). Get back the results.
+      results = yield (new_dynamic_args, new_kwargs)
+      ...
+      # Second yield: pair of (transformed results, and auxiliary output)
+      yield new_results, auxiliary_output
+
+
 `WrappedFun` objects explicitly represent the set of transformations so that
 they can be used as dictionary keys for memoization. `WrappedFun` objects
-compare as equal only if they compute the same function.
-
-Transformations are implemented as generators to save call stack frames.
-A transformation's generator takes arguments `gen args + args`, and yields
-a tuple of transformed arguments that should be passed to the wrapped
-function. The result of the wrapped function is passed back to the generator
-using `gen.send()`, and the generator yields the transformed results to pass
-back to the caller.
-
-Transformations can also return auxiliary data using the `transform_with_aux`
-decorator. For example:
-
-@lu.transformation_with_aux
-def scale_transformer_aux(scale, x):
-  ans = yield (x / scale,)
-  yield (x * scale, "Auxiliary data: {}".format(x))
-
-g = lu.wrap_init(f)  # Wraps `f` as a `WrappedFun`.
-g, aux_thunk = scale_transformer_aux(g, 2.0)  # Scale inputs/outputs by 2.0
-print(g.call_wrapped(3.))  # Call the transformed function.
-print(aux_thunk()) # Retrieves the auxiliary data computed during evaluation.
+compare as equal only if they compute the same function. The static and the
+dynamic positional arguments for the generators, and also the auxiliary output
+data must be immutable, because it will be stored in function memoization tables.
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import weakref
 
-from .util import curry, partial
-
-
-def thunk(f):
-  store = Store()
-  def f_memoized():
-    if not store:
-      # TODO(dougalm): save/restore relevant environment state too
-      store.store(f())
-    return store.val
-
-  return f_memoized
+from .util import curry
 
 class StoreException(Exception): pass
 
@@ -91,6 +74,7 @@ class EmptyStoreValue(object): pass
 _EMPTY_STORE_VALUE = EmptyStoreValue()
 
 class Store(object):
+  """Storage for a value, with checks for overwriting or reading empty store."""
   __slots__ = ("_val",)
 
   def __init__(self):
@@ -117,9 +101,14 @@ class WrappedFun(object):
 
   Arguments:
     f: the function to be transformed.
-    transforms: a list of `(gen, gen_args, out_store)` tuples representing
-      transformations to apply to `f.`
-    params: extra parameters to pass as keyword arguments to `f`.
+    transforms: a list of `(gen, gen_static_args)` tuples representing
+      transformations to apply to `f.` Here `gen` is a generator function
+      and `gen_static_args` is a tuple of static arguments for the generator. See
+      description at the start of this module for the expected behavior of the
+      generator.
+    stores: a list of out_store for the auxiliary output of the `transforms`.
+    params: extra parameters to pass as keyword arguments to `f`, along with the
+      transformed keyword arguments.
   """
   __slots__ = ("f", "transforms", "stores", "params")
 
@@ -133,19 +122,26 @@ class WrappedFun(object):
   def __name__(self):
     return getattr(self.f, '__name__', '<unnamed wrapped function>')
 
-  def wrap(self, gen, gen_args, out_store):
-    return WrappedFun(self.f, ((gen, gen_args),) + self.transforms,
+  def wrap(self, gen, gen_static_args, out_store):
+    """Add another transform and its store."""
+    return WrappedFun(self.f, ((gen, gen_static_args),) + self.transforms,
                       (out_store,) + self.stores, self.params)
 
   def populate_stores(self, stores):
+    """Copy the values from the `stores` into `self.stores`."""
     for self_store, other_store in zip(self.stores, stores):
       if self_store is not None:
         self_store.store(other_store.val)
 
   def call_wrapped(self, *args, **kwargs):
+    """Calls the underlying function, applying the transforms.
+
+    The positional `args` and keyword `kwargs` are passed to the first
+    transformation generator.
+    """
     stack = []
-    for (gen, gen_args), out_store in zip(self.transforms, self.stores):
-      gen = gen(*(gen_args + tuple(args)), **kwargs)
+    for (gen, gen_static_args), out_store in zip(self.transforms, self.stores):
+      gen = gen(*(gen_static_args + tuple(args)), **kwargs)
       args, kwargs = next(gen)
       stack.append((gen, out_store))
     gen = None
@@ -176,14 +172,21 @@ class WrappedFun(object):
             self.params == other.params)
 
 @curry
-def transformation(gen, fun, *transformation_args):
-  return fun.wrap(gen, transformation_args, None)
+def transformation(gen, fun: WrappedFun, *gen_static_args):
+  """Adds one more transformation to a WrappedFun.
+  Args:
+    gen: the transformation generator function
+    fun: a WrappedFun on which to apply the transformation
+    gen_static_args: static args for the generator function
+  """
+  return fun.wrap(gen, gen_static_args, None)
 
 @curry
-def transformation_with_aux(gen, fun, *transformation_args):
+def transformation_with_aux(gen, fun: WrappedFun, *gen_static_args):
+  """Adds one more transformation with auxiliary output to a WrappedFun."""
   out_store = Store()
   out_thunk = lambda: out_store.val
-  return fun.wrap(gen, transformation_args, out_store), out_thunk
+  return fun.wrap(gen, gen_static_args, out_store), out_thunk
 
 def fun_name(f):
   try:
@@ -197,7 +200,15 @@ def wrap_init(f, params={}):
 
 
 def cache(call):
+  """Cache decorator for WrappedFun calls.
+  Args:
+    call: a function that takes a WrappedFun as a first argument
+
+  Returns:
+     the memoized `call` function.
+  """
   fun_caches = weakref.WeakKeyDictionary()
+
   def memoized_fun(fun, *args):
     cache = fun_caches.setdefault(fun.f, {})
     key = (fun.transforms, fun.params, args)
@@ -209,6 +220,8 @@ def cache(call):
       ans = call(fun, *args)
       cache[key] = (ans, fun.stores)
     return ans
+
+  memoized_fun.cache_clear = fun_caches.clear
   return memoized_fun
 
 @transformation

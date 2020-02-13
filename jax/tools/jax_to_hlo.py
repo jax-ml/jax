@@ -50,7 +50,7 @@ resulting HLO program.
 Values of `constants` which are lists are converted to Numpy arrays using
 np.asarray.  In addition, you can specify constants using the flag
 --evaled_constants; values there that are strings are first evaluated using
-ast.literal_eval.  --evaled_constants is primarly useful for genrules; Skylark
+ast.literal_eval.  --evaled_constants is primarily useful for genrules; Skylark
 doesn't support floating-point types, so genrules need to deal in strings.
 
 Note that XLA's backwards-compatibility guarantees for saved HLO are currently
@@ -63,9 +63,6 @@ Implementation note: This script must be python2 compatible for now, because
 Google's genrules still run with python2, b/66712815.
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from ast import literal_eval
 import importlib

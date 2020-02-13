@@ -12,19 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from operator import attrgetter
 from contextlib import contextmanager
 from collections import namedtuple, Counter, defaultdict
+from functools import total_ordering
 import itertools as it
 from weakref import ref
 import threading
 import types
-
-import six
 
 from . import linear_util as lu
 from .util import safe_zip, safe_map, partial, curry
@@ -42,9 +38,18 @@ map = safe_map
 # -------------------- jaxprs --------------------
 
 class Jaxpr(object):
-  def __init__(self, constvars, freevars, invars, outvars, eqns):
+  def __init__(self, constvars, invars, outvars, eqns):
+    """
+    Params:
+      constvars: list of variables introduced for constants (either literals
+        in the Python program, or the result of constant folding during the
+        generation of the Jaxpr). Array constants are replaced with such variables
+        while scalar constants are kept inline.
+      invars: list of input variables. Together, `constvars` and `invars` are
+        the inputs to the Jaxpr.
+      outvars: list of output variables.
+      eqns: list of equations."""
     self.constvars = list(constvars)
-    self.freevars = list(freevars)
     self.invars = list(invars)
     self.outvars = list(outvars)
     self.eqns = list(eqns)
@@ -53,6 +58,19 @@ class Jaxpr(object):
     return str(pp_jaxpr(self))
   __repr__ = __str__
 
+
+def subjaxprs(jaxpr):
+  """Generator for all subjaxprs found in the params of jaxpr.eqns.
+  Does not descend recursively into the found subjaxprs.
+  """
+  for eqn in jaxpr.eqns:
+    for param in eqn.params.values():
+      if type(param) is Jaxpr:
+        yield param
+      elif type(param) is TypedJaxpr:
+        yield param.jaxpr
+
+
 class TypedJaxpr(object):
   def __init__(self, jaxpr, literals, in_avals, out_avals):
     assert type(jaxpr) is Jaxpr
@@ -60,7 +78,6 @@ class TypedJaxpr(object):
     assert len(in_avals) == len(jaxpr.invars)
     assert all(isinstance(aval, AbstractValue) for aval in in_avals)
     assert all(isinstance(aval, AbstractValue) for aval in out_avals)
-    assert not jaxpr.freevars
 
     self.jaxpr = jaxpr
     self.literals = list(literals)
@@ -77,19 +94,29 @@ class TypedJaxpr(object):
 
 @curry
 def jaxpr_as_fun(typed_jaxpr, *args):
-  return eval_jaxpr(typed_jaxpr.jaxpr, typed_jaxpr.literals, (), *args)
+  return eval_jaxpr(typed_jaxpr.jaxpr, typed_jaxpr.literals, *args)
 
 
-JaxprEqn = namedtuple('JaxprEqn', ['invars', 'outvars', 'primitive',
-                                   'bound_subjaxprs', 'params'])
+
+JaxprEqn = namedtuple('JaxprEqn', ['invars', 'outvars', 'primitive', 'params'])
 JaxprEqn.__repr__ = JaxprEqn.__str__ = lambda eqn: str(pp_eqn(eqn)).rstrip()
 new_jaxpr_eqn = JaxprEqn
 
 
+@total_ordering
 class Var(object):
+  # TODO(frostig,mattjj): We don't override __eq__ or __hash__, so comparison is
+  # by object id, but pretty printing might collide.
+
   def __init__(self, count, suffix):
     self.count = count
     self.suffix = suffix
+
+  def __lt__(self, other):
+    if not isinstance(other, Var):
+      return NotImplemented
+    else:
+      return (self.count, self.suffix) < (other.count, other.suffix)
 
   def __repr__(self):
     rem = self.count
@@ -120,14 +147,14 @@ class Literal(object):
           self.hash = None
 
   def __hash__(self):
-    return id(self.val) if self.hash is None else self.hash
+    assert False
 
   def __eq__(self, other):
-    return self.val is other.val if self.hash is None else self.val == other.val
+    assert False
 
   def __repr__(self):
     if self.hash is None:
-      return 'Literal(val={}, hashable={})'.format(self.val, self.hashable)
+      return 'Literal(val={})'.format(self.val)
     else:
       return '{}'.format(self.val)
 
@@ -135,6 +162,8 @@ literalable_types = set()
 
 class Primitive(object):
   multiple_results = False  # override for multi-output primitives
+  call_primitive = False  # override for higher-order primitives that are
+                          # processed in final style.
 
   def __init__(self, name):
     self.name = name
@@ -179,8 +208,26 @@ class Primitive(object):
 
 # -------------------- lifting --------------------
 
+# TODO(necula): this belongs next to pe.new_eqn_recipe, but is needed in
+# core.py. Plan to move all these utilities to jaxpr.py.
+def extract_call_jaxpr(primitive, params):
+  """Extract the call primitive subjaxpr from the params.
 
-def eval_jaxpr(jaxpr, consts, freevar_vals, *args):
+  Params:
+    params: a parameter dictionary for a primitive.
+  Returns: the subjaxpr and the params without the "jaxpr" value. If this is
+    not a call primitive then returns (None, params).
+  """
+  if not primitive.call_primitive:
+    return (None, params)
+  else:
+    assert "call_jaxpr" in params
+    new_params = dict(params)
+    del new_params["call_jaxpr"]
+    return (params["call_jaxpr"], new_params)
+
+
+def eval_jaxpr(jaxpr, consts, *args):
   def read(v):
     if type(v) is Literal:
       return v.val
@@ -194,15 +241,14 @@ def eval_jaxpr(jaxpr, consts, freevar_vals, *args):
   write(unitvar, unit)
   map(write, jaxpr.constvars, consts)
   map(write, jaxpr.invars, args)
-  map(write, jaxpr.freevars, freevar_vals)
   for eqn in jaxpr.eqns:
     in_vals = map(read, eqn.invars)
-    subfuns = [partial(eval_jaxpr, subjaxpr, map(read, const_bindings),
-                                             map(read, freevar_bindings))
-               for subjaxpr, const_bindings, freevar_bindings
-               in eqn.bound_subjaxprs]
-    subfuns = map(lu.wrap_init, subfuns)
-    ans = eqn.primitive.bind(*(subfuns + in_vals), **eqn.params)
+    call_jaxpr, params = extract_call_jaxpr(eqn.primitive, eqn.params)
+    if call_jaxpr:
+      subfuns = [lu.wrap_init(partial(eval_jaxpr, call_jaxpr, ()))]
+    else:
+      subfuns = []
+    ans = eqn.primitive.bind(*(subfuns + in_vals), **params)
     if eqn.primitive.multiple_results:
       map(write, eqn.outvars, ans)
     else:
@@ -219,7 +265,7 @@ def full_lower(val):
 
 def find_top_trace(xs):
  try:
-   top_trace = max((x.trace for x in xs if isinstance(x, Tracer)),
+   top_trace = max((x._trace for x in xs if isinstance(x, Tracer)),
                    key=attrgetter('level'))
  except ValueError:
    return None
@@ -241,22 +287,22 @@ class Trace(object):
       return self.pure(val)
     level = self.level
     sublevel = self.sublevel
-    if val.trace.master is self.master:
-      if val.trace.sublevel == sublevel:
+    if val._trace.master is self.master:
+      if val._trace.sublevel == sublevel:
         return val
-      elif val.trace.sublevel < sublevel:
+      elif val._trace.sublevel < sublevel:
         return self.sublift(val)
       else:
         raise Exception("Can't lift sublevels {} to {}"
-                        .format(val.trace.sublevel, sublevel))
-    elif val.trace.level < level:
-      if val.trace.sublevel > sublevel:
+                        .format(val._trace.sublevel, sublevel))
+    elif val._trace.level < level:
+      if val._trace.sublevel > sublevel:
         raise Exception("Incompatible sublevel: {}, {}"
-                        .format(val.trace, (level, sublevel)))
+                        .format(val._trace, (level, sublevel)))
       return self.lift(val)
-    elif val.trace.level > level:
+    elif val._trace.level > level:
       raise Exception("Can't lift {} to {}".format(val, self))
-    elif val.trace.level == self.level:
+    elif val._trace.level == self.level:
       raise Exception("Different traces at same level: {}, {}".format(val, self))
     else:
       raise Exception("Can't lift {} to {}".format(val, self))
@@ -278,14 +324,14 @@ class Trace(object):
 
 class Tracer(object):
   __array_priority__ = 1000
-  __slots__ = ['trace', '__weakref__']
+  __slots__ = ['_trace', '__weakref__']
 
   def __array__(self, *args, **kw):
     raise Exception("Tracer can't be used with raw numpy functions. "
                     "You might have\n  import numpy as np\ninstead of\n  import jax.numpy as np")
 
   def __init__(self, trace):
-    self.trace = trace
+    self._trace = trace
 
   def __iter__(self):
     return iter(self.aval._iter(self))
@@ -362,15 +408,18 @@ class Tracer(object):
       if t is aval_property:
         return attr.fget(self)
       elif t is aval_method:
-        if six.PY3:
-          return types.MethodType(attr.fun, self)
-        else:
-          return types.MethodType(attr.fun, self, None)
+        return types.MethodType(attr.fun, self)
       else:
         return attr
 
   def __repr__(self):
-    return 'Traced<{}>with<{}>'.format(self.aval, self.trace)
+    return 'Traced<{}>with<{}>'.format(self.aval, self._trace)
+
+  def __copy__(self):
+    return self
+
+  def __deepcopy__(self, unused_memo):
+    return self
 
 
 # these can be used to set up forwarding of properties and instance methods from
@@ -561,8 +610,9 @@ identity_p.def_custom_bind(lambda x: x)
 
 
 def apply_todos(todos, outs):
-  while todos:
-    outs = map(full_lower, todos.pop()(outs))
+  todos_list = list(todos)
+  while todos_list:
+    outs = map(full_lower, todos_list.pop()(outs))
   return outs
 
 @lu.transformation_with_aux
@@ -571,16 +621,16 @@ def process_env_traces(primitive, level, params_tuple, *args):
   params = dict(params_tuple)
   todo = []
   while True:
-    tracers = [x for x in outs if isinstance(x, Tracer) and x.trace.level > level]
+    tracers = [x for x in outs if isinstance(x, Tracer) and x._trace.level > level]
     if tracers:
-      ans = max(tracers, key=lambda x: x.trace.level)
+      ans = max(tracers, key=lambda x: x._trace.level)
     else:
       break
-    trace = type(ans.trace)(ans.trace.master, cur_sublevel())
+    trace = type(ans._trace)(ans._trace.master, cur_sublevel())
     outs = map(trace.full_raise, outs)
     outs, cur_todo = trace.post_process_call(primitive, outs, params)
     todo.append(cur_todo)
-  yield outs, todo
+  yield outs, tuple(todo)  # Ensure the aux output is immutable
 
 def call_bind(primitive, f, *args, **params):
   top_trace = find_top_trace(args)
@@ -610,11 +660,15 @@ call_p.def_impl(call_impl)
 # ------------------- Jaxpr printed representation -------------------
 
 def check_jaxpr(jaxpr):
+  """Checks well-formedness of a jaxpr.
+
+  Specifically it checks that all variabled used are previously defined.
+  """
   def context():
     return "\njaxpr:\n{}\n".format(jaxpr)
 
   def read_env(env, v):
-    if v not in env and type(v) is not Literal:
+    if type(v) is not Literal and v not in env:
       raise Exception("Variable '{}' not defined".format(v) + context())
 
   def write_env(env, v):
@@ -628,38 +682,39 @@ def check_jaxpr(jaxpr):
 
   write(unitvar)
   map(write, jaxpr.constvars)
-  map(write, jaxpr.freevars)
   map(write, jaxpr.invars)
   for eqn in jaxpr.eqns:
+    if eqn.primitive.call_primitive:
+      if "call_jaxpr" not in eqn.params:
+        raise Exception("Call primitive {} should have a 'call_jaxpr' parameter"
+                        .format(eqn.primitive))
     map(read, eqn.invars)
-    for subjaxpr, constvars, freevars in eqn.bound_subjaxprs:
-      map(read, freevars)
-      map(read, constvars)
-      check_jaxpr(subjaxpr)
     map(write, eqn.outvars)
+
+  for subjaxpr in subjaxprs(jaxpr):
+    check_jaxpr(subjaxpr)
+
   map(read, jaxpr.outvars)
 
 
 def pp_vars(vs):
     return ' '.join(map(str, vs))
 
+def pp_eqn_compact(primitive_name, params):
+  filtered_params = {k: v for k, v in params.items()
+                     if not isinstance(v, (Jaxpr, TypedJaxpr))}
+  return pp(primitive_name) >> pp_kv_pairs(sorted(filtered_params.items()))
+
 def pp_eqn(eqn):
   lhs = pp_vars(eqn.outvars)
   pp_subexpr = pp('')
-  if eqn.bound_subjaxprs:
-    for subjaxpr, const_vars, bound_vars in eqn.bound_subjaxprs:
-      pp_subexpr = pp_subexpr + (
-          pp_jaxpr(subjaxpr).indent(2)
-          >> pp(' [ {} ; {} ]'.format(pp_vars(const_vars),
-                                      pp_vars(bound_vars))))
   return (pp('{} = '.format(lhs)) >>
           pp(eqn.primitive.name) >> pp_kv_pairs(sorted(eqn.params.items()))
           >> pp(' ') >> pp(pp_vars(eqn.invars))) + pp_subexpr
 
 def pp_jaxpr(jaxpr):
-  return (pp('{{ lambda {} ; {} ; {}.'.format(pp_vars(jaxpr.constvars),
-                                              pp_vars(jaxpr.freevars),
-                                              pp_vars(jaxpr.invars))) +
+  return (pp('{{ lambda {} ; {}.'.format(pp_vars(jaxpr.constvars),
+                                         pp_vars(jaxpr.invars))) +
           ((pp('let ') >>
             vcat(map(pp_eqn, jaxpr.eqns))) +
            pp('in {} }}'.format(jaxpr.outvars))).indent(2))

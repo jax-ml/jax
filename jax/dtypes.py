@@ -19,16 +19,12 @@
 # b) the set of supported types (e.g., bfloat16),
 # so we need our own implementation that deviates from NumPy in places.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from distutils.util import strtobool
 import functools
 import os
 
 import numpy as onp
-import six
 
 from . import util
 from .config import flags
@@ -97,9 +93,6 @@ python_scalar_dtypes = {
   complex: onp.dtype(complex_),
 }
 
-if six.PY2:
-  python_scalar_dtypes[long] = onp.dtype(int_)  # noqa: F821
-
 def scalar_type_of(x):
   typ = dtype(x)
   if onp.issubdtype(typ, onp.bool_):
@@ -114,7 +107,7 @@ def scalar_type_of(x):
     raise TypeError("Invalid scalar value {}".format(x))
 
 def coerce_to_array(x):
-  """Coreces a scalar or NumPy array to an onp.array.
+  """Coerces a scalar or NumPy array to an onp.array.
 
   Handles Python scalar type promotion according to JAX's rules, not NumPy's
   rules.
@@ -135,44 +128,85 @@ def finfo(dtype):
 
 def issubdtype(a, b):
   if a == bfloat16:
-    return b in [onp.floating, onp.inexact, onp.number]
+    return b in [bfloat16, _bfloat16_dtype, onp.floating, onp.inexact,
+                 onp.number]
+  if not issubclass(b, onp.generic):
+    # Workaround for JAX scalar types. NumPy's issubdtype has a backward
+    # compatibility behavior for the second argument of issubdtype that
+    # interacts badly with JAX's custom scalar types. As a workaround,
+    # explicitly cast the second argument to a NumPy type object.
+    b = onp.dtype(b).type
   return onp.issubdtype(a, b)
 
 can_cast = onp.can_cast
 issubsctype = onp.issubsctype
 
-_bfloat16_type_promotions = {
-  onp.dtype('bool'): onp.dtype(bfloat16),
-  onp.dtype(bfloat16): onp.dtype(bfloat16),
-  onp.dtype('float16'): onp.dtype('float32'),
-  onp.dtype('float32'): onp.dtype('float32'),
-  onp.dtype('float64'): onp.dtype('float64'),
-  onp.dtype('complex64'): onp.dtype('complex64'),
-  onp.dtype('complex128'): onp.dtype('complex128'),
-  onp.dtype('int8'): onp.dtype(bfloat16),
-  onp.dtype('int16'): onp.dtype('float32'),
-  onp.dtype('int32'): onp.dtype('float64'),
-  onp.dtype('int64'): onp.dtype('float64'),
-  onp.dtype('uint8'): onp.dtype(bfloat16),
-  onp.dtype('uint16'): onp.dtype('float32'),
-  onp.dtype('uint32'): onp.dtype('float64'),
-  onp.dtype('uint64'): onp.dtype('float64'),
-}
+
+# List of all valid JAX dtypes, in the order they appear in the type promotion
+# table.
+_jax_types = [
+  onp.dtype('bool'),
+  onp.dtype('uint8'),
+  onp.dtype('uint16'),
+  onp.dtype('uint32'),
+  onp.dtype('uint64'),
+  onp.dtype('int8'),
+  onp.dtype('int16'),
+  onp.dtype('int32'),
+  onp.dtype('int64'),
+  onp.dtype(bfloat16),
+  onp.dtype('float16'),
+  onp.dtype('float32'),
+  onp.dtype('float64'),
+  onp.dtype('complex64'),
+  onp.dtype('complex128'),
+]
+
+# Mapping from types to their type numbers.
+_jax_type_nums = {t: i for i, t in enumerate(_jax_types)}
+
+def _make_type_promotion_table():
+  b1, u1, u2, u4, u8, s1, s2, s4, s8, bf, f2, f4, f8, c4, c8 = _jax_types
+  #  b1, u1, u2, u4, u8, s1, s2, s4, s8, bf, f2, f4, f8, c4, c8
+  return onp.array([
+    [b1, u1, u2, u4, u8, s1, s2, s4, s8, bf, f2, f4, f8, c4, c8],  # b1
+    [u1, u1, u2, u4, u8, s2, s2, s4, s8, bf, f2, f4, f8, c4, c8],  # u1
+    [u2, u2, u2, u4, u8, s4, s4, s4, s8, bf, f2, f4, f8, c4, c8],  # u2
+    [u4, u4, u4, u4, u8, s8, s8, s8, s8, bf, f2, f4, f8, c4, c8],  # u4
+    [u8, u8, u8, u8, u8, f8, f8, f8, f8, bf, f2, f4, f8, c4, c8],  # u8
+    [s1, s2, s4, s8, f8, s1, s2, s4, s8, bf, f2, f4, f8, c4, c8],  # s1
+    [s2, s2, s4, s8, f8, s2, s2, s4, s8, bf, f2, f4, f8, c4, c8],  # s2
+    [s4, s4, s4, s8, f8, s4, s4, s4, s8, bf, f2, f4, f8, c4, c8],  # s4
+    [s8, s8, s8, s8, f8, s8, s8, s8, s8, bf, f2, f4, f8, c4, c8],  # s8
+    [bf, bf, bf, bf, bf, bf, bf, bf, bf, bf, f4, f4, f8, c4, c8],  # bf
+    [f2, f2, f2, f2, f2, f2, f2, f2, f2, f4, f2, f4, f8, c4, c8],  # f2
+    [f4, f4, f4, f4, f4, f4, f4, f4, f4, f4, f4, f4, f8, c4, c8],  # f4
+    [f8, f8, f8, f8, f8, f8, f8, f8, f8, f8, f8, f8, f8, c8, c8],  # f8
+    [c4, c4, c4, c4, c4, c4, c4, c4, c4, c4, c4, c4, c8, c4, c8],  # c4
+    [c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8],  # c8
+  ])
+
+_type_promotion_table = _make_type_promotion_table()
 
 def promote_types(a, b):
+  """Returns the type to which a binary operation should cast its arguments.
+
+  For details of JAX's type promotion semantics, see :ref:`type-promotion`.
+
+  Args:
+    a: a :class:`numpy.dtype` or a dtype specifier.
+    b: a :class:`numpy.dtype` or a dtype specifier.
+
+  Returns:
+    A :class:`numpy.dtype` object.
+  """
   a = onp.dtype(a)
   b = onp.dtype(b)
-  if b == _bfloat16_dtype:
-    a, b = b, a
-
-  if a == _bfloat16_dtype:
-    try:
-      return _bfloat16_type_promotions[b]
-    except:
-      raise TypeError("invalid type promotion of bfloat16 type and {}"
-                      .format(b))
-
-  return onp.promote_types(a, b)
+  try:
+    return _type_promotion_table[_jax_type_nums[a], _jax_type_nums[b]]
+  except KeyError:
+    pass
+  raise TypeError("Invalid type promotion of {} and {}".format(a, b))
 
 
 def is_python_scalar(x):

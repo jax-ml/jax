@@ -66,15 +66,10 @@ the JAX transforms defined in api.py) and it has to be consumable by update_fun
 and get_params.
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from collections import namedtuple
 import functools
 import operator
-
-from six.moves import reduce
 
 import jax.numpy as np
 from jax.util import partial, safe_zip, safe_map, unzip2
@@ -420,7 +415,7 @@ def sm3(step_size, momentum=0.9):
   def update(i, g, state):
     x, m, vs = state
     vs = [broadcast_into(g.ndim, v, i) for i, v in enumerate(vs)]
-    accum = reduce(np.minimum, vs) + g ** 2
+    accum = functools.reduce(np.minimum, vs) + g ** 2
     accum_inv_sqrt = np.where(accum > 0, 1. / np.sqrt(accum), 0)
     m = (1. - momentum) * (g * accum_inv_sqrt) + momentum * m
     x = x - step_size(i) * m
