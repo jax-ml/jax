@@ -18,8 +18,6 @@ This demo fits a Gaussian approximation to an intractable, unnormalized
 density, by differentiating through a Monte Carlo estimate of the
 variational evidence lower bound (ELBO)."""
 
-from __future__ import absolute_import
-from __future__ import print_function
 
 from functools import partial
 import matplotlib.pyplot as plt

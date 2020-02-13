@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from collections import namedtuple
 
@@ -69,7 +66,7 @@ class BatchTracer(Tracer):
 
   def __init__(self, trace, val, batch_dim):
     assert core.skip_checks or type(batch_dim) in (int, NotMapped)
-    self.trace = trace
+    self._trace = trace
     self.val = val
     self.batch_dim = batch_dim
 

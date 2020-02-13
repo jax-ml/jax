@@ -23,9 +23,6 @@ tree_util.py), which include nested tuples/lists/dicts, where the leaves are
 arrays.
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import collections
 import functools
@@ -37,7 +34,6 @@ from warnings import warn
 
 import numpy as onp
 from contextlib import contextmanager
-from distutils.util import strtobool
 
 from . import core
 from . import linear_util as lu
@@ -63,14 +59,14 @@ from .interpreters import batching
 from .interpreters import parallel
 from .interpreters import masking
 from .interpreters.masking import shapecheck, ensure_poly
-from .config import flags, config
+from .config import flags, config, bool_env
 
 map = safe_map
 zip = safe_zip
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool("jax_disable_jit",
-                  strtobool(os.getenv("JAX_DISABLE_JIT", "False")),
+                  bool_env("JAX_DISABLE_JIT", False),
                   "Disable JIT compilation and just call original Python.")
 
 
@@ -308,7 +304,7 @@ def xla_computation(fun, static_argnums=(), axis_env=None, backend=None,
     xla_consts = map(c.Constant, consts)
     xla_args = xla._xla_callable_args(c, avals, tuple_args)
     outs = xla.jaxpr_subcomp(
-        c, jaxpr, backend, axis_env_, xla_consts, (),
+        c, jaxpr, backend, axis_env_, xla_consts,
         extend_name_stack(wrap_name(fun_name, 'xla_computation')), *xla_args)
     return c.Build(c.Tuple(*outs))
   return computation_maker
@@ -1214,7 +1210,7 @@ def lift_linearized(jaxpr, primal_avals, consts, io_tree, out_pvals, *py_args):
                "the original primal values.")
         raise ValueError(msg)
     dummy = (core.unit,) * len(tangents)
-    out = eval_jaxpr(jaxpr, consts, (), *(dummy + tangents))
+    out = eval_jaxpr(jaxpr, consts, *(dummy + tangents))
     tangents_out = out[len(out)//2:]
     return tuple(map(pe.merge_pvals, tangents_out, out_pvals))
 
@@ -1494,7 +1490,7 @@ def custom_transforms(fun):
 
   def fun_impl(*args, **params):
     consts, args = split_list(args, [params['num_consts']])
-    return core.eval_jaxpr(params['jaxpr'], consts, (), *args)
+    return core.eval_jaxpr(params['jaxpr'], consts, *args)
   fun_p.def_impl(fun_impl)
 
   def fun_jvp(primals, tangents, **params):
@@ -1921,7 +1917,6 @@ def _make_graphviz(fun):
     fragment = []
 
     fragment.extend(map(invar_node, jaxpr.invars, jaxpr.invars))
-    fragment.extend(map(freevar_node, jaxpr.freevars, jaxpr.freevars))
     fragment.extend(map(constant_node, jaxpr.constvars, consts))
 
     for eqn in jaxpr.eqns:
@@ -2030,7 +2025,8 @@ def checkpoint(fun, concrete=False):
   def fun_remat(*args, **kwargs):
     args_flat, in_tree = tree_flatten((args, kwargs))
     flat_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
-    out_flat = pe.remat_call(flat_fun, *args_flat, concrete=concrete)
+    out_flat = pe.remat_call(flat_fun, *args_flat, name=flat_fun.__name__,
+                             concrete=concrete)
     return tree_unflatten(out_tree(), out_flat)
   return fun_remat
 remat = checkpoint

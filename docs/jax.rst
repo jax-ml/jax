@@ -17,6 +17,7 @@ Subpackages
     jax.ops
     jax.random
     jax.tree_util
+    jax.dlpack
 
 Just-in-time compilation (:code:`jit`)
 --------------------------------------

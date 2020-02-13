@@ -12,12 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from collections import namedtuple, defaultdict
-from distutils.util import strtobool
 import itertools as it
 import operator as op
 import os
@@ -25,7 +21,7 @@ import os
 from absl import logging
 import numpy as onp
 
-from ..config import flags
+from ..config import flags, bool_env
 from .. import core
 from .. import ad_util
 from .. import tree_util
@@ -47,10 +43,10 @@ from . import masking
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_debug_nans',
-                  strtobool(os.getenv('JAX_DEBUG_NANS', "False")),
+                  bool_env('JAX_DEBUG_NANS', False),
                   'Add nan checks to every operation.')
 flags.DEFINE_bool('jax_log_compiles',
-                  strtobool(os.getenv('JAX_LOG_COMPILES', "False")),
+                  bool_env('JAX_LOG_COMPILES', False),
                   'Print a message each time a `jit` computation is compiled.')
 
 def _map(f, *xs): return tuple(map(f, *xs))
@@ -92,7 +88,7 @@ def device_put(x, device=None):
 
 device_put_handlers = {}
 device_put_handlers[core.Unit] = \
-    lambda _, device: xc.Buffer.from_pyval(
+    lambda _, device: xc.Buffer.make_tuple(
         (), device, backend=xb.get_device_backend(device))
 def _device_put_array(x, device):
   return xc.Buffer.from_pyval(x, device, backend=xb.get_device_backend(device))
@@ -175,32 +171,31 @@ def xla_primitive_callable(prim, *arg_specs, **params):
     handle_result = lambda xs: tuple(h(x) for h, x in zip(handlers, xs.destructure()))
   tuple_args = len(avals) > 100
   built_c = primitive_computation(prim, backend, tuple_args, *avals, **params)
-  options = xb.get_compile_options(device_assignment=device and (device.id,))
+  options = xb.get_compile_options(
+      num_replicas=1,
+      num_partitions=1,
+      device_assignment=device and (device.id,))
   compiled = built_c.Compile(compile_options=options, backend=backend)
   return partial(_execute_compiled_primitive, prim, compiled, backend,
                  tuple_args, handle_result)
 
-# TODO(mattjj): make Device instances hashable instead of handling pairs here
 def _device_from_arg_devices(devices):
   """Given devices of inputs, determine where to perform a computation.
 
   Args:
-    devices: list where each element is a either a pair consisting of a device
-      class and an int id (representing a Device instance) or a None.
+    devices: list where each element is a either a `Device` instance or `None`.
   Returns:
-    A Device instance or None.
+    A `Device` instance or None.
   Raises:
     ValueError if input devices are inconsistent.
   """
   try:
     device, = set(d for d in devices if d is not None) or (None,)
+    return device
   except ValueError:
     msg = "primitive arguments must be colocated on the same device, got {}"
     names = ("{}({})".format(d[0].__name__, d[1]) for d in devices if d is not None)
     raise ValueError(msg.format(", ".join(names)))
-  else:
-    all_devices = it.chain(xb.devices(), xb.devices('cpu'))
-    return device and next(d for d in all_devices if (type(d), d.id) == device)
 
 @cache()
 def primitive_computation(prim, backend, tuple_args, *avals, **params):
@@ -272,9 +267,8 @@ def jaxpr_literals(jaxpr):
   return it.chain.from_iterable(eqn_literals(eqn) for eqn in jaxpr.eqns)
 
 def eqn_literals(eqn):
-  if eqn.bound_subjaxprs:
-    (subjaxpr, _, _), = eqn.bound_subjaxprs
-    for literal in jaxpr_literals(subjaxpr):
+  if eqn.bound_subjaxpr:
+    for literal in jaxpr_literals(eqn.bound_subjaxpr):
       yield literal
   if eqn.primitive in initial_style_translations:
     for param in eqn.params.values():
@@ -286,7 +280,7 @@ def eqn_literals(eqn):
     if type(v) is core.Literal:
       yield v.val
 
-def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, freevars, name_stack, *args):
+def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
   platform = xb.get_backend(backend).platform
 
   def read(v):
@@ -302,7 +296,6 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, freevars, name_stack, *ar
   env = {}
   write(core.unitvar, c.Tuple())
   _map(write, jaxpr.constvars, consts)
-  _map(write, jaxpr.freevars, freevars)
   _map(write, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
     c.SetOpMetadata(xc.OpMetadata(
@@ -327,11 +320,8 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, freevars, name_stack, *ar
       ans = rule(c, *in_nodes, replica_groups=replica_groups, **new_params)
     elif eqn.primitive in call_translations:
       new_params = check_backend_params(eqn.params, backend)
-      (subjaxpr, const_bindings, freevar_bindings), = eqn.bound_subjaxprs
-      const_nodes = _map(read, const_bindings)
-      freevar_nodes = _map(read, freevar_bindings)
       rule = call_translations[eqn.primitive]
-      ans = rule(c, subjaxpr, axis_env, const_nodes, freevar_nodes, in_nodes,
+      ans = rule(c, eqn.bound_subjaxpr, axis_env, in_nodes,
                  name_stack, backend=backend, **new_params)
     else:
       msg = "XLA translation rule for primitive '{}' not found"
@@ -393,9 +383,8 @@ def jaxpr_replicas(jaxpr):
   return max(it.chain([1], (eqn_replicas(eqn) for eqn in jaxpr.eqns)))
 
 def eqn_replicas(eqn):
-  if eqn.bound_subjaxprs:
-    (subjaxpr, _, _), = eqn.bound_subjaxprs
-    return eqn.params.get('axis_size', 1) * jaxpr_replicas(subjaxpr)
+  if eqn.bound_subjaxpr:
+    return eqn.params.get('axis_size', 1) * jaxpr_replicas(eqn.bound_subjaxpr)
   elif eqn.primitive in initial_style_translations:
     nums = (jaxpr_replicas(param if type(param) is core.Jaxpr else param.jaxpr)
             for param in eqn.params.values()
@@ -411,9 +400,8 @@ def jaxpr_has_pmap(jaxpr):
   return any(eqn_has_pmap(eqn) for eqn in jaxpr.eqns)
 
 def eqn_has_pmap(eqn):
-  if eqn.bound_subjaxprs:
-    (subjaxpr, _, _), = eqn.bound_subjaxprs
-    return jaxpr_has_pmap(subjaxpr)
+  if eqn.bound_subjaxpr:
+    return jaxpr_has_pmap(eqn.bound_subjaxpr)
   elif eqn.primitive in initial_style_translations:
     return any(jaxpr_has_pmap(param if type(param) is core.Jaxpr else param.jaxpr)
                for param in eqn.params.values()
@@ -426,9 +414,8 @@ def jaxpr_collectives(jaxpr):
   return it.chain.from_iterable(eqn_collectives(eqn) for eqn in jaxpr.eqns)
 
 def eqn_collectives(eqn):
-  if eqn.bound_subjaxprs:
-    (subjaxpr, _, _), = eqn.bound_subjaxprs
-    for c in jaxpr_collectives(subjaxpr):
+  if eqn.bound_subjaxpr:
+    for c in jaxpr_collectives(eqn.bound_subjaxpr):
       yield c
   elif eqn.primitive in initial_style_translations:
     for param in eqn.params.values():
@@ -498,12 +485,14 @@ def _xla_callable(fun, device, backend, name, *arg_specs):
   xla_consts = _map(c.Constant, consts)
   xla_args = _xla_callable_args(c, abstract_args, tuple_args)
   out_nodes = jaxpr_subcomp(
-      c, jaxpr, backend, AxisEnv(nreps, [], []), xla_consts, (),
+      c, jaxpr, backend, AxisEnv(nreps, [], []), xla_consts,
       extend_name_stack(wrap_name(name, 'jit')), *xla_args)
   built = c.Build(c.Tuple(*out_nodes))
 
   options = xb.get_compile_options(
-      num_replicas=nreps, device_assignment=(device.id,) if device else None)
+      num_replicas=nreps,
+      num_partitions=1,
+      device_assignment=(device.id,) if device else None)
   compiled = built.Compile(compile_options=options, backend=xb.get_backend(backend))
 
   if nreps == 1:
@@ -587,7 +576,9 @@ def _get_device(device, backend):
   c = xb.make_computation_builder("get_device")
   built = c.Build(c.Tuple())
   options = xb.get_compile_options(
-      num_replicas=1, device_assignment=(device.id,) if device else None)
+      num_replicas=1,
+      num_partitions=1,
+      device_assignment=(device.id,) if device else None)
   compiled = built.Compile(compile_options=options, backend=xb.get_backend(backend))
   out, = compiled.local_devices()
   return out
@@ -598,17 +589,15 @@ xla_call = partial(core.call_bind, xla_call_p)
 xla_call_p.def_custom_bind(xla_call)
 xla_call_p.def_impl(_xla_call_impl)
 
-def _xla_call_translation_rule(c, jaxpr, axis_env, const_nodes, freevar_nodes,
+def _xla_call_translation_rule(c, jaxpr, axis_env,
                                in_nodes, name_stack, backend, name, device=None):
   del device  # Ignored.
   subc = xb.make_computation_builder("jit_{}".format(name))
-  consts = [subc.ParameterWithShape(c.GetShape(n)) for n in const_nodes]
-  freevars = [subc.ParameterWithShape(c.GetShape(n)) for n in freevar_nodes]
   args = [subc.ParameterWithShape(c.GetShape(n)) for n in in_nodes]
-  out_nodes = jaxpr_subcomp(subc, jaxpr, backend, axis_env, consts, freevars,
+  out_nodes = jaxpr_subcomp(subc, jaxpr, backend, axis_env, (),
                             extend_name_stack(name_stack, wrap_name(name, 'jit')), *args)
   subc = subc.Build(subc.Tuple(*out_nodes))
-  return c.Call(subc, list(const_nodes) + list(freevar_nodes) + list(in_nodes))
+  return c.Call(subc, list(in_nodes))
 ad.primitive_transposes[xla_call_p] = partial(ad.call_transpose, xla_call_p)
 
 
@@ -656,7 +645,7 @@ def lower_fun(fun, instantiate=False, initial_style=False):
     jaxpr, _, consts = pe.trace_to_jaxpr(
         lu.wrap_init(fun, params), pvals, instantiate=True)
     consts = _map(c.Constant, consts)
-    outs = jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, (),
+    outs = jaxpr_subcomp(c, jaxpr, backend, axis_env, consts,
                          name_stack, *xla_args)
     return c.Tuple(*outs)
   return f
@@ -719,7 +708,7 @@ class DeviceArray(DeviceValue):
   def __init__(self, aval, device, lazy_expr, device_buffer):
     self.aval = aval
     self.device_buffer = device_buffer
-    self._device = device and (type(device), device.id)
+    self._device = device
     self._lazy_expr = lazy_expr
 
     self._npy_value = None
@@ -832,6 +821,10 @@ class DeviceArray(DeviceValue):
   def __array__(self, dtype=None, context=None):
     return onp.asarray(self._value, dtype=dtype)
 
+  @property
+  def __cuda_array_interface__(self):
+    return _force(self).device_buffer.__cuda_array_interface__
+
   __str__ = partialmethod(_forward_to_value, str)
   __bool__ = __nonzero__ = partialmethod(_forward_to_value, bool)
   def __float__(self): return self._value.__float__()
@@ -906,8 +899,7 @@ def _force(x):
       device = x._device
       sticky = True
     else:
-      d = x.device_buffer.device()
-      device = d and (type(d), d.id)
+      device = x.device_buffer.device()
       sticky = False
     force_fun = _lazy_force_computation(sticky, x.aval, device, x._lazy_expr)
     return force_fun(x)
@@ -927,7 +919,10 @@ def _lazy_force_computation(sticky, aval, device, lexpr):
   built_c = c.Build(xla_out)
 
   device = _device_from_arg_devices([device])
-  options = xb.get_compile_options(device_assignment=device and (device.id,))
+  options = xb.get_compile_options(
+      num_replicas=1,
+      num_partitions=1,
+      device_assignment=device and (device.id,))
   backend = xb.get_device_backend(device)
   compiled = built_c.Compile(compile_options=options, backend=backend)
 
@@ -960,20 +955,18 @@ masking.shape_rules[device_put_p] = lambda x, **_: x.shape
 masking.defvectorized(device_put_p)
 
 
-def _remat_translation_rule(c, jaxpr, axis_env, const_nodes, freevar_nodes, in_nodes,
+def _remat_translation_rule(c, jaxpr, axis_env, in_nodes,
                             name_stack, backend, name, device=None, concrete=None):
   # This looks a lot like _xla_call_translation_rule, except for a widget we use
   # to foil CSE.
   del device, concrete  # Unused.
   subc = xb.make_computation_builder("remat_call_subcomputation")
-  consts = [subc.ParameterWithShape(c.GetShape(n)) for n in const_nodes]
-  freevars = [subc.ParameterWithShape(c.GetShape(n)) for n in freevar_nodes]
   args = [subc.ParameterWithShape(c.GetShape(n)) for n in in_nodes]
   args = [_foil_cse(subc, x) for x in args]
-  out_nodes = jaxpr_subcomp(subc, jaxpr, backend, axis_env, consts, freevars,
+  out_nodes = jaxpr_subcomp(subc, jaxpr, backend, axis_env, (),
                             extend_name_stack(name_stack, wrap_name(name, 'remat')), *args)
   subc = subc.Build(subc.Tuple(*out_nodes))
-  return c.Call(subc, list(const_nodes) + list(freevar_nodes) + list(in_nodes))
+  return c.Call(subc, list(in_nodes))
 call_translations[pe.remat_call_p] = _remat_translation_rule
 
 def _foil_cse(c, x):

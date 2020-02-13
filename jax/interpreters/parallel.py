@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from functools import partial
 import warnings
@@ -69,7 +66,7 @@ not_sharded = None
 
 class PapplyTracer(Tracer):
   def __init__(self, trace, name, axis_size, val, axis):
-    self.trace = trace
+    self._trace = trace
     self.name = name
     self.axis_size = axis_size
     self.val = val

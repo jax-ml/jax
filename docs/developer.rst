@@ -124,6 +124,9 @@ file directly to see more detailed information about the cases being run:
 
  python tests/lax_numpy_test.py --num_generated_cases=5
 
+You can skip a few tests known as slow, by passing environment variable
+JAX_SKIP_SLOW_TESTS=1.
+
 The Colab notebooks are tested for errors as part of the documentation build.
 
 Update documentation

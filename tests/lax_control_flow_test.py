@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import collections
 from functools import partial
@@ -651,8 +648,177 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     ans = api.jvp(fun, (x,), (x,))
     expected = api.jvp(fun_ref, (x,), (x,))
     self.assertAllClose(ans, expected, check_dtypes=False)
-
     jtu.check_grads(fun, (x,), order=2, modes=["fwd"])
+
+    x = 2.72
+    ans = api.jvp(fun, (x,), (x,))
+    expected = api.jvp(fun_ref, (x,), (x,))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+    jtu.check_grads(fun, (x,), order=2, modes=["fwd"])
+
+  def testCondJVP2(self):
+    def fun_ref(x):
+      if x < 3:
+        return 2.
+      else:
+        return 2. * x
+
+    def fun(x):
+      return lax.cond(x < 3, (), lambda _: 2., x, lambda x: 2. * x)
+
+    x = 3.14
+    ans = api.jvp(fun, (x,), (x,))
+    expected = api.jvp(fun_ref, (x,), (x,))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+    jtu.check_grads(fun, (x,), order=2, modes=["fwd"])
+
+    x = 2.72
+    ans = api.jvp(fun, (x,), (x,))
+    expected = api.jvp(fun_ref, (x,), (x,))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+    jtu.check_grads(fun, (x,), order=2, modes=["fwd"])
+
+  def testCondGrad(self):
+    def f_ref(x):
+      return 3. * x if x < 2 else np.sin(x)
+
+    def f(x):
+      return lax.cond(x < 2, x, lambda x: 3. * x, x, lambda x: np.sin(x))
+
+    x = 2.14
+    ans = api.grad(f)(x)
+    expected = api.grad(f_ref)(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+    jtu.check_grads(f, (x,), order=2, modes=["fwd", "rev"])
+
+    x = 1.72
+    ans = api.grad(f)(x)
+    expected = api.grad(f_ref)(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+    jtu.check_grads(f, (x,), order=2, modes=["fwd", "rev"])
+
+  def testCondGrad2(self):
+    def f_ref(x):
+      z = np.array([1., 2.]) * x if x[0] < 2 else np.sin(x)
+      return z.sum()
+
+    def _f(x):
+      return lax.cond(
+          x[0] < 2,
+          x, lambda x: np.array([1., 2.]) * x,
+          x, lambda x: np.sin(x))
+
+    f = lambda x: api.jit(_f)(x).sum()
+
+    x = 2.14 * np.ones(2)
+    ans = api.grad(f)(x)
+    expected = api.grad(f_ref)(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+    jtu.check_grads(f, (x,), order=2, modes=["fwd", "rev"])
+
+    x = 1.72 * np.ones(2)
+    ans = api.grad(f)(x)
+    expected = api.grad(f_ref)(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+    jtu.check_grads(f, (x,), order=2, modes=["fwd", "rev"])
+
+  def testCondGrad3(self):
+    def fun_ref(x):
+      if x < 3:
+        return 2.
+      else:
+        return 2. * x
+
+    def fun(x):
+      return lax.cond(x < 3, (), lambda _: 2., x, lambda x: 2. * x)
+
+    x = 3.14
+    ans = api.grad(fun)(x)
+    expected = api.grad(fun_ref)(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+    jtu.check_grads(fun, (x,), order=2, modes=["fwd", "rev"])
+
+    x = 2.72
+    ans = api.grad(fun)(x)
+    expected = api.grad(fun_ref)(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+    jtu.check_grads(fun, (x,), order=2, modes=["fwd", "rev"])
+
+  def testCondGrad4(self):
+    def fun_ref(x, y):
+      if x < 3:
+        return 2. * np.sin(y)
+      else:
+        return 2. * np.cos(x)
+
+    def fun(x, y):
+      return lax.cond(
+          x < 3,
+          (), lambda _: 2. * np.sin(y),
+          x,  lambda x: 2. * x)
+
+    y = 5.8
+    x = 3.14
+    ans = api.grad(fun, 1)(x, y)
+    expected = api.grad(fun_ref, 1)(x, y)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+    jtu.check_grads(fun, (x, y), order=2, modes=["fwd", "rev"])
+
+    x = 2.72
+    ans = api.grad(fun, 1)(x, y)
+    expected = api.grad(fun_ref, 1)(x, y)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+    jtu.check_grads(fun, (x, y), order=2, modes=["fwd", "rev"])
+
+  def testCondLinearize(self):
+    def f(x):
+      return lax.cond(x < 2, x, lambda x: 3. * x, x, lambda x: np.sin(x))
+    y, f_lin = api.linearize(f, 1.)
+    self.assertAllClose(y, 3., check_dtypes=False)
+    self.assertAllClose(f_lin(2.), 6., check_dtypes=False)
+    y, f_lin = api.linearize(f, 4.)
+    self.assertAllClose(y, np.sin(4.), check_dtypes=False)
+    self.assertAllClose(f_lin(2.), np.cos(4.) * 2., check_dtypes=False)
+
+  def testCondLinearize2(self):
+    def f_ref(x):
+      z = np.array([1., 2.]) * x if x[0] < 2 else np.cos(np.sin(x))
+      return z.sum()
+
+    def f(x):
+      return lax.cond(
+          x[0] < 2,
+          x, lambda x: np.array([1., 2.]) * x,
+          x, lambda x: np.cos(np.sin(x))).sum()
+
+    x = 2.14 * np.ones(2)
+    y, f_lin = api.linearize(f, x)
+    y_ref, f_lin_ref = api.linearize(f_ref, x)
+    self.assertAllClose(y, y_ref, check_dtypes=False)
+    self.assertAllClose(f_lin(x), f_lin_ref(x), check_dtypes=False)
+
+    x = -2.14 * np.ones(2)
+    y, f_lin = api.linearize(f, x)
+    y_ref, f_lin_ref = api.linearize(f_ref, x)
+    self.assertAllClose(y, y_ref, check_dtypes=False)
+    self.assertAllClose(f_lin(x), f_lin_ref(x), check_dtypes=False)
+
+    f = api.jit(f)
+    x = 2.14 * np.ones(2)
+    y, f_lin = api.linearize(f, x)
+    y_ref, f_lin_ref = api.linearize(f_ref, x)
+    self.assertAllClose(y, y_ref, check_dtypes=False)
+    self.assertAllClose(f_lin(x), f_lin_ref(x), check_dtypes=False)
+
+  def testCondJit(self):
+    def f(x):
+      return lax.cond(x < 2, x, lambda x: 3. * x, x, lambda x: np.sin(x))
+    y = api.jit(f)(1.)
+    expected = f(1.)
+    self.assertAllClose(y, expected, check_dtypes=False)
+    y = api.jit(f)(4.)
+    expected = f(4.)
+    self.assertAllClose(y, expected, check_dtypes=False)
 
   def testIssue1263(self):
     def f(rng, x):
@@ -791,6 +957,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
        "jit_scan": jit_scan, "jit_f": jit_f}
       for jit_scan in [False, True]
       for jit_f in [False, True])
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testScanGrad(self, jit_scan, jit_f):
     rng = onp.random.RandomState(0)
 
@@ -821,6 +988,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     jtu.check_grads(partial(scan, f), (c, as_), order=2, modes=["rev"],
                     atol=1e-3, rtol=2e-3)
 
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testScanRnn(self):
     r = npr.RandomState(0)
 
@@ -1278,6 +1446,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(results, 5.0 ** 1.5, check_dtypes=False,
                         rtol={onp.float64:1e-7})
 
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_custom_root_vector_with_solve_closure(self):
 
     def vector_solve(f, y):
@@ -1347,6 +1516,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       {"testcase_name": "nonsymmetric", "symmetric": False},
       {"testcase_name": "symmetric", "symmetric": True},
   )
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_custom_linear_solve(self, symmetric):
 
     def explicit_jacobian_solve(matvec, b):
@@ -1371,12 +1541,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     actual = api.jit(linear_solve)(a, b)
     self.assertAllClose(expected, actual, check_dtypes=True)
 
-    # TODO(shoyer): reenable when batching works
-    # c = rng.randn(3, 2)
-    # expected = np.linalg.solve(a, c)
-    # actual = api.vmap(linear_solve, (None, 1), 1)(a, c)
-    # self.assertAllClose(expected, actual, check_dtypes=True)
+    c = rng.randn(3, 2)
+    expected = np.linalg.solve(a, c)
+    actual = api.vmap(linear_solve, (None, 1), 1)(a, c)
+    self.assertAllClose(expected, actual, check_dtypes=True)
 
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_custom_linear_solve_zeros(self):
     def explicit_jacobian_solve(matvec, b):
       return lax.stop_gradient(np.linalg.solve(api.jacobian(matvec)(b), b))
@@ -1396,6 +1566,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     jtu.check_grads(lambda x: linear_solve(a, x), (b,), order=2,
                     rtol={onp.float32: 5e-3})
 
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_custom_linear_solve_iterative(self):
 
     def richardson_iteration(matvec, b, omega=0.1, tolerance=1e-6):
@@ -1424,10 +1595,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(expected, actual, atol=1e-5, check_dtypes=True)
     jtu.check_grads(build_and_solve, (a, b), atol=1e-5, order=2, rtol=2e-3)
 
-    # TODO(shoyer): reenable when batching works
-    # a2 = rng.randn(1, 2, 2)
-    # b2 = rng.randn(1, 2, 2)
-    # jtu.check_grads(api.vmap(build_and_solve), (a2, b2), atol=1e-5, order=2)
+    # vmap across an empty dimension
+    jtu.check_grads(
+        api.vmap(build_and_solve), (a[None, :, :], b[None, :]),
+        atol=1e-5,
+        order=2,
+        rtol=2e-3)
 
   def test_custom_linear_solve_cholesky(self):
 
@@ -1455,6 +1628,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         lambda x, y: positive_definite_solve(high_precision_dot(x, x.T), y),
         (a, b), order=2, rtol=1e-2)
 
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_custom_linear_solve_lu(self):
 
     # TODO(b/143528110): re-enable when underlying XLA TPU issue is fixed
@@ -1485,6 +1659,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     jtu.check_grads(api.jit(linear_solve), (a, b), order=2,
                     rtol={onp.float32: 2e-3})
 
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_custom_linear_solve_without_transpose_solve(self):
 
     def explicit_jacobian_solve(matvec, b):
@@ -1501,9 +1676,81 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     jtu.check_grads(loss, (a, b), order=2, modes=['fwd'],
                     atol={onp.float32: 2e-3, onp.float64: 1e-11})
+    jtu.check_grads(api.vmap(loss), (a[None,:,:], b[None,:]), order=2,
+                    modes=['fwd'], atol={onp.float32: 2e-3, onp.float64: 1e-11})
 
     with self.assertRaisesRegex(TypeError, "transpose_solve required"):
       api.grad(loss)(a, b)
+
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
+  def test_custom_linear_solve_pytree(self):
+    """Test custom linear solve with inputs and outputs that are pytrees."""
+
+    def unrolled_matvec(mat, x):
+      """Apply a Python list of lists of scalars to a list of scalars."""
+      result = []
+      for i in range(len(mat)):
+        v = 0
+        for j in range(len(x)):
+          if mat[i][j] is not None:
+            v += mat[i][j] * x[j]
+        result.append(v)
+      return result
+
+    def unrolled_substitution_solve(matvec, b, lower_tri):
+      """Solve a triangular unrolled system with fwd/back substitution."""
+      zero = np.zeros(())
+      one = np.ones(())
+      x = [zero for _ in b]
+      ordering = range(len(b)) if lower_tri else range(len(b) - 1, -1, -1)
+      for i in ordering:
+        residual = b[i] - matvec(x)[i]
+        diagonal = matvec([one if i == j else zero for j in range(len(b))])[i]
+        x[i] = residual / diagonal
+      return x
+
+    def custom_unrolled_lower_tri_solve(mat, b):
+      return lax.custom_linear_solve(
+          partial(unrolled_matvec, mat), b,
+          partial(unrolled_substitution_solve, lower_tri=True),
+          partial(unrolled_substitution_solve, lower_tri=False))
+
+    mat = [[1.0, None, None, None, None, None, None],
+           [1.0, 1.0, None, None, None, None, None],
+           [None, 1.0, 1.0, None, None, None, None],
+           [None, None, 1.0, 1.0, None, None, None],
+           [None, None, None, 1.0, 1.0, None, None],
+           [None, None, None, None, None, 2.0, None],
+           [None, None, None, None, None, 4.0, 3.0]]
+
+    rng = onp.random.RandomState(0)
+    b = list(rng.randn(7))
+
+    # Non-batched
+    jtu.check_grads(custom_unrolled_lower_tri_solve, (mat, b), order=2)
+
+    # Batch one element of b (which, because of unrolling, should only affect
+    # the first block of outputs)
+    b_bat = list(b)
+    b_bat[3] = rng.randn(3)
+    jtu.check_grads(
+        api.vmap(
+            custom_unrolled_lower_tri_solve,
+            in_axes=(None, [None, None, None, 0, None, None, None]),
+            out_axes=[0, 0, 0, 0, 0, None, None]), (mat, b_bat),
+        order=2)
+
+    # Batch one element of mat (again only affecting first block)
+    mat[2][1] = rng.randn(3)
+    mat_axis_tree = [
+        [0 if i == 2 and j == 1 else None for j in range(7)] for i in range(7)
+    ]
+    jtu.check_grads(
+        api.vmap(
+            custom_unrolled_lower_tri_solve,
+            in_axes=(mat_axis_tree, None),
+            out_axes=[0, 0, 0, 0, 0, None, None]), (mat, b),
+        order=2)
 
   def test_custom_linear_solve_errors(self):
 
