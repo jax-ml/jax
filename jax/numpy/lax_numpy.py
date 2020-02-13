@@ -187,6 +187,18 @@ load = onp.load
 
 ### utility functions
 
+# add helpers for multi dot
+
+def _assertRank2(*arrays):
+  for a in arrays:
+    if a.ndim != 2:
+      raise TypeError("{}-dimensional array given. Array must be at least "
+                      "two-dimensional".format(a.ndim))
+
+
+#########
+
+
 def _promote_shapes(fun_name, *args):
   """Prepend implicit leading singleton dimensions for Numpy broadcasting."""
   if len(args) < 2:
