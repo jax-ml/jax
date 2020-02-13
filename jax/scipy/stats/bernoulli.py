@@ -33,4 +33,4 @@ def logpmf(k, p, loc=0):
 
 @np._wraps(osp_stats.bernoulli.pmf, update_doc=False)
 def pmf(k, p, loc=0):
-  return np.exp(pmf(k, p, loc))
+  return np.exp(logpmf(k, p, loc))
