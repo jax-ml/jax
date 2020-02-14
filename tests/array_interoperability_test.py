@@ -37,12 +37,12 @@ except ImportError:
   cupy = None
 
 
-standard_dtypes = [jnp.bool_, jnp.int8, jnp.int16, jnp.int32, jnp.int64,
+dlpack_dtypes = [jnp.int8, jnp.int16, jnp.int32, jnp.int64,
                    jnp.uint8, jnp.uint16, jnp.uint32, jnp.uint64,
                    jnp.float16, jnp.float32, jnp.float64]
-all_dtypes = standard_dtypes + [jnp.bfloat16]
+all_dtypes = dlpack_dtypes + [jnp.bool_, jnp.bfloat16]
 torch_dtypes = [jnp.int8, jnp.int16, jnp.int32, jnp.int64,
-               jnp.uint8, jnp.float16, jnp.float32, jnp.float64]
+                jnp.uint8, jnp.float16, jnp.float32, jnp.float64]
 
 nonempty_nonscalar_array_shapes = [(4,), (3, 4), (2, 3, 4)]
 empty_array_shapes = []
@@ -65,7 +65,7 @@ class DLPackTest(jtu.JaxTestCase):
         jtu.format_shape_dtype_string(shape, dtype)),
      "shape": shape, "dtype": dtype}
      for shape in all_shapes
-     for dtype in all_dtypes))
+     for dtype in dlpack_dtypes))
   def testJaxRoundTrip(self, shape, dtype):
     rng = jtu.rand_default()
     np = rng(shape, dtype)
@@ -123,7 +123,7 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
         jtu.format_shape_dtype_string(shape, dtype)),
      "shape": shape, "dtype": dtype}
      for shape in all_shapes
-     for dtype in standard_dtypes))
+     for dtype in dlpack_dtypes))
   @unittest.skipIf(not cupy or jax.lib.version <= (0, 1, 38),
                    "Test requires CuPy and jaxlib >= 0.1.39")
   def testJaxToCuPy(self, shape, dtype):
