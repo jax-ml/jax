@@ -178,7 +178,10 @@ def broadcast_batcher(prim, args, dims, **params):
 
   Args:
     args: the possibly-batched arguments
-    dims: for each argument, the dimension that is being batched (or None)
+    dims: list or tuple of the same length as `args`, where each
+      entry indicates the batching state of the corresponding entry to `args`:
+      either an int indicating the batch dimension, or else `not_mapped`
+      indicating no batching.
   """
   shapes = {(x.shape, d) for x, d in zip(args, dims) if onp.ndim(x)}
   if len(shapes) == 1:
