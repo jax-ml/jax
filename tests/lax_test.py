@@ -1956,7 +1956,6 @@ class LaxAutodiffTest(jtu.JaxTestCase):
           (("NHWC", "OIHW", "NCHW"), ([0, 2, 3, 1], [0, 1, 2, 3]))]
       for rng_factory in [jtu.rand_default]
   ))
-  @jtu.skip_on_devices("tpu")  # TODO(phawkins): precision problems on TPU.
   def testConvGeneralDilatedGrad(self, lhs_shape, rhs_shape, dtype, strides,
                                  padding, lhs_dil, rhs_dil, dimension_numbers,
                                  perms, feature_group_count, rng_factory):

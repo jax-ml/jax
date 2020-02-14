@@ -891,6 +891,26 @@ class APITest(jtu.JaxTestCase):
     g = api.grad(f)(pt)
     self.assertIsInstance(pt, ZeroPoint)
 
+  @parameterized.parameters(1, 2, 3)
+  def test_shape_dtype_struct(self, i):
+    s = api.ShapeDtypeStruct(shape=(i, 2, 3), dtype=np.float32)
+    self.assertEqual(s.shape, (i, 2, 3))
+    self.assertEqual(s.dtype, np.float32)
+    self.assertEqual(s.ndim, 3)
+    self.assertEqual(s.size, i * 2 * 3)
+    self.assertLen(s, i)
+    for f in (str, repr):
+      self.assertEqual(
+          f(s), "ShapeDtypeStruct(shape=({}, 2, 3), dtype=float32)".format(i))
+
+  def test_shape_dtype_struct_scalar(self):
+    s = api.ShapeDtypeStruct(shape=(), dtype=np.float32)
+    self.assertEmpty(s.shape)
+    self.assertEqual(s.size, 1)
+    self.assertEqual(s.ndim, 0)
+    with self.assertRaisesRegex(TypeError, "len[(][)] of unsized object"):
+      _ = len(s)
+
   def test_eval_shape(self):
     def fun(x, y):
       return np.tanh(np.dot(x, y) + 3.)
@@ -1003,8 +1023,8 @@ class APITest(jtu.JaxTestCase):
     c = onp.ones((2, 3, 3))
 
     jaxpr = api.make_jaxpr(lambda b, c: f(a, b, c))(b, c)
-    subjaxpr = next(eqn.bound_subjaxpr for eqn in jaxpr.jaxpr.eqns
-                    if eqn.bound_subjaxpr)
+    subjaxpr = next(eqn.params["call_jaxpr"] for eqn in jaxpr.jaxpr.eqns
+                    if "call_jaxpr" in eqn.params)
     self.assertEqual(len(subjaxpr.eqns), 1)
 
   def test_grad_of_int_errors(self):
@@ -1640,6 +1660,45 @@ class APITest(jtu.JaxTestCase):
     u0 = np.ones_like(target)
     loss(u0, target, 10)  # doesn't crash
 
+  def test_remat_jit3(self):
+    # https://github.com/google/jax/issues/2180
+    def f(w, x):
+      a = np.dot(x, w)
+      b = np.einsum("btd,bTd->btT", a, a)
+      c = np.einsum("btT,btd->btd", b, a)
+      return np.sum(c)
+
+    w = np.ones([1, 1])
+    x = np.ones([1, 1, 1])
+    f = api.remat(f)
+    api.grad(f)(w, x)  # doesn't crash
+
+    @api.jit
+    def mul(a, b):
+      return a * b
+
+    def f(w, x):
+      a = mul(w, x)
+      b = mul(a, a)
+      return b
+
+    w = 1.
+    x = 1.
+    f = api.remat(f)
+    api.grad(f)(w, x)  # doesn't crash
+
+  def test_remat_scan2(self):
+    # https://github.com/google/jax/issues/1963
+
+    def scan_bug(x0):
+      f = lambda x, _: (x + 1, None)
+      def scanned_f(x, _):
+        return lax.scan(f, x, xs=None, length=1)[0], None
+      x, _ = jax.remat(scanned_f)(x0, None)
+      return x
+
+    jax.grad(scan_bug)(1.0)  # doesn't crash
+
   def test_trivial_computations(self):
     x = np.array([1, 2, 3])
     y = api.jit(lambda x: x)(x)
@@ -1683,7 +1742,7 @@ class APITest(jtu.JaxTestCase):
 
     self.assertLen(outer_jaxpr.eqns, 1)
     self.assertEqual(outer_jaxpr.eqns[0].primitive.name, 'xla_call')
-    subjaxpr_1 = outer_jaxpr.eqns[0].bound_subjaxpr
+    subjaxpr_1 = outer_jaxpr.eqns[0].params["call_jaxpr"]
     self.assertEqual(str(subjaxpr_1), str(inner_jaxpr))
     self.assertLen(inner_jaxpr.eqns, 2)
     self.assertEqual(inner_jaxpr.eqns[0].primitive.name, 'mul')

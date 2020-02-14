@@ -454,11 +454,12 @@ def _cond_pred_bcast_select(pred, x, y):
 
 def _cond_batching_rule(args, dims, true_jaxpr, false_jaxpr, linear):
   # TODO: maybe avoid moving arg axes to front if we're promoting to select?
+  size, = {x.shape[d] for x, d in zip(args, dims) if d is not batching.not_mapped}
   args = [batching.moveaxis(x, d, 0) if d is not batching.not_mapped and d != 0
           else x for x, d in zip(args, dims)]
-  (pred,), true_ops, false_ops = split_list(args, [1, len(true_jaxpr.in_avals)])
-  size, = {x.shape[d] for x, d in zip(args, dims) if d is not batching.not_mapped}
   orig_bat = [d is not batching.not_mapped for d in dims]
+  del dims
+  (pred,), true_ops, false_ops = split_list(args, [1, len(true_jaxpr.in_avals)])
   (pred_bat,), t_bat, f_bat = split_list(orig_bat, [1, len(true_jaxpr.in_avals)])
 
   _, true_out_bat = batching.batch_jaxpr(true_jaxpr, size, t_bat, False)
@@ -1005,11 +1006,11 @@ def _scan_transpose(cts, *args, forward, length, num_consts, num_carry, jaxpr, l
   if xs_lin != [True] * (len(xs_lin) - num_eres) + [False] * num_eres:
     raise NotImplementedError
   if not all(init_lin):
-    raise NotImplementedError
+    pass  # TODO(mattjj): error check https://github.com/google/jax/issues/1963
 
-  consts, init, xs = split_list(args, [num_consts, num_carry])
-  ires, consts = split_list(consts, [num_ires])
-  xs, eres = split_list(xs, [sum(xs_lin)])
+  consts, _, xs = split_list(args, [num_consts, num_carry])
+  ires, _ = split_list(consts, [num_ires])
+  _, eres = split_list(xs, [sum(xs_lin)])
   assert not any(r is ad.undefined_primal for r in ires)
   assert not any(r is ad.undefined_primal for r in eres)
 

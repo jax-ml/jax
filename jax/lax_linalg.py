@@ -18,6 +18,7 @@ from functools import partial
 import numpy as onp
 
 from jax.numpy import lax_numpy as np
+from jax.numpy.vectorize import vectorize
 from jax import ad_util
 from jax import api
 from jax import api_util
@@ -36,6 +37,7 @@ from jax.lax import (standard_primitive, standard_unop, naryop_dtype_rule,
 from jax.lib import xla_client
 from jax.lib import lapack
 from jax.lib import cusolver
+
 
 # traceables
 
@@ -660,6 +662,62 @@ def lu_pivots_to_permutation(swaps, m):
   result, _ = lax.fori_loop(onp.array(0, onp.int32), onp.array(k, onp.int32),
                             _lu_pivots_body_fn, (permutation, swaps))
   return result
+
+
+@partial(vectorize, excluded={3}, signature='(n,n),(n),(n,k)->(n,k)')
+def _lu_solve_core(lu, pivots, b, trans):
+  m = lu.shape[0]
+  permutation = lu_pivots_to_permutation(pivots, m)
+  x = np.reshape(b, (m, -1))
+  if trans == 0:
+    x = x[permutation, :]
+    x = triangular_solve(lu, x, left_side=True, lower=True, unit_diagonal=True)
+    x = triangular_solve(lu, x, left_side=True, lower=False)
+  elif trans == 1 or trans == 2:
+    conj = trans == 2
+    x = triangular_solve(lu, x, left_side=True, lower=False, transpose_a=True,
+                         conjugate_a=conj)
+    x = triangular_solve(lu, x, left_side=True, lower=True, unit_diagonal=True,
+                         transpose_a=True, conjugate_a=conj)
+    x = x[np.argsort(permutation), :]
+  else:
+    raise ValueError("'trans' value must be 0, 1, or 2, got {}".format(trans))
+  return lax.reshape(x, b.shape)
+
+
+@partial(api.jit, static_argnums=(3,))
+def _lu_solve(lu, pivots, b, trans):
+  if len(lu.shape) < 2 or lu.shape[-1] != lu.shape[-2]:
+    raise ValueError("last two dimensions of LU decomposition must be equal, "
+                     "got shape {}".format(lu.shape))
+  if len(b.shape) < 1:
+    raise ValueError("b matrix must have rank >= 1, got shape {}"
+                     .format(b.shape))
+  # Broadcasting follows NumPy's convention for linalg.solve: the RHS is
+  # treated as a (batched) vector if the number of dimensions differ by 1.
+  # Otherwise, broadcasting rules apply.
+  rhs_vector = lu.ndim == b.ndim + 1
+  if rhs_vector:
+    if b.shape[-1] != lu.shape[-1]:
+      raise ValueError("When LU decomposition matrix and b have the same "
+                       "number of dimensions, last axis of LU decomposition "
+                       "matrix (shape {}) and b array (shape {}) must match"
+                       .format(lu.shape, b.shape))
+    b = b[..., np.newaxis]
+  else:
+    if b.shape[-2] != lu.shape[-1]:
+      raise ValueError("When LU decomposition matrix and b different "
+                       "numbers of dimensions, last axis of LU decomposition "
+                       "matrix (shape {}) and second to last axis of b array "
+                       "(shape {}) must match"
+                       .format(lu.shape, b.shape))
+  x = _lu_solve_core(lu, pivots, b, trans)
+  return x[..., 0] if rhs_vector else x
+
+
+def lu_solve(lu, pivots, b, trans=0):
+  """LU solve with broadcasting."""
+  return _lu_solve(lu, pivots, b, trans)
 
 
 # QR decomposition

@@ -125,11 +125,11 @@ def get_bazel_path(bazel_path_flag):
   if bazel_path_flag:
     return bazel_path_flag
 
-  bazel = which("bazel")
+  bazel = download_and_verify_bazel()
   if bazel:
     return bazel
 
-  bazel = download_and_verify_bazel()
+  bazel = which("bazel")
   if bazel:
     return bazel
 
@@ -151,13 +151,13 @@ def check_bazel_version(bazel_path, min_version, max_version):
   if min_ints > actual_ints:
     print("Outdated bazel revision (>= {} required, found {})".format(
         min_version, version))
-    sys.exit(0)
+    sys.exit(-1)
   if max_version is not None:
     max_ints = [int(x) for x in max_version.split(".")]
     if actual_ints >= max_ints:
       print("Please downgrade your bazel revision to build JAX (>= {} and < {}"
             " required, found {})".format(min_version, max_version, version))
-      sys.exit(0)
+      sys.exit(-1)
 
 
 BAZELRC_TEMPLATE = """

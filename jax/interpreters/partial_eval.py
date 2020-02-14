@@ -98,22 +98,22 @@ class JaxprTrace(Trace):
       return self.default_process_primitive(primitive, tracers, params)
 
   def default_process_primitive(self, primitive, tracers, params):
-      pvs, consts = unzip2(t.pval for t in tracers)
-      if all(pv is None for pv in pvs):
-        return primitive.bind(*consts, **params)
-      tracers = map(self.instantiate_const, tracers)
-      avals = [t.aval for t in tracers]
-      out_aval = primitive.abstract_eval(*avals, **params)
-      if primitive.multiple_results:
-        out_tracers = [JaxprTracer(self, PartialVal((aval, unit)), None)
-                       for aval in out_aval]
-        eqn = new_eqn_recipe(tracers, out_tracers, primitive, params)
-        for t in out_tracers: t.recipe = eqn
-        return out_tracers
-      else:
-        out_tracer = JaxprTracer(self, PartialVal((out_aval, unit)), None)
-        out_tracer.recipe = new_eqn_recipe(tracers, [out_tracer], primitive, params)
-        return out_tracer
+    pvs, consts = unzip2(t.pval for t in tracers)
+    if all(pv is None for pv in pvs):
+      return primitive.bind(*consts, **params)
+    tracers = map(self.instantiate_const, tracers)
+    avals = [t.aval for t in tracers]
+    out_aval = primitive.abstract_eval(*avals, **params)
+    if primitive.multiple_results:
+      out_tracers = [JaxprTracer(self, PartialVal((aval, unit)), None)
+                     for aval in out_aval]
+      eqn = new_eqn_recipe(tracers, out_tracers, primitive, params)
+      for t in out_tracers: t.recipe = eqn
+      return out_tracers
+    else:
+      out_tracer = JaxprTracer(self, PartialVal((out_aval, unit)), None)
+      out_tracer.recipe = new_eqn_recipe(tracers, [out_tracer], primitive, params)
+      return out_tracer
 
   def process_call(self, call_primitive, f, tracers, params):
     name = params.get('name', f.__name__)
@@ -136,10 +136,10 @@ class JaxprTrace(Trace):
     lifted_jaxpr = convert_constvars_jaxpr(jaxpr)
     out_tracers = [JaxprTracer(self, PartialVal((out_pv, out_pv_const)), None)
                    for out_pv, out_pv_const in zip(out_pvs, out_pv_consts)]
+    new_params = dict(params, call_jaxpr=lifted_jaxpr)
     # The `jaxpr` already contains the env_vars at start of invars
     eqn = new_eqn_recipe(tuple(it.chain(const_tracers, env_tracers, tracers)),
-                         out_tracers, call_primitive, params,
-                         subjaxpr=lifted_jaxpr)
+                         out_tracers, call_primitive, new_params)
     for t in out_tracers:
       t.recipe = eqn
     return out_tracers
@@ -162,10 +162,10 @@ class JaxprTrace(Trace):
     new_params = dict(params,
                       mapped_invars=tuple([True] * len(const_tracers) +
                                           [False] * len(env_tracers) +
-                                          [True] * len(tracers)))
+                                          [True] * len(tracers)),
+                      call_jaxpr=lifted_jaxpr)
     eqn = new_eqn_recipe(tuple(it.chain(const_tracers, env_tracers, tracers)),
-                         out_tracers, map_primitive, new_params,
-                         subjaxpr=lifted_jaxpr)
+                         out_tracers, map_primitive, new_params)
     for t in out_tracers:
       t.recipe = eqn
     return out_tracers
@@ -187,10 +187,10 @@ class JaxprTrace(Trace):
       lifted_jaxpr = convert_constvars_jaxpr(jaxpr)
       out_tracers = [JaxprTracer(trace, PartialVal((out_pv, out_pv_const)), None)
                      for out_pv, out_pv_const in zip(out_pvs, out_pv_consts)]
+      new_params = dict(params, call_jaxpr=lifted_jaxpr)
       # The `jaxpr` already contains the env_vars at start of invars
       eqn = new_eqn_recipe(tuple(it.chain(const_tracers, env_tracers)),
-                           out_tracers, call_primitive, params,
-                           subjaxpr=lifted_jaxpr)
+                           out_tracers, call_primitive, new_params)
       for t in out_tracers:
         t.recipe = eqn
       return out_tracers
@@ -215,11 +215,11 @@ class JaxprTrace(Trace):
                      for out_pv, out_pv_const in zip(out_pvs, out_pv_consts)]
       new_params = dict(params,
                         mapped_invars=tuple([True] * len(const_tracers) +
-                                            [False] * len(env)))
+                                            [False] * len(env)),
+                        call_jaxpr=lifted_jaxpr)
       env_tracers = map(trace.full_raise, env)
       eqn = new_eqn_recipe(it.chain(const_tracers, env_tracers),
-                           out_tracers, map_primitive, new_params,
-                           subjaxpr=lifted_jaxpr)
+                           out_tracers, map_primitive, new_params)
       for t in out_tracers:
         t.recipe = eqn
       return out_tracers
@@ -383,12 +383,9 @@ FreeVar = namedtuple('FreeVar', ['val'])
 ConstVar = namedtuple('ConstVar', ['val'])
 LambdaBinding = namedtuple('LambdaBinding', [])
 JaxprEqnRecipe = namedtuple('JaxprEqnRecipe',
-                            ['eqn_id', 'invars', 'outvars', 'primitive',
-                             'bound_subjaxpr', 'params'])
+                            ['eqn_id', 'invars', 'outvars', 'primitive', 'params'])
 
-
-def new_eqn_recipe(invars, outvars, primitive, params,
-                   subjaxpr=None):
+def new_eqn_recipe(invars, outvars, primitive, params):
   """Constructs a new JaxEqnRecipe.
 
   Params:
@@ -396,25 +393,21 @@ def new_eqn_recipe(invars, outvars, primitive, params,
     outvars: the tracers for the primitive outputs.
     primitive: the primitive.
     params: the primitive params
-    subjaxpr: (optional) a sub-Jaxpr, used only for `xla_call` or `xla_pmap`.
-      If present, then `subjaxpr.invars` correspond to `invars.
   """
-  if subjaxpr is not None:
-    assert len(subjaxpr.constvars) == 0
-    assert len(subjaxpr.invars) == len(tuple(invars))
-    bound_subjaxpr = subjaxpr
-  else:
-    bound_subjaxpr = None
-
+  if primitive.call_primitive:
+    # TODO(necula): move these checks to core.check_jaxpr, and call it
+    # in more places.
+    assert "call_jaxpr" in params
   return JaxprEqnRecipe(object(), tuple(invars), map(ref, outvars), primitive,
-                        bound_subjaxpr, params)
+                        params)
+
 
 def recipe_to_eqn(unused_var, getvar, recipe):
-  _, in_tracers, out_tracer_refs, primitive, bound_subjaxpr, params = recipe
+  _, in_tracers, out_tracer_refs, primitive, params = recipe
   out_tracers = [t_ref() for t_ref in out_tracer_refs]
   invars  = [getvar(t) for t in in_tracers]
   outvars = [unused_var() if t is None else getvar(t) for t in out_tracers]
-  return new_jaxpr_eqn(invars, outvars, primitive, bound_subjaxpr, params)
+  return new_jaxpr_eqn(invars, outvars, primitive, params)
 
 def tracers_to_jaxpr(in_tracers, out_tracers):
   """Constructs Jaxpr given tracers for inputs and outputs.
@@ -520,6 +513,7 @@ def _split_aval(unknown, aval):
 
 
 remat_call_p = core.Primitive('remat_call')
+remat_call_p.call_primitive = True
 remat_call = partial(core.call_bind, remat_call_p)
 remat_call_p.def_custom_bind(remat_call)
 remat_call_p.def_impl(core.call_impl)
@@ -593,10 +587,9 @@ def _remat_partial_eval(trace, f, tracers, params):
   const_tracers = map(trace.new_instantiated_const, consts)
   lifted_jaxpr = convert_constvars_jaxpr(typed_jaxpr.jaxpr)
   out_tracers = [JaxprTracer(trace, out_pval, None) for out_pval in out_pvals]
+  new_params = dict(params, call_jaxpr=lifted_jaxpr)
   eqn = new_eqn_recipe(tuple(it.chain(const_tracers, instantiated_tracers)),
-                       out_tracers, remat_call_p,
-                       params,
-                       subjaxpr=lifted_jaxpr)
+                       out_tracers, remat_call_p, new_params)
   for t in out_tracers: t.recipe = eqn
   return out_tracers
 call_partial_eval_rules[remat_call_p] = _remat_partial_eval

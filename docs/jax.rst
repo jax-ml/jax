@@ -51,7 +51,7 @@ Vectorization (:code:`vmap`)
 ----------------------------
 
 .. autofunction:: vmap
-
+.. autofunction:: numpy.vectorize
 
 Parallelization (:code:`pmap`)
 ------------------------------
