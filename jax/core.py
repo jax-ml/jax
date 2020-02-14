@@ -213,10 +213,8 @@ class Primitive(object):
 def extract_call_jaxpr(primitive, params):
   """Extract the call primitive subjaxpr from the params.
 
-  Params:
-    params: a parameter dictionary for a primitive.
-  Returns: the subjaxpr and the params without the "jaxpr" value. If this is
-    not a call primitive then returns (None, params).
+  Returns the subjaxpr and the params without the "call_jaxpr" value. If this is
+  not a call primitive then returns (None, params).
   """
   if not primitive.call_primitive:
     return (None, params)
@@ -316,6 +314,9 @@ class Trace(object):
 
   def sublift(self, tracer):
     assert False
+
+  def process_primitive(self, primitive, tracers, params):
+    assert False, "Must override"
 
   def __repr__(self):
     return '{}(level={}/{})'.format(
@@ -714,8 +715,13 @@ def pp_eqn(eqn):
           >> pp(' ') >> pp(pp_vars(eqn.invars))) + pp_subexpr
 
 def pp_jaxpr(jaxpr):
+  if len(jaxpr.outvars) > 1:
+    pp_outvars = str(tuple(jaxpr.outvars))
+  else:
+    pp_outvars = str(jaxpr.outvars[0])
+
   return (pp('{{ lambda {} ; {}.'.format(pp_vars(jaxpr.constvars),
                                          pp_vars(jaxpr.invars))) +
           ((pp('let ') >>
             vcat(map(pp_eqn, jaxpr.eqns))) +
-           pp('in {} }}'.format(jaxpr.outvars))).indent(2))
+           pp('in {} }}'.format(pp_outvars))).indent(2))

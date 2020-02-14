@@ -174,6 +174,7 @@ _registry = {
     type(None): _RegistryEntry(lambda z: ((), None), lambda _, xs: None),
 }
 def _replace_nones(sentinel, tree):
+  """Replaces `None` in `tree` with `sentinel`."""
   if tree is None:
     return sentinel
   else:

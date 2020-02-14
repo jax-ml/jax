@@ -34,6 +34,7 @@ For an introduction to JAX, start at the
    :maxdepth: 1
    :caption: Notes
 
+   jaxpr
    async_dispatch
    concurrency
    gpu_memory_allocation
@@ -46,6 +47,7 @@ For an introduction to JAX, start at the
    :caption: Developer documentation
 
    developer
+   jax_internal_api
 
 .. toctree::
    :maxdepth: 3
