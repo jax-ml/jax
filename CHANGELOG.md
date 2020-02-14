@@ -4,6 +4,13 @@ These are the release notes for JAX.
 
 ## jax 0.1.60 (unreleased)
 
+### New features
+
+* `pmap` has `static_broadcast_argnums` argument which allows the user to 
+    specify arguments that should be treated as compile-time constants and 
+    should be broadcasted to all devices. It works analogously to 
+    `static_argnums` in `jit`. 
+
 ## jax 0.1.59 (February 11, 2020)
 
 ### Breaking changes

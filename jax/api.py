@@ -715,7 +715,7 @@ def _flatten_axes(treedef, axis_tree):
   return axes
 
 
-def pmap(fun, axis_name=None, devices=None, backend=None, axis_size=None):
+def pmap(fun, axis_name=None, static_broadcasted_argnums=(), devices=None, backend=None, axis_size=None):
   """Parallel map with support for collectives.
 
   The purpose of ``pmap`` is to express single-program multiple-data (SPMD)
@@ -758,6 +758,14 @@ def pmap(fun, axis_name=None, devices=None, backend=None, axis_size=None):
       (tuple/list/dict) thereof.
     axis_name: Optional, a hashable Python object used to identify the mapped
       axis so that parallel collectives can be applied.
+    static_broadcasted_argnums: A tuple of ints specifying which positional
+      arguments to treat as static (compile-time constant). Operations that
+      only depend on static arguments will be constant-folded. Calling the
+      pmaped function with different values for these constants will trigger
+      recompilation. If the pmaped function is called with fewer positional
+      arguments than indicated by `static_argnums` then an error is raised.
+      Each of the static arguments will be broadcasted to all devices.
+      Defaults to ().
     devices: This is an experimental feature and the API is likely to change.
       Optional, a sequence of Devices to map over. (Available devices can be
       retrieved via jax.devices()). If specified, the size of the mapped axis
@@ -866,6 +874,8 @@ def pmap(fun, axis_name=None, devices=None, backend=None, axis_size=None):
   """
   _check_callable(fun)
   axis_name = _TempAxisName(fun) if axis_name is None else axis_name
+  if isinstance(static_broadcasted_argnums, int):
+    static_broadcasted_argnums = (static_broadcasted_argnums,)
 
   # axis_size is an optional integer representing the global axis size.
   # The aggregate size (across all hosts) size of the mapped axis must match
@@ -877,7 +887,12 @@ def pmap(fun, axis_name=None, devices=None, backend=None, axis_size=None):
   @wraps(fun)
   def f_pmapped(*args, **kwargs):
     f = lu.wrap_init(fun)
-    args, in_tree = tree_flatten((args, kwargs))
+    if static_broadcasted_argnums:
+      dyn_argnums = [i for i in range(len(args)) if i not in static_broadcasted_argnums]
+      f, dyn_args = _argnums_partial(f, dyn_argnums, args)
+    else:
+      dyn_args = args
+    args, in_tree = tree_flatten((dyn_args, kwargs))
     local_axis_size = _pmap_axis_size(args)
     _check_args(args)
     flat_fun, out_tree = flatten_fun(f, in_tree)
