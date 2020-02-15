@@ -61,6 +61,39 @@ class NNFunctionsTest(jtu.JaxTestCase):
     # see https://github.com/google/jax/pull/1640
     jax.make_jaxpr(nn.hard_tanh)(np.ones((10 ** 12,)))  # don't oom
 
+  def testOneHot(self):
+    actual = nn.one_hot(np.array([0, 1, 2]), 3)
+    expected = np.array([[1., 0., 0.],
+                         [0., 1., 0.],
+                         [0., 0., 1.]])
+    self.assertAllClose(actual, expected, check_dtypes=True)
+
+    actual = nn.one_hot(np.array([1, 2, 0]), 3)
+    expected = np.array([[0., 1., 0.],
+                         [0., 0., 1.],
+                         [1., 0., 0.]])
+    self.assertAllClose(actual, expected, check_dtypes=True)
+
+  def testOneHotOutOfBound(self):
+    actual = nn.one_hot(np.array([-1, 3]), 3)
+    expected = np.array([[0., 0., 0.],
+                         [0., 0., 0.]])
+    self.assertAllClose(actual, expected, check_dtypes=True)
+
+  def testOneHotNonArrayInput(self):
+    actual = nn.one_hot([0, 1, 2], 3)
+    expected = np.array([[1., 0., 0.],
+                         [0., 1., 0.],
+                         [0., 0., 1.]])
+    self.assertAllClose(actual, expected, check_dtypes=True)
+
+  def testOneHotCustomDtype(self):
+    actual = nn.one_hot(np.array([0, 1, 2]), 3, dtype=np.bool_)
+    expected = np.array([[True, False, False],
+                         [False, True, False],
+                         [False, False, True]])
+    self.assertAllClose(actual, expected, check_dtypes=True)
+
 InitializerRecord = collections.namedtuple(
   "InitializerRecord",
   ["name", "initializer", "shapes"])
