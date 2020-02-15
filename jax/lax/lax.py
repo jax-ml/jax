@@ -3341,6 +3341,8 @@ def _scatter_jvp(primals, tangents, update_jaxpr, update_consts,
   new_operand = pad(new_operand, _zero(operand),
                     ((0, 1, 0),) + tuple((0, 0, 0) for _ in operand_shape))
 
+  # We specify the dtype here in case `updates_shape` is an empty tuple, in
+  # which case numpy defaults to float64.
   ids_shape = onp.array(updates_shape, dtype=onp.int32)
   ids_shape[dnums.update_window_dims,] = 1
   num_ids = onp.prod(ids_shape)
