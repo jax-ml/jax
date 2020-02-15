@@ -97,7 +97,7 @@ exclude_patterns = [
     'notebooks/score_matching.ipynb',
     'notebooks/maml.ipynb',
     # Fails with shape error in XL
-    'notebooks/XLA_in_Python.ipnb'
+    'notebooks/XLA_in_Python.ipynb'
 ]
 
 # The name of the Pygments (syntax highlighting) style to use.
