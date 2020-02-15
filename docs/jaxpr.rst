@@ -443,7 +443,7 @@ with 3 input parameters:
 
   * ``c`` is a constvar and stands for the ``ones`` constant,
   * ``b`` corresponds to the free variable ``arg`` captured in the ``inner`` function,
-  * ``a`` corresponds to the ``inner`` parameter ``x`.
+  * ``a`` corresponds to the ``inner`` parameter ``x``.
 
 The primitive takes three arguments ``b a c``.
 

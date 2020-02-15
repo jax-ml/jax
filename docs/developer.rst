@@ -157,7 +157,8 @@ You can then see the generated documentation in
 Update notebooks
 ----------------
 
-Open the notebook with http://colab.research.google.com, update it, ``Run all cells`` then
+Open the notebook with http://colab.research.google.com (then `Upload` from your
+local repo), update it as needed, ``Run all cells`` then
 ``Download ipynb``. You may want to test that it executes properly, using ``sphinx-build`` as
 explained above.
 
