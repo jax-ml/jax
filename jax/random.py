@@ -43,7 +43,6 @@ from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax.util import prod
-from jax.interpreters.masking import to_index
 
 
 def PRNGKey(seed):
@@ -277,7 +276,7 @@ def _random_bits(key, bit_width, shape):
     # TODO(mattjj): just split the key here
     raise TypeError("requesting more random bits than a single call provides.")
 
-  counts = lax.tie_in(key, lax.iota(onp.uint32, max_count.astype(onp.uint32)))
+  counts = lax.tie_in(key, lax.iota(onp.uint32, max_count))
   bits = threefry_2x32(key, counts)
   if bit_width == 64:
     bits = [lax.convert_element_type(x, onp.uint64) for x in np.split(bits, 2)]
@@ -290,7 +289,7 @@ def _random_bits(key, bit_width, shape):
 
 def _check_shape(name, shape, *param_shapes):
   try:
-    shape = tuple(map(to_index, shape))
+    shape = tuple(map(int, shape))
   except TypeError:
     msg = "{} requires a concrete tuple of integers as shape argument, got {}."
     raise ValueError(msg.format(name, shape))

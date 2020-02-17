@@ -38,7 +38,6 @@ from ..core import Primitive
 from ..abstract_arrays import (UnshapedArray, ShapedArray, ConcreteArray,
                                AbstractToken, array_types, make_shaped_array,
                                raise_to_shaped, abstract_token, canonicalize_shape)
-from ..interpreters.masking import to_index
 from ..interpreters import partial_eval as pe
 from ..interpreters import xla
 from ..interpreters import pxla
@@ -1065,7 +1064,7 @@ def iota(dtype, size):
   <https://www.tensorflow.org/xla/operation_semantics#iota>`_
   operator.
   """
-  size = to_index(size)
+  size = int(size)
   dtype = dtypes.canonicalize_dtype(dtype)
   lazy_expr = lazy.iota(dtype, size)
   aval = ShapedArray((size,), dtype)
@@ -1506,6 +1505,7 @@ def standard_primitive(shape_rule, dtype_rule, name, translation_rule=None):
   prim.def_impl(partial(xla.apply_primitive, prim))
   prim.def_abstract_eval(partial(standard_abstract_eval, prim, shape_rule, dtype_rule))
   xla.translations[prim] = translation_rule or partial(standard_translate, name)
+  masking.shape_rules[prim] = shape_rule
   return prim
 
 
@@ -4120,6 +4120,7 @@ tie_in_p.def_abstract_eval(lambda x, y: raise_to_shaped(y))
 xla.translations[tie_in_p] = lambda c, x, y: y
 ad.deflinear(tie_in_p, _tie_in_transpose_rule)
 batching.primitive_batchers[tie_in_p] = _tie_in_batch_rule
+masking.shape_rules[tie_in_p] = lambda x, y: y.shape
 masking.masking_rules[tie_in_p] = lambda vals, logical_shapes: vals[1]
 
 
@@ -4393,6 +4394,8 @@ def conv_transpose_shape_tuple(lhs_shape, rhs_shape, window_strides, padding,
 
 def _check_shapelike(fun_name, arg_name, obj):
   """Check that `obj` is a shape-like value (e.g. tuple of nonnegative ints)."""
+  if (type(obj) is tuple and masking.is_polymorphic(obj)):
+    return obj
   if not isinstance(obj, (tuple, list, onp.ndarray)):
     msg = "{} {} must be of type tuple/list/ndarray, got {}."
     raise TypeError(msg.format(fun_name, arg_name, type(obj)))
@@ -4403,9 +4406,7 @@ def _check_shapelike(fun_name, arg_name, obj):
   if obj_arr.ndim != 1:
     msg = "{} {} must be rank 1, got {}."
     raise TypeError(msg.format(obj_arr.ndim))
-  try:
-    canonicalize_shape(obj_arr)
-  except TypeError:
+  if not dtypes.issubdtype(obj_arr.dtype, onp.integer):
     msg = "{} {} must have every element be an integer type, got {}."
     raise TypeError(msg.format(fun_name, arg_name, tuple(map(type, obj))))
   if not (obj_arr >= 0).all():
