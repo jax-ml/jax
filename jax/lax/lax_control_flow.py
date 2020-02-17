@@ -1120,7 +1120,7 @@ def _scan_masking_rule(shape_envs, padded_vals, shape_exprs, forward, length,
                        jaxpr, num_consts, num_carry, linear):
   out_shape = _scan_shape_rule(shape_exprs, forward, length, jaxpr,
                                num_consts, num_carry, linear)
-  dynamic_length = length.evaluate(shape_envs.logical)
+  dynamic_length = masking.eval_dim_expr(shape_envs.logical, length)
   masked_jaxpr = _masked_scan_jaxpr(jaxpr, num_consts, num_carry)
   consts, init, xs = split_list(padded_vals, [num_consts, num_carry])
   max_length, = {x.shape[0] for x in xs}

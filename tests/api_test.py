@@ -17,6 +17,7 @@ import collections
 from contextlib import contextmanager
 import copy
 from functools import partial
+import re
 import unittest
 import warnings
 import weakref
@@ -1761,6 +1762,69 @@ class APITest(jtu.JaxTestCase):
       return r
 
     jit(fun)(np.array([0, 1, 2], dtype=np.int32))  # doesn't crash
+
+  def helper_save_tracer(self, x):
+    self._saved_tracer = x
+    return x
+
+  def test_escaped_tracers_diffent_top_level_traces(self):
+    api.jit(self.helper_save_tracer)(0.)
+    with self.assertRaisesRegex(
+        ValueError,
+        re.compile(
+          "Encountered an unexpected tracer.*Different traces at same level",
+          re.DOTALL)):
+      api.jit(lambda x: self._saved_tracer)(0.)
+
+  def test_escaped_tracers_cant_lift_sublevels(self):
+    api.jit(self.helper_save_tracer)(0.)
+    with self.assertRaisesRegex(
+        ValueError,
+        re.compile(
+          "Encountered an unexpected tracer.*Can't lift sublevels 1 to 0",
+          re.DOTALL)):
+      api.jit(lambda x: x)(self._saved_tracer)
+
+  def test_escaped_tracers_tracer_from_higher_level(self):
+    api.grad(self.helper_save_tracer)(0.)
+    with self.assertRaisesRegex(
+        ValueError,
+        re.compile(
+          "Encountered an unexpected tracer.*Tracer from a higher level",
+          re.DOTALL)):
+      api.grad(lambda x: x)(self._saved_tracer)
+
+  def test_escaped_tracers_incompatible_sublevel(self):
+    def func1(x):
+      api.jit(self.helper_save_tracer)(0.)
+      # Use the tracer
+      return x + self._saved_tracer
+    with self.assertRaisesRegex(
+        ValueError,
+        re.compile("Encountered an unexpected tracer.*Incompatible sublevel",
+                   re.DOTALL)):
+      api.jit(func1)(2.)
+
+  def test_escaped_tracers_cant_lift(self):
+    def func1(x):
+      api.grad(self.helper_save_tracer)(0.)
+      return x + self._saved_tracer
+    with self.assertRaisesRegex(
+        ValueError, re.compile("Encountered an unexpected tracer.*Can't lift",
+                               re.DOTALL)):
+      api.grad(func1)(2.)
+
+  def test_escaped_tracers_not_among_input_tracers(self):
+    def func1(x):
+      api.grad(self.helper_save_tracer)(x)
+      # Use the tracer
+      return x + self._saved_tracer
+
+    with self.assertRaisesRegex(
+        ValueError, re.compile(
+          "Encountered an unexpected tracer.*Tracer not among input tracers",
+          re.DOTALL)):
+      api.jit(func1)(2.)
 
 
 class JaxprTest(jtu.JaxTestCase):

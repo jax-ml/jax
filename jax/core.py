@@ -280,6 +280,13 @@ class Trace(object):
     self.level = master.level
     self.sublevel = sublevel
 
+  def escaped_tracer_error(self, detail):
+    msg = ("Encountered an unexpected tracer. Perhaps this tracer escaped "
+           "through global state from a previously traced function.\n"
+           "The functions being transformed should not save traced values to "
+           "global state.\nDetails: {}.")
+    raise ValueError(msg.format(detail))
+
   def full_raise(self, val):
     if not isinstance(val, Tracer):
       return self.pure(val)
@@ -291,19 +298,18 @@ class Trace(object):
       elif val._trace.sublevel < sublevel:
         return self.sublift(val)
       else:
-        raise Exception("Can't lift sublevels {} to {}"
-                        .format(val._trace.sublevel, sublevel))
+        self.escaped_tracer_error(
+          "Can't lift sublevels {} to {}".format(val._trace.sublevel, sublevel))
     elif val._trace.level < level:
       if val._trace.sublevel > sublevel:
-        raise Exception("Incompatible sublevel: {}, {}"
-                        .format(val._trace, (level, sublevel)))
+        self.escaped_tracer_error(
+          "Incompatible sublevel: {}, {}".format(val._trace, (level, sublevel)))
       return self.lift(val)
     elif val._trace.level > level:
-      raise Exception("Can't lift {} to {}".format(val, self))
-    elif val._trace.level == self.level:
-      raise Exception("Different traces at same level: {}, {}".format(val, self))
-    else:
-      raise Exception("Can't lift {} to {}".format(val, self))
+      self.escaped_tracer_error(
+        "Can't lift level {} to {}".format(val, self))
+    else:  # val._trace.level == self.level:
+      self.escaped_tracer_error("Different traces at same level: {}, {}".format(val, self))
 
 
   def pure(self, val):
@@ -653,6 +659,7 @@ def call_impl(f, *args, **params):
 
 
 call_p = Primitive('call')
+call_p.multiple_results = True
 call_p.call_primitive = True
 call = partial(call_bind, call_p)
 call_p.def_custom_bind(call)
