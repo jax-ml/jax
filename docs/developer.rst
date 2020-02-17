@@ -36,12 +36,13 @@ To build ``jaxlib`` from source, you must also install some prerequisites:
 * Numpy
 * Scipy
 * Cython
+* six (required for during the jaxlib build only, not required at install time)
 
 On Ubuntu 18.04 or Debian you can install the necessary prerequisites with:
 
 .. code-block:: shell
 
- sudo apt-get install g++ python python3-dev python3-numpy python3-scipy cython3
+ sudo apt-get install g++ python python3-dev python3-numpy python3-scipy cython3 python3-six
 
 
 If you are building on a Mac, make sure XCode and the XCode command line tools
@@ -51,7 +52,7 @@ You can also install the necessary Python dependencies using ``pip``:
 
 .. code-block:: shell
 
- pip install numpy scipy cython
+ pip install numpy scipy cython six
 
 
 To build ``jaxlib`` with CUDA support, you can run
@@ -63,9 +64,9 @@ To build ``jaxlib`` with CUDA support, you can run
 
 
 See ``python build/build.py --help`` for configuration options, including ways to
-specify the paths to CUDA and CUDNN, which you must have installed. The build
-also depends on NumPy, and a compiler toolchain corresponding to that of
-Ubuntu 16.04 or newer.
+specify the paths to CUDA and CUDNN, which you must have installed. Here
+``python`` should be the name of your Python 3 interpreter; on some systems, you
+may need to use ``python3`` instead.
 
 To build ``jaxlib`` without CUDA GPU support (CPU only), drop the ``--enable_cuda``:
 
