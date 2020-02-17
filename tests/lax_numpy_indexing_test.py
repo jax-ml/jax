@@ -757,6 +757,11 @@ class IndexingTest(jtu.JaxTestCase):
     x = lnp.array([1, 2, 3])
     self.assertRaises(TypeError, lambda: x[3.5])
 
+  def testIndexOutOfBounds(self):  # https://github.com/google/jax/issues/2245
+    array = lnp.ones(5)
+    self.assertAllClose(array, array[:10], check_dtypes=True)
+
+
 def _broadcastable_shapes(shape):
   """Returns all shapes that broadcast to `shape`."""
   def f(rshape):
