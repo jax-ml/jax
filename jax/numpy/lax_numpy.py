@@ -1635,6 +1635,27 @@ def _pad_symmetric_or_reflect(array, pad_width, mode):
   return array
 
 
+def _pad_edge(array, pad_width):
+  nd = ndim(array)
+  for i in range(nd):
+    # TODO: what is this business about?  It we have a zero length axis, then our array
+    # contains no values at all, so this padding operation cannot work---here and for reflect,
+    # symmetric, wrap.
+    if array.shape[i] == 0:
+      _check_no_padding(pad_width[i], mode)
+      continue
+
+    n = array.shape[i]
+    npad_before, npad_after = pad_width[i]
+
+    edge_before = lax.slice_in_dim(array, 0, 1, axis=i)
+    pad_before = repeat(edge_before, npad_before, axis=i)
+
+    edge_after = lax.slice_in_dim(array, n-1, n, axis=i)
+    pad_after = repeat(edge_after, npad_after, axis=i)
+
+    array = lax.concatenate([pad_before, array, pad_after], dimension=i)
+  return array
 
 
 @partial(jit, static_argnums=(1, 2))
@@ -1653,6 +1674,9 @@ def _pad(array, pad_width, mode, constant_values):
 
   elif mode in ("symmetric", "reflect"):
     return _pad_symmetric_or_reflect(array, pad_width, mode)
+
+  elif mode == "edge":
+    return _pad_edge(array, pad_width)
 
   else:
     msg = "Unimplemented padding mode '{}' for np.pad."
