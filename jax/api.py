@@ -1383,11 +1383,10 @@ def device_put(x, device=None):
   return tree_map(lambda y: xla.device_put_p.bind(y, device=device), x)
 
 
-# TODO(mattjj): consider revising
 def _device_get(x):
   if isinstance(x, core.Tracer):
     return x
-  return x.copy()
+  return onp.asarray(x)
 
 def device_get(x):
   for y in tree_leaves(x):
