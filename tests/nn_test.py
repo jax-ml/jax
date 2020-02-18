@@ -51,10 +51,12 @@ class NNFunctionsTest(jtu.JaxTestCase):
     val = nn.elu(1e4)
     self.assertAllClose(val, 1e4, check_dtypes=False)
 
-  @parameterized.parameters(np.float32, np.bfloat16, np.float16)
-  def testGeluDtypeMatchesInput(self, dtype):
+  @parameterized.parameters(*itertools.product(
+      (np.float32, np.bfloat16, np.float16),
+      (nn.gelu, nn.relu, nn.softplus, nn.sigmoid)))
+  def testDtypeMatchesInput(self, dtype, fn):
     x = np.zeros((), dtype=dtype)
-    out = nn.gelu(x)
+    out = fn(x)
     self.assertEqual(out.dtype, dtype)
 
   @jtu.skip_on_devices("gpu", "tpu")
