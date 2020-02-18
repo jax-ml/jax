@@ -138,12 +138,7 @@ def _sharded_callable(fun, partitions, name, *abstract_args):
   nrep = 1  # TODO generalize
 
   in_pvals = [pe.PartialVal((aval, core.unit)) for aval in abstract_args]
-  with core.new_master(pe.JaxprTrace, True) as master:
-    jaxpr, (out_pvals, consts,
-            env) = pe.trace_to_subjaxpr(fun, master,
-                                        False).call_wrapped(in_pvals)
-    assert not env  # no subtraces here
-    del master, env
+  jaxpr, out_pvals, consts = pe.trace_to_jaxpr(fun, in_pvals, instantiate=False, bottom=True)
 
   if not jaxpr.eqns and all(outvar is core.unitvar for outvar in jaxpr.outvars):
     return lambda *_: [core.unit] * len(jaxpr.outvars)

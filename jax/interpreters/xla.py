@@ -460,10 +460,9 @@ def _xla_callable(fun, device, backend, name, *arg_specs):
 
   abstract_args, arg_devices = unzip2(arg_specs)
   pvals = [pe.PartialVal((aval, core.unit)) for aval in abstract_args]
-  with core.new_master(pe.StagingJaxprTrace, True) as master:
-    jaxpr, (pvals, consts, env) = pe.trace_to_subjaxpr(fun, master, False).call_wrapped(pvals)
-    assert not env  # no subtraces here
-    del master, env
+  jaxpr, pvals, consts = pe.trace_to_jaxpr(
+      fun, pvals, instantiate=False, stage_out_calls=True, bottom=True)
+
   _map(prefetch, it.chain(consts, jaxpr_literals(jaxpr)))
 
   nreps = jaxpr_replicas(jaxpr)
