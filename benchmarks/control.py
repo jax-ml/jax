@@ -114,8 +114,9 @@ def lqr_solve(spec):
   K = np.zeros((T, control_dim, state_dim))
   k = np.zeros((T, control_dim))
 
-  def rev_loop(t_, (spec, P, p, K, k)):
+  def rev_loop(t_, state):
     t = T - t_ - 1
+    spec, P, p, K, k = state
 
     Q, q = spec.Q[t], spec.q[t]
     R, r = spec.R[t], spec.r[t]
@@ -149,7 +150,8 @@ def lqr_predict(spec, x0):
 
   K, k = lqr_solve(spec)
 
-  def fwd_loop(t, (spec, X, U)):
+  def fwd_loop(t, state):
+    spec, X, U = state
     A, B = spec.A[t], spec.B[t]
     u = mv(K[t], X[t]) + k[t]
     x = mv(A, X[t]) + mv(B, u)
@@ -170,7 +172,8 @@ def ilqr(iterations, p, x0, U):
 
   lqr_approx = make_lqr_approx(p)
 
-  def loop(_, (X, U)):
+  def loop(_, state):
+    X, U = state
     p_lqr = lqr_approx(X, U)
     dX, dU = lqr_predict(p_lqr, np.zeros_like(x0))
     U = U + dU
@@ -189,10 +192,11 @@ def mpc_predict(solver, p, x0, U):
     U_pad = np.vstack((U, np.zeros(U.shape)))
     return lax.dynamic_slice_in_dim(U_pad, t, T, axis=0)
 
-  def loop(t, (X, U)):
+  def loop(t, state):
     cost = lambda t_, x, u: p.cost(t + t_, x, u)
     dyns = lambda t_, x, u: p.dynamics(t + t_, x, u)
 
+    X, U = state
     p_ = ControlSpec(cost, dyns, T, p.state_dim, p.control_dim)
     xt = X[t]
     U_rem = zero_padded_controls_window(U, t)
