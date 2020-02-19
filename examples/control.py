@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-Benchmarks for model-predictive linear control
+Model-predictive non-linear control example.
 """
 
 from __future__ import absolute_import

@@ -25,7 +25,7 @@ from jax import lax
 from jax import test_util as jtu
 import jax.numpy as np
 
-from benchmarks import control
+from examples import control
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -70,7 +70,7 @@ def one_step_control(dim, T):
   return control.ControlSpec(cost, dynamics, T, dim, dim)
 
 
-class ControlBenchmarkTest(jtu.JaxTestCase):
+class ControlExampleTest(jtu.JaxTestCase):
 
   def testTrajectoryCyclicIntegerCounter(self):
     num_states = 3
