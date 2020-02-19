@@ -147,6 +147,7 @@ LAX_OPS = [
     op_record("bitwise_not", 1, bool_dtypes, jtu.rand_small),
     op_record("bitwise_or", 2, bool_dtypes, jtu.rand_small),
     op_record("bitwise_xor", 2, bool_dtypes, jtu.rand_small),
+    op_record("population_count", 1, bool_dtypes, jtu.rand_small),
 
     op_record("add", 2, default_dtypes + complex_dtypes, jtu.rand_small),
     op_record("sub", 2, default_dtypes + complex_dtypes, jtu.rand_small),
