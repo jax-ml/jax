@@ -274,6 +274,9 @@ def bitwise_xor(x: Array, y: Array) -> Array:
   r"""Elementwise exclusive OR: :math:`x \oplus y`."""
   return xor_p.bind(x, y)
 
+def population_count(x: Array) -> Array:
+  return population_count_p.bind(x)
+
 def add(x: Array, y: Array) -> Array:
   r"""Elementwise addition: :math:`x + y`."""
   return add_p.bind(x, y)
@@ -2017,6 +2020,8 @@ ad.defjvp_zero(or_p)
 
 xor_p = standard_naryop([_bool_or_int, _bool_or_int], 'xor')
 ad.defjvp_zero(xor_p)
+
+population_count_p = standard_unop(_bool_or_int, 'population_count')
 
 def _add_transpose(t, x, y):
   # The following linearity assertion is morally true, but because in some cases we
