@@ -68,6 +68,23 @@ def mv(mat, vec):
   return dot(mat, vec)
 
 
+LOOP_VIA_SCAN = False
+
+
+def fori_loop(lo, hi, loop, init):
+  if LOOP_VIA_SCAN:
+    return scan_fori_loop(lo, hi, loop, init)
+  else:
+    return lax.fori_loop(lo, hi, loop, init)
+
+
+def scan_fori_loop(lo, hi, loop, init):
+  def scan_f(x, t):
+    return loop(t, x), ()
+  x, _ = lax.scan(scan_f, init, np.arange(lo, hi))
+  return x
+
+
 def trajectory(dynamics, U, x0):
   '''Unrolls `X[t+1] = dynamics(t, X[t], U[t])`, where `X[0] = x0`.'''
   T, _ = U.shape
@@ -81,7 +98,7 @@ def trajectory(dynamics, U, x0):
     X = jo.index_update(X, jo.index[t + 1], x)
     return X
 
-  return lax.fori_loop(0, T, loop, X)
+  return fori_loop(0, T, loop, X)
 
 
 def make_lqr_approx(p):
@@ -137,7 +154,7 @@ def lqr_solve(spec):
     k = jo.index_update(k, jo.index[t], k_)
     return spec, P_, p_, K, k
 
-  _, P, p, K, k = lax.fori_loop(
+  _, P, p, K, k = fori_loop(
       0, T, rev_loop,
       (spec, spec.Q[T + 1], spec.q[T + 1], K, k))
 
@@ -162,7 +179,7 @@ def lqr_predict(spec, x0):
   U = np.zeros((T, control_dim))
   X = np.zeros((T + 1, state_dim))
   X = jo.index_update(X, jo.index[0], x0)
-  _, X, U = lax.fori_loop(0, T, fwd_loop, (spec, X, U))
+  _, X, U = fori_loop(0, T, fwd_loop, (spec, X, U))
   return X, U
 
 
@@ -181,7 +198,7 @@ def ilqr(iterations, p, x0, U):
     return X, U
 
   X = trajectory(p.dynamics, U, x0)
-  return lax.fori_loop(0, iterations, loop, (X, U))
+  return fori_loop(0, iterations, loop, (X, U))
 
 
 def mpc_predict(solver, p, x0, U):
@@ -209,4 +226,4 @@ def mpc_predict(solver, p, x0, U):
 
   X = np.zeros((T + 1, p.state_dim))
   X = jo.index_update(X, jo.index[0], x0)
-  return lax.fori_loop(0, T, loop, (X, U))
+  return fori_loop(0, T, loop, (X, U))
