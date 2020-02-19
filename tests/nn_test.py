@@ -55,6 +55,8 @@ class NNFunctionsTest(jtu.JaxTestCase):
       (np.float32, np.bfloat16, np.float16),
       (nn.gelu, nn.relu, nn.softplus, nn.sigmoid)))
   def testDtypeMatchesInput(self, dtype, fn):
+    if dtype is np.float16 and jtu.device_under_test() == "tpu":
+      self.skipTest("float16 not supported on TPU")
     x = np.zeros((), dtype=dtype)
     out = fn(x)
     self.assertEqual(out.dtype, dtype)
