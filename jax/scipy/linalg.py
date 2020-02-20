@@ -18,7 +18,7 @@ from functools import partial
 import scipy.linalg
 import textwrap
 
-from jax import jit, vmap
+from jax import jit
 from .. import lax
 from .. import lax_linalg
 from ..numpy.lax_numpy import _wraps
@@ -45,16 +45,24 @@ def cho_factor(a, lower=False, overwrite_a=False, check_finite=True):
 @partial(jit, static_argnums=(2,))
 def _cho_solve(c, b, lower):
   c, b = np_linalg._promote_arg_dtypes(np.asarray(c), np.asarray(b))
-  np_linalg._check_solve_shapes(c, b)
+  c_shape = np.shape(c)
+  b_shape = np.shape(b)
+  c_ndims = len(c_shape)
+  b_ndims = len(b_shape)
+  if not (c_ndims >= 2 and c_shape[-1] == c_shape[-2] and
+          (c_ndims == b_ndims or c_ndims == b_ndims + 1)):
+    msg = ("The arguments to solve must have shapes a=[..., m, m] and "
+           "b=[..., m, k] or b=[..., m]; got a={} and b={}")
+    raise ValueError(msg.format(c_shape, b_shape))
+
   # TODO(phawkins): triangular_solve only supports matrices on the RHS, so we
   # add a dummy dimension. Extend it to support vectors and simplify this.
-  rhs_vector = c.ndim == b.ndim + 1
-  b = b[..., np.newaxis] if rhs_vector else b
+  b = b if c_ndims == b_ndims else b[..., None]
   b = lax_linalg.triangular_solve(c, b, left_side=True, lower=lower,
                                   transpose_a=not lower, conjugate_a=not lower)
   b = lax_linalg.triangular_solve(c, b, left_side=True, lower=lower,
                                   transpose_a=lower, conjugate_a=lower)
-  return b[..., 0] if rhs_vector else b
+  return b[..., 0] if c_ndims != b_ndims else b
 
 @_wraps(scipy.linalg.cho_solve, update_doc=False)
 def cho_solve(c_and_lower, b, overwrite_b=False, check_finite=True):
@@ -162,30 +170,13 @@ def qr(a, overwrite_a=False, lwork=None, mode="full", pivoting=False,
   del overwrite_a, lwork, check_finite
   return _qr(a, mode, pivoting)
 
-
 @partial(jit, static_argnums=(2, 3))
 def _solve(a, b, sym_pos, lower):
   if not sym_pos:
     return np_linalg.solve(a, b)
 
   a, b = np_linalg._promote_arg_dtypes(np.asarray(a), np.asarray(b))
-  np_linalg._check_solve_shapes(a, b)
-
-  # With custom_linear_solve, we can reuse the same factorization when
-  # computing sensitivities. This is considerably faster.
-  factors = lax.stop_gradient(cho_factor)(a, lower=lower)
-  custom_solve = partial(
-      lax.custom_linear_solve,
-      lambda x: np_linalg._matvec_multiply(a, x),
-      solve=lambda _, x: cho_solve(factors, x),
-      symmetric=True)
-  if a.ndim == b.ndim + 1:
-    # b.shape == [..., m]
-    return custom_solve(b)
-  else:
-    # b.shape == [..., m, k]
-    return vmap(custom_solve, b.ndim - 1, max(a.ndim, b.ndim) - 1)(b)
-
+  return cho_solve(cho_factor(a, lower=lower), b)
 
 @_wraps(scipy.linalg.solve)
 def solve(a, b, sym_pos=False, lower=False, overwrite_a=False, overwrite_b=False,
