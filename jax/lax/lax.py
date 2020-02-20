@@ -1674,6 +1674,18 @@ ad.defjvp_zero(is_finite_p)
 exp_p = standard_unop(_float | _complex, 'exp')
 ad.defjvp2(exp_p, lambda g, ans, x: _safe_mul(g, ans))
 
+def _exp_taylor(primals_in, series_in):
+  x, = primals_in
+  series, = series_in
+  u = [x] + series
+  v = [exp(x)] + [None] * len(series)
+  def scale(k, j): return 1. / (fact(k-j) * fact(j-1))
+  for k in range(1,len(v)):
+    v[k] = fact(k-1) * sum([scale(k, j)* v[k-j] * u[j] for j in range(1, k+1)])
+  primal_out, *series_out = v
+  return primal_out, series_out
+taylor.prop_rules[exp_p] = _exp_taylor
+
 log_p = standard_unop(_float | _complex, 'log')
 ad.defjvp(log_p, lambda g, x: div(g, x))
 
@@ -1858,7 +1870,7 @@ ad.primitive_transposes[sub_p] = _sub_transpose
 mul_p = standard_naryop([_num, _num], 'mul')
 ad.defbilinear_broadcasting(_brcast, mul_p, mul, mul)
 
-def prop_mul(primals_in, series_in):
+def _mul_taylor(primals_in, series_in):
   x, y = primals_in
   x_terms, y_terms = series_in
   u = [x] + x_terms
@@ -1869,7 +1881,7 @@ def prop_mul(primals_in, series_in):
     v[k] = fact(k) * sum([scale(k, j) * u[j] * w[k-j] for j in range(0, k+1)])
   primal_out, *series_out = v
   return primal_out, series_out
-taylor.prop_rules[mul_p] = prop_mul
+taylor.prop_rules[mul_p] = _mul_taylor
 
 
 def _safe_mul_translation_rule(c, x, y):
@@ -2342,6 +2354,21 @@ ad.defbilinear(dot_general_p,
                _dot_general_transpose_lhs, _dot_general_transpose_rhs)
 batching.primitive_batchers[dot_general_p] = _dot_general_batch_rule
 masking.masking_rules[dot_general_p] = _dot_general_masking_rule
+
+# TODO factor out a bilinear rule (mul, dot, conv, ...)
+def _dot_general_taylor(primals_in, series_in, **params):
+  x, y = primals_in
+  x_terms, y_terms = series_in
+  u = [x] + x_terms
+  w = [y] + y_terms
+  v = [None] * len(u)
+  dot = partial(dot_general_p.bind, **params)
+  def scale(k, j): return 1. / (fact(k - j) * fact(j))
+  for k in range(0, len(v)):
+    v[k] = fact(k) * sum([scale(k, j) * dot(u[j], w[k-j]) for j in range(0, k+1)])
+  primal_out, *series_out = v
+  return primal_out, series_out
+taylor.prop_rules[dot_general_p] = _dot_general_taylor
 
 
 def _broadcast_shape_rule(operand, sizes):
