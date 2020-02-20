@@ -57,6 +57,7 @@ from .interpreters import ad
 from .interpreters import batching
 from .interpreters import parallel
 from .interpreters import masking
+from .interpreters import taylor
 from .interpreters.masking import shapecheck, ensure_poly
 from .config import flags, config, bool_env
 
@@ -2107,3 +2108,8 @@ def checkpoint(fun: Callable, concrete: bool = False):
     return tree_unflatten(out_tree(), out_flat)
   return fun_remat
 remat = checkpoint
+
+def jet(fun, primals, series):
+  f = lu.wrap_init(fun)
+  out_primal, out_terms = taylor.jet(f).call_wrapped(primals, series)
+  return out_primal, out_terms

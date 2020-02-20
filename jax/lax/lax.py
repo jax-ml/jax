@@ -24,6 +24,7 @@ from typing import Any
 import warnings
 
 import numpy as onp
+from scipy.special import factorial as fact  # TODO scipy dep?
 
 from ..util import partial, prod
 
@@ -43,6 +44,7 @@ from ..interpreters import xla
 from ..interpreters import pxla
 from ..interpreters import ad
 from ..interpreters import batching
+from ..interpreters import taylor
 from ..interpreters import masking
 from ..util import curry, cache, safe_zip, unzip2, prod
 from ..tree_util import build_tree, tree_unflatten, tree_map
@@ -1638,6 +1640,7 @@ _bool_or_int = _int | _bool
 
 neg_p = standard_unop(_num, 'neg')
 ad.deflinear(neg_p, lambda t: [neg(t)])
+taylor.deflinear(neg_p)
 
 def _sign_translation_rule(c, x):
   shape = c.GetShape(x)
@@ -1839,6 +1842,7 @@ def _add_transpose(t, x, y):
 add_p = standard_naryop([_num, _num], 'add')
 ad.defjvp(add_p, lambda g, x, y: _brcast(g, y), lambda g, x, y: _brcast(g, x))
 ad.primitive_transposes[add_p] = _add_transpose
+taylor.deflinear(add_p)
 
 
 def _sub_transpose(t, x, y):
@@ -1853,6 +1857,19 @@ ad.primitive_transposes[sub_p] = _sub_transpose
 
 mul_p = standard_naryop([_num, _num], 'mul')
 ad.defbilinear_broadcasting(_brcast, mul_p, mul, mul)
+
+def prop_mul(primals_in, series_in):
+  x, y = primals_in
+  x_terms, y_terms = series_in
+  u = [x] + x_terms
+  w = [y] + y_terms
+  v = [None] * len(u)
+  def scale(k, j): return 1. / (fact(k - j) * fact(j))
+  for k in range(0, len(v)):
+    v[k] = fact(k) * sum([scale(k, j) * u[j] * w[k-j] for j in range(0, k+1)])
+  primal_out, *series_out = v
+  return primal_out, series_out
+taylor.prop_rules[mul_p] = prop_mul
 
 
 def _safe_mul_translation_rule(c, x, y):
