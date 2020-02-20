@@ -16,6 +16,8 @@
 from .core import abstract_unit
 from .abstract_arrays import ShapedArray
 
+import numpy as onp
+
 # TODO(mattjj): use a special sentinel type rather than None
 NotMapped = type(None)
 not_mapped = None

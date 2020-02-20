@@ -96,7 +96,7 @@ shard_arg_handlers[core.Unit] = \
     lambda x, devices, _: [xla.device_put(core.unit, d) for d in devices]
 def _shard_array(x, devices, indices):
   return [xla.device_put(x[idx], device)
-          for idx, device in zip(indices, devices)])
+          for idx, device in zip(indices, devices)]
 for _t in array_types:
   shard_arg_handlers[_t] = _shard_array
 shard_arg_handlers[xla.DeviceArray] = _shard_array
@@ -361,8 +361,8 @@ def _match_sharded_axis(size, src, dst, arr):
     # this requires replicated buffers, but that requirement is unchecked
     # TODO(jekbradbury): keep track of replication in order to check it
     aval = ShapedArray(arr.shape[:src] + arr.shape[src + 1:], arr.dtype)
-    indices = [() if isinstance(ind, (*dtypes.python_scalar_dtypes.keys(),
-                                      onp.generic))
+    scalar_types = (*dtypes.python_scalar_dtypes.keys(), onp.generic)
+    indices = [() if isinstance(ind, scalar_types)
                else ind[:src] + ind[src + 1:]
                for ind in arr.logical_indices]
     return ShardedDeviceArray(aval, indices, arr.device_buffers)

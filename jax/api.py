@@ -301,7 +301,7 @@ def xla_computation(fun, static_argnums=(), axis_env=None, backend=None,
     axis_env_ = make_axis_env(xla.jaxpr_replicas(jaxpr))
     c = xb.make_computation_builder('xla_computation_{}'.format(fun_name))
     xla_consts = map(c.Constant, consts)
-    xla_args = xla._xla_callable_args(c, avals, tuple_args)
+    xla_args = xla._xla_callable_args(c, avals, tuple_args, (False,) * len(avals))
     outs = xla.jaxpr_subcomp(
         c, jaxpr, backend, axis_env_, xla_consts,
         extend_name_stack(wrap_name(fun_name, 'xla_computation')), *xla_args)

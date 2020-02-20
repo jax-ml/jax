@@ -564,7 +564,7 @@ def map_transpose(primitive, params, call_jaxpr, args, ct):
   primal_dim = tuple(dim for arg, dim in zip(args, params['in_dims']) if arg is not undefined_primal)
   in_dims = primal_dim + tuple(dim for t, dim in zip(ct, params['out_dim_dests'])
                                if t is not zero)
-  fun = lu.hashable_partial(lu.wrap_init(backward_pass), jaxpr)
+  fun = lu.hashable_partial(lu.wrap_init(backward_pass), call_jaxpr)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
   # TODO(jekbradbury): think harder about the fan-in-sums;
   # do all cotangents need to be mapped?
