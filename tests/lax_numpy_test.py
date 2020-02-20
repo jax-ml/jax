@@ -921,6 +921,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         ('symmetric', None, nonempty_shapes),
         ('reflect', None, nonempty_shapes),
         ('wrap', None, nonempty_shapes),
+        ('edge', None, nonempty_shapes),
       ]
       for shape, dtype in _shape_and_dtypes(shapes, all_dtypes)
       for pad_width_rank in range(3)))
