@@ -217,6 +217,13 @@ def _eval_subjaxpr_primals(prim, jaxpr, in_vals, params):
   all_args, in_tree_def = tree_flatten((in_vals,))
   fun = lu.hashable_partial(lu.wrap_init(_eval_primals), jaxpr)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
+  if prim in pe.map_primitives:
+    in_dims = tuple(dim for val, dim in zip(in_vals, params['in_dims'])
+                    if val is not undefined_primal)
+    out_dims = params['out_dim_dests']
+    out_dim_dests = out_dims if not isinstance(out_dims, tuple) else lambda: out_dims
+    new_out_dim_dests = lambda: flatten_axes(out_tree(), list(out_dim_dests()))
+    params = dict(params, in_dims=in_dims, out_dim_dests=new_out_dim_dests)
   out_flat = prim.bind(fun, *all_args, **params)
   return tree_unflatten(out_tree(), out_flat)
 

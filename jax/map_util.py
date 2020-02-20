@@ -28,7 +28,8 @@ def shard_aval(aval, batch_dim):
     return aval
   elif type(aval) is ShapedArray:
     assert 0 <= batch_dim < aval.ndim
-    new_shape = tuple(onp.delete(aval.shape, batch_dim))
+    shape = onp.array(aval.shape, dtype=onp.int32)
+    new_shape = tuple(onp.delete(shape, batch_dim))
     return ShapedArray(new_shape, aval.dtype)
   else:
     raise TypeError(aval)
@@ -39,7 +40,8 @@ def map_aval(size, aval, batch_dim):
     return aval
   elif type(aval) is ShapedArray:
     assert 0 <= batch_dim < aval.ndim + 1
-    new_shape = tuple(onp.insert(aval.shape, batch_dim, size))
+    shape = onp.array(aval.shape, dtype=onp.int32)
+    new_shape = tuple(onp.insert(shape, batch_dim, size))
     return ShapedArray(new_shape, aval.dtype)
   else:
     raise TypeError(aval)

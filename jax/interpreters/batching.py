@@ -69,7 +69,7 @@ class BatchTracer(Tracer):
   @property
   def aval(self):
     val_aval = raise_to_shaped(core.get_aval(self.val))
-    aval, _ = shard_aval(val_aval, self.batch_dim)
+    aval = shard_aval(val_aval, self.batch_dim)
     return aval
 
   def full_lower(self):

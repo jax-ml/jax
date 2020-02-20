@@ -880,8 +880,7 @@ def pmap(fun, axis_name=None, in_axes=0, out_axes=0, static_broadcasted_argnums=
     else:
       dyn_args = args
     args_flat, in_tree = tree_flatten((dyn_args, kwargs))
-    _, args_in_tree = tree_flatten(args)
-    in_axes_flat = flatten_axes(args_in_tree, in_axes)
+    in_axes_flat = flatten_axes(in_tree, (in_axes, 0))
     local_axis_size = _check_axis_sizes(in_tree, args_flat, in_axes_flat)
     _check_args(args_flat)
     flat_fun, out_tree = flatten_fun(f, in_tree)

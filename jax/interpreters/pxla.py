@@ -532,7 +532,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   c = xb.make_computation_builder("pmap_{}".format(fun.__name__))
   xla_consts = _map(c.Constant, consts)
   xla_args = xla._xla_callable_args(c, sharded_avals, tuple_args, replicated)
-  out_nodes = xla.jaxpr_subcomp(c, jaxpr, backend, axis_env, xla_consts, (),
+  out_nodes = xla.jaxpr_subcomp(c, jaxpr, backend, axis_env, xla_consts,
                                 extend_name_stack(wrap_name(name, 'pmap')), *xla_args)
   built = c.Build(c.Tuple(*out_nodes))
 

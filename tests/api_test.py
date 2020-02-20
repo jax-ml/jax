@@ -2035,8 +2035,9 @@ class JaxprTest(jtu.JaxTestCase):
                                  in g }
                     devices=None
                     global_axis_size=None
-                    mapped_invars=(True, False, True)
-                    name=inner ] c b a
+                    in_dims=(0, None, 0)
+                    name=inner
+                    out_dim_dests=(0,) ] c b a
   in d }
                               """, str(jaxpr))
 

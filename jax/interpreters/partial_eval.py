@@ -165,7 +165,7 @@ class JaxprTrace(Trace):
     num_orig_outs = len(out_flat) - len(jaxpr.constvars)
     out_pv_consts, consts = split_list(out_flat, [num_orig_outs])
     out_pvs = [None if pv is None else map_aval(params['axis_size'], pv, dim)
-               for pv, dim in zip(out_pvs_reduced, unstaged_out_dim_dests())]
+               for pv, dim in zip(out_pvs_reduced, out_dim_dests())]
     const_tracers = map(self.new_instantiated_const, consts)
     env_tracers = map(self.full_raise, env)
     lifted_jaxpr = convert_constvars_jaxpr(jaxpr)
