@@ -669,7 +669,7 @@ def _cauchy(key, shape, dtype):
 
 
 def dirichlet(key, alpha, shape=None, dtype=onp.float64):
-  """Sample Cauchy random values with given shape and float dtype.
+  """Sample Dirichlet random values with given shape and float dtype.
 
   Args:
     key: a PRNGKey used as the random key.

@@ -1063,6 +1063,18 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     expected = grad(lambda x: np.sum(f(x)))(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testPmapStaticArgnums(self):
+    @partial(pmap, axis_name='i', static_broadcasted_argnums=1)
+    def f(x, y):
+      return np.sin(x + y)
+    shape = (xla_bridge.device_count(), 4)
+    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+    y = onp.arange(4, dtype=onp.float32)
+
+    ans = f(x, y)
+    expected = onp.sin(x + y[None])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
 
 if __name__ == '__main__':
   absltest.main()

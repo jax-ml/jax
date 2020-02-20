@@ -55,6 +55,20 @@ def get_python_bin_path(python_bin_path_flag):
   return python_bin_path_flag or sys.executable
 
 
+def get_python_version(python_bin_path):
+  version_output = shell(
+    [python_bin_path, "-c",
+     "import sys; print(\"{}.{}\".format(sys.version_info[0], "
+     "sys.version_info[1]))"])
+  major, minor = map(int, version_output.split("."))
+  return major, minor
+
+def check_python_version(python_version):
+  if python_version < (3, 5):
+    print("JAX requires Python 3.5 or newer.")
+    sys.exit(-1)
+
+
 # Bazel
 
 BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/1.2.1/"
@@ -309,6 +323,9 @@ def main():
 
   python_bin_path = get_python_bin_path(args.python_bin_path)
   print("Python binary path: {}".format(python_bin_path))
+  python_version = get_python_version(python_bin_path)
+  print("Python version: {}".format(".".join(map(str, python_version))))
+  check_python_version(python_version)
 
   print("MKL-DNN enabled: {}".format("yes" if args.enable_mkl_dnn else "no"))
   print("-march=native: {}".format("yes" if args.enable_march_native else "no"))

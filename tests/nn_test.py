@@ -51,6 +51,16 @@ class NNFunctionsTest(jtu.JaxTestCase):
     val = nn.elu(1e4)
     self.assertAllClose(val, 1e4, check_dtypes=False)
 
+  @parameterized.parameters(*itertools.product(
+      (np.float32, np.bfloat16, np.float16),
+      (nn.gelu, nn.relu, nn.softplus, nn.sigmoid)))
+  def testDtypeMatchesInput(self, dtype, fn):
+    if dtype is np.float16 and jtu.device_under_test() == "tpu":
+      self.skipTest("float16 not supported on TPU")
+    x = np.zeros((), dtype=dtype)
+    out = fn(x)
+    self.assertEqual(out.dtype, dtype)
+
   @jtu.skip_on_devices("gpu", "tpu")
   def testEluMemory(self):
     # see https://github.com/google/jax/pull/1640
@@ -60,6 +70,39 @@ class NNFunctionsTest(jtu.JaxTestCase):
   def testHardTanhMemory(self):
     # see https://github.com/google/jax/pull/1640
     jax.make_jaxpr(nn.hard_tanh)(np.ones((10 ** 12,)))  # don't oom
+
+  def testOneHot(self):
+    actual = nn.one_hot(np.array([0, 1, 2]), 3)
+    expected = np.array([[1., 0., 0.],
+                         [0., 1., 0.],
+                         [0., 0., 1.]])
+    self.assertAllClose(actual, expected, check_dtypes=True)
+
+    actual = nn.one_hot(np.array([1, 2, 0]), 3)
+    expected = np.array([[0., 1., 0.],
+                         [0., 0., 1.],
+                         [1., 0., 0.]])
+    self.assertAllClose(actual, expected, check_dtypes=True)
+
+  def testOneHotOutOfBound(self):
+    actual = nn.one_hot(np.array([-1, 3]), 3)
+    expected = np.array([[0., 0., 0.],
+                         [0., 0., 0.]])
+    self.assertAllClose(actual, expected, check_dtypes=True)
+
+  def testOneHotNonArrayInput(self):
+    actual = nn.one_hot([0, 1, 2], 3)
+    expected = np.array([[1., 0., 0.],
+                         [0., 1., 0.],
+                         [0., 0., 1.]])
+    self.assertAllClose(actual, expected, check_dtypes=True)
+
+  def testOneHotCustomDtype(self):
+    actual = nn.one_hot(np.array([0, 1, 2]), 3, dtype=np.bool_)
+    expected = np.array([[True, False, False],
+                         [False, True, False],
+                         [False, False, True]])
+    self.assertAllClose(actual, expected, check_dtypes=True)
 
 InitializerRecord = collections.namedtuple(
   "InitializerRecord",

@@ -17,6 +17,7 @@ import collections
 from contextlib import contextmanager
 import copy
 from functools import partial
+import re
 import unittest
 import warnings
 import weakref
@@ -1762,6 +1763,72 @@ class APITest(jtu.JaxTestCase):
 
     jit(fun)(np.array([0, 1, 2], dtype=np.int32))  # doesn't crash
 
+  def helper_save_tracer(self, x):
+    self._saved_tracer = x
+    return x
+
+  def test_escaped_tracers_diffent_top_level_traces(self):
+    api.jit(self.helper_save_tracer)(0.)
+    with self.assertRaisesRegex(
+        ValueError,
+        re.compile(
+          "Encountered an unexpected tracer.*Different traces at same level",
+          re.DOTALL)):
+      api.jit(lambda x: self._saved_tracer)(0.)
+
+  def test_escaped_tracers_cant_lift_sublevels(self):
+    api.jit(self.helper_save_tracer)(0.)
+    with self.assertRaisesRegex(
+        ValueError,
+        re.compile(
+          "Encountered an unexpected tracer.*Can't lift sublevels 1 to 0",
+          re.DOTALL)):
+      api.jit(lambda x: x)(self._saved_tracer)
+
+  def test_escaped_tracers_tracer_from_higher_level(self):
+    api.grad(self.helper_save_tracer)(0.)
+    with self.assertRaisesRegex(
+        ValueError,
+        re.compile(
+          "Encountered an unexpected tracer.*Tracer from a higher level",
+          re.DOTALL)):
+      api.grad(lambda x: x)(self._saved_tracer)
+
+  def test_escaped_tracers_incompatible_sublevel(self):
+    def func1(x):
+      api.jit(self.helper_save_tracer)(0.)
+      # Use the tracer
+      return x + self._saved_tracer
+    with self.assertRaisesRegex(
+        ValueError,
+        re.compile("Encountered an unexpected tracer.*Incompatible sublevel",
+                   re.DOTALL)):
+      api.jit(func1)(2.)
+
+  def test_escaped_tracers_cant_lift(self):
+    def func1(x):
+      api.grad(self.helper_save_tracer)(0.)
+      return x + self._saved_tracer
+    with self.assertRaisesRegex(
+        ValueError, re.compile("Encountered an unexpected tracer.*Can't lift",
+                               re.DOTALL)):
+      api.grad(func1)(2.)
+
+  def test_escaped_tracers_not_among_input_tracers(self):
+    def func1(x):
+      api.grad(self.helper_save_tracer)(x)
+      # Use the tracer
+      return x + self._saved_tracer
+
+    with self.assertRaisesRegex(
+        ValueError, re.compile(
+          "Encountered an unexpected tracer.*Tracer not among input tracers",
+          re.DOTALL)):
+      api.jit(func1)(2.)
+
+  def test_array_tracer_copy(self):
+    api.value_and_grad(lambda x: x.copy().sum())(np.ones(2))  # doesn't crash
+
 
 class JaxprTest(jtu.JaxTestCase):
 
@@ -1774,11 +1841,11 @@ class JaxprTest(jtu.JaxTestCase):
       return (x, 1., np.zeros(1))
 
     jaxpr = api.make_jaxpr(fun)(0.)
-    self.assertMultiLineStrippedEqual(str(jaxpr), """
-    { lambda b ; a.
-        let
-        in [a, 1.0, b] }
-    """)
+    self.assertMultiLineStrippedEqual("""
+{ lambda b ; a.
+  let 
+  in (a, 1.0, b) }
+    """, str(jaxpr))
 
   def test_cond(self):
     def f(x):
@@ -1788,21 +1855,193 @@ class JaxprTest(jtu.JaxTestCase):
                       x + 2.,
                       lambda xf: xf - x)
     jaxpr = api.make_jaxpr(f)(3.)
-    self.assertMultiLineStrippedEqual(str(jaxpr), """
-    { lambda  ; a.
-      let b = ge a 0.0
-          c = add a 1.0
-          d = add a 2.0
-          e = cond[ false_jaxpr={ lambda  ; b a.
-                                  let c = sub a b
-                                  in [c] }
-                    linear=(False, False, False, False)
-                    true_jaxpr={ lambda  ; b a.
-                                 let c = add a b
-                                 in [c] } ] b a c a d
-      in [e] }
-        """)
+    self.assertMultiLineStrippedEqual("""
+{ lambda  ; a.
+  let b = ge a 0.0
+      c = add a 1.0
+      d = add a 2.0
+      e = cond[ false_jaxpr={ lambda  ; b a.
+                              let c = sub a b
+                              in c }
+                linear=(False, False, False, False)
+                true_jaxpr={ lambda  ; b a.
+                             let c = add a b
+                             in c } ] b a c a d
+  in e }
+        """, str(jaxpr))
 
+  def testExamplesJaxprDoc(self):
+    """Tests examples included in the Understanding JAXPRs doc (docs/jaxpr.rst)."""
+    from jax import numpy as jnp
+    def func1(first, second):
+      temp = first + jnp.sin(second) * 3.
+      return jnp.sum(temp)
+
+    jaxpr = jax.make_jaxpr(func1)(jnp.zeros(8), jnp.ones(8))
+    self.assertMultiLineStrippedEqual("""
+{ lambda  ; a b.
+  let c = sin b
+      d = mul c 3.0
+      e = add a d
+      f = reduce_sum[ axes=(0,)
+                      input_shape=(8,) ] e
+  in f }
+        """, str(jaxpr))
+
+    def func5(first, second):
+      temp = first + np.sin(second) * 3. - jnp.ones(8)
+      return temp
+
+    def func6(first):
+      return func5(first, jnp.ones(8))
+
+    jaxpr = api.make_jaxpr(func6)(jnp.ones(8))
+    self.assertMultiLineStrippedEqual("""
+{ lambda b d ; a.
+  let c = add a b
+      e = sub c d
+  in e }
+            """, str(jaxpr))
+
+    def func7(arg):
+      return lax.cond(arg >= 0.,
+                      arg,
+                      lambda xtrue: xtrue + 3.,
+                      arg,
+                      lambda xfalse: xfalse - 3.)
+
+    jaxpr = api.make_jaxpr(func7)(5.)
+    self.assertMultiLineStrippedEqual("""
+{ lambda  ; a.
+  let b = ge a 0.0
+      c = cond[ false_jaxpr={ lambda  ; a.
+                              let b = sub a 3.0
+                              in b }
+                linear=(False, False)
+                true_jaxpr={ lambda  ; a.
+                             let b = add a 3.0
+                             in b } ] b a a
+  in c }
+                """, str(jaxpr))
+
+    def func8(arg1, arg2):  # arg2 is a pair
+      return lax.cond(arg1 >= 0.,
+                      arg2,
+                      lambda xtrue: xtrue[0],
+                      arg2,
+                      lambda xfalse: jnp.ones(1) + xfalse[1])
+
+    jaxpr = api.make_jaxpr(func8)(5., (jnp.zeros(1), 2.))
+    self.assertMultiLineStrippedEqual("""
+{ lambda e ; a b c.
+  let d = ge a 0.0
+      f = cond[ false_jaxpr={ lambda  ; c a b.
+                              let d = add c b
+                              in d }
+                linear=(False, False, False, False, False)
+                true_jaxpr={ lambda  ; a b.
+                             let 
+                             in a } ] d b c e b c
+  in f }
+                    """, str(jaxpr))
+
+    def func10(arg, n):
+      ones = jnp.ones(arg.shape)  # A constant
+      return lax.fori_loop(0, n,
+                           lambda i, carry: carry + ones * 3. + arg,
+                           arg + ones)
+
+    jaxpr = api.make_jaxpr(func10)(onp.ones(16), 5)
+    self.assertMultiLineStrippedEqual("""
+{ lambda c d ; a b.
+  let e = add a d
+      f g h = while[ body_jaxpr={ lambda  ; e g a b c.
+                                  let d = add a 1
+                                      f = add c e
+                                      h = add f g
+                                  in (d, b, h) }
+                     body_nconsts=2
+                     cond_jaxpr={ lambda  ; a b c.
+                                  let d = lt a b
+                                  in d }
+                     cond_nconsts=0 ] c a 0 b e
+  in h }
+      """, str(jaxpr))
+
+    def func11(arr, extra):
+      ones = jnp.ones(arr.shape)  # A constant
+
+      def body(carry, aelems):
+        # carry: running dot-product of the two arrays
+        # aelems: a pair with corresponding elements from the two arrays
+        ae1, ae2 = aelems
+        return (carry + ae1 * ae2 + extra, carry)
+
+      return lax.scan(body, 0., (arr, ones))
+
+    jaxpr = api.make_jaxpr(func11)(onp.ones(16), 5.)
+    self.assertMultiLineStrippedEqual("""
+{ lambda c ; a b.
+  let d e = scan[ forward=True
+                  jaxpr={ lambda  ; a b c d e.
+                          let f = mul c e
+                              g = add b f
+                              h = add g a
+                          in (h, b) }
+                  length=16
+                  linear=(False, False, False, True, False)
+                  num_carry=1
+                  num_consts=1 ] b 0.0 a * c
+  in (d, e) }
+                        """, str(jaxpr))
+
+    def func12(arg):
+      @api.jit
+      def inner(x):
+        return x + arg * jnp.ones(1)  # Include a constant in the inner function
+
+      return arg + inner(arg - 2.)
+
+    jaxpr = api.make_jaxpr(func12)(1.)
+    self.assertMultiLineStrippedEqual("""
+{ lambda b ; a.
+  let c = sub a 2.0
+      d = xla_call[ backend=None
+                    call_jaxpr={ lambda  ; c b a.
+                                 let d = mul b c
+                                     e = add a d
+                                 in e }
+                    device=None
+                    name=inner ] b a c
+      e = add a d
+  in e }
+                            """, str(jaxpr))
+
+    def func13(arr, extra):
+      def inner(x):
+        # use a free variable "extra" and a constant jnp.ones(1)
+        return (x + extra + jnp.ones(1)) / lax.psum(x, axis_name='rows')
+
+      return api.pmap(inner, axis_name='rows')(arr)
+
+    jaxpr = api.make_jaxpr(func13)(jnp.ones((1, 3)), 5.)
+    self.assertMultiLineStrippedEqual("""
+{ lambda c ; a b.
+  let d = xla_pmap[ axis_name=rows
+                    axis_size=1
+                    backend=None
+                    call_jaxpr={ lambda  ; d b a.
+                                 let c = add a b
+                                     e = add c d
+                                     f = psum[ axis_name=rows ] a
+                                     g = div e f
+                                 in g }
+                    devices=None
+                    global_axis_size=None
+                    mapped_invars=(True, False, True)
+                    name=inner ] c b a
+  in d }
+                              """, str(jaxpr))
 
 class LazyTest(jtu.JaxTestCase):
 

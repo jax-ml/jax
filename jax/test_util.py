@@ -699,7 +699,7 @@ class JaxTestCase(parameterized.TestCase):
     expected_clean = re.sub(ignore_space_re, '\n', expected.strip())
     what_clean = re.sub(ignore_space_re, '\n', what.strip())
     self.assertMultiLineEqual(expected_clean, what_clean,
-                              msg="Expecting\n"+expected)
+                              msg="Found\n{}\nExpecting\n{}".format(what, expected))
 
   def _CompileAndCheck(self, fun, args_maker, check_dtypes,
                        rtol=None, atol=None):
