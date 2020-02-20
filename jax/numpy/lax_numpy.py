@@ -1638,9 +1638,6 @@ def _pad_symmetric_or_reflect(array, pad_width, mode):
 def _pad_edge(array, pad_width):
   nd = ndim(array)
   for i in range(nd):
-    # TODO: what is this business about?  It we have a zero length axis, then our array
-    # contains no values at all, so this padding operation cannot work---here and for reflect,
-    # symmetric, wrap.
     if array.shape[i] == 0:
       _check_no_padding(pad_width[i], mode)
       continue
