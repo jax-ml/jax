@@ -32,6 +32,7 @@ from jax.lax import lax
 from jax import linear_util as lu
 from jax.abstract_arrays import ShapedArray, raise_to_shaped
 from jax.api_util import flatten_fun_nokwargs, apply_flat_fun_nokwargs
+from jax.core import get_aval
 from jax.interpreters import ad
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
@@ -341,7 +342,7 @@ def _while_loop_jvp(primals, tangents, cond_nconsts, cond_jaxpr, body_nconsts,
 
   newvar = core.gensym('')
   invars_aug = (
-      cond_jaxpr.jaxpr.invars + [newvar() for _ in range(len(init_dot))])
+      cond_jaxpr.jaxpr.invars + [newvar(get_aval(x)) for x in init_dot])
   cond_jaxpr_augmented = core.Jaxpr(cond_jaxpr.jaxpr.constvars,
                                     invars_aug,
                                     cond_jaxpr.jaxpr.outvars,
@@ -947,6 +948,11 @@ def _scan_partial_eval(trace, *tracers, forward, length, num_consts, num_carry,
   const_avals_1 = [raise_to_shaped(core.get_aval(c)) for c in consts_1]
   in_avals_1 = [core.abstract_unit] * num_consts + jaxpr_1.in_avals[num_consts:]
   out_avals_1 = [core.abstract_unit if pv is None else pv for pv, c in out_pvals_1]
+
+  # TODO(cjfj): Explain the need for the code below.
+  for var in untyped_jaxpr_1.invars[:num_consts]:
+    var.aval = core.abstract_unit
+
   jaxpr_1_opt = pe.TypedJaxpr(pe.convert_constvars_jaxpr(untyped_jaxpr_1),
                               (), const_avals_1 + in_avals_1, out_avals_1)
   num_consts_1 = num_consts + len(consts_1)
