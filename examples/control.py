@@ -21,11 +21,9 @@ from __future__ import print_function
 
 import collections
 
-import jax
-from jax import lax
+from jax import lax, grad, jacfwd, jacobian, vmap
 import jax.numpy as np
 import jax.ops as jo
-from jax import grad, hessian, jacfwd, jacobian, jacrev, vmap
 
 
 # Specifies a general finite-horizon, time-varying control problem. Given cost
