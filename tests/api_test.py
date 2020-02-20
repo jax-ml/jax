@@ -1826,9 +1826,6 @@ class APITest(jtu.JaxTestCase):
           re.DOTALL)):
       api.jit(func1)(2.)
 
-  def test_array_tracer_copy(self):
-    api.value_and_grad(lambda x: x.copy().sum())(np.ones(2))  # doesn't crash
-
 
 class JaxprTest(jtu.JaxTestCase):
 
