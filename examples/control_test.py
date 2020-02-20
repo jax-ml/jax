@@ -84,14 +84,14 @@ class ControlExampleTest(jtu.JaxTestCase):
     X = control.trajectory(dynamics, U, np.zeros(1))
     expected = np.arange(T + 1) % num_states
     expected = np.reshape(expected, (T + 1, 1))
-    self.assertAllClose(X, expected, check_dtypes=True)
+    self.assertAllClose(X, expected, check_dtypes=False)
 
     U = 2 * np.ones((T, 1))
     X = control.trajectory(dynamics, U, np.zeros(1))
     expected = np.cumsum(2 * np.ones(T)) % num_states
     expected = np.concatenate((np.zeros(1), expected))
     expected = np.reshape(expected, (T + 1, 1))
-    self.assertAllClose(X, expected, check_dtypes=True)
+    self.assertAllClose(X, expected, check_dtypes=False)
 
   def testTrajectoryTimeVarying(self):
     T = 6
@@ -137,7 +137,7 @@ class ControlExampleTest(jtu.JaxTestCase):
     p = one_step_lqr(dim, T)
     K, k = control.lqr_solve(p)
     K_ = -np.stack(T * (np.eye(dim),))
-    self.assertAllClose(K, K_, check_dtypes=True)
+    self.assertAllClose(K, K_, check_dtypes=True, atol=1e-6, rtol=1e-6)
     self.assertAllClose(k, np.zeros((T, dim)), check_dtypes=True)
 
 
@@ -148,9 +148,12 @@ class ControlExampleTest(jtu.JaxTestCase):
     x0 = randn(dim)
     X, U = control.lqr_predict(p, x0)
     self.assertAllClose(X[0], x0, check_dtypes=True)
-    self.assertAllClose(U[0], -x0, check_dtypes=True)
-    self.assertAllClose(X[1:], np.zeros((T, 2)), check_dtypes=True)
-    self.assertAllClose(U[1:], np.zeros((T - 1, 2)), check_dtypes=True)
+    self.assertAllClose(U[0], -x0, check_dtypes=True,
+                        atol=1e-6, rtol=1e-6)
+    self.assertAllClose(X[1:], np.zeros((T, 2)), check_dtypes=True,
+                        atol=1e-6, rtol=1e-6)
+    self.assertAllClose(U[1:], np.zeros((T - 1, 2)), check_dtypes=True,
+                        atol=1e-6, rtol=1e-6)
 
 
   def testIlqrWithLqrProblem(self):
