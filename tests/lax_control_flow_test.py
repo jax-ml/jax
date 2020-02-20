@@ -820,6 +820,19 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = f(4.)
     self.assertAllClose(y, expected, check_dtypes=False)
 
+  def testCondVmapGrad(self):
+    # https://github.com/google/jax/issues/2264
+    def f_1(x): return x ** 2
+    def f_2(x): return x ** 3
+
+    def f(x): return lax.cond(x > 0, x, f_1, x, f_2)
+    def g(x): return np.where(x > 0, f_1(x), f_2(x))
+
+    x = np.linspace(-1, 1, 20)
+    ans = api.vmap(api.grad(f))(x)
+    expected = api.vmap(api.grad(g))(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def testIssue1263(self):
     def f(rng, x):
       cond = random.bernoulli(rng)

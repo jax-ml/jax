@@ -449,8 +449,11 @@ def _cond_translation_rule(c, axis_env, name_stack, pred, *args,
   return c.Conditional(pred, true_op, true_c, false_op, false_c)
 
 def _cond_pred_bcast_select(pred, x, y):
-  bcast_pred = lax.broadcast_in_dim(pred, onp.shape(x), list(range(onp.ndim(pred))))
-  return lax.select(bcast_pred, x, y)
+  if core.get_aval(x) is core.get_aval(y) is core.abstract_unit:
+    return x
+  else:
+    bcast_pred = lax.broadcast_in_dim(pred, onp.shape(x), list(range(onp.ndim(pred))))
+    return lax.select(bcast_pred, x, y)
 
 def _cond_batching_rule(args, dims, true_jaxpr, false_jaxpr, linear):
   # TODO: maybe avoid moving arg axes to front if we're promoting to select?
