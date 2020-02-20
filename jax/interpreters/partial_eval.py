@@ -212,33 +212,34 @@ class JaxprTrace(Trace):
     # though it has to pass through the linear_util machinery.
     # This might involve a Store. Also just understand what this does
     # and why...
-    jaxpr, consts, env = tracers_to_jaxpr([], out_tracers)
-    out_pvs_reduced, out_pv_consts = unzip2(t.pval for t in out_tracers)
-    out_pvs = [None if pv is None else map_aval(params['axis_size'], pv, dim)
-               for pv, dim in zip(out_pvs_reduced, ]
-    out = out_pv_consts + consts
-    del consts, out_pv_consts
-    master = self.master
-    def todo(x):
-      n = len(jaxpr.outvars)
-      out_pv_consts, consts = x[:n], x[n:]
-      trace = JaxprTrace(master, core.cur_sublevel())
-      const_tracers = map(trace.new_instantiated_const, consts)
-      # The `jaxpr` already contains the env_vars at start of invars
-      lifted_jaxpr = convert_constvars_jaxpr(jaxpr)
-      out_tracers = [JaxprTracer(trace, PartialVal((out_pv, out_pv_const)), None)
-                     for out_pv, out_pv_const in zip(out_pvs, out_pv_consts)]
-      new_params = dict(params,
-                        mapped_invars=tuple([True] * len(const_tracers) +
-                                            [False] * len(env)),
-                        call_jaxpr=lifted_jaxpr)
-      env_tracers = map(trace.full_raise, env)
-      eqn = new_eqn_recipe(it.chain(const_tracers, env_tracers),
-                           out_tracers, map_primitive, new_params)
-      for t in out_tracers:
-        t.recipe = eqn
-      return out_tracers
-    return out, todo
+    raise NotImplementedError
+    # jaxpr, consts, env = tracers_to_jaxpr([], out_tracers)
+    # out_pvs_reduced, out_pv_consts = unzip2(t.pval for t in out_tracers)
+    # out_pvs = [None if pv is None else map_aval(params['axis_size'], pv, dim)
+    #            for pv, dim in zip(out_pvs_reduced, ]
+    # out = out_pv_consts + consts
+    # del consts, out_pv_consts
+    # master = self.master
+    # def todo(x):
+    #   n = len(jaxpr.outvars)
+    #   out_pv_consts, consts = x[:n], x[n:]
+    #   trace = JaxprTrace(master, core.cur_sublevel())
+    #   const_tracers = map(trace.new_instantiated_const, consts)
+    #   # The `jaxpr` already contains the env_vars at start of invars
+    #   lifted_jaxpr = convert_constvars_jaxpr(jaxpr)
+    #   out_tracers = [JaxprTracer(trace, PartialVal((out_pv, out_pv_const)), None)
+    #                  for out_pv, out_pv_const in zip(out_pvs, out_pv_consts)]
+    #   new_params = dict(params,
+    #                     mapped_invars=tuple([True] * len(const_tracers) +
+    #                                         [False] * len(env)),
+    #                     call_jaxpr=lifted_jaxpr)
+    #   env_tracers = map(trace.full_raise, env)
+    #   eqn = new_eqn_recipe(it.chain(const_tracers, env_tracers),
+    #                        out_tracers, map_primitive, new_params)
+    #   for t in out_tracers:
+    #     t.recipe = eqn
+    #   return out_tracers
+    # return out, todo
 
 # This subclass is used just for its type tag, which switches the behavior of
 # process_call to stage out into the jaxpr any call primitives encountered
