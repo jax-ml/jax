@@ -1857,10 +1857,6 @@ def asarray(a, dtype=None, order=None):
   lax._check_user_dtype_supported(dtype, "asarray")
   return array(a, dtype=dtype, copy=False, order=order)
 
-@_wraps(onp.copy)
-def copy(a, order='K'):
-  return array(a, copy=True, order=order)
-
 
 @_wraps(onp.zeros_like)
 def zeros_like(x, dtype=None):
@@ -3481,8 +3477,7 @@ _nondiff_methods = ["all", "any", "argmax", "argmin", "argpartition", "argsort",
 _diff_methods = ["clip", "compress", "conj", "conjugate", "cumprod", "cumsum",
                  "diagonal", "dot", "max", "mean", "min", "prod", "ptp",
                  "ravel", "repeat", "sort", "squeeze", "std", "sum",
-                 "swapaxes", "take", "tile", "trace", "transpose", "var",
-                 "copy"]
+                 "swapaxes", "take", "tile", "trace", "transpose", "var"]
 
 
 # Set up operator, method, and property forwarding on Tracer instances containing
