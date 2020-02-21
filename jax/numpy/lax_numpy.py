@@ -151,6 +151,8 @@ float64 = double = _make_scalar_type(onp.float64)
 complex64 = csingle = _make_scalar_type(onp.complex64)
 complex128 = cdouble = _make_scalar_type(onp.complex128)
 
+complex_dtypes = [complex64, complex128]
+
 int_ = int32 if dtypes.int_ == onp.int32 else int64
 float_ = float32 if dtypes.float_ == onp.float32 else float64
 complex_ = complex64 if dtypes.complex_ == onp.complex64 else complex128
@@ -1397,15 +1399,7 @@ def var(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
   if out is not None:
     raise ValueError("var does not support the `out` argument.")
 
-  a_dtype = _dtype(a)
-  if dtype:
-    a_dtype = promote_types(a_dtype, dtype)
-  else:
-    if not issubdtype(a_dtype, inexact):
-      dtype = a_dtype = float_
-    else:
-      dtype = _complex_elem_type(a_dtype)
-      a_dtype = promote_types(a_dtype, float32)
+  a_dtype, dtype = _var_promote_types(_dtype(a), dtype)
   a_mean = mean(a, axis, dtype=a_dtype, keepdims=True)
   centered = a - a_mean
   if issubdtype(centered.dtype, complexfloating):
@@ -1423,6 +1417,20 @@ def var(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
   out = lax.div(result, lax.convert_element_type(normalizer, result.dtype))
   return lax.convert_element_type(out, dtype)
 
+
+def _var_promote_types(a_dtype, dtype):
+  if dtype:
+    if dtype not in complex_dtypes and a_dtype in complex_dtypes:
+      raise ValueError("dtype must be complex when calling var on a "
+                       "complex-valued array, got {} instead".format(dtype))
+    a_dtype = promote_types(a_dtype, dtype)
+  else:
+    if not issubdtype(a_dtype, inexact):
+      dtype = a_dtype = float_
+    else:
+      dtype = _complex_elem_type(a_dtype)
+      a_dtype = promote_types(a_dtype, float32)
+  return a_dtype, dtype
 
 
 @_wraps(onp.std)
@@ -1501,6 +1509,38 @@ def nanmean(a, axis=None, dtype=None, out=None, keepdims=False):
   normalizer = lax.convert_element_type(normalizer, dtype)
   td = lax.div(nansum(a, axis, dtype=dtype, keepdims=keepdims), normalizer)
   return td
+
+
+@_wraps(onp.nanvar)
+def nanvar(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
+  if out is not None:
+    raise ValueError("nanvar does not support the `out` argument.")
+
+  a_dtype, dtype = _var_promote_types(_dtype(a), dtype)
+  a_mean = nanmean(a, axis, dtype=a_dtype, keepdims=True)
+  centered = a - a_mean
+  if issubdtype(centered.dtype, complexfloating):
+    centered = lax.real(lax.mul(centered, lax.conj(centered)))
+  else:
+    centered = lax.square(centered)
+
+  normalizer = sum(logical_not(isnan(a)), axis=axis, keepdims=keepdims)
+  normalizer = normalizer - ddof
+  normalizer_mask = lax.le(normalizer, 0)
+
+  result = nansum(centered, axis, keepdims=keepdims)
+  result = where(normalizer_mask, nan, result)
+  divisor = where(normalizer_mask, 1, normalizer)
+  out = lax.div(result, lax.convert_element_type(divisor, result.dtype))
+  return lax.convert_element_type(out, dtype)
+
+
+@_wraps(onp.nanstd)
+def nanstd(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
+  if out is not None:
+    raise ValueError("nanstd does not support the `out` argument.")
+  return sqrt(nanvar(a, axis=axis, dtype=dtype, ddof=ddof, keepdims=keepdims))
+
 
 def _make_cumulative_reduction(onp_reduction, window_reduce, init_val,
                                squash_nan=False):
