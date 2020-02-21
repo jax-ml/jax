@@ -272,7 +272,8 @@ replicated and executed in parallel accross devices.
 Here's an example on an 8-GPU machine:
 
 ```python
-from jax import random
+from jax import random, pmap
+import jax.numpy as np
 
 # Create 8 random 5000 x 6000 matrices, one per GPU
 keys = random.split(random.PRNGKey(0), 8)
