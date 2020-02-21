@@ -1036,6 +1036,11 @@ def sort_key_val(keys, values, dimension=-1):
   sorted_keys, sorted_values = result
   return sorted_keys, sorted_values
 
+def top_k(operand, k):
+  k = int(k)
+  if k < 0:
+    raise ValueError("k argument to top_k must be nonnegative, got {}".format(k))
+  return top_k_p.bind(operand, k=k)
 
 def tie_in(x, y):
   return tie_in_p.bind(x, y)
@@ -4034,7 +4039,6 @@ sort_p = standard_primitive(sort_shape, _input_dtype, 'sort')
 ad.defjvp(sort_p, _sort_jvp_rule)
 batching.primitive_batchers[sort_p] = _sort_batch_rule
 
-
 def _sort_key_val_abstract_eval(keys, values, dimension):
   return raise_to_shaped(keys), raise_to_shaped(values)
 
@@ -4104,6 +4108,19 @@ xla.translations[sort_key_val_p] = partial(standard_translate, 'sort_key_val')
 ad.primitive_jvps[sort_key_val_p] = _sort_key_val_jvp
 ad.primitive_transposes[sort_key_val_p] = _sort_key_val_transpose_rule
 batching.primitive_batchers[sort_key_val_p] = _sort_key_val_batch_rule
+
+
+def _top_k_abstract_eval(operand, k):
+  if len(operand.shape) == 0:
+    raise TypeError("top_k operand must have >= 1 dimension, got {}"
+                    .format(operand.shape))
+  return raise_to_shaped(operand), ShapedArray(operand.shape, onp.int32)
+
+top_k_p = Primitive('top_k')
+top_k_p.multiple_results = True
+top_k_p.def_impl(partial(xla.apply_primitive, top_k_p))
+top_k_p.def_abstract_eval(_top_k_abstract_eval)
+xla.translations[top_k_p] = partial(standard_translate, 'top_k')
 
 
 def _tie_in_transpose_rule(t):
