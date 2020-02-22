@@ -68,7 +68,7 @@ keyword argument `strip_zeros=False` to get a jit-compatible variant:
 DeviceArray([-2.+0.j], dtype=complex64)
 >>> roots_unsafe([0, 1, 2])  # problem
 DeviceArray([nan+nanj, nan+nanj], dtype=complex64)
->>> roots([0, 1, 2])         # use the no-jit version instead
+>>> np.roots([0, 1, 2])         # use the no-jit version instead
 DeviceArray([-2.+0.j], dtype=complex64)
 """)
 def roots(p, strip_zeros=True):
