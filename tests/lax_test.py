@@ -1328,7 +1328,7 @@ class LaxTest(jtu.JaxTestCase):
       for shape in [(3,), (5, 3)]
       for k in [1, 3]
       for rng_factory in [jtu.rand_default]))
-  @unittest.skipIf(jax.lib.version <= (0, 1, 40), "Test requires jaxlib 0.1.40")
+  @unittest.skipIf(jax.lib.version < (0, 1, 40), "Test requires jaxlib 0.1.40")
   def testTopK(self, shape, dtype, k, rng_factory):
     rng = rng_factory()
     perm_rng = onp.random.RandomState(0)
@@ -1342,6 +1342,7 @@ class LaxTest(jtu.JaxTestCase):
       return sorted_vals[..., :-k-1:-1], sorted_idxs[..., :-k-1:-1]
     op = lambda vs: lax.top_k(vs, k=k)
     self._CheckAgainstNumpy(op, reference_top_k, args_maker)
+    self._CompileAndCheck(op, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_lhs_shape={}_rhs_shape={}"
