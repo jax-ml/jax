@@ -51,6 +51,16 @@ class NNFunctionsTest(jtu.JaxTestCase):
     val = nn.elu(1e4)
     self.assertAllClose(val, 1e4, check_dtypes=False)
 
+  @parameterized.parameters(*itertools.product(
+      (np.float32, np.bfloat16, np.float16),
+      (nn.gelu, nn.relu, nn.softplus, nn.sigmoid)))
+  def testDtypeMatchesInput(self, dtype, fn):
+    if dtype is np.float16 and jtu.device_under_test() == "tpu":
+      self.skipTest("float16 not supported on TPU")
+    x = np.zeros((), dtype=dtype)
+    out = fn(x)
+    self.assertEqual(out.dtype, dtype)
+
   @jtu.skip_on_devices("gpu", "tpu")
   def testEluMemory(self):
     # see https://github.com/google/jax/pull/1640

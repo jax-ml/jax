@@ -721,6 +721,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for dtype in float_types + complex_types
       for n in [-5, -2, -1, 0, 1, 2, 3, 4, 5, 10]
       for rng_factory in [jtu.rand_default]))
+  @jtu.skip_on_devices("tpu")  # TODO(b/149870255): Bug in XLA:TPU?.
   def testMatrixPower(self, shape, dtype, n, rng_factory):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
