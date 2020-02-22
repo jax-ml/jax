@@ -1399,6 +1399,14 @@ def var(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
 
   a_dtype = _dtype(a)
   if dtype:
+    if (not issubdtype(dtype, complexfloating) and
+        issubdtype(a_dtype, complexfloating)):
+      msg = ("jax.numpy.var does not yet support real dtype parameters when "
+             "computing the variance of an array of complex values. The "
+             "semantics of numpy.var seem unclear in this case. Please comment "
+             "on https://github.com/google/jax/issues/2283 if this behavior is "
+             "important to you.")
+      raise ValueError(msg)
     a_dtype = promote_types(a_dtype, dtype)
   else:
     if not issubdtype(a_dtype, inexact):

@@ -2281,10 +2281,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     lnp_fun = partial(lnp.var, dtype=out_dtype, axis=axis, ddof=ddof, keepdims=keepdims)
     tol = jtu.tolerance(out_dtype, {onp.float16: 1e-1, onp.float32: 1e-3,
                                     onp.float64: 1e-3, onp.complex128: 1e-6})
-    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True,
-                            tol=tol)
-    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True, rtol=tol,
-                          atol=tol)
+    if (lnp.issubdtype(dtype, lnp.complexfloating) and
+        not lnp.issubdtype(out_dtype, lnp.complexfloating)):
+      self.assertRaises(ValueError, lambda: lnp_fun(*args_maker()))
+    else:
+      self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True,
+                              tol=tol)
+      self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True, rtol=tol,
+                            atol=tol)
 
   @parameterized.named_parameters(
       jtu.cases_from_list(
