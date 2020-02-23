@@ -35,9 +35,6 @@ from ..third_party.numpy.linalg import cond, tensorinv, tensorsolve
 
 _T = lambda x: np.swapaxes(x, -1, -2)
 
-###############
-# implementing multi dot
-
 
 @_wraps(onp.linalg.multi_dot)
 def multi_dot(arrays):
@@ -47,18 +44,17 @@ def multi_dot(arrays):
         raise ValueError("Expecting at least two arrays.")
     elif n == 2:
         return dot(arrays[0], arrays[1])
-    # removed asanyarray for testing !!
+
     arrays = [np.asarray(a) for a in arrays]
 
     # save original ndim to reshape the result array into the proper form later
     ndim_first, ndim_last = arrays[0].ndim, arrays[-1].ndim
-    # Explicitly convert vectors to 2D arrays to keep the logic of the internal
-    # _multi_dot_* functions as simple as possible.
+    # Explicitly convert vectors to 2D arrays
     if arrays[0].ndim == 1:
         arrays[0] = atleast_2d(arrays[0])
     if arrays[-1].ndim == 1:
         arrays[-1] = atleast_2d(arrays[-1]).T
-    #_assertRank2 added to lax_numpy    !!
+
     _assertRank2(*arrays)
 
     # _multi_dot_three is much faster than _multi_dot_matrix_chain_order
@@ -80,7 +76,7 @@ def multi_dot(arrays):
 def _multi_dot_three(A, B, C):
     """
     Find the best order for three arrays and do the multiplication.
-    For three arguments `_multi_dot_three` is approximately 15 times faster
+    For three arguments `_multi_dot_three` is faster
     than `_multi_dot_matrix_chain_order`
     """
     a0, a1b0 = A.shape
@@ -96,26 +92,22 @@ def _multi_dot_three(A, B, C):
         return dot(A, dot(B, C))
 
 
-def _multi_dot_matrix_chain_order(arrays, return_costs=False):
+def _multi_dot_matrix_chain_order(arrays):
     """
-    Return a np.array that encodes the optimal order of mutiplications.
+    Return a np.array that encodes the optimal order of multiplications.
     The optimal order array is then used by `_multi_dot()` to do the
     multiplication.
-    Also return the cost matrix if `return_costs` is `True`
     """
     n = len(arrays)
     # p stores the dimensions of the matrices
     # Example for p: A_{10x100}, B_{100x5}, C_{5x50} --> p = [10, 100, 5, 50]
     p = [a.shape[0] for a in arrays] + [arrays[-1].shape[1]]
-    # m is a matrix of costs of the subproblems
+    # m is a matrix of costs of the sub-problems
     # m[i,j]: min number of scalar multiplications needed to compute A_{i..j}
-    m = zeros((n, n), dtype=double)
+    m = onp.zeros((n, n), dtype=onp.double)
     # s is the actual ordering
     # s[i, j] is the value of k at which we split the product A_i..A_j
-    # replaced empty with zeros since it wasn't implemented !!
-    # might be slower!!
-    # replaced intp with int64 since intp was not available in lax_numpy !!
-    s = zeros((n, n), dtype=int64)
+    s = onp.empty((n, n), dtype=onp.intp)
 
     for l in range(1, n):
         for i in range(n - l):
@@ -127,7 +119,7 @@ def _multi_dot_matrix_chain_order(arrays, return_costs=False):
                     m[i, j] = q
                     s[i, j] = k  # Note that Cormen uses 1-based index
 
-    return (s, m) if return_costs else s
+    return s
 
 
 def _multi_dot(arrays, order, i, j):
@@ -137,10 +129,6 @@ def _multi_dot(arrays, order, i, j):
     else:
         return dot(_multi_dot(arrays, order, i, order[i, j]),
                    _multi_dot(arrays, order, order[i, j] + 1, j))
-
-
-
-###########
 
 
 def _promote_arg_dtypes(*args):
