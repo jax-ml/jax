@@ -226,7 +226,7 @@ def scale_by_adam(b1=0.9, b2=0.999, eps=1e-8):
   def init_fn(params):
     mu = tree_multimap(jnp.zeros_like, params)  # First moment
     nu = tree_multimap(jnp.zeros_like, params)  # Second moment
-    return ScaleByAdamState(count=jnp.zeros([]), mu=mu, nu=nu)
+    return ScaleByAdamState(count=jnp.zeros([], jnp.int32), mu=mu, nu=nu)
 
   def update_fn(updates, state):
     mu = _update_moment(updates, state.mu, b1, 1)
@@ -278,7 +278,7 @@ def scale_by_schedule(step_size_fn):
   """
 
   def init_fn(_):
-    return ScaleByScheduleState(count=jnp.zeros([]))
+    return ScaleByScheduleState(count=jnp.zeros([], jnp.int32))
 
   def update_fn(updates, state):
     updates = tree_multimap(lambda g: step_size_fn(state.count) * g, updates)
@@ -306,7 +306,8 @@ def add_noise(eta, gamma, seed):
   """
 
   def init_fn(_):
-    return AddNoiseState(count=jnp.zeros([]), rng_key=jrandom.PRNGKey(seed))
+    return AddNoiseState(count=jnp.zeros([], jnp.int32),
+                         rng_key=jrandom.PRNGKey(seed))
 
   def update_fn(updates, state):  # pylint: disable=missing-docstring
     num_vars = len(tree_leaves(updates))
