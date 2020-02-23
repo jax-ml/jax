@@ -18,6 +18,7 @@ import functools
 from functools import partial
 import itertools
 from typing import Optional, cast
+import unittest
 from unittest import skip, SkipTest
 
 from absl.testing import absltest
@@ -1318,6 +1319,29 @@ class LaxTest(jtu.JaxTestCase):
     op = lambda ks, vs: lax.sort_key_val(ks, vs, axis)
     numpy_op = lambda ks, vs: lax_reference.sort_key_val(ks, vs, axis)
     self._CheckAgainstNumpy(op, numpy_op, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_k={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), k),
+       "rng_factory": rng_factory, "shape": shape, "dtype": dtype, "k": k}
+      for dtype in [onp.float32, onp.int32, onp.uint32]
+      for shape in [(3,), (5, 3)]
+      for k in [1, 3]
+      for rng_factory in [jtu.rand_default]))
+  @unittest.skipIf(jax.lib.version <= (0, 1, 40), "Test requires jaxlib 0.1.40")
+  def testTopK(self, shape, dtype, k, rng_factory):
+    rng = rng_factory()
+    perm_rng = onp.random.RandomState(0)
+    def args_maker():
+      flat_values = onp.arange(onp.prod(shape, dtype=int), dtype=dtype)
+      values = perm_rng.permutation(flat_values).reshape(shape)
+      return [values]
+    def reference_top_k(x):
+      bcast_idxs = onp.broadcast_to(onp.arange(shape[-1]), shape)
+      sorted_vals, sorted_idxs = lax_reference.sort_key_val(x, bcast_idxs)
+      return sorted_vals[..., :-k-1:-1], sorted_idxs[..., :-k-1:-1]
+    op = lambda vs: lax.top_k(vs, k=k)
+    self._CheckAgainstNumpy(op, reference_top_k, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_lhs_shape={}_rhs_shape={}"

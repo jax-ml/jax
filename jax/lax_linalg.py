@@ -641,6 +641,8 @@ def _lu_pivots_body_fn(i, permutation_and_swaps):
   permutation = ops.index_update(permutation, ops.index[..., i], y)
   return ops.index_update(permutation, ops.index[iotas + (j,)], x), swaps
 
+
+@partial(api.jit, static_argnums=(1,))
 def lu_pivots_to_permutation(swaps, m):
   """Converts the pivots (row swaps) returned by LU to a permutation.
 

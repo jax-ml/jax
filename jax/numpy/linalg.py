@@ -27,6 +27,7 @@ from .. import lax_linalg
 from .. import dtypes
 from .lax_numpy import _not_implemented, atleast_2d, _assertRank2, dot, zeros, double, int64, inf
 from .lax_numpy import _wraps
+from .vectorize import vectorize
 from . import lax_numpy as np
 from ..api import custom_transforms, defjvp
 from ..util import get_module_functions
@@ -435,16 +436,38 @@ def qr(a, mode="reduced"):
   return q, r
 
 
-@_wraps(onp.linalg.solve)
-@jit
-def solve(a, b):
-  a, b = _promote_arg_dtypes(np.asarray(a), np.asarray(b))
+def _check_solve_shapes(a, b):
   if not (a.ndim >= 2 and a.shape[-1] == a.shape[-2] and b.ndim >= 1):
     msg = ("The arguments to solve must have shapes a=[..., m, m] and "
            "b=[..., m, k] or b=[..., m]; got a={} and b={}")
     raise ValueError(msg.format(a.shape, b.shape))
-  lu, pivots = lax_linalg.lu(a)
-  return lax_linalg.lu_solve(lu, pivots, b, trans=0)
+
+
+@partial(vectorize, signature='(n,m),(m)->(n)')
+def _matvec_multiply(a, b):
+  return np.dot(a, b, precision=lax.Precision.HIGHEST)
+
+
+@_wraps(onp.linalg.solve)
+@jit
+def solve(a, b):
+  a, b = _promote_arg_dtypes(np.asarray(a), np.asarray(b))
+  _check_solve_shapes(a, b)
+
+  # With custom_linear_solve, we can reuse the same factorization when
+  # computing sensitivities. This is considerably faster.
+  lu, pivots = lax.stop_gradient(lax_linalg.lu)(a)
+  custom_solve = partial(
+      lax.custom_linear_solve,
+      lambda x: _matvec_multiply(a, x),
+      solve=lambda _, x: lax_linalg.lu_solve(lu, pivots, x, trans=0),
+      transpose_solve=lambda _, x: lax_linalg.lu_solve(lu, pivots, x, trans=1))
+  if a.ndim == b.ndim + 1:
+    # b.shape == [..., m]
+    return custom_solve(b)
+  else:
+    # b.shape == [..., m, k]
+    return vmap(custom_solve, b.ndim - 1, max(a.ndim, b.ndim) - 1)(b)
 
 
 for func in get_module_functions(onp.linalg):
