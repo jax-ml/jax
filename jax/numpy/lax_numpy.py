@@ -303,7 +303,7 @@ def update_numpydoc(docstr, fun, op):
   parameters = '\n'.join(param_list).replace('@@', '\n    ')
   return docstr[:begin_idx + 1] + parameters + docstr[end_idx - 2:]
 
-_numpy_signature_re = re.compile(r'^([\w., ]+=)?\s*[\w\.]+\(.*\)$')
+_numpy_signature_re = re.compile(r'^([\w., ]+=)?\s*[\w\.]+\([\w\W]*\)$')
 
 def _wraps(fun, update_doc=True, lax_description=""):
   """Like functools.wraps but works with numpy.ufuncs.
