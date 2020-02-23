@@ -1984,7 +1984,7 @@ class ShapeDtypeStruct(object):
 
   def __repr__(self):
     return "{}(shape={}, dtype={})".format(
-        type(self).__name__, self.shape, self.dtype.dtype.name)
+        type(self).__name__, self.shape, self.dtype.name)
 
   __str__ = __repr__
 
