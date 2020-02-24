@@ -4109,12 +4109,19 @@ ad.primitive_jvps[sort_key_val_p] = _sort_key_val_jvp
 ad.primitive_transposes[sort_key_val_p] = _sort_key_val_transpose_rule
 batching.primitive_batchers[sort_key_val_p] = _sort_key_val_batch_rule
 
-
 def _top_k_abstract_eval(operand, k):
+  if k < 0:
+    raise ValueError("k argument to top_k must be nonnegative, got {}".format(k))
   if len(operand.shape) == 0:
     raise TypeError("top_k operand must have >= 1 dimension, got {}"
                     .format(operand.shape))
-  return raise_to_shaped(operand), ShapedArray(operand.shape, onp.int32)
+  shape = list(operand.shape)
+  if shape[-1] < k:
+    msg = "k argument to top_k must be no larger than minor dimension; {} vs {}"
+    raise ValueError(msg.format(k, shape))
+  shape[-1] = k
+  return (ShapedArray(shape, operand.dtype),
+          ShapedArray(shape, onp.dtype(onp.int32)))
 
 top_k_p = Primitive('top_k')
 top_k_p.multiple_results = True
