@@ -277,6 +277,68 @@ def Dropout(rate, mode='train'):
   return init_fun, apply_fun
 
 
+def GRU(out_dim, W_init=glorot(), b_init=normal()):
+     """Layer construction function for a Gated Recurrent Unit (GRU) layer."""
+    def init_fun(rng, input_shape):
+        """ Initialize the GRU layer for stax. """
+        hidden = b_init(rng, (input_shape[0], out_dim))
+
+        k1, k2, k3 = random.split(rng, num=3)
+        update_W, update_U, update_b = (
+            W_init(k1, (input_shape[2], out_dim)),
+            W_init(k2, (out_dim, out_dim)),
+            b_init(k3, (out_dim,)),
+        )
+
+        k1, k2, k3 = random.split(rng, num=3)
+        reset_W, reset_U, reset_b = (
+            W_init(k1, (input_shape[2], out_dim)),
+            W_init(k2, (out_dim, out_dim)),
+            b_init(k3, (out_dim,)),
+        )
+
+        k1, k2, k3 = random.split(rng, num=3)
+        out_W, out_U, out_b = (
+            W_init(k1, (input_shape[2], out_dim)),
+            W_init(k2, (out_dim, out_dim)),
+            b_init(k3, (out_dim,)),
+        )
+        # Input dim 0 represents the batch dimension
+        # Input dim 1 represents the time dimension (before scan moveaxis)
+        output_shape = (input_shape[0], out_dim)
+        return (output_shape,
+            (hidden,
+             (update_W, update_U, update_b),
+             (reset_W, reset_U, reset_b),
+             (out_W, out_U, out_b),),)
+
+    def apply_fun_scan(params, hidden, inp):
+        """ Perform single step update of the network """
+        _, (update_W, update_U, update_b), (reset_W, reset_U, reset_b), (
+            out_W, out_U, out_b) = params
+
+        update_gate = sigmoid(np.dot(inp, update_W) + np.dot(hidden, update_U) + update_b)
+        reset_gate = sigmoid(np.dot(inp, reset_W) + np.dot(hidden, reset_U) + reset_b)
+        output_gate = np.tanh(np.dot(inp, out_W)
+                              + np.dot(np.multiply(reset_gate, hidden), out_U)
+                              + out_b)
+        output = np.multiply(update_gate, hidden) + np.multiply(1-update_gate, output_gate)
+        hidden = output
+        return hidden, hidden
+
+    def apply_fun(params, inputs, **kwargs):
+        """ Loop over the time steps of the input sequence """
+        h = params[0]
+        # Move the time dimension to position 0
+        inputs = np.moveaxis(inputs, 1, 0)
+        f = partial(apply_fun_scan, params)
+        # Use lax.scan for fast compilation
+        _, h_new = lax.scan(f, h, inputs)
+        return h_new
+
+    return init_fun, apply_fun
+
+
 # Composing layers via combinators
 
 
