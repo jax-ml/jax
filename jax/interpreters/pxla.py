@@ -460,12 +460,10 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   pvals = [pe.PartialVal((aval, core.unit)) for aval in avals]
   # We add a dummy first invar, to carry the trace details to `dynamic_fun`
   pval = pe.PartialVal([core.abstract_unit, core.unit])  # dummy value for axis env
-  with core.new_master(pe.StagingJaxprTrace, True) as master:
-    jaxpr, (out_pvals, consts, env) = pe.trace_to_subjaxpr(
-        dynamic_fun, master, False).call_wrapped([pval] + pvals)
-    jaxpr.invars = jaxpr.invars[1:]  # ignore dummy
-    assert not env
-    del master
+  jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
+      dynamic_fun, [pval] + pvals, instantiate=False, stage_out_calls=True, bottom=True)
+  jaxpr.invars = jaxpr.invars[1:]  # ignore dummy
+
   out_pvs, out_consts = unzip2(out_pvals)
 
   # TODO(skye,mattjj): allow more collectives on multi-host as we test them, but
