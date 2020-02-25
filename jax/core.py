@@ -21,6 +21,7 @@ from functools import total_ordering
 import itertools as it
 from weakref import ref
 import threading
+from typing import Dict, Generator, Iterator, Sequence, Type
 import types
 from typing import Any, Callable, ClassVar, Dict, List, Optional, Set
 
@@ -28,8 +29,9 @@ import numpy as onp
 
 from . import dtypes
 from . import linear_util as lu
+
 from .util import safe_zip, safe_map, partial, curry, prod, partialmethod
-from .pprint_util import pp, vcat, hcat, pp_kv_pairs
+from .pprint_util import pp, vcat, hcat, pp_kv_pairs, PrettyPrint
 
 # TODO(dougalm): the trace cache breaks the leak detector. Consisder solving.
 check_leaks = False
@@ -64,7 +66,7 @@ class Jaxpr(object):
   __repr__ = __str__
 
 
-def subjaxprs(jaxpr):
+def subjaxprs(jaxpr: Jaxpr) -> Iterator[Jaxpr]:
   """Generator for all subjaxprs found in the params of jaxpr.eqns.
   Does not descend recursively into the found subjaxprs.
   """
@@ -77,12 +79,10 @@ def subjaxprs(jaxpr):
 
 
 class TypedJaxpr(object):
-  def __init__(self, jaxpr, literals, in_avals, out_avals):
-    assert type(jaxpr) is Jaxpr
+  def __init__(self, jaxpr: Jaxpr, literals: Sequence,
+               in_avals: Sequence['AbstractValue'], out_avals: Sequence['AbstractValue']):
     assert len(literals) == len(jaxpr.constvars)
     assert len(in_avals) == len(jaxpr.invars)
-    assert all(isinstance(aval, AbstractValue) for aval in in_avals)
-    assert all(isinstance(aval, AbstractValue) for aval in out_avals)
 
     if not skip_checks:
       in_avals_raised = [raise_to_shaped(v) for v in in_avals]
@@ -106,7 +106,7 @@ class TypedJaxpr(object):
   __repr__ = __str__
 
 @curry
-def jaxpr_as_fun(typed_jaxpr, *args):
+def jaxpr_as_fun(typed_jaxpr: TypedJaxpr, *args):
   return eval_jaxpr(typed_jaxpr.jaxpr, typed_jaxpr.literals, *args)
 
 
@@ -518,7 +518,7 @@ def cur_sublevel():
 
 
 @contextmanager
-def new_master(trace_type, bottom=False):
+def new_master(trace_type: Type[Trace], bottom=False) -> Generator[MasterTrace, None, None]:
   level = trace_state.trace_stack.next_level(bottom)
   master = MasterTrace(level, trace_type)
   trace_state.trace_stack.push(master, bottom)
@@ -914,7 +914,7 @@ call_p.def_impl(call_impl)
 
 # ------------------- Jaxpr printed representation -------------------
 
-def check_jaxpr(jaxpr):
+def check_jaxpr(jaxpr: Jaxpr):
   """Checks well-formedness of a jaxpr.
 
   Specifically it checks that all variabled used are previously defined.
@@ -922,16 +922,16 @@ def check_jaxpr(jaxpr):
   def context():
     return "\njaxpr:\n{}\n".format(jaxpr)
 
-  def read_env(env, v):
+  def read_env(env: Set[Var], v: Var):
     if type(v) is not Literal and v not in env:
       raise Exception("Variable '{}' not defined".format(v) + context())
 
-  def write_env(env, v):
+  def write_env(env: Set[Var], v: Var):
     if v in env:
       raise Exception("Variable {} already bound".format(v) + context())
     env.add(v)
 
-  env = set()
+  env: Set[Var] = set()
   read = partial(read_env, env)
   write = partial(write_env, env)
 
@@ -952,22 +952,23 @@ def check_jaxpr(jaxpr):
   map(read, jaxpr.outvars)
 
 
-def pp_vars(vs):
+def pp_vars(vs) -> str:
     return ' '.join(map(str, vs))
 
-def pp_eqn_compact(primitive_name, params):
+def pp_eqn_compact(primitive_name: str, params: Dict) -> PrettyPrint:
   filtered_params = {k: v for k, v in params.items()
                      if not isinstance(v, (Jaxpr, TypedJaxpr))}
   return pp(primitive_name) >> pp_kv_pairs(sorted(filtered_params.items()))
 
-def pp_eqn(eqn):
+def pp_eqn(eqn: JaxprEqn) -> PrettyPrint:
   lhs = pp_vars(eqn.outvars)
   pp_subexpr = pp('')
   return (pp('{} = '.format(lhs)) >>
           pp(eqn.primitive.name) >> pp_kv_pairs(sorted(eqn.params.items()))
           >> pp(' ') >> pp(pp_vars(eqn.invars))) + pp_subexpr
 
-def pp_jaxpr(jaxpr):
+
+def pp_jaxpr(jaxpr) -> PrettyPrint:
   pp_outvars = str(tuple(jaxpr.outvars))
   return (pp('{{ lambda {} ; {}.'.format(pp_vars(jaxpr.constvars),
                                          pp_vars(jaxpr.invars))) +

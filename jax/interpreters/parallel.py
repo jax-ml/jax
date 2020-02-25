@@ -16,7 +16,6 @@
 from functools import partial
 from typing import Callable, Dict
 
-
 from .. import core
 from .. import linear_util as lu
 from ..core import Trace, Tracer, Primitive, new_master

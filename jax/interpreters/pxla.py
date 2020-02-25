@@ -399,7 +399,7 @@ xla.canonicalize_dtype_handlers[ChunkedDeviceArray] = identity
 
 ### the xla_pmap primitive and its rules are comparable to xla_call in xla.py
 
-def xla_pmap_impl(fun, *args, backend, axis_name, axis_size, global_axis_size,
+def xla_pmap_impl(fun: lu.WrappedFun, *args, backend, axis_name, axis_size, global_axis_size,
                   devices, name, mapped_invars=None):
   abstract_args = map(xla.abstractify, args)
   compiled_fun = parallel_callable(fun, backend, axis_name, axis_size,

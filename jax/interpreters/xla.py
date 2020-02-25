@@ -39,6 +39,7 @@ from ..lib import xla_client as xc
 from . import partial_eval as pe
 from . import ad
 from . import masking
+from typing import Callable
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_debug_nans',
@@ -64,7 +65,7 @@ def _device_put_unit(_, device):
 
 xb.register_constant_handler(core.Unit, lambda c, *_: _make_unit(c))
 
-def aval_to_xla_shape(aval):
+def aval_to_xla_shape(aval: core.AbstractValue):
   try:
     return xla_shape_handlers[type(aval)](aval)
   except KeyError as err:
@@ -72,6 +73,7 @@ def aval_to_xla_shape(aval):
                     ) from err
 xla_shape_handlers: Dict[Type[core.AbstractValue], Callable] = {}
 xla_shape_handlers[core.AbstractUnit] = _make_abstract_unit
+
 xla_shape_handlers[ShapedArray] = lambda a: xc.Shape.array_shape(a.dtype, a.shape)
 xla_shape_handlers[ConcreteArray] = lambda a: xc.Shape.array_shape(a.dtype, a.shape)
 
@@ -131,7 +133,7 @@ def _canonicalize_python_scalar_dtype(typ, x):
 for _t in dtypes.python_scalar_dtypes.keys():
   canonicalize_dtype_handlers[_t] = partial(_canonicalize_python_scalar_dtype, _t)
 
-def abstractify(x):
+def abstractify(x) -> core.AbstractValue:
   typ = type(x)
   aval_fn = pytype_aval_mappings.get(typ)
   if aval_fn: return aval_fn(x)
@@ -908,7 +910,7 @@ def _copy_device_array_to_device(x, device):
                                      backend=xb.get_device_backend(device))
   return DeviceArray(x.aval, device, x._lazy_expr, moved_buf)
 
-def _force(x):
+def _force(x: DeviceArray) -> DeviceArray:
   if lazy.is_trivial(x._lazy_expr):
     return x
   else:
@@ -923,8 +925,8 @@ def _force(x):
     return force_fun(x)
 
 @cache()
-def _lazy_force_computation(sticky, aval, device, lexpr
-                            ) -> Callable[[DeviceValue], DeviceArray]:
+
+def _lazy_force_computation(sticky, aval, device, lexpr) -> Callable[[DeviceArray], DeviceArray]:
   c = xb.make_computation_builder("lazy_force")
   if lazy.is_constant(lexpr):
     param = None

@@ -675,7 +675,7 @@ class APITest(jtu.JaxTestCase):
     ans = api.grad(foo, (0, 1))(3., 4.)
     self.assertAllClose(ans, (1. + 3. + 4., 1. * 3. * 9.), check_dtypes=False)
 
-  def test_defvjp_all(self):
+  def test_defvjp_all_custom_transforms(self):
     @api.custom_transforms
     def foo(x):
       return np.sin(x)

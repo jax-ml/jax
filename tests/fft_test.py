@@ -248,13 +248,13 @@ class FftTest(jtu.JaxTestCase):
     self.assertRaisesRegex(
       ValueError,
       "jax.np.fft.{} only supports 2 axes. "
-      "Got axes = \\[0\\].".format(name, name),
+      "Got axes = \\[0\\].".format(name),
       lambda: func(rng([2, 3], dtype=onp.float64), axes=[0])
     )
     self.assertRaisesRegex(
       ValueError,
       "jax.np.fft.{} only supports 2 axes. "
-      "Got axes = \\(0, 1, 2\\).".format(name, name),
+      "Got axes = \\(0, 1, 2\\).".format(name),
       lambda: func(rng([2, 3, 3], dtype=onp.float64), axes=(0, 1, 2))
     )
     self.assertRaises(
