@@ -324,6 +324,9 @@ def rmsprop(step_size, gamma=0.9, eps=1e-8, weight_decay=0.):
   Returns:
     An (init_fun, update_fun, get_params) triple.
   """
+  if not 0.0 <= weight_decay:
+      raise ValueError("Invalid weight decay coeff.: {}".format(weight_decay))
+
   step_size = make_schedule(step_size)
   def init(x0):
     avg_sq_grad = np.zeros_like(x0)
@@ -341,7 +344,8 @@ def rmsprop(step_size, gamma=0.9, eps=1e-8, weight_decay=0.):
 
 
 @optimizer
-def rmsprop_momentum(step_size, gamma=0.9, eps=1e-8, momentum=0.9):
+def rmsprop_momentum(step_size, gamma=0.9, eps=1e-8, momentum=0.9,
+                     weight_decay=0.):
   """Construct optimizer triple for RMSProp with momentum.
 
   This optimizer is separate from the rmsprop optimizer because it needs to
@@ -353,6 +357,8 @@ def rmsprop_momentum(step_size, gamma=0.9, eps=1e-8, momentum=0.9):
     gamma: Decay parameter.
     eps: Epsilon parameter.
     momentum: Momentum parameter.
+    weight_decay: positive scalar, representing weight/L2 norm regularization
+      coefficient (default: 0)
 
   Returns:
     An (init_fun, update_fun, get_params) triple.
@@ -364,6 +370,7 @@ def rmsprop_momentum(step_size, gamma=0.9, eps=1e-8, momentum=0.9):
     return x0, avg_sq_grad, mom
   def update(i, g, state):
     x, avg_sq_grad, mom = state
+    g = g + weight_decay*x
     avg_sq_grad = avg_sq_grad * gamma + g**2 * (1. - gamma)
     mom = momentum * mom + step_size(i) * g / np.sqrt(avg_sq_grad + eps)
     x = x - mom
