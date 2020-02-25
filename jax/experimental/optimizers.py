@@ -175,7 +175,7 @@ def optimizer(opt_maker):
 ### optimizers
 
 @optimizer
-def sgd(step_size):
+def sgd(step_size, weight_decay=0.):
   """Construct optimizer triple for stochastic gradient descent.
 
   Args:
@@ -186,10 +186,13 @@ def sgd(step_size):
     An (init_fun, update_fun, get_params) triple.
   """
   step_size = make_schedule(step_size)
+  if not 0.0 <= weight_decay:
+    raise ValueError("Invalid weight decay coefficient: {}".format(weight_decay))
+
   def init(x0):
     return x0
   def update(i, g, x):
-    return x - step_size(i) * g
+    return x - step_size(i) * (g + weight_decay*x)
   def get_params(x):
     return x
   return init, update, get_params
