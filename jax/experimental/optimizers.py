@@ -182,7 +182,7 @@ def sgd(step_size, weight_decay=0.):
     step_size: positive scalar, or a callable representing a step size schedule
       that maps the iteration index to positive scalar.
     weight_decay: positive scalar, representing weight/L2 norm regularization
-      coefficient (default: 0)
+      coefficient (default 0).
 
   Returns:
     An (init_fun, update_fun, get_params) triple.
@@ -209,7 +209,7 @@ def momentum(step_size, mass, weight_decay=0.):
       that maps the iteration index to positive scalar.
     mass: positive scalar representing the momentum coefficient.
     weight_decay: positive scalar, representing weight/L2 norm regularization
-      coefficient (default: 0)
+      coefficient (default 0).
 
   Returns:
     An (init_fun, update_fun, get_params) triple.
@@ -242,7 +242,7 @@ def nesterov(step_size, mass, weight_decay=0.):
       that maps the iteration index to positive scalar.
     mass: positive scalar representing the momentum coefficient.
     weight_decay: positive scalar, representing weight/L2 norm regularization
-      coefficient (default: 0)
+      coefficient (default 0).
 
   Returns:
     An (init_fun, update_fun, get_params) triple.
@@ -278,7 +278,7 @@ def adagrad(step_size, momentum=0.9):
       that maps the iteration index to positive scalar.
     momentum: optional, a positive scalar value for momentum
     weight_decay: positive scalar, representing weight/L2 norm regularization
-      coefficient (default: 0)
+      coefficient (default 0).
 
   Returns:
     An (init_fun, update_fun, get_params) triple.
@@ -319,7 +319,7 @@ def rmsprop(step_size, gamma=0.9, eps=1e-8, weight_decay=0.):
       gamma: Decay parameter.
       eps: Epsilon parameter.
       weight_decay: positive scalar, representing weight/L2 norm regularization
-        coefficient (default: 0)
+        coefficient (default 0).
 
   Returns:
     An (init_fun, update_fun, get_params) triple.
@@ -358,11 +358,14 @@ def rmsprop_momentum(step_size, gamma=0.9, eps=1e-8, momentum=0.9,
     eps: Epsilon parameter.
     momentum: Momentum parameter.
     weight_decay: positive scalar, representing weight/L2 norm regularization
-      coefficient (default: 0)
+      coefficient (default 0).
 
   Returns:
     An (init_fun, update_fun, get_params) triple.
   """
+  if not 0.0 <= weight_decay:
+      raise ValueError("Invalid weight decay coeff.: {}".format(weight_decay))
+
   step_size = make_schedule(step_size)
   def init(x0):
     avg_sq_grad = np.zeros_like(x0)
@@ -382,7 +385,7 @@ def rmsprop_momentum(step_size, gamma=0.9, eps=1e-8, momentum=0.9,
 
 
 @optimizer
-def adam(step_size, b1=0.9, b2=0.999, eps=1e-8):
+def adam(step_size, b1=0.9, b2=0.999, eps=1e-8, weight_decay=0.):
   """Construct optimizer triple for Adam.
 
   Args:
@@ -394,10 +397,15 @@ def adam(step_size, b1=0.9, b2=0.999, eps=1e-8):
       for the second moment estimates (default 0.999).
     eps: optional, a positive scalar value for epsilon, a small constant for
       numerical stability (default 1e-8).
+      weight_decay: positive scalar, representing weight/L2 norm regularization
+        coefficient (default 0).
 
   Returns:
     An (init_fun, update_fun, get_params) triple.
   """
+  if not 0.0 <= weight_decay:
+      raise ValueError("Invalid weight decay coeff.: {}".format(weight_decay))
+
   step_size = make_schedule(step_size)
   def init(x0):
     m0 = np.zeros_like(x0)
@@ -405,6 +413,7 @@ def adam(step_size, b1=0.9, b2=0.999, eps=1e-8):
     return x0, m0, v0
   def update(i, g, state):
     x, m, v = state
+    g = g + weight_decay*x
     m = (1 - b1) * g + b1 * m  # First  moment estimate.
     v = (1 - b2) * (g ** 2) + b2 * v  # Second moment estimate.
     mhat = m / (1 - b1 ** (i + 1))  # Bias correction.
