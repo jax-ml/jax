@@ -305,7 +305,7 @@ def GRU(out_dim, W_init=glorot(), b_init=normal()):
         )
         # Input dim 0 represents the batch dimension
         # Input dim 1 represents the time dimension (before scan moveaxis)
-        output_shape = (input_shape[0], out_dim)
+        output_shape = (input_shape[0], input_shape[1], out_dim)
         return (output_shape,
                 (hidden,
                  (update_W, update_U, update_b),
@@ -378,7 +378,7 @@ def LSTM(out_dim, W_init=glorot(), b_init=normal()):
             b_init(k3, (out_dim,)),
         )
 
-        output_shape = (input_shape[0], out_dim)
+        output_shape = (input_shape[0], input_shape[0], out_dim)
         return (output_shape,
                 ((cell, hidden),
                  (forget_W, forget_U, forget_b),
