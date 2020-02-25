@@ -277,10 +277,15 @@ def adagrad(step_size, momentum=0.9):
     step_size: positive scalar, or a callable representing a step size schedule
       that maps the iteration index to positive scalar.
     momentum: optional, a positive scalar value for momentum
+    weight_decay: positive scalar, representing weight/L2 norm regularization
+      coefficient (default: 0)
 
   Returns:
     An (init_fun, update_fun, get_params) triple.
   """
+  if not 0.0 <= weight_decay:
+      raise ValueError("Invalid weight decay coeff.: {}".format(weight_decay))
+
   step_size = make_schedule(step_size)
 
   def init(x0):
@@ -290,6 +295,7 @@ def adagrad(step_size, momentum=0.9):
 
   def update(i, g, state):
     x, g_sq, m = state
+    g = g + weight_decay*x
     g_sq += g**2
     g_sq_inv_sqrt = np.where(g_sq > 0, 1. / np.sqrt(g_sq), 0.0)
     m = (1. - momentum) * (g * g_sq_inv_sqrt) + momentum * m
