@@ -1448,6 +1448,15 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
 
+  def testAxisSizeNotOneError(self):
+    x = onp.array([[[0], [1], [2]]])
+    axis = 1 # axis 1 shape is 3
+    t_axis = (0,1)
+    self.assertRaises(ValueError, lambda: lnp.squeeze(x, axis=axis))
+    self.assertRaises(ValueError, lambda: api.jit(lnp.squeeze(x, axis=axis)))
+    self.assertRaises(ValueError, lambda: lnp.squeeze(x, axis=t_axis))
+    self.assertRaises(ValueError, lambda: api.jit(lnp.squeeze(x, axis=t_axis)))
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_axis={}_weights={}_returned={}".format(
           jtu.format_shape_dtype_string(shape, dtype),

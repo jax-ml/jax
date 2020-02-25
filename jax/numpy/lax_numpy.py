@@ -968,13 +968,21 @@ def ravel(a, order="C"):
 
 @_wraps(onp.squeeze)
 def squeeze(a, axis=None):
+  msg = "cannot select an axis to squeeze out " \
+            "which has size not equal to one"
   if 1 not in shape(a):
     return a
   if axis is None:
     newshape = [d for d in shape(a) if d != 1]
   else:
     if isinstance(axis, int):
+      if shape(a)[axis] != 1:
+        raise ValueError(msg)
       axis = (axis,)
+    elif isinstance(axis, tuple):
+      for x in axis:
+        if shape(a)[x] != 1:
+          raise ValueError(msg)
     axis = frozenset(_canonicalize_axis(i, ndim(a)) for i in axis)
     newshape = [d for i, d in enumerate(shape(a))
                 if d != 1 or i not in axis]
