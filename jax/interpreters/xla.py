@@ -13,10 +13,9 @@
 # limitations under the License.
 
 
-from collections import namedtuple, defaultdict
+from collections import defaultdict
 import itertools as it
 import operator as op
-import os
 
 from absl import logging
 import numpy as onp
@@ -24,17 +23,15 @@ import numpy as onp
 from ..config import flags, bool_env
 from .. import core
 from .. import ad_util
-from .. import tree_util
 from .. import dtypes
 from .. import lazy
 from .. import linear_util as lu
-from ..abstract_arrays import (ConcreteArray, ShapedArray, AbstractToken,
-                               make_shaped_array, array_types, raise_to_shaped,
-                               abstract_token)
-from ..core import valid_jaxtype, Literal, pp_eqn_compact
+from ..core import (Literal, pp_eqn_compact, ConcreteArray, ShapedArray,
+                    AbstractToken, make_shaped_array, array_types,
+                    raise_to_shaped, abstract_token)
 from ..pprint_util import pp
-from ..util import (partial, partialmethod, cache, safe_map, prod, unzip2,
-                    memoize, extend_name_stack, wrap_name)
+from ..util import (partial, partialmethod, cache, prod, unzip2, memoize,
+                    extend_name_stack, wrap_name)
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from . import partial_eval as pe

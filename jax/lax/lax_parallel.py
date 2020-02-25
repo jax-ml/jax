@@ -19,20 +19,18 @@ import collections
 
 import numpy as onp
 
-from jax import core
 from jax import ad_util
+from jax import core
 from jax import dtypes
 from jax import tree_util
 from jax.lax import lax
-from jax.abstract_arrays import ShapedArray, raise_to_shaped
+from jax.core import ShapedArray, raise_to_shaped
 from jax.interpreters import ad
 from jax.interpreters import parallel
 from jax.interpreters import xla
 from jax.interpreters import pxla
-from jax.util import partial, unzip2, prod
-from jax.lib import xla_client
-
 from jax.interpreters.pxla import axis_index
+from jax.util import partial, unzip2, prod
 
 
 ### parallel traceables

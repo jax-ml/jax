@@ -27,8 +27,6 @@ arrays.
 import collections
 import functools
 import itertools as it
-import operator as op
-import os
 import threading
 from typing import Any, Callable, Collection, Optional, Sequence, Tuple, Union
 from warnings import warn
@@ -40,7 +38,7 @@ from . import core
 from . import linear_util as lu
 from . import ad_util
 from . import dtypes
-from .core import eval_jaxpr
+from .core import eval_jaxpr, ShapedArray, raise_to_shaped
 from .api_util import (wraps, flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
                        flatten_fun_nokwargs2)
 from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
@@ -49,9 +47,8 @@ from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
 from .util import (unzip2, unzip3, curry, partial, safe_map, safe_zip,
                    WrapHashably, Hashable, prod, split_list, extend_name_stack, wrap_name)
 from .lib import xla_bridge as xb
-from .lib.xla_bridge import (device_count, local_device_count, devices, local_devices,
-                             host_id, host_ids, host_count)
-from .abstract_arrays import ConcreteArray, ShapedArray, raise_to_shaped
+from .lib.xla_bridge import (device_count, local_device_count, devices,
+                             local_devices, host_id, host_ids, host_count)
 from .interpreters import partial_eval as pe
 from .interpreters import xla
 from .interpreters import pxla

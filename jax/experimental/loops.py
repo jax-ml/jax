@@ -111,7 +111,6 @@ import numpy as onp
 import traceback
 from typing import Any, List, cast
 
-from jax import abstract_arrays
 from jax import lax, core
 from jax.lax import lax_control_flow
 from jax import tree_util
@@ -408,7 +407,7 @@ class _BodyTracer(object):
 
   @staticmethod
   def abstractify(x):
-    return abstract_arrays.raise_to_shaped(core.get_aval(x))
+    return core.raise_to_shaped(core.get_aval(x))
 
   @staticmethod
   def trace_to_jaxpr_finalize(in_tracers, out_tracers, trace, instantiate=True):
@@ -423,12 +422,12 @@ class _BodyTracer(object):
     assert not env
 
     # TODO: this is from the final part of lax_control_flow._initial_style_jaxpr
-    out_avals = safe_map(abstract_arrays.raise_to_shaped, unzip2(out_pvals)[0])
-    const_avals = tuple(abstract_arrays.raise_to_shaped(core.get_aval(c))
+    out_avals = safe_map(core.raise_to_shaped, unzip2(out_pvals)[0])
+    const_avals = tuple(core.raise_to_shaped(core.get_aval(c))
                         for c in consts)
 
     in_pvals = [t.pval for t in in_tracers]
-    in_avals = tuple(safe_map(abstract_arrays.raise_to_shaped, unzip2(in_pvals)[0]))
+    in_avals = tuple(safe_map(core.raise_to_shaped, unzip2(in_pvals)[0]))
 
     typed_jaxpr = core.TypedJaxpr(pe.convert_constvars_jaxpr(jaxpr),
                                   (), const_avals + in_avals, out_avals)
@@ -554,7 +553,7 @@ class _WhileBuilder(_LoopBuilder):
     if not tree_util.treedef_is_leaf(cond_tree):
       msg = "cond_fun must return a boolean scalar, but got pytree {}."
       raise TypeError(msg.format(cond_tree))
-    if cond_jaxpr.out_avals != [abstract_arrays.ShapedArray((), onp.bool_)]:
+    if cond_jaxpr.out_avals != [core.ShapedArray((), onp.bool_)]:
       msg = "cond_fun must return a boolean scalar, but got output type(s) {}."
       raise TypeError(msg.format(cond_jaxpr.out_avals))
 

@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import numpy as onp
 
-from .core import lattice_join, Primitive, Unit, unit, AbstractUnit, abstract_unit
+from .core import lattice_join, Primitive, Unit, unit, AbstractUnit, array_types, ShapedArray
+from .dtypes import canonicalize_dtype, result_type, python_scalar_dtypes
 from .tree_util import register_pytree_node
 from .util import safe_map
 
@@ -36,13 +38,30 @@ def add_impl(xs, ys):
 def add_abstract(xs, ys):
   return lattice_join(xs, ys)
 
+def _zeros_like_array(x):
+  dtype = canonicalize_dtype(result_type(x))
+  return onp.broadcast_to(onp.array(0, dtype), onp.shape(x))
+
+def _zeros_like_python_scalar(x):
+  return onp.array(0, python_scalar_dtypes[type(x)])
+
 jaxval_zeros_likers = {}
+for t in array_types:
+  jaxval_zeros_likers[t] = _zeros_like_array
+
+for t in python_scalar_dtypes.keys():
+  jaxval_zeros_likers[t] = _zeros_like_python_scalar
 
 def zeros_like_aval(aval):
   return aval_zeros_likers[type(aval)](aval)
 
+def _zeros_like_shaped_array(aval):
+  assert isinstance(aval, ShapedArray)
+  return onp.zeros(aval.shape, dtype=aval.dtype)
+
 aval_zeros_likers = {}
 aval_zeros_likers[AbstractUnit] = lambda _: unit
+aval_zeros_likers[ShapedArray] = _zeros_like_shaped_array
 
 def zeros_like_jaxval(val):
   return zeros_like_p.bind(val)

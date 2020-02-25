@@ -22,25 +22,21 @@ https://github.com/google/jax/blob/master/design_notes/prng.md
 
 
 from functools import partial
-import itertools
 
 import numpy as onp
 
 from . import lax
 from . import numpy as np
-from . import tree_util
 from . import dtypes
-from .api import custom_transforms, defjvp, jit, vmap
-from .numpy.lax_numpy import _constant_like, asarray, stack
+from .api import jit, vmap
+from .numpy.lax_numpy import _constant_like, asarray
 from jax.lib import xla_bridge
 from jax.lib import cuda_prng
 from jax import core
-from jax import abstract_arrays
 from jax.numpy.linalg import cholesky
 from jax.scipy.special import logit
 from jax.interpreters import ad
 from jax.interpreters import batching
-from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax.util import prod
 
@@ -101,11 +97,11 @@ def _threefry2x32_abstract_eval(*args):
   if any(a.dtype != np.uint32 for a in args):
     raise TypeError("Arguments to threefry2x32 must have uint32 type, got {}"
                     .format(args))
-  if all(isinstance(arg, abstract_arrays.ShapedArray) for arg in args):
+  if all(isinstance(arg, core.ShapedArray) for arg in args):
     shape = lax._broadcasting_shape_rule(*args)
-    aval = abstract_arrays.ShapedArray(shape, np.dtype(np.uint32))
+    aval = core.ShapedArray(shape, np.dtype(np.uint32))
   else:
-    aval = abstract_arrays.UnshapedArray(np.dtype(np.uint32))
+    aval = core.UnshapedArray(np.dtype(np.uint32))
   return (aval,) * 2
 
 def _threefry2x32_lowering(key1, key2, x1, x2, use_rolled_loops=True):
@@ -318,7 +314,7 @@ def uniform(key, shape=(), dtype=onp.float64, minval=0., maxval=1.):
     A random array with the specified shape and dtype.
   """
   dtype = dtypes.canonicalize_dtype(dtype)
-  shape = abstract_arrays.canonicalize_shape(shape)
+  shape = core.canonicalize_shape(shape)
   return _uniform(key, shape, dtype, minval, maxval)
 
 @partial(jit, static_argnums=(1, 2))
@@ -367,7 +363,7 @@ def randint(key, shape, minval, maxval, dtype=onp.int64):
     A random array with the specified shape and dtype.
   """
   dtype = dtypes.canonicalize_dtype(dtype)
-  shape = abstract_arrays.canonicalize_shape(shape)
+  shape = core.canonicalize_shape(shape)
   return _randint(key, shape, minval, maxval, dtype)
 
 @partial(jit, static_argnums=(1, 4))
@@ -466,7 +462,7 @@ def normal(key, shape=(), dtype=onp.float64):
     A random array with the specified shape and dtype.
   """
   dtype = dtypes.canonicalize_dtype(dtype)
-  shape = abstract_arrays.canonicalize_shape(shape)
+  shape = core.canonicalize_shape(shape)
   return _normal(key, shape, dtype)
 
 @partial(jit, static_argnums=(1, 2))
@@ -501,7 +497,7 @@ def multivariate_normal(key, mean, cov, shape=None, dtype=onp.float64):
   """
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
-    shape = abstract_arrays.canonicalize_shape(shape)
+    shape = core.canonicalize_shape(shape)
   return _multivariate_normal(key, mean, cov, shape, dtype)
 
 @partial(jit, static_argnums=(3, 4))
@@ -550,7 +546,7 @@ def truncated_normal(key, lower, upper, shape=None, dtype=onp.float64):
   """
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
-    shape = abstract_arrays.canonicalize_shape(shape)
+    shape = core.canonicalize_shape(shape)
   return _truncated_normal(key, lower, upper, shape, dtype)
 
 @partial(jit, static_argnums=(3, 4))
@@ -586,7 +582,7 @@ def bernoulli(key, p=onp.float32(0.5), shape=None):
   """
   dtype = dtypes.canonicalize_dtype(lax.dtype(p))
   if shape is not None:
-    shape = abstract_arrays.canonicalize_shape(shape)
+    shape = core.canonicalize_shape(shape)
   if not np.issubdtype(dtype, onp.floating):
     msg = "bernoulli probability `p` must have a floating dtype, got {}."
     raise TypeError(msg.format(dtype))
@@ -624,7 +620,7 @@ def beta(key, a, b, shape=None, dtype=onp.float64):
   """
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
-    shape = abstract_arrays.canonicalize_shape(shape)
+    shape = core.canonicalize_shape(shape)
   return _beta(key, a, b, shape, dtype)
 
 def _beta(key, a, b, shape, dtype):
@@ -657,7 +653,7 @@ def cauchy(key, shape=(), dtype=onp.float64):
     A random array with the specified shape and dtype.
   """
   dtype = dtypes.canonicalize_dtype(dtype)
-  shape = abstract_arrays.canonicalize_shape(shape)
+  shape = core.canonicalize_shape(shape)
   return _cauchy(key, shape, dtype)
 
 @partial(jit, static_argnums=(1, 2))
@@ -690,7 +686,7 @@ def dirichlet(key, alpha, shape=None, dtype=onp.float64):
   """
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
-    shape = abstract_arrays.canonicalize_shape(shape)
+    shape = core.canonicalize_shape(shape)
   return _dirichlet(key, alpha, shape, dtype)
 
 @partial(jit, static_argnums=(2, 3))
@@ -723,7 +719,7 @@ def exponential(key, shape=(), dtype=onp.float64):
     A random array with the specified shape and dtype.
   """
   dtype = dtypes.canonicalize_dtype(dtype)
-  shape = abstract_arrays.canonicalize_shape(shape)
+  shape = core.canonicalize_shape(shape)
   return _exponential(key, shape, dtype)
 
 @partial(jit, static_argnums=(1, 2))
@@ -925,7 +921,7 @@ def _gamma_batching_rule(batched_args, batch_dims):
 random_gamma_p = core.Primitive('random_gamma')
 random_gamma_p.multiple_results = True
 random_gamma_p.def_impl(_gamma_impl)
-random_gamma_p.def_abstract_eval(lambda key, a: (abstract_arrays.raise_to_shaped(a),))
+random_gamma_p.def_abstract_eval(lambda key, a: (core.raise_to_shaped(a),))
 ad.defjvp2(random_gamma_p, None, lambda tangent, ans, key, a: (tangent * _gamma_grad(ans[0], a),))
 xla.translations[random_gamma_p] = xla.lower_fun(_gamma_impl, instantiate=True)
 batching.primitive_batchers[random_gamma_p] = _gamma_batching_rule
@@ -949,7 +945,7 @@ def gamma(key, a, shape=None, dtype=onp.float64):
   """
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
-    shape = abstract_arrays.canonicalize_shape(shape)
+    shape = core.canonicalize_shape(shape)
   return _gamma(key, a, shape, dtype)
 
 @partial(jit, static_argnums=(2, 3))
@@ -979,7 +975,7 @@ def gumbel(key, shape=(), dtype=onp.float64):
     A random array with the specified shape and dtype.
   """
   dtype = dtypes.canonicalize_dtype(dtype)
-  shape = abstract_arrays.canonicalize_shape(shape)
+  shape = core.canonicalize_shape(shape)
   return _gumbel(key, shape, dtype)
 
 @partial(jit, static_argnums=(1, 2))
@@ -1031,7 +1027,7 @@ def laplace(key, shape=(), dtype=onp.float64):
     A random array with the specified shape and dtype.
   """
   dtype = dtypes.canonicalize_dtype(dtype)
-  shape = abstract_arrays.canonicalize_shape(shape)
+  shape = core.canonicalize_shape(shape)
   return _laplace(key, shape, dtype)
 
 @partial(jit, static_argnums=(1, 2))
@@ -1056,7 +1052,7 @@ def logistic(key, shape=(), dtype=onp.float64):
     A random array with the specified shape and dtype.
   """
   dtype = dtypes.canonicalize_dtype(dtype)
-  shape = abstract_arrays.canonicalize_shape(shape)
+  shape = core.canonicalize_shape(shape)
   return _logistic(key, shape, dtype)
 
 @partial(jit, static_argnums=(1, 2))
@@ -1084,7 +1080,7 @@ def pareto(key, b, shape=None, dtype=onp.float64):
   """
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
-    shape = abstract_arrays.canonicalize_shape(shape)
+    shape = core.canonicalize_shape(shape)
   return _pareto(key, b, shape, dtype)
 
 @partial(jit, static_argnums=(2, 3))
@@ -1117,7 +1113,7 @@ def t(key, df, shape=(), dtype=onp.float64):
     ``shape`` is not None, or else by ``df.shape``.
   """
   dtype = dtypes.canonicalize_dtype(dtype)
-  shape = abstract_arrays.canonicalize_shape(shape)
+  shape = core.canonicalize_shape(shape)
   return _t(key, df, shape, dtype)
 
 @partial(jit, static_argnums=(2, 3))

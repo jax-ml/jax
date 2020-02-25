@@ -17,12 +17,11 @@ from functools import partial
 
 import numpy as onp
 
-from jax.abstract_arrays import ShapedArray
 from jax.api import jit, vjp
-from jax.core import Primitive
+from jax.core import Primitive, ShapedArray
 from jax.interpreters import xla
 from jax.util import prod
-from . import dtypes, lax
+from . import lax
 from ..lib.xla_bridge import xla_client
 from ..interpreters import ad
 from ..interpreters import batching

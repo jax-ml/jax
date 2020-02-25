@@ -28,10 +28,8 @@ rules for the underlying :code:`lax` primitives.
 import builtins
 import collections
 from collections.abc import Sequence
-import itertools
 import os
 import re
-import string
 import types
 import warnings
 
@@ -41,8 +39,8 @@ import opt_einsum
 from jax import jit, device_put, custom_transforms, defjvp
 from .. import core
 from .. import dtypes
-from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
 from ..config import flags
+from ..core import UnshapedArray, ShapedArray, ConcreteArray
 from ..interpreters.xla import DeviceArray
 from .. import lax
 from ..util import partial, get_module_functions, unzip2, prod as _prod, subvals

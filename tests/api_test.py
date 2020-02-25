@@ -32,10 +32,9 @@ import jax
 import jax.numpy as np
 from jax import jit, grad, device_put, jacfwd, jacrev, hessian
 from jax import api, core, lax, lax_reference
-from jax.core import Primitive
+from jax.core import Primitive, concretization_err_msg
 from jax.interpreters import ad
 from jax.interpreters import xla
-from jax.abstract_arrays import concretization_err_msg
 from jax.lib import xla_bridge as xb
 from jax import test_util as jtu
 from jax import tree_util

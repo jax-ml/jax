@@ -14,20 +14,18 @@
 
 
 from contextlib import contextmanager
-from collections import defaultdict, Counter, namedtuple
+from collections import Counter, namedtuple
 import functools
-from functools import partial, wraps
+from functools import partial
 import itertools as it
 import operator as op
 import string
 
 import numpy as onp
 
-from .. import abstract_arrays
 from .. import core
-from ..core import Trace, Tracer
-from ..util import unzip2, safe_map, safe_zip, curry
-from ..abstract_arrays import ShapedArray
+from ..core import Trace, Tracer, ShapedArray
+from ..util import unzip2, safe_map, safe_zip
 from .. import linear_util as lu
 
 map = safe_map
@@ -215,7 +213,7 @@ class Poly(Counter):
   def is_constant(self):
     return len(self) == 1 and next(iter(self)).degree == 0
 
-abstract_arrays._DIMENSION_TYPES.add(Poly)
+core._DIMENSION_TYPES.add(Poly)
 
 
 class Mon(Counter):  # type Mon = Map Id Int -- ids to degrees

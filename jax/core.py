@@ -175,8 +175,6 @@ class Literal(object):
     else:
       return '{}'.format(self.val)
 
-literalable_types = set()
-
 class Primitive(object):
   multiple_results = False  # override for multi-output primitives
   call_primitive = False  # override for higher-order primitives that are
@@ -612,21 +610,15 @@ def get_aval(x):
     return concrete_aval(x)
 
 
-pytype_aval_mappings = {}
-
-
 class Unit(object):
   def __repr__(self): return '*'
 unit = Unit()
-literalable_types.add(Unit)
 
 class UnitVar(object):
   @property
   def aval(self): return abstract_unit
   def __repr__(self): return '*'
 unitvar = UnitVar()
-
-pytype_aval_mappings[Unit] = lambda _: abstract_unit
 
 identity_p = Primitive('id')
 identity_p.def_impl(lambda x: x)
@@ -849,6 +841,36 @@ def canonicalize_shape(shape):
     msg += ("\nIf using `jit`, try using `static_argnums` or applying `jit` to "
             "smaller subfunctions.")
   raise TypeError(msg.format(shape))
+
+def make_shaped_array(x):
+  dtype = dtypes.canonicalize_dtype(dtypes.result_type(x))
+  return ShapedArray(onp.shape(x), dtype)
+
+array_types = {onp.ndarray, onp.bool_,
+               onp.int8, onp.int16, onp.int32, onp.int64,
+               onp.uint8, onp.uint16, onp.uint32, onp.uint64,
+               dtypes.bfloat16, onp.float16, onp.float32, onp.float64,
+               onp.complex64, onp.complex128,
+               onp.longlong}
+
+# ------------------- Misc -------------------
+
+literalable_types = {Unit}
+literalable_types.update(array_types)
+literalable_types.update(dtypes.python_scalar_dtypes.keys())
+
+pytype_aval_mappings = {Unit: lambda _: abstract_unit}
+
+for t in array_types:
+  pytype_aval_mappings[t] = ConcreteArray
+
+def _make_concrete_python_scalar(x):
+  return ConcreteArray(
+      onp.array(x, dtype=dtypes.python_scalar_dtypes[type(x)]),
+      weak_type=True)
+
+for t in dtypes.python_scalar_dtypes.keys():
+  pytype_aval_mappings[t] = _make_concrete_python_scalar
 
 # ------------------- Call -------------------
 

@@ -21,7 +21,6 @@ import collections
 import functools
 import itertools
 import operator
-import threading
 
 import numpy as onp
 
@@ -30,16 +29,14 @@ from jax import core
 from jax import dtypes
 from jax.lax import lax
 from jax import linear_util as lu
-from jax.abstract_arrays import ShapedArray, raise_to_shaped
-from jax.api_util import flatten_fun_nokwargs, apply_flat_fun_nokwargs
-from jax.core import get_aval
+from jax.api_util import flatten_fun_nokwargs
+from jax.core import get_aval, ShapedArray, raise_to_shaped
 from jax.interpreters import ad
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax.interpreters import batching
 from jax.interpreters import masking
 from jax.lib import xla_bridge as xb
-from jax.lib import xla_client
 from jax.util import (partial, unzip2, safe_map, safe_zip, split_list,
                       split_dict, cache, extend_name_stack)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,

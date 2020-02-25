@@ -19,10 +19,10 @@ from typing import Any
 
 from . import partial_eval as pe
 from .. import core as core
-from ..core import Trace, Tracer, new_master, get_aval, call_p, Primitive, Literal
+from ..core import (Trace, Tracer, new_master, get_aval, call_p, Primitive,
+                    Literal, raise_to_shaped)
 from ..ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_aval,
                        zeros_like_p, zero)
-from ..abstract_arrays import raise_to_shaped
 from ..util import unzip2, safe_map, safe_zip, partial, split_list, wrap_name
 from ..tree_util import register_pytree_node
 from .. import linear_util as lu

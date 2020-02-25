@@ -15,17 +15,15 @@
 
 import builtins
 import collections
-import enum
 import functools
 import itertools
 import operator
-import string
 from typing import Any
 import warnings
 
 import numpy as onp
 
-from ..util import partial, prod
+from ..util import partial
 
 from .. import core
 from .. import ad_util
@@ -34,18 +32,17 @@ from .. import linear_util as lu
 from .. import dtypes
 from .. import lazy
 from ..config import flags
-from ..core import Primitive
-from ..abstract_arrays import (UnshapedArray, ShapedArray, ConcreteArray,
-                               AbstractToken, array_types, make_shaped_array,
-                               raise_to_shaped, abstract_token, canonicalize_shape)
+from ..core import (Primitive, UnshapedArray, ShapedArray, ConcreteArray,
+                    array_types, raise_to_shaped, abstract_token,
+                    canonicalize_shape)
 from ..interpreters import partial_eval as pe
 from ..interpreters import xla
 from ..interpreters import pxla
 from ..interpreters import ad
 from ..interpreters import batching
 from ..interpreters import masking
-from ..util import curry, cache, safe_zip, unzip2, prod
-from ..tree_util import build_tree, tree_unflatten, tree_map
+from ..util import cache, prod
+from ..tree_util import tree_map
 from ..lib import pytree
 from ..lib import xla_bridge
 from ..lib import xla_client

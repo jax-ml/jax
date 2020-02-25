@@ -18,10 +18,10 @@ from absl import logging
 import numpy as onp
 
 from .. import core
-from ..abstract_arrays import ShapedArray, ConcreteArray, array_types, abstract_token
 from . import partial_eval as pe
 from . import xla
 from .. import linear_util as lu
+from ..core import ShapedArray, ConcreteArray, array_types
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from ..api_util import flatten_fun

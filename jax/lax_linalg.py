@@ -21,8 +21,6 @@ from jax.numpy import lax_numpy as np
 from jax.numpy.vectorize import vectorize
 from jax import ad_util
 from jax import api
-from jax import api_util
-from jax import core
 from jax import lax
 from jax import ops
 from jax import dtypes
@@ -30,11 +28,9 @@ from jax.interpreters import xla
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.util import partial, prod
-from jax.abstract_arrays import ShapedArray
-from jax.core import Primitive
+from jax.core import Primitive, ShapedArray
 from jax.lax import (standard_primitive, standard_unop, naryop_dtype_rule,
                      _float, _complex, _input_dtype, _broadcasting_select)
-from jax.lib import xla_client
 from jax.lib import lapack
 from jax.lib import cusolver
 
