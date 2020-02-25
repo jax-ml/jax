@@ -185,9 +185,9 @@ def sgd(step_size, weight_decay=0.):
   Returns:
     An (init_fun, update_fun, get_params) triple.
   """
-  step_size = make_schedule(step_size)
   if not 0.0 <= weight_decay:
     raise ValueError("Invalid weight decay coefficient: {}".format(weight_decay))
+  step_size = make_schedule(step_size)
 
   def init(x0):
     return x0
@@ -198,7 +198,7 @@ def sgd(step_size, weight_decay=0.):
   return init, update, get_params
 
 @optimizer
-def momentum(step_size, mass):
+def momentum(step_size, mass, weight_decay=0.):
   """Construct optimizer triple for SGD with momentum.
 
   Args:
@@ -209,13 +209,16 @@ def momentum(step_size, mass):
   Returns:
     An (init_fun, update_fun, get_params) triple.
   """
+  if not 0.0 <= weight_decay:
+      raise ValueError("Invalid weight decay coefficient: {}".format(weight_decay))
+
   step_size = make_schedule(step_size)
   def init(x0):
     v0 = np.zeros_like(x0)
     return x0, v0
   def update(i, g, state):
     x, velocity = state
-    velocity = mass * velocity + g
+    velocity = mass * velocity + g + weight_decay*x
     x = x - step_size(i) * velocity
     return x, velocity
   def get_params(state):
