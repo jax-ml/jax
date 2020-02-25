@@ -181,12 +181,15 @@ def sgd(step_size, weight_decay=0.):
   Args:
     step_size: positive scalar, or a callable representing a step size schedule
       that maps the iteration index to positive scalar.
+    weight_decay: positive scalar, representing weight/L2 norm regularization
+      coefficient (default: 0)
 
   Returns:
     An (init_fun, update_fun, get_params) triple.
   """
   if not 0.0 <= weight_decay:
-    raise ValueError("Invalid weight decay coefficient: {}".format(weight_decay))
+    raise ValueError("Invalid weight decay coeff.: {}".format(weight_decay))
+
   step_size = make_schedule(step_size)
 
   def init(x0):
@@ -205,12 +208,14 @@ def momentum(step_size, mass, weight_decay=0.):
     step_size: positive scalar, or a callable representing a step size schedule
       that maps the iteration index to positive scalar.
     mass: positive scalar representing the momentum coefficient.
+    weight_decay: positive scalar, representing weight/L2 norm regularization
+      coefficient (default: 0)
 
   Returns:
     An (init_fun, update_fun, get_params) triple.
   """
   if not 0.0 <= weight_decay:
-      raise ValueError("Invalid weight decay coefficient: {}".format(weight_decay))
+      raise ValueError("Invalid weight decay coeff.: {}".format(weight_decay))
 
   step_size = make_schedule(step_size)
   def init(x0):
@@ -218,7 +223,8 @@ def momentum(step_size, mass, weight_decay=0.):
     return x0, v0
   def update(i, g, state):
     x, velocity = state
-    velocity = mass * velocity + g + weight_decay*x
+    g = g + weight_decay*x
+    velocity = mass * velocity + g
     x = x - step_size(i) * velocity
     return x, velocity
   def get_params(state):
@@ -228,23 +234,29 @@ def momentum(step_size, mass, weight_decay=0.):
 
 
 @optimizer
-def nesterov(step_size, mass):
+def nesterov(step_size, mass, weight_decay=0.):
   """Construct optimizer triple for SGD with Nesterov momentum.
 
   Args:
     step_size: positive scalar, or a callable representing a step size schedule
       that maps the iteration index to positive scalar.
     mass: positive scalar representing the momentum coefficient.
+    weight_decay: positive scalar, representing weight/L2 norm regularization
+      coefficient (default: 0)
 
   Returns:
     An (init_fun, update_fun, get_params) triple.
   """
+  if not 0.0 <= weight_decay:
+      raise ValueError("Invalid weight decay coeff.: {}".format(weight_decay))
+
   step_size = make_schedule(step_size)
   def init(x0):
     v0 = np.zeros_like(x0)
     return x0, v0
   def update(i, g, state):
     x, velocity = state
+    g = g + weight_decay*x
     velocity = mass * velocity + g
     x = x - step_size(i) * (mass * velocity + g)
     return x, velocity
