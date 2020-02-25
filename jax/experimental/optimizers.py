@@ -310,7 +310,7 @@ def adagrad(step_size, momentum=0.9):
 
 
 @optimizer
-def rmsprop(step_size, gamma=0.9, eps=1e-8):
+def rmsprop(step_size, gamma=0.9, eps=1e-8, weight_decay=0.):
   """Construct optimizer triple for RMSProp.
 
   Args:
@@ -318,6 +318,8 @@ def rmsprop(step_size, gamma=0.9, eps=1e-8):
       that maps the iteration index to positive scalar.
       gamma: Decay parameter.
       eps: Epsilon parameter.
+      weight_decay: positive scalar, representing weight/L2 norm regularization
+        coefficient (default: 0)
 
   Returns:
     An (init_fun, update_fun, get_params) triple.
@@ -328,6 +330,7 @@ def rmsprop(step_size, gamma=0.9, eps=1e-8):
     return x0, avg_sq_grad
   def update(i, g, state):
     x, avg_sq_grad = state
+    g = g + weight_decay*x
     avg_sq_grad = avg_sq_grad * gamma + g**2 * (1. - gamma)
     x = x - step_size(i) * g / np.sqrt(avg_sq_grad + eps)
     return x, avg_sq_grad
