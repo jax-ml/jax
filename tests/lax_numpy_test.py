@@ -608,9 +608,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testReducerNoDtype(self, onp_op, lnp_op, rng_factory, shape, dtype, axis,
                          keepdims, inexact):
     rng = rng_factory()
+    is_bf16_nan_test = dtype == lnp.bfloat16 and rng_factory.__name__ == 'rand_some_nan'
     def onp_fun(x):
-      x_cast = x if dtype != lnp.bfloat16 else x.astype(onp.float32)
-      return lnp.array(onp_op(x_cast, axis, keepdims=keepdims), dtype=x.dtype)
+      x_cast = x if not is_bf16_nan_test else x.astype(onp.float32)
+      res = onp_op(x_cast, axis, keepdims=keepdims)
+      res = res if not is_bf16_nan_test else res.astype(lnp.bfloat16)
+      return res
     onp_fun = _promote_like_lnp(onp_fun, inexact)
     lnp_fun = lambda x: lnp_op(x, axis, keepdims=keepdims)
     args_maker = lambda: [rng(shape, dtype)]
