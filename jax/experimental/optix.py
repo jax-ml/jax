@@ -14,19 +14,19 @@
 
 """A composable gradient processing and optimization library for JAX.
 
-The `optix` module implements a number of composable gradient transformations,
+The ``optix`` module implements a number of composable gradient transformations,
 typically used in the context of optimizing neural nets.
 
 Each transformation defines:
 
-* an `init_fn`, to initialize a (possibly empty) set of statistics, or `state`.
-* an `update_fn` to transform an input gradient and update the state.
+* an ``init_fn``, to initialize a (possibly empty) set of statistics, or ``state``.
+* an ``update_fn`` to transform an input gradient and update the state.
 
-An (optional) `chain` utility can be used to build custom optimizers by
+An (optional) ``chain`` utility can be used to build custom optimizers by
 chaining arbitrary sequences of transformations. For any sequence of
-transformations `chain` returns a single `init_fn` and `update_fn`.
+transformations ``chain`` returns a single ``init_fn`` and ``update_fn``.
 
-An (optional) `apply_updates` function can be used to eventually apply the
+An (optional) ``apply_updates`` function can be used to eventually apply the
 transformed gradients to the set of parameters of interest.
 
 Separating gradient transformations from the parameter update allows to flexibly
@@ -34,7 +34,7 @@ chain a sequence of transformations of the same gradients, as well as combine
 multiple updates to the same parameters (e.g. in multi-task settings where the
 different tasks may benefit from different sets of gradient transformations).
 
-Many popular optimizers can be implemented using `optix` as one-liners, and,
+Many popular optimizers can be implemented using ``optix`` as one-liners, and,
 for convenience, we provide aliases for some of the most popular ones.
 """
 
