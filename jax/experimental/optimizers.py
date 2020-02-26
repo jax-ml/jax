@@ -267,7 +267,7 @@ def nesterov(step_size, mass, weight_decay=0.):
 
 
 @optimizer
-def adagrad(step_size, momentum=0.9):
+def adagrad(step_size, momentum=0.9, weight_decay=0.):
   """Construct optimizer triple for Adagrad.
 
   Adaptive Subgradient Methods for Online Learning and Stochastic Optimization:
