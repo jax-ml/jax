@@ -30,7 +30,7 @@ import jax.ops as jo
 # function `c`, transition function `f`, and initial state `x0`, the goal is to
 # compute:
 #
-#   argmin(lambda U, U: c(T, X[T]) + sum(c(t, X[t], U[t]) for t in range(T)))
+#   argmin(lambda X, U: c(T, X[T]) + sum(c(t, X[t], U[t]) for t in range(T)))
 #
 # subject to the constraints that `X[0] == x0` and that:
 #
