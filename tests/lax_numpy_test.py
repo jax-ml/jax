@@ -1802,7 +1802,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         (1, 1),
         ((3,), (0,)),
         ((-2,), (-2,)),
-        ((1, 2), (0, -1))
+        ((1, 2), (0, -1)),
+        ((4, 2, 5, 5, 2, 4), None),
+        (100, None),
       ]
       for rng_factory in [jtu.rand_default]))
   def testRoll(self, shape, dtype, shifts, axis, rng_factory):
