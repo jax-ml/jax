@@ -46,7 +46,7 @@ By default\*, matrix multiplication in JAX on TPUs [uses bfloat16](https://cloud
 
 JAX also adds the `bfloat16` dtype, which you can use to explicitly cast arrays to bfloat16, e.g., `jax.numpy.array(x, dtype=jax.numpy.bfloat16)`.
 
-\* We might change the default precision in the future, since it is arguably surprising. Please comment/vote on [this issue](https://github.com/google/jax/issues/1856) if it affects you!
+\* We might change the default precision in the future, since it is arguably surprising. Please comment/vote on [this issue](https://github.com/google/jax/issues/2161) if it affects you!
 
 ## Running JAX on a Cloud TPU from a GCE VM
 
