@@ -123,7 +123,7 @@ def _threefry2x32_lowering(key1, key2, x1, x2, use_rolled_loops=True):
 
   def apply_round(v, rot):
     v = v[:]
-    v[0] = v[0] + v[1]
+    v[0] += v[1]
     v[1] = rotate_left(v[1], rot)
     v[1] = v[0] ^ v[1]
     return v
@@ -133,8 +133,8 @@ def _threefry2x32_lowering(key1, key2, x1, x2, use_rolled_loops=True):
                onp.array([17, 29, 16, 24], dtype=onp.uint32)]
   ks = [key1, key2, key1 ^ key2 ^ onp.uint32(0x1BD11BDA)]
 
-  x[0] = x[0] + ks[0]
-  x[1] = x[1] + ks[1]
+  x[0] += ks[0]
+  x[1] += ks[1]
 
   if use_rolled_loops:
     def rotate_list(xs): return xs[1:] + xs[:1]
@@ -149,28 +149,28 @@ def _threefry2x32_lowering(key1, key2, x1, x2, use_rolled_loops=True):
   else:
     for r in rotations[0]:
       x = apply_round(x, r)
-    x[0] = x[0] + ks[1]
-    x[1] = x[1] + ks[2] + onp.uint32(1)
+    x[0] += ks[1]
+    x[1] += ks[2] + onp.uint32(1)
 
     for r in rotations[1]:
       x = apply_round(x, r)
-    x[0] = x[0] + ks[2]
-    x[1] = x[1] + ks[0] + onp.uint32(2)
+    x[0] += ks[2]
+    x[1] += ks[0] + onp.uint32(2)
 
     for r in rotations[0]:
       x = apply_round(x, r)
-    x[0] = x[0] + ks[0]
-    x[1] = x[1] + ks[1] + onp.uint32(3)
+    x[0] += ks[0]
+    x[1] += ks[1] + onp.uint32(3)
 
     for r in rotations[1]:
       x = apply_round(x, r)
-    x[0] = x[0] + ks[1]
-    x[1] = x[1] + ks[2] + onp.uint32(4)
+    x[0] += ks[1]
+    x[1] += ks[2] + onp.uint32(4)
 
     for r in rotations[0]:
       x = apply_round(x, r)
-    x[0] = x[0] + ks[2]
-    x[1] = x[1] + ks[0] + onp.uint32(5)
+    x[0] += ks[2]
+    x[1] += ks[0] + onp.uint32(5)
 
   return tuple(x)
 
