@@ -1871,20 +1871,6 @@ ad.primitive_transposes[sub_p] = _sub_transpose
 mul_p = standard_naryop([_num, _num], 'mul')
 ad.defbilinear_broadcasting(_brcast, mul_p, mul, mul)
 
-def _mul_taylor(primals_in, series_in):
-  x, y = primals_in
-  x_terms, y_terms = series_in
-  u = [x] + x_terms
-  w = [y] + y_terms
-  v = [None] * len(u)
-  def scale(k, j): return 1. / (fact(k - j) * fact(j))
-  for k in range(0, len(v)):
-    v[k] = fact(k) * sum([scale(k, j) * u[j] * w[k-j] for j in range(0, k+1)])
-  primal_out, *series_out = v
-  return primal_out, series_out
-taylor.prop_rules[mul_p] = _mul_taylor
-
-
 def _safe_mul_translation_rule(c, x, y):
   dtype = c.GetShape(x).numpy_dtype()
   zero = c.Constant(onp.array(0, dtype=dtype))
@@ -2356,20 +2342,21 @@ ad.defbilinear(dot_general_p,
 batching.primitive_batchers[dot_general_p] = _dot_general_batch_rule
 masking.masking_rules[dot_general_p] = _dot_general_masking_rule
 
-# TODO factor out a bilinear rule (mul, dot, conv, ...)
-def _dot_general_taylor(primals_in, series_in, **params):
+def _bilinear_taylor_rule(prim, primals_in, series_in, **params):
   x, y = primals_in
   x_terms, y_terms = series_in
   u = [x] + x_terms
   w = [y] + y_terms
   v = [None] * len(u)
-  dot = partial(dot_general_p.bind, **params)
+  op = partial(prim.bind, **params)
   def scale(k, j): return 1. / (fact(k - j) * fact(j))
   for k in range(0, len(v)):
-    v[k] = fact(k) * sum([scale(k, j) * dot(u[j], w[k-j]) for j in range(0, k+1)])
+    v[k] = fact(k) * sum([scale(k, j) * op(u[j], w[k-j]) for j in range(0, k+1)])
   primal_out, *series_out = v
   return primal_out, series_out
-taylor.prop_rules[dot_general_p] = _dot_general_taylor
+taylor.prop_rules[dot_general_p] = partial(_bilinear_taylor_rule, dot_general_p)
+taylor.prop_rules[mul_p] = partial(_bilinear_taylor_rule, mul_p)
+taylor.prop_rules[conv_general_dilated_p] = partial(_bilinear_taylor_rule, conv_general_dilated_p)
 
 
 def _broadcast_shape_rule(operand, sizes):
@@ -2663,6 +2650,7 @@ reshape_p = standard_primitive(_reshape_shape_rule, _reshape_dtype_rule,
 reshape_p.def_impl(_reshape_impl)
 ad.deflinear(reshape_p, _reshape_transpose_rule)
 batching.primitive_batchers[reshape_p] = _reshape_batch_rule
+taylor.deflinear(reshape_p)
 
 
 def _rev_shape_rule(operand, dimensions):
