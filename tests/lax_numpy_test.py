@@ -1084,10 +1084,16 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     np_input = np.ones((1))
     jnp_input = jnp.ones((1))
+    expected_np_input_after_call = np.ones((1))
+    expected_jnp_input_after_call = jnp.ones((1))
+    
+    self.assertTrue(type(jnp.concatenate([np_input])) is jnp.DeviceArray)
+    
     attempt_sideeffect(np_input)
     attempt_sideeffect(jnp_input)
 
-    self.assertAllClose(np_input, jnp_input, check_dtypes=False)
+    self.assertAllClose(np_input, expected_np_input_after_call, check_dtypes=True)
+    self.assertAllClose(jnp_input, expected_jnp_input_after_call, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "op={}_shape=[{}]_axis={}_out_dtype={}".format(
