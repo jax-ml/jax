@@ -2594,16 +2594,17 @@ class LaxVmapTest(jtu.JaxTestCase):
             jtu.format_test_name_suffix(rec.op, shapes,
                                         itertools.repeat(dtype)), bdims),
          "op_name": rec.op, "rng_factory": rec.rng_factory, "shapes": shapes,
-         "dtype": dtype, "bdims": bdims}
+         "dtype": dtype, "bdims": bdims, "tol": rec.tol}
         for shape_group in compatible_shapes
         for shapes in CombosWithReplacement(shape_group, rec.nargs)
         for bdims in all_bdims(*shapes)
         for dtype in rec.dtypes)
       for rec in LAX_OPS))
-  def testOp(self, op_name, rng_factory, shapes, dtype, bdims):
+  def testOp(self, op_name, rng_factory, shapes, dtype, bdims, tol):
     rng = rng_factory()
     op = getattr(lax, op_name)
-    self._CheckBatching(op, 10, bdims, shapes, [dtype] * len(shapes), rng)
+    self._CheckBatching(op, 10, bdims, shapes, [dtype] * len(shapes), rng,
+                        atol=tol, rtol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
